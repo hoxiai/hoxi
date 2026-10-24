@@ -202,6 +202,9 @@ func canonicalDir(directory string) (string, error) {
 	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
 		abs = resolved
 	}
+	if isForbiddenWorkspaceRoot(abs) {
+		return "", errors.New("refusing to index or inspect protected directory")
+	}
 	return abs, nil
 }
 

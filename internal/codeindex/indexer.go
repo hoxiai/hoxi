@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
 
 type Config struct {
@@ -83,26 +85,31 @@ func init() {
 }
 
 var (
-	declarationRe = regexp.MustCompile(`(?m)^\s*(?:export\s+)?(?:default\s+)?(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:function|class|interface|type|struct|enum|trait|impl|def|func|fn|const|let|var|module|namespace|object|record)\s+([A-Za-z_$][\w$]*)`)
-	assignRe      = regexp.MustCompile(`(?m)^\s*([A-Za-z_$][\w$]*)\s*(?::[^=\n]+)?[:=]\s*(?:async\s*)?(?:function|\(|=>)`)
+	declarationRe = regexp.MustCompile(`(?m)^\s*(?:export\s+)?(?:default\s+)?(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:static\s+)?(?:function|class|interface|type|struct|enum|trait|impl|def|func|fn|const|let|var|module|namespace|object|record)\s+([A-Za-z_$][\w$]*)`)
+	goMethodRe    = regexp.MustCompile(`(?m)^\s*func\s*\([^)]+\)\s*([A-Za-z_]\w*)`)
+	assignRe      = regexp.MustCompile(`(?m)^\s*(?:export\s+)?(?:(?:const|let|var)\s+)?([A-Za-z_$][\w$]*)\s*(?::[^=\n]+)?[:=]\s*(?:async\s*)?(?:function|\(|=>)`)
 )
 
+func declaredSymbolOnLine(line string) string {
+	if m := goMethodRe.FindStringSubmatch(line); len(m) == 2 {
+		return m[1]
+	}
+	if m := declarationRe.FindStringSubmatch(line); len(m) == 2 {
+		return m[1]
+	}
+	if m := assignRe.FindStringSubmatch(line); len(m) == 2 {
+		return m[1]
+	}
+	return ""
+}
+
 func symbolAt(lines []string, start, end int) string {
-	best := ""
 	for i := start; i < end && i < len(lines); i++ {
-		line := lines[i]
-		if m := declarationRe.FindStringSubmatch(line); len(m) == 2 {
-			best = m[1]
+		if sym := declaredSymbolOnLine(lines[i]); sym != "" {
+			return sym
 		}
 	}
-	if best == "" {
-		for i := start; i < end && i < len(lines); i++ {
-			if m := assignRe.FindStringSubmatch(lines[i]); len(m) == 2 {
-				best = m[1]
-			}
-		}
-	}
-	return best
+	return ""
 }
 
 func chunkFile(path, content string, cfg Config) []Chunk {
@@ -118,11 +125,29 @@ func chunkFile(path, content string, cfg Config) []Chunk {
 	if overlap < 0 || overlap >= size {
 		overlap = 0
 	}
+	maxChunks := cfg.MaxFileChunks
+	if maxChunks <= 0 {
+		maxChunks = 200
+	}
 	var chunks []Chunk
 	for start := 0; start < len(lines); {
 		end := start + size
 		if end > len(lines) {
 			end = len(lines)
+		}
+		splitAtSymbol := false
+		if len(chunks) < maxChunks-4 {
+			hasFirstSymbol := false
+			for i := start; i < end; i++ {
+				if declaredSymbolOnLine(lines[i]) != "" {
+					if hasFirstSymbol && i > start {
+						end = i
+						splitAtSymbol = true
+						break
+					}
+					hasFirstSymbol = true
+				}
+			}
 		}
 		text := strings.TrimSpace(strings.Join(lines[start:end], "\n"))
 		if text != "" {
@@ -133,7 +158,7 @@ func chunkFile(path, content string, cfg Config) []Chunk {
 				EndLine:   end,
 				Text:      text,
 			})
-			if len(chunks) >= cfg.MaxFileChunks {
+			if len(chunks) >= maxChunks {
 				break
 			}
 		}
@@ -141,7 +166,7 @@ func chunkFile(path, content string, cfg Config) []Chunk {
 			break
 		}
 		next := end - overlap
-		if next <= start {
+		if splitAtSymbol || next <= start {
 			next = end
 		}
 		start = next
@@ -149,18 +174,84 @@ func chunkFile(path, content string, cfg Config) []Chunk {
 	return chunks
 }
 
-// secretFile reports files that commonly hold credentials. The index is
-// written to ~/.hoxi in plain text, so they are never indexed.
+var protectedWorktreeSegments = map[string]bool{
+	".git":      true,
+	".agents":   true,
+	".opencode": true,
+	".claude":   true,
+	".hoxi":     true,
+	".ssh":      true,
+	".aws":      true,
+	".gnupg":    true,
+	".kube":     true,
+	".docker":   true,
+	".azure":    true,
+	".config":   true,
+	".envrc":    true,
+}
+
+// secretFile reports files that commonly hold credentials or protected Hoxi state.
+// The index is written to ~/.hoxi in plain text, so they are never indexed or inspected.
 func secretFile(lower string) bool {
 	if lower == ".env" || strings.HasPrefix(lower, ".env.") || strings.HasSuffix(lower, ".env") {
 		return true
 	}
+	if hoxipaths.IsProtectedStateFile(lower) || lower == "hoxi.db" || strings.HasPrefix(lower, "hoxi.db-") {
+		return true
+	}
 	switch lower {
-	case ".npmrc", ".pypirc", ".netrc", ".git-credentials", "credentials", "credentials.json", "id_rsa", "id_ed25519":
+	case ".npmrc", ".pypirc", ".netrc", ".git-credentials", "credentials", "credentials.json", ".credentials.json",
+		"id_rsa", "id_ed25519", "id_ecdsa", "id_dsa", "authorized_keys", ".envrc",
+		".zshrc", ".zshenv", ".zprofile", ".zlogin", ".bashrc", ".bash_profile", ".bash_login", ".profile",
+		".gitconfig", ".curlrc", ".wgetrc":
 		return true
 	}
 	for _, suffix := range []string{".tfvars", ".tfvars.json", ".tfstate", ".pem", ".key", ".p12", ".pfx", ".keystore"} {
 		if strings.HasSuffix(lower, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+func isProtectedOrSecretRelPath(rel string) bool {
+	slash := filepath.ToSlash(strings.TrimSpace(rel))
+	if slash == "" || slash == "." {
+		return true
+	}
+	lowerSlash := strings.ToLower(slash)
+	if lowerSlash == ".vscode/settings.json" || strings.HasSuffix(lowerSlash, "/.vscode/settings.json") {
+		return true
+	}
+	for _, seg := range strings.Split(slash, "/") {
+		if seg == "" || seg == "." {
+			continue
+		}
+		if seg == ".." || ignoredFolders[seg] || ignoredFolders[strings.ToLower(seg)] || protectedWorktreeSegments[strings.ToLower(seg)] {
+			return true
+		}
+	}
+	return !indexableFile(slash)
+}
+
+func isForbiddenWorkspaceRoot(absDir string) bool {
+	slash := filepath.ToSlash(strings.TrimSpace(absDir))
+	segs := strings.Split(slash, "/")
+	for i, raw := range segs {
+		seg := strings.ToLower(strings.TrimSpace(raw))
+		if seg == "" {
+			continue
+		}
+		if seg == ".hoxi" {
+			// Isolated session worktrees live at <project>/.hoxi/worktrees/<id>;
+			// any other path inside .hoxi (e.g. ~/.hoxi or <project>/.hoxi/memory) is forbidden.
+			if i+2 < len(segs) && strings.ToLower(segs[i+1]) == "worktrees" && strings.TrimSpace(segs[i+2]) != "" {
+				continue
+			}
+			return true
+		}
+		switch seg {
+		case ".git", ".claude", ".opencode", ".agents", ".ssh", ".aws", ".gnupg", ".kube":
 			return true
 		}
 	}
@@ -196,8 +287,12 @@ func (s *Service) build(directory string, previous *Index) (*Index, error) {
 			return nil
 		}
 		if entry.IsDir() {
-			if path != directory && ignoredFolders[entry.Name()] {
-				return filepath.SkipDir
+			if path != directory {
+				name := entry.Name()
+				lowerName := strings.ToLower(name)
+				if ignoredFolders[name] || ignoredFolders[lowerName] || protectedWorktreeSegments[lowerName] {
+					return filepath.SkipDir
+				}
 			}
 			return nil
 		}
@@ -219,6 +314,9 @@ func (s *Service) build(directory string, previous *Index) (*Index, error) {
 			return nil
 		}
 		rel = filepath.ToSlash(rel)
+		if isProtectedOrSecretRelPath(rel) {
+			return nil
+		}
 		files++
 		total += info.Size()
 		if prev := previous.Files[rel]; prev != nil && prev.Size == info.Size() && prev.ModTime == info.ModTime().UnixMilli() {

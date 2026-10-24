@@ -557,7 +557,7 @@ export function externalDirectoryTargets(input) {
 // Edits stay sensitive. No session id, another session, or ~/.hoxi itself
 // stays sensitive. Both the Hoxi id and the runtime ExternalID match.
 const OWN_SESSION_READ_TOOLS = new Set([
-  "read", "glob", "grep", "list", "lsp", "todoread", "ls", "notebookread", "notebook_read",
+  "read", "glob", "grep", "list", "lsp", "todoread", "hoxi_code_index", "ls", "notebookread", "notebook_read",
   "read_file", "view_file", "list_dir", "find_by_name", "grep_search", "read_resource",
   "list_resources", "read_browser_page", "browser_get_dom", "browser_get_network_request",
   "browser_list_network_requests", "list_browser_pages", "capture_browser_console_logs",

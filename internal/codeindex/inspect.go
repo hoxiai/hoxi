@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -43,6 +44,13 @@ type CallersResponse struct {
 	Tests     []CallerHit `json:"tests"`
 }
 
+var classMethodDeclRe = regexp.MustCompile(`^\s*(?:(?:public|private|protected|internal|static|async|override|readonly|abstract|virtual|get|set)\s+)*([A-Za-z_$][\w$]*)\s*(?:<[^>]*>)?\s*\([^;]*\{\s*$`)
+
+var nonMethodKeywords = map[string]bool{
+	"if": true, "for": true, "while": true, "switch": true, "catch": true,
+	"return": true, "func": true, "function": true, "else": true, "select": true,
+}
+
 func (s *Service) Inspect(directory, relPath, symbol string, startLine, endLine, contextLines int) (InspectResponse, error) {
 	directory, err := canonicalDir(directory)
 	if err != nil {
@@ -58,27 +66,27 @@ func (s *Service) Inspect(directory, relPath, symbol string, startLine, endLine,
 		if err != nil {
 			return InspectResponse{}, err
 		}
-		matched := findSymbolChunk(c, symbol)
-		if matched == nil {
+		foundPath, symStart, symEnd, resolvedSym, ok := s.locateSymbolInIndex(directory, c, symbol)
+		if !ok {
 			return InspectResponse{}, fmt.Errorf("symbol %q not found in index", symbol)
 		}
-		relPath = matched.Path
+		relPath = foundPath
 		if startLine <= 0 {
-			startLine = matched.StartLine
+			startLine = symStart
 		}
 		if endLine <= 0 {
-			endLine = matched.EndLine
+			endLine = symEnd
 		}
-		if symbol == "" {
-			symbol = matched.Symbol
+		if resolvedSym != "" {
+			symbol = resolvedSym
 		}
 	}
 	cleanRel, fullPath, err := resolveSafeWorktreeFile(directory, relPath)
 	if err != nil {
 		return InspectResponse{}, err
 	}
-	if secretFile(strings.ToLower(filepath.Base(cleanRel))) {
-		return InspectResponse{}, errors.New("refusing to inspect credential or secret file")
+	if isProtectedOrSecretRelPath(cleanRel) {
+		return InspectResponse{}, errors.New("refusing to inspect protected or secret file")
 	}
 	st, err := os.Stat(fullPath)
 	if err != nil || st.IsDir() {
@@ -99,18 +107,18 @@ func (s *Service) Inspect(directory, relPath, symbol string, startLine, endLine,
 	totalLines := len(lines)
 
 	resolvedSymbol := symbol
-	if startLine <= 0 && symbol != "" {
-		chunks := chunkFile(cleanRel, content, s.cfg)
-		for _, ch := range chunks {
-			if strings.EqualFold(ch.Symbol, symbol) || strings.Contains(strings.ToLower(ch.Symbol), strings.ToLower(symbol)) {
-				startLine = ch.StartLine
-				if endLine <= 0 {
-					endLine = ch.EndLine
-				}
-				resolvedSymbol = ch.Symbol
-				break
-			}
+	if symbol != "" {
+		symStart, symEnd, matchedSym, ok := findSymbolInLines(lines, symbol)
+		if !ok {
+			return InspectResponse{}, fmt.Errorf("symbol %q not found in %s", symbol, cleanRel)
 		}
+		if startLine <= 1 || startLine < symStart || startLine > symEnd {
+			startLine = symStart
+		}
+		if endLine <= 0 || endLine < startLine || endLine > symEnd+maxInspectWindowLines {
+			endLine = symEnd
+		}
+		resolvedSymbol = matchedSym
 	}
 	if startLine <= 0 {
 		startLine = 1
@@ -190,6 +198,9 @@ func (s *Service) Callers(directory, symbol, excludePath string, limit int) (Cal
 	sort.Strings(paths)
 
 	for _, relPath := range paths {
+		if isProtectedOrSecretRelPath(relPath) {
+			continue
+		}
 		rec := c.index.Files[relPath]
 		isTest := isTestFilePath(relPath)
 		for _, ch := range rec.Chunks {
@@ -199,7 +210,6 @@ func (s *Service) Callers(directory, symbol, excludePath string, limit int) (Cal
 				if !containsIdentifier(line, symbol) {
 					continue
 				}
-				// Skip declaration lines of the symbol itself.
 				if isDeclarationOf(line, symbol) && (normExclude == "" || relPath == normExclude) {
 					continue
 				}
@@ -236,22 +246,130 @@ func (s *Service) Callers(directory, symbol, excludePath string, limit int) (Cal
 	}, nil
 }
 
-func findSymbolChunk(c *cachedIndex, symbol string) *Chunk {
+func (s *Service) locateSymbolInIndex(directory string, c *cachedIndex, symbol string) (path string, startLine, endLine int, resolvedSymbol string, ok bool) {
+	paths := make([]string, 0, len(c.index.Files))
+	for p := range c.index.Files {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	// First pass: check indexed files for exact/case-insensitive symbol declaration.
+	for _, relPath := range paths {
+		if isProtectedOrSecretRelPath(relPath) {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(directory, filepath.FromSlash(relPath)))
+		if err != nil {
+			continue
+		}
+		lines := strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n")
+		if st, en, matched, found := findSymbolInLines(lines, symbol); found {
+			return relPath, st, en, matched, true
+		}
+	}
+	// Fallback: check chunk symbols.
 	lower := strings.ToLower(strings.TrimSpace(symbol))
-	var partial *Chunk
 	for _, doc := range c.docs {
+		if isProtectedOrSecretRelPath(doc.chunk.Path) {
+			continue
+		}
 		sym := strings.ToLower(doc.chunk.Symbol)
+		if sym != "" && sym == lower {
+			return doc.chunk.Path, doc.chunk.StartLine, doc.chunk.EndLine, doc.chunk.Symbol, true
+		}
+	}
+	return "", 0, 0, "", false
+}
+
+func extractLineSymbolCandidate(line string) string {
+	if sym := declaredSymbolOnLine(line); sym != "" {
+		return sym
+	}
+	if m := classMethodDeclRe.FindStringSubmatch(line); len(m) == 2 {
+		if !nonMethodKeywords[m[1]] {
+			return m[1]
+		}
+	}
+	return ""
+}
+
+func findSymbolInLines(lines []string, symbol string) (startLine, endLine int, resolvedSymbol string, ok bool) {
+	target := strings.TrimSpace(symbol)
+	if target == "" {
+		return 0, 0, "", false
+	}
+	shortTarget := ""
+	if dot := strings.LastIndexByte(target, '.'); dot >= 0 && dot+1 < len(target) {
+		shortTarget = target[dot+1:]
+	}
+	declIdx := -1
+	matchedSym := ""
+	// Pass 1: exact case match on declared symbol.
+	for i, line := range lines {
+		sym := extractLineSymbolCandidate(line)
 		if sym == "" {
 			continue
 		}
-		if sym == lower {
-			return doc.chunk
-		}
-		if partial == nil && strings.Contains(sym, lower) {
-			partial = doc.chunk
+		if sym == target || (shortTarget != "" && sym == shortTarget) {
+			declIdx = i
+			matchedSym = sym
+			break
 		}
 	}
-	return partial
+	// Pass 2: case-insensitive match on declared symbol.
+	if declIdx < 0 {
+		for i, line := range lines {
+			sym := extractLineSymbolCandidate(line)
+			if sym == "" {
+				continue
+			}
+			if strings.EqualFold(sym, target) || (shortTarget != "" && strings.EqualFold(sym, shortTarget)) {
+				declIdx = i
+				matchedSym = sym
+				break
+			}
+		}
+	}
+	if declIdx < 0 {
+		return 0, 0, "", false
+	}
+	startLine = declIdx + 1
+	endLine = estimateSymbolEndLine(lines, declIdx)
+	return startLine, endLine, matchedSym, true
+}
+
+func estimateSymbolEndLine(lines []string, declIdx int) int {
+	braceDepth := 0
+	sawBrace := false
+	maxIdx := declIdx + maxInspectWindowLines - 1
+	if maxIdx >= len(lines) {
+		maxIdx = len(lines) - 1
+	}
+	for i := declIdx; i <= maxIdx; i++ {
+		line := lines[i]
+		if i > declIdx && !sawBrace && extractLineSymbolCandidate(line) != "" {
+			return i
+		}
+		for j := 0; j < len(line); j++ {
+			if j+1 < len(line) && line[j] == '/' && line[j+1] == '/' {
+				break
+			}
+			switch line[j] {
+			case '{':
+				braceDepth++
+				sawBrace = true
+			case '}':
+				braceDepth--
+			}
+		}
+		if sawBrace && braceDepth <= 0 {
+			return i + 1
+		}
+	}
+	end := declIdx + 40
+	if end > len(lines) {
+		end = len(lines)
+	}
+	return end
 }
 
 func resolveSafeWorktreeFile(directory, relPath string) (string, string, error) {
@@ -269,6 +387,13 @@ func resolveSafeWorktreeFile(directory, relPath string) (string, string, error) 
 	if err != nil {
 		return "", "", err
 	}
+	lexRel, err := filepath.Rel(directory, abs)
+	if err != nil || lexRel == ".." || strings.HasPrefix(lexRel, ".."+string(filepath.Separator)) {
+		return "", "", errors.New("path escapes workspace directory")
+	}
+	if isProtectedOrSecretRelPath(filepath.ToSlash(lexRel)) {
+		return "", "", errors.New("refusing to inspect protected or secret file")
+	}
 	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
 		abs = resolved
 	}
@@ -276,7 +401,11 @@ func resolveSafeWorktreeFile(directory, relPath string) (string, string, error) 
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", "", errors.New("path escapes workspace directory")
 	}
-	return filepath.ToSlash(rel), abs, nil
+	cleanRel := filepath.ToSlash(rel)
+	if isProtectedOrSecretRelPath(cleanRel) {
+		return "", "", errors.New("refusing to inspect protected or secret file")
+	}
+	return cleanRel, abs, nil
 }
 
 func containsIdentifier(line, ident string) bool {
@@ -305,20 +434,8 @@ func isIdentChar(b byte) bool {
 }
 
 func isDeclarationOf(line, symbol string) bool {
-	if m := declarationRe.FindStringSubmatch(line); len(m) == 2 && strings.EqualFold(m[1], symbol) {
+	if sym := extractLineSymbolCandidate(line); sym != "" && strings.EqualFold(sym, symbol) {
 		return true
-	}
-	if m := assignRe.FindStringSubmatch(line); len(m) == 2 && strings.EqualFold(m[1], symbol) {
-		return true
-	}
-	trimmed := strings.TrimSpace(line)
-	if strings.HasPrefix(trimmed, "func (") {
-		if closeIdx := strings.IndexByte(trimmed, ')'); closeIdx > 0 {
-			rest := strings.TrimSpace(trimmed[closeIdx+1:])
-			if strings.HasPrefix(rest, symbol) && (len(rest) == len(symbol) || !isIdentChar(rest[len(symbol)])) {
-				return true
-			}
-		}
 	}
 	return false
 }

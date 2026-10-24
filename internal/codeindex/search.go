@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	indexVersion = 2
+	indexVersion = 3
 	cacheTTL     = 60 * 1000
 )
 
@@ -50,8 +50,14 @@ func buildDocs(index *Index) *cachedIndex {
 	c := &cachedIndex{index: index, df: make(map[string]int)}
 	total := 0
 	for _, file := range index.Files {
+		if isProtectedOrSecretRelPath(file.Path) {
+			continue
+		}
 		for i := range file.Chunks {
 			chunk := &file.Chunks[i]
+			if isProtectedOrSecretRelPath(chunk.Path) {
+				continue
+			}
 			tokens := textindex.Counts(chunk.Text + " " + chunk.Symbol + " " + chunk.Path)
 			if len(tokens) == 0 {
 				continue

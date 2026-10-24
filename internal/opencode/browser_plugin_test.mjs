@@ -158,5 +158,27 @@ test("standalone browser plugin", async (t) => {
     await execIndex({ action: "refresh" }, context);
     assert.equal(requests[3].url.pathname, "/api/hoxi/code-index/refresh");
     assert.equal(requests[3].options.method, "POST");
+
+    // Sensitive / protected paths require read approval first and are rejected before reaching fetch
+    for (const blockedPath of [".hoxi/cloudflared.json", ".claude/.credentials.json", ".env", "../outside.go", "/etc/passwd"]) {
+      requests = [];
+      asks = [];
+      await assert.rejects(
+        execIndex({ action: "inspect", path: blockedPath }, context),
+        /protected or secret path|denied/i,
+      );
+      assert.equal(asks.length, 1, `expected approval ask for ${blockedPath}`);
+      assert.equal(asks[0].permission, "read");
+      assert.equal(requests.length, 0, `expected no HTTP fetch for ${blockedPath}`);
+    }
+  });
+
+  await t.test("experimental.session.compacting injects 8-dimension compaction prompt", async () => {
+    const compOut = { prompt: "", context: [] };
+    await hooks["experimental.session.compacting"]({ sessionID: "ses_1" }, compOut);
+    assert.ok(compOut.prompt.includes("## Goals"));
+    assert.ok(compOut.prompt.includes("## User constraints"));
+    assert.ok(compOut.prompt.includes("## Changed files and reasons"));
+    assert.ok(compOut.prompt.includes("## Next steps"));
   });
 });

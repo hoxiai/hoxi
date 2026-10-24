@@ -31,7 +31,7 @@ const (
 var (
 	readPermissions = setOf("read", "glob", "grep", "list", "lsp", "todoread")
 
-	readToolNames = setOf("read", "glob", "grep", "list", "lsp", "todoread",
+	readToolNames = setOf("read", "glob", "grep", "list", "lsp", "todoread", "hoxi_code_index",
 		"ls", "notebookread", "notebook_read", "read_file", "view_file",
 		"list_dir", "find_by_name", "grep_search", "read_resource", "list_resources",
 		"read_browser_page", "browser_get_dom", "browser_get_network_request",

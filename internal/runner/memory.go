@@ -12,11 +12,13 @@ import (
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
 
+const maxSessionConstraints = 48
+
 var (
 	memoryWriteMu       sync.Mutex
 	volatileUpdatedLine = regexp.MustCompile(`(?m)^Updated:\s*[^\r\n]+\r?\n?`)
-	userConstraintRe    = regexp.MustCompile(`(?i)\b(must|never|do not|don't|forbidden|constraint|cannot|should not)\b|严禁|不要|必须|禁止|不能|不得|仅限|切勿`)
-	clauseSplitRe       = regexp.MustCompile(`[.!?。！？；;\r\n]+`)
+	userConstraintRe    = regexp.MustCompile(`(?i)\b(must|must not|mustn't|never|do not|don't|forbidden|forbid|prohibit|constraint|requirement|cannot|can't|should not|shouldn't|only allow|keep .* unchanged|preserve|avoid)\b|严禁|不要|必须|务必|禁止|不能|不可|不得|仅限|只允许|切勿|别改|不准|保持|保留|避免`)
+	clauseBreakRe       = regexp.MustCompile(`(?:[.!?](?:\s+|$)|[。！？；;\r\n]+)`)
 	verificationCmdRe   = regexp.MustCompile(`(?i)\b(go\s+(?:test|vet|build)|npm\s+(?:--prefix\s+\S+\s+)?(?:test|run\s+(?:test|lint|build|check\S*))|pnpm\s+(?:test|lint|build|check\S*)|yarn\s+(?:test|lint|build)|flutter\s+(?:test|analyze)|pytest|cargo\s+(?:test|check|clippy)|tsc\b|node\s+--test)\b`)
 	memorySecretRes     = []*regexp.Regexp{
 		regexp.MustCompile(`\b(sk-[a-zA-Z0-9_-]{20,})\b`),
@@ -40,18 +42,107 @@ func redactMemorySecrets(text string) string {
 }
 
 func extractConstraintClauses(text string) []string {
-	whole := singleLineExcerpt(text, 240)
 	var out []string
-	for _, raw := range clauseSplitRe.Split(text, -1) {
-		clause := singleLineExcerpt(raw, 220)
-		if clause == "" || clause == whole {
+	seen := make(map[string]bool)
+	for _, raw := range clauseBreakRe.Split(text, -1) {
+		clean := strings.Join(strings.Fields(raw), " ")
+		if clean == "" || !userConstraintRe.MatchString(clean) {
 			continue
 		}
-		if userConstraintRe.MatchString(clause) {
-			out = append(out, redactMemorySecrets(clause))
+		clause := excerptAroundMatch(clean, userConstraintRe, 240)
+		clause = redactMemorySecrets(clause)
+		if clause != "" && !seen[clause] {
+			seen[clause] = true
+			out = append(out, clause)
 		}
 	}
 	return out
+}
+
+func excerptAroundMatch(clean string, re *regexp.Regexp, maxRunes int) string {
+	runes := []rune(clean)
+	if len(runes) <= maxRunes {
+		return clean
+	}
+	loc := re.FindStringIndex(clean)
+	if loc == nil {
+		return headTailExcerpt(clean, maxRunes)
+	}
+	matchStartRune := len([]rune(clean[:loc[0]]))
+	// Center window around the constraint match, biased toward keeping the tail after the match keyword.
+	winStart := matchStartRune - maxRunes/4
+	if winStart < 0 {
+		winStart = 0
+	}
+	winEnd := winStart + maxRunes
+	if winEnd > len(runes) {
+		winEnd = len(runes)
+		winStart = winEnd - maxRunes
+		if winStart < 0 {
+			winStart = 0
+		}
+	}
+	prefix := ""
+	suffix := ""
+	if winStart > 0 {
+		prefix = "…"
+	}
+	if winEnd < len(runes) {
+		suffix = "…"
+	}
+	return prefix + string(runes[winStart:winEnd]) + suffix
+}
+
+func headTailExcerpt(s string, maxRunes int) string {
+	clean := strings.Join(strings.Fields(s), " ")
+	runes := []rune(clean)
+	if len(runes) <= maxRunes {
+		return clean
+	}
+	headLen := maxRunes / 2
+	tailLen := maxRunes - headLen
+	return string(runes[:headLen]) + " … " + string(runes[len(runes)-tailLen:])
+}
+
+func summarizeUserMessage(txt string, maxRunes int) string {
+	excerpt := redactMemorySecrets(headTailExcerpt(txt, maxRunes))
+	clauses := extractConstraintClauses(txt)
+	var missing []string
+	for _, c := range clauses {
+		if !strings.Contains(excerpt, c) {
+			missing = append(missing, c)
+		}
+	}
+	if len(missing) > 0 {
+		excerpt += " [Constraints: " + strings.Join(missing, "; ") + "]"
+	}
+	return excerpt
+}
+
+func collectSessionConstraints(turns []MessageTurn) []string {
+	var constraints []string
+	seen := make(map[string]bool)
+	for _, turn := range turns {
+		if !strings.EqualFold(strings.TrimSpace(turn.Info.Role), "user") {
+			continue
+		}
+		for _, part := range turn.Parts {
+			if part.Type != "text" || strings.TrimSpace(part.Text) == "" {
+				continue
+			}
+			for _, clause := range extractConstraintClauses(part.Text) {
+				if seen[clause] {
+					continue
+				}
+				seen[clause] = true
+				if len(constraints) >= maxSessionConstraints {
+					constraints = constraints[1:]
+				}
+				constraints = append(constraints, clause)
+			}
+		}
+	}
+	return constraints
 }
 
 func isMutatingToolName(tool string) bool {
@@ -216,10 +307,13 @@ func buildEightDimSessionMarkdown(rec SessionRecord) string {
 
 	addConstraint := func(clause string) {
 		c := strings.TrimSpace(clause)
-		if c == "" || seenConstraints[c] || len(userConstraints) >= 8 {
+		if c == "" || seenConstraints[c] {
 			return
 		}
 		seenConstraints[c] = true
+		if len(userConstraints) >= maxSessionConstraints {
+			userConstraints = userConstraints[1:]
+		}
 		userConstraints = append(userConstraints, c)
 	}
 
@@ -251,12 +345,13 @@ func buildEightDimSessionMarkdown(rec SessionRecord) string {
 					continue
 				}
 				if role == "user" {
-					excerpt := redactMemorySecrets(singleLineExcerpt(txt, 220))
+					excerpt := summarizeUserMessage(txt, 260)
 					userMessages = append(userMessages, excerpt)
-					for _, clause := range extractConstraintClauses(txt) {
+					clauses := extractConstraintClauses(txt)
+					for _, clause := range clauses {
 						addConstraint(clause)
 					}
-					if userConstraintRe.MatchString(txt) && len(userMessages) > 1 {
+					if len(clauses) == 0 && userConstraintRe.MatchString(txt) && len(userMessages) > 1 {
 						addConstraint(excerpt)
 					}
 				} else if role == "assistant" {

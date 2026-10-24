@@ -3,18 +3,32 @@ package runner
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 )
 
+const qoderContextWindowTokens = 180000
+
 type claudeUsage struct {
-	InputTokens              int `json:"input_tokens"`
-	OutputTokens             int `json:"output_tokens"`
-	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
-	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+	InputTokens              int     `json:"input_tokens"`
+	OutputTokens             int     `json:"output_tokens"`
+	CacheReadInputTokens     int     `json:"cache_read_input_tokens"`
+	CacheCreationInputTokens int     `json:"cache_creation_input_tokens"`
+	ContextUsageRatio        float64 `json:"context_usage_ratio"`
 	OutputTokensDetails      *struct {
 		ThinkingTokens int `json:"thinking_tokens"`
 	} `json:"output_tokens_details"`
+}
+
+func (u claudeUsage) effectiveInputTokens() int {
+	if u.InputTokens > 0 || u.CacheReadInputTokens > 0 || u.CacheCreationInputTokens > 0 {
+		return u.InputTokens
+	}
+	if u.ContextUsageRatio > 0 {
+		return int(math.Round(u.ContextUsageRatio * qoderContextWindowTokens))
+	}
+	return 0
 }
 
 func (u claudeUsage) thinkingTokens() int {
@@ -98,8 +112,8 @@ func mergeClaudeUsage(prev claudeUsage, incoming *claudeUsage) claudeUsage {
 	if incoming == nil {
 		return prev
 	}
-	if incoming.InputTokens > prev.InputTokens {
-		prev.InputTokens = incoming.InputTokens
+	if in := incoming.effectiveInputTokens(); in > prev.InputTokens {
+		prev.InputTokens = in
 	}
 	if incoming.OutputTokens > prev.OutputTokens {
 		prev.OutputTokens = incoming.OutputTokens
@@ -118,12 +132,23 @@ func mergeClaudeUsage(prev claudeUsage, incoming *claudeUsage) claudeUsage {
 	return prev
 }
 
+// normalizeClaudeOutputTokens subtracts thinking_tokens from Anthropic's
+// output_tokens (which already includes thinking_tokens) so Hoxi's disjoint
+// Output + Reasoning fields sum to total output tokens without double-counting.
+func normalizeClaudeOutputTokens(rawOutput, thinking int) int {
+	if thinking > 0 && rawOutput >= thinking {
+		return rawOutput - thinking
+	}
+	return rawOutput
+}
+
 func sumClaudeUsageMap(m map[string]claudeUsage) *MessageTokens {
 	var in, out, reasoning, cacheRead, cacheWrite int
 	for _, u := range m {
+		th := u.thinkingTokens()
 		in += u.InputTokens
-		out += u.OutputTokens
-		reasoning += u.thinkingTokens()
+		out += normalizeClaudeOutputTokens(u.OutputTokens, th)
+		reasoning += th
 		cacheRead += u.CacheReadInputTokens
 		cacheWrite += u.CacheCreationInputTokens
 	}
@@ -142,18 +167,21 @@ func sumClaudeUsageMap(m map[string]claudeUsage) *MessageTokens {
 	return tokens
 }
 
-func (t *TurnTranslator) noteClaudeMsgUsage(msgID string, u *claudeUsage) {
+func (t *TurnTranslator) noteClaudeMsgUsage(msgID string, u *claudeUsage) bool {
 	if u == nil {
-		return
+		return false
 	}
 	key := strings.TrimSpace(msgID)
 	if key == "" {
 		key = "_default"
 	}
 	t.claudeMsgUsage[key] = mergeClaudeUsage(t.claudeMsgUsage[key], u)
-	if tokens := sumClaudeUsageMap(t.claudeMsgUsage); tokens != nil {
-		t.msgInfo.Tokens = tokens
+	tokens := sumClaudeUsageMap(t.claudeMsgUsage)
+	if tokens == nil || messageTokensEqual(t.msgInfo.Tokens, tokens) {
+		return false
 	}
+	t.msgInfo.Tokens = tokens
+	return true
 }
 
 func (t *TurnTranslator) applyClaudeResultUsage(env *claudeRawEvent) {
@@ -164,11 +192,11 @@ func (t *TurnTranslator) applyClaudeResultUsage(env *claudeRawEvent) {
 		t.msgInfo.Cost = env.TotalCostUSD
 	}
 	if len(env.ModelUsage) > 0 {
-		var in, out, reasoning, cacheRead, cacheWrite int
+		var in, rawOut, reasoning, cacheRead, cacheWrite int
 		var modelCost float64
 		for _, mu := range env.ModelUsage {
 			in += mu.InputTokens
-			out += mu.OutputTokens
+			rawOut += mu.OutputTokens
 			reasoning += mu.ThinkingTokens
 			cacheRead += mu.CacheReadInputTokens
 			cacheWrite += mu.CacheCreationInputTokens
@@ -177,6 +205,10 @@ func (t *TurnTranslator) applyClaudeResultUsage(env *claudeRawEvent) {
 		if env.Usage != nil && env.Usage.thinkingTokens() > reasoning {
 			reasoning = env.Usage.thinkingTokens()
 		}
+		if streamed := sumClaudeUsageMap(t.claudeMsgUsage); streamed != nil && streamed.Reasoning > reasoning {
+			reasoning = streamed.Reasoning
+		}
+		out := normalizeClaudeOutputTokens(rawOut, reasoning)
 		if t.msgInfo.Cost == 0 && modelCost > 0 {
 			t.msgInfo.Cost = modelCost
 		}
@@ -195,17 +227,25 @@ func (t *TurnTranslator) applyClaudeResultUsage(env *claudeRawEvent) {
 		}
 	}
 	if env.Usage != nil {
+		var parentStreamedTh int
+		for k, cu := range t.claudeMsgUsage {
+			if !strings.HasPrefix(k, "child:") {
+				parentStreamedTh += cu.thinkingTokens()
+			}
+		}
+		th := max(env.Usage.thinkingTokens(), parentStreamedTh)
 		in := env.Usage.InputTokens
-		out := env.Usage.OutputTokens
-		reasoning := env.Usage.thinkingTokens()
+		out := normalizeClaudeOutputTokens(env.Usage.OutputTokens, th)
+		reasoning := th
 		cacheRead := env.Usage.CacheReadInputTokens
 		cacheWrite := env.Usage.CacheCreationInputTokens
 		// Fold in any child subagent messages when modelUsage was not emitted.
 		for k, cu := range t.claudeMsgUsage {
 			if strings.HasPrefix(k, "child:") {
+				childTh := cu.thinkingTokens()
 				in += cu.InputTokens
-				out += cu.OutputTokens
-				reasoning += cu.thinkingTokens()
+				out += normalizeClaudeOutputTokens(cu.OutputTokens, childTh)
+				reasoning += childTh
 				cacheRead += cu.CacheReadInputTokens
 				cacheWrite += cu.CacheCreationInputTokens
 			}
@@ -354,6 +394,7 @@ func (t *TurnTranslator) feedClaudeEvent(env *claudeRawEvent, now int64) []SSEEv
 		if env.Event == nil {
 			return nil
 		}
+		var infoUpdated bool
 		if env.Event.Type == "message_start" {
 			msgID := env.APIMessageID
 			if env.Event.Message != nil {
@@ -362,22 +403,31 @@ func (t *TurnTranslator) feedClaudeEvent(env *claudeRawEvent, now int64) []SSEEv
 				}
 				if env.Event.Message.Model != "" && t.msgInfo.ModelID == "" {
 					t.msgInfo.ModelID = env.Event.Message.Model
+					infoUpdated = true
 				}
-				t.noteClaudeMsgUsage(msgID, env.Event.Message.Usage)
+				if t.noteClaudeMsgUsage(msgID, env.Event.Message.Usage) {
+					infoUpdated = true
+				}
 			}
 			t.advanceClaudeMessage(msgID, true)
 		} else if env.APIMessageID != "" {
 			t.advanceClaudeMessage(env.APIMessageID, false)
 		}
-		if env.Event.Usage != nil {
-			t.noteClaudeMsgUsage(firstNonEmptyStr(t.claudeMessageID, env.APIMessageID), env.Event.Usage)
+		if env.Event.Usage != nil && t.noteClaudeMsgUsage(firstNonEmptyStr(t.claudeMessageID, env.APIMessageID), env.Event.Usage) {
+			infoUpdated = true
+		}
+		withInfo := func(evts []SSEEvent) []SSEEvent {
+			if infoUpdated {
+				return append(evts, SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": t.msgInfo}})
+			}
+			return evts
 		}
 		if env.Event.Type == "content_block_start" && env.Event.ContentBlock != nil &&
 			env.Event.ContentBlock.Type != "" && env.Event.ContentBlock.Type != "thinking" {
-			return t.closeActiveClaudeReasoning(now)
+			return withInfo(t.closeActiveClaudeReasoning(now))
 		}
 		if env.Event.Delta == nil {
-			return nil
+			return withInfo(nil)
 		}
 		idx := env.Event.Index
 		if _, ok := t.stepStartMs[idx]; !ok {
@@ -465,11 +515,18 @@ func (t *TurnTranslator) feedClaudeEvent(env *claudeRawEvent, now int64) []SSEEv
 		// stream_event uses the API block index across thinking/text/tool_use.
 		msgID := firstNonEmptyStr(env.Message.ID, env.APIMessageID)
 		t.advanceClaudeMessage(msgID, false)
+		var infoUpdated bool
 		if env.Message.Model != "" && t.msgInfo.ModelID == "" {
 			t.msgInfo.ModelID = env.Message.Model
+			infoUpdated = true
 		}
-		t.noteClaudeMsgUsage(msgID, env.Message.Usage)
+		if t.noteClaudeMsgUsage(msgID, env.Message.Usage) {
+			infoUpdated = true
+		}
 		var evts []SSEEvent
+		if infoUpdated {
+			evts = append(evts, SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": t.msgInfo}})
+		}
 		for idx, blk := range env.Message.Content {
 			switch blk.Type {
 			case "thinking":
