@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/hoxiai/hoxi/internal/diagnostics"
@@ -138,9 +139,9 @@ func (s *deferredStore) write(path string, rows []DeferredEntry) {
 // turnCounts tracks one parent session's unattended decisions so the
 // end-of-turn summary can report numbers without any command text.
 type turnCounts struct {
-	allowed  int
-	denied   int
-	timedOut int
+	allowed  atomic.Int64
+	denied   atomic.Int64
+	timedOut atomic.Int64
 }
 
 func (s *Service) noteTurn(sessionID, kind string) {
@@ -154,11 +155,11 @@ func (s *Service) noteTurn(sessionID, kind string) {
 	}
 	switch kind {
 	case "allow":
-		c.allowed++
+		c.allowed.Add(1)
 	case "deny":
-		c.denied++
+		c.denied.Add(1)
 	case "timeout":
-		c.timedOut++
+		c.timedOut.Add(1)
 	}
 }
 
@@ -172,10 +173,13 @@ func (s *Service) finishTurnSummary(sessionID, status string) {
 	}
 	v, loaded := s.turnStats.LoadAndDelete(sessionID)
 	c, _ := v.(*turnCounts)
-	if c == nil {
-		c = &turnCounts{}
+	var allowed, denied, timedOut int
+	if c != nil {
+		allowed = int(c.allowed.Load())
+		denied = int(c.denied.Load())
+		timedOut = int(c.timedOut.Load())
 	}
-	if s.ApprovalPolicy().Mode != ApprovalModeUnattended && c.timedOut == 0 && !loaded {
+	if s.ApprovalPolicy().Mode != ApprovalModeUnattended && timedOut == 0 && !loaded {
 		return
 	}
 	deferred := 0
@@ -189,12 +193,12 @@ func (s *Service) finishTurnSummary(sessionID, status string) {
 	if s.status != nil {
 		s.status.Announce(statusbar.ApprovalNotice{
 			Kind: "summary", SessionID: sessionID, Status: status,
-			Allowed: c.allowed, Denied: c.denied, TimedOut: c.timedOut, Deferred: deferred,
+			Allowed: allowed, Denied: denied, TimedOut: timedOut, Deferred: deferred,
 		})
 	}
 	if s.onSummary != nil {
 		// Counts only. The session title, commands and paths stay out of this text.
-		s.onSummary(sessionID, fmt.Sprintf("自动放行 %d，拒绝 %d，待处理 %d", c.allowed, c.denied, deferred))
+		s.onSummary(sessionID, fmt.Sprintf("自动放行 %d，拒绝 %d，待处理 %d", allowed, denied, deferred))
 	}
 }
 

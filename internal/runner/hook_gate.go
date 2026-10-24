@@ -310,6 +310,9 @@ func (s *Service) gateCommand(r *http.Request, cred hookCredential, rec SessionR
 			return false, unattendedDenyReason(category)
 		}
 		if unattendedIsolated(rec) && s.policyApprovesIsolated(item, rec.WorktreePath, true) {
+			if decideCommandPermissionIn(ask.command, rec.WorktreePath) != "allow" {
+				s.recordPolicyApproval(cred, item)
+			}
 			s.noteTurn(cred.sessionID, "allow")
 			return true, ""
 		}

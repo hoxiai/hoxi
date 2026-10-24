@@ -437,4 +437,57 @@ func TestOpenCodeUnattendedHardDenyAuditsOnlyTheReject(t *testing.T) {
 	if len(decisions) != 1 || decisions[0] != "reject" {
 		t.Fatalf("hard deny audit decisions = %v, want exactly [reject]", decisions)
 	}
+	deferred := svc.deferred.list()
+	if len(deferred) != 1 || deferred[0].Command != "git push origin main" || deferred[0].Category != unattendedCategoryPublish {
+		t.Fatalf("deferred = %+v, want one publish entry with command from patterns", deferred)
+	}
+
+	// An in-directory edit on a non-isolated OpenCode session must not be
+	// hard-denied as "write outside the worktree"; it falls through to the
+	// full-trust rules instead.
+	svc.relayOpenCodeEvent(rec, []byte(`{"type":"permission.asked","properties":{"id":"per_oc_edit","sessionID":"oc-hard","permission":"edit","patterns":["src/main.ts"]}}`))
+	waitFor(t, "in-dir edit reply", func() bool { return fake.reply("per_oc_edit") == "once" })
+	waitFor(t, "in-dir edit audit", func() bool {
+		_, inflight := svc.openCodeAutoReplies.Load("per_oc_edit")
+		return !inflight
+	})
+}
+
+func TestOpenCodeUnattendedFailedReplyDoesNotRecordAuditOrDeferred(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	svc := NewService(dir, nil, statusbar.NewTracker(), filepath.Join(t.TempDir(), "sessions.json"))
+	setTestApprovalPolicy(t, svc, ApprovalPolicy{Mode: ApprovalModeUnattended})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+	svc.ConfigureOpenCode(server.URL, "secret")
+	if err := svc.store.Put(SessionRecord{ID: "ses_oc_fail", Runtime: "opencode", ProjectDir: dir, WorktreePath: dir, ExternalID: "oc-fail"}); err != nil {
+		t.Fatal(err)
+	}
+
+	failed := make(chan struct{}, 1)
+	item := map[string]interface{}{
+		"id":         "per_oc_push_fail",
+		"sessionID":  "ses_oc_fail",
+		"permission": "bash",
+		"patterns":   []string{"git push origin main"},
+	}
+	if !svc.claimOpenCodePermission(item, "ses_oc_fail", dir, func() { failed <- struct{}{} }) {
+		t.Fatal("first claim should attempt auto-reply")
+	}
+	<-failed
+	if svc.claimOpenCodePermission(item, "ses_oc_fail", dir, nil) {
+		t.Fatal("failed auto-reply must leave the request pending for the user")
+	}
+	if got := svc.audit.list("ses_oc_fail", 10); len(got) != 0 {
+		t.Fatalf("audit after failed reply = %+v, want empty", got)
+	}
+	if got := svc.deferred.list(); len(got) != 0 {
+		t.Fatalf("deferred after failed reply = %+v, want empty", got)
+	}
+	if _, loaded := svc.turnStats.Load("ses_oc_fail"); loaded {
+		t.Fatal("failed reply must not increment turn counts")
+	}
 }

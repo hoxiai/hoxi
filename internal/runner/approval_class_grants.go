@@ -141,13 +141,14 @@ func (g *approvalGate) hasClassGrants(sessionID string, classes []string) bool {
 	return len(classes) > 0
 }
 
-func (g *approvalGate) rememberOpenCodeAsk(id string, ask openCodeAsk) {
+func (g *approvalGate) rememberOpenCodeAsk(id string, ask openCodeAsk) bool {
 	if id == "" {
-		return
+		return false
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if len(g.openCodeAsks) >= maxOpenCodeAsks {
+	_, exists := g.openCodeAsks[id]
+	if !exists && len(g.openCodeAsks) >= maxOpenCodeAsks {
 		oldestID, oldest := "", time.Time{}
 		for k, v := range g.openCodeAsks {
 			if oldestID == "" || v.at.Before(oldest) {
@@ -158,6 +159,7 @@ func (g *approvalGate) rememberOpenCodeAsk(id string, ask openCodeAsk) {
 	}
 	ask.at = time.Now()
 	g.openCodeAsks[id] = ask
+	return !exists
 }
 
 func (g *approvalGate) openCodeAskFor(id string) (openCodeAsk, bool) {

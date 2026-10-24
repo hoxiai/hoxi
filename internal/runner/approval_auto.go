@@ -82,13 +82,13 @@ func (s *Service) recordPolicyApproval(cred hookCredential, req map[string]inter
 // behalf. Each request is answered once; a failed reply is never retried
 // and stays visible as a normal pending request.
 func (s *Service) autoReplyOpenCode(id, sessionID, directory, source string, onFail func()) {
-	s.autoReplyOpenCodeMessage(id, sessionID, directory, "once", "", source, onFail)
+	s.autoReplyOpenCodeMessage(id, sessionID, directory, "once", "", source, nil, onFail)
 }
 
 // autoReplyOpenCodeMessage answers an OpenCode permission once. reply is
 // "once" or "reject"; message is the reason OpenCode shows the model
 // (PermissionCorrectedError) and must not contain the command.
-func (s *Service) autoReplyOpenCodeMessage(id, sessionID, directory, reply, message, source string, onFail func()) {
+func (s *Service) autoReplyOpenCodeMessage(id, sessionID, directory, reply, message, source string, onAccept, onFail func()) {
 	if id == "" {
 		return
 	}
@@ -105,12 +105,18 @@ func (s *Service) autoReplyOpenCodeMessage(id, sessionID, directory, reply, mess
 		status, _, err := s.replyOpenCodePermission(ctx, id, directory, body)
 		switch {
 		case err == nil && status >= 200 && status < 300:
-			// Audit the reply OpenCode actually accepted, so a hard deny is
-			// never logged as "once".
+			// Audit and count only the reply OpenCode actually accepted, so a
+			// hard deny is never logged as "once" and a failed reply never
+			// inflates the turn summary or deferred list.
+			s.gate.forgetOpenCodeAsk(id)
 			s.recordOpenCodeAudit(id, sessionID, directory, reply, message, source)
+			if onAccept != nil {
+				onAccept()
+			}
 			s.openCodeAutoReplies.Delete(id)
 		case err == nil && status == http.StatusNotFound:
 			// Already answered elsewhere.
+			s.gate.forgetOpenCodeAsk(id)
 			s.openCodeAutoReplies.Delete(id)
 		default:
 			s.openCodeAutoReplies.Store(id, openCodeAutoReplyFailed)
@@ -145,15 +151,18 @@ func (s *Service) claimOpenCodePermission(item map[string]interface{}, sessionID
 	}
 	if s.ApprovalPolicy().Mode == ApprovalModeUnattended {
 		if allow, category := unattendedDecision(item, directory); !allow && category != "" {
-			s.autoReplyOpenCodeMessage(id, sessionID, directory, "reject", unattendedDenyReason(category), approvalSourceUnattended, onFail)
-			s.rememberDeferred(sessionID, id, category, firstString(itemMetadata(item)["command"]))
-			s.noteTurn(sessionID, "deny")
+			summary := permissionSummaryText(item)
+			s.autoReplyOpenCodeMessage(id, sessionID, directory, "reject", unattendedDenyReason(category), approvalSourceUnattended, func() {
+				s.rememberDeferred(sessionID, id, category, summary)
+				s.noteTurn(sessionID, "deny")
+			}, onFail)
 			return true
 		}
 		_, isolated := s.sessionIsolated(sessionID)
 		if isolated && s.policyApprovesIsolated(item, directory, true) {
-			s.noteTurn(sessionID, "allow")
-			s.autoReplyOpenCode(id, sessionID, directory, approvalSourcePolicy, onFail)
+			s.autoReplyOpenCodeMessage(id, sessionID, directory, "once", "", approvalSourcePolicy, func() {
+				s.noteTurn(sessionID, "allow")
+			}, onFail)
 			return true
 		}
 	}
@@ -168,8 +177,9 @@ func (s *Service) claimOpenCodePermission(item map[string]interface{}, sessionID
 	// Shown to the user: offer a session grant when Go would honour one, and
 	// keep the request so a grant reply is judged against it.
 	annotateGrantClasses(item, directory)
-	s.gate.rememberOpenCodeAsk(id, openCodeAsk{item: item, sessionID: sessionID, dir: directory})
-	s.armOpenCodeTimeout(id, sessionID, directory, item)
+	if s.gate.rememberOpenCodeAsk(id, openCodeAsk{item: item, sessionID: sessionID, dir: directory}) {
+		s.armOpenCodeTimeout(id, sessionID, directory, item)
+	}
 	return false
 }
 
@@ -187,10 +197,14 @@ func (s *Service) armOpenCodeTimeout(id, sessionID, directory string, item map[s
 	if delay < 0 {
 		delay = 0
 	}
+	summary := permissionSummaryText(item)
 	go func() {
 		timer := time.NewTimer(delay)
 		defer timer.Stop()
 		<-timer.C
+		if _, pending := s.gate.openCodeAskFor(id); !pending {
+			return
+		}
 		if _, loaded := s.openCodeAutoReplies.LoadOrStore(id, openCodeAutoReplyInflight); loaded {
 			return
 		}
@@ -199,12 +213,16 @@ func (s *Service) armOpenCodeTimeout(id, sessionID, directory string, item map[s
 		defer cancel()
 		body, _ := json.Marshal(map[string]string{"reply": "reject", "message": reason})
 		status, _, err := s.replyOpenCodePermission(ctx, id, directory, body)
-		if err != nil || status >= 300 && status != http.StatusNotFound {
+		if err != nil || status < 200 || status >= 300 {
+			if err == nil && status == http.StatusNotFound {
+				s.gate.forgetOpenCodeAsk(id)
+			}
 			s.openCodeAutoReplies.Delete(id)
 			return
 		}
+		s.gate.forgetOpenCodeAsk(id)
 		s.recordOpenCodeAudit(id, sessionID, directory, "reject", reason, approvalSourceTimeout)
-		s.rememberDeferred(sessionID, id, "timeout", firstString(itemMetadata(item)["command"]))
+		s.rememberDeferred(sessionID, id, "timeout", summary)
 		s.noteTurn(sessionID, "timeout")
 		s.openCodeAutoReplies.Delete(id)
 	}()

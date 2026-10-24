@@ -239,7 +239,7 @@ export default function ApprovalModePill(props: {
                     <div
                       class={`mt-0.5 p-1 rounded-lg shrink-0 ${
                         isSelected()
-                          ? opt.id === "trusted"
+                          ? opt.id === "trusted" || opt.id === "unattended"
                             ? "bg-[var(--danger-text)] text-white"
                             : opt.id === "manual"
                             ? "bg-[var(--warn-text)] text-white"

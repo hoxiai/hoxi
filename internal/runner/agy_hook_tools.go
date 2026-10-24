@@ -334,6 +334,7 @@ func (s *Service) gateToolCallIn(r *http.Request, cred hookCredential, tool stri
 		}
 		if rec, ok := s.store.Get(cred.sessionID); ok && unattendedIsolated(rec) && s.policyApprovesIsolated(req, worktree, true) {
 			s.recordPolicyApproval(cred, req)
+			s.noteTurn(cred.sessionID, "allow")
 			return true, ""
 		}
 	}

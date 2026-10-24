@@ -125,7 +125,7 @@ func unattendedHardDeny(item map[string]interface{}, worktree string) string {
 }
 
 func unattendedEditInside(item map[string]interface{}, worktree string) bool {
-	if strings.TrimSpace(worktree) == "" || !isIsolatedWorktree(worktree) {
+	if strings.TrimSpace(worktree) == "" {
 		return false
 	}
 	targets := categoryTargets(item, permissionCategoryEdit)
