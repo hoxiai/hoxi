@@ -193,7 +193,7 @@ function matchListMarker(
       text: ol[3],
     };
   }
-  if (isTailLine && !isHorizontalRule(line)) {
+  if (isTailLine && !isHorizontalRule(line) && !isPendingHorizontalRuleLine(line)) {
     const pendingUl = inUnorderedList
       ? line.match(/^(\s*)[-*+]\s*$/)
       : line.match(/^(\s*)[-*+]\s+$/);

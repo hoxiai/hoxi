@@ -607,6 +607,27 @@ describe("task progress todo staleness", () => {
       { type: "paragraph", text: "Intro" },
       { type: "hr" },
     ]);
+    // 3c. In a list context, a bare `-`/`*` tail must not spawn a phantom empty item that
+    // collapses into an hr on the next keystroke; a real new bullet still shows immediately.
+    const bullet = { text: "a", indent: 0, kind: "bullet" };
+    const listA = { type: "list", ordered: false, start: 1, items: [bullet] };
+    const one = [listA] as unknown[];
+    assertDeepEqual(parseMarkdownBlocks("- a\n-"), one);
+    assertDeepEqual(parseMarkdownBlocks("- a\n--"), one);
+    assertDeepEqual(parseMarkdownBlocks("- a\n\n-"), one);
+    assertDeepEqual(parseMarkdownBlocks("* a\n*"), one);
+    assertDeepEqual(parseMarkdownBlocks("- a\n---"), [listA, { type: "hr" }] as unknown[]);
+    assertDeepEqual(
+      parseMarkdownBlocks("- a\n- "),
+      [
+        {
+          type: "list",
+          ordered: false,
+          start: 1,
+          items: [bullet, { text: "", indent: 0, kind: "bullet" }],
+        },
+      ] as unknown[]
+    );
     assertDeepEqual(parseMarkdownBlocks("| Col A | Col B |\n|---"), [
       { type: "table", headers: ["Col A", "Col B"], aligns: ["left", "left"], rows: [] },
     ]);
