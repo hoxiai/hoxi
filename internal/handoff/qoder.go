@@ -219,7 +219,7 @@ LIMIT 120;`
 		}
 	}
 
-	// 2. Scan ~/.qoder*/projects/<encoded-cwd>/transcript/<session-id>.jsonl
+	// 2. Scan ~/.qoder*/projects/<encoded-cwd>[/transcript]/<session-id>.jsonl
 	for _, dDir := range dotDirs {
 		projRoot := filepath.Join(dDir, "projects")
 		projEntries, err := os.ReadDir(projRoot)
@@ -231,60 +231,66 @@ LIMIT 120;`
 				continue
 			}
 			decodedCWD := decodeHyphenatedProjectPath(pEntry.Name(), targetDir)
-			transDir := filepath.Join(projRoot, pEntry.Name(), "transcript")
-			files, err := os.ReadDir(transDir)
-			if err != nil {
-				continue
-			}
-			for _, f := range files {
-				if f.IsDir() || !strings.HasSuffix(f.Name(), ".jsonl") {
+			for _, transDir := range []string{
+				filepath.Join(projRoot, pEntry.Name(), "transcript"),
+				filepath.Join(projRoot, pEntry.Name()),
+			} {
+				files, err := os.ReadDir(transDir)
+				if err != nil {
 					continue
 				}
-				fi, err := f.Info()
-				if err != nil || fi.Size() < 16 {
-					continue
-				}
-				sID := strings.TrimSuffix(f.Name(), ".jsonl")
-				fullPath := filepath.Join(transDir, f.Name())
-				sum, ok := quickParseClaudeSummary(fullPath, sID, fi.ModTime().UnixMilli(), targetDir)
-				if !ok {
-					sum = ExternalSessionSummary{
-						ID:        sID,
-						CWD:       decodedCWD,
-						Title:     "Qoder Session " + sID[:minInt(8, len(sID))],
-						CreatedAt: fi.ModTime().UnixMilli(),
-						UpdatedAt: fi.ModTime().UnixMilli(),
+				for _, f := range files {
+					if f.IsDir() || !strings.HasSuffix(f.Name(), ".jsonl") {
+						continue
 					}
-				}
-				if sum.CWD == "" {
-					sum.CWD = decodedCWD
-				}
-				sum.Source = ExternalToolQoder
-				sum.SourceLabel = "Qoder"
-				if sum.Model == "" {
-					sum.Model = defModel
-				}
-				sum.MatchesCWD = sameOrSubPath(sum.CWD, targetDir)
+					fi, err := f.Info()
+					if err != nil || fi.Size() < 16 {
+						continue
+					}
+					sID := strings.TrimSuffix(f.Name(), ".jsonl")
+					fullPath := filepath.Join(transDir, f.Name())
+					sum, ok := quickParseClaudeSummary(fullPath, sID, fi.ModTime().UnixMilli(), targetDir)
+					if !ok {
+						sum = ExternalSessionSummary{
+							ID:        sID,
+							CWD:       decodedCWD,
+							Title:     "Qoder Session " + sID[:minInt(8, len(sID))],
+							CreatedAt: fi.ModTime().UnixMilli(),
+							UpdatedAt: fi.ModTime().UnixMilli(),
+						}
+					}
+					if sum.CWD == "" {
+						sum.CWD = decodedCWD
+					}
+					sum.Source = ExternalToolQoder
+					sum.SourceLabel = "Qoder"
+					if sum.Model == "" {
+						sum.Model = defModel
+					}
+					sum.MatchesCWD = sameOrSubPath(sum.CWD, targetDir)
 
-				if existing, ok := byID[sID]; ok {
-					existing.transcriptPath = fullPath
-					if existing.summary.CWD == "" && sum.CWD != "" {
-						existing.summary.CWD = sum.CWD
-						existing.summary.MatchesCWD = sum.MatchesCWD
-					}
-					if existing.summary.Summary == "" {
-						existing.summary.Summary = sum.Summary
-					}
-					if existing.summary.GitBranch == "" {
-						existing.summary.GitBranch = sum.GitBranch
-					}
-					if sum.UpdatedAt > existing.summary.UpdatedAt {
-						existing.summary.UpdatedAt = sum.UpdatedAt
-					}
-				} else {
-					byID[sID] = &qoderSessionCandidate{
-						summary:        sum,
-						transcriptPath: fullPath,
+					if existing, ok := byID[sID]; ok {
+						if existing.transcriptPath == "" {
+							existing.transcriptPath = fullPath
+						}
+						if existing.summary.CWD == "" && sum.CWD != "" {
+							existing.summary.CWD = sum.CWD
+							existing.summary.MatchesCWD = sum.MatchesCWD
+						}
+						if existing.summary.Summary == "" {
+							existing.summary.Summary = sum.Summary
+						}
+						if existing.summary.GitBranch == "" {
+							existing.summary.GitBranch = sum.GitBranch
+						}
+						if sum.UpdatedAt > existing.summary.UpdatedAt {
+							existing.summary.UpdatedAt = sum.UpdatedAt
+						}
+					} else {
+						byID[sID] = &qoderSessionCandidate{
+							summary:        sum,
+							transcriptPath: fullPath,
+						}
 					}
 				}
 			}

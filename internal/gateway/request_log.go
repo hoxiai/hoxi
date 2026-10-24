@@ -124,10 +124,6 @@ func (g *Gateway) collectRequestLog() []requestLogEntry {
 		if rec.UpdatedAt > 0 && rec.UpdatedAt < earliestMs {
 			continue
 		}
-		runtime := strings.TrimSpace(rec.Runtime)
-		if runtime == "" || runtime == "opencode" {
-			continue
-		}
 		store.VisitTurns(rec.ID, func(full runner.SessionRecord) {
 			var maxCreated int64
 			for i := range full.Turns {
@@ -136,9 +132,14 @@ func (g *Gateway) collectRequestLog() []requestLogEntry {
 				}
 			}
 			for i := range full.Turns {
-				tInfo := full.Turns[i].Info
+				turn := full.Turns[i]
+				providerID, isNative := nativeTurnProvider(turn, full)
+				if !isNative {
+					continue
+				}
+				tInfo := turn.Info
 				isLatest := tInfo.Time.Created >= maxCreated && strings.TrimSpace(tInfo.Finish) == ""
-				if entry, ok := requestLogFromTurn(full.Turns[i], rec, runtime, cutoffMs, isLatest); ok {
+				if entry, ok := requestLogFromTurn(turn, full, providerID, cutoffMs, isLatest); ok {
 					entries = append(entries, entry)
 				}
 			}
@@ -154,10 +155,11 @@ func requestLogFromTurn(turn runner.MessageTurn, rec runner.SessionRecord, runti
 		return requestLogEntry{}, false
 	}
 	tokens := info.Tokens
-	hasTokens := tokens != nil && (tokens.Input > 0 || tokens.Output > 0 || tokens.Cache.Read > 0)
-	failed := info.Error != nil
-	inProgress := isLatest && info.Time.Completed == 0 && info.Time.Created >= cutoffMs
-	if !hasTokens && !failed && !inProgress {
+	hasTokens := tokens != nil && (tokens.Input > 0 || tokens.Output > 0 || tokens.Reasoning > 0 || tokens.Cache.Read > 0 || tokens.Cache.Write > 0)
+	completed := info.Finish == "stop" && (info.Time.Completed > 0 || len(turn.Parts) > 0)
+	failed := info.Error != nil || info.Finish == "error"
+	inProgress := isLatest && info.Time.Completed == 0 && strings.TrimSpace(info.Finish) == "" && info.Time.Created >= cutoffMs
+	if !hasTokens && !completed && !failed && !inProgress {
 		return requestLogEntry{}, false
 	}
 	entry := requestLogEntry{
@@ -200,7 +202,7 @@ func turnFirstTokenMs(turn runner.MessageTurn, created int64) int64 {
 	first := int64(0)
 	for i := range turn.Parts {
 		part := turn.Parts[i]
-		if part.Type != "text" && part.Type != "reasoning" {
+		if (part.Type != "text" && part.Type != "reasoning") || part.Time == nil {
 			continue
 		}
 		start := part.Time.Start

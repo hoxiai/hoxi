@@ -249,3 +249,18 @@ func TestAgyStepUsageStreamsImmediatelyAndIgnoresCumulativeOrZeroResultOverwrite
 		t.Fatalf("zero result.usage on abort wiped out step tokens: %+v", trAbort.msgInfo.Tokens)
 	}
 }
+
+func TestCodeBuddyNormalizesPromptCacheMissAndResumedResultUsage(t *testing.T) {
+	t.Parallel()
+	tr := NewTurnTranslator("ses_cbd_usage", string(RuntimeCodeBuddy), "msg_a_1", "msg_u_1", "codebuddy", "hy3", "plan", "cb-conv-1")
+	// CodeBuddy maps prompt_tokens (83532) -> input_tokens and prompt_cache_miss_tokens (83020) -> cache_creation_input_tokens.
+	tr.FeedLine(`{"type":"assistant","message":{"id":"01a15395","model":"hy3","usage":{"input_tokens":83532,"output_tokens":267,"cache_read_input_tokens":512,"cache_creation_input_tokens":83020},"content":[{"type":"text","text":"Reply"}]}}`)
+	if tr.msgInfo.Tokens == nil || tr.msgInfo.Tokens.Input != 83020 || tr.msgInfo.Tokens.Cache.Read != 512 || tr.msgInfo.Tokens.Cache.Write != 0 || tr.msgInfo.Tokens.Total != 83799 {
+		t.Fatalf("expected CodeBuddy prompt_cache_miss_tokens normalization (in=83020, cacheRead=512, cacheWrite=0, total=83799), got %+v", tr.msgInfo.Tokens)
+	}
+	// CodeBuddy result.usage aggregates session.history across resumed turns; current turn's assistant usage must win.
+	tr.FeedLine(`{"type":"result","subtype":"success","is_error":false,"result":"Reply","usage":{"input_tokens":250000,"output_tokens":900,"cache_read_input_tokens":100000,"cache_creation_input_tokens":150000}}`)
+	if tr.msgInfo.Tokens == nil || tr.msgInfo.Tokens.Total != 83799 || tr.msgInfo.Tokens.Input != 83020 {
+		t.Fatalf("cumulative CodeBuddy result.usage overwrote current turn usage: %+v", tr.msgInfo.Tokens)
+	}
+}

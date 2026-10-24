@@ -301,6 +301,7 @@ func parseClaudeJSONL(filePath, sessionID, activeRoot string) (*ExternalSessionD
 	var turns []NormalizedTurn
 	var planSteps []ExternalPlanStep
 	toolCallIDIndex := map[string]int{} // map callID to turn index
+	seenMsgUsage := map[string]bool{}
 
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
@@ -345,11 +346,20 @@ func parseClaudeJSONL(filePath, sessionID, activeRoot string) (*ExternalSessionD
 
 		case "assistant":
 			modelID := asString(msg["model"])
+			msgID := strings.TrimSpace(asString(msg["id"]))
 			textPart, reasoningPart, tCalls, extractedPlans := extractClaudeAssistantContent(msg["content"])
 			if len(extractedPlans) > 0 {
 				planSteps = extractedPlans
 			}
-			usage := parseTurnUsage(msg["usage"])
+			var usage TurnUsage
+			if parsed := parseTurnUsage(msg["usage"]); !parsed.empty() {
+				if msgID == "" || !seenMsgUsage[msgID] {
+					usage = parsed
+					if msgID != "" {
+						seenMsgUsage[msgID] = true
+					}
+				}
+			}
 			if len(turns) > 0 && turns[len(turns)-1].Role == "assistant" {
 				last := &turns[len(turns)-1]
 				last.Usage = last.Usage.add(usage)

@@ -181,3 +181,53 @@ func TestCollectRunnerDailyUsageAppendsToExistingModels(t *testing.T) {
 		t.Fatalf("summary input tokens = %d, want only native 100", res.DbInputTokens)
 	}
 }
+
+func TestCollectRunnerDailyUsageHandlesMixedRuntimeSwitchSessions(t *testing.T) {
+	root := t.TempDir()
+	svc := runner.NewService(root, nil, nil, filepath.Join(root, "sessions"))
+	now := time.Now()
+	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).UnixMilli()
+	today := now.UnixMilli()
+
+	// Session 1 started on Antigravity (msg_a_*) then switched to OpenCode:
+	// the Antigravity turn must still be counted, while the OpenCode turn (msg_oc1) must be skipped.
+	agyTurn := pulseTokenMessage("msg_a_1", "ses_switched_to_oc", "gemini-4-argon-high", today, 400, 50, 10, 100)
+	agyTurn.ProviderID = string(runner.RuntimeAntigravity)
+	ocTurn := pulseTokenMessage("msg_oc1", "ses_switched_to_oc", "gpt-5", today+1, 9000, 900, 0, 0)
+	ocTurn.ProviderID = "openai"
+	if err := svc.Store().Put(runner.SessionRecord{
+		ID: "ses_switched_to_oc", Runtime: "opencode", OpenCodeIDs: []string{"ses_oc_inner"},
+		ProjectDir: root, WorktreePath: root, SandboxMode: "local",
+		Title: "switched to opencode", CreatedAt: today, UpdatedAt: today + 1,
+		Turns: []runner.MessageTurn{{Info: agyTurn}, {Info: ocTurn}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Session 2 started on OpenCode then switched to Antigravity:
+	// the earlier OpenCode turn (msg_oc2) must not be double-counted under Antigravity.
+	ocTurn2 := pulseTokenMessage("msg_oc2", "ses_switched_to_agy", "gpt-5", today, 8000, 800, 0, 0)
+	ocTurn2.ProviderID = "openai"
+	agyTurn2 := pulseTokenMessage("msg_a_2", "ses_switched_to_agy", "gemini-4-argon-high", today+2, 600, 70, 20, 200)
+	agyTurn2.ProviderID = string(runner.RuntimeAntigravity)
+	if err := svc.Store().Put(runner.SessionRecord{
+		ID: "ses_switched_to_agy", Runtime: string(runner.RuntimeAntigravity), OpenCodeIDs: []string{"ses_oc_inner_2"},
+		ProjectDir: root, WorktreePath: root, SandboxMode: "local",
+		Title: "switched to agy", CreatedAt: today, UpdatedAt: today + 2,
+		Turns: []runner.MessageTurn{{Info: ocTurn2}, {Info: agyTurn2}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	res := gitDailyPulseResponse{DbModels: []dailyModelStat{}}
+	g := &Gateway{runner: svc}
+	g.collectRunnerDailyUsage(start, &res)
+
+	if res.DbTurnsCount != 2 || res.DbInputTokens != 1000 || res.DbOutputTokens != 120 || res.DbReasoningTokens != 30 || res.DbCacheReadTokens != 300 {
+		t.Fatalf("unexpected mixed-session rollup: turns=%d in=%d out=%d reasoning=%d cacheRead=%d",
+			res.DbTurnsCount, res.DbInputTokens, res.DbOutputTokens, res.DbReasoningTokens, res.DbCacheReadTokens)
+	}
+	if len(res.DbModels) != 1 || res.DbModels[0].ProviderID != string(runner.RuntimeAntigravity) {
+		t.Fatalf("expected only antigravity model usage, got %+v", res.DbModels)
+	}
+}

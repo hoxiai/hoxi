@@ -21,6 +21,9 @@ const MODEL_VARIANT_SUFFIXES = [
   "-reasoning",
   "-build",
   "-preview",
+  "-high",
+  "-medium",
+  "-low",
 ];
 
 const MODEL_CHANNEL_SUFFIXES = ["@eu", "@us", "@cn", ":thinking", ":free", ":fast"];
@@ -114,6 +117,7 @@ const FRONTIER_TOKENS = [
   "ultra",
   "reasoner",
   "sol",
+  "argon",
 ];
 
 /** Vendor/family tokens that justify estimating an otherwise unknown id. */

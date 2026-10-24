@@ -400,4 +400,43 @@ describe("daily pulse market cost", () => {
       }
     );
   });
+
+  it("strips Antigravity effort suffixes (-high/-medium/-low) to match catalog models", () => {
+    withPricingCatalog(
+      [
+        pricingItem({
+          slug: "claude-opus-5-5",
+          price: { currency: "USD", input: 5, output: 25 },
+        }),
+        pricingItem({
+          slug: "gemini-3.8-flash",
+          price: { currency: "USD", input: 0.15, output: 0.6 },
+        }),
+      ],
+      () => {
+        approx(
+          estimateModelMarketCostUsd("claude-opus-5-5-high", {
+            input: 1_000_000,
+            output: 100_000,
+            reasoning: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+          }),
+          7.5,
+          "claude-opus-5-5-high matches claude-opus-5-5"
+        );
+        approx(
+          estimateModelMarketCostUsd("gemini-3.8-flash-low", {
+            input: 1_000_000,
+            output: 0,
+            reasoning: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+          }),
+          0.15,
+          "gemini-3.8-flash-low matches gemini-3.8-flash"
+        );
+      }
+    );
+  });
 });

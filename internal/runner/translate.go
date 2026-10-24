@@ -48,7 +48,7 @@ type TurnTranslator struct {
 	childOrder  []string
 
 	claudeMsgUsage map[string]claudeUsage
-	agyStepUsage   map[int]agyUsage
+	agyStepUsage   map[string]agyUsage
 }
 
 func NewTurnTranslator(sessionID, runtime, messageID, parentUserMsgID, providerID, modelID, mode, externalID string) *TurnTranslator {
@@ -87,7 +87,7 @@ func NewTurnTranslator(sessionID, runtime, messageID, parentUserMsgID, providerI
 		claudeTasks:     make(map[string]*claudeSubagentTask),
 		children:        make(map[string]*childSink),
 		claudeMsgUsage:  make(map[string]claudeUsage),
-		agyStepUsage:    make(map[int]agyUsage),
+		agyStepUsage:    make(map[string]agyUsage),
 	}
 }
 
@@ -198,6 +198,10 @@ type agyUsage struct {
 	ThinkingTokens  int `json:"thinking_tokens"`
 	CacheReadTokens int `json:"cache_read_tokens"`
 	TotalTokens     int `json:"total_tokens"`
+}
+
+func (u agyUsage) empty() bool {
+	return u.InputTokens == 0 && u.OutputTokens == 0 && u.ThinkingTokens == 0 && u.CacheReadTokens == 0 && u.TotalTokens == 0
 }
 
 func (t *TurnTranslator) feedAgyLine(line string) []SSEEvent {
@@ -352,22 +356,33 @@ func (t *TurnTranslator) handleAgyAgentResponse(su *agyStepUpdate, now int64) []
 		})
 	}
 	if su.State == "DONE" {
+		var tokensUpdated bool
 		if su.Usage != nil {
-			t.noteAgyStepUsage(su.StepIndex, *su.Usage)
+			tokensUpdated = t.noteAgyStepUsage(fmt.Sprintf("step:%d", su.StepIndex), *su.Usage)
 		}
 		if part, exists := t.partsByID[txtID]; exists {
 			part.Time = &PartTime{Start: startMs, End: endMs}
 			evts = append(evts, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": clonePart(*part)}})
 		}
+		if tokensUpdated {
+			evts = append(evts, SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": t.msgInfo}})
+		}
 	}
 	return evts
 }
 
-func (t *TurnTranslator) noteAgyStepUsage(stepIndex int, u agyUsage) {
-	if u.InputTokens == 0 && u.OutputTokens == 0 && u.ThinkingTokens == 0 && u.CacheReadTokens == 0 && u.TotalTokens == 0 {
-		return
+func messageTokensEqual(a, b *MessageTokens) bool {
+	if a == nil || b == nil {
+		return a == b
 	}
-	t.agyStepUsage[stepIndex] = u
+	return *a == *b
+}
+
+func (t *TurnTranslator) noteAgyStepUsage(key string, u agyUsage) bool {
+	if u.empty() {
+		return false
+	}
+	t.agyStepUsage[key] = u
 	var in, out, reasoning, cacheRead, total int
 	for _, s := range t.agyStepUsage {
 		in += s.InputTokens
@@ -386,7 +401,11 @@ func (t *TurnTranslator) noteAgyStepUsage(stepIndex int, u agyUsage) {
 		Reasoning: reasoning,
 	}
 	tokens.Cache.Read = cacheRead
+	if messageTokensEqual(t.msgInfo.Tokens, tokens) {
+		return false
+	}
 	t.msgInfo.Tokens = tokens
+	return true
 }
 
 func (t *TurnTranslator) handleAgyToolStep(su *agyStepUpdate, now int64) []SSEEvent {
@@ -488,23 +507,16 @@ func (t *TurnTranslator) handleAgyResult(res *agyResult) []SSEEvent {
 	now := time.Now().UnixMilli()
 	var evts []SSEEvent
 
-	if res.Usage != nil {
-		total := res.Usage.TotalTokens
-		if total == 0 {
-			total = res.Usage.InputTokens + res.Usage.OutputTokens + res.Usage.ThinkingTokens + res.Usage.CacheReadTokens
-		}
-		tokens := &MessageTokens{
-			Total:     total,
-			Input:     res.Usage.InputTokens,
-			Output:    res.Usage.OutputTokens,
-			Reasoning: res.Usage.ThinkingTokens,
-		}
-		tokens.Cache.Read = res.Usage.CacheReadTokens
-		t.msgInfo.Tokens = tokens
-	}
 	t.msgInfo.Time.Completed = now
 	evts = append(evts, t.finishAgySubagents(res.Status == "ERROR", now)...)
 	evts = append(evts, t.closeAllChildren(res.Status == "ERROR", now)...)
+	// On resumed conversations (`--conversation <id>`), `result.usage` reports the
+	// cumulative total across the entire conversation since step 0, and on errors
+	// or interruptions it reports all zeros. Prefer the per-step usage accumulated
+	// during this turn, falling back to `result.usage` only when no step usage was seen.
+	if len(t.agyStepUsage) == 0 && res.Usage != nil {
+		t.noteAgyStepUsage("result", *res.Usage)
+	}
 
 	if !t.hasTextPart && strings.TrimSpace(res.Response) != "" {
 		txtID := fmt.Sprintf("prt_%s_text_final", t.messageID)

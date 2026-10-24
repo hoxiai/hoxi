@@ -26,6 +26,7 @@ type childSink struct {
 	pending  []string          // tool part IDs still waiting for a result, oldest first
 	byCallID map[string]string // runtime tool call ID -> part ID
 	msgUsage map[string]claudeUsage
+	agySteps map[int]agyUsage
 	closed   bool
 }
 
@@ -63,6 +64,7 @@ func (t *TurnTranslator) openChild(key string, spec ChildSessionSpec, now int64)
 		parts:    make(map[string]*MessagePart),
 		byCallID: make(map[string]string),
 		msgUsage: make(map[string]claudeUsage),
+		agySteps: make(map[int]agyUsage),
 	}
 	t.children[key] = c
 	t.childOrder = append(t.childOrder, key)
@@ -93,18 +95,51 @@ func (c *childSink) partID(suffix string) string {
 	return "prt_" + c.asst.ID + "_" + suffix
 }
 
-func (c *childSink) noteClaudeUsage(msgID string, u *claudeUsage) {
+func (c *childSink) noteClaudeUsage(msgID string, u *claudeUsage) bool {
 	if c == nil || u == nil {
-		return
+		return false
 	}
 	key := strings.TrimSpace(msgID)
 	if key == "" {
 		key = "_default"
 	}
 	c.msgUsage[key] = mergeClaudeUsage(c.msgUsage[key], u)
-	if tokens := sumClaudeUsageMap(c.msgUsage); tokens != nil {
-		c.asst.Tokens = tokens
+	tokens := sumClaudeUsageMap(c.msgUsage)
+	if tokens == nil || messageTokensEqual(c.asst.Tokens, tokens) {
+		return false
 	}
+	c.asst.Tokens = tokens
+	return true
+}
+
+func (c *childSink) noteAgyUsage(stepIndex int, u agyUsage) bool {
+	if c == nil || u.empty() {
+		return false
+	}
+	c.agySteps[stepIndex] = u
+	var in, out, reasoning, cacheRead, total int
+	for _, s := range c.agySteps {
+		in += s.InputTokens
+		out += s.OutputTokens
+		reasoning += s.ThinkingTokens
+		cacheRead += s.CacheReadTokens
+		total += s.TotalTokens
+	}
+	if total == 0 {
+		total = in + out + reasoning + cacheRead
+	}
+	tokens := &MessageTokens{
+		Total:     total,
+		Input:     in,
+		Output:    out,
+		Reasoning: reasoning,
+	}
+	tokens.Cache.Read = cacheRead
+	if messageTokensEqual(c.asst.Tokens, tokens) {
+		return false
+	}
+	c.asst.Tokens = tokens
+	return true
 }
 
 // upsertText writes a whole text or reasoning part; subagent text arrives as

@@ -218,7 +218,7 @@ WHERE m.time_created >= %d
     OR CAST(COALESCE(json_extract(m.data, '$.tokens.cache.read'), 0) AS INTEGER) > 0
   )
 GROUP BY day, m.session_id, provider_id, model_id
-ORDER BY day;`, startMs, endMs, handoff.SQLNotImportedTitleClause("s.title"))
+ORDER BY day;`, startMs, endMs, handoff.SQLNotImportedTurnClause("s.title", "m.data", "m.time_created", "s.time_created"))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
@@ -297,7 +297,7 @@ FROM (
   GROUP BY date(p.time_created / 1000, 'unixepoch', 'localtime'), COALESCE(json_extract(p.data, '$.callID'), p.id)
 )
 GROUP BY day
-ORDER BY day;`, startMs, endMs, handoff.SQLNotImportedTitleClause("s.title"))
+ORDER BY day;`, startMs, endMs, handoff.SQLNotImportedTurnClause("s.title", "p.data", "p.time_created", "s.time_created"))
 
 	tCtx, tCancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer tCancel()
@@ -350,8 +350,9 @@ func (g *Gateway) collectRunnerHistory(startMs, endMs int64, day func(string) *h
 	store := g.runner.Store()
 	loc := time.Now().Location()
 
-	type modelKey struct{ date, provider, model string }
-	seen := make(map[string]map[modelKey]int)
+	type sessionKey struct{ date, sessionID string }
+	seenNative := make(map[string]map[sessionKey]int)
+	seenOpenCode := make(map[string]map[string]bool)
 
 	for _, info := range store.List("") {
 		if info.Time.Updated < startMs {
@@ -361,10 +362,6 @@ func (g *Gateway) collectRunnerHistory(startMs, endMs int64, day func(string) *h
 		if !ok || rec.Subagent {
 			continue
 		}
-		runtime := strings.TrimSpace(rec.Runtime)
-		if runtime == "" || runtime == "opencode" {
-			continue
-		}
 		store.VisitTurns(rec.ID, func(full runner.SessionRecord) {
 			for i := range full.Turns {
 				turn := full.Turns[i]
@@ -372,6 +369,14 @@ func (g *Gateway) collectRunnerHistory(startMs, endMs int64, day func(string) *h
 					continue
 				}
 				key := historyDayKey(turn.Info.Time.Created, loc)
+				providerID, isNative := nativeTurnProvider(turn, full)
+				if !isNative {
+					if seenOpenCode[key] == nil {
+						seenOpenCode[key] = make(map[string]bool)
+					}
+					seenOpenCode[key][full.ID] = true
+					continue
+				}
 				for _, part := range turn.Parts {
 					if part.Type != "tool" {
 						continue
@@ -386,7 +391,7 @@ func (g *Gateway) collectRunnerHistory(startMs, endMs int64, day func(string) *h
 				if tokens == nil {
 					continue
 				}
-				if tokens.Input == 0 && tokens.Output == 0 && tokens.Cache.Read == 0 && tokens.Cache.Write == 0 {
+				if tokens.Input == 0 && tokens.Output == 0 && tokens.Reasoning == 0 && tokens.Cache.Read == 0 && tokens.Cache.Write == 0 {
 					continue
 				}
 				target := day(key)
@@ -403,8 +408,8 @@ func (g *Gateway) collectRunnerHistory(startMs, endMs int64, day func(string) *h
 					durationSamples = 1
 				}
 				mergeHistoryModel(target, historyModelStat{
-					ProviderID:       runtime,
-					ModelID:          firstNonEmptyString(turn.Info.ModelID, rec.ModelID, "unknown"),
+					ProviderID:       providerID,
+					ModelID:          firstNonEmptyString(turn.Info.ModelID, full.ModelID, "unknown"),
 					Turns:            1,
 					InputTokens:      int64(tokens.Input),
 					OutputTokens:     int64(tokens.Output),
@@ -414,16 +419,20 @@ func (g *Gateway) collectRunnerHistory(startMs, endMs int64, day func(string) *h
 					DurationSumMs:    durationSum,
 					DurationSamples:  durationSamples,
 				})
-				if seen[key] == nil {
-					seen[key] = make(map[modelKey]int)
+				if seenNative[key] == nil {
+					seenNative[key] = make(map[sessionKey]int)
 				}
-				seen[key][modelKey{key, runtime, rec.ID}]++
+				seenNative[key][sessionKey{key, full.ID}]++
 			}
 		})
 	}
-	// Distinct sessions per day for native runtimes.
-	for key, sessions := range seen {
-		day(key).Sessions += len(sessions)
+	// Distinct sessions per day for native runtimes (excluding mixed sessions already counted via OpenCode).
+	for key, sessions := range seenNative {
+		for sk := range sessions {
+			if !seenOpenCode[key][sk.sessionID] {
+				day(key).Sessions++
+			}
+		}
 	}
 }
 

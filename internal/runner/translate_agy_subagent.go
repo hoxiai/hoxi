@@ -264,7 +264,16 @@ func (t *TurnTranslator) noteSubagentStep(su *agyStepUpdate, now int64) []SSEEve
 	}
 	tr.lastActivityMs = now
 	t.refreshSubagentMeta(tr)
-	return []SSEEvent{partUpdated(*t.partsByID[tr.partID])}
+	evts := []SSEEvent{partUpdated(*t.partsByID[tr.partID])}
+	if su.State == "DONE" && su.Usage != nil {
+		if c := t.children[tr.partID]; c != nil && c.noteAgyUsage(su.StepIndex, *su.Usage) {
+			evts = append(evts, SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": c.asst}})
+		}
+		if t.noteAgyStepUsage(fmt.Sprintf("sub:%s:%d", tr.partID, su.StepIndex), *su.Usage) {
+			evts = append(evts, SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": t.msgInfo}})
+		}
+	}
+	return evts
 }
 
 // PollSubagentActivity mirrors what running subagents appended to their brain
@@ -308,8 +317,29 @@ func (t *TurnTranslator) pollAgySubagent(tr *agySubagentTrack) []SSEEvent {
 		return nil
 	}
 	var evts []SSEEvent
+	var parentTokensUpdated, childTokensUpdated bool
 	for _, row := range rows {
 		evts = append(evts, agyRowToChildEvents(c, row, modMs)...)
+		if row.Type == "PLANNER_RESPONSE" {
+			u := agyUsage{
+				InputTokens:     row.InputTokens,
+				OutputTokens:    row.OutputTokens,
+				ThinkingTokens:  row.ThinkingTokens,
+				CacheReadTokens: row.CacheReadTokens,
+			}
+			if c.noteAgyUsage(row.StepIndex, u) {
+				childTokensUpdated = true
+			}
+			if t.noteAgyStepUsage(fmt.Sprintf("sub:%s:%d", tr.partID, row.StepIndex), u) {
+				parentTokensUpdated = true
+			}
+		}
+	}
+	if childTokensUpdated {
+		evts = append(evts, SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": c.asst}})
+	}
+	if parentTokensUpdated {
+		evts = append(evts, SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": t.msgInfo}})
 	}
 	return evts
 }

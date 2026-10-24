@@ -239,20 +239,20 @@ func (g *Gateway) collectRunnerDailyUsage(startOfTodayMs int64, res *gitDailyPul
 		if !ok || rec.Subagent {
 			continue
 		}
-		runtime := strings.TrimSpace(rec.Runtime)
-		if runtime == "" || runtime == "opencode" {
-			continue
-		}
-		hasTurnToday := false
+		hasNativeTurnToday := false
+		hasOpenCodeTurnToday := false
 		store.VisitTurns(rec.ID, func(full runner.SessionRecord) {
 			for i := range full.Turns {
 				turn := full.Turns[i]
-				if turn.Info.Time.Created >= startOfTodayMs {
-					hasTurnToday = true
-				}
 				if turn.Info.Role != "assistant" || turn.Info.Time.Created < startOfTodayMs {
 					continue
 				}
+				providerID, isNative := nativeTurnProvider(turn, full)
+				if !isNative {
+					hasOpenCodeTurnToday = true
+					continue
+				}
+				hasNativeTurnToday = true
 				for _, part := range turn.Parts {
 					if part.Type != "tool" {
 						continue
@@ -266,7 +266,7 @@ func (g *Gateway) collectRunnerDailyUsage(startOfTodayMs int64, res *gitDailyPul
 				if tokens == nil {
 					continue
 				}
-				if tokens.Input == 0 && tokens.Output == 0 && tokens.Cache.Read == 0 && tokens.Cache.Write == 0 {
+				if tokens.Input == 0 && tokens.Output == 0 && tokens.Reasoning == 0 && tokens.Cache.Read == 0 && tokens.Cache.Write == 0 {
 					continue
 				}
 				turns++
@@ -282,14 +282,14 @@ func (g *Gateway) collectRunnerDailyUsage(startOfTodayMs int64, res *gitDailyPul
 				cost += turn.Info.Cost
 
 				mergeDailyModel(res, index, dailyModelUsage{
-					ProviderID: runtime,
-					ModelID:    firstNonEmptyString(turn.Info.ModelID, rec.ModelID, "unknown"),
+					ProviderID: providerID,
+					ModelID:    firstNonEmptyString(turn.Info.ModelID, full.ModelID, "unknown"),
 					Tokens:     *tokens,
 					Cost:       turn.Info.Cost,
 				})
 			}
 		})
-		if hasTurnToday {
+		if hasNativeTurnToday && !hasOpenCodeTurnToday {
 			sessions++
 		}
 	}
@@ -310,6 +310,33 @@ func (g *Gateway) collectRunnerDailyUsage(startOfTodayMs int64, res *gitDailyPul
 	res.DbCacheWriteTokens += int64(cacheWrite)
 	res.DbTotalTokens += input + output + reasoning + int64(cacheRead) + int64(cacheWrite)
 	res.DbTotalCost += cost
+}
+
+// nativeTurnProvider reports whether turn was executed by a native CLI runtime
+// (as opposed to OpenCode, whose turns already live in hoxi.db) and returns its
+// runtime/provider identifier.
+func nativeTurnProvider(turn runner.MessageTurn, rec runner.SessionRecord) (string, bool) {
+	prov := strings.TrimSpace(turn.Info.ProviderID)
+	rt := strings.TrimSpace(rec.Runtime)
+	if runner.IsValidRuntime(prov) {
+		return prov, true
+	}
+	if strings.HasPrefix(turn.Info.ID, "msg_a_") {
+		if prov != "" && prov != "opencode" {
+			return prov, true
+		}
+		if runner.IsValidRuntime(rt) {
+			return rt, true
+		}
+		if p := strings.TrimSpace(rec.ProviderID); runner.IsValidRuntime(p) {
+			return p, true
+		}
+		return firstNonEmptyString(prov, "native"), true
+	}
+	if len(rec.OpenCodeIDs) == 0 && runner.IsValidRuntime(rt) {
+		return firstNonEmptyString(prov, rt), true
+	}
+	return "", false
 }
 
 type dailyModelUsage struct {
@@ -556,10 +583,10 @@ SELECT json_object(
     )
   )
 );`,
-		startOfTodayMs, handoff.SQLNotImportedTitleClause("s.title"),
-		startOfTodayMs, handoff.SQLNotImportedTitleClause("s.title"),
-		startOfTodayMs, handoff.SQLNotImportedTitleClause("s.title"),
-		startOfTodayMs, handoff.SQLNotImportedTitleClause("s.title"))
+		startOfTodayMs, handoff.SQLNotImportedTurnClause("s.title", "m.data", "m.time_created", "s.time_created"),
+		startOfTodayMs, handoff.SQLNotImportedTurnClause("s.title", "m.data", "m.time_created", "s.time_created"),
+		startOfTodayMs, handoff.SQLNotImportedTurnClause("s.title", "p.data", "p.time_created", "s.time_created"),
+		startOfTodayMs, handoff.SQLNotImportedTurnClause("s.title", "p.data", "p.time_created", "s.time_created"))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 	defer cancel()

@@ -79,17 +79,20 @@ func (t *TurnTranslator) finishClaudeSubagents(failed bool, now int64) []SSEEven
 // feedClaudeChildLine records a subagent's own message in its child session.
 func (t *TurnTranslator) feedClaudeChildLine(env *claudeRawEvent, now int64) []SSEEvent {
 	c := t.children[env.ParentToolUseID]
+	var evts []SSEEvent
 	if env.Message != nil && env.Message.Usage != nil {
 		msgID := firstNonEmptyStr(env.Message.ID, env.APIMessageID)
-		t.noteClaudeMsgUsage("child:"+env.ParentToolUseID+":"+msgID, env.Message.Usage)
-		if c != nil {
-			c.noteClaudeUsage(msgID, env.Message.Usage)
+		normUsage := env.Message.Usage.normalizeForRuntime(t.runtime)
+		if t.noteClaudeMsgUsage("child:"+env.ParentToolUseID+":"+msgID, normUsage) {
+			evts = append(evts, SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": t.msgInfo}})
+		}
+		if c != nil && c.noteClaudeUsage(msgID, normUsage) {
+			evts = append(evts, SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": c.asst}})
 		}
 	}
 	if c == nil || env.Message == nil {
-		return nil
+		return evts
 	}
-	var evts []SSEEvent
 	msgID := firstNonEmptyStr(env.Message.ID, env.APIMessageID)
 	for idx, blk := range env.Message.Content {
 		switch {

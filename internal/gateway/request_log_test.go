@@ -235,3 +235,41 @@ INSERT INTO part VALUES ('p_a1', 'm_asst', 'ses_oc', 2000, '{"type":"text","text
 		t.Fatalf("expected Found=false for missing messageID, got %+v", missing)
 	}
 }
+
+func TestRequestLogIncludesCompletedZeroTokenNativeTurnsAndMixedSessions(t *testing.T) {
+	t.Setenv("OPENCODE_DB", "")
+	t.Setenv("HOXI_DB_PATH", filepath.Join(t.TempDir(), "missing.db"))
+
+	repo := t.TempDir()
+	svc := runner.NewService(repo, nil, nil, filepath.Join(t.TempDir(), "sessions"))
+	now := time.Now().UnixMilli()
+
+	// A Qoder turn that completed normally without token metadata must still be logged.
+	qoderTurn := runner.MessageTurn{
+		Info: runner.MessageInfo{
+			ID: "msg_a_qdr_1", SessionID: "ses_mixed", Role: "assistant",
+			ProviderID: string(runner.RuntimeQoder), ModelID: "DeepSeek-Flash",
+			Finish: "stop", Time: runner.MessageTime{Created: now - 3000, Completed: now - 1000},
+		},
+		Parts: []runner.MessagePart{{Type: "text", Text: "Completed Qoder reply"}},
+	}
+	// An OpenCode turn inside the same session (which later switched to opencode) must be skipped here.
+	ocTurn := pulseTokenMessage("msg_oc_1", "ses_mixed", "gpt-5", now, 500, 50, 0, 0)
+	ocTurn.ProviderID = "openai"
+
+	if err := svc.Store().Put(runner.SessionRecord{
+		ID: "ses_mixed", Runtime: "opencode", OpenCodeIDs: []string{"ses_oc_1"},
+		ProjectDir: repo, WorktreePath: repo,
+		Title: "mixed", CreatedAt: now - 3000, UpdatedAt: now,
+		Turns: []runner.MessageTurn{qoderTurn, {Info: ocTurn}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	gw := New(0, "pass", repo, nil, nil)
+	gw.runner = svc
+	entries := gw.collectRequestLog()
+	if len(entries) != 1 || entries[0].ID != "msg_a_qdr_1" || entries[0].ProviderID != string(runner.RuntimeQoder) || entries[0].DurationMs != 2000 {
+		t.Fatalf("expected completed zero-token Qoder turn in request log, got %+v", entries)
+	}
+}

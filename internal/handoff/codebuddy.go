@@ -90,6 +90,7 @@ func md5HexString(s string) string {
 type codeBuddySessionCandidate struct {
 	summary    ExternalSessionSummary
 	sessionDir string
+	jsonlPath  string
 	copilotDir string
 }
 
@@ -326,6 +327,76 @@ func collectCodeBuddyCandidates(targetDir string) (map[string]*codeBuddySessionC
 								},
 							}
 						}
+					}
+				}
+			}
+		}
+	}
+
+	// 3. Scan CodeBuddy CLI ~/.codebuddy/projects/<slug>/<session-id>.jsonl
+	for _, dotDir := range dotDirs {
+		projRoot := filepath.Join(dotDir, "projects")
+		projDirs, err := os.ReadDir(projRoot)
+		if err != nil {
+			continue
+		}
+		for _, pd := range projDirs {
+			if !pd.IsDir() {
+				continue
+			}
+			dirPath := filepath.Join(projRoot, pd.Name())
+			decodedCWD := decodeHyphenatedProjectPath(pd.Name(), targetDir)
+			files, err := os.ReadDir(dirPath)
+			if err != nil {
+				continue
+			}
+			for _, f := range files {
+				if f.IsDir() || !strings.HasSuffix(f.Name(), ".jsonl") {
+					continue
+				}
+				sID := strings.TrimSuffix(f.Name(), ".jsonl")
+				fullPath := filepath.Join(dirPath, f.Name())
+				info, err := f.Info()
+				if err != nil || info.Size() == 0 {
+					continue
+				}
+				cwd, title, model, createdMs, updatedMs, turnCount := sniffCodeBuddyCLIJSONL(fullPath, decodedCWD, info.ModTime().UnixMilli())
+				if turnCount == 0 {
+					continue
+				}
+				if title == "" {
+					title = "CodeBuddy Session " + sID[:minInt(8, len(sID))]
+				}
+				if existing, ok := byID[sID]; ok {
+					if existing.jsonlPath == "" {
+						existing.jsonlPath = fullPath
+					}
+					if existing.summary.CWD == "" && cwd != "" {
+						existing.summary.CWD = cwd
+						existing.summary.MatchesCWD = sameOrSubPath(cwd, targetDir)
+					}
+					if existing.summary.Model == "" && model != "" {
+						existing.summary.Model = model
+					}
+					if updatedMs > existing.summary.UpdatedAt {
+						existing.summary.UpdatedAt = updatedMs
+					}
+				} else {
+					byID[sID] = &codeBuddySessionCandidate{
+						jsonlPath:  fullPath,
+						copilotDir: primaryCopilotDir,
+						summary: ExternalSessionSummary{
+							ID:          sID,
+							Source:      ExternalToolCodeBuddy,
+							SourceLabel: "CodeBuddy",
+							CWD:         cwd,
+							Title:       title,
+							Model:       model,
+							TurnCount:   turnCount,
+							CreatedAt:   createdMs,
+							UpdatedAt:   updatedMs,
+							MatchesCWD:  sameOrSubPath(cwd, targetDir),
+						},
 					}
 				}
 			}

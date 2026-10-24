@@ -364,6 +364,7 @@ func insertNormalizedTurnsToOpenCodeDB(
 			},
 			"modelID":    effModel,
 			"providerID": providerID,
+			"imported":   true,
 			"time":       map[string]interface{}{"created": ts, "completed": ts + 500},
 			"finish":     "stop",
 		}
@@ -409,9 +410,10 @@ func insertNormalizedTurnsToOpenCodeDB(
 				title = tc.Tool
 			}
 			tData, _ := json.Marshal(map[string]interface{}{
-				"type":   "tool",
-				"tool":   tc.Tool,
-				"callID": callID,
+				"type":     "tool",
+				"tool":     tc.Tool,
+				"callID":   callID,
+				"imported": true,
 				"state": map[string]interface{}{
 					"status":   "completed",
 					"input":    inMap,

@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -278,5 +279,42 @@ func TestDevPulseHistoryCustomWindowClampsInclusiveDayCount(t *testing.T) {
 	}
 	if len(res.Days) != historyMaxDays {
 		t.Fatalf("days = %d, want inclusive clamp to %d", len(res.Days), historyMaxDays)
+	}
+}
+
+func TestDevPulseHistoryCountsNewTurnsInImportedSessionWhileSkippingImportedTurns(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "hoxi.db")
+	t.Setenv("OPENCODE_DB", "")
+	t.Setenv("HOXI_DB_PATH", dbPath)
+
+	now := time.Now()
+	sessCreated := now.UnixMilli() - 5000
+	importedTurnTs := sessCreated - 2000
+	newTurnTs := sessCreated + 1000
+	schema := fmt.Sprintf(`
+CREATE TABLE session (id TEXT PRIMARY KEY, title TEXT, time_created INTEGER);
+CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, data TEXT);
+CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, time_created INTEGER, data TEXT);
+INSERT INTO session VALUES ('ses_imp', '[Antigravity (Gemini)] Imported Task', %d);
+INSERT INTO message VALUES ('m_old', 'ses_imp', %d, '{"role":"assistant","providerID":"google","modelID":"gemini-3.8-flash","imported":true,"tokens":{"input":9000,"output":900}}');
+INSERT INTO message VALUES ('m_new', 'ses_imp', %d, '{"role":"assistant","providerID":"google","modelID":"gemini-3.8-flash","tokens":{"input":300,"output":40}}');
+`, sessCreated, importedTurnTs, newTurnTs)
+	if out, err := exec.Command("sqlite3", dbPath, schema).CombinedOutput(); err != nil {
+		t.Fatalf("sqlite3 init: %v %s", err, out)
+	}
+
+	gw := New(0, "pass", t.TempDir(), nil, nil)
+	rec := httptest.NewRecorder()
+	gw.ServeHTTP(rec, localRequest(http.MethodGet, "/api/hoxi/dev-pulse/history?days=2", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var res devPulseHistoryResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+		t.Fatal(err)
+	}
+	todayRow := historyDayByDate(res.Days, now.Format("2006-01-02"))
+	if todayRow == nil || todayRow.Turns != 1 || todayRow.InputTokens != 300 || todayRow.OutputTokens != 40 {
+		t.Fatalf("expected only post-import turn counted (in=300, out=40), got %+v", todayRow)
 	}
 }

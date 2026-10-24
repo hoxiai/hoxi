@@ -271,7 +271,7 @@ INSERT INTO ItemTable VALUES (
 		"id":        "m2",
 		"role":      "assistant",
 		"message":   `{"role":"assistant","content":[{"type":"reasoning","text":"Planning cb_out.go"},{"type":"text","text":"Writing cb_out.go now."},{"type":"tool-call","toolCallId":"cb_call_1","toolName":"write_to_file","args":{"filePath":"cb_out.go","content":"package cb"}}]}`,
-		"extra":     `{"modelId":"step-5-preview"}`,
+		"extra":     `{"modelId":"step-5-preview","rawUsage":{"prompt_tokens":83532,"completion_tokens":267,"total_tokens":83799,"prompt_cache_hit_tokens":512,"completion_thinking_tokens":107}}`,
 		"createdAt": "2026-10-17T10:00:05Z",
 	}
 	cbMsg3 := map[string]interface{}{
@@ -547,6 +547,10 @@ func TestSyntheticDiscoveryAndDetailAllSources(t *testing.T) {
 	}
 	if !reflect.DeepEqual(cbDetail.ChangedFiles, []string{"cb_out.go"}) || cbDetail.Turns[1].Tools[0].Output != "wrote cb_out.go" {
 		t.Fatalf("unexpected codebuddy files/tools: files=%v tools=%+v", cbDetail.ChangedFiles, cbDetail.Turns[1].Tools)
+	}
+	wantCBUsage := TurnUsage{Input: 83020, Output: 160, Reasoning: 107, CacheRead: 512}
+	if cbDetail.Turns[1].Usage != wantCBUsage {
+		t.Fatalf("codebuddy Turn[1].Usage = %+v, want %+v", cbDetail.Turns[1].Usage, wantCBUsage)
 	}
 
 	// 6. Trae

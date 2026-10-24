@@ -330,6 +330,12 @@ func TestPollSubagentActivityMirrorsTranscriptIntoChildSession(t *testing.T) {
 	if txt := child.parts[child.partID("text_11")]; txt == nil || !strings.Contains(txt.Text, "calc.py") {
 		t.Fatal("the subagent's final reply must appear as text")
 	}
+	if child.asst.Tokens == nil || child.asst.Tokens.Input == 0 || child.asst.Tokens.Output == 0 {
+		t.Fatalf("expected subagent child session tokens populated from transcript, got %+v", child.asst.Tokens)
+	}
+	if tr.msgInfo.Tokens == nil || tr.msgInfo.Tokens.Input != child.asst.Tokens.Input {
+		t.Fatalf("expected parent turn tokens to roll up subagent transcript tokens, got parent=%+v child=%+v", tr.msgInfo.Tokens, child.asst.Tokens)
+	}
 
 	tr.FeedLine(`{"event":"result","result":{"conversation_id":"` + agyParentConv + `","status":"SUCCESS"}}`)
 	if evts := tr.PollSubagentActivity(); evts != nil {

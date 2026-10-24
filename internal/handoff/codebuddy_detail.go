@@ -56,6 +56,9 @@ func loadCodeBuddySessionDetail(sessionID, hintCWD, activeRoot string) (*Externa
 	}
 
 	turns, msgPlans, msgCWD := parseCodeBuddySessionMessages(cand.sessionDir, cand.summary.CreatedAt, cand.summary.Model)
+	if len(turns) == 0 && cand.jsonlPath != "" {
+		turns, msgPlans, msgCWD = parseCodeBuddyCLIJSONL(cand.jsonlPath, cand.summary.CreatedAt, cand.summary.Model)
+	}
 	todoPlans, brainRecap := loadCodeBuddyTodosAndBrain(cand.copilotDir, sessionID)
 	if len(todoPlans) > 0 {
 		msgPlans = todoPlans

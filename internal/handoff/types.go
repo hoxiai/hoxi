@@ -2,6 +2,7 @@ package handoff
 
 import (
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -340,14 +341,28 @@ func parseTurnUsage(raw interface{}) TurnUsage {
 	if !ok || m == nil {
 		return TurnUsage{}
 	}
-	input := asInt64(m["input_tokens"])
-	if input == 0 {
-		input = asInt64(m["input"])
+	rawInput := asInt64(m["input_tokens"])
+	if rawInput == 0 {
+		rawInput = asInt64(m["prompt_tokens"])
 	}
-	output := asInt64(m["output_tokens"])
-	if output == 0 {
-		output = asInt64(m["output"])
+	if rawInput == 0 {
+		rawInput = asInt64(m["inputTokens"])
 	}
+	if rawInput == 0 {
+		rawInput = asInt64(m["input"])
+	}
+	input := rawInput
+	rawOutput := asInt64(m["output_tokens"])
+	if rawOutput == 0 {
+		rawOutput = asInt64(m["completion_tokens"])
+	}
+	if rawOutput == 0 {
+		rawOutput = asInt64(m["outputTokens"])
+	}
+	if rawOutput == 0 {
+		rawOutput = asInt64(m["output"])
+	}
+	output := rawOutput
 	reasoning := asInt64(m["thinking_tokens"])
 	if reasoning == 0 {
 		reasoning = asInt64(m["reasoning_tokens"])
@@ -355,12 +370,36 @@ func parseTurnUsage(raw interface{}) TurnUsage {
 	if reasoning == 0 {
 		reasoning = asInt64(m["reasoning_output_tokens"])
 	}
-	if asInt64(m["reasoning_output_tokens"]) > 0 && output >= reasoning {
+	if reasoning == 0 {
+		reasoning = asInt64(m["completion_thinking_tokens"])
+	}
+	var detailsThinking int64
+	if details, ok := m["output_tokens_details"].(map[string]interface{}); ok && details != nil {
+		detailsThinking = asInt64(details["thinking_tokens"])
+		if detailsThinking == 0 {
+			detailsThinking = asInt64(details["reasoning_tokens"])
+		}
+		if reasoning == 0 {
+			reasoning = detailsThinking
+		}
+	}
+	if details, ok := m["completion_tokens_details"].(map[string]interface{}); ok && details != nil {
+		if r := asInt64(details["reasoning_tokens"]); r > 0 {
+			detailsThinking = r
+			if reasoning == 0 {
+				reasoning = r
+			}
+		}
+	}
+	if (asInt64(m["reasoning_output_tokens"]) > 0 || asInt64(m["completion_thinking_tokens"]) > 0 || detailsThinking > 0) && output >= reasoning {
 		output -= reasoning
 	}
 	cacheRead := asInt64(m["cache_read_input_tokens"])
 	if cacheRead == 0 {
 		cacheRead = asInt64(m["cache_read_tokens"])
+	}
+	if cacheRead == 0 {
+		cacheRead = asInt64(m["prompt_cache_hit_tokens"])
 	}
 	// Codex reports cached input as a subset of input_tokens; normalize it to
 	// the same disjoint categories used by the handoff usage ledger.
@@ -375,10 +414,21 @@ func parseTurnUsage(raw interface{}) TurnUsage {
 	if cacheWrite == 0 {
 		cacheWrite = asInt64(m["cache_write_input_tokens"])
 	}
-	if codexCachedInput > 0 || asInt64(m["cache_write_input_tokens"]) > 0 {
+	// CodeBuddy maps prompt_tokens -> input_tokens and prompt_cache_miss_tokens -> cache_creation_input_tokens.
+	openAIStylePrompt := asInt64(m["prompt_tokens"]) > 0 || asInt64(m["prompt_cache_hit_tokens"]) > 0 ||
+		(asInt64(m["total_tokens"]) > 0 && asInt64(m["total_tokens"]) == rawInput+rawOutput && cacheRead > 0)
+	if rawInput > 0 && cacheWrite > 0 && rawInput == cacheRead+cacheWrite {
+		input = cacheWrite
+		cacheWrite = 0
+	} else if codexCachedInput > 0 || asInt64(m["cache_write_input_tokens"]) > 0 || openAIStylePrompt {
 		input -= cacheRead + cacheWrite
 		if input < 0 {
 			input = 0
+		}
+	}
+	if input == 0 && output == 0 && cacheRead == 0 && cacheWrite == 0 {
+		if ratio := asFloat64(m["context_usage_ratio"]); ratio > 0 {
+			input = int64(math.Round(ratio * 180000))
 		}
 	}
 	cost := asFloat64(m["cost"])
@@ -424,4 +474,12 @@ func SQLNotImportedTitleClause(column string) string {
 		clauses = append(clauses, column+" NOT LIKE '"+p+"'")
 	}
 	return strings.Join(clauses, " AND ")
+}
+
+// SQLNotImportedTurnClause matches rows from native Hoxi sessions as well as new
+// turns executed inside Hoxi after an external session was imported, while
+// excluding the historical turns materialized during handoff import.
+func SQLNotImportedTurnClause(titleCol, dataCol, rowTimeCol, sessTimeCol string) string {
+	return "(" + SQLNotImportedTitleClause(titleCol) +
+		" OR (" + rowTimeCol + " > COALESCE(" + sessTimeCol + ", 0) AND COALESCE(json_extract(" + dataCol + ", '$.imported'), 0) = 0))"
 }

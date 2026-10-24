@@ -20,12 +20,16 @@ import (
 const agySubagentLogChunk = 1 << 20
 
 type agyTranscriptRow struct {
-	StepIndex int           `json:"step_index"`
-	Type      string        `json:"type"`
-	CreatedAt string        `json:"created_at"`
-	Thinking  string        `json:"thinking"`
-	Content   string        `json:"content"`
-	ToolCalls []agyToolCall `json:"tool_calls"`
+	StepIndex       int           `json:"step_index"`
+	Type            string        `json:"type"`
+	CreatedAt       string        `json:"created_at"`
+	Thinking        string        `json:"thinking"`
+	Content         string        `json:"content"`
+	ToolCalls       []agyToolCall `json:"tool_calls"`
+	InputTokens     int           `json:"input_tokens"`
+	OutputTokens    int           `json:"output_tokens"`
+	ThinkingTokens  int           `json:"thinking_tokens"`
+	CacheReadTokens int           `json:"cache_read_tokens"`
 }
 
 // agyToolCall is one planned tool invocation recorded in a transcript row.
