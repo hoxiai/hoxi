@@ -23,6 +23,11 @@ import (
 const (
 	// DefaultServerBaseURL is the canonical Hoxi cloud endpoint when HOXI_SERVER_URL is unset.
 	DefaultServerBaseURL = "https://hoxi.ai"
+	// DefaultDevServerBaseURL is the local hoxi.ai endpoint (apay dev server on 127.0.0.1:5400)
+	// preferred by Hoxi Dev when running locally.
+	DefaultDevServerBaseURL = "http://127.0.0.1:5400"
+	// DefaultDevServerHostPort is the loopback host:port of the local hoxi.ai dev server.
+	DefaultDevServerHostPort = "127.0.0.1:5400"
 	// DefaultReleaseBridgeAddr is the default loopback gateway address for release builds.
 	DefaultReleaseBridgeAddr = "127.0.0.1:5410"
 	// DefaultDevBridgeAddr is the default loopback gateway address for dev builds.

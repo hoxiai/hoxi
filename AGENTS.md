@@ -112,9 +112,10 @@ Flutter + Riverpod + GoRouter + Dio，四栏：沟通 · 工程 · 专栏 · 我
 
 ### 1.4 构建与验证命令
 
-- **Desktop Development (Hot Reloading)**:
+- **Desktop Development (Hot Reloading, 本地开发默认优先对接本地 `http://127.0.0.1:5400` 服务端)**:
   ```bash
   wails dev
+  # 当本机 apay (http://127.0.0.1:5400) 已启动时，Hoxi Dev 自动将 HOXI_SERVER_URL 指向 http://127.0.0.1:5400
   ```
 - **Build Production macOS Application (`.app`)**:
   ```bash

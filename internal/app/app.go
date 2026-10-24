@@ -126,6 +126,12 @@ func Run(distFS fs.FS) {
 
 	exePath, _ := os.Executable()
 	identity := ResolveIdentity(BuildVariant, exePath)
+	if identity.Variant == "dev" && strings.TrimSpace(os.Getenv("HOXI_SERVER_URL")) == "" {
+		if conn, err := net.DialTimeout("tcp", hoxipaths.DefaultDevServerHostPort, 150*time.Millisecond); err == nil {
+			_ = conn.Close()
+			_ = os.Setenv("HOXI_SERVER_URL", hoxipaths.DefaultDevServerBaseURL)
+		}
+	}
 	if rewritten, ok := cli.IsServeCommand(os.Args); ok {
 		os.Args = rewritten
 	}
