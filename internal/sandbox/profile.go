@@ -198,6 +198,9 @@ func secretReadRules(workspace string) []PathRule {
 	if err != nil || home == "" {
 		return nil
 	}
+	if resolved, err := filepath.EvalSymlinks(home); err == nil {
+		home = resolved
+	}
 	var rules []PathRule
 	for _, dir := range []string{".ssh", ".aws", ".gnupg", ".kube", ".azure", filepath.Join(".config", "gh"), filepath.Join(".config", "gcloud")} {
 		rules = append(rules, PathRule{Path: filepath.Join(home, dir), Kind: PathSubtree})
@@ -209,7 +212,10 @@ func secretReadRules(workspace string) []PathRule {
 		rules = append(rules, PathRule{Path: filepath.Join(home, file), Kind: PathLiteral})
 	}
 	rules = append(rules, PathRule{Path: filepath.Join(home, ".cargo"), Kind: PathSubtree})
-	rules = append(rules, PathRule{Path: filepath.Join(home, "Library", "Keychains"), Kind: PathSubtree})
+	// Keep ~/Library/Keychains readable at the Seatbelt vnode layer: confined
+	// native CLIs (agy, claude) read their OAuth tokens via Security.framework /
+	// /usr/bin/security from login.keychain-db on every turn. Tool and shell
+	// reads of ~/Library/Keychains remain blocked by the approval plane.
 	if hoxi := hoxipaths.Home(); hoxi != "" {
 		for _, name := range hoxipaths.ProtectedStateFiles() {
 			rules = append(rules, PathRule{Path: filepath.Join(hoxi, name), Kind: PathLiteral})

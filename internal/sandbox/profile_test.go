@@ -265,11 +265,18 @@ func TestSandboxDeniesSecretReadsUnderFakeHome(t *testing.T) {
 	if err := os.WriteFile(plain, []byte("hello\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	keychain := filepath.Join(home, "Library", "Keychains", "login.keychain-db")
+	if err := os.MkdirAll(filepath.Dir(keychain), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keychain, []byte("keychain-stub\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	profile, err := DefaultProfile(workspace, NetworkDeny)
 	if err != nil {
 		t.Fatal(err)
 	}
-	bin, args, err := WrapShell(profile, "head -c0 "+shellQuote(secret))
+	bin, args, err := WrapShell(profile, "head -c1 "+shellQuote(secret))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,6 +289,13 @@ func TestSandboxDeniesSecretReadsUnderFakeHome(t *testing.T) {
 	}
 	if err := runCommand(bin, args...); err != nil {
 		t.Fatalf("sandboxed read of a workspace file failed: %v", err)
+	}
+	bin, args, err = WrapShell(profile, "head -c1 "+shellQuote(keychain))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runCommand(bin, args...); err != nil {
+		t.Fatalf("sandboxed read of fake ~/Library/Keychains failed (required for agy/claude OAuth): %v", err)
 	}
 }
 
