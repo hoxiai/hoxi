@@ -500,8 +500,10 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 	}
 
 	if g.auth != nil {
-		g.mux.Handle("/api/hoxi/auth", auth.NewHTTPHandler(g.auth))
-		g.mux.Handle("/api/hoxi/auth/", auth.NewHTTPHandler(g.auth))
+		authHandler := auth.NewHTTPHandler(g.auth)
+		g.mux.Handle("/api/hoxi/auth", authHandler)
+		g.mux.Handle("/api/hoxi/auth/", authHandler)
+		g.mux.Handle("/api/hoxi/work/apps", authHandler)
 	}
 	if g.updater != nil {
 		h := updater.NewHTTPHandler(g.updater)

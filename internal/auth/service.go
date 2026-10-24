@@ -452,6 +452,63 @@ func (s *Service) PerformCheckin(ctx context.Context) (map[string]any, error) {
 	return s.callMemberEndpoint(ctx, http.MethodPost, "/api/hoxi/member/checkin", []byte(`{}`))
 }
 
+// MintMCPToken 使用本地已授权的设备凭据向 hoxi.ai 申请签发符合 APay MCP 规范的 apay_mcp_... Scoped Token
+func (s *Service) MintMCPToken(ctx context.Context, req MCPTokenRequest) (map[string]any, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
+	}
+	return s.callMemberEndpoint(ctx, http.MethodPost, "/api/hoxi/mcp/token", body)
+}
+
+// FetchWorkApps 从 hoxi.ai 拉取官方工作模式应用目录与 MCP 连接配置
+func (s *Service) FetchWorkApps(ctx context.Context) (map[string]any, error) {
+	s.mu.RLock()
+	baseURL := s.serverBaseURL
+	token := ""
+	if s.current != nil {
+		token = s.current.DeviceToken
+	}
+	s.mu.RUnlock()
+
+	targetURL := fmt.Sprintf("%s/api/hoxi/work/apps", baseURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var payload map[string]any
+	_ = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		msg := ""
+		if payload != nil {
+			if m, ok := payload["message"].(string); ok && m != "" {
+				msg = m
+			} else if m, ok := payload["statusMessage"].(string); ok && m != "" {
+				msg = m
+			}
+		}
+		return nil, &UpstreamAPIError{
+			StatusCode: resp.StatusCode,
+			Message:    msg,
+		}
+	}
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	return payload, nil
+}
+
 func (s *Service) callMemberEndpoint(ctx context.Context, method, endpoint string, body []byte) (map[string]any, error) {
 	s.mu.RLock()
 	var auth *StoredAuth

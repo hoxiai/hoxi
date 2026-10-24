@@ -422,3 +422,60 @@ func TestMemberCheckinAndPortalRoutes(t *testing.T) {
 		t.Fatalf("OpenPortalPage(rewards) = %q, %v", u, err)
 	}
 }
+
+func TestMintMCPTokenAndWorkApps(t *testing.T) {
+	s := testService(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/hoxi/work/apps" && r.Method == http.MethodGet {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"version": 1,
+				"apps": []map[string]any{
+					{"id": "qingpu", "name": "轻铺开店助手", "skillName": "qingpu-ops"},
+				},
+			})
+			return
+		}
+		if r.URL.Path == "/api/hoxi/mcp/token" && r.Method == http.MethodPost {
+			if r.Header.Get("Authorization") != "Bearer hox_dt_test" {
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"message":"Unauthorized"}`))
+				return
+			}
+			var req MCPTokenRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"accessToken": "apay_mcp_test_scoped_token",
+				"tokenType":   "Bearer",
+				"mcpUrl":      "https://hoxi.ai/api/mcp",
+				"appId":       req.AppID,
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	})
+
+	appsRes, err := s.FetchWorkApps(context.Background())
+	if err != nil || appsRes["version"] != float64(1) {
+		t.Fatalf("FetchWorkApps failed: %v, %#v", err, appsRes)
+	}
+
+	if _, err := s.MintMCPToken(context.Background(), MCPTokenRequest{AppID: "qingpu"}); err == nil {
+		t.Fatal("expected MintMCPToken error when not logged in")
+	}
+
+	s.current = &StoredAuth{
+		DeviceToken: "hox_dt_test",
+		User:        UserProfile{ID: 7, Email: "dev@hoxi.ai"},
+	}
+
+	tokRes, err := s.MintMCPToken(context.Background(), MCPTokenRequest{
+		AppID:   "qingpu",
+		AppName: "轻铺开店助手",
+		Scopes:  []string{"mcp:tools", "mcp:profile:read"},
+	})
+	if err != nil {
+		t.Fatalf("MintMCPToken failed: %v", err)
+	}
+	if tokRes["accessToken"] != "apay_mcp_test_scoped_token" || tokRes["mcpUrl"] != "https://hoxi.ai/api/mcp" {
+		t.Fatalf("unexpected MintMCPToken result: %#v", tokRes)
+	}
+}

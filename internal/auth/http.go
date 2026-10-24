@@ -41,6 +41,10 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleMember(w, r)
 	case path == "/checkin" && r.Method == http.MethodPost:
 		h.handleCheckin(w, r)
+	case path == "/mcp-token" && r.Method == http.MethodPost:
+		h.handleMCPToken(w, r)
+	case (path == "/work-apps" || r.URL.Path == "/api/hoxi/work/apps") && r.Method == http.MethodGet:
+		h.handleWorkApps(w, r)
 	case path == "/open-url" && r.Method == http.MethodPost:
 		h.handleOpenURL(w, r)
 	default:
@@ -104,6 +108,32 @@ func (h *HTTPHandler) handleMember(w http.ResponseWriter, r *http.Request) {
 
 func (h *HTTPHandler) handleCheckin(w http.ResponseWriter, r *http.Request) {
 	data, err := h.service.PerformCheckin(r.Context())
+	if err != nil {
+		h.writeMemberError(w, err)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(data)
+}
+
+func (h *HTTPHandler) handleMCPToken(w http.ResponseWriter, r *http.Request) {
+	var req MCPTokenRequest
+	if r.Body != nil {
+		if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid json body"})
+			return
+		}
+	}
+	data, err := h.service.MintMCPToken(r.Context(), req)
+	if err != nil {
+		h.writeMemberError(w, err)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(data)
+}
+
+func (h *HTTPHandler) handleWorkApps(w http.ResponseWriter, r *http.Request) {
+	data, err := h.service.FetchWorkApps(r.Context())
 	if err != nil {
 		h.writeMemberError(w, err)
 		return

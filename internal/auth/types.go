@@ -41,3 +41,10 @@ type ExchangeTokenRequest struct {
 	HandoffToken string `json:"handoffToken"`
 	State        string `json:"state"`
 }
+
+// MCPTokenRequest 请求签发 hoxi.ai MCP Scoped Access Token 的请求体
+type MCPTokenRequest struct {
+	AppID   string   `json:"appId,omitempty"`
+	AppName string   `json:"appName,omitempty"`
+	Scopes  []string `json:"scopes,omitempty"`
+}
