@@ -87,6 +87,33 @@ export interface MergedTurnResolution {
   ownsLiveTail: boolean;
 }
 
+function sameStringList(a: string[], b: string[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+export function stabilizeMergedTurnResolution(
+  prev: MergedTurnResolution | undefined,
+  next: MergedTurnResolution
+): MergedTurnResolution {
+  if (!prev) return next;
+  if (
+    prev.isVisuallyEmpty === next.isVisuallyEmpty &&
+    prev.isFirstVisualTurnInCycle === next.isFirstVisualTurnInCycle &&
+    prev.isCycleEnd === next.isCycleEnd &&
+    prev.ownsLiveTail === next.ownsLiveTail &&
+    samePartReferenceList(prev.effectiveParts, next.effectiveParts) &&
+    sameStringList(prev.carriedTurnIDs, next.carriedTurnIDs)
+  ) {
+    return prev;
+  }
+  return next;
+}
+
 const isRenderablePart = (part: MessagePart) => isWorkPart(part) || isVisibleTextPart(part);
 
 /**

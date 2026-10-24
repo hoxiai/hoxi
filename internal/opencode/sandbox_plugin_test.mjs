@@ -230,6 +230,31 @@ test("sandbox plugin", async (t) => {
     await hooks["experimental.chat.messages.transform"]({}, {});
   });
 
+  await t.test("unwraps sandbox-exec from history and prevents recursive wrapping", async () => {
+    const { profilePath } = fixture("deny");
+    const hooks = await HoxiSandboxPlugin();
+    const first = { args: { command: "echo 'hi' > out.txt" } };
+    await hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_sandbox", callID: "c1" }, first);
+    const wrappedOnce = first.args.command;
+
+    // If the model echoes the wrapped command back on a subsequent step, it must not be double-wrapped.
+    const second = { args: { command: wrappedOnce } };
+    await hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_sandbox", callID: "c2" }, second);
+    assert.equal(second.args.command.match(/\/usr\/bin\/sandbox-exec/g).length, 1);
+    assert.ok(second.args.command.includes(profilePath));
+
+    // History transform strips both the stop marker/trap and the sandbox-exec wrapper, even when nested.
+    const nested = `# hoxi-stop:ses_sandbox:c2\n${TRAP}\n'/usr/bin/sandbox-exec' -f '${profilePath}' -- /bin/sh -c '${wrappedOnce.replace(/'/g, "'\\''")}'`;
+    const messages = [
+      {
+        info: { role: "assistant" },
+        parts: [{ id: "prt_nested", type: "tool", tool: "bash", callID: "c2", state: { status: "completed", input: { command: nested } } }],
+      },
+    ];
+    await hooks["experimental.chat.messages.transform"]({}, { messages });
+    assert.equal(messages[0].parts[0].state.input.command, "echo 'hi' > out.txt");
+  });
+
   await t.test("exports only plugin functions", async () => {
     // OpenCode calls every export of a plugin module as a plugin.
     const mod = await import("./sandbox_plugin.mjs");

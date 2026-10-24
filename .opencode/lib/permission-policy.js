@@ -64,8 +64,12 @@ function pushText(out, value) {
 // `'/usr/bin/sandbox-exec' -f '<profile>' -- /bin/sh -c '<command>'`; judge the
 // wrapped command, not the wrapper.
 const SANDBOX_WRAP_RE = /^'?\/usr\/bin\/sandbox-exec'?\s+-f\s+(?:'[^']*'|\S+)\s+--\s+\/bin\/sh\s+-c\s+'((?:[^']|'\\'')*)'$/;
-const OPEN_CODE_STOP_MARKER_RE =
-  /^(?:[ \t]*(?:# hoxi-stop:[^\r\n]*(?:\r?\n(?:[ \t]*trap : (?:EXIT|\S+)(?:[ \t]*\r?\n|$))?|$)|trap : EXIT[ \t]+# hoxi-stop:[^\r\n]*(?:\r?\n|$)))+/;
+const OPEN_CODE_STOP_TRAP_RE = String.raw`trap 'printf "\\n\[Command stopped by user\]\\n"; exit 130' USR1; trap : EXIT`;
+const OPEN_CODE_STOP_MARKER_RE = new RegExp(
+  String.raw`^(?:[ \t]*(?:# hoxi-stop:[^\r\n]*(?:\r?\n(?:[ \t]*(?:trap : (?:EXIT|\S+)|` +
+    OPEN_CODE_STOP_TRAP_RE +
+    String.raw`)(?:[ \t]*\r?\n|$))?|$)|trap : EXIT[ \t]+# hoxi-stop:[^\r\n]*(?:\r?\n|$)))+`,
+);
 
 export function stripOpenCodeStopMarkerText(raw) {
   const s = String(raw ?? "");
@@ -75,7 +79,7 @@ export function stripOpenCodeStopMarkerText(raw) {
 
 export function unwrapSandboxCommand(command) {
   let cur = String(command ?? "");
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < 8; i++) {
     let next = stripOpenCodeStopMarkerText(cur);
     const match = SANDBOX_WRAP_RE.exec(next.trim());
     if (match) {

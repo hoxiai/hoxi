@@ -17,6 +17,8 @@ export interface InlineThinkingSplit {
   isUnclosedThinking: boolean;
 }
 
+const LEADING_LT_RE = /^\s*</;
+const NON_WHITESPACE_RE = /\S/;
 const PARTIAL_OPEN_THINK_RE = /^<(?:t(?:h(?:i(?:n(?:k(?:i(?:n(?:g)?)?)?)?)?)?)?)?$/i;
 const OPEN_THINK_TAG_RE = /^<think(?:ing)?>/i;
 const CLOSE_THINK_TAG_RE = /<\/think(?:ing)?>/i;
@@ -29,8 +31,7 @@ const PARTIAL_CLOSE_THINK_SUFFIX_RE = /<\/(?:t(?:h(?:i(?:n(?:k(?:i(?:n(?:g)?)?)?
  */
 export function splitInlineThinking(rawText?: string | null): InlineThinkingSplit {
   const source = rawText ?? "";
-  const trimmedStart = source.trimStart();
-  if (!trimmedStart.startsWith("<")) {
+  if (!LEADING_LT_RE.test(source)) {
     return {
       hasLeadingThinking: false,
       thinkingText: "",
@@ -38,6 +39,7 @@ export function splitInlineThinking(rawText?: string | null): InlineThinkingSpli
       isUnclosedThinking: false,
     };
   }
+  const trimmedStart = source.trimStart();
   if (PARTIAL_OPEN_THINK_RE.test(trimmedStart)) {
     return {
       hasLeadingThinking: true,
@@ -236,7 +238,7 @@ export function isTodoToolPart(part: MessagePart): boolean {
 export function isVisibleTextPart(
   part: MessagePart
 ): part is Extract<MessagePart, { type: "text" }> {
-  return part.type === "text" && extractVisibleAssistantText(part.text).trim().length > 0;
+  return part.type === "text" && NON_WHITESPACE_RE.test(extractVisibleAssistantText(part.text));
 }
 
 export function isContextToolPart(
@@ -257,14 +259,14 @@ export function isContextToolPart(
 
 export function isWorkPart(part: MessagePart): boolean {
   if (part.type === "reasoning") {
-    return part.time?.end == null || Boolean(part.text && part.text.trim().length > 0);
+    return part.time?.end == null || Boolean(part.text && NON_WHITESPACE_RE.test(part.text));
   }
   if (part.type === "text") {
     const split = splitInlineThinking(part.text);
     return (
       split.hasLeadingThinking &&
-      !split.visibleText.trim() &&
-      (split.isUnclosedThinking || split.thinkingText.trim().length > 0)
+      !NON_WHITESPACE_RE.test(split.visibleText) &&
+      (split.isUnclosedThinking || NON_WHITESPACE_RE.test(split.thinkingText))
     );
   }
   return part.type === "tool";

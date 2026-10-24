@@ -61,6 +61,22 @@ func TestOpenCodeDisplayNormalizesManagedToolParts(t *testing.T) {
 			t.Fatalf("description retained a prefix: %+v", part.State)
 		}
 	}
+
+	wrappedOnce := displayTestMarker + "\n" + openCodeStopTrap + "\n'/usr/bin/sandbox-exec' -f '/tmp/p.sb' -- /bin/sh -c 'git status'"
+	wrappedNested := displayTestMarker + "\n" + openCodeStopTrap + "\n'/usr/bin/sandbox-exec' -f '/tmp/p.sb' -- /bin/sh -c '" +
+		strings.ReplaceAll(wrappedOnce, "'", `'\''`) + "'"
+	nestedPart := MessagePart{
+		ID: "prt_nested", SessionID: "ses_engine", MessageID: "msg_1", CallID: "call_nested", Type: "tool", Tool: "bash",
+		State: &ToolState{
+			Status: "completed",
+			Input:  map[string]interface{}{"command": wrappedNested},
+			Title:  wrappedNested,
+		},
+	}
+	stripOpenCodeStopMarker(&nestedPart)
+	if nestedPart.State.Input["command"] != "git status" || nestedPart.State.Title != "git status" {
+		t.Fatalf("sandbox wrapper leaked into display: %+v", nestedPart.State)
+	}
 }
 
 func TestOpenCodeDisplayJSONPreservesContentAndNumbers(t *testing.T) {

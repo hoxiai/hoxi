@@ -84,4 +84,20 @@ describe("shell tool display", () => {
     assertEqual(extractCommand(part), taggedCommand);
     assertEqual(extractDescription(part), marker);
   });
+
+  it("unwraps single and nested sandbox-exec wrappers and full USR1 stop traps", () => {
+    const usr1Trap = String.raw`trap 'printf "\n[Command stopped by user]\n"; exit 130' USR1; trap : EXIT`;
+    const wrappedOnce = `${marker}\n${usr1Trap}\n'/usr/bin/sandbox-exec' -f '/tmp/p.sb' -- /bin/sh -c 'git status'`;
+    const wrappedNested = `${marker}\n${usr1Trap}\n'/usr/bin/sandbox-exec' -f '/tmp/p.sb' -- /bin/sh -c '${wrappedOnce.replace(/'/g, "'\\''")}'`;
+    const part = shellPart({
+      status: "completed",
+      input: { command: wrappedNested },
+      title: wrappedNested,
+      output: "clean",
+      metadata: {},
+      time: { start: 1, end: 2 },
+    });
+    assertEqual(extractCommand(part), "git status");
+    assertEqual(extractDescription(part), "git status");
+  });
 });

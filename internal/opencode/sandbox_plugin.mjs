@@ -134,24 +134,37 @@ function stopMarker(input) {
   return `${STOP_MARKER_PREFIX}${input.sessionID}:${input.callID}`;
 }
 
-// stripStopMarkers drops every leading `# hoxi-stop:` line and the stop trap.
+// stripStopMarkers drops every leading `# hoxi-stop:` line, the stop trap, and
+// any outer `sandbox-exec` wrapper added on a prior step or echoed by a model.
 // Tag lines are shell comments and the trap only matters for a stop, so this
 // never changes what the command does; later lines are left alone because they
 // may sit inside a heredoc or a quoted string. Not exported: OpenCode loads
 // every export of a plugin module as a plugin.
+const SANDBOX_WRAP_RE =
+  /^(?:'[^']*\/sandbox-exec'|\/usr\/bin\/sandbox-exec|sandbox-exec)\s+-f\s+(?:'[^']*'|\S+)\s+--\s+(?:\/bin\/sh|sh)\s+-c\s+'((?:[^']|'\\'')*)'$/;
+
 function stripStopMarkers(command) {
   if (typeof command !== "string") return command;
   let rest = command;
-  for (;;) {
+  for (let depth = 0; depth < 16; depth++) {
     const match = LEADING_STOP_MARKER_RE.exec(rest);
     if (match) {
       rest = rest.slice(match[0].length);
       continue;
     }
     const line = LEADING_LINE_RE.exec(rest);
-    if (!line || line[1].trimEnd() !== STOP_TRAP) return rest;
-    rest = rest.slice(line[0].length);
+    if (line && line[1].trimEnd() === STOP_TRAP) {
+      rest = rest.slice(line[0].length);
+      continue;
+    }
+    const wrapped = SANDBOX_WRAP_RE.exec(rest.trim());
+    if (wrapped) {
+      rest = wrapped[1].replace(/'\\''/g, "'");
+      continue;
+    }
+    return rest;
   }
+  return rest;
 }
 
 // OpenCode persists the tagged command as the tool input while the tool runs

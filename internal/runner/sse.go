@@ -254,7 +254,7 @@ func (s *Service) relayOpenCodeFrames(ctx context.Context, cancel context.Cancel
 }
 
 func sanitizeOpenCodePermissionSSELine(line string) string {
-	if !strings.Contains(line, `"permission.asked"`) || !strings.Contains(line, stopMarkerPrefix) {
+	if !strings.Contains(line, `"permission.asked"`) || (!strings.Contains(line, stopMarkerPrefix) && !strings.Contains(line, "sandbox-exec")) {
 		return line
 	}
 	trimmed := strings.TrimRight(line, "\r\n")

@@ -346,7 +346,7 @@ func (s *approvalAuditStore) lookupOpenCodePerm(id string) (openCodePermSnapshot
 func summarizePermissionItem(item map[string]interface{}) (string, string) {
 	meta, _ := item["metadata"].(map[string]interface{})
 	tool := firstString(meta["tool"], item["permission"], item["type"])
-	if cmd := stripOpenCodeStopMarkerText(firstString(meta["command"], meta["cmd"], item["pattern"])); cmd != "" {
+	if cmd := unwrapSandboxCommand(firstString(meta["command"], meta["cmd"], item["pattern"])); cmd != "" {
 		return cmd, firstNonEmptyStr(tool, "bash")
 	}
 	if args := firstString(meta["args"]); args != "" {
@@ -355,7 +355,7 @@ func summarizePermissionItem(item map[string]interface{}) (string, string) {
 	if patterns, ok := item["patterns"].([]string); ok && len(patterns) > 0 {
 		parts := make([]string, 0, len(patterns))
 		for _, p := range patterns {
-			if cleaned := strings.TrimSpace(stripOpenCodeStopMarkerText(p)); cleaned != "" {
+			if cleaned := strings.TrimSpace(unwrapSandboxCommand(p)); cleaned != "" {
 				parts = append(parts, cleaned)
 			}
 		}
@@ -367,7 +367,7 @@ func summarizePermissionItem(item map[string]interface{}) (string, string) {
 		parts := make([]string, 0, len(rawPatterns))
 		for _, p := range rawPatterns {
 			if s, ok := p.(string); ok {
-				if cleaned := strings.TrimSpace(stripOpenCodeStopMarkerText(s)); cleaned != "" {
+				if cleaned := strings.TrimSpace(unwrapSandboxCommand(s)); cleaned != "" {
 					parts = append(parts, cleaned)
 				}
 			}
@@ -376,7 +376,7 @@ func summarizePermissionItem(item map[string]interface{}) (string, string) {
 			return strings.Join(parts, " "), tool
 		}
 	}
-	return firstNonEmptyStr(stripOpenCodeStopMarkerText(firstString(item["title"], meta["description"])), tool, "permission"), tool
+	return firstNonEmptyStr(unwrapSandboxCommand(firstString(item["title"], meta["description"])), tool, "permission"), tool
 }
 
 func redactApprovalText(v string, limit int) string {

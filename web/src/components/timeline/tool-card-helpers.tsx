@@ -275,13 +275,29 @@ export function extractCommand(part: ToolPart): string {
   return isShellTool(part.tool) ? cleanShellDisplayText(command) : command;
 }
 
+const SHELL_STOP_TRAP_RE = String.raw`trap 'printf "\\n\[Command stopped by user\]\\n"; exit 130' USR1; trap : EXIT`;
+const SHELL_STOP_MARKER_RE = new RegExp(
+  String.raw`^(?:[ \t]*(?:#?[ \t]*hoxi-stop:[^\r\n]*(?:\r?\n(?:[ \t]*(?:trap : EXIT|` +
+    SHELL_STOP_TRAP_RE +
+    String.raw`)[ \t]*(?:\r?\n|$))?|$)|trap : EXIT[ \t]+# hoxi-stop:[^\r\n]*(?:\r?\n|$)))+`,
+);
+const SHELL_SANDBOX_WRAP_RE =
+  /^'?\/usr\/bin\/sandbox-exec'?\s+-f\s+(?:'[^']*'|\S+)\s+--\s+\/bin\/sh\s+-c\s+'((?:[^']|'\\'')*)'$/;
+
 // Old histories and pending/raw events may predate backend normalization.
 // Clean their display text without mutating tool input or actual shell output.
 function cleanShellDisplayText(text: string): string {
-  return text.replace(
-    /^(?:[ \t]*(?:#?[ \t]*hoxi-stop:[^\r\n]*(?:\r?\n(?:[ \t]*trap : EXIT[ \t]*(?:\r?\n|$))?|$)|trap : EXIT[ \t]+# hoxi-stop:[^\r\n]*(?:\r?\n|$)))+/,
-    ""
-  );
+  let cur = text;
+  for (let i = 0; i < 8; i++) {
+    let next = cur.replace(SHELL_STOP_MARKER_RE, "");
+    const match = SHELL_SANDBOX_WRAP_RE.exec(next.trim());
+    if (match) {
+      next = match[1].replace(/'\\''/g, "'").replace(SHELL_STOP_MARKER_RE, "");
+    }
+    if (next === cur) break;
+    cur = next;
+  }
+  return cur;
 }
 
 export function extractDescription(part: ToolPart): string {

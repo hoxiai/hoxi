@@ -64,6 +64,16 @@ const KIND_PRIORITY: ActivityBarSegment["kind"][] = [
   "text",
 ];
 
+const KIND_COLOR: Record<ActivityBarSegment["kind"], string> = {
+  error: "var(--status-danger)",
+  task: "#38bdf8",
+  edit: "#34d399",
+  shell: "#fbbf24",
+  explore: "#60a5fa",
+  reasoning: "#a78bfa",
+  text: "var(--text-muted)",
+};
+
 function resolvePartTime(part: MessagePart): { start: number; end?: number } | undefined {
   if (part.type === "reasoning") return part.time;
   if (part.type === "tool" && part.state.status !== "pending") return part.state.time;
@@ -107,14 +117,17 @@ export function buildTurnSegments(turns: MessageTurn[]): ActivityBarSegment[] {
     for (const turn of turnsInGroup) {
       if (turn.info.role === "assistant") parts.push(...expandInlineThinkingParts(turn.parts));
     }
-    type PartMeta = NonNullable<ReturnType<typeof classifyPart>>;
-    const metas: PartMeta[] = [];
+    const firstPartByKind = new Map<ActivityBarSegment["kind"], MessagePart>();
+    let stepCount = 0;
     const starts: number[] = [];
     const ends: number[] = [];
     const running = parts.some(isLivePart);
     for (const part of parts) {
-      const meta = classifyPart(part, !running);
-      if (meta) metas.push(meta);
+      const kind = classifyPartKind(part, !running);
+      if (kind) {
+        stepCount++;
+        if (!firstPartByKind.has(kind)) firstPartByKind.set(kind, part);
+      }
       const time = resolvePartTime(part);
       if (!time) continue;
       starts.push(time.start);
@@ -131,17 +144,21 @@ export function buildTurnSegments(turns: MessageTurn[]): ActivityBarSegment[] {
     const end = running || ends.length === 0 ? undefined : Math.max(...ends);
     const index = segments.length + 1;
     const preview = userTurn ? summarizeUserTurn(userTurn) : "";
-    const primaryKind = KIND_PRIORITY.find((kind) => metas.some((meta) => meta.kind === kind)) ?? "text";
-    const primary = metas.find((meta) => meta.kind === primaryKind);
+    const primaryKind = KIND_PRIORITY.find((kind) => firstPartByKind.has(kind)) ?? "text";
+    const primaryPart = firstPartByKind.get(primaryKind);
+    const primaryLabel =
+      !preview && primaryPart
+        ? classifyPart(primaryPart, !running)?.label
+        : undefined;
     segments.push({
       id: anchorTurn.info.id,
       messageID: anchorTurn.info.id,
       messageIDs: turnsInGroup.map((turn) => turn.info.id),
       kind: primaryKind,
-      color: primary?.color ?? "var(--text-muted)",
-      label: preview ? `#${index} ${preview}` : `#${index} ${primary?.label ?? t("timeline.activityResponse")}`,
-      heightPct: Math.min(100, Math.max(20, metas.length * 10)),
-      stepCount: metas.length,
+      color: firstPartByKind.has(primaryKind) ? KIND_COLOR[primaryKind] : "var(--text-muted)",
+      label: preview ? `#${index} ${preview}` : `#${index} ${primaryLabel ?? t("timeline.activityResponse")}`,
+      heightPct: Math.min(100, Math.max(20, stepCount * 10)),
+      stepCount,
       running,
       time: { start, ...(end !== undefined ? { end } : {}) },
       duration: end !== undefined ? Math.max(0, end - start) : undefined,
@@ -158,6 +175,33 @@ export function buildTurnSegments(turns: MessageTurn[]): ActivityBarSegment[] {
   }
   flush();
   return segments;
+}
+
+function classifyPartKind(
+  part: MessagePart,
+  isTurnCompleted: boolean
+): ActivityBarSegment["kind"] | null {
+  if (part.type === "reasoning") {
+    if (!isTurnCompleted && !part.time?.end) return "reasoning";
+    return part.text ? "reasoning" : null;
+  }
+  if (part.type === "text") {
+    if (!isTurnCompleted) return "text";
+    return part.text ? "text" : null;
+  }
+  if (part.type === "tool") {
+    const tp = part as ToolPart;
+    const name = (tp.tool || "").toLowerCase();
+    if (name === "todowrite" || name === "todoread") return null;
+    if (tp.state.status === "error") return "error";
+    if (name === "edit" || name === "write" || name === "patch" || name === "multiedit" || name === "apply_patch") {
+      return "edit";
+    }
+    if (name === "bash" || name === "shell") return "shell";
+    if (name === "task") return "task";
+    return "explore";
+  }
+  return null;
 }
 
 function classifyPart(

@@ -116,15 +116,18 @@ export function reasoningSummary(body: string): string {
  * continuously reflects current thinking progress without expanding a 240px box.
  */
 export function liveReasoningTicker(rawText: string, isStreaming = false): string {
-  const src = normalizeReasoningText(rawText);
-  if (!src) return "";
+  const raw = rawText ?? "";
+  if (!raw) return "";
 
   if (!isStreaming) {
+    const src = normalizeReasoningText(raw.slice(0, 1024));
+    if (!src) return "";
     const parsed = reasoningHeading(src.slice(0, 480), false);
     return parsed.title || reasoningSummary(parsed.body);
   }
 
-  const tail = src.slice(-600);
+  const tail = normalizeReasoningText(raw.slice(-1200)).slice(-600);
+  if (!tail) return "";
   const lines = tail
     .split("\n")
     .map((line) => line.trim())
@@ -148,7 +151,8 @@ export function liveReasoningTicker(rawText: string, isStreaming = false): strin
     }
   }
 
-  const headTitle = reasoningHeading(src.slice(0, 360), true).title;
+  const headSrc = normalizeReasoningText(raw.slice(0, 720));
+  const headTitle = reasoningHeading(headSrc.slice(0, 360), true).title;
   if (headTitle) return reasoningSummary(headTitle);
 
   const lastLine = lines[lines.length - 1];
@@ -163,7 +167,14 @@ export default function ThoughtBox(props: { part: ReasoningPart; revealKey?: str
   const streaming = () =>
     props.part.time?.end == null &&
     (!props.part.sessionID || isSessionBusy(props.part.sessionID));
-  const hasContent = () => normalizeReasoningText(props.part.text ?? "").length > 0;
+  const hasContent = () => {
+    const raw = props.part.text ?? "";
+    if (!raw) return false;
+    return (
+      normalizeReasoningText(raw.slice(0, 512)).length > 0 ||
+      normalizeReasoningText(raw).length > 0
+    );
+  };
 
   const resolveDefaultOpen = () => {
     const id = props.part.id;

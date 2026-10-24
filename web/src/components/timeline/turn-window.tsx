@@ -14,6 +14,10 @@ import { Icon } from "../icons";
 import { t } from "../../i18n";
 import { isVisibleTextPart, isWorkPart } from "./context-activity-parts";
 import {
+  type MergedTurnResolution,
+  stabilizeMergedTurnResolution,
+} from "./context-activity-turns";
+import {
   AssistantErrorCard,
   AssistantTurnFooter,
   ContextActivityGroupView,
@@ -157,6 +161,28 @@ export function resolveLimitForEarlierMessages(
 
 export function countUserMessages(turns: MessageTurn[]): number {
   return turns.reduce((total, turn) => total + (turn.info.role === "user" ? 1 : 0), 0);
+}
+
+/**
+ * Reports whether any turn before the current window is visually unrepresented.
+ * When a single user prompt owns a long work-only run (`anchorIndex === 1`),
+ * every step between `anchorIndex` and `startIndex` is already folded into
+ * `anchorIndex` and would mount as a 0-height node.
+ */
+export function hasUnmountedVisualTurns(
+  turns: MessageTurn[],
+  slice: ReturnType<typeof computeTurnWindowSlice>
+): boolean {
+  if (slice.hiddenMessageCount > 0) return true;
+  const ceiling = slice.anchorIndex ?? slice.startIndex;
+  for (let index = 0; index < ceiling; index++) {
+    if (index === slice.promptIndex) continue;
+    const turn = turns[index];
+    if (!turn) continue;
+    if (turn.info.role === "user" || turn.info.error) return true;
+    if (turn.parts.some(isWorkPart) || turn.parts.some(isVisibleTextPart)) return true;
+  }
+  return false;
 }
 
 export function resolveNextWindowLimit(params: {
@@ -342,7 +368,7 @@ export function createTurnWindow(
   };
 
   const handleTopScroll = (scroller: HTMLElement) => {
-    if (prependingLock || hiddenCount() <= 0) return;
+    if (prependingLock || hiddenCount() <= 0 || !hasUnmountedVisualTurns(turns(), slice())) return;
     if (scroller.scrollTop <= 120) {
       // Scrolling is incremental: reveal one older message per top hit. Counting
       // turns here would leave the reader stuck at the top of a long folded run.
@@ -423,11 +449,14 @@ export function AssistantTurnItem(props: {
   isHighlighted: boolean;
   cycleStartedAt?: number;
 }) {
-  const merged = createMemo(() =>
-    resolveMergedTurnParts(
-      props.allTurns,
-      props.globalIndex,
-      props.windowStartIndex ?? 0
+  const merged = createMemo<MergedTurnResolution>((prev) =>
+    stabilizeMergedTurnResolution(
+      prev,
+      resolveMergedTurnParts(
+        props.allTurns,
+        props.globalIndex,
+        props.windowStartIndex ?? 0
+      )
     )
   );
 

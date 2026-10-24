@@ -239,13 +239,13 @@ func stripOpenCodeStopMarkerText(raw string) string {
 func stripStopMarkerValue(v interface{}) (interface{}, bool) {
 	switch val := v.(type) {
 	case string:
-		cleaned := stripOpenCodeStopMarkerText(val)
+		cleaned := unwrapSandboxCommand(val)
 		return cleaned, cleaned != val
 	case []string:
 		changed := false
 		out := make([]string, 0, len(val))
 		for _, s := range val {
-			cleaned := stripOpenCodeStopMarkerText(s)
+			cleaned := unwrapSandboxCommand(s)
 			if cleaned != s {
 				changed = true
 			}
@@ -262,7 +262,7 @@ func stripStopMarkerValue(v interface{}) (interface{}, bool) {
 		out := make([]interface{}, 0, len(val))
 		for _, elem := range val {
 			if s, ok := elem.(string); ok {
-				cleaned := stripOpenCodeStopMarkerText(s)
+				cleaned := unwrapSandboxCommand(s)
 				if cleaned != s {
 					changed = true
 				}
@@ -309,7 +309,7 @@ func sanitizeOpenCodePermissionItem(item map[string]interface{}) bool {
 
 func unwrapSandboxCommand(command string) string {
 	cur := command
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 8; i++ {
 		next := stripOpenCodeStopMarkerText(cur)
 		if m := sandboxWrapRe.FindStringSubmatch(strings.TrimSpace(next)); m != nil {
 			next = stripOpenCodeStopMarkerText(strings.ReplaceAll(m[1], `'\''`, "'"))

@@ -2,6 +2,7 @@
 import {
   computeTurnWindowSlice,
   countUserMessages,
+  hasUnmountedVisualTurns,
   INITIAL_VISIBLE_TURNS,
   MAX_AUTO_EXPANDED_TURNS,
   nextProgressiveTurnLimit,
@@ -18,7 +19,10 @@ import {
   resolveSegmentDuration,
 } from "../components/timeline/TaskTimelineBar";
 import type { MessageTurn } from "../store/workspace";
-import { resolveMergedTurnParts } from "../components/timeline/context-activity-turns";
+import {
+  resolveMergedTurnParts,
+  stabilizeMergedTurnResolution,
+} from "../components/timeline/context-activity-turns";
 import { assertEqual, assertTrue, describe, it } from "./test-harness";
 
 function mockTurn(id: string, role: "user" | "assistant" = "assistant"): MessageTurn {
@@ -48,6 +52,9 @@ describe("TurnWindow windowing slice & prompt cycle protection", () => {
     const anchor = resolveMergedTurnParts(turns, slice.anchorIndex!, slice.anchorIndex!);
     assertEqual(anchor.effectiveParts.length, 1000);
     assertEqual(resolveMergedTurnParts(turns, slice.startIndex, slice.anchorIndex!).effectiveParts.length, 0);
+    assertEqual(hasUnmountedVisualTurns(turns, slice), false);
+    const secondMerge = resolveMergedTurnParts(turns, slice.anchorIndex!, slice.anchorIndex!);
+    assertTrue(stabilizeMergedTurnResolution(anchor, secondMerge) === anchor);
     const after = computeTurnWindowSlice([...turns, mockTurn("next")], INITIAL_VISIBLE_TURNS);
     assertEqual(after.visibleTurns[1], slice.visibleTurns[1]);
   });
