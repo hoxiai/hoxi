@@ -546,7 +546,7 @@ func (s *Service) Impact(directory, symbol, relPath string, depth, limit int) (I
 	}
 
 	var transitive []ImpactHit
-	for d := 2; d <= depth+1 && len(frontier) > 0; d++ {
+	for d := 2; d <= depth+1 && len(frontier) > 0 && (d <= depth || len(tests) < limit); d++ {
 		collectCallers := d <= depth && len(transitive) < limit
 		var nextFrontier []frontierNode
 		for _, node := range frontier {

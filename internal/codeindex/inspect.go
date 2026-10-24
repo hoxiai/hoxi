@@ -44,11 +44,13 @@ type CallersResponse struct {
 	Tests     []CallerHit `json:"tests"`
 }
 
-var classMethodDeclRe = regexp.MustCompile(`^\s*(?:(?:public|private|protected|internal|static|async|override|readonly|abstract|virtual|get|set)\s+)*([A-Za-z_$][\w$]*)\s*(?:<[^>]*>)?\s*\([^;]*\{\s*$`)
+var classMethodDeclRe = regexp.MustCompile(`^\s*(?:(?:public|private|protected|internal|static|async|override|readonly|abstract|virtual|get|set)\s+)*([A-Za-z_$][\w$]*)\s*(?:<[^>]*>)?\s*\([^()]*\)\s*(?::\s*[^{;=>]+|\s+throws\s+[^{;=>]+)?\{\s*$`)
 
 var nonMethodKeywords = map[string]bool{
 	"if": true, "for": true, "while": true, "switch": true, "catch": true,
 	"return": true, "func": true, "function": true, "else": true, "select": true,
+	"defer": true, "go": true, "try": true, "with": true, "match": true,
+	"loop": true, "synchronized": true,
 }
 
 func (s *Service) Inspect(directory, relPath, symbol string, startLine, endLine, contextLines int) (InspectResponse, error) {
@@ -170,13 +172,22 @@ func (s *Service) Inspect(directory, relPath, symbol string, startLine, endLine,
 	}, nil
 }
 
+func shortSymbolName(symbol string) string {
+	target := strings.TrimSpace(symbol)
+	if dot := strings.LastIndexByte(target, '.'); dot >= 0 && dot+1 < len(target) {
+		return target[dot+1:]
+	}
+	return target
+}
+
 func (s *Service) Callers(directory, symbol, excludePath string, limit int) (CallersResponse, error) {
 	directory, err := canonicalDir(directory)
 	if err != nil {
 		return CallersResponse{}, err
 	}
 	symbol = strings.TrimSpace(symbol)
-	if symbol == "" {
+	callIdent := shortSymbolName(symbol)
+	if callIdent == "" {
 		return CallersResponse{}, errors.New("symbol is required")
 	}
 	if limit <= 0 || limit > 40 {
@@ -204,16 +215,22 @@ func (s *Service) Callers(directory, symbol, excludePath string, limit int) (Cal
 		rec := c.index.Files[relPath]
 		isTest := isTestFilePath(relPath)
 		for _, ch := range rec.Chunks {
+			if !strings.Contains(ch.Text, callIdent) {
+				continue
+			}
 			lines := strings.Split(ch.Text, "\n")
 			for i, line := range lines {
-				lineNo := ch.StartLine + i
+				if !containsIdentifier(line, callIdent) {
+					continue
+				}
 				cleaned := stripLineStringsAndComments(line)
-				if !containsIdentifier(cleaned, symbol) {
+				if !containsIdentifier(cleaned, callIdent) {
 					continue
 				}
-				if isDeclarationOf(line, symbol) && (normExclude == "" || relPath == normExclude) {
+				if isDeclarationOf(line, callIdent) && (normExclude == "" || relPath == normExclude) {
 					continue
 				}
+				lineNo := ch.StartLine + i
 				key := fmt.Sprintf("%s:%d", relPath, lineNo)
 				if _, ok := seen[key]; ok {
 					continue

@@ -297,7 +297,7 @@ func TestCalleesImpactAndContextGraph(t *testing.T) {
 	dir := fixtureWorkspace(t)
 	writeFile(t, filepath.Join(dir, "billing", "pay.go"), "package billing\n\nfunc ChargeCard(amount int) error {\n\treturn nil\n}\n")
 	writeFile(t, filepath.Join(dir, "checkout.go"), "package main\n\nimport (\n\t\"example.com/app/billing\"\n\t\"example.com/app/lib\"\n)\n\nfunc HandleCheckout(items []int) error {\n\ttotal := computeTotal(items)\n\treturn billing.ChargeCard(total)\n}\n")
-	writeFile(t, filepath.Join(dir, "router.go"), "package main\n\nfunc DispatchRoute() error {\n\treturn HandleCheckout([]int{1, 2})\n}\n")
+	writeFile(t, filepath.Join(dir, "router.go"), "package main\n\nfunc DispatchRoute() error {\n\twithSpan(func() {\n\t\t_ = HandleCheckout([]int{1, 2})\n\t})\n\treturn nil\n}\n")
 	writeFile(t, filepath.Join(dir, "checkout_test.go"), "package main\n\nimport \"testing\"\n\nfunc TestHandleCheckout(t *testing.T) {\n\t_ = HandleCheckout(nil)\n}\n")
 	writeFile(t, filepath.Join(dir, "router_test.go"), "package main\n\nimport \"testing\"\n\nfunc TestDispatchRoute(t *testing.T) {\n\t_ = DispatchRoute()\n}\n")
 	writeFile(t, filepath.Join(dir, ".env"), "STRIPE_SECRET=sk_live_secret\n")
