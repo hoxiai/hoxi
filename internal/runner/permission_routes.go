@@ -143,7 +143,8 @@ func (s *Service) handleUnifiedPermissionRoutes(w http.ResponseWriter, r *http.R
 		_, _ = w.Write(cachedRaw)
 		return
 	}
-	if !s.claimOpenCodeReply(id) {
+	release, claimed := s.claimOpenCodeAnswer(id)
+	if !claimed {
 		writeJSONError(w, http.StatusConflict, "permission request already answered")
 		return
 	}
@@ -155,13 +156,13 @@ func (s *Service) handleUnifiedPermissionRoutes(w http.ResponseWriter, r *http.R
 		var known bool
 		ask, known = s.gate.openCodeAskFor(id)
 		if !known {
-			s.openCodeAutoReplies.Delete(id)
+			release()
 			writeJSONError(w, http.StatusBadRequest, "this request cannot be allowed for the whole session")
 			return
 		}
 		classes, problem := grantClassesForReply(source, parsedReply.Reply, ask.item, ask.dir)
 		if problem != "" {
-			s.openCodeAutoReplies.Delete(id)
+			release()
 			status := http.StatusBadRequest
 			if isRemoteApprovalSource(source) {
 				status = http.StatusForbidden
@@ -185,7 +186,7 @@ func (s *Service) handleUnifiedPermissionRoutes(w http.ResponseWriter, r *http.R
 	}
 	status, respRaw, err := s.replyOpenCodePermission(r.Context(), id, dir, raw)
 	if err != nil {
-		s.openCodeAutoReplies.Delete(id)
+		release()
 		writeJSONError(w, http.StatusBadGateway, "opencode service unavailable: "+err.Error())
 		return
 	}
@@ -193,7 +194,7 @@ func (s *Service) handleUnifiedPermissionRoutes(w http.ResponseWriter, r *http.R
 	case status == http.StatusNotFound:
 		s.settleOpenCodePermission(id)
 	case status < 200 || status >= 300:
-		s.openCodeAutoReplies.Delete(id)
+		release()
 	}
 	if status >= 200 && status < 300 {
 		if s.status != nil {
