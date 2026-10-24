@@ -23,7 +23,11 @@ function detectCodeKind(lang: string): "plain" | "shell" | "diff" {
   return "plain";
 }
 
-export default function CodeBlockCard(props: { lang: string; code: string }) {
+export default function CodeBlockCard(props: {
+  lang: string;
+  code: string;
+  ref?: (el: HTMLDivElement) => void;
+}) {
   const initialTheme = workspace.theme === "dark" ? "dark" : "light";
   const initialCached = getCachedHighlight(props.code, props.lang, initialTheme);
   const [copied, setCopied] = createSignal(false);
@@ -118,6 +122,7 @@ export default function CodeBlockCard(props: { lang: string; code: string }) {
 
   return (
     <div
+      ref={props.ref}
       class={`group/code relative my-1 overflow-hidden rounded-xl border bg-[var(--bg-code)] ${
         codeKind() === "diff"
           ? "border-[var(--violet-border)]/60"

@@ -36,6 +36,7 @@ import "../src/__tests__/task-overview.test";
 import "../src/__tests__/session-search.test";
 import "../src/__tests__/syntax-highlight.test";
 import "../src/__tests__/markdown-image.test";
+import "../src/__tests__/stream-reveal.test";
 import "../src/__tests__/image-viewer.test";
 import "../src/__tests__/composer-keyboard.test";
 import { runAllTests } from "../src/__tests__/test-harness";

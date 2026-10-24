@@ -226,6 +226,12 @@ export function advanceStreamingSlice(
   const line = target.slice(lineStart, lineEnd);
   let relPos = nextLen - lineStart;
 
+  // Reveal table rows (header, separator, body) a whole line at a time so the block
+  // never flips between paragraph and table, or reflows cells, while pipes type in.
+  if (/^\s*\|/.test(line)) {
+    return lineEndIdx === -1 ? lineEnd : lineEnd + 1;
+  }
+
   // Snap past line-start block markers (`### `, `- `, `1. `, code fence opener)
   const prefixMatch = line.match(STREAM_LINE_PREFIX_REGEX);
   if (prefixMatch && relPos <= prefixMatch[1].length) {

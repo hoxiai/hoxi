@@ -1,5 +1,12 @@
-import { createEffect, createMemo, createSignal, onCleanup } from "solid-js";
-import { advanceStreamingSlice, createIncrementalMarkdownParser } from "./markdown-parser";
+import { createEffect, createMemo, createSignal, onCleanup, Show, untrack } from "solid-js";
+import { createIncrementalMarkdownParser } from "./markdown-parser";
+import { createStreamPacer, REVEAL_REPLAY_MAX_CHARS } from "./markdown/reveal";
+import {
+  createRevealPainter,
+  createStreamCaret,
+  prefersReducedMotion,
+  type StreamReveal,
+} from "./stream-reveal";
 import MarkdownBlocks from "./MarkdownBlocks";
 
 export {
@@ -16,83 +23,119 @@ export {
   type TableAlign,
 } from "./markdown-parser";
 
-export default function MarkdownView(props: { content: string; density?: "chat" | "compact" }) {
+const clock = () => (typeof performance !== "undefined" ? performance.now() : Date.now());
+
+/**
+ * `streaming` marks the live tail of a busy session: new text lights up and cools into
+ * the body color, new blocks fade in and a glowing dot leads the text. Without it the
+ * view only paces growing content evenly, as before.
+ */
+export default function MarkdownView(props: {
+  content: string;
+  density?: "chat" | "compact";
+  streaming?: boolean;
+}) {
   const parseIncremental = createIncrementalMarkdownParser();
-  const [displayed, setDisplayed] = createSignal(props.content || "");
-  let target = props.content || "";
-  let current = target;
+  const canAnimate = typeof requestAnimationFrame === "function";
+  const initial = (props.content || "").replace(/\r\n/g, "\n");
+  // A live part that mounts with little text replays it so its first words light up
+  // too; a long one (e.g. reopening a busy session) shows at once.
+  const replay = Boolean(props.streaming) && canAnimate && initial.length <= REVEAL_REPLAY_MAX_CHARS;
+  const pacer = createStreamPacer(replay ? "" : initial, clock());
+  const painter = createRevealPainter();
+  const caret = createStreamCaret();
+  const [displayed, setDisplayed] = createSignal(replay ? "" : initial);
+  const [revealEnabled, setRevealEnabled] = createSignal(false);
+  let container: HTMLDivElement | undefined;
   let rafId: number | undefined;
 
-  const cancelTick = () => {
+  createEffect(() => {
+    if (props.streaming && canAnimate && !prefersReducedMotion()) setRevealEnabled(true);
+  });
+
+  const cancelFrame = () => {
     if (rafId !== undefined && typeof cancelAnimationFrame === "function") {
       cancelAnimationFrame(rafId);
-      rafId = undefined;
     }
+    rafId = undefined;
   };
 
-  const tick = () => {
+  // One loop drives the pacer, the light trail and the caret in that order, so the
+  // trail is painted in the same frame the new characters enter the DOM.
+  const frame = (ts: number) => {
     rafId = undefined;
-    if (current === target || !target.startsWith(current)) {
-      current = target;
-      setDisplayed(current);
-      return;
+    const prev = pacer.shown;
+    const next = pacer.step(ts);
+    if (next !== prev) {
+      setDisplayed(pacer.target.slice(0, next));
+      if (untrack(revealEnabled)) painter.push({ start: prev, end: next, at: ts });
     }
-    const remaining = target.length - current.length;
-    const rawNext =
-      remaining <= 10
-        ? target.length
-        : current.length + Math.max(10, Math.ceil(remaining * 0.38));
-    const nextLen = advanceStreamingSlice(target, current.length, rawNext);
-    current = target.slice(0, nextLen);
-    setDisplayed(current);
-    if (current.length < target.length && typeof requestAnimationFrame === "function") {
-      rafId = requestAnimationFrame(tick);
-    }
+    const glowing = untrack(revealEnabled) && painter.paint(ts);
+    if (untrack(() => props.streaming)) caret.place(container);
+    if (pacer.pending || glowing) rafId = requestAnimationFrame(frame);
+  };
+
+  const ensureFrame = () => {
+    if (rafId === undefined && canAnimate) rafId = requestAnimationFrame(frame);
   };
 
   createEffect(() => {
-    const next = props.content || "";
-    if (next === target) return;
-    const prevTarget = target;
-    target = next;
-    if (
-      !current ||
-      !next.startsWith(current) ||
-      !next.startsWith(prevTarget) ||
-      typeof requestAnimationFrame !== "function"
-    ) {
-      cancelTick();
-      current = next;
+    const next = (props.content || "").replace(/\r\n/g, "\n");
+    const at = clock();
+    const streaming = untrack(() => props.streaming);
+    const jump =
+      !canAnimate ||
+      // Content that shows up in an empty, non-live view (a file preview loading)
+      // appears at once rather than typing itself out.
+      (!streaming && pacer.shown === 0) ||
+      !pacer.push(next, at);
+    if (jump) {
+      cancelFrame();
+      painter.clear();
+      pacer.reset(next, at);
       setDisplayed(next);
+      if (streaming) ensureFrame();
       return;
     }
-    if (next.length - current.length <= 12) {
-      cancelTick();
-      const nextLen = advanceStreamingSlice(next, current.length, next.length);
-      current = next.slice(0, nextLen);
-      setDisplayed(current);
-      if (current.length < next.length) {
-        rafId = requestAnimationFrame(tick);
-      }
-      return;
-    }
-    if (rafId === undefined) {
-      tick();
-    }
+    if (pacer.pending) ensureFrame();
   });
 
-  onCleanup(cancelTick);
+  // Keep the caret on the text end when the column reflows (resize, sidebar toggle).
+  createEffect(() => {
+    if (!props.streaming || !container || typeof ResizeObserver !== "function") return;
+    const observer = new ResizeObserver(() => caret.place(container));
+    observer.observe(container);
+    ensureFrame();
+    onCleanup(() => observer.disconnect());
+  });
+
+  onCleanup(() => {
+    cancelFrame();
+    painter.dispose();
+  });
+
+  const reveal: StreamReveal = {
+    enabled: revealEnabled,
+    source: displayed,
+    track: painter.track,
+  };
 
   const blocks = createMemo(() => parseIncremental(displayed()));
 
   return (
     <div
-      class={`flex flex-col text-[var(--text-primary)] selectable-text ${
+      ref={container}
+      class={`relative flex flex-col text-[var(--text-primary)] selectable-text ${
         props.density === "compact" ? "gap-y-2 leading-[1.62]" : "gap-y-4 leading-[1.7]"
       }`}
       style={{ "font-size": "var(--app-chat-text-size)" }}
     >
-      <MarkdownBlocks blocks={blocks()} density={props.density ?? "chat"} />
+      <MarkdownBlocks blocks={blocks()} density={props.density ?? "chat"} reveal={reveal} />
+      <Show when={props.streaming}>
+        <span ref={caret.ref} class="hoxi-stream-caret-anchor" aria-hidden="true">
+          <span class="hoxi-stream-caret" />
+        </span>
+      </Show>
     </div>
   );
 }

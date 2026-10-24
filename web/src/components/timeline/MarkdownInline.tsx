@@ -22,6 +22,8 @@ import {
   stripFileLineSuffix,
 } from "./markdown-parser";
 import MarkdownImage from "./MarkdownImage";
+import { locateInlineSpans } from "./markdown/reveal";
+import { StreamRevealText, type StreamReveal } from "./stream-reveal";
 
 function hasNestedInlineSyntax(text: string): boolean {
   return text.includes("`") || /<br\s*\/?>/i.test(text) || text.includes("~~");
@@ -105,7 +107,15 @@ function FileCodeSpan(props: { text: string; unclosed?: boolean }) {
   );
 }
 
-export default function MarkdownInline(props: { text: string }) {
+/**
+ * `reveal` + `revealStart` (absolute offset of `text` in the streamed source) let the
+ * stream painter light up freshly revealed characters of the plain text runs.
+ */
+export default function MarkdownInline(props: {
+  text: string;
+  reveal?: StreamReveal;
+  revealStart?: number;
+}) {
   const text = createMemo(() => props.text);
   const spans = createMemo<InlineSpan[]>((prev) => {
     const next = parseInline(text());
@@ -116,10 +126,25 @@ export default function MarkdownInline(props: { text: string }) {
     }
     return next;
   }, []);
+  const spanOffsets = createMemo(() =>
+    props.reveal && (props.revealStart ?? -1) >= 0
+      ? locateInlineSpans(text(), spans())
+      : undefined
+  );
+  const spanStart = (idx: number) => {
+    const base = props.revealStart ?? -1;
+    const offset = spanOffsets()?.[idx] ?? -1;
+    return base < 0 || offset < 0 ? -1 : base + offset;
+  };
+  const revealedText = (value: string, idx: number) => (
+    <StreamRevealText text={value} start={spanStart(idx)} reveal={props.reveal} />
+  );
   return (
     <Index each={spans()}>
-      {(span) => (
-        <Switch fallback={<>{(span() as Extract<InlineSpan, { type: "text" }>).text}</>}>
+      {(span, idx) => (
+        <Switch
+          fallback={revealedText((span() as Extract<InlineSpan, { type: "text" }>).text, idx)}
+        >
           <Match when={span().type === "br"}>
             <br />
           </Match>
@@ -210,7 +235,7 @@ export default function MarkdownInline(props: { text: string }) {
               const inner = () => (span() as Extract<InlineSpan, { type: "bold" }>).text;
               return (
                 <strong class="font-semibold text-[var(--text-primary)]">
-                  <Show when={hasNestedInlineSyntax(inner())} fallback={inner()}>
+                  <Show when={hasNestedInlineSyntax(inner())} fallback={revealedText(inner(), idx)}>
                     <MarkdownInline text={inner()} />
                   </Show>
                 </strong>
@@ -222,7 +247,7 @@ export default function MarkdownInline(props: { text: string }) {
               const inner = () => (span() as Extract<InlineSpan, { type: "italic" }>).text;
               return (
                 <em class="italic">
-                  <Show when={hasNestedInlineSyntax(inner())} fallback={inner()}>
+                  <Show when={hasNestedInlineSyntax(inner())} fallback={revealedText(inner(), idx)}>
                     <MarkdownInline text={inner()} />
                   </Show>
                 </em>

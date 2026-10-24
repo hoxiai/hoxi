@@ -290,6 +290,86 @@ dialog[open]::backdrop {
   animation: hoxi-item-pop 150ms var(--ease-enter) both;
 }
 
+/*
+ * Live stream reveal (MarkdownView `streaming`). Freshly revealed text is painted
+ * through the CSS Custom Highlight API (no DOM or layout change): it lights up in the
+ * accent glow and cools into the body color, level 0 → 8 over REVEAL_GLOW_MS.
+ */
+::highlight(hoxi-reveal-0) {
+  color: color-mix(in srgb, var(--accent-primary) 28%, transparent);
+  text-shadow: 0 0 0.55em color-mix(in srgb, var(--accent-primary) 30%, transparent);
+}
+
+::highlight(hoxi-reveal-1) {
+  color: color-mix(in srgb, var(--accent-primary) 78%, transparent);
+  text-shadow: 0 0 0.55em color-mix(in srgb, var(--accent-primary) 55%, transparent);
+}
+
+::highlight(hoxi-reveal-2) {
+  color: var(--accent-primary);
+  text-shadow: 0 0 0.55em color-mix(in srgb, var(--accent-primary) 50%, transparent);
+}
+
+::highlight(hoxi-reveal-3) {
+  color: color-mix(in srgb, var(--accent-primary) 78%, var(--text-primary));
+  text-shadow: 0 0 0.55em color-mix(in srgb, var(--accent-primary) 34%, transparent);
+}
+
+::highlight(hoxi-reveal-4) {
+  color: color-mix(in srgb, var(--accent-primary) 60%, var(--text-primary));
+  text-shadow: 0 0 0.55em color-mix(in srgb, var(--accent-primary) 22%, transparent);
+}
+
+::highlight(hoxi-reveal-5) {
+  color: color-mix(in srgb, var(--accent-primary) 44%, var(--text-primary));
+  text-shadow: 0 0 0.55em color-mix(in srgb, var(--accent-primary) 12%, transparent);
+}
+
+::highlight(hoxi-reveal-6) {
+  color: color-mix(in srgb, var(--accent-primary) 30%, var(--text-primary));
+}
+
+::highlight(hoxi-reveal-7) {
+  color: color-mix(in srgb, var(--accent-primary) 17%, var(--text-primary));
+}
+
+::highlight(hoxi-reveal-8) {
+  color: color-mix(in srgb, var(--accent-primary) 7%, var(--text-primary));
+}
+
+/* Glowing dot leading the text; absolutely positioned so it never affects line layout. */
+@keyframes hoxi-stream-caret-breathe {
+  50% {
+    opacity: 0.45;
+    transform: scale3d(0.8, 0.8, 1);
+  }
+}
+
+.hoxi-stream-caret-anchor {
+  position: absolute;
+  left: 0;
+  top: 0;
+  opacity: 0;
+  pointer-events: none;
+  user-select: none;
+  transition:
+    transform 90ms linear,
+    opacity 200ms ease-out;
+}
+
+.hoxi-stream-caret {
+  display: block;
+  width: 0.46em;
+  height: 0.46em;
+  margin: -0.23em 0 0 0.3em;
+  border-radius: 999px;
+  background: var(--accent-primary);
+  box-shadow:
+    0 0 0.2em color-mix(in srgb, var(--accent-primary) 70%, transparent),
+    0 0 0.65em 0.15em color-mix(in srgb, var(--accent-primary) 45%, transparent);
+  animation: hoxi-stream-caret-breathe 1.4s ease-in-out infinite;
+}
+
 /* ============================================================================
  * 5. CSS Grid 0fr -> 1fr Smooth Collapsible Drawers & Rotating Chevrons
  * ============================================================================ */

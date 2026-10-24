@@ -521,11 +521,12 @@ export function AssistantTurnItem(props: {
       >
         <Index each={groupedItems()}>
           {(item, itemIdx) => {
-            const isTailActivityGroup = () =>
+            const isLiveTailItem = () =>
               props.isSessionBusy &&
               merged().ownsLiveTail &&
-              item().kind === "activity-group" &&
               itemIdx === groupedItems().length - 1;
+            const isTailActivityGroup = () =>
+              isLiveTailItem() && item().kind === "activity-group";
             return (
               <Show
                 when={item().kind === "activity-group"}
@@ -537,7 +538,7 @@ export function AssistantTurnItem(props: {
                         : undefined
                     }
                   >
-                    {(part) => <PartView part={part()} />}
+                    {(part) => <PartView part={part()} streaming={isLiveTailItem()} />}
                   </Show>
                 }
               >

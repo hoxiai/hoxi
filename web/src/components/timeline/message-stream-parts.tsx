@@ -130,7 +130,8 @@ export function ContextActivityGroupView(props: {
   );
 }
 
-export function PartView(props: { part: MessagePart; revealKey?: string }) {
+/** `streaming` marks the live tail of a busy session so its text reveals softly. */
+export function PartView(props: { part: MessagePart; revealKey?: string; streaming?: boolean }) {
   const mayHaveInlineThinking = createMemo(() => {
     const raw = props.part;
     if (!raw || raw.type !== "text") return false;
@@ -159,7 +160,7 @@ export function PartView(props: { part: MessagePart; revealKey?: string }) {
   return (
     <div data-part-id={props.part?.id}>
       <For each={expanded()}>
-        {(part) => (
+        {(part, partIdx) => (
           <Switch>
             <Match when={part.type === "reasoning"}>
               <ThoughtBox
@@ -178,6 +179,7 @@ export function PartView(props: { part: MessagePart; revealKey?: string }) {
                       ? extractVisibleAssistantText((part as Extract<MessagePart, { type: "text" }>).text)
                       : (part as Extract<MessagePart, { type: "text" }>).text
                   }
+                  streaming={Boolean(props.streaming) && partIdx() === expanded().length - 1}
                 />
               </div>
             </Match>
