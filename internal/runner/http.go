@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/hoxiai/hoxi/internal/agentcli"
 	"github.com/hoxiai/hoxi/internal/attachment"
@@ -56,6 +57,9 @@ type Service struct {
 	turnStats           sync.Map // session ID -> *turnCounts
 	promptReceipts      sync.Map // sessionID\x00clientRequestID -> cachedPromptReceipt
 	permissionReplies   sync.Map // permissionID\x00clientRequestID -> cachedPermissionReply
+
+	// openCodeTimeoutRetries overrides openCodeTimeoutRetryDelays in tests.
+	openCodeTimeoutRetries []time.Duration
 }
 
 // SetSummaryNotifier receives the end-of-turn count line. The body contains

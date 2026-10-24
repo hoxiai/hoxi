@@ -260,7 +260,8 @@ func (s *Service) askOpenCodeUser(item map[string]interface{}, sessionID, direct
 
 // armOpenCodeTimeout rejects an OpenCode request that nobody answers before
 // the policy timeout. The timer and a user reply share one claim, so only one
-// of them answers the request.
+// of them answers the request. A reject OpenCode refuses is sent again after
+// each of openCodeTimeoutRetryDelays until the request is settled.
 func (s *Service) armOpenCodeTimeout(id, sessionID, directory string, item map[string]interface{}) {
 	created := time.Now()
 	if ms, ok := item["createdAt"].(float64); ok && ms > 0 {
@@ -273,35 +274,58 @@ func (s *Service) armOpenCodeTimeout(id, sessionID, directory string, item map[s
 		delay = 0
 	}
 	summary := permissionSummaryText(item)
+	retries := s.openCodeTimeoutRetries
+	if retries == nil {
+		retries = openCodeTimeoutRetryDelays
+	}
 	go func() {
 		timer := time.NewTimer(delay)
 		defer timer.Stop()
-		<-timer.C
-		if _, pending := s.gate.openCodeAskFor(id); !pending {
-			return
+		for attempt := 0; ; attempt++ {
+			<-timer.C
+			if s.timeoutRejectOpenCode(id, sessionID, directory, summary) || attempt >= len(retries) {
+				return
+			}
+			timer.Reset(retries[attempt])
 		}
-		release, ok := s.claimOpenCodeAnswer(id)
-		if !ok {
-			return
-		}
-		reason := approvalTimeoutReason(s.ApprovalPolicy())
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		body, _ := json.Marshal(map[string]string{"reply": "reject", "message": reason})
-		status, _, err := s.replyOpenCodePermission(ctx, id, directory, body)
-		if err == nil && status == http.StatusNotFound {
-			s.settleOpenCodePermission(id)
-			return
-		}
-		if err != nil || status < 200 || status >= 300 {
-			release()
-			return
-		}
-		s.recordOpenCodeAudit(id, sessionID, directory, "reject", reason, approvalSourceTimeout)
-		s.rememberDeferred(sessionID, id, "timeout", summary)
-		s.noteTurn(sessionID, "timeout")
-		s.settleOpenCodePermission(id)
 	}()
+}
+
+// openCodeTimeoutRetryDelays spaces the timeout's further rejects after
+// OpenCode refused one or another answer was in flight. Once they run out
+// the request stays shown to the user.
+var openCodeTimeoutRetryDelays = []time.Duration{5 * time.Second, 15 * time.Second, 30 * time.Second, time.Minute, 2 * time.Minute}
+
+// timeoutRejectOpenCode sends the timeout's reject. It reports true when the
+// request needs no further attempt: it was answered, settled or forgotten.
+// The timeout only ever rejects; it never approves.
+func (s *Service) timeoutRejectOpenCode(id, sessionID, directory, summary string) bool {
+	if _, pending := s.gate.openCodeAskFor(id); !pending {
+		return true
+	}
+	release, ok := s.claimOpenCodeAnswer(id)
+	if !ok {
+		// Another answer is in flight; check again after the next delay.
+		return false
+	}
+	reason := approvalTimeoutReason(s.ApprovalPolicy())
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	body, _ := json.Marshal(map[string]string{"reply": "reject", "message": reason})
+	status, _, err := s.replyOpenCodePermission(ctx, id, directory, body)
+	if err == nil && status == http.StatusNotFound {
+		s.settleOpenCodePermission(id)
+		return true
+	}
+	if err != nil || status < 200 || status >= 300 {
+		release()
+		return false
+	}
+	s.recordOpenCodeAudit(id, sessionID, directory, "reject", reason, approvalSourceTimeout)
+	s.rememberDeferred(sessionID, id, "timeout", summary)
+	s.noteTurn(sessionID, "timeout")
+	s.settleOpenCodePermission(id)
+	return true
 }
 
 // claimOpenCodeSSELine handles permission.asked frames on the raw OpenCode
