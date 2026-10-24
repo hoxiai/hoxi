@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hoxiai/hoxi/internal/codeindex"
 	"github.com/hoxiai/hoxi/internal/handoff"
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
 	"github.com/hoxiai/hoxi/internal/opencode"
@@ -492,4 +494,107 @@ func runNativeOpenCodeTUI(ctx context.Context, args []string, dir string, stdout
 		return 1
 	}
 	return 0
+}
+
+func runCodeIndexCommand(args []string, cwd string, stdout, stderr io.Writer) int {
+	action := "search"
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		action = strings.ToLower(strings.TrimSpace(args[0]))
+		args = args[1:]
+	}
+	fs := flag.NewFlagSet("hoxi code-index", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var (
+		dir          string
+		query        string
+		symbol       string
+		relPath      string
+		startLine    int
+		endLine      int
+		contextLines int
+		limit        int
+		refresh      bool
+	)
+	fs.StringVar(&dir, "dir", cwd, "workspace directory")
+	fs.StringVar(&query, "q", "", "search query")
+	fs.StringVar(&query, "query", "", "search query")
+	fs.StringVar(&symbol, "symbol", "", "symbol name for inspect or callers")
+	fs.StringVar(&relPath, "path", "", "relative file path or prefix")
+	fs.IntVar(&startLine, "start", 0, "1-based start line for inspect")
+	fs.IntVar(&startLine, "start-line", 0, "1-based start line for inspect")
+	fs.IntVar(&endLine, "end", 0, "1-based end line for inspect")
+	fs.IntVar(&endLine, "end-line", 0, "1-based end line for inspect")
+	fs.IntVar(&contextLines, "context", 5, "context lines for inspect")
+	fs.IntVar(&limit, "limit", 12, "maximum results")
+	fs.BoolVar(&refresh, "refresh", false, "refresh index before searching")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	pos := strings.TrimSpace(strings.Join(fs.Args(), " "))
+	svc := codeindex.NewService("")
+	writeOut := func(v any) int {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(v); err != nil {
+			fmt.Fprintf(stderr, "Error encoding output: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+	switch action {
+	case "search":
+		if query == "" {
+			query = firstNonEmpty(pos, symbol)
+		}
+		if refresh {
+			_, _ = svc.Refresh(dir)
+		}
+		res, err := svc.SearchWithPath(dir, query, relPath, limit)
+		if err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return 1
+		}
+		return writeOut(res)
+	case "inspect":
+		if symbol == "" && relPath == "" && pos != "" {
+			if strings.Contains(pos, "/") || strings.Contains(pos, ".") {
+				relPath = pos
+			} else {
+				symbol = pos
+			}
+		}
+		res, err := svc.Inspect(dir, relPath, symbol, startLine, endLine, contextLines)
+		if err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return 1
+		}
+		return writeOut(res)
+	case "callers":
+		if symbol == "" {
+			symbol = firstNonEmpty(pos, query)
+		}
+		res, err := svc.Callers(dir, symbol, relPath, limit)
+		if err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return 1
+		}
+		return writeOut(res)
+	case "refresh":
+		res, err := svc.Refresh(dir)
+		if err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return 1
+		}
+		return writeOut(res)
+	case "status":
+		res, err := svc.Status(dir)
+		if err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return 1
+		}
+		return writeOut(res)
+	default:
+		fmt.Fprintf(stderr, "Unknown code-index action %q (supported: search, inspect, callers, refresh, status)\n", action)
+		return 2
+	}
 }

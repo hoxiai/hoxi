@@ -39,6 +39,8 @@ var knownSubcommands = map[string]bool{
 	"models":      true,
 	"handoff":     true,
 	"worktree":    true,
+	"code-index":  true,
+	"codeindex":   true,
 	"sessions":    true,
 	"status":      true,
 	"install-cli": true,
@@ -154,6 +156,8 @@ func Run(
 			return runSessionsCommand(ctx, args[2:], cwd, defaultBridgeAddr, bootHeadless, stdout, stderr)
 		case "worktree":
 			return runWorktreeCommand(ctx, args[2:], cwd, defaultBridgeAddr, bootHeadless, stdout, stderr)
+		case "code-index", "codeindex":
+			return runCodeIndexCommand(args[2:], cwd, stdout, stderr)
 		case "handoff":
 			return runHandoffCommand(ctx, args[2:], cwd, defaultBridgeAddr, bootHeadless, stdout, stderr)
 		case "status":
@@ -266,6 +270,7 @@ Usage:
   hoxi sessions                       List sessions in the current directory
   hoxi handoff [list|import]          Inspect or import sessions across Claude/Codex/AGY/OpenCode
   hoxi worktree [list|diff|apply]     Manage isolated Git worktree sandboxes
+  hoxi code-index <action> [flags]    Navigate code via worktree index (search|inspect|callers|refresh)
   hoxi tui                            Launch native OpenCode TUI with Hoxi plugins
   hoxi serve                          Run headless Hoxi daemon for mobile/remote control
   hoxi install-cli                    Install 'hoxi' command into /usr/local/bin or ~/.local/bin

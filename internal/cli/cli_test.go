@@ -396,3 +396,36 @@ func TestStreamTurnUnifiedSSEFilterHeartbeatAndResync(t *testing.T) {
 		t.Fatalf("rendered output = %q, want %q", gotOut, "Hello recovered world!")
 	}
 }
+
+func TestCLICodeIndexSubcommand(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nfunc RunServer() {\n\tprintln(\"ok\")\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, ".hoxi"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".hoxi", "cloudflared.json"), []byte(`{"token":"secret"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var outBuf, errBuf bytes.Buffer
+	code := runCodeIndexCommand([]string{"search", "--dir", dir, "RunServer"}, dir, &outBuf, &errBuf)
+	if code != 0 || !strings.Contains(outBuf.String(), "RunServer") {
+		t.Fatalf("code-index search failed (code=%d): out=%s err=%s", code, outBuf.String(), errBuf.String())
+	}
+
+	outBuf.Reset()
+	errBuf.Reset()
+	code = runCodeIndexCommand([]string{"inspect", "--dir", dir, "--path", "main.go", "--symbol", "RunServer"}, dir, &outBuf, &errBuf)
+	if code != 0 || !strings.Contains(outBuf.String(), "func RunServer()") {
+		t.Fatalf("code-index inspect failed (code=%d): out=%s err=%s", code, outBuf.String(), errBuf.String())
+	}
+
+	outBuf.Reset()
+	errBuf.Reset()
+	code = runCodeIndexCommand([]string{"inspect", "--dir", dir, "--path", ".hoxi/cloudflared.json"}, dir, &outBuf, &errBuf)
+	if code == 0 {
+		t.Fatalf("expected code-index inspect on .hoxi/cloudflared.json to fail, got out=%s", outBuf.String())
+	}
+}

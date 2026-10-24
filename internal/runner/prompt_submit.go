@@ -30,7 +30,7 @@ const commandExecutionGuidance = `Hoxi command execution:
 Keep build, test and workspace-check progress visible. Unless the user explicitly requests it, do not pipe long-running checks into tail/head or filters that suppress progress: tail -N waits for EOF, and grep may buffer output.
 Use the tool's bounded output when available. If a full log is needed, save it to a unique temporary file and inspect bounded excerpts while the command runs. Preserve and check the original command's exit status; a successful tail/grep does not prove the check passed.
 Set a suitable tool timeout and test timeout. If a check stays silent, inspect its current stage and existing log before retrying; do not start duplicate checks or repeatedly wait without reporting progress. Reuse build caches unless a clean build is required.
-When navigating code, follow: locate symbol/file (prefer hoxi_code_index when available) -> inspect the target function and minimal surrounding lines instead of whole files -> check callers and related tests -> edit -> run targeted verification.`
+When navigating code, follow: locate symbol/file (prefer hoxi_code_index tool or 'hoxi code-index search|inspect|callers|refresh') -> inspect the target function and minimal surrounding lines instead of whole files -> check callers and related tests -> edit -> run targeted verification.`
 
 // PromptReceipt is returned by POST .../prompt and .../prompt_async so callers
 // can correlate node-assigned instruction/message IDs and detect deduplicated retries.

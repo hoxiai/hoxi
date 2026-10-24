@@ -44,7 +44,8 @@ const GO_UNSAFE_FLAGS = new Set([
   "coverprofile", "cpuprofile", "memprofile", "blockprofile", "mutexprofile", "trace", "outputdir",
 ]);
 const GO_ENV_WRITE_FLAGS = new Set(["w", "u"]);
-const TOOLCHAIN_BASES = new Set(["go", "npm", "pnpm", "yarn", "cargo", "pytest", "tsc", "npx", "node", "git"]);
+const HOXI_CODE_INDEX_SUBCOMMANDS = new Set(["search", "inspect", "callers", "refresh", "status"]);
+const TOOLCHAIN_BASES = new Set(["go", "npm", "pnpm", "yarn", "cargo", "pytest", "tsc", "npx", "node", "git", "hoxi"]);
 const SYSTEM_TOOL_DIRS = new Set([
   "/usr/local/go/bin", "/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin",
 ]);
@@ -367,7 +368,35 @@ function isSafeWords(words) {
   if (cmd === "node") {
     return args.length === 1 && args[0] === "-v";
   }
+  if (cmd === "hoxi") {
+    return (
+      (arg(0) === "code-index" || arg(0) === "codeindex") &&
+      HOXI_CODE_INDEX_SUBCOMMANDS.has(arg(1)) &&
+      hoxiCodeIndexArgsSafe(args.slice(2))
+    );
+  }
   return false;
+}
+
+function hoxiCodeIndexArgsSafe(args) {
+  for (let i = 0; i < args.length; i++) {
+    const a = String(args[i] || "").trim();
+    if (!a) continue;
+    if (a === "-dir" || a === "--dir" || a.startsWith("-dir=") || a.startsWith("--dir=")) {
+      return false;
+    }
+    let val = a;
+    if (a.startsWith("-")) {
+      const eq = a.indexOf("=");
+      if (eq < 0) continue;
+      val = a.slice(eq + 1);
+    }
+    const parts = val.split(/[\\/]+/).filter(Boolean);
+    if (parts.includes("..") || isProtectedPath(val) || isSecretPath(val) || isSensitiveExternalPath(val)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function isSafeSegment(segment) {

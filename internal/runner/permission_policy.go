@@ -119,7 +119,8 @@ var (
 	// Flags that run another binary or write to an arbitrary path.
 	goUnsafeFlags = setOf("exec", "toolexec", "vettool", "o", "ldflags", "gccgoflags",
 		"coverprofile", "cpuprofile", "memprofile", "blockprofile", "mutexprofile", "trace", "outputdir")
-	goEnvWriteFlags = setOf("w", "u")
+	goEnvWriteFlags            = setOf("w", "u")
+	hoxiCodeIndexSubcommands  = setOf("search", "inspect", "callers", "refresh", "status")
 )
 
 func setOf(items ...string) map[string]bool {
@@ -295,7 +296,7 @@ func isWorktreeCD(segment, worktree string) bool {
 
 // toolchainBases are absolute binaries whose basename the shared policy
 // already recognizes. Only binaries inside trustedToolDirs are rewritten.
-var toolchainBases = setOf("go", "npm", "pnpm", "yarn", "cargo", "pytest", "tsc", "npx", "node", "git")
+var toolchainBases = setOf("go", "npm", "pnpm", "yarn", "cargo", "pytest", "tsc", "npx", "node", "git", "hoxi")
 
 // systemToolDirs must match SYSTEM_TOOL_DIRS in permission-policy.js.
 var systemToolDirs = []string{"/usr/local/go/bin", "/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"}
@@ -402,8 +403,41 @@ func isSafeWords(words []string) bool {
 		return arg(0) == "tsc" && toolArgsSafe("tsc", args[1:])
 	case cmd == "node":
 		return len(args) == 1 && args[0] == "-v"
+	case cmd == "hoxi":
+		return (arg(0) == "code-index" || arg(0) == "codeindex") &&
+			hoxiCodeIndexSubcommands[arg(1)] &&
+			hoxiCodeIndexArgsSafe(args[2:])
 	}
 	return false
+}
+
+func hoxiCodeIndexArgsSafe(args []string) bool {
+	for _, raw := range args {
+		a := strings.TrimSpace(raw)
+		if a == "" {
+			continue
+		}
+		if a == "-dir" || a == "--dir" || strings.HasPrefix(a, "-dir=") || strings.HasPrefix(a, "--dir=") {
+			return false
+		}
+		val := a
+		if strings.HasPrefix(a, "-") {
+			eq := strings.IndexByte(a, '=')
+			if eq < 0 {
+				continue
+			}
+			val = a[eq+1:]
+		}
+		for _, seg := range strings.FieldsFunc(val, func(r rune) bool { return r == '/' || r == '\\' }) {
+			if seg == ".." {
+				return false
+			}
+		}
+		if isProtectedRelPath(val) || isSecretFilePath(val) || isSensitiveExternalPath(val) {
+			return false
+		}
+	}
+	return true
 }
 
 func toolArgsSafe(cmd string, args []string) bool {
