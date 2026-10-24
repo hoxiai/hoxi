@@ -2,6 +2,7 @@
 import { Show } from "solid-js";
 import {
   DEFAULT_WORKSPACE_IDENTITY_COLOR,
+  isDefaultWorkspacePath,
   isDismissedProjectPath,
   isInvalidProjectPath,
   normalizeFolderPath,
@@ -178,6 +179,7 @@ export function buildAllProjects(): ProjectNavEntry[] {
     if (
       !primary ||
       isInvalidProjectPath(primary) ||
+      isDefaultWorkspacePath(primary) ||
       isDismissedProjectPath(saved.id) ||
       isDismissedProjectPath(primary)
     ) {
@@ -201,7 +203,7 @@ export function buildAllProjects(): ProjectNavEntry[] {
 
   for (const p of workspace.projects) {
     const wt = normalizeFolderPath(p.worktree);
-    if (!wt || isInvalidProjectPath(wt) || isDismissedProjectPath(wt) || secondaryPaths.has(wt)) continue;
+    if (!wt || isInvalidProjectPath(wt) || isDefaultWorkspacePath(wt) || isDismissedProjectPath(wt) || secondaryPaths.has(wt)) continue;
     const existing = map.get(wt);
     if (!existing) {
       map.set(wt, {
@@ -223,6 +225,7 @@ export function buildAllProjects(): ProjectNavEntry[] {
     if (
       !clean ||
       isInvalidProjectPath(clean) ||
+      isDefaultWorkspacePath(clean) ||
       isDismissedProjectPath(clean) ||
       map.has(clean) ||
       secondaryPaths.has(clean)
@@ -244,6 +247,7 @@ export function buildAllProjects(): ProjectNavEntry[] {
   if (
     rootClean &&
     !isInvalidProjectPath(rootClean) &&
+    !isDefaultWorkspacePath(rootClean) &&
     !isDismissedProjectPath(rootClean) &&
     !map.has(rootClean) &&
     !secondaryPaths.has(rootClean)

@@ -14,9 +14,12 @@ export type InspectorSurfaceTabID =
 export interface SurfaceExtension {
   enabled: boolean;
   defaultMode?: SurfaceMode;
+  renderTheme?: () => JSX.Element;
   renderHeaderSwitch?: () => JSX.Element;
+  renderHeaderCenter?: () => JSX.Element;
   renderLeftNav?: () => JSX.Element;
   renderLaunchpad?: () => JSX.Element;
+  renderComposer?: () => JSX.Element;
   inspectorTabs?: {
     primary: InspectorSurfaceTabID[];
     secondary: InspectorSurfaceTabID[];

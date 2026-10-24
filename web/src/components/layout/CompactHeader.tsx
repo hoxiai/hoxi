@@ -109,14 +109,19 @@ export default function CompactHeader(props: CompactHeaderProps) {
       </div>
 
       <div class="flex flex-1 min-w-0 items-center justify-center gap-2">
-        <span
-          class="min-w-0 truncate text-[12px] font-medium text-[var(--text-primary)] transition-opacity duration-150"
-          title={sessionTitle()}
+        <Show
+          when={!(isWorkSurface() && surfaceExtension.renderHeaderCenter)}
+          fallback={surfaceExtension.renderHeaderCenter!()}
         >
-          {sessionTitle()}
-        </span>
-        <Show when={!(isWorkSurface() && surfaceExtension.hideGitControls)}>
-          <BranchManagerPopover />
+          <span
+            class="min-w-0 truncate text-[12px] font-medium text-[var(--text-primary)] transition-opacity duration-150"
+            title={sessionTitle()}
+          >
+            {sessionTitle()}
+          </span>
+          <Show when={!(isWorkSurface() && surfaceExtension.hideGitControls)}>
+            <BranchManagerPopover />
+          </Show>
         </Show>
       </div>
 

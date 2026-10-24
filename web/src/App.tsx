@@ -45,6 +45,7 @@ import {
   scheduleRefreshWorktreeStatus,
   selectSession,
   setDefaultWorkspaceDir,
+  setRememberedCodeSurface,
   setSurfaceMode,
   setWorkspace,
   syncActiveProjectID,
@@ -110,17 +111,19 @@ export default function App() {
         const bootRoot = isInvalidProjectPath(boot.rootDir)
           ? ""
           : normalizeFolderPath(boot.rootDir);
+        const startInWork = isWorkSurface() && Boolean(fallbackWorkDir);
+        const initialRoot = startInWork ? fallbackWorkDir : bootRoot;
         setWorkspace({
           appVersion: boot.appVersion,
-          rootDir: bootRoot,
+          rootDir: initialRoot,
           activeProjectID: null,
           wsBaseURL: boot.wsBaseURL,
         });
 
         const eagerBootRoot =
-          bootRoot && !isDismissedProjectPath(bootRoot) ? bootRoot : "";
+          initialRoot && !isDismissedProjectPath(initialRoot) ? initialRoot : "";
         const eagerSessionsPromise = eagerBootRoot
-          ? bootstrapProjectSessions(eagerBootRoot).catch((err) => {
+          ? bootstrapProjectSessions(eagerBootRoot, !startInWork).catch((err) => {
               console.warn("Initial session load retry pending:", err);
               return null;
             })
@@ -145,22 +148,27 @@ export default function App() {
 
         await Promise.all([loadSavedWorkspaces(), loadProjects()]);
 
-        const resolvedRoot = resolveDefaultProjectDir(bootRoot);
-        const activeRoot =
-          resolvedRoot || (isWorkSurface() && fallbackWorkDir ? fallbackWorkDir : "");
+        const resolvedCodeRoot = resolveDefaultProjectDir(bootRoot);
+        if (resolvedCodeRoot) {
+          setRememberedCodeSurface(resolvedCodeRoot, null);
+        }
+        const activeRoot = startInWork
+          ? fallbackWorkDir
+          : resolvedCodeRoot;
         if (activeRoot && activeRoot !== workspace.rootDir) {
           setWorkspace("rootDir", activeRoot);
         }
 
         if (activeRoot) {
+          const selectInitial = !startInWork;
           const projectID = await syncActiveProjectID(activeRoot);
           if (eagerSessionsPromise && activeRoot === eagerBootRoot) {
             await eagerSessionsPromise;
             if (workspace.sessions.length === 0) {
-              await bootstrapProjectSessions(activeRoot, true, projectID);
+              await bootstrapProjectSessions(activeRoot, selectInitial, projectID);
             }
           } else {
-            await bootstrapProjectSessions(activeRoot, true, projectID);
+            await bootstrapProjectSessions(activeRoot, selectInitial, projectID);
           }
         } else {
           setWorkspace("bootstrappingSessions", false);

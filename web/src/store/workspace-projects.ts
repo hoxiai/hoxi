@@ -23,19 +23,82 @@ import { isSessionArchived, isSessionBusy, isSessionDeleted } from "./session-qu
 import {
   findWorkspaceProfileByDir,
   findWorkspaceProfileById,
+  isDefaultWorkspacePath,
   isDismissedProjectPath,
   isInvalidProjectPath,
   normalizeFolderPath,
   recordDismissedProject,
+  resolveDefaultProjectDir,
   unrecordDismissedProject,
   workspacePrimaryFolder,
 } from "./workspace-folders";
+import {
+  defaultWorkspaceDir,
+  setSurfaceMode,
+  surfaceMode,
+  type SurfaceMode,
+} from "./layout";
 import { refreshWorktreeStatus } from "./session-diffs";
 import { filterProjectSessions } from "./session-index";
 
 let projectSessionLoadRevision = 0;
 let appliedProjectSessionRevision = 0;
 let projectResolutionRevision = 0;
+
+let rememberedCodeSurface: { rootDir: string; sessionID: string | null } = {
+  rootDir: "",
+  sessionID: null,
+};
+let rememberedWorkSurface: { rootDir: string; sessionID: string | null } = {
+  rootDir: "",
+  sessionID: null,
+};
+
+export function setRememberedCodeSurface(rootDir: string, sessionID: string | null = null): void {
+  const clean = normalizeFolderPath(rootDir);
+  if (clean && !isInvalidProjectPath(clean) && !isDefaultWorkspacePath(clean)) {
+    rememberedCodeSurface = { rootDir: clean, sessionID };
+  }
+}
+
+export async function activateSurfaceMode(nextMode: SurfaceMode): Promise<void> {
+  const prevMode = surfaceMode();
+  setSurfaceMode(nextMode);
+  if (prevMode === nextMode) return;
+
+  const currentRoot = normalizeFolderPath(workspace.rootDir);
+  const currentSessionID = workspace.activeSessionID;
+
+  if (prevMode === "code" && currentRoot && !isDefaultWorkspacePath(currentRoot)) {
+    rememberedCodeSurface = { rootDir: currentRoot, sessionID: currentSessionID };
+  } else if (prevMode === "work" && currentRoot) {
+    rememberedWorkSurface = { rootDir: currentRoot, sessionID: currentSessionID };
+  }
+
+  if (nextMode === "work") {
+    const workDir = normalizeFolderPath(rememberedWorkSurface.rootDir || defaultWorkspaceDir());
+    if (workDir) {
+      await switchWorkspace(workDir, {
+        targetSessionID: rememberedWorkSurface.sessionID ?? undefined,
+        selectInitial: false,
+      });
+    } else {
+      setWorkspace({ rootDir: "", sessions: [], activeSessionID: null, activeProjectID: null });
+    }
+  } else {
+    const codeDir = normalizeFolderPath(
+      rememberedCodeSurface.rootDir || resolveDefaultProjectDir("")
+    );
+    if (codeDir && !isDefaultWorkspacePath(codeDir)) {
+      await switchWorkspace(codeDir, {
+        targetSessionID: rememberedCodeSurface.sessionID ?? undefined,
+        selectInitial: !rememberedCodeSurface.sessionID,
+      });
+    } else {
+      setWorkspace({ rootDir: "", sessions: [], activeSessionID: null, activeProjectID: null });
+    }
+  }
+}
 
 export async function loadSavedWorkspaces(): Promise<void> {
   try {
@@ -57,7 +120,10 @@ export async function loadProjects(): Promise<void> {
   try {
     const remote = await hoxiAPI.listProjects();
     const list = (Array.isArray(remote) ? remote : []).filter(
-      (p) => !isInvalidProjectPath(p.worktree) && !isDismissedProjectPath(p.worktree)
+      (p) =>
+        !isInvalidProjectPath(p.worktree) &&
+        !isDismissedProjectPath(p.worktree) &&
+        !isDefaultWorkspacePath(p.worktree)
     );
     setWorkspace("projects", list);
   } catch (err) {
@@ -67,9 +133,9 @@ export async function loadProjects(): Promise<void> {
 
 export function recordRecentProject(directory: string) {
   const cleaned = normalizeFolderPath(directory);
-  if (!cleaned || isInvalidProjectPath(cleaned)) return;
+  if (!cleaned || isInvalidProjectPath(cleaned) || isDefaultWorkspacePath(cleaned)) return;
   const recents = workspace.recentProjects.filter(
-    (p) => normalizeFolderPath(p) !== cleaned && !isInvalidProjectPath(p)
+    (p) => normalizeFolderPath(p) !== cleaned && !isInvalidProjectPath(p) && !isDefaultWorkspacePath(p)
   );
   const updatedRecents = [cleaned, ...recents].slice(0, 20);
   setWorkspace("recentProjects", updatedRecents);

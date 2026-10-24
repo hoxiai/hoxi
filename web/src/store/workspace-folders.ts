@@ -2,6 +2,7 @@
 // Workspace profile / folder path queries and dismissed-project bookkeeping.
 // Leaf module: depends only on workspace-state.
 import type { WorkspaceFolder, WorkspaceProfile } from "../services/api";
+import { defaultWorkspaceDir } from "./layout";
 import { DISMISSED_PROJECTS_KEY, setWorkspace, workspace } from "./workspace-state";
 
 // Directly borrowed from Kilo Desktop: plugins/kilo-ui/src/contracts/workspaces/identity-color.ts
@@ -84,6 +85,13 @@ export function isInvalidProjectPath(p?: string | null): boolean {
   return false;
 }
 
+export function isDefaultWorkspacePath(p?: string | null): boolean {
+  const def = normalizeFolderPath(defaultWorkspaceDir());
+  if (!def) return false;
+  const norm = stripWorktreePath(p);
+  return Boolean(norm && norm === def);
+}
+
 /** Saved workspaces the user can see: excludes auto-registered hidden projects and dismissed ones. */
 export function visibleSavedWorkspaces(): WorkspaceProfile[] {
   return workspace.savedWorkspaces.filter((saved) => !saved.hidden && !isDismissedProjectPath(saved.id));
@@ -91,24 +99,24 @@ export function visibleSavedWorkspaces(): WorkspaceProfile[] {
 
 export function resolveDefaultProjectDir(preferredRoot?: string | null): string {
   const pref = normalizeFolderPath(preferredRoot);
-  if (pref && !isInvalidProjectPath(pref) && !isDismissedProjectPath(pref)) {
+  if (pref && !isInvalidProjectPath(pref) && !isDismissedProjectPath(pref) && !isDefaultWorkspacePath(pref)) {
     return pref;
   }
   for (const saved of visibleSavedWorkspaces()) {
     const primary = normalizeFolderPath(workspacePrimaryFolder(saved));
-    if (primary && !isInvalidProjectPath(primary) && !isDismissedProjectPath(primary)) {
+    if (primary && !isInvalidProjectPath(primary) && !isDismissedProjectPath(primary) && !isDefaultWorkspacePath(primary)) {
       return primary;
     }
   }
   for (const recent of workspace.recentProjects) {
     const clean = normalizeFolderPath(recent);
-    if (clean && !isInvalidProjectPath(clean) && !isDismissedProjectPath(clean)) {
+    if (clean && !isInvalidProjectPath(clean) && !isDismissedProjectPath(clean) && !isDefaultWorkspacePath(clean)) {
       return clean;
     }
   }
   for (const proj of workspace.projects) {
     const wt = normalizeFolderPath(proj.worktree);
-    if (wt && !isInvalidProjectPath(wt) && !isDismissedProjectPath(wt)) {
+    if (wt && !isInvalidProjectPath(wt) && !isDismissedProjectPath(wt) && !isDefaultWorkspacePath(wt)) {
       return wt;
     }
   }

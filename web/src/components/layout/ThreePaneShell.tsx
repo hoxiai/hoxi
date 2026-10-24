@@ -11,6 +11,7 @@ import ParticleLogo from "../timeline/ParticleLogo";
 import ImagePreviewOverlay from "../preview/ImagePreviewOverlay";
 import InspectorPane from "../inspector/InspectorPane";
 import {
+  activateSurfaceMode,
   appSettings,
   closeSettingsModal,
   isUpdateModalOpen,
@@ -30,7 +31,6 @@ import {
   setLeftNavOpen,
   setLeftWidth,
   setRightWidth,
-  setSurfaceMode,
   setWorkspace,
   startDeepLinkNavigation,
   workspace,
@@ -121,12 +121,12 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
       if (surfaceExtension.enabled && (ev.metaKey || ev.ctrlKey) && !ev.shiftKey && !ev.altKey) {
         if (ev.key === "1") {
           ev.preventDefault();
-          setSurfaceMode("work");
+          void activateSurfaceMode("work");
           return;
         }
         if (ev.key === "2") {
           ev.preventDefault();
-          setSurfaceMode("code");
+          void activateSurfaceMode("code");
           return;
         }
       }
@@ -227,7 +227,13 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
   };
 
   return (
-    <div class="h-screen w-screen flex flex-col bg-[var(--bg-canvas)] text-[var(--text-primary)] overflow-hidden">
+    <div
+      data-surface={isWorkSurface() ? "work" : "code"}
+      class="h-screen w-screen flex flex-col bg-[var(--bg-canvas)] text-[var(--text-primary)] overflow-hidden transition-colors duration-200"
+    >
+      <Show when={isWorkSurface() && surfaceExtension.renderTheme}>
+        {surfaceExtension.renderTheme!()}
+      </Show>
       <CompactHeader
         network={props.network}
         leftNavOpen={leftNavOpen()}
@@ -310,7 +316,12 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
                   </Show>
                 </div>
               </div>
-              <Composer />
+              <Show
+                when={!(isWorkSurface() && surfaceExtension.renderComposer)}
+                fallback={surfaceExtension.renderComposer!()}
+              >
+                <Composer />
+              </Show>
             </div>
           </div>
           <div
