@@ -65,13 +65,15 @@ export default function SandboxLifecycleSection(props: {
     }
   };
 
+  const targetSessionID = createMemo(() => props.sessionID || session()?.id || null);
+
   const onApplyAndExit = () => {
-    const s = session();
-    if (!s) return;
+    const sid = targetSessionID();
+    if (!sid) return;
     return runAction(
       "apply-exit",
       async () => {
-        await applyAndExitSessionWorktree(s.id, appSettings.worktreeApplyMode, isPromotedBranch());
+        await applyAndExitSessionWorktree(sid, appSettings.worktreeApplyMode, isPromotedBranch());
         props.onClose();
       },
       t("timeline.sandboxApplyFailed")
@@ -79,12 +81,12 @@ export default function SandboxLifecycleSection(props: {
   };
 
   const onApplyKeepSandbox = () => {
-    const s = session();
-    if (!s) return;
+    const sid = targetSessionID();
+    if (!sid) return;
     return runAction(
       "apply-keep",
       async () => {
-        await applySessionWorktree(s.id, appSettings.worktreeApplyMode);
+        await applySessionWorktree(sid, appSettings.worktreeApplyMode);
         setNotice(t("timeline.sandboxAppliedSuccess"));
       },
       t("timeline.sandboxApplyFailed")
@@ -92,12 +94,12 @@ export default function SandboxLifecycleSection(props: {
   };
 
   const onSyncSandboxWithBase = () => {
-    const s = session();
-    if (!s) return;
+    const sid = targetSessionID();
+    if (!sid) return;
     return runAction(
       "sync-base",
       async () => {
-        await syncSessionWorktree(s.id);
+        await syncSessionWorktree(sid);
         setNotice(t("timeline.sandboxSyncedBaseSuccess", { branch: baseBranch() }));
       },
       t("timeline.sandboxApplyFailed")
@@ -105,25 +107,25 @@ export default function SandboxLifecycleSection(props: {
   };
 
   const onRenameSandboxBranch = () => {
-    const s = session();
+    const sid = targetSessionID();
     const cleaned = renameDraft().trim();
-    if (!s || !cleaned) return;
+    if (!sid || !cleaned) return;
     return runAction(
       "rename",
       async () => {
-        await renameSessionBranch(s.id, cleaned);
+        await renameSessionBranch(sid, cleaned);
       },
       t("timeline.sandboxRenameFailed")
     );
   };
 
   const onExitSandbox = (keepBranch: boolean) => {
-    const s = session();
-    if (!s) return;
+    const sid = targetSessionID();
+    if (!sid) return;
     return runAction(
       keepBranch ? "keep-exit" : "discard-exit",
       async () => {
-        await exitSessionWorktree(s.id, keepBranch);
+        await exitSessionWorktree(sid, keepBranch);
         props.onClose();
       },
       t("timeline.sandboxExitFailed")
@@ -231,17 +233,20 @@ export default function SandboxLifecycleSection(props: {
         </div>
 
         <div class="pt-1 border-t border-[var(--border-subtle)] flex flex-col gap-1">
-          <Show when={isPromotedBranch()}>
-            <button
-              type="button"
-              disabled={!!busyAction() || props.busy}
-              onClick={() => void onExitSandbox(true)}
-              class="w-full flex items-center gap-2 rounded-xl px-2.5 py-1.5 text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:opacity-50 transition-colors cursor-pointer"
+          <button
+            type="button"
+            disabled={!!busyAction() || props.busy}
+            onClick={() => void onExitSandbox(true)}
+            class="w-full flex items-center gap-2 rounded-xl px-2.5 py-1.5 text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:opacity-50 transition-colors cursor-pointer"
+          >
+            <Show
+              when={busyAction() !== "keep-exit"}
+              fallback={<LoaderCircle size={12} class="animate-spin shrink-0" />}
             >
               <GitBranch size={12} class="shrink-0 text-[var(--accent-primary)]" />
-              <span>{t("timeline.sandboxKeepExitBtn")}</span>
-            </button>
-          </Show>
+            </Show>
+            <span>{t("timeline.sandboxKeepExitBtn")}</span>
+          </button>
           <button
             type="button"
             disabled={!!busyAction() || props.busy}

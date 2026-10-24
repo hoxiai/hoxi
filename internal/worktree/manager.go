@@ -185,17 +185,19 @@ func (m *worktreeManager) CreateOnBranch(sessionID, retainedBranch string) (work
 	if _, err := os.Stat(worktreeDir); os.IsNotExist(err) {
 		isNewWorktree = true
 		_, _ = runGit(repoRoot, "worktree", "prune")
+		attached := false
 		if retainedBranch != "" {
-			_, err = runGit(repoRoot, "-c", "checkout.workers=0", "worktree", "add", worktreeDir, branch)
-			if err != nil {
-				return worktreeMeta{}, fmt.Errorf("reattach retained branch: %w", err)
+			if _, err = runGit(repoRoot, "-c", "checkout.workers=0", "worktree", "add", worktreeDir, branch); err == nil {
+				attached = true
 			}
-		} else {
-			_, err = runGit(repoRoot, "-c", "checkout.workers=0", "worktree", "add", "-b", branch, worktreeDir, strings.TrimSpace(baseCommit))
-			if err != nil {
-				// Branch may already exist from previous run; try without -b
-				_, err = runGit(repoRoot, "-c", "checkout.workers=0", "worktree", "add", worktreeDir, branch)
-				if err != nil {
+		}
+		if !attached {
+			branch = "hoxi/" + sessionID
+			if cur, _ := runGit(repoRoot, "rev-parse", "--abbrev-ref", "HEAD"); strings.TrimSpace(cur) == branch {
+				branch = "hoxi/" + sessionID + "-wt"
+			}
+			if _, err = runGit(repoRoot, "-c", "checkout.workers=0", "worktree", "add", "-b", branch, worktreeDir, strings.TrimSpace(baseCommit)); err != nil {
+				if _, err = runGit(repoRoot, "-c", "checkout.workers=0", "worktree", "add", worktreeDir, branch); err != nil {
 					return worktreeMeta{}, fmt.Errorf("git worktree add: %w", err)
 				}
 			}
@@ -636,16 +638,17 @@ func (m *worktreeManager) RemoveWithOptions(sessionID string, force bool, keepBr
 		m.roots.verify.StopDirectory(meta.Directory)
 	}
 	if !force {
+		cleanupSyncedEnvFiles(m.rootDir, meta.Directory)
+		if lstat, lErr := os.Lstat(filepath.Join(meta.Directory, ".opencode")); lErr == nil && lstat.Mode()&os.ModeSymlink != 0 {
+			_ = os.Remove(filepath.Join(meta.Directory, ".opencode"))
+		}
 		porcelain, err := runGit(meta.Directory, "status", "--porcelain")
 		if err != nil {
 			return fmt.Errorf("read worktree status: %w", err)
 		}
 		if strings.TrimSpace(porcelain) != "" {
+			syncWorktreeEnvFiles(m.rootDir, meta.Directory)
 			return errors.New("worktree has uncommitted changes; pass force=true to discard")
-		}
-		cleanupSyncedEnvFiles(m.rootDir, meta.Directory)
-		if lstat, lErr := os.Lstat(filepath.Join(meta.Directory, ".opencode")); lErr == nil && lstat.Mode()&os.ModeSymlink != 0 {
-			_ = os.Remove(filepath.Join(meta.Directory, ".opencode"))
 		}
 	}
 
@@ -667,11 +670,8 @@ func (m *worktreeManager) RemoveWithOptions(sessionID string, force bool, keepBr
 	globalRepoDiffCache.invalidate(meta.Directory)
 
 	if !keepBranch && meta.Branch != "" {
-		if _, err := runGit(m.rootDir, "branch", "-D", meta.Branch); err != nil {
-			m.mu.Lock()
-			delete(m.sessions, sessionID)
-			m.mu.Unlock()
-			return fmt.Errorf("delete worktree branch: %w", err)
+		if _, refErr := runGit(m.rootDir, "show-ref", "--verify", "--quiet", "refs/heads/"+meta.Branch); refErr == nil {
+			_, _ = runGit(m.rootDir, "branch", "-D", meta.Branch)
 		}
 	}
 	m.mu.Lock()

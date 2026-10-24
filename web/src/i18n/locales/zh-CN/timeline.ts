@@ -298,6 +298,7 @@ export const timeline: TimelineI18n = {
   sandboxSyncedBaseSuccess: "已同步最新 {branch} ✓",
   sandboxRenameFailed: "重命名失败",
   sandboxExitFailed: "退出沙盒失败",
+  sandboxDirtySwitchHint: "沙盒中有未提交的改动，请在下方「沙盒收尾」中选择合并回主分支、保留分支或丢弃改动",
   commandSandboxTitle: "命令沙箱",
   commandSandboxOn: "命令沙箱已开启",
   commandSandboxStateOn: "开启",

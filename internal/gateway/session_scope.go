@@ -52,12 +52,36 @@ func (g *Gateway) guardSessionScope(w http.ResponseWriter, r *http.Request) bool
 	if selected == "" {
 		selected = headerDir
 	}
-	if selected != "" && !sameDirectory(selected, binding.Directory) {
+	if selected != "" && !sameDirectory(selected, binding.Directory) && !allowsSandboxParentDirectory(r, binding.Directory, selected) {
 		http.Error(w, "session directory does not match its sandbox", http.StatusForbidden)
 		return false
 	}
 	setDirectoryQuery(r, binding.Directory)
 	return true
+}
+
+func allowsSandboxParentDirectory(r *http.Request, boundDir, selected string) bool {
+	if r.Method != http.MethodPatch && r.Method != http.MethodDelete {
+		return false
+	}
+	if !strings.HasPrefix(r.URL.Path, "/api/hoxi/runner/sessions/") {
+		return false
+	}
+	rest := strings.TrimPrefix(r.URL.Path, "/api/hoxi/runner/sessions/")
+	if strings.Contains(rest, "/") {
+		return false
+	}
+	return sameSandboxParentDirectory(boundDir, selected)
+}
+
+func sameSandboxParentDirectory(boundDir, selected string) bool {
+	slash := filepath.ToSlash(filepath.Clean(strings.TrimSpace(boundDir)))
+	idx := strings.Index(slash, "/.hoxi/worktrees/")
+	if idx <= 0 {
+		return false
+	}
+	parent := filepath.FromSlash(slash[:idx])
+	return sameDirectory(selected, parent)
 }
 
 func sessionPathID(requestPath string) (string, bool) {

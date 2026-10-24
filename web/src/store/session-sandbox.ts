@@ -18,7 +18,7 @@ import {
   setComposerSkillNotice,
 } from "./skills";
 import { exitSessionWorktree, removeSessionFromStore, replaceSession } from "./workspace-sessions";
-import { isManagedSession, isSessionBusy, sessionRuntimeForID } from "./session-query";
+import { isManagedSession, isSessionBusy, sessionDirectory, sessionRuntimeForID } from "./session-query";
 import { refreshWorktreeStatus } from "./session-diffs";
 import { indexSession } from "./session-index";
 import { normalizeFolderPath } from "./workspace-folders";
@@ -67,9 +67,26 @@ function localMeta(sessionID: string, directory: string): WorktreeMeta {
   };
 }
 
+function formatSandboxError(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  if (raw.includes("uncommitted changes")) {
+    return t("timeline.sandboxDirtySwitchHint");
+  }
+  if (
+    raw.includes("cannot create an isolated Git worktree") ||
+    raw.includes("Git repository with at least one commit")
+  ) {
+    return t("timeline.worktreeIsolationUnavailable");
+  }
+  if (raw.includes("while the session is running")) {
+    return t("timeline.worktreeBusy");
+  }
+  return raw;
+}
+
 function reportSetupError(error: unknown): void {
   setWorkspace("sessionSetupError", t("timeline.sessionSetupFailed", {
-    error: error instanceof Error ? error.message : String(error),
+    error: formatSandboxError(error),
   }));
 }
 
@@ -168,7 +185,8 @@ export async function switchActiveSessionSandboxMode(mode: "local" | "worktree")
     if (isSessionBusy(id)) throw new Error(t("timeline.worktreeBusy"));
     if (isManagedSession(id)) {
       await changeSandbox(id, async () => {
-        const session = await hoxiAPI.setSandboxMode(id, mode, undefined, directory || undefined);
+        const targetSelector = sessionDirectory(id) || directory || undefined;
+        const session = await hoxiAPI.setSandboxMode(id, mode, undefined, targetSelector);
         replaceSession(session);
         setWorkspace("worktreeBySession", id, {
           sessionID: id, isolated: session.sandboxMode === "worktree", directory: session.directory!,

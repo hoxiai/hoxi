@@ -200,3 +200,26 @@ func TestRunnerApplyGuardSerializesWithTurnStart(t *testing.T) {
 		t.Fatal("apply deadlocked")
 	}
 }
+
+func TestRunnerReentryFallsBackWhenRetainedBranchDeletedOrCheckedOut(t *testing.T) {
+	t.Parallel()
+	root := initTestGitRepo(t)
+	svc := NewService(root, nil, nil, filepath.Join(t.TempDir(), "sessions.json"))
+	info := createSandboxSession(t, svc, "claude-code", root, "worktree")
+	branch := info.Branch
+	if _, err := svc.changeSessionSandbox(info.ID, "local"); err != nil {
+		t.Fatal(err)
+	}
+	// Delete the retained branch externally; re-entering worktree must recreate cleanly.
+	if _, err := worktree.RunGit(root, "branch", "-D", branch); err != nil {
+		t.Fatal(err)
+	}
+	reentered, err := svc.changeSessionSandbox(info.ID, "worktree")
+	if err != nil {
+		t.Fatalf("reentry after branch delete failed: %v", err)
+	}
+	if reentered.SandboxMode != "worktree" {
+		t.Fatalf("expected worktree mode, got %+v", reentered)
+	}
+}
+

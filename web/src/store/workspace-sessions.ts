@@ -358,16 +358,26 @@ export async function exitSessionWorktree(sessionID: string, keepBranch = false)
 
 async function leaveSessionWorktree(sessionID: string, keepBranch: boolean): Promise<void> {
   if (isManagedSession(sessionID)) {
+    const targetSelector = sessionDirectory(sessionID) || workspace.rootDir || undefined;
     replaceSession(
       await hoxiAPI.setSandboxMode(
         sessionID,
         "local",
         { force: true, keepBranch },
-        workspace.rootDir || undefined
+        targetSelector
       )
     );
   } else {
     await hoxiAPI.removeWorktree(sessionID, true, keepBranch);
+    if (workspace.rootDir) {
+      setWorkspace("worktreeBySession", sessionID, {
+        sessionID,
+        isolated: false,
+        directory: workspace.rootDir,
+        branch: workspace.worktreeBySession["__root__"]?.branch,
+        createdAt: new Date().toISOString(),
+      });
+    }
   }
 }
 

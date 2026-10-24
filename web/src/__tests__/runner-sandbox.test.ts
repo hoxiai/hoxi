@@ -92,9 +92,11 @@ describe("local CLI sandbox settings", () => {
         setWorkspace({ activeSessionID: id, sessions: [{ id, runtime, sandboxMode: "local", title: "test",
           directory: "/runner-project", time: { created: 1, updated: 1 } }] });
         const calls: string[] = [];
-        hoxiAPI.setSandboxMode = async (sid, mode) => {
+        const directories: Array<string | undefined> = [];
+        hoxiAPI.setSandboxMode = async (sid, mode, _options, dir) => {
           assertEqual(sid, id);
           calls.push(mode);
+          directories.push(dir);
           return { id, runtime, sandboxMode: mode, title: "test", time: { created: 1, updated: 1 },
             directory: mode === "local" ? "/runner-project" : `/runner-project/.hoxi/worktrees/${id}` };
         };
@@ -104,6 +106,7 @@ describe("local CLI sandbox settings", () => {
         assertEqual(workspace.worktreeBySession[id].isolated, false);
         assertEqual(sessionDirectory(id), "/runner-project");
         assertEqual(calls.join(","), "worktree,local");
+        assertEqual(directories.join(","), `/runner-project,/runner-project/.hoxi/worktrees/${id}`);
         setWorkspace("statusBySession", id, { type: "busy" });
         let error: unknown;
         try { await switchActiveSessionSandboxMode("worktree"); } catch (caught) { error = caught; }

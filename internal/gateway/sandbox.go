@@ -152,7 +152,7 @@ func (g *Gateway) resolveSandboxDirectory(r *http.Request, sessionID, directory 
 			return "", err
 		}
 		if known {
-			if directory != "" && !sameDirectory(directory, binding.Directory) {
+			if directory != "" && !sameDirectory(directory, binding.Directory) && !sameSandboxParentDirectory(binding.Directory, directory) {
 				return "", errors.New("session directory does not match its sandbox")
 			}
 			return binding.Directory, nil

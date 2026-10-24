@@ -119,9 +119,16 @@ export default function Composer() {
   };
   const effectiveSandboxMode = createMemo<"local" | "worktree">(() => {
     const id = sessionID();
-    if (id && workspace.worktreeBySession[id]) {
-      return workspace.worktreeBySession[id].isolated ? "worktree" : "local";
+    if (id) {
+      if (workspace.worktreeBySession[id]) {
+        return workspace.worktreeBySession[id].isolated ? "worktree" : "local";
+      }
+      const s = workspace.sessions.find((item) => item.id === id);
+      if (s?.sandboxMode) return s.sandboxMode;
+      if (s?.directory?.includes("/.hoxi/worktrees/")) return "worktree";
+      if (s) return "local";
     }
+    if (appSettings.approvalMode === "unattended") return "worktree";
     return appSettings.defaultSandboxMode;
   });
 
@@ -663,7 +670,6 @@ export default function Composer() {
                   <FolderOpen size={14} />{t("timeline.selectFolder")}
                 </button>
               }>
-              <Show when={effectiveSandboxMode() === "worktree"}>
                 <ComposerSandboxPill
                   mode={effectiveSandboxMode()}
                   switching={switchingSandbox()}
@@ -674,7 +680,6 @@ export default function Composer() {
                   onToggle={(m) => void onToggleSandbox(m)}
                   onFork={onFork}
                 />
-              </Show>
               </Show>
             </div>
 

@@ -80,6 +80,12 @@ func TestSessionScopeSelectorsAndCompatibility(t *testing.T) {
 	if g.guardSessionScope(w, r) || w.Code != http.StatusBadRequest {
 		t.Fatal("duplicate directory headers should be rejected")
 	}
+
+	patchReq := httptest.NewRequest(http.MethodPatch, "/api/hoxi/runner/sessions/ses_guard?directory="+url.QueryEscape(root), nil)
+	patchRec := httptest.NewRecorder()
+	if !g.guardSessionScope(patchRec, patchReq) {
+		t.Fatalf("runner session PATCH with parent project root should be allowed, got %d: %s", patchRec.Code, patchRec.Body.String())
+	}
 }
 
 func makeSandbox(root, sessionID string) error {

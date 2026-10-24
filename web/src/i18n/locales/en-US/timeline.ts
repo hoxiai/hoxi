@@ -302,6 +302,7 @@ export const timeline = {
   sandboxSyncedBaseSuccess: "Synced with {branch} ✓",
   sandboxRenameFailed: "Rename failed",
   sandboxExitFailed: "Exit sandbox failed",
+  sandboxDirtySwitchHint: "This sandbox has uncommitted changes. Use the lifecycle actions below to apply to main, keep the branch, or discard before returning to Local",
   commandSandboxTitle: "Command sandbox",
   commandSandboxOn: "Command sandbox on",
   commandSandboxStateOn: "On",

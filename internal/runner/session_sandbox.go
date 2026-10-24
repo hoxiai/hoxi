@@ -129,6 +129,8 @@ func (s *Service) changeSessionSandboxWithOptions(sessionID, mode string, force,
 	if rec.sandboxMode() == mode {
 		return rec.ToSessionInfo(), nil
 	}
+	original, _ := s.store.Get(sessionID)
+	rec.SandboxMode = mode
 	if mode == "local" {
 		// A normal mode switch is safe; the explicit discard action supplies force.
 		if _, err := existingDirectory(rec.ProjectDir); err != nil {
@@ -143,23 +145,23 @@ func (s *Service) changeSessionSandboxWithOptions(sessionID, mode string, force,
 		} else {
 			rec.RetainedBranch = ""
 		}
-	}
-	original, _ := s.store.Get(sessionID)
-	rec.SandboxMode = mode
-	if mode == "local" {
 		rec.WorktreePath, rec.Branch, rec.BaseCommit = rec.ProjectDir, "", ""
 	} else {
 		if err := s.provisionSessionDirectory(&rec); err != nil {
 			return SessionInfo{}, err
 		}
-		if original.sandboxMode() == "local" && original.RetainedBranch == "" {
+		if original.sandboxMode() == "local" && original.RetainedBranch == "" && len(original.Turns) > 0 {
 			_ = worktree.TransferWorkingState(rec.ProjectDir, rec.WorktreePath)
+		}
+		if s.ApprovalPolicy().Mode == ApprovalModeUnattended && runtimeSandboxConfirmed(rec.Runtime) && sandbox.Available() {
+			rec.CommandSandbox = true
 		}
 	}
 	updated, _, err := s.store.Update(sessionID, func(r *SessionRecord) {
 		r.SandboxMode, r.WorktreePath = rec.SandboxMode, rec.WorktreePath
 		r.Branch, r.BaseCommit = rec.Branch, rec.BaseCommit
 		r.RetainedBranch = rec.RetainedBranch
+		r.CommandSandbox = rec.CommandSandbox
 		// Engine resume handles belong to their original working directory.
 		r.ExternalID, r.ContextPending = "", len(r.Turns) > 0
 		r.ContextTurnCount = len(r.Turns)
@@ -175,16 +177,22 @@ func (s *Service) changeSessionSandboxWithOptions(sessionID, mode string, force,
 				_, _, rollbackErr := s.store.Update(sessionID, func(r *SessionRecord) {
 					r.SandboxMode, r.WorktreePath = original.SandboxMode, original.WorktreePath
 					r.Branch, r.BaseCommit, r.RetainedBranch = original.Branch, original.BaseCommit, original.RetainedBranch
+					r.CommandSandbox = original.CommandSandbox
 					r.ExternalID, r.ContextPending, r.ContextTurnCount = original.ExternalID, original.ContextPending, original.ContextTurnCount
 				})
 				return SessionInfo{}, errors.Join(err, rollbackErr)
 			}
 			_ = manager.UseLocalDirectory(sessionID)
+			info := updated.ToSessionInfo()
+			s.broadcast(sessionID, SSEEvent{Type: "session.updated", Properties: map[string]interface{}{"info": info}})
 			return SessionInfo{}, err
 		}
 		if err := manager.UseLocalDirectory(sessionID); err != nil {
 			return SessionInfo{}, err
 		}
+	}
+	if updated.Runtime == "opencode" {
+		_ = syncOpenCodeCommandSandbox(updated)
 	}
 	info := updated.ToSessionInfo()
 	s.broadcast(sessionID, SSEEvent{Type: "session.updated", Properties: map[string]interface{}{"info": info}})

@@ -136,12 +136,11 @@ export function ComposerSandboxPill(props: {
       <button
         ref={buttonRef}
         type="button"
-        onClick={() => setOpen((v) => !v)}
-        class={`inline-flex items-center rounded-lg transition-colors cursor-pointer ${
-          props.mode === "worktree"
-            ? "gap-1.5 px-2 py-1 text-[12px] font-medium"
-            : "p-1.5"
-        } ${
+        onClick={() => {
+          setErrorMsg(null);
+          setOpen((v) => !v);
+        }}
+        class={`inline-flex items-center gap-1.5 px-2 py-1 text-[12px] font-medium rounded-lg transition-colors cursor-pointer ${
           open()
             ? "bg-[var(--bg-hover)] text-[var(--text-primary)]"
             : props.mode === "worktree"
@@ -168,9 +167,11 @@ export function ComposerSandboxPill(props: {
           />
         </Show>
 
-        <Show when={props.mode === "worktree"}>
-          <span>{t("timeline.sandboxWorktreeMode")}</span>
-        </Show>
+        <span>
+          {props.mode === "worktree"
+            ? t("timeline.sandboxWorktreeMode")
+            : t("timeline.sandboxLocalMode")}
+        </span>
 
         <Show when={changedFilesCount() > 0}>
           <span class="rounded-full bg-[var(--accent-surface)] px-1.5 py-0.2 font-mono text-[11px] text-[var(--accent-primary)]">
@@ -222,6 +223,11 @@ export function ComposerSandboxPill(props: {
               type="button"
               disabled={props.switching || props.busy}
               onClick={() => {
+                if (props.mode === "worktree" && activeWorktree()?.dirty) {
+                  setErrorMsg(t("timeline.sandboxDirtySwitchHint"));
+                  return;
+                }
+                setErrorMsg(null);
                 props.onToggle("local");
                 setOpen(false);
               }}
