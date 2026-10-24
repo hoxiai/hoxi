@@ -29,8 +29,39 @@ type summarizeTitleResponse struct {
 }
 
 var (
-	titlePrefixRegex = regexp.MustCompile(`(?i)^(会话标题|会话名称|标题|主题|总结|session\s*title|title|summary|topic)\s*[:：\-]\s*`)
+	titlePrefixRegex          = regexp.MustCompile(`(?i)^(会话标题|会话名称|标题|主题|总结|session\s*title|title|summary|topic)\s*[:：\-]\s*`)
+	conversationalFillerRegex = regexp.MustCompile(`(?i)^(请帮我|帮我|请问|麻烦|可以|能否|能不能|我想|我要|please\b|can\s+you\b|could\s+you\b|would\s+you\b|help\s+me\b|i\s+want\b|i\s+need\b|how\s+to\b|why\b|what\s+is\b)`)
+	hanRuneRegex              = regexp.MustCompile(`[\p{Han}]`)
 )
+
+// tryDirectShortTitle returns rawPrompt directly when it is already a clean,
+// single-line title in the requested UI language without conversational filler,
+// avoiding an unnecessary LLM round-trip.
+func tryDirectShortTitle(rawPrompt, locale string) string {
+	s := strings.TrimSpace(rawPrompt)
+	if s == "" || strings.ContainsAny(s, "\r\n`#*{}/\\<>|.,!?;:。，！？；：“”\"'()（）[]【】") {
+		return ""
+	}
+	if conversationalFillerRegex.MatchString(s) {
+		return ""
+	}
+	runes := []rune(s)
+	isZh := strings.HasPrefix(strings.ToLower(strings.TrimSpace(locale)), "zh")
+	hasHan := hanRuneRegex.MatchString(s)
+	if isZh {
+		if hasHan && len(runes) >= 4 && len(runes) <= 14 {
+			return s
+		}
+		return ""
+	}
+	if !hasHan && len(runes) >= 10 && len(runes) <= 36 {
+		words := strings.Fields(s)
+		if len(words) >= 2 && len(words) <= 6 {
+			return s
+		}
+	}
+	return ""
+}
 
 // HandleSummarizeTitle names a session from its first prompt, falling back to
 // a heuristic title when no model answers. It is served at the public
@@ -56,6 +87,14 @@ func (s *Service) HandleSummarizeTitle(w http.ResponseWriter, r *http.Request) {
 	locale := strings.TrimSpace(req.Locale)
 	if locale == "" {
 		locale = "zh-CN"
+	}
+
+	if direct := tryDirectShortTitle(rawPrompt, locale); direct != "" {
+		writeJSON(w, http.StatusOK, summarizeTitleResponse{
+			OK:    true,
+			Title: direct,
+		})
+		return
 	}
 
 	if s.llm != nil {

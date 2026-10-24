@@ -60,3 +60,40 @@ func TestAuditDiffsFromReviewCopiesEveryField(t *testing.T) {
 		t.Fatalf("unexpected conversion: %+v", out)
 	}
 }
+
+func TestBuildObserverAuditPromptExtractsChangedHunkFromLargeFile(t *testing.T) {
+	t.Parallel()
+	var beforeLines, afterLines []string
+	for i := 1; i <= 120; i++ {
+		line := fmt.Sprintf("// unchanged header padding line %03d", i)
+		beforeLines = append(beforeLines, line)
+		afterLines = append(afterLines, line)
+	}
+	beforeLines = append(beforeLines, "func CalculateTax() int { return 0 }")
+	afterLines = append(afterLines, "func CalculateTax() int { return 42 }")
+	for i := 122; i <= 150; i++ {
+		line := fmt.Sprintf("// unchanged footer line %03d", i)
+		beforeLines = append(beforeLines, line)
+		afterLines = append(afterLines, line)
+	}
+
+	prompt := buildObserverAuditPrompt(auditCodeRequest{
+		WorkerProviderID: "p",
+		WorkerModelID:    "m",
+		UserPrompt:       "fix tax calculation",
+		Diffs: []auditDiffFile{{
+			File:      "tax.go",
+			Before:    strings.Join(beforeLines, "\n"),
+			After:     strings.Join(afterLines, "\n"),
+			Additions: 1,
+			Deletions: 1,
+		}},
+	})
+	if !strings.Contains(prompt, "return 42") {
+		t.Fatalf("expected observer prompt to contain the modified line at line 121, got:\n%s", prompt)
+	}
+	if strings.Contains(prompt, "unchanged header padding line 001") {
+		t.Fatalf("expected observer prompt to omit unchanged file top, got:\n%s", prompt)
+	}
+}
+

@@ -319,10 +319,7 @@ func buildObserverAuditPrompt(req auditCodeRequest) string {
 			break
 		}
 		diffBuilder.WriteString(fmt.Sprintf("--- File: %s (+%d -%d)\n", d.File, d.Additions, d.Deletions))
-		snippet := strings.TrimSpace(d.After)
-		if len(snippet) > 900 {
-			snippet = snippet[:900] + "\n...[truncated]"
-		}
+		snippet := extractAuditDiffSnippet(d.Before, d.After, 900)
 		if snippet != "" {
 			diffBuilder.WriteString(snippet + "\n")
 		}
@@ -381,6 +378,53 @@ func parseObserverAuditJSON(text string) (int, string, []string, error) {
 		return s, "", nil, nil
 	}
 	return 0, "", nil, fmt.Errorf("Observer returned an invalid audit score")
+}
+
+func extractAuditDiffSnippet(before, after string, maxBytes int) string {
+	afterTrim := strings.TrimSpace(after)
+	if afterTrim == "" {
+		if strings.TrimSpace(before) != "" {
+			return "[file deleted]"
+		}
+		return ""
+	}
+	if strings.TrimSpace(before) == "" {
+		if len(afterTrim) > maxBytes {
+			return afterTrim[:maxBytes] + "\n...[truncated]"
+		}
+		return afterTrim
+	}
+	bLines := strings.Split(strings.ReplaceAll(before, "\r\n", "\n"), "\n")
+	aLines := strings.Split(strings.ReplaceAll(after, "\r\n", "\n"), "\n")
+	prefix := 0
+	for prefix < len(bLines) && prefix < len(aLines) && bLines[prefix] == aLines[prefix] {
+		prefix++
+	}
+	suffix := 0
+	for suffix < len(bLines)-prefix && suffix < len(aLines)-prefix &&
+		bLines[len(bLines)-1-suffix] == aLines[len(aLines)-1-suffix] {
+		suffix++
+	}
+	winStart := prefix - 3
+	if winStart < 0 {
+		winStart = 0
+	}
+	winEnd := len(aLines) - suffix + 3
+	if winEnd > len(aLines) {
+		winEnd = len(aLines)
+	}
+	if winStart >= winEnd {
+		winStart = 0
+		winEnd = len(aLines)
+	}
+	excerpt := strings.TrimSpace(strings.Join(aLines[winStart:winEnd], "\n"))
+	if winStart > 0 {
+		excerpt = fmt.Sprintf("@@ line %d @@\n%s", winStart+1, excerpt)
+	}
+	if len(excerpt) > maxBytes {
+		return excerpt[:maxBytes] + "\n...[truncated]"
+	}
+	return excerpt
 }
 
 func truncateStr(s string, maxLen int) string {

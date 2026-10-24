@@ -47,3 +47,23 @@ func TestCleanSummarizedTitleRejectsRawJSON(t *testing.T) {
 		t.Fatalf("expected cleanSummarizedTitle to reject raw JSON, got %q", title)
 	}
 }
+
+func TestHandleSummarizeTitleSkipsLLMForDirectShortTitles(t *testing.T) {
+	client := &fakeLLM{text: "Should Not Be Called"}
+	svc := NewService(client)
+
+	bodyZh := post(t, svc.HandleSummarizeTitle, summarizeTitleRequest{
+		ProviderID: "p", ModelID: "m", Prompt: "修复登录按钮对齐", Locale: "zh-CN",
+	})
+	if client.calls != 0 || bodyZh != `{"ok":true,"title":"修复登录按钮对齐"}`+"\n" {
+		t.Fatalf("expected direct short zh title with 0 LLM calls (got %d calls): %s", client.calls, bodyZh)
+	}
+
+	bodyEn := post(t, svc.HandleSummarizeTitle, summarizeTitleRequest{
+		ProviderID: "p", ModelID: "m", Prompt: "Fix login button alignment", Locale: "en-US",
+	})
+	if client.calls != 0 || bodyEn != `{"ok":true,"title":"Fix login button alignment"}`+"\n" {
+		t.Fatalf("expected direct short en title with 0 LLM calls (got %d calls): %s", client.calls, bodyEn)
+	}
+}
+

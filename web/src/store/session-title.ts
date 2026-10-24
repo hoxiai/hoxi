@@ -298,13 +298,16 @@ export async function summarizeAndRenameSession(
     const baseURL =
       cfgProv?.options?.baseURL || runtimeProv?.options?.baseURL || undefined;
     const npm = cfgProv?.npm || runtimeProv?.npm || undefined;
+    const strippedPrompt = promptText.replace(/```[\s\S]*?```/g, " ").trim() || promptText.trim();
+    const boundedPrompt =
+      strippedPrompt.length > 600 ? strippedPrompt.slice(0, 600) : strippedPrompt;
 
     const res = await hoxiAPI.summarizeSessionTitle({
       providerID: provID,
       modelID: modID,
       baseURL,
       npm,
-      prompt: promptText,
+      prompt: boundedPrompt,
       locale: currentLocale,
     });
 

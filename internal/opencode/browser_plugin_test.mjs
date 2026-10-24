@@ -162,6 +162,23 @@ test("standalone browser plugin", async (t) => {
     assert.equal(requests[3].url.pathname, "/api/hoxi/code-index/refresh");
     assert.equal(requests[3].options.method, "POST");
 
+    // Verify compact plain-text rendering of inspect response (no JSON string escaping or directory metadata bloat)
+    globalThis.fetch = async () =>
+      Response.json({
+        directory: "/work/tree",
+        path: "internal/foo.go",
+        symbol: "HandleFoo",
+        startLine: 10,
+        endLine: 12,
+        totalLines: 80,
+        content: '10: func HandleFoo() string {\n11: \treturn "ok"\n12: }',
+      });
+    const inspectRes = await execIndex({ action: "inspect", path: "internal/foo.go", symbol: "HandleFoo" }, context);
+    assert.equal(
+      inspectRes.output,
+      '# internal/foo.go:10-12 (of 80) [HandleFoo]\n10: func HandleFoo() string {\n11: \treturn "ok"\n12: }',
+    );
+
     // Sensitive / protected paths require read approval first and are rejected before reaching fetch
     for (const blockedPath of [".hoxi/cloudflared.json", ".claude/.credentials.json", ".env", "../outside.go", "/etc/passwd"]) {
       requests = [];
@@ -232,6 +249,21 @@ test("standalone browser plugin", async (t) => {
     const shortMessages = [{ parts: [noisyShortPart] }];
     await hooks["experimental.chat.messages.transform"]({}, { messages: shortMessages });
     assert.equal(shortMessages[0].parts[0].state.output, "Downloading 100%\nPASS src/app.test.ts");
+
+    // Package manager install logs > 2400 chars without failure are also compacted
+    const installLines = Array.from({ length: 90 }, (_, i) => `npm http fetch GET 200 https://registry.npmjs.org/pkg-${i} 12ms`).join("\n");
+    const installPart = {
+      type: "tool",
+      tool: "bash",
+      state: {
+        status: "completed",
+        input: { command: "npm install" },
+        output: installLines,
+      },
+    };
+    const installMessages = [{ parts: [installPart] }];
+    await hooks["experimental.chat.messages.transform"]({}, { messages: installMessages });
+    assert.ok(installMessages[0].parts[0].state.output.includes("lines of passing check output omitted"));
   });
 
   await t.test("system.transform deduplicates <project_memory> across plugins and redacts secrets", async () => {

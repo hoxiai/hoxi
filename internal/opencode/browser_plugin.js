@@ -48,7 +48,7 @@ function isSensitiveIndexPath(rawPath) {
 }
 
 const VERIFICATION_CMD_RE =
-  /\b(go\s+(?:test|vet|build)|npm\s+(?:--prefix\s+\S+\s+)?(?:test|run\s+(?:test|lint|build|check\S*))|pnpm\s+(?:test|lint|build|check\S*)|yarn\s+(?:test|lint|build)|flutter\s+(?:test|analyze)|pytest|cargo\s+(?:test|check|clippy)|tsc\b|node\s+--test)\b/i;
+  /\b(go\s+(?:test|vet|build|mod\s+(?:tidy|download))|npm\s+(?:--prefix\s+\S+\s+)?(?:test|install|ci|i|run\s+(?:test|lint|build|check\S*))|pnpm\s+(?:test|install|i|lint|build|check\S*)|yarn\s+(?:test|install|lint|build)|pip3?\s+install|flutter\s+(?:test|analyze|pub\s+get)|pytest|cargo\s+(?:test|check|clippy|fetch)|tsc\b|node\s+--test)\b/i;
 const FAILURE_OUTPUT_RE =
   /(?:^|\s)(?:FAIL|--- FAIL:|FAIL\t|AssertionError|panic:|Error:|error TS\d+|ERR!|✖|✗|fatal:)/m;
 const ANSI_ESCAPE_RE = /\x1b(?:\[[0-9;?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\))/g;
@@ -147,6 +147,42 @@ function compactMessageHistory(messages) {
       }
     }
   }
+}
+
+function formatCodeIndexOutput(action, payload) {
+  if (!payload || typeof payload !== "object") return JSON.stringify(payload);
+  if (action === "inspect" && typeof payload.content === "string" && typeof payload.path === "string") {
+    const sym = payload.symbol ? ` [${payload.symbol}]` : "";
+    const trunc = payload.truncated ? " [truncated]" : "";
+    return `# ${payload.path}:${payload.startLine}-${payload.endLine} (of ${payload.totalLines})${sym}${trunc}\n${payload.content}`;
+  }
+  if (action === "search" && Array.isArray(payload.results)) {
+    if (payload.results.length === 0) return "No matches found.";
+    if (typeof payload.results[0]?.path === "string") {
+      return payload.results
+        .map((r) => {
+          const sym = r.symbol ? ` [${r.symbol}]` : "";
+          const snip = typeof r.snippet === "string" && r.snippet.trim() ? `\n  ${r.snippet.trim().replace(/\n+/g, "\n  ")}` : "";
+          return `${r.path}:${r.startLine}-${r.endLine}${sym} (score ${r.score})${snip}`;
+        })
+        .join("\n");
+    }
+  }
+  if (action === "callers" && (Array.isArray(payload.callers) || Array.isArray(payload.tests))) {
+    const callers = Array.isArray(payload.callers) ? payload.callers : [];
+    const tests = Array.isArray(payload.tests) ? payload.tests : [];
+    const fmtHit = (h) => `  ${h.path}:${h.line}${h.symbol ? ` [${h.symbol}]` : ""} — ${h.snippet || ""}`;
+    return [
+      `Callers (${callers.length}):`,
+      ...(callers.length ? callers.map(fmtHit) : ["  (none)"]),
+      `Tests (${tests.length}):`,
+      ...(tests.length ? tests.map(fmtHit) : ["  (none)"]),
+    ].join("\n");
+  }
+  if (action === "refresh" && typeof payload.files === "number") {
+    return `Index refreshed (${payload.files} files, ${payload.chunks || 0} chunks).`;
+  }
+  return JSON.stringify(payload);
 }
 
 export default async function BrowserPlugin({ directory: factoryDir } = {}) {
@@ -278,7 +314,7 @@ export default async function BrowserPlugin({ directory: factoryDir } = {}) {
           const payload = await response.json();
           return {
             title: `CodeIndex: ${req.action}`,
-            output: JSON.stringify(payload),
+            output: formatCodeIndexOutput(req.action, payload),
           };
         },
       }),
