@@ -1,6 +1,16 @@
 // web/src/services/api-types.ts
+export type DesktopIntentAction =
+  | "attention"
+  | "running"
+  | "new-thread"
+  | "handoff"
+  | "policy"
+  | "settings"
+  | "sync-keep-awake";
+
 export interface DesktopIntent {
-  sessionID: string;
+  action?: DesktopIntentAction;
+  sessionID?: string;
   messageID?: string;
   directory?: string;
 }

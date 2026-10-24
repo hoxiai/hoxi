@@ -552,6 +552,7 @@ func (a *DesktopApp) startup(ctx context.Context) {
 	reveal := a.revealOnStartup
 	a.revealOnStartup = false
 	a.contextMu.Unlock()
+	statusbar.SetActionHandler(a.handleStatusBarMenuAction)
 	statusbar.Start(ctx)
 	statusbar.Update(a.status.Snapshot())
 	if a.notifier != nil {
@@ -578,6 +579,7 @@ func (a *DesktopApp) startup(ctx context.Context) {
 }
 
 func (a *DesktopApp) shutdown(_ context.Context) {
+	statusbar.SetActionHandler(nil)
 	statusbar.Stop()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()

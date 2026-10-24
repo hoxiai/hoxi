@@ -1,5 +1,7 @@
 package statusbar
 
+import "strings"
+
 // ApprovalNotice announces that an agent newly needs the user. It carries no
 // command text or other session content on purpose: notices leave the machine
 // (Hoxi → GoPanel → APNs) and are shown on a lock screen. The phone fetches
@@ -40,11 +42,13 @@ func (t *Tracker) SetApprovalListener(fn func(ApprovalNotice)) {
 // addPendingLocked records a pending request and returns the announcement to
 // fire after unlocking, or nil when it was already pending or nobody listens.
 func (t *Tracker) addPendingLocked(kind, requestID, sessionID, permission string) func() {
+	sessionID = strings.TrimSpace(sessionID)
 	if _, exists := t.pendingApprovals[requestID]; exists {
 		t.pendingApprovals[requestID] = sessionID
 		return nil
 	}
 	t.pendingApprovals[requestID] = sessionID
+	t.pendingOrder = append(t.pendingOrder, requestID)
 	listener := t.approvalListener
 	if listener == nil {
 		return nil

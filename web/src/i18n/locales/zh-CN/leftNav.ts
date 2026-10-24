@@ -12,6 +12,8 @@ export const leftNav: LeftNavI18n = {
   attentionTasks: "待处理",
   runningTasks: "运行中",
   attentionApprovals: "等待审批",
+  pendingApprovalsBanner: "{count} 项待审批任务",
+  viewPendingApprovals: "立即定位",
   attentionCompleted: "已完成未读",
   attentionPaused: "已暂停或停止",
   noAttentionTasks: "暂无需要处理的任务",

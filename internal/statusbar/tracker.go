@@ -3,25 +3,31 @@ package statusbar
 import (
 	"encoding/json"
 	"os/exec"
+	"sort"
 	"strings"
 	"sync"
 )
 
 type Summary struct {
-	Attention        int  `json:"attention"`
-	Running          int  `json:"running"`
-	Queued           int  `json:"queued"`
-	Available        bool `json:"available"`
-	KeepAwakeEnabled bool `json:"keepAwakeEnabled"`
-	KeepAwakeActive  bool `json:"keepAwakeActive"`
+	Attention        int             `json:"attention"`
+	PendingApprovals int             `json:"pendingApprovals"`
+	Running          int             `json:"running"`
+	Queued           int             `json:"queued"`
+	Available        bool            `json:"available"`
+	KeepAwakeEnabled bool            `json:"keepAwakeEnabled"`
+	KeepAwakeActive  bool            `json:"keepAwakeActive"`
+	PendingTargets   []SessionTarget `json:"pendingTargets,omitempty"`
+	RunningTargets   []SessionTarget `json:"runningTargets,omitempty"`
 }
 
 type Tracker struct {
 	mu                 sync.Mutex
 	available          bool
 	busySessions       map[string]bool
+	busyOrder          []string
 	stalledSessions    map[string]bool   // busy sessions silent long enough to look stuck
 	pendingApprovals   map[string]string // requestID -> sessionID
+	pendingOrder       []string
 	degradedProvider   map[string]bool
 	keepAwakeEnabled   bool
 	keepAwakeActive    bool
@@ -29,6 +35,7 @@ type Tracker struct {
 	startKeepAwakeHook func() (func(), error)
 	keepAwakeStopHook  func()
 	approvalListener   func(ApprovalNotice)
+	sessionResolver    func(sessionID string) (resolvedID, title, directory string)
 }
 
 func NewTracker() *Tracker {
@@ -42,12 +49,55 @@ func NewTracker() *Tracker {
 	}
 }
 
+// SetSessionResolver wires an optional lookup that maps a session ID (including
+// subagent or runtime engine IDs) to its root Hoxi session ID, title and directory.
+func (t *Tracker) SetSessionResolver(fn func(sessionID string) (resolvedID, title, directory string)) {
+	t.mu.Lock()
+	t.sessionResolver = fn
+	summary, pendingIDs, runningIDs, resolver := t.snapshotWithTargetsLocked()
+	t.mu.Unlock()
+	enrichSummary(&summary, pendingIDs, runningIDs, resolver)
+	Update(summary)
+}
+
+// ResolveTarget resolves one session ID into a SessionTarget using the registered resolver.
+func (t *Tracker) ResolveTarget(sessionID string) SessionTarget {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return SessionTarget{}
+	}
+	t.mu.Lock()
+	resolver := t.sessionResolver
+	t.mu.Unlock()
+	return resolveOneTarget(sessionID, resolver)
+}
+
+// FirstAttentionTarget returns the highest-priority session needing user
+// attention (pending approval first, then stalled session).
+func (t *Tracker) FirstAttentionTarget() (SessionTarget, bool) {
+	snap := t.Snapshot()
+	if len(snap.PendingTargets) == 0 {
+		return SessionTarget{}, false
+	}
+	return snap.PendingTargets[0], true
+}
+
+// FirstRunningTarget returns the first currently executing session.
+func (t *Tracker) FirstRunningTarget() (SessionTarget, bool) {
+	snap := t.Snapshot()
+	if len(snap.RunningTargets) == 0 {
+		return SessionTarget{}, false
+	}
+	return snap.RunningTargets[0], true
+}
+
 func (t *Tracker) SetAvailable(avail bool) {
 	t.mu.Lock()
 	t.available = avail
 	t.syncKeepAwakeLocked()
-	summary := t.snapshotLocked()
+	summary, pendingIDs, runningIDs, resolver := t.snapshotWithTargetsLocked()
 	t.mu.Unlock()
+	enrichSummary(&summary, pendingIDs, runningIDs, resolver)
 	Update(summary)
 }
 
@@ -58,20 +108,48 @@ func (t *Tracker) SetSessionBusy(sessionID string, busy bool) {
 	}
 	t.mu.Lock()
 	if busy {
-		t.busySessions[sessionID] = true
+		t.markBusyLocked(sessionID, true)
 	} else {
-		delete(t.busySessions, sessionID)
-		delete(t.stalledSessions, sessionID)
+		t.markBusyLocked(sessionID, false)
 		for reqID, sid := range t.pendingApprovals {
 			if sid == sessionID {
-				delete(t.pendingApprovals, reqID)
+				t.removePendingLocked(reqID)
 			}
 		}
 	}
 	t.syncKeepAwakeLocked()
-	summary := t.snapshotLocked()
+	summary, pendingIDs, runningIDs, resolver := t.snapshotWithTargetsLocked()
 	t.mu.Unlock()
+	enrichSummary(&summary, pendingIDs, runningIDs, resolver)
 	Update(summary)
+}
+
+func (t *Tracker) markBusyLocked(sessionID string, busy bool) {
+	if busy {
+		if !t.busySessions[sessionID] {
+			t.busySessions[sessionID] = true
+			t.busyOrder = append(t.busyOrder, sessionID)
+		}
+		return
+	}
+	delete(t.busySessions, sessionID)
+	delete(t.stalledSessions, sessionID)
+	for i, id := range t.busyOrder {
+		if id == sessionID {
+			t.busyOrder = append(t.busyOrder[:i], t.busyOrder[i+1:]...)
+			break
+		}
+	}
+}
+
+func (t *Tracker) removePendingLocked(requestID string) {
+	delete(t.pendingApprovals, requestID)
+	for i, id := range t.pendingOrder {
+		if id == requestID {
+			t.pendingOrder = append(t.pendingOrder[:i], t.pendingOrder[i+1:]...)
+			break
+		}
+	}
 }
 
 // SetSessionStalled raises Attention for a busy session that looks stuck.
@@ -88,8 +166,9 @@ func (t *Tracker) SetSessionStalled(sessionID string, stalled bool) {
 		delete(t.stalledSessions, sessionID)
 	}
 	t.syncKeepAwakeLocked()
-	summary := t.snapshotLocked()
+	summary, pendingIDs, runningIDs, resolver := t.snapshotWithTargetsLocked()
 	t.mu.Unlock()
+	enrichSummary(&summary, pendingIDs, runningIDs, resolver)
 	Update(summary)
 }
 
@@ -103,11 +182,12 @@ func (t *Tracker) SetPendingApproval(requestID, sessionID string, pending bool) 
 	if pending {
 		announce = t.addPendingLocked("approval", requestID, sessionID, "")
 	} else {
-		delete(t.pendingApprovals, requestID)
+		t.removePendingLocked(requestID)
 	}
 	t.syncKeepAwakeLocked()
-	summary := t.snapshotLocked()
+	summary, pendingIDs, runningIDs, resolver := t.snapshotWithTargetsLocked()
 	t.mu.Unlock()
+	enrichSummary(&summary, pendingIDs, runningIDs, resolver)
 	Update(summary)
 	if announce != nil {
 		announce()
@@ -128,26 +208,109 @@ func (t *Tracker) SetProviderDegraded(providerID string, degraded bool) {
 		delete(t.degradedProvider, providerID)
 	}
 	t.syncKeepAwakeLocked()
-	summary := t.snapshotLocked()
+	summary, pendingIDs, runningIDs, resolver := t.snapshotWithTargetsLocked()
 	t.mu.Unlock()
+	enrichSummary(&summary, pendingIDs, runningIDs, resolver)
 	Update(summary)
 }
 
 func (t *Tracker) Snapshot() Summary {
 	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.snapshotLocked()
+	summary, pendingIDs, runningIDs, resolver := t.snapshotWithTargetsLocked()
+	t.mu.Unlock()
+	enrichSummary(&summary, pendingIDs, runningIDs, resolver)
+	return summary
 }
 
 func (t *Tracker) snapshotLocked() Summary {
 	return Summary{
 		Attention:        len(t.pendingApprovals) + len(t.stalledSessions) + len(t.degradedProvider),
+		PendingApprovals: len(t.pendingApprovals),
 		Running:          len(t.busySessions),
 		Queued:           0,
 		Available:        t.available,
 		KeepAwakeEnabled: t.keepAwakeEnabled,
 		KeepAwakeActive:  t.keepAwakeActive,
 	}
+}
+
+func (t *Tracker) snapshotWithTargetsLocked() (Summary, []string, []string, func(string) (string, string, string)) {
+	summary := t.snapshotLocked()
+	var pendingIDs []string
+	seenPending := make(map[string]bool)
+	for _, reqID := range t.pendingOrder {
+		sid := strings.TrimSpace(t.pendingApprovals[reqID])
+		if sid != "" && !seenPending[sid] {
+			seenPending[sid] = true
+			pendingIDs = append(pendingIDs, sid)
+		}
+	}
+	if len(t.stalledSessions) > 0 {
+		var stalled []string
+		for sid := range t.stalledSessions {
+			if !seenPending[sid] {
+				stalled = append(stalled, sid)
+			}
+		}
+		sort.Strings(stalled)
+		pendingIDs = append(pendingIDs, stalled...)
+	}
+	runningIDs := make([]string, 0, len(t.busyOrder))
+	for _, sid := range t.busyOrder {
+		if t.busySessions[sid] {
+			runningIDs = append(runningIDs, sid)
+		}
+	}
+	return summary, pendingIDs, runningIDs, t.sessionResolver
+}
+
+func resolveOneTarget(sessionID string, resolver func(string) (string, string, string)) SessionTarget {
+	resolvedID := strings.TrimSpace(sessionID)
+	title := ""
+	dir := ""
+	if resolver != nil {
+		rID, rTitle, rDir := resolver(resolvedID)
+		if strings.TrimSpace(rID) != "" {
+			resolvedID = strings.TrimSpace(rID)
+		}
+		title = strings.TrimSpace(rTitle)
+		dir = strings.TrimSpace(rDir)
+	}
+	return SessionTarget{
+		SessionID: resolvedID,
+		Title:     title,
+		Directory: dir,
+	}
+}
+
+func enrichSummary(
+	summary *Summary,
+	pendingIDs []string,
+	runningIDs []string,
+	resolver func(string) (string, string, string),
+) {
+	summary.PendingTargets = buildSessionTargets(pendingIDs, resolver)
+	summary.RunningTargets = buildSessionTargets(runningIDs, resolver)
+}
+
+func buildSessionTargets(ids []string, resolver func(string) (string, string, string)) []SessionTarget {
+	if len(ids) == 0 {
+		return nil
+	}
+	seen := make(map[string]bool, len(ids))
+	out := make([]SessionTarget, 0, min(len(ids), maxMenuTargets))
+	for _, id := range ids {
+		target := resolveOneTarget(id, resolver)
+		if target.SessionID == "" || seen[target.SessionID] {
+			continue
+		}
+		seen[target.SessionID] = true
+		out = append(out, target)
+		if len(out) >= maxMenuTargets {
+			break
+		}
+	}
+	return out
 }
 
 // InspectSSELine passively parses OpenCode `data: {...}` SSE lines to keep the macOS status bar synchronized.
@@ -198,10 +361,9 @@ func (t *Tracker) InspectSSELine(line string) {
 		}
 		if json.Unmarshal(evtProps, &p) == nil && p.SessionID != "" {
 			if p.Status.Type == "busy" || p.Status.Type == "retry" {
-				t.busySessions[p.SessionID] = true
+				t.markBusyLocked(p.SessionID, true)
 			} else {
-				delete(t.busySessions, p.SessionID)
-				delete(t.stalledSessions, p.SessionID)
+				t.markBusyLocked(p.SessionID, false)
 			}
 			changed = true
 		}
@@ -210,8 +372,7 @@ func (t *Tracker) InspectSSELine(line string) {
 			SessionID string `json:"sessionID"`
 		}
 		if json.Unmarshal(evtProps, &p) == nil && p.SessionID != "" {
-			delete(t.busySessions, p.SessionID)
-			delete(t.stalledSessions, p.SessionID)
+			t.markBusyLocked(p.SessionID, false)
 			changed = true
 		}
 	case "permission.asked", "question.asked":
@@ -233,18 +394,24 @@ func (t *Tracker) InspectSSELine(line string) {
 			RequestID string `json:"requestID"`
 		}
 		if json.Unmarshal(evtProps, &p) == nil && p.RequestID != "" {
-			delete(t.pendingApprovals, p.RequestID)
+			t.removePendingLocked(p.RequestID)
 			changed = true
 		}
 	}
-	var summary Summary
+	var (
+		summary    Summary
+		pendingIDs []string
+		runningIDs []string
+		resolver   func(string) (string, string, string)
+	)
 	if changed {
 		t.syncKeepAwakeLocked()
-		summary = t.snapshotLocked()
+		summary, pendingIDs, runningIDs, resolver = t.snapshotWithTargetsLocked()
 	}
 	t.mu.Unlock()
 
 	if changed {
+		enrichSummary(&summary, pendingIDs, runningIDs, resolver)
 		Update(summary)
 	}
 	if announce != nil {

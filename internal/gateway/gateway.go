@@ -157,6 +157,9 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 	runnerSvc.ConfigureOpenCode(targetURL.String(), password)
 	runnerSvc.SetPermissionRulesSource(providers.PermissionRules)
 	runnerSvc.SetApprovalPolicyHook(providers.EnforceAskPermissions)
+	if status != nil {
+		status.SetSessionResolver(runnerSvc.ResolveSessionTarget)
+	}
 	authSvc := auth.NewService(nil)
 	updaterSvc := updater.NewChecker(buildinfo.Version, nil)
 	leaderboardSvc := leaderboard.NewService("", nil)

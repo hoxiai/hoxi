@@ -6,12 +6,14 @@ import {
   archiveSession,
   createProjectSessionLists,
   discardSession,
+  focusFirstAttentionSession,
   isInvalidProjectPath,
   startNewThreadDraft,
   normalizeFolderPath,
   openCreateWorkspaceModal,
   openHandoffModal,
   reorderProjects,
+  resolveRootSessionID,
   selectSession,
   setProjectOrder,
   setSidebarProjectMode,
@@ -124,6 +126,16 @@ export default function LeftNav() {
 
   const pendingSessions = createMemo(() => collectPendingSessionIDs(), new Set<string>(), {
     equals: sameStringSet,
+  });
+  const pendingApprovalCount = createMemo(() => {
+    const roots = new Set<string>();
+    for (const p of workspace.pendingPermissions) {
+      roots.add(resolveRootSessionID(p.sessionID) || p.sessionID);
+    }
+    for (const q of workspace.pendingQuestions) {
+      roots.add(resolveRootSessionID(q.sessionID) || q.sessionID);
+    }
+    return roots.size;
   });
   const isExpanded = (path: string) => expandedProjects().has(normalizeFolderPath(path));
 
@@ -429,9 +441,16 @@ export default function LeftNav() {
                           <OptIcon size={13} class="text-[var(--text-muted)]" />
                           <span>{opt.label()}</span>
                         </span>
-                        <Show when={workspace.sidebarProjectMode === opt.id}>
-                          <Check size={13} class="text-[var(--accent-primary)]" />
-                        </Show>
+                        <span class="inline-flex items-center gap-1.5">
+                          <Show when={opt.id === "attention" && pendingApprovalCount() > 0}>
+                            <span class="rounded-full bg-[var(--status-warning)]/15 px-1.5 py-0.2 font-mono text-[10.5px] font-semibold text-[var(--status-warning)]">
+                              {pendingApprovalCount()}
+                            </span>
+                          </Show>
+                          <Show when={workspace.sidebarProjectMode === opt.id}>
+                            <Check size={13} class="text-[var(--accent-primary)]" />
+                          </Show>
+                        </span>
                       </button>
                     );
                   }}
@@ -464,6 +483,27 @@ export default function LeftNav() {
           </button>
         </div>
       </div>
+
+      {/* Pending Approvals Quick Entry */}
+      <Show when={pendingApprovalCount() > 0 && workspace.sidebarProjectMode !== "attention"}>
+        <div class="pl-1.5 pr-2.5 pb-1.5 shrink-0">
+          <button
+            type="button"
+            onClick={() => focusFirstAttentionSession()}
+            class="w-full flex items-center justify-between gap-2 rounded-lg border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 hover:bg-[var(--status-warning)]/15 px-2.5 py-1.5 text-[12px] text-[var(--text-primary)] transition-colors cursor-pointer"
+          >
+            <span class="inline-flex items-center gap-2 min-w-0">
+              <span class="h-2 w-2 rounded-full bg-[var(--status-warning)] animate-pulse shrink-0" />
+              <span class="font-medium truncate">
+                {t("leftNav.pendingApprovalsBanner", { count: pendingApprovalCount() })}
+              </span>
+            </span>
+            <span class="shrink-0 text-[11px] font-medium text-[var(--status-warning)]">
+              {t("leftNav.viewPendingApprovals")} →
+            </span>
+          </button>
+        </div>
+      </Show>
 
       {/* Collapsible Search Filter */}
       <div

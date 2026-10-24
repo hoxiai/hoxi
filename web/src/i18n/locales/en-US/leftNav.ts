@@ -11,6 +11,8 @@ export const leftNav = {
   attentionTasks: "Needs Attention",
   runningTasks: "Running",
   attentionApprovals: "Waiting for approval",
+  pendingApprovalsBanner: "{count} pending approval",
+  viewPendingApprovals: "Locate",
   attentionCompleted: "Finished, unread",
   attentionPaused: "Paused or stopped",
   noAttentionTasks: "Nothing needs your attention.",

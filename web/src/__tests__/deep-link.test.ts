@@ -1,10 +1,16 @@
 import { reconcile, unwrap } from "solid-js/store";
 import { buildMessageLink } from "../components/timeline/session-export";
 import {
+  appSettings,
+  applyDesktopIntent,
   clearPendingDeepLink,
+  closeHandoffModal,
+  closeSettingsModal,
+  leftNavOpen,
   openSessionDeepLink,
   pendingDeepLink,
   resolvePendingDeepLink,
+  setLeftNavOpen,
   setWorkspace,
   workspace,
 } from "../store/workspace";
@@ -47,6 +53,52 @@ describe("session deep links", () => {
       assertEqual(pendingDeepLink(), null);
     } finally {
       clearPendingDeepLink();
+      setWorkspace(reconcile(saved));
+    }
+  });
+
+  it("handles status bar menu desktop intents for attention, running, policy, and handoff", () => {
+    const saved = structuredClone(unwrap(workspace));
+    const savedNav = leftNavOpen();
+    try {
+      setLeftNavOpen(false);
+      setWorkspace({
+        rootDir: "/repo-a",
+        bootstrappingSessions: false,
+        sidebarProjectMode: "multi",
+        sessions: [],
+        pendingPermissions: [
+          {
+            id: "perm_1",
+            sessionID: "ses_pending_1",
+            permission: "bash",
+            patterns: ["git push"],
+            metadata: {},
+            always: [],
+          },
+        ],
+      });
+
+      // Attention intent opens sidebar, switches to attention mode, and targets first pending approval
+      applyDesktopIntent({ action: "attention" });
+      assertEqual(leftNavOpen(), true);
+      assertEqual(workspace.sidebarProjectMode, "attention");
+      assertEqual(pendingDeepLink()?.sessionID, "ses_pending_1");
+
+      // Policy intent opens settings modal on the policy tab
+      applyDesktopIntent({ action: "policy" });
+      assertEqual(appSettings.modalOpen, true);
+      assertEqual(appSettings.activeTab, "policy");
+
+      // Handoff intent closes settings modal and opens handoff modal
+      applyDesktopIntent({ action: "handoff" });
+      assertEqual(appSettings.modalOpen, false);
+      assertEqual(workspace.handoffModalOpen, true);
+    } finally {
+      clearPendingDeepLink();
+      closeSettingsModal();
+      closeHandoffModal();
+      setLeftNavOpen(savedNav);
       setWorkspace(reconcile(saved));
     }
   });

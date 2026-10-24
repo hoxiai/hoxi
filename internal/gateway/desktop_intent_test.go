@@ -71,6 +71,8 @@ func TestDesktopIntentIgnoresEmptyOrInvalidInputs(t *testing.T) {
 		{SessionID: "ses_valid", Directory: "relative/path"},
 		{SessionID: "ses_valid", Directory: "/repo/with\nnewline"},
 		{SessionID: "ses_valid", Directory: "/repo/with\x00null"},
+		{Action: "unknown-action"},
+		{Action: "unknown-action", SessionID: "ses_valid"},
 	}
 	for i, tc := range invalidCases {
 		gw.QueueDesktopIntent(tc)
@@ -79,6 +81,25 @@ func TestDesktopIntentIgnoresEmptyOrInvalidInputs(t *testing.T) {
 		}
 		if got, ok := consumeIntentInTest(t, gw); ok {
 			t.Fatalf("case %d (%+v): expected no pending intent, got %+v", i, tc, got)
+		}
+	}
+}
+
+func TestDesktopIntentActionWithoutSession(t *testing.T) {
+	gw := New(0, "test", t.TempDir(), nil, nil)
+	for _, action := range []string{
+		DesktopIntentActionAttention,
+		DesktopIntentActionRunning,
+		DesktopIntentActionNewThread,
+		DesktopIntentActionHandoff,
+		DesktopIntentActionPolicy,
+		DesktopIntentActionSettings,
+		DesktopIntentActionSyncKeepAwake,
+	} {
+		gw.QueueDesktopIntent(DesktopIntent{Action: action})
+		got, ok := consumeIntentInTest(t, gw)
+		if !ok || got.Action != action || got.SessionID != "" {
+			t.Fatalf("action %q round-trip got %+v (ok=%v)", action, got, ok)
 		}
 	}
 }

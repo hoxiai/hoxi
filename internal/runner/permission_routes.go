@@ -194,6 +194,9 @@ func (s *Service) handleUnifiedPermissionRoutes(w http.ResponseWriter, r *http.R
 	}
 	if status >= 200 && status < 300 {
 		s.gate.forgetOpenCodeAsk(id)
+		if s.status != nil {
+			s.status.SetPendingApproval(id, "", false)
+		}
 		if len(granted) > 0 {
 			s.gate.addClassGrants(ask.sessionID, granted, source)
 			go s.reconcilePendingApprovals()

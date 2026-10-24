@@ -103,8 +103,9 @@ func (t *Tracker) SetKeepAwakeEnabled(enabled bool) {
 	t.mu.Lock()
 	t.keepAwakeEnabled = enabled
 	t.syncKeepAwakeLocked()
-	summary := t.snapshotLocked()
+	summary, pendingIDs, runningIDs, resolver := t.snapshotWithTargetsLocked()
 	t.mu.Unlock()
+	enrichSummary(&summary, pendingIDs, runningIDs, resolver)
 	Update(summary)
 }
 

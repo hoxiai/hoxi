@@ -9,7 +9,17 @@ package statusbar
 #include <stdlib.h>
 
 void hoxi_statusbar_start(void);
-void hoxi_statusbar_update(int attention, int running, int queued, int available, const char *badge);
+void hoxi_statusbar_update(
+	int attention,
+	int running,
+	int queued,
+	int available,
+	int keepAwakeEnabled,
+	int keepAwakeActive,
+	const char *badge,
+	const char *pendingItems,
+	const char *runningItems
+);
 void hoxi_statusbar_stop(void);
 */
 import "C"
@@ -39,9 +49,31 @@ func Update(summary Summary) {
 	if summary.Available {
 		available = 1
 	}
+	keepAwakeEnabled := C.int(0)
+	if summary.KeepAwakeEnabled {
+		keepAwakeEnabled = 1
+	}
+	keepAwakeActive := C.int(0)
+	if summary.KeepAwakeActive {
+		keepAwakeActive = 1
+	}
 	badge := C.CString(summary.DockBadgeLabel())
 	defer C.free(unsafe.Pointer(badge))
-	C.hoxi_statusbar_update(C.int(summary.Attention), C.int(summary.Running), C.int(summary.Queued), available, badge)
+	pendingItems := C.CString(encodeMenuTargets(summary.PendingTargets))
+	defer C.free(unsafe.Pointer(pendingItems))
+	runningItems := C.CString(encodeMenuTargets(summary.RunningTargets))
+	defer C.free(unsafe.Pointer(runningItems))
+	C.hoxi_statusbar_update(
+		C.int(summary.Attention),
+		C.int(summary.Running),
+		C.int(summary.Queued),
+		available,
+		keepAwakeEnabled,
+		keepAwakeActive,
+		badge,
+		pendingItems,
+		runningItems,
+	)
 }
 
 func Stop() {
@@ -60,11 +92,30 @@ func activeStatusBarCtx() context.Context {
 //export HoxiShowMainWindow
 func HoxiShowMainWindow() {
 	ctx := activeStatusBarCtx()
-	if ctx == nil {
-		return
+	if ctx != nil {
+		wailsruntime.WindowShow(ctx)
+		wailsruntime.WindowUnminimise(ctx)
 	}
-	wailsruntime.WindowShow(ctx)
-	wailsruntime.WindowUnminimise(ctx)
+	dispatchMenuAction(MenuActionWorkspace, "")
+}
+
+//export HoxiTriggerMenuAction
+func HoxiTriggerMenuAction(kind *C.char, sessionID *C.char) {
+	var k, sid string
+	if kind != nil {
+		k = C.GoString(kind)
+	}
+	if sessionID != nil {
+		sid = C.GoString(sessionID)
+	}
+	if k != MenuActionToggleKeepAwake {
+		ctx := activeStatusBarCtx()
+		if ctx != nil {
+			wailsruntime.WindowShow(ctx)
+			wailsruntime.WindowUnminimise(ctx)
+		}
+	}
+	dispatchMenuAction(k, sid)
 }
 
 //export HoxiQuitApplication

@@ -4,23 +4,92 @@
 #import <string.h>
 
 extern void HoxiShowMainWindow(void);
+extern void HoxiTriggerMenuAction(const char *kind, const char *sessionID);
 extern void HoxiQuitApplication(void);
 
 @interface HoxiStatusBarController : NSObject
 @property(nonatomic, strong) NSStatusItem *statusItem;
-@property(nonatomic, strong) NSMenuItem *summaryItem;
+@property(nonatomic, strong) NSMenu *menu;
+@property(nonatomic, strong) NSMenuItem *attentionItem;
+@property(nonatomic, strong) NSMenuItem *runningItem;
+@property(nonatomic, strong) NSMenuItem *keepAwakeItem;
+@property(nonatomic, strong) NSMutableArray<NSMenuItem *> *pendingSessionItems;
+@property(nonatomic, strong) NSMutableArray<NSMenuItem *> *runningSessionItems;
 @end
 
 @implementation HoxiStatusBarController
 
+- (instancetype)init {
+    self = [super init];
+    if (self != nil) {
+        _pendingSessionItems = [[NSMutableArray alloc] init];
+        _runningSessionItems = [[NSMutableArray alloc] init];
+    }
+    return self;
+}
+
 - (void)dealloc {
     [_statusItem release];
-    [_summaryItem release];
+    [_menu release];
+    [_attentionItem release];
+    [_runningItem release];
+    [_keepAwakeItem release];
+    [_pendingSessionItems release];
+    [_runningSessionItems release];
     [super dealloc];
 }
 
 - (void)showMainWindow:(id)sender {
+    [NSApp activateIgnoringOtherApps:YES];
     HoxiShowMainWindow();
+}
+
+- (void)openAttentionTasks:(id)sender {
+    [NSApp activateIgnoringOtherApps:YES];
+    HoxiTriggerMenuAction("attention", "");
+}
+
+- (void)openPendingSession:(id)sender {
+    [NSApp activateIgnoringOtherApps:YES];
+    id represented = [sender isKindOfClass:[NSMenuItem class]] ? [(NSMenuItem *)sender representedObject] : nil;
+    NSString *sessionID = [represented isKindOfClass:[NSString class]] ? (NSString *)represented : @"";
+    HoxiTriggerMenuAction("attention", [sessionID UTF8String]);
+}
+
+- (void)openRunningTasks:(id)sender {
+    [NSApp activateIgnoringOtherApps:YES];
+    HoxiTriggerMenuAction("running", "");
+}
+
+- (void)openRunningSession:(id)sender {
+    [NSApp activateIgnoringOtherApps:YES];
+    id represented = [sender isKindOfClass:[NSMenuItem class]] ? [(NSMenuItem *)sender representedObject] : nil;
+    NSString *sessionID = [represented isKindOfClass:[NSString class]] ? (NSString *)represented : @"";
+    HoxiTriggerMenuAction("running", [sessionID UTF8String]);
+}
+
+- (void)newThread:(id)sender {
+    [NSApp activateIgnoringOtherApps:YES];
+    HoxiTriggerMenuAction("new-thread", "");
+}
+
+- (void)openHandoff:(id)sender {
+    [NSApp activateIgnoringOtherApps:YES];
+    HoxiTriggerMenuAction("handoff", "");
+}
+
+- (void)toggleKeepAwake:(id)sender {
+    HoxiTriggerMenuAction("toggle-keep-awake", "");
+}
+
+- (void)openApprovalPolicy:(id)sender {
+    [NSApp activateIgnoringOtherApps:YES];
+    HoxiTriggerMenuAction("policy", "");
+}
+
+- (void)openSettings:(id)sender {
+    [NSApp activateIgnoringOtherApps:YES];
+    HoxiTriggerMenuAction("settings", "");
 }
 
 - (void)quitApplication:(id)sender {
@@ -149,6 +218,52 @@ static NSImage *hoxi_create_statusbar_summary(int attention, int running, int av
     return image;
 }
 
+static void hoxi_rebuild_session_items(
+    NSMenu *menu,
+    NSMenuItem *anchorItem,
+    NSMutableArray<NSMenuItem *> *trackedItems,
+    NSString *encodedLines,
+    id target,
+    SEL action
+) {
+    if (menu == nil || anchorItem == nil || trackedItems == nil) {
+        return;
+    }
+    for (NSMenuItem *oldItem in trackedItems) {
+        if ([menu indexOfItem:oldItem] >= 0) {
+            [menu removeItem:oldItem];
+        }
+    }
+    [trackedItems removeAllObjects];
+    if (encodedLines.length == 0) {
+        return;
+    }
+    NSInteger insertIndex = [menu indexOfItem:anchorItem];
+    if (insertIndex < 0) {
+        return;
+    }
+    NSArray<NSString *> *lines = [encodedLines componentsSeparatedByString:@"\n"];
+    for (NSString *line in lines) {
+        NSRange tab = [line rangeOfString:@"\t"];
+        if (tab.location == NSNotFound || tab.location == 0) {
+            continue;
+        }
+        NSString *sessionID = [line substringToIndex:tab.location];
+        NSString *label = [line substringFromIndex:tab.location + 1];
+        if (sessionID.length == 0 || label.length == 0) {
+            continue;
+        }
+        NSMenuItem *item = [[[NSMenuItem alloc] initWithTitle:label
+                                                       action:action
+                                                keyEquivalent:@""] autorelease];
+        item.target = target;
+        item.representedObject = sessionID;
+        insertIndex++;
+        [menu insertItem:item atIndex:insertIndex];
+        [trackedItems addObject:item];
+    }
+}
+
 void hoxi_statusbar_start(void) {
     hoxi_run_on_main(^{
         @autoreleasepool {
@@ -165,6 +280,8 @@ void hoxi_statusbar_start(void) {
             button.toolTip = @"Hoxi Workspace";
 
             NSMenu *menu = [NSMenu new];
+            menu.autoenablesItems = NO;
+
             NSMenuItem *openWorkspace = [[NSMenuItem alloc] initWithTitle:@"唤醒 Hoxi 工作台"
                                                                    action:@selector(showMainWindow:)
                                                             keyEquivalent:@""];
@@ -172,11 +289,59 @@ void hoxi_statusbar_start(void) {
             [menu addItem:openWorkspace];
             [openWorkspace release];
 
-            hoxiStatusBarController.summaryItem = [[[NSMenuItem alloc] initWithTitle:@"Agent: Idle"
-                                                                               action:nil
-                                                                        keyEquivalent:@""] autorelease];
-            hoxiStatusBarController.summaryItem.enabled = NO;
-            [menu addItem:hoxiStatusBarController.summaryItem];
+            [menu addItem:[NSMenuItem separatorItem]];
+
+            hoxiStatusBarController.attentionItem = [[[NSMenuItem alloc] initWithTitle:@"待审批任务 (0)"
+                                                                                action:@selector(openAttentionTasks:)
+                                                                         keyEquivalent:@""] autorelease];
+            hoxiStatusBarController.attentionItem.target = hoxiStatusBarController;
+            [menu addItem:hoxiStatusBarController.attentionItem];
+
+            hoxiStatusBarController.runningItem = [[[NSMenuItem alloc] initWithTitle:@"运行中任务 (0)"
+                                                                              action:@selector(openRunningTasks:)
+                                                                       keyEquivalent:@""] autorelease];
+            hoxiStatusBarController.runningItem.target = hoxiStatusBarController;
+            [menu addItem:hoxiStatusBarController.runningItem];
+
+            [menu addItem:[NSMenuItem separatorItem]];
+
+            NSMenuItem *newThreadItem = [[NSMenuItem alloc] initWithTitle:@"新建对话"
+                                                                   action:@selector(newThread:)
+                                                            keyEquivalent:@"n"];
+            newThreadItem.target = hoxiStatusBarController;
+            [menu addItem:newThreadItem];
+            [newThreadItem release];
+
+            NSMenuItem *handoffItem = [[NSMenuItem alloc] initWithTitle:@"导入外部 CLI 会话…"
+                                                                 action:@selector(openHandoff:)
+                                                          keyEquivalent:@""];
+            handoffItem.target = hoxiStatusBarController;
+            [menu addItem:handoffItem];
+            [handoffItem release];
+
+            [menu addItem:[NSMenuItem separatorItem]];
+
+            hoxiStatusBarController.keepAwakeItem = [[[NSMenuItem alloc] initWithTitle:@"任务运行时保持唤醒"
+                                                                                action:@selector(toggleKeepAwake:)
+                                                                         keyEquivalent:@""] autorelease];
+            hoxiStatusBarController.keepAwakeItem.target = hoxiStatusBarController;
+            hoxiStatusBarController.keepAwakeItem.state = NSControlStateValueOn;
+            [menu addItem:hoxiStatusBarController.keepAwakeItem];
+
+            NSMenuItem *policyItem = [[NSMenuItem alloc] initWithTitle:@"审批与安全策略…"
+                                                                action:@selector(openApprovalPolicy:)
+                                                         keyEquivalent:@""];
+            policyItem.target = hoxiStatusBarController;
+            [menu addItem:policyItem];
+            [policyItem release];
+
+            NSMenuItem *settingsItem = [[NSMenuItem alloc] initWithTitle:@"偏好设置…"
+                                                                  action:@selector(openSettings:)
+                                                           keyEquivalent:@","];
+            settingsItem.target = hoxiStatusBarController;
+            [menu addItem:settingsItem];
+            [settingsItem release];
+
             [menu addItem:[NSMenuItem separatorItem]];
 
             NSMenuItem *quitApplication = [[NSMenuItem alloc] initWithTitle:@"退出 Hoxi"
@@ -185,6 +350,8 @@ void hoxi_statusbar_start(void) {
             quitApplication.target = hoxiStatusBarController;
             [menu addItem:quitApplication];
             [quitApplication release];
+
+            hoxiStatusBarController.menu = menu;
             hoxiStatusBarController.statusItem.menu = menu;
             [menu release];
             [NSApp dockTile].badgeLabel = @"";
@@ -192,27 +359,82 @@ void hoxi_statusbar_start(void) {
     });
 }
 
-void hoxi_statusbar_update(int attention, int running, int queued, int available, const char *badge) {
+void hoxi_statusbar_update(
+    int attention,
+    int running,
+    int queued,
+    int available,
+    int keepAwakeEnabled,
+    int keepAwakeActive,
+    const char *badge,
+    const char *pendingItems,
+    const char *runningItems
+) {
     // The block may run later on the main queue, so own the text before Go frees it.
     char *badgeCopy = badge != NULL ? strdup(badge) : NULL;
+    char *pendingCopy = pendingItems != NULL ? strdup(pendingItems) : NULL;
+    char *runningCopy = runningItems != NULL ? strdup(runningItems) : NULL;
     hoxi_run_on_main(^{
         @autoreleasepool {
             NSString *badgeText = badgeCopy != NULL ? [NSString stringWithUTF8String:badgeCopy] : @"";
+            NSString *pendingText = pendingCopy != NULL ? [NSString stringWithUTF8String:pendingCopy] : @"";
+            NSString *runningText = runningCopy != NULL ? [NSString stringWithUTF8String:runningCopy] : @"";
             free(badgeCopy);
+            free(pendingCopy);
+            free(runningCopy);
             if (hoxiStatusBarController == nil) {
                 return;
             }
 
             NSStatusBarButton *button = hoxiStatusBarController.statusItem.button;
             button.image = hoxi_create_statusbar_summary(attention, running, available);
+            hoxiStatusBarController.keepAwakeItem.state = keepAwakeEnabled ? NSControlStateValueOn : NSControlStateValueOff;
+            hoxiStatusBarController.keepAwakeItem.title = (keepAwakeEnabled && keepAwakeActive)
+                ? @"任务运行时保持唤醒（生效中）"
+                : @"任务运行时保持唤醒";
+
             if (!available) {
                 button.toolTip = @"Hoxi: OpenCode 引擎正在启动";
-                hoxiStatusBarController.summaryItem.title = @"OpenCode 正在连接...";
+                hoxiStatusBarController.attentionItem.title = @"待审批任务（引擎正在连接…）";
+                hoxiStatusBarController.runningItem.title = @"运行中任务 (0)";
+                hoxi_rebuild_session_items(
+                    hoxiStatusBarController.menu,
+                    hoxiStatusBarController.attentionItem,
+                    hoxiStatusBarController.pendingSessionItems,
+                    @"",
+                    hoxiStatusBarController,
+                    @selector(openPendingSession:)
+                );
+                hoxi_rebuild_session_items(
+                    hoxiStatusBarController.menu,
+                    hoxiStatusBarController.runningItem,
+                    hoxiStatusBarController.runningSessionItems,
+                    @"",
+                    hoxiStatusBarController,
+                    @selector(openRunningSession:)
+                );
                 [NSApp dockTile].badgeLabel = @"";
                 return;
             }
             button.toolTip = [NSString stringWithFormat:@"Hoxi：待审批 %d · 运行中 %d", attention, running];
-            hoxiStatusBarController.summaryItem.title = [NSString stringWithFormat:@"待审批 %d · 运行中 %d", attention, running];
+            hoxiStatusBarController.attentionItem.title = [NSString stringWithFormat:@"待审批任务 (%d)", attention];
+            hoxiStatusBarController.runningItem.title = [NSString stringWithFormat:@"运行中任务 (%d)", running];
+            hoxi_rebuild_session_items(
+                hoxiStatusBarController.menu,
+                hoxiStatusBarController.attentionItem,
+                hoxiStatusBarController.pendingSessionItems,
+                pendingText,
+                hoxiStatusBarController,
+                @selector(openPendingSession:)
+            );
+            hoxi_rebuild_session_items(
+                hoxiStatusBarController.menu,
+                hoxiStatusBarController.runningItem,
+                hoxiStatusBarController.runningSessionItems,
+                runningText,
+                hoxiStatusBarController,
+                @selector(openRunningSession:)
+            );
             [NSApp dockTile].badgeLabel = badgeText;
         }
     });
@@ -225,7 +447,12 @@ void hoxi_statusbar_stop(void) {
             if (hoxiStatusBarController != nil) {
                 [[NSStatusBar systemStatusBar] removeStatusItem:hoxiStatusBarController.statusItem];
                 hoxiStatusBarController.statusItem = nil;
-                hoxiStatusBarController.summaryItem = nil;
+                hoxiStatusBarController.menu = nil;
+                hoxiStatusBarController.attentionItem = nil;
+                hoxiStatusBarController.runningItem = nil;
+                hoxiStatusBarController.keepAwakeItem = nil;
+                [hoxiStatusBarController.pendingSessionItems removeAllObjects];
+                [hoxiStatusBarController.runningSessionItems removeAllObjects];
                 [hoxiStatusBarController release];
                 hoxiStatusBarController = nil;
             }

@@ -181,3 +181,54 @@ func TestStatusTrackerKeepAwakeLifecycle(t *testing.T) {
 		t.Fatalf("expected persisted KeepAwakeEnabled=false on reload")
 	}
 }
+
+func TestStatusTrackerTargetsAndMenuDispatch(t *testing.T) {
+	tracker := NewTracker()
+	tracker.SetSessionResolver(func(sessionID string) (string, string, string) {
+		switch sessionID {
+		case "ses_child":
+			return "ses_root", "Fix auth callback", "/Users/dev/hoxi/.hoxi/worktrees/ses_root"
+		case "ses_busy":
+			return "ses_busy", "Run integration suite", "/Users/dev/backend"
+		default:
+			return sessionID, "", ""
+		}
+	})
+
+	tracker.SetPendingApproval("perm_1", "ses_child", true)
+	tracker.SetSessionBusy("ses_busy", true)
+
+	snap := tracker.Snapshot()
+	if snap.PendingApprovals != 1 {
+		t.Fatalf("PendingApprovals = %d, want 1", snap.PendingApprovals)
+	}
+	if len(snap.PendingTargets) != 1 || snap.PendingTargets[0].SessionID != "ses_root" || snap.PendingTargets[0].Directory != "/Users/dev/hoxi/.hoxi/worktrees/ses_root" {
+		t.Fatalf("unexpected PendingTargets: %+v", snap.PendingTargets)
+	}
+	if got := FormatMenuTargetLabel(snap.PendingTargets[0]); got != "  ↳ Fix auth callback · hoxi" {
+		t.Fatalf("FormatMenuTargetLabel = %q, want %q", got, "  ↳ Fix auth callback · hoxi")
+	}
+	if len(snap.RunningTargets) != 1 || snap.RunningTargets[0].SessionID != "ses_busy" || snap.RunningTargets[0].Directory != "/Users/dev/backend" {
+		t.Fatalf("unexpected RunningTargets: %+v", snap.RunningTargets)
+	}
+
+	att, ok := tracker.FirstAttentionTarget()
+	if !ok || att.SessionID != "ses_root" {
+		t.Fatalf("FirstAttentionTarget = %+v (ok=%v), want ses_root", att, ok)
+	}
+	run, ok := tracker.FirstRunningTarget()
+	if !ok || run.SessionID != "ses_busy" {
+		t.Fatalf("FirstRunningTarget = %+v (ok=%v), want ses_busy", run, ok)
+	}
+
+	var received MenuAction
+	SetActionHandler(func(action MenuAction) {
+		received = action
+	})
+	defer SetActionHandler(nil)
+
+	dispatchMenuAction("attention", "ses_root")
+	if received.Kind != MenuActionAttention || received.SessionID != "ses_root" {
+		t.Fatalf("unexpected dispatched menu action: %+v", received)
+	}
+}

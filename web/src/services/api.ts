@@ -225,16 +225,26 @@ export const hoxiAPI = {
     return info;
   },
 
-  // Desktop deep links and the CLI queue navigation intents in the gateway.
-  // Consuming clears the pending intent so a reload never replays it.
+  // Desktop deep links, the CLI, and the native status bar menu queue navigation
+  // intents in the gateway. Consuming clears the pending intent so a reload never replays it.
   async consumeDesktopIntent(): Promise<DesktopIntent | null> {
     const res = await requestJSON<{ intent?: DesktopIntent | null }>("/api/hoxi/desktop/intent", {
       method: "POST",
     });
     const intent = res?.intent;
-    if (!intent || typeof intent.sessionID !== "string" || !intent.sessionID.trim()) return null;
+    if (!intent) return null;
+    const action =
+      typeof intent.action === "string" && intent.action.trim()
+        ? (intent.action.trim() as import("./api-types").DesktopIntentAction)
+        : undefined;
+    const sessionID =
+      typeof intent.sessionID === "string" && intent.sessionID.trim()
+        ? intent.sessionID.trim()
+        : undefined;
+    if (!action && !sessionID) return null;
     return {
-      sessionID: intent.sessionID.trim(),
+      action,
+      sessionID,
       messageID: typeof intent.messageID === "string" && intent.messageID.trim() ? intent.messageID.trim() : undefined,
       directory: typeof intent.directory === "string" && intent.directory.trim() ? intent.directory.trim() : undefined,
     };

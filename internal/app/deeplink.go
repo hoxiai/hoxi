@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/hoxiai/hoxi/internal/gateway"
+	"github.com/hoxiai/hoxi/internal/statusbar"
 )
 
 // desktopIntentEvent wakes the webview when a deep link or CLI request queues a
@@ -96,4 +97,94 @@ func validDeepLinkID(value, prefix string) bool {
 		}
 	}
 	return true
+}
+
+func (a *DesktopApp) handleStatusBarMenuAction(action statusbar.MenuAction) {
+	switch strings.TrimSpace(action.Kind) {
+	case statusbar.MenuActionToggleKeepAwake:
+		if a.status != nil {
+			a.status.SetKeepAwakeEnabled(!a.status.KeepAwakeEnabled())
+		}
+		if a.gateway != nil {
+			a.gateway.QueueDesktopIntent(gateway.DesktopIntent{
+				Action: gateway.DesktopIntentActionSyncKeepAwake,
+			})
+		}
+		return
+	case statusbar.MenuActionWorkspace:
+		a.showWindow()
+		return
+	case statusbar.MenuActionAttention:
+		a.showWindow()
+		if a.gateway == nil {
+			return
+		}
+		sessionID := strings.TrimSpace(action.SessionID)
+		directory := ""
+		if a.status != nil {
+			if sessionID != "" {
+				target := a.status.ResolveTarget(sessionID)
+				sessionID = target.SessionID
+				directory = target.Directory
+			} else if target, ok := a.status.FirstAttentionTarget(); ok {
+				sessionID = target.SessionID
+				directory = target.Directory
+			}
+		}
+		a.gateway.QueueDesktopIntent(gateway.DesktopIntent{
+			Action:    gateway.DesktopIntentActionAttention,
+			SessionID: sessionID,
+			Directory: directory,
+		})
+	case statusbar.MenuActionRunning:
+		a.showWindow()
+		if a.gateway == nil {
+			return
+		}
+		sessionID := strings.TrimSpace(action.SessionID)
+		directory := ""
+		if a.status != nil {
+			if sessionID != "" {
+				target := a.status.ResolveTarget(sessionID)
+				sessionID = target.SessionID
+				directory = target.Directory
+			} else if target, ok := a.status.FirstRunningTarget(); ok {
+				sessionID = target.SessionID
+				directory = target.Directory
+			}
+		}
+		a.gateway.QueueDesktopIntent(gateway.DesktopIntent{
+			Action:    gateway.DesktopIntentActionRunning,
+			SessionID: sessionID,
+			Directory: directory,
+		})
+	case statusbar.MenuActionNewThread:
+		a.showWindow()
+		if a.gateway != nil {
+			a.gateway.QueueDesktopIntent(gateway.DesktopIntent{
+				Action: gateway.DesktopIntentActionNewThread,
+			})
+		}
+	case statusbar.MenuActionHandoff:
+		a.showWindow()
+		if a.gateway != nil {
+			a.gateway.QueueDesktopIntent(gateway.DesktopIntent{
+				Action: gateway.DesktopIntentActionHandoff,
+			})
+		}
+	case statusbar.MenuActionPolicy:
+		a.showWindow()
+		if a.gateway != nil {
+			a.gateway.QueueDesktopIntent(gateway.DesktopIntent{
+				Action: gateway.DesktopIntentActionPolicy,
+			})
+		}
+	case statusbar.MenuActionSettings:
+		a.showWindow()
+		if a.gateway != nil {
+			a.gateway.QueueDesktopIntent(gateway.DesktopIntent{
+				Action: gateway.DesktopIntentActionSettings,
+			})
+		}
+	}
 }

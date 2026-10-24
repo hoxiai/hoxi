@@ -4,11 +4,27 @@
 // a workspace switch when the intent names another project, and expiry so an
 // unresolved link can never fire later after an unrelated project change.
 import { createEffect, createRoot, createSignal, untrack } from "solid-js";
-import { hoxiAPI } from "../services/api";
+import { hoxiAPI, type DesktopIntent } from "../services/api";
 import { onDesktopIntent } from "../services/desktop-events";
+import { saveLayoutPrefs, setLeftNavOpen } from "./layout";
+import { isSessionArchived, isSessionBusy, sessionDirectory } from "./session-query";
+import { startNewThreadDraft } from "./session-sandbox";
+import {
+  closeHandoffModal,
+  closeSettingsModal,
+  fetchSystemRuntimeInfo,
+  openHandoffModal,
+  openSettingsModal,
+} from "./settings";
+import { resolveRootSessionID } from "./subagent-sessions";
 import { setWorkspace, workspace } from "./workspace-state";
 import { findWorkspaceProfileByDir, normalizeFolderPath, workspacePrimaryFolder } from "./workspace-folders";
-import { selectInitialProjectSession, switchWorkspace } from "./workspace-projects";
+import {
+  closeWorkspaceModal,
+  selectInitialProjectSession,
+  setSidebarProjectMode,
+  switchWorkspace,
+} from "./workspace-projects";
 import { selectSession } from "./workspace-sessions";
 
 export interface SessionDeepLink {
@@ -164,25 +180,165 @@ export function resolvePendingDeepLink(): void {
   });
 }
 
-// Pulls the pending navigation queued by a hoxi:// deep link or the CLI.
-// The gateway clears it on read, so polling is safe and idempotent.
-export async function consumeDesktopIntent(): Promise<SessionDeepLink | null> {
+// Pulls the pending navigation queued by a hoxi:// deep link, the CLI, or the
+// macOS status bar menu. The gateway clears it on read, so polling is safe and idempotent.
+export async function consumeDesktopIntent(): Promise<DesktopIntent | null> {
   try {
     const intent = await hoxiAPI.consumeDesktopIntent();
-    if (!intent?.sessionID) return null;
-    return {
-      sessionID: intent.sessionID,
-      messageID: intent.messageID || undefined,
-      directory: intent.directory || undefined,
-    };
+    if (!intent?.action && !intent?.sessionID) return null;
+    return intent;
   } catch {
     return null;
   }
 }
 
+/**
+ * Opens the sidebar in "Needs Attention" mode and focuses the first session
+ * awaiting approval, interactive question input, or user attention.
+ */
+export function focusFirstAttentionSession(targetSessionID?: string, directory?: string): void {
+  setLeftNavOpen(true);
+  saveLayoutPrefs();
+  setSidebarProjectMode("attention");
+
+  const explicitID = targetSessionID?.trim();
+  if (explicitID) {
+    const rootID = resolveRootSessionID(explicitID) || explicitID;
+    openSessionDeepLink({
+      sessionID: rootID,
+      directory: directory || sessionDirectory(rootID) || sessionDirectory(explicitID),
+    });
+    return;
+  }
+
+  const firstPerm = workspace.pendingPermissions[0];
+  if (firstPerm?.sessionID) {
+    const rootID = resolveRootSessionID(firstPerm.sessionID) || firstPerm.sessionID;
+    openSessionDeepLink({
+      sessionID: rootID,
+      directory: sessionDirectory(rootID) || sessionDirectory(firstPerm.sessionID),
+    });
+    return;
+  }
+
+  const firstQuestion = workspace.pendingQuestions[0];
+  if (firstQuestion?.sessionID) {
+    const rootID = resolveRootSessionID(firstQuestion.sessionID) || firstQuestion.sessionID;
+    openSessionDeepLink({
+      sessionID: rootID,
+      directory: sessionDirectory(rootID) || sessionDirectory(firstQuestion.sessionID),
+    });
+    return;
+  }
+
+  const candidate = workspace.sessions.find(
+    (s) =>
+      !s.parentID &&
+      !isSessionArchived(s) &&
+      Boolean(workspace.unreadCompletedBySession[s.id] || workspace.interruptedBySession[s.id])
+  );
+  if (candidate) {
+    openSessionDeepLink({
+      sessionID: candidate.id,
+      directory: sessionDirectory(candidate.id),
+    });
+  }
+}
+
+/**
+ * Opens the sidebar in "Running" mode and focuses the target or first active running session.
+ */
+export function focusFirstRunningSession(targetSessionID?: string, directory?: string): void {
+  setLeftNavOpen(true);
+  saveLayoutPrefs();
+  setSidebarProjectMode("running");
+
+  const explicitID = targetSessionID?.trim();
+  if (explicitID) {
+    const rootID = resolveRootSessionID(explicitID) || explicitID;
+    openSessionDeepLink({
+      sessionID: rootID,
+      directory: directory || sessionDirectory(rootID) || sessionDirectory(explicitID),
+    });
+    return;
+  }
+
+  const loadedRunning = workspace.sessions.find(
+    (s) => !s.parentID && !isSessionArchived(s) && isSessionBusy(s.id)
+  );
+  if (loadedRunning) {
+    openSessionDeepLink({
+      sessionID: loadedRunning.id,
+      directory: sessionDirectory(loadedRunning.id),
+    });
+    return;
+  }
+
+  for (const [id, st] of Object.entries(workspace.statusBySession)) {
+    if (st?.type === "busy" || st?.type === "retry") {
+      const rootID = resolveRootSessionID(id) || id;
+      openSessionDeepLink({
+        sessionID: rootID,
+        directory: sessionDirectory(rootID) || sessionDirectory(id),
+      });
+      return;
+    }
+  }
+}
+
+export function applyDesktopIntent(intent: DesktopIntent | null | undefined): void {
+  if (!intent) return;
+  switch (intent.action) {
+    case "sync-keep-awake":
+      void fetchSystemRuntimeInfo().catch(() => {});
+      return;
+    case "policy":
+      closeHandoffModal();
+      closeWorkspaceModal();
+      openSettingsModal("policy");
+      return;
+    case "settings":
+      closeHandoffModal();
+      closeWorkspaceModal();
+      openSettingsModal("general");
+      return;
+    case "handoff":
+      closeSettingsModal();
+      closeWorkspaceModal();
+      openHandoffModal();
+      return;
+    case "new-thread":
+      closeSettingsModal();
+      closeHandoffModal();
+      closeWorkspaceModal();
+      startNewThreadDraft();
+      return;
+    case "attention":
+      closeSettingsModal();
+      closeHandoffModal();
+      closeWorkspaceModal();
+      focusFirstAttentionSession(intent.sessionID, intent.directory);
+      return;
+    case "running":
+      closeSettingsModal();
+      closeHandoffModal();
+      closeWorkspaceModal();
+      focusFirstRunningSession(intent.sessionID, intent.directory);
+      return;
+    default:
+      if (intent.sessionID) {
+        openSessionDeepLink({
+          sessionID: intent.sessionID,
+          messageID: intent.messageID,
+          directory: intent.directory,
+        });
+      }
+  }
+}
+
 async function consumeAndOpenDesktopIntent(): Promise<void> {
   const intent = await consumeDesktopIntent();
-  if (intent) openSessionDeepLink(intent);
+  if (intent) applyDesktopIntent(intent);
 }
 
 /**

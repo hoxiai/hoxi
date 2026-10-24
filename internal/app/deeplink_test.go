@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/hoxiai/hoxi/internal/gateway"
+	"github.com/hoxiai/hoxi/internal/statusbar"
 )
 
 func TestParseSessionDeepLink(t *testing.T) {
@@ -103,5 +104,74 @@ func TestOnURLOpenOnlyRevealsWindowForValidDeepLink(t *testing.T) {
 	intent, ok := gw.ConsumeDesktopIntent()
 	if !ok || intent.SessionID != "ses_abc123" || intent.MessageID != "msg_456" {
 		t.Fatalf("unexpected queued intent: %+v (ok=%v)", intent, ok)
+	}
+}
+
+func TestHandleStatusBarMenuActionQueuesDesktopIntents(t *testing.T) {
+	t.Setenv("HOXI_KEEP_AWAKE_CONFIG", t.TempDir()+"/keep-awake.json")
+	tracker := statusbar.NewTracker()
+	tracker.SetSessionResolver(func(sessionID string) (string, string, string) {
+		switch sessionID {
+		case "ses_pending":
+			return "ses_pending", "Approve deploy", "/repo/deploy"
+		case "ses_running":
+			return "ses_running", "Build release", "/repo/release"
+		default:
+			return sessionID, "", ""
+		}
+	})
+	tracker.SetPendingApproval("perm_1", "ses_pending", true)
+	tracker.SetSessionBusy("ses_running", true)
+
+	gw := gateway.New(0, "test", t.TempDir(), nil, nil)
+	app := &DesktopApp{gateway: gw, status: tracker}
+
+	// 1. Attention menu click without explicit session resolves first pending target
+	app.handleStatusBarMenuAction(statusbar.MenuAction{Kind: statusbar.MenuActionAttention})
+	if !app.revealOnStartup {
+		t.Fatal("expected attention menu action to reveal window")
+	}
+	intent, ok := gw.ConsumeDesktopIntent()
+	if !ok || intent.Action != gateway.DesktopIntentActionAttention || intent.SessionID != "ses_pending" || intent.Directory != "/repo/deploy" {
+		t.Fatalf("unexpected attention intent: %+v (ok=%v)", intent, ok)
+	}
+
+	// 2. Running menu click with explicit session resolves target directory
+	app.handleStatusBarMenuAction(statusbar.MenuAction{Kind: statusbar.MenuActionRunning, SessionID: "ses_running"})
+	intent, ok = gw.ConsumeDesktopIntent()
+	if !ok || intent.Action != gateway.DesktopIntentActionRunning || intent.SessionID != "ses_running" || intent.Directory != "/repo/release" {
+		t.Fatalf("unexpected running intent: %+v (ok=%v)", intent, ok)
+	}
+
+	// 3. Policy, Handoff, NewThread, Settings
+	for _, tc := range []struct {
+		kind   string
+		action string
+	}{
+		{statusbar.MenuActionPolicy, gateway.DesktopIntentActionPolicy},
+		{statusbar.MenuActionHandoff, gateway.DesktopIntentActionHandoff},
+		{statusbar.MenuActionNewThread, gateway.DesktopIntentActionNewThread},
+		{statusbar.MenuActionSettings, gateway.DesktopIntentActionSettings},
+	} {
+		app.handleStatusBarMenuAction(statusbar.MenuAction{Kind: tc.kind})
+		got, ok := gw.ConsumeDesktopIntent()
+		if !ok || got.Action != tc.action {
+			t.Fatalf("menu kind %q -> intent %+v (ok=%v), want action %q", tc.kind, got, ok, tc.action)
+		}
+	}
+
+	// 4. Toggle keep-awake updates tracker and queues sync-keep-awake without revealing hidden window
+	app.revealOnStartup = false
+	initialKeepAwake := tracker.KeepAwakeEnabled()
+	app.handleStatusBarMenuAction(statusbar.MenuAction{Kind: statusbar.MenuActionToggleKeepAwake})
+	if tracker.KeepAwakeEnabled() == initialKeepAwake {
+		t.Fatal("expected toggle-keep-awake to flip KeepAwakeEnabled")
+	}
+	if app.revealOnStartup {
+		t.Fatal("expected toggle-keep-awake not to force-open window")
+	}
+	got, ok := gw.ConsumeDesktopIntent()
+	if !ok || got.Action != gateway.DesktopIntentActionSyncKeepAwake {
+		t.Fatalf("unexpected sync-keep-awake intent: %+v (ok=%v)", got, ok)
 	}
 }

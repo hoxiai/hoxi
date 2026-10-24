@@ -9,12 +9,22 @@ const (
 	maxDesktopEntityIDLength = 96
 	desktopSessionIDPrefix   = "ses_"
 	desktopMessageIDPrefix   = "msg_"
+
+	DesktopIntentActionAttention     = "attention"
+	DesktopIntentActionRunning       = "running"
+	DesktopIntentActionNewThread     = "new-thread"
+	DesktopIntentActionHandoff       = "handoff"
+	DesktopIntentActionPolicy        = "policy"
+	DesktopIntentActionSettings      = "settings"
+	DesktopIntentActionSyncKeepAwake = "sync-keep-awake"
 )
 
-// DesktopIntent is a one-shot navigation request produced by a deep link or the
-// CLI. The desktop UI consumes it and focuses the referenced session.
+// DesktopIntent is a one-shot navigation request produced by a deep link, the
+// CLI, or the native status bar menu. The desktop UI consumes it and focuses
+// the referenced session or view.
 type DesktopIntent struct {
-	SessionID string `json:"sessionID"`
+	Action    string `json:"action,omitempty"`
+	SessionID string `json:"sessionID,omitempty"`
 	MessageID string `json:"messageID,omitempty"`
 	Directory string `json:"directory,omitempty"`
 }
@@ -30,8 +40,15 @@ func (g *Gateway) SetDesktopIntentNotifier(fn func()) {
 
 // QueueDesktopIntent replaces any pending intent and notifies the desktop UI.
 func (g *Gateway) QueueDesktopIntent(intent DesktopIntent) {
+	intent.Action = strings.TrimSpace(intent.Action)
+	if intent.Action != "" && !validDesktopIntentAction(intent.Action) {
+		return
+	}
 	intent.SessionID = strings.TrimSpace(intent.SessionID)
-	if !validDesktopEntityID(intent.SessionID, desktopSessionIDPrefix) {
+	if intent.SessionID != "" && !validDesktopEntityID(intent.SessionID, desktopSessionIDPrefix) {
+		return
+	}
+	if intent.Action == "" && intent.SessionID == "" {
 		return
 	}
 	intent.MessageID = strings.TrimSpace(intent.MessageID)
@@ -49,6 +66,21 @@ func (g *Gateway) QueueDesktopIntent(intent DesktopIntent) {
 	g.intentMu.Unlock()
 	if notify != nil {
 		notify()
+	}
+}
+
+func validDesktopIntentAction(action string) bool {
+	switch action {
+	case DesktopIntentActionAttention,
+		DesktopIntentActionRunning,
+		DesktopIntentActionNewThread,
+		DesktopIntentActionHandoff,
+		DesktopIntentActionPolicy,
+		DesktopIntentActionSettings,
+		DesktopIntentActionSyncKeepAwake:
+		return true
+	default:
+		return false
 	}
 }
 
