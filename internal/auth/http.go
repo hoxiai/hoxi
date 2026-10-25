@@ -49,6 +49,12 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleSaveWorkApps(w, r)
 	case path == "/open-url" && r.Method == http.MethodPost:
 		h.handleOpenURL(w, r)
+	case path == "/tools/discover" && r.Method == http.MethodPost:
+		h.handleToolsDiscover(w, r)
+	case path == "/tools/inspect" && r.Method == http.MethodPost:
+		h.handleToolsInspect(w, r)
+	case path == "/tools/run" && r.Method == http.MethodPost:
+		h.handleToolsRun(w, r)
 	default:
 		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
 	}
@@ -177,6 +183,69 @@ func (h *HTTPHandler) handleOpenURL(w http.ResponseWriter, r *http.Request) {
 		"success": true,
 		"url":     targetURL,
 	})
+}
+
+func (h *HTTPHandler) handleToolsDiscover(w http.ResponseWriter, r *http.Request) {
+	body, err := readBoundedJSONBody(r, 64<<10)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid json body"})
+		return
+	}
+	data, err := h.service.DiscoverTools(r.Context(), body)
+	if err != nil {
+		h.writeMemberError(w, err)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(data)
+}
+
+func (h *HTTPHandler) handleToolsInspect(w http.ResponseWriter, r *http.Request) {
+	body, err := readBoundedJSONBody(r, 64<<10)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid json body"})
+		return
+	}
+	data, err := h.service.InspectTool(r.Context(), body)
+	if err != nil {
+		h.writeMemberError(w, err)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(data)
+}
+
+func (h *HTTPHandler) handleToolsRun(w http.ResponseWriter, r *http.Request) {
+	body, err := readBoundedJSONBody(r, 512<<10)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid json body"})
+		return
+	}
+	data, err := h.service.RunTool(r.Context(), body)
+	if err != nil {
+		h.writeMemberError(w, err)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(data)
+}
+
+func readBoundedJSONBody(r *http.Request, limit int64) ([]byte, error) {
+	if r.Body == nil {
+		return []byte(`{}`), nil
+	}
+	raw, err := io.ReadAll(io.LimitReader(r.Body, limit))
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) == 0 {
+		return []byte(`{}`), nil
+	}
+	var check map[string]any
+	if err := json.Unmarshal(raw, &check); err != nil {
+		return nil, err
+	}
+	return raw, nil
 }
 
 func (h *HTTPHandler) writeMemberError(w http.ResponseWriter, err error) {

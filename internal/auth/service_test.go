@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -487,5 +488,66 @@ func TestMintMCPTokenAndWorkApps(t *testing.T) {
 	}
 	if tokRes["accessToken"] != "apay_mcp_test_scoped_token" || tokRes["mcpUrl"] != "https://hoxi.ai/api/mcp" {
 		t.Fatalf("unexpected MintMCPToken result: %#v", tokRes)
+	}
+}
+
+func TestToolsGatewayBridge(t *testing.T) {
+	s := testService(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/hoxi/tools/discover":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code": 0,
+				"data": map[string]any{
+					"totalToolsMatched": 2,
+				},
+			})
+		case "/api/hoxi/tools/inspect":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code": 0,
+				"data": map[string]any{
+					"provider": "apify",
+					"endpoint": "/apidojo/tweet-scraper",
+				},
+			})
+		case "/api/hoxi/tools/run":
+			if r.Header.Get("Authorization") != "Bearer hox_dt_tools" {
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"message":"Unauthorized"}`))
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code": 0,
+				"data": map[string]any{
+					"ok":     true,
+					"status": "COMPLETED",
+				},
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+
+	discRes, err := s.DiscoverTools(context.Background(), []byte(`{"query":"twitter"}`))
+	if err != nil || discRes["code"] != float64(0) {
+		t.Fatalf("DiscoverTools failed: %v, %#v", err, discRes)
+	}
+
+	inspRes, err := s.InspectTool(context.Background(), []byte(`{"provider":"apify"}`))
+	if err != nil || inspRes["code"] != float64(0) {
+		t.Fatalf("InspectTool failed: %v, %#v", err, inspRes)
+	}
+
+	if _, err := s.RunTool(context.Background(), []byte(`{"provider":"apify","endpoint":"/apidojo/tweet-scraper"}`)); !errors.Is(err, ErrNotLoggedIn) {
+		t.Fatalf("expected ErrNotLoggedIn for RunTool when logged out, got %v", err)
+	}
+
+	s.current = &StoredAuth{
+		DeviceToken: "hox_dt_tools",
+		User:        UserProfile{ID: 9, Email: "tools@hoxi.ai"},
+	}
+
+	runRes, err := s.RunTool(context.Background(), []byte(`{"provider":"apify","endpoint":"/apidojo/tweet-scraper"}`))
+	if err != nil || runRes["code"] != float64(0) {
+		t.Fatalf("RunTool failed: %v, %#v", err, runRes)
 	}
 }

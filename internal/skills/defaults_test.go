@@ -50,17 +50,19 @@ func TestSeedDefaultsInstallsBundledSkills(t *testing.T) {
 }
 
 func TestDefaultSkillMatchesRepoCopy(t *testing.T) {
-	embedded, err := defaultSkillFiles.ReadFile("defaults/skill-authoring/SKILL.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	repoPath := filepath.Join("..", "..", ".opencode", "skills", "skill-authoring", "SKILL.md")
-	repo, err := os.ReadFile(repoPath)
-	if err != nil {
-		t.Fatalf("read repo skill copy: %v", err)
-	}
-	if !bytes.Equal(embedded, repo) {
-		t.Fatal("bundled default and .opencode/skills/skill-authoring/SKILL.md differ")
+	for _, slug := range []string{"skill-authoring", "hoxi-tools"} {
+		embedded, err := defaultSkillFiles.ReadFile("defaults/" + slug + "/SKILL.md")
+		if err != nil {
+			t.Fatalf("read embedded %s: %v", slug, err)
+		}
+		repoPath := filepath.Join("..", "..", ".opencode", "skills", slug, "SKILL.md")
+		repo, err := os.ReadFile(repoPath)
+		if err != nil {
+			t.Fatalf("read repo skill copy (%s): %v", slug, err)
+		}
+		if !bytes.Equal(embedded, repo) {
+			t.Fatalf("bundled default and .opencode/skills/%s/SKILL.md differ", slug)
+		}
 	}
 }
 

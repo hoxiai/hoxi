@@ -461,6 +461,72 @@ func (s *Service) MintMCPToken(ctx context.Context, req MCPTokenRequest) (map[st
 	return s.callMemberEndpoint(ctx, http.MethodPost, "/api/hoxi/mcp/token", body)
 }
 
+// DiscoverTools 通过 hoxi.ai 工具网关检索可用工具与 Endpoint（支持未登录检索与已登录态透传）
+func (s *Service) DiscoverTools(ctx context.Context, body []byte) (map[string]any, error) {
+	return s.callOptionalMemberEndpoint(ctx, http.MethodPost, "/api/hoxi/tools/discover", body)
+}
+
+// InspectTool 通过 hoxi.ai 工具网关读取指定工具 Endpoint 的入参 Schema 与积分单价
+func (s *Service) InspectTool(ctx context.Context, body []byte) (map[string]any, error) {
+	return s.callOptionalMemberEndpoint(ctx, http.MethodPost, "/api/hoxi/tools/inspect", body)
+}
+
+// RunTool 使用当前桌面端已登录的 Hoxi 账号与会员积分执行指定工具 Endpoint
+func (s *Service) RunTool(ctx context.Context, body []byte) (map[string]any, error) {
+	return s.callMemberEndpoint(ctx, http.MethodPost, "/api/hoxi/tools/run", body)
+}
+
+func (s *Service) callOptionalMemberEndpoint(ctx context.Context, method, endpoint string, body []byte) (map[string]any, error) {
+	s.mu.RLock()
+	baseURL := s.serverBaseURL
+	token := ""
+	if s.current != nil && s.current.DeviceToken != "" {
+		token = s.current.DeviceToken
+	}
+	s.mu.RUnlock()
+
+	if len(body) == 0 {
+		body = []byte(`{}`)
+	}
+	targetURL := fmt.Sprintf("%s%s", baseURL, endpoint)
+	req, err := http.NewRequestWithContext(ctx, method, targetURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var payload map[string]any
+	_ = json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(&payload)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		msg := ""
+		if payload != nil {
+			if m, ok := payload["message"].(string); ok && m != "" {
+				msg = m
+			} else if m, ok := payload["error"].(string); ok && m != "" {
+				msg = m
+			}
+		}
+		return nil, &UpstreamAPIError{
+			StatusCode: resp.StatusCode,
+			Message:    msg,
+		}
+	}
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	return payload, nil
+}
+
 // FetchWorkApps 从 hoxi.ai 拉取官方工作模式应用目录，并合并本地持久化的应用安装/技能绑定配置
 func (s *Service) FetchWorkApps(ctx context.Context) (map[string]any, error) {
 	s.mu.RLock()
