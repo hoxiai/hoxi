@@ -1,5 +1,5 @@
 ---
-name: hoxi-tools
+name: tools
 description: Discover, inspect, and execute 220+ verified Agent Tools and 2,000+ data/API endpoints (SEO, Ahrefs, DataForSEO, Apify scrapers, Amazon/TikTok/social media data, Apollo/Crunchbase lead enrichment, ElevenLabs/AI media) through Hoxi Desktop local browser/Chrome Link and the Hoxi Tools Gateway using Hoxi Account Points. 发现、校验并调用 Hoxi 全网 Agent 工具库（含网页采集、SEO 外链与关键词、跨境电商评论、社媒达人数据、B2B 获客背调、多模态生成等 220+ 服务商接口），优先使用 Hoxi 桌面端本地浏览器免费能力，商业数据接口经 Hoxi 网关按次消耗会员积分。
 compatibility: 支持 Hoxi 桌面端本地免 Key 桥接、Hoxi MCP Server 与 REST API 调用
 metadata:
@@ -9,7 +9,7 @@ metadata:
 
 # Hoxi Tools — 全栈与 Agent 工具调度技能
 
-`hoxi-tools` 是 Hoxi 研发工作台的工具与外部数据调度中枢。它把 **Hoxi 桌面端本地能力（无头浏览器 + Chrome Link + 本地工作区）** 与 **Hoxi 云端工具网关（220+ 服务商、按次积分计费接口）** 结合为统一的调用闭环。
+`tools` 是 Hoxi 研发工作台的工具与外部数据调度中枢。它把 **Hoxi 桌面端本地能力（无头浏览器 + Chrome Link + 本地工作区）** 与 **Hoxi 云端工具网关（220+ 服务商、按次积分计费接口）** 结合为统一的调用闭环。
 
 ---
 
@@ -111,13 +111,13 @@ curl -sS -X POST "${HOXI_BRIDGE}/api/hoxi/tools/run" \
 
 ## 四、与一人公司垂直运营 Skill 的闭环联动
 
-当用户执行跨境电商、独立站、社媒种草或买量投放任务时，主动将 `hoxi-tools` 作为 **前置真实数据源** 与以下官方技能组合：
+当用户执行跨境电商、独立站、社媒种草或买量投放任务时，主动将 `tools` 作为 **前置真实数据源** 与以下官方技能组合：
 
 1. **配合 `/amazon-ops`（亚马逊运营）**：
-   先用 `hoxi-tools` 调用 `dataforseo` / `apify` 拉取竞品 ASIN 差评（VOC）与搜索词数据 → 交由 `amazon-ops` 生成 COSMO 五点描述、A+ 脚本与 250B Search Terms → 经 Chrome Link 填入卖家后台。
+   先用 `tools` 调用 `dataforseo` / `apify` 拉取竞品 ASIN 差评（VOC）与搜索词数据 → 交由 `amazon-ops` 生成 COSMO 五点描述、A+ 脚本与 250B Search Terms → 经 Chrome Link 填入卖家后台。
 2. **配合 `/tiktok-shop-ops`（TikTok 小店与带货）**：
-   先用 `hoxi-tools` 调用 `apify` / `anyapi` 拉取同类目热门带货视频数据与达人信息 → 交由 `tiktok-shop-ops` 拆解黄金前 3 秒钩子、生成挂车脚本与达人建联 DM。
+   先用 `tools` 调用 `apify` / `anyapi` 拉取同类目热门带货视频数据与达人信息 → 交由 `tiktok-shop-ops` 拆解黄金前 3 秒钩子、生成挂车脚本与达人建联 DM。
 3. **配合 `/shopify-ops` & `/ads-growth-ops`（独立站与出海买量）**：
-   先用 `hoxi-tools` 调用 `ahrefs` / `dataforseo` / `apollo` 获取高转化长尾词、竞品外链与潜客决策人邮箱 → 生成高转化着陆页与 Meta/Google 广告测试矩阵。
+   先用 `tools` 调用 `ahrefs` / `dataforseo` / `apollo` 获取高转化长尾词、竞品外链与潜客决策人邮箱 → 生成高转化着陆页与 Meta/Google 广告测试矩阵。
 4. **配合 `/xiaohongshu-ops` & `/1688-ops`（国内种草与源头货盘）**：
-   结合 `hoxi-tools` 行业趋势数据与本地合规审计工具，完成从 1688 源头拿样定价到小红书 KFS 矩阵种草的全链路闭环。
+   结合 `tools` 行业趋势数据与本地合规审计工具，完成从 1688 源头拿样定价到小红书 KFS 矩阵种草的全链路闭环。

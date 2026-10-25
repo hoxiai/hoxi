@@ -50,7 +50,7 @@ func TestSeedDefaultsInstallsBundledSkills(t *testing.T) {
 }
 
 func TestDefaultSkillMatchesRepoCopy(t *testing.T) {
-	for _, slug := range []string{"skill-authoring", "hoxi-tools"} {
+	for _, slug := range []string{"skill-authoring", "tools"} {
 		embedded, err := defaultSkillFiles.ReadFile("defaults/" + slug + "/SKILL.md")
 		if err != nil {
 			t.Fatalf("read embedded %s: %v", slug, err)
