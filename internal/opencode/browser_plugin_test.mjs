@@ -304,4 +304,48 @@ test("standalone browser plugin", async (t) => {
       await fs.rm(tmpDir, { recursive: true, force: true });
     }
   });
+
+  await t.test("hoxi_tools executes discover and inspect without approval and requires approval for run", async () => {
+    const execTools = hooks.tool.hoxi_tools.execute;
+    requests = [];
+    asks = [];
+    globalThis.fetch = async (url, options) => {
+      requests.push({ url, options });
+      return Response.json({ code: 0, data: { ok: true } });
+    };
+
+    const discRes = await execTools({ action: "discover", query: "amazon reviews", limit: 5 }, context);
+    assert.equal(asks.length, 0);
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].url.pathname, "/api/hoxi/tools/discover");
+    assert.deepEqual(JSON.parse(requests[0].options.body), { query: "amazon reviews", limit: 5 });
+    assert.equal(discRes.title, "HoxiTools: discover");
+
+    const inspRes = await execTools({ action: "inspect", provider: "apify", endpoint: "/apidojo/tweet-scraper" }, context);
+    assert.equal(asks.length, 0);
+    assert.equal(requests.length, 2);
+    assert.equal(requests[1].url.pathname, "/api/hoxi/tools/inspect");
+    assert.deepEqual(JSON.parse(requests[1].options.body), { provider: "apify", endpoint: "/apidojo/tweet-scraper" });
+    assert.equal(inspRes.title, "HoxiTools: inspect (apify)");
+
+    const runRes = await execTools({
+      action: "run",
+      provider: "apify",
+      endpoint: "/apidojo/tweet-scraper",
+      body: { handle: "hoxiai" },
+      wait: true,
+    }, context);
+    assert.equal(asks.length, 1);
+    assert.equal(asks[0].permission, "hoxi_tools");
+    assert.deepEqual(asks[0].patterns, ["run apify /apidojo/tweet-scraper"]);
+    assert.equal(requests.length, 3);
+    assert.equal(requests[2].url.pathname, "/api/hoxi/tools/run");
+    assert.deepEqual(JSON.parse(requests[2].options.body), {
+      provider: "apify",
+      endpoint: "/apidojo/tweet-scraper",
+      body: { handle: "hoxiai" },
+      wait: true,
+    });
+    assert.equal(runRes.title, "HoxiTools: run (apify)");
+  });
 });

@@ -44,48 +44,30 @@ metadata:
 
 ## 三、三种调用通道（按当前运行环境自动选择）
 
-### 通道 A：MCP 工具直调（已挂载 Hoxi MCP Server 时首选）
+### 通道 A：Hoxi 桌面端原生内置工具 `hoxi_tools`（在 Hoxi 桌面端内首选）
 
-若当前会话已连接 Hoxi MCP Server（`/api/mcp`），直接调用以下 3 个原生工具：
+在 Hoxi 桌面端会话中，无需跑 `curl` 命令、也无需手动配置任何 API Key，直接调用内置的原生工具 **`hoxi_tools`**（进程自动绑定本机动态网关端口与当前登录的 Hoxi 账号，`discover` 与 `inspect` 零积分免审，`run` 自动走原生审批卡片）：
+
+1. **Discover（检索可用工具与 Endpoint）**：
+   调用 `hoxi_tools`：`{ "action": "discover", "query": "amazon reviews", "limit": 8 }`
+2. **Inspect（读取入参 Schema 与积分消耗）**：
+   调用 `hoxi_tools`：`{ "action": "inspect", "provider": "dataforseo", "endpoint": "/v3/merchant/amazon/products/live" }`
+3. **Run（按 Schema 执行接口）**：
+   调用 `hoxi_tools`：`{ "action": "run", "provider": "dataforseo", "endpoint": "/v3/merchant/amazon/products/live", "body": { "keyword": "wireless charger", "location_code": 2840 }, "wait": true }`
+
+> 若返回 `401 Unauthorized`（未登录 Hoxi 账号），提示用户在 Hoxi 桌面端左下角点击头像一键登录 Hoxi 账号（每日签到即可免费领取积分）。
+
+### 通道 B：MCP 工具直调（外部客户端挂载 Hoxi MCP Server 时首选）
+
+若当前客户端已连接 Hoxi MCP Server（`/api/mcp`），直接调用以下 3 个 MCP 工具：
 
 - `hoxi_tools_discover`：传入 `{ "query": "<需求关键词>", "category": "<可选分类>", "limit": 10 }`
 - `hoxi_tools_inspect`：传入 `{ "provider": "<provider>", "endpoint": "<endpoint>" }`
 - `hoxi_tools_run`：传入 `{ "provider": "<provider>", "endpoint": "<endpoint>", "body": { ... }, "wait": true }`
 
-### 通道 B：Hoxi 桌面端本机免 Key 桥接（在 Hoxi 桌面端内运行命令时首选）
+### 通道 C：HTTP REST 直调（无内置工具或独立 CLI 环境）
 
-在 Hoxi 桌面端会话中，本地桥接网关（Release 默认 `http://127.0.0.1:5410`，Dev 默认 `http://127.0.0.1:5420`）会自动附带当前已登录的 Hoxi 账号凭据，**无需用户手动配置 API Key**：
-
-```bash
-# 探测本地桥接端口（优先 5410，回落 5420）
-HOXI_BRIDGE="${HOXI_BRIDGE_URL:-http://127.0.0.1:5410}"
-
-# 1. Discover：检索可用工具与 Endpoint
-curl -sS -X POST "${HOXI_BRIDGE}/api/hoxi/tools/discover" \
-  -H "Content-Type: application/json" \
-  -d '{"query": "amazon reviews", "limit": 8}'
-
-# 2. Inspect：查看指定 provider + endpoint 的入参结构与积分消耗
-curl -sS -X POST "${HOXI_BRIDGE}/api/hoxi/tools/inspect" \
-  -H "Content-Type: application/json" \
-  -d '{"provider": "dataforseo", "endpoint": "/v3/merchant/amazon/products/live"}'
-
-# 3. Run：使用当前登录的 Hoxi 账号与积分执行接口
-curl -sS -X POST "${HOXI_BRIDGE}/api/hoxi/tools/run" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "provider": "dataforseo",
-    "endpoint": "/v3/merchant/amazon/products/live",
-    "body": {"keyword": "wireless charger", "location_code": 2840},
-    "wait": true
-  }'
-```
-
-> 若返回 `401 Unauthorized`（未登录 Hoxi 账号），提示用户在 Hoxi 桌面端左下角点击头像一键登录 Hoxi 账号（每日签到即可免费领取积分）。
-
-### 通道 C：云端 API 直调（外部 CLI / 独立环境）
-
-在非 Hoxi 桌面端的外部 Agent 环境中，直接请求 `https://hoxi.ai`（开发联调为 `http://127.0.0.1:5400`）：
+在未挂载插件或 MCP 的独立环境中，请求本机桥接（`${HOXI_BRIDGE_URL:-http://127.0.0.1:5410}`）或云端网关（`https://hoxi.ai`）：
 
 - **Discover（公开免鉴权）**：
   ```bash
