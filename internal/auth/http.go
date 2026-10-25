@@ -49,11 +49,11 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleSaveWorkApps(w, r)
 	case path == "/open-url" && r.Method == http.MethodPost:
 		h.handleOpenURL(w, r)
-	case path == "/tools/discover" && r.Method == http.MethodPost:
+	case (path == "/tools/discover" || r.URL.Path == "/api/hoxi/tools/discover") && r.Method == http.MethodPost:
 		h.handleToolsDiscover(w, r)
-	case path == "/tools/inspect" && r.Method == http.MethodPost:
+	case (path == "/tools/inspect" || r.URL.Path == "/api/hoxi/tools/inspect") && r.Method == http.MethodPost:
 		h.handleToolsInspect(w, r)
-	case path == "/tools/run" && r.Method == http.MethodPost:
+	case (path == "/tools/run" || r.URL.Path == "/api/hoxi/tools/run") && r.Method == http.MethodPost:
 		h.handleToolsRun(w, r)
 	default:
 		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)

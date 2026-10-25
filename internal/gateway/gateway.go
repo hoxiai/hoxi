@@ -504,6 +504,7 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 		g.mux.Handle("/api/hoxi/auth", authHandler)
 		g.mux.Handle("/api/hoxi/auth/", authHandler)
 		g.mux.Handle("/api/hoxi/work/apps", authHandler)
+		g.mux.Handle("/api/hoxi/tools/", authHandler)
 	}
 	if g.updater != nil {
 		h := updater.NewHTTPHandler(g.updater)

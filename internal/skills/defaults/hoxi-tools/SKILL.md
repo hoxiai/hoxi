@@ -61,17 +61,17 @@ metadata:
 HOXI_BRIDGE="${HOXI_BRIDGE_URL:-http://127.0.0.1:5410}"
 
 # 1. Discover：检索可用工具与 Endpoint
-curl -sS -X POST "${HOXI_BRIDGE}/api/hoxi/auth/tools/discover" \
+curl -sS -X POST "${HOXI_BRIDGE}/api/hoxi/tools/discover" \
   -H "Content-Type: application/json" \
   -d '{"query": "amazon reviews", "limit": 8}'
 
 # 2. Inspect：查看指定 provider + endpoint 的入参结构与积分消耗
-curl -sS -X POST "${HOXI_BRIDGE}/api/hoxi/auth/tools/inspect" \
+curl -sS -X POST "${HOXI_BRIDGE}/api/hoxi/tools/inspect" \
   -H "Content-Type: application/json" \
   -d '{"provider": "dataforseo", "endpoint": "/v3/merchant/amazon/products/live"}'
 
 # 3. Run：使用当前登录的 Hoxi 账号与积分执行接口
-curl -sS -X POST "${HOXI_BRIDGE}/api/hoxi/auth/tools/run" \
+curl -sS -X POST "${HOXI_BRIDGE}/api/hoxi/tools/run" \
   -H "Content-Type: application/json" \
   -d '{
     "provider": "dataforseo",

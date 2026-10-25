@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -549,5 +550,16 @@ func TestToolsGatewayBridge(t *testing.T) {
 	runRes, err := s.RunTool(context.Background(), []byte(`{"provider":"apify","endpoint":"/apidojo/tweet-scraper"}`))
 	if err != nil || runRes["code"] != float64(0) {
 		t.Fatalf("RunTool failed: %v, %#v", err, runRes)
+	}
+
+	h := NewHTTPHandler(s)
+	for _, route := range []string{"/api/hoxi/tools/discover", "/api/hoxi/auth/tools/discover"} {
+		req := httptest.NewRequest(http.MethodPost, route, strings.NewReader(`{"query":"twitter"}`))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 on %s, got %d (%s)", route, rec.Code, rec.Body.String())
+		}
 	}
 }
