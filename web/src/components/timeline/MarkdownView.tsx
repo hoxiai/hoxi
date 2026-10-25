@@ -1,10 +1,9 @@
-import { createEffect, createMemo, createSignal, onCleanup, Show, untrack } from "solid-js";
+import { createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js";
 import { createIncrementalMarkdownParser } from "./markdown-parser";
 import { createStreamPacer, REVEAL_REPLAY_MAX_CHARS } from "./markdown/reveal";
 import {
-  createRevealPainter,
-  createStreamCaret,
   prefersReducedMotion,
+  StreamRevealContext,
   type StreamReveal,
 } from "./stream-reveal";
 import MarkdownBlocks from "./MarkdownBlocks";
@@ -24,11 +23,15 @@ export {
 } from "./markdown-parser";
 
 const clock = () => (typeof performance !== "undefined" ? performance.now() : Date.now());
+const isDocumentHidden = () =>
+  typeof document !== "undefined" && document.visibilityState === "hidden";
 
 /**
- * `streaming` marks the live tail of a busy session: new text lights up and cools into
- * the body color, new blocks fade in and a glowing dot leads the text. Without it the
- * view only paces growing content evenly, as before.
+ * Renders markdown content incrementally.
+ * When `streaming` is true (the live tail of a busy session), incoming chunks are
+ * paced smoothly across animation frames and newly revealed text slices / blocks
+ * softly fade from faint to full contrast (`StreamRevealContext`).
+ * Historical turns, session switches, and non-streaming views render immediately.
  */
 export default function MarkdownView(props: {
   content: string;
@@ -38,20 +41,16 @@ export default function MarkdownView(props: {
   const parseIncremental = createIncrementalMarkdownParser();
   const canAnimate = typeof requestAnimationFrame === "function";
   const initial = (props.content || "").replace(/\r\n/g, "\n");
-  // A live part that mounts with little text replays it so its first words light up
-  // too; a long one (e.g. reopening a busy session) shows at once.
-  const replay = Boolean(props.streaming) && canAnimate && initial.length <= REVEAL_REPLAY_MAX_CHARS;
+  const replay =
+    Boolean(props.streaming) &&
+    canAnimate &&
+    !isDocumentHidden() &&
+    !prefersReducedMotion() &&
+    initial.length <= REVEAL_REPLAY_MAX_CHARS;
   const pacer = createStreamPacer(replay ? "" : initial, clock());
-  const painter = createRevealPainter();
-  const caret = createStreamCaret();
   const [displayed, setDisplayed] = createSignal(replay ? "" : initial);
-  const [revealEnabled, setRevealEnabled] = createSignal(false);
-  let container: HTMLDivElement | undefined;
+  const [revealActive, setRevealActive] = createSignal(false);
   let rafId: number | undefined;
-
-  createEffect(() => {
-    if (props.streaming && canAnimate && !prefersReducedMotion()) setRevealEnabled(true);
-  });
 
   const cancelFrame = () => {
     if (rafId !== undefined && typeof cancelAnimationFrame === "function") {
@@ -60,82 +59,97 @@ export default function MarkdownView(props: {
     rafId = undefined;
   };
 
-  // One loop drives the pacer, the light trail and the caret in that order, so the
-  // trail is painted in the same frame the new characters enter the DOM.
+  const snapToTarget = (streaming: boolean) => {
+    cancelFrame();
+    const full = pacer.target;
+    pacer.reset(full, clock());
+    setDisplayed(full);
+    setRevealActive(streaming && canAnimate && !isDocumentHidden() && !prefersReducedMotion());
+  };
+
   const frame = (ts: number) => {
     rafId = undefined;
+    if (isDocumentHidden() || prefersReducedMotion()) {
+      snapToTarget(Boolean(untrack(() => props.streaming)));
+      return;
+    }
     const prev = pacer.shown;
     const next = pacer.step(ts);
     if (next !== prev) {
+      setRevealActive(true);
       setDisplayed(pacer.target.slice(0, next));
-      if (untrack(revealEnabled)) painter.push({ start: prev, end: next, at: ts });
     }
-    const glowing = untrack(revealEnabled) && painter.paint(ts);
-    if (untrack(() => props.streaming)) caret.place(container);
-    if (pacer.pending || glowing) rafId = requestAnimationFrame(frame);
+    if (pacer.pending) {
+      rafId = requestAnimationFrame(frame);
+    } else if (!untrack(() => props.streaming)) {
+      setRevealActive(false);
+    }
   };
 
   const ensureFrame = () => {
-    if (rafId === undefined && canAnimate) rafId = requestAnimationFrame(frame);
+    if (rafId === undefined && canAnimate) {
+      rafId = requestAnimationFrame(frame);
+    }
   };
 
   createEffect(() => {
     const next = (props.content || "").replace(/\r\n/g, "\n");
+    const streaming = Boolean(props.streaming);
     const at = clock();
-    const streaming = untrack(() => props.streaming);
-    const jump =
-      !canAnimate ||
-      // Content that shows up in an empty, non-live view (a file preview loading)
-      // appears at once rather than typing itself out.
-      (!streaming && pacer.shown === 0) ||
-      !pacer.push(next, at);
-    if (jump) {
+    const shouldPace =
+      canAnimate &&
+      !isDocumentHidden() &&
+      !prefersReducedMotion() &&
+      (streaming || pacer.pending || untrack(revealActive));
+
+    if (!shouldPace || !pacer.push(next, at)) {
       cancelFrame();
-      painter.clear();
+      setRevealActive(false);
       pacer.reset(next, at);
       setDisplayed(next);
-      if (streaming) ensureFrame();
+      if (streaming && canAnimate && !isDocumentHidden() && !prefersReducedMotion()) {
+        setRevealActive(true);
+      }
       return;
     }
-    if (pacer.pending) ensureFrame();
+
+    if (streaming) setRevealActive(true);
+    if (pacer.pending) {
+      ensureFrame();
+    } else if (!streaming) {
+      setDisplayed(next);
+      setRevealActive(false);
+    }
   });
 
-  // Keep the caret on the text end when the column reflows (resize, sidebar toggle).
-  createEffect(() => {
-    if (!props.streaming || !container || typeof ResizeObserver !== "function") return;
-    const observer = new ResizeObserver(() => caret.place(container));
-    observer.observe(container);
-    ensureFrame();
-    onCleanup(() => observer.disconnect());
-  });
+  if (typeof document !== "undefined" && typeof document.addEventListener === "function") {
+    const onVisibilityChange = () => {
+      if (isDocumentHidden() && (pacer.pending || !untrack(() => props.streaming))) {
+        snapToTarget(Boolean(untrack(() => props.streaming)));
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    onCleanup(() => document.removeEventListener("visibilitychange", onVisibilityChange));
+  }
 
-  onCleanup(() => {
-    cancelFrame();
-    painter.dispose();
-  });
+  onCleanup(cancelFrame);
 
   const reveal: StreamReveal = {
-    enabled: revealEnabled,
-    source: displayed,
-    track: painter.track,
+    active: revealActive,
   };
 
   const blocks = createMemo(() => parseIncremental(displayed()));
 
   return (
-    <div
-      ref={container}
-      class={`relative flex flex-col text-[var(--text-primary)] selectable-text ${
-        props.density === "compact" ? "gap-y-2 leading-[1.62]" : "gap-y-4 leading-[1.7]"
-      }`}
-      style={{ "font-size": "var(--app-chat-text-size)" }}
-    >
-      <MarkdownBlocks blocks={blocks()} density={props.density ?? "chat"} reveal={reveal} />
-      <Show when={props.streaming}>
-        <span ref={caret.ref} class="hoxi-stream-caret-anchor" aria-hidden="true">
-          <span class="hoxi-stream-caret" />
-        </span>
-      </Show>
-    </div>
+    <StreamRevealContext.Provider value={reveal}>
+      <div
+        class={`flex flex-col text-[var(--text-primary)] selectable-text ${
+          props.density === "compact" ? "gap-y-2 leading-[1.62]" : "gap-y-4 leading-[1.7]"
+        }`}
+        style={{ "font-size": "var(--app-chat-text-size)" }}
+      >
+        <MarkdownBlocks blocks={blocks()} density={props.density ?? "chat"} />
+      </div>
+    </StreamRevealContext.Provider>
   );
 }

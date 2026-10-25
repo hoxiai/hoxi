@@ -124,13 +124,13 @@ export function ContextActivityGroupView(props: {
       startedAt={props.startedAt}
       revealKey={props.revealKey}
       renderFallbackPart={(part, revealKey) => (
-        <PartView part={part} revealKey={revealKey} />
+        <PartView part={part} revealKey={revealKey} streaming={props.isLiveTail} />
       )}
     />
   );
 }
 
-/** `streaming` marks the live tail of a busy session so its text reveals softly. */
+/** `streaming` marks the live tail of a busy session so its text paces and fades in softly. */
 export function PartView(props: { part: MessagePart; revealKey?: string; streaming?: boolean }) {
   const mayHaveInlineThinking = createMemo(() => {
     const raw = props.part;

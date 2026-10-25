@@ -8,8 +8,7 @@ import {
 import { Icon } from "../icons";
 import CodeBlockCard from "./CodeBlockCard";
 import MarkdownInline from "./MarkdownInline";
-import { locateTailInlines } from "./markdown/reveal";
-import { createRevealBirths, revealBlock, type StreamReveal } from "./stream-reveal";
+import { createRevealBirths, revealBlock } from "./stream-reveal";
 
 function alignClass(align?: TableAlign): string {
   if (align === "center") return "text-center";
@@ -41,39 +40,14 @@ function alertStyle(alert?: AlertKind): { border: string; badgeBg: string; label
   }
 }
 
-function isSameOffsets(a?: Map<string, number>, b?: Map<string, number>): boolean {
-  if (a === b) return true;
-  if (!a || !b || a.size !== b.size) return false;
-  for (const [key, value] of a) {
-    if (b.get(key) !== value) return false;
-  }
-  return true;
-}
-
 export default function MarkdownBlocks(props: {
   blocks: BlockToken[];
   density?: "chat" | "compact";
   depth?: number;
-  reveal?: StreamReveal;
 }) {
   const depth = () => props.depth ?? 0;
   const compact = () => props.density === "compact";
-  const blockBirth = createRevealBirths(() => props.reveal);
-  // Absolute source offsets of the trailing inline runs, so only text revealed in
-  // the last frames fades in and earlier blocks never re-animate.
-  // Offsets only move when a block is added, so equal maps do not notify every
-  // block on each streamed frame.
-  const tailInlines = createMemo(
-    () => {
-      const reveal = props.reveal;
-      if (!reveal || !reveal.enabled()) return undefined;
-      return locateTailInlines(reveal.source(), props.blocks);
-    },
-    undefined,
-    { equals: isSameOffsets }
-  );
-  const inlineStart = (key: string) => tailInlines()?.get(key) ?? -1;
-  const inlineReveal = (key: string) => (tailInlines()?.has(key) ? props.reveal : undefined);
+  const blockBirth = createRevealBirths();
 
   return (
     <Index each={props.blocks}>
@@ -92,11 +66,14 @@ export default function MarkdownBlocks(props: {
               (block() as Extract<BlockToken, { type: "heading" }>).level === 1
             }
           >
-            <h1 class="first:mt-0 mt-3.5 -mb-1 text-[1.28em] font-semibold tracking-tight text-[var(--text-primary)]">
+            <h1
+              ref={(el) =>
+                revealBlock(el, blockBirth(blockIdx), { startOpacity: 0.45, translateY: 2 })
+              }
+              class="first:mt-0 mt-3.5 -mb-1 text-[1.28em] font-semibold tracking-tight text-[var(--text-primary)]"
+            >
               <MarkdownInline
                 text={(block() as Extract<BlockToken, { type: "heading" }>).text || "\u00A0"}
-                reveal={inlineReveal(`${blockIdx}`)}
-                revealStart={inlineStart(`${blockIdx}`)}
               />
             </h1>
           </Match>
@@ -106,11 +83,14 @@ export default function MarkdownBlocks(props: {
               (block() as Extract<BlockToken, { type: "heading" }>).level === 2
             }
           >
-            <h2 class="first:mt-0 mt-3 -mb-1 text-[1.15em] font-semibold tracking-tight text-[var(--text-primary)]">
+            <h2
+              ref={(el) =>
+                revealBlock(el, blockBirth(blockIdx), { startOpacity: 0.45, translateY: 2 })
+              }
+              class="first:mt-0 mt-3 -mb-1 text-[1.15em] font-semibold tracking-tight text-[var(--text-primary)]"
+            >
               <MarkdownInline
                 text={(block() as Extract<BlockToken, { type: "heading" }>).text || "\u00A0"}
-                reveal={inlineReveal(`${blockIdx}`)}
-                revealStart={inlineStart(`${blockIdx}`)}
               />
             </h2>
           </Match>
@@ -120,16 +100,24 @@ export default function MarkdownBlocks(props: {
               (block() as Extract<BlockToken, { type: "heading" }>).level === 3
             }
           >
-            <h3 class="first:mt-0 mt-2.5 -mb-1 text-[1.05em] font-semibold text-[var(--text-primary)]">
+            <h3
+              ref={(el) =>
+                revealBlock(el, blockBirth(blockIdx), { startOpacity: 0.45, translateY: 2 })
+              }
+              class="first:mt-0 mt-2.5 -mb-1 text-[1.05em] font-semibold text-[var(--text-primary)]"
+            >
               <MarkdownInline
                 text={(block() as Extract<BlockToken, { type: "heading" }>).text || "\u00A0"}
-                reveal={inlineReveal(`${blockIdx}`)}
-                revealStart={inlineStart(`${blockIdx}`)}
               />
             </h3>
           </Match>
           <Match when={block().type === "heading"}>
-            <h4 class="first:mt-0 mt-2 -mb-1 text-[0.98em] font-semibold text-[var(--text-secondary)]">
+            <h4
+              ref={(el) =>
+                revealBlock(el, blockBirth(blockIdx), { startOpacity: 0.45, translateY: 2 })
+              }
+              class="first:mt-0 mt-2 -mb-1 text-[0.98em] font-semibold text-[var(--text-secondary)]"
+            >
               <MarkdownInline
                 text={(block() as Extract<BlockToken, { type: "heading" }>).text || "\u00A0"}
               />
@@ -138,11 +126,7 @@ export default function MarkdownBlocks(props: {
           <Match when={block().type === "list"}>
             {(_) => {
               const listBlock = () => block() as Extract<BlockToken, { type: "list" }>;
-              const itemBirth = createRevealBirths(
-                () => props.reveal,
-                () => blockBirth(blockIdx)
-              );
-              const itemKey = (itemIdx: number) => `${blockIdx}:${itemIdx}`;
+              const itemBirth = createRevealBirths();
               return (
                 <div class={`my-0.5 text-[var(--text-primary)] ${compact() ? "space-y-1.5" : "space-y-2"}`}>
                   <Index each={listBlock().items}>
@@ -154,11 +138,16 @@ export default function MarkdownBlocks(props: {
                           when={taskMatch()}
                           fallback={
                             <div
+                              ref={(el) =>
+                                revealBlock(el, itemBirth(itemIdx), {
+                                  startOpacity: 0.35,
+                                  translateY: 2,
+                                })
+                              }
                               class="flex items-start gap-2 leading-[1.68]"
                               style={{ "padding-left": padLeft() }}
                             >
                               <span
-                                ref={(el) => revealBlock(el, itemBirth(itemIdx))}
                                 class="shrink-0 select-none font-mono text-[0.9em] text-[var(--text-muted)] min-w-[1.25rem] text-right"
                               >
                                 {item().kind === "ordered"
@@ -170,8 +159,6 @@ export default function MarkdownBlocks(props: {
                               <div class="min-w-0 flex-1 whitespace-pre-wrap break-words">
                                 <MarkdownInline
                                   text={item().text || "\u00A0"}
-                                  reveal={inlineReveal(itemKey(itemIdx))}
-                                  revealStart={inlineStart(itemKey(itemIdx))}
                                 />
                               </div>
                             </div>
@@ -181,11 +168,16 @@ export default function MarkdownBlocks(props: {
                             const checked = () => tm()[1].toLowerCase() === "x";
                             return (
                               <div
+                                ref={(el) =>
+                                  revealBlock(el, itemBirth(itemIdx), {
+                                    startOpacity: 0.35,
+                                    translateY: 2,
+                                  })
+                                }
                                 class="flex items-start gap-2 leading-[1.68]"
                                 style={{ "padding-left": padLeft() }}
                               >
                                 <span
-                                  ref={(el) => revealBlock(el, itemBirth(itemIdx))}
                                   class={`mt-1 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
                                     checked()
                                       ? "border-[var(--ok-border)] bg-[var(--ok-surface)] text-[var(--ok-text)]"
@@ -259,13 +251,11 @@ export default function MarkdownBlocks(props: {
           <Match when={block().type === "table"}>
             {(_) => {
               const tb = () => block() as Extract<BlockToken, { type: "table" }>;
-              const rowBirth = createRevealBirths(
-                () => props.reveal,
-                () => blockBirth(blockIdx)
-              );
+              const tableAt = () => blockBirth(blockIdx);
+              const rowBirth = createRevealBirths();
               return (
                 <div
-                  ref={(el) => revealBlock(el, blockBirth(blockIdx))}
+                  ref={(el) => revealBlock(el, tableAt())}
                   class="my-1 overflow-x-auto rounded-xl border border-[var(--border-subtle)]"
                 >
                   <table class="w-full border-collapse text-left text-[0.92em]">
@@ -288,7 +278,12 @@ export default function MarkdownBlocks(props: {
                       <Index each={tb().rows}>
                         {(row, rowIdx) => (
                           <tr
-                            ref={(el) => revealBlock(el, rowBirth(rowIdx))}
+                            ref={(el) => {
+                              const at = rowBirth(rowIdx);
+                              if (at - tableAt() >= 8) {
+                                revealBlock(el, at, { startOpacity: 0, translateY: 2 });
+                              }
+                            }}
                             class="border-b last:border-b-0 border-[var(--border-subtle)]"
                           >
                             <Index each={row()}>
@@ -318,11 +313,14 @@ export default function MarkdownBlocks(props: {
             />
           </Match>
           <Match when={block().type === "paragraph"}>
-            <p class="whitespace-pre-wrap break-words leading-[1.7]">
+            <p
+              ref={(el) =>
+                revealBlock(el, blockBirth(blockIdx), { startOpacity: 0.5, translateY: 2 })
+              }
+              class="whitespace-pre-wrap break-words leading-[1.7]"
+            >
               <MarkdownInline
                 text={(block() as Extract<BlockToken, { type: "paragraph" }>).text}
-                reveal={inlineReveal(`${blockIdx}`)}
-                revealStart={inlineStart(`${blockIdx}`)}
               />
             </p>
           </Match>

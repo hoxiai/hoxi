@@ -387,7 +387,7 @@ export default function ThoughtBox(props: { part: ReasoningPart; revealKey?: str
                 }`}
               >
                 <div ref={innerRef}>
-                  <MarkdownView content={bodyContent()} />
+                  <MarkdownView content={bodyContent()} streaming={streaming()} />
                 </div>
               </div>
             </div>

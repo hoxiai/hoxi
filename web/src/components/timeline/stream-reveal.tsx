@@ -1,26 +1,27 @@
-import { createEffect, createRenderEffect, onCleanup, onMount, untrack } from "solid-js";
+// web/src/components/timeline/stream-reveal.tsx
 import {
-  pruneRevealChunks,
-  REVEAL_BLOCK_MS,
-  REVEAL_LEVELS,
-  type RevealChunk,
-  revealSegments,
-} from "./markdown/reveal";
+  createContext,
+  createRenderEffect,
+  onCleanup,
+  untrack,
+  useContext,
+} from "solid-js";
+import { REVEAL_BLOCK_MS, REVEAL_CHUNK_MS } from "./markdown/reveal";
 
 /**
- * Live-reveal state a streaming `MarkdownView` shares with its blocks. Effects only
- * apply to text revealed while the view streams; history renders exactly as before.
+ * Live-reveal state shared by a streaming `MarkdownView` with its descendant
+ * blocks and inline text runs via `StreamRevealContext`.
+ * Historical or non-streaming views leave `active()` false so they render
+ * synchronously in a single text node with zero animation overhead.
  */
 export interface StreamReveal {
-  /** True once the view has streamed live (and motion is allowed). */
-  enabled: () => boolean;
-  /** The displayed, normalized markdown source the blocks were parsed from. */
-  source: () => string;
-  /** Registers a rendered text node whose text starts at absolute source offset `start()`. */
-  track: (node: Text, start: () => number) => () => void;
+  /** True while the view is actively pacing out newly arrived streamed content. */
+  active: () => boolean;
 }
 
-const BLOCK_EASE = "cubic-bezier(0.16, 1, 0.3, 1)";
+export const StreamRevealContext = createContext<StreamReveal>();
+
+const BLOCK_EASE = "cubic-bezier(0.22, 1, 0.36, 1)";
 
 let reducedMotionQuery: MediaQueryList | undefined;
 
@@ -30,206 +31,194 @@ export function prefersReducedMotion(): boolean {
   return reducedMotionQuery.matches;
 }
 
-function supportsHighlights(): boolean {
-  return (
-    typeof CSS !== "undefined" &&
-    "highlights" in CSS &&
-    typeof Highlight === "function" &&
-    typeof StaticRange === "function"
-  );
-}
-
-let trailHighlights: Highlight[] | undefined;
-
-// One shared highlight per trail level (`::highlight(hoxi-reveal-N)` in transitions.css);
-// each painter adds and removes only its own ranges.
-function revealHighlights(): Highlight[] {
-  if (!trailHighlights) {
-    trailHighlights = Array.from({ length: REVEAL_LEVELS }, (_, level) => {
-      const highlight = new Highlight();
-      CSS.highlights.set(`hoxi-reveal-${level}`, highlight);
-      return highlight;
-    });
-  }
-  return trailHighlights;
+interface PendingChunk {
+  el: HTMLSpanElement;
+  text: string;
+  done: boolean;
+  timer: ReturnType<typeof setTimeout>;
 }
 
 /**
- * Paints the light trail over freshly revealed text with the CSS Custom Highlight API:
- * no extra DOM, no compositing layers and no change to text shaping, so the text
- * itself never moves or blinks — only its color is stepped through the trail levels.
+ * Renders an inline text run that appends in place.
+ * - Outside a streaming `MarkdownView`, returns a single bare `Text` node.
+ * - Inside a streaming `MarkdownView`, keeps settled text in a leading `Text`
+ *   node (`prefixNode`) and wraps each newly revealed slice in a transient
+ *   `<span class="hoxi-stream-chunk">` that softly fades from faint to solid
+ *   (`opacity: 0.06 -> 0.42 -> 1` over `REVEAL_CHUNK_MS`) before merging in FIFO
+ *   order into `prefixNode`.
  */
-export function createRevealPainter() {
-  const supported = supportsHighlights();
-  const tracked = new Map<Text, () => number>();
-  let chunks: readonly RevealChunk[] = [];
-  let owned: Array<[Highlight, StaticRange]> = [];
+export function StreamRevealText(props: { text: string }) {
+  const reveal = useContext(StreamRevealContext);
+  const prefixNode = document.createTextNode("");
 
-  const clearOwned = () => {
-    for (const [highlight, range] of owned) highlight.delete(range);
-    owned = [];
-  };
-
-  return {
-    track(node: Text, start: () => number) {
-      tracked.set(node, start);
-      return () => tracked.delete(node);
-    },
-    push(chunk: RevealChunk) {
-      if (supported) chunks = [...chunks, chunk];
-    },
-    /** Repaints the trail; returns true while some text is still glowing. */
-    paint(now: number): boolean {
-      if (!supported) return false;
-      clearOwned();
-      chunks = pruneRevealChunks(chunks, now);
-      if (chunks.length === 0) return false;
-      const levels = revealHighlights();
-      for (const [node, start] of tracked) {
-        if (!node.isConnected) continue;
-        for (const seg of revealSegments(chunks, untrack(start), node.length, now)) {
-          const range = new StaticRange({
-            startContainer: node,
-            startOffset: seg.from,
-            endContainer: node,
-            endOffset: seg.to,
-          });
-          levels[seg.level].add(range);
-          owned.push([levels[seg.level], range]);
-        }
+  if (!reveal) {
+    createRenderEffect(() => {
+      const text = props.text;
+      if (text === prefixNode.data) return;
+      if (text.startsWith(prefixNode.data)) {
+        prefixNode.appendData(text.slice(prefixNode.length));
+      } else {
+        prefixNode.data = text;
       }
-      return true;
-    },
-    clear() {
-      clearOwned();
-      chunks = [];
-    },
-    dispose() {
-      clearOwned();
-      chunks = [];
-      tracked.clear();
-    },
+    });
+    return prefixNode;
+  }
+
+  const host = document.createElement("span");
+  host.appendChild(prefixNode);
+  let shownText = "";
+  const chunks: PendingChunk[] = [];
+
+  const clearChunks = () => {
+    for (const chunk of chunks) {
+      clearTimeout(chunk.timer);
+      chunk.el.remove();
+    }
+    chunks.length = 0;
   };
-}
 
-/**
- * Plain text run of a streaming block. Renders a single stable text node (like `{text}`)
- * and registers it with the painter so its freshly revealed characters get the trail.
- */
-export function StreamRevealText(props: { text: string; start: number; reveal?: StreamReveal }) {
-  const node = document.createTextNode("");
+  const flushDoneChunks = () => {
+    while (chunks.length > 0 && chunks[0].done) {
+      const first = chunks.shift()!;
+      clearTimeout(first.timer);
+      prefixNode.appendData(first.text);
+      first.el.remove();
+    }
+  };
+
+  const appendFadingChunk = (delta: string) => {
+    const el = document.createElement("span");
+    el.className = "hoxi-stream-chunk";
+    el.textContent = delta;
+    const entry: PendingChunk = {
+      el,
+      text: delta,
+      done: false,
+      timer: setTimeout(() => {
+        entry.done = true;
+        flushDoneChunks();
+      }, REVEAL_CHUNK_MS + 32),
+    };
+    el.addEventListener(
+      "animationend",
+      () => {
+        entry.done = true;
+        flushDoneChunks();
+      },
+      { once: true }
+    );
+    chunks.push(entry);
+    host.appendChild(el);
+  };
+
   createRenderEffect(() => {
-    node.data = props.text;
+    const next = props.text;
+    if (next === shownText) return;
+    const active = untrack(reveal.active);
+    if (!active || prefersReducedMotion()) {
+      clearChunks();
+      if (next.startsWith(prefixNode.data)) {
+        prefixNode.appendData(next.slice(prefixNode.length));
+      } else {
+        prefixNode.data = next;
+      }
+      shownText = next;
+      return;
+    }
+    if (next.startsWith(shownText)) {
+      const delta = next.slice(shownText.length);
+      shownText = next;
+      if (delta) appendFadingChunk(delta);
+      return;
+    }
+    clearChunks();
+    prefixNode.data = next;
+    shownText = next;
   });
-  createEffect(() => {
-    const reveal = props.reveal;
-    if (!reveal) return;
-    onCleanup(reveal.track(node, () => props.start));
-  });
-  return node;
+
+  onCleanup(clearChunks);
+  return host;
+}
+
+export interface RevealBlockOptions {
+  startOpacity?: number;
+  translateY?: number;
+  durationMs?: number;
 }
 
 /**
- * Fades in a block (code card, table, list marker) that mounted while streaming. Uses a
- * negative delay so a remounted node resumes mid-fade instead of replaying it.
+ * Softly fades and glides in a block or inline pill that mounted during live streaming.
+ * Uses a negative delay so a remounted node resumes mid-fade instead of replaying.
  */
-export function revealBlock(el: Element, at: number) {
-  if (!at || typeof el.animate !== "function") return;
+export function revealBlock(
+  el: Element,
+  at: number,
+  options?: RevealBlockOptions
+) {
+  if (!at || typeof el.animate !== "function" || prefersReducedMotion()) return;
+  const startOpacity = options?.startOpacity ?? 0;
+  const translateY = options?.translateY ?? 2.5;
+  const durationMs = options?.durationMs ?? REVEAL_BLOCK_MS;
+
   const start = () => {
     const age = performance.now() - at;
-    if (age >= REVEAL_BLOCK_MS) return;
-    el.animate([{ opacity: 0 }, { opacity: 1 }], {
-      duration: REVEAL_BLOCK_MS,
+    if (age >= durationMs) return;
+    const fromFrame: Keyframe =
+      translateY !== 0
+        ? { opacity: startOpacity, transform: `translate3d(0, ${translateY}px, 0)` }
+        : { opacity: startOpacity };
+    const toFrame: Keyframe =
+      translateY !== 0
+        ? { opacity: 1, transform: "translate3d(0, 0, 0)" }
+        : { opacity: 1 };
+    el.animate([fromFrame, toFrame], {
+      duration: durationMs,
       delay: -Math.max(0, age),
       easing: BLOCK_EASE,
       fill: "backwards",
     });
   };
-  // Solid clones nodes from <template> content, so inside a `ref` callback the element
-  // still belongs to the template's inert document, whose timeline never advances: an
-  // animation started there freezes on its first keyframe (invisible). Start it once
-  // the node is adopted into the page, which happens later in the same task.
+  // Solid clones nodes from an inert <template> document inside `ref` callbacks;
+  // start the animation once the element is connected to the live document.
   if (el.isConnected) start();
   else queueMicrotask(() => el.isConnected && start());
 }
 
 /**
- * Per-index mount timestamps for a list of rendered items. Items present at the
- * first render (history) get `inherit()` (0 = no animation); items appended later
- * while the view streams get the current time. A remounted item keeps its stamp.
+ * Softly fades in an inline pill (`<code>`, file chip) when it mounts during
+ * active streaming.
  */
-export function createRevealBirths(
-  reveal: () => StreamReveal | undefined,
-  inherit: () => number = () => 0
-): (index: number) => number {
-  const births: number[] = [];
-  let primed = false;
-  onMount(() => {
-    primed = true;
-  });
-  return (index) => {
-    let at = births[index];
-    if (at === undefined) {
-      const current = untrack(reveal);
-      at = !primed ? untrack(inherit) : current && untrack(current.enabled) ? performance.now() : 0;
-      births[index] = at;
+export function useInlineRevealRef() {
+  const reveal = useContext(StreamRevealContext);
+  let bornAt: number | undefined;
+  return (el: Element) => {
+    if (bornAt === undefined) {
+      bornAt = reveal && untrack(reveal.active) ? performance.now() : 0;
     }
-    return at;
+    if (bornAt > 0) {
+      revealBlock(el, bornAt, {
+        startOpacity: 0.1,
+        translateY: 0,
+        durationMs: REVEAL_CHUNK_MS,
+      });
+    }
   };
 }
 
-function lastTextEnd(root: Element, skip: Element | undefined): DOMRect | undefined {
-  const accept = (node: Node) =>
-    skip?.contains(node) || !node.nodeValue?.trim()
-      ? NodeFilter.FILTER_REJECT
-      : NodeFilter.FILTER_ACCEPT;
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode: accept });
-  // Walk backwards from the deepest last node: O(1) for the usual case instead of
-  // visiting every text node of a long reply on each frame.
-  let deepest: Node = root;
-  while (deepest.lastChild) deepest = deepest.lastChild;
-  walker.currentNode = deepest;
-  const last =
-    deepest.nodeType === Node.TEXT_NODE && accept(deepest) === NodeFilter.FILTER_ACCEPT
-      ? deepest
-      : walker.previousNode();
-  if (!last) return undefined;
-  const text = last.nodeValue ?? "";
-  const end = text.trimEnd().length;
-  const range = document.createRange();
-  range.setStart(last, Math.max(0, end - 1));
-  range.setEnd(last, end);
-  const rects = range.getClientRects();
-  return rects[rects.length - 1];
-}
-
 /**
- * The glowing dot that leads the text. It is absolutely positioned, so it never takes
- * part in line layout; it glides along a line and jumps when the text wraps.
+ * Records per-index birth timestamps for a list of rendered blocks, list items,
+ * or table rows. Items present when `reveal.active()` is false get `0` (no
+ * animation); items appended while `reveal.active()` is true get `performance.now()`.
  */
-export function createStreamCaret() {
-  let anchor: HTMLSpanElement | undefined;
-  let lastY = Number.NaN;
-  return {
-    ref(el: HTMLSpanElement) {
-      anchor = el;
-      lastY = Number.NaN;
-    },
-    place(container: HTMLElement | undefined) {
-      if (!anchor || !container) return;
-      const end = lastTextEnd(container, anchor);
-      if (!end) {
-        anchor.style.opacity = "0";
-        return;
-      }
-      const box = container.getBoundingClientRect();
-      const x = end.right - box.left;
-      const y = end.top - box.top + end.height / 2;
-      const wrapped = Number.isNaN(lastY) || Math.abs(y - lastY) > 2;
-      anchor.style.transition = wrapped ? "opacity 200ms ease-out" : "";
-      anchor.style.transform = `translate3d(${x.toFixed(1)}px, ${y.toFixed(1)}px, 0)`;
-      anchor.style.opacity = "1";
-      lastY = y;
-    },
+export function createRevealBirths(): (index: number) => number {
+  const reveal = useContext(StreamRevealContext);
+  const births: number[] = [];
+  return (index: number) => {
+    let at = births[index];
+    if (at === undefined) {
+      at = reveal && untrack(reveal.active) ? performance.now() : 0;
+      births[index] = at;
+    }
+    return at;
   };
 }

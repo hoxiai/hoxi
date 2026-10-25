@@ -22,11 +22,15 @@ import {
   stripFileLineSuffix,
 } from "./markdown-parser";
 import MarkdownImage from "./MarkdownImage";
-import { locateInlineSpans } from "./markdown/reveal";
-import { StreamRevealText, type StreamReveal } from "./stream-reveal";
+import { StreamRevealText, useInlineRevealRef } from "./stream-reveal";
 
 function hasNestedInlineSyntax(text: string): boolean {
-  return text.includes("`") || /<br\s*\/?>/i.test(text) || text.includes("~~");
+  return (
+    text.includes("`") ||
+    /<br\s*\/?>/i.test(text) ||
+    text.includes("~~") ||
+    /\*\*[^*\n]+\*\*|__[^_\n]+__|\*[^*\n]+\*|\[[^\]\n]+\]\([^)\n]*\)/.test(text)
+  );
 }
 
 function isHttpUrl(raw: string): boolean {
@@ -50,6 +54,7 @@ function isExternalOrAnchorHref(href: string): boolean {
 }
 
 function FileCodeSpan(props: { text: string; unclosed?: boolean }) {
+  const inlineRevealRef = useInlineRevealRef();
   const resolveSyncVerified = (raw: string) => {
     const dir = activeDirectory() || workspace.rootDir || "";
     const cached = getCachedFileCheck(raw, dir);
@@ -89,12 +94,16 @@ function FileCodeSpan(props: { text: string; unclosed?: boolean }) {
     <Show
       when={verified()}
       fallback={
-        <code class="rounded-md border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-1.5 py-0.5 font-mono text-[0.88em] text-[var(--text-primary)]">
+        <code
+          ref={inlineRevealRef}
+          class="rounded-md border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-1.5 py-0.5 font-mono text-[0.88em] text-[var(--text-primary)]"
+        >
           {props.text}
         </code>
       }
     >
       <button
+        ref={inlineRevealRef}
         type="button"
         onClick={() => openFileInInspector(props.text)}
         title={t("timeline.openInInspectorTooltip")}
@@ -107,15 +116,7 @@ function FileCodeSpan(props: { text: string; unclosed?: boolean }) {
   );
 }
 
-/**
- * `reveal` + `revealStart` (absolute offset of `text` in the streamed source) let the
- * stream painter light up freshly revealed characters of the plain text runs.
- */
-export default function MarkdownInline(props: {
-  text: string;
-  reveal?: StreamReveal;
-  revealStart?: number;
-}) {
+export default function MarkdownInline(props: { text: string }) {
   const text = createMemo(() => props.text);
   const spans = createMemo<InlineSpan[]>((prev) => {
     const next = parseInline(text());
@@ -126,24 +127,17 @@ export default function MarkdownInline(props: {
     }
     return next;
   }, []);
-  const spanOffsets = createMemo(() =>
-    props.reveal && (props.revealStart ?? -1) >= 0
-      ? locateInlineSpans(text(), spans())
-      : undefined
-  );
-  const spanStart = (idx: number) => {
-    const base = props.revealStart ?? -1;
-    const offset = spanOffsets()?.[idx] ?? -1;
-    return base < 0 || offset < 0 ? -1 : base + offset;
-  };
-  const revealedText = (value: string, idx: number) => (
-    <StreamRevealText text={value} start={spanStart(idx)} reveal={props.reveal} />
-  );
+  // Pass changing text directly as a JSX prop on `<StreamRevealText>` so `<Switch>`
+  // never unmounts and recreates the text component on streamed updates.
   return (
     <Index each={spans()}>
-      {(span, idx) => (
+      {(span) => (
         <Switch
-          fallback={revealedText((span() as Extract<InlineSpan, { type: "text" }>).text, idx)}
+          fallback={
+            <StreamRevealText
+              text={(span() as Extract<InlineSpan, { type: "text" }>).text}
+            />
+          }
         >
           <Match when={span().type === "br"}>
             <br />
@@ -179,6 +173,7 @@ export default function MarkdownInline(props: {
             }
           >
             {(_) => {
+              const inlineRevealRef = useInlineRevealRef();
               const codeText = () => (span() as Extract<InlineSpan, { type: "code" }>).text;
               const handleOpen = (e: MouseEvent) => {
                 e.preventDefault();
@@ -195,7 +190,10 @@ export default function MarkdownInline(props: {
                 }
               };
               return (
-                <span class="inline-flex items-center gap-0.5 align-baseline">
+                <span
+                  ref={inlineRevealRef}
+                  class="inline-flex items-center gap-0.5 align-baseline"
+                >
                   <button
                     type="button"
                     onClick={handleOpen}
@@ -226,16 +224,27 @@ export default function MarkdownInline(props: {
             }}
           </Match>
           <Match when={span().type === "code"}>
-            <code class="rounded-md border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-1.5 py-0.5 font-mono text-[0.88em] text-[var(--text-primary)]">
-              {(span() as Extract<InlineSpan, { type: "code" }>).text}
-            </code>
+            {(_) => {
+              const inlineRevealRef = useInlineRevealRef();
+              return (
+                <code
+                  ref={inlineRevealRef}
+                  class="rounded-md border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-1.5 py-0.5 font-mono text-[0.88em] text-[var(--text-primary)]"
+                >
+                  {(span() as Extract<InlineSpan, { type: "code" }>).text}
+                </code>
+              );
+            }}
           </Match>
           <Match when={span().type === "bold"}>
             {(_) => {
               const inner = () => (span() as Extract<InlineSpan, { type: "bold" }>).text;
               return (
                 <strong class="font-semibold text-[var(--text-primary)]">
-                  <Show when={hasNestedInlineSyntax(inner())} fallback={revealedText(inner(), idx)}>
+                  <Show
+                    when={hasNestedInlineSyntax(inner())}
+                    fallback={<StreamRevealText text={inner()} />}
+                  >
                     <MarkdownInline text={inner()} />
                   </Show>
                 </strong>
@@ -247,7 +256,10 @@ export default function MarkdownInline(props: {
               const inner = () => (span() as Extract<InlineSpan, { type: "italic" }>).text;
               return (
                 <em class="italic">
-                  <Show when={hasNestedInlineSyntax(inner())} fallback={revealedText(inner(), idx)}>
+                  <Show
+                    when={hasNestedInlineSyntax(inner())}
+                    fallback={<StreamRevealText text={inner()} />}
+                  >
                     <MarkdownInline text={inner()} />
                   </Show>
                 </em>
@@ -255,12 +267,23 @@ export default function MarkdownInline(props: {
             }}
           </Match>
           <Match when={span().type === "strike"}>
-            <del class="line-through text-[var(--text-muted)]">
-              {(span() as Extract<InlineSpan, { type: "strike" }>).text}
-            </del>
+            {(_) => {
+              const inner = () => (span() as Extract<InlineSpan, { type: "strike" }>).text;
+              return (
+                <del class="line-through text-[var(--text-muted)]">
+                  <Show
+                    when={hasNestedInlineSyntax(inner())}
+                    fallback={<StreamRevealText text={inner()} />}
+                  >
+                    <MarkdownInline text={inner()} />
+                  </Show>
+                </del>
+              );
+            }}
           </Match>
           <Match when={span().type === "link"}>
             {(_) => {
+              const inlineRevealRef = useInlineRevealRef();
               const linkSpan = () => span() as Extract<InlineSpan, { type: "link" }>;
               const labelText = createMemo(() => linkSpan().text.replace(/^`|`$/g, ""));
               const isClosedLink = createMemo(() => {
@@ -308,11 +331,15 @@ export default function MarkdownInline(props: {
                 }
               };
               return (
-                <Show when={!isPendingProseLabel()} fallback={<span>{labelText()}</span>}>
+                <Show
+                  when={!isPendingProseLabel()}
+                  fallback={<StreamRevealText text={labelText()} />}
+                >
                   <Show
                     when={!isLocalFile()}
                     fallback={
                       <button
+                        ref={inlineRevealRef}
                         type="button"
                         onClick={() => openFileInInspector(localTarget() || labelText() || linkSpan().href)}
                         title={t("timeline.openInInspectorTooltip")}
@@ -330,18 +357,25 @@ export default function MarkdownInline(props: {
                       when={isHttp()}
                       fallback={
                         <a
+                          ref={inlineRevealRef}
                           href={linkSpan().href}
                           target="_blank"
                           rel="noreferrer"
                           class="text-[var(--accent-primary)] underline decoration-[var(--accent-border)] underline-offset-2 hover:opacity-85 break-all cursor-pointer"
                         >
-                          <Show when={hasNestedInlineSyntax(linkSpan().text)} fallback={linkSpan().text}>
+                          <Show
+                            when={hasNestedInlineSyntax(linkSpan().text)}
+                            fallback={<StreamRevealText text={linkSpan().text} />}
+                          >
                             <MarkdownInline text={linkSpan().text} />
                           </Show>
                         </a>
                       }
                     >
-                      <span class="inline-flex items-center gap-0.5 align-baseline">
+                      <span
+                        ref={inlineRevealRef}
+                        class="inline-flex items-center gap-0.5 align-baseline"
+                      >
                         <a
                           href={linkSpan().href}
                           target="_blank"
@@ -354,7 +388,10 @@ export default function MarkdownInline(props: {
                           onClick={handleHttpOpen}
                           class="text-[var(--accent-primary)] underline decoration-[var(--accent-border)] underline-offset-2 hover:opacity-85 break-all cursor-pointer"
                         >
-                          <Show when={hasNestedInlineSyntax(linkSpan().text)} fallback={linkSpan().text}>
+                          <Show
+                            when={hasNestedInlineSyntax(linkSpan().text)}
+                            fallback={<StreamRevealText text={linkSpan().text} />}
+                          >
                             <MarkdownInline text={linkSpan().text} />
                           </Show>
                         </a>
