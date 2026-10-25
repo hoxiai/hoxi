@@ -199,6 +199,26 @@ func ensureHoxiModelsConfig(rootDir string) string {
 		path := filepath.Join(dir, "opencode.jsonc")
 		if overlay := readJSONMapFile(path); overlay != nil {
 			legacyOverlay = path
+			if layer, ok := overlay["skills"]; ok && layer != nil {
+				skillLayers = append(skillLayers, layer)
+			}
+			for k, v := range overlay {
+				if k == "$schema" || k == "provider" || k == "skills" || v == nil {
+					continue
+				}
+				if oMap, ok := v.(map[string]interface{}); ok {
+					merged := make(map[string]interface{}, len(oMap))
+					deepMergeMap(merged, oMap)
+					if curMap, ok := doc[k].(map[string]interface{}); ok {
+						deepMergeMap(merged, curMap)
+					}
+					doc[k] = merged
+					continue
+				}
+				if _, exists := doc[k]; !exists {
+					doc[k] = v
+				}
+			}
 			imported := loadOpenCodeImportedProvidersFromDisk()
 			provMap, _ := doc["provider"].(map[string]interface{})
 			if provMap == nil {
@@ -584,103 +604,6 @@ func (g *Service) handleModelsConfig(w http.ResponseWriter, r *http.Request) {
 
 	default:
 		writeJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
-	}
-}
-
-// managedGlobalConfigKeys are top-level config keys written through PATCH /global/config.
-// When a key is removed from .hoxi/models.json it must also disappear from the GET response,
-// otherwise OpenCode's boot-time config keeps serving the stale value.
-var managedGlobalConfigKeys = []string{
-	"model",
-	"small_model",
-	"subagent_model",
-	"agent",
-	"permission",
-	"mcp",
-	"disabled_providers",
-	"compaction",
-}
-
-// overlayHoxiGlobalConfig makes .hoxi/models.json authoritative over the OpenCode
-// config snapshot loaded at process start, so routing roles (small_model,
-// agent models and agent permissions) reflect edits immediately without a daemon restart.
-func overlayHoxiGlobalConfig(cfg, doc map[string]interface{}) {
-	for key, value := range doc {
-		if key == "$schema" || key == "provider" {
-			continue
-		}
-		cfg[key] = value
-	}
-	for _, key := range managedGlobalConfigKeys {
-		if _, ok := doc[key]; !ok {
-			delete(cfg, key)
-		}
-	}
-}
-
-func deepMergeMap(dst, src map[string]interface{}) {
-	for k, v := range src {
-		if v == nil {
-			delete(dst, k)
-			continue
-		}
-		if vMap, ok := v.(map[string]interface{}); ok {
-			if dMap, ok := dst[k].(map[string]interface{}); ok {
-				deepMergeMap(dMap, vMap)
-				continue
-			}
-			dMap := make(map[string]interface{}, len(vMap))
-			deepMergeMap(dMap, vMap)
-			if len(dMap) > 0 || len(vMap) == 0 {
-				dst[k] = dMap
-			}
-			continue
-		}
-		dst[k] = v
-	}
-}
-
-func stripNullsMap(in map[string]interface{}) map[string]interface{} {
-	out := make(map[string]interface{}, len(in))
-	for k, v := range in {
-		if v == nil {
-			continue
-		}
-		if vMap, ok := v.(map[string]interface{}); ok {
-			out[k] = stripNullsMap(vMap)
-		} else {
-			out[k] = v
-		}
-	}
-	return out
-}
-
-func filterProviderModelsByHoxi(provMap, hoxiMap map[string]interface{}) {
-	for pid, hVal := range hoxiMap {
-		if pid == "opencode" || pid == "opencode-go" {
-			continue
-		}
-		hProv, ok := hVal.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		hModels, hasHModels := hProv["models"].(map[string]interface{})
-		if !hasHModels || len(hModels) == 0 {
-			continue
-		}
-		pObj, ok := provMap[pid].(map[string]interface{})
-		if !ok {
-			continue
-		}
-		pModels, ok := pObj["models"].(map[string]interface{})
-		if !ok {
-			continue
-		}
-		for mid := range pModels {
-			if _, keep := hModels[mid]; !keep {
-				delete(pModels, mid)
-			}
-		}
 	}
 }
 

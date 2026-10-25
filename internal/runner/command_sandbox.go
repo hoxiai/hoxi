@@ -4,7 +4,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 	"github.com/hoxiai/hoxi/internal/sandbox"
 )
 
@@ -18,11 +20,34 @@ func (s *Service) confineRuntimeCommand(rec SessionRecord, bin string, args []st
 	if !sandbox.Available() {
 		return "", nil, errors.New(sandbox.UnavailableReason())
 	}
-	profile, err := sandbox.DefaultProfile(rec.WorktreePath, sandbox.NetworkAllow, writableGitDir(rec.ProjectDir))
+	extraWritable := []string{writableGitDir(rec.ProjectDir)}
+	if rec.Runtime == string(RuntimeGeminiCLI) {
+		extraWritable = append(extraWritable, geminiSandboxWritableDirs()...)
+	}
+	profile, err := sandbox.DefaultProfile(rec.WorktreePath, sandbox.NetworkAllow, extraWritable...)
 	if err != nil {
 		return "", nil, err
 	}
 	return sandbox.WrapExec(profile, bin, args)
+}
+
+func geminiSandboxWritableDirs() []string {
+	var dirs []string
+	if hoxi := strings.TrimSpace(hoxipaths.Home()); hoxi != "" {
+		sandboxDir := filepath.Join(hoxi, "sandbox")
+		_ = os.MkdirAll(sandboxDir, 0o700)
+		dirs = append(dirs, sandboxDir)
+	}
+	if gRoot := strings.TrimSpace(geminiHomeDir()); gRoot != "" {
+		_ = os.MkdirAll(gRoot, 0o700)
+		dirs = append(dirs, gRoot)
+		for _, sub := range []string{"tmp", "history"} {
+			p := filepath.Join(gRoot, sub)
+			_ = os.MkdirAll(p, 0o700)
+			dirs = append(dirs, p)
+		}
+	}
+	return dirs
 }
 
 // syncOpenCodeCommandSandbox publishes the session's sandbox choice to the

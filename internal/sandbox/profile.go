@@ -141,7 +141,6 @@ func DefaultProfile(workspace string, network NetworkMode, extraWritable ...stri
 	allow = append(allow, PathRule{Path: "/dev", Kind: PathSubtree})
 	for _, dir := range []string{
 		DefaultRoot(),
-		filepath.Join(hoxipaths.Home(), "sandbox"),
 		hoxipaths.BinDir(),
 		hoxipaths.EngineDataDir(),
 		hoxipaths.EngineStateDir(),
@@ -206,6 +205,20 @@ func protectedStateRules() []PathRule {
 		for _, name := range hoxipaths.ProtectedStateFiles() {
 			rules = append(rules, PathRule{Path: filepath.Join(hoxi, name), Kind: PathLiteral})
 		}
+		sandboxDir := filepath.Join(hoxi, "sandbox")
+		if resolved, err := filepath.EvalSymlinks(sandboxDir); err == nil {
+			sandboxDir = resolved
+		}
+		rules = append(rules,
+			PathRule{
+				Path: `^` + escapeRegex(sandboxDir) + `/gemini-home-[^/]+/(settings\.json|\.gemini/(settings\.json|config(/.*)?))$`,
+				Kind: PathRegex,
+			},
+			PathRule{
+				Path: `^` + escapeRegex(sandboxDir) + `/gemini-settings-.*\.json$`,
+				Kind: PathRegex,
+			},
+		)
 	}
 	for _, file := range hoxipaths.DBFiles() {
 		rules = append(rules, PathRule{Path: file, Kind: PathLiteral})

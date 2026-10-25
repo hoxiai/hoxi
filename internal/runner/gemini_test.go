@@ -2,17 +2,21 @@ package runner
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/hoxiai/hoxi/internal/agyhook"
+	"github.com/hoxiai/hoxi/internal/sandbox"
 	"github.com/hoxiai/hoxi/internal/statusbar"
+	"github.com/hoxiai/hoxi/internal/testutil/execstub"
 )
 
 func TestBuildGeminiArgs(t *testing.T) {
@@ -218,3 +222,173 @@ func TestGeminiCLIAgyFallbackAndTranslation(t *testing.T) {
 		t.Fatalf("msgInfo.ModelID = %q, want gemini-4-argon", tr.msgInfo.ModelID)
 	}
 }
+
+func TestGeminiCLISandboxAllowsHookHomeAndProtectsSettings(t *testing.T) {
+	if !sandbox.Available() {
+		t.Skip("seatbelt backend unavailable")
+	}
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("HOXI_HOME", filepath.Join(home, ".hoxi"))
+	t.Setenv("GEMINI_HOME", filepath.Join(home, ".gemini"))
+
+	workspace, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(workspace, nil, nil, filepath.Join(t.TempDir(), "sessions.json"))
+	mux := http.NewServeMux()
+	svc.RegisterRoutes(mux)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	svc.SetHookBaseURL(srv.URL)
+
+	envList, revoke := svc.issueGeminiHook("build", "ses_gem_sbx", "msg_a_sbx")
+	t.Cleanup(revoke)
+	var homeDir string
+	for _, kv := range envList {
+		if k, v, ok := strings.Cut(kv, "="); ok && k == geminiCLIHomeEnv {
+			homeDir = v
+		}
+	}
+	if homeDir == "" {
+		t.Fatal("expected GEMINI_CLI_HOME to be set")
+	}
+
+	rec := SessionRecord{
+		ID:             "ses_gem_sbx",
+		Runtime:        string(RuntimeGeminiCLI),
+		ProjectDir:     workspace,
+		WorktreePath:   workspace,
+		CommandSandbox: true,
+	}
+
+	// 1. Confined Gemini CLI process can write to GEMINI_CLI_HOME/.gemini/state.json and symlinked tmp/history.
+	stateProbe := filepath.Join(homeDir, ".gemini", "state.json")
+	tmpProbe := filepath.Join(homeDir, ".gemini", "tmp", "session-1.json")
+	histProbe := filepath.Join(homeDir, ".gemini", "history", "hist-1.json")
+	bin, args, err := svc.confineRuntimeCommand(rec, "/bin/sh", []string{
+		"-c",
+		`printf '{"ok":true}' > "$1" && printf '{"chat":1}' > "$2" && printf '{"h":1}' > "$3"`,
+		"sh", stateProbe, tmpProbe, histProbe,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command(bin, args...).CombinedOutput(); err != nil {
+		t.Fatalf("expected confined Gemini CLI writes to succeed, got %v: %s", err, string(out))
+	}
+	if _, err := os.Stat(filepath.Join(home, ".gemini", "tmp", "session-1.json")); err != nil {
+		t.Fatalf("expected write through tmp symlink to persist in ~/.gemini/tmp: %v", err)
+	}
+
+	// 2. Confined process still cannot tamper with GEMINI_CLI_HOME/.gemini/settings.json (BeforeTool hook config).
+	hookSettings := filepath.Join(homeDir, ".gemini", "settings.json")
+	bin, args, err = svc.confineRuntimeCommand(rec, "/bin/sh", []string{
+		"-c",
+		`printf '{}' > "$1"`,
+		"sh", hookSettings,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Command(bin, args...).Run(); err == nil {
+		t.Fatalf("expected confined write to %s to be denied by Seatbelt", hookSettings)
+	}
+}
+
+func TestGeminiCLIStaleResumeFallsBackWithConversationHistory(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("HOXI_HOME", filepath.Join(home, ".hoxi"))
+	t.Setenv("GEMINI_API_KEY", "AIzaSyTestDirectKey123456")
+
+	workDir := filepath.Join(t.TempDir(), ".hoxi", "worktrees", "ses_gem_resume")
+	if err := os.MkdirAll(workDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	projDir := filepath.Dir(filepath.Dir(filepath.Dir(workDir)))
+
+	logFile := filepath.Join(t.TempDir(), "invocations.log")
+	script := `#!/bin/sh
+stdin_payload="$(cat)"
+printf "===INVOCATION===\nARGS:%s|STDIN:%s\n" "$*" "$stdin_payload" >> "` + logFile + `"
+for arg in "$@"; do
+  if [ "$arg" = "--resume" ]; then
+    echo "Error: session stale-gem-id not found" >&2
+    exit 1
+  fi
+done
+printf '{"type":"init","session_id":"fresh-gem-id","model":"gemini-2.5-pro"}\n'
+printf '{"type":"message","role":"assistant","content":"Recovered without resume.","delta":true}\n'
+printf '{"type":"result","status":"success"}\n'
+`
+	gemStub := execstub.Write(t, t.TempDir(), "gemini", script)
+	t.Setenv("GEMINI_BIN", gemStub)
+
+	svc := NewService(projDir, nil, nil, filepath.Join(t.TempDir(), "sessions.json"))
+	if err := svc.store.Put(SessionRecord{
+		ID:           "ses_gem_resume",
+		Runtime:      string(RuntimeGeminiCLI),
+		ExternalID:   "stale-gem-id",
+		ProjectDir:   projDir,
+		WorktreePath: workDir,
+		SandboxMode:  "worktree",
+		Mode:         "plan",
+		ModelID:      "gemini-2.5-pro",
+		Turns: []MessageTurn{
+			{
+				Info:  MessageInfo{ID: "msg_u_prev", SessionID: "ses_gem_resume", Role: "user"},
+				Parts: []MessagePart{{ID: "prt_u_prev", Type: "text", Text: "Remember code word PHOENIX-42"}},
+			},
+			{
+				Info:  MessageInfo{ID: "msg_a_prev", SessionID: "ses_gem_resume", Role: "assistant"},
+				Parts: []MessagePart{{ID: "prt_a_prev", Type: "text", Text: "Understood, PHOENIX-42."}},
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	reply, err := svc.RunPromptAndWait(context.Background(), "ses_gem_resume", PromptRequest{
+		Text:  "What was the code word?",
+		Agent: "plan",
+	})
+	if err != nil {
+		t.Fatalf("RunPromptAndWait failed: %v", err)
+	}
+	if !strings.Contains(reply, "Recovered without resume.") {
+		t.Fatalf("unexpected reply: %q", reply)
+	}
+	rec, _ := svc.store.Get("ses_gem_resume")
+	if rec.ExternalID != "fresh-gem-id" {
+		t.Fatalf("ExternalID = %q, want fresh-gem-id", rec.ExternalID)
+	}
+	rawLog, err := os.ReadFile(logFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := strings.Split(strings.TrimSpace(string(rawLog)), "===INVOCATION===")
+	var lines []string
+	for _, p := range parts {
+		if trimmed := strings.TrimSpace(p); trimmed != "" {
+			lines = append(lines, trimmed)
+		}
+	}
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 CLI invocations (1 failed resume + 1 fresh retry), got %d:\n%s", len(lines), string(rawLog))
+	}
+	if !strings.Contains(lines[0], "--resume stale-gem-id") {
+		t.Fatalf("expected first invocation to attempt --resume stale-gem-id, got: %s", lines[0])
+	}
+	if strings.Contains(lines[1], "--resume") {
+		t.Fatalf("expected second invocation to omit --resume, got: %s", lines[1])
+	}
+	if !strings.Contains(lines[1], "PHOENIX-42") {
+		t.Fatalf("expected second invocation stdin to include prior conversation history (PHOENIX-42), got: %s", lines[1])
+	}
+}
+

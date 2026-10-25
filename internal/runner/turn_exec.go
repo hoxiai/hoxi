@@ -266,6 +266,8 @@ func (s *Service) startTurnProcess(
 ) error {
 	geminiUsesAgy := rec.Runtime == string(RuntimeGeminiCLI) &&
 		(ShouldGeminiCLIUseAgy(modelID) || strings.EqualFold(filepath.Base(binPath), "agy"))
+	rawBinPath := binPath
+	priorTurns := append([]MessageTurn(nil), rec.Turns...)
 
 	var args []string
 	switch rec.Runtime {
@@ -311,14 +313,15 @@ func (s *Service) startTurnProcess(
 		}
 	}
 
-	binPath, args, err := s.confineRuntimeCommand(rec, binPath, args)
+	binPath, args, err := s.confineRuntimeCommand(rec, rawBinPath, args)
 	if err != nil {
 		revokeHook()
 		return err
 	}
+	procEnv := runtimeProcessEnv(rec, os.Environ(), hookEnv)
 	cmd := exec.Command(binPath, args...)
 	cmd.Dir = rec.WorktreePath
-	cmd.Env = runtimeProcessEnv(rec, os.Environ(), hookEnv)
+	cmd.Env = procEnv
 
 	stdinPipe, err := cmd.StdinPipe()
 	if err != nil {
@@ -417,37 +420,110 @@ func (s *Service) startTurnProcess(
 			}
 		}()
 
-		readerDone := make(chan struct{})
-		go func() {
-			defer close(readerDone)
-			readStreamLines(stdoutR, func(line string) {
-				emitMu.Lock()
-				defer emitMu.Unlock()
-				// A stopped CLI reports its interruption as a failed result;
-				// Hoxi finishes the turn itself as stopped (or stalled).
-				if ap.wasAborted() && isStreamResultLine(line) {
-					return
-				}
-				evts := tr.FeedLine(line)
-				s.noteToolEvents(rec.ID, evts)
-				// Only output the user can see counts as progress: CLIs keep
-				// writing heartbeats (Claude Code's `tool_progress`) while a
-				// tool hangs.
-				if len(evts) > 0 {
-					s.noteActivity(ap)
-				}
-				if extID := tr.ExternalID(); extID != "" && extID != rec.ExternalID {
-					rec.ExternalID = extID
-					_, _, _ = s.store.Update(rec.ID, func(r *SessionRecord) {
-						r.ExternalID = extID
-					})
-				}
-				s.broadcastRouted(rec.ID, evts)
-			})
-		}()
+		canRetryWithoutResume := rec.Runtime == string(RuntimeGeminiCLI) && strings.TrimSpace(rec.ExternalID) != ""
+		feedStdout := func(r *os.File) <-chan struct{} {
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				readStreamLines(r, func(line string) {
+					emitMu.Lock()
+					defer emitMu.Unlock()
+					// A stopped CLI reports its interruption as a failed result;
+					// Hoxi finishes the turn itself as stopped (or stalled).
+					if ap.wasAborted() && isStreamResultLine(line) {
+						return
+					}
+					if canRetryWithoutResume && len(tr.partsByID) == 0 && isFailedStreamResultLine(line) {
+						return
+					}
+					evts := tr.FeedLine(line)
+					s.noteToolEvents(rec.ID, evts)
+					// Only output the user can see counts as progress: CLIs keep
+					// writing heartbeats (Claude Code's `tool_progress`) while a
+					// tool hangs.
+					if len(evts) > 0 {
+						s.noteActivity(ap)
+					}
+					if extID := tr.ExternalID(); extID != "" && extID != rec.ExternalID {
+						rec.ExternalID = extID
+						_, _, _ = s.store.Update(rec.ID, func(sr *SessionRecord) {
+							sr.ExternalID = extID
+						})
+					}
+					s.broadcastRouted(rec.ID, evts)
+				})
+			}()
+			return done
+		}
 
+		readerDone := feedStdout(stdoutR)
 		waitErr := cmd.Wait()
 		reapOrphanedOutput(cmd.Process, stdoutR, readerDone)
+
+		if !tr.IsTurnFinished() && canRetryWithoutResume && len(tr.partsByID) == 0 && !ap.wasAborted() && ap.stall.abortError() == nil {
+			canRetryWithoutResume = false
+			rec.ExternalID = ""
+			_, _, _ = s.store.Update(rec.ID, func(sr *SessionRecord) {
+				sr.ExternalID = ""
+			})
+			tr.externalID = ""
+			tr.geminiLastErrMsg = ""
+
+			var retryArgs []string
+			if geminiUsesAgy {
+				agyModel, agyEffort := ResolveGeminiAgyModelAndEffort(modelID, effort)
+				retryArgs = BuildAgyArgs(mode, agyModel, agyEffort, "")
+			} else {
+				retryArgs = BuildGeminiArgs(mode, modelID, effort, "")
+			}
+			if retryBin, wrappedArgs, wrapErr := s.confineRuntimeCommand(rec, rawBinPath, retryArgs); wrapErr == nil {
+				retryCmd := exec.Command(retryBin, wrappedArgs...)
+				retryCmd.Dir = rec.WorktreePath
+				retryCmd.Env = procEnv
+				if retryStdin, inErr := retryCmd.StdinPipe(); inErr == nil {
+					if retryOutR, retryOutW, pipeErr := os.Pipe(); pipeErr == nil {
+						var retryStderr bytes.Buffer
+						retryCmd.Stdout = retryOutW
+						retryCmd.Stderr = &retryStderr
+						retryCmd.WaitDelay = orphanDrainGrace
+						setProcessGroup(retryCmd)
+						if startErr := retryCmd.Start(); startErr == nil {
+							_ = retryOutW.Close()
+							stderrBuf.Reset()
+							ap.mu.Lock()
+							ap.cmd = retryCmd
+							ap.stdin = retryStdin
+							ap.mu.Unlock()
+							ap.stall.touch(time.Now())
+
+							histRec := rec
+							histRec.ExternalID = ""
+							histRec.ContextPending = len(priorTurns) > 0
+							histRec.ContextTurnCount = len(priorTurns)
+							histRec.Turns = priorTurns
+							retryPrompt := promptText
+							if ctxPrefix := runtimeMemoryContext(histRec) + runtimeContext(histRec); ctxPrefix != "" && !strings.Contains(promptText, "Continue the existing conversation") {
+								retryPrompt = ctxPrefix + promptText
+							}
+							retryInput, _ := EncodeStreamInputTurnWithParts(inputRuntime, retryPrompt, deliveryParts)
+							_, _ = retryStdin.Write(retryInput)
+							_ = retryStdin.Close()
+
+							retryReaderDone := feedStdout(retryOutR)
+							waitErr = retryCmd.Wait()
+							reapOrphanedOutput(retryCmd.Process, retryOutR, retryReaderDone)
+							if retryStderr.Len() > 0 {
+								stderrBuf = retryStderr
+							}
+						} else {
+							_ = retryOutR.Close()
+							_ = retryOutW.Close()
+						}
+					}
+				}
+			}
+		}
+
 		close(stopPoll)
 		<-pollDone
 		defer func() {
@@ -504,6 +580,37 @@ func isStreamResultLine(line string) bool {
 		Event string `json:"event"`
 	}
 	return json.Unmarshal([]byte(line), &env) == nil && (env.Type == "result" || env.Event == "result")
+}
+
+func isFailedStreamResultLine(line string) bool {
+	if !isStreamResultLine(line) {
+		return false
+	}
+	var env struct {
+		Status  string          `json:"status"`
+		IsError bool            `json:"is_error"`
+		Error   json.RawMessage `json:"error"`
+		Result  struct {
+			Status string          `json:"status"`
+			Error  json.RawMessage `json:"error"`
+		} `json:"result"`
+	}
+	if json.Unmarshal([]byte(line), &env) != nil {
+		return false
+	}
+	if env.IsError || strings.EqualFold(env.Status, "error") || strings.EqualFold(env.Status, "failed") {
+		return true
+	}
+	if strings.EqualFold(env.Result.Status, "error") || strings.EqualFold(env.Result.Status, "failed") {
+		return true
+	}
+	if len(env.Error) > 0 && string(env.Error) != "null" && string(env.Error) != `""` {
+		return true
+	}
+	if len(env.Result.Error) > 0 && string(env.Result.Error) != "null" && string(env.Result.Error) != `""` {
+		return true
+	}
+	return false
 }
 
 // reapOrphanedOutput runs once the CLI has exited. A reader still blocked

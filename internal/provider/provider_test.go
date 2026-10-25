@@ -97,6 +97,10 @@ func TestConfigHelpersAndEnsureHoxiModelsConfig(t *testing.T) {
 	}`), 0o644)
 	legacyPath := filepath.Join(ocDir, "opencode.jsonc")
 	_ = os.WriteFile(legacyPath, []byte(`{
+		"theme": "tokyo-night",
+		"mcp": {
+			"custom-mcp": {"type": "local", "command": ["npx", "custom-mcp"]}
+		},
 		"provider": {
 			"imported-prov": {"options": {"apiKey": "sk-imported"}},
 			"legacy-custom": {"options": {"baseURL": "https://legacy.example/v1"}}
@@ -122,6 +126,13 @@ func TestConfigHelpersAndEnsureHoxiModelsConfig(t *testing.T) {
 	}
 	if _, ok := provs["imported-prov"]; ok {
 		t.Fatalf("did not expect imported-prov to be duplicated into Hoxi config")
+	}
+	fullDoc := svc.loadHoxiConfigDoc()
+	if gotTheme, _ := fullDoc["theme"].(string); gotTheme != "tokyo-night" {
+		t.Fatalf("expected top-level theme from opencode.jsonc to be preserved, got %v", fullDoc["theme"])
+	}
+	if mcpMap, _ := fullDoc["mcp"].(map[string]interface{}); mcpMap == nil || mcpMap["custom-mcp"] == nil {
+		t.Fatalf("expected top-level mcp config from opencode.jsonc to be preserved, got %v", fullDoc["mcp"])
 	}
 
 	// Test deepMergeMap, stripNullsMap, and the config write transaction.

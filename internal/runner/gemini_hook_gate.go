@@ -87,15 +87,20 @@ func writeGeminiHookHome(sessionID, messageID, exe string) (string, string, erro
 		return "", "", err
 	}
 	if gRoot := agentcli.GeminiHomeDir(); gRoot != "" {
-		if st, err := os.Stat(gRoot); err == nil && st.IsDir() {
+		if err := os.MkdirAll(gRoot, 0o700); err == nil {
 			for _, subDir := range []string{"tmp", "history"} {
 				_ = os.MkdirAll(filepath.Join(gRoot, subDir), 0o700)
 			}
 			for _, entry := range []string{
 				"oauth_creds.json",
 				"google_accounts.json",
+				"mcp-oauth-tokens-v2.json",
+				"mcp-oauth-tokens.json",
 				"state.json",
+				"projects.json",
+				"trustedFolders.json",
 				"installation_id",
+				"user_id",
 				"tmp",
 				"history",
 			} {

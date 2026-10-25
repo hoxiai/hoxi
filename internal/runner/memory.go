@@ -244,7 +244,7 @@ func runtimeMemoryContext(rec SessionRecord) string {
 
 	projClean := stripVolatileMemoryHeader(projMem)
 	sessClean := stripVolatileMemoryHeader(sessMem)
-	if rec.ContextPending && len(rec.Turns) > 0 && sessClean != "" {
+	if (rec.ContextPending || strings.TrimSpace(rec.ExternalID) == "") && len(rec.Turns) > 0 && sessClean != "" {
 		sessClean = dedupHandoffMemorySection6(sessClean)
 	}
 	if projClean == "" && sessClean == "" {

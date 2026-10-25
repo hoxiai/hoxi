@@ -289,10 +289,18 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 		)
 	}
 
+	resetGeminiResume := rec.Runtime == string(RuntimeGeminiCLI) &&
+		strings.TrimSpace(rec.ExternalID) != "" &&
+		ShouldGeminiCLIUseAgy(rec.ModelID) != ShouldGeminiCLIUseAgy(modelID)
 	_, _, _ = s.store.Update(sessionID, func(r *SessionRecord) {
 		r.ModelID = modelID
 		r.Mode = mode
 		r.ProviderID = rec.ProviderID
+		if resetGeminiResume {
+			r.ExternalID = ""
+			r.ContextPending = len(r.Turns) > 0
+			r.ContextTurnCount = len(r.Turns)
+		}
 	})
 	s.recordTurnSnapshot(sessionID, userMsgID)
 	if updated, ok := s.store.Get(sessionID); ok {

@@ -192,7 +192,8 @@ func summarizeHandoffToolPart(p MessagePart) string {
 // Each new engine receives a transcript once. Native resume handles later turns.
 // Treat prior output as quoted conversation, never as a new instruction.
 func runtimeContext(rec SessionRecord) string {
-	if (!rec.ContextPending && (rec.Runtime != "opencode" || rec.ContextTurnCount == 0)) || len(rec.Turns) == 0 {
+	hasNativeResume := rec.Runtime == "opencode" || strings.TrimSpace(rec.ExternalID) != ""
+	if (!rec.ContextPending && hasNativeResume && (rec.Runtime != "opencode" || rec.ContextTurnCount == 0)) || len(rec.Turns) == 0 {
 		return ""
 	}
 	turns := rec.Turns
