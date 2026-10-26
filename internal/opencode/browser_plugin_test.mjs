@@ -17,17 +17,19 @@ test("standalone browser plugin", async (t) => {
   process.env.HOXI_BROWSER_URL = "http://127.0.0.1:9000/";
   process.env.HOXI_BROWSER_TOKEN = "secret";
   const hooks = await BrowserPlugin({ directory: "/wrong/factory" });
-  await t.test("config hook forces browser approval and preserves other permissions", async () => {
+  await t.test("config hook forces browser and tools approval and preserves other permissions", async () => {
     for (const permission of [undefined, "allow", "ask", "deny",
-      { hoxi_browser: "allow", "*": "allow", edit: "deny", bash: { "git *": "allow", "*": "ask" } },
-      { "*": "allow", hoxi_browser: { "*": "allow" }, read: "allow" }]) {
+      { hoxi_browser: "allow", hoxi_tools: "allow", "*": "allow", edit: "deny", bash: { "git *": "allow", "*": "ask" } },
+      { "*": "allow", hoxi_browser: { "*": "allow" }, hoxi_tools: { "*": "allow" }, read: "allow" }]) {
       const cfg = { model: "test/model", permission };
       const expected = typeof permission === "string" ? { "*": permission } : { ...permission };
       delete expected.hoxi_browser;
+      delete expected.hoxi_tools;
       expected.hoxi_browser = "ask";
+      expected.hoxi_tools = "ask";
       await hooks.config(cfg);
       assert.deepEqual(cfg.permission, expected);
-      assert.equal(Object.keys(cfg.permission).at(-1), "hoxi_browser");
+      assert.deepEqual(Object.keys(cfg.permission).slice(-2), ["hoxi_browser", "hoxi_tools"]);
       assert.equal(cfg.model, "test/model");
       await hooks.config(cfg);
       assert.deepEqual(cfg.permission, expected);

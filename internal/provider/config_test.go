@@ -353,3 +353,25 @@ func TestDeepMergeMapStripsNestedNullsOnMissingParent(t *testing.T) {
 		t.Fatalf("expected null model key to be omitted from agent.custom, got %+v", customMap)
 	}
 }
+
+func TestReadJSONMapFileAcceptsJSONCCommentsAndTrailingCommas(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "opencode.json")
+	jsonc := `{
+  // Line comment with https://example.com
+  "model": "anthropic/claude-sonnet-4-5", /* block comment */
+  "provider": {
+    "custom": {
+      "options": {
+        "baseURL": "https://api.example.com/v1", // keep URL slashes inside strings
+      },
+    },
+  },
+}`
+	if err := os.WriteFile(path, []byte(jsonc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := readJSONMapFile(path)
+	if got == nil || got["model"] != "anthropic/claude-sonnet-4-5" {
+		t.Fatalf("expected JSONC config to parse, got %+v", got)
+	}
+}

@@ -318,10 +318,12 @@ stdin_payload="$(cat)"
 printf "===INVOCATION===\nARGS:%s|STDIN:%s\n" "$*" "$stdin_payload" >> "` + logFile + `"
 for arg in "$@"; do
   if [ "$arg" = "--resume" ]; then
+    printf '{"type":"system","subtype":"init","session_id":"stale-gem-id"}\n'
     echo "Error: session stale-gem-id not found" >&2
     exit 1
   fi
 done
+printf '{"type":"system","subtype":"init","session_id":"fresh-gem-id"}\n'
 printf '{"type":"init","session_id":"fresh-gem-id","model":"gemini-2.5-pro"}\n'
 printf '{"type":"message","role":"assistant","content":"Recovered without resume.","delta":true}\n'
 printf '{"type":"result","status":"success"}\n'
@@ -353,9 +355,11 @@ printf '{"type":"result","status":"success"}\n'
 		t.Fatal(err)
 	}
 
+	svc.recordCLISystemDelivered("ses_gem_resume", string(RuntimeGeminiCLI), "Caller custom system rule")
 	reply, err := svc.RunPromptAndWait(context.Background(), "ses_gem_resume", PromptRequest{
-		Text:  "What was the code word?",
-		Agent: "plan",
+		Text:   "What was the code word?",
+		Agent:  "plan",
+		System: "Caller custom system rule",
 	})
 	if err != nil {
 		t.Fatalf("RunPromptAndWait failed: %v", err)
@@ -389,6 +393,12 @@ printf '{"type":"result","status":"success"}\n'
 	}
 	if !strings.Contains(lines[1], "PHOENIX-42") {
 		t.Fatalf("expected second invocation stdin to include prior conversation history (PHOENIX-42), got: %s", lines[1])
+	}
+	if strings.Contains(lines[0], "Caller custom system rule") {
+		t.Fatalf("expected first invocation with --resume to skip already-delivered system instructions, got: %s", lines[0])
+	}
+	if !strings.Contains(lines[1], "Caller custom system rule") || !strings.Contains(lines[1], "Hoxi command execution:") {
+		t.Fatalf("expected second invocation stdin to restore system instructions on fresh retry, got: %s", lines[1])
 	}
 }
 

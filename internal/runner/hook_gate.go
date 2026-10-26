@@ -105,6 +105,12 @@ func (s *Service) SetHookBaseURL(base string) {
 	s.gate.mu.Unlock()
 }
 
+func (s *Service) hookBaseURL() string {
+	s.gate.mu.Lock()
+	defer s.gate.mu.Unlock()
+	return s.gate.baseURL
+}
+
 // issueHookCredential mints a per-process credential for one runner turn.
 // With no base URL the CLI falls back to its own policy, matching pre-gate
 // behavior.

@@ -1,11 +1,14 @@
 package skills
 
 import (
+	"bytes"
 	"embed"
 	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
+	"strings"
 
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
@@ -13,14 +16,25 @@ import (
 //go:embed defaults/*/SKILL.md
 var defaultSkillFiles embed.FS
 
+// legacyBundledSkillSlugs lists retired bundled skill directories that were
+// renamed in a newer release and should be cleaned up if unmodified.
+var legacyBundledSkillSlugs = []string{"hoxi-tools"}
+
+var (
+	frontmatterAuthorRe  = regexp.MustCompile(`(?m)^\s*author:\s*["']?([^"'\r\n]+)["']?\s*$`)
+	frontmatterVersionRe = regexp.MustCompile(`(?m)^\s*version:\s*["']?([^"'\r\n]+)["']?\s*$`)
+)
+
 // DefaultUserDir is the Hoxi-managed directory that holds bundled skills.
 // Hoxi registers it in the engine config so every project can discover it.
 func DefaultUserDir() string {
 	return hoxipaths.Join("skills")
 }
 
-// SeedDefaults installs bundled skills into DefaultUserDir and never
-// overwrites an existing file, so local edits are preserved.
+// SeedDefaults installs bundled skills into DefaultUserDir, migrates retired
+// Hoxi-authored bundled skill names, upgrades outdated Hoxi-authored bundled
+// skills when their embedded version advances, and preserves user-authored or
+// locally customized skills.
 func SeedDefaults() (int, error) {
 	root := DefaultUserDir()
 	if root == "" {
@@ -29,6 +43,8 @@ func SeedDefaults() (int, error) {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return 0, err
 	}
+	cleanupLegacyBundledSkills(root)
+
 	entries, err := fs.ReadDir(defaultSkillFiles, "defaults")
 	if err != nil {
 		return 0, err
@@ -44,10 +60,16 @@ func SeedDefaults() (int, error) {
 			return seeded, err
 		}
 		target := filepath.Join(root, name, "SKILL.md")
-		if _, err := os.Stat(target); err == nil {
+		if existing, statErr := os.ReadFile(target); statErr == nil {
+			if shouldUpgradeBundledSkill(existing, data) {
+				if err := replaceSkillFile(target, data); err != nil {
+					return seeded, err
+				}
+				seeded++
+			}
 			continue
-		} else if !os.IsNotExist(err) {
-			return seeded, err
+		} else if !os.IsNotExist(statErr) {
+			return seeded, statErr
 		}
 		if err := writeNewSkillFile(target, data); err != nil {
 			return seeded, err
@@ -60,40 +82,118 @@ func SeedDefaults() (int, error) {
 	return seeded, nil
 }
 
-func seedExternalSkillDir(root string) (int, error) {
-	candidates := []string{os.Getenv("HOXI_EXTRA_SKILLS_DIR")}
-	if wd, err := os.Getwd(); err == nil && wd != "" {
-		candidates = append(candidates, filepath.Clean(filepath.Join(wd, "..", "hoxi-work", "skills")))
-	}
-	seeded := 0
-	for _, dir := range candidates {
-		if dir == "" {
-			continue
-		}
-		entries, err := os.ReadDir(dir)
+func cleanupLegacyBundledSkills(root string) {
+	for _, oldSlug := range legacyBundledSkillSlugs {
+		dir := filepath.Join(root, oldSlug)
+		skillPath := filepath.Join(dir, "SKILL.md")
+		raw, err := os.ReadFile(skillPath)
 		if err != nil {
 			continue
 		}
-		for _, entry := range entries {
-			if !entry.IsDir() {
-				continue
-			}
-			name := entry.Name()
-			src := filepath.Join(dir, name, "SKILL.md")
-			data, err := os.ReadFile(src)
-			if err != nil {
-				continue
-			}
-			target := filepath.Join(root, name, "SKILL.md")
-			if _, err := os.Stat(target); err == nil {
-				continue
-			}
-			if err := writeNewSkillFile(target, data); err == nil {
-				seeded++
-			}
+		author, _ := extractFrontmatterMeta(raw)
+		if strings.EqualFold(author, "Hoxi") {
+			_ = os.RemoveAll(dir)
+		}
+	}
+}
+
+func extractFrontmatterMeta(data []byte) (author, version string) {
+	text := string(data)
+	if !strings.HasPrefix(text, "---\n") && !strings.HasPrefix(text, "---\r\n") {
+		return "", ""
+	}
+	end := strings.Index(text[4:], "\n---")
+	if end < 0 {
+		return "", ""
+	}
+	header := text[4 : 4+end]
+	if m := frontmatterAuthorRe.FindStringSubmatch(header); len(m) == 2 {
+		author = strings.TrimSpace(m[1])
+	}
+	if m := frontmatterVersionRe.FindStringSubmatch(header); len(m) == 2 {
+		version = strings.TrimSpace(m[1])
+	}
+	return author, version
+}
+
+func shouldUpgradeBundledSkill(existing, embedded []byte) bool {
+	if bytes.Equal(existing, embedded) {
+		return false
+	}
+	existAuthor, existVer := extractFrontmatterMeta(existing)
+	embedAuthor, embedVer := extractFrontmatterMeta(embedded)
+	if !strings.EqualFold(existAuthor, "Hoxi") || !strings.EqualFold(embedAuthor, "Hoxi") {
+		return false
+	}
+	return embedVer != "" && existVer != embedVer
+}
+
+func seedExternalSkillDir(root string) (int, error) {
+	dir := strings.TrimSpace(os.Getenv("HOXI_EXTRA_SKILLS_DIR"))
+	if dir == "" {
+		return 0, nil
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0, nil
+	}
+	seeded := 0
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		src := filepath.Join(dir, name, "SKILL.md")
+		data, err := os.ReadFile(src)
+		if err != nil {
+			continue
+		}
+		target := filepath.Join(root, name, "SKILL.md")
+		if _, err := os.Stat(target); err == nil {
+			continue
+		}
+		if err := writeNewSkillFile(target, data); err == nil {
+			seeded++
 		}
 	}
 	return seeded, nil
+}
+
+func replaceSkillFile(target string, data []byte) error {
+	dir := filepath.Dir(target)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, ".SKILL.md.tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	cleanup := func() {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+	}
+	if _, err := tmp.Write(data); err != nil {
+		cleanup()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		cleanup()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if err := os.Chmod(tmpName, 0o644); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if err := os.Rename(tmpName, target); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	return nil
 }
 
 // writeNewSkillFile writes atomically and fails instead of replacing an

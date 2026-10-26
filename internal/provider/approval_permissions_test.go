@@ -25,7 +25,7 @@ func TestNormalizeApprovalPermissionsKeepsOpenCodeAsking(t *testing.T) {
 	if !normalizeApprovalPermissions(doc, true) {
 		t.Fatal("enforcing must change legacy allow values")
 	}
-	for key, want := range map[string]interface{}{"edit": "ask", "websearch": "deny", "codesearch": "ask"} {
+	for key, want := range map[string]interface{}{"edit": "ask", "websearch": "deny", "codesearch": "ask", "hoxi_browser": "ask", "hoxi_tools": "ask"} {
 		if perm[key] != want {
 			t.Errorf("%s = %v, want %v", key, perm[key], want)
 		}
@@ -47,7 +47,7 @@ func TestNormalizeApprovalPermissionsCreatesBlockOnFreshInstallAndOverwritesStar
 		t.Fatal("fresh install without permission block must default to ask")
 	}
 	perm, _ := doc["permission"].(map[string]interface{})
-	if perm == nil || perm["bash"] != "ask" || perm["edit"] != "ask" || perm["codesearch"] != "ask" {
+	if perm == nil || perm["bash"] != "ask" || perm["edit"] != "ask" || perm["codesearch"] != "ask" || perm["hoxi_browser"] != "ask" || perm["hoxi_tools"] != "ask" {
 		t.Fatalf("permission: %v", perm)
 	}
 

@@ -107,6 +107,17 @@ func (t *TurnTranslator) IsTurnFinished() bool {
 	return t.turnFinished
 }
 
+// ResetForFreshRetry clears any conversation ID pinned during a failed
+// --resume attempt so the fresh retry turn can pin its new external ID.
+func (t *TurnTranslator) ResetForFreshRetry() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.externalID = ""
+	t.convPinned = false
+	t.editPayloads = nil
+	t.geminiLastErrMsg = ""
+}
+
 // noteAgyConversation pins externalID to the first conversation this turn
 // reports (the parent's) and tells whether id belongs to it.
 func (t *TurnTranslator) noteAgyConversation(id string) bool {

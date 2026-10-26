@@ -78,7 +78,7 @@ function assertWritable(value, workspace) {
 }
 
 const FILE_WRITE_TOOLS = new Set(["write", "edit", "multiedit", "apply_patch"]);
-const NETWORK_TOOLS = new Set(["webfetch", "websearch", "codesearch", "hoxi_browser"]);
+const NETWORK_TOOLS = new Set(["webfetch", "websearch", "codesearch", "hoxi_browser", "hoxi_tools"]);
 const PATCH_PATH_RE = /^\*\*\* (?:Add File|Update File|Delete File|Move to):\s*(.+?)\s*$/gm;
 
 function patchTargets(args) {

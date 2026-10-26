@@ -449,3 +449,20 @@ func listenUnix(t *testing.T, path string) net.Listener {
 	}()
 	return l
 }
+
+func TestResolvePathSymlinksOnUncreatedChild(t *testing.T) {
+	realBase, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	linkParent := filepath.Join(t.TempDir(), "linked-home")
+	if err := os.Symlink(realBase, linkParent); err != nil {
+		t.Fatal(err)
+	}
+	uncreated := filepath.Join(linkParent, ".hoxi", "sandbox")
+	got := resolvePathSymlinks(uncreated)
+	want := filepath.Join(realBase, ".hoxi", "sandbox")
+	if got != want {
+		t.Fatalf("resolvePathSymlinks(%q) = %q, want %q", uncreated, got, want)
+	}
+}

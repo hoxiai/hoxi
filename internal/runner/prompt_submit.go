@@ -365,3 +365,13 @@ func (s *Service) recordCLISystemDelivered(sessionID, runtime, callerSystem stri
 	s.cliSystemDelivered.Store(sessionID+"\x00"+runtime, callerSystem)
 }
 
+func (s *Service) fallbackCLISystemForFreshRetry(sessionID, runtime string) string {
+	sys := commandExecutionGuidance
+	if prev, ok := s.cliSystemDelivered.Load(sessionID + "\x00" + runtime); ok {
+		if caller, _ := prev.(string); strings.TrimSpace(caller) != "" {
+			sys += "\n\n" + strings.TrimSpace(caller)
+		}
+	}
+	return sys
+}
+

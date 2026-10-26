@@ -318,6 +318,9 @@ func (s *Service) startTurnProcess(
 		revokeHook()
 		return err
 	}
+	if base := strings.TrimSpace(s.hookBaseURL()); base != "" {
+		hookEnv = append(hookEnv, "HOXI_GATEWAY_URL="+base, "HOXI_BRIDGE_URL="+base)
+	}
 	procEnv := runtimeProcessEnv(rec, os.Environ(), hookEnv)
 	cmd := exec.Command(binPath, args...)
 	cmd.Dir = rec.WorktreePath
@@ -466,8 +469,7 @@ func (s *Service) startTurnProcess(
 			_, _, _ = s.store.Update(rec.ID, func(sr *SessionRecord) {
 				sr.ExternalID = ""
 			})
-			tr.externalID = ""
-			tr.geminiLastErrMsg = ""
+			tr.ResetForFreshRetry()
 
 			var retryArgs []string
 			if geminiUsesAgy {
@@ -502,8 +504,17 @@ func (s *Service) startTurnProcess(
 							histRec.ContextTurnCount = len(priorTurns)
 							histRec.Turns = priorTurns
 							retryPrompt := promptText
-							if ctxPrefix := runtimeMemoryContext(histRec) + runtimeContext(histRec); ctxPrefix != "" && !strings.Contains(promptText, "Continue the existing conversation") {
-								retryPrompt = ctxPrefix + promptText
+							sysPrefix := ""
+							if !strings.Contains(retryPrompt, commandExecutionGuidance) {
+								if sys := s.fallbackCLISystemForFreshRetry(rec.ID, rec.Runtime); sys != "" {
+									sysPrefix = sys + "\n\n"
+								}
+							}
+							ctxPrefix := runtimeMemoryContext(histRec) + runtimeContext(histRec)
+							if !strings.Contains(promptText, "Continue the existing conversation") {
+								retryPrompt = ctxPrefix + sysPrefix + promptText
+							} else if sysPrefix != "" {
+								retryPrompt = sysPrefix + promptText
 							}
 							retryInput, _ := EncodeStreamInputTurnWithParts(inputRuntime, retryPrompt, deliveryParts)
 							_, _ = retryStdin.Write(retryInput)

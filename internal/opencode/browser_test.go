@@ -18,7 +18,7 @@ func TestBrowserOverlay(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(cleanup)
-	if len(env) != 4 || env[1] != "HOXI_BROWSER_URL=http://127.0.0.1:9000" || env[2] != "HOXI_BROWSER_TOKEN=secret" || !strings.HasPrefix(env[3], "HOXI_SANDBOX_ROOT=") {
+	if len(env) != 5 || env[1] != "HOXI_GATEWAY_URL=http://127.0.0.1:9000" || env[2] != "HOXI_BROWSER_URL=http://127.0.0.1:9000" || env[3] != "HOXI_BROWSER_TOKEN=secret" || !strings.HasPrefix(env[4], "HOXI_SANDBOX_ROOT=") {
 		t.Fatalf("unexpected overlay: %v", env)
 	}
 	var config map[string]json.RawMessage
@@ -93,7 +93,7 @@ func TestBrowserOverlayWithoutConfig(t *testing.T) {
 			_ = os.Setenv("OPENCODE_CONFIG_CONTENT", raw)
 		}
 		env, cleanup, err := PrepareBrowserPlugin("http://127.0.0.1:9000", "secret")
-		if err != nil || len(env) != 4 {
+		if err != nil || len(env) != 5 {
 			t.Fatalf("valid empty config rejected: %v", err)
 		}
 		cleanup()

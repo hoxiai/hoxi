@@ -76,10 +76,91 @@ func readJSONMapFile(path string) map[string]interface{} {
 	}
 	var out map[string]interface{}
 	if err := json.Unmarshal(data, &out); err != nil {
+		if sanitized := sanitizeJSONC(data); json.Unmarshal(sanitized, &out) == nil && out != nil {
+			return out
+		}
 		if dir := openCodeConfigDir(); dir == "" || !strings.HasPrefix(filepath.Clean(path), filepath.Clean(dir)+string(filepath.Separator)) {
 			_ = os.Rename(path, path+".corrupt-"+strconv.FormatInt(time.Now().UnixMilli(), 10))
 		}
 		return nil
+	}
+	return out
+}
+
+// sanitizeJSONC strips // line comments, /* */ block comments, and trailing
+// commas outside string literals so user-edited opencode.json / models.json
+// files with JSONC syntax can still be parsed.
+func sanitizeJSONC(raw []byte) []byte {
+	s := make([]byte, 0, len(raw))
+	inString := false
+	for i := 0; i < len(raw); i++ {
+		c := raw[i]
+		if inString {
+			s = append(s, c)
+			if c == '\\' && i+1 < len(raw) {
+				i++
+				s = append(s, raw[i])
+			} else if c == '"' {
+				inString = false
+			}
+			continue
+		}
+		if c == '"' {
+			inString = true
+			s = append(s, c)
+			continue
+		}
+		if c == '/' && i+1 < len(raw) {
+			if raw[i+1] == '/' {
+				i += 2
+				for i < len(raw) && raw[i] != '\n' {
+					i++
+				}
+				if i < len(raw) {
+					s = append(s, '\n')
+				}
+				continue
+			}
+			if raw[i+1] == '*' {
+				i += 2
+				for i+1 < len(raw) && !(raw[i] == '*' && raw[i+1] == '/') {
+					i++
+				}
+				i++
+				continue
+			}
+		}
+		s = append(s, c)
+	}
+	out := make([]byte, 0, len(s))
+	inString = false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if inString {
+			out = append(out, c)
+			if c == '\\' && i+1 < len(s) {
+				i++
+				out = append(out, s[i])
+			} else if c == '"' {
+				inString = false
+			}
+			continue
+		}
+		if c == '"' {
+			inString = true
+			out = append(out, c)
+			continue
+		}
+		if c == ',' {
+			j := i + 1
+			for j < len(s) && (s[j] == ' ' || s[j] == '\t' || s[j] == '\r' || s[j] == '\n') {
+				j++
+			}
+			if j < len(s) && (s[j] == '}' || s[j] == ']') {
+				continue
+			}
+		}
+		out = append(out, c)
 	}
 	return out
 }

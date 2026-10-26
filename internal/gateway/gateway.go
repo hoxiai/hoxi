@@ -33,8 +33,10 @@ import (
 	"github.com/hoxiai/hoxi/internal/sandbox"
 	"github.com/hoxiai/hoxi/internal/skills"
 	"github.com/hoxiai/hoxi/internal/statusbar"
+	"github.com/hoxiai/hoxi/internal/tools"
 	"github.com/hoxiai/hoxi/internal/tunnel"
 	"github.com/hoxiai/hoxi/internal/updater"
+	"github.com/hoxiai/hoxi/internal/workapps"
 	"github.com/hoxiai/hoxi/internal/workspace"
 	"github.com/hoxiai/hoxi/internal/worktree"
 )
@@ -55,6 +57,8 @@ type Gateway struct {
 	skills                *skills.Service
 	browser               *browser.Service
 	auth                  *auth.Service
+	workApps              *workapps.Service
+	tools                 *tools.Service
 	updater               *updater.Checker
 	leaderboard           *leaderboard.Service
 	sandbox               *sandbox.Manager
@@ -179,6 +183,8 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 		runner:       runnerSvc,
 		browser:      browser.New(),
 		auth:         authSvc,
+		workApps:     workapps.NewService(authSvc, nil),
+		tools:        tools.NewService(authSvc),
 		updater:      updaterSvc,
 		leaderboard:  leaderboardSvc,
 		sandbox:      sandbox.NewManager(""),
@@ -503,8 +509,12 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 		authHandler := auth.NewHTTPHandler(g.auth)
 		g.mux.Handle("/api/hoxi/auth", authHandler)
 		g.mux.Handle("/api/hoxi/auth/", authHandler)
-		g.mux.Handle("/api/hoxi/work/apps", authHandler)
-		g.mux.Handle("/api/hoxi/tools/", authHandler)
+	}
+	if g.workApps != nil {
+		g.mux.Handle("/api/hoxi/work/apps", workapps.NewHTTPHandler(g.workApps))
+	}
+	if g.tools != nil {
+		g.mux.Handle("/api/hoxi/tools/", tools.NewHTTPHandler(g.tools))
 	}
 	if g.updater != nil {
 		h := updater.NewHTTPHandler(g.updater)

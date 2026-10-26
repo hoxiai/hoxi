@@ -81,6 +81,7 @@ func PrepareBrowserPlugin(baseURL, token string) (env []string, cleanup func(), 
 	}
 	return []string{
 		"OPENCODE_CONFIG_CONTENT=" + string(merged),
+		"HOXI_GATEWAY_URL=" + baseURL,
 		"HOXI_BROWSER_URL=" + baseURL,
 		"HOXI_BROWSER_TOKEN=" + token,
 		"HOXI_SANDBOX_ROOT=" + sandbox.DefaultRoot(),

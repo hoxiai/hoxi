@@ -47,5 +47,9 @@
   { "name": "substituted force push", "destructive": true, "request": { "permission": "bash", "patterns": ["D=/repo; git push --force \"$D\""] } },
   { "name": "background job kill", "destructive": true, "request": { "permission": "bash", "patterns": ["sleep 1 & kill %1"] } },
   { "name": "hoxi code-index context command", "destructive": false, "request": { "permission": "bash", "patterns": ["hoxi code-index context --symbol HandleCheckout"] } },
-  { "name": "hoxi code-index context on dotenv", "destructive": true, "request": { "permission": "bash", "patterns": ["hoxi code-index context --path .env"] } }
+  { "name": "hoxi code-index context on dotenv", "destructive": true, "request": { "permission": "bash", "patterns": ["hoxi code-index context --path .env"] } },
+  { "name": "hoxi_tools discover is read-only", "destructive": false, "request": { "permission": "hoxi_tools", "patterns": ["discover amazon reviews"], "metadata": { "tool": "hoxi_tools", "action": "discover" } } },
+  { "name": "hoxi_tools inspect is read-only", "destructive": false, "request": { "permission": "hoxi_tools", "patterns": ["inspect apify /apidojo/tweet-scraper"], "metadata": { "tool": "hoxi_tools", "action": "inspect" } } },
+  { "name": "hoxi_tools run requires approval", "destructive": true, "request": { "permission": "hoxi_tools", "patterns": ["run apify /apidojo/tweet-scraper"], "metadata": { "tool": "hoxi_tools", "action": "run" } } },
+  { "name": "hoxi_tools curl run requires approval", "destructive": true, "request": { "permission": "bash", "patterns": ["curl -s -X POST http://127.0.0.1:5410/api/hoxi/tools/run -d '{\"provider\":\"apify\"}'"] } }
 ]

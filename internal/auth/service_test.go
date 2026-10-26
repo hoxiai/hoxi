@@ -3,14 +3,12 @@ package auth
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -425,17 +423,8 @@ func TestMemberCheckinAndPortalRoutes(t *testing.T) {
 	}
 }
 
-func TestMintMCPTokenAndWorkApps(t *testing.T) {
+func TestMintMCPToken(t *testing.T) {
 	s := testService(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/hoxi/work/apps" && r.Method == http.MethodGet {
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"version": 1,
-				"apps": []map[string]any{
-					{"id": "shopify", "name": "Shopify 独立站运营", "skillName": "shopify-ops"},
-				},
-			})
-			return
-		}
 		if r.URL.Path == "/api/hoxi/mcp/token" && r.Method == http.MethodPost {
 			if r.Header.Get("Authorization") != "Bearer hox_dt_test" {
 				w.WriteHeader(http.StatusUnauthorized)
@@ -454,21 +443,6 @@ func TestMintMCPTokenAndWorkApps(t *testing.T) {
 		}
 		w.WriteHeader(http.StatusNotFound)
 	})
-
-	appsRes, err := s.FetchWorkApps(context.Background())
-	if err != nil || appsRes["version"] != float64(1) {
-		t.Fatalf("FetchWorkApps failed: %v, %#v", err, appsRes)
-	}
-
-	if err := s.SaveWorkAppsState(map[string]any{
-		"installedIds": []string{"shopify", "custom-1"},
-	}); err != nil {
-		t.Fatalf("SaveWorkAppsState failed: %v", err)
-	}
-	appsRes2, err := s.FetchWorkApps(context.Background())
-	if err != nil || appsRes2["localState"] == nil {
-		t.Fatalf("FetchWorkApps localState missing: %v, %#v", err, appsRes2)
-	}
 
 	if _, err := s.MintMCPToken(context.Background(), MCPTokenRequest{AppID: "shopify"}); err == nil {
 		t.Fatal("expected MintMCPToken error when not logged in")
@@ -489,77 +463,5 @@ func TestMintMCPTokenAndWorkApps(t *testing.T) {
 	}
 	if tokRes["accessToken"] != "apay_mcp_test_scoped_token" || tokRes["mcpUrl"] != "https://hoxi.ai/api/mcp" {
 		t.Fatalf("unexpected MintMCPToken result: %#v", tokRes)
-	}
-}
-
-func TestToolsGatewayBridge(t *testing.T) {
-	s := testService(t, func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/hoxi/tools/discover":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"code": 0,
-				"data": map[string]any{
-					"totalToolsMatched": 2,
-				},
-			})
-		case "/api/hoxi/tools/inspect":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"code": 0,
-				"data": map[string]any{
-					"provider": "apify",
-					"endpoint": "/apidojo/tweet-scraper",
-				},
-			})
-		case "/api/hoxi/tools/run":
-			if r.Header.Get("Authorization") != "Bearer hox_dt_tools" {
-				w.WriteHeader(http.StatusUnauthorized)
-				_, _ = w.Write([]byte(`{"message":"Unauthorized"}`))
-				return
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"code": 0,
-				"data": map[string]any{
-					"ok":     true,
-					"status": "COMPLETED",
-				},
-			})
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	})
-
-	discRes, err := s.DiscoverTools(context.Background(), []byte(`{"query":"twitter"}`))
-	if err != nil || discRes["code"] != float64(0) {
-		t.Fatalf("DiscoverTools failed: %v, %#v", err, discRes)
-	}
-
-	inspRes, err := s.InspectTool(context.Background(), []byte(`{"provider":"apify"}`))
-	if err != nil || inspRes["code"] != float64(0) {
-		t.Fatalf("InspectTool failed: %v, %#v", err, inspRes)
-	}
-
-	if _, err := s.RunTool(context.Background(), []byte(`{"provider":"apify","endpoint":"/apidojo/tweet-scraper"}`)); !errors.Is(err, ErrNotLoggedIn) {
-		t.Fatalf("expected ErrNotLoggedIn for RunTool when logged out, got %v", err)
-	}
-
-	s.current = &StoredAuth{
-		DeviceToken: "hox_dt_tools",
-		User:        UserProfile{ID: 9, Email: "tools@hoxi.ai"},
-	}
-
-	runRes, err := s.RunTool(context.Background(), []byte(`{"provider":"apify","endpoint":"/apidojo/tweet-scraper"}`))
-	if err != nil || runRes["code"] != float64(0) {
-		t.Fatalf("RunTool failed: %v, %#v", err, runRes)
-	}
-
-	h := NewHTTPHandler(s)
-	for _, route := range []string{"/api/hoxi/tools/discover", "/api/hoxi/auth/tools/discover"} {
-		req := httptest.NewRequest(http.MethodPost, route, strings.NewReader(`{"query":"twitter"}`))
-		req.Header.Set("Content-Type", "application/json")
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, req)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected 200 on %s, got %d (%s)", route, rec.Code, rec.Body.String())
-		}
 	}
 }

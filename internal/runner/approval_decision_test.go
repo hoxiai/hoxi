@@ -82,6 +82,9 @@ func TestApprovalModesDecideEveryCategory(t *testing.T) {
 		{"mcp tool", toolReq("call_mcp_tool", nil), true, false, false},
 		{"unknown tool", toolReq("mystery_action", nil), true, false, false},
 		{"protected edit", req("edit", ".git/config"), false, false, false},
+		{"hoxi_tools discover", map[string]interface{}{"permission": "hoxi_tools", "patterns": []interface{}{"discover amazon"}, "metadata": map[string]interface{}{"tool": "hoxi_tools", "action": "discover"}}, true, true, true},
+		{"hoxi_tools inspect", map[string]interface{}{"permission": "hoxi_tools", "patterns": []interface{}{"inspect apify"}, "metadata": map[string]interface{}{"tool": "hoxi_tools", "action": "inspect"}}, true, true, true},
+		{"hoxi_tools run asks in every mode", map[string]interface{}{"permission": "hoxi_tools", "patterns": []interface{}{"run apify /actor"}, "metadata": map[string]interface{}{"tool": "hoxi_tools", "action": "run"}}, false, false, false},
 	}
 	for _, c := range cases {
 		for _, m := range []struct {

@@ -220,6 +220,12 @@ func classifyToolName(name string) string {
 // permissionCategory maps OpenCode permission names and every runtime's tool
 // names onto the four categories the approval policy configures.
 func permissionCategory(item map[string]interface{}) string {
+	if isHoxiTools, action := hoxiToolsAction(item); isHoxiTools {
+		if action == "discover" || action == "inspect" {
+			return permissionCategoryRead
+		}
+		return permissionCategoryOther
+	}
 	if c := classifyToolName(permissionName(item)); c != "" {
 		return c
 	}
@@ -231,6 +237,30 @@ func permissionCategory(item map[string]interface{}) string {
 		}
 	}
 	return permissionCategoryOther
+}
+
+func hoxiToolsAction(item map[string]interface{}) (bool, string) {
+	perm := permissionName(item)
+	meta := itemMetadata(item)
+	toolObj, _ := item["tool"].(map[string]interface{})
+	toolName := strings.ToLower(strings.TrimSpace(firstString(meta["tool"], toolObj["name"], firstPattern(item))))
+	if perm != "hoxi_tools" && toolName != "hoxi_tools" && !strings.HasPrefix(toolName, "hoxi_tools_") {
+		return false, ""
+	}
+	if strings.HasPrefix(toolName, "hoxi_tools_") {
+		return true, strings.TrimPrefix(toolName, "hoxi_tools_")
+	}
+	args := parseToolArgs(meta["args"])
+	if act := strings.ToLower(strings.TrimSpace(firstString(meta["action"], args["action"]))); act != "" {
+		return true, act
+	}
+	for _, pat := range append(stringList(item["patterns"]), stringList(item["pattern"])...) {
+		fields := strings.Fields(strings.ToLower(strings.TrimSpace(pat)))
+		if len(fields) > 0 && (fields[0] == "discover" || fields[0] == "inspect" || fields[0] == "run") {
+			return true, fields[0]
+		}
+	}
+	return true, "run"
 }
 
 func stripOpenCodeStopMarkerText(raw string) string {
@@ -393,6 +423,9 @@ func isDestructivePermissionRequest(item map[string]interface{}) bool {
 	meta := itemMetadata(item)
 	if perm == "doom_loop" {
 		return true
+	}
+	if isHoxiTools, action := hoxiToolsAction(item); isHoxiTools {
+		return action != "discover" && action != "inspect"
 	}
 	if perm == "external_directory" {
 		return !externalDirectoryTargetsAreRoutine(item)

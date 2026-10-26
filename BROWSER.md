@@ -115,7 +115,7 @@ OpenCode child environment; keep the directory until the child exits, then call
 `cleanup`.
 
 After config loading, the plugin's config hook forces `permission.hoxi_browser`
-to `"ask"`, preserving all other permission fields.
+and `permission.hoxi_tools` to `"ask"`, preserving all other permission fields.
 
 To regenerate `internal/opencode/browser_plugin.mjs` from `browser_plugin.js`:
 

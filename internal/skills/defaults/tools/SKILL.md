@@ -4,7 +4,7 @@ description: Discover, inspect, and execute 220+ verified Agent Tools and 2,000+
 compatibility: 支持 Hoxi 桌面端本地免 Key 桥接、Hoxi MCP Server 与 REST API 调用
 metadata:
   author: "Hoxi"
-  version: "1.0.0"
+  version: "1.1.0"
 ---
 
 # Hoxi Tools — 全栈与 Agent 工具调度技能
@@ -42,11 +42,11 @@ metadata:
 
 ---
 
-## 三、三种调用通道（按当前运行环境自动选择）
+## 三、四种调用通道（按当前运行环境自动选择）
 
-### 通道 A：Hoxi 桌面端原生内置工具 `hoxi_tools`（在 Hoxi 桌面端内首选）
+### 通道 A：OpenCode 原生内置工具 `hoxi_tools`（当前会话具备 `hoxi_tools` 工具时首选）
 
-在 Hoxi 桌面端会话中，无需跑 `curl` 命令、也无需手动配置任何 API Key，直接调用内置的原生工具 **`hoxi_tools`**（进程自动绑定本机动态网关端口与当前登录的 Hoxi 账号，`discover` 与 `inspect` 零积分免审，`run` 自动走原生审批卡片）：
+当工具列表包含内置的 **`hoxi_tools`**（Hoxi 桌面端 OpenCode 运行时自动注入）时，无需跑 `curl` 命令、也无需手动配置任何 API Key，直接调用 `hoxi_tools`（`discover` 与 `inspect` 零积分免审，`run` 自动发起审批卡片）：
 
 1. **Discover（检索可用工具与 Endpoint）**：
    调用 `hoxi_tools`：`{ "action": "discover", "query": "amazon reviews", "limit": 8 }`
@@ -57,7 +57,30 @@ metadata:
 
 > 若返回 `401 Unauthorized`（未登录 Hoxi 账号），提示用户在 Hoxi 桌面端左下角点击头像一键登录 Hoxi 账号（每日签到即可免费领取积分）。
 
-### 通道 B：MCP 工具直调（外部客户端挂载 Hoxi MCP Server 时首选）
+### 通道 B：Hoxi 桌面端原生 CLI 本机免 Key 网桥（Claude Code / Antigravity / Gemini CLI 等）
+
+在 Hoxi 桌面端启动的原生 CLI 运行时中，进程环境变量已自动注入动态网关地址 `HOXI_GATEWAY_URL`（及兼容变量 `HOXI_BRIDGE_URL`）。直接请求本机网桥即可复用桌面端已登录的 Hoxi 账号（无需手动传 Token，`run` 请求由 Hoxi PreToolUse 安全门控统一审批）：
+
+```bash
+HOXI_BASE="${HOXI_GATEWAY_URL:-${HOXI_BRIDGE_URL:-http://127.0.0.1:5410}}"
+
+# 1. Discover（0 积分，免审）
+curl -sS -X POST "${HOXI_BASE}/api/hoxi/tools/discover" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "amazon reviews", "limit": 8}'
+
+# 2. Inspect（0 积分，免审）
+curl -sS -X POST "${HOXI_BASE}/api/hoxi/tools/inspect" \
+  -H "Content-Type: application/json" \
+  -d '{"provider": "dataforseo", "endpoint": "/v3/merchant/amazon/products/live"}'
+
+# 3. Run（需人工审批确认，按次消耗 Hoxi 账号积分）
+curl -sS -X POST "${HOXI_BASE}/api/hoxi/tools/run" \
+  -H "Content-Type: application/json" \
+  -d '{"provider": "dataforseo", "endpoint": "/v3/merchant/amazon/products/live", "body": {"keyword": "wireless charger", "location_code": 2840}, "wait": true}'
+```
+
+### 通道 C：MCP 工具直调（外部客户端挂载 Hoxi MCP Server 时首选）
 
 若当前客户端已连接 Hoxi MCP Server（`/api/mcp`），直接调用以下 3 个 MCP 工具：
 
@@ -65,9 +88,9 @@ metadata:
 - `hoxi_tools_inspect`：传入 `{ "provider": "<provider>", "endpoint": "<endpoint>" }`
 - `hoxi_tools_run`：传入 `{ "provider": "<provider>", "endpoint": "<endpoint>", "body": { ... }, "wait": true }`
 
-### 通道 C：HTTP REST 直调（无内置工具或独立 CLI 环境）
+### 通道 D：云端 HTTP REST 直调（脱离 Hoxi 桌面端的独立环境）
 
-在未挂载插件或 MCP 的独立环境中，请求本机桥接（`${HOXI_BRIDGE_URL:-http://127.0.0.1:5410}`）或云端网关（`https://hoxi.ai`）：
+在未启动 Hoxi 桌面端的独立服务器或外部 CLI 环境中，直接请求云端网关（`https://hoxi.ai`）：
 
 - **Discover（公开免鉴权）**：
   ```bash

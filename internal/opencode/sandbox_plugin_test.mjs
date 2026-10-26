@@ -111,7 +111,7 @@ test("sandbox plugin", async (t) => {
   await t.test("denies unconfined tools under network deny", async () => {
     fixture("deny");
     const hooks = await HoxiSandboxPlugin();
-    for (const tool of ["patch", "task", "webfetch", "websearch", "hoxi_browser", "some_mcp"]) {
+    for (const tool of ["patch", "task", "webfetch", "websearch", "hoxi_browser", "hoxi_tools", "some_mcp"]) {
       await assert.rejects(
         hooks["tool.execute.before"]({ tool, sessionID: "ses_sandbox", callID: "c5" }, { args: {} }),
         /sandbox/
@@ -137,6 +137,10 @@ test("sandbox plugin", async (t) => {
     await hooks["tool.execute.before"](
       { tool: "webfetch", sessionID: "ses_sandbox", callID: "c7" },
       { args: { url: "https://hoxi.ai" } }
+    );
+    await hooks["tool.execute.before"](
+      { tool: "hoxi_tools", sessionID: "ses_sandbox", callID: "c7b" },
+      { args: { action: "discover", query: "search" } }
     );
   });
 

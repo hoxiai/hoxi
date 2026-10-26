@@ -8,7 +8,7 @@ import { setLiteralJudge } from "./shell-constants.js";
 import { destructiveScanForms } from "./shell-substitution.js";
 
 const DESTRUCTIVE_RE =
-  /\b(rm|rmdir|unlink|shred|truncate|srm|sudo|chmod|chown|mkfs|dd|diskutil|killall|reboot|shutdown)\b|\bkill\s+(?:-[A-Za-z0-9]+\s+)*(?:[A-Za-z0-9]+\s+)?[-?\d%]|\bpkill\b|[>|]\s*(?:\/etc\/|(?:\~|\$HOME|\$\{HOME\})\/\.(?:zshrc|zshenv|zprofile|bashrc|bash_profile|profile|ssh\b|gnupg\b|netrc\b|npmrc\b))|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.(?:ssh|aws|gnupg|kube)\/|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.(?:netrc|npmrc|git-credentials|credentials\.json)(?:$|[\s;&|'"*?])|\.claude\/\.credentials\.json|\.hoxi\/(?:models|auth|tunnel(?:-dev)?|cloudflared|pairing|relay-keys|approval-policy|hoxi)\.(?:json|db)|\.docker\/config\.json|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.en(?:v(?:\.(?:local|prod(?:uction)?|dev(?:elopment)?|stag(?:e|ing)|test(?:ing)?|ci|preview|secret\w*|key\w*|private\w*|bak|backup)(?:\.local)?)?|\?|\*)(?:$|[\s;&|'"*?])|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.envrc(?:$|[\s;&|'"*?])|\bfind\b[^\n;&|]*\s-(delete|exec\w*|ok\w*|fprint\w*|fls)\b|\b(curl|wget)\b[^\n|]*\|\s*(sh|bash|zsh)\b|\b(?:npm|pnpm|yarn|cargo)\s+publish\b|\bterraform\s+(?:destroy|apply)\b|\bkubectl\s+delete\b|\bdocker\s+(?:system\s+prune|rm|rmi)\b/i;
+  /\b(rm|rmdir|unlink|shred|truncate|srm|sudo|chmod|chown|mkfs|dd|diskutil|killall|reboot|shutdown)\b|\bkill\s+(?:-[A-Za-z0-9]+\s+)*(?:[A-Za-z0-9]+\s+)?[-?\d%]|\bpkill\b|[>|]\s*(?:\/etc\/|(?:\~|\$HOME|\$\{HOME\})\/\.(?:zshrc|zshenv|zprofile|bashrc|bash_profile|profile|ssh\b|gnupg\b|netrc\b|npmrc\b))|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.(?:ssh|aws|gnupg|kube)\/|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.(?:netrc|npmrc|git-credentials|credentials\.json)(?:$|[\s;&|'"*?])|\.claude\/\.credentials\.json|\.hoxi\/(?:models|auth|tunnel(?:-dev)?|cloudflared|pairing|relay-keys|approval-policy|hoxi)\.(?:json|db)|\.docker\/config\.json|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.en(?:v(?:\.(?:local|prod(?:uction)?|dev(?:elopment)?|stag(?:e|ing)|test(?:ing)?|ci|preview|secret\w*|key\w*|private\w*|bak|backup)(?:\.local)?)?|\?|\*)(?:$|[\s;&|'"*?])|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.envrc(?:$|[\s;&|'"*?])|\bfind\b[^\n;&|]*\s-(delete|exec\w*|ok\w*|fprint\w*|fls)\b|\b(curl|wget)\b[^\n|]*\|\s*(sh|bash|zsh)\b|\b(?:npm|pnpm|yarn|cargo)\s+publish\b|\bterraform\s+(?:destroy|apply)\b|\bkubectl\s+delete\b|\bdocker\s+(?:system\s+prune|rm|rmi)\b|\/api\/hoxi\/tools\/run\b/i;
 
 // Match Git global options, option abbreviations (`--forc`, `--har`), combined
 // short flags (`-uf`), `+refspec` force pushes and `:refspec` deletions.
@@ -594,18 +594,10 @@ export function externalDirectoryTargets(input) {
   const out = [];
   for (const value of [
     ...(Array.isArray(input?.patterns) ? input.patterns : []),
-    input?.pattern,
-    ...(Array.isArray(input?.always) ? input.always : []),
-    meta.filepath,
-    meta.filePath,
-    meta.path,
-    meta.target,
-    meta.parentDir,
-    meta.dir,
+    input?.pattern, ...(Array.isArray(input?.always) ? input.always : []),
+    meta.filepath, meta.filePath, meta.path, meta.target, meta.parentDir, meta.dir,
     ...(Array.isArray(meta.directories) ? meta.directories : []),
-    ...(Array.isArray(meta.files)
-      ? meta.files.map((f) => f?.filePath || f?.filepath || f?.file || f?.path || "")
-      : []),
+    ...(Array.isArray(meta.files) ? meta.files.map((f) => f?.filePath || f?.filepath || f?.file || f?.path || "") : []),
     ...extractToolArgPaths(meta.args),
   ]) {
     if (typeof value === "string" && value.trim()) out.push(value.trim());
@@ -626,8 +618,7 @@ const OWN_SESSION_READ_TOOLS = new Set([
   "command_status",
 ]);
 const OWN_SESSION_EDIT_TOOLS = new Set([
-  ...EDIT_PERMISSIONS,
-  "insert_edit_into_file", "str_replace_editor", "str_replace_based_edit_tool",
+  ...EDIT_PERMISSIONS, "insert_edit_into_file", "str_replace_editor", "str_replace_based_edit_tool",
 ]);
 
 export function isOwnSessionRecordRead(input, rawPath) {
@@ -642,17 +633,10 @@ export function isOwnSessionRecordRead(input, rawPath) {
 function requestSessionIDs(input) {
   const meta = input?.metadata || {};
   const ids = [];
-  const add = (v) => {
-    if (typeof v !== "string") return;
-    const id = v.trim();
-    if (!validSessionID(id) || ids.includes(id)) return;
-    ids.push(id);
-  };
-  add(input?.sessionID);
-  add(input?.externalID);
-  add(meta.sessionID);
-  add(meta.externalID);
-  add(meta.externalId);
+  for (const v of [input?.sessionID, input?.externalID, meta.sessionID, meta.externalID, meta.externalId]) {
+    const id = typeof v === "string" ? v.trim() : "";
+    if (validSessionID(id) && !ids.includes(id)) ids.push(id);
+  }
   return ids;
 }
 
@@ -661,18 +645,14 @@ function validSessionID(id) {
 }
 
 function pathUnderOwnSession(raw, ids) {
-  if (ids.length === 0) return false;
-  return sessionPathCandidates(raw).some((cand) => sessionPathMatches(cand, ids));
+  return ids.length > 0 && sessionPathCandidates(raw).some((cand) => sessionPathMatches(cand, ids));
 }
 
 function sessionPathCandidates(raw) {
-  if (typeof raw !== "string") return [];
+  if (typeof raw !== "string" || !raw.trim()) return [];
   const trimmed = raw.trim();
-  if (!trimmed) return [];
-  const out = [trimmed];
   const stripped = trimmed.replace(/\*+$/, "").replace(/\/+$/, "");
-  if (stripped && stripped !== trimmed) out.push(stripped);
-  return out;
+  return stripped && stripped !== trimmed ? [trimmed, stripped] : [trimmed];
 }
 
 function sessionPathMatches(raw, ids) {
@@ -690,9 +670,35 @@ function sensitiveOutsideOwnSession(input, paths) {
   return paths.some((p) => (isProtectedPath(p) || isSensitiveExternalPath(p)) && !isOwnSessionRecordRead(input, p));
 }
 
+function hoxiToolsAction(input) {
+  const perm = String(input?.permission || input?.type || "").trim().toLowerCase();
+  const meta = input?.metadata || {};
+  const toolName = String(meta.tool || input?.tool?.name || (Array.isArray(input?.patterns) ? input.patterns[0] : "") || "").trim().toLowerCase();
+  if (perm !== "hoxi_tools" && toolName !== "hoxi_tools" && !toolName.startsWith("hoxi_tools_")) {
+    return { isHoxiTools: false, action: "" };
+  }
+  if (toolName.startsWith("hoxi_tools_")) return { isHoxiTools: true, action: toolName.slice("hoxi_tools_".length) };
+  let argsAction = meta.args && typeof meta.args === "object" ? String(meta.args.action || "") : "";
+  if (!argsAction && typeof meta.args === "string" && meta.args.trim().startsWith("{")) {
+    try { argsAction = String(JSON.parse(meta.args)?.action || ""); } catch {}
+  }
+  const act = String(meta.action || argsAction || "").trim().toLowerCase();
+  if (act) return { isHoxiTools: true, action: act };
+  for (const pat of [...(Array.isArray(input?.patterns) ? input.patterns : []), input?.pattern]) {
+    if (typeof pat !== "string" || !pat.trim()) continue;
+    const first = pat.trim().toLowerCase().split(/\s+/)[0];
+    if (first === "discover" || first === "inspect" || first === "run") return { isHoxiTools: true, action: first };
+  }
+  return { isHoxiTools: true, action: "run" };
+}
+
 export function isDestructivePermissionRequest(input) {
   const permission = String(input?.permission || input?.type || "").toLowerCase();
   if (permission === "doom_loop") return true;
+  const hoxiTools = hoxiToolsAction(input);
+  if (hoxiTools.isHoxiTools) {
+    return hoxiTools.action !== "discover" && hoxiTools.action !== "inspect";
+  }
   if (permission === "external_directory") {
     // OpenCode raises this for every read/write outside the session directory,
     // including sibling folders the user already registered as a workspace.
@@ -760,6 +766,8 @@ export function isSafeCommandPermissionRequest(input, options) {
 
 export function decidePermission(input, options) {
   if (isDestructivePermissionRequest(input)) return "ask";
+  const hoxiTools = hoxiToolsAction(input);
+  if (hoxiTools.isHoxiTools && (hoxiTools.action === "discover" || hoxiTools.action === "inspect")) return "allow";
   const permission = String(input?.permission || input?.type || "").toLowerCase();
   if (READ_PERMISSIONS.has(permission) || permission === "external_directory") return "allow";
   return isSafeCommandPermissionRequest(input, options) ? "allow" : "ask";

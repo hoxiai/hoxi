@@ -63,8 +63,8 @@ export default function MarkdownView(props: {
     cancelFrame();
     const full = pacer.target;
     pacer.reset(full, clock());
-    setDisplayed(full);
     setRevealActive(streaming && canAnimate && !isDocumentHidden() && !prefersReducedMotion());
+    setDisplayed(full);
   };
 
   const frame = (ts: number) => {
@@ -117,8 +117,8 @@ export default function MarkdownView(props: {
     if (pacer.pending) {
       ensureFrame();
     } else if (!streaming) {
-      setDisplayed(next);
       setRevealActive(false);
+      setDisplayed(next);
     }
   });
 

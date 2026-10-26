@@ -205,10 +205,7 @@ func protectedStateRules() []PathRule {
 		for _, name := range hoxipaths.ProtectedStateFiles() {
 			rules = append(rules, PathRule{Path: filepath.Join(hoxi, name), Kind: PathLiteral})
 		}
-		sandboxDir := filepath.Join(hoxi, "sandbox")
-		if resolved, err := filepath.EvalSymlinks(sandboxDir); err == nil {
-			sandboxDir = resolved
-		}
+		sandboxDir := resolvePathSymlinks(filepath.Join(hoxi, "sandbox"))
 		rules = append(rules,
 			PathRule{
 				Path: `^` + escapeRegex(sandboxDir) + `/gemini-home-[^/]+/(settings\.json|\.gemini/(settings\.json|config(/.*)?))$`,
@@ -236,6 +233,32 @@ func protectedStateRules() []PathRule {
 		rules = append(rules, PathRule{Path: file, Kind: PathLiteral})
 	}
 	return rules
+}
+
+// resolvePathSymlinks resolves symlinks along the longest existing ancestor
+// prefix of p so Seatbelt regex/literal rules match the canonical path even
+// when leaf directories (such as ~/.hoxi/sandbox) have not been created yet.
+func resolvePathSymlinks(p string) string {
+	cleaned := filepath.Clean(p)
+	if resolved, err := filepath.EvalSymlinks(cleaned); err == nil {
+		return resolved
+	}
+	cur := cleaned
+	var tail []string
+	for {
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return cleaned
+		}
+		tail = append(tail, filepath.Base(cur))
+		cur = parent
+		if resolved, err := filepath.EvalSymlinks(cur); err == nil {
+			for i := len(tail) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, tail[i])
+			}
+			return resolved
+		}
+	}
 }
 
 // secretReadRules are credential directories and files a sandboxed command

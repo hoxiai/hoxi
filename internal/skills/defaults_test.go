@@ -108,3 +108,45 @@ func TestClassifyHoxiDefaultSkill(t *testing.T) {
 		t.Fatalf("label = %q, want ~/.hoxi/skills/ prefix", label)
 	}
 }
+
+func TestSeedDefaultsMigratesLegacyAndUpgradesOutdatedBundledSkill(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("HOXI_HOME", filepath.Join(home, ".hoxi"))
+
+	legacyDir := filepath.Join(home, ".hoxi", "skills", "hoxi-tools")
+	if err := os.MkdirAll(legacyDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacyContent := "---\nname: hoxi-tools\nmetadata:\n  author: \"Hoxi\"\n  version: \"1.0.0\"\n---\n# Legacy\n"
+	if err := os.WriteFile(filepath.Join(legacyDir, "SKILL.md"), []byte(legacyContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	toolsDir := filepath.Join(home, ".hoxi", "skills", "tools")
+	if err := os.MkdirAll(toolsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oldTools := "---\nname: tools\nmetadata:\n  author: \"Hoxi\"\n  version: \"1.0.0\"\n---\n# Old tools\n"
+	if err := os.WriteFile(filepath.Join(toolsDir, "SKILL.md"), []byte(oldTools), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	seeded, err := SeedDefaults()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seeded < 2 {
+		t.Fatalf("expected skill-authoring install + tools upgrade, got seeded=%d", seeded)
+	}
+	if _, err := os.Stat(legacyDir); !os.IsNotExist(err) {
+		t.Fatalf("expected legacy ~/.hoxi/skills/hoxi-tools to be removed, stat err=%v", err)
+	}
+	upgraded, err := os.ReadFile(filepath.Join(toolsDir, "SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(upgraded), `version: "1.1.0"`) {
+		t.Fatalf("expected tools/SKILL.md to be upgraded to 1.1.0, got:\n%s", string(upgraded))
+	}
+}

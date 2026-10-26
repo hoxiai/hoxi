@@ -43,18 +43,8 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleCheckin(w, r)
 	case path == "/mcp-token" && r.Method == http.MethodPost:
 		h.handleMCPToken(w, r)
-	case (path == "/work-apps" || r.URL.Path == "/api/hoxi/work/apps") && r.Method == http.MethodGet:
-		h.handleWorkApps(w, r)
-	case (path == "/work-apps" || r.URL.Path == "/api/hoxi/work/apps") && (r.Method == http.MethodPut || r.Method == http.MethodPost):
-		h.handleSaveWorkApps(w, r)
 	case path == "/open-url" && r.Method == http.MethodPost:
 		h.handleOpenURL(w, r)
-	case (path == "/tools/discover" || r.URL.Path == "/api/hoxi/tools/discover") && r.Method == http.MethodPost:
-		h.handleToolsDiscover(w, r)
-	case (path == "/tools/inspect" || r.URL.Path == "/api/hoxi/tools/inspect") && r.Method == http.MethodPost:
-		h.handleToolsInspect(w, r)
-	case (path == "/tools/run" || r.URL.Path == "/api/hoxi/tools/run") && r.Method == http.MethodPost:
-		h.handleToolsRun(w, r)
 	default:
 		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
 	}
@@ -140,30 +130,6 @@ func (h *HTTPHandler) handleMCPToken(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(data)
 }
 
-func (h *HTTPHandler) handleWorkApps(w http.ResponseWriter, r *http.Request) {
-	data, err := h.service.FetchWorkApps(r.Context())
-	if err != nil {
-		h.writeMemberError(w, err)
-		return
-	}
-	_ = json.NewEncoder(w).Encode(data)
-}
-
-func (h *HTTPHandler) handleSaveWorkApps(w http.ResponseWriter, r *http.Request) {
-	var state map[string]any
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&state); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid json body"})
-		return
-	}
-	if err := h.service.SaveWorkAppsState(state); err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
-}
-
 func (h *HTTPHandler) handleOpenURL(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Target string `json:"target"`
@@ -183,69 +149,6 @@ func (h *HTTPHandler) handleOpenURL(w http.ResponseWriter, r *http.Request) {
 		"success": true,
 		"url":     targetURL,
 	})
-}
-
-func (h *HTTPHandler) handleToolsDiscover(w http.ResponseWriter, r *http.Request) {
-	body, err := readBoundedJSONBody(r, 64<<10)
-	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid json body"})
-		return
-	}
-	data, err := h.service.DiscoverTools(r.Context(), body)
-	if err != nil {
-		h.writeMemberError(w, err)
-		return
-	}
-	_ = json.NewEncoder(w).Encode(data)
-}
-
-func (h *HTTPHandler) handleToolsInspect(w http.ResponseWriter, r *http.Request) {
-	body, err := readBoundedJSONBody(r, 64<<10)
-	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid json body"})
-		return
-	}
-	data, err := h.service.InspectTool(r.Context(), body)
-	if err != nil {
-		h.writeMemberError(w, err)
-		return
-	}
-	_ = json.NewEncoder(w).Encode(data)
-}
-
-func (h *HTTPHandler) handleToolsRun(w http.ResponseWriter, r *http.Request) {
-	body, err := readBoundedJSONBody(r, 512<<10)
-	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid json body"})
-		return
-	}
-	data, err := h.service.RunTool(r.Context(), body)
-	if err != nil {
-		h.writeMemberError(w, err)
-		return
-	}
-	_ = json.NewEncoder(w).Encode(data)
-}
-
-func readBoundedJSONBody(r *http.Request, limit int64) ([]byte, error) {
-	if r.Body == nil {
-		return []byte(`{}`), nil
-	}
-	raw, err := io.ReadAll(io.LimitReader(r.Body, limit))
-	if err != nil {
-		return nil, err
-	}
-	if len(raw) == 0 {
-		return []byte(`{}`), nil
-	}
-	var check map[string]any
-	if err := json.Unmarshal(raw, &check); err != nil {
-		return nil, err
-	}
-	return raw, nil
 }
 
 func (h *HTTPHandler) writeMemberError(w http.ResponseWriter, err error) {
