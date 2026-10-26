@@ -146,6 +146,10 @@ function cleanRelPosixPath(p) {
   return parts.join("/") || ".";
 }
 
+function isSafeExternalCDTarget(resolved) {
+  return Boolean(resolved) && resolved !== "/" && !isSensitiveExternalPath(resolved) && !isSecretPath(resolved) && !isProtectedPath(resolved);
+}
+
 function advanceScopedCD(seg, cwd, worktree) {
   if (!cwd) return ["", false];
   let trimmed = String(seg || "").trim();
@@ -159,16 +163,31 @@ function advanceScopedCD(seg, cwd, worktree) {
   if (!m) return ["", false];
   const target = m[1];
   if (target.startsWith("~") || target.startsWith("-")) return ["", false];
-  const wt = String(worktree || "").trim();
-  if (wt) {
-    if (!wt.startsWith("/")) return ["", false];
-    const resolved = target.startsWith("/") ? target : `${cwd}/${target}`;
-    if (!isWorktreeCD(`cd ${resolved}`, wt)) return ["", false];
-    return ["/" + cleanRelPosixPath(resolved), true];
+  if (target.startsWith("/")) {
+    if (target.split("/").includes("..")) return ["", false];
+    const rel = cleanRelPosixPath(target);
+    const cleaned = rel === "." ? "/" : "/" + rel;
+    if (!isSafeExternalCDTarget(cleaned)) return ["", false];
+    return [cleaned, true];
   }
-  if (target.startsWith("/")) return ["", false];
+  const wt = String(worktree || "").trim();
+  if (cwd.startsWith("/")) {
+    const rel = cleanRelPosixPath(`${cwd}/${target}`);
+    const resolved = rel === "." || rel === ".." || rel.startsWith("../") ? "/" : "/" + rel;
+    if (wt && wt.startsWith("/")) {
+      const base = "/" + cleanRelPosixPath(wt);
+      if (cwd === base || cwd.startsWith(base + "/")) {
+        if (!isWorktreeCD(`cd ${resolved}`, wt)) return ["", false];
+        return [resolved, true];
+      }
+    }
+    if (!isSafeExternalCDTarget(resolved)) return ["", false];
+    return [resolved, true];
+  }
   const cleaned = cleanRelPosixPath(`${cwd}/${target}`);
-  if (cleaned === ".." || cleaned.startsWith("../")) return ["", false];
+  if (cleaned === ".." || cleaned.startsWith("../") || isSensitiveExternalPath(cleaned) || isSecretPath(cleaned) || isProtectedPath(cleaned)) {
+    return ["", false];
+  }
   return [cleaned, true];
 }
 
@@ -546,6 +565,51 @@ function gitMessageExpansionsOnly(args, vars) {
   return true;
 }
 
+const GIT_LOOP_READ_SUBS = new Set(["status", "diff", "log", "show", "rev-parse", "ls-files", "ls-remote", "describe", "shortlog"]);
+const GIT_LOOP_OUTPUT_RE = /^--(o(u[^=]*)?|ex(t[^=]*)?)(=|$)/;
+const GIT_LOOP_BRANCH_SHORT_RE = /^-(?:[arv]+)$/;
+const GIT_LOOP_BRANCH_LONG_RE = /^(?:--all|--remotes|--verbose|--show-current|--no-color)$/;
+
+function isSafeLoopGitBranch(args) {
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a.includes("$")) return false;
+    if (a === "-l" || a === "--list") return args.slice(i + 1).every((x) => !x.startsWith("-") && !x.includes("$"));
+    if (!GIT_LOOP_BRANCH_SHORT_RE.test(a) && !GIT_LOOP_BRANCH_LONG_RE.test(a)) return false;
+  }
+  return true;
+}
+
+function gitReadOnlyLoopExpansions(args, vars) {
+  const onlyTrustedLoopVars = (word) => {
+    const names = wordExpansionNames(word);
+    return names !== null && names.length > 0 && names.every((n) => vars.has(n) && vars.get(n) === true);
+  };
+  let i = 0;
+  while (i < args.length && args[i].startsWith("-")) {
+    const a = args[i];
+    if (a === "-c" || a.startsWith("-c") || a.startsWith("--config-env")) return false;
+    if (a === "-C" || a === "--git-dir" || a === "--work-tree") {
+      if (i + 1 >= args.length || (args[i + 1].includes("$") && !onlyTrustedLoopVars(args[i + 1]))) return false;
+      i += 2;
+      continue;
+    }
+    if (a.startsWith("-C") || a.startsWith("--git-dir=") || a.startsWith("--work-tree=")) {
+      if (a.includes("$") && !onlyTrustedLoopVars(a)) return false;
+      i++;
+      continue;
+    }
+    if (a.includes("$") || GIT_GLOBAL_VALUE_FLAGS.has(a)) return false;
+    i++;
+  }
+  if (i >= args.length) return false;
+  const sub = args[i];
+  const rest = args.slice(i + 1);
+  if (sub === "branch") return isSafeLoopGitBranch(rest);
+  if (!GIT_LOOP_READ_SUBS.has(sub)) return false;
+  return rest.every((a) => !GIT_LOOP_OUTPUT_RE.test(a) && (!a.includes("$") || (!a.startsWith("-") && onlyTrustedLoopVars(a))));
+}
+
 function wordExpansionNames(word) {
   const names = [];
   for (let i = 0; i < word.length; i++) {
@@ -594,7 +658,7 @@ function expansionsAreBounded(seg, words, vars, valueClass = false) {
   if (base === "export") return args.every((a) => !a.includes("$") || isBenignPathAssignment(a));
   const expanding = args.filter((a) => a.includes("$"));
   if (expanding.length === 0) return true;
-  if (base === "git") return gitMessageExpansionsOnly(args, vars);
+  if (base === "git") return gitMessageExpansionsOnly(args, vars) || gitReadOnlyLoopExpansions(args, vars);
   if (!READ_ONLY_DATA_TOOLS.has(base) && !(valueClass && base === "mkdir")) return false;
   for (const a of args) {
     if (a.startsWith("--pre") || a.startsWith("--hostname-bin") || a.startsWith("--compress-program") || (base === "printf" && a === "-v")) {

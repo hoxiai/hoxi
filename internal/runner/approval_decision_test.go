@@ -325,3 +325,38 @@ func TestOpaqueInterpreterVariantsAsk(t *testing.T) {
 		}
 	}
 }
+
+func TestCrossDirectoryCDAndSkillsApproval(t *testing.T) {
+	worktreeDir := t.TempDir()
+	siblingRepo := t.TempDir()
+	deployCmd := "cd " + siblingRepo + " && NODE_OPTIONS=--max-old-space-size=32768 /Users/hugh/.agents/skills/ainode-release-and-deploy/scripts/deploy-ainode-site.sh 1.1.24 2>&1 | tail -70"
+	for _, mode := range []string{ApprovalModeAuto, ApprovalModeTrusted} {
+		if !approvalAutoApproves(req("bash", deployCmd), ApprovalPolicy{Mode: mode}, nil, worktreeDir) {
+			t.Errorf("cross-directory deploy script asked in %s mode", mode)
+		}
+		if approvalAutoApproves(req("bash", "cd /etc && cat passwd"), ApprovalPolicy{Mode: mode}, nil, worktreeDir) {
+			t.Errorf("cd into /etc was auto-approved in %s mode", mode)
+		}
+	}
+
+	svc := NewService(worktreeDir, nil, nil, filepath.Join(t.TempDir(), "sessions.json"))
+	if err := svc.store.Put(SessionRecord{ID: "ses_skill_test", WorktreePath: worktreeDir}); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		tool        string
+		path        string
+		destructive bool
+	}{
+		{"read_file", "/Users/u/.agents/skills/ainode-release-and-deploy/SKILL.md", false},
+		{"read_file", filepath.Join(siblingRepo, ".git", "logs", "HEAD"), false},
+		{"read_file", "/etc/passwd", true},
+		{"edit_file", "/Users/u/.agents/skills/ainode-release-and-deploy/scripts/deploy.sh", true},
+		{"edit_file", filepath.Join(worktreeDir, ".git", "config"), true},
+	} {
+		_, _, gotDestructive, _ := svc.inspectHookToolRisk("ses_skill_test", tc.tool, map[string]interface{}{"Path": tc.path})
+		if gotDestructive != tc.destructive {
+			t.Errorf("inspectHookToolRisk(%s, %s) destructive = %v, want %v", tc.tool, tc.path, gotDestructive, tc.destructive)
+		}
+	}
+}

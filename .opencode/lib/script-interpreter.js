@@ -34,5 +34,50 @@ export function awkProgramExecutes(base, args) {
   }
   if (program.length === 0) return true;
   const text = program.join(" ");
-  return AWK_EXEC_RE.test(text) || text.includes("|");
+  return AWK_EXEC_RE.test(text) || awkTextHasPipe(text);
+}
+
+function awkTextHasPipe(text) {
+  let inString = false;
+  let inRegex = false;
+  let canStartRegex = true;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inString) {
+      if (c === "\\") i++;
+      else if (c === '"') { inString = false; canStartRegex = false; }
+      continue;
+    }
+    if (inRegex) {
+      if (c === "\\") i++;
+      else if (c === "/") { inRegex = false; canStartRegex = false; }
+      continue;
+    }
+    if (c === '"') {
+      inString = true;
+    } else if (c === "/") {
+      if (canStartRegex && text.indexOf("/", i + 1) >= 0) inRegex = true;
+    } else if (c === "|") {
+      if (i + 1 < text.length && text[i + 1] === "|") {
+        i++;
+        canStartRegex = true;
+        continue;
+      }
+      return true;
+    } else if (c === " " || c === "\t" || c === "\n" || c === "\r") {
+      // keep canStartRegex
+    } else if ("~!, (;{}:?&=".includes(c)) {
+      canStartRegex = true;
+    } else {
+      canStartRegex = false;
+    }
+  }
+  return false;
+}
+
+export function isSafeKillProbeArgs(args) {
+  let pids = null;
+  if (args.length >= 2 && args[0] === "-0") pids = args.slice(1);
+  else if (args.length >= 3 && (args[0] === "-s" || args[0] === "-n") && args[1] === "0") pids = args.slice(2);
+  return Boolean(pids) && pids.every((a) => /^[1-9]\d*$/.test(a));
 }

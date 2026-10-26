@@ -182,6 +182,18 @@ func opaqueShellCore(command, worktree string, allowInlineScripts, valueClass bo
 	return !hasExec
 }
 
+func isSafeExternalCDTarget(resolved string) bool {
+	if resolved == "" || resolved == "/" || isSensitiveExternalPath(resolved) || isSecretFilePath(resolved) || isProtectedRelPath(resolved) {
+		return false
+	}
+	if real, ok := resolvePathWithSymlinks(resolved, 0); ok && real != "" {
+		if real == "/" || isSensitiveExternalPath(real) || isSecretFilePath(real) || isProtectedRelPath(real) {
+			return false
+		}
+	}
+	return true
+}
+
 func advanceScopedCD(seg, cwd, worktree string) (string, bool) {
 	if cwd == "" {
 		return "", false
@@ -201,30 +213,37 @@ func advanceScopedCD(seg, cwd, worktree string) (string, bool) {
 	if strings.HasPrefix(target, "~") || strings.HasPrefix(target, "-") {
 		return "", false
 	}
+	if strings.HasPrefix(target, "/") {
+		for _, part := range strings.Split(filepath.ToSlash(target), "/") {
+			if part == ".." {
+				return "", false
+			}
+		}
+		cleaned := filepath.Clean(target)
+		if !isSafeExternalCDTarget(cleaned) {
+			return "", false
+		}
+		return cleaned, true
+	}
 	wt := strings.TrimSpace(worktree)
-	if wt != "" {
-		if !filepath.IsAbs(wt) {
-			return "", false
+	if filepath.IsAbs(cwd) {
+		resolved := filepath.Clean(filepath.Join(cwd, target))
+		if wt != "" && filepath.IsAbs(wt) {
+			base := filepath.Clean(wt)
+			if cwd == base || strings.HasPrefix(cwd, strings.TrimSuffix(base, "/")+"/") {
+				if (resolved != base && !strings.HasPrefix(resolved, strings.TrimSuffix(base, "/")+"/")) || !pathWithin(base, resolved) {
+					return "", false
+				}
+				return resolved, true
+			}
 		}
-		resolved := target
-		if !filepath.IsAbs(resolved) {
-			resolved = filepath.Join(cwd, resolved)
-		}
-		resolved = filepath.Clean(resolved)
-		base := filepath.Clean(wt)
-		if resolved != base && !strings.HasPrefix(resolved, strings.TrimSuffix(base, "/")+"/") {
-			return "", false
-		}
-		if !pathWithin(base, resolved) {
+		if !isSafeExternalCDTarget(resolved) {
 			return "", false
 		}
 		return resolved, true
 	}
-	if strings.HasPrefix(target, "/") {
-		return "", false
-	}
 	cleaned := path.Clean(cwd + "/" + filepath.ToSlash(target))
-	if cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+	if cleaned == ".." || strings.HasPrefix(cleaned, "../") || isSensitiveExternalPath(cleaned) || isSecretFilePath(cleaned) || isProtectedRelPath(cleaned) {
 		return "", false
 	}
 	return cleaned, true
@@ -404,4 +423,98 @@ func takeHeredocMarkers(line string, st *heredocScan) (string, []heredocMarker, 
 		out.WriteByte(c)
 	}
 	return out.String(), markers, true
+}
+
+// inlineScriptTool resolves an interpreter binary, including version-suffixed
+// names such as python3.12, node20 or ruby3.2, to its canonical family.
+func inlineScriptTool(base string) (string, bool) {
+	for _, name := range []string{"python", "python3", "node", "perl", "ruby", "php"} {
+		if base == name {
+			return name, true
+		}
+		if rest := strings.TrimPrefix(base, name); rest != base && interpreterVersionRe.MatchString(rest) {
+			return name, true
+		}
+	}
+	if base == "nodejs" {
+		return "node", true
+	}
+	return "", false
+}
+
+// awkProgramExecutes reports whether an awk-family invocation carries an inline
+// program whose reach cannot be verified: system() calls, command pipes, or a
+// program read from a file all execute outside the shell's static view.
+func awkProgramExecutes(base string, args []string) bool {
+	if !awkTools[base] {
+		return false
+	}
+	var program []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--":
+			continue
+		case a == "-f" || a == "--file" || strings.HasPrefix(a, "-f") || strings.HasPrefix(a, "--file="):
+			return true
+		case a == "-F" || a == "--field-separator" || a == "-v" || a == "--assign":
+			i++
+			continue
+		case strings.HasPrefix(a, "-F") || strings.HasPrefix(a, "-v") || strings.HasPrefix(a, "--"):
+			continue
+		case strings.HasPrefix(a, "-") && a != "-":
+			continue
+		default:
+			program = append(program, a)
+		}
+	}
+	if len(program) == 0 {
+		return true
+	}
+	text := strings.Join(program, " ")
+	return awkExecRe.MatchString(text) || awkTextHasPipe(text)
+}
+
+func awkTextHasPipe(text string) bool {
+	inString, inRegex, canStartRegex := false, false, true
+	for i := 0; i < len(text); i++ {
+		c := text[i]
+		if inString {
+			if c == '\\' {
+				i++
+			} else if c == '"' {
+				inString, canStartRegex = false, false
+			}
+			continue
+		}
+		if inRegex {
+			if c == '\\' {
+				i++
+			} else if c == '/' {
+				inRegex, canStartRegex = false, false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inString = true
+		case '/':
+			if canStartRegex && strings.IndexByte(text[i+1:], '/') >= 0 {
+				inRegex = true
+			}
+		case '|':
+			if i+1 < len(text) && text[i+1] == '|' {
+				i++
+				canStartRegex = true
+				continue
+			}
+			return true
+		case ' ', '\t', '\n', '\r':
+		case '~', '!', ',', '(', ';', '{', '}', ':', '?', '&', '=':
+			canStartRegex = true
+		default:
+			canStartRegex = false
+		}
+	}
+	return false
 }

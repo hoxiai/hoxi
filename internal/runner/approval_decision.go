@@ -463,8 +463,13 @@ func isDestructivePermissionRequest(item map[string]interface{}) bool {
 		}
 		candidates = append(candidates, metadataFilePaths(meta)...)
 		candidates = append(candidates, toolArgPaths(meta["args"])...)
+		readOnlyTool := perm == "tool" && !editToolNames[tool] && readToolNames[tool]
 		for _, p := range candidates {
-			if (isProtectedRelPath(p) || isSensitiveExternalPath(p)) && !isOwnSessionRecordRead(item, p) {
+			risky := isProtectedRelPath(p) || isSensitiveExternalPath(p)
+			if readOnlyTool {
+				risky = isSecretFilePath(p) || isSensitiveExternalReadPath(p)
+			}
+			if risky && !isOwnSessionRecordRead(item, p) {
 				return true
 			}
 		}

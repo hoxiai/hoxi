@@ -24,7 +24,7 @@ import (
 //     token resolves inside the session worktree.
 
 var (
-	destructiveRe = regexp.MustCompile(`(?i)\b(rm|rmdir|unlink|shred|truncate|srm|sudo|chmod|chown|mkfs|dd|diskutil|killall|reboot|shutdown)\b|\bkill\s+(?:-[A-Za-z0-9]+\s+)*(?:[A-Za-z0-9]+\s+)?[-?\d%]|\bpkill\b|[>|]\s*(?:/etc/|(?:\~|\$HOME|\$\{HOME\})/\.(?:zshrc|zshenv|zprofile|bashrc|bash_profile|profile|ssh\b|gnupg\b|netrc\b|npmrc\b))|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*/)?\.(?:ssh|aws|gnupg|kube)/|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*/)?\.(?:netrc|npmrc|git-credentials|credentials\.json)(?:$|[\s;&|'"*?])|\.claude/\.credentials\.json|\.hoxi/(?:models|auth|tunnel(?:-dev)?|cloudflared|pairing|relay-keys|approval-policy|hoxi)\.(?:json|db)|\.docker/config\.json|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*/)?\.en(?:v(?:\.(?:local|prod(?:uction)?|dev(?:elopment)?|stag(?:e|ing)|test(?:ing)?|ci|preview|secret\w*|key\w*|private\w*|bak|backup)(?:\.local)?)?|\?|\*)(?:$|[\s;&|'"*?])|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*/)?\.envrc(?:$|[\s;&|'"*?])|\bfind\b[^\n;&|]*\s-(delete|exec\w*|ok\w*|fprint\w*|fls)\b|\b(curl|wget)\b[^\n|]*\|\s*(sh|bash|zsh)\b|\b(?:npm|pnpm|yarn|cargo)\s+publish\b|\bterraform\s+(?:destroy|apply)\b|\bkubectl\s+delete\b|\bdocker\s+(?:system\s+prune|rm|rmi)\b|/api/hoxi/tools/run\b`)
+	destructiveRe = regexp.MustCompile(`(?i)\b(rm|rmdir|unlink|shred|truncate|srm|sudo|chmod|chown|mkfs|dd|diskutil|killall|reboot|shutdown)\b|\bkill\s+(?:(?:(?:-0\s+)*(?:-(?:[1-9a-mo-rt-z][a-z0-9]*|[sn][a-z0-9]+|0[a-z0-9]+|-)\s+|-[sn]\s+(?:[1-9a-z][a-z0-9]*|0[a-z0-9]+)\s+))+[-?\d%]|(?:-[1-9]\d*|[1-9?%]|0(?:\s|$)))|\bpkill\b|[>|]\s*(?:/etc/|(?:\~|\$HOME|\$\{HOME\})/\.(?:zshrc|zshenv|zprofile|bashrc|bash_profile|profile|ssh\b|gnupg\b|netrc\b|npmrc\b))|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*/)?\.(?:ssh|aws|gnupg|kube)/|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*/)?\.(?:netrc|npmrc|git-credentials|credentials\.json)(?:$|[\s;&|'"*?])|\.claude/\.credentials\.json|\.hoxi/(?:models|auth|tunnel(?:-dev)?|cloudflared|pairing|relay-keys|approval-policy|hoxi)\.(?:json|db)|\.docker/config\.json|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*/)?\.en(?:v(?:\.(?:local|prod(?:uction)?|dev(?:elopment)?|stag(?:e|ing)|test(?:ing)?|ci|preview|secret\w*|key\w*|private\w*|bak|backup)(?:\.local)?)?|\?|\*)(?:$|[\s;&|'"*?])|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*/)?\.envrc(?:$|[\s;&|'"*?])|\bfind\b[^\n;&|]*\s-(delete|exec\w*|ok\w*|fprint\w*|fls)\b|\b(curl|wget)\b[^\n|]*\|\s*(sh|bash|zsh)\b|\b(?:npm|pnpm|yarn|cargo)\s+publish\b|\bterraform\s+(?:destroy|apply)\b|\bkubectl\s+delete\b|\bdocker\s+(?:system\s+prune|rm|rmi)\b|/api/hoxi/tools/run\b`)
 
 	// Git option abbreviations (`--forc`, `--har`), combined short flags
 	// (`-uf`), `+refspec` force pushes and `:refspec` deletions count too.
@@ -60,56 +60,6 @@ var (
 	interpreterVersionRe   = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+)*$`)
 	awkExecRe              = regexp.MustCompile(`(?i)\bsystem\s*\(`)
 )
-
-// inlineScriptTool resolves an interpreter binary, including version-suffixed
-// names such as python3.12, node20 or ruby3.2, to its canonical family.
-func inlineScriptTool(base string) (string, bool) {
-	for _, name := range []string{"python", "python3", "node", "perl", "ruby", "php"} {
-		if base == name {
-			return name, true
-		}
-		if rest := strings.TrimPrefix(base, name); rest != base && interpreterVersionRe.MatchString(rest) {
-			return name, true
-		}
-	}
-	if base == "nodejs" {
-		return "node", true
-	}
-	return "", false
-}
-
-// awkProgramExecutes reports whether an awk-family invocation carries an inline
-// program whose reach cannot be verified: system() calls, command pipes, or a
-// program read from a file all execute outside the shell's static view.
-func awkProgramExecutes(base string, args []string) bool {
-	if !awkTools[base] {
-		return false
-	}
-	var program []string
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		switch {
-		case a == "--":
-			continue
-		case a == "-f" || a == "--file" || strings.HasPrefix(a, "-f") || strings.HasPrefix(a, "--file="):
-			return true
-		case a == "-F" || a == "--field-separator" || a == "-v" || a == "--assign":
-			i++
-			continue
-		case strings.HasPrefix(a, "-F") || strings.HasPrefix(a, "-v") || strings.HasPrefix(a, "--"):
-			continue
-		case strings.HasPrefix(a, "-") && a != "-":
-			continue
-		default:
-			program = append(program, a)
-		}
-	}
-	if len(program) == 0 {
-		return true
-	}
-	text := strings.Join(program, " ")
-	return awkExecRe.MatchString(text) || strings.Contains(text, "|")
-}
 
 var (
 	simpleSafeTools = setOf("ls", "pwd", "cat", "head", "tail", "wc", "find", "grep", "rg", "fd",
@@ -403,12 +353,35 @@ func isSafeWords(words []string) bool {
 		return arg(0) == "tsc" && toolArgsSafe("tsc", args[1:])
 	case cmd == "node":
 		return len(args) == 1 && args[0] == "-v"
+	case cmd == "kill":
+		return isSafeKillProbeArgs(args)
 	case cmd == "hoxi":
 		return (arg(0) == "code-index" || arg(0) == "codeindex") &&
 			hoxiCodeIndexSubcommands[arg(1)] &&
 			hoxiCodeIndexArgsSafe(args[2:])
 	}
 	return false
+}
+
+func isSafeKillProbeArgs(args []string) bool {
+	if len(args) >= 2 && args[0] == "-0" {
+		args = args[1:]
+	} else if len(args) >= 3 && (args[0] == "-s" || args[0] == "-n") && args[1] == "0" {
+		args = args[2:]
+	} else {
+		return false
+	}
+	for _, a := range args {
+		if a == "" || a[0] < '1' || a[0] > '9' {
+			return false
+		}
+		for i := 1; i < len(a); i++ {
+			if a[i] < '0' || a[i] > '9' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func hoxiCodeIndexArgsSafe(args []string) bool {

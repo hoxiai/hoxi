@@ -693,5 +693,12 @@
   { "command": "hoxi code-index callees --symbol HandleCheckout --path checkout.go", "decision": "allow", "destructive": false },
   { "command": "hoxi code-index impact --symbol ChargeCard --depth 2", "decision": "allow", "destructive": false },
   { "command": "hoxi code-index context --path .env", "decision": "ask", "destructive": true },
-  { "command": "hoxi code-index impact --dir /etc --symbol ChargeCard", "decision": "ask", "destructive": false }
+  { "command": "hoxi code-index impact --dir /etc --symbol ChargeCard", "decision": "ask", "destructive": false },
+  { "command": "kill -0 83853", "decision": "allow", "destructive": false },
+  { "command": "kill -s 0 83853", "decision": "allow", "destructive": false },
+  { "command": "kill 83853", "decision": "ask", "destructive": true },
+  { "command": "kill -9 83853", "decision": "ask", "destructive": true },
+  { "command": "kill -s TERM 83853", "decision": "ask", "destructive": true },
+  { "command": "kill -0 -9 83853", "decision": "ask", "destructive": true },
+  { "command": "kill -0 -1", "decision": "ask", "destructive": false }
 ]

@@ -51,5 +51,10 @@
   { "name": "hoxi_tools discover is read-only", "destructive": false, "request": { "permission": "hoxi_tools", "patterns": ["discover amazon reviews"], "metadata": { "tool": "hoxi_tools", "action": "discover" } } },
   { "name": "hoxi_tools inspect is read-only", "destructive": false, "request": { "permission": "hoxi_tools", "patterns": ["inspect apify /apidojo/tweet-scraper"], "metadata": { "tool": "hoxi_tools", "action": "inspect" } } },
   { "name": "hoxi_tools run requires approval", "destructive": true, "request": { "permission": "hoxi_tools", "patterns": ["run apify /apidojo/tweet-scraper"], "metadata": { "tool": "hoxi_tools", "action": "run" } } },
-  { "name": "hoxi_tools curl run requires approval", "destructive": true, "request": { "permission": "bash", "patterns": ["curl -s -X POST http://127.0.0.1:5410/api/hoxi/tools/run -d '{\"provider\":\"apify\"}'"] } }
+  { "name": "hoxi_tools curl run requires approval", "destructive": true, "request": { "permission": "bash", "patterns": ["curl -s -X POST http://127.0.0.1:5410/api/hoxi/tools/run -d '{\"provider\":\"apify\"}'"] } },
+  { "name": "agents skills external directory", "destructive": false, "request": { "permission": "external_directory", "patterns": ["/Users/u/.agents/skills/ainode-release-and-deploy/*"] } },
+  { "name": "runner read of agents skill", "destructive": false, "request": { "permission": "tool", "patterns": ["read_file"], "metadata": { "tool": "read_file", "externalDirectory": true, "filepath": "/Users/u/.agents/skills/ainode-release-and-deploy/SKILL.md" } } },
+  { "name": "runner read of git logs head", "destructive": false, "request": { "permission": "tool", "patterns": ["read_file"], "metadata": { "tool": "read_file", "externalDirectory": true, "filepath": "/Users/u/code/repo/.git/logs/HEAD" } } },
+  { "name": "runner edit of agents skill script", "destructive": true, "request": { "permission": "tool", "patterns": ["edit_file"], "metadata": { "tool": "edit_file", "externalDirectory": true, "filepath": "/Users/u/.agents/skills/ainode-release-and-deploy/scripts/deploy.sh" } } },
+  { "name": "edit of agents skill script", "destructive": true, "request": { "permission": "edit", "patterns": ["/Users/u/.agents/skills/ainode-release-and-deploy/scripts/deploy.sh"] } }
 ]

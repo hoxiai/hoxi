@@ -269,18 +269,20 @@ func (s *Service) inspectHookToolRiskIn(sessionID, tool, cwd string, args map[st
 		externalDir = true
 		destructive = true
 	}
+	isReadTool := (hookToolAction(lowerTool) == hookActionRead || readToolNames[lowerTool]) && !hookEditTools[lowerTool] && !editToolNames[lowerTool]
+	isRiskyPath := func(p string) bool {
+		if p == "" {
+			return false
+		}
+		if isReadTool {
+			return isSensitiveExternalReadPath(p) || isSecretFilePath(p)
+		}
+		return isProtectedRelPath(p) || isSensitiveExternalPath(p) || isSecretFilePath(p)
+	}
 	ownRead := hookOwnSessionRead(s, sessionID, lowerTool, filepathOut, rawPath)
 	if filepathOut != "" {
-		if !ownRead {
-			if isProtectedRelPath(filepathOut) || (rawPath != "" && isProtectedRelPath(rawPath)) {
-				destructive = true
-			}
-			if isSensitiveExternalPath(filepathOut) || (rawPath != "" && isSensitiveExternalPath(rawPath)) {
-				destructive = true
-			}
-			if isSecretFilePath(filepathOut) || (rawPath != "" && isSecretFilePath(rawPath)) {
-				destructive = true
-			}
+		if !ownRead && (isRiskyPath(filepathOut) || isRiskyPath(rawPath)) {
+			destructive = true
 		}
 		if worktree != "" && resolved != "" {
 			if !pathWithin(worktree, resolved) {
@@ -288,7 +290,7 @@ func (s *Service) inspectHookToolRiskIn(sessionID, tool, cwd string, args map[st
 				// routine; only credential and execution-controlling paths
 				// must keep asking (same rule as the shared policy port).
 				externalDir = true
-				if !ownRead && (isSensitiveExternalPath(resolved) || isSecretFilePath(resolved)) {
+				if !ownRead && isRiskyPath(resolved) {
 					destructive = true
 				}
 			} else if (hookEditTools[lowerTool] || lowerTool == "edit" || lowerTool == "multiedit" || lowerTool == "write" || lowerTool == "notebookedit") &&
@@ -305,9 +307,7 @@ func (s *Service) inspectHookToolRiskIn(sessionID, tool, cwd string, args map[st
 				subOut = p
 			}
 			if !hookOwnSessionRead(s, sessionID, lowerTool, subOut, p) {
-				if isProtectedRelPath(subOut) || isProtectedRelPath(p) ||
-					isSensitiveExternalPath(subOut) || isSensitiveExternalPath(p) ||
-					isSecretFilePath(subOut) || isSecretFilePath(p) {
+				if isRiskyPath(subOut) || isRiskyPath(p) {
 					destructive = true
 					filepathOut = subOut
 				}

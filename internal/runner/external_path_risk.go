@@ -14,13 +14,25 @@ import (
 // directory, so treating it as unconditionally destructive made "auto approve"
 // prompt on nearly every cross-folder command. Credential files and
 // execution-controlling paths still count as destructive.
+func isReadOnlyToolRequest(item map[string]interface{}) bool {
+	perm := permissionName(item)
+	meta := itemMetadata(item)
+	tool := strings.ToLower(strings.TrimSpace(firstString(meta["tool"], firstPattern(item))))
+	return perm == "tool" && !editToolNames[tool] && readToolNames[tool]
+}
+
 func externalDirectoryTargetsAreRoutine(item map[string]interface{}) bool {
 	targets := externalDirectoryTargets(item)
 	if len(targets) == 0 {
 		return false
 	}
+	readOnly := isReadOnlyToolRequest(item)
 	for _, target := range targets {
-		if isSensitiveExternalPath(target) && !isOwnSessionRecordRead(item, target) {
+		sensitive := isSensitiveExternalPath(target)
+		if readOnly {
+			sensitive = isSensitiveExternalReadPath(target)
+		}
+		if sensitive && !isOwnSessionRecordRead(item, target) {
 			return false
 		}
 	}
@@ -211,11 +223,21 @@ var sensitiveExternalPrefixes = []string{
 func isRoutineHoxiSubpath(slash string) bool {
 	return strings.Contains(slash, "/.hoxi/skills/") ||
 		strings.Contains(slash, "/.hoxi/attachments/") ||
+		strings.Contains(slash, "/.agents/skills/") ||
 		strings.HasPrefix(slash, ".hoxi/skills/") ||
-		strings.HasPrefix(slash, ".hoxi/attachments/")
+		strings.HasPrefix(slash, ".hoxi/attachments/") ||
+		strings.HasPrefix(slash, ".agents/skills/")
 }
 
 func isSensitiveExternalPath(rawPath string) bool {
+	return isSensitiveExternalPathWith(rawPath, true)
+}
+
+func isSensitiveExternalReadPath(rawPath string) bool {
+	return isSensitiveExternalPathWith(rawPath, false)
+}
+
+func isSensitiveExternalPathWith(rawPath string, checkProtected bool) bool {
 	trimmed := strings.TrimSpace(rawPath)
 	if trimmed == "" {
 		return false
@@ -226,9 +248,6 @@ func isSensitiveExternalPath(rawPath string) bool {
 		candidates = append(candidates, stripped)
 	}
 	for _, cand := range candidates {
-		if isProtectedRelPath(cand) {
-			return true
-		}
 		rawSlash := strings.TrimRight(strings.ToLower(filepath.ToSlash(cand)), "/")
 		slash := strings.TrimRight(stripWorktreePrefix(rawSlash), "/")
 		if slash == "" {
@@ -244,6 +263,9 @@ func isSensitiveExternalPath(rawPath string) bool {
 		}
 		if isRoutineHoxiSubpath(slash) {
 			continue
+		}
+		if checkProtected && isProtectedRelPath(cand) {
+			return true
 		}
 		for _, prefix := range sensitiveExternalPrefixes {
 			if strings.HasPrefix(slashDir, prefix) {

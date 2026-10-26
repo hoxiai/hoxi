@@ -620,5 +620,53 @@
   {
     "command": "X=rm; ( $X -rf build )",
     "opaque": true
+  },
+  {
+    "command": "cd /Users/hugh/code/hoxi/apay && NODE_OPTIONS=--max-old-space-size=32768 /Users/hugh/.agents/skills/ainode-release-and-deploy/scripts/deploy-ainode-site.sh 1.1.24 2>&1 | tail -70",
+    "opaque": false
+  },
+  {
+    "command": "(cd /Users/hugh/code/hoxi/apay/admin && npx vue-tsc --noEmit 2>&1 | head -60)",
+    "opaque": false
+  },
+  {
+    "command": "vm_stat | awk '/free|inactive|speculative/ {print}'",
+    "opaque": false
+  },
+  {
+    "command": "awk '$1 == \"a\" || $2 == \"b\" {print $0}' file.txt",
+    "opaque": false
+  },
+  {
+    "command": "for d in . site dist/site admin plugins/app/*; do [ -d \"$d/.git\" ] && echo \"=== $d ===\" && git -C \"$d\" status -sb | head -n 4; done",
+    "opaque": false
+  },
+  {
+    "command": "cd /etc && cat passwd",
+    "opaque": true
+  },
+  {
+    "command": "cd /Users/u/.ssh && cat id_ed25519",
+    "opaque": true
+  },
+  {
+    "command": "cd /tmp/../etc && cat passwd",
+    "opaque": true
+  },
+  {
+    "command": "awk 'BEGIN{print \"id\" | \"sh\"}'",
+    "opaque": true
+  },
+  {
+    "command": "awk 'BEGIN{print 1/2 | \"sh\"; x = 1/2}'",
+    "opaque": true
+  },
+  {
+    "command": "for d in plugins/*; do git -c \"$d\" status; done",
+    "opaque": true
+  },
+  {
+    "command": "for d in plugins/*; do git -C \"$d\" checkout -- .; done",
+    "opaque": true
   }
 ]

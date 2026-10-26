@@ -4,11 +4,12 @@
 // destructive warning on the approval card). Keep it identical to the Go
 // port: .opencode/lib/permission-policy.cases.json covers commands and
 // .opencode/lib/permission-request.cases.json covers whole requests.
+import { isSafeKillProbeArgs } from "./script-interpreter.js";
 import { setLiteralJudge } from "./shell-constants.js";
 import { destructiveScanForms } from "./shell-substitution.js";
 
 const DESTRUCTIVE_RE =
-  /\b(rm|rmdir|unlink|shred|truncate|srm|sudo|chmod|chown|mkfs|dd|diskutil|killall|reboot|shutdown)\b|\bkill\s+(?:-[A-Za-z0-9]+\s+)*(?:[A-Za-z0-9]+\s+)?[-?\d%]|\bpkill\b|[>|]\s*(?:\/etc\/|(?:\~|\$HOME|\$\{HOME\})\/\.(?:zshrc|zshenv|zprofile|bashrc|bash_profile|profile|ssh\b|gnupg\b|netrc\b|npmrc\b))|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.(?:ssh|aws|gnupg|kube)\/|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.(?:netrc|npmrc|git-credentials|credentials\.json)(?:$|[\s;&|'"*?])|\.claude\/\.credentials\.json|\.hoxi\/(?:models|auth|tunnel(?:-dev)?|cloudflared|pairing|relay-keys|approval-policy|hoxi)\.(?:json|db)|\.docker\/config\.json|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.en(?:v(?:\.(?:local|prod(?:uction)?|dev(?:elopment)?|stag(?:e|ing)|test(?:ing)?|ci|preview|secret\w*|key\w*|private\w*|bak|backup)(?:\.local)?)?|\?|\*)(?:$|[\s;&|'"*?])|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.envrc(?:$|[\s;&|'"*?])|\bfind\b[^\n;&|]*\s-(delete|exec\w*|ok\w*|fprint\w*|fls)\b|\b(curl|wget)\b[^\n|]*\|\s*(sh|bash|zsh)\b|\b(?:npm|pnpm|yarn|cargo)\s+publish\b|\bterraform\s+(?:destroy|apply)\b|\bkubectl\s+delete\b|\bdocker\s+(?:system\s+prune|rm|rmi)\b|\/api\/hoxi\/tools\/run\b/i;
+  /\b(rm|rmdir|unlink|shred|truncate|srm|sudo|chmod|chown|mkfs|dd|diskutil|killall|reboot|shutdown)\b|\bkill\s+(?:(?:(?:-0\s+)*(?:-(?:[1-9a-mo-rt-z][a-z0-9]*|[sn][a-z0-9]+|0[a-z0-9]+|-)\s+|-[sn]\s+(?:[1-9a-z][a-z0-9]*|0[a-z0-9]+)\s+))+[-?\d%]|(?:-[1-9]\d*|[1-9?%]|0(?:\s|$)))|\bpkill\b|[>|]\s*(?:\/etc\/|(?:\~|\$HOME|\$\{HOME\})\/\.(?:zshrc|zshenv|zprofile|bashrc|bash_profile|profile|ssh\b|gnupg\b|netrc\b|npmrc\b))|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.(?:ssh|aws|gnupg|kube)\/|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.(?:netrc|npmrc|git-credentials|credentials\.json)(?:$|[\s;&|'"*?])|\.claude\/\.credentials\.json|\.hoxi\/(?:models|auth|tunnel(?:-dev)?|cloudflared|pairing|relay-keys|approval-policy|hoxi)\.(?:json|db)|\.docker\/config\.json|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.en(?:v(?:\.(?:local|prod(?:uction)?|dev(?:elopment)?|stag(?:e|ing)|test(?:ing)?|ci|preview|secret\w*|key\w*|private\w*|bak|backup)(?:\.local)?)?|\?|\*)(?:$|[\s;&|'"*?])|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.envrc(?:$|[\s;&|'"*?])|\bfind\b[^\n;&|]*\s-(delete|exec\w*|ok\w*|fprint\w*|fls)\b|\b(curl|wget)\b[^\n|]*\|\s*(sh|bash|zsh)\b|\b(?:npm|pnpm|yarn|cargo)\s+publish\b|\bterraform\s+(?:destroy|apply)\b|\bkubectl\s+delete\b|\bdocker\s+(?:system\s+prune|rm|rmi)\b|\/api\/hoxi\/tools\/run\b/i;
 
 // Match Git global options, option abbreviations (`--forc`, `--har`), combined
 // short flags (`-uf`), `+refspec` force pushes and `:refspec` deletions.
@@ -381,15 +382,10 @@ function isSafeWords(words) {
   if (cmd === "npx") {
     return arg(0) === "tsc" && toolArgsSafe("tsc", args.slice(1));
   }
-  if (cmd === "node") {
-    return args.length === 1 && args[0] === "-v";
-  }
+  if (cmd === "node") return args.length === 1 && args[0] === "-v";
+  if (cmd === "kill") return isSafeKillProbeArgs(args);
   if (cmd === "hoxi") {
-    return (
-      (arg(0) === "code-index" || arg(0) === "codeindex") &&
-      HOXI_CODE_INDEX_SUBCOMMANDS.has(arg(1)) &&
-      hoxiCodeIndexArgsSafe(args.slice(2))
-    );
+    return (arg(0) === "code-index" || arg(0) === "codeindex") && HOXI_CODE_INDEX_SUBCOMMANDS.has(arg(1)) && hoxiCodeIndexArgsSafe(args.slice(2));
   }
   return false;
 }
@@ -466,10 +462,8 @@ const SENSITIVE_ENV_BASENAME_RE =
 
 function isRoutineHoxiSubpath(slash) {
   return (
-    slash.includes("/.hoxi/skills/") ||
-    slash.includes("/.hoxi/attachments/") ||
-    slash.startsWith(".hoxi/skills/") ||
-    slash.startsWith(".hoxi/attachments/")
+    slash.includes("/.hoxi/skills/") || slash.includes("/.hoxi/attachments/") || slash.includes("/.agents/skills/") ||
+    slash.startsWith(".hoxi/skills/") || slash.startsWith(".hoxi/attachments/") || slash.startsWith(".agents/skills/")
   );
 }
 
@@ -504,6 +498,14 @@ function stripWorktreePrefix(slash) {
 }
 
 export function isSensitiveExternalPath(rawPath) {
+  return isSensitiveExternalPathWith(rawPath, true);
+}
+
+function isSensitiveExternalReadPath(rawPath) {
+  return isSensitiveExternalPathWith(rawPath, false);
+}
+
+function isSensitiveExternalPathWith(rawPath, checkProtected) {
   if (typeof rawPath !== "string") return false;
   const trimmed = rawPath.trim();
   if (!trimmed) return false;
@@ -511,13 +513,13 @@ export function isSensitiveExternalPath(rawPath) {
   const stripped = trimmed.replace(/\/?\*+$/, "");
   if (stripped && stripped !== trimmed) candidates.push(stripped);
   for (const cand of candidates) {
-    if (isProtectedPath(cand)) return true;
     const rawSlash = cand.replaceAll("\\", "/").toLowerCase().replace(/\/+$/, "");
     const slash = stripWorktreePrefix(rawSlash).replace(/\/+$/, "") || "/";
     const slashDir = slash === "/" ? "/" : `${slash}/`;
     const base = slash.slice(slash.lastIndexOf("/") + 1);
     if (SENSITIVE_BASENAMES.has(base) || SENSITIVE_ENV_BASENAME_RE.test(base)) return true;
     if (isRoutineHoxiSubpath(slash)) continue;
+    if (checkProtected && isProtectedPath(cand)) return true;
     if (SENSITIVE_PATH_PREFIXES.some((p) => slashDir.startsWith(p))) return true;
     const normalizedDir = `/${slashDir.replace(/^\/+/, "")}`;
     if (SENSITIVE_PATH_FRAGMENTS.some((p) => normalizedDir.includes(p))) return true;
@@ -666,8 +668,9 @@ function sessionPathMatches(raw, ids) {
   return false;
 }
 
-function sensitiveOutsideOwnSession(input, paths) {
-  return paths.some((p) => (isProtectedPath(p) || isSensitiveExternalPath(p)) && !isOwnSessionRecordRead(input, p));
+function sensitiveOutsideOwnSession(input, paths, readOnly = false) {
+  const isRisky = readOnly ? (p) => isSecretPath(p) || isSensitiveExternalReadPath(p) : (p) => isProtectedPath(p) || isSensitiveExternalPath(p);
+  return paths.some((p) => isRisky(p) && !isOwnSessionRecordRead(input, p));
 }
 
 function hoxiToolsAction(input) {
@@ -708,9 +711,12 @@ export function isDestructivePermissionRequest(input) {
     return targets.length === 0 || targets.some((t) => isSensitiveExternalPath(t) && !isOwnSessionRecordRead(input, t));
   }
   if (input?.metadata?.destructive === true) return true;
+  const toolName = String(input?.metadata?.tool || input?.patterns?.[0] || "").trim().toLowerCase();
+  const readOnlyTool = permission === "tool" && !OWN_SESSION_EDIT_TOOLS.has(toolName) && OWN_SESSION_READ_TOOLS.has(toolName);
   if (input?.metadata?.externalDirectory === true) {
     const targets = externalDirectoryTargets(input);
-    if (targets.length === 0 || targets.some((t) => isSensitiveExternalPath(t) && !isOwnSessionRecordRead(input, t))) return true;
+    const isSens = readOnlyTool ? isSensitiveExternalReadPath : isSensitiveExternalPath;
+    if (targets.length === 0 || targets.some((t) => isSens(t) && !isOwnSessionRecordRead(input, t))) return true;
   }
   if (READ_PERMISSIONS.has(permission)) {
     // Search patterns are not paths; only a file read can expose a secret.
@@ -725,7 +731,6 @@ export function isDestructivePermissionRequest(input) {
     ].some((p) => isSecretPath(p) && !isOwnSessionRecordRead(input, p));
   }
   if (EDIT_PERMISSIONS.has(permission) || permission === "tool") {
-    const toolName = String(input?.metadata?.tool || input?.patterns?.[0] || "").trim().toLowerCase();
     if (toolName === "unsandboxed") return true;
     const candidates = [
       ...(permission === "tool" ? [] : Array.isArray(input?.patterns) ? input.patterns : []),
@@ -739,7 +744,7 @@ export function isDestructivePermissionRequest(input) {
         : []),
       ...extractToolArgPaths(input?.metadata?.args),
     ];
-    if (sensitiveOutsideOwnSession(input, candidates)) return true;
+    if (sensitiveOutsideOwnSession(input, candidates, readOnlyTool)) return true;
     if (EDIT_PERMISSIONS.has(permission)) return false;
     const hasCommandMeta =
       typeof input?.metadata?.command === "string" ||

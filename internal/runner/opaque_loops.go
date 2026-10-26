@@ -439,7 +439,7 @@ func expansionsAreBounded(seg string, words []string, vars map[string]bool, valu
 		return true
 	}
 	if base == "git" {
-		return gitMessageExpansionsOnly(args, vars)
+		return gitMessageExpansionsOnly(args, vars) || gitReadOnlyLoopExpansions(args, vars)
 	}
 	// mkdir may take a value-class $(...) (it only creates directories) but
 	// not an ordinary variable. Every other non-read-only command stays opaque.
@@ -514,6 +514,67 @@ func gitMessageExpansionsOnly(args []string, vars map[string]bool) bool {
 			if bound && !trusted || !bound && name != cmdSubstVar && !harmlessEnvVars[name] {
 				return false
 			}
+		}
+	}
+	return true
+}
+
+func gitReadOnlyLoopExpansions(args []string, vars map[string]bool) bool {
+	onlyTrustedLoopVars := func(word string) bool {
+		names, ok := wordExpansionNames(word)
+		if !ok || len(names) == 0 {
+			return false
+		}
+		for _, name := range names {
+			if trusted, bound := vars[name]; !bound || !trusted {
+				return false
+			}
+		}
+		return true
+	}
+	i := 0
+	for i < len(args) && strings.HasPrefix(args[i], "-") {
+		a := args[i]
+		if a == "-c" || strings.HasPrefix(a, "-c") || strings.HasPrefix(a, "--config-env") {
+			return false
+		}
+		if a == "-C" || a == "--git-dir" || a == "--work-tree" {
+			if i+1 >= len(args) || (strings.Contains(args[i+1], "$") && !onlyTrustedLoopVars(args[i+1])) {
+				return false
+			}
+			i += 2
+			continue
+		}
+		if strings.HasPrefix(a, "-C") || strings.HasPrefix(a, "--git-dir=") || strings.HasPrefix(a, "--work-tree=") {
+			if strings.Contains(a, "$") && !onlyTrustedLoopVars(a) {
+				return false
+			}
+			i++
+			continue
+		}
+		if strings.Contains(a, "$") || gitGlobalValueFlags[a] {
+			return false
+		}
+		i++
+	}
+	if i >= len(args) {
+		return false
+	}
+	sub, rest := args[i], args[i+1:]
+	if sub == "branch" {
+		for _, a := range rest {
+			if strings.Contains(a, "$") {
+				return false
+			}
+		}
+		return isReadOnlyGitBranch(append([]string{"branch"}, rest...))
+	}
+	if !gitReadSubcommands[sub] && sub != "ls-files" && sub != "ls-remote" && sub != "describe" && sub != "shortlog" {
+		return false
+	}
+	for _, a := range rest {
+		if gitOutputRe.MatchString(a) || (strings.Contains(a, "$") && (strings.HasPrefix(a, "-") || !onlyTrustedLoopVars(a))) {
+			return false
 		}
 	}
 	return true
