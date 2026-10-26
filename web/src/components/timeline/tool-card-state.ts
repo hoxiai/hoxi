@@ -342,6 +342,37 @@ export function resolveToolTodoItems(part: ToolPart): Array<{ content: string; s
   return raw.filter((item) => item && typeof item.content === "string");
 }
 
+function normalizeToolDiffText(raw: unknown): string | undefined {
+  if (typeof raw !== "string") return undefined;
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith('"')) {
+    const truncIdx = raw.lastIndexOf("\n<truncated ");
+    if (truncIdx >= 0 && raw.trimEnd().endsWith("bytes>")) {
+      return raw.slice(0, truncIdx);
+    }
+    return raw;
+  }
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (typeof parsed === "string") return parsed;
+  } catch {
+    const truncIdx = trimmed.lastIndexOf("<truncated ");
+    if (truncIdx > 0 && trimmed.endsWith("bytes>")) {
+      let prefix = trimmed.slice(0, truncIdx).replace(/[\r\n]+$/, "");
+      let bs = 0;
+      for (let i = prefix.length - 1; i >= 0 && prefix[i] === "\\"; i--) bs++;
+      if (bs % 2 === 1) prefix = prefix.slice(0, -1);
+      try {
+        const parsed = JSON.parse(`${prefix}"`);
+        if (typeof parsed === "string") return parsed;
+      } catch {
+        /* fall through */
+      }
+    }
+  }
+  return raw;
+}
+
 export function isRealFileDiff(d: SnapshotFileDiff | undefined): boolean {
   if (!d || !d.file) return false;
   if ((d.additions ?? 0) > 0 || (d.deletions ?? 0) > 0) return true;
@@ -429,8 +460,8 @@ export function resolveToolFileDiffs(
     const aParts: string[] = [];
     for (const ch of input.ReplacementChunks) {
       if (ch && typeof ch === "object") {
-        const tb = ch.TargetContent ?? ch.targetContent;
-        const ta = ch.ReplacementContent ?? ch.replacementContent;
+        const tb = normalizeToolDiffText(ch.TargetContent ?? ch.targetContent);
+        const ta = normalizeToolDiffText(ch.ReplacementContent ?? ch.replacementContent);
         if (typeof tb === "string") bParts.push(tb);
         if (typeof ta === "string") aParts.push(ta);
       }
@@ -440,27 +471,29 @@ export function resolveToolFileDiffs(
       chunksAfter = aParts.join("\n");
     }
   }
-  const before =
+  const before = normalizeToolDiffText(
     meta?.filediff?.before ??
-    input.oldString ??
-    input.old_string ??
-    input.TargetContent ??
-    input.targetContent ??
-    input.Target ??
-    chunksBefore;
-  const after =
+      input.oldString ??
+      input.old_string ??
+      input.TargetContent ??
+      input.targetContent ??
+      input.Target ??
+      chunksBefore
+  );
+  const after = normalizeToolDiffText(
     meta?.filediff?.after ??
-    input.newString ??
-    input.new_string ??
-    input.ReplacementContent ??
-    input.replacementContent ??
-    input.Replacement ??
-    input.Content ??
-    input.content ??
-    input.file_text ??
-    input.CodeContent ??
-    input.codeContent ??
-    chunksAfter;
+      input.newString ??
+      input.new_string ??
+      input.ReplacementContent ??
+      input.replacementContent ??
+      input.Replacement ??
+      input.Content ??
+      input.content ??
+      input.file_text ??
+      input.CodeContent ??
+      input.codeContent ??
+      chunksAfter
+  );
   const hasOwnPayload =
     typeof patch === "string" ||
     typeof before === "string" ||

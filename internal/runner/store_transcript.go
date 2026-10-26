@@ -52,6 +52,7 @@ func (idx *transcriptIndex) upsertPart(turns []MessageTurn, part MessagePart) bo
 	}
 	key := partKey{part.MessageID, part.ID}
 	if j, ok := idx.parts[key]; ok {
+		preserveToolEditInput(&part, turns[i].Parts[j])
 		turns[i].Parts[j] = part
 		return true
 	}
@@ -86,6 +87,7 @@ func (s *Store) UpsertTurnPart(sessionID string, part MessagePart) {
 	previousBytes := int64(0)
 	if previous := ss.index.part(ss.rec.Turns, partKey{part.MessageID, part.ID}); previous != nil {
 		previousBytes = estimatePartBytes(*previous)
+		preserveToolEditInput(&copied, *previous)
 	}
 	if !ss.index.upsertPart(ss.rec.Turns, copied) {
 		return

@@ -171,7 +171,7 @@ func normalizeExternalToolName(raw string) string {
 	switch lower {
 	case "read", "read_file", "view_file", "cat", "view":
 		return "read"
-	case "edit", "multiedit", "replace_file_content", "replace_in_file", "edit_file", "apply_patch", "patch", "str_replace_editor":
+	case "edit", "multiedit", "replace_file_content", "multi_replace_file_content", "replace_in_file", "replace", "sed_file", "notebook_edit", "edit_file", "apply_patch", "patch", "str_replace_editor":
 		return "edit"
 	case "write", "write_file", "create_file", "write_to_file":
 		return "write"
@@ -274,7 +274,7 @@ func extractChangedFilesFromTurns(turns []NormalizedTurn) []string {
 			if tc.Tool != "edit" && tc.Tool != "write" {
 				continue
 			}
-			for _, key := range []string{"filePath", "file_path", "path", "target_file", "file"} {
+			for _, key := range []string{"filePath", "file_path", "Path", "AbsolutePath", "TargetFile", "path", "target_file", "file"} {
 				if val, ok := tc.Input[key].(string); ok && strings.TrimSpace(val) != "" {
 					p := strings.TrimSpace(val)
 					if _, exists := seen[p]; !exists {

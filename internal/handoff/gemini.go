@@ -274,7 +274,7 @@ func normalizeAntigravityToolInput(rawName string, rawArgs map[string]interface{
 	for k, v := range rawArgs {
 		clean[k] = unquoteAntigravityArg(v)
 	}
-	if fp := firstNonEmpty(asString(clean["AbsolutePath"]), asString(clean["TargetFile"]), asString(clean["SearchPath"]), asString(clean["DirectoryPath"])); fp != "" {
+	if fp := firstNonEmpty(asString(clean["AbsolutePath"]), asString(clean["TargetFile"]), asString(clean["Path"]), asString(clean["path"]), asString(clean["SearchPath"]), asString(clean["DirectoryPath"])); fp != "" {
 		clean["filePath"] = fp
 	}
 	if cmd := asString(clean["CommandLine"]); cmd != "" {
@@ -332,8 +332,13 @@ func loadGeminiAntigravitySessionDetail(sessionID, hintCWD, activeRoot string) (
 		return &ExternalSessionDetail{Summary: matched}, nil
 	}
 
-	transcriptPath := filepath.Join(brainDir, ".system_generated", "logs", "transcript.jsonl")
+	logDir := filepath.Join(brainDir, ".system_generated", "logs")
+	transcriptPath := filepath.Join(logDir, "transcript_full.jsonl")
 	f, err := os.Open(transcriptPath)
+	if err != nil {
+		transcriptPath = filepath.Join(logDir, "transcript.jsonl")
+		f, err = os.Open(transcriptPath)
+	}
 	if err != nil {
 		return &ExternalSessionDetail{
 			Summary:   matched,

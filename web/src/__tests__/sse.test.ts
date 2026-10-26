@@ -8,6 +8,7 @@ import { setWorkspace, workspace } from "../store/workspace";
 import { replaceSessionFromEvent } from "../store/workspace-sessions";
 import { assertDeepEqual, assertEqual, assertTrue, describe, it } from "./test-harness";
 import { applyPartDeltaBatch, applyStreamFrameBatch } from "../store/session-stream";
+import { collectCycleChangedFiles, resolveToolFileDiff } from "../components/timeline/tool-card-state";
 
 class MockEventSource {
   static latest: MockEventSource | null = null;
@@ -447,6 +448,135 @@ describe("SSE client & 120Hz rAF delta batching", () => {
       });
       assertEqual(workspace.inspectorOpen, true);
       assertEqual(workspace.inspectorTab, "browser");
+    } finally {
+      setWorkspace(reconcile(saved));
+    }
+  });
+
+  it("preserves edit/write payloads across running -> completed updates and unescapes legacy truncated strings", () => {
+    const saved = structuredClone(unwrap(workspace));
+    try {
+      const sid = "ses_agy_edit_preserve";
+      setWorkspace({
+        activeSessionID: sid,
+        messagesBySession: {},
+      });
+      // 1. Running tool updates carry full Target/Replacement/Content
+      applyStreamFrameBatch({
+        infos: [{ id: "m_agy", sessionID: sid, role: "assistant", time: { created: 1, completed: 2 } }],
+        parts: [
+          {
+            id: "prt_m_agy_tool_5",
+            messageID: "m_agy",
+            sessionID: sid,
+            type: "tool",
+            tool: "write",
+            callID: "call_5",
+            state: {
+              status: "running",
+              input: { Path: "src/index.html", filePath: "src/index.html", Content: "<h1>Hello</h1>\n<p>World</p>" },
+              time: { start: 1 },
+            },
+          },
+          {
+            id: "prt_m_agy_tool_6",
+            messageID: "m_agy",
+            sessionID: sid,
+            type: "tool",
+            tool: "edit",
+            callID: "call_6",
+            state: {
+              status: "running",
+              input: {
+                Path: "src/Spots.vue",
+                filePath: "src/Spots.vue",
+                Target: "const a = 1;",
+                Replacement: "const a = 2;\nconst b = 3;\nconst c = 4;",
+              },
+              time: { start: 1 },
+            },
+          },
+        ],
+        deltas: [],
+      });
+
+      // 2. Subsequent completed updates only repeat Path/filePath
+      applyStreamFrameBatch({
+        infos: [],
+        parts: [
+          {
+            id: "prt_m_agy_tool_5",
+            messageID: "m_agy",
+            sessionID: sid,
+            type: "tool",
+            tool: "edit",
+            callID: "call_5",
+            state: {
+              status: "completed",
+              input: { Path: "src/index.html", filePath: "src/index.html" },
+              output: "Created file.",
+              title: "edit_file",
+              metadata: {},
+              time: { start: 1, end: 2 },
+            },
+          },
+          {
+            id: "prt_m_agy_tool_6",
+            messageID: "m_agy",
+            sessionID: sid,
+            type: "tool",
+            tool: "edit",
+            callID: "call_6",
+            state: {
+              status: "completed",
+              input: { Path: "src/Spots.vue", filePath: "src/Spots.vue" },
+              output: "Made 1 replacement.",
+              title: "edit_file",
+              metadata: {},
+              time: { start: 1, end: 2 },
+            },
+          },
+        ],
+        deltas: [],
+      });
+
+      const turns = workspace.messagesBySession[sid] ?? [];
+      const changed = collectCycleChangedFiles(turns, sid);
+      assertDeepEqual(
+        changed.map((d) => ({ file: d.file, additions: d.additions, deletions: d.deletions })),
+        [
+          { file: "src/index.html", additions: 2, deletions: 0 },
+          { file: "src/Spots.vue", additions: 3, deletions: 1 },
+        ]
+      );
+
+      // 3. Legacy truncated double-encoded strings from compact transcript.jsonl still compute multi-line diffs
+      const legacyTruncatedDiff = resolveToolFileDiff(
+        {
+          id: "prt_legacy",
+          sessionID: sid,
+          messageID: "m_agy",
+          type: "tool",
+          tool: "edit",
+          callID: "call_legacy",
+          state: {
+            status: "completed",
+            input: {
+              filePath: "src/Feed.vue",
+              Target: '"line 1\\nline 2\\n\n<truncated 7724 bytes>',
+              Replacement: '"line 1\\nline 2 updated\\nline 3\\n\n<truncated 7724 bytes>',
+            },
+            output: "",
+            title: "edit_file",
+            metadata: {},
+            time: { start: 1, end: 2 },
+          },
+        },
+        true,
+        "src/Feed.vue"
+      );
+      assertEqual(legacyTruncatedDiff?.additions, 2);
+      assertEqual(legacyTruncatedDiff?.deletions, 1);
     } finally {
       setWorkspace(reconcile(saved));
     }

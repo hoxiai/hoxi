@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -40,15 +42,75 @@ type agyToolCall struct {
 	Args map[string]interface{} `json:"args"`
 }
 
-// decodeAgyToolArgs unwraps transcript tool arguments, which agy stores as
-// JSON-encoded strings (`"CommandLine": "\"ls -la\""`).
+var agyStringOnlyArgNames = map[string]bool{
+	"Content":            true,
+	"content":            true,
+	"Target":             true,
+	"target":             true,
+	"Replacement":        true,
+	"replacement":        true,
+	"TargetContent":      true,
+	"targetContent":      true,
+	"ReplacementContent": true,
+	"replacementContent": true,
+	"CodeContent":        true,
+	"codeContent":        true,
+	"old_string":         true,
+	"new_string":         true,
+	"oldString":          true,
+	"newString":          true,
+	"Path":               true,
+	"path":               true,
+	"AbsolutePath":       true,
+	"TargetFile":         true,
+	"CommandLine":        true,
+	"toolSummary":        true,
+}
+
+func decodeAgyStringLiteral(s string) (string, bool) {
+	trimmed := strings.TrimSpace(s)
+	if !strings.HasPrefix(trimmed, "\"") {
+		return "", false
+	}
+	var unquoted string
+	if json.Unmarshal([]byte(trimmed), &unquoted) == nil {
+		return unquoted, true
+	}
+	if idx := strings.LastIndex(trimmed, "<truncated "); idx > 0 && strings.HasSuffix(trimmed, "bytes>") {
+		prefix := strings.TrimRight(trimmed[:idx], "\r\n")
+		bs := 0
+		for i := len(prefix) - 1; i >= 0 && prefix[i] == '\\'; i-- {
+			bs++
+		}
+		if bs%2 == 1 {
+			prefix = prefix[:len(prefix)-1]
+		}
+		if json.Unmarshal([]byte(prefix+"\""), &unquoted) == nil {
+			return unquoted, true
+		}
+	}
+	return "", false
+}
+
+// decodeAgyToolArgs unwraps transcript tool arguments, which compact
+// transcript.jsonl stores as JSON-encoded strings (`"CommandLine": "\"ls -la\""`),
+// while keeping JSON file contents in transcript_full.jsonl as strings.
 func decodeAgyToolArgs(args map[string]interface{}) map[string]interface{} {
 	out := make(map[string]interface{}, len(args))
 	for k, v := range args {
 		if s, ok := v.(string); ok {
-			var decoded interface{}
-			if json.Unmarshal([]byte(s), &decoded) == nil {
-				v = decoded
+			if unquoted, ok := decodeAgyStringLiteral(s); ok {
+				v = unquoted
+			} else if agyStringOnlyArgNames[k] {
+				if idx := strings.LastIndex(s, "\n<truncated "); idx >= 0 && strings.HasSuffix(strings.TrimSpace(s[idx:]), "bytes>") {
+					s = s[:idx]
+				}
+				v = s
+			} else {
+				var decoded interface{}
+				if json.Unmarshal([]byte(s), &decoded) == nil {
+					v = decoded
+				}
 			}
 		}
 		out[k] = v
@@ -138,85 +200,190 @@ var agyEditPayloadNames = map[string]bool{
 	"replace_file_content":       true,
 	"multi_replace_file_content": true,
 	"sed_file":                   true,
+	"replace":                    true,
+}
+
+var agyEditPayloadKeys = []string{
+	"TargetContent", "targetContent", "ReplacementContent", "replacementContent",
+	"CodeContent", "codeContent", "Content", "content", "old_string", "new_string",
+	"oldString", "newString", "Target", "Replacement",
+}
+
+type agyPendingEdit struct {
+	execStep int
+	call     agyToolCall
 }
 
 // agyEditPayloadCursor walks a conversation transcript in order and hands back
-// the planned arguments of each edit, one per stdout step. agy runs the calls
-// of one PLANNER_RESPONSE as consecutive steps and never reorders them.
+// the planned arguments of each edit, indexed by execution step (row.StepIndex+1+i)
+// with an ordered per-turn fallback queue. Repeated lookups for the same stdout
+// stepIndex (e.g. ACTIVE followed by DONE) return the exact same planned call.
 type agyEditPayloadCursor struct {
 	conversationID string
+	activePath     string
 	offset         int64
-	pending        []agyToolCall
+	byStep         map[int]agyToolCall
+	assigned       map[int]agyToolCall
+	pending        []agyPendingEdit
 }
 
 func newAgyEditPayloadCursor(conversationID string) *agyEditPayloadCursor {
-	return &agyEditPayloadCursor{conversationID: strings.TrimSpace(conversationID)}
+	return &agyEditPayloadCursor{
+		conversationID: strings.TrimSpace(conversationID),
+		byStep:         make(map[int]agyToolCall),
+		assigned:       make(map[int]agyToolCall),
+	}
 }
 
 func (c *agyEditPayloadCursor) next() (string, map[string]interface{}) {
+	return c.lookup(0, nil, false)
+}
+
+func (c *agyEditPayloadCursor) lookup(stepIndex int, rawParams map[string]interface{}, waitIfMissing bool) (string, map[string]interface{}) {
+	if c == nil {
+		return "", nil
+	}
+	if stepIndex > 0 {
+		if call, ok := c.assigned[stepIndex]; ok {
+			return call.Name, call.Args
+		}
+	}
 	c.pull()
+	if waitIfMissing {
+		for attempt := 0; attempt < 2; attempt++ {
+			if _, ok := c.byStep[stepIndex]; ok || len(c.pending) > 0 || !c.hasTranscriptFile() {
+				break
+			}
+			time.Sleep(50 * time.Millisecond)
+			c.pull()
+		}
+	}
+	if stepIndex > 0 {
+		if call, ok := c.byStep[stepIndex]; ok {
+			c.assigned[stepIndex] = call
+			c.removePendingByStep(stepIndex)
+			return call.Name, call.Args
+		}
+	}
 	if len(c.pending) == 0 {
 		return "", nil
 	}
-	call := c.pending[0]
-	c.pending = c.pending[1:]
+	pickIdx := 0
+	for i, entry := range c.pending {
+		if agyPathsMatch(rawParams, entry.call.Args) {
+			pickIdx = i
+			break
+		}
+	}
+	call := c.pending[pickIdx].call
+	c.pending = append(c.pending[:pickIdx], c.pending[pickIdx+1:]...)
+	if stepIndex > 0 {
+		c.assigned[stepIndex] = call
+	}
 	return call.Name, call.Args
 }
 
-// pull reads transcript rows appended since the last call. transcript.jsonl is
-// read before transcript_full.jsonl, which repeats the same rows.
+func (c *agyEditPayloadCursor) removePendingByStep(execStep int) {
+	for i, entry := range c.pending {
+		if entry.execStep == execStep {
+			c.pending = append(c.pending[:i], c.pending[i+1:]...)
+			return
+		}
+	}
+}
+
+func (c *agyEditPayloadCursor) hasTranscriptFile() bool {
+	if c.conversationID == "" || !validStoreID(c.conversationID) {
+		return false
+	}
+	for _, root := range agyBrainRoots() {
+		dir := agyTranscriptLogDir(root, c.conversationID)
+		for _, name := range []string{"transcript_full.jsonl", "transcript.jsonl"} {
+			if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// pull reads transcript rows appended since the last call. transcript_full.jsonl
+// is preferred over transcript.jsonl because compact transcript.jsonl truncates
+// large tool_calls arguments with `<truncated N bytes>`.
 func (c *agyEditPayloadCursor) pull() {
 	if c.conversationID == "" || !validStoreID(c.conversationID) {
 		return
 	}
-	var path string
+	var candidate string
 	for _, root := range agyBrainRoots() {
 		dir := agyTranscriptLogDir(root, c.conversationID)
-		for _, name := range []string{"transcript.jsonl", "transcript_full.jsonl"} {
-			candidate := filepath.Join(dir, name)
-			if st, err := os.Stat(candidate); err == nil && st.Size() > c.offset {
-				path = candidate
+		for _, name := range []string{"transcript_full.jsonl", "transcript.jsonl"} {
+			p := filepath.Join(dir, name)
+			if st, err := os.Stat(p); err == nil && st.Size() > 0 {
+				candidate = p
 				break
 			}
 		}
-		if path != "" {
+		if candidate != "" {
 			break
 		}
 	}
-	if path == "" {
+	if candidate == "" {
 		return
 	}
-	f, err := os.Open(path)
+	if candidate != c.activePath {
+		c.activePath = candidate
+		c.offset = 0
+		c.pending = nil
+	}
+	f, err := os.Open(candidate)
 	if err != nil {
 		return
 	}
 	defer f.Close()
-	buf := make([]byte, min(fileSize(f)-c.offset, agySubagentLogChunk))
-	n, err := f.ReadAt(buf, c.offset)
-	if err != nil && err != io.EOF {
+	size := fileSize(f)
+	if size < c.offset {
+		c.offset = 0
+		c.pending = nil
+	}
+	if size == c.offset {
 		return
 	}
-	buf = buf[:n]
-	end := bytes.LastIndexByte(buf, '\n')
-	if end < 0 {
-		if len(buf) == agySubagentLogChunk {
-			c.offset += int64(len(buf))
+	for c.offset < size {
+		buf := make([]byte, min(size-c.offset, agySubagentLogChunk))
+		n, err := f.ReadAt(buf, c.offset)
+		if err != nil && err != io.EOF {
+			return
 		}
-		return
-	}
-	for _, line := range bytes.Split(buf[:end], []byte{'\n'}) {
-		var row agyTranscriptRow
-		if json.Unmarshal(bytes.TrimSpace(line), &row) != nil {
-			continue
+		buf = buf[:n]
+		end := bytes.LastIndexByte(buf, '\n')
+		if end < 0 {
+			if len(buf) == agySubagentLogChunk {
+				c.offset += int64(len(buf))
+				continue
+			}
+			return
 		}
-		for _, call := range row.ToolCalls {
-			if agyEditPayloadNames[call.Name] {
-				call.Args = decodeAgyToolArgs(call.Args)
-				c.pending = append(c.pending, call)
+		for _, line := range bytes.Split(buf[:end], []byte{'\n'}) {
+			var row agyTranscriptRow
+			if json.Unmarshal(bytes.TrimSpace(line), &row) != nil {
+				continue
+			}
+			if row.Type == "USER_INPUT" {
+				c.pending = nil
+				continue
+			}
+			for i, call := range row.ToolCalls {
+				if agyEditPayloadNames[call.Name] {
+					call.Args = decodeAgyToolArgs(call.Args)
+					execStep := row.StepIndex + 1 + i
+					c.byStep[execStep] = call
+					c.pending = append(c.pending, agyPendingEdit{execStep: execStep, call: call})
+				}
 			}
 		}
+		c.offset += int64(end + 1)
 	}
-	c.offset += int64(end + 1)
 }
 
 func fileSize(f *os.File) int64 {
@@ -250,16 +417,188 @@ func mergeAgyEditParams(stdout, planned map[string]interface{}) map[string]inter
 // agyParamsLackEditPayload reports whether stdout omitted the text of an edit,
 // which is all current agy sends for edit_file and write_file.
 func agyParamsLackEditPayload(params map[string]interface{}) bool {
-	for _, key := range []string{
-		"TargetContent", "targetContent", "ReplacementContent", "replacementContent",
-		"CodeContent", "codeContent", "Content", "content", "old_string", "new_string",
-		"oldString", "newString", "Target", "Replacement",
-	} {
+	for _, key := range agyEditPayloadKeys {
 		if s, ok := params[key].(string); ok && strings.TrimSpace(s) != "" {
 			return false
 		}
 	}
+	if chunks, ok := params["ReplacementChunks"].([]interface{}); ok && len(chunks) > 0 {
+		return false
+	}
 	return true
+}
+
+func extractAgyParamPath(params map[string]interface{}) string {
+	if len(params) == 0 {
+		return ""
+	}
+	return firstString(
+		params["filePath"],
+		params["Path"],
+		params["AbsolutePath"],
+		params["TargetFile"],
+		params["file_path"],
+		params["target_file"],
+		params["path"],
+	)
+}
+
+func agyPathsMatch(a, b map[string]interface{}) bool {
+	pa := filepath.ToSlash(strings.TrimSpace(extractAgyParamPath(a)))
+	pb := filepath.ToSlash(strings.TrimSpace(extractAgyParamPath(b)))
+	if pa == "" || pb == "" {
+		return false
+	}
+	if pa == pb {
+		return true
+	}
+	return strings.HasSuffix(pa, "/"+pb) || strings.HasSuffix(pb, "/"+pa)
+}
+
+func preserveToolEditInput(next *MessagePart, prev MessagePart) {
+	if next == nil || next.Type != "tool" || prev.Type != "tool" || next.State == nil || prev.State == nil {
+		return
+	}
+	if agyParamsLackEditPayload(next.State.Input) && !agyParamsLackEditPayload(prev.State.Input) {
+		next.State.Input = mergeAgyEditParams(next.State.Input, prev.State.Input)
+		if (next.Tool == "edit" || next.Tool == "") && prev.Tool == "write" {
+			next.Tool = prev.Tool
+		}
+	}
+}
+
+func parseAgyToolStepIndex(partID string) (int, bool) {
+	idx := strings.LastIndex(partID, "_tool_")
+	if idx < 0 {
+		return 0, false
+	}
+	rest := partID[idx+len("_tool_"):]
+	if rest == "" || strings.Contains(rest, "_") {
+		return 0, false
+	}
+	step, err := strconv.Atoi(rest)
+	if err != nil || step <= 0 {
+		return 0, false
+	}
+	return step, true
+}
+
+func partHasTruncatedOrQuotedEditPayload(input map[string]interface{}) bool {
+	for _, key := range agyEditPayloadKeys {
+		if s, ok := input[key].(string); ok {
+			trimmed := strings.TrimSpace(s)
+			if strings.HasPrefix(trimmed, "\"") || strings.Contains(trimmed, "<truncated ") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func partNeedsAgyEditHydration(part MessagePart) bool {
+	if part.Type != "tool" || part.State == nil || (part.Tool != "edit" && part.Tool != "write") {
+		return false
+	}
+	if _, ok := parseAgyToolStepIndex(part.ID); !ok {
+		return false
+	}
+	return agyParamsLackEditPayload(part.State.Input) || partHasTruncatedOrQuotedEditPayload(part.State.Input)
+}
+
+func loadAgyTranscriptEditsByStep(conversationID string) map[int]agyToolCall {
+	if !validStoreID(conversationID) {
+		return nil
+	}
+	for _, root := range agyBrainRoots() {
+		dir := agyTranscriptLogDir(root, conversationID)
+		for _, name := range []string{"transcript_full.jsonl", "transcript.jsonl"} {
+			f, err := os.Open(filepath.Join(dir, name))
+			if err != nil {
+				continue
+			}
+			byStep := make(map[int]agyToolCall)
+			scanner := bufio.NewScanner(f)
+			scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
+			for scanner.Scan() {
+				var row agyTranscriptRow
+				if json.Unmarshal(bytes.TrimSpace(scanner.Bytes()), &row) != nil {
+					continue
+				}
+				for i, call := range row.ToolCalls {
+					if agyEditPayloadNames[call.Name] {
+						call.Args = decodeAgyToolArgs(call.Args)
+						byStep[row.StepIndex+1+i] = call
+					}
+				}
+			}
+			_ = f.Close()
+			if len(byStep) > 0 {
+				return byStep
+			}
+		}
+	}
+	return nil
+}
+
+// hydrateAgyTranscriptEditParts repairs persisted Antigravity tool parts whose
+// edit payload was omitted on DONE or truncated by compact transcript.jsonl.
+func hydrateAgyTranscriptEditParts(externalID string, turns []MessageTurn) bool {
+	needsRepair := false
+	for i := range turns {
+		for j := range turns[i].Parts {
+			if partNeedsAgyEditHydration(turns[i].Parts[j]) {
+				needsRepair = true
+				break
+			}
+		}
+		if needsRepair {
+			break
+		}
+	}
+	if !needsRepair {
+		return false
+	}
+	byStep := loadAgyTranscriptEditsByStep(strings.TrimSpace(externalID))
+	changed := false
+	for i := range turns {
+		for j := range turns[i].Parts {
+			part := &turns[i].Parts[j]
+			if part.Type != "tool" || part.State == nil || (part.Tool != "edit" && part.Tool != "write") {
+				continue
+			}
+			stepIdx, ok := parseAgyToolStepIndex(part.ID)
+			if !ok {
+				continue
+			}
+			if call, found := byStep[stepIdx]; found && (partNeedsAgyEditHydration(*part) || agyPathsMatch(part.State.Input, call.Args)) {
+				stdoutOnly := make(map[string]interface{}, 2)
+				for _, pk := range []string{"Path", "filePath", "TargetFile", "AbsolutePath"} {
+					if v, exists := part.State.Input[pk]; exists {
+						stdoutOnly[pk] = v
+					}
+				}
+				merged := mergeAgyEditParams(stdoutOnly, call.Args)
+				normTool, title, cleanInput := normalizeRunnerTool(call.Name, merged)
+				if part.Tool != normTool || !reflect.DeepEqual(part.State.Input, cleanInput) {
+					part.Tool = normTool
+					part.State.Input = cleanInput
+					if part.State.Title == "" || part.State.Title == "edit_file" || part.State.Title == "write_file" {
+						part.State.Title = title
+					}
+					changed = true
+				}
+				continue
+			}
+			if partHasTruncatedOrQuotedEditPayload(part.State.Input) {
+				decoded := decodeAgyToolArgs(part.State.Input)
+				if !reflect.DeepEqual(part.State.Input, decoded) {
+					part.State.Input = decoded
+					changed = true
+				}
+			}
+		}
+	}
+	return changed
 }
 
 // resolveAgySubagentLog trusts a reported log_uri only inside a brain root,
@@ -272,6 +611,12 @@ func resolveAgySubagentLog(logURI, conversationID string) string {
 		if base == "transcript.jsonl" || base == "transcript_full.jsonl" {
 			for _, root := range roots {
 				if strings.HasPrefix(p, root+string(filepath.Separator)) {
+					if base == "transcript.jsonl" {
+						full := filepath.Join(filepath.Dir(p), "transcript_full.jsonl")
+						if _, err := os.Stat(full); err == nil {
+							return full
+						}
+					}
 					return p
 				}
 			}
@@ -281,9 +626,12 @@ func resolveAgySubagentLog(logURI, conversationID string) string {
 		return ""
 	}
 	for _, root := range roots {
-		p := filepath.Join(agyTranscriptLogDir(root, conversationID), "transcript.jsonl")
-		if _, err := os.Stat(p); err == nil {
-			return p
+		dir := agyTranscriptLogDir(root, conversationID)
+		for _, name := range []string{"transcript_full.jsonl", "transcript.jsonl"} {
+			p := filepath.Join(dir, name)
+			if _, err := os.Stat(p); err == nil {
+				return p
+			}
 		}
 	}
 	return ""

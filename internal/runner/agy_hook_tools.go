@@ -59,6 +59,7 @@ var (
 		"search_file_content": true,
 	}
 	hookEditTools = map[string]bool{
+		"edit_file":                  true,
 		"write_to_file":              true,
 		"write_file":                 true,
 		"replace":                    true,

@@ -163,6 +163,53 @@ function preserveTextPartSkillMeta(target: MessagePart, source?: MessagePart): v
   }
 }
 
+const TOOL_EDIT_PAYLOAD_KEYS = [
+  "Target",
+  "Replacement",
+  "Content",
+  "content",
+  "TargetContent",
+  "targetContent",
+  "ReplacementContent",
+  "replacementContent",
+  "ReplacementChunks",
+  "CodeContent",
+  "codeContent",
+  "oldString",
+  "newString",
+  "old_string",
+  "new_string",
+  "patch",
+  "diff",
+  "patchText",
+] as const;
+
+function hasToolEditPayload(input?: Record<string, unknown>): boolean {
+  if (!input || typeof input !== "object") return false;
+  for (const key of TOOL_EDIT_PAYLOAD_KEYS) {
+    const val = input[key];
+    if (typeof val === "string" && val.trim().length > 0) return true;
+    if (Array.isArray(val) && val.length > 0) return true;
+  }
+  return false;
+}
+
+function preserveToolPartEditInput(target: MessagePart, source?: MessagePart): void {
+  if (target.type !== "tool" || !source || source.type !== "tool") return;
+  const srcInput = source.state?.input as Record<string, unknown> | undefined;
+  if (!hasToolEditPayload(srcInput)) return;
+  const dstInput = (target.state?.input || {}) as Record<string, unknown>;
+  if (!hasToolEditPayload(dstInput)) {
+    target.state = {
+      ...target.state,
+      input: { ...srcInput, ...dstInput },
+    };
+    if ((target.tool === "edit" || !target.tool) && source.tool === "write") {
+      target.tool = source.tool;
+    }
+  }
+}
+
 const MAX_REACTIVE_TOOL_OUTPUT_CHARS = 32 * 1024;
 const MAX_FULL_TOOL_OUTPUT_LRU = 64;
 const fullToolOutputCache = new Map<string, string>();
@@ -174,6 +221,7 @@ function normalizeMessagePartInPlace(part: MessagePart, previous?: MessagePart):
     part.text ??= previous?.type === part.type ? previous.text ?? "" : "";
   }
   preserveTextPartSkillMeta(part, previous);
+  preserveToolPartEditInput(part, previous);
   // Index before compaction: task outputs carry `session_id:` at their tail.
   indexSubagentLink(part);
   compactToolPartOutputInPlace(part);
@@ -321,6 +369,8 @@ function mergeTurnInto(local: MessageTurn, remote: { info: MessageInfo; parts: M
       continue;
     }
     preserveTextPartSkillMeta(rp, lp);
+    preserveToolPartEditInput(rp, lp);
+    preserveToolPartEditInput(lp, rp);
     if (!isLocalPartAhead(lp, rp)) Object.assign(lp, rp);
     nextParts.push(lp);
   }
@@ -489,6 +539,8 @@ export function filterLocalSessionDiffsByTurns(
         addPath(
           inp.filePath ||
             inp.file_path ||
+            inp.Path ||
+            inp.AbsolutePath ||
             inp.path ||
             inp.file ||
             inp.TargetFile ||

@@ -443,8 +443,14 @@ func (t *TurnTranslator) handleAgyToolStep(su *agyStepUpdate, now int64) []SSEEv
 			errMsg = su.ToolInfo.Error.Message
 		}
 	}
+	if existing, ok := t.partsByID[partID]; ok && existing.State != nil && len(existing.State.Input) > 0 {
+		rawParams = mergeAgyEditParams(rawParams, existing.State.Input)
+		if existing.Tool == "write" && strings.EqualFold(strings.TrimSpace(rawName), "edit_file") {
+			rawName = "write_file"
+		}
+	}
 	if t.editPayloads != nil && agyEditPayloadNames[strings.ToLower(strings.TrimSpace(rawName))] && agyParamsLackEditPayload(rawParams) {
-		if name, full := t.editPayloads.next(); full != nil {
+		if name, full := t.editPayloads.lookup(su.StepIndex, rawParams, su.State == "DONE"); full != nil {
 			rawParams = mergeAgyEditParams(rawParams, full)
 			// Stdout names every edit step edit_file, even the writes, so the
 			// planned call is what distinguishes creating a file from editing one.
@@ -505,6 +511,7 @@ func (t *TurnTranslator) handleAgyToolStep(su *agyStepUpdate, now int64) []SSEEv
 		}
 	}
 
+	part.Tool = normTool
 	part.State = &ToolState{
 		Status: status,
 		Input:  cleanInput,

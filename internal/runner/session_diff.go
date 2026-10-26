@@ -277,7 +277,7 @@ func extractEditedPathsFromPart(part MessagePart) []string {
 		}
 	}
 	if in := part.State.Input; in != nil {
-		for _, k := range []string{"filePath", "file_path", "path", "file", "filename", "targetFile", "TargetFile", "target_file", "notebook_path"} {
+		for _, k := range []string{"filePath", "file_path", "Path", "AbsolutePath", "path", "file", "filename", "targetFile", "TargetFile", "target_file", "notebook_path"} {
 			add(in[k])
 		}
 		if patchText, ok := in["patchText"].(string); ok && patchText != "" {
