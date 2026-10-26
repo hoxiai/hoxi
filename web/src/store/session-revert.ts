@@ -122,7 +122,7 @@ export async function revertToHere(
   }
   const info = await hoxiAPI.revertSession(sessionID, messageID, partID, sessionDirectory(sessionID));
   replaceSession(info);
-  void loadSessionMessages(sessionID);
+  void loadSessionMessages(sessionID).catch(() => {});
   scheduleRefreshWorktreeStatus(sessionID, 120);
 }
 
@@ -132,7 +132,7 @@ export async function undoRevert(sessionID: string): Promise<void> {
   if (existingSession) replaceSession({ ...existingSession, revert: undefined });
   const info = await hoxiAPI.unrevertSession(sessionID, sessionDirectory(sessionID));
   replaceSession(info);
-  void loadSessionMessages(sessionID);
+  void loadSessionMessages(sessionID).catch(() => {});
   scheduleRefreshWorktreeStatus(sessionID, 120);
 }
 

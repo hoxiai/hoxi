@@ -193,7 +193,7 @@ export async function pauseSessionTask(sessionID?: string | null): Promise<void>
     console.warn("pause session abort warning:", err);
   }
   void abortChildSubagentSessions(id);
-  void loadSessionMessages(id);
+  void loadSessionMessages(id).catch(() => {});
 }
 
 export async function stopSessionTask(sessionID?: string | null): Promise<void> {
@@ -207,7 +207,7 @@ export async function stopSessionTask(sessionID?: string | null): Promise<void> 
     console.warn("stop session abort warning:", err);
   }
   void abortChildSubagentSessions(id);
-  void loadSessionMessages(id);
+  void loadSessionMessages(id).catch(() => {});
 }
 
 export async function stopSessionToolCommand(
@@ -573,7 +573,7 @@ export async function dispatchSessionPrompt(
         (lastTurn.info.role === "user" &&
           (!wasBusyBeforeSubmit || !hasInFlightAssistant || lastTurn.info.id === optimisticMsgID))
       ) {
-        void loadSessionMessages(targetID);
+        void loadSessionMessages(targetID).catch(() => {});
       }
     }, 900);
   } catch (err) {
