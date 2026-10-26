@@ -52,8 +52,11 @@ var (
 	extGlobRe        = regexp.MustCompile(`^\*\.[A-Za-z0-9]+$`)
 	gitExtPathspecRe = regexp.MustCompile(`^[A-Za-z0-9_./-]*\*\.[A-Za-z0-9]+$`)
 	rgListFlagRe     = regexp.MustCompile(`^-[a-zA-Z]*l[a-zA-Z]*$`)
-	rgUnsafeShortRe  = regexp.MustCompile(`^-[a-zA-Z.]*[u.L][a-zA-Z.]*$`)
-	dotGlobRe        = regexp.MustCompile(`(^|/)\.[^/]*[*?]`)
+	rgUnsafeShortRe     = regexp.MustCompile(`^-[a-zA-Z.]*[u.L][a-zA-Z.]*$`)
+	dotGlobRe           = regexp.MustCompile(`(^|/)\.[^/]*[*?]`)
+	sedReadOnlyScriptRe = regexp.MustCompile(`^\s*\d+(?:\s*,\s*(?:\d+|\+\d+))?\s*[pq](?:\s*[;\n]\s*\d+(?:\s*,\s*(?:\d+|\+\d+))?\s*[pq])*\s*$`)
+	headTailCountRe     = regexp.MustCompile(`^[+-]?\d+$`)
+	headTailFlagRe      = regexp.MustCompile(`^-(?:[nc]?[+-]?\d+|q|v|-quiet|-silent|-lines=[+-]?\d+|-bytes=[+-]?\d+)$`)
 
 	// harmlessEnvVars hold system locations and settings, never secrets, so
 	// they may feed read-only tools and PATH assignments. Anything else that
@@ -371,9 +374,20 @@ func isSafeListingProducer(seg string) bool {
 				}
 				named = true
 				i++
+			case a == "-path" || a == "-ipath":
+				if i+1 >= len(args) || strings.Contains(args[i+1], "..") || dotGlobRe.MatchString(args[i+1]) ||
+					isSecretFilePath(args[i+1]) || isSensitiveExternalPath(args[i+1]) || isProtectedRelPath(args[i+1]) {
+					return false
+				}
+				i++
 			case a == "-type" || a == "-maxdepth" || a == "-mindepth":
 				i++
-			case a == "-not" || a == "!" || a == "-o" || a == "-or" || a == "-a" || a == "-and" || a == "-print":
+			case a == "-o" || a == "-or":
+				if !named {
+					return false
+				}
+				named = false
+			case a == "-not" || a == "!" || a == "-a" || a == "-and" || a == "-print":
 			default:
 				return false
 			}
@@ -443,7 +457,8 @@ func expansionsAreBounded(seg string, words []string, vars map[string]bool, valu
 	}
 	// mkdir may take a value-class $(...) (it only creates directories) but
 	// not an ordinary variable. Every other non-read-only command stays opaque.
-	if !readOnlyDataTools[base] && !(valueClass && base == "mkdir") {
+	readOnlyTool := readOnlyDataTools[base] || (base == "sed" && isReadOnlySedArgs(args))
+	if !readOnlyTool && !(valueClass && base == "mkdir") {
 		return false
 	}
 	for _, a := range args {
@@ -461,16 +476,70 @@ func expansionsAreBounded(seg string, words []string, vars map[string]bool, valu
 			trusted, bound := vars[name]
 			switch {
 			case name == cmdSubstVar:
-				if bound || (!valueOnlyTools[base] && !(valueClass && acceptsValueClassArg(base))) {
+				if bound || (!valueOnlyTools[base] && !(valueClass && (acceptsValueClassArg(base) || (base == "sed" && isReadOnlySedArgs(args))))) {
 					return false
 				}
 			case bound:
-				if !trusted || !readOnlyDataTools[base] {
+				if !trusted || !readOnlyTool {
 					return false
 				}
-			case !harmlessEnvVars[name] || !readOnlyDataTools[base]:
+			case !harmlessEnvVars[name] || !readOnlyTool:
 				return false
 			}
+		}
+	}
+	return true
+}
+
+func isReadOnlySedArgs(rawArgs []string) bool {
+	args, ok := stripNullRedirects(rawArgs)
+	if !ok || len(args) == 0 {
+		return false
+	}
+	quiet, hasScript, i := false, false, 0
+	for i < len(args) {
+		a := args[i]
+		if a == "--" {
+			i++
+			break
+		}
+		if a == "-n" || a == "--quiet" || a == "--silent" || a == "-nE" || a == "-nr" || a == "-En" || a == "-rn" {
+			quiet = true
+			i++
+			continue
+		}
+		if a == "-E" || a == "-r" || a == "--regexp-extended" {
+			i++
+			continue
+		}
+		if a == "-e" {
+			if i+1 >= len(args) || strings.ContainsAny(args[i+1], "$`") || !sedReadOnlyScriptRe.MatchString(args[i+1]) {
+				return false
+			}
+			hasScript = true
+			i += 2
+			continue
+		}
+		if strings.HasPrefix(a, "-") {
+			return false
+		}
+		break
+	}
+	if !quiet {
+		return false
+	}
+	if !hasScript {
+		if i >= len(args) || strings.ContainsAny(args[i], "$`") || !sedReadOnlyScriptRe.MatchString(args[i]) {
+			return false
+		}
+		i++
+	}
+	if i >= len(args) {
+		return false
+	}
+	for ; i < len(args); i++ {
+		if strings.HasPrefix(args[i], "-") {
+			return false
 		}
 	}
 	return true

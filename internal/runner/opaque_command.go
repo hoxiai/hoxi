@@ -34,7 +34,7 @@ func isOpaqueShellCommandDepth(command, worktree string, allowInlineScripts bool
 		return true
 	}
 	command = strings.TrimSpace(unwrapSandboxCommand(command))
-	if command == "" {
+	if command == "" || strings.Contains(command, cmdSubstVar) {
 		return true
 	}
 	command = joinLineContinuations(command)

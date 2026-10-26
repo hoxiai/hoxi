@@ -235,6 +235,9 @@ func isValueClassSegment(seg string) bool {
 	if seg == "" || hasDollarExpansion(seg) || strings.Contains(seg, "`") {
 		return false
 	}
+	if isSafeListingPipeline(seg) {
+		return true
+	}
 	words := stripShellKeywords(shellWords(seg))
 	if len(words) == 0 {
 		return false
@@ -311,11 +314,49 @@ func isValueClassSegment(seg string) bool {
 	return false
 }
 
+func isSafeListingPipeline(cmd string) bool {
+	segments, pipedIn := splitCommandChainWithPipes(cmd)
+	if len(segments) == 0 || !isSafeListingProducer(segments[0]) {
+		return false
+	}
+	for i := 1; i < len(segments); i++ {
+		if !pipedIn[i] || hasDollarExpansion(segments[i]) || strings.Contains(segments[i], "`") {
+			return false
+		}
+		words, ok := stripNullRedirects(shellWords(segments[i]))
+		if !ok || len(words) == 0 || envVarAssignmentWordRe.MatchString(words[0]) {
+			return false
+		}
+		base := filepath.Base(normalizeAbsoluteTool(words[0]))
+		if (base != "head" && base != "tail") || !isStdinOnlyHeadTail(words[1:]) {
+			return false
+		}
+	}
+	return true
+}
+
+func isStdinOnlyHeadTail(args []string) bool {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "-n" || a == "-c" || a == "--lines" || a == "--bytes" {
+			if i+1 >= len(args) || !headTailCountRe.MatchString(args[i+1]) {
+				return false
+			}
+			i++
+			continue
+		}
+		if !headTailFlagRe.MatchString(a) {
+			return false
+		}
+	}
+	return true
+}
+
 // commandSubsAreValueClass reports whether every $(...) in s is a value-class
 // command that is itself not opaque. Nested substitutions fail closed.
 func commandSubsAreValueClass(s string) bool {
 	var quote byte
-	found := false
+	found := strings.Contains(s, "$"+cmdSubstVar)
 	for i := 0; i < len(s); i++ {
 		c := s[i]
 		if quote == '\'' {

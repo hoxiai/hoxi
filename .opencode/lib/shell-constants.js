@@ -221,10 +221,17 @@ function splitConstSegments(command) {
     }
     if (quote === '"') {
       if (c === '"') quote = "";
+      else if (c === "$" && next === "(") {
+        const end = processSubstitutionEnd(command, i + 2);
+        if (end >= 0) i = end;
+      }
       continue;
     }
     if (c === "'" || c === '"') quote = c;
-    else if (c === "&" && next === "&") {
+    else if (c === "$" && next === "(") {
+      const end = processSubstitutionEnd(command, i + 2);
+      if (end >= 0) i = end;
+    } else if (c === "&" && next === "&") {
       flush(i, "&");
       i++;
       segStart = i + 1;
@@ -608,6 +615,7 @@ function unwrapCommandPrefixes(words) {
 export function isValueClassSegment(seg) {
   seg = String(seg ?? "").trim();
   if (!seg || seg.includes("`") || /\$[A-Za-z_{!(?]/.test(seg)) return false;
+  if (judge.isSafeListingPipeline?.(seg)) return true;
   let words = stripShellKeywords(shellWordsOf(seg));
   if (words.length === 0) return false;
   words = unwrapCommandPrefixes(words);
@@ -656,7 +664,7 @@ export function isValueClassSegment(seg) {
 
 export function commandSubsAreValueClass(s) {
   let quote = "";
-  let found = false;
+  let found = s.includes("$" + CMD_SUBST_VAR);
   for (let i = 0; i < s.length; i++) {
     const c = s[i];
     if (quote === "'") {

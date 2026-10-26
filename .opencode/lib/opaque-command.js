@@ -56,6 +56,9 @@ const GIT_EXT_PATHSPEC_RE = /^[A-Za-z0-9_./-]*\*\.[A-Za-z0-9]+$/;
 const RG_LIST_FLAG_RE = /^-[a-zA-Z]*l[a-zA-Z]*$/;
 const RG_UNSAFE_SHORT_RE = /^-[a-zA-Z.]*[u.L][a-zA-Z.]*$/;
 const DOT_GLOB_RE = /(^|\/)\.[^/]*[*?]/;
+const SED_READ_ONLY_SCRIPT_RE = /^\s*\d+(?:\s*,\s*(?:\d+|\+\d+))?\s*[pq](?:\s*[;\n]\s*\d+(?:\s*,\s*(?:\d+|\+\d+))?\s*[pq])*\s*$/;
+const HEAD_TAIL_COUNT_RE = /^[+-]?\d+$/;
+const HEAD_TAIL_FLAG_RE = /^-(?:[nc]?[+-]?\d+|q|v|-quiet|-silent|-lines=[+-]?\d+|-bytes=[+-]?\d+)$/;
 // Hold system locations and settings, never secrets.
 const GIT_GLOBAL_VALUE_FLAGS = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"]);
 
@@ -228,7 +231,7 @@ export function isOpaqueShellCommand(command, worktree = "", options = {}) {
 }
 
 function isOpaqueShellCommandDepth(command, worktree, options, depth) {
-  if (depth > MAX_SUBSHELL_DEPTH) return true;
+  if (depth > MAX_SUBSHELL_DEPTH || String(command ?? "").includes(CMD_SUBST_VAR)) return true;
   const allowInlineScripts = Boolean(options.allowInlineScripts);
   const trimmed = unwrapSandboxCommand(command).trim();
   if (!trimmed) return true;
@@ -418,9 +421,18 @@ function isSafeListingProducer(seg) {
         if (i + 1 >= args.length || !EXT_GLOB_RE.test(args[i + 1])) return false;
         named = true;
         i++;
+      } else if (a === "-path" || a === "-ipath") {
+        const p = args[i + 1] ?? "";
+        if (!p || p.includes("..") || DOT_GLOB_RE.test(p) || isSecretPath(p) || isSensitiveExternalPath(p) || isProtectedPath(p)) {
+          return false;
+        }
+        i++;
       } else if (a === "-type" || a === "-maxdepth" || a === "-mindepth") {
         i++;
-      } else if (!["-not", "!", "-o", "-or", "-a", "-and", "-print"].includes(a)) {
+      } else if (a === "-o" || a === "-or") {
+        if (!named) return false;
+        named = false;
+      } else if (!["-not", "!", "-a", "-and", "-print"].includes(a)) {
         return false;
       }
     }
@@ -644,6 +656,65 @@ function isBenignPathAssignment(word) {
   return names !== null && names.every((n) => HARMLESS_ENV_VARS.has(n));
 }
 
+function isStdinOnlyHeadTail(args) {
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "-n" || a === "-c" || a === "--lines" || a === "--bytes") {
+      if (i + 1 >= args.length || !HEAD_TAIL_COUNT_RE.test(args[i + 1])) return false;
+      i++;
+      continue;
+    }
+    if (!HEAD_TAIL_FLAG_RE.test(a)) return false;
+  }
+  return true;
+}
+
+function isSafeListingPipeline(cmd) {
+  const { segments, pipedIn } = splitCommandChainWithPipes(cmd);
+  if (segments.length === 0 || !isSafeListingProducer(segments[0])) return false;
+  for (let i = 1; i < segments.length; i++) {
+    if (!pipedIn[i] || hasDollarExpansion(segments[i]) || segments[i].includes("`")) return false;
+    const words = stripNullRedirects(shellWords(segments[i]));
+    if (!words || words.length === 0 || ENV_VAR_ASSIGNMENT_WORD_RE.test(words[0])) return false;
+    const base = baseName(normalizeAbsoluteTool(words[0]));
+    if ((base !== "head" && base !== "tail") || !isStdinOnlyHeadTail(words.slice(1))) return false;
+  }
+  return true;
+}
+
+function isReadOnlySedArgs(rawArgs) {
+  const args = stripNullRedirects(rawArgs);
+  if (!args || args.length === 0) return false;
+  let quiet = false;
+  let hasScript = false;
+  let i = 0;
+  while (i < args.length) {
+    const a = args[i];
+    if (a === "--") { i++; break; }
+    if (["-n", "--quiet", "--silent", "-nE", "-nr", "-En", "-rn"].includes(a)) {
+      quiet = true;
+      i++;
+      continue;
+    }
+    if (["-E", "-r", "--regexp-extended"].includes(a)) { i++; continue; }
+    if (a === "-e") {
+      if (i + 1 >= args.length || /[$`]/.test(args[i + 1]) || !SED_READ_ONLY_SCRIPT_RE.test(args[i + 1])) return false;
+      hasScript = true;
+      i += 2;
+      continue;
+    }
+    if (a.startsWith("-")) return false;
+    break;
+  }
+  if (!quiet) return false;
+  if (!hasScript) {
+    if (i >= args.length || /[$`]/.test(args[i]) || !SED_READ_ONLY_SCRIPT_RE.test(args[i])) return false;
+    i++;
+  }
+  if (i >= args.length) return false;
+  return args.slice(i).every((a) => !a.startsWith("-"));
+}
+
 function expansionsAreBounded(seg, words, vars, valueClass = false) {
   if (shellExpansionNames(seg) === null) return false;
   let j = 0;
@@ -659,7 +730,8 @@ function expansionsAreBounded(seg, words, vars, valueClass = false) {
   const expanding = args.filter((a) => a.includes("$"));
   if (expanding.length === 0) return true;
   if (base === "git") return gitMessageExpansionsOnly(args, vars) || gitReadOnlyLoopExpansions(args, vars);
-  if (!READ_ONLY_DATA_TOOLS.has(base) && !(valueClass && base === "mkdir")) return false;
+  const readOnlyTool = READ_ONLY_DATA_TOOLS.has(base) || (base === "sed" && isReadOnlySedArgs(args));
+  if (!readOnlyTool && !(valueClass && base === "mkdir")) return false;
   for (const a of args) {
     if (a.startsWith("--pre") || a.startsWith("--hostname-bin") || a.startsWith("--compress-program") || (base === "printf" && a === "-v")) {
       return false;
@@ -671,10 +743,10 @@ function expansionsAreBounded(seg, words, vars, valueClass = false) {
     for (const name of names) {
       const bound = vars.has(name);
       if (name === CMD_SUBST_VAR) {
-        if (bound || (!VALUE_ONLY_TOOLS.has(base) && !(valueClass && acceptsValueClassArg(base)))) return false;
+        if (bound || (!VALUE_ONLY_TOOLS.has(base) && !(valueClass && (acceptsValueClassArg(base) || (base === "sed" && isReadOnlySedArgs(args)))))) return false;
       } else if (bound) {
-        if (vars.get(name) !== true || !READ_ONLY_DATA_TOOLS.has(base)) return false;
-      } else if (!HARMLESS_ENV_VARS.has(name) || !READ_ONLY_DATA_TOOLS.has(base)) {
+        if (vars.get(name) !== true || !readOnlyTool) return false;
+      } else if (!HARMLESS_ENV_VARS.has(name) || !readOnlyTool) {
         return false;
       }
     }
@@ -686,5 +758,6 @@ setLiteralJudge({
   opaqueCore: (inner) => opaqueShellCore(inner, "", false, false),
   isSecret: (p) => isSecretPath(p) || isSensitiveExternalPath(p),
   isProtected: isProtectedPath,
+  isSafeListingPipeline,
   shellWords,
 });

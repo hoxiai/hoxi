@@ -668,5 +668,29 @@
   {
     "command": "for d in plugins/*; do git -C \"$d\" checkout -- .; done",
     "opaque": true
+  },
+  {
+    "command": "echo \"=== baike dir ===\"; ls index/www/baike 2>/dev/null | head; echo \"=== a dir ===\"; ls index/www/a 2>/dev/null | head; echo \"=== haidiao ===\"; ls index/www/haidiao 2>/dev/null | head; echo \"=== look at a sample generated html head ===\"; f=$(find index/www -name \"*.html\" -path \"*haidiao*\" 2>/dev/null | head -1); echo \"FILE: $f\"; sed -n '1,30p' \"$f\" 2>/dev/null",
+    "opaque": false
+  },
+  {
+    "command": "find index/www -name '*.html' -path '*haidiao*' | while read f; do sed -n '1,20p' \"$f\"; done",
+    "opaque": false
+  },
+  {
+    "command": "f=$(find index/www -path \"*haidiao*\" | head -1); sed -n '1,30p' \"$f\"",
+    "opaque": true
+  },
+  {
+    "command": "f=$(find index/www -name \"*.html\" | head -1 .env); sed -n '1,30p' \"$f\"",
+    "opaque": true
+  },
+  {
+    "command": "f=$(find index/www -name \"*.html\" | head -1); sed -i '1,30p' \"$f\"",
+    "opaque": true
+  },
+  {
+    "command": "f=$(find index/www -name \"*.html\" | head -1); sed -n \"$f\" index.html",
+    "opaque": true
   }
 ]

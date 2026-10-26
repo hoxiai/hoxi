@@ -256,12 +256,20 @@ func splitConstSegments(command string) []constSeg {
 		if quote == '"' {
 			if c == '"' {
 				quote = 0
+			} else if c == '$' && next == '(' {
+				if end := processSubstitutionEnd(command, i+2); end >= 0 {
+					i = end
+				}
 			}
 			continue
 		}
 		switch {
 		case c == '\'' || c == '"':
 			quote = c
+		case c == '$' && next == '(':
+			if end := processSubstitutionEnd(command, i+2); end >= 0 {
+				i = end
+			}
 		case c == '&' && next == '&':
 			flush(i, sepAnd)
 			i++
