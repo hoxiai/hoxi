@@ -1,26 +1,33 @@
 // web/src/components/models/ProviderCatalogTab.tsx
-import { createMemo, createSignal, For, Show } from "solid-js";
+import { createMemo, createSignal, For, onMount, Show } from "solid-js";
 import {
   Ban,
   ChevronDown,
   ChevronRight,
+  ExternalLink,
   Eye,
   KeyRound,
+  LoaderCircle,
   Pencil,
   Plus,
   RotateCcw,
   Server,
+  Sparkles,
   Trash2,
 } from "lucide-solid";
 import type { ProviderInfo } from "../../services/api";
 import {
+  cancelProviderMcpOAuth,
+  connectProviderWithMcpOAuth,
   disconnectProvider,
+  fetchGateways,
   getProviderSourceLabel,
   isCustomOrConfiguredProvider,
-  isHoxiCustomProvider,
   isImportedOpenCodeProvider,
+  leaderboardState,
   openProviderModal,
   POPULAR_PROVIDER_IDS,
+  providerMcpOAuthState,
   toggleDisabledProvider,
   workspace,
 } from "../../store/workspace";
@@ -38,6 +45,11 @@ export default function ProviderCatalogTab() {
   const [targetID, setTargetID] = createSignal<string>("deepseek");
   const [disabledExpanded, setDisabledExpanded] = createSignal(false);
   const [busyID, setBusyID] = createSignal<string | null>(null);
+  const [mcpToast, setMcpToast] = createSignal<{ ok: boolean; text: string } | null>(null);
+
+  onMount(() => {
+    void fetchGateways();
+  });
 
   const connectedSet = createMemo(() => new Set(workspace.connectedProviders));
   const disabledSet = createMemo(() => {
@@ -114,8 +126,52 @@ export default function ProviderCatalogTab() {
 
   const targetProvider = createMemo<ProviderInfo>(() => {
     const id = targetID();
-    return providerMap().get(id) || { id, name: id, models: {} };
+    const existing = providerMap().get(id);
+    if (existing) return existing;
+    const gw = leaderboardState.gateways.find((g) => g.id === id);
+    if (gw) {
+      return {
+        id: gw.id,
+        name: gw.name,
+        options: { baseURL: gw.baseUrl },
+        models: {},
+      };
+    }
+    return { id, name: id, models: {} };
   });
+
+  const recommendedGateways = createMemo(() => {
+    const dis = disabledSet();
+    return leaderboardState.gateways.filter((gw) => !dis.has(gw.id));
+  });
+
+  const onMcpQuickConnect = async (gw: (typeof leaderboardState.gateways)[number]) => {
+    setMcpToast(null);
+    try {
+      const res = await connectProviderWithMcpOAuth({
+        providerID: gw.id,
+        providerName: gw.name,
+        siteURL: gw.url,
+        baseURL: gw.baseUrl,
+        recommendedModels: gw.recommendedModels,
+      });
+      if (res) {
+        const count =
+          res.models?.length ||
+          gw.recommendedModels?.length ||
+          Object.keys(providerMap().get(gw.id)?.models || {}).length;
+        setMcpToast({
+          ok: true,
+          text: t("models.mcpOAuthSuccessToast", { name: gw.name, count }),
+        });
+      }
+    } catch (err: any) {
+      setMcpToast({
+        ok: false,
+        text: err?.message || t("models.mcpOAuthFailed"),
+      });
+    }
+  };
 
   const openConnectView = (providerID: string) => {
     setTargetID(providerID);
@@ -310,6 +366,144 @@ export default function ProviderCatalogTab() {
               </div>
             </Show>
           </div>
+
+          {/* Recommended Providers Section */}
+          <Show when={recommendedGateways().length > 0}>
+            <div class="space-y-2.5">
+              <div class="flex items-center justify-between px-1">
+                <div class="flex items-center gap-2">
+                  <Sparkles size={13} class="text-[var(--accent-primary)]" />
+                  <h3 class="text-[12px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                    {t("models.recommendedSectionTitle")}
+                  </h3>
+                  <span class="text-[11px] text-[var(--text-faint)] hidden sm:inline">
+                    · {t("models.recommendedSectionSubtitle")}
+                  </span>
+                </div>
+              </div>
+
+              <Show when={mcpToast()}>
+                {(notice) => (
+                  <div
+                    class={`rounded-xl border px-3.5 py-2 text-[12px] ${
+                      notice().ok
+                        ? "border-[var(--ok-border)] bg-[var(--ok-surface)] text-[var(--ok-text)]"
+                        : "border-[var(--danger-border)] bg-[var(--danger-surface)] text-[var(--danger-text)]"
+                    }`}
+                  >
+                    {notice().text}
+                  </div>
+                )}
+              </Show>
+
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <For each={recommendedGateways()}>
+                  {(gw) => {
+                    const isConnected = () =>
+                      connectedSet().has(gw.id) || Boolean(workspace.globalConfig?.provider?.[gw.id]);
+                    const isAuthorizing = () => providerMcpOAuthState.authorizingProviderID === gw.id;
+
+                    return (
+                      <div class="flex flex-col justify-between gap-3 rounded-2xl border border-[var(--accent-border)]/70 bg-[var(--bg-elevated)]/60 p-4 hover:border-[var(--accent-border)] transition-colors">
+                        <div class="space-y-2">
+                          <div class="flex items-start justify-between gap-2">
+                            <div class="flex items-center gap-2.5 min-w-0">
+                              <ProviderIcon id={gw.id} class="w-5 h-5 shrink-0" />
+                              <div class="min-w-0">
+                                <div class="flex items-center gap-1.5 flex-wrap">
+                                  <span class="text-[13px] font-semibold text-[var(--text-primary)] truncate">
+                                    {gw.name}
+                                  </span>
+                                  <Show when={gw.badge}>
+                                    <span class="rounded-full bg-[var(--accent-surface)] px-2 py-0.5 text-[10px] font-semibold text-[var(--accent-primary)]">
+                                      {gw.badge}
+                                    </span>
+                                  </Show>
+                                  <Show when={gw.priceLabel}>
+                                    <span class="rounded-full bg-[var(--ok-surface)] px-2 py-0.5 text-[10px] font-semibold text-[var(--ok-text)]">
+                                      {gw.priceLabel}
+                                    </span>
+                                  </Show>
+                                </div>
+                                <div class="font-mono text-[11px] text-[var(--text-faint)] truncate">
+                                  {gw.domain} · {gw.uptime} · ~{gw.latencyMs}ms
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          <Show when={gw.caveat}>
+                            <p class="text-[11px] text-[var(--text-secondary)] line-clamp-2">
+                              {gw.caveat}
+                            </p>
+                          </Show>
+
+                          <Show when={gw.recommendedModels?.length}>
+                            <div class="flex items-center gap-1 flex-wrap">
+                              <For each={gw.recommendedModels.slice(0, 4)}>
+                                {(m) => (
+                                  <span class="rounded-md bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-muted)]">
+                                    {m}
+                                  </span>
+                                )}
+                              </For>
+                            </div>
+                          </Show>
+                        </div>
+
+                        <div class="flex items-center justify-end gap-2 pt-1 border-t border-[var(--border-subtle)]/60">
+                          <Show
+                            when={gw.canOneClickConnect}
+                            fallback={
+                              <button
+                                type="button"
+                                onClick={() => openConnectView(gw.id)}
+                                class="rounded-xl border border-[var(--border-strong)] bg-[var(--bg-panel)] px-3 py-1.5 text-[12px] font-medium text-[var(--text-primary)] hover:bg-[var(--accent-surface)] hover:text-[var(--accent-primary)] hover:border-[var(--accent-border)] transition-colors cursor-pointer"
+                              >
+                                {isConnected() ? t("models.changeKey") : t("models.connect")}
+                              </button>
+                            }
+                          >
+                            <button
+                              type="button"
+                              onClick={() => openConnectView(gw.id)}
+                              class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1.5 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+                            >
+                              {t("models.manualConfigBtn")}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={isAuthorizing()}
+                              onClick={() => void onMcpQuickConnect(gw)}
+                              class="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] px-3 py-1.5 text-[12px] font-medium text-[var(--accent-foreground)] hover:opacity-90 disabled:opacity-60 transition-opacity cursor-pointer"
+                            >
+                              <Show when={!isAuthorizing()} fallback={<LoaderCircle size={12} class="animate-spin" />}>
+                                <ExternalLink size={12} />
+                              </Show>
+                              {isAuthorizing()
+                                ? t("models.mcpOAuthAuthorizing")
+                                : isConnected()
+                                  ? t("models.mcpOAuthReconnectBtn")
+                                  : t("models.mcpOAuthConnectBtn")}
+                            </button>
+                            <Show when={isAuthorizing()}>
+                              <button
+                                type="button"
+                                onClick={() => cancelProviderMcpOAuth()}
+                                class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-1.5 text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+                              >
+                                {t("models.mcpOAuthCancelBtn")}
+                              </button>
+                            </Show>
+                          </Show>
+                        </div>
+                      </div>
+                    );
+                  }}
+                </For>
+              </div>
+            </div>
+          </Show>
 
           {/* Popular Providers Section */}
           <div class="space-y-2.5">

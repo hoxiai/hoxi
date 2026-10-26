@@ -310,3 +310,50 @@ export const leaderboardAPI = {
     return json.data?.items || [];
   },
 };
+
+export interface ProviderMcpOAuthModelItem {
+  id: string;
+  name: string;
+  inputPrice?: number;
+  outputPrice?: number;
+}
+
+export interface ProviderMcpOAuthStartResponse {
+  state: string;
+  authUrl: string;
+  siteOrigin: string;
+}
+
+export interface ProviderMcpOAuthPollResponse {
+  status: "pending" | "authorized" | "expired" | "error";
+  providerId?: string;
+  providerName?: string;
+  siteOrigin?: string;
+  mcpUrl?: string;
+  accessToken?: string;
+  baseUrl?: string;
+  apiKey?: string;
+  accountLabel?: string;
+  models?: ProviderMcpOAuthModelItem[];
+  error?: string;
+}
+
+export const providerMcpOAuthAPI = {
+  start(req: {
+    providerId: string;
+    providerName?: string;
+    siteUrl?: string;
+    baseUrl?: string;
+  }): Promise<ProviderMcpOAuthStartResponse> {
+    return requestJSON("/api/hoxi/provider/mcp-oauth/start", {
+      method: "POST",
+      body: JSON.stringify(req),
+    });
+  },
+  poll(state: string): Promise<ProviderMcpOAuthPollResponse> {
+    return requestJSON(
+      `/api/hoxi/provider/mcp-oauth/poll?state=${encodeURIComponent(state)}`
+    );
+  },
+};
+

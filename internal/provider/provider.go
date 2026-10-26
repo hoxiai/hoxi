@@ -30,12 +30,16 @@ type Service struct {
 	reloadPending     bool
 	reloadLoopRunning bool
 	configPersistMu   sync.Mutex
-	relayMu           sync.Mutex
-	relayPersistMu    sync.Mutex
-	relayBaseURL      string
-	relayKeysPath     string
-	relayKeysLoaded   bool
-	relayKeys         []relayKeyRecord
+	relayMu              sync.Mutex
+	relayPersistMu       sync.Mutex
+	relayBaseURL         string
+	relayKeysPath        string
+	relayKeysLoaded      bool
+	relayKeys            []relayKeyRecord
+	mcpOAuthMu           sync.Mutex
+	mcpOAuthSessions     map[string]*mcpOAuthSession
+	mcpOAuthPollInterval time.Duration
+	openBrowserFunc      func(string)
 }
 
 func NewService(openCodePort int, password, rootDir string, proxy http.Handler) *Service {
@@ -68,6 +72,8 @@ func (s *Service) SetBusyCheck(fn func() bool) {
 func (s *Service) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/hoxi/provider/fetch-models", s.handleFetchProviderModels)
 	mux.HandleFunc("/api/hoxi/provider/test-model", s.handleTestProviderModel)
+	mux.HandleFunc("/api/hoxi/provider/mcp-oauth/start", s.handleProviderMCPOAuthStart)
+	mux.HandleFunc("/api/hoxi/provider/mcp-oauth/poll", s.handleProviderMCPOAuthPoll)
 	for _, action := range assistActions {
 		mux.HandleFunc("/api/hoxi/provider/"+action, s.serveAssist(action))
 	}

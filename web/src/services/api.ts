@@ -41,7 +41,7 @@ import type {
   WorktreeStatus,
 } from "./api-types";
 import { getGatewayToken, requestJSON, setGatewayToken, withDir } from "./http";
-import { authAPI, leaderboardAPI, updaterAPI } from "./platform-api";
+import { authAPI, leaderboardAPI, providerMcpOAuthAPI, updaterAPI } from "./platform-api";
 import {
   forgetRunnerSession,
   inferRunnerRuntimeFromSessionID,
@@ -64,6 +64,7 @@ export {
   isRunnerPermissionID,
   isRunnerSessionID,
   leaderboardAPI,
+  providerMcpOAuthAPI,
   requestJSON,
   resolveRunnerRuntimeForProvider,
   runnerAPI,
@@ -531,6 +532,8 @@ export const hoxiAPI = {
   }): Promise<{ ok?: boolean; models?: Array<{ id: string; name: string }>; error?: string; auth?: boolean }> {
     return requestJSON("/api/hoxi/provider/fetch-models", { method: "POST", body: JSON.stringify(opts) });
   },
+  startProviderMcpOAuth: providerMcpOAuthAPI.start,
+  pollProviderMcpOAuth: providerMcpOAuthAPI.poll,
   getGlobalConfig(): Promise<Record<string, any>> {
     return requestJSON("/global/config");
   },

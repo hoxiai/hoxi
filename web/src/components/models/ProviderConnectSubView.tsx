@@ -8,16 +8,21 @@ import {
   EyeOff,
   LoaderCircle,
   Pencil,
+  Sparkles,
 } from "lucide-solid";
 import type { ProviderAuthAuthorization, ProviderInfo } from "../../services/api";
 import {
   authorizeProviderOAuth,
+  cancelProviderMcpOAuth,
   completeProviderOAuth,
   connectProviderWithKey,
+  connectProviderWithMcpOAuth,
   isCustomOrConfiguredProvider,
+  leaderboardState,
   openExternalURL,
   openProviderModal,
   probeProviderModel,
+  providerMcpOAuthState,
   workspace,
 } from "../../store/workspace";
 import { ProviderIcon } from "../icons";
@@ -53,6 +58,39 @@ export function ProviderConnectView(props: {
     if (Array.isArray(methods) && methods.length > 0) return methods;
     return [{ type: "api" as const, label: t("models.apiKey") }];
   });
+
+  const matchedGateway = createMemo(() =>
+    leaderboardState.gateways.find((g) => g.id === props.provider.id)
+  );
+
+  const supportsMcpOAuth = createMemo(
+    () =>
+      props.provider.id === "ainode" ||
+      Boolean(matchedGateway()?.canOneClickConnect)
+  );
+
+  const isMcpAuthorizing = createMemo(
+    () => providerMcpOAuthState.authorizingProviderID === props.provider.id
+  );
+
+  const onStartMcpOAuth = async () => {
+    setFeedback(null);
+    try {
+      const gw = matchedGateway();
+      const res = await connectProviderWithMcpOAuth({
+        providerID: props.provider.id,
+        providerName: props.provider.name || gw?.name || "AINode",
+        siteURL: gw?.url,
+        baseURL: baseURL().trim() || gw?.baseUrl || "https://api.ainode.run/v1",
+        recommendedModels: gw?.recommendedModels,
+      });
+      if (res) {
+        props.onBack();
+      }
+    } catch (err: any) {
+      setFeedback({ ok: false, text: err?.message || t("models.mcpOAuthFailed") });
+    }
+  };
 
   const onProbeExtraModel = async () => {
     const mid = extraModelID().trim();
@@ -182,6 +220,46 @@ export function ProviderConnectView(props: {
             </p>
           </div>
         </div>
+
+        <Show when={supportsMcpOAuth()}>
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-2xl border border-[var(--accent-border)] bg-[var(--accent-surface)]/35 p-4">
+            <div class="space-y-1 min-w-0">
+              <div class="flex items-center gap-1.5 text-[13px] font-semibold text-[var(--text-primary)]">
+                <Sparkles size={14} class="text-[var(--accent-primary)] shrink-0" />
+                <span>{t("models.mcpOAuthCardTitle")}</span>
+              </div>
+              <p class="text-[12px] text-[var(--text-secondary)]">
+                {t("models.mcpOAuthCardDesc")}
+              </p>
+            </div>
+            <div class="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                disabled={isMcpAuthorizing() || busy()}
+                onClick={() => void onStartMcpOAuth()}
+                class="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] px-3.5 py-2 text-[12px] font-medium text-[var(--accent-foreground)] hover:opacity-90 disabled:opacity-60 transition-opacity cursor-pointer"
+              >
+                <Show when={!isMcpAuthorizing()} fallback={<LoaderCircle size={13} class="animate-spin" />}>
+                  <ExternalLink size={13} />
+                </Show>
+                {isMcpAuthorizing()
+                  ? t("models.mcpOAuthAuthorizing")
+                  : props.connected
+                    ? t("models.mcpOAuthReconnectBtn")
+                    : t("models.mcpOAuthConnectBtn")}
+              </button>
+              <Show when={isMcpAuthorizing()}>
+                <button
+                  type="button"
+                  onClick={() => cancelProviderMcpOAuth()}
+                  class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-2 text-[12px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+                >
+                  {t("models.mcpOAuthCancelBtn")}
+                </button>
+              </Show>
+            </div>
+          </div>
+        </Show>
 
         <Show when={authMethods().length > 1}>
           <div class="inline-flex rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-0.5">
