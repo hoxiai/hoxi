@@ -2,7 +2,7 @@
 // $(...) substitutions. The rewritten text is only a judgment form. Mirrors
 // internal/runner/opaque_constants.go and opaque_expand.go.
 import { DATA_ARG_INTERPRETERS } from "./command-data-args.js";
-import { containsFor, expandLiteralForLoops, forLoopRanges } from "./shell-loops.js";
+import { containsFor, expandLiteralForLoops, forLoopRanges, isValueClassCurl, isValueClassWc } from "./shell-loops.js";
 
 export const CMD_SUBST_VAR = "__hoxi_cmdsub__";
 export const MAX_SUBSHELL_DEPTH = 2;
@@ -17,10 +17,10 @@ export const HARMLESS_ENV_VARS = new Set(["HOME", "PATH", "PWD", "OLDPWD", "USER
 
 export const READ_ONLY_DATA_TOOLS = new Set(["rg", "grep", "egrep", "fgrep", "cat", "head", "tail", "wc", "ls", "stat",
   "file", "echo", "printf", "diff", "cmp", "sort", "uniq", "jq", "test", "[", "basename",
-  "dirname", "realpath", "true", "false", ":", "exit", "return",
+  "dirname", "realpath", "true", "false", ":", "exit", "return", "break", "continue",
   "lsof", "ps", "du", "df", "cut", "tr", "nl", "column", "shasum", "sha256sum", "md5", "xxd", "od", "sleep"]);
 
-export const VALUE_ONLY_TOOLS = new Set(["echo", "printf", "test", "[", "basename", "dirname", "true", "false", ":", "exit", "return"]);
+export const VALUE_ONLY_TOOLS = new Set(["echo", "printf", "test", "[", "basename", "dirname", "true", "false", ":", "exit", "return", "break", "continue"]);
 
 const isBoundary = (c) => " \t\r\n;&|()<>".includes(c);
 const baseName = (w) => (w.includes("/") ? w.slice(w.lastIndexOf("/") + 1) : w);
@@ -395,10 +395,12 @@ function indexInside(i, ranges) {
 function constBindings(command, segs) {
   const bound = new Map();
   const poisoned = new Set();
+  const invalid = new Set();
   const loops = forLoopRanges(command);
   const subshells = findSubshellSpans(command) || [];
   const poison = (name) => {
     if (!name) return;
+    invalid.add(name);
     poisoned.add(name);
     bound.delete(name);
   };
@@ -413,12 +415,26 @@ function constBindings(command, segs) {
     for (const name of rebindNames(text)) poison(name);
     const assign = pureAssignment(text);
     if (!assign) continue;
+    if (insideLoop) {
+      if (bound.has(assign.name)) poison(assign.name);
+      else invalid.add(assign.name);
+      continue;
+    }
     const uncertain = seg.before === "&" || seg.before === "|" || seg.before === "p" || seg.before === "b" || seg.next === "p";
-    if (!assign || insideLoop || uncertain || usedBefore.has(assign.name) || HARMLESS_ENV_VARS.has(assign.name) || poisoned.has(assign.name) || bound.has(assign.name)) {
+    if (!assign || uncertain || usedBefore.has(assign.name) || HARMLESS_ENV_VARS.has(assign.name) || invalid.has(assign.name) || poisoned.has(assign.name) || bound.has(assign.name)) {
       poison(assign.name);
       continue;
     }
-    const val = parseConstValue(assign.raw);
+    let raw = assign.raw;
+    if (raw.includes("$") && bound.size > 0) {
+      const litBound = new Map();
+      for (const [k, v] of bound.entries()) if (!v.valueSub && !v.secret) litBound.set(k, v);
+      if (litBound.size > 0) {
+        const sub = substituteVars(raw, litBound);
+        if (sub !== null) raw = sub;
+      }
+    }
+    const val = parseConstValue(raw);
     if (!val) {
       poison(assign.name);
       continue;
@@ -629,12 +645,10 @@ export function isValueClassSegment(seg) {
     return !args.slice(1).some((a) => a === "-w" || a === "-u" || a.startsWith("-w=") || a.startsWith("-u="));
   }
   if (base === "wc") {
-    let lines = false;
-    for (const a of args) {
-      if (a === "-l" || a === "--lines") lines = true;
-      else if (["-c", "-m", "-L", "-w", "--bytes", "--chars", "--max-line-length", "--words"].includes(a)) return false;
-    }
-    return lines;
+    return isValueClassWc(args, (p) => pathSecret(p) || judge.isProtected(p));
+  }
+  if (base === "curl") {
+    return isValueClassCurl(args, pathSecret);
   }
   if (base === "grep" || base === "rg") {
     let count = false;

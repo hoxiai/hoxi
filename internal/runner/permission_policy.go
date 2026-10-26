@@ -490,6 +490,7 @@ func isReadOnlyGitBranch(args []string) bool {
 
 func hasOpaqueShellSyntax(s string) bool {
 	var quote byte
+	openIdx := -1
 	for i := 0; i < len(s); i++ {
 		c := s[i]
 		prev, next := byte(0), byte(0)
@@ -502,7 +503,7 @@ func hasOpaqueShellSyntax(s string) bool {
 		if quote == '\'' {
 			if c == '\'' {
 				quote = 0
-				if next != 0 && !isWordBoundary(next) {
+				if next != 0 && !isWordBoundary(next) && !isQuotedDirGlobSuffix(s, openIdx, i) {
 					return true
 				}
 			}
@@ -518,7 +519,7 @@ func hasOpaqueShellSyntax(s string) bool {
 			}
 			if c == '"' {
 				quote = 0
-				if next != 0 && !isWordBoundary(next) {
+				if next != 0 && !isWordBoundary(next) && !isQuotedDirGlobSuffix(s, openIdx, i) {
 					return true
 				}
 			}
@@ -541,6 +542,7 @@ func hasOpaqueShellSyntax(s string) bool {
 				return true
 			}
 			quote = c
+			openIdx = i
 		}
 	}
 	return quote != 0

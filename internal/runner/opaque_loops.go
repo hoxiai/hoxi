@@ -42,7 +42,7 @@ var (
 
 	readOnlyDataTools = setOf("rg", "grep", "egrep", "fgrep", "cat", "head", "tail", "wc", "ls", "stat",
 		"file", "echo", "printf", "diff", "cmp", "sort", "uniq", "jq", "test", "[", "basename",
-		"dirname", "realpath", "true", "false", ":", "exit", "return",
+		"dirname", "realpath", "true", "false", ":", "exit", "return", "break", "continue",
 		"lsof", "ps", "du", "df", "cut", "tr", "nl", "column", "shasum", "sha256sum", "md5", "xxd", "od", "sleep")
 
 	// Builtins that can rebind a variable behind the policy's back.
@@ -68,7 +68,7 @@ var (
 
 	// valueOnlyTools print or test their arguments without opening them as
 	// files, so they may take a `$(…)` result.
-	valueOnlyTools = setOf("echo", "printf", "test", "[", "basename", "dirname", "true", "false", ":", "exit", "return")
+	valueOnlyTools = setOf("echo", "printf", "test", "[", "basename", "dirname", "true", "false", ":", "exit", "return", "break", "continue")
 )
 
 // extractProcessSubstitutions rewrites each `<(cmd)` into a placeholder
@@ -207,7 +207,7 @@ func stripShellKeywords(words []string) []string {
 
 // loopBindings returns, for every variable the command binds, whether all of
 // its bindings are trustworthy loop bindings.
-func loopBindings(segments []string, pipedIn []bool) map[string]bool {
+func loopBindings(segments []string, pipedIn []bool, valueClass bool) map[string]bool {
 	vars := map[string]bool{}
 	bind := func(name string, ok bool) {
 		if prev, seen := vars[name]; seen {
@@ -217,6 +217,13 @@ func loopBindings(segments []string, pipedIn []bool) map[string]bool {
 	}
 	for i, seg := range segments {
 		words := stripShellKeywords(shellWords(seg))
+		if len(words) == 1 && !pipedIn[i] && valueClass && strings.HasSuffix(words[0], "=$"+cmdSubstVar) {
+			name := words[0][:strings.IndexByte(words[0], '=')]
+			if shellVarNameRe.MatchString(name) {
+				bind(name, true)
+				continue
+			}
+		}
 		j := 0
 		for j < len(words) && envVarAssignmentWordRe.MatchString(words[j]) {
 			if !isBenignPathAssignment(words[j]) {
@@ -284,6 +291,9 @@ func forLoopBinding(seg string, cmd []string) (string, bool) {
 		return name, false
 	}
 	for _, item := range cmd[3:] {
+		if item == seqLoopPlaceholder {
+			continue
+		}
 		if strings.Contains(item, "[") || dotGlobRe.MatchString(item) ||
 			isSecretFilePath(item) || isSensitiveExternalPath(item) || isProtectedRelPath(item) {
 			return name, false
@@ -419,6 +429,9 @@ func isSafeListingProducer(seg string) bool {
 func expansionsAreBounded(seg string, words []string, vars map[string]bool, valueClass bool) bool {
 	if _, ok := shellExpansionNames(seg); !ok {
 		return false
+	}
+	if len(words) == 1 && valueClass && strings.HasSuffix(words[0], "=$"+cmdSubstVar) {
+		return true
 	}
 	j := 0
 	for j < len(words) && envVarAssignmentWordRe.MatchString(words[j]) {

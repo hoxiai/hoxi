@@ -296,12 +296,14 @@ func splitConstSegments(command string) []constSeg {
 func constBindings(command string, segs []constSeg) (map[string]constVal, map[string]bool) {
 	bound := map[string]constVal{}
 	poisoned := map[string]bool{}
+	invalid := map[string]bool{}
 	loops := forLoopRanges(command)
 	subshells, _ := findSubshellSpans(command)
 	poison := func(name string) {
 		if name == "" {
 			return
 		}
+		invalid[name] = true
 		poisoned[name] = true
 		delete(bound, name)
 	}
@@ -330,14 +332,27 @@ func constBindings(command string, segs []constSeg) (map[string]constVal, map[st
 		if name == "" {
 			continue
 		}
+		if insideLoop {
+			if _, exists := bound[name]; exists {
+				poison(name)
+			} else {
+				invalid[name] = true
+			}
+			continue
+		}
 		uncertain := seg.before == sepAnd || seg.before == sepOr || seg.before == sepPipe || seg.before == sepAsync || seg.next == sepPipe
-		if !pure || insideLoop || uncertain || usedBefore[name] || harmlessEnvVars[name] || poisoned[name] {
+		if !pure || uncertain || usedBefore[name] || harmlessEnvVars[name] || invalid[name] || poisoned[name] {
 			poison(name)
 			continue
 		}
 		if _, exists := bound[name]; exists {
 			poison(name)
 			continue
+		}
+		if strings.Contains(raw, "$") && len(bound) > 0 {
+			if sub, ok := substituteVars(raw, literalOnlyBindings(bound)); ok {
+				raw = sub
+			}
 		}
 		val, ok := parseConstValue(raw)
 		if !ok {
@@ -347,6 +362,16 @@ func constBindings(command string, segs []constSeg) (map[string]constVal, map[st
 		bound[name] = val
 	}
 	return bound, poisoned
+}
+
+func literalOnlyBindings(bound map[string]constVal) map[string]constVal {
+	out := make(map[string]constVal, len(bound))
+	for k, v := range bound {
+		if !v.valueSub && !v.secret {
+			out[k] = v
+		}
+	}
+	return out
 }
 
 func indexInside(i int, ranges [][2]int) bool {

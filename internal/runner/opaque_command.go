@@ -34,7 +34,7 @@ func isOpaqueShellCommandDepth(command, worktree string, allowInlineScripts bool
 		return true
 	}
 	command = strings.TrimSpace(unwrapSandboxCommand(command))
-	if command == "" || strings.Contains(command, cmdSubstVar) {
+	if command == "" || strings.Contains(command, cmdSubstVar) || strings.Contains(command, seqLoopPlaceholder) {
 		return true
 	}
 	command = joinLineContinuations(command)
@@ -47,6 +47,7 @@ func isOpaqueShellCommandDepth(command, worktree string, allowInlineScripts bool
 		}
 		command = stripped
 	}
+	command = normalizeNumericForHeaders(command)
 	if _, ok := findSubshellSpans(command); !ok {
 		return true
 	}
@@ -115,7 +116,7 @@ func opaqueShellCore(command, worktree string, allowInlineScripts, valueClass bo
 	}
 	outsideCWD := false
 	hasExec := false
-	vars := loopBindings(segments, pipedIn)
+	vars := loopBindings(segments, pipedIn, valueClass)
 	for i, rawSeg := range segments {
 		seg := strings.TrimSpace(rawSeg)
 		if seg == "" || strings.HasPrefix(seg, "#") {
@@ -169,7 +170,11 @@ func opaqueShellCore(command, worktree string, allowInlineScripts, valueClass bo
 		if outsideCWD && !isRecoverableSegment(cmdWords, "", map[string]bool{}) {
 			return true
 		}
-		if dataArgInterpreters[base] {
+		prevSeg := ""
+		if i > 0 {
+			prevSeg = segments[i-1]
+		}
+		if dataArgInterpreters[base] && !(base == "xargs" && isSafeXargsSegment(args, i > 0 && pipedIn[i], prevSeg)) {
 			return true
 		}
 		if awkProgramExecutes(base, args) {

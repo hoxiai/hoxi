@@ -692,5 +692,41 @@
   {
     "command": "f=$(find index/www -name \"*.html\" | head -1); sed -n \"$f\" index.html",
     "opaque": true
+  },
+  {
+    "command": "L=/var/folders/13/5t054pmd2bn5dkgqvfk2vct80000gn/T/opencode/shoply-v1.0.8-build.log; a=$(wc -c < $L); sleep 45; b=$(wc -c < $L); echo \"log_bytes_before=$a after=$b\"; tail -n 3 $L",
+    "opaque": false
+  },
+  {
+    "command": "for p in \"/\" \"/blog\" \"/page/json\" \"/search?q=json\"; do code=$(curl -s -o /tmp/opencode/page.html -w \"%{http_code}\" \"http://127.0.0.1:5400$p\"); size=$(wc -c < /tmp/opencode/page.html); echo \"$code $p (${size}B)\"; done",
+    "opaque": false
+  },
+  {
+    "command": "for i in $(seq 1 40); do if ! kill -0 83853 2>/dev/null; then echo \"BUILD_PROCESS_EXITED\"; break; fi; sleep 30; done",
+    "opaque": false
+  },
+  {
+    "command": "cd /Users/hugh/code/hoxi/apay && ls server/db/migrations/pg/*.sql | xargs -n1 basename | sort",
+    "opaque": false
+  },
+  {
+    "command": "TGT=/Users/hugh/code/hoxi/apay/app/themes/aix\nSRC=/Users/hugh/code/kuaiqin/shoply/plugins/app/Fastix\ncp \"$SRC/res/img/\"* \"$TGT/public/img/\" 2>/dev/null || true",
+    "opaque": false
+  },
+  {
+    "command": "a=$(wc -c < .env); echo \"$a\"",
+    "opaque": true
+  },
+  {
+    "command": "for i in $(seq 1 40); do rm \"file_$i\"; done",
+    "opaque": true
+  },
+  {
+    "command": "find . | xargs cat",
+    "opaque": true
+  },
+  {
+    "command": "find src -name '*.go' | xargs rm",
+    "opaque": true
   }
 ]

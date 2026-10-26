@@ -3,12 +3,30 @@ package runner
 import (
 	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
 // Literal for-loop expansion, value-class command substitutions and the
 // macOS per-user temp path. Judgment only: the shell still runs the original
-// command. Mirrors .opencode/lib/shell-constants.js.
+// command. Mirrors .opencode/lib/shell-constants.js and shell-loops.js.
+
+const seqLoopPlaceholder = "__hoxi_seq__"
+
+var (
+	numericForHeaderRe  = regexp.MustCompile(`(?m)(^|[;&|()\n\r\t ])(for[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]+in[ \t]+)(?:\$\(seq(?:[ \t]+\d+){1,3}\)|\{\d+\.\.\d+(?:\.\.\d+)?\})([ \t]*(?:;|\r?\n))`)
+	urlQueryItemRe      = regexp.MustCompile(`^(?:https?://[A-Za-z0-9_./:@%+=~?&,-]+|/[A-Za-z0-9_./%+-]*\?[A-Za-z0-9_=&.%+-]+)$`)
+	wcCountFlagRe       = regexp.MustCompile(`^(?:-[lcmwL]+|--(?:lines|bytes|chars|words|max-line-length))$`)
+	curlSilentFlagRe    = regexp.MustCompile(`^-(?:[sSLkIf46]+|-silent|-show-error|-location|-insecure|-fail|-head)$`)
+	curlWriteOutRe      = regexp.MustCompile(`^[A-Za-z0-9_.:;,/ \-%{}()\\\n\r\t]+$`)
+	positiveIntRe       = regexp.MustCompile(`^[1-9]\d*$`)
+	xargsReplRe         = regexp.MustCompile(`^(?:\{\}|%|[A-Za-z_][A-Za-z0-9_]*)$`)
+	xargsAttachedFlagRe = regexp.MustCompile(`^-(?:[nLPs][1-9]\d*|I(?:\{\}|%|[A-Za-z_][A-Za-z0-9_]*)|-max-(?:args|lines|procs)=[1-9]\d*)$`)
+)
+
+func normalizeNumericForHeaders(s string) string {
+	return numericForHeaderRe.ReplaceAllString(s, "${1}${2}"+seqLoopPlaceholder+"${3}")
+}
 
 func forLoopRanges(s string) [][2]int {
 	var ranges [][2]int
@@ -56,7 +74,13 @@ func forNameAt(header string) string {
 
 func literalForItems(items []string) bool {
 	for _, item := range items {
-		if strings.ContainsAny(item, "$*?[`") || strings.Contains(item, "${") {
+		if item == seqLoopPlaceholder {
+			return false
+		}
+		if urlQueryItemRe.MatchString(item) && !strings.Contains(item, "..") {
+			continue
+		}
+		if strings.ContainsAny(item, "$*?[`{") || strings.Contains(item, "${") {
 			return false
 		}
 		if isSecretFilePath(item) || isSensitiveExternalPath(item) || isProtectedRelPath(item) {
@@ -264,16 +288,27 @@ func isValueClassSegment(seg string) bool {
 		}
 		return true
 	case "wc":
-		lines := false
+		counted := false
 		for _, a := range args {
-			switch a {
-			case "-l", "--lines":
-				lines = true
-			case "-c", "-m", "-L", "-w", "--bytes", "--chars", "--max-line-length", "--words":
+			switch {
+			case a == "<":
+				continue
+			case strings.HasPrefix(a, "--files0-from"):
 				return false
+			case wcCountFlagRe.MatchString(a):
+				counted = true
+			case strings.HasPrefix(a, "-"):
+				return false
+			default:
+				p := strings.TrimPrefix(a, "<")
+				if isSecretFilePath(p) || isSensitiveExternalPath(p) || isProtectedRelPath(p) {
+					return false
+				}
 			}
 		}
-		return lines
+		return counted
+	case "curl":
+		return isValueClassCurl(args)
 	case "grep", "rg":
 		count := false
 		for _, a := range args {
@@ -350,6 +385,161 @@ func isStdinOnlyHeadTail(args []string) bool {
 		}
 	}
 	return true
+}
+
+func isValueClassCurl(args []string) bool {
+	hasWriteOut, hasSafeOutput := false, false
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "-w" || a == "--write-out":
+			if i+1 >= len(args) || !isSafeCurlWriteOut(args[i+1]) {
+				return false
+			}
+			hasWriteOut = true
+			i++
+		case strings.HasPrefix(a, "-w") && len(a) > 2:
+			if !isSafeCurlWriteOut(a[2:]) {
+				return false
+			}
+			hasWriteOut = true
+		case strings.HasPrefix(a, "--write-out="):
+			if !isSafeCurlWriteOut(a[len("--write-out="):]) {
+				return false
+			}
+			hasWriteOut = true
+		case a == "-o" || a == "--output":
+			if i+1 >= len(args) || !isSafeCurlOutputTarget(args[i+1]) {
+				return false
+			}
+			hasSafeOutput = true
+			i++
+		case strings.HasPrefix(a, "-o") && len(a) > 2:
+			if !isSafeCurlOutputTarget(a[2:]) {
+				return false
+			}
+			hasSafeOutput = true
+		case strings.HasPrefix(a, "--output="):
+			if !isSafeCurlOutputTarget(a[len("--output="):]) {
+				return false
+			}
+			hasSafeOutput = true
+		case a == "--max-time" || a == "-m" || a == "--connect-timeout" || a == "-H" || a == "--header" || a == "-A" || a == "--user-agent" || a == "-X" || a == "--request":
+			if i+1 >= len(args) {
+				return false
+			}
+			i++
+		case curlSilentFlagRe.MatchString(a):
+		case strings.HasPrefix(a, "-"):
+			return false
+		}
+	}
+	return hasWriteOut && hasSafeOutput
+}
+
+func isSafeCurlWriteOut(fmtStr string) bool {
+	lower := strings.ToLower(fmtStr)
+	return fmtStr != "" && !strings.Contains(fmtStr, "@") && !strings.Contains(lower, "header") && !strings.Contains(lower, "json") && curlWriteOutRe.MatchString(fmtStr)
+}
+
+func isSafeCurlOutputTarget(p string) bool {
+	if p == "/dev/null" {
+		return true
+	}
+	if strings.Contains(p, "..") || strings.ContainsAny(p, "$*?[`~") {
+		return false
+	}
+	return strings.HasPrefix(p, "/tmp/") || strings.HasPrefix(p, "/private/tmp/") || isMacOSTempPath(p)
+}
+
+func isSafeXargsSegment(rawArgs []string, piped bool, prevSeg string) bool {
+	if !piped {
+		return false
+	}
+	args, ok := stripNullRedirects(rawArgs)
+	if !ok {
+		return false
+	}
+	i := 0
+	for i < len(args) {
+		a := args[i]
+		if a == "--" {
+			i++
+			break
+		}
+		if a == "-0" || a == "--null" || a == "-r" || a == "--no-run-if-empty" || a == "-t" || a == "--verbose" {
+			i++
+			continue
+		}
+		if a == "-n" || a == "-L" || a == "-P" || a == "-s" {
+			if i+1 >= len(args) || !positiveIntRe.MatchString(args[i+1]) {
+				return false
+			}
+			i += 2
+			continue
+		}
+		if a == "-I" {
+			if i+1 >= len(args) || !xargsReplRe.MatchString(args[i+1]) {
+				return false
+			}
+			i += 2
+			continue
+		}
+		if xargsAttachedFlagRe.MatchString(a) {
+			i++
+			continue
+		}
+		if strings.HasPrefix(a, "-") {
+			return false
+		}
+		break
+	}
+	rest := args[i:]
+	if len(rest) == 0 {
+		return true
+	}
+	for _, w := range rest {
+		if strings.ContainsAny(w, "$`") {
+			return false
+		}
+	}
+	targetBase := filepath.Base(normalizeAbsoluteTool(rest[0]))
+	targetArgs := rest[1:]
+	if targetBase != "basename" && targetBase != "dirname" && targetBase != "echo" {
+		return false
+	}
+	for j := 0; j < len(targetArgs); j++ {
+		ta := targetArgs[j]
+		if targetBase == "basename" && (ta == "-a" || strings.HasPrefix(ta, "-s=")) {
+			continue
+		}
+		if targetBase == "basename" && ta == "-s" && j+1 < len(targetArgs) {
+			j++
+			continue
+		}
+		if targetBase == "echo" && ta == "-n" {
+			continue
+		}
+		if strings.HasPrefix(ta, "-") {
+			return false
+		}
+	}
+	return true
+}
+
+func isQuotedDirGlobSuffix(s string, openIdx, closeIdx int) bool {
+	if openIdx < 0 || closeIdx <= openIdx+1 || s[closeIdx-1] != '/' {
+		return false
+	}
+	if strings.Trim(s[openIdx+1:closeIdx], "/") == "" {
+		return false
+	}
+	k := closeIdx + 1
+	for k < len(s) && !isWordBoundary(s[k]) {
+		k++
+	}
+	suf := s[closeIdx+1 : k]
+	return suf == "*" || extGlobRe.MatchString(suf)
 }
 
 // commandSubsAreValueClass reports whether every $(...) in s is a value-class
