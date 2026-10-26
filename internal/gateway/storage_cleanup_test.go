@@ -20,6 +20,11 @@ import (
 func TestSystemStorageInspectAndClean(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOXI_HOME", home)
+	// DBPath() prefers OPENCODE_DB/HOXI_DB_PATH, which the dev/test shell may
+	// export and point at the real ~/.hoxi/hoxi.db. Pin both so the test can
+	// never seed or clean the developer's live database.
+	t.Setenv("OPENCODE_DB", filepath.Join(home, "hoxi.db"))
+	t.Setenv("HOXI_DB_PATH", filepath.Join(home, "hoxi.db"))
 	wsRoot := t.TempDir()
 
 	// 1. Seed SQLite hoxi.db with transient event bloat + durable session/message rows.
