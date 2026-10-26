@@ -362,7 +362,7 @@ func (g *Gateway) collectRunnerHistory(startMs, endMs int64, day func(string) *h
 		if !ok || rec.Subagent {
 			continue
 		}
-		store.VisitTurns(rec.ID, func(full runner.SessionRecord) {
+		store.VisitTurnsTransient(rec.ID, func(full runner.SessionRecord) {
 			for i := range full.Turns {
 				turn := full.Turns[i]
 				if turn.Info.Role != "assistant" || turn.Info.Time.Created < startMs || turn.Info.Time.Created >= endMs {

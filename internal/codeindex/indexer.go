@@ -70,6 +70,7 @@ var ignoredFolders = map[string]bool{
 	"Pods": true, "DerivedData": true, ".dart_tool": true, ".pub-cache": true,
 	"go-build": true, "go-build-cache": true, ".gocache": true, ".gomodcache": true,
 	".venv": true, "venv": true, "coverage": true, ".bundle": true,
+	"cache": true, "caches": true, "tmp": true, "temp": true, "logs": true,
 }
 
 var indexableExtensions = map[string]bool{}
@@ -354,6 +355,10 @@ func indexableFile(path string) bool {
 	return false
 }
 
+// maxFilesPerDir bounds how many files a single flat directory can contribute
+// so static dump folders do not exhaust the workspace indexing budget.
+const maxFilesPerDir = 500
+
 // build walks the workspace and incrementally reuses chunks for unchanged
 // files. It mirrors Kilo's ignore list and file-size bounds.
 func (s *Service) build(directory string, previous *Index) (*Index, error) {
@@ -361,6 +366,7 @@ func (s *Service) build(directory string, previous *Index) (*Index, error) {
 	index := &Index{Version: indexVersion, Directory: directory, BuiltAt: s.now(), Files: map[string]*FileRecord{}}
 	var total int64
 	files := 0
+	dirCounts := make(map[string]int)
 	err := filepath.WalkDir(directory, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
@@ -396,6 +402,11 @@ func (s *Service) build(directory string, previous *Index) (*Index, error) {
 		if isProtectedOrSecretRelPath(rel) {
 			return nil
 		}
+		parentDir := filepath.Dir(rel)
+		if dirCounts[parentDir] >= maxFilesPerDir {
+			return nil
+		}
+		dirCounts[parentDir]++
 		files++
 		total += info.Size()
 		if prev := previous.Files[rel]; prev != nil && prev.Size == info.Size() && prev.ModTime == info.ModTime().UnixMilli() {

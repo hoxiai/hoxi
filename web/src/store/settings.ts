@@ -505,6 +505,14 @@ export async function fetchSystemRuntimeInfo(): Promise<SystemRuntimeInfo> {
   return info;
 }
 
+export function fetchSystemStorage() {
+  return hoxiAPI.getSystemStorage();
+}
+
+export function cleanSystemStorage() {
+  return hoxiAPI.cleanSystemStorage();
+}
+
 export function resetAllAppSettings() {
   setAppSettings({
     ...DEFAULT_SETTINGS,

@@ -226,6 +226,62 @@ func (s *Store) loadAllMeta() {
 	}
 }
 
+func countCanonicalTurnLines(turns []MessageTurn) int {
+	lines := 0
+	for i := range turns {
+		lines++
+		lines += len(turns[i].Parts)
+	}
+	return lines
+}
+
+// CompactIdleTurns rewrites turns.jsonl for idle sessions whose on-disk log
+// contains redundant upsert lines, and removes any leftover .tmp files.
+func (s *Store) CompactIdleTurns() (compacted int, freedBytes int64) {
+	s.mu.RLock()
+	ids := make([]string, 0, len(s.records))
+	for id := range s.records {
+		ids = append(ids, id)
+	}
+	s.mu.RUnlock()
+
+	for _, id := range ids {
+		ss := s.lockSession(id, false)
+		if ss == nil {
+			continue
+		}
+		if ss.active {
+			ss.mu.Unlock()
+			continue
+		}
+		_ = s.flushSessionLocked(ss)
+		turnsPath := filepath.Join(s.sessionDir(id), sessionTurnsFile)
+		beforeInfo, err := os.Stat(turnsPath)
+		if err != nil || beforeInfo.Size() == 0 {
+			ss.mu.Unlock()
+			continue
+		}
+		turns := ss.rec.Turns
+		lines := ss.logLines
+		if !ss.turnsLoaded {
+			turns, lines = s.readTurns(id)
+		}
+		if lines > countCanonicalTurnLines(turns) {
+			if newLines, err := s.rewriteTurns(id, turns); err == nil {
+				if ss.turnsLoaded {
+					ss.logLines = newLines
+				}
+				if afterInfo, err := os.Stat(turnsPath); err == nil && beforeInfo.Size() > afterInfo.Size() {
+					compacted++
+					freedBytes += beforeInfo.Size() - afterInfo.Size()
+				}
+			}
+		}
+		ss.mu.Unlock()
+	}
+	return compacted, freedBytes
+}
+
 // migrateLegacy imports the single-file store used before per-session
 // directories. The old file is renamed only after every record was written,
 // so an interrupted import is retried on the next start.

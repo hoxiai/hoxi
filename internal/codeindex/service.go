@@ -53,6 +53,34 @@ func DefaultRoot() string {
 	return filepath.Join(os.TempDir(), "hoxi-code-index")
 }
 
+func (s *Service) Root() string {
+	return s.root
+}
+
+// ClearCache drops in-memory and on-disk cached indexes under s.root.
+func (s *Service) ClearCache() int64 {
+	s.mu.Lock()
+	s.cache = make(map[string]*cachedIndex)
+	s.mu.Unlock()
+	entries, err := os.ReadDir(s.root)
+	if err != nil {
+		return 0
+	}
+	var freed int64
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		path := filepath.Join(s.root, entry.Name())
+		if info, err := entry.Info(); err == nil {
+			if os.Remove(path) == nil {
+				freed += info.Size()
+			}
+		}
+	}
+	return freed
+}
+
 func (s *Service) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/hoxi/code-index/search", s.handleSearch)
 	mux.HandleFunc("/api/hoxi/code-index/inspect", s.handleInspect)

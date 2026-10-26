@@ -336,3 +336,49 @@ func TestProjectMemoryRootForIsolatedSession(t *testing.T) {
 		t.Fatalf("worktree must not hold its own memory copy, stat err = %v", err)
 	}
 }
+
+func TestVisitTurnsTransientAndCompactIdleTurns(t *testing.T) {
+	t.Parallel()
+	storeDir := t.TempDir()
+	s := NewStore(storeDir)
+	id := "ses_cld_compact_1"
+	if err := s.Put(SessionRecord{ID: id, Runtime: string(RuntimeClaudeCode), Title: "Compact"}); err != nil {
+		t.Fatal(err)
+	}
+	s.UpsertTurnInfo(id, MessageInfo{ID: "m1", SessionID: id, Role: "assistant"})
+	for i := 0; i < 10; i++ {
+		s.UpsertTurnPart(id, MessagePart{
+			ID:        "p1",
+			SessionID: id,
+			MessageID: "m1",
+			Type:      "text",
+			Text:      strings.Repeat("x", 1024*(i+1)),
+		})
+	}
+	s.Flush()
+
+	// Re-open cold store so turnsLoaded is false.
+	cold := NewStore(storeDir)
+	var visitedText string
+	if !cold.VisitTurnsTransient(id, func(rec SessionRecord) {
+		if len(rec.Turns) == 1 && len(rec.Turns[0].Parts) == 1 {
+			visitedText = rec.Turns[0].Parts[0].Text
+		}
+	}) {
+		t.Fatal("expected VisitTurnsTransient to find session")
+	}
+	if len(visitedText) != 10*1024 {
+		t.Fatalf("expected latest text length 10240, got %d", len(visitedText))
+	}
+	cold.mu.RLock()
+	cached := cold.cachedSessions
+	cold.mu.RUnlock()
+	if cached != 0 {
+		t.Fatalf("VisitTurnsTransient must not pin cold sessions into LRU cache, got cachedSessions=%d", cached)
+	}
+
+	compacted, freed := cold.CompactIdleTurns()
+	if compacted != 1 || freed <= 0 {
+		t.Fatalf("expected 1 compacted session with freed > 0, got compacted=%d freed=%d", compacted, freed)
+	}
+}

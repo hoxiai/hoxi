@@ -124,7 +124,7 @@ func (g *Gateway) collectRequestLog() []requestLogEntry {
 		if rec.UpdatedAt > 0 && rec.UpdatedAt < earliestMs {
 			continue
 		}
-		store.VisitTurns(rec.ID, func(full runner.SessionRecord) {
+		store.VisitTurnsTransient(rec.ID, func(full runner.SessionRecord) {
 			var maxCreated int64
 			for i := range full.Turns {
 				if full.Turns[i].Info.Time.Created > maxCreated {
@@ -260,36 +260,53 @@ func queryOpenCodeRequestLog(cutoffMs int64) []requestLogEntry {
 	}
 	sqlQuery := fmt.Sprintf(`
 SELECT
-  m.id,
-  m.session_id,
-  m.time_created,
-  CAST(COALESCE(json_extract(m.data, '$.time.completed'), 0) AS INTEGER) AS completed,
-  COALESCE(json_extract(m.data, '$.providerID'), 'opencode') AS provider_id,
-  COALESCE(json_extract(m.data, '$.modelID'), 'unknown') AS model_id,
-  CAST(COALESCE(json_extract(m.data, '$.tokens.input'), 0) AS INTEGER) AS input,
-  CAST(COALESCE(json_extract(m.data, '$.tokens.output'), 0) AS INTEGER) AS output,
-  CAST(COALESCE(json_extract(m.data, '$.tokens.reasoning'), 0) AS INTEGER) AS reasoning,
-  CAST(COALESCE(json_extract(m.data, '$.tokens.cache.read'), 0) AS INTEGER) AS cache_read,
-  CAST(COALESCE(json_extract(m.data, '$.tokens.cache.write'), 0) AS INTEGER) AS cache_write,
-  CAST(COALESCE(json_extract(m.data, '$.cost'), 0) AS REAL) AS cost,
-  CAST(COALESCE(json_extract(m.data, '$.error.data.statusCode'), 0) AS INTEGER) AS status,
-  COALESCE(json_extract(m.data, '$.error.data.message'), json_extract(m.data, '$.error.name'), '') AS error,
+  top_m.id,
+  top_m.session_id,
+  top_m.time_created,
+  top_m.completed,
+  top_m.provider_id,
+  top_m.model_id,
+  top_m.input,
+  top_m.output,
+  top_m.reasoning,
+  top_m.cache_read,
+  top_m.cache_write,
+  top_m.cost,
+  top_m.status,
+  top_m.error,
   COALESCE((
     SELECT MIN(p.time_created) FROM part p
-    WHERE p.message_id = m.id AND json_extract(p.data, '$.type') IN ('text', 'reasoning')
+    WHERE p.message_id = top_m.id AND json_extract(p.data, '$.type') IN ('text', 'reasoning')
   ), 0) AS first_part
-FROM message m
-JOIN session s ON s.id = m.session_id
-WHERE json_extract(m.data, '$.role') = 'assistant'
-  AND (
-    CAST(COALESCE(json_extract(m.data, '$.tokens.input'), 0) AS INTEGER) > 0
-    OR CAST(COALESCE(json_extract(m.data, '$.tokens.output'), 0) AS INTEGER) > 0
-    OR CAST(COALESCE(json_extract(m.data, '$.tokens.cache.read'), 0) AS INTEGER) > 0
-    OR json_extract(m.data, '$.error') IS NOT NULL
-    OR (json_extract(m.data, '$.time.completed') IS NULL AND m.time_created >= %d)
-  )
-ORDER BY m.time_created DESC
-LIMIT %d;`, cutoffMs, requestLogMaxLimit)
+FROM (
+  SELECT
+    m.id,
+    m.session_id,
+    m.time_created,
+    CAST(COALESCE(json_extract(m.data, '$.time.completed'), 0) AS INTEGER) AS completed,
+    COALESCE(json_extract(m.data, '$.providerID'), 'opencode') AS provider_id,
+    COALESCE(json_extract(m.data, '$.modelID'), 'unknown') AS model_id,
+    CAST(COALESCE(json_extract(m.data, '$.tokens.input'), 0) AS INTEGER) AS input,
+    CAST(COALESCE(json_extract(m.data, '$.tokens.output'), 0) AS INTEGER) AS output,
+    CAST(COALESCE(json_extract(m.data, '$.tokens.reasoning'), 0) AS INTEGER) AS reasoning,
+    CAST(COALESCE(json_extract(m.data, '$.tokens.cache.read'), 0) AS INTEGER) AS cache_read,
+    CAST(COALESCE(json_extract(m.data, '$.tokens.cache.write'), 0) AS INTEGER) AS cache_write,
+    CAST(COALESCE(json_extract(m.data, '$.cost'), 0) AS REAL) AS cost,
+    CAST(COALESCE(json_extract(m.data, '$.error.data.statusCode'), 0) AS INTEGER) AS status,
+    COALESCE(json_extract(m.data, '$.error.data.message'), json_extract(m.data, '$.error.name'), '') AS error
+  FROM message m
+  JOIN session s ON s.id = m.session_id
+  WHERE json_extract(m.data, '$.role') = 'assistant'
+    AND (
+      CAST(COALESCE(json_extract(m.data, '$.tokens.input'), 0) AS INTEGER) > 0
+      OR CAST(COALESCE(json_extract(m.data, '$.tokens.output'), 0) AS INTEGER) > 0
+      OR CAST(COALESCE(json_extract(m.data, '$.tokens.cache.read'), 0) AS INTEGER) > 0
+      OR json_extract(m.data, '$.error') IS NOT NULL
+      OR (json_extract(m.data, '$.time.completed') IS NULL AND m.time_created >= %d)
+    )
+  ORDER BY m.time_created DESC
+  LIMIT %d
+) top_m;`, cutoffMs, requestLogMaxLimit)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()

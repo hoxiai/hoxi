@@ -658,4 +658,21 @@ export interface FileValidateResponse {
   resolved?: Record<string, string>;
 }
 
+export interface SystemStorageStats {
+  totalBytes: number;
+  databaseBytes: number;
+  sessionsBytes: number;
+  engineLogsBytes: number;
+  cacheIndexBytes: number;
+  dataDir: string;
+}
+
+export interface SystemStorageCleanResult {
+  freedBytes: number;
+  compactedSessions: number;
+  prunedFiles: number;
+  storage: SystemStorageStats;
+}
+
+
 

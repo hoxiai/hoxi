@@ -228,6 +228,30 @@ func (s *Store) VisitTurns(sessionID string, fn func(rec SessionRecord)) bool {
 	return true
 }
 
+// VisitTurnsTransient reads turns for telemetry, history, or recall without
+// pinning or evicting the in-memory LRU transcript cache when the session is
+// not already loaded.
+func (s *Store) VisitTurnsTransient(sessionID string, fn func(rec SessionRecord)) bool {
+	ss := s.lockSession(sessionID, false)
+	if ss == nil {
+		return false
+	}
+	defer ss.mu.Unlock()
+	if ss.turnsLoaded {
+		fn(ss.rec)
+		return true
+	}
+	rec := ss.rec
+	rec.Turns, _ = s.readTurns(ss.rec.ID)
+	fn(rec)
+	return true
+}
+
+// Dir returns the root directory of the session store.
+func (s *Store) Dir() string {
+	return s.dir
+}
+
 func (s *Store) Meta(sessionID string) (SessionRecord, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

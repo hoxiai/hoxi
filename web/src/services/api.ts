@@ -36,6 +36,8 @@ import type {
   SaveWorkspaceInput,
   SlashCommandInfo,
   SystemRuntimeInfo,
+  SystemStorageCleanResult,
+  SystemStorageStats,
   WorkspaceProfile,
   WorktreeMeta,
   WorktreeStatus,
@@ -105,6 +107,16 @@ export const hoxiAPI = {
 
   getSystemInfo(): Promise<SystemRuntimeInfo> {
     return requestJSON("/api/hoxi/system-info");
+  },
+
+  getSystemStorage(): Promise<SystemStorageStats> {
+    return requestJSON("/api/hoxi/system/storage");
+  },
+
+  cleanSystemStorage(): Promise<SystemStorageCleanResult> {
+    return requestJSON("/api/hoxi/system/storage/clean", {
+      method: "POST",
+    });
   },
 
   installEngine(restart = false): Promise<{

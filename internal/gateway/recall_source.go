@@ -50,35 +50,48 @@ func (s *gatewayRecallSource) runnerSessions(directory string) []recall.Session 
 		projectID, _ = s.g.workspaces.ProjectIDForDirectory(directory)
 	}
 	infos := s.g.runner.Store().ListProject(projectID, directory)
-	sessions := make([]recall.Session, 0, len(infos))
+	sessions := make([]recall.Session, 0, recallMaxSessions)
 	for _, info := range infos {
+		if len(sessions) >= recallMaxSessions {
+			break
+		}
 		if info.ParentID != "" || info.Time.Archived > 0 {
 			continue
 		}
-		rec, ok := s.g.runner.Store().Get(info.ID)
-		if !ok || rec.Subagent {
+		meta, ok := s.g.runner.Store().Meta(info.ID)
+		if !ok || meta.Subagent {
 			continue
 		}
-		session := recall.Session{
-			ID:        rec.ID,
-			Title:     rec.Title,
-			Directory: rec.WorktreePath,
-			Runtime:   rec.Runtime,
-			UpdatedAt: rec.UpdatedAt,
-		}
-		for _, turn := range rec.Turns {
-			if text := turnText(turn); text != "" {
-				session.Turns = append(session.Turns, recall.Turn{
-					Role:    turn.Info.Role,
-					Text:    text,
-					Created: turn.Info.Time.Created,
-				})
+		var session recall.Session
+		var hasSession bool
+		s.g.runner.Store().VisitTurnsTransient(info.ID, func(rec runner.SessionRecord) {
+			if rec.Subagent {
+				return
 			}
-			if len(session.Turns) >= recallMaxTurns {
-				break
+			session = recall.Session{
+				ID:        rec.ID,
+				Title:     rec.Title,
+				Directory: rec.WorktreePath,
+				Runtime:   rec.Runtime,
+				UpdatedAt: rec.UpdatedAt,
 			}
+			for _, turn := range rec.Turns {
+				if text := turnText(turn); text != "" {
+					session.Turns = append(session.Turns, recall.Turn{
+						Role:    turn.Info.Role,
+						Text:    text,
+						Created: turn.Info.Time.Created,
+					})
+				}
+				if len(session.Turns) >= recallMaxTurns {
+					break
+				}
+			}
+			hasSession = true
+		})
+		if hasSession {
+			sessions = append(sessions, session)
 		}
-		sessions = append(sessions, session)
 	}
 	return sessions
 }

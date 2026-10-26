@@ -124,7 +124,7 @@ export async function refreshWorktreeStatus(sessionID?: string | null): Promise<
       : await hoxiAPI.getWorktreeStatus(key, dirArg);
     if (!isCurrentScope()) return;
     const prevMeta = workspace.worktreeBySession[key];
-    setWorktreeMetaIfChanged(key, {
+    const nextMeta: WorktreeMeta = {
       sessionID: key,
       isolated: st.isolated,
       directory: st.directory || dirArg || "",
@@ -145,12 +145,34 @@ export async function refreshWorktreeStatus(sessionID?: string | null): Promise<
       compareURL: st.compareURL,
       health: st.health,
       repos: st.repos,
-    });
+    };
+    const statusSignatureUnchanged = Boolean(
+      prevMeta &&
+      prevMeta.isolated === nextMeta.isolated &&
+      prevMeta.directory === nextMeta.directory &&
+      prevMeta.branch === nextMeta.branch &&
+      prevMeta.baseCommit === nextMeta.baseCommit &&
+      prevMeta.headCommit === nextMeta.headCommit &&
+      prevMeta.dirty === nextMeta.dirty &&
+      prevMeta.changedFiles === nextMeta.changedFiles &&
+      prevMeta.uncommittedLines === nextMeta.uncommittedLines &&
+      prevMeta.additions === nextMeta.additions &&
+      prevMeta.deletions === nextMeta.deletions &&
+      areRepoStatusListsEqual(prevMeta.repos, nextMeta.repos)
+    );
+    setWorktreeMetaIfChanged(key, nextMeta);
     if (key === "__root__" || key === workspace.activeSessionID) {
+      const cachedWorktreeDiffs = workspace.worktreeDiffsBySession[key];
+      const canReuseWorktreeDiffs =
+        statusSignatureUnchanged &&
+        Array.isArray(cachedWorktreeDiffs) &&
+        cachedWorktreeDiffs.length > 0;
       const diffs = st.dirty
-        ? (extraDirs.length > 0
-            ? await hoxiAPI.getWorktreeDiff(key, dirArg, extraDirs)
-            : await hoxiAPI.getWorktreeDiff(key, dirArg))
+        ? (canReuseWorktreeDiffs
+            ? cachedWorktreeDiffs
+            : extraDirs.length > 0
+              ? await hoxiAPI.getWorktreeDiff(key, dirArg, extraDirs)
+              : await hoxiAPI.getWorktreeDiff(key, dirArg))
         : [];
       if (!isCurrentScope()) return;
       setDiffListIfChanged("worktreeDiffsBySession", key, diffs);

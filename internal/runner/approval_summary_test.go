@@ -1,12 +1,15 @@
 package runner
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
 func TestFinishTurnSummaryCountsOnly(t *testing.T) {
-	svc := NewService(t.TempDir(), nil, nil, "")
+	home := t.TempDir()
+	t.Setenv("HOXI_HOME", home)
+	svc := NewService(t.TempDir(), nil, nil, filepath.Join(home, "sessions"))
 	var got []string
 	svc.SetSummaryNotifier(func(_, body string) { got = append(got, body) })
 	parent := "ses_agy_parent"

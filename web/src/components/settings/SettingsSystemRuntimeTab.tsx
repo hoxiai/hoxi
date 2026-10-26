@@ -21,6 +21,7 @@ import { Spinner } from "../icons";
 import { t } from "../../i18n";
 import { SettingGroup, SettingRow, ToggleSwitch } from "./setting-controls";
 import { confirmAction } from "./confirm-dialog";
+import { StorageCleanupSection } from "./StorageCleanupSection";
 
 export function SystemRuntimeSettingsTab() {
   const [sysInfo, setSysInfo] = createSignal<SystemRuntimeInfo | null>(null);
@@ -412,7 +413,10 @@ export function SystemRuntimeSettingsTab() {
         </details>
       </SettingGroup>
 
-      {/* 3. Maintenance Actions */}
+      {/* 3. Local Storage & Cleanup */}
+      <StorageCleanupSection onToast={showToast} />
+
+      {/* 4. Maintenance Actions */}
       <SettingGroup
         title={t("settings.sectionMaintenanceTitle")}
         tip={t("settings.sectionMaintenanceDesc")}

@@ -93,6 +93,7 @@ type Gateway struct {
 	engineReadyMu         sync.Mutex
 	engineReadyAt         time.Time
 	engineReadyOK         bool
+	storageCleanMu        sync.Mutex
 }
 
 func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statusbar.Tracker) *Gateway {
@@ -468,6 +469,8 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 	g.registerDesktopNotifyRoute(g.mux)
 
 	g.mux.HandleFunc("/api/hoxi/system-info", g.handleSystemRuntimeInfo)
+	g.mux.HandleFunc("/api/hoxi/system/storage", g.handleSystemStorage)
+	g.mux.HandleFunc("/api/hoxi/system/storage/clean", g.handleSystemStorageClean)
 	g.mux.HandleFunc("/api/hoxi/engine/install", g.handleEngineInstall)
 	g.mux.HandleFunc("/api/hoxi/keep-awake", g.handleKeepAwake)
 	g.mux.HandleFunc("/api/hoxi/sandbox/session", g.handleSandboxSession)
