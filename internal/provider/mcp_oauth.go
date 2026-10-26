@@ -8,7 +8,6 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -29,10 +28,11 @@ const (
 )
 
 type mcpOAuthStartRequest struct {
-	ProviderID   string `json:"providerId"`
-	ProviderName string `json:"providerName,omitempty"`
-	SiteURL      string `json:"siteUrl,omitempty"`
-	BaseURL      string `json:"baseUrl,omitempty"`
+	ProviderID        string   `json:"providerId"`
+	ProviderName      string   `json:"providerName,omitempty"`
+	SiteURL           string   `json:"siteUrl,omitempty"`
+	BaseURL           string   `json:"baseUrl,omitempty"`
+	RecommendedModels []string `json:"recommendedModels,omitempty"`
 }
 
 type mcpOAuthStartResponse struct {
@@ -54,27 +54,26 @@ type mcpOAuthPollResponse struct {
 	ProviderName string              `json:"providerName,omitempty"`
 	SiteOrigin   string              `json:"siteOrigin,omitempty"`
 	MCPURL       string              `json:"mcpUrl,omitempty"`
-	AccessToken  string              `json:"accessToken,omitempty"`
 	BaseURL      string              `json:"baseUrl,omitempty"`
-	APIKey       string              `json:"apiKey,omitempty"`
 	AccountLabel string              `json:"accountLabel,omitempty"`
 	Models       []mcpOAuthModelItem `json:"models,omitempty"`
 	Error        string              `json:"error,omitempty"`
 }
 
 type mcpOAuthSession struct {
-	mu           sync.Mutex
-	state        string
-	codeVerifier string
-	redirectURI  string
-	siteOrigin   string
-	providerID   string
-	providerName string
-	hintBaseURL  string
-	authURL      string
-	createdAt    time.Time
-	polling      bool
-	result       mcpOAuthPollResponse
+	mu                sync.Mutex
+	state             string
+	codeVerifier      string
+	redirectURI       string
+	siteOrigin        string
+	providerID        string
+	providerName      string
+	hintBaseURL       string
+	recommendedModels []string
+	authURL           string
+	createdAt         time.Time
+	polling           bool
+	result            mcpOAuthPollResponse
 }
 
 type mcpOAuthTokenPayload struct {
@@ -141,15 +140,16 @@ func (g *Service) handleProviderMCPOAuthStart(w http.ResponseWriter, r *http.Req
 	authURL := siteOrigin + "/api/oauth/authorize?" + query.Encode()
 
 	sess := &mcpOAuthSession{
-		state:        state,
-		codeVerifier: codeVerifier,
-		redirectURI:  redirectURI,
-		siteOrigin:   siteOrigin,
-		providerID:   providerID,
-		providerName: providerName,
-		hintBaseURL:  strings.TrimSpace(req.BaseURL),
-		authURL:      authURL,
-		createdAt:    time.Now(),
+		state:             state,
+		codeVerifier:      codeVerifier,
+		redirectURI:       redirectURI,
+		siteOrigin:        siteOrigin,
+		providerID:        providerID,
+		providerName:      providerName,
+		hintBaseURL:       strings.TrimSpace(req.BaseURL),
+		recommendedModels: append([]string(nil), req.RecommendedModels...),
+		authURL:           authURL,
+		createdAt:         time.Now(),
 		result: mcpOAuthPollResponse{
 			Status:       "pending",
 			ProviderID:   providerID,
@@ -334,6 +334,14 @@ func (g *Service) stepMCPOAuthSession(ctx context.Context, sess *mcpOAuthSession
 	provCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	baseURL, apiKey, models := g.provisionProviderWithMCPToken(provCtx, sess, accessToken)
+	persistedModels, persistErr := g.persistMCPOAuthProvisioning(sess, mcpURL, accessToken, baseURL, apiKey, models)
+	if persistErr != nil {
+		sess.mu.Lock()
+		sess.result.Status = "error"
+		sess.result.Error = persistErr.Error()
+		sess.mu.Unlock()
+		return true
+	}
 
 	sess.mu.Lock()
 	sess.result = mcpOAuthPollResponse{
@@ -342,309 +350,12 @@ func (g *Service) stepMCPOAuthSession(ctx context.Context, sess *mcpOAuthSession
 		ProviderName: sess.providerName,
 		SiteOrigin:   sess.siteOrigin,
 		MCPURL:       mcpURL,
-		AccessToken:  accessToken,
 		BaseURL:      baseURL,
-		APIKey:       apiKey,
 		AccountLabel: accountLabel,
-		Models:       models,
+		Models:       persistedModels,
 	}
 	sess.mu.Unlock()
 	return true
-}
-
-func (g *Service) provisionProviderWithMCPToken(ctx context.Context, sess *mcpOAuthSession, accessToken string) (string, string, []mcpOAuthModelItem) {
-	siteOrigin := sess.siteOrigin
-	var gwPayload struct {
-		URL     string `json:"url"`
-		BaseURL string `json:"baseUrl"`
-	}
-	var baseURL string
-	if g.fetchMCPAuthedJSON(ctx, http.MethodGet, siteOrigin+"/api/proxy/gateway-url", accessToken, nil, &gwPayload) == nil {
-		if rawGW := firstNonEmptyString(gwPayload.URL, gwPayload.BaseURL); rawGW != "" {
-			baseURL = normalizeGatewayAPIBaseURL(rawGW)
-		}
-	}
-	if baseURL == "" && sess.hintBaseURL != "" {
-		baseURL = normalizeGatewayAPIBaseURL(sess.hintBaseURL)
-	}
-	if baseURL == "" {
-		baseURL = deriveGatewayAPIBaseURLFromSite(siteOrigin)
-	}
-
-	apiKey := g.fetchOrMintSiteAPIKey(ctx, siteOrigin, accessToken)
-	if apiKey == "" {
-		apiKey = accessToken
-	}
-	models := g.fetchSiteModels(ctx, siteOrigin, baseURL, accessToken, apiKey)
-	return baseURL, apiKey, models
-}
-
-func (g *Service) fetchOrMintSiteAPIKey(ctx context.Context, siteOrigin, accessToken string) string {
-	listURL := siteOrigin + "/api/proxy/external?path=" + url.QueryEscape("/api/site/api-keys/list")
-	var listResp map[string]any
-	if g.fetchMCPAuthedJSON(ctx, http.MethodGet, listURL, accessToken, nil, &listResp) == nil {
-		if key := extractRawAPIKeyFromPayload(listResp); key != "" {
-			return key
-		}
-		createURL := siteOrigin + "/api/proxy/external?path=" + url.QueryEscape("/api/site/api-keys/create")
-		var createResp map[string]any
-		if g.fetchMCPAuthedJSON(ctx, http.MethodPost, createURL, accessToken, map[string]any{"name": "Hoxi Desktop", "groupId": 0}, &createResp) == nil {
-			if key := extractRawAPIKeyFromPayload(createResp); key != "" {
-				return key
-			}
-			var retryResp map[string]any
-			if g.fetchMCPAuthedJSON(ctx, http.MethodGet, listURL, accessToken, nil, &retryResp) == nil {
-				if key := extractRawAPIKeyFromPayload(retryResp); key != "" {
-					return key
-				}
-			}
-		}
-	}
-
-	memberKeysURL := siteOrigin + "/api/hoxi/member/keys"
-	var memberResp map[string]any
-	if g.fetchMCPAuthedJSON(ctx, http.MethodGet, memberKeysURL, accessToken, nil, &memberResp) == nil {
-		if key := extractRawAPIKeyFromPayload(memberResp); key != "" {
-			return key
-		}
-		if keyID := extractFirstActiveKeyID(memberResp); keyID > 0 {
-			var revealResp map[string]any
-			if g.fetchMCPAuthedJSON(ctx, http.MethodPost, memberKeysURL, accessToken, map[string]any{"action": "reveal", "id": keyID}, &revealResp) == nil {
-				if key := extractRawAPIKeyFromPayload(revealResp); key != "" {
-					return key
-				}
-			}
-		}
-		var createResp map[string]any
-		if g.fetchMCPAuthedJSON(ctx, http.MethodPost, memberKeysURL, accessToken, map[string]any{"name": "Hoxi Desktop"}, &createResp) == nil {
-			if key := extractRawAPIKeyFromPayload(createResp); key != "" {
-				return key
-			}
-		}
-	}
-	return ""
-}
-
-func (g *Service) fetchSiteModels(ctx context.Context, siteOrigin, baseURL, accessToken, apiKey string) []mcpOAuthModelItem {
-	for _, endpoint := range []string{
-		siteOrigin + "/api/ainode/public-models",
-		siteOrigin + "/api/proxy/external?path=" + url.QueryEscape("/api/site/models/groups"),
-		siteOrigin + "/api/hoxi/member/models",
-	} {
-		var payload map[string]any
-		if g.fetchMCPAuthedJSON(ctx, http.MethodGet, endpoint, accessToken, nil, &payload) == nil {
-			if items := parseSiteModelsPayload(payload); len(items) > 0 {
-				return items
-			}
-		}
-	}
-	if baseURL != "" && apiKey != "" {
-		modelsURL := strings.TrimRight(baseURL, "/") + "/models"
-		if req, err := http.NewRequestWithContext(ctx, http.MethodGet, modelsURL, nil); err == nil {
-			req.Header.Set("Accept", "application/json")
-			req.Header.Set("Authorization", "Bearer "+apiKey)
-			if resp, err := g.mcpOAuthHTTPClient(modelsURL, 8*time.Second).Do(req); err == nil {
-				defer resp.Body.Close()
-				if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-					raw, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
-					if fetched := parseOpenAIModelsPayload(raw); len(fetched) > 0 {
-						out := make([]mcpOAuthModelItem, 0, len(fetched))
-						for _, m := range fetched {
-							out = append(out, mcpOAuthModelItem{ID: m.ID, Name: m.Name})
-						}
-						return out
-					}
-				}
-			}
-		}
-	}
-	return nil
-}
-
-func parseSiteModelsPayload(payload map[string]any) []mcpOAuthModelItem {
-	if payload == nil {
-		return nil
-	}
-	seen := map[string]struct{}{}
-	var out []mcpOAuthModelItem
-	parseModelList := func(items []any) {
-		for _, raw := range items {
-			m, ok := raw.(map[string]any)
-			if !ok {
-				continue
-			}
-			id := firstNonEmptyString(m["code"], m["modelName"], m["id"], m["model"])
-			if id == "" {
-				continue
-			}
-			if _, dup := seen[id]; dup {
-				continue
-			}
-			seen[id] = struct{}{}
-			name := firstNonEmptyString(m["name"], m["displayName"], id)
-			out = append(out, mcpOAuthModelItem{
-				ID:          id,
-				Name:        name,
-				InputPrice:  toFloat64(m["inputPrice"], m["inputUsdPerM"]),
-				OutputPrice: toFloat64(m["outputPrice"], m["outputUsdPerM"]),
-			})
-		}
-	}
-
-	var groups []any
-	if dataMap, ok := payload["data"].(map[string]any); ok {
-		if gList, ok := dataMap["groups"].([]any); ok {
-			groups = gList
-		} else if mList, ok := dataMap["models"].([]any); ok {
-			parseModelList(mList)
-		}
-	} else if dataList, ok := payload["data"].([]any); ok {
-		parseModelList(dataList)
-	}
-	if len(groups) == 0 {
-		if gList, ok := payload["groups"].([]any); ok {
-			groups = gList
-		}
-	}
-	for _, gRaw := range groups {
-		if gMap, ok := gRaw.(map[string]any); ok {
-			if mList, ok := gMap["models"].([]any); ok {
-				parseModelList(mList)
-			}
-		}
-	}
-	if mList, ok := payload["models"].([]any); ok {
-		parseModelList(mList)
-	}
-	return out
-}
-
-func extractRawAPIKeyFromPayload(payload map[string]any) string {
-	if payload == nil {
-		return ""
-	}
-	cleanKey := func(v any) string {
-		s, _ := v.(string)
-		s = strings.TrimSpace(s)
-		if s == "" || strings.Contains(s, "***") || s == "********" {
-			return ""
-		}
-		return s
-	}
-	for _, field := range []string{"rawKey", "key", "apiKey", "token"} {
-		if k := cleanKey(payload[field]); k != "" {
-			return k
-		}
-	}
-	if dataMap, ok := payload["data"].(map[string]any); ok {
-		for _, field := range []string{"rawKey", "key", "apiKey", "token"} {
-			if k := cleanKey(dataMap[field]); k != "" {
-				return k
-			}
-		}
-		for _, listField := range []string{"list", "items", "keys"} {
-			if list, ok := dataMap[listField].([]any); ok {
-				if k := extractRawAPIKeyFromSlice(list); k != "" {
-					return k
-				}
-			}
-		}
-	}
-	for _, listField := range []string{"data", "keys", "items", "list"} {
-		if list, ok := payload[listField].([]any); ok {
-			if k := extractRawAPIKeyFromSlice(list); k != "" {
-				return k
-			}
-		}
-	}
-	return ""
-}
-
-func extractRawAPIKeyFromSlice(items []any) string {
-	for _, raw := range items {
-		item, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
-		status := strings.ToLower(firstNonEmptyString(item["status"]))
-		if status != "" && status != "active" && status != "enabled" && status != "1" {
-			continue
-		}
-		for _, field := range []string{"rawKey", "key", "apiKey", "token"} {
-			if k, ok := item[field].(string); ok {
-				k = strings.TrimSpace(k)
-				if k != "" && !strings.Contains(k, "***") && k != "********" {
-					return k
-				}
-			}
-		}
-	}
-	return ""
-}
-
-func extractFirstActiveKeyID(payload map[string]any) int64 {
-	for _, listField := range []string{"keys", "data", "items"} {
-		list, ok := payload[listField].([]any)
-		if !ok {
-			continue
-		}
-		for _, raw := range list {
-			item, ok := raw.(map[string]any)
-			if !ok {
-				continue
-			}
-			status := strings.ToLower(firstNonEmptyString(item["status"]))
-			if status != "" && status != "active" && status != "enabled" {
-				continue
-			}
-			if id := int64(toFloat64(item["id"])); id > 0 {
-				return id
-			}
-		}
-	}
-	return 0
-}
-
-func (g *Service) fetchMCPAuthedJSON(ctx context.Context, method, targetURL, accessToken string, reqBody any, out any) error {
-	var bodyReader io.Reader
-	if reqBody != nil {
-		b, err := json.Marshal(reqBody)
-		if err != nil {
-			return err
-		}
-		bodyReader = bytes.NewReader(b)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, targetURL, bodyReader)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Accept", "application/json")
-	if reqBody != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	if accessToken != "" {
-		req.Header.Set("Authorization", "Bearer "+accessToken)
-	}
-	resp, err := g.mcpOAuthHTTPClient(targetURL, 8*time.Second).Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
-	if out == nil {
-		return nil
-	}
-	return json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(out)
-}
-
-func (g *Service) mcpOAuthHTTPClient(targetURL string, timeout time.Duration) *http.Client {
-	transport := providerTransport
-	if isLoopbackURL(targetURL) {
-		transport = localTransport
-	}
-	return &http.Client{Timeout: timeout, Transport: transport}
 }
 
 func (g *Service) resolveMCPOAuthSiteOrigin(ctx context.Context, rawSiteURL, rawBaseURL string) string {

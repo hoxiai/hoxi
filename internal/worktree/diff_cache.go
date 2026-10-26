@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode/utf8"
 )
 
 const (
@@ -656,7 +657,7 @@ func (m *worktreeManager) DiffFile(sessionID, relPath string) (worktreeFileDiff,
 		}
 		large := len(patchRaw) > maxSingleFilePatchBytes
 		if large {
-			patchRaw = patchRaw[:maxSingleFilePatchBytes]
+			patchRaw = truncatePatchOnBoundary(patchRaw, maxSingleFilePatchBytes)
 		}
 		return worktreeFileDiff{
 			File:          cleaned,
@@ -734,3 +735,26 @@ func (m *worktreeManager) DiffFile(sessionID, relPath string) (worktreeFileDiff,
 		Stamp:         stamp,
 	}, nil
 }
+
+// truncatePatchOnBoundary truncates patch at the last newline within limit when
+// present, or backs up to the nearest valid UTF-8 rune boundary so neither multi-byte
+// runes nor unified diff lines are torn in half.
+func truncatePatchOnBoundary(patch string, limit int) string {
+	if limit <= 0 || len(patch) <= limit {
+		return patch
+	}
+	sub := patch[:limit]
+	if nl := strings.LastIndexByte(sub, '\n'); nl > 0 {
+		return sub[:nl+1]
+	}
+	for len(sub) > 0 && !utf8.RuneStart(sub[len(sub)-1]) {
+		sub = sub[:len(sub)-1]
+	}
+	if len(sub) > 0 {
+		if r, size := utf8.DecodeLastRuneInString(sub); r == utf8.RuneError && size == 1 {
+			sub = sub[:len(sub)-1]
+		}
+	}
+	return sub
+}
+

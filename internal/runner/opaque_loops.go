@@ -375,8 +375,9 @@ func isSafeListingProducer(seg string) bool {
 			a := args[i]
 			switch {
 			case !strings.HasPrefix(a, "-") && a != "!" && a != "(" && a != ")":
-				if named {
-					return false // a stray word after the predicates
+				if named || strings.Contains(a, "..") || dotGlobRe.MatchString(a) ||
+					isSecretFilePath(a) || isSensitiveExternalPath(a) || isProtectedRelPath(a) {
+					return false // a stray word after the predicates or a sensitive/protected root
 				}
 			case a == "-name" || a == "-iname":
 				if i+1 >= len(args) || !extGlobRe.MatchString(args[i+1]) {
@@ -391,6 +392,9 @@ func isSafeListingProducer(seg string) bool {
 				}
 				i++
 			case a == "-type" || a == "-maxdepth" || a == "-mindepth":
+				if i+1 >= len(args) {
+					return false
+				}
 				i++
 			case a == "-o" || a == "-or":
 				if !named {

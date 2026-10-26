@@ -57,6 +57,28 @@ func (s *Service) Root() string {
 	return s.root
 }
 
+// StorageBytes returns the total on-disk footprint of cached index files under s.root.
+func (s *Service) StorageBytes() int64 {
+	if s == nil {
+		return 0
+	}
+	entries, err := os.ReadDir(s.root)
+	if err != nil {
+		return 0
+	}
+	var total int64
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if info, err := entry.Info(); err == nil {
+			total += info.Size()
+		}
+	}
+	return total
+}
+
+
 // ClearCache drops in-memory and on-disk cached indexes under s.root.
 func (s *Service) ClearCache() int64 {
 	s.mu.Lock()

@@ -2,15 +2,17 @@ package gateway
 
 import (
 	"context"
-	"io/fs"
 	"net/http"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/hoxiai/hoxi/internal/diagnostics"
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
+	"github.com/hoxiai/hoxi/internal/opencode"
+	"github.com/hoxiai/hoxi/internal/opencode/ocstate"
+	"github.com/hoxiai/hoxi/internal/runner"
+	"github.com/hoxiai/hoxi/internal/worktree"
 )
 
 const (
@@ -62,7 +64,7 @@ func (g *Gateway) handleSystemStorageClean(w http.ResponseWriter, r *http.Reques
 		writeJSONError(w, http.StatusMethodNotAllowed, "POST required")
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 	defer cancel()
 	writeJSON(w, http.StatusOK, g.CleanStorage(ctx))
 }
@@ -101,15 +103,21 @@ func (g *Gateway) runBackgroundStorageMaintenance(ctx context.Context) {
 	g.storageCleanMu.Lock()
 	defer g.storageCleanMu.Unlock()
 
-	_, _ = g.pruneEngineLogDirs(autoCleanLogMaxAge)
-	_, _ = g.pruneWorkspaceTempPacks( time.Hour)
+	_, _ = opencode.PruneEngineLogDirs(autoCleanLogMaxAge)
+	_, _ = worktree.PruneTempPacks(g.knownWorkspaceDirs(), time.Hour)
 	if g.runner != nil && g.runner.Store() != nil {
-		_, _ = g.runner.Store().CompactIdleTurns()
-		_, _ = pruneTempFilesInDir(g.runner.Store().Dir(), time.Hour)
+		_, _, _ = g.runner.Store().CleanStorage(time.Hour)
 	}
 	if dbPath := hoxipaths.DBPath(); dbPath != "" {
-		if measureDatabaseBytes(dbPath) >= autoCleanDBThresholdBytes {
-			cleanSQLiteEventLog(ctx, dbPath)
+		if ocstate.MeasureDatabaseBytes(dbPath) >= autoCleanDBThresholdBytes {
+			if err := ocstate.CleanDatabaseEventLog(ctx, dbPath); err != nil {
+				diagnostics.Record(diagnostics.Entry{
+					Kind:    "system",
+					Level:   "warn",
+					Source:  "storage",
+					Message: err.Error(),
+				})
+			}
 		}
 	}
 }
@@ -117,10 +125,21 @@ func (g *Gateway) runBackgroundStorageMaintenance(ctx context.Context) {
 // InspectStorage calculates the current storage footprint across Hoxi's four
 // primary storage categories.
 func (g *Gateway) InspectStorage() SystemStorageStats {
-	dbBytes := measureDatabaseBytes(hoxipaths.DBPath())
-	sessionsBytes := dirSizeBytes(g.sessionsRootDir())
-	engineLogsBytes := g.measureEngineLogsBytes()
-	cacheIndexBytes := dirSizeBytes(g.codeIndexRootDir()) + g.measureWorkspaceTempPacksBytes()
+	dbBytes := ocstate.MeasureDatabaseBytes(hoxipaths.DBPath())
+	var sessionsBytes int64
+	if g.runner != nil && g.runner.Store() != nil {
+		sessionsBytes = g.runner.Store().StorageBytes()
+	} else {
+		sessionsBytes = runner.MeasureDirBytes(hoxipaths.Join("sessions"))
+	}
+	engineLogsBytes := opencode.MeasureEngineLogsBytes()
+	var codeIndexBytes int64
+	if g.codeIndex != nil {
+		codeIndexBytes = g.codeIndex.StorageBytes()
+	} else {
+		codeIndexBytes = runner.MeasureDirBytes(hoxipaths.Join("code-index"))
+	}
+	cacheIndexBytes := codeIndexBytes + worktree.MeasureTempPacksBytes(g.knownWorkspaceDirs())
 	total := dbBytes + sessionsBytes + engineLogsBytes + cacheIndexBytes
 	return SystemStorageStats{
 		TotalBytes:      total,
@@ -149,38 +168,41 @@ func (g *Gateway) CleanStorage(ctx context.Context) SystemStorageCleanResult {
 	var prunedFiles int
 
 	if dbPath := hoxipaths.DBPath(); dbPath != "" {
-		dbBefore := measureDatabaseBytes(dbPath)
-		cleanSQLiteEventLog(ctx, dbPath)
-		if dbAfter := measureDatabaseBytes(dbPath); dbBefore > dbAfter {
+		dbBefore := ocstate.MeasureDatabaseBytes(dbPath)
+		if err := ocstate.CleanDatabaseEventLog(ctx, dbPath); err != nil {
+			diagnostics.Record(diagnostics.Entry{
+				Kind:    "system",
+				Level:   "warn",
+				Source:  "storage",
+				Message: err.Error(),
+			})
+		}
+		if dbAfter := ocstate.MeasureDatabaseBytes(dbPath); dbBefore > dbAfter {
 			explicitFreed += dbBefore - dbAfter
 		}
 	}
 
 	if g.runner != nil && g.runner.Store() != nil {
-		c, freed := g.runner.Store().CompactIdleTurns()
+		c, files, freed := g.runner.Store().CleanStorage(minAge)
 		compacted += c
+		prunedFiles += files
 		explicitFreed += freed
-	}
-	if sDir := g.sessionsRootDir(); sDir != "" {
-		files, freed := pruneTempFilesInDir(sDir, minAge)
+	} else if sDir := hoxipaths.Join("sessions"); sDir != "" {
+		files, freed := runner.PruneTempFiles(sDir, minAge)
 		prunedFiles += files
 		explicitFreed += freed
 	}
 
-	if files, freed := g.pruneEngineLogDirs(minAge); files > 0 || freed > 0 {
+	if files, freed := opencode.PruneEngineLogDirs(minAge); files > 0 || freed > 0 {
 		prunedFiles += files
 		explicitFreed += freed
 	}
 
 	if g.codeIndex != nil {
 		explicitFreed += g.codeIndex.ClearCache()
-	} else if cDir := g.codeIndexRootDir(); cDir != "" {
-		files, freed := pruneFilesInDir(cDir, 0)
-		prunedFiles += files
-		explicitFreed += freed
 	}
 
-	if files, freed := g.pruneWorkspaceTempPacks(minAge); files > 0 || freed > 0 {
+	if files, freed := worktree.PruneTempPacks(g.knownWorkspaceDirs(), minAge); files > 0 || freed > 0 {
 		prunedFiles += files
 		explicitFreed += freed
 	}
@@ -200,57 +222,6 @@ func (g *Gateway) CleanStorage(ctx context.Context) SystemStorageCleanResult {
 		PrunedFiles:       prunedFiles,
 		Storage:           after,
 	}
-}
-
-func (g *Gateway) sessionsRootDir() string {
-	if g.runner != nil && g.runner.Store() != nil {
-		if dir := strings.TrimSpace(g.runner.Store().Dir()); dir != "" {
-			return dir
-		}
-	}
-	return hoxipaths.Join("sessions")
-}
-
-func (g *Gateway) codeIndexRootDir() string {
-	if g.codeIndex != nil {
-		if dir := strings.TrimSpace(g.codeIndex.Root()); dir != "" {
-			return dir
-		}
-	}
-	return hoxipaths.Join("code-index")
-}
-
-func engineLogDirs() []string {
-	home := hoxipaths.Home()
-	if home == "" {
-		return nil
-	}
-	ocData := filepath.Join(home, "engine-data", "opencode")
-	return []string{
-		filepath.Join(ocData, "log"),
-		filepath.Join(ocData, "tool-output"),
-		filepath.Join(ocData, "snapshot"),
-		filepath.Join(home, "logs"),
-	}
-}
-
-func (g *Gateway) measureEngineLogsBytes() int64 {
-	var total int64
-	for _, dir := range engineLogDirs() {
-		total += dirSizeBytes(dir)
-	}
-	return total
-}
-
-func (g *Gateway) pruneEngineLogDirs(minAge time.Duration) (int, int64) {
-	var totalFiles int
-	var totalBytes int64
-	for _, dir := range engineLogDirs() {
-		files, bytes := pruneFilesInDir(dir, minAge)
-		totalFiles += files
-		totalBytes += bytes
-	}
-	return totalFiles, totalBytes
 }
 
 func (g *Gateway) knownWorkspaceDirs() []string {
@@ -274,175 +245,4 @@ func (g *Gateway) knownWorkspaceDirs() []string {
 		}
 	}
 	return dirs
-}
-
-func (g *Gateway) measureWorkspaceTempPacksBytes() int64 {
-	var total int64
-	for _, ws := range g.knownWorkspaceDirs() {
-		packDir := filepath.Join(ws, ".git", "objects", "pack")
-		entries, err := os.ReadDir(packDir)
-		if err != nil {
-			continue
-		}
-		for _, entry := range entries {
-			if entry.IsDir() || !strings.HasPrefix(entry.Name(), "tmp_pack_") {
-				continue
-			}
-			if info, err := entry.Info(); err == nil {
-				total += info.Size()
-			}
-		}
-	}
-	return total
-}
-
-func (g *Gateway) pruneWorkspaceTempPacks(minAge time.Duration) (int, int64) {
-	now := time.Now()
-	var count int
-	var freed int64
-	for _, ws := range g.knownWorkspaceDirs() {
-		packDir := filepath.Join(ws, ".git", "objects", "pack")
-		entries, err := os.ReadDir(packDir)
-		if err != nil {
-			continue
-		}
-		for _, entry := range entries {
-			if entry.IsDir() || !strings.HasPrefix(entry.Name(), "tmp_pack_") {
-				continue
-			}
-			info, err := entry.Info()
-			if err != nil {
-				continue
-			}
-			if minAge > 0 && now.Sub(info.ModTime()) < minAge {
-				continue
-			}
-			fullPath := filepath.Join(packDir, entry.Name())
-			if err := os.Chmod(fullPath, 0o600); err != nil && !os.IsNotExist(err) {
-				// Git creates tmp_pack_* as 0444; make writable before unlink if needed.
-			}
-			if os.Remove(fullPath) == nil {
-				count++
-				freed += info.Size()
-			}
-		}
-	}
-	return count, freed
-}
-
-func measureDatabaseBytes(dbPath string) int64 {
-	dbPath = strings.TrimSpace(dbPath)
-	if dbPath == "" {
-		return 0
-	}
-	var total int64
-	for _, suffix := range []string{"", "-wal", "-shm"} {
-		if info, err := os.Stat(dbPath + suffix); err == nil && !info.IsDir() {
-			total += info.Size()
-		}
-	}
-	return total
-}
-
-func cleanSQLiteEventLog(ctx context.Context, dbPath string) {
-	dbPath = strings.TrimSpace(dbPath)
-	if dbPath == "" {
-		return
-	}
-	if _, err := os.Stat(dbPath); err != nil {
-		return
-	}
-	for _, stmt := range []string{
-		"DELETE FROM event;",
-		"DELETE FROM event_sequence;",
-		"PRAGMA wal_checkpoint(TRUNCATE);",
-		"VACUUM;",
-		"PRAGMA wal_checkpoint(TRUNCATE);",
-	} {
-		cmdCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-		cmd := exec.CommandContext(cmdCtx, "sqlite3", "-cmd", ".timeout 10000", dbPath, stmt)
-		_ = cmd.Run()
-		cancel()
-	}
-}
-
-func dirSizeBytes(root string) int64 {
-	root = strings.TrimSpace(root)
-	if root == "" {
-		return 0
-	}
-	var total int64
-	_ = filepath.WalkDir(root, func(_ string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return nil
-		}
-		if info, infoErr := d.Info(); infoErr == nil {
-			total += info.Size()
-		}
-		return nil
-	})
-	return total
-}
-
-func pruneFilesInDir(root string, minAge time.Duration) (int, int64) {
-	root = strings.TrimSpace(root)
-	if root == "" {
-		return 0, 0
-	}
-	now := time.Now()
-	var count int
-	var freed int64
-	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return nil
-		}
-		info, infoErr := d.Info()
-		if infoErr != nil {
-			return nil
-		}
-		if d.Name() == "opencode.log" {
-			if info.Size() > 0 && os.Truncate(path, 0) == nil {
-				count++
-				freed += info.Size()
-			}
-			return nil
-		}
-		if minAge > 0 && now.Sub(info.ModTime()) < minAge {
-			return nil
-		}
-		if os.Remove(path) == nil {
-			count++
-			freed += info.Size()
-		}
-		return nil
-	})
-	return count, freed
-}
-
-func pruneTempFilesInDir(root string, minAge time.Duration) (int, int64) {
-	root = strings.TrimSpace(root)
-	if root == "" {
-		return 0, 0
-	}
-	now := time.Now()
-	var count int
-	var freed int64
-	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() || !strings.HasSuffix(d.Name(), ".tmp") {
-			return nil
-		}
-		info, infoErr := d.Info()
-		if infoErr != nil {
-			return nil
-		}
-		if minAge > 0 && now.Sub(info.ModTime()) < minAge {
-			return nil
-		}
-		if os.Remove(path) == nil {
-			count++
-			freed += info.Size()
-		}
-		return nil
-	})
-	return count, freed
 }

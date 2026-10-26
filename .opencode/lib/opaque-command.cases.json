@@ -728,5 +728,41 @@
   {
     "command": "find src -name '*.go' | xargs rm",
     "opaque": true
+  },
+  {
+    "command": "cd / && rm -rf /tmp/*",
+    "opaque": true
+  },
+  {
+    "command": "cd / && rm /tmp/.env",
+    "opaque": true
+  },
+  {
+    "command": "cd / && rm -rf /var/folders/13/5t054pmd2bn5dkgqvfk2vct80000gn/T/opencode-test",
+    "opaque": false
+  },
+  {
+    "command": "code=$(curl -s -o /tmp/.env -w \"%{http_code}\" http://127.0.0.1:5400/health); echo \"$code\"",
+    "opaque": true
+  },
+  {
+    "command": "code=$(curl -s -o /dev/null -w \"%{http_code}\" -X DELETE http://127.0.0.1:8080/api/resource); echo \"$code\"",
+    "opaque": true
+  },
+  {
+    "command": "code=$(curl -s -o /dev/null -w \"%{http_code}\" -H \"Authorization: Bearer secret\" http://127.0.0.1:8080/api/resource); echo \"$code\"",
+    "opaque": true
+  },
+  {
+    "command": "find ~/.ssh -name \"*.pem\" | while read f; do cat \"$f\"; done",
+    "opaque": true
+  },
+  {
+    "command": "find . -name \"*.go\" -maxdepth | while read f; do cat \"$f\"; done",
+    "opaque": true
+  },
+  {
+    "command": "for x in .agents/skills/foo/SKILL.md; do cat \"$x\"; done",
+    "opaque": false
   }
 ]

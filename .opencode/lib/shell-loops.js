@@ -283,7 +283,7 @@ export function isValueClassWc(args, isSecretOrProtected) {
   return counted;
 }
 
-function isMacOSTempPath(slash) {
+export function isMacOSTempPath(slash) {
   let parts = String(slash ?? "").split("/").filter((p) => p && p !== ".");
   if (parts[0] === "private") parts = parts.slice(1);
   if (parts.length < 5 || parts[0] !== "var" || parts[1] !== "folders") return false;
@@ -331,7 +331,11 @@ export function isValueClassCurl(args, isSecret) {
     } else if (a.startsWith("--output=")) {
       if (!isSafeCurlOutputTarget(a.slice("--output=".length), isSecret)) return false;
       hasSafeOutput = true;
-    } else if (["--max-time", "-m", "--connect-timeout", "-H", "--header", "-A", "--user-agent", "-X", "--request"].includes(a)) {
+    } else if (a === "-X" || a === "--request") {
+      const method = String(args[i + 1] ?? "").toUpperCase();
+      if (method !== "GET" && method !== "HEAD") return false;
+      i++;
+    } else if (["--max-time", "-m", "--connect-timeout", "-A", "--user-agent"].includes(a)) {
       if (i + 1 >= args.length) return false;
       i++;
     } else if (!CURL_SILENT_FLAG_RE.test(a) && a.startsWith("-")) {

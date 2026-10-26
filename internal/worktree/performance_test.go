@@ -283,3 +283,24 @@ func TestSnapshotSkipsMassiveUntrackedDirsWithoutDeletingOnRestore(t *testing.T)
 		t.Fatalf("expected skipped huge_static/ files preserved on RestoreSnapshot, err=%v", err)
 	}
 }
+
+func TestTruncatePatchOnBoundaryPreservesNewlinesAndUTF8(t *testing.T) {
+	t.Parallel()
+	withNewlines := "diff --git a/a.txt b/a.txt\n+第一行内容\n+第二行内容\n"
+	// Slice inside the second Chinese line; should snap back to the end of the first line.
+	cut := len("diff --git a/a.txt b/a.txt\n+第一行内容\n+第二")
+	got := truncatePatchOnBoundary(withNewlines, cut)
+	want := "diff --git a/a.txt b/a.txt\n+第一行内容\n"
+	if got != want {
+		t.Fatalf("expected newline-aligned truncation %q, got %q", want, got)
+	}
+
+	// Single long line with multi-byte UTF-8 and no newline before limit.
+	singleLine := "+你好世界Hello"
+	// "+你" is 1 + 3 = 4 bytes; cutting at 5 lands mid-rune inside '好'.
+	gotUTF8 := truncatePatchOnBoundary(singleLine, 5)
+	if gotUTF8 != "+你" {
+		t.Fatalf("expected UTF-8 boundary truncation %q, got %q", "+你", gotUTF8)
+	}
+}
+

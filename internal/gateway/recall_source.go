@@ -97,6 +97,9 @@ func (s *gatewayRecallSource) runnerSessions(directory string) []recall.Session 
 }
 
 func turnText(turn runner.MessageTurn) string {
+	if runner.IsInternalRecoveryMessageID(turn.Info.ID) {
+		return ""
+	}
 	if turn.Info.Role != "user" && turn.Info.Role != "assistant" {
 		return ""
 	}
@@ -140,6 +143,7 @@ type upstreamSession struct {
 
 type upstreamTurn struct {
 	Info struct {
+		ID   string `json:"id"`
 		Role string `json:"role"`
 		Time struct {
 			Created int64 `json:"created"`
@@ -214,6 +218,9 @@ func (s *gatewayRecallSource) openCodeSessions(ctx context.Context, directory st
 				UpdatedAt: item.Time.Updated,
 			}
 			for _, turn := range turns {
+				if runner.IsInternalRecoveryMessageID(turn.Info.ID) {
+					continue
+				}
 				if turn.Info.Role != "user" && turn.Info.Role != "assistant" {
 					continue
 				}

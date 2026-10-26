@@ -183,6 +183,9 @@ func (s *Service) normalizeOpenCodePart(rec SessionRecord, part *MessagePart, fi
 	if part.Type == "reasoning" {
 		if cleaned, leaked := stripLeakedReasoningToolMarkup(part.Text); leaked {
 			part.Text = cleaned
+			if strings.TrimSpace(part.Text) == "" {
+				return false
+			}
 		}
 		return true
 	}
@@ -387,8 +390,14 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 					}
 				}
 				lastVisibleUserID := user.ID
-				for _, turn := range turns {
+				dropTurnIDs := make(map[string]bool)
+				for i, turn := range turns {
 					if isInternalRecoveryMessageID(turn.Info.ID) {
+						dropTurnIDs[turn.Info.ID] = true
+						continue
+					}
+					if isSupersededEmptyRecoveryStubTurn(turns, i) {
+						dropTurnIDs[turn.Info.ID] = true
 						continue
 					}
 					if turn.Info.Role == "user" {
@@ -411,6 +420,9 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 							s.broadcast(rec.ID, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": part}})
 						}
 					}
+				}
+				if len(dropTurnIDs) > 0 {
+					s.pruneOpenCodeTurnsFromStore(rec.ID, dropTurnIDs)
 				}
 				if _, hasSkill := s.userSkillByMsg.Load(user.ID); hasSkill {
 					hasUserTurn := false

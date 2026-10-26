@@ -10,7 +10,7 @@ import {
   type ProviderAuthAuthorization,
 } from "../services/api";
 import type { ProviderMcpOAuthPollResponse } from "../services/platform-api";
-import { disposeOpenCodeInstance, patchGlobalConfig, saveMcpServer } from "./global-config";
+import { disposeOpenCodeInstance, patchGlobalConfig } from "./global-config";
 import { syncOfficialModelPricing } from "./leaderboard-state";
 import {
   AUTO_PROVIDER_ID,
@@ -668,6 +668,7 @@ export async function connectProviderWithMcpOAuth(opts: {
       providerName: opts.providerName || pid,
       siteUrl: opts.siteURL,
       baseUrl: opts.baseURL,
+      recommendedModels: opts.recommendedModels,
     });
     if (runID !== activeMcpOAuthRunID) return null;
     setProviderMcpOAuthState({ pendingState: startRes.state, authURL: startRes.authUrl });
@@ -687,62 +688,14 @@ export async function connectProviderWithMcpOAuth(opts: {
       }
 
       if (pollRes.status === "authorized") {
-        const resolvedBaseURL = (pollRes.baseUrl || opts.baseURL || "https://api.ainode.run/v1").trim();
-        const resolvedKey = (pollRes.apiKey || pollRes.accessToken || "").trim();
-        if (resolvedKey) await hoxiAPI.setProviderAuth(pid, resolvedKey);
-
-        const existingProvider = workspace.hoxiProviders?.[pid] ?? {};
-        const modelsMap: Record<string, any> = { ...(existingProvider.models || {}) };
-        const returnedModels = Array.isArray(pollRes.models) ? pollRes.models : [];
-
-        if (returnedModels.length > 0) {
-          for (const m of returnedModels) {
-            const mid = (m.id || "").trim();
-            if (!mid) continue;
-            const isChat = !isNonChatUtilityModelID(mid);
-            modelsMap[mid] = {
-              name: (m.name || mid).trim(),
-              attachment: isChat,
-              reasoning: isChat,
-              ...(m.inputPrice || m.outputPrice ? { cost: { input: m.inputPrice || 0, output: m.outputPrice || 0 } } : {}),
-              modalities: { input: isChat ? ["text", "image"] : ["text"], output: ["text"] },
-            };
-          }
-        } else {
-          const fallbackIDs = opts.recommendedModels?.length
-            ? opts.recommendedModels
-            : ["claude-sonnet-4-6", "gpt-5.4", "gemini-3.1-pro", "deepseek-v3.2"];
-          for (const mid of fallbackIDs) {
-            const isChat = !isNonChatUtilityModelID(mid);
-            modelsMap[mid] = {
-              name: mid,
-              attachment: isChat,
-              reasoning: isChat,
-              modalities: { input: isChat ? ["text", "image"] : ["text"], output: ["text"] },
-            };
-          }
-        }
-
-        await hoxiAPI.saveHoxiProviderConfig(pid, {
-          ...existingProvider,
-          name: opts.providerName || pollRes.providerName || existingProvider.name || "AINode",
-          npm: existingProvider.npm || "@ai-sdk/openai-compatible",
-          options: { ...(existingProvider.options || {}), baseURL: resolvedBaseURL },
-          models: modelsMap,
-        });
-
-        if (pollRes.mcpUrl && pollRes.accessToken) {
-          await saveMcpServer(pid, {
-            type: "remote",
-            url: pollRes.mcpUrl,
-            enabled: true,
-            headers: { Authorization: `Bearer ${pollRes.accessToken}` },
-          }).catch(() => {});
-        }
-
         await loadProviders(true);
-        const firstModelID = Object.keys(modelsMap)[0];
-        if (firstModelID) selectProviderModelPreservingBusySession({ providerID: pid, modelID: firstModelID });
+        const firstModelID =
+          pollRes.models?.[0]?.id?.trim() ||
+          Object.keys(workspace.hoxiProviders?.[pid]?.models || {})[0] ||
+          opts.recommendedModels?.[0]?.trim();
+        if (firstModelID) {
+          selectProviderModelPreservingBusySession({ providerID: pid, modelID: firstModelID });
+        }
 
         setProviderMcpOAuthState({ authorizingProviderID: null, pendingState: null, authURL: null, error: null });
         return pollRes;

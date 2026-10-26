@@ -424,7 +424,12 @@ func isValueClassCurl(args []string) bool {
 				return false
 			}
 			hasSafeOutput = true
-		case a == "--max-time" || a == "-m" || a == "--connect-timeout" || a == "-H" || a == "--header" || a == "-A" || a == "--user-agent" || a == "-X" || a == "--request":
+		case a == "-X" || a == "--request":
+			if i+1 >= len(args) || (!strings.EqualFold(args[i+1], "GET") && !strings.EqualFold(args[i+1], "HEAD")) {
+				return false
+			}
+			i++
+		case a == "--max-time" || a == "-m" || a == "--connect-timeout" || a == "-A" || a == "--user-agent":
 			if i+1 >= len(args) {
 				return false
 			}
@@ -446,7 +451,7 @@ func isSafeCurlOutputTarget(p string) bool {
 	if p == "/dev/null" {
 		return true
 	}
-	if strings.Contains(p, "..") || strings.ContainsAny(p, "$*?[`~") {
+	if strings.Contains(p, "..") || strings.ContainsAny(p, "$*?[`~") || isSecretFilePath(p) {
 		return false
 	}
 	return strings.HasPrefix(p, "/tmp/") || strings.HasPrefix(p, "/private/tmp/") || isMacOSTempPath(p)

@@ -43,6 +43,7 @@ import {
 } from "./shell-constants.js";
 import {
   SEQ_LOOP_PLACEHOLDER,
+  isMacOSTempPath,
   isQuotedDirGlobSuffix,
   isReadOnlySedArgs,
   isSafeXargsSegment,
@@ -53,6 +54,8 @@ import {
 const BENIGN_PATH_EXPORT_RE = /^export[ \t]+PATH=[A-Za-z0-9_./:$~{}-]+$/;
 const ENV_VAR_ASSIGNMENT_WORD_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
 const RM_FLAG_RE = /^(?:-[rRfdvi]+|--(?:recursive|force|dir|verbose))$/;
+const CHMOD_FLAG_RE = /^(?:-[Rvf]+|--(?:recursive|verbose|silent|quiet))$/;
+const CHMOD_MODE_RE = /^(?:[0-7]{3,4}|[ugoa]*[-+=][rwxX]+)$/;
 const INLINE_SCRIPT_FLAGS = new Set(["-c", "-e", "--eval", "-p", "--print", "-"]);
 const INTERP_VALUE_FLAGS = new Set(["-m", "-W", "-X", "-r", "--require", "--import", "-I", "-C"]);
 
@@ -201,11 +204,38 @@ function advanceScopedCD(seg, cwd, worktree) {
   return [cleaned, true];
 }
 
+function isTempPathArg(arg) {
+  if (!arg || !arg.startsWith("/") || /[$[~]/.test(arg)) return false;
+  for (const part of arg.split("/")) {
+    if (part === ".." || (part !== "" && "*?.".includes(part[0]) && /[*?]/.test(part))) {
+      return false;
+    }
+  }
+  const rel = cleanRelPosixPath(arg);
+  let target = rel === "." ? "/" : "/" + rel;
+  if (/[*?]/.test(target)) {
+    target = target.slice(0, target.search(/[*?]/)) + "x";
+  }
+  if (isSecretPath(target)) return false;
+  if (target.startsWith("/tmp/") || target.startsWith("/private/tmp/")) {
+    return true;
+  }
+  return isMacOSTempPath(target);
+}
+
 function isTempOnlyCleanupSegment(words) {
   const cleaned = stripNullRedirects(words);
   if (!cleaned || cleaned.length === 0) return false;
   const cmd = normalizeAbsoluteTool(cleaned[0]);
-  const base = cmd.includes("/") ? cmd.slice(cmd.lastIndexOf("/") + 1) : cmd;
+  if (cmd.includes("/")) return false;
+  const base = cmd;
+  if (base === "chmod") {
+    let i = 1;
+    while (i < cleaned.length && CHMOD_FLAG_RE.test(cleaned[i])) i++;
+    if (i >= cleaned.length || !CHMOD_MODE_RE.test(cleaned[i])) return false;
+    const paths = cleaned.slice(i + 1);
+    return paths.length > 0 && paths.every(isTempPathArg);
+  }
   if (base !== "rm" && base !== "rmdir" && base !== "unlink") return false;
   let i = 1;
   while (i < cleaned.length && cleaned[i] !== "--" && cleaned[i].startsWith("-")) {
@@ -214,7 +244,7 @@ function isTempOnlyCleanupSegment(words) {
   }
   if (i < cleaned.length && cleaned[i] === "--") i++;
   const paths = cleaned.slice(i);
-  return paths.length > 0 && paths.every((p) => (p.startsWith("/tmp/") || p.startsWith("/private/tmp/")) && !p.includes("..") && !/[$[~]/.test(p));
+  return paths.length > 0 && paths.every(isTempPathArg);
 }
 
 function hasInlineScriptFlag(base, args) {
@@ -429,7 +459,9 @@ function isSafeListingProducer(seg) {
     for (let i = 0; i < args.length; i++) {
       const a = args[i];
       if (!a.startsWith("-") && a !== "!" && a !== "(" && a !== ")") {
-        if (named) return false;
+        if (named || a.includes("..") || DOT_GLOB_RE.test(a) || isSecretPath(a) || isSensitiveExternalPath(a) || isProtectedPath(a)) {
+          return false;
+        }
       } else if (a === "-name" || a === "-iname") {
         if (i + 1 >= args.length || !EXT_GLOB_RE.test(args[i + 1])) return false;
         named = true;
@@ -441,6 +473,7 @@ function isSafeListingProducer(seg) {
         }
         i++;
       } else if (a === "-type" || a === "-maxdepth" || a === "-mindepth") {
+        if (i + 1 >= args.length) return false;
         i++;
       } else if (a === "-o" || a === "-or") {
         if (!named) return false;

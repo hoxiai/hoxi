@@ -5,9 +5,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // On-disk layout, one directory per conversation so that a long transcript
@@ -281,6 +283,73 @@ func (s *Store) CompactIdleTurns() (compacted int, freedBytes int64) {
 	}
 	return compacted, freedBytes
 }
+
+// StorageBytes returns the total on-disk footprint of the session store directory.
+func (s *Store) StorageBytes() int64 {
+	if s == nil {
+		return 0
+	}
+	return MeasureDirBytes(s.dir)
+}
+
+// CleanStorage compacts idle session logs and removes leftover .tmp files under s.dir.
+func (s *Store) CleanStorage(minAge time.Duration) (compacted int, prunedFiles int, freedBytes int64) {
+	if s == nil {
+		return 0, 0, 0
+	}
+	compacted, freedBytes = s.CompactIdleTurns()
+	files, tmpFreed := PruneTempFiles(s.dir, minAge)
+	return compacted, files, freedBytes + tmpFreed
+}
+
+// MeasureDirBytes returns the recursive file size sum under root.
+func MeasureDirBytes(root string) int64 {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return 0
+	}
+	var total int64
+	_ = filepath.WalkDir(root, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if info, infoErr := d.Info(); infoErr == nil {
+			total += info.Size()
+		}
+		return nil
+	})
+	return total
+}
+
+// PruneTempFiles removes leftover *.tmp files older than minAge under root.
+func PruneTempFiles(root string, minAge time.Duration) (int, int64) {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return 0, 0
+	}
+	now := time.Now()
+	var count int
+	var freed int64
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(d.Name(), ".tmp") {
+			return nil
+		}
+		info, infoErr := d.Info()
+		if infoErr != nil {
+			return nil
+		}
+		if minAge > 0 && now.Sub(info.ModTime()) < minAge {
+			return nil
+		}
+		if os.Remove(path) == nil {
+			count++
+			freed += info.Size()
+		}
+		return nil
+	})
+	return count, freed
+}
+
 
 // migrateLegacy imports the single-file store used before per-session
 // directories. The old file is renamed only after every record was written,

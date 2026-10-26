@@ -19,8 +19,14 @@ const (
 
 const openCodeReasoningRecoveryPrompt = "Your previous step stopped inside reasoning without emitting a tool call or visible reply (or emitted raw <invoke>/<parameter> tags inside reasoning). Continue from where you left off: either invoke the next tool via standard tool calls (never write <invoke> or <parameter> XML inside reasoning) or output your visible reply directly."
 
-func isInternalRecoveryMessageID(id string) bool {
+// IsInternalRecoveryMessageID reports whether id is a synthetic user message
+// injected by Hoxi to auto-continue an interrupted OpenCode reasoning step.
+func IsInternalRecoveryMessageID(id string) bool {
 	return strings.HasPrefix(strings.TrimSpace(id), internalRecoveryMsgPrefix)
+}
+
+func isInternalRecoveryMessageID(id string) bool {
+	return IsInternalRecoveryMessageID(id)
 }
 
 var leakedReasoningOpenMarkers = []string{
@@ -283,7 +289,7 @@ func shouldRecoverOpenCodeTurn(turns []MessageTurn, ap *activeProcess) bool {
 	if ap == nil || ap.wasAborted() {
 		return false
 	}
-	loopAborted := ap.reasoningLoop.consumePendingRecovery()
+	loopAborted := ap.reasoningLoop.hasPendingRecovery()
 	var last *MessageTurn
 	for i := len(turns) - 1; i >= 0; i-- {
 		if isInternalRecoveryMessageID(turns[i].Info.ID) {
@@ -323,6 +329,36 @@ func shouldRecoverOpenCodeTurn(turns []MessageTurn, ap *activeProcess) bool {
 	return hasReasoning && last.Info.Finish == "length"
 }
 
+// isSupersededEmptyRecoveryStubTurn reports whether turns[idx] is an aborted or
+// truncated assistant turn immediately followed by an internal recovery prompt
+// that has no remaining visible text, tool calls, or non-empty reasoning after
+// stripping leaked tool-call markup.
+func isSupersededEmptyRecoveryStubTurn(turns []MessageTurn, idx int) bool {
+	if idx < 0 || idx+1 >= len(turns) {
+		return false
+	}
+	turn := turns[idx]
+	if turn.Info.Role != "assistant" || !isInternalRecoveryMessageID(turns[idx+1].Info.ID) {
+		return false
+	}
+	for _, p := range turn.Parts {
+		switch p.Type {
+		case "tool", "file":
+			return false
+		case "text":
+			if strings.TrimSpace(p.Text) != "" {
+				return false
+			}
+		case "reasoning":
+			cleaned, _ := stripLeakedReasoningToolMarkup(p.Text)
+			if strings.TrimSpace(cleaned) != "" {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 func buildOpenCodeReasoningRecoveryPayload(rec SessionRecord, mode, modelID, effort, system string, attempt int) map[string]interface{} {
 	recoverID := fmt.Sprintf("%s%d_%d", internalRecoveryMsgPrefix, time.Now().UnixMilli(), attempt)
 	payload := map[string]interface{}{
@@ -347,13 +383,19 @@ func buildOpenCodeReasoningRecoveryPayload(rec SessionRecord, mode, modelID, eff
 func (s *Service) recoverOpenCodeReasoningIfNeeded(ctx context.Context, rec SessionRecord, ap *activeProcess, mode, modelID, effort, system string, initialErr error) error {
 	curErr := initialErr
 	for attempt := 1; attempt <= maxOpenCodeReasoningRecoveries && !ap.wasAborted(); attempt++ {
+		s.waitForOpenCodeIdle(ctx, rec, ap)
+		if ap.wasAborted() {
+			break
+		}
 		checkCtx, checkCancel := context.WithTimeout(ctx, 10*time.Second)
 		var checkTurns []MessageTurn
 		fetchErr := s.openCodeJSON(checkCtx, "GET", "/session/"+rec.ExternalID+"/message", rec.WorktreePath, nil, &checkTurns)
 		checkCancel()
 		if fetchErr != nil || !shouldRecoverOpenCodeTurn(checkTurns, ap) {
+			ap.reasoningLoop.consumePendingRecovery()
 			return curErr
 		}
+		ap.reasoningLoop.consumePendingRecovery()
 		curErr = nil
 		ap.stall.touch(time.Now())
 		recoverPayload := buildOpenCodeReasoningRecoveryPayload(rec, mode, modelID, effort, system, attempt)
@@ -381,6 +423,22 @@ func (s *Service) rewriteRecoveryParentID(sessionID string, info *MessageInfo) {
 		}
 	}
 	info.ParentID = ""
+}
+
+func (s *Service) pruneOpenCodeTurnsFromStore(sessionID string, dropIDs map[string]bool) {
+	if len(dropIDs) == 0 {
+		return
+	}
+	_, _, _ = s.store.updateWithoutActivity(sessionID, func(r *SessionRecord) {
+		filtered := r.Turns[:0]
+		for _, t := range r.Turns {
+			if dropIDs[t.Info.ID] || isInternalRecoveryMessageID(t.Info.ID) {
+				continue
+			}
+			filtered = append(filtered, t)
+		}
+		r.Turns = filtered
+	})
 }
 
 func (s *Service) abandonOpenCodeInFlightParts(sessionID string, now int64) {

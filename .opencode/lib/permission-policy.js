@@ -532,12 +532,7 @@ export function isProtectedPath(rawPath) {
   const rawSlash = rawPath.trim().replaceAll("\\", "/").toLowerCase();
   const slash = stripWorktreePrefix(rawSlash);
   if (!slash) return false;
-  if (
-    slash.includes("/.hoxi/skills/") ||
-    slash.includes("/.hoxi/attachments/") ||
-    slash.startsWith(".hoxi/skills/") ||
-    slash.startsWith(".hoxi/attachments/")
-  ) {
+  if (isRoutineHoxiSubpath(slash)) {
     return false;
   }
   if (

@@ -55,6 +55,6 @@
   { "name": "agents skills external directory", "destructive": false, "request": { "permission": "external_directory", "patterns": ["/Users/u/.agents/skills/ainode-release-and-deploy/*"] } },
   { "name": "runner read of agents skill", "destructive": false, "request": { "permission": "tool", "patterns": ["read_file"], "metadata": { "tool": "read_file", "externalDirectory": true, "filepath": "/Users/u/.agents/skills/ainode-release-and-deploy/SKILL.md" } } },
   { "name": "runner read of git logs head", "destructive": false, "request": { "permission": "tool", "patterns": ["read_file"], "metadata": { "tool": "read_file", "externalDirectory": true, "filepath": "/Users/u/code/repo/.git/logs/HEAD" } } },
-  { "name": "runner edit of agents skill script", "destructive": true, "request": { "permission": "tool", "patterns": ["edit_file"], "metadata": { "tool": "edit_file", "externalDirectory": true, "filepath": "/Users/u/.agents/skills/ainode-release-and-deploy/scripts/deploy.sh" } } },
-  { "name": "edit of agents skill script", "destructive": true, "request": { "permission": "edit", "patterns": ["/Users/u/.agents/skills/ainode-release-and-deploy/scripts/deploy.sh"] } }
+  { "name": "runner edit of agents hooks config", "destructive": true, "request": { "permission": "tool", "patterns": ["edit_file"], "metadata": { "tool": "edit_file", "externalDirectory": true, "filepath": "/Users/u/.agents/hooks.json" } } },
+  { "name": "edit of agents hooks config", "destructive": true, "request": { "permission": "edit", "patterns": ["/Users/u/.agents/hooks.json"] } }
 ]

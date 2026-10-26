@@ -8,12 +8,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 )
 
 func TestProviderMCPOAuthPKCEAndProvisioning(t *testing.T) {
+	t.Setenv("HOXI_HOME", t.TempDir())
 	var approved atomic.Bool
 	var capturedChallenge atomic.Value
 	var capturedRedirectURI atomic.Value
@@ -216,16 +218,33 @@ func TestProviderMCPOAuthPKCEAndProvisioning(t *testing.T) {
 	if pollResp2.BaseURL != "https://api.ainode.run/v1" {
 		t.Fatalf("expected normalized baseUrl https://api.ainode.run/v1, got %q", pollResp2.BaseURL)
 	}
-	if pollResp2.APIKey != "sk-ainode-live-99887766" {
-		t.Fatalf("expected apiKey sk-ainode-live-99887766, got %q", pollResp2.APIKey)
-	}
-	if pollResp2.AccessToken != "apay_mcp_test_token_123" {
-		t.Fatalf("expected accessToken apay_mcp_test_token_123, got %q", pollResp2.AccessToken)
-	}
 	if pollResp2.AccountLabel != "dev@ainode.run" {
 		t.Fatalf("expected accountLabel dev@ainode.run, got %q", pollResp2.AccountLabel)
 	}
 	if len(pollResp2.Models) != 2 || pollResp2.Models[0].ID != "claude-sonnet-4-6" {
 		t.Fatalf("expected 2 models from public-models, got %+v", pollResp2.Models)
+	}
+	if strings.Contains(pollRec2.Body.String(), "sk-ainode-live-99887766") || strings.Contains(pollRec2.Body.String(), "apay_mcp_test_token_123") {
+		t.Fatalf("expected poll response not to leak plaintext credentials, got %s", pollRec2.Body.String())
+	}
+
+	doc := svc.LoadHoxiConfigDoc()
+	provMap, _ := doc["provider"].(map[string]interface{})
+	ainodeProv, _ := provMap["ainode"].(map[string]interface{})
+	opts, _ := ainodeProv["options"].(map[string]interface{})
+	if gotKey, _ := opts["apiKey"].(string); gotKey != "sk-ainode-live-99887766" {
+		t.Fatalf("expected persisted provider apiKey sk-ainode-live-99887766, got %q", gotKey)
+	}
+	if gotBase, _ := opts["baseURL"].(string); gotBase != "https://api.ainode.run/v1" {
+		t.Fatalf("expected persisted provider baseURL https://api.ainode.run/v1, got %q", gotBase)
+	}
+	mcpMap, _ := doc["mcp"].(map[string]interface{})
+	ainodeMCP, _ := mcpMap["ainode"].(map[string]interface{})
+	if gotURL, _ := ainodeMCP["url"].(string); gotURL != server.URL+"/api/mcp" {
+		t.Fatalf("expected persisted mcp url %q, got %q", server.URL+"/api/mcp", gotURL)
+	}
+	mcpHeaders, _ := ainodeMCP["headers"].(map[string]interface{})
+	if gotAuth, _ := mcpHeaders["Authorization"].(string); gotAuth != "Bearer apay_mcp_test_token_123" {
+		t.Fatalf("expected persisted mcp Authorization header, got %q", gotAuth)
 	}
 }

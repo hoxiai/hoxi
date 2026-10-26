@@ -245,3 +245,61 @@ func consoleUpsertSQL(ext *ConsoleState) string {
 func sqlQuote(s string) string {
 	return "'" + strings.ReplaceAll(strings.ReplaceAll(s, "\x00", ""), "'", "''") + "'"
 }
+
+// MeasureDatabaseBytes returns the total on-disk footprint of dbPath including
+// its SQLite WAL and shared-memory sidecar files.
+func MeasureDatabaseBytes(dbPath string) int64 {
+	dbPath = strings.TrimSpace(dbPath)
+	if dbPath == "" {
+		return 0
+	}
+	var total int64
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		if info, err := os.Stat(dbPath + suffix); err == nil && !info.IsDir() {
+			total += info.Size()
+		}
+	}
+	return total
+}
+
+// CleanDatabaseEventLog purges transient OpenCode event rows in a single batch
+// and runs VACUUM only when the delete step succeeds.
+func CleanDatabaseEventLog(ctx context.Context, dbPath string) error {
+	dbPath = strings.TrimSpace(dbPath)
+	if dbPath == "" {
+		return nil
+	}
+	if st, err := os.Stat(dbPath); err != nil || st.IsDir() {
+		return nil
+	}
+
+	purgeCtx, cancelPurge := context.WithTimeout(ctx, 30*time.Second)
+	defer cancelPurge()
+	purgeCmd := exec.CommandContext(
+		purgeCtx,
+		"sqlite3",
+		"-cmd", ".timeout 10000",
+		dbPath,
+		"DELETE FROM event; DELETE FROM event_sequence; PRAGMA wal_checkpoint(TRUNCATE);",
+	)
+	purgeCmd.WaitDelay = time.Second
+	if out, err := purgeCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("purge sqlite event log: %w (%s)", err, strings.TrimSpace(string(out)))
+	}
+
+	vacuumCtx, cancelVacuum := context.WithTimeout(ctx, 45*time.Second)
+	defer cancelVacuum()
+	vacuumCmd := exec.CommandContext(
+		vacuumCtx,
+		"sqlite3",
+		"-cmd", ".timeout 10000",
+		dbPath,
+		"VACUUM; PRAGMA wal_checkpoint(TRUNCATE);",
+	)
+	vacuumCmd.WaitDelay = time.Second
+	if out, err := vacuumCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("vacuum sqlite database: %w (%s)", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+

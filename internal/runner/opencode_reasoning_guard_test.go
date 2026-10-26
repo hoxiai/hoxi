@@ -304,3 +304,146 @@ func TestStartOpenCodeTurnAutoRecoversFromReasoningOnlyTruncation(t *testing.T) 
 		t.Fatalf("unexpected recovered assistant text: %q", got)
 	}
 }
+
+func TestStartOpenCodeTurnWaitsForIdleAndPrunesEmptyRecoveryStubTurn(t *testing.T) {
+	t.Parallel()
+
+	var (
+		mu          sync.Mutex
+		statusPolls int
+		postedMsgID []string
+		turns       []MessageTurn
+	)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/event":
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			if f, ok := w.(http.Flusher); ok {
+				_, _ = w.Write([]byte(": connected\n\n"))
+				f.Flush()
+			}
+			<-r.Context().Done()
+		case r.Method == http.MethodGet && r.URL.Path == "/session/status":
+			mu.Lock()
+			statusPolls++
+			n := statusPolls
+			mu.Unlock()
+			if n == 1 {
+				_ = json.NewEncoder(w).Encode(map[string]SessionStatus{
+					"ses_oc_stub": {Type: "busy"},
+				})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]SessionStatus{
+				"ses_oc_stub": {Type: "idle"},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/session/ses_oc_stub/message":
+			var body map[string]interface{}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			msgID, _ := body["messageID"].(string)
+			mu.Lock()
+			postedMsgID = append(postedMsgID, msgID)
+			callNum := len(postedMsgID)
+			if callNum == 1 {
+				turns = []MessageTurn{
+					{
+						Info:  MessageInfo{ID: msgID, SessionID: "ses_oc_stub", Role: "user", Time: MessageTime{Created: 100}},
+						Parts: []MessagePart{{ID: "prt_u1", SessionID: "ses_oc_stub", MessageID: msgID, Type: "text", Text: "检查状态"}},
+					},
+					{
+						Info: MessageInfo{
+							ID: "msg_a_empty_stub", SessionID: "ses_oc_stub", Role: "assistant", ParentID: msgID,
+							Finish: "length", Time: MessageTime{Created: 101, Completed: 102},
+						},
+						Parts: []MessagePart{{
+							ID: "prt_r_stub", SessionID: "ses_oc_stub", MessageID: "msg_a_empty_stub", Type: "reasoning",
+							Text: "<invoke name=\"bash\">\n<parameter name=\"command\">ls</parameter>\n" + strings.Repeat("</invoke>\n</parameter>\n", 8),
+						}},
+					},
+				}
+			} else {
+				turns = append(turns,
+					MessageTurn{
+						Info:  MessageInfo{ID: msgID, SessionID: "ses_oc_stub", Role: "user", Time: MessageTime{Created: 103}},
+						Parts: []MessagePart{{ID: "prt_u_rec", SessionID: "ses_oc_stub", MessageID: msgID, Type: "text", Text: openCodeReasoningRecoveryPrompt}},
+					},
+					MessageTurn{
+						Info: MessageInfo{
+							ID: "msg_a2", SessionID: "ses_oc_stub", Role: "assistant", ParentID: msgID,
+							Finish: "stop", Time: MessageTime{Created: 104, Completed: 105},
+						},
+						Parts: []MessagePart{
+							{ID: "prt_t2", SessionID: "ses_oc_stub", MessageID: "msg_a2", Type: "text", Text: "状态正常。"},
+						},
+					},
+				)
+			}
+			mu.Unlock()
+			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/session/ses_oc_stub/message":
+			mu.Lock()
+			snapshot := append([]MessageTurn(nil), turns...)
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(snapshot)
+		default:
+			_, _ = w.Write([]byte(`{}`))
+		}
+	}))
+	defer srv.Close()
+
+	root := t.TempDir()
+	svc := NewService(root, nil, nil, filepath.Join(t.TempDir(), "sessions"))
+	svc.ConfigureOpenCode(srv.URL, "secret")
+	rec := SessionRecord{
+		ID:           "ses_hoxi_stub",
+		ExternalID:   "ses_oc_stub",
+		Runtime:      "opencode",
+		ProjectDir:   root,
+		WorktreePath: root,
+		SandboxMode:  "local",
+	}
+	if err := svc.store.Put(rec); err != nil {
+		t.Fatal(err)
+	}
+	// Pre-seed the empty stub turn in store as if SSE streaming created it before abort.
+	svc.store.UpsertTurnInfo(rec.ID, MessageInfo{ID: "msg_a_empty_stub", SessionID: rec.ID, Role: "assistant", ParentID: "msg_u_initial"})
+
+	user := MessageInfo{ID: "msg_u_initial", SessionID: rec.ID, Role: "user", Time: MessageTime{Created: 100}}
+	parts := []MessagePart{{ID: "prt_u1", SessionID: rec.ID, MessageID: user.ID, Type: "text", Text: "检查状态"}}
+	if err := svc.startOpenCodeTurn(rec, "build", "deepseek-v4", "", "", user, parts, parts); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		svc.mu.Lock()
+		busy := svc.procs[rec.ID] != nil
+		svc.mu.Unlock()
+		if !busy {
+			break
+		}
+		time.Sleep(15 * time.Millisecond)
+	}
+
+	mu.Lock()
+	polls := statusPolls
+	mu.Unlock()
+	if polls < 2 {
+		t.Fatalf("expected waitForOpenCodeIdle to poll /session/status until idle before recovery, got %d polls", polls)
+	}
+
+	stored, ok := svc.store.Get(rec.ID)
+	if !ok {
+		t.Fatal("expected session record in store")
+	}
+	if len(stored.Turns) != 2 {
+		t.Fatalf("expected empty stub turn to be pruned leaving 2 turns (user + recovered assistant), got %d: %+v", len(stored.Turns), stored.Turns)
+	}
+	if stored.Turns[1].Info.ID != "msg_a2" || stored.Turns[1].Info.ParentID != "msg_u_initial" {
+		t.Fatalf("expected recovered assistant turn msg_a2 with ParentID=msg_u_initial, got %+v", stored.Turns[1].Info)
+	}
+}
+

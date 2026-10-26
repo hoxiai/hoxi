@@ -72,19 +72,30 @@ INSERT INTO message (id, session_id, data) VALUES ('msg_keep', 'ses_keep', '{"ro
 		t.Fatal(err)
 	}
 
-	// 3. Seed engine logs & tool-output.
+	// 3. Seed engine logs & tool-output, plus a bare Git snapshot repo that MUST NOT be pruned.
 	logFile := filepath.Join(home, "engine-data", "opencode", "log", "2026-01-01.log")
 	toolFile := filepath.Join(home, "engine-data", "opencode", "tool-output", "tool_abc")
+	snapshotHead := filepath.Join(home, "engine-data", "opencode", "snapshot", "proj_1", "HEAD")
+	snapshotPack := filepath.Join(home, "engine-data", "opencode", "snapshot", "proj_1", "objects", "pack", "pack-123.pack")
 	if err := os.MkdirAll(filepath.Dir(logFile), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Dir(toolFile), 0o700); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Dir(snapshotPack), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(logFile, []byte(strings.Repeat("L", 16*1024)), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(toolFile, []byte(strings.Repeat("O", 16*1024)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(snapshotHead, []byte("ref: refs/heads/main\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(snapshotPack, []byte(strings.Repeat("S", 4096)), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -161,6 +172,12 @@ INSERT INTO message (id, session_id, data) VALUES ('msg_keep', 'ses_keep', '{"ro
 	}
 	if _, err := os.Stat(tmpPack); !os.IsNotExist(err) {
 		t.Fatalf("expected read-only tmp_pack_* removed, stat err = %v", err)
+	}
+	if _, err := os.Stat(snapshotHead); err != nil {
+		t.Fatalf("expected OpenCode bare snapshot HEAD preserved after clean, stat err = %v", err)
+	}
+	if _, err := os.Stat(snapshotPack); err != nil {
+		t.Fatalf("expected OpenCode bare snapshot pack preserved after clean, stat err = %v", err)
 	}
 
 	// Verify durable session & message rows in hoxi.db are preserved.

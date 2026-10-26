@@ -330,9 +330,7 @@ export interface ProviderMcpOAuthPollResponse {
   providerName?: string;
   siteOrigin?: string;
   mcpUrl?: string;
-  accessToken?: string;
   baseUrl?: string;
-  apiKey?: string;
   accountLabel?: string;
   models?: ProviderMcpOAuthModelItem[];
   error?: string;
@@ -344,6 +342,7 @@ export const providerMcpOAuthAPI = {
     providerName?: string;
     siteUrl?: string;
     baseUrl?: string;
+    recommendedModels?: string[];
   }): Promise<ProviderMcpOAuthStartResponse> {
     return requestJSON("/api/hoxi/provider/mcp-oauth/start", {
       method: "POST",
