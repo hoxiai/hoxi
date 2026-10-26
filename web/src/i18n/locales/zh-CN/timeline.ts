@@ -260,6 +260,7 @@ export const timeline: TimelineI18n = {
   retryTask: "重试",
   turnPaused: "已暂停",
   turnStopped: "已停止",
+  turnTruncated: "输出截断",
   executing: "执行中…",
   executionPreparing: "正在准备下一步…",
   executionStillWorking: "正在处理任务",

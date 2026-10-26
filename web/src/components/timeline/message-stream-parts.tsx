@@ -1,6 +1,9 @@
 // web/src/components/timeline/message-stream-parts.tsx
 import { createMemo, createSignal, For, Match, onCleanup, Show, Switch } from "solid-js";
-import ThoughtBox from "./ThoughtBox";
+import ThoughtBox, {
+  hasLeakedReasoningToolMarkup,
+  normalizeReasoningText,
+} from "./ThoughtBox";
 import ToolCard from "./ToolCard";
 import MarkdownView from "./MarkdownView";
 import {
@@ -116,6 +119,7 @@ export function ContextActivityGroupView(props: {
   isLiveTail?: boolean;
   startedAt?: number;
   revealKey?: string;
+  defaultOpenReasoning?: boolean;
 }) {
   return (
     <ContextActivityGroupComponent
@@ -124,14 +128,24 @@ export function ContextActivityGroupView(props: {
       startedAt={props.startedAt}
       revealKey={props.revealKey}
       renderFallbackPart={(part, revealKey) => (
-        <PartView part={part} revealKey={revealKey} streaming={props.isLiveTail} />
+        <PartView
+          part={part}
+          revealKey={revealKey}
+          streaming={props.isLiveTail}
+          defaultOpenReasoning={props.defaultOpenReasoning}
+        />
       )}
     />
   );
 }
 
 /** `streaming` marks the live tail of a busy session so its text paces and fades in softly. */
-export function PartView(props: { part: MessagePart; revealKey?: string; streaming?: boolean }) {
+export function PartView(props: {
+  part: MessagePart;
+  revealKey?: string;
+  streaming?: boolean;
+  defaultOpenReasoning?: boolean;
+}) {
   const mayHaveInlineThinking = createMemo(() => {
     const raw = props.part;
     if (!raw || raw.type !== "text") return false;
@@ -166,6 +180,7 @@ export function PartView(props: { part: MessagePart; revealKey?: string; streami
               <ThoughtBox
                 part={part as Extract<MessagePart, { type: "reasoning" }>}
                 revealKey={props.revealKey}
+                defaultOpen={props.defaultOpenReasoning}
               />
             </Match>
             <Match when={part.type === "tool"}>
@@ -342,9 +357,30 @@ export function AssistantTurnFooter(props: {
     return null;
   });
 
+  const isTruncatedTurn = createMemo(() => {
+    if (interruptMode() || !props.info.time?.completed || props.info.error) return false;
+    if (props.info.finish === "length") return true;
+    const hasTools = props.parts.some((p) => p.type === "tool");
+    const hasVisibleText = props.parts.some(
+      (p) => p.type === "text" && Boolean(extractVisibleAssistantText(p.text).trim())
+    );
+    if (hasTools || hasVisibleText) return false;
+    return props.parts.some(
+      (p) => p.type === "reasoning" && hasLeakedReasoningToolMarkup(p.text)
+    );
+  });
+
   const isTurnExecuting = createMemo(() =>
     Boolean(props.isSessionBusy && !interruptMode() && isLatestTurn())
   );
+
+  const fallbackReasoningText = () =>
+    props.parts
+      .filter((p): p is Extract<MessagePart, { type: "reasoning" }> => p.type === "reasoning")
+      .map((p) => normalizeReasoningText(p.text))
+      .filter(Boolean)
+      .join("\n\n")
+      .trim();
 
   const cycleSummary = createMemo(() => {
     if (isTurnExecuting()) return null;
@@ -431,7 +467,7 @@ export function AssistantTurnFooter(props: {
         reasoningTokens,
         cacheReadTokens,
         cost,
-        finalText: textChunks.join("\n\n").trim(),
+        finalText: textChunks.join("\n\n").trim() || fallbackReasoningText(),
         changedFiles: collectCycleChangedFiles(cycleTurns, props.info.sessionID),
         revertMessageID,
       };
@@ -455,7 +491,7 @@ export function AssistantTurnFooter(props: {
       reasoningTokens: props.info.tokens?.reasoning ?? 0,
       cacheReadTokens: props.info.tokens?.cache?.read ?? 0,
       cost: props.info.cost ?? 0,
-      finalText: texts,
+      finalText: texts || fallbackReasoningText(),
       changedFiles: collectCycleChangedFiles(
         [{ info: props.info, parts: props.parts }],
         props.info.sessionID
@@ -573,7 +609,14 @@ export function AssistantTurnFooter(props: {
                 )}
               </Show>
 
-              <Show when={isLatestTurn() && interruptMode() && !props.isSessionBusy}>
+              <Show when={!interruptMode() && isTruncatedTurn()}>
+                <span class="inline-flex items-center gap-1 font-medium text-[var(--warn-text)]">
+                  <span class="font-mono text-[11px] leading-none">⏸</span>
+                  <span>{t("timeline.turnTruncated")}</span>
+                </span>
+              </Show>
+
+              <Show when={isLatestTurn() && (interruptMode() || isTruncatedTurn()) && !props.isSessionBusy}>
                 <button
                   type="button"
                   disabled={resuming()}

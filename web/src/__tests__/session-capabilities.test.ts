@@ -8,9 +8,15 @@ import {
   canSteerSession,
 } from "../store/session-capabilities";
 import {
+  isCompletedStandaloneReasoningTurn,
   resolveActiveExecutionCycle,
   resolveMergedTurnParts,
 } from "../components/timeline/context-activity-turns";
+import {
+  hasLeakedReasoningToolMarkup,
+  normalizeReasoningText,
+  stripLeakedReasoningToolMarkup,
+} from "../components/timeline/ThoughtBox";
 import { setWorkspace, workspace, type MessageTurn } from "../store/workspace";
 
 describe("session capabilities matrix", () => {
@@ -145,5 +151,75 @@ describe("session capabilities matrix", () => {
     const activeCycleAfterComplete = resolveActiveExecutionCycle(turns);
     assertEqual(activeCycleAfterComplete?.userTurn.info.id, "optimistic_2000");
     assertEqual(activeCycleAfterComplete?.cycleTurns.length, 0);
+  });
+
+  it("strips leaked DSML tool markup and preserves completed cycle-ending reasoning-only turns", () => {
+    const loop = "</invoke>\n</parameter>\n".repeat(10);
+    const leakedReasoning = `Checked 6 modules. Should I continue in order or focus on a specific module?\n\n<invoke name="bash">\n<parameter name="command">ls</parameter>\n${loop}`;
+    assertEqual(hasLeakedReasoningToolMarkup(leakedReasoning), true);
+    assertEqual(
+      stripLeakedReasoningToolMarkup(leakedReasoning),
+      "Checked 6 modules. Should I continue in order or focus on a specific module?"
+    );
+    assertEqual(
+      normalizeReasoningText(leakedReasoning),
+      "Checked 6 modules. Should I continue in order or focus on a specific module?"
+    );
+
+    const turns: MessageTurn[] = [
+      {
+        info: { id: "msg_u1", sessionID: "ses_1", role: "user", time: { created: 100 } },
+        parts: [{ id: "prt_u1", sessionID: "ses_1", messageID: "msg_u1", type: "text", text: "Continue" }],
+      },
+      {
+        info: { id: "msg_a1", sessionID: "ses_1", role: "assistant", time: { created: 101, completed: 102 } },
+        parts: [
+          {
+            id: "prt_t1",
+            sessionID: "ses_1",
+            messageID: "msg_a1",
+            type: "tool",
+            tool: "read",
+            callID: "c1",
+            state: {
+              status: "completed",
+              input: { filePath: "a.liquid" },
+              output: "ok",
+              title: "a.liquid",
+              metadata: {},
+              time: { start: 101, end: 102 },
+            },
+          },
+        ],
+      },
+      {
+        info: { id: "msg_a2", sessionID: "ses_1", role: "assistant", time: { created: 103, completed: 104 } },
+        parts: [
+          {
+            id: "prt_r2",
+            sessionID: "ses_1",
+            messageID: "msg_a2",
+            type: "reasoning",
+            text: "Final reply emitted in reasoning; must not fold into the earlier tool group.",
+            time: { start: 103, end: 104 },
+          },
+        ],
+      },
+    ];
+
+    assertEqual(isCompletedStandaloneReasoningTurn(turns, 2), true);
+    const firstTurnMerged = resolveMergedTurnParts(turns, 1, 0);
+    assertEqual(
+      firstTurnMerged.effectiveParts.map((p) => p.id).join(","),
+      "prt_t1",
+      "tool turn must not swallow completed cycle-ending reasoning-only turn"
+    );
+    const finalTurnMerged = resolveMergedTurnParts(turns, 2, 0);
+    assertEqual(finalTurnMerged.isVisuallyEmpty, false);
+    assertEqual(
+      finalTurnMerged.effectiveParts.map((p) => p.id).join(","),
+      "prt_r2",
+      "final reasoning-only turn renders its own reasoning part"
+    );
   });
 });

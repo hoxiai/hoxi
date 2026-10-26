@@ -26,13 +26,73 @@ function clean(value: string): string {
     .trim();
 }
 
+const LEAKED_REASONING_OPEN_MARKERS = [
+  "<｜DSML｜",
+  "</｜DSML｜",
+  "<invoke ",
+  "<invoke>",
+  "<parameter ",
+  "<tool_call>",
+  "<tool_call ",
+];
+
+const LEAKED_REASONING_CLOSE_MARKERS = [
+  "</invoke>",
+  "</parameter>",
+  "</tool_call>",
+  "</｜DSML｜",
+  "<｜DSML｜",
+];
+
+const RUNAWAY_CLOSING_TAG_RE =
+  /(?:<\/(?:invoke|parameter|tool_call|｜DSML｜[^>]{0,48})>\s*){6,}/;
+
+export function hasLeakedReasoningToolMarkup(raw: string): boolean {
+  if (!raw) return false;
+  if (RUNAWAY_CLOSING_TAG_RE.test(raw)) return true;
+  const hasClose = LEAKED_REASONING_CLOSE_MARKERS.some((m) => raw.includes(m));
+  if (!hasClose) return false;
+  return LEAKED_REASONING_OPEN_MARKERS.some((m) => raw.includes(m));
+}
+
+export function stripLeakedReasoningToolMarkup(raw: string): string {
+  if (!raw) return "";
+  const hasClose = LEAKED_REASONING_CLOSE_MARKERS.some((m) => raw.includes(m));
+  if (!hasClose) return raw;
+
+  let cutIdx = -1;
+  const noteCandidate = (idx: number) => {
+    if (idx >= 0 && (cutIdx < 0 || idx < cutIdx)) {
+      cutIdx = idx;
+    }
+  };
+  for (const m of LEAKED_REASONING_OPEN_MARKERS) {
+    noteCandidate(raw.indexOf(m));
+  }
+  if (RUNAWAY_CLOSING_TAG_RE.test(raw)) {
+    for (const m of LEAKED_REASONING_CLOSE_MARKERS) {
+      noteCandidate(raw.indexOf(m));
+    }
+  }
+  if (cutIdx < 0) return raw;
+
+  let head = raw.slice(0, cutIdx).replace(/[ \t\r\n]+$/, "");
+  if (head === "---") {
+    head = "";
+  } else if (head.endsWith("\n---")) {
+    head = head.slice(0, -4).replace(/[ \t\r\n]+$/, "");
+  }
+  return head;
+}
+
 /**
  * Normalizes raw reasoning text from providers and Codex-style summary streams:
- * strips stray `<think>` / `<thinking>` wrappers and splits adjacent bold
- * phase headings (`**Heading 1****Heading 2**`) onto separate paragraph lines.
+ * strips stray `<think>` / `<thinking>` wrappers, leaked DSML/XML tool-call
+ * markup, and splits adjacent bold phase headings (`**Heading 1****Heading 2**`)
+ * onto separate paragraph lines.
  */
 export function normalizeReasoningText(raw: string): string {
-  return (raw ?? "")
+  return stripLeakedReasoningToolMarkup(raw ?? "")
     .replace(/\[REDACTED\]/g, "")
     .replace(/<\/?think(?:ing)?>/gi, "")
     .replace(/<\/(?:t(?:h(?:i(?:n(?:k(?:i(?:n(?:g)?)?)?)?)?)?)?)?$/i, "")
@@ -165,7 +225,11 @@ export function liveReasoningTicker(rawText: string, isStreaming = false): strin
 const userOpened = new Set<string>();
 const userCollapsed = new Set<string>();
 
-export default function ThoughtBox(props: { part: ReasoningPart; revealKey?: string }) {
+export default function ThoughtBox(props: {
+  part: ReasoningPart;
+  revealKey?: string;
+  defaultOpen?: boolean;
+}) {
   const streaming = () =>
     props.part.time?.end == null &&
     (!props.part.sessionID || isSessionBusy(props.part.sessionID));
@@ -182,6 +246,9 @@ export default function ThoughtBox(props: { part: ReasoningPart; revealKey?: str
     const id = props.part.id;
     if (userOpened.has(id)) return true;
     if (userCollapsed.has(id)) return false;
+    if (props.defaultOpen && appSettings.reasoningDisplay !== "collapsed") {
+      return true;
+    }
     // Only open full box by default when the user explicitly selects "expanded";
     // in default "auto-collapse" mode, keep the compact single-line live ticker
     // so transitioning from thinking to answer causes zero height collapse.
@@ -239,9 +306,10 @@ export default function ThoughtBox(props: { part: ReasoningPart; revealKey?: str
   createEffect(() => {
     const id = props.part.id;
     const mode = appSettings.reasoningDisplay;
+    const forceDefaultOpen = Boolean(props.defaultOpen) && mode !== "collapsed";
     if (userOpened.has(id) || userCollapsed.has(id)) return;
     setAnimateToggle(false);
-    setOpen(mode === "expanded");
+    setOpen(forceDefaultOpen || mode === "expanded");
   });
 
   // Observe inner reasoning body height (KiloCode pattern): smooth lerp while streaming,

@@ -381,8 +381,9 @@ type activeProcess struct {
 	idleCh    chan struct{}
 	cancel    func()
 	mu        sync.Mutex
-	stall     stallState
-	toolFails toolFailureStreak
+	stall         stallState
+	toolFails     toolFailureStreak
+	reasoningLoop openCodeReasoningGuard
 	// openCodeChildren holds the OpenCode subagent session IDs spawned by
 	// this turn, so their activity counts toward the parent's watchdog.
 	openCodeChildren sync.Map

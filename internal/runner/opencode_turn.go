@@ -180,6 +180,12 @@ func (s *Service) normalizeOpenCodePart(rec SessionRecord, part *MessagePart, fi
 		}
 		return true
 	}
+	if part.Type == "reasoning" {
+		if cleaned, leaked := stripLeakedReasoningToolMarkup(part.Text); leaked {
+			part.Text = cleaned
+		}
+		return true
+	}
 	if part.Type == "text" {
 		const prefix = "Please analyze the attached file(s):\n\n<attached_file "
 		if strings.HasPrefix(part.Text, prefix) {
@@ -357,6 +363,9 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 		if err == nil && ap.wasSteered() && !ap.wasAborted() {
 			s.waitForOpenCodeIdle(ctx, rec, ap)
 		}
+		if (err == nil || ap.reasoningLoop.hasPendingRecovery()) && !ap.wasAborted() {
+			err = s.recoverOpenCodeReasoningIfNeeded(ctx, rec, ap, mode, modelID, effort, system, err)
+		}
 		// Stop the stream before authoritative snapshots, so a delayed delta cannot
 		// append to an already complete snapshot.
 		_ = stream.Body.Close()
@@ -377,7 +386,18 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 						}
 					}
 				}
+				lastVisibleUserID := user.ID
 				for _, turn := range turns {
+					if isInternalRecoveryMessageID(turn.Info.ID) {
+						continue
+					}
+					if turn.Info.Role == "user" {
+						lastVisibleUserID = turn.Info.ID
+					}
+					if isInternalRecoveryMessageID(turn.Info.ParentID) {
+						turn.Info.ParentID = lastVisibleUserID
+					}
+					sanitizeRunawayTriggeredInfo(&turn.Info, ap)
 					turn.Info.SessionID = rec.ID
 					if prevInfo, exists := existingInfoByID[turn.Info.ID]; !exists || !equalMessageInfo(prevInfo, turn.Info) {
 						s.broadcast(rec.ID, SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": turn.Info}})
@@ -470,44 +490,6 @@ func (s *Service) rejectOpenCodeSessionPermissions(ctx context.Context, rec Sess
 	}
 }
 
-func (s *Service) abandonOpenCodeInFlightParts(sessionID string, now int64) {
-	rec, ok := s.store.Get(sessionID)
-	if !ok || len(rec.Turns) == 0 {
-		return
-	}
-	for i := range rec.Turns {
-		for j := range rec.Turns[i].Parts {
-			p := rec.Turns[i].Parts[j]
-			if p.Type == "tool" && p.Tool != "task" && p.State != nil &&
-				(p.State.Status == "pending" || p.State.Status == "running") {
-				start := now
-				if p.State.Time != nil && p.State.Time.Start > 0 {
-					start = p.State.Time.Start
-				}
-				p.State.Status = "error"
-				if strings.TrimSpace(p.State.Error) == "" {
-					p.State.Error = "Interrupted before completion"
-				}
-				p.State.Time = &PartTime{Start: start, End: now}
-				s.broadcast(sessionID, SSEEvent{
-					Type:       "message.part.updated",
-					Properties: map[string]interface{}{"part": p},
-				})
-			} else if p.Type == "reasoning" && (p.Time == nil || p.Time.End == 0) {
-				start := now
-				if p.Time != nil && p.Time.Start > 0 {
-					start = p.Time.Start
-				}
-				p.Time = &PartTime{Start: start, End: now}
-				s.broadcast(sessionID, SSEEvent{
-					Type:       "message.part.updated",
-					Properties: map[string]interface{}{"part": p},
-				})
-			}
-		}
-	}
-}
-
 func (s *Service) relayOpenCodeEvent(rec SessionRecord, raw []byte) {
 	s.relayOpenCodeEventWithFiles(rec, raw, nil)
 }
@@ -559,6 +541,24 @@ func (s *Service) relayOpenCodeEventWithFiles(rec SessionRecord, raw []byte, fil
 	if !matched {
 		return
 	}
+	s.mu.Lock()
+	ap := s.procs[rec.ID]
+	s.mu.Unlock()
+	if evt.Type == "message.part.delta" {
+		msgID := firstString(evt.Properties["messageID"])
+		if isInternalRecoveryMessageID(msgID) {
+			return
+		}
+		if ap != nil {
+			triggered, drop := ap.reasoningLoop.observeDelta(msgID, firstString(evt.Properties["partID"]), firstString(evt.Properties["delta"]))
+			if triggered {
+				s.abortOpenCodeRunawayTurn(rec)
+			}
+			if drop {
+				return
+			}
+		}
+	}
 	s.noteOpenCodeActivity(rec.ID, evt)
 	if evt.Type == "permission.asked" {
 		sanitizeOpenCodePermissionItem(evt.Properties)
@@ -593,9 +593,6 @@ func (s *Service) relayOpenCodeEventWithFiles(rec SessionRecord, raw []byte, fil
 	}
 	if evt.Type == "session.status" || evt.Type == "session.idle" {
 		if evt.Type == "session.idle" || isOpenCodeIdleStatus(evt.Properties["status"]) {
-			s.mu.Lock()
-			ap := s.procs[rec.ID]
-			s.mu.Unlock()
 			if ap != nil {
 				ap.notifyIdle()
 			}
@@ -606,15 +603,20 @@ func (s *Service) relayOpenCodeEventWithFiles(rec SessionRecord, raw []byte, fil
 	case "message.updated":
 		data, _ := json.Marshal(evt.Properties["info"])
 		var info MessageInfo
-		if json.Unmarshal(data, &info) != nil {
+		if json.Unmarshal(data, &info) != nil || isInternalRecoveryMessageID(info.ID) {
 			return
 		}
+		s.rewriteRecoveryParentID(rec.ID, &info)
+		sanitizeRunawayTriggeredInfo(&info, ap)
 		evt.Properties["info"] = info
 	case "message.part.updated":
 		data, _ := json.Marshal(evt.Properties["part"])
 		var part MessagePart
-		if json.Unmarshal(data, &part) != nil {
+		if json.Unmarshal(data, &part) != nil || isInternalRecoveryMessageID(part.MessageID) {
 			return
+		}
+		if ap != nil && ap.reasoningLoop.observePart(part) {
+			s.abortOpenCodeRunawayTurn(rec)
 		}
 		if !s.normalizeOpenCodePart(rec, &part, fileURLByMsgAndName) {
 			return
@@ -623,6 +625,10 @@ func (s *Service) relayOpenCodeEventWithFiles(rec SessionRecord, raw []byte, fil
 		s.noteToolOutcome(rec.ID, part)
 	case "session.diff":
 		evt.Properties["diff"] = s.filterLocalSessionDiffEvent(rec.ID, evt.Properties["diff"])
+	case "session.error":
+		if ap != nil && ap.reasoningLoop.shouldSuppressAbortError(evt.Properties["error"]) {
+			return
+		}
 	}
 	s.publishOpenCodeEvent(rec.ID, evt)
 }

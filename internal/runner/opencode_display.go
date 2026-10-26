@@ -51,12 +51,24 @@ func stripOpenCodeStopMarker(part *MessagePart) {
 	}
 }
 
+func containsOpenCodeSanitizeMarker(raw []byte) bool {
+	return bytes.Contains(raw, []byte("hoxi-stop:")) ||
+		bytes.Contains(raw, []byte("sandbox-exec")) ||
+		bytes.Contains(raw, []byte("trap : EXIT")) ||
+		bytes.Contains(raw, []byte(toolStoppedNotice)) ||
+		bytes.Contains(raw, []byte("DSML")) ||
+		bytes.Contains(raw, []byte("</invoke>")) ||
+		bytes.Contains(raw, []byte(`\u003c/invoke`)) ||
+		bytes.Contains(raw, []byte("</parameter>")) ||
+		bytes.Contains(raw, []byte(`\u003c/parameter`))
+}
+
 // SanitizeOpenCodeToolJSON cleans tool display fields in upstream message
 // histories and events, including old persisted Hoxi histories. It deliberately
 // preserves user/assistant text, shell output and unrelated metadata, and keeps
 // unmodified payloads byte-identical.
 func SanitizeOpenCodeToolJSON(raw []byte) []byte {
-	if !bytes.Contains(raw, []byte("hoxi-stop:")) && !bytes.Contains(raw, []byte("sandbox-exec")) && !bytes.Contains(raw, []byte("trap : EXIT")) && !bytes.Contains(raw, []byte(toolStoppedNotice)) {
+	if !containsOpenCodeSanitizeMarker(raw) {
 		return raw
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
@@ -95,6 +107,13 @@ func sanitizeOpenCodeToolNode(node interface{}) bool {
 					}
 				}
 			}
+		} else if value["type"] == "reasoning" {
+			if text, ok := value["text"].(string); ok {
+				if cleaned, leaked := stripLeakedReasoningToolMarkup(text); leaked && cleaned != text {
+					value["text"] = cleaned
+					changed = true
+				}
+			}
 		}
 		// Traverse protocol envelopes only, never arbitrary tool arguments or
 		// outputs that may themselves contain JSON or examples of this marker.
@@ -108,7 +127,7 @@ func sanitizeOpenCodeToolNode(node interface{}) bool {
 // SanitizeOpenCodeDisplaySSELine covers both global and directory streams. It
 // preserves frame boundaries so it can also run on the raw proxy stream.
 func SanitizeOpenCodeDisplaySSELine(line string) string {
-	if !strings.HasPrefix(line, "data:") || (!strings.Contains(line, "hoxi-stop:") && !strings.Contains(line, "sandbox-exec") && !strings.Contains(line, "trap : EXIT") && !strings.Contains(line, toolStoppedNotice)) {
+	if !strings.HasPrefix(line, "data:") || !containsOpenCodeSanitizeMarker([]byte(line)) {
 		return line
 	}
 	line = sanitizeOpenCodePermissionSSELine(line)

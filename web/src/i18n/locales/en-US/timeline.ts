@@ -263,6 +263,7 @@ export const timeline = {
   retryTask: "Retry",
   turnPaused: "Paused",
   turnStopped: "Stopped",
+  turnTruncated: "Output truncated",
   executing: "Executing…",
   executionPreparing: "Preparing next step…",
   executionStillWorking: "Working on task",

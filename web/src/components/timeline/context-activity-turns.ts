@@ -117,6 +117,30 @@ export function stabilizeMergedTurnResolution(
 const isRenderablePart = (part: MessagePart) => isWorkPart(part) || isVisibleTextPart(part);
 
 /**
+ * Returns true when an assistant cycle ends with a completed turn that emitted
+ * ONLY `reasoning` parts (0 `tool` parts and 0 visible `text` parts).
+ * Such turns must not be swallowed into an earlier turn's collapsed tool group,
+ * because the reasoning block is the sole final output of the turn.
+ */
+export function isCompletedStandaloneReasoningTurn(
+  allTurns: MessageTurn[],
+  index: number
+): boolean {
+  const turn = allTurns[index];
+  if (!turn || turn.info.role !== "assistant" || turn.info.error || !turn.info.time?.completed) {
+    return false;
+  }
+  const isEnd =
+    index === allTurns.length - 1 || allTurns[index + 1]?.info.role !== "assistant";
+  if (!isEnd) return false;
+  const parts = expandInlineThinkingParts(turn.parts);
+  if (parts.some(isVisibleTextPart) || parts.some((p) => p.type === "tool")) {
+    return false;
+  }
+  return parts.some((p) => p.type === "reasoning" && Boolean(p.text?.trim()));
+}
+
+/**
  * Aggregates contiguous work parts (`reasoning` + `tool`) across consecutive
  * assistant turns within the same user prompt cycle into a single Execution
  * Activity Bar.
@@ -166,9 +190,16 @@ export function resolveMergedTurnParts(
   const turnParts = expandInlineThinkingParts(turn.parts);
   const firstTextIdx = turnParts.findIndex(isVisibleTextPart);
   const error = Boolean(turn.info.error);
-  // Leading work joins the open run; this turn renders from its first visible text.
-  const own = error || !runOpen ? turnParts : firstTextIdx < 0 ? [] : turnParts.slice(firstTextIdx);
-  const ownsRun = !error && (runOpen ? firstTextIdx >= 0 : turnParts.some(isRenderablePart));
+  const standaloneFinalReasoning = isCompletedStandaloneReasoningTurn(allTurns, globalIndex);
+  // Leading work joins the open run; this turn renders from its first visible text
+  // (or its own reasoning when it is a completed cycle-ending reasoning-only turn).
+  const own =
+    error || !runOpen || standaloneFinalReasoning
+      ? turnParts
+      : firstTextIdx < 0
+        ? []
+        : turnParts.slice(firstTextIdx);
+  const ownsRun = !error && !standaloneFinalReasoning && (runOpen ? firstTextIdx >= 0 : turnParts.some(isRenderablePart));
 
   const carriedWork: MessagePart[] = [];
   const carriedTurnIDs: string[] = [];
@@ -177,7 +208,7 @@ export function resolveMergedTurnParts(
     let i = globalIndex + 1;
     for (; i < allTurns.length && allTurns[i].info.role === "assistant"; i++) {
       const next = allTurns[i];
-      if (next.info.error) break;
+      if (next.info.error || isCompletedStandaloneReasoningTurn(allTurns, i)) break;
       const nextParts = expandInlineThinkingParts(next.parts);
       const nextTextIdx = nextParts.findIndex(isVisibleTextPart);
       const lead = (nextTextIdx < 0 ? nextParts : nextParts.slice(0, nextTextIdx)).filter(isWorkPart);

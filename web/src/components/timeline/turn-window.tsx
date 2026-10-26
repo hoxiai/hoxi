@@ -481,6 +481,15 @@ export function AssistantTurnItem(props: {
     );
   });
 
+  const defaultOpenFinalReasoning = createMemo(
+    () =>
+      merged().isCycleEnd &&
+      Boolean(props.turn.info.time?.completed) &&
+      !props.turn.info.error &&
+      !merged().effectiveParts.some(isVisibleTextPart) &&
+      !merged().effectiveParts.some((p) => p.type === "tool")
+  );
+
   return (
     <Show
       when={
@@ -535,7 +544,13 @@ export function AssistantTurnItem(props: {
                         : undefined
                     }
                   >
-                    {(part) => <PartView part={part()} streaming={isLiveTailItem()} />}
+                    {(part) => (
+                      <PartView
+                        part={part()}
+                        streaming={isLiveTailItem()}
+                        defaultOpenReasoning={defaultOpenFinalReasoning()}
+                      />
+                    )}
                   </Show>
                 }
               >
@@ -551,6 +566,7 @@ export function AssistantTurnItem(props: {
                   }
                   isLiveTail={isTailActivityGroup()}
                   startedAt={isTailActivityGroup() ? props.cycleStartedAt : undefined}
+                  defaultOpenReasoning={defaultOpenFinalReasoning()}
                 />
               </Show>
             );
