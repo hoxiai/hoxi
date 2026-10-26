@@ -2,6 +2,7 @@ package worktree
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -131,5 +132,154 @@ func TestDiffBatchedPatches(t *testing.T) {
 	}
 	if !strings.Contains(byName["binary.dat"].Patch, "Binary files") {
 		t.Fatal("lost binary patch")
+	}
+}
+
+func TestDiffBoundsMassiveUntrackedDirsAndResolvesExplicitEditedFiles(t *testing.T) {
+	t.Parallel()
+	dir := initTempGitRepo(t)
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("# Updated\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "z_direct_untracked.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	smallDir := filepath.Join(dir, "z_small_pkg")
+	if err := os.MkdirAll(smallDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(smallDir, "helper.go"), []byte("package small\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// An alphabetically earlier untracked directory with > maxUntrackedFilesPerDir files
+	// must not crowd out direct untracked files or small untracked directories.
+	hugeDir := filepath.Join(dir, "a_huge_dump")
+	if err := os.MkdirAll(hugeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < maxUntrackedFilesPerDir+10; i++ {
+		name := filepath.Join(hugeDir, fmt.Sprintf("page_%03d.html", i))
+		if err := os.WriteFile(name, []byte("<html>dump</html>\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	mgr := NewManager(dir)
+	diffs, err := mgr.Diff("__root__")
+	if err != nil {
+		t.Fatalf("Diff failed: %v", err)
+	}
+	byFile := make(map[string]worktreeFileDiff, len(diffs))
+	for _, d := range diffs {
+		if strings.HasPrefix(d.File, "a_huge_dump/") {
+			t.Fatalf("expected massive untracked dir a_huge_dump/ to be skipped in bulk diff, got %s", d.File)
+		}
+		byFile[d.File] = d
+	}
+	if _, ok := byFile["README.md"]; !ok {
+		t.Fatalf("expected modified tracked README.md in diffs, got %+v", diffs)
+	}
+	if d, ok := byFile["z_direct_untracked.go"]; !ok || !strings.Contains(d.Patch, "+package main") {
+		t.Fatalf("expected direct untracked file with inline patch, got %+v", d)
+	}
+	if d, ok := byFile["z_small_pkg/helper.go"]; !ok || !strings.Contains(d.Patch, "+package small") {
+		t.Fatalf("expected small untracked dir file with inline patch, got %+v", d)
+	}
+
+	// Explicitly editing a file inside the skipped huge untracked dir must still resolve via DiffForFiles.
+	targeted, err := mgr.DiffForFiles("__root__", map[string]struct{}{
+		"a_huge_dump/page_001.html": {},
+	})
+	if err != nil {
+		t.Fatalf("DiffForFiles failed: %v", err)
+	}
+	foundTargeted := false
+	for _, d := range targeted {
+		if d.File == "a_huge_dump/page_001.html" && strings.Contains(d.Patch, "+<html>dump</html>") {
+			foundTargeted = true
+			break
+		}
+	}
+	if !foundTargeted {
+		t.Fatalf("expected DiffForFiles to resolve explicit file in huge untracked dir, got %+v", targeted)
+	}
+}
+
+func TestFingerprintRemainsNonEmptyAboveMaxFingerprintFiles(t *testing.T) {
+	t.Parallel()
+	dir := initTempGitRepo(t)
+	for i := 0; i < maxFingerprintFiles+15; i++ {
+		if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("untracked_%03d.txt", i)), []byte("hello\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fp1 := computeRepoStateFingerprint(dir, "HEAD")
+	if fp1 == "" {
+		t.Fatal("expected non-empty fingerprint when porcelain entries exceed maxFingerprintFiles")
+	}
+	fp2 := computeRepoStateFingerprint(dir, "HEAD")
+	if fp1 != fp2 {
+		t.Fatalf("expected deterministic fingerprint, got %q vs %q", fp1, fp2)
+	}
+
+	mgr := NewManager(dir)
+	diffs, err := mgr.Diff("__root__")
+	if err != nil {
+		t.Fatalf("Diff failed: %v", err)
+	}
+	inlineCount := 0
+	deferredLargeCount := 0
+	for _, d := range diffs {
+		if d.Patch != "" {
+			inlineCount++
+		} else if d.Large {
+			deferredLargeCount++
+		}
+	}
+	if inlineCount > maxDiffUntrackedInlineFiles {
+		t.Fatalf("expected inline untracked patches capped at %d, got %d", maxDiffUntrackedInlineFiles, inlineCount)
+	}
+	if deferredLargeCount == 0 {
+		t.Fatal("expected untracked files beyond maxDiffUntrackedInlineFiles to be marked Large with deferred patch")
+	}
+}
+
+func TestSnapshotSkipsMassiveUntrackedDirsWithoutDeletingOnRestore(t *testing.T) {
+	t.Parallel()
+	dir := initTempGitRepo(t)
+	hugeDir := filepath.Join(dir, "huge_static")
+	if err := os.MkdirAll(hugeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < maxUntrackedFilesPerDir+5; i++ {
+		if err := os.WriteFile(filepath.Join(hugeDir, fmt.Sprintf("f_%03d.html", i)), []byte("static\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	snap, err := CreateSnapshot(dir)
+	if err != nil || snap == "" {
+		t.Fatalf("CreateSnapshot failed: snap=%q err=%v", snap, err)
+	}
+	treeOut, err := runGit(dir, "ls-tree", "-r", "--name-only", snap)
+	if err != nil {
+		t.Fatalf("ls-tree snap: %v", err)
+	}
+	if strings.Contains(treeOut, "huge_static/") {
+		t.Fatalf("expected huge_static/ excluded from snapshot tree, got:\n%s", treeOut)
+	}
+
+	agentFile := filepath.Join(dir, "agent_created.txt")
+	if err := os.WriteFile(agentFile, []byte("temporary\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := RestoreSnapshot(dir, snap); err != nil {
+		t.Fatalf("RestoreSnapshot failed: %v", err)
+	}
+	if _, err := os.Stat(agentFile); !os.IsNotExist(err) {
+		t.Fatalf("expected agent_created.txt removed on RestoreSnapshot, err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(hugeDir, "f_000.html")); err != nil {
+		t.Fatalf("expected skipped huge_static/ files preserved on RestoreSnapshot, err=%v", err)
 	}
 }

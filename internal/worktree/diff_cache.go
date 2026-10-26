@@ -2,6 +2,7 @@ package worktree
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,11 +12,43 @@ import (
 )
 
 const (
-	maxSingleFilePatchBytes    = 256 * 1024
-	maxGeneratedInlinePatchLen = 64 * 1024
-	maxCachedRepoDiffs         = 512
-	maxFingerprintFiles        = 128
+	maxSingleFilePatchBytes     = 256 * 1024
+	maxGeneratedInlinePatchLen  = 64 * 1024
+	maxTotalInlinePatchBytes    = 4 * 1024 * 1024
+	maxTotalDiffFiles           = 1000
+	maxDiffUntrackedFiles       = 256
+	maxDiffUntrackedInlineFiles = 64
+	maxUntrackedFilesPerDir     = 128
+	maxUntrackedScanDirsPerDir  = 256
+	maxCachedRepoDiffs          = 64
+	maxCachedRepoStatuses       = 512
+	maxFingerprintFiles         = 128
+	maxGitCommandOutputBytes    = 16 * 1024 * 1024
 )
+
+type cappedGitOutputBuffer struct {
+	buf   bytes.Buffer
+	limit int
+}
+
+func (w *cappedGitOutputBuffer) Write(p []byte) (int, error) {
+	origLen := len(p)
+	if w.limit > 0 {
+		rem := w.limit - w.buf.Len()
+		if rem <= 0 {
+			return origLen, nil
+		}
+		if len(p) > rem {
+			p = p[:rem]
+		}
+	}
+	_, _ = w.buf.Write(p)
+	return origLen, nil
+}
+
+func (w *cappedGitOutputBuffer) String() string {
+	return w.buf.String()
+}
 
 var knownLockfileNames = map[string]struct{}{
 	"package-lock.json": {},
@@ -82,6 +115,13 @@ func classifyGeneratedFile(relPath string) bool {
 	return false
 }
 
+func statStampFromFileInfo(info os.FileInfo) string {
+	if info == nil {
+		return "missing"
+	}
+	return fmt.Sprintf("%d:%d:%d", info.Size(), info.ModTime().UnixNano(), info.Mode())
+}
+
 // fileStatStamp returns a lightweight size+mtime+mode stamp for a working tree
 // file without reading its contents.
 func fileStatStamp(repoDir, relPath string) string {
@@ -90,7 +130,136 @@ func fileStatStamp(repoDir, relPath string) string {
 	if err != nil {
 		return "missing"
 	}
-	return fmt.Sprintf("%d:%d:%d", info.Size(), info.ModTime().UnixNano(), info.Mode())
+	return statStampFromFileInfo(info)
+}
+
+func untrackedDirWithinLimit(absDir string, maxFiles, maxDirs int) bool {
+	files, dirs := 0, 0
+	var walk func(curr string) bool
+	walk = func(curr string) bool {
+		dirs++
+		if dirs > maxDirs {
+			return false
+		}
+		entries, err := os.ReadDir(curr)
+		if err != nil {
+			return true
+		}
+		for _, entry := range entries {
+			name := entry.Name()
+			if name == "" || name == ".git" || isIgnoredUntrackedWorktreePath(name) {
+				continue
+			}
+			if entry.IsDir() {
+				if shouldSkipNestedScanDir(name) {
+					continue
+				}
+				child := filepath.Join(curr, name)
+				if hasGitMarker(child) {
+					continue
+				}
+				if !walk(child) {
+					return false
+				}
+				continue
+			}
+			files++
+			if files > maxFiles {
+				return false
+			}
+		}
+		return true
+	}
+	return walk(absDir)
+}
+
+// collectBoundedUntrackedFiles returns up to maxFiles untracked repo-relative
+// slash paths, prioritizing direct untracked files in tracked directories and
+// skipping untracked dump directories that exceed maxUntrackedFilesPerDir.
+func collectBoundedUntrackedFiles(repoDir, porcelainZ string, nestedPrefixes map[string]struct{}, maxFiles int) []string {
+	if maxFiles <= 0 {
+		return nil
+	}
+	if porcelainZ == "" {
+		porcelainZ, _ = runGitRaw(repoDir, "--no-optional-locks", "status", "--porcelain", "-b", "-z")
+	}
+	var out []string
+	seen := make(map[string]struct{})
+	addFile := func(rel string) {
+		rel = strings.TrimPrefix(filepath.ToSlash(strings.TrimSpace(rel)), "./")
+		if rel == "" || strings.HasSuffix(rel, "/") || strings.HasPrefix(rel, ".hoxi/") || isIgnoredUntrackedWorktreePath(rel) {
+			return
+		}
+		if len(nestedPrefixes) > 0 && isWithinNestedRepo(rel, nestedPrefixes) {
+			return
+		}
+		if _, exists := seen[rel]; exists {
+			return
+		}
+		seen[rel] = struct{}{}
+		out = append(out, rel)
+	}
+
+	if porcelainZ != "" {
+		var expandDirs []string
+		entries := strings.Split(porcelainZ, "\x00")
+		for i := 0; i < len(entries); i++ {
+			rawLine := entries[i]
+			if len(rawLine) < 4 || strings.HasPrefix(rawLine, "## ") {
+				continue
+			}
+			x, y := rawLine[0], rawLine[1]
+			if (x == 'R' || x == 'C' || y == 'R' || y == 'C') && i+1 < len(entries) {
+				i++
+				continue
+			}
+			if !strings.HasPrefix(rawLine, "?? ") {
+				continue
+			}
+			rel := filepath.ToSlash(strings.TrimSpace(rawLine[3:]))
+			if rel == "" || strings.HasPrefix(rel, ".hoxi/") || isIgnoredUntrackedWorktreePath(rel) {
+				continue
+			}
+			if len(nestedPrefixes) > 0 && isWithinNestedRepo(strings.TrimSuffix(rel, "/"), nestedPrefixes) {
+				continue
+			}
+			if strings.HasSuffix(rel, "/") {
+				absDir := filepath.Join(repoDir, filepath.FromSlash(strings.TrimSuffix(rel, "/")))
+				if untrackedDirWithinLimit(absDir, maxUntrackedFilesPerDir, maxUntrackedScanDirsPerDir) {
+					expandDirs = append(expandDirs, rel)
+				}
+				continue
+			}
+			addFile(rel)
+			if len(out) >= maxFiles {
+				return out
+			}
+		}
+		if len(expandDirs) > 0 && len(out) < maxFiles {
+			args := append([]string{"ls-files", "--others", "--exclude-standard", "-z", "--"}, expandDirs...)
+			if untrackedOut, err := runGitRaw(repoDir, args...); err == nil && untrackedOut != "" {
+				for _, rel := range strings.Split(untrackedOut, "\x00") {
+					addFile(rel)
+					if len(out) >= maxFiles {
+						break
+					}
+				}
+			}
+		}
+		return out
+	}
+
+	untrackedOut, err := runGitRaw(repoDir, "ls-files", "--others", "--exclude-standard", "-z")
+	if err != nil || untrackedOut == "" {
+		return nil
+	}
+	for _, rel := range strings.Split(untrackedOut, "\x00") {
+		addFile(rel)
+		if len(out) >= maxFiles {
+			break
+		}
+	}
+	return out
 }
 
 // resolveGitDirFast resolves the repository's .git directory (including linked
@@ -210,7 +379,7 @@ var (
 func computeRepoStateFingerprintWithPorcelain(repoDir, diffTarget string) (string, string, string, error) {
 	cleanDir := filepath.Clean(repoDir)
 	res := fingerprintFlightGroup.do(cleanDir+"\x00"+diffTarget, func() fingerprintResult {
-		porcelain, err := runGitRaw(cleanDir, "status", "--porcelain", "-b", "-z")
+		porcelain, err := runGitRaw(cleanDir, "--no-optional-locks", "status", "--porcelain", "-b", "-z")
 		if err != nil {
 			return fingerprintResult{err: err}
 		}
@@ -240,17 +409,27 @@ func computeRepoStateFingerprintWithPorcelain(repoDir, diffTarget string) (strin
 
 		entries := strings.Split(porcelain, "\x00")
 		if len(entries) > maxFingerprintFiles {
-			return fingerprintResult{headSHA: head, porcelainZ: porcelain}
+			sum := sha256.Sum256([]byte(porcelain))
+			fmt.Fprintf(&b, "p:%x|", sum[:16])
 		}
-		for _, entry := range entries {
+		statted := 0
+		for i := 0; i < len(entries); i++ {
+			entry := entries[i]
 			if entry == "" {
 				continue
 			}
-			b.WriteString(entry)
-			b.WriteByte(';')
+			if len(entries) <= maxFingerprintFiles {
+				b.WriteString(entry)
+				b.WriteByte(';')
+			}
 			if len(entry) > 3 && !strings.HasPrefix(entry, "## ") {
+				x, y := entry[0], entry[1]
 				rel := strings.TrimSpace(entry[3:])
-				if rel != "" && !strings.HasPrefix(rel, ".hoxi/") {
+				if (x == 'R' || x == 'C' || y == 'R' || y == 'C') && i+1 < len(entries) {
+					i++
+				}
+				if rel != "" && !strings.HasPrefix(rel, ".hoxi/") && !strings.HasSuffix(rel, "/") && statted < maxFingerprintFiles {
+					statted++
 					b.WriteString(fileStatStamp(cleanDir, rel))
 					b.WriteByte(';')
 				}
@@ -322,7 +501,7 @@ func (c *repoStatusCache) put(repoDir, diffTarget, fingerprint string, summary r
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if _, exists := c.entries[key]; !exists {
-		if len(c.order) >= maxCachedRepoDiffs {
+		if len(c.order) >= maxCachedRepoStatuses {
 			evict := c.order[0]
 			c.order = c.order[1:]
 			delete(c.entries, evict)

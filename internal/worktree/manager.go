@@ -765,9 +765,11 @@ func runGitRaw(workDir string, args ...string) (string, error) {
 	cmdArgs := append([]string{"-C", workDir}, args...)
 	cmd := exec.CommandContext(ctx, "git", cmdArgs...)
 	cmd.Env = nonInteractiveGitEnv()
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("%s: %w", strings.TrimSpace(string(output)), err)
+	out := &cappedGitOutputBuffer{limit: maxGitCommandOutputBytes}
+	cmd.Stdout = out
+	cmd.Stderr = out
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("%s: %w", strings.TrimSpace(out.String()), err)
 	}
-	return string(output), nil
+	return out.String(), nil
 }

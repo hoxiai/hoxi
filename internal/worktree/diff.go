@@ -318,7 +318,7 @@ func parsePatchHeaderFile(chunk string) string {
 }
 
 func diffSingleRepo(repo gitRepoTarget, diffTarget string, nestedPrefixes map[string]struct{}) []worktreeFileDiff {
-	fingerprint := computeRepoStateFingerprint(repo.Dir, diffTarget)
+	fingerprint, _, porcelainZ, _ := computeRepoStateFingerprintWithPorcelain(repo.Dir, diffTarget)
 	if cached, hit := globalRepoDiffCache.get(repo.Dir, diffTarget, fingerprint); hit {
 		return cached
 	}
@@ -333,11 +333,11 @@ func diffSingleRepo(repo gitRepoTarget, diffTarget string, nestedPrefixes map[st
 		if cached, hit := globalRepoDiffCache.get(repo.Dir, diffTarget, fingerprint); hit {
 			return cached
 		}
-		return computeDiffSingleRepo(repo, diffTarget, fingerprint, nestedPrefixes)
+		return computeDiffSingleRepo(repo, diffTarget, fingerprint, porcelainZ, nestedPrefixes)
 	})
 }
 
-func computeDiffSingleRepo(repo gitRepoTarget, diffTarget, fingerprint string, nestedPrefixes map[string]struct{}) []worktreeFileDiff {
+func computeDiffSingleRepo(repo gitRepoTarget, diffTarget, fingerprint, porcelainZ string, nestedPrefixes map[string]struct{}) []worktreeFileDiff {
 	var repoBranch, repoDir string
 	if repo.RelPrefix != "" || repo.External {
 		repoBranch = resolveGitBranchFast(repo.Dir)
@@ -380,8 +380,12 @@ func computeDiffSingleRepo(repo gitRepoTarget, diffTarget, fingerprint string, n
 
 	results := make([]worktreeFileDiff, 0)
 	seen := make(map[string]struct{})
+	totalInlinePatchBytes := 0
 
 	for i, line := range strings.Split(strings.TrimSuffix(numstat, "\x00"), "\x00") {
+		if len(results) >= maxTotalDiffFiles {
+			break
+		}
 		fields := strings.SplitN(line, "\t", 3)
 		if len(fields) < 3 {
 			continue
@@ -415,14 +419,19 @@ func computeDiffSingleRepo(repo gitRepoTarget, diffTarget, fingerprint string, n
 			st = "deleted"
 		}
 		generated := classifyGeneratedFile(relFile)
-		large := len(patch) > maxSingleFilePatchBytes || (generated && (len(patch) > maxGeneratedInlinePatchLen || add+del > 300))
+		large := len(patch) > maxSingleFilePatchBytes ||
+			(generated && (len(patch) > maxGeneratedInlinePatchLen || add+del > 300)) ||
+			(len(patch) > 0 && totalInlinePatchBytes+len(patch) > maxTotalInlinePatchBytes)
 		if large {
 			patch = ""
+		} else {
+			patch = strings.TrimSpace(patch)
+			totalInlinePatchBytes += len(patch)
 		}
 		seen[relFile] = struct{}{}
 		results = append(results, worktreeFileDiff{
 			File:          relFile,
-			Patch:         strings.TrimSpace(patch),
+			Patch:         patch,
 			Additions:     add,
 			Deletions:     del,
 			Status:        st,
@@ -436,14 +445,20 @@ func computeDiffSingleRepo(repo gitRepoTarget, diffTarget, fingerprint string, n
 		})
 	}
 
-	untracked, _ := runGitRaw(repo.Dir, "ls-files", "--others", "--exclude-standard", "-z")
-	for _, rel := range strings.Split(untracked, "\x00") {
-		if rel == "" || strings.HasPrefix(rel, ".hoxi/") || isIgnoredUntrackedWorktreePath(rel) {
-			continue
-		}
-		slashRel := filepath.ToSlash(rel)
-		if !repo.External && repo.RelPrefix == "" && isWithinNestedRepo(slashRel, nestedPrefixes) {
-			continue
+	var nestedFilter map[string]struct{}
+	if !repo.External && repo.RelPrefix == "" {
+		nestedFilter = nestedPrefixes
+	}
+	untrackedFiles := collectBoundedUntrackedFiles(repo.Dir, porcelainZ, nestedFilter, maxDiffUntrackedFiles)
+	resolvedRepoDir, errRepo := filepath.EvalSymlinks(repo.Dir)
+	if errRepo == nil {
+		resolvedRepoDir = filepath.Clean(resolvedRepoDir)
+	}
+	inlineUntracked := 0
+
+	for _, slashRel := range untrackedFiles {
+		if len(results) >= maxTotalDiffFiles {
+			break
 		}
 		relFile := slashRel
 		if repo.RelPrefix != "" {
@@ -452,13 +467,13 @@ func computeDiffSingleRepo(repo gitRepoTarget, diffTarget, fingerprint string, n
 		if _, exists := seen[relFile]; exists {
 			continue
 		}
-		full := filepath.Join(repo.Dir, rel)
+		full := filepath.Join(repo.Dir, filepath.FromSlash(slashRel))
 		info, err := os.Lstat(full)
 		if err != nil || info.IsDir() {
 			continue
 		}
 		generated := classifyGeneratedFile(relFile)
-		stamp := fileStatStamp(repo.Dir, slashRel)
+		stamp := statStampFromFileInfo(info)
 		if info.Mode()&os.ModeSymlink != 0 {
 			target, linkErr := os.Readlink(full)
 			if linkErr != nil {
@@ -480,10 +495,12 @@ func computeDiffSingleRepo(repo gitRepoTarget, diffTarget, fingerprint string, n
 			})
 			continue
 		}
-		if !info.Mode().IsRegular() || !regularFileStaysWithinRepo(repo.Dir, full) {
+		if !info.Mode().IsRegular() || errRepo != nil || !regularFileStaysWithinResolvedRepo(resolvedRepoDir, full) {
 			continue
 		}
-		if info.Size() > maxSingleFilePatchBytes {
+		if info.Size() > maxSingleFilePatchBytes ||
+			inlineUntracked >= maxDiffUntrackedInlineFiles ||
+			totalInlinePatchBytes+int(info.Size()) > maxTotalInlinePatchBytes {
 			seen[relFile] = struct{}{}
 			results = append(results, worktreeFileDiff{
 				File:          relFile,
@@ -519,6 +536,13 @@ func computeDiffSingleRepo(repo gitRepoTarget, diffTarget, fingerprint string, n
 				}
 			}
 			patch = strings.TrimSpace(patchBuf.String())
+			if totalInlinePatchBytes+len(patch) > maxTotalInlinePatchBytes {
+				patch = ""
+				large = true
+			} else {
+				inlineUntracked++
+				totalInlinePatchBytes += len(patch)
+			}
 		}
 		seen[relFile] = struct{}{}
 		results = append(results, worktreeFileDiff{
@@ -655,25 +679,38 @@ func (m *worktreeManager) DiffForFiles(sessionID string, edited map[string]struc
 	if meta.Isolated && strings.TrimSpace(meta.BaseCommit) != "" {
 		rootDiffTarget = strings.TrimSpace(meta.BaseCommit)
 	}
-	if len(targetRepos) == 1 {
-		target := "HEAD"
-		if targetRepos[0].RelPrefix == "" {
-			target = rootDiffTarget
-		}
-		return diffSingleRepo(targetRepos[0], target, nestedPrefixes), nil
-	}
-
 	var results []worktreeFileDiff
-	seenFiles := make(map[string]struct{})
+	indexByFile := make(map[string]int)
 	for _, r := range targetRepos {
 		target := "HEAD"
 		if r.RelPrefix == "" {
 			target = rootDiffTarget
 		}
 		for _, item := range diffSingleRepo(r, target, nestedPrefixes) {
-			if _, exists := seenFiles[item.File]; !exists {
-				seenFiles[item.File] = struct{}{}
+			if _, exists := indexByFile[item.File]; !exists {
+				indexByFile[item.File] = len(results)
 				results = append(results, item)
+			}
+		}
+	}
+	if len(edited) <= maxDiffUntrackedInlineFiles {
+		for relFile := range edited {
+			cleaned := filepath.ToSlash(filepath.Clean(strings.TrimPrefix(strings.TrimSpace(relFile), "./")))
+			if cleaned == "" || cleaned == "." || strings.HasPrefix(cleaned, "..") {
+				continue
+			}
+			if idx, exists := indexByFile[cleaned]; exists {
+				if results[idx].Patch != "" || !results[idx].Large || results[idx].GeneratedLike {
+					continue
+				}
+				if detail, err := m.DiffFile(sessionID, cleaned); err == nil && detail.Patch != "" {
+					results[idx] = detail
+				}
+				continue
+			}
+			if detail, err := m.DiffFile(sessionID, cleaned); err == nil && detail.File != "" {
+				indexByFile[detail.File] = len(results)
+				results = append(results, detail)
 			}
 		}
 	}
@@ -682,11 +719,17 @@ func (m *worktreeManager) DiffForFiles(sessionID string, edited map[string]struc
 
 func regularFileStaysWithinRepo(repoDir, fullPath string) bool {
 	resolvedRepo, errRepo := filepath.EvalSymlinks(repoDir)
-	resolvedFile, errFile := filepath.EvalSymlinks(fullPath)
-	if errRepo != nil || errFile != nil {
+	if errRepo != nil {
 		return false
 	}
-	resolvedRepo = filepath.Clean(resolvedRepo)
+	return regularFileStaysWithinResolvedRepo(filepath.Clean(resolvedRepo), fullPath)
+}
+
+func regularFileStaysWithinResolvedRepo(resolvedRepo, fullPath string) bool {
+	resolvedFile, errFile := filepath.EvalSymlinks(fullPath)
+	if errFile != nil {
+		return false
+	}
 	resolvedFile = filepath.Clean(resolvedFile)
 	return resolvedFile == resolvedRepo || strings.HasPrefix(resolvedFile, resolvedRepo+string(filepath.Separator))
 }

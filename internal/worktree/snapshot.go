@@ -48,7 +48,48 @@ func snapshotWorktree(dir, sessionID string) error {
 	return nil
 }
 
-// CreateSnapshot captures the working directory state (tracked + untracked files)
+const maxSnapshotUntrackedFileSize = 4 * 1024 * 1024
+
+func collectSnapshotCandidatePaths(repoRoot string) []string {
+	seen := make(map[string]struct{})
+	var paths []string
+	var totalBytes int64
+	addCandidate := func(rel string) {
+		rel = strings.TrimPrefix(filepath.ToSlash(strings.TrimSpace(rel)), "./")
+		if rel == "" || strings.HasPrefix(rel, ".hoxi/") || strings.HasPrefix(rel, ".claude/") || strings.HasPrefix(rel, ".opencode/") || isIgnoredUntrackedWorktreePath(rel) {
+			return
+		}
+		if _, exists := seen[rel]; exists {
+			return
+		}
+		absPath := filepath.Join(repoRoot, filepath.FromSlash(rel))
+		info, err := os.Lstat(absPath)
+		if err != nil || info.IsDir() {
+			return
+		}
+		if info.Mode()&os.ModeSymlink == 0 && !info.Mode().IsRegular() {
+			return
+		}
+		if info.Size() > maxSnapshotUntrackedFileSize || totalBytes+info.Size() > maxPortableUntrackedBytes {
+			return
+		}
+		totalBytes += info.Size()
+		seen[rel] = struct{}{}
+		paths = append(paths, rel)
+	}
+
+	if stagedNew, err := runGitRaw(repoRoot, "diff", "--cached", "--name-only", "--diff-filter=A", "-z"); err == nil && stagedNew != "" {
+		for _, rel := range strings.Split(stagedNew, "\x00") {
+			addCandidate(rel)
+		}
+	}
+	for _, rel := range collectBoundedUntrackedFiles(repoRoot, "", nil, maxDiffUntrackedFiles) {
+		addCandidate(rel)
+	}
+	return paths
+}
+
+// CreateSnapshot captures the working directory state (tracked + bounded untracked files)
 // as a Git tree object without modifying HEAD or the repository's real index.
 func CreateSnapshot(dir string) (string, error) {
 	dir = strings.TrimSpace(dir)
@@ -72,8 +113,14 @@ func CreateSnapshot(dir string) (string, error) {
 	defer os.Remove(tmpIndex)
 
 	_, _ = runGitWithIndex(repoRoot, tmpIndex, "read-tree", "HEAD")
-	if _, err := runGitWithIndex(repoRoot, tmpIndex, "add", "-A", "--", ".", ":(exclude).hoxi", ":(exclude).claude"); err != nil {
+	if _, err := runGitWithIndex(repoRoot, tmpIndex, "add", "-u", "--", ".", ":(exclude).hoxi", ":(exclude).claude"); err != nil {
 		return "", fmt.Errorf("stage snapshot: %w", err)
+	}
+	if untrackedPaths := collectSnapshotCandidatePaths(repoRoot); len(untrackedPaths) > 0 {
+		addArgs := append([]string{"add", "-A", "--"}, untrackedPaths...)
+		if _, err := runGitWithIndex(repoRoot, tmpIndex, addArgs...); err != nil {
+			return "", fmt.Errorf("stage untracked snapshot: %w", err)
+		}
 	}
 	if trackedClaude := trackedPathsUnder(repoRoot, ".claude"); len(trackedClaude) > 0 {
 		addArgs := append([]string{"add", "-A", "--"}, trackedClaude...)
@@ -147,14 +194,16 @@ func RestoreSnapshot(dir, treeHash string) error {
 		}
 	}
 
-	currentFilesOut, err := runGitRaw(repoRoot, "ls-files", "-c", "-o", "--exclude-standard", "-z")
-	if err == nil {
-		for _, rel := range strings.Split(currentFilesOut, "\x00") {
-			if rel == "" || keep[rel] || strings.HasPrefix(rel, ".hoxi/") || strings.HasPrefix(rel, ".opencode/") || isIgnoredUntrackedWorktreePath(rel) {
-				continue
-			}
-			_ = os.Remove(filepath.Join(repoRoot, filepath.FromSlash(rel)))
+	var currentCandidates []string
+	if trackedOut, err := runGitRaw(repoRoot, "ls-files", "-c", "-z"); err == nil && trackedOut != "" {
+		currentCandidates = append(currentCandidates, strings.Split(trackedOut, "\x00")...)
+	}
+	currentCandidates = append(currentCandidates, collectSnapshotCandidatePaths(repoRoot)...)
+	for _, rel := range currentCandidates {
+		if rel == "" || keep[rel] || strings.HasPrefix(rel, ".hoxi/") || strings.HasPrefix(rel, ".opencode/") || isIgnoredUntrackedWorktreePath(rel) {
+			continue
 		}
+		_ = os.Remove(filepath.Join(repoRoot, filepath.FromSlash(rel)))
 	}
 
 	tmpFile, err := os.CreateTemp("", "hoxi-restore-index-*")
@@ -310,11 +359,13 @@ func runGitWithIndex(workDir, indexPath string, args ...string) (string, error) 
 	cmdArgs := append([]string{"-C", workDir}, args...)
 	cmd := exec.CommandContext(ctx, "git", cmdArgs...)
 	cmd.Env = nonInteractiveGitEnv("GIT_INDEX_FILE=" + indexPath)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("%s: %w", strings.TrimSpace(string(output)), err)
+	out := &cappedGitOutputBuffer{limit: maxGitCommandOutputBytes}
+	cmd.Stdout = out
+	cmd.Stderr = out
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("%s: %w", strings.TrimSpace(out.String()), err)
 	}
-	return strings.TrimSpace(string(output)), nil
+	return strings.TrimSpace(out.String()), nil
 }
 
 const maxPortableUntrackedBytes = 20 * 1024 * 1024
@@ -350,31 +401,29 @@ func CapturePortableSnapshot(dir string) (*PortableGitSnapshot, error) {
 	unstaged, _ := runGitRaw(repoRoot, "diff", "--binary")
 
 	var untracked []PortableUntrackedFile
-	if out, lsErr := runGitRaw(repoRoot, "ls-files", "--others", "--exclude-standard", "-z"); lsErr == nil && out != "" {
-		var totalBytes int64
-		for _, entry := range strings.Split(out, "\x00") {
-			if entry == "" || strings.HasPrefix(entry, ".hoxi/") || strings.HasPrefix(entry, ".opencode/") || isIgnoredUntrackedWorktreePath(entry) || isRootEnvFile(entry) {
-				continue
-			}
-			absPath := filepath.Join(repoRoot, filepath.FromSlash(entry))
-			info, statErr := os.Lstat(absPath)
-			if statErr != nil || !info.Mode().IsRegular() {
-				continue
-			}
-			if totalBytes+info.Size() > maxPortableUntrackedBytes {
-				break
-			}
-			data, readErr := os.ReadFile(absPath)
-			if readErr != nil {
-				continue
-			}
-			totalBytes += int64(len(data))
-			untracked = append(untracked, PortableUntrackedFile{
-				RelPath: entry,
-				Mode:    info.Mode().Perm(),
-				Data:    data,
-			})
+	var totalBytes int64
+	for _, entry := range collectBoundedUntrackedFiles(repoRoot, "", nil, maxDiffUntrackedFiles) {
+		if entry == "" || strings.HasPrefix(entry, ".hoxi/") || strings.HasPrefix(entry, ".opencode/") || isIgnoredUntrackedWorktreePath(entry) || isRootEnvFile(entry) {
+			continue
 		}
+		absPath := filepath.Join(repoRoot, filepath.FromSlash(entry))
+		info, statErr := os.Lstat(absPath)
+		if statErr != nil || !info.Mode().IsRegular() || info.Size() > maxSnapshotUntrackedFileSize {
+			continue
+		}
+		if totalBytes+info.Size() > maxPortableUntrackedBytes {
+			break
+		}
+		data, readErr := os.ReadFile(absPath)
+		if readErr != nil {
+			continue
+		}
+		totalBytes += int64(len(data))
+		untracked = append(untracked, PortableUntrackedFile{
+			RelPath: entry,
+			Mode:    info.Mode().Perm(),
+			Data:    data,
+		})
 	}
 
 	return &PortableGitSnapshot{
