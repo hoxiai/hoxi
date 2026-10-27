@@ -352,6 +352,9 @@ func TestCrossDirectoryCDAndSkillsApproval(t *testing.T) {
 		{"read_file", filepath.Join(siblingRepo, ".git", "logs", "HEAD"), false},
 		{"read_file", "/etc/passwd", true},
 		{"edit_file", "/Users/u/.agents/hooks.json", true},
+		{"edit_file", "/Users/u/.agents/skills/ainode-release-and-deploy/scripts/deploy.sh", true},
+		{"write_file", filepath.Join(worktreeDir, ".hoxi", "skills", "foo", "run.sh"), true},
+		{"write_file", filepath.Join(worktreeDir, ".hoxi", "attachments", "paste.png"), false},
 		{"edit_file", filepath.Join(worktreeDir, ".git", "config"), true},
 	} {
 		_, _, gotDestructive, _ := svc.inspectHookToolRisk("ses_skill_test", tc.tool, map[string]interface{}{"Path": tc.path})

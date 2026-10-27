@@ -3,11 +3,8 @@ import type { SessionInfo } from "../services/sse-types";
 import { hoxiAPI } from "../services/api";
 import { registerRunnerSessions } from "../services/runner-api";
 import {
-  evictCachedSessionTurns,
   forgetSubagentLinks,
   mergeServerTurnsInto,
-  persistCachedSessionTurns,
-  readCachedSessionTurns,
 } from "./message-lookup";
 import { persistSessionAI, restoreSessionAI } from "./session-ai";
 import { syncPendingPermissions } from "./approval-mode";
@@ -22,8 +19,11 @@ import {
 } from "./session-title";
 import {
   beginSessionTranscriptRead,
+  evictCachedSessionTurns,
   hydratedSessionIDs,
   isReadingSessionTranscript,
+  persistCachedSessionTurns,
+  readCachedSessionTurns,
   touchSessionTranscript,
 } from "./session-transcripts";
 import {

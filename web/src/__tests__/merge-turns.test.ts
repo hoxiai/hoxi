@@ -1,16 +1,18 @@
 // web/src/__tests__/merge-turns.test.ts
 import { createStore, produce } from "solid-js/store";
 import {
-  evictCachedSessionTurns,
   forgetSubagentLinks,
   getFullToolOutput,
   lookupSubagentParent,
   mergeServerTurnsInto,
-  persistCachedSessionTurns,
-  readCachedSessionTurns,
   upsertTurnInfo,
   upsertTurnPart,
 } from "../store/message-lookup";
+import {
+  evictCachedSessionTurns,
+  persistCachedSessionTurns,
+  readCachedSessionTurns,
+} from "../store/session-transcripts";
 import type { MessageInfo, MessagePart } from "../services/sse-types";
 import type { MessageTurn } from "../store/workspace";
 import { assertEqual, assertTrue, describe, it } from "./test-harness";

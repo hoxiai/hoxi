@@ -168,6 +168,7 @@ const GO_BASE_PACKAGES = new Set([
   "notify",
   "opencode/ocapi",
   "opencode/ocstate",
+  "reclaim",
   "statusbar",
   "textindex",
 ]);

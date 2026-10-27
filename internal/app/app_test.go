@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"os/exec"
 	"testing"
 
 	"github.com/hoxiai/hoxi/internal/statusbar"
@@ -92,10 +91,7 @@ func TestDesktopAppLifecycleMethods(t *testing.T) {
 	dapp.childStopped = false
 
 	// Start a dummy long-running sleep process and register via setChild
-	cmd := exec.Command("sleep", "30")
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("failed to start dummy sleep process: %v", err)
-	}
+	cmd := startChild(t, "sleep", "30")
 	dapp.setChild(cmd)
 	if dapp.child != cmd {
 		t.Fatal("expected dapp.child to be set")
@@ -109,10 +105,7 @@ func TestDesktopAppLifecycleMethods(t *testing.T) {
 	<-dapp.childDone
 
 	// Start another dummy process to verify shutdown cleans up both wsServer and child
-	cmd2 := exec.Command("sleep", "30")
-	if err := cmd2.Start(); err != nil {
-		t.Fatalf("failed to start second dummy sleep process: %v", err)
-	}
+	cmd2 := startChild(t, "sleep", "30")
 	dapp.childStopped = false
 	dapp.setChild(cmd2)
 

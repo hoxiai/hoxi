@@ -459,7 +459,7 @@ func isProtectedRelPath(rel string) bool {
 	if slash == "." || slash == "" {
 		return false
 	}
-	if isRoutineHoxiSubpath(slash) {
+	if isRoutineAttachmentSubpath(slash) {
 		return false
 	}
 	if slash == ".vscode/settings.json" || strings.HasSuffix(slash, "/.vscode/settings.json") ||

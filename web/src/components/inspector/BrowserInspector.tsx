@@ -6,6 +6,7 @@ import {
   createChromePairing,
   executeBrowserAction,
   fetchBrowserState,
+  normalizeBrowserAddress,
   openExternalURL,
   sessionDirectory,
   setWorkspace,
@@ -64,6 +65,7 @@ export default function BrowserInspector() {
   let input: HTMLTextAreaElement | undefined;
   let composing = false;
   let editingURL = false;
+  let composingURL = false;
   let frameEpoch = -1;
   const iconBtn = "shrink-0 rounded p-1 hover:bg-[var(--bg-hover)] disabled:opacity-40 cursor-pointer transition-colors";
   const running = () => Boolean(state()?.tabs.length);
@@ -127,7 +129,9 @@ export default function BrowserInspector() {
       connection.navPending++;
       setBusy(true);
     }
-    setError("");
+    // The error banner itself changes the viewport height; the resulting
+    // layout-driven resize must not dismiss an error the user has not seen.
+    if (action.action !== "resize") setError("");
     connection.queue = connection.queue.then(async () => {
       if (!valid(connection)) return;
       try {
@@ -223,8 +227,14 @@ export default function BrowserInspector() {
     if (!pendingURL || !current || !valid(current)) return;
     setWorkspace("inspectedBrowserURL", null);
     editingURL = false;
-    setURL(pendingURL);
-    send({ action: "navigate", url: pendingURL });
+    const target = normalizeBrowserAddress(pendingURL);
+    if (!target) {
+      setURL(pendingURL);
+      setError(t("inspector.browser.invalidURL"));
+      return;
+    }
+    setURL(target);
+    send({ action: "navigate", url: target });
   }
 
   async function pairChrome() {
@@ -255,6 +265,7 @@ export default function BrowserInspector() {
     setBusy(false);
     setPairCode("");
     editingURL = false;
+    composingURL = false;
     composing = false;
     if (input) input.value = "";
     if (!active || !enabled) return;
@@ -345,6 +356,14 @@ export default function BrowserInspector() {
     if (text) send({ action: "type", text });
   }
 
+  function navigateAddress(address = url()) {
+    if (busy() || pairing() || state()?.connected === false || composingURL) return;
+    const target = normalizeBrowserAddress(address);
+    if (!target) { setError(t("inspector.browser.invalidURL")); return; }
+    setURL(target);
+    send({ action: "navigate", url: target });
+  }
+
   function keydown(event: KeyboardEvent) {
     // Remote-page keys belong to Chrome, not workspace shortcuts.
     event.stopPropagation();
@@ -367,9 +386,18 @@ export default function BrowserInspector() {
           <button class={iconBtn} disabled={!running() || busy()} title={t("inspector.browser.reload")} aria-label={t("inspector.browser.reload")} onClick={() => send({ action: "reload" })}><RefreshCw size={13} class={busy() ? "animate-spin" : ""} /></button>
           <form class="flex flex-1 min-w-0 items-center gap-1" onSubmit={(event) => {
             event.preventDefault();
-            if (!pairing()) send({ action: "navigate", url: url().trim() || "about:blank" });
+            navigateAddress();
           }} onKeyDown={(event) => event.stopPropagation()}>
-            <input class="min-w-0 flex-1 rounded border border-[var(--border-subtle)] bg-transparent px-2 py-1 text-xs focus:outline-none focus:border-[var(--accent-primary)]" aria-label={t("inspector.browser.url")} placeholder={t("inspector.browser.url")} value={url()} onFocus={() => { editingURL = true; }} onBlur={() => { editingURL = false; }} onInput={(event) => setURL(event.currentTarget.value)} />
+            <input class="min-w-0 flex-1 rounded border border-[var(--border-subtle)] bg-transparent px-2 py-1 text-xs focus:outline-none focus:border-[var(--accent-primary)]" aria-label={t("inspector.browser.url")} placeholder={t("inspector.browser.url")} value={url()} autocapitalize="off" autocomplete="off" spellcheck={false}
+              onFocus={() => { editingURL = true; }} onBlur={() => { editingURL = false; }} onInput={(event) => setURL(event.currentTarget.value)}
+              onCompositionStart={() => { composingURL = true; }} onCompositionEnd={() => { composingURL = false; }}
+              onKeyDown={(event) => {
+                event.stopPropagation();
+                if (event.key !== "Enter" || event.isComposing || composingURL || event.keyCode === 229) return;
+                // Submit explicitly: native WebViews need not perform implicit form submission.
+                event.preventDefault();
+                navigateAddress(event.currentTarget.value);
+              }} />
             <button class="shrink-0 rounded px-1.5 py-1 text-[11px] hover:bg-[var(--bg-hover)] disabled:opacity-40 cursor-pointer" disabled={busy() || pairing() || state()?.connected === false} type="submit">{t("inspector.browser.go")}</button>
           </form>
           <button
@@ -379,8 +407,10 @@ export default function BrowserInspector() {
             title={t("inspector.browser.openInExternal")}
             aria-label={t("inspector.browser.openInExternal")}
             onClick={() => {
-              const target = url().trim();
-              if (target && target !== "about:blank") {
+              const target = normalizeBrowserAddress(url());
+              if (!target) {
+                setError(t("inspector.browser.invalidURL"));
+              } else if (target !== "about:blank") {
                 openExternalURL(target);
               }
             }}
@@ -403,7 +433,7 @@ export default function BrowserInspector() {
           <Show
             when={running() || chromeLinked() || pairing()}
             fallback={
-              <button class="shrink-0 rounded border border-[var(--border-subtle)] px-2 py-1 text-[11px] hover:bg-[var(--bg-hover)] disabled:opacity-40 cursor-pointer" disabled={busy()} onClick={() => send({ action: "navigate", url: url().trim() || "about:blank" })}>
+              <button class="shrink-0 rounded border border-[var(--border-subtle)] px-2 py-1 text-[11px] hover:bg-[var(--bg-hover)] disabled:opacity-40 cursor-pointer" disabled={busy()} onClick={() => navigateAddress()}>
                 {t("inspector.browser.start")}
               </button>
             }
@@ -449,7 +479,7 @@ export default function BrowserInspector() {
                 </div>
                 <button
                   class="inline-flex items-center gap-2 rounded-lg bg-[var(--accent-primary)] px-4 py-2 text-xs font-medium text-white hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-primary)] cursor-pointer transition-opacity"
-                  onClick={() => send({ action: "navigate", url: url().trim() || "about:blank" })}
+                  onClick={() => navigateAddress()}
                 >
                   <Power size={14} aria-hidden="true" />
                   {t("inspector.browser.start")}

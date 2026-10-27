@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/hoxiai/hoxi/internal/reclaim"
 	"github.com/hoxiai/hoxi/internal/sandbox"
 )
 
@@ -23,7 +24,9 @@ var sandboxPlugin []byte
 // local bridge provider URLs.
 // Append env to the child environment and call cleanup only after the child exits.
 // Existing persistent OpenCode configuration is never written or replaced.
-func PrepareBrowserPlugin(baseURL, token string) (env []string, cleanup func(), err error) {
+// A non-nil ledger records the overlay directory so a later Hoxi start removes
+// it if this process dies before cleanup runs.
+func PrepareBrowserPlugin(baseURL, token string, ledger *reclaim.Ledger) (env []string, cleanup func(), err error) {
 	u, err := url.Parse(baseURL)
 	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.RawQuery != "" || u.Fragment != "" || u.User != nil {
 		return nil, nil, fmt.Errorf("invalid Hoxi browser base URL")
@@ -43,11 +46,15 @@ func PrepareBrowserPlugin(baseURL, token string) (env []string, cleanup func(), 
 			return nil, nil, fmt.Errorf("OPENCODE_CONFIG_CONTENT plugin must be an array")
 		}
 	}
-	dir, err := os.MkdirTemp("", "hoxi-browser-")
+	dir, ledgerID, err := ledger.MkdirTemp("opencode-plugin", "hoxi-opencode-plugin-")
 	if err != nil {
 		return nil, nil, fmt.Errorf("create browser plugin directory: %w", err)
 	}
-	cleanup = func() { _ = os.RemoveAll(dir) }
+	cleanup = func() {
+		if os.RemoveAll(dir) == nil {
+			ledger.Forget(ledgerID)
+		}
+	}
 	defer func() {
 		if err != nil {
 			cleanup()

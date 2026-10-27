@@ -15,8 +15,12 @@ OpenCode source modification is required.
    Disable it to let the agent continue. Manual control blocks all agent browser
    requests, including screenshots and snapshots.
 
-The toolbar supports navigation, tabs, refresh, and closing the browser. Click the
-page preview to focus an element, then type, paste, use IME, or send keyboard
+The toolbar supports navigation, tabs, refresh, and closing the browser. Use the
+address bar and press Enter or Go to navigate. Bare domains use HTTPS; local
+addresses such as `localhost:5400`, IP literals, and explicit host/port addresses
+use HTTP unless a scheme is supplied. Invalid addresses show an error before
+navigation, and IME confirmation does not submit the address bar.
+Click the page preview to focus an element, then type, paste, use IME, or send keyboard
 shortcuts. Scroll over the preview to scroll the page. The inspector can be
 maximized using its existing expand button.
 
@@ -73,7 +77,13 @@ disclose secrets.
 - The inspector decodes frames before displaying them on an animation frame and
   acknowledging receipt. Only one frame awaits display, with the latest pending
   frame retained server-side. Input does not wait for display acknowledgments.
-  JPEG quality is 92; density follows the display up to 2x within the pixel budget.
+  JPEG quality is 92. Stream frames are captured at CSS-pixel density (the
+  headless window renders at 1x); `deviceScaleFactor` applies to the page and to
+  screenshots. Before each stream starts, Hoxi steps the emulated height by one
+  pixel and back so Chrome captures the emulated viewport instead of the headless
+  window (whose minimum width is 500px), and frames whose aspect ratio does not
+  cover the viewport are dropped. The page therefore sees two resize events per
+  stream start.
   Hidden documents disconnect streams and pause polling, but the visible inspector's
   command channel remains available even if WKWebView visibility reporting lags.
   A user action resumes observation. State metadata is polled once per second rather
@@ -89,6 +99,25 @@ disclose secrets.
   native browser menus, file-picker dialogs, or OS clipboard synchronization.
 - Isolated-browser profiles are temporary; login state is not retained after
   browser close. Chrome Link preserves the existing user's profile
+- The isolated browser disables Chrome's back/forward cache, so Back and Forward
+  reload the entry like any navigation instead of waiting for a load event that a
+  cache restore never fires.
+- Each Hoxi process records the headless Chrome it launches (PID, process start
+  time, `--user-data-dir` profile) and its OpenCode plugin overlay directory in
+  `~/.hoxi/reclaim.json` (`internal/reclaim`, atomic writes under a file lock;
+  a protected state file that sandboxed commands cannot read or write), and drops
+  each record after a normal close. If Hoxi exits without its normal shutdown
+  (crash, `kill -9`, `wails dev` restart), the next desktop or headless start
+  reclaims only records whose owning Hoxi process is gone: it signals a Chrome only
+  while PID, start time and `--user-data-dir` all still match (SIGTERM, then
+  SIGKILL), and removes a recorded directory only if it is a real, user-owned
+  `hoxi-*` directory directly under the temp directory. Records of running
+  instances (for example the other build variant) are never touched, and a
+  corrupt ledger is moved aside to `reclaim.json.corrupt-*` without acting on it.
+  Nothing is found by scanning, so anything never recorded is not cleaned up:
+  Chrome processes and `hoxi-browser-*` directories from builds before this
+  ledger, and a Chrome whose owner died in the moment between launching it and
+  recording its PID (its profile directory, recorded first, is still removed).
 - DOM snapshots cover the main document, not iframe or shadow DOM contents.
   Screenshots and coordinate interactions remain available for visible content.
 - JavaScript evaluation is synchronous; it does not await promises.

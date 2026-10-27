@@ -1,4 +1,6 @@
 import { produce } from "solid-js/store";
+import type { MessageInfo } from "../services/sse-types";
+import { normalizeMessagePartInPlace } from "./message-lookup";
 import { setWorkspace, workspace } from "./workspace-state";
 import type { MessageTurn } from "./workspace-state";
 import { invalidateSessionDiffReads } from "./session-diffs";
@@ -115,5 +117,174 @@ export function trimSessionTranscripts(
     }
   }));
   return evicted;
+}
+
+// ---------------------------------------------------------------------------
+// Stale-While-Revalidate Local Session Turns Snapshot Cache (Kilo pattern)
+// ---------------------------------------------------------------------------
+
+const SESSION_TURNS_CACHE_KEY = "hoxi.session-turns-cache:v1";
+const MAX_CACHED_SESSIONS = 12;
+const MAX_SNAPSHOT_TURNS_PER_SESSION = 20;
+const MAX_SNAPSHOT_PART_CHARS = 2048;
+const MAX_SNAPSHOT_BUNDLE_CHARS = 600_000;
+
+interface CachedSessionTurnsBundle {
+  order: string[];
+  entries: Record<string, MessageTurn[]>;
+}
+
+let cachedSessionTurnsBundle: CachedSessionTurnsBundle | null = null;
+let saveSessionTurnsTimer: ReturnType<typeof setTimeout> | null = null;
+let lastFlushedSessionTurnsJSON = "";
+
+function loadSessionTurnsBundle(): CachedSessionTurnsBundle {
+  if (cachedSessionTurnsBundle) return cachedSessionTurnsBundle;
+  try {
+    const raw = typeof localStorage !== "undefined" ? localStorage.getItem(SESSION_TURNS_CACHE_KEY) : null;
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object" && Array.isArray(parsed.order) && typeof parsed.entries === "object") {
+        cachedSessionTurnsBundle = parsed as CachedSessionTurnsBundle;
+        lastFlushedSessionTurnsJSON = raw;
+        return cachedSessionTurnsBundle;
+      }
+    }
+  } catch {
+    /* ignore storage errors */
+  }
+  cachedSessionTurnsBundle = { order: [], entries: {} };
+  return cachedSessionTurnsBundle;
+}
+
+function serializeSessionTurnsBundle(bundle: CachedSessionTurnsBundle): string {
+  let raw = JSON.stringify(bundle);
+  while (raw.length > MAX_SNAPSHOT_BUNDLE_CHARS && bundle.order.length > 1) {
+    const oldest = bundle.order.shift();
+    if (oldest) delete bundle.entries[oldest];
+    raw = JSON.stringify(bundle);
+  }
+  return raw;
+}
+
+function flushSessionTurnsBundleToStorage(): void {
+  saveSessionTurnsTimer = null;
+  let bundle = cachedSessionTurnsBundle;
+  if (!bundle || typeof localStorage === "undefined") return;
+  let raw = serializeSessionTurnsBundle(bundle);
+  if (raw.length > MAX_SNAPSHOT_BUNDLE_CHARS) {
+    bundle = { order: [], entries: {} };
+    cachedSessionTurnsBundle = bundle;
+    raw = JSON.stringify(bundle);
+  }
+  if (raw === lastFlushedSessionTurnsJSON) return;
+  try {
+    localStorage.setItem(SESSION_TURNS_CACHE_KEY, raw);
+    lastFlushedSessionTurnsJSON = raw;
+    return;
+  } catch {
+    /* fall through to quota eviction */
+  }
+  // If quota exceeded, evict oldest half and retry once
+  try {
+    const keep = bundle.order.slice(-Math.max(2, Math.floor(bundle.order.length / 2)));
+    const trimmed: Record<string, MessageTurn[]> = {};
+    for (const id of keep) {
+      if (bundle.entries[id]) trimmed[id] = bundle.entries[id];
+    }
+    cachedSessionTurnsBundle = { order: keep, entries: trimmed };
+    const trimmedRaw = JSON.stringify(cachedSessionTurnsBundle);
+    localStorage.setItem(SESSION_TURNS_CACHE_KEY, trimmedRaw);
+    lastFlushedSessionTurnsJSON = trimmedRaw;
+  } catch {
+    /* ignore storage errors */
+  }
+}
+
+function saveSessionTurnsBundle(bundle: CachedSessionTurnsBundle): void {
+  cachedSessionTurnsBundle = bundle;
+  if (typeof localStorage === "undefined") return;
+  if (saveSessionTurnsTimer !== null) clearTimeout(saveSessionTurnsTimer);
+  saveSessionTurnsTimer = setTimeout(flushSessionTurnsBundleToStorage, 350);
+}
+
+function compactTurnForSnapshot(turn: MessageTurn): MessageTurn {
+  const info = { ...turn.info } as MessageInfo & { summary?: unknown };
+  delete info.summary;
+  return {
+    info,
+    parts: turn.parts
+      .filter((p) => p.type !== "file" || !p.url?.startsWith("data:"))
+      .map((p) => {
+        if (p.type === "text" || p.type === "reasoning") {
+          const text = p.text && p.text.length > MAX_SNAPSHOT_PART_CHARS
+            ? p.text.slice(0, MAX_SNAPSHOT_PART_CHARS)
+            : p.text;
+          return { ...p, text };
+        }
+        if (p.type === "tool") {
+          if (p.state.status === "completed") {
+            const out = p.state.output && p.state.output.length > MAX_SNAPSHOT_PART_CHARS
+              ? p.state.output.slice(0, MAX_SNAPSHOT_PART_CHARS)
+              : p.state.output;
+            return {
+              ...p,
+              state: {
+                ...p.state,
+                output: out,
+                metadata: p.state.metadata
+                  ? { ...p.state.metadata, output: undefined, stdout: undefined }
+                  : {},
+              },
+            };
+          }
+        }
+        return p;
+      }),
+  };
+}
+
+export function persistCachedSessionTurns(sessionID: string, turns: MessageTurn[]): void {
+  if (!sessionID || !Array.isArray(turns)) return;
+  // An empty merged snapshot means the server has no history; drop stale cache seeds.
+  if (turns.length === 0) return evictCachedSessionTurns([sessionID]);
+  const tail = turns.slice(-MAX_SNAPSHOT_TURNS_PER_SESSION).map(compactTurnForSnapshot);
+  const bundle = loadSessionTurnsBundle();
+  bundle.order = bundle.order.filter((id) => id !== sessionID);
+  bundle.order.push(sessionID);
+  bundle.entries[sessionID] = tail;
+  while (bundle.order.length > MAX_CACHED_SESSIONS) {
+    const oldest = bundle.order.shift();
+    if (oldest) delete bundle.entries[oldest];
+  }
+  saveSessionTurnsBundle(bundle);
+}
+
+export function readCachedSessionTurns(sessionID: string): MessageTurn[] | undefined {
+  if (!sessionID) return undefined;
+  const bundle = loadSessionTurnsBundle();
+  const turns = bundle.entries[sessionID];
+  if (!Array.isArray(turns) || turns.length === 0) return undefined;
+  for (const turn of turns) {
+    for (const part of turn.parts) normalizeMessagePartInPlace(part);
+  }
+  return turns;
+}
+
+export function evictCachedSessionTurns(sessionIDs: string[]): void {
+  if (!sessionIDs.length) return;
+  const bundle = loadSessionTurnsBundle();
+  let changed = false;
+  const removeSet = new Set(sessionIDs);
+  for (const id of sessionIDs) {
+    if (bundle.entries[id]) {
+      delete bundle.entries[id];
+      changed = true;
+    }
+  }
+  if (changed) {
+    bundle.order = bundle.order.filter((id) => !removeSet.has(id));
+    saveSessionTurnsBundle(bundle);
+  }
 }
 

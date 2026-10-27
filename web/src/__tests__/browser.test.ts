@@ -1,7 +1,35 @@
 import { browserAPI, browserPoint, browserStreamURL, browserURL, connectBrowserStream } from "../services/browser";
+import { normalizeBrowserAddress } from "../store/browser";
 import { assertDeepEqual, assertEqual, describe, it } from "./test-harness";
 
 describe("Browser inspector", () => {
+  it("opens domains and local development addresses without a scheme", () => {
+    for (const [address, expected] of [
+      ["example.com", "https://example.com/"],
+      [" www.example.com/docs?q=test#top ", "https://www.example.com/docs?q=test#top"],
+      ["//example.com/path", "https://example.com/path"],
+      ["localhost:5400", "http://localhost:5400/"],
+      ["localhost:5400/path?q=1", "http://localhost:5400/path?q=1"],
+      ["app.localhost", "http://app.localhost/"],
+      ["127.0.0.1:5421", "http://127.0.0.1:5421/"],
+      ["192.168.1.2:3000", "http://192.168.1.2:3000/"],
+      ["[::1]:8080", "http://[::1]:8080/"],
+      ["devbox:8080", "http://devbox:8080/"],
+      ["https://localhost:5400/", "https://localhost:5400/"],
+      ["http://example.com/page", "http://example.com/page"],
+      ["HTTPS://EXAMPLE.COM", "https://example.com/"],
+      ["", "about:blank"], ["about:blank", "about:blank"],
+    ]) assertEqual(normalizeBrowserAddress(address), expected, address);
+  });
+
+  it("rejects unsupported schemes, credentials, and invalid address input", () => {
+    for (const address of ["javascript:alert(1)", "file:///tmp", "data:text/html,test", "chrome://settings",
+      "ftp://example.com", "about:config", "https://user:password@example.com", "user@example.com",
+      "hello world", "search", "http://", "localhost:99999", "https://[invalid]"]) {
+      assertEqual(normalizeBrowserAddress(address), null, address);
+    }
+  });
+
   it("creates a Chrome connection code only through the scoped UI action", async () => {
     const original = globalThis.fetch;
     const scope = { sessionID: "ses_chrome", directory: "/work trees/chrome" };

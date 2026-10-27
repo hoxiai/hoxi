@@ -4,9 +4,10 @@ import (
 	"context"
 	"io"
 	"log/slog"
-	"os/exec"
 	"testing"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/opencode"
 )
 
 // Registering a new daemon must stop the previous one instead of orphaning
@@ -15,21 +16,15 @@ func TestSetChildStopsPreviousDaemon(t *testing.T) {
 	a := &DesktopApp{}
 	defer a.killChild()
 	respawned := make(chan struct{}, 1)
-	a.respawn = &respawner{start: func() (*exec.Cmd, error) {
+	a.respawn = &respawner{start: func() (*opencode.Daemon, error) {
 		respawned <- struct{}{}
 		return nil, context.Canceled
 	}}
-	first := exec.Command("sleep", "30")
-	if err := first.Start(); err != nil {
-		t.Fatal(err)
-	}
+	first := startChild(t, "sleep", "30")
 	a.setChild(first)
 	firstDone := a.childDone
 
-	second := exec.Command("sleep", "30")
-	if err := second.Start(); err != nil {
-		t.Fatal(err)
-	}
+	second := startChild(t, "sleep", "30")
 	a.setChild(second)
 	select {
 	case <-firstDone:
@@ -57,10 +52,7 @@ func TestSetChildStopsPreviousDaemon(t *testing.T) {
 func TestBootstrapSkipsWhenDaemonRunningAndHoldsEngineMutex(t *testing.T) {
 	a := &DesktopApp{logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	defer a.killChild()
-	live := exec.Command("sleep", "30")
-	if err := live.Start(); err != nil {
-		t.Fatal(err)
-	}
+	live := startChild(t, "sleep", "30")
 	a.setChild(live)
 
 	a.engineMu.Lock()

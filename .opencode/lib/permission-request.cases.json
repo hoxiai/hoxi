@@ -56,5 +56,8 @@
   { "name": "runner read of agents skill", "destructive": false, "request": { "permission": "tool", "patterns": ["read_file"], "metadata": { "tool": "read_file", "externalDirectory": true, "filepath": "/Users/u/.agents/skills/ainode-release-and-deploy/SKILL.md" } } },
   { "name": "runner read of git logs head", "destructive": false, "request": { "permission": "tool", "patterns": ["read_file"], "metadata": { "tool": "read_file", "externalDirectory": true, "filepath": "/Users/u/code/repo/.git/logs/HEAD" } } },
   { "name": "runner edit of agents hooks config", "destructive": true, "request": { "permission": "tool", "patterns": ["edit_file"], "metadata": { "tool": "edit_file", "externalDirectory": true, "filepath": "/Users/u/.agents/hooks.json" } } },
-  { "name": "edit of agents hooks config", "destructive": true, "request": { "permission": "edit", "patterns": ["/Users/u/.agents/hooks.json"] } }
+  { "name": "edit of agents hooks config", "destructive": true, "request": { "permission": "edit", "patterns": ["/Users/u/.agents/hooks.json"] } },
+  { "name": "edit of agents skill script requires approval", "destructive": true, "request": { "permission": "edit", "patterns": ["/Users/u/.agents/skills/ainode-release-and-deploy/scripts/deploy.sh"] } },
+  { "name": "write to hoxi skill script requires approval", "destructive": true, "request": { "permission": "write", "patterns": ["/repo/.hoxi/skills/foo/run.sh"] } },
+  { "name": "write to hoxi attachment stays routine", "destructive": false, "request": { "permission": "write", "patterns": ["/repo/.hoxi/attachments/paste.png"] } }
 ]

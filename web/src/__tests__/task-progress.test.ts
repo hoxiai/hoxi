@@ -24,7 +24,7 @@ import {
   resolveToolFileDiff,
 } from "../components/timeline/tool-card-state";
 import type { MessagePart, ToolPart } from "../services/sse-types";
-import { filterLocalSessionDiffsByTurns } from "../store/message-lookup";
+import { filterLocalSessionDiffsByTurns } from "../store/session-diffs";
 import { type MessageTurn, setWorkspace } from "../store/workspace";
 import { firstMatchingPartID } from "../components/timeline/TranscriptSearchBar";
 import { formatElapsedSeconds } from "../components/timeline/duration-label";

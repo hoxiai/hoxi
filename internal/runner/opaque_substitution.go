@@ -7,11 +7,13 @@ import (
 )
 
 var (
-	sshHostSpecRe      = regexp.MustCompile(`^(?:[A-Za-z0-9_.-]+@)?([A-Za-z0-9_.-]+)$`)
-	sshSafeShortFlagRe = regexp.MustCompile(`^-[TtnNqv46AaCxXYy]+$`)
-	scpSafeShortFlagRe = regexp.MustCompile(`^-[rpfqvBC46OT]+$`)
-	sshUnsafeOptRe     = regexp.MustCompile(`(?i)(?:proxycommand|localcommand|permitlocalcommand|include|identityagent)`)
-	sshDurationRe      = regexp.MustCompile(`^\d+[smhd]?$`)
+	sshHostSpecRe             = regexp.MustCompile(`^(?:[A-Za-z0-9_.-]+@)?([A-Za-z0-9_.-]+)$`)
+	sshNumericOrZeroOctetIPRe = regexp.MustCompile(`(?i)^(?:\d+|0x[0-9a-f]+|0\d+(?:\.[0-9a-fx]+)+)$`)
+	sshSafeShortFlagRe        = regexp.MustCompile(`^-[TtnNqv46AaCxXYy]+$`)
+	scpSafeShortFlagRe        = regexp.MustCompile(`^-[rpfqvBC46OT]+$`)
+	sshUnsafeOptRe            = regexp.MustCompile(`(?i)(?:proxycommand|localcommand|permitlocalcommand|knownhostscommand|identityfile|include|identityagent)`)
+	sshDurationRe             = regexp.MustCompile(`^\d+[smhd]?$`)
+	gitCommitHeredocPrefixRe  = regexp.MustCompile(`(?s)\bgit\s+commit\b.*-m\s*"?\$\(\s*cat\s*$`)
 
 	benignTempFileConsumers = setOf("scp", "ls", "wc", "head", "tail", "stat", "file", "md5", "shasum", "sha256sum", "rm", "echo", "printf", "grep", "rg", "sed")
 	sshBlockedKeyBasenames  = setOf("authorized_keys", "known_hosts", "config", "environment", "rc", ".ssh")
@@ -115,21 +117,24 @@ func opacityCandidates(item map[string]interface{}) []string {
 // destructiveScanForms returns the texts the destructive patterns scan.
 func destructiveScanForms(cmd string) []string {
 	baseCmd := joinLineContinuations(strings.TrimSpace(unwrapSandboxCommand(cmd)))
-	if strings.Contains(baseCmd, "<<") {
-		if stripped, ok := stripBenignHeredocs(baseCmd); ok {
+	prepared := baseCmd
+	hadBenignHeredoc := false
+	if strings.Contains(prepared, "<<") {
+		if stripped, ok := stripBenignHeredocs(prepared); ok {
+			prepared = stripped
 			baseCmd = stripped
+			hadBenignHeredoc = true
+		} else if stripped, ok := stripLiteralHeredocs(prepared); ok {
+			prepared = stripped
 		}
 	}
-	baseCmd = maskRemoteSSHAndSCP(baseCmd)
+	if !strings.Contains(baseCmd, "<<") || hadBenignHeredoc {
+		baseCmd = maskRemoteSSHAndSCP(baseCmd)
+		prepared = maskRemoteSSHAndSCP(prepared)
+	}
 	forms := []string{maskCommandDataArguments(baseCmd)}
 	if unpacked := extractProcessSubstitutions(baseCmd); unpacked != baseCmd {
 		forms = append(forms, maskCommandDataArguments(unpacked))
-	}
-	prepared := baseCmd
-	if strings.Contains(prepared, "<<") {
-		if stripped, ok := stripLiteralHeredocs(prepared); ok {
-			prepared = stripped
-		}
 	}
 	if spans, ok := findSubshellSpans(prepared); ok && len(spans) > 0 {
 		prepared = eraseSubshells(prepared)
@@ -156,20 +161,28 @@ func stripBenignHeredocs(s string) (string, bool) {
 		}
 		out = append(out, line)
 		if len(markers) > 0 {
-			segs, pipedIn := splitCommandChainWithPipes(line)
-			if len(segs) == 0 {
-				return s, false
-			}
-			lastIdx := len(segs) - 1
-			lastSeg := segs[lastIdx]
-			if !pipedIn[lastIdx] && isSafeRemoteSSHSegment(lastSeg) {
-				// remote ssh heredoc
-			} else if !pipedIn[lastIdx] {
-				target := tempCatRedirectTarget(lastSeg)
-				if target == "" {
+			if len(state.outer) == 1 {
+				if !gitCommitHeredocPrefixRe.MatchString(line) {
 					return s, false
 				}
-				tempTargets = append(tempTargets, target)
+			} else if len(state.outer) == 0 {
+				segs, pipedIn := splitCommandChainWithPipes(line)
+				if len(segs) == 0 {
+					return s, false
+				}
+				lastIdx := len(segs) - 1
+				lastSeg := segs[lastIdx]
+				if !pipedIn[lastIdx] && isSafeRemoteSSHSegment(lastSeg) {
+					// remote ssh heredoc
+				} else if !pipedIn[lastIdx] {
+					target := tempCatRedirectTarget(lastSeg)
+					if target == "" {
+						return s, false
+					}
+					tempTargets = append(tempTargets, target)
+				} else {
+					return s, false
+				}
 			} else {
 				return s, false
 			}
@@ -200,11 +213,12 @@ func stripBenignHeredocs(s string) (string, bool) {
 	stripped := strings.Join(out, "\n")
 	if len(tempTargets) > 0 {
 		allSegs, _ := splitCommandChainWithPipes(stripped)
-		for _, seg := range allSegs {
-			if tempCatRedirectTarget(seg) != "" {
-				continue
-			}
-			for _, t := range tempTargets {
+		for _, t := range tempTargets {
+			consumed := false
+			for _, seg := range allSegs {
+				if tempCatRedirectTarget(seg) != "" {
+					continue
+				}
 				if strings.Contains(seg, t) || strings.Contains(seg, filepath.Base(t)) {
 					words := stripShellKeywords(shellWords(seg))
 					j := 0
@@ -214,7 +228,11 @@ func stripBenignHeredocs(s string) (string, bool) {
 					if j >= len(words) || !benignTempFileConsumers[filepath.Base(normalizeAbsoluteTool(words[j]))] {
 						return s, false
 					}
+					consumed = true
 				}
+			}
+			if !consumed {
+				return s, false
 			}
 		}
 	}
@@ -418,8 +436,14 @@ func isNonLoopbackSSHHost(target string) bool {
 	if m == nil {
 		return false
 	}
-	host := strings.ToLower(m[1])
-	return host != "localhost" && host != "0.0.0.0" && host != "::1" && !strings.HasPrefix(host, "127.")
+	host := strings.TrimRight(strings.ToLower(m[1]), ".")
+	if host == "" || host == "localhost" || strings.HasSuffix(host, ".localhost") || host == "localhost.localdomain" {
+		return false
+	}
+	if host == "0" || host == "0.0.0.0" || host == "::1" || strings.HasPrefix(host, "127.") || strings.HasPrefix(host, "0.") {
+		return false
+	}
+	return !sshNumericOrZeroOctetIPRe.MatchString(host)
 }
 
 func unwrapSSHCommandWords(seg string) ([]string, bool) {
@@ -524,12 +548,19 @@ func rewriteSafeRemoteSCPSegment(seg string) (string, bool) {
 			}
 			out = append(out, a, args[i+1])
 			i++
+		case strings.HasPrefix(a, "-o") && len(a) > 2:
+			if sshUnsafeOptRe.MatchString(a[2:]) {
+				return "", false
+			}
+			out = append(out, a)
 		case a == "-P" || a == "-l":
 			if i+1 >= len(args) {
 				return "", false
 			}
 			out = append(out, a, args[i+1])
 			i++
+		case strings.HasPrefix(a, "-P") && len(a) > 2:
+			out = append(out, a)
 		case scpSafeShortFlagRe.MatchString(a):
 			out = append(out, a)
 		case strings.HasPrefix(a, "-"):

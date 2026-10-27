@@ -532,7 +532,7 @@ export function isProtectedPath(rawPath) {
   const rawSlash = rawPath.trim().replaceAll("\\", "/").toLowerCase();
   const slash = stripWorktreePrefix(rawSlash);
   if (!slash) return false;
-  if (isRoutineHoxiSubpath(slash)) {
+  if (slash.includes("/.hoxi/attachments/") || slash.startsWith(".hoxi/attachments/")) {
     return false;
   }
   if (
@@ -547,6 +547,12 @@ export function isProtectedPath(rawPath) {
   }
   const parts = slash.split("/").filter(Boolean);
   return parts.some((p) => PROTECTED_PATH_SEGMENTS.has(p));
+}
+
+export function isProtectedShellReadPath(rawPath) {
+  if (typeof rawPath !== "string" || !rawPath.trim()) return false;
+  const slash = stripWorktreePrefix(rawPath.trim().replaceAll("\\", "/").toLowerCase());
+  return isRoutineHoxiSubpath(slash) ? false : isProtectedPath(rawPath);
 }
 
 function matchesDestructive(blob) {
@@ -779,6 +785,7 @@ export function decidePermission(input, options) {
 setLiteralJudge({
   opaqueCore: () => true,
   isSecret: (p) => isSecretPath(p) || isSensitiveExternalPath(p),
-  isProtected: isProtectedPath,
+  isProtected: isProtectedShellReadPath,
+  normalizeAbsoluteTool,
   shellWords,
 });

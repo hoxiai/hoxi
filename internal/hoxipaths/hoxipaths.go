@@ -63,6 +63,10 @@ var protectedStateFiles = []string{
 	"relay-keys.json",
 	"git-attribution.json",
 	"work-apps.json",
+	// The reclaim ledger tells the next Hoxi start which processes to signal
+	// and which directories to delete; it must not be writable by agents.
+	"reclaim.json",
+	"reclaim.json.lock",
 }
 
 // Home returns ~/.hoxi (or $HOXI_HOME when set), or "" when the user home directory is unknown.
@@ -139,6 +143,13 @@ func TunnelConfigPath(variant string) string {
 // machine except inside the QR the user chooses to display.
 func PairingTokenPath() string {
 	return Join("pairing.json")
+}
+
+// ReclaimLedgerPath returns ~/.hoxi/reclaim.json, the shared record of the
+// headless Chrome processes, profiles and plugin overlays each running Hoxi
+// process owns, so the next start can clean up after a crash.
+func ReclaimLedgerPath() string {
+	return Join("reclaim.json")
 }
 
 // CloudflaredConfigPath returns ~/.hoxi/cloudflared.json, the Cloudflare Tunnel

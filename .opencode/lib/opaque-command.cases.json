@@ -796,5 +796,29 @@
   {
     "command": "code=$(curl -s --noproxy '*' -o /tmp/ssr_home.html -w '%{http_code}' http://127.0.0.1:3411/ 2>/dev/null); echo \"HTTP $code, bytes: $(wc -c < /tmp/ssr_home.html)\"; echo \"H1 count: $(grep -c '<h1' /tmp/ssr_home.html)\"; echo \"SSR links: $(grep -oc 'href=\"/[a-z]' /tmp/ssr_home.html)\"",
     "opaque": false
+  },
+  {
+    "command": "ls \"$HOME/.ssh\"",
+    "opaque": true
+  },
+  {
+    "command": "cd / && ssh -i ~/.ssh/id_117 root@192.168.1.117 'ls'",
+    "opaque": true
+  },
+  {
+    "command": "bash .hoxi/attachments/run.sh",
+    "opaque": true
+  },
+  {
+    "command": "ssh -i ~/.ssh/id_117 root@0 'ls'",
+    "opaque": true
+  },
+  {
+    "command": "ssh -o KnownHostsCommand='id' root@192.168.1.117 'ls'",
+    "opaque": true
+  },
+  {
+    "command": "ssh -o IdentityFile=~/.ssh/config root@192.168.1.117 'ls'",
+    "opaque": true
   }
 ]

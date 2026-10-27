@@ -12,7 +12,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"os/signal"
 	"runtime"
 	"strings"
@@ -28,6 +27,7 @@ import (
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
 	"github.com/hoxiai/hoxi/internal/notify"
 	"github.com/hoxiai/hoxi/internal/opencode"
+	"github.com/hoxiai/hoxi/internal/reclaim"
 	"github.com/hoxiai/hoxi/internal/statusbar"
 	"github.com/hoxiai/hoxi/internal/telemetry"
 	"github.com/hoxiai/hoxi/internal/updater"
@@ -97,7 +97,7 @@ type DesktopApp struct {
 	cfg             Config
 	logger          *slog.Logger
 	childMu         sync.Mutex
-	child           *exec.Cmd
+	child           *opencode.Daemon
 	childDone       chan struct{}
 	childGen        uint64
 	childStopped    bool
@@ -115,6 +115,7 @@ type DesktopApp struct {
 	lanServer       *http.Server
 	ingressServer   *http.Server
 	browserEnv      []string
+	ledger          *reclaim.Ledger
 }
 
 func Run(distFS fs.FS) {
@@ -185,6 +186,9 @@ func Run(distFS fs.FS) {
 	gw.EnableAgyApprovalHook()
 	gw.StartEnginePrewarm(ctx)
 	defer gw.CloseBrowser()
+	ledger := openReclaimLedger(logger)
+	gw.SetBrowserLedger(ledger)
+	go sweepReclaimLedger(ledger, logger)
 
 	app := &DesktopApp{
 		cfg:          cfg,
@@ -196,6 +200,7 @@ func Run(distFS fs.FS) {
 		runCtx:       ctx,
 		openCodePort: port,
 		openCodePass: password,
+		ledger:       ledger,
 	}
 	defer app.killChild()
 	gw.SetEngineInstaller(func(ctx context.Context, restart bool) (string, error) {
@@ -263,7 +268,7 @@ func Run(distFS fs.FS) {
 		return
 	}
 	gw.SetBrowserAgentToken(browserToken)
-	browserEnv, cleanupPlugin, err := opencode.PrepareBrowserPlugin("http://"+loopbackAddr, browserToken)
+	browserEnv, cleanupPlugin, err := opencode.PrepareBrowserPlugin("http://"+loopbackAddr, browserToken, ledger)
 	if err != nil {
 		logger.Error("failed to prepare browser tools", "error", err)
 		return
@@ -323,8 +328,6 @@ func Run(distFS fs.FS) {
 	} else {
 		logger.Warn("remote ingress port unavailable; relay access is disabled", "addr", hoxipaths.DefaultRemoteIngressAddr, "error", ingressErr)
 	}
-
-	opencode.ReapOrphanedDaemons(logger)
 
 	// Fast path: if opencode binary is already present locally (or bundled in Hoxi.app), start it immediately.
 	// Slow path: if opencode is missing on the user's machine, launch the UI window without crashing and
@@ -458,7 +461,7 @@ func Run(distFS fs.FS) {
 	}
 }
 
-func (a *DesktopApp) setChild(c *exec.Cmd) {
+func (a *DesktopApp) setChild(c *opencode.Daemon) {
 	a.childMu.Lock()
 	defer a.childMu.Unlock()
 	if a.childStopped {
@@ -703,6 +706,9 @@ func StartEphemeralHeadless(ctx context.Context, rootDir string) (string, func()
 	gw := gateway.New(port, password, rootDir, nil, statusTracker)
 	gw.EnableAgyApprovalHook()
 	gw.StartEnginePrewarm(ctx)
+	// Record, but leave sweeping to the long-lived desktop or daemon process.
+	ledger := openReclaimLedger(quietLogger)
+	gw.SetBrowserLedger(ledger)
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -716,7 +722,7 @@ func StartEphemeralHeadless(ctx context.Context, rootDir string) (string, func()
 	gw.SetGatewayToken(gatewayToken)
 	browserToken, _ := generateRandomHex(32)
 	gw.SetBrowserAgentToken(browserToken)
-	browserEnv, cleanupPlugin, _ := opencode.PrepareBrowserPlugin("http://"+loopbackAddr, browserToken)
+	browserEnv, cleanupPlugin, _ := opencode.PrepareBrowserPlugin("http://"+loopbackAddr, browserToken, ledger)
 
 	dapp := &DesktopApp{
 		cfg: Config{
@@ -732,6 +738,7 @@ func StartEphemeralHeadless(ctx context.Context, rootDir string) (string, func()
 		runCtx:       ctx,
 		openCodePort: port,
 		openCodePass: password,
+		ledger:       ledger,
 	}
 	gw.SetEngineInstaller(func(ctx context.Context, restart bool) (string, error) {
 		if restart {

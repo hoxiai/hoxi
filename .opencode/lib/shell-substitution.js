@@ -14,7 +14,7 @@ import {
   splitCommandChainWithPipes,
   stripNullRedirects,
 } from "./permission-policy.js";
-import { concretizeLiterals, eraseSubshells, findSubshellSpans } from "./shell-constants.js";
+import { concretizeLiterals, eraseSubshells, findSubshellSpans, unwrapCommandPrefixes } from "./shell-constants.js";
 import { isSafeCurlOutputTarget, normalizeHomePrefixPath } from "./shell-loops.js";
 
 const PROCESS_SUBSTITUTION_PLACEHOLDER = "/dev/fd/63";
@@ -22,9 +22,10 @@ export const CMD_SUBST_VAR = "__hoxi_cmdsub__";
 const MASKED_DATA_ARGUMENT = "Q";
 const HEREDOC_WORD_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const SSH_HOST_SPEC_RE = /^(?:[A-Za-z0-9_.-]+@)?([A-Za-z0-9_.-]+)$/;
+const SSH_NUMERIC_OR_ZERO_OCTET_IP_RE = /^(?:\d+|0x[0-9a-f]+|0\d+(?:\.[0-9a-fx]+)+)$/i;
 const SSH_SAFE_SHORT_FLAG_RE = /^-[TtnNqv46AaCxXYy]+$/;
 const SCP_SAFE_SHORT_FLAG_RE = /^-[rpfqvBC46OT]+$/;
-const SSH_UNSAFE_OPT_RE = /(?:proxycommand|localcommand|permitlocalcommand|include|identityagent)/i;
+const SSH_UNSAFE_OPT_RE = /(?:proxycommand|localcommand|permitlocalcommand|knownhostscommand|identityfile|include|identityagent)/i;
 const SSH_DURATION_RE = /^\d+[smhd]?$/;
 const ENV_ASSIGN_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
 const REDIRECT_WORD_RE = /^(?:\d*|&)>>?$/;
@@ -127,9 +128,10 @@ export function destructiveScanForms(cmd) {
   if (findSubshellSpans(prepared)) prepared = eraseSubshells(prepared);
   const expanded = concretizeLiterals(prepared);
   if (expanded.status === "applied" || expanded.status === "secret") {
-    forms.push(maskCommandDataArguments(expanded.text));
-    const again = extractProcessSubstitutions(expanded.text);
-    if (again !== expanded.text) forms.push(maskCommandDataArguments(again));
+    const maskedExp = maskRemoteSSHAndSCP(expanded.text);
+    forms.push(maskCommandDataArguments(maskedExp));
+    const again = extractProcessSubstitutions(maskedExp);
+    if (again !== maskedExp) forms.push(maskCommandDataArguments(again));
   }
   return forms;
 }
@@ -248,11 +250,19 @@ function stripBenignHeredocs(s) {
       if (state.outer.length === 1) {
         if (!/\bgit\s+commit\b[\s\S]*-m\s*"?\$\(\s*cat\s*$/.test(taken.line)) return null;
       } else if (state.outer.length === 0) {
-        const { segments } = splitCommandChainWithPipes(taken.line);
+        const { segments, pipedIn } = splitCommandChainWithPipes(taken.line);
         if (segments.length === 0) return null;
-        const target = tempCatRedirectTarget(segments[segments.length - 1]);
-        if (!target) return null;
-        tempTargets.push(target);
+        const lastIdx = segments.length - 1;
+        const lastSeg = segments[lastIdx];
+        if (!pipedIn[lastIdx] && isSafeRemoteSSHSegment(lastSeg)) {
+          // remote ssh heredoc
+        } else if (!pipedIn[lastIdx]) {
+          const target = tempCatRedirectTarget(lastSeg);
+          if (!target) return null;
+          tempTargets.push(target);
+        } else {
+          return null;
+        }
       } else {
         return null;
       }
@@ -276,9 +286,10 @@ function stripBenignHeredocs(s) {
   const stripped = out.join("\n");
   if (tempTargets.length > 0) {
     const { segments: allSegs } = splitCommandChainWithPipes(stripped);
-    for (const seg of allSegs) {
-      if (tempCatRedirectTarget(seg)) continue;
-      for (const t of tempTargets) {
+    for (const t of tempTargets) {
+      let consumed = false;
+      for (const seg of allSegs) {
+        if (tempCatRedirectTarget(seg)) continue;
         if (seg.includes(t) || seg.includes(baseName(t))) {
           const words = stripShellKw(shellWords(seg));
           let j = 0;
@@ -286,8 +297,10 @@ function stripBenignHeredocs(s) {
           if (j >= words.length || !BENIGN_TEMP_CONSUMERS.has(baseName(normalizeAbsoluteTool(words[j])))) {
             return null;
           }
+          consumed = true;
         }
       }
+      if (!consumed) return null;
     }
   }
   return stripped;
@@ -411,27 +424,6 @@ function stripShellKw(words) {
   return words.slice(i);
 }
 
-function unwrapCmdPrefixes(words) {
-  while (words.length > 0) {
-    const base = baseName(normalizeAbsoluteTool(words[0]));
-    if (base === "nohup" || base === "time" || base === "exec") {
-      if (words.length === 1) return null;
-      words = words.slice(1);
-    } else if (base === "command") {
-      if (words.length <= 1 || words[1] === "-v" || words[1] === "-V") return null;
-      words = words.slice(1);
-    } else if (base === "env") {
-      let k = 1;
-      while (k < words.length && ENV_ASSIGN_RE.test(words[k])) k++;
-      if (k === 1 || k >= words.length) return null;
-      words = words.slice(k);
-    } else {
-      return words;
-    }
-  }
-  return null;
-}
-
 function hasUnsafeLocalSSHExpansion(seg) {
   let quote = "";
   for (let i = 0; i < seg.length; i++) {
@@ -483,8 +475,14 @@ function isNonLoopbackSSHHost(target) {
   if (!target || target.startsWith("-")) return false;
   const m = SSH_HOST_SPEC_RE.exec(target);
   if (!m) return false;
-  const host = m[1].toLowerCase();
-  return host !== "localhost" && host !== "0.0.0.0" && host !== "::1" && !host.startsWith("127.");
+  const host = m[1].toLowerCase().replace(/\.+$/, "");
+  if (!host || host === "localhost" || host.endsWith(".localhost") || host === "localhost.localdomain") {
+    return false;
+  }
+  if (host === "0" || host === "0.0.0.0" || host === "::1" || host.startsWith("127.") || host.startsWith("0.")) {
+    return false;
+  }
+  return !SSH_NUMERIC_OR_ZERO_OCTET_IP_RE.test(host);
 }
 
 function unwrapSSHCommandWords(seg) {
@@ -497,8 +495,9 @@ function unwrapSSHCommandWords(seg) {
     j++;
   }
   if (j >= words.length) return null;
-  let unwrapped = unwrapCmdPrefixes(words.slice(j));
-  if (!unwrapped || unwrapped.length === 0) return null;
+  const unwrappedRes = unwrapCommandPrefixes(words.slice(j), normalizeAbsoluteTool);
+  if (!unwrappedRes || unwrappedRes.lookupOnly || unwrappedRes.words.length === 0) return null;
+  let unwrapped = unwrappedRes.words;
   if (baseName(normalizeAbsoluteTool(unwrapped[0])) === "timeout") {
     if (unwrapped.length < 3 || !SSH_DURATION_RE.test(unwrapped[1])) return null;
     unwrapped = unwrapped.slice(2);
@@ -557,10 +556,15 @@ function rewriteSafeRemoteSCPSegment(seg) {
       if (i + 1 >= args.length || SSH_UNSAFE_OPT_RE.test(args[i + 1])) return "";
       out.push(a, args[i + 1]);
       i++;
+    } else if (a.startsWith("-o") && a.length > 2) {
+      if (SSH_UNSAFE_OPT_RE.test(a.slice(2))) return "";
+      out.push(a);
     } else if (a === "-P" || a === "-l") {
       if (i + 1 >= args.length) return "";
       out.push(a, args[i + 1]);
       i++;
+    } else if (a.startsWith("-P") && a.length > 2) {
+      out.push(a);
     } else if (SCP_SAFE_SHORT_FLAG_RE.test(a)) {
       out.push(a);
     } else if (a.startsWith("-")) {

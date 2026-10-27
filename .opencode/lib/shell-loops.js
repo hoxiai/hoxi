@@ -414,8 +414,8 @@ export function isSafeHomePathWord(word, vars, deps) {
 export function isSafeHomeScriptWord(word, vars, deps) {
   if (!isSafeHomePathWord(word, vars, deps)) return false;
   const slash = String(word ?? "").replaceAll("\\", "/").toLowerCase();
-  const routine = slash.includes("/.hoxi/skills/") || slash.includes("/.hoxi/attachments/") || slash.includes("/.agents/skills/");
-  return routine && (slash.endsWith(".sh") || slash.endsWith(".bash") || slash.endsWith(".zsh"));
+  const isSkill = slash.includes("/.hoxi/skills/") || slash.includes("/.agents/skills/");
+  return isSkill && (slash.endsWith(".sh") || slash.endsWith(".bash") || slash.endsWith(".zsh"));
 }
 
 export function isSafeShellScriptSegment(base, rawArgs, piped, deps) {
@@ -442,11 +442,11 @@ export function isSafeShellScriptSegment(base, rawArgs, piped, deps) {
   if (script.startsWith("-") || script.startsWith("~") || script.includes("..") || /[$*?[`]/.test(script)) return false;
   const lower = script.replaceAll("\\", "/").toLowerCase();
   if (!lower.endsWith(".sh") && !lower.endsWith(".bash") && !lower.endsWith(".zsh")) return false;
+  const isSkill = lower.includes("/.hoxi/skills/") || lower.includes("/.agents/skills/") ||
+    lower.startsWith(".hoxi/skills/") || lower.startsWith(".agents/skills/");
   const isSec = (p) => deps.isSecretPath(p) || deps.isSensitiveExternalPath(p);
-  if (isSafeCurlOutputTarget(script, isSec) || isSec(script) || deps.isProtectedPath(script)) return false;
-  const routine = lower.includes("/.hoxi/skills/") || lower.includes("/.hoxi/attachments/") || lower.includes("/.agents/skills/") ||
-    lower.startsWith(".hoxi/skills/") || lower.startsWith(".hoxi/attachments/") || lower.startsWith(".agents/skills/");
-  if (!syntaxOnly && !routine) return false;
+  if (isSafeCurlOutputTarget(script, isSec) || isSec(script) || (!isSkill && deps.isProtectedPath(script))) return false;
+  if (!syntaxOnly && !isSkill) return false;
   return args.slice(i + 1).every((w) => !/[$`]/.test(w));
 }
 

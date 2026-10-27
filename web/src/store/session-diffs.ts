@@ -4,10 +4,9 @@
 import { unwrap } from "solid-js/store";
 import { hoxiAPI, type WorktreeMeta, type WorktreeRepoStatus } from "../services/api";
 import type { SnapshotFileDiff } from "../services/sse-types";
-import { filterLocalSessionDiffsByTurns } from "./message-lookup";
 import { isSessionDeleted, sessionDirectory } from "./session-query";
 import { secondaryWorkspaceDirs } from "./workspace-folders";
-import { setWorkspace, workspace } from "./workspace-state";
+import { type MessageTurn, setWorkspace, workspace } from "./workspace-state";
 
 const diffRevisions = new Map<string, number>();
 
@@ -251,4 +250,114 @@ export function setWorktreeMetaIfChanged(key: string, next: WorktreeMeta): void 
     return;
   }
   setWorkspace("worktreeBySession", key, next);
+}
+
+const SESSION_EDITING_TOOLS = new Set([
+  "edit",
+  "write",
+  "patch",
+  "multiedit",
+  "apply_patch",
+  "str_replace_based_edit_tool",
+  "create_file",
+  "write_to_file",
+  "replace_file_content",
+  "multi_replace_file_content",
+  "file_edit",
+  "notebookedit",
+]);
+
+function normalizeSessionRelPath(raw: string, rootDir: string): string {
+  let trimmed = (raw || "").trim().replace(/\\/g, "/");
+  if (!trimmed) return "";
+  const root = (rootDir || "").trim().replace(/\\/g, "/").replace(/\/+$/, "");
+  if (root && (trimmed === root || trimmed.startsWith(`${root}/`))) {
+    trimmed = trimmed.slice(root.length).replace(/^\/+/, "");
+  } else {
+    trimmed = trimmed.replace(/^\.\/+/, "");
+  }
+  return trimmed.replace(/^\.hoxi\/worktrees\/[^/]+\/+/, "");
+}
+
+export function filterLocalSessionDiffsByTurns(
+  sessionID: string,
+  diffs: SnapshotFileDiff[],
+  turnsBySession: Record<string, MessageTurn[]>,
+  rootDir: string
+): SnapshotFileDiff[] {
+  if (!diffs.length) return diffs;
+  const turns = turnsBySession[sessionID];
+  if (!turns || turns.length === 0) return diffs;
+
+  const touched = new Set<string>();
+  const addPath = (raw?: unknown) => {
+    if (typeof raw !== "string") return;
+    const norm = normalizeSessionRelPath(raw, rootDir);
+    if (norm) touched.add(norm);
+  };
+
+  const visited = new Set<string>();
+  const scanSession = (sid: string) => {
+    if (!sid || visited.has(sid)) return;
+    visited.add(sid);
+    for (const turn of turnsBySession[sid] ?? []) {
+      for (const p of turn.parts) {
+        if (p.type !== "tool") continue;
+        const toolName = (p.tool || "").toLowerCase();
+        if (toolName === "task" || toolName === "agent" || toolName.includes("subagent")) {
+          const meta = p.state.status !== "pending" ? (p.state.metadata as Record<string, any> | undefined) : undefined;
+          const inp = (p.state.input || {}) as Record<string, any>;
+          const out = (p.state as { output?: string }).output;
+          const outMatch = typeof out === "string" ? out.match(/session_id:\s*([a-zA-Z0-9_-]+)/) : null;
+          const childID = meta?.sessionId || meta?.sessionID || inp.task_id || outMatch?.[1];
+          if (typeof childID === "string") scanSession(childID);
+          continue;
+        }
+        if (p.state.status !== "completed" || !SESSION_EDITING_TOOLS.has(toolName)) continue;
+        const inp = (p.state.input || {}) as Record<string, any>;
+        addPath(
+          inp.filePath ||
+            inp.file_path ||
+            inp.Path ||
+            inp.AbsolutePath ||
+            inp.path ||
+            inp.file ||
+            inp.TargetFile ||
+            inp.target_file ||
+            inp.targetFile ||
+            inp.filename ||
+            inp.notebook_path
+        );
+        if (typeof inp.patchText === "string") {
+          for (const line of inp.patchText.split(/\r?\n/)) {
+            const m = line.match(/^\*\*\*\s+(?:Update|Add|Delete)\s+File:\s*(.+)$/);
+            if (m) addPath(m[1]);
+          }
+        }
+        const meta = (p.state.metadata || {}) as Record<string, any>;
+        addPath(meta.filediff?.file || meta.filediff?.path);
+        if (Array.isArray(meta.files)) {
+          for (const item of meta.files) {
+            if (typeof item === "string") addPath(item);
+            else if (item && typeof item === "object") {
+              addPath(item.relativePath || item.filePath || item.file || item.path);
+            }
+          }
+        }
+      }
+    }
+  };
+
+  scanSession(sessionID);
+  if (touched.size === 0) return [];
+
+  return diffs.filter((d) => {
+    const norm = normalizeSessionRelPath(d.file, rootDir);
+    if (!norm) return false;
+    if (touched.has(norm)) return true;
+    for (const f of touched) {
+      if (norm.endsWith(`/${f}`) || f.endsWith(`/${norm}`)) return true;
+    }
+    return false;
+  });
 }

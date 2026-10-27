@@ -13,7 +13,7 @@ import (
 func TestBrowserOverlay(t *testing.T) {
 	raw := `{"model":"test/model","plugin":["existing",["configured",{"enabled":true}]],"permission":{"edit":"ask"}}`
 	t.Setenv("OPENCODE_CONFIG_CONTENT", raw)
-	env, cleanup, err := PrepareBrowserPlugin("http://127.0.0.1:9000", "secret")
+	env, cleanup, err := PrepareBrowserPlugin("http://127.0.0.1:9000", "secret", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestBrowserOverlayInvalidConfig(t *testing.T) {
 	for _, raw := range []string{"", "null", "[]", `"text"`, "true", "1", "{", `{} {}`, `{"plugin":null}`, `{"plugin":{}}`, `{"plugin":"x"}`} {
 		t.Run(raw, func(t *testing.T) {
 			t.Setenv("OPENCODE_CONFIG_CONTENT", raw)
-			if _, cleanup, err := PrepareBrowserPlugin("http://127.0.0.1:9000", "secret"); err == nil {
+			if _, cleanup, err := PrepareBrowserPlugin("http://127.0.0.1:9000", "secret", nil); err == nil {
 				cleanup()
 				t.Fatal("accepted malformed config")
 			}
@@ -92,7 +92,7 @@ func TestBrowserOverlayWithoutConfig(t *testing.T) {
 		if raw != "" {
 			_ = os.Setenv("OPENCODE_CONFIG_CONTENT", raw)
 		}
-		env, cleanup, err := PrepareBrowserPlugin("http://127.0.0.1:9000", "secret")
+		env, cleanup, err := PrepareBrowserPlugin("http://127.0.0.1:9000", "secret", nil)
 		if err != nil || len(env) != 5 {
 			t.Fatalf("valid empty config rejected: %v", err)
 		}
@@ -102,7 +102,7 @@ func TestBrowserOverlayWithoutConfig(t *testing.T) {
 
 func TestBrowserOverlayInvalidRuntime(t *testing.T) {
 	for _, input := range [][2]string{{"", "secret"}, {"file:///tmp", "secret"}, {"http://localhost?x=1", "secret"}, {"http://localhost", ""}} {
-		if _, cleanup, err := PrepareBrowserPlugin(input[0], input[1]); err == nil {
+		if _, cleanup, err := PrepareBrowserPlugin(input[0], input[1], nil); err == nil {
 			cleanup()
 			t.Fatal("accepted invalid runtime settings")
 		}

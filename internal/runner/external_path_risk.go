@@ -220,13 +220,29 @@ var sensitiveExternalPrefixes = []string{
 	"/private/var/root/",
 }
 
-func isRoutineHoxiSubpath(slash string) bool {
+func isRoutineSkillSubpath(slash string) bool {
 	return strings.Contains(slash, "/.hoxi/skills/") ||
-		strings.Contains(slash, "/.hoxi/attachments/") ||
 		strings.Contains(slash, "/.agents/skills/") ||
 		strings.HasPrefix(slash, ".hoxi/skills/") ||
-		strings.HasPrefix(slash, ".hoxi/attachments/") ||
 		strings.HasPrefix(slash, ".agents/skills/")
+}
+
+func isRoutineAttachmentSubpath(slash string) bool {
+	return strings.Contains(slash, "/.hoxi/attachments/") ||
+		strings.HasPrefix(slash, ".hoxi/attachments/")
+}
+
+func isRoutineHoxiSubpath(slash string) bool {
+	return isRoutineSkillSubpath(slash) || isRoutineAttachmentSubpath(slash)
+}
+
+func isProtectedShellReadPath(p string) bool {
+	rawSlash := strings.ToLower(filepath.ToSlash(filepath.Clean(p)))
+	slash := stripWorktreePrefix(rawSlash)
+	if isRoutineHoxiSubpath(slash) {
+		return false
+	}
+	return isProtectedRelPath(p)
 }
 
 func isSensitiveExternalPath(rawPath string) bool {

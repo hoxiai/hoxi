@@ -17,11 +17,13 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/hoxiai/hoxi/internal/reclaim"
 	"github.com/hoxiai/hoxi/internal/testutil/execstub"
 )
 
@@ -399,9 +401,15 @@ func TestWaitForHealthAndStartDaemonWithBin(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	tmpDir := t.TempDir()
+	t.Setenv("HOXI_HOME", filepath.Join(tmpDir, "hoxi-home"))
+	ledgerPath := filepath.Join(tmpDir, "reclaim.json")
+	ledger, err := reclaim.Open(ledgerPath, logger)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// 3. StartDaemonWithBin error when binary does not exist
-	if _, err := StartDaemonWithBin(context.Background(), filepath.Join(tmpDir, "nonexistent"), tmpDir, "", port, testPassword, logger); err == nil {
+	if _, err := StartDaemonWithBin(context.Background(), filepath.Join(tmpDir, "nonexistent"), tmpDir, "", port, testPassword, ledger, logger); err == nil {
 		t.Fatal("expected error when starting nonexistent daemon binary")
 	}
 
@@ -413,24 +421,53 @@ func TestWaitForHealthAndStartDaemonWithBin(t *testing.T) {
 	}
 	shortCtx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
 	defer cancel()
-	if _, err := StartDaemonWithBin(shortCtx, fakeDaemon, tmpDir, filepath.Join(tmpDir, "opencode.json"), port, testPassword, logger); err == nil {
+	if _, err := StartDaemonWithBin(shortCtx, fakeDaemon, tmpDir, filepath.Join(tmpDir, "opencode.json"), port, testPassword, ledger, logger); err == nil {
 		t.Fatal("expected StartDaemonWithBin to fail when health check times out")
+	}
+	if records := daemonRecords(t, ledgerPath); len(records) != 0 {
+		t.Fatalf("a daemon that failed its health check stayed recorded: %+v", records)
 	}
 
 	// 5. StartDaemonWithBin success path when health endpoint responds 200 OK
 	healthy = true
-	child, err := StartDaemonWithBin(context.Background(), fakeDaemon, tmpDir, filepath.Join(tmpDir, "opencode.json"), port, testPassword, logger)
+	child, err := StartDaemonWithBin(context.Background(), fakeDaemon, tmpDir, filepath.Join(tmpDir, "opencode.json"), port, testPassword, ledger, logger)
 	if err != nil {
 		t.Fatalf("StartDaemonWithBin unexpected error: %v", err)
 	}
-	if child != nil && child.Process != nil {
-		_ = child.Process.Kill()
-		_ = child.Wait()
+	records := daemonRecords(t, ledgerPath)
+	wantArgs := []string{"serve", "--hostname", "127.0.0.1", "--port", strconv.Itoa(port)}
+	if len(records) != 1 || records[0].Kind != "opencode-daemon" || records[0].Process.PID != child.Process.Pid ||
+		strings.Join(records[0].Process.Args, " ") != strings.Join(wantArgs, " ") {
+		t.Fatalf("running daemon is not recorded by its argv: %+v", records)
+	}
+	_ = child.Process.Kill()
+	_ = child.Wait()
+	if records := daemonRecords(t, ledgerPath); len(records) != 0 {
+		t.Fatalf("a reaped daemon stayed recorded: %+v", records)
 	}
 }
 
-func TestReapOrphanedDaemons(t *testing.T) {
-	ReapOrphanedDaemons(nil)
+type daemonRecord struct {
+	Kind    string `json:"kind"`
+	Process *struct {
+		PID  int      `json:"pid"`
+		Args []string `json:"args"`
+	} `json:"process"`
+}
+
+func daemonRecords(t *testing.T, path string) []daemonRecord {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var f struct {
+		Entries []daemonRecord `json:"entries"`
+	}
+	if err := json.Unmarshal(raw, &f); err != nil {
+		t.Fatal(err)
+	}
+	return f.Entries
 }
 
 func TestEnsureHoxiEngineDataDir(t *testing.T) {

@@ -192,11 +192,11 @@ func opaqueShellCore(command, worktree string, allowInlineScripts, valueClass bo
 }
 
 func isSafeExternalCDTarget(resolved string) bool {
-	if resolved == "" || resolved == "/" || isSensitiveExternalPath(resolved) || isSecretFilePath(resolved) || isProtectedRelPath(resolved) {
+	if resolved == "" || resolved == "/" || isSensitiveExternalPath(resolved) || isSecretFilePath(resolved) || isProtectedShellReadPath(resolved) {
 		return false
 	}
 	if real, ok := resolvePathWithSymlinks(resolved, 0); ok && real != "" {
-		if real == "/" || isSensitiveExternalPath(real) || isSecretFilePath(real) || isProtectedRelPath(real) {
+		if real == "/" || isSensitiveExternalPath(real) || isSecretFilePath(real) || isProtectedShellReadPath(real) {
 			return false
 		}
 	}
@@ -256,7 +256,7 @@ func advanceScopedCD(seg, cwd, worktree string) (string, bool) {
 		return resolved, true
 	}
 	cleaned := path.Clean(cwd + "/" + filepath.ToSlash(target))
-	if cleaned == ".." || strings.HasPrefix(cleaned, "../") || isSensitiveExternalPath(cleaned) || isSecretFilePath(cleaned) || isProtectedRelPath(cleaned) {
+	if cleaned == ".." || strings.HasPrefix(cleaned, "../") || isSensitiveExternalPath(cleaned) || isSecretFilePath(cleaned) || isProtectedShellReadPath(cleaned) {
 		return "", false
 	}
 	return cleaned, true

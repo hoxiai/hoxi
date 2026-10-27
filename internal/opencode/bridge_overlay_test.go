@@ -29,7 +29,7 @@ func overlayGrokOptions(t *testing.T, env []string) map[string]any {
 func TestBrowserOverlayPointsGrokBridgeAtOwnGateway(t *testing.T) {
 	t.Setenv("OPENCODE_CONFIG_CONTENT", "{}")
 	for _, base := range []string{"http://127.0.0.1:5410", "http://127.0.0.1:5420/"} {
-		env, cleanup, err := PrepareBrowserPlugin(base, "secret")
+		env, cleanup, err := PrepareBrowserPlugin(base, "secret", nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -43,7 +43,7 @@ func TestBrowserOverlayPointsGrokBridgeAtOwnGateway(t *testing.T) {
 
 func TestBrowserOverlayKeepsExistingProviderSettings(t *testing.T) {
 	t.Setenv("OPENCODE_CONFIG_CONTENT", `{"provider":{"other":{"options":{"baseURL":"https://x.example"}},"grok-cli":{"npm":"custom","options":{"timeout":5,"baseURL":"http://127.0.0.1:1/api/hoxi/bridge/grok-cli/v1"}}}}`)
-	env, cleanup, err := PrepareBrowserPlugin("http://127.0.0.1:5420", "secret")
+	env, cleanup, err := PrepareBrowserPlugin("http://127.0.0.1:5420", "secret", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +61,7 @@ func TestBrowserOverlayRejectsMalformedProvider(t *testing.T) {
 	for _, raw := range []string{`{"provider":null}`, `{"provider":[]}`, `{"provider":{"grok-cli":"x"}}`, `{"provider":{"grok-cli":{"options":[]}}}`} {
 		t.Run(raw, func(t *testing.T) {
 			t.Setenv("OPENCODE_CONFIG_CONTENT", raw)
-			if _, cleanup, err := PrepareBrowserPlugin("http://127.0.0.1:9000", "secret"); err == nil {
+			if _, cleanup, err := PrepareBrowserPlugin("http://127.0.0.1:9000", "secret", nil); err == nil {
 				cleanup()
 				t.Fatal("accepted malformed provider config")
 			}

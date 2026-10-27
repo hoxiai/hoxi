@@ -5,15 +5,23 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hoxiai/hoxi/internal/opencode"
 	"github.com/hoxiai/hoxi/internal/statusbar"
 )
 
-func TestChildReapedOnExitAndAfterShutdown(t *testing.T) {
-	a := &DesktopApp{}
-	child := exec.Command("sh", "-c", "exit 0")
-	if err := child.Start(); err != nil {
+// startChild starts a stand-in for a supervised daemon.
+func startChild(t *testing.T, name string, args ...string) *opencode.Daemon {
+	t.Helper()
+	cmd := exec.Command(name, args...)
+	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
+	return &opencode.Daemon{Cmd: cmd}
+}
+
+func TestChildReapedOnExitAndAfterShutdown(t *testing.T) {
+	a := &DesktopApp{}
+	child := startChild(t, "sh", "-c", "exit 0")
 	a.setChild(child)
 	select {
 	case <-a.childDone:
@@ -24,10 +32,7 @@ func TestChildReapedOnExitAndAfterShutdown(t *testing.T) {
 		t.Fatal("exited child was not reaped promptly")
 	}
 	a.killChild()
-	late := exec.Command("sleep", "30")
-	if err := late.Start(); err != nil {
-		t.Fatal(err)
-	}
+	late := startChild(t, "sleep", "30")
 	a.setChild(late)
 	if late.ProcessState == nil {
 		t.Fatal("late child was not reaped after shutdown")
@@ -42,10 +47,7 @@ func TestChildAvailabilityFollowsLifecycle(t *testing.T) {
 	a := &DesktopApp{status: tracker}
 	defer a.killChild()
 	for i := 0; i < 20; i++ {
-		child := exec.Command("sh", "-c", "exit 0")
-		if err := child.Start(); err != nil {
-			t.Fatal(err)
-		}
+		child := startChild(t, "sh", "-c", "exit 0")
 		a.setChild(child)
 		select {
 		case <-a.childDone:
@@ -56,10 +58,7 @@ func TestChildAvailabilityFollowsLifecycle(t *testing.T) {
 			t.Fatal("exited child left service available")
 		}
 	}
-	live := exec.Command("sleep", "30")
-	if err := live.Start(); err != nil {
-		t.Fatal(err)
-	}
+	live := startChild(t, "sleep", "30")
 	a.setChild(live)
 	if !tracker.Snapshot().Available {
 		t.Fatal("running child did not mark service available")
@@ -68,10 +67,7 @@ func TestChildAvailabilityFollowsLifecycle(t *testing.T) {
 	if tracker.Snapshot().Available {
 		t.Fatal("shutdown left service available")
 	}
-	late := exec.Command("sleep", "30")
-	if err := late.Start(); err != nil {
-		t.Fatal(err)
-	}
+	late := startChild(t, "sleep", "30")
 	a.setChild(late)
 	if tracker.Snapshot().Available {
 		t.Fatal("late startup restored availability after shutdown")
@@ -82,21 +78,19 @@ func TestUnexpectedExitRespawnsDaemon(t *testing.T) {
 	tracker := statusbar.NewTracker()
 	a := &DesktopApp{status: tracker}
 	defer a.killChild()
-	restarted := make(chan *exec.Cmd, 1)
-	a.respawn = &respawner{start: func() (*exec.Cmd, error) {
-		child := exec.Command("sleep", "30")
-		if err := child.Start(); err != nil {
+	restarted := make(chan *opencode.Daemon, 1)
+	a.respawn = &respawner{start: func() (*opencode.Daemon, error) {
+		cmd := exec.Command("sleep", "30")
+		if err := cmd.Start(); err != nil {
 			return nil, err
 		}
+		child := &opencode.Daemon{Cmd: cmd}
 		restarted <- child
 		return child, nil
 	}}
-	crash := exec.Command("sh", "-c", "exit 1")
-	if err := crash.Start(); err != nil {
-		t.Fatal(err)
-	}
+	crash := startChild(t, "sh", "-c", "exit 1")
 	a.setChild(crash)
-	var next *exec.Cmd
+	var next *opencode.Daemon
 	select {
 	case next = <-restarted:
 	case <-time.After(5 * time.Second):
@@ -123,14 +117,11 @@ func TestUnexpectedExitRespawnsDaemon(t *testing.T) {
 func TestShutdownDoesNotRespawnDaemon(t *testing.T) {
 	a := &DesktopApp{}
 	called := make(chan struct{}, 1)
-	a.respawn = &respawner{start: func() (*exec.Cmd, error) {
+	a.respawn = &respawner{start: func() (*opencode.Daemon, error) {
 		called <- struct{}{}
 		return nil, nil
 	}}
-	child := exec.Command("sleep", "30")
-	if err := child.Start(); err != nil {
-		t.Fatal(err)
-	}
+	child := startChild(t, "sleep", "30")
 	a.setChild(child)
 	a.killChild()
 	select {

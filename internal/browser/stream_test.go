@@ -207,8 +207,14 @@ func TestChromeStreamLifecycleAndDensity(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := jpeg.DecodeConfig(bytes.NewReader(data)); err != nil {
+		img, err := jpeg.DecodeConfig(bytes.NewReader(data))
+		if err != nil {
 			t.Fatal(err)
+		}
+		// The UI maps clicks over the whole image, so it must show the whole
+		// viewport, not the headless window's content area.
+		if diff := img.Width*height - img.Height*width; diff > max(width, height) || -diff > max(width, height) {
+			t.Fatalf("frame %dx%d does not cover viewport %dx%d", img.Width, img.Height, width, height)
 		}
 	}
 	closed := func(conn *websocket.Conn) {
@@ -253,4 +259,53 @@ func TestChromeStreamLifecycleAndDensity(t *testing.T) {
 	last = dial()
 	s.Close()
 	closed(last)
+}
+
+// A narrow panel is below the headless window's minimum width, and a static page
+// never repaints on its own, so the first frame shown must already be correct.
+func TestChromeStreamStaticNarrowPageCoversViewport(t *testing.T) {
+	if os.Getenv("HOXI_BROWSER_TEST") != "1" {
+		t.Skip("set HOXI_BROWSER_TEST=1 for Chrome integration")
+	}
+	s := New()
+	defer s.Close()
+	dir := t.TempDir()
+	mux := http.NewServeMux()
+	s.RegisterRoutes(mux)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	pageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`<style>body{margin:0;height:100vh;background:linear-gradient(red,blue)}</style>`))
+	}))
+	defer pageServer.Close()
+	for _, body := range []string{
+		`{"action":"resize","width":420,"height":756,"deviceScaleFactor":2}`,
+		fmt.Sprintf(`{"action":"navigate","url":%q}`, pageServer.URL),
+	} {
+		if w := request(t, s, dir, "static", "action", body, false); w.Code != 200 {
+			t.Fatalf("%s: %d %s", body, w.Code, w.Body.String())
+		}
+	}
+	u := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/hoxi/browser/stream?sessionID=static&directory=" + url.QueryEscape(dir)
+	conn, _, err := websocket.DefaultDialer.Dial(u, http.Header{"Origin": []string{"wails://wails"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	var frame streamFrame
+	if err := conn.ReadJSON(&frame); err != nil {
+		t.Fatal(err)
+	}
+	data, err := base64.StdEncoding.DecodeString(frame.Image)
+	if err != nil {
+		t.Fatal(err)
+	}
+	img, err := jpeg.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if frame.Width != 420 || frame.Height != 756 || img.Width*756 != img.Height*420 {
+		t.Fatalf("frame %dx%d (css %dx%d) does not cover the 420x756 viewport", img.Width, img.Height, frame.Width, frame.Height)
+	}
 }

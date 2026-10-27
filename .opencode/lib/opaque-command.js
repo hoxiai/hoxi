@@ -11,6 +11,7 @@ import {
   DOLLAR_EXPAND_RE,
   commandCandidates,
   isProtectedPath,
+  isProtectedShellReadPath,
   isSecretPath,
   isSensitiveExternalPath,
   isWordBoundary,
@@ -41,6 +42,7 @@ import {
   findSubshellSpans,
   isHarmlessSet,
   setLiteralJudge,
+  unwrapCommandPrefixes,
 } from "./shell-constants.js";
 import {
   SEQ_LOOP_PLACEHOLDER,
@@ -166,7 +168,7 @@ function cleanRelPosixPath(p) {
 }
 
 function isSafeExternalCDTarget(resolved) {
-  return Boolean(resolved) && resolved !== "/" && !isSensitiveExternalPath(resolved) && !isSecretPath(resolved) && !isProtectedPath(resolved);
+  return Boolean(resolved) && resolved !== "/" && !isSensitiveExternalPath(resolved) && !isSecretPath(resolved) && !isProtectedShellReadPath(resolved);
 }
 
 function advanceScopedCD(seg, cwd, worktree) {
@@ -207,7 +209,7 @@ function advanceScopedCD(seg, cwd, worktree) {
     return [resolved, true];
   }
   const cleaned = cleanRelPosixPath(`${cwd}/${target}`);
-  if (cleaned === ".." || cleaned.startsWith("../") || isSensitiveExternalPath(cleaned) || isSecretPath(cleaned) || isProtectedPath(cleaned)) {
+  if (cleaned === ".." || cleaned.startsWith("../") || isSensitiveExternalPath(cleaned) || isSecretPath(cleaned) || isProtectedShellReadPath(cleaned)) {
     return ["", false];
   }
   return [cleaned, true];
@@ -336,7 +338,7 @@ function opaqueShellCore(command, worktree, allowInlineScripts, valueClass) {
     let cmdIdx = 0;
     while (cmdIdx < words.length && ENV_VAR_ASSIGNMENT_WORD_RE.test(words[cmdIdx])) cmdIdx++;
     if (cmdIdx >= words.length) continue;
-    const unwrapped = unwrapCommandPrefixes(words.slice(cmdIdx));
+    const unwrapped = unwrapCommandPrefixes(words.slice(cmdIdx), normalizeAbsoluteTool);
     if (!unwrapped) return true;
     if (unwrapped.lookupOnly) continue;
     const cmdWords = unwrapped.words;
@@ -361,11 +363,14 @@ function opaqueShellCore(command, worktree, allowInlineScripts, valueClass) {
       }
       continue;
     }
-    if (base === "ssh" && args.length === 1 && args[0] === "Q") continue;
-    if (isSafeShellScriptSegment(base, args, i > 0 && pipedIn[i], { stripNullRedirects, isSecretPath, isSensitiveExternalPath, isProtectedPath })) continue;
     if (outsideCWD && !isTempOnlyCleanupSegment(cmdWords)) return true;
     const prevSeg = i > 0 ? segments[i - 1] : "";
-    if (DATA_ARG_INTERPRETERS.has(base) && !(base === "xargs" && isSafeXargsSegment(args, i > 0 && pipedIn[i], prevSeg, { stripNullRedirects, normalizeAbsoluteTool, isSafeListingPipeline }))) {
+    if (
+      DATA_ARG_INTERPRETERS.has(base) &&
+      !(base === "xargs" && isSafeXargsSegment(args, i > 0 && pipedIn[i], prevSeg, { stripNullRedirects, normalizeAbsoluteTool, isSafeListingPipeline })) &&
+      !(base === "ssh" && args.length === 1 && args[0] === "Q") &&
+      !isSafeShellScriptSegment(base, args, i > 0 && pipedIn[i], { stripNullRedirects, isSecretPath, isSensitiveExternalPath, isProtectedPath })
+    ) {
       return true;
     }
     if (awkProgramExecutes(base, args)) return true;
@@ -430,7 +435,7 @@ function forLoopBinding(seg, cmd) {
   if (cmd.length < 4 || cmd[2] !== "in" || hasDollarExpansion(seg) || seg.includes("`")) return [name, false];
   for (const item of cmd.slice(3)) {
     if (item === SEQ_LOOP_PLACEHOLDER) continue;
-    if (item.includes("[") || DOT_GLOB_RE.test(item) || isSecretPath(item) || isSensitiveExternalPath(item) || isProtectedPath(item)) {
+    if (item.includes("[") || DOT_GLOB_RE.test(item) || isSecretPath(item) || isSensitiveExternalPath(item) || isProtectedShellReadPath(item)) {
       return [name, false];
     }
   }
@@ -473,7 +478,7 @@ function isSafeListingProducer(seg) {
       const a = args[i];
       if (a === "(" || a === ")" || a === "\\(" || a === "\\)") continue;
       if (!a.startsWith("-") && a !== "!") {
-        if (named || pruned || a.includes("..") || DOT_GLOB_RE.test(a) || isSecretPath(a) || isSensitiveExternalPath(a) || isProtectedPath(a)) {
+        if (named || pruned || a.includes("..") || DOT_GLOB_RE.test(a) || isSecretPath(a) || isSensitiveExternalPath(a) || isProtectedShellReadPath(a)) {
           return false;
         }
       } else if (a === "-name" || a === "-iname") {
@@ -482,7 +487,7 @@ function isSafeListingProducer(seg) {
         i++;
       } else if (a === "-path" || a === "-ipath") {
         const p = args[i + 1] ?? "";
-        if (!p || p.includes("..") || DOT_GLOB_RE.test(p) || isSecretPath(p) || isSensitiveExternalPath(p) || isProtectedPath(p)) {
+        if (!p || p.includes("..") || DOT_GLOB_RE.test(p) || isSecretPath(p) || isSensitiveExternalPath(p) || isProtectedShellReadPath(p)) {
           return false;
         }
         i++;
@@ -593,31 +598,6 @@ function shellExpansionNames(s) {
   return names;
 }
 
-// Strips wrappers that only run the next command (nohup, time, exec, command,
-// env NAME=value); `command -v x` is a lookup. A bare `env` prints every
-// environment variable, secrets included, so it returns null (opaque).
-function unwrapCommandPrefixes(words) {
-  while (words.length > 0) {
-    const base = baseName(normalizeAbsoluteTool(words[0]));
-    if (base === "nohup" || base === "time" || base === "exec") {
-      if (words.length === 1) return { words, lookupOnly: false };
-      words = words.slice(1);
-    } else if (base === "command") {
-      if (words.length >= 2 && (words[1] === "-v" || words[1] === "-V")) return { words, lookupOnly: true };
-      if (words.length === 1) return { words, lookupOnly: false };
-      words = words.slice(1);
-    } else if (base === "env") {
-      let k = 1;
-      while (k < words.length && ENV_VAR_ASSIGNMENT_WORD_RE.test(words[k])) k++;
-      if (k === 1 || k >= words.length) return null;
-      words = words.slice(k);
-    } else {
-      return { words, lookupOnly: false };
-    }
-  }
-  return { words, lookupOnly: false };
-}
-
 // Expansions only in the message of `git commit|tag|merge|stash -m …`.
 function gitMessageExpansionsOnly(args, vars) {
   let i = 0;
@@ -701,7 +681,7 @@ function expansionsAreBounded(seg, words, vars, valueClass = false) {
     wordExpansionNames,
     isSecretPath,
     isSensitiveExternalPath,
-    isProtectedPath,
+    isProtectedPath: isProtectedShellReadPath,
     gitGlobalValueFlags: GIT_GLOBAL_VALUE_FLAGS,
   };
   let j = 0;
@@ -726,6 +706,10 @@ function expansionsAreBounded(seg, words, vars, valueClass = false) {
     }
   }
   for (const a of expanding) {
+    if (a.includes("$HOME/") || a.includes("${HOME}/")) {
+      if (!isSafeHomePathWord(a, vars, homeDeps)) return false;
+      continue;
+    }
     if (isSafeHomePathWord(a, vars, homeDeps)) continue;
     const names = wordExpansionNames(a);
     if (names === null) return false;
@@ -746,7 +730,8 @@ function expansionsAreBounded(seg, words, vars, valueClass = false) {
 setLiteralJudge({
   opaqueCore: (inner) => opaqueShellCore(inner, "", false, false),
   isSecret: (p) => isSecretPath(p) || isSensitiveExternalPath(p),
-  isProtected: isProtectedPath,
+  isProtected: isProtectedShellReadPath,
+  normalizeAbsoluteTool,
   isSafeListingPipeline,
   shellWords,
 });

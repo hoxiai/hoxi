@@ -169,7 +169,7 @@ func forLoopBinding(seg string, cmd []string) (string, bool) {
 			continue
 		}
 		if strings.Contains(item, "[") || dotGlobRe.MatchString(item) ||
-			isSecretFilePath(item) || isSensitiveExternalPath(item) || isProtectedRelPath(item) {
+			isSecretFilePath(item) || isSensitiveExternalPath(item) || isProtectedShellReadPath(item) {
 			return name, false
 		}
 	}
@@ -250,7 +250,7 @@ func isSafeListingProducer(seg string) bool {
 			switch {
 			case !strings.HasPrefix(a, "-") && a != "!" && a != "(" && a != ")" && a != "\\(" && a != "\\)":
 				if named || pruned || strings.Contains(a, "..") || dotGlobRe.MatchString(a) ||
-					isSecretFilePath(a) || isSensitiveExternalPath(a) || isProtectedRelPath(a) {
+					isSecretFilePath(a) || isSensitiveExternalPath(a) || isProtectedShellReadPath(a) {
 					return false // a stray word after the predicates or a sensitive/protected root
 				}
 			case a == "-name" || a == "-iname":
@@ -261,7 +261,7 @@ func isSafeListingProducer(seg string) bool {
 				i++
 			case a == "-path" || a == "-ipath":
 				if i+1 >= len(args) || strings.Contains(args[i+1], "..") || dotGlobRe.MatchString(args[i+1]) ||
-					isSecretFilePath(args[i+1]) || isSensitiveExternalPath(args[i+1]) || isProtectedRelPath(args[i+1]) {
+					isSecretFilePath(args[i+1]) || isSensitiveExternalPath(args[i+1]) || isProtectedShellReadPath(args[i+1]) {
 					return false
 				}
 				i++
@@ -364,6 +364,15 @@ func expansionsAreBounded(seg string, words []string, vars map[string]bool, valu
 		}
 	}
 	for _, a := range expanding {
+		if strings.Contains(a, "$HOME/") || strings.Contains(a, "${HOME}/") {
+			if !isSafeHomePathWord(a, vars) {
+				return false
+			}
+			continue
+		}
+		if isSafeHomePathWord(a, vars) {
+			continue
+		}
 		names, ok := wordExpansionNames(a)
 		if !ok {
 			return false

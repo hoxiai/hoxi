@@ -77,6 +77,44 @@ func TestKeyboardValidation(t *testing.T) {
 	}
 }
 
+// Back/forward must return promptly even when Chrome restores the entry from
+// its back/forward cache, which never fires a fresh document load.
+func TestChromeHistoryNavigationReturns(t *testing.T) {
+	if os.Getenv("HOXI_BROWSER_TEST") != "1" {
+		t.Skip("set HOXI_BROWSER_TEST=1 for Chrome integration")
+	}
+	s := New()
+	defer s.Close()
+	dir := t.TempDir()
+	page := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("<title>" + r.URL.Path + "</title><p>" + r.URL.Path))
+	}))
+	defer page.Close()
+	call := func(a Action) map[string]any {
+		t.Helper()
+		start := time.Now()
+		w := request(t, s, dir, "history", "action", string(mustJSON(t, a)), false)
+		if w.Code != 200 {
+			t.Fatalf("%s after %s: %d %s", a.Action, time.Since(start).Round(time.Millisecond), w.Code, w.Body.String())
+		}
+		if elapsed := time.Since(start); elapsed > 10*time.Second {
+			t.Fatalf("%s took %s", a.Action, elapsed)
+		}
+		var result map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+	call(Action{Action: "navigate", URL: page.URL + "/a"})
+	call(Action{Action: "navigate", URL: page.URL + "/b"})
+	for _, step := range []struct{ action, path string }{{"back", "/a"}, {"forward", "/b"}, {"back", "/a"}} {
+		if got := call(Action{Action: step.action})["url"]; got != page.URL+step.path {
+			t.Fatalf("%s: url %v, want %s", step.action, got, page.URL+step.path)
+		}
+	}
+}
+
 func TestChromeInputViewportAndLastTab(t *testing.T) {
 	if os.Getenv("HOXI_BROWSER_TEST") != "1" {
 		t.Skip("set HOXI_BROWSER_TEST=1 for Chrome integration")

@@ -84,7 +84,7 @@ func literalForItems(items []string) bool {
 		if strings.ContainsAny(item, "$*?[`{") || strings.Contains(item, "${") {
 			return false
 		}
-		if isSecretFilePath(item) || isSensitiveExternalPath(item) || isProtectedRelPath(item) {
+		if isSecretFilePath(item) || isSensitiveExternalPath(item) || isProtectedShellReadPath(item) {
 			return false
 		}
 	}
@@ -315,7 +315,7 @@ func isValueClassSegment(seg string) bool {
 				return false
 			default:
 				p := strings.TrimPrefix(a, "<")
-				if isSecretFilePath(p) || isSensitiveExternalPath(p) || isProtectedRelPath(p) {
+				if isSecretFilePath(p) || isSensitiveExternalPath(p) || isProtectedShellReadPath(p) {
 					return false
 				}
 			}
@@ -705,7 +705,7 @@ func isSafeHomeScriptWord(word string, vars map[string]bool) bool {
 		return false
 	}
 	slash := strings.ToLower(filepath.ToSlash(word))
-	return isRoutineHoxiSubpath(slash) && (strings.HasSuffix(slash, ".sh") || strings.HasSuffix(slash, ".bash") || strings.HasSuffix(slash, ".zsh"))
+	return isRoutineSkillSubpath(slash) && (strings.HasSuffix(slash, ".sh") || strings.HasSuffix(slash, ".bash") || strings.HasSuffix(slash, ".zsh"))
 }
 
 func isSafeShellScriptSegment(base string, rawArgs []string, piped bool) bool {
@@ -752,10 +752,11 @@ func isSafeShellScriptSegment(base string, rawArgs []string, piped bool) bool {
 	if !strings.HasSuffix(lower, ".sh") && !strings.HasSuffix(lower, ".bash") && !strings.HasSuffix(lower, ".zsh") {
 		return false
 	}
-	if isSafeCurlOutputTarget(script) || isSecretFilePath(script) || isSensitiveExternalPath(script) || isProtectedRelPath(script) {
+	isSkill := isRoutineSkillSubpath(lower)
+	if isSafeCurlOutputTarget(script) || isSecretFilePath(script) || isSensitiveExternalPath(script) || (!isSkill && isProtectedRelPath(script)) {
 		return false
 	}
-	if !syntaxOnly && !isRoutineHoxiSubpath(lower) {
+	if !syntaxOnly && !isSkill {
 		return false
 	}
 	for _, w := range args[i+1:] {

@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -18,6 +17,7 @@ import (
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
 	"github.com/hoxiai/hoxi/internal/opencode/ocapi"
 	"github.com/hoxiai/hoxi/internal/opencode/ocstate"
+	"github.com/hoxiai/hoxi/internal/reclaim"
 )
 
 const resolveVersionTimeout = 10 * time.Second
@@ -176,14 +176,34 @@ func ResolveVersion(binPath string) string {
 	}
 }
 
+// Daemon is a started `opencode serve` child. It is recorded in the reclaim
+// ledger while it runs, so a later Hoxi start can stop it if this process dies
+// without stopping it first.
+type Daemon struct {
+	*exec.Cmd
+	ledger   *reclaim.Ledger
+	ledgerID string
+}
+
+// Wait reaps the daemon and then drops its ledger record. The record outlives
+// the process, never the other way round.
+func (d *Daemon) Wait() error {
+	err := d.Cmd.Wait()
+	d.ledger.Forget(d.ledgerID)
+	return err
+}
+
+// StartDaemonWithBin starts `opencode serve` and waits until it is healthy. A
+// non-nil ledger records the child, identified by its argv, until Wait reaps it.
 func StartDaemonWithBin(
 	ctx context.Context,
 	binPath, rootDir, configPath string,
 	port int,
 	password string,
+	ledger *reclaim.Ledger,
 	logger *slog.Logger,
 	extraEnv ...string,
-) (*exec.Cmd, error) {
+) (*Daemon, error) {
 	args := []string{"serve", "--hostname", "127.0.0.1", "--port", strconv.Itoa(port)}
 	child := exec.CommandContext(ctx, binPath, args...)
 	daemonDir := strings.TrimSpace(rootDir)
@@ -226,14 +246,16 @@ func StartDaemonWithBin(
 	if err := child.Start(); err != nil {
 		return nil, fmt.Errorf("start opencode serve (%s): %w", binPath, err)
 	}
+	daemon := &Daemon{Cmd: child, ledger: ledger}
+	daemon.ledgerID = ledger.RecordProcess("opencode-daemon", child.Process.Pid, args...)
 	logger.Info("started opencode daemon", "bin", binPath, "pid", child.Process.Pid, "port", port)
 
 	if err := WaitForHealth(ctx, port, password, 15*time.Second); err != nil {
 		_ = child.Process.Kill()
-		_ = child.Wait()
+		_ = daemon.Wait()
 		return nil, err
 	}
-	return child, nil
+	return daemon, nil
 }
 
 func WaitForHealth(ctx context.Context, port int, password string, timeout time.Duration) error {
@@ -254,39 +276,4 @@ func WaitForHealth(ctx context.Context, port int, password string, timeout time.
 		}
 	}
 	return fmt.Errorf("opencode health check timed out on port %d after %s", port, timeout)
-}
-
-func ReapOrphanedDaemons(logger *slog.Logger) {
-	if runtime.GOOS == "windows" {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, "ps", "-ax", "-o", "pid=,ppid=,command=").Output()
-	if err != nil {
-		return
-	}
-	reaped := 0
-	for _, line := range strings.Split(string(out), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 3 {
-			continue
-		}
-		pid, errPid := strconv.Atoi(fields[0])
-		ppid, errPpid := strconv.Atoi(fields[1])
-		if errPid != nil || errPpid != nil || ppid != 1 || pid <= 1 {
-			continue
-		}
-		cmdStr := strings.Join(fields[2:], " ")
-		if strings.Contains(cmdStr, "opencode serve --hostname 127.0.0.1") {
-			if proc, err := os.FindProcess(pid); err == nil {
-				if err := proc.Kill(); err == nil {
-					reaped++
-				}
-			}
-		}
-	}
-	if reaped > 0 && logger != nil {
-		logger.Info("reaped orphaned opencode serve daemons", "count", reaped)
-	}
 }

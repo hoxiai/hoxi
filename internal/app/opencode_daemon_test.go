@@ -27,6 +27,10 @@ func TestMain(m *testing.M) {
 	if len(os.Args) > 1 && os.Args[1] == "serve" {
 		os.Exit(runFakeOpenCodeDaemon(os.Args[2:]))
 	}
+	// Daemons inherit the owner's environment, so this check comes second.
+	if os.Getenv(reclaimOwnerEnv) != "" {
+		os.Exit(runReclaimOwner())
+	}
 	// The fake daemon answers on loopback within milliseconds; production
 	// backoffs would only make the suite sleep.
 	respawnDelay = 20 * time.Millisecond

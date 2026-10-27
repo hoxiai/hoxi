@@ -9,7 +9,7 @@ import (
 func TestBuiltinModesOverlayEnforcesReadOnlyAsk(t *testing.T) {
 	raw := `{"agent":{"ask":{"model":"p/m","permission":{"edit":"allow","bash":"allow","webfetch":"allow"}},"custom":{"prompt":"mine"}}}`
 	t.Setenv("OPENCODE_CONFIG_CONTENT", raw)
-	env, cleanup, err := PrepareBrowserPlugin("http://127.0.0.1:9000", "secret")
+	env, cleanup, err := PrepareBrowserPlugin("http://127.0.0.1:9000", "secret", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func TestBuiltinModesOverlayEnforcesReadOnlyAsk(t *testing.T) {
 
 func TestBuiltinModesRejectMalformedAgentWithoutLeakingOverlay(t *testing.T) {
 	t.Setenv("OPENCODE_CONFIG_CONTENT", `{"agent":"not-an-object"}`)
-	env, cleanup, err := PrepareBrowserPlugin("http://127.0.0.1:9000", "secret")
+	env, cleanup, err := PrepareBrowserPlugin("http://127.0.0.1:9000", "secret", nil)
 	if err == nil {
 		cleanup()
 		t.Fatalf("expected malformed agent config to fail, got %v", env)

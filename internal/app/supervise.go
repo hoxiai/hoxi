@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"errors"
-	"os/exec"
 	"time"
 
 	"github.com/hoxiai/hoxi/internal/opencode"
@@ -35,20 +34,20 @@ var (
 // retry cannot be raced into a second daemon by an older supervisor.
 type respawner struct {
 	generation uint64
-	start      func() (*exec.Cmd, error)
+	start      func() (*opencode.Daemon, error)
 }
 
 // startOpenCode starts the daemon and remembers how to restart it. Every
 // explicit start gets a new generation, invalidating respawns of older ones.
-func (a *DesktopApp) startOpenCode(ctx context.Context, binPath string, port int, password string) (*exec.Cmd, error) {
-	start := func() (*exec.Cmd, error) {
+func (a *DesktopApp) startOpenCode(ctx context.Context, binPath string, port int, password string) (*opencode.Daemon, error) {
+	start := func() (*opencode.Daemon, error) {
 		if seeded, err := skills.SeedDefaults(); err != nil {
 			a.logger.Warn("failed to seed default skills", "error", err)
 		} else if seeded > 0 {
 			a.logger.Info("seeded default skills", "count", seeded)
 		}
 		cfgPath := provider.EnsureHoxiModelsConfig(a.cfg.RootDir)
-		return opencode.StartDaemonWithBin(ctx, binPath, a.cfg.RootDir, cfgPath, port, password, a.logger, a.browserEnv...)
+		return opencode.StartDaemonWithBin(ctx, binPath, a.cfg.RootDir, cfgPath, port, password, a.ledger, a.logger, a.browserEnv...)
 	}
 	a.childMu.Lock()
 	a.childGen++
@@ -61,7 +60,7 @@ func (a *DesktopApp) startOpenCode(ctx context.Context, binPath string, port int
 	a.childMu.Lock()
 	a.respawn = &respawner{
 		generation: generation,
-		start: func() (*exec.Cmd, error) {
+		start: func() (*opencode.Daemon, error) {
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
@@ -75,7 +74,7 @@ func (a *DesktopApp) startOpenCode(ctx context.Context, binPath string, port int
 // startResolvedEngine starts binPath and rolls back to the previous managed
 // binary when a freshly installed one cannot serve. A backup only exists after
 // an install replaced an older binary, so external binaries never roll back.
-func (a *DesktopApp) startResolvedEngine(ctx context.Context, binPath string, port int, password string) (*exec.Cmd, error) {
+func (a *DesktopApp) startResolvedEngine(ctx context.Context, binPath string, port int, password string) (*opencode.Daemon, error) {
 	child, err := a.startOpenCode(ctx, binPath, port, password)
 	if err == nil {
 		opencode.DiscardBinaryBackup(binPath)

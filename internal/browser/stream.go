@@ -1,8 +1,11 @@
 package browser
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
+	"image/jpeg"
 	"net/http"
 	"sync/atomic"
 	"time"
@@ -80,6 +83,12 @@ func (st *screencast) pump() {
 				st.cancel()
 				return
 			}
+			// Chrome may emit frames at the stale view size before it re-derives
+			// the emulated one. The UI maps clicks over the whole image, so never
+			// show a frame that does not cover the viewport.
+			if !st.coversViewport(ev.Data) {
+				continue
+			}
 			// CDP ACKs are independent of display ACKs. Keep only the newest image.
 			select {
 			case <-st.latest:
@@ -92,6 +101,22 @@ func (st *screencast) pump() {
 			}
 		}
 	}
+}
+
+// coversViewport reports whether a frame has the viewport's aspect ratio,
+// allowing for rounding when Chrome scales it.
+func (st *screencast) coversViewport(data string) bool {
+	image, err := base64.StdEncoding.DecodeString(data)
+	if err != nil {
+		return false
+	}
+	config, err := jpeg.DecodeConfig(bytes.NewReader(image))
+	if err != nil {
+		return false
+	}
+	width, height := st.frame.Width, st.frame.Height
+	diff := config.Width*height - config.Height*width
+	return max(diff, -diff) <= max(config.Width, config.Height, width, height)
 }
 
 func (s *Service) serveStream(w http.ResponseWriter, r *http.Request) {
@@ -140,6 +165,24 @@ func (s *Service) serveStream(w http.ResponseWriter, r *http.Request) {
 	// Attach/apply metrics and start CDP under the gate, never upgrade or write there.
 	sc.stopStream()
 	err = sc.withTab(setup)
+	if err == nil {
+		// Chrome sizes screencast frames from the browser view, which can still be
+		// the headless window's content area rather than the emulated viewport
+		// (always so right after launch). Only a real metrics change re-derives it,
+		// and identical overrides are ignored, so step one pixel away and back.
+		nudge := sc.viewport()
+		if nudge.height > 1 {
+			nudge.height--
+		} else {
+			nudge.height++
+		}
+		if err = sc.withTab(setup, nudge.action()); err != nil {
+			delete(sc.viewports, sc.tabID)
+		} else {
+			sc.viewports[sc.tabID] = nudge
+			err = sc.withTab(setup)
+		}
+	}
 	var st *screencast
 	if err == nil {
 		tab := sc.tabs[sc.tabID]

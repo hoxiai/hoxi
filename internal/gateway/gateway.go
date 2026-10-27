@@ -29,6 +29,7 @@ import (
 	"github.com/hoxiai/hoxi/internal/pairing"
 	"github.com/hoxiai/hoxi/internal/provider"
 	"github.com/hoxiai/hoxi/internal/recall"
+	"github.com/hoxiai/hoxi/internal/reclaim"
 	"github.com/hoxiai/hoxi/internal/runner"
 	"github.com/hoxiai/hoxi/internal/sandbox"
 	"github.com/hoxiai/hoxi/internal/skills"
@@ -241,6 +242,10 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 }
 
 func (g *Gateway) SetBrowserAgentToken(token string) { g.browser.SetAgentToken(token) }
+
+// SetBrowserLedger records headless Chrome processes and profiles so the next
+// Hoxi start can reclaim them after this process dies without CloseBrowser.
+func (g *Gateway) SetBrowserLedger(ledger *reclaim.Ledger) { g.browser.SetLedger(ledger) }
 
 // SetEngineInstaller lets the desktop host resolve, verify and restart the
 // supervised OpenCode daemon when the user asks to install or retry. The

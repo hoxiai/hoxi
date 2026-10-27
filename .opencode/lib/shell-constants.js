@@ -612,24 +612,30 @@ export function concretizeLiterals(command) {
   return { text: rewritten, status: "applied" };
 }
 
-function unwrapCommandPrefixes(words) {
+// Strips wrappers that only run the next command (nohup, time, exec, command,
+// env NAME=value); `command -v x` is a lookup. A bare `env` prints every
+// environment variable, secrets included, so it returns null (opaque).
+export function unwrapCommandPrefixes(words, normalizeTool = judge.normalizeAbsoluteTool) {
   while (words.length > 0) {
-    const base = baseName(words[0]);
+    const first = normalizeTool ? normalizeTool(words[0]) : words[0];
+    const base = baseName(first);
     if (base === "nohup" || base === "time" || base === "exec") {
-      if (words.length === 1) return words;
+      if (words.length === 1) return { words, lookupOnly: false };
       words = words.slice(1);
     } else if (base === "command") {
-      if (words.length >= 2 && (words[1] === "-v" || words[1] === "-V")) return words;
-      if (words.length === 1) return words;
+      if (words.length >= 2 && (words[1] === "-v" || words[1] === "-V")) return { words, lookupOnly: true };
+      if (words.length === 1) return { words, lookupOnly: false };
       words = words.slice(1);
     } else if (base === "env") {
       let k = 1;
       while (k < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[k])) k++;
       if (k === 1 || k >= words.length) return null;
       words = words.slice(k);
-    } else return words;
+    } else {
+      return { words, lookupOnly: false };
+    }
   }
-  return words;
+  return { words, lookupOnly: false };
 }
 
 export function isValueClassSegment(seg) {
@@ -638,9 +644,11 @@ export function isValueClassSegment(seg) {
   if (judge.isSafeListingPipeline?.(seg)) return true;
   let words = stripShellKeywords(shellWordsOf(seg)).filter((w) => !/^(?:\d*|&)>>?\/dev\/null$|^\d*>&[12]$/.test(w));
   if (words.length === 0) return false;
-  words = unwrapCommandPrefixes(words);
-  if (!words || words.length === 0) return false;
-  const base = baseName(words[0]);
+  const unwrapped = unwrapCommandPrefixes(words);
+  if (!unwrapped || unwrapped.words.length === 0) return false;
+  words = unwrapped.words;
+  const first = judge.normalizeAbsoluteTool ? judge.normalizeAbsoluteTool(words[0]) : words[0];
+  const base = baseName(first);
   const args = words.slice(1);
   if (["pwd", "date", "which", "dirname", "basename"].includes(base)) return true;
   if (base === "cat") {

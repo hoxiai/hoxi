@@ -705,5 +705,14 @@
   { "command": "scp -i ~/.ssh/id_117 /tmp/run.sh root@192.168.1.117:/tmp/run.sh", "decision": "ask", "destructive": false },
   { "command": "scp -i ~/.ssh/id_117 ~/.ssh/id_117 root@192.168.1.117:/tmp/id_117", "decision": "ask", "destructive": true },
   { "command": "cat > /tmp/run.sh <<'EOF'\ndocker rm -f test\nrm -rf /opt/app\nEOF\nscp -i ~/.ssh/id_117 /tmp/run.sh root@192.168.1.117:/tmp/run.sh", "decision": "ask", "destructive": false },
-  { "command": "cat > /tmp/run.sh <<'EOF'\nrm -rf /tmp/x\nEOF\nbash /tmp/run.sh", "decision": "ask", "destructive": true }
+  { "command": "cat > /tmp/run.sh <<'EOF'\nrm -rf /tmp/x\nEOF\nbash /tmp/run.sh", "decision": "ask", "destructive": true },
+  { "command": "cat > /tmp/run.sh <<'EOF'\nrm -rf /tmp/x\nEOF", "decision": "ask", "destructive": true },
+  { "command": "ssh -i ~/.ssh/id_117 root@0 'rm -rf /tmp/x'", "decision": "ask", "destructive": true },
+  { "command": "ssh -i ~/.ssh/id_117 root@localhost. 'rm -rf /tmp/x'", "decision": "ask", "destructive": true },
+  { "command": "ssh -o KnownHostsCommand='rm -rf /tmp/x' root@192.168.1.117 'ls'", "decision": "ask", "destructive": true },
+  { "command": "ssh -o IdentityFile=~/.ssh/config root@192.168.1.117 'ls'", "decision": "ask", "destructive": true },
+  { "command": "git commit -m \"$(cat <<'EOF'\nfix rm .env issue\nEOF\n)\"", "decision": "ask", "destructive": false },
+  { "command": "ssh -i ~/.ssh/id_117 root@192.168.1.117 'bash -s' <<'EOF'\ndocker rm -f test\nrm -rf /opt/app\nEOF", "decision": "ask", "destructive": false },
+  { "command": "H=192.168.1.117; ssh root@$H 'ls'", "decision": "ask", "destructive": false },
+  { "command": "H=0; ssh root@$H 'rm -rf /tmp/x'", "decision": "ask", "destructive": true }
 ]

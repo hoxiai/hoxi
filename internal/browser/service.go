@@ -16,6 +16,8 @@ import (
 
 	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/chromedp"
+
+	"github.com/hoxiai/hoxi/internal/reclaim"
 )
 
 const maxScopes = 8
@@ -46,6 +48,8 @@ type scope struct {
 	browserCancel   context.CancelFunc
 	tabID           string
 	profile         string
+	ledger          *reclaim.Ledger
+	ledgerID        string
 	manual          bool
 	width           int
 	height          int
@@ -69,6 +73,15 @@ type Service struct {
 	closeDone      chan struct{}
 	resolveSession func(sessionID, directory string) (string, error)
 	bridgeURL      string
+	ledger         *reclaim.Ledger
+}
+
+// SetLedger records each Chrome process and profile in ledger so a later
+// Hoxi start can reclaim them if this process dies without calling Close.
+func (s *Service) SetLedger(ledger *reclaim.Ledger) {
+	s.mu.Lock()
+	s.ledger = ledger
+	s.mu.Unlock()
 }
 
 // SetSessionResolver lets the host map an engine handle to its owning Hoxi
@@ -166,8 +179,9 @@ func (sc *scope) dispose() {
 	if sc.allocatorCancel != nil {
 		sc.allocatorCancel()
 	}
-	if sc.profile != "" {
-		_ = os.RemoveAll(sc.profile)
+	if sc.profile != "" && os.RemoveAll(sc.profile) == nil {
+		sc.ledger.Forget(sc.ledgerID)
+		sc.ledgerID = ""
 	}
 }
 
@@ -226,7 +240,7 @@ func (s *Service) acquire(ctx context.Context, key scopeKey, create bool) (*scop
 			return nil, errors.New("browser scope limit reached")
 		}
 		life, cancel := context.WithCancel(s.ctx)
-		sc = &scope{gate: make(chan struct{}, 1), ctx: life, cancel: cancel, tabs: make(map[string]context.Context), tabCancels: make(map[string]context.CancelFunc), width: 1280, height: 800, scale: 1, viewports: make(map[string]viewport)}
+		sc = &scope{gate: make(chan struct{}, 1), ctx: life, cancel: cancel, tabs: make(map[string]context.Context), tabCancels: make(map[string]context.CancelFunc), width: 1280, height: 800, scale: 1, viewports: make(map[string]viewport), ledger: s.ledger}
 		s.scopes[key] = sc
 	}
 	s.mu.Unlock()
@@ -281,13 +295,16 @@ func (sc *scope) start(ctx context.Context) error {
 	if sc.browser != nil {
 		return nil
 	}
-	profile, err := os.MkdirTemp("", "hoxi-browser-*")
+	profile, ledgerID, err := sc.ledger.MkdirTemp("browser-profile", "hoxi-browser-profile-")
 	if err != nil {
 		return err
 	}
-	sc.profile = profile
+	sc.profile, sc.ledgerID = profile, ledgerID
 	opts := append([]chromedp.ExecAllocatorOption{}, chromedp.DefaultExecAllocatorOptions[:]...)
-	opts = append(opts, chromedp.UserDataDir(profile), chromedp.WindowSize(sc.width, sc.height))
+	opts = append(opts, chromedp.UserDataDir(profile), chromedp.WindowSize(sc.width, sc.height),
+		// Back/forward-cache restores fire no document load, so chromedp's
+		// history actions would wait until the request deadline.
+		chromedp.Flag("disable-back-forward-cache", true))
 	const macChrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 	if _, err := os.Stat(macChrome); err == nil {
 		opts = append(opts, chromedp.ExecPath(macChrome))
@@ -307,6 +324,9 @@ func (sc *scope) start(ctx context.Context) error {
 	}
 	if err != nil {
 		return err
+	}
+	if proc := chromedp.FromContext(browser).Browser.Process(); proc != nil {
+		sc.ledger.AttachProcess(sc.ledgerID, proc.Pid, "--user-data-dir="+profile)
 	}
 	sc.browser = browser
 	sc.tabID = string(chromedp.FromContext(browser).Target.TargetID)

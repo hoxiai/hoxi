@@ -24,6 +24,7 @@ export const inspector = {
     noSession: "Select a session to inspect its browser.",
     back: "Back", forward: "Forward", reload: "Reload",
     url: "Enter a URL", go: "Go", start: "Start browser", close: "Close browser",
+    invalidURL: "Enter an HTTP(S) address, a domain, or localhost:port",
     openInExternal: "Open in external browser",
     tabs: "Browser tabs", untitled: "Untitled tab", closeTab: "Close tab", newTab: "New tab",
     manual: "Manual control",
