@@ -820,5 +820,13 @@
   {
     "command": "ssh -o IdentityFile=~/.ssh/config root@192.168.1.117 'ls'",
     "opaque": true
+  },
+  {
+    "command": "git -C /Users/hugh/code/hoxi/hoxi status --short; echo \"--- shuffle ---\"; env -u HOXI_SERVER_URL go test -shuffle=on -count=1 ./internal/browser/ 2>&1 | tail -3",
+    "opaque": false
+  },
+  {
+    "command": "env -u SECRET",
+    "opaque": true
   }
 ]

@@ -284,9 +284,19 @@ func unwrapCommandPrefixes(words []string) (cmd []string, lookupOnly, ok bool) {
 			words = words[1:]
 		case "env":
 			k := 1
-			for k < len(words) && envVarAssignmentWordRe.MatchString(words[k]) {
-				k++
+			for k < len(words) {
+				w := words[k]
+				switch {
+				case envVarAssignmentWordRe.MatchString(w), w == "-i", w == "-", w == "--ignore-environment",
+					strings.HasPrefix(w, "--unset=") && shellVarNameRe.MatchString(strings.TrimPrefix(w, "--unset=")):
+					k++
+				case w == "-u" && k+1 < len(words) && shellVarNameRe.MatchString(words[k+1]):
+					k += 2
+				default:
+					goto doneEnv
+				}
 			}
+		doneEnv:
 			if k == 1 || k >= len(words) {
 				return words, false, false
 			}

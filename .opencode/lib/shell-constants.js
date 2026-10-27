@@ -628,7 +628,16 @@ export function unwrapCommandPrefixes(words, normalizeTool = judge.normalizeAbso
       words = words.slice(1);
     } else if (base === "env") {
       let k = 1;
-      while (k < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[k])) k++;
+      while (k < words.length) {
+        const w = words[k];
+        if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(w) || w === "-i" || w === "-" || w === "--ignore-environment" || /^--unset=[A-Za-z_][A-Za-z0-9_]*$/.test(w)) {
+          k++;
+        } else if (w === "-u" && k + 1 < words.length && /^[A-Za-z_][A-Za-z0-9_]*$/.test(words[k + 1])) {
+          k += 2;
+        } else {
+          break;
+        }
+      }
       if (k === 1 || k >= words.length) return null;
       words = words.slice(k);
     } else {
