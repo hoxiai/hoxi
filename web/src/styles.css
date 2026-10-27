@@ -427,13 +427,13 @@ body {
 }
 
 .group\/row:hover .session-action-glass,
-.group\/row:focus-within .session-action-glass {
+.group\/row:has(:focus-visible) .session-action-glass {
   -webkit-backdrop-filter: blur(12px) saturate(1.35);
   backdrop-filter: blur(12px) saturate(1.35);
 }
 
 .group\/row:hover .session-row-title,
-.group\/row:focus-within .session-row-title {
+.group\/row:has(:focus-visible) .session-row-title {
   -webkit-mask-image: linear-gradient(to right, black calc(100% - 56px), transparent calc(100% - 16px));
   mask-image: linear-gradient(to right, black calc(100% - 56px), transparent calc(100% - 16px));
 }

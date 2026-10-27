@@ -126,7 +126,7 @@ export function trimSessionTranscripts(
 const SESSION_TURNS_CACHE_KEY = "hoxi.session-turns-cache:v1";
 const MAX_CACHED_SESSIONS = 12;
 const MAX_SNAPSHOT_TURNS_PER_SESSION = 20;
-const MAX_SNAPSHOT_PART_CHARS = 2048;
+const MAX_SNAPSHOT_PART_CHARS = 16_384;
 const MAX_SNAPSHOT_BUNDLE_CHARS = 600_000;
 
 interface CachedSessionTurnsBundle {

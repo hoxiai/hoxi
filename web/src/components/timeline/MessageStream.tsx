@@ -235,6 +235,7 @@ export default function MessageStream(props: { hidden?: boolean }) {
     if (!scroller) return;
     readingPosition.schedule();
     transcriptControls.onScroll(scroller.scrollTop);
+    if (sessionScroll.isRestoring()) return;
     if (scroll.onScroll()) {
       turnWindow.handleTopScroll(scroller);
     }
@@ -494,8 +495,9 @@ export default function MessageStream(props: { hidden?: boolean }) {
                     {/* Kilo-style Right-Aligned User Message Bubble */}
                     <div
                       data-turn-id={turn.info.id}
-                      style={{ "--hoxi-order": String(Math.min(Math.max(turnWindow.visibleTurns().length - 1 - idx(), 0), 5)) }}
-                      class={`hoxi-item-enter group/turn flex flex-col items-end rounded-xl transition-colors ${
+                      class={`${
+                        turn.info.id.startsWith("optimistic_") ? "hoxi-item-enter " : ""
+                      }group/turn flex flex-col items-end rounded-xl transition-colors ${
                         idx() === 0 ? "mt-0" : "mt-6"
                       } ${
                         activeMatchTurnID() === turn.info.id

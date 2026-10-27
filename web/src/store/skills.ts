@@ -14,6 +14,7 @@ import {
 } from "../services/api";
 import { setWorkspace, workspace } from "./workspace-state";
 import { sessionDirectory, sessionRuntimeForID } from "./session-query";
+import { normalizeFolderPath } from "./workspace-folders";
 
 export const HIDDEN_SKILLS_STORAGE_KEY = "hoxi.skills.hidden:v1";
 
@@ -131,20 +132,26 @@ export function invalidateSkillsCatalogCache() {
   detailCache.clear();
 }
 
-function sessionKey(sessionID?: string | null): string {
-  return sessionID || "__new__";
+function sessionKey(sessionID?: string | null, directory?: string | null): string {
+  if (sessionID) return sessionID;
+  const dir = normalizeFolderPath(directory ?? workspace.rootDir);
+  return dir ? `__new__:${dir}` : "__new__";
 }
 
-export function getComposerSkill(sessionID?: string | null): SkillSelection | null {
-  return skillsStore.selectedBySession[sessionKey(sessionID)] ?? null;
+export function getComposerSkill(
+  sessionID?: string | null,
+  directory?: string | null
+): SkillSelection | null {
+  return skillsStore.selectedBySession[sessionKey(sessionID, directory)] ?? null;
 }
 
 export function selectComposerSkill(
   sessionID: string | null | undefined,
   selection: SkillSelection | null,
-  descriptor?: SkillDescriptor
+  descriptor?: SkillDescriptor,
+  directory?: string | null
 ) {
-  const key = sessionKey(sessionID);
+  const key = sessionKey(sessionID, directory);
   if (selection && descriptor) {
     descriptorBySelectionKey.set(selection.key, descriptor);
   }
@@ -157,24 +164,32 @@ export function selectComposerSkill(
 export function transferComposerSkillSelection(
   fromSessionID: string | null | undefined,
   toSessionID: string,
-  updatedSelection?: SkillSelection | null
+  updatedSelection?: SkillSelection | null,
+  directory?: string | null
 ) {
-  const fromKey = sessionKey(fromSessionID);
+  const fromKey = sessionKey(fromSessionID, directory);
   const current = updatedSelection !== undefined ? updatedSelection : skillsStore.selectedBySession[fromKey];
   setSkillsStore("selectedBySession", fromKey, null);
   setSkillsStore("selectedBySession", toSessionID, current ? { ...current } : null);
 }
 
-export function transferDraftComposerSkill(toSessionID: string) {
-  transferComposerSkillSelection(null, toSessionID);
+export function transferDraftComposerSkill(toSessionID: string, directory?: string | null) {
+  transferComposerSkillSelection(null, toSessionID, undefined, directory);
 }
 
-export function getComposerSkillNotice(sessionID?: string | null): string | null {
-  return skillsStore.noticeBySession[sessionKey(sessionID)] ?? null;
+export function getComposerSkillNotice(
+  sessionID?: string | null,
+  directory?: string | null
+): string | null {
+  return skillsStore.noticeBySession[sessionKey(sessionID, directory)] ?? null;
 }
 
-export function setComposerSkillNotice(sessionID: string | null | undefined, notice: string | null) {
-  setSkillsStore("noticeBySession", sessionKey(sessionID), notice);
+export function setComposerSkillNotice(
+  sessionID: string | null | undefined,
+  notice: string | null,
+  directory?: string | null
+) {
+  setSkillsStore("noticeBySession", sessionKey(sessionID, directory), notice);
 }
 
 export function recordSkillDescriptors(list: SkillDescriptor[]) {

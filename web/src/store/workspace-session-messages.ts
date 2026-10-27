@@ -456,7 +456,7 @@ export async function dispatchSessionPrompt(
     id = await newIsolatedSession(undefined, {
       directory: requestedDir,
       onSessionCreated: (createdID) => {
-        transferDraftComposerSkill(createdID);
+        transferDraftComposerSkill(createdID, requestedDir);
         stageOptimisticTurn(createdID);
       },
     });

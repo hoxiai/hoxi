@@ -576,7 +576,7 @@ export function AssistantTurnFooter(props: {
     <Show when={cycleSummary()}>
       {(summary) => (
         <Show when={!isTurnExecuting()}>
-          <div class="hoxi-fade-enter mt-4 space-y-2 select-none">
+          <div class="mt-4 space-y-2 select-none">
             <ChangedFilesSummary
               files={summary().changedFiles}
               commitSessionID={isLatestExchange() ? props.info.sessionID : undefined}

@@ -506,11 +506,6 @@ export function AssistantTurnItem(props: {
     >
       <div
         data-turn-id={props.turn.info.id}
-        style={{
-          ...(props.globalIndex < props.allTurns.length - 4 && !isHighlighted()
-            ? { "content-visibility": "auto", "contain-intrinsic-size": "auto 140px" }
-            : {}),
-        }}
         class={`group/turn flex flex-col gap-y-2.5 px-1 rounded-xl transition-colors ${
           merged().isVisuallyEmpty && !props.turn.info.error
             ? "mt-0"

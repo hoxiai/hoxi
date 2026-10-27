@@ -1,3 +1,4 @@
+import { batch } from "solid-js";
 import { produce } from "solid-js/store";
 import type { SessionInfo } from "../services/sse-types";
 import { hoxiAPI } from "../services/api";
@@ -241,6 +242,7 @@ export async function loadSessionMessagesOnly(sessionID: string, explicitDirecto
     restoreSessionAI(sessionID, turns);
     setWorkspace(produce((state) => {
       mergeServerTurnsInto((state.messagesBySession[sessionID] ||= []), turns, preRequestIDs);
+      state.loadingMessagesBySession[sessionID] = false;
     }));
     hydratedSessionIDs.add(sessionID);
     persistCachedSessionTurns(sessionID, workspace.messagesBySession[sessionID] ?? turns);
@@ -267,6 +269,7 @@ export async function loadSessionMessages(sessionID: string): Promise<void> {
     restoreSessionAI(sessionID, turns);
     setWorkspace(produce((state) => {
       mergeServerTurnsInto((state.messagesBySession[sessionID] ||= []), turns, preRequestIDs);
+      state.loadingMessagesBySession[sessionID] = false;
     }));
     hydratedSessionIDs.add(sessionID);
     persistCachedSessionTurns(sessionID, workspace.messagesBySession[sessionID] ?? turns);
@@ -305,26 +308,28 @@ export async function loadSessionMessages(sessionID: string): Promise<void> {
 
 export async function selectSession(sessionID: string): Promise<void> {
   touchSessionTranscript(sessionID);
-  if (workspace.activeSessionID !== sessionID) {
-    setWorkspace({
-      inspectedFilePath: null,
-      inspectedFileLine: null,
-      inspectedFileDiff: null,
-      inspectedDiffFile: null,
-      activeInspectorFolder: null,
-    });
-  }
   const hadLiveMemory = workspace.messagesBySession[sessionID] !== undefined;
-  if (!hadLiveMemory) {
-    const snap = readCachedSessionTurns(sessionID);
-    if (snap && snap.length > 0) {
-      setWorkspace("messagesBySession", sessionID, snap);
-    } else {
-      setWorkspace("loadingMessagesBySession", sessionID, true);
+  const snap = !hadLiveMemory ? readCachedSessionTurns(sessionID) : undefined;
+  batch(() => {
+    if (workspace.activeSessionID !== sessionID) {
+      setWorkspace({
+        inspectedFilePath: null,
+        inspectedFileLine: null,
+        inspectedFileDiff: null,
+        inspectedDiffFile: null,
+        activeInspectorFolder: null,
+      });
     }
-  }
-  setWorkspace("activeSessionID", sessionID);
-  setWorkspace("unreadCompletedBySession", sessionID, false);
+    if (!hadLiveMemory) {
+      if (snap && snap.length > 0) {
+        setWorkspace("messagesBySession", sessionID, snap);
+      } else {
+        setWorkspace("loadingMessagesBySession", sessionID, true);
+      }
+    }
+    setWorkspace("activeSessionID", sessionID);
+    setWorkspace("unreadCompletedBySession", sessionID, false);
+  });
   void syncPendingPermissions(sessionDirectory(sessionID));
   // Background SSE events create a partial transcript for sessions that were
   // never loaded, so only a fully hydrated one may skip the history fetch.

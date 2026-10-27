@@ -27,7 +27,6 @@ import { isDefaultWorkspacePath, normalizeFolderPath } from "./workspace-folders
 const pendingSandboxChanges = new Map<string, Promise<void>>();
 
 export function startNewThreadDraft(): void {
-  selectComposerSkill(null, null);
   setComposerSkillNotice(null, null);
   setWorkspace({ activeSessionID: null, sessionSetupError: null,
     newThreadRequest: workspace.newThreadRequest + 1 });

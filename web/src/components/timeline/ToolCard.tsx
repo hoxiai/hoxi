@@ -231,7 +231,7 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
     fileDiagnostics().length > 0;
 
   return (
-    <div class="hoxi-item-pop">
+    <div class={isRunning() ? "hoxi-item-pop" : undefined}>
       <div class="group/tool relative">
         {/* Clean borderless single-line tool trigger */}
         <div

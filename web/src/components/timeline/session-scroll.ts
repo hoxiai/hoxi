@@ -41,16 +41,13 @@ export function createSessionScrollController(options: {
     });
   };
 
-  const restore = () => {
-    frame = undefined;
+  const applyPending = (): boolean => {
     const el = options.scroller();
     const position = pending;
-    if (!ready || !position || !el || el.clientHeight === 0) return;
+    if (!ready || !position || !el || el.clientHeight === 0) return false;
     if (position.bottom) {
-      pending = undefined;
-      options.scroll.resume();
-      capture();
-      return;
+      options.scroll.jumpToBottom();
+      return true;
     }
     options.scroll.pause();
     const anchor = Array.from(el.querySelectorAll<HTMLElement>("[data-turn-id]"))
@@ -59,6 +56,18 @@ export function createSessionScrollController(options: {
       ? el.scrollTop + anchor.getBoundingClientRect().top - el.getBoundingClientRect().top - position.offset
       : position.top;
     options.scroll.updatePosition();
+    return true;
+  };
+
+  const restore = () => {
+    frame = undefined;
+    const position = pending;
+    if (!applyPending() || !position) return;
+    if (position.bottom) {
+      pending = undefined;
+      capture();
+      return;
+    }
     // Allow the restored layout and the resulting resize to settle before recording.
     if (settling !== undefined) cancelAnimationFrame(settling);
     settling = requestAnimationFrame(() => {
@@ -76,6 +85,9 @@ export function createSessionScrollController(options: {
 
   return {
     capture,
+    isRestoring() {
+      return Boolean(pending);
+    },
     switchSession(id: string | null) {
       if (id === sessionID) return;
       if (frame !== undefined) cancelAnimationFrame(frame);
@@ -92,11 +104,15 @@ export function createSessionScrollController(options: {
       if (pending.turnID && turnIDs.includes(pending.turnID)) {
         options.ensureTurnVisible(pending.turnID);
       }
+      applyPending();
       scheduleRestore();
     },
     resized() {
       if (pending) {
-        if (ready) scheduleRestore();
+        if (ready) {
+          applyPending();
+          scheduleRestore();
+        }
       } else capture();
     },
     interrupt() {

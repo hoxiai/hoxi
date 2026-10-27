@@ -41,9 +41,14 @@ describe("Session reading restoration", () => {
         ensureTurnVisible: (id) => { revealed = id; anchorVisible = true; },
       });
       controller.switchSession("A");
+      assertEqual(controller.isRestoring(), true);
       controller.ready(["old-turn"], false);
+      // Scroll position must be applied synchronously on ready() before any frame paints.
+      assertEqual(el.scrollTop, 1200);
+      assertEqual(scroll.awayFromBottom(), false);
       flush();
       assertEqual(el.scrollTop, 1200);
+      assertEqual(controller.isRestoring(), false);
 
       el.scrollTop = 350;
       scroll.onScroll();
@@ -51,6 +56,7 @@ describe("Session reading restoration", () => {
       controller.switchSession("B");
       el.scrollTop = 0;
       controller.ready([], false);
+      assertEqual(el.scrollTop, 1200);
       flush();
       assertEqual(el.scrollTop, 1200);
 
@@ -64,6 +70,7 @@ describe("Session reading restoration", () => {
       assertEqual(el.scrollTop, 0);
       controller.ready(["old-turn"], false);
       assertEqual(revealed, "old-turn");
+      assertEqual(el.scrollTop, 550);
       flush();
       assertEqual(el.scrollTop, 550);
       assertEqual(scroll.awayFromBottom(), true);

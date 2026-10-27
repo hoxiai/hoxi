@@ -149,12 +149,16 @@ export function createTimelineScroll(
     resume() {
       following = true;
       lastUserInputAt = 0;
-      syncOverflowAnchor();
+      const scroller = getScroller();
+      if (scroller) previousScrollTop = scroller.scrollTop;
+      syncOverflowAnchor(scroller);
       schedule();
     },
     pause() {
       following = false;
-      syncOverflowAnchor();
+      const scroller = getScroller();
+      if (scroller) previousScrollTop = scroller.scrollTop;
+      syncOverflowAnchor(scroller);
       if (frame !== undefined) cancelAnimationFrame(frame);
       frame = undefined;
     },

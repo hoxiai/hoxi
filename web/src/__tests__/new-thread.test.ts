@@ -1,3 +1,4 @@
+import { createRoot, createSignal } from "solid-js";
 import { reconcile, unwrap } from "solid-js/store";
 import { hoxiAPI } from "../services/api";
 import { appSettings, setAppSettings } from "../store/settings";
@@ -9,12 +10,19 @@ import {
   bootstrapProjectSessions,
   buildWorkspaceFoldersSystemPrompt,
   findWorkspaceProfileByDir,
+  getComposerSkill,
   reconcileSessionsInPlace,
+  selectComposerSkill,
   setWorkspace,
   submitSessionPrompt,
   workspace,
   workspaceFoldersForDir,
 } from "../store/workspace";
+import {
+  createImageAttachments,
+  createPasteCollapse,
+  createSessionDraftSync,
+} from "../components/timeline/composer-hooks";
 import type { SessionInfo } from "../services/sse-types";
 import { assertDeepEqual, assertEqual, assertTrue, describe, it } from "./test-harness";
 
@@ -234,6 +242,75 @@ describe("new thread drafts", () => {
       assertEqual(createdInDir, "/repo-second");
       assertEqual(sentInDir, "/repo-second");
       assertTrue(Boolean(sentSystem?.includes('"/repo-second"')));
+    });
+  });
+
+  it("preserves unsent new-thread drafts per workspace across session switches and startNewThreadDraft", async () => {
+    await withDraftFixture(() => {
+      createRoot((dispose) => {
+        try {
+          setWorkspace({ rootDir: "/repo-a", activeSessionID: null });
+          const [text, setText] = createSignal("");
+          const sessionID = () => workspace.activeSessionID;
+          const directory = () => workspace.rootDir;
+          const imgAttach = createImageAttachments(sessionID, directory);
+          const pasteCollapse = createPasteCollapse();
+          const draftSync = createSessionDraftSync({
+            sessionID,
+            directory,
+            resetRequest: () => workspace.newThreadRequest,
+            text,
+            setText,
+            imgAttach,
+            pasteCollapse,
+            onAfterRestore: () => {},
+          });
+
+          // 1. Type in Workspace A's new thread and pick a skill
+          setText("Draft in repo A");
+          selectComposerSkill(null, { key: "skl_a", name: "skill-a" });
+          assertEqual(getComposerSkill(null)?.key, "skl_a");
+
+          // 2. Switch to an existing session in Workspace A -> composer clears for that session
+          setWorkspace("activeSessionID", "ses_existing");
+          draftSync.sync();
+          assertEqual(text(), "");
+          setText("Reply to existing session");
+
+          // 3. Click "New Thread" (`startNewThreadDraft`) -> restores Workspace A's new-thread draft & skill
+          startNewThreadDraft();
+          draftSync.sync();
+          assertEqual(workspace.activeSessionID, null);
+          assertEqual(text(), "Draft in repo A");
+          assertEqual(getComposerSkill(null)?.key, "skl_a");
+
+          // 4. Switch to Workspace B's new thread -> independent empty draft, then type in Workspace B
+          setWorkspace({ rootDir: "/repo-b", activeSessionID: null });
+          draftSync.sync();
+          assertEqual(text(), "");
+          assertEqual(getComposerSkill(null), null);
+          setText("Draft in repo B");
+          selectComposerSkill(null, { key: "skl_b", name: "skill-b" });
+
+          // 5. Switch back to Workspace A and click "New Thread" -> Workspace A's draft is still intact
+          setWorkspace({ rootDir: "/repo-a", activeSessionID: "ses_existing" });
+          draftSync.sync();
+          assertEqual(text(), "Reply to existing session");
+          startNewThreadDraft();
+          draftSync.sync();
+          assertEqual(text(), "Draft in repo A");
+          assertEqual(getComposerSkill(null)?.key, "skl_a");
+
+          // 6. Clean up drafts
+          draftSync.clearCurrentDraft(null, "/repo-a");
+          draftSync.clearCurrentDraft(null, "/repo-b");
+          draftSync.clearCurrentDraft("ses_existing", "/repo-a");
+          selectComposerSkill(null, null, undefined, "/repo-a");
+          selectComposerSkill(null, null, undefined, "/repo-b");
+        } finally {
+          dispose();
+        }
+      });
     });
   });
 });

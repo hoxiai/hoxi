@@ -1,7 +1,12 @@
 // web/src/components/timeline/composer-hooks.ts
-import { type Accessor, createEffect, createSignal, type Setter } from "solid-js";
+import { type Accessor, createComputed, createSignal, type Setter, untrack } from "solid-js";
 import { t } from "../../i18n";
-import { createPromptHistory, uploadPromptAttachment } from "../../store/workspace";
+import {
+  createPromptHistory,
+  normalizeFolderPath,
+  uploadPromptAttachment,
+  workspace,
+} from "../../store/workspace";
 import { hoxiAPI, type PromptAttachment } from "../../services/api";
 import {
   applyAutocompleteToken,
@@ -205,17 +210,29 @@ export interface CollapsedPasteItem {
 
 let draftResetEpoch = 0;
 
+export function composerDraftKey(
+  sessionID?: string | null,
+  directory?: string | null
+): string {
+  if (sessionID) return sessionID;
+  const clean = normalizeFolderPath(directory ?? workspace.rootDir);
+  return clean ? `__new__:${clean}` : "__new__";
+}
+
 /**
  * Supports Cmd+V clipboard screenshot/Finder image paste, drag-and-drop files, and file picker
  * with size/count limits, loading/error feedback, and session-switch stale-read guard.
  */
-export function createImageAttachments(sessionID?: Accessor<string | null>) {
+export function createImageAttachments(
+  sessionID?: Accessor<string | null>,
+  directory?: Accessor<string>
+) {
   const [images, setImages] = createSignal<ImageItem[]>([]);
   const [dragging, setDragging] = createSignal(false);
   const [pendingCount, setPendingCount] = createSignal(0);
   const [notice, setNotice] = createSignal<string | null>(null);
 
-  const currentKey = () => sessionID?.() || "__new__";
+  const currentKey = () => composerDraftKey(sessionID?.(), directory?.());
 
   const commitAttachmentForTarget = (
     targetKey: string,
@@ -260,7 +277,7 @@ export function createImageAttachments(sessionID?: Accessor<string | null>) {
     if (typeof window !== "undefined" && item.dataUrl.startsWith("data:")) {
       setPendingCount((n) => n + 1);
       void uploadPromptAttachment({
-        sessionID: targetKey === "__new__" ? undefined : targetKey,
+        sessionID: targetKey.startsWith("__new__") ? undefined : targetKey,
         filename: rawName,
         mime: normMime,
         dataUrl: item.dataUrl,
@@ -607,6 +624,7 @@ const sessionDrafts = new Map<string, SessionComposerDraft>();
 
 export function createSessionDraftSync(params: {
   sessionID: Accessor<string | null>;
+  directory?: Accessor<string>;
   resetRequest?: Accessor<number>;
   text: Accessor<string>;
   setText: Setter<string>;
@@ -614,44 +632,72 @@ export function createSessionDraftSync(params: {
   pasteCollapse: ReturnType<typeof createPasteCollapse>;
   onAfterRestore: () => void;
 }) {
-  let activeKey = params.sessionID() || "__new__";
+  let activeSessionID = params.sessionID();
+  let activeDir = normalizeFolderPath(params.directory?.() ?? workspace.rootDir);
+  let activeKey = composerDraftKey(activeSessionID, activeDir);
   let resetRequest = params.resetRequest?.();
 
-  createEffect(() => {
-    const nextKey = params.sessionID() || "__new__";
+  const sync = () => {
+    const nextSessionID = params.sessionID();
+    const nextDir = normalizeFolderPath(params.directory?.() ?? workspace.rootDir);
+    const nextKey = composerDraftKey(nextSessionID, nextDir);
     const request = params.resetRequest?.();
     const reset = request !== resetRequest;
     resetRequest = request;
-    if (nextKey === activeKey && !reset) return;
-
-    const prevText = params.text();
-    const prevImages = params.imgAttach.images();
-    const prevPastes = params.pasteCollapse.pastes();
-    if (prevText.trim() || prevImages.length > 0 || prevPastes.length > 0) {
-      sessionDrafts.set(activeKey, {
-        text: prevText,
-        images: prevImages,
-        pastes: prevPastes,
-      });
-    } else {
-      sessionDrafts.delete(activeKey);
+    if (nextKey === activeKey) {
+      if (reset) params.onAfterRestore();
+      return;
     }
 
-    activeKey = nextKey;
-    if (reset) {
-      draftResetEpoch++;
-      sessionDrafts.delete(nextKey);
-    }
-    const saved = sessionDrafts.get(nextKey);
-    params.setText(saved?.text ?? "");
-    params.imgAttach.replaceImages(saved?.images ?? []);
-    params.pasteCollapse.replacePastes(saved?.pastes ?? []);
-    params.onAfterRestore();
-  });
+    untrack(() => {
+      const prevText = params.text();
+      const prevImages = params.imgAttach.images();
+      const prevPastes = params.pasteCollapse.pastes();
+      if (prevText.trim() || prevImages.length > 0 || prevPastes.length > 0) {
+        sessionDrafts.set(activeKey, {
+          text: prevText,
+          images: prevImages,
+          pastes: prevPastes,
+        });
+      } else {
+        sessionDrafts.delete(activeKey);
+      }
 
-  const clearCurrentDraft = () => {
-    sessionDrafts.delete(params.sessionID() || "__new__");
+      // If the user typed in the rootless "__new__" state before choosing their
+      // first folder, carry that unsent draft into the newly selected workspace.
+      if (
+        !activeSessionID &&
+        !activeDir &&
+        !nextSessionID &&
+        nextDir &&
+        !sessionDrafts.has(nextKey) &&
+        sessionDrafts.has(activeKey)
+      ) {
+        sessionDrafts.set(nextKey, sessionDrafts.get(activeKey)!);
+        sessionDrafts.delete(activeKey);
+      }
+
+      activeKey = nextKey;
+      activeSessionID = nextSessionID;
+      activeDir = nextDir;
+      const saved = sessionDrafts.get(nextKey);
+      params.setText(saved?.text ?? "");
+      params.imgAttach.replaceImages(saved?.images ?? []);
+      params.pasteCollapse.replacePastes(saved?.pastes ?? []);
+      params.onAfterRestore();
+    });
   };
 
-  return { clearCurrentDraft };
+  createComputed(sync);
+
+  const clearCurrentDraft = (targetSessionID?: string | null, targetDir?: string | null) => {
+    const key =
+      targetSessionID !== undefined || targetDir !== undefined
+        ? composerDraftKey(targetSessionID, targetDir)
+        : composerDraftKey(params.sessionID(), params.directory?.() ?? workspace.rootDir);
+    draftResetEpoch++;
+    sessionDrafts.delete(key);
+  };
+
+  return { clearCurrentDraft, sync };
 }

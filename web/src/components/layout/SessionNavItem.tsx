@@ -160,13 +160,13 @@ export function SessionNavItem(props: SessionNavItemProps) {
   return (
     <div
       ref={rowRef}
-      class={`hoxi-press group/row relative flex items-center justify-between gap-1 rounded-lg px-2.5 py-1.5 cursor-pointer overflow-hidden ${
+      class={`group/row relative flex items-center justify-between gap-1 rounded-lg px-2.5 py-1.5 cursor-pointer overflow-hidden transition-colors duration-120 ${
         confirmingDelete()
           ? "bg-[var(--danger-surface)] text-[var(--text-primary)] ring-1 ring-[var(--danger-border)]"
           : isEffectiveActive()
-            ? "bg-[var(--bg-hover)] text-[var(--text-primary)] font-medium"
+            ? "bg-[var(--bg-hover)] text-[var(--text-primary)]"
             : badge() === "completed"
-              ? "text-[var(--text-primary)] font-medium hover:bg-[var(--bg-hover)]/60"
+              ? "text-[var(--text-primary)] hover:bg-[var(--bg-hover)]/60"
               : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]/60 hover:text-[var(--text-primary)]"
       }`}
       onClick={() => {
@@ -209,7 +209,7 @@ export function SessionNavItem(props: SessionNavItemProps) {
 
       {/* Static Badges (Branch, Queue, Time or Loading) shown when not hovered and not confirming delete */}
       <Show when={!confirmingDelete()}>
-        <div class="flex items-center gap-1.5 shrink-0 text-[12px] font-mono group-hover/row:opacity-0 group-hover/row:invisible group-focus-within/row:opacity-0 group-focus-within/row:invisible transition-opacity duration-120 ease-out">
+        <div class="flex items-center gap-1.5 shrink-0 text-[12px] font-mono group-hover/row:opacity-0 group-hover/row:invisible group-has-[:focus-visible]/row:opacity-0 group-has-[:focus-visible]/row:invisible transition-opacity duration-120 ease-out">
           <Show when={pullRequest()}>
             {(pr) => <SessionPullRequestPill pr={pr()} />}
           </Show>
@@ -262,7 +262,7 @@ export function SessionNavItem(props: SessionNavItemProps) {
           class={`absolute right-1 top-1/2 -translate-y-1/2 flex items-center z-10 transition-opacity duration-120 ease-out ${
             confirmingDelete()
               ? "visible opacity-100 pointer-events-auto"
-              : "invisible opacity-0 pointer-events-none group-hover/row:visible group-hover/row:opacity-100 group-hover/row:pointer-events-auto group-focus-within/row:visible group-focus-within/row:opacity-100 group-focus-within/row:pointer-events-auto"
+              : "invisible opacity-0 pointer-events-none group-hover/row:visible group-hover/row:opacity-100 group-hover/row:pointer-events-auto group-has-[:focus-visible]/row:visible group-has-[:focus-visible]/row:opacity-100 group-has-[:focus-visible]/row:pointer-events-auto"
           }`}
           onClick={(ev) => ev.stopPropagation()}
         >

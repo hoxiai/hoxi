@@ -184,11 +184,12 @@ export default function Composer() {
     },
     cursorOffset
   );
-  const imgAttach = createImageAttachments(sessionID);
+  const imgAttach = createImageAttachments(sessionID, () => workspace.rootDir);
   const pasteCollapse = createPasteCollapse();
   const promptHistory = createPromptHistory(sessionID);
   const draftSync = createSessionDraftSync({
     sessionID,
+    directory: () => workspace.rootDir,
     resetRequest: () => workspace.newThreadRequest,
     text,
     setText,
@@ -338,11 +339,11 @@ export default function Composer() {
     }
     setSending(true);
     setText("");
-    selectComposerSkill(draftSessionID, null);
-    setComposerSkillNotice(draftSessionID, null);
+    selectComposerSkill(draftSessionID, null, undefined, draftDirectory);
+    setComposerSkillNotice(draftSessionID, null, draftDirectory);
     pasteCollapse.clearPastes();
     imgAttach.clearImages();
-    draftSync.clearCurrentDraft();
+    draftSync.clearCurrentDraft(draftSessionID, draftDirectory);
     ac.reset();
     if (textareaRef) {
       textareaRef.style.height = "48px";

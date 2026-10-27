@@ -254,10 +254,10 @@ export default function MultiProjectTreeItem(props: {
           />
 
           <span
-            class={`truncate text-[13px] ${
+            class={`truncate text-[13px] font-medium ${
               isActive()
-                ? "font-semibold text-[var(--text-primary)]"
-                : "font-medium text-[var(--text-secondary)] group-hover/proj:text-[var(--text-primary)]"
+                ? "text-[var(--text-primary)]"
+                : "text-[var(--text-secondary)] group-hover/proj:text-[var(--text-primary)]"
             }`}
           >
             {props.proj.name}
