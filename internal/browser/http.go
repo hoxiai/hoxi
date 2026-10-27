@@ -30,6 +30,12 @@ type Action struct {
 	Width             *int     `json:"width,omitempty"`
 	Height            *int     `json:"height,omitempty"`
 	DeviceScaleFactor *float64 `json:"deviceScaleFactor,omitempty"`
+	// UI-only pointer input: phase down/move/up/cancel, button
+	// left/middle/right, clickCount 1..3, CDP modifier bits Alt=1 Ctrl=2 Meta=4 Shift=8.
+	Phase      string `json:"phase,omitempty"`
+	Button     string `json:"button,omitempty"`
+	ClickCount int    `json:"clickCount,omitempty"`
+	Modifiers  int    `json:"modifiers,omitempty"`
 }
 
 type Tab struct {
@@ -44,6 +50,10 @@ type State struct {
 	Tabs   []Tab  `json:"tabs"`
 	TabID  string `json:"tabID"`
 	Manual bool   `json:"manual"`
+	// Set on a scope that no longer exists because its Chrome went unused
+	// for IdleMinutes, until a new scope is created for the same key.
+	IdleClosed  bool `json:"idleClosed,omitempty"`
+	IdleMinutes int  `json:"idleMinutes,omitempty"`
 }
 
 func emptyState() State { return State{Tabs: []Tab{}} }
@@ -192,7 +202,9 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
-	sc, err := s.acquire(ctx, key, path == "action" && action.Action != "close")
+	// Pointer input only reaches a page the inspector already shows; it never
+	// reserves a scope or starts Chrome (for example right after an idle close).
+	sc, err := s.acquire(ctx, key, path == "action" && action.Action != "close" && action.Action != "pointer")
 	if err != nil {
 		fail(w, 503, err)
 		return
@@ -202,10 +214,15 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 			fail(w, 404, errors.New("browser not started"))
 			return
 		}
-		writeJSON(w, 200, emptyState())
+		writeJSON(w, 200, s.idleState(key))
 		return
 	}
-	defer func() { <-sc.gate }()
+	// Every request counts as use, including the inspector's state poll: it
+	// runs only while the panel shows this session in a visible window.
+	defer func() {
+		sc.lastUsed = s.now()
+		<-sc.gate
+	}()
 	if agent && sc.manual {
 		fail(w, 403, errors.New("manual control is active"))
 		return
@@ -242,7 +259,7 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		sc.width, sc.height = *action.Width, *action.Height
 		sc.scale = scale
-	} else if path == "action" {
+	} else if path == "action" && action.Action != "pointer" {
 		if err = sc.start(ctx); err != nil {
 			s.remove(key, sc)
 			fail(w, 502, err)

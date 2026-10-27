@@ -60,6 +60,9 @@ type scope struct {
 	extension       *extensionBridge
 	pairToken       string
 	pairExpires     time.Time
+	lastUsed        time.Time
+	pointerState    pointerState
+	pointerHold     time.Duration
 }
 
 type Service struct {
@@ -74,6 +77,11 @@ type Service struct {
 	resolveSession func(sessionID, directory string) (string, error)
 	bridgeURL      string
 	ledger         *reclaim.Ledger
+	now            func() time.Time
+	idleClosed     map[scopeKey]time.Time
+	reaperDone     chan struct{}
+	// How long a held UI mouse button survives without pointer input.
+	pointerHold time.Duration
 }
 
 // SetLedger records each Chrome process and profile in ledger so a later
@@ -95,19 +103,30 @@ func (s *Service) SetSessionResolver(resolve func(sessionID, directory string) (
 // New creates a service without starting Chrome. The initial agent token is
 // random and undisclosed; callers must install their own secret to enable agents.
 func New() *Service {
+	return newService(time.Now, idleCheckInterval)
+}
+
+// newService checks for idle browsers every interval using now as the clock.
+func newService(now func() time.Time, interval time.Duration) *Service {
 	ctx, cancel := context.WithCancel(context.Background())
 	secret := make([]byte, 32)
 	if _, err := rand.Read(secret); err != nil {
 		panic(err)
 	}
-	return &Service{
-		ctx:       ctx,
-		cancel:    cancel,
-		scopes:    make(map[scopeKey]*scope),
-		token:     hex.EncodeToString(secret),
-		uiOrigins: make(map[string]bool),
-		closeDone: make(chan struct{}),
+	s := &Service{
+		ctx:         ctx,
+		cancel:      cancel,
+		scopes:      make(map[scopeKey]*scope),
+		token:       hex.EncodeToString(secret),
+		uiOrigins:   make(map[string]bool),
+		closeDone:   make(chan struct{}),
+		now:         now,
+		idleClosed:  make(map[scopeKey]time.Time),
+		reaperDone:  make(chan struct{}),
+		pointerHold: defaultPointerHold,
 	}
+	go s.reapIdle(interval)
+	return s
 }
 
 // SetAgentToken replaces the agent credential. An empty token disables agents.
@@ -150,6 +169,7 @@ func (s *Service) Close() {
 	}
 	s.scopes = make(map[scopeKey]*scope)
 	s.mu.Unlock()
+	<-s.reaperDone
 	for _, sc := range all {
 		sc.gate <- struct{}{}
 		sc.dispose()
@@ -166,6 +186,9 @@ func (sc *scope) dispose() {
 	if sc.stream != nil {
 		sc.stream.cancel()
 		sc.stream = nil
+	}
+	if sc.pointerState.timer != nil {
+		sc.pointerState.timer.Stop()
 	}
 	sc.cancel()
 	for _, cancel := range sc.tabCancels {
@@ -240,8 +263,9 @@ func (s *Service) acquire(ctx context.Context, key scopeKey, create bool) (*scop
 			return nil, errors.New("browser scope limit reached")
 		}
 		life, cancel := context.WithCancel(s.ctx)
-		sc = &scope{gate: make(chan struct{}, 1), ctx: life, cancel: cancel, tabs: make(map[string]context.Context), tabCancels: make(map[string]context.CancelFunc), width: 1280, height: 800, scale: 1, viewports: make(map[string]viewport), ledger: s.ledger}
+		sc = &scope{gate: make(chan struct{}, 1), ctx: life, cancel: cancel, tabs: make(map[string]context.Context), tabCancels: make(map[string]context.CancelFunc), width: 1280, height: 800, scale: 1, viewports: make(map[string]viewport), ledger: s.ledger, lastUsed: s.now(), pointerHold: s.pointerHold}
 		s.scopes[key] = sc
+		delete(s.idleClosed, key)
 	}
 	s.mu.Unlock()
 	if sc == nil {

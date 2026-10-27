@@ -33,6 +33,7 @@ export const inspector: InspectorI18n = {
     agentHint: "当前由 AI 控制浏览器。开启手动控制可避免操作冲突",
     error: "浏览器错误：{error}", working: "正在更新浏览器…", waiting: "正在等待画面…",
     empty: "也可以在上方输入网址，按回车打开",
+    idleClosed: "浏览器闲置 {minutes} 分钟后已自动关闭以释放内存，之前打开的页面和登录状态未保留",
     viewport: "浏览器实时画面", keyboard: "浏览器键盘输入",
   },
   diffs: {

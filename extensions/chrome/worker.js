@@ -51,6 +51,20 @@ async function key(link, chord) {
   } finally { await send(link, "Input.dispatchKeyEvent", { ...params, type: "keyUp", modifiers: 0 }); }
 }
 
+const MOUSE_TYPES = new Set(["mousePressed", "mouseMoved", "mouseReleased"]);
+const MOUSE_BUTTONS = new Set(["none", "left", "middle", "right"]);
+
+// Hoxi tracks held buttons and sends complete CDP mouse events; only forward
+// well-formed ones.
+async function pointer(link, a) {
+  const bounded = (value, max) => Number.isInteger(value) && value >= 0 && value <= max;
+  const coordinate = value => Number.isFinite(value) && value >= 0 && value <= 16384;
+  if (!MOUSE_TYPES.has(a.type) || !MOUSE_BUTTONS.has(a.button) || !coordinate(a.x) || !coordinate(a.y) ||
+    !bounded(a.buttons, 7) || !bounded(a.clickCount, 3) || !bounded(a.modifiers, 15)) throw new Error("Invalid pointer input");
+  await send(link, "Input.dispatchMouseEvent", { type: a.type, x: a.x, y: a.y, button: a.button,
+    buttons: a.buttons, clickCount: a.clickCount, modifiers: a.modifiers });
+}
+
 async function execute(link, a) {
   if (current !== link) throw new Error("Chrome connection ended");
   if (a.action === "tab_select" && a.tabID === String(link.tabID)) return state(link);
@@ -82,6 +96,7 @@ async function execute(link, a) {
       if (a.selector) await evaluate(link, `(()=>{const e=document.querySelector(${JSON.stringify(a.selector)});if(!e)throw new Error('Element not found');e.focus()})()`);
       await send(link, "Input.insertText", { text: a.text || "" }); break;
     case "key": await key(link, a.key); break;
+    case "pointer": await pointer(link, a); break;
     case "scroll": await send(link, "Input.dispatchMouseEvent", { type: "mouseWheel", x: a.x || 0, y: a.y || 0, deltaX: a.deltaX || 0, deltaY: a.deltaY || 0 }); break;
     case "snapshot": return { ...await state(link), snapshot: await evaluate(link, `(${snapshot.toString()})()`) };
     case "evaluate": {
@@ -116,7 +131,8 @@ async function connect(code, tabID) {
       const timer = setTimeout(() => { reject(new Error("Hoxi handshake timed out")); socket.close(); }, 6000);
       let connected = false;
       let queue = Promise.resolve();
-      socket.onopen = () => socket.send(JSON.stringify({ token }));
+      // Features tell Hoxi which actions this extension version understands.
+      socket.onopen = () => socket.send(JSON.stringify({ token, features: ["pointer"] }));
       socket.onerror = () => reject(new Error("Cannot reach local Hoxi"));
       socket.onclose = () => { clearTimeout(timer); if (!connected) reject(new Error("Connection code expired or rejected")); void disconnect(link); };
       socket.onmessage = event => {

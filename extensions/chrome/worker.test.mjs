@@ -21,6 +21,7 @@ test("worker confines commands to the selected tab and detaches without closing 
     },
     tabs: { get: async id => { assert.equal(id, 42); return { id, title: "Signed in", url: "https://example.com" }; } },
   };
+  let hello;
   class Socket {
     static OPEN = 1;
     readyState = 1;
@@ -32,6 +33,7 @@ test("worker confines commands to the selected tab and detaches without closing 
     }
     send(text) {
       const data = JSON.parse(text);
+      if (data.token) hello = data;
       if (data.token) queueMicrotask(() => this.onmessage({ data: '{"connected":true}' }));
       else this.sent.push(data);
     }
@@ -65,6 +67,17 @@ test("worker confines commands to the selected tab and detaches without closing 
     await action({ action: "key", key: "Control++" });
     assert.ok(commands.some(c => c.method === "Input.insertText" && c.params.text === "hello"));
     assert.ok(commands.some(c => c.method === "Input.dispatchKeyEvent" && c.params.key === "+"));
+    assert.deepEqual(hello.features, ["pointer"]);
+    const press = { action: "pointer", type: "mousePressed", x: 10, y: 20, button: "right", buttons: 2, clickCount: 1, modifiers: 8 };
+    assert.equal((await action(press)).result.tabs.length, 1);
+    assert.deepEqual(commands.filter(c => c.method === "Input.dispatchMouseEvent").at(-1).params,
+      { type: "mousePressed", x: 10, y: 20, button: "right", buttons: 2, clickCount: 1, modifiers: 8 });
+    const dispatched = commands.length;
+    for (const bad of [{ type: "mouseWheel" }, { button: "back" }, { x: -1 }, { y: Number.MAX_VALUE }, { buttons: 8 },
+      { clickCount: 4 }, { modifiers: 16 }, { buttons: 1.5 }, { x: "10" }]) {
+      assert.match((await action({ ...press, ...bad })).error, /Invalid pointer/, JSON.stringify(bad));
+    }
+    assert.equal(commands.length, dispatched);
     assert.deepEqual(await message({ type: "disconnect" }), { ok: true });
     assert.deepEqual(detached, [42]);
     assert.equal(socket.readyState, 3);

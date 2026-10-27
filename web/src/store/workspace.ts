@@ -61,6 +61,7 @@ export * from "./task-overview";
 export * from "./command-sandbox";
 export * from "./code-index";
 export * from "./browser";
+export * from "./browser-input";
 export * from "./remote-tunnel";
 export * from "./pairing";
 export * from "./cloudflared";

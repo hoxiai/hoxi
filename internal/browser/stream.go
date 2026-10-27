@@ -198,6 +198,8 @@ func (s *Service) serveStream(w http.ResponseWriter, r *http.Request) {
 	if err != nil && st != nil {
 		sc.stopStream()
 	}
+	// An open stream keeps the browser; idle time starts when it ends.
+	sc.lastUsed = s.now()
 	<-sc.gate
 	if err != nil {
 		fail(w, 502, err)
@@ -209,6 +211,7 @@ func (s *Service) serveStream(w http.ResponseWriter, r *http.Request) {
 		if sc.stream == st {
 			sc.stopStream()
 		}
+		sc.lastUsed = s.now()
 		<-sc.gate
 	}()
 	upgrader := websocket.Upgrader{HandshakeTimeout: 5 * time.Second, CheckOrigin: func(r *http.Request) bool {

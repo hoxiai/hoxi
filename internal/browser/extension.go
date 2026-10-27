@@ -10,6 +10,7 @@ import (
 	"errors"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +26,8 @@ type extensionBridge struct {
 	once      sync.Once
 	mu        sync.Mutex
 	responses chan extensionReply
+	// The extension accepts "pointer" mouse input; older ones only click.
+	pointer bool
 }
 
 type extensionReply struct {
@@ -89,7 +92,8 @@ func (s *Service) ServeExtension(w http.ResponseWriter, r *http.Request) {
 	conn.SetReadLimit(1024)
 	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	var hello struct {
-		Token string `json:"token"`
+		Token    string   `json:"token"`
+		Features []string `json:"features"`
 	}
 	if conn.ReadJSON(&hello) != nil || len(hello.Token) != 64 {
 		return
@@ -117,7 +121,8 @@ func (s *Service) ServeExtension(w http.ResponseWriter, r *http.Request) {
 	if owner == nil {
 		return
 	}
-	b := &extensionBridge{conn: conn, done: make(chan struct{}), responses: make(chan extensionReply, 1)}
+	b := &extensionBridge{conn: conn, done: make(chan struct{}), responses: make(chan extensionReply, 1),
+		pointer: slices.Contains(hello.Features, "pointer")}
 	owner.extension, owner.pairToken = b, ""
 	_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 	if conn.WriteJSON(map[string]bool{"connected": true}) != nil {
@@ -194,13 +199,23 @@ func (s *Service) serveExtensionAction(w http.ResponseWriter, ctx context.Contex
 		}
 	default:
 	}
+	var result map[string]any
+	var err error
+	if path == "action" && a.Action == "pointer" {
+		result, err = sc.pointer(ctx, a)
+		a = Action{Action: "state"}
+	} else if path == "action" && releasesPointer(a.Action) {
+		sc.dropPointer(ctx)
+	}
 	if path == "state" || a.Action == "control" || a.Action == "resize" {
 		a = Action{Action: "state"}
 	}
 	if path == "frame" {
 		a = Action{Action: "screenshot"}
 	}
-	result, err := sc.extension.call(ctx, a)
+	if err == nil && result == nil {
+		result, err = sc.extension.call(ctx, a)
+	}
 	if err != nil {
 		fail(w, 502, err)
 		return

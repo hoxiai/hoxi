@@ -31,6 +31,9 @@ func validateAction(a Action, agent bool) error {
 	if a.Manual != nil && a.Action != "control" {
 		return errors.New("manual is only valid for control")
 	}
+	if a.Action != "pointer" && (a.Phase != "" || a.Button != "" || a.ClickCount != 0 || a.Modifiers != 0) {
+		return errors.New("phase, button, clickCount and modifiers are only valid for pointer")
+	}
 	switch a.Action {
 	case "pair":
 		if agent {
@@ -68,6 +71,8 @@ func validateAction(a Action, agent bool) error {
 		if a.TabID == "" {
 			return errors.New("tabID required")
 		}
+	case "pointer":
+		return validatePointer(a, agent)
 	case "type":
 	case "key":
 		_, err := keyAction(a.Key)
@@ -176,8 +181,14 @@ func (sc *scope) capture(ctx context.Context) ([]byte, error) {
 }
 
 func (sc *scope) perform(ctx context.Context, a Action) (map[string]any, error) {
+	if releasesPointer(a.Action) {
+		sc.dropPointer(ctx)
+	}
 	var task chromedp.Action
 	switch a.Action {
+	case "pointer":
+		_, err := sc.pointer(ctx, a)
+		return nil, err
 	case "resize":
 		return nil, sc.withTab(ctx)
 	case "navigate":

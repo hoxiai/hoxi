@@ -99,6 +99,18 @@ disclose secrets.
   native browser menus, file-picker dialogs, or OS clipboard synchronization.
 - Isolated-browser profiles are temporary; login state is not retained after
   browser close. Chrome Link preserves the existing user's profile
+- An isolated browser left unused for 30 minutes is closed the same way as
+  `close`: Chrome stops and its temporary profile is deleted, so open pages and
+  sign-ins are lost. Use means any UI or agent `state`, `frame` or `action`
+  request, plus an open `stream` connection (idle time starts again when the
+  stream ends). The inspector polls `state` once per second only while the
+  Browser panel shows that session in a visible window, so an open panel counts
+  as use, but a closed panel, another session or a hidden window does not. A
+  browser is never closed this way while it is under manual control, while Chrome
+  Link is pairing or connected, while a stream is open, or while an operation is
+  in progress. The check runs once a minute. Until the scope is used again, its
+  `state` carries `idleClosed: true` and `idleMinutes`, and the inspector's start
+  screen explains why the browser closed.
 - The isolated browser disables Chrome's back/forward cache, so Back and Forward
   reload the entry like any navigation instead of waiting for a load event that a
   cache restore never fires.

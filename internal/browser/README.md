@@ -33,10 +33,14 @@ UI/agent paths start with `/api/hoxi/browser/` and require query parameters
 
 The pair identifies one independent headless Chrome process and temporary profile.
 At most eight scopes are retained, including scopes reserved by `control` or `resize` without
-launching Chrome. `close` frees the slot after process/profile cleanup.
+launching Chrome. `close` frees the slot after process/profile cleanup. A
+started browser that goes unused for 30 minutes is closed the same way; see
+`BROWSER.md` for what counts as use and what always keeps a browser open.
 
 - `GET state`: `{url,title,tabs:[{id,title,url}],tabID,manual}`. An unstarted scope
   returns empty strings and an empty tabs array; `manual` reflects reserved control state.
+  A scope closed for inactivity also returns `idleClosed: true` and `idleMinutes`
+  until a new scope is created for the same session and directory.
 - `GET frame`: JPEG of the current viewport, initially 1280x800; returns 404 if no
   browser has started, including scopes reserved by `control` or `resize`.
 - `GET stream`: UI-only WebSocket carrying continuous CDP JPEG frames; see below.

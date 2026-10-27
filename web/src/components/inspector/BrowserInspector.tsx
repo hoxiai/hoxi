@@ -477,6 +477,9 @@ export default function BrowserInspector() {
                 <div class="flex h-16 w-16 items-center justify-center rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-hover)]">
                   <Globe size={32} strokeWidth={1.5} aria-hidden="true" />
                 </div>
+                <Show when={state()?.idleClosed && state()?.idleMinutes}>
+                  <p role="status" class="max-w-64 text-xs leading-relaxed text-[var(--text-secondary)]">{t("inspector.browser.idleClosed", { minutes: state()!.idleMinutes! })}</p>
+                </Show>
                 <button
                   class="inline-flex items-center gap-2 rounded-lg bg-[var(--accent-primary)] px-4 py-2 text-xs font-medium text-white hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-primary)] cursor-pointer transition-opacity"
                   onClick={() => navigateAddress()}

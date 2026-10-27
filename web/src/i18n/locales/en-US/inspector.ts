@@ -32,6 +32,7 @@ export const inspector = {
     agentHint: "Agent control is enabled. Turn on manual control to prevent competing agent actions.",
     error: "Browser error: {error}", working: "Updating browser...", waiting: "Waiting for browser frame...",
     empty: "Or enter a URL above and press Enter to open it.",
+    idleClosed: "The browser was closed after {minutes} minutes without use to free memory; open pages and sign-ins were not kept",
     viewport: "Live browser viewport", keyboard: "Browser keyboard input",
   },
   diffs: {

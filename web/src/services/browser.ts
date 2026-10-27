@@ -14,11 +14,16 @@ export interface BrowserState {
   tabs: Array<{ id: string; title: string; url: string }>;
   tabID: string;
   manual: boolean;
+  // The scope's Chrome was stopped after idleMinutes without use.
+  idleClosed?: boolean;
+  idleMinutes?: number;
 }
+
+export type BrowserPointerButton = "left" | "middle" | "right";
 
 export interface BrowserAction {
   action: "navigate" | "back" | "forward" | "reload" | "click" | "type" | "key" |
-    "scroll" | "tab_new" | "tab_select" | "tab_close" | "control" | "resize" | "close";
+    "scroll" | "pointer" | "tab_new" | "tab_select" | "tab_close" | "control" | "resize" | "close";
   url?: string;
   selector?: string;
   text?: string;
@@ -32,6 +37,11 @@ export interface BrowserAction {
   width?: number;
   height?: number;
   deviceScaleFactor?: number;
+  // UI-only pointer input; hover is a move with no button held.
+  phase?: "down" | "move" | "up" | "cancel";
+  button?: BrowserPointerButton;
+  clickCount?: number;
+  modifiers?: number;
 }
 
 export function browserURL(endpoint: "state" | "action" | "frame" | "stream", scope: BrowserScope): string {
@@ -92,13 +102,18 @@ export function connectBrowserStream(scope: BrowserScope, base: string,
   };
 }
 
-// Bounds belong to the image itself, not its letterboxed container.
+// Bounds belong to the image itself, not its letterboxed container. With
+// clamp, a captured drag outside the image maps to the nearest viewport edge.
 export function browserPoint(bounds: { left: number; top: number; width: number; height: number },
-  clientX: number, clientY: number, viewport: { width: number; height: number }): { x: number; y: number } | null {
+  clientX: number, clientY: number, viewport: { width: number; height: number }, clamp = false): { x: number; y: number } | null {
   if (bounds.width <= 0 || bounds.height <= 0 || viewport.width <= 0 || viewport.height <= 0 ||
     !Number.isFinite(clientX + clientY + viewport.width + viewport.height)) return null;
-  const x = (clientX - bounds.left) / bounds.width;
-  const y = (clientY - bounds.top) / bounds.height;
+  let x = (clientX - bounds.left) / bounds.width;
+  let y = (clientY - bounds.top) / bounds.height;
+  if (clamp) {
+    x = Math.min(1, Math.max(0, x));
+    y = Math.min(1, Math.max(0, y));
+  }
   if (x < 0 || y < 0 || x > 1 || y > 1) return null;
   return { x: Math.min(viewport.width - 1, Math.floor(x * viewport.width)),
     y: Math.min(viewport.height - 1, Math.floor(y * viewport.height)) };

@@ -41,6 +41,7 @@ import "../src/__tests__/image-viewer.test";
 import "../src/__tests__/composer-keyboard.test";
 import { runAllTests } from "../src/__tests__/test-harness";
 import "../src/__tests__/browser.test";
+import "../src/__tests__/browser-input.test";
 import "../src/__tests__/terminal-lifecycle.test";
 import "../src/__tests__/diagnostics.test";
 import "../src/__tests__/appearance.test";
