@@ -828,5 +828,9 @@
   {
     "command": "env -u SECRET",
     "opaque": true
+  },
+  {
+    "command": "bash \"$HOME/.agents/skills/shoply-release-and-deploy/scripts/verify-shoply-release.sh\" v1.0.13 2>&1 | tail -n 20",
+    "opaque": false
   }
 ]

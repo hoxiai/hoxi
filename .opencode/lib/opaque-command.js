@@ -698,6 +698,7 @@ function expansionsAreBounded(seg, words, vars, valueClass = false) {
   const expanding = args.filter((a) => a.includes("$"));
   if (expanding.length === 0) return true;
   if (base === "git") return gitMessageExpansionsOnly(args, vars) || gitReadOnlyLoopExpansions(args, vars, homeDeps);
+  if (!vars.has("HOME") && (base === "sh" || base === "bash" || base === "zsh") && isSafeShellScriptSegment(base, args, false, { stripNullRedirects, isSecretPath, isSensitiveExternalPath, isProtectedPath })) return true;
   const readOnlyTool = READ_ONLY_DATA_TOOLS.has(base) || (base === "sed" && isReadOnlySedArgs(args, stripNullRedirects));
   if (!readOnlyTool && !(valueClass && base === "mkdir")) return false;
   for (const a of args) {

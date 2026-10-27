@@ -351,6 +351,9 @@ func expansionsAreBounded(seg string, words []string, vars map[string]bool, valu
 	if base == "git" {
 		return gitMessageExpansionsOnly(args, vars) || gitReadOnlyLoopExpansions(args, vars)
 	}
+	if !vars["HOME"] && (base == "sh" || base == "bash" || base == "zsh") && isSafeShellScriptSegment(base, args, false) {
+		return true
+	}
 	// mkdir may take a value-class $(...) (it only creates directories) but
 	// not an ordinary variable. Every other non-read-only command stays opaque.
 	readOnlyTool := readOnlyDataTools[base] || (base == "sed" && isReadOnlySedArgs(args))
