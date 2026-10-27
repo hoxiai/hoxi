@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"strings"
 	"testing"
 
@@ -126,10 +125,10 @@ func TestHandleStatusBarMenuActionQueuesDesktopIntents(t *testing.T) {
 
 	gw := gateway.New(0, "test", t.TempDir(), nil, nil)
 	notified := 0
-	gw.SetDesktopIntentNotifier(func() {
-		notified++
-		emitDesktopIntent(context.Background())
-	})
+	// Count the wake-ups only. Emitting to the webview needs a live Wails
+	// lifecycle; the non-darwin stub calls runtime.EventsEmit, which log.Fatals
+	// when no app is running, so a test must never drive it.
+	gw.SetDesktopIntentNotifier(func() { notified++ })
 	app := &DesktopApp{gateway: gw, status: tracker}
 
 	// 1. Attention menu click without explicit session resolves first pending target
