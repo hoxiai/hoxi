@@ -18,6 +18,14 @@ export function normalizeVersion(input) {
   return version;
 }
 
+// Sparkle compares the feed's sparkle:version against the bundle's
+// CFBundleVersion, so the build number must be a monotonic numeric code and the
+// display version stays the semantic version.
+export function versionCode(input) {
+  const [major, minor, patch] = normalizeVersion(input).split(".").map(Number);
+  return major * 1_000_000 + minor * 1_000 + patch;
+}
+
 export function maximumMacOS(versions) {
   for (const version of versions) {
     if (!/^\d+\.\d+(?:\.\d+)?$/.test(version)) throw new Error(`Invalid macOS version: ${version}`);
@@ -77,7 +85,8 @@ export function validateAppMetadata(info, expectedVersion, requiredMinimum) {
   assert.ok(info.CFBundleURLTypes?.some((type) => type.CFBundleURLSchemes?.includes("hoxi")),
     "App must register the hoxi URL scheme");
   assert.equal(info.CFBundleShortVersionString, version, "App display version differs from release version");
-  assert.equal(info.CFBundleVersion, version, "App build version differs from release version");
+  assert.equal(String(info.CFBundleVersion), String(versionCode(version)),
+    "App build version must be the numeric version code");
   assert.equal(maximumMacOS([info.LSMinimumSystemVersion, requiredMinimum]), info.LSMinimumSystemVersion,
     "App minimum macOS is lower than a bundled executable requires");
 }
@@ -87,7 +96,7 @@ export function configureApp(app, version) {
   const info = readInfo(app);
   const { minimum } = inspectBinaries(app, info);
   for (const [key, value] of Object.entries({
-    CFBundleVersion: version, CFBundleShortVersionString: version, LSMinimumSystemVersion: minimum,
+    CFBundleVersion: String(versionCode(version)), CFBundleShortVersionString: version, LSMinimumSystemVersion: minimum,
   })) {
     run("/usr/libexec/PlistBuddy", ["-c", `Set :${key} ${value}`, path.join(app, "Contents/Info.plist")]);
   }

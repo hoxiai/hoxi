@@ -31,14 +31,14 @@ test("macOS floor follows every Mach-O slice and required sidecar, not the SDK",
 });
 
 test("artifact metadata rejects wrong releases, wrong bundle and insufficient OS requirements", () => {
-  const info = { CFBundleIdentifier: "ai.hoxi.desktop", CFBundleVersion: "0.2.1",
+  const info = { CFBundleIdentifier: "ai.hoxi.desktop", CFBundleVersion: "2001",
     CFBundleShortVersionString: "0.2.1", LSMinimumSystemVersion: "13.0",
     CFBundleURLTypes: [{ CFBundleURLSchemes: ["hoxi"] }] };
   validateAppMetadata(info, "0.2.1", "13.0");
   assert.throws(() => validateAppMetadata({ ...info, CFBundleURLTypes: undefined }, "0.2.1", "13.0"), /URL scheme/);
   assert.throws(() => validateAppMetadata({ ...info, CFBundleURLTypes: [{ CFBundleURLSchemes: ["other"] }] }, "0.2.1", "13.0"), /URL scheme/);
   assert.throws(() => validateAppMetadata(info, "0.2.2", "13.0"), /display version/);
-  assert.throws(() => validateAppMetadata({ ...info, CFBundleVersion: "0.2.0" }, "0.2.1", "13.0"), /build version/);
+  assert.throws(() => validateAppMetadata({ ...info, CFBundleVersion: "2000" }, "0.2.1", "13.0"), /build version/);
   assert.throws(() => validateAppMetadata({ ...info, CFBundleIdentifier: "ai.hoxi.desktop.dev" }, "0.2.1", "13.0"));
   assert.throws(() => validateAppMetadata({ ...info, LSMinimumSystemVersion: "10.13" }, "0.2.1", "13.0"), /minimum macOS/);
 });
@@ -63,13 +63,16 @@ test("tracked publisher sends verified artifact metadata, keeps credentials out 
       assert.equal(init.headers.Authorization, "Bearer test-secret");
       assert.equal(init.redirect, "error");
       const body = JSON.parse(init.body);
+      assert.equal(body.appKey, "hoxi-desktop");
+      assert.equal(body.channel, "stable");
       assert.equal(body.version, "0.2.1");
-      assert.equal(body.sha256, "a".repeat(64));
-      assert.equal(body.size, 1234);
-      assert.equal(body.dryRun, false);
-      assert.ok(body.mirrors["mac-arm64"].global.endsWith("/v0.2.1/Hoxi-0.2.1-darwin-arm64.dmg"));
-      assert.equal(body.mirrors["mac-arm64"].cn, undefined);
-      assert.equal(body.desktop["mac-arm64"], body.mirrors["mac-arm64"].global);
+      assert.equal(body.dryRun, undefined);
+      assert.ok(body.locales.zh.body === "Release test");
+      const mac = body.assets.find((asset) => asset.platform === "macos" && asset.arch === "arm64");
+      assert.equal(mac.sha256, "a".repeat(64));
+      assert.equal(mac.size, 1234);
+      assert.ok(mac.browser_download_url.endsWith("/v0.2.1/Hoxi-0.2.1-darwin-arm64.dmg"));
+      assert.equal(body.assets.length, 3);
       return Response.json({ success: true, data: { version: "0.2.1" } });
     } });
   assert.equal(result.mode, "api");
@@ -230,7 +233,7 @@ const sparkle = {
 };
 
 test("artifact validation enforces Sparkle bridge policy keys as strict plist booleans", () => {
-  const info = { CFBundleIdentifier: "ai.hoxi.desktop", CFBundleVersion: "0.2.1",
+  const info = { CFBundleIdentifier: "ai.hoxi.desktop", CFBundleVersion: "2001",
     CFBundleShortVersionString: "0.2.1", LSMinimumSystemVersion: "13.0",
     CFBundleURLTypes: [{ CFBundleURLSchemes: ["hoxi"] }],
     SUFeedURL: sparkle.feedURL, SUPublicEDKey: sparkle.publicKey,
@@ -301,9 +304,10 @@ test("Sparkle is opt-in, rejects partial config and only accepts explicit offici
 
 test("Sparkle payload validates signature/key lengths, version, URL and byte length", () => {
   const data = releasePayload({ version: "0.2.1", notes: "test", size: 1234, sha256: "a".repeat(64), sparkle });
-  assert.deepEqual(data.sparkle, sparkle);
-  assert.equal(data.desktop["mac-arm64"], sparkle.url);
-  assert.deepEqual(data.mirrors["mac-arm64"], { global: sparkle.url });
+  assert.deepEqual(data.metaData.sparkle, sparkle);
+  const mac = data.assets.find((asset) => asset.platform === "macos" && asset.arch === "arm64");
+  assert.equal(mac.browser_download_url, sparkle.url);
+  assert.equal(mac.edSignature, sparkle.edSignature);
   for (const patch of [{ edSignature: "bad" }, { publicKey: "bad" }, { version: "0.2.2" },
     { length: 1235 }, { url: "https://hoxi.ai/app.dmg" }, { feedURL: "http://hoxi.ai/feed" }]) {
     assert.throws(() => validateSparkle({ ...sparkle, ...patch }, "0.2.1", 1234));
@@ -312,13 +316,16 @@ test("Sparkle payload validates signature/key lengths, version, URL and byte len
 
 test("website must explicitly accept exact Sparkle metadata, not merely generic release success", async () => {
   const data = releasePayload({ version: "0.2.1", size: 1234, sha256: "a".repeat(64), sparkle });
-  for (const confirmation of [{ version: "0.2.1" }, { version: "0.2.1", sparkleAccepted: true },
-    { version: "0.2.1", sparkleAccepted: true, sparkle: { ...sparkle, length: 5 } }]) {
+  const macAsset = { platform: "macos", arch: "arm64", package: "desktop", edSignature: sparkle.edSignature, size: sparkle.length };
+  for (const confirmation of [{ version: "0.2.1" },
+    { version: "0.2.1", assets: [{ ...macAsset, edSignature: undefined }] },
+    { version: "0.2.1", assets: [{ ...macAsset, edSignature: Buffer.alloc(64, 9).toString("base64") }] },
+    { version: "0.2.1", assets: [{ ...macAsset, size: 5 }] }]) {
     await assert.rejects(publishRelease(data, { key: "test", fetchImpl: async () =>
       Response.json({ success: true, data: confirmation }) }));
   }
   assert.equal((await publishRelease(data, { key: "test", fetchImpl: async () =>
-    Response.json({ success: true, data: { version: "0.2.1", sparkleAccepted: true, sparkle } }) })).success, true);
+    Response.json({ success: true, data: { version: "0.2.1", assets: [macAsset] } }) })).success, true);
 });
 
 test("Sparkle framework validation requires executable and helpers, and follows distribution symlinks", (t) => {

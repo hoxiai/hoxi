@@ -20,8 +20,8 @@ CREATE_TAG=0
 JSON_OUTPUT=0
 MANDATORY=0
 FORCE_DB=0
-API_URL="${HOXI_RELEASE_API_URL:-}"
-API_KEY="${HOXI_RELEASE_KEY:-}"
+API_URL="${APAY_RELEASE_API_URL:-${HOXI_RELEASE_API_URL:-}}"
+API_KEY="${APAY_RELEASE_KEY:-${HOXI_RELEASE_KEY:-}}"
 
 require_value() {
   [[ "$#" -ge 2 && -n "$2" ]] || { echo "$1 requires a value" >&2; exit 1; }
@@ -69,7 +69,7 @@ if [[ "${FORCE_DB}" -eq 1 ]]; then PUBLISHER="scripts/publish-release-to-posts.m
 if [[ "${DRY_RUN}" -eq 0 && "${BUILD_ONLY}" -eq 0 ]]; then
   [[ -f "${PUBLISHER}" ]] || { echo "Required publisher is missing: ${PUBLISHER}" >&2; exit 1; }
   if [[ "${FORCE_DB}" -eq 0 && -z "${API_KEY}" ]]; then
-    echo 'HOXI_RELEASE_KEY is required to publish; use --build-only or --dry-run for local verification' >&2
+    echo 'APAY_RELEASE_KEY (or HOXI_RELEASE_KEY) is required to publish; use --build-only or --dry-run for local verification' >&2
     exit 1
   fi
 fi
@@ -137,7 +137,7 @@ JS
     if [[ "${MANDATORY}" -eq 1 ]]; then LEGACY_ARGS+=(--mandatory); fi
     PUB_RESULT="$(node "${PUBLISHER}" "${LEGACY_ARGS[@]}")"
   else
-    PUB_RESULT="$(printf '%s' "${RELEASE_JSON}" | HOXI_RELEASE_KEY="${API_KEY}" HOXI_RELEASE_API_URL="${API_URL}" node "${PUBLISHER}")"
+    PUB_RESULT="$(printf '%s' "${RELEASE_JSON}" | APAY_RELEASE_KEY="${API_KEY}" APAY_RELEASE_API_URL="${API_URL}" node "${PUBLISHER}")"
   fi
   PUB_RESULT="$(printf '%s' "${PUB_RESULT}" | node scripts/release-artifact.mjs verify-publication)"
   if [[ "${CREATE_TAG}" -eq 1 ]]; then

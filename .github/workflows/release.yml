@@ -81,6 +81,7 @@ jobs:
           SPARKLE_SHA256: ${{ vars.HOXI_SPARKLE_ARCHIVE_SHA256 }}
           SPARKLE_PRIVATE_KEY: ${{ secrets.HOXI_SPARKLE_PRIVATE_KEY }}
           HOXI_RELEASE_KEY: ${{ secrets.HOXI_RELEASE_KEY }}
+          APAY_RELEASE_KEY: ${{ secrets.APAY_RELEASE_KEY }}
         run: |
           node scripts/opencode-lock.mjs verify
           OPENCODE_URL="$(node scripts/opencode-lock.mjs url darwin/arm64)"
@@ -88,7 +89,7 @@ jobs:
           : "${HOXI_SPARKLE_PUBLIC_KEY:?Sparkle public key required}"
           : "${HOXI_SPARKLE_FEED_URL:?Official feed URL required}"
           : "${SPARKLE_PRIVATE_KEY:?Sparkle private key required}"
-          : "${HOXI_RELEASE_KEY:?Website publication credential required}"
+          : "${APAY_RELEASE_KEY:?Unified release-center credential required (APAY_RELEASE_KEY)}"
           : "${SPARKLE_URL:?Pinned official Sparkle archive URL required}"
           : "${SPARKLE_SHA256:?Sparkle SHA-256 required}"
           : "${OPENCODE_URL:?Pinned official OpenCode ZIP URL required}"
@@ -178,8 +179,8 @@ jobs:
 
       - name: Publish website metadata after asset upload
         env:
-          HOXI_RELEASE_KEY: ${{ secrets.HOXI_RELEASE_KEY }}
-          HOXI_RELEASE_API_URL: ${{ vars.HOXI_RELEASE_API_URL }}
+          APAY_RELEASE_KEY: ${{ secrets.APAY_RELEASE_KEY }}
+          APAY_RELEASE_API_URL: ${{ vars.APAY_RELEASE_API_URL || vars.HOXI_RELEASE_API_URL }}
           RELEASE_NOTES: ${{ env.RELEASE_NOTES }}
         run: |
           node --input-type=module - "$RELEASE_VERSION" <<'JS' | node scripts/release-publisher.mjs
