@@ -51,23 +51,10 @@ const MODE_OPTIONS: ApprovalModeOption[] = [
     badgeKey: "approval.modeAutoBadge",
   },
   {
-    id: "smart",
-    labelKey: "approval.modeSmartLabel",
-    shortKey: "approval.modeSmartShort",
-    descKey: "approval.modeSmartDesc",
-  },
-  {
     id: "manual",
     labelKey: "approval.modeManualLabel",
     shortKey: "approval.modeManualShort",
     descKey: "approval.modeManualDesc",
-  },
-  {
-    id: "trusted",
-    labelKey: "approval.modeTrustedLabel",
-    shortKey: "approval.modeTrustedShort",
-    descKey: "approval.modeTrustedDesc",
-    badgeKey: "approval.modeTrustedBadge",
   },
   {
     id: "unattended",
@@ -77,6 +64,12 @@ const MODE_OPTIONS: ApprovalModeOption[] = [
     badgeKey: "approval.modeUnattendedBadge",
   },
 ];
+
+function normalizeDisplayMode(mode: ApprovalMode): ApprovalMode {
+  if (mode === "smart") return "auto";
+  if (mode === "trusted") return "unattended";
+  return mode;
+}
 
 function renderModeIcon(mode: ApprovalMode, size = 12.5) {
   if (mode === "trusted" || mode === "unattended") return <ShieldOff size={size} class="shrink-0" />;
@@ -225,7 +218,7 @@ export default function ApprovalModePill(props: {
           <div class="space-y-1">
             <For each={MODE_OPTIONS}>
               {(opt) => {
-                const isSelected = () => currentMode() === opt.id;
+                const isSelected = () => normalizeDisplayMode(currentMode()) === opt.id;
                 return (
                   <button
                     type="button"

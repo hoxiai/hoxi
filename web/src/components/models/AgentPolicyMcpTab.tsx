@@ -59,20 +59,9 @@ const PRESET_OPTIONS: PresetCardOption[] = [
     badgeKey: "approval.modeAutoBadge",
   },
   {
-    id: "smart",
-    labelKey: "approval.modeSmartLabel",
-    descKey: "approval.modeSmartDesc",
-  },
-  {
     id: "manual",
     labelKey: "approval.modeManualLabel",
     descKey: "approval.modeManualDesc",
-  },
-  {
-    id: "trusted",
-    labelKey: "approval.modeTrustedLabel",
-    descKey: "approval.modeTrustedDesc",
-    badgeKey: "approval.modeTrustedBadge",
   },
   {
     id: "unattended",
@@ -81,6 +70,12 @@ const PRESET_OPTIONS: PresetCardOption[] = [
     badgeKey: "approval.modeUnattendedBadge",
   },
 ];
+
+function normalizePresetMode(mode: ApprovalMode): ApprovalMode {
+  if (mode === "smart") return "auto";
+  if (mode === "trusted") return "unattended";
+  return mode;
+}
 
 function renderPresetIcon(mode: ApprovalMode, size = 15) {
   if (mode === "trusted" || mode === "unattended") return <ShieldOff size={size} class="shrink-0" />;
@@ -173,10 +168,10 @@ export default function AgentPolicyMcpTab() {
             </span>
           </div>
 
-          <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <For each={PRESET_OPTIONS}>
               {(opt) => {
-                const isSelected = () => currentMode() === opt.id;
+                const isSelected = () => normalizePresetMode(currentMode()) === opt.id;
                 return (
                   <button
                     type="button"
@@ -284,6 +279,20 @@ export default function AgentPolicyMcpTab() {
               onChange={(m) => void onChangeToolRule("webfetch", m)}
             />
           </SettingRow>
+
+          <SettingRow label={t("approval.timeoutLabel")} tip={t("approval.timeoutHint")}>
+            <input
+              type="number"
+              min="60"
+              max="3600"
+              value={approvalPolicy().approvalTimeoutSeconds || 600}
+              onChange={(e) => {
+                const n = Number(e.currentTarget.value);
+                if (n >= 60 && n <= 3600) void setApprovalTimeout(n).catch((err) => showSavedFeedback(false, String(err)));
+              }}
+              class="w-24 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-1 text-[12px]"
+            />
+          </SettingRow>
         </SettingGroup>
 
         <SettingGroup title={t("approval.aiReviewTitle")} tip={t("approval.aiReviewTip")}>
@@ -318,22 +327,6 @@ export default function AgentPolicyMcpTab() {
           </div>
         </SettingGroup>
 
-        <SettingGroup title={t("approval.timeoutLabel")} tip={t("approval.timeoutHint")}>
-          <SettingRow label={t("approval.timeoutLabel")} tip={t("approval.timeoutHint")}>
-            <input
-              type="number"
-              min="60"
-              max="3600"
-              value={approvalPolicy().approvalTimeoutSeconds || 600}
-              onChange={(e) => {
-                const n = Number(e.currentTarget.value);
-                if (n >= 60 && n <= 3600) void setApprovalTimeout(n).catch((err) => showSavedFeedback(false, String(err)));
-              }}
-              class="w-24 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-1 text-[12px]"
-            />
-          </SettingRow>
-        </SettingGroup>
-
         <DeferredList />
 
         <Show when={feedback()}>
@@ -347,82 +340,6 @@ export default function AgentPolicyMcpTab() {
             {feedback()!.text}
           </div>
         </Show>
-
-        {/* 3. Effective Policy Summary */}
-        <div class="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/35 p-4 space-y-3">
-          <div class="flex flex-wrap items-center justify-between gap-2">
-            <h4 class="text-[13px] font-semibold text-[var(--text-primary)]">
-              {t("approval.effectiveSummaryTitle")}
-            </h4>
-            <Show when={effective().hasCustomToolOverrides}>
-              <span class="rounded-full border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2.5 py-0.5 text-[11px] font-medium text-[var(--accent-primary)]">
-                {t("approval.effectiveSummaryCustomBadge")}
-              </span>
-            </Show>
-          </div>
-
-          <div class="divide-y divide-[var(--border-subtle)]/60 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] text-[12px]">
-            <div class="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2.5">
-              <span class="text-[var(--text-secondary)]">{t("approval.effectiveReadLabel")}</span>
-              <span class="font-medium text-[var(--ok-text)]">{t("approval.effectiveReadValue")}</span>
-            </div>
-
-            <div class="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2.5">
-              <span class="text-[var(--text-secondary)]">{t("approval.effectiveEditLabel")}</span>
-              <span
-                class={`font-medium ${
-                  effective().edit === "allow" ? "text-[var(--ok-text)]" : "text-[var(--warn-text)]"
-                }`}
-              >
-                {effective().edit === "allow"
-                  ? t("approval.effectiveValueAllow")
-                  : t("approval.effectiveValueAsk")}
-              </span>
-            </div>
-
-            <div class="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2.5">
-              <span class="text-[var(--text-secondary)]">{t("approval.effectiveShellLabel")}</span>
-              <span
-                class={`font-medium ${
-                  effective().bash === "allow"
-                    ? "text-[var(--ok-text)]"
-                    : effective().bash === "smart"
-                      ? "text-[var(--accent-primary)]"
-                      : "text-[var(--warn-text)]"
-                }`}
-              >
-                {effective().bash === "allow"
-                  ? t("approval.effectiveValueNormalShell")
-                  : effective().bash === "smart"
-                    ? t("approval.effectiveValueSafeShell")
-                    : t("approval.effectiveValueAsk")}
-              </span>
-            </div>
-
-            <div class="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2.5">
-              <span class="text-[var(--text-secondary)]">{t("approval.effectiveWebfetchLabel")}</span>
-              <span
-                class={`font-medium ${
-                  effective().webfetch === "allow" ? "text-[var(--ok-text)]" : "text-[var(--warn-text)]"
-                }`}
-              >
-                {effective().webfetch === "allow"
-                  ? t("approval.effectiveValueAllow")
-                  : t("approval.effectiveValueAsk")}
-              </span>
-            </div>
-
-            <div class="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2.5 bg-[var(--danger-surface)]/30">
-              <span class="font-medium text-[var(--text-primary)]">
-                {t("approval.effectiveDestructiveLabel")}
-              </span>
-              <span class="inline-flex items-center gap-1 font-semibold text-[var(--danger-text)]">
-                <ShieldAlert size={13} />
-                {t("approval.effectiveDestructiveValue")}
-              </span>
-            </div>
-          </div>
-        </div>
 
         {/* 4. Collapsible Advanced Section: Antigravity Hook & Approval Audit / Session Grants */}
         <details

@@ -15,7 +15,6 @@ import {
 } from "lucide-solid";
 import type { PermissionRequest } from "../../services/sse-types";
 import {
-  appSettings,
   isDestructivePermissionRequest,
   grantableClasses,
   grantClassLabel,
@@ -24,7 +23,6 @@ import {
   markPermissionResolved,
   openChangedFileInInspector,
   replyPermissionRequest,
-  setApprovalMode,
   type PermissionReplyMode,
 } from "../../store/workspace";
 import { DiffChanges, FileIcon } from "../icons";
@@ -256,12 +254,6 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
           </div>
         </Show>
 
-        <Show when={runnerScopeHint()}>
-          <div class="text-[11px] leading-relaxed text-[var(--text-muted)]">
-            {runnerScopeHint()}
-          </div>
-        </Show>
-
         {/* Kilo PermissionDiff: Structured File Diff Preview Cards */}
         <Show when={diffs().length > 0}>
           <div class="space-y-2">
@@ -415,33 +407,29 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
                 </Show>
                 {t("approval.allowOnce")}
               </button>
-              <Show when={sessionClasses().length > 0}>
+              <Show when={sessionClasses().length > 0 || !isDestructive()}>
                 <button
                   type="button"
                   class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--accent-border)] bg-[var(--accent-surface)] hover:opacity-90 px-3 py-1 text-[12px] font-medium text-[var(--accent-primary)] disabled:opacity-50 transition-opacity cursor-pointer"
                   disabled={!!busy()}
-                  title={t("approval.sessionClassScope", {
-                    classes: sessionClasses().map(grantClassLabel).join(t("approval.grantClassSeparator")),
-                  })}
-                  onClick={() => void grantSessionClass()}
+                  title={
+                    sessionClasses().length > 0
+                      ? t("approval.sessionClassScope", {
+                          classes: sessionClasses().map(grantClassLabel).join(t("approval.grantClassSeparator")),
+                        })
+                      : runnerScopeHint() || undefined
+                  }
+                  onClick={() =>
+                    sessionClasses().length > 0 ? void grantSessionClass() : void reply("always")
+                  }
                 >
-                  <Show when={busy() !== "class"} fallback={<LoaderCircle size={12} class="animate-spin" />}>
+                  <Show
+                    when={busy() !== "class" && busy() !== "always"}
+                    fallback={<LoaderCircle size={12} class="animate-spin" />}
+                  >
                     <Zap size={12} />
                   </Show>
-                  {t("approval.allowSessionClass")}
-                </button>
-              </Show>
-              <Show when={!isDestructive()}>
-                <button
-                  type="button"
-                  class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--accent-border)] bg-[var(--accent-surface)] hover:opacity-90 px-3 py-1 text-[12px] font-medium text-[var(--accent-primary)] disabled:opacity-50 transition-opacity cursor-pointer"
-                  disabled={!!busy()}
-                  onClick={() => void reply("always")}
-                >
-                  <Show when={busy() !== "always"} fallback={<LoaderCircle size={12} class="animate-spin" />}>
-                    <Zap size={12} />
-                  </Show>
-                  {alwaysButtonLabel()}
+                  {sessionClasses().length > 0 ? t("approval.allowSessionClass") : alwaysButtonLabel()}
                 </button>
               </Show>
               <button
@@ -453,21 +441,6 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
                 <X size={12} />
                 {t("approval.reject")}…
               </button>
-              <Show when={!isDestructive() && appSettings.approvalMode !== "auto" && appSettings.approvalMode !== "trusted"}>
-                <button
-                  type="button"
-                  class="ml-auto inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
-                  disabled={!!busy()}
-                  onClick={() =>
-                    void setApprovalMode("auto").catch((err) => {
-                      console.warn("Failed to set approval mode:", err);
-                    })
-                  }
-                >
-                  <Zap size={11} class="text-[var(--ok-text)]" />
-                  {t("approval.switchToAutoApprove")}
-                </button>
-              </Show>
             </>
           }
         >
