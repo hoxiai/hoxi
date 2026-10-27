@@ -24,6 +24,17 @@ Click the page preview to focus an element, then type, paste, use IME, or send k
 shortcuts. Scroll over the preview to scroll the page. The inspector can be
 maximized using its existing expand button.
 
+The preview forwards hover, left/middle/right presses, double/triple clicks and
+captured drags, so you can select text, drag page controls and move scrollbars.
+Losing pointer capture, hiding the window or switching sessions releases held
+buttons. Dragging external files into the page remains unsupported.
+Horizontal trackpad swipes go back/forward once per gesture. Horizontal scrollers,
+overscroll containment, frames, canvases, video and sliders retain their wheel
+input instead. Vertical and diagonal wheel input scroll normally. Pinch zoom
+supports macOS WebKit gesture events and Chromium Ctrl+wheel, and zooms the
+remote page rather than Hoxi's own interface. Chrome Link needs the updated
+extension reloaded in Chrome to support pinch zoom.
+
 ## Connect An Existing Chrome Tab
 
 Chrome Link reuses a tab in your already-open Chrome, including its existing
@@ -95,8 +106,9 @@ disclose secrets.
   selected-tab changes close the stream; reconnect after resize or a state poll
   detects a changed `tabID`. Streams never launch Chrome or reserve a scope and
   return 404 until started. Each reconnect replaces the previous stream.
-- Manual interaction supports clicks, scrolling, text, and keys, not drag/drop,
-  native browser menus, file-picker dialogs, or OS clipboard synchronization.
+- Manual interaction supports pointer hover/drag, clicks, scrolling, history swipes,
+  pinch zoom, text and keys. Native browser menus, external file drag/drop,
+  file-picker dialogs and OS clipboard synchronization remain unsupported.
 - Isolated-browser profiles are temporary; login state is not retained after
   browser close. Chrome Link preserves the existing user's profile
 - An isolated browser left unused for 30 minutes is closed the same way as
