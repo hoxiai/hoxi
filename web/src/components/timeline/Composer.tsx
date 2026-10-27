@@ -268,7 +268,7 @@ export default function Composer() {
     const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     setText((prev) =>
       prev
-        .replace(new RegExp(`(?:^|\\s)${escaped}(?=\\s|$)`, "g"), " ")
+        .replace(new RegExp(`\\s*${escaped}\\s*`, "g"), " ")
         .replace(/^\s+/, "")
     );
     requestAnimationFrame(adjustHeight);
@@ -622,7 +622,11 @@ export default function Composer() {
             }}
             onKeyDown={onKeyDown}
             onCompositionStart={() => { composing = true; }}
-            onCompositionEnd={() => { composing = false; }}
+            onCompositionEnd={(ev) => {
+              composing = false;
+              setCursorOffset(ev.currentTarget.selectionStart ?? ev.currentTarget.value.length);
+              setText(ev.currentTarget.value);
+            }}
             onBlur={() => { composing = false; }}
           />
 

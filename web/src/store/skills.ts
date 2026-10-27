@@ -115,6 +115,8 @@ const descriptorBySelectionKey = new Map<string, SkillDescriptor>();
 const CATALOG_CACHE_TTL_MS = 20_000;
 let listRequestGen = 0;
 let detailRequestGen = 0;
+const [skillsCatalogRevision, setSkillsCatalogRevision] = createSignal(0);
+export { skillsCatalogRevision };
 
 export function buildSkillsCacheKey(
   runtime: string,
@@ -130,6 +132,7 @@ export function invalidateSkillsCatalogCache() {
   detailRequestGen++;
   catalogCache.clear();
   detailCache.clear();
+  setSkillsCatalogRevision((v) => v + 1);
 }
 
 function sessionKey(sessionID?: string | null, directory?: string | null): string {

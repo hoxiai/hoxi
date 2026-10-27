@@ -357,7 +357,7 @@ export function inspectPromptContextMentions(
   const seen = new Set<string>();
   const dir = sessionDirectory(sessionID) || workspace.rootDir;
 
-  if (/(?:^|\s)@terminal\b/.test(rawPrompt)) {
+  if (/(?:^|[^a-zA-Z0-9_])@terminal\b/.test(rawPrompt)) {
     seen.add("@terminal");
     const snap = getTerminalOutputSnapshot(dir, sessionID, MAX_TERMINAL_CONTEXT_CHARS);
     chips.push({
@@ -372,7 +372,7 @@ export function inspectPromptContextMentions(
     });
   }
 
-  if (/(?:^|\s)@changes\b/.test(rawPrompt)) {
+  if (/(?:^|[^a-zA-Z0-9_])@changes\b/.test(rawPrompt)) {
     seen.add("@changes");
     void ensureWorktreeDiffsLoaded(sessionID || "__root__");
     const diffs = resolveDiffsForSession(sessionID);
@@ -450,7 +450,7 @@ export async function resolveContextMentionsForSend(
   sessionID: string | null
 ): Promise<string> {
   const tasks: Promise<void>[] = [];
-  if (/(?:^|\s)@changes\b/.test(rawPrompt)) {
+  if (/(?:^|[^a-zA-Z0-9_])@changes\b/.test(rawPrompt)) {
     tasks.push(ensureWorktreeDiffsLoaded(sessionID || "__root__"));
   }
   for (const match of rawPrompt.matchAll(/@session:([a-zA-Z0-9_-]+)/g)) {
@@ -473,7 +473,7 @@ export function expandContextMentions(rawPrompt: string, sessionID: string | nul
   const blocks: string[] = [];
   const dir = sessionDirectory(sessionID) || workspace.rootDir;
 
-  if (/(?:^|\s)@terminal\b/.test(rawPrompt)) {
+  if (/(?:^|[^a-zA-Z0-9_])@terminal\b/.test(rawPrompt)) {
     const snap = getTerminalOutputSnapshot(dir, sessionID, MAX_TERMINAL_CONTEXT_CHARS);
     if (snap.text) {
       const truncAttr = snap.truncated ? ` truncated="true" max_chars="${MAX_TERMINAL_CONTEXT_CHARS}"` : "";
@@ -487,7 +487,7 @@ export function expandContextMentions(rawPrompt: string, sessionID: string | nul
     }
   }
 
-  if (/(?:^|\s)@changes\b/.test(rawPrompt)) {
+  if (/(?:^|[^a-zA-Z0-9_])@changes\b/.test(rawPrompt)) {
     const diffs = resolveDiffsForSession(sessionID);
     if (diffs.length > 0) {
       const formatted = formatUnifiedDiffsContext(diffs, MAX_CHANGES_CONTEXT_CHARS);

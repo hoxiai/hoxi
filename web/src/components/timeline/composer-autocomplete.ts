@@ -8,14 +8,18 @@ import {
   type SkillSelection,
 } from "../../services/api";
 import {
+  defaultWorkspaceDir,
   expandContextMentions,
   inspectPromptContextMentions,
   isSkillHidden,
+  recordSkillDescriptors,
   resolveContextMentionsForSend,
   selectComposerSkill,
   sessionDirectory,
   sessionRuntimeForID,
   setComposerSkillNotice,
+  skillsCatalogRevision,
+  skillsStore,
   workspace,
   type ContextMentionChipInfo,
 } from "../../store/workspace";
@@ -51,7 +55,7 @@ export function buildSlashCommandSuggestions(params: {
   const seenSkills = new Set<string>();
 
   for (const sk of params.skills) {
-    if (checkHidden(sk.key)) continue;
+    if (checkHidden(sk.key) || checkHidden(sk.name)) continue;
     seenSkills.add(sk.name);
     if (
       !q ||
@@ -105,8 +109,8 @@ export interface AutocompleteToken {
 }
 
 /**
- * Resolves the active `/command` or `@mention` token at `cursorOffset` (defaults to end of `val`).
- * Supports triggering `@` mentions in the middle of a sentence as well as at the end.
+ * Resolves the active `/command` (or `/skill`) or `@mention` token at `cursorOffset` (defaults to end of `val`).
+ * Supports triggering `/` and `@` at any position in the prompt (start, after whitespace, after CJK/punctuation, or mid-sentence).
  */
 export function findAutocompleteToken(
   val: string,
@@ -119,24 +123,13 @@ export function findAutocompleteToken(
   const before = val.slice(0, cursor);
   const after = val.slice(cursor);
 
-  // Only trigger when the cursor is at the end of a token (followed by whitespace, punctuation, or EOF)
-  if (after.length > 0 && !/^[\s,.;:!?)\]}]/.test(after)) {
+  // Do not trigger when the cursor is in the middle of an ASCII word or path segment
+  if (after.length > 0 && /^[a-zA-Z0-9_/@.-]/.test(after)) {
     return null;
   }
 
-  // 1. Check slash command at start of input: `/cmd`
-  const cmdMatch = before.match(/^\/([^\s]*)$/);
-  if (cmdMatch) {
-    return {
-      mode: "command",
-      query: cmdMatch[1],
-      start: 0,
-      end: cursor,
-    };
-  }
-
-  // 2. Check @file, @changes, @session, or @worktree mention before cursor
-  const fileMatch = before.match(/(?:^|\s)@([^\s@]*)$/);
+  // 1. Check @file, @changes, @session, or @worktree mention before cursor
+  const fileMatch = before.match(/@([^\s@]*)$/);
   if (fileMatch) {
     const query = fileMatch[1];
     const start = cursor - query.length - 1;
@@ -147,6 +140,26 @@ export function findAutocompleteToken(
         start,
         end: cursor,
       };
+    }
+  }
+
+  // 2. Check /skill or /command trigger anywhere in the input
+  const cmdMatch = before.match(/\/([^\s/@]*)$/);
+  if (cmdMatch) {
+    const query = cmdMatch[1];
+    const start = cursor - query.length - 1;
+    if (start >= 0 && val[start] === "/") {
+      const prefixToken = before.slice(0, start).match(/[^\s]*$/)?.[0] ?? "";
+      const isUrlScheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:$/.test(prefixToken);
+      const isDotPath = /^\.{1,2}$/.test(prefixToken);
+      if (!/[/\\@]/.test(prefixToken) && !isUrlScheme && !isDotPath) {
+        return {
+          mode: "command",
+          query,
+          start,
+          end: cursor,
+        };
+      }
     }
   }
 
@@ -234,7 +247,11 @@ export function createComposerAutocomplete(
     const val = text();
     const cursor = cursorOffset ? cursorOffset() : val.length;
     const sid = sessionID();
-    const dir = (sid ? sessionDirectory(sid) : workspace.rootDir) || workspace.rootDir || undefined;
+    const dir =
+      (sid ? sessionDirectory(sid) : workspace.rootDir) ||
+      workspace.rootDir ||
+      defaultWorkspaceDir() ||
+      undefined;
     const token = findAutocompleteToken(val, cursor);
     setActiveToken(token);
 
@@ -245,13 +262,13 @@ export function createComposerAutocomplete(
       return;
     }
 
-    // 1. Slash command at start: `/cmd`
+    // 1. Slash command or skill: `/cmd`
     if (token.mode === "command") {
       const query = token.query.toLowerCase();
-      const sid = sessionID();
       const runtime = sessionRuntimeForID(sid);
-      const dirKey = `${runtime}\x00${dir || workspace.rootDir || "__root__"}`;
-      const effectiveDir = dir || workspace.rootDir || undefined;
+      const rev = skillsCatalogRevision();
+      const effectiveDir = dir || workspace.rootDir || defaultWorkspaceDir() || undefined;
+      const dirKey = `${runtime}\x00${rev}\x00${effectiveDir || "__root__"}`;
       const reqID = ++requestGen;
       setTriggerMode("command");
       void (async () => {
@@ -261,6 +278,29 @@ export function createComposerAutocomplete(
         const cachedSkills = skillsByDirCache.get(dirKey);
         let skills =
           cachedSkills && Date.now() <= cachedSkills.expiresAt ? cachedSkills.skills : null;
+        if (
+          !skills &&
+          skillsStore.skills.length > 0 &&
+          (!effectiveDir || !skillsStore.directory || skillsStore.directory === effectiveDir)
+        ) {
+          skills = skillsStore.skills;
+        }
+
+        const publish = () => {
+          if (reqID !== requestGen) return;
+          const filtered = buildSlashCommandSuggestions({
+            commands: cmds ?? [],
+            skills: skills ?? [],
+            query,
+            runtime,
+          });
+          setSuggestions(filtered);
+          setSelectedIndex(0);
+        };
+
+        if (cmds || skills) {
+          publish();
+        }
 
         const tasks: Promise<void>[] = [];
         if (!cmds) {
@@ -269,17 +309,20 @@ export function createComposerAutocomplete(
               .listCommands(effectiveDir)
               .then((res) => {
                 cmds = res ?? [];
-                commandByDirCache.set(dirKey, {
-                  commands: cmds,
-                  expiresAt: Date.now() + COMMAND_CACHE_TTL_MS,
-                });
+                if (cmds.length > 0) {
+                  commandByDirCache.set(dirKey, {
+                    commands: cmds,
+                    expiresAt: Date.now() + COMMAND_CACHE_TTL_MS,
+                  });
+                }
+                publish();
               })
               .catch(() => {
-                cmds = [];
+                cmds = cmds ?? [];
               })
           );
         }
-        if (!skills) {
+        if (!cachedSkills || Date.now() > cachedSkills.expiresAt) {
           tasks.push(
             skillsAPI
               .fetchSkillsList({
@@ -289,28 +332,24 @@ export function createComposerAutocomplete(
               })
               .then((res) => {
                 skills = res.supported ? (res.skills ?? []) : [];
-                skillsByDirCache.set(dirKey, {
-                  skills,
-                  expiresAt: Date.now() + COMMAND_CACHE_TTL_MS,
-                });
+                recordSkillDescriptors(skills);
+                if (skills.length > 0) {
+                  skillsByDirCache.set(dirKey, {
+                    skills,
+                    expiresAt: Date.now() + COMMAND_CACHE_TTL_MS,
+                  });
+                }
+                publish();
               })
               .catch(() => {
-                skills = [];
+                skills = skills ?? [];
               })
           );
         }
         if (tasks.length > 0) {
           await Promise.all(tasks);
+          publish();
         }
-        if (reqID !== requestGen) return;
-        const filtered = buildSlashCommandSuggestions({
-          commands: cmds ?? [],
-          skills: skills ?? [],
-          query,
-          runtime,
-        });
-        setSuggestions(filtered);
-        setSelectedIndex(0);
       })();
       return;
     }
@@ -423,7 +462,11 @@ export function createComposerAutocomplete(
       setComposerSkillNotice(sid, null);
       if (token) {
         const before = val.slice(0, token.start);
-        const after = val.slice(token.end).replace(/^\s+/, "");
+        const rawAfter = val.slice(token.end);
+        const after =
+          before.length === 0 || /\s$/.test(before)
+            ? rawAfter.replace(/^\s+/, "")
+            : rawAfter;
         const nextText = `${before}${after}`;
         setText(nextText);
         setTriggerMode(null);
@@ -432,7 +475,7 @@ export function createComposerAutocomplete(
         onApplied?.(before.length);
         return;
       }
-      const stripped = val.replace(/^\/[^\s]*\s*/, "");
+      const stripped = val.replace(/\/[^\s/@]*\s*/, "");
       setText(stripped);
       setTriggerMode(null);
       setActiveToken(null);
@@ -453,10 +496,7 @@ export function createComposerAutocomplete(
       setText(item.insertText);
       onApplied?.(item.insertText.length);
     } else {
-      const next = val.replace(/(?:^|\s)@([^\s@]*)$/, (m) => {
-        const prefix = m.startsWith(" ") ? " " : "";
-        return `${prefix}${item.insertText}`;
-      });
+      const next = val.replace(/@([^\s@]*)$/, () => item.insertText);
       setText(next);
       onApplied?.(next.length);
     }

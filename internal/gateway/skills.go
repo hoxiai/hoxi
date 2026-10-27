@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 	"github.com/hoxiai/hoxi/internal/skills"
 )
 
@@ -29,6 +30,9 @@ func (g *Gateway) allowedWorkspaceRoots() []string {
 				add(f.Path)
 			}
 		}
+	}
+	if def := hoxipaths.DefaultWorkspaceDir(); def != "" {
+		add(def)
 	}
 	return roots
 }

@@ -150,9 +150,11 @@ export function createBrowserController() {
   function send(action: BrowserAction) {
     // A user gesture proves the panel is interactive even when WKWebView's
     // visibility state lags behind showing/restoring the native window.
+    const release = action.action === "pointer" && (action.phase === "cancel" || action.phase === "up");
     if (action.action !== "pointer" || action.phase !== "cancel") setVisible(true);
     const connection = current;
-    if (!connection || !valid(connection) || (stopping() && !(action.action === "pointer" && action.phase === "cancel"))) return;
+    // Releases are never dropped, or the page would stay pressed.
+    if (!connection || !valid(connection) || (stopping() && !release)) return;
     if (requiresBrowserTakeover(action) && !state()?.manual && !connection.manualRequested) {
       connection.manualRequested = true;
       flushBufferedInputs(connection);

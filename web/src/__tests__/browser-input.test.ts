@@ -116,6 +116,31 @@ describe("Browser preview input", () => {
     assertEqual(pointer.handle(down(), { x: 1, y: 1 })[0].clickCount, 1);
   });
 
+  it("keeps a held press when an unchanged identity is re-read and releases it", () => {
+    const pointer = new BrowserPointerTracker(() => 0);
+    assertEqual(pointer.bind("ses:dir:tab1"), true);
+    pointer.handle(down(), { x: 5, y: 5 });
+    // Every state update re-reads the identity; the same value must not reset.
+    assertEqual(pointer.bind("ses:dir:tab1"), false);
+    assertEqual(pointer.pressed, true);
+    assertDeepEqual(pointer.handle(up(), { x: 9, y: 5 }).map(a => [a.phase, a.button, a.x]), [["up", "left", 9]]);
+    pointer.handle(down(), { x: 5, y: 5 });
+    assertEqual(pointer.bind("ses:dir:tab2"), true);
+    assertEqual(pointer.pressed, false);
+    assertEqual(pointer.cancel(), null, "the old tab's press is not released into the new one");
+  });
+
+  it("lets a held press finish while the frame is being replaced", () => {
+    const pointer = new BrowserPointerTracker(() => 0);
+    assertEqual(pointer.accepts("pointerdown", false), false);
+    assertEqual(pointer.accepts("pointermove", false), false, "no hover on a stale frame");
+    assertEqual(pointer.accepts("pointerdown", true), true);
+    pointer.handle(down(), { x: 5, y: 5 });
+    assertEqual(pointer.accepts("pointermove", false), true);
+    assertEqual(pointer.accepts("pointerup", false), true);
+    assertEqual(pointer.accepts("pointerdown", false), false, "no new press on a stale frame");
+  });
+
   it("clamps captured drags outside the preview to the viewport edge", () => {
     const bounds = { left: 100, top: 50, width: 640, height: 400 };
     const viewport = { width: 1280, height: 800 };

@@ -21,16 +21,17 @@ export default function BrowserPreview(props: Props) {
   const pointer = new BrowserPointerTracker();
 
   function cancel() {
+    // A scope or tab change resets the tracker first, so this only releases
+    // a press made on the page still shown, even while its frame is replaced.
     const action = pointer.cancel();
-    if (action && props.isCurrent) props.onAction(action);
+    if (action) props.onAction(action);
     if (captured !== null && image?.hasPointerCapture(captured)) image.releasePointerCapture(captured);
     captured = null;
   }
 
   createEffect(() => {
-    props.identity;
     // The old connection owns remote cleanup; never release into a new scope.
-    pointer.reset();
+    if (!pointer.bind(props.identity)) return;
     if (captured !== null && image?.hasPointerCapture(captured)) image.releasePointerCapture(captured);
     captured = null;
   });
@@ -40,7 +41,7 @@ export default function BrowserPreview(props: Props) {
   }
 
   function handlePointer(event: PointerEvent) {
-    if (!props.isCurrent || !event.isPrimary) return;
+    if (!event.isPrimary || !pointer.accepts(event.type as "pointerdown" | "pointermove" | "pointerup", props.isCurrent)) return;
     const at = point(event.clientX, event.clientY, pointer.pressed);
     if (!at) return;
     if (event.type === "pointerdown") {

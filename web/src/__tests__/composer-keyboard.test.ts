@@ -37,7 +37,7 @@ describe("Composer IME keyboard guard", () => {
 });
 
 describe("Composer cursor-aware autocomplete token", () => {
-  it("detects @mention tokens both at the end and in the middle of a sentence", () => {
+  it("detects @mention tokens at the end, in the middle of a sentence, and adjacent to CJK text", () => {
     const endToken = findAutocompleteToken("check @src/app", 14);
     assertDeepEqual(endToken, {
       mode: "file",
@@ -59,9 +59,18 @@ describe("Composer cursor-aware autocomplete token", () => {
     const applied = applyAutocompleteToken(midSentence, midToken!, "@src/components/Composer.tsx ");
     assertEqual(applied.text, "please review @src/components/Composer.tsx before shipping");
     assertEqual(applied.cursor, 43);
+
+    // Adjacent to CJK text without spaces before or after
+    const cjkMention = "\u8bf7\u68c0\u67e5@changes\u7136\u540e\u63d0\u4ea4";
+    assertDeepEqual(findAutocompleteToken(cjkMention, 11), {
+      mode: "file",
+      query: "changes",
+      start: 3,
+      end: 11,
+    });
   });
 
-  it("detects /command tokens only at the start of input", () => {
+  it("detects /skill and /command tokens at any position while ignoring URLs and multi-segment paths", () => {
     const cmdToken = findAutocompleteToken("/rev extra args", 4);
     assertDeepEqual(cmdToken, {
       mode: "command",
@@ -74,8 +83,27 @@ describe("Composer cursor-aware autocomplete token", () => {
     assertEqual(applied.text, "/review extra args");
     assertEqual(applied.cursor, 8);
 
-    // Mid-sentence slash is not a slash command
+    // Mid-sentence slash after whitespace
+    assertDeepEqual(findAutocompleteToken("please use /tools to inspect", 17), {
+      mode: "command",
+      query: "tools",
+      start: 11,
+      end: 17,
+    });
+
+    // Slash adjacent to CJK text without spaces
+    assertDeepEqual(findAutocompleteToken("\u5e2e\u6211\u7528/skill-authoring\u4f18\u5316", 19), {
+      mode: "command",
+      query: "skill-authoring",
+      start: 3,
+      end: 19,
+    });
+
+    // Multi-segment file paths and URLs are not slash commands
     assertEqual(findAutocompleteToken("check path /usr/local", 15), null);
+    assertEqual(findAutocompleteToken("check path /usr/local", 21), null);
+    assertEqual(findAutocompleteToken("visit https://hoxi.ai", 14), null);
+    assertEqual(findAutocompleteToken("run ./build.sh", 6), null);
   });
 });
 

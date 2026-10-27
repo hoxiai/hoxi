@@ -86,6 +86,7 @@ export function browserPointerModifiers(event: Pick<BrowserPointerEvent, "altKey
 export class BrowserPointerTracker {
   private held = 0;
   private last: { button: BrowserPointerButton; x: number; y: number; time: number; count: number } | null = null;
+  private identity: string | null = null;
 
   constructor(private readonly now: () => number = () => performance.now()) {}
 
@@ -128,6 +129,22 @@ export class BrowserPointerTracker {
   reset(): void {
     this.held = 0;
     this.last = null;
+  }
+
+  // Resets only when the preview really shows another scope or tab, and says
+  // so. Re-reading an unchanged identity (every state update does) must not
+  // drop a held press, or its release would never reach the page.
+  bind(identity: string): boolean {
+    if (identity === this.identity) return false;
+    this.identity = identity;
+    this.reset();
+    return true;
+  }
+
+  // New presses and hover need a current frame. A held press keeps its moves
+  // and release while the frame is replaced (resize, stream reconnect).
+  accepts(type: BrowserPointerEvent["type"], frameCurrent: boolean): boolean {
+    return frameCurrent || (this.pressed && type !== "pointerdown");
   }
 
   private press(button: BrowserPointerButton, point: Point, modifiers: number): BrowserAction | null {
