@@ -23,9 +23,21 @@ export interface BrowserState {
 
 export type BrowserPointerButton = "left" | "middle" | "right";
 
+export interface BrowserContext {
+  canCopy: boolean;
+  editable: boolean;
+  linkURL: string;
+}
+
+export interface BrowserActionResult extends BrowserState {
+  context?: BrowserContext;
+  clipboardText?: string;
+  clipboardError?: "protected" | "tooLarge" | "notEditable";
+}
+
 export interface BrowserAction {
   action: "navigate" | "back" | "forward" | "reload" | "click" | "type" | "key" |
-    "scroll" | "wheel" | "zoom" | "pointer" | "stop_loading" | "tab_new" | "tab_select" | "tab_close" | "control" | "resize" | "close";
+    "scroll" | "wheel" | "zoom" | "pointer" | "stop_loading" | "context" | "copy" | "paste" | "upload_cancel" | "zoom_reset" | "tab_new" | "tab_select" | "tab_close" | "control" | "resize" | "close";
   async?: boolean;
   url?: string;
   selector?: string;
@@ -46,6 +58,7 @@ export interface BrowserAction {
   button?: BrowserPointerButton;
   clickCount?: number;
   modifiers?: number;
+  requestID?: string;
 }
 
 // WebKit reports native trackpad pinches as gesture events; Chromium uses
@@ -90,7 +103,9 @@ export function observeBrowserInputCancellation(cancel: () => void): () => void 
   };
 }
 
-export function browserURL(endpoint: "state" | "action" | "frame" | "stream", scope: BrowserScope): string {
+export type BrowserEndpoint = "state" | "action" | "frame" | "stream" | "workflows" | "upload" | "download-save" | "download-open" | "download-reveal" | "download-cancel" | "diagnostics";
+
+export function browserURL(endpoint: BrowserEndpoint, scope: BrowserScope): string {
   const query = new URLSearchParams({ sessionID: scope.sessionID, directory: scope.directory });
   return `/api/hoxi/browser/${endpoint}?${query}`;
 }
@@ -210,7 +225,7 @@ export const browserAPI = {
   async state(scope: BrowserScope, signal: AbortSignal): Promise<BrowserState> {
     return (await request(scope, "state", signal)).json();
   },
-  async action(scope: BrowserScope, action: BrowserAction, signal: AbortSignal): Promise<BrowserState> {
+  async action(scope: BrowserScope, action: BrowserAction, signal: AbortSignal): Promise<BrowserActionResult> {
     return (await request(scope, "action", signal, action)).json();
   },
   async frame(scope: BrowserScope, signal: AbortSignal): Promise<Blob | null> {

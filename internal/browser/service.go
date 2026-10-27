@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/chromedp/cdproto/emulation"
+	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
 
 	"github.com/hoxiai/hoxi/internal/reclaim"
@@ -38,33 +39,36 @@ func (v viewport) action() *emulation.SetDeviceMetricsOverrideParams {
 }
 
 type scope struct {
-	wheelGesture    wheelGesture
-	gate            chan struct{}
-	ctx             context.Context
-	cancel          context.CancelFunc
-	allocatorCancel context.CancelFunc
-	browser         context.Context
-	tabs            map[string]context.Context
-	navigations     map[string]*navigationTracker
-	tabCancels      map[string]context.CancelFunc
-	browserCancel   context.CancelFunc
-	tabID           string
-	profile         string
-	ledger          *reclaim.Ledger
-	ledgerID        string
-	manual          bool
-	width           int
-	height          int
-	scale           float64
-	viewports       map[string]viewport
-	stream          *screencast
-	closed          bool
-	extension       *extensionBridge
-	pairToken       string
-	pairExpires     time.Time
-	lastUsed        time.Time
-	pointerState    pointerState
-	pointerHold     time.Duration
+	diagnostics      map[string]*diagnosticTracker
+	wheelGesture     wheelGesture
+	gate             chan struct{}
+	ctx              context.Context
+	cancel           context.CancelFunc
+	allocatorCancel  context.CancelFunc
+	browser          context.Context
+	tabs             map[string]context.Context
+	navigations      map[string]*navigationTracker
+	tabCancels       map[string]context.CancelFunc
+	browserCancel    context.CancelFunc
+	tabID            string
+	profile          string
+	ledger           *reclaim.Ledger
+	ledgerID         string
+	manual           bool
+	width            int
+	height           int
+	scale            float64
+	viewports        map[string]viewport
+	stream           *screencast
+	closed           bool
+	extension        *extensionBridge
+	pairToken        string
+	pairExpires      time.Time
+	lastUsed         time.Time
+	pointerState     pointerState
+	pointerHold      time.Duration
+	workflows        *workflowTracker
+	transferLedgerID string
 }
 
 type Service struct {
@@ -83,7 +87,9 @@ type Service struct {
 	idleClosed     map[scopeKey]time.Time
 	reaperDone     chan struct{}
 	// How long a held UI mouse button survives without pointer input.
-	pointerHold time.Duration
+	pointerHold    time.Duration
+	saveFileDialog func(name, title string) (string, error)
+	openFile       func(path string, reveal bool) error
 }
 
 // SetLedger records each Chrome process and profile in ledger so a later
@@ -211,6 +217,9 @@ func (sc *scope) dispose() {
 		sc.ledger.Forget(sc.ledgerID)
 		sc.ledgerID = ""
 	}
+	if sc.workflows != nil && sc.workflows.root != "" && os.RemoveAll(sc.workflows.root) == nil {
+		sc.ledger.Forget(sc.transferLedgerID)
+	}
 }
 
 var sessionPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
@@ -269,6 +278,7 @@ func (s *Service) acquire(ctx context.Context, key scopeKey, create bool) (*scop
 		}
 		life, cancel := context.WithCancel(s.ctx)
 		sc = &scope{gate: make(chan struct{}, 1), ctx: life, cancel: cancel, tabs: make(map[string]context.Context), tabCancels: make(map[string]context.CancelFunc), width: 1280, height: 800, scale: 1, viewports: make(map[string]viewport), ledger: s.ledger, lastUsed: s.now(), pointerHold: s.pointerHold}
+		sc.workflows = &workflowTracker{uploads: make(map[string]UploadRequest), dialogs: make(map[string]PageDialog), tabs: make(map[string]context.Context)}
 		s.scopes[key] = sc
 		delete(s.idleClosed, key)
 	}
@@ -343,7 +353,9 @@ func (sc *scope) start(ctx context.Context) error {
 	browser, browserCancel := chromedp.NewContext(alloc)
 	sc.browserCancel = browserCancel
 	done := make(chan error, 1)
-	go func() { done <- chromedp.Run(browser, sc.viewport().action()) }()
+	go func() {
+		done <- chromedp.Run(browser, sc.viewport().action(), page.SetInterceptFileChooserDialog(true))
+	}()
 	select {
 	case err = <-done:
 	case <-ctx.Done():
@@ -358,6 +370,9 @@ func (sc *scope) start(ctx context.Context) error {
 		sc.ledger.AttachProcess(sc.ledgerID, proc.Pid, "--user-data-dir="+profile)
 	}
 	sc.browser = browser
+	if err := sc.setupWorkflows(browser); err != nil {
+		return err
+	}
 	sc.tabID = string(chromedp.FromContext(browser).Target.TargetID)
 	sc.tabs[sc.tabID] = browser
 	sc.trackNavigation(browser, sc.tabID)

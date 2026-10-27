@@ -50,3 +50,26 @@ export function openExternalBrowserURL(url: string): void {
   }
   window.open(url, "_blank", "noopener,noreferrer");
 }
+
+// Called only by explicit copy/paste gestures. Prefer Wails' native clipboard:
+// WebKit's browser clipboard permission can expire while a page RPC is pending.
+export async function writeDesktopClipboard(text: string): Promise<void> {
+  const runtime = (typeof window === "undefined" ? undefined : window as unknown as {
+    runtime?: { ClipboardSetText?: (value: string) => Promise<boolean> };
+  })?.runtime;
+  if (typeof runtime?.ClipboardSetText === "function") {
+    if (!await runtime.ClipboardSetText(text)) throw new Error("Clipboard write failed");
+    return;
+  }
+  if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) throw new Error("Clipboard unavailable");
+  await navigator.clipboard.writeText(text);
+}
+
+export async function readDesktopClipboard(): Promise<string> {
+  const runtime = (typeof window === "undefined" ? undefined : window as unknown as {
+    runtime?: { ClipboardGetText?: () => Promise<string> };
+  })?.runtime;
+  if (typeof runtime?.ClipboardGetText === "function") return runtime.ClipboardGetText();
+  if (typeof navigator === "undefined" || !navigator.clipboard?.readText) throw new Error("Clipboard unavailable");
+  return navigator.clipboard.readText();
+}

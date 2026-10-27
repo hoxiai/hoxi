@@ -17,7 +17,10 @@ test("worker confines commands to the selected tab and detaches without closing 
         assert.equal(target.tabId, 42);
         commands.push({ method, params });
         if (method === "Page.navigate" && params.url === "https://example.com/slow") return new Promise(resolve => { finishSlow = resolve; });
-        if (method === "Runtime.evaluate") return { result: { value: { url: "https://example.com", title: "Signed in" } } };
+        if (method === "Runtime.evaluate") {
+          if (params.expression.includes("function browserClipboard")) return { result: { value: { clipboardText: "selected text" } } };
+          return { result: { value: { url: "https://example.com", title: "Signed in" } } };
+        }
         return {};
       },
     },
@@ -63,13 +66,18 @@ test("worker confines commands to the selected tab and detaches without closing 
     assert.match((await action({ action: "tab_select", tabID: "99" })).error, /only the selected tab/);
     assert.match((await action({ action: "tab_close", tabID: "42" })).error, /only the selected tab/);
     assert.match((await action({ action: "navigate", url: "file:///private.txt" })).error, /HTTP/);
-    assert.equal(commands.filter(c => !["Runtime.evaluate", "Page.enable", "Network.enable", "Page.getFrameTree"].includes(c.method)).length, 0);
+    assert.equal(commands.filter(c => !["Runtime.evaluate", "Page.enable", "Network.enable", "Runtime.enable", "Page.getFrameTree"].includes(c.method)).length, 0);
     await action({ action: "navigate", url: "https://example.com/account" });
     await action({ action: "type", text: "hello" });
     await action({ action: "key", key: "Control++" });
     assert.ok(commands.some(c => c.method === "Input.insertText" && c.params.text === "hello"));
     assert.ok(commands.some(c => c.method === "Input.dispatchKeyEvent" && c.params.key === "+"));
-    assert.deepEqual(hello.features, ["pointer", "zoom", "navigation"]);
+    assert.deepEqual(hello.features, ["pointer", "zoom", "navigation", "clipboard", "developer"]);
+    assert.equal((await action({ action: "copy" })).result.clipboardText, "selected text");
+    assert.match((await action({ action: "paste", x: -1, y: 2, text: "no" })).error, /Invalid clipboard/);
+    assert.match((await action({ action: "paste", x: 1, y: 2, text: "x".repeat(65537) })).error, /Invalid clipboard/);
+    await action({ action: "paste", x: 1, y: 2, text: "clipboard paste" });
+    assert.ok(commands.some(c => c.method === "Input.insertText" && c.params.text === "clipboard paste"));
     await action({ action: "zoom", x: 20, y: 30, scaleFactor: 1.5 });
     assert.deepEqual(commands.filter(c => c.method === "Input.synthesizePinchGesture").at(-1).params,
       { x: 20, y: 30, scaleFactor: 1.5, gestureSourceType: "mouse" });

@@ -30,6 +30,8 @@ type extensionBridge struct {
 	pointer    bool
 	zoom       bool
 	navigation bool
+	clipboard  bool
+	developer  bool
 }
 
 type extensionReply struct {
@@ -124,7 +126,8 @@ func (s *Service) ServeExtension(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	b := &extensionBridge{conn: conn, done: make(chan struct{}), responses: make(chan extensionReply, 1),
-		pointer: slices.Contains(hello.Features, "pointer"), zoom: slices.Contains(hello.Features, "zoom"), navigation: slices.Contains(hello.Features, "navigation")}
+		pointer: slices.Contains(hello.Features, "pointer"), zoom: slices.Contains(hello.Features, "zoom"), navigation: slices.Contains(hello.Features, "navigation"),
+		clipboard: slices.Contains(hello.Features, "clipboard"), developer: slices.Contains(hello.Features, "developer")}
 	owner.extension, owner.pairToken = b, ""
 	_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 	if conn.WriteJSON(map[string]bool{"connected": true}) != nil {
@@ -193,6 +196,18 @@ func (b *extensionBridge) call(ctx context.Context, action any) (map[string]any,
 }
 
 func (s *Service) serveExtensionAction(w http.ResponseWriter, ctx context.Context, sc *scope, path string, a Action) {
+	if a.Action == "upload_cancel" {
+		fail(w, 409, errors.New("use the native Chrome file dialog"))
+		return
+	}
+	if a.Action == "zoom_reset" && !sc.extension.developer {
+		fail(w, 409, errors.New("reload Hoxi Browser Link to reset page zoom"))
+		return
+	}
+	if (a.Action == "context" || a.Action == "copy" || a.Action == "paste") && !sc.extension.clipboard {
+		fail(w, 409, errors.New("reload Hoxi Browser Link in chrome://extensions to use the clipboard and context menu"))
+		return
+	}
 	if (a.Async || a.Action == "stop_loading") && !sc.extension.navigation {
 		fail(w, 409, errors.New("reload Hoxi Browser Link in chrome://extensions to use loading controls"))
 		return

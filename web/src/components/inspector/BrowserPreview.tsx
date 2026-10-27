@@ -1,7 +1,7 @@
 import { createEffect, onCleanup, onMount } from "solid-js";
 import {
   BrowserPointerTracker, browserPoint, observeBrowserZoom, observeBrowserInputCancellation,
-  type BrowserAction,
+  type BrowserAction, type BrowserMenuPoint,
 } from "../../store/workspace";
 import { t } from "../../i18n";
 
@@ -13,11 +13,14 @@ interface Props {
   isCurrent: boolean;
   onAction: (action: BrowserAction) => void;
   onKeyboardFocus: () => void;
+  onContextMenu: (point: BrowserMenuPoint) => void;
+  scale?: "fit" | "0.5" | "1" | "1.5";
 }
 
 export default function BrowserPreview(props: Props) {
   let image!: HTMLImageElement;
   let captured: number | null = null;
+  let hostContextPress = false;
   const pointer = new BrowserPointerTracker();
 
   function cancel() {
@@ -27,11 +30,13 @@ export default function BrowserPreview(props: Props) {
     if (action) props.onAction(action);
     if (captured !== null && image?.hasPointerCapture(captured)) image.releasePointerCapture(captured);
     captured = null;
+    hostContextPress = false;
   }
 
   createEffect(() => {
     // The old connection owns remote cleanup; never release into a new scope.
     if (!pointer.bind(props.identity)) return;
+    hostContextPress = false;
     if (captured !== null && image?.hasPointerCapture(captured)) image.releasePointerCapture(captured);
     captured = null;
   });
@@ -41,6 +46,16 @@ export default function BrowserPreview(props: Props) {
   }
 
   function handlePointer(event: PointerEvent) {
+    // Keep remote selection/focus intact while opening the host menu. Shift
+    // preserves access to the page's own right-button interactions.
+    if (event.type === "pointerdown" && !pointer.pressed && !event.shiftKey && (event.button === 2 || (event.button === 0 && event.ctrlKey))) {
+      hostContextPress = true;
+      event.preventDefault(); return;
+    }
+    if (hostContextPress && !pointer.pressed) {
+      if (event.type === "pointerup") hostContextPress = false;
+      event.preventDefault(); return;
+    }
     if (!event.isPrimary || !pointer.accepts(event.type as "pointerdown" | "pointermove" | "pointerup", props.isCurrent)) return;
     const at = point(event.clientX, event.clientY, pointer.pressed);
     if (!at) return;
@@ -74,11 +89,17 @@ export default function BrowserPreview(props: Props) {
   });
 
   return <img ref={image} src={props.image} alt={t("inspector.browser.viewport")} title={t("inspector.browser.gestureHint")}
-    draggable={false} class="block w-full h-auto rounded-sm select-none touch-none"
+    draggable={false} class="block h-auto rounded-sm select-none touch-none max-w-none"
+    style={{ width: !props.scale || props.scale === "fit" ? "100%" : `${props.width * Number(props.scale)}px` }}
     onPointerDown={handlePointer} onPointerMove={handlePointer} onPointerUp={handlePointer}
     onPointerCancel={cancel} onLostPointerCapture={cancel}
     onAuxClick={event => event.preventDefault()}
-    onContextMenu={event => event.preventDefault()}
+    onContextMenu={event => {
+      event.preventDefault();
+      if (event.shiftKey || !props.isCurrent) return;
+      const at = point(event.clientX, event.clientY);
+      if (at) { cancel(); props.onContextMenu({ ...at, clientX: event.clientX, clientY: event.clientY }); }
+    }}
     onWheel={event => {
       event.preventDefault();
       if (event.ctrlKey || !props.isCurrent) return;

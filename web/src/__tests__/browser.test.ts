@@ -18,7 +18,7 @@ describe("Browser inspector", () => {
   });
 
   it("takes over on deliberate page input without taking control on hover or release", () => {
-    for (const action of ["type", "key", "wheel", "zoom", "click"] as const) assertEqual(requiresBrowserTakeover({ action }), true);
+    for (const action of ["type", "key", "wheel", "zoom", "click", "context", "copy", "paste"] as const) assertEqual(requiresBrowserTakeover({ action }), true);
     assertEqual(requiresBrowserTakeover({ action: "pointer", phase: "down" }), true);
     for (const phase of ["move", "up", "cancel"] as const) assertEqual(requiresBrowserTakeover({ action: "pointer", phase }), false);
     assertEqual(requiresBrowserTakeover({ action: "control", manual: false }), false);

@@ -8,6 +8,8 @@ import {
   observeBrowserVisibility,
   decodeBrowserFrame,
   type BrowserAction,
+  type BrowserActionResult,
+  type BrowserContext,
   type BrowserFrame,
   type BrowserScope,
   type BrowserState,
@@ -21,6 +23,8 @@ export {
   observeBrowserVisibility,
   decodeBrowserFrame,
   type BrowserAction,
+  type BrowserActionResult,
+  type BrowserContext,
   type BrowserFrame,
   type BrowserScope,
   type BrowserState,
@@ -46,7 +50,7 @@ export function browserLoadPhase(state: BrowserState | null, busy: boolean, stre
 }
 
 export function requiresBrowserTakeover(action: BrowserAction): boolean {
-  return ["click", "type", "key", "wheel", "zoom"].includes(action.action) || (action.action === "pointer" && action.phase === "down");
+  return ["click", "type", "key", "wheel", "zoom", "zoom_reset", "context", "copy", "paste", "upload_cancel"].includes(action.action) || (action.action === "pointer" && action.phase === "down");
 }
 
 // Address-bar input is more permissive than the browser API's explicit URLs.
@@ -87,7 +91,7 @@ export function executeBrowserAction(
   scope: BrowserScope,
   action: BrowserAction,
   signal: AbortSignal
-): Promise<BrowserState> {
+): Promise<BrowserActionResult> {
   return browserAPI.action(scope, action, signal);
 }
 

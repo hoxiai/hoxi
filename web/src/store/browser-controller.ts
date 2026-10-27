@@ -3,17 +3,22 @@ import { BrowserInputBuffer } from "./browser-input";
 import { workspace, setWorkspace } from "./workspace-state";
 import { sessionDirectory } from "./session-query";
 import { t } from "../i18n";
+import { createBrowserClipboard } from "./browser-clipboard";
+import { createBrowserWorkflows } from "./browser-workflows";
+import { createBrowserDeveloper, browserViewportPresets } from "./browser-developer";
+import { writeDesktopClipboard } from "../services/desktop-events";
 import {
   connectBrowserStream, createChromePairing, executeBrowserAction, fetchBrowserState,
   normalizeBrowserAddress, releaseBrowserPointer, observeBrowserVisibility, decodeBrowserFrame,
   browserLoadPhase, requiresBrowserTakeover,
-  type BrowserAction, type BrowserScope, type BrowserState, type BrowserStreamPhase,
+  type BrowserAction, type BrowserActionResult, type BrowserScope, type BrowserState, type BrowserStreamPhase,
 } from "./browser";
 
 interface Connection {
   scope: BrowserScope;
   controller: AbortController;
   tabEpoch: number;
+  pageEpoch: number;
   pending: number;
   navPending: number;
   streamDirty: boolean;
@@ -44,8 +49,10 @@ export function createBrowserController() {
   const [now, setNow] = createSignal(Date.now());
   const [requestedURL, setRequestedURL] = createSignal("");
   const [pairCode, setPairCode] = createSignal("");
+  const [pairExpires, setPairExpires] = createSignal(0);
+  const [pairCopied, setPairCopied] = createSignal(false);
   const [visible, setVisible] = createSignal(true);
-  const [viewport, setViewport] = createSignal<{ width: number; height: number; deviceScaleFactor: number } | null>(null);
+  const [layoutViewport, setViewport] = createSignal<{ width: number; height: number; deviceScaleFactor: number } | null>(null);
   const [streamGeneration, setStreamGeneration] = createSignal(0);
   let frameSize = { width: 0, height: 0 };
   const scope = createMemo(() => {
@@ -85,11 +92,13 @@ export function createBrowserController() {
     if (!next.tabs.length) replaceFrame(null);
   }
 
-  function enqueueAction(connection: Connection, action: BrowserAction) {
+  function enqueueAction(connection: Connection, action: BrowserAction, guard = () => true): Promise<BrowserActionResult | undefined> | undefined {
     if (!valid(connection)) return;
     if (action.action !== "resize") connection.revision++;
     const isNav = NAV_ACTIONS.has(action.action);
     if (TAB_EPOCH_ACTIONS.has(action.action)) connection.tabEpoch++;
+    if (["navigate", "back", "forward", "reload", "tab_new", "tab_select", "tab_close", "close"].includes(action.action) ||
+      (action.action === "control" && action.manual === false)) connection.pageEpoch++;
     connection.pending++;
     if (TAB_EPOCH_ACTIONS.has(action.action)) {
       connection.streamDirty = true;
@@ -102,14 +111,17 @@ export function createBrowserController() {
     // The error banner itself changes the viewport height; the resulting
     // layout-driven resize must not dismiss an error the user has not seen.
     if (action.action !== "resize") setError("");
-    connection.queue = connection.queue.then(async () => {
-      if (!valid(connection)) return;
+    const result = connection.queue.then(async () => {
       try {
+        if (!valid(connection) || !guard()) return;
         if (requiresBrowserTakeover(action) && !state()?.manual) throw new Error(t("inspector.browser.takeoverFailed"));
         const next = await executeBrowserAction(connection.scope, action, connection.controller.signal);
         if (valid(connection)) {
-          applyState(next);
+          // Selection text is a transient reply, never part of reactive state.
+          const { clipboardText: _text, clipboardError: _error, context: _context, ...page } = next;
+          applyState(page);
           if (action.action === "close") { replaceFrame(null); setPairCode(""); }
+          if (guard()) return next;
         }
       } catch (err) {
         if (valid(connection)) setError(String(err));
@@ -129,7 +141,42 @@ export function createBrowserController() {
         }
       }
     });
+    connection.queue = result.then(() => {});
+    return result;
   }
+
+  function pageIdentity() {
+    // Read reactive sources even before the first connection is attached.
+    const active = scope(), page = state();
+    const connection = current;
+    if (!active || !connection || !valid(connection)) return "";
+    return JSON.stringify([connection.scope, connection.pageEpoch, connection.tabEpoch, page?.tabID, page?.url, page?.navigation?.startedAt]);
+  }
+
+  async function requestPageAction(action: BrowserAction) {
+    const connection = current;
+    if (!connection || !isFrameCurrent()) return;
+    const identity = pageIdentity();
+    const guard = () => pageIdentity() === identity;
+    flushBufferedInputs(connection);
+    if (!state()?.manual && !connection.manualRequested) {
+      connection.manualRequested = true;
+      enqueueAction(connection, { action: "control", manual: true }, guard);
+    }
+    return enqueueAction(connection, action, guard);
+  }
+
+  const clipboard = createBrowserClipboard({ identity: pageIdentity, isCurrent: isFrameCurrent,
+    request: requestPageAction, send, pageURL: () => state()?.url || "", onError: setError });
+  const workflows = createBrowserWorkflows({ scope, tab: () => state()?.tabID,
+    enabled: () => workspace.inspectorOpen && workspace.inspectorTab === "browser" && visible() && !chromeLinked(),
+    request: requestPageAction, send, error: setError });
+  const developer = createBrowserDeveloper({ scope, tab: () => state()?.tabID, frame,
+    enabled: () => workspace.inspectorOpen && workspace.inspectorTab === "browser" && visible(), error: setError });
+  const viewport = createMemo(() => {
+    const mode = developer.viewportMode();
+    return mode === "fit" ? layoutViewport() : browserViewportPresets[mode];
+  });
 
   function flushBufferedInputs(connection: Connection) {
     if (!valid(connection)) return;
@@ -200,13 +247,27 @@ export function createBrowserController() {
     setError("");
     try {
       const result = await createChromePairing(connection.scope, connection.controller.signal);
-      if (valid(connection)) setPairCode(result.code);
+      if (valid(connection)) { setPairCode(result.code); setPairExpires(Date.now() + result.expiresIn * 1000); setPairCopied(false); }
     } catch (err) {
       if (valid(connection)) setError(String(err));
     } finally {
       connection.pending--;
       if (valid(connection)) setBusy(false);
     }
+  }
+
+  async function copyChromeCode() {
+    const connection = current;
+    if (!connection || !valid(connection) || Date.now() >= pairExpires()) return;
+    try { await writeDesktopClipboard(pairCode()); if (valid(connection)) setPairCopied(true); }
+    catch { if (valid(connection)) setError(t("inspector.browser.clipboardUnavailable")); }
+  }
+
+  async function connectExistingChrome() {
+    const connection = current;
+    if (!connection || !valid(connection) || busy()) return;
+    if (running()) await enqueueAction(connection, { action: "close" });
+    if (valid(connection)) await pairChrome();
   }
 
   createEffect(() => {
@@ -221,13 +282,14 @@ export function createBrowserController() {
     setStopping(false);
     setRequestedURL("");
     setStreamPhase("connecting");
-    setPairCode("");
+    setPairCode(""); setPairCopied(false); setPairExpires(0);
     editingURL = false;
     if (!active || !enabled) return;
     const connection: Connection = {
       scope: { ...active },
       controller: new AbortController(),
       tabEpoch: 0,
+      pageEpoch: 0,
       pending: 0,
       navPending: 0,
       streamDirty: false,
@@ -363,8 +425,10 @@ export function createBrowserController() {
   }
 
   return { scope, state, frame, url, setURL, error, setError, pollError, busy, pairCode,
-    running, chromeLinked, pairing, send, pairChrome, typeText, navigateAddress, isFrameCurrent,
+    running, chromeLinked, pairing, send, pairChrome, copyChromeCode, pairCopied,
+    pairSeconds: () => Math.max(0, Math.ceil((pairExpires() - now()) / 1000)), connectExistingChrome,
+    typeText, navigateAddress, isFrameCurrent,
     frameSize: () => frameSize, setViewport, setEditingURL: (value: boolean) => { editingURL = value; },
-    phase, streamPhase, loading, stopping, canStop, stopLoading, retry,
+    phase, streamPhase, loading, stopping, canStop, stopLoading, retry, clipboard, workflows, developer,
   };
 }

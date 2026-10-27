@@ -70,6 +70,9 @@ with the following action-specific fields:
 | `pointer` | UI only; `phase`: down/move/up/cancel; down/up include `button` (left/middle/right) and `clickCount` (1..3); optional CDP `modifiers` (0..15); held buttons are tracked and released by Hoxi |
 | `wheel` | UI only; viewport `x`,`y` and finite bounded `deltaX`,`deltaY`; horizontal bursts navigate once unless the page owns horizontal scrolling; vertical input scrolls |
 | `zoom` | UI only; viewport `x`,`y` and relative `scaleFactor` (0.25..4); sends a native pinch to the remote page; Chrome Link requires the `zoom` capability |
+| `context` | UI only; viewport `x`,`y`; adds `context:{canCopy,editable,linkURL}` without selection text; only HTTP(S) links without credentials are returned |
+| `copy` | UI only; adds `clipboardText` for the focused input/textarea or document selection; passwords/masked fields return `clipboardError:"protected"`; oversized selections return `clipboardError:"tooLarge"` |
+| `paste` | UI only; viewport `x`,`y` and plain `text` (at most 65,536 UTF-16 code units); focuses the editable field at that point, preserves an existing selection and inserts text; readonly/disabled fields and iframe hit targets return `clipboardError:"notEditable"` |
 | `snapshot` | Adds `snapshot:{text,controls:[{selector,tag,text}]}` |
 | `screenshot` | Adds `image`: base64 JPEG |
 | `evaluate` | Agent only; `text` is a JS expression; adds `result` as a bounded JSON-serialized string |
@@ -79,6 +82,14 @@ with the following action-specific fields:
 | `pair` | UI only; returns `{code,expiresIn:120}` for a one-use Chrome Link connection, rejects replacing an existing browser |
 | `resize` | UI only; required integer `width` and `height`, each 1..4096; optional float `deviceScaleFactor` in [1,2], default 1; effective pixel area at most 8,388,608; saves scope size without launching Chrome and resizes the selected existing tab |
 | `close` | Stops Chrome, removes profile and scope; idempotent |
+
+Clipboard/context actions never reserve a scope or launch Chrome. They use a fixed
+page-side script, not user-supplied JavaScript. The service never accesses the OS
+clipboard. The desktop UI reads/writes it only after explicit copy/paste gestures,
+serializes page actions behind pending input, and discards replies after scope, tab,
+navigation or viewport changes. Selection text is not stored in reactive browser
+state. Chrome Link advertises `clipboard`; older extensions return an explicit
+reload hint. These actions are rejected for agents and remain outside the tunnel.
 
 `width`, `height`, and `deviceScaleFactor` are only valid on `resize`. The default
 viewport is 1280x800 at scale 1. The area bound is

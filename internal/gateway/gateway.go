@@ -248,6 +248,10 @@ func (g *Gateway) SetBrowserAgentToken(token string) { g.browser.SetAgentToken(t
 // Hoxi start can reclaim them after this process dies without CloseBrowser.
 func (g *Gateway) SetBrowserLedger(ledger *reclaim.Ledger) { g.browser.SetLedger(ledger) }
 
+func (g *Gateway) SetBrowserFileUI(save func(name, title string) (string, error), open func(path string, reveal bool) error) {
+	g.browser.SetFileUI(save, open)
+}
+
 // SetEngineInstaller lets the desktop host resolve, verify and restart the
 // supervised OpenCode daemon when the user asks to install or retry. The
 // installer reports the binary path it actually resolved; restart forces a

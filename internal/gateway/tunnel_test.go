@@ -43,6 +43,9 @@ func TestTunnelRouteAllowlist(t *testing.T) {
 	}
 	denied := []route{
 		{get, "/api/hoxi/browser/extension"}, {post, "/api/hoxi/browser/action"}, {get, "/api/hoxi/browser/stream"},
+		{get, "/api/hoxi/browser/workflows"}, {post, "/api/hoxi/browser/workflows"}, {get, "/api/hoxi/browser/diagnostics"}, {post, "/api/hoxi/browser/diagnostics"},
+		{post, "/api/hoxi/browser/upload"}, {post, "/api/hoxi/browser/download-save"}, {post, "/api/hoxi/browser/download-open"},
+		{post, "/api/hoxi/browser/download-reveal"}, {post, "/api/hoxi/browser/download-cancel"},
 		{get, "/"}, {get, "/api/hoxi/tunnel/status"}, {post, "/api/hoxi/tunnel/pair"}, {post, "/api/hoxi/tunnel/disable"},
 		{post, "/api/hoxi/tunnel/pair/request"}, {post, "/api/hoxi/tunnel/pair/cancel"}, {get, "/api/hoxi/tunnel/pair/request/req_1"},
 		// The LAN pairing token must never be readable from a paired GoPanel.

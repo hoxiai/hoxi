@@ -1,3 +1,5 @@
+import { browserClipboard } from "./clipboard.js";
+import { observeDiagnostics } from "./diagnostics.js";
 import { allowedURL, decodeConnectionCode, snapshot } from "./protocol.js";
 import { beginNavigation, finishNavigationCommand, stopNavigation, observeNavigation, cachedNavigationState } from "./navigation.js";
 
@@ -95,6 +97,10 @@ async function execute(link, a) {
   }
   switch (a.action) {
     case "state": break;
+    case "diagnostics":
+      if (a.clear) link.diagnostics = [];
+      return { diagnostics: link.diagnostics || [] };
+    case "zoom_reset": await send(link, "Emulation.setPageScaleFactor", { pageScaleFactor: 1 }); break;
     case "navigate": case "back": case "forward": case "reload": return navigate(link, a);
     case "stop_loading":
       stopNavigation(link);
@@ -108,6 +114,13 @@ async function execute(link, a) {
       await send(link, "Input.dispatchMouseEvent", { type: "mousePressed", ...point, button: "left", clickCount: 1 });
       await send(link, "Input.dispatchMouseEvent", { type: "mouseReleased", ...point, button: "left", clickCount: 1 });
       break;
+    }
+    case "context": case "copy": case "paste": {
+      if (![a.x ?? 0, a.y ?? 0].every(value => Number.isFinite(value) && value >= 0 && value <= 16384) ||
+        (a.action === "paste" && (typeof a.text !== "string" || a.text.length > 65536))) throw new Error("Invalid clipboard input");
+      const result = await evaluate(link, `(${browserClipboard.toString()})(${JSON.stringify(a.action)},${a.x ?? 0},${a.y ?? 0})`);
+      if (a.action === "paste" && !result.clipboardError) await send(link, "Input.insertText", { text: a.text });
+      return { ...await state(link), ...result };
     }
     case "type":
       if (a.selector) await evaluate(link, `(()=>{const e=document.querySelector(${JSON.stringify(a.selector)});if(!e)throw new Error('Element not found');e.focus()})()`);
@@ -148,6 +161,7 @@ async function connect(code, tabID) {
     await chrome.debugger.attach({ tabId: tabID }, "1.3");
     await send(link, "Page.enable");
     await send(link, "Network.enable");
+    await send(link, "Runtime.enable");
     const frame = await send(link, "Page.getFrameTree");
     link.mainFrame = frame?.frameTree?.frame?.id;
     link.lastState = { url: tab.url, title: tab.title || "", tabID: String(tabID), tabs: [{ id: String(tabID), url: tab.url, title: tab.title || "" }] };
@@ -159,7 +173,7 @@ async function connect(code, tabID) {
       let connected = false;
       let queue = Promise.resolve();
       // Features tell Hoxi which actions this extension version understands.
-      socket.onopen = () => socket.send(JSON.stringify({ token, features: ["pointer", "zoom", "navigation"] }));
+      socket.onopen = () => socket.send(JSON.stringify({ token, features: ["pointer", "zoom", "navigation", "clipboard", "developer"] }));
       socket.onerror = () => reject(new Error("Cannot reach local Hoxi"));
       socket.onclose = () => { clearTimeout(timer); if (!connected) reject(new Error("Connection code expired or rejected")); void disconnect(link); };
       socket.onmessage = event => {
@@ -189,5 +203,5 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
 });
 chrome.debugger.onDetach.addListener(source => { if (current?.tabID === source.tabId) void disconnect(current); });
 chrome.debugger.onEvent?.addListener((source, method, params) => {
-  if (current?.tabID === source.tabId) observeNavigation(current, method, params);
+  if (current?.tabID === source.tabId) { observeNavigation(current, method, params); observeDiagnostics(current, method, params); }
 });

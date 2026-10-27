@@ -4,6 +4,9 @@ import { createBrowserController, openExternalURL, normalizeBrowserAddress } fro
 import { t } from "../../i18n";
 import BrowserPreview from "./BrowserPreview";
 import BrowserStatusBar, { browserPhaseLabel } from "./BrowserStatusBar";
+import BrowserContextMenu from "./BrowserContextMenu";
+import BrowserWorkflows from "./BrowserWorkflows";
+import BrowserDeveloper from "./BrowserDeveloper";
 
 export default function BrowserInspector() {
   const browser = createBrowserController();
@@ -59,6 +62,9 @@ export default function BrowserInspector() {
     // Remote-page keys belong to Chrome, not workspace shortcuts.
     event.stopPropagation();
     if (event.isComposing || composing || event.key === "Process" || event.keyCode === 229) return;
+    if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "c") {
+      event.preventDefault(); void browser.clipboard.copySelection(); return;
+    }
     // Let the textarea receive text and native paste/IME events.
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "v") return;
     if (["Control", "Meta", "Alt", "Shift", "Dead"].includes(event.key)) return;
@@ -69,7 +75,13 @@ export default function BrowserInspector() {
   }
 
   return (
-    <div class="h-full flex flex-col min-w-0 text-[var(--text-primary)] text-xs">
+    <div class="relative h-full flex flex-col min-w-0 text-[var(--text-primary)] text-xs">
+      <Show when={browser.clipboard.menu()}>{menu => <BrowserContextMenu menu={menu()}
+        onClose={browser.clipboard.closeMenu} onCopy={() => void browser.clipboard.copySelection()}
+        onCopyLink={() => void browser.clipboard.copyLink()} onPaste={() => void browser.clipboard.paste()}
+        onOpen={browser.clipboard.openExternal} onPageMenu={browser.clipboard.showPageMenu}
+        onKeyboardFocus={() => input?.focus({ preventScroll: true })} />}</Show>
+      <Show when={browser.clipboard.notice()}><p role="status" class="absolute bottom-8 left-1/2 -translate-x-1/2 z-20 rounded bg-[var(--bg-panel)] border border-[var(--border-subtle)] px-3 py-1.5 shadow-lg pointer-events-none">{browser.clipboard.notice()}</p></Show>
       <Show when={scope()} fallback={<p class="p-4 text-[var(--text-muted)]">{t("inspector.browser.noSession")}</p>}>
         <div class="flex items-center gap-1 px-2 py-1 border-b border-[var(--border-subtle)]">
           <button class={iconBtn} disabled={!running() || busy()} title={t("inspector.browser.back")} aria-label={t("inspector.browser.back")} onClick={() => send({ action: "back" })}><ArrowLeft size={13} /></button>
@@ -142,6 +154,10 @@ export default function BrowserInspector() {
           <BrowserStatusBar phase={browser.phase()} stream={browser.streamPhase()} navigation={state()?.navigation}
             manual={state()?.manual ?? false} disabled={busy() || browser.stopping()} onRetry={browser.retry} />
         </Show>
+        <Show when={!chromeLinked()}><p class="px-2 py-1 text-[11px] text-[var(--text-muted)]">{t("inspector.browser.temporaryLoginHint")}</p></Show>
+        <Show when={running() && !chromeLinked()}>
+          <button class="mx-2 mb-1 rounded border border-[var(--border-subtle)] px-2 py-1 text-[11px] hover:bg-[var(--bg-hover)] disabled:opacity-40 cursor-pointer" disabled={busy()} onClick={() => void browser.connectExistingChrome()}>{t("inspector.browser.switchToChrome")}</button>
+        </Show>
         <Show when={!running() && !chromeLinked()}>
           <button class="m-2 rounded border border-[var(--border-subtle)] px-3 py-2 hover:bg-[var(--bg-hover)] disabled:opacity-40 cursor-pointer" disabled={busy()} onClick={() => void pairChrome()}>{t(pairing() ? "inspector.browser.regenerateChromeCode" : "inspector.browser.connectChrome")}</button>
         </Show>
@@ -150,9 +166,13 @@ export default function BrowserInspector() {
             <p>{t("inspector.browser.chromePairHint")}</p>
             <p class="text-[var(--text-muted)]">{t("inspector.browser.chromeInstallHint")}</p>
             <input class="w-full rounded border border-[var(--border-subtle)] bg-transparent p-2 font-mono selectable-text" readOnly value={pairCode()} aria-label={t("inspector.browser.chromeCode")} onFocus={event => event.currentTarget.select()} />
+            <div class="flex items-center justify-between gap-2">
+              <button class="rounded border border-[var(--border-subtle)] px-2 py-1 hover:bg-[var(--bg-hover)] disabled:opacity-40 cursor-pointer" disabled={browser.pairSeconds() === 0} onClick={() => void browser.copyChromeCode()}>{t(browser.pairCopied() ? "inspector.browser.copied" : "inspector.browser.copyChromeCode")}</button>
+              <span role="status">{browser.pairSeconds() ? t("inspector.browser.chromeCodeExpires", { seconds: browser.pairSeconds() }) : t("inspector.browser.chromeCodeExpired")}</span>
+            </div>
           </div>
         </Show>
-        <Show when={chromeLinked()}><p class="px-2 py-1 text-[var(--text-muted)]">{t(state()?.connected === false ? "inspector.browser.chromeDisconnected" : "inspector.browser.chromeConnected")}</p></Show>
+        <Show when={chromeLinked()}><p class="px-2 py-1 text-[var(--text-muted)]">{t(state()?.connected === false ? "inspector.browser.chromeDisconnected" : "inspector.browser.chromeConnected")}</p><p class="px-2 pb-1 text-[11px] text-[var(--text-muted)]">{t("inspector.browser.chromeNativeFiles")}</p></Show>
         <Show when={running()}>
           <div class="flex items-center gap-1 px-2 py-0.5 border-b border-[var(--border-subtle)]">
             <div class="flex flex-1 min-w-0 overflow-x-auto no-scrollbar gap-1" role="tablist" aria-label={t("inspector.browser.tabs")}>
@@ -167,7 +187,9 @@ export default function BrowserInspector() {
           </div>
         </Show>
         <Show when={error() || pollError()}><p role="alert" class="px-2 py-1 text-[11px] text-red-500 break-words border-b border-[var(--border-subtle)]">{t("inspector.browser.error", { error: error() || pollError() })}</p></Show>
-        <div ref={observeViewport} class="flex-1 min-h-0 overflow-hidden">
+        <BrowserWorkflows workflows={browser.workflows} url={state()?.url || ""} />
+        <Show when={running()}><BrowserDeveloper developer={browser.developer} chrome={chromeLinked()} resetZoom={() => send({ action: "zoom_reset" })} /></Show>
+        <div ref={observeViewport} class="flex-1 min-h-0 overflow-auto">
           <Show when={frame()} fallback={
             <div class="flex min-h-full flex-col items-center justify-center gap-4 px-6 py-10 text-center text-[var(--text-muted)]">
               <Show when={!busy() && !running() && !pairing() && !chromeLinked()} fallback={
@@ -193,7 +215,8 @@ export default function BrowserInspector() {
             <div class="relative">
               <BrowserPreview image={frame()!} width={browser.frameSize().width} height={browser.frameSize().height}
                 identity={`${scope()?.sessionID}:${scope()?.directory}:${state()?.tabID}`}
-                isCurrent={isFrameCurrent()}
+                isCurrent={isFrameCurrent()} scale={browser.developer.previewScale()}
+                onContextMenu={point => void browser.clipboard.openMenu(point)}
                 onAction={send} onKeyboardFocus={() => input?.focus({ preventScroll: true })} />
               <textarea ref={input} class="absolute left-0 top-0 w-px h-px opacity-0" aria-label={t("inspector.browser.keyboard")} autocapitalize="off" autocomplete="off" spellcheck={false}
                 onKeyDown={keydown}

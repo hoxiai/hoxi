@@ -16,6 +16,8 @@ import (
 )
 
 type Action struct {
+	RequestID         string   `json:"requestID,omitempty"`
+	Accept            *bool    `json:"accept,omitempty"`
 	Action            string   `json:"action"`
 	Async             bool     `json:"async,omitempty"`
 	URL               string   `json:"url,omitempty"`
@@ -62,6 +64,11 @@ type State struct {
 func emptyState() State { return State{Tabs: []Tab{}} }
 
 func (s *Service) RegisterRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("/api/hoxi/browser/workflows", s.serveWorkflows)
+	mux.HandleFunc("/api/hoxi/browser/diagnostics", s.serveDiagnostics)
+	for _, path := range []string{"upload", "download-save", "download-open", "download-reveal", "download-cancel"} {
+		mux.HandleFunc("/api/hoxi/browser/"+path, s.serveTransfer)
+	}
 	mux.HandleFunc("/api/hoxi/browser/extension", s.ServeExtension)
 	mux.HandleFunc("/api/hoxi/browser/stream", s.serveStream)
 	for _, path := range []string{"state", "frame", "action"} {
@@ -207,7 +214,8 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	// Pointer input only reaches a page the inspector already shows; it never
 	// reserves a scope or starts Chrome (for example right after an idle close).
-	liveInput := action.Action == "pointer" || action.Action == "wheel" || action.Action == "zoom" || action.Action == "stop_loading"
+	liveInput := action.Action == "pointer" || action.Action == "wheel" || action.Action == "zoom" || action.Action == "stop_loading" ||
+		action.Action == "context" || action.Action == "copy" || action.Action == "paste" || action.Action == "upload_cancel" || action.Action == "zoom_reset"
 	sc, err := s.acquire(ctx, key, path == "action" && action.Action != "close" && !liveInput)
 	if err != nil {
 		fail(w, 503, err)
@@ -319,7 +327,7 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		prevTab := sc.tabID
 		extra, err = sc.perform(opctx, action)
-		if err != nil && action.Action != "tab_new" && action.Action != "tab_select" && action.Action != "tab_close" {
+		if err != nil && !liveInput && action.Action != "tab_new" && action.Action != "tab_select" && action.Action != "tab_close" {
 			if _, stateErr := sc.state(opctx); stateErr == nil && sc.tabID != "" && sc.tabID != prevTab {
 				extra, err = sc.perform(opctx, action)
 			}

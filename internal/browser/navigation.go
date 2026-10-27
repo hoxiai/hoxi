@@ -163,6 +163,8 @@ func (sc *scope) trackNavigation(tab context.Context, id string) {
 	n := &navigationTracker{frame: cdp.FrameID(id), state: Navigation{Status: "ready"}}
 	sc.navigations[id] = n
 	chromedp.ListenTarget(tab, n.receive)
+	sc.trackWorkflows(tab, id)
+	sc.trackDiagnostics(tab, id)
 }
 
 // Only explicit UI async navigation uses a background job. Agent tools and

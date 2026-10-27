@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"math"
 	"net/url"
+	"regexp"
 	"sort"
 	"time"
 
 	"github.com/chromedp/cdproto/cdp"
+	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/cdproto/input"
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/cdproto/target"
@@ -25,6 +27,12 @@ func navigationURL(raw string) bool {
 }
 
 func validateAction(a Action, agent bool) error {
+	if a.RequestID != "" && a.Action != "upload_cancel" {
+		return errors.New("requestID is only valid for a file request")
+	}
+	if a.Accept != nil {
+		return errors.New("accept is only valid for a page dialog")
+	}
 	if a.Async && (agent || !navigationAction(a.Action)) {
 		return errors.New("async navigation is UI only")
 	}
@@ -41,6 +49,14 @@ func validateAction(a Action, agent bool) error {
 		return errors.New("phase, button, clickCount and modifiers are only valid for pointer")
 	}
 	switch a.Action {
+	case "zoom_reset":
+		if agent {
+			return errors.New("only UI may reset page zoom")
+		}
+	case "upload_cancel":
+		if agent || !regexp.MustCompile(`^[a-f0-9]{32}$`).MatchString(a.RequestID) {
+			return errors.New("only UI may cancel an identified file request")
+		}
 	case "pair":
 		if agent {
 			return errors.New("only UI may pair Chrome")
@@ -72,6 +88,26 @@ func validateAction(a Action, agent bool) error {
 	case "stop_loading":
 		if agent {
 			return errors.New("only UI may stop loading")
+		}
+	case "context", "copy", "paste":
+		if agent {
+			return errors.New("only UI may use clipboard actions")
+		}
+		if math.IsNaN(a.X) || math.IsInf(a.X, 0) || math.IsNaN(a.Y) || math.IsInf(a.Y, 0) ||
+			a.X < 0 || a.X > 16384 || a.Y < 0 || a.Y > 16384 || a.Selector != "" || a.URL != "" || a.Key != "" ||
+			a.DeltaX != 0 || a.DeltaY != 0 || a.TabID != "" || (a.Action != "paste" && a.Text != "") ||
+			(a.Action == "copy" && (a.X != 0 || a.Y != 0)) || len(a.Text) > 262144 {
+			return errors.New("invalid clipboard action")
+		}
+		units := 0
+		for _, r := range a.Text {
+			units++
+			if r > 0xffff {
+				units++
+			}
+		}
+		if units > 65536 {
+			return errors.New("clipboard text exceeds 65536 characters")
 		}
 	case "evaluate":
 		if !agent || a.Text == "" {
@@ -153,7 +189,7 @@ func (sc *scope) withTab(ctx context.Context, tasks ...chromedp.Action) error {
 		// Initial attachment starts a target event loop using this context.
 		// Keep it alive across requests, just like the initial browser target.
 		done := make(chan error, 1)
-		go func() { done <- chromedp.Run(tab, sc.viewport().action()) }()
+		go func() { done <- chromedp.Run(tab, sc.viewport().action(), page.SetInterceptFileChooserDialog(true)) }()
 		select {
 		case err := <-done:
 			if err != nil {
@@ -203,6 +239,12 @@ func (sc *scope) perform(ctx context.Context, a Action) (map[string]any, error) 
 	if a.Action == "stop_loading" {
 		return nil, sc.stopNavigation(ctx)
 	}
+	if a.Action == "context" || a.Action == "copy" || a.Action == "paste" {
+		return sc.clipboard(ctx, a)
+	}
+	if a.Action == "upload_cancel" {
+		return nil, sc.workflowAction(ctx, a)
+	}
 	if a.Action == "wheel" {
 		return sc.wheel(ctx, a)
 	}
@@ -219,6 +261,8 @@ func (sc *scope) perform(ctx context.Context, a Action) (map[string]any, error) 
 		return nil, err
 	case "resize":
 		return nil, sc.withTab(ctx)
+	case "zoom_reset":
+		return nil, sc.withTab(ctx, emulation.SetPageScaleFactor(1))
 	case "navigate":
 		task = chromedp.Navigate(a.URL)
 	case "back":
@@ -352,6 +396,14 @@ func (sc *scope) releaseTab(id string) {
 	}
 	delete(sc.tabs, id)
 	delete(sc.viewports, id)
+	delete(sc.diagnostics, id)
+	if sc.workflows != nil {
+		sc.workflows.mu.Lock()
+		delete(sc.workflows.uploads, id)
+		delete(sc.workflows.dialogs, id)
+		delete(sc.workflows.tabs, id)
+		sc.workflows.mu.Unlock()
+	}
 }
 
 // Light-DOM snapshot: at most 200 visible controls and 32 KiB of rendered text.

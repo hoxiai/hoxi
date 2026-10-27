@@ -33,7 +33,20 @@ Click the page preview to focus an element, then type, paste, use IME, or send k
 shortcuts. Scroll over the preview to scroll the page. The inspector can be
 maximized using its existing expand button.
 
-The preview forwards hover, left/middle/right presses, double/triple clicks and
+Right-click the preview for **Copy selected text**, **Copy link address**, **Paste**
+and opening the current page or link in the external browser. **Cmd+C / Ctrl+C**
+copies the remote selection to the system clipboard; native paste shortcuts and
+IME input continue to work. Opening the menu takes manual control first. Clipboard
+access happens only for explicit copy/paste actions, never in the background or
+through agent tools. Password/masked fields cannot be copied. Copy/paste supports
+plain text up to 65,536 UTF-16 code units; rich text, images and files are unsupported.
+The menu's paste targets the field under the pointer, preserving its selection if
+already focused. Readonly/disabled fields and iframe hit targets are not pasteable
+through this menu. Choose **Show page context menu**, or Shift+right-click, to send
+the right click to the page itself. This exposes page-defined menus; Chrome's native
+menu is not rendered in the preview. Chrome Link requires the updated extension.
+
+The preview forwards hover, left/middle presses, double/triple clicks and
 captured drags, so you can select text, drag page controls and move scrollbars.
 Losing pointer capture, hiding the window or switching sessions releases held
 buttons. Dragging external files into the page remains unsupported.
@@ -116,8 +129,8 @@ disclose secrets.
   detects a changed `tabID`. Streams never launch Chrome or reserve a scope and
   return 404 until started. Each reconnect replaces the previous stream.
 - Manual interaction supports pointer hover/drag, clicks, scrolling, history swipes,
-  pinch zoom, text and keys. Native browser menus, external file drag/drop,
-  file-picker dialogs and OS clipboard synchronization remain unsupported.
+  pinch zoom, text, keys, a Hoxi context menu and explicit plain-text copy/paste.
+  Native Chrome menus, external file drag/drop and file-picker dialogs remain unsupported.
 - Isolated-browser profiles are temporary; login state is not retained after
   browser close. Chrome Link preserves the existing user's profile
 - An isolated browser left unused for 30 minutes is closed the same way as

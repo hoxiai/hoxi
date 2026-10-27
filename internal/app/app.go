@@ -406,6 +406,7 @@ func Run(distFS fs.FS) {
 			Title: "Select Workspace Project Folder",
 		})
 	})
+	app.configureBrowserFiles(gw)
 	gw.SetDesktopFocusHandler(func(_, _ string) {
 		app.showWindow()
 	})
