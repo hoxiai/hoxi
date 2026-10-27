@@ -83,6 +83,19 @@ func (f *gateFixture) asyncHook(t *testing.T, body []byte) chan agyhook.Decision
 	return ch
 }
 
+// waitDecision reads a hook decision with a deadline so a gate regression fails
+// fast instead of hanging the package until the 10m test timeout.
+func waitDecision(t *testing.T, ch chan agyhook.Decision, what string) agyhook.Decision {
+	t.Helper()
+	select {
+	case d := <-ch:
+		return d
+	case <-time.After(3 * time.Second):
+		t.Fatalf("timed out waiting for %s", what)
+		return agyhook.Decision{}
+	}
+}
+
 func waitForEvent(t *testing.T, ch chan SSEEvent, typ string) SSEEvent {
 	t.Helper()
 	deadline := time.After(3 * time.Second)
@@ -741,7 +754,9 @@ func TestApprovalRejectsAlwaysFromTunnelAndDeduplicatesCallID(t *testing.T) {
 	asked := waitForEvent(t, events, "permission.asked")
 	id, _ := asked.Properties["id"].(string)
 	res2 := f.asyncHook(t, body)
-	time.Sleep(40 * time.Millisecond)
+	// Wait until the duplicate actually joined: a fixed sleep can lose the
+	// race and make the duplicate a fresh request that nothing answers.
+	waitFor(t, "duplicate hook to coalesce", func() bool { return f.svc.approvalDedupWaiters() >= 1 })
 	if len(f.svc.listPendingApprovals("")) != 1 {
 		t.Fatalf("expected deduplicated single pending approval, got %d", len(f.svc.listPendingApprovals("")))
 	}
@@ -773,7 +788,7 @@ func TestApprovalRejectsAlwaysFromTunnelAndDeduplicatesCallID(t *testing.T) {
 	if onceResp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 for tunnel once, got %d", onceResp.StatusCode)
 	}
-	if d1, d2 := <-res1, <-res2; d1.Decision != "auto_approve" || d2.Decision != "auto_approve" {
+	if d1, d2 := waitDecision(t, res1, "first deduplicated waiter"), waitDecision(t, res2, "second deduplicated waiter"); d1.Decision != "auto_approve" || d2.Decision != "auto_approve" {
 		t.Fatalf("deduplicated waiters did not both resolve: %+v / %+v", d1, d2)
 	}
 	entries := f.svc.audit.list("ses_agy_gate", 10)

@@ -68,6 +68,7 @@ type approvalGate struct {
 	tokens       map[[32]byte]hookCredential
 	pending      map[string]*pendingApproval
 	byCallKey    map[string]*pendingApproval
+	dedupWaiters map[string]int
 	always       map[string]map[string]ApprovalGrant
 	toolAlways   map[string]map[string]ApprovalGrant
 	classGrants  map[string]map[string]ApprovalGrant // session -> recoverable class
@@ -80,6 +81,7 @@ func newApprovalGate() *approvalGate {
 		tokens:       make(map[[32]byte]hookCredential),
 		pending:      make(map[string]*pendingApproval),
 		byCallKey:    make(map[string]*pendingApproval),
+		dedupWaiters: make(map[string]int),
 		always:       make(map[string]map[string]ApprovalGrant),
 		toolAlways:   make(map[string]map[string]ApprovalGrant),
 		classGrants:  make(map[string]map[string]ApprovalGrant),
@@ -377,8 +379,21 @@ func (s *Service) awaitApproval(r *http.Request, cred hookCredential, ask approv
 	return false, reason
 }
 
-func pendingCallKey(sessionID string, req map[string]interface{}) string {
-	toolMap, _ := req["tool"].(map[string]interface{})
+// approvalDedupWaiters reports how many hook calls are currently coalesced onto
+// an already-pending approval. Tests use it to wait for a duplicate to join
+// before answering, instead of racing the answer against the duplicate's
+// arrival (which would make the duplicate a fresh request).
+func (s *Service) approvalDedupWaiters() int {
+	s.gate.mu.Lock()
+	defer s.gate.mu.Unlock()
+	total := 0
+	for _, n := range s.gate.dedupWaiters {
+		total += n
+	}
+	return total
+}
+
+func pendingCallKey(sessionID string, req map[string]interface{}) string {	toolMap, _ := req["tool"].(map[string]interface{})
 	callID, _ := toolMap["callID"].(string)
 	callID = strings.TrimSpace(callID)
 	if sessionID == "" || callID == "" {
@@ -395,7 +410,21 @@ func (s *Service) awaitReply(r *http.Request, cred hookCredential, id string, re
 	s.gate.mu.Lock()
 	if callKey != "" {
 		if existing := s.gate.byCallKey[callKey]; existing != nil {
+			// Track deduplicated waiters so callers (tests, diagnostics) can
+			// tell a duplicate has actually joined before the first answer
+			// lands. A duplicate that arrives after the answer is a genuine
+			// new request, so this is the only observable "coalesced" signal.
+			s.gate.dedupWaiters[callKey]++
 			s.gate.mu.Unlock()
+			defer func() {
+				s.gate.mu.Lock()
+				if remaining := s.gate.dedupWaiters[callKey] - 1; remaining > 0 {
+					s.gate.dedupWaiters[callKey] = remaining
+				} else {
+					delete(s.gate.dedupWaiters, callKey)
+				}
+				s.gate.mu.Unlock()
+			}()
 			select {
 			case <-existing.done:
 				return existing.result

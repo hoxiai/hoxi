@@ -124,6 +124,28 @@ func taskByID(plan Plan, id string) TaskState {
 	return TaskState{}
 }
 
+// waitPersistedStatus blocks until the store holds the plan at status. Terminal
+// status becomes observable in memory just before the finishing goroutine
+// persists the snapshot, so a restart test that reads the file immediately can
+// otherwise load a stale "running" plan and report a false interruption.
+func waitPersistedStatus(t *testing.T, store *Store, id string, status string) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if plans, err := store.Load(); err == nil {
+			for _, plan := range plans {
+				if plan.ID == id && plan.Status == status {
+					return
+				}
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("plan %s was not persisted as %s", id, status)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 type flakySessions struct {
 	*fakeSessions
 	mu       sync.Mutex
@@ -157,6 +179,7 @@ func TestPlanPersistsAcrossServiceRestart(t *testing.T) {
 	if done.Status != StatusSucceeded {
 		t.Fatalf("plan status = %s, want succeeded", done.Status)
 	}
+	waitPersistedStatus(t, store, plan.ID, StatusSucceeded)
 
 	restarted := NewService(newFakeSessions(true), WithStore(store))
 	restored, ok := restarted.Get(plan.ID)
@@ -487,6 +510,9 @@ func TestRetryPersistenceFailureRestoresPreviousTaskState(t *testing.T) {
 	if oldSession == "" {
 		t.Fatal("expected failed task to have a session ID")
 	}
+	// Let the finishing persist land before mutating the store directory, or a
+	// late snapshot can recreate it after RemoveAll and fail the next WriteFile.
+	waitPersistedStatus(t, store, plan.ID, StatusFailed)
 
 	// Replace the store directory with a plain file so persisting the retry fails.
 	if err := os.RemoveAll(storeDir); err != nil {
