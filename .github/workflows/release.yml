@@ -180,7 +180,7 @@ jobs:
       - name: Publish website metadata after asset upload
         env:
           APAY_RELEASE_KEY: ${{ secrets.APAY_RELEASE_KEY }}
-          APAY_RELEASE_API_URL: ${{ vars.APAY_RELEASE_API_URL || vars.HOXI_RELEASE_API_URL }}
+          APAY_RELEASE_API_URL: ${{ vars.APAY_RELEASE_API_URL }}
           RELEASE_NOTES: ${{ env.RELEASE_NOTES }}
         run: |
           node --input-type=module - "$RELEASE_VERSION" <<'JS' | node scripts/release-publisher.mjs
