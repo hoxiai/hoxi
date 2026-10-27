@@ -1,8 +1,30 @@
-import { browserAPI, browserPoint, browserStreamURL, browserURL, connectBrowserStream } from "../services/browser";
+import { browserAPI, browserPoint, browserStreamURL, browserURL, connectBrowserStream, observeBrowserZoom } from "../services/browser";
 import { normalizeBrowserAddress } from "../store/browser";
 import { assertDeepEqual, assertEqual, describe, it } from "./test-harness";
 
 describe("Browser inspector", () => {
+  it("translates native WebKit pinch and Ctrl+wheel zoom and removes its listeners", () => {
+    const target = new EventTarget();
+    const zooms: number[] = [];
+    const stop = observeBrowserZoom(target as HTMLElement, scale => zooms.push(scale));
+    const dispatch = (type: string, data: object) => {
+      const event = Object.assign(new Event(type, { cancelable: true }), data);
+      target.dispatchEvent(event);
+      return event.defaultPrevented;
+    };
+    assertEqual(dispatch("gesturestart", {}), true);
+    dispatch("gesturechange", { scale: 1.5, clientX: 10, clientY: 20 });
+    dispatch("gesturechange", { scale: 3, clientX: 10, clientY: 20 });
+    dispatch("gestureend", {});
+    assertDeepEqual(zooms, [1.5, 2]);
+    assertEqual(dispatch("wheel", { ctrlKey: false, deltaY: -10 }), false);
+    assertEqual(dispatch("wheel", { ctrlKey: true, deltaY: -10, clientX: 10, clientY: 20 }), true);
+    assertEqual(zooms[2], Math.exp(.1));
+    stop();
+    assertEqual(dispatch("gesturestart", {}), false);
+    assertEqual(dispatch("wheel", { ctrlKey: true, deltaY: -10 }), false);
+    assertEqual(zooms.length, 3);
+  });
   it("opens domains and local development addresses without a scheme", () => {
     for (const [address, expected] of [
       ["example.com", "https://example.com/"],

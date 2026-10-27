@@ -28,6 +28,7 @@ type extensionBridge struct {
 	responses chan extensionReply
 	// The extension accepts "pointer" mouse input; older ones only click.
 	pointer bool
+	zoom    bool
 }
 
 type extensionReply struct {
@@ -122,7 +123,7 @@ func (s *Service) ServeExtension(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	b := &extensionBridge{conn: conn, done: make(chan struct{}), responses: make(chan extensionReply, 1),
-		pointer: slices.Contains(hello.Features, "pointer")}
+		pointer: slices.Contains(hello.Features, "pointer"), zoom: slices.Contains(hello.Features, "zoom")}
 	owner.extension, owner.pairToken = b, ""
 	_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 	if conn.WriteJSON(map[string]bool{"connected": true}) != nil {
@@ -201,7 +202,14 @@ func (s *Service) serveExtensionAction(w http.ResponseWriter, ctx context.Contex
 	}
 	var result map[string]any
 	var err error
-	if path == "action" && a.Action == "pointer" {
+	if path == "action" && (a.Action == "wheel" || a.Action == "zoom") {
+		if a.Action == "wheel" {
+			result, err = sc.wheel(ctx, a)
+		} else {
+			result, err = sc.zoom(ctx, a)
+		}
+		a = Action{Action: "state"}
+	} else if path == "action" && a.Action == "pointer" {
 		result, err = sc.pointer(ctx, a)
 		a = Action{Action: "state"}
 	} else if path == "action" && releasesPointer(a.Action) {

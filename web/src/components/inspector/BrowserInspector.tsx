@@ -1,13 +1,14 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, Show, untrack } from "solid-js";
 import { ArrowLeft, ArrowRight, ExternalLink, Globe, Plus, Power, RefreshCw, X } from "lucide-solid";
 import {
-  browserPoint,
+  BrowserInputBuffer,
   connectBrowserStream,
   createChromePairing,
   executeBrowserAction,
   fetchBrowserState,
   normalizeBrowserAddress,
   openExternalURL,
+  releaseBrowserPointer,
   sessionDirectory,
   setWorkspace,
   workspace,
@@ -16,13 +17,7 @@ import {
   type BrowserState,
 } from "../../store/workspace";
 import { t } from "../../i18n";
-
-interface PendingScroll {
-  x: number;
-  y: number;
-  deltaX: number;
-  deltaY: number;
-}
+import BrowserPreview from "./BrowserPreview";
 
 interface Connection {
   scope: BrowserScope;
@@ -31,8 +26,8 @@ interface Connection {
   pending: number;
   navPending: number;
   streamDirty: boolean;
-  pendingScroll: PendingScroll | null;
-  pendingType: string;
+  inputs: BrowserInputBuffer;
+  pointerUsed: boolean;
   flushScheduled: boolean;
   queue: Promise<void>;
 }
@@ -161,16 +156,7 @@ export default function BrowserInspector() {
 
   function flushBufferedInputs(connection: Connection) {
     if (!valid(connection)) return;
-    if (connection.pendingScroll) {
-      const scroll = connection.pendingScroll;
-      connection.pendingScroll = null;
-      enqueueAction(connection, { action: "scroll", ...scroll });
-    }
-    if (connection.pendingType) {
-      const text = connection.pendingType;
-      connection.pendingType = "";
-      enqueueAction(connection, { action: "type", text });
-    }
+    for (const action of connection.inputs.drain()) enqueueAction(connection, action);
   }
 
   function scheduleInputFlush(connection: Connection) {
@@ -187,34 +173,15 @@ export default function BrowserInspector() {
   function send(action: BrowserAction) {
     // A user gesture proves the panel is interactive even when WKWebView's
     // visibility state lags behind showing/restoring the native window.
-    setVisible(true);
+    if (action.action !== "pointer" || action.phase !== "cancel") setVisible(true);
     const connection = current;
     if (!connection || !valid(connection)) return;
     if (!running() && (action.action === "navigate" || action.action === "tab_new")) {
       const size = viewport();
       if (size) enqueueAction(connection, { action: "resize", ...size });
     }
-    if (action.action === "scroll") {
-      const dx = action.deltaX ?? 0;
-      const dy = action.deltaY ?? 0;
-      if (connection.pendingScroll) {
-        connection.pendingScroll.x = action.x ?? connection.pendingScroll.x;
-        connection.pendingScroll.y = action.y ?? connection.pendingScroll.y;
-        connection.pendingScroll.deltaX += dx;
-        connection.pendingScroll.deltaY += dy;
-      } else {
-        connection.pendingScroll = { x: action.x ?? 0, y: action.y ?? 0, deltaX: dx, deltaY: dy };
-      }
-      scheduleInputFlush(connection);
-      return;
-    }
-    if (action.action === "type") {
-      if (connection.pendingScroll) {
-        const scroll = connection.pendingScroll;
-        connection.pendingScroll = null;
-        enqueueAction(connection, { action: "scroll", ...scroll });
-      }
-      connection.pendingType += action.text ?? "";
+    if (action.action === "pointer" && action.phase === "down") connection.pointerUsed = true;
+    if (connection.inputs.add(action)) {
       scheduleInputFlush(connection);
       return;
     }
@@ -276,8 +243,8 @@ export default function BrowserInspector() {
       pending: 0,
       navPending: 0,
       streamDirty: false,
-      pendingScroll: null,
-      pendingType: "",
+      inputs: new BrowserInputBuffer(),
+      pointerUsed: false,
       flushScheduled: false,
       queue: Promise.resolve(),
     };
@@ -340,6 +307,7 @@ export default function BrowserInspector() {
     untrack(() => { void poll(); });
     onCleanup(() => {
       connection.controller.abort();
+      if (connection.pointerUsed) void connection.queue.finally(() => releaseBrowserPointer(connection.scope));
       clearTimeout(timer);
       if (current === connection) current = null;
       replaceFrame(null);
@@ -354,6 +322,10 @@ export default function BrowserInspector() {
 
   function typeText(text: string) {
     if (text) send({ action: "type", text });
+  }
+
+  function isFrameCurrent() {
+    return current !== null && frameEpoch === current.tabEpoch;
   }
 
   function navigateAddress(address = url()) {
@@ -492,19 +464,10 @@ export default function BrowserInspector() {
             </div>
           }>
             <div class="relative">
-              <img src={frame()!} alt={t("inspector.browser.viewport")} draggable={false} class="block w-full h-auto rounded-sm cursor-crosshair select-none" onClick={(event) => {
-                if (!current || frameEpoch !== current.tabEpoch) return;
-                const point = browserPoint(event.currentTarget.getBoundingClientRect(), event.clientX, event.clientY,
-                  frameSize);
-                if (point) { send({ action: "click", ...point }); input?.focus({ preventScroll: true }); }
-              }} onWheel={(event) => {
-                event.preventDefault();
-                if (!current || frameEpoch !== current.tabEpoch) return;
-                const point = browserPoint(event.currentTarget.getBoundingClientRect(), event.clientX, event.clientY,
-                  frameSize);
-                const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? frameSize.height : 1;
-                if (point) send({ action: "scroll", ...point, deltaX: event.deltaX * unit, deltaY: event.deltaY * unit });
-              }} />
+              <BrowserPreview image={frame()!} width={frameSize.width} height={frameSize.height}
+                identity={`${scope()?.sessionID}:${scope()?.directory}:${state()?.tabID}`}
+                isCurrent={isFrameCurrent()}
+                onAction={send} onKeyboardFocus={() => input?.focus({ preventScroll: true })} />
               <textarea ref={input} class="absolute left-0 top-0 w-px h-px opacity-0" aria-label={t("inspector.browser.keyboard")} autocapitalize="off" autocomplete="off" spellcheck={false}
                 onKeyDown={keydown}
                 onCompositionStart={() => { composing = true; }}

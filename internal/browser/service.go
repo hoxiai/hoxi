@@ -38,6 +38,7 @@ func (v viewport) action() *emulation.SetDeviceMetricsOverrideParams {
 }
 
 type scope struct {
+	wheelGesture    wheelGesture
 	gate            chan struct{}
 	ctx             context.Context
 	cancel          context.CancelFunc

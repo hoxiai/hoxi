@@ -25,6 +25,9 @@ func navigationURL(raw string) bool {
 }
 
 func validateAction(a Action, agent bool) error {
+	if a.ScaleFactor != nil && a.Action != "zoom" {
+		return errors.New("scaleFactor is only valid for zoom")
+	}
 	if a.Action != "resize" && (a.Width != nil || a.Height != nil || a.DeviceScaleFactor != nil) {
 		return errors.New("width and height are only valid for resize")
 	}
@@ -73,6 +76,8 @@ func validateAction(a Action, agent bool) error {
 		}
 	case "pointer":
 		return validatePointer(a, agent)
+	case "wheel", "zoom":
+		return validateGesture(a, agent)
 	case "type":
 	case "key":
 		_, err := keyAction(a.Key)
@@ -181,6 +186,12 @@ func (sc *scope) capture(ctx context.Context) ([]byte, error) {
 }
 
 func (sc *scope) perform(ctx context.Context, a Action) (map[string]any, error) {
+	if a.Action == "wheel" {
+		return sc.wheel(ctx, a)
+	}
+	if a.Action == "zoom" {
+		return sc.zoom(ctx, a)
+	}
 	if releasesPointer(a.Action) {
 		sc.dropPointer(ctx)
 	}

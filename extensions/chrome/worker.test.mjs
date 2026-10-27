@@ -67,7 +67,15 @@ test("worker confines commands to the selected tab and detaches without closing 
     await action({ action: "key", key: "Control++" });
     assert.ok(commands.some(c => c.method === "Input.insertText" && c.params.text === "hello"));
     assert.ok(commands.some(c => c.method === "Input.dispatchKeyEvent" && c.params.key === "+"));
-    assert.deepEqual(hello.features, ["pointer"]);
+    assert.deepEqual(hello.features, ["pointer", "zoom"]);
+    await action({ action: "zoom", x: 20, y: 30, scaleFactor: 1.5 });
+    assert.deepEqual(commands.filter(c => c.method === "Input.synthesizePinchGesture").at(-1).params,
+      { x: 20, y: 30, scaleFactor: 1.5, gestureSourceType: "mouse" });
+    const zoomCount = commands.length;
+    for (const bad of [{ x: -1 }, { y: 20000 }, { scaleFactor: 0 }, { scaleFactor: 5 }, { scaleFactor: "2" }]) {
+      assert.match((await action({ action: "zoom", x: 20, y: 30, scaleFactor: 1.5, ...bad })).error, /Invalid zoom/);
+    }
+    assert.equal(commands.length, zoomCount);
     const press = { action: "pointer", type: "mousePressed", x: 10, y: 20, button: "right", buttons: 2, clickCount: 1, modifiers: 8 };
     assert.equal((await action(press)).result.tabs.length, 1);
     assert.deepEqual(commands.filter(c => c.method === "Input.dispatchMouseEvent").at(-1).params,

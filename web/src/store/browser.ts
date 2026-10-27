@@ -3,6 +3,8 @@ import {
   browserAPI,
   browserPoint,
   connectBrowserStream,
+  observeBrowserZoom,
+  observeBrowserInputCancellation,
   type BrowserAction,
   type BrowserFrame,
   type BrowserScope,
@@ -12,11 +14,18 @@ import {
 export {
   browserPoint,
   connectBrowserStream,
+  observeBrowserZoom,
+  observeBrowserInputCancellation,
   type BrowserAction,
   type BrowserFrame,
   type BrowserScope,
   type BrowserState,
 };
+
+export async function releaseBrowserPointer(scope: BrowserScope): Promise<void> {
+  try { await browserAPI.action(scope, { action: "pointer", phase: "cancel" }, AbortSignal.timeout(5000)); }
+  catch { /* The backend also releases abandoned presses on a bounded timer. */ }
+}
 
 // Address-bar input is more permissive than the browser API's explicit URLs.
 // Keep normalization on the UI side; agent requests retain strict validation.

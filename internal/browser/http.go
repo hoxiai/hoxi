@@ -30,6 +30,7 @@ type Action struct {
 	Width             *int     `json:"width,omitempty"`
 	Height            *int     `json:"height,omitempty"`
 	DeviceScaleFactor *float64 `json:"deviceScaleFactor,omitempty"`
+	ScaleFactor       *float64 `json:"scaleFactor,omitempty"`
 	// UI-only pointer input: phase down/move/up/cancel, button
 	// left/middle/right, clickCount 1..3, CDP modifier bits Alt=1 Ctrl=2 Meta=4 Shift=8.
 	Phase      string `json:"phase,omitempty"`
@@ -204,7 +205,8 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	// Pointer input only reaches a page the inspector already shows; it never
 	// reserves a scope or starts Chrome (for example right after an idle close).
-	sc, err := s.acquire(ctx, key, path == "action" && action.Action != "close" && action.Action != "pointer")
+	liveInput := action.Action == "pointer" || action.Action == "wheel" || action.Action == "zoom"
+	sc, err := s.acquire(ctx, key, path == "action" && action.Action != "close" && !liveInput)
 	if err != nil {
 		fail(w, 503, err)
 		return
@@ -259,7 +261,7 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		sc.width, sc.height = *action.Width, *action.Height
 		sc.scale = scale
-	} else if path == "action" && action.Action != "pointer" {
+	} else if path == "action" && !liveInput {
 		if err = sc.start(ctx); err != nil {
 			s.remove(key, sc)
 			fail(w, 502, err)

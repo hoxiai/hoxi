@@ -8,6 +8,18 @@ const move = (buttons = 0, button = -1): BrowserPointerEvent => ({ type: "pointe
 const up = (button = 0, buttons = 0): BrowserPointerEvent => ({ type: "pointerup", button, buttons, ...keys });
 
 describe("Browser preview input", () => {
+  it("coalesces trackpad wheel and pinch input while retaining its gesture kind", () => {
+    const buffer = new BrowserInputBuffer();
+    buffer.add({ action: "wheel", x: 10, y: 20, deltaX: -60, deltaY: 0 });
+    buffer.add({ action: "wheel", x: 15, y: 20, deltaX: -70, deltaY: 1 });
+    buffer.add({ action: "zoom", x: 15, y: 20, scaleFactor: 1.5 });
+    buffer.add({ action: "zoom", x: 30, y: 40, scaleFactor: 2 });
+    assertDeepEqual(buffer.drain(), [
+      { action: "wheel", x: 15, y: 20, deltaX: -130, deltaY: 1 },
+      { action: "zoom", x: 30, y: 40, scaleFactor: 3 },
+    ]);
+    assertDeepEqual(buffer.drain(), []);
+  });
   it("keeps only the latest pointer move and drains it before the next press", () => {
     const buffer = new BrowserInputBuffer();
     for (const x of [1, 2, 3]) assertEqual(buffer.add({ action: "pointer", phase: "move", x, y: x }), true);
@@ -94,6 +106,14 @@ describe("Browser preview input", () => {
     assertEqual(browserPointerModifiers(keys), 0);
     assertEqual(browserPointerModifiers({ altKey: true, ctrlKey: true, metaKey: true, shiftKey: true }), 15);
     assertEqual(browserPointerModifiers({ ...keys, metaKey: true }), 4);
+  });
+
+  it("does not count presses across session or tab changes as a double click", () => {
+    const pointer = new BrowserPointerTracker(() => 0);
+    pointer.handle(down(), { x: 1, y: 1 });
+    pointer.handle(up(), { x: 1, y: 1 });
+    pointer.reset();
+    assertEqual(pointer.handle(down(), { x: 1, y: 1 })[0].clickCount, 1);
   });
 
   it("clamps captured drags outside the preview to the viewport edge", () => {

@@ -26,6 +26,7 @@ export const inspector: InspectorI18n = {
     back: "后退", forward: "前进", reload: "刷新",
     url: "输入网址", go: "前往", start: "启动浏览器", close: "关闭浏览器",
     invalidURL: "请输入 HTTP(S) 地址、域名或 localhost:端口",
+    gestureHint: "左右滑动前进后退，双指缩放，按住拖动可选中文字或移动网页控件",
     openInExternal: "在外部浏览器中打开",
     tabs: "标签页", untitled: "无标题标签页", closeTab: "关闭标签页", newTab: "新建标签页",
     manual: "手动控制",

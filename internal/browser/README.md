@@ -49,7 +49,8 @@ started browser that goes unused for 30 minutes is closed the same way; see
   trailing JSON, invalid actions, and invalid navigation URLs are rejected.
 
 POST fields are `action`, optional `url`, `selector`, `text`, `key`, `x`, `y`,
-`deltaX`, `deltaY`, `tabID`, `manual`, `width`, `height`, and `deviceScaleFactor`. Every successful action returns state,
+`deltaX`, `deltaY`, `tabID`, `manual`, `width`, `height`, `deviceScaleFactor`,
+`scaleFactor`, `phase`, `button`, `clickCount` and `modifiers`. Every successful action returns state,
 with the following action-specific fields:
 
 | Action | Parameters / Behavior |
@@ -60,6 +61,9 @@ with the following action-specific fields:
 | `type` | Inserts `text` into the focused element via CDP InsertText (IME/paste semantics); optional CSS `selector` focuses an element first; replaces selected text |
 | `key` | `key`: single character, DOM name such as `Enter`, or chord such as `Control+a`, `Meta+a`, `Shift+ArrowLeft`; modifiers are Control, Meta, Shift, Alt |
 | `scroll` | Viewport `x`,`y`, wheel `deltaX`,`deltaY` |
+| `pointer` | UI only; `phase`: down/move/up/cancel; down/up include `button` (left/middle/right) and `clickCount` (1..3); optional CDP `modifiers` (0..15); held buttons are tracked and released by Hoxi |
+| `wheel` | UI only; viewport `x`,`y` and finite bounded `deltaX`,`deltaY`; horizontal bursts navigate once unless the page owns horizontal scrolling; vertical input scrolls |
+| `zoom` | UI only; viewport `x`,`y` and relative `scaleFactor` (0.25..4); sends a native pinch to the remote page; Chrome Link requires the `zoom` capability |
 | `snapshot` | Adds `snapshot:{text,controls:[{selector,tag,text}]}` |
 | `screenshot` | Adds `image`: base64 JPEG |
 | `evaluate` | Agent only; `text` is a JS expression; adds `result` as a bounded JSON-serialized string |
@@ -111,7 +115,7 @@ CDP setup/stop runs under the scope gate with bounded deadlines; socket upgrade,
 writes, and the stream lifetime never hold that gate. Service/scope cancellation
 also cancels listeners and the independent CDP ACK worker.
 
-Only POST actions other than `control`, `resize`, and `close` start Chrome. Each operation
+Only POST actions other than `control`, `resize`, `pointer`, `wheel`, `zoom`, and `close` start Chrome. Each operation
 has a 30-second deadline including waiting for its scope lock. Scopes serialize
 independently; request cancellation does not kill an already launched browser.
 Service shutdown cancels work, reaps processes, and removes profiles. Initialization

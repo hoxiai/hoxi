@@ -2,7 +2,7 @@
 import type { BrowserAction, BrowserPointerButton } from "../services/browser";
 
 type Point = { x: number; y: number };
-type Mergeable = "move" | "scroll" | "type";
+type Mergeable = "move" | "scroll" | "zoom" | "type";
 
 // Inputs that only matter in aggregate wait for the next animation frame or
 // the in-flight request: a pointer move keeps only its latest position, wheel
@@ -10,7 +10,8 @@ type Mergeable = "move" | "scroll" | "type";
 // after the buffer drains, so a release always follows the final move.
 export class BrowserInputBuffer {
   private move: BrowserAction | null = null;
-  private scroll: Required<Pick<BrowserAction, "x" | "y" | "deltaX" | "deltaY">> | null = null;
+  private scroll: (Required<Pick<BrowserAction, "x" | "y" | "deltaX" | "deltaY">> & { action: "scroll" | "wheel" }) | null = null;
+  private zoom: BrowserAction | null = null;
   private text = "";
   private order: Mergeable[] = [];
 
@@ -18,7 +19,7 @@ export class BrowserInputBuffer {
     if (action.action === "pointer" && action.phase === "move") {
       if (!this.move) this.order.push("move");
       this.move = action;
-    } else if (action.action === "scroll") {
+    } else if (action.action === "scroll" || action.action === "wheel") {
       if (this.scroll) {
         this.scroll.x = action.x ?? this.scroll.x;
         this.scroll.y = action.y ?? this.scroll.y;
@@ -26,8 +27,11 @@ export class BrowserInputBuffer {
         this.scroll.deltaY += action.deltaY ?? 0;
       } else {
         this.order.push("scroll");
-        this.scroll = { x: action.x ?? 0, y: action.y ?? 0, deltaX: action.deltaX ?? 0, deltaY: action.deltaY ?? 0 };
+        this.scroll = { action: action.action, x: action.x ?? 0, y: action.y ?? 0, deltaX: action.deltaX ?? 0, deltaY: action.deltaY ?? 0 };
       }
+    } else if (action.action === "zoom") {
+      if (!this.zoom) this.order.push("zoom");
+      this.zoom = { ...action, scaleFactor: Math.max(.25, Math.min(4, (this.zoom?.scaleFactor ?? 1) * (action.scaleFactor ?? 1))) };
     } else if (action.action === "type") {
       const text = action.text ?? "";
       if (text && !this.text) this.order.push("type");
@@ -43,10 +47,12 @@ export class BrowserInputBuffer {
     const actions: BrowserAction[] = [];
     for (const kind of this.order) {
       if (kind === "move" && this.move) actions.push(this.move);
-      if (kind === "scroll" && this.scroll) actions.push({ action: "scroll", ...this.scroll });
+      if (kind === "scroll" && this.scroll) actions.push(this.scroll);
+      if (kind === "zoom" && this.zoom) actions.push(this.zoom);
       if (kind === "type" && this.text) actions.push({ action: "type", text: this.text });
     }
     this.move = this.scroll = null;
+    this.zoom = null;
     this.text = "";
     this.order = [];
     return actions;
@@ -117,6 +123,11 @@ export class BrowserPointerTracker {
     if (!this.held) return null;
     this.held = 0;
     return { action: "pointer", phase: "cancel" };
+  }
+
+  reset(): void {
+    this.held = 0;
+    this.last = null;
   }
 
   private press(button: BrowserPointerButton, point: Point, modifiers: number): BrowserAction | null {

@@ -25,6 +25,7 @@ export const inspector = {
     back: "Back", forward: "Forward", reload: "Reload",
     url: "Enter a URL", go: "Go", start: "Start browser", close: "Close browser",
     invalidURL: "Enter an HTTP(S) address, a domain, or localhost:port",
+    gestureHint: "Swipe horizontally to go back or forward, pinch to zoom, and drag to select text or move page controls",
     openInExternal: "Open in external browser",
     tabs: "Browser tabs", untitled: "Untitled tab", closeTab: "Close tab", newTab: "New tab",
     manual: "Manual control",

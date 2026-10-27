@@ -23,7 +23,7 @@ export type BrowserPointerButton = "left" | "middle" | "right";
 
 export interface BrowserAction {
   action: "navigate" | "back" | "forward" | "reload" | "click" | "type" | "key" |
-    "scroll" | "pointer" | "tab_new" | "tab_select" | "tab_close" | "control" | "resize" | "close";
+    "scroll" | "wheel" | "zoom" | "pointer" | "tab_new" | "tab_select" | "tab_close" | "control" | "resize" | "close";
   url?: string;
   selector?: string;
   text?: string;
@@ -37,11 +37,54 @@ export interface BrowserAction {
   width?: number;
   height?: number;
   deviceScaleFactor?: number;
+  scaleFactor?: number;
   // UI-only pointer input; hover is a move with no button held.
   phase?: "down" | "move" | "up" | "cancel";
   button?: BrowserPointerButton;
   clickCount?: number;
   modifiers?: number;
+}
+
+// WebKit reports native trackpad pinches as gesture events; Chromium uses
+// Ctrl+wheel. Both listeners must be non-passive to keep zoom inside the page.
+export function observeBrowserZoom(element: HTMLElement, zoom: (scale: number, clientX: number, clientY: number) => void): () => void {
+  type PinchEvent = Event & { scale: number; clientX: number; clientY: number };
+  let previous = 1;
+  const start = (raw: Event) => { raw.preventDefault(); previous = 1; };
+  const change = (raw: Event) => {
+    raw.preventDefault();
+    const event = raw as PinchEvent;
+    if (!Number.isFinite(event.scale) || event.scale <= 0) return;
+    zoom(Math.max(.25, Math.min(4, event.scale / previous)), event.clientX, event.clientY);
+    previous = event.scale;
+  };
+  const end = (raw: Event) => { raw.preventDefault(); previous = 1; };
+  const wheel = (event: WheelEvent) => {
+    if (!event.ctrlKey) return;
+    event.preventDefault();
+    event.stopPropagation();
+    zoom(Math.exp(Math.max(-1, Math.min(1, -event.deltaY * .01))), event.clientX, event.clientY);
+  };
+  element.addEventListener("gesturestart", start, { passive: false });
+  element.addEventListener("gesturechange", change, { passive: false });
+  element.addEventListener("gestureend", end, { passive: false });
+  element.addEventListener("wheel", wheel, { passive: false });
+  return () => {
+    element.removeEventListener("gesturestart", start);
+    element.removeEventListener("gesturechange", change);
+    element.removeEventListener("gestureend", end);
+    element.removeEventListener("wheel", wheel);
+  };
+}
+
+export function observeBrowserInputCancellation(cancel: () => void): () => void {
+  const hidden = () => { if (document.hidden) cancel(); };
+  window.addEventListener("blur", cancel);
+  document.addEventListener("visibilitychange", hidden);
+  return () => {
+    window.removeEventListener("blur", cancel);
+    document.removeEventListener("visibilitychange", hidden);
+  };
 }
 
 export function browserURL(endpoint: "state" | "action" | "frame" | "stream", scope: BrowserScope): string {

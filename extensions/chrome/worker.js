@@ -97,6 +97,11 @@ async function execute(link, a) {
       await send(link, "Input.insertText", { text: a.text || "" }); break;
     case "key": await key(link, a.key); break;
     case "pointer": await pointer(link, a); break;
+    case "zoom": {
+      if (![a.x, a.y, a.scaleFactor].every(Number.isFinite) || a.x < 0 || a.y < 0 || a.x > 16384 || a.y > 16384 || a.scaleFactor < .25 || a.scaleFactor > 4) throw new Error("Invalid zoom input");
+      await send(link, "Input.synthesizePinchGesture", { x: a.x, y: a.y, scaleFactor: a.scaleFactor, gestureSourceType: "mouse" });
+      break;
+    }
     case "scroll": await send(link, "Input.dispatchMouseEvent", { type: "mouseWheel", x: a.x || 0, y: a.y || 0, deltaX: a.deltaX || 0, deltaY: a.deltaY || 0 }); break;
     case "snapshot": return { ...await state(link), snapshot: await evaluate(link, `(${snapshot.toString()})()`) };
     case "evaluate": {
@@ -132,7 +137,7 @@ async function connect(code, tabID) {
       let connected = false;
       let queue = Promise.resolve();
       // Features tell Hoxi which actions this extension version understands.
-      socket.onopen = () => socket.send(JSON.stringify({ token, features: ["pointer"] }));
+      socket.onopen = () => socket.send(JSON.stringify({ token, features: ["pointer", "zoom"] }));
       socket.onerror = () => reject(new Error("Cannot reach local Hoxi"));
       socket.onclose = () => { clearTimeout(timer); if (!connected) reject(new Error("Connection code expired or rejected")); void disconnect(link); };
       socket.onmessage = event => {
