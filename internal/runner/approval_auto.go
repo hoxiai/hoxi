@@ -243,6 +243,9 @@ func (s *Service) claimOpenCodePermission(item map[string]interface{}, sessionID
 		s.autoReplyOpenCode(id, sessionID, directory, grantSourceSession, userFallback)
 		return true
 	}
+	if s.claimOpenCodeAIReview(id, item, sessionID, directory, userFallback) {
+		return true
+	}
 	// Shown to the user: offer a session grant when Go would honour one.
 	annotateGrantClasses(item, directory)
 	s.askOpenCodeUser(item, sessionID, directory)
@@ -499,6 +502,7 @@ func (s *Service) reconcilePendingApprovals() {
 		default:
 		}
 	}
+	s.reconcilePendingWithAIReview(pending)
 	if s.openCode == nil || !s.openCode.Available() {
 		return
 	}

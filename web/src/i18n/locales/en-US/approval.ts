@@ -58,6 +58,14 @@ export const approval = {
   unattendedInactive: "Inactive",
   timeoutLabel: "Approval timeout",
   timeoutHint: "A request nobody answers is rejected after this many seconds. A timeout never becomes an approval",
+  aiReviewTitle: "AI Review for Complex Shell Commands",
+  aiReviewTip:
+    "When static analysis cannot verify a complex command (such as bash -c, multi-repo loops, or command substitutions), ask the selected lightweight model whether it is strictly read-only",
+  aiReviewEnableLabel: "Auto-review opaque non-destructive commands",
+  aiReviewModelLabel: "Reviewer model",
+  aiReviewModelEmpty: "Select a lightweight model…",
+  aiReviewEgressNotice:
+    "Hard-denied and destructive commands (rm, sudo, git push, .env/.ssh reads) are blocked locally and never sent. Only non-destructive commands that fail static checks send the command string and workspace directory path to the selected model provider. Any timeout, error, or uncertainty falls back to manual confirmation",
   deferredTitle: "Waiting for you",
   deferredEmpty: "Nothing is waiting",
   deferredResolved: "Handled",
@@ -127,6 +135,7 @@ export const approval = {
   sourceSystem: "System",
   sourceGrant: "Session kind grant",
   sourcePolicy: "Approval mode",
+  sourceAIReview: "AI review",
   decisionOnce: "Allow Once",
   decisionAlways: "Session Always",
   decisionReject: "Rejected",

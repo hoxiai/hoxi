@@ -163,6 +163,7 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 	runnerSvc.ConfigureOpenCode(targetURL.String(), password)
 	runnerSvc.SetPermissionRulesSource(providers.PermissionRules)
 	runnerSvc.SetApprovalPolicyHook(providers.EnforceAskPermissions)
+	runnerSvc.SetLLM(providers)
 	if status != nil {
 		status.SetSessionResolver(runnerSvc.ResolveSessionTarget)
 	}

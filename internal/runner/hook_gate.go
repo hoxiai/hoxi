@@ -338,6 +338,10 @@ func (s *Service) gateCommand(r *http.Request, cred hookCredential, rec SessionR
 		s.recordRunnerApprovalAudit(cred, item, "once", approvalReply{Reply: "once", Source: grantSourceSession})
 		return true, ""
 	}
+	if ok, reason := s.aiReviewCommand(r.Context(), item, rec.WorktreePath); ok {
+		s.recordAIReviewApproval(cred, item, reason)
+		return true, ""
+	}
 	return s.awaitApproval(r, cred, ask)
 }
 

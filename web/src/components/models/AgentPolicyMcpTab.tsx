@@ -15,6 +15,7 @@ import {
   approvalPolicy,
   fetchGlobalConfig,
   resolveEffectivePermissionSummary,
+  setApprovalAIReview,
   setApprovalMode,
   setApprovalTimeout,
   updateToolPermissionRule,
@@ -28,7 +29,10 @@ import {
   SegmentedPills,
   SettingGroup,
   SettingRow,
+  ToggleSwitch,
 } from "../settings/setting-controls";
+import { getInternalLLMProviderModelGroups } from "./model-selector-utils";
+import ModelRolePicker from "./ModelRolePicker";
 
 interface PresetCardOption {
   id: ApprovalMode;
@@ -97,6 +101,7 @@ export default function AgentPolicyMcpTab() {
   });
 
   const currentMode = (): ApprovalMode => appSettings.approvalMode || "auto";
+  const connectedGroups = createMemo(() => getInternalLLMProviderModelGroups());
 
   const effective = createMemo(() =>
     resolveEffectivePermissionSummary(
@@ -279,6 +284,38 @@ export default function AgentPolicyMcpTab() {
               onChange={(m) => void onChangeToolRule("webfetch", m)}
             />
           </SettingRow>
+        </SettingGroup>
+
+        <SettingGroup title={t("approval.aiReviewTitle")} tip={t("approval.aiReviewTip")}>
+          <SettingRow label={t("approval.aiReviewEnableLabel")} tip={t("approval.aiReviewTip")}>
+            <ToggleSwitch
+              checked={Boolean(approvalPolicy().aiReview)}
+              onChange={(enabled) => {
+                void setApprovalAIReview({ aiReview: enabled })
+                  .then(() => showSavedFeedback(true, t("models.policyUpdated")))
+                  .catch((err) => showSavedFeedback(false, err?.message || String(err)));
+              }}
+            />
+          </SettingRow>
+          <SettingRow label={t("approval.aiReviewModelLabel")}>
+            <ModelRolePicker
+              value={approvalPolicy().aiReviewModel || ""}
+              groups={connectedGroups()}
+              allowEmpty={true}
+              emptyLabel={t("approval.aiReviewModelEmpty")}
+              onChange={(val) => {
+                void setApprovalAIReview({
+                  aiReviewModel: val,
+                  aiReview: val ? true : false,
+                })
+                  .then(() => showSavedFeedback(true, t("models.policyUpdated")))
+                  .catch((err) => showSavedFeedback(false, err?.message || String(err)));
+              }}
+            />
+          </SettingRow>
+          <div class="px-5 py-3 text-[12px] leading-relaxed text-[var(--text-muted)]">
+            {t("approval.aiReviewEgressNotice")}
+          </div>
         </SettingGroup>
 
         <SettingGroup title={t("approval.timeoutLabel")} tip={t("approval.timeoutHint")}>

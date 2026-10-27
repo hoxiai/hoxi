@@ -2,8 +2,10 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { ArrowRight, Bot, Check, LoaderCircle, RotateCcw, SlidersHorizontal } from "lucide-solid";
 import {
+  approvalPolicy,
   commitModelSpec,
   openProviderModal,
+  setApprovalAIReview,
   setCommitModelSpec,
   setObserverAutoAudit,
   setObserverModelRole,
@@ -241,6 +243,52 @@ export default function ModelsRoleTab() {
               setTimeout(() => {
                 if (savedKey() === "observer_model") setSavedKey(null);
               }, 1500);
+            },
+          })}
+        </div>
+
+        {/* Complex Shell Command AI Reviewer Model */}
+        <div class="flex items-center justify-between gap-4 px-4 py-3.5">
+          <div class="min-w-0 space-y-1">
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="text-[13px] font-semibold text-[var(--text-primary)]">
+                {t("approval.aiReviewTitle")}
+              </span>
+              <label class="inline-flex items-center gap-1.5 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-0.5 text-[11px] text-[var(--text-secondary)] cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={Boolean(approvalPolicy().aiReview)}
+                  onChange={(e) =>
+                    void setApprovalAIReview({ aiReview: e.currentTarget.checked })
+                  }
+                  class="rounded accent-[var(--accent-primary)] cursor-pointer"
+                />
+                <span>{t("approval.aiReviewEnableLabel")}</span>
+              </label>
+            </div>
+            <div class="text-[12px] text-[var(--text-muted)]">
+              {t("approval.aiReviewEgressNotice")}
+            </div>
+          </div>
+          {renderModelSelect({
+            roleKey: "ai_review_model",
+            value: () => approvalPolicy().aiReviewModel || "",
+            allowEmpty: true,
+            emptyLabel: t("approval.aiReviewModelEmpty"),
+            onChange: (val) => {
+              setSavingKey("ai_review_model");
+              setSavedKey(null);
+              void setApprovalAIReview({
+                aiReviewModel: val,
+                aiReview: val ? true : false,
+              })
+                .then(() => {
+                  setSavedKey("ai_review_model");
+                  setTimeout(() => {
+                    if (savedKey() === "ai_review_model") setSavedKey(null);
+                  }, 1500);
+                })
+                .finally(() => setSavingKey(null));
             },
           })}
         </div>

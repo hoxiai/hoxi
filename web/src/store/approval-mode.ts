@@ -125,8 +125,33 @@ export async function setApprovalTimeout(seconds: number): Promise<void> {
 
 export async function setApprovalMode(mode: ApprovalMode): Promise<void> {
   const gen = ++approvalPolicyGen;
-  // Switching approval modes clears per-tool overrides.
-  const state = await hoxiAPI.updateApprovalPolicy({ mode });
+  const cur = approvalPolicy();
+  // Switching approval modes clears per-tool overrides while keeping timeout and AI reviewer settings.
+  const state = await hoxiAPI.updateApprovalPolicy({
+    mode,
+    ...(cur.aiReview ? { aiReview: true } : {}),
+    ...(cur.aiReviewModel ? { aiReviewModel: cur.aiReviewModel } : {}),
+    ...(cur.approvalTimeoutSeconds ? { approvalTimeoutSeconds: cur.approvalTimeoutSeconds } : {}),
+  });
+  if (gen !== approvalPolicyGen) return;
+  applyApprovalPolicy(state.policy);
+}
+
+export async function setApprovalAIReview(patch: {
+  aiReview?: boolean;
+  aiReviewModel?: string;
+}): Promise<void> {
+  const gen = ++approvalPolicyGen;
+  const cur = approvalPolicy();
+  const aiReviewModel =
+    patch.aiReviewModel !== undefined ? patch.aiReviewModel.trim() : cur.aiReviewModel || "";
+  const aiReview =
+    patch.aiReview !== undefined ? patch.aiReview : Boolean(cur.aiReview);
+  const state = await hoxiAPI.updateApprovalPolicy({
+    ...cur,
+    aiReview,
+    aiReviewModel,
+  });
   if (gen !== approvalPolicyGen) return;
   applyApprovalPolicy(state.policy);
 }

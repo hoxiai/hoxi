@@ -220,7 +220,7 @@ export interface ApprovalAuditEntry {
   directory?: string;
   destructive?: boolean;
   decision: "once" | "always" | "reject" | "timeout" | "interrupted" | string;
-  source: "desktop" | "tunnel" | "system" | "policy" | string;
+  source: "desktop" | "tunnel" | "system" | "policy" | "ai_review" | string;
   message?: string;
 }
 
@@ -230,6 +230,8 @@ export interface ApprovalPolicy {
   edit?: "" | "allow" | "ask";
   webfetch?: "" | "allow" | "ask";
   bash?: "" | "allow" | "smart" | "ask";
+  aiReview?: boolean;
+  aiReviewModel?: string;
   approvalTimeoutSeconds?: number;
   updatedAt?: number;
 }

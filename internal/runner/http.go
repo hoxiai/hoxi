@@ -13,6 +13,7 @@ import (
 	"github.com/hoxiai/hoxi/internal/agentcli"
 	"github.com/hoxiai/hoxi/internal/attachment"
 	"github.com/hoxiai/hoxi/internal/diagnostics"
+	"github.com/hoxiai/hoxi/internal/llm"
 	"github.com/hoxiai/hoxi/internal/opencode/ocapi"
 	"github.com/hoxiai/hoxi/internal/statusbar"
 	"github.com/hoxiai/hoxi/internal/worktree"
@@ -28,10 +29,12 @@ type Service struct {
 	audit       *approvalAuditStore
 	deferred    *deferredStore
 	policy      *approvalPolicyStore
+	aiReviews   *aiReviewCache
 	doomLoop    *doomLoopGuard
 	stall       stallPolicy
 
 	mu              sync.Mutex
+	llm             llm.Client
 	turnMu          sessionTurnLocks
 	procs           map[string]*activeProcess
 	childBusy       map[string]bool
@@ -71,6 +74,16 @@ func (s *Service) SetSummaryNotifier(fn func(sessionID, body string)) {
 	}
 }
 
+// SetLLM wires the internal LLM client used by opt-in approval AI review.
+func (s *Service) SetLLM(client llm.Client) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.llm = client
+	s.mu.Unlock()
+}
+
 func NewService(rootDir string, worktrees *worktree.Manager, status *statusbar.Tracker, customStorePath string) *Service {
 	if worktrees == nil {
 		worktrees = worktree.NewManager(rootDir)
@@ -89,6 +102,7 @@ func NewService(rootDir string, worktrees *worktree.Manager, status *statusbar.T
 		audit:       newApprovalAuditStore(customStorePath),
 		deferred:    newDeferredStore(customStorePath),
 		policy:      newApprovalPolicyStore(customStorePath),
+		aiReviews:   newAIReviewCache(),
 		doomLoop:    newDoomLoopGuard(),
 		stall:       stallPolicyFromEnv(),
 		procs:       make(map[string]*activeProcess),
