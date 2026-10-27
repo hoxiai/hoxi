@@ -17,6 +17,7 @@ var (
 	numericForHeaderRe  = regexp.MustCompile(`(?m)(^|[;&|()\n\r\t ])(for[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]+in[ \t]+)(?:\$\(seq(?:[ \t]+\d+){1,3}\)|\{\d+\.\.\d+(?:\.\.\d+)?\})([ \t]*(?:;|\r?\n))`)
 	urlQueryItemRe      = regexp.MustCompile(`^(?:https?://[A-Za-z0-9_./:@%+=~?&,-]+|/[A-Za-z0-9_./%+-]*\?[A-Za-z0-9_=&.%+-]+)$`)
 	wcCountFlagRe       = regexp.MustCompile(`^(?:-[lcmwL]+|--(?:lines|bytes|chars|words|max-line-length))$`)
+	grepCountFlagRe     = regexp.MustCompile(`^-[a-zA-Z]*c[a-zA-Z]*$`)
 	curlSilentFlagRe    = regexp.MustCompile(`^-(?:[sSLkIf46]+|-silent|-show-error|-location|-insecure|-fail|-head)$`)
 	curlWriteOutRe      = regexp.MustCompile(`^[A-Za-z0-9_.:;,/ \-%{}()\\\n\r\t]+$`)
 	positiveIntRe       = regexp.MustCompile(`^[1-9]\d*$`)
@@ -263,6 +264,9 @@ func isValueClassSegment(seg string) bool {
 		return true
 	}
 	words := stripShellKeywords(shellWords(seg))
+	if stripped, ok := stripNullRedirects(words); ok {
+		words = stripped
+	}
 	if len(words) == 0 {
 		return false
 	}
@@ -274,6 +278,16 @@ func isValueClassSegment(seg string) bool {
 	args := words[1:]
 	switch base {
 	case "pwd", "date", "which", "dirname", "basename":
+		return true
+	case "cat":
+		if len(args) == 0 {
+			return false
+		}
+		for _, a := range args {
+			if strings.HasPrefix(a, "-") || a == "/dev/null" || !isSafeCurlOutputTarget(a) {
+				return false
+			}
+		}
 		return true
 	case "command":
 		return len(args) >= 1 && (args[0] == "-v" || args[0] == "-V")
@@ -309,11 +323,11 @@ func isValueClassSegment(seg string) bool {
 		return counted
 	case "curl":
 		return isValueClassCurl(args)
-	case "grep", "rg":
+	case "grep", "egrep", "fgrep", "rg":
 		count := false
 		for _, a := range args {
 			switch {
-			case a == "-c" || a == "--count":
+			case a == "--count" || grepCountFlagRe.MatchString(a):
 				count = true
 			case a == "-f" || a == "--file" || strings.HasPrefix(a, "-f") || strings.HasPrefix(a, "--file=") ||
 				strings.HasPrefix(a, "--pre") || strings.HasPrefix(a, "--hostname-bin"):
@@ -429,7 +443,7 @@ func isValueClassCurl(args []string) bool {
 				return false
 			}
 			i++
-		case a == "--max-time" || a == "-m" || a == "--connect-timeout" || a == "-A" || a == "--user-agent":
+		case a == "--max-time" || a == "-m" || a == "--connect-timeout" || a == "-A" || a == "--user-agent" || a == "--noproxy":
 			if i+1 >= len(args) {
 				return false
 			}
@@ -648,4 +662,106 @@ func isMacOSTempPath(slash string) bool {
 		}
 	}
 	return !isSecretFilePath(slash)
+}
+
+func normalizeHomePrefixPath(raw string) (string, bool) {
+	for _, pfx := range []string{"~/", "$HOME/", "${HOME}/"} {
+		if strings.HasPrefix(raw, pfx) && len(raw) > len(pfx) {
+			return "/__home__/" + raw[len(pfx):], true
+		}
+	}
+	return "", false
+}
+
+func isSafeHomePathWord(word string, vars map[string]bool) bool {
+	if _, bound := vars["HOME"]; bound {
+		return false
+	}
+	trimmed := word
+	for _, opt := range []string{"-C", "--git-dir=", "--work-tree="} {
+		if strings.HasPrefix(trimmed, opt) {
+			trimmed = trimmed[len(opt):]
+			break
+		}
+	}
+	synth, ok := normalizeHomePrefixPath(trimmed)
+	if !ok || strings.Contains(synth, "$") {
+		return false
+	}
+	for _, part := range strings.Split(filepath.ToSlash(synth), "/") {
+		if part == ".." {
+			return false
+		}
+	}
+	names, ok := wordExpansionNames(word)
+	if !ok || len(names) != 1 || names[0] != "HOME" {
+		return false
+	}
+	return isSafeExternalCDTarget(synth)
+}
+
+func isSafeHomeScriptWord(word string, vars map[string]bool) bool {
+	if !isSafeHomePathWord(word, vars) {
+		return false
+	}
+	slash := strings.ToLower(filepath.ToSlash(word))
+	return isRoutineHoxiSubpath(slash) && (strings.HasSuffix(slash, ".sh") || strings.HasSuffix(slash, ".bash") || strings.HasSuffix(slash, ".zsh"))
+}
+
+func isSafeShellScriptSegment(base string, rawArgs []string, piped bool) bool {
+	if piped || (base != "sh" && base != "bash" && base != "zsh") {
+		return false
+	}
+	args, ok := stripNullRedirects(rawArgs)
+	if !ok || len(args) == 0 {
+		return false
+	}
+	syntaxOnly := false
+	i := 0
+	for i < len(args) {
+		a := args[i]
+		if a == "-n" {
+			syntaxOnly = true
+			i++
+			continue
+		}
+		if a == "-e" || a == "-u" || a == "-x" || a == "-v" || a == "-f" || a == "-eu" || a == "-eo" || a == "-uo" || a == "-euo" {
+			i++
+			continue
+		}
+		if a == "-o" && i+1 < len(args) && (args[i+1] == "pipefail" || args[i+1] == "errexit") {
+			i += 2
+			continue
+		}
+		if strings.HasPrefix(a, "-") {
+			return false
+		}
+		break
+	}
+	if i >= len(args) {
+		return false
+	}
+	script := args[i]
+	if synth, ok := normalizeHomePrefixPath(script); ok {
+		script = synth
+	}
+	if strings.HasPrefix(script, "-") || strings.HasPrefix(script, "~") || strings.Contains(script, "..") || strings.ContainsAny(script, "$*?[`") {
+		return false
+	}
+	lower := strings.ToLower(filepath.ToSlash(script))
+	if !strings.HasSuffix(lower, ".sh") && !strings.HasSuffix(lower, ".bash") && !strings.HasSuffix(lower, ".zsh") {
+		return false
+	}
+	if isSafeCurlOutputTarget(script) || isSecretFilePath(script) || isSensitiveExternalPath(script) || isProtectedRelPath(script) {
+		return false
+	}
+	if !syntaxOnly && !isRoutineHoxiSubpath(lower) {
+		return false
+	}
+	for _, w := range args[i+1:] {
+		if strings.ContainsAny(w, "$`") {
+			return false
+		}
+	}
+	return true
 }

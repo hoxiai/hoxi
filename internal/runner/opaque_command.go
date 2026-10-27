@@ -47,6 +47,7 @@ func isOpaqueShellCommandDepth(command, worktree string, allowInlineScripts bool
 		}
 		command = stripped
 	}
+	command = maskRemoteSSHSegments(command)
 	command = normalizeNumericForHeaders(command)
 	if _, ok := findSubshellSpans(command); !ok {
 		return true
@@ -174,7 +175,10 @@ func opaqueShellCore(command, worktree string, allowInlineScripts, valueClass bo
 		if i > 0 {
 			prevSeg = segments[i-1]
 		}
-		if dataArgInterpreters[base] && !(base == "xargs" && isSafeXargsSegment(args, i > 0 && pipedIn[i], prevSeg)) {
+		if dataArgInterpreters[base] &&
+			!(base == "xargs" && isSafeXargsSegment(args, i > 0 && pipedIn[i], prevSeg)) &&
+			!(base == "ssh" && len(args) == 1 && args[0] == maskedDataArgument) &&
+			!isSafeShellScriptSegment(base, args, i > 0 && pipedIn[i]) {
 			return true
 		}
 		if awkProgramExecutes(base, args) {
@@ -207,8 +211,12 @@ func advanceScopedCD(seg, cwd, worktree string) (string, bool) {
 	if strings.HasPrefix(trimmed, "cd ") || strings.HasPrefix(trimmed, "cd\t") {
 		arg := strings.TrimSpace(trimmed[2:])
 		if len(arg) >= 2 && ((arg[0] == '"' && arg[len(arg)-1] == '"') || (arg[0] == '\'' && arg[len(arg)-1] == '\'')) {
-			trimmed = "cd " + arg[1:len(arg)-1]
+			arg = arg[1 : len(arg)-1]
 		}
+		if synth, ok := normalizeHomePrefixPath(arg); ok {
+			arg = synth
+		}
+		trimmed = "cd " + arg
 	}
 	m := cdSegmentRe.FindStringSubmatch(trimmed)
 	if m == nil {

@@ -525,7 +525,7 @@ func hasOpaqueShellSyntax(s string) bool {
 			}
 			continue
 		}
-		if c == '\\' && (next == '[' || next == ']') {
+		if c == '\\' && (next == '[' || next == ']' || next == '(' || next == ')') {
 			i++
 			continue
 		}

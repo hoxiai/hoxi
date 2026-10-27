@@ -71,132 +71,6 @@ var (
 	valueOnlyTools = setOf("echo", "printf", "test", "[", "basename", "dirname", "true", "false", ":", "exit", "return", "break", "continue")
 )
 
-// extractProcessSubstitutions rewrites each `<(cmd)` into a placeholder
-// argument and each `$(cmd)` into the $__hoxi_cmdsub__ variable, and appends
-// cmd as its own line, so it is judged like any other command. Nested parentheses or an unterminated form leave the command
-// unchanged (and therefore opaque).
-func extractProcessSubstitutions(s string) string {
-	var out strings.Builder
-	var inner []string
-	var quote byte
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		switch {
-		case quote == '\'':
-			if c == '\'' {
-				quote = 0
-			}
-		case c == '$' && quote != '\'' && i+1 < len(s) && s[i+1] == '(':
-			end := processSubstitutionEnd(s, i+2)
-			if end < 0 {
-				return s // `$((…))` arithmetic or nesting stays opaque
-			}
-			inner = append(inner, s[i+2:end])
-			out.WriteString("$" + cmdSubstVar)
-			i = end
-			continue
-		case quote == '"':
-			if c == '\\' && i+1 < len(s) {
-				out.WriteByte(c)
-				i++
-				c = s[i]
-			} else if c == '"' {
-				quote = 0
-			}
-		case c == '\\' && i+1 < len(s):
-			out.WriteByte(c)
-			i++
-			c = s[i]
-		case c == '\'' || c == '"':
-			quote = c
-		case c == '<' && i+1 < len(s) && s[i+1] == '(' && (i == 0 || isWordBoundary(s[i-1])):
-			end := processSubstitutionEnd(s, i+2)
-			if end < 0 {
-				return s
-			}
-			inner = append(inner, s[i+2:end])
-			out.WriteString(processSubstitutionPlaceholder)
-			i = end
-			continue
-		}
-		out.WriteByte(c)
-	}
-	if len(inner) == 0 {
-		return s
-	}
-	return out.String() + "\n" + strings.Join(inner, "\n")
-}
-
-// opacityCandidates returns the commands judged for opacity. OpenCode sends
-// the whole command in metadata.command and its own split of it in patterns
-// (`read f`, `echo "MISSING: $f"`, ...); a piece judged alone loses the loop
-// that binds its variable, so the whole command is the one judged.
-func opacityCandidates(item map[string]interface{}) []string {
-	meta := itemMetadata(item)
-	if cmd := strings.TrimSpace(firstString(meta["command"])); cmd != "" {
-		return []string{unwrapSandboxCommand(cmd)}
-	}
-	return commandCandidates(item)
-}
-
-// destructiveScanForms returns the texts the destructive patterns scan: the
-// command with data arguments masked, plus its unpacked form when it uses
-// `<(…)`, so `cat <(cat .env)` is judged by its inner `cat .env`. A literal
-// substitution (`D=~/.ssh; cat "$D/id_ed25519"`) is scanned too. The original
-// masked text is always kept.
-func destructiveScanForms(cmd string) []string {
-	forms := []string{maskCommandDataArguments(cmd)}
-	if unpacked := extractProcessSubstitutions(cmd); unpacked != cmd {
-		forms = append(forms, maskCommandDataArguments(unpacked))
-	}
-	prepared := joinLineContinuations(strings.TrimSpace(unwrapSandboxCommand(cmd)))
-	if strings.Contains(prepared, "<<") {
-		if stripped, ok := stripLiteralHeredocs(prepared); ok {
-			prepared = stripped
-		}
-	}
-	if spans, ok := findSubshellSpans(prepared); ok && len(spans) > 0 {
-		prepared = eraseSubshells(prepared)
-	}
-	if expanded, status := concretizeLiterals(prepared); status == constApplied || status == constSecret {
-		forms = append(forms, maskCommandDataArguments(expanded))
-		if unpacked := extractProcessSubstitutions(expanded); unpacked != expanded {
-			forms = append(forms, maskCommandDataArguments(unpacked))
-		}
-	}
-	return forms
-}
-
-// processSubstitutionEnd returns the index of the `)` closing a `<(` whose
-// body starts at start, or -1 for nested parentheses or no closing.
-func processSubstitutionEnd(s string, start int) int {
-	var quote byte
-	for i := start; i < len(s); i++ {
-		c := s[i]
-		switch {
-		case quote == '\'':
-			if c == '\'' {
-				quote = 0
-			}
-		case quote == '"':
-			if c == '\\' {
-				i++
-			} else if c == '"' {
-				quote = 0
-			}
-		case c == '\\':
-			i++
-		case c == '\'' || c == '"':
-			quote = c
-		case c == '(':
-			return -1
-		case c == ')':
-			return i
-		}
-	}
-	return -1
-}
-
 // stripShellKeywords drops leading control keywords (`do if ! rg …` → `rg …`).
 func stripShellKeywords(words []string) []string {
 	for len(words) > 0 && shellKeywords[words[0]] {
@@ -370,12 +244,12 @@ func isSafeListingProducer(seg string) bool {
 		}
 		return listing || (files && filtered)
 	case "find":
-		named := false
+		named, pruned := false, false
 		for i := 0; i < len(args); i++ {
 			a := args[i]
 			switch {
-			case !strings.HasPrefix(a, "-") && a != "!" && a != "(" && a != ")":
-				if named || strings.Contains(a, "..") || dotGlobRe.MatchString(a) ||
+			case !strings.HasPrefix(a, "-") && a != "!" && a != "(" && a != ")" && a != "\\(" && a != "\\)":
+				if named || pruned || strings.Contains(a, "..") || dotGlobRe.MatchString(a) ||
 					isSecretFilePath(a) || isSensitiveExternalPath(a) || isProtectedRelPath(a) {
 					return false // a stray word after the predicates or a sensitive/protected root
 				}
@@ -396,12 +270,14 @@ func isSafeListingProducer(seg string) bool {
 					return false
 				}
 				i++
+			case a == "-prune":
+				pruned = true
 			case a == "-o" || a == "-or":
-				if !named {
+				if !named && !pruned {
 					return false
 				}
-				named = false
-			case a == "-not" || a == "!" || a == "-a" || a == "-and" || a == "-print":
+				named, pruned = false, false
+			case a == "-not" || a == "!" || a == "-a" || a == "-and" || a == "-print" || a == "(" || a == ")" || a == "\\(" || a == "\\)":
 			default:
 				return false
 			}
@@ -447,7 +323,7 @@ func expansionsAreBounded(seg string, words []string, vars map[string]bool, valu
 	if j >= len(words) {
 		return true
 	}
-	if strings.Contains(words[j], "$") {
+	if strings.Contains(words[j], "$") && !isSafeHomeScriptWord(words[j], vars) {
 		return false
 	}
 	base := filepath.Base(normalizeAbsoluteTool(words[j]))
@@ -459,6 +335,9 @@ func expansionsAreBounded(seg string, words []string, vars map[string]bool, valu
 			}
 		}
 		return true
+	}
+	if base == "cd" {
+		return len(args) == 1 && isSafeHomePathWord(args[0], vars)
 	}
 	expanding := make([]string, 0, len(args))
 	for _, a := range args {
@@ -607,6 +486,9 @@ func gitMessageExpansionsOnly(args []string, vars map[string]bool) bool {
 
 func gitReadOnlyLoopExpansions(args []string, vars map[string]bool) bool {
 	onlyTrustedLoopVars := func(word string) bool {
+		if isSafeHomePathWord(word, vars) {
+			return true
+		}
 		names, ok := wordExpansionNames(word)
 		if !ok || len(names) == 0 {
 			return false
@@ -655,7 +537,11 @@ func gitReadOnlyLoopExpansions(args []string, vars map[string]bool) bool {
 		}
 		return isReadOnlyGitBranch(append([]string{"branch"}, rest...))
 	}
-	if !gitReadSubcommands[sub] && sub != "ls-files" && sub != "ls-remote" && sub != "describe" && sub != "shortlog" {
+	if sub == "worktree" {
+		return len(rest) == 1 && rest[0] == "list"
+	}
+	if !gitReadSubcommands[sub] && sub != "ls-files" && sub != "ls-remote" && sub != "describe" && sub != "shortlog" &&
+		sub != "ls-tree" && sub != "merge-base" && sub != "check-ignore" {
 		return false
 	}
 	for _, a := range rest {

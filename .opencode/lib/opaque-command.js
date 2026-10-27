@@ -26,6 +26,7 @@ import {
   CMD_SUBST_VAR,
   extractProcessSubstitutions,
   joinLineContinuations,
+  maskRemoteSSHSegments,
   stripLiteralHeredocs,
 } from "./shell-substitution.js";
 import {
@@ -43,11 +44,16 @@ import {
 } from "./shell-constants.js";
 import {
   SEQ_LOOP_PLACEHOLDER,
+  gitReadOnlyLoopExpansions,
   isMacOSTempPath,
   isQuotedDirGlobSuffix,
   isReadOnlySedArgs,
+  isSafeHomePathWord,
+  isSafeHomeScriptWord,
+  isSafeShellScriptSegment,
   isSafeXargsSegment,
   isStdinOnlyHeadTail,
+  normalizeHomePrefixPath,
   normalizeNumericForHeaders,
 } from "./shell-loops.js";
 
@@ -98,7 +104,7 @@ function hasOpaqueShellSyntax(s) {
       }
       continue;
     }
-    if (c === "\\" && (next === "[" || next === "]")) {
+    if (c === "\\" && (next === "[" || next === "]" || next === "(" || next === ")")) {
       i++;
       continue;
     }
@@ -167,10 +173,13 @@ function advanceScopedCD(seg, cwd, worktree) {
   if (!cwd) return ["", false];
   let trimmed = String(seg || "").trim();
   if (trimmed.startsWith("cd ") || trimmed.startsWith("cd\t")) {
-    const arg = trimmed.slice(2).trim();
+    let arg = trimmed.slice(2).trim();
     if (arg.length >= 2 && ((arg.startsWith('"') && arg.endsWith('"')) || (arg.startsWith("'") && arg.endsWith("'")))) {
-      trimmed = "cd " + arg.slice(1, -1);
+      arg = arg.slice(1, -1);
     }
+    const homeNorm = normalizeHomePrefixPath(arg);
+    if (homeNorm) arg = homeNorm;
+    trimmed = "cd " + arg;
   }
   const m = CD_SEGMENT_RE.exec(trimmed);
   if (!m) return ["", false];
@@ -279,6 +288,7 @@ function isOpaqueShellCommandDepth(command, worktree, options, depth) {
     if (joined === null) return true;
   }
   joined = normalizeNumericForHeaders(joined);
+  joined = maskRemoteSSHSegments(joined);
   const spans = findSubshellSpans(joined);
   if (!spans) return true;
   if (spans.every(([start, end]) => !isOpaqueShellCommandDepth(joined.slice(start + 1, end), worktree, options, depth + 1))) {
@@ -351,6 +361,8 @@ function opaqueShellCore(command, worktree, allowInlineScripts, valueClass) {
       }
       continue;
     }
+    if (base === "ssh" && args.length === 1 && args[0] === "Q") continue;
+    if (isSafeShellScriptSegment(base, args, i > 0 && pipedIn[i], { stripNullRedirects, isSecretPath, isSensitiveExternalPath, isProtectedPath })) continue;
     if (outsideCWD && !isTempOnlyCleanupSegment(cmdWords)) return true;
     const prevSeg = i > 0 ? segments[i - 1] : "";
     if (DATA_ARG_INTERPRETERS.has(base) && !(base === "xargs" && isSafeXargsSegment(args, i > 0 && pipedIn[i], prevSeg, { stripNullRedirects, normalizeAbsoluteTool, isSafeListingPipeline }))) {
@@ -456,10 +468,12 @@ function isSafeListingProducer(seg) {
   }
   if (base === "find") {
     let named = false;
+    let pruned = false;
     for (let i = 0; i < args.length; i++) {
       const a = args[i];
-      if (!a.startsWith("-") && a !== "!" && a !== "(" && a !== ")") {
-        if (named || a.includes("..") || DOT_GLOB_RE.test(a) || isSecretPath(a) || isSensitiveExternalPath(a) || isProtectedPath(a)) {
+      if (a === "(" || a === ")" || a === "\\(" || a === "\\)") continue;
+      if (!a.startsWith("-") && a !== "!") {
+        if (named || pruned || a.includes("..") || DOT_GLOB_RE.test(a) || isSecretPath(a) || isSensitiveExternalPath(a) || isProtectedPath(a)) {
           return false;
         }
       } else if (a === "-name" || a === "-iname") {
@@ -472,12 +486,15 @@ function isSafeListingProducer(seg) {
           return false;
         }
         i++;
+      } else if (a === "-prune") {
+        pruned = true;
       } else if (a === "-type" || a === "-maxdepth" || a === "-mindepth") {
         if (i + 1 >= args.length) return false;
         i++;
       } else if (a === "-o" || a === "-or") {
-        if (!named) return false;
+        if (!named && !pruned) return false;
         named = false;
+        pruned = false;
       } else if (!["-not", "!", "-a", "-and", "-print"].includes(a)) {
         return false;
       }
@@ -630,51 +647,6 @@ function gitMessageExpansionsOnly(args, vars) {
   return true;
 }
 
-const GIT_LOOP_READ_SUBS = new Set(["status", "diff", "log", "show", "rev-parse", "ls-files", "ls-remote", "describe", "shortlog"]);
-const GIT_LOOP_OUTPUT_RE = /^--(o(u[^=]*)?|ex(t[^=]*)?)(=|$)/;
-const GIT_LOOP_BRANCH_SHORT_RE = /^-(?:[arv]+)$/;
-const GIT_LOOP_BRANCH_LONG_RE = /^(?:--all|--remotes|--verbose|--show-current|--no-color)$/;
-
-function isSafeLoopGitBranch(args) {
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a.includes("$")) return false;
-    if (a === "-l" || a === "--list") return args.slice(i + 1).every((x) => !x.startsWith("-") && !x.includes("$"));
-    if (!GIT_LOOP_BRANCH_SHORT_RE.test(a) && !GIT_LOOP_BRANCH_LONG_RE.test(a)) return false;
-  }
-  return true;
-}
-
-function gitReadOnlyLoopExpansions(args, vars) {
-  const onlyTrustedLoopVars = (word) => {
-    const names = wordExpansionNames(word);
-    return names !== null && names.length > 0 && names.every((n) => vars.has(n) && vars.get(n) === true);
-  };
-  let i = 0;
-  while (i < args.length && args[i].startsWith("-")) {
-    const a = args[i];
-    if (a === "-c" || a.startsWith("-c") || a.startsWith("--config-env")) return false;
-    if (a === "-C" || a === "--git-dir" || a === "--work-tree") {
-      if (i + 1 >= args.length || (args[i + 1].includes("$") && !onlyTrustedLoopVars(args[i + 1]))) return false;
-      i += 2;
-      continue;
-    }
-    if (a.startsWith("-C") || a.startsWith("--git-dir=") || a.startsWith("--work-tree=")) {
-      if (a.includes("$") && !onlyTrustedLoopVars(a)) return false;
-      i++;
-      continue;
-    }
-    if (a.includes("$") || GIT_GLOBAL_VALUE_FLAGS.has(a)) return false;
-    i++;
-  }
-  if (i >= args.length) return false;
-  const sub = args[i];
-  const rest = args.slice(i + 1);
-  if (sub === "branch") return isSafeLoopGitBranch(rest);
-  if (!GIT_LOOP_READ_SUBS.has(sub)) return false;
-  return rest.every((a) => !GIT_LOOP_OUTPUT_RE.test(a) && (!a.includes("$") || (!a.startsWith("-") && onlyTrustedLoopVars(a))));
-}
-
 function wordExpansionNames(word) {
   const names = [];
   for (let i = 0; i < word.length; i++) {
@@ -725,19 +697,27 @@ function isSafeListingPipeline(cmd) {
 function expansionsAreBounded(seg, words, vars, valueClass = false) {
   if (shellExpansionNames(seg) === null) return false;
   if (words.length === 1 && valueClass && words[0].endsWith("=$" + CMD_SUBST_VAR)) return true;
+  const homeDeps = {
+    wordExpansionNames,
+    isSecretPath,
+    isSensitiveExternalPath,
+    isProtectedPath,
+    gitGlobalValueFlags: GIT_GLOBAL_VALUE_FLAGS,
+  };
   let j = 0;
   while (j < words.length && ENV_VAR_ASSIGNMENT_WORD_RE.test(words[j])) {
     if (words[j].includes("$") && !isBenignPathAssignment(words[j])) return false;
     j++;
   }
   if (j >= words.length) return true;
-  if (words[j].includes("$")) return false;
+  if (words[j].includes("$") && !isSafeHomeScriptWord(words[j], vars, homeDeps)) return false;
   const base = baseName(normalizeAbsoluteTool(words[j]));
   const args = words.slice(j + 1);
   if (base === "export") return args.every((a) => !a.includes("$") || isBenignPathAssignment(a));
+  if (base === "cd") return args.length === 1 && isSafeHomePathWord(args[0], vars, homeDeps);
   const expanding = args.filter((a) => a.includes("$"));
   if (expanding.length === 0) return true;
-  if (base === "git") return gitMessageExpansionsOnly(args, vars) || gitReadOnlyLoopExpansions(args, vars);
+  if (base === "git") return gitMessageExpansionsOnly(args, vars) || gitReadOnlyLoopExpansions(args, vars, homeDeps);
   const readOnlyTool = READ_ONLY_DATA_TOOLS.has(base) || (base === "sed" && isReadOnlySedArgs(args, stripNullRedirects));
   if (!readOnlyTool && !(valueClass && base === "mkdir")) return false;
   for (const a of args) {
@@ -746,6 +726,7 @@ function expansionsAreBounded(seg, words, vars, valueClass = false) {
     }
   }
   for (const a of expanding) {
+    if (isSafeHomePathWord(a, vars, homeDeps)) continue;
     const names = wordExpansionNames(a);
     if (names === null) return false;
     for (const name of names) {

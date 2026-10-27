@@ -700,5 +700,10 @@
   { "command": "kill -9 83853", "decision": "ask", "destructive": true },
   { "command": "kill -s TERM 83853", "decision": "ask", "destructive": true },
   { "command": "kill -0 -9 83853", "decision": "ask", "destructive": true },
-  { "command": "kill -0 -1", "decision": "ask", "destructive": false }
+  { "command": "kill -0 -1", "decision": "ask", "destructive": false },
+  { "command": "ssh -i ~/.ssh/id_117 root@192.168.1.117 'docker rm -f test && rm -rf /tmp/x'", "decision": "ask", "destructive": false },
+  { "command": "scp -i ~/.ssh/id_117 /tmp/run.sh root@192.168.1.117:/tmp/run.sh", "decision": "ask", "destructive": false },
+  { "command": "scp -i ~/.ssh/id_117 ~/.ssh/id_117 root@192.168.1.117:/tmp/id_117", "decision": "ask", "destructive": true },
+  { "command": "cat > /tmp/run.sh <<'EOF'\ndocker rm -f test\nrm -rf /opt/app\nEOF\nscp -i ~/.ssh/id_117 /tmp/run.sh root@192.168.1.117:/tmp/run.sh", "decision": "ask", "destructive": false },
+  { "command": "cat > /tmp/run.sh <<'EOF'\nrm -rf /tmp/x\nEOF\nbash /tmp/run.sh", "decision": "ask", "destructive": true }
 ]

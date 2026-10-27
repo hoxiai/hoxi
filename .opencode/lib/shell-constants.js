@@ -2,7 +2,7 @@
 // $(...) substitutions. The rewritten text is only a judgment form. Mirrors
 // internal/runner/opaque_constants.go and opaque_expand.go.
 import { DATA_ARG_INTERPRETERS } from "./command-data-args.js";
-import { containsFor, expandLiteralForLoops, forLoopRanges, isValueClassCurl, isValueClassWc } from "./shell-loops.js";
+import { containsFor, expandLiteralForLoops, forLoopRanges, isSafeCurlOutputTarget, isValueClassCurl, isValueClassWc } from "./shell-loops.js";
 
 export const CMD_SUBST_VAR = "__hoxi_cmdsub__";
 export const MAX_SUBSHELL_DEPTH = 2;
@@ -34,6 +34,10 @@ let judge = {
 
 export function setLiteralJudge(partial) {
   judge = { ...judge, ...partial };
+}
+
+export function getLiteralJudge() {
+  return judge;
 }
 
 export function acceptsValueClassArg(base) {
@@ -632,13 +636,16 @@ export function isValueClassSegment(seg) {
   seg = String(seg ?? "").trim();
   if (!seg || seg.includes("`") || /\$[A-Za-z_{!(?]/.test(seg)) return false;
   if (judge.isSafeListingPipeline?.(seg)) return true;
-  let words = stripShellKeywords(shellWordsOf(seg));
+  let words = stripShellKeywords(shellWordsOf(seg)).filter((w) => !/^(?:\d*|&)>>?\/dev\/null$|^\d*>&[12]$/.test(w));
   if (words.length === 0) return false;
   words = unwrapCommandPrefixes(words);
   if (!words || words.length === 0) return false;
   const base = baseName(words[0]);
   const args = words.slice(1);
   if (["pwd", "date", "which", "dirname", "basename"].includes(base)) return true;
+  if (base === "cat") {
+    return args.length > 0 && args.every((a) => !a.startsWith("-") && a !== "/dev/null" && isSafeCurlOutputTarget(a, pathSecret));
+  }
   if (base === "command") return args.length >= 1 && (args[0] === "-v" || args[0] === "-V");
   if (base === "go") {
     if (args[0] !== "env") return false;
@@ -650,10 +657,10 @@ export function isValueClassSegment(seg) {
   if (base === "curl") {
     return isValueClassCurl(args, pathSecret);
   }
-  if (base === "grep" || base === "rg") {
+  if (base === "grep" || base === "egrep" || base === "fgrep" || base === "rg") {
     let count = false;
     for (const a of args) {
-      if (a === "-c" || a === "--count") count = true;
+      if (a === "--count" || /^-[a-zA-Z]*c[a-zA-Z]*$/.test(a)) count = true;
       else if (a === "-f" || a === "--file" || a.startsWith("-f") || a.startsWith("--file=") || a.startsWith("--pre") || a.startsWith("--hostname-bin")) {
         return false;
       }

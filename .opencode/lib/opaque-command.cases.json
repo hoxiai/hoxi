@@ -241,6 +241,10 @@
   },
   {
     "command": "cd \"$HOME/code\" && ls",
+    "opaque": false
+  },
+  {
+    "command": "cd \"$HOME/.ssh\" && ls",
     "opaque": true
   },
   {
@@ -763,6 +767,34 @@
   },
   {
     "command": "for x in .agents/skills/foo/SKILL.md; do cat \"$x\"; done",
+    "opaque": false
+  },
+  {
+    "command": "ssh -i ~/.ssh/id_117 root@192.168.1.117 'docker ps && rm -rf /tmp/foo'",
+    "opaque": false
+  },
+  {
+    "command": "ssh -i ~/.ssh/id_117 root@localhost 'ls'",
+    "opaque": true
+  },
+  {
+    "command": "ssh -o ProxyCommand='sh -c id' root@192.168.1.117 'ls'",
+    "opaque": true
+  },
+  {
+    "command": "find /tmp/backups \\( -name '*.sql' -o -name '*.gz' \\) 2>/dev/null | while read f; do head -n 5 \"$f\"; done",
+    "opaque": false
+  },
+  {
+    "command": "bash -n /Users/hugh/.agents/skills/ainode-release-and-deploy/scripts/deploy-ainode-site.sh",
+    "opaque": false
+  },
+  {
+    "command": "bash /Users/hugh/.agents/skills/ainode-release-and-deploy/scripts/deploy-ainode-site.sh 1.1.24",
+    "opaque": false
+  },
+  {
+    "command": "code=$(curl -s --noproxy '*' -o /tmp/ssr_home.html -w '%{http_code}' http://127.0.0.1:3411/ 2>/dev/null); echo \"HTTP $code, bytes: $(wc -c < /tmp/ssr_home.html)\"; echo \"H1 count: $(grep -c '<h1' /tmp/ssr_home.html)\"; echo \"SSR links: $(grep -oc 'href=\"/[a-z]' /tmp/ssr_home.html)\"",
     "opaque": false
   }
 ]

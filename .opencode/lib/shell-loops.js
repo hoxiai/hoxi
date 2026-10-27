@@ -300,7 +300,7 @@ function isSafeCurlWriteOut(fmtStr) {
   return Boolean(fmtStr) && !fmtStr.includes("@") && !lower.includes("header") && !lower.includes("json") && CURL_WRITE_OUT_RE.test(fmtStr);
 }
 
-function isSafeCurlOutputTarget(p, isSecret) {
+export function isSafeCurlOutputTarget(p, isSecret) {
   if (p === "/dev/null") return true;
   if (!p || p.includes("..") || /[$*?[`~]/.test(p) || isSecret(p)) return false;
   return p.startsWith("/tmp/") || p.startsWith("/private/tmp/") || isMacOSTempPath(p);
@@ -335,7 +335,7 @@ export function isValueClassCurl(args, isSecret) {
       const method = String(args[i + 1] ?? "").toUpperCase();
       if (method !== "GET" && method !== "HEAD") return false;
       i++;
-    } else if (["--max-time", "-m", "--connect-timeout", "-A", "--user-agent"].includes(a)) {
+    } else if (["--max-time", "-m", "--connect-timeout", "-A", "--user-agent", "--noproxy"].includes(a)) {
       if (i + 1 >= args.length) return false;
       i++;
     } else if (!CURL_SILENT_FLAG_RE.test(a) && a.startsWith("-")) {
@@ -383,4 +383,117 @@ export function isSafeXargsSegment(rawArgs, piped, prevSeg, deps) {
     if (ta.startsWith("-")) return false;
   }
   return true;
+}
+
+export function normalizeHomePrefixPath(raw) {
+  const s = String(raw ?? "");
+  for (const pfx of ["~/", "$HOME/", "${HOME}/"]) {
+    if (s.startsWith(pfx) && s.length > pfx.length) {
+      return "/__home__/" + s.slice(pfx.length);
+    }
+  }
+  return "";
+}
+
+export function isSafeHomePathWord(word, vars, deps) {
+  if (vars.has("HOME")) return false;
+  let trimmed = String(word ?? "");
+  for (const opt of ["-C", "--git-dir=", "--work-tree="]) {
+    if (trimmed.startsWith(opt)) {
+      trimmed = trimmed.slice(opt.length);
+      break;
+    }
+  }
+  const synth = normalizeHomePrefixPath(trimmed);
+  if (!synth || synth.includes("$") || synth.split("/").includes("..")) return false;
+  const names = deps.wordExpansionNames(word);
+  if (!names || names.length !== 1 || names[0] !== "HOME") return false;
+  return Boolean(synth) && synth !== "/" && !deps.isSensitiveExternalPath(synth) && !deps.isSecretPath(synth) && !deps.isProtectedPath(synth);
+}
+
+export function isSafeHomeScriptWord(word, vars, deps) {
+  if (!isSafeHomePathWord(word, vars, deps)) return false;
+  const slash = String(word ?? "").replaceAll("\\", "/").toLowerCase();
+  const routine = slash.includes("/.hoxi/skills/") || slash.includes("/.hoxi/attachments/") || slash.includes("/.agents/skills/");
+  return routine && (slash.endsWith(".sh") || slash.endsWith(".bash") || slash.endsWith(".zsh"));
+}
+
+export function isSafeShellScriptSegment(base, rawArgs, piped, deps) {
+  if (piped || (base !== "sh" && base !== "bash" && base !== "zsh")) return false;
+  const args = deps.stripNullRedirects(rawArgs);
+  if (!args || args.length === 0) return false;
+  let syntaxOnly = false;
+  let i = 0;
+  while (i < args.length) {
+    const a = args[i];
+    if (a === "-n") { syntaxOnly = true; i++; continue; }
+    if (["-e", "-u", "-x", "-v", "-f", "-eu", "-eo", "-uo", "-euo"].includes(a)) { i++; continue; }
+    if (a === "-o" && i + 1 < args.length && (args[i + 1] === "pipefail" || args[i + 1] === "errexit")) {
+      i += 2;
+      continue;
+    }
+    if (a.startsWith("-")) return false;
+    break;
+  }
+  if (i >= args.length) return false;
+  let script = args[i];
+  const synth = normalizeHomePrefixPath(script);
+  if (synth) script = synth;
+  if (script.startsWith("-") || script.startsWith("~") || script.includes("..") || /[$*?[`]/.test(script)) return false;
+  const lower = script.replaceAll("\\", "/").toLowerCase();
+  if (!lower.endsWith(".sh") && !lower.endsWith(".bash") && !lower.endsWith(".zsh")) return false;
+  const isSec = (p) => deps.isSecretPath(p) || deps.isSensitiveExternalPath(p);
+  if (isSafeCurlOutputTarget(script, isSec) || isSec(script) || deps.isProtectedPath(script)) return false;
+  const routine = lower.includes("/.hoxi/skills/") || lower.includes("/.hoxi/attachments/") || lower.includes("/.agents/skills/") ||
+    lower.startsWith(".hoxi/skills/") || lower.startsWith(".hoxi/attachments/") || lower.startsWith(".agents/skills/");
+  if (!syntaxOnly && !routine) return false;
+  return args.slice(i + 1).every((w) => !/[$`]/.test(w));
+}
+
+const GIT_LOOP_READ_SUBS = new Set(["status", "diff", "log", "show", "rev-parse", "ls-files", "ls-remote", "describe", "shortlog", "ls-tree", "merge-base", "check-ignore"]);
+const GIT_LOOP_OUTPUT_RE = /^--(o(u[^=]*)?|ex(t[^=]*)?)(=|$)/;
+const GIT_LOOP_BRANCH_SHORT_RE = /^-(?:[arv]+)$/;
+const GIT_LOOP_BRANCH_LONG_RE = /^(?:--all|--remotes|--verbose|--show-current|--no-color)$/;
+const GIT_GLOBAL_VALUE_FLAGS = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"]);
+
+function isSafeLoopGitBranch(args) {
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a.includes("$")) return false;
+    if (a === "-l" || a === "--list") return args.slice(i + 1).every((x) => !x.startsWith("-") && !x.includes("$"));
+    if (!GIT_LOOP_BRANCH_SHORT_RE.test(a) && !GIT_LOOP_BRANCH_LONG_RE.test(a)) return false;
+  }
+  return true;
+}
+
+export function gitReadOnlyLoopExpansions(args, vars, deps) {
+  const onlyTrustedLoopVars = (word) => {
+    if (isSafeHomePathWord(word, vars, deps)) return true;
+    const names = deps.wordExpansionNames(word);
+    return names !== null && names.length > 0 && names.every((n) => vars.has(n) && vars.get(n) === true);
+  };
+  let i = 0;
+  while (i < args.length && args[i].startsWith("-")) {
+    const a = args[i];
+    if (a === "-c" || a.startsWith("-c") || a.startsWith("--config-env")) return false;
+    if (a === "-C" || a === "--git-dir" || a === "--work-tree") {
+      if (i + 1 >= args.length || (args[i + 1].includes("$") && !onlyTrustedLoopVars(args[i + 1]))) return false;
+      i += 2;
+      continue;
+    }
+    if (a.startsWith("-C") || a.startsWith("--git-dir=") || a.startsWith("--work-tree=")) {
+      if (a.includes("$") && !onlyTrustedLoopVars(a)) return false;
+      i++;
+      continue;
+    }
+    if (a.includes("$") || GIT_GLOBAL_VALUE_FLAGS.has(a)) return false;
+    i++;
+  }
+  if (i >= args.length) return false;
+  const sub = args[i];
+  const rest = args.slice(i + 1);
+  if (sub === "branch") return isSafeLoopGitBranch(rest);
+  if (sub === "worktree") return rest.length === 1 && rest[0] === "list";
+  if (!GIT_LOOP_READ_SUBS.has(sub)) return false;
+  return rest.every((a) => !GIT_LOOP_OUTPUT_RE.test(a) && (!a.includes("$") || (!a.startsWith("-") && onlyTrustedLoopVars(a))));
 }
