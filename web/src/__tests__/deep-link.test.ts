@@ -1,5 +1,6 @@
 import { reconcile, unwrap } from "solid-js/store";
 import { buildMessageLink } from "../components/timeline/session-export";
+import { DESKTOP_INTENT_EVENT, onDesktopIntent } from "../services/desktop-events";
 import {
   appSettings,
   applyDesktopIntent,
@@ -100,6 +101,62 @@ describe("session deep links", () => {
       closeHandoffModal();
       setLeftNavOpen(savedNav);
       setWorkspace(reconcile(saved));
+    }
+  });
+
+  it("subscribes to both Wails runtime and native DOM desktop-intent wake-ups", () => {
+    const g = globalThis as unknown as { window?: Record<string, unknown> };
+    const prevWindow = g.window;
+    const domListeners = new Map<string, Set<() => void>>();
+    let wailsListener = null as (() => void) | null;
+    let wailsOffCalls = 0;
+
+    g.window = {
+      runtime: {
+        EventsOn: (name: string, cb: () => void) => {
+          if (name === DESKTOP_INTENT_EVENT) {
+            wailsListener = cb;
+          }
+          return () => {
+            wailsOffCalls++;
+            if (wailsListener === cb) wailsListener = null;
+          };
+        },
+      },
+      addEventListener: (name: string, cb: () => void) => {
+        if (!domListeners.has(name)) domListeners.set(name, new Set());
+        domListeners.get(name)!.add(cb);
+      },
+      removeEventListener: (name: string, cb: () => void) => {
+        domListeners.get(name)?.delete(cb);
+      },
+    };
+
+    try {
+      let wakeups = 0;
+      const dispose = onDesktopIntent(() => {
+        wakeups++;
+      });
+
+      wailsListener?.();
+      assertEqual(wakeups, 1);
+
+      for (const cb of domListeners.get(DESKTOP_INTENT_EVENT) ?? []) cb();
+      assertEqual(wakeups, 2);
+
+      for (const cb of domListeners.get("focus") ?? []) cb();
+      assertEqual(wakeups, 3);
+
+      dispose();
+      assertEqual(wailsOffCalls, 1);
+      assertEqual(domListeners.get(DESKTOP_INTENT_EVENT)?.size ?? 0, 0);
+      assertEqual(domListeners.get("focus")?.size ?? 0, 0);
+    } finally {
+      if (prevWindow === undefined) {
+        delete g.window;
+      } else {
+        g.window = prevWindow;
+      }
     }
   });
 });

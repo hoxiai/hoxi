@@ -1,6 +1,7 @@
 //go:build darwin
 
 #import <Cocoa/Cocoa.h>
+#import <WebKit/WebKit.h>
 
 static NSString *hoxiAboutApplicationName;
 static NSString *hoxiAboutVersion;
@@ -84,10 +85,47 @@ static void hoxi_about_apply_menu_patch(void) {
 
 void hoxi_about_install(const char *applicationName, const char *version) {
     @autoreleasepool {
+        [hoxiAboutApplicationName release];
+        [hoxiAboutVersion release];
         hoxiAboutApplicationName = applicationName != NULL ? [[NSString alloc] initWithUTF8String:applicationName] : @"Hoxi";
         hoxiAboutVersion = version != NULL ? [[NSString alloc] initWithUTF8String:version] : @"";
         dispatch_async(dispatch_get_main_queue(), ^{
             hoxi_about_apply_menu_patch();
         });
     }
+}
+
+static void hoxi_eval_desktop_intent_in_view(NSView *view) {
+    if (view == nil) {
+        return;
+    }
+    if ([view isKindOfClass:[WKWebView class]]) {
+        // Static NSString literal (@"...") is an immortal __NSCFConstantString.
+        // Calling evaluateJavaScript: directly on WKWebView bypasses Wails v2.13.0's
+        // C.ExecJS, which over-releases its autoreleased NSString and crashes with SIGSEGV.
+        static NSString * const kDesktopIntentScript =
+            @"if(window.wails&&typeof window.wails.EventsNotify==='function'){"
+             "window.wails.EventsNotify('{\"name\":\"hoxi:desktop-intent\",\"data\":[]}');"
+             "}else{"
+             "window.dispatchEvent(new CustomEvent('hoxi:desktop-intent'));"
+             "}";
+        [(WKWebView *)view evaluateJavaScript:kDesktopIntentScript completionHandler:nil];
+        return;
+    }
+    for (NSView *subview in [view subviews]) {
+        hoxi_eval_desktop_intent_in_view(subview);
+    }
+}
+
+void hoxi_emit_desktop_intent(void) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        @autoreleasepool {
+            if (NSApp == nil) {
+                return;
+            }
+            for (NSWindow *window in [NSApp windows]) {
+                hoxi_eval_desktop_intent_in_view([window contentView]);
+            }
+        }
+    });
 }

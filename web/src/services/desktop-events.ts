@@ -18,10 +18,26 @@ function wailsEventsOn(): WailsEventsOn | null {
  * every listener registered for the event.
  */
 export function onDesktopIntent(callback: () => void): () => void {
+  if (typeof window === "undefined") return () => {};
+  const listener = () => callback();
   const eventsOn = wailsEventsOn();
-  if (!eventsOn) return () => {};
-  const off = eventsOn(DESKTOP_INTENT_EVENT, () => callback());
-  return typeof off === "function" ? off : () => {};
+  const offWails = eventsOn ? eventsOn(DESKTOP_INTENT_EVENT, listener) : undefined;
+  const hasDOMEvents =
+    typeof window.addEventListener === "function" &&
+    typeof window.removeEventListener === "function";
+  if (hasDOMEvents) {
+    window.addEventListener(DESKTOP_INTENT_EVENT, listener);
+    window.addEventListener("focus", listener);
+  }
+  return () => {
+    if (typeof offWails === "function") {
+      offWails();
+    }
+    if (hasDOMEvents) {
+      window.removeEventListener(DESKTOP_INTENT_EVENT, listener);
+      window.removeEventListener("focus", listener);
+    }
+  };
 }
 
 /** Opens an external URL through the Wails host browser bridge or `window.open` fallback. */

@@ -47,20 +47,25 @@ func SetActionHandler(fn func(MenuAction)) {
 	actionHandlerMu.Unlock()
 }
 
-func dispatchMenuAction(kind, sessionID string) {
+func activeActionHandler() func(MenuAction) {
+	actionHandlerMu.RLock()
+	defer actionHandlerMu.RUnlock()
+	return actionHandler
+}
+
+func invokeActionHandler(fn func(MenuAction), kind, sessionID string) {
 	kind = strings.TrimSpace(kind)
-	if kind == "" {
+	if fn == nil || kind == "" {
 		return
 	}
-	actionHandlerMu.RLock()
-	fn := actionHandler
-	actionHandlerMu.RUnlock()
-	if fn != nil {
-		fn(MenuAction{
-			Kind:      kind,
-			SessionID: strings.TrimSpace(sessionID),
-		})
-	}
+	fn(MenuAction{
+		Kind:      kind,
+		SessionID: strings.TrimSpace(sessionID),
+	})
+}
+
+func dispatchMenuAction(kind, sessionID string) {
+	invokeActionHandler(activeActionHandler(), kind, sessionID)
 }
 
 // FormatMenuTargetLabel formats a single-line menu label for a pending or

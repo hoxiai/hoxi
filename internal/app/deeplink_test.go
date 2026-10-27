@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -124,6 +125,11 @@ func TestHandleStatusBarMenuActionQueuesDesktopIntents(t *testing.T) {
 	tracker.SetSessionBusy("ses_running", true)
 
 	gw := gateway.New(0, "test", t.TempDir(), nil, nil)
+	notified := 0
+	gw.SetDesktopIntentNotifier(func() {
+		notified++
+		emitDesktopIntent(context.Background())
+	})
 	app := &DesktopApp{gateway: gw, status: tracker}
 
 	// 1. Attention menu click without explicit session resolves first pending target
@@ -173,5 +179,8 @@ func TestHandleStatusBarMenuActionQueuesDesktopIntents(t *testing.T) {
 	got, ok := gw.ConsumeDesktopIntent()
 	if !ok || got.Action != gateway.DesktopIntentActionSyncKeepAwake {
 		t.Fatalf("unexpected sync-keep-awake intent: %+v (ok=%v)", got, ok)
+	}
+	if notified != 7 {
+		t.Fatalf("expected desktop intent notifier to be invoked 7 times, got %d", notified)
 	}
 }

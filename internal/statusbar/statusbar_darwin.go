@@ -92,11 +92,17 @@ func activeStatusBarCtx() context.Context {
 //export HoxiShowMainWindow
 func HoxiShowMainWindow() {
 	ctx := activeStatusBarCtx()
-	if ctx != nil {
-		wailsruntime.WindowShow(ctx)
-		wailsruntime.WindowUnminimise(ctx)
+	fn := activeActionHandler()
+	if ctx == nil && fn == nil {
+		return
 	}
-	dispatchMenuAction(MenuActionWorkspace, "")
+	go func() {
+		if ctx != nil {
+			wailsruntime.WindowShow(ctx)
+			wailsruntime.WindowUnminimise(ctx)
+		}
+		invokeActionHandler(fn, MenuActionWorkspace, "")
+	}()
 }
 
 //export HoxiTriggerMenuAction
@@ -108,14 +114,18 @@ func HoxiTriggerMenuAction(kind *C.char, sessionID *C.char) {
 	if sessionID != nil {
 		sid = C.GoString(sessionID)
 	}
-	if k != MenuActionToggleKeepAwake {
-		ctx := activeStatusBarCtx()
-		if ctx != nil {
+	ctx := activeStatusBarCtx()
+	fn := activeActionHandler()
+	if ctx == nil && fn == nil {
+		return
+	}
+	go func() {
+		if k != MenuActionToggleKeepAwake && ctx != nil {
 			wailsruntime.WindowShow(ctx)
 			wailsruntime.WindowUnminimise(ctx)
 		}
-	}
-	dispatchMenuAction(k, sid)
+		invokeActionHandler(fn, k, sid)
+	}()
 }
 
 //export HoxiQuitApplication
@@ -124,5 +134,5 @@ func HoxiQuitApplication() {
 	if ctx == nil {
 		return
 	}
-	wailsruntime.Quit(ctx)
+	go wailsruntime.Quit(ctx)
 }

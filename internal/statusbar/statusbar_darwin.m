@@ -68,7 +68,7 @@ extern void HoxiQuitApplication(void);
     HoxiTriggerMenuAction("running", [sessionID UTF8String]);
 }
 
-- (void)newThread:(id)sender {
+- (void)openNewThread:(id)sender {
     [NSApp activateIgnoringOtherApps:YES];
     HoxiTriggerMenuAction("new-thread", "");
 }
@@ -306,7 +306,7 @@ void hoxi_statusbar_start(void) {
             [menu addItem:[NSMenuItem separatorItem]];
 
             NSMenuItem *newThreadItem = [[NSMenuItem alloc] initWithTitle:@"新建对话"
-                                                                   action:@selector(newThread:)
+                                                                   action:@selector(openNewThread:)
                                                             keyEquivalent:@"n"];
             newThreadItem.target = hoxiStatusBarController;
             [menu addItem:newThreadItem];

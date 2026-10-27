@@ -408,7 +408,7 @@ func Run(distFS fs.FS) {
 	})
 	gw.SetDesktopIntentNotifier(func() {
 		if ctx := app.desktopContext(); ctx != nil {
-			wailsruntime.EventsEmit(ctx, desktopIntentEvent)
+			emitDesktopIntent(ctx)
 		}
 	})
 
