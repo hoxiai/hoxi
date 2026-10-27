@@ -1,8 +1,28 @@
 import { browserAPI, browserPoint, browserStreamURL, browserURL, connectBrowserStream, observeBrowserZoom } from "../services/browser";
-import { normalizeBrowserAddress } from "../store/browser";
+import { browserLoadPhase, normalizeBrowserAddress, requiresBrowserTakeover } from "../store/browser";
 import { assertDeepEqual, assertEqual, describe, it } from "./test-harness";
 
 describe("Browser inspector", () => {
+  it("distinguishes startup, slow navigation, page failure, and preview connection", () => {
+    const state = { url: "https://example.com", title: "", tabID: "one", tabs: [{ id: "one", title: "", url: "" }], manual: false };
+    assertEqual(browserLoadPhase(null, false, "connecting", "", 20000), "idle");
+    assertEqual(browserLoadPhase(null, true, "connecting", "", 20000), "starting");
+    assertEqual(browserLoadPhase({ ...state, navigation: { status: "loading", startedAt: 19000 } }, false, "live", "", 20000), "loading");
+    assertEqual(browserLoadPhase({ ...state, navigation: { status: "loading", startedAt: 1000 } }, false, "live", "", 20000), "slow");
+    assertEqual(browserLoadPhase({ ...state, navigation: { status: "failed", httpStatus: 404 } }, false, "live", "", 20000), "failed");
+    assertEqual(browserLoadPhase({ ...state, navigation: { status: "stopped" } }, false, "live", "", 20000), "stopped");
+    assertEqual(browserLoadPhase(state, false, "reconnecting", "", 20000), "reconnecting");
+    assertEqual(browserLoadPhase(state, false, "delayed", "", 20000), "delayed");
+    assertEqual(browserLoadPhase(state, false, "live", "", 20000), "ready");
+    assertEqual(browserLoadPhase({ ...state, connected: false }, false, "live", "", 20000), "disconnected");
+  });
+
+  it("takes over on deliberate page input without taking control on hover or release", () => {
+    for (const action of ["type", "key", "wheel", "zoom", "click"] as const) assertEqual(requiresBrowserTakeover({ action }), true);
+    assertEqual(requiresBrowserTakeover({ action: "pointer", phase: "down" }), true);
+    for (const phase of ["move", "up", "cancel"] as const) assertEqual(requiresBrowserTakeover({ action: "pointer", phase }), false);
+    assertEqual(requiresBrowserTakeover({ action: "control", manual: false }), false);
+  });
   it("translates native WebKit pinch and Ctrl+wheel zoom and removes its listeners", () => {
     const target = new EventTarget();
     const zooms: number[] = [];
@@ -87,6 +107,7 @@ describe("Browser inspector", () => {
       onmessage: ((event: { data: string }) => Promise<void>) | null = null;
       onerror: (() => void) | null = null;
       onclose: (() => void) | null = null;
+      onopen: (() => void) | null = null;
       sent: string[] = [];
       closed = false;
       constructor(public url: string) { sockets.push(this); }
@@ -98,13 +119,17 @@ describe("Browser inspector", () => {
     try {
       const scope = { sessionID: "ses_test", directory: "/work tree" };
       let displayed = 0;
+      const statuses: string[] = [];
       let finish = () => {};
       stop = connectBrowserStream(scope, "ws://127.0.0.1:42817/", async frame => {
         assertEqual(frame.width, 375);
         displayed++;
         await new Promise<void>(resolve => { finish = resolve; });
-      }, error => { throw new Error(error); });
+      }, error => { throw new Error(error); }, status => statuses.push(status));
       const socket = sockets[0];
+      assertDeepEqual(statuses, ["connecting"]);
+      socket.onopen?.();
+      assertDeepEqual(statuses, ["connecting", "connected"]);
       assertEqual(socket.url, browserStreamURL(scope, "ws://127.0.0.1:42817"));
       const message = JSON.stringify({ image: "YWJj", width: 375, height: 667, tabID: "tab" });
       const pending = socket.onmessage!({ data: message });
@@ -114,6 +139,8 @@ describe("Browser inspector", () => {
       await pending;
       assertDeepEqual(socket.sent, ["ack"]);
       const late = socket.onmessage!({ data: message });
+      socket.onclose?.();
+      assertDeepEqual(statuses, ["connecting", "connected", "reconnecting"]);
       stop();
       finish();
       await late;

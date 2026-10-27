@@ -1,75 +1,39 @@
-import { createEffect, createMemo, createSignal, For, onCleanup, Show, untrack } from "solid-js";
+import { createEffect, For, onCleanup, Show } from "solid-js";
 import { ArrowLeft, ArrowRight, ExternalLink, Globe, Plus, Power, RefreshCw, X } from "lucide-solid";
-import {
-  BrowserInputBuffer,
-  connectBrowserStream,
-  createChromePairing,
-  executeBrowserAction,
-  fetchBrowserState,
-  normalizeBrowserAddress,
-  openExternalURL,
-  releaseBrowserPointer,
-  sessionDirectory,
-  setWorkspace,
-  workspace,
-  type BrowserAction,
-  type BrowserScope,
-  type BrowserState,
-} from "../../store/workspace";
+import { createBrowserController, openExternalURL, normalizeBrowserAddress } from "../../store/workspace";
 import { t } from "../../i18n";
 import BrowserPreview from "./BrowserPreview";
-
-interface Connection {
-  scope: BrowserScope;
-  controller: AbortController;
-  tabEpoch: number;
-  pending: number;
-  navPending: number;
-  streamDirty: boolean;
-  inputs: BrowserInputBuffer;
-  pointerUsed: boolean;
-  flushScheduled: boolean;
-  queue: Promise<void>;
-}
-
-const NAV_ACTIONS = new Set<BrowserAction["action"]>([
-  "navigate", "back", "forward", "reload", "tab_new", "tab_select", "tab_close", "close", "control",
-]);
-const TAB_EPOCH_ACTIONS = new Set<BrowserAction["action"]>([
-  "tab_new", "tab_select", "tab_close", "resize", "close",
-]);
+import BrowserStatusBar, { browserPhaseLabel } from "./BrowserStatusBar";
 
 export default function BrowserInspector() {
-  const [state, setState] = createSignal<BrowserState | null>(null);
-  const [frame, setFrame] = createSignal<string | null>(null);
-  const [url, setURL] = createSignal("");
-  const [error, setError] = createSignal("");
-  const [pollError, setPollError] = createSignal("");
-  const [busy, setBusy] = createSignal(false);
-  const [pairCode, setPairCode] = createSignal("");
-  const [visible, setVisible] = createSignal(!document.hidden);
-  const [viewport, setViewport] = createSignal<{ width: number; height: number; deviceScaleFactor: number } | null>(null);
-  const [streamGeneration, setStreamGeneration] = createSignal(0);
-  let frameSize = { width: 0, height: 0 };
-  const scope = createMemo(() => {
-    const sessionID = workspace.activeSessionID;
-    const directory = sessionID ? sessionDirectory(sessionID) : undefined;
-    return sessionID && directory ? { sessionID, directory } : null;
-  }, null, { equals: (left, right) => left?.sessionID === right?.sessionID && left?.directory === right?.directory });
-  let current: Connection | null = null;
+  const browser = createBrowserController();
+  const scope = browser.scope;
+  const state = browser.state;
+  const frame = browser.frame;
+  const url = browser.url;
+  const setURL = browser.setURL;
+  const error = browser.error;
+  const setError = browser.setError;
+  const pollError = browser.pollError;
+  const busy = browser.busy;
+  const pairCode = browser.pairCode;
+  const running = browser.running;
+  const chromeLinked = browser.chromeLinked;
+  const pairing = browser.pairing;
+  const send = browser.send;
+  const pairChrome = browser.pairChrome;
+  const typeText = browser.typeText;
+  const navigateAddress = browser.navigateAddress;
+  const isFrameCurrent = browser.isFrameCurrent;
   let input: HTMLTextAreaElement | undefined;
   let composing = false;
-  let editingURL = false;
   let composingURL = false;
-  let frameEpoch = -1;
   const iconBtn = "shrink-0 rounded p-1 hover:bg-[var(--bg-hover)] disabled:opacity-40 cursor-pointer transition-colors";
-  const running = () => Boolean(state()?.tabs.length);
-  const chromeLinked = () => state()?.mode === "chrome";
-  const pairing = () => Boolean(pairCode() || state()?.pairing);
-  const selectedTab = createMemo(() => state()?.tabID);
-  const visibility = () => setVisible(!document.hidden);
-  document.addEventListener("visibilitychange", visibility);
-  onCleanup(() => document.removeEventListener("visibilitychange", visibility));
+  createEffect(() => {
+    scope();
+    composing = composingURL = false;
+    if (input) input.value = "";
+  });
 
   function observeViewport(element: HTMLDivElement) {
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -84,256 +48,11 @@ export default function BrowserInspector() {
         const next = { width: Math.max(1, Math.floor(width * scale)), height: Math.max(1, Math.floor(height * scale)), deviceScaleFactor: 1 };
         next.deviceScaleFactor = Math.max(1, Math.min(2, window.devicePixelRatio || 1,
           Math.sqrt(8388608 / ((next.width + 1) * (next.height + 1)))));
-        setViewport(previous => previous?.width === next.width && previous.height === next.height && previous.deviceScaleFactor === next.deviceScaleFactor ? previous : next);
+        browser.setViewport(previous => previous?.width === next.width && previous.height === next.height && previous.deviceScaleFactor === next.deviceScaleFactor ? previous : next);
       }, 100);
     });
     observer.observe(element);
     onCleanup(() => { observer.disconnect(); clearTimeout(timer); });
-  }
-
-  function replaceFrame(next: string | null) {
-    const previous = frame();
-    setFrame(next);
-    if (previous?.startsWith("blob:")) URL.revokeObjectURL(previous);
-  }
-
-  function valid(connection: Connection) {
-    const active = scope();
-    return current === connection && !connection.controller.signal.aborted &&
-      active?.sessionID === connection.scope.sessionID && active?.directory === connection.scope.directory;
-  }
-
-  function applyState(next: BrowserState) {
-    if (next.mode === "chrome") setPairCode("");
-    if (state()?.tabID !== next.tabID) replaceFrame(null);
-    setState(next);
-    if (!editingURL) setURL(next.url || "");
-    if (!next.tabs.length) replaceFrame(null);
-  }
-
-  function enqueueAction(connection: Connection, action: BrowserAction) {
-    if (!valid(connection)) return;
-    const isNav = NAV_ACTIONS.has(action.action);
-    if (TAB_EPOCH_ACTIONS.has(action.action)) connection.tabEpoch++;
-    connection.pending++;
-    if (TAB_EPOCH_ACTIONS.has(action.action)) {
-      connection.streamDirty = true;
-      setStreamGeneration(value => value + 1);
-    }
-    if (isNav) {
-      connection.navPending++;
-      setBusy(true);
-    }
-    // The error banner itself changes the viewport height; the resulting
-    // layout-driven resize must not dismiss an error the user has not seen.
-    if (action.action !== "resize") setError("");
-    connection.queue = connection.queue.then(async () => {
-      if (!valid(connection)) return;
-      try {
-        const next = await executeBrowserAction(connection.scope, action, connection.controller.signal);
-        if (valid(connection)) {
-          applyState(next);
-          if (action.action === "close") { replaceFrame(null); setPairCode(""); }
-        }
-      } catch (err) {
-        if (valid(connection)) setError(String(err));
-      } finally {
-        connection.pending--;
-        if (isNav) {
-          connection.navPending--;
-          if (valid(connection)) setBusy(connection.navPending > 0);
-        }
-        if (valid(connection)) {
-          flushBufferedInputs(connection);
-          if (connection.pending === 0 && connection.streamDirty) {
-            connection.streamDirty = false;
-            setStreamGeneration(value => value + 1);
-          }
-        }
-      }
-    });
-  }
-
-  function flushBufferedInputs(connection: Connection) {
-    if (!valid(connection)) return;
-    for (const action of connection.inputs.drain()) enqueueAction(connection, action);
-  }
-
-  function scheduleInputFlush(connection: Connection) {
-    if (connection.flushScheduled || connection.pending > 0) return;
-    connection.flushScheduled = true;
-    requestAnimationFrame(() => {
-      connection.flushScheduled = false;
-      if (valid(connection) && connection.pending === 0) {
-        flushBufferedInputs(connection);
-      }
-    });
-  }
-
-  function send(action: BrowserAction) {
-    // A user gesture proves the panel is interactive even when WKWebView's
-    // visibility state lags behind showing/restoring the native window.
-    if (action.action !== "pointer" || action.phase !== "cancel") setVisible(true);
-    const connection = current;
-    if (!connection || !valid(connection)) return;
-    if (!running() && (action.action === "navigate" || action.action === "tab_new")) {
-      const size = viewport();
-      if (size) enqueueAction(connection, { action: "resize", ...size });
-    }
-    if (action.action === "pointer" && action.phase === "down") connection.pointerUsed = true;
-    if (connection.inputs.add(action)) {
-      scheduleInputFlush(connection);
-      return;
-    }
-    flushBufferedInputs(connection);
-    enqueueAction(connection, action);
-  }
-
-  function consumePendingBrowserURL() {
-    const pendingURL = workspace.inspectedBrowserURL;
-    if (!pendingURL || !current || !valid(current)) return;
-    setWorkspace("inspectedBrowserURL", null);
-    editingURL = false;
-    const target = normalizeBrowserAddress(pendingURL);
-    if (!target) {
-      setURL(pendingURL);
-      setError(t("inspector.browser.invalidURL"));
-      return;
-    }
-    setURL(target);
-    send({ action: "navigate", url: target });
-  }
-
-  async function pairChrome() {
-    const connection = current;
-    if (!connection || !valid(connection) || connection.pending > 0) return;
-    connection.pending++;
-    setBusy(true);
-    setError("");
-    try {
-      const result = await createChromePairing(connection.scope, connection.controller.signal);
-      if (valid(connection)) setPairCode(result.code);
-    } catch (err) {
-      if (valid(connection)) setError(String(err));
-    } finally {
-      connection.pending--;
-      if (valid(connection)) setBusy(false);
-    }
-  }
-
-  createEffect(() => {
-    const active = scope();
-    // Visibility only pauses background observation, never the command channel.
-    const enabled = workspace.inspectorOpen && workspace.inspectorTab === "browser";
-    setState(null);
-    setURL("");
-    setError("");
-    setPollError("");
-    setBusy(false);
-    setPairCode("");
-    editingURL = false;
-    composingURL = false;
-    composing = false;
-    if (input) input.value = "";
-    if (!active || !enabled) return;
-    const connection: Connection = {
-      scope: { ...active },
-      controller: new AbortController(),
-      tabEpoch: 0,
-      pending: 0,
-      navPending: 0,
-      streamDirty: false,
-      inputs: new BrowserInputBuffer(),
-      pointerUsed: false,
-      flushScheduled: false,
-      queue: Promise.resolve(),
-    };
-    current = connection;
-    createEffect(() => {
-      streamGeneration();
-      const tabID = selectedTab();
-      const base = workspace.wsBaseURL || `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}`;
-      if (!visible() || !tabID) return;
-      if (connection.pending > 0) { connection.streamDirty = true; return; }
-      const epoch = connection.tabEpoch;
-      let disposed = false;
-      let raf = 0;
-      let finish: (() => void) | undefined;
-      const stop = connectBrowserStream(connection.scope, base, async next => {
-        if (disposed || !valid(connection) || epoch !== connection.tabEpoch || next.tabID !== state()?.tabID) return;
-        const src = `data:image/jpeg;base64,${next.image}`;
-        const image = new Image();
-        image.src = src;
-        await image.decode();
-        if (disposed || !valid(connection) || epoch !== connection.tabEpoch || next.tabID !== state()?.tabID) return;
-        await new Promise<void>(resolve => {
-          finish = resolve;
-          raf = requestAnimationFrame(() => {
-            finish = undefined;
-            if (!disposed && valid(connection) && epoch === connection.tabEpoch && next.tabID === state()?.tabID) {
-              frameSize = { width: next.width, height: next.height };
-              frameEpoch = epoch;
-              replaceFrame(src);
-              setPollError("");
-            }
-            resolve();
-          });
-        });
-      }, message => { if (!disposed && valid(connection)) setPollError(message); });
-      onCleanup(() => { disposed = true; stop(); cancelAnimationFrame(raf); finish?.(); });
-    });
-    createEffect(() => {
-      const size = viewport();
-      // An idle panel only remembers its size; navigate/tab_new sends it on startup.
-      if (size) untrack(() => { if (running() && !chromeLinked()) enqueueAction(connection, { action: "resize", ...size }); });
-    });
-    untrack(consumePendingBrowserURL);
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    async function poll() {
-      try {
-        if (visible() && connection.pending === 0) {
-          const next = await fetchBrowserState(connection.scope, connection.controller.signal);
-          if (!valid(connection)) return;
-          if (connection.pending === 0) applyState(next);
-        }
-        setPollError("");
-      } catch (err) {
-        if (valid(connection)) setPollError(String(err));
-      } finally {
-        if (valid(connection)) timer = setTimeout(poll, 1000);
-      }
-    }
-    // Polling must not subscribe this connection lifecycle to browser state.
-    untrack(() => { void poll(); });
-    onCleanup(() => {
-      connection.controller.abort();
-      if (connection.pointerUsed) void connection.queue.finally(() => releaseBrowserPointer(connection.scope));
-      clearTimeout(timer);
-      if (current === connection) current = null;
-      replaceFrame(null);
-    });
-  });
-
-  createEffect(() => {
-    if (workspace.inspectedBrowserURL) {
-      consumePendingBrowserURL();
-    }
-  });
-
-  function typeText(text: string) {
-    if (text) send({ action: "type", text });
-  }
-
-  function isFrameCurrent() {
-    return current !== null && frameEpoch === current.tabEpoch;
-  }
-
-  function navigateAddress(address = url()) {
-    if (busy() || pairing() || state()?.connected === false || composingURL) return;
-    const target = normalizeBrowserAddress(address);
-    if (!target) { setError(t("inspector.browser.invalidURL")); return; }
-    setURL(target);
-    send({ action: "navigate", url: target });
   }
 
   function keydown(event: KeyboardEvent) {
@@ -355,20 +74,22 @@ export default function BrowserInspector() {
         <div class="flex items-center gap-1 px-2 py-1 border-b border-[var(--border-subtle)]">
           <button class={iconBtn} disabled={!running() || busy()} title={t("inspector.browser.back")} aria-label={t("inspector.browser.back")} onClick={() => send({ action: "back" })}><ArrowLeft size={13} /></button>
           <button class={iconBtn} disabled={!running() || busy()} title={t("inspector.browser.forward")} aria-label={t("inspector.browser.forward")} onClick={() => send({ action: "forward" })}><ArrowRight size={13} /></button>
-          <button class={iconBtn} disabled={!running() || busy()} title={t("inspector.browser.reload")} aria-label={t("inspector.browser.reload")} onClick={() => send({ action: "reload" })}><RefreshCw size={13} class={busy() ? "animate-spin" : ""} /></button>
+          <Show when={browser.canStop()} fallback={<button class={iconBtn} disabled={!running() || busy()} title={t("inspector.browser.reload")} aria-label={t("inspector.browser.reload")} onClick={() => send({ action: "reload" })}><RefreshCw size={13} class={busy() ? "animate-spin" : ""} /></button>}>
+            <button class={iconBtn} disabled={browser.stopping()} title={t("inspector.browser.stopLoading")} aria-label={t("inspector.browser.stopLoading")} onClick={() => void browser.stopLoading()}><X size={13} /></button>
+          </Show>
           <form class="flex flex-1 min-w-0 items-center gap-1" onSubmit={(event) => {
             event.preventDefault();
-            navigateAddress();
+            if (!composingURL) navigateAddress();
           }} onKeyDown={(event) => event.stopPropagation()}>
             <input class="min-w-0 flex-1 rounded border border-[var(--border-subtle)] bg-transparent px-2 py-1 text-xs focus:outline-none focus:border-[var(--accent-primary)]" aria-label={t("inspector.browser.url")} placeholder={t("inspector.browser.url")} value={url()} autocapitalize="off" autocomplete="off" spellcheck={false}
-              onFocus={() => { editingURL = true; }} onBlur={() => { editingURL = false; }} onInput={(event) => setURL(event.currentTarget.value)}
+              onFocus={() => { browser.setEditingURL(true); }} onBlur={() => { browser.setEditingURL(false); }} onInput={(event) => { browser.setEditingURL(true); setURL(event.currentTarget.value); }}
               onCompositionStart={() => { composingURL = true; }} onCompositionEnd={() => { composingURL = false; }}
               onKeyDown={(event) => {
                 event.stopPropagation();
                 if (event.key !== "Enter" || event.isComposing || composingURL || event.keyCode === 229) return;
                 // Submit explicitly: native WebViews need not perform implicit form submission.
                 event.preventDefault();
-                navigateAddress(event.currentTarget.value);
+                if (!composingURL) navigateAddress(event.currentTarget.value);
               }} />
             <button class="shrink-0 rounded px-1.5 py-1 text-[11px] hover:bg-[var(--bg-hover)] disabled:opacity-40 cursor-pointer" disabled={busy() || pairing() || state()?.connected === false} type="submit">{t("inspector.browser.go")}</button>
           </form>
@@ -390,17 +111,19 @@ export default function BrowserInspector() {
             <ExternalLink size={13} />
           </button>
           <Show when={running()}>
-            <label
+            <button type="button"
               class={`flex shrink-0 items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] cursor-pointer select-none transition-colors ${
                 state()?.manual
                   ? "border-[var(--accent-primary)] bg-[var(--accent-surface)] text-[var(--accent-primary)]"
                   : "border-[var(--border-subtle)] text-[var(--text-muted)] hover:text-[var(--text-primary)]"
               }`}
               title={t(state()?.manual ? "inspector.browser.manualHint" : "inspector.browser.agentHint")}
+              aria-pressed={state()?.manual ?? false}
+              disabled={busy() || browser.stopping()}
+              onClick={() => send({ action: "control", manual: !state()?.manual })}
             >
-              <input type="checkbox" class="sr-only" checked={state()?.manual ?? false} disabled={busy()} onChange={(event) => send({ action: "control", manual: event.currentTarget.checked })} />
-              {t("inspector.browser.manual")}
-            </label>
+              {t(state()?.manual ? "inspector.browser.giveBackAI" : "inspector.browser.takeOver")}
+            </button>
           </Show>
           <Show
             when={running() || chromeLinked() || pairing()}
@@ -415,6 +138,10 @@ export default function BrowserInspector() {
             </button>
           </Show>
         </div>
+        <Show when={running() || busy() || error() || pollError() || chromeLinked()}>
+          <BrowserStatusBar phase={browser.phase()} stream={browser.streamPhase()} navigation={state()?.navigation}
+            manual={state()?.manual ?? false} disabled={busy() || browser.stopping()} onRetry={browser.retry} />
+        </Show>
         <Show when={!running() && !chromeLinked()}>
           <button class="m-2 rounded border border-[var(--border-subtle)] px-3 py-2 hover:bg-[var(--bg-hover)] disabled:opacity-40 cursor-pointer" disabled={busy()} onClick={() => void pairChrome()}>{t(pairing() ? "inspector.browser.regenerateChromeCode" : "inspector.browser.connectChrome")}</button>
         </Show>
@@ -444,7 +171,7 @@ export default function BrowserInspector() {
           <Show when={frame()} fallback={
             <div class="flex min-h-full flex-col items-center justify-center gap-4 px-6 py-10 text-center text-[var(--text-muted)]">
               <Show when={!busy() && !running() && !pairing() && !chromeLinked()} fallback={
-                <p role="status">{t(busy() ? "inspector.browser.working" : "inspector.browser.waiting")}</p>
+                <p role="status">{browserPhaseLabel(browser.phase())}</p>
               }>
                 <div class="flex h-16 w-16 items-center justify-center rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-hover)]">
                   <Globe size={32} strokeWidth={1.5} aria-hidden="true" />
@@ -464,7 +191,7 @@ export default function BrowserInspector() {
             </div>
           }>
             <div class="relative">
-              <BrowserPreview image={frame()!} width={frameSize.width} height={frameSize.height}
+              <BrowserPreview image={frame()!} width={browser.frameSize().width} height={browser.frameSize().height}
                 identity={`${scope()?.sessionID}:${scope()?.directory}:${state()?.tabID}`}
                 isCurrent={isFrameCurrent()}
                 onAction={send} onKeyboardFocus={() => input?.focus({ preventScroll: true })} />

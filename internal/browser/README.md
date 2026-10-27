@@ -41,6 +41,10 @@ started browser that goes unused for 30 minutes is closed the same way; see
   returns empty strings and an empty tabs array; `manual` reflects reserved control state.
   A scope closed for inactivity also returns `idleClosed: true` and `idleMinutes`
   until a new scope is created for the same session and directory.
+  Started isolated tabs also expose `navigation:{status,url,error,httpStatus,startedAt}`;
+  status is `loading`, `ready`, `failed` or `stopped`. State comes from main-document
+  CDP events and is independent of screencast delivery. Network errors expose only
+  a bounded Chromium error code or a fixed label. HTTP failures retain their page.
 - `GET frame`: JPEG of the current viewport, initially 1280x800; returns 404 if no
   browser has started, including scopes reserved by `control` or `resize`.
 - `GET stream`: UI-only WebSocket carrying continuous CDP JPEG frames; see below.
@@ -50,13 +54,15 @@ started browser that goes unused for 30 minutes is closed the same way; see
 
 POST fields are `action`, optional `url`, `selector`, `text`, `key`, `x`, `y`,
 `deltaX`, `deltaY`, `tabID`, `manual`, `width`, `height`, `deviceScaleFactor`,
-`scaleFactor`, `phase`, `button`, `clickCount` and `modifiers`. Every successful action returns state,
+`scaleFactor`, `phase`, `button`, `clickCount`, `modifiers` and `async`. Every successful action returns state,
 with the following action-specific fields:
 
 | Action | Parameters / Behavior |
 | --- | --- |
 | `navigate` | `url`: only HTTP, HTTPS, or exactly `about:blank` |
 | `back`, `forward`, `reload` | Selected tab navigation |
+| `async: true` | UI only, on `navigate`, `back`, `forward` or `reload`; returns acceptance and navigation state immediately after Chrome starts/attaches, with a scope-owned 30-second navigation job; subsequent state polls observe completion/failure |
+| `stop_loading` | UI only; stops the selected tab and cancels its navigation job, without launching a browser; old job completions cannot replace the stopped/new navigation state |
 | `click` | CSS `selector`, or viewport coordinates `x`,`y` |
 | `type` | Inserts `text` into the focused element via CDP InsertText (IME/paste semantics); optional CSS `selector` focuses an element first; replaces selected text |
 | `key` | `key`: single character, DOM name such as `Enter`, or chord such as `Control+a`, `Meta+a`, `Shift+ArrowLeft`; modifiers are Control, Meta, Shift, Alt |
@@ -115,7 +121,7 @@ CDP setup/stop runs under the scope gate with bounded deadlines; socket upgrade,
 writes, and the stream lifetime never hold that gate. Service/scope cancellation
 also cancels listeners and the independent CDP ACK worker.
 
-Only POST actions other than `control`, `resize`, `pointer`, `wheel`, `zoom`, and `close` start Chrome. Each operation
+Only POST actions other than `control`, `resize`, `pointer`, `wheel`, `zoom`, `stop_loading`, and `close` start Chrome. Each operation
 has a 30-second deadline including waiting for its scope lock. Scopes serialize
 independently; request cancellation does not kill an already launched browser.
 Service shutdown cancels work, reaps processes, and removes profiles. Initialization

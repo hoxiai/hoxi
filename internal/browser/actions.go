@@ -25,6 +25,9 @@ func navigationURL(raw string) bool {
 }
 
 func validateAction(a Action, agent bool) error {
+	if a.Async && (agent || !navigationAction(a.Action)) {
+		return errors.New("async navigation is UI only")
+	}
 	if a.ScaleFactor != nil && a.Action != "zoom" {
 		return errors.New("scaleFactor is only valid for zoom")
 	}
@@ -65,6 +68,10 @@ func validateAction(a Action, agent bool) error {
 	case "control":
 		if agent || a.Manual == nil {
 			return errors.New("only UI may set manual control")
+		}
+	case "stop_loading":
+		if agent {
+			return errors.New("only UI may stop loading")
 		}
 	case "evaluate":
 		if !agent || a.Text == "" {
@@ -123,6 +130,9 @@ func (sc *scope) state(ctx context.Context) (State, error) {
 		}
 	}
 	state.TabID = sc.tabID
+	if n := sc.navigations[sc.tabID]; n != nil {
+		state.Navigation = n.snapshot()
+	}
 	for _, tab := range state.Tabs {
 		if tab.ID == sc.tabID {
 			state.URL, state.Title = tab.URL, tab.Title
@@ -156,6 +166,7 @@ func (sc *scope) withTab(ctx context.Context, tasks ...chromedp.Action) error {
 			return ctx.Err()
 		}
 		sc.tabs[sc.tabID] = tab
+		sc.trackNavigation(tab, sc.tabID)
 		sc.tabCancels[sc.tabID] = cancel
 		sc.viewports[sc.tabID] = sc.viewport()
 	}
@@ -186,6 +197,12 @@ func (sc *scope) capture(ctx context.Context) ([]byte, error) {
 }
 
 func (sc *scope) perform(ctx context.Context, a Action) (map[string]any, error) {
+	if a.Async {
+		return nil, sc.startNavigation(ctx, a)
+	}
+	if a.Action == "stop_loading" {
+		return nil, sc.stopNavigation(ctx)
+	}
 	if a.Action == "wheel" {
 		return sc.wheel(ctx, a)
 	}
@@ -320,6 +337,10 @@ func (sc *scope) perform(ctx context.Context, a Action) (map[string]any, error) 
 }
 
 func (sc *scope) releaseTab(id string) {
+	if n := sc.navigations[id]; n != nil {
+		n.stop()
+		delete(sc.navigations, id)
+	}
 	if sc.stream != nil && sc.stream.frame.TabID == id {
 		sc.stopStream()
 	}

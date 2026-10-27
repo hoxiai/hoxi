@@ -6,6 +6,8 @@ export interface BrowserScope {
 }
 
 export interface BrowserState {
+  navigation?: { status: "loading" | "ready" | "failed" | "stopped"; url?: string; error?: string; httpStatus?: number; startedAt?: number };
+  navigationControls?: boolean;
   mode?: "chrome";
   connected?: boolean;
   pairing?: boolean;
@@ -23,7 +25,8 @@ export type BrowserPointerButton = "left" | "middle" | "right";
 
 export interface BrowserAction {
   action: "navigate" | "back" | "forward" | "reload" | "click" | "type" | "key" |
-    "scroll" | "wheel" | "zoom" | "pointer" | "tab_new" | "tab_select" | "tab_close" | "control" | "resize" | "close";
+    "scroll" | "wheel" | "zoom" | "pointer" | "stop_loading" | "tab_new" | "tab_select" | "tab_close" | "control" | "resize" | "close";
+  async?: boolean;
   url?: string;
   selector?: string;
   text?: string;
@@ -105,14 +108,17 @@ export function browserStreamURL(scope: BrowserScope, base: string): string {
 
 // Display ACKs bound network buffering; CDP keeps only the latest pending frame.
 export function connectBrowserStream(scope: BrowserScope, base: string,
-  display: (frame: BrowserFrame) => Promise<void>, onError: (error: string) => void): () => void {
+  display: (frame: BrowserFrame) => Promise<void>, onError: (error: string) => void,
+  onStatus?: (status: "connecting" | "connected" | "reconnecting") => void): () => void {
   let disposed = false;
   let socket: WebSocket | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   function connect() {
     if (disposed) return;
+    onStatus?.("connecting");
     const current = new WebSocket(browserStreamURL(scope, base));
     socket = current;
+    current.onopen = () => { if (!disposed && socket === current) onStatus?.("connected"); };
     let displaying = false;
     current.onmessage = async event => {
       if (disposed || socket !== current) return;
@@ -134,7 +140,7 @@ export function connectBrowserStream(scope: BrowserScope, base: string,
     };
     current.onerror = () => { if (!disposed) onError("Browser stream disconnected"); };
     current.onclose = () => {
-      if (!disposed && socket === current) timer = setTimeout(connect, 500);
+      if (!disposed && socket === current) { onStatus?.("reconnecting"); timer = setTimeout(connect, 500); }
     };
   }
   connect();
@@ -143,6 +149,21 @@ export function connectBrowserStream(scope: BrowserScope, base: string,
     clearTimeout(timer);
     socket?.close();
   };
+}
+
+export function observeBrowserVisibility(changed: (visible: boolean) => void): () => void {
+  const update = () => changed(!document.hidden);
+  update();
+  document.addEventListener("visibilitychange", update);
+  return () => document.removeEventListener("visibilitychange", update);
+}
+
+export async function decodeBrowserFrame(frame: BrowserFrame): Promise<string> {
+  const src = `data:image/jpeg;base64,${frame.image}`;
+  const image = new Image();
+  image.src = src;
+  await image.decode();
+  return src;
 }
 
 // Bounds belong to the image itself, not its letterboxed container. With

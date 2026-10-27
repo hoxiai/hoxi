@@ -45,6 +45,7 @@ type scope struct {
 	allocatorCancel context.CancelFunc
 	browser         context.Context
 	tabs            map[string]context.Context
+	navigations     map[string]*navigationTracker
 	tabCancels      map[string]context.CancelFunc
 	browserCancel   context.CancelFunc
 	tabID           string
@@ -192,6 +193,9 @@ func (sc *scope) dispose() {
 		sc.pointerState.timer.Stop()
 	}
 	sc.cancel()
+	for _, n := range sc.navigations {
+		n.stop()
+	}
 	for _, cancel := range sc.tabCancels {
 		cancel()
 	}
@@ -356,6 +360,7 @@ func (sc *scope) start(ctx context.Context) error {
 	sc.browser = browser
 	sc.tabID = string(chromedp.FromContext(browser).Target.TargetID)
 	sc.tabs[sc.tabID] = browser
+	sc.trackNavigation(browser, sc.tabID)
 	sc.viewports[sc.tabID] = sc.viewport()
 	return nil
 }

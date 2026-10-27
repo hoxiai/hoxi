@@ -11,8 +11,9 @@ OpenCode source modification is required.
 2. Restart Hoxi after building these changes so its OpenCode child loads the plugin.
 3. Select a session and open the Browser inspector, or ask the agent to open a URL.
 4. Approve agent browser interactions through the existing permission cards.
-5. Enable manual control before entering credentials or operating the page yourself.
-   Disable it to let the agent continue. Manual control blocks all agent browser
+5. Choose **Take over** before entering credentials or completing site verification.
+   Deliberate page input also takes control automatically, before input is sent.
+   Choose **Return to AI** to let the agent continue. Manual control blocks all agent browser
    requests, including screenshots and snapshots.
 
 The toolbar supports navigation, tabs, refresh, and closing the browser. Use the
@@ -20,6 +21,14 @@ address bar and press Enter or Go to navigate. Bare domains use HTTPS; local
 addresses such as `localhost:5400`, IP literals, and explicit host/port addresses
 use HTTP unless a scheme is supplied. Invalid addresses show an error before
 navigation, and IME confirmation does not submit the address bar.
+The status bar distinguishes Chrome startup, page loading (with a slow-load notice
+after 15 seconds), navigation errors, stopped loading and preview connection state.
+The refresh button becomes **Stop loading** during navigation. **Retry** repeats a
+failed/stopped navigation, or reconnects the preview without reloading the page when
+only frame delivery was interrupted. A missing first frame is reported after eight
+seconds; an unchanged static page is not treated as a frozen preview.
+Site verification remains page content: Hoxi shows the page and offers manual
+takeover, without inferring success or automatically completing a challenge.
 Click the page preview to focus an element, then type, paste, use IME, or send keyboard
 shortcuts. Scroll over the preview to scroll the page. The inspector can be
 maximized using its existing expand button.
@@ -145,6 +154,10 @@ disclose secrets.
 - DOM snapshots cover the main document, not iframe or shadow DOM contents.
   Screenshots and coordinate interactions remain available for visible content.
 - JavaScript evaluation is synchronous; it does not await promises.
+- UI address-bar, back/forward and reload requests opt into asynchronous navigation
+  so observation and Stop loading remain responsive. Agent tools retain their
+  existing synchronous contract. Chrome Link needs the updated extension reloaded
+  for navigation status and loading controls.
 - Downloads, uploads, installing extensions into the isolated browser, and native dialogs have no dedicated
   product workflow. This is not a network sandbox or protection from every
   malicious page. Chrome can access local development servers.

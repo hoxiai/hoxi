@@ -5,6 +5,7 @@ test("worker confines commands to the selected tab and detaches without closing 
   const oldChrome = globalThis.chrome, oldSocket = globalThis.WebSocket;
   let onMessage, onDetach;
   const commands = [], detached = [], sockets = [];
+  let finishSlow;
   globalThis.chrome = {
     runtime: { id: "hoxi-test", getURL: path => `chrome-extension://hoxi-test/${path}`,
       onMessage: { addListener: fn => { onMessage = fn; } } },
@@ -15,6 +16,7 @@ test("worker confines commands to the selected tab and detaches without closing 
       sendCommand: async (target, method, params) => {
         assert.equal(target.tabId, 42);
         commands.push({ method, params });
+        if (method === "Page.navigate" && params.url === "https://example.com/slow") return new Promise(resolve => { finishSlow = resolve; });
         if (method === "Runtime.evaluate") return { result: { value: { url: "https://example.com", title: "Signed in" } } };
         return {};
       },
@@ -61,13 +63,13 @@ test("worker confines commands to the selected tab and detaches without closing 
     assert.match((await action({ action: "tab_select", tabID: "99" })).error, /only the selected tab/);
     assert.match((await action({ action: "tab_close", tabID: "42" })).error, /only the selected tab/);
     assert.match((await action({ action: "navigate", url: "file:///private.txt" })).error, /HTTP/);
-    assert.equal(commands.filter(c => c.method !== "Runtime.evaluate").length, 0);
+    assert.equal(commands.filter(c => !["Runtime.evaluate", "Page.enable", "Network.enable", "Page.getFrameTree"].includes(c.method)).length, 0);
     await action({ action: "navigate", url: "https://example.com/account" });
     await action({ action: "type", text: "hello" });
     await action({ action: "key", key: "Control++" });
     assert.ok(commands.some(c => c.method === "Input.insertText" && c.params.text === "hello"));
     assert.ok(commands.some(c => c.method === "Input.dispatchKeyEvent" && c.params.key === "+"));
-    assert.deepEqual(hello.features, ["pointer", "zoom"]);
+    assert.deepEqual(hello.features, ["pointer", "zoom", "navigation"]);
     await action({ action: "zoom", x: 20, y: 30, scaleFactor: 1.5 });
     assert.deepEqual(commands.filter(c => c.method === "Input.synthesizePinchGesture").at(-1).params,
       { x: 20, y: 30, scaleFactor: 1.5, gestureSourceType: "mouse" });
@@ -76,6 +78,14 @@ test("worker confines commands to the selected tab and detaches without closing 
       assert.match((await action({ action: "zoom", x: 20, y: 30, scaleFactor: 1.5, ...bad })).error, /Invalid zoom/);
     }
     assert.equal(commands.length, zoomCount);
+    const loading = await action({ action: "navigate", url: "https://example.com/slow", async: true });
+    assert.equal(loading.result.navigation.status, "loading");
+    const stopped = await action({ action: "stop_loading" });
+    assert.equal(stopped.result.navigation.status, "stopped");
+    assert.ok(commands.some(c => c.method === "Page.stopLoading"));
+    finishSlow({});
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.equal((await action({ action: "state" })).result.navigation.status, "stopped");
     const press = { action: "pointer", type: "mousePressed", x: 10, y: 20, button: "right", buttons: 2, clickCount: 1, modifiers: 8 };
     assert.equal((await action(press)).result.tabs.length, 1);
     assert.deepEqual(commands.filter(c => c.method === "Input.dispatchMouseEvent").at(-1).params,

@@ -17,6 +17,7 @@ import (
 
 type Action struct {
 	Action            string   `json:"action"`
+	Async             bool     `json:"async,omitempty"`
 	URL               string   `json:"url,omitempty"`
 	Selector          string   `json:"selector,omitempty"`
 	Text              string   `json:"text,omitempty"`
@@ -46,11 +47,12 @@ type Tab struct {
 }
 
 type State struct {
-	URL    string `json:"url"`
-	Title  string `json:"title"`
-	Tabs   []Tab  `json:"tabs"`
-	TabID  string `json:"tabID"`
-	Manual bool   `json:"manual"`
+	Navigation *Navigation `json:"navigation,omitempty"`
+	URL        string      `json:"url"`
+	Title      string      `json:"title"`
+	Tabs       []Tab       `json:"tabs"`
+	TabID      string      `json:"tabID"`
+	Manual     bool        `json:"manual"`
 	// Set on a scope that no longer exists because its Chrome went unused
 	// for IdleMinutes, until a new scope is created for the same key.
 	IdleClosed  bool `json:"idleClosed,omitempty"`
@@ -205,7 +207,7 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	// Pointer input only reaches a page the inspector already shows; it never
 	// reserves a scope or starts Chrome (for example right after an idle close).
-	liveInput := action.Action == "pointer" || action.Action == "wheel" || action.Action == "zoom"
+	liveInput := action.Action == "pointer" || action.Action == "wheel" || action.Action == "zoom" || action.Action == "stop_loading"
 	sc, err := s.acquire(ctx, key, path == "action" && action.Action != "close" && !liveInput)
 	if err != nil {
 		fail(w, 503, err)
@@ -333,6 +335,9 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result := map[string]any{"url": state.URL, "title": state.Title, "tabs": state.Tabs, "tabID": state.TabID, "manual": state.Manual}
+	if state.Navigation != nil {
+		result["navigation"] = state.Navigation
+	}
 	for k, v := range extra {
 		if b, ok := v.([]byte); ok {
 			result[k] = base64.StdEncoding.EncodeToString(b)

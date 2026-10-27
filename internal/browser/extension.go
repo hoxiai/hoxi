@@ -27,8 +27,9 @@ type extensionBridge struct {
 	mu        sync.Mutex
 	responses chan extensionReply
 	// The extension accepts "pointer" mouse input; older ones only click.
-	pointer bool
-	zoom    bool
+	pointer    bool
+	zoom       bool
+	navigation bool
 }
 
 type extensionReply struct {
@@ -123,7 +124,7 @@ func (s *Service) ServeExtension(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	b := &extensionBridge{conn: conn, done: make(chan struct{}), responses: make(chan extensionReply, 1),
-		pointer: slices.Contains(hello.Features, "pointer"), zoom: slices.Contains(hello.Features, "zoom")}
+		pointer: slices.Contains(hello.Features, "pointer"), zoom: slices.Contains(hello.Features, "zoom"), navigation: slices.Contains(hello.Features, "navigation")}
 	owner.extension, owner.pairToken = b, ""
 	_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 	if conn.WriteJSON(map[string]bool{"connected": true}) != nil {
@@ -192,6 +193,10 @@ func (b *extensionBridge) call(ctx context.Context, action any) (map[string]any,
 }
 
 func (s *Service) serveExtensionAction(w http.ResponseWriter, ctx context.Context, sc *scope, path string, a Action) {
+	if (a.Async || a.Action == "stop_loading") && !sc.extension.navigation {
+		fail(w, 409, errors.New("reload Hoxi Browser Link in chrome://extensions to use loading controls"))
+		return
+	}
 	select {
 	case <-sc.extension.done:
 		if path == "state" {
@@ -229,6 +234,7 @@ func (s *Service) serveExtensionAction(w http.ResponseWriter, ctx context.Contex
 		return
 	}
 	result["manual"], result["mode"], result["connected"] = sc.manual, "chrome", true
+	result["navigationControls"] = sc.extension.navigation
 	if path == "frame" {
 		image, _ := result["image"].(string)
 		data, err := base64.StdEncoding.DecodeString(image)
