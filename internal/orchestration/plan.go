@@ -1,9 +1,14 @@
 package orchestration
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -15,13 +20,14 @@ type TaskSpec struct {
 }
 
 type PlanRequest struct {
-	Directory   string     `json:"directory"`
-	Title       string     `json:"title,omitempty"`
-	Mode        string     `json:"mode,omitempty"`
-	Model       string     `json:"model,omitempty"`
-	Provider    string     `json:"providerID,omitempty"`
-	Concurrency int        `json:"concurrency"`
-	Tasks       []TaskSpec `json:"tasks"`
+	Directory       string     `json:"directory"`
+	ParentSessionID string     `json:"parentSessionID,omitempty"`
+	Title           string     `json:"title,omitempty"`
+	Mode            string     `json:"mode,omitempty"`
+	Model           string     `json:"model,omitempty"`
+	Provider        string     `json:"providerID,omitempty"`
+	Concurrency     int        `json:"concurrency"`
+	Tasks           []TaskSpec `json:"tasks"`
 }
 
 type TaskState struct {
@@ -37,19 +43,21 @@ type TaskState struct {
 }
 
 type Plan struct {
-	ID          string      `json:"id"`
-	Title       string      `json:"title"`
-	Directory   string      `json:"directory"`
-	Mode        string      `json:"mode,omitempty"`
-	Provider    string      `json:"provider,omitempty"`
-	Model       string      `json:"model,omitempty"`
-	Concurrency int         `json:"concurrency"`
-	Isolated    bool        `json:"isolated"` // every task runs in its own git worktree
-	Status      string      `json:"status"`
-	Tasks       []TaskState `json:"tasks"`
-	CreatedAt   int64       `json:"createdAt"`
-	UpdatedAt   int64       `json:"updatedAt"`
-	Error       string      `json:"error,omitempty"`
+	ID              string      `json:"id"`
+	ParentSessionID string      `json:"parentSessionID,omitempty"`
+	Title           string      `json:"title"`
+	Directory       string      `json:"directory"`
+	Mode            string      `json:"mode,omitempty"`
+	Provider        string      `json:"provider,omitempty"`
+	Model           string      `json:"model,omitempty"`
+	Concurrency     int         `json:"concurrency"`
+	Isolated        bool        `json:"isolated"` // every task runs in its own git worktree
+	Status          string      `json:"status"`
+	Tasks           []TaskState `json:"tasks"`
+	CreatedAt       int64       `json:"createdAt"`
+	UpdatedAt       int64       `json:"updatedAt"`
+	MergedAt        int64       `json:"mergedAt,omitempty"`
+	Error           string      `json:"error,omitempty"`
 }
 
 const (
@@ -62,6 +70,7 @@ const (
 )
 
 func normalizePlan(req PlanRequest) (PlanRequest, error) {
+	req.ParentSessionID = strings.TrimSpace(req.ParentSessionID)
 	req.Title = strings.TrimSpace(req.Title)
 	if req.Concurrency <= 0 {
 		req.Concurrency = 3
@@ -203,4 +212,75 @@ func sortedReady(plan *Plan) []int {
 	}
 	sort.Ints(ready)
 	return ready
+}
+
+// leafSessionIDs returns the session IDs of tasks that no other task in the
+// plan depends on (the DAG sinks), preserving plan task order. Each sink
+// already includes merged changes from its transitive prerequisites.
+func leafSessionIDs(plan Plan) []string {
+	depended := make(map[string]bool, len(plan.Tasks))
+	for _, task := range plan.Tasks {
+		for _, dep := range task.DependsOn {
+			depended[dep] = true
+		}
+	}
+	out := make([]string, 0, len(plan.Tasks))
+	for _, task := range plan.Tasks {
+		if !depended[task.ID] && strings.TrimSpace(task.SessionID) != "" {
+			out = append(out, strings.TrimSpace(task.SessionID))
+		}
+	}
+	return out
+}
+
+func convoyPrompt(spec TaskSpec, isolated bool) string {
+	var b strings.Builder
+	b.WriteString("Hoxi convoy task `")
+	b.WriteString(spec.ID)
+	b.WriteString("`.\n")
+	if len(spec.DependsOn) > 0 {
+		b.WriteString("Completed prerequisites: ")
+		b.WriteString(strings.Join(spec.DependsOn, ", "))
+		b.WriteString(". Their changes are already in this workspace.\n")
+	}
+	b.WriteString("Work only within the workspace, report the files you changed, and end with a short hand-off summary.\n")
+	if isolated {
+		b.WriteString("Do not commit: leave your changes uncommitted so dependent tasks can build on them.\n")
+	}
+	b.WriteString("\n")
+	b.WriteString(spec.Prompt)
+	return b.String()
+}
+
+func canonicalDirectory(directory string) (string, error) {
+	directory = strings.TrimSpace(directory)
+	if directory == "" {
+		return "", errors.New("directory is required")
+	}
+	abs, err := filepath.Abs(directory)
+	if err != nil {
+		return "", err
+	}
+	st, err := os.Stat(abs)
+	if err != nil || !st.IsDir() {
+		return "", errors.New("directory does not exist")
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = resolved
+	}
+	return abs, nil
+}
+
+func newPlanID() string {
+	var buf [6]byte
+	_, _ = rand.Read(buf[:])
+	return "plan_" + strconv.FormatInt(time.Now().UnixMilli(), 36) + "_" + hex.EncodeToString(buf[:])
+}
+
+func clip(value string, max int) string {
+	runes := []rune(value)
+	if len(runes) <= max {
+		return value
+	}
+	return string(runes[:max]) + "…"
 }

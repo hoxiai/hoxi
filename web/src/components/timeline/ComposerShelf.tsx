@@ -4,16 +4,29 @@ import {
   ChevronDown,
   ChevronUp,
   ExternalLink,
+  GitMerge,
+  LoaderCircle,
+  MessageSquareShare,
   MessageSquareText,
+  Workflow,
   X,
 } from "lucide-solid";
 import {
+  buildConvoyCompletionSummaryPrompt,
   clearReviewComments,
+  dismissSessionSpawnedConvoyPlan,
+  fetchConvoyPlan,
+  getSessionSpawnedConvoyPlans,
+  isConvoyPlanTerminal,
   isSessionBusy,
+  mergeConvoyPlan,
   openFileInInspector,
+  recordSessionConvoyPlan,
   removeReviewComment,
   resolveRootSessionID,
+  selectSession,
   setWorkspace,
+  submitSessionPrompt,
   workspace,
 } from "../../store/workspace";
 import ApprovalGateCard from "../approval/ApprovalGateCard";
@@ -29,9 +42,38 @@ import { t } from "../../i18n";
 
 export default function ComposerShelf() {
   const [reviewsExpanded, setReviewsExpanded] = createSignal(false);
+  const [subtasksExpanded, setSubtasksExpanded] = createSignal(false);
+  const [mergingPlanID, setMergingPlanID] = createSignal<string | null>(null);
   let reviewContainerRef: HTMLDivElement | undefined;
+  let subtasksContainerRef: HTMLDivElement | undefined;
 
   const sessionID = () => workspace.activeSessionID;
+
+  const spawnedPlans = createMemo(() => getSessionSpawnedConvoyPlans(sessionID()));
+  const activeSpawnedPlans = createMemo(() =>
+    spawnedPlans().filter((p) => !isConvoyPlanTerminal(p.status))
+  );
+
+  // Poll active spawned convoy plans for the current session
+  createEffect(() => {
+    const sid = sessionID();
+    const active = activeSpawnedPlans();
+    if (!sid || active.length === 0) return;
+    let disposed = false;
+    const timer = setInterval(() => {
+      for (const p of active) {
+        fetchConvoyPlan(p.id)
+          .then((next) => {
+            if (!disposed) recordSessionConvoyPlan(sid, next);
+          })
+          .catch(() => {});
+      }
+    }, 1500);
+    onCleanup(() => {
+      disposed = true;
+      clearInterval(timer);
+    });
+  });
 
   const activeSession = createMemo(() => {
     const id = sessionID();
@@ -100,6 +142,17 @@ export default function ComposerShelf() {
     });
   });
 
+  createEffect(() => {
+    if (!subtasksExpanded()) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (subtasksContainerRef && !subtasksContainerRef.contains(e.target as Node)) {
+        setSubtasksExpanded(false);
+      }
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    onCleanup(() => document.removeEventListener("pointerdown", onPointerDown, true));
+  });
+
   return (
     <>
       <Show when={workspace.sessionSetupError}>
@@ -137,6 +190,134 @@ export default function ComposerShelf() {
           <RevertBanner />
           <PlanFollowupBar />
           <ChangedFilesSummary files={changedFiles()} variant="pill" />
+
+          <Show when={spawnedPlans().length > 0}>
+            <div ref={subtasksContainerRef} class="relative inline-flex items-center">
+              <div class="inline-flex items-center gap-1.5 rounded-full border border-[var(--accent-border)] bg-[var(--accent-surface)]/45 px-2.5 py-1 text-[12px]">
+                <button
+                  type="button"
+                  onClick={() => setSubtasksExpanded((v) => !v)}
+                  class="inline-flex items-center gap-1.5 text-left cursor-pointer"
+                >
+                  <Show
+                    when={activeSpawnedPlans().length > 0}
+                    fallback={<Workflow size={12.5} class="text-[var(--ok-text)] shrink-0" />}
+                  >
+                    <LoaderCircle size={12.5} class="animate-spin text-[var(--accent-primary)] shrink-0" />
+                  </Show>
+                  <span class="font-medium text-[var(--text-primary)]">
+                    {activeSpawnedPlans().length > 0
+                      ? t("timeline.spawnedSubtasksShelfPill", {
+                          running: activeSpawnedPlans().reduce(
+                            (acc, p) => acc + p.tasks.filter((t) => t.status === "running").length,
+                            0
+                          ) || activeSpawnedPlans().length,
+                          total: spawnedPlans().reduce((acc, p) => acc + p.tasks.length, 0),
+                        })
+                      : t("timeline.spawnedSubtasksShelfDone", {
+                          succeeded: spawnedPlans().reduce(
+                            (acc, p) => acc + p.tasks.filter((t) => t.status === "succeeded").length,
+                            0
+                          ),
+                          total: spawnedPlans().reduce((acc, p) => acc + p.tasks.length, 0),
+                        })}
+                  </span>
+                  <span class="text-[var(--text-muted)] inline-flex items-center">
+                    {subtasksExpanded() ? <ChevronDown size={12} /> : <ChevronUp size={12} />}
+                  </span>
+                </button>
+              </div>
+
+              <Show when={subtasksExpanded()}>
+                <div class="absolute left-1/2 -translate-x-1/2 bottom-[calc(100%+6px)] z-40 w-[min(460px,calc(100vw-32px))] rounded-xl border border-[var(--accent-border)] bg-[var(--bg-elevated)]/98 backdrop-blur-xl p-2.5 shadow-2xl space-y-2 max-h-64 overflow-y-auto">
+                  <For each={spawnedPlans()}>
+                    {(plan) => (
+                      <div class="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)]/85 p-2 space-y-1.5 text-[12px]">
+                        <div class="flex items-center justify-between gap-2">
+                          <span class="font-semibold text-[var(--text-primary)] truncate">
+                            {plan.title}
+                          </span>
+                          <div class="flex items-center gap-1 shrink-0">
+                            <Show
+                              when={
+                                plan.status === "succeeded" &&
+                                plan.isolated &&
+                                !plan.mergedAt &&
+                                sessionID()
+                              }
+                            >
+                              <button
+                                type="button"
+                                disabled={mergingPlanID() === plan.id}
+                                onClick={() => {
+                                  const sid = sessionID();
+                                  if (!sid) return;
+                                  setMergingPlanID(plan.id);
+                                  mergeConvoyPlan(plan.id, sid)
+                                    .then((updated) => recordSessionConvoyPlan(sid, updated))
+                                    .catch(() => {})
+                                    .finally(() => setMergingPlanID(null));
+                                }}
+                                class="inline-flex items-center gap-1 rounded bg-[var(--accent-surface)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--accent-primary)] hover:opacity-90 cursor-pointer"
+                              >
+                                <GitMerge size={10} />
+                                <span>{t("timeline.inlineSubtasksMergeBtn")}</span>
+                              </button>
+                            </Show>
+                            <Show when={isConvoyPlanTerminal(plan.status) && sessionID()}>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const sid = sessionID();
+                                  if (!sid) return;
+                                  setSubtasksExpanded(false);
+                                  void submitSessionPrompt(buildConvoyCompletionSummaryPrompt(plan), sid);
+                                }}
+                                class="inline-flex items-center gap-1 rounded bg-[var(--accent-primary)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--accent-foreground)] hover:opacity-90 cursor-pointer"
+                              >
+                                <MessageSquareShare size={10} />
+                                <span>{t("timeline.inlineSubtasksSummarizeBtn")}</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => dismissSessionSpawnedConvoyPlan(sessionID(), plan.id)}
+                                class="p-0.5 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+                                title={t("common.close")}
+                              >
+                                <X size={12} />
+                              </button>
+                            </Show>
+                          </div>
+                        </div>
+                        <For each={plan.tasks}>
+                          {(task) => (
+                            <div class="flex items-center justify-between gap-2 text-[11px] text-[var(--text-secondary)]">
+                              <span class="truncate font-mono">
+                                {task.id}: {task.summary || task.prompt}
+                              </span>
+                              <Show when={task.sessionID}>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSubtasksExpanded(false);
+                                    void selectSession(task.sessionID!);
+                                  }}
+                                  class="shrink-0 inline-flex items-center gap-1 text-[var(--accent-primary)] hover:underline cursor-pointer"
+                                >
+                                  <ExternalLink size={10} />
+                                  <span>{t("timeline.convoyOpenSession")}</span>
+                                </button>
+                              </Show>
+                            </div>
+                          )}
+                        </For>
+                      </div>
+                    )}
+                  </For>
+                </div>
+              </Show>
+            </div>
+          </Show>
 
           {/* Queued Inline Diff ReviewComments Pill + Upward Popover */}
           <Show when={reviewComments().length > 0}>

@@ -2,15 +2,10 @@ package orchestration
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
-	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -19,9 +14,13 @@ import (
 )
 
 var (
-	ErrPlanNotFound = errors.New("orchestration plan not found")
-	ErrPlanActive   = errors.New("orchestration plan is still running")
-	ErrPlanStopping = errors.New("a task is still stopping; try again shortly")
+	ErrPlanNotFound          = errors.New("orchestration plan not found")
+	ErrPlanActive            = errors.New("orchestration plan is still running")
+	ErrPlanStopping          = errors.New("a task is still stopping; try again shortly")
+	ErrPlanNotSucceeded      = errors.New("orchestration plan has not succeeded")
+	ErrPlanNotIsolated       = errors.New("orchestration plan is not isolated")
+	ErrTargetSessionRequired = errors.New("target session is required")
+	ErrTargetSessionMismatch = errors.New("target session does not match plan parent session")
 )
 
 const interruptedError = "interrupted by a Hoxi restart"
@@ -228,18 +227,19 @@ func (s *Service) Create(request PlanRequest) (Plan, error) {
 		request.Concurrency = 1
 	}
 	plan := Plan{
-		Isolated:    isolated,
-		ID:          newPlanID(),
-		Title:       request.Title,
-		Directory:   directory,
-		Mode:        request.Mode,
-		Provider:    request.Provider,
-		Model:       request.Model,
-		Concurrency: request.Concurrency,
-		Status:      StatusRunning,
-		CreatedAt:   time.Now().UnixMilli(),
-		UpdatedAt:   time.Now().UnixMilli(),
-		Tasks:       make([]TaskState, len(request.Tasks)),
+		Isolated:        isolated,
+		ID:              newPlanID(),
+		ParentSessionID: request.ParentSessionID,
+		Title:           request.Title,
+		Directory:       directory,
+		Mode:            request.Mode,
+		Provider:        request.Provider,
+		Model:           request.Model,
+		Concurrency:     request.Concurrency,
+		Status:          StatusRunning,
+		CreatedAt:       time.Now().UnixMilli(),
+		UpdatedAt:       time.Now().UnixMilli(),
+		Tasks:           make([]TaskState, len(request.Tasks)),
 	}
 	for i, task := range request.Tasks {
 		plan.Tasks[i] = TaskState{
@@ -303,11 +303,13 @@ func (s *Service) ListBySession(sessionID string) []Plan {
 	defer s.mu.Unlock()
 	plans := make([]Plan, 0, 1)
 	for _, run := range s.plans {
-		owned := false
-		for _, task := range run.plan.Tasks {
-			if task.SessionID == sessionID {
-				owned = true
-				break
+		owned := run.plan.ParentSessionID == sessionID
+		if !owned {
+			for _, task := range run.plan.Tasks {
+				if task.SessionID == sessionID {
+					owned = true
+					break
+				}
 			}
 		}
 		if !owned {
@@ -393,13 +395,14 @@ func (s *Service) Retry(id string) (Plan, error) {
 	}
 	prevPlan := clonePlan(run.plan)
 	request := PlanRequest{
-		Directory:   run.plan.Directory,
-		Title:       run.plan.Title,
-		Mode:        run.plan.Mode,
-		Model:       run.plan.Model,
-		Provider:    run.plan.Provider,
-		Concurrency: run.plan.Concurrency,
-		Tasks:       make([]TaskSpec, 0, len(run.plan.Tasks)),
+		Directory:       run.plan.Directory,
+		ParentSessionID: run.plan.ParentSessionID,
+		Title:           run.plan.Title,
+		Mode:            run.plan.Mode,
+		Model:           run.plan.Model,
+		Provider:        run.plan.Provider,
+		Concurrency:     run.plan.Concurrency,
+		Tasks:           make([]TaskSpec, 0, len(run.plan.Tasks)),
 	}
 	for i := range run.plan.Tasks {
 		task := &run.plan.Tasks[i]
@@ -420,6 +423,7 @@ func (s *Service) Retry(id string) (Plan, error) {
 	}
 	run.plan.Status = StatusRunning
 	run.plan.Error = ""
+	run.plan.MergedAt = 0
 	run.plan.UpdatedAt = time.Now().UnixMilli()
 	run.epoch++
 	epoch := run.epoch
@@ -440,6 +444,69 @@ func (s *Service) Retry(id string) (Plan, error) {
 		return Plan{}, fmt.Errorf("could not persist orchestration plan: %w", err)
 	}
 	go s.run(ctx, id, request, epoch)
+	return plan, nil
+}
+
+// Merge folds the uncommitted changes of a succeeded isolated plan's leaf task
+// worktrees into targetSessionID (or the plan's ParentSessionID when omitted).
+func (s *Service) Merge(id, targetSessionID string) (Plan, error) {
+	if s.sessions == nil {
+		return Plan{}, errors.New("convoy sessions are unavailable")
+	}
+	targetSessionID = strings.TrimSpace(targetSessionID)
+	s.mu.Lock()
+	run := s.plans[id]
+	if run == nil {
+		s.mu.Unlock()
+		return Plan{}, ErrPlanNotFound
+	}
+	if run.plan.Status != StatusSucceeded {
+		s.mu.Unlock()
+		return Plan{}, ErrPlanNotSucceeded
+	}
+	if !run.plan.Isolated {
+		s.mu.Unlock()
+		return Plan{}, ErrPlanNotIsolated
+	}
+	if targetSessionID == "" {
+		targetSessionID = run.plan.ParentSessionID
+	}
+	if targetSessionID == "" {
+		s.mu.Unlock()
+		return Plan{}, ErrTargetSessionRequired
+	}
+	if run.plan.ParentSessionID != "" && targetSessionID != run.plan.ParentSessionID {
+		s.mu.Unlock()
+		return Plan{}, ErrTargetSessionMismatch
+	}
+	sources := leafSessionIDs(run.plan)
+	epoch := run.epoch
+	s.mu.Unlock()
+
+	if len(sources) > 0 {
+		if err := s.sessions.Merge(targetSessionID, sources); err != nil {
+			return Plan{}, err
+		}
+	}
+
+	s.mu.Lock()
+	run = s.plans[id]
+	if run == nil {
+		s.mu.Unlock()
+		return Plan{}, ErrPlanNotFound
+	}
+	var snap planSnapshot
+	if run.epoch == epoch {
+		now := time.Now().UnixMilli()
+		run.plan.MergedAt = now
+		run.plan.UpdatedAt = now
+		snap = snapshotLocked(run)
+	}
+	plan := clonePlan(run.plan)
+	s.mu.Unlock()
+	if snap.plan.ID != "" {
+		_ = s.persist(snap)
+	}
 	return plan, nil
 }
 
@@ -677,56 +744,4 @@ func (s *Service) pruneLocked(directory string) []string {
 		evicted = append(evicted, run.plan.ID)
 	}
 	return evicted
-}
-
-func convoyPrompt(spec TaskSpec, isolated bool) string {
-	var b strings.Builder
-	b.WriteString("Hoxi convoy task `")
-	b.WriteString(spec.ID)
-	b.WriteString("`.\n")
-	if len(spec.DependsOn) > 0 {
-		b.WriteString("Completed prerequisites: ")
-		b.WriteString(strings.Join(spec.DependsOn, ", "))
-		b.WriteString(". Their changes are already in this workspace.\n")
-	}
-	b.WriteString("Work only within the workspace, report the files you changed, and end with a short hand-off summary.\n")
-	if isolated {
-		b.WriteString("Do not commit: leave your changes uncommitted so dependent tasks can build on them.\n")
-	}
-	b.WriteString("\n")
-	b.WriteString(spec.Prompt)
-	return b.String()
-}
-
-func canonicalDirectory(directory string) (string, error) {
-	directory = strings.TrimSpace(directory)
-	if directory == "" {
-		return "", errors.New("directory is required")
-	}
-	abs, err := filepath.Abs(directory)
-	if err != nil {
-		return "", err
-	}
-	st, err := os.Stat(abs)
-	if err != nil || !st.IsDir() {
-		return "", errors.New("directory does not exist")
-	}
-	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
-		abs = resolved
-	}
-	return abs, nil
-}
-
-func newPlanID() string {
-	var buf [6]byte
-	_, _ = rand.Read(buf[:])
-	return "plan_" + strconv.FormatInt(time.Now().UnixMilli(), 36) + "_" + hex.EncodeToString(buf[:])
-}
-
-func clip(value string, max int) string {
-	runes := []rune(value)
-	if len(runes) <= max {
-		return value
-	}
-	return string(runes[:max]) + "…"
 }

@@ -472,4 +472,30 @@ export const timeline = {
   worktreeSetupRunning: "Running .hoxi/setup.sh…",
   worktreeSetupFailed: "Worktree setup failed",
   worktreeSetupRetry: "Retry Setup",
+  subtasksCommandUsage:
+    "Usage: /subtasks [goal] (propose parallel subtasks) · /subtask <prompt> (spawn background subtask)",
+  subtasksSlashDescription: "Split work into parallel subtasks with isolated Git worktrees",
+  subtaskSpawnSlashDescription:
+    "Spawn a background subtask in an isolated worktree without interrupting",
+  splitIntoSubtasks: "Split into Subtasks",
+  splitIntoSubtasksTooltip:
+    "Decompose this plan into parallel subtasks with an inline orchestration card",
+  spawnSubtaskAside: "Subtask",
+  spawnSubtaskAsideTooltip:
+    "Spawn as a parallel background subtask without interrupting the current run",
+  inlineSubtasksBadge: "Parallel Subtasks",
+  inlineSubtasksCount: "{count} subtasks",
+  inlineSubtasksProgress: "{completed}/{total} completed",
+  inlineSubtasksStartBtn: "Start {count} Subtasks",
+  inlineSubtasksEditBtn: "Customize",
+  inlineSubtasksDoneEditBtn: "Done",
+  inlineSubtasksAutoReport: "Auto-summarize to chat when finished",
+  inlineSubtasksMergeBtn: "Merge Changes to Session",
+  inlineSubtasksMergedBadge: "Changes Merged",
+  inlineSubtasksSummarizeBtn: "Summarize in Chat",
+  inlineSubtasksDependsOn: "Depends on: {ids}",
+  inlineSubtasksIndependent: "Parallel",
+  inlineSubtasksDrafting: "Drafting parallel subtask plan…",
+  spawnedSubtasksShelfPill: "{running} subtask running ({total} total)",
+  spawnedSubtasksShelfDone: "Subtasks finished ({succeeded}/{total})",
 };

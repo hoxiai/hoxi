@@ -1,7 +1,8 @@
 // web/src/components/timeline/PlanFollowupBar.tsx
 import { createMemo, createSignal, Show } from "solid-js";
-import { GitBranchPlus, LoaderCircle, Play, Sparkles, X } from "lucide-solid";
+import { GitBranchPlus, LoaderCircle, Play, Sparkles, Workflow, X } from "lucide-solid";
 import {
+  buildProposeSubtasksPrompt,
   isSessionBusy,
   newIsolatedSession,
   setWorkspace,
@@ -18,7 +19,9 @@ import { extractVisibleAssistantText } from "./context-activity-parts";
  * allowing one-click transition to `build` mode or spawning an isolated Worktree.
  */
 export default function PlanFollowupBar() {
-  const [runningAction, setRunningAction] = createSignal<null | "build" | "worktree">(null);
+  const [runningAction, setRunningAction] = createSignal<
+    null | "build" | "worktree" | "subtasks"
+  >(null);
 
   const sessionID = () => workspace.activeSessionID;
 
@@ -98,6 +101,25 @@ export default function PlanFollowupBar() {
     }
   };
 
+  const splitIntoSubtasks = async () => {
+    const info = planTurnInfo();
+    if (!info || runningAction()) return;
+    setRunningAction("subtasks");
+    try {
+      setWorkspace("dismissedPlanFollowups", info.dismissKey, true);
+      const excerpt =
+        info.planText.length > 3500
+          ? `${info.planText.slice(0, 3500)}\n...(truncated)`
+          : info.planText;
+      const prompt = buildProposeSubtasksPrompt("", excerpt);
+      await submitSessionPrompt(prompt, info.sessionID);
+    } catch (error) {
+      console.error("split plan into subtasks failed:", error);
+    } finally {
+      setRunningAction(null);
+    }
+  };
+
   return (
     <Show when={planTurnInfo()}>
       <div class="inline-flex flex-wrap items-center justify-between gap-2 rounded-full border border-[var(--accent-border)] bg-[var(--accent-surface)]/55 px-2.5 py-1 text-[12px] shadow-xs">
@@ -138,6 +160,22 @@ export default function PlanFollowupBar() {
               <GitBranchPlus size={11} class="text-[var(--accent-primary)]" />
             </Show>
             <span>{t("timeline.newWorktree")}</span>
+          </button>
+
+          <button
+            type="button"
+            disabled={!!runningAction()}
+            onClick={() => void splitIntoSubtasks()}
+            class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-strong)] bg-[var(--bg-panel)] px-2.5 py-1 text-[12px] font-medium text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-50 transition-colors cursor-pointer"
+            title={t("timeline.splitIntoSubtasksTooltip")}
+          >
+            <Show
+              when={runningAction() !== "subtasks"}
+              fallback={<LoaderCircle size={11} class="animate-spin" />}
+            >
+              <Workflow size={11} class="text-[var(--accent-primary)]" />
+            </Show>
+            <span>{t("timeline.splitIntoSubtasks")}</span>
           </button>
 
           <button

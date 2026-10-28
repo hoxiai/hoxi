@@ -3,6 +3,11 @@
 // commands are routed here; every other prompt goes straight to
 // dispatchSessionPrompt. Goal state itself lives in session-goal-state.
 import { t } from "../i18n";
+import {
+  buildProposeSubtasksPrompt,
+  parseSubtasksCommand,
+  spawnBackgroundSubtask,
+} from "./orchestration";
 import { isSessionBusy } from "./session-query";
 import { dispatchSessionPrompt } from "./workspace-session-messages";
 import { loadSessionMessagesOnly } from "./workspace-sessions";
@@ -137,6 +142,25 @@ export async function submitSessionPrompt(
   if (goalCommand) {
     await runGoalCommand(goalCommand, targetSessionID ?? workspace.activeSessionID);
     return "";
+  }
+  const subtasksCommand = parseSubtasksCommand(promptText);
+  if (subtasksCommand) {
+    if (subtasksCommand.kind === "usage") {
+      throw new Error(t("timeline.subtasksCommandUsage"));
+    }
+    if (subtasksCommand.kind === "spawn") {
+      await spawnBackgroundSubtask(
+        subtasksCommand.prompt,
+        targetSessionID ?? workspace.activeSessionID,
+        options?.directory
+      );
+      return "";
+    }
+    return dispatchSessionPrompt(
+      buildProposeSubtasksPrompt(subtasksCommand.goal),
+      targetSessionID,
+      options
+    );
   }
   return dispatchSessionPrompt(promptText, targetSessionID, options);
 }

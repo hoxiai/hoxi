@@ -26,6 +26,7 @@ export interface ConvoyTaskState extends ConvoyTaskSpec {
 
 export interface ConvoyPlan {
   id: string;
+  parentSessionID?: string;
   title: string;
   directory: string;
   mode?: string;
@@ -38,11 +39,13 @@ export interface ConvoyPlan {
   tasks: ConvoyTaskState[];
   createdAt: number;
   updatedAt: number;
+  mergedAt?: number;
   error?: string;
 }
 
 export interface ConvoyPlanRequest {
   directory: string;
+  parentSessionID?: string;
   title?: string;
   mode?: string;
   model?: string;
@@ -100,5 +103,15 @@ export async function retryConvoyPlan(planID: string): Promise<ConvoyPlan> {
   return requestJSON<ConvoyPlan>(
     `/api/hoxi/orchestration/plans/${encodeURIComponent(planID)}/retry`,
     { method: "POST" }
+  );
+}
+
+export async function mergeConvoyPlan(planID: string, sessionID?: string): Promise<ConvoyPlan> {
+  return requestJSON<ConvoyPlan>(
+    `/api/hoxi/orchestration/plans/${encodeURIComponent(planID)}/merge`,
+    {
+      method: "POST",
+      body: JSON.stringify(sessionID ? { sessionID } : {}),
+    }
   );
 }

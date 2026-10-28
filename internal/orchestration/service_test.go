@@ -655,3 +655,61 @@ func TestCancelledPlanReleasesSharedDirectoryLock(t *testing.T) {
 		t.Fatalf("plan after a cancelled waiter = %s", plan.Status)
 	}
 }
+
+func TestPlanParentSessionAndMergeLeafTasks(t *testing.T) {
+	fake := newFakeSessions(true)
+	svc := NewService(fake)
+	plan, err := svc.Create(PlanRequest{
+		Directory:       t.TempDir(),
+		ParentSessionID: "ses_parent_chat",
+		Tasks: []TaskSpec{
+			{ID: "a", Prompt: "alpha"},
+			{ID: "b", Prompt: "beta", DependsOn: []string{"a"}},
+			{ID: "c", Prompt: "gamma"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := waitTerminal(t, svc, plan.ID)
+	if done.ParentSessionID != "ses_parent_chat" {
+		t.Fatalf("ParentSessionID = %q, want ses_parent_chat", done.ParentSessionID)
+	}
+	if byParent := svc.ListBySession("ses_parent_chat"); len(byParent) != 1 || byParent[0].ID != plan.ID {
+		t.Fatalf("ListBySession(ses_parent_chat) = %#v", byParent)
+	}
+	if _, err := svc.Merge(plan.ID, "ses_wrong_target"); !errors.Is(err, ErrTargetSessionMismatch) {
+		t.Fatalf("Merge with mismatched target session = %v, want ErrTargetSessionMismatch", err)
+	}
+	merged, err := svc.Merge(plan.ID, "")
+	if err != nil {
+		t.Fatalf("Merge into parent session: %v", err)
+	}
+	if merged.MergedAt == 0 {
+		t.Fatal("expected MergedAt to be set after Merge")
+	}
+	fake.mu.Lock()
+	gotSources := fake.merges["ses_parent_chat"]
+	fake.mu.Unlock()
+	bID := taskByID(done, "b").SessionID
+	cID := taskByID(done, "c").SessionID
+	if len(gotSources) != 2 || gotSources[0] != bID || gotSources[1] != cID {
+		t.Fatalf("merged leaf sources = %v, want [%s %s]", gotSources, bID, cID)
+	}
+}
+
+func TestMergeRejectsNonIsolatedOrFailedPlan(t *testing.T) {
+	sharedSvc := NewService(newFakeSessions(false))
+	sharedPlan, err := sharedSvc.Create(PlanRequest{
+		Directory:       t.TempDir(),
+		ParentSessionID: "ses_parent",
+		Tasks:           []TaskSpec{{ID: "a", Prompt: "shared work"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitTerminal(t, sharedSvc, sharedPlan.ID)
+	if _, err := sharedSvc.Merge(sharedPlan.ID, "ses_parent"); !errors.Is(err, ErrPlanNotIsolated) {
+		t.Fatalf("Merge non-isolated plan = %v, want ErrPlanNotIsolated", err)
+	}
+}

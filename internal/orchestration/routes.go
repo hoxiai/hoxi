@@ -74,6 +74,28 @@ func (s *Service) handlePlan(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeOrchestrationJSON(w, http.StatusOK, plan)
+	case action == "merge" && r.Method == http.MethodPost:
+		var req struct {
+			SessionID string `json:"sessionID"`
+		}
+		if r.Body != nil {
+			_ = json.NewDecoder(io.LimitReader(r.Body, 16<<10)).Decode(&req)
+		}
+		plan, err := s.Merge(id, req.SessionID)
+		if err != nil {
+			switch {
+			case errors.Is(err, ErrPlanNotFound):
+				writeOrchestrationError(w, http.StatusNotFound, err.Error())
+			case errors.Is(err, ErrTargetSessionRequired), errors.Is(err, ErrTargetSessionMismatch):
+				writeOrchestrationError(w, http.StatusBadRequest, err.Error())
+			case errors.Is(err, ErrPlanNotSucceeded), errors.Is(err, ErrPlanNotIsolated):
+				writeOrchestrationError(w, http.StatusConflict, err.Error())
+			default:
+				writeOrchestrationError(w, http.StatusConflict, err.Error())
+			}
+			return
+		}
+		writeOrchestrationJSON(w, http.StatusOK, plan)
 	default:
 		writeOrchestrationError(w, http.StatusNotFound, "unknown orchestration endpoint")
 	}

@@ -1,12 +1,6 @@
 // web/src/components/timeline/Composer.tsx
 import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js";
-import {
-  ArrowUp,
-  Clock,
-  FolderOpen,
-  LoaderCircle,
-  Square,
-} from "lucide-solid";
+import { FolderOpen } from "lucide-solid";
 import {
   appSettings,
   clearReviewComments,
@@ -22,6 +16,7 @@ import {
   sessionDirectory,
   sessionRuntimeForID,
   setComposerSkillNotice,
+  spawnBackgroundSubtask,
   stopSessionTask,
   submitSessionPrompt,
   switchActiveSessionSandboxMode,
@@ -36,6 +31,7 @@ import {
   ComposerAttachmentChips,
   ComposerAutocompletePopover,
   ComposerEnhancePreview,
+  ComposerSendButtons,
 } from "./composer-subcomponents";
 import { ComposerSandboxPill } from "./ComposerSandboxPill";
 import CodeSearchModal from "../codeindex/CodeSearchModal";
@@ -64,6 +60,7 @@ export default function Composer() {
   const [text, setText] = createSignal("");
   const [cursorOffset, setCursorOffset] = createSignal(0);
   const [sending, setSending] = createSignal(false);
+  const [spawningSubtask, setSpawningSubtask] = createSignal(false);
   const [stopping, setStopping] = createSignal(false);
   const [forking, setForking] = createSignal(false);
   const [switchingSandbox, setSwitchingSandbox] = createSignal(false);
@@ -442,6 +439,29 @@ export default function Composer() {
     }
   };
 
+  const onSpawnSubtask = async () => {
+    const raw = pasteCollapse.expandIntoPrompt(text()).trim();
+    if (!raw || spawningSubtask() || sending()) return;
+    const draftSessionID = sessionID();
+    const draftDirectory = (draftSessionID ? sessionDirectory(draftSessionID) : "") || workspace.rootDir;
+    const prevText = text();
+    setSpawningSubtask(true);
+    setText("");
+    pasteCollapse.clearPastes();
+    draftSync.clearCurrentDraft(draftSessionID, draftDirectory);
+    ac.reset();
+    if (textareaRef) textareaRef.style.height = "48px";
+    try {
+      const payload = await resolveContextMentionsForSend(raw, draftSessionID);
+      await spawnBackgroundSubtask(payload, draftSessionID, draftDirectory);
+    } catch (err) {
+      if (!text()) setText(prevText);
+      imgAttach.setNotice(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSpawningSubtask(false);
+    }
+  };
+
   const onFork = async () => {
     const id = sessionID();
     if (!id || forking()) return;
@@ -690,58 +710,18 @@ export default function Composer() {
               <ContextProgressPill />
               <ApprovalModePill runtime={sessionRuntimeForID(sessionID())} sandboxMode={effectiveSandboxMode()} />
 
-              <Show when={busy()}>
-                <Show when={canSend()}>
-                  <button
-                    type="button"
-                    class="inline-flex h-7 items-center justify-center gap-1 rounded-full bg-[var(--accent-primary)] px-2.5 text-[var(--accent-foreground)] shadow-xs hover:opacity-90 transition-all cursor-pointer"
-                    onClick={onSend}
-                    title={t("timeline.queueSend")}
-                  >
-                    <Show
-                      when={!sending()}
-                      fallback={<LoaderCircle size={14} class="animate-spin" />}
-                    >
-                      <Clock size={12.5} strokeWidth={2.2} />
-                      <ArrowUp size={13.5} strokeWidth={2.5} />
-                    </Show>
-                  </button>
-                </Show>
-
-                <button
-                  type="button"
-                  class="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[var(--bg-inset)] text-[var(--text-secondary)] hover:bg-[var(--danger-surface)] hover:text-[var(--danger-text)] disabled:opacity-50 transition-colors cursor-pointer"
-                  disabled={stopping()}
-                  onClick={onStop}
-                  title={t("timeline.stopTooltip")}
-                >
-                  <Show
-                    when={!stopping()}
-                    fallback={<LoaderCircle size={13} class="animate-spin" />}
-                  >
-                    <Square size={10} class="fill-current" />
-                  </Show>
-                </button>
-              </Show>
-
-              <Show when={!busy()}>
-                <button
-                  type="button"
-                  class="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[var(--accent-primary)] text-[var(--accent-foreground)] shadow-xs hover:opacity-90 disabled:opacity-30 disabled:cursor-not-allowed transition-all cursor-pointer"
-                  disabled={!canSend()}
-                  onClick={onSend}
-                  title={`${t("timeline.send")} (${
-                    appSettings.sendShortcut === "mod-enter" ? "⌘/Ctrl+Enter" : "Enter"
-                  })`}
-                >
-                  <Show
-                    when={!sending()}
-                    fallback={<LoaderCircle size={14} class="animate-spin" />}
-                  >
-                    <ArrowUp size={15} strokeWidth={2.5} />
-                  </Show>
-                </button>
-              </Show>
+              <ComposerSendButtons
+                busy={busy()}
+                canSend={canSend()}
+                canSpawnSubtask={Boolean(text().trim() || pasteCollapse.pastes().length > 0)}
+                sending={sending()}
+                spawningSubtask={spawningSubtask()}
+                stopping={stopping()}
+                sendShortcut={appSettings.sendShortcut}
+                onSend={() => void onSend()}
+                onSpawnSubtask={() => void onSpawnSubtask()}
+                onStop={() => void onStop()}
+              />
             </div>
           </div>
         </div>

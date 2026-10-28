@@ -286,10 +286,33 @@ export function createComposerAutocomplete(
           skills = skillsStore.skills;
         }
 
+        const builtinCommands: CommandInfo[] = [
+          {
+            name: "subtasks",
+            description: t("timeline.subtasksSlashDescription"),
+            source: "command",
+            hints: ["[goal]"],
+          },
+          {
+            name: "subtask",
+            description: t("timeline.subtaskSpawnSlashDescription"),
+            source: "command",
+            hints: ["<prompt>"],
+          },
+        ];
+
         const publish = () => {
           if (reqID !== requestGen) return;
+          const mergedCmds: CommandInfo[] = [...builtinCommands];
+          const seenNames = new Set(builtinCommands.map((c) => c.name));
+          for (const c of cmds ?? []) {
+            if (!seenNames.has(c.name)) {
+              seenNames.add(c.name);
+              mergedCmds.push(c);
+            }
+          }
           const filtered = buildSlashCommandSuggestions({
-            commands: cmds ?? [],
+            commands: mergedCmds,
             skills: skills ?? [],
             query,
             runtime,
@@ -298,9 +321,7 @@ export function createComposerAutocomplete(
           setSelectedIndex(0);
         };
 
-        if (cmds || skills) {
-          publish();
-        }
+        publish();
 
         const tasks: Promise<void>[] = [];
         if (!cmds) {

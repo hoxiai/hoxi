@@ -1,8 +1,19 @@
 // web/src/__tests__/task-overview.test.ts
 import type { MessagePart, SessionInfo } from "../services/sse-types";
 import { buildTaskOverview } from "../store/task-overview";
-import { setWorkspace, type ConvoyPlan } from "../store/workspace";
-import { assertDeepEqual, assertEqual, describe, it } from "./test-harness";
+import {
+  bindInlineConvoyPlan,
+  buildConvoyCompletionSummaryPrompt,
+  buildProposeSubtasksPrompt,
+  clearBoundInlineConvoyPlan,
+  getBoundInlineConvoyPlanID,
+  isSubtaskPlanCodeBlockLang,
+  parseSubtaskPlanBlock,
+  parseSubtasksCommand,
+  setWorkspace,
+  type ConvoyPlan,
+} from "../store/workspace";
+import { assertDeepEqual, assertEqual, assertTrue, describe, it } from "./test-harness";
 
 function session(id: string, parentID?: string, created = 1): SessionInfo {
   return {
@@ -167,5 +178,89 @@ describe("unified task overview", () => {
         ["subagent:ses_int_child", "cancelled"],
       ]
     );
+  });
+
+  it("keeps finished convoy plans visible for their parentSessionID and parses inline hoxi-subtasks blocks", () => {
+    setWorkspace({
+      activeSessionID: "ses_parent_main",
+      sessions: [session("ses_parent_main")],
+      messagesBySession: {},
+      statusBySession: {},
+      interruptedBySession: {},
+    });
+    const groups = buildTaskOverview([
+      convoyPlan({
+        id: "plan_from_parent",
+        parentSessionID: "ses_parent_main",
+        status: "succeeded",
+        tasks: [{ id: "t1", prompt: "Subtask 1", status: "succeeded", sessionID: "ses_sub_1" }],
+      }),
+    ]);
+    assertEqual(groups[0].nodes.length, 1);
+    assertEqual(groups[0].nodes[0].id, "convoy:plan_from_parent");
+
+    assertTrue(isSubtaskPlanCodeBlockLang("hoxi-subtasks"));
+    assertTrue(isSubtaskPlanCodeBlockLang("HOXI-CONVOY"));
+    assertEqual(isSubtaskPlanCodeBlockLang("json"), false);
+
+    const parsed = parseSubtaskPlanBlock(
+      JSON.stringify({
+        title: "Auth Refactor",
+        concurrency: 4,
+        tasks: [
+          { id: "Backend API", prompt: "Build endpoints", dependsOn: ["unknown", "Backend API"] },
+          { id: "Frontend UI", prompt: "Build components", dependsOn: ["Backend API"] },
+        ],
+      })
+    );
+    assertDeepEqual(parsed, {
+      title: "Auth Refactor",
+      concurrency: 4,
+      tasks: [
+        { id: "backend-api", prompt: "Build endpoints" },
+        { id: "frontend-ui", prompt: "Build components", dependsOn: ["backend-api"] },
+      ],
+    });
+
+    // Rejects cyclic dependency graphs
+    const cyclic = parseSubtaskPlanBlock(
+      JSON.stringify({
+        tasks: [
+          { id: "a", prompt: "step a", dependsOn: ["b"] },
+          { id: "b", prompt: "step b", dependsOn: ["a"] },
+        ],
+      })
+    );
+    assertEqual(cyclic, null);
+
+    // Parses /subtasks, /convoy, and /subtask slash commands
+    assertDeepEqual(parseSubtasksCommand("/subtasks split auth and ui"), {
+      kind: "propose",
+      goal: "split auth and ui",
+    });
+    assertDeepEqual(parseSubtasksCommand("/convoy"), { kind: "propose", goal: "" });
+    assertDeepEqual(parseSubtasksCommand("/subtask fix flaky test"), {
+      kind: "spawn",
+      prompt: "fix flaky test",
+    });
+    assertDeepEqual(parseSubtasksCommand("/subtask"), { kind: "usage" });
+    assertEqual(parseSubtasksCommand("normal prompt"), null);
+
+    assertTrue(buildProposeSubtasksPrompt("Build X").includes("```hoxi-subtasks"));
+    const summaryPrompt = buildConvoyCompletionSummaryPrompt(
+      convoyPlan({
+        id: "plan_done",
+        title: "Parallel Run",
+        status: "succeeded",
+        mergedAt: 100,
+        tasks: [{ id: "api", prompt: "p", status: "succeeded", summary: "Added routes" }],
+      })
+    );
+    assertTrue(summaryPrompt.includes("Added routes"));
+
+    bindInlineConvoyPlan("card_key_1", "plan_123");
+    assertEqual(getBoundInlineConvoyPlanID("card_key_1"), "plan_123");
+    clearBoundInlineConvoyPlan("card_key_1");
+    assertEqual(getBoundInlineConvoyPlanID("card_key_1"), undefined);
   });
 });

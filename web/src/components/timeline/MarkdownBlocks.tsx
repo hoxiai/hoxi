@@ -6,7 +6,9 @@ import {
   type TableAlign,
 } from "./markdown-parser";
 import { Icon } from "../icons";
+import { isSubtaskPlanCodeBlockLang } from "../../store/workspace";
 import CodeBlockCard from "./CodeBlockCard";
+import InlineSubtaskPlanCard from "./InlineSubtaskPlanCard";
 import MarkdownInline from "./MarkdownInline";
 import { createRevealBirths, revealBlock } from "./stream-reveal";
 
@@ -53,6 +55,17 @@ export default function MarkdownBlocks(props: {
     <Index each={props.blocks}>
       {(block, blockIdx) => (
         <Switch>
+          <Match
+            when={
+              block().type === "code" &&
+              isSubtaskPlanCodeBlockLang((block() as Extract<BlockToken, { type: "code" }>).lang)
+            }
+          >
+            <InlineSubtaskPlanCard
+              ref={(el) => revealBlock(el, blockBirth(blockIdx))}
+              code={(block() as Extract<BlockToken, { type: "code" }>).code}
+            />
+          </Match>
           <Match when={block().type === "code"}>
             <CodeBlockCard
               ref={(el) => revealBlock(el, blockBirth(blockIdx))}

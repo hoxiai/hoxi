@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 	"github.com/hoxiai/hoxi/internal/orchestration"
 	"github.com/hoxiai/hoxi/internal/runner"
 	"github.com/hoxiai/hoxi/internal/worktree"
@@ -60,11 +61,15 @@ func (c convoySessions) Merge(targetSessionID string, sourceSessionIDs []string)
 	if !ok {
 		return errors.New("convoy session not found: " + targetSessionID)
 	}
+	targetRoot := hoxipaths.ProjectRootForWorktree(target.WorktreePath)
 	sources := make([]string, 0, len(sourceSessionIDs))
 	for _, id := range sourceSessionIDs {
 		rec, ok := c.runner.Store().Get(id)
 		if !ok {
 			return errors.New("convoy session not found: " + id)
+		}
+		if hoxipaths.ProjectRootForWorktree(rec.WorktreePath) != targetRoot {
+			return errors.New("convoy session belongs to a different project: " + id)
 		}
 		sources = append(sources, rec.WorktreePath)
 	}

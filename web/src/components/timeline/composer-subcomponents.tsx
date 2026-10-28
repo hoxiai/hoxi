@@ -1,6 +1,21 @@
 // web/src/components/timeline/composer-subcomponents.tsx
 import { createEffect, For, Show } from "solid-js";
-import { AlertCircle, AtSign, Check, ClipboardPaste, FileText, LoaderCircle, RefreshCw, Slash, Sparkles, X } from "lucide-solid";
+import {
+  AlertCircle,
+  ArrowUp,
+  AtSign,
+  Check,
+  ClipboardPaste,
+  Clock,
+  FileText,
+  LoaderCircle,
+  RefreshCw,
+  Slash,
+  Sparkles,
+  Square,
+  Workflow,
+  X,
+} from "lucide-solid";
 import { FileIcon } from "../icons";
 import { t } from "../../i18n";
 import type { SkillSelection } from "../../services/api";
@@ -372,6 +387,94 @@ export function ComposerEnhancePreview(props: {
       </Show>
       <Show when={props.error}>
         <p class="mt-1.5 text-[11px] text-[var(--danger-text)]">{props.error}</p>
+      </Show>
+    </>
+  );
+}
+
+export function ComposerSendButtons(props: {
+  busy: boolean;
+  canSend: boolean;
+  canSpawnSubtask: boolean;
+  sending: boolean;
+  spawningSubtask: boolean;
+  stopping: boolean;
+  sendShortcut: string;
+  onSend: () => void;
+  onSpawnSubtask: () => void;
+  onStop: () => void;
+}) {
+  return (
+    <>
+      <Show when={props.busy}>
+        <Show when={props.canSpawnSubtask}>
+          <button
+            type="button"
+            disabled={props.spawningSubtask || props.sending}
+            onClick={props.onSpawnSubtask}
+            title={t("timeline.spawnSubtaskAsideTooltip")}
+            class="inline-flex h-7 items-center justify-center gap-1 rounded-full border border-[var(--accent-border)] bg-[var(--accent-surface)]/70 px-2.5 text-[11px] font-medium text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] disabled:opacity-50 transition-colors cursor-pointer"
+          >
+            <Show
+              when={!props.spawningSubtask}
+              fallback={<LoaderCircle size={12} class="animate-spin" />}
+            >
+              <Workflow size={12} />
+            </Show>
+            <span>{t("timeline.spawnSubtaskAside")}</span>
+          </button>
+        </Show>
+
+        <Show when={props.canSend}>
+          <button
+            type="button"
+            class="inline-flex h-7 items-center justify-center gap-1 rounded-full bg-[var(--accent-primary)] px-2.5 text-[var(--accent-foreground)] shadow-xs hover:opacity-90 transition-all cursor-pointer"
+            onClick={props.onSend}
+            title={t("timeline.queueSend")}
+          >
+            <Show
+              when={!props.sending}
+              fallback={<LoaderCircle size={14} class="animate-spin" />}
+            >
+              <Clock size={12.5} strokeWidth={2.2} />
+              <ArrowUp size={13.5} strokeWidth={2.5} />
+            </Show>
+          </button>
+        </Show>
+
+        <button
+          type="button"
+          class="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[var(--bg-inset)] text-[var(--text-secondary)] hover:bg-[var(--danger-surface)] hover:text-[var(--danger-text)] disabled:opacity-50 transition-colors cursor-pointer"
+          disabled={props.stopping}
+          onClick={props.onStop}
+          title={t("timeline.stopTooltip")}
+        >
+          <Show
+            when={!props.stopping}
+            fallback={<LoaderCircle size={13} class="animate-spin" />}
+          >
+            <Square size={10} class="fill-current" />
+          </Show>
+        </button>
+      </Show>
+
+      <Show when={!props.busy}>
+        <button
+          type="button"
+          class="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[var(--accent-primary)] text-[var(--accent-foreground)] shadow-xs hover:opacity-90 disabled:opacity-30 disabled:cursor-not-allowed transition-all cursor-pointer"
+          disabled={!props.canSend}
+          onClick={props.onSend}
+          title={`${t("timeline.send")} (${
+            props.sendShortcut === "mod-enter" ? "⌘/Ctrl+Enter" : "Enter"
+          })`}
+        >
+          <Show
+            when={!props.sending}
+            fallback={<LoaderCircle size={14} class="animate-spin" />}
+          >
+            <ArrowUp size={15} strokeWidth={2.5} />
+          </Show>
+        </button>
       </Show>
     </>
   );

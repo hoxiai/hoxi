@@ -60,6 +60,7 @@ export function buildTaskOverview(plans: ConvoyPlan[]): TaskOverviewGroup[] {
     .filter(
       (plan) =>
         !isConvoyPlanTerminal(plan.status) ||
+        Boolean(plan.parentSessionID && relatedSessions.has(plan.parentSessionID)) ||
         plan.tasks.some((task) => Boolean(task.sessionID && relatedSessions.has(task.sessionID)))
     )
     .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
