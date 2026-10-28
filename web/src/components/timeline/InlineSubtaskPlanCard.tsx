@@ -35,9 +35,11 @@ import {
   fetchConvoyPlan,
   getBoundInlineConvoyPlanID,
   isConvoyPlanTerminal,
+  isSessionBusy,
   mergeConvoyPlan,
   parseSubtaskPlanBlock,
   recordSessionConvoyPlan,
+  resolveConvoyModelForSession,
   retryConvoyPlan,
   selectSession,
   sessionDirectory,
@@ -47,6 +49,8 @@ import {
   type ConvoyTaskSpec,
   type ConvoyTaskStatus,
 } from "../../store/workspace";
+
+const autoStartedInlineKeys = new Set<string>();
 
 type EditableSubtask = {
   id: string;
@@ -253,15 +257,14 @@ export default function InlineSubtaskPlanCard(props: {
     setError(null);
     const sid = sessionID();
     const key = cardKey();
-    const selected = workspace.selectedModel;
+    const selected = resolveConvoyModelForSession(sid);
     try {
       const created = await createConvoyPlan({
         directory: dir,
         ...(sid ? { parentSessionID: sid } : {}),
         ...(title().trim() ? { title: title().trim() } : {}),
         mode: "build",
-        ...(selected?.providerID ? { providerID: selected.providerID } : {}),
-        ...(selected?.modelID ? { model: selected.modelID } : {}),
+        ...selected,
         concurrency: concurrency(),
         tasks: specs,
       });
@@ -274,6 +277,20 @@ export default function InlineSubtaskPlanCard(props: {
       setStarting(false);
     }
   };
+
+  // Auto-launch background subtasks when the AI sets "autoStart": true and the main turn finishes
+  createEffect(() => {
+    const p = parsed();
+    const sid = sessionID();
+    const key = cardKey();
+    const dir = directory().trim();
+    if (!p?.autoStart || !key || !dir) return;
+    if (sid && isSessionBusy(sid)) return;
+    if (plan() || starting() || editing() || tasks().length === 0) return;
+    if (getBoundInlineConvoyPlanID(key) || autoStartedInlineKeys.has(key)) return;
+    autoStartedInlineKeys.add(key);
+    void onStart();
+  });
 
   const onCancel = async () => {
     const current = plan();

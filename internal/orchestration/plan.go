@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
 
 type TaskSpec struct {
@@ -26,6 +28,7 @@ type PlanRequest struct {
 	Mode            string     `json:"mode,omitempty"`
 	Model           string     `json:"model,omitempty"`
 	Provider        string     `json:"providerID,omitempty"`
+	ProviderAlias   string     `json:"provider,omitempty"`
 	Concurrency     int        `json:"concurrency"`
 	Tasks           []TaskSpec `json:"tasks"`
 }
@@ -72,6 +75,12 @@ const (
 func normalizePlan(req PlanRequest) (PlanRequest, error) {
 	req.ParentSessionID = strings.TrimSpace(req.ParentSessionID)
 	req.Title = strings.TrimSpace(req.Title)
+	req.Provider = strings.TrimSpace(req.Provider)
+	if req.Provider == "" {
+		req.Provider = strings.TrimSpace(req.ProviderAlias)
+	}
+	req.ProviderAlias = ""
+	req.Model = strings.TrimSpace(req.Model)
 	if req.Concurrency <= 0 {
 		req.Concurrency = 3
 	}
@@ -267,6 +276,15 @@ func canonicalDirectory(directory string) (string, error) {
 	}
 	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
 		abs = resolved
+	}
+	if root := hoxipaths.ProjectRootForWorktree(abs); root != "" {
+		if st, err := os.Stat(root); err == nil && st.IsDir() {
+			if resolved, err := filepath.EvalSymlinks(root); err == nil {
+				abs = resolved
+			} else {
+				abs = root
+			}
+		}
 	}
 	return abs, nil
 }

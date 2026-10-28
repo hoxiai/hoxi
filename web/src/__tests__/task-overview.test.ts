@@ -222,6 +222,21 @@ describe("unified task overview", () => {
       ],
     });
 
+    const autoStartParsed = parseSubtaskPlanBlock(
+      JSON.stringify({
+        title: "Heartbeat Cron",
+        autoStart: true,
+        concurrency: 1,
+        tasks: [{ id: "cron", prompt: "Add heartbeat cron" }],
+      })
+    );
+    assertDeepEqual(autoStartParsed, {
+      title: "Heartbeat Cron",
+      concurrency: 1,
+      tasks: [{ id: "cron", prompt: "Add heartbeat cron" }],
+      autoStart: true,
+    });
+
     // Rejects cyclic dependency graphs
     const cyclic = parseSubtaskPlanBlock(
       JSON.stringify({

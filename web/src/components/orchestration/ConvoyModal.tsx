@@ -23,6 +23,7 @@ import {
   createConvoyPlan,
   draftConvoyPlan,
   fetchConvoyPlan,
+  resolveConvoyModelForSession,
   retryConvoyPlan,
   selectSession,
   workspace,
@@ -281,10 +282,14 @@ export default function ConvoyModal(props: {
     }
     setStarting(true);
     setError(null);
+    const sid = workspace.activeSessionID;
+    const selected = resolveConvoyModelForSession(sid);
     try {
       const created = await createConvoyPlan({
         directory: dir,
+        ...(sid ? { parentSessionID: sid } : {}),
         ...(title().trim() ? { title: title().trim() } : {}),
+        ...selected,
         concurrency: concurrency(),
         tasks: specs,
       });

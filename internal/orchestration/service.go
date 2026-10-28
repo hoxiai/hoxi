@@ -44,11 +44,12 @@ type Sessions interface {
 
 // SessionRequest describes the conversation that hosts one convoy task.
 type SessionRequest struct {
-	Directory string
-	Title     string
-	Mode      string
-	Provider  string
-	Model     string
+	Directory       string
+	ParentSessionID string
+	Title           string
+	Mode            string
+	Provider        string
+	Model           string
 	// Isolated asks for a dedicated git worktree instead of Directory itself.
 	Isolated bool
 }
@@ -278,6 +279,11 @@ func (s *Service) Get(id string) (Plan, bool) {
 
 func (s *Service) List(directory string) []Plan {
 	directory = strings.TrimSpace(directory)
+	if directory != "" {
+		if canon, err := canonicalDirectory(directory); err == nil {
+			directory = canon
+		}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	plans := make([]Plan, 0, len(s.plans))
@@ -609,12 +615,13 @@ func (s *Service) executeTask(ctx context.Context, planID string, index int, spe
 	}
 
 	sessionID, err := s.sessions.Create(ctx, SessionRequest{
-		Directory: request.Directory,
-		Title:     fmt.Sprintf("Convoy · %s · %s", planID, taskID),
-		Mode:      request.Mode,
-		Provider:  request.Provider,
-		Model:     request.Model,
-		Isolated:  isolated,
+		Directory:       request.Directory,
+		ParentSessionID: request.ParentSessionID,
+		Title:           fmt.Sprintf("Convoy · %s · %s", planID, taskID),
+		Mode:            request.Mode,
+		Provider:        request.Provider,
+		Model:           request.Model,
+		Isolated:        isolated,
 	})
 	if err != nil {
 		s.completeTask(planID, epoch, taskID, "", "", err)

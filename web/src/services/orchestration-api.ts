@@ -50,6 +50,7 @@ export interface ConvoyPlanRequest {
   mode?: string;
   model?: string;
   providerID?: string;
+  provider?: string;
   concurrency: number;
   tasks: ConvoyTaskSpec[];
 }

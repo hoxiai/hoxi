@@ -16,6 +16,7 @@ import {
   type ConvoyTaskState,
   type ConvoyTaskStatus,
 } from "../services/orchestration-api";
+import { isAutoModel, resolveAutoModelTarget } from "./auto-models";
 import { sessionDirectory } from "./session-query";
 import { workspace } from "./workspace-state";
 
@@ -32,6 +33,7 @@ export interface ParsedSubtaskPlan {
   title: string;
   concurrency: number;
   tasks: ConvoyTaskSpec[];
+  autoStart?: boolean;
 }
 
 export type SubtasksCommand =
@@ -256,8 +258,34 @@ export function parseSubtaskPlanBlock(raw: string): ParsedSubtaskPlan | null {
   const rawConcurrency = typeof obj.concurrency === "number" ? Math.trunc(obj.concurrency) : 3;
   const concurrency = Math.max(1, Math.min(8, rawConcurrency || 3));
   const title = typeof obj.title === "string" ? obj.title.trim() : "";
+  const autoStart = obj.autoStart === true;
 
-  return { title, concurrency, tasks };
+  return {
+    title,
+    concurrency,
+    tasks,
+    ...(autoStart ? { autoStart: true } : {}),
+  };
+}
+
+export function resolveConvoyModelForSession(sessionID?: string | null): {
+  providerID?: string;
+  model?: string;
+} {
+  const sid = (sessionID || workspace.activeSessionID || "").trim();
+  const raw =
+    (sid && workspace.aiBySession[sid]?.model) ||
+    workspace.selectedModel ||
+    workspace.defaultAI.model;
+  if (!raw) return {};
+  const resolved = isAutoModel(raw)
+    ? resolveAutoModelTarget(raw, { advance: false, sessionID: sid || undefined })
+    : raw;
+  if (!resolved || isAutoModel(resolved)) return {};
+  return {
+    ...(resolved.providerID ? { providerID: resolved.providerID } : {}),
+    ...(resolved.modelID ? { model: resolved.modelID } : {}),
+  };
 }
 
 export function computeSubtaskPlanCardKey(
@@ -339,14 +367,13 @@ export async function spawnBackgroundSubtask(
   }
   const firstLine = cleanPrompt.split(/\r?\n/)[0]?.trim() || "Subtask";
   const title = firstLine.length > 64 ? `${firstLine.slice(0, 64)}…` : firstLine;
-  const selected = workspace.selectedModel;
+  const selected = resolveConvoyModelForSession(sid);
   const created = await apiCreateConvoyPlan({
     directory: dir,
     ...(sid ? { parentSessionID: sid } : {}),
     title,
     mode: "build",
-    ...(selected?.providerID ? { providerID: selected.providerID } : {}),
-    ...(selected?.modelID ? { model: selected.modelID } : {}),
+    ...selected,
     concurrency: 1,
     tasks: [{ id: "subtask-1", prompt: cleanPrompt }],
   });

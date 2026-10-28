@@ -94,4 +94,42 @@ func TestConvoySessionsIsolateTasksAndMergePrerequisites(t *testing.T) {
 	if main, _ := os.ReadFile(filepath.Join(repo, "app.txt")); string(main) != "one\ntwo\nthree\n" {
 		t.Fatalf("convoy changes leaked into the main checkout: %q", main)
 	}
+
+	// Verify inheriting parent session provider/model and merging into a local parent session.
+	parentInfo, _, err := svc.CreateConversation(ctx, runner.CreateSessionRequest{
+		Title:       "Parent Local Session",
+		Directory:   repo,
+		Runtime:     "opencode",
+		Mode:        "build",
+		ProviderID:  "deepseek",
+		ModelID:     "deepseek-chat",
+		SandboxMode: "local",
+	}, repo)
+	if err != nil {
+		t.Fatalf("create parent session: %v", err)
+	}
+	inheritedID, err := backend.Create(ctx, orchestration.SessionRequest{
+		Directory:       repo,
+		ParentSessionID: parentInfo.ID,
+		Title:           "Convoy · inherited",
+		Provider:        "hoxi-auto",
+		Model:           "free",
+		Isolated:        true,
+	})
+	if err != nil {
+		t.Fatalf("create inherited task session: %v", err)
+	}
+	inheritedRec, ok := svc.Store().Get(inheritedID)
+	if !ok {
+		t.Fatal("inherited session record missing")
+	}
+	if inheritedRec.ProviderID != "deepseek" || inheritedRec.ModelID != "deepseek-chat" {
+		t.Fatalf("expected inherited provider/model deepseek/deepseek-chat, got %q/%q", inheritedRec.ProviderID, inheritedRec.ModelID)
+	}
+	if err := backend.Merge(parentInfo.ID, []string{second}); err != nil {
+		t.Fatalf("merge convoy task into local parent session: %v", err)
+	}
+	if main, _ := os.ReadFile(filepath.Join(repo, "app.txt")); string(main) != "one\nTWO\nthree\n" {
+		t.Fatalf("expected merged changes in local parent checkout, got %q", main)
+	}
 }
