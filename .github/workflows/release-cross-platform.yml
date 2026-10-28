@@ -46,11 +46,22 @@ jobs:
         run: |
           VERSION="$(node scripts/release-artifact.mjs version "$RELEASE_TAG")"
           echo "RELEASE_VERSION=$VERSION" >> "$GITHUB_ENV"
+          node -e '
+            const fs = require("node:fs");
+            const v = process.argv[1] + ".0";
+            const info = JSON.parse(fs.readFileSync("build/windows/info.json", "utf8"));
+            info.fileVersion = v;
+            info.productVersion = v;
+            fs.writeFileSync("build/windows/info.json", JSON.stringify(info, null, 2) + "\n");
+          ' "$VERSION"
 
       - name: Install frontend dependencies & Build web
         run: |
           npm --prefix web ci
           npm --prefix web run build
+
+      - name: Run Windows Go vet
+        run: go vet ./...
 
       - name: Install Wails v2
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.13.0
@@ -60,6 +71,7 @@ jobs:
         run: |
           wails build -platform windows/amd64 -s -m -nosyncgomod \
             -ldflags "-X github.com/hoxiai/hoxi/internal/app.BuildVariant=release -X github.com/hoxiai/hoxi/internal/buildinfo.Version=${RELEASE_VERSION}"
+          test "$(./build/bin/Hoxi.exe --version | tr -d '\r\n')" = "${RELEASE_VERSION}"
 
       - name: Bundle OpenCode Runtime
         shell: bash
@@ -79,6 +91,7 @@ jobs:
           ZIP_NAME="Hoxi-${RELEASE_VERSION}-windows-amd64.zip"
           cd build/bin
           7z a "$ZIP_NAME" Hoxi.exe opencode.exe
+          sha256sum "$ZIP_NAME" > "${ZIP_NAME}.sha256"
 
       - name: Upload Windows Artifact to Release
         uses: softprops/action-gh-release@v2
@@ -86,6 +99,7 @@ jobs:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           files: |
             build/bin/Hoxi-${{ env.RELEASE_VERSION }}-windows-amd64.zip
+            build/bin/Hoxi-${{ env.RELEASE_VERSION }}-windows-amd64.zip.sha256
           draft: false
           prerelease: false
 

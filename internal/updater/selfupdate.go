@@ -1,0 +1,179 @@
+package updater
+
+import (
+	"archive/zip"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+)
+
+const maxUpdateArchiveBytes = 512 << 20 // 512 MiB
+
+func isAllowedUpdateURL(rawURL string) bool {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || u.Host == "" {
+		return false
+	}
+	if u.Scheme == "https" {
+		return true
+	}
+	if u.Scheme == "http" {
+		host := strings.ToLower(u.Hostname())
+		return host == "127.0.0.1" || host == "localhost" || host == "::1"
+	}
+	return false
+}
+
+func parseSHA256Text(raw string) string {
+	for _, field := range strings.Fields(strings.TrimSpace(raw)) {
+		candidate := strings.ToLower(strings.TrimSpace(field))
+		if len(candidate) == 64 && isHexString(candidate) {
+			return candidate
+		}
+	}
+	return ""
+}
+
+func isHexString(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return false
+		}
+	}
+	return len(s) > 0
+}
+
+func resolveArchiveSHA256(ctx context.Context, client *http.Client, archiveURL, fallbackSHA256 string) (string, error) {
+	sidecarURL := archiveURL + ".sha256"
+	if isAllowedUpdateURL(sidecarURL) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, sidecarURL, nil)
+		if err == nil {
+			resp, err := client.Do(req)
+			if err == nil {
+				body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+				_ = resp.Body.Close()
+				if resp.StatusCode == http.StatusOK {
+					if sum := parseSHA256Text(string(body)); sum != "" {
+						return sum, nil
+					}
+				}
+			}
+		}
+	}
+	if sum := parseSHA256Text(fallbackSHA256); sum != "" {
+		return sum, nil
+	}
+	return "", errors.New("missing SHA-256 checksum for update archive")
+}
+
+// downloadAndStageWindowsZip downloads the release zip from archiveURL, verifies
+// its SHA-256 against archiveURL+".sha256" (or fallbackSHA256), and extracts
+// Hoxi.exe (and optional opencode.exe) into stageDir.
+func downloadAndStageWindowsZip(ctx context.Context, client *http.Client, archiveURL, fallbackSHA256, stageDir string) error {
+	if !isAllowedUpdateURL(archiveURL) {
+		return errors.New("update download URL must use HTTPS")
+	}
+	if client == nil {
+		client = &http.Client{Timeout: 10 * time.Minute}
+	}
+	expectedSHA, err := resolveArchiveSHA256(ctx, client, archiveURL, fallbackSHA256)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, archiveURL, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("download update archive: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("update download returned HTTP %d", resp.StatusCode)
+	}
+
+	if err := os.MkdirAll(stageDir, 0o700); err != nil {
+		return err
+	}
+	zipPath := filepath.Join(stageDir, "update.zip")
+	outFile, err := os.OpenFile(zipPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	hasher := sha256.New()
+	written, copyErr := io.Copy(io.MultiWriter(outFile, hasher), io.LimitReader(resp.Body, maxUpdateArchiveBytes+1))
+	closeErr := outFile.Close()
+	if copyErr != nil {
+		return copyErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if written > maxUpdateArchiveBytes {
+		return errors.New("update archive exceeds maximum allowed size")
+	}
+
+	actualSHA := hex.EncodeToString(hasher.Sum(nil))
+	if !strings.EqualFold(actualSHA, expectedSHA) {
+		return fmt.Errorf("update archive SHA-256 mismatch: got %s, want %s", actualSHA, expectedSHA)
+	}
+
+	zr, err := zip.OpenReader(zipPath)
+	if err != nil {
+		return fmt.Errorf("open update zip: %w", err)
+	}
+	defer zr.Close()
+
+	foundHoxiExe := false
+	for _, f := range zr.File {
+		if f.FileInfo().IsDir() {
+			continue
+		}
+		base := filepath.Base(strings.ReplaceAll(f.Name, `\`, `/`))
+		var targetName string
+		switch {
+		case strings.EqualFold(base, "Hoxi.exe"):
+			targetName = "Hoxi.exe"
+			foundHoxiExe = true
+		case strings.EqualFold(base, "opencode.exe"):
+			targetName = "opencode.exe"
+		default:
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			return err
+		}
+		dstPath := filepath.Join(stageDir, targetName)
+		dstFile, err := os.OpenFile(dstPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o700)
+		if err != nil {
+			_ = rc.Close()
+			return err
+		}
+		_, err = io.Copy(dstFile, io.LimitReader(rc, maxUpdateArchiveBytes))
+		_ = rc.Close()
+		if closeErr := dstFile.Close(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+		if err != nil {
+			return err
+		}
+	}
+	_ = os.Remove(zipPath)
+	if !foundHoxiExe {
+		return errors.New("update archive does not contain Hoxi.exe")
+	}
+	return nil
+}

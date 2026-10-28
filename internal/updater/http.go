@@ -4,7 +4,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync/atomic"
 )
+
+var activeChecker atomic.Pointer[Checker]
 
 type HTTPHandler struct {
 	checker  *Checker
@@ -12,6 +15,9 @@ type HTTPHandler struct {
 }
 
 func NewHTTPHandler(checker *Checker) *HTTPHandler {
+	if checker != nil {
+		activeChecker.Store(checker)
+	}
 	return &HTTPHandler{checker: checker}
 }
 

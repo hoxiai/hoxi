@@ -86,6 +86,37 @@ jobs:
       - name: Build headless CLI daemon binary
         run: go build -v ./cmd/hoxi
 
+      - name: Cross-check Windows vet & build
+        run: |
+          GOOS=windows GOARCH=amd64 go vet ./...
+          GOOS=windows GOARCH=amd64 go build -v . ./cmd/hoxi
+
+  windows-native:
+    name: "Windows Native: Go Build & Core Tests"
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Prepare embedded asset placeholder
+        shell: bash
+        run: mkdir -p web/dist && touch web/dist/placeholder
+
+      - name: Run Windows Go vet
+        run: go vet ./...
+
+      - name: Run Windows core unit tests
+        run: go test -v ./internal/agentcli ./internal/attachment ./internal/cloudflared ./internal/notify ./internal/pairing ./internal/reclaim ./internal/runner ./internal/statusbar ./internal/updater ./internal/worktree
+
+      - name: Build Windows desktop and CLI entrypoints
+        run: go build -v . ./cmd/hoxi
+
   macos-native:
     name: "macOS Native: Darwin CGo & Desktop Host"
     runs-on: macos-latest
