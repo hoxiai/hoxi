@@ -232,4 +232,25 @@ func TestApprovalPolicyValidateAIReviewModel(t *testing.T) {
 			t.Fatalf("expected error for invalid aiReviewModel %q", spec)
 		}
 	}
+
+	// Setting AIReview without a model normalizes AIReview to false so the
+	// policy never claims AI review is active when no model is configured.
+	store := newApprovalPolicyStore(t.TempDir() + "/sessions.json")
+	saved, err := store.set(ApprovalPolicy{Mode: ApprovalModeAuto, AIReview: true, AIReviewModel: "  "})
+	if err != nil {
+		t.Fatalf("unexpected error saving policy: %v", err)
+	}
+	if saved.AIReview || saved.AIReviewModel != "" {
+		t.Fatalf("expected AIReview=false when AIReviewModel is empty, got %+v", saved)
+	}
+
+	if got := aiReviewPromptForPolicy(ApprovalPolicy{Mode: ApprovalModeAuto}); got != aiReviewAutoPrompt {
+		t.Fatalf("expected auto prompt in auto mode")
+	}
+	if got := aiReviewPromptForPolicy(ApprovalPolicy{Mode: ApprovalModeSmart}); got != aiReviewSmartPrompt {
+		t.Fatalf("expected smart prompt in smart mode")
+	}
+	if got := aiReviewPromptForPolicy(ApprovalPolicy{Mode: ApprovalModeAuto, Edit: "ask"}); got != aiReviewSmartPrompt {
+		t.Fatalf("expected smart prompt when edit override is ask")
+	}
 }

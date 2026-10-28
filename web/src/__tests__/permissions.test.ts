@@ -14,7 +14,9 @@ import {
   loadApprovalPolicy,
   markPermissionResolved,
   replyPermissionRequest,
+  resolveDefaultAIReviewModel,
   resolveEffectivePermissionSummary,
+  setApprovalAIReview,
   setApprovalMode,
   unattendedGapFor,
   updateToolPermissionRule,
@@ -284,6 +286,56 @@ describe("approval policy store and migration", () => {
     } finally {
       hoxiAPI.updateApprovalPolicy = origUpdatePolicy;
       setAppSettings("approvalMode", prevMode);
+    }
+  });
+
+  it("setApprovalAIReview auto-selects a connected HTTP model and never enables without one", async () => {
+    const prevProviders = [...workspace.providers];
+    const prevConnected = [...workspace.connectedProviders];
+    const prevConfig = workspace.globalConfig;
+    const origUpdatePolicy = hoxiAPI.updateApprovalPolicy;
+    try {
+      const puts: ApprovalPolicy[] = [];
+      hoxiAPI.updateApprovalPolicy = async (policy) => {
+        puts.push(policy);
+        return { policy, exists: true };
+      };
+
+      // Only CLI runtime + unconfigured opencode -> cannot enable AI review without a model
+      await setApprovalMode("auto");
+      setWorkspace("providers", [
+        { id: "opencode", name: "OpenCode", source: "api", models: { free: { name: "Free" } } },
+        { id: "claude-code", name: "Claude Code", source: "runner", models: { sonnet: { name: "Sonnet" } } },
+      ] as never);
+      setWorkspace("connectedProviders", ["claude-code"]);
+      setWorkspace("globalConfig", {});
+      assertEqual(resolveDefaultAIReviewModel(), "");
+      await setApprovalAIReview({ aiReview: true });
+      assertEqual(puts[puts.length - 1].aiReview, false);
+      assertEqual(puts[puts.length - 1].aiReviewModel, "");
+
+      // Connected HTTP provider -> picks fast model automatically when enabling AI review
+      setWorkspace("providers", [
+        {
+          id: "ainode",
+          name: "AINode",
+          source: "api",
+          models: {
+            "deepseek-r1": { name: "R1", reasoning: true },
+            "deepseek-flash": { name: "Flash", reasoning: false },
+          },
+        },
+      ] as never);
+      setWorkspace("connectedProviders", ["ainode"]);
+      assertEqual(resolveDefaultAIReviewModel(), "ainode/deepseek-flash");
+      await setApprovalAIReview({ aiReview: true });
+      assertEqual(puts[puts.length - 1].aiReview, true);
+      assertEqual(puts[puts.length - 1].aiReviewModel, "ainode/deepseek-flash");
+    } finally {
+      hoxiAPI.updateApprovalPolicy = origUpdatePolicy;
+      setWorkspace("providers", prevProviders);
+      setWorkspace("connectedProviders", prevConnected);
+      setWorkspace("globalConfig", prevConfig);
     }
   });
 });

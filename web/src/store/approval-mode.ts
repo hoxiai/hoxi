@@ -29,6 +29,7 @@ import { setWorkspace, workspace } from "./workspace-state";
 import { sessionDirectory } from "./session-query";
 import { normalizeFolderPath } from "./workspace-folders";
 import { fetchGlobalConfig, updateGlobalPermissions } from "./global-config";
+import { getInternalLLMProviderModelGroups, isInternalLLMModel } from "./provider-catalog";
 import { isDestructivePermissionRequest } from "../../../.opencode/lib/permission-policy.js";
 
 export { isDestructivePermissionRequest, isRunnerPermissionID };
@@ -137,16 +138,91 @@ export async function setApprovalMode(mode: ApprovalMode): Promise<void> {
   applyApprovalPolicy(state.policy);
 }
 
+const FAST_REVIEW_KEYWORDS = ["flash", "mini", "haiku", "lite", "nano", "small", "fast"];
+
+function parseInternalModelSpec(raw?: unknown): { providerID: string; modelID: string } | null {
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  const idx = trimmed.indexOf("/");
+  if (idx <= 0 || idx >= trimmed.length - 1) return null;
+  const candidate = {
+    providerID: trimmed.slice(0, idx).trim(),
+    modelID: trimmed.slice(idx + 1).trim(),
+  };
+  return isInternalLLMModel(candidate) ? candidate : null;
+}
+
+function pickFastestProviderModel(providerID: string, fallbackModelID: string): string {
+  const prov = workspace.providers.find((p) => p.id === providerID);
+  if (!prov?.models) return `${providerID}/${fallbackModelID}`;
+  for (const [mID, mInfo] of Object.entries(prov.models)) {
+    const isReasoning = Boolean(mInfo?.reasoning || mInfo?.capabilities?.reasoning);
+    if (!isReasoning && FAST_REVIEW_KEYWORDS.some((kw) => mID.toLowerCase().includes(kw))) {
+      return `${providerID}/${mID}`;
+    }
+  }
+  return `${providerID}/${fallbackModelID}`;
+}
+
+/**
+ * Resolves a default lightweight model for AI approval review when the user
+ * enables AI review without having picked a specific model yet. Only considers
+ * HTTP providers the user has explicitly connected or configured.
+ */
+export function resolveDefaultAIReviewModel(): string {
+  const existing = parseInternalModelSpec(approvalPolicy().aiReviewModel);
+  if (existing) return `${existing.providerID}/${existing.modelID}`;
+
+  const small = parseInternalModelSpec(workspace.globalConfig?.small_model);
+  if (small) return `${small.providerID}/${small.modelID}`;
+
+  const connSet = new Set(workspace.connectedProviders);
+  const cfgProviders = workspace.globalConfig?.provider ?? {};
+  const isUserConnected = (providerID: string) =>
+    (connSet.has(providerID) ||
+      Boolean(cfgProviders[providerID]) ||
+      Boolean(workspace.hoxiProviders?.[providerID])) &&
+    (providerID !== "opencode" ||
+      Boolean(cfgProviders.opencode) ||
+      Boolean(workspace.hoxiProviders?.opencode));
+
+  for (const cand of [
+    workspace.selectedModel,
+    parseInternalModelSpec(workspace.globalConfig?.model),
+    workspace.defaultAI?.model,
+  ]) {
+    if (cand && isInternalLLMModel(cand) && isUserConnected(cand.providerID)) {
+      return pickFastestProviderModel(cand.providerID, cand.modelID);
+    }
+  }
+
+  for (const group of getInternalLLMProviderModelGroups()) {
+    if (!isUserConnected(group.providerID) || group.models.length === 0) continue;
+    const fast = group.models.find((m) =>
+      FAST_REVIEW_KEYWORDS.some((kw) => m.id.toLowerCase().includes(kw))
+    );
+    return (fast || group.models[0]).fullKey;
+  }
+
+  return "";
+}
+
 export async function setApprovalAIReview(patch: {
   aiReview?: boolean;
   aiReviewModel?: string;
 }): Promise<void> {
   const gen = ++approvalPolicyGen;
   const cur = approvalPolicy();
-  const aiReviewModel =
+  let aiReviewModel =
     patch.aiReviewModel !== undefined ? patch.aiReviewModel.trim() : cur.aiReviewModel || "";
-  const aiReview =
+  let aiReview =
     patch.aiReview !== undefined ? patch.aiReview : Boolean(cur.aiReview);
+  if (aiReview && !aiReviewModel && patch.aiReviewModel === undefined) {
+    aiReviewModel = resolveDefaultAIReviewModel();
+  }
+  if (!aiReviewModel) {
+    aiReview = false;
+  }
   const state = await hoxiAPI.updateApprovalPolicy({
     ...cur,
     aiReview,

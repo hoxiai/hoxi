@@ -5,6 +5,7 @@ import {
   approvalPolicy,
   commitModelSpec,
   openProviderModal,
+  resolveDefaultAIReviewModel,
   setApprovalAIReview,
   setCommitModelSpec,
   setObserverAutoAudit,
@@ -257,11 +258,12 @@ export default function ModelsRoleTab() {
               <label class="inline-flex items-center gap-1.5 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-0.5 text-[11px] text-[var(--text-secondary)] cursor-pointer select-none">
                 <input
                   type="checkbox"
-                  checked={Boolean(approvalPolicy().aiReview)}
+                  checked={Boolean(approvalPolicy().aiReview && approvalPolicy().aiReviewModel)}
+                  disabled={!approvalPolicy().aiReviewModel && !resolveDefaultAIReviewModel()}
                   onChange={(e) =>
                     void setApprovalAIReview({ aiReview: e.currentTarget.checked })
                   }
-                  class="rounded accent-[var(--accent-primary)] cursor-pointer"
+                  class="rounded accent-[var(--accent-primary)] cursor-pointer disabled:opacity-50"
                 />
                 <span>{t("approval.aiReviewEnableLabel")}</span>
               </label>

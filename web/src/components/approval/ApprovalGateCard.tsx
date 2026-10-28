@@ -15,6 +15,7 @@ import {
 } from "lucide-solid";
 import type { PermissionRequest } from "../../services/sse-types";
 import {
+  approvalPolicy,
   isDestructivePermissionRequest,
   grantableClasses,
   grantClassLabel,
@@ -22,7 +23,11 @@ import {
   isRunnerPermissionID,
   markPermissionResolved,
   openChangedFileInInspector,
+  openProviderModal,
   replyPermissionRequest,
+  resolveDefaultAIReviewModel,
+  setApprovalAIReview,
+  syncPendingPermissions,
   type PermissionReplyMode,
 } from "../../store/workspace";
 import { DiffChanges, FileIcon } from "../icons";
@@ -41,7 +46,7 @@ import {
  * and Reject-with-Feedback steering.
  */
 export default function ApprovalGateCard(props: { request: PermissionRequest }) {
-  const [busy, setBusy] = createSignal<null | "once" | "always" | "reject" | "class">(null);
+  const [busy, setBusy] = createSignal<null | "once" | "always" | "reject" | "class" | "aireview">(null);
   const [rejecting, setRejecting] = createSignal(false);
   const [feedback, setFeedback] = createSignal("");
   const [rulesExpanded, setRulesExpanded] = createSignal(false);
@@ -88,6 +93,34 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
   const isDestructive = createMemo(() => isDestructivePermissionRequest(props.request));
   const isRunner = createMemo(() => isRunnerPermissionID(props.request.id));
   const sessionClasses = createMemo(() => grantableClasses(props.request));
+  const defaultAIReviewer = createMemo(
+    () => approvalPolicy().aiReviewModel || resolveDefaultAIReviewModel()
+  );
+  const canOfferAIReview = createMemo(
+    () =>
+      !isDestructive() &&
+      (props.request.permission === "bash" || props.request.permission === "shell") &&
+      approvalPolicy().mode !== "manual" &&
+      (!approvalPolicy().aiReview || !approvalPolicy().aiReviewModel)
+  );
+
+  const onQuickEnableAIReview = async () => {
+    if (busy()) return;
+    if (!defaultAIReviewer()) {
+      openProviderModal("policy");
+      return;
+    }
+    setBusy("aireview");
+    setError(null);
+    try {
+      await setApprovalAIReview({ aiReview: true });
+      await syncPendingPermissions();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const grantSessionClass = async () => {
     if (busy()) return;
@@ -441,6 +474,27 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
                 <X size={12} />
                 {t("approval.reject")}…
               </button>
+              <Show when={canOfferAIReview()}>
+                <button
+                  type="button"
+                  class="ml-auto inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-2.5 py-1 text-[11.5px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] disabled:opacity-50 transition-colors cursor-pointer"
+                  disabled={!!busy()}
+                  title={
+                    defaultAIReviewer()
+                      ? t("approval.enableAIReviewQuickHint", { model: defaultAIReviewer() })
+                      : t("approval.aiReviewTip")
+                  }
+                  onClick={() => void onQuickEnableAIReview()}
+                >
+                  <Show
+                    when={busy() !== "aireview"}
+                    fallback={<LoaderCircle size={11} class="animate-spin" />}
+                  >
+                    <Zap size={11} class="text-[var(--accent-primary)]" />
+                  </Show>
+                  {t("approval.enableAIReviewQuick")}
+                </button>
+              </Show>
             </>
           }
         >

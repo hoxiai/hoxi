@@ -14,6 +14,7 @@ import {
   approvalGrants,
   approvalPolicy,
   fetchGlobalConfig,
+  resolveDefaultAIReviewModel,
   resolveEffectivePermissionSummary,
   setApprovalAIReview,
   setApprovalMode,
@@ -298,8 +299,12 @@ export default function AgentPolicyMcpTab() {
         <SettingGroup title={t("approval.aiReviewTitle")} tip={t("approval.aiReviewTip")}>
           <SettingRow label={t("approval.aiReviewEnableLabel")} tip={t("approval.aiReviewTip")}>
             <ToggleSwitch
-              checked={Boolean(approvalPolicy().aiReview)}
+              checked={Boolean(approvalPolicy().aiReview && approvalPolicy().aiReviewModel)}
               onChange={(enabled) => {
+                if (enabled && !approvalPolicy().aiReviewModel && !resolveDefaultAIReviewModel()) {
+                  showSavedFeedback(false, t("approval.aiReviewModelEmpty"));
+                  return;
+                }
                 void setApprovalAIReview({ aiReview: enabled })
                   .then(() => showSavedFeedback(true, t("models.policyUpdated")))
                   .catch((err) => showSavedFeedback(false, err?.message || String(err)));

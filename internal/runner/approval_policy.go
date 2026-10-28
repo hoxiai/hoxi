@@ -228,6 +228,10 @@ func (s *approvalPolicyStore) load() {
 		s.seedDefaultLocked()
 		return
 	}
+	p.AIReviewModel = strings.TrimSpace(p.AIReviewModel)
+	if p.AIReviewModel == "" {
+		p.AIReview = false
+	}
 	s.policy = p
 	s.exists = p.UpdatedAt > 0 || p != defaultApprovalPolicy()
 }
@@ -239,8 +243,12 @@ func (s *approvalPolicyStore) get() (ApprovalPolicy, bool) {
 }
 
 func (s *approvalPolicyStore) set(p ApprovalPolicy) (ApprovalPolicy, error) {
+	p.AIReviewModel = strings.TrimSpace(p.AIReviewModel)
 	if err := p.validate(); err != nil {
 		return ApprovalPolicy{}, err
+	}
+	if p.AIReviewModel == "" {
+		p.AIReview = false
 	}
 	p.UpdatedAt = time.Now().UnixMilli()
 	s.mu.Lock()

@@ -60,10 +60,13 @@ export const approval: ApprovalI18n = {
   timeoutHint: "无人应答的请求在此秒数后自动拒绝，超时永远不会变成放行",
   aiReviewTitle: "轻量模型自动审查复杂命令",
   aiReviewTip:
-    "当静态规则无法直接证明复杂命令（如 bash -c、多仓库循环或命令替换）只读时，交由所选轻量模型判定是否为纯只读检查命令",
+    "当静态规则无法直接证明复杂命令（如 bash -c、循环、内联脚本或命令替换）安全时，交由所选轻量模型按当前审批模式判定是否放行",
   aiReviewEnableLabel: "启用复杂非破坏性命令自动审查",
   aiReviewModelLabel: "审查模型",
   aiReviewModelEmpty: "选择轻量模型…",
+  enableAIReviewQuick: "开启 AI 自动审查",
+  enableAIReviewQuickHint:
+    "使用 {model} 自动审查非破坏性复杂命令",
   aiReviewEgressNotice:
     "高危与破坏性命令（rm、sudo、git push、.env/.ssh 读取等）由本地静态规则直接拦截，绝不外发；仅通过静态安全底线但包含复杂语法的命令会将命令文本与工作区目录路径发送给所选模型服务商，超时、报错或存疑一律回退人工确认",
   deferredTitle: "待处理",
