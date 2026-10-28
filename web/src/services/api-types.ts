@@ -139,6 +139,7 @@ export interface WorkspaceProfile {
   color: string;
   folders: WorkspaceFolder[];
   hidden?: boolean;
+  aliases?: string[];
   createdAt: string;
   updatedAt: string;
 }

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -108,10 +109,16 @@ func (s *workspaceStore) profileIndexLocked(idOrPath string) int {
 			return i
 		}
 	}
-	compTarget := comparableFolderPath(idOrPath)
+	expanded := expandUserPath(idOrPath)
+	compTarget := comparableFolderPath(expanded)
+	resolvedTarget := compTarget
+	if realPath, err := filepath.EvalSymlinks(expanded); err == nil && realPath != "" {
+		resolvedTarget = comparableFolderPath(realPath)
+	}
 	for i, ws := range s.workspaces {
 		for _, f := range ws.Folders {
-			if comparableFolderPath(f.Path) == compTarget {
+			comp := comparableFolderPath(f.Path)
+			if comp == compTarget || comp == resolvedTarget {
 				return i
 			}
 		}
@@ -203,11 +210,31 @@ func (s *workspaceStore) updateLocked(targetIdx int, input saveWorkspaceRequest)
 			break
 		}
 	}
+	for _, oldFolder := range before.Folders {
+		comp := comparableFolderPath(oldFolder.Path)
+		if !inInput[comp] && !s.folderOwnedByOtherLocked(comp, updated.ID) {
+			s.addDismissedLocked(oldFolder.Path)
+		}
+	}
 	s.afterSaveLocked(updated)
 	if err := s.commitLocked(prev); err != nil {
 		return workspaceProfile{}, nil, err
 	}
 	return cloneProfile(updated), relinks, nil
+}
+
+func (s *workspaceStore) folderOwnedByOtherLocked(compPath, selfID string) bool {
+	for _, ws := range s.workspaces {
+		if ws.ID == selfID {
+			continue
+		}
+		for _, f := range ws.Folders {
+			if comparableFolderPath(f.Path) == compPath {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // hiddenOwnersLocked returns the IDs of hidden projects that own any of

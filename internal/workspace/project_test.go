@@ -556,3 +556,38 @@ func TestLegacyDuplicateFolderPrefersChildWorkspace(t *testing.T) {
 		t.Fatalf("parent directory resolved to %q, want parent", got)
 	}
 }
+
+func TestUpdateDismissesReplacedFolderAndExpandsTilde(t *testing.T) {
+	homeDir := setupTestEnv(t)
+	oldDir := mkdirTempProject(t, homeDir, "proj-old")
+	newDir := mkdirTempProject(t, homeDir, "proj-new")
+
+	store := NewStore("")
+	ws, err := store.Create(saveWorkspaceRequest{
+		Folders: []workspaceFolderInput{{Path: oldDir, IsPrimary: true}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := store.Update(ws.ID, saveWorkspaceRequest{
+		Folders: []workspaceFolderInput{{ID: ws.Folders[0].ID, Path: "~/proj-new", IsPrimary: true}},
+	})
+	if err != nil {
+		t.Fatalf("Update with tilde path failed: %v", err)
+	}
+	if len(updated.Folders) != 1 || comparableFolderPath(updated.Folders[0].Path) != comparableFolderPath(newDir) {
+		t.Fatalf("expected expanded folder %q, got %+v", newDir, updated.Folders)
+	}
+
+	foundDismissed := false
+	for _, d := range store.ListDismissed() {
+		if comparableFolderPath(d) == comparableFolderPath(oldDir) {
+			foundDismissed = true
+			break
+		}
+	}
+	if !foundDismissed {
+		t.Fatalf("expected replaced folder %q in dismissed list, got %v", oldDir, store.ListDismissed())
+	}
+}

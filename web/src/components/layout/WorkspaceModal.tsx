@@ -86,6 +86,27 @@ export default function WorkspaceModal() {
     )
   );
 
+  createEffect(() => {
+    if (mode() !== "edit") return;
+    const prof = targetProfile();
+    if (!prof || prof.folders.length === 0) return;
+    setFolders((prev) => {
+      let changed = false;
+      const next = prev.map((f) => {
+        if (f.id) return f;
+        const match = prof.folders.find(
+          (pf) => normalizeFolderPath(pf.path) === normalizeFolderPath(f.path)
+        );
+        if (match?.id) {
+          changed = true;
+          return { ...f, id: match.id };
+        }
+        return f;
+      });
+      return changed ? next : prev;
+    });
+  });
+
   const appendFolderPath = (rawPath: string) => {
     const cleaned = normalizeFolderPath(rawPath);
     if (!cleaned) return;
@@ -99,11 +120,49 @@ export default function WorkspaceModal() {
     });
   };
 
+  const replaceFolderPath = (targetPath: string, rawNewPath: string) => {
+    const target = normalizeFolderPath(targetPath);
+    const cleaned = normalizeFolderPath(rawNewPath);
+    if (!target || !cleaned || target === cleaned) return;
+    setErrorMsg(null);
+    setFolders((prev) => {
+      const targetIdx = prev.findIndex((f) => normalizeFolderPath(f.path) === target);
+      if (targetIdx < 0) return prev;
+      const targetFolder = prev[targetIdx];
+      const dupIdx = prev.findIndex(
+        (f, idx) => idx !== targetIdx && normalizeFolderPath(f.path) === cleaned
+      );
+      if (dupIdx >= 0) {
+        return prev
+          .map((f, idx) =>
+            idx === dupIdx
+              ? { ...f, isPrimary: f.isPrimary || targetFolder.isPrimary }
+              : f
+          )
+          .filter((_, idx) => idx !== targetIdx);
+      }
+      const next = prev.slice();
+      next[targetIdx] = { ...targetFolder, path: cleaned };
+      return next;
+    });
+  };
+
   const handleBrowseFolder = async () => {
     try {
       const res = await hoxiAPI.openDirectoryDialog();
       if (res?.path && res.path.trim()) {
         appendFolderPath(res.path);
+      }
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const handleChangeFolder = async (targetPath: string) => {
+    try {
+      const res = await hoxiAPI.openDirectoryDialog();
+      if (res?.path && res.path.trim()) {
+        replaceFolderPath(targetPath, res.path);
       }
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : String(err));
@@ -140,17 +199,40 @@ export default function WorkspaceModal() {
 
   const handleSave = async (e: Event) => {
     e.preventDefault();
-    if (folders().length === 0 || saving()) return;
+    const pendingManual = normalizeFolderPath(manualPath().trim());
+    if (pendingManual) {
+      appendFolderPath(pendingManual);
+      setManualPath("");
+    }
+    const currentFolders = folders();
+    if (currentFolders.length === 0 || saving()) return;
     setSaving(true);
     setErrorMsg(null);
     try {
       const prof = targetProfile();
       const modalMode = mode();
-      const selectedPrimary = folders().find((folder) => folder.isPrimary);
+      const editTargetID =
+        modalMode === "edit"
+          ? prof?.id || workspace.editingWorkspaceID || workspace.editingWorkspaceDir
+          : null;
+      const editingDir = normalizeFolderPath(
+        workspace.editingWorkspaceDir || workspacePrimaryFolder(prof)
+      );
+      const activeRootBeforeSave = normalizeFolderPath(workspace.rootDir);
+      const wasEditingActiveWorkspace =
+        modalMode === "edit" &&
+        Boolean(activeRootBeforeSave) &&
+        (activeRootBeforeSave === editingDir ||
+          Boolean(
+            prof?.folders.some(
+              (f) => normalizeFolderPath(f.path) === activeRootBeforeSave
+            )
+          ));
+      const selectedPrimary = currentFolders.find((folder) => folder.isPrimary);
       const orderedFolders = (
         selectedPrimary
-          ? [selectedPrimary, ...folders().filter((folder) => folder !== selectedPrimary)]
-          : folders()
+          ? [selectedPrimary, ...currentFolders.filter((folder) => folder !== selectedPrimary)]
+          : currentFolders
       ).map((folder, index, all) =>
         !folder.id && index === 0 && all.length === 1 && prof?.folders.length === 1
           ? { ...folder, id: prof.folders[0].id }
@@ -162,14 +244,15 @@ export default function WorkspaceModal() {
           color: normalizeWorkspaceIdentityColor(color()),
           folders: orderedFolders,
         },
-        mode() === "edit" ? prof?.id : null
+        editTargetID
       );
       const primary = workspacePrimaryFolder(saved);
       closeWorkspaceModal();
       if (
         primary &&
         (modalMode === "create" ||
-          normalizeFolderPath(workspace.rootDir) !== normalizeFolderPath(primary))
+          (wasEditingActiveWorkspace &&
+            normalizeFolderPath(workspace.rootDir) !== normalizeFolderPath(primary)))
       ) {
         await switchWorkspace(primary);
       }
@@ -386,6 +469,13 @@ export default function WorkspaceModal() {
                           </div>
 
                           <div class="flex items-center gap-1 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => void handleChangeFolder(folder.path)}
+                              class="px-2 py-1 rounded text-[11px] font-medium text-[var(--accent-text)] hover:bg-[var(--accent-surface)] transition-colors"
+                            >
+                              {t("leftNav.changeFolder")}
+                            </button>
                             <Show when={!folder.isPrimary}>
                               <button
                                 type="button"
@@ -453,7 +543,7 @@ export default function WorkspaceModal() {
               </button>
               <button
                 type="submit"
-                disabled={folders().length === 0 || saving()}
+                disabled={(folders().length === 0 && !manualPath().trim()) || saving()}
                 class="px-4 py-1.5 rounded-lg text-[13px] font-medium bg-[var(--accent-primary)] hover:opacity-90 text-[var(--accent-foreground)] disabled:opacity-40 transition-opacity shadow-sm"
               >
                 {saving()

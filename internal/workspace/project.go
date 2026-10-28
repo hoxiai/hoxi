@@ -16,7 +16,7 @@ import (
 // update the profile path, and only happens on an explicit folder replace.
 
 func canonicalProjectDirectory(directory string) (string, error) {
-	trimmed := strings.TrimSpace(directory)
+	trimmed := expandUserPath(directory)
 	if trimmed == "" {
 		return "", errors.New("project directory is required")
 	}

@@ -2,46 +2,27 @@ import { batch } from "solid-js";
 import { produce } from "solid-js/store";
 import { hoxiAPI, type SaveWorkspaceInput, type WorkspaceProfile } from "../services/api";
 import {
-  isValidStoredProjectPath,
-  PROJECT_ORDER_KEY,
-  RECENT_PROJECTS_KEY,
-  SIDEBAR_PROJECT_MODE_KEY,
-  setWorkspace,
-  workspace,
-  type SidebarProjectMode,
+  isValidStoredProjectPath, PROJECT_ORDER_KEY, RECENT_PROJECTS_KEY,
+  SIDEBAR_PROJECT_MODE_KEY, setWorkspace, workspace, type SidebarProjectMode,
 } from "./workspace-state";
 import { loadAgents, loadProviders } from "./workspace-providers";
 import { isPlaceholderSessionTitle, preserveSessionTitle, sortSessionsByActivity } from "./session-title";
 import { syncPendingPermissions } from "./approval-mode";
 import { syncSessionStatuses } from "./session-status-sync";
-import {
-  loadSessionMessagesOnly,
-  reconcileSessionsInPlace,
-  selectSession,
-} from "./workspace-sessions";
+import { loadSessionMessagesOnly, reconcileSessionsInPlace, selectSession } from "./workspace-sessions";
 import type { SessionInfo } from "../services/sse-types";
 import { isSessionArchived, isSessionBusy, isSessionDeleted } from "./session-query";
 import {
-  findWorkspaceProfileByDir,
-  findWorkspaceProfileById,
-  isDefaultWorkspacePath,
-  isDismissedProjectPath,
-  isInvalidProjectPath,
-  normalizeFolderPath,
-  recordDismissedProject,
-  resolveDefaultProjectDir,
-  unrecordDismissedProject,
-  workspacePrimaryFolder,
+  findWorkspaceProfileByDir, findWorkspaceProfileById, isDefaultWorkspacePath,
+  isDismissedProjectPath, isInvalidProjectPath, normalizeFolderPath, recordDismissedProject,
+  resolveDefaultProjectDir, stripWorktreePath, unrecordDismissedProject,
+  workspaceFoldersForDir, workspacePrimaryFolder,
 } from "./workspace-folders";
-import {
-  defaultWorkspaceDir,
-  setDefaultWorkspaceDir,
-  setSurfaceMode,
-  surfaceMode,
-  type SurfaceMode,
-} from "./layout";
+import { defaultWorkspaceDir, setDefaultWorkspaceDir, setSurfaceMode, surfaceMode, type SurfaceMode } from "./layout";
 import { refreshWorktreeStatus } from "./session-diffs";
-import { filterProjectSessions, getCachedProjectSessions, setCachedProjectSessions } from "./session-index";
+import {
+  deleteCachedProjectSessions, filterProjectSessions, getCachedProjectSessions, setCachedProjectSessions,
+} from "./session-index";
 
 let projectSessionLoadRevision = 0;
 let appliedProjectSessionRevision = 0;
@@ -204,13 +185,9 @@ export async function activateSurfaceMode(nextMode: SurfaceMode): Promise<void> 
 export async function loadSavedWorkspaces(): Promise<void> {
   try {
     const res = await hoxiAPI.listWorkspaces();
-    if (Array.isArray(res?.workspaces)) {
-      setWorkspace("savedWorkspaces", res.workspaces);
-    }
+    if (Array.isArray(res?.workspaces)) setWorkspace("savedWorkspaces", res.workspaces);
     if (Array.isArray(res?.dismissed)) {
-      for (const d of res.dismissed) {
-        recordDismissedProject(d);
-      }
+      for (const d of res.dismissed) recordDismissedProject(d);
     }
   } catch (err) {
     console.error("Failed to load saved workspaces:", err);
@@ -221,10 +198,7 @@ export async function loadProjects(): Promise<void> {
   try {
     const remote = await hoxiAPI.listProjects();
     const list = (Array.isArray(remote) ? remote : []).filter(
-      (p) =>
-        !isInvalidProjectPath(p.worktree) &&
-        !isDismissedProjectPath(p.worktree) &&
-        !isDefaultWorkspacePath(p.worktree)
+      (p) => !isInvalidProjectPath(p.worktree) && !isDismissedProjectPath(p.worktree) && !isDefaultWorkspacePath(p.worktree)
     );
     setWorkspace("projects", list);
   } catch (err) {
@@ -243,10 +217,19 @@ export function recordRecentProject(directory: string) {
   try { localStorage.setItem(RECENT_PROJECTS_KEY, JSON.stringify(updatedRecents)); } catch { /* ignore */ }
 }
 
+function isSessionInWorkspaceFolders(s: SessionInfo, rootDir: string): boolean {
+  const dir = stripWorktreePath(s.directory || workspace.worktreeBySession[s.id]?.directory);
+  if (!dir) return true;
+  const cleanedRoot = normalizeFolderPath(rootDir);
+  if (cleanedRoot && dir === cleanedRoot) return true;
+  return workspaceFoldersForDir(cleanedRoot).some((f) => normalizeFolderPath(f.path) === dir);
+}
+
 export async function selectInitialProjectSession(
   sessions: SessionInfo[],
   expectedRootDir = normalizeFolderPath(workspace.rootDir),
-  expectedNewThreadReq = workspace.newThreadRequest
+  expectedNewThreadReq = workspace.newThreadRequest,
+  preferredSessionID?: string | null
 ): Promise<void> {
   if (
     normalizeFolderPath(workspace.rootDir) !== expectedRootDir ||
@@ -256,15 +239,19 @@ export async function selectInitialProjectSession(
     setWorkspace("bootstrappingSessions", false);
     return;
   }
-  const unarchived = sessions.filter((s) => !s.parentID && !isSessionArchived(s));
+  const unarchived = sessions.filter(
+    (s) => !s.parentID && !isSessionArchived(s) && isSessionInWorkspaceFolders(s, expectedRootDir)
+  );
   if (unarchived.length === 0) {
     setWorkspace("bootstrappingSessions", false);
     return;
   }
+  const preferred = preferredSessionID ? unarchived.find((s) => s.id === preferredSessionID) : undefined;
   const sorted = sortSessionsByActivity(unarchived);
   const candidates = [
-    ...sorted.filter((s) => !isPlaceholderSessionTitle(s.title)),
-    ...sorted.filter((s) => isPlaceholderSessionTitle(s.title)),
+    ...(preferred ? [preferred] : []),
+    ...sorted.filter((s) => s.id !== preferred?.id && !isPlaceholderSessionTitle(s.title)),
+    ...sorted.filter((s) => s.id !== preferred?.id && isPlaceholderSessionTitle(s.title)),
   ];
   const first = candidates[0];
   const p = selectSession(first.id);
@@ -322,13 +309,17 @@ export async function syncActiveProjectID(directory: string): Promise<string | n
   }
   if (revision !== projectResolutionRevision || normalizeFolderPath(workspace.rootDir) !== cleaned) return null;
   setWorkspace("activeProjectID", projectID);
+  if (projectID && !findWorkspaceProfileById(projectID)) {
+    void loadSavedWorkspaces();
+  }
   return projectID;
 }
 
 export async function bootstrapProjectSessions(
   directory: string,
   selectInitial = true,
-  projectID?: string | null
+  projectID?: string | null,
+  preferredSessionID?: string | null
 ): Promise<void> {
   const revision = ++projectSessionLoadRevision;
   const cleaned = normalizeFolderPath(directory);
@@ -366,13 +357,18 @@ export async function bootstrapProjectSessions(
     setWorkspace(
       produce((state) => {
         for (const s of titledSessions) {
-          if (s.directory && !state.worktreeBySession[s.id]) {
+          if (!s.directory) continue;
+          const existing = state.worktreeBySession[s.id];
+          const rootChanged =
+            existing && stripWorktreePath(existing.directory) !== stripWorktreePath(s.directory);
+          if (!existing || rootChanged) {
             state.worktreeBySession[s.id] = {
               sessionID: s.id,
               isolated: s.sandboxMode ? s.sandboxMode === "worktree" : normalizeFolderPath(s.directory) !== cleaned,
               directory: s.directory,
-              branch: s.branch,
-              createdAt: new Date(s.time?.created || Date.now()).toISOString(),
+              branch: s.branch ?? existing?.branch,
+              baseBranch: existing?.baseBranch,
+              createdAt: existing?.createdAt || new Date(s.time?.created || Date.now()).toISOString(),
             };
           }
         }
@@ -382,12 +378,18 @@ export async function bootstrapProjectSessions(
   void refreshWorktreeStatus("__root__");
   void syncSessionStatuses(cleaned);
   void syncPendingPermissions(cleaned);
+  if (selectInitial && workspace.newThreadRequest === initialNewThreadReq && workspace.activeSessionID) {
+    const active = titledSessions.find((s) => s.id === workspace.activeSessionID);
+    if (active && !isSessionInWorkspaceFolders(active, cleaned)) {
+      setWorkspace("activeSessionID", null);
+    }
+  }
   if (
     selectInitial &&
     workspace.newThreadRequest === initialNewThreadReq &&
     !workspace.activeSessionID
   ) {
-    await selectInitialProjectSession(titledSessions, cleaned, initialNewThreadReq);
+    await selectInitialProjectSession(titledSessions, cleaned, initialNewThreadReq, preferredSessionID);
   } else if (isLatest) {
     // A newer read already landed and cleared it, or is still loading.
     setWorkspace("bootstrappingSessions", false);
@@ -397,6 +399,7 @@ export async function bootstrapProjectSessions(
 export interface SwitchWorkspaceOptions {
   selectInitial?: boolean;
   targetSessionID?: string;
+  preferredSessionID?: string;
   cachedSessions?: SessionInfo[];
   fastSurfaceSwitch?: boolean;
 }
@@ -420,10 +423,15 @@ export async function switchWorkspace(
 
   let targetSessionID = opts.targetSessionID ?? null;
   if (!targetSessionID && selectInitial && hydratedSessions.length > 0) {
-    const unarchived = hydratedSessions.filter((s) => !s.parentID && !isSessionArchived(s));
+    const unarchived = hydratedSessions.filter(
+      (s) => !s.parentID && !isSessionArchived(s) && isSessionInWorkspaceFolders(s, cleaned)
+    );
     if (unarchived.length > 0) {
+      const preferred = opts.preferredSessionID
+        ? unarchived.find((s) => s.id === opts.preferredSessionID)
+        : undefined;
       const sorted = sortSessionsByActivity(unarchived);
-      const first = sorted.find((s) => !isPlaceholderSessionTitle(s.title)) || sorted[0];
+      const first = preferred || sorted.find((s) => !isPlaceholderSessionTitle(s.title)) || sorted[0];
       targetSessionID = first?.id ?? null;
     }
   }
@@ -462,7 +470,7 @@ export async function switchWorkspace(
       setTimeout(() => {
         if (normalizeFolderPath(workspace.rootDir) !== cleaned) return;
         void syncActiveProjectID(cleaned);
-        void bootstrapProjectSessions(cleaned, selectInitial, knownProjectID);
+        void bootstrapProjectSessions(cleaned, selectInitial, knownProjectID, opts.preferredSessionID);
       }, 120);
     }
     return;
@@ -475,7 +483,7 @@ export async function switchWorkspace(
   try {
     await Promise.all([
       syncActiveProjectID(cleaned),
-      bootstrapProjectSessions(cleaned, selectInitial, knownProjectID),
+      bootstrapProjectSessions(cleaned, selectInitial, knownProjectID, opts.preferredSessionID),
       ...(selectPromise ? [selectPromise] : []),
     ]);
   } catch (err) {
@@ -515,6 +523,7 @@ export function openEditWorkspaceModal(dirOrWorkspaceID: string) {
     editingWorkspaceID: byDir?.id ?? null,
     editingWorkspaceDir: byDir ? workspacePrimaryFolder(byDir) : normalizeFolderPath(dirOrWorkspaceID),
   });
+  if (!byDir) void loadSavedWorkspaces();
 }
 
 export function openDeleteWorkspaceModal(dirOrWorkspaceID: string) {
@@ -534,42 +543,107 @@ export function closeWorkspaceModal() {
   setWorkspace({ workspaceModalMode: null, editingWorkspaceID: null, editingWorkspaceDir: null });
 }
 
+function isPathLikeID(value: string): boolean {
+  return value.includes("/") || value.includes("\\") || value.startsWith("~");
+}
+
 export async function saveWorkspaceProfile(
   input: SaveWorkspaceInput,
   existingID?: string | null
 ): Promise<WorkspaceProfile> {
-  const previous = existingID ? findWorkspaceProfileById(existingID) : undefined;
-  const saved = existingID
-    ? await hoxiAPI.updateWorkspace(existingID, input)
-    : await hoxiAPI.createWorkspace(input);
+  const cleanExistingID = existingID?.trim() || "";
+  const previous = cleanExistingID
+    ? findWorkspaceProfileById(cleanExistingID) ?? findWorkspaceProfileByDir(cleanExistingID)
+    : undefined;
+  const previousFolders = new Set<string>();
+  if (previous) {
+    for (const f of previous.folders) {
+      const norm = normalizeFolderPath(f.path);
+      if (norm) previousFolders.add(norm);
+    }
+  } else if (cleanExistingID) {
+    if (isPathLikeID(cleanExistingID)) previousFolders.add(normalizeFolderPath(cleanExistingID));
+    if (workspace.editingWorkspaceDir) previousFolders.add(normalizeFolderPath(workspace.editingWorkspaceDir));
+  }
+  const previousPrimary = normalizeFolderPath(
+    workspacePrimaryFolder(previous) ||
+      (cleanExistingID ? workspace.editingWorkspaceDir || (isPathLikeID(cleanExistingID) ? cleanExistingID : "") : "")
+  );
 
+  const normalizedInput: SaveWorkspaceInput =
+    previous && previous.folders.length === 1 && input.folders.length === 1 && !input.folders[0].id
+      ? { ...input, folders: [{ ...input.folders[0], id: previous.folders[0].id }] }
+      : input;
+
+  const saved = cleanExistingID
+    ? await hoxiAPI.updateWorkspace(previous?.id || cleanExistingID, normalizedInput)
+    : await hoxiAPI.createWorkspace(normalizedInput);
+
+  const aliasSet = new Set(saved.aliases || []);
   setWorkspace("savedWorkspaces", (prev) => {
-    const idx = prev.findIndex((w) => w.id === saved.id);
-    if (idx < 0) return [saved, ...prev];
-    const next = prev.slice();
+    const filtered = prev.filter((w) => !aliasSet.has(w.id));
+    const idx = filtered.findIndex((w) => w.id === saved.id || (previous && w.id === previous.id));
+    if (idx < 0) return [saved, ...filtered];
+    const next = filtered.slice();
     next[idx] = saved;
     return next;
   });
 
-  const primaryPath = workspacePrimaryFolder(saved);
-  if (primaryPath) recordRecentProject(primaryPath);
+  const savedFolderSet = new Set((saved.folders || []).map((f) => normalizeFolderPath(f.path)).filter(Boolean));
+  const otherOwnedFolders = new Set<string>();
+  for (const w of workspace.savedWorkspaces) {
+    if (w.id === saved.id || (previous && w.id === previous.id)) continue;
+    for (const f of w.folders || []) {
+      const norm = normalizeFolderPath(f.path);
+      if (norm) otherOwnedFolders.add(norm);
+    }
+  }
+
+  const removedFolders = new Set<string>();
+  for (const oldPath of previousFolders) {
+    if (oldPath && !savedFolderSet.has(oldPath) && !otherOwnedFolders.has(oldPath)) removedFolders.add(oldPath);
+  }
+
+  if (removedFolders.size > 0) {
+    for (const oldPath of removedFolders) {
+      recordDismissedProject(oldPath);
+      deleteCachedProjectSessions(oldPath);
+    }
+    setWorkspace("projects", (prev) => prev.filter((p) => !removedFolders.has(normalizeFolderPath(p.worktree))));
+    const nextRecents = workspace.recentProjects.filter((p) => !removedFolders.has(normalizeFolderPath(p)));
+    setWorkspace("recentProjects", nextRecents);
+    try { localStorage.setItem(RECENT_PROJECTS_KEY, JSON.stringify(nextRecents)); } catch { /* ignore */ }
+  }
+
+  const savedPrimary = normalizeFolderPath(workspacePrimaryFolder(saved));
+  if (previousPrimary && savedPrimary && previousPrimary !== savedPrimary) {
+    const currentOrder = workspace.projectOrder.slice();
+    const prevIdx = currentOrder.findIndex((p) => normalizeFolderPath(p) === previousPrimary);
+    if (prevIdx >= 0) currentOrder[prevIdx] = savedPrimary;
+    setProjectOrder(
+      currentOrder.filter((p) => {
+        const norm = normalizeFolderPath(p);
+        return norm === savedPrimary || !removedFolders.has(norm);
+      })
+    );
+    if (rememberedCodeSurface.rootDir === previousPrimary || removedFolders.has(rememberedCodeSurface.rootDir)) {
+      setRememberedCodeSurface(savedPrimary, null);
+    }
+  }
+
+  if (savedPrimary) recordRecentProject(savedPrimary);
   if (saved?.id) {
     unrecordDismissedProject(saved.id);
     for (const f of saved.folders || []) unrecordDismissedProject(f.path);
   }
-  // The backend relinked sessions while saving. If the active root moved,
-  // switch to the new path so transcripts, diffs and terminals follow it.
-  const previousPrimary = normalizeFolderPath(workspacePrimaryFolder(previous));
-  const savedPrimary = normalizeFolderPath(workspacePrimaryFolder(saved));
+
+  const activeRoot = normalizeFolderPath(workspace.rootDir);
   if (
-    previousPrimary && savedPrimary && previousPrimary !== savedPrimary &&
-    normalizeFolderPath(workspace.rootDir) === previousPrimary
+    savedPrimary &&
+    activeRoot !== savedPrimary &&
+    ((previousPrimary && activeRoot === previousPrimary) || removedFolders.has(activeRoot))
   ) {
-    await switchWorkspace(savedPrimary, {
-      selectInitial: false,
-      targetSessionID: workspace.activeSessionID ?? undefined,
-      cachedSessions: workspace.sessions.slice(),
-    });
+    await switchWorkspace(savedPrimary, { preferredSessionID: workspace.activeSessionID ?? undefined });
   }
   return saved;
 }

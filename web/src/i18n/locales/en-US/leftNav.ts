@@ -63,6 +63,7 @@ export const leftNav = {
   workspaceFoldersLabel: "Folders",
   primaryBadge: "Primary",
   makePrimary: "Make primary",
+  changeFolder: "Change",
   removeFolder: "Remove",
   addFolder: "Add folder",
   addFolderByPathPlaceholder: "Or paste folder path and press Enter…",

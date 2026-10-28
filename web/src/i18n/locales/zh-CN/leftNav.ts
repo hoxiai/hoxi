@@ -64,6 +64,7 @@ export const leftNav: LeftNavI18n = {
   workspaceFoldersLabel: "包含目录",
   primaryBadge: "主目录",
   makePrimary: "设为主目录",
+  changeFolder: "更改",
   removeFolder: "移除",
   addFolder: "选择目录",
   addFolderByPathPlaceholder: "或粘贴本地目录路径后按回车添加…",

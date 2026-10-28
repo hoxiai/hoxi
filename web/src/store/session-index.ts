@@ -126,3 +126,9 @@ export function setCachedProjectSessions(directory: string, list: SessionInfo[])
   if (!key) return;
   cachedProjectSessionsByDir.set(key, list);
 }
+
+export function deleteCachedProjectSessions(directory: string): void {
+  const key = normalizeFolderPath(directory);
+  if (!key) return;
+  cachedProjectSessionsByDir.delete(key);
+}

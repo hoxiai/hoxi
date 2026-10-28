@@ -134,11 +134,24 @@ func canonicalHomeDir() string {
 	return filepath.Clean(home)
 }
 
+func expandUserPath(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "~" {
+		return canonicalHomeDir()
+	}
+	if strings.HasPrefix(trimmed, "~/") || strings.HasPrefix(trimmed, `~\`) {
+		if home := canonicalHomeDir(); home != "" {
+			return filepath.Join(home, trimmed[2:])
+		}
+	}
+	return trimmed
+}
+
 // CleanValidProjectDir resolves and validates whether dir can serve as a workspace project root.
 // It rejects empty paths, non-existent directories, filesystem roots ("/"), the user's home directory,
 // and directories inside a macOS .app bundle.
 func CleanValidProjectDir(dir string) string {
-	trimmed := strings.TrimSpace(dir)
+	trimmed := expandUserPath(dir)
 	if trimmed == "" || trimmed == "." {
 		return ""
 	}
@@ -192,7 +205,7 @@ func validateWorkspaceFoldersKeeping(inputs []workspaceFolderInput, keepMissing 
 	seen := make(map[string]struct{}, len(inputs))
 
 	for _, item := range inputs {
-		trimmed := strings.TrimSpace(item.Path)
+		trimmed := expandUserPath(item.Path)
 		if trimmed == "" {
 			continue
 		}

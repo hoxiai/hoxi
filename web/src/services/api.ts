@@ -721,8 +721,8 @@ export const hoxiAPI = {
   listProjects(): Promise<ProjectInfo[]> { return requestJSON("/project"); },
   listWorkspaces(): Promise<{ workspaces: WorkspaceProfile[]; dismissed?: string[] }> { return requestJSON("/api/hoxi/workspaces"); },
   createWorkspace(input: SaveWorkspaceInput): Promise<WorkspaceProfile> { return requestJSON("/api/hoxi/workspaces", { method: "POST", body: JSON.stringify(input) }); },
-  updateWorkspace(id: string, input: SaveWorkspaceInput): Promise<WorkspaceProfile> { return requestJSON(`/api/hoxi/workspaces/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(input) }); },
-  deleteWorkspace(id: string): Promise<{ ok: boolean; deleted?: boolean; dismissed?: string[] }> { return requestJSON(`/api/hoxi/workspaces/${encodeURIComponent(id)}`, { method: "DELETE" }); },
+  updateWorkspace(id: string, input: SaveWorkspaceInput): Promise<WorkspaceProfile> { const byBody = id.includes("/") || id.includes("\\"); return requestJSON(byBody ? "/api/hoxi/workspaces" : `/api/hoxi/workspaces/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ ...input, id }) }); },
+  deleteWorkspace(id: string): Promise<{ ok: boolean; deleted?: boolean; dismissed?: string[] }> { const byQuery = id.includes("/") || id.includes("\\"); return requestJSON(byQuery ? `/api/hoxi/workspaces?id=${encodeURIComponent(id)}` : `/api/hoxi/workspaces/${encodeURIComponent(id)}`, { method: "DELETE" }); },
   openDirectoryDialog(): Promise<{ path: string; error?: string }> { return requestJSON("/api/hoxi/dialog/open-directory", { method: "POST" }); },
   testProviderModel(opts: { providerID?: string; baseURL?: string; apiKey?: string; npm?: string; modelID: string; headers?: Record<string, string> }): Promise<{ ok: boolean; latencyMs?: number; error?: string }> {
     return requestJSON("/api/hoxi/provider/test-model", { method: "POST", body: JSON.stringify(opts) });

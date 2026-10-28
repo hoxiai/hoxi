@@ -134,13 +134,11 @@ export function findWorkspaceProfileById(id?: string | null): WorkspaceProfile |
 export function findWorkspaceProfileByDir(dir?: string | null): WorkspaceProfile | undefined {
   const norm = stripWorktreePath(dir);
   if (!norm) return undefined;
-  const primaryMatch = workspace.savedWorkspaces.find((w) =>
-    w.folders.some((f) => f.isPrimary && normalizeFolderPath(f.path) === norm)
-  );
-  if (primaryMatch) return primaryMatch;
-  return workspace.savedWorkspaces.find((w) =>
-    w.folders.some((f) => normalizeFolderPath(f.path) === norm)
-  );
+  const visible = workspace.savedWorkspaces.filter((w) => !w.hidden);
+  const matchIn = (list: WorkspaceProfile[]) =>
+    list.find((w) => w.folders.some((f) => f.isPrimary && normalizeFolderPath(f.path) === norm)) ??
+    list.find((w) => w.folders.some((f) => normalizeFolderPath(f.path) === norm));
+  return matchIn(visible) ?? matchIn(workspace.savedWorkspaces);
 }
 
 export function activeWorkspaceProfile(): WorkspaceProfile | undefined {

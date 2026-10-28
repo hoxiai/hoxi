@@ -1,7 +1,16 @@
 import { reconcile, unwrap } from "solid-js/store";
 import type { SessionInfo } from "../services/sse-types";
 import { hoxiAPI } from "../services/api";
-import { filterProjectSessions, setWorkspace, workspace } from "../store/workspace";
+import {
+  activeDirectory,
+  bootstrapProjectSessions,
+  deleteCachedProjectSessions,
+  filterProjectSessions,
+  isDismissedProjectPath,
+  saveWorkspaceProfile,
+  setWorkspace,
+  workspace,
+} from "../store/workspace";
 import { renameSessionTitle, replaceSession, replaceSessionFromEvent } from "../store/workspace-sessions";
 import { assertEqual, describe, it } from "./test-harness";
 
@@ -182,6 +191,124 @@ describe("project attribution", () => {
       replaceSessionFromEvent(session("directory-less-foreign", { projectID: "prj_other" }));
       assertEqual(workspace.sessions.some((item) => item.id === "directory-less-foreign"), false);
     } finally {
+      setWorkspace(reconcile(saved));
+    }
+  });
+
+  it("updates worktreeBySession directory when a session is relinked to a new project directory", async () => {
+    const saved = structuredClone(unwrap(workspace));
+    const origListSessions = hoxiAPI.listSessions;
+    const origGetMessages = hoxiAPI.getMessages;
+    try {
+      setWorkspace({
+        rootDir: "/repo-new",
+        activeProjectID: "prj_1",
+        activeSessionID: null,
+        sessions: [],
+        worktreeBySession: {
+          ses_relinked: {
+            sessionID: "ses_relinked",
+            isolated: false,
+            directory: "/repo-old",
+            createdAt: "2026-01-01T00:00:00.000Z",
+          },
+        },
+      });
+      hoxiAPI.listSessions = async () => [
+        session("ses_relinked", { projectID: "prj_1", directory: "/repo-new", title: "Relinked task" }),
+      ];
+      hoxiAPI.getMessages = async () => [];
+      await bootstrapProjectSessions("/repo-new", true, "prj_1");
+      assertEqual(workspace.worktreeBySession.ses_relinked?.directory, "/repo-new");
+      assertEqual(workspace.activeSessionID, "ses_relinked");
+      assertEqual(activeDirectory(), "/repo-new");
+    } finally {
+      deleteCachedProjectSessions("/repo-new");
+      hoxiAPI.listSessions = origListSessions;
+      hoxiAPI.getMessages = origGetMessages;
+      setWorkspace(reconcile(saved));
+    }
+  });
+
+  it("does not auto-select un-relinked sessions from a replaced directory and cleans up old folder state on save", async () => {
+    const saved = structuredClone(unwrap(workspace));
+    const origUpdateWorkspace = hoxiAPI.updateWorkspace;
+    const origListSessions = hoxiAPI.listSessions;
+    const origResolveProject = hoxiAPI.resolveProject;
+    const origListAgents = hoxiAPI.listAgents;
+    try {
+      setWorkspace({
+        rootDir: "/repo-old",
+        activeProjectID: "prj_1",
+        activeSessionID: "ses_old",
+        editingWorkspaceDir: "/repo-old",
+        providers: [{ id: "p1", name: "P1", models: {} }],
+        savedWorkspaces: [
+          {
+            id: "prj_1",
+            name: "MyRepo",
+            color: "#5EA0F7",
+            folders: [{ id: "fld_1", path: "/repo-old", isPrimary: true, position: 0 }],
+            createdAt: "",
+            updatedAt: "",
+          },
+        ],
+        recentProjects: ["/repo-old", "/other"],
+        projects: [{ id: "p_old", worktree: "/repo-old", time: { created: 1, updated: 1 } }],
+        projectOrder: ["/other", "/repo-old"],
+        sessions: [session("ses_old", { projectID: "prj_1", directory: "/repo-old", title: "Old dir task" })],
+        worktreeBySession: {
+          ses_old: {
+            sessionID: "ses_old",
+            isolated: false,
+            directory: "/repo-old",
+            createdAt: "2026-01-01T00:00:00.000Z",
+          },
+        },
+      });
+
+      let capturedInput: unknown = null;
+      hoxiAPI.updateWorkspace = async (_id, input) => {
+        capturedInput = input;
+        return {
+          id: "prj_1",
+          name: "MyRepo",
+          color: "#5EA0F7",
+          folders: [{ id: "fld_1", path: "/repo-new", isPrimary: true, position: 0 }],
+          createdAt: "",
+          updatedAt: "",
+        };
+      };
+      hoxiAPI.resolveProject = async () => ({
+        projectID: "prj_1",
+        directory: "/repo-new",
+        roots: ["/repo-new"],
+      });
+      hoxiAPI.listAgents = async () => [];
+      // Old folder still existed on disk so ses_old kept directory: "/repo-old"
+      hoxiAPI.listSessions = async () => [
+        session("ses_old", { projectID: "prj_1", directory: "/repo-old", title: "Old dir task" }),
+      ];
+
+      await saveWorkspaceProfile(
+        { name: "MyRepo", folders: [{ path: "/repo-new", isPrimary: true }] },
+        "prj_1"
+      );
+
+      assertEqual((capturedInput as { folders: Array<{ id?: string }> })?.folders?.[0]?.id, "fld_1");
+      assertEqual(workspace.rootDir, "/repo-new");
+      assertEqual(workspace.activeSessionID, null);
+      assertEqual(activeDirectory(), "/repo-new");
+      assertEqual(isDismissedProjectPath("/repo-old"), true);
+      assertEqual(workspace.recentProjects.includes("/repo-old"), false);
+      assertEqual(workspace.projects.some((p) => p.worktree === "/repo-old"), false);
+      assertEqual(workspace.projectOrder[1], "/repo-new");
+    } finally {
+      deleteCachedProjectSessions("/repo-new");
+      hoxiAPI.updateWorkspace = origUpdateWorkspace;
+      hoxiAPI.listSessions = origListSessions;
+      hoxiAPI.resolveProject = origResolveProject;
+      hoxiAPI.listAgents = origListAgents;
       setWorkspace(reconcile(saved));
     }
   });
