@@ -147,3 +147,15 @@ func TestAgyHookCommandShellBehavior(t *testing.T) {
 		t.Fatalf("missing binary: %q %v", out, err)
 	}
 }
+
+func TestAgyHookCommandForWindowsUsesCmdIfExist(t *testing.T) {
+	winCmd := agyHookCommandForOS("windows", `C:\Program Files\Hoxi\Hoxi.exe`)
+	want := `if exist "C:\Program Files\Hoxi\Hoxi.exe" ("C:\Program Files\Hoxi\Hoxi.exe" agy-hook) else (echo {"decision":"allow"})`
+	if winCmd != want {
+		t.Fatalf("agyHookCommandForOS(windows) = %q, want %q", winCmd, want)
+	}
+	unixCmd := agyHookCommandForOS("darwin", "/Applications/Hoxi.app/Contents/MacOS/hoxi")
+	if !strings.HasPrefix(unixCmd, "[ -x '/Applications/Hoxi.app/Contents/MacOS/hoxi' ] && exec ") {
+		t.Fatalf("agyHookCommandForOS(darwin) = %q", unixCmd)
+	}
+}

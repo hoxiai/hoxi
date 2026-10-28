@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hoxiai/hoxi/internal/agentcli"
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
 	"github.com/hoxiai/hoxi/internal/opencode/ocstate"
 )
@@ -20,14 +21,10 @@ func resolveExternalOpenCodeBinary() string {
 		return p
 	}
 	if home, _ := os.UserHomeDir(); home != "" {
-		for _, sub := range []string{
+		return agentcli.FirstExecutableFile(
 			filepath.Join(home, ".opencode", "bin", "opencode"),
 			filepath.Join(hoxipaths.BinDir(), "opencode"),
-		} {
-			if st, err := os.Stat(sub); err == nil && !st.IsDir() {
-				return sub
-			}
-		}
+		)
 	}
 	return ""
 }

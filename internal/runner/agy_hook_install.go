@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 
@@ -58,6 +59,14 @@ func shellQuote(s string) string {
 }
 
 func agyHookCommand(exe string) string {
+	return agyHookCommandForOS(runtime.GOOS, exe)
+}
+
+func agyHookCommandForOS(goos, exe string) string {
+	if goos == "windows" {
+		q := `"` + strings.ReplaceAll(exe, `"`, `""`) + `"`
+		return fmt.Sprintf(`if exist %s (%s %s) else (echo {"decision":"allow"})`, q, q, agyhook.Subcommand)
+	}
 	q := shellQuote(exe)
 	return fmt.Sprintf(`[ -x %s ] && exec %s %s || echo '{"decision":"allow"}'`, q, q, agyhook.Subcommand)
 }

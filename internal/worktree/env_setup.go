@@ -161,16 +161,69 @@ func copyFileExclusive(src, dst string, perm os.FileMode) error {
 }
 
 // resolveWorktreeSetupScript checks .hoxi/setup.sh, .hoxi/setup-script.sh, and
-// .hoxi/setup-script in repoRoot.
+// .hoxi/setup-script in repoRoot (plus .ps1/.cmd/.bat on Windows).
 func resolveWorktreeSetupScript(repoRoot string) string {
 	hoxiDir := filepath.Join(repoRoot, ".hoxi")
-	for _, name := range []string{"setup.sh", "setup-script.sh", "setup-script"} {
+	names := []string{"setup.sh", "setup-script.sh", "setup-script"}
+	if runtime.GOOS == "windows" {
+		names = []string{"setup.ps1", "setup.cmd", "setup.bat", "setup.sh", "setup-script.sh", "setup-script"}
+	}
+	for _, name := range names {
 		candidate := filepath.Join(hoxiDir, name)
 		if info, err := os.Stat(candidate); err == nil && info.Mode().IsRegular() {
 			return candidate
 		}
 	}
 	return ""
+}
+
+func resolveWindowsSh() string {
+	if p, err := exec.LookPath("sh"); err == nil && p != "" {
+		return p
+	}
+	for _, k := range []string{"ProgramFiles", "ProgramFiles(x86)", "LocalAppData"} {
+		root := strings.TrimSpace(os.Getenv(k))
+		if root == "" {
+			continue
+		}
+		for _, sub := range []string{
+			filepath.Join(root, "Git", "bin", "sh.exe"),
+			filepath.Join(root, "Git", "usr", "bin", "sh.exe"),
+			filepath.Join(root, "Programs", "Git", "bin", "sh.exe"),
+		} {
+			if st, err := os.Stat(sub); err == nil && !st.IsDir() {
+				return sub
+			}
+		}
+	}
+	return ""
+}
+
+func newSetupScriptCommand(ctx context.Context, scriptPath string) *exec.Cmd {
+	lower := strings.ToLower(scriptPath)
+	if strings.HasSuffix(lower, ".ps1") {
+		return exec.CommandContext(ctx, "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath)
+	}
+	if runtime.GOOS == "windows" {
+		if strings.HasSuffix(lower, ".cmd") || strings.HasSuffix(lower, ".bat") {
+			return exec.CommandContext(ctx, "cmd", "/c", scriptPath)
+		}
+		if sh := resolveWindowsSh(); sh != "" {
+			return exec.CommandContext(ctx, sh, scriptPath)
+		}
+		return exec.CommandContext(ctx, "cmd", "/c", scriptPath)
+	}
+	return exec.CommandContext(ctx, "sh", scriptPath)
+}
+
+func newVerifyShellCommand(ctx context.Context, cmdStr string) *exec.Cmd {
+	if runtime.GOOS == "windows" {
+		if sh := resolveWindowsSh(); sh != "" {
+			return exec.CommandContext(ctx, sh, "-c", cmdStr)
+		}
+		return exec.CommandContext(ctx, "cmd", "/c", cmdStr)
+	}
+	return exec.CommandContext(ctx, "sh", "-c", cmdStr)
 }
 
 type worktreeSetupResult struct {
@@ -194,7 +247,7 @@ func executeWorktreeSetupScript(repoRoot, worktreeDir, sessionID, branch string,
 	if port <= 0 {
 		port = allocateWorktreePort(sessionID)
 	}
-	cmd := exec.CommandContext(ctx, "sh", scriptPath)
+	cmd := newSetupScriptCommand(ctx, scriptPath)
 	cmd.Dir = worktreeDir
 	cmd.Env = nonInteractiveGitEnv(
 		"HOXI_WORKTREE_DIR="+worktreeDir,

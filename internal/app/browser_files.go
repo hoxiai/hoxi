@@ -26,16 +26,23 @@ func (a *DesktopApp) configureBrowserFiles(gw *gateway.Gateway) {
 	}, func(path string, reveal bool) error {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		if runtime.GOOS == "darwin" {
+		switch runtime.GOOS {
+		case "darwin":
 			args := []string{path}
 			if reveal {
 				args = []string{"-R", path}
 			}
 			return exec.CommandContext(ctx, "open", args...).Run()
+		case "windows":
+			if reveal {
+				return exec.CommandContext(ctx, "explorer", "/select,", path).Run()
+			}
+			return exec.CommandContext(ctx, "cmd", "/c", "start", "", path).Run()
+		default:
+			if reveal {
+				path = filepath.Dir(path)
+			}
+			return exec.CommandContext(ctx, "xdg-open", path).Run()
 		}
-		if reveal {
-			path = filepath.Dir(path)
-		}
-		return exec.CommandContext(ctx, "xdg-open", path).Run()
 	})
 }

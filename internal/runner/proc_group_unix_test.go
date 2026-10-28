@@ -558,6 +558,25 @@ func TestSelectOpenCodeDaemonPIDPrefersLeaf(t *testing.T) {
 	}
 }
 
+func TestIsAgentRuntimeProcessArgsHandlesWindowsPathsAndExtensions(t *testing.T) {
+	cases := []struct {
+		args string
+		want bool
+	}{
+		{`"C:\Users\dev\.local\bin\claude.exe" --output-format stream-json`, true},
+		{`C:\Users\dev\AppData\Roaming\npm\gemini.cmd -p ""`, true},
+		{`C:\Users\dev\.hoxi\bin\opencode.exe serve --hostname 127.0.0.1 --port 5411`, true},
+		{`"C:\Users\dev\AppData\Local\Programs\Antigravity\bin\agy.cmd" -p ""`, true},
+		{`"C:\Program Files\Git\bin\bash.exe" -c "npm test"`, false},
+		{`/bin/sh -c "sleep 300"`, false},
+	}
+	for _, tc := range cases {
+		if got := isAgentRuntimeProcessArgs(tc.args); got != tc.want {
+			t.Errorf("isAgentRuntimeProcessArgs(%q) = %v, want %v", tc.args, got, tc.want)
+		}
+	}
+}
+
 func TestStopOpenCodeToolProcessSubagentCallIDFallbackAndTrapExit(t *testing.T) {
 	subagentMarker := openCodeStopMarker("ses_subagent", "call_sub_1") + `\ntrap : EXIT`
 	// Notice the single command `sleep 307` without `\nwait`: `trap : EXIT` prevents `/bin/sh -c` from tail-call execve'ing into `sleep 307` and losing the marker from argv.

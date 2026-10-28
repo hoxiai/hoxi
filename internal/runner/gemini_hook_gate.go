@@ -106,7 +106,7 @@ func writeGeminiHookHome(sessionID, messageID, exe string) (string, string, erro
 			} {
 				src := filepath.Join(gRoot, entry)
 				if _, err := os.Stat(src); err == nil {
-					_ = os.Symlink(src, filepath.Join(dotGemini, entry))
+					linkOrCopyGeminiEntry(src, filepath.Join(dotGemini, entry))
 				}
 			}
 		}
@@ -119,6 +119,29 @@ func writeGeminiHookHome(sessionID, messageID, exe string) (string, string, erro
 	}
 	_ = os.WriteFile(filepath.Join(homeDir, "settings.json"), data, 0o600)
 	return homeDir, settingsPath, nil
+}
+
+// linkOrCopyGeminiEntry prefers a symlink, falling back to an NTFS/POSIX hard
+// link or a 0600 file copy when the OS denies unprivileged symlinks (Windows
+// without Developer Mode).
+func linkOrCopyGeminiEntry(src, dst string) {
+	if os.Symlink(src, dst) == nil {
+		return
+	}
+	info, err := os.Stat(src)
+	if err != nil {
+		return
+	}
+	if info.IsDir() {
+		_ = os.MkdirAll(dst, 0o700)
+		return
+	}
+	if os.Link(src, dst) == nil {
+		return
+	}
+	if raw, err := os.ReadFile(src); err == nil {
+		_ = os.WriteFile(dst, raw, 0o600)
+	}
 }
 
 // issueGeminiHook prepares a per-turn GEMINI_CLI_HOME directory wiring Gemini

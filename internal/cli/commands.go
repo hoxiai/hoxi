@@ -74,25 +74,57 @@ func openDesktopWindow(ctx context.Context, client *Client, directory, sessionID
 }
 
 func launchMacOSApp(directory string) error {
-	if runtime.GOOS != "darwin" {
-		return fmt.Errorf("automatic desktop launch is only supported on macOS")
-	}
-	candidates := []string{
-		"/Applications/Hoxi.app",
-		"/Applications/Hoxi Dev.app",
-	}
-	if exe, err := os.Executable(); err == nil {
-		if idx := strings.Index(exe, ".app/Contents/MacOS/"); idx > 0 {
-			candidates = append([]string{exe[:idx+4]}, candidates...)
+	switch runtime.GOOS {
+	case "darwin":
+		candidates := []string{
+			"/Applications/Hoxi.app",
+			"/Applications/Hoxi Dev.app",
 		}
-	}
-	for _, appPath := range candidates {
-		if info, err := os.Stat(appPath); err == nil && info.IsDir() {
-			cmd := exec.Command("open", "-a", appPath, directory)
-			return cmd.Run()
+		if exe, err := os.Executable(); err == nil {
+			if idx := strings.Index(exe, ".app/Contents/MacOS/"); idx > 0 {
+				candidates = append([]string{exe[:idx+4]}, candidates...)
+			}
 		}
+		for _, appPath := range candidates {
+			if info, err := os.Stat(appPath); err == nil && info.IsDir() {
+				cmd := exec.Command("open", "-a", appPath, directory)
+				return cmd.Run()
+			}
+		}
+		return exec.Command("open", "-a", "Hoxi", directory).Run()
+	case "windows":
+		var candidates []string
+		if exe, err := os.Executable(); err == nil && exe != "" {
+			exeDir := filepath.Dir(exe)
+			candidates = append(candidates,
+				filepath.Join(exeDir, "Hoxi.exe"),
+				exe,
+			)
+		}
+		for _, envKey := range []string{"LOCALAPPDATA", "ProgramFiles"} {
+			if root := strings.TrimSpace(os.Getenv(envKey)); root != "" {
+				candidates = append(candidates,
+					filepath.Join(root, "Programs", "Hoxi", "Hoxi.exe"),
+					filepath.Join(root, "Hoxi", "Hoxi.exe"),
+				)
+			}
+		}
+		for _, bin := range candidates {
+			if st, err := os.Stat(bin); err == nil && !st.IsDir() {
+				cmd := exec.Command(bin, "-dir", directory)
+				cmd.Env = append(os.Environ(), "HOXI_NO_DESKTOP=0")
+				return cmd.Start()
+			}
+		}
+		if bin, err := exec.LookPath("Hoxi.exe"); err == nil {
+			cmd := exec.Command(bin, "-dir", directory)
+			cmd.Env = append(os.Environ(), "HOXI_NO_DESKTOP=0")
+			return cmd.Start()
+		}
+		return fmt.Errorf("Hoxi.exe not found")
+	default:
+		return fmt.Errorf("automatic desktop launch is not supported on %s", runtime.GOOS)
 	}
-	return exec.Command("open", "-a", "Hoxi", directory).Run()
 }
 
 func runSessionsCommand(

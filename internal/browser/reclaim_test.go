@@ -1,3 +1,5 @@
+//go:build darwin || linux
+
 package browser
 
 import (
@@ -18,6 +20,10 @@ import (
 
 	"github.com/hoxiai/hoxi/internal/reclaim"
 )
+
+func testProcessAlive(pid int) bool {
+	return syscall.Kill(pid, 0) == nil
+}
 
 const ownerLedgerEnv = "HOXI_BROWSER_OWNER_LEDGER"
 

@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 
@@ -298,7 +297,7 @@ func TestChromeIdleCloseStopsProcessAndRemovesProfile(t *testing.T) {
 	if n := s.closeIdleScopes(); n != 1 {
 		t.Fatal("idle Chrome kept")
 	}
-	if syscall.Kill(pid, 0) == nil {
+	if testProcessAlive(pid) {
 		t.Fatal("Chrome still running after idle close")
 	}
 	waitNoProfileProcesses(t, profile)

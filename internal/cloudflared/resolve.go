@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
@@ -20,9 +21,15 @@ func ResolveBinary() string {
 		return path
 	}
 	if dir := hoxipaths.BinDir(); dir != "" {
-		candidate := filepath.Join(dir, "cloudflared")
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-			return candidate
+		names := []string{"cloudflared"}
+		if runtime.GOOS == "windows" {
+			names = []string{"cloudflared.exe", "cloudflared"}
+		}
+		for _, name := range names {
+			candidate := filepath.Join(dir, name)
+			if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+				return candidate
+			}
 		}
 	}
 	return ""

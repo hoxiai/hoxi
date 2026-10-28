@@ -402,3 +402,34 @@ printf '{"type":"result","status":"success"}\n'
 	}
 }
 
+func TestLinkOrCopyGeminiEntry(t *testing.T) {
+	dir := t.TempDir()
+	srcFile := filepath.Join(dir, "oauth_creds.json")
+	if err := os.WriteFile(srcFile, []byte(`{"token":"secret"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dstFile := filepath.Join(dir, "isolated", "oauth_creds.json")
+	if err := os.MkdirAll(filepath.Dir(dstFile), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	linkOrCopyGeminiEntry(srcFile, dstFile)
+	got, err := os.ReadFile(dstFile)
+	if err != nil {
+		t.Fatalf("ReadFile(%s): %v", dstFile, err)
+	}
+	if string(got) != `{"token":"secret"}` {
+		t.Fatalf("unexpected linked/copied file content: %q", string(got))
+	}
+
+	srcDir := filepath.Join(dir, "history")
+	if err := os.MkdirAll(srcDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	dstDir := filepath.Join(dir, "isolated", "history")
+	linkOrCopyGeminiEntry(srcDir, dstDir)
+	if info, err := os.Stat(dstDir); err != nil || !info.IsDir() {
+		t.Fatalf("expected %s to exist as directory, got info=%v err=%v", dstDir, info, err)
+	}
+}
+
+

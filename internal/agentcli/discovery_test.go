@@ -168,4 +168,11 @@ func TestWithUserBinPathAddsPATHWhenMissing(t *testing.T) {
 	if !found {
 		t.Fatalf("PATH was not added: %#v", got)
 	}
+
+	// Windows environment variables often use mixed-case "Path=".
+	winEnv := []string{"SystemRoot=C:\\Windows", "Path=C:\\Windows\\system32"}
+	winGot := WithUserBinPath(winEnv)
+	if len(winGot) != 2 || !strings.HasPrefix(winGot[1], "Path=") || !strings.HasSuffix(winGot[1], "C:\\Windows\\system32") {
+		t.Fatalf("expected mixed-case Path= to be updated in place, got %#v", winGot)
+	}
 }

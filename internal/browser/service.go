@@ -9,8 +9,11 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -344,9 +347,8 @@ func (sc *scope) start(ctx context.Context) error {
 		// Back/forward-cache restores fire no document load, so chromedp's
 		// history actions would wait until the request deadline.
 		chromedp.Flag("disable-back-forward-cache", true))
-	const macChrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-	if _, err := os.Stat(macChrome); err == nil {
-		opts = append(opts, chromedp.ExecPath(macChrome))
+	if execPath := resolveBrowserExecPath(); execPath != "" {
+		opts = append(opts, chromedp.ExecPath(execPath))
 	}
 	alloc, cancel := chromedp.NewExecAllocator(sc.ctx, opts...)
 	sc.allocatorCancel = cancel
@@ -378,4 +380,40 @@ func (sc *scope) start(ctx context.Context) error {
 	sc.trackNavigation(browser, sc.tabID)
 	sc.viewports[sc.tabID] = sc.viewport()
 	return nil
+}
+
+func resolveBrowserExecPath() string {
+	switch runtime.GOOS {
+	case "darwin":
+		const macChrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+		if st, err := os.Stat(macChrome); err == nil && !st.IsDir() {
+			return macChrome
+		}
+	case "windows":
+		var roots []string
+		for _, k := range []string{"ProgramFiles", "ProgramFiles(x86)", "LocalAppData"} {
+			if v := strings.TrimSpace(os.Getenv(k)); v != "" {
+				roots = append(roots, v)
+			}
+		}
+		for _, r := range roots {
+			p := filepath.Join(r, "Google", "Chrome", "Application", "chrome.exe")
+			if st, err := os.Stat(p); err == nil && !st.IsDir() {
+				return p
+			}
+		}
+		if p, err := exec.LookPath("chrome"); err == nil {
+			return p
+		}
+		for _, r := range roots {
+			p := filepath.Join(r, "Microsoft", "Edge", "Application", "msedge.exe")
+			if st, err := os.Stat(p); err == nil && !st.IsDir() {
+				return p
+			}
+		}
+		if p, err := exec.LookPath("msedge"); err == nil {
+			return p
+		}
+	}
+	return ""
 }

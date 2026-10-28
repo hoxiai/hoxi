@@ -490,7 +490,7 @@ func (m *worktreeManager) StartVerify(sessionID, kind, customCommand string) (Wo
 	ent.appendOutputLocked([]byte(fmt.Sprintf("$ %s (PORT=%d)\n", cmdStr, port)))
 
 	ctx, cancel := context.WithCancel(context.Background())
-	cmd := exec.CommandContext(ctx, "sh", "-c", cmdStr)
+	cmd := newVerifyShellCommand(ctx, cmdStr)
 	cmd.Dir = dir
 	// Background children that inherit stdout/stderr must not keep Wait
 	// blocked after the command itself has exited.

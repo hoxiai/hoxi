@@ -68,7 +68,22 @@ func CommonUserBinDirs() []string {
 			}
 		}
 	}
-	if runtime.GOOS != "windows" {
+	if runtime.GOOS == "windows" {
+		if home, _ := os.UserHomeDir(); home != "" {
+			dirs = append(dirs, filepath.Join(home, "scoop", "shims"))
+		}
+		if appData := strings.TrimSpace(os.Getenv("APPDATA")); appData != "" {
+			dirs = append(dirs, filepath.Join(appData, "npm"))
+		}
+		if localApp := strings.TrimSpace(os.Getenv("LOCALAPPDATA")); localApp != "" {
+			dirs = append(dirs,
+				filepath.Join(localApp, "Microsoft", "WinGet", "Links"),
+				filepath.Join(localApp, "Programs", "Antigravity", "resources", "app", "bin"),
+				filepath.Join(localApp, "Programs", "Gemini", "resources", "app", "bin"),
+				filepath.Join(localApp, "Programs", "claude-code"),
+			)
+		}
+	} else {
 		dirs = append(dirs, "/opt/homebrew/bin", "/usr/local/bin")
 	}
 	return dirs
@@ -79,10 +94,10 @@ func CommonUserBinDirs() []string {
 // fails with "env: node: No such file or directory" even though node is
 // installed under fnm, nvm, volta or a package-manager bin directory.
 func WithUserBinPath(env []string) []string {
-	pathIndex, current := -1, ""
+	pathIndex, current, keyPrefix := -1, "", "PATH="
 	for i, kv := range env {
-		if strings.HasPrefix(kv, "PATH=") {
-			pathIndex, current = i, kv[len("PATH="):]
+		if len(kv) >= 5 && strings.EqualFold(kv[:5], "PATH=") {
+			pathIndex, current, keyPrefix = i, kv[5:], kv[:5]
 			break
 		}
 	}
@@ -113,7 +128,7 @@ func WithUserBinPath(env []string) []string {
 	next := strings.Join(append(prepend, parts...), string(os.PathListSeparator))
 	out := append([]string(nil), env...)
 	if pathIndex >= 0 {
-		out[pathIndex] = "PATH=" + next
+		out[pathIndex] = keyPrefix + next
 		return out
 	}
 	return append(out, "PATH="+next)
@@ -124,6 +139,14 @@ func FirstExecutableFile(candidates ...string) string {
 	for _, c := range candidates {
 		c = strings.TrimSpace(c)
 		if c == "" {
+			continue
+		}
+		if runtime.GOOS == "windows" && filepath.Ext(c) == "" {
+			for _, ext := range []string{".exe", ".cmd", ".bat", ""} {
+				if st, err := os.Stat(c + ext); err == nil && !st.IsDir() {
+					return c + ext
+				}
+			}
 			continue
 		}
 		if st, err := os.Stat(c); err == nil && !st.IsDir() {
