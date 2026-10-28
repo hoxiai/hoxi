@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -47,7 +48,7 @@ func TestRequestPairApprovedConnectsAndRegistersGateway(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("credential mode = %v, want 0600", info.Mode().Perm())
 	}
 	if !waitFor(t, 5*time.Second, func() bool { return m.Status().State == StateOnline }) {

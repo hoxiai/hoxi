@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -134,7 +135,7 @@ func TestApprovalAuditLoadReRedactsLegacyEntries(t *testing.T) {
 	if strings.Contains(string(onDisk), "S3cretVal9") || !strings.Contains(string(onDisk), "ls -la") {
 		t.Fatalf("audit file was not rewritten cleanly: %s", onDisk)
 	}
-	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o600 {
+	if info, err := os.Stat(path); err != nil || (runtime.GOOS != "windows" && info.Mode().Perm() != 0o600) {
 		t.Fatalf("rewritten audit file must stay 0600: %v %v", info, err)
 	}
 	if leftovers, _ := filepath.Glob(path + ".tmp-*"); len(leftovers) != 0 {

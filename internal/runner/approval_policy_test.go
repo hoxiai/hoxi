@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -69,7 +70,7 @@ func TestApprovalPolicyPersistsAndRejectsInvalidValues(t *testing.T) {
 	if code != http.StatusOK || got.Exists || got.Policy.Mode != ApprovalModeAuto {
 		t.Fatalf("default policy: %d %+v", code, got)
 	}
-	if info, err := os.Stat(policyPath); err != nil || info.Mode().Perm() != 0o600 {
+	if info, err := os.Stat(policyPath); err != nil || (runtime.GOOS != "windows" && info.Mode().Perm() != 0o600) {
 		t.Fatalf("default policy file must be seeded on startup with 0600: %v %v", info, err)
 	}
 	for _, bad := range []map[string]string{
@@ -88,7 +89,7 @@ func TestApprovalPolicyPersistsAndRejectsInvalidValues(t *testing.T) {
 	if code != http.StatusOK || !got.Exists || got.Policy.Mode != ApprovalModeManual || got.Policy.Edit != "allow" {
 		t.Fatalf("save: %d %+v", code, got)
 	}
-	if info, err := os.Stat(policyPath); err != nil || info.Mode().Perm() != 0o600 {
+	if info, err := os.Stat(policyPath); err != nil || (runtime.GOOS != "windows" && info.Mode().Perm() != 0o600) {
 		t.Fatalf("policy file: %v %v", info, err)
 	}
 	reloaded := NewService(t.TempDir(), nil, nil, storePath)

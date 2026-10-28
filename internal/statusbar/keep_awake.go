@@ -83,7 +83,7 @@ func savePersistedKeepAwakeEnabled(enabled bool) error {
 
 // KeepAwakeSupported reports whether the host OS supports idle sleep prevention.
 func KeepAwakeSupported() bool {
-	return runtime.GOOS == "darwin"
+	return runtime.GOOS == "darwin" || runtime.GOOS == "windows"
 }
 
 func (t *Tracker) KeepAwakeEnabled() bool {
@@ -122,6 +122,13 @@ func (t *Tracker) syncKeepAwakeLocked() {
 	if t.startKeepAwakeHook != nil {
 		stopFn, err := t.startKeepAwakeHook()
 		if err == nil {
+			t.keepAwakeStopHook = stopFn
+			t.keepAwakeActive = true
+		}
+		return
+	}
+	if runtime.GOOS == "windows" {
+		if stopFn, ok := startOSKeepAwake(); ok {
 			t.keepAwakeStopHook = stopFn
 			t.keepAwakeActive = true
 		}

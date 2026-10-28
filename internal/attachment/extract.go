@@ -73,7 +73,7 @@ result;
 `
 
 func convertImageBytesToPNG(raw []byte, ext string) ([]byte, error) {
-	if runtime.GOOS != "darwin" {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "windows" {
 		return nil, os.ErrInvalid
 	}
 	if ext == "" {
@@ -101,7 +101,14 @@ func convertImageBytesToPNG(raw []byte, ext string) ([]byte, error) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "sips", "-s", "format", "png", inPath, "--out", outPath)
+	var cmd *exec.Cmd
+	if runtime.GOOS == "darwin" {
+		cmd = exec.CommandContext(ctx, "sips", "-s", "format", "png", inPath, "--out", outPath)
+	} else {
+		script := `Add-Type -AssemblyName System.Drawing; $img = [System.Drawing.Image]::FromFile($env:HOXI_IMG_IN); try { $img.Save($env:HOXI_IMG_OUT, [System.Drawing.Imaging.ImageFormat]::Png) } finally { $img.Dispose() }`
+		cmd = exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", script)
+		cmd.Env = append(os.Environ(), "HOXI_IMG_IN="+inPath, "HOXI_IMG_OUT="+outPath)
+	}
 	if err := cmd.Run(); err != nil {
 		return nil, err
 	}
@@ -109,31 +116,51 @@ func convertImageBytesToPNG(raw []byte, ext string) ([]byte, error) {
 }
 
 func extractPDFText(pdfPath string) string {
-	if runtime.GOOS != "darwin" {
-		return ""
+	if runtime.GOOS == "darwin" {
+		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, "osascript", "-l", "JavaScript", "-e", macPDFExtractJXA, pdfPath)
+		if out, err := cmd.Output(); err == nil {
+			if s := strings.TrimSpace(string(out)); s != "" {
+				return s
+			}
+		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "osascript", "-l", "JavaScript", "-e", macPDFExtractJXA, pdfPath)
-	out, err := cmd.Output()
-	if err != nil {
-		return ""
+	if bin, err := exec.LookPath("pdftotext"); err == nil && bin != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, bin, "-layout", "-nopgbrk", pdfPath, "-")
+		if out, err := cmd.Output(); err == nil {
+			if s := strings.TrimSpace(string(out)); s != "" {
+				return s
+			}
+		}
 	}
-	return strings.TrimSpace(string(out))
+	return extractPDFTextPureGo(pdfPath)
 }
 
 func extractMacTextUtil(docPath string) string {
-	if runtime.GOOS != "darwin" {
-		return ""
+	if runtime.GOOS == "darwin" {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, "textutil", "-convert", "txt", "-stdout", docPath)
+		out, err := cmd.Output()
+		if err != nil {
+			return ""
+		}
+		return strings.TrimSpace(string(out))
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "textutil", "-convert", "txt", "-stdout", docPath)
-	out, err := cmd.Output()
-	if err != nil {
-		return ""
+	if runtime.GOOS == "windows" && strings.EqualFold(filepath.Ext(docPath), ".rtf") {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		script := `Add-Type -AssemblyName System.Windows.Forms; $rtb = New-Object System.Windows.Forms.RichTextBox; try { $rtb.LoadFile($env:HOXI_DOC_PATH, [System.Windows.Forms.RichTextBoxStreamType]::RichText); [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Write-Output $rtb.Text } finally { $rtb.Dispose() }`
+		cmd := exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-STA", "-WindowStyle", "Hidden", "-Command", script)
+		cmd.Env = append(os.Environ(), "HOXI_DOC_PATH="+docPath)
+		if out, err := cmd.Output(); err == nil {
+			return strings.TrimSpace(string(out))
+		}
 	}
-	return strings.TrimSpace(string(out))
+	return ""
 }
 
 func excelColIndex(cellRef string) int {

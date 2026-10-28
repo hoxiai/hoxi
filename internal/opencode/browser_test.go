@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -52,7 +53,7 @@ func TestBrowserOverlay(t *testing.T) {
 	}
 	for path, mode := range map[string]os.FileMode{u.Path: 0600, filepath.Dir(u.Path): 0700} {
 		info, err := os.Stat(path)
-		if err != nil || info.Mode().Perm() != mode {
+		if err != nil || (runtime.GOOS != "windows" && info.Mode().Perm() != mode) {
 			t.Fatalf("invalid private permissions: %s %v", path, err)
 		}
 	}

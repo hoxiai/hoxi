@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -75,7 +76,7 @@ func TestInstallAgyHookCreatesMergesAndRefreshes(t *testing.T) {
 	if raw, _ := os.ReadFile(path); strings.Contains(string(raw), `\u0026`) {
 		t.Fatalf("hooks.json should keep && readable: %s", raw)
 	}
-	if fi, _ := os.Stat(path); fi.Mode().Perm() != 0o600 {
+	if fi, _ := os.Stat(path); runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
 		t.Fatalf("file mode changed to %v", fi.Mode().Perm())
 	}
 

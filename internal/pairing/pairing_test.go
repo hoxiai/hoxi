@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -59,7 +60,7 @@ func TestCodePersistsTokenWith0600(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat token: %v", err)
 	}
-	if perm := info.Mode().Perm(); perm != 0o600 {
+	if perm := info.Mode().Perm(); runtime.GOOS != "windows" && perm != 0o600 {
 		t.Fatalf("token perms = %o, want 600", perm)
 	}
 	if !strings.Contains(codeTokenString(t, path), first.Token) {

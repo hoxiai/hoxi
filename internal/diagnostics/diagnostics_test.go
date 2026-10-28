@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -60,7 +61,7 @@ func TestStorePermissionsRotationAndRetention(t *testing.T) {
 	for _, f := range files {
 		total += f.size
 		info, err := os.Stat(f.path)
-		if err != nil || info.Mode().Perm() != 0600 {
+		if err != nil || (runtime.GOOS != "windows" && info.Mode().Perm() != 0600) {
 			t.Fatalf("file permissions: %v %v", info, err)
 		}
 		if f.size > s.segment {
@@ -71,7 +72,7 @@ func TestStorePermissionsRotationAndRetention(t *testing.T) {
 		t.Fatalf("budget exceeded: %d", total)
 	}
 	info, _ := os.Stat(s.directory)
-	if info.Mode().Perm() != 0700 {
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0700 {
 		t.Fatal("directory permissions")
 	}
 	old := time.Now().Add(-8 * 24 * time.Hour)

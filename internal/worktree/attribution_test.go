@@ -3,6 +3,7 @@ package worktree
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -74,7 +75,7 @@ func TestAttributionPreferencePersistsAndDefaultsToAuto(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if perm := info.Mode().Perm(); perm != 0o600 {
+	if perm := info.Mode().Perm(); runtime.GOOS != "windows" && perm != 0o600 {
 		t.Fatalf("preference file mode = %o, want 600", perm)
 	}
 	if err := SaveAttribution("", AttributionAuto); err == nil {

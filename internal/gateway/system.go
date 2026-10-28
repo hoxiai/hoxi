@@ -162,6 +162,45 @@ if (files.length === 0) {
 JSON.stringify({ files, rawPngBase64 });
 `
 
+var winPasteboardPS = `
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+$files = @()
+if ([System.Windows.Forms.Clipboard]::ContainsFileDropList()) {
+  foreach ($f in [System.Windows.Forms.Clipboard]::GetFileDropList()) {
+    if ($f) { $files += [string]$f }
+  }
+}
+$rawPngBase64 = ""
+if ($files.Count -eq 0 -and [System.Windows.Forms.Clipboard]::ContainsImage()) {
+  $img = [System.Windows.Forms.Clipboard]::GetImage()
+  if ($img -ne $null) {
+    try {
+      $ms = New-Object System.IO.MemoryStream
+      $img.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
+      $bytes = $ms.ToArray()
+      if ($bytes.Length -gt 0 -and $bytes.Length -le ` + strconv.Itoa(maxClipboardImageBytes) + `) {
+        $rawPngBase64 = [Convert]::ToBase64String($bytes)
+      }
+      $ms.Dispose()
+    } finally {
+      $img.Dispose()
+    }
+  }
+}
+@{ files = @($files); rawPngBase64 = $rawPngBase64 } | ConvertTo-Json -Compress
+`
+
+const winConvertImagePS = `
+Add-Type -AssemblyName System.Drawing
+$img = [System.Drawing.Image]::FromFile($env:HOXI_CLIP_IN)
+try {
+  $img.Save($env:HOXI_CLIP_OUT, [System.Drawing.Imaging.ImageFormat]::Png)
+} finally {
+  $img.Dispose()
+}
+`
+
 func readClipboardImageFile(path string) (clipboardImageItem, bool) {
 	baseName := filepath.Base(path)
 	kind, directMime, err := attachment.ClassifyFile(baseName, "")
@@ -180,7 +219,7 @@ func readClipboardImageFile(path string) (clipboardImageItem, bool) {
 		return clipboardImageItem{}, false
 	}
 
-	if needsConvert && runtime.GOOS == "darwin" {
+	if needsConvert && (runtime.GOOS == "darwin" || runtime.GOOS == "windows") {
 		tmpFile, err := os.CreateTemp("", "hoxi-clip-*.png")
 		if err != nil {
 			return clipboardImageItem{}, false
@@ -191,7 +230,13 @@ func readClipboardImageFile(path string) (clipboardImageItem, bool) {
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		cmd := exec.CommandContext(ctx, "sips", "-s", "format", "png", path, "--out", tmpPath)
+		var cmd *exec.Cmd
+		if runtime.GOOS == "darwin" {
+			cmd = exec.CommandContext(ctx, "sips", "-s", "format", "png", path, "--out", tmpPath)
+		} else {
+			cmd = exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", winConvertImagePS)
+			cmd.Env = append(os.Environ(), "HOXI_CLIP_IN="+path, "HOXI_CLIP_OUT="+tmpPath)
+		}
 		if cmd.Run() != nil {
 			return clipboardImageItem{}, false
 		}
@@ -221,20 +266,40 @@ func readClipboardImageFile(path string) (clipboardImageItem, bool) {
 	}, true
 }
 
+func decodeClipboardFilesField(raw json.RawMessage) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	var list []string
+	if err := json.Unmarshal(raw, &list); err == nil {
+		return list
+	}
+	var single string
+	if err := json.Unmarshal(raw, &single); err == nil && single != "" {
+		return []string{single}
+	}
+	return nil
+}
+
 func (g *Gateway) handleClipboardImages(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
 		return
 	}
 	filesOnly := r.URL.Query().Get("filesOnly") == "1"
-	if runtime.GOOS != "darwin" {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "windows" {
 		writeJSON(w, http.StatusOK, map[string]any{"images": []clipboardImageItem{}})
 		return
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "osascript", "-l", "JavaScript", "-e", macPasteboardJXA)
+	var cmd *exec.Cmd
+	if runtime.GOOS == "darwin" {
+		cmd = exec.CommandContext(ctx, "osascript", "-l", "JavaScript", "-e", macPasteboardJXA)
+	} else {
+		cmd = exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-STA", "-WindowStyle", "Hidden", "-Command", winPasteboardPS)
+	}
 	out, err := cmd.Output()
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"images": []clipboardImageItem{}})
@@ -242,16 +307,17 @@ func (g *Gateway) handleClipboardImages(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var parsed struct {
-		Files        []string `json:"files"`
-		RawPngBase64 string   `json:"rawPngBase64"`
+		Files        json.RawMessage `json:"files"`
+		RawPngBase64 string          `json:"rawPngBase64"`
 	}
 	if json.Unmarshal(out, &parsed) != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"images": []clipboardImageItem{}})
 		return
 	}
 
+	files := decodeClipboardFilesField(parsed.Files)
 	images := make([]clipboardImageItem, 0, 4)
-	for _, f := range parsed.Files {
+	for _, f := range files {
 		if len(images) >= 4 {
 			break
 		}

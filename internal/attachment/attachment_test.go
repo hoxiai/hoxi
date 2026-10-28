@@ -179,3 +179,16 @@ func TestActiveAttachmentContentIsSandboxed(t *testing.T) {
 		}
 	}
 }
+
+func TestExtractPDFTextPureGo(t *testing.T) {
+	pdfBytes := []byte("%PDF-1.4\n1 0 obj\n<< /Length 55 >>\nstream\nBT\n(Hello Windows PDF) Tj\n0 -14 Td\n(Second Line) Tj\nET\nendstream\nendobj\n%%EOF\n")
+	path := t.TempDir() + "/sample.pdf"
+	if err := os.WriteFile(path, pdfBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := extractPDFTextPureGo(path)
+	if !strings.Contains(got, "Hello Windows PDF") || !strings.Contains(got, "Second Line") {
+		t.Fatalf("extractPDFTextPureGo = %q, want both lines", got)
+	}
+}
+
