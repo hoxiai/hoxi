@@ -97,8 +97,18 @@ npm --prefix web run build
 mkdir -p build/bin
 
 resolve_opencode_bin() {
+  node scripts/opencode-lock.mjs verify >/dev/null
+  if [[ -n "${HOXI_OPENCODE:-}" ]]; then
+    if [[ ! -x "${HOXI_OPENCODE}" ]]; then
+      echo "HOXI_OPENCODE is not executable: ${HOXI_OPENCODE}" >&2
+      return 1
+    fi
+    node scripts/opencode-lock.mjs verify-binary "${HOXI_OPENCODE}" >&2
+    echo "${HOXI_OPENCODE}"
+    return 0
+  fi
+
   local candidates=(
-    "${HOXI_OPENCODE:-}"
     "${HOME}/.hoxi/bin/opencode"
     "${HOME}/.opencode/bin/opencode"
     "/opt/homebrew/bin/opencode"
@@ -106,17 +116,60 @@ resolve_opencode_bin() {
     "$(command -v opencode 2>/dev/null || true)"
   )
   for c in "${candidates[@]}"; do
-    if [[ -n "${c}" && -x "${c}" ]]; then
+    if [[ -n "${c}" && -x "${c}" ]] && node scripts/opencode-lock.mjs verify-binary "${c}" >/dev/null 2>&1; then
       echo "${c}"
       return 0
     fi
   done
-  return 1
+
+  if [[ "$(uname -s)" != "Darwin" ]]; then
+    return 1
+  fi
+
+  local host_arch
+  case "$(uname -m)" in
+    arm64|aarch64) host_arch="arm64" ;;
+    x86_64|amd64)  host_arch="amd64" ;;
+    *)
+      echo "Unsupported macOS architecture for OpenCode sidecar: $(uname -m)" >&2
+      return 1
+      ;;
+  esac
+
+  local platform="darwin/${host_arch}"
+  local opencode_url
+  opencode_url="$(node scripts/opencode-lock.mjs url "${platform}")"
+  local dl_dir
+  dl_dir="$(mktemp -d "${TMPDIR:-/tmp}/hoxi-opencode.XXXXXX")"
+  echo "⬇️  Downloading & verifying pinned OpenCode (${platform}) from opencode.lock..." >&2
+  if ! curl --fail --location --silent --show-error --proto '=https' --proto-redir '=https' \
+    "${opencode_url}" -o "${dl_dir}/opencode.zip"; then
+    rm -rf "${dl_dir}"
+    return 1
+  fi
+  if ! node scripts/opencode-lock.mjs verify-archive "${platform}" "${dl_dir}/opencode.zip" >&2; then
+    rm -rf "${dl_dir}"
+    return 1
+  fi
+  mkdir -p "${dl_dir}/extracted" "${HOME}/.hoxi/bin"
+  ditto -x -k "${dl_dir}/opencode.zip" "${dl_dir}/extracted"
+  if ! node scripts/opencode-lock.mjs verify-binary "${dl_dir}/extracted/opencode" >&2; then
+    rm -rf "${dl_dir}"
+    return 1
+  fi
+  local target_bin="${HOME}/.hoxi/bin/opencode"
+  local tmp_bin="${HOME}/.hoxi/bin/.opencode.$$.tmp"
+  cp -f "${dl_dir}/extracted/opencode" "${tmp_bin}"
+  chmod 0755 "${tmp_bin}"
+  mv -f "${tmp_bin}" "${target_bin}"
+  rm -rf "${dl_dir}"
+  echo "${target_bin}"
+  return 0
 }
 
 OPENCODE_SRC="$(resolve_opencode_bin || true)"
 if [[ -z "${OPENCODE_SRC}" && "$(uname -s)" == "Darwin" ]]; then
-  echo "Set HOXI_OPENCODE to a preinstalled, verified OpenCode executable." >&2
+  echo "Failed to resolve or download verified OpenCode executable matching internal/opencode/opencode.lock." >&2
   exit 1
 fi
 

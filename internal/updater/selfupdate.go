@@ -199,7 +199,7 @@ func resolveArchiveSHA256(ctx context.Context, client *http.Client, archiveURL, 
 
 // downloadAndStageWindowsZip downloads the release zip from archiveURL, verifies
 // its SHA-256 against archiveURL+".sha256" (or fallbackSHA256), and extracts
-// Hoxi.exe (and optional opencode.exe) into stageDir.
+// Hoxi.exe and optional opencode.exe / sqlite3.exe into stageDir.
 func downloadAndStageWindowsZip(ctx context.Context, client *http.Client, archiveURL, fallbackSHA256, stageDir string) error {
 	if !isAllowedUpdateURL(archiveURL) {
 		return errors.New("update download URL must use HTTPS")
@@ -274,6 +274,8 @@ func downloadAndStageWindowsZip(ctx context.Context, client *http.Client, archiv
 			foundHoxiExe = true
 		case strings.EqualFold(base, "opencode.exe"):
 			targetName = "opencode.exe"
+		case strings.EqualFold(base, "sqlite3.exe"):
+			targetName = "sqlite3.exe"
 		default:
 			continue
 		}

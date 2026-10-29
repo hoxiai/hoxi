@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/hoxiai/hoxi/internal/agentcli"
+	"github.com/hoxiai/hoxi/internal/sqlitecli"
 )
 
 func geminiRootDir() string {
@@ -116,7 +117,7 @@ func scanGeminiAntigravitySessions(targetDir, query string) ([]ExternalSessionSu
 		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		countCmd := exec.CommandContext(ctx, "sqlite3", "-readonly", "-cmd", ".timeout 3000", dbPath, "SELECT count(*) FROM conversation_summaries WHERE nesting_depth = 0 AND killed = 0;")
+		countCmd := exec.CommandContext(ctx, sqlitecli.Executable(), "-readonly", "-cmd", ".timeout 3000", dbPath, "SELECT count(*) FROM conversation_summaries WHERE nesting_depth = 0 AND killed = 0;")
 		countCmd.WaitDelay = time.Second
 		countOut, countErr := countCmd.Output()
 		cancel()
@@ -133,7 +134,7 @@ ORDER BY last_modified_time DESC
 LIMIT 120;`
 
 		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
-		queryCmd := exec.CommandContext(ctx, "sqlite3", "-readonly", "-cmd", ".timeout 3000", "-json", dbPath, sqlQuery)
+		queryCmd := exec.CommandContext(ctx, sqlitecli.Executable(), "-readonly", "-cmd", ".timeout 3000", "-json", dbPath, sqlQuery)
 		queryCmd.WaitDelay = time.Second
 		rawOut, err := queryCmd.Output()
 		cancel()

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
+	"github.com/hoxiai/hoxi/internal/sqlitecli"
 )
 
 const (
@@ -90,7 +91,7 @@ type ConsoleState struct {
 
 const consoleStateQuery = `
 SELECT json_object(
-  'accounts', COALESCE((
+  'accounts', json(COALESCE((
     SELECT json_group_array(json_object(
       'id', COALESCE(a.id, ''),
       'email', COALESCE(a.email, ''),
@@ -102,7 +103,7 @@ SELECT json_object(
       'timeUpdated', COALESCE(a.time_updated, 0)
     ))
     FROM account a
-  ), json('[]')),
+  ), '[]')),
   'activeAccountID', COALESCE((SELECT active_account_id FROM account_state WHERE id = 1 LIMIT 1), ''),
   'activeOrgID', COALESCE((SELECT active_org_id FROM account_state WHERE id = 1 LIMIT 1), '')
 );`
@@ -120,7 +121,7 @@ func ReadConsoleState(dbPath string) *ConsoleState {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), sqliteReadTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "sqlite3", "-readonly", "-cmd", ".timeout 3000", dbPath, consoleStateQuery)
+	cmd := exec.CommandContext(ctx, sqlitecli.Executable(), "-readonly", "-cmd", ".timeout 3000", dbPath, consoleStateQuery)
 	cmd.WaitDelay = time.Second
 	out, err := cmd.Output()
 	if err != nil || len(bytes.TrimSpace(out)) == 0 {
@@ -191,7 +192,7 @@ func SyncConsoleState(ext *ConsoleState, dstDB string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), sqliteWriteTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "sqlite3", "-cmd", ".timeout 3000", dstDB)
+	cmd := exec.CommandContext(ctx, sqlitecli.Executable(), "-cmd", ".timeout 3000", dstDB)
 	cmd.WaitDelay = time.Second
 	cmd.Stdin = strings.NewReader(consoleUpsertSQL(ext))
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -277,7 +278,7 @@ func CleanDatabaseEventLog(ctx context.Context, dbPath string) error {
 	defer cancelPurge()
 	purgeCmd := exec.CommandContext(
 		purgeCtx,
-		"sqlite3",
+		sqlitecli.Executable(),
 		"-cmd", ".timeout 10000",
 		dbPath,
 		"DELETE FROM event; DELETE FROM event_sequence; PRAGMA wal_checkpoint(TRUNCATE);",
@@ -291,7 +292,7 @@ func CleanDatabaseEventLog(ctx context.Context, dbPath string) error {
 	defer cancelVacuum()
 	vacuumCmd := exec.CommandContext(
 		vacuumCtx,
-		"sqlite3",
+		sqlitecli.Executable(),
 		"-cmd", ".timeout 10000",
 		dbPath,
 		"VACUUM; PRAGMA wal_checkpoint(TRUNCATE);",
@@ -302,4 +303,3 @@ func CleanDatabaseEventLog(ctx context.Context, dbPath string) error {
 	}
 	return nil
 }
-

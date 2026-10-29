@@ -15,6 +15,7 @@ import (
 
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
 	"github.com/hoxiai/hoxi/internal/runner"
+	"github.com/hoxiai/hoxi/internal/sqlitecli"
 )
 
 // requestLogContentMaxChars bounds each text part so an enormous reply cannot
@@ -156,7 +157,7 @@ func openCodeRequestContent(sessionID, messageID string) requestContent {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "sqlite3", "-readonly", "-cmd", ".timeout 5000", dbPath, sqlQuery)
+	cmd := exec.CommandContext(ctx, sqlitecli.Executable(), "-readonly", "-cmd", ".timeout 5000", dbPath, sqlQuery)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return requestContent{}

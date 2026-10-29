@@ -33,6 +33,18 @@ Unicode true
   !endif
 !endif
 
+!ifndef ARG_HOXI_SQLITE_BINARY
+  !if /FileExists "..\..\bin\sqlite3.exe"
+    !define ARG_HOXI_SQLITE_BINARY "..\..\bin\sqlite3.exe"
+  !else if /FileExists "tmp\sqlite3.exe"
+    !define ARG_HOXI_SQLITE_BINARY "tmp\sqlite3.exe"
+  !else if /FileExists "tmp\sqlite\sqlite3.exe"
+    !define ARG_HOXI_SQLITE_BINARY "tmp\sqlite\sqlite3.exe"
+  !else
+    !error "Hoxi installer requires the verified sqlite3.exe sidecar"
+  !endif
+!endif
+
 !include "wails_tools.nsh"
 
 # The version information for these two must consist of 4 numeric parts
@@ -95,6 +107,7 @@ Section
 
     !insertmacro wails.files
     File "/oname=opencode.exe" "${ARG_HOXI_OPENCODE_BINARY}"
+    File "/oname=sqlite3.exe" "${ARG_HOXI_SQLITE_BINARY}"
     File /nonfatal "..\..\..\LICENSE"
     File /nonfatal "..\..\..\NOTICE"
     File /nonfatal "..\..\..\THIRD_PARTY_NOTICES.md"

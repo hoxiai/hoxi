@@ -41,6 +41,8 @@ Hoxi 的电脑控制在 macOS 和 Windows 上提供同一套会话授权、窗�
 
 macOS 使用 NSWorkspace / Accessibility / ScreenCaptureKit / CGEvent；Windows 使用 Win32 窗口与进程身份、UI Automation、PrintWindow 和 SendInput。Windows 的 UIA/单窗口截图运行在固定脚本的受限时长子进程中，目标窗口不响应时终止该子进程，不截整个桌面。
 
-本次 macOS 开发环境能够编译原生后端、执行授权/审批/取消回归测试，并交叉编译 Windows amd64/arm64。**交叉编译不等同于 Windows 真机验收**：Windows 的权限、DPI、多显示器、应用兼容性与管理员窗口输入仍需在 Windows 上验证。Mac 上真实截图与输入也取决于用户在系统设置中授予当前 Hoxi 构建权限。
+Windows 11 ARM64 虚拟机已运行 x64 兼容层下的窗口枚举、辅助功能树读取和单窗口截图测试，以及 ARM64 的授权/审批回归测试。该验证使用临时测试窗口；Windows 的不同 DPI、多显示器、更多应用与管理员窗口输入仍需进一步验收。Mac 上真实截图与输入也取决于用户在系统设置中授予当前 Hoxi 构建权限。
+
+在已解锁的 Windows 交互桌面中，可设置 `HOXI_WINDOWS_INTERACTIVE_TEST=1` 后运行 `go test ./internal/computer -run TestWindowsInteractiveWindowInspection -v`，验证临时窗口的读取与截图；普通 CI 默认跳过此测试。
 
 本版本尚未提供 macOS 后台输入、独立虚拟桌面、后台持续操控、Windows 安全桌面、跨进程应用组授权，也未给其它 CLI 运行时注入原生电脑工具。不能据此宣称已经与 Codex 电脑控制完全等价。

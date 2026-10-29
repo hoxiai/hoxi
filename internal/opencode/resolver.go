@@ -171,8 +171,33 @@ func FindBinary(configured string) string {
 	return ""
 }
 
+func isManagedBinaryPath(binPath string) bool {
+	binDir := hoxipaths.BinDir()
+	if binDir == "" || strings.TrimSpace(binPath) == "" {
+		return false
+	}
+	return filepath.Dir(filepath.Clean(binPath)) == filepath.Clean(binDir)
+}
+
+func isDefaultBinaryConfig(configured string) bool {
+	trimmed := strings.TrimSpace(configured)
+	return trimmed == "" || trimmed == "opencode" || trimmed == "opencode.exe"
+}
+
 func ResolveOrInstall(ctx context.Context, configured string, logger *slog.Logger) (string, error) {
 	if found := FindBinary(configured); found != "" {
+		if isDefaultBinaryConfig(configured) && isManagedBinaryPath(found) {
+			if installedVer := extractSemanticVersion(ResolveVersion(found)); installedVer != "" && installedVer != releaseVersion() {
+				logger.Info("managed opencode binary differs from pinned release; upgrading ~/.hoxi/bin",
+					"installed", installedVer, "pinned", releaseVersion())
+				if upgraded, err := downloadOfficialOpenCode(ctx, logger); err == nil {
+					return upgraded, nil
+				} else {
+					logger.Warn("failed to upgrade managed opencode binary; keeping existing install",
+						"installed", installedVer, "pinned", releaseVersion(), "error", err)
+				}
+			}
+		}
 		return found, nil
 	}
 
@@ -401,6 +426,7 @@ func writeBinaryAtomically(binDir, binName string, binBytes []byte) (string, err
 		return "", err
 	}
 	committed = true
+	invalidateCachedVersion(targetPath)
 	return targetPath, nil
 }
 
@@ -444,6 +470,7 @@ func RestoreBinaryBackup(binPath string) (bool, error) {
 	if err := os.Rename(backupPath, binPath); err != nil {
 		return false, err
 	}
+	invalidateCachedVersion(binPath)
 	return true, nil
 }
 

@@ -10,7 +10,19 @@ import {
 } from "./release-artifact.mjs";
 import { releasePayload, publishRelease } from "./release-publisher.mjs";
 import { sparkleConfig, validateSparkle, validateSparkleApp, frameworkFiles, verifyUpdateSignature } from "./sparkle.mjs";
-import { loadOpenCodeLock } from "./opencode-lock.mjs";
+import { loadOpenCodeLock, parseOpenCodeVersion, verifyBinaryVersion } from "./opencode-lock.mjs";
+import { verifySQLiteArchive } from "./sqlite-tools.mjs";
+
+test("SQLite release archive rejects a mismatched digest", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hoxi-sqlite-lock-"));
+  try {
+    const file = path.join(dir, "sqlite.zip");
+    fs.writeFileSync(file, "not the pinned SQLite archive");
+    assert.throws(() => verifySQLiteArchive(file), /checksum mismatch/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test("release versions accept only complete numeric releases", () => {
   for (const version of ["0.2.1", "1.0.0", "v2.3.4"]) {
@@ -127,6 +139,34 @@ test("opencode.lock pins every shipped platform and release workflows consume it
   assert.match(nsisProject, /File "\/oname=opencode\.exe"/);
   assert.match(nsisProject, /!insertmacro wails\.webview2runtime/);
   assert.match(nsisProject, /!insertmacro wails\.associateCustomProtocols/);
+
+  const macBuild = fs.readFileSync(path.join(scripts, "../build-desktop.sh"), "utf8");
+  assert.match(macBuild, /opencode-lock\.mjs verify-binary/);
+  assert.match(macBuild, /opencode-lock\.mjs verify-archive/);
+  const winBuild = fs.readFileSync(path.join(scripts, "build-windows.ps1"), "utf8");
+  assert.match(winBuild, /opencode-lock\.mjs verify-binary/);
+  assert.match(winBuild, /opencode-lock\.mjs verify-archive/);
+});
+
+test("verifyBinaryVersion accepts only the pinned OpenCode version and rejects drift or failing binaries", { skip: process.platform === "win32" }, (t) => {
+  assert.equal(parseOpenCodeVersion("\x1b[33mWarning: test\x1b[0m\nopencode v1.19.3\n"), "1.19.3");
+  assert.equal(parseOpenCodeVersion("1.19.3\n"), "1.19.3");
+  assert.equal(parseOpenCodeVersion("noise line\n"), "");
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hoxi-opencode-bin-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const lock = loadOpenCodeLock();
+  const goodBin = path.join(dir, "opencode-good");
+  fs.writeFileSync(goodBin, `#!/bin/sh\necho "opencode ${lock.version}"\n`, { mode: 0o755 });
+  assert.equal(verifyBinaryVersion(goodBin), lock.version);
+
+  const driftedBin = path.join(dir, "opencode-drifted");
+  fs.writeFileSync(driftedBin, "#!/bin/sh\necho 'opencode 0.0.1'\n", { mode: 0o755 });
+  assert.throws(() => verifyBinaryVersion(driftedBin), /version mismatch/);
+
+  const brokenBin = path.join(dir, "opencode-broken");
+  fs.writeFileSync(brokenBin, "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+  assert.throws(() => verifyBinaryVersion(brokenBin), /failed to execute/);
 });
 
 test("tag workflow gates publication on tests, versioned artifacts and notarization", () => {
@@ -186,6 +226,7 @@ function fixture(t) {
   fs.copyFileSync(path.join(scripts, "ai-release.sh"), path.join(root, "scripts/ai-release.sh"));
   fs.copyFileSync(path.join(scripts, "release-artifact.mjs"), path.join(root, "scripts/policy.mjs"));
   fs.copyFileSync(path.join(scripts, "sparkle.mjs"), path.join(root, "scripts/sparkle.mjs"));
+  fs.copyFileSync(path.join(scripts, "opencode-lock.mjs"), path.join(root, "scripts/opencode-lock.mjs"));
   fs.writeFileSync(path.join(root, "scripts/release-artifact.mjs"), `
 import fs from 'node:fs';
 import crypto from 'node:crypto';

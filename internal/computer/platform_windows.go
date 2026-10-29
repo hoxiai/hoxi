@@ -156,7 +156,10 @@ func (nativeBackend) Apps(ctx context.Context) ([]App, error) {
 var windowsAccessibility string
 
 func windowsAX(ctx context.Context, pid int, hwnd uintptr, operation string, out any) error {
-	ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	// PowerShell must initialize UI Automation and compile the PrintWindow
+	// helper on every invocation. This can exceed four seconds on Windows ARM
+	// running the x64 build even when the target window is responsive.
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	script := utf16.Encode([]rune(windowsAccessibility))
 	encoded := make([]byte, len(script)*2)

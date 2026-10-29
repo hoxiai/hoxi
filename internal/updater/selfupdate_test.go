@@ -30,6 +30,11 @@ func buildTestWindowsReleaseZip(t *testing.T, includeHoxi bool) ([]byte, string)
 		t.Fatal(err)
 	}
 	_, _ = w2.Write([]byte("MZ-fake-opencode-exe-binary"))
+	w3, err := zw.Create("sqlite3.exe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = w3.Write([]byte("MZ-fake-sqlite-exe-binary"))
 	if err := zw.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -66,6 +71,10 @@ func TestDownloadAndStageWindowsZipVerifiesSHA256AndExtracts(t *testing.T) {
 	ocRaw, err := os.ReadFile(filepath.Join(stageDir, "opencode.exe"))
 	if err != nil || string(ocRaw) != "MZ-fake-opencode-exe-binary" {
 		t.Fatalf("staged opencode.exe mismatch: %v / %q", err, string(ocRaw))
+	}
+	sqliteRaw, err := os.ReadFile(filepath.Join(stageDir, "sqlite3.exe"))
+	if err != nil || string(sqliteRaw) != "MZ-fake-sqlite-exe-binary" {
+		t.Fatalf("staged sqlite3.exe mismatch: %v / %q", err, string(sqliteRaw))
 	}
 	if _, err := os.Stat(filepath.Join(stageDir, "update.zip")); !os.IsNotExist(err) {
 		t.Fatalf("expected temporary update.zip to be removed after extraction")

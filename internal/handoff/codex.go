@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/sqlitecli"
 )
 
 func codexHomeDir() string {
@@ -68,7 +70,7 @@ func scanCodexSessions(targetDir, query string) ([]ExternalSessionSummary, Exter
 	}
 
 	// Count total threads and fetch top 100 recent threads
-	countOut, err := codexCommandOutput("sqlite3", "-readonly", "-cmd", ".timeout 5000", dbPath, "SELECT count(*) FROM threads WHERE archived = 0;")
+	countOut, err := codexCommandOutput(sqlitecli.Executable(), "-readonly", "-cmd", ".timeout 5000", dbPath, "SELECT count(*) FROM threads WHERE archived = 0;")
 	if err == nil {
 		if n, err := strconv.Atoi(strings.TrimSpace(string(countOut))); err == nil {
 			stats.SessionCount = n
@@ -81,7 +83,7 @@ WHERE archived = 0 AND title != 'Guardian review'
 ORDER BY updated_at DESC
 LIMIT 120;`
 
-	rawJSON, err := codexCommandOutput("sqlite3", "-readonly", "-cmd", ".timeout 5000", "-json", dbPath, sqlQuery)
+	rawJSON, err := codexCommandOutput(sqlitecli.Executable(), "-readonly", "-cmd", ".timeout 5000", "-json", dbPath, sqlQuery)
 	if err != nil || len(bytes.TrimSpace(rawJSON)) == 0 {
 		return nil, stats
 	}
@@ -146,7 +148,7 @@ func loadCodexSessionDetail(sessionID, hintCWD, activeRoot string) (*ExternalSes
 	sqlQuery := fmt.Sprintf(`SELECT id, rollout_path, created_at, updated_at, cwd, title, COALESCE(git_branch,'') AS git_branch, COALESCE(git_sha,'') AS git_sha, COALESCE(model,'') AS model, COALESCE(first_user_message,'') AS first_user_message
 FROM threads WHERE id = '%s' LIMIT 1;`, safeID)
 
-	rawJSON, err := codexCommandOutput("sqlite3", "-readonly", "-cmd", ".timeout 5000", "-json", dbPath, sqlQuery)
+	rawJSON, err := codexCommandOutput(sqlitecli.Executable(), "-readonly", "-cmd", ".timeout 5000", "-json", dbPath, sqlQuery)
 	if err != nil {
 		return nil, err
 	}

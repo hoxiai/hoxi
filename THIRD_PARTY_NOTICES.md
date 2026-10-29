@@ -17,6 +17,7 @@ distribution.
 | Component | Version | License | Copyright |
 | --- | --- | --- | --- |
 | [opencode](https://github.com/anomalyco/opencode) | v1.18+ (resolved at build) | MIT | Copyright (c) 2025 opencode |
+| [SQLite](https://www.sqlite.org/copyright.html) Windows CLI | 3.54.1 | Public domain | SQLite authors |
 | [Sparkle](https://github.com/sparkle-project/Sparkle) | 2.x (bundled framework) | MIT | Copyright (c) 2006-2013 Andy Matuschak; 2009-2013 Elgato Systems GmbH; 2011-2014 Kornel Lesiński; 2015-2017 Mayur Pawashe; 2014 C.W. Betts; 2014 Petroules Corporation; 2014 Big Nerd Ranch |
 
 ## Go modules

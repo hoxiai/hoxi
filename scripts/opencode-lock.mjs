@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -59,13 +60,52 @@ export function verifyArchive(file, expectedSHA256) {
   }
 }
 
+const ANSI_ESCAPE_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-_]/g;
+const VERSION_LINE_RE = /^(?:opencode\s+)?v?(\d+\.\d+\.\d+)\b/i;
+
+export function parseOpenCodeVersion(output) {
+  const cleaned = String(output ?? "").replace(ANSI_ESCAPE_RE, "");
+  for (const rawLine of cleaned.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const match = line.match(VERSION_LINE_RE);
+    if (match) return match[1];
+  }
+  return "";
+}
+
+export function verifyBinaryVersion(binaryPath, expectedVersion = loadOpenCodeLock().version) {
+  const env = { ...process.env, CI: "1", NO_COLOR: "1", GIT_TERMINAL_PROMPT: "0",
+    OPENCODE_DISABLE_CONFIG_DEPENDENCY_INSTALL: "1" };
+  delete env.FORCE_COLOR;
+  delete env.CLICOLOR_FORCE;
+  delete env.CLICOLOR;
+  let output;
+  try {
+    output = execFileSync(binaryPath, ["--version"], {
+      encoding: "utf8",
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 15_000,
+    });
+  } catch (error) {
+    throw new Error(`failed to execute ${binaryPath} --version: ${error.message}`);
+  }
+  const actual = parseOpenCodeVersion(output);
+  if (actual !== expectedVersion) {
+    throw new Error(`opencode binary version mismatch for ${binaryPath}: expected ${expectedVersion}, got ${actual || JSON.stringify(String(output).trim())}`);
+  }
+  return actual;
+}
+
 function usage() {
   console.error(`usage:
   node scripts/opencode-lock.mjs verify
   node scripts/opencode-lock.mjs version
   node scripts/opencode-lock.mjs url <goos/goarch>
   node scripts/opencode-lock.mjs sha256 <goos/goarch>
-  node scripts/opencode-lock.mjs verify-archive <goos/goarch> <file>`);
+  node scripts/opencode-lock.mjs verify-archive <goos/goarch> <file>
+  node scripts/opencode-lock.mjs verify-binary <binary>`);
   process.exit(1);
 }
 
@@ -96,6 +136,13 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       if (!process.argv[4]) usage();
       verifyArchive(process.argv[4], asset.sha256);
       console.log(`${process.argv[4]}: OK`);
+      break;
+    }
+    case "verify-binary": {
+      const binary = process.argv[3];
+      if (!binary) usage();
+      const verified = verifyBinaryVersion(binary, lock.version);
+      console.log(`${binary}: opencode ${verified} OK`);
       break;
     }
     default:

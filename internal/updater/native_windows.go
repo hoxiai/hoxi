@@ -42,6 +42,9 @@ for ($i = 0; $i -lt 20; $i++) {
     if (Test-Path (Join-Path $stageDir 'opencode.exe')) {
       Move-Item -Force (Join-Path $stageDir 'opencode.exe') (Join-Path $targetDir 'opencode.exe')
     }
+    if (Test-Path (Join-Path $stageDir 'sqlite3.exe')) {
+      Move-Item -Force (Join-Path $stageDir 'sqlite3.exe') (Join-Path $targetDir 'sqlite3.exe')
+    }
     Move-Item -Force (Join-Path $stageDir 'Hoxi.exe') (Join-Path $targetDir $exeName)
     break
   } catch {

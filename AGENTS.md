@@ -58,6 +58,7 @@ Flutter + Riverpod + GoRouter + Dio，四栏：沟通 · 工作台 · 一人公�
 │   ├── llm/                          # [底座层] Narrow Client/Target/Request contract for internal single-shot LLM calls
 │   ├── notify/                       # [底座层] Native desktop notifications (macOS) with stub fallback
 │   ├── osopen/                       # [底座层] Native file opening and file-manager reveal (ShellExecute on Windows)
+│   ├── sqlitecli/                    # [底座层] Resolve bundled Windows SQLite CLI with PATH fallback
 │   ├── opencode/                     # [业务层] OpenCode binary resolver, installer, daemon supervision & Hoxi plugin overlay (browser, code_index, tools, compaction)
 │   │   ├── ocapi/                    # [底座层] Shared loopback HTTP/SSE client & Basic Auth transport for `opencode serve`
 │   │   └── ocstate/                  # [底座层] External OpenCode SQLite reader & Console account sync into hoxi.db

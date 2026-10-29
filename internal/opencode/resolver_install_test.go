@@ -211,3 +211,35 @@ func TestDiscardBinaryBackupRemovesRollbackCopy(t *testing.T) {
 		t.Fatalf("current binary was removed: %v", err)
 	}
 }
+
+func TestExtractSemanticVersionAndManagedPathClassification(t *testing.T) {
+	cases := map[string]string{
+		"1.19.3":          "1.19.3",
+		"v1.19.3":         "1.19.3",
+		"opencode 1.19.3": "1.19.3",
+		"OpenCode v2.0.1": "2.0.1",
+		"":                "",
+		"unknown":         "",
+	}
+	for input, want := range cases {
+		if got := extractSemanticVersion(input); got != want {
+			t.Fatalf("extractSemanticVersion(%q) = %q, want %q", input, got, want)
+		}
+	}
+
+	hoxiHome := t.TempDir()
+	t.Setenv("HOXI_HOME", hoxiHome)
+	managedBin := filepath.Join(hoxiHome, "bin", "opencode")
+	if !isManagedBinaryPath(managedBin) {
+		t.Fatalf("expected %q to be classified as managed binary path", managedBin)
+	}
+	if isManagedBinaryPath("/opt/homebrew/bin/opencode") {
+		t.Fatal("external path must not be classified as managed binary path")
+	}
+	if !isDefaultBinaryConfig("") || !isDefaultBinaryConfig("opencode") || !isDefaultBinaryConfig("opencode.exe") {
+		t.Fatal("expected default binary names to be recognized")
+	}
+	if isDefaultBinaryConfig("/custom/path/opencode") {
+		t.Fatal("explicit path must not be treated as default binary config")
+	}
+}

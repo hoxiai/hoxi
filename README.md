@@ -104,7 +104,7 @@ Long sessions forget early architectural constraints; third-party API gateways s
     ```powershell
     irm https://raw.githubusercontent.com/hoxiai/hoxi/main/scripts/install.ps1 | iex
     ```
-  - The OS command sandbox and unattended approval mode are currently unavailable on Windows. Some SQLite-based features, including OpenCode Console account import and Qoder session discovery, require `sqlite3.exe` on `PATH`; it is not included in the installer.
+  - The OS command sandbox and unattended approval mode are currently unavailable on Windows. Release builds bundle SQLite for database-backed features; source builds can use `sqlite3.exe` on `PATH`.
 
 ### 2. Prerequisites (Building from Source)
 - **macOS** `>= 13.0` or **Windows 10/11** (`x64`)

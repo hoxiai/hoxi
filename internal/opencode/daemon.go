@@ -92,9 +92,28 @@ func envWithout(env []string, keys ...string) []string {
 }
 
 var (
-	ansiEscapePattern  = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-_]`)
-	versionLinePattern = regexp.MustCompile(`(?i)^(?:opencode\s+)?v?\d+\.\d+\.\d+`)
+	ansiEscapePattern    = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-_]`)
+	versionLinePattern   = regexp.MustCompile(`(?i)^(?:opencode\s+)?v?\d+\.\d+\.\d+`)
+	semverExtractPattern = regexp.MustCompile(`(?i)^(?:opencode\s+)?v?(\d+\.\d+\.\d+)\b`)
 )
+
+func extractSemanticVersion(verLine string) string {
+	m := semverExtractPattern.FindStringSubmatch(strings.TrimSpace(verLine))
+	if len(m) >= 2 {
+		return m[1]
+	}
+	return ""
+}
+
+func invalidateCachedVersion(binPath string) {
+	binPath = strings.TrimSpace(binPath)
+	if binPath == "" {
+		return
+	}
+	cachedOpenCodeVerMu.Lock()
+	delete(cachedOpenCodeVersions, filepath.Clean(binPath))
+	cachedOpenCodeVerMu.Unlock()
+}
 
 // parseVersionOutput extracts the version line from CLI output that may carry
 // ANSI escapes, leading warning lines or stack frames.

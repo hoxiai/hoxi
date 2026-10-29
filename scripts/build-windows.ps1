@@ -54,22 +54,51 @@ try {
   New-Item -ItemType Directory -Path "build/bin" -Force | Out-Null
   New-Item -ItemType Directory -Path "build/windows/installer/tmp" -Force | Out-Null
 
-  # Resolve or download + verify pinned opencode.exe sidecar
-  $OpenCodeCandidates = @(
-    $env:HOXI_OPENCODE,
-    (Join-Path $HOME ".hoxi\bin\opencode.exe"),
-    (Join-Path $HOME ".opencode\bin\opencode.exe")
-  ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) -and (Test-Path $_) }
+  # Bundle the official SQLite CLI for account import, history and statistics.
+  $SQLiteZip = Join-Path "build/windows/installer/tmp" "sqlite-tools.zip"
+  $SQLiteURL = (& node scripts/sqlite-tools.mjs url).Trim()
+  if ($LASTEXITCODE -ne 0) { throw "Failed to resolve SQLite URL" }
+  Invoke-WebRequest -Uri $SQLiteURL -OutFile $SQLiteZip -UseBasicParsing
+  & node scripts/sqlite-tools.mjs verify $SQLiteZip
+  if ($LASTEXITCODE -ne 0) { throw "Downloaded SQLite archive failed SHA3-256 verification" }
+  Expand-Archive -Path $SQLiteZip -DestinationPath "build/windows/installer/tmp/sqlite" -Force
+  Remove-Item -Force $SQLiteZip
+  Copy-Item -Path "build/windows/installer/tmp/sqlite/sqlite3.exe" -Destination "build/bin/sqlite3.exe" -Force
 
-  if ($OpenCodeCandidates.Count -gt 0) {
-    $OpenCodeSrc = $OpenCodeCandidates[0]
+  # Resolve or download + verify pinned opencode.exe sidecar
+  & node scripts/opencode-lock.mjs verify
+  if ($LASTEXITCODE -ne 0) { throw "opencode.lock verification failed" }
+
+  $OpenCodeSrc = $null
+  if (-not [string]::IsNullOrWhiteSpace($env:HOXI_OPENCODE)) {
+    if (-not (Test-Path $env:HOXI_OPENCODE)) {
+      throw "HOXI_OPENCODE does not exist: $($env:HOXI_OPENCODE)"
+    }
+    & node scripts/opencode-lock.mjs verify-binary $env:HOXI_OPENCODE
+    if ($LASTEXITCODE -ne 0) {
+      throw "HOXI_OPENCODE failed version verification against opencode.lock: $($env:HOXI_OPENCODE)"
+    }
+    $OpenCodeSrc = $env:HOXI_OPENCODE
+  } else {
+    $OpenCodeCandidates = @(
+      (Join-Path $HOME ".hoxi\bin\opencode.exe"),
+      (Join-Path $HOME ".opencode\bin\opencode.exe")
+    ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) -and (Test-Path $_) }
+    foreach ($Candidate in $OpenCodeCandidates) {
+      & node scripts/opencode-lock.mjs verify-binary $Candidate *> $null
+      if ($LASTEXITCODE -eq 0) {
+        $OpenCodeSrc = $Candidate
+        break
+      }
+    }
+  }
+
+  if (-not [string]::IsNullOrWhiteSpace($OpenCodeSrc)) {
     Copy-Item -Path $OpenCodeSrc -Destination "build/bin/opencode.exe" -Force
     Copy-Item -Path $OpenCodeSrc -Destination "build/windows/installer/tmp/opencode.exe" -Force
-    Write-Host "==> Using local opencode.exe from $OpenCodeSrc" -ForegroundColor Green
+    Write-Host "==> Using verified local opencode.exe from $OpenCodeSrc" -ForegroundColor Green
   } else {
     Write-Host "==> Downloading & verifying pinned OpenCode Windows runtime..." -ForegroundColor Cyan
-    & node scripts/opencode-lock.mjs verify
-    if ($LASTEXITCODE -ne 0) { throw "opencode.lock verification failed" }
     $OpenCodeUrl = (& node scripts/opencode-lock.mjs url windows/amd64).Trim()
     $OpenCodeZip = Join-Path "build/windows/installer/tmp" "opencode-windows-x64.zip"
     Invoke-WebRequest -Uri $OpenCodeUrl -OutFile $OpenCodeZip -UseBasicParsing
@@ -77,7 +106,12 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Downloaded opencode archive failed SHA-256 verification" }
     Expand-Archive -Path $OpenCodeZip -DestinationPath "build/windows/installer/tmp" -Force
     Remove-Item -Force $OpenCodeZip -ErrorAction SilentlyContinue
+    & node scripts/opencode-lock.mjs verify-binary "build/windows/installer/tmp/opencode.exe"
+    if ($LASTEXITCODE -ne 0) { throw "Extracted opencode.exe failed version verification against opencode.lock" }
     Copy-Item -Path "build/windows/installer/tmp/opencode.exe" -Destination "build/bin/opencode.exe" -Force
+    $CacheDir = Join-Path $HOME ".hoxi\bin"
+    New-Item -ItemType Directory -Path $CacheDir -Force | Out-Null
+    Copy-Item -Path "build/windows/installer/tmp/opencode.exe" -Destination (Join-Path $CacheDir "opencode.exe") -Force
   }
 
   # Ensure NSIS (makensis) is on PATH when building the installer
@@ -101,6 +135,7 @@ try {
   if ($LASTEXITCODE -ne 0) { throw "Wails Windows build failed" }
 
   Copy-Item -Path "build/windows/installer/tmp/opencode.exe" -Destination "build/bin/opencode.exe" -Force
+  Copy-Item -Path "build/windows/installer/tmp/sqlite/sqlite3.exe" -Destination "build/bin/sqlite3.exe" -Force
 
   $BuiltVer = (& "build/bin/Hoxi.exe" --version).Trim()
   if ($BuiltVer -ne $Version) {
@@ -121,7 +156,7 @@ try {
 
   $ZipPath = "build/bin/Hoxi-$Version-windows-amd64.zip"
   if (Test-Path $ZipPath) { Remove-Item -Force $ZipPath }
-  Compress-Archive -Path @("build/bin/Hoxi.exe", "build/bin/opencode.exe") -DestinationPath $ZipPath -Force
+  Compress-Archive -Path @("build/bin/Hoxi.exe", "build/bin/opencode.exe", "build/bin/sqlite3.exe") -DestinationPath $ZipPath -Force
   $ZipSha = (Get-FileHash -Path $ZipPath -Algorithm SHA256).Hash.ToLowerInvariant()
   Set-Content -Path "$ZipPath.sha256" -Value "$ZipSha  Hoxi-$Version-windows-amd64.zip`n" -NoNewline
   Write-Host "==> Built Windows Portable Archive: $ZipPath" -ForegroundColor Green

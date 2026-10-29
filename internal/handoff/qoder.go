@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/hoxiai/hoxi/internal/agentcli"
+	"github.com/hoxiai/hoxi/internal/sqlitecli"
 )
 
 func qoderDotDirs() []string {
@@ -109,7 +110,7 @@ func readQoderDefaultModel() string {
 			continue
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		cmd := exec.CommandContext(ctx, "sqlite3", "-readonly", "-cmd", ".timeout 3000", vscdb, "SELECT value FROM ItemTable WHERE key = 'chat.modelConfig.assistant' LIMIT 1;")
+		cmd := exec.CommandContext(ctx, sqlitecli.Executable(), "-readonly", "-cmd", ".timeout 3000", vscdb, "SELECT value FROM ItemTable WHERE key = 'chat.modelConfig.assistant' LIMIT 1;")
 		cmd.WaitDelay = time.Second
 		out, err := cmd.Output()
 		cancel()
@@ -169,7 +170,7 @@ WHERE COALESCE(parent_session_id,'') = ''
 ORDER BY gmt_modified DESC
 LIMIT 120;`
 		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
-		cmd := exec.CommandContext(ctx, "sqlite3", "-readonly", "-cmd", ".timeout 3000", "-json", dbPath, sqlQuery)
+		cmd := exec.CommandContext(ctx, sqlitecli.Executable(), "-readonly", "-cmd", ".timeout 3000", "-json", dbPath, sqlQuery)
 		cmd.WaitDelay = time.Second
 		rawOut, err := cmd.Output()
 		cancel()
@@ -488,7 +489,7 @@ func loadQoderProjectMemories(cwd, sessionID, localDBPath string) string {
 		safeID := strings.ReplaceAll(strings.ReplaceAll(sessionID, "\x00", ""), "'", "''")
 		sqlQuery := fmt.Sprintf("SELECT COALESCE(title,'') AS title, COALESCE(content,'') AS content FROM agent_memory WHERE session_id = '%s' ORDER BY gmt_modified DESC LIMIT 8;", safeID)
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		cmd := exec.CommandContext(ctx, "sqlite3", "-readonly", "-cmd", ".timeout 3000", "-json", localDBPath, sqlQuery)
+		cmd := exec.CommandContext(ctx, sqlitecli.Executable(), "-readonly", "-cmd", ".timeout 3000", "-json", localDBPath, sqlQuery)
 		cmd.WaitDelay = time.Second
 		rawOut, err := cmd.Output()
 		cancel()

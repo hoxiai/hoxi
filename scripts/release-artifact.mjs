@@ -6,6 +6,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { verifyBinaryVersion } from "./opencode-lock.mjs";
 import { sparkleConfig, validateSparkleApp, machoFiles, frameworkFiles } from "./sparkle.mjs";
 
 export const minimumSupportedMacOS = "13.0";
@@ -75,7 +76,7 @@ function inspectBinaries(app, info) {
     assert.ok(architectures.includes("arm64"), `${binary} must contain arm64 code`);
     return minimumFromMachO(run("otool", ["-l", binary]));
   })]);
-  return { main, minimum };
+  return { main, sidecar, minimum };
 }
 
 export function validateAppMetadata(info, expectedVersion, requiredMinimum) {
@@ -104,11 +105,12 @@ export function configureApp(app, version) {
 
 export function verifyApp(app, version) {
   const info = readInfo(app);
-  const { main, minimum } = inspectBinaries(app, info);
+  const { main, sidecar, minimum } = inspectBinaries(app, info);
   validateAppMetadata(info, version, minimum);
   run("codesign", ["--verify", "--deep", "--strict", app]);
   assert.equal(run(main, ["--version"]).trim(), normalizeVersion(version),
     "Embedded runtime version differs from release version");
+  verifyBinaryVersion(sidecar);
   return { version: normalizeVersion(version), minimumMacOS: info.LSMinimumSystemVersion, architecture: "arm64" };
 }
 

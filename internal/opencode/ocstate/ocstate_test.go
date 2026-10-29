@@ -26,7 +26,7 @@ func TestSeedConsoleAccountMirrorsExternalLogin(t *testing.T) {
 	}
 	home := t.TempDir()
 	for k, v := range map[string]string{
-		"HOME": home, "OPENCODE_DB": "", "HOXI_DB_PATH": "", "OPENCODE_EXTERNAL_DB": "",
+		"HOME": home, "USERPROFILE": home, "OPENCODE_DB": "", "HOXI_DB_PATH": "", "OPENCODE_EXTERNAL_DB": "",
 		"OPENCODE_DATA_DIR": "", "HOXI_ENGINE_DATA_DIR": "", "LOCALAPPDATA": "", "APPDATA": "",
 	} {
 		t.Setenv(k, v)

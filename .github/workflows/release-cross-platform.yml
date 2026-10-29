@@ -107,6 +107,15 @@ jobs:
           test -f build/windows/installer/tmp/opencode.exe
           echo "Bundled standalone opencode.exe into build/bin/ and build/windows/installer/tmp/"
 
+      - name: Bundle verified SQLite CLI
+        shell: bash
+        run: |
+          curl -fsSL -o sqlite-tools.zip "$(node scripts/sqlite-tools.mjs url)"
+          node scripts/sqlite-tools.mjs verify sqlite-tools.zip
+          7z e -y sqlite-tools.zip sqlite3.exe -obuild/bin/
+          test -f build/bin/sqlite3.exe
+          cp -f build/bin/sqlite3.exe build/windows/installer/tmp/sqlite3.exe
+
       - name: Build Windows Desktop App & Setup Installer
         shell: bash
         run: |
@@ -123,6 +132,7 @@ jobs:
             -ldflags "-X github.com/hoxiai/hoxi/internal/app.BuildVariant=release -X github.com/hoxiai/hoxi/internal/buildinfo.Version=${RELEASE_VERSION}"
           test "$(./build/bin/Hoxi.exe --version | tr -d '\r\n')" = "${RELEASE_VERSION}"
           cp -f build/windows/installer/tmp/opencode.exe build/bin/opencode.exe
+          cp -f build/windows/installer/tmp/sqlite3.exe build/bin/sqlite3.exe
           test -f build/bin/opencode.exe
           test -f build/bin/Hoxi-amd64-installer.exe
 
@@ -134,7 +144,7 @@ jobs:
           cd build/bin
           mv -f Hoxi-amd64-installer.exe "$SETUP_NAME"
           sha256sum "$SETUP_NAME" > "${SETUP_NAME}.sha256"
-          7z a "$ZIP_NAME" Hoxi.exe opencode.exe
+          7z a "$ZIP_NAME" Hoxi.exe opencode.exe sqlite3.exe
           sha256sum "$ZIP_NAME" > "${ZIP_NAME}.sha256"
 
       - name: Upload Windows Artifact to Release

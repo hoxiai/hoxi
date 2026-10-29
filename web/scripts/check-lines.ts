@@ -169,6 +169,7 @@ const GO_BASE_PACKAGES = new Set([
   "opencode/ocapi",
   "opencode/ocstate",
   "reclaim",
+  "sqlitecli",
   "statusbar",
   "textindex",
 ]);
