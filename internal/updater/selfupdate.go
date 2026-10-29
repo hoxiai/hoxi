@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -58,19 +59,21 @@ func resolveDarwinDMGURL(res *UpdateCheckResult) string {
 	return strings.TrimSpace(res.Mirrors.Global)
 }
 
+// resolveDarwinAppBundlePath parses POSIX macOS bundle paths regardless of the
+// host OS, so it uses path (always "/") rather than filepath (OS separators).
 func resolveDarwinAppBundlePath(exePath string) (string, error) {
-	cleaned := filepath.Clean(strings.TrimSpace(exePath))
+	cleaned := path.Clean(strings.TrimSpace(exePath))
 	if cleaned == "" || cleaned == "." {
 		return "", errors.New("empty executable path")
 	}
-	macOSDir := filepath.Dir(cleaned)
-	contentsDir := filepath.Dir(macOSDir)
-	appBundle := filepath.Dir(contentsDir)
-	if filepath.Base(macOSDir) != "MacOS" || filepath.Base(contentsDir) != "Contents" ||
+	macOSDir := path.Dir(cleaned)
+	contentsDir := path.Dir(macOSDir)
+	appBundle := path.Dir(contentsDir)
+	if path.Base(macOSDir) != "MacOS" || path.Base(contentsDir) != "Contents" ||
 		!strings.HasSuffix(strings.ToLower(appBundle), ".app") {
 		return "", errors.New("executable is not inside a macOS .app bundle")
 	}
-	if strings.EqualFold(filepath.Base(appBundle), "Hoxi Dev.app") {
+	if strings.EqualFold(path.Base(appBundle), "Hoxi Dev.app") {
 		return "", errors.New("in-app self-update is disabled for Hoxi Dev.app")
 	}
 	return appBundle, nil
