@@ -66,7 +66,10 @@ export function createBrowserController() {
   let frameEpoch = -1;
   const running = () => Boolean(state()?.tabs.length);
   const chromeLinked = () => state()?.mode === "chrome";
-  const windowMode = () => state()?.mode === "window";
+  const windowMode = () => {
+    const currentState = state();
+    return currentState ? currentState.mode === "window" : true;
+  };
   const headlessMode = () => !windowMode() && !chromeLinked();
   const effectivePreview = () => headlessMode() || previewEnabled();
   const pairing = () => Boolean(pairCode() || state()?.pairing);

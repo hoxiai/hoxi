@@ -1,4 +1,5 @@
 import { For, Show } from "solid-js";
+import { CircleHelp } from "lucide-solid";
 import type { BrowserPreviewScale, BrowserViewportMode, createBrowserDeveloper } from "../../store/workspace";
 import { t } from "../../i18n";
 
@@ -14,8 +15,8 @@ export default function BrowserDeveloper(props: {
     </button>
     <Show when={props.developer.open()}><div class="space-y-2 px-2 pb-2 text-[11px]">
       <div class="flex flex-wrap items-center gap-2">
-        <label>{t("inspector.browser.viewportPreset")} <select value={props.developer.viewportMode()} disabled={props.chrome}
-          class="rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-1 py-0.5" onChange={event => props.developer.setViewportMode(event.currentTarget.value as BrowserViewportMode)}>
+        <label title={props.chrome ? t("inspector.browser.chromeViewportHint") : undefined}>{t("inspector.browser.viewportPreset")} <select value={props.developer.viewportMode()} disabled={props.chrome}
+          class="rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-1 py-0.5 disabled:opacity-50" onChange={event => props.developer.setViewportMode(event.currentTarget.value as BrowserViewportMode)}>
           <option value="fit">{t("inspector.browser.viewportFit")}</option>
           <option value="desktop">{t("inspector.browser.viewportDesktop")}</option>
           <option value="mobile">{t("inspector.browser.viewportMobile")}</option>
@@ -27,10 +28,14 @@ export default function BrowserDeveloper(props: {
         <button class={button} onClick={props.resetZoom}>{t("inspector.browser.resetZoom")}</button>
         <button class={button} disabled={props.developer.capturing()} onClick={() => void props.developer.attachScreenshot()}>{t(props.developer.capturing() ? "inspector.browser.screenshotAttaching" : "inspector.browser.attachScreenshot")}</button>
       </div>
-      <Show when={props.chrome}><p class="text-[var(--text-muted)]">{t("inspector.browser.chromeViewportHint")}</p></Show>
       <Show when={props.developer.notice()}><p role="status">{props.developer.notice()}</p></Show>
-      <div class="flex items-center justify-between"><span>{t("inspector.browser.diagnostics")}</span><button class={button} onClick={() => void props.developer.clearDiagnostics()}>{t("inspector.browser.clearDiagnostics")}</button></div>
-      <p class="text-[var(--text-muted)]">{t("inspector.browser.diagnosticsHint")}</p>
+      <div class="flex items-center justify-between">
+        <span class="inline-flex items-center gap-1" title={t("inspector.browser.diagnosticsHint")}>
+          {t("inspector.browser.diagnostics")}
+          <CircleHelp size={11} class="text-[var(--text-muted)]" />
+        </span>
+        <button class={button} onClick={() => void props.developer.clearDiagnostics()}>{t("inspector.browser.clearDiagnostics")}</button>
+      </div>
       <Show when={props.developer.error()}><p role="alert" class="break-words text-red-500">{props.developer.error()}</p></Show>
       <div class="max-h-40 space-y-1 overflow-y-auto selectable-text" aria-label={t("inspector.browser.diagnostics")}>
         <Show when={props.developer.diagnostics().length} fallback={<p class="text-[var(--text-muted)]">{t("inspector.browser.diagnosticsEmpty")}</p>}>
