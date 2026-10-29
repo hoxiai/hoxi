@@ -727,6 +727,11 @@ export interface OfficialAinodeConnectResult {
   modelCount: number;
 }
 
+// OFFICIAL_PROVIDER_ID is the dedicated provider for the signed-in Hoxi account
+// AINode channel. It must stay separate from the third-party "ainode" gateway
+// provider so the two catalogs never overwrite or mix with each other.
+export const OFFICIAL_PROVIDER_ID = "hoxi-official";
+
 export interface OfficialAinodeModelsUIState {
   loaded: boolean;
   loading: boolean;
@@ -778,7 +783,7 @@ export async function connectOfficialAinode(): Promise<OfficialAinodeConnectResu
     throw new Error(t("models.officialConnectLoginRequired"));
   }
   await loadProviders(true);
-  const pid = (res.providerId || "ainode").trim();
+  const pid = (res.providerId || OFFICIAL_PROVIDER_ID).trim();
   const firstModelID =
     res.models?.[0]?.id?.trim() ||
     Object.keys(workspace.hoxiProviders?.[pid]?.models || {})[0];

@@ -108,7 +108,7 @@ func TestOfficialConnectProvisionsAinodeProvider(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if resp.ProviderID != "ainode" || resp.ModelCount != 2 {
+	if resp.ProviderID != "hoxi-official" || resp.ModelCount != 2 {
 		t.Fatalf("unexpected connect response: %+v", resp)
 	}
 	if bytes.Contains(rec.Body.Bytes(), []byte("sk-hoxi-official-key")) || bytes.Contains(rec.Body.Bytes(), []byte("hox_dt_test")) {
@@ -117,7 +117,7 @@ func TestOfficialConnectProvisionsAinodeProvider(t *testing.T) {
 
 	doc := svc.LoadHoxiConfigDoc()
 	provMap, _ := doc["provider"].(map[string]interface{})
-	ainode, _ := provMap["ainode"].(map[string]interface{})
+	ainode, _ := provMap["hoxi-official"].(map[string]interface{})
 	opts, _ := ainode["options"].(map[string]interface{})
 	if got, _ := opts["apiKey"].(string); got != "sk-hoxi-official-key" {
 		t.Fatalf("expected persisted member key, got %q", got)

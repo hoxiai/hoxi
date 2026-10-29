@@ -29,7 +29,7 @@ func (s *Service) SetAuthSource(a AuthSource) {
 }
 
 const (
-	officialAinodeProviderID     = "ainode"
+	officialAinodeProviderID     = "hoxi-official"
 	officialAinodeProviderName   = "Hoxi Official"
 	officialAinodeDefaultBaseURL = "https://api.ainode.run/v1"
 	officialPointsPerUsd         = 10_000

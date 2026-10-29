@@ -27,6 +27,7 @@ import {
   isImportedOpenCodeProvider,
   leaderboardState,
   loadOfficialAinodeModels,
+  OFFICIAL_PROVIDER_ID,
   officialAinodeState,
   openProviderModal,
   openSettingsModal,
@@ -95,6 +96,7 @@ export default function ProviderCatalogTab() {
     const result: ProviderInfo[] = [];
 
     for (const p of providerMap().values()) {
+      if (p.id === OFFICIAL_PROVIDER_ID) continue;
       if (dis.has(p.id)) continue;
       const isConn = conn.has(p.id) || Boolean(cfgProviders[p.id]);
       if (isConn) {
@@ -130,7 +132,9 @@ export default function ProviderCatalogTab() {
   const disabledProviders = createMemo(() => {
     const dis = disabledSet();
     const map = providerMap();
-    return Array.from(dis).map((id) => map.get(id) || { id, name: id, models: {} });
+    return Array.from(dis)
+      .filter((id) => id !== OFFICIAL_PROVIDER_ID)
+      .map((id) => map.get(id) || { id, name: id, models: {} });
   });
 
   const targetProvider = createMemo<ProviderInfo>(() => {

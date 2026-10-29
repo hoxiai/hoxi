@@ -9,6 +9,7 @@ import {
   getAutoPoolDisplayName,
   getStoredPoolCandidates,
   loadOfficialAinodeModels,
+  OFFICIAL_PROVIDER_ID,
   officialAinodeState,
   openSettingsModal,
   PRESET_AUTO_POOL_IDS,
@@ -52,11 +53,11 @@ export default function OfficialAinodeTab() {
 
   const inPool = (modelID: string) =>
     getStoredPoolCandidates(poolID()).some(
-      (c) => c.providerID === "ainode" && c.modelID === modelID
+      (c) => c.providerID === OFFICIAL_PROVIDER_ID && c.modelID === modelID
     );
 
   const isSelected = (modelID: string) =>
-    workspace.selectedModel?.providerID === "ainode" &&
+    workspace.selectedModel?.providerID === OFFICIAL_PROVIDER_ID &&
     workspace.selectedModel?.modelID === modelID;
 
   createEffect(() => {
@@ -82,10 +83,12 @@ export default function OfficialAinodeTab() {
   const onTogglePool = async (modelID: string) => {
     try {
       const cur = getStoredPoolCandidates(poolID());
-      const exists = cur.some((c) => c.providerID === "ainode" && c.modelID === modelID);
+      const exists = cur.some(
+        (c) => c.providerID === OFFICIAL_PROVIDER_ID && c.modelID === modelID
+      );
       const next = exists
-        ? cur.filter((c) => !(c.providerID === "ainode" && c.modelID === modelID))
-        : [...cur, { providerID: "ainode", modelID }];
+        ? cur.filter((c) => !(c.providerID === OFFICIAL_PROVIDER_ID && c.modelID === modelID))
+        : [...cur, { providerID: OFFICIAL_PROVIDER_ID, modelID }];
       await saveAutoPool(poolID(), { customized: true, candidates: next });
     } catch (err: any) {
       setFeedback({ ok: false, text: err?.message || t("models.officialConnectFailed") });
@@ -97,7 +100,7 @@ export default function OfficialAinodeTab() {
       <div class="mx-auto w-full max-w-4xl space-y-5">
         <div class="flex items-start justify-between gap-4 rounded-2xl border border-[var(--accent-border)] bg-[var(--accent-surface)]/35 p-4">
           <div class="flex items-center gap-3 min-w-0">
-            <ProviderIcon id="ainode" class="w-6 h-6 shrink-0" />
+            <ProviderIcon id={OFFICIAL_PROVIDER_ID} class="w-6 h-6 shrink-0" />
             <div class="min-w-0">
               <div class="flex items-center gap-1.5 text-[14px] font-semibold text-[var(--text-primary)]">
                 <Sparkles size={14} class="text-[var(--accent-primary)] shrink-0" />
@@ -212,7 +215,7 @@ export default function OfficialAinodeTab() {
                       <button
                         type="button"
                         disabled={isSelected(m.id)}
-                        onClick={() => selectModel({ providerID: "ainode", modelID: m.id })}
+                        onClick={() => selectModel({ providerID: OFFICIAL_PROVIDER_ID, modelID: m.id })}
                         class={`inline-flex items-center gap-1 rounded-xl px-3 py-1.5 text-[12px] font-medium transition-colors cursor-pointer ${
                           isSelected(m.id)
                             ? "border border-[var(--ok-border)] bg-[var(--ok-surface)] text-[var(--ok-text)]"

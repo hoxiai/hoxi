@@ -56,7 +56,7 @@ describe("official AINode account connect", () => {
       setDesktopAuth({ isLoggedIn: true });
       hoxiAPI.connectOfficialAinodeProvider = async () => ({
         authenticated: false,
-        providerId: "ainode",
+        providerId: "hoxi-official",
         baseUrl: "",
         modelCount: 0,
         models: [],

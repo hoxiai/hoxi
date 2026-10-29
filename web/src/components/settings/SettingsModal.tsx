@@ -26,6 +26,7 @@ import {
 import {
   appSettings,
   closeSettingsModal,
+  desktopAuth,
   openProviderModal,
   openSettingsModal,
   toggleTheme,
@@ -161,12 +162,6 @@ export default function SettingsModal() {
           icon: KeyRound,
           badge: () => workspace.connectedProviders.length,
           keywords: () => [t("models.tabCustom"), "API Key", "Provider"],
-        },
-        {
-          id: "official",
-          label: () => t("models.tabOfficial"),
-          icon: Sparkles,
-          keywords: () => ["ainode", t("models.tabOfficial")],
         },
         {
           id: "models",
@@ -316,6 +311,13 @@ export default function SettingsModal() {
         icon: KeyRound,
       };
     }
+    if (cur === "official") {
+      return {
+        group: t("settings.groupModels"),
+        item: t("models.tabOfficial"),
+        icon: Sparkles,
+      };
+    }
     for (const grp of navGroups) {
       for (const item of grp.items) {
         if (item.id === cur) {
@@ -421,6 +423,26 @@ export default function SettingsModal() {
                   </Show>
                 </div>
               </div>
+
+              <button
+                type="button"
+                onClick={() => selectTab("official")}
+                class={`hoxi-press flex shrink-0 sm:shrink sm:w-full items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left text-[13px] font-semibold cursor-pointer ${
+                  activeTab() === "official"
+                    ? "border-[var(--accent-primary)] bg-[var(--accent-surface)] text-[var(--accent-primary)]"
+                    : "border-[var(--accent-border)] bg-[var(--accent-surface)]/40 text-[var(--text-primary)] hover:bg-[var(--accent-surface)]"
+                }`}
+              >
+                <span class="inline-flex items-center gap-2.5 min-w-0">
+                  <Sparkles size={15} class="shrink-0 text-[var(--accent-primary)]" />
+                  <span class="whitespace-nowrap sm:truncate">{t("models.tabOfficial")}</span>
+                </span>
+                <Show when={desktopAuth.isLoggedIn && desktopAuth.member.points > 0}>
+                  <span class="shrink-0 rounded-full bg-[var(--bg-inset)] px-2 py-0.5 font-mono text-[11px] text-[var(--text-secondary)]">
+                    {Math.round(desktopAuth.member.points).toLocaleString()}
+                  </span>
+                </Show>
+              </button>
 
               <Show
                 when={filteredNavGroups().length > 0}
