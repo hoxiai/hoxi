@@ -27,7 +27,7 @@ import {
   workspace,
 } from "../../store/workspace";
 import { Icon, Spinner } from "../icons";
-import { buildAllProjects, collectPendingSessionIDs, findProjectDropTarget, sameStringSet } from "./left-nav-helpers";
+import { buildAllProjects, collectPendingSessionIDs, findProjectDropTarget, resolveActiveRootSessionID, sameStringSet } from "./left-nav-helpers";
 import MultiProjectTreeItem from "./MultiProjectItem";
 import SingleProjectNavView, { RecentTasksNavView } from "./SingleProjectNavView";
 import { AttentionNavView, RunningNavView } from "./CrossProjectNavView";
@@ -157,7 +157,7 @@ export default function LeftNav() {
   const pendingSessions = createMemo(() => collectPendingSessionIDs(), new Set<string>(), {
     equals: sameStringSet,
   });
-  const pendingApprovalCount = createMemo(() => {
+  const pendingApprovalRoots = createMemo(() => {
     const roots = new Set<string>();
     for (const p of workspace.pendingPermissions) {
       roots.add(resolveRootSessionID(p.sessionID) || p.sessionID);
@@ -165,7 +165,18 @@ export default function LeftNav() {
     for (const q of workspace.pendingQuestions) {
       roots.add(resolveRootSessionID(q.sessionID) || q.sessionID);
     }
-    return roots.size;
+    return roots;
+  });
+  const pendingApprovalCount = createMemo(() => pendingApprovalRoots().size);
+  const hasUnfocusedPendingApproval = createMemo(() => {
+    const roots = pendingApprovalRoots();
+    if (roots.size === 0) return false;
+    const activeRoot = resolveActiveRootSessionID();
+    if (!activeRoot) return true;
+    for (const id of roots) {
+      if (id !== activeRoot) return true;
+    }
+    return false;
   });
   const isExpanded = (path: string) => expandedProjects().has(normalizeFolderPath(path));
 
@@ -521,11 +532,17 @@ export default function LeftNav() {
       </div>
 
       {/* Pending Approvals Quick Entry */}
-      <Show when={pendingApprovalCount() > 0 && workspace.sidebarProjectMode !== "attention"}>
+      <Show when={hasUnfocusedPendingApproval() && workspace.sidebarProjectMode !== "attention"}>
         <div class="pl-1.5 pr-2.5 pb-1.5 shrink-0">
           <button
             type="button"
-            onClick={() => focusFirstAttentionSession()}
+            onClick={() => {
+              focusFirstAttentionSession();
+              const root = normalizeFolderPath(workspace.rootDir);
+              if (root && !isInvalidProjectPath(root) && !isDefaultWorkspacePath(root)) {
+                setExpandedProjects((prev) => (prev.has(root) ? prev : new Set([...prev, root])));
+              }
+            }}
             class="w-full flex items-center justify-between gap-2 rounded-lg border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 hover:bg-[var(--status-warning)]/15 px-2.5 py-1.5 text-[12px] text-[var(--text-primary)] transition-colors cursor-pointer"
           >
             <span class="inline-flex items-center gap-2 min-w-0">

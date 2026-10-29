@@ -193,13 +193,13 @@ export async function consumeDesktopIntent(): Promise<DesktopIntent | null> {
 }
 
 /**
- * Opens the sidebar in "Needs Attention" mode and focuses the first session
- * awaiting approval, interactive question input, or user attention.
+ * Ensures the sidebar is open without changing the current sidebar view mode,
+ * and focuses the next session awaiting approval, interactive question input,
+ * or user attention.
  */
 export function focusFirstAttentionSession(targetSessionID?: string, directory?: string): void {
   setLeftNavOpen(true);
   saveLayoutPrefs();
-  setSidebarProjectMode("attention");
 
   const explicitID = targetSessionID?.trim();
   if (explicitID) {
@@ -211,23 +211,36 @@ export function focusFirstAttentionSession(targetSessionID?: string, directory?:
     return;
   }
 
-  const firstPerm = workspace.pendingPermissions[0];
-  if (firstPerm?.sessionID) {
-    const rootID = resolveRootSessionID(firstPerm.sessionID) || firstPerm.sessionID;
-    openSessionDeepLink({
+  const targets: SessionDeepLink[] = [];
+  const seen = new Set<string>();
+  const pushTarget = (rawSessionID?: string) => {
+    const sid = rawSessionID?.trim();
+    if (!sid) return;
+    const rootID = resolveRootSessionID(sid) || sid;
+    if (seen.has(rootID)) return;
+    seen.add(rootID);
+    targets.push({
       sessionID: rootID,
-      directory: sessionDirectory(rootID) || sessionDirectory(firstPerm.sessionID),
+      directory: sessionDirectory(rootID) || sessionDirectory(sid),
     });
-    return;
+  };
+
+  for (const perm of workspace.pendingPermissions) {
+    pushTarget(perm?.sessionID);
+  }
+  for (const question of workspace.pendingQuestions) {
+    pushTarget(question?.sessionID);
   }
 
-  const firstQuestion = workspace.pendingQuestions[0];
-  if (firstQuestion?.sessionID) {
-    const rootID = resolveRootSessionID(firstQuestion.sessionID) || firstQuestion.sessionID;
-    openSessionDeepLink({
-      sessionID: rootID,
-      directory: sessionDirectory(rootID) || sessionDirectory(firstQuestion.sessionID),
-    });
+  if (targets.length > 0) {
+    const activeID = workspace.activeSessionID?.trim();
+    const activeRootID = activeID ? resolveRootSessionID(activeID) || activeID : "";
+    const currentIdx = activeRootID
+      ? targets.findIndex((t) => t.sessionID === activeRootID)
+      : -1;
+    const nextTarget =
+      currentIdx >= 0 ? targets[(currentIdx + 1) % targets.length] : targets[0];
+    openSessionDeepLink(nextTarget);
     return;
   }
 

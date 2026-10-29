@@ -88,6 +88,17 @@ export function SessionNavItem(props: SessionNavItemProps) {
     }
   });
 
+  createEffect((prevActive) => {
+    const active = isEffectiveActive();
+    if (active && !prevActive && rowRef && typeof rowRef.scrollIntoView === "function") {
+      const rafId = requestAnimationFrame(() => {
+        rowRef?.scrollIntoView({ block: "nearest" });
+      });
+      onCleanup(() => cancelAnimationFrame(rafId));
+    }
+    return active;
+  }, false);
+
   const finishedTimestamp = () => {
     const local = workspace.sessionFinishedAt[props.session.id];
     const updated = props.session.time?.updated;

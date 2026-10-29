@@ -7,6 +7,7 @@ import {
   clearPendingDeepLink,
   closeHandoffModal,
   closeSettingsModal,
+  focusFirstAttentionSession,
   leftNavOpen,
   openSessionDeepLink,
   pendingDeepLink,
@@ -80,11 +81,37 @@ describe("session deep links", () => {
         ],
       });
 
-      // Attention intent opens sidebar, switches to attention mode, and targets first pending approval
+      // Attention intent opens sidebar, preserves the current sidebar mode, and locates first pending approval
       applyDesktopIntent({ action: "attention" });
       assertEqual(leftNavOpen(), true);
-      assertEqual(workspace.sidebarProjectMode, "attention");
+      assertEqual(workspace.sidebarProjectMode, "multi");
       assertEqual(pendingDeepLink()?.sessionID, "ses_pending_1");
+
+      // When multiple sessions have pending approvals and the first is already active, locating again cycles to the next
+      setWorkspace({
+        activeSessionID: "ses_pending_1",
+        pendingPermissions: [
+          {
+            id: "perm_1",
+            sessionID: "ses_pending_1",
+            permission: "bash",
+            patterns: ["git push"],
+            metadata: {},
+            always: [],
+          },
+          {
+            id: "perm_2",
+            sessionID: "ses_pending_2",
+            permission: "bash",
+            patterns: ["rm -rf dist"],
+            metadata: {},
+            always: [],
+          },
+        ],
+      });
+      focusFirstAttentionSession();
+      assertEqual(workspace.sidebarProjectMode, "multi");
+      assertEqual(pendingDeepLink()?.sessionID, "ses_pending_2");
 
       // Policy intent opens settings modal on the policy tab
       applyDesktopIntent({ action: "policy" });
