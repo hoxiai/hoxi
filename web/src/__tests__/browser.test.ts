@@ -14,7 +14,9 @@ describe("Browser inspector", () => {
     assertEqual(browserLoadPhase(state, false, "reconnecting", "", 20000), "reconnecting");
     assertEqual(browserLoadPhase(state, false, "delayed", "", 20000), "delayed");
     assertEqual(browserLoadPhase(state, false, "live", "", 20000), "ready");
+    assertEqual(browserLoadPhase({ ...state, mode: "window" }, false, "connecting", "", 20000, false), "ready");
     assertEqual(browserLoadPhase({ ...state, connected: false }, false, "live", "", 20000), "disconnected");
+    assertEqual(browserLoadPhase({ ...state, connected: false }, false, "connecting", "", 20000, false), "disconnected");
   });
 
   it("takes over on deliberate page input without taking control on hover or release", () => {
@@ -22,6 +24,8 @@ describe("Browser inspector", () => {
     assertEqual(requiresBrowserTakeover({ action: "pointer", phase: "down" }), true);
     for (const phase of ["move", "up", "cancel"] as const) assertEqual(requiresBrowserTakeover({ action: "pointer", phase }), false);
     assertEqual(requiresBrowserTakeover({ action: "control", manual: false }), false);
+    assertEqual(requiresBrowserTakeover({ action: "mode", window: true }), false);
+    assertEqual(requiresBrowserTakeover({ action: "focus" }), false);
   });
   it("translates native WebKit pinch and Ctrl+wheel zoom and removes its listeners", () => {
     const target = new EventTarget();

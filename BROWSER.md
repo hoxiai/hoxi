@@ -1,9 +1,10 @@
 # Browser Workspace
 
-Hoxi starts an independent headless Chrome browser on demand and displays its
-viewport in the right-hand Browser inspector. OpenCode receives the built-in
-`hoxi_browser` plugin when Hoxi launches its daemon; no MCP configuration or
-OpenCode source modification is required.
+Hoxi provides three browser modes in the right-hand Browser inspector and for the built-in `hoxi_browser` OpenCode plugin:
+
+1. **Desktop Window (`window`, default)**: Opens a real, visible desktop Chrome window backed by a persistent profile at `~/.hoxi/browser-profile` (`hoxipaths.BrowserProfileDir()`). Sign-ins, cookies, and extensions persist across sessions and restarts, native file pickers/downloads and full Chrome DevTools work out of the box, and the inspector does not force viewport emulation or stream live JPEG frames unless you explicitly toggle **Show live preview**.
+2. **Daily Chrome (`chrome`, Chrome Link extension)**: Connects to tabs in your already-open daily Chrome via the unpacked `extensions/chrome` MV3 extension. After the first 2-minute pairing code handshake, a persistent `linkToken` is saved in `chrome.storage.local` and `~/.hoxi/browser-profile/.hoxi-extension-token`, allowing one-click reconnect without entering a new code. Supports opening/switching/closing secondary tabs and automatically follows newly opened child/popup tabs (`openerTabId`).
+3. **Headless Sandbox (`headless`, or `HOXI_BROWSER_HEADLESS=1`)**: Runs an isolated headless Chrome with a temporary profile that is deleted on close or after 30 minutes of inactivity, streaming a live CDP JPEG screencast into the inspector panel.
 
 ## Usage
 
