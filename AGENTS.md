@@ -126,6 +126,10 @@ Flutter + Riverpod + GoRouter + Dio，四栏：沟通 · 工作台 · 一人公�
   ```bash
   ./build-desktop.sh
   ```
+- **Build Production Windows Installer (`-setup.exe` & `.zip`)**:
+  ```powershell
+  .\scripts\build-windows.ps1
+  ```
 - **Run Headless Daemon (CLI / Browser Mode)**:
   ```bash
   go run ./cmd/hoxi --no-desktop

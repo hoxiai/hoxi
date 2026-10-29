@@ -25,8 +25,12 @@ func resolveWindowsArchiveURL(res *UpdateCheckResult) string {
 	}
 	for _, cand := range []string{res.DownloadURL, res.Mirrors.Global} {
 		trimmed := strings.TrimSpace(cand)
-		if trimmed != "" && strings.HasSuffix(strings.ToLower(trimmed), ".zip") {
+		lower := strings.ToLower(trimmed)
+		if trimmed != "" && strings.HasSuffix(lower, ".zip") {
 			return trimmed
+		}
+		if trimmed != "" && strings.HasSuffix(lower, "-setup.exe") {
+			return trimmed[:len(trimmed)-len("-setup.exe")] + ".zip"
 		}
 	}
 	ver := strings.TrimPrefix(strings.TrimSpace(res.LatestVersion), "v")

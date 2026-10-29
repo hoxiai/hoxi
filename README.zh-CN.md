@@ -97,8 +97,17 @@
 
 ## 快速开始
 
-### 环境要求
-- **macOS** `>= 13.0`（主力支持 Apple Silicon `arm64`）
+### 1. 直接下载安装（普通用户推荐）
+- **macOS (Apple Silicon `arm64`, `>= 13.0`)**：前往 [GitHub Releases](https://github.com/hoxiai/hoxi/releases) 下载 `Hoxi-<version>-darwin-arm64.dmg`，拖入 `Applications` 即可。
+- **Windows 10 / 11 (64-bit `x64`)**：
+  - **图形化安装包**：下载 [`Hoxi-<version>-windows-amd64-setup.exe`](https://github.com/hoxiai/hoxi/releases) 双击安装（自动部署至 `%LOCALAPPDATA%\Programs\Hoxi`、内置 `opencode.exe` 引擎、自动检测安装 WebView2 Runtime、创建桌面与开始菜单快捷方式并注册 `hoxi://` 登录回调协议，支持应用内自更新）。
+  - **PowerShell 一行命令安装**：
+    ```powershell
+    irm https://raw.githubusercontent.com/hoxiai/hoxi/main/scripts/install.ps1 | iex
+    ```
+
+### 2. 源码构建环境要求
+- **macOS** `>= 13.0` 或 **Windows 10/11** (`x64`)
 - **Go** `>= 1.23`
 - **Node.js** `>= 20`（或 **Bun** `>= 1.2`）
 - **Wails CLI v2**（`go install github.com/wailsapp/wails/v2/cmd/wails@v2.13.0`）
@@ -113,9 +122,13 @@ wails dev
 go run ./cmd/hoxi --no-desktop
 ```
 
-### 构建生产级 macOS 应用 (`build/bin/Hoxi.app`)
+### 构建生产级桌面应用与安装包
 ```bash
+# macOS (build/bin/Hoxi.app & Hoxi.dmg)
 ./build-desktop.sh
+
+# Windows PowerShell (build/bin/Hoxi-<version>-windows-amd64-setup.exe & .zip)
+.\scripts\build-windows.ps1
 ```
 
 ### 质量校验与测试

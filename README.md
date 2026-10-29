@@ -96,8 +96,17 @@ Long sessions forget early architectural constraints; third-party API gateways s
 
 ## Quick Start
 
-### Prerequisites
-- **macOS** `>= 13.0` (Apple Silicon `arm64` primary release target)
+### 1. Direct Install (Recommended for Users)
+- **macOS (Apple Silicon `arm64`, `>= 13.0`)**: Download `Hoxi-<version>-darwin-arm64.dmg` from [GitHub Releases](https://github.com/hoxiai/hoxi/releases) and drag `Hoxi.app` into `Applications`.
+- **Windows 10 / 11 (64-bit `x64`)**:
+  - **Graphical Setup Installer**: Download [`Hoxi-<version>-windows-amd64-setup.exe`](https://github.com/hoxiai/hoxi/releases) and double-click to install (installs per-user into `%LOCALAPPDATA%\Programs\Hoxi` with bundled `opencode.exe`, WebView2 Runtime bootstrapper, Desktop/Start Menu shortcuts, `hoxi://` login protocol, and in-app self-update support).
+  - **One-Line PowerShell Install**:
+    ```powershell
+    irm https://raw.githubusercontent.com/hoxiai/hoxi/main/scripts/install.ps1 | iex
+    ```
+
+### 2. Prerequisites (Building from Source)
+- **macOS** `>= 13.0` or **Windows 10/11** (`x64`)
 - **Go** `>= 1.23`
 - **Node.js** `>= 20` (or **Bun** `>= 1.2`)
 - **Wails CLI v2** (`go install github.com/wailsapp/wails/v2/cmd/wails@v2.13.0`)
@@ -112,9 +121,13 @@ wails dev
 go run ./cmd/hoxi --no-desktop
 ```
 
-### Build Production macOS App (`build/bin/Hoxi.app`)
+### Build Production Desktop App & Installer
 ```bash
+# macOS (build/bin/Hoxi.app & Hoxi.dmg)
 ./build-desktop.sh
+
+# Windows PowerShell (build/bin/Hoxi-<version>-windows-amd64-setup.exe & .zip)
+.\scripts\build-windows.ps1
 ```
 
 ### Verify & Test

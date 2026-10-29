@@ -72,6 +72,8 @@ test("tracked publisher sends verified artifact metadata, keeps credentials out 
       assert.equal(mac.sha256, "a".repeat(64));
       assert.equal(mac.size, 1234);
       assert.ok(mac.browser_download_url.endsWith("/v0.2.1/Hoxi-0.2.1-darwin-arm64.dmg"));
+      const win = body.assets.find((asset) => asset.platform === "windows" && asset.arch === "x64");
+      assert.ok(win.browser_download_url.endsWith("/v0.2.1/Hoxi-0.2.1-windows-amd64-setup.exe"));
       assert.equal(body.assets.length, 3);
       return Response.json({ success: true, data: { version: "0.2.1" } });
     } });
@@ -115,6 +117,16 @@ test("opencode.lock pins every shipped platform and release workflows consume it
     assert.ok(crossWorkflow.includes(`opencode-lock.mjs url ${platform}`), `workflow must use the lock URL for ${platform}`);
     assert.ok(crossWorkflow.includes(`opencode-lock.mjs verify-archive ${platform}`), `workflow must verify ${platform}`);
   }
+  assert.match(crossWorkflow, /wails build -platform windows\/amd64 -nsis/);
+  assert.match(crossWorkflow, /Hoxi-\$\{RELEASE_VERSION\}-windows-amd64-setup\.exe/);
+  assert.match(crossWorkflow, /Hoxi-\$\{RELEASE_VERSION\}-windows-amd64\.zip/);
+
+  const nsisProject = fs.readFileSync(path.join(scripts, "../build/windows/installer/project.nsi"), "utf8");
+  assert.match(nsisProject, /!define WAILS_INSTALL_SCOPE "user"/);
+  assert.match(nsisProject, /!define REQUEST_EXECUTION_LEVEL "user"/);
+  assert.match(nsisProject, /File "\/oname=opencode\.exe"/);
+  assert.match(nsisProject, /!insertmacro wails\.webview2runtime/);
+  assert.match(nsisProject, /!insertmacro wails\.associateCustomProtocols/);
 });
 
 test("tag workflow gates publication on tests, versioned artifacts and notarization", () => {

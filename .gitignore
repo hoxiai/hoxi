@@ -13,6 +13,8 @@ web/dist/
 /cmd/hoxi/hoxi
 build/bin/
 build/preflight/
+build/windows/installer/tmp/
+build/windows/installer/wails_tools.nsh
 
 # Local session worktrees & runtime state
 .hoxi/

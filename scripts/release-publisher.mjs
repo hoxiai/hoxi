@@ -26,7 +26,7 @@ export function releasePayload({ version, notes, sha256, size, mandatory = false
 
   const base = githubBase(version);
   const macUrl = `${base}/Hoxi-${version}-darwin-arm64.dmg`;
-  const winUrl = `${base}/Hoxi-${version}-windows-amd64.zip`;
+  const winUrl = `${base}/Hoxi-${version}-windows-amd64-setup.exe`;
   const linuxUrl = `${base}/Hoxi-${version}-linux-amd64.tar.gz`;
 
   const assets = [
@@ -37,7 +37,7 @@ export function releasePayload({ version, notes, sha256, size, mandatory = false
       ...(minimumMacOS ? { minimumSystemVersion: minimumMacOS } : {}),
     },
     {
-      name: `Hoxi-${version}-windows-amd64.zip`, url: winUrl, browser_download_url: winUrl,
+      name: `Hoxi-${version}-windows-amd64-setup.exe`, url: winUrl, browser_download_url: winUrl,
       platform: "windows", arch: "x64", package: "desktop",
     },
     {
