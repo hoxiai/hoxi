@@ -5,10 +5,13 @@ import { defineConfig } from "vite";
 import solidPlugin from "vite-plugin-solid";
 import tailwindcss from "@tailwindcss/vite";
 
-const webRoot = fileURLToPath(new URL(".", import.meta.url));
-const srcRoot = fileURLToPath(new URL("./src", import.meta.url));
-const lucideSolidEsm = fileURLToPath(
-  new URL("./node_modules/lucide-solid/dist/esm/lucide-solid.js", import.meta.url),
+const toPosixPath = (p: string) => p.replace(/\\/g, "/");
+const webRoot = toPosixPath(fileURLToPath(new URL(".", import.meta.url)));
+const srcRoot = toPosixPath(fileURLToPath(new URL("./src", import.meta.url)));
+const lucideSolidEsm = toPosixPath(
+  fileURLToPath(
+    new URL("./node_modules/lucide-solid/dist/esm/lucide-solid.js", import.meta.url),
+  ),
 );
 const resolveWorkRepoDir = () => {
   if (process.env.HOXI_WORK_DIR) {
@@ -25,8 +28,8 @@ const resolveWorkRepoDir = () => {
   }
   return candidates[0];
 };
-const workRepoDir = resolveWorkRepoDir();
-const workExtEntry = path.join(workRepoDir, "web/index.tsx");
+const workRepoDir = toPosixPath(resolveWorkRepoDir());
+const workExtEntry = toPosixPath(path.join(workRepoDir, "web/index.tsx"));
 const hasWorkExt =
   process.env.HOXI_DISABLE_WORK_EXT !== "1" && fs.existsSync(workExtEntry);
 
@@ -43,26 +46,32 @@ export default defineConfig({
       { find: /^lucide-solid$/, replacement: lucideSolidEsm },
       {
         find: /^solid-js$/,
-        replacement: fileURLToPath(
-          new URL("./node_modules/solid-js/dist/solid.js", import.meta.url),
+        replacement: toPosixPath(
+          fileURLToPath(
+            new URL("./node_modules/solid-js/dist/solid.js", import.meta.url),
+          ),
         ),
       },
       {
         find: /^solid-js\/web$/,
-        replacement: fileURLToPath(
-          new URL("./node_modules/solid-js/web/dist/web.js", import.meta.url),
+        replacement: toPosixPath(
+          fileURLToPath(
+            new URL("./node_modules/solid-js/web/dist/web.js", import.meta.url),
+          ),
         ),
       },
       {
         find: /^solid-js\/store$/,
-        replacement: fileURLToPath(
-          new URL("./node_modules/solid-js/store/dist/store.js", import.meta.url),
+        replacement: toPosixPath(
+          fileURLToPath(
+            new URL("./node_modules/solid-js/store/dist/store.js", import.meta.url),
+          ),
         ),
       },
       { find: /^@hoxi-core\/(.*)$/, replacement: `${srcRoot}/$1` },
       ...(hasWorkExt
         ? [
-            { find: /^.*\/surface-extension(?:\.ts)?$/, replacement: workExtEntry },
+            { find: /^.*[\/\\]surface-extension(?:\.ts)?$/, replacement: workExtEntry },
           ]
         : []),
     ],

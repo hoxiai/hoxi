@@ -48,11 +48,16 @@ jobs:
           echo "RELEASE_VERSION=$VERSION" >> "$GITHUB_ENV"
           node -e '
             const fs = require("node:fs");
-            const v = process.argv[1] + ".0";
+            const ver = process.argv[1];
+            const winVer = ver + ".0";
             const info = JSON.parse(fs.readFileSync("build/windows/info.json", "utf8"));
-            info.fileVersion = v;
-            info.productVersion = v;
+            info.fileVersion = winVer;
+            info.productVersion = winVer;
             fs.writeFileSync("build/windows/info.json", JSON.stringify(info, null, 2) + "\n");
+            const wailsCfg = JSON.parse(fs.readFileSync("wails.json", "utf8"));
+            wailsCfg.info = wailsCfg.info || {};
+            wailsCfg.info.productVersion = ver;
+            fs.writeFileSync("wails.json", JSON.stringify(wailsCfg, null, 2) + "\n");
           ' "$VERSION"
 
       - name: Install frontend dependencies & Build web
@@ -60,10 +65,12 @@ jobs:
         env:
           HOXI_WORK_TOKEN: ${{ secrets.HOXI_WORK_TOKEN }}
         run: |
-          if [[ -n "${HOXI_WORK_TOKEN:-}" && ! -d "../hoxi-work" ]]; then
+          if [[ ! -d "../hoxi-work" ]]; then
+            : "${HOXI_WORK_TOKEN:?HOXI_WORK_TOKEN secret is required to bundle the Work surface in release builds}"
             git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$HOXI_WORK_TOKEN" | base64 | tr -d '\r\n')" \
               clone --depth 1 https://github.com/hoxiai/hoxi-work.git ../hoxi-work
           fi
+          test -f "../hoxi-work/web/index.tsx"
           if [[ -d "../hoxi-work/skills" ]]; then
             for skill_src in ../hoxi-work/skills/*; do
               [[ -d "${skill_src}" && -f "${skill_src}/SKILL.md" ]] || continue
@@ -73,6 +80,7 @@ jobs:
           fi
           npm --prefix web ci
           npm --prefix web run build
+          grep -q "modeExecuteLabel" web/dist/assets/*.js
 
       - name: Run Windows Go vet
         run: go vet ./...
@@ -84,13 +92,6 @@ jobs:
       - name: Install Wails v2
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.13.0
 
-      - name: Build Windows Desktop App
-        shell: bash
-        run: |
-          wails build -platform windows/amd64 -s -m -nosyncgomod \
-            -ldflags "-X github.com/hoxiai/hoxi/internal/app.BuildVariant=release -X github.com/hoxiai/hoxi/internal/buildinfo.Version=${RELEASE_VERSION}"
-          test "$(./build/bin/Hoxi.exe --version | tr -d '\r\n')" = "${RELEASE_VERSION}"
-
       - name: Bundle OpenCode Runtime
         shell: bash
         run: |
@@ -98,16 +99,41 @@ jobs:
           node scripts/opencode-lock.mjs verify
           curl -fsSL -o "$OPENCODE_ZIP" "$(node scripts/opencode-lock.mjs url windows/amd64)"
           node scripts/opencode-lock.mjs verify-archive windows/amd64 "$OPENCODE_ZIP"
-          7z e "$OPENCODE_ZIP" opencode.exe -obuild/bin/
+          mkdir -p build/bin build/windows/installer/tmp
+          7z e -y "$OPENCODE_ZIP" opencode.exe -obuild/bin/
+          cp -f build/bin/opencode.exe build/windows/installer/tmp/opencode.exe
           rm -f "$OPENCODE_ZIP"
           test -f build/bin/opencode.exe
-          echo "Bundled standalone opencode.exe into build/bin/"
+          test -f build/windows/installer/tmp/opencode.exe
+          echo "Bundled standalone opencode.exe into build/bin/ and build/windows/installer/tmp/"
 
-      - name: Package Windows Release Archive
+      - name: Build Windows Desktop App & Setup Installer
         shell: bash
         run: |
+          if ! command -v makensis >/dev/null 2>&1; then
+            if [[ -x "/c/Program Files (x86)/NSIS/makensis.exe" ]]; then
+              export PATH="/c/Program Files (x86)/NSIS:$PATH"
+            else
+              choco install nsis -y
+              export PATH="/c/Program Files (x86)/NSIS:$PATH"
+            fi
+          fi
+          command -v makensis
+          wails build -platform windows/amd64 -nsis -s -m -nosyncgomod \
+            -ldflags "-X github.com/hoxiai/hoxi/internal/app.BuildVariant=release -X github.com/hoxiai/hoxi/internal/buildinfo.Version=${RELEASE_VERSION}"
+          test "$(./build/bin/Hoxi.exe --version | tr -d '\r\n')" = "${RELEASE_VERSION}"
+          cp -f build/windows/installer/tmp/opencode.exe build/bin/opencode.exe
+          test -f build/bin/opencode.exe
+          test -f build/bin/Hoxi-amd64-installer.exe
+
+      - name: Package Windows Release Archives
+        shell: bash
+        run: |
+          SETUP_NAME="Hoxi-${RELEASE_VERSION}-windows-amd64-setup.exe"
           ZIP_NAME="Hoxi-${RELEASE_VERSION}-windows-amd64.zip"
           cd build/bin
+          mv -f Hoxi-amd64-installer.exe "$SETUP_NAME"
+          sha256sum "$SETUP_NAME" > "${SETUP_NAME}.sha256"
           7z a "$ZIP_NAME" Hoxi.exe opencode.exe
           sha256sum "$ZIP_NAME" > "${ZIP_NAME}.sha256"
 
@@ -116,8 +142,11 @@ jobs:
         with:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           files: |
+            build/bin/Hoxi-${{ env.RELEASE_VERSION }}-windows-amd64-setup.exe
+            build/bin/Hoxi-${{ env.RELEASE_VERSION }}-windows-amd64-setup.exe.sha256
             build/bin/Hoxi-${{ env.RELEASE_VERSION }}-windows-amd64.zip
             build/bin/Hoxi-${{ env.RELEASE_VERSION }}-windows-amd64.zip.sha256
+          fail_on_unmatched_files: true
           draft: false
           prerelease: false
 
@@ -161,10 +190,12 @@ jobs:
         env:
           HOXI_WORK_TOKEN: ${{ secrets.HOXI_WORK_TOKEN }}
         run: |
-          if [[ -n "${HOXI_WORK_TOKEN:-}" && ! -d "../hoxi-work" ]]; then
+          if [[ ! -d "../hoxi-work" ]]; then
+            : "${HOXI_WORK_TOKEN:?HOXI_WORK_TOKEN secret is required to bundle the Work surface in release builds}"
             git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$HOXI_WORK_TOKEN" | base64 | tr -d '\r\n')" \
               clone --depth 1 https://github.com/hoxiai/hoxi-work.git ../hoxi-work
           fi
+          test -f "../hoxi-work/web/index.tsx"
           if [[ -d "../hoxi-work/skills" ]]; then
             for skill_src in ../hoxi-work/skills/*; do
               [[ -d "${skill_src}" && -f "${skill_src}/SKILL.md" ]] || continue
@@ -174,6 +205,7 @@ jobs:
           fi
           npm --prefix web ci
           npm --prefix web run build
+          grep -q "modeExecuteLabel" web/dist/assets/*.js
 
       - name: Install Wails v2
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.13.0

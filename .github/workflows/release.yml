@@ -46,10 +46,12 @@ jobs:
         env:
           HOXI_WORK_TOKEN: ${{ secrets.HOXI_WORK_TOKEN }}
         run: |
-          if [[ -n "${HOXI_WORK_TOKEN:-}" && ! -d "../hoxi-work" ]]; then
+          if [[ ! -d "../hoxi-work" ]]; then
+            : "${HOXI_WORK_TOKEN:?HOXI_WORK_TOKEN secret is required to bundle the Work surface in release builds}"
             git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$HOXI_WORK_TOKEN" | base64 | tr -d '\r\n')" \
               clone --depth 1 https://github.com/hoxiai/hoxi-work.git ../hoxi-work
           fi
+          test -f "../hoxi-work/web/index.tsx"
           npm --prefix web ci
 
       - name: Validate release version
