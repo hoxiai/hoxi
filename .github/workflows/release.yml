@@ -43,7 +43,14 @@ jobs:
           cache-dependency-path: web/package-lock.json
 
       - name: Install frontend dependencies
-        run: npm --prefix web ci
+        env:
+          HOXI_WORK_TOKEN: ${{ secrets.HOXI_WORK_TOKEN }}
+        run: |
+          if [[ -n "${HOXI_WORK_TOKEN:-}" && ! -d "../hoxi-work" ]]; then
+            git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$HOXI_WORK_TOKEN" | base64 | tr -d '\r\n')" \
+              clone --depth 1 https://github.com/hoxiai/hoxi-work.git ../hoxi-work
+          fi
+          npm --prefix web ci
 
       - name: Validate release version
         env:

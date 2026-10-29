@@ -66,6 +66,29 @@ fi
 export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-13.0}"
 node scripts/sparkle.mjs check
 
+resolve_work_repo_dir() {
+  if [[ -n "${HOXI_WORK_DIR:-}" ]]; then
+    echo "${HOXI_WORK_DIR}"
+    return 0
+  fi
+  local candidates=(
+    "${PROJECT_ROOT}/../hoxi-work"
+    "${PROJECT_ROOT}/../../../../hoxi-work"
+  )
+  for c in "${candidates[@]}"; do
+    if [[ -d "${c}" ]]; then
+      (cd "${c}" && pwd)
+      return 0
+    fi
+  done
+  echo "${PROJECT_ROOT}/../hoxi-work"
+}
+
+WORK_REPO_DIR="$(resolve_work_repo_dir)"
+if [[ -d "${WORK_REPO_DIR}" ]]; then
+  export HOXI_WORK_DIR="${WORK_REPO_DIR}"
+fi
+
 if [[ ! -d web/node_modules ]]; then
   npm --prefix web install
 fi
@@ -205,7 +228,6 @@ cleanup_build_stage() {
 }
 trap cleanup_build_stage EXIT
 
-WORK_REPO_DIR="${HOXI_WORK_DIR:-${PROJECT_ROOT}/../hoxi-work}"
 if [[ -d "${WORK_REPO_DIR}/skills" ]]; then
   for skill_src in "${WORK_REPO_DIR}/skills"/*; do
     [[ -d "${skill_src}" && -f "${skill_src}/SKILL.md" ]] || continue

@@ -10,9 +10,22 @@ const srcRoot = fileURLToPath(new URL("./src", import.meta.url));
 const lucideSolidEsm = fileURLToPath(
   new URL("./node_modules/lucide-solid/dist/esm/lucide-solid.js", import.meta.url),
 );
-const workRepoDir = process.env.HOXI_WORK_DIR
-  ? path.resolve(webRoot, process.env.HOXI_WORK_DIR)
-  : path.resolve(webRoot, "../../hoxi-work");
+const resolveWorkRepoDir = () => {
+  if (process.env.HOXI_WORK_DIR) {
+    return path.resolve(webRoot, process.env.HOXI_WORK_DIR);
+  }
+  const candidates = [
+    path.resolve(webRoot, "../../hoxi-work"),
+    path.resolve(webRoot, "../../../../../hoxi-work"),
+  ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(path.join(candidate, "web/index.tsx"))) {
+      return candidate;
+    }
+  }
+  return candidates[0];
+};
+const workRepoDir = resolveWorkRepoDir();
 const workExtEntry = path.join(workRepoDir, "web/index.tsx");
 const hasWorkExt =
   process.env.HOXI_DISABLE_WORK_EXT !== "1" && fs.existsSync(workExtEntry);

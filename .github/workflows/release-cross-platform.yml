@@ -56,12 +56,27 @@ jobs:
           ' "$VERSION"
 
       - name: Install frontend dependencies & Build web
+        shell: bash
+        env:
+          HOXI_WORK_TOKEN: ${{ secrets.HOXI_WORK_TOKEN }}
         run: |
+          if [[ -n "${HOXI_WORK_TOKEN:-}" && ! -d "../hoxi-work" ]]; then
+            git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$HOXI_WORK_TOKEN" | base64 | tr -d '\r\n')" \
+              clone --depth 1 https://github.com/hoxiai/hoxi-work.git ../hoxi-work
+          fi
+          if [[ -d "../hoxi-work/skills" ]]; then
+            for skill_src in ../hoxi-work/skills/*; do
+              [[ -d "${skill_src}" && -f "${skill_src}/SKILL.md" ]] || continue
+              target_dir="internal/skills/defaults/$(basename "${skill_src}")"
+              [[ -d "${target_dir}" ]] || cp -R "${skill_src}" "${target_dir}"
+            done
+          fi
           npm --prefix web ci
           npm --prefix web run build
 
       - name: Run Windows Go vet
         run: go vet ./...
+
 
       - name: Install Wails v2
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.13.0
@@ -139,7 +154,21 @@ jobs:
           echo "RELEASE_VERSION=$VERSION" >> "$GITHUB_ENV"
 
       - name: Install frontend dependencies & Build web
+        shell: bash
+        env:
+          HOXI_WORK_TOKEN: ${{ secrets.HOXI_WORK_TOKEN }}
         run: |
+          if [[ -n "${HOXI_WORK_TOKEN:-}" && ! -d "../hoxi-work" ]]; then
+            git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$HOXI_WORK_TOKEN" | base64 | tr -d '\r\n')" \
+              clone --depth 1 https://github.com/hoxiai/hoxi-work.git ../hoxi-work
+          fi
+          if [[ -d "../hoxi-work/skills" ]]; then
+            for skill_src in ../hoxi-work/skills/*; do
+              [[ -d "${skill_src}" && -f "${skill_src}/SKILL.md" ]] || continue
+              target_dir="internal/skills/defaults/$(basename "${skill_src}")"
+              [[ -d "${target_dir}" ]] || cp -R "${skill_src}" "${target_dir}"
+            done
+          fi
           npm --prefix web ci
           npm --prefix web run build
 
