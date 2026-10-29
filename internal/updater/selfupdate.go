@@ -18,6 +18,26 @@ import (
 
 const maxUpdateArchiveBytes = 512 << 20 // 512 MiB
 
+func resolveWindowsArchiveURL(res *UpdateCheckResult) string {
+	if res == nil {
+		return ""
+	}
+	for _, cand := range []string{res.DownloadURL, res.Mirrors.Global} {
+		trimmed := strings.TrimSpace(cand)
+		if trimmed != "" && strings.HasSuffix(strings.ToLower(trimmed), ".zip") {
+			return trimmed
+		}
+	}
+	ver := strings.TrimPrefix(strings.TrimSpace(res.LatestVersion), "v")
+	if ver != "" {
+		return fmt.Sprintf("https://github.com/hoxiai/hoxi/releases/download/v%s/Hoxi-%s-windows-amd64.zip", ver, ver)
+	}
+	if d := strings.TrimSpace(res.DownloadURL); d != "" {
+		return d
+	}
+	return strings.TrimSpace(res.Mirrors.Global)
+}
+
 func isAllowedUpdateURL(rawURL string) bool {
 	u, err := url.Parse(strings.TrimSpace(rawURL))
 	if err != nil || u.Host == "" {

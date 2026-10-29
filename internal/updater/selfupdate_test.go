@@ -83,4 +83,14 @@ func TestDownloadAndStageWindowsZipVerifiesSHA256AndExtracts(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "SHA-256 mismatch") {
 		t.Fatalf("expected SHA-256 mismatch error, got %v", err)
 	}
+
+	// resolveWindowsArchiveURL falls back to the Windows .zip asset when DownloadURL points to a .dmg
+	gotURL := resolveWindowsArchiveURL(&UpdateCheckResult{
+		LatestVersion: "0.4.5",
+		DownloadURL:   "https://github.com/hoxiai/hoxi/releases/download/v0.4.5/Hoxi-0.4.5-darwin-arm64.dmg",
+	})
+	wantURL := "https://github.com/hoxiai/hoxi/releases/download/v0.4.5/Hoxi-0.4.5-windows-amd64.zip"
+	if gotURL != wantURL {
+		t.Fatalf("resolveWindowsArchiveURL = %q, want %q", gotURL, wantURL)
+	}
 }

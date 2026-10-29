@@ -128,62 +128,59 @@ func CheckNative() error {
 		return errors.New("application is already up to date")
 	}
 
-	archiveURL := strings.TrimSpace(res.DownloadURL)
-	if archiveURL == "" {
-		archiveURL = strings.TrimSpace(res.Mirrors.Global)
-	}
+	archiveURL := resolveWindowsArchiveURL(res)
 	if archiveURL == "" {
 		cleanupAbort()
 		return errors.New("update download URL is missing")
 	}
 
-	go func(urlStr, fallbackSHA, expectedVer, targetExe string) {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-		defer cancel()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
 
-		targetDir := filepath.Dir(targetExe)
-		stageDir, err := os.MkdirTemp(targetDir, ".hoxi-update-staging-*")
-		if err != nil {
-			cleanupAbort()
-			return
-		}
-		if err := downloadAndStageWindowsZip(ctx, nil, urlStr, fallbackSHA, stageDir); err != nil {
-			_ = os.RemoveAll(stageDir)
-			cleanupAbort()
-			return
-		}
+	targetDir := filepath.Dir(exePath)
+	stageDir, err := os.MkdirTemp(targetDir, ".hoxi-update-staging-*")
+	if err != nil {
+		cleanupAbort()
+		return fmt.Errorf("create staging directory: %w", err)
+	}
+	if err := downloadAndStageWindowsZip(ctx, nil, archiveURL, res.SHA256, stageDir); err != nil {
+		_ = os.RemoveAll(stageDir)
+		cleanupAbort()
+		return err
+	}
 
-		stagedExe := filepath.Join(stageDir, "Hoxi.exe")
-		verCtx, verCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		out, err := exec.CommandContext(verCtx, stagedExe, "--version").Output()
-		verCancel()
-		if err != nil || strings.TrimSpace(string(out)) != strings.TrimPrefix(strings.TrimSpace(expectedVer), "v") {
-			_ = os.RemoveAll(stageDir)
-			cleanupAbort()
-			return
-		}
+	stagedExe := filepath.Join(stageDir, "Hoxi.exe")
+	verCtx, verCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	out, err := exec.CommandContext(verCtx, stagedExe, "--version").Output()
+	verCancel()
+	if err != nil || strings.TrimSpace(string(out)) != strings.TrimPrefix(strings.TrimSpace(res.LatestVersion), "v") {
+		_ = os.RemoveAll(stageDir)
+		cleanupAbort()
+		return errors.New("staged Hoxi.exe version verification failed")
+	}
 
-		psBin, err := exec.LookPath("powershell.exe")
-		if err != nil {
-			psBin = "powershell.exe"
-		}
-		cmd := exec.Command(psBin, "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", windowsSwapAndRestartPS)
-		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-		cmd.Env = append(os.Environ(),
-			"HOXI_UPD_PID="+strconv.Itoa(os.Getpid()),
-			"HOXI_UPD_STAGE_DIR="+stageDir,
-			"HOXI_UPD_TARGET_DIR="+targetDir,
-			"HOXI_UPD_EXE="+filepath.Base(targetExe),
-		)
-		if err := cmd.Start(); err != nil {
-			_ = os.RemoveAll(stageDir)
-			cleanupAbort()
-			return
-		}
-		_ = cmd.Process.Release()
-		time.Sleep(150 * time.Millisecond)
+	psBin, err := exec.LookPath("powershell.exe")
+	if err != nil {
+		psBin = "powershell.exe"
+	}
+	cmd := exec.Command(psBin, "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", windowsSwapAndRestartPS)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	cmd.Env = append(os.Environ(),
+		"HOXI_UPD_PID="+strconv.Itoa(os.Getpid()),
+		"HOXI_UPD_STAGE_DIR="+stageDir,
+		"HOXI_UPD_TARGET_DIR="+targetDir,
+		"HOXI_UPD_EXE="+filepath.Base(exePath),
+	)
+	if err := cmd.Start(); err != nil {
+		_ = os.RemoveAll(stageDir)
+		cleanupAbort()
+		return fmt.Errorf("launch update installer: %w", err)
+	}
+	_ = cmd.Process.Release()
+	go func() {
+		time.Sleep(250 * time.Millisecond)
 		os.Exit(0)
-	}(archiveURL, res.SHA256, res.LatestVersion, exePath)
+	}()
 
 	return nil
 }
