@@ -27,7 +27,7 @@ import {
   appSettings,
   closeSettingsModal,
   desktopAuth,
-  openProviderModal,
+  formatMemberPoints,
   openSettingsModal,
   toggleTheme,
   workspace,
@@ -59,13 +59,9 @@ export default function SettingsModal() {
     typeof navigator !== "undefined" &&
     /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent);
 
-  const isOpen = () => appSettings.modalOpen || workspace.providerModalOpen;
+  const isOpen = () => appSettings.modalOpen;
 
-  const activeTab = createMemo<SettingsTab>(() =>
-    !appSettings.modalOpen && workspace.providerModalOpen
-      ? workspace.providerModalTab
-      : appSettings.activeTab
-  );
+  const activeTab = () => appSettings.activeTab;
 
   const isModelTab = () => {
     const tab = activeTab();
@@ -82,11 +78,7 @@ export default function SettingsModal() {
   };
 
   const selectTab = (tab: SettingsTab) => {
-    if (tab === "custom") {
-      openProviderModal("custom", workspace.editingProviderID);
-      return;
-    }
-    openSettingsModal(tab);
+    openSettingsModal(tab, tab === "custom" ? workspace.editingProviderID : null);
   };
 
   const navGroups: Array<{
@@ -439,7 +431,7 @@ export default function SettingsModal() {
                 </span>
                 <Show when={desktopAuth.isLoggedIn && desktopAuth.member.points > 0}>
                   <span class="shrink-0 rounded-full bg-[var(--bg-inset)] px-2 py-0.5 font-mono text-[11px] text-[var(--text-secondary)]">
-                    {Math.round(desktopAuth.member.points).toLocaleString()}
+                    {formatMemberPoints(desktopAuth.member.points)}
                   </span>
                 </Show>
               </button>

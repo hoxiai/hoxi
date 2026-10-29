@@ -1,7 +1,6 @@
 import { createStore } from "solid-js/store";
 import { diagnosticsAPI, type DiagnosticEntry, type DiagnosticsFilters } from "../services/diagnostics";
 import { openSettingsModal } from "./settings";
-import { setWorkspace } from "./workspace-state";
 
 const emptyFilters = (): DiagnosticsFilters => ({ kind: "", level: "", sessionID: "", providerID: "", q: "" });
 
@@ -40,7 +39,6 @@ export function openDiagnostics(scope: { sessionID?: string; providerID?: string
     kind: scope.providerID ? "request" : "",
   });
   setDiagnostics("actionError", "");
-  setWorkspace("providerModalOpen", false);
   openSettingsModal(scope.sessionID || scope.providerID ? "errorLog" : "diagnostics");
 }
 

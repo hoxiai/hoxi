@@ -6,6 +6,7 @@ import {
   autoPools,
   connectOfficialAinode,
   desktopAuth,
+  formatMemberPoints,
   getAutoPoolDisplayName,
   getStoredPoolCandidates,
   loadOfficialAinodeModels,
@@ -20,19 +21,14 @@ import {
 import { t } from "../../i18n";
 import { ProviderIcon } from "../icons";
 
-function formatPoints(value: number): string {
-  if (!Number.isFinite(value) || value <= 0) return "0";
-  return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
-}
-
 function modelPointsLabel(
   m: { perCallPoints: number; inputPointsPerM: number; outputPointsPerM: number }
 ): string {
   if (m.perCallPoints > 0) {
-    return t("models.officialPerCallPoints", { points: formatPoints(m.perCallPoints) });
+    return t("models.officialPerCallPoints", { points: formatMemberPoints(m.perCallPoints) });
   }
   return t("models.officialTokenPointsPerM", {
-    points: `${formatPoints(m.inputPointsPerM)} / ${formatPoints(m.outputPointsPerM)}`,
+    points: `${formatMemberPoints(m.inputPointsPerM)} / ${formatMemberPoints(m.outputPointsPerM)}`,
   });
 }
 
@@ -112,7 +108,7 @@ export default function OfficialAinodeTab() {
             </div>
           </div>
           <span class="shrink-0 rounded-full bg-[var(--bg-inset)] px-3 py-1.5 text-[12px] font-semibold text-[var(--accent-primary)]">
-            {t("models.officialPointsLabel", { points: formatPoints(desktopAuth.member.points) })}
+            {t("models.officialPointsLabel", { points: formatMemberPoints(desktopAuth.member.points) })}
           </span>
         </div>
 

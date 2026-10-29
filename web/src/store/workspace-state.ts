@@ -231,8 +231,6 @@ export interface WorkspaceState {
   workspaceModalMode: WorkspaceModalMode;
   editingWorkspaceID: string | null;
   editingWorkspaceDir: string | null;
-  providerModalOpen: boolean;
-  providerModalTab: ProviderModalTab;
   editingProviderID: string | null;
   arenaModalOpen: boolean;
   handoffModalOpen: boolean;
@@ -475,8 +473,6 @@ export const [workspace, setWorkspace] = createStore<WorkspaceState>({
   workspaceModalMode: null,
   editingWorkspaceID: null,
   editingWorkspaceDir: null,
-  providerModalOpen: false,
-  providerModalTab: "providers",
   editingProviderID: null,
   arenaModalOpen: false,
   handoffModalOpen: false,

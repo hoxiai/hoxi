@@ -33,7 +33,7 @@ describe("Diagnostics", () => {
 
   it("opens scoped diagnostics without retaining the previous scope or provider overlay", () => {
     const settings = { modalOpen: appSettings.modalOpen, activeTab: appSettings.activeTab };
-    const providerModalOpen = workspace.providerModalOpen;
+    const editingProviderID = workspace.editingProviderID;
     try {
       openProviderModal("custom", "ep-1");
       assertEqual(appSettings.modalOpen, true);
@@ -44,11 +44,10 @@ describe("Diagnostics", () => {
       assertEqual(workspace.editingProviderID, null);
       closeSettingsModal();
       assertEqual(appSettings.modalOpen, false);
-      assertEqual(workspace.providerModalOpen, false);
 
-      setWorkspace("providerModalOpen", true);
+      openProviderModal("custom", "ep-2");
       openDiagnostics({ providerID: "provider-a" });
-      assertEqual(workspace.providerModalOpen, false);
+      assertEqual(workspace.editingProviderID, null);
       assertEqual(appSettings.activeTab, "errorLog");
       assertEqual(appSettings.modalOpen, true);
       assertEqual(diagnostics.filters.providerID, "provider-a");
@@ -61,7 +60,7 @@ describe("Diagnostics", () => {
       assertEqual(diagnostics.filters.kind, "");
     } finally {
       setAppSettings(settings);
-      setWorkspace("providerModalOpen", providerModalOpen);
+      setWorkspace("editingProviderID", editingProviderID);
       resetDiagnosticsFilters();
     }
   });

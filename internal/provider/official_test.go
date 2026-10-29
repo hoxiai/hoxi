@@ -126,11 +126,36 @@ func TestOfficialConnectProvisionsAinodeProvider(t *testing.T) {
 		t.Fatalf("expected persisted baseURL, got %q", got)
 	}
 	models, _ := ainode["models"].(map[string]interface{})
-	if _, ok := models["claude-sonnet-4-6"]; !ok {
-		t.Fatalf("expected persisted model catalog, got %+v", models)
+	if len(models) != 2 {
+		t.Fatalf("expected exactly 2 enabled models persisted (excluding disabled-model), got %d: %+v", len(models), models)
+	}
+	sonnet, ok := models["claude-sonnet-4-6"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected persisted claude-sonnet-4-6 model, got %+v", models)
+	}
+	sonnetCost, _ := sonnet["cost"].(map[string]interface{})
+	if sonnetCost["input"] != 3.0 || sonnetCost["output"] != 15.0 {
+		t.Fatalf("expected points converted to USD cost (3.0/15.0), got %+v", sonnetCost)
+	}
+	if _, hasDisabled := models["disabled-model"]; hasDisabled {
+		t.Fatalf("disabled-model must not be persisted into models.json")
 	}
 	if _, ok := doc["mcp"]; ok {
 		t.Fatalf("official connect must not persist MCP config")
+	}
+
+	// Clearing the official provider removes both models.json entry and engine auth.json key.
+	if gotKey := svc.ResolveStoredProviderKey("hoxi-official", "https://api.ainode.run/v1"); gotKey != "sk-hoxi-official-key" {
+		t.Fatalf("expected stored key before clear, got %q", gotKey)
+	}
+	svc.ClearOfficialProvider()
+	docAfter := svc.LoadHoxiConfigDoc()
+	provMapAfter, _ := docAfter["provider"].(map[string]interface{})
+	if _, exists := provMapAfter["hoxi-official"]; exists {
+		t.Fatalf("expected hoxi-official removed from models.json after ClearOfficialProvider")
+	}
+	if gotKey := svc.ResolveStoredProviderKey("hoxi-official", "https://api.ainode.run/v1"); gotKey != "" {
+		t.Fatalf("expected engine auth.json key cleared, got %q", gotKey)
 	}
 }
 
@@ -178,5 +203,10 @@ func TestOfficialConnectInvalidatesRevokedToken(t *testing.T) {
 	}
 	if !auth.invalidated {
 		t.Fatalf("expected device token to be invalidated on 401")
+	}
+	doc := svc.LoadHoxiConfigDoc()
+	provMap, _ := doc["provider"].(map[string]interface{})
+	if _, exists := provMap["hoxi-official"]; exists {
+		t.Fatalf("expected hoxi-official removed on 401")
 	}
 }

@@ -201,7 +201,37 @@ export function toggleFavoriteModel(providerID: string, modelID: string) {
   }
 }
 
+let inFlightLoadProviders: Promise<void> | null = null;
+
+export async function waitForInFlightProvidersLoad(): Promise<void> {
+  if (inFlightLoadProviders) {
+    await inFlightLoadProviders;
+  }
+}
+
+export function isModelSelectionValid(model: SelectedModel | null | undefined): boolean {
+  if (!model?.providerID || !model?.modelID) return false;
+  if (model.providerID === AUTO_PROVIDER_ID) {
+    return Boolean(buildAutoVirtualProvider().models?.[model.modelID]);
+  }
+  return Boolean(
+    workspace.providers.some((p) => p.id === model.providerID && p.models?.[model.modelID]) ||
+      workspace.hoxiProviders?.[model.providerID]?.models?.[model.modelID]
+  );
+}
+
+export function shouldAutoSelectProvisionedModel(providerID: string): boolean {
+  const cur = workspace.selectedModel;
+  if (!cur) return true;
+  if (cur.providerID === providerID) {
+    return !isModelSelectionValid(cur);
+  }
+  if (isModelSelectionValid(cur)) return false;
+  return workspace.providers.some((p) => p.id !== providerID);
+}
+
 export async function loadProviders(forceRefresh = false): Promise<void> {
+  const run = async () => {
   try {
     const dir = workspace.rootDir || undefined;
     const [res, cfg, authMethods, hoxiCfg, agyRunner, geminiRunner, claudeRunner, codeBuddyRunner, qoderRunner] = await Promise.all([
@@ -412,6 +442,16 @@ export async function loadProviders(forceRefresh = false): Promise<void> {
       }
     }  } catch (err) {
     console.error("Failed to load providers:", err);
+  }
+  };
+  const promise = run();
+  inFlightLoadProviders = promise;
+  try {
+    await promise;
+  } finally {
+    if (inFlightLoadProviders === promise) {
+      inFlightLoadProviders = null;
+    }
   }
 }
 
@@ -709,7 +749,11 @@ export async function connectProviderWithMcpOAuth(opts: {
           Object.keys(workspace.hoxiProviders?.[pid]?.models || {})[0] ||
           opts.recommendedModels?.[0]?.trim();
         if (firstModelID) {
-          selectProviderModelPreservingBusySession({ providerID: pid, modelID: firstModelID });
+          if (shouldAutoSelectProvisionedModel(pid)) {
+            selectProviderModelPreservingBusySession({ providerID: pid, modelID: firstModelID });
+          } else {
+            pushRecentModel({ providerID: pid, modelID: firstModelID });
+          }
         }
 
         setProviderMcpOAuthState({ authorizingProviderID: null, pendingState: null, authURL: null, error: null });

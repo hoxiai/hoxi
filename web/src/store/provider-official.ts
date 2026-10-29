@@ -3,8 +3,17 @@ import { createStore } from "solid-js/store";
 import { hoxiAPI } from "../services/api";
 import type { OfficialAinodeModel } from "../services/platform-api";
 import { t } from "../i18n";
-import { desktopAuth } from "./auth-state";
-import { loadProviders, selectProviderModelPreservingBusySession } from "./workspace-providers";
+import {
+  desktopAuth,
+  onDesktopAuthLoggedOut,
+  purgeOfficialProviderFromWorkspace,
+} from "./auth-state";
+import {
+  loadProviders,
+  selectProviderModelPreservingBusySession,
+  shouldAutoSelectProvisionedModel,
+  waitForInFlightProvidersLoad,
+} from "./workspace-providers";
 import { OFFICIAL_PROVIDER_ID, workspace } from "./workspace-state";
 
 export interface OfficialAinodeConnectResult {
@@ -29,11 +38,23 @@ export const [officialAinodeState, setOfficialAinodeState] = createStore<Officia
   error: null,
 });
 
+export function resetOfficialAinodeState(): void {
+  setOfficialAinodeState({
+    loaded: false,
+    loading: false,
+    baseUrl: "",
+    models: [],
+    error: null,
+  });
+}
+
+onDesktopAuthLoggedOut(resetOfficialAinodeState);
+
 // loadOfficialAinodeModels refreshes the model catalog the signed-in Hoxi
 // account may call on the official AINode channel.
 export async function loadOfficialAinodeModels(force = false): Promise<void> {
   if (!desktopAuth.isLoggedIn) {
-    setOfficialAinodeState({ loaded: false, loading: false, baseUrl: "", models: [], error: null });
+    resetOfficialAinodeState();
     return;
   }
   if (officialAinodeState.loading) return;
@@ -41,6 +62,9 @@ export async function loadOfficialAinodeModels(force = false): Promise<void> {
   setOfficialAinodeState({ loading: true, error: null });
   try {
     const res = await hoxiAPI.fetchOfficialAinodeModels();
+    if (!res.authenticated) {
+      purgeOfficialProviderFromWorkspace();
+    }
     setOfficialAinodeState({
       loaded: true,
       loading: false,
@@ -68,7 +92,7 @@ export async function connectOfficialAinode(): Promise<OfficialAinodeConnectResu
   const firstModelID =
     res.models?.[0]?.id?.trim() ||
     Object.keys(workspace.hoxiProviders?.[pid]?.models || {})[0];
-  if (firstModelID) {
+  if (firstModelID && shouldAutoSelectProvisionedModel(pid)) {
     selectProviderModelPreservingBusySession({ providerID: pid, modelID: firstModelID });
   }
   await loadOfficialAinodeModels(true);
@@ -86,6 +110,8 @@ let officialAutoConnectInFlight = false;
 // provider in the model picker. When it already exists it only refreshes the
 // account's callable-model catalog (no config rewrite).
 export async function ensureOfficialProviderConnected(): Promise<void> {
+  if (!desktopAuth.isLoggedIn || officialAutoConnectInFlight) return;
+  await waitForInFlightProvidersLoad();
   if (!desktopAuth.isLoggedIn || officialAutoConnectInFlight) return;
   const connected =
     Boolean(workspace.hoxiProviders?.[OFFICIAL_PROVIDER_ID]) ||

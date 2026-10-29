@@ -7,7 +7,8 @@ import {
   officialAinodeState,
   setOfficialAinodeState,
 } from "../store/provider-official";
-import { OFFICIAL_PROVIDER_ID, setWorkspace } from "../store/workspace-state";
+import { loadProviders } from "../store/workspace-providers";
+import { OFFICIAL_PROVIDER_ID, setWorkspace, workspace } from "../store/workspace-state";
 import { assertEqual, describe, it } from "./test-harness";
 
 describe("official AINode account connect", () => {
@@ -119,6 +120,133 @@ describe("official AINode account connect", () => {
       hoxiAPI.connectOfficialAinodeProvider = origConnect;
       hoxiAPI.fetchOfficialAinodeModels = origModels;
       setWorkspace("hoxiProviders", {});
+    }
+  });
+
+  it("preserves user-selected model on connect/reconnect and only auto-selects when no valid model is chosen", async () => {
+    const origConnect = hoxiAPI.connectOfficialAinodeProvider;
+    const origModels = hoxiAPI.fetchOfficialAinodeModels;
+    const origGetHoxiModelsConfig = hoxiAPI.getHoxiModelsConfig;
+    const origListProviders = hoxiAPI.listProviders;
+    const prevModel = workspace.defaultAI.model;
+    const prevProviders = workspace.providers;
+    const prevHoxiProviders = workspace.hoxiProviders;
+    const prevConnected = workspace.connectedProviders;
+    try {
+      setDesktopAuth({ isLoggedIn: true });
+      hoxiAPI.connectOfficialAinodeProvider = async () => ({
+        authenticated: true,
+        providerId: OFFICIAL_PROVIDER_ID,
+        baseUrl: "https://api.ainode.run/v1",
+        modelCount: 1,
+        firstModelId: "gpt-5.4",
+        models: [{ id: "gpt-5.4", name: "GPT-5.4", inputPointsPerM: 25000, outputPointsPerM: 100000, perCallPoints: 0 }],
+      });
+      hoxiAPI.fetchOfficialAinodeModels = async () => ({
+        authenticated: true,
+        gatewayAvailable: true,
+        baseUrl: "https://api.ainode.run/v1",
+        models: [{ id: "gpt-5.4", name: "GPT-5.4", inputPointsPerM: 25000, outputPointsPerM: 100000, perCallPoints: 0 }],
+      });
+      hoxiAPI.getHoxiModelsConfig = async () => ({
+        hoxiProviders: {
+          anthropic: { name: "Anthropic", models: { "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" } } },
+          [OFFICIAL_PROVIDER_ID]: { name: "Hoxi Official", models: { "gpt-5.4": { name: "GPT-5.4" } } },
+        },
+        openCodeProviders: [],
+        configPath: ".hoxi/models.json",
+      });
+      hoxiAPI.listProviders = async () => ({
+        all: [
+          {
+            id: "anthropic",
+            name: "Anthropic",
+            models: { "claude-sonnet-4-6": { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" } } as Record<string, { id: string; name: string }>,
+          },
+          {
+            id: OFFICIAL_PROVIDER_ID,
+            name: "Hoxi Official",
+            models: { "gpt-5.4": { id: "gpt-5.4", name: "GPT-5.4" } } as Record<string, { id: string; name: string }>,
+          },
+        ],
+        connected: ["anthropic", OFFICIAL_PROVIDER_ID],
+        default: {},
+      });
+
+      // Case 1: User already has a valid selected model -> must NOT overwrite it
+      setWorkspace("defaultAI", "model", { providerID: "anthropic", modelID: "claude-sonnet-4-6" });
+      await connectOfficialAinode();
+      assertEqual(workspace.selectedModel?.providerID, "anthropic");
+      assertEqual(workspace.selectedModel?.modelID, "claude-sonnet-4-6");
+
+      // Case 2: No model is selected -> auto-selects firstModelId from official provider
+      setWorkspace("defaultAI", "model", null);
+      await connectOfficialAinode();
+      assertEqual(workspace.selectedModel?.providerID, OFFICIAL_PROVIDER_ID);
+      assertEqual(workspace.selectedModel?.modelID, "gpt-5.4");
+    } finally {
+      hoxiAPI.connectOfficialAinodeProvider = origConnect;
+      hoxiAPI.fetchOfficialAinodeModels = origModels;
+      hoxiAPI.getHoxiModelsConfig = origGetHoxiModelsConfig;
+      hoxiAPI.listProviders = origListProviders;
+      setWorkspace({
+        providers: prevProviders,
+        hoxiProviders: prevHoxiProviders,
+        connectedProviders: prevConnected,
+      });
+      setWorkspace("defaultAI", "model", prevModel);
+    }
+  });
+
+  it("waits for in-flight loadProviders before deciding whether to provision official provider", async () => {
+    const origConnect = hoxiAPI.connectOfficialAinodeProvider;
+    const origModels = hoxiAPI.fetchOfficialAinodeModels;
+    const origGetHoxiModelsConfig = hoxiAPI.getHoxiModelsConfig;
+    const origListProviders = hoxiAPI.listProviders;
+    const prevHoxiProviders = workspace.hoxiProviders;
+    let connectCalled = false;
+    let resolveProviders!: () => void;
+    try {
+      setDesktopAuth({ isLoggedIn: true });
+      setWorkspace("hoxiProviders", {});
+      hoxiAPI.getHoxiModelsConfig = () =>
+        new Promise((resolve) => {
+          resolveProviders = () =>
+            resolve({
+              hoxiProviders: {
+                [OFFICIAL_PROVIDER_ID]: {
+                  name: "Hoxi Official",
+                  models: { "gpt-5.4": { name: "GPT-5.4" } },
+                },
+              },
+              openCodeProviders: [],
+              configPath: ".hoxi/models.json",
+            });
+        });
+      hoxiAPI.listProviders = async () => ({ all: [], connected: [OFFICIAL_PROVIDER_ID], default: {} });
+      hoxiAPI.connectOfficialAinodeProvider = async () => {
+        connectCalled = true;
+        return { authenticated: true, providerId: OFFICIAL_PROVIDER_ID, baseUrl: "", modelCount: 0, models: [] };
+      };
+      hoxiAPI.fetchOfficialAinodeModels = async () => ({
+        authenticated: true,
+        gatewayAvailable: true,
+        baseUrl: "https://api.ainode.run/v1",
+        models: [{ id: "gpt-5.4", name: "GPT-5.4", inputPointsPerM: 25000, outputPointsPerM: 100000, perCallPoints: 0 }],
+      });
+
+      const inFlightLoad = loadProviders();
+      const ensurePromise = ensureOfficialProviderConnected();
+      resolveProviders();
+      await Promise.all([inFlightLoad, ensurePromise]);
+
+      assertEqual(connectCalled, false);
+    } finally {
+      hoxiAPI.connectOfficialAinodeProvider = origConnect;
+      hoxiAPI.fetchOfficialAinodeModels = origModels;
+      hoxiAPI.getHoxiModelsConfig = origGetHoxiModelsConfig;
+      hoxiAPI.listProviders = origListProviders;
+      setWorkspace("hoxiProviders", prevHoxiProviders);
     }
   });
 });

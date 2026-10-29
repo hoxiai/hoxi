@@ -98,6 +98,7 @@ func (s *Service) handleOfficialModels(w http.ResponseWriter, r *http.Request) {
 		if auth != nil {
 			auth.InvalidateDeviceToken(token, site)
 		}
+		s.ClearOfficialProvider()
 		writeJSON(w, http.StatusOK, officialModelsResponse{Authenticated: false, Models: []officialModelView{}})
 		return
 	}
@@ -139,35 +140,31 @@ func (s *Service) handleOfficialConnect(w http.ResponseWriter, r *http.Request) 
 		if auth != nil {
 			auth.InvalidateDeviceToken(token, site)
 		}
+		s.ClearOfficialProvider()
 		writeJSONError(w, http.StatusUnauthorized, "not logged in")
 		return
 	}
 
-	apiKey := s.fetchOrMintSiteAPIKey(r.Context(), site, token)
+	apiKey, keyStatus := s.fetchOrMintOfficialMemberKey(r.Context(), site, token)
+	if keyStatus == http.StatusUnauthorized {
+		if auth != nil {
+			auth.InvalidateDeviceToken(token, site)
+		}
+		s.ClearOfficialProvider()
+		writeJSONError(w, http.StatusUnauthorized, "not logged in")
+		return
+	}
 	if apiKey == "" {
 		writeJSONError(w, http.StatusBadGateway, "official channel credential unavailable")
 		return
 	}
 
-	offlineModels, _ := parseOfficialModels(payload)
-	engineModels := s.fetchSiteModels(r.Context(), site, baseURL, token, apiKey)
-	persisted, persistErr := s.persistMCPOAuthProvisioning(
-		&mcpOAuthSession{siteOrigin: site, providerID: officialAinodeProviderID, providerName: officialAinodeProviderName},
-		"",
-		token,
-		baseURL,
-		apiKey,
-		engineModels,
-	)
-	if persistErr != nil {
+	models, _ := parseOfficialModels(payload)
+	if persistErr := s.persistOfficialProvider(baseURL, apiKey, models); persistErr != nil {
 		writeJSONError(w, http.StatusInternalServerError, persistErr.Error())
 		return
 	}
 
-	models := offlineModels
-	if len(models) == 0 {
-		models = modelItemsToViews(persisted)
-	}
 	writeJSON(w, http.StatusOK, officialConnectResponse{
 		Authenticated: true,
 		ProviderID:    officialAinodeProviderID,
@@ -175,6 +172,156 @@ func (s *Service) handleOfficialConnect(w http.ResponseWriter, r *http.Request) 
 		ModelCount:    len(models),
 		Models:        models,
 	})
+}
+
+// ClearOfficialProvider removes persisted hoxi-official credentials and models
+// from ~/.hoxi/models.json and engine auth.json when the desktop account signs
+// out or its device token is revoked.
+func (s *Service) ClearOfficialProvider() {
+	_ = s.removeEngineProviderAuth(officialAinodeProviderID)
+
+	s.configPersistMu.Lock()
+	doc := s.loadHoxiConfigDoc()
+	hoxiMap, _ := doc["provider"].(map[string]interface{})
+	removed := false
+	if hoxiMap != nil {
+		if _, exists := hoxiMap[officialAinodeProviderID]; exists {
+			delete(hoxiMap, officialAinodeProviderID)
+			doc["provider"] = hoxiMap
+			removed = true
+		}
+	}
+	if removed {
+		_ = s.persistHoxiConfigFiles(doc)
+	}
+	s.configPersistMu.Unlock()
+
+	if removed {
+		s.reloadOpenCodeGlobalConfig()
+	}
+}
+
+func (s *Service) fetchOrMintOfficialMemberKey(ctx context.Context, site, token string) (string, int) {
+	memberKeysURL := site + "/api/hoxi/member/keys"
+	status, memberResp, err := s.fetchOfficialSiteJSON(ctx, http.MethodGet, memberKeysURL, token, nil)
+	if err != nil {
+		return "", 0
+	}
+	if status == http.StatusUnauthorized {
+		return "", http.StatusUnauthorized
+	}
+	if status < 200 || status >= 300 {
+		return "", status
+	}
+	if key := extractRawAPIKeyFromPayload(memberResp); key != "" {
+		return key, http.StatusOK
+	}
+	if keyID := extractFirstActiveKeyID(memberResp); keyID > 0 {
+		st, revealResp, revErr := s.fetchOfficialSiteJSON(ctx, http.MethodPost, memberKeysURL, token, map[string]any{"action": "reveal", "id": keyID})
+		if revErr == nil && st == http.StatusUnauthorized {
+			return "", http.StatusUnauthorized
+		}
+		if revErr == nil && st >= 200 && st < 300 {
+			if key := extractRawAPIKeyFromPayload(revealResp); key != "" {
+				return key, http.StatusOK
+			}
+		}
+	}
+	st, createResp, createErr := s.fetchOfficialSiteJSON(ctx, http.MethodPost, memberKeysURL, token, map[string]any{"name": "Hoxi Desktop"})
+	if createErr == nil && st == http.StatusUnauthorized {
+		return "", http.StatusUnauthorized
+	}
+	if createErr == nil && st >= 200 && st < 300 {
+		if key := extractRawAPIKeyFromPayload(createResp); key != "" {
+			return key, http.StatusOK
+		}
+	}
+	return "", status
+}
+
+func (s *Service) persistOfficialProvider(baseURL, apiKey string, models []officialModelView) error {
+	resolvedBaseURL := strings.TrimSpace(baseURL)
+	if resolvedBaseURL == "" {
+		resolvedBaseURL = officialAinodeDefaultBaseURL
+	}
+	resolvedKey := strings.TrimSpace(apiKey)
+	if resolvedKey != "" {
+		s.persistEngineProviderAuth(officialAinodeProviderID, resolvedKey)
+	}
+
+	s.configPersistMu.Lock()
+	doc := s.loadHoxiConfigDoc()
+	hoxiMap, _ := doc["provider"].(map[string]interface{})
+	if hoxiMap == nil {
+		hoxiMap = map[string]interface{}{}
+	}
+	existingProv, _ := hoxiMap[officialAinodeProviderID].(map[string]interface{})
+	nextProv := map[string]interface{}{}
+	for k, v := range existingProv {
+		nextProv[k] = v
+	}
+	nextProv["name"] = officialAinodeProviderName
+
+	npmPkg, _ := existingProv["npm"].(string)
+	if strings.TrimSpace(npmPkg) == "" {
+		npmPkg = "@ai-sdk/openai-compatible"
+	}
+	nextProv["npm"] = npmPkg
+
+	nextOpts := map[string]interface{}{}
+	if existingOpts, ok := existingProv["options"].(map[string]interface{}); ok {
+		for k, v := range existingOpts {
+			nextOpts[k] = v
+		}
+	}
+	nextOpts["baseURL"] = resolvedBaseURL
+	if resolvedKey != "" {
+		nextOpts["apiKey"] = resolvedKey
+	}
+	nextProv["options"] = nextOpts
+
+	modelsMap := make(map[string]interface{}, len(models))
+	for _, m := range models {
+		mid := strings.TrimSpace(m.ID)
+		if mid == "" {
+			continue
+		}
+		mName := firstNonEmptyString(m.Name, mid)
+		isChat := !isNonChatUtilityModel(mid)
+		inputs := []interface{}{"text"}
+		if isChat {
+			inputs = []interface{}{"text", "image"}
+		}
+		mEntry := map[string]interface{}{
+			"name":       mName,
+			"attachment": isChat,
+			"reasoning":  isChat,
+			"modalities": map[string]interface{}{
+				"input":  inputs,
+				"output": []interface{}{"text"},
+			},
+		}
+		if m.InputPointsPerM > 0 || m.OutputPointsPerM > 0 {
+			mEntry["cost"] = map[string]interface{}{
+				"input":  round4(m.InputPointsPerM / officialPointsPerUsd),
+				"output": round4(m.OutputPointsPerM / officialPointsPerUsd),
+			}
+		}
+		modelsMap[mid] = mEntry
+	}
+	nextProv["models"] = modelsMap
+
+	s.normalizeAndStoreMultiKeys(officialAinodeProviderID, nextProv)
+	hoxiMap[officialAinodeProviderID] = nextProv
+	doc["provider"] = hoxiMap
+
+	err := s.persistHoxiConfigFiles(doc)
+	s.configPersistMu.Unlock()
+	if err != nil {
+		return err
+	}
+	s.reloadOpenCodeGlobalConfig()
+	return nil
 }
 
 func (s *Service) resolveOfficialGateway(ctx context.Context, site, token string) (string, map[string]any, int, error) {
@@ -270,22 +417,27 @@ func round4(v float64) float64 {
 	return math.Round(v*10_000) / 10_000
 }
 
-func modelItemsToViews(items []mcpOAuthModelItem) []officialModelView {
-	views := make([]officialModelView, 0, len(items))
-	for _, m := range items {
-		id := strings.TrimSpace(m.ID)
-		if id == "" {
+func extractFirstActiveKeyID(payload map[string]any) int64 {
+	for _, listField := range []string{"keys", "data", "items"} {
+		list, ok := payload[listField].([]any)
+		if !ok {
 			continue
 		}
-		views = append(views, officialModelView{
-			ID:               id,
-			Name:             firstNonEmptyString(m.Name, id),
-			BillingMode:      "token",
-			InputPointsPerM:  round4(m.InputPrice * officialPointsPerUsd),
-			OutputPointsPerM: round4(m.OutputPrice * officialPointsPerUsd),
-		})
+		for _, raw := range list {
+			item, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			status := strings.ToLower(firstNonEmptyString(item["status"]))
+			if status != "" && status != "active" && status != "enabled" {
+				continue
+			}
+			if id := int64(toFloat64(item["id"])); id > 0 {
+				return id
+			}
+		}
 	}
-	return views
+	return 0
 }
 
 func (s *Service) fetchOfficialSiteJSON(ctx context.Context, method, targetURL, token string, body any) (int, map[string]any, error) {

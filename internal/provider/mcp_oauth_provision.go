@@ -219,28 +219,6 @@ func (g *Service) fetchOrMintSiteAPIKey(ctx context.Context, siteOrigin, accessT
 			}
 		}
 	}
-
-	memberKeysURL := siteOrigin + "/api/hoxi/member/keys"
-	var memberResp map[string]any
-	if g.fetchMCPAuthedJSON(ctx, http.MethodGet, memberKeysURL, accessToken, nil, &memberResp) == nil {
-		if key := extractRawAPIKeyFromPayload(memberResp); key != "" {
-			return key
-		}
-		if keyID := extractFirstActiveKeyID(memberResp); keyID > 0 {
-			var revealResp map[string]any
-			if g.fetchMCPAuthedJSON(ctx, http.MethodPost, memberKeysURL, accessToken, map[string]any{"action": "reveal", "id": keyID}, &revealResp) == nil {
-				if key := extractRawAPIKeyFromPayload(revealResp); key != "" {
-					return key
-				}
-			}
-		}
-		var createResp map[string]any
-		if g.fetchMCPAuthedJSON(ctx, http.MethodPost, memberKeysURL, accessToken, map[string]any{"name": "Hoxi Desktop"}, &createResp) == nil {
-			if key := extractRawAPIKeyFromPayload(createResp); key != "" {
-				return key
-			}
-		}
-	}
 	return ""
 }
 
@@ -248,7 +226,6 @@ func (g *Service) fetchSiteModels(ctx context.Context, siteOrigin, baseURL, acce
 	for _, endpoint := range []string{
 		siteOrigin + "/api/ainode/public-models",
 		siteOrigin + "/api/proxy/external?path=" + url.QueryEscape("/api/site/models/groups"),
-		siteOrigin + "/api/hoxi/member/models",
 	} {
 		var payload map[string]any
 		if g.fetchMCPAuthedJSON(ctx, http.MethodGet, endpoint, accessToken, nil, &payload) == nil {
@@ -399,29 +376,6 @@ func extractRawAPIKeyFromSlice(items []any) string {
 		}
 	}
 	return ""
-}
-
-func extractFirstActiveKeyID(payload map[string]any) int64 {
-	for _, listField := range []string{"keys", "data", "items"} {
-		list, ok := payload[listField].([]any)
-		if !ok {
-			continue
-		}
-		for _, raw := range list {
-			item, ok := raw.(map[string]any)
-			if !ok {
-				continue
-			}
-			status := strings.ToLower(firstNonEmptyString(item["status"]))
-			if status != "" && status != "active" && status != "enabled" {
-				continue
-			}
-			if id := int64(toFloat64(item["id"])); id > 0 {
-				return id
-			}
-		}
-	}
-	return 0
 }
 
 func (g *Service) fetchMCPAuthedJSON(ctx context.Context, method, targetURL, accessToken string, reqBody any, out any) error {

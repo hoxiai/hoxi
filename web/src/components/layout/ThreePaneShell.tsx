@@ -136,7 +136,7 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
       }
       if ((ev.metaKey || ev.ctrlKey) && ev.key === ",") {
         ev.preventDefault();
-        if (appSettings.modalOpen || workspace.providerModalOpen) {
+        if (appSettings.modalOpen) {
           closeSettingsModal();
         } else {
           openSettingsModal("general");
@@ -151,7 +151,7 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
       if (
         ev.key === "Escape" &&
         !ev.defaultPrevented &&
-        (appSettings.modalOpen || workspace.providerModalOpen) &&
+        appSettings.modalOpen &&
         !isUpdateModalOpen() &&
         !leaderboardState.modalOpen &&
         !workspace.handoffModalOpen &&
@@ -405,7 +405,7 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
         <Show when={leaderboardState.modalOpen}>
           <ModelLeaderboardModal />
         </Show>
-        <Show when={appSettings.modalOpen || workspace.providerModalOpen}>
+        <Show when={appSettings.modalOpen}>
           <SettingsModal />
         </Show>
       </Suspense>

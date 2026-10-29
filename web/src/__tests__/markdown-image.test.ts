@@ -1,3 +1,4 @@
+import { resolveActiveHeadingSlug } from "../components/inspector/MarkdownDocumentReader";
 import {
   advanceStreamingSlice,
   extractMarkdownHeadings,
@@ -374,5 +375,23 @@ describe("markdown document reader helpers", () => {
         inspectorOpen: prevOpen,
       });
     }
+  });
+
+  it("resolves active TOC heading across normal scroll, bottom boundary, and pinned click target", () => {
+    const items = [
+      { slug: "intro", offsetTop: -120 },
+      { slug: "middle", offsetTop: 40 },
+      { slug: "short-tail-1", offsetTop: 180 },
+      { slug: "short-tail-2", offsetTop: 260 },
+    ];
+
+    // Normal scroll picks the last heading above the 72px threshold
+    assertEqual(resolveActiveHeadingSlug(items, false), "middle");
+
+    // Scrolled to bottom without a pinned click target highlights the last heading
+    assertEqual(resolveActiveHeadingSlug(items, true), "short-tail-2");
+
+    // Scrolled to bottom after clicking a short trailing section keeps that clicked section highlighted
+    assertEqual(resolveActiveHeadingSlug(items, true, "short-tail-1", 400), "short-tail-1");
   });
 });

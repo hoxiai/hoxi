@@ -1,9 +1,11 @@
 // web/src/store/auth-state.ts
 import { createStore } from "solid-js/store";
+import { t } from "../i18n";
 import { authAPI, type AuthStatusSnapshot, type AuthUserProfile } from "../services/api";
 import { openExternalBrowserURL } from "../services/desktop-events";
 import type { MemberCheckinStatus, PortalTarget } from "../services/platform-api";
 import { setAppSettings, signOutUserAccount, updateAppSetting } from "./settings";
+import { OFFICIAL_PROVIDER_ID, setWorkspace, workspace } from "./workspace-state";
 
 export interface DesktopMemberState {
   loaded: boolean;
@@ -85,6 +87,113 @@ function isUnauthorizedError(err: unknown): boolean {
   return /^HTTP 401\b/i.test(msg) || msg.toLowerCase().includes("not logged in");
 }
 
+const logoutListeners = new Set<() => void>();
+
+export function onDesktopAuthLoggedOut(fn: () => void): () => void {
+  logoutListeners.add(fn);
+  return () => logoutListeners.delete(fn);
+}
+
+export function purgeOfficialProviderFromWorkspace() {
+  if (workspace.hoxiProviders && OFFICIAL_PROVIDER_ID in workspace.hoxiProviders) {
+    setWorkspace("hoxiProviders", OFFICIAL_PROVIDER_ID, undefined as any);
+  }
+  if (workspace.globalConfig?.provider && OFFICIAL_PROVIDER_ID in workspace.globalConfig.provider) {
+    const nextProv = { ...workspace.globalConfig.provider };
+    delete nextProv[OFFICIAL_PROVIDER_ID];
+    setWorkspace("globalConfig", { ...workspace.globalConfig, provider: nextProv });
+  }
+  if (workspace.connectedProviders.includes(OFFICIAL_PROVIDER_ID)) {
+    setWorkspace(
+      "connectedProviders",
+      workspace.connectedProviders.filter((id) => id !== OFFICIAL_PROVIDER_ID)
+    );
+  }
+  if (workspace.providers.some((p) => p.id === OFFICIAL_PROVIDER_ID)) {
+    setWorkspace(
+      "providers",
+      workspace.providers.filter((p) => p.id !== OFFICIAL_PROVIDER_ID)
+    );
+  }
+  if (workspace.defaultAI.model?.providerID === OFFICIAL_PROVIDER_ID) {
+    const fallbackProv = workspace.providers.find(
+      (p) => p.id !== OFFICIAL_PROVIDER_ID && Object.keys(p.models || {}).length > 0
+    );
+    const fallbackModelID = fallbackProv ? Object.keys(fallbackProv.models || {})[0] : undefined;
+    setWorkspace(
+      "defaultAI",
+      "model",
+      fallbackProv && fallbackModelID
+        ? { providerID: fallbackProv.id, modelID: fallbackModelID }
+        : null
+    );
+  }
+  for (const [sid, ai] of Object.entries(workspace.aiBySession)) {
+    if (ai?.model?.providerID === OFFICIAL_PROVIDER_ID) {
+      setWorkspace("aiBySession", sid, "model", workspace.defaultAI.model);
+    }
+  }
+  for (const fn of logoutListeners) {
+    fn();
+  }
+}
+
+export function formatMemberPoints(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return "0";
+  return value.toLocaleString(undefined, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  });
+}
+
+export function formatMemberPointsRange(
+  range: { min: number; max: number } | undefined,
+  fallback: number
+): string {
+  const min = Number(range?.min || 0);
+  const max = Number(range?.max || 0);
+  if (min > 0 && max > min) {
+    return `${formatMemberPoints(min)}~${formatMemberPoints(max)}`;
+  }
+  return formatMemberPoints(max > 0 ? max : fallback);
+}
+
+export function desktopUserDisplayName(): string {
+  return (desktopAuth.user?.nickname || desktopAuth.user?.username || "Developer").trim();
+}
+
+export function desktopUserEmail(): string {
+  return desktopAuth.user?.email || "";
+}
+
+export function desktopUserAvatar(): string {
+  return desktopAuth.user?.avatar || desktopAuth.user?.avatarUrl || "";
+}
+
+export function desktopUserPlan(): string {
+  return desktopAuth.user?.plan || t("settings.accountPlanBadge");
+}
+
+export function desktopUserInitial(): string {
+  const name = desktopUserDisplayName();
+  return name ? name.charAt(0).toUpperCase() : "U";
+}
+
+export function desktopCheckinSubtitle(): string {
+  const m = desktopAuth.member;
+  if (m.nextMilestone && m.nextMilestone.day > 0) {
+    return t("settings.accountCheckinMilestoneDesc", {
+      streak: m.streak,
+      day: m.nextMilestone.day,
+      bonus: m.nextMilestone.points,
+    });
+  }
+  return t("settings.accountCheckinStreakDesc", {
+    streak: m.streak,
+    next: formatMemberPointsRange(m.nextPointsRange, m.nextPoints),
+  });
+}
+
 function resetLoggedOutState() {
   stopPolling();
   logoutGeneration++;
@@ -98,6 +207,7 @@ function resetLoggedOutState() {
     member: { ...DEFAULT_MEMBER_STATE },
   });
   signOutUserAccount();
+  purgeOfficialProviderFromWorkspace();
 }
 
 function applyMemberStatus(status: MemberCheckinStatus) {
@@ -231,6 +341,7 @@ export async function refreshAuthStatus(): Promise<AuthStatusSnapshot | null> {
       memberRequestSeq++;
       setDesktopAuth("member", { ...DEFAULT_MEMBER_STATE });
       signOutUserAccount();
+      purgeOfficialProviderFromWorkspace();
     }
 
     return snap;

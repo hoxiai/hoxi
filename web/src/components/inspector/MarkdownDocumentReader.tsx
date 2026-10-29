@@ -16,16 +16,53 @@ export interface MarkdownDocumentReaderProps {
   scrollContainer?: () => HTMLElement | undefined;
 }
 
+export function resolveActiveHeadingSlug(
+  headings: ReadonlyArray<{ slug: string; offsetTop: number }>,
+  atBottom: boolean,
+  pinnedSlug?: string | null,
+  thresholdPx = 72
+): string {
+  if (headings.length === 0) return "";
+  if (pinnedSlug) {
+    const pinned = headings.find((h) => h.slug === pinnedSlug);
+    if (pinned && (pinned.offsetTop <= thresholdPx || atBottom)) {
+      return pinned.slug;
+    }
+  }
+  if (atBottom) {
+    return headings[headings.length - 1].slug;
+  }
+  let current = headings[0].slug;
+  for (const h of headings) {
+    if (h.offsetTop <= thresholdPx) {
+      current = h.slug;
+    } else {
+      break;
+    }
+  }
+  return current;
+}
+
 export default function MarkdownDocumentReader(props: MarkdownDocumentReaderProps) {
   let rootRef: HTMLDivElement | undefined;
+  let jumpRafId = 0;
+  let pinnedSlug: string | null = null;
   const headings = createMemo<MarkdownHeadingItem[]>(
     () => props.headings ?? extractMarkdownHeadings(props.content)
   );
   const [activeSlug, setActiveSlug] = createSignal<string>("");
 
+  onCleanup(() => {
+    if (jumpRafId && typeof cancelAnimationFrame === "function") {
+      cancelAnimationFrame(jumpRafId);
+      jumpRafId = 0;
+    }
+  });
+
   createEffect(() => {
     const list = headings();
     if (list.length === 0) {
+      pinnedSlug = null;
       setActiveSlug("");
       return;
     }
@@ -47,16 +84,21 @@ export default function MarkdownDocumentReader(props: MarkdownDocumentReaderProp
       const nodes = Array.from(rootRef.querySelectorAll<HTMLElement>("[data-heading-slug]"));
       if (nodes.length === 0) return;
       const containerTop = container.getBoundingClientRect().top;
-      let current = nodes[0].dataset.headingSlug || "";
-      for (const node of nodes) {
-        const offset = node.getBoundingClientRect().top - containerTop;
-        if (offset <= 72) {
-          current = node.dataset.headingSlug || current;
-        } else {
-          break;
+      const atBottom =
+        container.scrollHeight > container.clientHeight &&
+        Math.ceil(container.scrollTop + container.clientHeight) >= container.scrollHeight - 4;
+      const measured = nodes.map((node) => ({
+        slug: node.dataset.headingSlug || "",
+        offsetTop: node.getBoundingClientRect().top - containerTop,
+      }));
+      if (pinnedSlug && !atBottom) {
+        const pinned = measured.find((h) => h.slug === pinnedSlug);
+        if (!pinned || pinned.offsetTop <= 72) {
+          pinnedSlug = null;
         }
       }
-      if (current) setActiveSlug(current);
+      const next = resolveActiveHeadingSlug(measured, atBottom, pinnedSlug);
+      if (next) setActiveSlug(next);
     };
 
     updateActiveHeading();
@@ -71,11 +113,24 @@ export default function MarkdownDocumentReader(props: MarkdownDocumentReaderProp
   });
 
   const handleJumpToHeading = (slug: string) => {
+    pinnedSlug = slug;
     setActiveSlug(slug);
-    const target = rootRef?.querySelector<HTMLElement>(`[data-heading-slug="${CSS.escape(slug)}"]`);
-    target?.scrollIntoView({ behavior: "smooth", block: "start" });
-    if (!workspace.inspectorMaximized) {
+    const shouldCloseFloatingOutline = !workspace.inspectorMaximized && props.outlineOpen;
+    if (shouldCloseFloatingOutline) {
       props.onToggleOutline(false);
+    }
+    const scrollToTarget = () => {
+      jumpRafId = 0;
+      const target = rootRef?.querySelector<HTMLElement>(`[data-heading-slug="${CSS.escape(slug)}"]`);
+      target?.scrollIntoView({ behavior: "smooth", block: "start" });
+    };
+    if (shouldCloseFloatingOutline && typeof requestAnimationFrame === "function") {
+      if (jumpRafId && typeof cancelAnimationFrame === "function") {
+        cancelAnimationFrame(jumpRafId);
+      }
+      jumpRafId = requestAnimationFrame(scrollToTarget);
+    } else {
+      scrollToTarget();
     }
   };
 

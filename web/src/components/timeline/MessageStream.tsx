@@ -316,7 +316,6 @@ export default function MessageStream(props: { hidden?: boolean }) {
         !searchOpen() &&
         !imageViewerOpen() &&
         !appSettings.modalOpen &&
-        !workspace.providerModalOpen &&
         !workspace.arenaModalOpen &&
         (ev.key === "Escape" || ((ev.metaKey || ev.ctrlKey) && ev.key === "."))
       ) {

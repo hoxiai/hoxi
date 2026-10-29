@@ -18,6 +18,14 @@ import {
 import {
   appSettings,
   desktopAuth,
+  desktopCheckinSubtitle,
+  desktopUserAvatar,
+  desktopUserDisplayName,
+  desktopUserEmail,
+  desktopUserInitial,
+  desktopUserPlan,
+  formatMemberPoints,
+  formatMemberPointsRange,
   logoutDesktopAccount,
   openDesktopPortalPage,
   openProviderModal,
@@ -31,15 +39,6 @@ import {
 import { Icon } from "../icons";
 import { locale, t, toggleLocale } from "../../i18n";
 import AccountLoginForm from "./AccountLoginForm";
-
-function formatPointsBadge(points: number): string {
-  if (!Number.isFinite(points) || points <= 0) return "0";
-  if (Number.isInteger(points)) return points.toLocaleString();
-  return points.toLocaleString(undefined, {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 2,
-  });
-}
 
 export default function UserAccountMenu() {
   const [menuOpen, setMenuOpen] = createSignal(false);
@@ -71,16 +70,6 @@ export default function UserAccountMenu() {
   });
 
   const isLoggedIn = () => desktopAuth.isLoggedIn;
-  const userName = () =>
-    (desktopAuth.user?.nickname || desktopAuth.user?.username || "Developer").trim();
-  const userEmail = () => desktopAuth.user?.email || "";
-  const userAvatar = () => desktopAuth.user?.avatar || desktopAuth.user?.avatarUrl || "";
-  const userPlan = () => desktopAuth.user?.plan || t("settings.accountPlanBadge");
-
-  const userInitial = () => {
-    const name = userName();
-    return name ? name.charAt(0).toUpperCase() : "U";
-  };
 
   const toggleMenu = () => {
     const next = !menuOpen();
@@ -111,38 +100,6 @@ export default function UserAccountMenu() {
 
   const currentLangLabel = () =>
     locale() === "zh-CN" ? t("settings.langZhLabel") : t("settings.langEnLabel");
-
-  const formatPointsNum = (n: number): string => {
-    const safe = Math.max(0, Math.trunc(Number(n || 0)));
-    return safe.toLocaleString("en-US");
-  };
-
-  const formatRangeLabel = (
-    range: { min: number; max: number } | undefined,
-    fallback: number,
-  ): string => {
-    const min = Number(range?.min || 0);
-    const max = Number(range?.max || 0);
-    if (min > 0 && max > min) {
-      return `${formatPointsNum(min)}~${formatPointsNum(max)}`;
-    }
-    return formatPointsNum(max > 0 ? max : fallback);
-  };
-
-  const checkinSubtitle = () => {
-    const m = desktopAuth.member;
-    if (m.nextMilestone && m.nextMilestone.day > 0) {
-      return t("settings.accountCheckinMilestoneDesc", {
-        streak: m.streak,
-        day: m.nextMilestone.day,
-        bonus: m.nextMilestone.points,
-      });
-    }
-    return t("settings.accountCheckinStreakDesc", {
-      streak: m.streak,
-      next: formatRangeLabel(m.nextPointsRange, m.nextPoints),
-    });
-  };
 
   const handleSignOut = async () => {
     if (signingOut()) return;
@@ -180,23 +137,23 @@ export default function UserAccountMenu() {
                 <div class="flex items-center justify-between gap-2">
                   <div class="flex items-center gap-2 min-w-0 flex-1">
                     <div class="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--accent-primary)] text-[12px] font-bold text-[var(--accent-foreground)] shadow-2xs overflow-hidden">
-                      <Show when={userAvatar()} fallback={userInitial()}>
-                        <img src={userAvatar()} alt="" class="h-full w-full object-cover" />
+                      <Show when={desktopUserAvatar()} fallback={desktopUserInitial()}>
+                        <img src={desktopUserAvatar()} alt="" class="h-full w-full object-cover" />
                       </Show>
                       <span class="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-[var(--bg-panel)] bg-emerald-500" />
                     </div>
                     <div class="min-w-0 flex-1">
                       <div class="flex items-center gap-1.5">
                         <span class="truncate text-[13px] font-semibold text-[var(--text-primary)]">
-                          {userName()}
+                          {desktopUserDisplayName()}
                         </span>
                         <span class="shrink-0 rounded-md bg-[var(--bg-inset)] border border-[var(--border-subtle)] px-1.5 py-0.5 text-[10.5px] font-semibold text-[var(--text-secondary)]">
-                          {userPlan()}
+                          {desktopUserPlan()}
                         </span>
                       </div>
-                      <Show when={userEmail()}>
+                      <Show when={desktopUserEmail()}>
                         <div class="truncate font-mono text-[10.5px] text-[var(--text-muted)] leading-tight mt-0.5">
-                          {userEmail()}
+                          {desktopUserEmail()}
                         </div>
                       </Show>
                     </div>
@@ -213,7 +170,7 @@ export default function UserAccountMenu() {
                     class="shrink-0 inline-flex items-center gap-1 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-inset)]/80 hover:bg-[var(--bg-hover)] px-2.5 py-1 text-[12px] font-mono font-semibold tabular-nums text-[var(--text-primary)] transition-colors cursor-pointer"
                   >
                     <Sparkles size={12} class="text-amber-500 shrink-0" />
-                    <span>{formatPointsBadge(desktopAuth.member.points)}</span>
+                    <span>{formatMemberPoints(desktopAuth.member.points)}</span>
                   </button>
                 </div>
 
@@ -223,17 +180,17 @@ export default function UserAccountMenu() {
                     <div class="text-[13px] font-bold text-[var(--text-primary)] leading-tight truncate">
                       {desktopAuth.member.checkedInToday
                         ? t("settings.accountCheckedInTitle", {
-                            points: formatPointsNum(desktopAuth.member.todayPoints),
+                            points: formatMemberPoints(desktopAuth.member.todayPoints),
                           })
                         : t("settings.accountCheckinTitle", {
-                            points: formatRangeLabel(
+                            points: formatMemberPointsRange(
                               desktopAuth.member.todayPointsRange,
                               desktopAuth.member.todayPoints,
                             ),
                           })}
                     </div>
                     <div class="text-[11px] text-[var(--text-muted)] leading-tight mt-1 truncate">
-                      {checkinSubtitle()}
+                      {desktopCheckinSubtitle()}
                     </div>
                   </div>
 
@@ -445,23 +402,23 @@ export default function UserAccountMenu() {
               }
             >
               <div class="relative flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--accent-primary)] text-[12px] font-bold text-[var(--accent-foreground)] shadow-2xs overflow-hidden">
-                <Show when={userAvatar()} fallback={userInitial()}>
-                  <img src={userAvatar()} alt="" class="h-full w-full object-cover" />
+                <Show when={desktopUserAvatar()} fallback={desktopUserInitial()}>
+                  <img src={desktopUserAvatar()} alt="" class="h-full w-full object-cover" />
                 </Show>
                 <span class="absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border border-[var(--bg-panel)] bg-emerald-500" />
               </div>
               <div class="min-w-0 flex-1 flex items-center justify-between gap-1.5">
                 <div class="flex items-center gap-1.5 min-w-0">
                   <span class="truncate text-[13px] font-semibold text-[var(--text-primary)]">
-                    {userName()}
+                    {desktopUserDisplayName()}
                   </span>
                   <span class="shrink-0 rounded-md px-1.5 py-0.2 text-[10.5px] font-semibold bg-[var(--bg-inset)] border border-[var(--border-subtle)] text-[var(--text-secondary)]">
-                    {userPlan()}
+                    {desktopUserPlan()}
                   </span>
                 </div>
                 <span class="shrink-0 inline-flex items-center gap-1 rounded-full bg-[var(--bg-inset)] border border-[var(--border-subtle)]/70 px-1.5 py-0.5 text-[10.5px] font-mono font-semibold tabular-nums text-[var(--text-secondary)]">
                   <Sparkles size={10} class="text-amber-500 shrink-0" />
-                  <span>{formatPointsBadge(desktopAuth.member.points)}</span>
+                  <span>{formatMemberPoints(desktopAuth.member.points)}</span>
                 </span>
               </div>
             </Show>

@@ -2,11 +2,19 @@ import { authAPI } from "../services/api";
 import type { MemberCheckinStatus } from "../services/platform-api";
 import {
   desktopAuth,
+  desktopUserDisplayName,
+  desktopUserInitial,
+  desktopUserPlan,
+  formatMemberPoints,
+  formatMemberPointsRange,
+  logoutDesktopAccount,
   performDesktopCheckin,
   refreshDesktopMember,
   setDesktopAuth,
 } from "../store/auth-state";
+import { officialAinodeState, setOfficialAinodeState } from "../store/provider-official";
 import { appSettings, setAppSettings } from "../store/settings";
+import { OFFICIAL_PROVIDER_ID, setWorkspace, workspace } from "../store/workspace-state";
 import { assertEqual, describe, it } from "./test-harness";
 
 describe("desktop auth member state & race protection", () => {
@@ -111,5 +119,75 @@ describe("desktop auth member state & race protection", () => {
       authAPI.getMemberStatus = origGetMember;
       authAPI.checkin = origCheckin;
     }
+  });
+
+  it("purges hoxi-official provider state and catalog on logout or HTTP 401", async () => {
+    const origLogout = authAPI.logout;
+    const prevHoxiProviders = workspace.hoxiProviders;
+    const prevConnected = workspace.connectedProviders;
+    const prevProviders = workspace.providers;
+    const prevDefaultModel = workspace.defaultAI.model;
+    try {
+      authAPI.logout = async () => ({ success: true });
+      setDesktopAuth({
+        isLoggedIn: true,
+        user: { id: 1, email: "dev@hoxi.ai", nickname: "Dev" },
+      });
+      setOfficialAinodeState({
+        loaded: true,
+        loading: false,
+        baseUrl: "https://api.ainode.run/v1",
+        models: [{ id: "gpt-5.4", name: "GPT-5.4", inputPointsPerM: 25000, outputPointsPerM: 100000, perCallPoints: 0 }],
+        error: null,
+      });
+      setWorkspace({
+        hoxiProviders: {
+          [OFFICIAL_PROVIDER_ID]: { name: "Hoxi Official", models: { "gpt-5.4": { name: "GPT-5.4" } } },
+          anthropic: { name: "Anthropic", models: { "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" } } },
+        },
+        connectedProviders: [OFFICIAL_PROVIDER_ID, "anthropic"],
+        providers: [
+          { id: OFFICIAL_PROVIDER_ID, name: "Hoxi Official", models: { "gpt-5.4": { id: "gpt-5.4", name: "GPT-5.4" } } },
+          { id: "anthropic", name: "Anthropic", models: { "claude-sonnet-4-6": { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" } } },
+        ],
+      });
+      setWorkspace("defaultAI", "model", { providerID: OFFICIAL_PROVIDER_ID, modelID: "gpt-5.4" });
+
+      await logoutDesktopAccount();
+
+      assertEqual(desktopAuth.isLoggedIn, false);
+      assertEqual(officialAinodeState.loaded, false);
+      assertEqual(officialAinodeState.models.length, 0);
+      assertEqual(Boolean(workspace.hoxiProviders[OFFICIAL_PROVIDER_ID]), false);
+      assertEqual(workspace.connectedProviders.includes(OFFICIAL_PROVIDER_ID), false);
+      assertEqual(workspace.providers.some((p) => p.id === OFFICIAL_PROVIDER_ID), false);
+      assertEqual(workspace.selectedModel?.providerID, "anthropic");
+      assertEqual(workspace.selectedModel?.modelID, "claude-sonnet-4-6");
+    } finally {
+      authAPI.logout = origLogout;
+      setWorkspace({
+        hoxiProviders: prevHoxiProviders,
+        connectedProviders: prevConnected,
+        providers: prevProviders,
+      });
+      setWorkspace("defaultAI", "model", prevDefaultModel);
+    }
+  });
+
+  it("formats member points and user identity selectors consistently", () => {
+    assertEqual(formatMemberPoints(1200), "1,200");
+    assertEqual(formatMemberPoints(12.5), "12.5");
+    assertEqual(formatMemberPoints(12.567), "12.57");
+    assertEqual(formatMemberPointsRange({ min: 5, max: 5 }, 5), "5");
+    assertEqual(formatMemberPointsRange({ min: 5, max: 20 }, 5), "5~20");
+    assertEqual(formatMemberPointsRange(undefined, 8), "8");
+
+    setDesktopAuth({
+      isLoggedIn: true,
+      user: { id: 1, email: "alice@hoxi.ai", nickname: "Alice", plan: "Pro" },
+    });
+    assertEqual(desktopUserDisplayName(), "Alice");
+    assertEqual(desktopUserPlan(), "Pro");
+    assertEqual(desktopUserInitial(), "A");
   });
 });

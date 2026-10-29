@@ -140,8 +140,7 @@ export default function App() {
           : null;
 
         // Kick off non-blocking background loads while awaiting saved workspaces & projects
-        void loadProviders();
-        void ensureOfficialProviderConnected();
+        void loadProviders().then(() => ensureOfficialProviderConnected());
         void loadProviderTelemetry();
         void syncProviderBreakers();
         void loadAgents();

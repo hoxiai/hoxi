@@ -36,6 +36,7 @@ type Service struct {
 	pending       *authorization
 	generation    uint64
 	launchBrowser func(string)
+	onClear       func()
 	// pollInterval paces device-token polling; zero means defaultPollInterval.
 	// Tests shorten it so they do not wait on real seconds.
 	pollInterval time.Duration
@@ -75,6 +76,14 @@ func (s *Service) ServerBaseURL() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.serverBaseURL
+}
+
+// SetOnClear registers a callback invoked after local desktop account
+// credentials are cleared by logout or upstream 401 invalidation.
+func (s *Service) SetOnClear(fn func()) {
+	s.mu.Lock()
+	s.onClear = fn
+	s.mu.Unlock()
 }
 
 func (s *Service) SetServerBaseURL(urlStr string) {
@@ -127,14 +136,19 @@ func (s *Service) InvalidateDeviceToken(token, baseURL string) {
 	if token == "" {
 		return
 	}
+	var onClear func()
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.current != nil && s.current.DeviceToken == token &&
 		(baseURL == "" || s.serverBaseURL == strings.TrimRight(baseURL, "/")) {
 		if err := s.store.Clear(); err == nil {
 			s.current = nil
 			s.generation++
+			onClear = s.onClear
 		}
+	}
+	s.mu.Unlock()
+	if onClear != nil {
+		onClear()
 	}
 }
 
@@ -272,7 +286,12 @@ func (s *Service) Logout(ctx context.Context) error {
 	}
 	s.current = nil
 	baseURL := s.serverBaseURL
+	onClear := s.onClear
 	s.mu.Unlock()
+
+	if onClear != nil {
+		onClear()
+	}
 
 	if token != "" {
 		revokeURL := fmt.Sprintf("%s/api/hoxi/device-tokens/revoke", baseURL)
@@ -416,8 +435,8 @@ func (s *Service) verifyBackground(auth *StoredAuth, baseURL string, generation 
 		}
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.current != auth || s.generation != generation || s.serverBaseURL != baseURL {
+		s.mu.Unlock()
 		return
 	}
 
@@ -429,10 +448,16 @@ func (s *Service) verifyBackground(auth *StoredAuth, baseURL string, generation 
 			if s.logger != nil {
 				s.logger.Error("failed to clear revoked credentials", "error", err)
 			}
+			s.mu.Unlock()
 			return
 		}
 		s.current = nil
 		s.generation++
+		onClear := s.onClear
+		s.mu.Unlock()
+		if onClear != nil {
+			onClear()
+		}
 		return
 	}
 
@@ -444,6 +469,7 @@ func (s *Service) verifyBackground(auth *StoredAuth, baseURL string, generation 
 			s.current = &updated
 		}
 	}
+	s.mu.Unlock()
 }
 
 var ErrNotLoggedIn = errors.New("not logged in")
@@ -519,14 +545,19 @@ func (s *Service) callMemberEndpoint(ctx context.Context, method, endpoint strin
 	_ = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload)
 
 	if resp.StatusCode == http.StatusUnauthorized {
+		var onClear func()
 		s.mu.Lock()
 		if s.current != nil && s.current.DeviceToken == auth.DeviceToken && s.generation == generation && s.serverBaseURL == baseURL {
 			if err := s.store.Clear(); err == nil {
 				s.current = nil
 				s.generation++
+				onClear = s.onClear
 			}
 		}
 		s.mu.Unlock()
+		if onClear != nil {
+			onClear()
+		}
 		return nil, ErrNotLoggedIn
 	}
 

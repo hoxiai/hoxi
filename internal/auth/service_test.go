@@ -465,3 +465,43 @@ func TestMintMCPToken(t *testing.T) {
 		t.Fatalf("unexpected MintMCPToken result: %#v", tokRes)
 	}
 }
+
+func TestOnClearInvokedOnLogoutAnd401Invalidation(t *testing.T) {
+	var cleared atomic.Int32
+	s := testService(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/hoxi/device-tokens/revoke" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+	})
+	s.SetOnClear(func() {
+		cleared.Add(1)
+	})
+
+	s.current = &StoredAuth{DeviceToken: "tok-1"}
+	_ = s.store.Save(s.current)
+	if err := s.Logout(context.Background()); err != nil {
+		t.Fatalf("Logout: %v", err)
+	}
+	if cleared.Load() != 1 {
+		t.Fatalf("expected onClear called once after Logout, got %d", cleared.Load())
+	}
+
+	s.current = &StoredAuth{DeviceToken: "tok-2"}
+	_ = s.store.Save(s.current)
+	s.InvalidateDeviceToken("tok-2", s.ServerBaseURL())
+	if cleared.Load() != 2 {
+		t.Fatalf("expected onClear called after InvalidateDeviceToken, got %d", cleared.Load())
+	}
+
+	s.current = &StoredAuth{DeviceToken: "tok-3"}
+	_ = s.store.Save(s.current)
+	_, err := s.FetchMemberStatus(context.Background())
+	if err != ErrNotLoggedIn {
+		t.Fatalf("expected ErrNotLoggedIn on 401 member status, got %v", err)
+	}
+	if cleared.Load() != 3 {
+		t.Fatalf("expected onClear called after 401 in callMemberEndpoint, got %d", cleared.Load())
+	}
+}

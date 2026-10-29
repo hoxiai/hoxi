@@ -423,25 +423,12 @@ if (typeof window !== "undefined" && window.matchMedia) {
   });
 }
 
-export function openSettingsModal(tab: SettingsTab = "general") {
+export function openSettingsModal(
+  tab: SettingsTab = "general",
+  editProviderID: string | null = null
+) {
   const resolvedTab: SettingsTab = tab === "terminal" ? "general" : tab;
-  if (
-    resolvedTab === "providers" ||
-    resolvedTab === "official" ||
-    resolvedTab === "custom" ||
-    resolvedTab === "auto" ||
-    resolvedTab === "models" ||
-    resolvedTab === "agents" ||
-    resolvedTab === "subagents" ||
-    resolvedTab === "policy"
-  ) {
-    if (resolvedTab !== "custom") {
-      setWorkspace("editingProviderID", null);
-    }
-    setWorkspace({ providerModalTab: resolvedTab, providerModalOpen: false });
-  } else {
-    setWorkspace("providerModalOpen", false);
-  }
+  setWorkspace("editingProviderID", resolvedTab === "custom" ? editProviderID : null);
   setAppSettings({ activeTab: resolvedTab, modalOpen: true });
 }
 
@@ -449,12 +436,7 @@ export function openProviderModal(
   tab: ProviderModalTab = "providers",
   editProviderID: string | null = null
 ) {
-  setWorkspace({
-    providerModalTab: tab,
-    editingProviderID: editProviderID,
-    providerModalOpen: true,
-  });
-  setAppSettings({ activeTab: tab, modalOpen: true });
+  openSettingsModal(tab, editProviderID);
 }
 
 export function openHandoffModal() { setWorkspace("handoffModalOpen", true); }
@@ -462,7 +444,6 @@ export function closeHandoffModal() { setWorkspace("handoffModalOpen", false); }
 
 export function closeSettingsModal() {
   setAppSettings("modalOpen", false);
-  setWorkspace("providerModalOpen", false);
 }
 
 export function updateAppSetting<K extends keyof PersistedSettings>(
