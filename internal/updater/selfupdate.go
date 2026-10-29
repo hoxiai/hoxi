@@ -38,6 +38,100 @@ func resolveWindowsArchiveURL(res *UpdateCheckResult) string {
 	return strings.TrimSpace(res.Mirrors.Global)
 }
 
+func resolveDarwinDMGURL(res *UpdateCheckResult) string {
+	if res == nil {
+		return ""
+	}
+	for _, cand := range []string{res.DownloadURL, res.Mirrors.Global} {
+		trimmed := strings.TrimSpace(cand)
+		if trimmed != "" && strings.HasSuffix(strings.ToLower(trimmed), ".dmg") {
+			return trimmed
+		}
+	}
+	ver := strings.TrimPrefix(strings.TrimSpace(res.LatestVersion), "v")
+	if ver != "" {
+		return fmt.Sprintf("https://github.com/hoxiai/hoxi/releases/download/v%s/Hoxi-%s-darwin-arm64.dmg", ver, ver)
+	}
+	if d := strings.TrimSpace(res.DownloadURL); d != "" {
+		return d
+	}
+	return strings.TrimSpace(res.Mirrors.Global)
+}
+
+func resolveDarwinAppBundlePath(exePath string) (string, error) {
+	cleaned := filepath.Clean(strings.TrimSpace(exePath))
+	if cleaned == "" || cleaned == "." {
+		return "", errors.New("empty executable path")
+	}
+	macOSDir := filepath.Dir(cleaned)
+	contentsDir := filepath.Dir(macOSDir)
+	appBundle := filepath.Dir(contentsDir)
+	if filepath.Base(macOSDir) != "MacOS" || filepath.Base(contentsDir) != "Contents" ||
+		!strings.HasSuffix(strings.ToLower(appBundle), ".app") {
+		return "", errors.New("executable is not inside a macOS .app bundle")
+	}
+	if strings.EqualFold(filepath.Base(appBundle), "Hoxi Dev.app") {
+		return "", errors.New("in-app self-update is disabled for Hoxi Dev.app")
+	}
+	return appBundle, nil
+}
+
+func downloadAndVerifyDMG(ctx context.Context, client *http.Client, dmgURL, fallbackSHA256, dstPath string) error {
+	if !isAllowedUpdateURL(dmgURL) {
+		return errors.New("update download URL must use HTTPS")
+	}
+	if client == nil {
+		client = &http.Client{Timeout: 10 * time.Minute}
+	}
+	expectedSHA, err := resolveArchiveSHA256(ctx, client, dmgURL, fallbackSHA256)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, dmgURL, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("download update DMG: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("update download returned HTTP %d", resp.StatusCode)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(dstPath), 0o700); err != nil {
+		return err
+	}
+	outFile, err := os.OpenFile(dstPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	hasher := sha256.New()
+	written, copyErr := io.Copy(io.MultiWriter(outFile, hasher), io.LimitReader(resp.Body, maxUpdateArchiveBytes+1))
+	closeErr := outFile.Close()
+	if copyErr != nil {
+		_ = os.Remove(dstPath)
+		return copyErr
+	}
+	if closeErr != nil {
+		_ = os.Remove(dstPath)
+		return closeErr
+	}
+	if written > maxUpdateArchiveBytes {
+		_ = os.Remove(dstPath)
+		return errors.New("update DMG exceeds maximum allowed size")
+	}
+
+	actualSHA := hex.EncodeToString(hasher.Sum(nil))
+	if !strings.EqualFold(actualSHA, expectedSHA) {
+		_ = os.Remove(dstPath)
+		return fmt.Errorf("update DMG SHA-256 mismatch: got %s, want %s", actualSHA, expectedSHA)
+	}
+	return nil
+}
+
 func isAllowedUpdateURL(rawURL string) bool {
 	u, err := url.Parse(strings.TrimSpace(rawURL))
 	if err != nil || u.Host == "" {

@@ -271,3 +271,12 @@ void hoxi_native_stop(void) {
         [delegate release]; delegate = nil;
     }});
 }
+
+int hoxi_native_confirm_busy(void) {
+    __block int confirmed = 0;
+    onMain(^{ @autoreleasepool {
+        [NSApp activateIgnoringOtherApps:YES];
+        confirmed = HoxiConfirmUpdate() ? 1 : 0;
+    }});
+    return confirmed;
+}

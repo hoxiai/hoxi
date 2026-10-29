@@ -94,3 +94,59 @@ func TestDownloadAndStageWindowsZipVerifiesSHA256AndExtracts(t *testing.T) {
 		t.Fatalf("resolveWindowsArchiveURL = %q, want %q", gotURL, wantURL)
 	}
 }
+
+func TestDownloadAndVerifyDMGAndBundleResolution(t *testing.T) {
+	dmgPayload := []byte("fake-dmg-payload-bytes")
+	sum := sha256.Sum256(dmgPayload)
+	dmgSHA := hex.EncodeToString(sum[:])
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/Hoxi-0.5.0-darwin-arm64.dmg":
+			w.Header().Set("Content-Type", "application/x-apple-diskimage")
+			_, _ = w.Write(dmgPayload)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	dstPath := filepath.Join(t.TempDir(), "update.dmg")
+	if err := downloadAndVerifyDMG(context.Background(), srv.Client(), srv.URL+"/Hoxi-0.5.0-darwin-arm64.dmg", dmgSHA, dstPath); err != nil {
+		t.Fatalf("downloadAndVerifyDMG failed: %v", err)
+	}
+	gotBytes, err := os.ReadFile(dstPath)
+	if err != nil || !bytes.Equal(gotBytes, dmgPayload) {
+		t.Fatalf("downloaded DMG mismatch: %v / %q", err, string(gotBytes))
+	}
+
+	// Corrupt SHA-256 must fail and remove the partial file
+	badPath := filepath.Join(t.TempDir(), "bad.dmg")
+	err = downloadAndVerifyDMG(context.Background(), srv.Client(), srv.URL+"/Hoxi-0.5.0-darwin-arm64.dmg", strings.Repeat("f", 64), badPath)
+	if err == nil || !strings.Contains(err.Error(), "SHA-256 mismatch") {
+		t.Fatalf("expected SHA-256 mismatch error, got %v", err)
+	}
+	if _, statErr := os.Stat(badPath); !os.IsNotExist(statErr) {
+		t.Fatalf("expected corrupt DMG to be removed")
+	}
+
+	// resolveDarwinAppBundlePath accepts release .app bundles and rejects Hoxi Dev.app or bare binaries
+	appBundle, err := resolveDarwinAppBundlePath("/Applications/Hoxi.app/Contents/MacOS/Hoxi")
+	if err != nil || appBundle != "/Applications/Hoxi.app" {
+		t.Fatalf("resolveDarwinAppBundlePath(/Applications/Hoxi.app/...) = %q, %v", appBundle, err)
+	}
+	if _, err := resolveDarwinAppBundlePath("/Users/test/build/bin/Hoxi Dev.app/Contents/MacOS/Hoxi"); err == nil {
+		t.Fatalf("expected Hoxi Dev.app to be rejected by resolveDarwinAppBundlePath")
+	}
+	if _, err := resolveDarwinAppBundlePath("/usr/local/bin/hoxi"); err == nil {
+		t.Fatalf("expected bare binary to be rejected by resolveDarwinAppBundlePath")
+	}
+
+	gotDMG := resolveDarwinDMGURL(&UpdateCheckResult{
+		LatestVersion: "0.5.0",
+		DownloadURL:   "https://github.com/hoxiai/hoxi/releases/download/v0.5.0/Hoxi-0.5.0-darwin-arm64.dmg",
+	})
+	if gotDMG != "https://github.com/hoxiai/hoxi/releases/download/v0.5.0/Hoxi-0.5.0-darwin-arm64.dmg" {
+		t.Fatalf("resolveDarwinDMGURL = %q", gotDMG)
+	}
+}

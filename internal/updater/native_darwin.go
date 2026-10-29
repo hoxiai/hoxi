@@ -11,13 +11,62 @@ package updater
 import "C"
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
+	"time"
 	"unsafe"
 )
 
-var nativeReady atomic.Bool
+var (
+	nativeReady        atomic.Bool
+	darwinSparkleReady atomic.Bool
+
+	darwinDMGMu      sync.Mutex
+	darwinCanInstall func(force bool) bool
+	darwinRelease    func()
+	darwinAppBundle  string
+	darwinInstalling bool
+)
+
+const darwinSwapAndRestartSh = `
+target_pid="$HOXI_UPD_PID"
+staged_app="$HOXI_UPD_STAGED_APP"
+target_app="$HOXI_UPD_TARGET_APP"
+stage_dir="$HOXI_UPD_STAGE_DIR"
+
+i=0
+while [ "$i" -lt 60 ]; do
+  if ! kill -0 "$target_pid" 2>/dev/null; then
+    break
+  fi
+  sleep 0.5
+  i=$((i + 1))
+done
+
+backup_app="${target_app}.backup.$$"
+rm -rf "$backup_app"
+if [ -d "$target_app" ]; then
+  mv "$target_app" "$backup_app" 2>/dev/null || rm -rf "$target_app"
+fi
+if ditto "$staged_app" "$target_app"; then
+  rm -rf "$backup_app"
+  xattr -dr com.apple.quarantine "$target_app" 2>/dev/null || true
+elif [ -d "$backup_app" ]; then
+  rm -rf "$target_app"
+  mv "$backup_app" "$target_app" 2>/dev/null || true
+fi
+rm -rf "$stage_dir"
+open "$target_app"
+`
 
 var nativeCallbacks = struct {
 	sync.Mutex
@@ -60,22 +109,47 @@ func StartNative(canInstall func(force bool) bool, release func()) error {
 	nativeCallbacks.entries[token] = &nativeAdmission{canInstall: canInstall, release: release}
 	nativeCallbacks.Unlock()
 	if message := C.hoxi_native_start(C.ulonglong(token)); message != nil {
-		defer C.free(unsafe.Pointer(message))
+		sparkleErr := C.GoString(message)
+		C.free(unsafe.Pointer(message))
 		hoxiNativeRelease(C.ulonglong(token), 1)
-		return errors.New(C.GoString(message))
+
+		exe, err := os.Executable()
+		if err != nil || strings.TrimSpace(exe) == "" {
+			return errors.New(sparkleErr)
+		}
+		if real, err := filepath.EvalSymlinks(exe); err == nil && real != "" {
+			exe = real
+		}
+		appBundle, err := resolveDarwinAppBundlePath(exe)
+		if err != nil {
+			return errors.New(sparkleErr)
+		}
+		darwinDMGMu.Lock()
+		darwinCanInstall = canInstall
+		darwinRelease = release
+		darwinAppBundle = appBundle
+		darwinInstalling = false
+		darwinDMGMu.Unlock()
+		darwinSparkleReady.Store(false)
+		nativeReady.Store(true)
+		return nil
 	}
+	darwinSparkleReady.Store(true)
 	nativeReady.Store(true)
 	return nil
 }
 
-// NativeAvailable reports whether StartNative has successfully started Sparkle.
+// NativeAvailable reports whether StartNative has successfully started Sparkle or the DMG self-updater.
 func NativeAvailable() bool { return nativeReady.Load() }
 
-// CheckNative opens Sparkle's standard UI. A denied install is not resumed
-// automatically; the user must retry. Success only means the check was accepted.
+// CheckNative opens Sparkle's standard UI when Sparkle is embedded, or runs the
+// SHA-256 verified DMG self-updater when running from a non-Sparkle .app bundle.
 func CheckNative() error {
 	if !NativeAvailable() {
 		return errors.New("native updater is unavailable")
+	}
+	if !darwinSparkleReady.Load() {
+		return checkDarwinDMGSelfUpdate()
 	}
 	if message := C.hoxi_native_check(); message != nil {
 		defer C.free(unsafe.Pointer(message))
@@ -90,8 +164,175 @@ func CheckNative() error {
 // for an already staged installer; StopNative is not an update cancellation API.
 func StopNative() {
 	if nativeReady.Swap(false) {
-		C.hoxi_native_stop()
+		if darwinSparkleReady.Swap(false) {
+			C.hoxi_native_stop()
+			return
+		}
+		darwinDMGMu.Lock()
+		release := darwinRelease
+		darwinCanInstall = nil
+		darwinRelease = nil
+		darwinAppBundle = ""
+		darwinInstalling = false
+		darwinDMGMu.Unlock()
+		if release != nil {
+			release()
+		}
 	}
+}
+
+func stageDarwinAppFromDMG(ctx context.Context, dmgPath, expectedVersion, stageDir string) (string, error) {
+	mountPoint := filepath.Join(stageDir, "mnt")
+	if err := os.MkdirAll(mountPoint, 0o700); err != nil {
+		return "", err
+	}
+	attachCmd := exec.CommandContext(ctx, "hdiutil", "attach", "-nobrowse", "-readonly", "-noverify", "-mountpoint", mountPoint, dmgPath)
+	if out, err := attachCmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("mount update DMG: %w (%s)", err, strings.TrimSpace(string(out)))
+	}
+	detached := false
+	detach := func() {
+		if detached {
+			return
+		}
+		detached = true
+		_ = exec.Command("hdiutil", "detach", mountPoint, "-force").Run()
+	}
+	defer detach()
+
+	mountedApp := filepath.Join(mountPoint, "Hoxi.app")
+	mountedExe := filepath.Join(mountedApp, "Contents", "MacOS", "Hoxi")
+	if info, err := os.Stat(mountedExe); err != nil || info.IsDir() {
+		return "", errors.New("mounted DMG does not contain a valid Hoxi.app")
+	}
+
+	verifyCmd := exec.CommandContext(ctx, "codesign", "--verify", "--deep", "--strict", mountedApp)
+	if out, err := verifyCmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("verify update code signature: %w (%s)", err, strings.TrimSpace(string(out)))
+	}
+
+	wantVer := strings.TrimPrefix(strings.TrimSpace(expectedVersion), "v")
+	if wantVer != "" {
+		plistPath := filepath.Join(mountedApp, "Contents", "Info.plist")
+		out, err := exec.CommandContext(ctx, "/usr/libexec/PlistBuddy", "-c", "Print :CFBundleShortVersionString", plistPath).Output()
+		gotVer := strings.TrimPrefix(strings.TrimSpace(string(out)), "v")
+		if err != nil || gotVer != wantVer {
+			return "", fmt.Errorf("staged Hoxi.app version mismatch: got %q, want %q", gotVer, wantVer)
+		}
+	}
+
+	stagedApp := filepath.Join(stageDir, "Hoxi.app")
+	dittoCmd := exec.CommandContext(ctx, "ditto", mountedApp, stagedApp)
+	if out, err := dittoCmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("stage updated Hoxi.app: %w (%s)", err, strings.TrimSpace(string(out)))
+	}
+	detach()
+	return stagedApp, nil
+}
+
+func checkDarwinDMGSelfUpdate() error {
+	darwinDMGMu.Lock()
+	if darwinInstalling {
+		darwinDMGMu.Unlock()
+		return errors.New("update installation is already in progress")
+	}
+	canInstall := darwinCanInstall
+	release := darwinRelease
+	appBundle := darwinAppBundle
+	darwinInstalling = true
+	darwinDMGMu.Unlock()
+
+	cleanupAbort := func() {
+		darwinDMGMu.Lock()
+		darwinInstalling = false
+		darwinDMGMu.Unlock()
+		if release != nil {
+			release()
+		}
+	}
+
+	if canInstall == nil || strings.TrimSpace(appBundle) == "" {
+		cleanupAbort()
+		return errors.New("native updater is not configured")
+	}
+	admitted := canInstall(false)
+	if !admitted && C.hoxi_native_confirm_busy() != 0 {
+		admitted = canInstall(true)
+	}
+	if !admitted {
+		cleanupAbort()
+		return errors.New("cannot install update while agent sessions are active")
+	}
+
+	checker := activeChecker.Load()
+	if checker == nil {
+		cleanupAbort()
+		return errors.New("update checker is not initialized")
+	}
+	res := checker.LastResult()
+	if res == nil || !res.NeedUpdate {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		checked, err := checker.Check(ctx)
+		cancel()
+		if err != nil {
+			cleanupAbort()
+			return err
+		}
+		res = checked
+	}
+	if res == nil || !res.NeedUpdate {
+		cleanupAbort()
+		return errors.New("application is already up to date")
+	}
+
+	dmgURL := resolveDarwinDMGURL(res)
+	if dmgURL == "" {
+		cleanupAbort()
+		return errors.New("update download URL is missing")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	stageDir, err := os.MkdirTemp("", "hoxi-macos-update-*")
+	if err != nil {
+		cleanupAbort()
+		return fmt.Errorf("create staging directory: %w", err)
+	}
+	dmgPath := filepath.Join(stageDir, "update.dmg")
+	if err := downloadAndVerifyDMG(ctx, nil, dmgURL, res.SHA256, dmgPath); err != nil {
+		_ = os.RemoveAll(stageDir)
+		cleanupAbort()
+		return err
+	}
+	stagedApp, err := stageDarwinAppFromDMG(ctx, dmgPath, res.LatestVersion, stageDir)
+	_ = os.Remove(dmgPath)
+	if err != nil {
+		_ = os.RemoveAll(stageDir)
+		cleanupAbort()
+		return err
+	}
+
+	cmd := exec.Command("/bin/sh", "-c", darwinSwapAndRestartSh)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	cmd.Env = append(os.Environ(),
+		"HOXI_UPD_PID="+strconv.Itoa(os.Getpid()),
+		"HOXI_UPD_STAGED_APP="+stagedApp,
+		"HOXI_UPD_TARGET_APP="+appBundle,
+		"HOXI_UPD_STAGE_DIR="+stageDir,
+	)
+	if err := cmd.Start(); err != nil {
+		_ = os.RemoveAll(stageDir)
+		cleanupAbort()
+		return fmt.Errorf("launch update installer: %w", err)
+	}
+	_ = cmd.Process.Release()
+	go func() {
+		time.Sleep(250 * time.Millisecond)
+		os.Exit(0)
+	}()
+
+	return nil
 }
 
 //export hoxiNativeCanInstall
