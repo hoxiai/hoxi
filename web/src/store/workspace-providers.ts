@@ -9,7 +9,7 @@ import {
   type ProviderInfo,
   type ProviderAuthAuthorization,
 } from "../services/api";
-import type { ProviderMcpOAuthPollResponse } from "../services/platform-api";
+import type { ProviderMcpOAuthPollResponse, OfficialAinodeModel } from "../services/platform-api";
 import { disposeOpenCodeInstance, patchGlobalConfig } from "./global-config";
 import { syncOfficialModelPricing } from "./leaderboard-state";
 import {
@@ -24,7 +24,7 @@ import {
   splitAgyModelEffortSuffix,
 } from "./provider-catalog";
 import { parseModelString, updateSessionAI } from "./session-ai";
-import {
+import { desktopAuth } from "./auth-state";import {
   DEFAULT_AGENTS,
   EFFORT_KEY,
   FAVORITE_MODELS_KEY,
@@ -719,5 +719,77 @@ export async function connectProviderWithMcpOAuth(opts: {
     }
     throw err;
   }
+}
+
+export interface OfficialAinodeConnectResult {
+  providerId: string;
+  baseUrl: string;
+  modelCount: number;
+}
+
+export interface OfficialAinodeModelsUIState {
+  loaded: boolean;
+  loading: boolean;
+  baseUrl: string;
+  models: OfficialAinodeModel[];
+  error: string | null;
+}
+
+export const [officialAinodeState, setOfficialAinodeState] = createStore<OfficialAinodeModelsUIState>({
+  loaded: false,
+  loading: false,
+  baseUrl: "",
+  models: [],
+  error: null,
+});
+
+// loadOfficialAinodeModels refreshes the model catalog the signed-in Hoxi
+// account may call on the official AINode channel.
+export async function loadOfficialAinodeModels(force = false): Promise<void> {
+  if (!desktopAuth.isLoggedIn) {
+    setOfficialAinodeState({ loaded: false, loading: false, baseUrl: "", models: [], error: null });
+    return;
+  }
+  if (officialAinodeState.loading) return;
+  if (officialAinodeState.loaded && !force) return;
+  setOfficialAinodeState({ loading: true, error: null });
+  try {
+    const res = await hoxiAPI.fetchOfficialAinodeModels();
+    setOfficialAinodeState({
+      loaded: true,
+      loading: false,
+      baseUrl: res.baseUrl || "",
+      models: res.authenticated ? res.models || [] : [],
+      error: null,
+    });
+  } catch (err: any) {
+    setOfficialAinodeState({
+      loading: false,
+      error: err?.message || t("models.officialLoadFailed"),
+    });
+  }
+}
+
+// connectOfficialAinode provisions/refreshes the official AINode provider from
+// the signed-in Hoxi account device token, then adopts its authorized models.
+export async function connectOfficialAinode(): Promise<OfficialAinodeConnectResult> {
+  const res = await hoxiAPI.connectOfficialAinodeProvider();
+  if (!res?.authenticated) {
+    throw new Error(t("models.officialConnectLoginRequired"));
+  }
+  await loadProviders(true);
+  const pid = (res.providerId || "ainode").trim();
+  const firstModelID =
+    res.models?.[0]?.id?.trim() ||
+    Object.keys(workspace.hoxiProviders?.[pid]?.models || {})[0];
+  if (firstModelID) {
+    selectProviderModelPreservingBusySession({ providerID: pid, modelID: firstModelID });
+  }
+  await loadOfficialAinodeModels(true);
+  return {
+    providerId: pid,
+    baseUrl: res.baseUrl,
+    modelCount: res.modelCount ?? res.models?.length ?? 0,
+  };
 }
 

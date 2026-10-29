@@ -37,7 +37,7 @@ import { ProviderConnectView, ProviderSelectAllView } from "./ProviderConnectSub
 import { ProviderHealthBadge } from "./ProviderQualityCard";
 import { isModelFree } from "./model-selector-utils";
 import LocalCliBridgeBanner from "./LocalCliBridgeBanner";
-
+import OfficialAinodePanel from "./OfficialAinodePanel";
 type SubView = "list" | "connect" | "select-all";
 
 export default function ProviderCatalogTab() {
@@ -206,6 +206,7 @@ export default function ProviderCatalogTab() {
         <div class="flex-1 overflow-y-auto p-6 sm:p-8">
           <div class="mx-auto w-full max-w-5xl space-y-6">
           <LocalCliBridgeBanner />
+          <OfficialAinodePanel />
 
           {/* Custom Provider Quick Card */}
           <div class="flex items-center justify-between gap-4 rounded-2xl border border-[var(--accent-border)] bg-[var(--accent-surface)]/40 px-4 py-3.5">

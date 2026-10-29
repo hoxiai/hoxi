@@ -18,18 +18,18 @@ import (
 )
 
 type Service struct {
-	openCode          *ocapi.Client
-	rootDir           string
-	proxy             http.Handler
-	stats             *modelStatsStore
-	breaker           *breakerStore
-	assistMu          sync.RWMutex
-	assist            map[string]http.HandlerFunc
-	isBusyFn          func() bool
-	reloadMu          sync.Mutex
-	reloadPending     bool
-	reloadLoopRunning bool
-	configPersistMu   sync.Mutex
+	openCode             *ocapi.Client
+	rootDir              string
+	proxy                http.Handler
+	stats                *modelStatsStore
+	breaker              *breakerStore
+	assistMu             sync.RWMutex
+	assist               map[string]http.HandlerFunc
+	isBusyFn             func() bool
+	reloadMu             sync.Mutex
+	reloadPending        bool
+	reloadLoopRunning    bool
+	configPersistMu      sync.Mutex
 	relayMu              sync.Mutex
 	relayPersistMu       sync.Mutex
 	relayBaseURL         string
@@ -40,6 +40,8 @@ type Service struct {
 	mcpOAuthSessions     map[string]*mcpOAuthSession
 	mcpOAuthPollInterval time.Duration
 	openBrowserFunc      func(string)
+	authMu               sync.RWMutex
+	authSource           AuthSource
 }
 
 func NewService(openCodePort int, password, rootDir string, proxy http.Handler) *Service {
@@ -74,6 +76,8 @@ func (s *Service) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/hoxi/provider/test-model", s.handleTestProviderModel)
 	mux.HandleFunc("/api/hoxi/provider/mcp-oauth/start", s.handleProviderMCPOAuthStart)
 	mux.HandleFunc("/api/hoxi/provider/mcp-oauth/poll", s.handleProviderMCPOAuthPoll)
+	mux.HandleFunc("/api/hoxi/provider/official/models", s.handleOfficialModels)
+	mux.HandleFunc("/api/hoxi/provider/official/connect", s.handleOfficialConnect)
 	for _, action := range assistActions {
 		mux.HandleFunc("/api/hoxi/provider/"+action, s.serveAssist(action))
 	}

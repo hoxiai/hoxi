@@ -172,6 +172,7 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 		status.SetSessionResolver(runnerSvc.ResolveSessionTarget)
 	}
 	authSvc := auth.NewService(nil)
+	providers.SetAuthSource(authSvc)
 	updaterSvc := updater.NewChecker(buildinfo.Version, nil)
 	leaderboardSvc := leaderboard.NewService("", nil)
 	forgeSvc := forge.NewService()
