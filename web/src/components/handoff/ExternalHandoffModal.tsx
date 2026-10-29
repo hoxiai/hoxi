@@ -90,11 +90,13 @@ export default function ExternalHandoffModal() {
     const reqID = ++listRequestGen;
     setLoadingList(true);
     setErrorMsg(null);
+    const src = sourceFilter();
     try {
       const [sessRes, cliRes] = await Promise.all([
         hoxiAPI.listExternalSessions({
           directory: workspace.rootDir || undefined,
           query: serverQuery?.trim() || undefined,
+          source: src !== "all" ? src : undefined,
         }),
         cliTools().length > 0
           ? Promise.resolve({ tools: cliTools() })
@@ -115,6 +117,11 @@ export default function ExternalHandoffModal() {
 
   createEffect(() => {
     if (!workspace.handoffModalOpen) return;
+    // The server applies one combined limit across all sources, so in a busy
+    // workspace a source with no current-workspace matches (e.g. Grok) can be
+    // pushed out of the first page. Refetch per selected source so the tab is
+    // scoped before the server limit is applied.
+    sourceFilter();
     void loadSessionsAndStatus();
   });
 
