@@ -38,6 +38,11 @@ describe("desktop computer transport", () => {
       await computerAPI.stop(signal);
       assertEqual(calls[5].url.pathname, "/api/hoxi/computer/stop");
       assertEqual(calls[5].url.search, "");
+      await computerAPI.requestPermission("reset", signal);
+      assertEqual(calls[6].url.pathname, "/api/hoxi/computer/permissions");
+      assertDeepEqual(JSON.parse(calls[6].init.body as string), { permission: "reset" });
+      await computerAPI.requestPermission("reveal", signal);
+      assertDeepEqual(JSON.parse(calls[7].init.body as string), { permission: "reveal" });
       assertTrue(!("input" in computerAPI), "UI must not expose an input bypass");
     } finally { globalThis.fetch = previous.fetch; setGatewayToken(previous.token); }
   });

@@ -41,4 +41,34 @@ func TestComputerGatewayRejectsUntrustedOriginsAndAgentGrants(t *testing.T) {
 			t.Fatal("computer privilege escalation accepted", w.Code)
 		}
 	}
+
+	g.uiOrigins = map[string]bool{
+		"http://127.0.0.1:5420":          true,
+		"http://localhost:5421":          true,
+		"wails://wails.localhost:34115":  true,
+	}
+	checkCaller := func(host, origin, site string, want bool) {
+		t.Helper()
+		r := httptest.NewRequest(http.MethodGet, "http://"+host+"/api/hoxi/computer/permissions", nil)
+		r.Host = host
+		if origin != "" {
+			r.Header.Set("Origin", origin)
+		}
+		r.Header.Set("X-Hoxi-Computer", "true")
+		if site != "" {
+			r.Header.Set("Sec-Fetch-Site", site)
+		}
+		agent, err := g.computerCaller(r)
+		if (err == nil) != want || agent {
+			t.Fatalf("host=%s origin=%s site=%s: agent=%v err=%v, want=%v", host, origin, site, agent, err, want)
+		}
+	}
+	checkCaller("wails.localhost", "", "", true)
+	checkCaller("wails.localhost:34115", "", "", true)
+	checkCaller("wails.localhost:34115", "wails://wails.localhost:34115", "", true)
+	checkCaller("127.0.0.1:5420", "", "same-origin", true)
+	checkCaller("localhost:5421", "", "same-origin", true)
+	checkCaller("127.0.0.1:5420", "http://localhost:5421", "", true)
+	checkCaller("127.0.0.1:5420", "", "", false)
+	checkCaller("127.0.0.1:9999", "", "same-origin", false)
 }

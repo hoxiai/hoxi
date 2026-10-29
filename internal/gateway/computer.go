@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -49,6 +50,19 @@ func (g *Gateway) computerScope(r *http.Request) (computer.Scope, error) {
 	}
 	return computer.Scope{SessionID: session, Directory: dir}, nil
 }
+func (g *Gateway) trustedComputerUI(origin, authority string) (bool, bool, bool) {
+	g.originMu.RLock()
+	defer g.originMu.RUnlock()
+	configuredHost := false
+	for allowed := range g.uiOrigins {
+		if u, err := url.Parse(allowed); err == nil && u.Host == authority {
+			configuredHost = true
+		}
+	}
+	nativeOrigin := origin == "wails://wails" || origin == "wails://wails.localhost" || origin == "wails://app.wails.localhost"
+	native := nativeHost(authority) || g.uiOrigins["wails://"+authority]
+	return nativeOrigin || g.uiOrigins[origin], configuredHost, native
+}
 func (g *Gateway) computerCaller(r *http.Request) (bool, error) {
 	if isRemoteRequest(r) || !trustedHost(r.Host) {
 		return false, errors.New("computer_use_is_desktop_only")
@@ -64,14 +78,21 @@ func (g *Gateway) computerCaller(r *http.Request) (bool, error) {
 		return true, nil
 	}
 	origin := r.Header.Get("Origin")
-	g.originMu.RLock()
-	allowed := g.uiOrigins[origin]
-	g.originMu.RUnlock()
-	native := origin == "wails://wails" || origin == "wails://wails.localhost" || origin == "wails://app.wails.localhost"
-	if origin != "" && len(r.Header.Values("Origin")) == 1 && (allowed || native) {
-		return false, nil
+	allowedOrigin, configuredHost, native := g.trustedComputerUI(origin, r.Host)
+	if origin != "" {
+		if len(r.Header.Values("Origin")) == 1 && allowedOrigin {
+			return false, nil
+		}
+		return false, errors.New("computer_ui_origin_required")
 	}
-	if origin == "" && r.Header.Get("X-Hoxi-Computer") == "true" && nativeHost(r.Host) && (r.Header.Get("Sec-Fetch-Site") == "" || r.Header.Get("Sec-Fetch-Site") == "same-origin") {
+	site := r.Header.Get("Sec-Fetch-Site")
+	if !native && site == "" {
+		if ref, err := url.Parse(r.Header.Get("Referer")); err == nil && ref.Scheme == "wails" {
+			allowedRef, _, refNative := g.trustedComputerUI(ref.Scheme+"://"+ref.Host, ref.Host)
+			native = allowedRef && refNative
+		}
+	}
+	if r.Header.Get("X-Hoxi-Computer") == "true" && (native || configuredHost) && (site == "same-origin" || (site == "" && native)) {
 		return false, nil
 	}
 	return false, errors.New("computer_ui_origin_required")
@@ -121,7 +142,7 @@ func (g *Gateway) handleComputer(w http.ResponseWriter, r *http.Request) {
 			var req struct {
 				Permission string `json:"permission"`
 			}
-			if decodeComputerJSON(w, r, &req) != nil || (req.Permission != "accessibility" && req.Permission != "screen") {
+			if decodeComputerJSON(w, r, &req) != nil || (req.Permission != "accessibility" && req.Permission != "screen" && req.Permission != "reset" && req.Permission != "reveal") {
 				writeJSONError(w, 400, "permission_required")
 				return
 			}

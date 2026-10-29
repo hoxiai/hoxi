@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 )
 
 // RequestComputerApproval uses the shared permission plane. Desktop input has
@@ -32,10 +33,32 @@ func (s *Service) ResolveComputerSession(sessionID, directory string) (string, e
 	if err != nil {
 		return "", err
 	}
-	if _, ok := s.store.Meta(resolved); !ok {
-		return "", errors.New("computer_use_requires_registered_session")
+	if _, ok := s.store.Meta(resolved); ok {
+		return resolved, nil
 	}
-	return resolved, nil
+	if s.worktrees != nil {
+		if binding, bound, bErr := s.worktrees.BindingForSession(resolved); bErr == nil && bound && binding.Directory != "" {
+			if normalizeComparePath(directory) != normalizeComparePath(binding.Directory) {
+				return "", errors.New("browser directory does not match its session sandbox")
+			}
+			return resolved, nil
+		}
+	}
+	if s.openCode != nil && s.openCode.Available() {
+		var info SessionInfo
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if err := s.openCodeJSON(ctx, http.MethodGet, "/session/"+resolved, directory, nil, &info); err == nil && info.ID == resolved {
+			dir := info.Directory
+			if dir == "" {
+				dir = s.rootDir
+			}
+			if dir != "" && normalizeComparePath(directory) == normalizeComparePath(dir) {
+				return resolved, nil
+			}
+		}
+	}
+	return "", errors.New("computer_use_requires_registered_session")
 }
 
 func (s *Service) CancelComputerApprovals(sessionID string) {

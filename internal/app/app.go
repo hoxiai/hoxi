@@ -234,7 +234,7 @@ func Run(distFS fs.FS) {
 		uiOrigins = append(uiOrigins, "http://wails.localhost")
 	}
 	if identity.Variant == "dev" {
-		uiOrigins = append(uiOrigins, "http://localhost:5421", "http://127.0.0.1:5421", "http://localhost:5411", "http://127.0.0.1:5411")
+		uiOrigins = append(uiOrigins, "http://localhost:5421", "http://127.0.0.1:5421", "http://localhost:5411", "http://127.0.0.1:5411", "http://localhost:34115", "http://127.0.0.1:34115", "wails://wails.localhost:34115")
 		// Wails exports its actual development listener (including custom ports).
 		if devServer := os.Getenv("devserver"); devServer != "" {
 			uiOrigins = append(uiOrigins, "http://"+devServer)

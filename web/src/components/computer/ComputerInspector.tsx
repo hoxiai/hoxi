@@ -4,6 +4,7 @@ import {
   Check,
   Copy,
   Crosshair,
+  FolderOpen,
   Lock,
   Maximize2,
   Monitor,
@@ -139,7 +140,38 @@ export default function ComputerInspector() {
               </div>
 
               <Show when={permission().platform === "darwin" && !ready()}>
-                <div class="flex flex-wrap gap-2 pt-0.5">
+                <Show when={permission().appName || permission().appPath}>
+                  <div class="flex flex-wrap items-center justify-between gap-2 rounded bg-[var(--bg-inset)] px-2 py-1.5 text-[11px]">
+                    <div class="min-w-0 flex-1 space-y-0.5">
+                      <Show when={permission().appName}>
+                        <div class="font-medium text-[var(--text-secondary)]">
+                          {t("computer.currentAppLabel", { name: permission().appName ?? "Hoxi" })}
+                          <Show when={permission().bundleID}>
+                            <span class="ml-1.5 font-mono text-[10.5px] text-[var(--text-muted)]">
+                              ({permission().bundleID})
+                            </span>
+                          </Show>
+                        </div>
+                      </Show>
+                      <Show when={permission().appPath}>
+                        <div class="truncate font-mono text-[10px] text-[var(--text-faint)]">
+                          {permission().appPath}
+                        </div>
+                      </Show>
+                    </div>
+                    <button
+                      type="button"
+                      class={btnBase}
+                      disabled={control.busy()}
+                      onClick={() => void control.permission("reveal")}
+                    >
+                      <FolderOpen size={11} />
+                      <span>{t("computer.revealApp")}</span>
+                    </button>
+                  </div>
+                </Show>
+
+                <div class="flex flex-wrap gap-1.5 pt-0.5">
                   <button
                     type="button"
                     class={btnBase}
@@ -156,9 +188,21 @@ export default function ComputerInspector() {
                   >
                     {t("computer.requestAccessibility")}
                   </button>
+                  <button
+                    type="button"
+                    class="inline-flex items-center gap-1.5 rounded-md border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2.5 py-1 text-[11.5px] font-medium text-[var(--accent-primary)] hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity cursor-pointer"
+                    disabled={control.busy()}
+                    onClick={() => void control.permission("reset")}
+                  >
+                    <RefreshCw size={11} />
+                    <span>{t("computer.resetPermissions")}</span>
+                  </button>
                 </div>
                 <p class="text-[11px] leading-relaxed text-[var(--text-muted)]">
                   {t("computer.systemPermissionHint")}
+                </p>
+                <p class="rounded bg-[var(--warn-surface)]/40 px-2 py-1.5 text-[11px] leading-relaxed text-[var(--warn-text)]">
+                  {t("computer.resetPermissionHint")}
                 </p>
               </Show>
               <Show when={permission().platform === "windows"}>
@@ -172,7 +216,7 @@ export default function ComputerInspector() {
 
         {/* Session App Grant Controls */}
         <Show
-          when={control.scope()}
+          when={control.canAuthorize()}
           fallback={
             <div class="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-3 text-center text-[var(--text-muted)]">
               {t("computer.selectSession")}
@@ -244,7 +288,7 @@ export default function ComputerInspector() {
             <button
               type="button"
               class="w-full inline-flex items-center justify-center gap-1.5 rounded-md border border-[var(--accent-border)] bg-[var(--accent-surface)] px-3 py-1.5 text-[12px] font-medium text-[var(--accent-primary)] hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity cursor-pointer"
-              disabled={!ready() || !control.selected() || control.busy()}
+              disabled={!control.permissions()?.supported || !control.selected() || control.busy()}
               onClick={() => void control.authorize()}
             >
               <ShieldCheck size={13} />

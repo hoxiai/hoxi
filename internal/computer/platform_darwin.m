@@ -86,12 +86,56 @@ static NSDictionary *input(NSDictionary *payload) {
  else {int count=MAX(1,[action[@"clickCount"]intValue]);for(int i=1;i<=count;i++){if(!frontIs(pid)||!pointOwned(start,pid))return failure(@"target_app_changed");postMouse(down,start,b,i);postMouse(up,start,b,i);usleep(20000);}}
  return @{};
 }
+static void openPrivacyPane(NSString *anchor) {
+ NSString *url=[NSString stringWithFormat:@"x-apple.systempreferences:com.apple.preference.security?%@",anchor];
+ [NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:url]];
+}
+static void resetTCC(NSString *service,NSString *bundleID) {
+ if(!bundleID.length)return;
+ NSTask *task=[NSTask new];
+ task.executableURL=[NSURL fileURLWithPath:@"/usr/bin/tccutil"];
+ task.arguments=@[@"reset",service,bundleID];
+ task.standardOutput=[NSPipe pipe];
+ task.standardError=[NSPipe pipe];
+ NSError *err=nil;
+ if([task launchAndReturnError:&err])[task waitUntilExit];
+}
+static NSDictionary *permissions(NSDictionary *request) {
+ NSBundle *bundle=NSBundle.mainBundle;
+ NSString *bundleID=bundle.bundleIdentifier?:@"";
+ NSString *appPath=bundle.bundlePath?:@"";
+ NSString *appName=[bundle objectForInfoDictionaryKey:@"CFBundleDisplayName"]?:[bundle objectForInfoDictionaryKey:@"CFBundleName"]?:[NSProcessInfo.processInfo processName]?:@"Hoxi";
+ NSString *prompt=[request[@"prompt"] isKindOfClass:NSString.class]?request[@"prompt"]:@"";
+ if([prompt isEqualToString:@"screen"]){
+  CGRequestScreenCaptureAccess();
+  if(!CGPreflightScreenCaptureAccess())openPrivacyPane(@"Privacy_ScreenCapture");
+ } else if([prompt isEqualToString:@"accessibility"]){
+  AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)@{(__bridge NSString*)kAXTrustedCheckOptionPrompt:@YES});
+  if(!AXIsProcessTrusted())openPrivacyPane(@"Privacy_Accessibility");
+ } else if([prompt isEqualToString:@"reset"]){
+  BOOL needAX=!AXIsProcessTrusted(),needScreen=!CGPreflightScreenCaptureAccess(),bothReady=!needAX&&!needScreen;
+  if(needAX||bothReady){
+   resetTCC(@"Accessibility",bundleID);
+   AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)@{(__bridge NSString*)kAXTrustedCheckOptionPrompt:@YES});
+  }
+  if(needScreen||bothReady){
+   resetTCC(@"ScreenCapture",bundleID);
+   CGRequestScreenCaptureAccess();
+  }
+  if(!AXIsProcessTrusted())openPrivacyPane(@"Privacy_Accessibility");
+  else if(!CGPreflightScreenCaptureAccess())openPrivacyPane(@"Privacy_ScreenCapture");
+ } else if([prompt isEqualToString:@"reveal"]){
+  NSURL *targetURL=bundle.bundleURL?:bundle.executableURL;
+  if(targetURL)[NSWorkspace.sharedWorkspace activateFileViewerSelectingURLs:@[targetURL]];
+ }
+ return @{@"supported":@YES,@"platform":@"darwin",@"accessibility":(AXIsProcessTrusted()?@YES:@NO),@"screenRecording":(CGPreflightScreenCaptureAccess()?@YES:@NO),@"foregroundOnly":@YES,@"appName":appName,@"bundleID":bundleID,@"appPath":appPath};
+}
 char *hoxi_computer_call(const char *operation,const char *payload) { @autoreleasepool {
  NSString *op=[NSString stringWithUTF8String:operation];NSData *data=[[NSString stringWithUTF8String:payload]dataUsingEncoding:NSUTF8StringEncoding];NSDictionary *request=[NSJSONSerialization JSONObjectWithData:data options:0 error:nil];NSDictionary *result=nil;
- if([op isEqualToString:@"permissions"]){NSString *prompt=request[@"prompt"];if([prompt isEqualToString:@"screen"])CGRequestScreenCaptureAccess();if([prompt isEqualToString:@"accessibility"])AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)@{(__bridge NSString*)kAXTrustedCheckOptionPrompt:@YES});result=@{@"supported":@YES,@"platform":@"darwin",@"accessibility":(AXIsProcessTrusted()?@YES:@NO),@"screenRecording":(CGPreflightScreenCaptureAccess()?@YES:@NO),@"foregroundOnly":@YES};}
+ if([op isEqualToString:@"permissions"])result=permissions(request);
  else if([op isEqualToString:@"apps"]){NSMutableArray *apps=[NSMutableArray array];for(NSRunningApplication *app in NSWorkspace.sharedWorkspace.runningApplications){if(app.activationPolicy!=NSApplicationActivationPolicyRegular||app.terminated||!app.launchDate||!app.executableURL||app.processIdentifier==getpid())continue;NSString *started=[NSString stringWithFormat:@"%.6f",app.launchDate.timeIntervalSince1970];[apps addObject:@{@"id":[NSString stringWithFormat:@"%d:%@",app.processIdentifier,started],@"pid":@(app.processIdentifier),@"name":app.localizedName?:@"",@"bundleID":app.bundleIdentifier?:@"",@"path":app.executableURL.path?:@"",@"started":started}];}result=@{@"apps":apps};}
- else if(!AXIsProcessTrusted())result=failure(@"accessibility_permission_required");
- else if([op isEqualToString:@"inspect"]){pid_t pid=[request[@"pid"]intValue];NSArray *windows=appWindows(pid);NSString *wanted=request[@"windowID"];NSDictionary *selected=nil;for(NSDictionary *w in windows)if(!wanted.length||[w[@"id"]isEqualToString:wanted]){selected=w;break;}if(!selected)result=failure(@"no_visible_target_window");else {AXUIElementRef root=AXUIElementCreateApplication(pid);AXUIElementSetMessagingTimeout(root,0.2);NSMutableArray *elements=[NSMutableArray array];id axWindows=axValue(root,kAXWindowsAttribute);if([axWindows isKindOfClass:NSArray.class]){NSDictionary *sb=selected[@"bounds"];for(id window in axWindows){CGRect r=axRect((__bridge AXUIElementRef)window);if(fabs(r.origin.x-[sb[@"x"]doubleValue])<4&&fabs(r.origin.y-[sb[@"y"]doubleValue])<4&&fabs(r.size.width-[sb[@"width"]doubleValue])<4&&fabs(r.size.height-[sb[@"height"]doubleValue])<4){appendAX((__bridge AXUIElementRef)window,elements,0);break;}}for(id window in axWindows){if(elements.count>=300)break;CGRect r=axRect((__bridge AXUIElementRef)window);if(fabs(r.origin.x-[sb[@"x"]doubleValue])<4&&fabs(r.origin.y-[sb[@"y"]doubleValue])<4&&fabs(r.size.width-[sb[@"width"]doubleValue])<4&&fabs(r.size.height-[sb[@"height"]doubleValue])<4)continue;appendAX((__bridge AXUIElementRef)window,elements,0);}}CFRelease(root);NSMutableDictionary *value=[@{@"windows":windows,@"windowID":selected[@"id"],@"elements":elements,@"width":@0,@"height":@0}mutableCopy];if([request[@"image"]boolValue]){if(!CGPreflightScreenCaptureAccess())result=failure(@"screen_recording_permission_required");else [value addEntriesFromDictionary:capture((CGWindowID)[selected[@"id"]longLongValue])];}if(!result)result=value;}}
+ else if(!AXIsProcessTrusted()){AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)@{(__bridge NSString*)kAXTrustedCheckOptionPrompt:@YES});result=failure(@"accessibility_permission_required");}
+ else if([op isEqualToString:@"inspect"]){pid_t pid=[request[@"pid"]intValue];NSArray *windows=appWindows(pid);NSString *wanted=request[@"windowID"];NSDictionary *selected=nil;for(NSDictionary *w in windows)if(!wanted.length||[w[@"id"]isEqualToString:wanted]){selected=w;break;}if(!selected)result=failure(@"no_visible_target_window");else {AXUIElementRef root=AXUIElementCreateApplication(pid);AXUIElementSetMessagingTimeout(root,0.2);NSMutableArray *elements=[NSMutableArray array];id axWindows=axValue(root,kAXWindowsAttribute);if([axWindows isKindOfClass:NSArray.class]){NSDictionary *sb=selected[@"bounds"];for(id window in axWindows){CGRect r=axRect((__bridge AXUIElementRef)window);if(fabs(r.origin.x-[sb[@"x"]doubleValue])<4&&fabs(r.origin.y-[sb[@"y"]doubleValue])<4&&fabs(r.size.width-[sb[@"width"]doubleValue])<4&&fabs(r.size.height-[sb[@"height"]doubleValue])<4){appendAX((__bridge AXUIElementRef)window,elements,0);break;}}for(id window in axWindows){if(elements.count>=300)break;CGRect r=axRect((__bridge AXUIElementRef)window);if(fabs(r.origin.x-[sb[@"x"]doubleValue])<4&&fabs(r.origin.y-[sb[@"y"]doubleValue])<4&&fabs(r.size.width-[sb[@"width"]doubleValue])<4&&fabs(r.size.height-[sb[@"height"]doubleValue])<4)continue;appendAX((__bridge AXUIElementRef)window,elements,0);}}CFRelease(root);NSMutableDictionary *value=[@{@"windows":windows,@"windowID":selected[@"id"],@"elements":elements,@"width":@0,@"height":@0}mutableCopy];if([request[@"image"]boolValue]){if(!CGPreflightScreenCaptureAccess()){CGRequestScreenCaptureAccess();result=failure(@"screen_recording_permission_required");}else [value addEntriesFromDictionary:capture((CGWindowID)[selected[@"id"]longLongValue])];}if(!result)result=value;}}
  else if([op isEqualToString:@"input"])result=input(request);else result=failure(@"unsupported_computer_operation");
  NSData *json=[NSJSONSerialization dataWithJSONObject:result?:failure(@"native_computer_failure") options:0 error:nil];return strdup([[NSString alloc]initWithData:json encoding:NSUTF8StringEncoding].UTF8String);
 }}

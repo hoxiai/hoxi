@@ -4,6 +4,7 @@ import {
   type ComputerApp,
   type ComputerElement,
   type ComputerGrant,
+  type ComputerPermissionAction,
   type ComputerPermissions,
   type ComputerRect,
   type ComputerScope,
@@ -12,6 +13,7 @@ import {
 } from "../services/computer";
 import { workspace } from "./workspace-state";
 import { sessionDirectory } from "./session-query";
+import { newIsolatedSession } from "./session-sandbox";
 import { locale, t } from "../i18n";
 
 export async function stopAllComputerControl(): Promise<void> {
@@ -53,6 +55,7 @@ export function createComputerController() {
       directory = sessionID ? sessionDirectory(sessionID) : undefined;
     return sessionID && directory ? { sessionID, directory } : null;
   }, null, { equals: (a, b) => a?.sessionID === b?.sessionID && a?.directory === b?.directory });
+  const canAuthorize = createMemo(() => Boolean(scope() || workspace.rootDir));
   let current: { abort: AbortController; scope: ComputerScope | null; revision: number } | null = null;
   let copiedTimer: ReturnType<typeof setTimeout> | undefined;
   const valid = (connection: typeof current) =>
@@ -73,7 +76,6 @@ export function createComputerController() {
     setGrant(null);
     setSnapshot(null);
     setWindowID("");
-    setSelected("");
     setElementFilter("");
     setHoveredElementID(null);
     setCursorPoint(null);
@@ -174,7 +176,7 @@ export function createComputerController() {
       if (valid(connection)) report(err);
     }
   }
-  async function permission(kind: "screen" | "accessibility") {
+  async function permission(kind: ComputerPermissionAction) {
     const connection = current;
     if (!connection || !valid(connection) || busy()) return;
     setBusy(true);
@@ -189,15 +191,37 @@ export function createComputerController() {
     }
   }
   async function authorize() {
-    const connection = current;
-    if (!connection?.scope || !valid(connection) || !selected() || busy()) return;
     const appID = selected();
+    if (!appID || busy()) return;
+    let connection = current;
+    if (!connection || !valid(connection)) return;
+    if (!connection.scope) {
+      if (!workspace.rootDir) return;
+      setBusy(true);
+      setError("");
+      try {
+        await newIsolatedSession();
+      } catch (err) {
+        setBusy(false);
+        report(err);
+        return;
+      }
+      connection = current;
+      if (!connection?.scope || !valid(connection)) {
+        setBusy(false);
+        return;
+      }
+    }
     setBusy(true);
     setError("");
     const revision = ++connection.revision;
     try {
-      const next = await computerAPI.grant(connection.scope, appID, locale(), connection.abort.signal);
+      const [next, perm] = await Promise.all([
+        computerAPI.grant(connection.scope, appID, locale(), connection.abort.signal),
+        computerAPI.permissions(connection.abort.signal).catch(() => null),
+      ]);
       if (valid(connection) && connection.revision === revision) {
+        if (perm) setPermissions(perm);
         setGrant(next.grant);
         setSnapshot(null);
         setWindowID("");
@@ -262,7 +286,27 @@ export function createComputerController() {
         if (!requestedWindow) setWindowID(next.windowID);
       }
     } catch (err) {
-      if (valid(connection) && connection.revision === revision) report(err);
+      if (valid(connection) && connection.revision === revision) {
+        report(err);
+        const msg = err instanceof Error ? err.message : String(err);
+        if (permissions()?.platform === "darwin") {
+          if (msg.includes("accessibility_permission_required")) {
+            void computerAPI
+              .requestPermission("accessibility", connection.abort.signal)
+              .then((p) => {
+                if (valid(connection)) setPermissions(p);
+              })
+              .catch(() => {});
+          } else if (msg.includes("screen_recording_permission_required")) {
+            void computerAPI
+              .requestPermission("screen", connection.abort.signal)
+              .then((p) => {
+                if (valid(connection)) setPermissions(p);
+              })
+              .catch(() => {});
+          }
+        }
+      }
     } finally {
       if (valid(connection) && connection.revision === revision) setBusy(false);
     }
@@ -282,12 +326,15 @@ export function createComputerController() {
       window_not_capturable: "computer.errorWindowNotCapturable",
       screen_capture_unavailable: "computer.errorScreenCaptureUnavailable",
       accessibility_inspection_unavailable: "computer.errorAccessibilityInspectionUnavailable",
+      computer_ui_origin_required: "computer.errorUiOriginRequired",
+      computer_use_requires_registered_session: "computer.errorRegisteredSessionRequired",
     } as const;
     const code = (Object.keys(known) as Array<keyof typeof known>).find((value) => raw.includes(value));
     return code ? t(known[code]) : raw;
   }
   return {
     scope,
+    canAuthorize,
     permissions,
     apps,
     filteredApps,

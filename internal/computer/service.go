@@ -25,6 +25,9 @@ type Permissions struct {
 	Accessibility   bool   `json:"accessibility"`
 	ScreenRecording bool   `json:"screenRecording"`
 	ForegroundOnly  bool   `json:"foregroundOnly"`
+	AppName         string `json:"appName,omitempty"`
+	BundleID        string `json:"bundleID,omitempty"`
+	AppPath         string `json:"appPath,omitempty"`
 }
 type App struct {
 	ID       string `json:"id"`
@@ -190,8 +193,13 @@ func (s *Service) authorize(ctx context.Context, scope Scope, appID string, vers
 	if err != nil {
 		return nil, err
 	}
-	if !permission.Supported || !permission.Accessibility || !permission.ScreenRecording {
+	if !permission.Supported {
 		return nil, errors.New("system_permissions_required")
+	}
+	if !permission.Accessibility {
+		_, _ = s.Permissions(ctx, "accessibility")
+	} else if !permission.ScreenRecording {
+		_, _ = s.Permissions(ctx, "screen")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()

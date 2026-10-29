@@ -25,6 +25,10 @@
         <string>true</string>
         <key>NSHumanReadableCopyright</key>
         <string>{{.Info.Copyright}}</string>
+        <key>NSAccessibilityUsageDescription</key>
+        <string>Hoxi needs Accessibility access to inspect and interact with the desktop app window you authorize for a chat.</string>
+        <key>NSScreenCaptureUsageDescription</key>
+        <string>Hoxi needs Screen Recording access to capture screenshots of the desktop app window you authorize for a chat.</string>
         {{if .Info.FileAssociations}}
         <key>CFBundleDocumentTypes</key>
         <array>
