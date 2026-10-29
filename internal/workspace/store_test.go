@@ -114,6 +114,8 @@ func TestCleanValidProjectDirAndResolveInitialRootDir(t *testing.T) {
 	homeDir := setupTestEnv(t)
 	projA := mkdirTempProject(t, homeDir, "proj-alpha")
 	appBundleDir := mkdirTempProject(t, homeDir, "Hoxi.app/Contents/MacOS")
+	defaultWsDir := mkdirTempProject(t, homeDir, ".hoxi/workspaces/default")
+	winInstallDir := mkdirTempProject(t, homeDir, "AppData/Local/Programs/Hoxi")
 
 	if got := CleanValidProjectDir("/"); got != "" {
 		t.Fatalf("expected / to be rejected, got %q", got)
@@ -124,6 +126,12 @@ func TestCleanValidProjectDirAndResolveInitialRootDir(t *testing.T) {
 	if got := CleanValidProjectDir(appBundleDir); got != "" {
 		t.Fatalf("expected .app/Contents path to be rejected, got %q", got)
 	}
+	if got := CleanValidProjectDir(defaultWsDir); got != "" {
+		t.Fatalf("expected .hoxi/workspaces/default path to be rejected, got %q", got)
+	}
+	if got := CleanValidProjectDir(winInstallDir); got != "" {
+		t.Fatalf("expected AppData/Local/Programs/Hoxi path to be rejected, got %q", got)
+	}
 	if got := CleanValidProjectDir(projA); got != projA {
 		t.Fatalf("expected %q to be valid, got %q", projA, got)
 	}
@@ -131,6 +139,13 @@ func TestCleanValidProjectDirAndResolveInitialRootDir(t *testing.T) {
 	// With no saved workspaces, ResolveInitialRootDir("/") should return ""
 	if got := ResolveInitialRootDir("/"); got != "" {
 		t.Fatalf("expected empty rootDir when no workspaces saved and candidate is /, got %q", got)
+	}
+	// Seeding with defaultWsDir or winInstallDir must not create a workspace
+	if s := NewStore(defaultWsDir); len(s.List()) != 0 {
+		t.Fatalf("expected NewStore(defaultWsDir) not to seed a workspace, got %+v", s.List())
+	}
+	if s := NewStore(winInstallDir); len(s.List()) != 0 {
+		t.Fatalf("expected NewStore(winInstallDir) not to seed a workspace, got %+v", s.List())
 	}
 
 	// Seed a workspace and verify ResolveInitialRootDir("/") falls back to projA

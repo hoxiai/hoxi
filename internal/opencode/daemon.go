@@ -208,7 +208,9 @@ func StartDaemonWithBin(
 	child := exec.CommandContext(ctx, binPath, args...)
 	daemonDir := strings.TrimSpace(rootDir)
 	if daemonDir == "" || daemonDir == "/" {
-		if home, err := os.UserHomeDir(); err == nil && home != "" {
+		if defDir := hoxipaths.EnsureDefaultWorkspaceDir(); defDir != "" {
+			daemonDir = defDir
+		} else if home, err := os.UserHomeDir(); err == nil && home != "" {
 			daemonDir = home
 		} else {
 			daemonDir = os.TempDir()

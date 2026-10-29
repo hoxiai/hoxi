@@ -144,10 +144,9 @@ func Run(distFS fs.FS) {
 
 	var cfg Config
 	var showVersion bool
-	cwd, _ := os.Getwd()
 	flag.StringVar(&cfg.Address, "address", envOr("HOXI_BRIDGE_ADDR", identity.DefaultBridgeAddr), "address for the hoxi loopback bridge / headless server")
 	flag.StringVar(&cfg.OpenCode, "opencode", envOr("HOXI_OPENCODE", "opencode"), "path to the opencode executable")
-	flag.StringVar(&cfg.RootDir, "dir", envOr("HOXI_ROOT_DIR", cwd), "workspace root directory")
+	flag.StringVar(&cfg.RootDir, "dir", envOr("HOXI_ROOT_DIR", ""), "workspace root directory")
 	flag.BoolVar(&cfg.NoDesktop, "no-desktop", os.Getenv("HOXI_NO_DESKTOP") == "1", "run in headless HTTP mode without Wails desktop window")
 	flag.BoolVar(&showVersion, "version", false, "print the embedded Hoxi version and exit")
 	flag.Parse()

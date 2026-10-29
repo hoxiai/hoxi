@@ -55,7 +55,11 @@ export function normalizeFolderPath(p?: string | null): string {
   const trimmed = (p || "").trim();
   if (!trimmed) return "";
   if (trimmed === "/") return "/";
-  return trimmed.replace(/[\\/]+$/, "");
+  const stripped = trimmed.replace(/[\\/]+$/, "");
+  if (/^[A-Za-z]:(?:$|[\\/])/.test(stripped)) {
+    return `${stripped[0].toUpperCase()}:${stripped.slice(2).replace(/\\+/g, "/")}`;
+  }
+  return stripped;
 }
 
 export function stripWorktreePath(p?: string | null): string {
@@ -77,11 +81,17 @@ export function shortenPath(p: string): string {
   return p;
 }
 
+const HOME_ROOT_RE = /^(?:\/(?:Users|home)\/[^/]+|[A-Za-z]:\/Users\/[^/]+)$/i;
+const APP_INSTALL_OR_SYSTEM_PATH_RE =
+  /(?:\/AppData\/Local\/Programs\/Hoxi(?:$|\/)|\/Program Files(?: \(x86\))?\/Hoxi(?:$|\/)|^[A-Za-z]:\/Windows(?:$|\/))/i;
+
 export function isInvalidProjectPath(p?: string | null): boolean {
   const norm = normalizeFolderPath(p);
   if (!norm || norm === "." || norm === "/" || norm === "\\") return true;
   if (/^[A-Za-z]:$/.test(norm)) return true;
   if (norm.includes(".app/Contents")) return true;
+  if (HOME_ROOT_RE.test(norm)) return true;
+  if (APP_INSTALL_OR_SYSTEM_PATH_RE.test(norm)) return true;
   return false;
 }
 

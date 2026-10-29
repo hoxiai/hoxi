@@ -437,6 +437,9 @@ export async function switchWorkspace(
   }
 
   recordRecentProject(cleaned);
+  if (!isDefaultWorkspacePath(cleaned)) {
+    setRememberedCodeSurface(cleaned, targetSessionID);
+  }
 
   const knownProjectID = findWorkspaceProfileByDir(cleaned)?.id || null;
   const warmSurfaceSwitch =

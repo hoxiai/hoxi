@@ -634,8 +634,19 @@ export default function LeftNav() {
             }}
           </For>
 
-          {/* Bottom + Import External Task Button */}
-          <div class="pt-1">
+          {/* Bottom + New Workspace (when empty) & Import External Task Button */}
+          <div class="pt-1 space-y-0.5">
+            <Show when={allProjects().length === 0}>
+              <button
+                type="button"
+                onClick={() => openCreateWorkspaceModal()}
+                class="w-full flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[12px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]/60 transition-colors cursor-pointer"
+                title={t("leftNav.newWorkspace")}
+              >
+                <FolderPlus size={13.5} class="shrink-0 text-[var(--accent-primary)]" />
+                <span>{t("leftNav.newWorkspace")}</span>
+              </button>
+            </Show>
             <button
               type="button"
               onClick={() => openHandoffModal()}

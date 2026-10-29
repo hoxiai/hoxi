@@ -104,6 +104,9 @@ func (s *workspaceStore) backupCorruptFileLocked() (string, error) {
 }
 
 func (s *workspaceStore) buildSeededWorkspace(rootDir string) (workspaceProfile, error) {
+	if CleanValidProjectDir(rootDir) == "" {
+		return workspaceProfile{}, errors.New("invalid seed rootDir")
+	}
 	folders, err := validateWorkspaceFolders([]workspaceFolderInput{{Path: rootDir, IsPrimary: true}})
 	if err != nil || len(folders) == 0 {
 		return workspaceProfile{}, errors.New("invalid seed rootDir")

@@ -7,6 +7,8 @@ import {
   deleteCachedProjectSessions,
   filterProjectSessions,
   isDismissedProjectPath,
+  isInvalidProjectPath,
+  normalizeFolderPath,
   saveWorkspaceProfile,
   setWorkspace,
   workspace,
@@ -417,6 +419,48 @@ describe("project attribution", () => {
       hoxiAPI.listSessions = origListSessions;
       hoxiAPI.resolveProject = origResolveProject;
       hoxiAPI.listAgents = origListAgents;
+      setWorkspace(reconcile(saved));
+    }
+  });
+
+  it("deduplicates Windows backslash and slash paths and filters out home and app install directories", () => {
+    const saved = structuredClone(unwrap(workspace));
+    try {
+      assertEqual(normalizeFolderPath("c:\\Users\\alice\\code\\repo\\"), "C:/Users/alice/code/repo");
+      assertEqual(normalizeFolderPath("C:/Users/alice/code/repo"), "C:/Users/alice/code/repo");
+      assertEqual(isInvalidProjectPath("/Users/alice"), true);
+      assertEqual(isInvalidProjectPath("C:\\Users\\alice"), true);
+      assertEqual(isInvalidProjectPath("C:\\Users\\alice\\AppData\\Local\\Programs\\Hoxi"), true);
+      assertEqual(isInvalidProjectPath("C:\\Windows\\System32"), true);
+      assertEqual(isInvalidProjectPath("C:\\Users\\alice\\code\\repo"), false);
+
+      setWorkspace({
+        rootDir: "",
+        savedWorkspaces: [
+          {
+            id: "ws_win",
+            name: "repo",
+            color: "#5EA0F7",
+            folders: [{ id: "f1", path: "C:\\Users\\alice\\code\\repo", isPrimary: true, position: 0 }],
+            createdAt: "",
+            updatedAt: "",
+          },
+        ],
+        projects: [
+          { id: "p_dup", worktree: "C:/Users/alice/code/repo", time: { created: 1, updated: 1 } },
+          { id: "p_home", worktree: "C:/Users/alice", time: { created: 1, updated: 1 } },
+          { id: "p_inst", worktree: "C:\\Users\\alice\\AppData\\Local\\Programs\\Hoxi", time: { created: 1, updated: 1 } },
+          { id: "p_def", worktree: "C:\\Users\\alice\\.hoxi\\workspaces\\default", time: { created: 1, updated: 1 } },
+        ],
+        recentProjects: [],
+        projectOrder: [],
+        dismissedProjects: [],
+      });
+
+      const allProjects = buildAllProjects();
+      assertEqual(allProjects.length, 1);
+      assertEqual(allProjects[0]?.path, "C:/Users/alice/code/repo");
+    } finally {
       setWorkspace(reconcile(saved));
     }
   });

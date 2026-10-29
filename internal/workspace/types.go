@@ -149,7 +149,8 @@ func expandUserPath(raw string) string {
 
 // CleanValidProjectDir resolves and validates whether dir can serve as a workspace project root.
 // It rejects empty paths, non-existent directories, filesystem roots ("/"), the user's home directory,
-// and directories inside a macOS .app bundle.
+// directories inside a macOS .app bundle, the Hoxi application binary directory, and the built-in
+// default workspace directory (~/.hoxi/workspaces/default).
 func CleanValidProjectDir(dir string) string {
 	trimmed := expandUserPath(dir)
 	if trimmed == "" || trimmed == "." {
@@ -167,10 +168,38 @@ func CleanValidProjectDir(dir string) string {
 	if isForbiddenProjectRoot(resolved) {
 		return ""
 	}
-	if strings.Contains(resolved, ".app/Contents") {
+	if isAppInstallOrDefaultWorkspaceDir(resolved) {
 		return ""
 	}
 	return cleaned
+}
+
+func isAppInstallOrDefaultWorkspaceDir(resolved string) bool {
+	if strings.Contains(resolved, ".app/Contents") {
+		return true
+	}
+	slash := strings.ToLower(filepath.ToSlash(resolved))
+	if strings.HasSuffix(slash, "/.hoxi/workspaces/default") || strings.Contains(slash, "/.hoxi/workspaces/default/") {
+		return true
+	}
+	if strings.Contains(slash, "/appdata/local/programs/hoxi") ||
+		strings.Contains(slash, "/program files/hoxi") ||
+		strings.Contains(slash, "/program files (x86)/hoxi") {
+		return true
+	}
+	if slash == "c:/windows" || strings.HasPrefix(slash, "c:/windows/") {
+		return true
+	}
+	if exe, err := os.Executable(); err == nil && exe != "" {
+		exeDir := filepath.Clean(filepath.Dir(exe))
+		if realExeDir, err := filepath.EvalSymlinks(exeDir); err == nil && realExeDir != "" {
+			exeDir = filepath.Clean(realExeDir)
+		}
+		if comparableFolderPath(resolved) == comparableFolderPath(exeDir) {
+			return true
+		}
+	}
+	return false
 }
 
 func ResolveInitialRootDir(candidate string) string {
