@@ -54,6 +54,15 @@ export default function FileTreeView() {
   const [loadingPreview, setLoadingPreview] = createSignal(false);
   const [highlightedLine, setHighlightedLine] = createSignal<number | null>(null);
   const [viewMode, setViewMode] = createSignal<"preview" | "source">("source");
+  const [historyStack, setHistoryStack] = createSignal<
+    Array<{ path: string; diff: SnapshotFileDiff | null; line: number | null }>
+  >([]);
+  const [historyIndex, setHistoryIndex] = createSignal(-1);
+
+  const resetPreviewHistory = () => {
+    setHistoryStack([]);
+    setHistoryIndex(-1);
+  };
 
   let lastLoadedDir = "";
   let listRequest = 0;
@@ -124,15 +133,29 @@ export default function FileTreeView() {
   const openPreview = async (
     path: string,
     diffOverride?: SnapshotFileDiff | null,
-    requestedLine?: number | null
+    requestedLine?: number | null,
+    options?: { fromHistory?: boolean }
   ) => {
     const request = ++previewRequest;
     const lineTarget = requestedLine !== undefined ? requestedLine : workspace.inspectedFileLine;
+    const effectiveDiff = diffOverride === undefined ? workspace.inspectedFileDiff : diffOverride;
+    if (!options?.fromHistory) {
+      const stack = historyStack();
+      const idx = historyIndex();
+      const current = idx >= 0 ? stack[idx] : undefined;
+      if (!current || current.path !== path || current.line !== (lineTarget ?? null)) {
+        const nextStack = stack.slice(0, idx + 1);
+        nextStack.push({ path, diff: effectiveDiff ?? null, line: lineTarget ?? null });
+        if (nextStack.length > 24) nextStack.shift();
+        setHistoryStack(nextStack);
+        setHistoryIndex(nextStack.length - 1);
+      }
+    }
     setSelectedPath(path);
     setPreviewContent("");
     setPreviewMeta(null);
     setPreviewPath(path);
-    setPreviewDiff(diffOverride === undefined ? workspace.inspectedFileDiff : diffOverride);
+    setPreviewDiff(effectiveDiff);
     setHighlightedLine(lineTarget);
     setViewMode(
       !lineTarget && (isMarkdownPath(path) || isSvgPath(path)) ? "preview" : "source"
@@ -234,12 +257,27 @@ export default function FileTreeView() {
       setSelectedPath(null);
       if (hadPrev && !workspace.inspectedFilePath) {
         setPreviewPath(null);
+        resetPreviewHistory();
       }
       const cached = readCachedRootNodes(dir, "");
       if (!cached) setResults([]);
       void loadInitialFiles(dir);
     }
   });
+
+  const canGoHistoryBack = createMemo(() => historyIndex() > 0);
+  const canGoHistoryForward = createMemo(
+    () => historyIndex() >= 0 && historyIndex() < historyStack().length - 1
+  );
+
+  const navigateHistory = (delta: -1 | 1) => {
+    const nextIdx = historyIndex() + delta;
+    const stack = historyStack();
+    if (nextIdx < 0 || nextIdx >= stack.length) return;
+    const entry = stack[nextIdx];
+    setHistoryIndex(nextIdx);
+    void openPreview(entry.path, entry.diff, entry.line, { fromHistory: true });
+  };
 
   // React to file links clicked in chat, ToolCard, or ReviewComments
   createEffect(() => {
@@ -369,7 +407,14 @@ export default function FileTreeView() {
             viewMode={viewMode()}
             onChangeViewMode={setViewMode}
             targetDirectory={targetDirectory()}
-            onBack={() => setPreviewPath(null)}
+            canGoBack={canGoHistoryBack()}
+            canGoForward={canGoHistoryForward()}
+            onNavigateBack={() => navigateHistory(-1)}
+            onNavigateForward={() => navigateHistory(1)}
+            onBack={() => {
+              setPreviewPath(null);
+              resetPreviewHistory();
+            }}
           />
         )}
       </Show>

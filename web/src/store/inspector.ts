@@ -87,15 +87,17 @@ export function openFileInInspector(filePath: string, line?: number | null, diff
   });
 }
 
+function isRenderPreviewDefaultPath(cleanPath: string): boolean {
+  return /\.(?:md|mdx|markdown|svg)$/i.test(cleanPath.trim());
+}
+
 export function openChangedFileInInspector(diff: SnapshotFileDiff | string) {
   const file = typeof diff === "string" ? diff : diff.file;
   const ref = parseFileReference(file);
   const resolvedDiff = typeof diff === "string" ? resolveKnownPoolDiff(ref.path) : diff;
-  openFileInInspector(
-    file,
-    ref.line ?? firstChangedLine(resolvedDiff?.patch),
-    resolvedDiff
-  );
+  const targetLine =
+    ref.line ?? (isRenderPreviewDefaultPath(ref.path) ? null : firstChangedLine(resolvedDiff?.patch));
+  openFileInInspector(file, targetLine, resolvedDiff);
 }
 
 export function openDiffInInspector(

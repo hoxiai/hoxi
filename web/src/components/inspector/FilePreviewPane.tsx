@@ -2,6 +2,8 @@ import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "so
 import {
   ArrowLeft,
   Check,
+  ChevronLeft,
+  ChevronRight,
   Code2,
   Copy,
   ExternalLink,
@@ -9,6 +11,7 @@ import {
   FileCode2,
   FolderOpen,
   GitBranch,
+  ListTree,
   LoaderCircle,
 } from "lucide-solid";
 import type { FileContentResponse } from "../../services/api";
@@ -22,7 +25,7 @@ import {
 } from "../../store/workspace";
 import { DiffChanges, FileIcon } from "../icons";
 import { computeChangedFileLines } from "../timeline/file-diff-lines";
-import MarkdownView from "../timeline/MarkdownView";
+import { extractMarkdownHeadings } from "../timeline/MarkdownView";
 import { highlightCode, fileLanguage, type HighlightedCode } from "../timeline/syntax-highlight";
 import { t } from "../../i18n";
 import {
@@ -31,6 +34,7 @@ import {
   isMarkdownPath,
   isSvgPath,
 } from "./file-tree-helpers";
+import MarkdownDocumentReader from "./MarkdownDocumentReader";
 
 export interface FilePreviewPaneProps {
   previewPath: string;
@@ -44,6 +48,10 @@ export interface FilePreviewPaneProps {
   viewMode: "preview" | "source";
   onChangeViewMode: (mode: "preview" | "source") => void;
   targetDirectory: string | undefined;
+  canGoBack?: boolean;
+  canGoForward?: boolean;
+  onNavigateBack?: () => void;
+  onNavigateForward?: () => void;
   onBack: () => void;
 }
 
@@ -51,6 +59,7 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
   const [highlighted, setHighlighted] = createSignal<HighlightedCode>();
   const [copiedPath, setCopiedPath] = createSignal(false);
   const [copiedContent, setCopiedContent] = createSignal(false);
+  const [outlineOpen, setOutlineOpen] = createSignal(false);
   let sourceContainer: HTMLDivElement | undefined;
   let drillPhase = false;
   const drillEnterClass = createMemo(() => {
@@ -63,11 +72,20 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
   const isImageFile = createMemo(() =>
     Boolean(props.previewPath && isImagePreviewable(props.previewPath, props.previewMeta))
   );
+  const isMarkdownFile = createMemo(() => {
+    const p = props.previewMeta?.resolvedPath || props.previewPath || "";
+    return !isBinaryPreview() && isMarkdownPath(p, props.previewMeta?.mimeType);
+  });
   const canTogglePreview = createMemo(() => {
     const p = props.previewMeta?.resolvedPath || props.previewPath || "";
     const mime = props.previewMeta?.mimeType;
     return !isBinaryPreview() && (isMarkdownPath(p, mime) || isSvgPath(p, mime));
   });
+  const markdownHeadings = createMemo(() =>
+    isMarkdownFile() && props.previewContent
+      ? extractMarkdownHeadings(props.previewContent)
+      : []
+  );
 
   const imageDataUrl = createMemo(() => {
     const p = props.previewPath || "";
@@ -169,11 +187,35 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
           type="button"
           class="hoxi-press inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer shrink-0"
           onClick={() => props.onBack()}
-          title={t("inspector.files.back")}
+          title={t("inspector.files.backToTree")}
         >
           <ArrowLeft size={12} />
           {t("inspector.files.back")}
         </button>
+
+        <Show when={props.canGoBack || props.canGoForward}>
+          <div class="shrink-0 inline-flex items-center rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-0.5">
+            <button
+              type="button"
+              disabled={!props.canGoBack}
+              onClick={() => props.onNavigateBack?.()}
+              title={t("inspector.files.historyBack")}
+              class="hoxi-press rounded p-0.5 text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-35 cursor-pointer"
+            >
+              <ChevronLeft size={12} />
+            </button>
+            <button
+              type="button"
+              disabled={!props.canGoForward}
+              onClick={() => props.onNavigateForward?.()}
+              title={t("inspector.files.historyForward")}
+              class="hoxi-press rounded p-0.5 text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-35 cursor-pointer"
+            >
+              <ChevronRight size={12} />
+            </button>
+          </div>
+        </Show>
+
         <FileIcon
           node={{ path: props.previewMeta?.resolvedPath || props.previewPath, type: "file" }}
           class="w-4 h-4 shrink-0"
@@ -241,6 +283,25 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
               <span>{t("inspector.files.sourceMode")}</span>
             </button>
           </div>
+        </Show>
+
+        {/* Markdown Outline (TOC) Toggle */}
+        <Show when={props.viewMode === "preview" && markdownHeadings().length >= 2}>
+          <button
+            type="button"
+            onClick={() => setOutlineOpen((v) => !v)}
+            class={`hoxi-press shrink-0 inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] cursor-pointer ${
+              outlineOpen()
+                ? "border-[var(--accent-border)] bg-[var(--accent-surface)] text-[var(--accent-primary)] font-medium"
+                : "border-[var(--border-subtle)] bg-[var(--bg-panel)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+            }`}
+            title={t("inspector.files.outlineTitle")}
+          >
+            <ListTree size={11} />
+            <span>
+              {t("inspector.files.outlineCount", { count: markdownHeadings().length })}
+            </span>
+          </button>
         </Show>
 
         {/* Quick Action Icons: Copy Path, Copy Content, Reveal in Finder, Open in Default App */}
@@ -354,13 +415,7 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
                 fallback={
                   /* 3. Markdown Rendered Document Preview */
                   <Show
-                    when={
-                      props.viewMode === "preview" &&
-                      isMarkdownPath(
-                        props.previewMeta?.resolvedPath || props.previewPath || "",
-                        props.previewMeta?.mimeType
-                      )
-                    }
+                    when={props.viewMode === "preview" && isMarkdownFile()}
                     fallback={
                       /* 4. Highlighted Code / Text Source View */
                       <pre
@@ -438,9 +493,14 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
                       </pre>
                     }
                   >
-                    <div class="p-4 bg-[var(--bg-panel)] min-h-full">
-                      <MarkdownView content={props.previewContent} />
-                    </div>
+                    <MarkdownDocumentReader
+                      content={props.previewContent}
+                      baseFilePath={props.previewPath}
+                      headings={markdownHeadings()}
+                      outlineOpen={outlineOpen()}
+                      onToggleOutline={setOutlineOpen}
+                      scrollContainer={() => sourceContainer}
+                    />
                   </Show>
                 }
               >

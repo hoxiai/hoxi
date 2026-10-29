@@ -1,6 +1,17 @@
 // web/src/components/timeline/markdown/blocks.ts
-import { looksLikeCandidate, normalizeCandidatePath } from "../../../store/workspace";
-import type { AlertKind, BlockToken, ListItemEntry, TableAlign } from "./types";
+import {
+  extractFileSuffix,
+  looksLikeCandidate,
+  normalizeCandidatePath,
+} from "../../../store/workspace";
+import type {
+  AlertKind,
+  BlockToken,
+  FrontmatterEntry,
+  ListItemEntry,
+  MarkdownHeadingItem,
+  TableAlign,
+} from "./types";
 
 export function isLikelyFilePath(text: string): boolean {
   const trimmed = text.trim();
@@ -223,10 +234,70 @@ function matchListMarker(
   return null;
 }
 
+function parseYamlFrontmatter(
+  lines: string[]
+): { entries: FrontmatterEntry[]; nextIndex: number } | null {
+  if (lines.length < 3 || lines[0].trim() !== "---") return null;
+  const maxScan = Math.min(lines.length, 48);
+  let closeIdx = -1;
+  for (let idx = 1; idx < maxScan; idx++) {
+    const trimmed = lines[idx].trim();
+    if (trimmed === "---" || trimmed === "...") {
+      closeIdx = idx;
+      break;
+    }
+  }
+  if (closeIdx <= 1) return null;
+
+  const entries: FrontmatterEntry[] = [];
+  for (let idx = 1; idx < closeIdx; idx++) {
+    const rawLine = lines[idx];
+    const trimmed = rawLine.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+
+    const kv = rawLine.match(/^([A-Za-z0-9_.-]+)\s*:\s*(.*)$/);
+    if (kv) {
+      const key = kv[1].trim();
+      let val = kv[2].trim();
+      if (val === "|" || val === ">" || val === "|-" || val === ">-") {
+        val = "";
+      } else if (
+        (val.startsWith('"') && val.endsWith('"')) ||
+        (val.startsWith("'") && val.endsWith("'"))
+      ) {
+        val = val.slice(1, -1);
+      }
+      entries.push({ key, value: val });
+      continue;
+    }
+
+    const cont = rawLine.match(/^\s+(?:-\s+(.*)|(\S.*))$/);
+    if (cont && entries.length > 0) {
+      const itemText = (cont[1] ?? cont[2] ?? "").trim().replace(/^["']|["']$/g, "");
+      if (itemText) {
+        const prev = entries[entries.length - 1];
+        prev.value = prev.value ? `${prev.value}, ${itemText}` : itemText;
+      }
+      continue;
+    }
+
+    return null;
+  }
+
+  if (entries.length === 0) return null;
+  return { entries, nextIndex: closeIdx + 1 };
+}
+
 export function parseMarkdownBlocks(src: string): BlockToken[] {
   const blocks: BlockToken[] = [];
   const lines = src.replace(/\r\n/g, "\n").split("\n");
   let i = 0;
+
+  const frontmatter = parseYamlFrontmatter(lines);
+  if (frontmatter) {
+    blocks.push({ type: "frontmatter", entries: frontmatter.entries });
+    i = frontmatter.nextIndex;
+  }
 
   while (i < lines.length) {
     const line = lines[i];
@@ -454,4 +525,138 @@ export function parseNestedBlockquote(text: string): BlockToken[] | null {
   const blocks = parseMarkdownBlocks(text);
   if (blocks.length === 1 && blocks[0].type === "paragraph") return null;
   return blocks;
+}
+
+/**
+ * Strips inline Markdown syntax (`code`, `[label](url)`, `![alt](url)`, `**bold**`, `*italic*`, `~~strike~~`)
+ * so heading outlines and slug anchors use clean human-readable text.
+ */
+export function stripInlineMarkdownFormatting(raw: string): string {
+  return (raw || "")
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/__([^_]+)__/g, "$1")
+    .replace(/~~([^~]+)~~/g, "$1")
+    .replace(/\*([^*]+)\*/g, "$1")
+    .trim();
+}
+
+/**
+ * Generates a GitHub-compatible heading anchor slug preserving ASCII word characters and CJK characters.
+ */
+export function slugifyHeading(raw: string): string {
+  const clean = stripInlineMarkdownFormatting(raw).toLowerCase();
+  const slug = clean
+    .replace(/[\s\u3000-\u303f\uff00-\uffef!"#$%&'()*+,./:;<=>?@[\\\]^`{|}~—–·]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  return slug || "section";
+}
+
+/**
+ * Computes deduplicated heading slugs aligned by block index for `MarkdownBlocks`.
+ */
+export function computeHeadingSlugList(blocks: BlockToken[]): Array<string | undefined> {
+  const seen = new Map<string, number>();
+  return blocks.map((block) => {
+    if (block.type !== "heading" || !block.text.trim()) return undefined;
+    const base = slugifyHeading(block.text);
+    const count = seen.get(base) ?? 0;
+    seen.set(base, count + 1);
+    return count === 0 ? base : `${base}-${count}`;
+  });
+}
+
+/**
+ * Extracts a flat Table of Contents (TOC) list of headings with deduplicated anchor slugs.
+ */
+export function extractMarkdownHeadings(
+  contentOrBlocks: string | BlockToken[]
+): MarkdownHeadingItem[] {
+  const blocks =
+    typeof contentOrBlocks === "string"
+      ? parseMarkdownBlocks(contentOrBlocks)
+      : contentOrBlocks;
+  const slugs = computeHeadingSlugList(blocks);
+  const headings: MarkdownHeadingItem[] = [];
+  for (let i = 0; i < blocks.length; i++) {
+    const b = blocks[i];
+    const slug = slugs[i];
+    if (b.type === "heading" && slug) {
+      const label = stripInlineMarkdownFormatting(b.text);
+      if (label) {
+        headings.push({
+          level: b.level,
+          text: label,
+          slug,
+        });
+      }
+    }
+  }
+  return headings;
+}
+
+/**
+ * Resolves a relative file or image reference inside a Markdown document against `baseFilePath`
+ * (e.g. resolving `./contract.md` or `../client/AGENTS.md` when reading `docs/guide.md`),
+ * while preserving `#L10` / `:10` line suffixes and leaving workspace-root or absolute paths intact.
+ */
+export function resolveMarkdownRelativePath(
+  rawPath: string,
+  baseFilePath?: string
+): string {
+  const trimmed = (rawPath || "").trim();
+  if (!trimmed || !baseFilePath) return trimmed;
+  if (
+    trimmed.startsWith("#") ||
+    /^(?:https?|mailto|tel|javascript|vbscript|data|ws|wss|file):/i.test(trimmed) ||
+    trimmed.startsWith("/") ||
+    trimmed.startsWith("~/") ||
+    /^[A-Za-z]:[\\/]/.test(trimmed)
+  ) {
+    return trimmed;
+  }
+
+  const normBase = baseFilePath.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+  const lastSlash = normBase.lastIndexOf("/");
+  if (lastSlash <= 0) {
+    return trimmed.startsWith("./") ? trimmed.slice(2) : trimmed;
+  }
+  const baseDir = normBase.slice(0, lastSlash);
+
+  // Extract optional #L10 or :10 suffix so we can re-attach it after path normalization
+  const hashIdx = trimmed.indexOf("#");
+  const suffixFromHash = hashIdx >= 0 ? trimmed.slice(hashIdx) : "";
+  const withoutHash = hashIdx >= 0 ? trimmed.slice(0, hashIdx) : trimmed;
+  const { path: cleanRel, line, column } = extractFileSuffix(withoutHash);
+  const lineSuffix = suffixFromHash
+    ? suffixFromHash
+    : line
+      ? column
+        ? `:${line}:${column}`
+        : `:${line}`
+      : "";
+
+  const relNorm = cleanRel.replace(/\\/g, "/").trim();
+  if (!relNorm) return trimmed;
+
+  const isExplicitDot = relNorm.startsWith("./") || relNorm.startsWith("../");
+  // Avoid double-prefixing if the author already wrote a workspace-root path starting with `baseDir/`
+  if (!isExplicitDot && (relNorm === baseDir || relNorm.startsWith(`${baseDir}/`))) {
+    return `${relNorm}${lineSuffix}`;
+  }
+
+  const stack = baseDir.split("/").filter(Boolean);
+  for (const seg of relNorm.split("/")) {
+    if (!seg || seg === ".") continue;
+    if (seg === "..") {
+      stack.pop();
+    } else {
+      stack.push(seg);
+    }
+  }
+  const joined = stack.join("/");
+  return joined ? `${joined}${lineSuffix}` : `${relNorm}${lineSuffix}`;
 }

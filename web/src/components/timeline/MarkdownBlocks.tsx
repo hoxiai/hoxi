@@ -1,7 +1,8 @@
-import { createMemo, Index, Match, Show, Switch } from "solid-js";
+import { createMemo, For, Index, Match, Show, Switch } from "solid-js";
 import {
   type AlertKind,
   type BlockToken,
+  computeHeadingSlugList,
   parseNestedBlockquote,
   type TableAlign,
 } from "./markdown-parser";
@@ -44,17 +45,40 @@ function alertStyle(alert?: AlertKind): { border: string; badgeBg: string; label
 
 export default function MarkdownBlocks(props: {
   blocks: BlockToken[];
-  density?: "chat" | "compact";
+  density?: "chat" | "compact" | "document";
   depth?: number;
 }) {
   const depth = () => props.depth ?? 0;
   const compact = () => props.density === "compact";
+  const isDoc = () => props.density === "document";
   const blockBirth = createRevealBirths();
+  const headingSlugs = createMemo(() => computeHeadingSlugList(props.blocks));
 
   return (
     <Index each={props.blocks}>
       {(block, blockIdx) => (
         <Switch>
+          <Match when={block().type === "frontmatter"}>
+            <div
+              ref={(el) => revealBlock(el, blockBirth(blockIdx))}
+              class="my-1 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)]/70 px-3.5 py-2.5 text-[0.9em]"
+            >
+              <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 items-baseline">
+                <For each={(block() as Extract<BlockToken, { type: "frontmatter" }>).entries}>
+                  {(entry) => (
+                    <>
+                      <dt class="font-mono text-[11px] font-medium text-[var(--text-muted)] select-none">
+                        {entry.key}
+                      </dt>
+                      <dd class="min-w-0 text-[var(--text-secondary)] break-words">
+                        <MarkdownInline text={entry.value || "—"} />
+                      </dd>
+                    </>
+                  )}
+                </For>
+              </dl>
+            </div>
+          </Match>
           <Match
             when={
               block().type === "code" &&
@@ -80,10 +104,14 @@ export default function MarkdownBlocks(props: {
             }
           >
             <h1
+              id={headingSlugs()[blockIdx] ? `hoxi-md-${headingSlugs()[blockIdx]}` : undefined}
+              data-heading-slug={headingSlugs()[blockIdx]}
               ref={(el) =>
                 revealBlock(el, blockBirth(blockIdx), { startOpacity: 0.45, translateY: 2 })
               }
-              class="first:mt-0 mt-3.5 -mb-1 text-[1.28em] font-semibold tracking-tight text-[var(--text-primary)]"
+              class={`first:mt-0 mt-4 -mb-1 text-[1.32em] font-semibold tracking-tight text-[var(--text-primary)] scroll-mt-12 ${
+                isDoc() ? "border-b border-[var(--border-subtle)] pb-2 mb-0.5" : ""
+              }`}
             >
               <MarkdownInline
                 text={(block() as Extract<BlockToken, { type: "heading" }>).text || "\u00A0"}
@@ -97,10 +125,14 @@ export default function MarkdownBlocks(props: {
             }
           >
             <h2
+              id={headingSlugs()[blockIdx] ? `hoxi-md-${headingSlugs()[blockIdx]}` : undefined}
+              data-heading-slug={headingSlugs()[blockIdx]}
               ref={(el) =>
                 revealBlock(el, blockBirth(blockIdx), { startOpacity: 0.45, translateY: 2 })
               }
-              class="first:mt-0 mt-3 -mb-1 text-[1.15em] font-semibold tracking-tight text-[var(--text-primary)]"
+              class={`first:mt-0 mt-3.5 -mb-1 text-[1.16em] font-semibold tracking-tight text-[var(--text-primary)] scroll-mt-12 ${
+                isDoc() ? "border-b border-[var(--border-subtle)]/70 pb-1.5 mb-0.5" : ""
+              }`}
             >
               <MarkdownInline
                 text={(block() as Extract<BlockToken, { type: "heading" }>).text || "\u00A0"}
@@ -114,10 +146,12 @@ export default function MarkdownBlocks(props: {
             }
           >
             <h3
+              id={headingSlugs()[blockIdx] ? `hoxi-md-${headingSlugs()[blockIdx]}` : undefined}
+              data-heading-slug={headingSlugs()[blockIdx]}
               ref={(el) =>
                 revealBlock(el, blockBirth(blockIdx), { startOpacity: 0.45, translateY: 2 })
               }
-              class="first:mt-0 mt-2.5 -mb-1 text-[1.05em] font-semibold text-[var(--text-primary)]"
+              class="first:mt-0 mt-2.5 -mb-1 text-[1.05em] font-semibold text-[var(--text-primary)] scroll-mt-12"
             >
               <MarkdownInline
                 text={(block() as Extract<BlockToken, { type: "heading" }>).text || "\u00A0"}
@@ -126,10 +160,12 @@ export default function MarkdownBlocks(props: {
           </Match>
           <Match when={block().type === "heading"}>
             <h4
+              id={headingSlugs()[blockIdx] ? `hoxi-md-${headingSlugs()[blockIdx]}` : undefined}
+              data-heading-slug={headingSlugs()[blockIdx]}
               ref={(el) =>
                 revealBlock(el, blockBirth(blockIdx), { startOpacity: 0.45, translateY: 2 })
               }
-              class="first:mt-0 mt-2 -mb-1 text-[0.98em] font-semibold text-[var(--text-secondary)]"
+              class="first:mt-0 mt-2 -mb-1 text-[0.98em] font-semibold text-[var(--text-secondary)] scroll-mt-12"
             >
               <MarkdownInline
                 text={(block() as Extract<BlockToken, { type: "heading" }>).text || "\u00A0"}

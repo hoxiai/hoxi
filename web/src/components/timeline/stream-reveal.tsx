@@ -17,9 +17,16 @@ import { REVEAL_BLOCK_MS, REVEAL_CHUNK_MS } from "./markdown/reveal";
 export interface StreamReveal {
   /** True while the view is actively pacing out newly arrived streamed content. */
   active: () => boolean;
+  /** Optional relative file path of the Markdown document being rendered (e.g. "docs/guide.md"). */
+  baseFilePath?: () => string | undefined;
 }
 
 export const StreamRevealContext = createContext<StreamReveal>();
+
+export function useMarkdownBaseFilePath(): () => string | undefined {
+  const reveal = useContext(StreamRevealContext);
+  return () => reveal?.baseFilePath?.();
+}
 
 const BLOCK_EASE = "cubic-bezier(0.22, 1, 0.36, 1)";
 

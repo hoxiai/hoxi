@@ -6,17 +6,24 @@
 export type {
   AlertKind,
   BlockToken,
+  FrontmatterEntry,
   InlineSpan,
   ListItemEntry,
+  MarkdownHeadingItem,
   TableAlign,
 } from "./markdown/types";
 
 export {
+  computeHeadingSlugList,
+  extractMarkdownHeadings,
   isLikelyFilePath,
   parseMarkdownBlocks,
   parseNestedBlockquote,
+  resolveMarkdownRelativePath,
+  slugifyHeading,
   splitTableRow,
   stripFileLineSuffix,
+  stripInlineMarkdownFormatting,
 } from "./markdown/blocks";
 
 export { isSameInlineSpan, parseInline } from "./markdown/inline";

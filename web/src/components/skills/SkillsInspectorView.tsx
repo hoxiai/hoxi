@@ -4,6 +4,7 @@ import {
   AlertCircle,
   ArrowLeft,
   Check,
+  Code2,
   Eye,
   EyeOff,
   FileCode2,
@@ -31,6 +32,7 @@ import {
   workspace,
 } from "../../store/workspace";
 import { invalidateComposerSkillsAutocompleteCache } from "../timeline/composer-autocomplete";
+import MarkdownView from "../timeline/MarkdownView";
 import SkillsMarketplaceView from "./SkillsMarketplaceView";
 
 const SOURCE_ORDER: SkillSource[] = ["project", "user", "builtin", "external"];
@@ -66,6 +68,7 @@ export default function SkillsInspectorView() {
   const [showHidden, setShowHidden] = createSignal(false);
   const [showRefreshHint, setShowRefreshHint] = createSignal(false);
   const [tab, setTab] = createSignal<"local" | "marketplace">("local");
+  const [skillViewMode, setSkillViewMode] = createSignal<"preview" | "source">("preview");
 
   const sessionID = () => workspace.activeSessionID;
   const directory = () => activeDirectory() || workspace.rootDir || "";
@@ -516,12 +519,58 @@ export default function SkillsInspectorView() {
                             </div>
 
                             <div class="space-y-1.5">
-                              <div class="px-1 text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
-                                {t("skills.sourcePathLabel")}
+                              <div class="flex items-center justify-between gap-2 px-1">
+                                <span class="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
+                                  {t("skills.sourcePathLabel")}
+                                </span>
+                                <div class="inline-flex items-center rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-0.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => setSkillViewMode("preview")}
+                                    class={`hoxi-press inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] cursor-pointer ${
+                                      skillViewMode() === "preview"
+                                        ? "bg-[var(--accent-surface)] text-[var(--accent-primary)] font-medium"
+                                        : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                                    }`}
+                                    title={t("inspector.files.previewMode")}
+                                  >
+                                    <Eye size={11} />
+                                    <span>{t("inspector.files.previewMode")}</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setSkillViewMode("source")}
+                                    class={`hoxi-press inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] cursor-pointer ${
+                                      skillViewMode() === "source"
+                                        ? "bg-[var(--accent-surface)] text-[var(--accent-primary)] font-medium"
+                                        : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                                    }`}
+                                    title={t("inspector.files.sourceMode")}
+                                  >
+                                    <Code2 size={11} />
+                                    <span>{t("inspector.files.sourceMode")}</span>
+                                  </button>
+                                </div>
                               </div>
-                              <pre class="max-h-[420px] overflow-auto rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-3 font-mono text-[12px] leading-relaxed text-[var(--text-primary)] whitespace-pre-wrap break-words selectable-text">
-                                {detail().content}
-                              </pre>
+                              <Show
+                                when={skillViewMode() === "preview"}
+                                fallback={
+                                  <pre class="max-h-[420px] overflow-auto rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-3 font-mono text-[12px] leading-relaxed text-[var(--text-primary)] whitespace-pre-wrap break-words selectable-text">
+                                    {detail().content}
+                                  </pre>
+                                }
+                              >
+                                <div
+                                  data-markdown-reader-root="true"
+                                  class="max-h-[460px] overflow-auto rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-3.5"
+                                >
+                                  <MarkdownView
+                                    content={detail().content || ""}
+                                    density="document"
+                                    baseFilePath={detail().sourceLabel || detail().location}
+                                  />
+                                </div>
+                              </Show>
                             </div>
                           </div>
                         );

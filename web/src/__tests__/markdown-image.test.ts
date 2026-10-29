@@ -1,11 +1,15 @@
 import {
   advanceStreamingSlice,
+  extractMarkdownHeadings,
   parseInline,
   parseMarkdownBlocks,
   parseNestedBlockquote,
+  resolveMarkdownRelativePath,
+  slugifyHeading,
 } from "../components/timeline/markdown-parser";
 import { liveReasoningTicker } from "../components/timeline/ThoughtBox";
 import { isSameTextRevealStream } from "../components/icons/TextShimmer";
+import { openChangedFileInInspector, setWorkspace, workspace } from "../store/workspace";
 import { assertDeepEqual, assertEqual, assertTrue, describe, it } from "./test-harness";
 
 describe("markdown images", () => {
@@ -213,6 +217,123 @@ describe("markdown inline streaming & backtracking guard", () => {
         `Expected continuous stream from "${prevTicker}" to "${nextTicker}"`
       );
       prevTicker = nextTicker;
+    }
+  });
+});
+
+describe("markdown document reader helpers", () => {
+  it("parses YAML frontmatter without misparsing regular horizontal rules", () => {
+    const skillDoc = [
+      "---",
+      "name: skill-authoring",
+      'description: "Author and validate Agent Skills"',
+      "tags:",
+      "  - skills",
+      "  - markdown",
+      "---",
+      "",
+      "# Skill Authoring Guide",
+    ].join("\n");
+
+    const blocks = parseMarkdownBlocks(skillDoc);
+    assertEqual(blocks.length, 2);
+    assertDeepEqual(blocks[0], {
+      type: "frontmatter",
+      entries: [
+        { key: "name", value: "skill-authoring" },
+        { key: "description", value: "Author and validate Agent Skills" },
+        { key: "tags", value: "skills, markdown" },
+      ],
+    });
+    assertDeepEqual(blocks[1], {
+      type: "heading",
+      level: 1,
+      text: "Skill Authoring Guide",
+    });
+
+    // Regular horizontal rules at start of document followed by prose must stay <hr>
+    const hrDoc = "---\nThis is a normal paragraph\n---";
+    const hrBlocks = parseMarkdownBlocks(hrDoc);
+    assertEqual(hrBlocks[0].type, "hr");
+  });
+
+  it("extracts TOC headings with CJK slugs and duplicate disambiguation", () => {
+    const h1Text = "\u4e00\u3001\u73b0\u72b6";
+    const h1Slug = "\u4e00-\u73b0\u72b6";
+    const h2Text = "1.1 \u684c\u9762\u7aef";
+    const h2Slug = "1-1-\u684c\u9762\u7aef";
+    const h3Text = "\u8fdc\u7a0b\u96a7\u9053\u5951\u7ea6";
+    const doc = [
+      `# ${h1Text} (\`Hoxi\`)`,
+      `## ${h2Text}`,
+      `## ${h2Text}`,
+      `### [${h3Text}](docs/gopanel-hoxi-remote-tunnel.md)`,
+    ].join("\n");
+
+    assertEqual(slugifyHeading(`${h1Text} (\`Hoxi\`)`), `${h1Slug}-hoxi`);
+    const headings = extractMarkdownHeadings(doc);
+    assertDeepEqual(headings, [
+      { level: 1, text: `${h1Text} (Hoxi)`, slug: `${h1Slug}-hoxi` },
+      { level: 2, text: h2Text, slug: h2Slug },
+      { level: 2, text: h2Text, slug: `${h2Slug}-1` },
+      { level: 3, text: h3Text, slug: h3Text },
+    ]);
+  });
+
+  it("resolves document-relative file and image paths while preserving line anchors", () => {
+    assertEqual(
+      resolveMarkdownRelativePath("./gopanel-hoxi-remote-tunnel.md", "docs/guide.md"),
+      "docs/gopanel-hoxi-remote-tunnel.md"
+    );
+    assertEqual(
+      resolveMarkdownRelativePath("../client/AGENTS.md#L12-L20", "docs/guide.md"),
+      "client/AGENTS.md#L12-L20"
+    );
+    assertEqual(
+      resolveMarkdownRelativePath("../../client/AGENTS.md#L12-L20", "docs/sub/guide.md"),
+      "client/AGENTS.md#L12-L20"
+    );
+    assertEqual(
+      resolveMarkdownRelativePath("assets/arch.png", "docs/guide.md"),
+      "docs/assets/arch.png"
+    );
+    // Do not double-prefix if the link already starts with the base directory
+    assertEqual(
+      resolveMarkdownRelativePath("docs/assets/arch.png", "docs/guide.md"),
+      "docs/assets/arch.png"
+    );
+  });
+
+  it("defaults changed Markdown files to preview mode unless an explicit line is requested", () => {
+    const prevPath = workspace.inspectedFilePath;
+    const prevLine = workspace.inspectedFileLine;
+    try {
+      openChangedFileInInspector({
+        file: "docs/plan.md",
+        patch: "@@ -1,2 +1,4 @@\n+# Heading\n+Body\n",
+        additions: 2,
+        deletions: 0,
+      });
+      assertEqual(workspace.inspectedFilePath, "docs/plan.md");
+      assertEqual(workspace.inspectedFileLine, null);
+
+      openChangedFileInInspector("docs/plan.md#L15");
+      assertEqual(workspace.inspectedFilePath, "docs/plan.md");
+      assertEqual(workspace.inspectedFileLine, 15);
+
+      openChangedFileInInspector({
+        file: "web/src/App.tsx",
+        patch: "@@ -10,2 +10,3 @@\n+const x = 1;\n",
+        additions: 1,
+        deletions: 0,
+      });
+      assertEqual(workspace.inspectedFilePath, "web/src/App.tsx");
+      assertEqual(workspace.inspectedFileLine, 11);
+    } finally {
+      setWorkspace({
+        inspectedFilePath: prevPath,
+        inspectedFileLine: prevLine,
+      });
     }
   });
 });

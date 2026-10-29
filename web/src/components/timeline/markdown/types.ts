@@ -10,7 +10,19 @@ export interface ListItemEntry {
   orderNumber?: number;
 }
 
+export interface FrontmatterEntry {
+  key: string;
+  value: string;
+}
+
+export interface MarkdownHeadingItem {
+  level: 1 | 2 | 3 | 4;
+  text: string;
+  slug: string;
+}
+
 export type BlockToken =
+  | { type: "frontmatter"; entries: FrontmatterEntry[] }
   | { type: "code"; lang: string; code: string }
   | { type: "heading"; level: 1 | 2 | 3 | 4; text: string }
   | { type: "list"; ordered: boolean; start: number; items: ListItemEntry[] }

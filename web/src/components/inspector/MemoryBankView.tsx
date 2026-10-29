@@ -1,8 +1,9 @@
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
-import { Brain, LoaderCircle, RefreshCw } from "lucide-solid";
+import { Brain, Code2, Eye, LoaderCircle, RefreshCw } from "lucide-solid";
 import { hoxiAPI } from "../../services/api";
 import { activeDirectory, workspace } from "../../store/workspace";
 import { t } from "../../i18n";
+import MarkdownView, { slugifyHeading } from "../timeline/MarkdownView";
 
 const PROJECT_MEMORY_FILE = ".hoxi/memory/project.md";
 const LEGACY_PROJECT_MEMORY_FILE = ".opencode/memory/project.md";
@@ -25,6 +26,8 @@ export default function MemoryBankView() {
   const [content, setContent] = createSignal("");
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
+  const [viewMode, setViewMode] = createSignal<"preview" | "source">("preview");
+  let scrollRef: HTMLDivElement | undefined;
 
   const activeFile = createMemo(() =>
     scope() === "session" && workspace.activeSessionID
@@ -90,6 +93,19 @@ export default function MemoryBankView() {
     return scopePhase ? "hoxi-view-enter-a" : "hoxi-view-enter-b";
   });
 
+  const handleJumpDimension = (dim: string) => {
+    const slug = slugifyHeading(dim);
+    if (viewMode() !== "preview") {
+      setViewMode("preview");
+    }
+    requestAnimationFrame(() => {
+      const target = scrollRef?.querySelector<HTMLElement>(
+        `[data-heading-slug="${CSS.escape(slug)}"]`
+      );
+      target?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  };
+
   return (
     <div class="flex flex-col h-full">
       <div class="shrink-0 flex items-center justify-between gap-2 px-3 py-2 border-b border-[var(--border-subtle)]">
@@ -120,23 +136,63 @@ export default function MemoryBankView() {
             </button>
           </div>
         </div>
-        <button
-          class="hoxi-press shrink-0 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
-          onClick={() => void load()}
-          title={`${t("inspector.memory.reload")} (${activeFile()})`}
-        >
-          <RefreshCw size={13} class={loading() ? "animate-spin" : ""} />
-        </button>
+        <div class="flex items-center gap-1.5 shrink-0">
+          <Show when={content() && !error()}>
+            <div class="inline-flex items-center rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-0.5">
+              <button
+                type="button"
+                onClick={() => setViewMode("preview")}
+                class={`hoxi-press inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] cursor-pointer ${
+                  viewMode() === "preview"
+                    ? "bg-[var(--accent-surface)] text-[var(--accent-primary)] font-medium"
+                    : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                }`}
+                title={t("inspector.files.previewMode")}
+              >
+                <Eye size={11} />
+                <span>{t("inspector.files.previewMode")}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode("source")}
+                class={`hoxi-press inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] cursor-pointer ${
+                  viewMode() === "source"
+                    ? "bg-[var(--accent-surface)] text-[var(--accent-primary)] font-medium"
+                    : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                }`}
+                title={t("inspector.files.sourceMode")}
+              >
+                <Code2 size={11} />
+                <span>{t("inspector.files.sourceMode")}</span>
+              </button>
+            </div>
+          </Show>
+          <button
+            class="hoxi-press shrink-0 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+            onClick={() => void load()}
+            title={`${t("inspector.memory.reload")} (${activeFile()})`}
+          >
+            <RefreshCw size={13} class={loading() ? "animate-spin" : ""} />
+          </button>
+        </div>
       </div>
 
-      <div class={`inspector-scroll flex-1 min-h-0 overflow-y-auto px-2.5 py-2.5 space-y-2 ${memoryEnterClass()}`}>
+      <div
+        ref={scrollRef}
+        data-markdown-reader-root="true"
+        class={`inspector-scroll flex-1 min-h-0 overflow-y-auto px-2.5 py-2.5 space-y-2 ${memoryEnterClass()}`}
+      >
         <Show when={dims().length > 0}>
           <div class="flex flex-wrap gap-1">
             <For each={dims()}>
               {(d) => (
-                <span class="rounded bg-[var(--bg-inset)] px-1.5 py-[1px] font-mono text-[11px] text-[var(--text-secondary)]">
+                <button
+                  type="button"
+                  onClick={() => handleJumpDimension(d)}
+                  class="hoxi-press rounded bg-[var(--bg-inset)] hover:bg-[var(--accent-surface)] px-1.5 py-[1px] font-mono text-[11px] text-[var(--text-secondary)] hover:text-[var(--accent-primary)] transition-colors cursor-pointer"
+                >
                   {d}
-                </span>
+                </button>
               )}
             </For>
           </div>
@@ -149,9 +205,25 @@ export default function MemoryBankView() {
         </Show>
 
         <Show when={content() && !error()}>
-          <pre class="rounded-md border border-[var(--border-subtle)] bg-[var(--bg-canvas)] p-2.5 font-mono leading-relaxed text-[var(--text-secondary)] whitespace-pre-wrap break-words selectable-text" style={{ "font-size": "var(--app-code-text-size)" }}>
-            {content()}
-          </pre>
+          <Show
+            when={viewMode() === "preview"}
+            fallback={
+              <pre
+                class="rounded-md border border-[var(--border-subtle)] bg-[var(--bg-canvas)] p-2.5 font-mono leading-relaxed text-[var(--text-secondary)] whitespace-pre-wrap break-words selectable-text"
+                style={{ "font-size": "var(--app-code-text-size)" }}
+              >
+                {content()}
+              </pre>
+            }
+          >
+            <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-3.5">
+              <MarkdownView
+                content={content()}
+                density="document"
+                baseFilePath={activeFile()}
+              />
+            </div>
+          </Show>
         </Show>
 
         <Show when={loading() && !content()}>

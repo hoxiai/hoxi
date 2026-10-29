@@ -34,6 +34,19 @@ export function isSameBlockToken(a: BlockToken | undefined, b: BlockToken): bool
   switch (b.type) {
     case "hr":
       return true;
+    case "frontmatter": {
+      const prev = a as typeof b;
+      if (prev.entries.length !== b.entries.length) return false;
+      for (let i = 0; i < b.entries.length; i++) {
+        if (
+          prev.entries[i].key !== b.entries[i].key ||
+          prev.entries[i].value !== b.entries[i].value
+        ) {
+          return false;
+        }
+      }
+      return true;
+    }
     case "paragraph":
       return (a as typeof b).text === b.text;
     case "blockquote":

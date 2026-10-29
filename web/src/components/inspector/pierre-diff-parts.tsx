@@ -5,6 +5,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ExternalLink,
+  Eye,
   GitBranch,
   MessageSquarePlus,
   RotateCcw,
@@ -35,6 +36,7 @@ import {
   GeneratedFileBadge,
   stripRepoPrefixFromFile,
 } from "./diff-file-tree";
+import { isMarkdownPath } from "./file-tree-helpers";
 
 export function openRemoteCompareURL(url: string) {
   if (!url) return;
@@ -288,6 +290,11 @@ export function SelectedDiffDetail(props: {
   const [loadingFull, setLoadingFull] = createSignal(false);
 
   const effectiveDiff = () => loadedDiff() || props.diff;
+  const isMarkdownDiff = createMemo(
+    () =>
+      isMarkdownPath(props.diff.file) &&
+      effectiveDiff().status !== "deleted"
+  );
 
   const fetchFullFileDiff = async (targetFile: string, stamp?: string) => {
     const sessionID = workspace.activeSessionID || "__root__";
@@ -480,6 +487,23 @@ export function SelectedDiffDetail(props: {
                 <ChevronRight size={12} />
               </button>
             </div>
+          </Show>
+
+          <Show when={isMarkdownDiff()}>
+            <button
+              type="button"
+              class="hoxi-press shrink-0 inline-flex items-center gap-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-2 py-1 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--accent-primary)] hover:border-[var(--accent-border)] cursor-pointer"
+              onClick={() => {
+                const target = props.diff.repoDir
+                  ? `${props.diff.repoDir.replace(/\/+$/, "")}/${stripRepoPrefixFromFile(props.diff.file, props.diff.repo)}`
+                  : props.diff.file;
+                openFileInInspector(target, null, effectiveDiff());
+              }}
+              title={t("inspector.files.previewMode")}
+            >
+              <Eye size={11} />
+              <span>{t("inspector.files.previewMode")}</span>
+            </button>
           </Show>
 
           <button

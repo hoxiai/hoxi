@@ -11,7 +11,8 @@ import {
 import { hoxiAPI } from "../../services/api";
 import { t } from "../../i18n";
 import { Icon } from "../icons";
-import { stripFileLineSuffix } from "./markdown-parser";
+import { resolveMarkdownRelativePath, stripFileLineSuffix } from "./markdown-parser";
+import { useMarkdownBaseFilePath } from "./stream-reveal";
 
 const MAX_LOCAL_IMAGE_CACHE = 40;
 const MAX_CONCURRENT_LOCAL_IMAGES = 2;
@@ -99,6 +100,7 @@ export default function MarkdownImage(props: { src: string; alt: string; title?:
   const [resolved, setResolved] = createSignal("");
   const [failed, setFailed] = createSignal(false);
   const [loading, setLoading] = createSignal(false);
+  const baseFilePath = useMarkdownBaseFilePath();
 
   const rawSrc = () => (props.src || "").trim();
   const isRemote = () => /^https?:\/\//i.test(rawSrc());
@@ -107,7 +109,8 @@ export default function MarkdownImage(props: { src: string; alt: string; title?:
     !isRemote() &&
     !isDataImage() &&
     (!/^[a-z][a-z0-9+.-]*:/i.test(rawSrc()) || /^[a-zA-Z]:[\\/]/.test(rawSrc()));
-  const localPath = () => (isLocal() ? stripFileLineSuffix(rawSrc()) : "");
+  const rawLocalPath = () => (isLocal() ? stripFileLineSuffix(rawSrc()) : "");
+  const localPath = () => resolveMarkdownRelativePath(rawLocalPath(), baseFilePath());
   const canOpen = () => Boolean(localPath()) || isRemote() || isDataImage();
   const displaySrc = () => (isRemote() || isDataImage() ? rawSrc() : resolved());
 
@@ -120,6 +123,7 @@ export default function MarkdownImage(props: { src: string; alt: string; title?:
     }
 
     const path = localPath();
+    const fallbackPath = rawLocalPath();
     if (!path) {
       setResolved("");
       setLoading(false);
@@ -150,17 +154,22 @@ export default function MarkdownImage(props: { src: string; alt: string; title?:
 
     setLoading(true);
     setFailed(false);
-    void loadLocalImage(path, directory, sessionID).then((url) => {
-      if (cancelled) return;
-      setLoading(false);
-      if (url) {
-        setResolved(url);
-        setFailed(false);
-      } else {
-        setResolved("");
-        setFailed(true);
-      }
-    });
+    void loadLocalImage(path, directory, sessionID)
+      .then((url) => {
+        if (url || !fallbackPath || fallbackPath === path) return url;
+        return loadLocalImage(fallbackPath, directory, sessionID);
+      })
+      .then((url) => {
+        if (cancelled) return;
+        setLoading(false);
+        if (url) {
+          setResolved(url);
+          setFailed(false);
+        } else {
+          setResolved("");
+          setFailed(true);
+        }
+      });
   });
 
   const handleOpen = (e: MouseEvent) => {

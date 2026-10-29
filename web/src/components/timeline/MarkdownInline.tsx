@@ -19,10 +19,12 @@ import {
   isLikelyFilePath,
   isSameInlineSpan,
   parseInline,
+  resolveMarkdownRelativePath,
+  slugifyHeading,
   stripFileLineSuffix,
 } from "./markdown-parser";
 import MarkdownImage from "./MarkdownImage";
-import { StreamRevealText, useInlineRevealRef } from "./stream-reveal";
+import { StreamRevealText, useInlineRevealRef, useMarkdownBaseFilePath } from "./stream-reveal";
 
 function hasNestedInlineSyntax(text: string): boolean {
   return (
@@ -53,19 +55,53 @@ function isExternalOrAnchorHref(href: string): boolean {
   return false;
 }
 
+function scrollToHeadingAnchor(e: MouseEvent, rawHref: string) {
+  const anchor = rawHref.trim().replace(/^#+/, "");
+  if (!anchor || typeof document === "undefined") return;
+  let decoded = anchor;
+  try {
+    decoded = decodeURIComponent(anchor);
+  } catch {
+    /* ignore */
+  }
+  const slug = slugifyHeading(decoded);
+  const currentEl = e.currentTarget as HTMLElement | null;
+  const root: ParentNode =
+    currentEl?.closest("[data-markdown-reader-root]") ||
+    currentEl?.closest(".overflow-auto, .overflow-y-auto") ||
+    document;
+  const candidates = Array.from(root.querySelectorAll<HTMLElement>("[data-heading-slug]"));
+  const target =
+    candidates.find((el) => el.dataset.headingSlug === decoded) ||
+    candidates.find((el) => el.dataset.headingSlug === slug) ||
+    candidates.find((el) => el.id === `hoxi-md-${slug}`);
+  if (target) {
+    e.preventDefault();
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+}
+
 function FileCodeSpan(props: { text: string; unclosed?: boolean }) {
   const inlineRevealRef = useInlineRevealRef();
+  const baseFilePath = useMarkdownBaseFilePath();
+  const effectivePath = () => {
+    const raw = props.text;
+    if (raw.startsWith("./") || raw.startsWith("../")) {
+      return resolveMarkdownRelativePath(raw, baseFilePath());
+    }
+    return raw;
+  };
   const resolveSyncVerified = (raw: string) => {
     const dir = activeDirectory() || workspace.rootDir || "";
     const cached = getCachedFileCheck(raw, dir);
     if (cached !== undefined) return cached;
     return looksLikeFilePath(raw);
   };
-  const [verified, setVerified] = createSignal(resolveSyncVerified(props.text));
-  const cleanPath = () => stripFileLineSuffix(props.text);
+  const [verified, setVerified] = createSignal(resolveSyncVerified(effectivePath()));
+  const cleanPath = () => stripFileLineSuffix(effectivePath());
 
   createEffect(() => {
-    const raw = props.text;
+    const raw = effectivePath();
     const dir = activeDirectory() || workspace.rootDir || "";
     const cached = getCachedFileCheck(raw, dir);
     if (cached !== undefined) {
@@ -105,7 +141,7 @@ function FileCodeSpan(props: { text: string; unclosed?: boolean }) {
       <button
         ref={inlineRevealRef}
         type="button"
-        onClick={() => openFileInInspector(props.text)}
+        onClick={() => openFileInInspector(effectivePath())}
         title={t("timeline.openInInspectorTooltip")}
         class="inline-flex items-center gap-1.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-elevated)] hover:border-[var(--accent-border)] hover:bg-[var(--accent-surface)] px-1.5 py-0.5 font-mono text-[0.88em] text-[var(--text-primary)] hover:text-[var(--accent-text)] transition-colors cursor-pointer align-baseline"
       >
@@ -284,6 +320,7 @@ export default function MarkdownInline(props: { text: string }) {
           <Match when={span().type === "link"}>
             {(_) => {
               const inlineRevealRef = useInlineRevealRef();
+              const baseFilePath = useMarkdownBaseFilePath();
               const linkSpan = () => span() as Extract<InlineSpan, { type: "link" }>;
               const labelText = createMemo(() => linkSpan().text.replace(/^`|`$/g, ""));
               const isClosedLink = createMemo(() => {
@@ -294,6 +331,10 @@ export default function MarkdownInline(props: { text: string }) {
               const isPendingProseLabel = createMemo(
                 () => linkSpan().href === "#" && !isCodeOrFileLinkLabel(linkSpan().text)
               );
+              const isAnchorHref = createMemo(() => {
+                const h = linkSpan().href.trim();
+                return h.startsWith("#") && h.length > 1;
+              });
               const isLocalFile = createMemo(() => {
                 const s = linkSpan();
                 if (s.href === "#") return isCodeOrFileLinkLabel(s.text);
@@ -301,7 +342,14 @@ export default function MarkdownInline(props: { text: string }) {
                 if (!isClosedLink() && !isExternalOrAnchorHref(s.href)) return true;
                 return false;
               });
-              const localTarget = () => extractFilePathFromHref(linkSpan().href);
+              const localTarget = () => {
+                const raw = extractFilePathFromHref(linkSpan().href);
+                return raw ? resolveMarkdownRelativePath(raw, baseFilePath()) : null;
+              };
+              const resolvedLocalClickTarget = () => {
+                const raw = localTarget() || labelText() || linkSpan().href;
+                return resolveMarkdownRelativePath(raw, baseFilePath());
+              };
               const iconPath = createMemo(() => {
                 const cleanLabel = stripFileLineSuffix(labelText());
                 if (isLikelyFilePath(cleanLabel)) return cleanLabel;
@@ -341,7 +389,7 @@ export default function MarkdownInline(props: { text: string }) {
                       <button
                         ref={inlineRevealRef}
                         type="button"
-                        onClick={() => openFileInInspector(localTarget() || labelText() || linkSpan().href)}
+                        onClick={() => openFileInInspector(resolvedLocalClickTarget())}
                         title={t("timeline.openInInspectorTooltip")}
                         class="inline-flex items-center gap-1.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-elevated)] hover:border-[var(--accent-border)] hover:bg-[var(--accent-surface)] px-1.5 py-0.5 font-mono text-[0.88em] text-[var(--text-primary)] hover:text-[var(--accent-text)] transition-colors cursor-pointer align-baseline"
                       >
@@ -359,8 +407,13 @@ export default function MarkdownInline(props: { text: string }) {
                         <a
                           ref={inlineRevealRef}
                           href={linkSpan().href}
-                          target="_blank"
-                          rel="noreferrer"
+                          target={isAnchorHref() ? undefined : "_blank"}
+                          rel={isAnchorHref() ? undefined : "noreferrer"}
+                          onClick={(e) => {
+                            if (isAnchorHref()) {
+                              scrollToHeadingAnchor(e, linkSpan().href);
+                            }
+                          }}
                           class="text-[var(--accent-primary)] underline decoration-[var(--accent-border)] underline-offset-2 hover:opacity-85 break-all cursor-pointer"
                         >
                           <Show

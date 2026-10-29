@@ -12,13 +12,20 @@ export {
   advanceStreamingSlice,
   type AlertKind,
   type BlockToken,
+  computeHeadingSlugList,
+  extractMarkdownHeadings,
+  type FrontmatterEntry,
   isLikelyFilePath,
   isSameBlockToken,
   type ListItemEntry,
+  type MarkdownHeadingItem,
   parseInline,
   parseMarkdownBlocks,
+  resolveMarkdownRelativePath,
+  slugifyHeading,
   splitTableRow,
   stabilizeBlockToken,
+  stripInlineMarkdownFormatting,
   type TableAlign,
 } from "./markdown-parser";
 
@@ -35,8 +42,9 @@ const isDocumentHidden = () =>
  */
 export default function MarkdownView(props: {
   content: string;
-  density?: "chat" | "compact";
+  density?: "chat" | "compact" | "document";
   streaming?: boolean;
+  baseFilePath?: string;
 }) {
   const parseIncremental = createIncrementalMarkdownParser();
   const canAnimate = typeof requestAnimationFrame === "function";
@@ -136,6 +144,7 @@ export default function MarkdownView(props: {
 
   const reveal: StreamReveal = {
     active: revealActive,
+    baseFilePath: () => props.baseFilePath,
   };
 
   const blocks = createMemo(() => parseIncremental(displayed()));
@@ -144,7 +153,11 @@ export default function MarkdownView(props: {
     <StreamRevealContext.Provider value={reveal}>
       <div
         class={`flex flex-col text-[var(--text-primary)] selectable-text ${
-          props.density === "compact" ? "gap-y-2 leading-[1.62]" : "gap-y-4 leading-[1.7]"
+          props.density === "compact"
+            ? "gap-y-2 leading-[1.62]"
+            : props.density === "document"
+              ? "gap-y-4 leading-[1.75]"
+              : "gap-y-4 leading-[1.7]"
         }`}
         style={{ "font-size": "var(--app-chat-text-size)" }}
       >
