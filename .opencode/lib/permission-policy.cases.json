@@ -715,5 +715,9 @@
   { "command": "ssh -i ~/.ssh/id_117 root@192.168.1.117 'bash -s' <<'EOF'\ndocker rm -f test\nrm -rf /opt/app\nEOF", "decision": "ask", "destructive": false },
   { "command": "H=192.168.1.117; ssh root@$H 'ls'", "decision": "ask", "destructive": false },
   { "command": "H=0; ssh root@$H 'rm -rf /tmp/x'", "decision": "ask", "destructive": true },
-  {"command": "curl -X POST http://127.0.0.1:5410/api/hoxi/computer/action", "decision": "ask", "destructive": true}
+  { "command": "curl -X POST http://127.0.0.1:5410/api/hoxi/computer/action", "decision": "ask", "destructive": true },
+  { "command": "cat > /tmp/run.sh <<'EOF'\nrm -rf /tmp/x\nEOF\nscp /tmp/run.sh root@0:/tmp/run.sh", "decision": "ask", "destructive": true },
+  { "command": "cat > /tmp/run.sh <<'EOF'\nrm -rf /tmp/x\nEOF\nhead -n 20 /tmp/run.sh > /tmp/out.sh", "decision": "ask", "destructive": true },
+  { "command": "echo 'id' > .agents/skills/foo/run.sh", "decision": "ask", "destructive": true },
+  { "command": "cp /tmp/x.sh .hoxi/skills/foo/run.sh && bash .hoxi/skills/foo/run.sh", "decision": "ask", "destructive": true }
 ]

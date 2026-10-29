@@ -216,7 +216,7 @@ function advanceScopedCD(seg, cwd, worktree) {
 }
 
 function isTempPathArg(arg) {
-  if (!arg || !arg.startsWith("/") || /[$[~]/.test(arg)) return false;
+  if (!arg || !arg.startsWith("/") || arg.startsWith("~") || /[$[]/.test(arg)) return false;
   for (const part of arg.split("/")) {
     if (part === ".." || (part !== "" && "*?.".includes(part[0]) && /[*?]/.test(part))) {
       return false;

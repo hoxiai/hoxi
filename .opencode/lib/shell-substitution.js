@@ -15,7 +15,7 @@ import {
   stripNullRedirects,
 } from "./permission-policy.js";
 import { concretizeLiterals, eraseSubshells, findSubshellSpans, unwrapCommandPrefixes } from "./shell-constants.js";
-import { isSafeCurlOutputTarget, normalizeHomePrefixPath } from "./shell-loops.js";
+import { isReadOnlySedArgs, isSafeCurlOutputTarget, normalizeHomePrefixPath } from "./shell-loops.js";
 
 const PROCESS_SUBSTITUTION_PLACEHOLDER = "/dev/fd/63";
 export const CMD_SUBST_VAR = "__hoxi_cmdsub__";
@@ -286,24 +286,39 @@ function stripBenignHeredocs(s) {
   const stripped = out.join("\n");
   if (tempTargets.length > 0) {
     const { segments: allSegs } = splitCommandChainWithPipes(stripped);
+    for (const seg of allSegs) {
+      const trimmed = seg.trim();
+      if (!trimmed || trimmed.startsWith("#") || tempCatRedirectTarget(seg)) continue;
+      if (!isBenignTempConsumerSegment(seg)) return null;
+    }
     for (const t of tempTargets) {
       let consumed = false;
       for (const seg of allSegs) {
         if (tempCatRedirectTarget(seg)) continue;
         if (seg.includes(t) || seg.includes(baseName(t))) {
-          const words = stripShellKw(shellWords(seg));
-          let j = 0;
-          while (j < words.length && ENV_ASSIGN_RE.test(words[j])) j++;
-          if (j >= words.length || !BENIGN_TEMP_CONSUMERS.has(baseName(normalizeAbsoluteTool(words[j])))) {
-            return null;
-          }
           consumed = true;
+          break;
         }
       }
       if (!consumed) return null;
     }
   }
   return stripped;
+}
+
+function isBenignTempConsumerSegment(seg) {
+  if (isSafeRemoteSSHSegment(seg)) return true;
+  if (rewriteSafeRemoteSCPSegment(seg)) return true;
+  const words = stripShellKw(shellWords(seg));
+  let j = 0;
+  while (j < words.length && ENV_ASSIGN_RE.test(words[j])) j++;
+  if (j >= words.length) return false;
+  const clean = stripNullRedirects(words.slice(j));
+  if (!clean || clean.length === 0) return false;
+  const base = baseName(normalizeAbsoluteTool(clean[0]));
+  if (base === "scp") return false;
+  if (base === "sed") return isReadOnlySedArgs(clean.slice(1), stripNullRedirects);
+  return BENIGN_TEMP_CONSUMERS.has(base);
 }
 
 function hasBasicDollarExpansion(s) {

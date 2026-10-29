@@ -213,6 +213,15 @@ func stripBenignHeredocs(s string) (string, bool) {
 	stripped := strings.Join(out, "\n")
 	if len(tempTargets) > 0 {
 		allSegs, _ := splitCommandChainWithPipes(stripped)
+		for _, seg := range allSegs {
+			trimmed := strings.TrimSpace(seg)
+			if trimmed == "" || strings.HasPrefix(trimmed, "#") || tempCatRedirectTarget(seg) != "" {
+				continue
+			}
+			if !isBenignTempConsumerSegment(seg) {
+				return s, false
+			}
+		}
 		for _, t := range tempTargets {
 			consumed := false
 			for _, seg := range allSegs {
@@ -220,15 +229,8 @@ func stripBenignHeredocs(s string) (string, bool) {
 					continue
 				}
 				if strings.Contains(seg, t) || strings.Contains(seg, filepath.Base(t)) {
-					words := stripShellKeywords(shellWords(seg))
-					j := 0
-					for j < len(words) && envVarAssignmentWordRe.MatchString(words[j]) {
-						j++
-					}
-					if j >= len(words) || !benignTempFileConsumers[filepath.Base(normalizeAbsoluteTool(words[j]))] {
-						return s, false
-					}
 					consumed = true
+					break
 				}
 			}
 			if !consumed {
@@ -237,6 +239,35 @@ func stripBenignHeredocs(s string) (string, bool) {
 		}
 	}
 	return stripped, true
+}
+
+func isBenignTempConsumerSegment(seg string) bool {
+	if isSafeRemoteSSHSegment(seg) {
+		return true
+	}
+	if _, ok := rewriteSafeRemoteSCPSegment(seg); ok {
+		return true
+	}
+	words := stripShellKeywords(shellWords(seg))
+	j := 0
+	for j < len(words) && envVarAssignmentWordRe.MatchString(words[j]) {
+		j++
+	}
+	if j >= len(words) {
+		return false
+	}
+	clean, ok := stripNullRedirects(words[j:])
+	if !ok || len(clean) == 0 {
+		return false
+	}
+	base := filepath.Base(normalizeAbsoluteTool(clean[0]))
+	if base == "scp" {
+		return false
+	}
+	if base == "sed" {
+		return isReadOnlySedArgs(clean[1:])
+	}
+	return benignTempFileConsumers[base]
 }
 
 func tempCatRedirectTarget(seg string) string {
