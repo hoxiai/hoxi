@@ -211,6 +211,20 @@ func (s *workspaceStore) ProjectRoots(projectID string) []string {
 	return nil
 }
 
+func (s *workspaceStore) isDismissedLocked(target string) bool {
+	clean := strings.TrimSpace(target)
+	if clean == "" {
+		return false
+	}
+	comp := comparableFolderPath(clean)
+	for _, d := range s.dismissed {
+		if d == clean || (comp != "" && comparableFolderPath(d) == comp) {
+			return true
+		}
+	}
+	return false
+}
+
 // AllProjectRoots returns every live project folder path across all profiles,
 // de-duplicated. Callers use it to warm per-directory engine state ahead of
 // the first interactive request.
@@ -220,9 +234,12 @@ func (s *workspaceStore) AllProjectRoots() []string {
 	var roots []string
 	seen := make(map[string]bool)
 	for _, ws := range s.workspaces {
+		if s.isDismissedLocked(ws.ID) {
+			continue
+		}
 		for _, folder := range ws.Folders {
 			path := strings.TrimSpace(folder.Path)
-			if path == "" || seen[path] {
+			if path == "" || seen[path] || s.isDismissedLocked(path) {
 				continue
 			}
 			seen[path] = true

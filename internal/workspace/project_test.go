@@ -591,3 +591,45 @@ func TestUpdateDismissesReplacedFolderAndExpandsTilde(t *testing.T) {
 		t.Fatalf("expected replaced folder %q in dismissed list, got %v", oldDir, store.ListDismissed())
 	}
 }
+
+func TestUpdateUnsavedPathToMultiFolderDismissesOriginalAndExcludesFromPrewarm(t *testing.T) {
+	homeDir := setupTestEnv(t)
+	unsavedDir := mkdirTempProject(t, homeDir, "unsaved-old")
+	dir1 := mkdirTempProject(t, homeDir, "multi-1")
+	dir2 := mkdirTempProject(t, homeDir, "multi-2")
+
+	store := NewStore("")
+	updated, err := store.Update(unsavedDir, saveWorkspaceRequest{
+		Name: "MultiRepo",
+		Folders: []workspaceFolderInput{
+			{Path: dir1, IsPrimary: true},
+			{Path: dir2, IsPrimary: false},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Update from unsaved path failed: %v", err)
+	}
+	if len(updated.Folders) != 2 {
+		t.Fatalf("expected 2 folders, got %+v", updated.Folders)
+	}
+	if list := store.List(); len(list) != 1 {
+		t.Fatalf("expected exactly 1 visible workspace, got %d: %+v", len(list), list)
+	}
+
+	foundDismissed := false
+	for _, d := range store.ListDismissed() {
+		if comparableFolderPath(d) == comparableFolderPath(unsavedDir) {
+			foundDismissed = true
+			break
+		}
+	}
+	if !foundDismissed {
+		t.Fatalf("expected replaced unsaved directory %q in dismissed list, got %v", unsavedDir, store.ListDismissed())
+	}
+
+	for _, root := range store.AllProjectRoots() {
+		if comparableFolderPath(root) == comparableFolderPath(unsavedDir) {
+			t.Fatalf("expected dismissed directory %q to be excluded from AllProjectRoots, got %v", unsavedDir, store.AllProjectRoots())
+		}
+	}
+}

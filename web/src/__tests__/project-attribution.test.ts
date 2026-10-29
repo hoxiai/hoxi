@@ -12,6 +12,7 @@ import {
   workspace,
 } from "../store/workspace";
 import { renameSessionTitle, replaceSession, replaceSessionFromEvent } from "../store/workspace-sessions";
+import { buildAllProjects } from "../components/layout/left-nav-helpers";
 import { assertEqual, describe, it } from "./test-harness";
 
 function session(id: string, extra?: Partial<SessionInfo>): SessionInfo {
@@ -305,6 +306,113 @@ describe("project attribution", () => {
       assertEqual(workspace.projectOrder[1], "/repo-new");
     } finally {
       deleteCachedProjectSessions("/repo-new");
+      hoxiAPI.updateWorkspace = origUpdateWorkspace;
+      hoxiAPI.listSessions = origListSessions;
+      hoxiAPI.resolveProject = origResolveProject;
+      hoxiAPI.listAgents = origListAgents;
+      setWorkspace(reconcile(saved));
+    }
+  });
+
+  it("keeps a single workspace entry when saving a multi-folder project with moved OpenCode sandboxes and secondary folders", async () => {
+    const saved = structuredClone(unwrap(workspace));
+    const origUpdateWorkspace = hoxiAPI.updateWorkspace;
+    const origListSessions = hoxiAPI.listSessions;
+    const origResolveProject = hoxiAPI.resolveProject;
+    const origListAgents = hoxiAPI.listAgents;
+    try {
+      setWorkspace({
+        rootDir: "/new/Fastix",
+        activeProjectID: "prj_multi",
+        activeSessionID: null,
+        editingWorkspaceDir: "prj_multi",
+        providers: [{ id: "p1", name: "P1", models: {} }],
+        savedWorkspaces: [
+          {
+            id: "prj_multi",
+            name: "Toolkit",
+            color: "#5EA0F7",
+            folders: [{ id: "fld_1", path: "/new/Fastix", isPrimary: true, position: 0 }],
+            createdAt: "",
+            updatedAt: "",
+          },
+          {
+            id: "prj_absorbed",
+            name: "aix",
+            color: "#5EA0F7",
+            hidden: true,
+            folders: [{ id: "fld_abs", path: "/new/themes/aix", isPrimary: true, position: 0 }],
+            createdAt: "",
+            updatedAt: "",
+          },
+        ],
+        recentProjects: ["/new/Fastix", "/new/themes/aix", "/new/apay/aix"],
+        projectOrder: ["/new/Fastix", "/new/themes/aix", "/new/apay/aix"],
+        projects: [
+          {
+            id: "git_commit_1",
+            worktree: "/old/moved/Fastix",
+            sandboxes: ["/new/Fastix"],
+            time: { created: 1, updated: 2 },
+          },
+          {
+            id: "git_commit_2",
+            worktree: "/old/moved/themes/aix",
+            sandboxes: ["/new/themes/aix"],
+            time: { created: 1, updated: 2 },
+          },
+        ],
+        sessions: [],
+        worktreeBySession: {},
+      });
+
+      hoxiAPI.updateWorkspace = async () => ({
+        id: "prj_multi",
+        name: "Toolkit",
+        color: "#5EA0F7",
+        folders: [
+          { id: "fld_1", path: "/new/Fastix", isPrimary: true, position: 0 },
+          { id: "fld_2", path: "/new/themes/aix", isPrimary: false, position: 1 },
+          { id: "fld_3", path: "/new/apay/aix", isPrimary: false, position: 2 },
+        ],
+        createdAt: "",
+        updatedAt: "",
+      });
+      hoxiAPI.resolveProject = async () => ({
+        projectID: "prj_multi",
+        directory: "/new/Fastix",
+        roots: ["/new/Fastix", "/new/themes/aix", "/new/apay/aix"],
+      });
+      hoxiAPI.listAgents = async () => [];
+      hoxiAPI.listSessions = async () => [];
+
+      await saveWorkspaceProfile(
+        {
+          name: "Toolkit",
+          folders: [
+            { path: "/new/Fastix", isPrimary: true },
+            { path: "/new/themes/aix", isPrimary: false },
+            { path: "/new/apay/aix", isPrimary: false },
+          ],
+        },
+        "prj_multi"
+      );
+
+      const allProjects = buildAllProjects();
+      assertEqual(allProjects.length, 1);
+      assertEqual(allProjects[0]?.workspaceId, "prj_multi");
+      assertEqual(allProjects[0]?.path, "/new/Fastix");
+      assertEqual(allProjects[0]?.folders?.length, 3);
+      assertEqual(workspace.recentProjects.includes("/new/themes/aix"), false);
+      assertEqual(workspace.recentProjects.includes("/new/apay/aix"), false);
+      assertEqual(workspace.projectOrder.includes("/new/themes/aix"), false);
+      assertEqual(workspace.projectOrder.includes("/new/apay/aix"), false);
+      assertEqual(isDismissedProjectPath("/old/moved/Fastix"), true);
+      assertEqual(isDismissedProjectPath("/old/moved/themes/aix"), true);
+    } finally {
+      deleteCachedProjectSessions("/new/Fastix");
+      deleteCachedProjectSessions("/new/themes/aix");
+      deleteCachedProjectSessions("/new/apay/aix");
       hoxiAPI.updateWorkspace = origUpdateWorkspace;
       hoxiAPI.listSessions = origListSessions;
       hoxiAPI.resolveProject = origResolveProject;

@@ -1,12 +1,10 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { t } from "../../i18n";
-import type { WorkspaceFolderInput, WorkspaceProfile } from "../../services/api";
+import type { WorkspaceProfile } from "../../services/api";
 import {
   closeWorkspaceModal,
   DEFAULT_WORKSPACE_IDENTITY_COLOR,
-  isDismissedProjectPath,
   normalizeFolderPath,
-  normalizeWorkspaceIdentityColor,
   openCreateWorkspaceModal,
   openDeleteWorkspaceModal,
   openEditWorkspaceModal,
@@ -14,10 +12,8 @@ import {
   switchWorkspace,
   workspace,
   workspaceDisplayName,
-  workspacePrimaryFolder,
-  visibleSavedWorkspaces,
 } from "../../store/workspace";
-import { FolderIcon } from "./left-nav-helpers";
+import { buildAllProjects, FolderIcon } from "./left-nav-helpers";
 
 export function folderBaseName(p: string): string {
   const parts = normalizeFolderPath(p).split(/[\\/]/).filter(Boolean);
@@ -94,53 +90,16 @@ export function DeleteWorkspaceModalView(props: {
 }
 
 export function ManageWorkspacesModalView() {
-  const allManagedWorkspaces = createMemo(() => {
-    const items: Array<{
-      key: string;
-      id?: string;
-      name: string;
-      color: string;
-      primaryDir: string;
-      folders: WorkspaceFolderInput[];
-    }> = [];
-    const coveredDirs = new Set<string>();
-
-    for (const saved of visibleSavedWorkspaces()) {
-      const primary = workspacePrimaryFolder(saved);
-      if (isDismissedProjectPath(primary)) continue;
-      for (const f of saved.folders) {
-        coveredDirs.add(normalizeFolderPath(f.path));
-      }
-      items.push({
-        key: saved.id,
-        id: saved.id,
-        name: saved.name,
-        color: saved.color || DEFAULT_WORKSPACE_IDENTITY_COLOR,
-        primaryDir: primary,
-        folders: saved.folders,
-      });
-    }
-
-    const extraDirs = new Set<string>();
-    if (workspace.rootDir) extraDirs.add(normalizeFolderPath(workspace.rootDir));
-    for (const r of workspace.recentProjects) extraDirs.add(normalizeFolderPath(r));
-    for (const p of workspace.projects) extraDirs.add(normalizeFolderPath(p.worktree));
-
-    for (const dir of extraDirs) {
-      if (!dir || isDismissedProjectPath(dir) || coveredDirs.has(dir)) continue;
-      const proj = workspace.projects.find(
-        (p) => normalizeFolderPath(p.worktree) === dir
-      );
-      items.push({
-        key: dir,
-        name: folderBaseName(dir),
-        color: normalizeWorkspaceIdentityColor(proj?.icon?.color),
-        primaryDir: dir,
-        folders: [{ path: dir, isPrimary: true }],
-      });
-    }
-    return items;
-  });
+  const allManagedWorkspaces = createMemo(() =>
+    buildAllProjects().map((entry) => ({
+      key: entry.workspaceId || entry.path,
+      id: entry.workspaceId,
+      name: entry.name,
+      color: entry.color || DEFAULT_WORKSPACE_IDENTITY_COLOR,
+      primaryDir: entry.path,
+      folders: entry.folders,
+    }))
+  );
 
   return (
     <div class="w-full max-w-[480px] rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#16161A] hoxi-modal-panel hoxi-elevation-4 overflow-hidden">

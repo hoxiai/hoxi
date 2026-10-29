@@ -90,7 +90,31 @@ export default function WorkspaceModal() {
     if (mode() !== "edit") return;
     const prof = targetProfile();
     if (!prof || prof.folders.length === 0) return;
+    const fallbackDir = normalizeFolderPath(
+      workspace.editingWorkspaceDir || workspace.rootDir
+    );
     setFolders((prev) => {
+      if (
+        prev.length === 0 ||
+        (prev.length === 1 &&
+          !prev[0].id &&
+          prof.folders.length > 1 &&
+          normalizeFolderPath(prev[0].path) === fallbackDir)
+      ) {
+        return prof.folders.map((f) => ({
+          id: f.id,
+          path: f.path,
+          isPrimary: f.isPrimary,
+        }));
+      }
+      if (
+        prev.length === 1 &&
+        !prev[0].id &&
+        prof.folders.length === 1 &&
+        prof.folders[0].id
+      ) {
+        return [{ ...prev[0], id: prof.folders[0].id }];
+      }
       let changed = false;
       const next = prev.map((f) => {
         if (f.id) return f;

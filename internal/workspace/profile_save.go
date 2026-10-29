@@ -26,7 +26,7 @@ func (s *workspaceStore) Create(input saveWorkspaceRequest) (workspaceProfile, e
 // owns one of the folders is promoted (keeping its ID); further hidden owners
 // are merged into it as aliases. A folder owned by another visible workspace
 // is rejected so no folder ever belongs to two projects.
-func (s *workspaceStore) createLocked(folders []workspaceFolderInput, input saveWorkspaceRequest) (workspaceProfile, error) {
+func (s *workspaceStore) createLocked(folders []workspaceFolderInput, input saveWorkspaceRequest, replacedPaths ...string) (workspaceProfile, error) {
 	hidden, err := s.hiddenOwnersLocked(folders, "")
 	if err != nil {
 		return workspaceProfile{}, err
@@ -39,13 +39,20 @@ func (s *workspaceStore) createLocked(folders []workspaceFolderInput, input save
 		UpdatedAt: now,
 	}
 	existingFolderIDs := map[string]string{}
+	for _, hid := range hidden {
+		if idx := s.indexOfLocked(hid); idx >= 0 {
+			for _, folder := range s.workspaces[idx].Folders {
+				comp := comparableFolderPath(folder.Path)
+				if existingFolderIDs[comp] == "" && folder.ID != "" {
+					existingFolderIDs[comp] = folder.ID
+				}
+			}
+		}
+	}
 	if len(hidden) > 0 {
 		promoted := s.workspaces[s.indexOfLocked(hidden[0])]
 		created.ID, created.Color, created.CreatedAt = promoted.ID, promoted.Color, promoted.CreatedAt
 		created.Aliases = append(created.Aliases, promoted.Aliases...)
-		for _, folder := range promoted.Folders {
-			existingFolderIDs[comparableFolderPath(folder.Path)] = folder.ID
-		}
 		hidden = hidden[1:]
 		s.dropProfileLocked(promoted.ID)
 	} else if tomb, ok := s.tombstoneForLocked(folders); ok {
@@ -62,14 +69,28 @@ func (s *workspaceStore) createLocked(folders []workspaceFolderInput, input save
 		created.Color = defaultWorkspaceIdentityColor
 	}
 	created.Folders = make([]workspaceFolder, len(folders))
+	inInput := make(map[string]bool, len(folders))
 	for idx, f := range folders {
-		id := existingFolderIDs[comparableFolderPath(f.Path)]
+		comp := comparableFolderPath(f.Path)
+		inInput[comp] = true
+		id := existingFolderIDs[comp]
 		if id == "" {
 			id = generateWorkspaceUUID()
 		}
 		created.Folders[idx] = workspaceFolder{ID: id, Path: f.Path, IsPrimary: f.IsPrimary, Position: idx}
 	}
 	s.workspaces = append(s.workspaces, created)
+	for _, oldRaw := range replacedPaths {
+		if !strings.ContainsAny(oldRaw, `/\`) && !strings.HasPrefix(strings.TrimSpace(oldRaw), "~") {
+			continue
+		}
+		for _, candidate := range []string{oldRaw, expandUserPath(oldRaw)} {
+			comp := comparableFolderPath(candidate)
+			if comp != "" && !inInput[comp] && !s.folderOwnedByOtherLocked(comp, created.ID) {
+				s.addDismissedLocked(candidate)
+			}
+		}
+	}
 	s.afterSaveLocked(created)
 	if err := s.commitLocked(prev); err != nil {
 		return workspaceProfile{}, err
@@ -97,7 +118,7 @@ func (s *workspaceStore) Update(id string, input saveWorkspaceRequest) (result w
 		if err != nil {
 			return workspaceProfile{}, err
 		}
-		return s.createLocked(folders, input)
+		return s.createLocked(folders, input, cleanID)
 	}
 	result, relinks, err = s.updateLocked(targetIdx, input)
 	return result, err

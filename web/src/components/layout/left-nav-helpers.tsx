@@ -9,6 +9,7 @@ import {
   normalizeWorkspaceIdentityColor,
   resolveRootSessionID,
   shortenPath,
+  stripWorktreePath,
   workspace,
   workspacePrimaryFolder,
   visibleSavedWorkspaces,
@@ -173,8 +174,9 @@ export function basename(p: string): string {
 export function buildAllProjects(): ProjectNavEntry[] {
   const map = new Map<string, ProjectNavEntry>();
   const secondaryPaths = new Set<string>();
+  const savedList = visibleSavedWorkspaces();
 
-  for (const saved of visibleSavedWorkspaces()) {
+  for (const saved of savedList) {
     const primary = normalizeFolderPath(workspacePrimaryFolder(saved));
     if (
       !primary ||
@@ -187,7 +189,23 @@ export function buildAllProjects(): ProjectNavEntry[] {
     }
     for (const f of saved.folders) {
       const fp = normalizeFolderPath(f.path);
+      const stripped = stripWorktreePath(f.path);
       if (fp && fp !== primary) secondaryPaths.add(fp);
+      if (stripped && stripped !== primary) secondaryPaths.add(stripped);
+    }
+  }
+
+  for (const saved of savedList) {
+    const primary = normalizeFolderPath(workspacePrimaryFolder(saved));
+    if (
+      !primary ||
+      isInvalidProjectPath(primary) ||
+      isDefaultWorkspacePath(primary) ||
+      isDismissedProjectPath(saved.id) ||
+      isDismissedProjectPath(primary) ||
+      secondaryPaths.has(primary)
+    ) {
+      continue;
     }
     map.set(primary, {
       workspaceId: saved.id,
@@ -203,9 +221,35 @@ export function buildAllProjects(): ProjectNavEntry[] {
 
   for (const p of workspace.projects) {
     const wt = normalizeFolderPath(p.worktree);
-    if (!wt || isInvalidProjectPath(wt) || isDefaultWorkspacePath(wt) || isDismissedProjectPath(wt) || secondaryPaths.has(wt)) continue;
+    const strippedWt = stripWorktreePath(wt);
+    if (
+      !wt ||
+      wt !== strippedWt ||
+      isInvalidProjectPath(wt) ||
+      isDefaultWorkspacePath(wt) ||
+      isDismissedProjectPath(wt) ||
+      secondaryPaths.has(wt)
+    ) {
+      continue;
+    }
+    const sandboxPaths = (p.sandboxes || [])
+      .map((s) => stripWorktreePath(s))
+      .filter(Boolean);
     const existing = map.get(wt);
     if (!existing) {
+      if (
+        sandboxPaths.some(
+          (s) => map.has(s) || secondaryPaths.has(s) || isDismissedProjectPath(s)
+        )
+      ) {
+        for (const s of sandboxPaths) {
+          const owner = map.get(s);
+          if (owner) {
+            owner.sandboxes = Math.max(owner.sandboxes, (p.sandboxes || []).length);
+          }
+        }
+        continue;
+      }
       map.set(wt, {
         name: basename(wt),
         path: wt,
@@ -224,6 +268,7 @@ export function buildAllProjects(): ProjectNavEntry[] {
     const clean = normalizeFolderPath(p);
     if (
       !clean ||
+      clean !== stripWorktreePath(clean) ||
       isInvalidProjectPath(clean) ||
       isDefaultWorkspacePath(clean) ||
       isDismissedProjectPath(clean) ||
@@ -246,6 +291,7 @@ export function buildAllProjects(): ProjectNavEntry[] {
   const rootClean = normalizeFolderPath(workspace.rootDir);
   if (
     rootClean &&
+    rootClean === stripWorktreePath(rootClean) &&
     !isInvalidProjectPath(rootClean) &&
     !isDefaultWorkspacePath(rootClean) &&
     !isDismissedProjectPath(rootClean) &&
