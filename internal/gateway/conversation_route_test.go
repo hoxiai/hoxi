@@ -48,6 +48,7 @@ func newConversationGateway(t *testing.T) (*Gateway, func() []upstreamCall) {
 	root := t.TempDir()
 	t.Setenv("HOXI_SESSION_STORE_DIR", t.TempDir())
 	gw := New(upstream.Listener.Addr().(*net.TCPAddr).Port, "pass", root, nil, nil)
+	t.Cleanup(gw.CloseBrowser)
 	rec := runner.SessionRecord{ID: "ses_cld_owned", Runtime: "claude-code", ProjectDir: root, WorktreePath: root,
 		SandboxMode: "local", Title: "owned", UpdatedAt: 10, OpenCodeIDs: []string{"ses_engine"},
 		Turns: []runner.MessageTurn{{
@@ -196,9 +197,10 @@ func TestSkillSelectionAdoptsOldSessionAndStripsUpstreamField(t *testing.T) {
 			_, _ = io.WriteString(w, `{}`)
 		}
 	}))
-	defer upstream.Close()
+	t.Cleanup(upstream.Close)
 
 	gw := New(upstream.Listener.Addr().(*net.TCPAddr).Port, "pass", root, nil, nil)
+	t.Cleanup(gw.CloseBrowser)
 
 	// 1. Fetch skill list via gateway
 	listRes := serve(gw, http.MethodGet, "/api/hoxi/skills/list?directory="+url.QueryEscape(root), "")
@@ -358,6 +360,7 @@ func TestConversationListDoesNotLeakNestedOpenCodeSessions(t *testing.T) {
 	t.Cleanup(upstream.Close)
 	t.Setenv("HOXI_SESSION_STORE_DIR", t.TempDir())
 	gw := New(upstream.Listener.Addr().(*net.TCPAddr).Port, "pass", root, nil, nil)
+	t.Cleanup(gw.CloseBrowser)
 	parentProject, err := gw.workspaces.EnsureProjectForDirectory(root)
 	if err != nil {
 		t.Fatal(err)
