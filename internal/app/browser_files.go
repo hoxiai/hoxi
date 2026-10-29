@@ -35,7 +35,12 @@ func (a *DesktopApp) configureBrowserFiles(gw *gateway.Gateway) {
 			return exec.CommandContext(ctx, "open", args...).Run()
 		case "windows":
 			if reveal {
-				return exec.CommandContext(ctx, "explorer", "/select,", path).Run()
+				err := exec.CommandContext(ctx, "explorer.exe", "/select,"+filepath.Clean(path)).Run()
+				var exitErr *exec.ExitError
+				if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+					return nil
+				}
+				return err
 			}
 			return exec.CommandContext(ctx, "cmd", "/c", "start", "", path).Run()
 		default:

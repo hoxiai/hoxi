@@ -20,13 +20,23 @@ func resolveExternalOpenCodeBinary() string {
 	if p, err := exec.LookPath("opencode"); err == nil && strings.TrimSpace(p) != "" {
 		return p
 	}
+	var candidates []string
 	if home, _ := os.UserHomeDir(); home != "" {
-		return agentcli.FirstExecutableFile(
+		candidates = append(candidates,
 			filepath.Join(home, ".opencode", "bin", "opencode"),
 			filepath.Join(hoxipaths.BinDir(), "opencode"),
 		)
 	}
-	return ""
+	if localApp := strings.TrimSpace(os.Getenv("LOCALAPPDATA")); localApp != "" {
+		candidates = append(candidates,
+			filepath.Join(localApp, "opencode", "bin", "opencode"),
+			filepath.Join(localApp, "Programs", "opencode", "opencode"),
+		)
+	}
+	for _, dir := range agentcli.CommonUserBinDirs() {
+		candidates = append(candidates, filepath.Join(dir, "opencode"))
+	}
+	return agentcli.FirstExecutableFile(candidates...)
 }
 
 func parseOpenCodeModelField(raw string) (providerID, modelID string) {

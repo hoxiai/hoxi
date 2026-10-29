@@ -2,6 +2,7 @@ package diagnostics
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os/exec"
 	"runtime"
@@ -93,8 +94,13 @@ func openLogDirectory(directory string) error {
 	case "darwin":
 		program = "open"
 	case "windows":
-		program = "explorer"
+		program = "explorer.exe"
 	}
 	// No shell, user-supplied arguments, or captured child output.
-	return exec.Command(program, directory).Run()
+	err := exec.Command(program, directory).Run()
+	var exitErr *exec.ExitError
+	if runtime.GOOS == "windows" && errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		return nil
+	}
+	return err
 }

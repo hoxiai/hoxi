@@ -74,6 +74,9 @@ func Home() string {
 	if custom := env("HOXI_HOME"); custom != "" {
 		return filepath.Clean(custom)
 	}
+	if home := env("HOME"); filepath.IsAbs(home) {
+		return filepath.Join(filepath.Clean(home), ".hoxi")
+	}
 	home, err := os.UserHomeDir()
 	if err != nil || strings.TrimSpace(home) == "" {
 		return ""

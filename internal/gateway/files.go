@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"io/fs"
 	"net/http"
@@ -637,7 +638,7 @@ func (g *Gateway) handleFileOpen(w http.ResponseWriter, r *http.Request) {
 		}
 	case "windows":
 		if action == "reveal" {
-			cmd = exec.CommandContext(ctx, "explorer", "/select,", targetPath)
+			cmd = exec.CommandContext(ctx, "explorer.exe", "/select,"+filepath.Clean(targetPath))
 		} else {
 			cmd = exec.CommandContext(ctx, "cmd", "/c", "start", "", targetPath)
 		}
@@ -650,8 +651,11 @@ func (g *Gateway) handleFileOpen(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := cmd.Run(); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "failed to open path: "+err.Error())
-		return
+		var exitErr *exec.ExitError
+		if !(runtime.GOOS == "windows" && action == "reveal" && errors.As(err, &exitErr) && exitErr.ExitCode() == 1) {
+			writeJSONError(w, http.StatusInternalServerError, "failed to open path: "+err.Error())
+			return
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{

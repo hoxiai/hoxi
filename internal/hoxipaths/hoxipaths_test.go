@@ -9,6 +9,7 @@ import (
 func TestDBPathPriority(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("OPENCODE_DB", "")
 	t.Setenv("HOXI_DB_PATH", "")
 	if got, want := DBPath(), filepath.Join(home, ".hoxi", "hoxi.db"); got != want {
@@ -30,6 +31,7 @@ func TestDBPathPriority(t *testing.T) {
 func TestEngineDirs(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("HOXI_ENGINE_DATA_DIR", "")
 	if got, want := EngineDataDir(), filepath.Join(home, ".hoxi", "engine-data"); got != want {
 		t.Fatalf("EngineDataDir() = %s, want %s", got, want)
@@ -79,7 +81,7 @@ func TestHomeOverrideServerURLAndProtectedStateFiles(t *testing.T) {
 }
 
 func TestProjectMemoryPaths(t *testing.T) {
-	root := filepath.Join(string(filepath.Separator), "repo", "demo")
+	root := filepath.Join(t.TempDir(), "repo", "demo")
 	if got, want := ProjectMemoryDir(root), filepath.Join(root, ".hoxi", "memory"); got != want {
 		t.Fatalf("ProjectMemoryDir() = %s, want %s", got, want)
 	}
@@ -107,7 +109,7 @@ func TestProjectMemoryPaths(t *testing.T) {
 }
 
 func TestProjectRootForWorktree(t *testing.T) {
-	root := filepath.Join(string(filepath.Separator), "repo", "demo")
+	root := filepath.Join(t.TempDir(), "repo", "demo")
 	cases := map[string]string{
 		filepath.Join(root, ".hoxi", "worktrees", "ses_1"):       root,
 		filepath.Join(root, ".hoxi", "worktrees", "ses_1", "in"): "",

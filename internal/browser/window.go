@@ -221,11 +221,17 @@ func (sc *scope) focusWindow(ctx context.Context) error {
 }
 
 func focusOSProcess(pid int) {
-	if runtime.GOOS != "darwin" || pid <= 0 {
+	if pid <= 0 {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	script := fmt.Sprintf(`tell application "System Events" to set frontmost of first process whose unix id is %d to true`, pid)
-	_ = exec.CommandContext(ctx, "osascript", "-e", script).Run()
+	switch runtime.GOOS {
+	case "darwin":
+		script := fmt.Sprintf(`tell application "System Events" to set frontmost of first process whose unix id is %d to true`, pid)
+		_ = exec.CommandContext(ctx, "osascript", "-e", script).Run()
+	case "windows":
+		script := fmt.Sprintf(`(New-Object -ComObject WScript.Shell).AppActivate(%d) | Out-Null`, pid)
+		_ = exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", script).Run()
+	}
 }
