@@ -488,7 +488,7 @@ export default function UserAccountMenu() {
       <button
         type="button"
         onClick={() => openSettingsModal("general")}
-        class="p-1.5 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]/60 transition-colors cursor-pointer shrink-0"
+        class="flex items-center justify-center p-1.5 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]/60 transition-colors cursor-pointer shrink-0"
         title={`${t("settings.modalTitle")} (⌘,)`}
       >
         <Icon name="settings-gear" size="small" />
