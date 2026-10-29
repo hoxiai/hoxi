@@ -4,11 +4,10 @@ import {
   connectOfficialAinode,
   ensureOfficialProviderConnected,
   loadOfficialAinodeModels,
-  OFFICIAL_PROVIDER_ID,
   officialAinodeState,
   setOfficialAinodeState,
 } from "../store/provider-official";
-import { setWorkspace } from "../store/workspace-state";
+import { OFFICIAL_PROVIDER_ID, setWorkspace } from "../store/workspace-state";
 import { assertEqual, describe, it } from "./test-harness";
 
 describe("official AINode account connect", () => {

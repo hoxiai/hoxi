@@ -5,12 +5,7 @@ import type { OfficialAinodeModel } from "../services/platform-api";
 import { t } from "../i18n";
 import { desktopAuth } from "./auth-state";
 import { loadProviders, selectProviderModelPreservingBusySession } from "./workspace-providers";
-import { workspace } from "./workspace-state";
-
-// OFFICIAL_PROVIDER_ID is the dedicated provider for the signed-in Hoxi account
-// AINode channel. It must stay separate from the third-party "ainode" gateway
-// provider so the two catalogs never overwrite or mix with each other.
-export const OFFICIAL_PROVIDER_ID = "hoxi-official";
+import { OFFICIAL_PROVIDER_ID, workspace } from "./workspace-state";
 
 export interface OfficialAinodeConnectResult {
   providerId: string;

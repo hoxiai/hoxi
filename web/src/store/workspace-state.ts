@@ -176,6 +176,11 @@ export interface ReviewCommentItem {
 export type ProviderModalTab = "providers" | "official" | "custom" | "auto" | "models" | "agents" | "subagents" | "policy";
 export type WorkspaceModalMode = "create" | "edit" | "delete" | "manage" | null;
 
+// OFFICIAL_PROVIDER_ID is the dedicated provider for the signed-in Hoxi account
+// AINode channel. It stays separate from the third-party "ainode" gateway
+// provider so the two catalogs never overwrite or mix with each other.
+export const OFFICIAL_PROVIDER_ID = "hoxi-official";
+
 export interface SessionIndexEntry {
   directory?: string;
   projectID?: string;

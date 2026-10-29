@@ -24,10 +24,12 @@ import {
   splitAgyModelEffortSuffix,
 } from "./provider-catalog";
 import { parseModelString, updateSessionAI } from "./session-ai";
+import { desktopAuth } from "./auth-state";
 import {
   DEFAULT_AGENTS,
   EFFORT_KEY,
   FAVORITE_MODELS_KEY,
+  OFFICIAL_PROVIDER_ID,
   RECENT_MODELS_KEY,
   SELECTED_MODEL_KEY,
   setWorkspace,
@@ -383,6 +385,15 @@ export async function loadProviders(forceRefresh = false): Promise<void> {
         selectDefaultModel(cfgModel);
         return;
       }
+      // Prefer the signed-in account's official channel when nothing valid is selected.
+      if (desktopAuth.isLoggedIn) {
+        const official = all.find((p) => p.id === OFFICIAL_PROVIDER_ID);
+        const officialModel = official ? Object.keys(official.models || {})[0] : undefined;
+        if (official && officialModel) {
+          selectDefaultModel({ providerID: OFFICIAL_PROVIDER_ID, modelID: officialModel });
+          return;
+        }
+      }
       for (const pid of cleanConnected) {
         if (pid === AUTO_PROVIDER_ID) continue;
         // OpenCode's built-in free service is not a user-configured provider.
@@ -399,8 +410,7 @@ export async function loadProviders(forceRefresh = false): Promise<void> {
           return;
         }
       }
-    }
-  } catch (err) {
+    }  } catch (err) {
     console.error("Failed to load providers:", err);
   }
 }
