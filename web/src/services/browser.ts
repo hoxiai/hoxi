@@ -8,7 +8,7 @@ export interface BrowserScope {
 export interface BrowserState {
   navigation?: { status: "loading" | "ready" | "failed" | "stopped"; url?: string; error?: string; httpStatus?: number; startedAt?: number };
   navigationControls?: boolean;
-  mode?: "chrome";
+  mode?: "chrome" | "window" | "headless";
   connected?: boolean;
   pairing?: boolean;
   url: string;
@@ -37,7 +37,7 @@ export interface BrowserActionResult extends BrowserState {
 
 export interface BrowserAction {
   action: "navigate" | "back" | "forward" | "reload" | "click" | "type" | "key" |
-    "scroll" | "wheel" | "zoom" | "pointer" | "stop_loading" | "context" | "copy" | "paste" | "upload_cancel" | "zoom_reset" | "tab_new" | "tab_select" | "tab_close" | "control" | "resize" | "close";
+    "scroll" | "wheel" | "zoom" | "pointer" | "stop_loading" | "context" | "copy" | "paste" | "upload_cancel" | "zoom_reset" | "tab_new" | "tab_select" | "tab_close" | "control" | "mode" | "focus" | "resize" | "close";
   async?: boolean;
   url?: string;
   selector?: string;
@@ -49,6 +49,7 @@ export interface BrowserAction {
   deltaY?: number;
   tabID?: string;
   manual?: boolean;
+  window?: boolean;
   width?: number;
   height?: number;
   deviceScaleFactor?: number;

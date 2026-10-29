@@ -29,6 +29,7 @@ type screencast struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	tab    context.Context
+	window bool
 	frame  streamFrame
 	events chan *page.EventScreencastFrame
 	latest chan string
@@ -86,7 +87,13 @@ func (st *screencast) pump() {
 			// Chrome may emit frames at the stale view size before it re-derives
 			// the emulated one. The UI maps clicks over the whole image, so never
 			// show a frame that does not cover the viewport.
-			if !st.coversViewport(ev.Data) {
+			if st.window {
+				w, h := st.decodeDimensions(ev.Data)
+				if w <= 0 || h <= 0 {
+					continue
+				}
+				st.frame.Width, st.frame.Height = w, h
+			} else if !st.coversViewport(ev.Data) {
 				continue
 			}
 			// CDP ACKs are independent of display ACKs. Keep only the newest image.
@@ -103,20 +110,28 @@ func (st *screencast) pump() {
 	}
 }
 
-// coversViewport reports whether a frame has the viewport's aspect ratio,
-// allowing for rounding when Chrome scales it.
-func (st *screencast) coversViewport(data string) bool {
+func (st *screencast) decodeDimensions(data string) (int, int) {
 	image, err := base64.StdEncoding.DecodeString(data)
 	if err != nil {
-		return false
+		return 0, 0
 	}
 	config, err := jpeg.DecodeConfig(bytes.NewReader(image))
 	if err != nil {
+		return 0, 0
+	}
+	return config.Width, config.Height
+}
+
+// coversViewport reports whether a frame has the viewport's aspect ratio,
+// allowing for rounding when Chrome scales it.
+func (st *screencast) coversViewport(data string) bool {
+	w, h := st.decodeDimensions(data)
+	if w <= 0 || h <= 0 {
 		return false
 	}
 	width, height := st.frame.Width, st.frame.Height
-	diff := config.Width*height - config.Height*width
-	return max(diff, -diff) <= max(config.Width, config.Height, width, height)
+	diff := w*height - h*width
+	return max(diff, -diff) <= max(w, h, width, height)
 }
 
 func (s *Service) serveStream(w http.ResponseWriter, r *http.Request) {
@@ -165,7 +180,7 @@ func (s *Service) serveStream(w http.ResponseWriter, r *http.Request) {
 	// Attach/apply metrics and start CDP under the gate, never upgrade or write there.
 	sc.stopStream()
 	err = sc.withTab(setup)
-	if err == nil {
+	if err == nil && !sc.window {
 		// Chrome sizes screencast frames from the browser view, which can still be
 		// the headless window's content area rather than the emulated viewport
 		// (always so right after launch). Only a real metrics change re-derives it,
@@ -187,7 +202,7 @@ func (s *Service) serveStream(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		tab := sc.tabs[sc.tabID]
 		ctx, stop := context.WithCancel(tab)
-		st = &screencast{ctx: ctx, cancel: stop, tab: tab,
+		st = &screencast{ctx: ctx, cancel: stop, tab: tab, window: sc.window,
 			frame:  streamFrame{Width: sc.width, Height: sc.height, TabID: sc.tabID},
 			events: make(chan *page.EventScreencastFrame, 8), latest: make(chan string, 1)}
 		chromedp.ListenTarget(ctx, st.receive)

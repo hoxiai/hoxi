@@ -200,6 +200,10 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 		forge:        forgeSvc,
 	}
 	g.browser.SetSessionResolver(runnerSvc.ResolveBrowserSession)
+	if profileDir := hoxipaths.BrowserProfileDir(); profileDir != "" {
+		g.browser.SetProfileRoot(profileDir)
+		g.browser.SetDefaultWindowMode(true)
+	}
 	g.recallSvc = recall.NewService(&gatewayRecallSource{g: g})
 	if g.runner != nil {
 		options := []orchestration.Option{orchestration.WithLLM(providers)}

@@ -1,11 +1,12 @@
 {
   "extensionName": { "message": "Hoxi Browser Link" },
   "extensionDescription": { "message": "Connect a selected Chrome tab to your local Hoxi session" },
-  "hint": { "message": "Generate a connection code in Hoxi's Browser panel and paste it here. Only this tab is connected, using its existing sign-in" },
-  "code": { "message": "Hoxi connection code" },
+  "hint": { "message": "Paste a Hoxi connection code for the first pairing, or click Connect directly once paired. New tabs opened from this tab are followed automatically" },
+  "code": { "message": "Hoxi connection code (optional after first pairing)" },
   "connect": { "message": "Connect this tab" },
+  "quickConnect": { "message": "Quick connect this tab (no code needed)" },
   "disconnect": { "message": "Disconnect" },
-  "connected": { "message": "This tab is connected" },
+  "connected": { "message": "Connected to Hoxi (auto-following new tabs)" },
   "disconnected": { "message": "Disconnected; your Chrome tab remains open" },
   "failed": { "message": "Connection failed" },
   "working": { "message": "Connecting…" }

@@ -59,6 +59,9 @@ func TestHomeOverrideServerURLAndProtectedStateFiles(t *testing.T) {
 	if got, want := Join("models.json"), filepath.Join(customHome, "models.json"); got != want {
 		t.Fatalf("Join(models.json) = %s, want %s", got, want)
 	}
+	if got, want := BrowserProfileDir(), filepath.Join(customHome, "browser-profile"); got != want {
+		t.Fatalf("BrowserProfileDir() = %s, want %s", got, want)
+	}
 
 	t.Setenv("HOXI_SERVER_URL", "https://mirror.hoxi.ai/")
 	if got := ServerBaseURL(); got != "https://mirror.hoxi.ai" {

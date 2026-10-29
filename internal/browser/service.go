@@ -42,36 +42,40 @@ func (v viewport) action() *emulation.SetDeviceMetricsOverrideParams {
 }
 
 type scope struct {
-	diagnostics      map[string]*diagnosticTracker
-	wheelGesture     wheelGesture
-	gate             chan struct{}
-	ctx              context.Context
-	cancel           context.CancelFunc
-	allocatorCancel  context.CancelFunc
-	browser          context.Context
-	tabs             map[string]context.Context
-	navigations      map[string]*navigationTracker
-	tabCancels       map[string]context.CancelFunc
-	browserCancel    context.CancelFunc
-	tabID            string
-	profile          string
-	ledger           *reclaim.Ledger
-	ledgerID         string
-	manual           bool
-	width            int
-	height           int
-	scale            float64
-	viewports        map[string]viewport
-	stream           *screencast
-	closed           bool
-	extension        *extensionBridge
-	pairToken        string
-	pairExpires      time.Time
-	lastUsed         time.Time
-	pointerState     pointerState
-	pointerHold      time.Duration
-	workflows        *workflowTracker
-	transferLedgerID string
+	service           *Service
+	sessionID         string
+	diagnostics       map[string]*diagnosticTracker
+	wheelGesture      wheelGesture
+	gate              chan struct{}
+	ctx               context.Context
+	cancel            context.CancelFunc
+	allocatorCancel   context.CancelFunc
+	browser           context.Context
+	tabs              map[string]context.Context
+	navigations       map[string]*navigationTracker
+	tabCancels        map[string]context.CancelFunc
+	browserCancel     context.CancelFunc
+	tabID             string
+	profile           string
+	persistentProfile bool
+	window            bool
+	ledger            *reclaim.Ledger
+	ledgerID          string
+	manual            bool
+	width             int
+	height            int
+	scale             float64
+	viewports         map[string]viewport
+	stream            *screencast
+	closed            bool
+	extension         *extensionBridge
+	pairToken         string
+	pairExpires       time.Time
+	lastUsed          time.Time
+	pointerState      pointerState
+	pointerHold       time.Duration
+	workflows         *workflowTracker
+	transferLedgerID  string
 }
 
 type Service struct {
@@ -80,6 +84,9 @@ type Service struct {
 	cancel         context.CancelFunc
 	scopes         map[scopeKey]*scope
 	token          string
+	linkToken      string
+	profileRoot    string
+	defaultWindow  bool
 	uiOrigins      map[string]bool
 	closed         bool
 	closeDone      chan struct{}
@@ -124,11 +131,16 @@ func newService(now func() time.Time, interval time.Duration) *Service {
 	if _, err := rand.Read(secret); err != nil {
 		panic(err)
 	}
+	linkSecret := make([]byte, 32)
+	if _, err := rand.Read(linkSecret); err != nil {
+		panic(err)
+	}
 	s := &Service{
 		ctx:         ctx,
 		cancel:      cancel,
 		scopes:      make(map[scopeKey]*scope),
 		token:       hex.EncodeToString(secret),
+		linkToken:   hex.EncodeToString(linkSecret),
 		uiOrigins:   make(map[string]bool),
 		closeDone:   make(chan struct{}),
 		now:         now,
@@ -194,35 +206,8 @@ func (sc *scope) dispose() {
 	if sc.extension != nil {
 		sc.extension.close()
 	}
-	if sc.stream != nil {
-		sc.stream.cancel()
-		sc.stream = nil
-	}
-	if sc.pointerState.timer != nil {
-		sc.pointerState.timer.Stop()
-	}
+	sc.resetBrowser()
 	sc.cancel()
-	for _, n := range sc.navigations {
-		n.stop()
-	}
-	for _, cancel := range sc.tabCancels {
-		cancel()
-	}
-	if sc.browserCancel != nil {
-		sc.browserCancel()
-	}
-	clear(sc.tabs)
-	clear(sc.tabCancels)
-	if sc.allocatorCancel != nil {
-		sc.allocatorCancel()
-	}
-	if sc.profile != "" && os.RemoveAll(sc.profile) == nil {
-		sc.ledger.Forget(sc.ledgerID)
-		sc.ledgerID = ""
-	}
-	if sc.workflows != nil && sc.workflows.root != "" && os.RemoveAll(sc.workflows.root) == nil {
-		sc.ledger.Forget(sc.transferLedgerID)
-	}
 }
 
 var sessionPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
@@ -280,7 +265,7 @@ func (s *Service) acquire(ctx context.Context, key scopeKey, create bool) (*scop
 			return nil, errors.New("browser scope limit reached")
 		}
 		life, cancel := context.WithCancel(s.ctx)
-		sc = &scope{gate: make(chan struct{}, 1), ctx: life, cancel: cancel, tabs: make(map[string]context.Context), tabCancels: make(map[string]context.CancelFunc), width: 1280, height: 800, scale: 1, viewports: make(map[string]viewport), ledger: s.ledger, lastUsed: s.now(), pointerHold: s.pointerHold}
+		sc = &scope{service: s, sessionID: key.session, window: s.defaultWindow, gate: make(chan struct{}, 1), ctx: life, cancel: cancel, tabs: make(map[string]context.Context), tabCancels: make(map[string]context.CancelFunc), width: 1280, height: 800, scale: 1, viewports: make(map[string]viewport), ledger: s.ledger, lastUsed: s.now(), pointerHold: s.pointerHold}
 		sc.workflows = &workflowTracker{uploads: make(map[string]UploadRequest), dialogs: make(map[string]PageDialog), tabs: make(map[string]context.Context)}
 		s.scopes[key] = sc
 		delete(s.idleClosed, key)
@@ -334,12 +319,32 @@ func (s *Service) remove(key scopeKey, sc *scope) {
 }
 
 func (sc *scope) start(ctx context.Context) error {
+	if sc.browser != nil && sc.browser.Err() != nil {
+		sc.resetBrowser()
+	}
 	if sc.browser != nil {
 		return nil
 	}
-	profile, ledgerID, err := sc.ledger.MkdirTemp("browser-profile", "hoxi-browser-profile-")
-	if err != nil {
-		return err
+	var (
+		profile  string
+		ledgerID string
+		err      error
+	)
+	if sc.window && sc.service != nil {
+		profile, err = sc.service.acquirePersistentProfile(sc)
+		if err != nil {
+			return err
+		}
+		if profile != "" {
+			sc.persistentProfile = true
+		}
+	}
+	if profile == "" {
+		profile, ledgerID, err = sc.ledger.MkdirTemp("browser-profile", "hoxi-browser-profile-")
+		if err != nil {
+			return err
+		}
+		sc.persistentProfile = false
 	}
 	sc.profile, sc.ledgerID = profile, ledgerID
 	opts := append([]chromedp.ExecAllocatorOption{}, chromedp.DefaultExecAllocatorOptions[:]...)
@@ -347,6 +352,13 @@ func (sc *scope) start(ctx context.Context) error {
 		// Back/forward-cache restores fire no document load, so chromedp's
 		// history actions would wait until the request deadline.
 		chromedp.Flag("disable-back-forward-cache", true))
+	if sc.window {
+		opts = append(opts,
+			chromedp.Flag("headless", false),
+			chromedp.Flag("hide-scrollbars", false),
+			chromedp.Flag("mute-audio", false),
+		)
+	}
 	if execPath := resolveBrowserExecPath(); execPath != "" {
 		opts = append(opts, chromedp.ExecPath(execPath))
 	}
@@ -356,24 +368,35 @@ func (sc *scope) start(ctx context.Context) error {
 	sc.browserCancel = browserCancel
 	done := make(chan error, 1)
 	go func() {
-		done <- chromedp.Run(browser, sc.viewport().action(), page.SetInterceptFileChooserDialog(true))
+		if sc.window {
+			done <- chromedp.Run(browser)
+		} else {
+			done <- chromedp.Run(browser, sc.viewport().action(), page.SetInterceptFileChooserDialog(true))
+		}
 	}()
 	select {
 	case err = <-done:
 	case <-ctx.Done():
-		sc.cancel()
+		sc.resetBrowser()
 		<-done
 		return ctx.Err()
 	}
 	if err != nil {
+		sc.resetBrowser()
 		return err
 	}
 	if proc := chromedp.FromContext(browser).Browser.Process(); proc != nil {
-		sc.ledger.AttachProcess(sc.ledgerID, proc.Pid, "--user-data-dir="+profile)
+		if sc.persistentProfile {
+			sc.ledgerID = sc.ledger.RecordProcess("browser-window", proc.Pid, "--user-data-dir="+profile)
+		} else {
+			sc.ledger.AttachProcess(sc.ledgerID, proc.Pid, "--user-data-dir="+profile)
+		}
 	}
 	sc.browser = browser
-	if err := sc.setupWorkflows(browser); err != nil {
-		return err
+	if !sc.window {
+		if err := sc.setupWorkflows(browser); err != nil {
+			return err
+		}
 	}
 	sc.tabID = string(chromedp.FromContext(browser).Target.TargetID)
 	sc.tabs[sc.tabID] = browser

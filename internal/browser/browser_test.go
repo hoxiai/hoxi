@@ -55,7 +55,10 @@ func TestValidation(t *testing.T) {
 			t.Errorf("accepted %+v", a)
 		}
 	}
-	dir := t.TempDir()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	link := filepath.Join(t.TempDir(), "alias")
 	if err := os.Symlink(dir, link); err != nil {
 		t.Fatal(err)
@@ -114,7 +117,10 @@ func TestLazyManualAndStrictJSON(t *testing.T) {
 	s := New()
 	defer s.Close()
 	s.SetAgentToken("secret")
-	dir := t.TempDir()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	if w := request(t, s, dir, "a", "state", "", false); w.Code != 200 {
 		t.Fatal(w.Body.String())
 	}
@@ -206,7 +212,10 @@ func TestChromeSmoke(t *testing.T) {
 	s := New()
 	defer s.Close()
 	s.SetAgentToken("secret")
-	dir := t.TempDir()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	page := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`<title>Hoxi Smoke</title><button id="go" onclick="document.title='Clicked'">Go</button><input id="name">`))
 	}))
@@ -288,3 +297,62 @@ func mustJSON(t *testing.T, v any) []byte {
 	}
 	return b
 }
+
+func TestWindowModeAndPersistentProfile(t *testing.T) {
+	s := New()
+	defer s.Close()
+	s.SetAgentToken("secret")
+	profileDir := filepath.Join(t.TempDir(), "browser-profile")
+	s.SetProfileRoot(profileDir)
+	s.SetDefaultWindowMode(true)
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Idle state reflects default window mode without creating a scope.
+	w := request(t, s, dir, "a", "state", "", false)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"mode":"window"`) {
+		t.Fatalf("expected window mode in idle state, got %d %s", w.Code, w.Body.String())
+	}
+	// Agent cannot change browser mode or call focus.
+	for _, body := range []string{`{"action":"mode","window":false}`, `{"action":"focus"}`, `{"action":"navigate","url":"https://example.com","window":false}`} {
+		if resp := request(t, s, dir, "a", "action", body, true); resp.Code != 400 {
+			t.Fatalf("agent should not be allowed %s: %d", body, resp.Code)
+		}
+	}
+	// UI can switch between window and headless mode lazily without starting Chrome.
+	if resp := request(t, s, dir, "a", "action", `{"action":"mode","window":false}`, false); resp.Code != 200 || strings.Contains(resp.Body.String(), `"mode":"window"`) {
+		t.Fatalf("expected headless mode after mode switch: %d %s", resp.Code, resp.Body.String())
+	}
+	if resp := request(t, s, dir, "a", "action", `{"action":"mode","window":true}`, false); resp.Code != 200 || !strings.Contains(resp.Body.String(), `"mode":"window"`) {
+		t.Fatalf("expected window mode after mode switch: %d %s", resp.Code, resp.Body.String())
+	}
+	// Verify persistent profile directory is preserved across resetBrowser and Close.
+	sc, err := s.acquire(context.Background(), scopeKey{dir, "a"}, false)
+	if err != nil || sc == nil {
+		t.Fatalf("acquire scope: %v %v", sc, err)
+	}
+	gotProfile, err := s.acquirePersistentProfile(sc)
+	if err != nil || gotProfile != profileDir {
+		<-sc.gate
+		t.Fatalf("acquirePersistentProfile = %q, %v; want %q", gotProfile, err, profileDir)
+	}
+	sc.profile = gotProfile
+	sc.persistentProfile = true
+	cookieMarker := filepath.Join(profileDir, "Cookies")
+	if err := os.WriteFile(cookieMarker, []byte("keep-login"), 0o600); err != nil {
+		<-sc.gate
+		t.Fatal(err)
+	}
+	sc.resetBrowser()
+	<-sc.gate
+	if _, err := os.Stat(cookieMarker); err != nil {
+		t.Fatalf("persistent profile should not be deleted on resetBrowser: %v", err)
+	}
+	s.Close()
+	if _, err := os.Stat(cookieMarker); err != nil {
+		t.Fatalf("persistent profile should not be deleted on Close: %v", err)
+	}
+}
+

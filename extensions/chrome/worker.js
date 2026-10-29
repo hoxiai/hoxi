@@ -4,14 +4,46 @@ import { allowedURL, decodeConnectionCode, snapshot } from "./protocol.js";
 import { beginNavigation, finishNavigationCommand, stopNavigation, observeNavigation, cachedNavigationState } from "./navigation.js";
 
 let current = null;
+let savedEndpoint = null;
 const send = (link, method, params = {}) => chrome.debugger.sendCommand({ tabId: link.tabID }, method, params);
+
+async function loadSavedEndpoint() {
+  if (savedEndpoint) return savedEndpoint;
+  try {
+    const stored = await chrome.storage?.local?.get?.("hoxiEndpoint");
+    if (stored?.hoxiEndpoint?.url && stored?.hoxiEndpoint?.token) {
+      savedEndpoint = stored.hoxiEndpoint;
+    }
+  } catch { /* storage unavailable */ }
+  return savedEndpoint;
+}
+
+async function persistEndpoint(url, token) {
+  if (!url || typeof token !== "string" || token.length !== 64) return;
+  savedEndpoint = { url, token };
+  try { await chrome.storage?.local?.set?.({ hoxiEndpoint: savedEndpoint }); } catch { /* ignore */ }
+}
+
+async function attachTab(link, tabID, title = "", url = "") {
+  await chrome.debugger.attach({ tabId: tabID }, "1.3");
+  await chrome.debugger.sendCommand({ tabId: tabID }, "Page.enable");
+  await chrome.debugger.sendCommand({ tabId: tabID }, "Network.enable");
+  await chrome.debugger.sendCommand({ tabId: tabID }, "Runtime.enable");
+  const frame = await chrome.debugger.sendCommand({ tabId: tabID }, "Page.getFrameTree");
+  const mainFrame = frame?.frameTree?.frame?.id;
+  link.tabs.set(tabID, { id: String(tabID), title, url, mainFrame });
+  if (link.tabID === tabID) link.mainFrame = mainFrame;
+}
 
 async function disconnect(link = current) {
   if (!link || link.closed) return;
   link.closed = true;
   clearInterval(link.heartbeat);
   link.socket?.close();
-  try { await chrome.debugger.detach({ tabId: link.tabID }); } catch { /* already detached */ }
+  const ids = link.tabs ? [...link.tabs.keys()] : [link.tabID];
+  for (const id of ids) {
+    try { await chrome.debugger.detach({ tabId: id }); } catch { /* already detached */ }
+  }
   if (current === link) current = null;
 }
 
@@ -22,13 +54,14 @@ async function evaluate(link, expression) {
 }
 
 async function state(link) {
-  // Never enumerate other tabs. The tab chosen in the popup is the entire scope.
   const tab = await chrome.tabs.get(link.tabID);
   // activeTab metadata access can expire after a cross-origin navigation;
-  // the explicitly attached debugger remains bound to the same selected tab.
+  // the explicitly attached debugger remains bound to the selected tab.
   const metadata = await evaluate(link, "({url:location.href,title:document.title})");
-  link.lastState = { url: metadata.url || "", title: metadata.title || "", tabID: String(tab.id),
-    tabs: [{ id: String(tab.id), title: metadata.title || "", url: metadata.url || "" }] };
+  const existing = link.tabs.get(link.tabID) || {};
+  link.tabs.set(link.tabID, { ...existing, id: String(tab.id), title: metadata.title || "", url: metadata.url || "" });
+  const tabs = [...link.tabs.values()].map(({ id, title, url }) => ({ id, title, url }));
+  link.lastState = { url: metadata.url || "", title: metadata.title || "", tabID: String(tab.id), tabs };
   return cachedNavigationState(link);
 }
 
@@ -91,12 +124,51 @@ async function pointer(link, a) {
 
 async function execute(link, a) {
   if (current !== link) throw new Error("Chrome connection ended");
-  if (a.action === "tab_select" && a.tabID === String(link.tabID)) return state(link);
-  if (["tab_new", "tab_select", "tab_close"].includes(a.action)) {
-    throw new Error("Chrome Link controls only the selected tab; choose another tab in the extension");
+  if (a.action === "tab_select") {
+    if (a.tabID === String(link.tabID)) return state(link);
+    const targetID = Number(a.tabID);
+    if (!link.tabs.has(targetID)) {
+      throw new Error("Chrome Link controls only the selected tab; choose another tab in the extension");
+    }
+    link.tabID = targetID;
+    link.mainFrame = link.tabs.get(targetID)?.mainFrame;
+    await chrome.tabs.update?.(targetID, { active: true });
+    return state(link);
+  }
+  if (a.action === "tab_new") {
+    const nextURL = a.url || "about:blank";
+    if (!allowedURL(nextURL)) throw new Error("Only HTTP(S) navigation is supported");
+    if (typeof chrome.tabs?.create !== "function") {
+      throw new Error("Chrome Link controls only the selected tab; choose another tab in the extension");
+    }
+    const created = await chrome.tabs.create({ url: nextURL, active: true });
+    await attachTab(link, created.id, created.title || "", created.url || nextURL);
+    link.tabID = created.id;
+    link.mainFrame = link.tabs.get(created.id)?.mainFrame;
+    return state(link);
+  }
+  if (a.action === "tab_close") {
+    const targetID = Number(a.tabID);
+    if (targetID === link.rootTabID || !link.tabs.has(targetID) || typeof chrome.tabs?.remove !== "function") {
+      throw new Error("Chrome Link controls only the selected tab; choose another tab in the extension");
+    }
+    link.tabs.delete(targetID);
+    try { await chrome.debugger.detach({ tabId: targetID }); } catch { /* already detached */ }
+    await chrome.tabs.remove(targetID);
+    if (link.tabID === targetID) {
+      link.tabID = link.rootTabID;
+      link.mainFrame = link.tabs.get(link.rootTabID)?.mainFrame;
+    }
+    return state(link);
   }
   switch (a.action) {
     case "state": break;
+    case "focus": {
+      const tab = await chrome.tabs.get(link.tabID);
+      await chrome.tabs.update?.(link.tabID, { active: true });
+      if (tab?.windowId !== undefined) await chrome.windows?.update?.(tab.windowId, { focused: true });
+      break;
+    }
     case "diagnostics":
       if (a.clear) link.diagnostics = [];
       return { diagnostics: link.diagnostics || [] };
@@ -150,20 +222,22 @@ async function execute(link, a) {
   return state(link);
 }
 
+async function resolveConnection(code) {
+  if (typeof code === "string" && code.trim()) return decodeConnectionCode(code.trim());
+  const saved = await loadSavedEndpoint();
+  if (saved?.url && saved?.token) return saved;
+  throw new Error("Paste a Hoxi connection code for the first pairing");
+}
+
 async function connect(code, tabID) {
   if (current) throw new Error("Disconnect the existing Chrome Link first");
-  const { url, token } = decodeConnectionCode(code);
+  const { url, token } = await resolveConnection(code);
   const tab = await chrome.tabs.get(tabID);
   if (!allowedURL(tab.url) || tab.url === "about:blank") throw new Error("Open an HTTP(S) page before connecting");
-  const link = { tabID, socket: null, heartbeat: null };
+  const link = { rootTabID: tabID, tabID, tabs: new Map(), socket: null, heartbeat: null };
   current = link;
   try {
-    await chrome.debugger.attach({ tabId: tabID }, "1.3");
-    await send(link, "Page.enable");
-    await send(link, "Network.enable");
-    await send(link, "Runtime.enable");
-    const frame = await send(link, "Page.getFrameTree");
-    link.mainFrame = frame?.frameTree?.frame?.id;
+    await attachTab(link, tabID, tab.title || "", tab.url);
     link.lastState = { url: tab.url, title: tab.title || "", tabID: String(tabID), tabs: [{ id: String(tabID), url: tab.url, title: tab.title || "" }] };
     if (current !== link) throw new Error("Chrome connection cancelled");
     await new Promise((resolve, reject) => {
@@ -181,6 +255,9 @@ async function connect(code, tabID) {
           const hello = JSON.parse(event.data);
           if (!hello.connected) { reject(new Error("Invalid Hoxi handshake")); return; }
           connected = true; clearTimeout(timer);
+          if (typeof hello.linkToken === "string" && hello.linkToken.length === 64) {
+            void persistEndpoint(url, hello.linkToken);
+          }
           link.heartbeat = setInterval(() => { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ heartbeat: true })); }, 20000);
           resolve(); return;
         }
@@ -196,12 +273,39 @@ async function connect(code, tabID) {
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
   // No content script or external messaging endpoint exists. Only the popup can connect.
   if (sender.id !== chrome.runtime.id || sender.url !== chrome.runtime.getURL("popup.html")) return false;
+  if (message.type === "status") {
+    void loadSavedEndpoint().then(saved => respond({
+      ok: true,
+      connected: Boolean(current && !current.closed),
+      hasSavedEndpoint: Boolean(saved?.url && saved?.token),
+    }));
+    return true;
+  }
   const result = message.type === "connect" ? connect(message.code, message.tabID) :
     message.type === "disconnect" ? disconnect() : Promise.reject(new Error("Unknown request"));
   result.then(() => respond({ ok: true }), error => respond({ error: error.message }));
   return true;
 });
-chrome.debugger.onDetach.addListener(source => { if (current?.tabID === source.tabId) void disconnect(current); });
+chrome.debugger.onDetach.addListener(source => {
+  if (!current) return;
+  if (current.rootTabID === source.tabId || current.tabs.size <= 1) {
+    void disconnect(current);
+  } else if (current.tabs.has(source.tabId)) {
+    current.tabs.delete(source.tabId);
+    if (current.tabID === source.tabId) current.tabID = current.rootTabID;
+  }
+});
+chrome.tabs?.onCreated?.addListener(tab => {
+  if (!current || current.closed || !tab?.id || !tab.openerTabId || !current.tabs.has(tab.openerTabId)) return;
+  const nextURL = tab.pendingUrl || tab.url || "about:blank";
+  if (!allowedURL(nextURL)) return;
+  void attachTab(current, tab.id, tab.title || "", nextURL).then(() => {
+    if (current && !current.closed && current.tabs.has(tab.id)) {
+      current.tabID = tab.id;
+      current.mainFrame = current.tabs.get(tab.id)?.mainFrame;
+    }
+  }).catch(() => { /* ignore restricted tab */ });
+});
 chrome.debugger.onEvent?.addListener((source, method, params) => {
   if (current?.tabID === source.tabId) { observeNavigation(current, method, params); observeDiagnostics(current, method, params); }
 });

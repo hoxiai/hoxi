@@ -1,11 +1,12 @@
 {
   "extensionName": { "message": "Hoxi Browser Link" },
   "extensionDescription": { "message": "将选中的 Chrome 标签页连接到本机 Hoxi 会话" },
-  "hint": { "message": "在 Hoxi 浏览器面板生成连接码，粘贴到这里，仅连接当前标签页并复用登录态" },
-  "code": { "message": "Hoxi 连接码" },
+  "hint": { "message": "首次配对请粘贴 Hoxi 连接码；配对一次后无需输入连接码即可直接连接当前标签页，并自动跟随由此打开的新标签页" },
+  "code": { "message": "Hoxi 连接码（首次配对后可留空）" },
   "connect": { "message": "连接当前标签页" },
+  "quickConnect": { "message": "免连接码一键连接当前标签页" },
   "disconnect": { "message": "断开连接" },
-  "connected": { "message": "已连接当前标签页" },
+  "connected": { "message": "已连接 Hoxi（支持自动跟随新标签页）" },
   "disconnected": { "message": "已断开，Chrome 页面保持打开" },
   "failed": { "message": "连接失败" },
   "working": { "message": "正在连接…" }

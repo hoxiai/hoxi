@@ -115,3 +115,112 @@ test("worker confines commands to the selected tab and detaches without closing 
     globalThis.WebSocket = oldSocket;
   }
 });
+
+test("worker supports persistent linkToken reconnect and auto-follows child tabs", async () => {
+  const oldChrome = globalThis.chrome, oldSocket = globalThis.WebSocket;
+  let onMessage, onCreated;
+  const attached = new Set(), removed = [], sockets = [];
+  const store = {};
+  const tabMeta = new Map([
+    [10, { id: 10, title: "Main Tab", url: "https://example.com" }],
+    [11, { id: 11, title: "Popup Tab", url: "https://example.com/popup" }],
+    [12, { id: 12, title: "New Tab", url: "https://example.com/new" }],
+  ]);
+  globalThis.chrome = {
+    runtime: { id: "hoxi-test", getURL: path => `chrome-extension://hoxi-test/${path}`,
+      onMessage: { addListener: fn => { onMessage = fn; } } },
+    storage: {
+      local: {
+        get: async key => ({ [key]: store[key] }),
+        set: async obj => { Object.assign(store, obj); },
+      },
+    },
+    debugger: {
+      attach: async target => { attached.add(target.tabId); },
+      detach: async target => { attached.delete(target.tabId); },
+      onDetach: { addListener: () => {} },
+      sendCommand: async (target, method) => {
+        if (method === "Runtime.evaluate") {
+          const info = tabMeta.get(target.tabId) || { url: "https://example.com", title: "Tab" };
+          return { result: { value: { url: info.url, title: info.title } } };
+        }
+        return {};
+      },
+    },
+    tabs: {
+      get: async id => tabMeta.get(id) || { id, title: "Tab", url: "https://example.com" },
+      create: async ({ url }) => ({ id: 12, title: "New Tab", url }),
+      update: async () => {},
+      remove: async id => { removed.push(id); },
+      onCreated: { addListener: fn => { onCreated = fn; } },
+    },
+  };
+  const persistentToken = "b".repeat(64);
+  class Socket {
+    static OPEN = 1;
+    readyState = 1;
+    sent = [];
+    lastToken = "";
+    constructor(url) {
+      this.url = url;
+      sockets.push(this);
+      setTimeout(() => this.onopen(), 0);
+    }
+    send(text) {
+      const data = JSON.parse(text);
+      if (data.token) {
+        this.lastToken = data.token;
+        queueMicrotask(() => this.onmessage({ data: JSON.stringify({ connected: true, linkToken: persistentToken }) }));
+      } else {
+        this.sent.push(data);
+      }
+    }
+    close() { if (this.readyState !== 3) { this.readyState = 3; this.onclose?.(); } }
+  }
+  globalThis.WebSocket = Socket;
+  const sender = { id: "hoxi-test", url: "chrome-extension://hoxi-test/popup.html" };
+  const message = data => new Promise(resolve => onMessage(data, sender, resolve));
+  try {
+    await import(`./worker.js?test=${Date.now() + 1}`);
+    const oneTime = "a".repeat(64);
+    const code = Buffer.from(`http://127.0.0.1:5420/api/hoxi/browser/extension#${oneTime}`).toString("base64url");
+    assert.deepEqual(await message({ type: "connect", code, tabID: 10 }), { ok: true });
+    assert.equal(sockets[0].lastToken, oneTime);
+    await message({ type: "disconnect" });
+
+    // Reconnect with an empty code using the persisted linkToken.
+    const status = await message({ type: "status" });
+    assert.equal(status.hasSavedEndpoint, true);
+    assert.deepEqual(await message({ type: "connect", code: "", tabID: 10 }), { ok: true });
+    const socket = sockets[1];
+    assert.equal(socket.lastToken, persistentToken);
+
+    async function action(input) {
+      const count = socket.sent.length;
+      socket.onmessage({ data: JSON.stringify(input) });
+      for (let i = 0; i < 20 && socket.sent.length === count; i++) await new Promise(resolve => setTimeout(resolve, 1));
+      return socket.sent.at(-1);
+    }
+    // Auto-follow child tab opened from tab 10.
+    onCreated({ id: 11, openerTabId: 10, url: "https://example.com/popup", title: "Popup Tab" });
+    await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(attached.has(11), true);
+    const afterPopup = await action({ action: "state" });
+    assert.equal(afterPopup.result.tabID, "11");
+    assert.equal(afterPopup.result.tabs.length, 2);
+
+    // Create a new tab via tab_new, switch back to root tab 10, and close secondary tabs.
+    const created = await action({ action: "tab_new", url: "https://example.com/new" });
+    assert.equal(created.result.tabID, "12");
+    assert.equal(created.result.tabs.length, 3);
+    const selected = await action({ action: "tab_select", tabID: "10" });
+    assert.equal(selected.result.tabID, "10");
+    const closed = await action({ action: "tab_close", tabID: "12" });
+    assert.equal(closed.result.tabs.length, 2);
+    assert.deepEqual(removed, [12]);
+  } finally {
+    await message({ type: "disconnect" });
+    globalThis.chrome = oldChrome;
+    globalThis.WebSocket = oldSocket;
+  }
+});

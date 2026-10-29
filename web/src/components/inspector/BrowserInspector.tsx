@@ -7,6 +7,7 @@ import BrowserStatusBar, { browserPhaseLabel } from "./BrowserStatusBar";
 import BrowserContextMenu from "./BrowserContextMenu";
 import BrowserWorkflows from "./BrowserWorkflows";
 import BrowserDeveloper from "./BrowserDeveloper";
+import BrowserWindowCard from "./BrowserWindowCard";
 
 export default function BrowserInspector() {
   const browser = createBrowserController();
@@ -19,12 +20,10 @@ export default function BrowserInspector() {
   const setError = browser.setError;
   const pollError = browser.pollError;
   const busy = browser.busy;
-  const pairCode = browser.pairCode;
   const running = browser.running;
   const chromeLinked = browser.chromeLinked;
   const pairing = browser.pairing;
   const send = browser.send;
-  const pairChrome = browser.pairChrome;
   const typeText = browser.typeText;
   const navigateAddress = browser.navigateAddress;
   const isFrameCurrent = browser.isFrameCurrent;
@@ -154,63 +153,47 @@ export default function BrowserInspector() {
           <BrowserStatusBar phase={browser.phase()} stream={browser.streamPhase()} navigation={state()?.navigation}
             manual={state()?.manual ?? false} disabled={busy() || browser.stopping()} onRetry={browser.retry} />
         </Show>
-        <Show when={!chromeLinked()}><p class="px-2 py-1 text-[11px] text-[var(--text-muted)]">{t("inspector.browser.temporaryLoginHint")}</p></Show>
-        <Show when={running() && !chromeLinked()}>
-          <button class="mx-2 mb-1 rounded border border-[var(--border-subtle)] px-2 py-1 text-[11px] hover:bg-[var(--bg-hover)] disabled:opacity-40 cursor-pointer" disabled={busy()} onClick={() => void browser.connectExistingChrome()}>{t("inspector.browser.switchToChrome")}</button>
-        </Show>
-        <Show when={!running() && !chromeLinked()}>
-          <button class="m-2 rounded border border-[var(--border-subtle)] px-3 py-2 hover:bg-[var(--bg-hover)] disabled:opacity-40 cursor-pointer" disabled={busy()} onClick={() => void pairChrome()}>{t(pairing() ? "inspector.browser.regenerateChromeCode" : "inspector.browser.connectChrome")}</button>
-        </Show>
-        <Show when={pairCode()}>
-          <div class="m-2 flex flex-col gap-2 rounded border border-[var(--border-subtle)] p-3">
-            <p>{t("inspector.browser.chromePairHint")}</p>
-            <p class="text-[var(--text-muted)]">{t("inspector.browser.chromeInstallHint")}</p>
-            <input class="w-full rounded border border-[var(--border-subtle)] bg-transparent p-2 font-mono selectable-text" readOnly value={pairCode()} aria-label={t("inspector.browser.chromeCode")} onFocus={event => event.currentTarget.select()} />
-            <div class="flex items-center justify-between gap-2">
-              <button class="rounded border border-[var(--border-subtle)] px-2 py-1 hover:bg-[var(--bg-hover)] disabled:opacity-40 cursor-pointer" disabled={browser.pairSeconds() === 0} onClick={() => void browser.copyChromeCode()}>{t(browser.pairCopied() ? "inspector.browser.copied" : "inspector.browser.copyChromeCode")}</button>
-              <span role="status">{browser.pairSeconds() ? t("inspector.browser.chromeCodeExpires", { seconds: browser.pairSeconds() }) : t("inspector.browser.chromeCodeExpired")}</span>
-            </div>
-          </div>
-        </Show>
-        <Show when={chromeLinked()}><p class="px-2 py-1 text-[var(--text-muted)]">{t(state()?.connected === false ? "inspector.browser.chromeDisconnected" : "inspector.browser.chromeConnected")}</p><p class="px-2 pb-1 text-[11px] text-[var(--text-muted)]">{t("inspector.browser.chromeNativeFiles")}</p></Show>
+        <BrowserWindowCard browser={browser} />
         <Show when={running()}>
           <div class="flex items-center gap-1 px-2 py-0.5 border-b border-[var(--border-subtle)]">
             <div class="flex flex-1 min-w-0 overflow-x-auto no-scrollbar gap-1" role="tablist" aria-label={t("inspector.browser.tabs")}>
               <For each={state()?.tabs}>{(tab) => (
                 <div class="flex shrink-0 items-center rounded border border-[var(--border-subtle)] text-[11px]" classList={{ "bg-[var(--accent-surface)] text-[var(--accent-primary)]": state()?.tabID === tab.id }}>
                   <button role="tab" aria-selected={state()?.tabID === tab.id} class="max-w-32 truncate px-1.5 py-0.5 cursor-pointer" disabled={busy()} title={tab.url} onClick={() => send({ action: "tab_select", tabID: tab.id })}>{tab.title || tab.url || t("inspector.browser.untitled")}</button>
-                  <Show when={!chromeLinked()}><button class="shrink-0 rounded p-0.5 hover:bg-[var(--bg-hover)] disabled:opacity-40 cursor-pointer" disabled={busy()} aria-label={t("inspector.browser.closeTab")} onClick={() => send({ action: "tab_close", tabID: tab.id })}><X size={11} /></button></Show>
+                  <Show when={!chromeLinked() || (state()?.tabs.length ?? 0) > 1}><button class="shrink-0 rounded p-0.5 hover:bg-[var(--bg-hover)] disabled:opacity-40 cursor-pointer" disabled={busy()} aria-label={t("inspector.browser.closeTab")} onClick={() => send({ action: "tab_close", tabID: tab.id })}><X size={11} /></button></Show>
                 </div>
               )}</For>
             </div>
-            <Show when={!chromeLinked()}><button class={iconBtn} disabled={busy()} title={t("inspector.browser.newTab")} aria-label={t("inspector.browser.newTab")} onClick={() => send({ action: "tab_new", url: "about:blank" })}><Plus size={13} /></button></Show>
+            <button class={iconBtn} disabled={busy()} title={t("inspector.browser.newTab")} aria-label={t("inspector.browser.newTab")} onClick={() => send({ action: "tab_new", url: "about:blank" })}><Plus size={13} /></button>
           </div>
         </Show>
         <Show when={error() || pollError()}><p role="alert" class="px-2 py-1 text-[11px] text-red-500 break-words border-b border-[var(--border-subtle)]">{t("inspector.browser.error", { error: error() || pollError() })}</p></Show>
         <BrowserWorkflows workflows={browser.workflows} url={state()?.url || ""} />
-        <Show when={running()}><BrowserDeveloper developer={browser.developer} chrome={chromeLinked()} resetZoom={() => send({ action: "zoom_reset" })} /></Show>
+        <Show when={running()}><BrowserDeveloper developer={browser.developer} chrome={chromeLinked() || browser.windowMode()} resetZoom={() => send({ action: "zoom_reset" })} /></Show>
         <div ref={observeViewport} class="flex-1 min-h-0 overflow-auto">
-          <Show when={frame()} fallback={
-            <div class="flex min-h-full flex-col items-center justify-center gap-4 px-6 py-10 text-center text-[var(--text-muted)]">
-              <Show when={!busy() && !running() && !pairing() && !chromeLinked()} fallback={
-                <p role="status">{browserPhaseLabel(browser.phase())}</p>
-              }>
-                <div class="flex h-16 w-16 items-center justify-center rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-hover)]">
-                  <Globe size={32} strokeWidth={1.5} aria-hidden="true" />
-                </div>
-                <Show when={state()?.idleClosed && state()?.idleMinutes}>
-                  <p role="status" class="max-w-64 text-xs leading-relaxed text-[var(--text-secondary)]">{t("inspector.browser.idleClosed", { minutes: state()!.idleMinutes! })}</p>
+          <Show when={browser.effectivePreview() && frame()} fallback={
+            <Show when={!running() || browser.effectivePreview()}>
+              <div class="flex min-h-full flex-col items-center justify-center gap-4 px-6 py-10 text-center text-[var(--text-muted)]">
+                <Show when={!busy() && !running() && !pairing() && !chromeLinked()} fallback={
+                  <p role="status">{browserPhaseLabel(browser.phase())}</p>
+                }>
+                  <div class="flex h-16 w-16 items-center justify-center rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-hover)]">
+                    <Globe size={32} strokeWidth={1.5} aria-hidden="true" />
+                  </div>
+                  <Show when={state()?.idleClosed && state()?.idleMinutes}>
+                    <p role="status" class="max-w-64 text-xs leading-relaxed text-[var(--text-secondary)]">{t("inspector.browser.idleClosed", { minutes: state()!.idleMinutes! })}</p>
+                  </Show>
+                  <button
+                    class="inline-flex items-center gap-2 rounded-lg bg-[var(--accent-primary)] px-4 py-2 text-xs font-medium text-white hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-primary)] cursor-pointer transition-opacity"
+                    onClick={() => navigateAddress()}
+                  >
+                    <Power size={14} aria-hidden="true" />
+                    {t(browser.windowMode() ? "inspector.browser.startWindow" : "inspector.browser.start")}
+                  </button>
+                  <p class="max-w-64 text-xs leading-relaxed">{t("inspector.browser.empty")}</p>
                 </Show>
-                <button
-                  class="inline-flex items-center gap-2 rounded-lg bg-[var(--accent-primary)] px-4 py-2 text-xs font-medium text-white hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-primary)] cursor-pointer transition-opacity"
-                  onClick={() => navigateAddress()}
-                >
-                  <Power size={14} aria-hidden="true" />
-                  {t("inspector.browser.start")}
-                </button>
-                <p class="max-w-64 text-xs leading-relaxed">{t("inspector.browser.empty")}</p>
-              </Show>
-            </div>
+              </div>
+            </Show>
           }>
             <div class="relative">
               <BrowserPreview image={frame()!} width={browser.frameSize().width} height={browser.frameSize().height}

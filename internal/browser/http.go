@@ -30,6 +30,7 @@ type Action struct {
 	DeltaY            float64  `json:"deltaY,omitempty"`
 	TabID             string   `json:"tabID,omitempty"`
 	Manual            *bool    `json:"manual,omitempty"`
+	Window            *bool    `json:"window,omitempty"`
 	Width             *int     `json:"width,omitempty"`
 	Height            *int     `json:"height,omitempty"`
 	DeviceScaleFactor *float64 `json:"deviceScaleFactor,omitempty"`
@@ -50,6 +51,7 @@ type Tab struct {
 
 type State struct {
 	Navigation *Navigation `json:"navigation,omitempty"`
+	Mode       string      `json:"mode,omitempty"`
 	URL        string      `json:"url"`
 	Title      string      `json:"title"`
 	Tabs       []Tab       `json:"tabs"`
@@ -215,7 +217,7 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	// Pointer input only reaches a page the inspector already shows; it never
 	// reserves a scope or starts Chrome (for example right after an idle close).
 	liveInput := action.Action == "pointer" || action.Action == "wheel" || action.Action == "zoom" || action.Action == "stop_loading" ||
-		action.Action == "context" || action.Action == "copy" || action.Action == "paste" || action.Action == "upload_cancel" || action.Action == "zoom_reset"
+		action.Action == "context" || action.Action == "copy" || action.Action == "paste" || action.Action == "upload_cancel" || action.Action == "zoom_reset" || action.Action == "focus"
 	sc, err := s.acquire(ctx, key, path == "action" && action.Action != "close" && !liveInput)
 	if err != nil {
 		fail(w, 503, err)
@@ -241,26 +243,47 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if path == "action" && action.Action == "close" {
 		s.remove(key, sc)
-		writeJSON(w, 200, emptyState())
+		state := emptyState()
+		if s.defaultModeWindow() {
+			state.Mode = "window"
+		}
+		writeJSON(w, 200, state)
 		return
 	}
 	if path == "action" && action.Action == "pair" {
 		s.servePair(w, sc)
 		return
 	}
-	if sc.pairToken != "" && path == "action" && action.Action != "resize" && action.Action != "control" {
+	if sc.pairToken != "" && path == "action" && action.Action != "resize" && action.Action != "control" && action.Action != "mode" {
 		fail(w, 409, errors.New("Chrome pairing pending; connect the extension or cancel pairing first"))
 		return
 	}
 	if sc.extension != nil {
-		if path == "action" && action.Action == "control" {
-			sc.manual = *action.Manual
+		if path == "action" && action.Action == "mode" {
+			sc.extension.close()
+			sc.extension = nil
+			sc.window = *action.Window
+		} else {
+			if path == "action" && action.Action == "control" {
+				sc.manual = *action.Manual
+			}
+			s.serveExtensionAction(w, ctx, sc, path, action)
+			return
 		}
-		s.serveExtensionAction(w, ctx, sc, path, action)
-		return
+	}
+	if sc.browser != nil && sc.browser.Err() != nil {
+		sc.resetBrowser()
 	}
 	if path == "action" && action.Action == "control" {
 		sc.manual = *action.Manual
+	} else if path == "action" && action.Action == "mode" {
+		if sc.window != *action.Window {
+			if sc.browser != nil {
+				sc.resetBrowser()
+			}
+			sc.window = *action.Window
+		}
+		sc.pairToken = ""
 	} else if path == "action" && action.Action == "resize" {
 		scale := 1.0
 		if action.DeviceScaleFactor != nil {
@@ -272,10 +295,17 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		sc.width, sc.height = *action.Width, *action.Height
 		sc.scale = scale
 	} else if path == "action" && !liveInput {
+		if action.Window != nil && sc.browser == nil {
+			sc.window = *action.Window
+		}
+		wasStopped := sc.browser == nil
 		if err = sc.start(ctx); err != nil {
 			s.remove(key, sc)
 			fail(w, 502, err)
 			return
+		}
+		if wasStopped && sc.window && !agent {
+			_ = sc.focusWindow(ctx)
 		}
 	}
 	if sc.browser == nil {
@@ -285,6 +315,9 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		state := emptyState()
 		state.Manual = sc.manual
+		if sc.window {
+			state.Mode = "window"
+		}
 		if sc.pairToken != "" {
 			writeJSON(w, 200, map[string]any{"tabs": []Tab{}, "tabID": "", "url": "", "title": "", "manual": sc.manual, "pairing": true})
 			return
@@ -318,8 +351,8 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var extra map[string]any
-	if path == "action" && action.Action != "control" {
-		if sc.tabID == "" && action.Action != "tab_new" && action.Action != "tab_select" && action.Action != "tab_close" {
+	if path == "action" && action.Action != "control" && action.Action != "mode" {
+		if sc.tabID == "" && action.Action != "tab_new" && action.Action != "tab_select" && action.Action != "tab_close" && action.Action != "focus" {
 			if _, err = sc.state(opctx); err != nil {
 				fail(w, 502, err)
 				return
@@ -339,10 +372,23 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	state, err := sc.state(opctx)
 	if err != nil {
+		if path == "state" && sc.browser != nil && sc.browser.Err() != nil {
+			sc.resetBrowser()
+			fallback := emptyState()
+			fallback.Manual = sc.manual
+			if sc.window {
+				fallback.Mode = "window"
+			}
+			writeJSON(w, 200, fallback)
+			return
+		}
 		fail(w, 502, err)
 		return
 	}
 	result := map[string]any{"url": state.URL, "title": state.Title, "tabs": state.Tabs, "tabID": state.TabID, "manual": state.Manual}
+	if state.Mode != "" {
+		result["mode"] = state.Mode
+	}
 	if state.Navigation != nil {
 		result["navigation"] = state.Navigation
 	}

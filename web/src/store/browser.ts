@@ -38,7 +38,7 @@ export async function releaseBrowserPointer(scope: BrowserScope): Promise<void> 
 export type BrowserStreamPhase = "connecting" | "live" | "reconnecting" | "delayed";
 export type BrowserLoadPhase = "idle" | "starting" | "loading" | "slow" | "failed" | "stopped" | "connecting" | "reconnecting" | "delayed" | "ready" | "disconnected";
 
-export function browserLoadPhase(state: BrowserState | null, busy: boolean, stream: BrowserStreamPhase, error: string, now: number): BrowserLoadPhase {
+export function browserLoadPhase(state: BrowserState | null, busy: boolean, stream: BrowserStreamPhase, error: string, now: number, previewEnabled = true): BrowserLoadPhase {
   if (state?.connected === false) return "disconnected";
   if (error || state?.navigation?.status === "failed") return "failed";
   if (!state?.tabs.length) return busy ? "starting" : "idle";
@@ -46,6 +46,7 @@ export function browserLoadPhase(state: BrowserState | null, busy: boolean, stre
     return state.navigation.startedAt && now - state.navigation.startedAt >= 15000 ? "slow" : "loading";
   }
   if (state.navigation?.status === "stopped") return "stopped";
+  if (!previewEnabled) return "ready";
   return stream === "live" ? "ready" : stream;
 }
 

@@ -103,11 +103,13 @@ func (s *Service) ServeExtension(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
+	linkToken := s.linkToken
 	candidates := make([]*scope, 0, len(s.scopes))
 	for _, sc := range s.scopes {
 		candidates = append(candidates, sc)
 	}
 	s.mu.Unlock()
+	isLinkToken := len(linkToken) == 64 && subtle.ConstantTimeCompare([]byte(hello.Token), []byte(linkToken)) == 1
 	var owner *scope
 	for _, sc := range candidates {
 		select {
@@ -116,26 +118,50 @@ func (s *Service) ServeExtension(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if !sc.closed && sc.browser == nil && sc.extension == nil && time.Now().Before(sc.pairExpires) &&
-			subtle.ConstantTimeCompare([]byte(hello.Token), []byte(sc.pairToken)) == 1 {
+			(subtle.ConstantTimeCompare([]byte(hello.Token), []byte(sc.pairToken)) == 1 || (isLinkToken && sc.pairToken != "")) {
 			owner = sc
 			break
 		}
 		<-sc.gate
 	}
+	if owner == nil && isLinkToken {
+		var best *scope
+		for _, sc := range candidates {
+			select {
+			case sc.gate <- struct{}{}:
+			default:
+				continue
+			}
+			canAttach := !sc.closed && sc.browser == nil && (sc.extension == nil || sc.extension.isDisconnected())
+			if canAttach && (best == nil || sc.lastUsed.After(best.lastUsed)) {
+				if best != nil {
+					<-best.gate
+				}
+				best = sc
+				continue
+			}
+			<-sc.gate
+		}
+		owner = best
+	}
 	if owner == nil {
 		return
+	}
+	if owner.extension != nil {
+		owner.extension.close()
 	}
 	b := &extensionBridge{conn: conn, done: make(chan struct{}), responses: make(chan extensionReply, 1),
 		pointer: slices.Contains(hello.Features, "pointer"), zoom: slices.Contains(hello.Features, "zoom"), navigation: slices.Contains(hello.Features, "navigation"),
 		clipboard: slices.Contains(hello.Features, "clipboard"), developer: slices.Contains(hello.Features, "developer")}
 	owner.extension, owner.pairToken = b, ""
 	_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-	if conn.WriteJSON(map[string]bool{"connected": true}) != nil {
+	if conn.WriteJSON(map[string]any{"connected": true, "linkToken": linkToken}) != nil {
 		<-owner.gate
 		b.close()
 		return
 	}
 	<-owner.gate
+	s.persistLinkToken()
 	defer b.close()
 	conn.SetReadLimit(20 << 20)
 	for {
@@ -152,6 +178,18 @@ func (s *Service) ServeExtension(w http.ResponseWriter, r *http.Request) {
 		case <-b.done:
 			return
 		}
+	}
+}
+
+func (b *extensionBridge) isDisconnected() bool {
+	if b == nil {
+		return true
+	}
+	select {
+	case <-b.done:
+		return true
+	default:
+		return false
 	}
 }
 

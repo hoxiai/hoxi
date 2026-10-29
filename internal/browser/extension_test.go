@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -264,3 +265,70 @@ func TestExtensionExpiredCodeAndStream(t *testing.T) {
 	_ = extension.Close()
 	<-workerDone
 }
+
+func TestExtensionPersistentLinkTokenReconnect(t *testing.T) {
+	s := New()
+	defer s.Close()
+	profileDir := filepath.Join(t.TempDir(), "browser-profile")
+	s.SetProfileRoot(profileDir)
+	s.SetBridgeURL("ws://127.0.0.1:5420")
+	dir := t.TempDir()
+	pair := request(t, s, dir, "a", "action", `{"action":"pair"}`, false)
+	if pair.Code != 200 {
+		t.Fatal(pair.Code, pair.Body.String())
+	}
+	var payload struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal(pair.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(payload.Code)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oneTimeToken := strings.Split(string(decoded), "#")[1]
+	server := httptest.NewServer(http.HandlerFunc(s.ServeExtension))
+	defer server.Close()
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	dial := func(token string) (*websocket.Conn, map[string]any) {
+		t.Helper()
+		conn, _, err := websocket.DefaultDialer.Dial(wsURL, http.Header{"Origin": {"chrome-extension://" + strings.Repeat("a", 32)}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = conn.SetReadDeadline(time.Now().Add(time.Second))
+		if err := conn.WriteJSON(map[string]string{"token": token}); err != nil {
+			conn.Close()
+			t.Fatal(err)
+		}
+		var hello map[string]any
+		if err := conn.ReadJSON(&hello); err != nil {
+			conn.Close()
+			t.Fatal(err)
+		}
+		return conn, hello
+	}
+	conn1, hello1 := dial(oneTimeToken)
+	linkToken, _ := hello1["linkToken"].(string)
+	if len(linkToken) != 64 {
+		conn1.Close()
+		t.Fatalf("expected 64-char persistent linkToken, got %q", linkToken)
+	}
+	_ = conn1.Close()
+	// Wait for the first bridge to mark itself disconnected, then reconnect using
+	// the persistent linkToken without generating a new 2-minute pairing code.
+	for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); {
+		w := request(t, s, dir, "a", "state", "", false)
+		if strings.Contains(w.Body.String(), `"connected":false`) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	conn2, hello2 := dial(linkToken)
+	defer conn2.Close()
+	if hello2["connected"] != true {
+		t.Fatalf("expected persistent linkToken reconnect to succeed, got %v", hello2)
+	}
+}
+

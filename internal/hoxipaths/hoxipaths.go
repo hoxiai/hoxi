@@ -152,6 +152,13 @@ func ReclaimLedgerPath() string {
 	return Join("reclaim.json")
 }
 
+// BrowserProfileDir returns ~/.hoxi/browser-profile, the persistent Chrome user
+// data directory used when Hoxi launches a visible desktop Chrome window so sign-ins,
+// cookies and extensions survive across sessions and restarts.
+func BrowserProfileDir() string {
+	return Join("browser-profile")
+}
+
 // CloudflaredConfigPath returns ~/.hoxi/cloudflared.json, the Cloudflare Tunnel
 // connector settings (enabled flag, connector token, hostname). Written 0600;
 // the token is never returned by the HTTP API.

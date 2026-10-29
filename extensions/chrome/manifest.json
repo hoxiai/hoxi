@@ -2,10 +2,10 @@
   "manifest_version": 3,
   "name": "__MSG_extensionName__",
   "default_locale": "en",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "__MSG_extensionDescription__",
   "minimum_chrome_version": "118",
-  "permissions": ["debugger", "activeTab"],
+  "permissions": ["debugger", "activeTab", "storage", "tabs"],
   "host_permissions": ["http://127.0.0.1/*"],
   "background": { "service_worker": "worker.js", "type": "module" },
   "action": { "default_popup": "popup.html", "default_title": "Hoxi Browser Link" }

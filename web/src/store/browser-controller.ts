@@ -31,10 +31,10 @@ interface Connection {
 }
 
 const NAV_ACTIONS = new Set<BrowserAction["action"]>([
-  "navigate", "back", "forward", "reload", "tab_new", "tab_select", "tab_close", "close", "control",
+  "navigate", "back", "forward", "reload", "tab_new", "tab_select", "tab_close", "close", "control", "mode",
 ]);
 const TAB_EPOCH_ACTIONS = new Set<BrowserAction["action"]>([
-  "tab_new", "tab_select", "tab_close", "resize", "close",
+  "tab_new", "tab_select", "tab_close", "resize", "close", "mode",
 ]);
 
 export function createBrowserController() {
@@ -52,6 +52,7 @@ export function createBrowserController() {
   const [pairExpires, setPairExpires] = createSignal(0);
   const [pairCopied, setPairCopied] = createSignal(false);
   const [visible, setVisible] = createSignal(true);
+  const [previewEnabled, setPreviewEnabled] = createSignal(false);
   const [layoutViewport, setViewport] = createSignal<{ width: number; height: number; deviceScaleFactor: number } | null>(null);
   const [streamGeneration, setStreamGeneration] = createSignal(0);
   let frameSize = { width: 0, height: 0 };
@@ -65,6 +66,9 @@ export function createBrowserController() {
   let frameEpoch = -1;
   const running = () => Boolean(state()?.tabs.length);
   const chromeLinked = () => state()?.mode === "chrome";
+  const windowMode = () => state()?.mode === "window";
+  const headlessMode = () => !windowMode() && !chromeLinked();
+  const effectivePreview = () => headlessMode() || previewEnabled();
   const pairing = () => Boolean(pairCode() || state()?.pairing);
   const selectedTab = createMemo(() => state()?.tabID);
   onCleanup(observeBrowserVisibility(setVisible));
@@ -120,7 +124,7 @@ export function createBrowserController() {
           // Selection text is a transient reply, never part of reactive state.
           const { clipboardText: _text, clipboardError: _error, context: _context, ...page } = next;
           applyState(page);
-          if (action.action === "close") { replaceFrame(null); setPairCode(""); }
+          if (action.action === "close" || action.action === "mode") { replaceFrame(null); setPairCode(""); }
           if (guard()) return next;
         }
       } catch (err) {
@@ -169,7 +173,7 @@ export function createBrowserController() {
   const clipboard = createBrowserClipboard({ identity: pageIdentity, isCurrent: isFrameCurrent,
     request: requestPageAction, send, pageURL: () => state()?.url || "", onError: setError });
   const workflows = createBrowserWorkflows({ scope, tab: () => state()?.tabID,
-    enabled: () => workspace.inspectorOpen && workspace.inspectorTab === "browser" && visible() && !chromeLinked(),
+    enabled: () => workspace.inspectorOpen && workspace.inspectorTab === "browser" && visible() && headlessMode(),
     request: requestPageAction, send, error: setError });
   const developer = createBrowserDeveloper({ scope, tab: () => state()?.tabID, frame,
     enabled: () => workspace.inspectorOpen && workspace.inspectorTab === "browser" && visible(), error: setError });
@@ -211,7 +215,7 @@ export function createBrowserController() {
       action = { ...action, async: !chromeLinked() || state()?.navigationControls === true };
       if (action.url) setRequestedURL(action.url);
     }
-    if (!running() && (action.action === "navigate" || action.action === "tab_new")) {
+    if (!running() && headlessMode() && (action.action === "navigate" || action.action === "tab_new")) {
       const size = viewport();
       if (size) enqueueAction(connection, { action: "resize", ...size });
     }
@@ -304,8 +308,12 @@ export function createBrowserController() {
     createEffect(() => {
       streamGeneration();
       const tabID = selectedTab();
+      const showPreview = effectivePreview();
       const base = workspace.wsBaseURL || `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}`;
-      if (!visible() || !tabID) return;
+      if (!visible() || !tabID || !showPreview) {
+        replaceFrame(null);
+        return;
+      }
       if (connection.pending > 0) { connection.streamDirty = true; return; }
       const epoch = connection.tabEpoch;
       let disposed = false;
@@ -343,7 +351,7 @@ export function createBrowserController() {
     createEffect(() => {
       const size = viewport();
       // An idle panel only remembers its size; navigate/tab_new sends it on startup.
-      if (size) untrack(() => { if (running() && !chromeLinked()) enqueueAction(connection, { action: "resize", ...size }); });
+      if (size) untrack(() => { if (running() && headlessMode()) enqueueAction(connection, { action: "resize", ...size }); });
     });
     untrack(consumePendingBrowserURL);
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -396,7 +404,7 @@ export function createBrowserController() {
     send({ action: "navigate", url: target });
   }
 
-  const phase = createMemo(() => browserLoadPhase(state(), busy(), streamPhase(), error() || pollError(), now()));
+  const phase = createMemo(() => browserLoadPhase(state(), busy(), streamPhase(), error() || pollError(), now(), effectivePreview()));
   const loading = () => state()?.navigation?.status === "loading";
   const canStop = () => running() && (!chromeLinked() || state()?.navigationControls === true) && (loading() || busy());
 
@@ -425,7 +433,11 @@ export function createBrowserController() {
   }
 
   return { scope, state, frame, url, setURL, error, setError, pollError, busy, pairCode,
-    running, chromeLinked, pairing, send, pairChrome, copyChromeCode, pairCopied,
+    running, chromeLinked, windowMode, headlessMode, previewEnabled, effectivePreview,
+    togglePreview: () => setPreviewEnabled(value => !value),
+    switchMode: (window: boolean) => send({ action: "mode", window }),
+    focusWindow: () => send({ action: "focus" }),
+    pairing, send, pairChrome, copyChromeCode, pairCopied,
     pairSeconds: () => Math.max(0, Math.ceil((pairExpires() - now()) / 1000)), connectExistingChrome,
     typeText, navigateAddress, isFrameCurrent,
     frameSize: () => frameSize, setViewport, setEditingURL: (value: boolean) => { editingURL = value; },

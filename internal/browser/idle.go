@@ -50,7 +50,7 @@ func (s *Service) closeIdleScopes() int {
 		default:
 			continue
 		}
-		if sc.closed || sc.browser == nil || sc.manual || sc.extension != nil || sc.pairToken != "" ||
+		if sc.closed || sc.browser == nil || sc.window || sc.manual || sc.extension != nil || sc.pairToken != "" ||
 			sc.stream != nil || now.Sub(sc.lastUsed) < idleTimeout {
 			<-sc.gate
 			continue
@@ -90,7 +90,11 @@ func (s *Service) idleState(key scopeKey) State {
 	state := emptyState()
 	s.mu.Lock()
 	_, closed := s.idleClosed[key]
+	window := s.defaultWindow
 	s.mu.Unlock()
+	if window {
+		state.Mode = "window"
+	}
 	if closed {
 		state.IdleClosed, state.IdleMinutes = true, int(idleTimeout/time.Minute)
 	}

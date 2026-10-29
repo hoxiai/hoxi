@@ -45,10 +45,21 @@ func validateAction(a Action, agent bool) error {
 	if a.Manual != nil && a.Action != "control" {
 		return errors.New("manual is only valid for control")
 	}
+	if a.Window != nil && (agent || (a.Action != "mode" && a.Action != "navigate" && a.Action != "tab_new")) {
+		return errors.New("window is only valid for UI mode, navigate or tab_new")
+	}
 	if a.Action != "pointer" && (a.Phase != "" || a.Button != "" || a.ClickCount != 0 || a.Modifiers != 0) {
 		return errors.New("phase, button, clickCount and modifiers are only valid for pointer")
 	}
 	switch a.Action {
+	case "mode":
+		if agent || a.Window == nil {
+			return errors.New("only UI may set browser mode")
+		}
+	case "focus":
+		if agent {
+			return errors.New("only UI may focus the browser window")
+		}
 	case "zoom_reset":
 		if agent {
 			return errors.New("only UI may reset page zoom")
@@ -139,6 +150,9 @@ func (sc *scope) state(ctx context.Context) (State, error) {
 	}
 	state := emptyState()
 	state.Manual = sc.manual
+	if sc.window {
+		state.Mode = "window"
+	}
 	live := make(map[string]bool)
 	for _, info := range infos {
 		if info.Type == "page" {
@@ -189,7 +203,13 @@ func (sc *scope) withTab(ctx context.Context, tasks ...chromedp.Action) error {
 		// Initial attachment starts a target event loop using this context.
 		// Keep it alive across requests, just like the initial browser target.
 		done := make(chan error, 1)
-		go func() { done <- chromedp.Run(tab, sc.viewport().action(), page.SetInterceptFileChooserDialog(true)) }()
+		go func() {
+			if sc.window {
+				done <- chromedp.Run(tab)
+			} else {
+				done <- chromedp.Run(tab, sc.viewport().action(), page.SetInterceptFileChooserDialog(true))
+			}
+		}()
 		select {
 		case err := <-done:
 			if err != nil {
@@ -210,7 +230,7 @@ func (sc *scope) withTab(ctx context.Context, tasks ...chromedp.Action) error {
 	stop := context.AfterFunc(ctx, cancel)
 	defer stop()
 	defer cancel()
-	if sc.viewports[sc.tabID] != sc.viewport() {
+	if !sc.window && sc.viewports[sc.tabID] != sc.viewport() {
 		if err := chromedp.Run(op, sc.viewport().action()); err != nil {
 			return err
 		}
@@ -256,6 +276,8 @@ func (sc *scope) perform(ctx context.Context, a Action) (map[string]any, error) 
 	}
 	var task chromedp.Action
 	switch a.Action {
+	case "focus":
+		return nil, sc.focusWindow(ctx)
 	case "pointer":
 		_, err := sc.pointer(ctx, a)
 		return nil, err
