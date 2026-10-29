@@ -207,6 +207,9 @@ func (s *approvalAuditStore) record(e ApprovalAuditEntry) {
 		e.Source = "desktop"
 	}
 
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
+
 	s.mu.Lock()
 	if e.RequestID != "" {
 		for _, existing := range s.entries {
@@ -231,12 +234,16 @@ func (s *approvalAuditStore) record(e ApprovalAuditEntry) {
 	if path == "" || blocked != nil {
 		return
 	}
-	_ = s.persistSnapshot(path, seq, snapshot)
+	_ = s.persistSnapshotLocked(path, seq, snapshot)
 }
 
 func (s *approvalAuditStore) persistSnapshot(path string, seq uint64, snapshot []ApprovalAuditEntry) error {
 	s.persistMu.Lock()
 	defer s.persistMu.Unlock()
+	return s.persistSnapshotLocked(path, seq, snapshot)
+}
+
+func (s *approvalAuditStore) persistSnapshotLocked(path string, seq uint64, snapshot []ApprovalAuditEntry) error {
 	if seq <= s.persistedSeq {
 		return nil
 	}
@@ -295,6 +302,8 @@ func (s *approvalAuditStore) list(sessionID string, limit int) []ApprovalAuditEn
 		limit = 200
 	}
 	sid := strings.TrimSpace(sessionID)
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := make([]ApprovalAuditEntry, 0, min(len(s.entries), limit))
@@ -311,6 +320,8 @@ func (s *approvalAuditStore) list(sessionID string, limit int) []ApprovalAuditEn
 }
 
 func (s *approvalAuditStore) clear() error {
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
 	s.mu.Lock()
 	s.entries = []ApprovalAuditEntry{}
 	s.seq++
@@ -324,7 +335,7 @@ func (s *approvalAuditStore) clear() error {
 	if path == "" {
 		return nil
 	}
-	return s.persistSnapshot(path, seq, []ApprovalAuditEntry{})
+	return s.persistSnapshotLocked(path, seq, []ApprovalAuditEntry{})
 }
 
 func (s *approvalAuditStore) rememberOpenCodePerm(item map[string]interface{}, directory string) {
