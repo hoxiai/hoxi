@@ -1,7 +1,7 @@
 // web/src/store/updater-state.ts
 import { createSignal } from "solid-js";
 import { createStore } from "solid-js/store";
-import { updaterAPI, type UpdateCheckResult } from "../services/api";
+import { updaterAPI, type NativeUpdateProgress, type UpdateCheckResult } from "../services/api";
 import { t } from "../i18n";
 import { appSettings, sendDesktopNotification } from "./settings";
 
@@ -13,6 +13,7 @@ export interface DesktopUpdaterState {
   hasChecked: boolean;
   result: UpdateCheckResult | null;
   error: string | null;
+  progress: NativeUpdateProgress | null;
 }
 
 export const [desktopUpdater, setDesktopUpdater] = createStore<DesktopUpdaterState>({
@@ -23,6 +24,7 @@ export const [desktopUpdater, setDesktopUpdater] = createStore<DesktopUpdaterSta
   hasChecked: false,
   result: null,
   error: null,
+  progress: null,
 });
 
 /** Minimum spacing between successful checks; startup, focus and timers all share it. */
@@ -32,6 +34,39 @@ const NOTIFIED_VERSION_KEY = "hoxi:update-notified-version";
 
 let lastSuccessfulCheckAt = 0;
 let inFlightCheck: Promise<UpdateCheckResult | null> | null = null;
+let statusGeneration = 0;
+
+export function isSelfUpdateActive(progress: NativeUpdateProgress | null): boolean {
+  return Boolean(progress && progress.phase !== "failed");
+}
+
+/** True from the install click until the self-updater fails or Hoxi restarts, surviving page reloads. */
+export function isDesktopUpdateInstalling(): boolean {
+  return desktopUpdater.isInstalling || isSelfUpdateActive(desktopUpdater.progress);
+}
+
+/** Label for install buttons: the current phase, plus the download percentage when known. */
+export function desktopUpdateButtonLabel(): string {
+  const percent = desktopUpdateProgressPercent(desktopUpdater.progress);
+  const label = desktopUpdateStatusLabel();
+  return percent === undefined ? label : `${label} ${percent}%`;
+}
+
+export function desktopUpdateProgressPercent(progress: NativeUpdateProgress | null): number | undefined {
+  if (!progress || progress.phase !== "downloading" || progress.totalBytes <= 0) return undefined;
+  return Math.max(0, Math.min(100, Math.floor(progress.downloadedBytes / progress.totalBytes * 100)));
+}
+
+export function desktopUpdateStatusLabel(): string {
+  switch (desktopUpdater.progress?.phase) {
+    case "preparing": return t("header.updatePreparing");
+    case "downloading": return t("header.updateDownloading");
+    case "verifying": return t("header.updateVerifying");
+    case "staging": return t("header.updateStaging");
+    case "restarting": return t("header.updateRestarting");
+    default: return t("header.updateOpening");
+  }
+}
 
 function readNotifiedVersion(): string {
   try {
@@ -99,24 +134,32 @@ function notifyDesktopUpdateIfNeeded(res: UpdateCheckResult): void {
 }
 
 export async function refreshDesktopUpdateStatus(): Promise<void> {
+  const generation = ++statusGeneration;
   try {
     const status = await updaterAPI.nativeStatus();
-    setDesktopUpdater({ nativeAvailable: status.available, draining: status.draining });
+    if (generation !== statusGeneration) return;
+    setDesktopUpdater({
+      nativeAvailable: status.available,
+      draining: status.draining,
+      progress: status.progress ?? null,
+      ...(status.progress?.phase === "failed" ? { error: status.progress.error || t("header.updateInstallFailed") } : {}),
+    });
   } catch {
     // Keep the last known status during startup or a temporary disconnect.
   }
 }
 
 export async function startDesktopUpdate(): Promise<void> {
-  if (desktopUpdater.isInstalling || !desktopUpdater.nativeAvailable) return;
+  if (isDesktopUpdateInstalling() || !desktopUpdater.nativeAvailable) return;
 
-  setDesktopUpdater({ isInstalling: true, error: null });
+  ++statusGeneration;
+  setDesktopUpdater({ isInstalling: true, error: null, progress: null });
   try {
     await updaterAPI.install();
-    await refreshDesktopUpdateStatus();
   } catch (err: unknown) {
     setDesktopUpdater("error", err instanceof Error ? err.message : t("header.updateInstallFailed"));
   } finally {
+    await refreshDesktopUpdateStatus();
     setDesktopUpdater("isInstalling", false);
   }
 }

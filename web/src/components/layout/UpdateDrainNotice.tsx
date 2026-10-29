@@ -1,7 +1,7 @@
 // web/src/components/layout/UpdateDrainNotice.tsx
 import { Show } from "solid-js";
 import { AlertTriangle } from "lucide-solid";
-import { isUpdateDraining, openDesktopUpdateModal } from "../../store/workspace";
+import { desktopUpdater, desktopUpdateStatusLabel, isSelfUpdateActive, isUpdateDraining, openDesktopUpdateModal } from "../../store/workspace";
 import { t } from "../../i18n";
 
 /**
@@ -19,7 +19,7 @@ export default function UpdateDrainNotice() {
         style={{ "--wails-draggable": "no-drag" } as any}
       >
         <AlertTriangle size={12} class="shrink-0" />
-        <span class="truncate">{t("header.updateRestartRequired")}</span>
+        <span class="truncate">{isSelfUpdateActive(desktopUpdater.progress) ? desktopUpdateStatusLabel() : t("header.updateRestartRequired")}</span>
         <span class="truncate text-[11px] font-normal opacity-80">
           {t("header.updateDrainingNotice")}
         </span>

@@ -1,8 +1,9 @@
 // web/src/components/layout/UpdateWatcher.tsx
 import { onCleanup, onMount } from "solid-js";
-import { checkDesktopUpdate, refreshDesktopUpdateStatus } from "../../store/workspace";
+import { checkDesktopUpdate, isDesktopUpdateInstalling, refreshDesktopUpdateStatus } from "../../store/workspace";
 
 const STATUS_POLL_MS = 5_000;
+const INSTALL_POLL_MS = 1_000;
 const CHECK_INTERVAL_MS = 30 * 60_000;
 
 /**
@@ -19,9 +20,18 @@ export default function UpdateWatcher() {
     };
 
     void checkDesktopUpdate(false);
-    void refreshDesktopUpdateStatus();
 
-    const statusTimer = window.setInterval(() => void refreshDesktopUpdateStatus(), STATUS_POLL_MS);
+    // Self-schedule so the poll speeds up while the self-updater downloads.
+    let statusTimer: number | undefined;
+    let disposed = false;
+    const pollStatus = async () => {
+      await refreshDesktopUpdateStatus();
+      if (disposed) return;
+      const delay = isDesktopUpdateInstalling() ? INSTALL_POLL_MS : STATUS_POLL_MS;
+      statusTimer = window.setTimeout(() => void pollStatus(), delay);
+    };
+    void pollStatus();
+
     const checkTimer = window.setInterval(recheck, CHECK_INTERVAL_MS);
 
     window.addEventListener("focus", recheck);
@@ -29,7 +39,8 @@ export default function UpdateWatcher() {
     document.addEventListener("visibilitychange", recheckOnWake);
 
     onCleanup(() => {
-      window.clearInterval(statusTimer);
+      disposed = true;
+      window.clearTimeout(statusTimer);
       window.clearInterval(checkTimer);
       window.removeEventListener("focus", recheck);
       window.removeEventListener("online", recheck);

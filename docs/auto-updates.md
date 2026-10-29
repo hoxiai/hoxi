@@ -9,6 +9,15 @@ Automatic checks are enabled. Background downloads are disabled: Sparkle couples
 them to install-on-quit staging, which has no public veto for active agent tasks.
 Users confirm downloading and restarting in the native dialog.
 
+On macOS release bundles without a usable Sparkle framework, Update in App uses
+the SHA-256 verified DMG self-updater. This fallback downloads and prepares the
+update inside the install request rather than opening a native progress window.
+The `/api/hoxi/updater/native` status includes its current phase and downloaded /
+total bytes so the workspace can display download progress, verification,
+installation preparation and restart separately. Downloads without a known size
+show bytes and an indeterminate progress bar. Failures remain visible in status,
+and a new install attempt clears the previous failure.
+
 The workspace JSON check is not startup-only: it runs at launch, every 30 minutes,
 and on window focus, visibility or network recovery. Automatic re-checks share a
 10-minute minimum gap, never stack while one is in flight, and a failed background
@@ -56,7 +65,7 @@ export HOXI_OPENCODE=/absolute/path/to/verified/opencode
 The SDK directory must contain `Sparkle.framework` and executable `bin/sign_update`.
 No SDK is downloaded by local builds. All three Sparkle settings must be present
 or all absent; partial configuration fails closed, even for development builds.
-Without configuration release bundles have no updater. Development bundles always
+Without configuration release bundles use the DMG self-updater. Development bundles always
 remove the framework and updater plist keys. The native bridge dynamically loads
 the framework; no Sparkle link flag or Go build tag is added.
 

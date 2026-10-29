@@ -5,6 +5,10 @@ import { ArrowUpCircle, Download, ExternalLink, X } from "lucide-solid";
 import {
   closeDesktopUpdateModal,
   desktopUpdater,
+  desktopUpdateProgressPercent,
+  desktopUpdateStatusLabel,
+  isDesktopUpdateInstalling,
+  isSelfUpdateActive,
   isUpdateModalOpen,
   openExternalURL,
   startDesktopUpdate,
@@ -21,6 +25,8 @@ function UpdateDialog(props: { state: Accessor<PresenceState> }) {
   });
 
   const updateResult = () => desktopUpdater.result;
+  const installing = isDesktopUpdateInstalling;
+  const percent = () => desktopUpdateProgressPercent(desktopUpdater.progress);
 
   return (
     <div
@@ -40,7 +46,9 @@ function UpdateDialog(props: { state: Accessor<PresenceState> }) {
               </div>
               <div>
                 <h3 class="text-[15px] font-bold text-[var(--text-primary)]">
-                  {desktopUpdater.draining
+                  {isSelfUpdateActive(desktopUpdater.progress)
+                    ? desktopUpdateStatusLabel()
+                    : desktopUpdater.draining
                     ? t("header.updateRestartRequired")
                     : t("header.updateModalTitle")}
                 </h3>
@@ -79,6 +87,28 @@ function UpdateDialog(props: { state: Accessor<PresenceState> }) {
               {t("header.updateDrainingNotice")}
             </div>
           </Show>
+          <Show when={installing()}>
+            <div role="status" class="space-y-2 text-[12px] text-[var(--text-secondary)]">
+              <div class="flex items-center justify-between gap-2">
+                <span>{desktopUpdateStatusLabel()}</span>
+                <Show when={percent() !== undefined}><span>{percent()}%</span></Show>
+              </div>
+              <progress
+                aria-label={desktopUpdateStatusLabel()}
+                max={100}
+                value={percent()}
+                class="block h-1.5 w-full overflow-hidden rounded-full accent-[var(--accent-primary)]"
+              />
+              <Show when={desktopUpdater.progress?.phase === "downloading"}>
+                <p class="font-mono text-[11px] text-[var(--text-muted)]">
+                  {((desktopUpdater.progress?.downloadedBytes || 0) / 1048576).toFixed(1)} MB
+                  <Show when={(desktopUpdater.progress?.totalBytes || 0) > 0}>
+                    {" / "}{((desktopUpdater.progress?.totalBytes || 0) / 1048576).toFixed(1)} MB
+                  </Show>
+                </p>
+              </Show>
+            </div>
+          </Show>
           <Show when={desktopUpdater.error}>
             <p role="alert" class="text-[12px] text-red-500">
               {t("header.updateError", { error: desktopUpdater.error || "" })}
@@ -113,12 +143,12 @@ function UpdateDialog(props: { state: Accessor<PresenceState> }) {
             <Show when={desktopUpdater.nativeAvailable}>
               <button
                 type="button"
-                disabled={desktopUpdater.isInstalling}
+                disabled={installing()}
                 onClick={() => void startDesktopUpdate()}
                 class="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] hover:opacity-90 px-3.5 py-1.5 text-[12px] font-semibold text-[var(--accent-foreground)] shadow-xs transition-opacity cursor-pointer disabled:opacity-50 disabled:cursor-wait"
               >
                 <ArrowUpCircle size={13} />
-                {desktopUpdater.isInstalling ? t("header.updateOpening") : t("header.updateInApp")}
+                {installing() ? desktopUpdateStatusLabel() : t("header.updateInApp")}
               </button>
             </Show>
             <Show when={updateResult()?.mirrors.global}>

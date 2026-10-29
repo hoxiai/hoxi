@@ -30,7 +30,11 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case path == "/native" && r.Method == http.MethodGet:
 		draining := h.draining != nil && h.draining()
-		_ = json.NewEncoder(w).Encode(map[string]bool{"available": NativeAvailable(), "draining": draining})
+		_ = json.NewEncoder(w).Encode(struct {
+			Available bool             `json:"available"`
+			Draining  bool             `json:"draining"`
+			Progress  *InstallProgress `json:"progress,omitempty"`
+		}{NativeAvailable(), draining, installProgress.Load()})
 	case path == "/install" && r.Method == http.MethodPost:
 		if !NativeAvailable() {
 			http.Error(w, `{"error":"native updater is not configured"}`, http.StatusServiceUnavailable)

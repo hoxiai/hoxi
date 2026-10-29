@@ -34,6 +34,14 @@ export interface UpdateMirrors {
 export interface NativeUpdateStatus {
   available: boolean;
   draining: boolean;
+  progress?: NativeUpdateProgress;
+}
+
+export interface NativeUpdateProgress {
+  phase: "preparing" | "downloading" | "verifying" | "staging" | "restarting" | "failed";
+  downloadedBytes: number;
+  totalBytes: number;
+  error?: string;
 }
 
 export interface UpdateCheckResult {

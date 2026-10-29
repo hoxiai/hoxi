@@ -129,8 +129,17 @@ func TestDownloadAndVerifyDMGAndBundleResolution(t *testing.T) {
 	defer srv.Close()
 
 	dstPath := filepath.Join(t.TempDir(), "update.dmg")
-	if err := downloadAndVerifyDMG(context.Background(), srv.Client(), srv.URL+"/Hoxi-0.5.0-darwin-arm64.dmg", dmgSHA, dstPath); err != nil {
+	var snapshots []InstallProgress
+	if err := downloadAndVerifyDMG(context.Background(), srv.Client(), srv.URL+"/Hoxi-0.5.0-darwin-arm64.dmg", dmgSHA, dstPath, func(p InstallProgress) {
+		snapshots = append(snapshots, p)
+	}); err != nil {
 		t.Fatalf("downloadAndVerifyDMG failed: %v", err)
+	}
+	if len(snapshots) < 3 || snapshots[0].Phase != "downloading" || snapshots[len(snapshots)-1].Phase != "verifying" {
+		t.Fatalf("expected download and verification stages, got %+v", snapshots)
+	}
+	if p := snapshots[len(snapshots)-2]; p.DownloadedBytes != int64(len(dmgPayload)) || p.TotalBytes != int64(len(dmgPayload)) {
+		t.Fatalf("incorrect download progress: %+v", p)
 	}
 	gotBytes, err := os.ReadFile(dstPath)
 	if err != nil || !bytes.Equal(gotBytes, dmgPayload) {
@@ -139,7 +148,7 @@ func TestDownloadAndVerifyDMGAndBundleResolution(t *testing.T) {
 
 	// Corrupt SHA-256 must fail and remove the partial file
 	badPath := filepath.Join(t.TempDir(), "bad.dmg")
-	err = downloadAndVerifyDMG(context.Background(), srv.Client(), srv.URL+"/Hoxi-0.5.0-darwin-arm64.dmg", strings.Repeat("f", 64), badPath)
+	err = downloadAndVerifyDMG(context.Background(), srv.Client(), srv.URL+"/Hoxi-0.5.0-darwin-arm64.dmg", strings.Repeat("f", 64), badPath, nil)
 	if err == nil || !strings.Contains(err.Error(), "SHA-256 mismatch") {
 		t.Fatalf("expected SHA-256 mismatch error, got %v", err)
 	}

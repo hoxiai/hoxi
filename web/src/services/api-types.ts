@@ -515,6 +515,7 @@ export type {
   ModelPricingItem,
   ModelPricingResponse,
   NativeUpdateStatus,
+  NativeUpdateProgress,
   StartAuthResponse,
   UpdateCheckResult,
   UpdateMirrors,

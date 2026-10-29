@@ -230,7 +230,7 @@ func stageDarwinAppFromDMG(ctx context.Context, dmgPath, expectedVersion, stageD
 	return stagedApp, nil
 }
 
-func checkDarwinDMGSelfUpdate() error {
+func checkDarwinDMGSelfUpdate() (installErr error) {
 	darwinDMGMu.Lock()
 	if darwinInstalling {
 		darwinDMGMu.Unlock()
@@ -241,11 +241,17 @@ func checkDarwinDMGSelfUpdate() error {
 	appBundle := darwinAppBundle
 	darwinInstalling = true
 	darwinDMGMu.Unlock()
+	setInstallPhase("preparing")
+	defer func() {
+		finishInstallProgress(installErr)
+		if installErr != nil {
+			darwinDMGMu.Lock()
+			darwinInstalling = false
+			darwinDMGMu.Unlock()
+		}
+	}()
 
 	cleanupAbort := func() {
-		darwinDMGMu.Lock()
-		darwinInstalling = false
-		darwinDMGMu.Unlock()
 		if release != nil {
 			release()
 		}
@@ -300,11 +306,15 @@ func checkDarwinDMGSelfUpdate() error {
 		return fmt.Errorf("create staging directory: %w", err)
 	}
 	dmgPath := filepath.Join(stageDir, "update.dmg")
-	if err := downloadAndVerifyDMG(ctx, nil, dmgURL, res.SHA256, dmgPath); err != nil {
+	setInstallPhase("downloading")
+	if err := downloadAndVerifyDMG(ctx, nil, dmgURL, res.SHA256, dmgPath, func(p InstallProgress) {
+		installProgress.Store(&p)
+	}); err != nil {
 		_ = os.RemoveAll(stageDir)
 		cleanupAbort()
 		return err
 	}
+	setInstallPhase("staging")
 	stagedApp, err := stageDarwinAppFromDMG(ctx, dmgPath, res.LatestVersion, stageDir)
 	_ = os.Remove(dmgPath)
 	if err != nil {
@@ -327,6 +337,7 @@ func checkDarwinDMGSelfUpdate() error {
 		return fmt.Errorf("launch update installer: %w", err)
 	}
 	_ = cmd.Process.Release()
+	setInstallPhase("restarting")
 	go func() {
 		time.Sleep(250 * time.Millisecond)
 		os.Exit(0)

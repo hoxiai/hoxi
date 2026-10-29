@@ -83,7 +83,7 @@ func resolveDarwinAppBundlePath(exePath string) (string, error) {
 	return appBundle, nil
 }
 
-func downloadAndVerifyDMG(ctx context.Context, client *http.Client, dmgURL, fallbackSHA256, dstPath string) error {
+func downloadAndVerifyDMG(ctx context.Context, client *http.Client, dmgURL, fallbackSHA256, dstPath string, report func(InstallProgress)) error {
 	if !isAllowedUpdateURL(dmgURL) {
 		return errors.New("update download URL must use HTTPS")
 	}
@@ -116,7 +116,7 @@ func downloadAndVerifyDMG(ctx context.Context, client *http.Client, dmgURL, fall
 		return err
 	}
 	hasher := sha256.New()
-	written, copyErr := io.Copy(io.MultiWriter(outFile, hasher), io.LimitReader(resp.Body, maxUpdateArchiveBytes+1))
+	written, copyErr := io.Copy(withDownloadProgress(io.MultiWriter(outFile, hasher), resp.ContentLength, report), io.LimitReader(resp.Body, maxUpdateArchiveBytes+1))
 	closeErr := outFile.Close()
 	if copyErr != nil {
 		_ = os.Remove(dstPath)
@@ -131,6 +131,9 @@ func downloadAndVerifyDMG(ctx context.Context, client *http.Client, dmgURL, fall
 		return errors.New("update DMG exceeds maximum allowed size")
 	}
 
+	if report != nil {
+		report(InstallProgress{Phase: "verifying", DownloadedBytes: written, TotalBytes: written})
+	}
 	actualSHA := hex.EncodeToString(hasher.Sum(nil))
 	if !strings.EqualFold(actualSHA, expectedSHA) {
 		_ = os.Remove(dstPath)

@@ -5,8 +5,10 @@ import type { SystemRuntimeInfo } from "../../services/api";
 import {
   appSettings,
   checkDesktopUpdate,
+  desktopUpdateButtonLabel,
   desktopUpdater,
   fetchSystemRuntimeInfo,
+  isDesktopUpdateInstalling,
   installOpenCodeEngine,
   openExternalURL,
   openProviderModal,
@@ -188,14 +190,14 @@ export function SystemRuntimeSettingsTab() {
             <Show when={hasNewVersion() && desktopUpdater.nativeAvailable}>
               <button
                 type="button"
-                disabled={desktopUpdater.isInstalling}
+                disabled={isDesktopUpdateInstalling()}
                 onClick={() => void startDesktopUpdate()}
                 class="hoxi-press inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] hover:opacity-90 px-4 py-2 text-[13px] font-semibold text-[var(--accent-foreground)] shadow-xs transition-opacity cursor-pointer disabled:opacity-50 disabled:cursor-wait"
               >
                 <ArrowUpCircle size={14} />
                 <span>
-                  {desktopUpdater.isInstalling
-                    ? t("header.updateOpening")
+                  {isDesktopUpdateInstalling()
+                    ? desktopUpdateButtonLabel()
                     : t("header.updateInApp")}
                 </span>
               </button>
