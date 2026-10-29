@@ -64,14 +64,14 @@ func PrepareBrowserPlugin(baseURL, token string, ledger *reclaim.Ledger) (env []
 	if err = os.WriteFile(path, browserPlugin, 0600); err != nil {
 		return nil, cleanup, fmt.Errorf("write browser plugin: %w", err)
 	}
-	pluginURL := (&url.URL{Scheme: "file", Path: filepath.ToSlash(path)}).String()
+	pluginURL := fileURL(path)
 	entry, _ := json.Marshal(pluginURL)
 	plugins = append(plugins, entry)
 	sandboxPath := filepath.Join(dir, "sandbox-plugin.mjs")
 	if err = os.WriteFile(sandboxPath, sandboxPlugin, 0600); err != nil {
 		return nil, cleanup, fmt.Errorf("write sandbox plugin: %w", err)
 	}
-	sandboxURL := (&url.URL{Scheme: "file", Path: filepath.ToSlash(sandboxPath)}).String()
+	sandboxURL := fileURL(sandboxPath)
 	sandboxEntry, _ := json.Marshal(sandboxURL)
 	plugins = append(plugins, sandboxEntry)
 	config["plugin"], _ = json.Marshal(plugins)
@@ -93,4 +93,12 @@ func PrepareBrowserPlugin(baseURL, token string, ledger *reclaim.Ledger) (env []
 		"HOXI_BROWSER_TOKEN=" + token,
 		"HOXI_SANDBOX_ROOT=" + sandbox.DefaultRoot(),
 	}, cleanup, nil
+}
+
+func fileURL(path string) string {
+	slash := strings.ReplaceAll(filepath.ToSlash(path), "\\", "/")
+	if !strings.HasPrefix(slash, "/") {
+		slash = "/" + slash
+	}
+	return (&url.URL{Scheme: "file", Path: slash}).String()
 }

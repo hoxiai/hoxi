@@ -8,12 +8,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
 
 func (g *Service) provisionProviderWithMCPToken(ctx context.Context, sess *mcpOAuthSession, accessToken string) (string, string, []mcpOAuthModelItem) {
@@ -196,27 +192,10 @@ func (g *Service) persistMCPOAuthProvisioning(
 }
 
 func (g *Service) persistEngineProviderAuth(providerID, apiKey string) {
-	cred := map[string]interface{}{
+	_ = g.persistEngineProviderAuthMap(providerID, map[string]interface{}{
 		"type": "api",
 		"key":  apiKey,
-	}
-	if dir := hoxipaths.EngineOpenCodeDir(); dir != "" {
-		path := filepath.Join(dir, "auth.json")
-		merged := map[string]interface{}{}
-		if raw, err := os.ReadFile(path); err == nil {
-			_ = json.Unmarshal(raw, &merged)
-		}
-		if merged == nil {
-			merged = map[string]interface{}{}
-		}
-		merged[providerID] = cred
-		_ = writeJSONMapFile(path, merged)
-	}
-	if g.openCode != nil && g.openCode.Available() {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-		_ = g.openCode.JSON(ctx, http.MethodPut, "/auth/"+url.PathEscape(providerID), nil, cred, nil)
-	}
+	})
 }
 
 func (g *Service) fetchOrMintSiteAPIKey(ctx context.Context, siteOrigin, accessToken string) string {

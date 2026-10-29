@@ -105,6 +105,7 @@
     ```powershell
     irm https://raw.githubusercontent.com/hoxiai/hoxi/main/scripts/install.ps1 | iex
     ```
+  - Windows 暂不支持操作系统命令沙箱和无人值守审批模式。OpenCode Console 账号导入、Qoder 会话发现等 SQLite 功能需要在 `PATH` 中安装 `sqlite3.exe`，安装包目前不包含它。
 
 ### 2. 源码构建环境要求
 - **macOS** `>= 13.0` 或 **Windows 10/11** (`x64`)

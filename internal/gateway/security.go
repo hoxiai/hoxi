@@ -35,10 +35,9 @@ var openCodeProxyPrefixes = []string{
 	"/experimental",
 	"/path",
 	"/project",
-	"/auth",
 }
 
-var upstreamPassthroughPrefixes = append(append([]string(nil), openCodeProxyPrefixes...), "/provider")
+var upstreamPassthroughPrefixes = append(append([]string(nil), openCodeProxyPrefixes...), "/provider", "/auth")
 
 func nativeHost(host string) bool {
 	return host == "wails" || host == "wails.localhost" || host == "app.wails.localhost"

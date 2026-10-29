@@ -19,6 +19,37 @@ import (
 	"github.com/hoxiai/hoxi/internal/testutil/execstub"
 )
 
+func TestIsAgyBinaryRecognizesWindowsLaunchers(t *testing.T) {
+	for _, tc := range []struct {
+		path string
+		want bool
+	}{
+		{"/usr/local/bin/agy", true},
+		{`C:\Program Files\Gemini\agy.exe`, true},
+		{`C:\Users\x\agy.CMD`, true},
+		{`C:\Users\x\agy.bat`, true},
+		{`C:\Users\x\gemini.exe`, false},
+		{`C:\Users\x\agy.exe.cmd`, false},
+		{"", false},
+	} {
+		if got := isAgyBinary(tc.path); got != tc.want {
+			t.Errorf("isAgyBinary(%q) = %v, want %v", tc.path, got, tc.want)
+		}
+	}
+}
+
+func TestResolveGeminiTurnBinaryUsesAgyProtocolForExplicitWindowsBinary(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agy.exe")
+	if err := os.WriteFile(path, []byte("stub"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GEMINI_BIN", path)
+	got, useAgy := ResolveGeminiTurnBinary("auto")
+	if got != path || !useAgy {
+		t.Fatalf("ResolveGeminiTurnBinary = %q, %v; want %q, true", got, useAgy, path)
+	}
+}
+
 func TestBuildGeminiArgs(t *testing.T) {
 	gotBuild := BuildGeminiArgs("build", "gemini-2.5-pro", "high", "ses-ext-1")
 	wantBuild := []string{
@@ -431,5 +462,3 @@ func TestLinkOrCopyGeminiEntry(t *testing.T) {
 		t.Fatalf("expected %s to exist as directory, got info=%v err=%v", dstDir, info, err)
 	}
 }
-
-

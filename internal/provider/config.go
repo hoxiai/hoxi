@@ -3,9 +3,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -31,7 +29,13 @@ type saveHoxiProviderRequest struct {
 func (g *Service) workspaceHoxiModelsPath() string {
 	root := strings.TrimSpace(g.rootDir)
 	if root == "" {
+		if userHoxiModelsPath() != "" {
+			return ""
+		}
 		root, _ = os.Getwd()
+	}
+	if root == "" {
+		return ""
 	}
 	return filepath.Join(root, ".hoxi", "models.json")
 }
@@ -202,7 +206,7 @@ func persistHoxiModelsFiles(userPath, workspacePath string, doc map[string]inter
 	if err := writeJSONMapFile(userPath, doc); err != nil {
 		return err
 	}
-	if filepath.Clean(userPath) == filepath.Clean(workspacePath) {
+	if workspacePath == "" || filepath.Clean(userPath) == filepath.Clean(workspacePath) {
 		return nil
 	}
 	// Keep the full merged config for OPENCODE_CONFIG and Hoxi's own requests.
@@ -253,10 +257,14 @@ func loadOpenCodeImportedProvidersFromDisk() map[string]interface{} {
 // and returns the path to pass via OPENCODE_CONFIG.
 func ensureHoxiModelsConfig(rootDir string) string {
 	uPath := userHoxiModelsPath()
-	if strings.TrimSpace(rootDir) == "" {
+	rootDir = strings.TrimSpace(rootDir)
+	if rootDir == "" && uPath == "" {
 		rootDir, _ = os.Getwd()
 	}
-	wPath := filepath.Join(rootDir, ".hoxi", "models.json")
+	wPath := ""
+	if rootDir != "" {
+		wPath = filepath.Join(rootDir, ".hoxi", "models.json")
+	}
 
 	doc := map[string]interface{}{
 		"$schema":  "https://opencode.ai/config.json",
@@ -686,106 +694,4 @@ func (g *Service) handleModelsConfig(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
 	}
-}
-
-// handleGlobalConfigProxy persists PATCH /global/config directly to .hoxi/models.json (never touching ~/.config/opencode)
-// and overlays GET /global/config with that document, so routing roles (small_model, subagent_model,
-// agent models) and Hoxi-managed provider model keys reflect the latest persisted config.
-func (g *Service) handleGlobalConfigProxy(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodPatch {
-		raw, err := io.ReadAll(r.Body)
-		if err == nil && len(raw) > 0 {
-			var patch map[string]interface{}
-			if json.Unmarshal(raw, &patch) == nil && patch != nil {
-				g.configPersistMu.Lock()
-				doc := g.loadHoxiConfigDoc()
-				deepMergeMap(doc, patch)
-				persistErr := g.persistHoxiConfigFiles(doc)
-				g.configPersistMu.Unlock()
-				if persistErr != nil {
-					writeJSONError(w, http.StatusInternalServerError, persistErr.Error())
-					return
-				}
-				g.reloadOpenCodeGlobalConfig()
-			}
-		}
-	}
-
-	status, body, ok := g.fetchOpenCodeForProxy(w, r, "/global/config", nil)
-	if !ok {
-		return
-	}
-	var cfg map[string]interface{}
-	if json.Unmarshal(body, &cfg) == nil && cfg != nil {
-		doc := g.loadHoxiConfigDoc()
-		overlayHoxiGlobalConfig(cfg, doc)
-		if provMap, ok := cfg["provider"].(map[string]interface{}); ok {
-			filterProviderModelsByHoxi(provMap, g.loadHoxiProvidersMap())
-		}
-		writeJSON(w, status, cfg)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_, _ = w.Write(body)
-}
-
-// fetchOpenCodeForProxy GETs path from the engine for a filtering proxy
-// handler. When the engine is unreachable it hands the request to the plain
-// reverse proxy (which reports the outage) and returns ok=false.
-func (g *Service) fetchOpenCodeForProxy(w http.ResponseWriter, r *http.Request, path string, query url.Values) (int, []byte, bool) {
-	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
-	defer cancel()
-	status, body, err := g.openCode.Raw(ctx, http.MethodGet, path, query, nil)
-	if err != nil && status == 0 {
-		g.proxy.ServeHTTP(w, r)
-		return 0, nil, false
-	}
-	if err != nil {
-		writeJSONError(w, http.StatusBadGateway, err.Error())
-		return 0, nil, false
-	}
-	return status, body, true
-}
-
-// handleProviderProxy filters GET /provider so any provider managed in .hoxi/models.json only exposes its .hoxi models.
-func (g *Service) handleProviderProxy(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		g.proxy.ServeHTTP(w, r)
-		return
-	}
-	status, body, ok := g.fetchOpenCodeForProxy(w, r, r.URL.Path, r.URL.Query())
-	if !ok {
-		return
-	}
-	var payload map[string]interface{}
-	if json.Unmarshal(body, &payload) == nil {
-		hoxiMap := g.loadHoxiProvidersMap()
-		if allArr, ok := payload["all"].([]interface{}); ok {
-			for _, item := range allArr {
-				if pObj, ok := item.(map[string]interface{}); ok {
-					pid, _ := pObj["id"].(string)
-					if pid == "opencode" || pid == "opencode-go" {
-						continue
-					}
-					if hProv, ok := hoxiMap[pid].(map[string]interface{}); ok {
-						if hModels, ok := hProv["models"].(map[string]interface{}); ok && len(hModels) > 0 {
-							if pModels, ok := pObj["models"].(map[string]interface{}); ok {
-								for mid := range pModels {
-									if _, keep := hModels[mid]; !keep {
-										delete(pModels, mid)
-									}
-								}
-							}
-						}
-					}
-				}
-			}
-		}
-		writeJSON(w, status, payload)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_, _ = w.Write(body)
 }

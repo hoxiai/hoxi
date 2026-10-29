@@ -109,3 +109,12 @@ func TestBrowserOverlayInvalidRuntime(t *testing.T) {
 		}
 	}
 }
+
+func TestFileURLWindowsAndUnixPaths(t *testing.T) {
+	if got := fileURL(`C:\Users\Alice\AppData\Local\Temp\plugin.mjs`); got != "file:///C:/Users/Alice/AppData/Local/Temp/plugin.mjs" {
+		t.Fatalf("Windows fileURL = %q, want file:///C:/Users/Alice/AppData/Local/Temp/plugin.mjs", got)
+	}
+	if got := fileURL("/tmp/hoxi-opencode-plugin/plugin.mjs"); got != "file:///tmp/hoxi-opencode-plugin/plugin.mjs" {
+		t.Fatalf("Unix fileURL = %q, want file:///tmp/hoxi-opencode-plugin/plugin.mjs", got)
+	}
+}

@@ -149,6 +149,7 @@ func ResolveVersion(binPath string) string {
 
 		ctx, cancel := context.WithTimeout(context.Background(), resolveVersionTimeout)
 		cmd := exec.CommandContext(ctx, binPath, "--version")
+		configureChildProcess(cmd, false)
 		// Drop inherited color-forcing vars: with FORCE_COLOR set the CLI ignores
 		// NO_COLOR and prints an ANSI-colored warning on top of the version line.
 		cmd.Env = append(envWithout(os.Environ(), "FORCE_COLOR", "CLICOLOR_FORCE", "CLICOLOR"),
@@ -217,8 +218,7 @@ func StartDaemonWithBin(
 		}
 	}
 	child.Dir = daemonDir
-	child.Stdout = os.Stdout
-	child.Stderr = os.Stderr
+	configureChildProcess(child, true)
 	hoxiDBPath := ensureHoxiDB()
 	// Mirror the user's OpenCode Console login (OpenCode Go / Personal
 	// subscriptions) into the isolated engine database before it boots.

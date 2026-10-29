@@ -376,3 +376,41 @@ func TestReadJSONMapFileAcceptsJSONCCommentsAndTrailingCommas(t *testing.T) {
 		t.Fatalf("expected JSONC config to parse, got %+v", got)
 	}
 }
+
+func TestEmptyRootDirDoesNotWriteCwdWorkspaceConfig(t *testing.T) {
+	setupIsolatedEnv(t)
+	cwdDir := t.TempDir()
+	origWD, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(cwdDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(origWD) })
+
+	cfgPath := EnsureHoxiModelsConfig("")
+	if cfgPath != userHoxiModelsPath() {
+		t.Fatalf("EnsureHoxiModelsConfig(\"\") = %q, want %q", cfgPath, userHoxiModelsPath())
+	}
+	svc := NewService(0, "", "", nil)
+	if got := svc.WorkspaceHoxiModelsPath(); got != "" {
+		t.Fatalf("WorkspaceHoxiModelsPath with empty rootDir = %q, want empty", got)
+	}
+	doc := map[string]interface{}{
+		"provider": map[string]interface{}{
+			"custom": map[string]interface{}{
+				"options": map[string]interface{}{"apiKey": "sk-no-workspace"},
+			},
+		},
+	}
+	if err := svc.PersistHoxiConfigDoc(doc); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(cwdDir, ".hoxi", "models.json")); !os.IsNotExist(err) {
+		t.Fatalf("expected no .hoxi/models.json in process cwd when rootDir is empty, got err=%v", err)
+	}
+	if got := svc.ResolveStoredProviderKey("custom", ""); got != "sk-no-workspace" {
+		t.Fatalf("ResolveStoredProviderKey = %q, want sk-no-workspace", got)
+	}
+}

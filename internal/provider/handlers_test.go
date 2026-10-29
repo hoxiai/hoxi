@@ -475,3 +475,62 @@ func TestFetchProbeAndTelemetryRoutes(t *testing.T) {
 		t.Fatalf("DELETE all telemetry failed: %d", rec.Code)
 	}
 }
+
+func TestProviderAuthAndGlobalConfigWhenOpenCodeDown(t *testing.T) {
+	_, workspaceDir := setupIsolatedEnv(t)
+
+	// Pick an unused closed loopback port so OpenCode is genuinely unreachable (connection refused).
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	closedPort := ln.Addr().(*net.TCPAddr).Port
+	_ = ln.Close()
+
+	badGatewayProxy := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeJSONError(w, http.StatusBadGateway, "opencode service unavailable")
+	})
+
+	svc := NewService(closedPort, "secret", workspaceDir, badGatewayProxy)
+	mux := http.NewServeMux()
+	svc.RegisterRoutes(mux)
+
+	// 1. PUT /auth/<providerID> must persist to engine auth.json and return 200 OK instead of 502.
+	rec := doMuxReq(t, mux, http.MethodPut, "/auth/my-custom-gw", map[string]any{
+		"type": "api",
+		"key":  "sk-offline-saved-key",
+	})
+	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != "true" {
+		t.Fatalf("PUT /auth/my-custom-gw when OpenCode down: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if got := svc.ResolveStoredProviderKey("my-custom-gw", ""); got != "sk-offline-saved-key" {
+		t.Fatalf("ResolveStoredProviderKey after offline PUT /auth = %q, want sk-offline-saved-key", got)
+	}
+
+	// 2. PATCH and GET /global/config must succeed from .hoxi/models.json even when OpenCode is down.
+	rec = doMuxReq(t, mux, http.MethodPatch, "/global/config", map[string]any{
+		"model": "my-custom-gw/gpt-4o",
+	})
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "my-custom-gw/gpt-4o") {
+		t.Fatalf("PATCH /global/config when OpenCode down: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	rec = doMuxReq(t, mux, http.MethodGet, "/global/config", nil)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "my-custom-gw/gpt-4o") {
+		t.Fatalf("GET /global/config when OpenCode down: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	// 3. DELETE /auth/<providerID> must remove the persisted key and return 200 OK instead of 502.
+	rec = doMuxReq(t, mux, http.MethodDelete, "/auth/my-custom-gw", nil)
+	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != "true" {
+		t.Fatalf("DELETE /auth/my-custom-gw when OpenCode down: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if got := svc.ResolveStoredProviderKey("my-custom-gw", ""); got != "" {
+		t.Fatalf("expected deleted key to be empty, got %q", got)
+	}
+
+	// 4. GET /auth/<providerID> still delegates to the upstream proxy handler.
+	rec = doMuxReq(t, mux, http.MethodGet, "/auth/my-custom-gw", nil)
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("expected GET /auth/my-custom-gw to delegate to proxy (502), got %d", rec.Code)
+	}
+}

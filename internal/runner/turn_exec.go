@@ -265,7 +265,7 @@ func (s *Service) startTurnProcess(
 	asstMsgID string,
 ) error {
 	geminiUsesAgy := rec.Runtime == string(RuntimeGeminiCLI) &&
-		(ShouldGeminiCLIUseAgy(modelID) || strings.EqualFold(filepath.Base(binPath), "agy"))
+		(ShouldGeminiCLIUseAgy(modelID) || isAgyBinary(binPath))
 	rawBinPath := binPath
 	priorTurns := append([]MessageTurn(nil), rec.Turns...)
 

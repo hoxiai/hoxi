@@ -2,7 +2,6 @@ package runner
 
 import (
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/hoxiai/hoxi/internal/agentcli"
@@ -53,10 +52,27 @@ func ResolveGeminiTurnBinary(modelID string) (binPath string, useAgy bool) {
 		return ResolveAgyBinary(), true
 	}
 	bin := ResolveGeminiBinary()
-	if bin != "" && strings.EqualFold(filepath.Base(bin), "agy") {
+	if isAgyBinary(bin) {
 		return bin, true
 	}
 	return bin, false
+}
+
+// The Windows resolver may return agy.exe or an npm/Scoop command shim.
+// Recognize the executable name before choosing the protocol and hook.
+func isAgyBinary(path string) bool {
+	name := path
+	if i := strings.LastIndexAny(name, `/\`); i >= 0 {
+		name = name[i+1:]
+	}
+	name = strings.ToLower(name)
+	for _, ext := range []string{".exe", ".cmd", ".bat"} {
+		if strings.HasSuffix(name, ext) {
+			name = strings.TrimSuffix(name, ext)
+			break
+		}
+	}
+	return name == "agy"
 }
 
 // ResolveGeminiAgyModelAndEffort maps a `gemini-cli` model slug and effort to

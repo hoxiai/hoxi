@@ -84,6 +84,9 @@ func (s *Service) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/global/config", s.handleGlobalConfigProxy)
 	mux.HandleFunc("/global/dispose", s.handleGlobalDispose)
 	mux.HandleFunc("/provider", s.handleProviderProxy)
+	mux.HandleFunc("/auth", s.handleProviderAuth)
+	mux.HandleFunc("/auth/", s.handleProviderAuth)
+	mux.HandleFunc("/api/auth/", s.handleProviderAuth)
 	if s.stats != nil {
 		s.stats.registerRoutes(mux)
 	}

@@ -217,4 +217,37 @@ describe("local CLI model sync", () => {
       assertDeepEqual(workspace.recentModels[0], { providerID: "other-custom", modelID: "other-m1" });
     });
   });
+
+  it("persists apiKey in hoxi provider config and succeeds even if setProviderAuth fails", async () => {
+    await withProviders(async () => {
+      let savedCfg = null as Record<string, any> | null;
+      let authKeyPassed = "";
+      hoxiAPI.setProviderAuth = async (_pid, key) => {
+        authKeyPassed = key;
+        throw new Error("HTTP 502: opencode service unavailable");
+      };
+      hoxiAPI.saveHoxiProviderConfig = async (_pid, cfg) => {
+        savedCfg = cfg;
+        return { ok: true, hoxiProviders: { "win-custom": cfg }, configPath: "test" };
+      };
+      hoxiAPI.getHoxiModelsConfig = async () => ({
+        hoxiProviders: savedCfg ? { "win-custom": savedCfg } : {},
+        openCodeProviders: [],
+        configPath: "test",
+      });
+
+      await saveCustomProvider({
+        providerID: "win-custom",
+        name: "Win Custom",
+        npm: "@ai-sdk/openai-compatible",
+        baseURL: "https://win.example/v1",
+        apiKey: "sk-key-1, sk-key-2",
+        models: [{ id: "win-m1", name: "Win M1", reasoning: true, image: true }],
+      });
+
+      assertDeepEqual(authKeyPassed, "sk-key-1");
+      assertDeepEqual(savedCfg?.options?.apiKey, "sk-key-1, sk-key-2");
+      assertDeepEqual(workspace.selectedModel, { providerID: "win-custom", modelID: "win-m1" });
+    });
+  });
 });

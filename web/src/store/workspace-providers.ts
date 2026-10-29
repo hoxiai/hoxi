@@ -488,11 +488,16 @@ export async function saveCustomProvider(input: SaveCustomProviderInput): Promis
 
   const rawKey = (input.apiKey ?? "").trim();
   if (rawKey && rawKey !== MASKED_SECRET) {
+    nextOptions.apiKey = rawKey;
     if (/^\{env:[^}]+\}$/.test(rawKey)) {
-      nextOptions.apiKey = rawKey;
       await hoxiAPI.removeProviderAuth(pid).catch(() => {});
     } else {
-      await hoxiAPI.setProviderAuth(pid, rawKey);
+      const primaryKey =
+        rawKey
+          .split(/[\s,;\n]+/)
+          .map((s) => s.trim())
+          .find(Boolean) || rawKey;
+      await hoxiAPI.setProviderAuth(pid, primaryKey).catch(() => {});
     }
   } else if (input.preserveExistingKey && typeof previous?.options?.apiKey === "string") {
     nextOptions.apiKey = previous.options.apiKey;

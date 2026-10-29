@@ -5,21 +5,20 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"io"
 	"io/fs"
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/hoxiai/hoxi/internal/osopen"
 )
 
 const (
@@ -628,34 +627,9 @@ func (g *Gateway) handleFileOpen(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "darwin":
-		if action == "reveal" {
-			cmd = exec.CommandContext(ctx, "open", "-R", targetPath)
-		} else {
-			cmd = exec.CommandContext(ctx, "open", targetPath)
-		}
-	case "windows":
-		if action == "reveal" {
-			cmd = exec.CommandContext(ctx, "explorer.exe", "/select,"+filepath.Clean(targetPath))
-		} else {
-			cmd = exec.CommandContext(ctx, "cmd", "/c", "start", "", targetPath)
-		}
-	default:
-		openTarget := targetPath
-		if action == "reveal" {
-			openTarget = filepath.Dir(targetPath)
-		}
-		cmd = exec.CommandContext(ctx, "xdg-open", openTarget)
-	}
-
-	if err := cmd.Run(); err != nil {
-		var exitErr *exec.ExitError
-		if !(runtime.GOOS == "windows" && action == "reveal" && errors.As(err, &exitErr) && exitErr.ExitCode() == 1) {
-			writeJSONError(w, http.StatusInternalServerError, "failed to open path: "+err.Error())
-			return
-		}
+	if err := osopen.Open(ctx, targetPath, action == "reveal"); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "failed to open path: "+err.Error())
+		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
