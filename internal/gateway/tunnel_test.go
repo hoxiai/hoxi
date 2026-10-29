@@ -42,6 +42,7 @@ func TestTunnelRouteAllowlist(t *testing.T) {
 		}
 	}
 	denied := []route{
+		{get, "/api/hoxi/computer/apps"}, {get, "/api/hoxi/computer/permissions"}, {get, "/api/hoxi/computer/state"}, {post, "/api/hoxi/computer/action"}, {post, "/api/hoxi/computer/grant"}, {post, "/api/hoxi/computer/revoke"}, {post, "/api/hoxi/computer/pause"}, {post, "/api/hoxi/computer/stop"},
 		{get, "/api/hoxi/browser/extension"}, {post, "/api/hoxi/browser/action"}, {get, "/api/hoxi/browser/stream"},
 		{get, "/api/hoxi/browser/workflows"}, {post, "/api/hoxi/browser/workflows"}, {get, "/api/hoxi/browser/diagnostics"}, {post, "/api/hoxi/browser/diagnostics"},
 		{post, "/api/hoxi/browser/upload"}, {post, "/api/hoxi/browser/download-save"}, {post, "/api/hoxi/browser/download-open"},

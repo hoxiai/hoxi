@@ -12,11 +12,12 @@ import { t } from "../../i18n";
 const PierreDiffViewer = lazy(() => import("./PierreDiffViewer"));
 const WebGLTerminal = lazy(() => import("../terminal/WebGLTerminal"));
 const BrowserInspector = lazy(() => import("./BrowserInspector"));
+const ComputerInspector = lazy(() => import("../computer/ComputerInspector"));
 
-type TabID = "diffs" | "memory" | "files" | "skills" | "terminal" | "browser" | "tasks";
+type TabID = "diffs" | "memory" | "files" | "skills" | "terminal" | "browser" | "computer" | "tasks";
 
 const PRIMARY_TABS: TabID[] = ["diffs", "files", "terminal", "tasks"];
-const SECONDARY_TABS: TabID[] = ["browser", "memory", "skills"];
+const SECONDARY_TABS: TabID[] = ["browser", "computer", "memory", "skills"];
 
 export default function InspectorPane() {
   const [visitedTabs, setVisitedTabs] = createSignal<Record<TabID, boolean>>({
@@ -26,6 +27,7 @@ export default function InspectorPane() {
     skills: workspace.inspectorTab === "skills",
     terminal: workspace.inspectorTab === "terminal",
     browser: workspace.inspectorTab === "browser",
+    computer: workspace.inspectorTab === "computer",
     tasks: workspace.inspectorTab === "tasks",
   });
 
@@ -95,6 +97,8 @@ export default function InspectorPane() {
         return t("inspector.tabs.skills");
       case "terminal":
         return t("inspector.tabs.terminal");
+      case "computer":
+        return t("computer.title");
       case "browser":
         return t("inspector.tabs.browser");
       case "tasks":
@@ -175,6 +179,9 @@ export default function InspectorPane() {
             <div class="hoxi-tab-panel" data-active={workspace.inspectorTab === "browser" ? "true" : "false"} aria-hidden={workspace.inspectorTab !== "browser"}>
               <BrowserInspector />
             </div>
+          </Show>
+          <Show when={visitedTabs().computer}>
+            <div class="hoxi-tab-panel" data-active={workspace.inspectorTab === "computer" ? "true" : "false"} aria-hidden={workspace.inspectorTab !== "computer"}><ComputerInspector /></div>
           </Show>
           <Show when={visitedTabs().tasks}>
             <div class="hoxi-tab-panel" data-active={workspace.inspectorTab === "tasks" ? "true" : "false"} aria-hidden={workspace.inspectorTab !== "tasks"}>

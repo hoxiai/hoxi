@@ -9,7 +9,7 @@ import (
 // approvalPermissionKeys are the OpenCode permissions Hoxi's approval policy
 // decides. OpenCode must ask for them so every request reaches the runner's
 // policy; an "allow" here would run the tool before Hoxi ever sees it.
-var approvalPermissionKeys = []string{"edit", "webfetch", "websearch", "codesearch", "bash", "hoxi_browser", "hoxi_tools"}
+var approvalPermissionKeys = []string{"edit", "webfetch", "websearch", "codesearch", "bash", "hoxi_browser", "hoxi_tools", "hoxi_computer"}
 
 // normalizeApprovalPermissions keeps OpenCode asking Hoxi. Pattern objects
 // saved from approval cards get a "*": "ask" fallback, because OpenCode's

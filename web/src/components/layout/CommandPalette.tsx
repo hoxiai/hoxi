@@ -12,6 +12,7 @@ import {
   FileText,
   GitCompare,
   Globe,
+  Monitor,
   Link2,
   ListChecks,
   MessageSquare,
@@ -161,6 +162,13 @@ export default function CommandPalette(props: CommandPaletteProps) {
         label: t("commandPalette.actionOpenTerminal"),
         icon: Terminal,
         run: () => setWorkspace({ inspectorOpen: true, inspectorTab: "terminal" }),
+      },
+      {
+        id: "open-computer",
+        group: "actions",
+        label: t("computer.open"),
+        icon: Monitor,
+        run: () => setWorkspace({ inspectorOpen: true, inspectorTab: "computer" }),
       },
       {
         id: "open-browser",

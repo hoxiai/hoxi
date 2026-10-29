@@ -268,6 +268,7 @@ func Run(distFS fs.FS) {
 		return
 	}
 	gw.SetBrowserAgentToken(browserToken)
+	gw.SetComputerAgentToken(browserToken)
 	browserEnv, cleanupPlugin, err := opencode.PrepareBrowserPlugin("http://"+loopbackAddr, browserToken, ledger)
 	if err != nil {
 		logger.Error("failed to prepare browser tools", "error", err)
@@ -407,6 +408,7 @@ func Run(distFS fs.FS) {
 		})
 	})
 	app.configureBrowserFiles(gw)
+	app.configureComputer(gw)
 	gw.SetDesktopFocusHandler(func(_, _ string) {
 		app.showWindow()
 	})
@@ -723,6 +725,7 @@ func StartEphemeralHeadless(ctx context.Context, rootDir string) (string, func()
 	gw.SetGatewayToken(gatewayToken)
 	browserToken, _ := generateRandomHex(32)
 	gw.SetBrowserAgentToken(browserToken)
+	gw.SetComputerAgentToken(browserToken)
 	browserEnv, cleanupPlugin, _ := opencode.PrepareBrowserPlugin("http://"+loopbackAddr, browserToken, ledger)
 
 	dapp := &DesktopApp{

@@ -214,7 +214,7 @@ export interface WorkspaceState {
   aiBySession: Record<string, SessionAIConfig>;
   sessionSandboxMode: "local" | "worktree";
   sidebarProjectMode: SidebarProjectMode;
-  inspectorTab: "diffs" | "memory" | "files" | "skills" | "terminal" | "browser" | "tasks";
+  inspectorTab: "diffs" | "memory" | "files" | "skills" | "terminal" | "browser" | "computer" | "tasks";
   inspectorOpen: boolean;
   inspectorMaximized: boolean;
   inspectedFilePath: string | null;

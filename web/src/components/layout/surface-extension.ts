@@ -9,6 +9,7 @@ export type InspectorSurfaceTabID =
   | "skills"
   | "terminal"
   | "browser"
+  | "computer"
   | "tasks";
 
 export interface SurfaceExtension {

@@ -96,6 +96,9 @@ func approvalAutoApproves(item map[string]interface{}, pol ApprovalPolicy, rules
 // Hoxi worktree and its runtime commands are OS-sandboxed; unattended mode
 // then allows everything the hard-refuse list does not name.
 func approvalAutoApprovesIsolated(item map[string]interface{}, pol ApprovalPolicy, rules map[string]interface{}, worktree string, isolated bool) bool {
+	if permissionName(item) == "hoxi_computer" || strings.EqualFold(firstString(itemMetadata(item)["tool"]), "hoxi_computer") {
+		return false
+	}
 	if pol.Mode == ApprovalModeUnattended && isolated {
 		allow, _ := unattendedDecision(item, worktree)
 		return allow
@@ -419,6 +422,9 @@ func metadataFilePaths(meta map[string]interface{}) []string {
 // isDestructivePermissionRequest mirrors isDestructivePermissionRequest in
 // permission-policy.js: requests that must reach the user in every mode.
 func isDestructivePermissionRequest(item map[string]interface{}) bool {
+	if permissionName(item) == "hoxi_computer" || strings.EqualFold(firstString(itemMetadata(item)["tool"]), "hoxi_computer") {
+		return true
+	}
 	perm := permissionName(item)
 	meta := itemMetadata(item)
 	if perm == "doom_loop" {

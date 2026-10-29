@@ -19,6 +19,7 @@ import (
 	"github.com/hoxiai/hoxi/internal/buildinfo"
 	"github.com/hoxiai/hoxi/internal/cloudflared"
 	"github.com/hoxiai/hoxi/internal/codeindex"
+	"github.com/hoxiai/hoxi/internal/computer"
 	"github.com/hoxiai/hoxi/internal/diagnostics"
 	"github.com/hoxiai/hoxi/internal/forge"
 	"github.com/hoxiai/hoxi/internal/handoff"
@@ -43,6 +44,9 @@ import (
 )
 
 type Gateway struct {
+	computer              *computer.Service
+	computerAgentToken    string
+	confirmComputerApp    func(context.Context, computer.App, computer.Scope, string) (bool, error)
 	openCodePort          int
 	openCode              *ocapi.Client
 	rootDir               string
@@ -185,6 +189,7 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 		handoff:      handoffSvc,
 		runner:       runnerSvc,
 		browser:      browser.New(),
+		computer:     computer.New(),
 		auth:         authSvc,
 		workApps:     workapps.NewService(authSvc, nil),
 		tools:        tools.NewService(authSvc),
@@ -268,6 +273,9 @@ func (g *Gateway) HandleAuthCallback(ctx context.Context, rawURL string) error {
 
 func (g *Gateway) CloseBrowser() {
 	g.browser.Close()
+	if g.computer != nil {
+		g.computer.Stop()
+	}
 	if g.runner != nil {
 		g.runner.CloseAll()
 	}
@@ -367,7 +375,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Add("Vary", "Origin")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Hoxi-Browser, X-Hoxi-Directory, X-Hoxi-Token")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Hoxi-Browser, X-Hoxi-Computer, X-Hoxi-Directory, X-Hoxi-Token")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -499,6 +507,9 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 	g.cloudflared.RegisterRoutes(g.mux)
 	g.workspaces.RegisterRoutes(g.mux)
 	g.browser.RegisterRoutes(g.mux)
+	for _, route := range []string{"permissions", "apps", "state", "grant", "revoke", "pause", "stop", "action"} {
+		g.mux.HandleFunc("/api/hoxi/computer/"+route, g.handleComputer)
+	}
 	if g.runner != nil {
 		g.runner.RegisterRoutes(g.mux)
 	}

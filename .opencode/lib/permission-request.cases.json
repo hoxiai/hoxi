@@ -59,5 +59,6 @@
   { "name": "edit of agents hooks config", "destructive": true, "request": { "permission": "edit", "patterns": ["/Users/u/.agents/hooks.json"] } },
   { "name": "edit of agents skill script requires approval", "destructive": true, "request": { "permission": "edit", "patterns": ["/Users/u/.agents/skills/ainode-release-and-deploy/scripts/deploy.sh"] } },
   { "name": "write to hoxi skill script requires approval", "destructive": true, "request": { "permission": "write", "patterns": ["/repo/.hoxi/skills/foo/run.sh"] } },
-  { "name": "write to hoxi attachment stays routine", "destructive": false, "request": { "permission": "write", "patterns": ["/repo/.hoxi/attachments/paste.png"] } }
+  { "name": "write to hoxi attachment stays routine", "destructive": false, "request": { "permission": "write", "patterns": ["/repo/.hoxi/attachments/paste.png"] } },
+  {"name": "computer input always requires desktop approval", "destructive": true, "request": {"permission": "hoxi_computer", "patterns": ["click Fixture"], "metadata": {"tool": "hoxi_computer"}}}
 ]

@@ -61,6 +61,7 @@ export * from "./task-overview";
 export * from "./command-sandbox";
 export * from "./code-index";
 export * from "./browser";
+export * from "./computer";
 export * from "./browser-controller";
 export * from "./browser-clipboard";
 export * from "./browser-workflows";

@@ -77,6 +77,9 @@ jobs:
       - name: Run Windows Go vet
         run: go vet ./...
 
+      - name: Run Windows computer control regressions
+        run: go test ./internal/computer
+
 
       - name: Install Wails v2
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.13.0

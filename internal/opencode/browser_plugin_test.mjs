@@ -25,11 +25,13 @@ test("standalone browser plugin", async (t) => {
       const expected = typeof permission === "string" ? { "*": permission } : { ...permission };
       delete expected.hoxi_browser;
       delete expected.hoxi_tools;
+      delete expected.hoxi_computer;
       expected.hoxi_browser = "ask";
       expected.hoxi_tools = "ask";
+      expected.hoxi_computer = "ask";
       await hooks.config(cfg);
       assert.deepEqual(cfg.permission, expected);
-      assert.deepEqual(Object.keys(cfg.permission).slice(-2), ["hoxi_browser", "hoxi_tools"]);
+      assert.deepEqual(Object.keys(cfg.permission).slice(-3), ["hoxi_browser", "hoxi_tools", "hoxi_computer"]);
       assert.equal(cfg.model, "test/model");
       await hooks.config(cfg);
       assert.deepEqual(cfg.permission, expected);

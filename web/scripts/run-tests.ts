@@ -44,6 +44,7 @@ import "../src/__tests__/browser.test";
 import "../src/__tests__/browser-input.test";
 import "../src/__tests__/browser-clipboard.test";
 import "../src/__tests__/browser-workflows.test";
+import "../src/__tests__/computer.test";
 import "../src/__tests__/terminal-lifecycle.test";
 import "../src/__tests__/diagnostics.test";
 import "../src/__tests__/appearance.test";

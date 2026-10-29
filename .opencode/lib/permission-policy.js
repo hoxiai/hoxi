@@ -9,7 +9,7 @@ import { setLiteralJudge } from "./shell-constants.js";
 import { destructiveScanForms } from "./shell-substitution.js";
 
 const DESTRUCTIVE_RE =
-  /\b(rm|rmdir|unlink|shred|truncate|srm|sudo|chmod|chown|mkfs|dd|diskutil|killall|reboot|shutdown)\b|\bkill\s+(?:(?:(?:-0\s+)*(?:-(?:[1-9a-mo-rt-z][a-z0-9]*|[sn][a-z0-9]+|0[a-z0-9]+|-)\s+|-[sn]\s+(?:[1-9a-z][a-z0-9]*|0[a-z0-9]+)\s+))+[-?\d%]|(?:-[1-9]\d*|[1-9?%]|0(?:\s|$)))|\bpkill\b|[>|]\s*(?:\/etc\/|(?:\~|\$HOME|\$\{HOME\})\/\.(?:zshrc|zshenv|zprofile|bashrc|bash_profile|profile|ssh\b|gnupg\b|netrc\b|npmrc\b))|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.(?:ssh|aws|gnupg|kube)\/|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.(?:netrc|npmrc|git-credentials|credentials\.json)(?:$|[\s;&|'"*?])|\.claude\/\.credentials\.json|\.hoxi\/(?:models|auth|tunnel(?:-dev)?|cloudflared|pairing|relay-keys|approval-policy|hoxi)\.(?:json|db)|\.docker\/config\.json|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.en(?:v(?:\.(?:local|prod(?:uction)?|dev(?:elopment)?|stag(?:e|ing)|test(?:ing)?|ci|preview|secret\w*|key\w*|private\w*|bak|backup)(?:\.local)?)?|\?|\*)(?:$|[\s;&|'"*?])|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.envrc(?:$|[\s;&|'"*?])|\bfind\b[^\n;&|]*\s-(delete|exec\w*|ok\w*|fprint\w*|fls)\b|\b(curl|wget)\b[^\n|]*\|\s*(sh|bash|zsh)\b|\b(?:npm|pnpm|yarn|cargo)\s+publish\b|\bterraform\s+(?:destroy|apply)\b|\bkubectl\s+delete\b|\bdocker\s+(?:system\s+prune|rm|rmi)\b|\/api\/hoxi\/tools\/run\b/i;
+  /\b(rm|rmdir|unlink|shred|truncate|srm|sudo|chmod|chown|mkfs|dd|diskutil|killall|reboot|shutdown)\b|\bkill\s+(?:(?:(?:-0\s+)*(?:-(?:[1-9a-mo-rt-z][a-z0-9]*|[sn][a-z0-9]+|0[a-z0-9]+|-)\s+|-[sn]\s+(?:[1-9a-z][a-z0-9]*|0[a-z0-9]+)\s+))+[-?\d%]|(?:-[1-9]\d*|[1-9?%]|0(?:\s|$)))|\bpkill\b|[>|]\s*(?:\/etc\/|(?:\~|\$HOME|\$\{HOME\})\/\.(?:zshrc|zshenv|zprofile|bashrc|bash_profile|profile|ssh\b|gnupg\b|netrc\b|npmrc\b))|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.(?:ssh|aws|gnupg|kube)\/|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.(?:netrc|npmrc|git-credentials|credentials\.json)(?:$|[\s;&|'"*?])|\.claude\/\.credentials\.json|\.hoxi\/(?:models|auth|tunnel(?:-dev)?|cloudflared|pairing|relay-keys|approval-policy|hoxi)\.(?:json|db)|\.docker\/config\.json|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.en(?:v(?:\.(?:local|prod(?:uction)?|dev(?:elopment)?|stag(?:e|ing)|test(?:ing)?|ci|preview|secret\w*|key\w*|private\w*|bak|backup)(?:\.local)?)?|\?|\*)(?:$|[\s;&|'"*?])|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.envrc(?:$|[\s;&|'"*?])|\bfind\b[^\n;&|]*\s-(delete|exec\w*|ok\w*|fprint\w*|fls)\b|\b(curl|wget)\b[^\n|]*\|\s*(sh|bash|zsh)\b|\b(?:npm|pnpm|yarn|cargo)\s+publish\b|\bterraform\s+(?:destroy|apply)\b|\bkubectl\s+delete\b|\bdocker\s+(?:system\s+prune|rm|rmi)\b|\/api\/hoxi\/(?:tools\/run|computer\/(?:action|grant|pause|stop))\b/i;
 
 // Match Git global options, option abbreviations (`--forc`, `--har`), combined
 // short flags (`-uf`), `+refspec` force pushes and `:refspec` deletions.
@@ -698,6 +698,7 @@ function hoxiToolsAction(input) {
 
 export function isDestructivePermissionRequest(input) {
   const permission = String(input?.permission || input?.type || "").toLowerCase();
+  if (permission === "hoxi_computer" || String(input?.metadata?.tool || "").toLowerCase() === "hoxi_computer") return true;
   if (permission === "doom_loop") return true;
   const hoxiTools = hoxiToolsAction(input);
   if (hoxiTools.isHoxiTools) {

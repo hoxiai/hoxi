@@ -1,5 +1,6 @@
 // web/src/i18n/locales/en-US/index.ts
 import { common } from "./common";
+import { computer } from "./computer";
 import { header } from "./header";
 import { leftNav } from "./leftNav";
 import { timeline } from "./timeline";
@@ -22,6 +23,7 @@ import { tasks } from "./tasks";
 
 export const enUS = {
   common,
+  computer,
   header,
   leftNav,
   timeline,
