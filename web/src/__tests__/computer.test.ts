@@ -1,5 +1,7 @@
 import { computerAPI } from "../services/computer";
 import { getGatewayToken, setGatewayToken } from "../services/http";
+import { resolveElementWindowBounds } from "../store/computer";
+import { extractDescription, isComputerTool, kiloToolIconName } from "../components/timeline/tool-card-helpers";
 import { assertDeepEqual, assertEqual, assertTrue, describe, it } from "./test-harness";
 
 describe("desktop computer transport", () => {
@@ -16,6 +18,7 @@ describe("desktop computer transport", () => {
     try {
       await computerAPI.grant(scope, "app-one", "zh-CN", signal);
       await computerAPI.observe(scope, "window-one", signal);
+      await computerAPI.observe(scope, "window-one", signal, false);
       await computerAPI.pause(scope, true, signal);
       await computerAPI.revoke(scope, signal);
       for (const call of calls) {
@@ -30,10 +33,11 @@ describe("desktop computer transport", () => {
       }
       assertDeepEqual(JSON.parse(calls[0].init.body as string), { appID: "app-one", locale: "zh-CN" });
       assertDeepEqual(JSON.parse(calls[1].init.body as string), { action: "screenshot", windowID: "window-one" });
-      assertDeepEqual(JSON.parse(calls[2].init.body as string), { paused: true });
+      assertDeepEqual(JSON.parse(calls[2].init.body as string), { action: "state", windowID: "window-one" });
+      assertDeepEqual(JSON.parse(calls[3].init.body as string), { paused: true });
       await computerAPI.stop(signal);
-      assertEqual(calls[4].url.pathname, "/api/hoxi/computer/stop");
-      assertEqual(calls[4].url.search, "");
+      assertEqual(calls[5].url.pathname, "/api/hoxi/computer/stop");
+      assertEqual(calls[5].url.search, "");
       assertTrue(!("input" in computerAPI), "UI must not expose an input bypass");
     } finally { globalThis.fetch = previous.fetch; setGatewayToken(previous.token); }
   });
@@ -47,5 +51,40 @@ describe("desktop computer transport", () => {
     } catch (err) { error = err; }
     finally { globalThis.fetch = previous; }
     assertTrue(error instanceof Error && error.message.includes("app_permission_not_granted"));
+  });
+
+  it("computes window-relative element bounds and formats hoxi_computer tool descriptions", () => {
+    const wb = resolveElementWindowBounds(
+      { id: 2, role: "AXButton", name: "Run", bounds: { x: 250, y: 180, width: 80, height: 32 } },
+      { x: 100, y: 80, width: 800, height: 600 }
+    );
+    assertDeepEqual(wb, { x: 150, y: 100, width: 80, height: 32 });
+
+    assertTrue(isComputerTool("hoxi_computer"));
+    assertEqual(kiloToolIconName("hoxi_computer"), "window-cursor");
+    assertEqual(
+      extractDescription({
+        id: "p1",
+        sessionID: "s1",
+        messageID: "m1",
+        type: "tool",
+        tool: "hoxi_computer",
+        callID: "c1",
+        state: { status: "running", input: { action: "click", elementID: 2, clickCount: 2 }, time: { start: 1 } },
+      }),
+      "click ×2 #2"
+    );
+    assertEqual(
+      extractDescription({
+        id: "p2",
+        sessionID: "s1",
+        messageID: "m1",
+        type: "tool",
+        tool: "hoxi_computer",
+        callID: "c2",
+        state: { status: "running", input: { action: "type", elementID: 1, text: "hello world" }, time: { start: 1 } },
+      }),
+      'type #1 "hello world"'
+    );
   });
 });

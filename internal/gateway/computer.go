@@ -229,6 +229,7 @@ func (g *Gateway) handleComputer(w http.ResponseWriter, r *http.Request) {
 			Action        string  `json:"action"`
 			WindowID      string  `json:"windowID,omitempty"`
 			ObservationID string  `json:"observationID,omitempty"`
+			ElementID     int     `json:"elementID,omitempty"`
 			X             float64 `json:"x,omitempty"`
 			Y             float64 `json:"y,omitempty"`
 			EndX          float64 `json:"endX,omitempty"`
@@ -266,7 +267,7 @@ func (g *Gateway) handleComputer(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 200, snapshot)
 			return
 		}
-		action := computer.Action{Action: req.Action, WindowID: req.WindowID, ObservationID: req.ObservationID, X: req.X, Y: req.Y, EndX: req.EndX, EndY: req.EndY, DeltaX: req.DeltaX, DeltaY: req.DeltaY, Button: req.Button, ClickCount: req.ClickCount, Text: req.Text, Key: req.Key}
+		action := computer.Action{Action: req.Action, WindowID: req.WindowID, ObservationID: req.ObservationID, ElementID: req.ElementID, X: req.X, Y: req.Y, EndX: req.EndX, EndY: req.EndY, DeltaX: req.DeltaX, DeltaY: req.DeltaY, Button: req.Button, ClickCount: req.ClickCount, Text: req.Text, Key: req.Key}
 		if !agent {
 			writeJSONError(w, 403, "native_input_requires_agent_approval")
 			return

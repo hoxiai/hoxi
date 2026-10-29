@@ -1,10 +1,38 @@
 import { createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js";
-import { computerAPI, type ComputerApp, type ComputerGrant, type ComputerPermissions, type ComputerScope, type ComputerSnapshot } from "../services/computer";
+import {
+  computerAPI,
+  type ComputerApp,
+  type ComputerElement,
+  type ComputerGrant,
+  type ComputerPermissions,
+  type ComputerRect,
+  type ComputerScope,
+  type ComputerSnapshot,
+  type ComputerWindow,
+} from "../services/computer";
 import { workspace } from "./workspace-state";
 import { sessionDirectory } from "./session-query";
 import { locale, t } from "../i18n";
 
-export async function stopAllComputerControl(): Promise<void> { await computerAPI.stop(AbortSignal.timeout(5000)); }
+export async function stopAllComputerControl(): Promise<void> {
+  await computerAPI.stop(AbortSignal.timeout(5000));
+}
+
+export function resolveElementWindowBounds(
+  element: ComputerElement,
+  windowBounds?: ComputerRect
+): ComputerRect | null {
+  if (element.windowBounds && element.windowBounds.width > 0 && element.windowBounds.height > 0) {
+    return element.windowBounds;
+  }
+  if (!windowBounds || element.bounds.width <= 0 || element.bounds.height <= 0) return null;
+  return {
+    x: element.bounds.x - windowBounds.x,
+    y: element.bounds.y - windowBounds.y,
+    width: element.bounds.width,
+    height: element.bounds.height,
+  };
+}
 
 export function createComputerController() {
   const [permissions, setPermissions] = createSignal<ComputerPermissions | null>(null);
@@ -13,20 +41,44 @@ export function createComputerController() {
   const [snapshot, setSnapshot] = createSignal<ComputerSnapshot | null>(null);
   const [selected, setSelected] = createSignal("");
   const [windowID, setWindowID] = createSignal("");
+  const [appFilter, setAppFilter] = createSignal("");
+  const [elementFilter, setElementFilter] = createSignal("");
+  const [hoveredElementID, setHoveredElementID] = createSignal<number | null>(null);
+  const [cursorPoint, setCursorPoint] = createSignal<{ x: number; y: number } | null>(null);
+  const [copiedValue, setCopiedValue] = createSignal("");
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal("");
   const scope = createMemo<ComputerScope | null>(() => {
-    const sessionID = workspace.activeSessionID, directory = sessionID ? sessionDirectory(sessionID) : undefined;
+    const sessionID = workspace.activeSessionID,
+      directory = sessionID ? sessionDirectory(sessionID) : undefined;
     return sessionID && directory ? { sessionID, directory } : null;
   }, null, { equals: (a, b) => a?.sessionID === b?.sessionID && a?.directory === b?.directory });
   let current: { abort: AbortController; scope: ComputerScope | null; revision: number } | null = null;
-  const valid = (connection: typeof current) => Boolean(connection && current === connection && !connection.abort.signal.aborted &&
-    scope()?.sessionID === connection.scope?.sessionID && scope()?.directory === connection.scope?.directory);
-  function report(err: unknown) { setError(err instanceof Error ? err.message : String(err)); }
+  let copiedTimer: ReturnType<typeof setTimeout> | undefined;
+  const valid = (connection: typeof current) =>
+    Boolean(
+      connection &&
+        current === connection &&
+        !connection.abort.signal.aborted &&
+        scope()?.sessionID === connection.scope?.sessionID &&
+        scope()?.directory === connection.scope?.directory
+    );
+  function report(err: unknown) {
+    setError(err instanceof Error ? err.message : String(err));
+  }
 
   createEffect(() => {
-    const active = scope(), enabled = workspace.inspectorOpen && workspace.inspectorTab === "computer";
-    setGrant(null); setSnapshot(null); setWindowID(""); setSelected(""); setBusy(false); setError("");
+    const active = scope(),
+      enabled = workspace.inspectorOpen && workspace.inspectorTab === "computer";
+    setGrant(null);
+    setSnapshot(null);
+    setWindowID("");
+    setSelected("");
+    setElementFilter("");
+    setHoveredElementID(null);
+    setCursorPoint(null);
+    setBusy(false);
+    setError("");
     if (!enabled) return;
     const connection = { scope: active, abort: new AbortController(), revision: 0 };
     current = connection;
@@ -34,17 +86,83 @@ export function createComputerController() {
     async function poll() {
       const revision = connection.revision;
       try {
-        const [permission, state] = await Promise.all([computerAPI.permissions(connection.abort.signal), active ? computerAPI.state(active, connection.abort.signal) : Promise.resolve({ grant: null })]);
+        const [permission, state] = await Promise.all([
+          computerAPI.permissions(connection.abort.signal),
+          active ? computerAPI.state(active, connection.abort.signal) : Promise.resolve({ grant: null }),
+        ]);
         if (valid(connection) && connection.revision === revision) {
-          setPermissions(permission); setGrant(state.grant);
+          setPermissions(permission);
+          setGrant(state.grant);
           if (!state.grant || state.grant.paused) setSnapshot(null);
         }
-      } catch (err) { if (valid(connection)) report(err); }
-      finally { if (valid(connection)) timer = setTimeout(poll, 2000); }
+      } catch (err) {
+        if (valid(connection)) report(err);
+      } finally {
+        if (valid(connection)) timer = setTimeout(poll, 2000);
+      }
     }
-    untrack(() => { void poll(); void refreshApps(); });
-    onCleanup(() => { clearTimeout(timer); connection.abort.abort(); if (current === connection) current = null; });
+    untrack(() => {
+      void poll();
+      void refreshApps();
+    });
+    onCleanup(() => {
+      clearTimeout(timer);
+      clearTimeout(copiedTimer);
+      connection.abort.abort();
+      if (current === connection) current = null;
+    });
   });
+
+  const filteredApps = createMemo(() => {
+    const q = appFilter().trim().toLowerCase();
+    if (!q) return apps();
+    return apps().filter(
+      (app) =>
+        app.name.toLowerCase().includes(q) ||
+        app.bundleID.toLowerCase().includes(q) ||
+        app.path.toLowerCase().includes(q) ||
+        String(app.pid).includes(q)
+    );
+  });
+
+  const activeWindow = createMemo<ComputerWindow | null>(() => {
+    const snap = snapshot();
+    if (!snap || !snap.windows.length) return null;
+    const id = windowID() || snap.windowID;
+    return snap.windows.find((w) => w.id === id) ?? snap.windows[0] ?? null;
+  });
+
+  const filteredElements = createMemo<ComputerElement[]>(() => {
+    const list = snapshot()?.elements ?? [];
+    const q = elementFilter().trim().toLowerCase();
+    if (!q) return list;
+    return list.filter(
+      (el) =>
+        `#${el.id}` === q ||
+        String(el.id) === q ||
+        el.role.toLowerCase().includes(q) ||
+        (el.name && el.name.toLowerCase().includes(q)) ||
+        (el.value && el.value.toLowerCase().includes(q))
+    );
+  });
+
+  const hoveredElement = createMemo<ComputerElement | null>(() => {
+    const id = hoveredElementID();
+    if (id === null) return null;
+    return snapshot()?.elements.find((el) => el.id === id) ?? null;
+  });
+
+  function copyToClipboard(text: string) {
+    if (!text) return;
+    setCopiedValue(text);
+    clearTimeout(copiedTimer);
+    copiedTimer = setTimeout(() => setCopiedValue(""), 1800);
+    try {
+      void navigator.clipboard?.writeText(text);
+    } catch {
+      /* ignore */
+    }
+  }
 
   async function refreshApps() {
     const connection = current;
@@ -52,51 +170,102 @@ export function createComputerController() {
     try {
       const result = await computerAPI.apps(connection.abort.signal);
       if (valid(connection)) setApps(result.apps);
-    } catch (err) { if (valid(connection)) report(err); }
+    } catch (err) {
+      if (valid(connection)) report(err);
+    }
   }
   async function permission(kind: "screen" | "accessibility") {
     const connection = current;
     if (!connection || !valid(connection) || busy()) return;
-    setBusy(true); setError("");
-    try { const next = await computerAPI.requestPermission(kind, connection.abort.signal); if (valid(connection)) setPermissions(next); }
-    catch (err) { if (valid(connection)) report(err); }
-    finally { if (valid(connection)) setBusy(false); }
+    setBusy(true);
+    setError("");
+    try {
+      const next = await computerAPI.requestPermission(kind, connection.abort.signal);
+      if (valid(connection)) setPermissions(next);
+    } catch (err) {
+      if (valid(connection)) report(err);
+    } finally {
+      if (valid(connection)) setBusy(false);
+    }
   }
   async function authorize() {
     const connection = current;
     if (!connection?.scope || !valid(connection) || !selected() || busy()) return;
     const appID = selected();
-    setBusy(true); setError(""); const revision = ++connection.revision;
+    setBusy(true);
+    setError("");
+    const revision = ++connection.revision;
     try {
       const next = await computerAPI.grant(connection.scope, appID, locale(), connection.abort.signal);
-      if (valid(connection) && connection.revision === revision) { setGrant(next.grant); setSnapshot(null); setWindowID(""); }
-    } catch (err) { if (valid(connection) && connection.revision === revision) report(err); }
-    finally { if (valid(connection) && connection.revision === revision) setBusy(false); }
+      if (valid(connection) && connection.revision === revision) {
+        setGrant(next.grant);
+        setSnapshot(null);
+        setWindowID("");
+      }
+    } catch (err) {
+      if (valid(connection) && connection.revision === revision) report(err);
+    } finally {
+      if (valid(connection) && connection.revision === revision) setBusy(false);
+    }
   }
   async function updateAccess(action: "pause" | "revoke" | "stop") {
     const connection = current;
     if (!connection || !valid(connection)) return;
-    const revision = ++connection.revision; setError(""); setSnapshot(null); setBusy(false);
+    const revision = ++connection.revision;
+    setError("");
+    setSnapshot(null);
+    setBusy(false);
     try {
-      if (action === "stop") { await stopAllComputerControl(); if (valid(connection) && connection.revision === revision) setGrant(null); }
-      else if (connection.scope) {
-        const next = action === "revoke" ? await computerAPI.revoke(connection.scope, connection.abort.signal) : await computerAPI.pause(connection.scope, !grant()?.paused, connection.abort.signal);
+      if (action === "stop") {
+        await stopAllComputerControl();
+        if (valid(connection) && connection.revision === revision) setGrant(null);
+      } else if (connection.scope) {
+        const next =
+          action === "revoke"
+            ? await computerAPI.revoke(connection.scope, connection.abort.signal)
+            : await computerAPI.pause(connection.scope, !grant()?.paused, connection.abort.signal);
         if (valid(connection) && connection.revision === revision) setGrant(next.grant);
       }
-    } catch (err) { if (valid(connection) && connection.revision === revision) report(err); }
+    } catch (err) {
+      if (valid(connection) && connection.revision === revision) report(err);
+    }
   }
-  async function inspect() {
-    const connection = current, target = grant();
+  async function inspect(withImage = true) {
+    const connection = current,
+      target = grant();
     if (!connection?.scope || !valid(connection) || !target || target.paused || busy()) return;
-    const appID = target.app.id, requestedWindow = windowID(), revision = connection.revision;
-    setBusy(true); setError("");
+    const appID = target.app.id,
+      requestedWindow = windowID(),
+      revision = connection.revision;
+    setBusy(true);
+    setError("");
     try {
-      const next = await computerAPI.observe(connection.scope, requestedWindow, connection.abort.signal);
-      if (valid(connection) && connection.revision === revision && grant()?.app.id === appID && !grant()?.paused && windowID() === requestedWindow) {
-        setSnapshot(next); if (!requestedWindow) setWindowID(next.windowID);
+      const next = await computerAPI.observe(
+        connection.scope,
+        requestedWindow,
+        connection.abort.signal,
+        withImage
+      );
+      if (
+        valid(connection) &&
+        connection.revision === revision &&
+        grant()?.app.id === appID &&
+        !grant()?.paused &&
+        windowID() === requestedWindow
+      ) {
+        const prev = snapshot();
+        const merged: ComputerSnapshot =
+          !withImage && prev && prev.windowID === next.windowID && prev.image
+            ? { ...next, image: prev.image, width: prev.width, height: prev.height }
+            : next;
+        setSnapshot(merged);
+        if (!requestedWindow) setWindowID(next.windowID);
       }
-    } catch (err) { if (valid(connection) && connection.revision === revision) report(err); }
-    finally { if (valid(connection) && connection.revision === revision) setBusy(false); }
+    } catch (err) {
+      if (valid(connection) && connection.revision === revision) report(err);
+    } finally {
+      if (valid(connection) && connection.revision === revision) setBusy(false);
+    }
   }
   function errorMessage() {
     const raw = error();
@@ -114,10 +283,43 @@ export function createComputerController() {
       screen_capture_unavailable: "computer.errorScreenCaptureUnavailable",
       accessibility_inspection_unavailable: "computer.errorAccessibilityInspectionUnavailable",
     } as const;
-    const code = (Object.keys(known) as Array<keyof typeof known>).find(value => raw.includes(value));
+    const code = (Object.keys(known) as Array<keyof typeof known>).find((value) => raw.includes(value));
     return code ? t(known[code]) : raw;
   }
-  return { scope, permissions, apps, grant, snapshot, selected, setSelected, windowID,
-    setWindowID: (value: string) => { setWindowID(value); setSnapshot(null); void inspect(); }, busy, error: errorMessage,
-    refreshApps, permission, authorize, updateAccess, inspect };
+  return {
+    scope,
+    permissions,
+    apps,
+    filteredApps,
+    appFilter,
+    setAppFilter,
+    grant,
+    snapshot,
+    activeWindow,
+    filteredElements,
+    elementFilter,
+    setElementFilter,
+    hoveredElementID,
+    setHoveredElementID,
+    hoveredElement,
+    cursorPoint,
+    setCursorPoint,
+    copiedValue,
+    copyToClipboard,
+    selected,
+    setSelected,
+    windowID,
+    setWindowID: (value: string) => {
+      setWindowID(value);
+      setSnapshot(null);
+      void inspect(true);
+    },
+    busy,
+    error: errorMessage,
+    refreshApps,
+    permission,
+    authorize,
+    updateAccess,
+    inspect,
+  };
 }

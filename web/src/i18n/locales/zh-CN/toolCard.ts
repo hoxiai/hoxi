@@ -30,6 +30,7 @@ export const toolCard: ToolCardI18n = {
   actionTodo: "任务清单",
   updatingTodos: "更新任务清单",
   actionWebFetch: "网页抓取",
+  actionComputer: "电脑控制",
   actionSkill: "调用技能",
   actionQuestion: "提问确认",
   questionSelectedSummary: "已选择: {answers}",

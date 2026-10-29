@@ -2,9 +2,10 @@ import { tool } from "@opencode-ai/plugin";
 
 export function createComputerTool() {
   const args = {
-    action: tool.schema.enum(["status", "apps", "state", "screenshot", "focus", "click", "drag", "scroll", "type", "key"]),
+    action: tool.schema.enum(["status", "apps", "state", "screenshot", "focus", "move", "click", "drag", "scroll", "type", "key"]),
     windowID: tool.schema.string().max(64).optional(),
     observationID: tool.schema.string().max(64).optional(),
+    elementID: tool.schema.number().int().min(1).max(300).optional(),
     x: tool.schema.number().finite().optional(), y: tool.schema.number().finite().optional(),
     endX: tool.schema.number().finite().optional(), endY: tool.schema.number().finite().optional(),
     deltaX: tool.schema.number().int().optional(), deltaY: tool.schema.number().int().optional(),
@@ -14,7 +15,7 @@ export function createComputerTool() {
   };
   const schema = tool.schema.object(args);
   return tool({
-    description: "Inspect and control the desktop app explicitly granted to this chat in Hoxi's Computer panel. Works with macOS and Windows. Use screenshot/state first; coordinates are relative to the window's bounds, not the scaled screenshot. Every input requires the returned windowID and observationID, and waits for Hoxi's desktop approval. Input consumes the observation; inspect again before the next action. No app grant, background execution, system settings, password input, or self-approval is permitted.",
+    description: "Inspect and control the desktop app explicitly granted to this chat in Hoxi's Computer panel. Works with macOS and Windows. Use screenshot/state first; each element includes windowBounds (relative to the target window) and an id you can pass as elementID to click, move, scroll, or type without manual coordinate math. Manual x/y coordinates are relative to the window's bounds, not the scaled screenshot. Every input requires the returned windowID and observationID, and waits for Hoxi's desktop approval. Input consumes the observation; inspect again before the next action. No app grant, background execution, system settings, password input, or self-approval is permitted.",
     args,
     async execute(input, context) {
       if (!context.sessionID || !context.directory) throw new Error("Computer use requires a Hoxi session scope");

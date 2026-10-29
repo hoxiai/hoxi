@@ -100,7 +100,7 @@ function command(snapshot, input) {
   }
   if (input.tool === "bash") return true;
   if (FILE_WRITE_TOOLS.has(input.tool)) return true;
-  if (["read", "grep", "glob", "list", "lsp", "todowrite", "todoread", "goal_report", "skill", "question", "hoxi_code_index"].includes(input.tool)) return true;
+  if (["read", "grep", "glob", "list", "lsp", "todowrite", "todoread", "goal_report", "skill", "question", "hoxi_code_index", "hoxi_computer"].includes(input.tool)) return true;
   if (input.tool.startsWith("hoxi_memory_")) return true;
   if (snapshot.network === "allow" && NETWORK_TOOLS.has(input.tool)) return true;
   throw new Error(

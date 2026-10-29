@@ -1,7 +1,7 @@
 // web/src/components/timeline/tool-card-helpers.tsx
 import { createMemo, For, type JSX, Show } from "solid-js";
 import type { MessagePart, SnapshotFileDiff, ToolState } from "../../services/sse-types";
-import { getFullToolOutput, openDiffInInspector, setWorkspace, workspace } from "../../store/workspace";
+import { getFullToolOutput, openDiffInInspector, openImagePreview, setWorkspace, workspace } from "../../store/workspace";
 import { findQuestionReply, questionSummaryText } from "../../store/question-answers";
 import { Icon, type IconName } from "../icons";
 import FileDiffBlock from "../inspector/LazyFileDiffBlock";
@@ -127,6 +127,10 @@ export function isQuestionTool(tool: string): boolean {
   return tool.toLowerCase() === "question";
 }
 
+export function isComputerTool(tool: string): boolean {
+  return (tool || "").toLowerCase() === "hoxi_computer";
+}
+
 export function kiloToolIconName(tool: string): IconName {
   const t = tool.toLowerCase();
   if (isShellTool(t)) return "console";
@@ -135,7 +139,8 @@ export function kiloToolIconName(tool: string): IconName {
   if (t === "list" || t === "ls") return "bullet-list";
   if (t.includes("grep") || t.includes("glob") || t.includes("find") || t.includes("search"))
     return "magnifying-glass-menu";
-  if (t.includes("webfetch") || t.includes("web") || t.includes("fetch")) return "window-cursor";
+  if (isComputerTool(t) || t.includes("webfetch") || t.includes("web") || t.includes("fetch"))
+    return "window-cursor";
   if (isTodoTool(t)) return "checklist";
   if (isTaskTool(t)) return "task";
   if (t === "skill") return "brain";
@@ -164,6 +169,7 @@ export function formatToolDisplayName(tool: string, part?: ToolPart): string {
   if (isShellTool(lower)) return t("toolCard.actionShell");
   if (isTaskTool(lower)) return t("toolCard.actionSubagent");
   if (isTodoTool(lower)) return t("toolCard.actionTodo");
+  if (isComputerTool(lower)) return t("toolCard.actionComputer");
   if (lower.includes("webfetch") || lower.includes("fetch")) return t("toolCard.actionWebFetch");
   if (lower === "skill") return t("toolCard.actionSkill");
   if (lower === "question") return t("toolCard.actionQuestion");
@@ -214,7 +220,7 @@ function extractRawField(raw: string, key: string): string | undefined {
 
 const RAW_KEYS = [
   "filePath", "file_path", "path", "file", "TargetFile", "targetFile", "target_file", "command", "cmd",
-  "description", "pattern", "include", "url", "subagent_type", "patchText", "name",
+  "description", "pattern", "include", "url", "subagent_type", "patchText", "name", "action", "key", "text",
 ] as const;
 
 export function resolveToolInput(part: ToolPart): Record<string, any> {
@@ -312,6 +318,30 @@ export function extractDescription(part: ToolPart): string {
     return extractCommand(part).split(/\r?\n/, 1)[0].trim();
   }
   if (isQuestionTool(part.tool)) return questionSummaryText(part, findQuestionReply(part.callID));
+  if (isComputerTool(part.tool)) {
+    const action = typeof input.action === "string" ? input.action.trim() : "";
+    const target =
+      typeof input.elementID === "number" && input.elementID > 0
+        ? `#${input.elementID}`
+        : typeof input.x === "number" && typeof input.y === "number"
+          ? `(${Math.round(input.x)}, ${Math.round(input.y)})`
+          : "";
+    if (action === "click" || action === "move") {
+      const btn = input.button && input.button !== "left" ? ` ${input.button}` : "";
+      const cnt = typeof input.clickCount === "number" && input.clickCount > 1 ? ` ×${input.clickCount}` : "";
+      return `${action}${btn}${cnt}${target ? ` ${target}` : ""}`;
+    }
+    if (action === "drag" && typeof input.endX === "number" && typeof input.endY === "number") {
+      return `drag ${target} → (${Math.round(input.endX)}, ${Math.round(input.endY)})`.trim();
+    }
+    if (action === "type" && typeof input.text === "string") {
+      const snippet = input.text.length > 32 ? `${input.text.slice(0, 32)}…` : input.text;
+      return `type${target ? ` ${target}` : ""} "${snippet}"`;
+    }
+    if (action === "key" && typeof input.key === "string") return `key ${input.key}`;
+    if (action === "scroll") return `scroll Δ(${input.deltaX ?? 0}, ${input.deltaY ?? 0})`;
+    if (action) return action;
+  }
   if ((part.tool || "").toLowerCase() === "skill") {
     const skillName =
       (typeof input.name === "string" && input.name.trim()) ||
@@ -649,6 +679,31 @@ export function ToolCardExpandedBody(props: {
               <pre class="text-[12px] font-mono bg-[var(--bg-code)] border border-[var(--border-subtle)] p-2.5 rounded-lg overflow-x-auto max-h-40 text-[var(--text-secondary)] selectable-text">
                 {JSON.stringify(props.part.state.input, null, 2)}
               </pre>
+            </div>
+          </Show>
+
+          <Show when={props.part.state.status === "completed" && props.part.state.attachments?.length}>
+            <div class="flex flex-wrap gap-2">
+              <For each={(props.part.state as Extract<ToolState, { status: "completed" }>).attachments}>
+                {(att) => (
+                  <Show when={att.mime?.startsWith("image/") && att.url}>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openImagePreview({ src: att.url, alt: att.filename || props.part.tool });
+                      }}
+                      class="overflow-hidden rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] hover:border-[var(--accent-border)] transition-colors cursor-zoom-in"
+                    >
+                      <img
+                        src={att.url}
+                        alt={att.filename || props.part.tool}
+                        class="max-h-56 w-auto object-contain block"
+                      />
+                    </button>
+                  </Show>
+                )}
+              </For>
             </div>
           </Show>
 

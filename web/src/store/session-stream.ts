@@ -94,6 +94,10 @@ export function upsertMessagePart(part: MessagePart) {
       part.state.status === "running" && part.sessionID === workspace.activeSessionID) {
     setWorkspace({ inspectorOpen: true, inspectorTab: "browser" });
   }
+  if (part.type === "tool" && part.tool === "hoxi_computer" &&
+      part.state.status === "running" && part.sessionID === workspace.activeSessionID) {
+    setWorkspace({ inspectorOpen: true, inspectorTab: "computer" });
+  }
   if (part.type === "tool" && isTaskLikeTool(part.tool)) {
     ensureChildSubagentSessionLoaded(
       extractChildSubagentSessionId(part),
@@ -166,6 +170,14 @@ export function applyStreamFrameBatch(batch: StreamFrameBatch) {
       part.sessionID === workspace.activeSessionID
     ) {
       setWorkspace({ inspectorOpen: true, inspectorTab: "browser" });
+    }
+    if (
+      part.type === "tool" &&
+      part.tool === "hoxi_computer" &&
+      part.state.status === "running" &&
+      part.sessionID === workspace.activeSessionID
+    ) {
+      setWorkspace({ inspectorOpen: true, inspectorTab: "computer" });
     }
     if (part.type === "tool" && isTaskLikeTool(part.tool)) {
       ensureChildSubagentSessionLoaded(

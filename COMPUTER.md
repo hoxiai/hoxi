@@ -19,13 +19,13 @@ Hoxi 的电脑控制在 macOS 和 Windows 上提供同一套会话授权、窗�
 | 动作 | 行为 |
 | --- | --- |
 | `status`、`apps` | 当前会话授权状态、运行中应用的名称与可执行文件身份 |
-| `state`、`screenshot` | 授权应用的窗口、可读界面元素；后者附带单窗口 JPEG 图像 |
-| `focus`、`click`、`drag` | 聚焦窗口、单/双/三击、拖动 |
-| `scroll`、`type`、`key` | 横纵滚动、Unicode 文本、组合键 |
+| `state`、`screenshot` | 授权应用的窗口、可读界面元素（含窗口相对 `windowBounds`）；后者附带单窗口 JPEG 图像 |
+| `focus`、`move`、`click`、`drag` | 聚焦窗口、移动光标、单/双/三击、拖动（支持 `elementID` 或窗口相对坐标） |
+| `scroll`、`type`、`key` | 横纵滚动、Unicode 文本（传 `elementID` 时先点击聚焦目标元素）、组合键 |
 
-每次读取返回 `observationID` 和 `windowID`。输入必须带两者，坐标相对 **原始窗口 bounds**，截图长边最多 1600 像素，模型需按窗口尺寸换算。读取结果最多保留 5 分钟；一次输入消费该授权下所有旧读取结果，窗口尺寸变化、进程重启、暂停、撤销或停止后，必须重新读取。
+每次读取返回 `observationID` 和 `windowID`，并为每个可读元素计算相对于目标窗口的 `windowBounds`。输入必须带 `observationID` 与 `windowID`，可直接传 `elementID` 定位元素中心，也可传相对 **原始窗口 bounds** 的坐标（截图长边最多 1600 像素，手动传坐标时按窗口尺寸换算）。读取结果最多保留 5 分钟；一次输入消费该授权下所有旧读取结果，窗口尺寸变化、进程重启、暂停、撤销或停止后，必须重新读取。
 
-支持 DOM 风格键名 `Enter`、`Tab`、`Escape`、`Backspace`、`Delete`、方向键、`Home`、`End`、`PageUp`、`PageDown`、`Space` 与单字符键；修饰键为 `Control`、`Alt`、`Shift`、`Meta`。macOS `Meta` 表示 Command，Windows 不开放 Windows 系统键。应用切换、锁屏、安全桌面等全局快捷键不开放。输入正文使用 `type`，避免依赖键盘布局。
+支持 DOM 风格键名 `Enter`、`Tab`、`Escape`、`Backspace`、`Delete`、方向键、`Home`、`End`、`PageUp`、`PageDown`、`Space`、`F1`–`F12` 与单字符键；修饰键为 `Control`、`Alt`、`Shift`、`Meta`。macOS `Meta` 表示 Command，Windows 不开放 Windows 系统键。应用切换、关闭窗口（`Alt+F4`）、Mission Control（`Meta+F3` / `Meta+F11`）、锁屏、安全桌面等全局快捷键不开放。输入正文使用 `type`，避免依赖键盘布局。
 
 ## 授权与数据边界
 

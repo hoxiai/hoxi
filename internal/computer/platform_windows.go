@@ -364,7 +364,7 @@ func (nativeBackend) Input(ctx context.Context, app App, window Window, action A
 		if err != nil {
 			return err
 		}
-		codes := map[string]uint16{"Enter": 13, "Tab": 9, "Escape": 27, "Backspace": 8, "Delete": 46, "ArrowLeft": 37, "ArrowRight": 39, "ArrowUp": 38, "ArrowDown": 40, "Home": 36, "End": 35, "PageUp": 33, "PageDown": 34, "Space": 32}
+		codes := map[string]uint16{"Enter": 13, "Tab": 9, "Escape": 27, "Backspace": 8, "Delete": 46, "ArrowLeft": 37, "ArrowRight": 39, "ArrowUp": 38, "ArrowDown": 40, "Home": 36, "End": 35, "PageUp": 33, "PageDown": 34, "Space": 32, "F1": 112, "F2": 113, "F3": 114, "F4": 115, "F5": 116, "F6": 117, "F7": 118, "F8": 119, "F9": 120, "F10": 121, "F11": 122, "F12": 123}
 		code := codes[chord.Key]
 		if code == 0 && len(chord.Key) == 1 {
 			value, _, _ := desktopUser.NewProc("VkKeyScanW").Call(uintptr(chord.Key[0]))
@@ -414,6 +414,9 @@ func (nativeBackend) Input(ctx context.Context, app App, window Window, action A
 	setDesktopCursor.Call(uintptr(x), uintptr(y))
 	if err := check(); err != nil {
 		return err
+	}
+	if action.Action == "move" {
+		return nil
 	}
 	if action.Action == "scroll" {
 		if action.DeltaY != 0 {

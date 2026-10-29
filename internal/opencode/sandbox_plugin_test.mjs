@@ -129,6 +129,10 @@ test("sandbox plugin", async (t) => {
       { tool: "hoxi_code_index", sessionID: "ses_sandbox", callID: "c6c" },
       { args: { action: "search", query: "foo" } }
     );
+    await hooks["tool.execute.before"](
+      { tool: "hoxi_computer", sessionID: "ses_sandbox", callID: "c6d" },
+      { args: { action: "screenshot" } }
+    );
   });
 
   await t.test("allows network tools when network mode is allow", async () => {

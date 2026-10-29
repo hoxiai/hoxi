@@ -48,7 +48,12 @@ func ParseKey(raw string) (KeyChord, error) {
 		}
 	}
 	valid := false
-	for _, key := range []string{"Enter", "Tab", "Escape", "Backspace", "Delete", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown", "Space"} {
+	for _, key := range []string{
+		"Enter", "Tab", "Escape", "Backspace", "Delete",
+		"ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown",
+		"Home", "End", "PageUp", "PageDown", "Space",
+		"F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12",
+	} {
 		if chord.Key == key {
 			valid = true
 		}
@@ -59,7 +64,10 @@ func ParseKey(raw string) (KeyChord, error) {
 	if !valid {
 		return chord, errors.New("unsupported_key")
 	}
-	if chord.Meta && (chord.Key == "Tab" || chord.Key == "Space" || chord.Alt && chord.Key == "Escape" || chord.Control && strings.EqualFold(chord.Key, "q")) || chord.Alt && (chord.Key == "Tab" || chord.Key == "Escape") || chord.Control && chord.Alt && chord.Key == "Delete" || chord.Control && chord.Key == "Escape" {
+	if chord.Meta && (chord.Key == "Tab" || chord.Key == "Space" || chord.Key == "F3" || chord.Key == "F11" || chord.Alt && chord.Key == "Escape" || chord.Control && strings.EqualFold(chord.Key, "q")) ||
+		chord.Alt && (chord.Key == "Tab" || chord.Key == "Escape" || chord.Key == "F4") ||
+		chord.Control && chord.Alt && chord.Key == "Delete" ||
+		chord.Control && chord.Key == "Escape" {
 		return chord, errors.New("system_shortcut_not_allowed")
 	}
 	return chord, nil

@@ -29,6 +29,7 @@ export const toolCard = {
   actionTodo: "To-dos",
   updatingTodos: "Updating to-dos",
   actionWebFetch: "Web fetch",
+  actionComputer: "Computer",
   actionSkill: "Skill",
   actionQuestion: "Question",
   questionSelectedSummary: "Selected: {answers}",

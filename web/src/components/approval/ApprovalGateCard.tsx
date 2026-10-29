@@ -254,7 +254,13 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
         <Show
           when={command()}
           fallback={
-            <Show when={props.request.patterns?.length && diffs().length === 0}>
+            <Show
+              when={
+                props.request.patterns?.length &&
+                diffs().length === 0 &&
+                !(props.request.permission === "hoxi_computer" && toolArgsText())
+              }
+            >
               <div class="space-y-1">
                 <For each={props.request.patterns}>
                   {(pattern) => (

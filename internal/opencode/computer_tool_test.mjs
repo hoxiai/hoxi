@@ -35,14 +35,17 @@ test("computer tool keeps authority in Go and sends only scoped actions", async 
   assert.equal(result.attachments[0].url, "data:image/jpeg;base64,image-bytes");
   await execute({ action: "click", observationID: "fresh", windowID: "one", x: 5, y: 8 }, context);
   assert.equal(calls.length, 2);
+  await execute({ action: "move", observationID: "fresh", windowID: "one", elementID: 4 }, context);
+  assert.equal(calls.length, 3);
+  assert.deepEqual(JSON.parse(calls[2].options.body), { action: "move", observationID: "fresh", windowID: "one", elementID: 4 });
   for (const action of ["grant", "evaluate", "permissions", "resume"]) {
     await assert.rejects(execute({ action }, context));
   }
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 3);
   await assert.rejects(execute({ action: "status" }, { ...context, sessionID: "" }), /scope/);
   abort.abort();
   await assert.rejects(execute({ action: "click" }, context), { name: "AbortError" });
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 3);
 });
 
 test("computer tool propagates denied and paused control", async t => {

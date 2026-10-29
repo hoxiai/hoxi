@@ -13,6 +13,7 @@ import {
   revertToHere,
   selectSession,
   sessionsWithPendingPermission,
+  setWorkspace,
   stopSessionToolCommand,
 } from "../../store/workspace";
 import { t } from "../../i18n";
@@ -26,7 +27,7 @@ import {
   ActionIconButton,
   extractCommand, extractDescription, extractRollingShellLines,
   extractShellOutput, extractTargetFile, formatToolDisplayName, getDirectory, getFilename,
-  InlineDiagnosticsDisplay, isEditingTool, isQuestionTool, isReadTool, isShellTool, isShellAwaitingFirstOutput,
+  InlineDiagnosticsDisplay, isComputerTool, isEditingTool, isQuestionTool, isReadTool, isShellTool, isShellAwaitingFirstOutput,
   isTaskTool, isTodoTool, kiloToolIconName, processCarriageReturns,
   ToolCardExpandedBody, type ToolPart,
 } from "./tool-card-helpers";
@@ -449,6 +450,19 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
                   <Icon name="task" size="small" />
                 </ActionIconButton>
               )}
+            </Show>
+
+            <Show when={isComputerTool(props.part.tool)}>
+              <ActionIconButton
+                variant="accent"
+                label={t("computer.open")}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setWorkspace({ inspectorOpen: true, inspectorTab: "computer" });
+                }}
+              >
+                <Icon name="window-cursor" size="small" />
+              </ActionIconButton>
             </Show>
 
             <Show when={totalDiffStats()}>

@@ -47,12 +47,13 @@ type Window struct {
 	Bounds Rect   `json:"bounds"`
 }
 type Element struct {
-	ID     int    `json:"id"`
-	Role   string `json:"role"`
-	Name   string `json:"name"`
-	Value  string `json:"value,omitempty"`
-	Bounds Rect   `json:"bounds"`
-	Secure bool   `json:"secure,omitempty"`
+	ID           int    `json:"id"`
+	Role         string `json:"role"`
+	Name         string `json:"name"`
+	Value        string `json:"value,omitempty"`
+	Bounds       Rect   `json:"bounds"`
+	WindowBounds *Rect  `json:"windowBounds,omitempty"`
+	Secure       bool   `json:"secure,omitempty"`
 }
 type Snapshot struct {
 	App           App       `json:"app"`
@@ -68,6 +69,7 @@ type Action struct {
 	Action        string  `json:"action"`
 	ObservationID string  `json:"observationID"`
 	WindowID      string  `json:"windowID"`
+	ElementID     int     `json:"elementID,omitempty"`
 	X             float64 `json:"x,omitempty"`
 	Y             float64 `json:"y,omitempty"`
 	EndX          float64 `json:"endX,omitempty"`
@@ -80,10 +82,12 @@ type Action struct {
 	Key           string  `json:"key,omitempty"`
 }
 type Grant struct {
-	App    App   `json:"app"`
-	Scope  Scope `json:"scope"`
-	Paused bool  `json:"paused"`
-	Active bool  `json:"active"`
+	App          App    `json:"app"`
+	Scope        Scope  `json:"scope"`
+	Paused       bool   `json:"paused"`
+	Active       bool   `json:"active"`
+	LastAction   string `json:"lastAction,omitempty"`
+	LastActionAt int64  `json:"lastActionAt,omitempty"`
 }
 type Backend interface {
 	Permissions(context.Context, string) (Permissions, error)
@@ -92,8 +96,9 @@ type Backend interface {
 	Input(context.Context, App, Window, Action) error
 }
 type observation struct {
-	at      time.Time
-	windows []Window
+	at       time.Time
+	windows  []Window
+	elements []Element
 }
 type sessionGrant struct {
 	Grant
@@ -286,10 +291,28 @@ func (s *Service) Observe(ctx context.Context, scope Scope, window string, image
 	if len(snapshot.Elements) > 300 {
 		snapshot.Elements = snapshot.Elements[:300]
 	}
+	var selectedWindow *Window
+	for i := range snapshot.Windows {
+		if snapshot.Windows[i].ID == snapshot.WindowID {
+			selectedWindow = &snapshot.Windows[i]
+			break
+		}
+	}
+	if selectedWindow == nil && len(snapshot.Windows) > 0 {
+		selectedWindow = &snapshot.Windows[0]
+	}
 	for i := range snapshot.Elements {
 		if snapshot.Elements[i].Secure {
 			snapshot.Elements[i].Value = ""
 			snapshot.Elements[i].Name = ""
+		}
+		if selectedWindow != nil && snapshot.Elements[i].Bounds.Width > 0 && snapshot.Elements[i].Bounds.Height > 0 {
+			snapshot.Elements[i].WindowBounds = &Rect{
+				X:      snapshot.Elements[i].Bounds.X - selectedWindow.Bounds.X,
+				Y:      snapshot.Elements[i].Bounds.Y - selectedWindow.Bounds.Y,
+				Width:  snapshot.Elements[i].Bounds.Width,
+				Height: snapshot.Elements[i].Bounds.Height,
+			}
 		}
 	}
 	if len(snapshot.Image) > 20<<20 {
@@ -317,7 +340,7 @@ func (s *Service) Observe(ctx context.Context, scope Scope, window string, image
 		}
 		delete(grant.observations, oldest)
 	}
-	grant.observations[token] = observation{at: s.now(), windows: snapshot.Windows}
+	grant.observations[token] = observation{at: s.now(), windows: snapshot.Windows, elements: snapshot.Elements}
 	snapshot.ObservationID = token
 	snapshot.App = target
 	return snapshot, nil
@@ -331,7 +354,7 @@ func ValidateAction(a Action) error {
 			return errors.New("invalid_coordinates")
 		}
 	}
-	if len(a.Text) > 8192 || len(a.Key) > 128 || a.ClickCount < 0 || a.ClickCount > 3 {
+	if len(a.Text) > 8192 || len(a.Key) > 128 || a.ClickCount < 0 || a.ClickCount > 3 || a.ElementID < 0 || a.ElementID > 300 {
 		return errors.New("input_exceeds_budget")
 	}
 	switch a.Action {
@@ -355,7 +378,7 @@ func ValidateAction(a Action) error {
 		if _, err := ParseKey(a.Key); err != nil {
 			return err
 		}
-	case "focus":
+	case "focus", "move":
 	default:
 		return errors.New("unsupported_computer_action")
 	}
@@ -394,6 +417,38 @@ func (s *Service) Execute(ctx context.Context, scope Scope, a Action) error {
 		s.mu.Unlock()
 		return errors.New("window_not_in_observation")
 	}
+	if a.ElementID > 0 {
+		var elem *Element
+		for i := range observation.elements {
+			if observation.elements[i].ID == a.ElementID {
+				copy := observation.elements[i]
+				elem = &copy
+				break
+			}
+		}
+		if elem == nil {
+			s.mu.Unlock()
+			return errors.New("element_not_in_observation")
+		}
+		if elem.Secure {
+			s.mu.Unlock()
+			return errors.New("secure_field_requires_manual_input")
+		}
+		cx := elem.Bounds.X + elem.Bounds.Width/2 - window.Bounds.X
+		cy := elem.Bounds.Y + elem.Bounds.Height/2 - window.Bounds.Y
+		if cx < 0 || cy < 0 || cx >= window.Bounds.Width || cy >= window.Bounds.Height {
+			s.mu.Unlock()
+			return errors.New("input_outside_window")
+		}
+		switch a.Action {
+		case "click", "move", "type":
+			a.X, a.Y = cx, cy
+		case "scroll":
+			if a.X == 0 && a.Y == 0 {
+				a.X, a.Y = cx, cy
+			}
+		}
+	}
 	if a.X >= window.Bounds.Width || a.Y >= window.Bounds.Height || (a.Action == "drag" && (a.EndX >= window.Bounds.Width || a.EndY >= window.Bounds.Height)) {
 		s.mu.Unlock()
 		return errors.New("input_outside_window")
@@ -425,8 +480,28 @@ func (s *Service) Execute(ctx context.Context, scope Scope, a Action) error {
 	if err := op.Err(); err != nil {
 		return err
 	}
+	if a.Action == "type" && a.ElementID > 0 {
+		clickAction := Action{
+			Action:        "click",
+			ObservationID: a.ObservationID,
+			WindowID:      a.WindowID,
+			X:             a.X,
+			Y:             a.Y,
+			Button:        "left",
+			ClickCount:    1,
+		}
+		if err := s.backend.Input(op, target, *window, clickAction); err != nil {
+			return fmt.Errorf("computer_input: %w", err)
+		}
+	}
 	if err := s.backend.Input(op, target, *window, a); err != nil {
 		return fmt.Errorf("computer_input: %w", err)
 	}
+	s.mu.Lock()
+	if s.grants[scope] == grant {
+		grant.LastAction = a.Action
+		grant.LastActionAt = s.now().UnixMilli()
+	}
+	s.mu.Unlock()
 	return nil
 }

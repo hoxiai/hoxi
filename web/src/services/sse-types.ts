@@ -103,6 +103,7 @@ export type ToolState =
       output: string;
       title: string;
       metadata: Record<string, any>;
+      attachments?: Array<{ type?: string; mime: string; filename?: string; url: string }>;
       time: { start: number; end: number; compacted?: number };
     }
   | {

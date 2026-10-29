@@ -453,6 +453,38 @@ describe("SSE client & 120Hz rAF delta batching", () => {
     }
   });
 
+  it("auto-opens Computer Inspector tab when applyStreamFrameBatch receives a running hoxi_computer tool part for the active session", () => {
+    const saved = structuredClone(unwrap(workspace));
+    try {
+      const sid = "ses_computer_auto_open";
+      setWorkspace({
+        activeSessionID: sid,
+        inspectorOpen: false,
+        inspectorTab: "diffs",
+        messagesBySession: {},
+      });
+      applyStreamFrameBatch({
+        infos: [{ id: "m1", sessionID: sid, role: "assistant", time: { created: 1 } }],
+        parts: [
+          {
+            id: "p1",
+            messageID: "m1",
+            sessionID: sid,
+            type: "tool",
+            tool: "hoxi_computer",
+            callID: "c1",
+            state: { status: "running", input: { action: "screenshot" }, time: { start: 1 } },
+          },
+        ],
+        deltas: [],
+      });
+      assertEqual(workspace.inspectorOpen, true);
+      assertEqual(workspace.inspectorTab, "computer");
+    } finally {
+      setWorkspace(reconcile(saved));
+    }
+  });
+
   it("preserves edit/write payloads across running -> completed updates and unescapes legacy truncated strings", () => {
     const saved = structuredClone(unwrap(workspace));
     try {

@@ -10,13 +10,14 @@ import (
 )
 
 type fakeDesktop struct {
-	mu      sync.Mutex
-	app     App
-	resized bool
-	inputs  int
-	entered chan struct{}
-	wait    bool
-	secure  bool
+	mu         sync.Mutex
+	app        App
+	resized    bool
+	inputs     int
+	lastActions []Action
+	entered    chan struct{}
+	wait       bool
+	secure     bool
 }
 
 func (f *fakeDesktop) Permissions(context.Context, string) (Permissions, error) {
@@ -34,11 +35,19 @@ func (f *fakeDesktop) Inspect(_ context.Context, app App, window string, image b
 	if f.resized {
 		width = 600
 	}
-	return Snapshot{WindowID: "one", Windows: []Window{{ID: "one", Bounds: Rect{Width: width, Height: 600}}}, Elements: []Element{{ID: 1, Name: "private", Value: "password", Secure: f.secure}}}, nil
+	return Snapshot{
+		WindowID: "one",
+		Windows:  []Window{{ID: "one", Bounds: Rect{X: 100, Y: 50, Width: width, Height: 600}}},
+		Elements: []Element{
+			{ID: 1, Role: "AXTextField", Name: "private", Value: "password", Bounds: Rect{X: 140, Y: 90, Width: 200, Height: 30}, Secure: f.secure},
+			{ID: 2, Role: "AXButton", Name: "Submit", Bounds: Rect{X: 200, Y: 150, Width: 100, Height: 40}},
+		},
+	}, nil
 }
-func (f *fakeDesktop) Input(ctx context.Context, _ App, _ Window, _ Action) error {
+func (f *fakeDesktop) Input(ctx context.Context, _ App, _ Window, a Action) error {
 	f.mu.Lock()
 	f.inputs++
+	f.lastActions = append(f.lastActions, a)
 	wait := f.wait
 	entered := f.entered
 	f.mu.Unlock()
@@ -207,12 +216,12 @@ func TestDesktopPauseAndResumeDiscardInFlightObservation(t *testing.T) {
 	}
 }
 func TestDesktopInputValidationAndGlobalShortcuts(t *testing.T) {
-	for _, key := range []string{"Meta+Tab", "Meta+Space", "Meta+Alt+Escape", "Alt+Tab", "Control+Alt+Delete", "Control+Escape", "Control+Control+a", "Bogus+a"} {
+	for _, key := range []string{"Meta+Tab", "Meta+Space", "Meta+Alt+Escape", "Alt+Tab", "Alt+F4", "Meta+F3", "Meta+F11", "Control+Alt+Delete", "Control+Escape", "Control+Control+a", "Bogus+a"} {
 		if _, err := ParseKey(key); err == nil {
 			t.Fatal("unsafe shortcut accepted", key)
 		}
 	}
-	for _, key := range []string{"Enter", "Control+a", "Meta+c", "Shift+ArrowLeft", "Alt+ArrowRight"} {
+	for _, key := range []string{"Enter", "Control+a", "Meta+c", "Shift+ArrowLeft", "Alt+ArrowRight", "F1", "F5", "F12", "Shift+F10"} {
 		if _, err := ParseKey(key); err != nil {
 			t.Fatal(key, err)
 		}
@@ -222,5 +231,71 @@ func TestDesktopInputValidationAndGlobalShortcuts(t *testing.T) {
 	}
 	if ValidateAction(Action{Action: "execute", ObservationID: strings.Repeat("a", 32), WindowID: "one"}) == nil {
 		t.Fatal("arbitrary desktop operation accepted")
+	}
+	if err := ValidateAction(Action{Action: "move", ObservationID: strings.Repeat("a", 32), WindowID: "one", X: 25, Y: 35}); err != nil {
+		t.Fatal("move action rejected", err)
+	}
+}
+
+func TestDesktopElementTargetingWindowBoundsAndLastAction(t *testing.T) {
+	s, f, scope := desktopFixture(t)
+	snapshot, err := s.Observe(context.Background(), scope, "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Elements[1].WindowBounds == nil || snapshot.Elements[1].WindowBounds.X != 100 || snapshot.Elements[1].WindowBounds.Y != 100 {
+		t.Fatalf("unexpected windowBounds: %+v", snapshot.Elements[1].WindowBounds)
+	}
+	// Click element 2 by elementID (center screen = (250, 170), window-relative = (150, 120))
+	err = s.Execute(context.Background(), scope, Action{
+		Action:        "click",
+		ObservationID: snapshot.ObservationID,
+		WindowID:      "one",
+		ElementID:     2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(f.lastActions) != 1 || f.lastActions[0].X != 150 || f.lastActions[0].Y != 120 {
+		t.Fatalf("expected window-relative center (150, 120), got %+v", f.lastActions)
+	}
+	grant := s.Current(scope)
+	if grant == nil || grant.LastAction != "click" || grant.LastActionAt == 0 {
+		t.Fatalf("expected LastAction=click on grant, got %+v", grant)
+	}
+
+	// Type into element 1 by elementID: should click first to focus, then type
+	snapshot2, err := s.Observe(context.Background(), scope, "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = s.Execute(context.Background(), scope, Action{
+		Action:        "type",
+		ObservationID: snapshot2.ObservationID,
+		WindowID:      "one",
+		ElementID:     1,
+		Text:          "hello",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(f.lastActions) != 3 || f.lastActions[1].Action != "click" || f.lastActions[2].Action != "type" {
+		t.Fatalf("expected click+type sequence, got %+v", f.lastActions)
+	}
+
+	// Secure element should reject elementID targeting
+	f.secure = true
+	snapshot3, err := s.Observe(context.Background(), scope, "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = s.Execute(context.Background(), scope, Action{
+		Action:        "click",
+		ObservationID: snapshot3.ObservationID,
+		WindowID:      "one",
+		ElementID:     1,
+	})
+	if err == nil || err.Error() != "secure_field_requires_manual_input" {
+		t.Fatalf("expected secure_field_requires_manual_input, got %v", err)
 	}
 }
