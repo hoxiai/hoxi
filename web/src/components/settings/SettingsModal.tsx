@@ -18,6 +18,7 @@ import {
   SlidersHorizontal,
   Smartphone,
   Sun,
+  User,
   X,
   Zap,
 } from "lucide-solid";
@@ -46,6 +47,7 @@ import {
   UsageSettingsTab,
 } from "./SettingsMergedTabs";
 import { WorkspaceGitSettingsTab } from "./SettingsWorkspaceTerminalTabs";
+import { AccountSettingsTab } from "./AccountSettingsTab";
 
 export default function SettingsModal() {
   const [searchQuery, setSearchQuery] = createSignal("");
@@ -93,6 +95,24 @@ export default function SettingsModal() {
       keywords?: () => string[];
     }>;
   }> = [
+    {
+      groupLabel: () => t("settings.groupAccount"),
+      items: [
+        {
+          id: "account",
+          label: () => t("settings.accountPageTitle"),
+          icon: User,
+          keywords: () => [
+            t("settings.accountMenuTitle"),
+            t("settings.accountPlanBadge"),
+            t("settings.accountPointsTooltip"),
+            "Account",
+            "Membership",
+            "Points",
+          ],
+        },
+      ],
+    },
     {
       groupLabel: () => t("settings.groupPreferencesWorkspace"),
       items: [
@@ -487,6 +507,11 @@ export default function SettingsModal() {
             <Show when={!isModelTab()}>
               <div class="min-w-0 flex-1 overflow-y-auto p-6 sm:p-8">
                 <div class={`mx-auto w-full ${activeTab() === "usage" || activeTab() === "diagnostics" ? "max-w-6xl" : "max-w-4xl"}`}>
+                  <Show when={activeTab() === "account"}>
+                    <div class="hoxi-view-enter">
+                      <AccountSettingsTab />
+                    </div>
+                  </Show>
                   <Show when={activeTab() === "general"}>
                     <div class="hoxi-view-enter">
                       <GeneralAppearanceTab />

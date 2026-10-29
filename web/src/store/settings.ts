@@ -19,6 +19,7 @@ export type SettingsTab =
   | "chat"
   | "workspace"
   | "terminal"
+  | "account"
   | "system"
   | "privacy"
   | "diagnostics"
