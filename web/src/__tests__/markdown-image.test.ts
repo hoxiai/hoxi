@@ -9,7 +9,12 @@ import {
 } from "../components/timeline/markdown-parser";
 import { liveReasoningTicker } from "../components/timeline/ThoughtBox";
 import { isSameTextRevealStream } from "../components/icons/TextShimmer";
-import { openChangedFileInInspector, setWorkspace, workspace } from "../store/workspace";
+import {
+  openChangedFileInInspector,
+  openURLInInspector,
+  setWorkspace,
+  workspace,
+} from "../store/workspace";
 import { assertDeepEqual, assertEqual, assertTrue, describe, it } from "./test-harness";
 
 describe("markdown images", () => {
@@ -333,6 +338,40 @@ describe("markdown document reader helpers", () => {
       setWorkspace({
         inspectedFilePath: prevPath,
         inspectedFileLine: prevLine,
+      });
+    }
+  });
+
+  it("stops bare URLs before CJK punctuation and text and sanitizes inspector URLs", () => {
+    const prose =
+      "\u9884\u89c8\u4ecd\u5728 http://127.0.0.1:5401\uff08\u5c40\u57df\u7f51 http://192.168.1.101:5401\uff09\u3002";
+    assertDeepEqual(parseInline(prose), [
+      { type: "text", text: "\u9884\u89c8\u4ecd\u5728 " },
+      { type: "link", text: "http://127.0.0.1:5401", href: "http://127.0.0.1:5401" },
+      { type: "text", text: "\uff08\u5c40\u57df\u7f51 " },
+      { type: "link", text: "http://192.168.1.101:5401", href: "http://192.168.1.101:5401" },
+      { type: "text", text: "\uff09\u3002" },
+    ]);
+
+    const prevURL = workspace.inspectedBrowserURL;
+    const prevTab = workspace.inspectorTab;
+    const prevOpen = workspace.inspectorOpen;
+    try {
+      openURLInInspector("http://127.0.0.1:5401\uff08\u5c40\u57df\u7f51");
+      assertEqual(workspace.inspectedBrowserURL, "http://127.0.0.1:5401");
+      assertEqual(workspace.inspectorTab, "browser");
+      assertEqual(workspace.inspectorOpen, true);
+
+      openURLInInspector("https://en.wikipedia.org/wiki/Markdown_(markup_language)).");
+      assertEqual(
+        workspace.inspectedBrowserURL,
+        "https://en.wikipedia.org/wiki/Markdown_(markup_language)"
+      );
+    } finally {
+      setWorkspace({
+        inspectedBrowserURL: prevURL,
+        inspectorTab: prevTab,
+        inspectorOpen: prevOpen,
       });
     }
   });

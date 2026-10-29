@@ -115,20 +115,36 @@ export function openDiffInInspector(
   });
 }
 
+function cleanInspectorHttpURL(raw: string): string {
+  const trimmed = raw.trim();
+  const match = trimmed.match(
+    /^https?:\/\/[^\s<>[\]"`\u3000-\u303f\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef\u2014\u2018\u2019\u201c\u201d\u2026\u00ab\u00bb]+/i
+  );
+  if (!match) return "";
+  let candidate = match[0].replace(/[.,;:!?'"]+$/, "");
+  while (candidate.endsWith(")")) {
+    const opens = (candidate.match(/\(/g) || []).length;
+    const closes = (candidate.match(/\)/g) || []).length;
+    if (closes <= opens) break;
+    candidate = candidate.slice(0, -1).replace(/[.,;:!?'"]+$/, "");
+  }
+  return candidate;
+}
+
 export function openURLInInspector(url: string) {
-  const trimmed = url.trim();
-  if (!trimmed || !/^https?:\/\//i.test(trimmed)) return;
+  const cleaned = cleanInspectorHttpURL(url);
+  if (!cleaned) return;
   setWorkspace({
-    inspectedBrowserURL: trimmed,
+    inspectedBrowserURL: cleaned,
     inspectorTab: "browser",
     inspectorOpen: true,
   });
 }
 
 export function openExternalURL(url: string) {
-  const trimmed = url.trim();
-  if (!trimmed || !/^https?:\/\//i.test(trimmed)) return;
-  openExternalBrowserURL(trimmed);
+  const cleaned = cleanInspectorHttpURL(url);
+  if (!cleaned) return;
+  openExternalBrowserURL(cleaned);
 }
 
 export async function openExternalFile(

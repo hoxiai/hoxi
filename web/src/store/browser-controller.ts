@@ -52,7 +52,7 @@ export function createBrowserController() {
   const [pairExpires, setPairExpires] = createSignal(0);
   const [pairCopied, setPairCopied] = createSignal(false);
   const [visible, setVisible] = createSignal(true);
-  const [previewEnabled, setPreviewEnabled] = createSignal(false);
+  const [previewEnabled, setPreviewEnabled] = createSignal(true);
   const [layoutViewport, setViewport] = createSignal<{ width: number; height: number; deviceScaleFactor: number } | null>(null);
   const [streamGeneration, setStreamGeneration] = createSignal(0);
   let frameSize = { width: 0, height: 0 };
@@ -233,9 +233,18 @@ export function createBrowserController() {
 
   function consumePendingBrowserURL() {
     const pendingURL = workspace.inspectedBrowserURL;
-    if (!pendingURL || !current || !valid(current)) return;
+    if (
+      !pendingURL ||
+      !workspace.inspectorOpen ||
+      workspace.inspectorTab !== "browser" ||
+      !current ||
+      !valid(current)
+    ) {
+      return;
+    }
     setWorkspace("inspectedBrowserURL", null);
     editingURL = false;
+    setPreviewEnabled(true);
     const target = normalizeBrowserAddress(pendingURL);
     if (!target) {
       setURL(pendingURL);
@@ -386,7 +395,7 @@ export function createBrowserController() {
 
   createEffect(() => {
     if (workspace.inspectedBrowserURL) {
-      consumePendingBrowserURL();
+      untrack(consumePendingBrowserURL);
     }
   });
 
