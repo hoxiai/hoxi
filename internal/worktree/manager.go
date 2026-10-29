@@ -762,14 +762,19 @@ func runGit(workDir string, args ...string) (string, error) {
 func runGitRaw(workDir string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), gitCommandTimeout)
 	defer cancel()
-	cmdArgs := append([]string{"-C", workDir}, args...)
+	cmdArgs := append([]string{"-c", "core.autocrlf=false", "-C", workDir}, args...)
 	cmd := exec.CommandContext(ctx, "git", cmdArgs...)
 	cmd.Env = nonInteractiveGitEnv()
-	out := &cappedGitOutputBuffer{limit: maxGitCommandOutputBytes}
-	cmd.Stdout = out
-	cmd.Stderr = out
+	stdout := &cappedGitOutputBuffer{limit: maxGitCommandOutputBytes}
+	stderr := &cappedGitOutputBuffer{limit: maxGitCommandOutputBytes}
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("%s: %w", strings.TrimSpace(out.String()), err)
+		errText := strings.TrimSpace(stderr.String())
+		if errText == "" {
+			errText = strings.TrimSpace(stdout.String())
+		}
+		return "", fmt.Errorf("%s: %w", errText, err)
 	}
-	return out.String(), nil
+	return stdout.String(), nil
 }

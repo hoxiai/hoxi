@@ -356,16 +356,21 @@ func normalizeSnapshotRepoRelPath(repoRoot, raw string) string {
 func runGitWithIndex(workDir, indexPath string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), gitCommandTimeout)
 	defer cancel()
-	cmdArgs := append([]string{"-C", workDir}, args...)
+	cmdArgs := append([]string{"-c", "core.autocrlf=false", "-C", workDir}, args...)
 	cmd := exec.CommandContext(ctx, "git", cmdArgs...)
 	cmd.Env = nonInteractiveGitEnv("GIT_INDEX_FILE=" + indexPath)
-	out := &cappedGitOutputBuffer{limit: maxGitCommandOutputBytes}
-	cmd.Stdout = out
-	cmd.Stderr = out
+	stdout := &cappedGitOutputBuffer{limit: maxGitCommandOutputBytes}
+	stderr := &cappedGitOutputBuffer{limit: maxGitCommandOutputBytes}
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("%s: %w", strings.TrimSpace(out.String()), err)
+		errText := strings.TrimSpace(stderr.String())
+		if errText == "" {
+			errText = strings.TrimSpace(stdout.String())
+		}
+		return "", fmt.Errorf("%s: %w", errText, err)
 	}
-	return strings.TrimSpace(out.String()), nil
+	return strings.TrimSpace(stdout.String()), nil
 }
 
 const maxPortableUntrackedBytes = 20 * 1024 * 1024
@@ -497,7 +502,7 @@ func applyGitPatch(workDir, patch string, extraArgs ...string) error {
 	run := func(threeWay bool) error {
 		ctx, cancel := context.WithTimeout(context.Background(), gitCommandTimeout)
 		defer cancel()
-		args := []string{"-C", workDir, "apply", "--whitespace=nowarn"}
+		args := []string{"-c", "core.autocrlf=false", "-C", workDir, "apply", "--whitespace=nowarn"}
 		if threeWay {
 			args = append(args, "--3way")
 		}

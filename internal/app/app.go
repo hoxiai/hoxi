@@ -422,7 +422,7 @@ func Run(distFS fs.FS) {
 		Height:                   860,
 		MinWidth:                 880,
 		MinHeight:                560,
-		HideWindowOnClose:        runtime.GOOS == "darwin",
+		HideWindowOnClose:        runtime.GOOS == "darwin" || runtime.GOOS == "windows",
 		EnableDefaultContextMenu: true,
 		BackgroundColour:         options.NewRGBA(0, 0, 0, 0),
 		AssetServer: &assetserver.Options{

@@ -1,6 +1,7 @@
 package worktree
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 )
@@ -43,7 +44,18 @@ func (m *worktreeManager) UpdateDirectories(roots []string) ([]string, error) {
 		if !info.IsDir() {
 			continue
 		}
-		entries, err := os.ReadDir(filepath.Join(root, ".hoxi", "worktrees"))
+		wtDir := filepath.Join(root, ".hoxi", "worktrees")
+		wtInfo, err := os.Stat(wtDir)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if !wtInfo.IsDir() {
+			return nil, fmt.Errorf("worktrees path is not a directory: %s", wtDir)
+		}
+		entries, err := os.ReadDir(wtDir)
 		if os.IsNotExist(err) {
 			continue
 		}

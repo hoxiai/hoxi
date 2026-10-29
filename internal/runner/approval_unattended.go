@@ -179,8 +179,10 @@ func pathInsideWorktree(worktree, target string) bool {
 	if target == "" {
 		return false
 	}
-	if !filepath.IsAbs(target) {
+	if !isAbsOrRootedPath(target) {
 		target = filepath.Join(worktree, target)
+	} else if !filepath.IsAbs(target) && filepath.IsAbs(worktree) {
+		return false
 	}
 	return pathWithin(worktree, target)
 }

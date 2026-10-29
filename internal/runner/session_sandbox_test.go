@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/testutil/execstub"
 )
 
 func createSandboxSession(t *testing.T, svc *Service, runtime, directory, mode string) SessionInfo {
@@ -77,9 +79,7 @@ else
 fi
 `
 				for _, name := range []string{"claude", "agy"} {
-					if err := os.WriteFile(filepath.Join(binDir, name), []byte(script), 0700); err != nil {
-						t.Fatal(err)
-					}
+					execstub.Write(t, binDir, name, script)
 				}
 				ch, unsub := svc.Subscribe(info.ID)
 				defer unsub()

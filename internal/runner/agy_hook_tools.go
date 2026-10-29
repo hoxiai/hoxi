@@ -195,7 +195,7 @@ func resolveHookToolPath(base string, args map[string]interface{}) string {
 	} else if strings.HasPrefix(raw, "~") {
 		return ""
 	}
-	if !filepath.IsAbs(raw) {
+	if !isAbsOrRootedPath(raw) {
 		if strings.TrimSpace(base) == "" {
 			return ""
 		}
@@ -511,19 +511,17 @@ func resolvePathWithSymlinks(p string, depth int) (string, bool) {
 		}
 		info, err := os.Lstat(cur)
 		if err == nil {
-			if info.Mode()&os.ModeSymlink == 0 {
-				return "", false
+			if info.Mode()&os.ModeSymlink != 0 {
+				link, err := os.Readlink(cur)
+				if err != nil {
+					return "", false
+				}
+				if !filepath.IsAbs(link) {
+					link = filepath.Join(filepath.Dir(cur), link)
+				}
+				return resolvePathWithSymlinks(filepath.Join(link, suffix), depth+1)
 			}
-			link, err := os.Readlink(cur)
-			if err != nil {
-				return "", false
-			}
-			if !filepath.IsAbs(link) {
-				link = filepath.Join(filepath.Dir(cur), link)
-			}
-			return resolvePathWithSymlinks(filepath.Join(link, suffix), depth+1)
-		}
-		if !os.IsNotExist(err) {
+		} else if !os.IsNotExist(err) {
 			return "", false
 		}
 		parent := filepath.Dir(cur)
@@ -537,6 +535,9 @@ func resolvePathWithSymlinks(p string, depth int) (string, bool) {
 
 func pathWithin(base, target string) bool {
 	if strings.TrimSpace(base) == "" || strings.TrimSpace(target) == "" {
+		return false
+	}
+	if filepath.IsAbs(base) != filepath.IsAbs(target) && isAbsOrRootedPath(base) && isAbsOrRootedPath(target) {
 		return false
 	}
 	realBase, ok := resolvePathWithSymlinks(base, 0)

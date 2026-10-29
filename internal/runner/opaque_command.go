@@ -192,11 +192,15 @@ func opaqueShellCore(command, worktree string, allowInlineScripts, valueClass bo
 }
 
 func isSafeExternalCDTarget(resolved string) bool {
-	if resolved == "" || resolved == "/" || isSensitiveExternalPath(resolved) || isSecretFilePath(resolved) || isProtectedShellReadPath(resolved) {
+	cleaned := filepath.Clean(resolved)
+	slash := filepath.ToSlash(cleaned)
+	if slash == "" || slash == "/" || filepath.Dir(cleaned) == cleaned || isSensitiveExternalPath(resolved) || isSecretFilePath(resolved) || isProtectedShellReadPath(resolved) {
 		return false
 	}
 	if real, ok := resolvePathWithSymlinks(resolved, 0); ok && real != "" {
-		if real == "/" || isSensitiveExternalPath(real) || isSecretFilePath(real) || isProtectedShellReadPath(real) {
+		realClean := filepath.Clean(real)
+		realSlash := filepath.ToSlash(realClean)
+		if realSlash == "/" || filepath.Dir(realClean) == realClean || isSensitiveExternalPath(real) || isSecretFilePath(real) || isProtectedShellReadPath(real) {
 			return false
 		}
 	}
@@ -226,7 +230,7 @@ func advanceScopedCD(seg, cwd, worktree string) (string, bool) {
 	if strings.HasPrefix(target, "~") || strings.HasPrefix(target, "-") {
 		return "", false
 	}
-	if strings.HasPrefix(target, "/") {
+	if isAbsOrRootedPath(target) {
 		for _, part := range strings.Split(filepath.ToSlash(target), "/") {
 			if part == ".." {
 				return "", false
@@ -239,12 +243,15 @@ func advanceScopedCD(seg, cwd, worktree string) (string, bool) {
 		return cleaned, true
 	}
 	wt := strings.TrimSpace(worktree)
-	if filepath.IsAbs(cwd) {
+	if isAbsOrRootedPath(cwd) {
 		resolved := filepath.Clean(filepath.Join(cwd, target))
-		if wt != "" && filepath.IsAbs(wt) {
+		if wt != "" && isAbsOrRootedPath(wt) {
 			base := filepath.Clean(wt)
-			if cwd == base || strings.HasPrefix(cwd, strings.TrimSuffix(base, "/")+"/") {
-				if (resolved != base && !strings.HasPrefix(resolved, strings.TrimSuffix(base, "/")+"/")) || !pathWithin(base, resolved) {
+			slashCWD := filepath.ToSlash(cwd)
+			slashBase := strings.TrimSuffix(filepath.ToSlash(base), "/")
+			slashResolved := filepath.ToSlash(resolved)
+			if slashCWD == slashBase || strings.HasPrefix(slashCWD, slashBase+"/") {
+				if (slashResolved != slashBase && !strings.HasPrefix(slashResolved, slashBase+"/")) || !pathWithin(base, resolved) {
 					return "", false
 				}
 				return resolved, true

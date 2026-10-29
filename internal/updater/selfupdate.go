@@ -152,9 +152,13 @@ func downloadAndStageWindowsZip(ctx context.Context, client *http.Client, archiv
 
 	zr, err := zip.OpenReader(zipPath)
 	if err != nil {
+		_ = os.Remove(zipPath)
 		return fmt.Errorf("open update zip: %w", err)
 	}
-	defer zr.Close()
+	defer func() {
+		_ = zr.Close()
+		_ = os.Remove(zipPath)
+	}()
 
 	foundHoxiExe := false
 	for _, f := range zr.File {
@@ -191,6 +195,7 @@ func downloadAndStageWindowsZip(ctx context.Context, client *http.Client, archiv
 			return err
 		}
 	}
+	_ = zr.Close()
 	_ = os.Remove(zipPath)
 	if !foundHoxiExe {
 		return errors.New("update archive does not contain Hoxi.exe")

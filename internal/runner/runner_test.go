@@ -337,6 +337,7 @@ func initTestGitRepo(t *testing.T) string {
 		}
 	}
 	run("init")
+	run("config", "core.autocrlf", "false")
 	run("config", "user.email", "test@hoxi.ai")
 	run("config", "user.name", "Test")
 	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("# test\n"), 0o644); err != nil {

@@ -373,7 +373,7 @@ func TestOpenCodeRequestsAreAnsweredByThePolicy(t *testing.T) {
 	waitFor(t, "list policy reply", func() bool { return fake.reply("per_oc_list_ok") == "once" })
 
 	// Raw stream frames for sessions the runner does not drive are claimed too.
-	line := `data: {"directory":"` + dir + `","payload":{"type":"permission.asked","properties":{"id":"per_oc_raw","sessionID":"oc-unmanaged","permission":"edit","patterns":["src/b.ts"]}}}`
+	line := `data: {"directory":"` + strings.ReplaceAll(dir, `\`, `\\`) + `","payload":{"type":"permission.asked","properties":{"id":"per_oc_raw","sessionID":"oc-unmanaged","permission":"edit","patterns":["src/b.ts"]}}}`
 	if !svc.claimOpenCodeSSELine(line, "") {
 		t.Fatal("raw permission frame allowed by the policy must be dropped")
 	}

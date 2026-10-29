@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -131,6 +132,9 @@ func TestSessionCommitRejectsUnsafeChanges(t *testing.T) {
 				data := "binary\x00data"
 				diff.After = &data
 			case "mode":
+				if runtime.GOOS == "windows" {
+					t.Skip("Windows NTFS does not track POSIX executable mode bits on working files")
+				}
 				if err := os.Chmod(filepath.Join(dir, "file.txt"), 0755); err != nil {
 					t.Fatal(err)
 				}
@@ -397,7 +401,7 @@ func TestSessionCommitRejectsContextDependentConfig(t *testing.T) {
 					condition = "onbranch:other"
 				}
 				if kind == "gitdir-include" {
-					condition = "gitdir:" + filepath.Join(realDir, ".git") + "/"
+					condition = "gitdir:" + filepath.ToSlash(filepath.Join(realDir, ".git")) + "/"
 				}
 				if kind == "nested-include" {
 					nested := filepath.Join(t.TempDir(), "nested.config")

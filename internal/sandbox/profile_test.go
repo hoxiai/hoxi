@@ -42,7 +42,7 @@ func TestProfileTextConfinesWritesAndNetwork(t *testing.T) {
 		"(allow file-read*)",
 		"(deny network-outbound",
 		"(allow file-write*",
-		workspace,
+		strings.ReplaceAll(workspace, `\`, `\\`),
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("profile missing %q:\n%s", want, text)
@@ -105,7 +105,7 @@ func TestProfileTextDeniesSensitiveSubdirectories(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, dir := range []string{DefaultRoot(), filepath.Join(hoxipaths.Home(), "bin")} {
-		if !strings.Contains(text, dir) {
+		if !strings.Contains(text, strings.ReplaceAll(dir, `\`, `\\`)) {
 			t.Fatalf("profile does not mention %s:\n%s", dir, text)
 		}
 	}
@@ -378,7 +378,12 @@ func TestProfileTextDeniesCredentialAgentSockets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"com\\.apple\\.launchd", filepath.Join(home, ".ssh"), filepath.Join(home, ".gnupg"), "custom-agent.sock"} {
+	for _, want := range []string{
+		"com\\.apple\\.launchd",
+		strings.ReplaceAll(filepath.Join(home, ".ssh"), `\`, `\\`),
+		strings.ReplaceAll(filepath.Join(home, ".gnupg"), `\`, `\\`),
+		"custom-agent.sock",
+	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("socket deny is missing %q:\n%s", want, text)
 		}

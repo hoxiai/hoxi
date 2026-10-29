@@ -358,7 +358,7 @@ func unwrapSandboxCommand(command string) string {
 		}
 		cur = next
 	}
-	return cur
+	return normalizeWindowsDrivePaths(cur)
 }
 
 // commandCandidates mirrors commandCandidates in permission-policy.js.

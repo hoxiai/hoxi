@@ -219,12 +219,27 @@ func shellWords(s string) []string {
 	return words
 }
 
+var windowsDrivePathRe = regexp.MustCompile(`(?i)\b[a-z]:\\[^\s;&|'"` + "`" + `()<>]*`)
+
+func normalizeWindowsDrivePaths(command string) string {
+	if filepath.Separator != '\\' || !strings.Contains(command, `:\`) {
+		return command
+	}
+	return windowsDrivePathRe.ReplaceAllStringFunc(command, func(m string) string {
+		return strings.ReplaceAll(m, `\`, `/`)
+	})
+}
+
+func isAbsOrRootedPath(p string) bool {
+	return filepath.IsAbs(p) || strings.HasPrefix(p, "/") || strings.HasPrefix(p, `\`)
+}
+
 // isWorktreeCD reports whether a segment is exactly `cd <plain-token>` whose
 // target stays inside the worktree. Tokens with quotes, escapes, globs, `~`,
 // `$` or a leading `-` (`cd -`, `cd -P`) never match cdSegmentRe.
 func isWorktreeCD(segment, worktree string) bool {
 	worktree = strings.TrimSpace(worktree)
-	if worktree == "" || !filepath.IsAbs(worktree) {
+	if worktree == "" || !isAbsOrRootedPath(worktree) {
 		return false
 	}
 	m := cdSegmentRe.FindStringSubmatch(strings.TrimSpace(segment))
@@ -232,12 +247,14 @@ func isWorktreeCD(segment, worktree string) bool {
 		return false
 	}
 	target := m[1]
-	if !filepath.IsAbs(target) {
+	if !isAbsOrRootedPath(target) {
 		target = filepath.Join(worktree, target)
 	}
 	target = filepath.Clean(target)
 	base := filepath.Clean(worktree)
-	if target != base && !strings.HasPrefix(target, strings.TrimSuffix(base, "/")+"/") {
+	slashTarget := filepath.ToSlash(target)
+	slashBase := strings.TrimSuffix(filepath.ToSlash(base), "/")
+	if slashTarget != slashBase && !strings.HasPrefix(slashTarget, slashBase+"/") {
 		return false
 	}
 	// The Go gate additionally resolves symlinks; the JS port is lexical only.

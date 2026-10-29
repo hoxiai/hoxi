@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -321,6 +322,9 @@ func TestCorruptLedgerIsBackedUpAndNotActedOn(t *testing.T) {
 }
 
 func TestCorruptLedgerThatCannotBeBackedUpIsLeftUntouched(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows NTFS does not enforce 0500 read-only directory mode via os.Chmod")
+	}
 	if os.Getuid() == 0 {
 		t.Skip("root ignores directory permissions")
 	}
@@ -425,7 +429,7 @@ func TestSweepEscalatesToSIGKILL(t *testing.T) {
 		t.Fatalf("report = %+v", r)
 	}
 	stubborn.waitExit(t)
-	if time.Since(start) < l.termWait {
+	if runtime.GOOS != "windows" && time.Since(start) < l.termWait {
 		t.Fatal("process exited before SIGKILL; SIGTERM was not ignored")
 	}
 }

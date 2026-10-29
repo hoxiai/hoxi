@@ -197,6 +197,9 @@ func parseNumstat(field string) int {
 
 // safeReviewPath rejects absolute paths and anything that could leave the repo.
 func safeReviewPath(rel string) bool {
+	if strings.HasPrefix(rel, "/") || strings.HasPrefix(rel, `\`) {
+		return false
+	}
 	clean := filepath.Clean(rel)
 	return clean != "." && !filepath.IsAbs(clean) && clean != ".." && !strings.HasPrefix(clean, ".."+string(filepath.Separator))
 }

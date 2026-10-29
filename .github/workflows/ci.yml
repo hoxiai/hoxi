@@ -55,8 +55,8 @@ jobs:
       - name: Run release pipeline regression tests
         run: node --test scripts/release.test.mjs
 
-      - name: Run browser plugin tests
-        run: node --test internal/opencode/browser_plugin_test.mjs
+      - name: Run browser and sandbox plugin tests
+        run: node --test internal/opencode/browser_plugin_test.mjs internal/opencode/sandbox_plugin_test.mjs
 
       - name: Build frontend production bundle
         run: npm --prefix web run build
@@ -112,7 +112,7 @@ jobs:
         run: go vet ./...
 
       - name: Run Windows core unit tests
-        run: go test -v ./internal/agentcli ./internal/attachment ./internal/cloudflared ./internal/notify ./internal/pairing ./internal/reclaim ./internal/runner ./internal/statusbar ./internal/updater ./internal/worktree
+        run: go test -v ./internal/agentcli ./internal/attachment ./internal/cloudflared ./internal/notify ./internal/pairing ./internal/reclaim ./internal/runner ./internal/sandbox ./internal/statusbar ./internal/updater ./internal/worktree
 
       - name: Build Windows desktop and CLI entrypoints
         run: go build -v . ./cmd/hoxi

@@ -26,6 +26,7 @@ func initTempGitRepo(t *testing.T) string {
 	}
 
 	run("init", "-b", "main")
+	run("config", "core.autocrlf", "false")
 	run("config", "user.name", "Test User")
 	run("config", "user.email", "test@hoxi.local")
 
@@ -477,6 +478,7 @@ func initSubGitRepo(t *testing.T, parentDir, relPath, branch string) string {
 		}
 	}
 	run("init", "-b", branch)
+	run("config", "core.autocrlf", "false")
 	run("config", "user.name", "Test User")
 	run("config", "user.email", "test@hoxi.local")
 	if err := os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n"), 0o644); err != nil {

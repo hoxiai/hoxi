@@ -6,6 +6,7 @@
 // sandbox is active instead of silently escaping it.
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 const executable = "/usr/bin/sandbox-exec";
@@ -34,6 +35,10 @@ function quote(value) {
 }
 
 function inside(target, root) {
+  if (process.platform === "win32") {
+    target = target.toLowerCase();
+    root = root.toLowerCase();
+  }
   if (target === root) return true;
   return target.startsWith(root.endsWith(path.sep) ? root : root + path.sep);
 }
@@ -41,7 +46,7 @@ function inside(target, root) {
 function resolveTarget(value, workspace) {
   if (typeof value !== "string" || value.trim() === "") return undefined;
   let target = value.trim();
-  if (target.startsWith("~")) target = path.join(process.env.HOME || "", target.slice(1));
+  if (target.startsWith("~")) target = path.join(process.env.HOME || process.env.USERPROFILE || os.homedir() || "", target.slice(1));
   target = path.isAbsolute(target) ? target : path.join(workspace, target);
   const resolved = path.resolve(target);
   let probe = resolved;

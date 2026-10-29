@@ -132,6 +132,7 @@ func recoverableCommandClassesAt(command, worktree string, classes map[string]bo
 	if depth > maxSubshellDepth {
 		return false
 	}
+	command = normalizeWindowsDrivePaths(command)
 	spans, ok := findSubshellSpans(command)
 	if !ok {
 		return false
@@ -294,7 +295,7 @@ func isWorktreeRootGlob(arg, worktree string) bool {
 		return false
 	}
 	target := arg
-	if !filepath.IsAbs(target) {
+	if !isAbsOrRootedPath(target) {
 		target = filepath.Join(worktree, target)
 	}
 	target = filepath.Clean(target)
@@ -315,7 +316,7 @@ func trustedTempRoots() []string {
 // isTempPathArg accepts an absolute path strictly below a temp root. The root
 // itself, and globs that start a segment there (`/tmp/*`), keep asking.
 func isTempPathArg(arg string) bool {
-	if !filepath.IsAbs(arg) || strings.ContainsAny(arg, "$[~") {
+	if !isAbsOrRootedPath(arg) || strings.ContainsAny(arg, "$[~") {
 		return false
 	}
 	for _, part := range strings.Split(filepath.ToSlash(arg), "/") {
@@ -359,8 +360,10 @@ func isWorktreePathArg(arg, worktree string) bool {
 		}
 	}
 	target := arg
-	if !filepath.IsAbs(target) {
+	if !isAbsOrRootedPath(target) {
 		target = filepath.Join(worktree, target)
+	} else if !filepath.IsAbs(target) && filepath.IsAbs(worktree) {
+		return false
 	}
 	target = filepath.Clean(target)
 	globbed := strings.ContainsAny(target, "*?")

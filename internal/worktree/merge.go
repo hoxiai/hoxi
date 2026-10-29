@@ -94,7 +94,7 @@ func applyThreeWay(dir, patch string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), gitCommandTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", "-C", dir, "apply", "--3way", "--whitespace=nowarn", "-")
+	cmd := exec.CommandContext(ctx, "git", "-c", "core.autocrlf=false", "-C", dir, "apply", "--3way", "--whitespace=nowarn", "-")
 	cmd.Env = nonInteractiveGitEnv()
 	cmd.Stdin = strings.NewReader(patch)
 	if output, err := cmd.CombinedOutput(); err != nil {

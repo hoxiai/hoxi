@@ -13,6 +13,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/testutil/execstub"
 )
 
 func switchRuntime(t *testing.T, s *Service, id, rt, dir string) *httptest.ResponseRecorder {
@@ -333,9 +335,7 @@ func TestNativeRuntimeHandoffUsesHistoryWithoutReusingOtherEngineResumeID(t *tes
 	t.Setenv("TEST_ARGS", argsLog)
 	for name, result := range map[string]string{"agy": `{"event":"result","result":{"response":"OK","status":"DONE"}}`, "claude": `{"type":"result","result":"OK","is_error":false}`} {
 		script := "#!/bin/sh\nprintf '%s\\n' \"$*\" > \"$TEST_ARGS\"\n/bin/cat > \"$TEST_INPUT\"\nprintf '%s\\n' '" + result + "'\n"
-		if err := os.WriteFile(filepath.Join(binDir, name), []byte(script), 0700); err != nil {
-			t.Fatal(err)
-		}
+		execstub.Write(t, binDir, name, script)
 	}
 	svc := NewService(root, nil, nil, filepath.Join(t.TempDir(), "sessions.json"))
 	defer svc.CloseAll()

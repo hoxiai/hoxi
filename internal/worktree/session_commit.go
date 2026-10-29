@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"unicode/utf8"
 )
@@ -98,7 +99,11 @@ func sessionGit(dir, index, gitDir string, input []byte, args ...string) ([]byte
 }
 
 func sessionPath(root, name string) (string, error) {
-	if name == "" || strings.ContainsAny(name, "\x00\\\r\n") {
+	forbidden := "\x00\\\r\n"
+	if runtime.GOOS == "windows" {
+		forbidden = "\x00\r\n"
+	}
+	if name == "" || strings.ContainsAny(name, forbidden) {
 		return "", errors.New("invalid session file path")
 	}
 	// Reject traversal even when cleaning it would happen to remain in the repo.
@@ -109,6 +114,9 @@ func sessionPath(root, name string) (string, error) {
 	}
 	abs := name
 	if !filepath.IsAbs(abs) {
+		if strings.HasPrefix(abs, "/") || strings.HasPrefix(abs, `\`) {
+			return "", fmt.Errorf("session path outside repository: %q", name)
+		}
 		abs = filepath.Join(root, abs)
 	} else {
 		// macOS exposes /var through /private/var. Resolve only a repository
