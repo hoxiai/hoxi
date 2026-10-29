@@ -427,6 +427,7 @@ export function openSettingsModal(tab: SettingsTab = "general") {
   const resolvedTab: SettingsTab = tab === "terminal" ? "general" : tab;
   if (
     resolvedTab === "providers" ||
+    resolvedTab === "official" ||
     resolvedTab === "custom" ||
     resolvedTab === "auto" ||
     resolvedTab === "models" ||

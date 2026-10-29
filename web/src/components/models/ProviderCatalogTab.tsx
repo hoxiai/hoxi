@@ -1,5 +1,5 @@
 // web/src/components/models/ProviderCatalogTab.tsx
-import { createMemo, createSignal, For, onMount, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onMount, Show } from "solid-js";
 import {
   Ban,
   ChevronDown,
@@ -19,13 +19,17 @@ import type { ProviderInfo } from "../../services/api";
 import {
   cancelProviderMcpOAuth,
   connectProviderWithMcpOAuth,
+  desktopAuth,
   disconnectProvider,
   fetchGateways,
   getProviderSourceLabel,
   isCustomOrConfiguredProvider,
   isImportedOpenCodeProvider,
   leaderboardState,
+  loadOfficialAinodeModels,
+  officialAinodeState,
   openProviderModal,
+  openSettingsModal,
   POPULAR_PROVIDER_IDS,
   providerMcpOAuthState,
   toggleDisabledProvider,
@@ -37,7 +41,6 @@ import { ProviderConnectView, ProviderSelectAllView } from "./ProviderConnectSub
 import { ProviderHealthBadge } from "./ProviderQualityCard";
 import { isModelFree } from "./model-selector-utils";
 import LocalCliBridgeBanner from "./LocalCliBridgeBanner";
-import OfficialAinodePanel from "./OfficialAinodePanel";
 type SubView = "list" | "connect" | "select-all";
 
 export default function ProviderCatalogTab() {
@@ -49,6 +52,12 @@ export default function ProviderCatalogTab() {
 
   onMount(() => {
     void fetchGateways();
+  });
+
+  createEffect(() => {
+    if (desktopAuth.isLoggedIn) {
+      void loadOfficialAinodeModels();
+    }
   });
 
   const connectedSet = createMemo(() => new Set(workspace.connectedProviders));
@@ -206,7 +215,29 @@ export default function ProviderCatalogTab() {
         <div class="flex-1 overflow-y-auto p-6 sm:p-8">
           <div class="mx-auto w-full max-w-5xl space-y-6">
           <LocalCliBridgeBanner />
-          <OfficialAinodePanel />
+
+          <Show when={desktopAuth.isLoggedIn}>
+            <button
+              type="button"
+              onClick={() => openSettingsModal("official")}
+              class="flex w-full items-center justify-between gap-4 rounded-2xl border border-[var(--accent-border)] bg-[var(--accent-surface)]/35 px-4 py-3 text-left hover:border-[var(--accent-primary)] transition-colors cursor-pointer"
+            >
+              <div class="flex items-center gap-3 min-w-0">
+                <Sparkles size={16} class="shrink-0 text-[var(--accent-primary)]" />
+                <div class="min-w-0">
+                  <div class="text-[13px] font-semibold text-[var(--text-primary)]">
+                    {t("models.officialCardTitle")}
+                  </div>
+                  <div class="text-[12px] text-[var(--text-secondary)] line-clamp-1">
+                    {t("models.officialModelsCount", { count: officialAinodeState.models.length })}
+                  </div>
+                </div>
+              </div>
+              <span class="shrink-0 text-[12px] font-medium text-[var(--accent-primary)]">
+                {t("models.officialOpenTab")}
+              </span>
+            </button>
+          </Show>
 
           {/* Custom Provider Quick Card */}
           <div class="flex items-center justify-between gap-4 rounded-2xl border border-[var(--accent-border)] bg-[var(--accent-surface)]/40 px-4 py-3.5">

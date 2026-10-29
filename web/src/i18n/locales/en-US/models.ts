@@ -452,4 +452,11 @@ export const models = {
   officialModelsEmpty: "No callable models for this account yet",
   officialPerCallPoints: "{points} points / call",
   officialTokenPointsPerM: "{points} points / 1M tokens",
+  tabOfficial: "Hoxi Official",
+  officialPoolTarget: "Auto pool",
+  officialUseBtn: "Use",
+  officialInUse: "In use",
+  officialAddToPool: "Add to pool",
+  officialInPool: "In pool",
+  officialOpenTab: "Manage official models",
 };

@@ -17,6 +17,7 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   Smartphone,
+  Sparkles,
   Sun,
   User,
   X,
@@ -36,6 +37,7 @@ import AgentPolicyMcpTab from "../models/AgentPolicyMcpTab";
 import AutoModelPoolTab from "../models/AutoModelPoolTab";
 import CustomEndpointTab from "../models/CustomEndpointTab";
 import ModelsRoleTab from "../models/ModelsRoleTab";
+import OfficialAinodeTab from "../models/OfficialAinodeTab";
 import ProviderCatalogTab from "../models/ProviderCatalogTab";
 import { ChatComposerTab, GeneralAppearanceTab } from "./SettingsGeneralChatTabs";
 import { PrivacySettingsTab } from "./PrivacyControls";
@@ -68,6 +70,7 @@ export default function SettingsModal() {
     const tab = activeTab();
     return (
       tab === "providers" ||
+      tab === "official" ||
       tab === "custom" ||
       tab === "auto" ||
       tab === "models" ||
@@ -158,6 +161,12 @@ export default function SettingsModal() {
           icon: KeyRound,
           badge: () => workspace.connectedProviders.length,
           keywords: () => [t("models.tabCustom"), "API Key", "Provider"],
+        },
+        {
+          id: "official",
+          label: () => t("models.tabOfficial"),
+          icon: Sparkles,
+          keywords: () => ["ainode", t("models.tabOfficial")],
         },
         {
           id: "models",
@@ -475,6 +484,11 @@ export default function SettingsModal() {
               <Show when={activeTab() === "providers"}>
                 <div class="flex-1 min-h-0 flex flex-col hoxi-view-enter">
                   <ProviderCatalogTab />
+                </div>
+              </Show>
+              <Show when={activeTab() === "official"}>
+                <div class="flex-1 min-h-0 flex flex-col hoxi-view-enter">
+                  <OfficialAinodeTab />
                 </div>
               </Show>
               <Show when={activeTab() === "custom"}>
