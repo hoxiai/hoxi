@@ -10,6 +10,7 @@ export * from "./session-index";
 export * from "./workspace-folders";
 export * from "./global-config";
 export * from "./workspace-providers";
+export * from "./provider-official";
 export * from "./provider-catalog";
 export * from "./model-limits";
 export * from "./session-ai";

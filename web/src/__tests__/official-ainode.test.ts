@@ -2,10 +2,13 @@ import { hoxiAPI } from "../services/api";
 import { setDesktopAuth } from "../store/auth-state";
 import {
   connectOfficialAinode,
+  ensureOfficialProviderConnected,
   loadOfficialAinodeModels,
+  OFFICIAL_PROVIDER_ID,
   officialAinodeState,
   setOfficialAinodeState,
-} from "../store/workspace-providers";
+} from "../store/provider-official";
+import { setWorkspace } from "../store/workspace-state";
 import { assertEqual, describe, it } from "./test-harness";
 
 describe("official AINode account connect", () => {
@@ -71,6 +74,52 @@ describe("official AINode account connect", () => {
       assertEqual(threw, true);
     } finally {
       hoxiAPI.connectOfficialAinodeProvider = orig;
+    }
+  });
+
+  it("does not auto-connect while logged out", async () => {
+    const orig = hoxiAPI.connectOfficialAinodeProvider;
+    let called = false;
+    try {
+      setDesktopAuth({ isLoggedIn: false });
+      hoxiAPI.connectOfficialAinodeProvider = async () => {
+        called = true;
+        return { authenticated: true, providerId: OFFICIAL_PROVIDER_ID, baseUrl: "", modelCount: 0, models: [] };
+      };
+      await ensureOfficialProviderConnected();
+      assertEqual(called, false);
+    } finally {
+      hoxiAPI.connectOfficialAinodeProvider = orig;
+    }
+  });
+
+  it("refreshes the catalog instead of reprovisioning when already connected", async () => {
+    const origConnect = hoxiAPI.connectOfficialAinodeProvider;
+    const origModels = hoxiAPI.fetchOfficialAinodeModels;
+    let connectCalled = false;
+    try {
+      setDesktopAuth({ isLoggedIn: true });
+      setWorkspace("hoxiProviders", { [OFFICIAL_PROVIDER_ID]: { name: "Hoxi Official", models: {} } });
+      setOfficialAinodeState({ loaded: false, loading: false, baseUrl: "", models: [], error: null });
+      hoxiAPI.connectOfficialAinodeProvider = async () => {
+        connectCalled = true;
+        return { authenticated: true, providerId: OFFICIAL_PROVIDER_ID, baseUrl: "", modelCount: 0, models: [] };
+      };
+      hoxiAPI.fetchOfficialAinodeModels = async () => ({
+        authenticated: true,
+        gatewayAvailable: true,
+        baseUrl: "https://api.ainode.run/v1",
+        models: [{ id: "m1", name: "M1", inputPointsPerM: 1, outputPointsPerM: 2, perCallPoints: 0 }],
+      });
+
+      await ensureOfficialProviderConnected();
+
+      assertEqual(connectCalled, false);
+      assertEqual(officialAinodeState.models.length, 1);
+    } finally {
+      hoxiAPI.connectOfficialAinodeProvider = origConnect;
+      hoxiAPI.fetchOfficialAinodeModels = origModels;
+      setWorkspace("hoxiProviders", {});
     }
   });
 });

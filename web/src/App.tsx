@@ -1,4 +1,4 @@
-import { createSignal, onCleanup, onMount } from "solid-js";
+import { createEffect, createSignal, onCleanup, onMount } from "solid-js";
 import ThreePaneShell from "./components/layout/ThreePaneShell";
 import { hoxiAPI } from "./services/api";
 import { connectEventStream } from "./services/sse";
@@ -10,7 +10,9 @@ import {
   applyManagedStatusSnapshot,
   applyStreamFrameBatch,
   bootstrapProjectSessions,
+  desktopAuth,
   drainNextQueuedPrompt,
+  ensureOfficialProviderConnected,
   handleIncomingPermissionRequest,
   hasStoredSurfaceMode,
   markPermissionResolved,
@@ -64,6 +66,14 @@ export default function App() {
   const [online, setOnline] = createSignal(typeof navigator === "undefined" || navigator.onLine);
   const [eventStreamStarted, setEventStreamStarted] = createSignal(false);
   let retryEventStream: (() => void) | undefined;
+
+  // Auto-provision the official Hoxi channel once the account is signed in so
+  // its models are always selectable in the model picker.
+  createEffect(() => {
+    if (desktopAuth.isLoggedIn) {
+      void ensureOfficialProviderConnected();
+    }
+  });
 
   onMount(() => {
     let disconnectStream: (() => void) | undefined;
@@ -131,6 +141,7 @@ export default function App() {
 
         // Kick off non-blocking background loads while awaiting saved workspaces & projects
         void loadProviders();
+        void ensureOfficialProviderConnected();
         void loadProviderTelemetry();
         void syncProviderBreakers();
         void loadAgents();

@@ -20,6 +20,7 @@ import {
   isCustomOrConfiguredProvider,
   isFavoriteModel,
   isNonChatUtilityModelID,
+  OFFICIAL_PROVIDER_ID,
   openProviderModal,
   peekAutoModelTarget,
   resolveFavoriteModelEntries,
@@ -193,6 +194,9 @@ export default function ModelSelector() {
       }
     }
     return Array.from(counts.values()).sort((a, b) => {
+      const aOff = a.id === OFFICIAL_PROVIDER_ID;
+      const bOff = b.id === OFFICIAL_PROVIDER_ID;
+      if (aOff !== bOff) return aOff ? -1 : 1;
       const aPrio = a.isRunner || a.isCustom;
       const bPrio = b.isRunner || b.isCustom;
       if (aPrio !== bPrio) return aPrio ? -1 : 1;
@@ -284,6 +288,9 @@ export default function ModelSelector() {
     }
     if (r === "free") {
       return [...freeConnectedModels()].sort((a, b) => {
+        const aOff = a.providerID === OFFICIAL_PROVIDER_ID;
+        const bOff = b.providerID === OFFICIAL_PROVIDER_ID;
+        if (aOff !== bOff) return aOff ? -1 : 1;
         const aFav = isFavoriteModel(a.providerID, a.modelID);
         const bFav = isFavoriteModel(b.providerID, b.modelID);
         if (aFav !== bFav) return aFav ? -1 : 1;
@@ -301,6 +308,9 @@ export default function ModelSelector() {
     }
     if (r === "connected") {
       return [...pool].sort((a, b) => {
+        const aOff = a.providerID === OFFICIAL_PROVIDER_ID;
+        const bOff = b.providerID === OFFICIAL_PROVIDER_ID;
+        if (aOff !== bOff) return aOff ? -1 : 1;
         const aFav = isFavoriteModel(a.providerID, a.modelID);
         const bFav = isFavoriteModel(b.providerID, b.modelID);
         if (aFav !== bFav) return aFav ? -1 : 1;
