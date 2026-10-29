@@ -316,7 +316,7 @@ func trustedTempRoots() []string {
 // isTempPathArg accepts an absolute path strictly below a temp root. The root
 // itself, and globs that start a segment there (`/tmp/*`), keep asking.
 func isTempPathArg(arg string) bool {
-	if !isAbsOrRootedPath(arg) || strings.ContainsAny(arg, "$[~") {
+	if !isAbsOrRootedPath(arg) || strings.HasPrefix(arg, "~") || strings.ContainsAny(arg, "$[") {
 		return false
 	}
 	for _, part := range strings.Split(filepath.ToSlash(arg), "/") {

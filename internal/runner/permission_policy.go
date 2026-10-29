@@ -39,7 +39,7 @@ var (
 	redirectWordRe   = regexp.MustCompile(`^(?:\d*|&)>>?$`)
 	devNullWordRe    = regexp.MustCompile(`^(?:\d*|&)>>?/dev/null$`)
 	dupStreamWordRe  = regexp.MustCompile(`^\d*>&[12]$`)
-	cdSegmentRe      = regexp.MustCompile(`^cd[ \t]+([A-Za-z0-9_./@%+,:][A-Za-z0-9_./@%+,:-]*)$`)
+	cdSegmentRe      = regexp.MustCompile(`^cd[ \t]+([A-Za-z0-9_./@%+,:][A-Za-z0-9_./@%+,:~-]*)$`)
 	findActionRe     = regexp.MustCompile(`^-(exec\w*|ok\w*|delete|fprint\w*|fls)$`)
 	fdExecRe         = regexp.MustCompile(`^(-[^-]*[xX]|--exec)`)
 	rgExecRe         = regexp.MustCompile(`^--(pre|hostname-bin)`)

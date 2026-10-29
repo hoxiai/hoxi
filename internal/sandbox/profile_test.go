@@ -28,7 +28,7 @@ type commandError struct {
 func (e *commandError) Error() string { return e.err.Error() + ": " + e.output }
 
 func TestProfileTextConfinesWritesAndNetwork(t *testing.T) {
-	workspace := t.TempDir()
+	workspace := resolvePathSymlinks(t.TempDir())
 	profile, err := DefaultProfile(workspace, NetworkDeny)
 	if err != nil {
 		t.Fatal(err)
@@ -367,7 +367,7 @@ func TestGitMetadataDirResolvesLinkedWorktree(t *testing.T) {
 }
 
 func TestProfileTextDeniesCredentialAgentSockets(t *testing.T) {
-	home := t.TempDir()
+	home := resolvePathSymlinks(t.TempDir())
 	t.Setenv("HOME", home)
 	t.Setenv("SSH_AUTH_SOCK", "/private/tmp/custom-agent.sock")
 	profile, err := DefaultProfile(t.TempDir(), NetworkAllow)
