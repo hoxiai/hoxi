@@ -3,6 +3,7 @@ import { tool } from "@opencode-ai/plugin";
 export function createComputerTool() {
   const args = {
     action: tool.schema.enum(["status", "apps", "state", "screenshot", "focus", "move", "click", "drag", "scroll", "type", "key"]),
+    app: tool.schema.string().max(256).optional(),
     windowID: tool.schema.string().max(64).optional(),
     observationID: tool.schema.string().max(64).optional(),
     elementID: tool.schema.number().int().min(1).max(300).optional(),
@@ -15,7 +16,7 @@ export function createComputerTool() {
   };
   const schema = tool.schema.object(args);
   return tool({
-    description: "Inspect and control the desktop app explicitly granted to this chat in Hoxi's Computer panel. Works with macOS and Windows. Use screenshot/state first; each element includes windowBounds (relative to the target window) and an id you can pass as elementID to click, move, scroll, or type without manual coordinate math. Manual x/y coordinates are relative to the window's bounds, not the scaled screenshot. Every input requires the returned windowID and observationID, and waits for Hoxi's desktop approval. Input consumes the observation; inspect again before the next action. No app grant, background execution, system settings, password input, or self-approval is permitted.",
+    description: "Inspect and control a running desktop app on macOS and Windows. Pass 'app' (app name like 'Calculator' or 'Safari', bundleID, or id from action='apps') on screenshot/state to target an app directly without requiring the user to pre-select it in the sidebar. Use screenshot/state first; each element includes windowBounds (relative to the target window) and an id you can pass as elementID to click, move, scroll, or type without manual coordinate math. Manual x/y coordinates are relative to the window's bounds, not the scaled screenshot. Every input requires the returned windowID and observationID, and consumes the observation; inspect again before the next action. Protected apps (Hoxi, System Settings, password managers) and password fields are blocked.",
     args,
     async execute(input, context) {
       if (!context.sessionID || !context.directory) throw new Error("Computer use requires a Hoxi session scope");

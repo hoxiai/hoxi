@@ -249,7 +249,13 @@ export default function ComputerInspector() {
                 class="min-w-0 flex-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-1.5 text-[12px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-border)]"
                 value={control.selected()}
                 aria-label={t("computer.targetApp")}
-                onChange={(event) => control.setSelected(event.currentTarget.value)}
+                onChange={(event) => {
+                  const val = event.currentTarget.value;
+                  control.setSelected(val);
+                  if (val && control.permissions()?.supported) {
+                    void control.authorize();
+                  }
+                }}
               >
                 <option value="">{t("computer.targetApp")}</option>
                 <For each={control.filteredApps()}>

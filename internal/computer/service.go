@@ -174,20 +174,48 @@ func (s *Service) Authorize(ctx context.Context, scope Scope, appID string) (*Gr
 func (s *Service) AuthorizeConfirmed(ctx context.Context, scope Scope, appID string, version uint64) (*Grant, error) {
 	return s.authorize(ctx, scope, appID, &version)
 }
-func (s *Service) authorize(ctx context.Context, scope Scope, appID string, version *uint64) (*Grant, error) {
+func (s *Service) ResolveApp(ctx context.Context, query string) (*App, error) {
+	q := strings.TrimSpace(query)
+	if q == "" {
+		return nil, errors.New("app_id_required")
+	}
 	apps, err := s.Apps(ctx)
 	if err != nil {
 		return nil, err
 	}
-	var target *App
 	for i := range apps {
-		if apps[i].ID == appID {
-			target = &apps[i]
-			break
+		if apps[i].ID == q {
+			if apps[i].Blocked {
+				return nil, errors.New("target_app_not_allowed")
+			}
+			return &apps[i], nil
 		}
 	}
-	if target == nil || target.Blocked {
-		return nil, errors.New("target_app_not_allowed")
+	for i := range apps {
+		if strings.EqualFold(apps[i].Name, q) || (apps[i].BundleID != "" && strings.EqualFold(apps[i].BundleID, q)) {
+			if apps[i].Blocked {
+				return nil, errors.New("target_app_not_allowed")
+			}
+			return &apps[i], nil
+		}
+	}
+	lower := strings.ToLower(q)
+	for i := range apps {
+		if apps[i].Blocked {
+			continue
+		}
+		if strings.Contains(strings.ToLower(apps[i].Name), lower) ||
+			strings.Contains(strings.ToLower(apps[i].BundleID), lower) ||
+			strings.Contains(strings.ToLower(filepath.Base(apps[i].Path)), lower) {
+			return &apps[i], nil
+		}
+	}
+	return nil, errors.New("target_app_not_allowed")
+}
+func (s *Service) authorize(ctx context.Context, scope Scope, appID string, version *uint64) (*Grant, error) {
+	target, err := s.ResolveApp(ctx, appID)
+	if err != nil {
+		return nil, err
 	}
 	permission, err := s.Permissions(ctx, "")
 	if err != nil {

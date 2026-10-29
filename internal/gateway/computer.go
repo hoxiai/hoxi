@@ -189,40 +189,38 @@ func (g *Gateway) handleComputer(w http.ResponseWriter, r *http.Request) {
 			AppID  string `json:"appID"`
 			Locale string `json:"locale,omitempty"`
 		}
-		if decodeComputerJSON(w, r, &req) != nil {
+		if decodeComputerJSON(w, r, &req) != nil || strings.TrimSpace(req.AppID) == "" {
 			writeJSONError(w, 400, "app_id_required")
 			return
 		}
-		apps, err := g.computer.Apps(ctx)
+		app, err := g.computer.ResolveApp(ctx, req.AppID)
 		if err != nil {
-			writeJSONError(w, 409, err.Error())
-			return
-		}
-		var app *computer.App
-		for i := range apps {
-			if apps[i].ID == req.AppID {
-				app = &apps[i]
-				break
+			status := 403
+			if err.Error() != "target_app_not_allowed" {
+				status = 409
 			}
-		}
-		if app == nil || app.Blocked {
-			writeJSONError(w, 403, "target_app_not_allowed")
+			writeJSONError(w, status, err.Error())
 			return
 		}
 		g.originMu.RLock()
 		confirm := g.confirmComputerApp
 		g.originMu.RUnlock()
-		if confirm == nil {
-			writeJSONError(w, 503, "native_desktop_app_confirmation_required")
+		if confirm != nil {
+			version := g.computer.AuthorizationVersion()
+			accepted, err := confirm(ctx, *app, scope, req.Locale)
+			if err != nil || !accepted || ctx.Err() != nil || version != g.computer.AuthorizationVersion() {
+				writeJSONError(w, 403, "app_permission_not_granted")
+				return
+			}
+			grant, err := g.computer.AuthorizeConfirmed(ctx, scope, app.ID, version)
+			if err != nil {
+				writeJSONError(w, 409, err.Error())
+				return
+			}
+			writeJSON(w, 200, map[string]any{"grant": grant})
 			return
 		}
-		version := g.computer.AuthorizationVersion()
-		accepted, err := confirm(ctx, *app, scope, req.Locale)
-		if err != nil || !accepted || ctx.Err() != nil || version != g.computer.AuthorizationVersion() {
-			writeJSONError(w, 403, "app_permission_not_granted")
-			return
-		}
-		grant, err := g.computer.AuthorizeConfirmed(ctx, scope, req.AppID, version)
+		grant, err := g.computer.Authorize(ctx, scope, app.ID)
 		if err != nil {
 			writeJSONError(w, 409, err.Error())
 			return
@@ -248,6 +246,7 @@ func (g *Gateway) handleComputer(w http.ResponseWriter, r *http.Request) {
 	case "action":
 		var req struct {
 			Action        string  `json:"action"`
+			App           string  `json:"app,omitempty"`
 			WindowID      string  `json:"windowID,omitempty"`
 			ObservationID string  `json:"observationID,omitempty"`
 			ElementID     int     `json:"elementID,omitempty"`
@@ -278,6 +277,20 @@ func (g *Gateway) handleComputer(w http.ResponseWriter, r *http.Request) {
 			}
 			writeJSON(w, 200, map[string]any{"apps": apps})
 			return
+		}
+		if targetQuery := strings.TrimSpace(req.App); targetQuery != "" {
+			current := g.computer.Current(scope)
+			target, err := g.computer.ResolveApp(ctx, targetQuery)
+			if err != nil {
+				writeJSONError(w, 403, err.Error())
+				return
+			}
+			if current == nil || current.App.ID != target.ID {
+				if _, err := g.computer.Authorize(ctx, scope, target.ID); err != nil {
+					writeJSONError(w, 409, err.Error())
+					return
+				}
+			}
 		}
 		if req.Action == "state" || req.Action == "screenshot" {
 			snapshot, err := g.computer.Observe(ctx, scope, req.WindowID, req.Action == "screenshot")

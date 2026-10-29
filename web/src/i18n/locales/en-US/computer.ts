@@ -18,7 +18,7 @@ export const computer = {
   resetPermissionHint: "Already turned on in System Settings but still showing Required? (Common after an app update or dev rebuild.) Click “Reset & re-authorize” to refresh macOS authorization in one click",
   windowsHint: "Keep Windows unlocked and the target app visible; protected or elevated windows may reject input",
   selectSession: "Select a chat before authorizing a desktop app",
-  disclosure: "The authorized app’s visible contents and screenshots will be sent to this chat’s selected model. Input can change apps and files outside the worktree; each AI input needs approval in Hoxi",
+  disclosure: "You can tell the AI directly in chat which app to control (no need to pre-select here), or switch the target app below in one click; input actions follow the session’s approval policy and support “Always allow”",
   targetApp: "Choose a running app",
   protectedApp: "Protected",
   refreshApps: "Refresh",

@@ -49,13 +49,13 @@ func TestComputerApprovalOnlyAcceptsDesktopOnceAndIsCancelable(t *testing.T) {
 	if id == "" {
 		t.Fatal("computer action did not enter shared permission plane")
 	}
-	for _, reply := range []struct{ body, source string }{{`{"reply":"always"}`, "desktop"}, {`{"reply":"once"}`, "tunnel"}} {
+	for _, reply := range []struct{ body, source string }{{`{"reply":"once","grantClass":true}`, "desktop"}, {`{"reply":"once"}`, "tunnel"}, {`{"reply":"always"}`, "tunnel"}} {
 		request := httptest.NewRequest("POST", "/api/hoxi/permission/"+id+"/reply", strings.NewReader(reply.body))
 		request.Header.Set(ApprovalSourceHeader, reply.source)
 		w := httptest.NewRecorder()
 		f.svc.replyRunnerPermission(w, request, id)
 		if w.Code != http.StatusForbidden {
-			t.Fatal("non-desktop or persistent computer approval accepted", w.Code, w.Body.String())
+			t.Fatal("non-desktop or class computer approval accepted", w.Code, w.Body.String())
 		}
 	}
 	f.svc.CancelComputerApprovals("ses_agy_gate")
@@ -66,6 +66,41 @@ func TestComputerApprovalOnlyAcceptsDesktopOnceAndIsCancelable(t *testing.T) {
 		}
 	case <-ctx.Done():
 		t.Fatal("stop did not clear pending computer approval")
+	}
+
+	// Verify desktop "always" grants session-scoped auto-approval and is cleared on cancel.
+	doneAlways := make(chan bool, 1)
+	go func() {
+		allowed, _ := f.svc.RequestComputerApproval(ctx, "ses_agy_gate", f.dir, "Fixture", map[string]any{"action": "click"})
+		doneAlways <- allowed
+	}()
+	id = ""
+	for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); {
+		f.svc.gate.mu.Lock()
+		for key, pending := range f.svc.gate.pending {
+			if permissionName(pending.req) == "hoxi_computer" {
+				id = key
+			}
+		}
+		f.svc.gate.mu.Unlock()
+		if id != "" {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	reqAlways := httptest.NewRequest("POST", "/api/hoxi/permission/"+id+"/reply", strings.NewReader(`{"reply":"always"}`))
+	reqAlways.Header.Set(ApprovalSourceHeader, "desktop")
+	wAlways := httptest.NewRecorder()
+	f.svc.replyRunnerPermission(wAlways, reqAlways, id)
+	if wAlways.Code != http.StatusOK || !<-doneAlways {
+		t.Fatal("desktop always approval failed", wAlways.Code, wAlways.Body.String())
+	}
+	if auto, err := f.svc.RequestComputerApproval(ctx, "ses_agy_gate", f.dir, "Fixture", map[string]any{"action": "type"}); err != nil || !auto {
+		t.Fatalf("expected subsequent computer action to auto-approve after always, got auto=%v err=%v", auto, err)
+	}
+	f.svc.CancelComputerApprovals("ses_agy_gate")
+	if f.svc.gate.hasToolAlways("ses_agy_gate", computerSessionGrantKey("Fixture")) {
+		t.Fatal("CancelComputerApprovals did not clear session always grant")
 	}
 }
 

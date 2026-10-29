@@ -22,7 +22,7 @@ test("computer tool keeps authority in Go and sends only scoped actions", async 
     calls.push({ url, options });
     return Response.json({ windowID: "window-one", observationID: "opaque", image: "image-bytes" });
   };
-  const result = await execute({ action: "screenshot", sessionID: "spoof", directory: "/other", grant: true, manual: false }, context);
+  const result = await execute({ action: "screenshot", app: "Calculator", sessionID: "spoof", directory: "/other", grant: true, manual: false }, context);
   assert.equal(calls[0].url.pathname, "/api/hoxi/computer/action");
   assert.equal(calls[0].url.searchParams.get("sessionID"), context.sessionID);
   assert.equal(calls[0].url.searchParams.get("directory"), context.directory);
@@ -30,7 +30,7 @@ test("computer tool keeps authority in Go and sends only scoped actions", async 
   assert.equal(calls[0].options.headers["X-Hoxi-Agent"], "true");
   assert.equal(calls[0].options.signal, context.abort);
   assert.equal(calls[0].options.redirect, "error");
-  assert.deepEqual(JSON.parse(calls[0].options.body), { action: "screenshot" });
+  assert.deepEqual(JSON.parse(calls[0].options.body), { action: "screenshot", app: "Calculator" });
   assert.equal(result.output.includes("image-bytes"), false);
   assert.equal(result.attachments[0].url, "data:image/jpeg;base64,image-bytes");
   await execute({ action: "click", observationID: "fresh", windowID: "one", x: 5, y: 8 }, context);

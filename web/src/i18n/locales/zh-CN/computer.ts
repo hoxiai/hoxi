@@ -18,7 +18,7 @@ export const computer = {
   resetPermissionHint: "如果系统设置里开关已经打开却仍显示「待授权」（常见于版本更新或开发编译后签名变化），请点击「一键重置并重新授权」自动刷新 macOS 权限记录",
   windowsHint: "请保持 Windows 已解锁且目标应用可见，受保护或管理员权限窗口可能拒绝输入",
   selectSession: "请先选择会话，再授权桌面应用",
-  disclosure: "授权应用的可读界面和截图会发送给当前会话选择的模型，输入操作可以影响工作树以外的应用和文件，每次 AI 输入都需在 Hoxi 中审批",
+  disclosure: "你可以在对话里直接告诉 AI 要控制哪个应用（无需提前在此选择），也可以在下方一键切换目标应用；输入操作跟随当前会话的审批模式，并支持「始终允许」",
   targetApp: "选择运行中的应用",
   protectedApp: "受保护",
   refreshApps: "刷新应用",
