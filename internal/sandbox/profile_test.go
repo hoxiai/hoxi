@@ -369,7 +369,8 @@ func TestGitMetadataDirResolvesLinkedWorktree(t *testing.T) {
 func TestProfileTextDeniesCredentialAgentSockets(t *testing.T) {
 	home := resolvePathSymlinks(t.TempDir())
 	t.Setenv("HOME", home)
-	t.Setenv("SSH_AUTH_SOCK", "/private/tmp/custom-agent.sock")
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("SSH_AUTH_SOCK", filepath.Join(home, "custom-agent.sock"))
 	profile, err := DefaultProfile(t.TempDir(), NetworkAllow)
 	if err != nil {
 		t.Fatal(err)
