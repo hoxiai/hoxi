@@ -18,12 +18,30 @@ func TestLeaderboardServiceFallback(t *testing.T) {
 		t.Fatalf("expected fallback items, got: %+v", lb)
 	}
 
-	gw, err := svc.GetConnectableGateways()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if _, err := svc.GetConnectableGateways(); err == nil {
+		t.Fatal("expected gateway directory to fail without a live server instead of serving a local fallback")
 	}
-	if gw.Code != 200 || gw.Data == nil || len(gw.Data.Items) == 0 || !gw.Data.Items[0].CanOneClickConnect {
-		t.Fatalf("expected fallback self-operated gateway item, got: %+v", gw)
+}
+
+func TestConnectableGatewaysAlwaysHitsUpstream(t *testing.T) {
+	hits := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		json.NewEncoder(w).Encode(GatewaysResponse{Code: 200, Data: &GatewaysData{
+			Total: 1,
+			Items: []GatewayItem{{ID: "hoxi-gateway", Name: "Hoxi Gateway", BaseURL: "https://api.hoxi.ai/v1"}},
+		}})
+	}))
+	defer server.Close()
+
+	svc := NewService(server.URL, server.Client())
+	for i := 1; i <= 3; i++ {
+		if _, err := svc.GetConnectableGateways(); err != nil {
+			t.Fatalf("call %d: unexpected error: %v", i, err)
+		}
+		if hits != i {
+			t.Fatalf("call %d: expected %d upstream hits (no caching), got %d", i, i, hits)
+		}
 	}
 }
 

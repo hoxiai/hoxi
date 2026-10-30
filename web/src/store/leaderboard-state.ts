@@ -68,7 +68,11 @@ export async function fetchGateways() {
     const items = await leaderboardAPI.getConnectableGateways(currentLangParam());
     setLeaderboardState({ gateways: items, loading: false });
   } catch (err: any) {
-    setLeaderboardState({ error: err?.message || "Failed to load gateways", loading: false });
+    setLeaderboardState({
+      gateways: [],
+      error: err?.message || "Failed to load gateways",
+      loading: false,
+    });
   }
 }
 

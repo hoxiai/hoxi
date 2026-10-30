@@ -87,6 +87,7 @@ func (h *HTTPHandler) handleGateways(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	w.Header().Set("Cache-Control", "no-store")
 	lang := r.URL.Query().Get("lang")
 	res, err := h.svc.GetConnectableGateways(lang)
 	if err != nil {

@@ -115,37 +115,35 @@ func isSelfOperatedGateway(item GatewayItem) bool {
 	return id == "hoxi-gateway" || strings.HasPrefix(id, "hoxi-gateway-")
 }
 
+// GetConnectableGateways always fetches the live recommendation directory from
+// the official site. It is deliberately never cached, locally or in memory, so
+// the list the desktop shows cannot drift from what the server recommends.
 func (s *Service) GetConnectableGateways(lang ...string) (*GatewaysResponse, error) {
 	normLang := normalizeLang(lang...)
-	cacheKey := fmt.Sprintf("connectable_gateways_%s", normLang)
-
-	s.mu.RLock()
-	if entry, ok := s.cache[cacheKey]; ok && time.Now().Before(entry.expiresAt) {
-		s.mu.RUnlock()
-		return entry.data.(*GatewaysResponse), nil
-	}
-	s.mu.RUnlock()
 
 	endpoint := fmt.Sprintf("%s/api/hoxi/gateways/connectable?lang=%s", s.baseURL, url.QueryEscape(normLang))
 	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
 	if err != nil {
-		return s.fallbackGateways(normLang), nil
+		return nil, err
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", buildinfo.UserAgent())
 
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return s.fallbackGateways(normLang), nil
+		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return s.fallbackGateways(normLang), nil
+		return nil, fmt.Errorf("gateway directory returned status %d", resp.StatusCode)
 	}
 
 	var result GatewaysResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil || result.Data == nil {
-		return s.fallbackGateways(normLang), nil
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+	if result.Data == nil {
+		return nil, fmt.Errorf("gateway directory returned no data")
 	}
 	// Only self-operated gateways support desktop one-click OAuth & automatic key provisioning.
 	for i := range result.Data.Items {
@@ -163,13 +161,6 @@ func (s *Service) GetConnectableGateways(lang ...string) (*GatewaysResponse, err
 		item.CanOneClickConnect = false
 		item.AuthURL = ""
 	}
-
-	s.mu.Lock()
-	s.cache[cacheKey] = cachedEntry{
-		data:      &result,
-		expiresAt: time.Now().Add(s.cacheTTL),
-	}
-	s.mu.Unlock()
 
 	return &result, nil
 }
@@ -270,50 +261,6 @@ func (s *Service) fallbackLeaderboard(dimension string, limit int, lang string) 
 			UpdatedAt: "2026-08-27",
 			Total:     len(items),
 			Items:     items,
-		},
-	}
-}
-
-func (s *Service) fallbackGateways(lang string) *GatewaysResponse {
-	isZh := lang == "zh"
-	name := "Hoxi Gateway"
-	badge := "Official Pick · 1-Click Auth"
-	features := []string{"Low-latency direct routing", "100% full-weight thinking mode", "Instant top-up", "Never-expiring balance"}
-	caveat := "Enterprise-grade dedicated upstream channels with 1-click OAuth to Hoxi Desktop"
-	if isZh {
-		name = "Hoxi 官方网关"
-		badge = "自营推荐 · 一键直连"
-		features = []string{"国内双线直连", "支持 100% 满血思考模式", "微信/支付宝充值", "余额永不过期"}
-		caveat = "只做高质量企业专线，支持一键免密授权接入 Hoxi 桌面端"
-	}
-	return &GatewaysResponse{
-		Code:    200,
-		Message: "ok (cached offline fallback)",
-		Data: &GatewaysData{
-			Total: 1,
-			Items: []GatewayItem{
-				{
-					ID:                 "hoxi-gateway",
-					Name:               name,
-					Domain:             "hoxi.ai",
-					URL:                "https://api.hoxi.ai",
-					BaseURL:            "https://api.hoxi.ai/v1",
-					IsSelfOperated:     true,
-					CanOneClickConnect: true,
-					Badge:              badge,
-					BadgeTone:          "positive",
-					SavingsPercent:     87,
-					PriceLabel:         "¥2.80 / M",
-					OfficialPriceCNY:   21.8,
-					LatencyMs:          280,
-					Uptime:             "99.99%",
-					Models:             []string{"claude-sonnet-4-5", "deepseek-r1", "gpt-4o", "gemini-2.5-flash"},
-					RecommendedModels:  []string{"claude-sonnet-4-5", "gpt-4o", "gemini-2.5-flash", "deepseek-r1"},
-					Features:           features,
-					Caveat:             caveat,
-					AuthURL:            "https://hoxi.ai/auth/authorize-desktop?gateway=hoxi-gateway",
-				},
-			},
 		},
 	}
 }
