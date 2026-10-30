@@ -270,17 +270,17 @@ func TestBranchesCheckoutRenameApplyMergeAndPrune(t *testing.T) {
 		t.Fatalf("expected error for invalid branch name")
 	}
 
-	// Uncommitted change in s1 applied via "merge" mode
+	// Uncommitted change in s1 applied via "merge" mode with custom commit message
 	_ = os.WriteFile(filepath.Join(s1.Directory, "merged.txt"), []byte("from merge\n"), 0o644)
-	if err := mgr.Apply("ses_b1", "merge"); err != nil {
-		t.Fatalf("Apply(merge) failed: %v", err)
+	if err := mgr.ApplyWithMessage("ses_b1", "merge", "feat: custom sandbox merge"); err != nil {
+		t.Fatalf("ApplyWithMessage(merge) failed: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(repoDir, "merged.txt")); err != nil {
 		t.Fatalf("expected merged.txt in main repo after merge apply: %v", err)
 	}
 	mergeBody, err := RunGit(repoDir, "log", "-1", "--format=%B")
-	if err != nil || !strings.Contains(mergeBody, HoxiCoAuthorTrailer) {
-		t.Fatalf("expected merge commit message to contain %q, got %q (err=%v)", HoxiCoAuthorTrailer, mergeBody, err)
+	if err != nil || !strings.Contains(mergeBody, "feat: custom sandbox merge") || !strings.Contains(mergeBody, HoxiCoAuthorTrailer) {
+		t.Fatalf("expected merge commit message to contain custom message and %q, got %q (err=%v)", HoxiCoAuthorTrailer, mergeBody, err)
 	}
 
 	// CheckoutBranch create=true and existing

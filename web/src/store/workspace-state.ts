@@ -259,6 +259,7 @@ export interface WorkspaceState {
   pendingPermissions: PermissionRequest[];
   pendingQuestions: QuestionRequest[];
   dismissedPlanFollowups: Record<string, boolean>;
+  dismissedSandboxMergePrompts: Record<string, boolean>;
   providerTelemetry: Record<string, ProviderTelemetryStats>;
   observerModel: string;
   observerAutoAudit: boolean;
@@ -505,6 +506,7 @@ export const [workspace, setWorkspace] = createStore<WorkspaceState>({
   pendingPermissions: [],
   pendingQuestions: [],
   dismissedPlanFollowups: {},
+  dismissedSandboxMergePrompts: {},
   providerTelemetry: initialProviderTelemetry(),
   observerModel: initialObserverModel(),
   observerAutoAudit: initialObserverAutoAudit(),

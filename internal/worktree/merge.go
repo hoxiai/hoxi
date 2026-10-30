@@ -133,3 +133,93 @@ func sameRootPath(left, right string) bool {
 	}
 	return filepath.Clean(leftCanonical) == filepath.Clean(rightCanonical)
 }
+
+func (m *worktreeManager) Apply(sessionID, mode string) error {
+	return m.ApplyWithMessage(sessionID, mode, "")
+}
+
+func (m *worktreeManager) ApplyWithMessage(sessionID, mode, message string) error {
+	sessionID = sanitizeSessionID(sessionID)
+	m.roots.Lock()
+	guard := m.roots.applyGuard
+	m.roots.Unlock()
+	apply := func() error { return m.apply(sessionID, mode, message) }
+	if guard != nil {
+		return guard(sessionID, apply)
+	}
+	return apply()
+}
+
+func (m *worktreeManager) apply(sessionID, mode, message string) error {
+	m.ops.Lock()
+	defer m.ops.Unlock()
+	sessionID = sanitizeSessionID(sessionID)
+	m.mu.RLock()
+	meta, ok := m.sessions[sessionID]
+	m.mu.RUnlock()
+	if !ok {
+		candidate := filepath.Join(m.rootDir, ".hoxi", "worktrees", sessionID)
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			br, _ := runGit(candidate, "rev-parse", "--abbrev-ref", "HEAD")
+			if br == "" {
+				br = "hoxi/" + sessionID
+			}
+			meta = worktreeMeta{
+				SessionID: sessionID,
+				Isolated:  true,
+				Directory: candidate,
+				Branch:    br,
+			}
+			ok = true
+		}
+	}
+	if !ok || !meta.Isolated {
+		return errors.New("session does not have an isolated worktree")
+	}
+	if branch, err := runGit(meta.Directory, "symbolic-ref", "--short", "HEAD"); err == nil {
+		meta.Branch = branch
+	}
+
+	if err := snapshotWorktreeWithMessage(meta.Directory, sessionID, message); err != nil {
+		return err
+	}
+	defer func() {
+		globalRepoDiffCache.invalidate(meta.Directory)
+		globalRepoDiffCache.invalidate(m.rootDir)
+	}()
+
+	if mode == "merge" {
+		// Resolve attribution against the session worktree that produced the
+		// change, not the project repo the merge commit lands in.
+		mergeMsg := strings.TrimSpace(message)
+		if mergeMsg == "" {
+			mergeMsg = "Merge hoxi session " + sessionID
+		}
+		_, err := runGit(m.rootDir, "merge", "--no-ff", "-m", appendHoxiCoAuthorFor(meta.Directory, mergeMsg), meta.Branch)
+		return err
+	}
+
+	// Default mode: "patch" — applies changes cleanly onto main workspace without polluting commit history
+	base, err := runGit(m.rootDir, "merge-base", "HEAD", meta.Branch)
+	if err != nil || strings.TrimSpace(base) == "" {
+		return fmt.Errorf("resolve apply base: %v", err)
+	}
+	diffPatch, err := runGitRaw(meta.Directory, "diff", "--binary", strings.TrimSpace(base)+"..HEAD")
+	if err != nil {
+		return fmt.Errorf("generate worktree patch: %w", err)
+	}
+	if strings.TrimSpace(diffPatch) == "" {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), gitCommandTimeout)
+	defer cancel()
+	cmd := subproc.CommandContext(ctx, "git", "-C", m.rootDir, "apply", "--3way", "-")
+	cmd.Env = nonInteractiveGitEnv()
+	cmd.Stdin = strings.NewReader(diffPatch)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git apply --3way failed: %s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}

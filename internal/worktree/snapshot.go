@@ -33,6 +33,10 @@ func isIgnoredUntrackedWorktreePath(rel string) bool {
 }
 
 func snapshotWorktree(dir, sessionID string) error {
+	return snapshotWorktreeWithMessage(dir, sessionID, "")
+}
+
+func snapshotWorktreeWithMessage(dir, sessionID, customMessage string) error {
 	statusOut, err := runGit(dir, "status", "--porcelain")
 	if err != nil {
 		return fmt.Errorf("read worktree status: %w", err)
@@ -43,7 +47,11 @@ func snapshotWorktree(dir, sessionID string) error {
 	if _, err = runGit(dir, "add", "-A"); err != nil {
 		return fmt.Errorf("stage worktree snapshot: %w", err)
 	}
-	if _, err = runGit(dir, "commit", "-m", appendHoxiCoAuthorFor(dir, "chore(hoxi): snapshot before apply ("+sessionID+")")); err != nil {
+	msg := strings.TrimSpace(customMessage)
+	if msg == "" {
+		msg = "chore(hoxi): snapshot before apply (" + sessionID + ")"
+	}
+	if _, err = runGit(dir, "commit", "-m", appendHoxiCoAuthorFor(dir, msg)); err != nil {
 		return fmt.Errorf("commit worktree snapshot: %w", err)
 	}
 	return nil

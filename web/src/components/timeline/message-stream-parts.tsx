@@ -52,8 +52,8 @@ import ExecutionWaitingIndicator from "./ExecutionWaitingIndicator";
 import { formatElapsedSeconds } from "./duration-label";
 import StalledNotice from "./StalledNotice";
 import ChangedFilesSummary from "./ChangedFilesSummary";
+import SandboxMergePromptCard from "./SandboxMergePromptCard";
 import TurnTelemetryPopover from "./TurnTelemetryPopover";
-
 
 export {
   ActionIconButton,
@@ -587,24 +587,20 @@ export function AssistantTurnFooter(props: {
               }
             />
 
+            <Show when={isLatestExchange() && !interruptMode()}>
+              <SandboxMergePromptCard
+                sessionID={props.info.sessionID}
+                messageID={props.info.id}
+                changedFiles={summary().changedFiles}
+              />
+            </Show>
+
             <div class="flex items-center gap-2 flex-wrap text-[12px] text-[var(--text-faint)]">
               <Show when={interruptMode()}>
                 {(mode) => (
-                  <span
-                    class={`inline-flex items-center gap-1 font-medium ${
-                      mode() === "paused"
-                        ? "text-[var(--warn-text)]"
-                        : "text-[var(--danger-text)]"
-                    }`}
-                  >
-                    <span class="font-mono text-[11px] leading-none">
-                      {mode() === "paused" ? "⏸" : "■"}
-                    </span>
-                    <span>
-                      {mode() === "paused"
-                        ? t("timeline.turnPaused")
-                        : t("timeline.turnStopped")}
-                    </span>
+                  <span class={`inline-flex items-center gap-1 font-medium ${mode() === "paused" ? "text-[var(--warn-text)]" : "text-[var(--danger-text)]"}`}>
+                    <span class="font-mono text-[11px] leading-none">{mode() === "paused" ? "⏸" : "■"}</span>
+                    <span>{mode() === "paused" ? t("timeline.turnPaused") : t("timeline.turnStopped")}</span>
                   </span>
                 )}
               </Show>
@@ -627,7 +623,6 @@ export function AssistantTurnFooter(props: {
                   <span class="text-[11px] leading-none">▶</span>
                   <span>{t("timeline.resume")}</span>
                 </button>
-
                 <button
                   type="button"
                   onClick={() => void retryLastUserPrompt(props.info.sessionID)}
@@ -645,32 +640,17 @@ export function AssistantTurnFooter(props: {
               <div class="pointer-events-none flex items-center gap-2 opacity-0 transition-opacity duration-150 motion-reduce:transition-none group-hover/turn:pointer-events-auto group-hover/turn:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
                 <Show when={summary().finalText.length > 0}>
                   <div class="flex items-center gap-1">
-                    <ActionIconButton
-                      label={copied() ? t("common.copied") : t("common.copy")}
-                      onClick={() => void copyResponse()}
-                    >
+                    <ActionIconButton label={copied() ? t("common.copied") : t("common.copy")} onClick={() => void copyResponse()}>
                       <Show when={copied()} fallback={<Icon name="copy" size="small" />}>
                         <Icon name="check" size="small" class="text-[var(--ok-text)]" />
                       </Show>
                     </ActionIconButton>
-
-                    <ActionIconButton
-                      label={
-                        downloaded()
-                          ? t("timeline.downloadedMarkdown")
-                          : t("timeline.downloadMarkdown")
-                      }
-                      onClick={downloadMarkdown}
-                    >
+                    <ActionIconButton label={downloaded() ? t("timeline.downloadedMarkdown") : t("timeline.downloadMarkdown")} onClick={downloadMarkdown}>
                       <Show when={downloaded()} fallback={<Icon name="download" size="small" />}>
                         <Icon name="check" size="small" class="text-[var(--ok-text)]" />
                       </Show>
                     </ActionIconButton>
-
-                    <ActionIconButton
-                      label={linkCopied() ? t("common.copied") : t("commandPalette.actionCopySessionLink")}
-                      onClick={() => void copyLink()}
-                    >
+                    <ActionIconButton label={linkCopied() ? t("common.copied") : t("commandPalette.actionCopySessionLink")} onClick={() => void copyLink()}>
                       <Show when={linkCopied()} fallback={<Icon name="link" size="small" />}>
                         <Icon name="check" size="small" class="text-[var(--ok-text)]" />
                       </Show>
@@ -681,10 +661,7 @@ export function AssistantTurnFooter(props: {
                 <Show when={durationLabel()}>
                   <TurnTelemetryPopover
                     durationLabel={durationLabel()}
-                    durationMs={Math.max(
-                      0,
-                      (summary().completed || 0) - (summary().created || 0)
-                    )}
+                    durationMs={Math.max(0, (summary().completed || 0) - (summary().created || 0))}
                     providerID={summary().providerID}
                     modelID={summary().modelID}
                     toolCount={summary().toolCount}

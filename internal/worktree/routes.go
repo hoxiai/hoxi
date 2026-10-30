@@ -94,6 +94,7 @@ func (m *worktreeManager) registerRoutes(mux *http.ServeMux) {
 		var body struct {
 			SessionID string `json:"sessionID"`
 			Mode      string `json:"mode"`
+			Message   string `json:"message"`
 			Directory string `json:"directory"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -104,7 +105,7 @@ func (m *worktreeManager) registerRoutes(mux *http.ServeMux) {
 		if !m.checkSessionDirectory(w, body.SessionID, body.Directory, r.URL.Query().Get("directory")) {
 			return
 		}
-		if err := m.scoped(dir, body.SessionID).Apply(body.SessionID, body.Mode); err != nil {
+		if err := m.scoped(dir, body.SessionID).ApplyWithMessage(body.SessionID, body.Mode, body.Message); err != nil {
 			writeJSONError(w, http.StatusInternalServerError, err.Error())
 			return
 		}

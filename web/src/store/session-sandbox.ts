@@ -235,9 +235,10 @@ export async function switchActiveSessionSandboxMode(mode: "local" | "worktree")
 
 export async function applySessionWorktree(
   sessionID: string,
-  mode: "patch" | "merge" = "patch"
+  mode: "patch" | "merge" = "patch",
+  message?: string
 ): Promise<void> {
-  await hoxiAPI.applyWorktree(sessionID, mode);
+  await hoxiAPI.applyWorktree(sessionID, mode, message);
   await refreshWorktreeStatus(sessionID);
   await refreshWorktreeStatus("__root__");
 }
@@ -245,10 +246,16 @@ export async function applySessionWorktree(
 export async function applyAndExitSessionWorktree(
   sessionID: string,
   mode: "patch" | "merge" = "patch",
-  keepBranch = false
+  keepBranch = false,
+  message?: string
 ): Promise<void> {
-  await hoxiAPI.applyWorktree(sessionID, mode);
+  await hoxiAPI.applyWorktree(sessionID, mode, message);
   await exitSessionWorktree(sessionID, keepBranch);
+}
+
+export function dismissSandboxMergePrompt(dismissKey: string): void {
+  if (!dismissKey) return;
+  setWorkspace("dismissedSandboxMergePrompts", dismissKey, true);
 }
 
 export async function renameSessionBranch(sessionID: string, newBranch: string): Promise<string> {

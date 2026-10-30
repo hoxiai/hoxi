@@ -655,8 +655,8 @@ export const hoxiAPI = {
     const q = `sessionID=${encodeURIComponent(sessionID)}&file=${encodeURIComponent(file)}${directory ? `&directory=${encodeURIComponent(directory)}` : ""}`;
     return requestJSON(`/api/hoxi/worktree/diff?${q}`);
   },
-  applyWorktree(sessionID: string, mode: "patch" | "merge" = "patch"): Promise<{ ok: boolean }> {
-    return requestJSON("/api/hoxi/worktree/apply", { method: "POST", body: JSON.stringify({ sessionID, mode }) });
+  applyWorktree(sessionID: string, mode: "patch" | "merge" = "patch", message?: string): Promise<{ ok: boolean }> {
+    return requestJSON("/api/hoxi/worktree/apply", { method: "POST", body: JSON.stringify({ sessionID, mode, ...(message?.trim() ? { message: message.trim() } : {}) }) });
   },
   syncWorktree(sessionID: string, directory?: string): Promise<WorktreeStatus> {
     return requestJSON("/api/hoxi/worktree/sync", { method: "POST", body: JSON.stringify({ sessionID, ...(directory ? { directory } : {}) }) });
