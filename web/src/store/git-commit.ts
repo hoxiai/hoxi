@@ -10,7 +10,7 @@ import { canSteerSession } from "./session-capabilities";
 import { workspace, type SelectedModel } from "./workspace-state";
 import { activeDirectory, isSessionBusy, sessionDirectory } from "./session-query";
 import { submitSessionPrompt } from "./session-goal";
-import { refreshWorktreeStatus } from "./session-diffs";
+import { collectSessionTouchedPaths, refreshWorktreeStatus } from "./session-diffs";
 import { loadSessionMessages, loadSessionMessagesOnly } from "./workspace-sessions";
 
 export const COMMIT_MODEL_STORAGE_KEY = "hoxi-commit-model:v1";
@@ -338,7 +338,7 @@ export function canQuickCommitSession(sessionID?: string | null): boolean {
 
 export async function executeTaskCommitAndPush(
   sessionID?: string | null,
-  options?: { push?: boolean; customMessage?: string }
+  options?: { push?: boolean; customMessage?: string; files?: string[] }
 ): Promise<string> {
   const activeID = sessionID ?? workspace.activeSessionID;
   if (!activeID || activeID === "__root__") {
@@ -347,11 +347,20 @@ export async function executeTaskCommitAndPush(
   const directory = sessionDirectory(activeID);
   if (!directory) throw new Error(t("timeline.gitSessionRequired"));
   const customMessage = options?.customMessage?.trim();
+  const explicitFiles = Array.isArray(options?.files)
+    ? Array.from(new Set(options.files.map((f) => f.trim()).filter(Boolean)))
+    : [];
+  const targetFiles = explicitFiles.length > 0
+    ? explicitFiles
+    : collectSessionTouchedPaths(activeID, workspace.messagesBySession, directory);
   const cheapModel = canSteerSession(activeID)
     ? resolveEffectiveCommitModel() || undefined
     : undefined;
   const prompt = [
     t("timeline.gitAgentCommitPrompt", { directory: JSON.stringify(directory) }),
+    targetFiles.length > 0
+      ? t("timeline.gitAgentCommitFilesPrompt", { files: JSON.stringify(targetFiles) })
+      : "",
     t(options?.push === false ? "timeline.gitAgentCommitOnlyPrompt" : "timeline.gitAgentCommitPushPrompt"),
     customMessage ? t("timeline.gitAgentCommitMessagePrompt", { message: JSON.stringify(customMessage) }) : "",
   ].filter(Boolean).join("\n\n");

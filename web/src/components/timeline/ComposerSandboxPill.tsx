@@ -19,6 +19,7 @@ import {
   fetchSandboxSession,
   openDiffInInspector,
   refreshWorktreeStatus,
+  uncommittedSessionFiles,
   workspace,
 } from "../../store/workspace";
 import { t } from "../../i18n";
@@ -121,7 +122,11 @@ export function ComposerSandboxPill(props: {
     setErrorMsg(null);
     setToastMsg(null);
     try {
-      await executeTaskCommitAndPush(props.sessionID, { push });
+      const files = uncommittedSessionFiles(props.sessionID).map((d) => d.file);
+      await executeTaskCommitAndPush(props.sessionID, {
+        push,
+        ...(files.length > 0 ? { files } : {}),
+      });
       setToastMsg(t("timeline.gitTaskRequested"));
       setTimeout(() => setToastMsg(null), 4000);
     } catch (err: any) {

@@ -399,6 +399,7 @@ export const timeline = {
   gitTaskRequested: "Sent to AI. Follow progress in the conversation.",
   gitAgentCommitHint: "The session AI reviews and commits the changes; results appear in the conversation.",
   gitAgentCommitPrompt: "In {directory}, check `git status`, stage and commit the current changes. Do not use `--no-verify` or `--force`, and briefly report the result.",
+  gitAgentCommitFilesPrompt: "This change only involves the following files (stage and commit only these files; do not stage or inspect unrelated changes in the working tree): {files}",
   gitAgentCommitOnlyPrompt: "Commit locally only; do not push.",
   gitAgentCommitPushPrompt: "Run `git push` after committing.",
   gitAgentCommitMessagePrompt: "Use this exact commit message text: {message}",

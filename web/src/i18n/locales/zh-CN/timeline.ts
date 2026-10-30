@@ -395,6 +395,7 @@ export const timeline: TimelineI18n = {
   gitTaskRequested: "已交给 AI 处理，请在对话中查看进度",
   gitAgentCommitHint: "由当前会话 AI 审查并提交改动，结果显示在对话中",
   gitAgentCommitPrompt: "请在目录 {directory} 下查看 `git status`，暂存并提交本次修改。不要使用 `--no-verify` 或 `--force`，完成后简报结果",
+  gitAgentCommitFilesPrompt: "本次修改仅涉及以下文件（请只暂存并提交这些文件，不要暂存或检查工作区中的其他无关改动）：{files}",
   gitAgentCommitOnlyPrompt: "仅本地提交，不要推送",
   gitAgentCommitPushPrompt: "提交后执行 `git push` 推送到远端",
   gitAgentCommitMessagePrompt: "使用以下精确文本作为提交说明：{message}",

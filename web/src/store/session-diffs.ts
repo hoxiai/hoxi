@@ -300,15 +300,13 @@ function normalizeSessionRelPath(raw: string, rootDir: string): string {
   return trimmed.replace(/^\.hoxi\/worktrees\/[^/]+\/+/, "");
 }
 
-export function filterLocalSessionDiffsByTurns(
+export function collectSessionTouchedPaths(
   sessionID: string,
-  diffs: SnapshotFileDiff[],
   turnsBySession: Record<string, MessageTurn[]>,
   rootDir: string
-): SnapshotFileDiff[] {
-  if (!diffs.length) return diffs;
+): string[] {
   const turns = turnsBySession[sessionID];
-  if (!turns || turns.length === 0) return diffs;
+  if (!turns || turns.length === 0) return [];
 
   const touched = new Set<string>();
   const addPath = (raw?: unknown) => {
@@ -370,7 +368,22 @@ export function filterLocalSessionDiffsByTurns(
   };
 
   scanSession(sessionID);
-  if (touched.size === 0) return [];
+  return Array.from(touched);
+}
+
+export function filterLocalSessionDiffsByTurns(
+  sessionID: string,
+  diffs: SnapshotFileDiff[],
+  turnsBySession: Record<string, MessageTurn[]>,
+  rootDir: string
+): SnapshotFileDiff[] {
+  if (!diffs.length) return diffs;
+  const turns = turnsBySession[sessionID];
+  if (!turns || turns.length === 0) return diffs;
+
+  const touchedList = collectSessionTouchedPaths(sessionID, turnsBySession, rootDir);
+  if (touchedList.length === 0) return [];
+  const touched = new Set(touchedList);
 
   return diffs.filter((d) => {
     const norm = normalizeSessionRelPath(d.file, rootDir);

@@ -306,6 +306,60 @@ describe("task commit and push", () => {
       assertDeepEqual(calls.worktreeDiff, [[id, directory]]);
     });
   });
+
+  it("includes deduplicated explicit file paths in the commit prompt", async () => {
+    await withCommitFixture(async ({ id, directory, calls }) => {
+      await executeTaskCommitAndPush(id, {
+        push: false,
+        files: [" src/a.ts ", "src/b.ts", "src/a.ts", ""],
+      });
+      assertEqual(calls.send.length, 1);
+      assertEqual(calls.send[0][1], [
+        t("timeline.gitAgentCommitPrompt", { directory: JSON.stringify(directory) }),
+        t("timeline.gitAgentCommitFilesPrompt", { files: JSON.stringify(["src/a.ts", "src/b.ts"]) }),
+        t("timeline.gitAgentCommitOnlyPrompt"),
+      ].join("\n\n"));
+    });
+  });
+
+  it("falls back to files touched by completed editing tools in the session", async () => {
+    await withCommitFixture(async ({ id, directory, calls }) => {
+      setWorkspace("messagesBySession", id, [
+        {
+          info: { id: `msg_${id}_u`, sessionID: id, role: "user", time: { created: 1 } },
+          parts: [],
+        },
+        {
+          info: { id: `msg_${id}_a`, sessionID: id, role: "assistant", time: { created: 2 } },
+          parts: [
+            {
+              id: "part_edit_1",
+              sessionID: id,
+              messageID: `msg_${id}_a`,
+              type: "tool",
+              callID: "call_edit_1",
+              tool: "edit",
+              state: {
+                status: "completed",
+                input: { filePath: `${directory}/internal/server/api.go` },
+                output: "ok",
+                title: "edit",
+                metadata: {},
+                time: { start: 1, end: 2 },
+              },
+            },
+          ],
+        },
+      ]);
+      await executeTaskCommitAndPush(id, { push: false });
+      assertEqual(calls.send.length, 1);
+      assertEqual(calls.send[0][1], [
+        t("timeline.gitAgentCommitPrompt", { directory: JSON.stringify(directory) }),
+        t("timeline.gitAgentCommitFilesPrompt", { files: JSON.stringify(["internal/server/api.go"]) }),
+        t("timeline.gitAgentCommitOnlyPrompt"),
+      ].join("\n\n"));
+    });
+  });
 });
 
 describe("uncommitted session commit gate", () => {

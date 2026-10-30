@@ -130,7 +130,10 @@ export default function ChangedFilesSummary(props: {
     setCommitError("");
     setCommitting(true);
     try {
-      await executeTaskCommitAndPush(id, { push: false });
+      await executeTaskCommitAndPush(id, {
+        push: false,
+        files: props.files.map((f) => f.file),
+      });
     } catch (err: any) {
       setCommitError(err?.message || String(err));
     } finally {
