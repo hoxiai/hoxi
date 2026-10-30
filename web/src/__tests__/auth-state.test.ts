@@ -1,4 +1,5 @@
 import { authAPI } from "../services/api";
+import { errorMessageOf } from "../services/http";
 import type { MemberCheckinStatus } from "../services/platform-api";
 import {
   desktopAuth,
@@ -327,6 +328,42 @@ describe("member points auto refresh", () => {
       assertEqual(calls, 2);
     } finally {
       authAPI.getMemberStatus = origGetMember;
+    }
+  });
+});
+
+describe("readable server error text", () => {
+  it("shows the server's message instead of the raw JSON body", () => {
+    const zh = "\u8bf7\u5148\u5b8c\u6210\u90ae\u7bb1\u9a8c\u8bc1";
+    assertEqual(errorMessageOf(new Error(`HTTP 403: {"error":"${zh}"}`), "x"), zh);
+    assertEqual(errorMessageOf(new Error('HTTP 400: {"msg":"bad input"}'), "x"), "bad input");
+    assertEqual(errorMessageOf(new Error('HTTP 400: {"message":"nope"}'), "x"), "nope");
+    assertEqual(errorMessageOf(new Error('HTTP 502: {"error":{"message":"upstream down"}}'), "x"), "upstream down");
+  });
+
+  it("falls back for empty, unknown-shape or HTML bodies and keeps other errors", () => {
+    assertEqual(errorMessageOf(new Error("HTTP 500: "), "fallback"), "fallback");
+    assertEqual(errorMessageOf(new Error('HTTP 500: {"code":7}'), "fallback"), "fallback");
+    assertEqual(errorMessageOf(new Error("HTTP 502: <html>bad gateway</html>"), "fallback"), "fallback");
+    assertEqual(errorMessageOf(new Error("HTTP 503: service unavailable"), "fallback"), "service unavailable");
+    assertEqual(errorMessageOf(new Error("Failed to fetch"), "fallback"), "Failed to fetch");
+    assertEqual(errorMessageOf(null, "fallback"), "fallback");
+  });
+
+  it("stores the server's message when check-in is refused", async () => {
+    const origCheckin = authAPI.checkin;
+    try {
+      setDesktopAuth({ isLoggedIn: true, user: { id: 1, email: "dev@hoxi.ai", nickname: "Dev" } });
+      setDesktopAuth("member", { checkingIn: false, checkedInToday: false, error: null });
+      authAPI.checkin = async () => {
+        throw new Error('HTTP 403: {"error":"verify your email first"}');
+      };
+      assertEqual(await performDesktopCheckin(), null);
+      assertEqual(desktopAuth.isLoggedIn, true);
+      assertEqual(desktopAuth.member.error, "verify your email first");
+      assertEqual(desktopAuth.member.checkingIn, false);
+    } finally {
+      authAPI.checkin = origCheckin;
     }
   });
 });

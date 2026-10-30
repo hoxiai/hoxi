@@ -3,6 +3,7 @@ import { createStore } from "solid-js/store";
 import { t } from "../i18n";
 import { authAPI, type AuthStatusSnapshot, type AuthUserProfile } from "../services/api";
 import { openExternalBrowserURL } from "../services/desktop-events";
+import { errorMessageOf } from "../services/http";
 import type { MemberCheckinStatus, PortalTarget } from "../services/platform-api";
 import { setAppSettings, signOutUserAccount, updateAppSetting } from "./settings";
 import { OFFICIAL_PROVIDER_ID, workspace } from "./workspace-state";
@@ -241,7 +242,7 @@ export async function refreshDesktopMember(): Promise<MemberCheckinStatus | null
     if (seq !== memberRequestSeq) return null;
     setDesktopAuth("member", {
       loading: false,
-      error: err?.message || "Failed to load member status",
+      error: errorMessageOf(err, "Failed to load member status"),
     });
     return null;
   }
@@ -317,7 +318,7 @@ export async function performDesktopCheckin(): Promise<MemberCheckinStatus | nul
     if (seq !== memberRequestSeq) return null;
     setDesktopAuth("member", {
       checkingIn: false,
-      error: err?.message || "Check-in failed",
+      error: errorMessageOf(err, "Check-in failed"),
     });
     return null;
   }
@@ -407,7 +408,7 @@ export async function startDesktopAuthorization(): Promise<string | null> {
   } catch (err: any) {
     setDesktopAuth({
       isAuthorizing: false,
-      error: err?.message || "Failed to start authorization",
+      error: errorMessageOf(err, "Failed to start authorization"),
     });
     return null;
   }
