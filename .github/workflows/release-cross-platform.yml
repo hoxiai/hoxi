@@ -17,10 +17,14 @@ concurrency:
 
 jobs:
   build-windows:
-    name: "Windows: Build x64 Client & Release"
+    name: "Windows: Build ${{ matrix.arch }} Client & Release"
     runs-on: windows-latest
     permissions:
       contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
 
     steps:
       - name: Checkout repository
@@ -95,10 +99,10 @@ jobs:
       - name: Bundle OpenCode Runtime
         shell: bash
         run: |
-          OPENCODE_ZIP="opencode-windows-x64.zip"
+          OPENCODE_ZIP="opencode-windows-${{ matrix.arch }}.zip"
           node scripts/opencode-lock.mjs verify
-          curl -fsSL -o "$OPENCODE_ZIP" "$(node scripts/opencode-lock.mjs url windows/amd64)"
-          node scripts/opencode-lock.mjs verify-archive windows/amd64 "$OPENCODE_ZIP"
+          curl -fsSL -o "$OPENCODE_ZIP" "$(node scripts/opencode-lock.mjs url windows/${{ matrix.arch }})"
+          node scripts/opencode-lock.mjs verify-archive windows/${{ matrix.arch }} "$OPENCODE_ZIP"
           mkdir -p build/bin build/windows/installer/tmp
           7z e -y "$OPENCODE_ZIP" opencode.exe -obuild/bin/
           cp -f build/bin/opencode.exe build/windows/installer/tmp/opencode.exe
@@ -110,8 +114,8 @@ jobs:
       - name: Bundle verified SQLite CLI
         shell: bash
         run: |
-          curl -fsSL -o sqlite-tools.zip "$(node scripts/sqlite-tools.mjs url)"
-          node scripts/sqlite-tools.mjs verify sqlite-tools.zip
+          curl -fsSL -o sqlite-tools.zip "$(node scripts/sqlite-tools.mjs url ${{ matrix.arch }})"
+          node scripts/sqlite-tools.mjs verify sqlite-tools.zip ${{ matrix.arch }}
           7z e -y sqlite-tools.zip sqlite3.exe -obuild/bin/
           test -f build/bin/sqlite3.exe
           cp -f build/bin/sqlite3.exe build/windows/installer/tmp/sqlite3.exe
@@ -128,21 +132,31 @@ jobs:
             fi
           fi
           command -v makensis
-          wails build -platform windows/amd64 -nsis -s -m -nosyncgomod \
+          wails build -platform windows/${{ matrix.arch }} -nsis -s -m -nosyncgomod \
             -ldflags "-X github.com/hoxiai/hoxi/internal/app.BuildVariant=release -X github.com/hoxiai/hoxi/internal/buildinfo.Version=${RELEASE_VERSION}"
-          test "$(./build/bin/Hoxi.exe --version | tr -d '\r\n')" = "${RELEASE_VERSION}"
+          # An x64 runner cannot execute an arm64 PE, so only run the built
+          # binary when the host architecture matches; otherwise assert the
+          # embedded version resource and the PE machine type.
+          HOST_ARCH="$(uname -m)"
+          if [[ "$HOST_ARCH" == "x86_64" && "${{ matrix.arch }}" == "amd64" ]] || [[ "$HOST_ARCH" == "aarch64" && "${{ matrix.arch }}" == "arm64" ]]; then
+            test "$(./build/bin/Hoxi.exe --version | tr -d '\r\n')" = "${RELEASE_VERSION}"
+          else
+            powershell -NoProfile -Command 'if ((Get-Item "build/bin/Hoxi.exe").VersionInfo.ProductVersion -notlike ($env:RELEASE_VERSION + "*")) { Write-Error "embedded version resource does not match RELEASE_VERSION"; exit 1 }'
+          fi
           cp -f build/windows/installer/tmp/opencode.exe build/bin/opencode.exe
           cp -f build/windows/installer/tmp/sqlite3.exe build/bin/sqlite3.exe
           test -f build/bin/opencode.exe
-          test -f build/bin/Hoxi-amd64-installer.exe
+          test -f build/bin/sqlite3.exe
+          node scripts/pe-arch.mjs verify ${{ matrix.arch }} build/bin/Hoxi.exe build/bin/opencode.exe build/bin/sqlite3.exe
+          test -f build/bin/Hoxi-${{ matrix.arch }}-installer.exe
 
       - name: Package Windows Release Archives
         shell: bash
         run: |
-          SETUP_NAME="Hoxi-${RELEASE_VERSION}-windows-amd64-setup.exe"
-          ZIP_NAME="Hoxi-${RELEASE_VERSION}-windows-amd64.zip"
+          SETUP_NAME="Hoxi-${RELEASE_VERSION}-windows-${{ matrix.arch }}-setup.exe"
+          ZIP_NAME="Hoxi-${RELEASE_VERSION}-windows-${{ matrix.arch }}.zip"
           cd build/bin
-          mv -f Hoxi-amd64-installer.exe "$SETUP_NAME"
+          mv -f Hoxi-${{ matrix.arch }}-installer.exe "$SETUP_NAME"
           sha256sum "$SETUP_NAME" > "${SETUP_NAME}.sha256"
           7z a "$ZIP_NAME" Hoxi.exe opencode.exe sqlite3.exe
           sha256sum "$ZIP_NAME" > "${ZIP_NAME}.sha256"
@@ -152,10 +166,10 @@ jobs:
         with:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           files: |
-            build/bin/Hoxi-${{ env.RELEASE_VERSION }}-windows-amd64-setup.exe
-            build/bin/Hoxi-${{ env.RELEASE_VERSION }}-windows-amd64-setup.exe.sha256
-            build/bin/Hoxi-${{ env.RELEASE_VERSION }}-windows-amd64.zip
-            build/bin/Hoxi-${{ env.RELEASE_VERSION }}-windows-amd64.zip.sha256
+            build/bin/Hoxi-${{ env.RELEASE_VERSION }}-windows-${{ matrix.arch }}-setup.exe
+            build/bin/Hoxi-${{ env.RELEASE_VERSION }}-windows-${{ matrix.arch }}-setup.exe.sha256
+            build/bin/Hoxi-${{ env.RELEASE_VERSION }}-windows-${{ matrix.arch }}.zip
+            build/bin/Hoxi-${{ env.RELEASE_VERSION }}-windows-${{ matrix.arch }}.zip.sha256
           fail_on_unmatched_files: true
           draft: false
           prerelease: false

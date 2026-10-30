@@ -98,7 +98,7 @@ func TestDownloadAndStageWindowsZipVerifiesSHA256AndExtracts(t *testing.T) {
 		LatestVersion: "0.4.5",
 		DownloadURL:   "https://github.com/hoxiai/hoxi/releases/download/v0.4.5/Hoxi-0.4.5-darwin-arm64.dmg",
 	})
-	wantURL := "https://github.com/hoxiai/hoxi/releases/download/v0.4.5/Hoxi-0.4.5-windows-amd64.zip"
+	wantURL := "https://github.com/hoxiai/hoxi/releases/download/v0.4.5/Hoxi-0.4.5-windows-" + windowsReleaseArch() + ".zip"
 	if gotURL != wantURL {
 		t.Fatalf("resolveWindowsArchiveURL = %q, want %q", gotURL, wantURL)
 	}
@@ -186,5 +186,17 @@ func TestResolveDarwinDMGURLFallsBackToHostArchitecture(t *testing.T) {
 	want := "https://github.com/hoxiai/hoxi/releases/download/v0.5.0/Hoxi-0.5.0-darwin-" + arch + ".dmg"
 	if got != want {
 		t.Fatalf("resolveDarwinDMGURL fallback = %q, want %q", got, want)
+	}
+}
+
+func TestResolveWindowsArchiveURLFallsBackToHostArchitecture(t *testing.T) {
+	arch := windowsReleaseArch()
+	if arch != "amd64" && arch != "arm64" {
+		t.Fatalf("windowsReleaseArch() = %q", arch)
+	}
+	got := resolveWindowsArchiveURL(&UpdateCheckResult{LatestVersion: "0.5.0"})
+	want := "https://github.com/hoxiai/hoxi/releases/download/v0.5.0/Hoxi-0.5.0-windows-" + arch + ".zip"
+	if got != want {
+		t.Fatalf("resolveWindowsArchiveURL fallback = %q, want %q", got, want)
 	}
 }

@@ -134,6 +134,7 @@ Flutter + Riverpod + GoRouter + Dio，四栏：沟通 · 工作台 · 一人公�
 - **Build Production Windows Installer (`-setup.exe` & `.zip`)**:
   ```powershell
   .\scripts\build-windows.ps1
+  .\scripts\build-windows.ps1 -Arch arm64   # Windows on ARM; default -Arch is amd64
   ```
 - **Run Headless Daemon (CLI / Browser Mode)**:
   ```bash

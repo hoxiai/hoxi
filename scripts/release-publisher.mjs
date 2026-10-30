@@ -28,6 +28,7 @@ export function releasePayload({ version, notes, sha256, size, mandatory = false
   const macUrl = `${base}/Hoxi-${version}-darwin-arm64.dmg`;
   const macAmd64Url = `${base}/Hoxi-${version}-darwin-amd64.dmg`;
   const winUrl = `${base}/Hoxi-${version}-windows-amd64-setup.exe`;
+  const winArm64Url = `${base}/Hoxi-${version}-windows-arm64-setup.exe`;
   const linuxUrl = `${base}/Hoxi-${version}-linux-amd64.tar.gz`;
 
   const assets = [
@@ -47,6 +48,10 @@ export function releasePayload({ version, notes, sha256, size, mandatory = false
     {
       name: `Hoxi-${version}-windows-amd64-setup.exe`, url: winUrl, browser_download_url: winUrl,
       platform: "windows", arch: "x64", package: "desktop",
+    },
+    {
+      name: `Hoxi-${version}-windows-arm64-setup.exe`, url: winArm64Url, browser_download_url: winArm64Url,
+      platform: "windows", arch: "arm64", package: "desktop",
     },
     {
       name: `Hoxi-${version}-linux-amd64.tar.gz`, url: linuxUrl, browser_download_url: linuxUrl,

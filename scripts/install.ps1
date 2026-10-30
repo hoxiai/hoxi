@@ -22,8 +22,11 @@ param(
 $ErrorActionPreference = "Stop"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-if ($env:PROCESSOR_ARCHITECTURE -ne "AMD64" -and $env:PROCESSOR_ARCHITEW6432 -ne "AMD64") {
-  throw "Hoxi Windows installer currently requires 64-bit Windows (x64 / AMD64)."
+# Pick the release asset architecture for this machine: native ARM64 Windows uses
+# the arm64 build, everything else (x64 or x64-emulated) uses amd64.
+$Arch = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "arm64" } else { "amd64" }
+if ($env:PROCESSOR_ARCHITECTURE -ne "AMD64" -and $env:PROCESSOR_ARCHITEW6432 -ne "AMD64" -and $env:PROCESSOR_ARCHITECTURE -ne "ARM64") {
+  throw "Hoxi Windows installer requires 64-bit Windows (x64 / AMD64 or ARM64)."
 }
 
 $Repo = "hoxiai/hoxi"
@@ -43,8 +46,8 @@ if ([string]::IsNullOrWhiteSpace($Ver)) {
   throw "Unable to determine release version from $ApiUrl"
 }
 
-$SetupName = "Hoxi-$Ver-windows-amd64-setup.exe"
-$ZipName   = "Hoxi-$Ver-windows-amd64.zip"
+$SetupName = "Hoxi-$Ver-windows-$Arch-setup.exe"
+$ZipName   = "Hoxi-$Ver-windows-$Arch.zip"
 
 $SetupAsset = $Release.assets | Where-Object { $_.name -eq $SetupName } | Select-Object -First 1
 $ZipAsset   = $Release.assets | Where-Object { $_.name -eq $ZipName }   | Select-Object -First 1

@@ -5,10 +5,13 @@
 .EXAMPLE
   .\scripts\build-windows.ps1
   .\scripts\build-windows.ps1 -Version 0.5.1
+  .\scripts\build-windows.ps1 -Arch arm64
 #>
 [CmdletBinding()]
 param(
   [string]$Version = "",
+  [ValidateSet("amd64", "arm64")]
+  [string]$Arch = "amd64",
   [switch]$SkipInstaller
 )
 
@@ -26,7 +29,7 @@ try {
     throw "Failed to resolve build version"
   }
 
-  Write-Host "==> Building Hoxi v$Version for Windows (windows/amd64)..." -ForegroundColor Cyan
+  Write-Host "==> Building Hoxi v$Version for Windows (windows/$Arch)..." -ForegroundColor Cyan
 
   # Sync version metadata into build/windows/info.json and wails.json
   & node -e '
@@ -56,19 +59,20 @@ try {
 
   # Bundle the official SQLite CLI for account import, history and statistics.
   $SQLiteZip = Join-Path "build/windows/installer/tmp" "sqlite-tools.zip"
-  $SQLiteURL = (& node scripts/sqlite-tools.mjs url).Trim()
+  $SQLiteURL = (& node scripts/sqlite-tools.mjs url $Arch).Trim()
   if ($LASTEXITCODE -ne 0) { throw "Failed to resolve SQLite URL" }
   Invoke-WebRequest -Uri $SQLiteURL -OutFile $SQLiteZip -UseBasicParsing
-  & node scripts/sqlite-tools.mjs verify $SQLiteZip
+  & node scripts/sqlite-tools.mjs verify $SQLiteZip $Arch
   if ($LASTEXITCODE -ne 0) { throw "Downloaded SQLite archive failed SHA3-256 verification" }
   Expand-Archive -Path $SQLiteZip -DestinationPath "build/windows/installer/tmp/sqlite" -Force
   Remove-Item -Force $SQLiteZip
   Copy-Item -Path "build/windows/installer/tmp/sqlite/sqlite3.exe" -Destination "build/bin/sqlite3.exe" -Force
 
-  # Resolve or download + verify pinned opencode.exe sidecar
+  # Resolve or download + verify pinned opencode.exe sidecar for the target arch
   & node scripts/opencode-lock.mjs verify
   if ($LASTEXITCODE -ne 0) { throw "opencode.lock verification failed" }
 
+  $Platform = "windows/$Arch"
   $OpenCodeSrc = $null
   if (-not [string]::IsNullOrWhiteSpace($env:HOXI_OPENCODE)) {
     if (-not (Test-Path $env:HOXI_OPENCODE)) {
@@ -79,7 +83,8 @@ try {
       throw "HOXI_OPENCODE failed version verification against opencode.lock: $($env:HOXI_OPENCODE)"
     }
     $OpenCodeSrc = $env:HOXI_OPENCODE
-  } else {
+  } elseif ($Arch -eq "amd64") {
+    # A cached host-local binary is only trusted for the native amd64 target.
     $OpenCodeCandidates = @(
       (Join-Path $HOME ".hoxi\bin\opencode.exe"),
       (Join-Path $HOME ".opencode\bin\opencode.exe")
@@ -98,25 +103,27 @@ try {
     Copy-Item -Path $OpenCodeSrc -Destination "build/windows/installer/tmp/opencode.exe" -Force
     Write-Host "==> Using verified local opencode.exe from $OpenCodeSrc" -ForegroundColor Green
   } else {
-    Write-Host "==> Downloading & verifying pinned OpenCode Windows runtime..." -ForegroundColor Cyan
-    $OpenCodeUrl = (& node scripts/opencode-lock.mjs url windows/amd64).Trim()
-    $OpenCodeZip = Join-Path "build/windows/installer/tmp" "opencode-windows-x64.zip"
+    Write-Host "==> Downloading & verifying pinned OpenCode Windows runtime ($Platform)..." -ForegroundColor Cyan
+    $OpenCodeUrl = (& node scripts/opencode-lock.mjs url $Platform).Trim()
+    $OpenCodeZip = Join-Path "build/windows/installer/tmp" "opencode-windows-$Arch.zip"
     Invoke-WebRequest -Uri $OpenCodeUrl -OutFile $OpenCodeZip -UseBasicParsing
-    & node scripts/opencode-lock.mjs verify-archive windows/amd64 $OpenCodeZip
+    & node scripts/opencode-lock.mjs verify-archive $Platform $OpenCodeZip
     if ($LASTEXITCODE -ne 0) { throw "Downloaded opencode archive failed SHA-256 verification" }
     Expand-Archive -Path $OpenCodeZip -DestinationPath "build/windows/installer/tmp" -Force
     Remove-Item -Force $OpenCodeZip -ErrorAction SilentlyContinue
     & node scripts/opencode-lock.mjs verify-binary "build/windows/installer/tmp/opencode.exe"
     if ($LASTEXITCODE -ne 0) { throw "Extracted opencode.exe failed version verification against opencode.lock" }
     Copy-Item -Path "build/windows/installer/tmp/opencode.exe" -Destination "build/bin/opencode.exe" -Force
-    $CacheDir = Join-Path $HOME ".hoxi\bin"
-    New-Item -ItemType Directory -Path $CacheDir -Force | Out-Null
-    Copy-Item -Path "build/windows/installer/tmp/opencode.exe" -Destination (Join-Path $CacheDir "opencode.exe") -Force
+    if ($Arch -eq "amd64") {
+      $CacheDir = Join-Path $HOME ".hoxi\bin"
+      New-Item -ItemType Directory -Path $CacheDir -Force | Out-Null
+      Copy-Item -Path "build/windows/installer/tmp/opencode.exe" -Destination (Join-Path $CacheDir "opencode.exe") -Force
+    }
   }
 
   # Ensure NSIS (makensis) is on PATH when building the installer
   $WailsArgs = @(
-    "build", "-platform", "windows/amd64", "-s", "-m", "-nosyncgomod",
+    "build", "-platform", $Platform, "-s", "-m", "-nosyncgomod",
     "-ldflags", "-X github.com/hoxiai/hoxi/internal/app.BuildVariant=release -X github.com/hoxiai/hoxi/internal/buildinfo.Version=$Version"
   )
   if (-not $SkipInstaller) {
@@ -143,22 +150,22 @@ try {
   }
 
   if (-not $SkipInstaller) {
-    $RawInstaller = "build/bin/Hoxi-amd64-installer.exe"
-    $SetupPath    = "build/bin/Hoxi-$Version-windows-amd64-setup.exe"
+    $RawInstaller = "build/bin/Hoxi-$Arch-installer.exe"
+    $SetupPath    = "build/bin/Hoxi-$Version-windows-$Arch-setup.exe"
     if (-not (Test-Path $RawInstaller)) {
       throw "Expected NSIS installer at $RawInstaller was not generated"
     }
     Move-Item -Path $RawInstaller -Destination $SetupPath -Force
     $SetupSha = (Get-FileHash -Path $SetupPath -Algorithm SHA256).Hash.ToLowerInvariant()
-    Set-Content -Path "$SetupPath.sha256" -Value "$SetupSha  Hoxi-$Version-windows-amd64-setup.exe`n" -NoNewline
+    Set-Content -Path "$SetupPath.sha256" -Value "$SetupSha  Hoxi-$Version-windows-$Arch-setup.exe`n" -NoNewline
     Write-Host "==> Built Windows Setup Installer: $SetupPath" -ForegroundColor Green
   }
 
-  $ZipPath = "build/bin/Hoxi-$Version-windows-amd64.zip"
+  $ZipPath = "build/bin/Hoxi-$Version-windows-$Arch.zip"
   if (Test-Path $ZipPath) { Remove-Item -Force $ZipPath }
   Compress-Archive -Path @("build/bin/Hoxi.exe", "build/bin/opencode.exe", "build/bin/sqlite3.exe") -DestinationPath $ZipPath -Force
   $ZipSha = (Get-FileHash -Path $ZipPath -Algorithm SHA256).Hash.ToLowerInvariant()
-  Set-Content -Path "$ZipPath.sha256" -Value "$ZipSha  Hoxi-$Version-windows-amd64.zip`n" -NoNewline
+  Set-Content -Path "$ZipPath.sha256" -Value "$ZipSha  Hoxi-$Version-windows-$Arch.zip`n" -NoNewline
   Write-Host "==> Built Windows Portable Archive: $ZipPath" -ForegroundColor Green
 } finally {
   Pop-Location

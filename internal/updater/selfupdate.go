@@ -36,12 +36,21 @@ func resolveWindowsArchiveURL(res *UpdateCheckResult) string {
 	}
 	ver := strings.TrimPrefix(strings.TrimSpace(res.LatestVersion), "v")
 	if ver != "" {
-		return fmt.Sprintf("https://github.com/hoxiai/hoxi/releases/download/v%s/Hoxi-%s-windows-amd64.zip", ver, ver)
+		return fmt.Sprintf("https://github.com/hoxiai/hoxi/releases/download/v%s/Hoxi-%s-windows-%s.zip", ver, ver, windowsReleaseArch())
 	}
 	if d := strings.TrimSpace(res.DownloadURL); d != "" {
 		return d
 	}
 	return strings.TrimSpace(res.Mirrors.Global)
+}
+
+// windowsReleaseArch maps the running Go architecture to the Windows portable
+// zip release asset suffix so arm64 and x64 clients fetch their own installer.
+func windowsReleaseArch() string {
+	if runtime.GOARCH == "arm64" {
+		return "arm64"
+	}
+	return "amd64"
 }
 
 // darwinReleaseArch maps the running Go architecture to the macOS DMG release

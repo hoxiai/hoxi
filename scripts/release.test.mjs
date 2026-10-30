@@ -11,7 +11,7 @@ import {
 import { releasePayload, publishRelease } from "./release-publisher.mjs";
 import { sparkleConfig, validateSparkle, validateSparkleApp, frameworkFiles, verifyUpdateSignature } from "./sparkle.mjs";
 import { loadOpenCodeLock, parseOpenCodeVersion, verifyBinaryVersion } from "./opencode-lock.mjs";
-import { verifySQLiteArchive } from "./sqlite-tools.mjs";
+import { verifySQLiteArchive, sqliteAsset } from "./sqlite-tools.mjs";
 
 test("SQLite release archive rejects a mismatched digest", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hoxi-sqlite-lock-"));
@@ -22,6 +22,17 @@ test("SQLite release archive rejects a mismatched digest", () => {
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("SQLite pins both Windows amd64 and arm64 tools archives", () => {
+  const amd64 = sqliteAsset("amd64");
+  const arm64 = sqliteAsset("arm64");
+  assert.match(amd64.url, /sqlite-tools-win-x64-/);
+  assert.match(arm64.url, /sqlite-tools-win-arm64-/);
+  assert.match(amd64.sha3, /^[a-f0-9]{64}$/);
+  assert.match(arm64.sha3, /^[a-f0-9]{64}$/);
+  assert.notEqual(amd64.sha3, arm64.sha3);
+  assert.throws(() => sqliteAsset("ia64"), /Unsupported/);
 });
 
 test("release versions accept only complete numeric releases", () => {
@@ -89,7 +100,9 @@ test("tracked publisher sends verified artifact metadata, keeps credentials out 
       assert.equal(macIntel.name, "Hoxi-0.2.1-darwin-amd64.dmg");
       const win = body.assets.find((asset) => asset.platform === "windows" && asset.arch === "x64");
       assert.ok(win.browser_download_url.endsWith("/v0.2.1/Hoxi-0.2.1-windows-amd64-setup.exe"));
-      assert.equal(body.assets.length, 4);
+      const winArm = body.assets.find((asset) => asset.platform === "windows" && asset.arch === "arm64");
+      assert.ok(winArm.browser_download_url.endsWith("/v0.2.1/Hoxi-0.2.1-windows-arm64-setup.exe"));
+      assert.equal(body.assets.length, 5);
       return Response.json({ success: true, data: { version: "0.2.1" } });
     } });
   assert.equal(result.mode, "api");
@@ -130,13 +143,19 @@ test("opencode.lock pins every shipped platform and release workflows consume it
 
   const crossWorkflow = fs.readFileSync(path.join(scripts, "../.github/workflows/release-cross-platform.yml"), "utf8");
   assert.doesNotMatch(crossWorkflow, /releases\/latest\/download/);
-  for (const platform of ["windows/amd64", "linux/amd64"]) {
+  // Windows opencode/lock lookups are templated by the amd64/arm64 matrix; Linux stays literal.
+  assert.ok(crossWorkflow.includes("opencode-lock.mjs url windows/${{ matrix.arch }}"), "workflow must use the lock URL for windows");
+  assert.ok(crossWorkflow.includes("opencode-lock.mjs verify-archive windows/${{ matrix.arch }}"), "workflow must verify windows");
+  for (const platform of ["linux/amd64"]) {
     assert.ok(crossWorkflow.includes(`opencode-lock.mjs url ${platform}`), `workflow must use the lock URL for ${platform}`);
     assert.ok(crossWorkflow.includes(`opencode-lock.mjs verify-archive ${platform}`), `workflow must verify ${platform}`);
   }
-  assert.match(crossWorkflow, /wails build -platform windows\/amd64 -nsis/);
-  assert.match(crossWorkflow, /Hoxi-\$\{RELEASE_VERSION\}-windows-amd64-setup\.exe/);
-  assert.match(crossWorkflow, /Hoxi-\$\{RELEASE_VERSION\}-windows-amd64\.zip/);
+  // Windows builds run for both amd64 and arm64 via a matrix.
+  assert.match(crossWorkflow, /arch: \[amd64, arm64\]/);
+  assert.match(crossWorkflow, /wails build -platform windows\/\$\{\{ matrix\.arch \}\} -nsis/);
+  assert.match(crossWorkflow, /Hoxi-\$\{RELEASE_VERSION\}-windows-\$\{\{ matrix\.arch \}\}-setup\.exe/);
+  assert.match(crossWorkflow, /Hoxi-\$\{RELEASE_VERSION\}-windows-\$\{\{ matrix\.arch \}\}\.zip/);
+  assert.match(crossWorkflow, /pe-arch\.mjs verify \$\{\{ matrix\.arch \}\}/);
 
   const nsisProject = fs.readFileSync(path.join(scripts, "../build/windows/installer/project.nsi"), "utf8");
   assert.match(nsisProject, /!define WAILS_INSTALL_SCOPE "user"/);
@@ -151,6 +170,8 @@ test("opencode.lock pins every shipped platform and release workflows consume it
   const winBuild = fs.readFileSync(path.join(scripts, "build-windows.ps1"), "utf8");
   assert.match(winBuild, /opencode-lock\.mjs verify-binary/);
   assert.match(winBuild, /opencode-lock\.mjs verify-archive/);
+  assert.match(winBuild, /\[ValidateSet\("amd64", "arm64"\)\]/);
+  assert.match(winBuild, /windows\/\$Arch/);
 });
 
 test("verifyBinaryVersion accepts only the pinned OpenCode version and rejects drift or failing binaries", { skip: process.platform === "win32" }, (t) => {
