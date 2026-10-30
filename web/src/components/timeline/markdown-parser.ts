@@ -20,6 +20,7 @@ export {
   parseMarkdownBlocks,
   parseNestedBlockquote,
   resolveMarkdownRelativePath,
+  resolveMarkdownFileLink,
   slugifyHeading,
   splitTableRow,
   stripFileLineSuffix,

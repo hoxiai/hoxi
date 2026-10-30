@@ -3,6 +3,8 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -118,24 +120,29 @@ func (g *Service) removeEngineProviderAuth(providerID string) error {
 		path := filepath.Join(dir, "auth.json")
 		if raw, err := os.ReadFile(path); err == nil {
 			var merged map[string]interface{}
-			if json.Unmarshal(raw, &merged) == nil && merged != nil {
+			if err := json.Unmarshal(raw, &merged); err != nil {
+				persistErr = fmt.Errorf("read engine credentials: %w", err)
+			} else if merged != nil {
 				if _, exists := merged[providerID]; exists {
 					delete(merged, providerID)
 					persistErr = writeJSONMapFile(path, merged)
 				}
 			}
+		} else if !os.IsNotExist(err) {
+			persistErr = err
 		}
 	}
 	g.configPersistMu.Unlock()
-	if persistErr != nil {
-		return persistErr
-	}
+	var engineErr error
 	if g.openCode != nil && g.openCode.Available() {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
-		_ = g.openCode.JSON(ctx, http.MethodDelete, "/auth/"+url.PathEscape(providerID), nil, nil, nil)
+		engineErr = g.openCode.JSON(ctx, http.MethodDelete, "/auth/"+url.PathEscape(providerID), nil, nil, nil)
 	}
-	return nil
+	if providerID == officialAinodeProviderID {
+		return errors.Join(persistErr, engineErr)
+	}
+	return persistErr // Ordinary local provider edits retain offline support.
 }
 
 // handleGlobalConfigProxy persists PATCH /global/config directly to .hoxi/models.json (never touching ~/.config/opencode)
@@ -173,6 +180,9 @@ func (g *Service) handleGlobalConfigProxy(w http.ResponseWriter, r *http.Request
 					overlayHoxiGlobalConfig(cfg, doc)
 					if provMap, ok := cfg["provider"].(map[string]interface{}); ok {
 						filterProviderModelsByHoxi(provMap, g.loadHoxiProvidersMap())
+						if g.officialBlocked.Load() {
+							delete(provMap, officialAinodeProviderID)
+						}
 					}
 					writeJSON(w, status, cfg)
 					return
@@ -234,6 +244,23 @@ func (g *Service) handleProviderProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	var payload map[string]interface{}
 	if json.Unmarshal(body, &payload) == nil {
+		if g.officialBlocked.Load() {
+			for _, field := range []string{"all", "connected"} {
+				if items, ok := payload[field].([]interface{}); ok {
+					kept := make([]interface{}, 0, len(items))
+					for _, item := range items {
+						id, _ := item.(string)
+						if p, ok := item.(map[string]interface{}); ok {
+							id, _ = p["id"].(string)
+						}
+						if id != officialAinodeProviderID {
+							kept = append(kept, item)
+						}
+					}
+					payload[field] = kept
+				}
+			}
+		}
 		hoxiMap := g.loadHoxiProvidersMap()
 		if allArr, ok := payload["all"].([]interface{}); ok {
 			for _, item := range allArr {

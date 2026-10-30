@@ -20,6 +20,7 @@ import {
   isSameInlineSpan,
   parseInline,
   resolveMarkdownRelativePath,
+  resolveMarkdownFileLink,
   slugifyHeading,
   stripFileLineSuffix,
 } from "./markdown-parser";
@@ -342,14 +343,8 @@ export default function MarkdownInline(props: { text: string }) {
                 if (!isClosedLink() && !isExternalOrAnchorHref(s.href)) return true;
                 return false;
               });
-              const localTarget = () => {
-                const raw = extractFilePathFromHref(linkSpan().href);
-                return raw ? resolveMarkdownRelativePath(raw, baseFilePath()) : null;
-              };
-              const resolvedLocalClickTarget = () => {
-                const raw = localTarget() || labelText() || linkSpan().href;
-                return resolveMarkdownRelativePath(raw, baseFilePath());
-              };
+              const resolvedLocalClickTarget = () =>
+                resolveMarkdownFileLink(linkSpan().href, labelText(), baseFilePath());
               const iconPath = createMemo(() => {
                 const cleanLabel = stripFileLineSuffix(labelText());
                 if (isLikelyFilePath(cleanLabel)) return cleanLabel;

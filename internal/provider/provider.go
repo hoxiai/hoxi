@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
@@ -42,16 +43,20 @@ type Service struct {
 	openBrowserFunc      func(string)
 	authMu               sync.RWMutex
 	authSource           AuthSource
+	officialMu           sync.Mutex
+	officialBlocked      atomic.Bool
 }
 
 func NewService(openCodePort int, password, rootDir string, proxy http.Handler) *Service {
-	return &Service{
+	s := &Service{
 		openCode: ocapi.NewForPort(openCodePort, password),
 		rootDir:  rootDir,
 		proxy:    proxy,
 		stats:    newModelStatsStore(rootDir),
 		breaker:  newBreakerStore(rootDir),
 	}
+	s.officialBlocked.Store(true)
+	return s
 }
 
 // SetOnProviderDegraded wires persistent internal LLM failure notifications
@@ -341,6 +346,9 @@ func (g *Service) isAuthorizedProviderBaseURL(providerID, requestedBaseURL strin
 }
 
 func (g *Service) resolveProviderConnection(providerID, hintBaseURL, hintNPM string) (baseURL, apiKey, npm string, headers map[string]string) {
+	if providerID == officialAinodeProviderID && g.officialBlocked.Load() {
+		return "", "", "", nil
+	}
 	baseURL = strings.TrimSpace(g.localizeBridgeURL(hintBaseURL))
 	npm = strings.TrimSpace(hintNPM)
 	headers = map[string]string{}
@@ -471,6 +479,9 @@ func (g *Service) resolveOpenCodeLiveModelConfig(providerID, modelID string) (ba
 }
 
 func (g *Service) resolveStoredProviderKey(providerID, requestedBaseURL string) string {
+	if providerID == officialAinodeProviderID && g.officialBlocked.Load() {
+		return ""
+	}
 	openCodeBaseURL, openCodeKey, _, _ := g.resolveOpenCodeLiveModelConfig(providerID, "")
 
 	if !g.isAuthorizedProviderBaseURL(providerID, requestedBaseURL, openCodeBaseURL) {

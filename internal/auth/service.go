@@ -26,6 +26,9 @@ func devicePlatform() string {
 }
 
 type Service struct {
+	// credentialMu orders account changes with dependent credential commits.
+	// Authorization requests run outside this lock; callbacks never hold mu.
+	credentialMu  sync.Mutex
 	mu            sync.RWMutex
 	store         *TokenStore
 	logger        *slog.Logger
@@ -36,7 +39,7 @@ type Service struct {
 	pending       *authorization
 	generation    uint64
 	launchBrowser func(string)
-	onClear       func()
+	onClear       func() error
 	// pollInterval paces device-token polling; zero means defaultPollInterval.
 	// Tests shorten it so they do not wait on real seconds.
 	pollInterval time.Duration
@@ -80,13 +83,15 @@ func (s *Service) ServerBaseURL() string {
 
 // SetOnClear registers a callback invoked after local desktop account
 // credentials are cleared by logout or upstream 401 invalidation.
-func (s *Service) SetOnClear(fn func()) {
+func (s *Service) SetOnClear(fn func() error) {
 	s.mu.Lock()
 	s.onClear = fn
 	s.mu.Unlock()
 }
 
 func (s *Service) SetServerBaseURL(urlStr string) {
+	s.credentialMu.Lock()
+	defer s.credentialMu.Unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	baseURL := strings.TrimRight(urlStr, "/")
@@ -133,32 +138,20 @@ func (s *Service) CurrentDeviceToken() string {
 
 // InvalidateDeviceToken 在上游返回 401 时清理匹配的本地过期凭据。
 func (s *Service) InvalidateDeviceToken(token, baseURL string) {
-	if token == "" {
-		return
-	}
-	var onClear func()
-	s.mu.Lock()
-	if s.current != nil && s.current.DeviceToken == token &&
-		(baseURL == "" || s.serverBaseURL == strings.TrimRight(baseURL, "/")) {
-		if err := s.store.Clear(); err == nil {
-			s.current = nil
-			s.generation++
-			onClear = s.onClear
-		}
-	}
-	s.mu.Unlock()
-	if onClear != nil {
-		onClear()
+	if err := s.invalidateDeviceToken(token, baseURL, nil); err != nil && s.logger != nil {
+		s.logger.Error("failed to clear revoked account credentials", "error", err)
 	}
 }
 
 // StartAuthorization 发起一键授权流程
 func (s *Service) StartAuthorization(ctx context.Context) (*StartAuthResponse, error) {
+	s.credentialMu.Lock()
 	s.mu.Lock()
 
 	buf := make([]byte, 16)
 	if _, err := rand.Read(buf); err != nil {
 		s.mu.Unlock()
+		s.credentialMu.Unlock()
 		return nil, fmt.Errorf("failed to generate random state: %w", err)
 	}
 	state := hex.EncodeToString(buf)
@@ -170,6 +163,7 @@ func (s *Service) StartAuthorization(ctx context.Context) (*StartAuthResponse, e
 	attempt := &authorization{state: state, baseURL: baseURL, expiresAt: expiresAt, ctx: pollCtx, cancel: cancel}
 	s.pending = attempt
 	s.mu.Unlock()
+	s.credentialMu.Unlock()
 
 	authURL := fmt.Sprintf("%s/auth/authorize-desktop?state=%s", baseURL, state)
 
@@ -273,9 +267,11 @@ func (s *Service) ExchangeToken(ctx context.Context, handoffToken, state string)
 }
 
 func (s *Service) Logout(ctx context.Context) error {
+	s.credentialMu.Lock()
 	s.mu.Lock()
 	if err := s.store.Clear(); err != nil {
 		s.mu.Unlock()
+		s.credentialMu.Unlock()
 		return fmt.Errorf("failed to clear local credentials: %w", err)
 	}
 	s.cancelPendingLocked()
@@ -289,9 +285,11 @@ func (s *Service) Logout(ctx context.Context) error {
 	onClear := s.onClear
 	s.mu.Unlock()
 
+	var cleanupErr error
 	if onClear != nil {
-		onClear()
+		cleanupErr = onClear()
 	}
+	s.credentialMu.Unlock()
 
 	if token != "" {
 		revokeURL := fmt.Sprintf("%s/api/hoxi/device-tokens/revoke", baseURL)
@@ -312,6 +310,9 @@ func (s *Service) Logout(ctx context.Context) error {
 		}
 	}
 
+	if cleanupErr != nil {
+		return fmt.Errorf("failed to clear account provider credentials: %w", cleanupErr)
+	}
 	return nil
 }
 
@@ -328,11 +329,23 @@ func (s *Service) pendingValidLocked(attempt *authorization) bool {
 }
 
 func (s *Service) applyAuthorized(attempt *authorization, auth *StoredAuth) error {
+	s.credentialMu.Lock()
+	defer s.credentialMu.Unlock()
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if !s.pendingValidLocked(attempt) {
+		s.mu.Unlock()
 		return errors.New("invalid or expired authorization state")
 	}
+	onClear := s.onClear
+	changingAccount := s.current != nil && s.current.DeviceToken != auth.DeviceToken
+	s.mu.Unlock()
+	if changingAccount && onClear != nil {
+		if err := onClear(); err != nil {
+			return fmt.Errorf("failed to clear previous account provider: %w", err)
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	// Keep persistence ordered with logout and publish only successfully saved credentials.
 	if err := s.store.Save(auth); err != nil {
 		return err
@@ -434,30 +447,17 @@ func (s *Service) verifyBackground(auth *StoredAuth, baseURL string, generation 
 			return
 		}
 	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		if err := s.invalidateDeviceToken(auth.DeviceToken, baseURL, &generation); err != nil && s.logger != nil {
+			s.logger.Error("failed to clear revoked credentials", "error", err)
+		}
+		return
+	}
+	s.credentialMu.Lock()
+	defer s.credentialMu.Unlock()
 	s.mu.Lock()
 	if s.current != auth || s.generation != generation || s.serverBaseURL != baseURL {
 		s.mu.Unlock()
-		return
-	}
-
-	if resp.StatusCode == http.StatusUnauthorized {
-		if s.logger != nil {
-			s.logger.Warn("device token revoked on server, resetting local auth")
-		}
-		if err := s.store.Clear(); err != nil {
-			if s.logger != nil {
-				s.logger.Error("failed to clear revoked credentials", "error", err)
-			}
-			s.mu.Unlock()
-			return
-		}
-		s.current = nil
-		s.generation++
-		onClear := s.onClear
-		s.mu.Unlock()
-		if onClear != nil {
-			onClear()
-		}
 		return
 	}
 
@@ -545,18 +545,8 @@ func (s *Service) callMemberEndpoint(ctx context.Context, method, endpoint strin
 	_ = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload)
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		var onClear func()
-		s.mu.Lock()
-		if s.current != nil && s.current.DeviceToken == auth.DeviceToken && s.generation == generation && s.serverBaseURL == baseURL {
-			if err := s.store.Clear(); err == nil {
-				s.current = nil
-				s.generation++
-				onClear = s.onClear
-			}
-		}
-		s.mu.Unlock()
-		if onClear != nil {
-			onClear()
+		if err := s.invalidateDeviceToken(auth.DeviceToken, baseURL, &generation); err != nil {
+			return nil, errors.Join(ErrNotLoggedIn, err)
 		}
 		return nil, ErrNotLoggedIn
 	}

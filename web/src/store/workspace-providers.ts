@@ -24,7 +24,7 @@ import {
   splitAgyModelEffortSuffix,
 } from "./provider-catalog";
 import { parseModelString, updateSessionAI } from "./session-ai";
-import { desktopAuth } from "./auth-state";
+import { desktopAuth, desktopAuthGeneration } from "./auth-state";
 import {
   DEFAULT_AGENTS,
   EFFORT_KEY,
@@ -231,6 +231,7 @@ export function shouldAutoSelectProvisionedModel(providerID: string): boolean {
 }
 
 export async function loadProviders(forceRefresh = false): Promise<void> {
+  const account = desktopAuthGeneration();
   const run = async () => {
   try {
     const dir = workspace.rootDir || undefined;
@@ -253,6 +254,7 @@ export async function loadProviders(forceRefresh = false): Promise<void> {
       syncOfficialModelPricing(forceRefresh).catch(() => {}),
     ]);
 
+    if (account !== desktopAuthGeneration() || dir !== (workspace.rootDir || undefined)) return;
     const hoxiMap = hoxiCfg?.hoxiProviders ?? {};
     const openCodeList = Array.isArray(hoxiCfg?.openCodeProviders)
       ? hoxiCfg.openCodeProviders

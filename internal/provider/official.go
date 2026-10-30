@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"math"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -15,9 +18,10 @@ import (
 // provision the official AINode channel without importing internal/auth.
 // It mirrors the tool / workapp auth seams.
 type AuthSource interface {
-	ServerBaseURL() string
 	CurrentDeviceToken() string
+	DeviceTokenSnapshot() (token, baseURL string)
 	InvalidateDeviceToken(token, baseURL string)
+	WithCurrentDeviceToken(token, baseURL string, commit func() error) (bool, error)
 }
 
 // SetAuthSource wires the desktop account used by the official AINode connect
@@ -26,6 +30,7 @@ func (s *Service) SetAuthSource(a AuthSource) {
 	s.authMu.Lock()
 	s.authSource = a
 	s.authMu.Unlock()
+	s.officialBlocked.Store(a == nil || a.CurrentDeviceToken() == "")
 }
 
 const (
@@ -69,11 +74,12 @@ func (s *Service) officialAuth() (AuthSource, string, string) {
 	if auth == nil {
 		return nil, "", ""
 	}
-	site := strings.TrimRight(strings.TrimSpace(auth.ServerBaseURL()), "/")
+	token, baseURL := auth.DeviceTokenSnapshot()
+	site := strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if site == "" {
 		return nil, "", ""
 	}
-	return auth, site, strings.TrimSpace(auth.CurrentDeviceToken())
+	return auth, site, strings.TrimSpace(token)
 }
 
 // handleOfficialModels previews the models the signed-in Hoxi account may call
@@ -98,7 +104,6 @@ func (s *Service) handleOfficialModels(w http.ResponseWriter, r *http.Request) {
 		if auth != nil {
 			auth.InvalidateDeviceToken(token, site)
 		}
-		s.ClearOfficialProvider()
 		writeJSON(w, http.StatusOK, officialModelsResponse{Authenticated: false, Models: []officialModelView{}})
 		return
 	}
@@ -140,17 +145,20 @@ func (s *Service) handleOfficialConnect(w http.ResponseWriter, r *http.Request) 
 		if auth != nil {
 			auth.InvalidateDeviceToken(token, site)
 		}
-		s.ClearOfficialProvider()
 		writeJSONError(w, http.StatusUnauthorized, "not logged in")
 		return
 	}
 
+	models, catalogErr := parseOfficialModels(payload)
+	if status < 200 || status >= 300 || catalogErr != "" {
+		writeJSONError(w, http.StatusBadGateway, "official model catalog unavailable")
+		return
+	}
 	apiKey, keyStatus := s.fetchOrMintOfficialMemberKey(r.Context(), site, token)
 	if keyStatus == http.StatusUnauthorized {
 		if auth != nil {
 			auth.InvalidateDeviceToken(token, site)
 		}
-		s.ClearOfficialProvider()
 		writeJSONError(w, http.StatusUnauthorized, "not logged in")
 		return
 	}
@@ -159,8 +167,14 @@ func (s *Service) handleOfficialConnect(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	models, _ := parseOfficialModels(payload)
-	if persistErr := s.persistOfficialProvider(baseURL, apiKey, models); persistErr != nil {
+	committed, persistErr := auth.WithCurrentDeviceToken(token, site, func() error {
+		return s.persistOfficialProvider(baseURL, apiKey, models)
+	})
+	if !committed {
+		writeJSONError(w, http.StatusUnauthorized, "account changed during official connection")
+		return
+	}
+	if persistErr != nil {
 		writeJSONError(w, http.StatusInternalServerError, persistErr.Error())
 		return
 	}
@@ -177,28 +191,41 @@ func (s *Service) handleOfficialConnect(w http.ResponseWriter, r *http.Request) 
 // ClearOfficialProvider removes persisted hoxi-official credentials and models
 // from ~/.hoxi/models.json and engine auth.json when the desktop account signs
 // out or its device token is revoked.
-func (s *Service) ClearOfficialProvider() {
-	_ = s.removeEngineProviderAuth(officialAinodeProviderID)
+func (s *Service) ClearOfficialProvider() error {
+	s.officialMu.Lock()
+	defer s.officialMu.Unlock()
+	// Remain blocked on any cleanup error, including across retries.
+	s.officialBlocked.Store(true)
+	authErr := s.removeEngineProviderAuth(officialAinodeProviderID)
 
+	configErr := s.clearOfficialConfig()
+	s.reloadOpenCodeGlobalConfig()
+	return errors.Join(authErr, configErr)
+}
+
+func (s *Service) clearOfficialConfig() error {
 	s.configPersistMu.Lock()
-	doc := s.loadHoxiConfigDoc()
-	hoxiMap, _ := doc["provider"].(map[string]interface{})
-	removed := false
-	if hoxiMap != nil {
-		if _, exists := hoxiMap[officialAinodeProviderID]; exists {
-			delete(hoxiMap, officialAinodeProviderID)
-			doc["provider"] = hoxiMap
-			removed = true
+	defer s.configPersistMu.Unlock()
+	for _, path := range []string{userHoxiModelsPath(), s.workspaceHoxiModelsPath()} {
+		if path == "" {
+			continue
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		if len(bytes.TrimSpace(raw)) > 0 && readJSONMapFile(path) == nil {
+			return fmt.Errorf("cannot clear official provider from invalid config %s", path)
 		}
 	}
-	if removed {
-		_ = s.persistHoxiConfigFiles(doc)
+	doc := s.loadHoxiConfigDoc()
+	hoxiMap, _ := doc["provider"].(map[string]interface{})
+	if _, exists := hoxiMap[officialAinodeProviderID]; !exists {
+		return nil
 	}
-	s.configPersistMu.Unlock()
-
-	if removed {
-		s.reloadOpenCodeGlobalConfig()
-	}
+	delete(hoxiMap, officialAinodeProviderID)
+	doc["provider"] = hoxiMap
+	return s.persistHoxiConfigFiles(doc)
 }
 
 func (s *Service) fetchOrMintOfficialMemberKey(ctx context.Context, site, token string) (string, int) {
@@ -240,13 +267,18 @@ func (s *Service) fetchOrMintOfficialMemberKey(ctx context.Context, site, token 
 }
 
 func (s *Service) persistOfficialProvider(baseURL, apiKey string, models []officialModelView) error {
+	s.officialMu.Lock()
+	defer s.officialMu.Unlock()
+	s.officialBlocked.Store(true)
 	resolvedBaseURL := strings.TrimSpace(baseURL)
 	if resolvedBaseURL == "" {
 		resolvedBaseURL = officialAinodeDefaultBaseURL
 	}
 	resolvedKey := strings.TrimSpace(apiKey)
 	if resolvedKey != "" {
-		s.persistEngineProviderAuth(officialAinodeProviderID, resolvedKey)
+		if err := s.persistEngineProviderAuthMap(officialAinodeProviderID, map[string]interface{}{"type": "api", "key": resolvedKey}); err != nil {
+			return err
+		}
 	}
 
 	s.configPersistMu.Lock()
@@ -321,6 +353,7 @@ func (s *Service) persistOfficialProvider(baseURL, apiKey string, models []offic
 		return err
 	}
 	s.reloadOpenCodeGlobalConfig()
+	s.officialBlocked.Store(false)
 	return nil
 }
 
@@ -329,8 +362,11 @@ func (s *Service) resolveOfficialGateway(ctx context.Context, site, token string
 	if err != nil {
 		return "", nil, 0, err
 	}
-	if status == http.StatusUnauthorized {
+	if status < 200 || status >= 300 {
 		return "", payload, status, nil
+	}
+	if _, catalogErr := parseOfficialModels(payload); catalogErr != "" {
+		return "", payload, status, errors.New("official model catalog unavailable")
 	}
 	baseURL := officialGatewayBaseURL(payload, site)
 	if baseURL == "" {
@@ -466,6 +502,8 @@ func (s *Service) fetchOfficialSiteJSON(ctx context.Context, method, targetURL, 
 	}
 	defer resp.Body.Close()
 	var payload map[string]any
-	_ = json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(&payload)
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(&payload); err != nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return resp.StatusCode, nil, errors.New("invalid official channel response")
+	}
 	return resp.StatusCode, payload, nil
 }

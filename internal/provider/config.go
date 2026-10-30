@@ -463,6 +463,9 @@ func (g *Service) loadHoxiConfigDoc() map[string]interface{} {
 func (g *Service) loadHoxiProvidersMap() map[string]interface{} {
 	doc := g.loadHoxiConfigDoc()
 	if provMap, ok := doc["provider"].(map[string]interface{}); ok && provMap != nil {
+		if g.officialBlocked.Load() {
+			delete(provMap, officialAinodeProviderID)
+		}
 		return provMap
 	}
 	return map[string]interface{}{}
@@ -588,6 +591,9 @@ func (g *Service) handleModelsConfig(w http.ResponseWriter, r *http.Request) {
 		doc := g.loadHoxiConfigDoc()
 		g.configPersistMu.Unlock()
 		hoxiMap, _ := doc["provider"].(map[string]interface{})
+		if g.officialBlocked.Load() {
+			delete(hoxiMap, officialAinodeProviderID)
+		}
 		if hoxiMap == nil {
 			hoxiMap = map[string]interface{}{}
 		}

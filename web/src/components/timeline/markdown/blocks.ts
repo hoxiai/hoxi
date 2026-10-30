@@ -1,6 +1,7 @@
 // web/src/components/timeline/markdown/blocks.ts
 import {
   extractFileSuffix,
+  extractFilePathFromHref,
   looksLikeCandidate,
   normalizeCandidatePath,
 } from "../../../store/workspace";
@@ -603,6 +604,10 @@ export function extractMarkdownHeadings(
  * (e.g. resolving `./contract.md` or `../client/AGENTS.md` when reading `docs/guide.md`),
  * while preserving `#L10` / `:10` line suffixes and leaving workspace-root or absolute paths intact.
  */
+export function resolveMarkdownFileLink(href: string, label: string, baseFilePath?: string): string {
+  return resolveMarkdownRelativePath(extractFilePathFromHref(href) || label || href, baseFilePath);
+}
+
 export function resolveMarkdownRelativePath(
   rawPath: string,
   baseFilePath?: string
@@ -619,12 +624,12 @@ export function resolveMarkdownRelativePath(
     return trimmed;
   }
 
-  const normBase = baseFilePath.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+  const normBase = baseFilePath.replace(/\\/g, "/").replace(/\/+$/g, "");
   const lastSlash = normBase.lastIndexOf("/");
-  if (lastSlash <= 0) {
+  if (lastSlash < 0) {
     return trimmed.startsWith("./") ? trimmed.slice(2) : trimmed;
   }
-  const baseDir = normBase.slice(0, lastSlash);
+  const baseDir = normBase.slice(0, lastSlash) || "/";
 
   // Extract optional #L10 or :10 suffix so we can re-attach it after path normalization
   const hashIdx = trimmed.indexOf("#");
@@ -657,6 +662,6 @@ export function resolveMarkdownRelativePath(
       stack.push(seg);
     }
   }
-  const joined = stack.join("/");
+  const joined = `${baseDir.startsWith("/") ? "/" : ""}${stack.join("/")}`;
   return joined ? `${joined}${lineSuffix}` : `${relNorm}${lineSuffix}`;
 }

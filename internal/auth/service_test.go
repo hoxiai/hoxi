@@ -475,8 +475,9 @@ func TestOnClearInvokedOnLogoutAnd401Invalidation(t *testing.T) {
 		}
 		w.WriteHeader(http.StatusUnauthorized)
 	})
-	s.SetOnClear(func() {
+	s.SetOnClear(func() error {
 		cleared.Add(1)
+		return nil
 	})
 
 	s.current = &StoredAuth{DeviceToken: "tok-1"}

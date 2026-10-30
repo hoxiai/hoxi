@@ -1,5 +1,5 @@
 import { reconcile, unwrap } from "solid-js/store";
-import { hoxiAPI, runnerAPI, type LocalCLIStatusItem, type ProviderInfo } from "../services/api";
+import { hoxiAPI, authAPI, runnerAPI, type LocalCLIStatusItem, type ProviderInfo } from "../services/api";
 import {
   connectProviderWithKey,
   loadProviders,
@@ -7,6 +7,7 @@ import {
   syncLocalCLIModel,
 } from "../store/workspace-providers";
 import { setWorkspace, workspace } from "../store/workspace";
+import { desktopAuth, logoutDesktopAccount, setDesktopAuth } from "../store/auth-state";
 import { assertDeepEqual, describe, it } from "./test-harness";
 
 const model = { providerID: "ollama", modelID: "local-model" };
@@ -249,5 +250,31 @@ describe("local CLI model sync", () => {
       assertDeepEqual(savedCfg?.options?.apiKey, "sk-key-1, sk-key-2");
       assertDeepEqual(workspace.selectedModel, { providerID: "win-custom", modelID: "win-m1" });
     });
+  });
+});
+
+
+describe("provider loading account isolation", () => {
+  it("does not restore a provider snapshot after logout", async () => {
+    const oldLogout = authAPI.logout;
+    const oldAuth = { ...desktopAuth };
+    try {
+      await withProviders(async () => {
+        setDesktopAuth({ isLoggedIn: true });
+        let resolveOld!: (value: Awaited<ReturnType<typeof hoxiAPI.listProviders>>) => void;
+        hoxiAPI.listProviders = () => new Promise((resolve) => { resolveOld = resolve; });
+        authAPI.logout = async () => ({ success: true });
+        const pending = loadProviders(true);
+        await logoutDesktopAccount();
+        setWorkspace("providers", []);
+        resolveOld({ all: providers, connected: ["ollama"], default: {} });
+        await pending;
+        assertDeepEqual(workspace.providers, []);
+        assertDeepEqual(workspace.defaultAI.model, null);
+      });
+    } finally {
+      authAPI.logout = oldLogout;
+      setDesktopAuth(oldAuth);
+    }
   });
 });

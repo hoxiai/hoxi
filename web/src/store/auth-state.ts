@@ -5,7 +5,6 @@ import { authAPI, type AuthStatusSnapshot, type AuthUserProfile } from "../servi
 import { openExternalBrowserURL } from "../services/desktop-events";
 import type { MemberCheckinStatus, PortalTarget } from "../services/platform-api";
 import { setAppSettings, signOutUserAccount, updateAppSetting } from "./settings";
-import { OFFICIAL_PROVIDER_ID, setWorkspace, workspace } from "./workspace-state";
 
 export interface DesktopMemberState {
   loaded: boolean;
@@ -66,7 +65,7 @@ export const [desktopAuth, setDesktopAuth] = createStore<DesktopAuthState>({
 });
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
-let logoutGeneration = 0;
+let authGeneration = 0;
 let memberRequestSeq = 0;
 
 function stopPolling() {
@@ -87,55 +86,19 @@ function isUnauthorizedError(err: unknown): boolean {
   return /^HTTP 401\b/i.test(msg) || msg.toLowerCase().includes("not logged in");
 }
 
-const logoutListeners = new Set<() => void>();
+const authChangeListeners = new Set<() => void>();
 
-export function onDesktopAuthLoggedOut(fn: () => void): () => void {
-  logoutListeners.add(fn);
-  return () => logoutListeners.delete(fn);
+export function onDesktopAuthChanged(fn: () => void): () => void {
+  authChangeListeners.add(fn);
+  return () => authChangeListeners.delete(fn);
 }
 
-export function purgeOfficialProviderFromWorkspace() {
-  if (workspace.hoxiProviders && OFFICIAL_PROVIDER_ID in workspace.hoxiProviders) {
-    setWorkspace("hoxiProviders", OFFICIAL_PROVIDER_ID, undefined as any);
-  }
-  if (workspace.globalConfig?.provider && OFFICIAL_PROVIDER_ID in workspace.globalConfig.provider) {
-    const nextProv = { ...workspace.globalConfig.provider };
-    delete nextProv[OFFICIAL_PROVIDER_ID];
-    setWorkspace("globalConfig", { ...workspace.globalConfig, provider: nextProv });
-  }
-  if (workspace.connectedProviders.includes(OFFICIAL_PROVIDER_ID)) {
-    setWorkspace(
-      "connectedProviders",
-      workspace.connectedProviders.filter((id) => id !== OFFICIAL_PROVIDER_ID)
-    );
-  }
-  if (workspace.providers.some((p) => p.id === OFFICIAL_PROVIDER_ID)) {
-    setWorkspace(
-      "providers",
-      workspace.providers.filter((p) => p.id !== OFFICIAL_PROVIDER_ID)
-    );
-  }
-  if (workspace.defaultAI.model?.providerID === OFFICIAL_PROVIDER_ID) {
-    const fallbackProv = workspace.providers.find(
-      (p) => p.id !== OFFICIAL_PROVIDER_ID && Object.keys(p.models || {}).length > 0
-    );
-    const fallbackModelID = fallbackProv ? Object.keys(fallbackProv.models || {})[0] : undefined;
-    setWorkspace(
-      "defaultAI",
-      "model",
-      fallbackProv && fallbackModelID
-        ? { providerID: fallbackProv.id, modelID: fallbackModelID }
-        : null
-    );
-  }
-  for (const [sid, ai] of Object.entries(workspace.aiBySession)) {
-    if (ai?.model?.providerID === OFFICIAL_PROVIDER_ID) {
-      setWorkspace("aiBySession", sid, "model", workspace.defaultAI.model);
-    }
-  }
-  for (const fn of logoutListeners) {
-    fn();
-  }
+export function desktopAuthGeneration(): number {
+  return authGeneration;
+}
+
+function notifyAccountChanged(): void {
+  for (const fn of authChangeListeners) fn();
 }
 
 export function formatMemberPoints(value: number): string {
@@ -196,7 +159,7 @@ export function desktopCheckinSubtitle(): string {
 
 function resetLoggedOutState() {
   stopPolling();
-  logoutGeneration++;
+  authGeneration++;
   memberRequestSeq++;
   setDesktopAuth({
     isLoggedIn: false,
@@ -207,7 +170,7 @@ function resetLoggedOutState() {
     member: { ...DEFAULT_MEMBER_STATE },
   });
   signOutUserAccount();
-  purgeOfficialProviderFromWorkspace();
+  notifyAccountChanged();
 }
 
 function applyMemberStatus(status: MemberCheckinStatus) {
@@ -242,17 +205,17 @@ function applyMemberStatus(status: MemberCheckinStatus) {
 
 export async function refreshDesktopMember(): Promise<MemberCheckinStatus | null> {
   if (!desktopAuth.isLoggedIn || desktopAuth.member.checkingIn) return null;
-  const generation = logoutGeneration;
+  const generation = authGeneration;
   const seq = ++memberRequestSeq;
   setDesktopAuth("member", "loading", true);
   setDesktopAuth("member", "error", null);
   try {
     const status = await authAPI.getMemberStatus();
-    if (generation !== logoutGeneration || seq !== memberRequestSeq) return null;
+    if (generation !== authGeneration || seq !== memberRequestSeq) return null;
     applyMemberStatus(status);
     return status;
   } catch (err: any) {
-    if (generation !== logoutGeneration) return null;
+    if (generation !== authGeneration) return null;
     if (isUnauthorizedError(err)) {
       resetLoggedOutState();
       return null;
@@ -270,16 +233,16 @@ export async function performDesktopCheckin(): Promise<MemberCheckinStatus | nul
   if (!desktopAuth.isLoggedIn || desktopAuth.member.checkingIn || desktopAuth.member.checkedInToday) {
     return null;
   }
-  const generation = logoutGeneration;
+  const generation = authGeneration;
   const seq = ++memberRequestSeq;
   setDesktopAuth("member", { loading: false, checkingIn: true, error: null });
   try {
     const status = await authAPI.checkin();
-    if (generation !== logoutGeneration || seq !== memberRequestSeq) return null;
+    if (generation !== authGeneration || seq !== memberRequestSeq) return null;
     applyMemberStatus(status);
     return status;
   } catch (err: any) {
-    if (generation !== logoutGeneration) return null;
+    if (generation !== authGeneration) return null;
     if (isUnauthorizedError(err)) {
       resetLoggedOutState();
       return null;
@@ -312,10 +275,17 @@ export async function openDesktopPortalPage(target: PortalTarget): Promise<void>
 }
 
 export async function refreshAuthStatus(): Promise<AuthStatusSnapshot | null> {
-  const generation = logoutGeneration;
+  const generation = authGeneration;
   try {
     const snap = await authAPI.getStatus();
-    if (generation !== logoutGeneration) return null;
+    if (generation !== authGeneration) return null;
+    const changed = desktopAuth.isLoggedIn !== snap.isLoggedIn ||
+      desktopAuth.user?.id !== snap.user?.id || desktopAuth.serverBaseUrl !== snap.serverBaseUrl;
+    if (changed) {
+      authGeneration++;
+      memberRequestSeq++;
+      notifyAccountChanged();
+    }
     setDesktopAuth({
       isLoggedIn: snap.isLoggedIn,
       isAuthorizing: snap.isAuthorizing,
@@ -341,12 +311,12 @@ export async function refreshAuthStatus(): Promise<AuthStatusSnapshot | null> {
       memberRequestSeq++;
       setDesktopAuth("member", { ...DEFAULT_MEMBER_STATE });
       signOutUserAccount();
-      purgeOfficialProviderFromWorkspace();
+      notifyAccountChanged();
     }
 
     return snap;
   } catch (err: any) {
-    if (generation !== logoutGeneration) return null;
+    if (generation !== authGeneration) return null;
     setDesktopAuth("error", err?.message || "Failed to fetch auth status");
     return null;
   }
@@ -387,6 +357,8 @@ export async function logoutDesktopAccount(): Promise<void> {
     const result = await authAPI.logout();
     if (!result.success) throw new Error("Logout was not confirmed");
   } catch (err) {
+    // The device token may already be gone while dependent credential cleanup failed.
+    await refreshAuthStatus();
     setDesktopAuth("error", err instanceof Error ? err.message : "Logout failed");
     throw err;
   }

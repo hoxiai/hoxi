@@ -1,9 +1,10 @@
-import { hoxiAPI } from "../services/api";
-import { setDesktopAuth } from "../store/auth-state";
+import { hoxiAPI, authAPI } from "../services/api";
+import { desktopAuth, logoutDesktopAccount, refreshAuthStatus, setDesktopAuth } from "../store/auth-state";
 import {
   connectOfficialAinode,
   ensureOfficialProviderConnected,
   loadOfficialAinodeModels,
+  resetOfficialAinodeState,
   officialAinodeState,
   setOfficialAinodeState,
 } from "../store/provider-official";
@@ -247,6 +248,80 @@ describe("official AINode account connect", () => {
       hoxiAPI.getHoxiModelsConfig = origGetHoxiModelsConfig;
       hoxiAPI.listProviders = origListProviders;
       setWorkspace("hoxiProviders", prevHoxiProviders);
+    }
+  });
+});
+
+
+describe("official provider account lifecycle", () => {
+  it("discards a catalog response arriving after logout", async () => {
+    const origModels = hoxiAPI.fetchOfficialAinodeModels;
+    const origLogout = authAPI.logout;
+    try {
+      setDesktopAuth({ isLoggedIn: true });
+      resetOfficialAinodeState();
+      let resolveOld!: (value: Awaited<ReturnType<typeof origModels>>) => void;
+      hoxiAPI.fetchOfficialAinodeModels = () => new Promise((resolve) => { resolveOld = resolve; });
+      authAPI.logout = async () => ({ success: true });
+      const pending = loadOfficialAinodeModels(true);
+      await logoutDesktopAccount();
+      resolveOld({ authenticated: true, gatewayAvailable: true, baseUrl: "https://old-account", models: [{ id: "old", name: "Old", inputPointsPerM: 1, outputPointsPerM: 1, perCallPoints: 0 }] });
+      await pending;
+      assertEqual(desktopAuth.isLoggedIn, false);
+      assertEqual(officialAinodeState.loaded, false);
+      assertEqual(officialAinodeState.models.length, 0);
+    } finally {
+      hoxiAPI.fetchOfficialAinodeModels = origModels;
+      authAPI.logout = origLogout;
+    }
+  });
+
+  it("discards a late connect before reloading providers or changing models", async () => {
+    const origConnect = hoxiAPI.connectOfficialAinodeProvider;
+    const origLogout = authAPI.logout;
+    const origList = hoxiAPI.listProviders;
+    let loads = 0;
+    try {
+      setDesktopAuth({ isLoggedIn: true });
+      let resolveOld!: (value: Awaited<ReturnType<typeof origConnect>>) => void;
+      hoxiAPI.connectOfficialAinodeProvider = () => new Promise((resolve) => { resolveOld = resolve; });
+      hoxiAPI.listProviders = async () => { loads++; return { all: [], connected: [], default: {} }; };
+      authAPI.logout = async () => ({ success: true });
+      const pending = connectOfficialAinode().then(() => false, () => true);
+      await logoutDesktopAccount();
+      resolveOld({ authenticated: true, providerId: OFFICIAL_PROVIDER_ID, baseUrl: "", modelCount: 0, models: [] });
+      assertEqual(await pending, true);
+      assertEqual(loads, 0);
+    } finally {
+      hoxiAPI.connectOfficialAinodeProvider = origConnect;
+      authAPI.logout = origLogout;
+      hoxiAPI.listProviders = origList;
+    }
+  });
+
+  it("keeps a new account catalog when an old account request arrives later", async () => {
+    const origModels = hoxiAPI.fetchOfficialAinodeModels;
+    const origStatus = authAPI.getStatus;
+    const origMember = authAPI.getMemberStatus;
+    try {
+      setDesktopAuth({ isLoggedIn: true, user: { id: 1, email: "old@example.com", nickname: "Old" }, serverBaseUrl: "https://hoxi.ai" });
+      resetOfficialAinodeState();
+      let resolveOld!: (value: Awaited<ReturnType<typeof origModels>>) => void;
+      hoxiAPI.fetchOfficialAinodeModels = () => new Promise((resolve) => { resolveOld = resolve; });
+      const pending = loadOfficialAinodeModels(true);
+      authAPI.getStatus = async () => ({ isLoggedIn: true, isAuthorizing: false, user: { id: 2, email: "new@example.com", nickname: "New" }, serverBaseUrl: "https://hoxi.ai" });
+      authAPI.getMemberStatus = async () => ({ checkedInToday: false, streak: 0, maxStreak: 0, todayPoints: 0, nextPoints: 0, balance: 0 });
+      await refreshAuthStatus();
+      hoxiAPI.fetchOfficialAinodeModels = async () => ({ authenticated: true, gatewayAvailable: true, baseUrl: "https://new-account", models: [{ id: "new", name: "New", inputPointsPerM: 1, outputPointsPerM: 1, perCallPoints: 0 }] });
+      await loadOfficialAinodeModels(true);
+      resolveOld({ authenticated: true, gatewayAvailable: true, baseUrl: "https://old-account", models: [] });
+      await pending;
+      assertEqual(officialAinodeState.models[0]?.id, "new");
+      assertEqual(officialAinodeState.baseUrl, "https://new-account");
+    } finally {
+      hoxiAPI.fetchOfficialAinodeModels = origModels;
+      authAPI.getStatus = origStatus;
+      authAPI.getMemberStatus = origMember;
     }
   });
 });

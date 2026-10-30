@@ -9,6 +9,7 @@ import {
   formatMemberPointsRange,
   logoutDesktopAccount,
   performDesktopCheckin,
+  refreshAuthStatus,
   refreshDesktopMember,
   setDesktopAuth,
 } from "../store/auth-state";
@@ -141,6 +142,7 @@ describe("desktop auth member state & race protection", () => {
         error: null,
       });
       setWorkspace({
+        globalConfig: { provider: { [OFFICIAL_PROVIDER_ID]: { models: { "gpt-5.4": {} } } } },
         hoxiProviders: {
           [OFFICIAL_PROVIDER_ID]: { name: "Hoxi Official", models: { "gpt-5.4": { name: "GPT-5.4" } } },
           anthropic: { name: "Anthropic", models: { "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" } } },
@@ -159,10 +161,10 @@ describe("desktop auth member state & race protection", () => {
       assertEqual(officialAinodeState.loaded, false);
       assertEqual(officialAinodeState.models.length, 0);
       assertEqual(Boolean(workspace.hoxiProviders[OFFICIAL_PROVIDER_ID]), false);
+      assertEqual(Boolean(workspace.globalConfig?.provider?.[OFFICIAL_PROVIDER_ID]), false);
       assertEqual(workspace.connectedProviders.includes(OFFICIAL_PROVIDER_ID), false);
       assertEqual(workspace.providers.some((p) => p.id === OFFICIAL_PROVIDER_ID), false);
-      assertEqual(workspace.selectedModel?.providerID, "anthropic");
-      assertEqual(workspace.selectedModel?.modelID, "claude-sonnet-4-6");
+      assertEqual(workspace.selectedModel, null);
     } finally {
       authAPI.logout = origLogout;
       setWorkspace({
@@ -189,5 +191,51 @@ describe("desktop auth member state & race protection", () => {
     assertEqual(desktopUserDisplayName(), "Alice");
     assertEqual(desktopUserPlan(), "Pro");
     assertEqual(desktopUserInitial(), "A");
+  });
+});
+
+
+describe("logout model and credential cleanup", () => {
+  it("clears official session models without selecting an unconnected provider", async () => {
+    const origLogout = authAPI.logout;
+    const saved = { providers: workspace.providers, connectedProviders: workspace.connectedProviders, model: workspace.defaultAI.model };
+    const sid = "ses_logout_regression";
+    try {
+      authAPI.logout = async () => ({ success: true });
+      setDesktopAuth({ isLoggedIn: true });
+      setWorkspace({ providers: [{ id: "opencode", name: "OpenCode", models: { free: { id: "free", name: "Free" } } }], connectedProviders: [OFFICIAL_PROVIDER_ID] });
+      setWorkspace("defaultAI", "model", { providerID: OFFICIAL_PROVIDER_ID, modelID: "old" });
+      setWorkspace("aiBySession", sid, { ...workspace.defaultAI });
+      setWorkspace("statusBySession", sid, { type: "busy" });
+      await logoutDesktopAccount();
+      assertEqual(workspace.defaultAI.model, null);
+      assertEqual(workspace.aiBySession[sid]?.model, null);
+      assertEqual(workspace.connectedProviders.length, 0);
+    } finally {
+      authAPI.logout = origLogout;
+      setWorkspace("providers", saved.providers);
+      setWorkspace("connectedProviders", saved.connectedProviders);
+      setWorkspace("defaultAI", "model", saved.model);
+      setWorkspace("aiBySession", sid, undefined as any);
+      setWorkspace("statusBySession", sid, undefined as any);
+    }
+  });
+
+  it("shows cleanup errors while synchronizing an already-cleared device login", async () => {
+    const origLogout = authAPI.logout;
+    const origStatus = authAPI.getStatus;
+    try {
+      setDesktopAuth({ isLoggedIn: true });
+      authAPI.logout = async () => { throw new Error("provider cleanup failed"); };
+      authAPI.getStatus = async () => ({ isLoggedIn: false, isAuthorizing: false, serverBaseUrl: "https://hoxi.ai" });
+      let failed = false;
+      try { await logoutDesktopAccount(); } catch { failed = true; }
+      assertEqual(failed, true);
+      assertEqual(desktopAuth.isLoggedIn, false);
+      assertEqual(desktopAuth.error, "provider cleanup failed");
+    } finally {
+      authAPI.logout = origLogout;
+      authAPI.getStatus = origStatus;
+    }
   });
 });

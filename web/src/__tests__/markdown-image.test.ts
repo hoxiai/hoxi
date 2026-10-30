@@ -6,6 +6,7 @@ import {
   parseMarkdownBlocks,
   parseNestedBlockquote,
   resolveMarkdownRelativePath,
+  resolveMarkdownFileLink,
   slugifyHeading,
 } from "../components/timeline/markdown-parser";
 import { liveReasoningTicker } from "../components/timeline/ThoughtBox";
@@ -393,5 +394,19 @@ describe("markdown document reader helpers", () => {
 
     // Scrolled to bottom after clicking a short trailing section keeps that clicked section highlighted
     assertEqual(resolveActiveHeadingSlug(items, true, "short-tail-1", 400), "short-tail-1");
+  });
+});
+
+
+describe("markdown document file links", () => {
+  it("resolves the original href only once across sibling directories", () => {
+    assertEqual(resolveMarkdownFileLink("../client/AGENTS.md", "Mobile", "docs/guide.md"), "client/AGENTS.md");
+    assertEqual(resolveMarkdownFileLink("../README.md#L10", "Home", "docs/guide.md"), "README.md#L10");
+    assertEqual(resolveMarkdownFileLink("./contract.md", "Contract", "docs/guide.md"), "docs/contract.md");
+  });
+  it("preserves an absolute document base for relative links and images", () => {
+    assertEqual(resolveMarkdownRelativePath("./assets/image.png", "/project/docs/guide.md"), "/project/docs/assets/image.png");
+    assertEqual(resolveMarkdownFileLink("../README.md", "Home", "/project/docs/guide.md"), "/project/README.md");
+    assertEqual(resolveMarkdownRelativePath("./other.md", "/guide.md"), "/other.md");
   });
 });

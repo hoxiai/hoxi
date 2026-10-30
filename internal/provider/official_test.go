@@ -5,21 +5,49 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 )
 
 type fakeAuthSource struct {
+	mu          sync.Mutex
 	site        string
 	token       string
 	invalidated bool
+	onClear     func() error
 }
 
 func (f *fakeAuthSource) ServerBaseURL() string { return f.site }
+func (f *fakeAuthSource) DeviceTokenSnapshot() (string, string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.token, f.site
+}
 func (f *fakeAuthSource) CurrentDeviceToken() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	return f.token
 }
 func (f *fakeAuthSource) InvalidateDeviceToken(token, baseURL string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.token != token || f.site != baseURL {
+		return
+	}
 	f.invalidated = true
+	f.token = ""
+	if f.onClear != nil {
+		_ = f.onClear()
+	}
+}
+
+func (f *fakeAuthSource) WithCurrentDeviceToken(token, baseURL string, commit func() error) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if token == "" || f.token != token || f.site != baseURL {
+		return false, nil
+	}
+	return true, commit()
 }
 
 func newOfficialTestSite(t *testing.T, unauthorized bool) *httptest.Server {
@@ -192,6 +220,7 @@ func TestOfficialConnectInvalidatesRevokedToken(t *testing.T) {
 	auth := &fakeAuthSource{site: server.URL, token: "hox_dt_test"}
 	svc := NewService(0, "", t.TempDir(), http.NotFoundHandler())
 	svc.SetAuthSource(auth)
+	auth.onClear = svc.ClearOfficialProvider
 
 	mux := http.NewServeMux()
 	svc.RegisterRoutes(mux)
