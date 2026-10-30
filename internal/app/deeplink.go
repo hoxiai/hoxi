@@ -6,6 +6,7 @@ import (
 
 	"github.com/hoxiai/hoxi/internal/gateway"
 	"github.com/hoxiai/hoxi/internal/statusbar"
+	"github.com/wailsapp/wails/v2/pkg/options"
 )
 
 // desktopIntentEvent wakes the webview when a deep link or CLI request queues a
@@ -60,6 +61,34 @@ func parseSessionDeepLink(raw string) (gateway.DesktopIntent, bool) {
 		messageID = ""
 	}
 	return gateway.DesktopIntent{SessionID: sessionID, MessageID: messageID}, true
+}
+
+// launchURLs returns the hoxi:// links among process arguments. Windows opens a
+// protocol link as `Hoxi.exe "hoxi://…"`; macOS delivers links through
+// OnUrlOpen instead, so there the list is empty.
+func launchURLs(args []string) []string {
+	var urls []string
+	for _, arg := range args {
+		if isAppURLArg(arg) {
+			urls = append(urls, strings.TrimSpace(arg))
+		}
+	}
+	return urls
+}
+
+func isAppURLArg(arg string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(arg)), "hoxi://")
+}
+
+// onSecondInstance runs in the live instance when Hoxi is launched again,
+// including when Windows opens a hoxi:// link (login callback, session link).
+func (a *DesktopApp) onSecondInstance(data options.SecondInstanceData) {
+	if a.desktopContext() != nil {
+		a.showWindow()
+	}
+	for _, link := range launchURLs(data.Args) {
+		a.onURLOpen(link)
+	}
 }
 
 // isAuthCallbackDeepLink reports whether the URL is the account authorization

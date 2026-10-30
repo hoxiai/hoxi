@@ -183,3 +183,20 @@ func TestHandleStatusBarMenuActionQueuesDesktopIntents(t *testing.T) {
 		t.Fatalf("expected desktop intent notifier to be invoked 7 times, got %d", notified)
 	}
 }
+
+func TestLaunchURLsPicksOnlyHoxiLinks(t *testing.T) {
+	got := launchURLs([]string{
+		"--flag",
+		" hoxi://auth-callback/?handoff=abc&state=def ",
+		"fix the login bug",
+		"HOXI://session/ses_abc123",
+		"https://hoxi.ai",
+	})
+	want := []string{"hoxi://auth-callback/?handoff=abc&state=def", "HOXI://session/ses_abc123"}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("launchURLs = %q, want %q", got, want)
+	}
+	if got := launchURLs(nil); len(got) != 0 {
+		t.Fatalf("launchURLs(nil) = %q, want none", got)
+	}
+}

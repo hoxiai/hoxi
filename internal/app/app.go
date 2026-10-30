@@ -570,6 +570,9 @@ func (a *DesktopApp) startup(ctx context.Context) {
 		a.notifier.Start()
 	}
 	installNativeAbout(a.identity.Title, buildinfo.Version)
+	for _, link := range launchURLs(os.Args[1:]) {
+		a.onURLOpen(link) // Windows: Hoxi was started by opening a hoxi:// link
+	}
 	telemetry.ReportLaunch(a.logger)
 	if BuildVariant == "release" {
 		// Wails startup can precede the Cocoa run loop; never wait for it here.
@@ -610,13 +613,6 @@ func (a *DesktopApp) shutdown(_ context.Context) {
 		a.gateway.CloseBrowser()
 	}
 	updater.StopNative()
-}
-
-func (a *DesktopApp) onSecondInstance(_ options.SecondInstanceData) {
-	if ctx := a.desktopContext(); ctx != nil {
-		wailsruntime.WindowShow(ctx)
-		wailsruntime.WindowUnminimise(ctx)
-	}
 }
 
 func (a *DesktopApp) onURLOpen(rawURL string) {

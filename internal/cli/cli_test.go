@@ -60,6 +60,18 @@ func TestShouldHandleAndIsServeCommand(t *testing.T) {
 		}
 	}
 
+	// Windows protocol activation (`Hoxi.exe "hoxi://…"`) belongs to the desktop
+	// app; the login callback token must never become a model prompt.
+	for _, args := range [][]string{
+		{`C:\Users\me\AppData\Local\Programs\Hoxi\Hoxi.exe`, "hoxi://auth-callback/?handoff=abc&state=def"},
+		{`C:\Users\me\AppData\Local\Programs\Hoxi\hoxi.exe`, "HOXI://session/ses_abc123"},
+		{"hoxi", " hoxi://open?session=ses_abc123"},
+	} {
+		if ShouldHandle(args, noEnv) {
+			t.Fatalf("expected hoxi:// link %v to open the desktop app, not the CLI", args)
+		}
+	}
+
 	// `hoxi serve` rewrites to `--no-desktop`
 	rewritten, ok := IsServeCommand([]string{"hoxi", "serve", "--address", "127.0.0.1:5410"})
 	if !ok {
