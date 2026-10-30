@@ -7,13 +7,13 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/hoxiai/hoxi/internal/attachment"
+	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 func (s *Service) prepareTurnAttachments(
@@ -322,7 +322,7 @@ func (s *Service) startTurnProcess(
 		hookEnv = append(hookEnv, "HOXI_GATEWAY_URL="+base, "HOXI_BRIDGE_URL="+base)
 	}
 	procEnv := runtimeProcessEnv(rec, os.Environ(), hookEnv)
-	cmd := exec.Command(binPath, args...)
+	cmd := subproc.Command(binPath, args...)
 	cmd.Dir = rec.WorktreePath
 	cmd.Env = procEnv
 
@@ -479,7 +479,7 @@ func (s *Service) startTurnProcess(
 				retryArgs = BuildGeminiArgs(mode, modelID, effort, "")
 			}
 			if retryBin, wrappedArgs, wrapErr := s.confineRuntimeCommand(rec, rawBinPath, retryArgs); wrapErr == nil {
-				retryCmd := exec.Command(retryBin, wrappedArgs...)
+				retryCmd := subproc.Command(retryBin, wrappedArgs...)
 				retryCmd.Dir = rec.WorktreePath
 				retryCmd.Env = procEnv
 				if retryStdin, inErr := retryCmd.StdinPipe(); inErr == nil {

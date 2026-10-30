@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 var persistKeepAwakeMu sync.Mutex
@@ -143,7 +145,7 @@ func (t *Tracker) syncKeepAwakeLocked() {
 	}
 	// -i prevents system idle sleep (display can still dim/lock);
 	// -w binds caffeinate to Hoxi's PID so it exits automatically if Hoxi terminates.
-	cmd := exec.Command(bin, "-i", "-w", strconv.Itoa(os.Getpid()))
+	cmd := subproc.Command(bin, "-i", "-w", strconv.Itoa(os.Getpid()))
 	if err := cmd.Start(); err != nil {
 		return
 	}

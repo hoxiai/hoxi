@@ -5,13 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/hoxiai/hoxi/internal/llm"
+	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 const (
@@ -589,7 +589,7 @@ func (m *worktreeManager) apply(sessionID, mode string) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), gitCommandTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", "-C", m.rootDir, "apply", "--3way", "-")
+	cmd := subproc.CommandContext(ctx, "git", "-C", m.rootDir, "apply", "--3way", "-")
 	cmd.Env = nonInteractiveGitEnv()
 	cmd.Stdin = strings.NewReader(diffPatch)
 	out, err := cmd.CombinedOutput()
@@ -763,7 +763,7 @@ func runGitRaw(workDir string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), gitCommandTimeout)
 	defer cancel()
 	cmdArgs := append([]string{"-c", "core.autocrlf=false", "-C", workDir}, args...)
-	cmd := exec.CommandContext(ctx, "git", cmdArgs...)
+	cmd := subproc.CommandContext(ctx, "git", cmdArgs...)
 	cmd.Env = nonInteractiveGitEnv()
 	stdout := &cappedGitOutputBuffer{limit: maxGitCommandOutputBytes}
 	stderr := &cappedGitOutputBuffer{limit: maxGitCommandOutputBytes}

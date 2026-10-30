@@ -9,11 +9,12 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 // SessionDiff is the original OpenCode session diff, not a workspace diff.
@@ -73,7 +74,7 @@ func writeSessionCheckpoint(path string, checkpoint sessionCommitCheckpoint) err
 func sessionGit(dir, index, gitDir string, input []byte, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), gitCommandTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
+	cmd := subproc.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
 	for _, value := range os.Environ() {
 		key := strings.SplitN(value, "=", 2)[0]
 		switch key {

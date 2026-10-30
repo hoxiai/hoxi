@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"unsafe"
 
+	"github.com/hoxiai/hoxi/internal/subproc"
 	"golang.org/x/sys/windows"
 )
 
@@ -19,10 +20,8 @@ const (
 )
 
 func setProcessGroup(cmd *exec.Cmd) {
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP,
-		HideWindow:    true,
-	}
+	subproc.HideWindow(cmd)
+	cmd.SysProcAttr.CreationFlags |= syscall.CREATE_NEW_PROCESS_GROUP
 }
 
 func selfProcessGroupID() int { return 0 }

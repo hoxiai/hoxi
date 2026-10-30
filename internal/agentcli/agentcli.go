@@ -17,6 +17,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 // Runtime identifiers shared with the runner's RuntimeType values.
@@ -285,7 +287,7 @@ func DiscoverAgyCLIModels(forceRefresh bool) (slugs []string, displayBySlug map[
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, agyBin, "models")
+	cmd := subproc.CommandContext(ctx, agyBin, "models")
 	cmd.WaitDelay = time.Second
 	out, err := cmd.Output()
 	if err != nil && len(bytes.TrimSpace(out)) == 0 {

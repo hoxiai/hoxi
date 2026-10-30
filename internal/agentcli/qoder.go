@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 // ResolveQoderBinaries locates both Qoder Global CLI (`qodercli`, English)
@@ -337,7 +339,7 @@ func probeQoderBinaryModels(bin string) ([]qoderBaseModel, bool) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), qoderProbeTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, bin, "--list-models")
+	cmd := subproc.CommandContext(ctx, bin, "--list-models")
 	cmd.WaitDelay = time.Second
 	out, err := cmd.Output()
 	if err != nil && len(bytes.TrimSpace(out)) == 0 {

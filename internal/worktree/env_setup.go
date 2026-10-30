@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 const (
@@ -202,28 +204,28 @@ func resolveWindowsSh() string {
 func newSetupScriptCommand(ctx context.Context, scriptPath string) *exec.Cmd {
 	lower := strings.ToLower(scriptPath)
 	if strings.HasSuffix(lower, ".ps1") {
-		return exec.CommandContext(ctx, "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath)
+		return subproc.CommandContext(ctx, "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath)
 	}
 	if runtime.GOOS == "windows" {
 		if strings.HasSuffix(lower, ".cmd") || strings.HasSuffix(lower, ".bat") {
-			return exec.CommandContext(ctx, "cmd", "/c", scriptPath)
+			return subproc.CommandContext(ctx, "cmd", "/c", scriptPath)
 		}
 		if sh := resolveWindowsSh(); sh != "" {
-			return exec.CommandContext(ctx, sh, scriptPath)
+			return subproc.CommandContext(ctx, sh, scriptPath)
 		}
-		return exec.CommandContext(ctx, "cmd", "/c", scriptPath)
+		return subproc.CommandContext(ctx, "cmd", "/c", scriptPath)
 	}
-	return exec.CommandContext(ctx, "sh", scriptPath)
+	return subproc.CommandContext(ctx, "sh", scriptPath)
 }
 
 func newVerifyShellCommand(ctx context.Context, cmdStr string) *exec.Cmd {
 	if runtime.GOOS == "windows" {
 		if sh := resolveWindowsSh(); sh != "" {
-			return exec.CommandContext(ctx, sh, "-c", cmdStr)
+			return subproc.CommandContext(ctx, sh, "-c", cmdStr)
 		}
-		return exec.CommandContext(ctx, "cmd", "/c", cmdStr)
+		return subproc.CommandContext(ctx, "cmd", "/c", cmdStr)
 	}
-	return exec.CommandContext(ctx, "sh", "-c", cmdStr)
+	return subproc.CommandContext(ctx, "sh", "-c", cmdStr)
 }
 
 type worktreeSetupResult struct {

@@ -4,9 +4,10 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 func isIgnoredUntrackedWorktreePath(rel string) bool {
@@ -357,7 +358,7 @@ func runGitWithIndex(workDir, indexPath string, args ...string) (string, error) 
 	ctx, cancel := context.WithTimeout(context.Background(), gitCommandTimeout)
 	defer cancel()
 	cmdArgs := append([]string{"-c", "core.autocrlf=false", "-C", workDir}, args...)
-	cmd := exec.CommandContext(ctx, "git", cmdArgs...)
+	cmd := subproc.CommandContext(ctx, "git", cmdArgs...)
 	cmd.Env = nonInteractiveGitEnv("GIT_INDEX_FILE=" + indexPath)
 	stdout := &cappedGitOutputBuffer{limit: maxGitCommandOutputBytes}
 	stderr := &cappedGitOutputBuffer{limit: maxGitCommandOutputBytes}
@@ -508,7 +509,7 @@ func applyGitPatch(workDir, patch string, extraArgs ...string) error {
 		}
 		args = append(args, extraArgs...)
 		args = append(args, "-")
-		cmd := exec.CommandContext(ctx, "git", args...)
+		cmd := subproc.CommandContext(ctx, "git", args...)
 		cmd.Env = nonInteractiveGitEnv()
 		cmd.Stdin = strings.NewReader(patch)
 		output, err := cmd.CombinedOutput()

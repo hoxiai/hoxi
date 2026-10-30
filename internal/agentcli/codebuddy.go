@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 // ResolveCodeBuddyBinary locates the official CodeBuddy CLI (`codebuddy` / `cbc`),
@@ -420,7 +422,7 @@ func DiscoverCodeBuddyModelsWithRefresh(forceRefresh bool) []ModelItem {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, bin, "--help")
+	cmd := subproc.CommandContext(ctx, bin, "--help")
 	cmd.WaitDelay = time.Second
 	out, _ := cmd.Output()
 	parsed := ParseCodeBuddyModelsOutput(string(out))

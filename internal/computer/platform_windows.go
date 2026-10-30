@@ -10,9 +10,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
-	"golang.org/x/sys/windows"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -22,6 +20,10 @@ import (
 	"time"
 	"unicode/utf16"
 	"unsafe"
+
+	"golang.org/x/sys/windows"
+
+	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 type nativeBackend struct{}
@@ -171,8 +173,7 @@ func windowsAX(ctx context.Context, pid int, hwnd uintptr, operation string, out
 		return err
 	}
 	executable := filepath.Join(system, "WindowsPowerShell", "v1.0", "powershell.exe")
-	command := exec.CommandContext(ctx, executable, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", base64.StdEncoding.EncodeToString(encoded))
-	command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	command := subproc.CommandContext(ctx, executable, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", base64.StdEncoding.EncodeToString(encoded))
 	payload, _ := json.Marshal(map[string]any{"window": strconv.FormatUint(uint64(hwnd), 10), "process": pid, "operation": operation})
 	command.Stdin = bytes.NewReader(payload)
 	result, err := command.Output()

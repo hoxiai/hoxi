@@ -12,6 +12,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 // setProcessGroup starts the CLI as the leader of its own process group, so
@@ -48,7 +50,7 @@ func selfProcessGroupID() int {
 func descendantPIDs(pid int) []int {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "ps", "-axo", "pid=,ppid=")
+	cmd := subproc.CommandContext(ctx, "ps", "-axo", "pid=,ppid=")
 	stdout, err := cmd.StdoutPipe()
 	if err != nil || cmd.Start() != nil {
 		return nil
@@ -89,7 +91,7 @@ func killPIDs(pids []int) {
 func readProcessSnapshots() (map[int]procSnapshot, map[int][]int) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "ps", "-axo", "pid=,ppid=,pgid=,args=")
+	cmd := subproc.CommandContext(ctx, "ps", "-axo", "pid=,ppid=,pgid=,args=")
 	stdout, err := cmd.StdoutPipe()
 	if err != nil || cmd.Start() != nil {
 		return nil, nil

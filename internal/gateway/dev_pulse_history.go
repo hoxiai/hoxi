@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,6 +16,7 @@ import (
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
 	"github.com/hoxiai/hoxi/internal/runner"
 	"github.com/hoxiai/hoxi/internal/sqlitecli"
+	"github.com/hoxiai/hoxi/internal/subproc"
 	"github.com/hoxiai/hoxi/internal/worktree"
 )
 
@@ -223,7 +223,7 @@ ORDER BY day;`, startMs, endMs, handoff.SQLNotImportedTurnClause("s.title", "m.d
 
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, sqlitecli.Executable(), "-json", "-readonly", "-cmd", ".timeout 5000", dbPath, sqlQuery)
+	cmd := subproc.CommandContext(ctx, sqlitecli.Executable(), "-json", "-readonly", "-cmd", ".timeout 5000", dbPath, sqlQuery)
 	out, err := cmd.Output()
 	if err != nil || len(bytes.TrimSpace(out)) == 0 {
 		return
@@ -302,7 +302,7 @@ ORDER BY day;`, startMs, endMs, handoff.SQLNotImportedTurnClause("s.title", "p.d
 
 	tCtx, tCancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer tCancel()
-	tCmd := exec.CommandContext(tCtx, sqlitecli.Executable(), "-json", "-readonly", "-cmd", ".timeout 5000", dbPath, toolSQL)
+	tCmd := subproc.CommandContext(tCtx, sqlitecli.Executable(), "-json", "-readonly", "-cmd", ".timeout 5000", dbPath, toolSQL)
 	if tOut, err := tCmd.Output(); err == nil && len(bytes.TrimSpace(tOut)) > 0 {
 		var toolRows []struct {
 			Day         string `json:"day"`

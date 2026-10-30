@@ -15,6 +15,7 @@ import (
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
 	"github.com/hoxiai/hoxi/internal/opencode/ocstate"
 	"github.com/hoxiai/hoxi/internal/sqlitecli"
+	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 func resolveExternalOpenCodeBinary() string {
@@ -113,7 +114,7 @@ FROM (
 
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, sqlitecli.Executable(), "-readonly", "-cmd", ".timeout 3000", dbPath, sqlRich)
+	cmd := subproc.CommandContext(ctx, sqlitecli.Executable(), "-readonly", "-cmd", ".timeout 3000", dbPath, sqlRich)
 	cmd.WaitDelay = time.Second
 	out, err := cmd.Output()
 	if err != nil || len(bytes.TrimSpace(out)) == 0 {
@@ -231,7 +232,7 @@ SELECT json_object(
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, sqlitecli.Executable(), "-readonly", "-cmd", ".timeout 3000", dbPath, sqlQuery)
+	cmd := subproc.CommandContext(ctx, sqlitecli.Executable(), "-readonly", "-cmd", ".timeout 3000", dbPath, sqlQuery)
 	cmd.WaitDelay = time.Second
 	out, err := cmd.Output()
 	if err != nil || len(bytes.TrimSpace(out)) == 0 {

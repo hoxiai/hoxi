@@ -6,15 +6,15 @@ import (
 	"os"
 	"os/exec"
 	"syscall"
+
+	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 func configureChildProcess(cmd *exec.Cmd, attachStdio bool) {
 	if cmd == nil {
 		return
 	}
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		HideWindow: true,
-	}
+	subproc.HideWindow(cmd)
 	if !attachStdio {
 		return
 	}

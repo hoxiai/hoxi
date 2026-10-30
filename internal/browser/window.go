@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -12,6 +11,8 @@ import (
 
 	"github.com/chromedp/cdproto/target"
 	"github.com/chromedp/chromedp"
+
+	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 // SetProfileRoot configures the base directory for persistent desktop Chrome
@@ -229,9 +230,9 @@ func focusOSProcess(pid int) {
 	switch runtime.GOOS {
 	case "darwin":
 		script := fmt.Sprintf(`tell application "System Events" to set frontmost of first process whose unix id is %d to true`, pid)
-		_ = exec.CommandContext(ctx, "osascript", "-e", script).Run()
+		_ = subproc.CommandContext(ctx, "osascript", "-e", script).Run()
 	case "windows":
 		script := fmt.Sprintf(`(New-Object -ComObject WScript.Shell).AppActivate(%d) | Out-Null`, pid)
-		_ = exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", script).Run()
+		_ = subproc.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", script).Run()
 	}
 }

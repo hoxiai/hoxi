@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+
+	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 // handle is the subset of a running connector process the manager needs.
@@ -32,7 +34,7 @@ func (h cmdHandle) Kill() error {
 // connector token is passed through env (TUNNEL_TOKEN), never on argv, so it
 // cannot be read from the process list.
 func execRun(ctx context.Context, bin string, env, args []string, onLine func(string)) (handle, error) {
-	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd := subproc.CommandContext(ctx, bin, args...)
 	writer := &lineWriter{onLine: onLine}
 	cmd.Stdout = writer
 	cmd.Stderr = writer

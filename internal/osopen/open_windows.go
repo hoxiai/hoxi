@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 
 	"golang.org/x/sys/windows"
+
+	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 var shellExecute = windows.ShellExecute
@@ -20,7 +22,7 @@ func Open(ctx context.Context, path string, reveal bool) error {
 		return err
 	}
 	if reveal {
-		err := exec.CommandContext(ctx, "explorer.exe", "/select,"+filepath.Clean(path)).Run()
+		err := subproc.CommandContext(ctx, "explorer.exe", "/select,"+filepath.Clean(path)).Run()
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
 			return nil

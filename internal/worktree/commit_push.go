@@ -6,11 +6,12 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 const gitPushTimeout = 45 * time.Second
@@ -514,7 +515,7 @@ func runGitWithTimeout(workDir string, timeout time.Duration, args ...string) (s
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmdArgs := append([]string{"-C", workDir}, args...)
-	cmd := exec.CommandContext(ctx, "git", cmdArgs...)
+	cmd := subproc.CommandContext(ctx, "git", cmdArgs...)
 	cmd.Env = nonInteractiveGitEnv()
 	output, err := cmd.CombinedOutput()
 	if err != nil {

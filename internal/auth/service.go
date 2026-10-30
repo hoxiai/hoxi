@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
+	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 func devicePlatform() string {
@@ -606,11 +607,11 @@ func openBrowser(targetURL string) {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
-		cmd = exec.Command("open", targetURL)
+		cmd = subproc.Command("open", targetURL)
 	case "windows":
-		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", targetURL)
+		cmd = subproc.Command("rundll32", "url.dll,FileProtocolHandler", targetURL)
 	default:
-		cmd = exec.Command("xdg-open", targetURL)
+		cmd = subproc.Command("xdg-open", targetURL)
 	}
 	if err := cmd.Start(); err == nil {
 		go func() { _ = cmd.Wait() }()

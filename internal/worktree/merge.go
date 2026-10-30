@@ -6,9 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 // ErrMergeConflict marks a MergeWorkingState call that could not combine the
@@ -94,7 +95,7 @@ func applyThreeWay(dir, patch string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), gitCommandTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", "-c", "core.autocrlf=false", "-C", dir, "apply", "--3way", "--whitespace=nowarn", "-")
+	cmd := subproc.CommandContext(ctx, "git", "-c", "core.autocrlf=false", "-C", dir, "apply", "--3way", "--whitespace=nowarn", "-")
 	cmd.Env = nonInteractiveGitEnv()
 	cmd.Stdin = strings.NewReader(patch)
 	if output, err := cmd.CombinedOutput(); err != nil {

@@ -8,13 +8,13 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/hoxiai/hoxi/internal/sqlitecli"
+	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 func codexHomeDir() string {
@@ -213,7 +213,7 @@ func openCodexRolloutReader(rolloutPath string) (io.ReadCloser, error) {
 func codexCommandOutput(name string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := subproc.CommandContext(ctx, name, args...)
 	cmd.WaitDelay = time.Second
 	return cmd.Output()
 }

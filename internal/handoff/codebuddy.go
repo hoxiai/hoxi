@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -16,6 +15,7 @@ import (
 
 	"github.com/hoxiai/hoxi/internal/agentcli"
 	"github.com/hoxiai/hoxi/internal/sqlitecli"
+	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 func codeBuddyDotDirs() []string {
@@ -150,7 +150,7 @@ func collectCodeBuddyCandidates(targetDir string) (map[string]*codeBuddySessionC
 		vscdb := filepath.Join(appDir, "codebuddy-sessions.vscdb")
 		if _, err := os.Stat(vscdb); err == nil {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			cmd := exec.CommandContext(ctx, sqlitecli.Executable(), "-readonly", "-cmd", ".timeout 3000", "-json", vscdb, "SELECT value FROM ItemTable WHERE key LIKE 'session:%' LIMIT 150;")
+			cmd := subproc.CommandContext(ctx, sqlitecli.Executable(), "-readonly", "-cmd", ".timeout 3000", "-json", vscdb, "SELECT value FROM ItemTable WHERE key LIKE 'session:%' LIMIT 150;")
 			cmd.WaitDelay = time.Second
 			rawOut, err := cmd.Output()
 			cancel()

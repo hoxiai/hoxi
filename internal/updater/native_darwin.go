@@ -15,7 +15,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -24,6 +23,8 @@ import (
 	"syscall"
 	"time"
 	"unsafe"
+
+	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 var (
@@ -186,7 +187,7 @@ func stageDarwinAppFromDMG(ctx context.Context, dmgPath, expectedVersion, stageD
 	if err := os.MkdirAll(mountPoint, 0o700); err != nil {
 		return "", err
 	}
-	attachCmd := exec.CommandContext(ctx, "hdiutil", "attach", "-nobrowse", "-readonly", "-noverify", "-mountpoint", mountPoint, dmgPath)
+	attachCmd := subproc.CommandContext(ctx, "hdiutil", "attach", "-nobrowse", "-readonly", "-noverify", "-mountpoint", mountPoint, dmgPath)
 	if out, err := attachCmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("mount update DMG: %w (%s)", err, strings.TrimSpace(string(out)))
 	}
@@ -196,7 +197,7 @@ func stageDarwinAppFromDMG(ctx context.Context, dmgPath, expectedVersion, stageD
 			return
 		}
 		detached = true
-		_ = exec.Command("hdiutil", "detach", mountPoint, "-force").Run()
+		_ = subproc.Command("hdiutil", "detach", mountPoint, "-force").Run()
 	}
 	defer detach()
 
@@ -206,7 +207,7 @@ func stageDarwinAppFromDMG(ctx context.Context, dmgPath, expectedVersion, stageD
 		return "", errors.New("mounted DMG does not contain a valid Hoxi.app")
 	}
 
-	verifyCmd := exec.CommandContext(ctx, "codesign", "--verify", "--deep", "--strict", mountedApp)
+	verifyCmd := subproc.CommandContext(ctx, "codesign", "--verify", "--deep", "--strict", mountedApp)
 	if out, err := verifyCmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("verify update code signature: %w (%s)", err, strings.TrimSpace(string(out)))
 	}
@@ -214,7 +215,7 @@ func stageDarwinAppFromDMG(ctx context.Context, dmgPath, expectedVersion, stageD
 	wantVer := strings.TrimPrefix(strings.TrimSpace(expectedVersion), "v")
 	if wantVer != "" {
 		plistPath := filepath.Join(mountedApp, "Contents", "Info.plist")
-		out, err := exec.CommandContext(ctx, "/usr/libexec/PlistBuddy", "-c", "Print :CFBundleShortVersionString", plistPath).Output()
+		out, err := subproc.CommandContext(ctx, "/usr/libexec/PlistBuddy", "-c", "Print :CFBundleShortVersionString", plistPath).Output()
 		gotVer := strings.TrimPrefix(strings.TrimSpace(string(out)), "v")
 		if err != nil || gotVer != wantVer {
 			return "", fmt.Errorf("staged Hoxi.app version mismatch: got %q, want %q", gotVer, wantVer)
@@ -222,7 +223,7 @@ func stageDarwinAppFromDMG(ctx context.Context, dmgPath, expectedVersion, stageD
 	}
 
 	stagedApp := filepath.Join(stageDir, "Hoxi.app")
-	dittoCmd := exec.CommandContext(ctx, "ditto", mountedApp, stagedApp)
+	dittoCmd := subproc.CommandContext(ctx, "ditto", mountedApp, stagedApp)
 	if out, err := dittoCmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("stage updated Hoxi.app: %w (%s)", err, strings.TrimSpace(string(out)))
 	}
@@ -323,7 +324,7 @@ func checkDarwinDMGSelfUpdate() (installErr error) {
 		return err
 	}
 
-	cmd := exec.Command("/bin/sh", "-c", darwinSwapAndRestartSh)
+	cmd := subproc.Command("/bin/sh", "-c", darwinSwapAndRestartSh)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.Env = append(os.Environ(),
 		"HOXI_UPD_PID="+strconv.Itoa(os.Getpid()),

@@ -18,6 +18,7 @@ import (
 	"github.com/hoxiai/hoxi/internal/opencode/ocapi"
 	"github.com/hoxiai/hoxi/internal/opencode/ocstate"
 	"github.com/hoxiai/hoxi/internal/reclaim"
+	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 const resolveVersionTimeout = 10 * time.Second
@@ -167,7 +168,7 @@ func ResolveVersion(binPath string) string {
 		cachedOpenCodeVerMu.Unlock()
 
 		ctx, cancel := context.WithTimeout(context.Background(), resolveVersionTimeout)
-		cmd := exec.CommandContext(ctx, binPath, "--version")
+		cmd := subproc.CommandContext(ctx, binPath, "--version")
 		configureChildProcess(cmd, false)
 		// Drop inherited color-forcing vars: with FORCE_COLOR set the CLI ignores
 		// NO_COLOR and prints an ANSI-colored warning on top of the version line.
@@ -225,7 +226,7 @@ func StartDaemonWithBin(
 	extraEnv ...string,
 ) (*Daemon, error) {
 	args := []string{"serve", "--hostname", "127.0.0.1", "--port", strconv.Itoa(port)}
-	child := exec.CommandContext(ctx, binPath, args...)
+	child := subproc.CommandContext(ctx, binPath, args...)
 	daemonDir := strings.TrimSpace(rootDir)
 	if daemonDir == "" || daemonDir == "/" {
 		if defDir := hoxipaths.EnsureDefaultWorkspaceDir(); defDir != "" {

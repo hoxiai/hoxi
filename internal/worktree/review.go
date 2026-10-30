@@ -7,9 +7,10 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 // ReviewScope selects which changes a workspace review covers.
@@ -257,7 +258,7 @@ func readReviewGuidance(root, ref string) (string, bool) {
 func runGitBounded(dir string, limit int64, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), gitCommandTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
+	cmd := subproc.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
 	cmd.Env = nonInteractiveGitEnv()
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

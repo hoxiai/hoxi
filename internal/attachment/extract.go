@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 const macPDFExtractJXA = `
@@ -103,10 +105,10 @@ func convertImageBytesToPNG(raw []byte, ext string) ([]byte, error) {
 	defer cancel()
 	var cmd *exec.Cmd
 	if runtime.GOOS == "darwin" {
-		cmd = exec.CommandContext(ctx, "sips", "-s", "format", "png", inPath, "--out", outPath)
+		cmd = subproc.CommandContext(ctx, "sips", "-s", "format", "png", inPath, "--out", outPath)
 	} else {
 		script := `Add-Type -AssemblyName System.Drawing; $img = [System.Drawing.Image]::FromFile($env:HOXI_IMG_IN); try { $img.Save($env:HOXI_IMG_OUT, [System.Drawing.Imaging.ImageFormat]::Png) } finally { $img.Dispose() }`
-		cmd = exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", script)
+		cmd = subproc.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", script)
 		cmd.Env = append(os.Environ(), "HOXI_IMG_IN="+inPath, "HOXI_IMG_OUT="+outPath)
 	}
 	if err := cmd.Run(); err != nil {
@@ -119,7 +121,7 @@ func extractPDFText(pdfPath string) string {
 	if runtime.GOOS == "darwin" {
 		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
 		defer cancel()
-		cmd := exec.CommandContext(ctx, "osascript", "-l", "JavaScript", "-e", macPDFExtractJXA, pdfPath)
+		cmd := subproc.CommandContext(ctx, "osascript", "-l", "JavaScript", "-e", macPDFExtractJXA, pdfPath)
 		if out, err := cmd.Output(); err == nil {
 			if s := strings.TrimSpace(string(out)); s != "" {
 				return s
@@ -129,7 +131,7 @@ func extractPDFText(pdfPath string) string {
 	if bin, err := exec.LookPath("pdftotext"); err == nil && bin != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		cmd := exec.CommandContext(ctx, bin, "-layout", "-nopgbrk", pdfPath, "-")
+		cmd := subproc.CommandContext(ctx, bin, "-layout", "-nopgbrk", pdfPath, "-")
 		if out, err := cmd.Output(); err == nil {
 			if s := strings.TrimSpace(string(out)); s != "" {
 				return s
@@ -143,7 +145,7 @@ func extractMacTextUtil(docPath string) string {
 	if runtime.GOOS == "darwin" {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		cmd := exec.CommandContext(ctx, "textutil", "-convert", "txt", "-stdout", docPath)
+		cmd := subproc.CommandContext(ctx, "textutil", "-convert", "txt", "-stdout", docPath)
 		out, err := cmd.Output()
 		if err != nil {
 			return ""
@@ -154,7 +156,7 @@ func extractMacTextUtil(docPath string) string {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		script := `Add-Type -AssemblyName System.Windows.Forms; $rtb = New-Object System.Windows.Forms.RichTextBox; try { $rtb.LoadFile($env:HOXI_DOC_PATH, [System.Windows.Forms.RichTextBoxStreamType]::RichText); [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Write-Output $rtb.Text } finally { $rtb.Dispose() }`
-		cmd := exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-STA", "-WindowStyle", "Hidden", "-Command", script)
+		cmd := subproc.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-STA", "-WindowStyle", "Hidden", "-Command", script)
 		cmd.Env = append(os.Environ(), "HOXI_DOC_PATH="+docPath)
 		if out, err := cmd.Output(); err == nil {
 			return strings.TrimSpace(string(out))

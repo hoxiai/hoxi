@@ -6,8 +6,9 @@ import (
 	"context"
 	"os"
 	"os/exec"
-	"syscall"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 const windowsToastScript = `
@@ -65,8 +66,7 @@ func platformShow(req Request) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, psBin, "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", windowsToastScript)
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	cmd := subproc.CommandContext(ctx, psBin, "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", windowsToastScript)
 	cmd.Env = append(os.Environ(),
 		"HOXI_NOTIFY_TITLE="+req.Title,
 		"HOXI_NOTIFY_BODY="+req.Body,

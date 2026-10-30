@@ -7,13 +7,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/hoxiai/hoxi/internal/sqlitecli"
+	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 func traeDotDirs() []string {
@@ -84,7 +84,7 @@ func readTraeSessionModels() (bySession map[string]string, defaultModel string) 
 		}
 		sqlQuery := `SELECT key, value FROM ItemTable WHERE key LIKE '%AI.agent.model.session_selected_model' OR key LIKE '%AI.agent.model.recent_user_selection_by_agent_label' OR key LIKE '%ai-chat:sessionRelation:globalModelMap' LIMIT 20;`
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		cmd := exec.CommandContext(ctx, sqlitecli.Executable(), "-readonly", "-cmd", ".timeout 3000", "-json", vscdb, sqlQuery)
+		cmd := subproc.CommandContext(ctx, sqlitecli.Executable(), "-readonly", "-cmd", ".timeout 3000", "-json", vscdb, sqlQuery)
 		cmd.WaitDelay = time.Second
 		rawOut, err := cmd.Output()
 		cancel()

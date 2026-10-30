@@ -13,8 +13,9 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 var (
@@ -154,7 +155,7 @@ func CheckNative() error {
 
 	stagedExe := filepath.Join(stageDir, "Hoxi.exe")
 	verCtx, verCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	out, err := exec.CommandContext(verCtx, stagedExe, "--version").Output()
+	out, err := subproc.CommandContext(verCtx, stagedExe, "--version").Output()
 	verCancel()
 	if err != nil || strings.TrimSpace(string(out)) != strings.TrimPrefix(strings.TrimSpace(res.LatestVersion), "v") {
 		_ = os.RemoveAll(stageDir)
@@ -166,8 +167,7 @@ func CheckNative() error {
 	if err != nil {
 		psBin = "powershell.exe"
 	}
-	cmd := exec.Command(psBin, "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", windowsSwapAndRestartPS)
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	cmd := subproc.Command(psBin, "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", windowsSwapAndRestartPS)
 	cmd.Env = append(os.Environ(),
 		"HOXI_UPD_PID="+strconv.Itoa(os.Getpid()),
 		"HOXI_UPD_STAGE_DIR="+stageDir,

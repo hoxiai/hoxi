@@ -20,6 +20,7 @@ import (
 	"github.com/hoxiai/hoxi/internal/provider"
 	"github.com/hoxiai/hoxi/internal/runner"
 	"github.com/hoxiai/hoxi/internal/skills"
+	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 func runOpenCommand(
@@ -87,11 +88,11 @@ func launchMacOSApp(directory string) error {
 		}
 		for _, appPath := range candidates {
 			if info, err := os.Stat(appPath); err == nil && info.IsDir() {
-				cmd := exec.Command("open", "-a", appPath, directory)
+				cmd := subproc.Command("open", "-a", appPath, directory)
 				return cmd.Run()
 			}
 		}
-		return exec.Command("open", "-a", "Hoxi", directory).Run()
+		return subproc.Command("open", "-a", "Hoxi", directory).Run()
 	case "windows":
 		var candidates []string
 		if exe, err := os.Executable(); err == nil && exe != "" {
@@ -111,13 +112,13 @@ func launchMacOSApp(directory string) error {
 		}
 		for _, bin := range candidates {
 			if st, err := os.Stat(bin); err == nil && !st.IsDir() {
-				cmd := exec.Command(bin, "-dir", directory)
+				cmd := subproc.Command(bin, "-dir", directory)
 				cmd.Env = append(os.Environ(), "HOXI_NO_DESKTOP=0")
 				return cmd.Start()
 			}
 		}
 		if bin, err := exec.LookPath("Hoxi.exe"); err == nil {
-			cmd := exec.Command(bin, "-dir", directory)
+			cmd := subproc.Command(bin, "-dir", directory)
 			cmd.Env = append(os.Environ(), "HOXI_NO_DESKTOP=0")
 			return cmd.Start()
 		}
@@ -508,7 +509,7 @@ func runNativeOpenCodeTUI(ctx context.Context, args []string, dir string, stdout
 		fmt.Fprintf(stderr, "Warning: failed to seed default skills: %v\n", err)
 	}
 	cfgPath := provider.EnsureHoxiModelsConfig(dir)
-	cmd := exec.CommandContext(ctx, binPath, args...)
+	cmd := subproc.CommandContext(ctx, binPath, args...)
 	cmd.Dir = dir
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = stdout

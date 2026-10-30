@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -16,6 +15,7 @@ import (
 
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
 	"github.com/hoxiai/hoxi/internal/sqlitecli"
+	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 const base62Alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
@@ -462,7 +462,7 @@ func insertNormalizedTurnsToOpenCodeDB(
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, sqlitecli.Executable(), "-cmd", ".timeout 5000", dbPath)
+	cmd := subproc.CommandContext(ctx, sqlitecli.Executable(), "-cmd", ".timeout 5000", dbPath)
 	cmd.WaitDelay = time.Second
 	cmd.Stdin = strings.NewReader(sqlBuf.String())
 	if out, err := cmd.CombinedOutput(); err != nil {

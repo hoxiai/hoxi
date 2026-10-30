@@ -7,10 +7,11 @@ import (
 	"errors"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 const (
@@ -81,7 +82,7 @@ func (s *Service) runGH(ctx context.Context, dir string, args ...string) ghResul
 	ctx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, s.ghPath, args...)
+	cmd := subproc.CommandContext(ctx, s.ghPath, args...)
 	cmd.Dir = dir
 	cmd.Env = forgeEnv()
 

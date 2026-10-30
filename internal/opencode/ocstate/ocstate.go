@@ -12,13 +12,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
 	"github.com/hoxiai/hoxi/internal/sqlitecli"
+	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 const (
@@ -121,7 +121,7 @@ func ReadConsoleState(dbPath string) *ConsoleState {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), sqliteReadTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, sqlitecli.Executable(), "-readonly", "-cmd", ".timeout 3000", dbPath, consoleStateQuery)
+	cmd := subproc.CommandContext(ctx, sqlitecli.Executable(), "-readonly", "-cmd", ".timeout 3000", dbPath, consoleStateQuery)
 	cmd.WaitDelay = time.Second
 	out, err := cmd.Output()
 	if err != nil || len(bytes.TrimSpace(out)) == 0 {
@@ -192,7 +192,7 @@ func SyncConsoleState(ext *ConsoleState, dstDB string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), sqliteWriteTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, sqlitecli.Executable(), "-cmd", ".timeout 3000", dstDB)
+	cmd := subproc.CommandContext(ctx, sqlitecli.Executable(), "-cmd", ".timeout 3000", dstDB)
 	cmd.WaitDelay = time.Second
 	cmd.Stdin = strings.NewReader(consoleUpsertSQL(ext))
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -276,7 +276,7 @@ func CleanDatabaseEventLog(ctx context.Context, dbPath string) error {
 
 	purgeCtx, cancelPurge := context.WithTimeout(ctx, 30*time.Second)
 	defer cancelPurge()
-	purgeCmd := exec.CommandContext(
+	purgeCmd := subproc.CommandContext(
 		purgeCtx,
 		sqlitecli.Executable(),
 		"-cmd", ".timeout 10000",
@@ -290,7 +290,7 @@ func CleanDatabaseEventLog(ctx context.Context, dbPath string) error {
 
 	vacuumCtx, cancelVacuum := context.WithTimeout(ctx, 45*time.Second)
 	defer cancelVacuum()
-	vacuumCmd := exec.CommandContext(
+	vacuumCmd := subproc.CommandContext(
 		vacuumCtx,
 		sqlitecli.Executable(),
 		"-cmd", ".timeout 10000",

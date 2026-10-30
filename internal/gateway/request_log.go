@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"os/exec"
 	"regexp"
 	"sort"
 	"strconv"
@@ -17,6 +16,7 @@ import (
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
 	"github.com/hoxiai/hoxi/internal/runner"
 	"github.com/hoxiai/hoxi/internal/sqlitecli"
+	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 const (
@@ -311,7 +311,7 @@ FROM (
 
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, sqlitecli.Executable(), "-json", "-readonly", "-cmd", ".timeout 5000", dbPath, sqlQuery)
+	cmd := subproc.CommandContext(ctx, sqlitecli.Executable(), "-json", "-readonly", "-cmd", ".timeout 5000", dbPath, sqlQuery)
 	out, err := cmd.Output()
 	if err != nil || len(bytes.TrimSpace(out)) == 0 {
 		return nil

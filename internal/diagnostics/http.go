@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"strconv"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 // Handler serves diagnostics, a bounded metadata-only export, and the fixed
@@ -97,7 +99,7 @@ func openLogDirectory(directory string) error {
 		program = "explorer.exe"
 	}
 	// No shell, user-supplied arguments, or captured child output.
-	err := exec.Command(program, directory).Run()
+	err := subproc.Command(program, directory).Run()
 	var exitErr *exec.ExitError
 	if runtime.GOOS == "windows" && errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
 		return nil

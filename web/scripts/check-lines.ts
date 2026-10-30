@@ -172,6 +172,7 @@ const GO_BASE_PACKAGES = new Set([
   "reclaim",
   "sqlitecli",
   "statusbar",
+  "subproc",
   "textindex",
 ]);
 

@@ -21,6 +21,7 @@ import (
 	"github.com/hoxiai/hoxi/internal/opencode"
 	"github.com/hoxiai/hoxi/internal/provider"
 	"github.com/hoxiai/hoxi/internal/statusbar"
+	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 type systemRuntimeInfoResponse struct {
@@ -62,7 +63,7 @@ func resolveLocalUserIdentity() (sysUser, gitName, gitEmail string) {
 		readGitGlobal := func(key string) string {
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
-			cmd := exec.CommandContext(ctx, "git", "config", "--global", key)
+			cmd := subproc.CommandContext(ctx, "git", "config", "--global", key)
 			cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GCM_INTERACTIVE=never")
 			out, err := cmd.Output()
 			if err != nil {
@@ -232,9 +233,9 @@ func readClipboardImageFile(path string) (clipboardImageItem, bool) {
 		defer cancel()
 		var cmd *exec.Cmd
 		if runtime.GOOS == "darwin" {
-			cmd = exec.CommandContext(ctx, "sips", "-s", "format", "png", path, "--out", tmpPath)
+			cmd = subproc.CommandContext(ctx, "sips", "-s", "format", "png", path, "--out", tmpPath)
 		} else {
-			cmd = exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", winConvertImagePS)
+			cmd = subproc.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", winConvertImagePS)
 			cmd.Env = append(os.Environ(), "HOXI_CLIP_IN="+path, "HOXI_CLIP_OUT="+tmpPath)
 		}
 		if cmd.Run() != nil {
@@ -296,9 +297,9 @@ func (g *Gateway) handleClipboardImages(w http.ResponseWriter, r *http.Request) 
 	defer cancel()
 	var cmd *exec.Cmd
 	if runtime.GOOS == "darwin" {
-		cmd = exec.CommandContext(ctx, "osascript", "-l", "JavaScript", "-e", macPasteboardJXA)
+		cmd = subproc.CommandContext(ctx, "osascript", "-l", "JavaScript", "-e", macPasteboardJXA)
 	} else {
-		cmd = exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-STA", "-WindowStyle", "Hidden", "-Command", winPasteboardPS)
+		cmd = subproc.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-STA", "-WindowStyle", "Hidden", "-Command", winPasteboardPS)
 	}
 	out, err := cmd.Output()
 	if err != nil {
