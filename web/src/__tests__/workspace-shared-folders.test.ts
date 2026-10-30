@@ -2,6 +2,7 @@ import { reconcile, unwrap } from "solid-js/store";
 import { hoxiAPI } from "../services/api";
 import type { WorkspaceProfile } from "../services/api-types";
 import {
+  findWorkspaceProfileByDir,
   isDismissedProjectPath,
   removeWorkspaceProfile,
   saveWorkspaceProfile,
@@ -83,5 +84,21 @@ describe("workspaces sharing folders", () => {
       assertEqual(workspace.rootDir, "/code/first");
       assertEqual(workspace.activeProjectID, "ws_first");
       assertEqual(buildAllProjects().length, 2);
+    }));
+
+  it("rebuilds the folder lookup after in-place edits that keep the workspace count", () =>
+    withSharedWorkspaces(() => {
+      // Prime the cache so the lookups below must notice the edits themselves.
+      assertEqual(findWorkspaceProfileByDir("/code/moved"), undefined);
+      assertEqual(findWorkspaceProfileByDir("/code/first")?.id, "ws_first");
+
+      setWorkspace("savedWorkspaces", 0, "folders", [
+        { id: "ws_first_0", path: "/code/moved", isPrimary: true, position: 0 },
+      ]);
+      assertEqual(findWorkspaceProfileByDir("/code/moved")?.id, "ws_first");
+
+      setWorkspace("savedWorkspaces", 0, "folders", 0, "path", "/code/renamed");
+      assertEqual(findWorkspaceProfileByDir("/code/moved"), undefined);
+      assertEqual(findWorkspaceProfileByDir("/code/renamed")?.id, "ws_first");
     }));
 });

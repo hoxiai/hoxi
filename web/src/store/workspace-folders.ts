@@ -1,7 +1,7 @@
 // web/src/store/workspace-folders.ts
 // Workspace profile / folder path queries and dismissed-project bookkeeping.
 // Leaf module: depends only on workspace-state.
-import { createSignal } from "solid-js";
+import { createSignal, getListener } from "solid-js";
 import { unwrap } from "solid-js/store";
 import type { WorkspaceFolder, WorkspaceProfile } from "../services/api";
 import type { SessionInfo } from "../services/sse-types";
@@ -187,6 +187,8 @@ let cachedFirstSessionEntry: SessionIndexEntry | undefined;
 let cachedSessionSurfaceByDir = new Map<string, "work" | "code">();
 let cachedSavedItems: WorkspaceProfile[] = [];
 let cachedSavedFolders: Array<WorkspaceFolder[] | undefined> = [];
+let cachedSavedFolderSnaps: Array<Array<{ path: string; isPrimary: boolean | undefined }>> = [];
+let cachedSavedIds: Array<string | undefined> = [];
 let cachedSavedSurfaces: Array<WorkspaceProfile["surface"]> = [];
 let cachedSavedHidden: Array<boolean | undefined> = [];
 let cachedSavedNames: Array<string | undefined> = [];
@@ -211,12 +213,53 @@ function buildProfileDirMap(list: WorkspaceProfile[]): Map<string, WorkspaceProf
   return map;
 }
 
+function snapshotFolders(folders: WorkspaceFolder[] | undefined): Array<{ path: string; isPrimary: boolean | undefined }> {
+  return (folders || []).map((f) => ({ path: f.path, isPrimary: f.isPrimary }));
+}
+
+function foldersMatchSnapshot(
+  folders: WorkspaceFolder[] | undefined,
+  snap: Array<{ path: string; isPrimary: boolean | undefined }> | undefined
+): boolean {
+  const list = folders || [];
+  if (!snap || list.length !== snap.length) return false;
+  for (let i = 0; i < list.length; i++) {
+    if (list[i]?.path !== snap[i].path || list[i]?.isPrimary !== snap[i].isPrimary) return false;
+  }
+  return true;
+}
+
+// The lookup is derived from every field it indexes by. Reading only `.length`
+// would leave a caller that runs on a cache hit unaware of in-place edits that
+// keep the array size (rename, recolor, hide, change folders), so subscribe to
+// each of those fields through the store proxy whenever a computation is listening.
+function trackFolderLookupSources(): void {
+  if (!getListener()) return;
+  const saved = workspace.savedWorkspaces;
+  for (let i = 0; i < saved.length; i++) {
+    const w = saved[i];
+    if (!w) continue;
+    void w.id;
+    void w.name;
+    void w.color;
+    void w.surface;
+    void w.hidden;
+    const folders = w.folders;
+    if (!folders) continue;
+    for (let j = 0; j < folders.length; j++) {
+      void folders[j]?.path;
+      void folders[j]?.isPrimary;
+    }
+  }
+  const dismissed = workspace.dismissedProjects;
+  for (let i = 0; i < dismissed.length; i++) void dismissed[i];
+}
+
 function getFolderLookup(): FolderLookup {
   const defDir = normalizeFolderPath(defaultWorkspaceDir());
   const wDirs = workWorkspaceDirs();
   const sessRev = sessionSurfaceRevision();
-  void workspace.savedWorkspaces.length;
-  void workspace.dismissedProjects.length;
+  trackFolderLookupSources();
 
   const rawSaved = unwrap(workspace.savedWorkspaces) || [];
   const rawDismissed = unwrap(workspace.dismissedProjects) || [];
@@ -268,7 +311,9 @@ function getFolderLookup(): FolderLookup {
       const w = rawSaved[i];
       if (
         w !== cachedSavedItems[i] ||
+        w?.id !== cachedSavedIds[i] ||
         w?.folders !== cachedSavedFolders[i] ||
+        !foldersMatchSnapshot(w?.folders, cachedSavedFolderSnaps[i]) ||
         w?.surface !== cachedSavedSurfaces[i] ||
         w?.hidden !== cachedSavedHidden[i] ||
         w?.name !== cachedSavedNames[i] ||
@@ -331,6 +376,8 @@ function getFolderLookup(): FolderLookup {
   cachedWorkDirs = wDirs;
   cachedSavedItems = rawSaved.slice();
   cachedSavedFolders = rawSaved.map((w) => w?.folders);
+  cachedSavedFolderSnaps = rawSaved.map((w) => snapshotFolders(w?.folders));
+  cachedSavedIds = rawSaved.map((w) => w?.id);
   cachedSavedSurfaces = rawSaved.map((w) => w?.surface);
   cachedSavedHidden = rawSaved.map((w) => w?.hidden);
   cachedSavedNames = rawSaved.map((w) => w?.name);
