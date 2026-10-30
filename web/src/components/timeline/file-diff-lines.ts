@@ -61,7 +61,11 @@ export function resolveSessionDiffForFile(
     }
     const turns = workspace.messagesBySession[sid] ?? [];
     if (turns.length > 0) {
-      const fromTurns = findMatchingDiff(collectCycleChangedFiles(turns, sid), norm);
+      // A tool card for a temp-dir edit still needs its own diff lines.
+      const fromTurns = findMatchingDiff(
+        collectCycleChangedFiles(turns, sid, { includeScratch: true }),
+        norm
+      );
       if (fromTurns) return fromTurns;
     }
     if (direct) return direct;

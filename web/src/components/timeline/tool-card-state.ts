@@ -4,7 +4,9 @@ import {
   ensureChildSubagentSessionLoaded,
   extractChildSubagentSessionId,
   type MessageTurn,
+  sessionDirectory,
   workspace,
+  workspaceFoldersForDir,
 } from "../../store/workspace";
 import {
   countDiffLines,
@@ -26,6 +28,27 @@ export function normalizeWorkspaceRelPath(raw: string): string {
     trimmed = trimmed.replace(/^\.\/+/, "");
   }
   return trimmed.replace(/^\.hoxi\/worktrees\/[^/]+\/+/, "");
+}
+
+// /tmp, macOS per-user /var/folders/<a>/<b>/T, and Windows user / system Temp.
+const SYSTEM_TEMP_PATH =
+  /^(?:\/(?:private\/)?tmp(?:\/|$)|\/(?:private\/)?var\/folders\/[^/]+\/[^/]+\/T(?:\/|$)|[a-z]:[\\/](?:users[\\/][^\\/]+[\\/]appdata[\\/]local[\\/]temp|windows[\\/]temp)(?:[\\/]|$))/i;
+
+function isUnderDir(file: string, dir: string): boolean {
+  const base = dir.replace(/[\\/]+$/, "");
+  return Boolean(base) && (file === base || file.startsWith(`${base}/`) || file.startsWith(`${base}\\`));
+}
+
+/**
+ * Scratch files the agent wrote into a system temp directory are not project
+ * changes. A project folder or session directory that itself lives in temp
+ * still counts.
+ */
+export function isSessionScratchFile(file: string, sessionID: string): boolean {
+  if (!SYSTEM_TEMP_PATH.test(file)) return false;
+  const dir = sessionDirectory(sessionID) || workspace.rootDir;
+  const roots = [dir, workspace.rootDir, ...(dir ? workspaceFoldersForDir(dir).map((f) => f.path) : [])];
+  return !roots.some((root) => root && isUnderDir(file, root));
 }
 
 
@@ -560,7 +583,8 @@ export function resolveToolFileDiagnostics(
  */
 export function collectCycleChangedFiles(
   cycleTurns: MessageTurn[],
-  sessionID: string
+  sessionID: string,
+  options: { includeScratch?: boolean } = {}
 ): SnapshotFileDiff[] {
   const byFile = new Map<string, SnapshotFileDiff>();
   const patchFiles: string[] = [];
@@ -568,6 +592,7 @@ export function collectCycleChangedFiles(
   const recordDiff = (d: SnapshotFileDiff) => {
     const norm = normalizeWorkspaceRelPath(d.file);
     if (!norm) return;
+    if (!options.includeScratch && isSessionScratchFile(norm, sessionID)) return;
     const candidate = enrichToolDiffMeta({ ...d, file: norm }, sessionID);
     if (!isRealFileDiff(candidate)) return;
     const prev = byFile.get(norm);

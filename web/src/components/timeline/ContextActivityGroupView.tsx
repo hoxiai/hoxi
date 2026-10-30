@@ -41,7 +41,11 @@ import {
   isShellTool,
   isTaskTool,
 } from "./tool-card-helpers";
-import { resolveToolFileDiffs } from "./tool-card-state";
+import {
+  isSessionScratchFile,
+  normalizeWorkspaceRelPath,
+  resolveToolFileDiffs,
+} from "./tool-card-state";
 import { t as tI18n } from "../../i18n";
 import { isAttentionToolPart } from "./context-activity-parts";
 
@@ -379,6 +383,8 @@ export default function ContextActivityGroupView(props: {
       const diffs = resolveToolFileDiffs(p, true, target);
       for (const d of diffs) {
         if (!d.file) continue;
+        // Match the changed-files card: temp-dir scratch edits are not project changes.
+        if (isSessionScratchFile(normalizeWorkspaceRelPath(d.file), p.sessionID)) continue;
         byFile.set(d.file, {
           additions: d.additions || 0,
           deletions: d.deletions || 0,
