@@ -163,6 +163,13 @@ test("opencode.lock pins every shipped platform and release workflows consume it
   assert.match(nsisProject, /File "\/oname=opencode\.exe"/);
   assert.match(nsisProject, /!insertmacro wails\.webview2runtime/);
   assert.match(nsisProject, /!insertmacro wails\.associateCustomProtocols/);
+  // Killing Hoxi.exe alone orphans its opencode.exe child, which keeps the file
+  // locked: install and uninstall must both stop sidecars running from $INSTDIR,
+  // matched by full path rather than by process name.
+  assert.equal(nsisProject.match(/^\s*!insertmacro hoxi\.stopInstalledProcesses\s*$/gm)?.length, 2);
+  assert.match(nsisProject, /'opencode\.exe', 'sqlite3\.exe'/);
+  assert.match(nsisProject, /GetDirectoryName\(\$\$_\.ExecutablePath\) -ieq \$\$root/);
+  assert.doesNotMatch(nsisProject, /taskkill[^\n]*opencode/i);
 
   const macBuild = fs.readFileSync(path.join(scripts, "../build-desktop.sh"), "utf8");
   assert.match(macBuild, /opencode-lock\.mjs verify-binary/);

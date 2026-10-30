@@ -265,7 +265,13 @@ func StartDaemonWithBin(
 		child.Env = append(child.Env, "OPENCODE_CONFIG="+configPath)
 	}
 	child.Env = append(child.Env, extraEnv...)
-	if err := child.Start(); err != nil {
+	// Tied so a Hoxi that is killed (crash, taskkill /F from the installer)
+	// takes the daemon with it on Windows instead of leaving opencode.exe
+	// running and locked. The ledger below still covers an untied daemon.
+	untied := func(err error) {
+		logger.Warn("opencode daemon not tied to Hoxi's lifetime", "error", err)
+	}
+	if err := subproc.StartTied(child, untied); err != nil {
 		return nil, fmt.Errorf("start opencode serve (%s): %w", binPath, err)
 	}
 	daemon := &Daemon{Cmd: child, ledger: ledger}

@@ -95,6 +95,34 @@ Function .onInit
     !insertmacro wails.checkArchitecture
 FunctionEnd
 
+# Stop Hoxi.exe, opencode.exe and sqlite3.exe that run from $INSTDIR and wait
+# for them to exit. Killing Hoxi.exe alone leaves its `opencode serve` child
+# running, which keeps $INSTDIR\opencode.exe locked: the uninstaller then
+# cannot remove it and the next install cannot overwrite it. Matching is by
+# full path in $INSTDIR, never by name, so opencode.exe installed elsewhere
+# by the user is left alone. Hoxi.exe goes first so it cannot respawn
+# opencode; a few rounds cover a respawn that slips in anyway.
+!macro hoxi.stopInstalledProcesses
+    Push $0
+    InitPluginsDir
+    FileOpen $0 "$PLUGINSDIR\hoxi-stop.ps1" w
+    FileWrite $0 "param([string]$$Dir)$\r$\n"
+    FileWrite $0 "$$ErrorActionPreference = 'SilentlyContinue'$\r$\n"
+    FileWrite $0 "if (-not $$Dir) { exit 0 }$\r$\n"
+    FileWrite $0 "$$root = [IO.Path]::GetFullPath($$Dir).TrimEnd('\')$\r$\n"
+    FileWrite $0 "$$names = @('${PRODUCT_EXECUTABLE}', 'opencode.exe', 'sqlite3.exe')$\r$\n"
+    FileWrite $0 "for ($$i = 0; $$i -lt 5; $$i++) {$\r$\n"
+    FileWrite $0 "  $$procs = @(Get-CimInstance Win32_Process | Where-Object { $$_.ExecutablePath -and ($$names -contains [IO.Path]::GetFileName($$_.ExecutablePath)) -and ([IO.Path]::GetDirectoryName($$_.ExecutablePath) -ieq $$root) } | Sort-Object { [IO.Path]::GetFileName($$_.ExecutablePath) -ine '${PRODUCT_EXECUTABLE}' })$\r$\n"
+    FileWrite $0 "  if ($$procs.Count -eq 0) { exit 0 }$\r$\n"
+    FileWrite $0 "  foreach ($$p in $$procs) { Write-Output ('Stopping ' + $$p.ExecutablePath + ' (PID ' + $$p.ProcessId + ')'); Stop-Process -Id $$p.ProcessId -Force }$\r$\n"
+    FileWrite $0 "  Wait-Process -Id @($$procs | ForEach-Object { $$_.ProcessId }) -Timeout 10$\r$\n"
+    FileWrite $0 "}$\r$\n"
+    FileClose $0
+    nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\hoxi-stop.ps1" "$INSTDIR"'
+    Pop $0
+    Pop $0
+!macroend
+
 Section
     !insertmacro wails.setShellContext
 
@@ -102,8 +130,10 @@ Section
 
     SetOutPath $INSTDIR
 
-    # Stop any running Hoxi instance before replacing binaries
+    # Stop any running Hoxi instance and the opencode / sqlite3 sidecars it
+    # started from $INSTDIR before replacing binaries
     nsExec::ExecToLog 'taskkill /F /IM "${PRODUCT_EXECUTABLE}"'
+    !insertmacro hoxi.stopInstalledProcesses
 
     !insertmacro wails.files
     File "/oname=opencode.exe" "${ARG_HOXI_OPENCODE_BINARY}"
@@ -125,6 +155,7 @@ Section "uninstall"
     !insertmacro wails.setShellContext
 
     nsExec::ExecToLog 'taskkill /F /IM "${PRODUCT_EXECUTABLE}"'
+    !insertmacro hoxi.stopInstalledProcesses
 
     RMDir /r "$AppData\${PRODUCT_EXECUTABLE}"
     RMDir /r $INSTDIR
