@@ -53,6 +53,9 @@ export interface BrowserAction {
   width?: number;
   height?: number;
   deviceScaleFactor?: number;
+  // Ask the backend to size the viewport to the whole document instead of the
+  // requested height, so the preview can scroll the full page.
+  fullPage?: boolean;
   scaleFactor?: number;
   // UI-only pointer input; hover is a move with no button held.
   phase?: "down" | "move" | "up" | "cancel";

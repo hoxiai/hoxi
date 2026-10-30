@@ -176,6 +176,50 @@ func TestChromeDynamicViewport(t *testing.T) {
 	assertSize(375, 667)
 }
 
+func TestResizeFullPageValidation(t *testing.T) {
+	s := New()
+	defer s.Close()
+	s.SetAgentToken("secret")
+	dir := t.TempDir()
+	// fullPage is meaningless outside resize and must never reserve a scope.
+	for _, body := range []string{
+		`{"action":"navigate","url":"about:blank","fullPage":true}`,
+		`{"action":"control","manual":true,"fullPage":false}`,
+		`{"action":"snapshot","fullPage":true}`,
+	} {
+		if w := request(t, s, dir, "resize", "action", body, false); w.Code != 400 {
+			t.Fatalf("%s: %d %s", body, w.Code, w.Body.String())
+		}
+	}
+	if len(s.scopes) != 0 {
+		t.Fatal("invalid fullPage reserved a scope")
+	}
+	// A fullPage resize still only saves size lazily and never starts Chrome;
+	// the content height is measured later, once a page is loaded.
+	if w := request(t, s, dir, "resize", "action", `{"action":"resize","width":800,"height":600,"fullPage":true}`, false); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	found := false
+	for _, sc := range s.scopes {
+		found = true
+		if sc.width != 800 || sc.browser != nil || !sc.fullPage {
+			t.Fatal("fullPage resize did not save lazily")
+		}
+	}
+	if !found {
+		t.Fatal("fullPage resize reserved no scope")
+	}
+	// Turning it back off keeps the scope but clears the flag.
+	if w := request(t, s, dir, "resize", "action", `{"action":"resize","width":800,"height":600,"fullPage":false}`, false); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	for _, sc := range s.scopes {
+		if sc.fullPage {
+			t.Fatal("fullPage not cleared")
+		}
+	}
+}
+
 func TestViewportOnlyScopesDoNotExhaustLimit(t *testing.T) {
 	s := New()
 	defer s.Close()

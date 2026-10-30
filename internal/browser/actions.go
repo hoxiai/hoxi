@@ -42,6 +42,9 @@ func validateAction(a Action, agent bool) error {
 	if a.Action != "resize" && (a.Width != nil || a.Height != nil || a.DeviceScaleFactor != nil) {
 		return errors.New("width and height are only valid for resize")
 	}
+	if a.FullPage != nil && a.Action != "resize" {
+		return errors.New("fullPage is only valid for resize")
+	}
 	if a.Manual != nil && a.Action != "control" {
 		return errors.New("manual is only valid for control")
 	}
@@ -256,6 +259,37 @@ func (sc *scope) capture(ctx context.Context) ([]byte, error) {
 	return image, err
 }
 
+// contentHeight measures the whole document so a full-page viewport can cover
+// it. The result stays within the same 4096 / 8388608-pixel bounds as resize.
+func (sc *scope) contentHeight(ctx context.Context) (int, error) {
+	var height float64
+	const expression = `(()=>{const d=document.documentElement,b=document.body;return Math.max(d?d.scrollHeight:0,b?b.scrollHeight:0,d?d.offsetHeight:0)||0})()`
+	if err := sc.withTab(ctx, chromedp.Evaluate(expression, &height)); err != nil {
+		return 0, err
+	}
+	measured := int(math.Ceil(height))
+	if measured < 1 {
+		measured = 1
+	}
+	if measured > 4096 {
+		measured = 4096
+	}
+	// Keep the emulated surface within the same pixel budget as resize.
+	scale := sc.scale
+	if scale <= 0 {
+		scale = 1
+	}
+	if sc.width > 0 {
+		if limit := int(8388608 / (float64(sc.width) * scale * scale)); measured > limit {
+			measured = limit
+		}
+	}
+	if measured < 1 {
+		measured = 1
+	}
+	return measured, nil
+}
+
 func (sc *scope) perform(ctx context.Context, a Action) (map[string]any, error) {
 	if a.Async {
 		return nil, sc.startNavigation(ctx, a)
@@ -286,6 +320,17 @@ func (sc *scope) perform(ctx context.Context, a Action) (map[string]any, error) 
 		_, err := sc.pointer(ctx, a)
 		return nil, err
 	case "resize":
+		if !sc.fullPage || sc.window {
+			return nil, sc.withTab(ctx)
+		}
+		height, err := sc.contentHeight(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if height != sc.height {
+			sc.height = height
+			sc.stopStream()
+		}
 		return nil, sc.withTab(ctx)
 	case "viewport_reset":
 		// Only Chrome Link emulates a viewport it can restore; Hoxi-owned

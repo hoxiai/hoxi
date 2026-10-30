@@ -35,6 +35,7 @@ export const inspector = {
     developerTools: "Preview and diagnostics",
     viewportPreset: "Page size",
     viewportFit: "Fit panel",
+    viewportPage: "Full page · fit width",
     viewportDesktop: "Desktop · 1440 × 900",
     viewportMobile: "Phone · 390 × 844",
     viewportActual: "Actual window size",

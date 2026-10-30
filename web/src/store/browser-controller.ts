@@ -72,7 +72,11 @@ export function createBrowserController() {
   };
   const headlessMode = () => !windowMode() && !chromeLinked();
   const chromeViewportLinked = createMemo(() => chromeLinked() && state()?.connected !== false);
-  const effectivePreview = () => headlessMode() || previewEnabled();
+  // Memoized so the frame stream effect subscribes to a boolean that only
+  // notifies on real flips, not to every poll/action state object. Reading
+  // state() through a plain function re-ran the stream effect (and rebuilt the
+  // WebSocket) on every state update, making the preview flicker.
+  const effectivePreview = createMemo(() => headlessMode() || previewEnabled());
   const pairing = () => Boolean(pairCode() || state()?.pairing);
   const selectedTab = createMemo(() => state()?.tabID);
   onCleanup(observeBrowserVisibility(setVisible));
@@ -184,8 +188,9 @@ export function createBrowserController() {
     enabled: () => workspace.inspectorOpen && workspace.inspectorTab === "browser" && visible(), error: setError });
   const viewport = createMemo(() => {
     const mode = developer.viewportMode();
-    return mode === "fit" || mode === "actual" ? layoutViewport() : browserViewportPresets[mode];
+    return mode === "fit" || mode === "page" || mode === "actual" ? layoutViewport() : browserViewportPresets[mode];
   });
+  const fullPageMode = () => developer.viewportMode() === "page" && headlessMode();
 
   function flushBufferedInputs(connection: Connection) {
     if (!valid(connection)) return;
@@ -222,7 +227,7 @@ export function createBrowserController() {
     }
     if (!running() && headlessMode() && (action.action === "navigate" || action.action === "tab_new")) {
       const size = viewport();
-      if (size) enqueueAction(connection, { action: "resize", ...size });
+      if (size) enqueueAction(connection, { action: "resize", ...size, fullPage: fullPageMode() });
     }
     if (action.action === "pointer" && action.phase === "down") connection.pointerUsed = true;
     if (connection.inputs.add(action)) {
@@ -365,7 +370,7 @@ export function createBrowserController() {
     createEffect(() => {
       const size = viewport();
       // An idle panel only remembers its size; navigate/tab_new sends it on startup.
-      if (size) untrack(() => { if (running() && headlessMode()) enqueueAction(connection, { action: "resize", ...size }); });
+      if (size) untrack(() => { if (running() && headlessMode()) enqueueAction(connection, { action: "resize", ...size, fullPage: fullPageMode() }); });
     });
     createEffect(() => {
       // Chrome Link renders the tab at the panel's size unless the user keeps
@@ -375,6 +380,41 @@ export function createBrowserController() {
       const actual = developer.viewportMode() === "actual";
       if (!actual && !size) return;
       untrack(() => enqueueAction(connection, actual ? { action: "viewport_reset" } : { action: "resize", ...size! }));
+    });
+    let measuredPageKey = "";
+    createEffect(() => {
+      // Full page re-measures the document height after each load (and when the
+      // panel width changes) so the preview can scroll the whole page.
+      if (!fullPageMode() || !running()) { measuredPageKey = ""; return; }
+      const nav = state()?.navigation;
+      const tabID = state()?.tabID;
+      if (!tabID || !nav || nav.status !== "ready") return;
+      const key = `${tabID}|${nav.startedAt ?? 0}`;
+      if (key === measuredPageKey) return;
+      const size = viewport();
+      if (!size) return;
+      measuredPageKey = key;
+      untrack(() => enqueueAction(connection, { action: "resize", ...size, fullPage: true }));
+    });
+    let switchingToIsolated = false;
+    createEffect(() => {
+      // Full page needs an emulated viewport, which the real Chrome window
+      // cannot provide, so selecting it switches an owned window to isolated.
+      // The active page is re-opened in the isolated browser afterwards.
+      if (developer.viewportMode() !== "page" || !windowMode()) { switchingToIsolated = false; return; }
+      if (!running() || chromeLinked() || pairing() || busy() || stopping()) return;
+      if (switchingToIsolated) return;
+      switchingToIsolated = true;
+      const target = state()?.navigation?.url || state()?.url || "";
+      untrack(() => {
+        const pending = enqueueAction(connection, { action: "mode", window: false });
+        if (!pending || !target || target === "about:blank") return;
+        void pending.then(() => {
+          if (valid(connection) && state()?.mode !== "window") {
+            enqueueAction(connection, { action: "navigate", url: target, async: true });
+          }
+        });
+      });
     });
     untrack(consumePendingBrowserURL);
     let timer: ReturnType<typeof setTimeout> | undefined;

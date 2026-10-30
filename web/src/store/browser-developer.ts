@@ -6,7 +6,9 @@ import { setWorkspace } from "./workspace-state";
 import { t } from "../i18n";
 
 // "actual" keeps a linked Chrome tab at its own window size.
-export type BrowserViewportMode = "fit" | "desktop" | "mobile" | "actual";
+// "page" fits the panel width and renders the whole document height so the
+// preview scrolls the full page instead of the single panel viewport.
+export type BrowserViewportMode = "fit" | "page" | "desktop" | "mobile" | "actual";
 export type BrowserPreviewScale = "fit" | "0.5" | "1" | "1.5";
 export const browserViewportPresets = {
   desktop: { width: 1440, height: 900, deviceScaleFactor: 1 },
@@ -23,7 +25,7 @@ interface Options {
 
 export function createBrowserDeveloper(options: Options) {
   const [open, setOpen] = createSignal(false);
-  const [viewportMode, setViewportMode] = createSignal<BrowserViewportMode>("fit");
+  const [viewportMode, setViewportMode] = createSignal<BrowserViewportMode>("page");
   const [previewScale, setPreviewScale] = createSignal<BrowserPreviewScale>("fit");
   const [diagnostics, setDiagnostics] = createSignal<BrowserDiagnostic[]>([]);
   const [error, setError] = createSignal("");

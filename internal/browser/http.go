@@ -34,6 +34,9 @@ type Action struct {
 	Width             *int     `json:"width,omitempty"`
 	Height            *int     `json:"height,omitempty"`
 	DeviceScaleFactor *float64 `json:"deviceScaleFactor,omitempty"`
+	// FullPage makes resize capture the whole document: the emulated viewport
+	// height follows the page content instead of the panel height.
+	FullPage *bool `json:"fullPage,omitempty"`
 	ScaleFactor       *float64 `json:"scaleFactor,omitempty"`
 	// UI-only pointer input: phase down/move/up/cancel, button
 	// left/middle/right, clickCount 1..3, CDP modifier bits Alt=1 Ctrl=2 Meta=4 Shift=8.
@@ -290,9 +293,13 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		if action.DeviceScaleFactor != nil {
 			scale = *action.DeviceScaleFactor
 		}
-		if sc.width != *action.Width || sc.height != *action.Height || sc.scale != scale {
+		fullPage := action.FullPage != nil && *action.FullPage
+		// Full page replaces the requested height with the measured content
+		// height, so only width/scale changes can invalidate the stream here.
+		if sc.width != *action.Width || sc.scale != scale || (!fullPage && sc.height != *action.Height) {
 			sc.stopStream()
 		}
+		sc.fullPage = fullPage
 		sc.width, sc.height = *action.Width, *action.Height
 		sc.scale = scale
 	} else if path == "action" && !liveInput {

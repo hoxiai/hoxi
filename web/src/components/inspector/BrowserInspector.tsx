@@ -94,6 +94,8 @@ export default function BrowserInspector() {
             // An explicit submit (clicking "Go") is never an IME confirmation, so it must not be gated on composition.
             composingURL = false;
             navigateAddress(urlInput?.value ?? url());
+            // Blur so the WebView commits any marked IME text and the address bar releases focus.
+            urlInput?.blur();
           }} onKeyDown={(event) => event.stopPropagation()}>
             <input ref={urlInput} class="min-w-0 flex-1 rounded border border-[var(--border-subtle)] bg-transparent px-2 py-1 text-xs focus:outline-none focus:border-[var(--accent-primary)]" aria-label={t("inspector.browser.url")} placeholder={t("inspector.browser.url")} value={url()} autocapitalize="off" autocomplete="off" spellcheck={false}
               onFocus={() => { browser.setEditingURL(true); }} onBlur={() => { composingURL = false; browser.setEditingURL(false); }} onInput={(event) => { browser.setEditingURL(true); setURL(event.currentTarget.value); }}
@@ -105,8 +107,7 @@ export default function BrowserInspector() {
                 event.preventDefault();
                 if (!composingURL) navigateAddress(event.currentTarget.value);
               }} />
-            <button class="shrink-0 rounded px-1.5 py-1 text-[11px] hover:bg-[var(--bg-hover)] disabled:opacity-40 cursor-pointer" disabled={busy() || pairing() || state()?.connected === false} type="submit"
-              onMouseDown={(event) => event.preventDefault()}>{t("inspector.browser.go")}</button>
+            <button class="shrink-0 rounded px-1.5 py-1 text-[11px] hover:bg-[var(--bg-hover)] disabled:opacity-40 cursor-pointer" disabled={busy() || pairing() || state()?.connected === false} type="submit">{t("inspector.browser.go")}</button>
           </form>
           <button
             type="button"
@@ -174,7 +175,7 @@ export default function BrowserInspector() {
         <Show when={error() || pollError()}><p role="alert" class="px-2 py-1 text-[11px] text-red-500 break-words border-b border-[var(--border-subtle)]">{t("inspector.browser.error", { error: error() || pollError() })}</p></Show>
         <BrowserWorkflows workflows={browser.workflows} url={state()?.url || ""} />
         <Show when={running()}><BrowserDeveloper developer={browser.developer} chrome={chromeLinked()} window={browser.windowMode()} resetZoom={() => send({ action: "zoom_reset" })} /></Show>
-        <div ref={observeViewport} class="flex-1 min-h-0 overflow-auto">
+        <div ref={observeViewport} class="flex-1 min-h-0 overflow-auto [scrollbar-gutter:stable]">
           <Show when={browser.effectivePreview() && frame()} fallback={
             <Show when={!running() || browser.effectivePreview()}>
               <div class="flex min-h-full flex-col items-center justify-center gap-4 px-6 py-10 text-center text-[var(--text-muted)]">

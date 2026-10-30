@@ -36,6 +36,7 @@ export const inspector: InspectorI18n = {
     developerTools: "预览与诊断",
     viewportPreset: "网页尺寸",
     viewportFit: "适应面板",
+    viewportPage: "整页 · 适应宽度",
     viewportDesktop: "桌面 · 1440 × 900",
     viewportMobile: "手机 · 390 × 844",
     viewportActual: "实际窗口尺寸",

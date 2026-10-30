@@ -19,6 +19,7 @@ export default function BrowserDeveloper(props: {
         <label title={props.chrome ? t("inspector.browser.chromeViewportHint") : props.window ? t("inspector.browser.windowViewportHint") : undefined}>{t("inspector.browser.viewportPreset")} <select value={props.chrome || props.developer.viewportMode() !== "actual" ? props.developer.viewportMode() : "fit"} disabled={props.window}
           class="rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-1 py-0.5 disabled:opacity-50" onChange={event => props.developer.setViewportMode(event.currentTarget.value as BrowserViewportMode)}>
           <option value="fit">{t("inspector.browser.viewportFit")}</option>
+          <option value="page">{t("inspector.browser.viewportPage")}</option>
           <option value="desktop">{t("inspector.browser.viewportDesktop")}</option>
           <option value="mobile">{t("inspector.browser.viewportMobile")}</option>
           <Show when={props.chrome}><option value="actual">{t("inspector.browser.viewportActual")}</option></Show>

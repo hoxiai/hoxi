@@ -65,6 +65,7 @@ type scope struct {
 	width             int
 	height            int
 	scale             float64
+	fullPage          bool
 	viewports         map[string]viewport
 	stream            *screencast
 	closed            bool
