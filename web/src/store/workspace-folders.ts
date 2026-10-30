@@ -2,6 +2,7 @@
 // Workspace profile / folder path queries and dismissed-project bookkeeping.
 // Leaf module: depends only on workspace-state.
 import { createSignal } from "solid-js";
+import { unwrap } from "solid-js/store";
 import type { WorkspaceFolder, WorkspaceProfile } from "../services/api";
 import type { SessionInfo } from "../services/sse-types";
 import { defaultWorkspaceDir } from "./layout";
@@ -11,12 +12,23 @@ import {
   RECENT_PROJECTS_KEY,
   setWorkspace,
   workspace,
+  type SessionIndexEntry,
 } from "./workspace-state";
 
 // Directly borrowed from Kilo Desktop: plugins/kilo-ui/src/contracts/workspaces/identity-color.ts
 export const WORKSPACE_IDENTITY_COLORS = ["#5EA0F7", "#34D399", "#F87171", "#A78BFA", "#22D3EE", "#FBBF24"] as const;
 export const DEFAULT_WORKSPACE_IDENTITY_COLOR = WORKSPACE_IDENTITY_COLORS[0];
 const HEX_COLOR_RE = /^#[0-9A-Fa-f]{6}$/;
+
+const MAX_PATH_CACHE = 4096;
+const normalizedPathCache = new Map<string, string>();
+const strippedPathCache = new Map<string, string>();
+
+export const [sessionSurfaceRevision, setSessionSurfaceRevision] = createSignal(0);
+
+export function bumpSessionSurfaceRevision(): void {
+  setSessionSurfaceRevision((v) => v + 1);
+}
 
 export function normalizeWorkspaceIdentityColor(value?: string | null): string {
   const trimmed = (value || "").trim().toUpperCase();
@@ -27,14 +39,10 @@ export function normalizeWorkspaceIdentityColor(value?: string | null): string {
 export function isDismissedProjectPath(pathOrID?: string | null): boolean {
   if (!pathOrID) return false;
   const clean = pathOrID.trim();
+  if (!clean) return false;
   const norm = normalizeFolderPath(clean);
-  const list = workspace.dismissedProjects || [];
-  return list.some((item) => {
-    if (!item) return false;
-    if (item === clean) return true;
-    const itemNorm = normalizeFolderPath(item);
-    return Boolean(itemNorm && norm && itemNorm === norm);
-  });
+  const dismissedSet = getFolderLookup().dismissedSet;
+  return dismissedSet.has(clean) || Boolean(norm && dismissedSet.has(norm));
 }
 
 export function recordDismissedProject(pathOrID?: string | null): void {
@@ -60,20 +68,35 @@ export function unrecordDismissedProject(pathOrID?: string | null): void {
 }
 
 export function normalizeFolderPath(p?: string | null): string {
-  const trimmed = (p || "").trim();
-  if (!trimmed) return "";
-  if (trimmed === "/") return "/";
-  const stripped = trimmed.replace(/[\\/]+$/, "");
-  if (/^[A-Za-z]:(?:$|[\\/])/.test(stripped)) {
-    return `${stripped[0].toUpperCase()}:${stripped.slice(2).replace(/\\+/g, "/")}`;
+  if (!p) return "";
+  const cached = normalizedPathCache.get(p);
+  if (cached !== undefined) return cached;
+  const trimmed = p.trim();
+  let result = "";
+  if (trimmed === "/") {
+    result = "/";
+  } else if (trimmed) {
+    const stripped = trimmed.replace(/[\\/]+$/, "");
+    if (/^[A-Za-z]:(?:$|[\\/])/.test(stripped)) {
+      result = `${stripped[0].toUpperCase()}:${stripped.slice(2).replace(/\\+/g, "/")}`;
+    } else {
+      result = stripped;
+    }
   }
-  return stripped;
+  if (normalizedPathCache.size >= MAX_PATH_CACHE) normalizedPathCache.clear();
+  normalizedPathCache.set(p, result);
+  return result;
 }
 
 export function stripWorktreePath(p?: string | null): string {
+  if (!p) return "";
+  const cached = strippedPathCache.get(p);
+  if (cached !== undefined) return cached;
   const norm = normalizeFolderPath(p);
-  if (!norm) return "";
-  return norm.replace(/[\\/]\.hoxi[\\/]worktrees[\\/][^\\/]+$/, "");
+  const result = norm ? norm.replace(/[\\/]\.hoxi[\\/]worktrees[\\/][^\\/]+$/, "") : "";
+  if (strippedPathCache.size >= MAX_PATH_CACHE) strippedPathCache.clear();
+  strippedPathCache.set(p, result);
+  return result;
 }
 
 export function shortenPath(p: string): string {
@@ -143,6 +166,190 @@ export function unrecordWorkWorkspaceDir(pathOrDir?: string | null): void {
   try { localStorage.setItem(WORK_WORKSPACE_DIRS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
 }
 
+interface FolderLookup {
+  dismissedSet: Set<string>;
+  profileById: Map<string, WorkspaceProfile>;
+  visibleProfileByDir: Map<string, WorkspaceProfile>;
+  nonHiddenProfileByDir: Map<string, WorkspaceProfile>;
+  anyProfileByDir: Map<string, WorkspaceProfile>;
+  workDirsSet: Set<string>;
+  sessionSurfaceByDir: Map<string, "work" | "code">;
+  workSurfaceByDir: Map<string, boolean>;
+}
+
+let cachedLookup: FolderLookup | null = null;
+let cachedDefDir = "";
+let cachedWorkDirs: string[] | null = null;
+let cachedSessRev = -1;
+let cachedRawSessionIndex: Record<string, SessionIndexEntry> | null = null;
+let cachedFirstSessionKey: string | undefined;
+let cachedFirstSessionEntry: SessionIndexEntry | undefined;
+let cachedSessionSurfaceByDir = new Map<string, "work" | "code">();
+let cachedSavedItems: WorkspaceProfile[] = [];
+let cachedSavedFolders: Array<WorkspaceFolder[] | undefined> = [];
+let cachedSavedSurfaces: Array<WorkspaceProfile["surface"]> = [];
+let cachedSavedHidden: Array<boolean | undefined> = [];
+let cachedSavedNames: Array<string | undefined> = [];
+let cachedSavedColors: Array<string | undefined> = [];
+let cachedDismissedItems: string[] = [];
+
+function buildProfileDirMap(list: WorkspaceProfile[]): Map<string, WorkspaceProfile> {
+  const map = new Map<string, WorkspaceProfile>();
+  for (const w of list) {
+    for (const f of w.folders || []) {
+      if (!f.isPrimary) continue;
+      const fp = normalizeFolderPath(f.path);
+      if (fp && !map.has(fp)) map.set(fp, w);
+    }
+  }
+  for (const w of list) {
+    for (const f of w.folders || []) {
+      const fp = normalizeFolderPath(f.path);
+      if (fp && !map.has(fp)) map.set(fp, w);
+    }
+  }
+  return map;
+}
+
+function getFolderLookup(): FolderLookup {
+  const defDir = normalizeFolderPath(defaultWorkspaceDir());
+  const wDirs = workWorkspaceDirs();
+  const sessRev = sessionSurfaceRevision();
+  void workspace.savedWorkspaces.length;
+  void workspace.dismissedProjects.length;
+
+  const rawSaved = unwrap(workspace.savedWorkspaces) || [];
+  const rawDismissed = unwrap(workspace.dismissedProjects) || [];
+  const rawSessionIndex = unwrap(workspace.sessionIndex) || {};
+
+  let firstSessionKey: string | undefined;
+  for (const k in rawSessionIndex) {
+    firstSessionKey = k;
+    break;
+  }
+  const firstSessionEntry =
+    firstSessionKey !== undefined ? rawSessionIndex[firstSessionKey] : undefined;
+  const sessionIndexSame =
+    sessRev === cachedSessRev &&
+    rawSessionIndex === cachedRawSessionIndex &&
+    firstSessionKey === cachedFirstSessionKey &&
+    firstSessionEntry === cachedFirstSessionEntry;
+
+  if (!sessionIndexSame) {
+    const nextSessionSurface = new Map<string, "work" | "code">();
+    for (const id in rawSessionIndex) {
+      const entry = rawSessionIndex[id];
+      if (!entry?.directory || (entry.surface !== "work" && entry.surface !== "code")) continue;
+      const dir = stripWorktreePath(entry.directory);
+      if (!dir) continue;
+      if (entry.surface === "code") {
+        nextSessionSurface.set(dir, "code");
+      } else if (!nextSessionSurface.has(dir)) {
+        nextSessionSurface.set(dir, "work");
+      }
+    }
+    cachedSessionSurfaceByDir = nextSessionSurface;
+    cachedSessRev = sessRev;
+    cachedRawSessionIndex = rawSessionIndex;
+    cachedFirstSessionKey = firstSessionKey;
+    cachedFirstSessionEntry = firstSessionEntry;
+  }
+
+  let savedSame =
+    cachedLookup !== null &&
+    defDir === cachedDefDir &&
+    wDirs === cachedWorkDirs &&
+    sessionIndexSame &&
+    rawSaved.length === cachedSavedItems.length &&
+    rawDismissed.length === cachedDismissedItems.length;
+
+  if (savedSame) {
+    for (let i = 0; i < rawSaved.length; i++) {
+      const w = rawSaved[i];
+      if (
+        w !== cachedSavedItems[i] ||
+        w?.folders !== cachedSavedFolders[i] ||
+        w?.surface !== cachedSavedSurfaces[i] ||
+        w?.hidden !== cachedSavedHidden[i] ||
+        w?.name !== cachedSavedNames[i] ||
+        w?.color !== cachedSavedColors[i]
+      ) {
+        savedSame = false;
+        break;
+      }
+    }
+  }
+  if (savedSame) {
+    for (let i = 0; i < rawDismissed.length; i++) {
+      if (rawDismissed[i] !== cachedDismissedItems[i]) {
+        savedSame = false;
+        break;
+      }
+    }
+  }
+  if (savedSame && cachedLookup) {
+    return cachedLookup;
+  }
+
+  const dismissedSet = new Set<string>();
+  for (const item of rawDismissed) {
+    if (!item) continue;
+    const clean = item.trim();
+    if (clean) dismissedSet.add(clean);
+    const norm = normalizeFolderPath(clean);
+    if (norm) dismissedSet.add(norm);
+  }
+
+  const isDismissedId = (id?: string | null): boolean => {
+    if (!id) return false;
+    const clean = id.trim();
+    if (!clean) return false;
+    const norm = normalizeFolderPath(clean);
+    return dismissedSet.has(clean) || Boolean(norm && dismissedSet.has(norm));
+  };
+
+  const proxySaved = workspace.savedWorkspaces;
+  const allList: WorkspaceProfile[] = [];
+  const nonHiddenList: WorkspaceProfile[] = [];
+  const visibleList: WorkspaceProfile[] = [];
+  const profileById = new Map<string, WorkspaceProfile>();
+
+  for (let i = 0; i < rawSaved.length; i++) {
+    const w = proxySaved[i] ?? rawSaved[i];
+    if (!w) continue;
+    allList.push(w);
+    if (w.id && !profileById.has(w.id)) profileById.set(w.id, w);
+    if (!w.hidden) {
+      nonHiddenList.push(w);
+      if (!isDismissedId(w.id)) {
+        visibleList.push(w);
+      }
+    }
+  }
+
+  cachedDefDir = defDir;
+  cachedWorkDirs = wDirs;
+  cachedSavedItems = rawSaved.slice();
+  cachedSavedFolders = rawSaved.map((w) => w?.folders);
+  cachedSavedSurfaces = rawSaved.map((w) => w?.surface);
+  cachedSavedHidden = rawSaved.map((w) => w?.hidden);
+  cachedSavedNames = rawSaved.map((w) => w?.name);
+  cachedSavedColors = rawSaved.map((w) => w?.color);
+  cachedDismissedItems = rawDismissed.slice();
+
+  cachedLookup = {
+    dismissedSet,
+    profileById,
+    visibleProfileByDir: buildProfileDirMap(visibleList),
+    nonHiddenProfileByDir: buildProfileDirMap(nonHiddenList),
+    anyProfileByDir: buildProfileDirMap(allList),
+    workDirsSet: new Set(wDirs),
+    sessionSurfaceByDir: cachedSessionSurfaceByDir,
+    workSurfaceByDir: new Map<string, boolean>(),
+  };
+  return cachedLookup;
+}
+
 export function isDefaultWorkspacePath(p?: string | null): boolean {
   const norm = stripWorktreePath(p);
   if (!norm) return false;
@@ -154,25 +361,34 @@ export function isDefaultWorkspacePath(p?: string | null): boolean {
 export function isWorkSurfacePath(p?: string | null): boolean {
   const norm = stripWorktreePath(p);
   if (!norm) return false;
-  if (isDefaultWorkspacePath(norm) || WORK_STORAGE_PATH_RE.test(norm)) return true;
-  const visible = workspace.savedWorkspaces.filter((w) => !w.hidden && !isDismissedProjectPath(w.id));
-  const matchIn = (list: WorkspaceProfile[]) =>
-    list.find((w) => w.folders.some((f) => f.isPrimary && normalizeFolderPath(f.path) === norm)) ??
-    list.find((w) => w.folders.some((f) => normalizeFolderPath(f.path) === norm));
-  const visOwner = matchIn(visible);
-  if (visOwner?.surface === "work") return true;
-  if (visOwner?.surface === "code") return false;
-  const anyOwner = matchIn(workspace.savedWorkspaces);
-  if (anyOwner?.surface === "work") return true;
-  if (anyOwner?.surface === "code") return false;
-  if (workWorkspaceDirs().includes(norm)) return true;
-  let hasWorkSession = false;
-  for (const entry of Object.values(workspace.sessionIndex)) {
-    if (!entry?.directory || stripWorktreePath(entry.directory) !== norm) continue;
-    if (entry.surface === "code") return false;
-    if (entry.surface === "work") hasWorkSession = true;
+  const lookup = getFolderLookup();
+  const cached = lookup.workSurfaceByDir.get(norm);
+  if (cached !== undefined) return cached;
+
+  let result = false;
+  if (DEFAULT_WORKSPACE_PATH_RE.test(norm) || (cachedDefDir && norm === cachedDefDir) || WORK_STORAGE_PATH_RE.test(norm)) {
+    result = true;
+  } else {
+    const visOwner = lookup.visibleProfileByDir.get(norm);
+    if (visOwner?.surface === "work") {
+      result = true;
+    } else if (visOwner?.surface === "code") {
+      result = false;
+    } else {
+      const anyOwner = lookup.anyProfileByDir.get(norm);
+      if (anyOwner?.surface === "work") {
+        result = true;
+      } else if (anyOwner?.surface === "code") {
+        result = false;
+      } else if (lookup.workDirsSet.has(norm)) {
+        result = true;
+      } else {
+        result = lookup.sessionSurfaceByDir.get(norm) === "work";
+      }
+    }
   }
-  return hasWorkSession;
+  lookup.workSurfaceByDir.set(norm, result);
+  return result;
 }
 
 export interface RememberedSurfaceState {
@@ -334,17 +550,14 @@ export function resolveDefaultProjectDir(preferredRoot?: string | null): string 
 
 export function findWorkspaceProfileById(id?: string | null): WorkspaceProfile | undefined {
   if (!id) return undefined;
-  return workspace.savedWorkspaces.find((w) => w.id === id);
+  return getFolderLookup().profileById.get(id);
 }
 
 export function findWorkspaceProfileByDir(dir?: string | null): WorkspaceProfile | undefined {
   const norm = stripWorktreePath(dir);
   if (!norm) return undefined;
-  const visible = workspace.savedWorkspaces.filter((w) => !w.hidden);
-  const matchIn = (list: WorkspaceProfile[]) =>
-    list.find((w) => w.folders.some((f) => f.isPrimary && normalizeFolderPath(f.path) === norm)) ??
-    list.find((w) => w.folders.some((f) => normalizeFolderPath(f.path) === norm));
-  return matchIn(visible) ?? matchIn(workspace.savedWorkspaces);
+  const lookup = getFolderLookup();
+  return lookup.nonHiddenProfileByDir.get(norm) ?? lookup.anyProfileByDir.get(norm);
 }
 
 export function activeWorkspaceProfile(): WorkspaceProfile | undefined {

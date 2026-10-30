@@ -28,6 +28,7 @@ import { useAnchoredPopover } from "./anchored-popover";
 import { t } from "../../i18n";
 import { SessionHistoryList, useSessionHistory } from "./SessionHistory";
 import { matchesProjectSearch, matchesSessionSearch } from "./session-search";
+import { isWorkSurface } from "./surface-extension";
 
 export function WorkspaceActionMenu(props: {
   dirOrWorkspaceID: string;
@@ -173,20 +174,24 @@ export default function MultiProjectTreeItem(props: {
   onUnarchiveSession: (path: string, ev: MouseEvent, sessionID: string) => void;
   onDiscardSession: (path: string, ev: MouseEvent, sessionID: string) => Promise<void> | void;
 }) {
-  const isActive = () =>
-    normalizeFolderPath(props.proj.path) === normalizeFolderPath(workspace.rootDir);
+  const isActive = createMemo(
+    () =>
+      !isWorkSurface() &&
+      normalizeFolderPath(props.proj.path) === normalizeFolderPath(workspace.rootDir)
+  );
   const isSelectedSession = createSelector<string | null, string>(() =>
     isActive() ? resolveActiveRootSessionID() : null
   );
   // Running work elsewhere must stay visible: the header shows a live count for
   // sessions of this project that are still executing.
-  const runningCount = createMemo(() =>
-    countRunningSessionsForProject(
+  const runningCount = createMemo(() => {
+    if (isWorkSurface()) return 0;
+    return countRunningSessionsForProject(
       props.proj.path,
       isActive() ? workspace.sessions : props.cachedSessions,
       props.proj.folders
-    )
-  );
+    );
+  });
   const [everExpanded, setEverExpanded] = createSignal(props.expanded);
   const [everArchivedOpen, setEverArchivedOpen] = createSignal(props.isArchivedOpen);
 
@@ -197,8 +202,9 @@ export default function MultiProjectTreeItem(props: {
     if (props.isArchivedOpen) setEverArchivedOpen(true);
   });
 
-  const allFilteredSessions = createMemo(() => {
+  const allFilteredSessions = createMemo<SessionInfo[]>((prev) => {
     if (!everExpanded()) return [];
+    if (isWorkSurface()) return prev ?? [];
     const q = props.filterQuery.trim().toLowerCase();
     const rawList =
       isActive() && !workspace.bootstrappingSessions && workspace.sessions.length > 0

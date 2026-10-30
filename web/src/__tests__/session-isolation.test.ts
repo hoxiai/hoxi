@@ -5,6 +5,7 @@ import {
   activateSurfaceMode,
   getInitialCodeProjectDir,
   getRememberedCodeSurface,
+  indexSession,
   isWorkSurfacePath,
   loadProjects,
   openDiffInInspector,
@@ -12,6 +13,7 @@ import {
   resolveSessionSurface,
   saveWorkspaceProfile,
   sessionBelongsToProject,
+  sessionSurfaceRevision,
   setDefaultWorkspaceDir,
   setRememberedCodeSurface,
   setSurfaceMode,
@@ -503,6 +505,129 @@ describe("session worktree isolation", () => {
       } finally {
         unrecordWorkWorkspaceDir("/Users/test/work-ops");
         setSurfaceMode(prevSurface);
+      }
+    });
+  });
+
+  it("uses warm surface switch even when a surface has 0 sessions and skips Git status on Work surface", async () => {
+    await withSessionFixture(async () => {
+      const prevSurface = surfaceMode();
+      setDefaultWorkspaceDir("/Users/test/.hoxi/workspaces/default");
+      try {
+        setSurfaceMode("code");
+        setWorkspace({
+          rootDir: "/Users/test/code-empty",
+          savedWorkspaces: [],
+          recentProjects: ["/Users/test/code-empty"],
+          projectOrder: ["/Users/test/code-empty"],
+          projects: [],
+        });
+        setRememberedCodeSurface("/Users/test/code-empty", "");
+
+        let listSessionsCalls = 0;
+        let resolveProjectCalls = 0;
+        const worktreeStatusDirs: string[] = [];
+        hoxiAPI.listWorkspaces = async () => ({ workspaces: [], dismissed: [] });
+        hoxiAPI.listProjects = async () => [];
+        hoxiAPI.listAgents = async () => [];
+        hoxiAPI.listSessions = async () => {
+          listSessionsCalls++;
+          return [];
+        };
+        hoxiAPI.resolveProject = async (dir) => {
+          resolveProjectCalls++;
+          return {
+            projectID: dir.includes(".hoxi/workspaces") ? "ws_default_work" : "ws_code_empty",
+            directory: dir,
+            roots: [dir],
+          };
+        };
+        hoxiAPI.getWorktreeStatus = async (sessionID, directory) => {
+          if (directory) worktreeStatusDirs.push(directory);
+          return {
+            sessionID,
+            directory: directory || "",
+            isolated: false,
+            dirty: false,
+            changedFiles: 0,
+            uncommittedLines: 0,
+            additions: 0,
+            deletions: 0,
+          };
+        };
+
+        // Cold switch to Code and Work so both have an empty cached session list ([])
+        await switchWorkspace("/Users/test/code-empty");
+        await activateSurfaceMode("work");
+        assertEqual(surfaceMode(), "work");
+        assertEqual(workspace.sessions.length, 0);
+        assertEqual(workspace.bootstrappingSessions, false);
+        assertEqual(
+          worktreeStatusDirs.some((d) => d.includes(".hoxi/workspaces/default")),
+          false
+        );
+
+        const callsAfterInitialBootstrap = {
+          listSessions: listSessionsCalls,
+          resolveProject: resolveProjectCalls,
+        };
+
+        // Warm switch back to empty Code surface and back to empty Work surface
+        await activateSurfaceMode("code");
+        assertEqual(surfaceMode(), "code");
+        assertEqual(workspace.bootstrappingSessions, false);
+        assertEqual(listSessionsCalls, callsAfterInitialBootstrap.listSessions);
+        assertEqual(resolveProjectCalls, callsAfterInitialBootstrap.resolveProject);
+
+        await activateSurfaceMode("work");
+        assertEqual(surfaceMode(), "work");
+        assertEqual(workspace.bootstrappingSessions, false);
+        assertEqual(listSessionsCalls, callsAfterInitialBootstrap.listSessions);
+        assertEqual(resolveProjectCalls, callsAfterInitialBootstrap.resolveProject);
+      } finally {
+        setSurfaceMode(prevSurface);
+      }
+    });
+  });
+
+  it("does not invalidate isWorkSurfacePath reactive memos on non-surface sessionIndex updates", async () => {
+    await withSessionFixture(async () => {
+      setDefaultWorkspaceDir("/Users/test/.hoxi/workspaces/default");
+      try {
+        indexSession({
+          id: "ses_perf_1",
+          title: "Initial",
+          directory: "/Users/test/perf-code",
+          surface: "code",
+          time: { created: 1, updated: 1 },
+        });
+        assertEqual(isWorkSurfacePath("/Users/test/perf-code"), false);
+        const revBefore = sessionSurfaceRevision();
+
+        // Updating title/timestamps on existing session with same surface & directory must not bump surface revision
+        indexSession({
+          id: "ses_perf_1",
+          title: "Updated title",
+          directory: "/Users/test/perf-code",
+          surface: "code",
+          time: { created: 1, updated: 999 },
+        });
+        assertEqual(sessionSurfaceRevision(), revBefore);
+        assertEqual(isWorkSurfacePath("/Users/test/perf-code"), false);
+
+        // Indexing a brand-new work session in another directory bumps the surface revision and updates lookup
+        indexSession({
+          id: "ses_perf_work",
+          title: "Work session",
+          directory: "/Users/test/perf-work",
+          surface: "work",
+          time: { created: 2, updated: 2 },
+        });
+        assertEqual(sessionSurfaceRevision(), revBefore + 1);
+        assertEqual(isWorkSurfacePath("/Users/test/perf-code"), false);
+        assertEqual(isWorkSurfacePath("/Users/test/perf-work"), true);
+      } finally {
+        unrecordWorkWorkspaceDir("/Users/test/perf-work");
       }
     });
   });

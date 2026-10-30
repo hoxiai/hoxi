@@ -28,7 +28,7 @@ import {
   workspace,
 } from "../../store/workspace";
 import { Icon, Spinner } from "../icons";
-import { buildAllProjects, collectPendingSessionIDs, findProjectDropTarget, resolveActiveRootSessionID, sameStringSet } from "./left-nav-helpers";
+import { buildAllProjects, collectPendingSessionIDs, findProjectDropTarget, resolveActiveRootSessionID, sameStringSet, type ProjectNavEntry } from "./left-nav-helpers";
 import MultiProjectTreeItem from "./MultiProjectItem";
 import SingleProjectNavView, { RecentTasksNavView } from "./SingleProjectNavView";
 import { AttentionNavView, RunningNavView } from "./CrossProjectNavView";
@@ -110,6 +110,7 @@ export default function LeftNav() {
   });
 
   createEffect(() => {
+    if (isWorkSurface()) return;
     const root = normalizeFolderPath(workspace.rootDir);
     void workspace.sessions.length;
     void workspace.bootstrappingSessions;
@@ -125,18 +126,21 @@ export default function LeftNav() {
     }
   });
 
-  const allProjects = createMemo(() => buildAllProjects());
+  const allProjects = createMemo<ProjectNavEntry[]>((prev) =>
+    isWorkSurface() ? prev ?? [] : buildAllProjects()
+  );
 
   // Ensure newly discovered projects are recorded into projectOrder so switching projects never scrambles order
   createEffect(() => {
-    if (workspace.bootstrappingSessions) return;
+    if (isWorkSurface() || workspace.bootstrappingSessions) return;
     const current = allProjects().map((p) => p.path);
     if (current.length === 0) return;
     const missing = current.filter((p) => !workspace.projectOrder.includes(p));
     if (missing.length > 0) setProjectOrder([...workspace.projectOrder, ...missing]);
   });
 
-  const projectList = createMemo(() => {
+  const projectList = createMemo<ProjectNavEntry[]>((prev) => {
+    if (isWorkSurface()) return prev ?? [];
     const all = allProjects();
     const q = filterQuery().trim().toLowerCase();
     if (!q) return all;
@@ -184,6 +188,7 @@ export default function LeftNav() {
   const loadSessionsForProject = sessionLists.load;
 
   createEffect(() => {
+    if (isWorkSurface()) return;
     const activeRoot = normalizeFolderPath(workspace.rootDir);
     for (const rawPath of expandedProjects()) {
       const path = normalizeFolderPath(rawPath);
@@ -382,6 +387,7 @@ export default function LeftNav() {
   });
 
   createEffect(() => {
+    if (isWorkSurface()) return;
     const mode = workspace.sidebarProjectMode;
     if (mode !== "recent" && mode !== "attention" && mode !== "running" &&
       !(mode === "multi" && filterQuery().trim())) return;

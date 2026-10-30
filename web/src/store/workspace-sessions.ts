@@ -49,7 +49,7 @@ import {
 } from "./subagent-sessions";
 import { forgetPromptQueueState } from "./prompt-queue";
 import { indexSession, indexSessions, sessionBelongsToProject } from "./session-index";
-import { normalizeFolderPath } from "./workspace-folders";
+import { bumpSessionSurfaceRevision, normalizeFolderPath } from "./workspace-folders";
 
 const sessionMessageLoads = new Map<string, Promise<void>>();
 
@@ -622,6 +622,7 @@ export function purgeSessionsFromStoreState(
   const idSet = new Set(allIDs);
   forgetSubagentLinks(allIDs);
   forgetPromptQueueState(allIDs);
+  let surfaceRemoved = false;
   for (const id of allIDs) {
     loadedChildSessionIDs.delete(id);
     settledChildSessionIDs.delete(id);
@@ -640,8 +641,10 @@ export function purgeSessionsFromStoreState(
     delete state.interruptedBySession[id];
     delete state.queuedPromptsBySession[id];
     delete state.composerDraftEditBySession[id];
+    if (state.sessionIndex[id]?.surface) surfaceRemoved = true;
     delete state.sessionIndex[id];
   }
+  if (surfaceRemoved) bumpSessionSurfaceRevision();
   state.sessions = state.sessions.filter(
     (s) => !idSet.has(s.id) && (!s.parentID || !idSet.has(s.parentID))
   );

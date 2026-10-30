@@ -317,7 +317,9 @@ export async function bootstrapProjectSessions(
       })
     );
   }
-  void refreshWorktreeStatus("__root__");
+  if (surfaceMode() !== "work" && !isWorkSurfacePath(cleaned)) {
+    void refreshWorktreeStatus("__root__");
+  }
   void syncSessionStatuses(cleaned);
   void syncPendingPermissions(cleaned);
   if (selectInitial && workspace.newThreadRequest === initialNewThreadReq && workspace.activeSessionID) {
@@ -386,8 +388,9 @@ export async function switchWorkspace(
   }
 
   const knownProjectID = findWorkspaceProfileByDir(cleaned)?.id || null;
+  const hasCachedSessions = rawCached !== undefined;
   const warmSurfaceSwitch =
-    Boolean(opts.fastSurfaceSwitch) && hydratedSessions.length > 0;
+    Boolean(opts.fastSurfaceSwitch) && hasCachedSessions;
   const recentlyBootstrapped =
     warmSurfaceSwitch &&
     Date.now() - (lastBootstrappedAtByDir.get(cleaned) || 0) < 30_000;
@@ -402,7 +405,7 @@ export async function switchWorkspace(
     inspectedDiffFile: null,
     activeSessionID: targetSessionID,
     activeProjectID: knownProjectID,
-    bootstrappingSessions: hydratedSessions.length === 0,
+    bootstrappingSessions: !warmSurfaceSwitch && hydratedSessions.length === 0,
   });
 
   if (warmSurfaceSwitch) {

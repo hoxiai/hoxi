@@ -5,7 +5,7 @@ import { unwrap } from "solid-js/store";
 import { hoxiAPI, type WorktreeMeta, type WorktreeRepoStatus } from "../services/api";
 import type { SnapshotFileDiff } from "../services/sse-types";
 import { isSessionDeleted, sessionDirectory } from "./session-query";
-import { secondaryWorkspaceDirs } from "./workspace-folders";
+import { normalizeFolderPath, secondaryWorkspaceDirs } from "./workspace-folders";
 import { type MessageTurn, setWorkspace, workspace } from "./workspace-state";
 
 const diffRevisions = new Map<string, number>();
@@ -80,10 +80,23 @@ export async function refreshSessionDiff(
 const worktreeRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 const worktreeRevisions = new Map<string, number>();
+const inFlightWorktreeDirByKey = new Map<string, string>();
+
+export function isWorktreeStatusLoadedOrInFlight(
+  sessionID: string | null | undefined,
+  directory: string
+): boolean {
+  const key = sessionID || "__root__";
+  const normDir = normalizeFolderPath(directory);
+  if (!normDir) return false;
+  if (inFlightWorktreeDirByKey.get(key) === normDir) return true;
+  return normalizeFolderPath(workspace.worktreeBySession[key]?.directory) === normDir;
+}
 
 export function invalidateSessionDiffReads(id: string): void {
   diffRevisions.set(id, (diffRevisions.get(id) ?? 0) + 1);
   worktreeRevisions.set(id, (worktreeRevisions.get(id) ?? 0) + 1);
+  inFlightWorktreeDirByKey.delete(id);
   cancelScheduledWorktreeStatus(id);
   clearTimeout(diffRefreshTimers.get(id));
   diffRefreshTimers.delete(id);
@@ -112,8 +125,12 @@ export function scheduleRefreshWorktreeStatus(
 export async function refreshWorktreeStatus(sessionID?: string | null): Promise<void> {
   const key = sessionID || "__root__";
   const dirArg = key === "__root__" ? workspace.rootDir || undefined : sessionDirectory(key);
+  const normDirArg = normalizeFolderPath(dirArg);
   const revision = (worktreeRevisions.get(key) ?? 0) + 1;
   worktreeRevisions.set(key, revision);
+  if (normDirArg) {
+    inFlightWorktreeDirByKey.set(key, normDirArg);
+  }
   const isCurrentScope = () => worktreeRevisions.get(key) === revision && !isSessionDeleted(key) && dirArg ===
     (key === "__root__" ? workspace.rootDir || undefined : sessionDirectory(key));
   try {
@@ -183,6 +200,10 @@ export async function refreshWorktreeStatus(sessionID?: string | null): Promise<
     }
   } catch (err) {
     console.error("refresh worktree status failed:", err);
+  } finally {
+    if (worktreeRevisions.get(key) === revision) {
+      inFlightWorktreeDirByKey.delete(key);
+    }
   }
 }
 

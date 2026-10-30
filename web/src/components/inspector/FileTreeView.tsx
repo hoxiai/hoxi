@@ -64,6 +64,7 @@ export default function FileTreeView() {
     setHistoryIndex(-1);
   };
 
+  let lastResetDir = "";
   let lastLoadedDir = "";
   let listRequest = 0;
   let previewRequest = 0;
@@ -246,11 +247,17 @@ export default function FileTreeView() {
     )
   );
 
+  const isFilesInspectorVisible = () =>
+    workspace.inspectorOpen && workspace.inspectorTab === "files";
+
   createEffect(() => {
     const dir = targetDirectory();
-    if (dir && dir !== lastLoadedDir) {
-      const hadPrev = Boolean(lastLoadedDir);
-      lastLoadedDir = dir;
+    if (!dir) return;
+    const visible = isFilesInspectorVisible();
+    if (dir !== lastResetDir) {
+      const hadPrev = Boolean(lastResetDir);
+      lastResetDir = dir;
+      if (!visible) lastLoadedDir = "";
       listRequest++;
       previewRequest++;
       setQuery("");
@@ -260,7 +267,10 @@ export default function FileTreeView() {
         resetPreviewHistory();
       }
       const cached = readCachedRootNodes(dir, "");
-      if (!cached) setResults([]);
+      setResults(cached ?? []);
+    }
+    if (visible && dir !== lastLoadedDir) {
+      lastLoadedDir = dir;
       void loadInitialFiles(dir);
     }
   });

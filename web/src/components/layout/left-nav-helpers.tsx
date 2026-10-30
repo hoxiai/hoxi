@@ -149,8 +149,11 @@ export function countRunningSessionsForProject(
     seen.add(session.id);
     count++;
   }
-  for (const [id, entry] of Object.entries(workspace.sessionIndex)) {
-    if (entry.parentID || seen.has(id) || !isRunning(id)) continue;
+  for (const [id, statusEntry] of Object.entries(workspace.statusBySession)) {
+    if (statusEntry?.type !== "busy" && statusEntry?.type !== "retry") continue;
+    if (seen.has(id)) continue;
+    const entry = workspace.sessionIndex[id];
+    if (!entry || entry.parentID) continue;
     const dir = normalizeFolderPath(entry.directory);
     if (!dir) continue;
     let matches = false;

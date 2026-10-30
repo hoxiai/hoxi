@@ -13,12 +13,16 @@ import {
 import {
   checkoutLocalBranch,
   fetchProjectBranches,
+  isWorkSurfacePath,
+  isWorktreeStatusLoadedOrInFlight,
+  normalizeFolderPath,
   pruneProjectSandboxes,
   refreshWorktreeStatus,
   workspace,
 } from "../../store/workspace";
 import type { GitBranchInfo } from "../../services/api";
 import { t } from "../../i18n";
+import { isWorkSurface } from "./surface-extension";
 
 export default function BranchManagerPopover() {
   const [open, setOpen] = createSignal(false);
@@ -73,7 +77,11 @@ export default function BranchManagerPopover() {
   };
 
   createEffect(() => {
-    if (workspace.rootDir) void refreshWorktreeStatus("__root__");
+    if (isWorkSurface()) return;
+    const root = normalizeFolderPath(workspace.rootDir);
+    if (!root || isWorkSurfacePath(root) || workspace.bootstrappingSessions) return;
+    if (isWorktreeStatusLoadedOrInFlight("__root__", root)) return;
+    void refreshWorktreeStatus("__root__");
   });
 
   createEffect(() => {

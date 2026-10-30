@@ -76,6 +76,7 @@ export default function SkillsInspectorView() {
   const selectedInComposer = createMemo(() => getComposerSkill(sessionID()));
 
   createEffect(() => {
+    if (!workspace.inspectorOpen || workspace.inspectorTab !== "skills") return;
     const sid = sessionID();
     const dir = directory();
     const rt = runtime();

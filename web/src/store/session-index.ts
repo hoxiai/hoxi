@@ -5,7 +5,9 @@
 import type { SessionInfo } from "../services/sse-types";
 import { setWorkspace, workspace, type SessionIndexEntry } from "./workspace-state";
 import {
+  bumpSessionSurfaceRevision,
   findWorkspaceProfileByDir,
+  findWorkspaceProfileById,
   isWorkSurfacePath,
   normalizeFolderPath,
   recordWorkWorkspaceDir,
@@ -40,7 +42,16 @@ export function indexSession(info: SessionInfo | undefined | null): void {
     prev.updated === entry.updated) {
     return;
   }
+  const surfaceChanged =
+    prev?.surface !== entry.surface ||
+    Boolean(
+      (entry.surface || prev?.surface) &&
+        stripWorktreePath(prev?.directory) !== stripWorktreePath(entry.directory)
+    );
   setWorkspace("sessionIndex", info.id, entry);
+  if (surfaceChanged) {
+    bumpSessionSurfaceRevision();
+  }
   if (entry.surface === "work" && entry.directory) {
     const owner = findWorkspaceProfileByDir(entry.directory);
     if (owner?.surface !== "code") {
@@ -71,6 +82,83 @@ export function resolveSessionSurface(
   return isWorkSurfacePath(dir) ? "work" : "code";
 }
 
+interface ProjectOwnershipContext {
+  root: string;
+  rootIsWork: boolean;
+  expectedSurface: "code" | "work";
+  expectedID: string | undefined;
+  roots: string[];
+}
+
+function buildProjectOwnershipContext(
+  directory: string,
+  projectID?: string | null
+): ProjectOwnershipContext | null {
+  const root = normalizeFolderPath(directory);
+  if (!root) return null;
+  const rootIsWork = isWorkSurfacePath(root);
+  const profile = findWorkspaceProfileByDir(root);
+  const expectedID = projectID || profile?.id;
+  const roots = profile?.folders.map((f) => normalizeFolderPath(f.path)) || [root];
+  return {
+    root,
+    rootIsWork,
+    expectedSurface: rootIsWork ? "work" : "code",
+    expectedID,
+    roots,
+  };
+}
+
+function sessionBelongsToProjectWithContext(
+  info: SessionInfo,
+  ctx: ProjectOwnershipContext,
+  allowRemovedProjectDirectoryFallback: boolean
+): boolean {
+  const indexed = indexedSession(info.id);
+  const explicitSurface = info.surface ?? indexed?.surface;
+  const sessionDir = normalizeFolderPath(
+    info.directory || indexed?.directory || workspace.worktreeBySession[info.id]?.directory
+  );
+  const strippedSessionDir = sessionDir ? stripWorktreePath(sessionDir) : "";
+  const sessionDirIsWork = sessionDir
+    ? strippedSessionDir === ctx.root
+      ? ctx.rootIsWork
+      : isWorkSurfacePath(strippedSessionDir)
+    : false;
+  const sessionSurface: "code" | "work" =
+    explicitSurface === "work" || explicitSurface === "code"
+      ? explicitSurface
+      : sessionDirIsWork
+        ? "work"
+        : "code";
+  if (sessionSurface !== ctx.expectedSurface) {
+    return false;
+  }
+  if (sessionDir && sessionDirIsWork !== ctx.rootIsWork) {
+    return false;
+  }
+  const ownerID = info.projectID || indexed?.projectID;
+  // Before boot resolves the project there is no expected ID to compare
+  // against; ownership then falls back to the directory checks below.
+  if (ownerID && ctx.expectedID) {
+    if (ownerID === ctx.expectedID) return true;
+    const ownerIsLive = Boolean(findWorkspaceProfileById(ownerID));
+    // A backend-scoped session list can contain an old owner ID only after
+    // ListProject has confirmed that ID is no longer live. Global/background
+    // events do not carry that guarantee and must stay strictly attributed.
+    if (!allowRemovedProjectDirectoryFallback || ownerIsLive) return false;
+  }
+  if (sessionDir) return ctx.roots.includes(strippedSessionDir);
+  const parentID = info.parentID || indexed?.parentID;
+  if (parentID && parentID !== info.id) {
+    const parent = workspace.sessions.find((s) => s.id === parentID) || indexedSession(parentID);
+    if (parent?.projectID && ctx.expectedID) return parent.projectID === ctx.expectedID;
+    if (parent?.directory) return ctx.roots.includes(stripWorktreePath(parent.directory));
+  }
+  // A directory-less legacy item is still accepted from its scoped list.
+  return !ownerID;
+}
+
 /** Stable attribution wins; legacy sessions fall back to exact roots or Hoxi worktrees. */
 export function sessionBelongsToProject(
   info: SessionInfo,
@@ -78,49 +166,18 @@ export function sessionBelongsToProject(
   projectID?: string | null,
   allowRemovedProjectDirectoryFallback = false
 ): boolean {
-  const root = normalizeFolderPath(directory);
-  if (!root) return false;
-  const rootIsWork = isWorkSurfacePath(root);
-  const expectedSurface: "code" | "work" = rootIsWork ? "work" : "code";
-  if (resolveSessionSurface(info) !== expectedSurface) {
-    return false;
-  }
-  const expectedID = projectID || findWorkspaceProfileByDir(root)?.id;
-  const indexed = indexedSession(info.id);
-  const sessionDir = normalizeFolderPath(info.directory || indexed?.directory ||
-    workspace.worktreeBySession[info.id]?.directory);
-  if (sessionDir && isWorkSurfacePath(sessionDir) !== rootIsWork) {
-    return false;
-  }
-  const ownerID = info.projectID || indexed?.projectID;
-  // Before boot resolves the project there is no expected ID to compare
-  // against; ownership then falls back to the directory checks below.
-  if (ownerID && expectedID) {
-    if (ownerID === expectedID) return true;
-    const ownerIsLive = workspace.savedWorkspaces.some((saved) => saved.id === ownerID);
-    // A backend-scoped session list can contain an old owner ID only after
-    // ListProject has confirmed that ID is no longer live. Global/background
-    // events do not carry that guarantee and must stay strictly attributed.
-    if (!allowRemovedProjectDirectoryFallback || ownerIsLive) return false;
-  }
-  const profile = findWorkspaceProfileByDir(root);
-  const roots = profile?.folders.map((f) => normalizeFolderPath(f.path)) || [root];
-  if (sessionDir) return roots.includes(stripWorktreePath(sessionDir));
-  const parentID = info.parentID || indexed?.parentID;
-  if (parentID && parentID !== info.id) {
-    const parent = workspace.sessions.find((s) => s.id === parentID) || indexedSession(parentID);
-    if (parent?.projectID && expectedID) return parent.projectID === expectedID;
-    if (parent?.directory) return roots.includes(stripWorktreePath(parent.directory));
-  }
-  // A directory-less legacy item is still accepted from its scoped list.
-  return !ownerID;
+  const ctx = buildProjectOwnershipContext(directory, projectID);
+  if (!ctx) return false;
+  return sessionBelongsToProjectWithContext(info, ctx, allowRemovedProjectDirectoryFallback);
 }
 
 export function filterProjectSessions(list: SessionInfo[], directory: string, projectID?: string | null): SessionInfo[] {
+  const ctx = buildProjectOwnershipContext(directory, projectID);
+  if (!ctx) return [];
   const seen = new Set<string>();
   return list.filter((info) => {
     if (!info?.id || seen.has(info.id) ||
-      !sessionBelongsToProject(info, directory, projectID, true)) return false;
+      !sessionBelongsToProjectWithContext(info, ctx, true)) return false;
     seen.add(info.id);
     return true;
   });
