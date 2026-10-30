@@ -1,17 +1,17 @@
-// web/src/components/models/OfficialAinodeTab.tsx
+// web/src/components/models/OfficialChannelTab.tsx
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import { Check, LoaderCircle, RefreshCw, Sparkles } from "lucide-solid";
 import {
   AUTO_PROVIDER_ID,
   autoPools,
-  connectOfficialAinode,
+  connectOfficialChannel,
   desktopAuth,
   formatMemberPoints,
   getAutoPoolDisplayName,
   getStoredPoolCandidates,
-  loadOfficialAinodeModels,
+  loadOfficialChannelModels,
   OFFICIAL_PROVIDER_ID,
-  officialAinodeState,
+  officialChannelState,
   openSettingsModal,
   PRESET_AUTO_POOL_IDS,
   saveAutoPool,
@@ -32,7 +32,7 @@ function modelPointsLabel(
   });
 }
 
-export default function OfficialAinodeTab() {
+export default function OfficialChannelTab() {
   const [connecting, setConnecting] = createSignal(false);
   const [feedback, setFeedback] = createSignal<{ ok: boolean; text: string } | null>(null);
   const [poolID, setPoolID] = createSignal<string>(
@@ -58,7 +58,7 @@ export default function OfficialAinodeTab() {
 
   createEffect(() => {
     if (desktopAuth.isLoggedIn) {
-      void loadOfficialAinodeModels();
+      void loadOfficialChannelModels();
     }
   });
 
@@ -67,7 +67,7 @@ export default function OfficialAinodeTab() {
     setConnecting(true);
     setFeedback(null);
     try {
-      const res = await connectOfficialAinode();
+      const res = await connectOfficialChannel();
       setFeedback({ ok: true, text: t("models.officialConnectSuccess", { count: res.modelCount }) });
     } catch (err: any) {
       setFeedback({ ok: false, text: err?.message || t("models.officialConnectFailed") });
@@ -146,11 +146,11 @@ export default function OfficialAinodeTab() {
             <div class="flex items-center gap-2">
               <button
                 type="button"
-                disabled={officialAinodeState.loading || connecting()}
-                onClick={() => void loadOfficialAinodeModels(true)}
+                disabled={officialChannelState.loading || connecting()}
+                onClick={() => void loadOfficialChannelModels(true)}
                 class="inline-flex items-center gap-1.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3 py-1.5 text-[12px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] disabled:opacity-50 cursor-pointer"
               >
-                <RefreshCw size={12} class={officialAinodeState.loading ? "animate-spin" : ""} />
+                <RefreshCw size={12} class={officialChannelState.loading ? "animate-spin" : ""} />
                 {t("models.officialReconnectBtn")}
               </button>
               <button
@@ -180,15 +180,15 @@ export default function OfficialAinodeTab() {
           </Show>
 
           <Show
-            when={officialAinodeState.models.length > 0}
+            when={officialChannelState.models.length > 0}
             fallback={
               <div class="rounded-xl border border-dashed border-[var(--border-subtle)] bg-[var(--bg-elevated)]/30 p-6 text-center text-[12px] text-[var(--text-muted)]">
-                {officialAinodeState.loading ? t("models.officialConnecting") : t("models.officialModelsEmpty")}
+                {officialChannelState.loading ? t("models.officialConnecting") : t("models.officialModelsEmpty")}
               </div>
             }
           >
             <div class="divide-y divide-[var(--border-subtle)] overflow-hidden rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/50">
-              <For each={officialAinodeState.models}>
+              <For each={officialChannelState.models}>
                 {(m) => (
                   <div class="flex items-center justify-between gap-3 px-4 py-3">
                     <div class="min-w-0">

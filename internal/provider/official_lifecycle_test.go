@@ -19,7 +19,7 @@ func TestOfficialLateConnectCannotRestoreLoggedOutCredentials(t *testing.T) {
 	started, resume := make(chan struct{}), make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/hoxi/member/models" {
-			_, _ = w.Write([]byte(`{"gatewayBaseUrl":"https://api.ainode.run/v1","models":[{"modelName":"m1"}]}`))
+			_, _ = w.Write([]byte(`{"gatewayBaseUrl":"https://api.hoxi.ai/v1","models":[{"modelName":"m1"}]}`))
 			return
 		}
 		close(started)
@@ -44,10 +44,10 @@ func TestOfficialLateConnectCannotRestoreLoggedOutCredentials(t *testing.T) {
 		t.Fatalf("late connect must be rejected: %d %s", rec.Code, rec.Body.String())
 	}
 	providers := svc.LoadHoxiConfigDoc()["provider"].(map[string]interface{})
-	if _, ok := providers[officialAinodeProviderID]; ok {
+	if _, ok := providers[officialProviderID]; ok {
 		t.Fatal("late connect restored logged-out credentials")
 	}
-	if key := svc.ResolveStoredProviderKey(officialAinodeProviderID, ""); key != "" {
+	if key := svc.ResolveStoredProviderKey(officialProviderID, ""); key != "" {
 		t.Fatal("late connect left a usable key")
 	}
 }
@@ -74,12 +74,12 @@ func TestOfficialStale401DoesNotClearNewAccount(t *testing.T) {
 	auth.mu.Lock()
 	auth.token = "new"
 	auth.mu.Unlock()
-	if err := svc.persistOfficialProvider("https://api.ainode.run/v1", "sk-new", []officialModelView{{ID: "new-model"}}); err != nil {
+	if err := svc.persistOfficialProvider("https://api.hoxi.ai/v1", "sk-new", []officialModelView{{ID: "new-model"}}); err != nil {
 		t.Fatal(err)
 	}
 	close(resume)
 	<-done
-	if key := svc.ResolveStoredProviderKey(officialAinodeProviderID, ""); key != "sk-new" {
+	if key := svc.ResolveStoredProviderKey(officialProviderID, ""); key != "sk-new" {
 		t.Fatal("old account 401 removed the new account key")
 	}
 }
@@ -107,7 +107,7 @@ func TestOfficialCatalogFailuresPreserveExistingModels(t *testing.T) {
 			defer server.Close()
 			svc := NewService(0, "", t.TempDir(), http.NotFoundHandler())
 			svc.SetAuthSource(&fakeAuthSource{site: server.URL, token: "token"})
-			if err := svc.persistOfficialProvider("https://api.ainode.run/v1", "sk-existing", []officialModelView{{ID: "existing-model"}}); err != nil {
+			if err := svc.persistOfficialProvider("https://api.hoxi.ai/v1", "sk-existing", []officialModelView{{ID: "existing-model"}}); err != nil {
 				t.Fatal(err)
 			}
 			rec := httptest.NewRecorder()
@@ -115,11 +115,11 @@ func TestOfficialCatalogFailuresPreserveExistingModels(t *testing.T) {
 			if rec.Code != http.StatusBadGateway {
 				t.Fatalf("expected 502, got %d %s", rec.Code, rec.Body.String())
 			}
-			doc := svc.LoadHoxiProvidersMap()[officialAinodeProviderID].(map[string]interface{})
+			doc := svc.LoadHoxiProvidersMap()[officialProviderID].(map[string]interface{})
 			if _, ok := doc["models"].(map[string]interface{})["existing-model"]; !ok {
 				t.Fatal("catalog failure erased existing model")
 			}
-			if key := svc.ResolveStoredProviderKey(officialAinodeProviderID, ""); key != "sk-existing" {
+			if key := svc.ResolveStoredProviderKey(officialProviderID, ""); key != "sk-existing" {
 				t.Fatal("catalog failure changed existing key")
 			}
 		})
@@ -133,7 +133,7 @@ func TestOfficialCleanupFailureBlocksResidualKeyAndCanRetry(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOXI_HOME", home)
 	svc := NewService(0, "", t.TempDir(), http.NotFoundHandler())
-	if err := svc.persistOfficialProvider("https://api.ainode.run/v1", "sk-old", []officialModelView{{ID: "m1"}}); err != nil {
+	if err := svc.persistOfficialProvider("https://api.hoxi.ai/v1", "sk-old", []officialModelView{{ID: "m1"}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chmod(home, 0500); err != nil {
@@ -147,13 +147,13 @@ func TestOfficialCleanupFailureBlocksResidualKeyAndCanRetry(t *testing.T) {
 	if err != nil || !bytes.Contains(raw, []byte("sk-old")) {
 		t.Fatal("test did not retain the blocked on-disk key")
 	}
-	if key := svc.ResolveStoredProviderKey(officialAinodeProviderID, ""); key != "" {
+	if key := svc.ResolveStoredProviderKey(officialProviderID, ""); key != "" {
 		t.Fatal("residual key must be blocked")
 	}
-	if _, key, _, _ := svc.resolveProviderConnection(officialAinodeProviderID, "", ""); key != "" {
+	if _, key, _, _ := svc.resolveProviderConnection(officialProviderID, "", ""); key != "" {
 		t.Fatal("connection resolver bypassed the block")
 	}
-	if _, ok := svc.LoadHoxiProvidersMap()[officialAinodeProviderID]; ok {
+	if _, ok := svc.LoadHoxiProvidersMap()[officialProviderID]; ok {
 		t.Fatal("blocked provider remains visible")
 	}
 	if err := os.Chmod(home, 0700); err != nil {
@@ -163,7 +163,7 @@ func TestOfficialCleanupFailureBlocksResidualKeyAndCanRetry(t *testing.T) {
 		t.Fatalf("retry: %v", err)
 	}
 	doc := svc.LoadHoxiConfigDoc()["provider"].(map[string]interface{})
-	if _, ok := doc[officialAinodeProviderID]; ok {
+	if _, ok := doc[officialProviderID]; ok {
 		t.Fatal("retry left provider on disk")
 	}
 }
@@ -171,7 +171,7 @@ func TestOfficialCleanupFailureBlocksResidualKeyAndCanRetry(t *testing.T) {
 func TestOfficialCleanupPreservesCorruptEngineCredentials(t *testing.T) {
 	t.Setenv("HOXI_HOME", t.TempDir())
 	svc := NewService(0, "", t.TempDir(), http.NotFoundHandler())
-	if err := svc.persistOfficialProvider("https://api.ainode.run/v1", "sk-old", []officialModelView{{ID: "m1"}}); err != nil {
+	if err := svc.persistOfficialProvider("https://api.hoxi.ai/v1", "sk-old", []officialModelView{{ID: "m1"}}); err != nil {
 		t.Fatal(err)
 	}
 	path := hoxipaths.EngineAuthPath()

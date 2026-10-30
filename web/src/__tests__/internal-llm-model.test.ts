@@ -9,13 +9,13 @@ import {
 import { assertDeepEqual, assertEqual, describe, it } from "./test-harness";
 
 const CLI_MODEL = { providerID: "codebuddy", modelID: "deepseek-v4.1-flash" };
-const HTTP_MODEL = { providerID: "ainode", modelID: "deepseek-flash" };
+const HTTP_MODEL = { providerID: "hoxi-gateway", modelID: "deepseek-flash" };
 
 function withProviders(run: () => void): void {
   const saved = structuredClone(unwrap(workspace.providers));
   setWorkspace("providers", [
     { id: "codebuddy", name: "CodeBuddy", source: "runner", models: { "deepseek-v4.1-flash": { name: "Flash" } } },
-    { id: "ainode", name: "AINode", source: "api", models: { "deepseek-flash": { name: "DeepSeek Flash" } } },
+    { id: "hoxi-gateway", name: "Hoxi Gateway", source: "api", models: { "deepseek-flash": { name: "DeepSeek Flash" } } },
   ] as never);
   try {
     run();
@@ -29,7 +29,7 @@ describe("Internal LLM role models", () => {
     withProviders(() => {
       assertEqual(isInternalLLMModel(CLI_MODEL), false);
       assertEqual(isInternalLLMModel(HTTP_MODEL), true);
-      assertEqual(isInternalLLMModel({ providerID: "ainode", modelID: "missing" }), false);
+      assertEqual(isInternalLLMModel({ providerID: "hoxi-gateway", modelID: "missing" }), false);
       assertEqual(isInternalLLMModel({ providerID: "hoxi-auto", modelID: "free" }), false);
       assertEqual(isInternalLLMModel(null), false);
       assertEqual(isInternalLLMModel({ providerID: "unloaded", modelID: "x" }), false);
@@ -50,15 +50,15 @@ describe("Internal LLM role models", () => {
     setWorkspace("providers", [
       { id: "opencode", name: "OpenCode", source: "api", models: { free: { name: "Free" } } },
       { id: "codebuddy", name: "CodeBuddy", source: "api", models: { flash: { name: "Flash" } } },
-      { id: "ainode", name: "AINode", source: "api", models: { "deepseek-flash": { name: "DeepSeek Flash" } } },
+      { id: "hoxi-gateway", name: "Hoxi Gateway", source: "api", models: { "deepseek-flash": { name: "DeepSeek Flash" } } },
     ] as never);
     try {
       setWorkspace("connectedProviders", []);
       assertEqual(findBestFallbackModel(undefined, { httpOnly: true }), null);
       setWorkspace("connectedProviders", ["codebuddy"]);
       assertEqual(findBestFallbackModel(undefined, { httpOnly: true }), null);
-      setWorkspace("connectedProviders", ["codebuddy", "ainode"]);
-      assertEqual(findBestFallbackModel(undefined, { httpOnly: true })?.providerID, "ainode");
+      setWorkspace("connectedProviders", ["codebuddy", "hoxi-gateway"]);
+      assertEqual(findBestFallbackModel(undefined, { httpOnly: true })?.providerID, "hoxi-gateway");
     } finally {
       setWorkspace("providers", saved);
       setWorkspace("connectedProviders", savedConnected);

@@ -51,14 +51,14 @@ func (g *Service) persistMCPOAuthProvisioning(
 ) ([]mcpOAuthModelItem, error) {
 	pid := strings.TrimSpace(sess.providerID)
 	if pid == "" {
-		pid = "ainode"
+		pid = "hoxi-gateway"
 	}
 	resolvedBaseURL := strings.TrimSpace(baseURL)
 	if resolvedBaseURL == "" {
 		resolvedBaseURL = strings.TrimSpace(sess.hintBaseURL)
 	}
 	if resolvedBaseURL == "" {
-		resolvedBaseURL = "https://api.ainode.run/v1"
+		resolvedBaseURL = "https://api.hoxi.ai/v1"
 	}
 	resolvedKey := strings.TrimSpace(apiKey)
 	if resolvedKey == "" {
@@ -100,7 +100,7 @@ func (g *Service) persistMCPOAuthProvisioning(
 		if existingName, ok := existingProv["name"].(string); ok && strings.TrimSpace(existingName) != "" {
 			name = strings.TrimSpace(existingName)
 		} else {
-			name = "AINode"
+			name = "Hoxi Gateway"
 		}
 	}
 	nextProv["name"] = name
@@ -224,7 +224,7 @@ func (g *Service) fetchOrMintSiteAPIKey(ctx context.Context, siteOrigin, accessT
 
 func (g *Service) fetchSiteModels(ctx context.Context, siteOrigin, baseURL, accessToken, apiKey string) []mcpOAuthModelItem {
 	for _, endpoint := range []string{
-		siteOrigin + "/api/ainode/public-models",
+		siteOrigin + "/api/hoxi/public-models",
 		siteOrigin + "/api/proxy/external?path=" + url.QueryEscape("/api/site/models/groups"),
 	} {
 		var payload map[string]any

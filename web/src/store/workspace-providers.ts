@@ -715,7 +715,7 @@ export async function connectProviderWithMcpOAuth(opts: {
   baseURL?: string;
   recommendedModels?: string[];
 }): Promise<ProviderMcpOAuthPollResponse | null> {
-  const pid = (opts.providerID || "ainode").trim();
+  const pid = (opts.providerID || "hoxi-gateway").trim();
   const runID = ++activeMcpOAuthRunID;
   setProviderMcpOAuthState({ authorizingProviderID: pid, pendingState: null, authURL: null, error: null });
 

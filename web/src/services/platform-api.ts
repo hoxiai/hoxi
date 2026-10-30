@@ -364,7 +364,7 @@ export const providerMcpOAuthAPI = {
   },
 };
 
-export interface OfficialAinodeModel {
+export interface OfficialChannelModel {
   id: string;
   name: string;
   vendor?: string;
@@ -374,29 +374,29 @@ export interface OfficialAinodeModel {
   perCallPoints: number;
 }
 
-export interface OfficialAinodeModelsResponse {
+export interface OfficialChannelModelsResponse {
   authenticated: boolean;
   gatewayAvailable: boolean;
   baseUrl: string;
-  models: OfficialAinodeModel[];
+  models: OfficialChannelModel[];
   error?: string;
 }
 
-export interface OfficialAinodeConnectResponse {
+export interface OfficialChannelConnectResponse {
   authenticated: boolean;
   providerId: string;
   baseUrl: string;
   modelCount: number;
-  models: OfficialAinodeModel[];
+  models: OfficialChannelModel[];
 }
 
-// officialAinodeAPI resolves the models the signed-in Hoxi account may call on
-// the official AINode channel via the account device token (no browser OAuth).
-export const officialAinodeAPI = {
-  models(): Promise<OfficialAinodeModelsResponse> {
+// officialChannelAPI resolves the models the signed-in Hoxi account may call on
+// the official gateway channel via the account device token (no browser OAuth).
+export const officialChannelAPI = {
+  models(): Promise<OfficialChannelModelsResponse> {
     return requestJSON("/api/hoxi/provider/official/models");
   },
-  connect(): Promise<OfficialAinodeConnectResponse> {
+  connect(): Promise<OfficialChannelConnectResponse> {
     return requestJSON("/api/hoxi/provider/official/connect", {
       method: "POST",
       body: JSON.stringify({}),

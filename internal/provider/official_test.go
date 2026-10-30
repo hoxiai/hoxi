@@ -67,7 +67,7 @@ func newOfficialTestSite(t *testing.T, unauthorized bool) *httptest.Server {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"code":             0,
 				"gatewayAvailable": true,
-				"gatewayBaseUrl":   "https://api.ainode.run",
+				"gatewayBaseUrl":   "https://api.hoxi.ai",
 				"models": []map[string]any{
 					{"modelName": "claude-sonnet-4-6", "displayName": "Claude Sonnet 4.6", "vendor": "Anthropic", "billingMode": "token", "inputPointsPerM": 30000, "outputPointsPerM": 150000},
 					{"modelName": "gpt-5.4", "displayName": "GPT-5.4", "vendor": "OpenAI", "billingMode": "token", "inputUsdPerM": 2.5, "outputUsdPerM": 10},
@@ -106,7 +106,7 @@ func TestOfficialModelsPreview(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if !resp.Authenticated || !resp.GatewayAvailable || resp.BaseURL != "https://api.ainode.run/v1" {
+	if !resp.Authenticated || !resp.GatewayAvailable || resp.BaseURL != "https://api.hoxi.ai/v1" {
 		t.Fatalf("unexpected envelope: %+v", resp)
 	}
 	if len(resp.Models) != 2 {
@@ -117,7 +117,7 @@ func TestOfficialModelsPreview(t *testing.T) {
 	}
 }
 
-func TestOfficialConnectProvisionsAinodeProvider(t *testing.T) {
+func TestOfficialConnectProvisionsProvider(t *testing.T) {
 	t.Setenv("HOXI_HOME", t.TempDir())
 	server := newOfficialTestSite(t, false)
 
@@ -145,15 +145,15 @@ func TestOfficialConnectProvisionsAinodeProvider(t *testing.T) {
 
 	doc := svc.LoadHoxiConfigDoc()
 	provMap, _ := doc["provider"].(map[string]interface{})
-	ainode, _ := provMap["hoxi-official"].(map[string]interface{})
-	opts, _ := ainode["options"].(map[string]interface{})
+	official, _ := provMap["hoxi-official"].(map[string]interface{})
+	opts, _ := official["options"].(map[string]interface{})
 	if got, _ := opts["apiKey"].(string); got != "sk-hoxi-official-key" {
 		t.Fatalf("expected persisted member key, got %q", got)
 	}
-	if got, _ := opts["baseURL"].(string); got != "https://api.ainode.run/v1" {
+	if got, _ := opts["baseURL"].(string); got != "https://api.hoxi.ai/v1" {
 		t.Fatalf("expected persisted baseURL, got %q", got)
 	}
-	models, _ := ainode["models"].(map[string]interface{})
+	models, _ := official["models"].(map[string]interface{})
 	if len(models) != 2 {
 		t.Fatalf("expected exactly 2 enabled models persisted (excluding disabled-model), got %d: %+v", len(models), models)
 	}
@@ -173,7 +173,7 @@ func TestOfficialConnectProvisionsAinodeProvider(t *testing.T) {
 	}
 
 	// Clearing the official provider removes both models.json entry and engine auth.json key.
-	if gotKey := svc.ResolveStoredProviderKey("hoxi-official", "https://api.ainode.run/v1"); gotKey != "sk-hoxi-official-key" {
+	if gotKey := svc.ResolveStoredProviderKey("hoxi-official", "https://api.hoxi.ai/v1"); gotKey != "sk-hoxi-official-key" {
 		t.Fatalf("expected stored key before clear, got %q", gotKey)
 	}
 	svc.ClearOfficialProvider()
@@ -182,7 +182,7 @@ func TestOfficialConnectProvisionsAinodeProvider(t *testing.T) {
 	if _, exists := provMapAfter["hoxi-official"]; exists {
 		t.Fatalf("expected hoxi-official removed from models.json after ClearOfficialProvider")
 	}
-	if gotKey := svc.ResolveStoredProviderKey("hoxi-official", "https://api.ainode.run/v1"); gotKey != "" {
+	if gotKey := svc.ResolveStoredProviderKey("hoxi-official", "https://api.hoxi.ai/v1"); gotKey != "" {
 		t.Fatalf("expected engine auth.json key cleared, got %q", gotKey)
 	}
 }

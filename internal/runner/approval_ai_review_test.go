@@ -55,7 +55,7 @@ func (s *stubAIReviewLLM) Complete(_ context.Context, _ llm.Target, req llm.Requ
 }
 
 const shoplyInspectionScript = `bash -c '
-cd /Users/hugh/code/kuaiqin/shoply
+cd /Users/u/code/kuaiqin/shoply
 find . -name .git -not -path "*/node_modules/*" -not -path "*/vendor/*" -not -path "*/.claude/*" | sort | while read -r gitdir; do
   repo=$(dirname "$gitdir")
   [ "$repo" = "." ] && repo="."

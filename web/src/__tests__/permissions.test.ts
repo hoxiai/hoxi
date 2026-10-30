@@ -317,8 +317,8 @@ describe("approval policy store and migration", () => {
       // Connected HTTP provider -> picks fast model automatically when enabling AI review
       setWorkspace("providers", [
         {
-          id: "ainode",
-          name: "AINode",
+          id: "hoxi-gateway",
+          name: "Hoxi Gateway",
           source: "api",
           models: {
             "deepseek-r1": { name: "R1", reasoning: true },
@@ -326,11 +326,11 @@ describe("approval policy store and migration", () => {
           },
         },
       ] as never);
-      setWorkspace("connectedProviders", ["ainode"]);
-      assertEqual(resolveDefaultAIReviewModel(), "ainode/deepseek-flash");
+      setWorkspace("connectedProviders", ["hoxi-gateway"]);
+      assertEqual(resolveDefaultAIReviewModel(), "hoxi-gateway/deepseek-flash");
       await setApprovalAIReview({ aiReview: true });
       assertEqual(puts[puts.length - 1].aiReview, true);
-      assertEqual(puts[puts.length - 1].aiReviewModel, "ainode/deepseek-flash");
+      assertEqual(puts[puts.length - 1].aiReviewModel, "hoxi-gateway/deepseek-flash");
     } finally {
       hoxiAPI.updateApprovalPolicy = origUpdatePolicy;
       setWorkspace("providers", prevProviders);

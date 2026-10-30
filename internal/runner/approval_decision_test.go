@@ -329,7 +329,7 @@ func TestOpaqueInterpreterVariantsAsk(t *testing.T) {
 func TestCrossDirectoryCDAndSkillsApproval(t *testing.T) {
 	worktreeDir := t.TempDir()
 	siblingRepo := t.TempDir()
-	deployCmd := "cd " + siblingRepo + " && NODE_OPTIONS=--max-old-space-size=32768 /Users/hugh/.agents/skills/ainode-release-and-deploy/scripts/deploy-ainode-site.sh 1.1.24 2>&1 | tail -70"
+	deployCmd := "cd " + siblingRepo + " && NODE_OPTIONS=--max-old-space-size=32768 /Users/u/.agents/skills/release-skill/scripts/deploy-site.sh 1.1.24 2>&1 | tail -70"
 	for _, mode := range []string{ApprovalModeAuto, ApprovalModeTrusted} {
 		if !approvalAutoApproves(req("bash", deployCmd), ApprovalPolicy{Mode: mode}, nil, worktreeDir) {
 			t.Errorf("cross-directory deploy script asked in %s mode", mode)
@@ -348,11 +348,11 @@ func TestCrossDirectoryCDAndSkillsApproval(t *testing.T) {
 		path        string
 		destructive bool
 	}{
-		{"read_file", "/Users/u/.agents/skills/ainode-release-and-deploy/SKILL.md", false},
+		{"read_file", "/Users/u/.agents/skills/release-skill/SKILL.md", false},
 		{"read_file", filepath.Join(siblingRepo, ".git", "logs", "HEAD"), false},
 		{"read_file", "/etc/passwd", true},
 		{"edit_file", "/Users/u/.agents/hooks.json", true},
-		{"edit_file", "/Users/u/.agents/skills/ainode-release-and-deploy/scripts/deploy.sh", true},
+		{"edit_file", "/Users/u/.agents/skills/release-skill/scripts/deploy.sh", true},
 		{"write_file", filepath.Join(worktreeDir, ".hoxi", "skills", "foo", "run.sh"), true},
 		{"write_file", filepath.Join(worktreeDir, ".hoxi", "attachments", "paste.png"), false},
 		{"edit_file", filepath.Join(worktreeDir, ".git", "config"), true},

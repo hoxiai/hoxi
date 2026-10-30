@@ -15,7 +15,7 @@ import (
 )
 
 // AuthSource exposes the signed-in Hoxi account so the provider plane can
-// provision the official AINode channel without importing internal/auth.
+// provision the official gateway channel without importing internal/auth.
 // It mirrors the tool / workapp auth seams.
 type AuthSource interface {
 	CurrentDeviceToken() string
@@ -24,7 +24,7 @@ type AuthSource interface {
 	WithCurrentDeviceToken(token, baseURL string, commit func() error) (bool, error)
 }
 
-// SetAuthSource wires the desktop account used by the official AINode connect
+// SetAuthSource wires the desktop account used by the official gateway connect
 // flow. When unset the official routes answer 401.
 func (s *Service) SetAuthSource(a AuthSource) {
 	s.authMu.Lock()
@@ -34,11 +34,10 @@ func (s *Service) SetAuthSource(a AuthSource) {
 }
 
 const (
-	officialAinodeProviderID     = "hoxi-official"
-	officialAinodeProviderName   = "Hoxi Official"
-	officialAinodeDefaultBaseURL = "https://api.ainode.run/v1"
-	officialPointsPerUsd         = 10_000
-	officialSiteRequestTimeout   = 12 * time.Second
+	officialProviderID         = "hoxi-official"
+	officialProviderName       = "Hoxi Official"
+	officialPointsPerUsd       = 10_000
+	officialSiteRequestTimeout = 12 * time.Second
 )
 
 type officialModelView struct {
@@ -83,7 +82,7 @@ func (s *Service) officialAuth() (AuthSource, string, string) {
 }
 
 // handleOfficialModels previews the models the signed-in Hoxi account may call
-// on the official AINode channel, resolved through the tenant path.
+// on the official gateway channel, resolved through the tenant path.
 func (s *Service) handleOfficialModels(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSONError(w, http.StatusMethodNotAllowed, "GET required")
@@ -113,6 +112,9 @@ func (s *Service) handleOfficialModels(w http.ResponseWriter, r *http.Request) {
 	}
 
 	baseURL := officialGatewayBaseURL(payload, site)
+	if baseURL == "" {
+		baseURL = deriveGatewayAPIBaseURLFromSite(site)
+	}
 	models, errMsg := parseOfficialModels(payload)
 	writeJSON(w, http.StatusOK, officialModelsResponse{
 		Authenticated:    true,
@@ -123,7 +125,7 @@ func (s *Service) handleOfficialModels(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleOfficialConnect provisions (or refreshes) the official AINode provider
+// handleOfficialConnect provisions (or refreshes) the official gateway provider
 // using the desktop account device token, without a browser OAuth round-trip.
 func (s *Service) handleOfficialConnect(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -181,7 +183,7 @@ func (s *Service) handleOfficialConnect(w http.ResponseWriter, r *http.Request) 
 
 	writeJSON(w, http.StatusOK, officialConnectResponse{
 		Authenticated: true,
-		ProviderID:    officialAinodeProviderID,
+		ProviderID:    officialProviderID,
 		BaseURL:       baseURL,
 		ModelCount:    len(models),
 		Models:        models,
@@ -196,7 +198,7 @@ func (s *Service) ClearOfficialProvider() error {
 	defer s.officialMu.Unlock()
 	// Remain blocked on any cleanup error, including across retries.
 	s.officialBlocked.Store(true)
-	authErr := s.removeEngineProviderAuth(officialAinodeProviderID)
+	authErr := s.removeEngineProviderAuth(officialProviderID)
 
 	configErr := s.clearOfficialConfig()
 	s.reloadOpenCodeGlobalConfig()
@@ -220,10 +222,10 @@ func (s *Service) clearOfficialConfig() error {
 	}
 	doc := s.loadHoxiConfigDoc()
 	hoxiMap, _ := doc["provider"].(map[string]interface{})
-	if _, exists := hoxiMap[officialAinodeProviderID]; !exists {
+	if _, exists := hoxiMap[officialProviderID]; !exists {
 		return nil
 	}
-	delete(hoxiMap, officialAinodeProviderID)
+	delete(hoxiMap, officialProviderID)
 	doc["provider"] = hoxiMap
 	return s.persistHoxiConfigFiles(doc)
 }
@@ -271,12 +273,9 @@ func (s *Service) persistOfficialProvider(baseURL, apiKey string, models []offic
 	defer s.officialMu.Unlock()
 	s.officialBlocked.Store(true)
 	resolvedBaseURL := strings.TrimSpace(baseURL)
-	if resolvedBaseURL == "" {
-		resolvedBaseURL = officialAinodeDefaultBaseURL
-	}
 	resolvedKey := strings.TrimSpace(apiKey)
 	if resolvedKey != "" {
-		if err := s.persistEngineProviderAuthMap(officialAinodeProviderID, map[string]interface{}{"type": "api", "key": resolvedKey}); err != nil {
+		if err := s.persistEngineProviderAuthMap(officialProviderID, map[string]interface{}{"type": "api", "key": resolvedKey}); err != nil {
 			return err
 		}
 	}
@@ -287,12 +286,12 @@ func (s *Service) persistOfficialProvider(baseURL, apiKey string, models []offic
 	if hoxiMap == nil {
 		hoxiMap = map[string]interface{}{}
 	}
-	existingProv, _ := hoxiMap[officialAinodeProviderID].(map[string]interface{})
+	existingProv, _ := hoxiMap[officialProviderID].(map[string]interface{})
 	nextProv := map[string]interface{}{}
 	for k, v := range existingProv {
 		nextProv[k] = v
 	}
-	nextProv["name"] = officialAinodeProviderName
+	nextProv["name"] = officialProviderName
 
 	npmPkg, _ := existingProv["npm"].(string)
 	if strings.TrimSpace(npmPkg) == "" {
@@ -343,8 +342,8 @@ func (s *Service) persistOfficialProvider(baseURL, apiKey string, models []offic
 	}
 	nextProv["models"] = modelsMap
 
-	s.normalizeAndStoreMultiKeys(officialAinodeProviderID, nextProv)
-	hoxiMap[officialAinodeProviderID] = nextProv
+	s.normalizeAndStoreMultiKeys(officialProviderID, nextProv)
+	hoxiMap[officialProviderID] = nextProv
 	doc["provider"] = hoxiMap
 
 	err := s.persistHoxiConfigFiles(doc)
@@ -375,7 +374,10 @@ func (s *Service) resolveOfficialGateway(ctx context.Context, site, token string
 		}
 	}
 	if baseURL == "" {
-		baseURL = officialAinodeDefaultBaseURL
+		baseURL = deriveGatewayAPIBaseURLFromSite(site)
+	}
+	if baseURL == "" {
+		return "", payload, status, errors.New("official gateway endpoint unavailable")
 	}
 	return baseURL, payload, status, nil
 }

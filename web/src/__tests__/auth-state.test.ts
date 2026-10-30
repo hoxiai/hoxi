@@ -16,7 +16,7 @@ import {
   sessionLastTurnUsedOfficialModel,
   setDesktopAuth,
 } from "../store/auth-state";
-import { officialAinodeState, setOfficialAinodeState } from "../store/provider-official";
+import { officialChannelState, setOfficialChannelState } from "../store/provider-official";
 import { appSettings, setAppSettings } from "../store/settings";
 import { OFFICIAL_PROVIDER_ID, setWorkspace, workspace } from "../store/workspace-state";
 import { assertEqual, describe, it } from "./test-harness";
@@ -137,10 +137,10 @@ describe("desktop auth member state & race protection", () => {
         isLoggedIn: true,
         user: { id: 1, email: "dev@hoxi.ai", nickname: "Dev" },
       });
-      setOfficialAinodeState({
+      setOfficialChannelState({
         loaded: true,
         loading: false,
-        baseUrl: "https://api.ainode.run/v1",
+        baseUrl: "https://api.hoxi.ai/v1",
         models: [{ id: "gpt-5.4", name: "GPT-5.4", inputPointsPerM: 25000, outputPointsPerM: 100000, perCallPoints: 0 }],
         error: null,
       });
@@ -161,8 +161,8 @@ describe("desktop auth member state & race protection", () => {
       await logoutDesktopAccount();
 
       assertEqual(desktopAuth.isLoggedIn, false);
-      assertEqual(officialAinodeState.loaded, false);
-      assertEqual(officialAinodeState.models.length, 0);
+      assertEqual(officialChannelState.loaded, false);
+      assertEqual(officialChannelState.models.length, 0);
       assertEqual(Boolean(workspace.hoxiProviders[OFFICIAL_PROVIDER_ID]), false);
       assertEqual(Boolean(workspace.globalConfig?.provider?.[OFFICIAL_PROVIDER_ID]), false);
       assertEqual(workspace.connectedProviders.includes(OFFICIAL_PROVIDER_ID), false);

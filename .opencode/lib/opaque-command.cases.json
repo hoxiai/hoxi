@@ -626,11 +626,11 @@
     "opaque": true
   },
   {
-    "command": "cd /Users/hugh/code/hoxi/apay && NODE_OPTIONS=--max-old-space-size=32768 /Users/hugh/.agents/skills/ainode-release-and-deploy/scripts/deploy-ainode-site.sh 1.1.24 2>&1 | tail -70",
+    "command": "cd /Users/u/code/site && NODE_OPTIONS=--max-old-space-size=32768 /Users/u/.agents/skills/release-skill/scripts/deploy-site.sh 1.1.24 2>&1 | tail -70",
     "opaque": false
   },
   {
-    "command": "(cd /Users/hugh/code/hoxi/apay/admin && npx vue-tsc --noEmit 2>&1 | head -60)",
+    "command": "(cd /Users/u/code/site/admin && npx vue-tsc --noEmit 2>&1 | head -60)",
     "opaque": false
   },
   {
@@ -710,11 +710,11 @@
     "opaque": false
   },
   {
-    "command": "cd /Users/hugh/code/hoxi/apay && ls server/db/migrations/pg/*.sql | xargs -n1 basename | sort",
+    "command": "cd /Users/u/code/site && ls server/db/migrations/pg/*.sql | xargs -n1 basename | sort",
     "opaque": false
   },
   {
-    "command": "TGT=/Users/hugh/code/hoxi/apay/app/themes/aix\nSRC=/Users/hugh/code/kuaiqin/shoply/plugins/app/Fastix\ncp \"$SRC/res/img/\"* \"$TGT/public/img/\" 2>/dev/null || true",
+    "command": "TGT=/Users/u/code/site/app/themes/aix\nSRC=/Users/u/code/kuaiqin/shoply/plugins/app/Fastix\ncp \"$SRC/res/img/\"* \"$TGT/public/img/\" 2>/dev/null || true",
     "opaque": false
   },
   {
@@ -786,11 +786,11 @@
     "opaque": false
   },
   {
-    "command": "bash -n /Users/hugh/.agents/skills/ainode-release-and-deploy/scripts/deploy-ainode-site.sh",
+    "command": "bash -n /Users/u/.agents/skills/release-skill/scripts/deploy-site.sh",
     "opaque": false
   },
   {
-    "command": "bash /Users/hugh/.agents/skills/ainode-release-and-deploy/scripts/deploy-ainode-site.sh 1.1.24",
+    "command": "bash /Users/u/.agents/skills/release-skill/scripts/deploy-site.sh 1.1.24",
     "opaque": false
   },
   {
@@ -822,7 +822,7 @@
     "opaque": true
   },
   {
-    "command": "git -C /Users/hugh/code/hoxi/hoxi status --short; echo \"--- shuffle ---\"; env -u HOXI_SERVER_URL go test -shuffle=on -count=1 ./internal/browser/ 2>&1 | tail -3",
+    "command": "git -C /Users/u/code/hoxi/hoxi status --short; echo \"--- shuffle ---\"; env -u HOXI_SERVER_URL go test -shuffle=on -count=1 ./internal/browser/ 2>&1 | tail -3",
     "opaque": false
   },
   {

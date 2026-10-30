@@ -26,9 +26,9 @@ import {
   isCustomOrConfiguredProvider,
   isImportedOpenCodeProvider,
   leaderboardState,
-  loadOfficialAinodeModels,
+  loadOfficialChannelModels,
   OFFICIAL_PROVIDER_ID,
-  officialAinodeState,
+  officialChannelState,
   openProviderModal,
   openSettingsModal,
   POPULAR_PROVIDER_IDS,
@@ -57,7 +57,7 @@ export default function ProviderCatalogTab() {
 
   createEffect(() => {
     if (desktopAuth.isLoggedIn) {
-      void loadOfficialAinodeModels();
+      void loadOfficialChannelModels();
     }
   });
 
@@ -233,7 +233,7 @@ export default function ProviderCatalogTab() {
                     {t("models.officialCardTitle")}
                   </div>
                   <div class="text-[12px] text-[var(--text-secondary)] line-clamp-1">
-                    {t("models.officialModelsCount", { count: officialAinodeState.models.length })}
+                    {t("models.officialModelsCount", { count: officialChannelState.models.length })}
                   </div>
                 </div>
               </div>

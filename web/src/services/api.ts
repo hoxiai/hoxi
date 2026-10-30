@@ -43,7 +43,7 @@ import type {
   WorktreeStatus,
 } from "./api-types";
 import { getGatewayToken, requestJSON, setGatewayToken, withDir } from "./http";
-import { authAPI, leaderboardAPI, officialAinodeAPI, providerMcpOAuthAPI, updaterAPI } from "./platform-api";
+import { authAPI, leaderboardAPI, officialChannelAPI, providerMcpOAuthAPI, updaterAPI } from "./platform-api";
 import {
   forgetRunnerSession,
   inferRunnerRuntimeFromSessionID,
@@ -67,7 +67,7 @@ export {
   isRunnerSessionID,
   leaderboardAPI,
   providerMcpOAuthAPI,
-  officialAinodeAPI,
+  officialChannelAPI,
   requestJSON,
   resolveRunnerRuntimeForProvider,
   runnerAPI,
@@ -547,8 +547,8 @@ export const hoxiAPI = {
   },
   startProviderMcpOAuth: providerMcpOAuthAPI.start,
   pollProviderMcpOAuth: providerMcpOAuthAPI.poll,
-  fetchOfficialAinodeModels: officialAinodeAPI.models,
-  connectOfficialAinodeProvider: officialAinodeAPI.connect,
+  fetchOfficialChannelModels: officialChannelAPI.models,
+  connectOfficialChannelProvider: officialChannelAPI.connect,
   getGlobalConfig(): Promise<Record<string, any>> {
     return requestJSON("/global/config");
   },

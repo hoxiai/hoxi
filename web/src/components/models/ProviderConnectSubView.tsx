@@ -65,7 +65,7 @@ export function ProviderConnectView(props: {
 
   const supportsMcpOAuth = createMemo(
     () =>
-      props.provider.id === "ainode" ||
+      props.provider.id === "hoxi-gateway" ||
       Boolean(matchedGateway()?.canOneClickConnect)
   );
 
@@ -79,9 +79,9 @@ export function ProviderConnectView(props: {
       const gw = matchedGateway();
       const res = await connectProviderWithMcpOAuth({
         providerID: props.provider.id,
-        providerName: props.provider.name || gw?.name || "AINode",
+        providerName: props.provider.name || gw?.name || "Hoxi Gateway",
         siteURL: gw?.url,
-        baseURL: baseURL().trim() || gw?.baseUrl || "https://api.ainode.run/v1",
+        baseURL: baseURL().trim() || gw?.baseUrl || "https://api.hoxi.ai/v1",
         recommendedModels: gw?.recommendedModels,
       });
       if (res) {

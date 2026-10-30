@@ -38,7 +38,7 @@ import AgentPolicyMcpTab from "../models/AgentPolicyMcpTab";
 import AutoModelPoolTab from "../models/AutoModelPoolTab";
 import CustomEndpointTab from "../models/CustomEndpointTab";
 import ModelsRoleTab from "../models/ModelsRoleTab";
-import OfficialAinodeTab from "../models/OfficialAinodeTab";
+import OfficialChannelTab from "../models/OfficialChannelTab";
 import ProviderCatalogTab from "../models/ProviderCatalogTab";
 import { ChatComposerTab, GeneralAppearanceTab } from "./SettingsGeneralChatTabs";
 import { PrivacySettingsTab } from "./PrivacyControls";
@@ -502,7 +502,7 @@ export default function SettingsModal() {
               </Show>
               <Show when={activeTab() === "official"}>
                 <div class="flex-1 min-h-0 flex flex-col hoxi-view-enter">
-                  <OfficialAinodeTab />
+                  <OfficialChannelTab />
                 </div>
               </Show>
               <Show when={activeTab() === "custom"}>

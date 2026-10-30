@@ -1,7 +1,7 @@
 // web/src/store/provider-official.ts
 import { createStore } from "solid-js/store";
 import { hoxiAPI } from "../services/api";
-import type { OfficialAinodeModel } from "../services/platform-api";
+import type { OfficialChannelModel } from "../services/platform-api";
 import { t } from "../i18n";
 import {
   desktopAuth,
@@ -18,21 +18,21 @@ import {
 import { OFFICIAL_PROVIDER_ID, SELECTED_MODEL_KEY, setWorkspace, workspace } from "./workspace-state";
 import { persistSessionAI, updateSessionAI } from "./session-ai";
 
-export interface OfficialAinodeConnectResult {
+export interface OfficialChannelConnectResult {
   providerId: string;
   baseUrl: string;
   modelCount: number;
 }
 
-export interface OfficialAinodeModelsUIState {
+export interface OfficialChannelModelsUIState {
   loaded: boolean;
   loading: boolean;
   baseUrl: string;
-  models: OfficialAinodeModel[];
+  models: OfficialChannelModel[];
   error: string | null;
 }
 
-export const [officialAinodeState, setOfficialAinodeState] = createStore<OfficialAinodeModelsUIState>({
+export const [officialChannelState, setOfficialChannelState] = createStore<OfficialChannelModelsUIState>({
   loaded: false,
   loading: false,
   baseUrl: "",
@@ -62,9 +62,9 @@ export function purgeOfficialProviderFromWorkspace(): void {
   persistSessionAI();
 }
 
-export function resetOfficialAinodeState(): void {
+export function resetOfficialChannelState(): void {
   catalogGeneration++;
-  setOfficialAinodeState({
+  setOfficialChannelState({
     loaded: false,
     loading: false,
     baseUrl: "",
@@ -75,33 +75,33 @@ export function resetOfficialAinodeState(): void {
 
 onDesktopAuthChanged(() => {
   officialAutoConnectGeneration = null;
-  resetOfficialAinodeState();
+  resetOfficialChannelState();
   purgeOfficialProviderFromWorkspace();
 });
 
-// loadOfficialAinodeModels refreshes the model catalog the signed-in Hoxi
-// account may call on the official AINode channel.
-export async function loadOfficialAinodeModels(force = false): Promise<void> {
+// loadOfficialChannelModels refreshes the model catalog the signed-in Hoxi
+// account may call on the official gateway channel.
+export async function loadOfficialChannelModels(force = false): Promise<void> {
   if (!desktopAuth.isLoggedIn) {
-    resetOfficialAinodeState();
+    resetOfficialChannelState();
     return;
   }
-  if (officialAinodeState.loading) return;
-  if (officialAinodeState.loaded && !force) return;
+  if (officialChannelState.loading) return;
+  if (officialChannelState.loaded && !force) return;
   const account = desktopAuthGeneration();
   const request = ++catalogGeneration;
   const current = () => account === desktopAuthGeneration() && request === catalogGeneration && desktopAuth.isLoggedIn;
-  setOfficialAinodeState({ loading: true, error: null });
+  setOfficialChannelState({ loading: true, error: null });
   try {
-    const res = await hoxiAPI.fetchOfficialAinodeModels();
+    const res = await hoxiAPI.fetchOfficialChannelModels();
     if (!current()) return;
     if (!res.authenticated) {
       purgeOfficialProviderFromWorkspace();
-      resetOfficialAinodeState();
+      resetOfficialChannelState();
       await refreshAuthStatus();
       return;
     }
-    setOfficialAinodeState({
+    setOfficialChannelState({
       loaded: true,
       loading: false,
       baseUrl: res.baseUrl || "",
@@ -110,20 +110,20 @@ export async function loadOfficialAinodeModels(force = false): Promise<void> {
     });
   } catch (err: any) {
     if (!current()) return;
-    setOfficialAinodeState({
+    setOfficialChannelState({
       loading: false,
       error: err?.message || t("models.officialLoadFailed"),
     });
   }
 }
 
-// connectOfficialAinode provisions/refreshes the official AINode provider from
+// connectOfficialChannel provisions/refreshes the official gateway provider from
 // the signed-in Hoxi account device token, then adopts its authorized models.
-export async function connectOfficialAinode(): Promise<OfficialAinodeConnectResult> {
+export async function connectOfficialChannel(): Promise<OfficialChannelConnectResult> {
   const account = desktopAuthGeneration();
   const current = () => account === desktopAuthGeneration() && desktopAuth.isLoggedIn;
   if (!current()) throw new Error(t("models.officialConnectLoginRequired"));
-  const res = await hoxiAPI.connectOfficialAinodeProvider();
+  const res = await hoxiAPI.connectOfficialChannelProvider();
   if (!current() || !res?.authenticated) {
     throw new Error(t("models.officialConnectLoginRequired"));
   }
@@ -136,7 +136,7 @@ export async function connectOfficialAinode(): Promise<OfficialAinodeConnectResu
   if (firstModelID && shouldAutoSelectProvisionedModel(pid)) {
     selectProviderModelPreservingBusySession({ providerID: pid, modelID: firstModelID });
   }
-  await loadOfficialAinodeModels(true);
+  await loadOfficialChannelModels(true);
   return {
     providerId: pid,
     baseUrl: res.baseUrl,
@@ -158,12 +158,12 @@ export async function ensureOfficialProviderConnected(): Promise<void> {
     Boolean(workspace.hoxiProviders?.[OFFICIAL_PROVIDER_ID]) ||
     Boolean(workspace.connectedProviders?.includes(OFFICIAL_PROVIDER_ID));
   if (connected) {
-    await loadOfficialAinodeModels();
+    await loadOfficialChannelModels();
     return;
   }
   officialAutoConnectGeneration = account;
   try {
-    await connectOfficialAinode();
+    await connectOfficialChannel();
   } catch {
     // Silent: the user can retry from the Hoxi official settings entry.
   } finally {

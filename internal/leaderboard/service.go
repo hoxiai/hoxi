@@ -107,14 +107,12 @@ func (s *Service) GetLeaderboard(dimension string, limit int, lang ...string) (*
 	return &result, nil
 }
 
-func isAINodeGateway(item GatewayItem) bool {
+// isSelfOperatedGateway identifies the official one-click gateway by its
+// server-issued id. The gateway endpoint itself is supplied by the official
+// site API, so no domain is hardcoded here.
+func isSelfOperatedGateway(item GatewayItem) bool {
 	id := strings.ToLower(strings.TrimSpace(item.ID))
-	domain := strings.ToLower(strings.TrimSpace(item.Domain))
-	baseURL := strings.ToLower(strings.TrimSpace(item.BaseURL))
-	rawURL := strings.ToLower(strings.TrimSpace(item.URL))
-	return id == "ainode" || strings.HasPrefix(id, "ainode-") ||
-		domain == "ainode.run" || strings.HasSuffix(domain, ".ainode.run") ||
-		strings.Contains(baseURL, "ainode.run") || strings.Contains(rawURL, "ainode.run")
+	return id == "hoxi-gateway" || strings.HasPrefix(id, "hoxi-gateway-")
 }
 
 func (s *Service) GetConnectableGateways(lang ...string) (*GatewaysResponse, error) {
@@ -149,10 +147,10 @@ func (s *Service) GetConnectableGateways(lang ...string) (*GatewaysResponse, err
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil || result.Data == nil {
 		return s.fallbackGateways(normLang), nil
 	}
-	// Only AINode gateways support desktop one-click OAuth & automatic key provisioning.
+	// Only self-operated gateways support desktop one-click OAuth & automatic key provisioning.
 	for i := range result.Data.Items {
 		item := &result.Data.Items[i]
-		if isAINodeGateway(*item) {
+		if isSelfOperatedGateway(*item) {
 			item.IsSelfOperated = true
 			item.CanOneClickConnect = true
 			continue
@@ -278,12 +276,12 @@ func (s *Service) fallbackLeaderboard(dimension string, limit int, lang string) 
 
 func (s *Service) fallbackGateways(lang string) *GatewaysResponse {
 	isZh := lang == "zh"
-	name := "AINode Direct Pro"
+	name := "Hoxi Gateway"
 	badge := "Official Pick · 1-Click Auth"
 	features := []string{"Low-latency direct routing", "100% full-weight thinking mode", "Instant top-up", "Never-expiring balance"}
 	caveat := "Enterprise-grade dedicated upstream channels with 1-click OAuth to Hoxi Desktop"
 	if isZh {
-		name = "AINode 极速专线"
+		name = "Hoxi 官方网关"
 		badge = "自营推荐 · 一键直连"
 		features = []string{"国内双线直连", "支持 100% 满血思考模式", "微信/支付宝充值", "余额永不过期"}
 		caveat = "只做高质量企业专线，支持一键免密授权接入 Hoxi 桌面端"
@@ -295,11 +293,11 @@ func (s *Service) fallbackGateways(lang string) *GatewaysResponse {
 			Total: 1,
 			Items: []GatewayItem{
 				{
-					ID:                 "ainode-pro",
+					ID:                 "hoxi-gateway",
 					Name:               name,
-					Domain:             "ainode.run",
-					URL:                "https://api.ainode.run",
-					BaseURL:            "https://api.ainode.run/v1",
+					Domain:             "hoxi.ai",
+					URL:                "https://api.hoxi.ai",
+					BaseURL:            "https://api.hoxi.ai/v1",
 					IsSelfOperated:     true,
 					CanOneClickConnect: true,
 					Badge:              badge,
@@ -313,7 +311,7 @@ func (s *Service) fallbackGateways(lang string) *GatewaysResponse {
 					RecommendedModels:  []string{"claude-sonnet-4-5", "gpt-4o", "gemini-2.5-flash", "deepseek-r1"},
 					Features:           features,
 					Caveat:             caveat,
-					AuthURL:            "https://hoxi.ai/auth/authorize-desktop?gateway=ainode",
+					AuthURL:            "https://hoxi.ai/auth/authorize-desktop?gateway=hoxi-gateway",
 				},
 			},
 		},

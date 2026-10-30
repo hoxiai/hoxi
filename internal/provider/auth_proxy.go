@@ -139,7 +139,7 @@ func (g *Service) removeEngineProviderAuth(providerID string) error {
 		defer cancel()
 		engineErr = g.openCode.JSON(ctx, http.MethodDelete, "/auth/"+url.PathEscape(providerID), nil, nil, nil)
 	}
-	if providerID == officialAinodeProviderID {
+	if providerID == officialProviderID {
 		return errors.Join(persistErr, engineErr)
 	}
 	return persistErr // Ordinary local provider edits retain offline support.
@@ -181,7 +181,7 @@ func (g *Service) handleGlobalConfigProxy(w http.ResponseWriter, r *http.Request
 					if provMap, ok := cfg["provider"].(map[string]interface{}); ok {
 						filterProviderModelsByHoxi(provMap, g.loadHoxiProvidersMap())
 						if g.officialBlocked.Load() {
-							delete(provMap, officialAinodeProviderID)
+							delete(provMap, officialProviderID)
 						}
 					}
 					writeJSON(w, status, cfg)
@@ -253,7 +253,7 @@ func (g *Service) handleProviderProxy(w http.ResponseWriter, r *http.Request) {
 						if p, ok := item.(map[string]interface{}); ok {
 							id, _ = p["id"].(string)
 						}
-						if id != officialAinodeProviderID {
+						if id != officialProviderID {
 							kept = append(kept, item)
 						}
 					}

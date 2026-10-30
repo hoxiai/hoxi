@@ -349,7 +349,7 @@ func (g *Service) isAuthorizedProviderBaseURL(providerID, requestedBaseURL strin
 }
 
 func (g *Service) resolveProviderConnection(providerID, hintBaseURL, hintNPM string) (baseURL, apiKey, npm string, headers map[string]string) {
-	if providerID == officialAinodeProviderID && g.officialBlocked.Load() {
+	if providerID == officialProviderID && g.officialBlocked.Load() {
 		return "", "", "", nil
 	}
 	baseURL = strings.TrimSpace(g.localizeBridgeURL(hintBaseURL))
@@ -482,7 +482,7 @@ func (g *Service) resolveOpenCodeLiveModelConfig(providerID, modelID string) (ba
 }
 
 func (g *Service) resolveStoredProviderKey(providerID, requestedBaseURL string) string {
-	if providerID == officialAinodeProviderID && g.officialBlocked.Load() {
+	if providerID == officialProviderID && g.officialBlocked.Load() {
 		return ""
 	}
 	openCodeBaseURL, openCodeKey, _, _ := g.resolveOpenCodeLiveModelConfig(providerID, "")

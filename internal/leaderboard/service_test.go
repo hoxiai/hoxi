@@ -23,7 +23,7 @@ func TestLeaderboardServiceFallback(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if gw.Code != 200 || gw.Data == nil || len(gw.Data.Items) == 0 || !gw.Data.Items[0].CanOneClickConnect {
-		t.Fatalf("expected fallback AINode gateway item, got: %+v", gw)
+		t.Fatalf("expected fallback self-operated gateway item, got: %+v", gw)
 	}
 }
 
@@ -36,11 +36,11 @@ func TestGatewayDirectoryDoesNotOfferHoxiInferenceAuth(t *testing.T) {
 					IsSelfOperated: true, CanOneClickConnect: true,
 					Badge: "Official Pick", Caveat: "Hoxi account connects inference",
 					AuthURL: "https://hoxi.ai/auth/authorize-desktop"},
-				{ID: "ainode-pro", Name: "AINode Direct Pro",
-					Domain: "ainode.run", URL: "https://api.ainode.run", BaseURL: "https://api.ainode.run/v1",
+				{ID: "hoxi-gateway", Name: "Hoxi Gateway",
+					Domain: "hoxi.ai", URL: "https://api.hoxi.ai", BaseURL: "https://api.hoxi.ai/v1",
 					IsSelfOperated: true, CanOneClickConnect: true,
 					Badge: "Official Pick", Caveat: "Enterprise dedicated line",
-					AuthURL: "https://hoxi.ai/auth/authorize-desktop?gateway=ainode"},
+					AuthURL: "https://hoxi.ai/auth/authorize-desktop?gateway=hoxi-gateway"},
 			},
 		}})
 	}))
@@ -58,9 +58,9 @@ func TestGatewayDirectoryDoesNotOfferHoxiInferenceAuth(t *testing.T) {
 		if item.URL != "https://hoxi.ai" || item.BaseURL != "https://hoxi.ai/v1" {
 			t.Fatalf("third-party directory metadata should be preserved: %+v", item)
 		}
-		ainode := result.Data.Items[1]
-		if !ainode.IsSelfOperated || !ainode.CanOneClickConnect || ainode.Badge != "Official Pick" {
-			t.Fatalf("expected AINode gateway to preserve one-click connect metadata: %+v", ainode)
+		official := result.Data.Items[1]
+		if !official.IsSelfOperated || !official.CanOneClickConnect || official.Badge != "Official Pick" {
+			t.Fatalf("expected self-operated gateway to preserve one-click connect metadata: %+v", official)
 		}
 	}
 }

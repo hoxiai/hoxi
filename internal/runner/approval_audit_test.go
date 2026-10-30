@@ -281,7 +281,7 @@ func TestExternalDirectoryRiskClassifiesRoutineAndSensitiveTargets(t *testing.T)
 	// too, but destructive metadata always wins.
 	if isDestructivePermissionRequest(map[string]interface{}{
 		"permission": "tool",
-		"metadata":   map[string]interface{}{"externalDirectory": true, "args": `{"file_path":"/Users/hugh/code/hoxi/ainode/src/a.ts"}`},
+		"metadata":   map[string]interface{}{"externalDirectory": true, "args": `{"file_path":"/Users/u/code/app/src/a.ts"}`},
 	}) {
 		t.Error("sibling-folder tool access must not be classified destructive")
 	}

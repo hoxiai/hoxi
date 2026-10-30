@@ -108,7 +108,7 @@ func (g *Service) handleProviderMCPOAuthStart(w http.ResponseWriter, r *http.Req
 
 	providerID := strings.TrimSpace(req.ProviderID)
 	if providerID == "" {
-		providerID = "ainode"
+		providerID = "hoxi-gateway"
 	}
 	providerName := strings.TrimSpace(req.ProviderName)
 	if providerName == "" {
