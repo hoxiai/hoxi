@@ -315,8 +315,7 @@ describe("task commit and push", () => {
       });
       assertEqual(calls.send.length, 1);
       assertEqual(calls.send[0][1], [
-        t("timeline.gitAgentCommitPrompt", { directory: JSON.stringify(directory) }),
-        t("timeline.gitAgentCommitFilesPrompt", { files: JSON.stringify(["src/a.ts", "src/b.ts"]) }),
+        t("timeline.gitAgentCommitScopedPrompt", { directory: JSON.stringify(directory), files: JSON.stringify(["src/a.ts", "src/b.ts"]) }),
         t("timeline.gitAgentCommitOnlyPrompt"),
       ].join("\n\n"));
     });
@@ -354,8 +353,7 @@ describe("task commit and push", () => {
       await executeTaskCommitAndPush(id, { push: false });
       assertEqual(calls.send.length, 1);
       assertEqual(calls.send[0][1], [
-        t("timeline.gitAgentCommitPrompt", { directory: JSON.stringify(directory) }),
-        t("timeline.gitAgentCommitFilesPrompt", { files: JSON.stringify(["internal/server/api.go"]) }),
+        t("timeline.gitAgentCommitScopedPrompt", { directory: JSON.stringify(directory), files: JSON.stringify(["internal/server/api.go"]) }),
         t("timeline.gitAgentCommitOnlyPrompt"),
       ].join("\n\n"));
     });

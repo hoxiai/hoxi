@@ -357,10 +357,10 @@ export async function executeTaskCommitAndPush(
     ? resolveEffectiveCommitModel() || undefined
     : undefined;
   const prompt = [
-    t("timeline.gitAgentCommitPrompt", { directory: JSON.stringify(directory) }),
+    // With a known file list the agent must not re-inspect the whole worktree.
     targetFiles.length > 0
-      ? t("timeline.gitAgentCommitFilesPrompt", { files: JSON.stringify(targetFiles) })
-      : "",
+      ? t("timeline.gitAgentCommitScopedPrompt", { directory: JSON.stringify(directory), files: JSON.stringify(targetFiles) })
+      : t("timeline.gitAgentCommitPrompt", { directory: JSON.stringify(directory) }),
     t(options?.push === false ? "timeline.gitAgentCommitOnlyPrompt" : "timeline.gitAgentCommitPushPrompt"),
     customMessage ? t("timeline.gitAgentCommitMessagePrompt", { message: JSON.stringify(customMessage) }) : "",
   ].filter(Boolean).join("\n\n");
