@@ -176,7 +176,13 @@ func TestOpenCodeDisplayCleansPersistedHistoryWithoutRewritingStore(t *testing.T
 	if err := json.Unmarshal(w.Body.Bytes(), &turns); err != nil {
 		t.Fatal(err)
 	}
-	assertCleanDisplayPart(t, turns[0].Parts[0])
+	// History drops the identical metadata copy of the output (see history_page.go).
+	part := turns[0].Parts[0]
+	if _, dup := part.State.Metadata["output"]; dup {
+		t.Fatalf("duplicate shell output kept in history: %+v", part.State.Metadata)
+	}
+	part.State.Metadata["output"] = part.State.Output
+	assertCleanDisplayPart(t, part)
 	stored, _ := svc.store.Get("ses_hoxi_display")
 	if stored.Turns[0].Parts[0].State.Input["command"] != displayTestCommand {
 		t.Fatal("reading history modified the persisted record")

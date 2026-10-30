@@ -2,8 +2,9 @@
 // Session / worktree diff and git-status refresh: debounced scheduling, request
 // revisions (stale-read guard) and change-detecting store writes.
 import { unwrap } from "solid-js/store";
-import { hoxiAPI, type WorktreeMeta, type WorktreeRepoStatus } from "../services/api";
+import { hoxiAPI, isRunnerSessionID, type WorktreeMeta, type WorktreeRepoStatus } from "../services/api";
 import type { SnapshotFileDiff } from "../services/sse-types";
+import { hasOlderSessionHistory } from "./session-history";
 import { isSessionDeleted, sessionDirectory } from "./session-query";
 import { normalizeFolderPath, secondaryWorkspaceDirs } from "./workspace-folders";
 import { type MessageTurn, setWorkspace, workspace } from "./workspace-state";
@@ -31,12 +32,20 @@ function setDiffListIfChanged(
   }
 }
 
+// Runner sessions are already scoped server-side from their full transcript;
+// re-filtering by a partially loaded (paged) transcript would drop files that
+// were only edited in older, not yet loaded turns.
+function scopeLocalSessionDiffs(sessionID: string, diffs: SnapshotFileDiff[]): SnapshotFileDiff[] {
+  if (isRunnerSessionID(sessionID) && hasOlderSessionHistory(sessionID)) return diffs;
+  return filterLocalSessionDiffsByTurns(sessionID, diffs, unwrap(workspace.messagesBySession), workspace.rootDir);
+}
+
 export function applySessionDiffEvent(sessionID: string, diffs: SnapshotFileDiff[]): void {
   if (isSessionDeleted(sessionID)) return;
   diffRevisions.set(sessionID, (diffRevisions.get(sessionID) ?? 0) + 1);
   const next = workspace.worktreeBySession[sessionID]?.isolated
     ? diffs
-    : filterLocalSessionDiffsByTurns(sessionID, diffs, unwrap(workspace.messagesBySession), workspace.rootDir);
+    : scopeLocalSessionDiffs(sessionID, diffs);
   setDiffListIfChanged("diffsBySession", sessionID, next);
 }
 
@@ -69,7 +78,7 @@ export async function refreshSessionDiff(
     if (!diffs.length && meta?.isolated && meta.dirty && meta.directory === directory) {
       diffs = preloadedWorktreeDiffs ?? (await hoxiAPI.getWorktreeDiff(sessionID, directory));
     } else if (!meta?.isolated) {
-      diffs = filterLocalSessionDiffsByTurns(sessionID, diffs, unwrap(workspace.messagesBySession), workspace.rootDir);
+      diffs = scopeLocalSessionDiffs(sessionID, diffs);
     }
     if (isCurrent()) setDiffListIfChanged("diffsBySession", sessionID, diffs);
   } catch (err) {

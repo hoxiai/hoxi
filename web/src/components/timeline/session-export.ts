@@ -1,6 +1,6 @@
 import type { MessageInfo, MessagePart } from "../../services/sse-types";
 import { hoxiAPI } from "../../services/api";
-import { sessionDirectory, workspace } from "../../store/workspace";
+import { hasOlderSessionHistory, sessionDirectory, workspace } from "../../store/workspace";
 import { expandInlineThinkingParts } from "./context-activity-parts";
 import { normalizeReasoningText } from "./ThoughtBox";
 
@@ -131,10 +131,12 @@ function safeFilename(value: string): string {
 
 export async function downloadSessionExport(sessionID: string, format: "markdown" | "json" = "markdown") {
   let turns = workspace.messagesBySession[sessionID];
-  if (!turns || turns.length === 0) {
+  // Long conversations are paged; an export must contain every turn.
+  if (!turns || turns.length === 0 || hasOlderSessionHistory(sessionID)) {
     const directory = workspace.sessions.find((item) => item.id === sessionID)?.directory
       || sessionDirectory(sessionID);
-    turns = await hoxiAPI.getMessages(sessionID, directory, 1000).catch(() => []);
+    const loaded = turns ?? [];
+    turns = await hoxiAPI.getMessages(sessionID, directory, "all").catch(() => loaded);
   }
   const session = workspace.sessions.find((item) => item.id === sessionID);
   const base = safeFilename(session?.title || sessionID);

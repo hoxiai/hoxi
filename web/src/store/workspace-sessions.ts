@@ -8,6 +8,7 @@ import {
   mergeServerTurnsInto,
 } from "./message-lookup";
 import { persistSessionAI, restoreSessionAI } from "./session-ai";
+import { forgetSessionHistory, noteSessionHistoryTail, SESSION_HISTORY_PAGE_TURNS } from "./session-history";
 import { syncPendingPermissions } from "./approval-mode";
 import { ARCHIVED_SESSIONS_KEY, setWorkspace, workspace } from "./workspace-state";
 import {
@@ -228,7 +229,33 @@ function idleTurnIDs(sessionID: string): Set<string> | undefined {
 
 const loadRequestRevisions = new Map<string, number>();
 
-export async function loadSessionMessagesOnly(sessionID: string, explicitDirectory?: string): Promise<void> {
+// Subagent transcripts stay whole: parent diff scoping and inline timelines scan them.
+function historyLimitFor(sessionID: string, full?: boolean): number | "all" {
+  if (full || workspace.sessions.find((s) => s.id === sessionID)?.parentID) return "all";
+  return SESSION_HISTORY_PAGE_TURNS;
+}
+
+function mergeHistorySnapshot(
+  sessionID: string,
+  turns: Awaited<ReturnType<typeof hoxiAPI.getMessages>>,
+  limit: number | "all",
+  preRequestIDs: Set<string> | undefined
+): void {
+  // Only a server-hydrated list holds real older pages; a cache seed may be stale.
+  const keepOlder = limit !== "all" && hydratedSessionIDs.has(sessionID);
+  let keptOlder = 0;
+  setWorkspace(produce((state) => {
+    keptOlder = mergeServerTurnsInto((state.messagesBySession[sessionID] ||= []), turns, preRequestIDs, { keepOlder });
+    state.loadingMessagesBySession[sessionID] = false;
+  }));
+  noteSessionHistoryTail(sessionID, turns.length, limit, keptOlder);
+}
+
+export async function loadSessionMessagesOnly(
+  sessionID: string,
+  explicitDirectory?: string,
+  options?: { full?: boolean }
+): Promise<void> {
   const finishRead = beginSessionTranscriptRead(sessionID);
   try {
     const directory = explicitDirectory || sessionDirectory(sessionID);
@@ -237,13 +264,11 @@ export async function loadSessionMessagesOnly(sessionID: string, explicitDirecto
     const isCurrent = () => loadRequestRevisions.get(sessionID) === revision &&
       sessionDirectory(sessionID) === directory && !isSessionDeleted(sessionID);
     const preRequestIDs = idleTurnIDs(sessionID);
-    const turns = await hoxiAPI.getMessages(sessionID, directory);
+    const limit = historyLimitFor(sessionID, options?.full);
+    const turns = await hoxiAPI.getMessages(sessionID, directory, limit);
     if (!isCurrent()) return;
     restoreSessionAI(sessionID, turns);
-    setWorkspace(produce((state) => {
-      mergeServerTurnsInto((state.messagesBySession[sessionID] ||= []), turns, preRequestIDs);
-      state.loadingMessagesBySession[sessionID] = false;
-    }));
+    mergeHistorySnapshot(sessionID, turns, limit, preRequestIDs);
     hydratedSessionIDs.add(sessionID);
     persistCachedSessionTurns(sessionID, workspace.messagesBySession[sessionID] ?? turns);
   } finally { finishRead(); }
@@ -264,13 +289,11 @@ export async function loadSessionMessages(sessionID: string): Promise<void> {
   }
   try {
     const preRequestIDs = idleTurnIDs(sessionID);
-    const turns = await hoxiAPI.getMessages(sessionID, directory);
+    const limit = historyLimitFor(sessionID);
+    const turns = await hoxiAPI.getMessages(sessionID, directory, limit);
     if (!isCurrent()) return;
     restoreSessionAI(sessionID, turns);
-    setWorkspace(produce((state) => {
-      mergeServerTurnsInto((state.messagesBySession[sessionID] ||= []), turns, preRequestIDs);
-      state.loadingMessagesBySession[sessionID] = false;
-    }));
+    mergeHistorySnapshot(sessionID, turns, limit, preRequestIDs);
     hydratedSessionIDs.add(sessionID);
     persistCachedSessionTurns(sessionID, workspace.messagesBySession[sessionID] ?? turns);
     if (!isChildSession) {
@@ -482,6 +505,7 @@ export function removeSessionFromStore(sessionID: string): SessionInfo | undefin
   for (const id of allIDs) {
     cancelScheduledWorktreeStatus(id);
     hydratedSessionIDs.delete(id);
+    forgetSessionHistory(id);
     markSessionDeleted(id);
   }
   forgetSessionTitles(allIDs);
@@ -604,7 +628,7 @@ export function ensureChildSubagentSessionLoaded(
   if (needsInitialLoad || needsSettledLoad) {
     loadedChildSessionIDs.add(childSessionID);
     if (settled) settledChildSessionIDs.add(childSessionID);
-    void loadSessionMessagesOnly(childSessionID, directory)
+    void loadSessionMessagesOnly(childSessionID, directory, { full: true })
       .then(() => {
         if (parentSessionID && !isSessionDeleted(parentSessionID)) {
           scheduleRefreshSessionDiff(parentSessionID);

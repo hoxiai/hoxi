@@ -200,26 +200,6 @@ func (s *Store) Get(sessionID string) (SessionRecord, bool) {
 	return cloneRecord(ss.rec), true
 }
 
-// MarshalTurns holds a session lock, so a large history response never blocks
-// streaming writes or metadata reads for other conversations.
-func (s *Store) MarshalTurns(sessionID string) ([]byte, bool) {
-	ss := s.lockSession(sessionID, false)
-	if ss == nil {
-		return nil, false
-	}
-	defer s.finishSession(ss)
-	s.ensureTurnsLocked(ss)
-	turns := ss.rec.Turns
-	if turns == nil {
-		turns = []MessageTurn{}
-	}
-	raw, err := json.Marshal(turns)
-	if err != nil {
-		return []byte("[]"), true
-	}
-	return raw, true
-}
-
 // VisitTurns supplies a read-only record under its session lock. The callback
 // must not mutate the record or call Store methods for this same session.
 func (s *Store) VisitTurns(sessionID string, fn func(rec SessionRecord)) bool {

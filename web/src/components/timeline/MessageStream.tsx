@@ -9,6 +9,7 @@ import {
   onCleanup,
   onMount,
   Show,
+  untrack,
 } from "solid-js";
 import type { MessagePart, SessionStatus, ToolPart } from "../../services/sse-types";
 import type { MessageTurn } from "../../store/workspace";
@@ -16,9 +17,12 @@ import {
   appSettings,
   canForkSession,
   canRevertSession,
+  ensureFullSessionHistory,
   findLatestUserTurnID,
   forkFromMessage,
+  hasOlderSessionHistory,
   imageViewerOpen,
+  loadOlderSessionHistory,
   openImagePreview,
   isUserTurnTaskActive as isUserTurnTaskActiveInStore,
   resolveTurnSkillStatus,
@@ -91,7 +95,23 @@ export default function MessageStream(props: { hidden?: boolean }) {
     return filterVisibleTurnsByRevert(raw, activeSession()?.revert);
   });
 
-  const turnWindow = createTurnWindow(renderedSessionID, turns);
+  const turnWindow = createTurnWindow(renderedSessionID, turns, {
+    hasOlder: () => hasOlderSessionHistory(renderedSessionID()),
+    loadOlder: (around) => {
+      const id = renderedSessionID();
+      return id ? loadOlderSessionHistory(id, undefined, around) : Promise.resolve(0);
+    },
+    loadAll: () => {
+      const id = renderedSessionID();
+      return id ? ensureFullSessionHistory(id) : Promise.resolve();
+    },
+  });
+  // Transcript search must cover turns that are not paged in yet.
+  createEffect(() => {
+    const id = renderedSessionID();
+    if (!searchOpen() || !id) return;
+    untrack(() => void ensureFullSessionHistory(id).catch(() => {}));
+  });
   const readingPosition = createReadingPositionTracker({
     scroller: () => scroller,
     content: () => content,
@@ -113,6 +133,12 @@ export default function MessageStream(props: { hidden?: boolean }) {
   });
 
   const latestUserTurnID = createMemo(() => findLatestUserTurnID(turns()));
+  // Scans back only to the newest user turn; shared by every assistant footer.
+  const latestUserIndex = createMemo(() => {
+    const list = turns();
+    for (let i = list.length - 1; i >= 0; i--) if (list[i].info.role === "user") return i;
+    return -1;
+  });
 
   const isUserTurnTaskActive = (turn: MessageTurn, index: number): boolean => {
     if (turn.info.id !== latestUserTurnID()) return false;
@@ -467,6 +493,7 @@ export default function MessageStream(props: { hidden?: boolean }) {
             <EarlierTurnsBanner
               hiddenMessageCount={turnWindow.hiddenMessageCount()}
               totalCount={countUserMessages(turns())}
+              hasOlderHistory={hasOlderSessionHistory(renderedSessionID())}
               onLoadBatch={() => turnWindow.loadEarlierBatch(scroller)}
               onLoadAll={() => turnWindow.loadAllEarlier(scroller)}
             />
@@ -488,6 +515,7 @@ export default function MessageStream(props: { hidden?: boolean }) {
                         navigationRevision={navigationRevision()}
                         isHighlighted={activeMatchTurnID() === turn.info.id}
                         cycleStartedAt={cycleStartedAt()}
+                        latestUserIndex={latestUserIndex()}
                       />
                     }
                   >

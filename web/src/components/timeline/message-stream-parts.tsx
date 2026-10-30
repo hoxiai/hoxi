@@ -311,6 +311,8 @@ export function AssistantTurnFooter(props: {
   parts: MessagePart[];
   turns?: Array<{ info: MessageInfo; parts: MessagePart[] }>;
   turnIndex?: number;
+  /** Newest user turn index; avoids rescanning every turn per footer. */
+  latestUserIndex?: number;
   isSessionBusy?: boolean;
 }) {
   const [copied, setCopied] = createSignal(false);
@@ -347,6 +349,7 @@ export function AssistantTurnFooter(props: {
   // revert/view actions but must not offer to commit today's tree.
   const isLatestExchange = createMemo(() => {
     if (!props.turns || typeof props.turnIndex !== "number") return true;
+    if (typeof props.latestUserIndex === "number") return props.turnIndex > props.latestUserIndex;
     let lastUserIndex = -1;
     props.turns.forEach((turn, index) => {
       if (turn.info.role === "user") lastUserIndex = index;

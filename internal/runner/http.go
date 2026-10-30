@@ -375,7 +375,7 @@ func (s *Service) handleSessionSubroutes(w http.ResponseWriter, r *http.Request)
 	case "":
 		s.handleSingleSession(w, r, sessionID)
 	case "message":
-		raw, ok := s.store.MarshalTurns(sessionID)
+		raw, ok := s.store.MarshalTurnsPage(sessionID, parseHistoryPage(r.URL.Query()))
 		if !ok {
 			writeJSONError(w, http.StatusNotFound, "runner session not found")
 			return

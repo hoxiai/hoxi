@@ -392,13 +392,18 @@ function mergeTurnInto(local: MessageTurn, remote: { info: MessageInfo; parts: M
  * Merges a REST message snapshot into the live store list in place (call inside `produce`).
  * Existing turn/part objects are updated rather than replaced so streamed progress that is
  * newer than the snapshot survives and rendered cards keep their identity.
+ *
+ * With `keepOlder` the snapshot is only the newest page of history: loaded
+ * turns older than its first turn stay in front instead of being treated as
+ * deleted. Returns how many such older turns were kept.
  */
 export function mergeServerTurnsInto(
   list: MessageTurn[],
   remoteTurns: Array<{ info: MessageInfo; parts: MessagePart[] }>,
   /** Turn IDs already in the list when the snapshot was requested (e.g. a cached seed). */
-  preRequestIDs?: ReadonlySet<string>
-) {
+  preRequestIDs?: ReadonlySet<string>,
+  options?: { keepOlder?: boolean }
+): number {
   const existing = list.slice();
   const priorRealUserIDs = new Set(
     existing
@@ -409,6 +414,8 @@ export function mergeServerTurnsInto(
     (t) => t.info.role === "user" && !priorRealUserIDs.has(t.info.id)
   );
   const lastRemote = remoteTurns[remoteTurns.length - 1]?.info;
+  const firstRemote = options?.keepOlder ? remoteTurns[0]?.info : undefined;
+  const older: MessageTurn[] = [];
 
   const remoteIDs = new Set<string>();
   const next: MessageTurn[] = [];
@@ -460,10 +467,13 @@ export function mergeServerTurnsInto(
     // but drop turns that predate the request: the server no longer has them.
     if (!lastRemote) {
       if (!preRequestIDs?.has(turn.info.id)) next.push(turn);
+    } else if (firstRemote && compareTurnOrder(turn.info, firstRemote) < 0) {
+      older.push(turn);
     } else if (compareTurnOrder(turn.info, lastRemote) > 0) {
       next.push(turn);
     }
   }
+  if (older.length > 0) next.unshift(...older);
 
   if (
     list.length !== next.length ||
@@ -471,5 +481,6 @@ export function mergeServerTurnsInto(
   ) {
     list.splice(0, list.length, ...next);
   }
+  return older.length;
 }
 

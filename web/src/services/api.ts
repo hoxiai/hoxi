@@ -325,13 +325,21 @@ export const hoxiAPI = {
     forgetRunnerSession(sessionID);
   },
 
+  // `limit` returns the newest N turns and `before` pages backwards from that
+  // message; "all" omits the limit so the server returns the whole transcript.
   getMessages(
     sessionID: string,
     directory?: string,
-    limit = 100
+    limit: number | "all" = 100,
+    before?: string
   ): Promise<Array<{ info: MessageInfo; parts: MessagePart[] }>> {
-    const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.min(2000, Math.floor(limit)) : 100;
-    return requestJSON(withDir(`${sessionPath(sessionID)}/message?limit=${safeLimit}`, directory));
+    const query = new URLSearchParams();
+    if (limit !== "all") {
+      query.set("limit", String(Number.isFinite(limit) && limit > 0 ? Math.min(2000, Math.floor(limit)) : 100));
+    }
+    if (before) query.set("before", before);
+    const qs = query.toString();
+    return requestJSON(withDir(`${sessionPath(sessionID)}/message${qs ? `?${qs}` : ""}`, directory));
   },
 
   // Prompting & Live Mid-Stream Steering

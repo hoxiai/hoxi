@@ -4,6 +4,7 @@ import { normalizeMessagePartInPlace } from "./message-lookup";
 import { setWorkspace, workspace } from "./workspace-state";
 import type { MessageTurn } from "./workspace-state";
 import { invalidateSessionDiffReads } from "./session-diffs";
+import { forgetSessionHistory } from "./session-history";
 
 export const MAX_RESIDENT_TRANSCRIPTS = 12;
 export const MAX_RESIDENT_TRANSCRIPT_BYTES = 32 * 1024 * 1024;
@@ -113,6 +114,7 @@ export function trimSessionTranscripts(
       delete state.diffsBySession[id];
       delete state.worktreeDiffsBySession[id];
       hydratedSessionIDs.delete(id);
+      forgetSessionHistory(id);
       lastUsed.delete(id);
     }
   }));

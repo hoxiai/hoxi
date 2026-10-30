@@ -66,6 +66,18 @@ export function filterVisibleTurnsByRevert(
   return rawTurns.filter((t) => t.info.id < revert.messageID);
 }
 
+/**
+ * Server-side history paging (see store/session-history.ts). Long sessions
+ * only load their newest turns; the window pulls older pages once the loaded
+ * ones are all mounted. `around` wraps the synchronous prepend so the reader's
+ * scroll position can be kept.
+ */
+export interface TurnWindowHistory {
+  hasOlder: Accessor<boolean>;
+  loadOlder: (around: (apply: () => number) => number) => Promise<number>;
+  loadAll: () => Promise<void>;
+}
+
 export interface TurnWindowController {
   visibleTurns: Accessor<MessageTurn[]>;
   hiddenCount: Accessor<number>;
@@ -223,7 +235,8 @@ export function resolveNextWindowLimit(params: {
  */
 export function createTurnWindow(
   sessionID: Accessor<string | null>,
-  turns: Accessor<MessageTurn[]>
+  turns: Accessor<MessageTurn[]>,
+  history?: TurnWindowHistory
 ): TurnWindowController {
   // Per-session window size. Turns appended while a session is open widen the
   // window instead of sliding it: unmounting the oldest turn on every new step
@@ -231,6 +244,7 @@ export function createTurnWindow(
   const windows = new Map<string, { limit: number; seen: number; lastTailID: string }>();
   const [revision, setRevision] = createSignal(0);
   let prependingLock = false;
+  let fetchingOlder = false;
   let lastActiveSessionID: string | null = null;
   let mountFrame: number | undefined;
   let mountRevision = 0;
@@ -347,15 +361,53 @@ export function createTurnWindow(
     pump();
   };
 
-  const loadEarlierBatch = (scroller?: HTMLElement, count = TURN_BATCH_SIZE) => {
+  // Prepending older turns can mount a carried prompt row above the reader;
+  // keep the visible content where it was.
+  const keepScrollAround = (scroller: HTMLElement | undefined) => (apply: () => number) => {
+    const prevScrollHeight = scroller?.scrollHeight ?? 0;
+    const prevScrollTop = scroller?.scrollTop ?? 0;
+    const added = apply();
+    if (scroller) {
+      const delta = scroller.scrollHeight - prevScrollHeight;
+      if (delta > 0) scroller.scrollTop = prevScrollTop + delta;
+    }
+    return added;
+  };
+
+  // Pulls older server history when the loaded turns cannot reveal `count`
+  // more messages, then mounts them like a local batch.
+  const revealEarlier = async (scroller: HTMLElement | undefined, count: number) => {
+    const sid = sessionID();
+    if (history?.hasOlder() && hiddenMessageCount() < count && !fetchingOlder) {
+      fetchingOlder = true;
+      try {
+        await history.loadOlder(keepScrollAround(scroller));
+      } catch (err) {
+        console.warn("load older session history failed:", err);
+      } finally {
+        fetchingOlder = false;
+      }
+      if (sessionID() !== sid) return;
+    }
     mountEarlierProgressively(
       scroller,
       resolveLimitForEarlierMessages(turns(), visibleLimit(), count)
     );
   };
 
+  const loadEarlierBatch = (scroller?: HTMLElement, count = TURN_BATCH_SIZE) => {
+    void revealEarlier(scroller, count);
+  };
+
   const loadAllEarlier = (scroller?: HTMLElement) => {
-    mountEarlierProgressively(scroller, turns().length);
+    void (async () => {
+      const sid = sessionID();
+      if (history?.hasOlder()) {
+        await history.loadAll().catch((err) => console.warn("load full session history failed:", err));
+        if (sessionID() !== sid) return;
+      }
+      mountEarlierProgressively(scroller, turns().length);
+    })();
   };
 
   const ensureTurnVisible = (messageID: string) => {
@@ -368,14 +420,16 @@ export function createTurnWindow(
   };
 
   const handleTopScroll = (scroller: HTMLElement) => {
-    if (prependingLock || hiddenCount() <= 0 || !hasUnmountedVisualTurns(turns(), slice())) return;
-    if (scroller.scrollTop <= 120) {
+    if (prependingLock || fetchingOlder || scroller.scrollTop > 120) return;
+    if (hiddenCount() > 0 && hasUnmountedVisualTurns(turns(), slice())) {
       // Scrolling is incremental: reveal one older message per top hit. Counting
       // turns here would leave the reader stuck at the top of a long folded run.
       mountEarlierProgressively(
         scroller,
         resolveLimitForEarlierMessages(turns(), visibleLimit(), 1)
       );
+    } else if (history?.hasOlder()) {
+      void revealEarlier(scroller, 1);
     }
   };
 
@@ -396,16 +450,20 @@ export function createTurnWindow(
 export function EarlierTurnsBanner(props: {
   hiddenMessageCount: number;
   totalCount: number;
+  /** The server still has turns older than the loaded ones. */
+  hasOlderHistory?: boolean;
   onLoadBatch: () => void;
   onLoadAll: () => void;
 }) {
   const nextBatchCount = () => Math.min(props.hiddenMessageCount, TURN_BATCH_SIZE);
 
   return (
-    <Show when={props.hiddenMessageCount > 0}>
+    <Show when={props.hiddenMessageCount > 0 || props.hasOlderHistory}>
       <div class="mb-5 flex flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-[var(--border-subtle)] bg-[var(--bg-inset)]/50 px-4 py-2.5 text-center select-none">
         <div class="text-[12px] text-[var(--text-faint)]">
-          {t("timeline.hiddenTurnsHint", { count: props.hiddenMessageCount })}
+          {props.hiddenMessageCount > 0
+            ? t("timeline.hiddenTurnsHint", { count: props.hiddenMessageCount })
+            : t("timeline.olderHistoryHint")}
         </div>
         <div class="flex items-center gap-2">
           <button
@@ -414,16 +472,24 @@ export function EarlierTurnsBanner(props: {
             class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] hover:bg-[var(--bg-hover)] hover:border-[var(--border-strong)] px-3 py-1 text-[12px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
           >
             <Icon name="arrow-up" size="small" class="text-[var(--accent-primary)]" />
-            <span>{t("timeline.loadEarlierTurns", { count: nextBatchCount() })}</span>
+            <span>
+              {nextBatchCount() > 0
+                ? t("timeline.loadEarlierTurns", { count: nextBatchCount() })
+                : t("timeline.loadOlderHistory")}
+            </span>
           </button>
 
-          <Show when={props.hiddenMessageCount > TURN_BATCH_SIZE}>
+          <Show when={props.hiddenMessageCount > TURN_BATCH_SIZE || props.hasOlderHistory}>
             <button
               type="button"
               onClick={props.onLoadAll}
               class="inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[12px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
             >
-              <span>{t("timeline.loadAllEarlierTurns", { total: props.totalCount })}</span>
+              <span>
+                {props.hasOlderHistory
+                  ? t("timeline.loadFullHistory")
+                  : t("timeline.loadAllEarlierTurns", { total: props.totalCount })}
+              </span>
             </button>
           </Show>
         </div>
@@ -448,6 +514,8 @@ export function AssistantTurnItem(props: {
   navigationRevision?: number;
   isHighlighted: boolean;
   cycleStartedAt?: number;
+  /** Index of the newest user turn, computed once by the stream. */
+  latestUserIndex?: number;
 }) {
   const merged = createMemo<MergedTurnResolution>((prev) =>
     stabilizeMergedTurnResolution(
@@ -574,6 +642,7 @@ export function AssistantTurnItem(props: {
           parts={props.turn.parts}
           turns={props.allTurns}
           turnIndex={props.globalIndex}
+          latestUserIndex={props.latestUserIndex}
           isSessionBusy={props.isSessionBusy}
         />
       </div>

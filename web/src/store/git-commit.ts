@@ -11,6 +11,7 @@ import { workspace, type SelectedModel } from "./workspace-state";
 import { activeDirectory, isSessionBusy, sessionDirectory } from "./session-query";
 import { submitSessionPrompt } from "./session-goal";
 import { collectSessionTouchedPaths, refreshWorktreeStatus } from "./session-diffs";
+import { ensureFullSessionHistory } from "./session-history";
 import { loadSessionMessages, loadSessionMessagesOnly } from "./workspace-sessions";
 
 export const COMMIT_MODEL_STORAGE_KEY = "hoxi-commit-model:v1";
@@ -350,6 +351,8 @@ export async function executeTaskCommitAndPush(
   const explicitFiles = Array.isArray(options?.files)
     ? Array.from(new Set(options.files.map((f) => f.trim()).filter(Boolean)))
     : [];
+  // Commit scoping must see edits from older, not yet loaded history pages.
+  if (explicitFiles.length === 0) await ensureFullSessionHistory(activeID).catch(() => {});
   const targetFiles = explicitFiles.length > 0
     ? explicitFiles
     : collectSessionTouchedPaths(activeID, workspace.messagesBySession, directory);
