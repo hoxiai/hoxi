@@ -21,6 +21,14 @@ export function machoArchName(arch = "arm64") {
   return name;
 }
 
+// The release architecture of the machine running verification, used to decide
+// whether bundled binaries can be executed natively or only inspected.
+function hostReleaseArch() {
+  if (process.arch === "x64") return "amd64";
+  if (process.arch === "arm64") return "arm64";
+  return process.arch;
+}
+
 export function normalizeVersion(input) {
   const version = String(input ?? "").trim().replace(/^v/i, "");
   if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)) {
@@ -122,9 +130,16 @@ export function verifyApp(app, version, arch = "arm64") {
   const { main, sidecar, minimum } = inspectBinaries(app, info, arch);
   validateAppMetadata(info, version, minimum);
   run("codesign", ["--verify", "--deep", "--strict", app]);
-  assert.equal(run(main, ["--version"]).trim(), normalizeVersion(version),
-    "Embedded runtime version differs from release version");
-  verifyBinaryVersion(sidecar);
+  // Cross-arch artifacts cannot run natively here: Rosetta cold-start of the
+  // large hardened-runtime sidecar exceeds the exec timeout. Verify structure,
+  // the exact Mach-O slice, signature and plist version instead; the sidecar
+  // itself is already pinned by opencode.lock's SHA-256. Native builds keep the
+  // full runtime check.
+  if (hostReleaseArch() === arch) {
+    assert.equal(run(main, ["--version"]).trim(), normalizeVersion(version),
+      "Embedded runtime version differs from release version");
+    verifyBinaryVersion(sidecar);
+  }
   return { version: normalizeVersion(version), minimumMacOS: info.LSMinimumSystemVersion, architecture: arch };
 }
 

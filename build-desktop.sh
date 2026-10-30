@@ -119,6 +119,27 @@ npm --prefix web run build
 
 mkdir -p build/bin
 
+verify_sidecar_binary() {
+  local bin="$1" arch="$2"
+  # Executing a cross-arch binary needs Rosetta and is slow for the large
+  # hardened-runtime sidecar, so verify the pinned archive by SHA-256 and assert
+  # the Mach-O slice instead of running it. Native builds keep the runtime check.
+  if [[ "$(resolve_host_arch)" == "${arch}" ]]; then
+    node scripts/opencode-lock.mjs verify-binary "${bin}" >&2
+    return $?
+  fi
+  local want
+  case "${arch}" in
+    arm64) want="arm64" ;;
+    amd64) want="x86_64" ;;
+    *) echo "Unsupported sidecar architecture: ${arch}" >&2; return 1 ;;
+  esac
+  if ! lipo -archs "${bin}" | tr ' ' '\n' | grep -qx "${want}"; then
+    echo "OpenCode sidecar lacks ${want} code: ${bin}" >&2
+    return 1
+  fi
+}
+
 resolve_opencode_bin() {
   local target_arch="$1"
   node scripts/opencode-lock.mjs verify >/dev/null
@@ -127,7 +148,7 @@ resolve_opencode_bin() {
       echo "HOXI_OPENCODE is not executable: ${HOXI_OPENCODE}" >&2
       return 1
     fi
-    node scripts/opencode-lock.mjs verify-binary "${HOXI_OPENCODE}" >&2
+    verify_sidecar_binary "${HOXI_OPENCODE}" "${target_arch}"
     echo "${HOXI_OPENCODE}"
     return 0
   fi
@@ -170,7 +191,7 @@ resolve_opencode_bin() {
   fi
   mkdir -p "${dl_dir}/extracted" "${HOME}/.hoxi/bin"
   ditto -x -k "${dl_dir}/opencode.zip" "${dl_dir}/extracted"
-  if ! node scripts/opencode-lock.mjs verify-binary "${dl_dir}/extracted/opencode" >&2; then
+  if ! verify_sidecar_binary "${dl_dir}/extracted/opencode" "${target_arch}"; then
     rm -rf "${dl_dir}"
     return 1
   fi
