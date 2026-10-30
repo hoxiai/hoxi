@@ -16,9 +16,11 @@ import type { PermissionRequest, ToolPart } from "../services/sse-types";
 import { computeProviderHealth } from "../store/provider-health";
 import {
   emptyStats,
+  isBalanceError,
   isContextOverflowError,
   isModelUnavailableError,
   pushSample,
+  recordAssistantTurnUpdated,
 } from "../store/provider-telemetry";
 import { setWorkspace } from "../store/workspace";
 import { assertDeepEqual, assertEqual, assertTrue, describe, it } from "./test-harness";
@@ -411,5 +413,51 @@ describe("model unavailable detection", () => {
     assertEqual(isModelUnavailableError(info({ name: "MessageAbortedError", message: "Aborted" })), false);
     assertEqual(isModelUnavailableError(info(undefined)), false);
     assertEqual(isModelUnavailableError(null), false);
+  });
+});
+
+describe("balance exhausted detection", () => {
+  const info = (error?: { name: string; message?: string; statusCode?: number }, providerID = "") =>
+    ({
+      id: `msg_${Math.random().toString(36).slice(2)}`,
+      sessionID: "ses_balance",
+      role: "assistant",
+      providerID,
+      modelID: "",
+      time: { created: 1 },
+      error: error && {
+        name: error.name,
+        data: { message: error.message, statusCode: error.statusCode },
+      },
+    } as any);
+
+  it("recognizes 402 and out-of-balance wording", () => {
+    assertEqual(isBalanceError(info({ name: "APIError", message: "Insufficient balance", statusCode: 402 })), true);
+    assertEqual(isBalanceError(info({ name: "APIError", statusCode: 402 })), true);
+    assertEqual(
+      isBalanceError(info({ name: "APIError", message: "You exceeded your current quota", statusCode: 429 })),
+      true
+    );
+    assertEqual(isBalanceError(info({ name: "APIError", message: "\u8d26\u6237\u4f59\u989d\u4e0d\u8db3" })), true);
+    assertEqual(isBalanceError(info({ name: "APIError", message: "Your credit balance is too low" })), true);
+  });
+
+  it("does not treat rate limits or other failures as balance", () => {
+    assertEqual(isBalanceError(info({ name: "APIError", message: "Too many requests", statusCode: 429 })), false);
+    assertEqual(isBalanceError(info({ name: "APIError", message: "Bad gateway", statusCode: 502 })), false);
+    assertEqual(isBalanceError(info({ name: "ContextOverflowError" })), false);
+    assertEqual(isBalanceError(info(undefined)), false);
+    assertEqual(isBalanceError(null), false);
+  });
+
+  it("keeps balance failures out of provider stability", () => {
+    setWorkspace("providerTelemetry", "balance_test", undefined as any);
+    recordAssistantTurnUpdated(
+      info({ name: "APIError", message: "Insufficient balance", statusCode: 402 }, "balance_test")
+    );
+    assertEqual(computeProviderHealth("balance_test").status, "untested");
+
+    recordAssistantTurnUpdated(info({ name: "APIError", message: "Bad gateway", statusCode: 502 }, "balance_test"));
+    assertEqual(computeProviderHealth("balance_test").stabilityScore, 0);
   });
 });

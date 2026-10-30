@@ -396,6 +396,22 @@ export function isModelUnavailableError(info?: MessageInfo | null): boolean {
   );
 }
 
+// Out of balance, credits or prepaid quota (余额不足, 积分不足, 欠费). Chinese is
+// \u-escaped for the i18n lint. Rate limits ("429", "均已限额") are not billing.
+const BALANCE_RE =
+  /insufficient.?(quota|balance|credits?|funds)|exceeded your current quota|credit balance|out of credits|payment required|\u4f59\u989d\u4e0d\u8db3|\u79ef\u5206\u4e0d\u8db3|\u6b20\u8d39/;
+
+/**
+ * The provider refused the request because the account has no balance left.
+ * Retrying the same model cannot help until the user tops up, and the endpoint
+ * itself is fine, so this is not counted against its stability.
+ */
+export function isBalanceError(info?: MessageInfo | null): boolean {
+  if (!info?.error) return false;
+  if (info.error.data?.statusCode === 402) return true;
+  return BALANCE_RE.test((info.error.data?.message || "").toLowerCase());
+}
+
 /**
  * The model rejected the request because the conversation no longer fits its
  * window. Retrying the same prompt cannot help: the session has to be compacted
@@ -437,6 +453,12 @@ export function recordAssistantTurnUpdated(info: MessageInfo) {
 
     const errMsg = info.error.data?.message || info.error.name || "API Error";
     const statusCode = info.error.data?.statusCode;
+    if (isBalanceError(info)) {
+      // The account is out of money; the endpoint is healthy. The auto pool
+      // still rests this candidate so other turns do not hit the same wall.
+      reportAutoCandidateOutcome({ providerID: pid, modelID: mid, ok: false, statusCode, message: errMsg });
+      return;
+    }
     const isTimeout = isTimeoutErrorText(errMsg, statusCode);
 
     setWorkspace(

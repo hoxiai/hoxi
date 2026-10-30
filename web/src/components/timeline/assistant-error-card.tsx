@@ -4,10 +4,12 @@ import type { MessageInfo, SessionStatus } from "../../services/sse-types";
 import {
   compactSessionContext,
   computeProviderHealth,
+  desktopAuth,
   findAutoFailoverNotice,
   findBestFallbackModel,
   getEffectivePoolCandidates,
   isContextOverflowError,
+  formatMemberPoints,
   isModelFree,
   isModelUnavailableError,
   isRunnerStallError,
@@ -18,6 +20,11 @@ import {
   refreshProviders,
   resolveAutoModelTarget,
   isAutoModel,
+  isBalanceError,
+  OFFICIAL_PROVIDER_ID,
+  openDesktopPortalPage,
+  performDesktopCheckin,
+  refreshDesktopMemberIfStale,
   retryLastUserPrompt,
   selectModel,
   workspace,
@@ -36,6 +43,9 @@ const FAILOVER_REASON_KEYS = {
   network: "timeline.autoFailoverReasonNetwork",
   other: "timeline.autoFailoverReasonOther",
 } as const satisfies Record<AutoFailoverReason, string>;
+
+// The error card asks for a fresh points balance at most this often.
+const BALANCE_REFRESH_MIN_MS = 15_000;
 
 function formatPausedUntil(at: number): string {
   const date = new Date(at);
@@ -95,6 +105,19 @@ export function AssistantErrorCard(props: { info: MessageInfo }) {
   };
 
   const isModelUnavailable = () => isModelUnavailableError(props.info);
+  // Out of balance: the endpoint is fine, so no health warning and no plain
+  // retry; point the user at topping up (or check-in for official points).
+  const isBalance = () => !isStall() && isBalanceError(props.info);
+  const isOfficialBalance = () =>
+    isBalance() && (props.info.providerID || workspace.selectedModel?.providerID) === OFFICIAL_PROVIDER_ID;
+  createEffect(() => {
+    if (isOfficialBalance()) refreshDesktopMemberIfStale(BALANCE_REFRESH_MIN_MS);
+  });
+  const canCheckin = () =>
+    isOfficialBalance() &&
+    desktopAuth.isLoggedIn &&
+    desktopAuth.member.loaded &&
+    !desktopAuth.member.checkedInToday;
   const [reloading, setReloading] = createSignal(false);
   const reloadCatalog = async () => {
     if (reloading()) return;
@@ -112,11 +135,17 @@ export function AssistantErrorCard(props: { info: MessageInfo }) {
         ? t("timeline.contextOverflowTitle")
         : isModelUnavailable()
           ? t("timeline.modelNotLoadedTitle")
-          : props.info.error?.name || t("timeline.apiError");
+          : isOfficialBalance()
+            ? t("timeline.balanceOfficialTitle")
+            : isBalance()
+              ? t("timeline.balanceTitle")
+              : props.info.error?.name || t("timeline.apiError");
   const errMessage = () =>
     (isStall() && t("timeline.stalledErrorMessage")) ||
     (isOverflow() && t("timeline.contextOverflowMessage")) ||
     (isModelUnavailable() && t("timeline.modelNotLoadedMessage")) ||
+    (isOfficialBalance() && t("timeline.balanceOfficialMessage")) ||
+    (isBalance() && t("timeline.balanceMessage")) ||
     props.info.error?.data?.message ||
     props.info.error?.name ||
     t("timeline.modelRequestFailed");
@@ -217,18 +246,38 @@ export function AssistantErrorCard(props: { info: MessageInfo }) {
                   {[props.info.providerID, props.info.modelID].filter(Boolean).join(" / ")}
                 </span>
               </Show>
-              <Show when={providerID()}>
+              <Show when={providerID() && !isBalance()}>
                 <ProviderHealthBadge providerID={providerID()} modelID={modelID() || undefined} />
               </Show>
             </div>
 
-            <div class="font-mono text-[12px] leading-relaxed break-words opacity-95">
-              {errMessage()}
-            </div>
+            <Show
+              when={isBalance()}
+              fallback={
+                <div class="font-mono text-[12px] leading-relaxed break-words opacity-95">
+                  {errMessage()}
+                </div>
+              }
+            >
+              <div class="text-[12px] leading-relaxed break-words">{errMessage()}</div>
+              <div class="flex items-center gap-2 flex-wrap text-[11px] opacity-80">
+                <Show when={isOfficialBalance() && desktopAuth.member.loaded}>
+                  <span>
+                    {t("timeline.balanceCurrentPoints", {
+                      points: formatMemberPoints(desktopAuth.member.points),
+                    })}
+                  </span>
+                </Show>
+                <Show when={props.info.error?.data?.message}>
+                  <span class="font-mono break-words">{props.info.error?.data?.message}</span>
+                </Show>
+              </div>
+            </Show>
 
             <Show
               when={
                 !isStall() &&
+                !isBalance() &&
                 providerHealth() &&
                 (providerHealth()!.status === "degraded" ||
                   providerHealth()!.status === "warning" ||
@@ -257,20 +306,56 @@ export function AssistantErrorCard(props: { info: MessageInfo }) {
               >
                 {t("diagnostics.view")}
               </button>
+              <Show when={isOfficialBalance()}>
+                <button
+                  type="button"
+                  onClick={() => void openDesktopPortalPage("rewards")}
+                  class="inline-flex items-center gap-1.5 rounded-lg bg-[var(--accent-primary)] px-2.5 py-1 text-[11px] font-medium text-[var(--accent-foreground)] hover:opacity-90 transition-opacity cursor-pointer"
+                >
+                  <Icon name="square-arrow-top-right" size="small" />
+                  <span>{t("timeline.balanceTopUp")}</span>
+                </button>
+              </Show>
+              <Show when={canCheckin()}>
+                <button
+                  type="button"
+                  disabled={desktopAuth.member.checkingIn}
+                  aria-busy={desktopAuth.member.checkingIn}
+                  onClick={() => void performDesktopCheckin()}
+                  class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2.5 py-1 text-[11px] font-medium text-[var(--accent-text)] hover:opacity-90 transition-opacity disabled:opacity-50 cursor-pointer"
+                >
+                  <Icon name="star-filled" size="small" />
+                  <span>{t("timeline.balanceCheckin")}</span>
+                </button>
+              </Show>
               <Show when={!superseded()}>
               <Show
                 when={isOverflow()}
                 fallback={
                   <Show when={workspace.selectedModel}>
                     {(sel) => (
-                      <button
-                        type="button"
-                        onClick={() => void retryLastUserPrompt(props.info.sessionID)}
-                        class="inline-flex items-center gap-1.5 rounded-lg bg-[var(--accent-primary)] px-2.5 py-1 text-[11px] font-medium text-[var(--accent-foreground)] hover:opacity-90 transition-opacity cursor-pointer"
+                      <Show
+                        when={isBalance()}
+                        fallback={
+                          <button
+                            type="button"
+                            onClick={() => void retryLastUserPrompt(props.info.sessionID)}
+                            class="inline-flex items-center gap-1.5 rounded-lg bg-[var(--accent-primary)] px-2.5 py-1 text-[11px] font-medium text-[var(--accent-foreground)] hover:opacity-90 transition-opacity cursor-pointer"
+                          >
+                            <Icon name="arrow-up" size="small" />
+                            <span>{t("timeline.retryWithModel", { model: sel().modelID })}</span>
+                          </button>
+                        }
                       >
-                        <Icon name="arrow-up" size="small" />
-                        <span>{t("timeline.retryWithModel", { model: sel().modelID })}</span>
-                      </button>
+                        <button
+                          type="button"
+                          onClick={() => void retryLastUserPrompt(props.info.sessionID)}
+                          class="inline-flex items-center gap-1 rounded-lg border border-[var(--danger-border)] bg-[var(--bg-panel)]/80 px-2.5 py-1 text-[11px] font-medium text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+                        >
+                          <Icon name="arrow-up" size="small" />
+                          <span>{t("timeline.balanceRetry")}</span>
+                        </button>
+                      </Show>
                     )}
                   </Show>
                 }
