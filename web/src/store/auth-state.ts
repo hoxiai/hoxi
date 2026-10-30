@@ -5,6 +5,7 @@ import { authAPI, type AuthStatusSnapshot, type AuthUserProfile } from "../servi
 import { openExternalBrowserURL } from "../services/desktop-events";
 import type { MemberCheckinStatus, PortalTarget } from "../services/platform-api";
 import { setAppSettings, signOutUserAccount, updateAppSetting } from "./settings";
+import { OFFICIAL_PROVIDER_ID, workspace } from "./workspace-state";
 
 export interface DesktopMemberState {
   loaded: boolean;
@@ -67,6 +68,21 @@ export const [desktopAuth, setDesktopAuth] = createStore<DesktopAuthState>({
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let authGeneration = 0;
 let memberRequestSeq = 0;
+
+// Points change outside this window (official-model turns, top-ups on the
+// website), so the balance is re-fetched on these triggers.
+export const MEMBER_FOCUS_REFRESH_MIN_MS = 30_000;
+export const MEMBER_POLL_INTERVAL_MS = 5 * 60_000;
+export const MEMBER_TURN_REFRESH_DELAY_MS = 1_500;
+let lastMemberRefreshAt = 0;
+let turnRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+
+function clearTurnRefreshTimer() {
+  if (turnRefreshTimer) {
+    clearTimeout(turnRefreshTimer);
+    turnRefreshTimer = null;
+  }
+}
 
 function stopPolling() {
   if (pollTimer) {
@@ -159,6 +175,7 @@ export function desktopCheckinSubtitle(): string {
 
 function resetLoggedOutState() {
   stopPolling();
+  clearTurnRefreshTimer();
   authGeneration++;
   memberRequestSeq++;
   setDesktopAuth({
@@ -207,6 +224,7 @@ export async function refreshDesktopMember(): Promise<MemberCheckinStatus | null
   if (!desktopAuth.isLoggedIn || desktopAuth.member.checkingIn) return null;
   const generation = authGeneration;
   const seq = ++memberRequestSeq;
+  lastMemberRefreshAt = Date.now();
   setDesktopAuth("member", "loading", true);
   setDesktopAuth("member", "error", null);
   try {
@@ -227,6 +245,55 @@ export async function refreshDesktopMember(): Promise<MemberCheckinStatus | null
     });
     return null;
   }
+}
+
+/** Re-fetches the balance unless it was fetched within `minIntervalMs`. */
+export function refreshDesktopMemberIfStale(minIntervalMs: number): void {
+  if (!desktopAuth.isLoggedIn) return;
+  if (Date.now() - lastMemberRefreshAt < minIntervalMs) return;
+  void refreshDesktopMember();
+}
+
+/** Refreshes on window focus / tab wake and on a slow interval while visible. */
+export function startDesktopMemberAutoRefresh(): () => void {
+  if (typeof window === "undefined" || typeof document === "undefined") return () => {};
+  const onFocus = () => refreshDesktopMemberIfStale(MEMBER_FOCUS_REFRESH_MIN_MS);
+  const onVisibility = () => {
+    if (document.visibilityState === "visible") onFocus();
+  };
+  window.addEventListener("focus", onFocus);
+  document.addEventListener("visibilitychange", onVisibility);
+  const timer = setInterval(() => {
+    if (document.visibilityState === "hidden") return;
+    refreshDesktopMemberIfStale(MEMBER_POLL_INTERVAL_MS - 1_000);
+  }, MEMBER_POLL_INTERVAL_MS);
+  return () => {
+    window.removeEventListener("focus", onFocus);
+    document.removeEventListener("visibilitychange", onVisibility);
+    clearInterval(timer);
+  };
+}
+
+/** Whether the latest turn (assistant replies after the last user message) used the official provider. */
+export function sessionLastTurnUsedOfficialModel(sessionID: string): boolean {
+  const turns = workspace.messagesBySession[sessionID] || [];
+  for (let i = turns.length - 1; i >= 0; i--) {
+    const info = turns[i]?.info;
+    if (!info) continue;
+    if (info.role === "user") break;
+    if (info.providerID === OFFICIAL_PROVIDER_ID) return true;
+  }
+  return false;
+}
+
+/** Called when a session turn ends; only official-model turns spend points. */
+export function refreshDesktopMemberAfterTurn(sessionID: string): void {
+  if (!desktopAuth.isLoggedIn || !sessionLastTurnUsedOfficialModel(sessionID)) return;
+  clearTurnRefreshTimer();
+  turnRefreshTimer = setTimeout(() => {
+    turnRefreshTimer = null;
+    void refreshDesktopMember();
+  }, MEMBER_TURN_REFRESH_DELAY_MS);
 }
 
 export async function performDesktopCheckin(): Promise<MemberCheckinStatus | null> {

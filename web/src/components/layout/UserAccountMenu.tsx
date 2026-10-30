@@ -33,6 +33,7 @@ import {
   performDesktopCheckin,
   refreshAuthStatus,
   refreshDesktopMember,
+  startDesktopMemberAutoRefresh,
   updateAppSetting,
   type ThemeMode,
 } from "../../store/workspace";
@@ -47,6 +48,7 @@ export default function UserAccountMenu() {
 
   onMount(() => {
     void refreshAuthStatus();
+    onCleanup(startDesktopMemberAutoRefresh());
 
     const handleDocPointerDown = (e: MouseEvent) => {
       if (!menuOpen()) return;

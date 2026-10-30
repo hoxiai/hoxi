@@ -11,6 +11,9 @@ import {
   performDesktopCheckin,
   refreshAuthStatus,
   refreshDesktopMember,
+  refreshDesktopMemberAfterTurn,
+  refreshDesktopMemberIfStale,
+  sessionLastTurnUsedOfficialModel,
   setDesktopAuth,
 } from "../store/auth-state";
 import { officialAinodeState, setOfficialAinodeState } from "../store/provider-official";
@@ -236,6 +239,94 @@ describe("logout model and credential cleanup", () => {
     } finally {
       authAPI.logout = origLogout;
       authAPI.getStatus = origStatus;
+    }
+  });
+});
+
+describe("member points auto refresh", () => {
+  const memberStatus = (walletPoints: number) => ({ walletPoints } as unknown as MemberCheckinStatus);
+  const turn = (id: string, role: "user" | "assistant", providerID?: string) => ({
+    info: { id, sessionID: "", role, time: { created: 0 }, providerID },
+    parts: [],
+  });
+
+  it("refreshes after a turn only when that turn used the official provider", async () => {
+    const origGetMember = authAPI.getMemberStatus;
+    const origSetTimeout = globalThis.setTimeout;
+    const official = "ses_points_official";
+    const other = "ses_points_other";
+    const scheduled: Array<() => void> = [];
+    let calls = 0;
+    try {
+      globalThis.setTimeout = ((fn: () => void) => {
+        scheduled.push(fn);
+        return scheduled.length as any;
+      }) as typeof setTimeout;
+      authAPI.getMemberStatus = async () => {
+        calls++;
+        return memberStatus(42);
+      };
+      setDesktopAuth({ isLoggedIn: true, member: { ...desktopAuth.member, checkingIn: false, points: 100 } });
+      setWorkspace("messagesBySession", official, [
+        turn("msg_1", "user"),
+        turn("msg_2", "assistant", OFFICIAL_PROVIDER_ID),
+      ] as any);
+      // An earlier official turn must not count once a later turn used another provider.
+      setWorkspace("messagesBySession", other, [
+        turn("msg_1", "user"),
+        turn("msg_2", "assistant", OFFICIAL_PROVIDER_ID),
+        turn("msg_3", "user"),
+        turn("msg_4", "assistant", "anthropic"),
+      ] as any);
+
+      assertEqual(sessionLastTurnUsedOfficialModel(official), true);
+      assertEqual(sessionLastTurnUsedOfficialModel(other), false);
+      assertEqual(sessionLastTurnUsedOfficialModel("ses_points_missing"), false);
+
+      refreshDesktopMemberAfterTurn(other);
+      assertEqual(scheduled.length, 0);
+
+      refreshDesktopMemberAfterTurn(official);
+      assertEqual(scheduled.length, 1);
+      scheduled[0]();
+      await Promise.resolve();
+      await Promise.resolve();
+      assertEqual(calls, 1);
+      assertEqual(desktopAuth.member.points, 42);
+
+      setDesktopAuth("isLoggedIn", false);
+      refreshDesktopMemberAfterTurn(official);
+      assertEqual(scheduled.length, 1);
+    } finally {
+      globalThis.setTimeout = origSetTimeout;
+      authAPI.getMemberStatus = origGetMember;
+      setWorkspace("messagesBySession", official, undefined as any);
+      setWorkspace("messagesBySession", other, undefined as any);
+    }
+  });
+
+  it("throttles stale refreshes and skips them when logged out", async () => {
+    const origGetMember = authAPI.getMemberStatus;
+    let calls = 0;
+    try {
+      authAPI.getMemberStatus = async () => {
+        calls++;
+        return memberStatus(7);
+      };
+      setDesktopAuth({ isLoggedIn: false });
+      refreshDesktopMemberIfStale(0);
+      assertEqual(calls, 0);
+
+      setDesktopAuth({ isLoggedIn: true, member: { ...desktopAuth.member, checkingIn: false } });
+      await refreshDesktopMember();
+      assertEqual(calls, 1);
+      refreshDesktopMemberIfStale(60_000);
+      assertEqual(calls, 1);
+      refreshDesktopMemberIfStale(0);
+      await Promise.resolve();
+      assertEqual(calls, 2);
+    } finally {
+      authAPI.getMemberStatus = origGetMember;
     }
   });
 });

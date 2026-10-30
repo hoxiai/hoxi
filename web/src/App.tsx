@@ -59,6 +59,7 @@ import {
   upsertMessageInfo,
   upsertMessagePart,
   workspace,
+  refreshDesktopMemberAfterTurn,
 } from "./store/workspace";
 import { isWorkSurface, surfaceExtension } from "./components/layout/surface-extension";
 import { t } from "./i18n";
@@ -292,6 +293,7 @@ export default function App() {
                 }
                 void drainNextQueuedPrompt(sid);
                 if (wasBusy && !parentID) void advanceSessionGoal(sid);
+                if (wasBusy) refreshDesktopMemberAfterTurn(sid);
               } else if (evt.properties.status.type === "retry") {
                 recordSessionRetry(
                   sid,
@@ -313,6 +315,7 @@ export default function App() {
                 setWorkspace("stalledSinceBySession", sid, 0);
               }
               setWorkspace("sessionFinishedAt", sid, Date.now());
+              refreshDesktopMemberAfterTurn(sid);
               const parentID = resolveParentSessionID(sid);
               if (parentID) {
                 void loadSessionMessagesOnly(sid);
