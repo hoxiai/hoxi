@@ -68,39 +68,63 @@ func TestComputerApprovalOnlyAcceptsDesktopOnceAndIsCancelable(t *testing.T) {
 		t.Fatal("stop did not clear pending computer approval")
 	}
 
-	// Verify desktop "always" grants session-scoped auto-approval and is cleared on cancel.
-	doneAlways := make(chan bool, 1)
-	go func() {
-		allowed, _ := f.svc.RequestComputerApproval(ctx, "ses_agy_gate", f.dir, "Fixture", map[string]any{"action": "click"})
-		doneAlways <- allowed
-	}()
-	id = ""
+}
+
+func waitComputerPending(t *testing.T, f *gateFixture) string {
+	t.Helper()
 	for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); {
 		f.svc.gate.mu.Lock()
 		for key, pending := range f.svc.gate.pending {
 			if permissionName(pending.req) == "hoxi_computer" {
-				id = key
+				f.svc.gate.mu.Unlock()
+				return key
 			}
 		}
 		f.svc.gate.mu.Unlock()
-		if id != "" {
-			break
-		}
 		time.Sleep(time.Millisecond)
 	}
-	reqAlways := httptest.NewRequest("POST", "/api/hoxi/permission/"+id+"/reply", strings.NewReader(`{"reply":"always"}`))
-	reqAlways.Header.Set(ApprovalSourceHeader, "desktop")
-	wAlways := httptest.NewRecorder()
-	f.svc.replyRunnerPermission(wAlways, reqAlways, id)
-	if wAlways.Code != http.StatusOK || !<-doneAlways {
-		t.Fatal("desktop always approval failed", wAlways.Code, wAlways.Body.String())
-	}
-	if auto, err := f.svc.RequestComputerApproval(ctx, "ses_agy_gate", f.dir, "Fixture", map[string]any{"action": "type"}); err != nil || !auto {
-		t.Fatalf("expected subsequent computer action to auto-approve after always, got auto=%v err=%v", auto, err)
-	}
-	f.svc.CancelComputerApprovals("ses_agy_gate")
-	if f.svc.gate.hasToolAlways("ses_agy_gate", computerSessionGrantKey("Fixture")) {
-		t.Fatal("CancelComputerApprovals did not clear session always grant")
+	t.Fatal("computer action did not enter shared permission plane")
+	return ""
+}
+
+// Desktop input acts outside the worktree sandbox, so no approval mode, policy
+// sweep or desktop "always" reply may approve it: each input waits for a
+// one-time desktop allow.
+func TestComputerInputAlwaysWaitsForDesktopOnce(t *testing.T) {
+	for _, mode := range []string{ApprovalModeAuto, ApprovalModeTrusted, ApprovalModeSmart, ApprovalModeManual} {
+		t.Run(mode, func(t *testing.T) {
+			f := newGateFixture(t)
+			defer f.revoke()
+			setTestApprovalPolicy(t, f.svc, ApprovalPolicy{Mode: mode})
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			done := make(chan bool, 1)
+			go func() {
+				allowed, _ := f.svc.RequestComputerApproval(ctx, "ses_agy_gate", f.dir, "Fixture", map[string]any{"action": "type", "text": "rm -rf ~"})
+				done <- allowed
+			}()
+			id := waitComputerPending(t, f)
+			f.svc.reconcilePendingApprovals()
+			select {
+			case allowed := <-done:
+				t.Fatal("computer input settled without desktop approval", mode, allowed)
+			case <-time.After(50 * time.Millisecond):
+			}
+			always := httptest.NewRequest("POST", "/api/hoxi/permission/"+id+"/reply", strings.NewReader(`{"reply":"always"}`))
+			always.Header.Set(ApprovalSourceHeader, "desktop")
+			w := httptest.NewRecorder()
+			f.svc.replyRunnerPermission(w, always, id)
+			if w.Code != http.StatusForbidden {
+				t.Fatal("desktop always accepted for computer input", mode, w.Code, w.Body.String())
+			}
+			once := httptest.NewRequest("POST", "/api/hoxi/permission/"+id+"/reply", strings.NewReader(`{"reply":"once"}`))
+			once.Header.Set(ApprovalSourceHeader, "desktop")
+			w = httptest.NewRecorder()
+			f.svc.replyRunnerPermission(w, once, id)
+			if w.Code != http.StatusOK || !<-done {
+				t.Fatal("desktop once did not approve computer input", mode, w.Code, w.Body.String())
+			}
+		})
 	}
 }
 

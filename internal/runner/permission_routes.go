@@ -250,8 +250,8 @@ func (s *Service) replyRunnerPermission(w http.ResponseWriter, r *http.Request, 
 		writeJSONError(w, http.StatusNotFound, "permission request not found")
 		return
 	}
-	if permissionName(pa.req) == "hoxi_computer" && (body.GrantClass || isRemoteApprovalSource(source)) {
-		writeJSONError(w, http.StatusForbidden, "computer input requires desktop approval")
+	if permissionName(pa.req) == "hoxi_computer" && (body.Reply == "always" || body.GrantClass || isRemoteApprovalSource(source)) {
+		writeJSONError(w, http.StatusForbidden, "computer input requires one-time approval on the desktop")
 		return
 	}
 	reply := approvalReply{Reply: body.Reply, Message: body.Message, Source: source}

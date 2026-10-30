@@ -5,43 +5,28 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strings"
 	"time"
 )
 
-func computerSessionGrantKey(app string) string {
-	return "hoxi_computer:" + strings.ToLower(strings.TrimSpace(app))
-}
-
-// RequestComputerApproval uses the shared permission plane. It respects the
-// session's approval policy (auto / trusted auto-approve) and session-scoped
-// "always" grants, while never allowing unattended or remote approval.
+// RequestComputerApproval uses the shared permission plane. Desktop input acts
+// outside the worktree and its sandbox (a keystroke can do anything the target
+// app can), so no approval mode, stored "always" grant, AI review or remote
+// reply approves it: only a one-time "allow" on this desktop does.
 func (s *Service) RequestComputerApproval(ctx context.Context, sessionID, directory, app string, action any) (bool, error) {
-	pol := s.ApprovalPolicy()
-	if pol.Mode == ApprovalModeUnattended {
+	if s.ApprovalPolicy().Mode == ApprovalModeUnattended {
 		return false, errors.New("desktop_input_unavailable_in_unattended_mode")
 	}
-	resolved, err := s.ResolveComputerSession(sessionID, directory)
-	if err != nil {
+	if _, err := s.ResolveComputerSession(sessionID, directory); err != nil {
 		return false, err
-	}
-	grantKey := computerSessionGrantKey(app)
-	if pol.Mode == ApprovalModeAuto || pol.Mode == ApprovalModeTrusted ||
-		s.gate.hasToolAlways(resolved, grantKey) || s.gate.hasToolAlways(resolved, "hoxi_computer:*") {
-		return true, nil
 	}
 	encoded, err := json.Marshal(action)
 	if err != nil {
 		return false, err
 	}
 	id := runnerPermissionID + randomHex(12)
-	request := map[string]interface{}{"id": id, "sessionID": sessionID, "permission": "hoxi_computer", "patterns": []string{app + " " + string(encoded)}, "always": []string{app}, "metadata": map[string]interface{}{"tool": "hoxi_computer", "app": app, "args": string(encoded), "destructive": true, "description": "Desktop input outside the session worktree", "desktopOnly": true}}
+	request := map[string]interface{}{"id": id, "sessionID": sessionID, "permission": "hoxi_computer", "patterns": []string{app + " " + string(encoded)}, "always": []string{}, "metadata": map[string]interface{}{"tool": "hoxi_computer", "app": app, "args": string(encoded), "destructive": true, "description": "Desktop input outside the session worktree", "desktopOnly": true}}
 	incoming, _ := http.NewRequestWithContext(ctx, http.MethodPost, "http://127.0.0.1/api/hoxi/computer/action", nil)
 	answer := s.awaitReply(incoming, hookCredential{runtime: "computer", sessionID: sessionID}, id, request)
-	if answer.Reply == "always" {
-		s.gate.addToolAlways(resolved, grantKey, "hoxi_computer", app, answer.Source)
-		return true, nil
-	}
 	return answer.Reply == "once", nil
 }
 
@@ -81,16 +66,6 @@ func (s *Service) ResolveComputerSession(sessionID, directory string) (string, e
 func (s *Service) CancelComputerApprovals(sessionID string) {
 	s.gate.mu.Lock()
 	defer s.gate.mu.Unlock()
-	for sid, grants := range s.gate.toolAlways {
-		if sessionID != "" && sid != sessionID {
-			continue
-		}
-		for key := range grants {
-			if strings.HasPrefix(key, "hoxi_computer:") {
-				delete(grants, key)
-			}
-		}
-	}
 	for _, pending := range s.gate.pending {
 		if permissionName(pending.req) != "hoxi_computer" || sessionID != "" && pending.sid != sessionID {
 			continue

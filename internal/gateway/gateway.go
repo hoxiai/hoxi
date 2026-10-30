@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/hoxiai/hoxi/internal/auth"
@@ -46,7 +47,9 @@ import (
 type Gateway struct {
 	computer              *computer.Service
 	computerAgentToken    string
-	confirmComputerApp    func(context.Context, computer.App, computer.Scope, string) (bool, error)
+	confirmComputerApp    func(context.Context, ComputerAppConfirmation) (bool, error)
+	computerLocale        string
+	computerConfirming    atomic.Bool
 	openCodePort          int
 	openCode              *ocapi.Client
 	rootDir               string

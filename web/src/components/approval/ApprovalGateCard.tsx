@@ -468,7 +468,7 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
                 </Show>
                 {t("approval.allowOnce")}
               </button>
-              <Show when={sessionClasses().length > 0 || !isDestructive() || props.request.permission === "hoxi_computer"}>
+              <Show when={props.request.permission !== "hoxi_computer" && (sessionClasses().length > 0 || !isDestructive())}>
                 <button
                   type="button"
                   class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--accent-border)] bg-[var(--accent-surface)] hover:opacity-90 px-3 py-1 text-[12px] font-medium text-[var(--accent-primary)] disabled:opacity-50 transition-opacity cursor-pointer"

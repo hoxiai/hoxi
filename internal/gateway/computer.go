@@ -22,10 +22,55 @@ func (g *Gateway) SetComputerAgentToken(token string) {
 	g.computerAgentToken = token
 	g.originMu.Unlock()
 }
-func (g *Gateway) SetComputerAppConfirmation(confirm func(context.Context, computer.App, computer.Scope, string) (bool, error)) {
+
+// ComputerAppConfirmation describes one app grant shown in the native
+// confirmation dialog. RequestedByAgent is true when the model, not the
+// Computer panel, asked for the app.
+type ComputerAppConfirmation struct {
+	App              computer.App
+	Scope            computer.Scope
+	Locale           string
+	RequestedByAgent bool
+}
+
+func (g *Gateway) SetComputerAppConfirmation(confirm func(context.Context, ComputerAppConfirmation) (bool, error)) {
 	g.originMu.Lock()
 	g.confirmComputerApp = confirm
 	g.originMu.Unlock()
+}
+
+// grantComputerApp grants an app only after the user accepts the native
+// dialog, whoever asked. Without a dialog (headless mode) nothing is granted.
+// Agent requests show one dialog at a time so a model cannot stack prompts.
+func (g *Gateway) grantComputerApp(ctx context.Context, scope computer.Scope, app computer.App, locale string, byAgent bool) (*computer.Grant, int, error) {
+	if byAgent {
+		if !g.computerConfirming.CompareAndSwap(false, true) {
+			return nil, http.StatusConflict, errors.New("app_confirmation_pending")
+		}
+		defer g.computerConfirming.Store(false)
+	}
+	g.originMu.Lock()
+	confirm := g.confirmComputerApp
+	if !byAgent && (locale == "zh-CN" || locale == "en-US") {
+		g.computerLocale = locale
+	}
+	if byAgent || locale == "" {
+		locale = g.computerLocale
+	}
+	g.originMu.Unlock()
+	if confirm == nil {
+		return nil, http.StatusServiceUnavailable, errors.New("native_desktop_app_confirmation_required")
+	}
+	version := g.computer.AuthorizationVersion()
+	accepted, err := confirm(ctx, ComputerAppConfirmation{App: app, Scope: scope, Locale: locale, RequestedByAgent: byAgent})
+	if err != nil || !accepted || ctx.Err() != nil || version != g.computer.AuthorizationVersion() {
+		return nil, http.StatusForbidden, errors.New("app_permission_not_granted")
+	}
+	grant, err := g.computer.AuthorizeConfirmed(ctx, scope, app.ID, version)
+	if err != nil {
+		return nil, http.StatusConflict, err
+	}
+	return grant, http.StatusOK, nil
 }
 func (g *Gateway) computerScope(r *http.Request) (computer.Scope, error) {
 	q := r.URL.Query()
@@ -202,27 +247,9 @@ func (g *Gateway) handleComputer(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, status, err.Error())
 			return
 		}
-		g.originMu.RLock()
-		confirm := g.confirmComputerApp
-		g.originMu.RUnlock()
-		if confirm != nil {
-			version := g.computer.AuthorizationVersion()
-			accepted, err := confirm(ctx, *app, scope, req.Locale)
-			if err != nil || !accepted || ctx.Err() != nil || version != g.computer.AuthorizationVersion() {
-				writeJSONError(w, 403, "app_permission_not_granted")
-				return
-			}
-			grant, err := g.computer.AuthorizeConfirmed(ctx, scope, app.ID, version)
-			if err != nil {
-				writeJSONError(w, 409, err.Error())
-				return
-			}
-			writeJSON(w, 200, map[string]any{"grant": grant})
-			return
-		}
-		grant, err := g.computer.Authorize(ctx, scope, app.ID)
+		grant, status, err := g.grantComputerApp(ctx, scope, *app, req.Locale, false)
 		if err != nil {
-			writeJSONError(w, 409, err.Error())
+			writeJSONError(w, status, err.Error())
 			return
 		}
 		writeJSON(w, 200, map[string]any{"grant": grant})
@@ -279,15 +306,20 @@ func (g *Gateway) handleComputer(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if targetQuery := strings.TrimSpace(req.App); targetQuery != "" {
-			current := g.computer.Current(scope)
 			target, err := g.computer.ResolveApp(ctx, targetQuery)
 			if err != nil {
 				writeJSONError(w, 403, err.Error())
 				return
 			}
-			if current == nil || current.App.ID != target.ID {
-				if _, err := g.computer.Authorize(ctx, scope, target.ID); err != nil {
-					writeJSONError(w, 409, err.Error())
+			if current := g.computer.Current(scope); current == nil || current.App.ID != target.ID {
+				// Switching apps only happens on a read, and only after the
+				// user confirms the exact app in the native dialog.
+				if req.Action != "state" && req.Action != "screenshot" {
+					writeJSONError(w, 409, "inspect_app_before_input")
+					return
+				}
+				if _, status, err := g.grantComputerApp(ctx, scope, *target, "", agent); err != nil {
+					writeJSONError(w, status, err.Error())
 					return
 				}
 			}

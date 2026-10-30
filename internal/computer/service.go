@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -119,6 +118,10 @@ type Service struct {
 }
 
 func New() *Service { return newService(nativeBackend{}) }
+
+// NewWithBackend builds a Service over another desktop backend, for tests in
+// packages that drive the computer routes.
+func NewWithBackend(backend Backend) *Service { return newService(backend) }
 func newService(backend Backend) *Service {
 	return &Service{backend: backend, grants: make(map[Scope]*sessionGrant), operation: make(chan struct{}, 1), now: time.Now}
 }
@@ -128,14 +131,6 @@ func opaqueID() string {
 		panic(err)
 	}
 	return hex.EncodeToString(raw[:])
-}
-func BlockedApp(app App) bool {
-	id := strings.ToLower(app.BundleID)
-	name := strings.ToLower(app.Name)
-	file := strings.ToLower(filepath.Base(app.Path))
-	return app.PID == os.Getpid() || file == "hoxi.exe" || file == "hoxi dev.exe" || file == "consent.exe" || file == "logonui.exe" || file == "credentialuibroker.exe" || file == "systemsettings.exe" || strings.HasPrefix(id, "ai.hoxi.") || id == "com.apple.systempreferences" || id == "com.apple.securityagent" || id == "com.apple.loginwindow" ||
-		id == "com.apple.keychainaccess" || strings.Contains(id, "1password") || strings.Contains(id, "bitwarden") ||
-		name == "hoxi" || name == "hoxi dev" || strings.Contains(strings.ToLower(app.Path), "/hoxi.app/")
 }
 func (s *Service) Permissions(ctx context.Context, prompt string) (Permissions, error) {
 	return s.backend.Permissions(ctx, prompt)
