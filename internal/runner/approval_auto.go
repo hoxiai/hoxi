@@ -207,6 +207,7 @@ func (s *Service) claimOpenCodePermission(item map[string]interface{}, sessionID
 	case openCodeAutoReplyFailed:
 		// The policy already tried once; the user or the timeout answers.
 		annotateGrantClasses(item, directory)
+		s.carryAIReviewNote(id, item)
 		s.askOpenCodeUser(item, sessionID, directory)
 		return false
 	}

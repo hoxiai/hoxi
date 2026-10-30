@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/hoxiai/hoxi/internal/llm"
 )
@@ -36,7 +37,7 @@ func (s *Service) Complete(ctx context.Context, target llm.Target, req llm.Reque
 	if req.Purpose == llm.PurposeReview {
 		transport = providerTransport
 	}
-	return callSimpleLLM(ctx, llmCompletionRequest{
+	call := llmCompletionRequest{
 		ProviderID:  target.ProviderID,
 		ModelID:     target.ModelID,
 		BaseURL:     baseURL,
@@ -50,7 +51,40 @@ func (s *Service) Complete(ctx context.Context, target llm.Target, req llm.Reque
 		Transport:   transport,
 		Stats:       s.stats,
 		Breaker:     s.breaker,
-	})
+	}
+	effort := strings.TrimSpace(req.ReasoningEffort)
+	memoKey := target.ProviderID + "/" + target.ModelID
+	if _, unsupported := s.noReasoningEffort.Load(memoKey); effort == "" || unsupported {
+		return callSimpleLLM(ctx, call)
+	}
+	// Endpoints that do not know reasoning_effort answer 400; the breaker
+	// ignores bad requests, and the model is retried once without it.
+	started := time.Now()
+	withEffort := call
+	withEffort.ReasoningEffort = effort
+	text, err := callSimpleLLM(ctx, withEffort)
+	if err == nil || !isReasoningEffortRejection(err) {
+		return text, err
+	}
+	s.noReasoningEffort.Store(memoKey, struct{}{})
+	if call.Timeout > 0 {
+		call.Timeout -= time.Since(started)
+		if call.Timeout <= 0 {
+			return "", context.DeadlineExceeded
+		}
+	}
+	return callSimpleLLM(ctx, call)
+}
+
+// isReasoningEffortRejection reports whether an endpoint refused the request
+// because of the reasoning_effort parameter itself.
+func isReasoningEffortRejection(err error) bool {
+	msg := strings.ToLower(err.Error())
+	if !strings.HasPrefix(msg, "http 400") && !strings.HasPrefix(msg, "http 422") {
+		return false
+	}
+	return strings.Contains(msg, "reasoning_effort") || strings.Contains(msg, "reasoning effort") ||
+		strings.Contains(msg, "reasoningeffort")
 }
 
 // RecordAuditResult folds an observer verdict into the worker model's stats.

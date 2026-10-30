@@ -45,6 +45,9 @@ type Service struct {
 	authSource           AuthSource
 	officialMu           sync.Mutex
 	officialBlocked      atomic.Bool
+	// noReasoningEffort remembers provider/model pairs whose endpoint rejected
+	// reasoning_effort, so later calls skip the doomed first attempt.
+	noReasoningEffort sync.Map
 }
 
 func NewService(openCodePort int, password, rootDir string, proxy http.Handler) *Service {

@@ -506,6 +506,61 @@ export function grantClassLabel(cls: string): string {
   }
 }
 
+/**
+ * What AI review concluded for a request that reached the user (Go sets
+ * metadata.hoxiAIReview): the model asked for confirmation, or gave no usable
+ * verdict and why. Null when AI review was not involved.
+ */
+export type AIReviewNote = {
+  status: "ask" | "unavailable";
+  failure?: string;
+  detail?: string;
+  reason?: string;
+  timeoutSeconds?: number;
+};
+
+export function aiReviewNote(req: Partial<PermissionRequest> & Record<string, any>): AIReviewNote | null {
+  const raw = req?.metadata?.hoxiAIReview;
+  if (!raw || typeof raw !== "object") return null;
+  const status = raw.status;
+  if (status !== "ask" && status !== "unavailable") return null;
+  const text = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
+  return {
+    status,
+    failure: text(raw.failure),
+    detail: text(raw.detail),
+    reason: text(raw.reason),
+    timeoutSeconds: typeof raw.timeoutSeconds === "number" ? raw.timeoutSeconds : undefined,
+  };
+}
+
+/** True when the reviewer model itself is the likely problem, so the card offers to change it. */
+export function aiReviewNoteSuggestsModelChange(note: AIReviewNote): boolean {
+  return note.status === "unavailable" && note.failure !== "error";
+}
+
+export function aiReviewNoteText(note: AIReviewNote): string {
+  if (note.status === "ask") {
+    return note.reason
+      ? t("approval.aiReviewNoteAsk", { reason: note.reason })
+      : t("approval.aiReviewNoteAskNoReason");
+  }
+  switch (note.failure) {
+    case "empty":
+      return t("approval.aiReviewNoteEmpty");
+    case "timeout":
+      return t("approval.aiReviewNoteTimeout", { seconds: note.timeoutSeconds ?? 10 });
+    case "invalid":
+      return t("approval.aiReviewNoteInvalid");
+    case "unready":
+      return t("approval.aiReviewNoteUnready");
+    default:
+      return note.detail
+        ? t("approval.aiReviewNoteError", { detail: note.detail })
+        : t("approval.aiReviewNoteErrorNoDetail");
+  }
+}
+
 export async function loadApprovalGrants(sessionID?: string): Promise<ApprovalGrant[]> {
   try {
     const list = await hoxiAPI.listApprovalGrants(sessionID ? { sessionID } : undefined);

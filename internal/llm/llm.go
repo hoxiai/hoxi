@@ -61,4 +61,8 @@ type Request struct {
 	Temperature float64
 	Timeout     time.Duration
 	Purpose     Purpose
+	// ReasoningEffort asks reasoning models to think less ("low") so a short
+	// answer fits MaxTokens. Providers that reject the parameter are retried
+	// without it.
+	ReasoningEffort string
 }

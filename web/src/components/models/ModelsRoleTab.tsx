@@ -269,6 +269,9 @@ export default function ModelsRoleTab() {
               </label>
             </div>
             <div class="text-[12px] text-[var(--text-muted)]">
+              {t("approval.aiReviewModelHint")}
+            </div>
+            <div class="text-[12px] text-[var(--text-muted)]">
               {t("approval.aiReviewEgressNotice")}
             </div>
           </div>

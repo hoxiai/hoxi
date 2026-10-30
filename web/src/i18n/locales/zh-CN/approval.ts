@@ -67,6 +67,18 @@ export const approval: ApprovalI18n = {
   enableAIReviewQuick: "开启 AI 自动审查",
   enableAIReviewQuickHint:
     "使用 {model} 自动审查非破坏性复杂命令",
+  aiReviewModelHint:
+    "建议选不带推理的快速模型；推理模型会先思考再回答，容易超时或给不出结论",
+  aiReviewNoteAsk: "AI 审核认为需要你确认：{reason}",
+  aiReviewNoteAskNoReason: "AI 审核认为需要你确认",
+  aiReviewNoteEmpty:
+    "AI 审核不可用：审核模型没有给出结论。推理模型常在思考阶段就用完 token 上限，建议换成不带推理的快速模型",
+  aiReviewNoteTimeout: "AI 审核不可用：审核模型 {seconds} 秒内没有回复",
+  aiReviewNoteInvalid: "AI 审核不可用：审核模型的回复不是有效结论",
+  aiReviewNoteUnready: "AI 审核不可用：审核模型未配置或没有可用的接入点",
+  aiReviewNoteError: "AI 审核不可用：调用审核模型失败（{detail}）",
+  aiReviewNoteErrorNoDetail: "AI 审核不可用：调用审核模型失败",
+  aiReviewChangeModel: "更换审核模型",
   aiReviewEgressNotice:
     "高危与破坏性命令（rm、sudo、git push、.env/.ssh 读取等）由本地静态规则直接拦截，绝不外发；仅通过静态安全底线但包含复杂语法的命令会将命令文本与工作区目录路径发送给所选模型服务商，超时、报错或存疑一律回退人工确认",
   deferredTitle: "待处理",

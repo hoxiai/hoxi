@@ -67,6 +67,18 @@ export const approval = {
   enableAIReviewQuick: "Enable AI Auto-Review",
   enableAIReviewQuickHint:
     "Use {model} to auto-review non-destructive complex commands",
+  aiReviewModelHint:
+    "Pick a fast model without reasoning. Reasoning models think before answering and often time out or return no verdict",
+  aiReviewNoteAsk: "AI review wants your confirmation: {reason}",
+  aiReviewNoteAskNoReason: "AI review wants your confirmation",
+  aiReviewNoteEmpty:
+    "AI review unavailable: the reviewer model returned no verdict. Reasoning models often use up the token budget while thinking; a fast non-reasoning model works better",
+  aiReviewNoteTimeout: "AI review unavailable: the reviewer model did not answer within {seconds}s",
+  aiReviewNoteInvalid: "AI review unavailable: the reviewer model's answer was not a verdict",
+  aiReviewNoteUnready: "AI review unavailable: the reviewer model is not configured or has no endpoint",
+  aiReviewNoteError: "AI review unavailable: the request to the reviewer model failed ({detail})",
+  aiReviewNoteErrorNoDetail: "AI review unavailable: the request to the reviewer model failed",
+  aiReviewChangeModel: "Change reviewer model",
   aiReviewEgressNotice:
     "Hard-denied and destructive commands (rm, sudo, git push, .env/.ssh reads) are blocked locally and never sent. Only non-destructive commands that fail static checks send the command string and workspace directory path to the selected model provider. Any timeout, error, or uncertainty falls back to manual confirmation",
   deferredTitle: "Waiting for you",

@@ -15,6 +15,9 @@ import {
 } from "lucide-solid";
 import type { PermissionRequest } from "../../services/sse-types";
 import {
+  aiReviewNote,
+  aiReviewNoteSuggestsModelChange,
+  aiReviewNoteText,
   approvalPolicy,
   isDestructivePermissionRequest,
   grantableClasses,
@@ -93,6 +96,7 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
   const isDestructive = createMemo(() => isDestructivePermissionRequest(props.request));
   const isRunner = createMemo(() => isRunnerPermissionID(props.request.id));
   const sessionClasses = createMemo(() => grantableClasses(props.request));
+  const reviewNote = createMemo(() => aiReviewNote(props.request));
   const defaultAIReviewer = createMemo(
     () => approvalPolicy().aiReviewModel || resolveDefaultAIReviewModel()
   );
@@ -277,6 +281,24 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
             <Terminal size={13} class="mt-0.5 text-[var(--accent-primary)] shrink-0" />
             <pre class="whitespace-pre-wrap break-all selectable-text">{command()}</pre>
           </div>
+        </Show>
+
+        <Show when={reviewNote()}>
+          {(note) => (
+            <div class="flex items-start gap-1.5 text-[11.5px] leading-relaxed text-[var(--text-secondary)]">
+              <Zap size={11} class="mt-[3px] shrink-0 text-[var(--accent-primary)]" />
+              <span class="min-w-0 flex-1 selectable-text">{aiReviewNoteText(note())}</span>
+              <Show when={aiReviewNoteSuggestsModelChange(note())}>
+                <button
+                  type="button"
+                  class="shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium text-[var(--accent-primary)] hover:bg-[var(--bg-hover)] cursor-pointer"
+                  onClick={() => openProviderModal("policy")}
+                >
+                  {t("approval.aiReviewChangeModel")}
+                </button>
+              </Show>
+            </div>
+          )}
         </Show>
 
         <Show when={toolArgsText()}>

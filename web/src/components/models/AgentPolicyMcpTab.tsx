@@ -311,7 +311,7 @@ export default function AgentPolicyMcpTab() {
               }}
             />
           </SettingRow>
-          <SettingRow label={t("approval.aiReviewModelLabel")}>
+          <SettingRow label={t("approval.aiReviewModelLabel")} tip={t("approval.aiReviewModelHint")}>
             <ModelRolePicker
               value={approvalPolicy().aiReviewModel || ""}
               groups={connectedGroups()}

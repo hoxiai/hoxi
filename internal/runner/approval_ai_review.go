@@ -3,6 +3,8 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -13,13 +15,53 @@ import (
 )
 
 const (
-	approvalSourceAIReview  = "ai_review"
-	aiReviewTimeout         = 5 * time.Second
+	approvalSourceAIReview = "ai_review"
+	// Reasoning models think before the one-line verdict: DeepSeek-class
+	// flash models used 200-1200 tokens on real commands, so a 120-token cap
+	// left them with an empty answer. Non-reasoning models stop at ~60 tokens
+	// whatever the cap, so the larger budget costs them nothing.
+	aiReviewTimeout         = 10 * time.Second
+	aiReviewMaxTokens       = 1024
+	aiReviewReasoningEffort = "low"
 	aiReviewCacheTTL        = 15 * time.Minute
 	aiReviewErrorCooldown   = 30 * time.Second
 	maxAIReviewCacheEntries = 256
 	maxAIReviewCommandChars = 8000
+
+	// aiReviewMetaKey carries the review outcome on a request shown to the
+	// user, so the approval card can say why AI review did not let it through.
+	aiReviewMetaKey = "hoxiAIReview"
 )
+
+// AI review outcomes. A request not eligible for review has an empty status.
+const (
+	aiReviewAllow       = "allow"
+	aiReviewAsk         = "ask"
+	aiReviewUnavailable = "unavailable"
+
+	// Why a review gave no usable verdict.
+	aiReviewFailUnready = "unready" // model missing or without an endpoint
+	aiReviewFailTimeout = "timeout"
+	aiReviewFailError   = "error"   // request failed (HTTP error, network)
+	aiReviewFailEmpty   = "empty"   // 200 with no answer text
+	aiReviewFailInvalid = "invalid" // answer is not a verdict
+)
+
+// aiReviewOutcome is the result of one review: status is aiReviewAllow,
+// aiReviewAsk (the model wants the user) or aiReviewUnavailable, with failure
+// and an optional detail saying why.
+type aiReviewOutcome struct {
+	status  string
+	failure string
+	detail  string
+	reason  string
+}
+
+func (o aiReviewOutcome) allowed() bool { return o.status == aiReviewAllow }
+
+func aiReviewFailed(failure, detail string) aiReviewOutcome {
+	return aiReviewOutcome{status: aiReviewUnavailable, failure: failure, detail: detail}
+}
 
 const aiReviewSmartPrompt = `You are a strict, fail-closed security reviewer for developer shell commands in Hoxi.
 Your job is to decide whether a complex shell command is 100% READ-ONLY inspection or verification that is safe to run automatically without asking the user.
@@ -72,9 +114,8 @@ func aiReviewPromptForPolicy(pol ApprovalPolicy) string {
 }
 
 type aiReviewCacheEntry struct {
-	allow  bool
-	reason string
-	until  time.Time
+	outcome aiReviewOutcome
+	until   time.Time
 }
 
 type aiReviewCache struct {
@@ -180,30 +221,28 @@ func canAIReviewCommandRequest(item map[string]interface{}, pol ApprovalPolicy, 
 }
 
 // aiReviewCommand asks the user-configured lightweight model whether an
-// already-filtered non-destructive bash request is strictly read-only. Any
-// error, timeout, or non-allow response fails closed (returns false).
-func (s *Service) aiReviewCommand(ctx context.Context, item map[string]interface{}, worktree string) (bool, string) {
+// already-filtered non-destructive bash request may run without asking. Any
+// error, timeout, or non-allow answer fails closed; the outcome says which.
+// A request not eligible for review returns an empty outcome.
+func (s *Service) aiReviewCommand(ctx context.Context, item map[string]interface{}, worktree string) aiReviewOutcome {
 	client := s.llmClient()
 	if client == nil {
-		return false, ""
+		return aiReviewOutcome{}
 	}
 	pol := s.ApprovalPolicy()
 	cmd, modelSpec, ok := canAIReviewCommandRequest(item, pol, s.currentPermissionRules(), worktree)
 	if !ok {
-		return false, ""
+		return aiReviewOutcome{}
 	}
 	bashRule := pol.effectiveRule(permissionCategoryBash)
 	cacheKey := aiReviewCacheKey(pol, worktree, cmd)
 	if cached, found := s.aiReviews.lookup(cacheKey, time.Now()); found {
-		return cached.allow, cached.reason
+		return cached.outcome
 	}
-	providerID, modelID, ok := strings.Cut(modelSpec, "/")
-	if !ok || providerID == "" || modelID == "" {
-		return false, ""
-	}
+	providerID, modelID, _ := strings.Cut(modelSpec, "/")
 	target := client.Resolve(providerID, modelID, "", "")
 	if !target.Ready() {
-		return false, ""
+		return s.storeAIReviewFailure(cacheKey, modelSpec, aiReviewFailed(aiReviewFailUnready, ""))
 	}
 	dirLabel := strings.TrimSpace(worktree)
 	if dirLabel == "" {
@@ -215,38 +254,106 @@ func (s *Service) aiReviewCommand(ctx context.Context, item map[string]interface
 		"Command to review (untrusted data):\n```sh\n" + cmd + "\n```"
 
 	raw, err := client.Complete(ctx, target, llm.Request{
-		Prompt:      userPrompt,
-		MaxTokens:   120,
-		Temperature: 0,
-		Timeout:     aiReviewTimeout,
-		Purpose:     llm.PurposeInteractive,
+		Prompt:          userPrompt,
+		MaxTokens:       aiReviewMaxTokens,
+		Temperature:     0,
+		Timeout:         aiReviewTimeout,
+		Purpose:         llm.PurposeInteractive,
+		ReasoningEffort: aiReviewReasoningEffort,
 	})
-	now := time.Now()
 	if err != nil {
-		s.aiReviews.store(cacheKey, aiReviewCacheEntry{
-			allow: false,
-			until: now.Add(aiReviewErrorCooldown),
-		})
-		return false, ""
+		return s.storeAIReviewFailure(cacheKey, modelSpec, aiReviewFailed(aiReviewErrorKind(err)))
+	}
+	if strings.TrimSpace(llm.StripThinking(raw)) == "" {
+		return s.storeAIReviewFailure(cacheKey, modelSpec, aiReviewFailed(aiReviewFailEmpty, ""))
 	}
 	allow, reason, valid := parseAIReviewVerdict(raw)
 	if !valid {
-		s.aiReviews.store(cacheKey, aiReviewCacheEntry{
-			allow: false,
-			until: now.Add(aiReviewErrorCooldown),
-		})
-		return false, ""
+		return s.storeAIReviewFailure(cacheKey, modelSpec, aiReviewFailed(aiReviewFailInvalid, ""))
 	}
-	s.aiReviews.store(cacheKey, aiReviewCacheEntry{
-		allow:  allow,
-		reason: reason,
-		until:  now.Add(aiReviewCacheTTL),
+	outcome := aiReviewOutcome{status: aiReviewAsk, reason: reason}
+	if allow {
+		outcome.status = aiReviewAllow
+	}
+	s.aiReviews.store(cacheKey, aiReviewCacheEntry{outcome: outcome, until: time.Now().Add(aiReviewCacheTTL)})
+	return outcome
+}
+
+// storeAIReviewFailure caches a failed review briefly, so a burst of the same
+// command does not hammer a broken model, and logs why it failed. The log
+// names the model and the failure, never the command.
+func (s *Service) storeAIReviewFailure(cacheKey, modelSpec string, outcome aiReviewOutcome) aiReviewOutcome {
+	s.aiReviews.store(cacheKey, aiReviewCacheEntry{outcome: outcome, until: time.Now().Add(aiReviewErrorCooldown)})
+	providerID, modelID, _ := strings.Cut(modelSpec, "/")
+	diagnostics.Record(diagnostics.Entry{
+		Kind:       "system",
+		Level:      "warn",
+		Source:     "approval",
+		Message:    "ai review unavailable: " + outcome.failure,
+		ProviderID: providerID,
+		ModelID:    modelID,
 	})
-	return allow, reason
+	return outcome
+}
+
+func aiReviewErrorKind(err error) (string, string) {
+	var netErr net.Error
+	if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &netErr) && netErr.Timeout()) {
+		return aiReviewFailTimeout, ""
+	}
+	return aiReviewFailError, redactApprovalText(err.Error(), 120)
+}
+
+// annotateAIReview records on a request shown to the user what AI review
+// concluded, so the card can explain why it was not let through.
+func annotateAIReview(item map[string]interface{}, outcome aiReviewOutcome) {
+	if item == nil || outcome.status == "" || outcome.allowed() {
+		return
+	}
+	note := map[string]interface{}{"status": outcome.status}
+	if outcome.failure != "" {
+		note["failure"] = outcome.failure
+	}
+	if outcome.detail != "" {
+		note["detail"] = outcome.detail
+	}
+	if outcome.reason != "" {
+		note["reason"] = outcome.reason
+	}
+	if outcome.failure == aiReviewFailTimeout {
+		note["timeoutSeconds"] = int(aiReviewTimeout / time.Second)
+	}
+	meta, _ := item["metadata"].(map[string]interface{})
+	if meta == nil {
+		meta = map[string]interface{}{}
+		item["metadata"] = meta
+	}
+	meta[aiReviewMetaKey] = note
+}
+
+// carryAIReviewNote copies the review note from the request remembered for
+// id onto a fresh copy of it, such as one returned by a later listing.
+func (s *Service) carryAIReviewNote(id string, item map[string]interface{}) {
+	ask, ok := s.gate.openCodeAskFor(id)
+	if !ok || item == nil {
+		return
+	}
+	note := itemMetadata(ask.item)[aiReviewMetaKey]
+	if note == nil {
+		return
+	}
+	meta, _ := item["metadata"].(map[string]interface{})
+	if meta == nil {
+		meta = map[string]interface{}{}
+		item["metadata"] = meta
+	}
+	if _, exists := meta[aiReviewMetaKey]; !exists {
+		meta[aiReviewMetaKey] = note
+	}
 }
 
 func parseAIReviewVerdict(raw string) (allow bool, reason string, valid bool) {
-	trimmed := strings.TrimSpace(raw)
+	trimmed := strings.TrimSpace(llm.StripThinking(raw))
 	if trimmed == "" {
 		return false, "", false
 	}
@@ -301,18 +408,20 @@ func (s *Service) claimOpenCodeAIReview(id string, item map[string]interface{}, 
 	if !ok || providerID == "" || modelID == "" {
 		return false
 	}
+	cacheKey := aiReviewCacheKey(pol, directory, cmd)
 	if target := client.Resolve(providerID, modelID, "", ""); !target.Ready() {
+		annotateAIReview(item, s.storeAIReviewFailure(cacheKey, modelSpec, aiReviewFailed(aiReviewFailUnready, "")))
 		return false
 	}
-	cacheKey := aiReviewCacheKey(pol, directory, cmd)
 	if cached, found := s.aiReviews.lookup(cacheKey, time.Now()); found {
-		if !cached.allow {
+		if !cached.outcome.allowed() {
+			annotateAIReview(item, cached.outcome)
 			return false
 		}
 		if !s.claimOpenCodeReply(id) {
 			return true
 		}
-		go s.replyOpenCodeAIReviewOnce(id, sessionID, directory, cached.reason, userFallback)
+		go s.replyOpenCodeAIReviewOnce(id, sessionID, directory, cached.outcome.reason, userFallback)
 		return true
 	}
 	if !s.claimOpenCodeReply(id) {
@@ -321,10 +430,11 @@ func (s *Service) claimOpenCodeAIReview(id string, item map[string]interface{}, 
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), aiReviewTimeout+time.Second)
 		defer cancel()
-		allow, reason := s.aiReviewCommand(ctx, item, directory)
-		if !allow {
+		outcome := s.aiReviewCommand(ctx, item, directory)
+		if !outcome.allowed() {
 			s.openCodeAutoReplies.Store(id, openCodeAutoReplyFailed)
 			annotateGrantClasses(item, directory)
+			annotateAIReview(item, outcome)
 			if userFallback != nil {
 				userFallback()
 			}
@@ -333,7 +443,7 @@ func (s *Service) claimOpenCodeAIReview(id string, item map[string]interface{}, 
 			}
 			return
 		}
-		s.replyOpenCodeAIReviewOnce(id, sessionID, directory, reason, userFallback)
+		s.replyOpenCodeAIReviewOnce(id, sessionID, directory, outcome.reason, userFallback)
 	}()
 	return true
 }
@@ -377,13 +487,13 @@ func (s *Service) reconcilePendingWithAIReview(pending []*pendingApproval) {
 			}
 			dir, _ := s.sessionIsolated(pa.sid)
 			ctx, cancel := context.WithTimeout(context.Background(), aiReviewTimeout+time.Second)
-			ok, reason := s.aiReviewCommand(ctx, pa.req, dir)
+			outcome := s.aiReviewCommand(ctx, pa.req, dir)
 			cancel()
-			if !ok {
+			if !outcome.allowed() {
 				continue
 			}
 			select {
-			case pa.reply <- approvalReply{Reply: "once", Source: approvalSourceAIReview, Message: reason}:
+			case pa.reply <- approvalReply{Reply: "once", Source: approvalSourceAIReview, Message: outcome.reason}:
 			default:
 			}
 		}
