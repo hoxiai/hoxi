@@ -1,4 +1,5 @@
 import { startTerminalConnection } from "../components/terminal/terminal-connection";
+import { trackWebglContexts } from "../components/terminal/webgl-context";
 import { hoxiAPI } from "../services/api";
 import { assertDeepEqual, assertEqual, describe, it } from "./test-harness";
 
@@ -192,5 +193,39 @@ describe("terminal lifecycle", () => {
     } finally {
       globalThis.fetch = saved;
     }
+  });
+});
+
+describe("terminal WebGL context release", () => {
+  function fakeCanvas(kind: "webgl2" | "2d") {
+    let lost = 0;
+    const gl = {
+      isContextLost: () => lost > 0,
+      getExtension: (name: string) => (name === "WEBGL_lose_context" ? { loseContext: () => { lost++; } } : null),
+    };
+    const canvas = {
+      getContext: (type: string) => (type === kind && kind === "webgl2" ? gl : null),
+    };
+    return { canvas, lost: () => lost };
+  }
+
+  it("loses only the contexts the addon added, once", () => {
+    const existing = fakeCanvas("webgl2");
+    const added = fakeCanvas("webgl2");
+    const linkLayer = fakeCanvas("2d");
+    const canvases: unknown[] = [existing.canvas];
+    const root = { querySelectorAll: () => canvases.slice() } as unknown as ParentNode;
+    const release = trackWebglContexts(root, () => { canvases.push(added.canvas, linkLayer.canvas); });
+    assertEqual(added.lost(), 0);
+    release();
+    release();
+    assertEqual(added.lost(), 1);
+    assertEqual(existing.lost(), 0);
+  });
+
+  it("does nothing when the addon added no WebGL canvas", () => {
+    const root = { querySelectorAll: () => [] } as unknown as ParentNode;
+    const release = trackWebglContexts(root, () => {});
+    release();
   });
 });

@@ -8,6 +8,7 @@ import { getGatewayToken } from "../../services/api";
 import { activeDirectory, appSettings, appendTerminalOutput, terminalPTYAPI, workspace } from "../../store/workspace";
 import { t } from "../../i18n";
 import { startTerminalConnection } from "./terminal-connection";
+import { trackWebglContexts } from "./webgl-context";
 
 function wsEndpoint(ptyID: string, directory?: string): string {
   const base =
@@ -124,10 +125,11 @@ export default function WebGLTerminal() {
     term.open(container);
     activeTerm = term;
     activeFit = fit;
+    let releaseWebgl = () => {};
     try {
       const webgl = new WebglAddon();
       webgl.onContextLoss(() => webgl.dispose());
-      term.loadAddon(webgl);
+      releaseWebgl = trackWebglContexts(container, () => term.loadAddon(webgl));
     } catch {
       /* fall back to DOM renderer when WebGL is unavailable */
     }
@@ -172,6 +174,7 @@ export default function WebGLTerminal() {
         activeFit = null;
         activeConnection = undefined;
         term.dispose();
+        releaseWebgl();
       },
     });
     activeConnection = connection;
