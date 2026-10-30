@@ -15,6 +15,7 @@ import "../src/__tests__/task-progress.test";
 import "../src/__tests__/question-answers.test";
 import "../src/__tests__/session-isolation.test";
 import "../src/__tests__/project-attribution.test";
+import "../src/__tests__/workspace-shared-folders.test";
 import "../src/__tests__/session-lists.test";
 import "../src/__tests__/worktree-refresh.test";
 import "../src/__tests__/new-thread.test";

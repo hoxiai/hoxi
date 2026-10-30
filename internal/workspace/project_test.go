@@ -375,7 +375,7 @@ func TestSaveAbsorbsHiddenProjectsForEveryFolder(t *testing.T) {
 	}
 }
 
-func TestSaveRejectsFolderOfAnotherVisibleWorkspace(t *testing.T) {
+func TestSaveRejectsPrimaryFolderOfAnotherVisibleWorkspace(t *testing.T) {
 	homeDir := setupTestEnv(t)
 	a := mkdirTempProject(t, homeDir, "proj-a")
 	b := mkdirTempProject(t, homeDir, "proj-b")
@@ -389,14 +389,101 @@ func TestSaveRejectsFolderOfAnotherVisibleWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := store.Create(saveWorkspaceRequest{
-		Folders: []workspaceFolderInput{{Path: b, IsPrimary: true}, {Path: a}},
+		Folders: []workspaceFolderInput{{Path: a, IsPrimary: true}, {Path: b}},
 	}); err == nil {
-		t.Fatal("creating a workspace with a folder owned by another workspace must fail")
+		t.Fatal("creating a workspace whose primary folder is another workspace's primary must fail")
 	}
 	if _, err := store.Update(other.ID, saveWorkspaceRequest{
-		Folders: []workspaceFolderInput{{Path: b, IsPrimary: true}, {Path: a}},
+		Folders: []workspaceFolderInput{{Path: a, IsPrimary: true}, {Path: b}},
 	}); err == nil {
-		t.Fatal("adding a folder owned by another workspace must fail")
+		t.Fatal("switching the primary folder to another workspace's primary must fail")
+	}
+	if got := len(store.List()); got != 2 {
+		t.Fatalf("rejected saves must not change the store: %d profiles", got)
+	}
+}
+
+func TestVisibleWorkspacesMayShareSecondaryFolders(t *testing.T) {
+	homeDir := setupTestEnv(t)
+	a := mkdirTempProject(t, homeDir, "proj-a")
+	b := mkdirTempProject(t, homeDir, "proj-b")
+	c := mkdirTempProject(t, homeDir, "proj-c")
+
+	store := NewStore("")
+	first, err := store.Create(saveWorkspaceRequest{Folders: []workspaceFolderInput{{Path: a, IsPrimary: true}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.Create(saveWorkspaceRequest{
+		Folders: []workspaceFolderInput{{Path: b, IsPrimary: true}, {Path: a}},
+	})
+	if err != nil {
+		t.Fatalf("a folder that is another workspace's primary may be a secondary folder: %v", err)
+	}
+	third, err := store.Create(saveWorkspaceRequest{
+		Folders: []workspaceFolderInput{{Path: c, IsPrimary: true}, {Path: a}, {Path: b}},
+	})
+	if err != nil {
+		t.Fatalf("secondary folders may be shared by several workspaces: %v", err)
+	}
+	if first.ID == second.ID || second.ID == third.ID {
+		t.Fatal("shared folders must not merge workspaces")
+	}
+	for dir, want := range map[string]string{a: first.ID, b: second.ID, c: third.ID} {
+		if got, _ := store.ProjectIDForDirectory(dir); got != want {
+			t.Fatalf("sessions in %s resolve to %q, want the workspace whose primary it is (%q)", dir, got, want)
+		}
+	}
+	if got := store.ProjectRoots(third.ID); len(got) != 3 {
+		t.Fatalf("third workspace roots = %v", got)
+	}
+}
+
+func TestRemovingWorkspaceKeepsSharedFoldersOfOthers(t *testing.T) {
+	homeDir := setupTestEnv(t)
+	a := mkdirTempProject(t, homeDir, "proj-a")
+	b := mkdirTempProject(t, homeDir, "proj-b")
+	c := mkdirTempProject(t, homeDir, "proj-c")
+
+	store := NewStore("")
+	first, err := store.Create(saveWorkspaceRequest{
+		Folders: []workspaceFolderInput{{Path: a, IsPrimary: true}, {Path: c}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.Create(saveWorkspaceRequest{
+		Folders: []workspaceFolderInput{{Path: b, IsPrimary: true}, {Path: a}, {Path: c}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed, err := store.Remove(second.ID); !removed || err != nil {
+		t.Fatalf("remove = %v, %v", removed, err)
+	}
+	list := store.List()
+	if len(list) != 1 || list[0].ID != first.ID || len(list[0].Folders) != 2 {
+		t.Fatalf("removing one workspace must leave the other intact: %+v", list)
+	}
+	for _, dismissed := range store.ListDismissed() {
+		if dismissed == a || dismissed == c {
+			t.Fatalf("folder %s of a remaining workspace was dismissed", dismissed)
+		}
+	}
+	roots := store.AllProjectRoots()
+	if len(roots) != 2 {
+		t.Fatalf("remaining folders must still be prewarmed: %v", roots)
+	}
+	if got, _ := store.ProjectIDForDirectory(c); got != first.ID {
+		t.Fatalf("shared folder resolves to %q, want %q", got, first.ID)
+	}
+
+	// Removing by a path that is only a secondary folder deletes nothing.
+	if removed, err := store.Remove(c); removed || err != nil {
+		t.Fatalf("remove by secondary path = %v, %v; want no-op", removed, err)
+	}
+	if len(store.List()) != 1 {
+		t.Fatal("removing by a secondary path must not drop the owning workspace")
 	}
 }
 
@@ -509,24 +596,32 @@ func TestCreatingNestedWorkspaceKeepsParentSeparate(t *testing.T) {
 	}
 }
 
-func TestFolderCannotBelongToTwoVisibleWorkspaces(t *testing.T) {
+func TestChildFolderCanBeOwnWorkspaceWhileParentListsIt(t *testing.T) {
 	homeDir := setupTestEnv(t)
 	parent := mkdirTempProject(t, homeDir, "parent")
 	child := mkdirTempProject(t, parent, "client")
 
 	store := NewStore("")
-	if _, err := store.Create(saveWorkspaceRequest{
+	parentWS, err := store.Create(saveWorkspaceRequest{
 		Folders: []workspaceFolderInput{
 			{Path: parent, IsPrimary: true},
 			{Path: child, IsPrimary: false},
 		},
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Create(saveWorkspaceRequest{
+	childWS, err := store.Create(saveWorkspaceRequest{
 		Folders: []workspaceFolderInput{{Path: child, IsPrimary: true}},
-	}); err == nil {
-		t.Fatal("expected the child folder to be rejected while the parent owns it")
+	})
+	if err != nil {
+		t.Fatalf("a secondary folder of one workspace may be another workspace's primary: %v", err)
+	}
+	if got, _ := store.ProjectIDForDirectory(child); got != childWS.ID {
+		t.Fatalf("child directory resolved to %q, want its own workspace %q", got, childWS.ID)
+	}
+	if got, _ := store.ProjectIDForDirectory(parent); got != parentWS.ID {
+		t.Fatalf("parent directory resolved to %q, want %q", got, parentWS.ID)
 	}
 }
 

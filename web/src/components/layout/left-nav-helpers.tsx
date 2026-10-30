@@ -205,11 +205,12 @@ export function buildAllProjects(surface: "code" | "work" = "code"): ProjectNavE
       isInvalidProjectPath(primary) ||
       rejectForSurface(primary) ||
       isDismissedProjectPath(saved.id) ||
-      isDismissedProjectPath(primary) ||
-      secondaryPaths.has(primary)
+      isDismissedProjectPath(primary)
     ) {
       continue;
     }
+    // A saved workspace keeps its own row even when another workspace lists
+    // its primary folder as a secondary folder.
     map.set(primary, {
       workspaceId: saved.id,
       name: saved.name || basename(primary),

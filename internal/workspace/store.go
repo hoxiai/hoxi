@@ -329,8 +329,11 @@ func (s *workspaceStore) ListDismissed() []string {
 	return out
 }
 
-// Remove drops every profile matching an ID or folder path. Each folder
-// leaves a tombstone so re-adding it later reuses the project ID.
+// Remove drops the profile with the given ID or, when no profile has that ID,
+// every profile whose primary folder is the given path. A folder that another
+// remaining workspace still lists is left alone; other folders are dismissed
+// and leave a tombstone so re-adding them later reuses the project ID. The
+// removed profile's primary folder always gets a tombstone.
 func (s *workspaceStore) Remove(idOrPath string) (bool, error) {
 	target := strings.TrimSpace(idOrPath)
 	if target == "" {
@@ -341,30 +344,45 @@ func (s *workspaceStore) Remove(idOrPath string) (bool, error) {
 	defer s.mu.Unlock()
 	prev := s.snapshotLocked()
 
-	next := make([]workspaceProfile, 0, len(s.workspaces))
-	removed := false
-	for _, ws := range s.workspaces {
-		matchPath := false
+	byID := s.indexOfLocked(target) >= 0
+	matches := func(ws workspaceProfile) bool {
+		if byID {
+			return ws.ID == target
+		}
 		for _, f := range ws.Folders {
-			if comparableFolderPath(f.Path) == compTarget {
-				matchPath = true
-				break
+			if f.IsPrimary && comparableFolderPath(f.Path) == compTarget {
+				return true
 			}
 		}
-		if ws.ID == target || matchPath {
-			removed = true
-			s.addDismissedLocked(ws.ID)
-			for _, f := range ws.Folders {
-				s.addDismissedLocked(f.Path)
-				s.addTombstoneLocked(f.Path, ws)
-			}
+		return false
+	}
+	next := make([]workspaceProfile, 0, len(s.workspaces))
+	var dropped []workspaceProfile
+	for _, ws := range s.workspaces {
+		if matches(ws) {
+			dropped = append(dropped, ws)
 			continue
 		}
 		next = append(next, ws)
 	}
-
-	s.addDismissedLocked(target)
 	s.workspaces = next
+
+	for _, ws := range dropped {
+		s.addDismissedLocked(ws.ID)
+		for _, f := range ws.Folders {
+			shared := s.folderOwnedByOtherLocked(comparableFolderPath(f.Path), "")
+			if !shared {
+				s.addDismissedLocked(f.Path)
+			}
+			if !shared || f.IsPrimary {
+				s.addTombstoneLocked(f.Path, ws)
+			}
+		}
+	}
+	if byID || !s.folderOwnedByOtherLocked(compTarget, "") {
+		s.addDismissedLocked(target)
+	}
+	removed := len(dropped) > 0
 	if err := s.commitLocked(prev); err != nil {
 		return false, err
 	}

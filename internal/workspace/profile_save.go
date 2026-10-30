@@ -24,8 +24,8 @@ func (s *workspaceStore) Create(input saveWorkspaceRequest) (workspaceProfile, e
 
 // createLocked saves a new visible profile. A hidden project that already
 // owns one of the folders is promoted (keeping its ID); further hidden owners
-// are merged into it as aliases. A folder owned by another visible workspace
-// is rejected so no folder ever belongs to two projects.
+// are merged into it as aliases. Folders may also belong to other visible
+// workspaces, except that no two visible workspaces share a primary folder.
 func (s *workspaceStore) createLocked(folders []workspaceFolderInput, input saveWorkspaceRequest, replacedPaths ...string) (workspaceProfile, error) {
 	hidden, err := s.hiddenOwnersLocked(folders, "")
 	if err != nil {
@@ -269,22 +269,35 @@ func (s *workspaceStore) folderOwnedByOtherLocked(compPath, selfID string) bool 
 }
 
 // hiddenOwnersLocked returns the IDs of hidden projects that own any of
-// folders, or an error when a visible workspace other than selfID owns one.
+// folders. Visible workspaces may share folders, but the primary folder is
+// the directory sessions are attributed by, so it is rejected when it is
+// already the primary folder of another visible workspace. folders[0] is the
+// primary (validateWorkspaceFolders orders it first).
 func (s *workspaceStore) hiddenOwnersLocked(folders []workspaceFolderInput, selfID string) ([]string, error) {
+	if len(folders) > 0 {
+		primary := comparableFolderPath(folders[0].Path)
+		for _, ws := range s.workspaces {
+			if ws.ID == selfID || ws.Hidden {
+				continue
+			}
+			for _, owned := range ws.Folders {
+				if owned.IsPrimary && comparableFolderPath(owned.Path) == primary {
+					return nil, fmt.Errorf("Folder %s is already the primary folder of workspace %q. Choose another primary folder.", folders[0].Path, ws.Name)
+				}
+			}
+		}
+	}
 	var hidden []string
 	seen := make(map[string]bool)
 	for _, folder := range folders {
 		comp := comparableFolderPath(folder.Path)
 		for _, ws := range s.workspaces {
-			if ws.ID == selfID || seen[ws.ID] {
+			if ws.ID == selfID || seen[ws.ID] || !ws.Hidden {
 				continue
 			}
 			for _, owned := range ws.Folders {
 				if comparableFolderPath(owned.Path) != comp {
 					continue
-				}
-				if !ws.Hidden {
-					return nil, fmt.Errorf("Folder %s already belongs to workspace %q.", folder.Path, ws.Name)
 				}
 				seen[ws.ID] = true
 				hidden = append(hidden, ws.ID)

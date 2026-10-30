@@ -619,7 +619,10 @@ export async function saveWorkspaceProfile(input: SaveWorkspaceInput, existingID
   if (
     savedPrimary &&
     activeRoot !== savedPrimary &&
-    ((previousPrimary && activeRoot === previousPrimary) || removedFolders.has(activeRoot) || savedSecondarySet.has(activeRoot))
+    ((previousPrimary && activeRoot === previousPrimary) ||
+      removedFolders.has(activeRoot) ||
+      // A secondary folder that is another workspace's primary stays where it is.
+      (savedSecondarySet.has(activeRoot) && !otherPrimaryFolders.has(activeRoot)))
   ) {
     await switchWorkspace(savedPrimary, { preferredSessionID: workspace.activeSessionID ?? undefined });
   } else if (savedPrimary && activeRoot === savedPrimary && saved?.id) {
@@ -655,15 +658,26 @@ export async function quickAddFolderToWorkspace(dirOrWorkspaceID: string): Promi
 export async function removeWorkspaceProfile(dirOrWorkspaceID: string): Promise<void> {
   const normInput = normalizeFolderPath(dirOrWorkspaceID);
   const existing = findWorkspaceProfileById(dirOrWorkspaceID) ?? findWorkspaceProfileByDir(dirOrWorkspaceID);
+  // Folders another visible workspace still lists stay untouched: removing
+  // one workspace must not dismiss or hide the folders of another.
+  const sharedFolders = new Set<string>();
+  for (const w of workspace.savedWorkspaces) {
+    if (w.hidden || (existing && w.id === existing.id)) continue;
+    for (const f of w.folders || []) {
+      const nf = normalizeFolderPath(f.path);
+      if (nf) sharedFolders.add(nf);
+    }
+  }
+  const removedPrimary = normalizeFolderPath(workspacePrimaryFolder(existing)) || normInput;
   const removedKeys = new Set<string>();
-  if (dirOrWorkspaceID) removedKeys.add(dirOrWorkspaceID);
-  if (normInput) removedKeys.add(normInput);
+  const addRemovedKey = (key: string) => {
+    if (key && !sharedFolders.has(key)) removedKeys.add(key);
+  };
+  addRemovedKey(dirOrWorkspaceID);
+  addRemovedKey(normInput);
   if (existing) {
     removedKeys.add(existing.id);
-    for (const f of existing.folders) {
-      const nf = normalizeFolderPath(f.path);
-      if (nf) removedKeys.add(nf);
-    }
+    for (const f of existing.folders) addRemovedKey(normalizeFolderPath(f.path));
   }
   for (const p of workspace.projects) {
     const wt = normalizeFolderPath(p.worktree);
@@ -688,7 +702,8 @@ export async function removeWorkspaceProfile(dirOrWorkspaceID: string): Promise<
   const nextOrder = workspace.projectOrder.filter((p) => !removedKeys.has(normalizeFolderPath(p)));
   setWorkspace("projectOrder", nextOrder);
   try { localStorage.setItem(PROJECT_ORDER_KEY, JSON.stringify(nextOrder)); } catch { /* ignore */ }
-  if (removedKeys.has(normalizeFolderPath(workspace.rootDir))) {
+  const activeRoot = normalizeFolderPath(workspace.rootDir);
+  if (removedKeys.has(activeRoot) || (removedPrimary && activeRoot === removedPrimary)) {
     if (surfaceMode() === "work") {
       const nextWork = workspacePrimaryFolder(visibleSavedWorkspaces("work")[0]) || normalizeFolderPath(defaultWorkspaceDir());
       if (nextWork) await switchWorkspace(nextWork, { selectInitial: false });
@@ -698,7 +713,7 @@ export async function removeWorkspaceProfile(dirOrWorkspaceID: string): Promise<
       );
       const nextCandidate =
         workspacePrimaryFolder(remainingSaved[0]) ||
-        nextRecents.find((p) => !removedKeys.has(normalizeFolderPath(p)) && !isWorkSurfacePath(p)) ||
+        nextRecents.find((p) => !removedKeys.has(normalizeFolderPath(p)) && normalizeFolderPath(p) !== removedPrimary && !isWorkSurfacePath(p)) ||
         workspace.projects.find((p) => !removedKeys.has(normalizeFolderPath(p.worktree)) && !isWorkSurfacePath(p.worktree))?.worktree;
       if (nextCandidate) await switchWorkspace(nextCandidate);
     }
