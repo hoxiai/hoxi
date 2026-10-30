@@ -5,6 +5,7 @@ import {
   isDefaultWorkspacePath,
   isDismissedProjectPath,
   isInvalidProjectPath,
+  isWorkSurfacePath,
   normalizeFolderPath,
   normalizeWorkspaceIdentityColor,
   resolveRootSessionID,
@@ -171,17 +172,19 @@ export function basename(p: string): string {
   return parts.length ? parts[parts.length - 1] : p || "workspace";
 }
 
-export function buildAllProjects(): ProjectNavEntry[] {
+export function buildAllProjects(surface: "code" | "work" = "code"): ProjectNavEntry[] {
   const map = new Map<string, ProjectNavEntry>();
   const secondaryPaths = new Set<string>();
-  const savedList = visibleSavedWorkspaces();
+  const savedList = visibleSavedWorkspaces(surface);
+  const rejectForSurface = (p: string) =>
+    surface === "work" ? isDefaultWorkspacePath(p) : isWorkSurfacePath(p);
 
   for (const saved of savedList) {
     const primary = normalizeFolderPath(workspacePrimaryFolder(saved));
     if (
       !primary ||
       isInvalidProjectPath(primary) ||
-      isDefaultWorkspacePath(primary) ||
+      rejectForSurface(primary) ||
       isDismissedProjectPath(saved.id) ||
       isDismissedProjectPath(primary)
     ) {
@@ -200,7 +203,7 @@ export function buildAllProjects(): ProjectNavEntry[] {
     if (
       !primary ||
       isInvalidProjectPath(primary) ||
-      isDefaultWorkspacePath(primary) ||
+      rejectForSurface(primary) ||
       isDismissedProjectPath(saved.id) ||
       isDismissedProjectPath(primary) ||
       secondaryPaths.has(primary)
@@ -219,6 +222,31 @@ export function buildAllProjects(): ProjectNavEntry[] {
     });
   }
 
+  if (surface === "work") {
+    const rootClean = normalizeFolderPath(workspace.rootDir);
+    if (
+      rootClean &&
+      rootClean === stripWorktreePath(rootClean) &&
+      !isInvalidProjectPath(rootClean) &&
+      !isDefaultWorkspacePath(rootClean) &&
+      isWorkSurfacePath(rootClean) &&
+      !isDismissedProjectPath(rootClean) &&
+      !map.has(rootClean) &&
+      !secondaryPaths.has(rootClean)
+    ) {
+      map.set(rootClean, {
+        name: basename(rootClean),
+        path: rootClean,
+        color: DEFAULT_WORKSPACE_IDENTITY_COLOR,
+        folders: [{ path: rootClean, isPrimary: true }],
+        sandboxes: 0,
+        vcs: true,
+        isPinned: true,
+      });
+    }
+    return Array.from(map.values());
+  }
+
   for (const p of workspace.projects) {
     const wt = normalizeFolderPath(p.worktree);
     const strippedWt = stripWorktreePath(wt);
@@ -226,7 +254,7 @@ export function buildAllProjects(): ProjectNavEntry[] {
       !wt ||
       wt !== strippedWt ||
       isInvalidProjectPath(wt) ||
-      isDefaultWorkspacePath(wt) ||
+      isWorkSurfacePath(wt) ||
       isDismissedProjectPath(wt) ||
       secondaryPaths.has(wt)
     ) {
@@ -270,7 +298,7 @@ export function buildAllProjects(): ProjectNavEntry[] {
       !clean ||
       clean !== stripWorktreePath(clean) ||
       isInvalidProjectPath(clean) ||
-      isDefaultWorkspacePath(clean) ||
+      isWorkSurfacePath(clean) ||
       isDismissedProjectPath(clean) ||
       map.has(clean) ||
       secondaryPaths.has(clean)
@@ -293,7 +321,7 @@ export function buildAllProjects(): ProjectNavEntry[] {
     rootClean &&
     rootClean === stripWorktreePath(rootClean) &&
     !isInvalidProjectPath(rootClean) &&
-    !isDefaultWorkspacePath(rootClean) &&
+    !isWorkSurfacePath(rootClean) &&
     !isDismissedProjectPath(rootClean) &&
     !map.has(rootClean) &&
     !secondaryPaths.has(rootClean)

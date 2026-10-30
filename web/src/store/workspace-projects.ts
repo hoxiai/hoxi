@@ -13,9 +13,12 @@ import { loadSessionMessagesOnly, reconcileSessionsInPlace, selectSession } from
 import type { SessionInfo } from "../services/sse-types";
 import { isSessionArchived, isSessionBusy, isSessionDeleted } from "./session-query";
 import {
-  findWorkspaceProfileByDir, findWorkspaceProfileById, isDefaultWorkspacePath,
-  isDismissedProjectPath, isInvalidProjectPath, normalizeFolderPath, recordDismissedProject,
-  resolveDefaultProjectDir, stripWorktreePath, unrecordDismissedProject,
+  findWorkspaceProfileByDir, findWorkspaceProfileById, getActiveWorkWorkspaceDir,
+  getRememberedCodeSurface, getRememberedWorkSurface, isDismissedProjectPath,
+  isInvalidProjectPath, isWorkSurfacePath, normalizeFolderPath, pruneWorkPathsFromCodeState,
+  recordDismissedProject, recordWorkWorkspaceDir, resolveDefaultProjectDir,
+  setRememberedCodeSurface, setRememberedWorkSurface, stripWorktreePath,
+  unrecordDismissedProject, unrecordWorkWorkspaceDir, visibleSavedWorkspaces,
   workspaceFoldersForDir, workspacePrimaryFolder,
 } from "./workspace-folders";
 import { defaultWorkspaceDir, setDefaultWorkspaceDir, setSurfaceMode, surfaceMode, type SurfaceMode } from "./layout";
@@ -29,59 +32,6 @@ let appliedProjectSessionRevision = 0;
 let projectResolutionRevision = 0;
 const lastBootstrappedAtByDir = new Map<string, number>();
 
-const REMEMBERED_CODE_SURFACE_KEY = "hoxi:remembered-code-surface";
-
-function readRememberedCodeSurface(): { rootDir: string; sessionID: string | null } {
-  try {
-    const raw = localStorage.getItem(REMEMBERED_CODE_SURFACE_KEY);
-    if (!raw) return { rootDir: "", sessionID: null };
-    const parsed = JSON.parse(raw);
-    const rootDir = normalizeFolderPath(parsed?.rootDir);
-    if (rootDir && !isInvalidProjectPath(rootDir) && !isDefaultWorkspacePath(rootDir)) {
-      return {
-        rootDir,
-        sessionID: typeof parsed?.sessionID === "string" ? parsed.sessionID : null,
-      };
-    }
-  } catch {
-    /* ignore */
-  }
-  return { rootDir: "", sessionID: null };
-}
-
-function writeRememberedCodeSurface(state: { rootDir: string; sessionID: string | null }): void {
-  try {
-    localStorage.setItem(REMEMBERED_CODE_SURFACE_KEY, JSON.stringify(state));
-  } catch {
-    /* ignore */
-  }
-}
-
-let rememberedCodeSurface: { rootDir: string; sessionID: string | null; cachedSessions?: SessionInfo[] } =
-  readRememberedCodeSurface();
-let rememberedWorkSurface: { rootDir: string; sessionID: string | null; cachedSessions?: SessionInfo[] } = {
-  rootDir: "",
-  sessionID: null,
-};
-
-export function getInitialCodeProjectDir(): string {
-  return normalizeFolderPath(rememberedCodeSurface.rootDir || resolveDefaultProjectDir(""));
-}
-
-export function setRememberedCodeSurface(rootDir: string, sessionID: string | null = null): void {
-  const clean = normalizeFolderPath(rootDir);
-  if (clean && !isInvalidProjectPath(clean) && !isDefaultWorkspacePath(clean)) {
-    const sameDir = rememberedCodeSurface.rootDir === clean;
-    const preservedSessionID = sessionID ?? (sameDir ? rememberedCodeSurface.sessionID : null);
-    rememberedCodeSurface = {
-      rootDir: clean,
-      sessionID: preservedSessionID,
-      cachedSessions: sameDir ? rememberedCodeSurface.cachedSessions : undefined,
-    };
-    writeRememberedCodeSurface({ rootDir: clean, sessionID: preservedSessionID });
-  }
-}
-
 export async function activateSurfaceMode(nextMode: SurfaceMode): Promise<void> {
   const prevMode = surfaceMode();
   const currentRoot = normalizeFolderPath(workspace.rootDir);
@@ -89,33 +39,24 @@ export async function activateSurfaceMode(nextMode: SurfaceMode): Promise<void> 
 
   if (
     prevMode === nextMode &&
-    ((nextMode === "work" && currentRoot && isDefaultWorkspacePath(currentRoot)) ||
-      (nextMode === "code" && currentRoot && !isDefaultWorkspacePath(currentRoot)))
+    ((nextMode === "work" && currentRoot && isWorkSurfacePath(currentRoot)) ||
+      (nextMode === "code" && currentRoot && !isWorkSurfacePath(currentRoot)))
   ) {
     return;
   }
 
-  if (prevMode === "code" && currentRoot && !isDefaultWorkspacePath(currentRoot)) {
-    rememberedCodeSurface = {
-      rootDir: currentRoot,
-      sessionID: currentSessionID,
-      cachedSessions: workspace.sessions.slice(),
-    };
-    writeRememberedCodeSurface({ rootDir: currentRoot, sessionID: currentSessionID });
-  } else if (prevMode === "work" && currentRoot && isDefaultWorkspacePath(currentRoot)) {
+  if (prevMode === "code" && currentRoot && !isWorkSurfacePath(currentRoot)) {
+    setRememberedCodeSurface(currentRoot, currentSessionID, workspace.sessions.slice());
+  } else if (prevMode === "work" && currentRoot && isWorkSurfacePath(currentRoot)) {
     const validWorkSessionID =
       currentSessionID && workspace.sessions.some((s) => s.id === currentSessionID)
         ? currentSessionID
         : null;
-    rememberedWorkSurface = {
-      rootDir: currentRoot,
-      sessionID: validWorkSessionID,
-      cachedSessions: workspace.sessions.slice(),
-    };
+    setRememberedWorkSurface(currentRoot, validWorkSessionID, workspace.sessions.slice());
   }
 
   if (nextMode === "work") {
-    let workDir = normalizeFolderPath(defaultWorkspaceDir());
+    let workDir = getActiveWorkWorkspaceDir();
     if (!workDir) {
       try {
         const boot = await hoxiAPI.getBootstrap();
@@ -128,16 +69,17 @@ export async function activateSurfaceMode(nextMode: SurfaceMode): Promise<void> 
       }
     }
     if (workDir) {
+      const remWork = getRememberedWorkSurface();
       let switchPromise: Promise<void> | undefined;
       batch(() => {
         setSurfaceMode("work");
         switchPromise = switchWorkspace(workDir, {
-          targetSessionID: rememberedWorkSurface.sessionID ?? undefined,
+          targetSessionID: remWork.rootDir === workDir ? remWork.sessionID ?? undefined : undefined,
           selectInitial: false,
           fastSurfaceSwitch: true,
           cachedSessions:
-            rememberedWorkSurface.rootDir === workDir
-              ? rememberedWorkSurface.cachedSessions
+            remWork.rootDir === workDir && remWork.cachedSessions
+              ? remWork.cachedSessions
               : getCachedProjectSessions(workDir),
         });
       });
@@ -152,10 +94,9 @@ export async function activateSurfaceMode(nextMode: SurfaceMode): Promise<void> 
     if (workspace.savedWorkspaces.length === 0 && workspace.projects.length === 0) {
       void Promise.all([loadSavedWorkspaces(), loadProjects()]);
     }
-    const codeDir = normalizeFolderPath(
-      rememberedCodeSurface.rootDir || resolveDefaultProjectDir("")
-    );
-    if (codeDir && !isDefaultWorkspacePath(codeDir)) {
+    const remCode = getRememberedCodeSurface();
+    const codeDir = normalizeFolderPath(remCode.rootDir || resolveDefaultProjectDir(""));
+    if (codeDir && !isWorkSurfacePath(codeDir)) {
       let switchPromise: Promise<void> | undefined;
       batch(() => {
         if (workspace.sidebarProjectMode === "attention" || workspace.sidebarProjectMode === "running") {
@@ -163,12 +104,12 @@ export async function activateSurfaceMode(nextMode: SurfaceMode): Promise<void> 
         }
         setSurfaceMode("code");
         switchPromise = switchWorkspace(codeDir, {
-          targetSessionID: rememberedCodeSurface.sessionID ?? undefined,
-          selectInitial: !rememberedCodeSurface.sessionID,
+          targetSessionID: remCode.sessionID ?? undefined,
+          selectInitial: !remCode.sessionID,
           fastSurfaceSwitch: true,
           cachedSessions:
-            rememberedCodeSurface.rootDir === codeDir && rememberedCodeSurface.cachedSessions
-              ? rememberedCodeSurface.cachedSessions
+            remCode.rootDir === codeDir && remCode.cachedSessions
+              ? remCode.cachedSessions
               : getCachedProjectSessions(codeDir),
         });
       });
@@ -189,6 +130,7 @@ export async function loadSavedWorkspaces(): Promise<void> {
     if (Array.isArray(res?.dismissed)) {
       for (const d of res.dismissed) recordDismissedProject(d);
     }
+    pruneWorkPathsFromCodeState();
   } catch (err) {
     console.error("Failed to load saved workspaces:", err);
   }
@@ -198,7 +140,7 @@ export async function loadProjects(): Promise<void> {
   try {
     const remote = await hoxiAPI.listProjects();
     const list = (Array.isArray(remote) ? remote : []).filter(
-      (p) => !isInvalidProjectPath(p.worktree) && !isDismissedProjectPath(p.worktree) && !isDefaultWorkspacePath(p.worktree)
+      (p) => !isInvalidProjectPath(p.worktree) && !isDismissedProjectPath(p.worktree) && !isWorkSurfacePath(p.worktree)
     );
     setWorkspace("projects", list);
   } catch (err) {
@@ -208,9 +150,9 @@ export async function loadProjects(): Promise<void> {
 
 export function recordRecentProject(directory: string) {
   const cleaned = normalizeFolderPath(directory);
-  if (!cleaned || isInvalidProjectPath(cleaned) || isDefaultWorkspacePath(cleaned)) return;
+  if (!cleaned || isInvalidProjectPath(cleaned) || isWorkSurfacePath(cleaned) || surfaceMode() === "work") return;
   const recents = workspace.recentProjects.filter(
-    (p) => normalizeFolderPath(p) !== cleaned && !isInvalidProjectPath(p) && !isDefaultWorkspacePath(p)
+    (p) => normalizeFolderPath(p) !== cleaned && !isInvalidProjectPath(p) && !isWorkSurfacePath(p)
   );
   const updatedRecents = [cleaned, ...recents].slice(0, 20);
   setWorkspace("recentProjects", updatedRecents);
@@ -436,8 +378,10 @@ export async function switchWorkspace(
     }
   }
 
-  recordRecentProject(cleaned);
-  if (!isDefaultWorkspacePath(cleaned)) {
+  if (surfaceMode() === "work" || isWorkSurfacePath(cleaned)) {
+    setRememberedWorkSurface(cleaned, targetSessionID);
+  } else {
+    recordRecentProject(cleaned);
     setRememberedCodeSurface(cleaned, targetSessionID);
   }
 
@@ -554,9 +498,12 @@ export async function saveWorkspaceProfile(input: SaveWorkspaceInput, existingID
   const previousPrimary = normalizeFolderPath(
     workspacePrimaryFolder(previous) || (cleanExistingID ? workspace.editingWorkspaceDir || (isPathLikeID(cleanExistingID) ? cleanExistingID : "") : "")
   );
+  const targetSurface: "code" | "work" =
+    input.surface || previous?.surface || (surfaceMode() === "work" ? "work" : "code");
   const normalizedInput: SaveWorkspaceInput = previous
     ? {
         ...input,
+        surface: targetSurface,
         folders: input.folders.map((f, idx, all) => {
           if (f.id) return f;
           if (idx === 0 && all.length === 1 && previous.folders.length === 1) return { ...f, id: previous.folders[0].id };
@@ -564,11 +511,12 @@ export async function saveWorkspaceProfile(input: SaveWorkspaceInput, existingID
           return byPath?.id ? { ...f, id: byPath.id } : f;
         }),
       }
-    : input;
+    : { ...input, surface: targetSurface };
 
   const saved = cleanExistingID
     ? await hoxiAPI.updateWorkspace(previous?.id || cleanExistingID, normalizedInput)
     : await hoxiAPI.createWorkspace(normalizedInput);
+  if (!saved.surface) saved.surface = targetSurface;
 
   const savedFolderSet = new Set((saved.folders || []).map((f) => normalizeFolderPath(f.path)).filter(Boolean));
   const savedPrimary = normalizeFolderPath(workspacePrimaryFolder(saved));
@@ -637,24 +585,31 @@ export async function saveWorkspaceProfile(input: SaveWorkspaceInput, existingID
     try { localStorage.setItem(RECENT_PROJECTS_KEY, JSON.stringify(nextRecents)); } catch { /* ignore */ }
   }
 
-  const currentOrder = workspace.projectOrder.slice();
-  if (previousPrimary && savedPrimary && previousPrimary !== savedPrimary) {
-    const prevIdx = currentOrder.findIndex((p) => normalizeFolderPath(p) === previousPrimary);
-    if (prevIdx >= 0) currentOrder[prevIdx] = savedPrimary;
-    if (rememberedCodeSurface.rootDir === previousPrimary || removedFolders.has(rememberedCodeSurface.rootDir)) {
-      setRememberedCodeSurface(savedPrimary, null);
+  if (targetSurface === "work") {
+    for (const f of saved.folders || []) recordWorkWorkspaceDir(f.path);
+    pruneWorkPathsFromCodeState();
+    if (savedPrimary) setRememberedWorkSurface(savedPrimary, workspace.activeSessionID);
+  } else {
+    for (const f of saved.folders || []) unrecordWorkWorkspaceDir(f.path);
+    const currentOrder = workspace.projectOrder.slice();
+    const remCode = getRememberedCodeSurface();
+    if (previousPrimary && savedPrimary && previousPrimary !== savedPrimary) {
+      const prevIdx = currentOrder.findIndex((p) => normalizeFolderPath(p) === previousPrimary);
+      if (prevIdx >= 0) currentOrder[prevIdx] = savedPrimary;
+      if (remCode.rootDir === previousPrimary || removedFolders.has(remCode.rootDir)) {
+        setRememberedCodeSurface(savedPrimary, null);
+      }
     }
+    if ((previousPrimary && savedPrimary && previousPrimary !== savedPrimary) || removedFolders.size > 0 || hiddenSecondary.size > 0) {
+      setProjectOrder(
+        currentOrder.filter((p) => {
+          const norm = normalizeFolderPath(p);
+          return norm === savedPrimary || (!removedFolders.has(norm) && !hiddenSecondary.has(norm));
+        })
+      );
+    }
+    if (savedPrimary) recordRecentProject(savedPrimary);
   }
-  if ((previousPrimary && savedPrimary && previousPrimary !== savedPrimary) || removedFolders.size > 0 || hiddenSecondary.size > 0) {
-    setProjectOrder(
-      currentOrder.filter((p) => {
-        const norm = normalizeFolderPath(p);
-        return norm === savedPrimary || (!removedFolders.has(norm) && !hiddenSecondary.has(norm));
-      })
-    );
-  }
-
-  if (savedPrimary) recordRecentProject(savedPrimary);
   if (saved?.id) {
     unrecordDismissedProject(saved.id);
     for (const f of saved.folders || []) unrecordDismissedProject(f.path);
@@ -714,7 +669,10 @@ export async function removeWorkspaceProfile(dirOrWorkspaceID: string): Promise<
     const wt = normalizeFolderPath(p.worktree);
     if (wt && (p.sandboxes || []).some((s) => removedKeys.has(stripWorktreePath(s)))) removedKeys.add(wt);
   }
-  for (const k of removedKeys) recordDismissedProject(k);
+  for (const k of removedKeys) {
+    recordDismissedProject(k);
+    unrecordWorkWorkspaceDir(k);
+  }
   try {
     await hoxiAPI.deleteWorkspace(existing?.id || normInput || dirOrWorkspaceID);
   } catch (err) {
@@ -731,14 +689,19 @@ export async function removeWorkspaceProfile(dirOrWorkspaceID: string): Promise<
   setWorkspace("projectOrder", nextOrder);
   try { localStorage.setItem(PROJECT_ORDER_KEY, JSON.stringify(nextOrder)); } catch { /* ignore */ }
   if (removedKeys.has(normalizeFolderPath(workspace.rootDir))) {
-    const remainingSaved = workspace.savedWorkspaces.filter(
-      (w) => !removedKeys.has(w.id) && !w.folders.some((f) => removedKeys.has(normalizeFolderPath(f.path)))
-    );
-    const nextCandidate =
-      workspacePrimaryFolder(remainingSaved[0]) ||
-      nextRecents.find((p) => !removedKeys.has(normalizeFolderPath(p))) ||
-      workspace.projects.find((p) => !removedKeys.has(normalizeFolderPath(p.worktree)))?.worktree;
-    if (nextCandidate) await switchWorkspace(nextCandidate);
+    if (surfaceMode() === "work") {
+      const nextWork = workspacePrimaryFolder(visibleSavedWorkspaces("work")[0]) || normalizeFolderPath(defaultWorkspaceDir());
+      if (nextWork) await switchWorkspace(nextWork, { selectInitial: false });
+    } else {
+      const remainingSaved = visibleSavedWorkspaces("code").filter(
+        (w) => !removedKeys.has(w.id) && !w.folders.some((f) => removedKeys.has(normalizeFolderPath(f.path)))
+      );
+      const nextCandidate =
+        workspacePrimaryFolder(remainingSaved[0]) ||
+        nextRecents.find((p) => !removedKeys.has(normalizeFolderPath(p)) && !isWorkSurfacePath(p)) ||
+        workspace.projects.find((p) => !removedKeys.has(normalizeFolderPath(p.worktree)) && !isWorkSurfacePath(p.worktree))?.worktree;
+      if (nextCandidate) await switchWorkspace(nextCandidate);
+    }
   }
 }
 

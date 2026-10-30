@@ -11,6 +11,7 @@ import {
   healTransientSidebarProjectMode,
   isDefaultWorkspacePath,
   isInvalidProjectPath,
+  isWorkSurfacePath,
   startNewThreadDraft,
   normalizeFolderPath,
   openCreateWorkspaceModal,
@@ -84,7 +85,7 @@ export default function LeftNav() {
   // Expanded projects set (by path) for Multi-Project mode
   const [expandedProjects, setExpandedProjects] = createSignal<Set<string>>(
     new Set(
-      workspace.rootDir && !isInvalidProjectPath(workspace.rootDir) && !isDefaultWorkspacePath(workspace.rootDir)
+      workspace.rootDir && !isInvalidProjectPath(workspace.rootDir) && !isWorkSurfacePath(workspace.rootDir)
         ? [normalizeFolderPath(workspace.rootDir)]
         : []
     )
@@ -100,9 +101,9 @@ export default function LeftNav() {
   createEffect(() => {
     if (isWorkSurface()) return;
     const root = normalizeFolderPath(workspace.rootDir);
-    if (!root || isDefaultWorkspacePath(root)) {
+    if (!root || isWorkSurfacePath(root)) {
       const fallbackCodeDir = normalizeFolderPath(resolveDefaultProjectDir(""));
-      if (fallbackCodeDir && !isDefaultWorkspacePath(fallbackCodeDir)) {
+      if (fallbackCodeDir && !isWorkSurfacePath(fallbackCodeDir)) {
         void switchWorkspace(fallbackCodeDir, { selectInitial: true });
       }
     }
@@ -113,12 +114,12 @@ export default function LeftNav() {
     void workspace.sessions.length;
     void workspace.bootstrappingSessions;
     void workspace.activeProjectID;
-    if (root && !isInvalidProjectPath(root) && !isDefaultWorkspacePath(root)) {
+    if (root && !isInvalidProjectPath(root) && !isWorkSurfacePath(root)) {
       setExpandedProjects((prev) => (prev.has(root) ? prev : new Set([...prev, root])));
       sessionLists.syncActive(root);
     } else {
       const codeDir = getInitialCodeProjectDir();
-      if (codeDir && !isInvalidProjectPath(codeDir) && !isDefaultWorkspacePath(codeDir)) {
+      if (codeDir && !isInvalidProjectPath(codeDir) && !isWorkSurfacePath(codeDir)) {
         setExpandedProjects((prev) => (prev.has(codeDir) ? prev : new Set([...prev, codeDir])));
       }
     }

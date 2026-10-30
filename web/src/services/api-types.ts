@@ -137,6 +137,7 @@ export interface WorkspaceProfile {
   id: string;
   name: string;
   color: string;
+  surface?: "code" | "work";
   folders: WorkspaceFolder[];
   hidden?: boolean;
   aliases?: string[];
@@ -153,6 +154,7 @@ export interface ProjectResolveResponse {
 export interface SaveWorkspaceInput {
   name?: string;
   color?: string;
+  surface?: "code" | "work";
   folders: WorkspaceFolderInput[];
 }
 

@@ -25,6 +25,10 @@ type projectEnumerator interface {
 	AllProjectRoots() []string
 }
 
+type surfaceProjectResolver interface {
+	EnsureProjectForDirectoryWithSurface(directory, surface string) (string, error)
+}
+
 // SetProjectResolver wires project attribution and backfills legacy sessions
 // that predate stable project IDs. It is safe to call more than once.
 func (s *Service) SetProjectResolver(resolver ProjectResolver) {
@@ -47,8 +51,15 @@ func (s *Service) projectIDForDirectory(directory string) (string, bool) {
 }
 
 func (s *Service) ensureProjectID(directory string) (string, error) {
+	return s.ensureProjectIDWithSurface(directory, "")
+}
+
+func (s *Service) ensureProjectIDWithSurface(directory, surface string) (string, error) {
 	if s.projectResolver == nil || strings.TrimSpace(directory) == "" {
 		return "", nil
+	}
+	if sr, ok := s.projectResolver.(surfaceProjectResolver); ok {
+		return sr.EnsureProjectForDirectoryWithSurface(directory, surface)
 	}
 	return s.projectResolver.EnsureProjectForDirectory(directory)
 }
@@ -68,6 +79,9 @@ func (s *Service) backfillProjectIDs() {
 			continue
 		}
 		if current := strings.TrimSpace(rec.ProjectID); current != "" {
+			if rec.Surface == "work" {
+				_, _ = s.ensureProjectIDWithSurface(rec.ProjectDir, rec.Surface)
+			}
 			if canonicalizer == nil {
 				continue
 			}
@@ -76,7 +90,7 @@ func (s *Service) backfillProjectIDs() {
 			}
 			continue
 		}
-		projectID, err := s.projectResolver.EnsureProjectForDirectory(rec.ProjectDir)
+		projectID, err := s.ensureProjectIDWithSurface(rec.ProjectDir, rec.Surface)
 		if err != nil || projectID == "" {
 			continue
 		}

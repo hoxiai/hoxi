@@ -4,7 +4,13 @@
 // session lives; this index survives project switches and transcript eviction.
 import type { SessionInfo } from "../services/sse-types";
 import { setWorkspace, workspace, type SessionIndexEntry } from "./workspace-state";
-import { findWorkspaceProfileByDir, isDefaultWorkspacePath, normalizeFolderPath, stripWorktreePath } from "./workspace-folders";
+import {
+  findWorkspaceProfileByDir,
+  isWorkSurfacePath,
+  normalizeFolderPath,
+  recordWorkWorkspaceDir,
+  stripWorktreePath,
+} from "./workspace-folders";
 
 function entryFrom(info: SessionInfo, previous?: SessionIndexEntry): SessionIndexEntry | null {
   const directory = (info.directory || "").trim() || previous?.directory;
@@ -35,6 +41,12 @@ export function indexSession(info: SessionInfo | undefined | null): void {
     return;
   }
   setWorkspace("sessionIndex", info.id, entry);
+  if (entry.surface === "work" && entry.directory) {
+    const owner = findWorkspaceProfileByDir(entry.directory);
+    if (owner?.surface !== "code") {
+      recordWorkWorkspaceDir(entry.directory);
+    }
+  }
 }
 
 export function indexSessions(list: SessionInfo[] | undefined | null): void {
@@ -56,7 +68,7 @@ export function resolveSessionSurface(
     info?.directory ||
     indexed?.directory ||
     (info?.id ? workspace.worktreeBySession[info.id]?.directory : "");
-  return isDefaultWorkspacePath(dir) ? "work" : "code";
+  return isWorkSurfacePath(dir) ? "work" : "code";
 }
 
 /** Stable attribution wins; legacy sessions fall back to exact roots or Hoxi worktrees. */
@@ -68,7 +80,7 @@ export function sessionBelongsToProject(
 ): boolean {
   const root = normalizeFolderPath(directory);
   if (!root) return false;
-  const rootIsWork = isDefaultWorkspacePath(root);
+  const rootIsWork = isWorkSurfacePath(root);
   const expectedSurface: "code" | "work" = rootIsWork ? "work" : "code";
   if (resolveSessionSurface(info) !== expectedSurface) {
     return false;
@@ -77,7 +89,7 @@ export function sessionBelongsToProject(
   const indexed = indexedSession(info.id);
   const sessionDir = normalizeFolderPath(info.directory || indexed?.directory ||
     workspace.worktreeBySession[info.id]?.directory);
-  if (sessionDir && isDefaultWorkspacePath(sessionDir) !== rootIsWork) {
+  if (sessionDir && isWorkSurfacePath(sessionDir) !== rootIsWork) {
     return false;
   }
   const ownerID = info.projectID || indexed?.projectID;

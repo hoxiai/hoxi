@@ -1,9 +1,17 @@
 // web/src/store/workspace-folders.ts
 // Workspace profile / folder path queries and dismissed-project bookkeeping.
 // Leaf module: depends only on workspace-state.
+import { createSignal } from "solid-js";
 import type { WorkspaceFolder, WorkspaceProfile } from "../services/api";
+import type { SessionInfo } from "../services/sse-types";
 import { defaultWorkspaceDir } from "./layout";
-import { DISMISSED_PROJECTS_KEY, setWorkspace, workspace } from "./workspace-state";
+import {
+  DISMISSED_PROJECTS_KEY,
+  PROJECT_ORDER_KEY,
+  RECENT_PROJECTS_KEY,
+  setWorkspace,
+  workspace,
+} from "./workspace-state";
 
 // Directly borrowed from Kilo Desktop: plugins/kilo-ui/src/contracts/workspaces/identity-color.ts
 export const WORKSPACE_IDENTITY_COLORS = ["#5EA0F7", "#34D399", "#F87171", "#A78BFA", "#22D3EE", "#FBBF24"] as const;
@@ -96,6 +104,44 @@ export function isInvalidProjectPath(p?: string | null): boolean {
 }
 
 const DEFAULT_WORKSPACE_PATH_RE = /(?:^|[\\/])\.hoxi[\\/]workspaces[\\/]default(?:$|[\\/])/i;
+const WORK_STORAGE_PATH_RE = /(?:^|[\\/])\.hoxi[\\/]workspaces(?:$|[\\/])/i;
+export const WORK_WORKSPACE_DIRS_KEY = "hoxi:work-workspace-dirs";
+const REMEMBERED_CODE_SURFACE_KEY = "hoxi:remembered-code-surface";
+const REMEMBERED_WORK_SURFACE_KEY = "hoxi:remembered-work-surface";
+
+function initialWorkWorkspaceDirs(): string[] {
+  try {
+    const raw = localStorage.getItem(WORK_WORKSPACE_DIRS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return Array.from(new Set(parsed.map((p) => stripWorktreePath(String(p))).filter(Boolean)));
+    }
+  } catch { /* ignore */ }
+  return [];
+}
+
+const [workWorkspaceDirs, setWorkWorkspaceDirs] = createSignal<string[]>(initialWorkWorkspaceDirs());
+
+export function recordWorkWorkspaceDir(pathOrDir?: string | null): void {
+  const norm = stripWorktreePath(pathOrDir);
+  if (!norm || isInvalidProjectPath(norm) || isDefaultWorkspacePath(norm)) return;
+  const current = workWorkspaceDirs();
+  if (current.includes(norm)) return;
+  const next = [...current, norm];
+  setWorkWorkspaceDirs(next);
+  try { localStorage.setItem(WORK_WORKSPACE_DIRS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+}
+
+export function unrecordWorkWorkspaceDir(pathOrDir?: string | null): void {
+  const norm = stripWorktreePath(pathOrDir);
+  if (!norm) return;
+  const current = workWorkspaceDirs();
+  if (!current.includes(norm)) return;
+  const next = current.filter((item) => item !== norm);
+  setWorkWorkspaceDirs(next);
+  try { localStorage.setItem(WORK_WORKSPACE_DIRS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+}
 
 export function isDefaultWorkspacePath(p?: string | null): boolean {
   const norm = stripWorktreePath(p);
@@ -105,31 +151,181 @@ export function isDefaultWorkspacePath(p?: string | null): boolean {
   return Boolean(def && norm === def);
 }
 
-/** Saved workspaces the user can see: excludes auto-registered hidden projects and dismissed ones. */
-export function visibleSavedWorkspaces(): WorkspaceProfile[] {
-  return workspace.savedWorkspaces.filter((saved) => !saved.hidden && !isDismissedProjectPath(saved.id));
+export function isWorkSurfacePath(p?: string | null): boolean {
+  const norm = stripWorktreePath(p);
+  if (!norm) return false;
+  if (isDefaultWorkspacePath(norm) || WORK_STORAGE_PATH_RE.test(norm)) return true;
+  const visible = workspace.savedWorkspaces.filter((w) => !w.hidden && !isDismissedProjectPath(w.id));
+  const matchIn = (list: WorkspaceProfile[]) =>
+    list.find((w) => w.folders.some((f) => f.isPrimary && normalizeFolderPath(f.path) === norm)) ??
+    list.find((w) => w.folders.some((f) => normalizeFolderPath(f.path) === norm));
+  const visOwner = matchIn(visible);
+  if (visOwner?.surface === "work") return true;
+  if (visOwner?.surface === "code") return false;
+  const anyOwner = matchIn(workspace.savedWorkspaces);
+  if (anyOwner?.surface === "work") return true;
+  if (anyOwner?.surface === "code") return false;
+  if (workWorkspaceDirs().includes(norm)) return true;
+  let hasWorkSession = false;
+  for (const entry of Object.values(workspace.sessionIndex)) {
+    if (!entry?.directory || stripWorktreePath(entry.directory) !== norm) continue;
+    if (entry.surface === "code") return false;
+    if (entry.surface === "work") hasWorkSession = true;
+  }
+  return hasWorkSession;
+}
+
+export interface RememberedSurfaceState {
+  rootDir: string;
+  sessionID: string | null;
+  cachedSessions?: SessionInfo[];
+}
+
+function readRememberedSurface(storageKey: string, expectWork: boolean): RememberedSurfaceState {
+  try {
+    const raw = localStorage.getItem(storageKey);
+    if (!raw) return { rootDir: "", sessionID: null };
+    const parsed = JSON.parse(raw);
+    const rootDir = normalizeFolderPath(parsed?.rootDir);
+    if (
+      rootDir &&
+      !isInvalidProjectPath(rootDir) &&
+      (expectWork ? true : !isWorkSurfacePath(rootDir))
+    ) {
+      return {
+        rootDir,
+        sessionID: typeof parsed?.sessionID === "string" ? parsed.sessionID : null,
+      };
+    }
+  } catch { /* ignore */ }
+  return { rootDir: "", sessionID: null };
+}
+
+function writeRememberedSurface(storageKey: string, state: { rootDir: string; sessionID: string | null }): void {
+  try { localStorage.setItem(storageKey, JSON.stringify(state)); } catch { /* ignore */ }
+}
+
+let rememberedCodeSurface: RememberedSurfaceState = readRememberedSurface(REMEMBERED_CODE_SURFACE_KEY, false);
+let rememberedWorkSurface: RememberedSurfaceState = readRememberedSurface(REMEMBERED_WORK_SURFACE_KEY, true);
+
+export function getRememberedCodeSurface(): RememberedSurfaceState {
+  if (rememberedCodeSurface.rootDir && isWorkSurfacePath(rememberedCodeSurface.rootDir)) {
+    rememberedCodeSurface = { rootDir: "", sessionID: null };
+    writeRememberedSurface(REMEMBERED_CODE_SURFACE_KEY, { rootDir: "", sessionID: null });
+  }
+  return rememberedCodeSurface;
+}
+
+export function setRememberedCodeSurface(
+  rootDir: string,
+  sessionID: string | null = null,
+  cachedSessions?: SessionInfo[]
+): void {
+  const clean = normalizeFolderPath(rootDir);
+  if (clean && !isInvalidProjectPath(clean) && !isWorkSurfacePath(clean)) {
+    const sameDir = rememberedCodeSurface.rootDir === clean;
+    const preservedSessionID = sessionID ?? (sameDir ? rememberedCodeSurface.sessionID : null);
+    rememberedCodeSurface = {
+      rootDir: clean,
+      sessionID: preservedSessionID,
+      cachedSessions: cachedSessions ?? (sameDir ? rememberedCodeSurface.cachedSessions : undefined),
+    };
+    writeRememberedSurface(REMEMBERED_CODE_SURFACE_KEY, { rootDir: clean, sessionID: preservedSessionID });
+  }
+}
+
+export function getRememberedWorkSurface(): RememberedSurfaceState {
+  return rememberedWorkSurface;
+}
+
+export function setRememberedWorkSurface(
+  rootDir: string,
+  sessionID: string | null = null,
+  cachedSessions?: SessionInfo[]
+): void {
+  const clean = normalizeFolderPath(rootDir);
+  if (clean && !isInvalidProjectPath(clean)) {
+    recordWorkWorkspaceDir(clean);
+    const sameDir = rememberedWorkSurface.rootDir === clean;
+    const preservedSessionID = sessionID ?? (sameDir ? rememberedWorkSurface.sessionID : null);
+    rememberedWorkSurface = {
+      rootDir: clean,
+      sessionID: preservedSessionID,
+      cachedSessions: cachedSessions ?? (sameDir ? rememberedWorkSurface.cachedSessions : undefined),
+    };
+    writeRememberedSurface(REMEMBERED_WORK_SURFACE_KEY, { rootDir: clean, sessionID: preservedSessionID });
+  }
+}
+
+export function getActiveWorkWorkspaceDir(): string {
+  const rem = normalizeFolderPath(rememberedWorkSurface.rootDir);
+  if (rem && !isInvalidProjectPath(rem) && !isDismissedProjectPath(rem) && isWorkSurfacePath(rem)) {
+    return rem;
+  }
+  const firstSaved = visibleSavedWorkspaces("work")[0];
+  const savedPrimary = normalizeFolderPath(workspacePrimaryFolder(firstSaved));
+  if (savedPrimary && !isInvalidProjectPath(savedPrimary) && !isDismissedProjectPath(savedPrimary)) {
+    return savedPrimary;
+  }
+  return normalizeFolderPath(defaultWorkspaceDir());
+}
+
+export function getInitialCodeProjectDir(): string {
+  return normalizeFolderPath(getRememberedCodeSurface().rootDir || resolveDefaultProjectDir(""));
+}
+
+export function pruneWorkPathsFromCodeState(): void {
+  for (const ws of workspace.savedWorkspaces) {
+    if (ws.surface === "work") {
+      for (const f of ws.folders || []) recordWorkWorkspaceDir(f.path);
+    }
+  }
+  const filteredRecents = workspace.recentProjects.filter((p) => !isWorkSurfacePath(p));
+  if (filteredRecents.length !== workspace.recentProjects.length) {
+    setWorkspace("recentProjects", filteredRecents);
+    try { localStorage.setItem(RECENT_PROJECTS_KEY, JSON.stringify(filteredRecents)); } catch { /* ignore */ }
+  }
+  const filteredOrder = workspace.projectOrder.filter((p) => !isWorkSurfacePath(p));
+  if (filteredOrder.length !== workspace.projectOrder.length) {
+    setWorkspace("projectOrder", filteredOrder);
+    try { localStorage.setItem(PROJECT_ORDER_KEY, JSON.stringify(filteredOrder)); } catch { /* ignore */ }
+  }
+  if (workspace.projects.some((p) => isWorkSurfacePath(p.worktree))) {
+    setWorkspace("projects", (prev) => prev.filter((p) => !isWorkSurfacePath(p.worktree)));
+  }
+  getRememberedCodeSurface();
+}
+
+/** Saved workspaces the user can see, scoped by surface ("code" by default). */
+export function visibleSavedWorkspaces(surface: "code" | "work" = "code"): WorkspaceProfile[] {
+  return workspace.savedWorkspaces.filter((saved) => {
+    if (saved.hidden || isDismissedProjectPath(saved.id)) return false;
+    const primary = normalizeFolderPath(workspacePrimaryFolder(saved));
+    const isWork = saved.surface === "work" || (saved.surface !== "code" && isWorkSurfacePath(primary));
+    return surface === "work" ? isWork : !isWork;
+  });
 }
 
 export function resolveDefaultProjectDir(preferredRoot?: string | null): string {
   const pref = normalizeFolderPath(preferredRoot);
-  if (pref && !isInvalidProjectPath(pref) && !isDismissedProjectPath(pref) && !isDefaultWorkspacePath(pref)) {
+  if (pref && !isInvalidProjectPath(pref) && !isDismissedProjectPath(pref) && !isWorkSurfacePath(pref)) {
     return pref;
   }
-  for (const saved of visibleSavedWorkspaces()) {
+  for (const saved of visibleSavedWorkspaces("code")) {
     const primary = normalizeFolderPath(workspacePrimaryFolder(saved));
-    if (primary && !isInvalidProjectPath(primary) && !isDismissedProjectPath(primary) && !isDefaultWorkspacePath(primary)) {
+    if (primary && !isInvalidProjectPath(primary) && !isDismissedProjectPath(primary) && !isWorkSurfacePath(primary)) {
       return primary;
     }
   }
   for (const recent of workspace.recentProjects) {
     const clean = normalizeFolderPath(recent);
-    if (clean && !isInvalidProjectPath(clean) && !isDismissedProjectPath(clean) && !isDefaultWorkspacePath(clean)) {
+    if (clean && !isInvalidProjectPath(clean) && !isDismissedProjectPath(clean) && !isWorkSurfacePath(clean)) {
       return clean;
     }
   }
   for (const proj of workspace.projects) {
     const wt = normalizeFolderPath(proj.worktree);
-    if (wt && !isInvalidProjectPath(wt) && !isDismissedProjectPath(wt) && !isDefaultWorkspacePath(wt)) {
+    if (wt && !isInvalidProjectPath(wt) && !isDismissedProjectPath(wt) && !isWorkSurfacePath(wt)) {
       return wt;
     }
   }

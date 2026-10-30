@@ -14,7 +14,7 @@ import {
   activateSurfaceMode,
   appSettings,
   closeSettingsModal,
-  isDefaultWorkspacePath,
+  isWorkSurfacePath,
   isUpdateModalOpen,
   leaderboardState,
   LEFT_PANE_MAX,
@@ -92,7 +92,7 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
   });
 
   const isNewConversation = createMemo(() => {
-    const rootIsWork = isDefaultWorkspacePath(workspace.rootDir);
+    const rootIsWork = isWorkSurfacePath(workspace.rootDir);
     if (isWorkSurface() && !rootIsWork) return true;
     if (!isWorkSurface() && rootIsWork) return true;
     if (workspace.bootstrappingSessions) return false;

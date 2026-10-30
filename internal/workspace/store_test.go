@@ -419,3 +419,73 @@ func TestPersistIsAtomicAndRollsBackOnFailure(t *testing.T) {
 		t.Fatalf("failed save must roll back memory, got %+v", store.List())
 	}
 }
+
+func TestWorkspaceSurfaceIsolationAndPrimaryRootDir(t *testing.T) {
+	homeDir := setupTestEnv(t)
+	workDir := mkdirTempProject(t, homeDir, "work-ops")
+	hiddenWorkDir := mkdirTempProject(t, homeDir, "work-hidden")
+	codeDir := mkdirTempProject(t, homeDir, "code-repo")
+
+	store := NewStore("")
+	wsWork, err := store.Create(saveWorkspaceRequest{
+		Name:    "Ops Work",
+		Surface: "work",
+		Folders: []workspaceFolderInput{{Path: workDir, IsPrimary: true}},
+	})
+	if err != nil {
+		t.Fatalf("Create work workspace: %v", err)
+	}
+	if wsWork.Surface != "work" {
+		t.Fatalf("expected Surface='work', got %q", wsWork.Surface)
+	}
+	if got := store.PrimaryRootDir(""); got != "" {
+		t.Fatalf("PrimaryRootDir must skip work workspaces when no code workspace exists, got %q", got)
+	}
+
+	// Update without specifying Surface preserves existing Surface="work".
+	updatedWork, err := store.Update(wsWork.ID, saveWorkspaceRequest{
+		Name:    "Ops Work Renamed",
+		Folders: []workspaceFolderInput{{Path: workDir, IsPrimary: true}},
+	})
+	if err != nil {
+		t.Fatalf("Update work workspace: %v", err)
+	}
+	if updatedWork.Surface != "work" {
+		t.Fatalf("expected Surface='work' preserved on update, got %q", updatedWork.Surface)
+	}
+
+	// EnsureProjectForDirectoryWithSurface registers hidden work project and promoting it keeps surface="work".
+	hidID, err := store.EnsureProjectForDirectoryWithSurface(hiddenWorkDir, "work")
+	if err != nil || hidID == "" {
+		t.Fatalf("EnsureProjectForDirectoryWithSurface failed: id=%q err=%v", hidID, err)
+	}
+	if got := store.PrimaryRootDir(""); got != "" {
+		t.Fatalf("PrimaryRootDir must skip hidden work project, got %q", got)
+	}
+	promoted, err := store.Create(saveWorkspaceRequest{
+		Name:    "Promoted Work",
+		Folders: []workspaceFolderInput{{Path: hiddenWorkDir, IsPrimary: true}},
+	})
+	if err != nil {
+		t.Fatalf("Promote hidden work workspace: %v", err)
+	}
+	if promoted.ID != hidID || promoted.Surface != "work" {
+		t.Fatalf("expected promoted workspace to keep ID %q and Surface 'work', got %+v", hidID, promoted)
+	}
+
+	// Creating a code workspace makes PrimaryRootDir return codeDir.
+	wsCode, err := store.Create(saveWorkspaceRequest{
+		Name:    "Code Repo",
+		Surface: "code",
+		Folders: []workspaceFolderInput{{Path: codeDir, IsPrimary: true}},
+	})
+	if err != nil {
+		t.Fatalf("Create code workspace: %v", err)
+	}
+	if wsCode.Surface != "code" {
+		t.Fatalf("expected Surface='code', got %q", wsCode.Surface)
+	}
+	if got := store.PrimaryRootDir(""); got != codeDir {
+		t.Fatalf("expected PrimaryRootDir to return codeDir %q, got %q", codeDir, got)
+	}
+}

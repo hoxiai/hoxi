@@ -62,6 +62,7 @@ type workspaceProfile struct {
 	ID      string            `json:"id"`
 	Name    string            `json:"name"`
 	Color   string            `json:"color,omitempty"`
+	Surface string            `json:"surface,omitempty"`
 	Folders []workspaceFolder `json:"folders"`
 	// Hidden projects are registered automatically for directories that own
 	// sessions but were never saved as a workspace. They keep stable session
@@ -78,7 +79,25 @@ type saveWorkspaceRequest struct {
 	ID      string                 `json:"id,omitempty"`
 	Name    string                 `json:"name,omitempty"`
 	Color   string                 `json:"color,omitempty"`
+	Surface string                 `json:"surface,omitempty"`
 	Folders []workspaceFolderInput `json:"folders"`
+}
+
+func normalizeWorkspaceSurface(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "work":
+		return "work"
+	case "code":
+		return "code"
+	default:
+		return ""
+	}
+}
+
+func isDefaultWorkSurfaceDir(path string) bool {
+	slash := strings.ToLower(filepath.ToSlash(filepath.Clean(strings.TrimSpace(path))))
+	return strings.HasSuffix(slash, "/.hoxi/workspaces/default") ||
+		strings.Contains(slash, "/.hoxi/workspaces/default/")
 }
 
 type workspaceStoreFile struct {

@@ -9,6 +9,7 @@ import {
   openDeleteWorkspaceModal,
   openEditWorkspaceModal,
   removeWorkspaceProfile,
+  surfaceMode,
   switchWorkspace,
   workspace,
   workspaceDisplayName,
@@ -91,7 +92,7 @@ export function DeleteWorkspaceModalView(props: {
 
 export function ManageWorkspacesModalView() {
   const allManagedWorkspaces = createMemo(() =>
-    buildAllProjects().map((entry) => ({
+    buildAllProjects(surfaceMode()).map((entry) => ({
       key: entry.workspaceId || entry.path,
       id: entry.workspaceId,
       name: entry.name,

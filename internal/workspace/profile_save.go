@@ -51,7 +51,7 @@ func (s *workspaceStore) createLocked(folders []workspaceFolderInput, input save
 	}
 	if len(hidden) > 0 {
 		promoted := s.workspaces[s.indexOfLocked(hidden[0])]
-		created.ID, created.Color, created.CreatedAt = promoted.ID, promoted.Color, promoted.CreatedAt
+		created.ID, created.Color, created.Surface, created.CreatedAt = promoted.ID, promoted.Color, promoted.Surface, promoted.CreatedAt
 		created.Aliases = append(created.Aliases, promoted.Aliases...)
 		hidden = hidden[1:]
 		s.dropProfileLocked(promoted.ID)
@@ -62,6 +62,11 @@ func (s *workspaceStore) createLocked(folders []workspaceFolderInput, input save
 	created.Aliases = withoutID(mergeIDs(created.Aliases, s.absorbHiddenLocked(hidden, folders)), created.ID)
 
 	created.Name = s.resolveNameLocked(input.Name, folders[0].Path, created.ID)
+	if surface := normalizeWorkspaceSurface(input.Surface); surface != "" {
+		created.Surface = surface
+	} else if created.Surface == "" && isDefaultWorkSurfaceDir(folders[0].Path) {
+		created.Surface = "work"
+	}
 	if color := normalizeWorkspaceIdentityColor(input.Color); color != "" {
 		created.Color = color
 	}
@@ -215,10 +220,15 @@ func (s *workspaceStore) updateLocked(targetIdx int, input saveWorkspaceRequest)
 	if color == "" {
 		color = defaultWorkspaceIdentityColor
 	}
+	surface := normalizeWorkspaceSurface(input.Surface)
+	if surface == "" {
+		surface = before.Surface
+	}
 	updated := workspaceProfile{
 		ID:        before.ID,
 		Name:      s.resolveNameLocked(input.Name, folders[0].Path, before.ID),
 		Color:     color,
+		Surface:   surface,
 		Folders:   wsFolders,
 		Aliases:   append([]string(nil), before.Aliases...),
 		CreatedAt: before.CreatedAt,

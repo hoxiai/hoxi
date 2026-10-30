@@ -22,7 +22,7 @@ import { isManagedSession, isSessionBusy, sessionDirectory, sessionRuntimeForID 
 import { refreshWorktreeStatus } from "./session-diffs";
 import { indexSession } from "./session-index";
 import { surfaceMode } from "./layout";
-import { isDefaultWorkspacePath, normalizeFolderPath } from "./workspace-folders";
+import { isWorkSurfacePath, normalizeFolderPath } from "./workspace-folders";
 
 const pendingSandboxChanges = new Map<string, Promise<void>>();
 
@@ -107,7 +107,7 @@ export async function newIsolatedSession(
   );
   const isRunner = runtime !== "opencode";
   const unattended = appSettings.approvalMode === "unattended";
-  const currentSurface = isDefaultWorkspacePath(directory) ? "work" : surfaceMode();
+  const currentSurface = isWorkSurfacePath(directory) ? "work" : surfaceMode();
   const shouldIsolate =
     unattended ||
     (options?.isolated ?? (currentSurface === "work" ? false : appSettings.defaultSandboxMode === "worktree"));

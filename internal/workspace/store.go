@@ -258,6 +258,9 @@ func (s *workspaceStore) PrimaryRootDir(fallback string) string {
 	defer s.mu.RUnlock()
 	savedRoot := func(includeHidden bool) string {
 		for _, ws := range s.workspaces {
+			if ws.Surface == "work" {
+				continue
+			}
 			if ws.Hidden && !includeHidden {
 				continue
 			}

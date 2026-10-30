@@ -126,14 +126,31 @@ func (s *workspaceStore) ProjectIDForDirectory(directory string) (string, bool) 
 // hidden project on first use. The ID stays stable for the lifetime of the
 // project even if the folder is later renamed.
 func (s *workspaceStore) EnsureProjectForDirectory(directory string) (string, error) {
+	return s.EnsureProjectForDirectoryWithSurface(directory, "")
+}
+
+// EnsureProjectForDirectoryWithSurface resolves directory to a project and
+// records the surface ("work" or "code") when registering a hidden project.
+func (s *workspaceStore) EnsureProjectForDirectoryWithSurface(directory, surface string) (string, error) {
 	canonical, err := canonicalProjectDirectory(directory)
 	if err != nil {
 		return "", err
 	}
 	canonical = hoxiWorktreeRoot(canonical)
+	normSurface := normalizeWorkspaceSurface(surface)
+	if normSurface == "" && isDefaultWorkSurfaceDir(canonical) {
+		normSurface = "work"
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if ws, ok := s.findProjectLocked(canonical); ok {
+		if ws.Hidden && ws.Surface == "" && normSurface != "" {
+			if idx := s.indexOfLocked(ws.ID); idx >= 0 {
+				prev := s.snapshotLocked()
+				s.workspaces[idx].Surface = normSurface
+				_ = s.commitLocked(prev)
+			}
+		}
 		return ws.ID, nil
 	}
 	prev := s.snapshotLocked()
@@ -149,6 +166,7 @@ func (s *workspaceStore) EnsureProjectForDirectory(directory string) (string, er
 		Aliases: append([]string(nil), aliases...),
 		Name:    filepath.Base(canonical),
 		Color:   defaultWorkspaceIdentityColor,
+		Surface: normSurface,
 		Folders: []workspaceFolder{
 			{ID: generateWorkspaceUUID(), Path: canonical, IsPrimary: true, Position: 0},
 		},

@@ -13,6 +13,7 @@ import {
   desktopAuth,
   drainNextQueuedPrompt,
   ensureOfficialProviderConnected,
+  getActiveWorkWorkspaceDir,
   handleIncomingPermissionRequest,
   hasStoredSurfaceMode,
   markPermissionResolved,
@@ -122,7 +123,8 @@ export default function App() {
           ? ""
           : normalizeFolderPath(boot.rootDir);
         const startInWork = isWorkSurface() && Boolean(fallbackWorkDir);
-        const initialRoot = startInWork ? fallbackWorkDir : bootRoot;
+        const initialWorkRoot = getActiveWorkWorkspaceDir() || fallbackWorkDir;
+        const initialRoot = startInWork ? initialWorkRoot : bootRoot;
         setWorkspace({
           appVersion: boot.appVersion,
           rootDir: initialRoot,
@@ -163,7 +165,7 @@ export default function App() {
           setRememberedCodeSurface(resolvedCodeRoot, null);
         }
         const activeRoot = startInWork
-          ? fallbackWorkDir
+          ? (getActiveWorkWorkspaceDir() || fallbackWorkDir)
           : resolvedCodeRoot;
         if (activeRoot && activeRoot !== workspace.rootDir) {
           setWorkspace("rootDir", activeRoot);

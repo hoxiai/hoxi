@@ -1,7 +1,27 @@
 import { reconcile, unwrap } from "solid-js/store";
 import { hoxiAPI, type WorktreeMeta } from "../services/api";
 import { appSettings, setAppSettings } from "../store/settings";
-import { openDiffInInspector, setWorkspace, workspace } from "../store/workspace";
+import {
+  activateSurfaceMode,
+  getInitialCodeProjectDir,
+  getRememberedCodeSurface,
+  isWorkSurfacePath,
+  loadProjects,
+  openDiffInInspector,
+  resolveDefaultProjectDir,
+  resolveSessionSurface,
+  saveWorkspaceProfile,
+  sessionBelongsToProject,
+  setDefaultWorkspaceDir,
+  setRememberedCodeSurface,
+  setSurfaceMode,
+  setWorkspace,
+   surfaceMode,
+  switchWorkspace,
+  unrecordWorkWorkspaceDir,
+  visibleSavedWorkspaces,
+  workspace,
+} from "../store/workspace";
 import { newIsolatedSession, switchActiveSessionSandboxMode } from "../store/session-sandbox";
 import { loadSessionMessages, selectSession } from "../store/workspace-sessions";
 import { assertEqual, assertTrue, describe, it } from "./test-harness";
@@ -384,6 +404,106 @@ describe("session worktree isolation", () => {
       await rejection(switchActiveSessionSandboxMode("local"));
       assertEqual(removeCount, 0);
       assertEqual(sessionDirectory(id), meta.directory);
+    });
+  });
+
+  it("isolates Hoxi Work workspaces and directories from Code projects and remembered surfaces", async () => {
+    await withSessionFixture(async () => {
+      const prevSurface = surfaceMode();
+      setDefaultWorkspaceDir("/Users/test/.hoxi/workspaces/default");
+      try {
+        setSurfaceMode("code");
+        setWorkspace({
+          rootDir: "/Users/test/code-app",
+          savedWorkspaces: [
+            {
+              id: "ws_code_1",
+              name: "Code App",
+              color: "#5EA0F7",
+              surface: "code",
+              folders: [{ id: "f_code_1", path: "/Users/test/code-app", isPrimary: true, position: 0 }],
+              createdAt: "2026-01-01T00:00:00Z",
+              updatedAt: "2026-01-01T00:00:00Z",
+            },
+          ],
+          recentProjects: ["/Users/test/code-app"],
+          projectOrder: ["/Users/test/code-app"],
+          projects: [],
+        });
+        setRememberedCodeSurface("/Users/test/code-app", "ses_code_1");
+
+        hoxiAPI.listSessions = async () => [];
+        hoxiAPI.resolveProject = async (dir) => ({
+          projectID: dir.includes("work-ops") ? "ws_work_1" : "ws_code_1",
+          directory: dir,
+          roots: [dir],
+        });
+        hoxiAPI.createWorkspace = async (input) => ({
+          id: "ws_work_1",
+          name: input.name || "Work Ops",
+          color: input.color || "#5EA0F7",
+          surface: input.surface,
+          folders: input.folders.map((f, idx) => ({
+            id: `f_work_${idx}`,
+            path: f.path,
+            isPrimary: Boolean(f.isPrimary ?? idx === 0),
+            position: idx,
+          })),
+          createdAt: "2026-01-01T00:00:00Z",
+          updatedAt: "2026-01-01T00:00:00Z",
+        });
+
+        // Switch to Work mode and create a custom Work workspace (/Users/test/work-ops)
+        await activateSurfaceMode("work");
+        assertEqual(surfaceMode(), "work");
+
+        const savedWork = await saveWorkspaceProfile({
+          name: "Work Ops",
+          folders: [{ path: "/Users/test/work-ops", isPrimary: true }],
+        });
+        await switchWorkspace("/Users/test/work-ops");
+
+        assertEqual(savedWork.surface, "work");
+        assertTrue(isWorkSurfacePath("/Users/test/work-ops"), "Work workspace folder must be recognized as work surface");
+        assertEqual(workspace.recentProjects.includes("/Users/test/work-ops"), false);
+        assertEqual(workspace.projectOrder.includes("/Users/test/work-ops"), false);
+        assertEqual(getRememberedCodeSurface().rootDir, "/Users/test/code-app");
+        assertEqual(getInitialCodeProjectDir(), "/Users/test/code-app");
+        assertEqual(resolveDefaultProjectDir("/Users/test/work-ops"), "/Users/test/code-app");
+        assertEqual(visibleSavedWorkspaces("code").some((w) => w.id === "ws_work_1"), false);
+        assertEqual(visibleSavedWorkspaces("work").some((w) => w.id === "ws_work_1"), true);
+
+        // OpenCode project list returning the Work folder must be filtered out of Code projects
+        hoxiAPI.listProjects = async () => [
+          { id: "p1", worktree: "/Users/test/code-app", time: { created: 1, updated: 1 } },
+          { id: "p2", worktree: "/Users/test/work-ops", time: { created: 1, updated: 1 } },
+        ];
+        await loadProjects();
+        assertEqual(workspace.projects.some((p) => p.worktree === "/Users/test/work-ops"), false);
+        assertEqual(workspace.projects.some((p) => p.worktree === "/Users/test/code-app"), true);
+
+        // Session surface & project ownership checks respect custom Work workspace directories
+        assertEqual(resolveSessionSurface({ id: "s_work", directory: "/Users/test/work-ops" }), "work");
+        assertEqual(
+          sessionBelongsToProject(
+            { id: "s_work", title: "Work task", directory: "/Users/test/work-ops", time: { created: 1, updated: 1 } },
+            "/Users/test/code-app"
+          ),
+          false
+        );
+
+        // Switching back to Code mode restores /Users/test/code-app, and switching to Work restores /Users/test/work-ops
+        await activateSurfaceMode("code");
+        assertEqual(surfaceMode(), "code");
+        assertEqual(workspace.rootDir, "/Users/test/code-app");
+
+        await activateSurfaceMode("work");
+        assertEqual(surfaceMode(), "work");
+        assertEqual(workspace.rootDir, "/Users/test/work-ops");
+      } finally {
+        unrecordWorkWorkspaceDir("/Users/test/work-ops");
+        setSurfaceMode(prevSurface);
+      }
     });
   });
 });

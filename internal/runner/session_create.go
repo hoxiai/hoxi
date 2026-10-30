@@ -69,7 +69,8 @@ func (s *Service) CreateSession(body CreateSessionRequest, directory string) (Se
 	if err != nil {
 		return SessionInfo{}, http.StatusBadRequest, err
 	}
-	projectID, err := s.ensureProjectID(projDir)
+	surface := NormalizeSessionSurface(body.Surface, projDir)
+	projectID, err := s.ensureProjectIDWithSurface(projDir, surface)
 	if err != nil {
 		return SessionInfo{}, http.StatusBadRequest, err
 	}
@@ -123,7 +124,7 @@ func (s *Service) CreateSession(body CreateSessionRequest, directory string) (Se
 	rec := SessionRecord{
 		ID:             sessionID,
 		ProjectID:      projectID,
-		Surface:        NormalizeSessionSurface(body.Surface, projDir),
+		Surface:        surface,
 		Runtime:        rt,
 		ProjectDir:     projDir,
 		SandboxMode:    sandboxMode,
