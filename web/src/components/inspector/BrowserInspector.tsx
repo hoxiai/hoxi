@@ -30,6 +30,7 @@ export default function BrowserInspector() {
   let input: HTMLTextAreaElement | undefined;
   let composing = false;
   let composingURL = false;
+  let urlInput: HTMLInputElement | undefined;
   const iconBtn = "shrink-0 rounded p-1 hover:bg-[var(--bg-hover)] disabled:opacity-40 cursor-pointer transition-colors";
   createEffect(() => {
     scope();
@@ -90,11 +91,13 @@ export default function BrowserInspector() {
           </Show>
           <form class="flex flex-1 min-w-0 items-center gap-1" onSubmit={(event) => {
             event.preventDefault();
-            if (!composingURL) navigateAddress();
+            // An explicit submit (clicking "Go") is never an IME confirmation, so it must not be gated on composition.
+            composingURL = false;
+            navigateAddress(urlInput?.value ?? url());
           }} onKeyDown={(event) => event.stopPropagation()}>
-            <input class="min-w-0 flex-1 rounded border border-[var(--border-subtle)] bg-transparent px-2 py-1 text-xs focus:outline-none focus:border-[var(--accent-primary)]" aria-label={t("inspector.browser.url")} placeholder={t("inspector.browser.url")} value={url()} autocapitalize="off" autocomplete="off" spellcheck={false}
-              onFocus={() => { browser.setEditingURL(true); }} onBlur={() => { browser.setEditingURL(false); }} onInput={(event) => { browser.setEditingURL(true); setURL(event.currentTarget.value); }}
-              onCompositionStart={() => { composingURL = true; }} onCompositionEnd={() => { composingURL = false; }}
+            <input ref={urlInput} class="min-w-0 flex-1 rounded border border-[var(--border-subtle)] bg-transparent px-2 py-1 text-xs focus:outline-none focus:border-[var(--accent-primary)]" aria-label={t("inspector.browser.url")} placeholder={t("inspector.browser.url")} value={url()} autocapitalize="off" autocomplete="off" spellcheck={false}
+              onFocus={() => { browser.setEditingURL(true); }} onBlur={() => { composingURL = false; browser.setEditingURL(false); }} onInput={(event) => { browser.setEditingURL(true); setURL(event.currentTarget.value); }}
+              onCompositionStart={() => { composingURL = true; }} onCompositionEnd={(event) => { composingURL = false; setURL(event.currentTarget.value); }}
               onKeyDown={(event) => {
                 event.stopPropagation();
                 if (event.key !== "Enter" || event.isComposing || composingURL || event.keyCode === 229) return;
@@ -102,7 +105,8 @@ export default function BrowserInspector() {
                 event.preventDefault();
                 if (!composingURL) navigateAddress(event.currentTarget.value);
               }} />
-            <button class="shrink-0 rounded px-1.5 py-1 text-[11px] hover:bg-[var(--bg-hover)] disabled:opacity-40 cursor-pointer" disabled={busy() || pairing() || state()?.connected === false} type="submit">{t("inspector.browser.go")}</button>
+            <button class="shrink-0 rounded px-1.5 py-1 text-[11px] hover:bg-[var(--bg-hover)] disabled:opacity-40 cursor-pointer" disabled={busy() || pairing() || state()?.connected === false} type="submit"
+              onMouseDown={(event) => event.preventDefault()}>{t("inspector.browser.go")}</button>
           </form>
           <button
             type="button"
