@@ -274,7 +274,9 @@ func TestApprovalPolicyValidateAIReviewModel(t *testing.T) {
 }
 
 // Reasoning models think before the verdict; a 120-token cap left
-// DeepSeek-class flash models with an empty answer on every real command.
+// DeepSeek-class flash models with an empty answer on every real command, and
+// 1024 tokens within 10s still left a third of real commands with none (they
+// showed up as timeouts). 4096 tokens and 25s answered all of them.
 func TestAIReviewLeavesRoomForReasoningModels(t *testing.T) {
 	f := newGateFixture(t)
 	defer f.revoke()
@@ -290,7 +292,7 @@ func TestAIReviewLeavesRoomForReasoningModels(t *testing.T) {
 		t.Fatalf("expected allow")
 	}
 	req := mockLLM.lastRequest()
-	if req.MaxTokens < 1024 || req.ReasoningEffort != "low" || req.Timeout < 10e9 {
+	if req.MaxTokens < 4096 || req.ReasoningEffort != "low" || req.Timeout < aiReviewTimeout || aiReviewTimeout < 25e9 {
 		t.Fatalf("review request leaves no room to think: max=%d effort=%q timeout=%s", req.MaxTokens, req.ReasoningEffort, req.Timeout)
 	}
 }

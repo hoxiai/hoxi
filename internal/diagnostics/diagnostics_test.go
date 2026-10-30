@@ -265,3 +265,39 @@ func TestRejectSymlinkDirectory(t *testing.T) {
 		t.Fatal("symlink accepted")
 	}
 }
+
+// Test binaries record fake models and failures; without HOXI_HOME they must
+// write to a temp directory, never to the user's real ~/.hoxi/logs.
+func TestInitializeKeepsTestBinariesOutOfRealLogs(t *testing.T) {
+	t.Setenv("HOXI_HOME", "")
+	global.Lock()
+	previous := global.s
+	global.s = nil
+	global.Unlock()
+	t.Cleanup(func() { global.Lock(); global.s = previous; global.Unlock() })
+
+	_ = Initialize()
+	global.Lock()
+	dir := global.s.directory
+	global.Unlock()
+	if want := filepath.Join(os.TempDir(), "hoxi-test-diagnostics"); dir != want {
+		t.Fatalf("test diagnostics dir = %q, want %q", dir, want)
+	}
+	if underRealHoxiHome(dir) {
+		t.Fatalf("test diagnostics must not write under the real ~/.hoxi: %q", dir)
+	}
+
+	// A test that points HOME at a temp directory keeps its own logs.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	global.Lock()
+	global.s = nil
+	global.Unlock()
+	_ = Initialize()
+	global.Lock()
+	dir = global.s.directory
+	global.Unlock()
+	if want := filepath.Join(home, ".hoxi", "logs"); dir != want {
+		t.Fatalf("diagnostics dir with a temp HOME = %q, want %q", dir, want)
+	}
+}

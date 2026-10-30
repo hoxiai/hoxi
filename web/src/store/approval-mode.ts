@@ -549,7 +549,7 @@ export function aiReviewNoteText(note: AIReviewNote): string {
     case "empty":
       return t("approval.aiReviewNoteEmpty");
     case "timeout":
-      return t("approval.aiReviewNoteTimeout", { seconds: note.timeoutSeconds ?? 10 });
+      return t("approval.aiReviewNoteTimeout", { seconds: note.timeoutSeconds ?? 25 });
     case "invalid":
       return t("approval.aiReviewNoteInvalid");
     case "unready":

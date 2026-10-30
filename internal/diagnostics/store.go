@@ -7,12 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"testing"
 	"time"
 	"unicode/utf8"
 
@@ -65,6 +67,12 @@ func Initialize() error {
 	defer global.Unlock()
 	if global.s == nil {
 		dir := hoxipaths.Join("logs")
+		if testing.Testing() && underRealHoxiHome(dir) {
+			// Test binaries record fake models and failures; they must
+			// never land in the user's real ~/.hoxi/logs. Tests that point
+			// HOME or HOXI_HOME at a temp directory keep their own.
+			dir = filepath.Join(os.TempDir(), "hoxi-test-diagnostics")
+		}
 		if dir == "" {
 			home, err := os.UserHomeDir()
 			if err != nil {
@@ -82,6 +90,19 @@ func Initialize() error {
 		s.err = s.prune(0)
 	}
 	return s.err
+}
+
+// underRealHoxiHome reports whether dir is inside the account's real ~/.hoxi,
+// read from the user database rather than $HOME, which tests override. When
+// that home cannot be read, every path counts as real.
+func underRealHoxiHome(dir string) bool {
+	u, err := user.Current()
+	if err != nil || strings.TrimSpace(u.HomeDir) == "" || strings.TrimSpace(dir) == "" {
+		return true
+	}
+	real := filepath.Join(filepath.Clean(u.HomeDir), ".hoxi")
+	dir = filepath.Clean(dir)
+	return dir == real || strings.HasPrefix(dir, real+string(filepath.Separator))
 }
 
 func defaultStore() *store {

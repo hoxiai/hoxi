@@ -20,8 +20,14 @@ const (
 	// flash models used 200-1200 tokens on real commands, so a 120-token cap
 	// left them with an empty answer. Non-reasoning models stop at ~60 tokens
 	// whatever the cap, so the larger budget costs them nothing.
-	aiReviewTimeout         = 10 * time.Second
-	aiReviewMaxTokens       = 1024
+	// Reasoning models spend most of the output budget thinking before the
+	// one-line verdict. Measured on a DeepSeek Flash model with real
+	// commands: 1024 tokens ran out with no answer on a third of them (seen
+	// as a timeout at 10s), 2048 still left some empty, 4096 answered all in
+	// 3-16s. Fast models stop as soon as the verdict is written, so the
+	// larger budget costs them nothing.
+	aiReviewTimeout         = 25 * time.Second
+	aiReviewMaxTokens       = 4096
 	aiReviewReasoningEffort = "low"
 	aiReviewCacheTTL        = 15 * time.Minute
 	aiReviewErrorCooldown   = 30 * time.Second
