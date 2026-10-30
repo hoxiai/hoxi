@@ -318,20 +318,29 @@ func (s *Service) gateCommand(r *http.Request, cred hookCredential, rec SessionR
 			s.recordUnattendedDeny(cred, item, category)
 			return false, unattendedDenyReason(category)
 		}
-		if unattendedIsolated(rec) && s.policyApprovesIsolated(item, rec.WorktreePath, true) {
-			if decideCommandPermissionIn(ask.command, rec.WorktreePath) != "allow" {
-				s.recordPolicyApproval(cred, item)
-			}
-			s.noteTurn(cred.sessionID, "allow")
-			return true, ""
-		}
 	}
-	if s.policyApproves(item, rec.WorktreePath) {
+	// Verified kills of the session's own processes are masked for the
+	// policy; the audit records the command as it was asked.
+	judged, maskedOwnKill := s.ownedProcessJudgedItem(item, cred.sessionID)
+	recordApproval := func() {
+		if maskedOwnKill {
+			item["id"] = runnerPermissionID + randomHex(12)
+			s.recordRunnerApprovalAudit(cred, item, "once", approvalReply{Reply: "once", Source: approvalSourceOwnProcess})
+			return
+		}
 		// Read-only commands are routine; only audit what the policy let
 		// through beyond them.
 		if decideCommandPermissionIn(ask.command, rec.WorktreePath) != "allow" {
 			s.recordPolicyApproval(cred, item)
 		}
+	}
+	if s.ApprovalPolicy().Mode == ApprovalModeUnattended && unattendedIsolated(rec) && s.policyApprovesIsolated(judged, rec.WorktreePath, true) {
+		recordApproval()
+		s.noteTurn(cred.sessionID, "allow")
+		return true, ""
+	}
+	if s.policyApproves(judged, rec.WorktreePath) {
+		recordApproval()
 		return true, ""
 	}
 	if s.classGrantApproves(item, cred.sessionID, rec.WorktreePath) {

@@ -150,6 +150,7 @@ export const approval: ApprovalI18n = {
   sourceGrant: "本会话此类授权",
   sourcePolicy: "审批模式自动放行",
   sourceAIReview: "轻量模型审查放行",
+  sourceOwnProcess: "结束本会话进程放行",
   decisionOnce: "允许一次",
   decisionAlways: "本会话允许",
   decisionReject: "已拒绝",

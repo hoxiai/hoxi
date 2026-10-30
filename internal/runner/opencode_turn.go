@@ -511,6 +511,7 @@ func (s *Service) relayOpenCodeEventWithFiles(rec SessionRecord, raw []byte, fil
 	if json.Unmarshal(raw, &evt) != nil {
 		return
 	}
+	s.noteOpenCodeShellEvent(rec, evt)
 	if s.noteOpenCodeChildEvent(rec, evt) {
 		return
 	}

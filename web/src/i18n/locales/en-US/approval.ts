@@ -151,6 +151,7 @@ export const approval = {
   sourceGrant: "Session kind grant",
   sourcePolicy: "Approval mode",
   sourceAIReview: "AI review",
+  sourceOwnProcess: "Stops own session process",
   decisionOnce: "Allow Once",
   decisionAlways: "Session Always",
   decisionReject: "Rejected",

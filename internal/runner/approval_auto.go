@@ -228,16 +228,25 @@ func (s *Service) claimOpenCodePermission(item map[string]interface{}, sessionID
 			}, userFallback)
 			return true
 		}
+	}
+	// Judge the request with verified kills of the session's own processes
+	// masked; the user still sees and the audit still records item itself.
+	judged, maskedOwnKill := s.ownedProcessJudgedItem(item, sessionID)
+	source := approvalSourcePolicy
+	if maskedOwnKill {
+		source = approvalSourceOwnProcess
+	}
+	if s.ApprovalPolicy().Mode == ApprovalModeUnattended {
 		_, isolated := s.sessionIsolated(sessionID)
-		if isolated && s.policyApprovesIsolated(item, directory, true) {
-			s.autoReplyOpenCodeMessage(id, sessionID, directory, "once", "", approvalSourcePolicy, func() {
+		if isolated && s.policyApprovesIsolated(judged, directory, true) {
+			s.autoReplyOpenCodeMessage(id, sessionID, directory, "once", "", source, func() {
 				s.noteTurn(sessionID, "allow")
 			}, userFallback)
 			return true
 		}
 	}
-	if s.policyApproves(item, directory) {
-		s.autoReplyOpenCode(id, sessionID, directory, approvalSourcePolicy, userFallback)
+	if s.policyApproves(judged, directory) {
+		s.autoReplyOpenCode(id, sessionID, directory, source, userFallback)
 		return true
 	}
 	if s.classGrantApproves(item, sessionID, directory) {

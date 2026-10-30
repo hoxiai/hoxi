@@ -221,7 +221,7 @@ export interface ApprovalAuditEntry {
   directory?: string;
   destructive?: boolean;
   decision: "once" | "always" | "reject" | "timeout" | "interrupted" | string;
-  source: "desktop" | "tunnel" | "system" | "policy" | "ai_review" | string;
+  source: "desktop" | "tunnel" | "system" | "policy" | "ai_review" | "own_process" | string;
   message?: string;
 }
 

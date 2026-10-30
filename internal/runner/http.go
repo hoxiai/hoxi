@@ -30,6 +30,7 @@ type Service struct {
 	deferred    *deferredStore
 	policy      *approvalPolicyStore
 	aiReviews   *aiReviewCache
+	ownedProcs  *ownedProcessLedger
 	doomLoop    *doomLoopGuard
 	stall       stallPolicy
 
@@ -103,6 +104,7 @@ func NewService(rootDir string, worktrees *worktree.Manager, status *statusbar.T
 		deferred:    newDeferredStore(customStorePath),
 		policy:      newApprovalPolicyStore(customStorePath),
 		aiReviews:   newAIReviewCache(),
+		ownedProcs:  newOwnedProcessLedger(),
 		doomLoop:    newDoomLoopGuard(),
 		stall:       stallPolicyFromEnv(),
 		procs:       make(map[string]*activeProcess),
@@ -183,6 +185,7 @@ func (s *Service) Subscribe(sessionID string) (chan SSEEvent, func()) {
 func (s *Service) broadcast(sessionID string, evts ...SSEEvent) {
 	for _, evt := range evts {
 		s.decorateStoppedToolEvent(sessionID, &evt)
+		s.noteRuntimeShellEvent(sessionID, evt)
 		if evt.Type == "session.error" {
 			if entry := sessionErrorDiagnostic(sessionID, evt.Properties["error"]); entry != nil {
 				if rec, ok := s.store.Get(sessionID); ok {

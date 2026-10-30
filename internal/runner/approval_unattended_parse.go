@@ -15,6 +15,9 @@ type uWord struct {
 	text    string // the literal parts of the word
 	dynamic bool   // holds `$…`, `${…}`, `$(…)`, backticks or `$'…'`
 	procSub bool   // a `<(…)` / `>(…)` path
+	// start and end are the word's byte span in the parsed text, quotes
+	// included. Only process-control masking reads them.
+	start, end int
 }
 
 // uSeg is one simple command and where its standard input comes from.
@@ -53,6 +56,7 @@ type uParser struct {
 	cur     *uSeg
 	word    strings.Builder
 	inWord  bool
+	start   int // where the word being read began
 	dyn     bool
 	proc    bool
 	redir   string // "", "in", "out", "herestring": the next word is a redirect target
@@ -81,6 +85,9 @@ func newUParser(s string) *uParser {
 func (p *uParser) run(nested bool) (int, bool) {
 	for p.i < len(p.s) {
 		c := p.s[p.i]
+		if !p.inWord {
+			p.start = p.i
+		}
 		switch {
 		case c == '\\':
 			if p.i+1 < len(p.s) {
@@ -225,7 +232,7 @@ func (p *uParser) endWord() {
 	if !p.inWord {
 		return
 	}
-	w := uWord{text: p.word.String(), dynamic: p.dyn, procSub: p.proc}
+	w := uWord{text: p.word.String(), dynamic: p.dyn, procSub: p.proc, start: p.start, end: p.i}
 	p.word.Reset()
 	p.inWord, p.dyn, p.proc = false, false, false
 	switch p.redir {
