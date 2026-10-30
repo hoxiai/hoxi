@@ -39,6 +39,7 @@ export default function CustomEndpointTab() {
   const [fetchedModels, setFetchedModels] = createSignal<Array<{ id: string; name: string }>>([]);
   const [modelProbes, setModelProbes] = createSignal<Record<string, ModelProbeResult>>({});
   const [saving, setSaving] = createSignal(false);
+  const [deleting, setDeleting] = createSignal(false);
   const [feedback, setFeedback] = createSignal<{ ok: boolean; text: string } | null>(null);
 
   const existingCustomProviders = createMemo(() => listExistingCustomProviders());
@@ -219,13 +220,16 @@ export default function CustomEndpointTab() {
 
   const onDeleteProvider = async () => {
     const pid = providerID().trim();
-    if (!pid || saving()) return;
-    setSaving(true);
+    if (!pid || saving() || deleting()) return;
+    setFeedback(null);
+    setDeleting(true);
     try {
       await disconnectProvider(pid);
       openProviderModal("providers", null);
+    } catch (err: any) {
+      setFeedback({ ok: false, text: err?.message || t("models.disconnectFailed") });
     } finally {
-      setSaving(false);
+      setDeleting(false);
     }
   };
 
@@ -460,12 +464,12 @@ export default function CustomEndpointTab() {
             <Show when={isEditing() && !isReadOnlyImported()}>
               <button
                 type="button"
-                disabled={saving()}
+                disabled={saving() || deleting()}
                 onClick={() => void onDeleteProvider()}
-                aria-busy={saving()}
+                aria-busy={deleting()}
                 class="inline-flex items-center gap-1.5 rounded-xl border border-[var(--danger-border)] bg-[var(--danger-surface)] px-3 py-1.5 text-[12px] font-medium text-[var(--danger-text)] hover:opacity-90 disabled:opacity-60 disabled:cursor-default cursor-pointer"
               >
-                <Show when={!saving()} fallback={<LoaderCircle size={13} class="animate-spin" />}>
+                <Show when={!deleting()} fallback={<LoaderCircle size={13} class="animate-spin" />}>
                   <Trash2 size={13} />
                 </Show>
                 {t("common.delete")}

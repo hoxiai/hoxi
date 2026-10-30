@@ -8,6 +8,7 @@ import { t } from "../../i18n";
 
 export default function ProviderDisconnectButton(props: {
   providerName: string;
+  disabled?: boolean;
   loading: boolean;
   onConfirm: () => void;
 }) {
@@ -18,6 +19,10 @@ export default function ProviderDisconnectButton(props: {
     anchor: () => buttonRef,
     panel: () => (open() ? panelRef() : undefined),
     align: "end",
+  });
+
+  createEffect(() => {
+    if (props.disabled || props.loading) setOpen(false);
   });
 
   createEffect(() => {
@@ -45,7 +50,7 @@ export default function ProviderDisconnectButton(props: {
       <button
         ref={buttonRef}
         type="button"
-        disabled={props.loading}
+        disabled={props.disabled || props.loading}
         onClick={() => setOpen((v) => !v)}
         class="rounded-lg p-1.5 text-[var(--text-faint)] hover:bg-[var(--danger-surface)] hover:text-[var(--danger-text)] transition-colors cursor-pointer disabled:opacity-60 disabled:cursor-default"
         title={t("models.disconnect")}

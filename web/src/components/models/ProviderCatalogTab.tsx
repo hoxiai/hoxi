@@ -49,7 +49,11 @@ export default function ProviderCatalogTab() {
   const [targetID, setTargetID] = createSignal<string>("deepseek");
   const [disabledExpanded, setDisabledExpanded] = createSignal(false);
   const [busyID, setBusyID] = createSignal<string | null>(null);
+  const [disconnectingID, setDisconnectingID] = createSignal<string | null>(null);
   const [mcpToast, setMcpToast] = createSignal<{ ok: boolean; text: string } | null>(null);
+  const [actionError, setActionError] = createSignal<string | null>(null);
+
+  const rowBusy = (id: string) => busyID() === id || disconnectingID() === id;
 
   onMount(() => {
     void fetchGateways();
@@ -194,20 +198,26 @@ export default function ProviderCatalogTab() {
   const sourceLabel = (p: ProviderInfo) => getProviderSourceLabel(p);
 
   const onDisconnect = async (pid: string) => {
-    if (busyID()) return;
-    setBusyID(pid);
+    if (busyID() || disconnectingID()) return;
+    setActionError(null);
+    setDisconnectingID(pid);
     try {
       await disconnectProvider(pid);
+    } catch (err: any) {
+      setActionError(err?.message || t("models.disconnectFailed"));
     } finally {
-      setBusyID(null);
+      setDisconnectingID(null);
     }
   };
 
   const onToggleDisabled = async (pid: string, disabled: boolean) => {
-    if (busyID()) return;
+    if (busyID() || disconnectingID()) return;
+    setActionError(null);
     setBusyID(pid);
     try {
       await toggleDisabledProvider(pid, disabled);
+    } catch (err: any) {
+      setActionError(err?.message || t("models.providerActionFailed"));
     } finally {
       setBusyID(null);
     }
@@ -219,6 +229,21 @@ export default function ProviderCatalogTab() {
         <div class="flex-1 overflow-y-auto p-6 sm:p-8">
           <div class="mx-auto w-full max-w-5xl space-y-6">
           <LocalCliBridgeBanner />
+
+          <Show when={actionError()}>
+            {(message) => (
+              <div class="flex items-start justify-between gap-3 rounded-xl border border-[var(--danger-border)] bg-[var(--danger-surface)] px-3.5 py-2 text-[12px] text-[var(--danger-text)]">
+                <span class="min-w-0 break-words">{message()}</span>
+                <button
+                  type="button"
+                  onClick={() => setActionError(null)}
+                  class="shrink-0 rounded-md px-1.5 py-0.5 text-[11px] font-medium text-[var(--danger-text)] hover:bg-black/10 transition-colors cursor-pointer"
+                >
+                  {t("common.close")}
+                </button>
+              </div>
+            )}
+          </Show>
 
           <Show when={desktopAuth.isLoggedIn}>
             <button
@@ -376,7 +401,7 @@ export default function ProviderCatalogTab() {
                           </Show>
                           <button
                             type="button"
-                            disabled={busyID() === item.id}
+                            disabled={rowBusy(item.id)}
                             onClick={() => void onToggleDisabled(item.id, true)}
                             class="rounded-lg p-1.5 text-[var(--text-faint)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-secondary)] transition-colors cursor-pointer"
                             title={t("models.disableProvider")}
@@ -386,7 +411,8 @@ export default function ProviderCatalogTab() {
                           <Show when={!isImported() && item.source !== "runner"}>
                             <ProviderDisconnectButton
                               providerName={item.name}
-                              loading={busyID() === item.id}
+                              disabled={busyID() === item.id}
+                              loading={disconnectingID() === item.id}
                               onConfirm={() => void onDisconnect(item.id)}
                             />
                           </Show>
@@ -400,6 +426,21 @@ export default function ProviderCatalogTab() {
           </div>
 
           {/* Recommended Providers Section */}
+          <Show when={leaderboardState.gatewaysError && recommendedGateways().length === 0}>
+            <div class="flex items-start justify-between gap-3 rounded-2xl border border-[var(--danger-border)] bg-[var(--danger-surface)] px-4 py-3">
+              <span class="min-w-0 text-[12px] leading-relaxed text-[var(--danger-text)]">
+                {t("models.gatewaysLoadError")}
+              </span>
+              <button
+                type="button"
+                onClick={() => void fetchGateways()}
+                class="shrink-0 rounded-lg border border-[var(--danger-border)] bg-[var(--bg-panel)] px-2.5 py-1 text-[12px] font-medium text-[var(--danger-text)] hover:opacity-90 transition-opacity cursor-pointer"
+              >
+                {t("common.refresh")}
+              </button>
+            </div>
+          </Show>
+
           <Show when={recommendedGateways().length > 0}>
             <div class="space-y-2.5">
               <div class="flex items-center justify-between px-1">

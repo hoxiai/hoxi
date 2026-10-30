@@ -16,6 +16,7 @@ export interface LeaderboardState {
   models: LeaderboardModelItem[];
   pricingCatalog: ModelPricingItem[];
   gateways: ConnectableGatewayItem[];
+  gatewaysError: string | null;
   loading: boolean;
   error: string | null;
   updatedAt: string;
@@ -27,6 +28,7 @@ export const [leaderboardState, setLeaderboardState] = createStore<LeaderboardSt
   models: [],
   pricingCatalog: [],
   gateways: [],
+  gatewaysError: null,
   loading: false,
   error: null,
   updatedAt: "",
@@ -63,14 +65,14 @@ export async function fetchLeaderboardModels(tab?: LeaderboardTab) {
 }
 
 export async function fetchGateways() {
-  setLeaderboardState({ loading: true, error: null });
+  setLeaderboardState({ loading: true, gatewaysError: null });
   try {
     const items = await leaderboardAPI.getConnectableGateways(currentLangParam());
-    setLeaderboardState({ gateways: items, loading: false });
+    setLeaderboardState({ gateways: items, gatewaysError: null, loading: false });
   } catch (err: any) {
     setLeaderboardState({
       gateways: [],
-      error: err?.message || "Failed to load gateways",
+      gatewaysError: err?.message || "Failed to load gateways",
       loading: false,
     });
   }

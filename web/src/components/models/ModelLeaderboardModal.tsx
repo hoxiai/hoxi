@@ -16,6 +16,7 @@ import {
 } from "lucide-solid";
 import {
   closeLeaderboardModal,
+  fetchGateways,
   leaderboardState,
   openExternalURL,
   resolveOfficialWebURL,
@@ -294,6 +295,21 @@ export default function ModelLeaderboardModal() {
             </Show>
 
             {/* Gateway directory only; account login does not connect inference. */}
+            <Show when={leaderboardState.activeTab === "gateways" && leaderboardState.gatewaysError && leaderboardState.gateways.length === 0}>
+              <div class="flex items-start justify-between gap-3 rounded-2xl border border-[var(--danger-border)] bg-[var(--danger-surface)] px-4 py-3">
+                <span class="min-w-0 text-[12px] leading-relaxed text-[var(--danger-text)]">
+                  {t("models.gatewaysLoadError")}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void fetchGateways()}
+                  class="shrink-0 rounded-lg border border-[var(--danger-border)] bg-[var(--bg-panel)] px-2.5 py-1 text-[12px] font-medium text-[var(--danger-text)] hover:opacity-90 transition-opacity cursor-pointer"
+                >
+                  {t("common.refresh")}
+                </button>
+              </div>
+            </Show>
+
             <Show when={!leaderboardState.loading && leaderboardState.activeTab === "gateways"}>
               <div class="space-y-4">
                 <For each={leaderboardState.gateways}>

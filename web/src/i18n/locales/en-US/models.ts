@@ -83,6 +83,9 @@ export const models = {
   disconnectConfirmTitle: "Disconnect {name}?",
   disconnectConfirmBody:
     "Its credentials and local provider config will be removed from this device. Models using it must be selected again.",
+  disconnectFailed: "Could not disconnect the provider. Please try again.",
+  providerActionFailed: "Could not update the provider. Please try again.",
+  gatewaysLoadError: "Could not load the recommended providers. Check your network and try again.",
   testConnection: "Test Connection",
   testing: "Testing…",
   active: "Active",
