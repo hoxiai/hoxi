@@ -4,6 +4,7 @@ import {
   ensureChildSubagentSessionLoaded,
   extractChildSubagentSessionId,
   type MessageTurn,
+  normalizeFolderPath,
   sessionDirectory,
   workspace,
   workspaceFoldersForDir,
@@ -34,9 +35,18 @@ export function normalizeWorkspaceRelPath(raw: string): string {
 const SYSTEM_TEMP_PATH =
   /^(?:\/(?:private\/)?tmp(?:\/|$)|\/(?:private\/)?var\/folders\/[^/]+\/[^/]+\/T(?:\/|$)|[a-z]:[\\/](?:users[\\/][^\\/]+[\\/]appdata[\\/]local[\\/]temp|windows[\\/]temp)(?:[\\/]|$))/i;
 
+// Compares through normalizeFolderPath so `C:\Temp\p` and `c:/Temp/p` agree on
+// separators; Windows drive paths are case-insensitive.
 function isUnderDir(file: string, dir: string): boolean {
-  const base = dir.replace(/[\\/]+$/, "");
-  return Boolean(base) && (file === base || file.startsWith(`${base}/`) || file.startsWith(`${base}\\`));
+  let f = normalizeFolderPath(file);
+  let base = normalizeFolderPath(dir);
+  if (!f || !base) return false;
+  if (/^[A-Za-z]:/.test(f) && /^[A-Za-z]:/.test(base)) {
+    f = f.toLowerCase();
+    base = base.toLowerCase();
+  }
+  base = base.replace(/\/+$/, "");
+  return Boolean(base) && (f === base || f.startsWith(`${base}/`));
 }
 
 /**

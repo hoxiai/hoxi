@@ -114,4 +114,17 @@ describe("changed files exclude system temp scratch files", () => {
       );
     });
   });
+
+  it("matches a Windows temp project root regardless of separator or drive case", () => {
+    withRoot("c:/Users/dev/AppData/Local/Temp/proj", () => {
+      assertEqual(
+        isSessionScratchFile("C:\\Users\\dev\\AppData\\Local\\Temp\\proj\\a.ts", sid),
+        false,
+      );
+      assertEqual(
+        isSessionScratchFile("C:\\Users\\dev\\AppData\\Local\\Temp\\other\\a.ts", sid),
+        true,
+      );
+    });
+  });
 });
