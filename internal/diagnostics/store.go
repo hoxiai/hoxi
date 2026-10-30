@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -47,6 +48,9 @@ type store struct {
 	budget, segment int64
 	now             func() time.Time
 	openDirectory   func(string) error
+	// lastID keeps record IDs strictly increasing; Windows clock resolution can
+	// return the same nanosecond for consecutive records.
+	lastID int64
 }
 
 var global struct {
@@ -231,7 +235,12 @@ func (s *store) append(e Entry) error {
 	e.Time = now
 	e = sanitize(e)
 	if e.ID == "" {
-		e.ID = fmt.Sprintf("%d", now.UnixNano())
+		id := now.UnixNano()
+		if id <= s.lastID {
+			id = s.lastID + 1
+		}
+		s.lastID = id
+		e.ID = fmt.Sprintf("%d", id)
 	}
 	data, err := json.Marshal(e)
 	if err != nil {
@@ -319,7 +328,7 @@ func (s *store) entries(f filter) ([]Entry, error) {
 			result = append(result, e)
 			// Keep memory bounded even when querying all retained files.
 			if len(result) > f.limit*2 {
-				sort.SliceStable(result, func(i, j int) bool { return result[i].Time.After(result[j].Time) })
+				sort.SliceStable(result, func(i, j int) bool { return newer(result[i], result[j]) })
 				result = result[:f.limit]
 			}
 		}
@@ -329,9 +338,23 @@ func (s *store) entries(f filter) ([]Entry, error) {
 			return result, err
 		}
 	}
-	sort.SliceStable(result, func(i, j int) bool { return result[i].Time.After(result[j].Time) })
+	sort.SliceStable(result, func(i, j int) bool { return newer(result[i], result[j]) })
 	if len(result) > f.limit {
 		result = result[:f.limit]
 	}
 	return result, s.err
+}
+
+// newer orders entries by time, falling back to the strictly increasing record
+// ID so records written within one clock tick still sort newest first.
+func newer(a, b Entry) bool {
+	if a.Time.Equal(b.Time) {
+		ai, aerr := strconv.ParseInt(a.ID, 10, 64)
+		bi, berr := strconv.ParseInt(b.ID, 10, 64)
+		if aerr == nil && berr == nil {
+			return ai > bi
+		}
+		return a.ID > b.ID
+	}
+	return a.Time.After(b.Time)
 }

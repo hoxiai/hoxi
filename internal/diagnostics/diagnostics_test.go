@@ -90,6 +90,24 @@ func TestStorePermissionsRotationAndRetention(t *testing.T) {
 	}
 }
 
+func TestRecordsWithinOneClockTickStayNewestFirst(t *testing.T) {
+	s := testStore(t)
+	frozen := time.Now().UTC()
+	s.now = func() time.Time { return frozen }
+	s.record(Entry{Message: "first"})
+	s.record(Entry{Message: "second"})
+	entries, err := s.entries(filter{limit: 10})
+	if err != nil || len(entries) != 2 {
+		t.Fatalf("%v %v", entries, err)
+	}
+	if entries[0].Message != "second" || entries[1].Message != "first" {
+		t.Fatalf("order within one clock tick: %v", entries)
+	}
+	if entries[0].ID <= entries[1].ID {
+		t.Fatalf("record IDs must increase: %s %s", entries[1].ID, entries[0].ID)
+	}
+}
+
 func TestFilteringAndHTTP(t *testing.T) {
 	s := testStore(t)
 	s.record(Entry{Kind: "request", Level: "error", Source: "provider", Message: "request failed", SessionID: "s1", ProviderID: "p1"})
