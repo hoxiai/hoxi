@@ -228,6 +228,9 @@ func (m *worktreeManager) CreateOnBranch(sessionID, retainedBranch string) (work
 			_ = os.Symlink(srcOpenCode, dstOpenCode)
 		}
 	}
+	if lstat, err := os.Lstat(dstOpenCode); err == nil && lstat.Mode()&os.ModeSymlink != 0 {
+		excludeSharedOpenCodeLink(repoRoot, worktreeDir)
+	}
 
 	// Sync root-level .env / .env.* files into the worktree without overwriting
 	_, _ = syncWorktreeEnvFiles(repoRoot, worktreeDir)
@@ -614,6 +617,31 @@ func sanitizeSessionID(id string) string {
 // Hoxi never creates a .git directory in a plain folder.
 func EnsureGitExclude(repoRoot string, patterns ...string) {
 	ensureGitExclude(repoRoot, patterns...)
+}
+
+// excludeSharedOpenCodeLink hides the worktree's .opencode symlink from Git.
+// Left visible, `git add -A` commits it as a symlink, and merging that branch
+// fails whenever the project keeps an untracked .opencode/ directory ("would
+// lose untracked files"). info/exclude is shared by every worktree, so the
+// pattern pair ignores the root .opencode entry while re-including it when it
+// is a real directory: Git sees symlinks as files, so only the link is hidden
+// and the project's own .opencode/ stays visible in its status.
+func excludeSharedOpenCodeLink(repoRoot, worktreeDir string) {
+	if gitIgnoresPath(worktreeDir, ".opencode") {
+		return
+	}
+	patterns := []string{"/.opencode"}
+	// Never re-include a project .opencode/ the user already ignores.
+	if !gitIgnoresPath(repoRoot, ".opencode") {
+		patterns = append(patterns, "!/.opencode/")
+	}
+	ensureGitExclude(repoRoot, patterns...)
+}
+
+// gitIgnoresPath reports whether rel (relative to dir) matches an ignore rule.
+func gitIgnoresPath(dir, rel string) bool {
+	_, err := runGit(dir, "check-ignore", "-q", "--", rel)
+	return err == nil
 }
 
 func ensureGitExclude(repoRoot string, patterns ...string) {
