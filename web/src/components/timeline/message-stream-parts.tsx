@@ -208,11 +208,19 @@ export function PartView(props: {
 const USER_PROMPT_FOLD_LINES = 10;
 const USER_PROMPT_FOLD_CHARS = 600;
 
+// Survives session-switch remounts so restored reading positions keep their layout.
+const expandedUserPrompts = new Set<string>();
+
 export function UserTextPartView(props: {
   part: Extract<MessagePart, { type: "text" }>;
   forceExpand?: boolean;
 }) {
-  const [expanded, setExpanded] = createSignal(false);
+  const [expanded, setExpandedSignal] = createSignal(expandedUserPrompts.has(props.part.id));
+  const setExpanded = (next: boolean) => {
+    if (next) expandedUserPrompts.add(props.part.id);
+    else expandedUserPrompts.delete(props.part.id);
+    setExpandedSignal(next);
+  };
   let containerRef: HTMLDivElement | undefined;
 
   const lineCount = createMemo(() => {

@@ -105,6 +105,9 @@ function summarizeStepTarget(part: ToolPart): string {
 // Persistent manual expand state keyed by the first part ID of each group
 const expandedActivityGroupKeys = new Set<string>();
 const collapsedActivityGroupKeys = new Set<string>();
+// Earlier steps the reader revealed, kept across session-switch remounts.
+const STEP_PAGE = 40;
+const activityGroupStepLimits = new Map<string, number>();
 
 export default function ContextActivityGroupView(props: {
   parts: MessagePart[];
@@ -118,7 +121,17 @@ export default function ContextActivityGroupView(props: {
   const [open, setOpen] = createSignal(
     expandedActivityGroupKeys.has(groupKey()) && !collapsedActivityGroupKeys.has(groupKey())
   );
-  const [stepLimit, setStepLimit] = createSignal(40);
+  const [stepLimit, setStepLimitSignal] = createSignal(
+    activityGroupStepLimits.get(groupKey()) ?? STEP_PAGE
+  );
+  const setStepLimit = (next: number) => {
+    const key = groupKey();
+    if (key) {
+      if (next > STEP_PAGE) activityGroupStepLimits.set(key, next);
+      else activityGroupStepLimits.delete(key);
+    }
+    setStepLimitSignal(next);
+  };
   const visibleSteps = createMemo(() => props.parts.slice(-stepLimit()));
 
   // Sync open state when groupKey changes across virtualized/reused turns,
@@ -127,7 +140,7 @@ export default function ContextActivityGroupView(props: {
   createEffect(() => {
     const key = groupKey();
     if (!key) return;
-    setStepLimit(40);
+    setStepLimitSignal(activityGroupStepLimits.get(key) ?? STEP_PAGE);
     setOpen(expandedActivityGroupKeys.has(key) && !collapsedActivityGroupKeys.has(key));
   });
 
@@ -171,8 +184,8 @@ export default function ContextActivityGroupView(props: {
   const renderStepWindow = () => <>
     <Show when={props.parts.length > stepLimit()}>
       <button type="button" class="text-[12px] text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
-        onClick={() => setStepLimit((limit) => limit + 40)}>
-        {tI18n("timeline.loadEarlierSteps", { count: Math.min(40, props.parts.length - stepLimit()) })}
+        onClick={() => setStepLimit(stepLimit() + STEP_PAGE)}>
+        {tI18n("timeline.loadEarlierSteps", { count: Math.min(STEP_PAGE, props.parts.length - stepLimit()) })}
       </button>
     </Show>
     <For each={visibleSteps()}>{(part) => props.renderFallbackPart(part, props.revealKey)}</For>

@@ -48,9 +48,19 @@ const ROLLING_PREVIEW_RELEASE_MS = 280;
 
 export { extractTargetFile, kiloToolIconName, processCarriageReturns };
 
+// Expansion chosen by the reader survives remounts (session switches unmount the
+// transcript), like ThoughtBox and activity groups; otherwise the layout shrinks
+// and the restored reading position lands on different content.
+const toolCardExpansion = new Map<string, boolean>();
+
 export default function ToolCard(props: { part: ToolPart; defaultExpanded?: boolean }) {
-  const [expanded, setExpanded] = createSignal(props.defaultExpanded ?? false);
-  const [everExpanded, setEverExpanded] = createSignal(props.defaultExpanded ?? false);
+  const initiallyExpanded = toolCardExpansion.get(props.part.id) ?? props.defaultExpanded ?? false;
+  const [expanded, setExpandedSignal] = createSignal(initiallyExpanded);
+  const setExpanded = (next: boolean) => {
+    toolCardExpansion.set(props.part.id, next);
+    setExpandedSignal(next);
+  };
+  const [everExpanded, setEverExpanded] = createSignal(initiallyExpanded);
   const [elapsed, setElapsed] = createSignal(0);
   const [copiedCmd, setCopiedCmd] = createSignal(false);
   const [stoppingCmd, setStoppingCmd] = createSignal(false);
