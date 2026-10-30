@@ -80,7 +80,12 @@ extension currently allows one connection at a time and is manually loaded, not
 published to the Chrome Web Store. Opening Chrome DevTools may detach automation.
 After detachment, Hoxi shows disconnected state and requires explicit reconnection
 rather than silently starting an isolated browser. Chrome Link uses periodic
-JPEG captures (not a high-frame-rate screencast) and preserves the real viewport.
+JPEG captures (not a high-frame-rate screencast). With the default **Fit panel**
+page size, the linked tab renders at the inspector's size (device-metrics
+emulation, so it shows letterboxed in the Chrome window); detaching restores it.
+Choose **Actual window size** in developer tools to keep the tab's own viewport.
+Extensions older than 0.3.1 lack the `viewport` capability and keep the real
+viewport.
 
 ## Tools And Isolation
 

@@ -6,6 +6,7 @@ import { t } from "../../i18n";
 export default function BrowserDeveloper(props: {
   developer: ReturnType<typeof createBrowserDeveloper>;
   chrome: boolean;
+  window: boolean;
   resetZoom: () => void;
 }) {
   const button = "rounded border border-[var(--border-subtle)] px-2 py-0.5 text-[11px] hover:bg-[var(--bg-hover)] disabled:opacity-40 cursor-pointer";
@@ -15,11 +16,12 @@ export default function BrowserDeveloper(props: {
     </button>
     <Show when={props.developer.open()}><div class="space-y-2 px-2 pb-2 text-[11px]">
       <div class="flex flex-wrap items-center gap-2">
-        <label title={props.chrome ? t("inspector.browser.chromeViewportHint") : undefined}>{t("inspector.browser.viewportPreset")} <select value={props.developer.viewportMode()} disabled={props.chrome}
+        <label title={props.chrome ? t("inspector.browser.chromeViewportHint") : props.window ? t("inspector.browser.windowViewportHint") : undefined}>{t("inspector.browser.viewportPreset")} <select value={props.chrome || props.developer.viewportMode() !== "actual" ? props.developer.viewportMode() : "fit"} disabled={props.window}
           class="rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-1 py-0.5 disabled:opacity-50" onChange={event => props.developer.setViewportMode(event.currentTarget.value as BrowserViewportMode)}>
           <option value="fit">{t("inspector.browser.viewportFit")}</option>
           <option value="desktop">{t("inspector.browser.viewportDesktop")}</option>
           <option value="mobile">{t("inspector.browser.viewportMobile")}</option>
+          <Show when={props.chrome}><option value="actual">{t("inspector.browser.viewportActual")}</option></Show>
         </select></label>
         <label>{t("inspector.browser.previewScale")} <select value={props.developer.previewScale()}
           class="rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-1 py-0.5" onChange={event => props.developer.setPreviewScale(event.currentTarget.value as BrowserPreviewScale)}>

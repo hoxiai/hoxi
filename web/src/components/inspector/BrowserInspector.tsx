@@ -169,7 +169,7 @@ export default function BrowserInspector() {
         </Show>
         <Show when={error() || pollError()}><p role="alert" class="px-2 py-1 text-[11px] text-red-500 break-words border-b border-[var(--border-subtle)]">{t("inspector.browser.error", { error: error() || pollError() })}</p></Show>
         <BrowserWorkflows workflows={browser.workflows} url={state()?.url || ""} />
-        <Show when={running()}><BrowserDeveloper developer={browser.developer} chrome={chromeLinked() || browser.windowMode()} resetZoom={() => send({ action: "zoom_reset" })} /></Show>
+        <Show when={running()}><BrowserDeveloper developer={browser.developer} chrome={chromeLinked()} window={browser.windowMode()} resetZoom={() => send({ action: "zoom_reset" })} /></Show>
         <div ref={observeViewport} class="flex-1 min-h-0 overflow-auto">
           <Show when={browser.effectivePreview() && frame()} fallback={
             <Show when={!running() || browser.effectivePreview()}>

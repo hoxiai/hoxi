@@ -32,6 +32,8 @@ type extensionBridge struct {
 	navigation bool
 	clipboard  bool
 	developer  bool
+	// The extension can render the tab at the inspector's size.
+	viewport bool
 }
 
 type extensionReply struct {
@@ -152,7 +154,8 @@ func (s *Service) ServeExtension(w http.ResponseWriter, r *http.Request) {
 	}
 	b := &extensionBridge{conn: conn, done: make(chan struct{}), responses: make(chan extensionReply, 1),
 		pointer: slices.Contains(hello.Features, "pointer"), zoom: slices.Contains(hello.Features, "zoom"), navigation: slices.Contains(hello.Features, "navigation"),
-		clipboard: slices.Contains(hello.Features, "clipboard"), developer: slices.Contains(hello.Features, "developer")}
+		clipboard: slices.Contains(hello.Features, "clipboard"), developer: slices.Contains(hello.Features, "developer"),
+		viewport: slices.Contains(hello.Features, "viewport")}
 	owner.extension, owner.pairToken = b, ""
 	_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 	if conn.WriteJSON(map[string]any{"connected": true, "linkToken": linkToken}) != nil {
@@ -273,7 +276,8 @@ func (s *Service) serveExtensionAction(w http.ResponseWriter, ctx context.Contex
 	} else if path == "action" && releasesPointer(a.Action) {
 		sc.dropPointer(ctx)
 	}
-	if path == "state" || a.Action == "control" || a.Action == "resize" {
+	// Older extensions keep the tab's own size, so resizing only reads state.
+	if path == "state" || a.Action == "control" || ((a.Action == "resize" || a.Action == "viewport_reset") && !sc.extension.viewport) {
 		a = Action{Action: "state"}
 	}
 	if path == "frame" {

@@ -37,7 +37,7 @@ export interface BrowserActionResult extends BrowserState {
 
 export interface BrowserAction {
   action: "navigate" | "back" | "forward" | "reload" | "click" | "type" | "key" |
-    "scroll" | "wheel" | "zoom" | "pointer" | "stop_loading" | "context" | "copy" | "paste" | "upload_cancel" | "zoom_reset" | "tab_new" | "tab_select" | "tab_close" | "control" | "mode" | "focus" | "resize" | "close";
+    "scroll" | "wheel" | "zoom" | "pointer" | "stop_loading" | "context" | "copy" | "paste" | "upload_cancel" | "zoom_reset" | "viewport_reset" | "tab_new" | "tab_select" | "tab_close" | "control" | "mode" | "focus" | "resize" | "close";
   async?: boolean;
   url?: string;
   selector?: string;

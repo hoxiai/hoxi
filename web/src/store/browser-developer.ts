@@ -5,7 +5,8 @@ import { hoxiAPI } from "../services/api";
 import { setWorkspace } from "./workspace-state";
 import { t } from "../i18n";
 
-export type BrowserViewportMode = "fit" | "desktop" | "mobile";
+// "actual" keeps a linked Chrome tab at its own window size.
+export type BrowserViewportMode = "fit" | "desktop" | "mobile" | "actual";
 export type BrowserPreviewScale = "fit" | "0.5" | "1" | "1.5";
 export const browserViewportPresets = {
   desktop: { width: 1440, height: 900, deviceScaleFactor: 1 },

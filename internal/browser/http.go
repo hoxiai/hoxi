@@ -217,7 +217,8 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	// Pointer input only reaches a page the inspector already shows; it never
 	// reserves a scope or starts Chrome (for example right after an idle close).
 	liveInput := action.Action == "pointer" || action.Action == "wheel" || action.Action == "zoom" || action.Action == "stop_loading" ||
-		action.Action == "context" || action.Action == "copy" || action.Action == "paste" || action.Action == "upload_cancel" || action.Action == "zoom_reset" || action.Action == "focus"
+		action.Action == "context" || action.Action == "copy" || action.Action == "paste" || action.Action == "upload_cancel" || action.Action == "zoom_reset" || action.Action == "focus" ||
+		action.Action == "viewport_reset"
 	sc, err := s.acquire(ctx, key, path == "action" && action.Action != "close" && !liveInput)
 	if err != nil {
 		fail(w, 503, err)
@@ -254,7 +255,7 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		s.servePair(w, sc)
 		return
 	}
-	if sc.pairToken != "" && path == "action" && action.Action != "resize" && action.Action != "control" && action.Action != "mode" {
+	if sc.pairToken != "" && path == "action" && action.Action != "resize" && action.Action != "viewport_reset" && action.Action != "control" && action.Action != "mode" {
 		fail(w, 409, errors.New("Chrome pairing pending; connect the extension or cancel pairing first"))
 		return
 	}

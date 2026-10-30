@@ -33,6 +33,30 @@ async function attachTab(link, tabID, title = "", url = "") {
   const mainFrame = frame?.frameTree?.frame?.id;
   link.tabs.set(tabID, { id: String(tabID), title, url, mainFrame });
   if (link.tabID === tabID) link.mainFrame = mainFrame;
+  if (link.viewport) await applyViewport(link, tabID);
+}
+
+// Hoxi asks linked tabs to render at its inspector's size, like its own
+// browser. Detaching the debugger drops the override, restoring the tab.
+function validViewport(a) {
+  const size = value => Number.isInteger(value) && value >= 1 && value <= 4096;
+  return size(a.width) && size(a.height) && a.width * a.height <= 8388608;
+}
+
+async function applyViewport(link, tabID) {
+  const target = { tabId: tabID };
+  if (!link.viewport) return chrome.debugger.sendCommand(target, "Emulation.clearDeviceMetricsOverride");
+  // A zero scale factor keeps the screen's own pixel density.
+  return chrome.debugger.sendCommand(target, "Emulation.setDeviceMetricsOverride",
+    { width: link.viewport.width, height: link.viewport.height, deviceScaleFactor: 0, mobile: false });
+}
+
+async function setViewport(link, viewport) {
+  link.viewport = viewport;
+  for (const id of link.tabs.keys()) {
+    try { await applyViewport(link, id); }
+    catch (error) { if (id === link.tabID) throw error; }
+  }
 }
 
 async function disconnect(link = current) {
@@ -173,6 +197,10 @@ async function execute(link, a) {
       if (a.clear) link.diagnostics = [];
       return { diagnostics: link.diagnostics || [] };
     case "zoom_reset": await send(link, "Emulation.setPageScaleFactor", { pageScaleFactor: 1 }); break;
+    case "resize":
+      if (!validViewport(a)) throw new Error("Invalid viewport size");
+      await setViewport(link, { width: a.width, height: a.height }); break;
+    case "viewport_reset": await setViewport(link, null); break;
     case "navigate": case "back": case "forward": case "reload": return navigate(link, a);
     case "stop_loading":
       stopNavigation(link);
@@ -247,7 +275,7 @@ async function connect(code, tabID) {
       let connected = false;
       let queue = Promise.resolve();
       // Features tell Hoxi which actions this extension version understands.
-      socket.onopen = () => socket.send(JSON.stringify({ token, features: ["pointer", "zoom", "navigation", "clipboard", "developer"] }));
+      socket.onopen = () => socket.send(JSON.stringify({ token, features: ["pointer", "zoom", "navigation", "clipboard", "developer", "viewport"] }));
       socket.onerror = () => reject(new Error("Cannot reach local Hoxi"));
       socket.onclose = () => { clearTimeout(timer); if (!connected) reject(new Error("Connection code expired or rejected")); void disconnect(link); };
       socket.onmessage = event => {

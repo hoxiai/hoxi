@@ -80,7 +80,8 @@ with the following action-specific fields:
 | `tab_select`, `tab_close` | Required `tabID`, checked against browser's page targets |
 | `control` | UI only; required boolean `manual`; does not launch Chrome |
 | `pair` | UI only; returns `{code,expiresIn:120}` for a one-use Chrome Link connection, rejects replacing an existing browser |
-| `resize` | UI only; required integer `width` and `height`, each 1..4096; optional float `deviceScaleFactor` in [1,2], default 1; effective pixel area at most 8,388,608; saves scope size without launching Chrome and resizes the selected existing tab |
+| `resize` | UI only; required integer `width` and `height`, each 1..4096; optional float `deviceScaleFactor` in [1,2], default 1; effective pixel area at most 8,388,608; saves scope size without launching Chrome and resizes the selected existing tab; with Chrome Link (`viewport` capability) it emulates that size on the linked tabs |
+| `viewport_reset` | UI only; Chrome Link restores the linked tabs' own size; a no-op otherwise and never launches Chrome |
 | `close` | Stops Chrome, removes profile and scope; idempotent |
 
 Clipboard/context actions never reserve a scope or launch Chrome. They use a fixed

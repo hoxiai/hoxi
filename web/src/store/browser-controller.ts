@@ -71,6 +71,7 @@ export function createBrowserController() {
     return currentState ? currentState.mode === "window" : true;
   };
   const headlessMode = () => !windowMode() && !chromeLinked();
+  const chromeViewportLinked = createMemo(() => chromeLinked() && state()?.connected !== false);
   const effectivePreview = () => headlessMode() || previewEnabled();
   const pairing = () => Boolean(pairCode() || state()?.pairing);
   const selectedTab = createMemo(() => state()?.tabID);
@@ -101,7 +102,8 @@ export function createBrowserController() {
 
   function enqueueAction(connection: Connection, action: BrowserAction, guard = () => true): Promise<BrowserActionResult | undefined> | undefined {
     if (!valid(connection)) return;
-    if (action.action !== "resize") connection.revision++;
+    const sizing = action.action === "resize" || action.action === "viewport_reset";
+    if (!sizing) connection.revision++;
     const isNav = NAV_ACTIONS.has(action.action);
     if (TAB_EPOCH_ACTIONS.has(action.action)) connection.tabEpoch++;
     if (["navigate", "back", "forward", "reload", "tab_new", "tab_select", "tab_close", "close"].includes(action.action) ||
@@ -117,7 +119,7 @@ export function createBrowserController() {
     }
     // The error banner itself changes the viewport height; the resulting
     // layout-driven resize must not dismiss an error the user has not seen.
-    if (action.action !== "resize") setError("");
+    if (!sizing) setError("");
     const result = connection.queue.then(async () => {
       try {
         if (!valid(connection) || !guard()) return;
@@ -182,7 +184,7 @@ export function createBrowserController() {
     enabled: () => workspace.inspectorOpen && workspace.inspectorTab === "browser" && visible(), error: setError });
   const viewport = createMemo(() => {
     const mode = developer.viewportMode();
-    return mode === "fit" ? layoutViewport() : browserViewportPresets[mode];
+    return mode === "fit" || mode === "actual" ? layoutViewport() : browserViewportPresets[mode];
   });
 
   function flushBufferedInputs(connection: Connection) {
@@ -364,6 +366,15 @@ export function createBrowserController() {
       const size = viewport();
       // An idle panel only remembers its size; navigate/tab_new sends it on startup.
       if (size) untrack(() => { if (running() && headlessMode()) enqueueAction(connection, { action: "resize", ...size }); });
+    });
+    createEffect(() => {
+      // Chrome Link renders the tab at the panel's size unless the user keeps
+      // its actual window size; the tab is restored when the link ends.
+      if (!chromeViewportLinked()) return;
+      const size = viewport();
+      const actual = developer.viewportMode() === "actual";
+      if (!actual && !size) return;
+      untrack(() => enqueueAction(connection, actual ? { action: "viewport_reset" } : { action: "resize", ...size! }));
     });
     untrack(consumePendingBrowserURL);
     let timer: ReturnType<typeof setTimeout> | undefined;

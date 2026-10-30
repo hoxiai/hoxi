@@ -72,7 +72,17 @@ test("worker confines commands to the selected tab and detaches without closing 
     await action({ action: "key", key: "Control++" });
     assert.ok(commands.some(c => c.method === "Input.insertText" && c.params.text === "hello"));
     assert.ok(commands.some(c => c.method === "Input.dispatchKeyEvent" && c.params.key === "+"));
-    assert.deepEqual(hello.features, ["pointer", "zoom", "navigation", "clipboard", "developer"]);
+    assert.deepEqual(hello.features, ["pointer", "zoom", "navigation", "clipboard", "developer", "viewport"]);
+    await action({ action: "resize", width: 480, height: 720 });
+    assert.deepEqual(commands.filter(c => c.method === "Emulation.setDeviceMetricsOverride").at(-1).params,
+      { width: 480, height: 720, deviceScaleFactor: 0, mobile: false });
+    const resized = commands.length;
+    for (const bad of [{ width: 0 }, { height: 4097 }, { width: 1.5 }, { width: "480" }, { width: 4096, height: 4096 }]) {
+      assert.match((await action({ action: "resize", width: 480, height: 720, ...bad })).error, /Invalid viewport/, JSON.stringify(bad));
+    }
+    assert.equal(commands.length, resized);
+    await action({ action: "viewport_reset" });
+    assert.equal(commands.at(-2).method, "Emulation.clearDeviceMetricsOverride");
     assert.equal((await action({ action: "copy" })).result.clipboardText, "selected text");
     assert.match((await action({ action: "paste", x: -1, y: 2, text: "no" })).error, /Invalid clipboard/);
     assert.match((await action({ action: "paste", x: 1, y: 2, text: "x".repeat(65537) })).error, /Invalid clipboard/);

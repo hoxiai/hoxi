@@ -64,6 +64,10 @@ func validateAction(a Action, agent bool) error {
 		if agent {
 			return errors.New("only UI may reset page zoom")
 		}
+	case "viewport_reset":
+		if agent {
+			return errors.New("only UI may restore the Chrome Link viewport")
+		}
 	case "upload_cancel":
 		if agent || !regexp.MustCompile(`^[a-f0-9]{32}$`).MatchString(a.RequestID) {
 			return errors.New("only UI may cancel an identified file request")
@@ -283,6 +287,10 @@ func (sc *scope) perform(ctx context.Context, a Action) (map[string]any, error) 
 		return nil, err
 	case "resize":
 		return nil, sc.withTab(ctx)
+	case "viewport_reset":
+		// Only Chrome Link emulates a viewport it can restore; Hoxi-owned
+		// browsers always follow their own size.
+		return nil, nil
 	case "zoom_reset":
 		return nil, sc.withTab(ctx, emulation.SetPageScaleFactor(1))
 	case "navigate":
