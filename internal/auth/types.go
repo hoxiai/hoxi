@@ -47,4 +47,8 @@ type MCPTokenRequest struct {
 	AppID   string   `json:"appId,omitempty"`
 	AppName string   `json:"appName,omitempty"`
 	Scopes  []string `json:"scopes,omitempty"`
+	// StoreName / SiteURL 是可选的门店提示，仅原样透传给 hoxi.ai 用于按店铺
+	// 生成一键授权入口（如 Shopify 需先知道 *.myshopify.com 域名）。
+	StoreName string `json:"storeName,omitempty"`
+	SiteURL   string `json:"siteUrl,omitempty"`
 }
