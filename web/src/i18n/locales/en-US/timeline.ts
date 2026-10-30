@@ -78,6 +78,8 @@ export const timeline = {
   filesAttached: "{count} files",
   addContext: "Add Context",
   selectModel: "Select Model",
+  selectModelToSend: "Choose a model before sending",
+  modelUnavailableReselect: "Model {model} is unavailable. Choose another model",
   reads: "{count} reads",
   searches: "{count} searches",
   lists: "{count} lists",

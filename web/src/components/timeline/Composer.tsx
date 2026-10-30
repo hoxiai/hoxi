@@ -14,6 +14,7 @@ import {
   loadSkillsCatalog,
   selectComposerSkill,
   sessionDirectory,
+  sessionNeedsModelSelection,
   sessionRuntimeForID,
   setComposerSkillNotice,
   spawnBackgroundSubtask,
@@ -70,6 +71,7 @@ export default function Composer() {
   const [codeSearchOpen, setCodeSearchOpen] = createSignal(false);
   const [convoyOpen, setConvoyOpen] = createSignal(false);
   const [choosingFolder, setChoosingFolder] = createSignal(false);
+  const [modelPickerRequest, setModelPickerRequest] = createSignal(0);
   const chooseFolder = async () => {
     if (choosingFolder()) return;
     const request = workspace.newThreadRequest;
@@ -182,6 +184,9 @@ export default function Composer() {
     cursorOffset
   );
   const imgAttach = createImageAttachments(sessionID, () => workspace.rootDir);
+  createEffect(() => {
+    if (workspace.selectedModel && imgAttach.notice() === t("timeline.selectModelToSend")) imgAttach.clearNotice();
+  });
   const pasteCollapse = createPasteCollapse();
   const promptHistory = createPromptHistory(sessionID);
   const draftSync = createSessionDraftSync({
@@ -315,6 +320,11 @@ export default function Composer() {
         return;
       }
     }
+    if (!sending() && sessionNeedsModelSelection(sessionID())) {
+      imgAttach.setNotice(t("timeline.selectModelToSend"));
+      setModelPickerRequest((n) => n + 1);
+      return;
+    }
     const withPastes = pasteCollapse.expandIntoPrompt(text());
     const hasReviews = reviewComments().length > 0;
     const attachments = imgAttach.toPromptAttachments();
@@ -356,9 +366,6 @@ export default function Composer() {
     } catch (err) {
       console.error("send prompt failed:", err);
       const errMsg = err instanceof Error ? err.message : String(err || "");
-      if (errMsg) {
-        imgAttach.setNotice(errMsg);
-      }
       if (workspace.rootDir === draftDirectory && (!draftSessionID || sessionID() === draftSessionID)) {
         if (!text()) setText(draft.text);
         if (draft.skill && !getComposerSkill(sessionID())) {
@@ -368,6 +375,8 @@ export default function Composer() {
         pasteCollapse.replacePastes([...draft.pastes, ...pasteCollapse.pastes()]);
         requestAnimationFrame(adjustHeight);
       }
+      // Set after restoring the draft: replaceImages clears the notice.
+      if (errMsg) imgAttach.setNotice(errMsg);
     } finally {
       setSending(false);
     }
@@ -681,7 +690,7 @@ export default function Composer() {
               />
 
               <ModeSwitcher />
-              <ModelSelector />
+              <ModelSelector openRequest={modelPickerRequest()} />
 
               <Show when={!(isWorkSurface() && surfaceExtension.hideCodeComposerControls)}>
                 <Show when={workspace.rootDir} fallback={

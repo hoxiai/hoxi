@@ -1,5 +1,5 @@
 // web/src/components/models/ModelSelector.tsx
-import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show } from "solid-js";
 import { Portal } from "solid-js/web";
 import { Presence } from "../motion/Presence";
 import {
@@ -62,7 +62,7 @@ function effortOptionLabel(level: ConcreteReasoningEffort): string {
   }
 }
 
-export default function ModelSelector() {
+export default function ModelSelector(props: { openRequest?: number }) {
   const [open, setOpen] = createSignal(false);
   const [triggerHovered, setTriggerHovered] = createSignal(false);
   const [rail, setRail] = createSignal<string>("connected");
@@ -354,6 +354,17 @@ export default function ModelSelector() {
     }
   };
 
+  // The composer bumps openRequest when a send is blocked on a missing model.
+  createEffect(
+    on(
+      () => props.openRequest,
+      (request) => {
+        if (request && !open()) toggleOpen();
+      },
+      { defer: true }
+    )
+  );
+
   const handleKeyDown = (e: KeyboardEvent) => {
     if (e.target !== searchInputRef) {
       if (e.key === "Escape") {
@@ -409,13 +420,15 @@ export default function ModelSelector() {
         class={`hoxi-press inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[12px] font-medium cursor-pointer max-w-[260px] ${
           open()
             ? "bg-[var(--bg-hover)] text-[var(--text-primary)]"
-            : "text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
+            : activeModelInfo()
+            ? "text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
+            : "ring-1 ring-inset ring-[var(--warn-border)] bg-[var(--warn-surface)] text-[var(--warn-text)] hover:brightness-105"
         }`}
-        title={activeModelInfo() ? undefined : t("timeline.selectModel")}
+        title={activeModelInfo() ? undefined : t("timeline.selectModelToSend")}
       >
         <Show
           when={activeModelInfo()?.providerID}
-          fallback={<Cpu size={12} class="shrink-0 text-[var(--accent-primary)]" />}
+          fallback={<Cpu size={12} class="shrink-0" />}
         >
           {(provID) => <ProviderIcon id={provID()} class="w-3.5 h-3.5 shrink-0" />}
         </Show>

@@ -351,11 +351,13 @@ export async function dispatchSessionPrompt(
     ? { ...chosenModel }
     : undefined;
   if (!effectiveModel && sessionRuntimeForID(id) === "opencode") {
-    throw new Error(t("timeline.selectModel"));
+    throw new Error(t("timeline.selectModelToSend"));
   }
   if (effectiveModel && workspace.providers.length && !workspace.providers.some((provider) =>
     provider.id === effectiveModel.providerID && provider.models?.[effectiveModel.modelID])) {
-    throw new Error(`${t("timeline.selectModel")}: ${effectiveModel.providerID}/${effectiveModel.modelID}`);
+    throw new Error(
+      t("timeline.modelUnavailableReselect", { model: `${effectiveModel.providerID}/${effectiveModel.modelID}` })
+    );
   }
   if (
     hasImageAttachment &&

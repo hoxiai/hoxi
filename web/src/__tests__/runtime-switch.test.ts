@@ -4,7 +4,7 @@ import type { SessionInfo, SessionRuntime } from "../services/sse-types";
 import { selectModel } from "../store/workspace-providers";
 import { setWorkspace, workspace } from "../store/workspace";
 import { assertDeepEqual, assertEqual, assertTrue, describe, it } from "./test-harness";
-import { sessionRuntimeForID } from "../store/session-query";
+import { sessionNeedsModelSelection, sessionRuntimeForID } from "../store/session-query";
 
 const modelFor = (runtime: SessionRuntime) => ({ providerID: runtime === "opencode" ? "ollama" : runtime, modelID: "model" });
 
@@ -27,6 +27,24 @@ describe("runtime switching in an existing conversation", () => {
       }
       setWorkspace("sessions", 0, "runtime", "opencode");
       assertEqual(sessionRuntimeForID(id), "opencode");
+    } finally { setWorkspace(reconcile(saved)); }
+  });
+
+  it("asks for a model only when OpenCode would run without one", () => {
+    const saved = structuredClone(unwrap(workspace));
+    try {
+      const cld = "ses_cld_no_model";
+      setWorkspace({ activeSessionID: null, hoxiProviders: {}, globalConfig: {},
+        defaultAI: { model: null, agent: "build", effort: "high" },
+        sessions: [{ id: cld, runtime: "claude-code", directory: "/project", title: "Existing", time: { created: 1, updated: 1 } }],
+        aiBySession: { [cld]: { model: null, agent: "build", effort: "high" } } });
+      assertTrue(sessionNeedsModelSelection(null));
+      assertEqual(sessionNeedsModelSelection(cld), false);
+      setWorkspace("globalConfig", { agent: { build: { model: "ollama/model" } } });
+      assertEqual(sessionNeedsModelSelection(null), false);
+      setWorkspace("globalConfig", {});
+      setWorkspace("defaultAI", "model", modelFor("opencode"));
+      assertEqual(sessionNeedsModelSelection(null), false);
     } finally { setWorkspace(reconcile(saved)); }
   });
 

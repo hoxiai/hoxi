@@ -99,6 +99,18 @@ export function sessionsWithPendingPermission(): Set<string> {
   return set;
 }
 
+/**
+ * True when sending would fail because no model is chosen: OpenCode needs one,
+ * while native CLI runtimes fall back to their own default.
+ */
+export function sessionNeedsModelSelection(sessionID?: string | null): boolean {
+  const config = (sessionID && workspace.aiBySession[sessionID]) || workspace.defaultAI;
+  if (config.model) return false;
+  const agentModel = workspace.globalConfig?.agent?.[config.agent]?.model;
+  if (typeof agentModel === "string" && agentModel) return false;
+  return sessionRuntimeForID(sessionID) === "opencode";
+}
+
 export function sessionRuntimeForID(sessionID?: string | null): SessionRuntime {
   if (!sessionID) {
     const rawModel = workspace.defaultAI.model;

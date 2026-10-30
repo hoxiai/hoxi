@@ -79,6 +79,8 @@ export const timeline: TimelineI18n = {
   filesAttached: "{count} 个文件",
   addContext: "添加上下文",
   selectModel: "选择模型",
+  selectModelToSend: "请先选择模型再发送",
+  modelUnavailableReselect: "模型 {model} 不可用，请重新选择",
   reads: "{count} 次读取",
   searches: "{count} 次搜索",
   lists: "{count} 次检索",
