@@ -179,6 +179,12 @@ export default function OfficialChannelTab() {
             </div>
           </Show>
 
+          <Show when={!feedback() && officialChannelState.error}>
+            <div class="rounded-xl border border-[var(--danger-border)] bg-[var(--danger-surface)] px-3.5 py-2.5 text-[12px] text-[var(--danger-text)]">
+              {officialChannelState.error}
+            </div>
+          </Show>
+
           <Show
             when={officialChannelState.models.length > 0}
             fallback={

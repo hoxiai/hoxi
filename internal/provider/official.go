@@ -27,10 +27,73 @@ type AuthSource interface {
 // SetAuthSource wires the desktop account used by the official gateway connect
 // flow. When unset the official routes answer 401.
 func (s *Service) SetAuthSource(a AuthSource) {
+	signedIn := a != nil && a.CurrentDeviceToken() != ""
 	s.authMu.Lock()
 	s.authSource = a
 	s.authMu.Unlock()
-	s.officialBlocked.Store(a == nil || a.CurrentDeviceToken() == "")
+	s.officialBlocked.Store(!signedIn)
+	if signedIn {
+		s.migrateLegacyOfficialProvider()
+	}
+}
+
+// migrateLegacyOfficialProvider repairs the upgrade path where the official
+// channel was persisted under the shared "ainode" provider id before it got a
+// dedicated id. Without this, the model picker still shows the account catalog
+// while the engine answers "Model not found: hoxi-official/<model>" because the
+// provider never reached ~/.hoxi/models.json.
+//
+// It only runs while the account is signed in, never overwrites an existing
+// official provider, and only renames a provider that still carries the
+// official display name, so a user-defined "ainode" gateway is left untouched.
+func (s *Service) migrateLegacyOfficialProvider() {
+	s.officialMu.Lock()
+	defer s.officialMu.Unlock()
+
+	s.configPersistMu.Lock()
+	doc := s.loadHoxiConfigDoc()
+	providers, _ := doc["provider"].(map[string]interface{})
+	legacy, ok := providers["ainode"].(map[string]interface{})
+	if !ok {
+		s.configPersistMu.Unlock()
+		return
+	}
+	if _, exists := providers[officialProviderID]; exists {
+		s.configPersistMu.Unlock()
+		return
+	}
+	if name, _ := legacy["name"].(string); strings.TrimSpace(name) != officialProviderName {
+		s.configPersistMu.Unlock()
+		return
+	}
+
+	migrated := make(map[string]interface{}, len(legacy))
+	for k, v := range legacy {
+		migrated[k] = v
+	}
+	if npm, _ := migrated["npm"].(string); strings.TrimSpace(npm) == "" {
+		migrated["npm"] = "@ai-sdk/openai-compatible"
+	}
+	providers[officialProviderID] = migrated
+	delete(providers, "ainode")
+	doc["provider"] = providers
+	persistErr := s.persistHoxiConfigFiles(doc)
+	s.configPersistMu.Unlock()
+	if persistErr != nil {
+		return
+	}
+
+	if key := providerAPIKey(migrated); key != "" {
+		_ = s.persistEngineProviderAuthMap(officialProviderID, map[string]interface{}{"type": "api", "key": key})
+	}
+	s.officialBlocked.Store(false)
+	s.reloadOpenCodeGlobalConfig()
+}
+
+func providerAPIKey(provider map[string]interface{}) string {
+	opts, _ := provider["options"].(map[string]interface{})
+	key, _ := opts["apiKey"].(string)
+	return strings.TrimSpace(key)
 }
 
 const (

@@ -164,8 +164,10 @@ export async function ensureOfficialProviderConnected(): Promise<void> {
   officialAutoConnectGeneration = account;
   try {
     await connectOfficialChannel();
-  } catch {
-    // Silent: the user can retry from the Hoxi official settings entry.
+  } catch (err: any) {
+    // Keep the failure visible in the official settings entry instead of only
+    // surfacing it later as a generic engine 500 on the selected model.
+    setOfficialChannelState({ error: err?.message || t("models.officialConnectFailed") });
   } finally {
     if (officialAutoConnectGeneration === account) officialAutoConnectGeneration = null;
   }
