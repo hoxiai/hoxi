@@ -302,6 +302,8 @@ func (s *breakerStore) RecordFailure(providerID, modelID string, class breakerCl
 	}
 	s.mu.Lock()
 	rec := s.entryLocked(providerID, modelID)
+	now := s.now()
+	class, resetAt, hasReset := quotaResetCooldown(class, reason, now)
 	rec.Failures++
 	rec.ConsecutiveFailures++
 	rec.LastClass = class
@@ -322,10 +324,14 @@ func (s *breakerStore) RecordFailure(providerID, modelID string, class breakerCl
 	phaseChanged := false
 	if rec.ConsecutiveFailures >= threshold {
 		rec.Phase = breakerOpen
-		rec.OpenUntil = s.now().Add(breakerCooldown(class, rec.ConsecutiveFailures)).UnixMilli()
+		rec.OpenUntil = now.Add(breakerCooldown(class, rec.ConsecutiveFailures)).UnixMilli()
+		if hasReset {
+			// The upstream named the reset time; trust it over the backoff guess.
+			rec.OpenUntil = resetAt.UnixMilli()
+		}
 		phaseChanged = true
 	}
-	rec.UpdatedAt = s.now().UnixMilli()
+	rec.UpdatedAt = now.UnixMilli()
 	doc, seq, shouldSave := s.prepareSaveLocked(phaseChanged)
 	s.mu.Unlock()
 	if shouldSave {

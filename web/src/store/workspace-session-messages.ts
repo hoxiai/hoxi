@@ -18,6 +18,12 @@ import {
   resolveAutoModelTarget,
 } from "./auto-models";
 import { reportAutoCandidateOutcome } from "./auto-breaker";
+import {
+  decideAutoFailover,
+  maxAutoFailoverAttempts,
+  parseQuotaResetMs,
+  recordAutoFailover,
+} from "./auto-failover";
 import { newIsolatedSession, waitForSessionSandbox } from "./session-sandbox";
 import { buildCombinedSystemPrompt } from "./settings";
 import { setWorkspace, workspace, type ReasoningEffort } from "./workspace-state";
@@ -93,28 +99,20 @@ export async function handleSessionErrorEvent(
   if (autoState && error && error.name !== "RunnerStalledError") {
     const errText = error.data?.message || error.name || "error";
     const status = error.data?.statusCode;
-    markAutoCandidateCooldown(autoState.target.providerID, autoState.target.modelID, errText, status);
-    reportAutoCandidateOutcome({
-      providerID: autoState.target.providerID,
-      modelID: autoState.target.modelID,
-      ok: false,
-      statusCode: status,
-      message: errText,
-    });
-    const isElapsedFast = Date.now() - autoState.dispatchedAt < 45_000;
-    // A model the engine no longer knows can never succeed by retrying it, so
-    // the pool must advance exactly like it does for a rate limit.
-    const isModelUnavailable =
-      error.name === "ProviderModelNotFoundError" ||
-      /model not found|model.*not.*available|is not loaded in the running engine/i.test(errText);
-    const isRateOrTransient =
-      isModelUnavailable ||
-      status === 429 ||
-      status === 502 ||
-      status === 503 ||
-      Boolean(error.data?.isRetryable) ||
-      /429|rate.?limit|quota|too many requests|overloaded|unavailable|timeout/i.test(errText);
-    if ((isRateOrTransient || isElapsedFast) && autoState.triedKeys.size < 3) {
+    const failed = autoState.target;
+    const cooldownMs = parseQuotaResetMs(errText);
+    const decision = decideAutoFailover(error, Date.now() - autoState.dispatchedAt);
+    if (decision.penalize) {
+      markAutoCandidateCooldown(failed.providerID, failed.modelID, errText, status, cooldownMs);
+      reportAutoCandidateOutcome({
+        providerID: failed.providerID,
+        modelID: failed.modelID,
+        ok: false,
+        statusCode: status,
+        message: errText,
+      });
+    }
+    if (decision.failover && autoState.triedKeys.size < maxAutoFailoverAttempts(autoState.poolID)) {
       const retryHasImage = (autoState.attachments ?? []).some(
         (a) => (a.mime || "").toLowerCase().startsWith("image/") || /^data:image\//i.test(a.url || "")
       );
@@ -129,6 +127,14 @@ export async function handleSessionErrorEvent(
         `${nextCand.providerID}/${nextCand.modelID}` !==
           `${autoState.target.providerID}/${autoState.target.modelID}`
       ) {
+        recordAutoFailover({
+          sessionID,
+          from: { ...failed },
+          to: { ...nextCand },
+          reason: decision.reason,
+          at: Date.now(),
+          cooldownUntil: cooldownMs ? Date.now() + cooldownMs : undefined,
+        });
         autoState.triedKeys.add(`${nextCand.providerID}/${nextCand.modelID}`);
         autoState.target = nextCand;
         autoState.dispatchedAt = Date.now();

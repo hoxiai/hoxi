@@ -58,6 +58,7 @@ import "../src/__tests__/pairing.test";
 import "../src/__tests__/cloudflared.test";
 import "../src/__tests__/auto-models.test";
 import "../src/__tests__/auto-breaker.test";
+import "../src/__tests__/auto-failover.test";
 import "../src/__tests__/auto-candidate-status.test";
 import "../src/__tests__/auto-session-affinity.test";
 import "../src/__tests__/workspace-review.test";

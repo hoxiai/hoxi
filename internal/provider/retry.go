@@ -56,6 +56,10 @@ var quotaExhaustedMarkers = []string{
 	"credit balance is too low",
 	"billing_hard_limit",
 	"freeusagelimiterror",
+	"均已限额",
+	"额度已用完",
+	"额度不足",
+	"余额不足",
 }
 
 func isQuotaExhausted(body []byte) bool {

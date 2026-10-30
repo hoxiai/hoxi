@@ -4,6 +4,7 @@ import type { MessageInfo, SessionStatus } from "../../services/sse-types";
 import {
   compactSessionContext,
   computeProviderHealth,
+  findAutoFailoverNotice,
   findBestFallbackModel,
   getEffectivePoolCandidates,
   isContextOverflowError,
@@ -23,7 +24,28 @@ import {
 } from "../../store/workspace";
 import { ProviderHealthBadge } from "../models/ProviderHealthBadge";
 import { Icon } from "../icons";
-import { t } from "../../i18n";
+import { locale, t } from "../../i18n";
+import type { AutoFailoverReason } from "../../store/workspace";
+
+const FAILOVER_REASON_KEYS = {
+  rateLimit: "timeline.autoFailoverReasonRateLimit",
+  quota: "timeline.autoFailoverReasonQuota",
+  auth: "timeline.autoFailoverReasonAuth",
+  model: "timeline.autoFailoverReasonModel",
+  server: "timeline.autoFailoverReasonServer",
+  network: "timeline.autoFailoverReasonNetwork",
+  other: "timeline.autoFailoverReasonOther",
+} as const satisfies Record<AutoFailoverReason, string>;
+
+function formatPausedUntil(at: number): string {
+  const date = new Date(at);
+  const sameDay = date.toDateString() === new Date().toDateString();
+  return date.toLocaleString(locale(), {
+    ...(sameDay ? {} : { month: "numeric", day: "numeric" }),
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
 
 /**
  * Renders provider / model API errors returned on an assistant turn (`info.error`)
@@ -31,6 +53,15 @@ import { t } from "../../i18n";
  */
 export function AssistantErrorCard(props: { info: MessageInfo }) {
   const isStall = () => isRunnerStallError(props.info);
+  // The auto pool already resent this prompt to another candidate.
+  const failover = createMemo(() => findAutoFailoverNotice(props.info));
+  // A later prompt moved the session on, so "retry" would resend the wrong turn.
+  const superseded = createMemo(() => {
+    const created = props.info.time?.created ?? 0;
+    return (workspace.messagesBySession[props.info.sessionID] ?? []).some(
+      (m) => m.info.role === "user" && (m.info.time?.created ?? 0) > created
+    );
+  });
   const isOverflow = () => isContextOverflowError(props.info);
   const [compacting, setCompacting] = createSignal(false);
   const [compactNotice, setCompactNotice] = createSignal("");
@@ -134,6 +165,44 @@ export function AssistantErrorCard(props: { info: MessageInfo }) {
 
   return (
     <Show when={props.info.error && !isUserAbortError(props.info)}>
+      <Show when={failover()}>
+        {(n) => (
+          <div
+            role="status"
+            class="my-2 rounded-xl border border-[var(--warn-border)] bg-[var(--warn-surface)] px-3.5 py-2.5 text-[12px] text-[var(--warn-text)]"
+          >
+            <div class="flex items-start gap-2.5">
+              <Icon name="reset" size="small" class="mt-0.5 shrink-0" />
+              <div class="min-w-0 flex-1 space-y-1">
+                <div class="font-semibold">{t("timeline.autoFailoverTitle")}</div>
+                <div class="break-words">
+                  {t("timeline.autoFailoverDesc", {
+                    from: `${n().from.providerID}/${n().from.modelID}`,
+                    to: `${n().to.providerID}/${n().to.modelID}`,
+                    reason: t(FAILOVER_REASON_KEYS[n().reason] ?? FAILOVER_REASON_KEYS.other),
+                  })}
+                </div>
+                <Show when={(n().cooldownUntil ?? 0) > Date.now()}>
+                  <div class="opacity-80">
+                    {t("timeline.autoFailoverPausedUntil", {
+                      model: n().from.modelID,
+                      time: formatPausedUntil(n().cooldownUntil!),
+                    })}
+                  </div>
+                </Show>
+                <details class="text-[11px] opacity-80">
+                  <summary class="cursor-pointer select-none">{t("timeline.autoFailoverShowError")}</summary>
+                  <div class="mt-1 font-mono break-words">
+                    {errTitle()}
+                    {statusCode() ? ` (${statusCode()})` : ""}: {errMessage()}
+                  </div>
+                </details>
+              </div>
+            </div>
+          </div>
+        )}
+      </Show>
+      <Show when={!failover()}>
       <div class="my-2 rounded-xl border border-[var(--danger-border)] bg-[var(--danger-surface)] px-3.5 py-3 text-[13px] text-[var(--danger-text)]">
         <div class="flex items-start gap-2.5">
           <Icon name="circle-ban-sign" size="small" class="mt-0.5 shrink-0" />
@@ -188,6 +257,7 @@ export function AssistantErrorCard(props: { info: MessageInfo }) {
               >
                 {t("diagnostics.view")}
               </button>
+              <Show when={!superseded()}>
               <Show
                 when={isOverflow()}
                 fallback={
@@ -216,6 +286,7 @@ export function AssistantErrorCard(props: { info: MessageInfo }) {
                   <span>{t("timeline.contextOverflowCompactRetry")}</span>
                 </button>
               </Show>
+              </Show>
 
               <Show when={compactNotice()}>
                 <span role="status" class="text-[11px] text-[var(--danger-text)]">
@@ -236,7 +307,7 @@ export function AssistantErrorCard(props: { info: MessageInfo }) {
                 </button>
               </Show>
 
-              <Show when={recommendedFallback()}>
+              <Show when={!superseded() && recommendedFallback()}>
                 {(fb) => (
                   <button
                     type="button"
@@ -259,6 +330,7 @@ export function AssistantErrorCard(props: { info: MessageInfo }) {
 
               <Show
                 when={
+                  !superseded() &&
                   !isStall() &&
                   !recommendedFallback() &&
                   freeFallbackModel() &&
@@ -299,6 +371,7 @@ export function AssistantErrorCard(props: { info: MessageInfo }) {
           </div>
         </div>
       </div>
+      </Show>
     </Show>
   );
 }

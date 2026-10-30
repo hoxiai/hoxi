@@ -51,6 +51,7 @@ export * from "./question-answers";
 export * from "./auto-models";
 export * from "./auto-breaker";
 export * from "./auto-candidate-status";
+export * from "./auto-failover";
 export * from "./skills";
 export * from "./terminal-context";
 export * from "./telemetry";
