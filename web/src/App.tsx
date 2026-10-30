@@ -1,4 +1,4 @@
-import { createEffect, createSignal, onCleanup, onMount } from "solid-js";
+import { Show, createEffect, createSignal, onCleanup, onMount } from "solid-js";
 import ThreePaneShell from "./components/layout/ThreePaneShell";
 import { hoxiAPI } from "./services/api";
 import { connectEventStream } from "./services/sse";
@@ -51,6 +51,7 @@ import {
   setRememberedCodeSurface,
   setSurfaceMode,
   setWorkspace,
+  surfaceOnboardingOpen,
   syncActiveProjectID,
   syncPendingPermissions,
   syncSessionStatuses,
@@ -58,6 +59,7 @@ import {
   trimSessionTranscripts,
   upsertMessageInfo,
   upsertMessagePart,
+  waitForSurfaceOnboarding,
   workspace,
   refreshDesktopMemberAfterTurn,
 } from "./store/workspace";
@@ -68,6 +70,11 @@ export default function App() {
   const [online, setOnline] = createSignal(typeof navigator === "undefined" || navigator.onLine);
   const [eventStreamStarted, setEventStreamStarted] = createSignal(false);
   let retryEventStream: (() => void) | undefined;
+  // Ask before the first render so the shell never flashes the wrong surface.
+  const surfaceOnboarding =
+    surfaceExtension.enabled && surfaceExtension.renderOnboarding && !hasStoredSurfaceMode()
+      ? waitForSurfaceOnboarding()
+      : null;
 
   // Auto-provision the official Hoxi channel once the account is signed in so
   // its models are always selectable in the model picker.
@@ -113,7 +120,9 @@ export default function App() {
     void (async () => {
       try {
         const boot = await hoxiAPI.getBootstrap();
-        if (surfaceExtension.enabled && !hasStoredSurfaceMode() && surfaceExtension.defaultMode) {
+        if (surfaceOnboarding) {
+          await surfaceOnboarding;
+        } else if (surfaceExtension.enabled && !hasStoredSurfaceMode() && surfaceExtension.defaultMode) {
           setSurfaceMode(surfaceExtension.defaultMode);
         }
         const fallbackWorkDir = boot.defaultWorkspaceDir
@@ -411,13 +420,16 @@ export default function App() {
   });
 
   return (
-    <ThreePaneShell
-      network={{
-        online,
-        connected: () => workspace.connected,
-        streamStarted: eventStreamStarted,
-        onRetry: () => retryEventStream?.(),
-      }}
-    />
+    <>
+      <ThreePaneShell
+        network={{
+          online,
+          connected: () => workspace.connected,
+          streamStarted: eventStreamStarted,
+          onRetry: () => retryEventStream?.(),
+        }}
+      />
+      <Show when={surfaceOnboardingOpen()}>{surfaceExtension.renderOnboarding?.()}</Show>
+    </>
   );
 }

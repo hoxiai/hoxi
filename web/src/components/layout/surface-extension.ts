@@ -21,6 +21,8 @@ export interface SurfaceExtension {
   renderLeftNav?: () => JSX.Element;
   renderLaunchpad?: () => JSX.Element;
   renderComposer?: () => JSX.Element;
+  /** Full-window first-launch surface chooser; replaces `defaultMode` when the user has never picked a surface. */
+  renderOnboarding?: () => JSX.Element;
   inspectorTabs?: {
     primary: InspectorSurfaceTabID[];
     secondary: InspectorSurfaceTabID[];

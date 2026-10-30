@@ -104,6 +104,32 @@ export function setSurfaceMode(mode: SurfaceMode): void {
   }
 }
 
+// First-launch surface chooser. Startup holds its mode-dependent steps until
+// the user picks a surface, so the shell boots straight into the right root.
+const [surfaceOnboardingOpen, setSurfaceOnboardingOpen] = createSignal(false);
+let surfaceOnboardingWaiters: Array<(mode: SurfaceMode) => void> = [];
+
+export { surfaceOnboardingOpen };
+
+export function waitForSurfaceOnboarding(): Promise<SurfaceMode> {
+  setSurfaceOnboardingOpen(true);
+  return new Promise((resolve) => {
+    surfaceOnboardingWaiters.push(resolve);
+  });
+}
+
+/** Persist the chosen surface and release startup; the chooser stays mounted for its exit animation. */
+export function completeSurfaceOnboarding(mode: SurfaceMode): void {
+  setSurfaceMode(mode);
+  const waiters = surfaceOnboardingWaiters;
+  surfaceOnboardingWaiters = [];
+  for (const resolve of waiters) resolve(mode);
+}
+
+export function dismissSurfaceOnboarding(): void {
+  setSurfaceOnboardingOpen(false);
+}
+
 export function saveLayoutPrefs(): void {
   try {
     localStorage.setItem(
