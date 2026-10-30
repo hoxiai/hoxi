@@ -80,6 +80,9 @@ export const models = {
   connect: "Connect",
   connected: "Connected",
   disconnect: "Disconnect",
+  disconnectConfirmTitle: "Disconnect {name}?",
+  disconnectConfirmBody:
+    "Its credentials and local provider config will be removed from this device. Models using it must be selected again.",
   testConnection: "Test Connection",
   testing: "Testing…",
   active: "Active",

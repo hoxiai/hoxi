@@ -80,6 +80,8 @@ export const models: ModelsI18n = {
   connect: "连接",
   connected: "已连接",
   disconnect: "断开连接",
+  disconnectConfirmTitle: "断开 {name}？",
+  disconnectConfirmBody: "将从本机移除该服务商的凭据与配置，使用它的模型需要重新选择",
   testConnection: "测试连接",
   testing: "测试中…",
   active: "已启用",
