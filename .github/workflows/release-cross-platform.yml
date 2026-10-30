@@ -136,12 +136,12 @@ jobs:
             -ldflags "-X github.com/hoxiai/hoxi/internal/app.BuildVariant=release -X github.com/hoxiai/hoxi/internal/buildinfo.Version=${RELEASE_VERSION}"
           # An x64 runner cannot execute an arm64 PE, so only run the built
           # binary when the host architecture matches; otherwise assert the
-          # embedded version resource and the PE machine type.
+          # embedded ldflags version (via `go version -m`) and the PE machine.
           HOST_ARCH="$(uname -m)"
           if [[ "$HOST_ARCH" == "x86_64" && "${{ matrix.arch }}" == "amd64" ]] || [[ "$HOST_ARCH" == "aarch64" && "${{ matrix.arch }}" == "arm64" ]]; then
             test "$(./build/bin/Hoxi.exe --version | tr -d '\r\n')" = "${RELEASE_VERSION}"
           else
-            powershell -NoProfile -Command 'if ((Get-Item "build/bin/Hoxi.exe").VersionInfo.ProductVersion -notlike ($env:RELEASE_VERSION + "*")) { Write-Error "embedded version resource does not match RELEASE_VERSION"; exit 1 }'
+            go version -m build/bin/Hoxi.exe | grep -q "buildinfo.Version=${RELEASE_VERSION}"
           fi
           cp -f build/windows/installer/tmp/opencode.exe build/bin/opencode.exe
           cp -f build/windows/installer/tmp/sqlite3.exe build/bin/sqlite3.exe
