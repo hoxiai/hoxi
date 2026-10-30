@@ -25,7 +25,7 @@
 
 ---
 
-**Hoxi** ([hoxi.ai](https://hoxi.ai)) unifies **OpenCode**, **Claude Code**, **Google Antigravity (`agy`)**, **Gemini CLI (`gemini`)**, **Qoder**, and **CodeBuddy** inside a **~30 MB**, **0.2s cold-start** native macOS workspace—and extends to your phone (`client/`) to command running AI agents and manage [**GoPanel**](https://github.com/hoxiai/gopanel) Linux servers on the go.
+**Hoxi** ([hoxi.ai](https://hoxi.ai)) unifies **OpenCode**, **Claude Code**, **Google Antigravity (`agy`)**, **Gemini CLI (`gemini`)**, **Qoder**, and **CodeBuddy** inside a native macOS workspace (typically **~30 MB** RAM and **~0.2s** cold start)—and extends to your phone (`client/`) to command running AI agents and manage [**GoPanel**](https://github.com/hoxiai/gopanel) Linux servers on the go.
 
 ---
 
@@ -39,14 +39,14 @@ Running two agents at once in the same repo overwrites uncommitted files and bre
 
 ### 2. Rate Limits, CLI Silos & Lost Context
 When Claude Code hits a usage cap mid-refactor, or an agent loops on a bug, switching tools usually means re-explaining your entire task from scratch.
-- **Multi-Runtime Unified Timeline**: Run **OpenCode** (supervised `opencode serve`, zero-fork), **Claude Code** (`claude`), **Google Antigravity** (`agy`), **Gemini CLI** (`gemini`), **Qoder**, and **CodeBuddy** natively inside the same 3-pane shell. Switch runtimes mid-session without losing your thread.
+- **Multi-Runtime Unified Timeline**: Run **OpenCode** (supervised `opencode serve`, zero-fork), **Claude Code** (`claude`), **Google Antigravity** (`agy`), **Gemini CLI** (`gemini`), **Qoder**, and **CodeBuddy** natively inside the same 3-pane shell. Switch runtimes mid-session without losing your thread. Qoder and CodeBuddy run read-only (Plan mode) only—their CLIs have no PreToolUse approval gate.
 - **Nested Subagent Inspection**: Subagents spawned by Claude Code or Antigravity render as interactive, collapsible task trees (`AgentStackPill`) instead of opaque stdout dumps.
 - **1-Click Cross-CLI Session Handoff**: Scans local histories from **Claude Code**, **OpenAI Codex CLI**, **Grok CLI**, **Antigravity / Gemini CLI**, **OpenCode**, **Trae**, **Qoder**, and **CodeBuddy**. Imports every turn, reasoning block, and normalized tool call, and synthesizes an **8-dimension handoff memory** so the next model continues seamlessly.
 
 ### 3. Blind Auto-Approve vs. Terminal Babysitting
 Giving agents blanket shell access risks `rm -rf` or `git push --force`. Approving every file read chains you to your desk. And when an agent drifts off-track, aborting wastes the whole turn.
 - **Unified PreToolUse Safety Gate + Seatbelt OS Sandbox + Unattended Mode**: Safe reads and edits flow uninterrupted. Destructive commands (`rm`, `sudo`, `chmod`, `diskutil`, `git reset --hard`, `git push --force`) are intercepted across OpenCode, Claude Code, Antigravity, and Gemini CLI—triggering a macOS `NSStatusBar` **Attention** badge and an inline approval card (`Once` / `Always` / `Reject`). In **Unattended Mode** (`unattended`), sessions run inside an isolated Git worktree and macOS Seatbelt OS-level sandbox with automatic credential env stripping, sensitive path blocking (`~/.ssh`, `~/.aws`, `.env`), and hard rejection of dynamic shell evaluation, privilege escalation, and `git push`.
-- **Live Mid-Stream Steering (`Steer`)**: Inject course corrections while an agent is actively executing without killing the turn.
+- **Live Mid-Stream Steering (`Steer`, OpenCode sessions)**: Inject course corrections while an agent is actively executing without killing the turn.
 - **Isolated Headless Chrome + Chrome Link Extension**: Per-session Chrome inspector with one-click **Manual Control** for login walls/CAPTCHAs, plus the Chrome Link MV3 extension (`extensions/chrome`, 2-minute one-time pairing code) to attach to tabs in your existing Chrome browser.
 
 ### 4. Stepping Away from Your Desk (Mobile AI + [GoPanel](https://github.com/hoxiai/gopanel) Server Ops)
@@ -54,7 +54,7 @@ Solo builders and lean teams don't just write code—they also deploy and mainta
 - **Resilient Dual-Transport Mobile Console ([`client/`](client/README.md) — `Chat · Workbench · Solo Company · Me`)**:
   - **3-Path Connectivity (LAN-First with Relay Failover)**: Pair your phone via **LAN Direct QR** (`:5417`), **Cloudflare Tunnel Connector** (`:5418`), or **[GoPanel](https://github.com/hoxiai/gopanel) Reverse Tunnel + iOS APNs Approval Push** (push payloads carry pending counts only—never raw commands, code, or file paths).
   - **Tool-Call Intent Routing & Mandatory Confirmation Cards**: Query live coding progress on your Hoxi desktop or server metrics on GoPanel, or dispatch commands to run tests, inspect/commit Git worktree changes, approve PreToolUse safety gates, restart Docker containers, and renew SSL certificates. Every mutating action requires a **2-minute, single-use confirmation card** backed by `X-Idempotency-Key` and `instructionId` deduplication.
-  - **Native Voice Pipeline & Barge-In**: Built-in iOS `.voiceChat` hardware AEC, 50s ASR rollover, and **Speak or Tap to Interrupt (`onUserBargeIn`)** over native ASR + gateway `/v1/audio/speech` TTS (with automatic system speech fallback), plus remote Node Skill discovery and mounting.
+  - **Native Voice Pipeline & Barge-In (manual start; on-device acceptance pending)**: Built-in iOS `.voiceChat` hardware AEC, 50s ASR rollover, and **Speak or Tap to Interrupt (`onUserBargeIn`)** over native ASR + gateway `/v1/audio/speech` TTS (with automatic system speech fallback), plus remote Node Skill discovery and mounting.
 
 ### 5. Context Rot, Endpoint Degradation & Electron Bloat
 Long sessions forget early architectural constraints; third-party API gateways silently degrade or stall; Electron forks eat 1.5 GB+ RAM per window.
@@ -63,6 +63,14 @@ Long sessions forget early architectural constraints; third-party API gateways s
 - **Role-Based Model Routing & Observer Audits**: Use frontier models for primary coding while routing title generation, background subagents, memory compaction, and Git commit messages to fast/cheap or local models (Ollama / vLLM)—plus optional post-edit diff scoring via an independent **Observer** referee model.
 - **Native Wails v2 + SolidJS 120Hz Shell**: Built on macOS `WKWebView` + fine-grained SolidJS signals (`requestAnimationFrame` token batching, zero VDOM) + WebGL Xterm.
 
+### 6. Agents That Leave the Chat
+Most AI coding tools stop at the repository. Hoxi also lets a session act on native apps, fan one goal out into parallel projects, and review what lands upstream.
+- **Native Computer Control (`hoxi_computer`)**: An OpenCode session can read a window and drive foreground input on macOS (Accessibility / ScreenCaptureKit / CGEvent) and Windows (UI Automation / PrintWindow / SendInput). Authorization is bound to one session plus one running app and confirmed in a native dialog; every input needs a one-time local approval (never remote, never "always allow", never unattended). Screenshots capture only the granted window, exclude password fields, and the computer-control routes are closed to the tunnel, LAN and relay.
+- **Multi-Agent DAG Orchestration**: Describe a goal once and Hoxi drafts a task DAG (a "convoy") where every task runs as its own session—one isolated worktree per task in a Git repo—so dependent tasks start from their prerequisites' merged changes while independent ones run in parallel.
+- **GitHub PR & CI Review (`forge`)**: Read live PR status, checks and review threads through the `gh` CLI without leaving the workspace.
+
+**Also built in**: symbol/chunk code index with BM25 search; Agent Skills (local discovery, built-in defaults, SHA-256-verified installs from the hoxi.ai marketplace); the Hoxi Tools gateway (220+ provider endpoints via discover/inspect/run); one-click official Hoxi account (AINode) provider and MCP OAuth 2.1 PKCE connect; multi-workspace profiles; `/goal` session goals; multimodal attachments; prompt enhancement; a model leaderboard; and a crash-safe reclaim ledger that cleans up orphaned `opencode`/Chrome processes after a crash or `kill -9`. Local-first by design: the only telemetry is a launch beacon (event, install id, os/arch, version—never prompts, code, paths or keys), and the OpenAI-compatible relay is loopback-only.
+
 ---
 
 ## Architecture at a Glance
@@ -70,7 +78,7 @@ Long sessions forget early architectural constraints; third-party API gateways s
 ```text
 ┌─────────────────────────────────────────────────────────────────────────┐
 │ Native Host & Mobile Client (Wails v2 + NSStatusBar + Flutter App)      │
-│  • macOS WKWebView (~30MB RAM, 0.2s cold start, native vibrancy)        │
+│  • macOS WKWebView (typically ~30MB RAM, ~0.2s cold start, vibrancy)    │
 │  • Menu bar tray with live Running count & Attention approval badges    │
 │  • Mobile App (`client/`): LAN & Relay control for Hoxi & GoPanel       │
 ├─────────────────────────────────────────────────────────────────────────┤
@@ -82,13 +90,13 @@ Long sessions forget early architectural constraints; third-party API gateways s
 │ Go Supervisor, Loopback Gateway & Session Store (`internal/`)           │
 │  • Hoxi-owned sessions (`~/.hoxi/sessions/<id>/session.json` + JSONL)   │
 │  • Git Worktree sandboxes, Seatbelt confinement & unified Safety Gate   │
-│  • 8-tool Session Handoff, loopback OpenAI relay & health circuit-breaker│
+│  • 8-CLI  Session Handoff, loopback OpenAI relay & health circuit-breaker│
 │  • Loopback proxy (`Proxy: nil`, `FlushInterval: -1`, per-boot auth)    │
 ├─────────────────────────────────────────────────────────────────────────┤
 │ Pluggable Execution Runtimes (`internal/runner` & `internal/opencode`)  │
 │  • OpenCode (`opencode serve` pristine upstream binary, zero-fork)      │
 │  • Claude Code (`claude`), Antigravity (`agy`), Gemini CLI (`gemini`)   │
-│  • Qoder, CodeBuddy CLIs                                                │
+│  • Qoder, CodeBuddy CLIs (read-only Plan mode)                          │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 

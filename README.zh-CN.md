@@ -25,18 +25,18 @@
 
 ---
 
-**Hoxi** ([hoxi.ai](https://hoxi.ai)) 不是又一个吃掉 1.5GB 内存的套壳 Electron 编辑器（仅 **~30 MB 内存**、**0.2 秒冷启动**）。
+**Hoxi** ([hoxi.ai](https://hoxi.ai)) 不是又一个吃掉 1.5GB 内存的套壳 Electron 编辑器（典型约 **30 MB 内存**、约 **0.2 秒冷启动**）。
 
 它把桌面端的 **OpenCode**、**Claude Code**、**Google Antigravity (`agy`)**、**Gemini CLI (`gemini`)**、**Qoder（通义灵码）**、**CodeBuddy（腾讯云）** 统一收进同一个三栏工作区，并通过配套移动端（[`client/`](client/README.zh-CN.md)）把**桌面 AI 研发指挥**与 **[GoPanel](https://github.com/hoxiai/gopanel) 服务器运维管理**装进你的口袋。
 
 ---
 
-## 直击 5 个最痛的日常研发与运维场景
+## 直击 6 个最痛的日常研发与运维场景
 
 ### 1. 额度限流、账号被封或单工具死循环，换工具就得从头讲起
 日常写代码往往同时装了 Claude Code、Codex、Antigravity、Gemini CLI、Trae、Qoder、CodeBuddy。一旦主力工具触发 Rate Limit、额度见底，或者在某个诡异 Bug 上死循环，切到别的工具就要重新贴文件、重新交代上下文。
 - **跨软件会话一键无损接管（Session Handoff）**：自动扫描本机 **Claude Code**、**OpenAI Codex CLI**、**Grok CLI**、**Antigravity / Gemini CLI**、**OpenCode** 以及国内高频使用的 **Trae**、**Qoder**、**CodeBuddy** 历史会话。一键导入完整对话、思考链（Reasoning）、工具调用记录与已改文件，并自动提炼 **8 维交接记忆**，换个模型无缝接着干。
-- **同会话多引擎热切换**：无需新建对话，同一个会话内可随时在 `OpenCode` / `Claude Code` / `Antigravity` / `Gemini CLI` / `Qoder` / `CodeBuddy` 运行时之间平滑切换；Claude Code 与 Antigravity 派发的子代理（Subagent）直接在时间线内以嵌套任务树实时展示。
+- **同会话多引擎热切换**：无需新建对话，同一个会话内可随时在 `OpenCode` / `Claude Code` / `Antigravity` / `Gemini CLI` / `Qoder` / `CodeBuddy` 运行时之间平滑切换；Claude Code 与 Antigravity 派发的子代理（Subagent）直接在时间线内以嵌套任务树实时展示。Qoder 与 CodeBuddy 仅能只读（Plan 模式）运行——它们的 CLI 没有 PreToolUse 审批门控。
 
 ### 2. 中转站“偷偷降智 / 掺水 / 断流”，开着 Clash / Surge 动不动 502
 国内开发者大量混用 API 中转站、聚合网关或国产模型（DeepSeek、千问 Qwen、智谱 GLM、Kimi、MiniMax、豆包、硅基流动），但中转站到底稳不稳全靠体感；而且系统一开全局代理，本地 Agent 守护进程经常报 `502 Bad Gateway`。
@@ -58,11 +58,19 @@
 ### 5. 离开工位不敢放手，线上服务器还得背电脑管（Seatbelt 沙箱 + 手机端双栖遥控）
 独立开发者与精干团队既要写代码，又要管线上服务器。全自动放行怕 Agent 一句 `rm -rf` 删库或泄露密钥；全手动又得死盯屏幕点确认；出门在外还得随时处理审批与服务器告警。
 - **跨引擎统一高危门控 + Seatbelt 进程沙箱 + 无人值守模式（`unattended`）**：无论底层是 OpenCode、Claude Code、Antigravity 还是 Gemini CLI，涉及 `rm`、`sudo`、`git push --force`、敏感文件读取等高危指令一律经 PreToolUse Hook 硬拦截并点亮 macOS 状态栏 `Attention` 徽章。开启**无人值守模式**后，会话强制运行在「隔离 Git Worktree + macOS Seatbelt 操作系统沙箱」内，自动剥离环境变量凭据、封锁 `~/.ssh` / `~/.aws` / `.env` 读取，并对动态拼接命令、`git push`、提权与外发执行零妥协硬拒绝。
-- **运行时中途纠偏（Steer）+ 隔离浏览器 & Chrome Link 扩展**：Agent 思路偏了无需强杀重来，随时插入指令实时纠偏；既可使用会话独占的 Headless Chrome，也可通过 Chrome Link 扩展（`extensions/chrome`，一次性 2 分钟连接码）安全接管本机已打开并登录的 Chrome 标签页。
+- **运行时中途纠偏（Steer，OpenCode 会话）+ 隔离浏览器 & Chrome Link 扩展**：Agent 思路偏了无需强杀重来，随时插入指令实时纠偏；既可使用会话独占的 Headless Chrome，也可通过 Chrome Link 扩展（`extensions/chrome`，一次性 2 分钟连接码）安全接管本机已打开并登录的 Chrome 标签页。
 - **手机端随身控制台（[`client/`](client/README.zh-CN.md) — `沟通 · 工作台 · 一人公司 · 我的`）**：
   1. **三通道弹性连接（局域网优先、失败回落中继）**：支持**局域网扫码直连**（`:5417`）、**Cloudflare Tunnel 中继**（`:5418`）以及 **[GoPanel](https://github.com/hoxiai/gopanel) 反向隧道 + iPhone APNs 审批提醒推送**（推送载荷仅含待处理计数，绝不经第三方通道传输代码或命令明文）。
   2. **工具意图识别 + 修改类操作强制确认闭环**：一句话查询 **Hoxi 桌面编码进展**与 **GoPanel 服务器水位**，或下发指令跑单测、审查/提交 Git 改动、批准安全门控、重启容器、续期 SSL 证书；所有修改类动作强制生成 **2 分钟有效、单次消费的确认卡片**，并携带 `X-Idempotency-Key` 与 `instructionId` 幂等对账，杜绝误触与弱网重放。
-  3. **原生语音输入与连续通话**：内置 iOS `.voiceChat` 硬件回声消除、50 秒识别轮转、开口或点击即打断（`onUserBargeIn`），采用原生 ASR + 模型网关 `/v1/audio/speech` 服务端 TTS（失败自动回落系统语音），并支持挂载节点端发现的 Agent Skills。
+  3. **原生语音输入与连续通话（手动开启；真机验收待定）**：内置 iOS `.voiceChat` 硬件回声消除、50 秒识别轮转、开口或点击即打断（`onUserBargeIn`），采用原生 ASR + 模型网关 `/v1/audio/speech` 服务端 TTS（失败自动回落系统语音），并支持挂载节点端发现的 Agent Skills。
+
+### 6. 让智能体走出聊天框
+多数 AI 编码工具止步于仓库。Hoxi 还能让会话操作原生应用、把一个目标拆成并行任务，并回看上游落地了什么。
+- **原生电脑控制（`hoxi_computer`）**：OpenCode 会话可读取窗口并驱动前台输入——macOS 走 Accessibility / ScreenCaptureKit / CGEvent，Windows 走 UI Automation / PrintWindow / SendInput。授权绑定「一个会话 + 一个运行中的应用」，经原生弹窗确认；每次输入都只接受本机「允许一次」，不支持远程、始终允许或无人值守；截图只截授权窗口、不返回密码字段，相关路由不对隧道、局域网与中继开放。
+- **多 Agent DAG 编排（Convoy）**：一句话描述目标，自动拆成分工 DAG——Git 仓库里每个任务独占一个隔离 worktree，任务按依赖从上游已合并改动起步，无依赖的并行执行。
+- **GitHub PR 与 CI 审查（`forge`）**：在工作区内直接读取 PR 状态、检查项与评论线程（经 GitHub CLI `gh`），无需切换窗口。
+
+**另外还内置**：符号/分块 + BM25 检索的代码索引；Agent Skills（本地发现、内置默认技能、经 SHA-256 校验从 hoxi.ai 市场显式安装）；Hoxi Tools 网关（220+ 服务商接口，经 discover/inspect/run 调用）；官方 Hoxi 账号（AINode）一键接入与 MCP OAuth 2.1 PKCE 连接；多工作区 profile；`/goal` 会话目标；多模态附件；提示词增强；模型排行榜；以及崩溃安全回收账本（崩溃或 `kill -9` 后清理残留的 `opencode` / Chrome 进程）。本地优先：唯一遥测是启动信标（事件、安装 ID、系统/架构、版本——绝不含提示词、代码、路径或密钥），OpenAI 兼容中转只在回环地址、不上隧道。
 
 ---
 
@@ -71,7 +79,7 @@
 ```text
 ┌─────────────────────────────────────────────────────────────────────────┐
 │ 原生宿主与移动端双栖控制 (Wails v2 + NSStatusBar + Flutter 手机客户端)   │
-│  • macOS WKWebView (~30MB 内存, 0.2s 极速冷启动, 原生毛玻璃与交通灯)     │
+│  • macOS WKWebView (典型约 30MB 内存, 约 0.2s 冷启动, 原生毛玻璃与交通灯)│
 │  • 状态栏常驻托盘 (实时显示 Running 并发计数 / Attention 待审批提醒)     │
 │  • 移动端 (`client/`): 局域网/中继双通道接管 Hoxi 桌面与 GoPanel 服务器  │
 ├─────────────────────────────────────────────────────────────────────────┤
@@ -83,13 +91,13 @@
 │ Go 守护进程、本地回环网关与会话中枢 (`internal/`)                       │
 │  • Hoxi 自主会话存储 (`~/.hoxi/sessions/<id>/session.json` + JSONL)     │
 │  • Git Worktree 沙箱、Seatbelt 进程沙箱与统一审批门控 (`internal/runner`)│
-│  • 8 大工具会话无损物化、本机 OpenAI 兼容中转与健康度熔断选模            │
+│  • 8 大 CLI 会话无损物化、本机 OpenAI 兼容中转与健康度熔断选模           │
 │  • 本地防劫持网关 (`Proxy: nil` 免疫代理 502, `FlushInterval: -1`)       │
 ├─────────────────────────────────────────────────────────────────────────┤
 │ 可插拔多执行引擎层 (`internal/runner` & `internal/opencode`)            │
-│  • OpenCode (原版 `opencode serve` 零侵入监管 + 9 级模糊替换 + LSP 诊断)│
+│  • OpenCode (原版 `opencode serve` 零侵入监管 + 内联 LSP 诊断)          │
 │  • Claude Code (`claude`) / Antigravity (`agy`) / Gemini CLI (`gemini`) │
-│  • Qoder / CodeBuddy                                                    │
+│  • Qoder / CodeBuddy（只读 Plan 模式）                                  │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
