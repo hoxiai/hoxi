@@ -176,3 +176,15 @@ func TestDownloadAndVerifyDMGAndBundleResolution(t *testing.T) {
 		t.Fatalf("resolveDarwinDMGURL = %q", gotDMG)
 	}
 }
+
+func TestResolveDarwinDMGURLFallsBackToHostArchitecture(t *testing.T) {
+	arch := darwinReleaseArch()
+	if arch != "arm64" && arch != "amd64" {
+		t.Fatalf("darwinReleaseArch() = %q", arch)
+	}
+	got := resolveDarwinDMGURL(&UpdateCheckResult{LatestVersion: "0.5.0"})
+	want := "https://github.com/hoxiai/hoxi/releases/download/v0.5.0/Hoxi-0.5.0-darwin-" + arch + ".dmg"
+	if got != want {
+		t.Fatalf("resolveDarwinDMGURL fallback = %q, want %q", got, want)
+	}
+}

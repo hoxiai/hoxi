@@ -16,11 +16,18 @@ tag. `--build-only` also builds and verifies a candidate without publishing. Bot
 modes allow local Ad-hoc signatures and report their non-publication explicitly.
 An already named `Hoxi-<version>-darwin-arm64.dmg` takes precedence over a generic
 `Hoxi.dmg` when `--skip-build` is used. Its actual contents must match the version.
+`ai-release.sh` defaults to `--arch arm64`; pass `--arch amd64` to verify an Intel
+candidate (use the matching `--skip-build` DMG name).
+
+`build-desktop.sh` accepts `--arch arm64|amd64` (default: the host architecture) and
+builds the matching `darwin/<arch>` slice, bundling the OpenCode sidecar pinned for
+that same platform. Release verification is arch-aware: it asserts the requested
+Mach-O slice (arm64 or x86_64) on the app, sidecar and any Sparkle framework.
 
 The runtime `--version`, bootstrap API, update requests, settings page, and both
 bundle version fields use the embedded build version. The declared minimum macOS
 is at least 13.0 and is raised if the main executable or bundled OpenCode requires
-a newer version. This release path currently verifies arm64 artifacts.
+a newer version. This release path verifies both arm64 and amd64 artifacts.
 
 ## Public distribution
 
@@ -68,10 +75,11 @@ Signing and notarization are mandatory on this path. The temporary signing
 keychain is added to the runner's search list and deleted after the job, including
 on failure. Missing credentials or failed verification stop publication.
 
-Before creating the release, the workflow mounts the final DMG read-only
+Before creating the release, the workflow mounts each final DMG read-only
 to verify the app version, runtime version, architecture, minimum macOS and app
-signature. It also verifies the DMG's Developer ID signature and stapled notary
-ticket. The versioned DMG, SHA-256 checksum and signed public `sparkle.json` metadata
+signature. It also verifies each DMG's Developer ID signature and stapled notary
+ticket. Both the versioned arm64 and amd64 DMGs, a SHA-256 checksum file and the
+signed public `sparkle.json` metadata
 are uploaded to GitHub before website metadata publication; missing files fail the
 release. The Sparkle enclosure and the website download links use the exact GitHub
 DMG. The website must explicitly

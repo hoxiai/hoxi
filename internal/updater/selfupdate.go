@@ -13,6 +13,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -43,6 +44,15 @@ func resolveWindowsArchiveURL(res *UpdateCheckResult) string {
 	return strings.TrimSpace(res.Mirrors.Global)
 }
 
+// darwinReleaseArch maps the running Go architecture to the macOS DMG release
+// asset suffix so Intel and Apple Silicon clients fetch their own installer.
+func darwinReleaseArch() string {
+	if runtime.GOARCH == "amd64" {
+		return "amd64"
+	}
+	return "arm64"
+}
+
 func resolveDarwinDMGURL(res *UpdateCheckResult) string {
 	if res == nil {
 		return ""
@@ -55,7 +65,7 @@ func resolveDarwinDMGURL(res *UpdateCheckResult) string {
 	}
 	ver := strings.TrimPrefix(strings.TrimSpace(res.LatestVersion), "v")
 	if ver != "" {
-		return fmt.Sprintf("https://github.com/hoxiai/hoxi/releases/download/v%s/Hoxi-%s-darwin-arm64.dmg", ver, ver)
+		return fmt.Sprintf("https://github.com/hoxiai/hoxi/releases/download/v%s/Hoxi-%s-darwin-%s.dmg", ver, ver, darwinReleaseArch())
 	}
 	if d := strings.TrimSpace(res.DownloadURL); d != "" {
 		return d

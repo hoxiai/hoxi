@@ -11,6 +11,16 @@ import { sparkleConfig, validateSparkleApp, machoFiles, frameworkFiles } from ".
 
 export const minimumSupportedMacOS = "13.0";
 
+// Map the release artifact architecture suffix (Go naming) to the Mach-O
+// architecture name reported by `lipo`/`otool`.
+const MACHO_ARCH_NAMES = { arm64: "arm64", amd64: "x86_64" };
+
+export function machoArchName(arch = "arm64") {
+  const name = MACHO_ARCH_NAMES[arch];
+  assert.ok(name, `Unsupported release architecture: ${arch}`);
+  return name;
+}
+
 export function normalizeVersion(input) {
   const version = String(input ?? "").trim().replace(/^v/i, "");
   if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)) {
@@ -60,12 +70,16 @@ function readInfo(app) {
   return JSON.parse(run("plutil", ["-convert", "json", "-o", "-", path.join(app, "Contents/Info.plist")]));
 }
 
-function inspectBinaries(app, info) {
+function inspectBinaries(app, info, arch = "arm64") {
   assert.equal(path.basename(info.CFBundleExecutable), info.CFBundleExecutable, "Invalid app executable");
+  const archName = machoArchName(arch);
   const main = path.join(app, "Contents/MacOS", info.CFBundleExecutable);
   const sidecar = path.join(app, "Contents/MacOS/opencode");
   const framework = path.join(app, "Contents/Frameworks/Sparkle.framework");
-  const config = sparkleConfig();
+  // The Intel bundle intentionally ships without Sparkle: the published appcast
+  // carries a single arm64 enclosure, so a bundled updater would push arm64 to
+  // an Intel Mac. It relies on the arch-aware JSON/self-updater instead.
+  const config = arch === "amd64" ? null : sparkleConfig();
   if (validateSparkleApp(info, config)) {
     frameworkFiles(framework);
   } else assert.ok(!fs.existsSync(framework), "Unconfigured Sparkle framework");
@@ -73,7 +87,7 @@ function inspectBinaries(app, info) {
   const minimum = maximumMacOS([minimumSupportedMacOS, info.LSMinimumSystemVersion, ...binaries.map((binary) => {
     assert.ok(fs.statSync(binary).isFile(), `Missing executable: ${binary}`);
     const architectures = run("lipo", ["-archs", binary]).trim().split(/\s+/);
-    assert.ok(architectures.includes("arm64"), `${binary} must contain arm64 code`);
+    assert.ok(architectures.includes(archName), `${binary} must contain ${archName} code`);
     return minimumFromMachO(run("otool", ["-l", binary]));
   })]);
   return { main, sidecar, minimum };
@@ -92,10 +106,10 @@ export function validateAppMetadata(info, expectedVersion, requiredMinimum) {
     "App minimum macOS is lower than a bundled executable requires");
 }
 
-export function configureApp(app, version) {
+export function configureApp(app, version, arch = "arm64") {
   version = normalizeVersion(version);
   const info = readInfo(app);
-  const { minimum } = inspectBinaries(app, info);
+  const { minimum } = inspectBinaries(app, info, arch);
   for (const [key, value] of Object.entries({
     CFBundleVersion: String(versionCode(version)), CFBundleShortVersionString: version, LSMinimumSystemVersion: minimum,
   })) {
@@ -103,25 +117,25 @@ export function configureApp(app, version) {
   }
 }
 
-export function verifyApp(app, version) {
+export function verifyApp(app, version, arch = "arm64") {
   const info = readInfo(app);
-  const { main, sidecar, minimum } = inspectBinaries(app, info);
+  const { main, sidecar, minimum } = inspectBinaries(app, info, arch);
   validateAppMetadata(info, version, minimum);
   run("codesign", ["--verify", "--deep", "--strict", app]);
   assert.equal(run(main, ["--version"]).trim(), normalizeVersion(version),
     "Embedded runtime version differs from release version");
   verifyBinaryVersion(sidecar);
-  return { version: normalizeVersion(version), minimumMacOS: info.LSMinimumSystemVersion, architecture: "arm64" };
+  return { version: normalizeVersion(version), minimumMacOS: info.LSMinimumSystemVersion, architecture: arch };
 }
 
-export function verifyDMG(dmg, version) {
+export function verifyDMG(dmg, version, arch = "arm64") {
   const mount = fs.mkdtempSync(path.join(os.tmpdir(), "hoxi-verify-dmg-"));
   let attached = false;
   let metadata;
   try {
     run("hdiutil", ["attach", "-readonly", "-nobrowse", "-mountpoint", mount, path.resolve(dmg)]);
     attached = true;
-    metadata = verifyApp(path.join(mount, "Hoxi.app"), version);
+    metadata = verifyApp(path.join(mount, "Hoxi.app"), version, arch);
   } finally {
     // Never recursively remove a mount point: detach must succeed first.
     if (attached) run("hdiutil", ["detach", mount]);
@@ -146,9 +160,9 @@ function main([command, ...args]) {
   if (command === "version") console.log(normalizeVersion(args[0]));
   else if (command === "default-version") {
     console.log(normalizeVersion(JSON.parse(fs.readFileSync("wails.json", "utf8")).info.productVersion));
-  } else if (command === "configure-app") configureApp(args[0], args[1]);
-  else if (command === "verify-app") console.log(JSON.stringify(verifyApp(args[0], args[1])));
-  else if (command === "verify-dmg") console.log(JSON.stringify(verifyDMG(args[0], args[1])));
+  } else if (command === "configure-app") configureApp(args[0], args[1], args[2] ?? "arm64");
+  else if (command === "verify-app") console.log(JSON.stringify(verifyApp(args[0], args[1], args[2] ?? "arm64")));
+  else if (command === "verify-dmg") console.log(JSON.stringify(verifyDMG(args[0], args[1], args[2] ?? "arm64")));
   else if (command === "verify-publication") {
     console.log(JSON.stringify(validatePublication(JSON.parse(fs.readFileSync(0, "utf8")))));
   } else if (command === "verify-distribution") {

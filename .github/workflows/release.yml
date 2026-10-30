@@ -93,28 +93,36 @@ jobs:
           APAY_RELEASE_KEY: ${{ secrets.APAY_RELEASE_KEY }}
         run: |
           node scripts/opencode-lock.mjs verify
-          OPENCODE_URL="$(node scripts/opencode-lock.mjs url darwin/arm64)"
-          OPENCODE_SHA256="$(node scripts/opencode-lock.mjs sha256 darwin/arm64)"
+          OPENCODE_URL_ARM64="$(node scripts/opencode-lock.mjs url darwin/arm64)"
+          OPENCODE_SHA256_ARM64="$(node scripts/opencode-lock.mjs sha256 darwin/arm64)"
+          OPENCODE_URL_AMD64="$(node scripts/opencode-lock.mjs url darwin/amd64)"
+          OPENCODE_SHA256_AMD64="$(node scripts/opencode-lock.mjs sha256 darwin/amd64)"
           : "${HOXI_SPARKLE_PUBLIC_KEY:?Sparkle public key required}"
           : "${HOXI_SPARKLE_FEED_URL:?Official feed URL required}"
           : "${SPARKLE_PRIVATE_KEY:?Sparkle private key required}"
           : "${APAY_RELEASE_KEY:?Unified release-center credential required (APAY_RELEASE_KEY)}"
           : "${SPARKLE_URL:?Pinned official Sparkle archive URL required}"
           : "${SPARKLE_SHA256:?Sparkle SHA-256 required}"
-          : "${OPENCODE_URL:?Pinned official OpenCode ZIP URL required}"
-          : "${OPENCODE_SHA256:?OpenCode SHA-256 required}"
+          : "${OPENCODE_URL_ARM64:?Pinned official OpenCode ZIP URL required}"
+          : "${OPENCODE_SHA256_ARM64:?OpenCode SHA-256 required}"
           [[ "$SPARKLE_URL" == https://github.com/sparkle-project/Sparkle/releases/download/* ]]
-          [[ "$OPENCODE_URL" == https://github.com/anomalyco/opencode/releases/download/* ]]
-          [[ "$SPARKLE_SHA256" =~ ^[a-f0-9]{64}$ && "$OPENCODE_SHA256" =~ ^[a-f0-9]{64}$ ]]
+          [[ "$OPENCODE_URL_ARM64" == https://github.com/anomalyco/opencode/releases/download/* ]]
+          [[ "$OPENCODE_URL_AMD64" == https://github.com/anomalyco/opencode/releases/download/* ]]
+          [[ "$SPARKLE_SHA256" =~ ^[a-f0-9]{64}$ && "$OPENCODE_SHA256_ARM64" =~ ^[a-f0-9]{64}$ && "$OPENCODE_SHA256_AMD64" =~ ^[a-f0-9]{64}$ ]]
           curl --fail --location --proto '=https' --proto-redir '=https' "$SPARKLE_URL" -o "$RUNNER_TEMP/sparkle.tar.xz"
           printf '%s  %s\n' "$SPARKLE_SHA256" "$RUNNER_TEMP/sparkle.tar.xz" | shasum -a 256 -c -
-          mkdir -p "$HOXI_SPARKLE_DIR" "$RUNNER_TEMP/opencode"
+          mkdir -p "$HOXI_SPARKLE_DIR" "$RUNNER_TEMP/opencode-arm64" "$RUNNER_TEMP/opencode-amd64"
           tar -xf "$RUNNER_TEMP/sparkle.tar.xz" -C "$HOXI_SPARKLE_DIR"
-          curl --fail --location --proto '=https' --proto-redir '=https' "$OPENCODE_URL" -o "$RUNNER_TEMP/opencode.zip"
-          printf '%s  %s\n' "$OPENCODE_SHA256" "$RUNNER_TEMP/opencode.zip" | shasum -a 256 -c -
-          ditto -x -k "$RUNNER_TEMP/opencode.zip" "$RUNNER_TEMP/opencode"
-          test -x "$RUNNER_TEMP/opencode/opencode"
-          echo "HOXI_OPENCODE=$RUNNER_TEMP/opencode/opencode" >> "$GITHUB_ENV"
+          curl --fail --location --proto '=https' --proto-redir '=https' "$OPENCODE_URL_ARM64" -o "$RUNNER_TEMP/opencode-arm64.zip"
+          printf '%s  %s\n' "$OPENCODE_SHA256_ARM64" "$RUNNER_TEMP/opencode-arm64.zip" | shasum -a 256 -c -
+          ditto -x -k "$RUNNER_TEMP/opencode-arm64.zip" "$RUNNER_TEMP/opencode-arm64"
+          test -x "$RUNNER_TEMP/opencode-arm64/opencode"
+          curl --fail --location --proto '=https' --proto-redir '=https' "$OPENCODE_URL_AMD64" -o "$RUNNER_TEMP/opencode-amd64.zip"
+          printf '%s  %s\n' "$OPENCODE_SHA256_AMD64" "$RUNNER_TEMP/opencode-amd64.zip" | shasum -a 256 -c -
+          ditto -x -k "$RUNNER_TEMP/opencode-amd64.zip" "$RUNNER_TEMP/opencode-amd64"
+          test -x "$RUNNER_TEMP/opencode-amd64/opencode"
+          echo "HOXI_OPENCODE=$RUNNER_TEMP/opencode-arm64/opencode" >> "$GITHUB_ENV"
+          echo "HOXI_OPENCODE_AMD64=$RUNNER_TEMP/opencode-amd64/opencode" >> "$GITHUB_ENV"
           umask 077
           printf '%s' "$SPARKLE_PRIVATE_KEY" > "$HOXI_SPARKLE_PRIVATE_KEY_FILE"
           node scripts/sparkle.mjs check
@@ -159,18 +167,37 @@ jobs:
             --issuer "$APPLE_API_ISSUER" \
             --keychain "$KEYCHAIN_PATH"
 
-      - name: Build Production macOS App and DMG
+      - name: Install Rosetta for Intel artifact verification
         run: |
-          ./build-desktop.sh --release-only --dmg --no-install \
-            --version "$RELEASE_VERSION" --notarize --notary-profile "hoxi-notary"
+          if [[ "$(uname -m)" == "arm64" ]] && ! /usr/bin/pgrep -q oahd; then
+            sudo softwareupdate --install-rosetta --agree-to-license
+          fi
 
-      - name: Verify release artifact and generate checksums
+      - name: Build Production macOS Apps and DMGs
         run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/artifacts"
+          for ARCH in arm64 amd64; do
+            if [[ "$ARCH" == "amd64" ]]; then
+              export HOXI_OPENCODE="$HOXI_OPENCODE_AMD64"
+            fi
+            ./build-desktop.sh --release-only --dmg --no-install \
+              --version "$RELEASE_VERSION" --notarize --notary-profile "hoxi-notary" --arch "$ARCH"
+            mv "build/bin/Hoxi.dmg" "$RUNNER_TEMP/artifacts/Hoxi-${RELEASE_VERSION}-darwin-${ARCH}.dmg"
+          done
+
+      - name: Verify release artifacts and generate checksums
+        run: |
+          set -euo pipefail
+          for ARCH in arm64 amd64; do
+            name="Hoxi-${RELEASE_VERSION}-darwin-${ARCH}.dmg"
+            DMG="build/bin/${name}"
+            cp -f "$RUNNER_TEMP/artifacts/${name}" "$DMG"
+            node scripts/release-artifact.mjs verify-dmg "$DMG" "$RELEASE_VERSION" "$ARCH" > "build/bin/release-artifact-${ARCH}.json"
+            node scripts/release-artifact.mjs verify-distribution "$DMG"
+          done
+          (cd build/bin && shasum -a 256 Hoxi-${RELEASE_VERSION}-darwin-*.dmg > checksums.txt)
           DMG="build/bin/Hoxi-${RELEASE_VERSION}-darwin-arm64.dmg"
-          mv build/bin/Hoxi.dmg "$DMG"
-          node scripts/release-artifact.mjs verify-dmg "$DMG" "$RELEASE_VERSION" > build/bin/release-artifact.json
-          node scripts/release-artifact.mjs verify-distribution "$DMG"
-          (cd build/bin && shasum -a 256 "Hoxi-${RELEASE_VERSION}-darwin-arm64.dmg" > checksums.txt)
           node scripts/sparkle.mjs sign-update "$DMG" "$RELEASE_VERSION" build/bin/sparkle.json
 
       - name: Create GitHub Release
@@ -180,6 +207,7 @@ jobs:
           body: ${{ env.RELEASE_NOTES }}
           files: |
             build/bin/Hoxi-${{ env.RELEASE_VERSION }}-darwin-arm64.dmg
+            build/bin/Hoxi-${{ env.RELEASE_VERSION }}-darwin-amd64.dmg
             build/bin/checksums.txt
             build/bin/sparkle.json
           fail_on_unmatched_files: true
@@ -197,7 +225,7 @@ jobs:
           import crypto from 'node:crypto';
           const version = process.argv[2];
           const bytes = fs.readFileSync(`build/bin/Hoxi-${version}-darwin-arm64.dmg`);
-          const verified = JSON.parse(fs.readFileSync('build/bin/release-artifact.json', 'utf8'));
+          const verified = JSON.parse(fs.readFileSync('build/bin/release-artifact-arm64.json', 'utf8'));
           console.log(JSON.stringify({...verified, version, notes: process.env.RELEASE_NOTES || `Hoxi Desktop v${version}`, size: bytes.length,
             sha256: crypto.createHash('sha256').update(bytes).digest('hex'),
             sparkle: JSON.parse(fs.readFileSync('build/bin/sparkle.json', 'utf8'))}));

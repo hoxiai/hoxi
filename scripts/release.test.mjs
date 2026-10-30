@@ -84,9 +84,12 @@ test("tracked publisher sends verified artifact metadata, keeps credentials out 
       assert.equal(mac.sha256, "a".repeat(64));
       assert.equal(mac.size, 1234);
       assert.ok(mac.browser_download_url.endsWith("/v0.2.1/Hoxi-0.2.1-darwin-arm64.dmg"));
+      const macIntel = body.assets.find((asset) => asset.platform === "macos" && asset.arch === "x64");
+      assert.ok(macIntel.browser_download_url.endsWith("/v0.2.1/Hoxi-0.2.1-darwin-amd64.dmg"));
+      assert.equal(macIntel.name, "Hoxi-0.2.1-darwin-amd64.dmg");
       const win = body.assets.find((asset) => asset.platform === "windows" && asset.arch === "x64");
       assert.ok(win.browser_download_url.endsWith("/v0.2.1/Hoxi-0.2.1-windows-amd64-setup.exe"));
-      assert.equal(body.assets.length, 3);
+      assert.equal(body.assets.length, 4);
       return Response.json({ success: true, data: { version: "0.2.1" } });
     } });
   assert.equal(result.mode, "api");
@@ -121,6 +124,8 @@ test("opencode.lock pins every shipped platform and release workflows consume it
   assert.match(macWorkflow, /node scripts\/opencode-lock\.mjs verify/);
   assert.match(macWorkflow, /opencode-lock\.mjs url darwin\/arm64/);
   assert.match(macWorkflow, /opencode-lock\.mjs sha256 darwin\/arm64/);
+  assert.match(macWorkflow, /opencode-lock\.mjs url darwin\/amd64/);
+  assert.match(macWorkflow, /opencode-lock\.mjs sha256 darwin\/amd64/);
   assert.doesNotMatch(macWorkflow, /vars\.HOXI_OPENCODE_ARCHIVE_(URL|SHA256)/);
 
   const crossWorkflow = fs.readFileSync(path.join(scripts, "../.github/workflows/release-cross-platform.yml"), "utf8");
@@ -186,6 +191,7 @@ test("tag workflow gates publication on tests, versioned artifacts and notarizat
     "security list-keychains -d user -s",
     "- name: Setup Apple Notarization Profile",
     '--issuer "$APPLE_API_ISSUER"',
+    "- name: Install Rosetta for Intel artifact verification",
     '--version "$RELEASE_VERSION" --notarize --notary-profile "hoxi-notary"',
     'verify-dmg "$DMG" "$RELEASE_VERSION"',
     'verify-distribution "$DMG"',
@@ -193,6 +199,7 @@ test("tag workflow gates publication on tests, versioned artifacts and notarizat
     "uses: softprops/action-gh-release@v2",
     "body: ${{ env.RELEASE_NOTES }}",
     "build/bin/Hoxi-${{ env.RELEASE_VERSION }}-darwin-arm64.dmg",
+    "build/bin/Hoxi-${{ env.RELEASE_VERSION }}-darwin-amd64.dmg",
     "fail_on_unmatched_files: true",
     "if: always()",
     'security delete-keychain "$KEYCHAIN_PATH"',

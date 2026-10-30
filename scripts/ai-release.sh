@@ -20,6 +20,7 @@ CREATE_TAG=0
 JSON_OUTPUT=0
 MANDATORY=0
 FORCE_DB=0
+ARCH="arm64"
 API_URL="${APAY_RELEASE_API_URL:-${HOXI_RELEASE_API_URL:-}}"
 API_KEY="${APAY_RELEASE_KEY:-${HOXI_RELEASE_KEY:-}}"
 
@@ -40,12 +41,14 @@ while [[ $# -gt 0 ]]; do
     --json) JSON_OUTPUT=1; shift ;;
     --mandatory) MANDATORY=1; shift ;;
     --force-db) FORCE_DB=1; shift ;;
+    --arch) require_value "$@"; ARCH="$2"; shift 2 ;;
     -h|--help)
       echo 'Usage: scripts/ai-release.sh <major.minor.patch> [notes] [options]'
       echo '  --dry-run       Verify a candidate without publishing or creating a tag'
       echo '  --build-only    Build and verify without publishing (local signing allowed)'
       echo '  --skip-build    Verify and reuse a DMG whose embedded version matches'
       echo '  --tag --json --mandatory --api-url URL --key KEY'
+      echo '  --arch arm64|amd64  Target macOS architecture (default arm64)'
       echo '  --force-db      Explicit legacy maintainer publisher; never a silent fallback'
       exit 0 ;;
     --*) echo "Unknown option: $1" >&2; exit 1 ;;
@@ -82,9 +85,9 @@ go vet ./... >&2
 go test -race ./... >&2
 
 DMG_OUTPUT="build/bin/Hoxi.dmg"
-TARGET_DMG="build/bin/Hoxi-${VERSION}-darwin-arm64.dmg"
+TARGET_DMG="build/bin/Hoxi-${VERSION}-darwin-${ARCH}.dmg"
 if [[ "${SKIP_BUILD}" -eq 0 ]]; then
-  BUILD_ARGS=(--release-only --dmg --no-install --version "${VERSION}")
+  BUILD_ARGS=(--release-only --dmg --no-install --version "${VERSION}" --arch "${ARCH}")
   if [[ "${DRY_RUN}" -eq 0 && "${BUILD_ONLY}" -eq 0 ]]; then
     BUILD_ARGS+=(--notarize)
   fi
@@ -98,7 +101,7 @@ fi
 [[ -f "${SOURCE_DMG}" ]] || { echo "Missing candidate DMG: ${SOURCE_DMG}" >&2; exit 1; }
 
 # Inspect the actual read-only mounted image, not a sidecar manifest or adjacent app.
-METADATA="$(node scripts/release-artifact.mjs verify-dmg "${SOURCE_DMG}" "${VERSION}")"
+METADATA="$(node scripts/release-artifact.mjs verify-dmg "${SOURCE_DMG}" "${VERSION}" "${ARCH}")"
 if [[ "${SOURCE_DMG}" != "${TARGET_DMG}" ]]; then cp -f "${SOURCE_DMG}" "${TARGET_DMG}"; fi
 RELEASE_JSON="$(node --input-type=module - "${VERSION}" "${NOTES}" "${METADATA}" "${MANDATORY}" "${TARGET_DMG}" <<'JS'
 import fs from 'node:fs';
@@ -121,7 +124,7 @@ JS
 )"
 else
   node scripts/release-artifact.mjs verify-distribution "${TARGET_DMG}" >&2
-  if [[ -n "${HOXI_SPARKLE_DIR:-}${HOXI_SPARKLE_PUBLIC_KEY:-}${HOXI_SPARKLE_FEED_URL:-}" ]]; then
+  if [[ "${ARCH}" == "arm64" && -n "${HOXI_SPARKLE_DIR:-}${HOXI_SPARKLE_PUBLIC_KEY:-}${HOXI_SPARKLE_FEED_URL:-}" ]]; then
     [[ "${FORCE_DB}" -eq 0 ]] || { echo 'Sparkle requires the confirming API publisher' >&2; exit 1; }
     node scripts/sparkle.mjs sign-update "${TARGET_DMG}" "${VERSION}" "${TARGET_DMG}.sparkle.json" >&2
     RELEASE_JSON="$(node --input-type=module - "${RELEASE_JSON}" "${TARGET_DMG}.sparkle.json" <<'JS'

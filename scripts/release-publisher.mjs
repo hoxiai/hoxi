@@ -26,6 +26,7 @@ export function releasePayload({ version, notes, sha256, size, mandatory = false
 
   const base = githubBase(version);
   const macUrl = `${base}/Hoxi-${version}-darwin-arm64.dmg`;
+  const macAmd64Url = `${base}/Hoxi-${version}-darwin-amd64.dmg`;
   const winUrl = `${base}/Hoxi-${version}-windows-amd64-setup.exe`;
   const linuxUrl = `${base}/Hoxi-${version}-linux-amd64.tar.gz`;
 
@@ -34,6 +35,13 @@ export function releasePayload({ version, notes, sha256, size, mandatory = false
       name: `Hoxi-${version}-darwin-arm64.dmg`, url: macUrl, browser_download_url: macUrl,
       platform: "macos", arch: "arm64", package: "desktop", size, sha256,
       ...(sig ? { edSignature: sig.edSignature, signature: sig.edSignature } : {}),
+      ...(minimumMacOS ? { minimumSystemVersion: minimumMacOS } : {}),
+    },
+    {
+      // Intel Mac DMG. Sparkle stays bound to the single arm64 appcast
+      // enclosure above; the Intel bundle uses the arch-aware self-updater.
+      name: `Hoxi-${version}-darwin-amd64.dmg`, url: macAmd64Url, browser_download_url: macAmd64Url,
+      platform: "macos", arch: "x64", package: "desktop",
       ...(minimumMacOS ? { minimumSystemVersion: minimumMacOS } : {}),
     },
     {

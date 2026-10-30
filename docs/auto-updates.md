@@ -42,6 +42,18 @@ quit/restart before starting new work. This prevents a staged install-on-quit fr
 interrupting newly admitted tasks. External direct daemon clients and unrelated
 terminal jobs are outside this gate. A real signed-app acceptance test is required.
 
+## Packaging Notes
+
+macOS releases ship two DMGs: `Hoxi-<version>-darwin-arm64.dmg` and
+`Hoxi-<version>-darwin-amd64.dmg` (Intel). Both are signed and notarized. Only the
+arm64 bundle carries the Sparkle framework, because the published appcast has a
+single arm64 enclosure; bundling Sparkle into the Intel build would push an arm64
+update to an Intel Mac. The Intel bundle therefore uses the arch-aware JSON /
+self-updater (the update check reports `arch=x64` and the DMG fallback selects
+`darwin-amd64.dmg`), and the release payload registers the Intel DMG as a
+`macos`/`x64` asset so the website can serve it. Enabling Sparkle auto-update for
+Intel requires a per-arch appcast item on the website (out of this repository).
+
 ## Deployment Blocker
 
 The website implementation lives in the separate APay Hoxi theme repository.
@@ -74,7 +86,8 @@ XPC bundles and the framework are signed inside out before the host app. Helpers
 retain Downloader's official entitlements; other helpers receive none, per Sparkle's
 manual signing guidance. Host JIT entitlements are never applied to them. Use an
 official signed SDK, not a locally modified/rebuilt framework. Artifact
-verification checks helper presence, arm64 support and the minimum OS of every
+verification checks helper presence, support for the requested architecture
+(arm64 or x86_64) and the minimum OS of every
 bundled Mach-O executable, as well as the existing host/sidecar requirements.
 
 ## Update Signing

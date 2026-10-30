@@ -12,6 +12,7 @@ NOTARIZE=0
 NOTARY_PROFILE="${NOTARY_PROFILE:-hoxi-notary}"
 SIGN_IDENTITY=""
 BUILD_VERSION="${HOXI_BUILD_VERSION:-}"
+TARGET_ARCH="${HOXI_TARGET_ARCH:-}"
 EXTRA_WAILS_ARGS=()
 
 while [[ $# -gt 0 ]]; do
@@ -19,6 +20,11 @@ while [[ $# -gt 0 ]]; do
     --version)
       [[ $# -ge 2 && -n "$2" ]] || { echo "--version requires a value" >&2; exit 1; }
       BUILD_VERSION="$2"
+      shift 2
+      ;;
+    --arch)
+      [[ $# -ge 2 && -n "$2" ]] || { echo "--arch requires a value (arm64 or amd64)" >&2; exit 1; }
+      TARGET_ARCH="$2"
       shift 2
       ;;
     --release-only)
@@ -63,6 +69,23 @@ if [[ -n "${BUILD_VERSION}" ]]; then
 else
   BUILD_VERSION="$(node scripts/release-artifact.mjs default-version)"
 fi
+
+resolve_host_arch() {
+  case "$(uname -m)" in
+    arm64|aarch64) echo "arm64" ;;
+    x86_64|amd64)  echo "amd64" ;;
+    *) echo "" ;;
+  esac
+}
+
+if [[ -z "${TARGET_ARCH}" ]]; then
+  TARGET_ARCH="$(resolve_host_arch)"
+fi
+case "${TARGET_ARCH}" in
+  arm64|amd64) ;;
+  *) echo "Unsupported target macOS architecture: ${TARGET_ARCH:-$(uname -m)}" >&2; exit 1 ;;
+esac
+
 export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-13.0}"
 node scripts/sparkle.mjs check
 
@@ -97,6 +120,7 @@ npm --prefix web run build
 mkdir -p build/bin
 
 resolve_opencode_bin() {
+  local target_arch="$1"
   node scripts/opencode-lock.mjs verify >/dev/null
   if [[ -n "${HOXI_OPENCODE:-}" ]]; then
     if [[ ! -x "${HOXI_OPENCODE}" ]]; then
@@ -108,35 +132,28 @@ resolve_opencode_bin() {
     return 0
   fi
 
-  local candidates=(
-    "${HOME}/.hoxi/bin/opencode"
-    "${HOME}/.opencode/bin/opencode"
-    "/opt/homebrew/bin/opencode"
-    "/usr/local/bin/opencode"
-    "$(command -v opencode 2>/dev/null || true)"
-  )
-  for c in "${candidates[@]}"; do
-    if [[ -n "${c}" && -x "${c}" ]] && node scripts/opencode-lock.mjs verify-binary "${c}" >/dev/null 2>&1; then
-      echo "${c}"
-      return 0
-    fi
-  done
+  # A host-local binary is only valid when it matches the requested target arch.
+  if [[ "$(resolve_host_arch)" == "${target_arch}" ]]; then
+    local candidates=(
+      "${HOME}/.hoxi/bin/opencode"
+      "${HOME}/.opencode/bin/opencode"
+      "/opt/homebrew/bin/opencode"
+      "/usr/local/bin/opencode"
+      "$(command -v opencode 2>/dev/null || true)"
+    )
+    for c in "${candidates[@]}"; do
+      if [[ -n "${c}" && -x "${c}" ]] && node scripts/opencode-lock.mjs verify-binary "${c}" >/dev/null 2>&1; then
+        echo "${c}"
+        return 0
+      fi
+    done
+  fi
 
   if [[ "$(uname -s)" != "Darwin" ]]; then
     return 1
   fi
 
-  local host_arch
-  case "$(uname -m)" in
-    arm64|aarch64) host_arch="arm64" ;;
-    x86_64|amd64)  host_arch="amd64" ;;
-    *)
-      echo "Unsupported macOS architecture for OpenCode sidecar: $(uname -m)" >&2
-      return 1
-      ;;
-  esac
-
-  local platform="darwin/${host_arch}"
+  local platform="darwin/${target_arch}"
   local opencode_url
   opencode_url="$(node scripts/opencode-lock.mjs url "${platform}")"
   local dl_dir
@@ -167,7 +184,7 @@ resolve_opencode_bin() {
   return 0
 }
 
-OPENCODE_SRC="$(resolve_opencode_bin || true)"
+OPENCODE_SRC="$(resolve_opencode_bin "${TARGET_ARCH}" || true)"
 if [[ -z "${OPENCODE_SRC}" && "$(uname -s)" == "Darwin" ]]; then
   echo "Failed to resolve or download verified OpenCode executable matching internal/opencode/opencode.lock." >&2
   exit 1
@@ -203,6 +220,7 @@ bundle_and_sign_macos_app() {
   local bundle_id="$2"
   local display_name="$3"
   local is_release="$4"
+  local arch="$5"
 
   test -x "${app_path}/Contents/MacOS/Hoxi"
 
@@ -226,8 +244,15 @@ bundle_and_sign_macos_app() {
     fi
   done
 
-  node scripts/sparkle.mjs configure "${app_path}" "${is_release}"
-  node scripts/release-artifact.mjs configure-app "${app_path}" "${BUILD_VERSION}"
+  # Sparkle auto-update is bound to the single arm64 appcast enclosure. The
+  # Intel bundle omits it so an Intel Mac never installs an arm64 update; it
+  # relies on the arch-aware JSON/self-updater instead.
+  local sparkle_enabled="${is_release}"
+  if [[ "${arch}" == "amd64" ]]; then
+    sparkle_enabled=0
+  fi
+  node scripts/sparkle.mjs configure "${app_path}" "${sparkle_enabled}"
+  node scripts/release-artifact.mjs configure-app "${app_path}" "${BUILD_VERSION}" "${arch}"
 
   local target_identity="-"
   if [[ "${is_release}" -eq 1 && "${CURRENT_IDENTITY}" != "-" ]]; then
@@ -262,7 +287,7 @@ bundle_and_sign_macos_app() {
   fi
 
   if [[ "${is_release}" -eq 1 ]]; then
-    node scripts/release-artifact.mjs verify-app "${app_path}" "${BUILD_VERSION}"
+    node scripts/release-artifact.mjs verify-app "${app_path}" "${BUILD_VERSION}" "${arch}"
   fi
 
   local actual_id
@@ -305,6 +330,7 @@ if [[ "${BUILD_DEV}" -eq 1 ]]; then
     -skipbindings \
     -debug \
     -nosyncgomod \
+    -platform "darwin/${TARGET_ARCH}" \
     -ldflags "-X github.com/hoxiai/hoxi/internal/app.BuildVariant=dev -X github.com/hoxiai/hoxi/internal/buildinfo.Version=${BUILD_VERSION}" \
     "${EXTRA_WAILS_ARGS[@]+"${EXTRA_WAILS_ARGS[@]}"}"
 
@@ -312,7 +338,7 @@ if [[ "${BUILD_DEV}" -eq 1 ]]; then
     DEV_STAGE_APP="${STAGE_DIR}/Hoxi Dev.app"
     rm -rf "${DEV_STAGE_APP}"
     mv "build/bin/Hoxi.app" "${DEV_STAGE_APP}"
-    bundle_and_sign_macos_app "${DEV_STAGE_APP}" "ai.hoxi.desktop.dev" "Hoxi Dev" 0
+    bundle_and_sign_macos_app "${DEV_STAGE_APP}" "ai.hoxi.desktop.dev" "Hoxi Dev" 0 "${TARGET_ARCH}"
   fi
 fi
 
@@ -324,12 +350,13 @@ if [[ "${BUILD_RELEASE}" -eq 1 ]]; then
     -s \
     -m \
     -nosyncgomod \
+    -platform "darwin/${TARGET_ARCH}" \
     -ldflags "-X github.com/hoxiai/hoxi/internal/app.BuildVariant=release -X github.com/hoxiai/hoxi/internal/buildinfo.Version=${BUILD_VERSION}" \
     "${EXTRA_WAILS_ARGS[@]+"${EXTRA_WAILS_ARGS[@]}"}"
 
   if [[ "$(uname -s)" == "Darwin" ]]; then
     APP_PATH="build/bin/Hoxi.app"
-    bundle_and_sign_macos_app "${APP_PATH}" "ai.hoxi.desktop" "Hoxi" 1
+    bundle_and_sign_macos_app "${APP_PATH}" "ai.hoxi.desktop" "Hoxi" 1 "${TARGET_ARCH}"
 
     if [[ "${BUILD_DMG}" -eq 1 ]]; then
       DMG_PATH="build/bin/Hoxi.dmg"

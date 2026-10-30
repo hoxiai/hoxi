@@ -126,9 +126,10 @@ Flutter + Riverpod + GoRouter + Dio，四栏：沟通 · 工作台 · 一人公�
   wails dev
   # 当本机 apay (http://127.0.0.1:5400) 已启动时，Hoxi Dev 自动将 HOXI_SERVER_URL 指向 http://127.0.0.1:5400
   ```
-- **Build Production macOS Application (`.app`)**:
+- **Build Production macOS Application (`.app` / `--dmg`)**:
   ```bash
   ./build-desktop.sh
+  ./build-desktop.sh --release-only --dmg --no-install --arch amd64   # Intel DMG; default --arch is the host architecture
   ```
 - **Build Production Windows Installer (`-setup.exe` & `.zip`)**:
   ```powershell
