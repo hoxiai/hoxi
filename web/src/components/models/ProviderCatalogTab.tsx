@@ -13,7 +13,6 @@ import {
   RotateCcw,
   Server,
   Sparkles,
-  Trash2,
 } from "lucide-solid";
 import type { ProviderInfo } from "../../services/api";
 import {
@@ -42,6 +41,7 @@ import { ProviderConnectView, ProviderSelectAllView } from "./ProviderConnectSub
 import { ProviderHealthBadge } from "./ProviderQualityCard";
 import { isModelFree } from "./model-selector-utils";
 import LocalCliBridgeBanner from "./LocalCliBridgeBanner";
+import ProviderDisconnectButton from "./provider-disconnect-button";
 type SubView = "list" | "connect" | "select-all";
 
 export default function ProviderCatalogTab() {
@@ -384,15 +384,11 @@ export default function ProviderCatalogTab() {
                             <Ban size={13} />
                           </button>
                           <Show when={!isImported() && item.source !== "runner"}>
-                            <button
-                              type="button"
-                              disabled={busyID() === item.id}
-                              onClick={() => void onDisconnect(item.id)}
-                              class="rounded-lg p-1.5 text-[var(--text-faint)] hover:bg-[var(--danger-surface)] hover:text-[var(--danger-text)] transition-colors cursor-pointer"
-                              title={t("models.disconnect")}
-                            >
-                              <Trash2 size={13} />
-                            </button>
+                            <ProviderDisconnectButton
+                              providerName={item.name}
+                              loading={busyID() === item.id}
+                              onConfirm={() => void onDisconnect(item.id)}
+                            />
                           </Show>
                         </div>
                       </div>

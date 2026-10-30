@@ -462,9 +462,12 @@ export default function CustomEndpointTab() {
                 type="button"
                 disabled={saving()}
                 onClick={() => void onDeleteProvider()}
-                class="inline-flex items-center gap-1.5 rounded-xl border border-[var(--danger-border)] bg-[var(--danger-surface)] px-3 py-1.5 text-[12px] font-medium text-[var(--danger-text)] hover:opacity-90 cursor-pointer"
+                aria-busy={saving()}
+                class="inline-flex items-center gap-1.5 rounded-xl border border-[var(--danger-border)] bg-[var(--danger-surface)] px-3 py-1.5 text-[12px] font-medium text-[var(--danger-text)] hover:opacity-90 disabled:opacity-60 disabled:cursor-default cursor-pointer"
               >
-                <Trash2 size={13} />
+                <Show when={!saving()} fallback={<LoaderCircle size={13} class="animate-spin" />}>
+                  <Trash2 size={13} />
+                </Show>
                 {t("common.delete")}
               </button>
             </Show>
