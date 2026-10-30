@@ -3,6 +3,7 @@ import { createEffect, createMemo, createSignal, For, onCleanup, Show, untrack }
 import { RotateCcw } from "lucide-solid";
 import {
   extractChildSubagentSessionId,
+  canRevertSession,
   isSessionBusy,
   isSubagentToolAlive,
   isSubagentToolInterrupted,
@@ -472,7 +473,8 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
             <Show when={isEdit() && status() === "completed"}>
               <ActionIconButton
                 variant="warn"
-                label={t("toolCard.undo")}
+                disabled={!canRevertSession(props.part.sessionID)}
+                label={isSessionBusy(props.part.sessionID) ? t("timeline.revertWhileBusy") : t("toolCard.undo")}
                 onClick={(e) => {
                   e.stopPropagation();
                   void revertToHere(props.part.sessionID, props.part.messageID, props.part.id);

@@ -679,7 +679,9 @@ export default function MessageStream(props: { hidden?: boolean }) {
                             variant="warn"
                             label={
                               !canRevertSession(workspace.activeSessionID)
-                                ? t("timeline.runnerFeatureUnsupported")
+                                ? isSessionBusy()
+                                  ? t("timeline.revertWhileBusy")
+                                  : t("timeline.runnerFeatureUnsupported")
                                 : t("timeline.revertBtn")
                             }
                             onClick={() => void onRevertToMessage(turn.info.id)}

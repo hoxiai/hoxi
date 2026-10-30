@@ -156,6 +156,7 @@ export const timeline = {
   revertTooltip:
     "Revert conversation and code changes to before this message",
   revertBtn: "Revert",
+  revertWhileBusy: "Wait for the task to finish before reverting",
   openTerminalTooltip: "Open terminal",
   terminalBtn: "Terminal",
   reviewCommentSingular: "{count} review comment",

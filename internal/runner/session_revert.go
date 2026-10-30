@@ -111,14 +111,11 @@ func (s *Service) handleSessionRevert(w http.ResponseWriter, r *http.Request, se
 	}
 
 	s.mu.Lock()
-	ap := s.procs[sessionID]
+	busy := s.procs[sessionID] != nil || s.childBusy[sessionID]
 	s.mu.Unlock()
-	if ap != nil {
-		s.abortActiveProcess(sessionID)
-		select {
-		case <-ap.done:
-		case <-time.After(5 * time.Second):
-		}
+	if busy {
+		writeJSONError(w, http.StatusConflict, "cannot revert while the session is running; wait for it to finish")
+		return
 	}
 
 	rec, ok := s.store.Get(sessionID)
@@ -254,6 +251,13 @@ func (s *Service) handleSessionUnrevert(w http.ResponseWriter, r *http.Request, 
 	}
 	if rec.Subagent {
 		writeJSONError(w, http.StatusConflict, errSubagentSessionReadOnly.Error())
+		return
+	}
+	s.mu.Lock()
+	busy := s.procs[sessionID] != nil || s.childBusy[sessionID]
+	s.mu.Unlock()
+	if busy {
+		writeJSONError(w, http.StatusConflict, "cannot restore a revert while the session is running; wait for it to finish")
 		return
 	}
 

@@ -63,6 +63,7 @@ import "../src/__tests__/session-goal.test";
 import "../src/__tests__/skills.test";
 import "../src/__tests__/context-mentions.test";
 import "../src/__tests__/session-capabilities.test";
+import "../src/__tests__/session-revert.test";
 import "../src/__tests__/turn-window.test";
 import "../src/__tests__/session-transcripts.test";
 import "../src/__tests__/internal-llm-model.test";

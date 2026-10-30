@@ -474,7 +474,7 @@ function scheduleFlush(applyDeltaToStore: (key: string, delta: string) => void) 
    - 用户在 Agent 执行中途发送纠偏指令时，前端直接调用 `POST /session/{sessionID}/prompt_async` 追加指导消息。OpenCode 内核会在当前工具步骤完成后立即将该纠偏指令并入下一轮上下文，无需粗暴中断重来。
 2. **单步级“代码时光机回滚”与“分支探索”（Checkpoint Revert & Session Fork）**：
    - 在每条用户消息及每张已完成的文件修改 `ToolCard` 右上角提供两个快捷微交互按钮：
-     - **`[Revert to Here 回滚到此步]`**：调用 `POST /session/{sessionID}/revert`（传入 `{ messageID, partID }`），利用 OpenCode 内置的 Git Snapshot 机制同时回滚对话历史与磁盘上的代码改动；顶栏同步弹出 `[Undo Revert 恢复重做]` 提示条（绑定 `POST /session/{sessionID}/unrevert`）。
+     - **`[Revert to Here 回滚到此步]`**：经统一 `POST /api/hoxi/sessions/{sessionID}/revert?directory=...`（传入 `{ messageID, partID }`）回退消息与对应文件检查点。执行中（含重试等待）禁用回退，后端对运行中的任务返回 409，绝不隐式停止主任务或子任务；“立即发送”已送入运行时的消息目前不能无中断撤回。仅实际恢复文件时显示 `[Undo Revert 恢复重做]` 提示条（绑定统一 `/unrevert` 路由）；纯消息回退不显示代码回滚提示。请求失败时保留原消息、回退状态与输入草稿。
      - **`[Fork 分叉探索]`**：调用 `POST /session/{sessionID}/fork`（传入 `{ messageID }`），从当前节点瞬间克隆出一条新会话，方便对比两种不同的技术重构路径。
 3. **毫秒级“LSP 编译器诊断闭环”（Auto LSP Diagnostics）**：
    - 顶栏与右侧审查栏常驻显示当前工作区的 **LSP 状态徽标**（读取 `GET /lsp`）。

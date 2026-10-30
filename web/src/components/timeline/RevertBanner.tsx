@@ -3,6 +3,8 @@ import { createMemo, createSignal, For, Show } from "solid-js";
 import { GitFork, LoaderCircle, RotateCcw, Undo2 } from "lucide-solid";
 import {
   forkFromMessage,
+  hasRevertedFiles,
+  isSessionBusy,
   openDiffInInspector,
   pendingRevertConfirm,
   revertToHere,
@@ -55,7 +57,7 @@ export default function RevertBanner() {
 
   const onConfirmRevertBoth = async () => {
     const req = pendingConfirm();
-    if (!req || busy()) return;
+    if (!req || busy() || isSessionBusy(req.sessionID)) return;
     setBusy(true);
     try {
       await revertToHere(req.sessionID, req.messageID, req.partID, { skipConfirm: true });
@@ -149,7 +151,8 @@ export default function RevertBanner() {
               <div class="flex items-center gap-1.5 shrink-0">
                 <button
                   type="button"
-                  disabled={busy()}
+                  disabled={busy() || isSessionBusy(req().sessionID)}
+                  title={isSessionBusy(req().sessionID) ? t("timeline.revertWhileBusy") : undefined}
                   onClick={() => void onConfirmRevertBoth()}
                   class="inline-flex items-center gap-1 rounded-lg bg-[var(--warn-text)] px-2.5 py-1 text-[11px] font-medium text-white hover:opacity-90 disabled:opacity-50 cursor-pointer"
                 >
@@ -202,7 +205,7 @@ export default function RevertBanner() {
         )}
       </Show>
 
-      <Show when={revertBoundary()}>
+      <Show when={revertBoundary() && hasRevertedFiles(workspace.activeSessionID!)}>
         <div class="inline-flex items-center gap-1.5 rounded-full border border-[var(--warn-border)] bg-[var(--warn-surface)]/90 px-2.5 py-1 shadow-xs">
           <Undo2 size={12.5} class="text-[var(--warn-text)] shrink-0" />
           <span class="truncate text-[11px] font-medium text-[var(--warn-text)]">
@@ -222,7 +225,7 @@ export default function RevertBanner() {
 
           <button
             type="button"
-            disabled={busy()}
+            disabled={busy() || isSessionBusy(workspace.activeSessionID)}
             onClick={() => void onStepRedo()}
             class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium text-[var(--warn-text)] hover:bg-[var(--bg-hover)] disabled:opacity-50 cursor-pointer"
             title={t("timeline.redoOneTurn")}
@@ -235,7 +238,7 @@ export default function RevertBanner() {
 
           <button
             type="button"
-            disabled={busy()}
+            disabled={busy() || isSessionBusy(workspace.activeSessionID)}
             onClick={() => void onRestoreAll()}
             class="inline-flex items-center rounded-md bg-[var(--accent-primary)] px-2 py-0.5 text-[11px] font-medium text-[var(--accent-foreground)] hover:opacity-90 disabled:opacity-50 cursor-pointer"
           >

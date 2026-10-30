@@ -3,6 +3,7 @@
 import { createSignal } from "solid-js";
 import { hoxiAPI } from "../services/api";
 import type { MessagePart } from "../services/sse-types";
+import { t } from "../i18n";
 import { recordUserRevertAction } from "./provider-telemetry";
 import { initializeSessionAI, sessionAIConfig } from "./session-ai";
 import { isSessionBusy, sessionDirectory } from "./session-query";
@@ -11,7 +12,6 @@ import { setWorkspace, workspace } from "./workspace-state";
 import { appSettings } from "./settings";
 import { scheduleRefreshWorktreeStatus } from "./session-diffs";
 import { extractUserTurnSkillSelection } from "./skills";
-import { abortChildSubagentSessions } from "./workspace-session-messages";
 
 export interface PendingRevertRequest {
   sessionID: string;
@@ -22,6 +22,11 @@ export interface PendingRevertRequest {
 
 export const [pendingRevertConfirm, setPendingRevertConfirm] =
   createSignal<PendingRevertRequest | null>(null);
+
+export function hasRevertedFiles(sessionID: string): boolean {
+  const revert = workspace.sessions.find((s) => s.id === sessionID)?.revert;
+  return revert?.codeChanged ?? Boolean(revert?.diff?.trim());
+}
 
 const MUTATING_TOOLS = new Set([
   "edit",
@@ -82,18 +87,20 @@ export async function revertToHere(
   partID?: string,
   options?: { skipConfirm?: boolean }
 ): Promise<void> {
+  if (isSessionBusy(sessionID)) throw new Error(t("timeline.revertWhileBusy"));
   const existingSession = workspace.sessions.find((s) => s.id === sessionID);
   const affectedFiles = collectAffectedRevertFiles(sessionID, messageID, partID);
   if (
     !options?.skipConfirm &&
     appSettings.confirmBeforeRevert &&
     !existingSession?.revert &&
-    (affectedFiles.length > 0 || Boolean(partID))
+    affectedFiles.length > 0
   ) {
     setPendingRevertConfirm({ sessionID, messageID, partID, affectedFiles });
     return;
   }
   setPendingRevertConfirm(null);
+  const info = await hoxiAPI.revertSession(sessionID, messageID, partID, sessionDirectory(sessionID));
   recordUserRevertAction(sessionID, messageID);
 
   if (!partID) {
@@ -114,22 +121,14 @@ export async function revertToHere(
     }
   }
 
-  if (existingSession) replaceSession({ ...existingSession, revert: { messageID, partID } });
-  if (isSessionBusy(sessionID)) {
-    setWorkspace("statusBySession", sessionID, { type: "idle" });
-    try { await hoxiAPI.abortSession(sessionID, sessionDirectory(sessionID)); } catch { /* ignore */ }
-    void abortChildSubagentSessions(sessionID);
-  }
-  const info = await hoxiAPI.revertSession(sessionID, messageID, partID, sessionDirectory(sessionID));
   replaceSession(info);
   void loadSessionMessages(sessionID).catch(() => {});
   scheduleRefreshWorktreeStatus(sessionID, 120);
 }
 
 export async function undoRevert(sessionID: string): Promise<void> {
+  if (isSessionBusy(sessionID)) throw new Error(t("timeline.revertWhileBusy"));
   setPendingRevertConfirm(null);
-  const existingSession = workspace.sessions.find((s) => s.id === sessionID);
-  if (existingSession) replaceSession({ ...existingSession, revert: undefined });
   const info = await hoxiAPI.unrevertSession(sessionID, sessionDirectory(sessionID));
   replaceSession(info);
   void loadSessionMessages(sessionID).catch(() => {});

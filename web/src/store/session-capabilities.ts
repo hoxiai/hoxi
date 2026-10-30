@@ -1,9 +1,11 @@
 // web/src/store/session-capabilities.ts
 import { workspace } from "./workspace-state";
 import { isRunnerSessionID, resolveRunnerRuntimeForProvider } from "../services/api";
+import { isSessionBusy } from "./session-query";
 
 export function canRevertSession(sessionID?: string | null): boolean {
   if (!sessionID) return false;
+  if (isSessionBusy(sessionID)) return false;
   const session = workspace.sessions.find((s) => s.id === sessionID);
   if (session?.capabilities?.revert !== undefined) return session.capabilities.revert;
   return true;

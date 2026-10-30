@@ -154,6 +154,7 @@ export const timeline: TimelineI18n = {
   forkBtn: "分支",
   revertTooltip: "回滚至此消息之前",
   revertBtn: "回滚",
+  revertWhileBusy: "任务执行中，结束后可回退消息",
   openTerminalTooltip: "打开终端",
   terminalBtn: "终端",
   reviewCommentSingular: "{count} 条代码批注",
