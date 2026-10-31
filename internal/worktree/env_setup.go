@@ -2,7 +2,6 @@ package worktree
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -281,14 +280,4 @@ func executeWorktreeSetupScript(repoRoot, worktreeDir, sessionID, branch string,
 		Status: "succeeded",
 		Output: outputStr,
 	}
-}
-
-// runWorktreeSetupScript executes the optional .hoxi/setup.sh script inside a
-// newly created worktree directory.
-func runWorktreeSetupScript(repoRoot, worktreeDir, sessionID, branch string) error {
-	res := executeWorktreeSetupScript(repoRoot, worktreeDir, sessionID, branch, 0)
-	if res.Status == "failed" {
-		return errors.New(res.Error)
-	}
-	return nil
 }

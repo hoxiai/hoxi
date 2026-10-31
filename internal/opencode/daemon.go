@@ -149,52 +149,50 @@ func ResolveVersion(binPath string) string {
 		return ""
 	}
 	key := filepath.Clean(binPath)
-	for {
-		cachedOpenCodeVerMu.Lock()
-		if ver, ok := cachedOpenCodeVersions[key]; ok && ver != "" {
-			cachedOpenCodeVerMu.Unlock()
-			return ver
-		}
-		if waitCh, inflight := inflightOpenCodeVer[key]; inflight {
-			cachedOpenCodeVerMu.Unlock()
-			<-waitCh
-			cachedOpenCodeVerMu.Lock()
-			ver := cachedOpenCodeVersions[key]
-			cachedOpenCodeVerMu.Unlock()
-			return ver
-		}
-		done := make(chan struct{})
-		inflightOpenCodeVer[key] = done
-		cachedOpenCodeVerMu.Unlock()
-
-		ctx, cancel := context.WithTimeout(context.Background(), resolveVersionTimeout)
-		cmd := subproc.CommandContext(ctx, binPath, "--version")
-		configureChildProcess(cmd, false)
-		// Drop inherited color-forcing vars: with FORCE_COLOR set the CLI ignores
-		// NO_COLOR and prints an ANSI-colored warning on top of the version line.
-		cmd.Env = append(envWithout(os.Environ(), "FORCE_COLOR", "CLICOLOR_FORCE", "CLICOLOR"),
-			"CI=1",
-			"NO_COLOR=1",
-			"GIT_TERMINAL_PROMPT=0",
-			"OPENCODE_DISABLE_CONFIG_DEPENDENCY_INSTALL=1",
-		)
-		out, err := cmd.CombinedOutput()
-		cancel()
-
-		ver := ""
-		if err == nil {
-			ver = parseVersionOutput(out)
-		}
-
-		cachedOpenCodeVerMu.Lock()
-		if ver != "" {
-			cachedOpenCodeVersions[key] = ver
-		}
-		delete(inflightOpenCodeVer, key)
-		close(done)
+	cachedOpenCodeVerMu.Lock()
+	if ver, ok := cachedOpenCodeVersions[key]; ok && ver != "" {
 		cachedOpenCodeVerMu.Unlock()
 		return ver
 	}
+	if waitCh, inflight := inflightOpenCodeVer[key]; inflight {
+		cachedOpenCodeVerMu.Unlock()
+		<-waitCh
+		cachedOpenCodeVerMu.Lock()
+		ver := cachedOpenCodeVersions[key]
+		cachedOpenCodeVerMu.Unlock()
+		return ver
+	}
+	done := make(chan struct{})
+	inflightOpenCodeVer[key] = done
+	cachedOpenCodeVerMu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), resolveVersionTimeout)
+	cmd := subproc.CommandContext(ctx, binPath, "--version")
+	configureChildProcess(cmd, false)
+	// Drop inherited color-forcing vars: with FORCE_COLOR set the CLI ignores
+	// NO_COLOR and prints an ANSI-colored warning on top of the version line.
+	cmd.Env = append(envWithout(os.Environ(), "FORCE_COLOR", "CLICOLOR_FORCE", "CLICOLOR"),
+		"CI=1",
+		"NO_COLOR=1",
+		"GIT_TERMINAL_PROMPT=0",
+		"OPENCODE_DISABLE_CONFIG_DEPENDENCY_INSTALL=1",
+	)
+	out, err := cmd.CombinedOutput()
+	cancel()
+
+	ver := ""
+	if err == nil {
+		ver = parseVersionOutput(out)
+	}
+
+	cachedOpenCodeVerMu.Lock()
+	if ver != "" {
+		cachedOpenCodeVersions[key] = ver
+	}
+	delete(inflightOpenCodeVer, key)
+	close(done)
+	cachedOpenCodeVerMu.Unlock()
+	return ver
 }
 
 // Daemon is a started `opencode serve` child. It is recorded in the reclaim

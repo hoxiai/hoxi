@@ -506,10 +506,6 @@ func readTargets(item map[string]interface{}) []string {
 	return out
 }
 
-func isOpaquePermissionRequest(item map[string]interface{}, worktree string) bool {
-	return isOpaquePermissionRequestWith(item, worktree, false)
-}
-
 func isOpaquePermissionRequestWith(item map[string]interface{}, worktree string, allowInlineScripts bool) bool {
 	if worktree == "" {
 		worktree = firstString(itemMetadata(item)["worktree"])
