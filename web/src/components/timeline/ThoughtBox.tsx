@@ -312,12 +312,18 @@ export default function ThoughtBox(props: {
     setOpen(forceDefaultOpen || mode === "expanded");
   });
 
-  // Observe inner reasoning body height (KiloCode pattern): smooth lerp while streaming,
-  // synchronous pre-paint snap when settled.
+  // Observe inner reasoning body height (KiloCode pattern): snap immediately on
+  // initial mount, smooth lerp while streaming, synchronous pre-paint snap when settled.
   createEffect(() => {
     if (!everOpened() || !innerRef) return;
+    let initialSnap = true;
     const observer = new ResizeObserver(() => {
       if (!open() || userScrolledUp || !bodyRef) return;
+      if (initialSnap) {
+        initialSnap = false;
+        bodyRef.scrollTop = maxScrollTop();
+        return;
+      }
       if (streaming()) {
         if (followFrame === undefined) {
           followFrame = requestAnimationFrame(tickFollow);

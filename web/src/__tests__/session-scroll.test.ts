@@ -1,5 +1,16 @@
+import { reconcile, unwrap } from "solid-js/store";
 import { createSessionScrollController } from "../components/timeline/session-scroll";
 import { createTimelineScroll } from "../components/timeline/timeline-scroll";
+import { hoxiAPI } from "../services/api";
+import {
+  hydratedSessionIDs,
+  isSessionTaskActive,
+  selectSession,
+  setWorkspace,
+  timelineFollowRequest,
+  workspace,
+  type MessageTurn,
+} from "../store/workspace";
 import { assertEqual, describe, it } from "./test-harness";
 
 describe("Session reading restoration", () => {
@@ -210,6 +221,80 @@ describe("Session reading restoration", () => {
     } finally {
       globalThis.requestAnimationFrame = originalRAF;
       globalThis.cancelAnimationFrame = originalCancel;
+    }
+  });
+
+  it("marks unhydrated background-SSE sessions as loading and emits follow requests on active-task selectSession", async () => {
+    const saved = structuredClone(unwrap(workspace));
+    const origGetMessages = hoxiAPI.getMessages;
+    const origGetPending = hoxiAPI.getPendingPermissions;
+    const origGetDiffs = hoxiAPI.getSessionDiff;
+    const origGetWorktree = hoxiAPI.getWorktree;
+    try {
+      let resolveMessages!: (turns: MessageTurn[]) => void;
+      hoxiAPI.getMessages = () => new Promise((r) => { resolveMessages = r; });
+      hoxiAPI.getPendingPermissions = async () => [];
+      hoxiAPI.getSessionDiff = async () => [];
+      hoxiAPI.getWorktree = async () => ({ sessionID: "", isolated: false, directory: "/proj", createdAt: "" });
+
+      hydratedSessionIDs.delete("busy-sse");
+      hydratedSessionIDs.add("idle-hydrated");
+      setWorkspace(reconcile({
+        ...saved,
+        rootDir: "/proj",
+        activeSessionID: "idle-hydrated",
+        sessions: [
+          { id: "idle-hydrated", title: "Idle", directory: "/proj", time: { created: 1, updated: 1 } },
+          { id: "busy-sse", title: "Busy", directory: "/proj", time: { created: 2, updated: 2 } },
+        ],
+        statusBySession: { "busy-sse": { type: "busy" } },
+        messagesBySession: {
+          "idle-hydrated": [],
+          // Partial turn already pushed by background SSE before first open:
+          "busy-sse": [{
+            info: { id: "m-live", sessionID: "busy-sse", role: "assistant", time: { created: 2 } },
+            parts: [],
+          }],
+        },
+        loadingMessagesBySession: {},
+        pendingPermissions: [],
+        pendingQuestions: [],
+      }));
+
+      assertEqual(isSessionTaskActive("idle-hydrated"), false);
+      assertEqual(isSessionTaskActive("busy-sse"), true);
+
+      const prevSeq = timelineFollowRequest()?.seq ?? 0;
+      const promise = selectSession("busy-sse");
+      // Even though messagesBySession["busy-sse"] had a partial SSE turn, it is
+      // not hydrated yet so loadingMessagesBySession must stay true until getMessages resolves.
+      assertEqual(workspace.activeSessionID, "busy-sse");
+      assertEqual(workspace.loadingMessagesBySession["busy-sse"], true);
+      assertEqual(timelineFollowRequest()?.sessionID, "busy-sse");
+      assertEqual((timelineFollowRequest()?.seq ?? 0) > prevSeq, true);
+
+      resolveMessages([
+        { info: { id: "m-old", sessionID: "busy-sse", role: "user", time: { created: 1 } }, parts: [] },
+        { info: { id: "m-live", sessionID: "busy-sse", role: "assistant", time: { created: 2 } }, parts: [] },
+      ]);
+      await promise;
+      assertEqual(workspace.loadingMessagesBySession["busy-sse"], false);
+      assertEqual(hydratedSessionIDs.has("busy-sse"), true);
+
+      // Re-clicking the already-active session title while busy or awaiting approval
+      // bumps timelineFollowRequest again so scrolled-up readers snap back to the focus point.
+      const seqAfterHydrate = timelineFollowRequest()?.seq ?? 0;
+      setWorkspace("aiBySession", "busy-sse", { agent: "build", model: { providerID: "p", modelID: "m" }, effort: "" });
+      await selectSession("busy-sse");
+      assertEqual((timelineFollowRequest()?.seq ?? 0) > seqAfterHydrate, true);
+    } finally {
+      hydratedSessionIDs.delete("busy-sse");
+      hydratedSessionIDs.delete("idle-hydrated");
+      setWorkspace(reconcile(saved));
+      hoxiAPI.getMessages = origGetMessages;
+      hoxiAPI.getPendingPermissions = origGetPending;
+      hoxiAPI.getSessionDiff = origGetDiffs;
+      hoxiAPI.getWorktree = origGetWorktree;
     }
   });
 });

@@ -117,7 +117,7 @@ export function createSessionScrollController(options: {
       pending = { bottom: true, top: 0, offset: 0 };
       if (sessionID) positions.set(sessionID, pending);
       options.scroll.resume();
-      options.scroll.jumpToBottom();
+      applyPending();
       if (ready) scheduleRestore();
     },
     ready(turnIDs: string[], loading: boolean) {

@@ -10,8 +10,11 @@ import { isPlaceholderSessionTitle, preserveSessionTitle, sortSessionsByActivity
 import { syncPendingPermissions } from "./approval-mode";
 import { syncSessionStatuses } from "./session-status-sync";
 import { loadSessionMessagesOnly, reconcileSessionsInPlace, selectSession } from "./workspace-sessions";
+import { hydratedSessionIDs } from "./session-transcripts";
 import type { SessionInfo } from "../services/sse-types";
-import { isSessionArchived, isSessionBusy, isSessionDeleted } from "./session-query";
+import {
+  isSessionArchived, isSessionBusy, isSessionDeleted, isSessionTaskActive, requestTimelineFollow,
+} from "./session-query";
 import {
   findWorkspaceProfileByDir, findWorkspaceProfileById, getActiveWorkWorkspaceDir,
   getRememberedCodeSurface, getRememberedWorkSurface, isDismissedProjectPath,
@@ -410,8 +413,9 @@ export async function switchWorkspace(
 
   if (warmSurfaceSwitch) {
     if (targetSessionID) {
-      if (workspace.messagesBySession[targetSessionID] !== undefined) {
+      if (workspace.messagesBySession[targetSessionID] !== undefined && hydratedSessionIDs.has(targetSessionID)) {
         setWorkspace("unreadCompletedBySession", targetSessionID, false);
+        if (isSessionTaskActive(targetSessionID)) requestTimelineFollow(targetSessionID);
       } else {
         void selectSession(targetSessionID);
       }
