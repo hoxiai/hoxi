@@ -39,7 +39,7 @@ func (s *Service) invalidateDeviceToken(token, baseURL string, generation *uint6
 		s.mu.Unlock()
 		return nil
 	}
-	if err := s.store.Clear(); err != nil {
+	if err := s.store.ClearForServer(s.serverBaseURL, token); err != nil {
 		s.mu.Unlock()
 		return err
 	}

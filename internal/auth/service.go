@@ -49,11 +49,13 @@ type Service struct {
 const defaultPollInterval = 2 * time.Second
 
 type authorization struct {
-	state     string
-	baseURL   string
-	expiresAt time.Time
-	ctx       context.Context
-	cancel    context.CancelFunc
+	exchangeMu sync.Mutex
+	state      string
+	baseURL    string
+	expiresAt  time.Time
+	ctx        context.Context
+	cancel     context.CancelFunc
+	completed  *StoredAuth
 }
 
 func NewService(logger *slog.Logger) *Service {
@@ -67,8 +69,8 @@ func NewService(logger *slog.Logger) *Service {
 		},
 	}
 
-	// 启动时从磁盘加载已有凭据
-	if stored, err := svc.store.Load(); err == nil && stored != nil {
+	// 启动时按当前服务端地址加载对应的本地凭据，避免 dev 与正式环境串用或误清
+	if stored, err := svc.store.LoadForServer(svc.serverBaseURL); err == nil && stored != nil {
 		svc.current = stored
 		go svc.verifyBackground(stored, svc.serverBaseURL, svc.generation)
 	}
@@ -100,6 +102,11 @@ func (s *Service) SetServerBaseURL(urlStr string) {
 		s.cancelPendingLocked()
 		s.generation++
 		s.serverBaseURL = baseURL
+		if stored, err := s.store.LoadForServer(baseURL); err == nil {
+			s.current = stored
+		} else {
+			s.current = nil
+		}
 	}
 }
 
@@ -211,6 +218,21 @@ func (s *Service) ExchangeToken(ctx context.Context, handoffToken, state string)
 	if !valid {
 		return nil, errors.New("invalid or expired authorization state")
 	}
+
+	attempt.exchangeMu.Lock()
+	defer attempt.exchangeMu.Unlock()
+
+	if attempt.completed != nil {
+		copied := *attempt.completed
+		return &copied, nil
+	}
+	s.mu.RLock()
+	stillValid := s.pendingValidLocked(attempt) && attempt.state == state
+	s.mu.RUnlock()
+	if !stillValid {
+		return nil, errors.New("invalid or expired authorization state")
+	}
+
 	requestCtx, cancel := context.WithCancel(ctx)
 	stop := context.AfterFunc(attempt.ctx, cancel)
 	defer stop()
@@ -258,6 +280,7 @@ func (s *Service) ExchangeToken(ctx context.Context, handoffToken, state string)
 		User:           res.User,
 		ExpiresAt:      res.ExpiresAt,
 		LastVerifiedAt: time.Now(),
+		ServerBaseURL:  baseURL,
 	}
 
 	if err := s.applyAuthorized(attempt, stored); err != nil {
@@ -270,17 +293,17 @@ func (s *Service) ExchangeToken(ctx context.Context, handoffToken, state string)
 func (s *Service) Logout(ctx context.Context) error {
 	s.credentialMu.Lock()
 	s.mu.Lock()
-	if err := s.store.Clear(); err != nil {
+	token := ""
+	if s.current != nil {
+		token = s.current.DeviceToken
+	}
+	if err := s.store.ClearForServer(s.serverBaseURL, token); err != nil {
 		s.mu.Unlock()
 		s.credentialMu.Unlock()
 		return fmt.Errorf("failed to clear local credentials: %w", err)
 	}
 	s.cancelPendingLocked()
 	s.generation++
-	token := ""
-	if s.current != nil {
-		token = s.current.DeviceToken
-	}
 	s.current = nil
 	baseURL := s.serverBaseURL
 	onClear := s.onClear
@@ -347,10 +370,15 @@ func (s *Service) applyAuthorized(attempt *authorization, auth *StoredAuth) erro
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if !s.pendingValidLocked(attempt) {
+		return errors.New("invalid or expired authorization state")
+	}
+	auth.ServerBaseURL = attempt.baseURL
 	// Keep persistence ordered with logout and publish only successfully saved credentials.
-	if err := s.store.Save(auth); err != nil {
+	if err := s.store.SaveForServer(attempt.baseURL, auth); err != nil {
 		return err
 	}
+	attempt.completed = auth
 	s.current = auth
 	s.generation++
 	s.cancelPendingLocked()
@@ -382,41 +410,51 @@ func (s *Service) runPollWorker(attempt *authorization) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			req, err := http.NewRequestWithContext(ctx, http.MethodGet, pollURL, nil)
-			if err != nil {
-				continue
-			}
-			resp, err := s.httpClient.Do(req)
-			if err != nil {
-				continue
-			}
-
-			var result struct {
-				Status      string       `json:"status"`
-				Message     string       `json:"message"`
-				User        *UserProfile `json:"user,omitempty"`
-				DeviceToken string       `json:"deviceToken,omitempty"`
-				ExpiresAt   string       `json:"expiresAt,omitempty"`
-			}
-
-			decodeErr := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&result)
-			_ = resp.Body.Close()
-			if resp.StatusCode != http.StatusOK || decodeErr != nil {
-				continue
-			}
-
-			if result.Status == "authorized" && result.DeviceToken != "" && result.User != nil {
-				stored := &StoredAuth{
-					DeviceToken:    result.DeviceToken,
-					User:           *result.User,
-					ExpiresAt:      result.ExpiresAt,
-					LastVerifiedAt: time.Now(),
+			done := func() bool {
+				attempt.exchangeMu.Lock()
+				defer attempt.exchangeMu.Unlock()
+				if ctx.Err() != nil || attempt.completed != nil {
+					return true
 				}
-				if err := s.applyAuthorized(attempt, stored); err == nil && s.logger != nil {
-					s.logger.Info("hoxi desktop authorized successfully via poll", "email", result.User.Email)
+				req, err := http.NewRequestWithContext(ctx, http.MethodGet, pollURL, nil)
+				if err != nil {
+					return false
 				}
-				return
-			} else if result.Status == "expired" || result.Status == "error" {
+				resp, err := s.httpClient.Do(req)
+				if err != nil {
+					return false
+				}
+
+				var result struct {
+					Status      string       `json:"status"`
+					Message     string       `json:"message"`
+					User        *UserProfile `json:"user,omitempty"`
+					DeviceToken string       `json:"deviceToken,omitempty"`
+					ExpiresAt   string       `json:"expiresAt,omitempty"`
+				}
+
+				decodeErr := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&result)
+				_ = resp.Body.Close()
+				if resp.StatusCode != http.StatusOK || decodeErr != nil {
+					return false
+				}
+
+				if result.Status == "authorized" && result.DeviceToken != "" && result.User != nil {
+					stored := &StoredAuth{
+						DeviceToken:    result.DeviceToken,
+						User:           *result.User,
+						ExpiresAt:      result.ExpiresAt,
+						LastVerifiedAt: time.Now(),
+						ServerBaseURL:  attempt.baseURL,
+					}
+					if err := s.applyAuthorized(attempt, stored); err == nil && s.logger != nil {
+						s.logger.Info("hoxi desktop authorized successfully via poll", "email", result.User.Email)
+					}
+					return true
+				}
+				return result.Status == "expired" || result.Status == "error"
+			}()
+			if done {
 				return
 			}
 		}
@@ -466,7 +504,8 @@ func (s *Service) verifyBackground(auth *StoredAuth, baseURL string, generation 
 		updated := *auth
 		updated.User = verifyRes.User
 		updated.LastVerifiedAt = time.Now()
-		if err := s.store.Save(&updated); err == nil {
+		updated.ServerBaseURL = baseURL
+		if err := s.store.SaveForServer(baseURL, &updated); err == nil {
 			s.current = &updated
 		}
 	}

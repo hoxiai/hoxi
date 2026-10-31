@@ -506,3 +506,98 @@ func TestOnClearInvokedOnLogoutAnd401Invalidation(t *testing.T) {
 		t.Fatalf("expected onClear called after 401 in callMemberEndpoint, got %d", cleared.Load())
 	}
 }
+
+func TestPerServerCredentialIsolationPreservesProductionAuth(t *testing.T) {
+	authFile := filepath.Join(t.TempDir(), "auth.json")
+	// Write a legacy production auth.json (without serverBaseUrl) as written by older builds.
+	legacyJSON := `{"deviceToken":"prod-token-123","user":{"id":1,"email":"prod@hoxi.ai","nickname":"Prod"}}`
+	if err := os.WriteFile(authFile, []byte(legacyJSON), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := &TokenStore{filePath: authFile}
+
+	// A dev instance pointing at http://127.0.0.1:5400 must not adopt the production token.
+	devLoaded, err := store.LoadForServer("http://127.0.0.1:5400")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if devLoaded != nil {
+		t.Fatalf("dev server unexpectedly loaded production token: %+v", devLoaded)
+	}
+
+	// Production server (https://hoxi.ai) still loads the legacy production token.
+	prodLoaded, err := store.LoadForServer("https://hoxi.ai")
+	if err != nil || prodLoaded == nil || prodLoaded.DeviceToken != "prod-token-123" {
+		t.Fatalf("production server failed to load legacy token: %+v, err=%v", prodLoaded, err)
+	}
+
+	// Saving and clearing a dev token must keep the production token intact on disk.
+	if err := store.SaveForServer("http://127.0.0.1:5400", &StoredAuth{
+		DeviceToken: "dev-token-456",
+		User:        UserProfile{ID: 2, Email: "dev@local.test"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := store.LoadForServer("http://127.0.0.1:5400"); err != nil || got == nil || got.DeviceToken != "dev-token-456" {
+		t.Fatalf("expected dev token for dev server, got %+v (%v)", got, err)
+	}
+	if got, err := store.LoadForServer("https://hoxi.ai"); err != nil || got == nil || got.DeviceToken != "prod-token-123" {
+		t.Fatalf("production token was overwritten by dev save: %+v (%v)", got, err)
+	}
+	if err := store.ClearForServer("http://127.0.0.1:5400"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := store.LoadForServer("https://hoxi.ai"); err != nil || got == nil || got.DeviceToken != "prod-token-123" {
+		t.Fatalf("production token was wiped by dev clear: %+v (%v)", got, err)
+	}
+}
+
+func TestConcurrentPollAndExchangeDoNotDoubleIssueToken(t *testing.T) {
+	pollEntered := make(chan struct{})
+	releasePoll := make(chan struct{})
+	var authorizeCalls atomic.Int32
+
+	s := testService(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/hoxi/device-tokens/poll":
+			select {
+			case <-pollEntered:
+			default:
+				close(pollEntered)
+			}
+			<-releasePoll
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status":      "authorized",
+				"deviceToken": "poll-issued-token",
+				"user":        UserProfile{ID: 1, Email: "user@hoxi.ai"},
+			})
+		case "/api/hoxi/device-tokens/authorize":
+			authorizeCalls.Add(1)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"success":     true,
+				"deviceToken": "exchange-issued-token",
+				"user":        UserProfile{ID: 1, Email: "user@hoxi.ai"},
+			})
+		}
+	})
+	s.pollInterval = 10 * time.Millisecond
+	state := startTestAuth(t, s)
+	await(t, pollEntered)
+
+	exchangeDone := make(chan error, 1)
+	go func() {
+		_, err := s.ExchangeToken(context.Background(), "handoff-tok", state)
+		exchangeDone <- err
+	}()
+	// Give ExchangeToken a moment to queue on attempt.exchangeMu behind the active poll.
+	time.Sleep(25 * time.Millisecond)
+	close(releasePoll)
+
+	if err := await(t, exchangeDone); err != nil {
+		t.Fatalf("ExchangeToken failed when poll completed concurrently: %v", err)
+	}
+	if authorizeCalls.Load() != 0 {
+		t.Fatalf("expected 0 /authorize calls after poll already completed, got %d", authorizeCalls.Load())
+	}
+	assertStoredToken(t, s, "poll-issued-token")
+}

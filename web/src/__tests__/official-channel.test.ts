@@ -324,4 +324,57 @@ describe("official provider account lifecycle", () => {
       authAPI.getMemberStatus = origMember;
     }
   });
+
+  it("preserves persisted hoxi-official provider and selected model during startup auth hydration", async () => {
+    const origStatus = authAPI.getStatus;
+    const origMember = authAPI.getMemberStatus;
+    const prevProviders = workspace.providers;
+    const prevHoxiProviders = workspace.hoxiProviders;
+    const prevConnected = workspace.connectedProviders;
+    const prevModel = workspace.defaultAI.model;
+    try {
+      setDesktopAuth({ isLoggedIn: false, user: null, serverBaseUrl: "https://hoxi.ai" });
+      setWorkspace({
+        hoxiProviders: {
+          [OFFICIAL_PROVIDER_ID]: { name: "Hoxi Official", models: { "gpt-5.4": { name: "GPT-5.4" } } },
+        },
+        connectedProviders: [OFFICIAL_PROVIDER_ID],
+        providers: [
+          { id: OFFICIAL_PROVIDER_ID, name: "Hoxi Official", models: { "gpt-5.4": { id: "gpt-5.4", name: "GPT-5.4" } } },
+        ],
+      });
+      setWorkspace("defaultAI", "model", { providerID: OFFICIAL_PROVIDER_ID, modelID: "gpt-5.4" });
+      authAPI.getStatus = async () => ({
+        isLoggedIn: true,
+        isAuthorizing: false,
+        user: { id: 1, email: "user@hoxi.ai", nickname: "User" },
+        serverBaseUrl: "https://hoxi.ai",
+      });
+      authAPI.getMemberStatus = async () => ({
+        checkedInToday: false,
+        streak: 0,
+        maxStreak: 0,
+        todayPoints: 0,
+        nextPoints: 0,
+        balance: 100,
+      });
+
+      await refreshAuthStatus();
+
+      assertEqual(desktopAuth.isLoggedIn, true);
+      assertEqual(Boolean(workspace.hoxiProviders[OFFICIAL_PROVIDER_ID]), true);
+      assertEqual(workspace.connectedProviders.includes(OFFICIAL_PROVIDER_ID), true);
+      assertEqual(workspace.selectedModel?.providerID, OFFICIAL_PROVIDER_ID);
+      assertEqual(workspace.selectedModel?.modelID, "gpt-5.4");
+    } finally {
+      authAPI.getStatus = origStatus;
+      authAPI.getMemberStatus = origMember;
+      setWorkspace({
+        providers: prevProviders,
+        hoxiProviders: prevHoxiProviders,
+        connectedProviders: prevConnected,
+      });
+      setWorkspace("defaultAI", "model", prevModel);
+    }
+  });
 });

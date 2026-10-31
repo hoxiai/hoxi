@@ -347,12 +347,20 @@ export async function refreshAuthStatus(): Promise<AuthStatusSnapshot | null> {
   try {
     const snap = await authAPI.getStatus();
     if (generation !== authGeneration) return null;
-    const changed = desktopAuth.isLoggedIn !== snap.isLoggedIn ||
-      desktopAuth.user?.id !== snap.user?.id || desktopAuth.serverBaseUrl !== snap.serverBaseUrl;
+    const wasLoggedIn = desktopAuth.isLoggedIn;
+    const accountSwitched =
+      wasLoggedIn &&
+      (!snap.isLoggedIn ||
+        desktopAuth.user?.id !== snap.user?.id ||
+        desktopAuth.serverBaseUrl !== snap.serverBaseUrl);
+    const changed =
+      wasLoggedIn !== snap.isLoggedIn ||
+      desktopAuth.user?.id !== snap.user?.id ||
+      desktopAuth.serverBaseUrl !== snap.serverBaseUrl;
     if (changed) {
       authGeneration++;
       memberRequestSeq++;
-      notifyAccountChanged();
+      if (accountSwitched) notifyAccountChanged();
     }
     setDesktopAuth({
       isLoggedIn: snap.isLoggedIn,

@@ -31,11 +31,19 @@ func TestMain(m *testing.M) {
 	if os.Getenv(reclaimOwnerEnv) != "" {
 		os.Exit(runReclaimOwner())
 	}
+	home, err := os.MkdirTemp("", "hoxi-app-test-home-")
+	if err != nil {
+		panic(err)
+	}
+	_ = os.Setenv("HOME", home)
+	_ = os.Setenv("HOXI_HOME", filepath.Join(home, ".hoxi"))
 	// The fake daemon answers on loopback within milliseconds; production
 	// backoffs would only make the suite sleep.
 	respawnDelay = 20 * time.Millisecond
 	engineProbeTimeout = 500 * time.Millisecond
-	os.Exit(m.Run())
+	code := m.Run()
+	_ = os.RemoveAll(home)
+	os.Exit(code)
 }
 
 // respawnQuietWindow is how long a test waits to prove that no automatic

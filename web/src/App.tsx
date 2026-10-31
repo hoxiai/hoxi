@@ -30,6 +30,7 @@ import {
   loadProjects,
   loadProviders,
   loadProviderTelemetry,
+  refreshAuthStatus,
   syncProviderBreakers,
   loadSavedWorkspaces,
   loadSessionMessages,
@@ -152,7 +153,7 @@ export default function App() {
           : null;
 
         // Kick off non-blocking background loads while awaiting saved workspaces & projects
-        void loadProviders().then(() => ensureOfficialProviderConnected());
+        void Promise.all([loadProviders(), refreshAuthStatus()]).then(() => ensureOfficialProviderConnected());
         void loadProviderTelemetry();
         void syncProviderBreakers();
         void loadAgents();
@@ -226,6 +227,7 @@ export default function App() {
         onConnectionChange: (connected) => {
           setWorkspace("connected", connected);
           if (connected) {
+            void refreshAuthStatus();
             void loadProviders();
             void loadProviderTelemetry();
             void syncProviderBreakers();

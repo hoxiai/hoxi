@@ -17,6 +17,7 @@ type StoredAuth struct {
 	User           UserProfile `json:"user"`
 	ExpiresAt      string      `json:"expiresAt,omitempty"`
 	LastVerifiedAt time.Time   `json:"lastVerifiedAt"`
+	ServerBaseURL  string      `json:"serverBaseUrl,omitempty"`
 }
 
 // AuthStatusSnapshot 前端读取的认证状态快照
