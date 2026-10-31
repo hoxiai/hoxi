@@ -76,23 +76,21 @@ export function upsertTurnInfo(list: MessageTurn[], info: MessageInfo) {
     if (optIdx >= 0 && idx < 0) {
       // Promote the optimistic turn in place: a new object would remount the bubble.
       const turn = list[optIdx];
-      turn.info = info;
+      Object.assign(turn.info, info);
       for (const part of turn.parts) part.messageID = info.id;
       bubbleTurnIntoOrder(list, optIdx);
       return;
     }
     if (optIdx >= 0 && idx >= 0 && optIdx !== idx) {
-      const realParts = list[idx].parts;
-      const fallbackParts = list[optIdx].parts.map((p) => ({
-        ...p,
-        messageID: info.id,
-      }));
-      const mergedParts = realParts.length > 0 ? realParts : fallbackParts;
-      const targetIdx = Math.min(optIdx, idx);
-      const removeIdx = Math.max(optIdx, idx);
-      list[targetIdx] = { info, parts: mergedParts };
-      list.splice(removeIdx, 1);
-      bubbleTurnIntoOrder(list, targetIdx);
+      const turn = list[optIdx];
+      Object.assign(turn.info, info);
+      for (const part of turn.parts) part.messageID = info.id;
+      for (const part of list[idx].parts) {
+        upsertTurnPart([turn], part);
+      }
+      list.splice(idx, 1);
+      const nextIdx = optIdx > idx ? optIdx - 1 : optIdx;
+      bubbleTurnIntoOrder(list, nextIdx);
       return;
     }
   }
@@ -109,14 +107,19 @@ export function upsertTurnInfo(list: MessageTurn[], info: MessageInfo) {
 export function upsertTurnPart(list: MessageTurn[], part: MessagePart) {
   let turnIdx = findMessageIndex(list, part.messageID);
 
-  if (turnIdx < 0 && part.type === "text" && part.text) {
+  if (turnIdx < 0 && (part.type === "text" || part.type === "file")) {
     const optIdx = list.findIndex(
       (m) =>
         isOptimisticID(m.info.id) &&
-        m.parts.some((p) => p.type === "text" && p.text === part.text)
+        m.parts.some((p) =>
+          part.type === "text"
+            ? p.type === "text" && Boolean(part.text) && p.text === part.text
+            : p.type === "file" && (!part.filename || p.filename === part.filename)
+        )
     );
     if (optIdx >= 0) {
       list[optIdx].info.id = part.messageID;
+      for (const p of list[optIdx].parts) p.messageID = part.messageID;
       turnIdx = optIdx;
       bubbleTurnIntoOrder(list, turnIdx);
     }
@@ -137,16 +140,18 @@ export function upsertTurnPart(list: MessageTurn[], part: MessagePart) {
     bubbleTurnIntoOrder(list, list.length - 1);
   }
 
-  if (!isOptimisticPartID(part.id)) {
-    for (let i = turn.parts.length - 1; i >= 0; i--) {
-      if (isOptimisticPartID(turn.parts[i].id) && turn.parts[i].type === part.type) {
-        preserveTextPartSkillMeta(part, turn.parts[i]);
-        turn.parts.splice(i, 1);
-      }
+  let pIdx = findPartIndex(turn.parts, part.id);
+  if (pIdx < 0 && !isOptimisticPartID(part.id)) {
+    pIdx = turn.parts.findIndex(
+      (p) =>
+        isOptimisticPartID(p.id) &&
+        p.type === part.type &&
+        (part.type !== "file" || !part.filename || (p.type === "file" && p.filename === part.filename))
+    );
+    if (pIdx < 0 && part.type === "file") {
+      pIdx = turn.parts.findIndex((p) => isOptimisticPartID(p.id) && p.type === "file");
     }
   }
-
-  const pIdx = findPartIndex(turn.parts, part.id);
   normalizeMessagePartInPlace(part, pIdx >= 0 ? turn.parts[pIdx] : undefined);
   if (pIdx >= 0) {
     Object.assign(turn.parts[pIdx], part);
@@ -362,7 +367,16 @@ function mergeTurnInto(local: MessageTurn, remote: { info: MessageInfo; parts: M
     if (localSkillPart && rp.type === "text") {
       preserveTextPartSkillMeta(rp, localSkillPart);
     }
-    const idx = findPartIndex(local.parts, rp.id);
+    let idx = findPartIndex(local.parts, rp.id);
+    if (idx < 0 && !isOptimisticPartID(rp.id)) {
+      idx = local.parts.findIndex(
+        (p) =>
+          isOptimisticPartID(p.id) &&
+          p.type === rp.type &&
+          !nextParts.includes(p) &&
+          (rp.type !== "file" || !rp.filename || (p.type === "file" && p.filename === rp.filename))
+      );
+    }
     const lp = idx >= 0 ? local.parts[idx] : undefined;
     if (!lp || lp.type !== rp.type) {
       nextParts.push(rp);
@@ -431,19 +445,10 @@ export function mergeServerTurnsInto(
       if (optimistic) {
         // Promote the optimistic bubble in place; a fresh object would remount it.
         promoted = optimistic;
-        optimistic.info = remote.info;
-        const optSkillPart = optimistic.parts.find(
-          (p): p is Extract<MessagePart, { type: "text" }> =>
-            p.type === "text" && Boolean(p.metadata?.hoxiSkill)
-        );
         if (remote.parts.length > 0) {
-          if (optSkillPart) {
-            for (const rp of remote.parts) {
-              if (rp.type === "text") preserveTextPartSkillMeta(rp, optSkillPart);
-            }
-          }
-          optimistic.parts = remote.parts;
+          mergeTurnInto(optimistic, remote);
         } else {
+          optimistic.info = remote.info;
           for (const part of optimistic.parts) part.messageID = remote.info.id;
         }
         next.push(optimistic);

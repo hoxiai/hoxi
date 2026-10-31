@@ -53,6 +53,26 @@ import { indexSession, indexSessions, sessionBelongsToProject } from "./session-
 import { bumpSessionSurfaceRevision, normalizeFolderPath } from "./workspace-folders";
 
 const sessionMessageLoads = new Map<string, Promise<void>>();
+let localSessionCreationDepth = 0;
+const deferredCreatedEvents = new Map<string, { info: SessionInfo; eventDirectory?: string }>();
+
+export function beginLocalSessionCreation(): void {
+  localSessionCreationDepth++;
+}
+
+export function endLocalSessionCreation(createdSessionID?: string): void {
+  if (createdSessionID) {
+    deferredCreatedEvents.delete(createdSessionID);
+  }
+  localSessionCreationDepth = Math.max(0, localSessionCreationDepth - 1);
+  if (localSessionCreationDepth === 0 && deferredCreatedEvents.size > 0) {
+    const pending = [...deferredCreatedEvents.values()];
+    deferredCreatedEvents.clear();
+    for (const item of pending) {
+      replaceSessionFromEvent(item.info, item.eventDirectory);
+    }
+  }
+}
 
 function persistArchivedSessionIDs(ids: string[]) {
   try {
@@ -169,6 +189,14 @@ export function replaceSession(info: SessionInfo) {
 }
 
 export function replaceSessionFromEvent(info: SessionInfo, eventDirectory?: string): void {
+  if (
+    localSessionCreationDepth > 0 &&
+    !info.parentID &&
+    !workspace.sessions.some((s) => s.id === info.id)
+  ) {
+    deferredCreatedEvents.set(info.id, { info, eventDirectory });
+    return;
+  }
   const normalize = (path?: string) => (path || "").trim().replace(/[\\/]+$/, "");
   const root = normalize(workspace.rootDir);
   if (!root) return;

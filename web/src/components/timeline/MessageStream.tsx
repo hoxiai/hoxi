@@ -501,7 +501,7 @@ export default function MessageStream(props: { hidden?: boolean }) {
             <For each={turnWindow.visibleTurns()}>
               {(turn, idx) => {
                 const globalIndex = () => turnWindow.globalIndex(idx());
-                const enterClass = turn.info.id.startsWith("optimistic_") ? "hoxi-item-enter " : "";
+                const enterClass = idx() > 0 && turn.info.id.startsWith("optimistic_") ? "hoxi-item-enter " : "";
                 return (
                   <Show
                     when={turn.info.role === "user"}

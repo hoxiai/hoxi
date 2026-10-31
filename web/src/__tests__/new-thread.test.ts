@@ -12,6 +12,7 @@ import {
   findWorkspaceProfileByDir,
   getComposerSkill,
   reconcileSessionsInPlace,
+  replaceSessionFromEvent,
   selectComposerSkill,
   setWorkspace,
   submitSessionPrompt,
@@ -311,6 +312,58 @@ describe("new thread drafts", () => {
           dispose();
         }
       });
+    });
+  });
+
+  it("commits the optimistic turn and busy status before activating a newly created session", async () => {
+    await withDraftFixture(async () => {
+      setWorkspace({
+        rootDir: "/new-thread-test",
+        activeSessionID: null,
+        sessions: [],
+        providers: [{ id: "openai", name: "OpenAI", models: { "gpt-5": { id: "gpt-5", name: "GPT-5" } } }],
+        defaultAI: { agent: "build", model: { providerID: "openai", modelID: "gpt-5" }, effort: "" },
+      });
+      let createdTitle: string | undefined;
+      let sessionsDuringCreateSSE = -1;
+      let activeIDWhenTurnStaged: string | null | undefined;
+      let turnCountWhenTurnStaged = 0;
+      let activeIDWhenDispatched: string | null | undefined;
+      let statusWhenDispatched: string | undefined;
+      hoxiAPI.createSession = async (title, dir) => {
+        createdTitle = title;
+        const created: SessionInfo = {
+          id: "ses_atomic_new",
+          title: title || "New Session",
+          directory: dir,
+          time: { created: 10, updated: 10 },
+        };
+        // Simulate backend broadcasting session.created over SSE before createSession HTTP resolves
+        replaceSessionFromEvent(created, dir);
+        sessionsDuringCreateSSE = workspace.sessions.length;
+        return created;
+      };
+      hoxiAPI.sendPromptAsync = async (id) => {
+        activeIDWhenDispatched = workspace.activeSessionID;
+        statusWhenDispatched = workspace.statusBySession[id]?.type;
+      };
+      hoxiAPI.summarizeSessionTitle = async () => ({ ok: false, title: "" });
+
+      await submitSessionPrompt("Fix flash", null, {
+        directory: "/new-thread-test",
+        onTurnStaged: () => {
+          activeIDWhenTurnStaged = workspace.activeSessionID;
+          turnCountWhenTurnStaged = workspace.messagesBySession["ses_atomic_new"]?.length ?? 0;
+        },
+      });
+
+      assertEqual(createdTitle, "Fix flash");
+      assertEqual(sessionsDuringCreateSSE, 0, "early SSE session.created must not insert unselected idle row before batch()");
+      assertEqual(activeIDWhenTurnStaged, null, "optimistic turn is staged before activeSessionID switches");
+      assertEqual(turnCountWhenTurnStaged, 1, "optimistic user turn is already in messagesBySession");
+      assertEqual(activeIDWhenDispatched, "ses_atomic_new");
+      assertEqual(statusWhenDispatched, "busy");
+      assertEqual(workspace.sessions[0]?.id, "ses_atomic_new");
     });
   });
 });

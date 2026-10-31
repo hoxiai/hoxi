@@ -14,7 +14,11 @@ import {
   recordSessionRetry,
   recordUserAbortAction,
 } from "./provider-telemetry";
-import { isPlaceholderSessionTitle, summarizeAndRenameSession } from "./session-title";
+import {
+  extractLocalFallbackTitle,
+  isPlaceholderSessionTitle,
+  summarizeAndRenameSession,
+} from "./session-title";
 import {
   isAutoModel,
   markAutoCandidateCooldown,
@@ -304,6 +308,7 @@ export async function dispatchSessionPrompt(
     /** false for automatic dispatches that must not move the reader's scroll position. */
     followTimeline?: boolean;
     beforeSend?: () => Promise<void>;
+    onTurnStaged?: () => void;
   }
 ): Promise<string> {
   let id = targetSessionID ?? workspace.activeSessionID;
@@ -375,6 +380,7 @@ export async function dispatchSessionPrompt(
       skillSelection: effectiveSkill,
       system: options?.system,
     });
+    options?.onTurnStaged?.();
     if (options?.followTimeline !== false) requestTimelineFollow(id);
     return id;
   }
@@ -451,6 +457,7 @@ export async function dispatchSessionPrompt(
           });
         })
       );
+      options?.onTurnStaged?.();
       markSessionPromptDispatched(sessionID);
       recordPromptDispatched(sessionID, effectiveModel?.providerID, effectiveModel?.modelID);
       setWorkspace("statusBySession", sessionID, { type: "busy" });
@@ -459,7 +466,10 @@ export async function dispatchSessionPrompt(
   };
 
   if (!id) {
-    id = await newIsolatedSession(undefined, {
+    const fallbackTitle = extractLocalFallbackTitle(
+      promptText || (effectiveSkill ? `/${effectiveSkill.name}` : t("timeline.imagePromptSessionTitle"))
+    );
+    id = await newIsolatedSession(isPlaceholderSessionTitle(fallbackTitle) ? undefined : fallbackTitle, {
       directory: requestedDir,
       onSessionCreated: (createdID) => {
         transferDraftComposerSkill(createdID, requestedDir);
@@ -573,13 +583,15 @@ export async function dispatchSessionPrompt(
       const hasInFlightAssistant = turns.some(
         (t) => t.info.role === "assistant" && !t.info.time?.completed && !t.info.error
       );
-      // Only poll via HTTP if SSE is disconnected or no assistant turn has arrived yet;
-      // otherwise an HTTP snapshot mid-stream races with live SSE token deltas at t=900ms.
+      // Only poll via HTTP if SSE is disconnected or the optimistic turn still
+      // has not been acknowledged; otherwise an HTTP snapshot mid-stream races
+      // with live SSE token deltas and triggers redundant diff/status refreshes.
       if (
         !workspace.connected ||
         !lastTurn ||
         (lastTurn.info.role === "user" &&
-          (!wasBusyBeforeSubmit || !hasInFlightAssistant || lastTurn.info.id === optimisticMsgID))
+          !hasInFlightAssistant &&
+          lastTurn.info.id === optimisticMsgID)
       ) {
         void loadSessionMessages(targetID).catch(() => {});
       }

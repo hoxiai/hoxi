@@ -95,8 +95,9 @@ export function createSessionScrollController(options: {
       frame = settling = undefined;
       sessionID = id;
       ready = false;
-      options.scroll.pause();
       pending = positions.get(id || "") || { bottom: true, top: 0, offset: 0 };
+      if (pending.bottom) options.scroll.resume();
+      else options.scroll.pause();
     },
     ready(turnIDs: string[], loading: boolean) {
       ready = !loading;

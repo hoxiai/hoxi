@@ -1,3 +1,4 @@
+import { batch } from "solid-js";
 import { t } from "../i18n";
 import {
   hoxiAPI,
@@ -17,7 +18,13 @@ import {
   selectComposerSkill,
   setComposerSkillNotice,
 } from "./skills";
-import { exitSessionWorktree, removeSessionFromStore, replaceSession } from "./workspace-sessions";
+import {
+  beginLocalSessionCreation,
+  endLocalSessionCreation,
+  exitSessionWorktree,
+  removeSessionFromStore,
+  replaceSession,
+} from "./workspace-sessions";
 import { isManagedSession, isSessionBusy, sessionDirectory, sessionRuntimeForID } from "./session-query";
 import { refreshWorktreeStatus } from "./session-diffs";
 import { indexSession } from "./session-index";
@@ -113,6 +120,7 @@ export async function newIsolatedSession(
     (options?.isolated ?? (currentSurface === "work" ? false : appSettings.defaultSandboxMode === "worktree"));
   let session: SessionInfo | undefined;
   setWorkspace("sessionSetupError", null);
+  beginLocalSessionCreation();
   try {
     if (!directory) throw new Error(t("timeline.selectFolderHint"));
     session = await hoxiAPI.createSession(title, directory || undefined, {
@@ -143,6 +151,7 @@ export async function newIsolatedSession(
       setWorkspace("worktreeBySession", session.id, localMeta(session.id, directory));
     }
   } catch (error) {
+    endLocalSessionCreation(session?.id);
     if (normalizeFolderPath(workspace.rootDir) === normalizeFolderPath(directory)) {
       reportSetupError(error);
       if (session && workspace.activeSessionID === session.id) {
@@ -163,16 +172,26 @@ export async function newIsolatedSession(
   indexSession(attributed);
   // The user may have switched workspaces while the session was being
   // provisioned. Never inject it into the workspace that is active now.
-  if (normalizeFolderPath(workspace.rootDir) === normalizeFolderPath(directory)) {
-    setWorkspace("messagesBySession", session.id, []);
-    setWorkspace("diffsBySession", session.id, []);
-    setWorkspace("loadingMessagesBySession", session.id, false);
-    setWorkspace("unreadCompletedBySession", session.id, false);
-    replaceSession(attributed);
-    setWorkspace("activeSessionID", session.id);
+  try {
+    batch(() => {
+      const inActiveWorkspace =
+        normalizeFolderPath(workspace.rootDir) === normalizeFolderPath(directory);
+      if (inActiveWorkspace) {
+        setWorkspace("messagesBySession", session.id, []);
+        setWorkspace("diffsBySession", session.id, []);
+        setWorkspace("loadingMessagesBySession", session.id, false);
+        setWorkspace("unreadCompletedBySession", session.id, false);
+        replaceSession(attributed);
+      }
+      initializeSessionAI(session.id, initialAI);
+      options?.onSessionCreated?.(session.id);
+      if (inActiveWorkspace) {
+        setWorkspace("activeSessionID", session.id);
+      }
+    });
+  } finally {
+    endLocalSessionCreation(session.id);
   }
-  initializeSessionAI(session.id, initialAI);
-  options?.onSessionCreated?.(session.id);
   return session.id;
 }
 

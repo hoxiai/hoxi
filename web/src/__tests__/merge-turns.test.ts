@@ -198,12 +198,15 @@ describe("REST snapshot merge", () => {
       turns: [{ info: at("optimistic_300", "user", 300), parts: [text("prt_300", "optimistic_300", "go")] }],
     });
     const bubble = state.turns[0];
+    const bubblePart = state.turns[0].parts[0];
     setState(produce((s) => mergeServerTurnsInto(s.turns, [
       { info: at("msg_u_300_1", "user", 301), parts: [text("prt_real", "msg_u_300_1", "go")] },
     ])));
     assertEqual(state.turns.length, 1);
     assertEqual(state.turns[0].info.id, "msg_u_300_1");
+    assertEqual(state.turns[0].parts[0].id, "prt_real");
     assertTrue(state.turns[0] === bubble, "bubble is not remounted");
+    assertTrue(state.turns[0].parts[0] === bubblePart, "user part is promoted in place");
   });
 
   it("compacts oversized completed tool outputs out of reactive store and caches session snapshots", () => {

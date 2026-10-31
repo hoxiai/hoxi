@@ -14,7 +14,7 @@ export default function ExecutionWaitingIndicator(props: {
 }) {
   const mountedAt = Date.now();
   const resolveStart = () =>
-    props.startedAt && props.startedAt > 0 ? props.startedAt : mountedAt;
+    props.startedAt && props.startedAt > 0 ? Math.min(props.startedAt, mountedAt) : mountedAt;
   const calcElapsed = (nowMs = Date.now()) => Math.max(0, (nowMs - resolveStart()) / 1000);
 
   const [elapsed, setElapsed] = createSignal(calcElapsed());
@@ -56,15 +56,11 @@ export default function ExecutionWaitingIndicator(props: {
             <span class="hidden sm:inline text-[11px] text-[var(--text-muted)]">
               {t("timeline.executionStepsDone", { count: props.completedSteps })}
             </span>
-            <Show when={elapsed() >= 0.05}>
-              <span class="text-[var(--text-faint)]">·</span>
-            </Show>
+            <span class="text-[var(--text-faint)]">·</span>
           </Show>
-          <Show when={elapsed() >= 0.05}>
-            <span class="font-mono text-[11px] tabular-nums text-[var(--accent-text)]">
-              {t("timeline.executionElapsed", { time: formatElapsedSeconds(elapsed()) })}
-            </span>
-          </Show>
+          <span class="font-mono text-[11px] tabular-nums text-[var(--accent-text)]">
+            {t("timeline.executionElapsed", { time: formatElapsedSeconds(elapsed()) })}
+          </span>
         </div>
       </div>
     </div>

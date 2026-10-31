@@ -345,15 +345,23 @@ export default function Composer() {
       promptHistory.recordPrompt(text().trim());
     }
     setSending(true);
-    setText("");
-    selectComposerSkill(draftSessionID, null, undefined, draftDirectory);
-    setComposerSkillNotice(draftSessionID, null, draftDirectory);
-    pasteCollapse.clearPastes();
-    imgAttach.clearImages();
-    draftSync.clearCurrentDraft(draftSessionID, draftDirectory);
     ac.reset();
-    if (textareaRef) {
-      textareaRef.style.height = "48px";
+    let cleared = false;
+    const clearComposerInput = () => {
+      if (cleared) return;
+      cleared = true;
+      setText("");
+      selectComposerSkill(draftSessionID, null, undefined, draftDirectory);
+      setComposerSkillNotice(draftSessionID, null, draftDirectory);
+      pasteCollapse.clearPastes();
+      imgAttach.clearImages();
+      draftSync.clearCurrentDraft(draftSessionID, draftDirectory);
+      if (textareaRef) {
+        textareaRef.style.height = "48px";
+      }
+    };
+    if (draftSessionID) {
+      clearComposerInput();
     }
     try {
       const payload = await buildPayloadWithReviews(withPastes, draftSessionID);
@@ -361,7 +369,9 @@ export default function Composer() {
         directory: draftDirectory,
         attachments,
         skillSelection: currentSkill,
+        onTurnStaged: clearComposerInput,
       });
+      clearComposerInput();
       clearReviewComments(id);
     } catch (err) {
       console.error("send prompt failed:", err);
