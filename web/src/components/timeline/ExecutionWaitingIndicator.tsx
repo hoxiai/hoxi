@@ -37,7 +37,7 @@ export default function ExecutionWaitingIndicator(props: {
   return (
     <div
       data-component="execution-waiting"
-      class="mt-3 overflow-hidden border-l-2 border-[var(--accent-border)]/60 py-2.5 pl-3"
+      class="mt-5 overflow-hidden border-l-2 border-[var(--accent-border)]/60 py-2.5 pl-3"
     >
       <div class="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[13px] text-[var(--accent-primary)]">
         <div class="flex min-w-0 flex-1 basis-48 items-center gap-2">

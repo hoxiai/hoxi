@@ -120,34 +120,35 @@ describe("auto-pool failover dispatch", () => {
       hoxiAPI.sendPromptAsync = async (_sid, _text, opts) => {
         attempted.push(`${opts?.model?.providerID}/${opts?.model?.modelID}`);
       };
-      const startedAt = Date.now();
-      await dispatchSessionPrompt("build it", sid, { forceImmediate: true });
-      assertEqual(attempted[0], "alpha/m");
-
       const realNow = Date.now;
+      const startedAt = Date.UTC(2026, 9, 30, 5, 24, 0);
       try {
+        Date.now = () => startedAt;
+        await dispatchSessionPrompt("build it", sid, { forceImmediate: true });
+        assertEqual(attempted[0], "alpha/m");
+
         // The upstream spent 80s cycling its own accounts before answering 429.
-        Date.now = () => realNow() + 80_000;
+        Date.now = () => startedAt + 80_000;
         await handleSessionErrorEvent(sid, {
           name: "APIError",
           data: { message: RATE_429, statusCode: 429, isRetryable: true },
         });
+        assertDeepEqual(attempted, ["alpha/m", "beta/m"], "a slow 429 must still fail over");
+        assertTrue(isCandidateCoolingDown("alpha", "m"));
+        const entry = getAutoCandidateCooldown("alpha", "m");
+        assertTrue(
+          Boolean(entry && entry.until - Date.now() > 60 * 60 * 1000),
+          "the stated reset must outlast the default 3-minute rate-limit cooldown"
+        );
       } finally {
         Date.now = realNow;
       }
-      assertDeepEqual(attempted, ["alpha/m", "beta/m"], "a slow 429 must still fail over");
-      assertTrue(isCandidateCoolingDown("alpha", "m"));
-      const entry = getAutoCandidateCooldown("alpha", "m");
-      assertTrue(
-        Boolean(entry && entry.until - Date.now() > 60 * 60 * 1000),
-        "the stated reset must outlast the default 3-minute rate-limit cooldown"
-      );
 
       const notice = findAutoFailoverNotice({
         sessionID: sid,
         providerID: "alpha",
         modelID: "m",
-        time: { created: startedAt, completed: Date.now() + 80_000 },
+        time: { created: startedAt, completed: startedAt + 80_000 },
       });
       assertDeepEqual(notice?.to, { providerID: "beta", modelID: "m" });
       assertEqual(notice?.reason, "quota");

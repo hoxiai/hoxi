@@ -213,7 +213,14 @@ export function resolveNextWindowLimit(params: {
   }
 
   if (params.state.seen > 0 && params.total > params.state.seen && params.state.lastTailID) {
-    const prevTailIdx = params.list.findIndex((t) => t.info.id === params.state.lastTailID);
+    let prevTailIdx = params.list.findIndex((t) => t.info.id === params.state.lastTailID);
+    if (
+      prevTailIdx < 0 &&
+      params.state.lastTailID.startsWith("optimistic_") &&
+      params.list[params.state.seen - 1]?.info.role === "user"
+    ) {
+      prevTailIdx = params.state.seen - 1;
+    }
     if (prevTailIdx >= 0) {
       const appendedAtTail = params.total - 1 - prevTailIdx;
       if (appendedAtTail > 0 && appendedAtTail <= TURN_BATCH_SIZE) {

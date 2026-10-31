@@ -501,6 +501,7 @@ export default function MessageStream(props: { hidden?: boolean }) {
             <For each={turnWindow.visibleTurns()}>
               {(turn, idx) => {
                 const globalIndex = () => turnWindow.globalIndex(idx());
+                const enterClass = turn.info.id.startsWith("optimistic_") ? "hoxi-item-enter " : "";
                 return (
                   <Show
                     when={turn.info.role === "user"}
@@ -522,9 +523,7 @@ export default function MessageStream(props: { hidden?: boolean }) {
                     {/* Kilo-style Right-Aligned User Message Bubble */}
                     <div
                       data-turn-id={turn.info.id}
-                      class={`${
-                        turn.info.id.startsWith("optimistic_") ? "hoxi-item-enter " : ""
-                      }group/turn flex flex-col items-end rounded-xl transition-colors ${
+                      class={`${enterClass}group/turn flex flex-col items-end rounded-xl transition-colors ${
                         idx() === 0 ? "mt-0" : "mt-6"
                       } ${
                         activeMatchTurnID() === turn.info.id

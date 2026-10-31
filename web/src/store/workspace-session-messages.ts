@@ -1,4 +1,4 @@
-import { createSignal } from "solid-js";
+import { batch, createSignal } from "solid-js";
 import { produce } from "solid-js/store";
 import { t } from "../i18n";
 import { hoxiAPI, resolveRunnerRuntimeForProvider, type SkillSelection } from "../services/api";
@@ -402,62 +402,71 @@ export async function dispatchSessionPrompt(
     const hasPriorUserTurn = existingTurns.some((m) => m.info.role === "user");
     const currentSessionObj = workspace.sessions.find((s) => s.id === sessionID);
     const revertBoundary = currentSessionObj?.revert;
-    if (currentSessionObj && revertBoundary) {
-      replaceSession({ ...currentSessionObj, revert: undefined });
-    }
     shouldSummarizeTitle =
       isBrandNewSession ||
       !hasPriorUserTurn ||
       isPlaceholderSessionTitle(currentSessionObj?.title);
-
     lastInterruptAtBySession.delete(sessionID);
-    setWorkspace("interruptedBySession", sessionID, undefined);
-    setWorkspace(
-      produce((state) => {
-        const list = (state.messagesBySession[sessionID] ||= []);
-        if (revertBoundary?.messageID) {
-          const bIdx = list.findIndex((m) => m.info.id === revertBoundary.messageID);
-          if (bIdx >= 0) {
-            list.splice(revertBoundary.partID ? bIdx + 1 : bIdx);
+    batch(() => {
+      if (currentSessionObj && revertBoundary) {
+        replaceSession({ ...currentSessionObj, revert: undefined });
+      }
+      setWorkspace("interruptedBySession", sessionID, undefined);
+      setWorkspace(
+        produce((state) => {
+          const list = (state.messagesBySession[sessionID] ||= []);
+          if (revertBoundary?.messageID) {
+            const bIdx = list.findIndex((m) => m.info.id === revertBoundary.messageID);
+            if (bIdx >= 0) {
+              list.splice(revertBoundary.partID ? bIdx + 1 : bIdx);
+            }
           }
-        }
-        const optimisticParts: MessagePart[] = attachments.map((att, idx) => ({
-          id: `prt_file_${now}_${idx}`,
-          sessionID,
-          messageID: optimisticMsgID,
-          type: "file",
-          mime: att.mime,
-          filename: att.filename,
-          url: att.url,
-        }));
-        if (promptText || effectiveSkill || optimisticParts.length === 0) {
-          optimisticParts.push({
-            id: `prt_${now}`,
+          if (!wasBusyBeforeSubmit) {
+            for (const prior of list) {
+              if (prior.info.role === "assistant" && !prior.info.time?.completed && !prior.info.error) {
+                const settledAt = prior.info.time?.created || now;
+                prior.info.time = { ...(prior.info.time || { created: settledAt }), completed: settledAt };
+              }
+            }
+          }
+          const optimisticParts: MessagePart[] = attachments.map((att, idx) => ({
+            id: `prt_file_${now}_${idx}`,
             sessionID,
             messageID: optimisticMsgID,
-            type: "text",
-            text: promptText,
-            ...(effectiveSkill ? { metadata: { hoxiSkill: { ...effectiveSkill } } } : {}),
+            type: "file",
+            mime: att.mime,
+            filename: att.filename,
+            url: att.url,
+          }));
+          if (promptText || effectiveSkill || optimisticParts.length === 0) {
+            optimisticParts.push({
+              id: `prt_${now}`,
+              sessionID,
+              messageID: optimisticMsgID,
+              type: "text",
+              text: promptText,
+              ...(effectiveSkill ? { metadata: { hoxiSkill: { ...effectiveSkill } } } : {}),
+            });
+          }
+          list.push({
+            info: {
+              id: optimisticMsgID,
+              sessionID,
+              role: "user",
+              time: { created: now },
+              agent: effectiveAgent,
+              modelID: effectiveModel?.modelID,
+              providerID: effectiveModel?.providerID,
+            },
+            parts: optimisticParts,
           });
-        }
-        list.push({
-          info: {
-            id: optimisticMsgID,
-            sessionID,
-            role: "user",
-            time: { created: now },
-            agent: effectiveAgent,
-            modelID: effectiveModel?.modelID,
-            providerID: effectiveModel?.providerID,
-          },
-          parts: optimisticParts,
-        });
-      })
-    );
-    markSessionPromptDispatched(sessionID);
-    recordPromptDispatched(sessionID, effectiveModel?.providerID, effectiveModel?.modelID);
-    setWorkspace("statusBySession", sessionID, { type: "busy" });
-    if (options?.followTimeline !== false) requestTimelineFollow(sessionID);
+        })
+      );
+      markSessionPromptDispatched(sessionID);
+      recordPromptDispatched(sessionID, effectiveModel?.providerID, effectiveModel?.modelID);
+      setWorkspace("statusBySession", sessionID, { type: "busy" });
+      if (options?.followTimeline !== false) requestTimelineFollow(sessionID);
+    });
   };
 
   if (!id) {

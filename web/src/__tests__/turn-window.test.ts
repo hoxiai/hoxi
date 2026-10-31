@@ -222,6 +222,48 @@ describe("TurnWindow limit resolution & session-switching lifecycle", () => {
     assertEqual(state.limit, MAX_AUTO_EXPANDED_TURNS);
   });
 
+  it("expands limit when an optimistic user turn is promoted in the same batch as the new assistant turn", () => {
+    const history: MessageTurn[] = Array.from({ length: INITIAL_VISIBLE_TURNS }, (_, i) =>
+      mockTurn(`t_${i}`, i % 2 === 0 ? "user" : "assistant")
+    );
+    const state = {
+      limit: INITIAL_VISIBLE_TURNS,
+      seen: history.length,
+      lastTailID: history[history.length - 1].info.id,
+    };
+
+    // 1. User sends a message -> optimistic turn appended at tail
+    const optimisticTurn = mockTurn("optimistic_1700000000", "user");
+    const withOptimistic = [...history, optimisticTurn];
+    resolveNextWindowLimit({
+      currentSession: "session_opt",
+      lastActiveSessionID: "session_opt",
+      state,
+      total: withOptimistic.length,
+      tailID: optimisticTurn.info.id,
+      list: withOptimistic,
+    });
+    assertEqual(state.limit, INITIAL_VISIBLE_TURNS + 1);
+
+    // 2. First SSE frame batch promotes optimistic turn in-place to msg_u_1 AND appends msg_a_1
+    optimisticTurn.info.id = "msg_u_1";
+    const assistantTurn = mockTurn("msg_a_1", "assistant");
+    const withPromotedAndAssistant = [...withOptimistic, assistantTurn];
+    resolveNextWindowLimit({
+      currentSession: "session_opt",
+      lastActiveSessionID: "session_opt",
+      state,
+      total: withPromotedAndAssistant.length,
+      tailID: assistantTurn.info.id,
+      list: withPromotedAndAssistant,
+    });
+
+    // Limit must expand by 1 more so the earliest visible turn does not unmount and bounce the page
+    assertEqual(state.limit, INITIAL_VISIBLE_TURNS + 2);
+    const slice = computeTurnWindowSlice(withPromotedAndAssistant, state.limit);
+    assertEqual(slice.hiddenCount, 0);
+  });
+
   it("does not shrink user-expanded limits during tail streaming", () => {
     // User manually loaded earlier turns, so limit is 44
     let list: MessageTurn[] = Array.from({ length: 50 }, (_, i) => mockTurn(`t_${i}`));
