@@ -168,6 +168,29 @@ const MAX_NOTICES = 200;
 // A failed turn is marked completed just before session.error arrives and the
 // next candidate is dispatched, so the switch lands shortly after it.
 const NOTICE_MATCH_WINDOW_MS = 120_000;
+const AUTO_FAILOVER_PENDING_TTL_MS = 5_000;
+const autoFailoverPendingAtBySession = new Map<string, number>();
+
+export function markAutoFailoverPending(sessionID: string): void {
+  if (!sessionID) return;
+  autoFailoverPendingAtBySession.set(sessionID, Date.now());
+}
+
+export function clearAutoFailoverPending(sessionID: string): void {
+  if (!sessionID) return;
+  autoFailoverPendingAtBySession.delete(sessionID);
+}
+
+export function isAutoFailoverPending(sessionID: string): boolean {
+  if (!sessionID) return false;
+  const at = autoFailoverPendingAtBySession.get(sessionID);
+  if (at === undefined) return false;
+  if (Date.now() - at > AUTO_FAILOVER_PENDING_TTL_MS) {
+    autoFailoverPendingAtBySession.delete(sessionID);
+    return false;
+  }
+  return true;
+}
 
 function loadNotices(): AutoFailoverNotice[] {
   try {

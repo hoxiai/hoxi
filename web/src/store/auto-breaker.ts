@@ -138,7 +138,15 @@ export async function syncProviderBreakers(): Promise<void> {
   try {
     const res = await hoxiAPI.getProviderCandidates();
     if (res?.breakers && typeof res.breakers === "object") {
-      applyProviderBreakers(res.breakers as BreakerMap);
+      const incoming = res.breakers as BreakerMap;
+      const now = Date.now();
+      const merged: BreakerMap = { ...incoming };
+      for (const [key, prev] of Object.entries(providerBreakersSignal())) {
+        if (!(key in merged) && prev?.open && prev.openUntil && prev.openUntil > now) {
+          merged[key] = prev;
+        }
+      }
+      applyProviderBreakers(merged);
     }
   } catch {
     /* keep the last known snapshot when offline */

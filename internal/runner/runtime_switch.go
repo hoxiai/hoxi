@@ -41,7 +41,8 @@ func (s *Service) handleRuntimeSwitch(w http.ResponseWriter, r *http.Request, id
 	unlock := s.turnMu.lock(id)
 	defer unlock()
 	s.mu.Lock()
-	busy := s.procs[id] != nil
+	ap := s.procs[id]
+	busy := ap != nil && !ap.hasPendingError() && !ap.wasAborted()
 	s.mu.Unlock()
 	rec, ok := s.store.Get(id)
 	if ok && rec.Subagent {

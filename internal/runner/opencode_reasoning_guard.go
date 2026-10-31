@@ -396,6 +396,7 @@ func (s *Service) recoverOpenCodeReasoningIfNeeded(ctx context.Context, rec Sess
 			return curErr
 		}
 		ap.reasoningLoop.consumePendingRecovery()
+		_, _ = ap.takePendingError()
 		curErr = nil
 		ap.stall.touch(time.Now())
 		recoverPayload := buildOpenCodeReasoningRecoveryPayload(rec, mode, modelID, effort, system, attempt)

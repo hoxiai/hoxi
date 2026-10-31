@@ -384,6 +384,7 @@ type activeProcess struct {
 	stall         stallState
 	toolFails     toolFailureStreak
 	reasoningLoop openCodeReasoningGuard
+	pendingErr    *SSEEvent
 	// openCodeChildren holds the OpenCode subagent session IDs spawned by
 	// this turn, so their activity counts toward the parent's watchdog.
 	openCodeChildren sync.Map
@@ -451,6 +452,40 @@ func (ap *activeProcess) notifyIdle() {
 	select {
 	case ap.idleCh <- struct{}{}:
 	default:
+	}
+}
+
+func (ap *activeProcess) setPendingError(evt SSEEvent) {
+	ap.mu.Lock()
+	ap.pendingErr = &evt
+	ap.mu.Unlock()
+}
+
+func (ap *activeProcess) hasPendingError() bool {
+	ap.mu.Lock()
+	defer ap.mu.Unlock()
+	return ap.pendingErr != nil
+}
+
+func (ap *activeProcess) takePendingError() (SSEEvent, bool) {
+	ap.mu.Lock()
+	defer ap.mu.Unlock()
+	if ap.pendingErr == nil {
+		return SSEEvent{}, false
+	}
+	evt := *ap.pendingErr
+	ap.pendingErr = nil
+	return evt, true
+}
+
+func (s *Service) releaseActiveProcess(sessionID string, ap *activeProcess) {
+	s.mu.Lock()
+	if s.procs[sessionID] == ap {
+		delete(s.procs, sessionID)
+	}
+	s.mu.Unlock()
+	if s.status != nil {
+		s.status.SetSessionBusy(sessionID, false)
 	}
 }
 

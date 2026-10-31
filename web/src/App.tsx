@@ -17,7 +17,9 @@ import {
   handleIncomingPermissionRequest,
   hasStoredSurfaceMode,
   markPermissionResolved,
+  clearAutoFailoverPending,
   handleSessionErrorEvent,
+  isAutoFailoverPending,
   isDismissedProjectPath,
   isInvalidProjectPath,
   isManagedSession,
@@ -278,6 +280,12 @@ export default function App() {
             }
             case "session.status": {
               const sid = evt.properties.sessionID;
+              if (evt.properties.status.type === "idle" && isAutoFailoverPending(sid)) {
+                break;
+              }
+              if (evt.properties.status.type === "busy") {
+                clearAutoFailoverPending(sid);
+              }
               const previousStatus = workspace.statusBySession[sid]?.type;
               const wasBusy = previousStatus === "busy" || previousStatus === "retry";
               setWorkspace("statusBySession", sid, evt.properties.status);
@@ -316,6 +324,9 @@ export default function App() {
             }
             case "session.idle": {
               const sid = evt.properties.sessionID;
+              if (isAutoFailoverPending(sid)) {
+                break;
+              }
               // Native runtimes send `session.status` idle right before this
               // event; that one may already have dispatched the next queued
               // prompt, whose busy state must not be flipped back to idle.

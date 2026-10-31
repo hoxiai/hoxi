@@ -301,16 +301,12 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 			<-streamDone
 			s.abandonOpenCodeInFlightParts(rec.ID, time.Now().UnixMilli())
 			s.store.FlushSession(rec.ID)
-			s.mu.Lock()
-			if s.procs[rec.ID] == ap {
-				delete(s.procs, rec.ID)
-			}
-			s.mu.Unlock()
-			close(ap.done)
-			if s.status != nil {
-				s.status.SetSessionBusy(rec.ID, false)
+			s.releaseActiveProcess(rec.ID, ap)
+			if errEvt, ok := ap.takePendingError(); ok {
+				s.publishOpenCodeEvent(rec.ID, errEvt)
 			}
 			s.broadcast(rec.ID, SSEEvent{Type: "session.status", Properties: map[string]interface{}{"sessionID": rec.ID, "status": SessionStatus{Type: "idle"}}})
+			close(ap.done)
 		}()
 		if len(docOnlyFileParts) > 0 {
 			s.broadcast(rec.ID, SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": user}})
@@ -363,10 +359,10 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 				err = s.openCodeJSON(ctx, "POST", "/session/"+rec.ExternalID+"/message", rec.WorktreePath, payload, nil)
 			}
 		}
-		if err == nil && ap.wasSteered() && !ap.wasAborted() {
+		if err == nil && ap.wasSteered() && !ap.wasAborted() && !ap.hasPendingError() {
 			s.waitForOpenCodeIdle(ctx, rec, ap)
 		}
-		if (err == nil || ap.reasoningLoop.hasPendingRecovery()) && !ap.wasAborted() {
+		if ((err == nil && !ap.hasPendingError()) || ap.reasoningLoop.hasPendingRecovery()) && !ap.wasAborted() {
 			err = s.recoverOpenCodeReasoningIfNeeded(ctx, rec, ap, mode, modelID, effort, system, err)
 		}
 		// Stop the stream before authoritative snapshots, so a delayed delta cannot
@@ -447,9 +443,9 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 			}
 		}
 		if stallErr := ap.stall.abortError(); stallErr != nil {
-			s.broadcast(rec.ID, SSEEvent{Type: "session.error", Properties: map[string]interface{}{"sessionID": rec.ID, "error": stallErr}})
-		} else if err != nil && !ap.wasAborted() {
-			s.broadcast(rec.ID, SSEEvent{Type: "session.error", Properties: map[string]interface{}{"sessionID": rec.ID, "error": openCodeEngineError(err)}})
+			ap.setPendingError(SSEEvent{Type: "session.error", Properties: map[string]interface{}{"sessionID": rec.ID, "error": stallErr}})
+		} else if err != nil && !ap.wasAborted() && !ap.hasPendingError() {
+			ap.setPendingError(SSEEvent{Type: "session.error", Properties: map[string]interface{}{"sessionID": rec.ID, "error": openCodeEngineError(err)}})
 		}
 	}()
 	return nil
@@ -640,6 +636,11 @@ func (s *Service) relayOpenCodeEventWithFiles(rec SessionRecord, raw []byte, fil
 		evt.Properties["diff"] = s.filterLocalSessionDiffEvent(rec.ID, evt.Properties["diff"])
 	case "session.error":
 		if ap != nil && ap.reasoningLoop.shouldSuppressAbortError(evt.Properties["error"]) {
+			return
+		}
+		if ap != nil {
+			ap.setPendingError(evt)
+			ap.notifyIdle()
 			return
 		}
 	}

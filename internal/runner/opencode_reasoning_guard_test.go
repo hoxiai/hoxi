@@ -447,3 +447,88 @@ func TestStartOpenCodeTurnWaitsForIdleAndPrunesEmptyRecoveryStubTurn(t *testing.
 	}
 }
 
+func TestOpenCodeSessionErrorReleasesProcessBeforeBroadcast(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	svc := NewService(root, nil, nil, filepath.Join(t.TempDir(), "sessions"))
+	rec := SessionRecord{
+		ID:           "ses_hoxi_failover",
+		ExternalID:   "ses_oc_failover",
+		Runtime:      "opencode",
+		ProjectDir:   root,
+		WorktreePath: root,
+		SandboxMode:  "local",
+	}
+	if err := svc.store.Put(rec); err != nil {
+		t.Fatal(err)
+	}
+
+	ap := &activeProcess{
+		sessionID: rec.ID,
+		runtime:   "opencode",
+		done:      make(chan struct{}),
+		idleCh:    make(chan struct{}, 1),
+	}
+	svc.mu.Lock()
+	svc.procs[rec.ID] = ap
+	svc.mu.Unlock()
+
+	sub, unsub := svc.Subscribe(rec.ID)
+	defer unsub()
+
+	errLine := `{"type":"session.error","properties":{"sessionID":"ses_oc_failover","error":{"name":"APIError","data":{"message":"502 Bad Gateway","statusCode":502}}}}`
+	svc.relayOpenCodeEvent(rec, []byte(errLine))
+
+	// 1. session.error must be held until turn cleanup finishes, not broadcast while ap is still tearing down.
+	select {
+	case evt := <-sub:
+		t.Fatalf("session.error broadcast prematurely before releaseActiveProcess: %+v", evt)
+	default:
+	}
+
+	// 2. While ap has a pending error, handleRuntimeSwitch must not treat the session as busy
+	// and must update ProviderID/ModelID for the auto-failover candidate.
+	if !ap.hasPendingError() {
+		t.Fatal("expected ap.hasPendingError() to be true after session.error")
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/hoxi/sessions/"+rec.ID+"/runtime", strings.NewReader(`{"runtime":"opencode","providerID":"subapi","modelID":"WorkBuddy-deepseek-v4.1-flash"}`))
+	rr := httptest.NewRecorder()
+	svc.handleRuntimeSwitch(rr, req, rec.ID)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("handleRuntimeSwitch status = %d, want 200: %s", rr.Code, rr.Body.String())
+	}
+	updated, _ := svc.store.Meta(rec.ID)
+	if updated.ProviderID != "subapi" || updated.ModelID != "WorkBuddy-deepseek-v4.1-flash" {
+		t.Fatalf("expected runtime switch to update model to subapi/WorkBuddy-deepseek-v4.1-flash, got %s/%s", updated.ProviderID, updated.ModelID)
+	}
+	// Drain the session.updated broadcast emitted by handleRuntimeSwitch.
+	select {
+	case <-sub:
+	default:
+	}
+
+	// 3. Releasing the active process and broadcasting pending error delivers session.error with procs[rec.ID] == nil.
+	svc.releaseActiveProcess(rec.ID, ap)
+	if errEvt, ok := ap.takePendingError(); ok {
+		svc.broadcastRouted(rec.ID, []SSEEvent{errEvt})
+	}
+	close(ap.done)
+
+	select {
+	case evt := <-sub:
+		if evt.Type != "session.error" {
+			t.Fatalf("expected session.error event, got %+v", evt)
+		}
+		svc.mu.Lock()
+		stillInProcs := svc.procs[rec.ID] != nil
+		svc.mu.Unlock()
+		if stillInProcs {
+			t.Fatal("expected s.procs[rec.ID] to be nil when session.error is received")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for deferred session.error event")
+	}
+}
+
+

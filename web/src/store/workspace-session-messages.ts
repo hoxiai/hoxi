@@ -19,7 +19,9 @@ import {
 } from "./auto-models";
 import { reportAutoCandidateOutcome } from "./auto-breaker";
 import {
+  clearAutoFailoverPending,
   decideAutoFailover,
+  markAutoFailoverPending,
   maxAutoFailoverAttempts,
   parseQuotaResetMs,
   recordAutoFailover,
@@ -77,6 +79,7 @@ export function markSessionInterrupted(
   kind: "paused" | "stopped" = "stopped"
 ) {
   if (!sessionID) return;
+  clearAutoFailoverPending(sessionID);
   pauseSessionGoal(sessionID, "stopped");
   lastInterruptAtBySession.set(sessionID, Date.now());
   setWorkspace("interruptedBySession", sessionID, kind);
@@ -94,14 +97,21 @@ export async function handleSessionErrorEvent(
   error?: { name: string; data?: { message?: string; statusCode?: number; isRetryable?: boolean } }
 ): Promise<void> {
   if (!sessionID) return;
-  pauseSessionGoal(sessionID, "error");
   const autoState = lastAutoDispatchBySession.get(sessionID);
-  if (autoState && error && error.name !== "RunnerStalledError") {
-    const errText = error.data?.message || error.name || "error";
-    const status = error.data?.statusCode;
+  let currentError = error;
+  const initialFailed = autoState ? { ...autoState.target } : undefined;
+  let initialReason: ReturnType<typeof decideAutoFailover>["reason"] | undefined;
+  let initialCooldownUntil: number | undefined;
+  while (autoState && currentError && currentError.name !== "RunnerStalledError") {
+    const errText = currentError.data?.message || currentError.name || "error";
+    const status = currentError.data?.statusCode;
     const failed = autoState.target;
     const cooldownMs = parseQuotaResetMs(errText);
-    const decision = decideAutoFailover(error, Date.now() - autoState.dispatchedAt);
+    const decision = decideAutoFailover(currentError, Date.now() - autoState.dispatchedAt);
+    if (!initialReason) {
+      initialReason = decision.reason;
+      initialCooldownUntil = cooldownMs ? Date.now() + cooldownMs : undefined;
+    }
     if (decision.penalize) {
       markAutoCandidateCooldown(failed.providerID, failed.modelID, errText, status, cooldownMs);
       reportAutoCandidateOutcome({
@@ -112,64 +122,72 @@ export async function handleSessionErrorEvent(
         message: errText,
       });
     }
-    if (decision.failover && autoState.triedKeys.size < maxAutoFailoverAttempts(autoState.poolID)) {
-      const retryHasImage = (autoState.attachments ?? []).some(
-        (a) => (a.mime || "").toLowerCase().startsWith("image/") || /^data:image\//i.test(a.url || "")
-      );
-      const nextCand = resolveAutoModelTarget(autoState.poolID, {
-        advance: true,
-        excludeKeys: autoState.triedKeys,
-        requireImage: retryHasImage,
-        sessionID,
+    if (!decision.failover || autoState.triedKeys.size >= maxAutoFailoverAttempts(autoState.poolID)) break;
+    const retryHasImage = (autoState.attachments ?? []).some(
+      (a) => (a.mime || "").toLowerCase().startsWith("image/") || /^data:image\//i.test(a.url || "")
+    );
+    const nextCand = resolveAutoModelTarget(autoState.poolID, {
+      advance: true,
+      excludeKeys: autoState.triedKeys,
+      requireImage: retryHasImage,
+      sessionID,
+    });
+    if (!nextCand || `${nextCand.providerID}/${nextCand.modelID}` === `${failed.providerID}/${failed.modelID}`) break;
+    autoState.triedKeys.add(`${nextCand.providerID}/${nextCand.modelID}`);
+    autoState.target = nextCand;
+    autoState.dispatchedAt = Date.now();
+    markAutoFailoverPending(sessionID);
+    markSessionPromptDispatched(sessionID);
+    recordPromptDispatched(sessionID, nextCand.providerID, nextCand.modelID);
+    setWorkspace("statusBySession", sessionID, { type: "busy" });
+    try {
+      await hoxiAPI.sendPromptAsync(sessionID, autoState.promptText, {
+        agent: autoState.agent,
+        model: nextCand,
+        variant: autoState.effort || undefined,
+        directory: sessionDirectory(sessionID),
+        attachments: autoState.attachments,
+        skillSelection: autoState.skillSelection,
+        system: autoState.system,
+        runtime: resolveRunnerRuntimeForProvider(
+          nextCand.providerID,
+          Boolean(workspace.hoxiProviders?.[nextCand.providerID || ""])
+        ),
       });
-      if (
-        nextCand &&
-        `${nextCand.providerID}/${nextCand.modelID}` !==
-          `${autoState.target.providerID}/${autoState.target.modelID}`
-      ) {
-        recordAutoFailover({
-          sessionID,
-          from: { ...failed },
-          to: { ...nextCand },
-          reason: decision.reason,
-          at: Date.now(),
-          cooldownUntil: cooldownMs ? Date.now() + cooldownMs : undefined,
-        });
-        autoState.triedKeys.add(`${nextCand.providerID}/${nextCand.modelID}`);
-        autoState.target = nextCand;
-        autoState.dispatchedAt = Date.now();
-        void hoxiAPI
-          .sendPromptAsync(sessionID, autoState.promptText, {
-            agent: autoState.agent,
-            model: nextCand,
-            variant: autoState.effort || undefined,
-            directory: sessionDirectory(sessionID),
-            attachments: autoState.attachments,
-            skillSelection: autoState.skillSelection,
-            system: autoState.system,
-            runtime: resolveRunnerRuntimeForProvider(
-              nextCand.providerID,
-              Boolean(workspace.hoxiProviders?.[nextCand.providerID || ""])
-            ),
-          })
-          .catch(() => {});
-        return;
-      }
+      recordAutoFailover({
+        sessionID,
+        from: initialFailed ?? { ...failed },
+        to: { ...nextCand },
+        reason: initialReason ?? decision.reason,
+        at: Date.now(),
+        cooldownUntil: initialCooldownUntil,
+      });
+      markSessionPromptDispatched(sessionID);
+      return;
+    } catch (sendErr) {
+      const errMsg = sendErr instanceof Error ? sendErr.message : String(sendErr || "error");
+      const statusMatch = errMsg.match(/\bHTTP (\d{3})\b/);
+      currentError = {
+        name: "APIError",
+        data: { message: errMsg, statusCode: statusMatch ? Number(statusMatch[1]) : undefined },
+      };
     }
   }
+  clearAutoFailoverPending(sessionID);
+  pauseSessionGoal(sessionID, "error");
   lastInterruptAtBySession.set(sessionID, Date.now());
   setWorkspace("statusBySession", sessionID, { type: "idle" });
   setWorkspace("unreadCompletedBySession", sessionID, false);
   await loadSessionMessages(sessionID);
-  if (!error) return;
+  if (!currentError) return;
   setWorkspace(
     produce((state) => {
       const list = (state.messagesBySession[sessionID] ||= []);
       const last = list[list.length - 1];
       if (last?.info.role === "assistant") {
         // A runner stop (watchdog, repeated invalid tool calls) explains the engine's own "aborted" error.
-        if (error.name === "RunnerStalledError" || error.name === "RepeatedToolFailureError") last.info.error = error;
-        else last.info.error ||= error;
+        if (currentError.name === "RunnerStalledError" || currentError.name === "RepeatedToolFailureError") last.info.error = currentError;
+        else last.info.error ||= currentError;
         return;
       }
       const now = Date.now();
@@ -181,7 +199,7 @@ export async function handleSessionErrorEvent(
           time: { created: now, completed: now },
           modelID: sessionAIConfig(sessionID).model?.modelID,
           providerID: sessionAIConfig(sessionID).model?.providerID,
-          error,
+          error: currentError,
         },
         parts: [],
       });

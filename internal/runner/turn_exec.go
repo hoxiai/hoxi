@@ -383,20 +383,20 @@ func (s *Service) startTurnProcess(
 	_ = stdinPipe.Close()
 
 	go func() {
+		var terminalEvts []SSEEvent
 		defer func() {
+			for _, id := range tr.ChildSessionIDs() {
+				s.setChildBusy(id, false)
+			}
 			revokeHook()
 			s.cancelSessionApprovals(rec.ID, "the CLI process exited")
 			s.syncSessionMemoryFile(rec.ID)
 			s.store.FlushSession(rec.ID)
+			s.releaseActiveProcess(rec.ID, ap)
+			if len(terminalEvts) > 0 {
+				s.broadcastRouted(rec.ID, terminalEvts)
+			}
 			close(ap.done)
-			s.mu.Lock()
-			if s.procs[rec.ID] == ap {
-				delete(s.procs, rec.ID)
-			}
-			s.mu.Unlock()
-			if s.status != nil {
-				s.status.SetSessionBusy(rec.ID, false)
-			}
 		}()
 
 		// emitMu keeps translate+broadcast atomic so a poll snapshot can never
@@ -453,7 +453,15 @@ func (s *Service) startTurnProcess(
 							sr.ExternalID = extID
 						})
 					}
-					s.broadcastRouted(rec.ID, evts)
+					var liveEvts []SSEEvent
+					for _, evt := range evts {
+						if evt.Type == "session.error" || evt.Type == "session.idle" || (evt.Type == "session.status" && isOpenCodeIdleStatus(evt.Properties["status"])) {
+							terminalEvts = append(terminalEvts, evt)
+						} else {
+							liveEvts = append(liveEvts, evt)
+						}
+					}
+					s.broadcastRouted(rec.ID, liveEvts)
 				})
 			}()
 			return done
@@ -470,6 +478,7 @@ func (s *Service) startTurnProcess(
 				sr.ExternalID = ""
 			})
 			tr.ResetForFreshRetry()
+			terminalEvts = nil
 
 			var retryArgs []string
 			if geminiUsesAgy {
@@ -537,21 +546,14 @@ func (s *Service) startTurnProcess(
 
 		close(stopPoll)
 		<-pollDone
-		defer func() {
-			for _, id := range tr.ChildSessionIDs() {
-				s.setChildBusy(id, false)
-			}
-		}()
 		if !tr.IsTurnFinished() {
 			s.broadcastRouted(rec.ID, tr.AbandonTurn(time.Now().UnixMilli()))
 			stallErr := ap.stall.abortError()
 			if ap.wasAborted() && stallErr == nil {
 				tr.msgInfo.Time.Completed = time.Now().UnixMilli()
 				tr.msgInfo.Finish = "aborted"
-				s.broadcast(rec.ID,
-					SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": tr.msgInfo}},
-					SSEEvent{Type: "session.status", Properties: map[string]interface{}{"sessionID": rec.ID, "status": SessionStatus{Type: "idle"}}},
-				)
+				s.broadcast(rec.ID, SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": tr.msgInfo}})
+				terminalEvts = append(terminalEvts, SSEEvent{Type: "session.status", Properties: map[string]interface{}{"sessionID": rec.ID, "status": SessionStatus{Type: "idle"}}})
 				return
 			}
 			errText := strings.TrimSpace(stderrBuf.String())
@@ -571,8 +573,8 @@ func (s *Service) startTurnProcess(
 			tr.msgInfo.Time.Completed = time.Now().UnixMilli()
 			tr.msgInfo.Error = msgErr
 			tr.msgInfo.Finish = "error"
-			s.broadcast(rec.ID,
-				SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": tr.msgInfo}},
+			s.broadcast(rec.ID, SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": tr.msgInfo}})
+			terminalEvts = append(terminalEvts,
 				SSEEvent{Type: "session.error", Properties: map[string]interface{}{"sessionID": rec.ID, "error": msgErr}},
 				SSEEvent{Type: "session.status", Properties: map[string]interface{}{"sessionID": rec.ID, "status": SessionStatus{Type: "idle"}}},
 			)

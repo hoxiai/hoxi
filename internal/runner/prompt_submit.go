@@ -191,7 +191,8 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 	}
 	if rec.Runtime == "opencode" {
 		s.mu.Lock()
-		busy := unmanagedBusySteer || s.procs[sessionID] != nil
+		ap := s.procs[sessionID]
+		busy := unmanagedBusySteer || (ap != nil && !ap.hasPendingError() && !ap.wasAborted())
 		s.mu.Unlock()
 		if busy {
 			modelID, providerID := rec.ModelID, rec.ProviderID

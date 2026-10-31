@@ -4,17 +4,20 @@ import { hoxiAPI } from "../services/api";
 import {
   AUTO_PROVIDER_ID,
   applyProviderBreakers,
+  clearAutoFailoverPending,
   getAutoCandidateCooldown,
   clearAutoPoolCooldowns,
   decideAutoFailover,
   dispatchSessionPrompt,
   findAutoFailoverNotice,
   handleSessionErrorEvent,
+  isAutoFailoverPending,
   isCandidateCoolingDown,
   parseQuotaResetMs,
   resetAutoPoolToDefault,
   saveAutoPool,
   setWorkspace,
+  workspace,
 } from "../store/workspace";
 import { assertDeepEqual, assertEqual, assertTrue, describe, it } from "./test-harness";
 
@@ -162,6 +165,101 @@ describe("auto-pool failover dispatch", () => {
         Date.now = realNow;
       }
     } finally {
+      hoxiAPI.sendPromptAsync = origSend;
+      hoxiAPI.getMessages = origGetMessages;
+      hoxiAPI.reportCandidateOutcome = origReport;
+      hoxiAPI.getProviderCandidates = origGet;
+      hoxiAPI.summarizeSessionTitle = origSummarize;
+      setWorkspace("activeSessionID", null);
+      setWorkspace("sessions", []);
+      setWorkspace("aiBySession", reconcile({}));
+      setWorkspace("messagesBySession", reconcile({}));
+      setWorkspace("statusBySession", reconcile({}));
+      clearAutoPoolCooldowns("free");
+      await resetAutoPoolToDefault("free");
+      applyProviderBreakers({});
+    }
+  });
+
+  it("advances to the next candidate when sendPromptAsync rejects synchronously during failover", async () => {
+    const origSend = hoxiAPI.sendPromptAsync;
+    const origGetMessages = hoxiAPI.getMessages;
+    const origReport = hoxiAPI.reportCandidateOutcome;
+    const origGet = hoxiAPI.getProviderCandidates;
+    const origSummarize = hoxiAPI.summarizeSessionTitle;
+    const sid = "ses_failover_sync_reject";
+    try {
+      hoxiAPI.reportCandidateOutcome = async () => ({ ok: true });
+      hoxiAPI.getProviderCandidates = async () => ({ ok: true, breakers: {} });
+      hoxiAPI.getMessages = async () => [];
+      hoxiAPI.summarizeSessionTitle = async () => ({ ok: true, title: "Test" });
+      const model = (id: string) => ({ id, name: id, capabilities: { toolcall: true } });
+      setWorkspace("providers", [
+        { id: "alpha", name: "Alpha", models: { m: model("m") } },
+        { id: "beta", name: "Beta", models: { m: model("m") } },
+        { id: "gamma", name: "Gamma", models: { m: model("m") } },
+      ]);
+      setWorkspace("connectedProviders", ["alpha", "beta", "gamma"]);
+      setWorkspace("sessions", [{ id: sid, title: "Failover", time: { created: 1, updated: 1 } } as never]);
+      setWorkspace("activeSessionID", sid);
+      setWorkspace("aiBySession", sid, {
+        agent: "build",
+        model: { providerID: AUTO_PROVIDER_ID, modelID: "free" },
+        effort: "",
+      });
+      await saveAutoPool("free", {
+        id: "free",
+        preset: true,
+        strategy: "priority",
+        customized: true,
+        candidates: [
+          { providerID: "alpha", modelID: "m" },
+          { providerID: "beta", modelID: "m" },
+          { providerID: "gamma", modelID: "m" },
+        ],
+      });
+      clearAutoPoolCooldowns("free");
+      applyProviderBreakers({});
+
+      const attempted: string[] = [];
+      hoxiAPI.sendPromptAsync = async (_sid, _text, opts) => {
+        const key = `${opts?.model?.providerID}/${opts?.model?.modelID}`;
+        attempted.push(key);
+        if (key === "beta/m") {
+          throw new Error("HTTP 409: model beta/m is not loaded in the running engine");
+        }
+      };
+
+      const startedAt = Date.now();
+      await dispatchSessionPrompt("build it", sid, { forceImmediate: true });
+      assertDeepEqual(attempted, ["alpha/m"]);
+
+      await handleSessionErrorEvent(sid, {
+        name: "APIError",
+        data: { message: "502 Bad Gateway", statusCode: 502 },
+      });
+
+      assertDeepEqual(
+        attempted,
+        ["alpha/m", "beta/m", "gamma/m"],
+        "synchronous failure on beta/m must advance to gamma/m"
+      );
+      assertTrue(isCandidateCoolingDown("alpha", "m"), "alpha/m should cool down");
+      assertTrue(isCandidateCoolingDown("beta", "m"), "beta/m should cool down after sync rejection");
+      assertEqual(isCandidateCoolingDown("gamma", "m"), false, "gamma/m is now running");
+      assertTrue(isAutoFailoverPending(sid), "failover pending flag set while awaiting new turn busy");
+      assertEqual(workspace.statusBySession[sid]?.type, "busy");
+
+      const notice = findAutoFailoverNotice({
+        sessionID: sid,
+        providerID: "alpha",
+        modelID: "m",
+        time: { created: startedAt },
+      });
+      assertDeepEqual(notice?.from, { providerID: "alpha", modelID: "m" });
+      assertDeepEqual(notice?.to, { providerID: "gamma", modelID: "m" });
+    } finally {
+      clearAutoFailoverPending(sid);
       hoxiAPI.sendPromptAsync = origSend;
       hoxiAPI.getMessages = origGetMessages;
       hoxiAPI.reportCandidateOutcome = origReport;
