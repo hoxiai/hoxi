@@ -178,10 +178,14 @@ export function isTimeoutErrorText(text: string, statusCode?: number): boolean {
     lower.includes("timed out") ||
     lower.includes("etimedout") ||
     lower.includes("deadline") ||
+    lower.includes("connection reset") ||
+    lower.includes("econnreset") ||
+    lower.includes("unexpected eof") ||
     lower.includes("504") ||
     lower.includes("502") ||
     lower.includes("stall") ||
-    lower.includes("socket hang up")
+    lower.includes("socket hang up") ||
+    lower.includes("\u8d85\u65f6")
   );
 }
 

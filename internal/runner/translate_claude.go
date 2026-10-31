@@ -479,7 +479,7 @@ func (t *TurnTranslator) feedClaudeEvent(env *claudeRawEvent, now int64) []SSEEv
 			}
 			msgErr := &MessageError{
 				Name: "RunnerError",
-				Data: &MessageErrorData{Message: errMsg, IsRetryable: false},
+				Data: &MessageErrorData{Message: errMsg, IsRetryable: isRetryableTurnError(errMsg)},
 			}
 			t.msgInfo.Error = msgErr
 			t.msgInfo.Finish = "error"

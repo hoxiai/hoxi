@@ -268,32 +268,13 @@ func (s *Service) startTurnProcess(
 		(ShouldGeminiCLIUseAgy(modelID) || isAgyBinary(binPath))
 	rawBinPath := binPath
 	priorTurns := append([]MessageTurn(nil), rec.Turns...)
+	initialExternalID := strings.TrimSpace(rec.ExternalID)
 
-	var args []string
-	switch rec.Runtime {
-	case string(RuntimeClaudeCode):
-		args = BuildClaudeArgs(mode, modelID, effort, rec.ExternalID)
-	case string(RuntimeGeminiCLI):
-		if geminiUsesAgy {
-			agyModel, agyEffort := ResolveGeminiAgyModelAndEffort(modelID, effort)
-			args = BuildAgyArgs(mode, agyModel, agyEffort, rec.ExternalID)
-		} else {
-			args = BuildGeminiArgs(mode, modelID, effort, rec.ExternalID)
-		}
-	case string(RuntimeCodeBuddy):
-		args = BuildCodeBuddyArgs(mode, modelID, effort, rec.ExternalID)
-	case string(RuntimeQoder):
-		args = BuildQoderArgs(mode, modelID, effort, rec.ExternalID)
-	default:
-		args = BuildAgyArgs(mode, modelID, effort, rec.ExternalID)
-	}
-
+	var claudeHookArgs []string
 	var hookEnv []string
 	revokeHook := func() {}
 	if rec.Runtime == string(RuntimeClaudeCode) {
-		var hookArgs []string
-		hookArgs, hookEnv, revokeHook = s.issueClaudeHook(mode, rec.ID, asstMsgID)
-		args = append(args, hookArgs...)
+		claudeHookArgs, hookEnv, revokeHook = s.issueClaudeHook(mode, rec.ID, asstMsgID)
 	} else if rec.Runtime == string(RuntimeGeminiCLI) {
 		if geminiUsesAgy {
 			s.ensureAgyHookInstalled()
@@ -313,6 +294,7 @@ func (s *Service) startTurnProcess(
 		}
 	}
 
+	args := buildTurnCLIArgs(rec.Runtime, mode, modelID, effort, rec.ExternalID, geminiUsesAgy, claudeHookArgs)
 	binPath, args, err := s.confineRuntimeCommand(rec, rawBinPath, args)
 	if err != nil {
 		revokeHook()
@@ -359,6 +341,7 @@ func (s *Service) startTurnProcess(
 		cmd:       cmd,
 		stdin:     stdinPipe,
 		done:      make(chan struct{}),
+		abortCh:   make(chan struct{}),
 	}
 	ap.stall.touch(time.Now())
 	s.mu.Lock()
@@ -423,6 +406,9 @@ func (s *Service) startTurnProcess(
 			}
 		}()
 
+		retryDelays := s.cliTurnRetryDelays()
+		retryAttempt := 0
+		var heldFailedResultLine string
 		canRetryWithoutResume := rec.Runtime == string(RuntimeGeminiCLI) && strings.TrimSpace(rec.ExternalID) != ""
 		feedStdout := func(r *os.File) <-chan struct{} {
 			done := make(chan struct{})
@@ -436,8 +422,14 @@ func (s *Service) startTurnProcess(
 					if ap.wasAborted() && isStreamResultLine(line) {
 						return
 					}
-					if canRetryWithoutResume && len(tr.partsByID) == 0 && isFailedStreamResultLine(line) {
-						return
+					if isFailedStreamResultLine(line) && !ap.wasAborted() && ap.stall.abortError() == nil {
+						resErr := extractFailedStreamResultError(line, tr.LastErrorText())
+						canResume := !tr.HasToolParts() || strings.TrimSpace(firstNonEmptyStr(tr.ExternalID(), rec.ExternalID)) != ""
+						if (retryAttempt < len(retryDelays) && isRetryableTurnError(resErr) && canResume) ||
+							(canRetryWithoutResume && len(tr.partsByID) == 0) {
+							heldFailedResultLine = line
+							return
+						}
 					}
 					evts := tr.FeedLine(line)
 					s.noteToolEvents(rec.ID, evts)
@@ -471,77 +463,134 @@ func (s *Service) startTurnProcess(
 		waitErr := cmd.Wait()
 		reapOrphanedOutput(cmd.Process, stdoutR, readerDone)
 
-		if !tr.IsTurnFinished() && canRetryWithoutResume && len(tr.partsByID) == 0 && !ap.wasAborted() && ap.stall.abortError() == nil {
-			canRetryWithoutResume = false
-			rec.ExternalID = ""
-			_, _, _ = s.store.Update(rec.ID, func(sr *SessionRecord) {
-				sr.ExternalID = ""
-			})
-			tr.ResetForFreshRetry()
-			terminalEvts = nil
-
-			var retryArgs []string
-			if geminiUsesAgy {
-				agyModel, agyEffort := ResolveGeminiAgyModelAndEffort(modelID, effort)
-				retryArgs = BuildAgyArgs(mode, agyModel, agyEffort, "")
-			} else {
-				retryArgs = BuildGeminiArgs(mode, modelID, effort, "")
+		for !tr.IsTurnFinished() && !ap.wasAborted() && ap.stall.abortError() == nil {
+			transientErrText := ""
+			if heldFailedResultLine != "" {
+				transientErrText = extractFailedStreamResultError(heldFailedResultLine, tr.LastErrorText())
 			}
-			if retryBin, wrappedArgs, wrapErr := s.confineRuntimeCommand(rec, rawBinPath, retryArgs); wrapErr == nil {
-				retryCmd := subproc.Command(retryBin, wrappedArgs...)
-				retryCmd.Dir = rec.WorktreePath
-				retryCmd.Env = procEnv
-				if retryStdin, inErr := retryCmd.StdinPipe(); inErr == nil {
-					if retryOutR, retryOutW, pipeErr := os.Pipe(); pipeErr == nil {
-						var retryStderr bytes.Buffer
-						retryCmd.Stdout = retryOutW
-						retryCmd.Stderr = &retryStderr
-						retryCmd.WaitDelay = orphanDrainGrace
-						setProcessGroup(retryCmd)
-						if startErr := retryCmd.Start(); startErr == nil {
-							_ = retryOutW.Close()
-							stderrBuf.Reset()
-							ap.mu.Lock()
-							ap.cmd = retryCmd
-							ap.stdin = retryStdin
-							ap.mu.Unlock()
-							ap.stall.touch(time.Now())
-
-							histRec := rec
-							histRec.ExternalID = ""
-							histRec.ContextPending = len(priorTurns) > 0
-							histRec.ContextTurnCount = len(priorTurns)
-							histRec.Turns = priorTurns
-							retryPrompt := promptText
-							sysPrefix := ""
-							if !strings.Contains(retryPrompt, commandExecutionGuidance) {
-								if sys := s.fallbackCLISystemForFreshRetry(rec.ID, rec.Runtime); sys != "" {
-									sysPrefix = sys + "\n\n"
-								}
-							}
-							ctxPrefix := runtimeMemoryContext(histRec) + runtimeContext(histRec)
-							if !strings.Contains(promptText, "Continue the existing conversation") {
-								retryPrompt = ctxPrefix + sysPrefix + promptText
-							} else if sysPrefix != "" {
-								retryPrompt = sysPrefix + promptText
-							}
-							retryInput, _ := EncodeStreamInputTurnWithParts(inputRuntime, retryPrompt, deliveryParts)
-							_, _ = retryStdin.Write(retryInput)
-							_ = retryStdin.Close()
-
-							retryReaderDone := feedStdout(retryOutR)
-							waitErr = retryCmd.Wait()
-							reapOrphanedOutput(retryCmd.Process, retryOutR, retryReaderDone)
-							if retryStderr.Len() > 0 {
-								stderrBuf = retryStderr
-							}
-						} else {
-							_ = retryOutR.Close()
-							_ = retryOutW.Close()
-						}
-					}
+			if transientErrText == "" {
+				transientErrText = firstNonEmptyStr(tr.LastErrorText(), stderrBuf.String())
+				if transientErrText == "" && waitErr != nil {
+					transientErrText = waitErr.Error()
 				}
 			}
+			hasTools := tr.HasToolParts()
+			resumeExtID := strings.TrimSpace(firstNonEmptyStr(tr.ExternalID(), rec.ExternalID))
+
+			if retryAttempt < len(retryDelays) && isRetryableTurnError(transientErrText) && (!hasTools || resumeExtID != "") {
+				retryAttempt++
+				delay := retryDelays[retryAttempt-1]
+				if hinted := parseTurnRetryDelay(transientErrText); hinted > delay {
+					delay = hinted
+				}
+				heldFailedResultLine = ""
+				terminalEvts = nil
+				nextMs := time.Now().Add(delay).UnixMilli()
+				s.broadcast(rec.ID, SSEEvent{
+					Type: "session.status",
+					Properties: map[string]interface{}{
+						"sessionID": rec.ID,
+						"status": SessionStatus{
+							Type:    "retry",
+							Attempt: retryAttempt,
+							Message: summarizeTurnRetryReason(transientErrText),
+							Next:    nextMs,
+						},
+					},
+				})
+				s.noteActivity(ap)
+				if !waitTurnRetryBackoff(ap, delay) {
+					break
+				}
+
+				var retryArgs []string
+				var retryInput []byte
+				emitMu.Lock()
+				if !hasTools {
+					resetEvts := tr.ResetUncommittedTurnForRetry(initialExternalID)
+					rec.ExternalID = initialExternalID
+					_, _, _ = s.store.Update(rec.ID, func(sr *SessionRecord) {
+						sr.ExternalID = initialExternalID
+					})
+					if len(resetEvts) > 0 {
+						s.broadcastRouted(rec.ID, resetEvts)
+					}
+					retryArgs = buildTurnCLIArgs(rec.Runtime, mode, modelID, effort, initialExternalID, geminiUsesAgy, claudeHookArgs)
+					retryInput = inputBytes
+				} else {
+					settleEvts := tr.PrepareForResumeRetry(time.Now().UnixMilli())
+					rec.ExternalID = resumeExtID
+					_, _, _ = s.store.Update(rec.ID, func(sr *SessionRecord) {
+						sr.ExternalID = resumeExtID
+					})
+					if len(settleEvts) > 0 {
+						s.broadcastRouted(rec.ID, settleEvts)
+					}
+					retryArgs = buildTurnCLIArgs(rec.Runtime, mode, modelID, effort, resumeExtID, geminiUsesAgy, claudeHookArgs)
+					retryInput, _ = EncodeStreamInputTurnWithParts(inputRuntime, turnResumePrompt, nil)
+				}
+				emitMu.Unlock()
+
+				started, retryWaitErr := s.runRetrySubprocess(rec, rawBinPath, retryArgs, procEnv, retryInput, ap, &stderrBuf, true, feedStdout)
+				if !started {
+					break
+				}
+				waitErr = retryWaitErr
+				continue
+			}
+
+			if canRetryWithoutResume && len(tr.partsByID) == 0 {
+				canRetryWithoutResume = false
+				heldFailedResultLine = ""
+				rec.ExternalID = ""
+				_, _, _ = s.store.Update(rec.ID, func(sr *SessionRecord) {
+					sr.ExternalID = ""
+				})
+				tr.ResetForFreshRetry()
+				terminalEvts = nil
+
+				histRec := rec
+				histRec.ExternalID = ""
+				histRec.ContextPending = len(priorTurns) > 0
+				histRec.ContextTurnCount = len(priorTurns)
+				histRec.Turns = priorTurns
+				retryPrompt := promptText
+				sysPrefix := ""
+				if !strings.Contains(retryPrompt, commandExecutionGuidance) {
+					if sys := s.fallbackCLISystemForFreshRetry(rec.ID, rec.Runtime); sys != "" {
+						sysPrefix = sys + "\n\n"
+					}
+				}
+				ctxPrefix := runtimeMemoryContext(histRec) + runtimeContext(histRec)
+				if !strings.Contains(promptText, "Continue the existing conversation") {
+					retryPrompt = ctxPrefix + sysPrefix + promptText
+				} else if sysPrefix != "" {
+					retryPrompt = sysPrefix + promptText
+				}
+				retryInput, _ := EncodeStreamInputTurnWithParts(inputRuntime, retryPrompt, deliveryParts)
+				retryArgs := buildTurnCLIArgs(rec.Runtime, mode, modelID, effort, "", geminiUsesAgy, claudeHookArgs)
+				if started, retryWaitErr := s.runRetrySubprocess(rec, rawBinPath, retryArgs, procEnv, retryInput, ap, &stderrBuf, false, feedStdout); started {
+					waitErr = retryWaitErr
+					continue
+				}
+			}
+			break
+		}
+
+		if !tr.IsTurnFinished() && heldFailedResultLine != "" && !ap.wasAborted() && ap.stall.abortError() == nil {
+			emitMu.Lock()
+			evts := tr.FeedLine(heldFailedResultLine)
+			s.noteToolEvents(rec.ID, evts)
+			var liveEvts []SSEEvent
+			for _, evt := range evts {
+				if evt.Type == "session.error" || evt.Type == "session.idle" || (evt.Type == "session.status" && isOpenCodeIdleStatus(evt.Properties["status"])) {
+					terminalEvts = append(terminalEvts, evt)
+				} else {
+					liveEvts = append(liveEvts, evt)
+				}
+			}
+			s.broadcastRouted(rec.ID, liveEvts)
+			emitMu.Unlock()
 		}
 
 		close(stopPoll)
@@ -565,7 +614,7 @@ func (s *Service) startTurnProcess(
 			}
 			msgErr := &MessageError{
 				Name: "RunnerProcessError",
-				Data: &MessageErrorData{Message: errText, IsRetryable: false},
+				Data: &MessageErrorData{Message: errText, IsRetryable: isRetryableTurnError(errText)},
 			}
 			if stallErr != nil {
 				msgErr = stallErr
@@ -582,48 +631,6 @@ func (s *Service) startTurnProcess(
 	}()
 
 	return nil
-}
-
-func isStreamResultLine(line string) bool {
-	if !strings.Contains(line, `"result"`) {
-		return false
-	}
-	var env struct {
-		Type  string `json:"type"`
-		Event string `json:"event"`
-	}
-	return json.Unmarshal([]byte(line), &env) == nil && (env.Type == "result" || env.Event == "result")
-}
-
-func isFailedStreamResultLine(line string) bool {
-	if !isStreamResultLine(line) {
-		return false
-	}
-	var env struct {
-		Status  string          `json:"status"`
-		IsError bool            `json:"is_error"`
-		Error   json.RawMessage `json:"error"`
-		Result  struct {
-			Status string          `json:"status"`
-			Error  json.RawMessage `json:"error"`
-		} `json:"result"`
-	}
-	if json.Unmarshal([]byte(line), &env) != nil {
-		return false
-	}
-	if env.IsError || strings.EqualFold(env.Status, "error") || strings.EqualFold(env.Status, "failed") {
-		return true
-	}
-	if strings.EqualFold(env.Result.Status, "error") || strings.EqualFold(env.Result.Status, "failed") {
-		return true
-	}
-	if len(env.Error) > 0 && string(env.Error) != "null" && string(env.Error) != `""` {
-		return true
-	}
-	if len(env.Result.Error) > 0 && string(env.Result.Error) != "null" && string(env.Result.Error) != `""` {
-		return true
-	}
-	return false
 }
 
 // reapOrphanedOutput runs once the CLI has exited. A reader still blocked

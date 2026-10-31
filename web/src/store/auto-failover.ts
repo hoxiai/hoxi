@@ -5,7 +5,14 @@
 // remember each switch so the timeline shows "switched from X to Y" instead of
 // a dead-end error with manual retry buttons.
 import { createSignal } from "solid-js";
-import { getEffectivePoolCandidates } from "./auto-models";
+import type { SkillSelection } from "../services/api";
+import { reportAutoCandidateOutcome } from "./auto-breaker";
+import {
+  getEffectivePoolCandidates,
+  markAutoCandidateCooldown,
+  resolveAutoModelTarget,
+} from "./auto-models";
+import type { ReasoningEffort } from "./workspace-state";
 
 export interface AutoFailoverError {
   name: string;
@@ -58,8 +65,10 @@ const QUOTA_RE =
   /insufficient.?(quota|balance)|exceeded your current quota|credit balance|billing|\u4f59\u989d\u4e0d\u8db3|\u989d\u5ea6|\u5747\u5df2\u9650\u989d|\u4f7f\u7528\u91cf\u5df2\u8d85\u51fa/;
 const RATE_RE = /\b429\b|rate.?limit|too many requests|\u9891\u7387|\u9650\u6d41|\u8bf7\u6c42\u8fc7\u4e8e\u9891\u7e41/;
 const AUTH_RE = /unauthorized|invalid api key|incorrect api key|authentication|forbidden|\u9274\u6743|\u8ba4\u8bc1\u5931\u8d25|\u65e0\u6548.{0,4}(key|\u4ee4\u724c)/;
-const SERVER_RE = /overloaded|service unavailable|bad gateway|\b50[234]\b|\b529\b|internal server error|\u670d\u52a1.{0,4}(\u7e41\u5fd9|\u4e0d\u53ef\u7528)/;
-const NETWORK_RE = /timeout|timed out|econn|fetch failed|network|socket|stream was interrupted|\u8fde\u63a5.{0,4}(\u5931\u8d25|\u4e2d\u65ad)/;
+const SERVER_RE =
+  /overloaded|service unavailable|bad gateway|gateway timeout|temporarily unavailable|\b50[0234]\b|\b52[0249]\b|internal server error|\u670d\u52a1.{0,4}(\u7e41\u5fd9|\u4e0d\u53ef\u7528)/;
+const NETWORK_RE =
+  /timeout|timed out|econn|connection reset|connection refused|connection aborted|connection closed|closed network connection|closed idle connection|broken pipe|epipe|enetunreach|ehostunreach|eai_again|unexpected eof|\beof\b|fetch failed|network|socket|stream was interrupted|read tcp|write tcp|dial tcp|tls handshake|deadline exceeded|i\/o timeout|client connection lost|server sent goaway|\u8d85\u65f6|\u8fde\u63a5.{0,4}(\u5931\u8d25|\u4e2d\u65ad|\u91cd\u7f6e|\u8d85\u65f6)|\u7f51\u7edc.{0,4}(\u5f02\u5e38|\u9519\u8bef|\u4e2d\u65ad)/;
 
 export function decideAutoFailover(
   error: AutoFailoverError,
@@ -238,4 +247,124 @@ export function findAutoFailoverNotice(info: {
     }
   }
   return undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Per-session turn dispatch state for pool failover & same-model retry.
+
+export const MAX_SAME_MODEL_RETRIES = 2;
+
+export interface TurnDispatchState {
+  poolID: string;
+  target: { providerID: string; modelID: string };
+  promptText: string;
+  agent?: string;
+  effort?: ReasoningEffort;
+  attachments?: Array<{ type: "file"; mime: string; filename?: string; url: string }>;
+  skillSelection?: SkillSelection;
+  system?: string;
+  triedKeys: Set<string>;
+  sameModelRetries: number;
+  backendRetried: boolean;
+  dispatchedAt: number;
+}
+
+const lastDispatchBySession = new Map<string, TurnDispatchState>();
+
+export function rememberTurnDispatch(sessionID: string, state: TurnDispatchState): void {
+  if (!sessionID) return;
+  lastDispatchBySession.set(sessionID, state);
+}
+
+export function getTurnDispatchState(sessionID: string): TurnDispatchState | undefined {
+  if (!sessionID) return undefined;
+  return lastDispatchBySession.get(sessionID);
+}
+
+export function clearTurnDispatchState(sessionID: string): void {
+  if (!sessionID) return;
+  lastDispatchBySession.delete(sessionID);
+}
+
+export function markSessionBackendRetried(sessionID: string): void {
+  if (!sessionID) return;
+  const st = lastDispatchBySession.get(sessionID);
+  if (st) st.backendRetried = true;
+}
+
+export function shouldRetrySameModelOnError(
+  error: AutoFailoverError,
+  decision: AutoFailoverDecision,
+  state: TurnDispatchState
+): boolean {
+  if (state.backendRetried || state.sameModelRetries >= MAX_SAME_MODEL_RETRIES) return false;
+  const name = (error.name || "").toLowerCase();
+  // Native CLI turns already run their own in-process retry loop in Go runner.
+  if (name === "runnererror" || name === "runnerprocesserror") return false;
+  if (!decision.failover) return false;
+  return decision.reason === "network" || decision.reason === "server";
+}
+
+export function selectNextDispatchTarget(
+  sessionID: string,
+  currentError: AutoFailoverError,
+  autoState: TurnDispatchState
+): {
+  target: { providerID: string; modelID: string };
+  switchedPoolCandidate: boolean;
+  reason: AutoFailoverReason;
+  cooldownUntil?: number;
+  errText: string;
+} | null {
+  const errText = currentError.data?.message || currentError.name || "error";
+  const status = currentError.data?.statusCode;
+  const failed = autoState.target;
+  const cooldownMs = parseQuotaResetMs(errText);
+  const decision = decideAutoFailover(currentError, Date.now() - autoState.dispatchedAt);
+  if (autoState.poolID && decision.penalize) {
+    markAutoCandidateCooldown(failed.providerID, failed.modelID, errText, status, cooldownMs);
+    reportAutoCandidateOutcome({
+      providerID: failed.providerID,
+      modelID: failed.modelID,
+      ok: false,
+      statusCode: status,
+      message: errText,
+    });
+  }
+  let nextCand: { providerID: string; modelID: string } | null = null;
+  if (
+    autoState.poolID &&
+    decision.failover &&
+    autoState.triedKeys.size < maxAutoFailoverAttempts(autoState.poolID)
+  ) {
+    const retryHasImage = (autoState.attachments ?? []).some(
+      (a) => (a.mime || "").toLowerCase().startsWith("image/") || /^data:image\//i.test(a.url || "")
+    );
+    const resolved = resolveAutoModelTarget(autoState.poolID, {
+      advance: true,
+      excludeKeys: autoState.triedKeys,
+      requireImage: retryHasImage,
+      sessionID,
+    });
+    if (resolved && `${resolved.providerID}/${resolved.modelID}` !== `${failed.providerID}/${failed.modelID}`) {
+      nextCand = resolved;
+    }
+  }
+  const sameModelRetry = !nextCand && shouldRetrySameModelOnError(currentError, decision, autoState);
+  if (!nextCand && !sameModelRetry) return null;
+  const target = nextCand ?? failed;
+  if (nextCand) {
+    autoState.triedKeys.add(`${nextCand.providerID}/${nextCand.modelID}`);
+    autoState.target = nextCand;
+  } else {
+    autoState.sameModelRetries += 1;
+  }
+  autoState.dispatchedAt = Date.now();
+  return {
+    target,
+    switchedPoolCandidate: Boolean(nextCand),
+    reason: decision.reason,
+    cooldownUntil: cooldownMs ? Date.now() + cooldownMs : undefined,
+    errText,
+  };
 }

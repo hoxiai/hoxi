@@ -376,8 +376,10 @@ type activeProcess struct {
 	cmd       *exec.Cmd
 	stdin     io.WriteCloser
 	done      chan struct{}
+	abortCh   chan struct{}
 	aborted   bool
 	steered   bool
+	retrying  bool
 	idleCh    chan struct{}
 	cancel    func()
 	mu        sync.Mutex
@@ -395,7 +397,9 @@ var abortInterruptGrace = 2 * time.Second
 
 func (ap *activeProcess) Abort() {
 	ap.mu.Lock()
+	alreadyAborted := ap.aborted
 	ap.aborted = true
+	abortCh := ap.abortCh
 	var proc *os.Process
 	if ap.cmd != nil {
 		proc = ap.cmd.Process
@@ -403,6 +407,9 @@ func (ap *activeProcess) Abort() {
 	stdin := ap.stdin
 	cancel := ap.cancel
 	ap.mu.Unlock()
+	if !alreadyAborted && abortCh != nil {
+		close(abortCh)
+	}
 	if cancel != nil {
 		cancel()
 	}

@@ -36,6 +36,19 @@ describe("auto-pool failover decision", () => {
       ["overloaded", { name: "APIError", data: { message: "Overloaded", statusCode: 529 } }, "server"],
       ["gateway", { name: "APIError", data: { message: "bad gateway", statusCode: 502 } }, "server"],
       ["network", { name: "UnknownError", data: { message: "fetch failed: ECONNRESET" } }, "network"],
+      [
+        "go tcp reset",
+        {
+          name: "RunnerError",
+          data: {
+            message:
+              'API error (attempt 1): request failed: Post "https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse": read tcp 172.19.0.1:58835->172.217.113.4:443: read: connection reset by peer',
+          },
+        },
+        "network",
+      ],
+      ["io timeout", { name: "APIError", data: { message: "dial tcp 1.2.3.4:443: i/o timeout" } }, "network"],
+      ["unexpected eof", { name: "APIError", data: { message: "unexpected EOF" } }, "network"],
     ];
     for (const [label, error, reason] of cases) {
       const d = decideAutoFailover(error as never, slow);
@@ -273,6 +286,69 @@ describe("auto-pool failover dispatch", () => {
       clearAutoPoolCooldowns("free");
       await resetAutoPoolToDefault("free");
       applyProviderBreakers({});
+    }
+  });
+
+  it("retries a non-auto single-model turn up to 2 times on transient network or server errors", async () => {
+    const origSend = hoxiAPI.sendPromptAsync;
+    const origGetMessages = hoxiAPI.getMessages;
+    const origSummarize = hoxiAPI.summarizeSessionTitle;
+    const sid = "ses_same_model_retry";
+    try {
+      hoxiAPI.getMessages = async () => [];
+      hoxiAPI.summarizeSessionTitle = async () => ({ ok: true, title: "Test" });
+      const model = (id: string) => ({ id, name: id, capabilities: { toolcall: true } });
+      setWorkspace("providers", [{ id: "openai", name: "OpenAI", models: { "gpt-5": model("gpt-5") } }]);
+      setWorkspace("connectedProviders", ["openai"]);
+      setWorkspace("sessions", [{ id: sid, title: "Retry", time: { created: 1, updated: 1 } } as never]);
+      setWorkspace("activeSessionID", sid);
+      setWorkspace("aiBySession", sid, {
+        agent: "build",
+        model: { providerID: "openai", modelID: "gpt-5" },
+        effort: "",
+      });
+
+      const attempted: string[] = [];
+      hoxiAPI.sendPromptAsync = async (_sid, _text, opts) => {
+        attempted.push(`${opts?.model?.providerID}/${opts?.model?.modelID}`);
+      };
+
+      await dispatchSessionPrompt("ping", sid, { forceImmediate: true });
+      assertDeepEqual(attempted, ["openai/gpt-5"]);
+
+      // Retry #1 on transient network reset
+      await handleSessionErrorEvent(sid, {
+        name: "APIError",
+        data: { message: "read tcp 10.0.0.1:443: read: connection reset by peer" },
+      });
+      assertDeepEqual(attempted, ["openai/gpt-5", "openai/gpt-5"]);
+      assertEqual(workspace.statusBySession[sid]?.type, "busy");
+
+      // Retry #2 on 504 gateway timeout
+      await handleSessionErrorEvent(sid, {
+        name: "APIError",
+        data: { message: "504 Gateway Timeout", statusCode: 504 },
+      });
+      assertDeepEqual(attempted, ["openai/gpt-5", "openai/gpt-5", "openai/gpt-5"]);
+      assertEqual(workspace.statusBySession[sid]?.type, "busy");
+
+      // Exhausted after 2 same-model retries -> settles as idle with error
+      await handleSessionErrorEvent(sid, {
+        name: "APIError",
+        data: { message: "504 Gateway Timeout", statusCode: 504 },
+      });
+      assertEqual(attempted.length, 3);
+      assertEqual(workspace.statusBySession[sid]?.type, "idle");
+    } finally {
+      clearAutoFailoverPending(sid);
+      hoxiAPI.sendPromptAsync = origSend;
+      hoxiAPI.getMessages = origGetMessages;
+      hoxiAPI.summarizeSessionTitle = origSummarize;
+      setWorkspace("activeSessionID", null);
+      setWorkspace("sessions", []);
+      setWorkspace("aiBySession", reconcile({}));
+      setWorkspace("messagesBySession", reconcile({}));
+      setWorkspace("statusBySession", reconcile({}));
     }
   });
 });

@@ -17,6 +17,7 @@ import {
   handleIncomingPermissionRequest,
   hasStoredSurfaceMode,
   markPermissionResolved,
+  markSessionBackendRetried,
   clearAutoFailoverPending,
   handleSessionErrorEvent,
   isAutoFailoverPending,
@@ -314,6 +315,7 @@ export default function App() {
                 if (wasBusy && !parentID) void advanceSessionGoal(sid);
                 if (wasBusy) refreshDesktopMemberAfterTurn(sid);
               } else if (evt.properties.status.type === "retry") {
+                markSessionBackendRetried(sid);
                 recordSessionRetry(
                   sid,
                   evt.properties.status.attempt,

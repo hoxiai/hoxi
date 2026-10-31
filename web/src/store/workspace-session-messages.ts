@@ -9,7 +9,11 @@ import {
   setComposerSkillNotice,
   transferDraftComposerSkill,
 } from "./skills";
-import { recordPromptDispatched, recordUserAbortAction } from "./provider-telemetry";
+import {
+  recordPromptDispatched,
+  recordSessionRetry,
+  recordUserAbortAction,
+} from "./provider-telemetry";
 import { isPlaceholderSessionTitle, summarizeAndRenameSession } from "./session-title";
 import {
   isAutoModel,
@@ -20,11 +24,13 @@ import {
 import { reportAutoCandidateOutcome } from "./auto-breaker";
 import {
   clearAutoFailoverPending,
-  decideAutoFailover,
+  clearTurnDispatchState,
+  getTurnDispatchState,
   markAutoFailoverPending,
-  maxAutoFailoverAttempts,
-  parseQuotaResetMs,
   recordAutoFailover,
+  rememberTurnDispatch,
+  selectNextDispatchTarget,
+  type AutoFailoverReason,
 } from "./auto-failover";
 import { newIsolatedSession, waitForSessionSandbox } from "./session-sandbox";
 import { buildCombinedSystemPrompt } from "./settings";
@@ -59,27 +65,13 @@ import { collectChildSubagentSessionIDs } from "./subagent-sessions";
 
 const lastInterruptAtBySession = new Map<string, number>();
 
-interface AutoDispatchState {
-  poolID: string;
-  target: { providerID: string; modelID: string };
-  promptText: string;
-  agent?: string;
-  effort?: ReasoningEffort;
-  attachments?: Array<{ type: "file"; mime: string; filename?: string; url: string }>;
-  skillSelection?: SkillSelection;
-  system?: string;
-  triedKeys: Set<string>;
-  dispatchedAt: number;
-}
-
-const lastAutoDispatchBySession = new Map<string, AutoDispatchState>();
-
 export function markSessionInterrupted(
   sessionID: string,
   kind: "paused" | "stopped" = "stopped"
 ) {
   if (!sessionID) return;
   clearAutoFailoverPending(sessionID);
+  clearTurnDispatchState(sessionID);
   pauseSessionGoal(sessionID, "stopped");
   lastInterruptAtBySession.set(sessionID, Date.now());
   setWorkspace("interruptedBySession", sessionID, kind);
@@ -97,71 +89,50 @@ export async function handleSessionErrorEvent(
   error?: { name: string; data?: { message?: string; statusCode?: number; isRetryable?: boolean } }
 ): Promise<void> {
   if (!sessionID) return;
-  const autoState = lastAutoDispatchBySession.get(sessionID);
+  const autoState = getTurnDispatchState(sessionID);
   let currentError = error;
   const initialFailed = autoState ? { ...autoState.target } : undefined;
-  let initialReason: ReturnType<typeof decideAutoFailover>["reason"] | undefined;
+  let initialReason: AutoFailoverReason | undefined;
   let initialCooldownUntil: number | undefined;
   while (autoState && currentError && currentError.name !== "RunnerStalledError") {
-    const errText = currentError.data?.message || currentError.name || "error";
-    const status = currentError.data?.statusCode;
-    const failed = autoState.target;
-    const cooldownMs = parseQuotaResetMs(errText);
-    const decision = decideAutoFailover(currentError, Date.now() - autoState.dispatchedAt);
+    const failed = { ...autoState.target };
+    const nextStep = selectNextDispatchTarget(sessionID, currentError, autoState);
+    if (!nextStep) break;
     if (!initialReason) {
-      initialReason = decision.reason;
-      initialCooldownUntil = cooldownMs ? Date.now() + cooldownMs : undefined;
+      initialReason = nextStep.reason;
+      initialCooldownUntil = nextStep.cooldownUntil;
     }
-    if (decision.penalize) {
-      markAutoCandidateCooldown(failed.providerID, failed.modelID, errText, status, cooldownMs);
-      reportAutoCandidateOutcome({
-        providerID: failed.providerID,
-        modelID: failed.modelID,
-        ok: false,
-        statusCode: status,
-        message: errText,
-      });
+    if (!nextStep.switchedPoolCandidate) {
+      recordSessionRetry(sessionID, autoState.sameModelRetries, nextStep.errText);
     }
-    if (!decision.failover || autoState.triedKeys.size >= maxAutoFailoverAttempts(autoState.poolID)) break;
-    const retryHasImage = (autoState.attachments ?? []).some(
-      (a) => (a.mime || "").toLowerCase().startsWith("image/") || /^data:image\//i.test(a.url || "")
-    );
-    const nextCand = resolveAutoModelTarget(autoState.poolID, {
-      advance: true,
-      excludeKeys: autoState.triedKeys,
-      requireImage: retryHasImage,
-      sessionID,
-    });
-    if (!nextCand || `${nextCand.providerID}/${nextCand.modelID}` === `${failed.providerID}/${failed.modelID}`) break;
-    autoState.triedKeys.add(`${nextCand.providerID}/${nextCand.modelID}`);
-    autoState.target = nextCand;
-    autoState.dispatchedAt = Date.now();
     markAutoFailoverPending(sessionID);
     markSessionPromptDispatched(sessionID);
-    recordPromptDispatched(sessionID, nextCand.providerID, nextCand.modelID);
+    recordPromptDispatched(sessionID, nextStep.target.providerID, nextStep.target.modelID);
     setWorkspace("statusBySession", sessionID, { type: "busy" });
     try {
       await hoxiAPI.sendPromptAsync(sessionID, autoState.promptText, {
         agent: autoState.agent,
-        model: nextCand,
+        model: nextStep.target,
         variant: autoState.effort || undefined,
         directory: sessionDirectory(sessionID),
         attachments: autoState.attachments,
         skillSelection: autoState.skillSelection,
         system: autoState.system,
         runtime: resolveRunnerRuntimeForProvider(
-          nextCand.providerID,
-          Boolean(workspace.hoxiProviders?.[nextCand.providerID || ""])
+          nextStep.target.providerID,
+          Boolean(workspace.hoxiProviders?.[nextStep.target.providerID || ""])
         ),
       });
-      recordAutoFailover({
-        sessionID,
-        from: initialFailed ?? { ...failed },
-        to: { ...nextCand },
-        reason: initialReason ?? decision.reason,
-        at: Date.now(),
-        cooldownUntil: initialCooldownUntil,
-      });
+      if (nextStep.switchedPoolCandidate) {
+        recordAutoFailover({
+          sessionID,
+          from: initialFailed ?? failed,
+          to: { ...nextStep.target },
+          reason: initialReason ?? nextStep.reason,
+          at: Date.now(),
+          cooldownUntil: initialCooldownUntil,
+        });
+      }
       markSessionPromptDispatched(sessionID);
       return;
     } catch (sendErr) {
@@ -538,9 +509,9 @@ export async function dispatchSessionPrompt(
       await options.beforeSend();
     }
     const usedAutoPool = Boolean(isAuto && chosenModel && effectiveModel);
-    if (usedAutoPool && chosenModel && effectiveModel) {
-      lastAutoDispatchBySession.set(id, {
-        poolID: chosenModel.modelID,
+    if (effectiveModel) {
+      rememberTurnDispatch(id, {
+        poolID: usedAutoPool && chosenModel ? chosenModel.modelID : "",
         target: effectiveModel,
         promptText,
         agent: effectiveAgent,
@@ -549,10 +520,12 @@ export async function dispatchSessionPrompt(
         skillSelection: effectiveSkill,
         system,
         triedKeys: new Set([`${effectiveModel.providerID}/${effectiveModel.modelID}`]),
+        sameModelRetries: 0,
+        backendRetried: false,
         dispatchedAt: Date.now(),
       });
     } else {
-      lastAutoDispatchBySession.delete(id);
+      clearTurnDispatchState(id);
     }
     markSessionPromptDispatched(id);
     try {

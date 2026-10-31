@@ -600,7 +600,7 @@ func (s *Service) relayOpenCodeEventWithFiles(rec SessionRecord, raw []byte, fil
 			return
 		}
 	}
-	if evt.Type == "session.status" || evt.Type == "session.idle" {
+	if evt.Type == "session.idle" || (evt.Type == "session.status" && !ap.shouldRelayOpenCodeStatus(evt.Properties["status"])) {
 		if evt.Type == "session.idle" || isOpenCodeIdleStatus(evt.Properties["status"]) {
 			if ap != nil {
 				ap.notifyIdle()

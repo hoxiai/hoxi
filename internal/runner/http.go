@@ -65,6 +65,8 @@ type Service struct {
 
 	// openCodeTimeoutRetries overrides openCodeTimeoutRetryDelays in tests.
 	openCodeTimeoutRetries []time.Duration
+	// turnRetryDelays overrides defaultTurnRetryDelays in tests.
+	turnRetryDelays []time.Duration
 }
 
 // SetSummaryNotifier receives the end-of-turn count line. The body contains
