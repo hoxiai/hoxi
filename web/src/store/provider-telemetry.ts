@@ -456,7 +456,14 @@ export function recordAssistantTurnUpdated(info: MessageInfo) {
     if (isBalanceError(info)) {
       // The account is out of money; the endpoint is healthy. The auto pool
       // still rests this candidate so other turns do not hit the same wall.
-      reportAutoCandidateOutcome({ providerID: pid, modelID: mid, ok: false, statusCode, message: errMsg });
+      reportAutoCandidateOutcome({
+        providerID: pid,
+        modelID: mid,
+        ok: false,
+        statusCode,
+        message: errMsg,
+        class: "quota",
+      });
       return;
     }
     const isTimeout = isTimeoutErrorText(errMsg, statusCode);

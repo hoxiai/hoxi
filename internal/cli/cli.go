@@ -75,13 +75,13 @@ func ShouldHandle(args []string, getenv func(string) string) bool {
 			return false
 		}
 	}
-	// Windows opens a hoxi:// link as `Hoxi.exe "hoxi://…"`. The link belongs
-	// to the desktop app (login callback, session link) and must never be sent
-	// to a model as a prompt.
-	if len(args) > 1 && strings.HasPrefix(strings.ToLower(strings.TrimSpace(args[1])), "hoxi://") {
-		return false
-	}
 	for _, a := range args[1:] {
+		// Windows opens a hoxi:// link as `Hoxi.exe "hoxi://…"`. The link belongs
+		// to the desktop app (login callback, session link) and must never be sent
+		// to a model as a prompt.
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(a)), "hoxi://") {
+			return false
+		}
 		if a == "--no-desktop" || a == "-no-desktop" || a == "--version" || a == "-version" {
 			return false
 		}

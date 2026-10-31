@@ -581,6 +581,8 @@ func classifyCandidateFailure(status int, err error, body []byte) breakerClass {
 		return breakerClassBadReq
 	case 401:
 		return breakerClassConfig
+	case 402:
+		return breakerClassQuota
 	case 403:
 		if isQuotaExhausted(body) {
 			return breakerClassQuota

@@ -66,6 +66,7 @@ func TestShouldHandleAndIsServeCommand(t *testing.T) {
 		{`C:\Users\me\AppData\Local\Programs\Hoxi\Hoxi.exe`, "hoxi://auth-callback/?handoff=abc&state=def"},
 		{`C:\Users\me\AppData\Local\Programs\Hoxi\hoxi.exe`, "HOXI://session/ses_abc123"},
 		{"hoxi", " hoxi://open?session=ses_abc123"},
+		{`C:\Users\me\AppData\Local\Programs\Hoxi\Hoxi.exe`, "--allow-remote", "hoxi://auth-callback/?handoff=abc&state=def"},
 	} {
 		if ShouldHandle(args, noEnv) {
 			t.Fatalf("expected hoxi:// link %v to open the desktop app, not the CLI", args)

@@ -68,6 +68,8 @@ func (p *windowsInstanceProbe) claim() bool {
 	case err == nil && (event == windows.WAIT_OBJECT_0 || event == windows.WAIT_ABANDONED):
 		return true
 	case err == nil && event == uint32(windows.WAIT_TIMEOUT):
+		_ = windows.CloseHandle(p.mutex)
+		p.mutex = 0
 		runtime.UnlockOSThread()
 		return false
 	default:

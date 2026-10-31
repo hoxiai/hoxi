@@ -13,6 +13,7 @@ import {
   processCarriageReturns,
 } from "../components/timeline/tool-card-helpers";
 import type { PermissionRequest, ToolPart } from "../services/sse-types";
+import { getCandidateBreaker } from "../store/auto-breaker";
 import { computeProviderHealth } from "../store/provider-health";
 import {
   emptyStats,
@@ -452,10 +453,11 @@ describe("balance exhausted detection", () => {
 
   it("keeps balance failures out of provider stability", () => {
     setWorkspace("providerTelemetry", "balance_test", undefined as any);
-    recordAssistantTurnUpdated(
-      info({ name: "APIError", message: "Insufficient balance", statusCode: 402 }, "balance_test")
-    );
+    const turn = info({ name: "APIError", message: "Insufficient balance", statusCode: 402 }, "balance_test");
+    turn.modelID = "m1";
+    recordAssistantTurnUpdated(turn);
     assertEqual(computeProviderHealth("balance_test").status, "untested");
+    assertEqual(getCandidateBreaker("balance_test", "m1")?.lastClass, "quota");
 
     recordAssistantTurnUpdated(info({ name: "APIError", message: "Bad gateway", statusCode: 502 }, "balance_test"));
     assertEqual(computeProviderHealth("balance_test").stabilityScore, 0);

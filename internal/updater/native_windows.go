@@ -160,7 +160,6 @@ func CheckNative() (installErr error) {
 		return err
 	}
 
-	setInstallPhase("staging")
 	stagedExe := filepath.Join(stageDir, "Hoxi.exe")
 	verCtx, verCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	out, err := subproc.CommandContext(verCtx, stagedExe, "--version").Output()

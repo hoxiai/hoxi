@@ -140,27 +140,27 @@ describe("auto-pool failover dispatch", () => {
           Boolean(entry && entry.until - Date.now() > 60 * 60 * 1000),
           "the stated reset must outlast the default 3-minute rate-limit cooldown"
         );
+
+        const notice = findAutoFailoverNotice({
+          sessionID: sid,
+          providerID: "alpha",
+          modelID: "m",
+          time: { created: startedAt, completed: startedAt + 80_000 },
+        });
+        assertDeepEqual(notice?.to, { providerID: "beta", modelID: "m" });
+        assertEqual(notice?.reason, "quota");
+
+        // A second failure moves on to the third candidate instead of giving up.
+        await handleSessionErrorEvent(sid, { name: "APIError", data: { message: "bad gateway", statusCode: 502 } });
+        assertDeepEqual(attempted, ["alpha/m", "beta/m", "gamma/m"]);
+
+        // A user stop neither switches nor benches the running candidate.
+        await handleSessionErrorEvent(sid, { name: "MessageAbortedError", data: { message: "Aborted" } });
+        assertEqual(attempted.length, 3);
+        assertEqual(isCandidateCoolingDown("gamma", "m"), false);
       } finally {
         Date.now = realNow;
       }
-
-      const notice = findAutoFailoverNotice({
-        sessionID: sid,
-        providerID: "alpha",
-        modelID: "m",
-        time: { created: startedAt, completed: startedAt + 80_000 },
-      });
-      assertDeepEqual(notice?.to, { providerID: "beta", modelID: "m" });
-      assertEqual(notice?.reason, "quota");
-
-      // A second failure moves on to the third candidate instead of giving up.
-      await handleSessionErrorEvent(sid, { name: "APIError", data: { message: "bad gateway", statusCode: 502 } });
-      assertDeepEqual(attempted, ["alpha/m", "beta/m", "gamma/m"]);
-
-      // A user stop neither switches nor benches the running candidate.
-      await handleSessionErrorEvent(sid, { name: "MessageAbortedError", data: { message: "Aborted" } });
-      assertEqual(attempted.length, 3);
-      assertEqual(isCandidateCoolingDown("gamma", "m"), false);
     } finally {
       hoxiAPI.sendPromptAsync = origSend;
       hoxiAPI.getMessages = origGetMessages;
