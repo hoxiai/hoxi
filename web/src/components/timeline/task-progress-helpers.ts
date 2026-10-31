@@ -14,6 +14,7 @@ import {
   getFilename,
   isEditingTool,
   isTaskTool,
+  meaningfulToolTitle,
   type ToolPart,
 } from "./tool-card-helpers";
 import { collectCycleChangedFiles, resolveToolFileDiff } from "./tool-card-state";
@@ -97,7 +98,7 @@ export function collectCycleStepItems(
       ? getFilename(file)
       : cmd
         ? `$ ${cmd}`
-        : desc || pattern || tp.state.title || "";
+        : desc || pattern || meaningfulToolTitle(tp.state.title, tp.tool) || "";
 
     let additions = 0;
     let deletions = 0;

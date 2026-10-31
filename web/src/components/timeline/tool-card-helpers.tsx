@@ -7,6 +7,20 @@ import { Icon, type IconName } from "../icons";
 import FileDiffBlock from "../inspector/LazyFileDiffBlock";
 import QuestionToolBody from "./question-card";
 import { t } from "../../i18n";
+import {
+  formatToolDisplayName,
+  isBrowserTool,
+  isComputerTool,
+  isEditingTool,
+  isQuestionTool,
+  isReadTool,
+  isSearchOrListTool,
+  isShellTool,
+  isTaskTool,
+  isTodoTool,
+  kiloToolIconName,
+  meaningfulToolTitle,
+} from "./tool-taxonomy";
 
 export type ToolPart = Extract<MessagePart, { type: "tool" }>;
 
@@ -86,95 +100,22 @@ export function processCarriageReturns(input: string): string {
     .join("\n");
 }
 
-export function isShellTool(tool: string): boolean {
-  const t = tool.toLowerCase();
-  return t === "bash" || t === "shell" || t.includes("bash") || t.includes("shell");
-}
-
-export function isEditingTool(tool: string): boolean {
-  const t = tool.toLowerCase();
-  if (isTodoTool(t) || isReadTool(t) || isSearchOrListTool(t)) return false;
-  return (
-    t.includes("edit") ||
-    t.includes("write") ||
-    t.includes("patch") ||
-    t.includes("replace") ||
-    t === "create_file"
-  );
-}
-
-export function isReadTool(tool: string): boolean {
-  const t = tool.toLowerCase();
-  return t === "read" || t.endsWith("_read");
-}
-
-export function isSearchOrListTool(tool: string): boolean {
-  const t = tool.toLowerCase();
-  return t === "grep" || t === "glob" || t === "list" || t === "ls";
-}
-
-export function isTodoTool(tool: string): boolean {
-  const t = tool.toLowerCase();
-  return t === "todowrite" || t === "todoread";
-}
-
-export function isTaskTool(tool: string): boolean {
-  const t = tool.toLowerCase();
-  return t === "task" || t === "agent" || t.includes("subagent");
-}
-
-export function isQuestionTool(tool: string): boolean {
-  return tool.toLowerCase() === "question";
-}
-
-export function isComputerTool(tool: string): boolean {
-  return (tool || "").toLowerCase() === "hoxi_computer";
-}
-
-export function kiloToolIconName(tool: string): IconName {
-  const t = tool.toLowerCase();
-  if (isShellTool(t)) return "console";
-  if (isEditingTool(t)) return "code-lines";
-  if (isReadTool(t)) return "glasses";
-  if (t === "list" || t === "ls") return "bullet-list";
-  if (t.includes("grep") || t.includes("glob") || t.includes("find") || t.includes("search"))
-    return "magnifying-glass-menu";
-  if (isComputerTool(t) || t.includes("webfetch") || t.includes("web") || t.includes("fetch"))
-    return "window-cursor";
-  if (isTodoTool(t)) return "checklist";
-  if (isTaskTool(t)) return "task";
-  if (t === "skill") return "brain";
-  if (t === "question" || t === "agent_report") return "bubble-5";
-  if (t === "agent_wait" || t === "agent_status") return "task";
-  return "mcp";
-}
-
-export function formatToolDisplayName(tool: string, part?: ToolPart): string {
-  if (!tool) return "";
-  const lower = tool.toLowerCase();
-  if (lower === "agent_report") return t("toolCard.actionSystemMessage");
-  if (lower === "agent_wait") {
-    return part?.state.metadata?.waitingFor === "subagents"
-      ? t("toolCard.actionWaitSubagents")
-      : t("toolCard.actionWait");
-  }
-  if (lower === "agent_status") return t("toolCard.actionCheckSubagents");
-  if (isReadTool(lower)) return t("toolCard.actionRead");
-  if ((lower.includes("write") || lower === "create_file") && !isTodoTool(lower)) return t("toolCard.actionWrite");
-  if (lower.includes("patch")) return t("toolCard.actionPatch");
-  if (lower.includes("edit") || lower.includes("replace")) return t("toolCard.actionEdit");
-  if (lower === "grep" || lower.includes("search")) return t("toolCard.actionSearch");
-  if (lower === "glob" || lower === "find") return t("toolCard.actionFind");
-  if (lower === "list" || lower === "ls") return t("toolCard.actionList");
-  if (isShellTool(lower)) return t("toolCard.actionShell");
-  if (isTaskTool(lower)) return t("toolCard.actionSubagent");
-  if (isTodoTool(lower)) return t("toolCard.actionTodo");
-  if (isComputerTool(lower)) return t("toolCard.actionComputer");
-  if (lower.includes("webfetch") || lower.includes("fetch")) return t("toolCard.actionWebFetch");
-  if (lower === "skill") return t("toolCard.actionSkill");
-  if (lower === "question") return t("toolCard.actionQuestion");
-  return tool;
-}
+// Tool-name taxonomy lives in its own module so display helpers, activity
+// grouping and subagent summaries share one mapping table.
+export {
+  formatToolDisplayName,
+  isBrowserTool,
+  isComputerTool,
+  isEditingTool,
+  isQuestionTool,
+  isReadTool,
+  isSearchOrListTool,
+  isShellTool,
+  isTaskTool,
+  isTodoTool,
+  kiloToolIconName,
+  meaningfulToolTitle,
+};
 
 export function formatToolStatusLabel(status: string): string {
   if (status === "pending") return t("toolCard.statePending");
@@ -309,7 +250,7 @@ function cleanShellDisplayText(text: string): string {
 export function extractDescription(part: ToolPart): string {
   const input = resolveToolInput(part);
   if (isShellTool(part.tool)) {
-    for (const value of [input.description, part.state.title]) {
+    for (const value of [input.description, meaningfulToolTitle(part.state.title, part.tool)]) {
       if (typeof value === "string") {
         const description = cleanShellDisplayText(value).trim();
         if (description) return description;
@@ -359,7 +300,7 @@ export function extractDescription(part: ToolPart): string {
     return dir ? `${input.pattern.trim()} (${dir})` : input.pattern.trim();
   }
   if (typeof input.url === "string" && input.url.trim()) return input.url.trim();
-  if (part.state.title) return part.state.title;
+  if (part.state.title) return meaningfulToolTitle(part.state.title, part.tool);
   return "";
 }
 

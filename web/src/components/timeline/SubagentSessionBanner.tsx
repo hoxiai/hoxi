@@ -36,6 +36,7 @@ import {
   extractTargetFile,
   formatToolDisplayName,
   getFilename,
+  meaningfulToolTitle,
 } from "./tool-card-helpers";
 import { collectCycleChangedFiles } from "./tool-card-state";
 
@@ -147,7 +148,9 @@ export function collectSubagentsForSession(parentID: string | null): SubagentSta
         workspace.pendingQuestions.some((q) => q.sessionID === subId);
 
       const telemetry = summarizeSubagentTelemetry(subId);
-      const description = String(tp.state.input?.description || tp.state.title || "Subagent Task");
+      const description = String(
+        tp.state.input?.description || meaningfulToolTitle(tp.state.title, tp.tool) || "Subagent Task"
+      );
       const title = resolveSubagentTitle(parentID, subId, description);
       map.set(subId, {
         sessionID: subId,

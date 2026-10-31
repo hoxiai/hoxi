@@ -3,9 +3,11 @@ import {
   extractDescription,
   extractShellOutput,
   extractRollingShellLines,
+  formatToolDisplayName,
   isShellAwaitingFirstOutput,
 } from "../components/timeline/tool-card-helpers";
 import type { ToolPart, ToolState } from "../services/sse-types";
+import { dictionaries, setLocale } from "../i18n";
 import { assertDeepEqual, assertEqual, describe, it } from "./test-harness";
 
 const marker = "# hoxi-stop:ses_display:call_1";
@@ -99,5 +101,62 @@ describe("shell tool display", () => {
     });
     assertEqual(extractCommand(part), "git status");
     assertEqual(extractDescription(part), "git status");
+  });
+});
+
+describe("localized tool labels for CLI runtimes", () => {
+  function part(tool: string, overrides: Partial<ToolState> = {}): ToolPart {
+    return {
+      id: "prt_label",
+      sessionID: "ses_label",
+      messageID: "msg_label",
+      callID: "call_label",
+      type: "tool",
+      tool,
+      state: { status: "completed", input: {}, ...overrides } as ToolState,
+    };
+  }
+
+  it("maps Antigravity tool identifiers to localized labels instead of raw names", () => {
+    const zh = dictionaries["zh-CN"].toolCard;
+    const en = dictionaries["en-US"].toolCard;
+    setLocale("zh-CN");
+    const expected: Array<[string, string]> = [
+      ["run_command", zh.actionShell],
+      ["cmd_command", zh.actionShell],
+      ["view_file", zh.actionRead],
+      ["read_file", zh.actionRead],
+      ["list_dir", zh.actionList],
+      ["find_by_name", zh.actionFind],
+      ["grep_search", zh.actionSearch],
+      ["write_to_file", zh.actionWrite],
+      ["multi_replace_file_content", zh.actionEdit],
+      ["apply_patch", zh.actionPatch],
+      ["manage_subagents", zh.actionCheckSubagents],
+      ["ask_question", zh.actionQuestion],
+      ["search_web", zh.actionWebSearch],
+      ["read_url_content", zh.actionWebFetch],
+      ["taskcreate", zh.actionTodo],
+      ["taskupdate", zh.actionTodo],
+      ["manage_task", zh.actionBackgroundTask],
+      ["hoxi_browser", zh.actionBrowser],
+      ["hoxi_code_index", zh.actionCodeIndex],
+    ];
+    for (const [tool, label] of expected) {
+      assertEqual(formatToolDisplayName(tool), label, tool);
+    }
+    setLocale("en-US");
+    assertEqual(formatToolDisplayName("run_command"), en.actionShell);
+    setLocale("zh-CN");
+  });
+
+  it("drops a raw tool identifier used as the persisted title", () => {
+    setLocale("zh-CN");
+    const shell = part("bash", { title: "run_command", input: { command: "ls -la" } });
+    assertEqual(extractDescription(shell), "ls -la");
+    const read = part("read", { title: "read_file", input: { filePath: "a.ts" } });
+    assertEqual(extractDescription(read), "");
+    const real = part("read", { title: "Reading a.ts", input: { filePath: "a.ts" } });
+    assertEqual(extractDescription(real), "Reading a.ts");
   });
 });

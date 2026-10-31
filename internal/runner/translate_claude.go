@@ -530,36 +530,71 @@ func normalizeRunnerTool(rawName string, rawParams map[string]interface{}) (norm
 	}
 	lower := strings.ToLower(strings.TrimSpace(rawName))
 	switch lower {
-	case "view_file", "read", "read_file", "read_many_files":
+	case "view_file", "read", "read_file", "read_many_files", "read_resource":
 		normTool = "read"
 	case "write_to_file", "write_file", "write", "create_file":
 		normTool = "write"
-	case "replace_file_content", "multi_replace_file_content", "sed_file", "edit", "edit_file", "replace":
+	case "replace_file_content", "multi_replace_file_content", "sed_file", "edit", "edit_file", "replace", "notebook_edit":
 		normTool = "edit"
-	case "run_command", "run_shell_command", "bash", "shell":
+	case "run_command", "run_shell_command", "bash", "shell", "cmd_command", "execute_command":
 		normTool = "bash"
 	case "grep_search", "search_file_content", "grep":
 		normTool = "grep"
-	case "find_by_name", "list_dir", "list_directory", "glob":
+	case "find_by_name", "list_dir", "list_directory", "list_files", "list_resources", "glob":
 		normTool = "glob"
-	case "search_web", "google_web_search", "websearch":
+	case "search_web", "google_web_search", "web_search", "websearch":
 		normTool = "websearch"
-	case "read_url_content", "web_fetch", "webfetch":
+	case "read_url_content", "web_fetch", "webfetch", "fetch_url":
 		normTool = "webfetch"
-	case "invoke_subagent", "task", "agent":
+	case "invoke_subagent", "define_subagent", "spawn_agent", "task", "agent":
 		normTool = "task"
-	case "schedule":
+	case "browser_subagent":
+		normTool = "task"
+	case "schedule", "wait", "wait_5_seconds":
 		normTool = "agent_wait"
 	case "manage_subagents":
 		normTool = "agent_status"
+	case "taskcreate", "taskupdate", "tasklist":
+		// Qoder's task board tools are not TodoWrite; keep them distinct so the
+		// timeline still shows them as work steps.
+		normTool = lower
+	case "ask_question":
+		normTool = "question"
 	default:
 		normTool = lower
 		if normTool == "" {
 			normTool = "tool"
 		}
 	}
-	title = firstString(clean["toolSummary"], clean["toolAction"], clean["description"], clean["Prompt"], clean["Action"], rawName)
+	title = firstString(clean["toolSummary"], clean["toolAction"], clean["description"], clean["Prompt"], clean["Action"])
+	// A bare tool identifier is not a description: Antigravity steps often carry
+	// no toolSummary, and echoing "run_command" would defeat the UI's localized
+	// label. Leave the title empty so the frontend falls back to command/path.
+	if title != "" && (strings.EqualFold(title, rawName) || isBareToolIdentifier(title)) {
+		title = ""
+	}
 	return normTool, title, clean
+}
+
+// isBareToolIdentifier reports snake_case, dot- or camel-free tool names such as
+// read_file, run_command or apply_patch (English prose titles never carry "_").
+func isBareToolIdentifier(v string) bool {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return false
+	}
+	hasLetter := false
+	for i := 0; i < len(v); i++ {
+		c := v[i]
+		switch {
+		case c >= 'a' && c <= 'z':
+			hasLetter = true
+		case c == '_' || c >= '0' && c <= '9':
+		default:
+			return false
+		}
+	}
+	return hasLetter && strings.Contains(v, "_")
 }
 
 func firstString(vals ...interface{}) string {
