@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  Native macOS command center for <b>parallel AI software engineering</b>, paired with a mobile control plane for <b>Hoxi &amp; <a href="https://github.com/hoxiai/gopanel">GoPanel</a> servers</b>.
+  Native macOS &amp; Windows command center for <b>parallel AI software engineering</b>, paired with a mobile control plane for <b>Hoxi &amp; <a href="https://github.com/hoxiai/gopanel">GoPanel</a> servers</b>.
 </p>
 
 <p align="center">
@@ -25,7 +25,7 @@
 
 ---
 
-**Hoxi** ([hoxi.ai](https://hoxi.ai)) unifies **OpenCode**, **Claude Code**, **Google Antigravity (`agy`)**, **Gemini CLI (`gemini`)**, **Qoder**, and **CodeBuddy** inside a native macOS workspace (typically **~30 MB** RAM and **~0.2s** cold start)—and extends to your phone (`client/`) to command running AI agents and manage [**GoPanel**](https://github.com/hoxiai/gopanel) Linux servers on the go.
+**Hoxi** ([hoxi.ai](https://hoxi.ai)) unifies **OpenCode**, **Claude Code**, **Google Antigravity (`agy`)**, **Gemini CLI (`gemini`)**, **Qoder**, and **CodeBuddy** inside a native macOS & Windows workspace (typically **~30 MB** RAM and **~0.2s** cold start)—and extends to your phone (`client/`) to command running AI agents and manage [**GoPanel**](https://github.com/hoxiai/gopanel) Linux servers on the go.
 
 ---
 
@@ -45,9 +45,9 @@ When Claude Code hits a usage cap mid-refactor, or an agent loops on a bug, swit
 
 ### 3. Blind Auto-Approve vs. Terminal Babysitting
 Giving agents blanket shell access risks `rm -rf` or `git push --force`. Approving every file read chains you to your desk. And when an agent drifts off-track, aborting wastes the whole turn.
-- **Unified PreToolUse Safety Gate + Seatbelt OS Sandbox + Unattended Mode**: Safe reads and edits flow uninterrupted. Destructive commands (`rm`, `sudo`, `chmod`, `diskutil`, `git reset --hard`, `git push --force`) are intercepted across OpenCode, Claude Code, Antigravity, and Gemini CLI—triggering a macOS `NSStatusBar` **Attention** badge and an inline approval card (`Once` / `Always` / `Reject`). In **Unattended Mode** (`unattended`), sessions run inside an isolated Git worktree and macOS Seatbelt OS-level sandbox with automatic credential env stripping, sensitive path blocking (`~/.ssh`, `~/.aws`, `.env`), and hard rejection of dynamic shell evaluation, privilege escalation, and `git push`.
+- **Unified PreToolUse Safety Gate + Seatbelt OS Sandbox + Unattended Mode**: Safe reads and edits flow uninterrupted. Destructive commands (`rm`, `sudo`, `chmod`, `diskutil`, `git reset --hard`, `git push --force`) are intercepted across OpenCode, Claude Code, Antigravity, and Gemini CLI—triggering a macOS `NSStatusBar` / Windows `Shell_NotifyIconW` **Attention** badge and an inline approval card (`Once` / `Always` / `Reject`). In **Unattended Mode** (`unattended`), sessions run inside an isolated Git worktree and macOS Seatbelt OS-level sandbox with automatic credential env stripping, sensitive path blocking (`~/.ssh`, `~/.aws`, `.env`), and hard rejection of dynamic shell evaluation, privilege escalation, and `git push`.
 - **Live Mid-Stream Steering (`Steer`, OpenCode sessions)**: Inject course corrections while an agent is actively executing without killing the turn.
-- **Isolated Headless Chrome + Chrome Link Extension**: Per-session Chrome inspector with one-click **Manual Control** for login walls/CAPTCHAs, plus the Chrome Link MV3 extension (`extensions/chrome`, 2-minute one-time pairing code) to attach to tabs in your existing Chrome browser.
+- **Desktop Browser Window, Isolated Headless Chrome & Chrome Link Extension**: Opens a visible desktop Chrome window backed by a persistent `~/.hoxi/browser-profile` by default (with isolated headless Chrome as an opt-in mode) and one-click **Manual Control** for login walls/CAPTCHAs, plus the Chrome Link MV3 extension (`extensions/chrome`, 2-minute one-time pairing code with persistent `linkToken` auto-reconnect and multi-tab/popup support) to attach to tabs in your existing Chrome browser.
 
 ### 4. Stepping Away from Your Desk (Mobile AI + [GoPanel](https://github.com/hoxiai/gopanel) Server Ops)
 Solo builders and lean teams don't just write code—they also deploy and maintain servers. Being away from your laptop shouldn't stall a long-running agent or leave a production alert unanswered.
@@ -58,10 +58,10 @@ Solo builders and lean teams don't just write code—they also deploy and mainta
 
 ### 5. Context Rot, Endpoint Degradation & Electron Bloat
 Long sessions forget early architectural constraints; third-party API gateways silently degrade or stall; Electron forks eat 1.5 GB+ RAM per window.
-- **8-Dimension Persistent Memory**: Automatically compacts long sessions into `.hoxi/memory/` across 8 structured sections (*Goals, Constraints, Key Facts, Changed Files, Errors & Fixes, Todo, Progress, Next Steps*).
+- **8-Dimension Persistent Memory**: Automatically compacts long sessions into `<project>/.hoxi/memory/project.md` and `<project>/.hoxi/memory/sessions/<session>.md` across 8 structured sections (*Goals, Constraints, Key Facts, Changed Files, Errors & Fixes, Todo, Progress, Next Steps*).
 - **Smart Auto-Router (`hoxi-auto`) & Local OpenAI-Compatible Relay**: Tracks live TTFT EWMA and failure categories (`transient` / `rate_limit` / `quota` / `config`) per `provider/model`, automatically circuit-breaking unhealthy or >3× slower endpoints while keeping session-sticky routing to preserve upstream prompt caches. Exposes loopback `GET /v1/models` and `POST /v1/chat/completions` (`hk-*` SHA-256 hashed keys) so local tools (Cline, Continue, Cherry Studio, Open WebUI, aider) can share your configured providers without exposing upstream API keys.
 - **Role-Based Model Routing & Observer Audits**: Use frontier models for primary coding while routing title generation, background subagents, memory compaction, and Git commit messages to fast/cheap or local models (Ollama / vLLM)—plus optional post-edit diff scoring via an independent **Observer** referee model.
-- **Native Wails v2 + SolidJS 120Hz Shell**: Built on macOS `WKWebView` + fine-grained SolidJS signals (`requestAnimationFrame` token batching, zero VDOM) + WebGL Xterm.
+- **Native Wails v2 + SolidJS 120Hz Shell**: Built on macOS `WKWebView` / Windows `WebView2` + fine-grained SolidJS signals (`requestAnimationFrame` token batching, zero VDOM) + WebGL Xterm.
 
 ### 6. Agents That Leave the Chat
 Most AI coding tools stop at the repository. Hoxi also lets a session act on native apps, fan one goal out into parallel projects, and review what lands upstream.
@@ -77,26 +77,27 @@ Most AI coding tools stop at the repository. Hoxi also lets a session act on nat
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────────┐
-│ Native Host & Mobile Client (Wails v2 + NSStatusBar + Flutter App)      │
-│  • macOS WKWebView (typically ~30MB RAM, ~0.2s cold start, vibrancy)    │
-│  • Menu bar tray with live Running count & Attention approval badges    │
+│ Native Host & Mobile Client (Wails v2 + Tray + Flutter App)             │
+│  • macOS WKWebView & Windows WebView2 (~30MB RAM, ~0.2s cold start)     │
+│  • Native tray (`NSStatusBar` / `Shell_NotifyIconW`) Running/Attention  │
 │  • Mobile App (`client/`): LAN & Relay control for Hoxi & GoPanel       │
 ├─────────────────────────────────────────────────────────────────────────┤
 │ 3-Pane SolidJS Workspace (Zero-VDOM, 120Hz rAF Batched Streaming)       │
 │  • Left: Projects, Worktree Sandboxes, Multi-Runtime Sessions           │
 │  • Center: Unified Timeline, Subagent Trees, ThoughtBox, Steer Composer │
-│  • Right: Pierre Diffs, 8-Dim Memory, Files, WebGL Xterm, Chrome View   │
+│  • Right: Pierre Diffs, 8-Dim Memory, Files, WebGL Xterm, Chrome & Apps │
 ├─────────────────────────────────────────────────────────────────────────┤
 │ Go Supervisor, Loopback Gateway & Session Store (`internal/`)           │
 │  • Hoxi-owned sessions (`~/.hoxi/sessions/<id>/session.json` + JSONL)   │
 │  • Git Worktree sandboxes, Seatbelt confinement & unified Safety Gate   │
-│  • 8-CLI  Session Handoff, loopback OpenAI relay & health circuit-breaker│
+│  • Native Computer Control (`internal/computer`) & Browser (`browser/`) │
+│  • 8-CLI Session Handoff, loopback OpenAI relay & health circuit-breaker│
 │  • Loopback proxy (`Proxy: nil`, `FlushInterval: -1`, per-boot auth)    │
 ├─────────────────────────────────────────────────────────────────────────┤
 │ Pluggable Execution Runtimes (`internal/runner` & `internal/opencode`)  │
 │  • OpenCode (`opencode serve` pristine upstream binary, zero-fork)      │
 │  • Claude Code (`claude`), Antigravity (`agy`), Gemini CLI (`gemini`)   │
-│  • Qoder, CodeBuddy CLIs (read-only Plan mode)                          │
+│  • Qoder (`qoder`), CodeBuddy (`codebuddy`) CLIs (read-only Plan mode)  │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -156,7 +157,8 @@ npm --prefix web test && npm --prefix web run build
 - **[client/README.md](client/README.md)**: Hoxi Mobile App (Flutter, iOS/Android — AI Command Center & GoPanel Server Manager)
 - **[DEVELOPMENT.md](DEVELOPMENT.md)**: Deep-dive architecture, OpenAPI/SSE contracts, Worktree state machines, and plugin hooks
 - **[HANDOFF_AND_CLI_BRIDGE.md](HANDOFF_AND_CLI_BRIDGE.md)**: Cross-CLI session handoff IR, local credential discovery, and protocol bridges
-- **[BROWSER.md](BROWSER.md)**: Isolated Headless Chrome inspector, manual takeover, and security boundaries
+- **[COMPUTER.md](COMPUTER.md)**: Native macOS & Windows computer control (`hoxi_computer`), per-app authorization, and validation boundaries
+- **[BROWSER.md](BROWSER.md)**: Desktop Window & Headless Chrome inspector, Chrome Link extension, manual takeover, and security boundaries
 - **[docs/releases.md](docs/releases.md)** & **[docs/auto-updates.md](docs/auto-updates.md)**: DMG notarization, Sparkle EdDSA appcast, and release pipeline
 - **[CONTRIBUTING.md](CONTRIBUTING.md)**: Local workflow, required gates and pull-request rules
 - **[SECURITY.md](SECURITY.md)**: Vulnerability reporting and the local security model

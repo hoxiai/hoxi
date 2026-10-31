@@ -154,6 +154,10 @@ func Run(distFS fs.FS) {
 		fmt.Println(buildinfo.Version)
 		return
 	}
+	// Before any daemon, port or log file: a repeat launch goes to the running window.
+	if !cfg.NoDesktop && handOffToRunningInstance(identity.BundleID) {
+		return
+	}
 
 	cfg.RootDir = workspace.ResolveInitialRootDir(cfg.RootDir)
 

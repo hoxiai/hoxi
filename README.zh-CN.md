@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  专为高强度 AI 研发打造的 <b>macOS 原生多 Agent 并行工作台</b>，配套 <b>Hoxi &amp; <a href="https://github.com/hoxiai/gopanel">GoPanel</a> 手机端开发与服务器掌上管家</b>。
+  专为高强度 AI 研发打造的 <b>macOS &amp; Windows 原生多 Agent 并行工作台</b>，配套 <b>Hoxi &amp; <a href="https://github.com/hoxiai/gopanel">GoPanel</a> 手机端开发与服务器掌上管家</b>。
 </p>
 
 <p align="center">
@@ -25,7 +25,7 @@
 
 ---
 
-**Hoxi** ([hoxi.ai](https://hoxi.ai)) 不是又一个吃掉 1.5GB 内存的套壳 Electron 编辑器（典型约 **30 MB 内存**、约 **0.2 秒冷启动**）。
+**Hoxi** ([hoxi.ai](https://hoxi.ai)) 不是又一个吃掉 1.5GB 内存的套壳 Electron 编辑器（macOS 与 Windows 原生宿主，典型约 **30 MB 内存**、约 **0.2 秒冷启动**）。
 
 它把桌面端的 **OpenCode**、**Claude Code**、**Google Antigravity (`agy`)**、**Gemini CLI (`gemini`)**、**Qoder（通义灵码）**、**CodeBuddy（腾讯云）** 统一收进同一个三栏工作区，并通过配套移动端（[`client/`](client/README.zh-CN.md)）把**桌面 AI 研发指挥**与 **[GoPanel](https://github.com/hoxiai/gopanel) 服务器运维管理**装进你的口袋。
 
@@ -52,13 +52,13 @@
 
 ### 4. 长对话“越写越忘”反复踩坑，全用旗舰模型烧钱太狠
 对话超过三四十轮后，上下文窗口塞满历史废话，Agent 开始遗忘最初定下的架构红线；而所有杂活都走主模型，Token 账单涨得肉疼。
-- **8 维结构化长效记忆（`.hoxi/memory/`）**：自动将长会话压缩沉淀为**目标、约束、关键事实、已改文件、报错与修复、待办、当前进展、下一步** 8 个结构化维度，跨轮次持久注入，长线重构不失忆。
+- **8 维结构化长效记忆（`<project>/.hoxi/memory/project.md` 与 `<project>/.hoxi/memory/sessions/<session>.md`）**：自动将长会话压缩沉淀为**目标、约束、关键事实、已改文件、报错与修复、待办、当前进展、下一步** 8 个结构化维度，跨轮次持久注入，长线重构不失忆。
 - **角色化模型路由（省钱利器）**：主对话用顶级编码模型；会话标题生成、后台子代理（Subagent）、8 维记忆压缩、Git 提交信息生成可分别指定便宜快速的轻量模型（或本地 Ollama / vLLM），其中 Git Commit 更支持 **0 延迟纯本地规则合成**，不花一分冤枉钱。
 
 ### 5. 离开工位不敢放手，线上服务器还得背电脑管（Seatbelt 沙箱 + 手机端双栖遥控）
 独立开发者与精干团队既要写代码，又要管线上服务器。全自动放行怕 Agent 一句 `rm -rf` 删库或泄露密钥；全手动又得死盯屏幕点确认；出门在外还得随时处理审批与服务器告警。
-- **跨引擎统一高危门控 + Seatbelt 进程沙箱 + 无人值守模式（`unattended`）**：无论底层是 OpenCode、Claude Code、Antigravity 还是 Gemini CLI，涉及 `rm`、`sudo`、`git push --force`、敏感文件读取等高危指令一律经 PreToolUse Hook 硬拦截并点亮 macOS 状态栏 `Attention` 徽章。开启**无人值守模式**后，会话强制运行在「隔离 Git Worktree + macOS Seatbelt 操作系统沙箱」内，自动剥离环境变量凭据、封锁 `~/.ssh` / `~/.aws` / `.env` 读取，并对动态拼接命令、`git push`、提权与外发执行零妥协硬拒绝。
-- **运行时中途纠偏（Steer，OpenCode 会话）+ 隔离浏览器 & Chrome Link 扩展**：Agent 思路偏了无需强杀重来，随时插入指令实时纠偏；既可使用会话独占的 Headless Chrome，也可通过 Chrome Link 扩展（`extensions/chrome`，一次性 2 分钟连接码）安全接管本机已打开并登录的 Chrome 标签页。
+- **跨引擎统一高危门控 + Seatbelt 进程沙箱 + 无人值守模式（`unattended`）**：无论底层是 OpenCode、Claude Code、Antigravity 还是 Gemini CLI，涉及 `rm`、`sudo`、`git push --force`、敏感文件读取等高危指令一律经 PreToolUse Hook 硬拦截并点亮 macOS `NSStatusBar` / Windows 系统托盘 `Attention` 徽章。开启**无人值守模式**后，会话强制运行在「隔离 Git Worktree + macOS Seatbelt 操作系统沙箱」内，自动剥离环境变量凭据、封锁 `~/.ssh` / `~/.aws` / `.env` 读取，并对动态拼接命令、`git push`、提权与外发执行零妥协硬拒绝。
+- **运行时中途纠偏（Steer，OpenCode 会话）+ 桌面浏览器窗口 / 隔离无头浏览器 / Chrome Link 扩展**：Agent 思路偏了无需强杀重来，随时插入指令实时纠偏；默认打开持久化 `~/.hoxi/browser-profile` 的真实桌面 Chrome 窗口（`window` 模式，登录态跨重启保留），可选会话独占的隔离无头模式（`headless`），也可通过 Chrome Link 扩展（`extensions/chrome`，首次 2 分钟一次性配对码、后续通过 `linkToken` 一键自动重连，支持多标签与子弹窗 `openerTabId` 接管）安全操控日常 Chrome。
 - **手机端随身控制台（[`client/`](client/README.zh-CN.md) — `沟通 · 工作台 · 一人公司 · 我的`）**：
   1. **三通道弹性连接（局域网优先、失败回落中继）**：支持**局域网扫码直连**（`:5417`）、**Cloudflare Tunnel 中继**（`:5418`）以及 **[GoPanel](https://github.com/hoxiai/gopanel) 反向隧道 + iPhone APNs 审批提醒推送**（推送载荷仅含待处理计数，绝不经第三方通道传输代码或命令明文）。
   2. **工具意图识别 + 修改类操作强制确认闭环**：一句话查询 **Hoxi 桌面编码进展**与 **GoPanel 服务器水位**，或下发指令跑单测、审查/提交 Git 改动、批准安全门控、重启容器、续期 SSL 证书；所有修改类动作强制生成 **2 分钟有效、单次消费的确认卡片**，并携带 `X-Idempotency-Key` 与 `instructionId` 幂等对账，杜绝误触与弱网重放。
@@ -78,26 +78,27 @@
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────────┐
-│ 原生宿主与移动端双栖控制 (Wails v2 + NSStatusBar + Flutter 手机客户端)   │
-│  • macOS WKWebView (典型约 30MB 内存, 约 0.2s 冷启动, 原生毛玻璃与交通灯)│
-│  • 状态栏常驻托盘 (实时显示 Running 并发计数 / Attention 待审批提醒)     │
+│ 原生宿主与移动端双栖控制 (Wails v2 + 原生托盘 + Flutter 手机客户端)     │
+│  • macOS WKWebView & Windows WebView2 (约 30MB 内存, 约 0.2s 冷启动)    │
+│  • 状态栏/系统托盘 (`NSStatusBar` / `Shell_NotifyIconW`) Running/审批   │
 │  • 移动端 (`client/`): 局域网/中继双通道接管 Hoxi 桌面与 GoPanel 服务器  │
 ├─────────────────────────────────────────────────────────────────────────┤
 │ 三栏 SolidJS 极速工作区 (零虚拟 DOM, 120Hz rAF 批处理满帧流式渲染)       │
 │  • 左栏：多项目管理、Git Worktree 沙箱切换、跨软件会话接管中心           │
 │  • 中栏：统一时间线、Subagent 嵌套树、ThoughtBox 思考抽屉、Steer 输入框 │
-│  • 右栏：Pierre Diffs 代码对比、8 维记忆库、文件树、WebGL 终端、浏览器   │
+│  • 右栏：Pierre Diffs、8 维记忆库、文件树、WebGL 终端、浏览器与电脑控制 │
 ├─────────────────────────────────────────────────────────────────────────┤
 │ Go 守护进程、本地回环网关与会话中枢 (`internal/`)                       │
 │  • Hoxi 自主会话存储 (`~/.hoxi/sessions/<id>/session.json` + JSONL)     │
 │  • Git Worktree 沙箱、Seatbelt 进程沙箱与统一审批门控 (`internal/runner`)│
+│  • 原生电脑控制 (`internal/computer`) 与多模式浏览器 (`internal/browser`)│
 │  • 8 大 CLI 会话无损物化、本机 OpenAI 兼容中转与健康度熔断选模           │
 │  • 本地防劫持网关 (`Proxy: nil` 免疫代理 502, `FlushInterval: -1`)       │
 ├─────────────────────────────────────────────────────────────────────────┤
 │ 可插拔多执行引擎层 (`internal/runner` & `internal/opencode`)            │
 │  • OpenCode (原版 `opencode serve` 零侵入监管 + 内联 LSP 诊断)          │
 │  • Claude Code (`claude`) / Antigravity (`agy`) / Gemini CLI (`gemini`) │
-│  • Qoder / CodeBuddy（只读 Plan 模式）                                  │
+│  • Qoder (`qoder`) / CodeBuddy (`codebuddy`)（只读 Plan 模式）          │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -157,7 +158,8 @@ npm --prefix web test && npm --prefix web run build
 - **[client/README.zh-CN.md](client/README.zh-CN.md)**: Hoxi 移动端开发指挥台与 GoPanel 手机服务器管家（Flutter，iOS / Android）
 - **[DEVELOPMENT.md](DEVELOPMENT.md)**: 生产级架构蓝图、OpenAPI/SSE 契约、Worktree 状态机与插件细节
 - **[HANDOFF_AND_CLI_BRIDGE.md](HANDOFF_AND_CLI_BRIDGE.md)**: 8 大外部 CLI 会话解析、统一 IR 物化与本地凭证桥接规范
-- **[BROWSER.md](BROWSER.md)**: 会话级隔离 Headless Chrome 审查器、人工接管机制与安全边界
+- **[COMPUTER.md](COMPUTER.md)**: 原生电脑控制（`hoxi_computer`）、会话级单应用授权与平台验证边界
+- **[BROWSER.md](BROWSER.md)**: 桌面 Chrome 窗口 / 隔离 Headless Chrome 检视器、Chrome Link 扩展、人工接管与安全边界
 - **[docs/releases.md](docs/releases.md)** & **[docs/auto-updates.md](docs/auto-updates.md)**: DMG 签名公证、Sparkle EdDSA 自动更新与一键发版流水线
 - **[CONTRIBUTING.md](CONTRIBUTING.md)**: 本地开发流程、必跑门禁与 PR 规范
 - **[SECURITY.md](SECURITY.md)**: 漏洞上报渠道与本地安全边界

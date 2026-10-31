@@ -1,6 +1,6 @@
 # AGENTS.md
 
-`Hoxi` 是面向独立开发者的本地多 Agent 研发工作台，由三部分组成：**macOS 桌面端**（本仓库根目录，Go + Wails + SolidJS）、**Flutter 手机端**（[`client/`](client/)）、以及配套的 **GoPanel 服务器面板**（独立仓库 `gopanel_v2`）。手机端经 GoPanel 反向隧道远程查看与控制 Hoxi 桌面。
+`Hoxi` 是面向独立开发者的本地多 Agent 研发工作台，由三部分组成：**macOS 与 Windows 桌面端**（本仓库根目录，Go + Wails + SolidJS）、**Flutter 手机端**（[`client/`](client/)）、以及配套的 **GoPanel 服务器面板**（独立仓库 `gopanel_v2`）。手机端经局域网直连、Cloudflare Tunnel 或 GoPanel 反向隧道远程查看与控制 Hoxi 桌面。
 
 本文分三段：**现状**（已实现，可在代码或测试中找到）、**边界与约束**（写代码时必须遵守）、**规划**（未实现，不能当作现有能力引用）。手机端细节见 [`client/AGENTS.md`](client/AGENTS.md)；远程通道以 [远程隧道契约](docs/gopanel-hoxi-remote-tunnel.md) 为准。文档与代码冲突时以代码和测试为准，并同步修正文档。
 
@@ -14,12 +14,12 @@
 - **状态栏 / 系统托盘**（`internal/statusbar`）：macOS `NSStatusBar` 与 Windows `Shell_NotifyIconW` 原生系统托盘，显示 `Running` / `Attention` 状态徽标与快捷菜单；新增待审批项时只回调一次，不含命令文本（经隧道转为手机推送）
 - **OpenCode 运行时**（`internal/opencode`）：官方 `opencode` 进程监管，每次启动生成随机 `OPENCODE_SERVER_PASSWORD` 并以 HTTP Basic Auth 访问；`opencode serve` 启动后按 PID、启动时间与参数序列 `serve --hostname 127.0.0.1 --port <port>` 登记到 `~/.hoxi/reclaim.json`（`internal/reclaim`），进程被回收后注销。Hoxi 未经正常退出（崩溃、`kill -9`）留下的守护进程由下次启动按账本回收，只处理所属 Hoxi 进程已退出的记录，三项都一致才结束进程；不扫描进程表，另一个仍在运行的变体、用户自己或其他工具启动的 `opencode serve` 都不会被结束。Windows 上守护进程经 `subproc.StartTied` 挂起启动、放进「句柄关闭即结束」的 Job Object 后再恢复，Hoxi 被强杀（崩溃、安装器的 `taskkill /F`）时守护进程及其子进程随之结束，不再锁住安装目录的 `opencode.exe`；绑定失败只记警告，仍由账本兜底。NSIS 安装与卸载另按完整路径结束安装目录里的 `Hoxi.exe` / `opencode.exe` / `sqlite3.exe`（不按进程名）
 - **多运行时引擎**（`internal/runner`）：统一驱动 Claude Code、Antigravity（`agy`）、Gemini CLI（`gemini`）、Qoder、CodeBuddy 子进程，翻译为统一事件流；Claude Code、Antigravity 与 Gemini CLI 经 PreToolUse / BeforeTool Hook 接入同一审批平面，审批决策统一由 `internal/runner/approval_decision.go` 判定，策略存于 `~/.hoxi/approval-policy.json`（另支持用户显式开启轻量模型审查 `aiReview` + `aiReviewModel`，由 `internal/runner/approval_ai_review.go` 在静态高危与破坏性底线通过后对 `bash -c`、复杂循环等不透明命令做只读判定，超时或存疑一律回退人工确认；请求给足推理模型的思考预算并带 `reasoning_effort: low`，上游不认该参数时自动去掉重试；未放行时审批卡片标出模型的理由或不可用原因：无结论、超时、回复无效、调用失败或模型未配置）。审批模式含 `unattended`（无人值守，仅桌面端可开，且要求本机沙箱可用）：新建会话必须是隔离 worktree 加命令沙箱，否则拒绝创建。Claude Code、Antigravity、Gemini CLI、Qoder、CodeBuddy 的整个运行时进程由 `confineRuntimeCommand` 包进 Seatbelt；OpenCode 只有 bash 工具经沙箱插件包裹，文件工具跑在守护进程里，因此不享受无人值守的全部放行，仍按完全信任规则询问。Qoder / CodeBuddy 没有 PreToolUse 门控能力，无法执行任何模式都保留的硬底线审批，因此只允许在只读模式（Plan）运行，非只读模式一律拒绝启动
-- **前端工作区**（`web/`）：Vite + SolidJS + Tailwind 三栏布局；SSE 增量经 `requestAnimationFrame` 批处理；Subagent 嵌套时间线、`ThoughtBox`、`ToolCard`（含内联 LSP 诊断）；`@pierre/diffs` 代码审查、`@xterm/xterm` + WebGL 终端、无头 Chrome 浏览器（`internal/browser`；异常退出留下的 Chrome、配置目录与 OpenCode 插件目录记在 `~/.hoxi/reclaim.json`，由 `internal/reclaim` 按所属 Hoxi 进程登记，下次启动只回收所属进程已退出的记录，PID、启动时间与 `--user-data-dir` 都一致才结束进程，不扫描进程表或临时目录），以及经 Chrome Link 扩展（`extensions/chrome`，手动加载的未打包扩展）接管用户已打开的 Chrome 标签页：桌面签发 2 分钟有效的一次性连接码，扩展经 `/api/hoxi/browser/extension` WebSocket 连入，仅接受 `chrome-extension://` 来源与回环地址，同一时间只允许一个连接，断开后不会静默回落到隔离浏览器（详见 [`BROWSER.md`](BROWSER.md)）
-- **原生电脑控制**（`internal/computer`）：macOS（Accessibility / ScreenCaptureKit / CGEvent）与 Windows（UI Automation / PrintWindow / SendInput）的前台窗口读取与输入，首个模型入口为 OpenCode `hoxi_computer`；桌面面板或智能体（传 `app`）按会话与工作树请求单个运行中应用，每次授权都要原生弹窗确认；终端与脚本工具、密码管理器、系统设置不可授权。每次输入通过统一审批平面的本机「允许一次」，不支持远程批准、始终允许或无人值守输入。可暂停、撤销或停止全部授权；只截目标窗口，不回落整个桌面。Windows 在 Mac 上仅交叉编译，仍需真机验收；详见 [`COMPUTER.md`](COMPUTER.md)
-- **会话能力**：Git Worktree 会话隔离（`internal/worktree`，`?directory=` 作用域）、长会话历史分页（runner `GET …/message?limit=N&before=<messageID>` 返回最新 N 条或游标之前的一页，并去掉与 `state.output` 相同的 `metadata.output` 副本；不带 `limit` 仍返回全量，CLI 与手机端不受影响。桌面端 `web/src/store/session-history.ts` 打开会话只取最新 200 条，上滑或点「加载更早」再按页取，转写搜索、导出与提交范围判定前补齐全量；子 Agent 会话始终全量）、运行中纠偏（Steer）与停止、按消息回滚（Revert）与分叉（Fork）、会话目标 `/goal`（按整轮判定进展，智能体以回复末行 `[[goal:complete]]` / `[[goal:blocked]]` 或 `goal_report` 工具上报，所有运行时可用）；runner 在原生 CLI 运行时首轮与切换运行时时注入 `<project>/.hoxi/memory/` 记忆。8 维度压缩提示词、密钥脱敏与 `project.md` 冻结抽为共享模块 `.opencode/lib/memory-compaction.js`，由桌面端 OpenCode 插件（`internal/opencode/context_compaction.js`）与仓库级 `.opencode/plugins/hoxi-memory.js` 共用；会话级压缩落盘（`<project>/.hoxi/memory/<session>.md`）与 `hoxi-goal.js` 位于 `.opencode/plugins/`，在 OpenCode 打开本仓库时加载
+- **前端工作区**（`web/`）：Vite + SolidJS + Tailwind 三栏布局；SSE 增量经 `requestAnimationFrame` 批处理；Subagent 嵌套时间线、`ThoughtBox`、`ToolCard`（含内联 LSP 诊断）；`@pierre/diffs` 代码审查、`@xterm/xterm` + WebGL 终端、内置浏览器检视器（`internal/browser`；默认以可见桌面 Chrome 窗口 `window` 模式运行并复用持久化 `~/.hoxi/browser-profile`，可选隔离无头模式 `headless`；异常退出留下的 Chrome、临时配置/传输目录与 OpenCode 插件目录记在 `~/.hoxi/reclaim.json`，由 `internal/reclaim` 按所属 Hoxi 进程登记，下次启动只回收所属进程已退出的记录，PID、启动时间与 `--user-data-dir` 都一致才结束进程，不扫描进程表或临时目录），以及经 Chrome Link 扩展（`extensions/chrome`，手动加载的未打包扩展）接管用户已打开的日常 Chrome：首次连接由桌面签发 2 分钟有效的一次性连接码，握手成功后在 `~/.hoxi/browser-profile/.hoxi-extension-token` 与扩展 `chrome.storage.local` 持久化 `linkToken` 供后续一键自动重连；扩展经 `/api/hoxi/browser/extension` WebSocket 连入，仅接受 `chrome-extension://` 来源与回环地址，支持多标签切换/新建/关闭及自动跟随子标签/弹窗（`openerTabId`），断开后不会静默回落到隔离浏览器（详见 [`BROWSER.md`](BROWSER.md)）
+- **原生电脑控制**（`internal/computer`）：macOS（Accessibility / ScreenCaptureKit / CGEvent）与 Windows（UI Automation / PrintWindow / SendInput）的前台窗口读取与输入，首个模型入口为 OpenCode `hoxi_computer`；桌面面板或智能体（传 `app`）按会话与工作树请求单个运行中应用，每次授权都要原生弹窗确认；终端与脚本工具、密码管理器、系统设置不可授权。每次输入通过统一审批平面的本机「允许一次」，不支持远程批准、始终允许或无人值守输入。可暂停、撤销或停止全部授权；只截目标窗口，不回落整个桌面。Windows 11 ARM64 虚拟机已完成窗口枚举、UIA 树读取、单窗口截图与授权/审批回归测试，真机多显示器/高 DPI 仍待进一步验收；详见 [`COMPUTER.md`](COMPUTER.md)
+- **会话能力**：Git Worktree 会话隔离（`internal/worktree`，`?directory=` 作用域）、长会话历史分页（runner `GET …/message?limit=N&before=<messageID>` 返回最新 N 条或游标之前的一页，并去掉与 `state.output` 相同的 `metadata.output` 副本；不带 `limit` 仍返回全量，CLI 与手机端不受影响。桌面端 `web/src/store/session-history.ts` 打开会话只取最新 200 条，上滑或点「加载更早」再按页取，转写搜索、导出与提交范围判定前补齐全量；子 Agent 会话始终全量）、运行中纠偏（Steer）与停止、按消息回滚（Revert）与分叉（Fork）、会话目标 `/goal`（按整轮判定进展，智能体以回复末行 `[[goal:complete]]` / `[[goal:blocked]]` 或 `goal_report` 工具上报，所有运行时可用）；runner 在原生 CLI 运行时首轮与切换运行时时注入 `<project>/.hoxi/memory/` 记忆。8 维度压缩提示词、密钥脱敏与 `project.md` 冻结抽为共享模块 `.opencode/lib/memory-compaction.js`，由桌面端 OpenCode 插件（`internal/opencode/context_compaction.js`）与仓库级 `.opencode/plugins/hoxi-memory.js` 共用；会话级压缩落盘（`<project>/.hoxi/memory/sessions/<session>.md`）与 `hoxi-goal.js` 位于 `.opencode/plugins/`，在 OpenCode 打开本仓库时加载
 - **外部 CLI 会话接管**（`internal/handoff`）：从 Claude / Codex / Gemini / Grok / OpenCode / Trae / Qoder / CodeBuddy 导入会话
 - **Agent Skills 与工具网桥**（`internal/skills` + `internal/tools` + `internal/workapps`）：本地 Skill 发现（OpenCode `/skill`）、内置默认 Skill `skill-authoring` 与 `tools`（`internal/skills/defaults/`，按内置 `version` 自动升级并清理废弃目录，配套本机免 Key 工具网桥 `internal/tools` `/api/hoxi/tools/{discover,inspect,run}` 与 Work 应用状态 `internal/workapps` `/api/hoxi/work/apps`），以及 hoxi.ai 线上技能目录（`GET /api/hoxi/skills/marketplace`）与显式安装（`POST /api/hoxi/skills/marketplace/install`，校验 `sha256` 后原子写入 `~/.hoxi/skills/<slug>/`，不自动安装、不执行远程脚本、不经隧道开放）
-- **GoPanel 反向隧道**（`internal/tunnel` + `internal/gateway/tunnel.go`）：Mac 主动外连 GoPanel，路由白名单内的 HTTP / SSE 在进程内交给网关；Mac 不开放公网端口。待处理审批经 Notify 帧交给 GoPanel 发 APNs；无人值守或出现审批超时的任务结束时，另发一条 `kind: "summary"` 计数摘要（放行 / 拒绝 / 超时 / 待处理数量，同时弹桌面通知）
+- **GoPanel 反向隧道**（`internal/tunnel` + `internal/gateway/tunnel.go`）：桌面端主动外连 GoPanel，路由白名单内的 HTTP / SSE 在进程内交给网关；桌面不开放公网端口。待处理审批经 Notify 帧交给 GoPanel 发 APNs；无人值守或出现审批超时的任务结束时，另发一条 `kind: "summary"` 计数摘要（放行 / 拒绝 / 超时 / 待处理数量，同时弹桌面通知）
 - **局域网配对二维码**（`internal/pairing` + 设置 → 远程）：桌面端生成含本机局域网 IPv4、端口 `5417` 与配对令牌的二维码（`GET /api/hoxi/pairing/qr`，返回 data:PNG），手机 App 扫码后经局域网直连；桌面监听 `:5417`（`internal/gateway/lan.go`）用配对令牌鉴权并复用远程路由白名单，仅服务局域网来源地址（loopback / RFC1918 / ULA / 链路本地 / CGNAT），令牌存 `~/.hoxi/pairing.json`（0600，属受保护状态文件）。配置了 Cloudflare Tunnel 时二维码另带 `relay`（公开主机名）与独立的 `relayToken`（中继令牌，与局域网令牌不同，同存 `~/.hoxi/pairing.json`），手机据此做「局域网优先、失败回落中继」的传输选路，走中继时只发 `relayToken`。面板打开即显示二维码，并支持**重新生成令牌**（`POST /api/hoxi/pairing/rotate`，局域网与中继两个令牌一起换，旧码立即失效）。该路由与 `5417` 监听均**不对隧道开放**；`5417` 为明文 + 令牌（跨网端到端加密仍为规划，见 [`docs/remote-access-e2e-contract.md`](docs/remote-access-e2e-contract.md)）
 - **反向代理入口**（`internal/gateway/ingress.go`）：本机 loopback `127.0.0.1:5418` 上另开一个入口，供 `cloudflared` 等本地转发器把公网请求代理进来，`cloudflared` 的 `service` 指到这里；复用同一份远程路由白名单，但只认中继令牌（`relayToken`，局域网令牌在此一律 401，`servePairedRequest` 按来源区分），**不做来源地址过滤**（公网可达性由转发器前置鉴权把关，如 Cloudflare Access）。该入口同样不对 GoPanel 隧道开放
 - **Cloudflare Tunnel 连接器**（`internal/cloudflared` + 设置 → 远程）：受监管的 `cloudflared` 进程，以 `--no-autoupdate tunnel run` 运行并经环境变量 `TUNNEL_TOKEN` 传入凭据（不出现在进程参数中）、断线退避重启；`connector token` 存 `~/.hoxi/cloudflared.json`（0600，属受保护状态文件），HTTP API 只回状态、从不回令牌；二进制仅在 `HOXI_CLOUDFLARED` / PATH / `~/.hoxi/bin` 解析，不自动下载。管理路由 `/api/hoxi/cloudflared/*` 桌面专属、不对隧道开放
@@ -29,7 +29,7 @@
 
 ### 1.2 手机端（`client/`）
 
-Flutter + Riverpod + GoRouter + Dio，四栏：沟通 · 工作台 · 一人公司 · 我的。已实现并有测试：节点连接与代次隔离、经 GoPanel 隧道访问 Hoxi（HTTP / SSE）、模型工具调用意图识别 + 关键词回退、修改类操作确认卡片、Hoxi 编码会话 / 审批 / Git 审查、GoPanel 资源页、iPhone 审批提醒推送。手动开启的连续语音通话与 iOS Realtime 语音客户端有代码，未做真机验收。完整清单与测试对应关系见 [`client/AGENTS.md`](client/AGENTS.md)。
+Flutter + Riverpod + GoRouter + Dio，四栏：沟通 · 工作台 · 一人公司 · 我的。已实现并有测试：节点连接与代次隔离、三通道弹性连接（局域网 `:5417` 优先、失败回落 Cloudflare Tunnel `:5418` 中继或经 GoPanel 隧道访问 Hoxi HTTP / SSE）、模型工具调用意图识别 + 关键词回退、修改类操作确认卡片、Hoxi 编码会话 / 审批 / Git 审查 / 节点 Skill 挂载与 Work 应用、GoPanel 资源页、hoxi.ai 账号登录 / 会员中心 / 每日签到、iPhone 审批提醒推送。手动开启的连续语音通话与 iOS Realtime 语音客户端有代码，未做真机验收。完整清单与测试对应关系见 [`client/AGENTS.md`](client/AGENTS.md)。
 
 ### 1.3 目录结构
 
@@ -43,7 +43,7 @@ Flutter + Riverpod + GoRouter + Dio，四栏：沟通 · 工作台 · 一人公�
 │   ├── agyhook/                      # [底座层] `hoxi agy-hook` Antigravity PreToolUse hook → runner approval gate
 │   ├── attachment/                   # [业务层] Multimodal file/image attachment staging, validation & store
 │   ├── auth/                         # [业务层] Hoxi account one-click authorization, token poll/exchange & store
-│   ├── browser/                      # [业务层] Headless Chrome session manager, tabs, actions & inspector bridge
+│   ├── browser/                      # [业务层] Desktop Window & Headless Chrome session manager, tabs, actions, workflows & Chrome Link bridge
 │   ├── buildinfo/                    # [底座层] Build version embedded by the desktop build
 │   ├── claudeconfig/                 # [底座层] Claude Code model/config discovery & selection
 │   ├── cli/                          # Terminal-first `hoxi` CLI (REPL, SSE streaming renderer, subcommands & gateway client)
@@ -74,7 +74,7 @@ Flutter + Riverpod + GoRouter + Dio，四栏：沟通 · 工作台 · 一人公�
 │   ├── skills/                       # [业务层] Local Agent Skills discovery + hoxi.ai catalog client & verified installer + embedded defaults
 │   ├── statusbar/                    # [底座层] Running/Attention tracker, attention notices & macOS NSStatusBar / Windows system tray
 │   ├── subproc/                      # [底座层] Child-process constructor: Windows children of the GUI app get a console without a window; StartTied ties long-lived children to Hoxi via a kill-on-close job
-│   ├── telemetry/                    # [业务层] Local token/cost/latency metrics & session usage ledger
+│   ├── telemetry/                    # [业务层] Anonymous install/launch client-events beacon & opt-out settings (~/.hoxi/telemetry.json)
 │   ├── testutil/execstub/            # [测试辅助] Fake CLI executables for tests (symlink to the test binary + sidecar sh script; avoids macOS first-exec scans)
 │   ├── textindex/                    # [底座层] Pure-Go BM25 / trigram full-text search index primitive
 │   ├── tools/                        # [业务层] Hoxi Tools gateway (/api/hoxi/tools/{discover,inspect,run}) with anonymous fallback on 401
@@ -101,19 +101,20 @@ Flutter + Riverpod + GoRouter + Dio，四栏：沟通 · 工作台 · 一人公�
 │           ├── chat_hub/             # 沟通：意图识别（模型工具调用 + 关键词回退）、确认计划、查询上下文、语音通话
 │           ├── portal/               # 一人公司：hoxi.ai 文章、省钱（专线/模型/套餐）、五维自测与工具箱
 │           ├── ai_workspace/         # 工作台：Hoxi (/api/hoxi/*) 与 GoPanel (/api/code/*) 编码会话、Git 审查与终端
-│           └── server/container/database/website/ssl/apps/resources/task_center/auth/settings
+│           └── account/checkin/membership/work_apps/server/container/database/website/ssl/apps/resources/task_center/auth/settings
 ├── extensions/
 │   └── chrome/                       # Chrome Link MV3 extension (manually loaded): worker.js bridge, protocol.js, popup & _locales; node --test *.test.mjs
 ├── .opencode/                        # Upstream OpenCode config root; Hoxi only reads it, never writes memory here
 │   ├── plugins/                      # hoxi-memory.js & hoxi-goal.js
-│   ├── lib/                          # permission-policy.js + memory-compaction.js + command-data-args.js + opaque-command.js + shell-substitution.js + shell-constants.js + shell-loops.js + script-interpreter.js + unattended-policy.js + *.cases.json (shared safety-gate & compaction rules)
+│   ├── lib/                          # permission-policy.js + memory-compaction.js + command-data-args.js + opaque-command.js + shell-substitution.js + shell-constants.js + shell-loops.js + script-interpreter.js + unattended-shell.js + unattended-policy.js + *.cases.json (shared safety-gate & compaction rules)
 │   └── skills/                       # Project-local Agent Skills
 ├── .hoxi/                            # Hoxi-local project state (git-ignored): memory/, worktrees/, attachments/
-│   └── memory/                       # project.md & per-session compaction records (legacy .opencode/memory is read-only)
+│   └── memory/                       # project.md & sessions/<session>.md compaction records (legacy .opencode/memory is read-only)
 ├── docs/                             # Approval hooks, remote tunnel, auto-updates, release & direct-distribution guides (+ assets/)
 ├── scripts/                          # AI one-click release, DMG packaging, notarization & release publishing
 ├── README.md / README.zh-CN.md       # Bilingual landing docs
-├── BROWSER.md                        # Headless Chrome inspector, Chrome Link, manual takeover & security boundaries
+├── COMPUTER.md                       # Native macOS / Windows computer control, per-app authorization & validation boundaries
+├── BROWSER.md                        # Desktop Window & Headless Chrome inspector, Chrome Link, manual takeover & security boundaries
 ├── HANDOFF_AND_CLI_BRIDGE.md         # Cross-CLI handoff IR, credential discovery & protocol bridges
 ├── DEVELOPMENT.md                    # Comprehensive implementation blueprint
 └── AGENTS.md                         # Engineering rules & quick reference
@@ -161,7 +162,7 @@ Flutter + Riverpod + GoRouter + Dio，四栏：沟通 · 工作台 · 一人公�
 
 - **信任边界**：配对即授权。能以管理员身份登录已配对 GoPanel 的人，可在隧道白名单内远程操作这台 Mac（新建会话、下发指令、批准审批）。GoPanel 能看到经它转发的明文，没有端到端加密。隧道白名单之外的路由（账号、提供商配置、浏览器、更新器、OpenCode 原始透传等）一律 403，新增经隧道开放的路由必须同步更新契约文档并补测试
 - **意图识别**：手机配置模型网关时由大模型通过工具调用提出意图；目标必须与实时数据原样匹配，找不到或有歧义时追问；修改类操作一律走确认卡片；未配置模型或网关不支持工具时回退关键词路径。实现见 `client/lib/features/chat_hub/data/chat_intent_*.dart`
-- **数据外发**：手机调用模型时会把会话标题、待审批摘要、最近会话输出片段、节点资源名称等上下文发给用户配置的模型网关。目前 UI 未说明目的地与范围，列为待办（见规划）；在此之前不要扩大发送范围
+- **数据外发**：手机调用模型时会把会话标题、待审批摘要、最近会话输出片段、节点资源名称、主动拍照图片等上下文发给用户配置的模型网关。模型网关配置处可随时查看外发说明，首次对话前强制弹窗确认（`model_gateway_disclosure.dart`、`model_gateway_disclosure_sheet.dart`），抹除本地数据或扩大外发清单版本后会重置确认；未经同步更新 `ModelGatewayDisclosure.contextItems` 与确认版本，严禁扩大发送范围
 - **提示词注入**：会话内容可能诱导模型调用工具。当前由目标校验与确认卡片兜底；桌面端 PreToolUse 审批门控与破坏性命令审批仍是最终防线，不能因手机端有确认而放宽
 - **推送**：只发计数——待审批时发“有几项待处理”，无人值守或出现审批超时的任务结束时发一条摘要（`kind: "summary"`，正文形如“任务已结束：自动放行 X，拒绝 Y，待处理 Z”）；载荷不含命令、代码、路径、会话标题或会话内容；目前仅 iOS APNs，Android 未实现
 - **语音入口**：iOS 不允许第三方 App 后台持续监听自定义唤醒词，可行入口是 Siri / App Intents、操作按钮、小组件和推送点开
@@ -185,7 +186,7 @@ Flutter + Riverpod + GoRouter + Dio，四栏：沟通 · 工作台 · 一人公�
    - **严禁在用户项目里创建 `.opencode/`**：该目录是上游 OpenCode 的配置根，一旦存在，`opencode serve` 会把它当作配置目录并在其中安装 `@opencode-ai/plugin` 依赖（`package.json` + `node_modules`），污染用户仓库。Hoxi 的项目级状态（记忆、工作树、附件）一律写 `<project>/.hoxi/`，路径解析走 [`internal/hoxipaths`](internal/hoxipaths/hoxipaths.go)（`ProjectMemoryDir` / `ProjectSessionMemoryFile`）；旧版 `.opencode/memory/` 仅作为只读回退，不做写入。
 
 3. **三大统一网关平面与 Git Worktree 强隔离 (Unified Gateway Planes & Worktree Scoping)**
-   - **会话、事件流与权限审批三大平面统一收口**：前端（[`web/src/services/api.ts`](web/src/services/api.ts)、[`sse.ts`](web/src/services/sse.ts)）与 CLI 的所有会话操作必须统一走 `/api/hoxi/sessions`，SSE 事件流必须统一订阅 `/api/hoxi/event`，权限审批必须统一走 `/api/hoxi/permission`（由 `gateway` 与 `runner` 合并路由 OpenCode 与 Claude/Antigravity/Qoder/CodeBuddy 运行时），**严禁前端直接裸调上游 `/session`、`/event` 或 `/permission` 接口**。
+   - **会话、事件流与权限审批三大平面统一收口**：前端（[`web/src/services/api.ts`](web/src/services/api.ts)、[`sse.ts`](web/src/services/sse.ts)）与 CLI 的所有会话操作必须统一走 `/api/hoxi/sessions`，SSE 事件流必须统一订阅 `/api/hoxi/event`，权限审批必须统一走 `/api/hoxi/permission`（由 `gateway` 与 `runner` 合并路由 OpenCode 与 Claude/Antigravity/Gemini CLI/Qoder/CodeBuddy 运行时），**严禁前端直接裸调上游 `/session`、`/event` 或 `/permission` 接口**。
    - **工作树目录强隔离**：所有关联特定会话或沙箱的请求（`/api/hoxi/sessions`、`/api/hoxi/event`、`/api/hoxi/permission`、`/file`、`/pty`）**必须**携带该会话对应的 `?directory=<worktree-path>` 参数，严禁跨会话读写或污染其它工作树。
 
 4. **SolidJS 响应式、生命周期清理与异步防竞态约束 (SolidJS Reactivity, Cleanup & Stale-Read Guard)**
@@ -194,7 +195,7 @@ Flutter + Riverpod + GoRouter + Dio，四栏：沟通 · 工作台 · 一人公�
    - **成对清理与防过期响应覆盖**：组件内注册的 `addEventListener`、`ResizeObserver`、定时器及 WebSocket/PTY 连接**必须**在 `onCleanup` 中成对销毁；跨会话或跨目录的异步读取（拉取历史、Diff、诊断等）必须校验当前激活 `sessionID` 或递增请求世代号（Stale-Read Guard），丢弃晚到的过期响应。
 
 5. **任务流状态与回滚闭环 (Task Lifecycle & Control Integrity)**
-   - 会话处于 `busy` 时必须支持实时纠偏（`Steer`）与中止（`Stop`），工具卡片（`ToolCard`）与推理抽屉（`ThoughtBox`）必须准确反映 `pending` / `running` / `completed` / `error` 四态与耗时，且状态变更需实时同步至 macOS 状态栏（`Running` / `Attention`）。
+   - 会话处于 `busy` 时必须支持实时纠偏（`Steer`）与中止（`Stop`），工具卡片（`ToolCard`）与推理抽屉（`ThoughtBox`）必须准确反映 `pending` / `running` / `completed` / `error` 四态与耗时，且状态变更需实时同步至 macOS / Windows 状态栏（`Running` / `Attention`）。
 
 6. **安全门控、网络外发边界、子进程消毒与资源边界 (Safety, Egress, Subprocess & Resource Hygiene)**
    - **破坏性操作人工审批**：包含破坏性指令（`rm`, `sudo`, `chmod`, `chown`, `diskutil`, `mkfs`, `git push --force`, `git reset --hard`）的 Shell 操作与敏感文件读取（`.env` 等）严禁自动放行，必须由 Go 审批策略（`approvalAutoApproves` / `isDestructivePermissionRequest`）交给用户，触发状态栏 `Attention` 与 `<ApprovalGateCard />` 人工确认。破坏性判定只扫描命令本身：提交说明、搜索词、`echo` 文本等字面量数据参数先由 `maskCommandDataArguments`（Go `command_data_args.go` / JS `command-data-args.js`）替换后再匹配，无法确定语义（命令替换、heredoc、管道进 Shell/解释器）时不做替换。
@@ -263,7 +264,7 @@ Flutter + Riverpod + GoRouter + Dio，四栏：沟通 · 工作台 · 一人公�
 | **前端多语言词条** | 同步写入 `web/src/i18n/locales/en-US/<domain>.ts` 与 `zh-CN/<domain>.ts` | 严禁手写维护冗长 interface（由 [`types.ts`](web/src/i18n/types.ts) 自动推导） | [`web/src/i18n/types.ts`](web/src/i18n/types.ts) |
 | **移动端聊天查询上下文** | [`chat_information_engine.dart`](client/lib/features/chat_hub/data/chat_information_engine.dart) | 严禁在 UI Widget 中硬编码业务拼接逻辑 | [`ChatInformationEngine`](client/lib/features/chat_hub/data/chat_information_engine.dart) |
 | **移动端聊天内控制动作** | `chat_session_actions.dart` / `chat_infrastructure_actions.dart`，接入 `chat_intent_tools.dart` 与 [`chat_action_executor.dart`](client/lib/features/chat_hub/data/chat_action_executor.dart) | 严禁跳过确认计划直接执行修改；严禁要求用户退出聊天进入多层菜单才能完成常规控制 | [`ChatIntentDispatcher`](client/lib/features/chat_hub/data/chat_intent_dispatcher.dart) |
-| **移动端语音** | [`chat_voice_service.dart`](client/lib/features/chat_hub/data/chat_voice_service.dart) + [`realtime_voice_model_service.dart`](client/lib/features/chat_hub/data/realtime_voice_model_service.dart) + [`chat_hub_voice_call_sheet.dart`](client/lib/features/chat_hub/presentation/widgets/chat_hub_voice_call_sheet.dart) | 严禁在每轮语音回合反复销毁重建原生 `AVAudioEngine` | [`ChatHubVoiceCallSheet`](client/lib/features/chat_hub/presentation/widgets/chat_hub_voice_call_sheet.dart) |
+| **移动端语音** | [`chat_voice_service.dart`](client/lib/features/chat_hub/data/chat_voice_service.dart) + [`realtime_voice_client.dart`](client/lib/features/chat_hub/data/realtime_voice_client.dart) + [`chat_realtime_voice_control.dart`](client/lib/features/chat_hub/data/chat_realtime_voice_control.dart) + [`chat_hub_voice_call_sheet.dart`](client/lib/features/chat_hub/presentation/widgets/chat_hub_voice_call_sheet.dart) | 严禁在每轮语音回合反复销毁重建原生 `AVAudioEngine` | [`ChatHubVoiceCallSheet`](client/lib/features/chat_hub/presentation/widgets/chat_hub_voice_call_sheet.dart) |
 
 ### 2.4 专项文档
 
@@ -293,10 +294,9 @@ Flutter + Riverpod + GoRouter + Dio，四栏：沟通 · 工作台 · 一人公�
 | 远程端到端加密与盲目中继 | 跨网直连优先、打不通回落只转发密文的中继，中继读不到内容；配对票据服务与数据面分离。LAN 直连与 `5417` 令牌监听**已实现**，跨网部分见 [`docs/remote-access-e2e-contract.md`](docs/remote-access-e2e-contract.md) |
 | 隧道 WebSocket | 经隧道使用远程终端（`/pty`），当前 GoPanel 返回 501 |
 | 隧道凭据入钥匙串 | 当前为 `0600` 明文文件 |
-| 手机端数据外发说明 | 在模型网关配置处与首次对话前说明上下文发往哪个网关、包含哪些内容 |
-| 系统语音入口 | Siri / App Intents、操作按钮、小组件、语音深链；iOS 不做后台自定义唤醒词 |
-| 语音验收 | iOS 识别主动轮转（当前为结束或出错后重启）、Realtime 长通话、Android 原始 PCM 上送、30 分钟连续通话与时延指标 |
+| 桌面/锁屏小组件与系统级操作按钮定制 | Siri / App Intents（`OpenHoxiVoiceIntent`、`OpenHoxiApprovalsIntent`、`HoxiShortcuts`）与 `hoxi://voice`、`hoxi://approvals` 深链**已实现**；桌面/锁屏 Widget 与操作按钮专属配置未实现；iOS 不做后台自定义唤醒词 |
+| 真机语音长稳与指标验收 | iOS 50 秒识别主动轮转与 Android 16kHz 原始 PCM 采集（`startPcmCapture`）已在代码中实现；30 分钟连续通话、蓝牙/弱网路由、Realtime 长通话与端到端时延指标待真机验收 |
 | Android 推送 | 需厂商推送或第三方通道 |
-| 手机委托执行业务 Skill | 通用 Skill 描述、发现、输入与结构化结果契约；手机一句话 → 节点执行指定 Skill → 可核验回执。当前本地 Skill 只能在桌面 Agent 会话内使用 |
-| 服务端任务语义 | 任务 ID、幂等键、取消与最终状态查询 |
-| 真机端到端验收 | 公网 GoPanel + 真实 Mac + 手机 4G 的隧道、SSE 与推送 |
+| 手机端结构化业务 Skill 契约与独立回执 | 枚举桌面 Skill 并以 `skillSelection{key,name}` 在会话内下发及核验原生 `skill` 工具回执**已实现**；脱离编码会话的通用结构化入参/回执契约未实现 |
+| 跨重启任务状态查询与 GoPanel 通道幂等键 | Hoxi 通道 `prompt_async` 与审批 `reply` 的 `clientRequestId` / `X-Idempotency-Key` 去重及 `instructionId` **已实现**；跨进程重启的持久化任务账本与 GoPanel 通道通用幂等键未实现 |
+| 真机端到端验收 | 公网 GoPanel + 真实电脑 + 手机 4G 的隧道、SSE 与推送 |
