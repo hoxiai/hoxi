@@ -5,10 +5,12 @@ import { ArrowUpCircle, Download, ExternalLink, X } from "lucide-solid";
 import {
   closeDesktopUpdateModal,
   desktopUpdater,
+  desktopUpdateButtonLabel,
+  desktopUpdateDetailLabel,
   desktopUpdateProgressPercent,
+  desktopUpdateSpeedEtaLabel,
   desktopUpdateStatusLabel,
   isDesktopUpdateInstalling,
-  isSelfUpdateActive,
   isUpdateModalOpen,
   openExternalURL,
   startDesktopUpdate,
@@ -46,7 +48,7 @@ function UpdateDialog(props: { state: Accessor<PresenceState> }) {
               </div>
               <div>
                 <h3 class="text-[15px] font-bold text-[var(--text-primary)]">
-                  {isSelfUpdateActive(desktopUpdater.progress)
+                  {installing()
                     ? desktopUpdateStatusLabel()
                     : desktopUpdater.draining
                     ? t("header.updateRestartRequired")
@@ -88,10 +90,12 @@ function UpdateDialog(props: { state: Accessor<PresenceState> }) {
             </div>
           </Show>
           <Show when={installing()}>
-            <div role="status" class="space-y-2 text-[12px] text-[var(--text-secondary)]">
+            <div role="status" class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)]/60 p-3 space-y-2 text-[12px] text-[var(--text-secondary)]">
               <div class="flex items-center justify-between gap-2">
-                <span>{desktopUpdateStatusLabel()}</span>
-                <Show when={percent() !== undefined}><span>{percent()}%</span></Show>
+                <span class="font-medium text-[var(--text-primary)]">{desktopUpdateStatusLabel()}</span>
+                <Show when={percent() !== undefined}>
+                  <span class="font-mono font-semibold text-[var(--accent-text)]">{percent()}%</span>
+                </Show>
               </div>
               <progress
                 aria-label={desktopUpdateStatusLabel()}
@@ -99,13 +103,25 @@ function UpdateDialog(props: { state: Accessor<PresenceState> }) {
                 value={percent()}
                 class="block h-1.5 w-full overflow-hidden rounded-full accent-[var(--accent-primary)]"
               />
-              <Show when={desktopUpdater.progress?.phase === "downloading"}>
-                <p class="font-mono text-[11px] text-[var(--text-muted)]">
-                  {((desktopUpdater.progress?.downloadedBytes || 0) / 1048576).toFixed(1)} MB
-                  <Show when={(desktopUpdater.progress?.totalBytes || 0) > 0}>
-                    {" / "}{((desktopUpdater.progress?.totalBytes || 0) / 1048576).toFixed(1)} MB
-                  </Show>
-                </p>
+              <div class="flex flex-wrap items-center justify-between gap-2 text-[11px] text-[var(--text-muted)]">
+                <span
+                  class={
+                    desktopUpdater.progress?.phase === "downloading" &&
+                    (desktopUpdater.progress?.downloadedBytes || 0) > 0
+                      ? "font-mono"
+                      : ""
+                  }
+                >
+                  {desktopUpdateDetailLabel()}
+                </span>
+                <Show when={desktopUpdateSpeedEtaLabel()}>
+                  <span class="font-mono">{desktopUpdateSpeedEtaLabel()}</span>
+                </Show>
+              </div>
+              <Show when={desktopUpdater.downloadSlow}>
+                <div class="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2 text-[11px] leading-relaxed text-amber-600 dark:text-amber-400">
+                  {t("header.updateSlowHint")}
+                </div>
               </Show>
             </div>
           </Show>
@@ -148,7 +164,7 @@ function UpdateDialog(props: { state: Accessor<PresenceState> }) {
                 class="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] hover:opacity-90 px-3.5 py-1.5 text-[12px] font-semibold text-[var(--accent-foreground)] shadow-xs transition-opacity cursor-pointer disabled:opacity-50 disabled:cursor-wait"
               >
                 <ArrowUpCircle size={13} />
-                {installing() ? desktopUpdateStatusLabel() : t("header.updateInApp")}
+                {installing() ? desktopUpdateButtonLabel() : t("header.updateInApp")}
               </button>
             </Show>
             <Show when={updateResult()?.mirrors.global}>

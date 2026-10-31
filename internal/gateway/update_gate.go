@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -194,6 +196,7 @@ func (g *Gateway) BeginUpdate() bool {
 			roots = append(roots, dir)
 		}
 		g.updateMu.Unlock()
+		var batch []string
 		for _, dir := range roots {
 			if dir == "" || checked[dir] {
 				continue
@@ -202,14 +205,11 @@ func (g *Gateway) BeginUpdate() bool {
 				checked[dir] = true
 				continue
 			}
-			if !g.updateDirectoryIdle(ctx, dir) {
-				if updateDirectoryGone(dir) {
-					checked[dir] = true
-					continue
-				}
-				return false
-			}
 			checked[dir] = true
+			batch = append(batch, dir)
+		}
+		if !g.updateDirectoriesIdleBatch(ctx, batch) {
+			return false
 		}
 		g.updateMu.Lock()
 		complete := true
@@ -257,6 +257,44 @@ func (g *Gateway) updateDirectoryIdle(ctx context.Context, dir string) bool {
 		}
 	}
 	return true
+}
+
+func (g *Gateway) updateDirectoriesIdleBatch(ctx context.Context, dirs []string) bool {
+	if len(dirs) == 0 {
+		return true
+	}
+	if len(dirs) == 1 {
+		dir := dirs[0]
+		return g.updateDirectoryIdle(ctx, dir) || updateDirectoryGone(dir)
+	}
+	batchCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	const maxConcurrent = 8
+	sem := make(chan struct{}, maxConcurrent)
+	var wg sync.WaitGroup
+	var failed atomic.Bool
+
+	for _, dir := range dirs {
+		if failed.Load() {
+			break
+		}
+		sem <- struct{}{}
+		wg.Add(1)
+		go func(d string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			if failed.Load() {
+				return
+			}
+			if !g.updateDirectoryIdle(batchCtx, d) && !updateDirectoryGone(d) {
+				failed.Store(true)
+				cancel()
+			}
+		}(dir)
+	}
+	wg.Wait()
+	return !failed.Load()
 }
 
 func (g *Gateway) ReleaseUpdate() {

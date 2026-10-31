@@ -1,13 +1,21 @@
 import {
   UPDATE_CHECK_MIN_GAP_MS,
+  UPDATE_SLOW_CONNECT_MS,
+  UPDATE_SLOW_SPEED_MS,
   shouldAutoCheckUpdate,
   shouldNotifyUpdate,
   desktopUpdater,
   desktopUpdateButtonLabel,
+  desktopUpdateDetailLabel,
   desktopUpdateProgressPercent,
+  desktopUpdateSpeedEtaLabel,
+  desktopUpdateStatusLabel,
+  formatUpdateSpeed,
   isDesktopUpdateInstalling,
   isSelfUpdateActive,
+  recordUpdateDownloadSample,
   refreshDesktopUpdateStatus,
+  resetUpdateDownloadMetrics,
   setDesktopUpdater,
   startDesktopUpdate,
 } from "../store/updater-state";
@@ -89,6 +97,63 @@ describe("desktop self-update progress", () => {
       assertEqual(isDesktopUpdateInstalling(), false);
     } finally {
       updaterAPI.nativeStatus = oldStatus;
+      setDesktopUpdater(saved);
+    }
+  });
+
+  it("tracks download speed, ETA, clear phase details and slow-download detection", () => {
+    const saved = { ...desktopUpdater };
+    try {
+      resetUpdateDownloadMetrics();
+      const s0 = recordUpdateDownloadSample(
+        { phase: "downloading", downloadedBytes: 0, totalBytes: 0 },
+        1_000
+      );
+      assertEqual(s0.speedBps, 0);
+      assertEqual(s0.slow, false);
+      setDesktopUpdater({
+        progress: { phase: "downloading", downloadedBytes: 0, totalBytes: 0 },
+        downloadSpeedBps: s0.speedBps,
+        downloadSlow: s0.slow,
+      });
+      assertEqual(desktopUpdateStatusLabel().length > 0, true);
+      assertEqual(desktopUpdateDetailLabel().includes("MB"), false);
+
+      // Stuck connecting past UPDATE_SLOW_CONNECT_MS flags slow=true
+      const sSlowConnect = recordUpdateDownloadSample(
+        { phase: "downloading", downloadedBytes: 0, totalBytes: 10 * 1048576 },
+        1_000 + UPDATE_SLOW_CONNECT_MS + 100
+      );
+      assertEqual(sSlowConnect.slow, true);
+
+      // Fast transfer (2 MB in 1s) clears slow flag and computes speed + ETA
+      const sFast = recordUpdateDownloadSample(
+        { phase: "downloading", downloadedBytes: 2 * 1048576, totalBytes: 10 * 1048576 },
+        1_000 + UPDATE_SLOW_CONNECT_MS + 1_100
+      );
+      assertEqual(sFast.slow, false);
+      assertEqual(formatUpdateSpeed(sFast.speedBps), "2.0 MB/s");
+      setDesktopUpdater({
+        progress: { phase: "downloading", downloadedBytes: 2 * 1048576, totalBytes: 10 * 1048576 },
+        downloadSpeedBps: sFast.speedBps,
+        downloadSlow: sFast.slow,
+      });
+      assertEqual(desktopUpdateDetailLabel(), "2.0 MB / 10.0 MB");
+      assertEqual(desktopUpdateSpeedEtaLabel().includes("2.0 MB/s"), true);
+
+      // Slow transfer (< 150 KB/s after UPDATE_SLOW_SPEED_MS) flags slow=true
+      resetUpdateDownloadMetrics();
+      recordUpdateDownloadSample(
+        { phase: "downloading", downloadedBytes: 0, totalBytes: 20 * 1048576 },
+        1_000
+      );
+      const sSlowRate = recordUpdateDownloadSample(
+        { phase: "downloading", downloadedBytes: 200 * 1024, totalBytes: 20 * 1048576 },
+        1_000 + UPDATE_SLOW_SPEED_MS + 1_000
+      );
+      assertEqual(sSlowRate.slow, true);
+    } finally {
+      resetUpdateDownloadMetrics();
       setDesktopUpdater(saved);
     }
   });

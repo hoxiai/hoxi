@@ -6,6 +6,10 @@ import {
   appSettings,
   checkDesktopUpdate,
   desktopUpdateButtonLabel,
+  desktopUpdateDetailLabel,
+  desktopUpdateProgressPercent,
+  desktopUpdateSpeedEtaLabel,
+  desktopUpdateStatusLabel,
   desktopUpdater,
   fetchSystemRuntimeInfo,
   isDesktopUpdateInstalling,
@@ -152,7 +156,9 @@ export function SystemRuntimeSettingsTab() {
                   when={!desktopUpdater.error}
                   fallback={
                     <span class="text-rose-500">
-                      {t("settings.updaterCheckFailed")} ({desktopUpdater.error})
+                      {hasNewVersion()
+                        ? t("header.updateError", { error: desktopUpdater.error || "" })
+                        : `${t("settings.updaterCheckFailed")} (${desktopUpdater.error})`}
                     </span>
                   }
                 >
@@ -227,6 +233,51 @@ export function SystemRuntimeSettingsTab() {
             </button>
           </div>
         </div>
+
+        {/* Active Self-Update Progress */}
+        <Show when={isDesktopUpdateInstalling()}>
+          <div
+            role="status"
+            class="px-5 py-3.5 bg-[var(--bg-inset)]/55 space-y-2 text-[12px] text-[var(--text-secondary)]"
+          >
+            <div class="flex items-center justify-between gap-2">
+              <span class="font-medium text-[var(--text-primary)]">
+                {desktopUpdateStatusLabel()}
+              </span>
+              <Show when={desktopUpdateProgressPercent(desktopUpdater.progress) !== undefined}>
+                <span class="font-mono font-semibold text-[var(--accent-primary)]">
+                  {desktopUpdateProgressPercent(desktopUpdater.progress)}%
+                </span>
+              </Show>
+            </div>
+            <progress
+              aria-label={desktopUpdateStatusLabel()}
+              max={100}
+              value={desktopUpdateProgressPercent(desktopUpdater.progress)}
+              class="block h-1.5 w-full overflow-hidden rounded-full accent-[var(--accent-primary)]"
+            />
+            <div class="flex flex-wrap items-center justify-between gap-2 text-[11px] text-[var(--text-muted)]">
+              <span
+                class={
+                  desktopUpdater.progress?.phase === "downloading" &&
+                  (desktopUpdater.progress?.downloadedBytes || 0) > 0
+                    ? "font-mono"
+                    : ""
+                }
+              >
+                {desktopUpdateDetailLabel()}
+              </span>
+              <Show when={desktopUpdateSpeedEtaLabel()}>
+                <span class="font-mono">{desktopUpdateSpeedEtaLabel()}</span>
+              </Show>
+            </div>
+            <Show when={desktopUpdater.downloadSlow}>
+              <div class="rounded-xl border border-amber-500/30 bg-amber-500/10 p-2.5 text-[11px] leading-relaxed text-amber-600 dark:text-amber-400">
+                {t("header.updateSlowHint")}
+              </div>
+            </Show>
+          </div>
+        </Show>
 
         {/* Draining Notice */}
         <Show when={desktopUpdater.draining}>

@@ -82,7 +82,7 @@ func NativeAvailable() bool {
 	return winNativeReady.Load()
 }
 
-func CheckNative() error {
+func CheckNative() (installErr error) {
 	if !NativeAvailable() {
 		return errors.New("native updater is unavailable")
 	}
@@ -96,6 +96,10 @@ func CheckNative() error {
 	exePath := winExecutable
 	winInstalling = true
 	winNativeMu.Unlock()
+	setInstallPhase("preparing")
+	defer func() {
+		finishInstallProgress(installErr)
+	}()
 
 	cleanupAbort := func() {
 		winNativeMu.Lock()
@@ -147,12 +151,16 @@ func CheckNative() error {
 		cleanupAbort()
 		return fmt.Errorf("create staging directory: %w", err)
 	}
-	if err := downloadAndStageWindowsZip(ctx, nil, archiveURL, res.SHA256, stageDir); err != nil {
+	setInstallPhase("downloading")
+	if err := downloadAndStageWindowsZip(ctx, nil, archiveURL, res.SHA256, stageDir, func(p InstallProgress) {
+		installProgress.Store(&p)
+	}); err != nil {
 		_ = os.RemoveAll(stageDir)
 		cleanupAbort()
 		return err
 	}
 
+	setInstallPhase("staging")
 	stagedExe := filepath.Join(stageDir, "Hoxi.exe")
 	verCtx, verCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	out, err := subproc.CommandContext(verCtx, stagedExe, "--version").Output()
@@ -180,6 +188,7 @@ func CheckNative() error {
 		return fmt.Errorf("launch update installer: %w", err)
 	}
 	_ = cmd.Process.Release()
+	setInstallPhase("restarting")
 	go func() {
 		time.Sleep(250 * time.Millisecond)
 		os.Exit(0)

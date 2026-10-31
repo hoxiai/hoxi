@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func buildTestWindowsReleaseZip(t *testing.T, includeHoxi bool) ([]byte, string) {
@@ -60,9 +61,18 @@ func TestDownloadAndStageWindowsZipVerifiesSHA256AndExtracts(t *testing.T) {
 	defer srv.Close()
 
 	stageDir := filepath.Join(t.TempDir(), "stage")
-	err := downloadAndStageWindowsZip(context.Background(), srv.Client(), srv.URL+"/Hoxi-0.4.5-windows-amd64.zip", "", stageDir)
+	var snapshots []InstallProgress
+	err := downloadAndStageWindowsZip(context.Background(), srv.Client(), srv.URL+"/Hoxi-0.4.5-windows-amd64.zip", "", stageDir, func(p InstallProgress) {
+		snapshots = append(snapshots, p)
+	})
 	if err != nil {
 		t.Fatalf("downloadAndStageWindowsZip failed: %v", err)
+	}
+	if len(snapshots) < 4 || snapshots[0].Phase != "downloading" || snapshots[len(snapshots)-2].Phase != "verifying" || snapshots[len(snapshots)-1].Phase != "staging" {
+		t.Fatalf("expected downloading, verifying and staging progress phases, got %+v", snapshots)
+	}
+	if p := snapshots[len(snapshots)-3]; p.DownloadedBytes != int64(len(zipBytes)) || p.TotalBytes != int64(len(zipBytes)) {
+		t.Fatalf("incorrect zip download progress: %+v", p)
 	}
 	hoxiRaw, err := os.ReadFile(filepath.Join(stageDir, "Hoxi.exe"))
 	if err != nil || string(hoxiRaw) != "MZ-fake-hoxi-exe-binary" {
@@ -88,6 +98,7 @@ func TestDownloadAndStageWindowsZipVerifiesSHA256AndExtracts(t *testing.T) {
 		srv.URL+"/Hoxi-0.4.5-windows-amd64.zip?nosidecar=1",
 		strings.Repeat("0", 64),
 		badStage,
+		nil,
 	)
 	if err == nil || !strings.Contains(err.Error(), "SHA-256 mismatch") {
 		t.Fatalf("expected SHA-256 mismatch error, got %v", err)
@@ -198,5 +209,41 @@ func TestResolveWindowsArchiveURLFallsBackToHostArchitecture(t *testing.T) {
 	want := "https://github.com/hoxiai/hoxi/releases/download/v0.5.0/Hoxi-0.5.0-windows-" + arch + ".zip"
 	if got != want {
 		t.Fatalf("resolveWindowsArchiveURL fallback = %q, want %q", got, want)
+	}
+}
+
+func TestDownloadAbortsPromptlyWhenStreamStalls(t *testing.T) {
+	oldStall := downloadStallTimeout
+	downloadStallTimeout = 80 * time.Millisecond
+	defer func() { downloadStallTimeout = oldStall }()
+
+	unblock := make(chan struct{})
+	defer close(unblock)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "1048576")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("partial-head"))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		<-unblock
+	}))
+	defer srv.Close()
+
+	dstPath := filepath.Join(t.TempDir(), "stalled.dmg")
+	err := downloadAndVerifyDMG(
+		context.Background(),
+		srv.Client(),
+		srv.URL+"/Hoxi-0.6.0-darwin-arm64.dmg",
+		strings.Repeat("a", 64),
+		dstPath,
+		nil,
+	)
+	if err == nil || !strings.Contains(err.Error(), "update download stalled") {
+		t.Fatalf("expected stalled download error, got %v", err)
+	}
+	if _, statErr := os.Stat(dstPath); !os.IsNotExist(statErr) {
+		t.Fatalf("expected stalled partial DMG to be removed")
 	}
 }

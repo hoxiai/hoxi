@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -19,6 +20,48 @@ import (
 )
 
 const maxUpdateArchiveBytes = 512 << 20 // 512 MiB
+
+var downloadStallTimeout = 45 * time.Second
+
+type stallTimeoutReader struct {
+	r       io.Reader
+	timeout time.Duration
+	cancel  context.CancelCauseFunc
+}
+
+func (s *stallTimeoutReader) Read(p []byte) (int, error) {
+	if s.timeout <= 0 {
+		return s.r.Read(p)
+	}
+	timer := time.AfterFunc(s.timeout, func() {
+		s.cancel(fmt.Errorf("update download stalled (no data received for %s)", s.timeout))
+	})
+	n, err := s.r.Read(p)
+	timer.Stop()
+	if err != nil && n <= 0 {
+		return n, err
+	}
+	return n, err
+}
+
+func newUpdateHTTPClient() *http.Client {
+	var tr *http.Transport
+	if base, ok := http.DefaultTransport.(*http.Transport); ok && base != nil {
+		tr = base.Clone()
+	} else {
+		tr = &http.Transport{Proxy: http.ProxyFromEnvironment}
+	}
+	tr.DialContext = (&net.Dialer{
+		Timeout:   15 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}).DialContext
+	tr.TLSHandshakeTimeout = 15 * time.Second
+	tr.ResponseHeaderTimeout = 30 * time.Second
+	return &http.Client{
+		Timeout:   10 * time.Minute,
+		Transport: tr,
+	}
+}
 
 func resolveWindowsArchiveURL(res *UpdateCheckResult) string {
 	if res == nil {
@@ -107,14 +150,17 @@ func downloadAndVerifyDMG(ctx context.Context, client *http.Client, dmgURL, fall
 		return errors.New("update download URL must use HTTPS")
 	}
 	if client == nil {
-		client = &http.Client{Timeout: 10 * time.Minute}
+		client = newUpdateHTTPClient()
 	}
 	expectedSHA, err := resolveArchiveSHA256(ctx, client, dmgURL, fallbackSHA256)
 	if err != nil {
 		return err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, dmgURL, nil)
+	reqCtx, reqCancel := context.WithCancelCause(ctx)
+	defer reqCancel(nil)
+
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, dmgURL, nil)
 	if err != nil {
 		return err
 	}
@@ -135,10 +181,14 @@ func downloadAndVerifyDMG(ctx context.Context, client *http.Client, dmgURL, fall
 		return err
 	}
 	hasher := sha256.New()
-	written, copyErr := io.Copy(withDownloadProgress(io.MultiWriter(outFile, hasher), resp.ContentLength, report), io.LimitReader(resp.Body, maxUpdateArchiveBytes+1))
+	bodyReader := &stallTimeoutReader{r: resp.Body, timeout: downloadStallTimeout, cancel: reqCancel}
+	written, copyErr := io.Copy(withDownloadProgress(io.MultiWriter(outFile, hasher), resp.ContentLength, report), io.LimitReader(bodyReader, maxUpdateArchiveBytes+1))
 	closeErr := outFile.Close()
 	if copyErr != nil {
 		_ = os.Remove(dstPath)
+		if cause := context.Cause(reqCtx); cause != nil && errors.Is(copyErr, context.Canceled) {
+			return cause
+		}
 		return copyErr
 	}
 	if closeErr != nil {
@@ -199,7 +249,8 @@ func isHexString(s string) bool {
 func resolveArchiveSHA256(ctx context.Context, client *http.Client, archiveURL, fallbackSHA256 string) (string, error) {
 	sidecarURL := archiveURL + ".sha256"
 	if isAllowedUpdateURL(sidecarURL) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, sidecarURL, nil)
+		sidecarCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		req, err := http.NewRequestWithContext(sidecarCtx, http.MethodGet, sidecarURL, nil)
 		if err == nil {
 			resp, err := client.Do(req)
 			if err == nil {
@@ -207,11 +258,13 @@ func resolveArchiveSHA256(ctx context.Context, client *http.Client, archiveURL, 
 				_ = resp.Body.Close()
 				if resp.StatusCode == http.StatusOK {
 					if sum := parseSHA256Text(string(body)); sum != "" {
+						cancel()
 						return sum, nil
 					}
 				}
 			}
 		}
+		cancel()
 	}
 	if sum := parseSHA256Text(fallbackSHA256); sum != "" {
 		return sum, nil
@@ -222,19 +275,22 @@ func resolveArchiveSHA256(ctx context.Context, client *http.Client, archiveURL, 
 // downloadAndStageWindowsZip downloads the release zip from archiveURL, verifies
 // its SHA-256 against archiveURL+".sha256" (or fallbackSHA256), and extracts
 // Hoxi.exe and optional opencode.exe / sqlite3.exe into stageDir.
-func downloadAndStageWindowsZip(ctx context.Context, client *http.Client, archiveURL, fallbackSHA256, stageDir string) error {
+func downloadAndStageWindowsZip(ctx context.Context, client *http.Client, archiveURL, fallbackSHA256, stageDir string, report func(InstallProgress)) error {
 	if !isAllowedUpdateURL(archiveURL) {
 		return errors.New("update download URL must use HTTPS")
 	}
 	if client == nil {
-		client = &http.Client{Timeout: 10 * time.Minute}
+		client = newUpdateHTTPClient()
 	}
 	expectedSHA, err := resolveArchiveSHA256(ctx, client, archiveURL, fallbackSHA256)
 	if err != nil {
 		return err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, archiveURL, nil)
+	reqCtx, reqCancel := context.WithCancelCause(ctx)
+	defer reqCancel(nil)
+
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, archiveURL, nil)
 	if err != nil {
 		return err
 	}
@@ -256,9 +312,13 @@ func downloadAndStageWindowsZip(ctx context.Context, client *http.Client, archiv
 		return err
 	}
 	hasher := sha256.New()
-	written, copyErr := io.Copy(io.MultiWriter(outFile, hasher), io.LimitReader(resp.Body, maxUpdateArchiveBytes+1))
+	bodyReader := &stallTimeoutReader{r: resp.Body, timeout: downloadStallTimeout, cancel: reqCancel}
+	written, copyErr := io.Copy(withDownloadProgress(io.MultiWriter(outFile, hasher), resp.ContentLength, report), io.LimitReader(bodyReader, maxUpdateArchiveBytes+1))
 	closeErr := outFile.Close()
 	if copyErr != nil {
+		if cause := context.Cause(reqCtx); cause != nil && errors.Is(copyErr, context.Canceled) {
+			return cause
+		}
 		return copyErr
 	}
 	if closeErr != nil {
@@ -268,11 +328,17 @@ func downloadAndStageWindowsZip(ctx context.Context, client *http.Client, archiv
 		return errors.New("update archive exceeds maximum allowed size")
 	}
 
+	if report != nil {
+		report(InstallProgress{Phase: "verifying", DownloadedBytes: written, TotalBytes: written})
+	}
 	actualSHA := hex.EncodeToString(hasher.Sum(nil))
 	if !strings.EqualFold(actualSHA, expectedSHA) {
 		return fmt.Errorf("update archive SHA-256 mismatch: got %s, want %s", actualSHA, expectedSHA)
 	}
 
+	if report != nil {
+		report(InstallProgress{Phase: "staging", DownloadedBytes: written, TotalBytes: written})
+	}
 	zr, err := zip.OpenReader(zipPath)
 	if err != nil {
 		_ = os.Remove(zipPath)
