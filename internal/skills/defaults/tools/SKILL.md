@@ -4,7 +4,7 @@ description: Discover, inspect, and execute 220+ verified Agent Tools and 2,000+
 compatibility: 支持 Hoxi 桌面端本地免 Key 桥接、Hoxi MCP Server 与 REST API 调用
 metadata:
   author: "Hoxi"
-  version: "1.1.0"
+  version: "1.2.0"
 ---
 
 # Hoxi Tools — 全栈与 Agent 工具调度技能
@@ -18,9 +18,9 @@ metadata:
 在写爬虫或请求外部数据前，严格按以下优先级选路：
 
 1. **第 1 层：零成本本地能力优先（0 积分）**
-   - **公开单页读取**：目标只是读取普通公开网页正文、文档或截图时，直接使用内置网页抓取或 Hoxi 桌面端无头浏览器（Headless Chrome）。
-   - **用户已登录后台读取与回填**：目标是读取或操作用户在 Chrome 已登录的卖家/创作者后台（Amazon Seller Central、小红书创作者中心、TikTok Shop、Shopify Admin、1688 旺铺、广告后台），优先使用 **Hoxi Chrome Link 扩展**。
-   - **本地电商与买量测算**：Shopify 阶梯定价 CSV、TikTok 30s 脚本与佣金测算、小红书违禁词体检、Amazon FBA 利润与 250B 字节校验、ROAS 盈亏平衡计算、1688 阶梯批发价测算，直接调用内置 `hoxi_work_*` MCP 工具（0 积分）。
+   - **公开单页读取**：目标只是读取普通公开网页正文、文档或截图时，直接使用内置网页抓取或 Hoxi 桌面端浏览器（Desktop Window / 隔离无头 Chrome）。
+   - **用户已登录后台读取与回填**：目标是读取或操作用户在 Chrome 已登录的卖家/创作者后台（Amazon Seller Central、小红书创作者中心、TikTok Shop、Shopify Admin、1688 旺铺、广告后台），优先使用 **Hoxi Chrome Link 扩展**。Chrome Link 已连接标签页与桌面窗口/隔离无头浏览器统一通过 OpenCode 的 `hoxi_browser` 工具或本机 `/api/hoxi/browser/*` 回环接口控制。
+   - **本地电商与买量测算**：纯算术与本地文本规则校验（如 ROAS 盈亏平衡计算、Amazon FBA 利润与 250B 字节长度校验、Shopify 阶梯定价 CSV 生成、TikTok 30s 脚本字数与佣金测算、小红书违禁词规则比对、1688 阶梯批发价测算）直接由 Agent 或本地脚本在工作区内计算完成（0 积分），无需调用付费外部 API。
 
 2. **第 2 层：Hoxi Tools 云端数据与 AI 接口（按次消耗 Hoxi 积分）**
    - 当任务涉及 **商业闭源数据库、反爬社媒平台批量采集、专业 SEO 索引或生成式多模态 API** 时，切勿手写脆弱爬虫，直接走 **Hoxi Tools 网关**：
@@ -46,7 +46,7 @@ metadata:
 
 ### 通道 A：OpenCode 原生内置工具 `hoxi_tools`（当前会话具备 `hoxi_tools` 工具时首选）
 
-当工具列表包含内置的 **`hoxi_tools`**（Hoxi 桌面端 OpenCode 运行时自动注入）时，无需跑 `curl` 命令、也无需手动配置任何 API Key，直接调用 `hoxi_tools`（`discover` 与 `inspect` 零积分免审，`run` 自动发起审批卡片）：
+当工具列表包含内置的 **`hoxi_tools`**（Hoxi 桌面端 OpenCode 运行时自动注入）时，无需跑 `curl` 命令、也无需手动配置任何 API Key，直接调用 `hoxi_tools`（在 OpenCode 中 `discover` 与 `inspect` 为只读操作自动放行且 0 积分，`run` 会发起工具审批并按次消耗积分）：
 
 1. **Discover（检索可用工具与 Endpoint）**：
    调用 `hoxi_tools`：`{ "action": "discover", "query": "amazon reviews", "limit": 8 }`
@@ -59,25 +59,17 @@ metadata:
 
 ### 通道 B：Hoxi 桌面端原生 CLI 本机免 Key 网桥（Claude Code / Antigravity / Gemini CLI 等）
 
-在 Hoxi 桌面端启动的原生 CLI 运行时中，进程环境变量已自动注入动态网关地址 `HOXI_GATEWAY_URL`（及兼容变量 `HOXI_BRIDGE_URL`）。直接请求本机网桥即可复用桌面端已登录的 Hoxi 账号（无需手动传 Token，`run` 请求由 Hoxi PreToolUse 安全门控统一审批）：
+在 Hoxi 桌面端启动的原生 CLI 运行时中，进程环境变量已自动注入本机网关地址 `HOXI_GATEWAY_URL`（未设置时默认回环地址为 `http://127.0.0.1:5410`）。直接请求本机网桥即可复用桌面端已登录的 Hoxi 账号（无需手动传 Token；在原生 CLI 运行时中通过 `bash` + `curl` 调用受当前会话的 Shell 审批策略管控，请使用单行命令，不要写 `${HOXI_GATEWAY_URL:-...}` 参数展开或 `\` 续行以免触发复杂命令门控）：
 
 ```bash
-HOXI_BASE="${HOXI_GATEWAY_URL:-${HOXI_BRIDGE_URL:-http://127.0.0.1:5410}}"
+# 1. Discover（0 积分）
+curl -sS -X POST "$HOXI_GATEWAY_URL/api/hoxi/tools/discover" -H "Content-Type: application/json" -d '{"query":"amazon reviews","limit":8}'
 
-# 1. Discover（0 积分，免审）
-curl -sS -X POST "${HOXI_BASE}/api/hoxi/tools/discover" \
-  -H "Content-Type: application/json" \
-  -d '{"query": "amazon reviews", "limit": 8}'
+# 2. Inspect（0 积分）
+curl -sS -X POST "$HOXI_GATEWAY_URL/api/hoxi/tools/inspect" -H "Content-Type: application/json" -d '{"provider":"dataforseo","endpoint":"/v3/merchant/amazon/products/live"}'
 
-# 2. Inspect（0 积分，免审）
-curl -sS -X POST "${HOXI_BASE}/api/hoxi/tools/inspect" \
-  -H "Content-Type: application/json" \
-  -d '{"provider": "dataforseo", "endpoint": "/v3/merchant/amazon/products/live"}'
-
-# 3. Run（需人工审批确认，按次消耗 Hoxi 账号积分）
-curl -sS -X POST "${HOXI_BASE}/api/hoxi/tools/run" \
-  -H "Content-Type: application/json" \
-  -d '{"provider": "dataforseo", "endpoint": "/v3/merchant/amazon/products/live", "body": {"keyword": "wireless charger", "location_code": 2840}, "wait": true}'
+# 3. Run（按次消耗 Hoxi 账号积分）
+curl -sS -X POST "$HOXI_GATEWAY_URL/api/hoxi/tools/run" -H "Content-Type: application/json" -d '{"provider":"dataforseo","endpoint":"/v3/merchant/amazon/products/live","body":{"keyword":"wireless charger","location_code":2840},"wait":true}'
 ```
 
 ### 通道 C：MCP 工具直调（外部客户端挂载 Hoxi MCP Server 时首选）
@@ -94,35 +86,28 @@ curl -sS -X POST "${HOXI_BASE}/api/hoxi/tools/run" \
 
 - **Discover（公开免鉴权）**：
   ```bash
-  curl -sS -X POST "https://hoxi.ai/api/hoxi/tools/discover" \
-    -H "Content-Type: application/json" \
-    -d '{"query": "ahrefs backlinks"}'
+  curl -sS -X POST "https://hoxi.ai/api/hoxi/tools/discover" -H "Content-Type: application/json" -d '{"query":"ahrefs backlinks"}'
   ```
 - **Inspect（公开免鉴权）**：
   ```bash
-  curl -sS -X POST "https://hoxi.ai/api/hoxi/tools/inspect" \
-    -H "Content-Type: application/json" \
-    -d '{"provider": "ahrefs", "endpoint": "/v3/site-explorer/backlinks"}'
+  curl -sS -X POST "https://hoxi.ai/api/hoxi/tools/inspect" -H "Content-Type: application/json" -d '{"provider":"ahrefs","endpoint":"/v3/site-explorer/backlinks"}'
   ```
 - **Run（需携带 Hoxi 令牌 `hox_dt_...` 或 `apay_mcp_...`）**：
   ```bash
-  curl -sS -X POST "https://hoxi.ai/api/hoxi/tools/run" \
-    -H "Authorization: Bearer ${HOXI_TOKEN}" \
-    -H "Content-Type: application/json" \
-    -d '{"provider": "ahrefs", "endpoint": "/v3/site-explorer/backlinks", "body": {"target": "example.com"}}'
+  curl -sS -X POST "https://hoxi.ai/api/hoxi/tools/run" -H "Authorization: Bearer $HOXI_TOKEN" -H "Content-Type: application/json" -d '{"provider":"ahrefs","endpoint":"/v3/site-explorer/backlinks","body":{"target":"example.com"}}'
   ```
 
 ---
 
 ## 四、与一人公司垂直运营 Skill 的闭环联动
 
-当用户执行跨境电商、独立站、社媒种草或买量投放任务时，主动将 `tools` 作为 **前置真实数据源** 与以下官方技能组合：
+`amazon-ops`、`tiktok-shop-ops`、`shopify-ops`、`ads-growth-ops`、`xiaohongshu-ops`、`1688-ops`、`shopark-ops` 等领域技能属于 **Skills 技能市场可选扩展包**（并非预装内置技能，可在桌面端「技能」面板一键安装到 `~/.hoxi/skills/`）。当用户已安装并执行跨境电商、独立站、社媒种草或买量投放任务时，可将 `tools` 作为 **前置真实数据源** 与这些技能组合：
 
 1. **配合 `/amazon-ops`（亚马逊运营）**：
-   先用 `tools` 调用 `dataforseo` / `apify` 拉取竞品 ASIN 差评（VOC）与搜索词数据 → 交由 `amazon-ops` 生成 COSMO 五点描述、A+ 脚本与 250B Search Terms → 经 Chrome Link 填入卖家后台。
+   先用 `tools` 调用 `dataforseo` / `apify` 拉取竞品 ASIN 差评（VOC）与搜索词数据 → 交由 `amazon-ops` 生成 COSMO 五点描述、A+ 脚本与 250B Search Terms → 经 `hoxi_browser`（Chrome Link）填入卖家后台。
 2. **配合 `/tiktok-shop-ops`（TikTok 小店与带货）**：
    先用 `tools` 调用 `apify` / `anyapi` 拉取同类目热门带货视频数据与达人信息 → 交由 `tiktok-shop-ops` 拆解黄金前 3 秒钩子、生成挂车脚本与达人建联 DM。
-3. **配合 `/shopify-ops` & `/ads-growth-ops`（独立站与出海买量）**：
+3. **配合 `/shopify-ops` & `/ads-growth-ops` & `/shopark-ops`（独立站与出海买量）**：
    先用 `tools` 调用 `ahrefs` / `dataforseo` / `apollo` 获取高转化长尾词、竞品外链与潜客决策人邮箱 → 生成高转化着陆页与 Meta/Google 广告测试矩阵。
 4. **配合 `/xiaohongshu-ops` & `/1688-ops`（国内种草与源头货盘）**：
-   结合 `tools` 行业趋势数据与本地合规审计工具，完成从 1688 源头拿样定价到小红书 KFS 矩阵种草的全链路闭环。
+   结合 `tools` 行业趋势数据与本地合规校验，完成从 1688 源头拿样定价到小红书 KFS 矩阵种草的全链路闭环。

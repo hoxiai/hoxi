@@ -69,23 +69,28 @@ cookies and login state. No Chrome restart or remote-debugging port is needed.
    running isolated browser, then choose **Connect existing Chrome tab**
 3. Copy the generated connection code (valid for two minutes)
 4. Switch to the target HTTP(S) page in Chrome, click **Hoxi Browser Link**, paste
-   the code, and choose **Connect this tab**. Chrome shows its debugger indicator
-5. Use the same `hoxi_browser` tool and Hoxi inspector to view and operate the tab
+   the code, and choose **Connect this tab**. Chrome shows its debugger indicator.
+   After the first handshake, a 64-character hex `linkToken` is saved in
+   `~/.hoxi/browser-profile/.hoxi-extension-token` and `chrome.storage.local`,
+   allowing one-click **Reconnect** without generating a new code
+5. Use the same `hoxi_browser` tool and Hoxi inspector to view and operate the tab,
+   open/switch/close secondary tabs (`tab_new`, `tab_select`, `tab_close`), and
+   follow newly opened child/popup tabs (`openerTabId`)
 6. Disconnect from either Hoxi or the extension. This detaches automation without
    closing the Chrome tab or deleting its profile/login state
 
-Only the selected tab is exposed. Other tabs, including popups, are not listed or
-controlled; to use another tab, disconnect and pair again on that tab. The
-extension currently allows one connection at a time and is manually loaded, not
-published to the Chrome Web Store. Opening Chrome DevTools may detach automation.
-After detachment, Hoxi shows disconnected state and requires explicit reconnection
-rather than silently starting an isolated browser. Chrome Link uses periodic
-JPEG captures (not a high-frame-rate screencast). With the default **Fit panel**
-page size, the linked tab renders at the inspector's size (device-metrics
-emulation, so it shows letterboxed in the Chrome window); detaching restores it.
-Choose **Actual window size** in developer tools to keep the tab's own viewport.
-Extensions older than 0.3.1 lack the `viewport` capability and keep the real
-viewport.
+The extension attaches to the user-selected tab plus any tabs opened from it via
+`tab_new` or child/popup navigation (`openerTabId`), without enumerating unrelated
+tabs. The extension allows one active Hoxi connection at a time and is manually
+loaded, not published to the Chrome Web Store. Opening Chrome DevTools may detach
+automation. After detachment, Hoxi shows disconnected state and requires explicit
+reconnection rather than silently starting a new Chrome instance. Chrome Link uses
+periodic JPEG captures (quality 80, approximately one frame per 750 ms) rather than
+a high-frame-rate CDP screencast. With the default **Fit panel** page size, the
+linked tab renders at the inspector's size (`Emulation.setDeviceMetricsOverride`,
+so it shows letterboxed in the Chrome window); detaching or choosing **Actual
+window size** (`viewport_reset`) restores the tab's own viewport. Extensions older
+than 0.3.1 lack the `viewport` capability and keep the real viewport.
 
 ## Tools And Isolation
 
@@ -94,9 +99,14 @@ scroll, DOM snapshots, JPEG screenshots, JavaScript evaluation, and tab lifecycl
 The plugin derives scope from OpenCode's execution context, never model-supplied
 session IDs. The gateway resolves managed OpenCode handles to their owning Hoxi
 session ID, so agent tools and the inspector share the same browser and manual
-ownership. Requests with a mismatched worktree are rejected. In the default isolated mode, each session/directory pair receives a separate Chrome process and
-temporary profile. Up to eight browser scopes can coexist. Closing a browser
-frees its slot and deletes its profile; app shutdown closes all browsers.
+ownership. Requests with a mismatched worktree are rejected.
+
+By default, Hoxi launches a visible **Desktop Window (`window`)** backed by the
+persistent profile at `~/.hoxi/browser-profile`. When running in **Headless Sandbox
+(`headless`)** mode, each session/directory pair receives a separate headless Chrome
+process and temporary profile. Up to eight browser scopes can coexist. Closing an
+isolated headless browser frees its slot and deletes its temporary profile; app
+shutdown closes all browsers.
 
 All actions except snapshots and screenshots request browser permission. The
 plugin sets the browser permission to `ask`; existing explicit per-agent policy
@@ -136,9 +146,13 @@ disclose secrets.
   return 404 until started. Each reconnect replaces the previous stream.
 - Manual interaction supports pointer hover/drag, clicks, scrolling, history swipes,
   pinch zoom, text, keys, a Hoxi context menu and explicit plain-text copy/paste.
-  Native Chrome menus, external file drag/drop and file-picker dialogs remain unsupported.
-- Isolated-browser profiles are temporary; login state is not retained after
-  browser close. Chrome Link preserves the existing user's profile
+  Native Chrome menus and external file drag/drop into the preview remain unsupported.
+- **Uploads, Dialogs, Downloads & Diagnostics**:
+  - **File chooser & upload**: CDP file-chooser interception (`Page.setInterceptFileChooserDialog`) surfaces active file inputs in `/api/hoxi/browser/workflows` and uploads files via `POST /api/hoxi/browser/upload` (up to 50 MiB per upload, 1 GiB total transfer cap) or cancels via `action: "upload_cancel"`.
+  - **JavaScript dialogs**: `alert` / `confirm` / `prompt` / `beforeunload` dialogs are tracked in `/api/hoxi/browser/workflows` and handled via `POST /api/hoxi/browser/workflows` (`accept`, optional `text`).
+  - **Downloads**: Tracked in `/api/hoxi/browser/workflows` (up to 32 items, 512 MiB per file) and managed through `POST /api/hoxi/browser/download-{save,open,reveal,cancel}` with temporary storage recorded in `~/.hoxi/reclaim.json`.
+  - **Diagnostics**: Console errors/warnings, uncaught exceptions, and failed HTTP/network requests (up to 100 items per tab, URLs sanitized without query/credentials) are exposed at `GET|POST /api/hoxi/browser/diagnostics` (`POST` clears the buffer).
+- Desktop Window (`window`) mode persists cookies and sign-ins in `~/.hoxi/browser-profile`; Headless Sandbox (`headless`) profiles are temporary and deleted on close; Chrome Link preserves the user's daily Chrome profile.
 - An isolated browser left unused for 30 minutes is closed the same way as
   `close`: Chrome stops and its temporary profile is deleted, so open pages and
   sign-ins are lost. Use means any UI or agent `state`, `frame` or `action`
@@ -177,9 +191,9 @@ disclose secrets.
   so observation and Stop loading remain responsive. Agent tools retain their
   existing synchronous contract. Chrome Link needs the updated extension reloaded
   for navigation status and loading controls.
-- Downloads, uploads, installing extensions into the isolated browser, and native dialogs have no dedicated
-  product workflow. This is not a network sandbox or protection from every
-  malicious page. Chrome can access local development servers.
+- Installing extensions into the isolated headless browser has no dedicated product
+  workflow. This is not a network sandbox or protection from every malicious page;
+  Chrome can access local development servers.
 
 ## Development
 

@@ -163,22 +163,32 @@ func stripVolatileMemoryHeader(md string) string {
 	return strings.TrimSpace(volatileUpdatedLine.ReplaceAllString(md, ""))
 }
 
-// dedupHandoffMemorySection6 collapses Section 6 (All User Messages) when
-// runtimeContext(rec) is also being appended in the same handoff prompt, so the
-// last 10 user messages are not serialized twice back-to-back.
+// dedupHandoffMemorySection6 collapses Section 6 (All User Messages) or repeated
+// intermediate user bullets in Section 1 (Goals) when runtimeContext(rec) is also
+// being appended in the same handoff prompt, so the last 10 user messages are not
+// serialized twice back-to-back.
 func dedupHandoffMemorySection6(md string) string {
 	const sec6 = "## 6. All User Messages\n"
-	const sec7 = "\n## 7. Pending Tasks"
-	i := strings.Index(md, sec6)
-	if i < 0 {
-		return md
+	const sec7 = "\n## 7."
+	if i := strings.Index(md, sec6); i >= 0 {
+		rest := md[i+len(sec6):]
+		if j := strings.Index(rest, sec7); j >= 0 {
+			return md[:i+len(sec6)] + "- Carried in quoted conversation history below.\n" + rest[j:]
+		}
 	}
-	rest := md[i+len(sec6):]
-	j := strings.Index(rest, sec7)
-	if j < 0 {
-		return md
+	const sec1 = "## 1. Goals\n"
+	const sec2 = "\n## 2."
+	if i := strings.Index(md, sec1); i >= 0 {
+		rest := md[i+len(sec1):]
+		if j := strings.Index(rest, sec2); j >= 0 {
+			lines := strings.Split(strings.TrimSpace(rest[:j]), "\n")
+			if len(lines) > 2 {
+				collapsed := lines[0] + "\n- Carried in quoted conversation history below.\n" + lines[len(lines)-1] + "\n"
+				return md[:i+len(sec1)] + collapsed + rest[j:]
+			}
+		}
 	}
-	return md[:i+len(sec6)] + "- Carried in quoted conversation history below.\n" + rest[j:]
+	return md
 }
 
 // projectMemoryDir returns the project root whose .hoxi/memory holds the

@@ -16,14 +16,16 @@ type fakeLLM struct {
 	text       string
 	noEndpoint bool
 	calls      int
+	lastPrompt string
 }
 
 func (f *fakeLLM) Resolve(providerID, modelID, baseURL, npm string) llm.Target {
 	return llm.Target{ProviderID: providerID, ModelID: modelID, HasEndpoint: !f.noEndpoint}
 }
 
-func (f *fakeLLM) Complete(_ context.Context, target llm.Target, _ llm.Request) (string, error) {
+func (f *fakeLLM) Complete(_ context.Context, target llm.Target, req llm.Request) (string, error) {
 	f.calls++
+	f.lastPrompt = req.Prompt
 	if !target.Ready() {
 		return "", llm.ErrUnavailable
 	}
@@ -66,6 +68,9 @@ func TestHandleEnhancePrompt(t *testing.T) {
 	svc := NewService(client)
 	if body := post(t, svc.HandleEnhancePrompt, enhancePromptRequest{ProviderID: "p", ModelID: "m", Prompt: "retry"}); !strings.Contains(body, `"prompt":"Add a retry guard."`) {
 		t.Fatalf("unexpected enhance response: %s", body)
+	}
+	if !strings.Contains(client.lastPrompt, "<user_draft>\nretry\n</user_draft>") || !strings.Contains(client.lastPrompt, "same natural language the draft is written in") {
+		t.Fatalf("expected <user_draft> wrapper and draft language preservation in prompt, got: %s", client.lastPrompt)
 	}
 	client.noEndpoint = true
 	calls := client.calls

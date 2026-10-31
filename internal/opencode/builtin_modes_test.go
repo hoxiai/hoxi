@@ -35,8 +35,13 @@ func TestBuiltinModesOverlayEnforcesReadOnlyAsk(t *testing.T) {
 	if ask.Mode != "primary" || ask.Description == "" || !strings.Contains(ask.Prompt, "read-only") {
 		t.Fatalf("ask built-in definition incomplete: %+v", ask)
 	}
-	if len(ask.Permission) != 2 || ask.Permission["edit"] != "deny" || ask.Permission["bash"] != "deny" {
-		t.Fatalf("ask must deny edit and bash regardless of user config, got %v", ask.Permission)
+	if len(ask.Permission) != 5 ||
+		ask.Permission["edit"] != "deny" ||
+		ask.Permission["bash"] != "deny" ||
+		ask.Permission["hoxi_browser"] != "deny" ||
+		ask.Permission["hoxi_computer"] != "deny" ||
+		ask.Permission["hoxi_tools"] != "deny" {
+		t.Fatalf("ask must deny edit, bash, and mutating Hoxi tools regardless of user config, got %v", ask.Permission)
 	}
 
 	debug := config.Agent["debug"]

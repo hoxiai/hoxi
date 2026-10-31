@@ -1,5 +1,6 @@
 # 交接：Hoxi 会话体系自主化 + 本地运行时（2026-10-19）
 
+> **历史交接归档（全部第 1～6 步均已合并且完成）**：当前实现以 [`AGENTS.md`](../../AGENTS.md) 与 [`DEVELOPMENT.md`](../../DEVELOPMENT.md) 为准。Hoxi 已全面接管 6 个运行时（`OpenCode`、`Claude Code`、`Antigravity`、`Gemini CLI`、`Qoder`、`CodeBuddy`）的会话目录（`~/.hoxi/sessions/<id>/`）、单一 SSE（`/api/hoxi/event`）、统一审批平面（`/api/hoxi/permission`）以及会话级 `revert` / `fork`；本机桥接端口为 release `127.0.0.1:5410`、dev `127.0.0.1:5420`（回落随机端口）。
 > 读者：接手的 AI / 开发者。开始前先读 `AGENTS.md`（800 行上限、单向分层、i18n、OpenCode 零侵入、提交尾注 `Co-authored-by: Hoxi <code@hoxi.ai>`）。
 
 ## 1. 目标与原则
@@ -157,9 +158,9 @@ npm --prefix web test
 
 如果要起一个隔离的无头实例做端到端测试，注意以下几点：
 
-- 换一个端口，不要用正式 App 的 5088：`--no-desktop -address 127.0.0.1:5199`。
+- 换一个端口，不要用正式 App 的 5410（或 dev 的 5420）：`--no-desktop -address 127.0.0.1:5199`。
 - 设置 `HOXI_SESSION_STORE_DIR` 指向临时目录。
 - 用临时 git 仓库作为 `-dir`。
-- **先备份 `~/.hoxi/models.json`，结束后恢复**（原因见第 6 节第 3 条）。
+- `grok-cli` 磁盘配置固定写入 `http://127.0.0.1:5410/api/hoxi/bridge/grok-cli/v1`，当前进程只在内存中按实际桥接地址覆盖，不再污染 `~/.hoxi/models.json`。
 
 端到端测试会消耗用户各个 CLI 账号的额度，请使用轻量模型和简短提示。

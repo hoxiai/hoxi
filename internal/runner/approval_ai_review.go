@@ -77,15 +77,15 @@ Respond with ONLY a single-line JSON object:
 {"decision":"allow","reason":"brief explanation"} or {"decision":"ask","reason":"brief explanation"}
 
 Return "allow" ONLY when ALL of the following hold:
-1. Every operation in the command (including inside bash -c, sh -c, zsh -c, loops, conditionals, pipelines, subshells, and $(...) command substitutions) only inspects state or runs read-only verification (for example: git status/rev-parse/remote/log/diff/show/branch/ls-files/symbolic-ref, find without -delete/-exec/-ok/-fprint, ls, stat, file, wc, sort, uniq, cut, tr, head, tail, grep, rg, sed -n, awk without system() or output redirection, jq, dirname, basename, realpath, pwd, echo/printf to stdout/stderr, test/[, node -e / python3 -c read-only inspection, or standard local test/check commands such as go test/vet/list, npm test/run lint/run check, node --test, pytest, tsc --noEmit, cargo check/test).
-2. Environment variable reads or unsets only touch non-secret build/test/path flags (such as PATH, HOME, TMPDIR, CI, NODE_ENV, HOXI_BROWSER_TEST, HOXI_SERVER_URL).
+1. Every operation in the command (including inside bash -c, sh -c, zsh -c, loops, conditionals, pipelines, subshells, and $(...) command substitutions) only inspects state or runs read-only verification (for example: git status/rev-parse/remote/log/diff/show/branch/ls-files/symbolic-ref/tag -l, find without -delete/-exec/-ok/-fprint, ls, stat, file, wc, sort, uniq, cut, tr, head, tail, grep, rg, sed -n, awk without system() or output redirection, jq, cat, dirname, basename, realpath, pwd, echo/printf to stdout/stderr, test/[, node -e / python3 -c read-only inspection, local loopback curl to /api/hoxi/tools/discover or /api/hoxi/tools/inspect, or standard local test/check commands such as go test/vet/list, npm test/run lint/run check, pnpm test/lint/check, node --test, pytest, tsc --noEmit, cargo check/test).
+2. Environment variable reads or unsets only touch non-secret build/test/path flags (such as PATH, HOME, TMPDIR, CI, NODE_ENV, GOOS, GOARCH, CGO_ENABLED, HOXI_BROWSER_TEST, HOXI_SERVER_URL, HOXI_GATEWAY_URL, HOXI_BRIDGE_URL).
 3. Output redirections only target /dev/null or standard streams (such as 2>/dev/null, >/dev/null, 2>&1).
 
 Return "ask" if ANY of the following hold:
 1. Creates, modifies, moves, copies, touches, chmods, chowns, truncates, or deletes any file or directory, or redirects output (> or >>) to a file.
 2. Mutates git state or contacts remotes (add, commit, checkout, switch, restore, reset, clean, stash, merge, rebase, cherry-pick, tag, fetch, pull, push, branch -d/-D/-m, remote add/remove/set-url, config write, worktree add/remove/prune, submodule update).
-3. Reads or searches secrets, credentials, .env files, SSH/AWS/cloud keys, keychain, or environment variables holding tokens, passwords, or keys.
-4. Makes network requests (curl, wget, ssh, scp, rsync, nc, etc.), installs/uninstalls/publishes packages, kills/signals processes, or starts long-running servers/daemons.
+3. Reads or searches secrets, credentials, .env files, SSH/AWS/cloud keys, keychain, or environment variables holding tokens, passwords, or keys (including HOXI_BROWSER_TOKEN, HOXI_HOOK_TOKEN).
+4. Makes network requests (curl/wget other than local loopback /api/hoxi/tools/discover or /api/hoxi/tools/inspect, ssh, scp, rsync, nc, etc.), installs/uninstalls/publishes packages, kills/signals processes, or starts long-running servers/daemons.
 5. Uses dynamic command names ($cmd, eval) or anything ambiguous.`
 
 const aiReviewAutoPrompt = `You are a strict, fail-closed security reviewer for developer shell commands in Hoxi (Auto Approval mode).
@@ -97,23 +97,23 @@ Respond with ONLY a single-line JSON object:
 
 Return "allow" ONLY when ALL of the following hold:
 1. Every operation in the command only performs:
-   - read-only inspection or text/data processing (git status/rev-parse/remote/log/diff/show/branch/ls-files/tag -l, find without -delete/-exec/-ok, ls, stat, file, wc, sort, uniq, cut, tr, head, tail, grep, rg, sed, awk without system(), jq, cat, echo/printf, node -e / python3 -c inspection), OR
+   - read-only inspection or text/data processing (git status/rev-parse/remote/log/diff/show/branch/ls-files/symbolic-ref/tag -l, find without -delete/-exec/-ok/-fprint, ls, stat, file, wc, sort, uniq, cut, tr, head, tail, grep, rg, sed, awk without system(), jq, cat, dirname, basename, realpath, pwd, echo/printf, test/[, node -e / python3 -c inspection), OR
    - standard local workspace verification/test/lint/build commands (go test/vet/build/list, npm test/run lint/run check/run build, pnpm test/lint/check/build, node --test, pytest, tsc, cargo check/test), OR
    - creating or updating normal project files strictly inside the provided Workspace directory or temporary files inside /tmp or /var/folders/.../T/ ($TMPDIR) (including via inline scripts such as python3 -c, node -e, or heredocs), OR
    - routine local git staging/commit/stash operations (git add, git commit, git stash push/list/show) inside the Workspace directory, OR
    - local loopback HTTP checks (curl/wget to 127.0.0.1, localhost, or [::1]).
 2. Any file writes, tee, or output redirections (>, >>, : >) only target /dev/null, standard streams (2>&1), temporary files inside /tmp or /var/folders/.../T/ ($TMPDIR), or normal non-protected project files inside the provided Workspace directory.
-3. Environment variable reads, assignments, or unsets (env -u) only involve non-secret local/test/build variables (such as PATH, TMPDIR, CI, NODE_ENV, LOG, GOOS, GOARCH, CGO_ENABLED, HOXI_*).
+3. Environment variable reads, assignments, or unsets (env -u) only involve non-secret local/test/build variables (such as PATH, HOME, TMPDIR, CI, NODE_ENV, LOG, GOOS, GOARCH, CGO_ENABLED, HOXI_BROWSER_TEST, HOXI_SERVER_URL, HOXI_GATEWAY_URL, HOXI_BRIDGE_URL).
 
 Return "ask" if ANY of the following hold:
 1. Deletes, removes, truncates, or wipes any file or directory (rm, rmdir, unlink, shred, find -delete, os.remove, fs.unlink, fs.rm, shutil.rmtree), or writes/modifies any file outside the Workspace directory, /tmp, and /var/folders/.../T/, or touches protected paths (.git/, .hoxi/, .opencode/, .claude/, .agents/, .vscode/, .idea/, .env*).
 2. Contacts git remotes or performs destructive/history-rewriting git operations (push, pull, fetch, reset, clean, checkout --, checkout -f, restore, switch -f, merge, rebase, cherry-pick, tag -d, branch -d/-D/-m, stash drop/clear, remote add/remove/set-url, config write, worktree add/remove/prune, submodule update).
-3. Reads, searches, or prints secrets, credentials, .env files, SSH/AWS/cloud keys, keychain, ~/.hoxi credential/policy files, or environment variables holding tokens, passwords, or keys.
+3. Reads, searches, or prints secrets, credentials, .env files, SSH/AWS/cloud keys, keychain, ~/.hoxi credential/policy files, or environment variables holding tokens, passwords, or keys (including HOXI_BROWSER_TOKEN, HOXI_HOOK_TOKEN).
 4. Makes external (non-loopback) network or remote requests (curl/wget to non-local hosts, ssh, scp, rsync, nc), installs/uninstalls/publishes packages, kills/signals processes (kill, pkill, killall), changes permissions/ownership (chmod, chown, sudo), or starts background servers/daemons.
 5. Uses dynamic command names ($cmd, eval) or anything ambiguous.`
 
 func aiReviewPromptForPolicy(pol ApprovalPolicy) string {
-	if pol.effectiveRule(permissionCategoryBash) == "smart" || pol.effectiveRule(permissionCategoryEdit) == "ask" {
+	if pol.effectiveRule(permissionCategoryBash) == "smart" || pol.effectiveRule(permissionCategoryEdit) != "allow" {
 		return aiReviewSmartPrompt
 	}
 	return aiReviewAutoPrompt

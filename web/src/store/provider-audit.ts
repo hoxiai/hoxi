@@ -147,6 +147,50 @@ function resolveSessionWorkerAndPrompt(sessionID: string): {
   return { workerProviderID, workerModelID, userPrompt };
 }
 
+function collectSessionLspErrors(sessionID: string): {
+  lspErrorCount: number;
+  lspErrorsSummary?: string;
+} {
+  const turns = workspace.messagesBySession[sessionID] ?? [];
+  const latestByFile = new Map<
+    string,
+    Array<{ range?: { start?: { line?: number } }; message?: string; severity?: number }>
+  >();
+
+  for (const turn of turns) {
+    for (const part of turn.parts) {
+      if (part.type !== "tool" || part.state.status !== "completed") continue;
+      const diagMap = part.state.metadata?.diagnostics;
+      if (!diagMap || typeof diagMap !== "object") continue;
+      for (const [filePath, list] of Object.entries(diagMap)) {
+        if (Array.isArray(list)) {
+          latestByFile.set(filePath, list);
+        }
+      }
+    }
+  }
+
+  let lspErrorCount = 0;
+  const summaries: string[] = [];
+  for (const [filePath, list] of latestByFile.entries()) {
+    const shortFile = filePath.split("/").pop() || filePath;
+    for (const d of list) {
+      if (!d || typeof d.message !== "string") continue;
+      if (d.severity !== undefined && d.severity !== 1) continue;
+      lspErrorCount++;
+      if (summaries.length < 3) {
+        const line = (d.range?.start?.line ?? 0) + 1;
+        summaries.push(`${shortFile}:${line} ${d.message.trim()}`);
+      }
+    }
+  }
+
+  return {
+    lspErrorCount,
+    lspErrorsSummary: summaries.length > 0 ? summaries.join("; ") : undefined,
+  };
+}
+
 /**
  * Reviews the session's workspace changes (uncommitted or against a base branch).
  * The backend collects the diffs and REVIEW.md from the base revision, so the
@@ -185,6 +229,7 @@ export async function runWorkspaceReview(
   }
 
   try {
+    const lsp = collectSessionLspErrors(sessionID);
     const res = await hoxiAPI.auditProviderCode({
       sessionID,
       workerProviderID,
@@ -195,7 +240,8 @@ export async function runWorkspaceReview(
       observerNPM: observer.npm,
       userPrompt: userPrompt || t("inspector.review.defaultRequest"),
       diffs: [],
-      lspErrorCount: 0,
+      lspErrorCount: lsp.lspErrorCount,
+      lspErrorsSummary: lsp.lspErrorsSummary,
       locale: locale(),
       reviewScope: scope,
       repoDir,
@@ -244,6 +290,7 @@ export async function runSessionCodeAudit(
   setWorkspace("auditingBySession", sessionID, true);
 
   try {
+    const lsp = collectSessionLspErrors(sessionID);
     const res = await hoxiAPI.auditProviderCode({
       sessionID,
       workerProviderID,
@@ -260,7 +307,8 @@ export async function runSessionCodeAudit(
         additions: d.additions,
         deletions: d.deletions,
       })),
-      lspErrorCount: 0,
+      lspErrorCount: lsp.lspErrorCount,
+      lspErrorsSummary: lsp.lspErrorsSummary,
       locale: locale(),
     });
 

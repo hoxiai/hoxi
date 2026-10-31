@@ -29,6 +29,13 @@ bundle version fields use the embedded build version. The declared minimum macOS
 is at least 13.0 and is raised if the main executable or bundled OpenCode requires
 a newer version. This release path verifies both arm64 and amd64 artifacts.
 
+For Windows builds (`build-windows.ps1` / `.github/workflows/release-desktop.yml`),
+the release pipeline builds `windows/amd64` (and `windows/arm64` when configured),
+bundles the matching pinned `opencode.exe` and `sqlite3.exe` from
+`internal/opencode/opencode.lock`, and packages both the NSIS installer
+(`Hoxi-<version>-windows-<arch>-setup.exe`) and the portable self-update archive
+(`Hoxi-<version>-windows-<arch>.zip`) along with SHA-256 checksums.
+
 ## Public distribution
 
 Configure the Developer ID signing identity (`HOXI_SIGN_IDENTITY`), a Keychain

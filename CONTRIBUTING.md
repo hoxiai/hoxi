@@ -13,12 +13,12 @@ contribute code you cannot license this way.
 
 ## Prerequisites
 
-- macOS 13 or newer (Apple Silicon is the primary release target)
+- macOS 13 or newer (Apple Silicon is the primary release target) or Windows 10/11 (x64 / ARM64)
 - Go 1.23+ (the module targets Go 1.25)
 - Node.js 20+
 - Wails CLI v2.13.0
 - At least one agent CLI on `PATH` for manual testing: `opencode`, `claude`,
-  `agy`, `qoder` or `codebuddy`
+  `agy`, `gemini`, `qoder` or `codebuddy`
 
 ```bash
 wails dev                    # desktop app with hot reload

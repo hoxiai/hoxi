@@ -1,6 +1,6 @@
 # 交接：审批决策统一收口到 Go（2026-10-22）
 
-> 状态：**已完成（Go 后端、前端与文档均已完成并通过测试）**。接手前请完整阅读本文、[`AGENTS.md`](../../AGENTS.md) 和 [`docs/ai-coding-guardrails.md`](../ai-coding-guardrails.md) 第 1 节。
+> 状态：**已完成（Go 后端、前端与文档均已完成并通过测试）**。后续在此基础上已扩展至 5 种审批模式（`auto` / `trusted` / `smart` / `manual` / `unattended`）、审批超时（`approvalTimeoutSeconds`）、可选轻量模型审查（`aiReview` + `aiReviewModel`，`internal/runner/approval_ai_review.go`）以及 Gemini CLI `BeforeTool` Hook（`internal/runner/gemini_hook_gate.go`）。最新行为以 [`AGENTS.md`](../../AGENTS.md) 与 [`docs/ai-coding-guardrails.md`](../ai-coding-guardrails.md) 第 1 节为准。
 
 ## 1. 要解决的问题
 
@@ -273,8 +273,8 @@ npm --prefix web run lint && npm --prefix web test && npm --prefix web run build
 - **迁移时机**：`normalizeApprovalPermissions` 只有在策略文件存在后，才会把 edit / webfetch 的 `"allow"` 改成 `"ask"`。这样前端迁移时还能读到旧的覆盖值。对象规则补 `"*":"ask"` 不受此限制，总是执行。
 - **`provider.loadHoxiConfigDoc` 到 `persistHoxiConfigDoc` 之间没有加锁**：这是原有问题，本次没有处理。
 
-## 6. 建议的后续（不在本次范围）
+## 6. 建议的后续（历史记录）
 
-- Qoder / CodeBuddy 仍然没有 PreToolUse 门控（启动时有诊断警告）。
-- “总是允许”在两边语义仍不同：OpenCode 写入的是全局持久的 pattern 规则；Claude / Antigravity 是会话内存里的授权，重启后丢失。可以考虑统一成 Go 侧的持久规则。
-- 手机端数据外发说明等待办见 AGENTS.md 第三节。
+- Qoder / CodeBuddy 没有 PreToolUse 门控能力，现已在 `internal/runner/` 中限制为仅允许只读模式（Plan）运行，非只读模式一律拒绝启动。
+- “总是允许”在两边语义仍不同：OpenCode 写入的是全局持久的 pattern 规则；Claude / Antigravity / Gemini CLI 是会话内存里的授权（可通过 `/api/hoxi/permission/grants` 查看与撤销），重启后丢失。
+- 手机端首次模型网关披露弹窗已在 `client/lib/core/compliance/model_gateway_disclosure.dart` 实现。

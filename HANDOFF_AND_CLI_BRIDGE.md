@@ -45,7 +45,7 @@
 
 ---
 
-## 2. 本机三大 CLI 会话与凭证格式逆向规范
+## 2. 本机 8 大 CLI / IDE 会话与凭证格式规范
 
 ### 2.1 Grok CLI (`~/.grok`)
 1. **会话索引与目录结构**：
@@ -85,8 +85,8 @@
        - `role`: `"user"` | `"assistant"`
        - `content`: 字符串，或数组 `[ { "type": "text", "text": "..." }, { "type": "thinking", "thinking": "..." }, { "type": "tool_use", "id": "...", "name": "...", "input": {...} }, { "type": "tool_result", "tool_use_id": "...", "content": "..." } ]`
 2. **凭证与环境配置**：
-   - `~/.claude/settings.json`：可能包含 `env.ANTHROPIC_BASE_URL`、`env.ANTHROPIC_AUTH_TOKEN`、`env.ANTHROPIC_API_KEY`、`model`。
-   - `~/.claude/.credentials.json` 或 macOS Keychain（`security find-generic-password -s "Claude Code-credentials" -w`）：包含 `claudeAiOauth`。
+   - `~/.claude/settings.json`：读取 `env.ANTHROPIC_BASE_URL`、`env.ANTHROPIC_AUTH_TOKEN`、`env.ANTHROPIC_API_KEY`。
+   - **认证模式区分（`claude-settings` vs `claude-runner`）**：当检测到真实 API Key 时（`authMode: "claude-settings"`，排除 `sk-ant-oat*` OAuth token）可一键导入到 `~/.hoxi/models.json`；若用户使用 Claude 官方 OAuth 登录（`authMode: "claude-runner"`），Hoxi **绝不将 Claude OAuth Token 导入 OpenCode**，而是引导用户直接使用原生 `Claude Code` 运行时新建或切换会话。
 
 ### 2.3 OpenAI Codex (`~/.codex`)
 1. **会话存储结构**：
@@ -95,11 +95,17 @@
    - 对话轨迹文件：`rollout_path` 指向 `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`（或 `.jsonl.zst`，可通过 `zstd -dc` 解压读取）：
      - `type: "event_msg"` (`payload.type`: `"user_message"`, `"agent_message"`, `"agent_reasoning"`)
      - `type: "response_item"` (`payload.type`: `"message"`, `"reasoning"`, `"function_call"`, `"function_call_output"`)
-2. **凭证与提供商配置**：
-   - `~/.codex/auth.json`：
-     - `OPENAI_API_KEY`: API Key 模式
-     - `tokens`: ChatGPT OAuth 模式（`access_token`, `refresh_token`, `id_token`, `account_id`），其 OAuth `client_id` (`app_EMoamEEZ73f0CkXaXp7hrann`) 与 OpenCode 内置 `openai` OAuth 插件完全同源，可直接通过 `PUT /auth/openai` 注入 OpenCode。
-   - `~/.codex/config.toml`：包含 `model`, `model_provider` 及自定义 `[model_providers.<id>]` 的 `base_url`。
+2. **凭证与防互踢同步机制**：
+   - `~/.codex/auth.json`：支持 `OPENAI_API_KEY`（API Key 模式）与 `tokens`（ChatGPT OAuth 模式：`access_token`, `refresh_token`, `account_id`）。
+   - **单向只读同步（防 Refresh Token 互踢）**：Hoxi 绝不自行刷新或回写 `~/.codex/auth.json`——注入 OpenCode `/auth/openai` 时将 `expires` 固定设为 `0`（未知过期时间），并由后台 `credentialSyncLoop` 每 60 秒按指纹比对 `~/.codex/auth.json`，仅当 Codex CLI 自身轮换了凭证时才同步更新给引擎，避免双端同时消费同一个 `refresh_token` 导致 Codex CLI 被登出。
+   - `~/.codex/config.toml` 与 `~/.codex/models_cache.json`：提取 `model` 与可用模型列表。
+
+### 2.4 Google Antigravity / Gemini CLI (`~/.gemini`)、OpenCode CLI、Trae、Qoder 与 CodeBuddy
+- **Google Antigravity (`agy`) / Gemini CLI (`gemini`)**（`internal/handoff/gemini.go`）：扫描 `~/.gemini/antigravity/brain/<id>/transcript*.jsonl`（优先读取完整 `transcript_full.jsonl`），解析 `USER_INPUT`、`PLANNER_RESPONSE`（含 `thinking` 与 `tool_calls`）及工作区路径。
+- **OpenCode CLI**（`internal/handoff/opencode.go`）：以只读模式（`-readonly` + `.timeout 5000`）扫描本机 `~/.local/share/opencode/opencode.db`（或 `$XDG_DATA_HOME/opencode/opencode.db`）的 `session`、`message`、`part` 表。
+- **Trae**（`internal/handoff/trae.go`）：扫描 `~/Library/Application Support/Trae*`（及 Windows `%APPDATA%\Trae*`）下的 SQLite `ItemTable` 与会话历史。
+- **Qoder（通义灵码）**（`internal/handoff/qoder.go`）：扫描 `~/.qoder/projects/*` 与 Application Support 下的会话记录。
+- **CodeBuddy（腾讯云）**（`internal/handoff/codebuddy.go`）：扫描 `~/.codebuddy/*` 与 Application Support 下的会话记录。
 
 ---
 
@@ -198,7 +204,7 @@ type NormalizedTurn struct {
 ## 4. 后端 HTTP API 与协议桥接契约
 
 ### 4.1 跨软件会话发现与接管接口
-- `GET /api/hoxi/handoff/sessions?directory=<cwd>&query=<q>&source=<all|grok-cli|claude-code|codex-cli>&limit=50`
+- `GET /api/hoxi/handoff/sessions?directory=<cwd>&query=<q>&source=<all|grok-cli|claude-code|codex-cli|gemini-antigravity|opencode-cli|trae|qoder|codebuddy>&limit=50`
   - 返回本机外部 CLI 会话列表（优先置顶与当前 `directory` 匹配的会话，同时支持跨工程全局搜索）：
     ```json
     {
@@ -252,13 +258,13 @@ type NormalizedTurn struct {
 
 ### 4.2 本地 CLI 模型与凭证探测/导入接口
 - `GET /api/hoxi/local-cli/status`
-  - 自动探测本机已安装的 `grok-cli`、`codex-cli`、`claude-code` 的二进制版本、登录状态、可用模型列表以及是否已接入 Hoxi。
+  - 并行探测本机 8 大工具（`grok-cli`、`claude-code`、`codex-cli`、`gemini-antigravity`、`codebuddy`、`trae`、`qoder`、`opencode-cli`）的安装状态、认证模式、可用模型列表、会话数量以及是否已接入 Hoxi。
 - `POST /api/hoxi/local-cli/import`
-  - 请求体：`{ "toolID": "grok-cli" | "codex-cli" | "claude-code" }`
+  - 请求体：`{ "toolID": "grok-cli" | "codex-cli" | "claude-code" | "gemini-antigravity" | "opencode-cli" }`
   - 行为：
-    - `grok-cli`：在 `.hoxi/models.json` 中注册 `grok-cli` 提供商，其 `baseURL` 指向 Hoxi 内部协议桥 `http://127.0.0.1:<port>/api/hoxi/bridge/grok-cli/v1`，并自动导入 `grok-4.7`、`grok-4.7-build-fast`、`grok-4.6`、`grok-4.5` 四个模型。
-    - `codex-cli`：将 `~/.codex/auth.json` 的 OAuth 凭证或 API Key 同步至 OpenCode `/auth/openai`（或注册自定义 provider），无需二次登录。
-    - `claude-code`：将 `~/.claude/settings.json` 中的 `ANTHROPIC_BASE_URL` + Token 或凭证导入 `.hoxi/models.json`。
+    - `grok-cli`：在 `~/.hoxi/models.json` 中注册 `grok-cli` 提供商，落盘进程中立的 `grokCLIStoredBridgeURL`（`http://127.0.0.1:5410/api/hoxi/bridge/grok-cli/v1`），各运行实例在内存中将其重写为自身回环桥接端口（避免 release / dev / headless 多实例互改配置文件），并自动导入 `~/.grok/models_cache.json` 中的模型。
+    - `codex-cli`：读取 `~/.codex/auth.json` 的 OAuth 凭证（设置 `expires: 0`，由后台 `credentialSyncLoop` 每 60s 同步，不抢占刷新）或 API Key 同步至 OpenCode `/auth/openai` 与 `~/.hoxi/models.json`。
+    - `claude-code`：仅当 `~/.claude/settings.json` 或环境变量配置了真实 API Key（`authMode: "claude-settings"`）时才导入 `~/.hoxi/models.json`；若为 Claude OAuth 登录（`authMode: "claude-runner"`），绝不将 OAuth Token 导入 OpenCode，而是由 `Claude Code` 原生运行时直接驱动。
 
 ### 4.3 本地 CLI 协议转换网关 (`/api/hoxi/bridge/grok-cli/v1/*`)
 - `GET /api/hoxi/bridge/grok-cli/v1/models`：动态读取 `~/.grok/models_cache.json` 并返回标准 OpenAI `{ "object": "list", "data": [...] }`。

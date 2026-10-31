@@ -271,6 +271,9 @@ func TestApprovalPolicyValidateAIReviewModel(t *testing.T) {
 	if got := aiReviewPromptForPolicy(ApprovalPolicy{Mode: ApprovalModeAuto, Edit: "ask"}); got != aiReviewSmartPrompt {
 		t.Fatalf("expected smart prompt when edit override is ask")
 	}
+	if got := aiReviewPromptForPolicy(ApprovalPolicy{Mode: ApprovalModeAuto, Edit: "deny"}); got != aiReviewSmartPrompt {
+		t.Fatalf("expected smart prompt when edit override is deny")
+	}
 }
 
 // Reasoning models think before the verdict; a 120-token cap left

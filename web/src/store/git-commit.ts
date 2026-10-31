@@ -369,9 +369,13 @@ export async function executeTaskCommitAndPush(
   ].filter(Boolean).join("\n\n");
   // Attribution is an instruction to the model, not part of what the user said:
   // send it as a turn-scoped system prefix so the timeline shows only the task.
-  const system = gitAttributionEnabledFor(directory)
-    ? t("timeline.gitAgentCommitAttributionPrompt")
-    : undefined;
+  const alreadyHasCoAuthor = Boolean(
+    customMessage && /Co-authored-by:\s*Hoxi\s*<code@hoxi\.ai>/i.test(customMessage)
+  );
+  const system =
+    !alreadyHasCoAuthor && gitAttributionEnabledFor(directory)
+      ? t("timeline.gitAgentCommitAttributionPrompt")
+      : undefined;
   // Dispatch is not completion; the agent reports actual Git results in the timeline.
   // Override only this prompt; the session's saved model remains unchanged.
   return submitSessionPrompt(prompt, activeID, { agent: "build", model: cheapModel, system });

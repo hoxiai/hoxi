@@ -22,7 +22,7 @@ export function createBrowserTool() {
 
   return tool({
     description:
-      "Control the session's embedded browser. Use snapshot for visible text and CSS selectors, screenshot for a JPEG, and evaluate for JavaScript (requires approval). Mutations require approval; manual mode blocks agent control.",
+      "Control the active session browser (Desktop Window, isolated headless Chrome, or an attached Chrome Link tab). Use snapshot for visible text and CSS selectors, screenshot for a JPEG, and evaluate for JavaScript (requires approval). Mutations require approval; manual mode blocks agent control.",
     args,
     async execute(input, context) {
       // Strip unknown fields, including any model-supplied scope or manual override.

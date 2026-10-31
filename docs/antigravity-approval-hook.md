@@ -66,7 +66,7 @@ agy 发起 run_command
 
 - Hoxi 只维护自己的命名键 `hoxi-approval-gate`。读取 → 合并 → 原子写回，保留用户已有的其他 hook。在第一次启动 Antigravity Runner 时安装，二进制路径变化时更新；设置里提供"卸载"。
 - 工作区 `.agents/hooks.json` **不推荐**：local 模式下会往用户仓库里写文件，还可能覆盖仓库自带的 hooks.json。worktree 模式下虽然可以用（另需写 `.git/info/exclude`），但两种模式的行为会不一致。
-- 写入的 hook 配置：
+- 写入的 hook 配置（macOS / Linux）：
 
 ```json
 {
@@ -74,7 +74,7 @@ agy 发起 run_command
     "PreToolUse": [{
       "matcher": "*",
       "hooks": [{
-        "command": "[ -x '/Applications/Hoxi.app/Contents/MacOS/hoxi' ] && exec '/Applications/Hoxi.app/Contents/MacOS/hoxi' agy-hook || printf '{\"decision\":\"allow\"}'",
+        "command": "[ -x '/Applications/Hoxi.app/Contents/MacOS/hoxi' ] && exec '/Applications/Hoxi.app/Contents/MacOS/hoxi' agy-hook || echo '{\"decision\":\"allow\"}'",
         "timeout": 600
       }]
     }]
@@ -82,9 +82,12 @@ agy 发起 run_command
 }
 ```
 
-  matcher 是正则：`"*"` / `""` 匹配所有工具，`"run_command|view_file"` 匹配其中之一，`"browser_.*"` 匹配前缀。Hoxi 用通配符覆盖全部工具，再由 `hook_gate.go` 按工具分类，避免 agy 新增工具（如 1.4.3 的 `read_file`）时漏配 matcher 被无头模式软拒。
+  在 Windows（`runtime.GOOS == "windows"`，`internal/runner/agy_hook_install.go`）下命令为：
+  `if exist "C:\...\Hoxi.exe" ("C:\...\Hoxi.exe" agy-hook) else (echo {"decision":"allow"})`。
 
-  `[ -x … ] || allow` 这层守卫是必须的。I2 证明 hook 失败会让工具报错，如果 Hoxi 被移走或卸载，用户自己的 agy / IDE 命令就会全部失败。
+  matcher 是正则：`"*"` / `""` 匹配所有工具，`"run_command|view_file"` 匹配其中之一，`"browser_.*"` 匹配前缀。Hoxi 用通配符 `"*"` 覆盖全部工具，再由 `hook_gate.go` / `agy_hook_tools.go` 按工具分类，避免 agy 新增工具（如 1.4.3 的 `read_file`）时漏配 matcher 被无头模式软拒。
+
+  `[ -x … ] || echo '{"decision":"allow"}'`（Windows 下 `if exist … else …`）这层守卫是必须的。I2 证明 hook 失败会让工具报错，如果 Hoxi 被移走或卸载，用户自己的 agy / IDE 命令就会全部失败。
 
 ### 3.3 `hoxi agy-hook` 子命令（`cmd/hoxi`）
 
@@ -147,14 +150,12 @@ agy 发起 run_command
 | 全局 hooks.json 安装器 | `internal/runner/agy_hook_install.go`，`GET/POST/DELETE /api/hoxi/runner/antigravity/hook` 分别对应查询状态、安装、卸载；每轮 agy 启动前自动确认已安装，仅桌面 App 开启自动安装 |
 | 权限策略 Go 移植 | `internal/runner/permission_policy.go`，与 JS 共用 `.opencode/lib/permission-policy.cases.json` |
 | 进程接线 | `internal/runner/turn_exec.go`（每轮签发凭证；Stop 或进程退出时拒绝所有挂起请求）、`internal/gateway/gateway.go`（传入回调地址） |
-| 前端 | `services/runner-api.ts` / `services/api.ts`（`per_rnr_` 前缀的请求路由到 Runner）、`ApprovalGateCard.tsx`（拒绝说明随回复带回，Runner 请求不显示 OpenCode 规则选择器） |
+| 前端 | `services/runner-api.ts` / `services/api.ts`（`per_rnr_` 前缀的请求路由到 Runner，经统一网关 `/api/hoxi/permission/{id}/reply` 回复）、`ApprovalGateCard.tsx`（拒绝说明随回复带回，Runner 请求不显示 OpenCode 规则选择器）、`components/models/AgentPolicyMcpTab.tsx`（显示 Antigravity 审批 Hook 安装状态并提供安装/卸载按钮） |
 
 与原方案的差异：
 
-- 审批决策统一由 Go 端 `approvalAutoApproves`（`internal/runner/approval_decision.go`）按 `~/.hoxi/approval-policy.json`（`auto` / `smart` / `manual` 及工具覆盖）判定：策略允许的请求由 Go 直接 `auto_approve`，不推送 `permission.asked` 事件、不计入状态栏 Attention；策略不允许的请求（含任何模式下的破坏性命令与敏感凭据读取）推送 `permission.asked` 等待用户确认。前端只负责展示与编辑策略，不再替用户自动回复。
+- 审批决策统一由 Go 端 `approvalAutoApproves`（`internal/runner/approval_decision.go`）按 `~/.hoxi/approval-policy.json`（5 种模式：`auto` / `trusted` / `smart` / `manual` / `unattended`，及工具覆盖与可选轻量模型审查 `aiReview`）判定：策略允许的请求由 Go 直接 `auto_approve`，不推送 `permission.asked` 事件、不计入状态栏 Attention；策略不允许的请求（含任何模式下的破坏性命令、敏感凭据读取及受保护路径修改）推送 `permission.asked` 等待用户确认。前端只负责展示与编辑策略，不再替用户自动回复。
 - 会话内的 always 规则只保存在内存里，按完全相同的命令匹配，Hoxi 重启后失效。破坏性命令永远不会被 always 记住。
-
-未实现：设置页里的 hook 安装状态显示与按钮（后端接口已就绪）。
 
 端到端测试（需要真实的 agy，会消耗少量模型请求）：
 

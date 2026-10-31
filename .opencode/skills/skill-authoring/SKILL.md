@@ -4,7 +4,7 @@ description: Create, modify, validate, or troubleshoot Agent Skills through conv
 compatibility: 需要读写目标技能目录与当前 Git 工作区
 metadata:
   author: "Hoxi"
-  version: "1.0.0"
+  version: "1.1.0"
 ---
 
 # 技能创造与维护
@@ -45,6 +45,7 @@ metadata:
 
 全局级（跨项目）：
 
+- `~/.hoxi/skills/<name>/SKILL.md`
 - `~/.config/opencode/skills/<name>/SKILL.md`
 - `~/.agents/skills/<name>/SKILL.md`
 - `~/.claude/skills/<name>/SKILL.md`
@@ -53,8 +54,8 @@ metadata:
 
 - 只服务当前仓库时放项目级；跨项目通用时放全局级。
 - 多会话、多 worktree 使用时放项目级并提交 Git。
-- 目录名必须使用复数 `skills/`。OpenCode 1.19.3 的 `.opencode` 同时扫描单数 `skill/`，但 `.claude`、`.agents` 只扫描复数；Hoxi 统一使用 `skills/`。
-- Hoxi 内置默认技能安装在 `~/.hoxi/skills/<name>/SKILL.md`，由 Hoxi 启动时注册到 `skills` 配置；用户自建技能不要写这里，以免与内置默认技能同名冲突。
+- 目录名必须使用复数 `skills/`。OpenCode 的 `.opencode` 同时扫描单数 `skill/`，但 `.claude`、`.agents` 只扫描复数；Hoxi 统一使用 `skills/`。
+- `~/.hoxi/skills/<name>/SKILL.md` 是 Hoxi 全局技能目录（线上技能市场安装与用户全局技能均存放于此）；仅 `skill-authoring` 与 `tools` 为 Hoxi 内置默认技能名（启动时按版本自动维护），用户自建技能请避免使用这两个保留名。
 - 名称在全部位置中必须唯一；创建前先检索同名目录。
 - 引擎从当前目录向上扫描到 Git worktree 根。worktree 只包含已提交文件，因此项目级技能必须提交到 Git 才能在该 worktree 的会话中发现。
 
@@ -85,7 +86,6 @@ description 公式：`[能力] + [触发场景与关键词] + [产出]`。避免
 - 可执行代码放 `scripts/`，模板与素材放 `assets/`。
 - 所有引用使用技能根目录下的相对路径。
 - 不写个人机器的绝对路径、密钥或内部凭据。
-- 需要仓库事实时引用 `docs/skills-development.md`，不要另立规则。
 
 模板：
 
@@ -133,23 +133,19 @@ metadata:
 
 ```bash
 f=.opencode/skills/skill-authoring/SKILL.md
-name=$(awk 'BEGIN{f=0} /^---[[:space:]]*$/{f++; next} f==1 && /^name:/{sub(/^name:[[:space:]]*/,""); print; exit}' "$f")
-desc=$(awk 'BEGIN{f=0} /^---[[:space:]]*$/{f++; next} f==1 && /^description:/{sub(/^description:[[:space:]]*/,""); print; exit}' "$f")
+name=$(awk 'BEGIN{f=0} /^---[[:space:]]*\r?$/{f++; next} f==1 && /^name:/{sub(/^name:[[:space:]]*["\047]?/,""); sub(/["\047]?[[:space:]]*\r?$/,""); print; exit}' "$f")
+desc=$(awk 'BEGIN{f=0} /^---[[:space:]]*\r?$/{f++; next} f==1 && /^description:/{sub(/^description:[[:space:]]*["\047]?/,""); sub(/["\047]?[[:space:]]*\r?$/,""); print; exit}' "$f")
 dir=$(basename "$(dirname "$f")")
 test "$name" = "$dir" && echo "name ok" || echo "name mismatch: $name vs $dir"
 test -n "$desc" && test ${#desc} -le 1024 && echo "description ok" || echo "description missing or too long"
-awk 'BEGIN{n=0} /^---[[:space:]]*$/{n++; if(n==2){ok=1; exit}} END{exit !ok}' "$f" && echo "frontmatter ok"
+awk 'BEGIN{n=0} /^---[[:space:]]*\r?$/{n++; if(n==2){ok=1; exit}} END{exit !ok}' "$f" && echo "frontmatter ok"
 ```
 
 ## 第 6 步：生效与验证
 
 1. 提交：`git add <技能目录>` 并提交。worktree 只包含已提交文件，未提交的项目级技能在 worktree 会话中不可见。
-2. 重启：完全退出并重启 Hoxi，或 dispose 引擎实例。OpenCode 1.19.3 按目录缓存技能目录，新增或修改后不会热更新，重复 GET 也不会刷新。
-3. 验证目录接口：
-   - Hoxi：`GET /api/hoxi/skills/list?directory=<绝对路径>`
-   - OpenCode：`GET /skill?directory=<绝对路径>`
-   确认返回中包含目标 `name`、`description`、`location`。
-4. 会话内可用性：技能目录在会话创建时快照，已有会话需新开会话才能看到新技能。
+2. 验证目录接口：Hoxi 的 `GET /api/hoxi/skills/list?directory=<绝对路径>`（或在桌面端「技能」面板点刷新）会实时扫描磁盘，无需重启 Hoxi 即可看到新增或修改的技能；确认返回中包含目标 `name`、`description`、`location`。
+3. 会话内生效：原生 CLI 运行时（`claude-code` / `antigravity` / `gemini` / `qoder` / `codebuddy`）每轮按磁盘实时读取并内联 `SKILL.md`，立即生效；OpenCode 的 `/skill` 工具目录（`GET /skill?directory=<绝对路径>`）按引擎实例与会话缓存，若在已有 OpenCode 会话中未刷新，可新开会话或重启引擎实例。
 
 ## 第 7 步：修改已有技能
 
@@ -167,7 +163,7 @@ awk 'BEGIN{n=0} /^---[[:space:]]*$/{n++; if(n==2){ok=1; exit}} END{exit !ok}' "$
 3. frontmatter 是否未闭合，或缺少 `description`。
 4. 是否放在 `~/.hoxi/` 下除 `skills/` 之外的位置，或其它非扫描目录。
 5. 当前 worktree 是否真的能看到该文件；未提交的项目级技能不会进入 worktree。
-6. 引擎是否在技能创建后重启过。
+6. OpenCode 会话中若 `/skill` 列表未更新，是否已新开会话或重启引擎实例（Hoxi 技能面板与原生 CLI 运行时实时读取磁盘，无需重启）。
 7. 是否存在跨目录同名技能被覆盖。
 8. 是否被 `permission.skill` 设为 `deny`，或 `metadata["opencode/autoinvoke"]` 为 `"false"`。
 
@@ -176,7 +172,7 @@ awk 'BEGIN{n=0} /^---[[:space:]]*$/{n++; if(n==2){ok=1; exit}} END{exit !ok}' "$
 - 技能路径
 - `name` 与 `description`
 - 校验结果
-- 生效所需操作（提交、重启、新开会话）
+- 生效所需操作（Worktree 需提交 Git；OpenCode 已有会话需新开会话或刷新引擎）
 - 修改场景下附变更点
 
 ## 边界

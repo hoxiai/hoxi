@@ -95,5 +95,19 @@ func TestBuildObserverAuditPromptExtractsChangedHunkFromLargeFile(t *testing.T) 
 	if strings.Contains(prompt, "unchanged header padding line 001") {
 		t.Fatalf("expected observer prompt to omit unchanged file top, got:\n%s", prompt)
 	}
+	if !strings.Contains(prompt, "<task_context>\nfix tax calculation\n</task_context>") || !strings.Contains(prompt, "<diff_summary>") {
+		t.Fatalf("expected <task_context> and <diff_summary> fences, got:\n%s", prompt)
+	}
+	if strings.Contains(prompt, `"pass":`) {
+		t.Fatalf("expected observer prompt schema to omit redundant pass field, got:\n%s", prompt)
+	}
+}
+
+func TestParseObserverAuditJSONStripsThinkingBlocks(t *testing.T) {
+	t.Parallel()
+	score, summary, issues, err := parseObserverAuditJSON("<think>\nlet me evaluate the diff\n</think>\n```json\n{\"score\": 91, \"summary\": \"Clean fix\", \"issues\": []}\n```")
+	if err != nil || score != 91 || summary != "Clean fix" || len(issues) != 0 {
+		t.Fatalf("expected thinking block stripped and JSON parsed, got score=%d summary=%q issues=%v err=%v", score, summary, issues, err)
+	}
 }
 

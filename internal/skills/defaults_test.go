@@ -146,7 +146,7 @@ func TestSeedDefaultsMigratesLegacyAndUpgradesOutdatedBundledSkill(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(upgraded), `version: "1.1.0"`) {
-		t.Fatalf("expected tools/SKILL.md to be upgraded to 1.1.0, got:\n%s", string(upgraded))
+	if !strings.Contains(string(upgraded), `version: "1.2.0"`) {
+		t.Fatalf("expected tools/SKILL.md to be upgraded to 1.2.0, got:\n%s", string(upgraded))
 	}
 }

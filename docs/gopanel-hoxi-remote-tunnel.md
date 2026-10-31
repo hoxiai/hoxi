@@ -16,7 +16,7 @@
 | 手机在服务器列表中发现并添加 Hoxi 电脑 | 已实现 |
 | 经隧道的 WebSocket（终端 `/pty`） | 未实现，GoPanel 返回 501 |
 | 同局域网手机直连 Mac（`5417` 监听） | 已实现（`internal/gateway/lan.go` + `internal/pairing`，明文 + 配对令牌；跨网端到端加密仍为规划，见第 9 节） |
-| iPhone 审批提醒推送（APNs），点开进入语音审批 | 已实现，待真机验收；需在 GoPanel 配置 APNs 密钥 |
+| iPhone 审批提醒推送（APNs），点开进入待处理审批列表 | 已实现，待真机验收；需在 GoPanel 配置 APNs 密钥 |
 | Android 推送 | 未实现（国内无统一通道，需厂商推送或第三方） |
 
 ## 2. 拓扑
@@ -215,14 +215,14 @@ Type(1B) | StreamID(8B, BigEndian uint64) | Payload(≤ 4MB)
 
 ## 11. 审批提醒推送
 
-Agent 等待审批或向用户提问时，iPhone 收到通知；点开后 App 连接对应的 Hoxi 电脑、打开语音通话，并由助手读出待处理事项，用户用语音回答，经意图识别与确认卡片执行。
+Agent 等待审批或向用户提问时，iPhone 收到通知；点开后 App 连接对应的 Hoxi 电脑并直接打开结构化待审批列表（`CodeAttentionScreen`），不会自动开启麦克风或启动语音通话（见 `client/lib/app/push_launch_listener.dart`）。
 
 ```text
 Hoxi statusbar.Tracker（OpenCode permission/question.asked 与 Runner PreToolUse 审批）
   → 新增待处理项只通知一次 → tunnel.Manager.Notify → Notify 帧（类型 9）
   → GoPanel HandleHoxiNotice（仅限注册了 hoxi-gateway 的节点，按 requestId 去重 10 分钟）
   → APNs（.p8 token 认证，HTTP/2，collapse-id = hoxi-node-<nodeId>）→ 已注册的 iPhone
-  → 点开：按 panel + nodeId 找到中继连接 → 切换节点 → 打开语音通话 → 自动询问“有哪些操作在等我审批”
+  → 点开：按 panel + nodeId 找到中继连接 → 切换节点 → 打开结构化待审批列表（CodeAttentionScreen，不自动开启麦克风）
 ```
 
 - **内容最小化**：Notify 载荷只有 `kind`（approval / question / summary）、`requestId`、`sessionId`、`permission`、`pending`；`summary` 另有 `status`、`allowed`、`denied`、`timedOut`、`deferred` 五个数字。推送正文只说“有 N 项操作等待审批”，任务结束时只说“任务已结束：自动放行 X，拒绝 Y，待处理 Z”，**不含命令、代码、路径或会话内容**（这些会经过 Apple 并显示在锁屏上）。细节由手机点开后经隧道读取。GoPanel 需识别 `kind: "summary"` 并发上述通用正文；未识别时按旧逻辑忽略即可

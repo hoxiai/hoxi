@@ -32,7 +32,13 @@ var builtinModes = []builtinMode{
 		Name:        "ask",
 		Description: "Read-only answers about the codebase. Never edits files or runs shell commands.",
 		Prompt:      askModePrompt,
-		Permission:  map[string]string{"edit": "deny", "bash": "deny"},
+		Permission: map[string]string{
+			"edit":          "deny",
+			"bash":          "deny",
+			"hoxi_browser":  "deny",
+			"hoxi_computer": "deny",
+			"hoxi_tools":    "deny",
+		},
 	},
 	{
 		Name:        "debug",

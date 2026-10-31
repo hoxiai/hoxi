@@ -49,7 +49,7 @@ function continuePrompt(objective: string): string {
   return [
     `Continue working toward the session goal: ${objective}`,
     "Take the next concrete step.",
-    "End your final reply with `[[goal:complete]] <what you verified>` once the objective is met and verified, or `[[goal:blocked]] <blocker>` if you cannot proceed safely; otherwise write neither.",
+    "End your final reply with `[[goal:complete]] <what you verified>` once the objective is met and verified, or `[[goal:blocked]] <blocker>` if you cannot proceed safely; otherwise write neither (or call goal_report if available).",
   ].join("\n");
 }
 

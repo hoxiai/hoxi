@@ -1,10 +1,9 @@
-# Hoxi Skills 开发规范与实施方案
+# Hoxi Skills 开发规范与实现架构
 
-> 文档版本：0.2 · 日期：2026-10-20 · 状态：基于 OpenCode 1.19.3 本地探测的待实现方案。
-> 优先实现 OpenCode 原生技能的目录展示、选择请求和调用反馈，再逐个适配其他运行时。
-> 标准格式、实际观测和新增设计分别标注；文档存在不代表功能已经交付。
+> 状态：**已实现**（`internal/skills/`、`internal/runner/skills.go`、`web/src/store/skills.ts`、`web/src/components/skills/`）。
+> 支持全部 6 个运行时（OpenCode 原生 `skill` 工具调用 + Claude Code / Antigravity / Gemini CLI / Qoder / CodeBuddy 内联 `<skill_content>` 注入）、内置默认技能播种（`skill-authoring`、`tools`）以及 hoxi.ai 线上技能市集（`GET /api/hoxi/skills/marketplace` + `POST /api/hoxi/skills/marketplace/install`）。
 
-## 1. 实际基线与开发决策
+## 1. 实际基线与实现架构
 
 ### 1.1 版本与证据范围
 
@@ -31,20 +30,16 @@
 
 该版本 `/doc` 同时有 legacy `/skill` 和 V2 `/api/skill`，二者响应契约不同。Hoxi 当前发送、事件和会话适配使用 legacy 契约，第一版沿用该套契约；不因同一二进制提供 V2 就混接两套 API。
 
-### 1.3 对原方案的收敛
+### 1.3 已实现能力与范围边界
 
-第一版交付以下能力：
+当前已交付以下能力：
 
-1. 通过 Hoxi 自有薄接口读取 OpenCode 实际目录和正文，展示来源、权限提示和内置技能。
-2. 在输入框选择一个技能，向原生运行时发出明确的加载请求；保留排队、失败恢复和会话隔离。
-3. 复用原生 `skill` 工具事件与现有 ToolCard，确认实际加载结果。
-4. 明确缓存与刷新限制，保持已有安全审批、Stop 和历史读取行为。
-
-以下内容放到后续阶段：其他 CLI 适配、确定性的原生命令调用、技能创建编辑、全包版本快照、跨运行时统一加载状态、技能包同步（多文件资源、更新与卸载）。
-
-线上市集已经落地，但范围刻意收窄为**元数据目录 + 显式安装**：hoxi.ai 的 `GET /api/hoxi/skills` 只发布元数据，桌面端 `GET /api/hoxi/skills/marketplace` 读取并标注本地安装状态；`POST /api/hoxi/skills/marketplace/install` 在用户点击后下载单个 `SKILL.md`，校验 `contentSha256` 与 frontmatter `name`，再原子写入 `~/.hoxi/skills/<slug>/`。不做自动安装、不执行远程脚本、不开放隧道安装。
-
-第一版不把完整内容摘要、全包复制、新 activation SSE 和独立历史账本作为前置条件。后续有复现需求时再增加，不能把普通内容摘要包装成已经锁定了引擎运行版本。
+1. **统一目录与详情接口**（`internal/skills/skills.go`）：`GET /api/hoxi/skills/list` 与 `GET /api/hoxi/skills/detail` 读取 OpenCode `GET /skill` 目录并按会话真实运行时适配，对全部 6 个运行时（`opencode`、`claude-code`、`antigravity`、`gemini-cli`、`qoder`、`codebuddy`）均返回 `supported: true`，标注来源（`builtin` / `project` / `user` / `external`）与本地路径打开权限。
+2. **多运行时技能注入**（`internal/runner/skills.go`）：在输入框选择一个技能（`skillSelection`）后：
+   - **OpenCode 运行时**（`mode: "native"`）：向模型追加明确指令，要求先调用原生 `skill` 工具（`{"name": "<name>"}`）加载该技能，并在前端复用原生 `skill` 工具事件与 `ToolCard` 确认加载状态。
+   - **CLI 运行时**（`claude-code` / `antigravity` / `gemini-cli` / `qoder` / `codebuddy`，`mode: "inline"`）：由 `formatInlineSkillPrompt` 将经过校验的技能正文及 `<Base directory for this skill: ...>` 直接以 `<skill_content name="...">...</skill_content>` 内联注入本轮提示词。
+3. **内置默认技能自动播种与升级**（`internal/skills/defaults.go`）：启动时 `skills.SeedDefaults()` 将 `internal/skills/defaults/` 下的 `skill-authoring` 与 `tools` 写入 `~/.hoxi/skills/<name>/SKILL.md`；当文件仍由 `author: "Hoxi"` 维护且内置 `version` 更高时自动升级，并自动清理已废弃的旧默认目录（`hoxi-tools`、`shoply-ops`）。
+4. **hoxi.ai 线上技能市集**（`internal/skills/marketplace.go`）：`GET /api/hoxi/skills/marketplace` 拉取线上目录并标注本地安装状态（`installed` / `updatable`）；`POST /api/hoxi/skills/marketplace/install` 在用户点击后下载单个 `SKILL.md`，校验 `contentSha256` 与 frontmatter `name == slug`，再原子写入 `~/.hoxi/skills/<slug>/SKILL.md`（本地文件已被用户修改时需显式传 `overwrite=true`）。不做自动安装、不执行远程脚本、安装接口不对远程隧道开放。
 
 ## 2. 标准 SKILL.md 编写约定
 
@@ -152,9 +147,9 @@ Claude Code 的扩展能力和标准字段需要分开处理，参见 [官方兼
 
 ### 2.4 Hoxi 默认技能
 
-- 内置默认技能随应用发布，引擎启动前由 `skills.SeedDefaults` 播种到 `~/.hoxi/skills/<name>/SKILL.md`；已存在的文件不覆盖，用户修改优先。
+- 内置默认技能（`skill-authoring`、`tools`）随应用发布，引擎启动前由 `skills.SeedDefaults`（`internal/skills/defaults.go`）播种到 `~/.hoxi/skills/<name>/SKILL.md`；当磁盘文件仍带 `author: "Hoxi"` 且内置 `version` 更高时自动升级，若用户已自行修改或自定义则保留用户文件不覆盖。已废弃的旧内置技能目录（`hoxi-tools`、`shoply-ops`）在未添加用户自定义文件时自动清理。
 - `ensureHoxiModelsConfig` 在生成 `OPENCODE_CONFIG` 时把该目录并入 `skills`。合并按路径并集处理，兼容数组与 `{paths, urls}` 两种既有形式，统一输出数组形式（官方 schema 已把对象形式标记为 deprecated），不覆盖用户自定义来源。
-- 该目录同时登记在 `internal/skills/userSkillRoots`，Hoxi 技能面板将其标识为 `~/.hoxi/skills` 来源并允许打开文件。
+- `internal/skills/userSkillRoots` 登记的个人技能根包含 `$XDG_CONFIG_HOME/{opencode,agents,claude}`、`~/.config/opencode`、`~/.opencode`、`~/.claude`、`~/.agents`、`~/.hoxi/skills` 与 `~/.gemini`，技能面板将其归类为 `user` 来源并允许在本地打开文件。
 - 默认技能源文件位于 `internal/skills/defaults/`；仓库根 `.opencode/skills/` 的副本用于本项目会话，测试会校验两者一致。
 
 ## 3. OpenCode 1.19.3 协议与语义
@@ -243,18 +238,18 @@ flowchart LR
 
 `skills` 服务通过注入的运行时目录接口读取数据，不反向依赖 `runner`、`gateway`、`app` 或 `cli`。共享长生命周期 HTTP transport、Basic Auth 和目录参数；禁止每次请求另建连接池或改写 OpenCode 源码。
 
-## 5. 目录适配与最小接口
+## 5. 目录适配与 HTTP 接口
 
 ### 5.1 Hoxi 描述符
 
-以下类型为新增 Hoxi 设计，与上游实际结构分开维护：
+以下类型为 Hoxi 技能接口结构（`internal/skills/skills.go` 与 `web/src/services/skills-types.ts`）：
 
 ```ts
 interface SkillDescriptor {
   key: string;
   name: string;
   description?: string;
-  runtime: "opencode";
+  runtime: string;
   source: "builtin" | "project" | "user" | "external";
   sourceLabel: string;
   canOpenLocation: boolean;
@@ -267,22 +262,20 @@ interface SkillSelection {
 }
 ```
 
-`key` 是后端按运行时、有效目录和已解析来源生成的不透明标识；不接受前端传入绝对路径替代来源检查。`contentDigest` 若提供，仅表示本次读取到的正文摘要，不覆盖整个资源包，也不承诺锁定运行时版本。
+`key` 是后端按运行时、有效目录和已解析来源生成的不透明标识（`skl_<sha256>`）；不接受前端传入绝对路径替代来源检查。`contentDigest` 表示本次读取到的正文 SHA-256 摘要。
 
-目录与详情缓存键必须包含运行时、版本和有效 `directory`；会话缓存还包含 `sessionID`。原生目录按名称解析后的条目是可调用候选，不另行发现并显示原生引擎无法按名称选择的同名副本。
-
-### 5.2 HTTP 路由草案
+### 5.2 HTTP 路由
 
 | 方法与路径 | 上下文与参数 | 结果 |
 | --- | --- | --- |
-| `GET /api/hoxi/skills/list` | `directory`；有会话时附 `sessionID` | 原生有效技能描述符列表 |
-| `GET /api/hoxi/skills/detail` | 同一上下文及 `key` | 描述符与从上游目录记录取得的正文 |
+| `GET /api/hoxi/skills/list` | `directory`；有会话时附 `sessionID` | `{directory, sessionID?, runtime, supported: true, skills: SkillDescriptor[]}` |
+| `GET /api/hoxi/skills/detail` | 同一上下文及 `key` | `{directory, sessionID?, runtime, skill: SkillDescriptor, content: string}` |
+| `GET /api/hoxi/skills/marketplace` | 可选 `?refresh=1` | `{skills: MarketplaceSkill[], fetchedAt}`（经隧道只读开放） |
+| `POST /api/hoxi/skills/marketplace/install` | `{slug, overwrite?}` | 校验 `contentSha256` 并原子写入 `~/.hoxi/skills/<slug>/SKILL.md`（仅限桌面本机，隧道 403） |
 
-这两个路径是新增设计。由技能领域包 `RegisterRoutes(mux)` 注册，复用网关鉴权与目录守卫；后端按会话真实运行时决定适配器，不信任客户端随意声明 runtime。
+由 `internal/skills.Service.RegisterRoutes(mux)` 注册，复用网关鉴权与目录守卫；后端按会话真实运行时决定 `runtime`，全部 6 个运行时（`opencode`、`claude-code`、`antigravity`、`gemini-cli`、`qoder`、`codebuddy`）均支持。
 
 无会话预览只允许已登记工作区。新会话沙箱建立后重新读取该沙箱目录，并更新选择的 key；名称消失、有效来源变化或发生目录冲突时保留草稿、提示重新选择。
-
-其他 CLI 尚未完成适配时返回明确的“当前运行时未支持”，不能回退展示 OpenCode 目录并让用户误以为也能在该 CLI 调用。
 
 ### 5.3 内置技能、资源与路径
 
@@ -301,9 +294,9 @@ interface SkillSelection {
 - 标签表示用户意图，不代表已加载；实际加载依靠第 7 节的原生事件。
 - 不改写或安装用户技能文件；列表与查看功能不执行技能正文。
 
-### 6.2 prompt 扩展草案
+### 6.2 `skillSelection` 发送契约
 
-继续通过统一入口发送；以下字段是 Hoxi 自有扩展，当前尚未实现：
+通过统一会话入口发送（`internal/runner/skills.go`）：
 
 ```http
 POST /api/hoxi/sessions/ses_example/prompt_async?directory=%2Frepo%2F.hoxi%2Fworktrees%2Fses_example
@@ -323,16 +316,11 @@ Content-Type: application/json
 
 后端按以下顺序执行：
 
-1. 沿用隐私授权、会话所有权、有效目录和并发运行检查。
-2. 在最终会话目录查询 OpenCode 当前记录，校验 key 与 name 对应；不把 key 当成文件路径。
-3. 保留用户原文与选择记录，构造一段明确要求使用该名称原生技能的本轮用户指令，参数仍是普通文本。
-4. 复用现有 `startOpenCodeTurn` 的模型、系统上下文、附件、SSE、Stop 和持久化流程。
-5. 向上游只发送其实际支持的 prompt 字段，剥离 `skillSelection`；不内联整个技能正文来假装原生调用。
-6. 模型若没有调用 skill 工具，结束时显示“本轮未确认加载”，不报告技能调用成功。
-
-因此首版提供的是“请求使用原生技能”，并不保证强制预加载。产品若要求完全确定的模板展开，应推进第 3.3 节的 command 接入和门控验收。
-
-旧 OpenCode 会话收到扩展时先走既有收编流程进入 runner，不能让未知字段直接经透传路由到上游。当前 runner 没有 `command` 子路由；未来使用 command 时也必须新增统一 `/api/hoxi/sessions/{id}/command` 的处理，禁止前端直调上游 `/session`。
+1. 沿用会话所有权、有效目录和并发运行检查。
+2. 在最终会话目录查询技能目录记录，校验 `key` 与 `name` 对应；不把 `key` 当成文件路径。
+3. 将用户选择写入用户文本片段的 `metadata.hoxi.skillSelection`（含 `key`、`name`、`mode: "native" | "inline"`）。
+4. **OpenCode 运行时**（`mode: "native"`）：构造明确要求先调用原生 `skill` 工具（`{"name": "<name>"}`）的本轮用户指令，向上游发送标准 `parts` 并剥离 `skillSelection`；模型若未调用 `skill` 工具，轮次结束时前端显示“本轮未确认加载”。
+5. **CLI 运行时**（`claude-code` / `antigravity` / `gemini-cli` / `qoder` / `codebuddy`，`mode: "inline"`）：由 `formatInlineSkillPrompt` 将技能正文（及磁盘技能的 `Base directory for this skill`）包装为 `<skill_content name="...">...</skill_content>` 内联注入本轮提示词。
 
 ### 6.3 草稿、排队与历史
 
@@ -405,18 +393,15 @@ OpenCode 的原生技能权限配置和工具禁用机制可优先复用，参�
 
 技能内容作为模型上下文随用户发起的 AI 请求发送到其自行配置的提供商。后续若增加后台技能生成或审计，必须在 UI 中明确说明目的地，不能在扫描时静默调用模型。
 
-## 10. 其他运行时与后续能力
+## 10. 多运行时支持与后续演进
 
-| 能力 | 演进方式 |
+| 能力 | 状态与说明 |
 | --- | --- |
-| Claude Code | 按 Hoxi 实际 `-p` / stream-json 参数实测原生发现、加载、资源和事件；保留其专属扩展 |
-| Antigravity / Qoder / CodeBuddy | 分别验证，未完成前标记未支持；消息外形相同不等于技能机制相同 |
-| 通用 inline 模式 | 作为明确兼容子集另立方案，说明不支持的动态命令、hooks 和变量；不静默替代原生调用 |
-| 精确版本复现 | 同时解决引擎目录缓存、正文与资源包快照、同名解析和运行时可达路径 |
-| 创建/编辑/导入 | 增加作者格式校验、版本冲突写入、来源边界和引擎安全重载 |
-| 移动端 | 复用节点端目录与选择协议，手机不扫描桌面文件系统；GoPanel 未提供契约时隐藏入口 |
-
-通用模式将来若需复制包资源，目录包含会话 ID，避免 local 模式的共享工作区串资源；持久状态依赖既有 Store 路径并支持 `HOXI_SESSION_STORE_DIR`。这些后续设计不作为 OpenCode 首版的前置重构。
+| OpenCode | 已实现（`mode: "native"`）：模型调用原生 `skill` 工具加载技能，前端根据 `tool: "skill"` 事件展示加载状态 |
+| Claude Code / Antigravity / Gemini CLI / Qoder / CodeBuddy | 已实现（`mode: "inline"`）：`internal/runner/skills.go` 校验 `skillSelection` 后通过 `formatInlineSkillPrompt` 将 `<skill_content name="...">` 与技能资源目录内联注入本轮提示词 |
+| 内置默认技能与线上市集 | 已实现：`skills.SeedDefaults` 自动播种/按版本升级 `skill-authoring` 与 `tools`；`GET /api/hoxi/skills/marketplace` 与 `POST /api/hoxi/skills/marketplace/install` 提供 SHA-256 校验后的单文件显式安装 |
+| 移动端 | 已实现只读目录：`/api/hoxi/skills/list` 与 `/api/hoxi/skills/marketplace` 在远程隧道白名单内只读开放，安装接口（`/api/hoxi/skills/marketplace/install`）仅限桌面本机 |
+| 后续演进 | 精确全包版本快照、多文件技能包远程同步、业务 Skill 结构化返回契约（`requiresConfirmation`）仍属后续规划 |
 
 ## 11. 实施阶段与验收
 
