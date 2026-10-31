@@ -218,18 +218,25 @@ func TestDownloadAbortsPromptlyWhenStreamStalls(t *testing.T) {
 	defer func() { downloadStallTimeout = oldStall }()
 
 	unblock := make(chan struct{})
-	defer close(unblock)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, ".sha256") {
+			http.NotFound(w, r)
+			return
+		}
 		w.Header().Set("Content-Length", "1048576")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("partial-head"))
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
 		}
-		<-unblock
+		select {
+		case <-unblock:
+		case <-r.Context().Done():
+		}
 	}))
 	defer srv.Close()
+	defer close(unblock)
 
 	dstPath := filepath.Join(t.TempDir(), "stalled.dmg")
 	err := downloadAndVerifyDMG(
