@@ -22,6 +22,7 @@ import {
   forkFromMessage,
   hasOlderSessionHistory,
   imageViewerOpen,
+  isSessionTaskActive,
   loadOlderSessionHistory,
   openImagePreview,
   isUserTurnTaskActive as isUserTurnTaskActiveInStore,
@@ -220,11 +221,14 @@ export default function MessageStream(props: { hidden?: boolean }) {
   const sessionScroll = createSessionScroll({
     sessionID: () => workspace.activeSessionID,
     turnIDs: () => turns().map((turn) => turn.info.id),
-    loading: () => isLoadingSession(),
+    loading: () =>
+      isLoadingSession() ||
+      Boolean(workspace.activeSessionID && workspace.loadingMessagesBySession[workspace.activeSessionID]),
     scroller: () => scroller,
     content: () => content,
     scroll,
     ensureTurnVisible: turnWindow.ensureTurnVisible,
+    shouldFollowBottom: isSessionTaskActive,
   });
   let promptFollowFrame: number | undefined;
 
@@ -232,13 +236,12 @@ export default function MessageStream(props: { hidden?: boolean }) {
     if (promptFollowFrame !== undefined) cancelAnimationFrame(promptFollowFrame);
   });
 
-  // A prompt the user just sent (or queued) always brings the live tail back into
-  // view, even when they had scrolled up; automatic queue drains do not.
+  // A prompt the user just sent (or queued), or selecting an active-task session,
+  // always brings the live tail back into view; automatic queue drains do not.
   createEffect(on(timelineFollowRequest, (request) => {
     const sessionID = request?.sessionID;
     if (!sessionID || sessionID !== workspace.activeSessionID) return;
-    sessionScroll.interrupt();
-    scroll.jumpToBottom();
+    sessionScroll.followToBottom();
     // The optimistic turn and the first assistant activity are committed in
     // separate reactive updates; re-anchor once more after the next layout pass.
     if (promptFollowFrame !== undefined) cancelAnimationFrame(promptFollowFrame);

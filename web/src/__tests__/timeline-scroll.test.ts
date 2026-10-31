@@ -207,6 +207,18 @@ describe("Timeline layout following", () => {
       assertEqual(scroller.scrollTop, 1750);
       assertEqual(scroll.awayFromBottom(), false);
 
+      // A large activity-group or reasoning collapse (>240px) clamping scrollTop
+      // upward without user input must NOT pause following, and must self-heal.
+      scroller.scrollHeight = 1600;
+      scroller.scrollTop = 1750; // clamped to 1200 (-550px > READ_AWAY_THRESHOLD)
+      scroller.scrollHeight = 1720; // +120px new step before scroll event fires
+      assertEqual(scroll.onScroll(), false);
+      assertEqual(scroll.isFollowing(), true);
+      assertEqual(scroller.scrollTop, 1320);
+      assertEqual(scroll.awayFromBottom(), false);
+      scroller.scrollHeight = 2150;
+      resized();
+
       // Scrolling down with wheel/trackpad into the bottom padding (<=28px)
       // re-engages auto-follow so there is no dead zone with a hidden button.
       scroller.scrollTop = 1400;

@@ -80,6 +80,7 @@ export function createTimelineScroll(
   let following = true;
   let frame: number | undefined;
   let previousScrollTop = 0;
+  let previousScrollHeight = 0;
   // Scrollbar drags and touch scrolls emit only scroll events, so upward movement
   // counts as reader intent only while one of them is in progress.
   let pointerScrolling = false;
@@ -114,6 +115,7 @@ export function createTimelineScroll(
     syncOverflowAnchor(scroller);
     scroller.scrollTop = scroller.scrollHeight;
     previousScrollTop = scroller.scrollTop;
+    previousScrollHeight = scroller.scrollHeight;
     setAwayFromBottom(false);
   };
 
@@ -150,14 +152,20 @@ export function createTimelineScroll(
       following = true;
       lastUserInputAt = 0;
       const scroller = getScroller();
-      if (scroller) previousScrollTop = scroller.scrollTop;
+      if (scroller) {
+        previousScrollTop = scroller.scrollTop;
+        previousScrollHeight = scroller.scrollHeight;
+      }
       syncOverflowAnchor(scroller);
       schedule();
     },
     pause() {
       following = false;
       const scroller = getScroller();
-      if (scroller) previousScrollTop = scroller.scrollTop;
+      if (scroller) {
+        previousScrollTop = scroller.scrollTop;
+        previousScrollHeight = scroller.scrollHeight;
+      }
       syncOverflowAnchor(scroller);
       if (frame !== undefined) cancelAnimationFrame(frame);
       frame = undefined;
@@ -175,10 +183,13 @@ export function createTimelineScroll(
       // scroll event is dispatched it looks like distanceFromBottom grew.
       // Compare actual upward scrollTop delta (`upwardDelta`) rather than `distance`.
       const currentTop = scroller.scrollTop;
+      const currentHeight = scroller.scrollHeight;
       const upwardDelta = previousScrollTop - currentTop;
+      const heightChanged = currentHeight !== previousScrollHeight;
       const movedUp = upwardDelta > 1;
       const movedDown = currentTop - previousScrollTop > 1;
       previousScrollTop = currentTop;
+      previousScrollHeight = currentHeight;
       const distance = distanceFromBottom(scroller);
       const hasRecentUserInput =
         pointerScrolling ||
@@ -190,13 +201,14 @@ export function createTimelineScroll(
       ) {
         following = true;
         lastUserInputAt = 0;
-      } else if (movedUp && (hasRecentUserInput || upwardDelta > READ_AWAY_THRESHOLD)) {
+      } else if (movedUp && (hasRecentUserInput || (!heightChanged && upwardDelta > READ_AWAY_THRESHOLD))) {
         following = false;
       } else if (following && enabled() && !hasRecentUserInput && distance > 0) {
         // Self-healing pin (KiloCode pattern): if a same-frame DOM swap clamped
         // scrollTop upward without user input, re-pin immediately before paint.
         scroller.scrollTop = scroller.scrollHeight;
         previousScrollTop = scroller.scrollTop;
+        previousScrollHeight = scroller.scrollHeight;
       }
       updatePosition();
       return !following;

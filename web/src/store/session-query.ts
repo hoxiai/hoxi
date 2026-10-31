@@ -2,6 +2,7 @@
 // Read-only session lookups (directory, busy/archived/deleted flags, runtime).
 // Leaf module (workspace-state + auto-models only) so every domain module can use
 // it without creating import cycles.
+import { createSignal } from "solid-js";
 import {
   inferRunnerRuntimeFromSessionID,
   isRunnerSessionID,
@@ -11,6 +12,16 @@ import type { SessionInfo, SessionRuntime } from "../services/sse-types";
 import { AUTO_PROVIDER_ID, peekAutoModelTarget } from "./auto-models";
 import { indexedSession } from "./session-index";
 import { workspace } from "./workspace-state";
+
+// Bumped when the user sends (or queues) a prompt or selects an active-task
+// session so the timeline re-follows the live tail.
+const [timelineFollowRequest, setTimelineFollowRequest] =
+  createSignal<{ sessionID: string; seq: number } | null>(null);
+export { timelineFollowRequest };
+
+export function requestTimelineFollow(sessionID: string): void {
+  setTimelineFollowRequest((prev) => ({ sessionID, seq: (prev?.seq ?? 0) + 1 }));
+}
 
 export function isSessionArchived(session: SessionInfo): boolean {
   if (session.time?.archived && session.time.archived > 0) return true;
@@ -90,6 +101,15 @@ export function isSessionBusy(sessionID: string | null): boolean {
   if (!sessionID) return false;
   const st = workspace.statusBySession[sessionID]?.type;
   return st === "busy" || st === "retry";
+}
+
+export function isSessionTaskActive(sessionID: string | null): boolean {
+  if (!sessionID) return false;
+  if (isSessionBusy(sessionID)) return true;
+  return (
+    workspace.pendingPermissions.some((p) => p.sessionID === sessionID) ||
+    workspace.pendingQuestions.some((q) => q.sessionID === sessionID)
+  );
 }
 
 export function sessionsWithPendingPermission(): Set<string> {

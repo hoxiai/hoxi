@@ -1,4 +1,4 @@
-import { batch, createSignal } from "solid-js";
+import { batch } from "solid-js";
 import { produce } from "solid-js/store";
 import { t } from "../i18n";
 import { hoxiAPI, resolveRunnerRuntimeForProvider, type SkillSelection } from "../services/api";
@@ -53,8 +53,10 @@ import {
 import {
   isSessionBusy,
   isSessionDeleted,
+  requestTimelineFollow,
   sessionDirectory,
   sessionRuntimeForID,
+  timelineFollowRequest,
 } from "./session-query";
 import { pauseSessionGoal } from "./session-goal-state";
 import {
@@ -270,15 +272,7 @@ export async function resumePausedSession(
   await dispatchSessionPrompt(prompt, id, { forceImmediate: true });
 }
 
-// Bumped when the user sends (or queues) a prompt so the timeline re-follows the
-// tail. Automatic queue drains skip it and never pull a reader off older output.
-const [timelineFollowRequest, setTimelineFollowRequest] =
-  createSignal<{ sessionID: string; seq: number } | null>(null);
 export { timelineFollowRequest };
-
-function requestTimelineFollow(sessionID: string) {
-  setTimelineFollowRequest((prev) => ({ sessionID, seq: (prev?.seq ?? 0) + 1 }));
-}
 
 export function uploadPromptAttachment(input: {
   sessionID?: string;

@@ -8,11 +8,13 @@ export function createSessionScrollController(options: {
   scroller: () => HTMLElement | undefined;
   scroll: ReturnType<typeof createTimelineScroll>;
   ensureTurnVisible: (id: string) => void;
+  shouldFollowBottom?: (id: string) => boolean;
 }) {
   const positions = new Map<string, Position>();
   let sessionID: string | null = null;
   let pending: Position | undefined;
   let ready = false;
+  let hasTurns = false;
   let frame: number | undefined;
   let settling: number | undefined;
 
@@ -44,11 +46,13 @@ export function createSessionScrollController(options: {
   const applyPending = (): boolean => {
     const el = options.scroller();
     const position = pending;
-    if (!ready || !position || !el || el.clientHeight === 0) return false;
+    if (!position || !el || el.clientHeight === 0) return false;
     if (position.bottom) {
+      if (!ready && !hasTurns) return false;
       options.scroll.jumpToBottom();
-      return true;
+      return ready;
     }
+    if (!ready) return false;
     options.scroll.pause();
     const anchor = Array.from(el.querySelectorAll<HTMLElement>("[data-turn-id]"))
       .find((node) => node.dataset.turnId === position.turnID);
@@ -95,13 +99,35 @@ export function createSessionScrollController(options: {
       frame = settling = undefined;
       sessionID = id;
       ready = false;
-      pending = positions.get(id || "") || { bottom: true, top: 0, offset: 0 };
+      hasTurns = false;
+      const followBottom = Boolean(id && options.shouldFollowBottom?.(id));
+      pending = followBottom
+        ? { bottom: true, top: 0, offset: 0 }
+        : positions.get(id || "") || { bottom: true, top: 0, offset: 0 };
+      if (followBottom && id) {
+        positions.set(id, pending);
+      }
       if (pending.bottom) options.scroll.resume();
       else options.scroll.pause();
     },
+    followToBottom() {
+      if (frame !== undefined) cancelAnimationFrame(frame);
+      if (settling !== undefined) cancelAnimationFrame(settling);
+      frame = settling = undefined;
+      pending = { bottom: true, top: 0, offset: 0 };
+      if (sessionID) positions.set(sessionID, pending);
+      options.scroll.resume();
+      options.scroll.jumpToBottom();
+      if (ready) scheduleRestore();
+    },
     ready(turnIDs: string[], loading: boolean) {
       ready = !loading;
-      if (!pending || !ready) return;
+      hasTurns = turnIDs.length > 0;
+      if (!pending) return;
+      if (!ready) {
+        if (pending.bottom && hasTurns) applyPending();
+        return;
+      }
       if (pending.turnID && turnIDs.includes(pending.turnID)) {
         options.ensureTurnVisible(pending.turnID);
       }
@@ -110,10 +136,8 @@ export function createSessionScrollController(options: {
     },
     resized() {
       if (pending) {
-        if (ready) {
-          applyPending();
-          scheduleRestore();
-        }
+        applyPending();
+        if (ready) scheduleRestore();
       } else capture();
     },
     interrupt() {
@@ -141,6 +165,7 @@ export function createSessionScroll(options: {
   scroller: () => HTMLElement | undefined;
   scroll: ReturnType<typeof createTimelineScroll>;
   ensureTurnVisible: (id: string) => void;
+  shouldFollowBottom?: (id: string) => boolean;
 }) {
   const controller = createSessionScrollController(options);
   createEffect(() => {

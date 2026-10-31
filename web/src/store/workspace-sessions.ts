@@ -33,7 +33,9 @@ import {
   isSessionArchived,
   isSessionBusy,
   isSessionDeleted,
+  isSessionTaskActive,
   markSessionDeleted,
+  requestTimelineFollow,
   sessionDirectory,
 } from "./session-query";
 import {
@@ -361,6 +363,10 @@ export async function selectSession(sessionID: string): Promise<void> {
   touchSessionTranscript(sessionID);
   const hadLiveMemory = workspace.messagesBySession[sessionID] !== undefined;
   const snap = !hadLiveMemory ? readCachedSessionTurns(sessionID) : undefined;
+  const skipHydration =
+    hadLiveMemory &&
+    hydratedSessionIDs.has(sessionID) &&
+    Boolean(workspace.aiBySession[sessionID] || !isSessionBusy(sessionID));
   batch(() => {
     if (workspace.activeSessionID !== sessionID) {
       setWorkspace({
@@ -378,13 +384,19 @@ export async function selectSession(sessionID: string): Promise<void> {
         setWorkspace("loadingMessagesBySession", sessionID, true);
       }
     }
+    if (!skipHydration && !hydratedSessionIDs.has(sessionID)) {
+      setWorkspace("loadingMessagesBySession", sessionID, true);
+    }
     setWorkspace("activeSessionID", sessionID);
     setWorkspace("unreadCompletedBySession", sessionID, false);
   });
+  if (isSessionTaskActive(sessionID)) {
+    requestTimelineFollow(sessionID);
+  }
   void syncPendingPermissions(sessionDirectory(sessionID));
   // Background SSE events create a partial transcript for sessions that were
   // never loaded, so only a fully hydrated one may skip the history fetch.
-  if (hadLiveMemory && hydratedSessionIDs.has(sessionID) && (workspace.aiBySession[sessionID] || !isSessionBusy(sessionID))) {
+  if (skipHydration) {
     const isChildSession = Boolean(workspace.sessions.find((s) => s.id === sessionID)?.parentID);
     if (!isChildSession) void refreshSessionDiff(sessionID);
     return;
