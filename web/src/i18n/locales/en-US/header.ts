@@ -47,7 +47,7 @@ export const header = {
   langEn: "English",
   pulseBtnLabel: "Dev Pulse",
   pulseTooltip: "Today's tokens, spend, code changes and telemetry",
-  pulseTitle: "Daily Dev Pulse",
+  pulseTitle: "Today's Token Usage",
   pulseRefreshTooltip: "Refresh today's Git and session telemetry",
   pulseTodayTokens: "Today's Tokens",
 

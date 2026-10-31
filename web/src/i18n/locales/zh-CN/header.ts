@@ -48,7 +48,7 @@ export const header: HeaderI18n = {
   langEn: "English",
   pulseBtnLabel: "今日统计",
   pulseTooltip: "今日 Token、费用与代码产出",
-  pulseTitle: "今日研发统计",
+  pulseTitle: "今日 Token 消耗",
   pulseRefreshTooltip: "刷新今日统计",
   pulseTodayTokens: "今日 Token 用量",
 
