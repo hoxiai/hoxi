@@ -2,7 +2,7 @@
 package buildinfo
 
 // Version is overridden by build-desktop.sh with the validated release version.
-var Version = "0.6.3"
+var Version = "0.6.4"
 
 // UserAgent returns the standard User-Agent header for Hoxi desktop requests.
 func UserAgent() string {
