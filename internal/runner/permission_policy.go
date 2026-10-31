@@ -24,7 +24,7 @@ import (
 //     token resolves inside the session worktree.
 
 var (
-	destructiveRe = regexp.MustCompile(`(?i)\b(rm|rmdir|unlink|shred|truncate|srm|sudo|chmod|chown|mkfs|dd|diskutil|killall|reboot|shutdown)\b|\bkill\s+(?:(?:(?:-0\s+)*(?:-(?:[1-9a-mo-rt-z][a-z0-9]*|[sn][a-z0-9]+|0[a-z0-9]+|-)\s+|-[sn]\s+(?:[1-9a-z][a-z0-9]*|0[a-z0-9]+)\s+))+[-?\d%]|(?:-[1-9]\d*|[1-9?%]|0(?:\s|$)))|\bpkill\b|[>|]\s*(?:/etc/|(?:\~|\$HOME|\$\{HOME\})/\.(?:zshrc|zshenv|zprofile|bashrc|bash_profile|profile|ssh\b|gnupg\b|netrc\b|npmrc\b))|(?:>>?|\b(?:cp|mv|install|ln|rsync|tee)\b[^\n;&|]*|\bsed\b[^\n;&|]*\s-[a-z0-9]*i[^\n;&|]*)\s*(?:[^\s;&|]*/)?\.(?:git/(?:hooks/|config\b)|opencode/|claude/|agents/|hoxi/skills/|vscode/settings\.json\b|gemini/(?:settings|config/hooks)\.json\b)|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*/)?\.(?:ssh|aws|gnupg|kube)/|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*/)?\.(?:netrc|npmrc|git-credentials|credentials\.json)(?:$|[\s;&|'"*?])|\.claude/\.credentials\.json|\.hoxi/(?:models|auth|tunnel(?:-dev)?|cloudflared|pairing|relay-keys|approval-policy|hoxi)\.(?:json|db)|\.docker/config\.json|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*/)?\.en(?:v(?:\.(?:local|prod(?:uction)?|dev(?:elopment)?|stag(?:e|ing)|test(?:ing)?|ci|preview|secret\w*|key\w*|private\w*|bak|backup)(?:\.local)?)?|\?|\*)(?:$|[\s;&|'"*?])|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*/)?\.envrc(?:$|[\s;&|'"*?])|\bfind\b[^\n;&|]*\s-(delete|exec\w*|ok\w*|fprint\w*|fls)\b|\b(curl|wget)\b[^\n|]*\|\s*(sh|bash|zsh)\b|\b(?:npm|pnpm|yarn|cargo)\s+publish\b|\bterraform\s+(?:destroy|apply)\b|\bkubectl\s+delete\b|\bdocker\s+(?:system\s+prune|rm|rmi)\b|/api/hoxi/(?:tools/run|computer/(?:action|grant|pause|stop))\b`)
+	destructiveRe = regexp.MustCompile(`(?i)\b(rm|rmdir|unlink|shred|truncate|srm|sudo|chmod|chown|mkfs|dd|diskutil|killall|reboot|shutdown)\b|\bkill\s+(?:(?:(?:-0\s+)*(?:-(?:[1-9a-mo-rt-z][a-z0-9]*|[sn][a-z0-9]+|0[a-z0-9]+|-)\s+|-[sn]\s+(?:[1-9a-z][a-z0-9]*|0[a-z0-9]+)\s+))+[-?\d%]|(?:-[1-9]\d*|[1-9?%]|0(?:\s|$)))|\bpkill\b|[>|]\s*(?:/etc/|(?:\~|\$HOME|\$\{HOME\})/\.(?:zshrc|zshenv|zprofile|bashrc|bash_profile|profile|ssh\b|gnupg\b|netrc\b|npmrc\b))|(?:>>?|\b(?:cp|mv|install|ln|rsync|tee)\b[^\n;&|]*|\bsed\b[^\n;&|]*[ \t]-[a-z0-9]*i[^\n;&|]*)[ \t]*(?:[^\s;&|]*/)?\.(?:git/(?:hooks/|config\b)|opencode/|claude/|agents/|hoxi/skills/|vscode/settings\.json\b|gemini/(?:settings|config/hooks)\.json\b)|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*/)?\.(?:ssh|aws|gnupg|kube)/|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*/)?\.(?:netrc|npmrc|git-credentials|credentials\.json)(?:$|[\s;&|'"*?])|\.claude/\.credentials\.json|\.hoxi/(?:models|auth|tunnel(?:-dev)?|cloudflared|pairing|relay-keys|approval-policy|hoxi)\.(?:json|db)|\.docker/config\.json|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*/)?\.en(?:v(?:\.(?:local|prod(?:uction)?|dev(?:elopment)?|stag(?:e|ing)|test(?:ing)?|ci|preview|secret\w*|key\w*|private\w*|bak|backup)(?:\.local)?)?|\?|\*)(?:$|[\s;&|'"*?])|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*/)?\.envrc(?:$|[\s;&|'"*?])|\bfind\b[^\n;&|]*\s-(delete|exec\w*|ok\w*|fprint\w*|fls)\b|\b(curl|wget)\b[^\n|]*\|\s*(sh|bash|zsh)\b|\b(?:npm|pnpm|yarn|cargo)\s+publish\b|\bterraform\s+(?:destroy|apply)\b|\bkubectl\s+delete\b|\bdocker\s+(?:system\s+prune|rm|rmi)\b|/api/hoxi/(?:tools/run|computer/(?:action|grant|pause|stop))\b`)
 
 	// Git option abbreviations (`--forc`, `--har`), combined short flags
 	// (`-uf`), `+refspec` force pushes and `:refspec` deletions count too.
@@ -39,7 +39,8 @@ var (
 	redirectWordRe   = regexp.MustCompile(`^(?:\d*|&)>>?$`)
 	devNullWordRe    = regexp.MustCompile(`^(?:\d*|&)>>?/dev/null$`)
 	dupStreamWordRe  = regexp.MustCompile(`^\d*>&[12]$`)
-	cdSegmentRe      = regexp.MustCompile(`^cd[ \t]+([A-Za-z0-9_./@%+,:][A-Za-z0-9_./@%+,:~-]*)$`)
+	cdSegmentRe            = regexp.MustCompile(`^cd[ \t]+([A-Za-z0-9_./@%+,:][A-Za-z0-9_./@%+,:~-]*)$`)
+	cdNullRedirectSuffixRe = regexp.MustCompile(`(?:[ \t]+(?:(?:\d*|&)>>?[ \t]*/dev/null|\d*>&[12]))+$`)
 	findActionRe     = regexp.MustCompile(`^-(exec\w*|ok\w*|delete|fprint\w*|fls)$`)
 	fdExecRe         = regexp.MustCompile(`^(-[^-]*[xX]|--exec)`)
 	rgExecRe         = regexp.MustCompile(`^--(pre|hostname-bin)`)
@@ -234,6 +235,13 @@ func isAbsOrRootedPath(p string) bool {
 	return filepath.IsAbs(p) || strings.HasPrefix(p, "/") || strings.HasPrefix(p, `\`)
 }
 
+func stripCDNullRedirects(s string) string {
+	if strings.HasPrefix(s, "cd ") || strings.HasPrefix(s, "cd\t") {
+		return cdNullRedirectSuffixRe.ReplaceAllString(s, "")
+	}
+	return s
+}
+
 // isWorktreeCD reports whether a segment is exactly `cd <plain-token>` whose
 // target stays inside the worktree. Tokens with quotes, escapes, globs, `~`,
 // `$` or a leading `-` (`cd -`, `cd -P`) never match cdSegmentRe.
@@ -242,7 +250,7 @@ func isWorktreeCD(segment, worktree string) bool {
 	if worktree == "" || !isAbsOrRootedPath(worktree) {
 		return false
 	}
-	m := cdSegmentRe.FindStringSubmatch(strings.TrimSpace(segment))
+	m := cdSegmentRe.FindStringSubmatch(stripCDNullRedirects(strings.TrimSpace(segment)))
 	if m == nil {
 		return false
 	}
@@ -546,7 +554,14 @@ func hasOpaqueShellSyntax(s string) bool {
 			i++
 			continue
 		}
-		if c == '\\' || c == '(' || c == ')' || c == '{' || c == '}' {
+		if c == '{' {
+			if nextIdx, ok := skipSafeBraceSpan(s, i); ok {
+				i = nextIdx
+				continue
+			}
+			return true
+		}
+		if c == '\\' || c == '(' || c == ')' || c == '}' {
 			return true
 		}
 		if c == '<' && next == '<' {
@@ -555,7 +570,7 @@ func hasOpaqueShellSyntax(s string) bool {
 		if c == '\'' || c == '"' {
 			shortFlag := i >= 2 && s[i-2] == '-' && (i == 2 || isWordBoundary(s[i-3])) &&
 				((prev >= 'a' && prev <= 'z') || (prev >= 'A' && prev <= 'Z'))
-			if prev != 0 && !isWordBoundary(prev) && prev != '=' && !shortFlag {
+			if prev != 0 && !isWordBoundary(prev) && prev != '=' && !(prev == '/' && next == '[') && !shortFlag {
 				return true
 			}
 			quote = c

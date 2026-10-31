@@ -48,15 +48,17 @@ var (
 	// Builtins that can rebind a variable behind the policy's back.
 	loopVarRebinders = setOf("declare", "local", "typeset", "readonly", "mapfile", "readarray", "let", "unset", "export")
 
-	shellVarNameRe   = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-	extGlobRe        = regexp.MustCompile(`^\*\.[A-Za-z0-9]+$`)
-	gitExtPathspecRe = regexp.MustCompile(`^[A-Za-z0-9_./-]*\*\.[A-Za-z0-9]+$`)
-	rgListFlagRe     = regexp.MustCompile(`^-[a-zA-Z]*l[a-zA-Z]*$`)
-	rgUnsafeShortRe     = regexp.MustCompile(`^-[a-zA-Z.]*[u.L][a-zA-Z.]*$`)
-	dotGlobRe           = regexp.MustCompile(`(^|/)\.[^/]*[*?]`)
-	sedReadOnlyScriptRe = regexp.MustCompile(`^\s*\d+(?:\s*,\s*(?:\d+|\+\d+))?\s*[pq](?:\s*[;\n]\s*\d+(?:\s*,\s*(?:\d+|\+\d+))?\s*[pq])*\s*$`)
-	headTailCountRe     = regexp.MustCompile(`^[+-]?\d+$`)
-	headTailFlagRe      = regexp.MustCompile(`^-(?:[nc]?[+-]?\d+|q|v|-quiet|-silent|-lines=[+-]?\d+|-bytes=[+-]?\d+)$`)
+	shellVarNameRe        = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	pipestatusSubscriptRe = regexp.MustCompile(`^(?:pipestatus|PIPESTATUS)\[\d+\]$`)
+	gitAtBraceRe          = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
+	extGlobRe             = regexp.MustCompile(`^\*\.[A-Za-z0-9]+$`)
+	gitExtPathspecRe      = regexp.MustCompile(`^[A-Za-z0-9_./-]*\*\.[A-Za-z0-9]+$`)
+	rgListFlagRe          = regexp.MustCompile(`^-[a-zA-Z]*l[a-zA-Z]*$`)
+	rgUnsafeShortRe       = regexp.MustCompile(`^-[a-zA-Z.]*[u.L][a-zA-Z.]*$`)
+	dotGlobRe             = regexp.MustCompile(`(^|/)\.[^/]*[*?]`)
+	sedReadOnlyScriptRe   = regexp.MustCompile(`^\s*\d+(?:\s*,\s*(?:\d+|\+\d+))?\s*[pq](?:\s*[;\n]\s*\d+(?:\s*,\s*(?:\d+|\+\d+))?\s*[pq])*\s*$`)
+	headTailCountRe       = regexp.MustCompile(`^[+-]?\d+$`)
+	headTailFlagRe        = regexp.MustCompile(`^-(?:[nc]?[+-]?\d+|q|v|-quiet|-silent|-lines=[+-]?\d+|-bytes=[+-]?\d+)$`)
 
 	// harmlessEnvVars hold system locations and settings, never secrets, so
 	// they may feed read-only tools and PATH assignments. Anything else that
@@ -64,7 +66,7 @@ var (
 	harmlessEnvVars = setOf("HOME", "PATH", "PWD", "OLDPWD", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG",
 		"TERM", "GOPATH", "GOROOT", "GOBIN", "GOCACHE", "GOMODCACHE", "CARGO_HOME", "PNPM_HOME",
 		"JAVA_HOME", "ANDROID_HOME",
-		"?", "!", "pipestatus") // exit status, and $! the last background pid
+		"?", "!", "pipestatus", "PIPESTATUS") // exit status, and $! the last background pid
 
 	// valueOnlyTools print or test their arguments without opening them as
 	// files, so they may take a `$(…)` result.
@@ -586,6 +588,35 @@ func isBenignPathAssignment(word string) bool {
 	return true
 }
 
+func braceVarName(body string) (string, bool) {
+	if shellVarNameRe.MatchString(body) {
+		return body, true
+	}
+	if pipestatusSubscriptRe.MatchString(body) {
+		return "pipestatus", true
+	}
+	return "", false
+}
+
+func skipSafeBraceSpan(s string, i int) (int, bool) {
+	if i <= 0 || i+1 >= len(s) || s[i] != '{' {
+		return i, false
+	}
+	end := strings.IndexByte(s[i+1:], '}')
+	if end <= 0 {
+		return i, false
+	}
+	body := s[i+1 : i+1+end]
+	if s[i-1] == '$' {
+		_, ok := braceVarName(body)
+		return i + 1 + end, ok
+	}
+	if s[i-1] == '@' && gitAtBraceRe.MatchString(body) {
+		return i + 1 + end, true
+	}
+	return i, false
+}
+
 // wordExpansionNames lists `$name` / `${name}` in one unquoted word; any
 // other `$` form fails.
 func wordExpansionNames(word string) ([]string, bool) {
@@ -598,10 +629,14 @@ func wordExpansionNames(word string) ([]string, bool) {
 		switch {
 		case next == '{':
 			end := strings.IndexByte(word[i+2:], '}')
-			if end < 0 || !shellVarNameRe.MatchString(word[i+2:i+2+end]) {
+			if end < 0 {
 				return nil, false
 			}
-			names = append(names, word[i+2:i+2+end])
+			name, ok := braceVarName(word[i+2 : i+2+end])
+			if !ok {
+				return nil, false
+			}
+			names = append(names, name)
 			i += end + 2
 		case next == '_' || (next >= 'a' && next <= 'z') || (next >= 'A' && next <= 'Z'):
 			k := i + 1
@@ -653,10 +688,14 @@ func shellExpansionNames(s string) ([]string, bool) {
 		switch {
 		case next == '{':
 			end := strings.IndexByte(s[i+2:], '}')
-			if end < 0 || !shellVarNameRe.MatchString(s[i+2:i+2+end]) {
+			if end < 0 {
 				return nil, false
 			}
-			names = append(names, s[i+2:i+2+end])
+			name, ok := braceVarName(s[i+2 : i+2+end])
+			if !ok {
+				return nil, false
+			}
+			names = append(names, name)
 			i += end + 2
 		case next == '_' || (next >= 'a' && next <= 'z') || (next >= 'A' && next <= 'Z'):
 			k := i + 1

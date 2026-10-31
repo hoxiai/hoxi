@@ -9,7 +9,7 @@ import { setLiteralJudge } from "./shell-constants.js";
 import { destructiveScanForms } from "./shell-substitution.js";
 
 const DESTRUCTIVE_RE =
-  /\b(rm|rmdir|unlink|shred|truncate|srm|sudo|chmod|chown|mkfs|dd|diskutil|killall|reboot|shutdown)\b|\bkill\s+(?:(?:(?:-0\s+)*(?:-(?:[1-9a-mo-rt-z][a-z0-9]*|[sn][a-z0-9]+|0[a-z0-9]+|-)\s+|-[sn]\s+(?:[1-9a-z][a-z0-9]*|0[a-z0-9]+)\s+))+[-?\d%]|(?:-[1-9]\d*|[1-9?%]|0(?:\s|$)))|\bpkill\b|[>|]\s*(?:\/etc\/|(?:\~|\$HOME|\$\{HOME\})\/\.(?:zshrc|zshenv|zprofile|bashrc|bash_profile|profile|ssh\b|gnupg\b|netrc\b|npmrc\b))|(?:>>?|\b(?:cp|mv|install|ln|rsync|tee)\b[^\n;&|]*|\bsed\b[^\n;&|]*\s-[a-z0-9]*i[^\n;&|]*)\s*(?:[^\s;&|]*\/)?\.(?:git\/(?:hooks\/|config\b)|opencode\/|claude\/|agents\/|hoxi\/skills\/|vscode\/settings\.json\b|gemini\/(?:settings|config\/hooks)\.json\b)|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.(?:ssh|aws|gnupg|kube)\/|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.(?:netrc|npmrc|git-credentials|credentials\.json)(?:$|[\s;&|'"*?])|\.claude\/\.credentials\.json|\.hoxi\/(?:models|auth|tunnel(?:-dev)?|cloudflared|pairing|relay-keys|approval-policy|hoxi)\.(?:json|db)|\.docker\/config\.json|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.en(?:v(?:\.(?:local|prod(?:uction)?|dev(?:elopment)?|stag(?:e|ing)|test(?:ing)?|ci|preview|secret\w*|key\w*|private\w*|bak|backup)(?:\.local)?)?|\?|\*)(?:$|[\s;&|'"*?])|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.envrc(?:$|[\s;&|'"*?])|\bfind\b[^\n;&|]*\s-(delete|exec\w*|ok\w*|fprint\w*|fls)\b|\b(curl|wget)\b[^\n|]*\|\s*(sh|bash|zsh)\b|\b(?:npm|pnpm|yarn|cargo)\s+publish\b|\bterraform\s+(?:destroy|apply)\b|\bkubectl\s+delete\b|\bdocker\s+(?:system\s+prune|rm|rmi)\b|\/api\/hoxi\/(?:tools\/run|computer\/(?:action|grant|pause|stop))\b/i;
+  /\b(rm|rmdir|unlink|shred|truncate|srm|sudo|chmod|chown|mkfs|dd|diskutil|killall|reboot|shutdown)\b|\bkill\s+(?:(?:(?:-0\s+)*(?:-(?:[1-9a-mo-rt-z][a-z0-9]*|[sn][a-z0-9]+|0[a-z0-9]+|-)\s+|-[sn]\s+(?:[1-9a-z][a-z0-9]*|0[a-z0-9]+)\s+))+[-?\d%]|(?:-[1-9]\d*|[1-9?%]|0(?:\s|$)))|\bpkill\b|[>|]\s*(?:\/etc\/|(?:\~|\$HOME|\$\{HOME\})\/\.(?:zshrc|zshenv|zprofile|bashrc|bash_profile|profile|ssh\b|gnupg\b|netrc\b|npmrc\b))|(?:>>?|\b(?:cp|mv|install|ln|rsync|tee)\b[^\n;&|]*|\bsed\b[^\n;&|]*[ \t]-[a-z0-9]*i[^\n;&|]*)[ \t]*(?:[^\s;&|]*\/)?\.(?:git\/(?:hooks\/|config\b)|opencode\/|claude\/|agents\/|hoxi\/skills\/|vscode\/settings\.json\b|gemini\/(?:settings|config\/hooks)\.json\b)|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.(?:ssh|aws|gnupg|kube)\/|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.(?:netrc|npmrc|git-credentials|credentials\.json)(?:$|[\s;&|'"*?])|\.claude\/\.credentials\.json|\.hoxi\/(?:models|auth|tunnel(?:-dev)?|cloudflared|pairing|relay-keys|approval-policy|hoxi)\.(?:json|db)|\.docker\/config\.json|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.en(?:v(?:\.(?:local|prod(?:uction)?|dev(?:elopment)?|stag(?:e|ing)|test(?:ing)?|ci|preview|secret\w*|key\w*|private\w*|bak|backup)(?:\.local)?)?|\?|\*)(?:$|[\s;&|'"*?])|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.envrc(?:$|[\s;&|'"*?])|\bfind\b[^\n;&|]*\s-(delete|exec\w*|ok\w*|fprint\w*|fls)\b|\b(curl|wget)\b[^\n|]*\|\s*(sh|bash|zsh)\b|\b(?:npm|pnpm|yarn|cargo)\s+publish\b|\bterraform\s+(?:destroy|apply)\b|\bkubectl\s+delete\b|\bdocker\s+(?:system\s+prune|rm|rmi)\b|\/api\/hoxi\/(?:tools\/run|computer\/(?:action|grant|pause|stop))\b/i;
 
 // Match Git global options, option abbreviations (`--forc`, `--har`), combined
 // short flags (`-uf`), `+refspec` force pushes and `:refspec` deletions.
@@ -22,6 +22,8 @@ const REDIRECT_WORD_RE = /^(?:\d*|&)>>?$/;
 const DEV_NULL_WORD_RE = /^(?:\d*|&)>>?\/dev\/null$/;
 const DUP_STREAM_WORD_RE = /^\d*>&[12]$/;
 export const CD_SEGMENT_RE = /^cd[ \t]+([A-Za-z0-9_./@%+,:][A-Za-z0-9_./@%+,:~-]*)$/;
+const CD_NULL_REDIRECT_SUFFIX_RE = /(?:[ \t]+(?:(?:\d*|&)>>?[ \t]*\/dev\/null|\d*>&[12]))+$/;
+export const stripCDNullRedirects = (s) => (s.startsWith("cd ") || s.startsWith("cd\t") ? s.replace(CD_NULL_REDIRECT_SUFFIX_RE, "") : s);
 const FIND_ACTION_RE = /^-(exec\w*|ok\w*|delete|fprint\w*|fls)$/;
 const FD_EXEC_RE = /^(-[^-]*[xX]|--exec)/;
 const RG_EXEC_RE = /^--(pre|hostname-bin)/;
@@ -214,7 +216,7 @@ function cleanPosixPath(p) {
 export function isWorktreeCD(segment, worktree) {
   const wt = String(worktree || "").trim();
   if (!wt.startsWith("/")) return false;
-  const m = CD_SEGMENT_RE.exec(String(segment || "").trim());
+  const m = CD_SEGMENT_RE.exec(stripCDNullRedirects(String(segment || "").trim()));
   if (!m) return false;
   const raw = m[1];
   const target = cleanPosixPath(raw.startsWith("/") ? raw : `${wt}/${raw}`);

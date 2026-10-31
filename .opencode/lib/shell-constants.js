@@ -7,13 +7,31 @@ import { containsFor, expandLiteralForLoops, forLoopRanges, isSafeCurlOutputTarg
 export const CMD_SUBST_VAR = "__hoxi_cmdsub__";
 export const MAX_SUBSHELL_DEPTH = 2;
 const SHELL_VAR_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const PIPESTATUS_SUBSCRIPT_RE = /^(?:pipestatus|PIPESTATUS)\[\d+\]$/;
+const GIT_AT_BRACE_RE = /^[A-Za-z0-9_]+$/;
 const PARAM_SENSITIVE = new Set(["git", "find", "rm", "rmdir", "unlink", "curl", "wget", "cp", "mv"]);
 const LOOP_VAR_REBINDERS = new Set(["declare", "local", "typeset", "readonly", "mapfile", "readarray", "let", "unset", "export"]);
 const SHELL_KEYWORDS = new Set(["while", "until", "do", "done", "if", "then", "else", "elif", "fi", "!"]);
 
 export const HARMLESS_ENV_VARS = new Set(["HOME", "PATH", "PWD", "OLDPWD", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG",
   "TERM", "GOPATH", "GOROOT", "GOBIN", "GOCACHE", "GOMODCACHE", "CARGO_HOME", "PNPM_HOME",
-  "JAVA_HOME", "ANDROID_HOME", "?", "!", "pipestatus"]);
+  "JAVA_HOME", "ANDROID_HOME", "?", "!", "pipestatus", "PIPESTATUS"]);
+
+export function braceVarName(body) {
+  if (SHELL_VAR_NAME_RE.test(body)) return body;
+  if (PIPESTATUS_SUBSCRIPT_RE.test(body)) return "pipestatus";
+  return "";
+}
+
+export function skipSafeBraceSpan(s, i) {
+  if (i <= 0 || i + 1 >= s.length || s[i] !== "{") return -1;
+  const end = s.indexOf("}", i + 1);
+  if (end <= i + 1) return -1;
+  const body = s.slice(i + 1, end);
+  if (s[i - 1] === "$") return braceVarName(body) ? end : -1;
+  if (s[i - 1] === "@" && GIT_AT_BRACE_RE.test(body)) return end;
+  return -1;
+}
 
 export const READ_ONLY_DATA_TOOLS = new Set(["rg", "grep", "egrep", "fgrep", "cat", "head", "tail", "wc", "ls", "stat",
   "file", "echo", "printf", "diff", "cmp", "sort", "uniq", "jq", "test", "[", "basename",
@@ -161,8 +179,8 @@ function shellExpansionNames(s) {
     const next = s[i + 1];
     if (next === "{") {
       const end = s.indexOf("}", i + 2);
-      const name = end < 0 ? "" : s.slice(i + 2, end);
-      if (!SHELL_VAR_NAME_RE.test(name)) return null;
+      const name = end < 0 ? "" : braceVarName(s.slice(i + 2, end));
+      if (!name) return null;
       names.push(name);
       i = end;
     } else if (/[A-Za-z_]/.test(next)) {
@@ -185,8 +203,8 @@ function wordExpansionNames(word) {
     const next = word[i + 1];
     if (next === "{") {
       const end = word.indexOf("}", i + 2);
-      const name = end < 0 ? "" : word.slice(i + 2, end);
-      if (!SHELL_VAR_NAME_RE.test(name)) return null;
+      const name = end < 0 ? "" : braceVarName(word.slice(i + 2, end));
+      if (!name) return null;
       names.push(name);
       i = end;
     } else if (/[A-Za-z_]/.test(next)) {
@@ -471,9 +489,9 @@ function readDollarName(s, i) {
   const n = s[i + 1];
   if (n === "{") {
     const end = s.indexOf("}", i + 2);
-    const body = end < 0 ? "" : s.slice(i + 2, end);
-    if (!SHELL_VAR_NAME_RE.test(body)) return { fail: true };
-    return { name: body, next: end + 1 };
+    const name = end < 0 ? "" : braceVarName(s.slice(i + 2, end));
+    if (!name) return { fail: true };
+    return { name, next: end + 1 };
   }
   if (/[A-Za-z_]/.test(n)) {
     let k = i + 1;

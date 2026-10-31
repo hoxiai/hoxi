@@ -19,6 +19,7 @@ import {
   normalizeAbsoluteTool,
   shellWords,
   splitCommandChainWithPipes,
+  stripCDNullRedirects,
   stripNullRedirects,
   unwrapSandboxCommand,
 } from "./permission-policy.js";
@@ -36,12 +37,14 @@ import {
   READ_ONLY_DATA_TOOLS,
   VALUE_ONLY_TOOLS,
   acceptsValueClassArg,
+  braceVarName,
   commandSubsAreValueClass,
   concretizeLiterals,
   eraseSubshells,
   findSubshellSpans,
   isHarmlessSet,
   setLiteralJudge,
+  skipSafeBraceSpan,
   unwrapCommandPrefixes,
 } from "./shell-constants.js";
 import {
@@ -110,11 +113,19 @@ function hasOpaqueShellSyntax(s) {
       i++;
       continue;
     }
-    if (c === "\\" || c === "(" || c === ")" || c === "{" || c === "}") return true;
+    if (c === "{") {
+      const nextIdx = skipSafeBraceSpan(s, i);
+      if (nextIdx >= 0) {
+        i = nextIdx;
+        continue;
+      }
+      return true;
+    }
+    if (c === "\\" || c === "(" || c === ")" || c === "}") return true;
     if (c === "<" && next === "<") return true;
     if (c === "'" || c === '"') {
       const shortFlag = i >= 2 && s[i - 2] === "-" && (i === 2 || isWordBoundary(s[i - 3])) && /[A-Za-z]/.test(prev);
-      if (prev && !isWordBoundary(prev) && prev !== "=" && !shortFlag) return true;
+      if (prev && !isWordBoundary(prev) && prev !== "=" && !(prev === "/" && next === "[") && !shortFlag) return true;
       quote = c;
       openIdx = i;
     }
@@ -173,7 +184,7 @@ function isSafeExternalCDTarget(resolved) {
 
 function advanceScopedCD(seg, cwd, worktree) {
   if (!cwd) return ["", false];
-  let trimmed = String(seg || "").trim();
+  let trimmed = stripCDNullRedirects(String(seg || "").trim());
   if (trimmed.startsWith("cd ") || trimmed.startsWith("cd\t")) {
     let arg = trimmed.slice(2).trim();
     if (arg.length >= 2 && ((arg.startsWith('"') && arg.endsWith('"')) || (arg.startsWith("'") && arg.endsWith("'")))) {
@@ -385,6 +396,7 @@ function opaqueShellCore(command, worktree, allowInlineScripts, valueClass) {
 export function isOpaquePermissionRequest(input, options) {
   const worktree = options?.worktree || input?.metadata?.worktree || "";
   const permission = String(input?.permission || input?.type || "").toLowerCase();
+  if (permission === "external_directory") return false;
   const meta = input?.metadata || {};
   // OpenCode also sends its own split of the command in patterns; judged alone,
   // a piece loses the loop that binds its variable, so judge the whole command.
@@ -579,8 +591,8 @@ function shellExpansionNames(s) {
     const next = s[i + 1];
     if (next === "{") {
       const end = s.indexOf("}", i + 2);
-      const name = end < 0 ? "" : s.slice(i + 2, end);
-      if (!SHELL_VAR_NAME_RE.test(name)) return null;
+      const name = end < 0 ? "" : braceVarName(s.slice(i + 2, end));
+      if (!name) return null;
       names.push(name);
       i = end;
     } else if (/[A-Za-z_]/.test(next)) {
@@ -634,8 +646,8 @@ function wordExpansionNames(word) {
     const next = word[i + 1];
     if (next === "{") {
       const end = word.indexOf("}", i + 2);
-      const name = end < 0 ? "" : word.slice(i + 2, end);
-      if (!SHELL_VAR_NAME_RE.test(name)) return null;
+      const name = end < 0 ? "" : braceVarName(word.slice(i + 2, end));
+      if (!name) return null;
       names.push(name);
       i = end;
     } else if (/[A-Za-z_]/.test(next)) {

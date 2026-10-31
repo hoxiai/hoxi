@@ -378,6 +378,10 @@
   },
   {
     "command": "echo ${PIPESTATUS[0]}",
+    "opaque": false
+  },
+  {
+    "command": "echo ${ARR[0]}",
     "opaque": true
   },
   {
@@ -839,6 +843,26 @@
   },
   {
     "command": "cd / && rm -f /tmp/RUNNER~1/out.log",
+    "opaque": false
+  },
+  {
+    "command": "cd /Users/u/code/ainode 2>/dev/null && rg -n \"api/tenant\" --glob '*.go' | head -60",
+    "opaque": false
+  },
+  {
+    "command": "cd /Users/u/code/apay/app/themes/qingpu && git ls-remote --heads origin 2>&1 | head -5; echo \"LS_EXIT=${pipestatus[1]}\"",
+    "opaque": false
+  },
+  {
+    "command": "git -C /Users/u/code/shopark log --oneline @{u}.. && git -C /Users/u/code/shopark status -sb",
+    "opaque": false
+  },
+  {
+    "command": "sed -n '1,60p' server/api/posts/'[slug].get.ts'",
+    "opaque": false
+  },
+  {
+    "command": "\"$HOME/.agents/skills/hoxi-site/scripts/deploy-hoxi-site.sh\" 1.0.32 --allow-dirty 2>&1 | tee /tmp/hoxi-site-deploy-1.0.32.log",
     "opaque": false
   }
 ]

@@ -507,6 +507,9 @@ func readTargets(item map[string]interface{}) []string {
 }
 
 func isOpaquePermissionRequestWith(item map[string]interface{}, worktree string, allowInlineScripts bool) bool {
+	if permissionName(item) == "external_directory" {
+		return false
+	}
 	if worktree == "" {
 		worktree = firstString(itemMetadata(item)["worktree"])
 	}

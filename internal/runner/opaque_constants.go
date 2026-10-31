@@ -707,11 +707,11 @@ func readDollarName(s string, i int) (name string, next int, ok bool) {
 		if end < 0 {
 			return "", i, false
 		}
-		body := s[i+2 : i+2+end]
-		if !shellVarNameRe.MatchString(body) {
+		name, ok := braceVarName(s[i+2 : i+2+end])
+		if !ok {
 			return "", i, false
 		}
-		return body, i + 2 + end + 1, true
+		return name, i + 2 + end + 1, true
 	case n == '_' || (n >= 'a' && n <= 'z') || (n >= 'A' && n <= 'Z'):
 		k := i + 1
 		for k < len(s) && (s[k] == '_' || (s[k] >= 'a' && s[k] <= 'z') || (s[k] >= 'A' && s[k] <= 'Z') || (s[k] >= '0' && s[k] <= '9')) {

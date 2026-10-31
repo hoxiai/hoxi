@@ -212,7 +212,13 @@ func hasShellGrouping(s string) bool {
 			}
 		case c == '\'' || c == '"':
 			quote = c
-		case c == '`' || c == '(' || c == ')' || c == '{' || c == '}':
+		case c == '{':
+			if nextIdx, ok := skipSafeBraceSpan(s, i); ok {
+				i = nextIdx
+				continue
+			}
+			return true
+		case c == '`' || c == '(' || c == ')' || c == '}':
 			return true
 		}
 	}

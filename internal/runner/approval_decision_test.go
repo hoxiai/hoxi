@@ -73,6 +73,7 @@ func TestApprovalModesDecideEveryCategory(t *testing.T) {
 		{"branch deletion", req("bash", "git branch -D feature"), false, false, false},
 		{"webfetch", req("webfetch", "https://example.com"), true, true, false},
 		{"routine external directory", req("external_directory", "/Users/u/code/sibling/*"), true, true, false},
+		{"routine external directory with command metadata", map[string]interface{}{"permission": "external_directory", "patterns": []interface{}{"/Users/u/code/sibling/*"}, "metadata": map[string]interface{}{"command": "cd /Users/u/code/sibling && node -e 'console.log(1)'"}}, true, true, false},
 		{"credential external directory", req("external_directory", "/Users/u/.ssh/config"), false, false, false},
 		{"todo control tool", req("todowrite"), true, true, false},
 		{"claude edit tool", toolReq("Write", map[string]interface{}{"args": `{"file_path":"src/a.ts"}`}), true, true, false},

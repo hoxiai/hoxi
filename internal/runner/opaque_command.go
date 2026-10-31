@@ -211,7 +211,7 @@ func advanceScopedCD(seg, cwd, worktree string) (string, bool) {
 	if cwd == "" {
 		return "", false
 	}
-	trimmed := strings.TrimSpace(seg)
+	trimmed := stripCDNullRedirects(strings.TrimSpace(seg))
 	if strings.HasPrefix(trimmed, "cd ") || strings.HasPrefix(trimmed, "cd\t") {
 		arg := strings.TrimSpace(trimmed[2:])
 		if len(arg) >= 2 && ((arg[0] == '"' && arg[len(arg)-1] == '"') || (arg[0] == '\'' && arg[len(arg)-1] == '\'')) {
