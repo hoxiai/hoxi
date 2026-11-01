@@ -598,3 +598,138 @@ func TestOpenCodeTimeoutAndWorktreeDirectoryResolution(t *testing.T) {
 		t.Fatalf("deferred entries = %d (%+v), want exactly 2", len(deferred), deferred)
 	}
 }
+
+func TestOrphanedOpenCodePermissionsAndQuestionsAreFilteredAndRejected(t *testing.T) {
+	t.Parallel()
+	projectDir := t.TempDir()
+	svc := NewService(projectDir, nil, statusbar.NewTracker(), filepath.Join(t.TempDir(), "sessions.json"))
+	setTestApprovalPolicy(t, svc, ApprovalPolicy{Mode: ApprovalModeManual})
+
+	var mu sync.Mutex
+	rejectedPerms := map[string]bool{}
+	rejectedQuestions := map[string]bool{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/permission":
+			writeJSON(w, http.StatusOK, []map[string]interface{}{
+				{"id": "per_deleted_oc", "sessionID": "oc_deleted_ext", "permission": "bash", "patterns": []string{"rm -rf a"}},
+				{"id": "per_archived_oc", "sessionID": "oc_archived_ext", "permission": "bash", "patterns": []string{"rm -rf b"}},
+				{"id": "per_idle_child", "sessionID": "oc_child_finished", "permission": "bash", "patterns": []string{"rm -rf c"}},
+				{"id": "per_active_oc", "sessionID": "oc_active_ext", "permission": "bash", "patterns": []string{"rm -rf d"}, "metadata": map[string]interface{}{"cwd": filepath.Join(projectDir, "sub")}},
+			})
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/permission/") && strings.HasSuffix(r.URL.Path, "/reply"):
+			id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/permission/"), "/reply")
+			rejectedPerms[id] = true
+			writeJSON(w, http.StatusOK, true)
+		case r.Method == http.MethodGet && r.URL.Path == "/question":
+			writeJSON(w, http.StatusOK, []map[string]interface{}{
+				{"id": "que_deleted_oc", "sessionID": "oc_deleted_ext"},
+				{"id": "que_idle_oc", "sessionID": "oc_idle_ext"},
+				{"id": "que_busy_oc", "sessionID": "oc_busy_ext"},
+			})
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/question/") && strings.HasSuffix(r.URL.Path, "/reject"):
+			id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/question/"), "/reject")
+			rejectedQuestions[id] = true
+			writeJSON(w, http.StatusOK, true)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	svc.ConfigureOpenCode(server.URL, "secret")
+
+	svc.managedOpenCode.Store("oc_deleted_ext", true)
+	svc.openCodeChildParent.Store("oc_child_finished", "ses_hoxi_active")
+
+	if err := svc.store.Put(SessionRecord{
+		ID:           "ses_hoxi_archived",
+		Runtime:      "opencode",
+		ProjectDir:   projectDir,
+		WorktreePath: projectDir,
+		ExternalID:   "oc_archived_ext",
+		OpenCodeIDs:  []string{"oc_archived_ext"},
+		ArchivedAt:   1000,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.store.Put(SessionRecord{
+		ID:           "ses_hoxi_active",
+		Runtime:      "opencode",
+		ProjectDir:   projectDir,
+		WorktreePath: projectDir,
+		ExternalID:   "oc_active_ext",
+		OpenCodeIDs:  []string{"oc_active_ext"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.store.Put(SessionRecord{
+		ID:           "ses_hoxi_idle",
+		Runtime:      "opencode",
+		ProjectDir:   projectDir,
+		WorktreePath: projectDir,
+		ExternalID:   "oc_idle_ext",
+		OpenCodeIDs:  []string{"oc_idle_ext"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.store.Put(SessionRecord{
+		ID:           "ses_hoxi_busy",
+		Runtime:      "opencode",
+		ProjectDir:   projectDir,
+		WorktreePath: projectDir,
+		ExternalID:   "oc_busy_ext",
+		OpenCodeIDs:  []string{"oc_busy_ext"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	svc.mu.Lock()
+	svc.procs["ses_hoxi_busy"] = &activeProcess{sessionID: "ses_hoxi_busy", runtime: "opencode", done: make(chan struct{})}
+	svc.mu.Unlock()
+
+	perms := svc.listUnifiedPermissions(context.Background(), projectDir)
+	if len(perms) != 1 || perms[0]["id"] != "per_active_oc" || perms[0]["sessionID"] != "ses_hoxi_active" {
+		t.Fatalf("unexpected filtered permissions: %+v", perms)
+	}
+	meta, _ := perms[0]["metadata"].(map[string]interface{})
+	if meta["directory"] != projectDir {
+		t.Fatalf("expected metadata.directory=%q even when metadata.cwd is set, got %+v", projectDir, meta)
+	}
+
+	waitFor(t, "stale permissions rejected", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return rejectedPerms["per_deleted_oc"] && rejectedPerms["per_archived_oc"] && rejectedPerms["per_idle_child"]
+	})
+
+	rawQuestions := []byte(`[
+		{"id":"que_deleted_oc","sessionID":"oc_deleted_ext"},
+		{"id":"que_idle_oc","sessionID":"oc_idle_ext"},
+		{"id":"que_busy_oc","sessionID":"oc_busy_ext"}
+	]`)
+	filteredRaw := svc.FilterOpenCodeQuestions(rawQuestions, projectDir)
+	var keptQuestions []map[string]interface{}
+	if err := json.Unmarshal(filteredRaw, &keptQuestions); err != nil {
+		t.Fatal(err)
+	}
+	if len(keptQuestions) != 1 || keptQuestions[0]["id"] != "que_busy_oc" || keptQuestions[0]["sessionID"] != "ses_hoxi_busy" {
+		t.Fatalf("unexpected filtered questions: %+v", keptQuestions)
+	}
+
+	waitFor(t, "stale questions rejected", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return rejectedQuestions["que_deleted_oc"] && rejectedQuestions["que_idle_oc"]
+	})
+
+	// Now simulate ses_hoxi_busy ending its turn: rejectOpenCodeSessionPermissions must also reject que_busy_oc.
+	busyRec, _ := svc.store.Get("ses_hoxi_busy")
+	svc.rejectOpenCodeSessionPermissions(context.Background(), busyRec)
+	mu.Lock()
+	busyQuestionRejected := rejectedQuestions["que_busy_oc"]
+	mu.Unlock()
+	if !busyQuestionRejected {
+		t.Fatal("expected rejectOpenCodeSessionPermissions to reject open question que_busy_oc")
+	}
+}

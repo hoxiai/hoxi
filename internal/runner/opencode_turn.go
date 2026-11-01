@@ -299,6 +299,9 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 			cancel()
 			_ = stream.Body.Close()
 			<-streamDone
+			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			s.rejectOpenCodeSessionPermissions(cleanupCtx, rec)
+			cleanupCancel()
 			s.abandonOpenCodeInFlightParts(rec.ID, time.Now().UnixMilli())
 			s.store.FlushSession(rec.ID)
 			s.releaseActiveProcess(rec.ID, ap)
@@ -451,53 +454,6 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 	return nil
 }
 
-func (s *Service) rejectOpenCodeSessionPermissions(ctx context.Context, rec SessionRecord) {
-	status, raw, err := s.openCodeRaw(ctx, http.MethodGet, "/permission", directoryQuery(rec.WorktreePath, nil), nil)
-	var perms []map[string]interface{}
-	if err != nil || status != http.StatusOK || json.Unmarshal(raw, &perms) != nil {
-		return
-	}
-	s.mu.Lock()
-	ap := s.procs[rec.ID]
-	s.mu.Unlock()
-	replyBody := []byte(`{"reply":"reject","message":"the session was stopped"}`)
-	for _, item := range perms {
-		sid, _ := item["sessionID"].(string)
-		pid, _ := item["id"].(string)
-		isChild := ap != nil && ap.isOpenCodeChild(sid)
-		if pid == "" || (sid != rec.ExternalID && sid != rec.ID && !isChild) {
-			continue
-		}
-		release, claimed := s.claimOpenCodeAnswer(pid)
-		if !claimed {
-			continue
-		}
-		rStatus, _, replyErr := s.replyOpenCodePermission(ctx, pid, rec.WorktreePath, replyBody)
-		if replyErr == nil && rStatus == http.StatusNotFound {
-			s.settleOpenCodePermission(pid)
-			continue
-		}
-		if replyErr != nil || rStatus < 200 || rStatus >= 300 {
-			release()
-			continue
-		}
-		// Hoxi rejected this itself because the session stopped, so record it
-		// like any other decision (source "system", not a user choice).
-		s.recordOpenCodeAudit(pid, rec.ID, rec.WorktreePath, "reject", "the session was stopped", "system")
-		s.settleOpenCodePermission(pid)
-		repliedEvt := SSEEvent{
-			Type:       "permission.replied",
-			Properties: map[string]interface{}{"sessionID": rec.ID, "requestID": pid, "reply": "reject"},
-		}
-		if s.status != nil {
-			if data, mErr := json.Marshal(repliedEvt); mErr == nil {
-				s.status.InspectSSELine("data: " + string(data))
-			}
-		}
-		s.broadcast(rec.ID, repliedEvt)
-	}
-}
-
 func (s *Service) relayOpenCodeEvent(rec SessionRecord, raw []byte) {
 	s.relayOpenCodeEventWithFiles(rec, raw, nil)
 }
@@ -577,7 +533,7 @@ func (s *Service) relayOpenCodeEventWithFiles(rec SessionRecord, raw []byte, fil
 				meta = make(map[string]interface{})
 				evt.Properties["metadata"] = meta
 			}
-			if rec.WorktreePath != "" && firstString(meta["directory"], meta["cwd"]) == "" {
+			if rec.WorktreePath != "" && firstString(meta["directory"]) == "" {
 				meta["directory"] = rec.WorktreePath
 			}
 			// The permission's sessionID is rewritten to the Hoxi id above.

@@ -41,8 +41,9 @@ type Service struct {
 	childBusy       map[string]bool
 	subs            map[chan SSEEvent]string
 	seqSeed         int64
-	openCode        *ocapi.Client
-	managedOpenCode sync.Map
+	openCode            *ocapi.Client
+	managedOpenCode     sync.Map
+	openCodeChildParent sync.Map // openCode child session ID -> hoxi session ID
 	// childTurns caches OpenCode subagent transcripts read while filtering diffs.
 	childTurns      sync.Map // session ID -> childTurnsEntry
 	editedFiles     sync.Map // session ID -> editedFilesEntry
@@ -115,6 +116,14 @@ func NewService(rootDir string, worktrees *worktree.Manager, status *statusbar.T
 	}
 	for _, info := range svc.store.List("") {
 		rec, _ := svc.store.Meta(info.ID)
+		if rec.ExternalID != "" && rec.Runtime == "opencode" {
+			svc.managedOpenCode.Store(rec.ExternalID, true)
+		}
+		for _, ocID := range rec.OpenCodeIDs {
+			if ocID != "" {
+				svc.managedOpenCode.Store(ocID, true)
+			}
+		}
 		if rec.Subagent || validateSessionDirectory(rec) != nil {
 			continue
 		}
@@ -472,6 +481,13 @@ func (s *Service) handleSingleSession(w http.ResponseWriter, r *http.Request, se
 		if !ok {
 			writeJSONError(w, http.StatusNotFound, "runner session not found")
 			return
+		}
+		if body.Time != nil && body.Time.Archived != nil && *body.Time.Archived > 0 {
+			s.gate.forgetSession(sessionID)
+			s.abortActiveProcess(sessionID)
+			if updated.Runtime == "opencode" || len(updated.OpenCodeIDs) > 0 {
+				s.rejectOpenCodeSessionPermissions(r.Context(), updated)
+			}
 		}
 		info := updated.ToSessionInfo()
 		s.broadcast(sessionID, SSEEvent{Type: "session.updated", Properties: map[string]interface{}{"info": info}})

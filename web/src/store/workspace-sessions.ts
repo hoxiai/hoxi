@@ -9,7 +9,7 @@ import {
 } from "./message-lookup";
 import { persistSessionAI, restoreSessionAI } from "./session-ai";
 import { forgetSessionHistory, noteSessionHistoryTail, SESSION_HISTORY_PAGE_TURNS } from "./session-history";
-import { syncPendingPermissions } from "./approval-mode";
+import { clearSessionPendingApprovals, syncPendingPermissions } from "./approval-mode";
 import { ARCHIVED_SESSIONS_KEY, setWorkspace, workspace } from "./workspace-state";
 import {
   forgetSessionTitles,
@@ -495,6 +495,7 @@ export async function archiveSession(sessionID: string, directory?: string): Pro
       }
     })
   );
+  clearSessionPendingApprovals(sessionID);
 
   if (workspace.activeSessionID === sessionID) {
     const next = nextActiveSessionCandidate(sessionID);

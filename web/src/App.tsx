@@ -19,6 +19,7 @@ import {
   markPermissionResolved,
   markSessionBackendRetried,
   clearAutoFailoverPending,
+  clearSessionPendingApprovals,
   handleSessionErrorEvent,
   isAutoFailoverPending,
   isDismissedProjectPath,
@@ -113,6 +114,14 @@ export default function App() {
       if (hasBusySession || workspace.pendingPermissions.length > 0) {
         void syncPendingPermissions();
       }
+      if (workspace.pendingQuestions.length > 0) {
+        void hoxiAPI
+          .listQuestions(workspace.rootDir || undefined)
+          .then((qs) => {
+            if (Array.isArray(qs)) setWorkspace("pendingQuestions", qs);
+          })
+          .catch(() => {});
+      }
     }, 4000);
 
     onCleanup(() => {
@@ -166,7 +175,7 @@ export default function App() {
         void loadGitAttribution();
         void syncPendingPermissions(eagerBootRoot || undefined);
         void hoxiAPI
-          .listQuestions()
+          .listQuestions(eagerBootRoot || undefined)
           .then((qs) => {
             if (Array.isArray(qs)) setWorkspace("pendingQuestions", qs);
           })
@@ -219,7 +228,7 @@ export default function App() {
               workspace.rootDir
                 ? bootstrapProjectSessions(workspace.rootDir, false, workspace.activeProjectID)
                 : Promise.resolve(),
-              hoxiAPI.listQuestions().then((questions) => {
+              hoxiAPI.listQuestions(workspace.rootDir || undefined).then((questions) => {
                 if (Array.isArray(questions)) setWorkspace("pendingQuestions", questions);
               }),
             ]);
@@ -294,6 +303,7 @@ export default function App() {
               if (evt.properties.status.type === "busy") {
                 setWorkspace("unreadCompletedBySession", sid, false);
               } else if (evt.properties.status.type === "idle") {
+                clearSessionPendingApprovals(sid);
                 setWorkspace("sessionFinishedAt", sid, Date.now());
                 const parentID = resolveParentSessionID(sid);
                 if (wasBusy && parentID) {
@@ -335,6 +345,7 @@ export default function App() {
               const nextPromptRunning =
                 isSessionBusy(sid) && Date.now() - lastPromptDispatchedAt(sid) <= 3500;
               if (!nextPromptRunning) {
+                clearSessionPendingApprovals(sid);
                 setWorkspace("statusBySession", sid, { type: "idle" });
                 setWorkspace("stalledSinceBySession", sid, 0);
               }

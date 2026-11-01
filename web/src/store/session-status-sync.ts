@@ -2,6 +2,7 @@ import { produce } from "solid-js/store";
 import { hoxiAPI } from "../services/api";
 import type { SessionStatus } from "../services/sse-types";
 import { setWorkspace, workspace } from "./workspace-state";
+import { clearSessionPendingApprovals } from "./approval-mode";
 import { loadSessionMessagesOnly } from "./workspace-sessions";
 import { advanceSessionGoal } from "./session-goal";
 import { activeDirectory, isManagedSession, sessionDirectory } from "./session-query";
@@ -38,6 +39,7 @@ export function collectStatusDirectories(extra?: string): Array<string | undefin
 
 function finishIdleSessions(sessionIDs: string[]): void {
   for (const sid of sessionIDs) {
+    clearSessionPendingApprovals(sid);
     if (sid === workspace.activeSessionID || workspace.messagesBySession[sid] !== undefined) {
       void loadSessionMessagesOnly(sid).catch(() => {});
     }
@@ -177,6 +179,7 @@ export async function syncSessionStatuses(directory?: string): Promise<void> {
     );
 
     for (const sid of newlyIdleSessions) {
+      clearSessionPendingApprovals(sid);
       if (sid === workspace.activeSessionID || workspace.messagesBySession[sid] !== undefined) {
         void loadSessionMessagesOnly(sid).catch(() => {});
       }

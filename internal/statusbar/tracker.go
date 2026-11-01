@@ -111,11 +111,6 @@ func (t *Tracker) SetSessionBusy(sessionID string, busy bool) {
 		t.markBusyLocked(sessionID, true)
 	} else {
 		t.markBusyLocked(sessionID, false)
-		for reqID, sid := range t.pendingApprovals {
-			if sid == sessionID {
-				t.removePendingLocked(reqID)
-			}
-		}
 	}
 	t.syncKeepAwakeLocked()
 	summary, pendingIDs, runningIDs, resolver := t.snapshotWithTargetsLocked()
@@ -138,6 +133,11 @@ func (t *Tracker) markBusyLocked(sessionID string, busy bool) {
 		if id == sessionID {
 			t.busyOrder = append(t.busyOrder[:i], t.busyOrder[i+1:]...)
 			break
+		}
+	}
+	for reqID, sid := range t.pendingApprovals {
+		if sid == sessionID {
+			t.removePendingLocked(reqID)
 		}
 	}
 }

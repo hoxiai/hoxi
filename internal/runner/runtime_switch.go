@@ -18,6 +18,9 @@ func (s *Service) ConfigureOpenCode(baseURL, password string) {
 	s.openCode = ocapi.New(baseURL, password)
 	for _, info := range s.store.List("") {
 		rec, _ := s.store.Meta(info.ID)
+		if rec.ExternalID != "" && rec.Runtime == "opencode" {
+			s.managedOpenCode.Store(rec.ExternalID, true)
+		}
 		for _, id := range rec.OpenCodeIDs {
 			s.managedOpenCode.Store(id, true)
 		}
@@ -425,6 +428,9 @@ func (s *Service) deleteConversation(ctx context.Context, id string) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
+	if rec.Runtime == "opencode" || len(rec.OpenCodeIDs) > 0 {
+		s.rejectOpenCodeSessionPermissions(ctx, rec)
+	}
 	for _, engineID := range rec.OpenCodeIDs {
 		dir := rec.OpenCodeDirectories[engineID]
 		if dir == "" {

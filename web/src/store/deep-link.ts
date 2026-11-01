@@ -7,7 +7,7 @@ import { createEffect, createRoot, createSignal, untrack } from "solid-js";
 import { hoxiAPI, type DesktopIntent } from "../services/api";
 import { onDesktopIntent } from "../services/desktop-events";
 import { saveLayoutPrefs, setLeftNavOpen } from "./layout";
-import { isSessionArchived, isSessionBusy, sessionDirectory } from "./session-query";
+import { isSessionArchived, isSessionBusy, isSessionDeleted, sessionDirectory } from "./session-query";
 import { startNewThreadDraft } from "./session-sandbox";
 import {
   closeHandoffModal,
@@ -213,20 +213,40 @@ export function focusFirstAttentionSession(targetSessionID?: string, directory?:
 
   const targets: SessionDeepLink[] = [];
   const seen = new Set<string>();
-  const pushTarget = (rawSessionID?: string) => {
+  const explicitDirFor = (sid: string): string | undefined =>
+    normalizeFolderPath(
+      workspace.worktreeBySession[sid]?.directory ||
+        workspace.sessions.find((s) => s.id === sid)?.directory ||
+        workspace.sessionIndex[sid]?.directory
+    ) || undefined;
+  const pushTarget = (rawSessionID?: string, fallbackDir?: string) => {
     const sid = rawSessionID?.trim();
-    if (!sid) return;
+    if (!sid || isSessionDeleted(sid) || workspace.archivedSessionIDs.includes(sid)) return;
     const rootID = resolveRootSessionID(sid) || sid;
-    if (seen.has(rootID)) return;
+    if (seen.has(rootID) || isSessionDeleted(rootID) || workspace.archivedSessionIDs.includes(rootID)) return;
+    const existing = workspace.sessions.find((s) => s.id === rootID || s.id === sid);
+    if (existing && isSessionArchived(existing)) return;
     seen.add(rootID);
+    const metaDir = normalizeFolderPath(fallbackDir) || undefined;
     targets.push({
       sessionID: rootID,
-      directory: sessionDirectory(rootID) || sessionDirectory(sid),
+      directory:
+        explicitDirFor(rootID) ||
+        explicitDirFor(sid) ||
+        metaDir ||
+        sessionDirectory(rootID) ||
+        sessionDirectory(sid),
     });
   };
 
   for (const perm of workspace.pendingPermissions) {
-    pushTarget(perm?.sessionID);
+    const permDir =
+      typeof perm?.metadata?.directory === "string"
+        ? perm.metadata.directory
+        : typeof perm?.metadata?.cwd === "string"
+          ? perm.metadata.cwd
+          : undefined;
+    pushTarget(perm?.sessionID, permDir);
   }
   for (const question of workspace.pendingQuestions) {
     pushTarget(question?.sessionID);

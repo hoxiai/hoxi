@@ -114,15 +114,36 @@ function dropPendingQuestion(requestID: string): void {
   setWorkspace("pendingQuestions", (prev) => prev.filter((q) => q.id !== requestID));
 }
 
+function isQuestionGoneError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err ?? "");
+  return /\bHTTP\s+(400|404)\b/i.test(msg) || /not\s+found|already\s+answered/i.test(msg);
+}
+
 /** Sends the user's answers for a docked question and records them for the tool card. */
 export async function replyQuestionRequest(request: QuestionRequest, answers: string[][]): Promise<void> {
-  await hoxiAPI.replyQuestion(request.id, answers, sessionDirectory(request.sessionID));
+  try {
+    await hoxiAPI.replyQuestion(request.id, answers, sessionDirectory(request.sessionID));
+  } catch (err) {
+    if (isQuestionGoneError(err)) {
+      dropPendingQuestion(request.id);
+      return;
+    }
+    throw err;
+  }
   rememberQuestionReply(request.id, request.sessionID, answers);
   dropPendingQuestion(request.id);
 }
 
 export async function rejectQuestionRequest(request: QuestionRequest): Promise<void> {
-  await hoxiAPI.rejectQuestion(request.id, sessionDirectory(request.sessionID));
+  try {
+    await hoxiAPI.rejectQuestion(request.id, sessionDirectory(request.sessionID));
+  } catch (err) {
+    if (isQuestionGoneError(err)) {
+      dropPendingQuestion(request.id);
+      return;
+    }
+    throw err;
+  }
   rememberQuestionReject(request.id, request.sessionID);
   dropPendingQuestion(request.id);
 }

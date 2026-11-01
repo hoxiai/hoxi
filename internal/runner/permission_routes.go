@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -284,13 +285,17 @@ func (s *Service) replyRunnerPermission(w http.ResponseWriter, r *http.Request, 
 	}
 }
 
-func (s *Service) listUnifiedPermissions(ctx context.Context, directory string) []map[string]interface{} {
+func (s *Service) openCodeEngineSessionMap() (map[string]string, map[string]string, map[string]bool) {
 	engineToHoxi := make(map[string]string)
 	sessionDirByID := make(map[string]string)
+	archivedHoxi := make(map[string]bool)
 	for _, info := range s.store.List("") {
 		rec, ok := s.store.Meta(info.ID)
 		if !ok {
 			continue
+		}
+		if rec.ArchivedAt > 0 {
+			archivedHoxi[rec.ID] = true
 		}
 		recDir := firstNonEmptyStr(strings.TrimSpace(rec.WorktreePath), strings.TrimSpace(rec.ProjectDir))
 		if recDir != "" {
@@ -313,6 +318,21 @@ func (s *Service) listUnifiedPermissions(ctx context.Context, directory string) 
 			}
 		}
 	}
+	s.openCodeChildParent.Range(func(key, value interface{}) bool {
+		childID, _ := key.(string)
+		parentID, _ := value.(string)
+		if childID == "" || parentID == "" {
+			return true
+		}
+		if _, ok := s.store.Meta(parentID); !ok {
+			return true
+		}
+		engineToHoxi[childID] = parentID
+		if hoxiDir := sessionDirByID[parentID]; hoxiDir != "" {
+			sessionDirByID[childID] = hoxiDir
+		}
+		return true
+	})
 	s.mu.Lock()
 	for hoxiID, ap := range s.procs {
 		if ap == nil {
@@ -329,6 +349,78 @@ func (s *Service) listUnifiedPermissions(ctx context.Context, directory string) 
 		})
 	}
 	s.mu.Unlock()
+	return engineToHoxi, sessionDirByID, archivedHoxi
+}
+
+func (s *Service) isSessionBusy(sessionID string) bool {
+	if sessionID == "" {
+		return false
+	}
+	s.mu.Lock()
+	ap := s.procs[sessionID]
+	childBusy := s.childBusy[sessionID]
+	s.mu.Unlock()
+	if childBusy {
+		return true
+	}
+	return ap != nil && !ap.hasPendingError() && !ap.wasAborted()
+}
+
+func (s *Service) isOrphanedOpenCodeSession(rawSid, hoxiID string, archivedHoxi map[string]bool) bool {
+	if hoxiID != "" {
+		if archivedHoxi[hoxiID] {
+			return true
+		}
+		if rawSid != "" && rawSid != hoxiID {
+			if _, isChild := s.openCodeChildParent.Load(rawSid); isChild && !s.isSessionBusy(hoxiID) {
+				return true
+			}
+		}
+		return false
+	}
+	if rawSid == "" {
+		return false
+	}
+	if s.IsManagedOpenCodeSession(rawSid) || s.isManagedOpenCodeChild(rawSid) {
+		return true
+	}
+	if IsRunnerSessionID(rawSid) {
+		rec, ok := s.store.Meta(rawSid)
+		return !ok || rec.ArchivedAt > 0
+	}
+	return false
+}
+
+func (s *Service) rejectStaleOpenCodePermission(pid, dir string) {
+	if pid == "" || s.openCode == nil {
+		return
+	}
+	release, claimed := s.claimOpenCodeAnswer(pid)
+	if !claimed {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	replyBody := []byte(`{"reply":"reject","message":"the session was stopped"}`)
+	rStatus, _, err := s.replyOpenCodePermission(ctx, pid, dir, replyBody)
+	if err == nil && (rStatus == http.StatusNotFound || (rStatus >= 200 && rStatus < 300)) {
+		s.settleOpenCodePermission(pid)
+		return
+	}
+	release()
+}
+
+func (s *Service) rejectStaleOpenCodeQuestion(qid, dir string) {
+	if qid == "" || s.openCode == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, _, _ = s.openCodeRaw(ctx, http.MethodPost, "/question/"+url.PathEscape(qid)+"/reject", directoryQuery(dir, nil), nil)
+}
+
+func (s *Service) listUnifiedPermissions(ctx context.Context, directory string) []map[string]interface{} {
+	engineToHoxi, sessionDirByID, archivedHoxi := s.openCodeEngineSessionMap()
 	out := make([]map[string]interface{}, 0)
 	seenIDs := make(map[string]bool)
 	for _, dir := range s.openCodeCandidateDirs(directory) {
@@ -344,10 +436,9 @@ func (s *Service) listUnifiedPermissions(ctx context.Context, directory string) 
 					seenIDs[pid] = true
 				}
 				rawSid, _ := item["sessionID"].(string)
-				if rawSid != "" {
-					if hoxiID := engineToHoxi[rawSid]; hoxiID != "" {
-						item["sessionID"] = hoxiID
-					}
+				hoxiID := engineToHoxi[rawSid]
+				if hoxiID != "" {
+					item["sessionID"] = hoxiID
 				}
 				sessionID, _ := item["sessionID"].(string)
 				meta, _ := item["metadata"].(map[string]interface{})
@@ -357,12 +448,16 @@ func (s *Service) listUnifiedPermissions(ctx context.Context, directory string) 
 					firstString(meta["directory"], meta["cwd"]),
 					dir,
 				)
+				if s.isOrphanedOpenCodeSession(rawSid, hoxiID, archivedHoxi) {
+					go s.rejectStaleOpenCodePermission(pid, itemDir)
+					continue
+				}
 				if itemDir != "" {
 					if meta == nil {
 						meta = make(map[string]interface{})
 						item["metadata"] = meta
 					}
-					if firstString(meta["directory"], meta["cwd"]) == "" {
+					if firstString(meta["directory"]) == "" {
 						meta["directory"] = itemDir
 					}
 				}
@@ -381,6 +476,167 @@ func (s *Service) listUnifiedPermissions(ctx context.Context, directory string) 
 	return out
 }
 
+// FilterOpenCodeQuestions rewrites engine/subagent session IDs to Hoxi
+// conversation IDs and drops questions left behind by finished, archived, or
+// deleted Hoxi turns.
+func (s *Service) FilterOpenCodeQuestions(raw []byte, directory string) []byte {
+	var questions []map[string]interface{}
+	if json.Unmarshal(raw, &questions) != nil {
+		return raw
+	}
+	engineToHoxi, sessionDirByID, archivedHoxi := s.openCodeEngineSessionMap()
+	kept := make([]map[string]interface{}, 0, len(questions))
+	for _, item := range questions {
+		qid, _ := item["id"].(string)
+		rawSid, _ := item["sessionID"].(string)
+		hoxiID := engineToHoxi[rawSid]
+		if hoxiID == "" && IsRunnerSessionID(rawSid) {
+			if rec, ok := s.store.Meta(rawSid); ok {
+				hoxiID = rec.ID
+			}
+		}
+		if s.isOrphanedOpenCodeSession(rawSid, hoxiID, archivedHoxi) || (hoxiID != "" && !s.isSessionBusy(hoxiID)) {
+			qDir := firstNonEmptyStr(sessionDirByID[rawSid], sessionDirByID[hoxiID], directory)
+			go s.rejectStaleOpenCodeQuestion(qid, qDir)
+			continue
+		}
+		if hoxiID != "" {
+			item["sessionID"] = hoxiID
+		}
+		kept = append(kept, item)
+	}
+	encoded, err := json.Marshal(kept)
+	if err != nil {
+		return raw
+	}
+	return encoded
+}
+
+func (s *Service) rejectOpenCodeSessionPermissions(ctx context.Context, rec SessionRecord) {
+	if s.openCode == nil {
+		return
+	}
+	s.mu.Lock()
+	ap := s.procs[rec.ID]
+	s.mu.Unlock()
+	matchesSession := func(sid string) bool {
+		if sid == "" {
+			return false
+		}
+		if sid == rec.ID || sid == rec.ExternalID {
+			return true
+		}
+		for _, ocID := range rec.OpenCodeIDs {
+			if ocID != "" && sid == ocID {
+				return true
+			}
+		}
+		if ap != nil && ap.isOpenCodeChild(sid) {
+			return true
+		}
+		if parentID, ok := s.openCodeChildParent.Load(sid); ok && parentID == rec.ID {
+			return true
+		}
+		return false
+	}
+	var dirs []string
+	seenDirs := make(map[string]bool)
+	addDir := func(d string) {
+		d = strings.TrimSpace(d)
+		key := normalizeComparePath(d)
+		if key == "" {
+			key = d
+		}
+		if seenDirs[key] {
+			return
+		}
+		seenDirs[key] = true
+		dirs = append(dirs, d)
+	}
+	if rec.WorktreePath != "" {
+		addDir(rec.WorktreePath)
+	}
+	if rec.ProjectDir != "" {
+		addDir(rec.ProjectDir)
+	}
+	for _, ocDir := range rec.OpenCodeDirectories {
+		if ocDir != "" {
+			addDir(ocDir)
+		}
+	}
+	if len(dirs) == 0 {
+		dirs = []string{""}
+	}
+
+	replyBody := []byte(`{"reply":"reject","message":"the session was stopped"}`)
+	for _, dir := range dirs {
+		status, raw, err := s.openCodeRaw(ctx, http.MethodGet, "/permission", directoryQuery(dir, nil), nil)
+		var perms []map[string]interface{}
+		if err == nil && status == http.StatusOK && json.Unmarshal(raw, &perms) == nil {
+			for _, item := range perms {
+				sid, _ := item["sessionID"].(string)
+				pid, _ := item["id"].(string)
+				if pid == "" || !matchesSession(sid) {
+					continue
+				}
+				release, claimed := s.claimOpenCodeAnswer(pid)
+				if !claimed {
+					continue
+				}
+				rStatus, _, replyErr := s.replyOpenCodePermission(ctx, pid, dir, replyBody)
+				if replyErr == nil && rStatus == http.StatusNotFound {
+					s.settleOpenCodePermission(pid)
+					continue
+				}
+				if replyErr != nil || rStatus < 200 || rStatus >= 300 {
+					release()
+					continue
+				}
+				// Hoxi rejected this itself because the session stopped, so record it
+				// like any other decision (source "system", not a user choice).
+				s.recordOpenCodeAudit(pid, rec.ID, dir, "reject", "the session was stopped", "system")
+				s.settleOpenCodePermission(pid)
+				repliedEvt := SSEEvent{
+					Type:       "permission.replied",
+					Properties: map[string]interface{}{"sessionID": rec.ID, "requestID": pid, "reply": "reject"},
+				}
+				if s.status != nil {
+					if data, mErr := json.Marshal(repliedEvt); mErr == nil {
+						s.status.InspectSSELine("data: " + string(data))
+					}
+				}
+				s.broadcast(rec.ID, repliedEvt)
+			}
+		}
+
+		qStatus, qRaw, qErr := s.openCodeRaw(ctx, http.MethodGet, "/question", directoryQuery(dir, nil), nil)
+		var questions []map[string]interface{}
+		if qErr == nil && qStatus == http.StatusOK && json.Unmarshal(qRaw, &questions) == nil {
+			for _, item := range questions {
+				sid, _ := item["sessionID"].(string)
+				qid, _ := item["id"].(string)
+				if qid == "" || !matchesSession(sid) {
+					continue
+				}
+				rStatus, _, rErr := s.openCodeRaw(ctx, http.MethodPost, "/question/"+url.PathEscape(qid)+"/reject", directoryQuery(dir, nil), nil)
+				if rErr != nil || (rStatus != http.StatusNotFound && (rStatus < 200 || rStatus >= 300)) {
+					continue
+				}
+				rejectedEvt := SSEEvent{
+					Type:       "question.rejected",
+					Properties: map[string]interface{}{"sessionID": rec.ID, "requestID": qid},
+				}
+				if s.status != nil {
+					if data, mErr := json.Marshal(rejectedEvt); mErr == nil {
+						s.status.InspectSSELine("data: " + string(data))
+					}
+				}
+				s.broadcast(rec.ID, rejectedEvt)
+			}
+		}
+	}
+}
+
 func (s *Service) listPendingApprovals(directory string) []map[string]interface{} {
 	dir := normalizeComparePath(directory)
 	s.gate.mu.Lock()
@@ -391,9 +647,12 @@ func (s *Service) listPendingApprovals(directory string) []map[string]interface{
 	s.gate.mu.Unlock()
 	out := make([]map[string]interface{}, 0, len(all))
 	for _, p := range all {
+		rec, ok := s.store.Meta(p.sid)
+		if !ok || rec.ArchivedAt > 0 {
+			continue
+		}
 		if dir != "" {
-			rec, ok := s.store.Get(p.sid)
-			if !ok || (normalizeComparePath(rec.ProjectDir) != dir && normalizeComparePath(rec.WorktreePath) != dir) {
+			if normalizeComparePath(rec.ProjectDir) != dir && normalizeComparePath(rec.WorktreePath) != dir {
 				continue
 			}
 		}

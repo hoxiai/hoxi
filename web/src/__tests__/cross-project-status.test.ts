@@ -177,4 +177,79 @@ describe("cross-project execution status", () => {
       setWorkspace(reconcile(saved));
     }
   });
+
+  it("prunes stale approvals whose metadata.cwd is a nested subdirectory and clears approvals when a session becomes idle", async () => {
+    const saved = structuredClone(unwrap(workspace));
+    const originalAPI = { ...hoxiAPI };
+    try {
+      setWorkspace({
+        rootDir: "/repo-b",
+        activeProjectID: "prj_b",
+        sessions: [
+          {
+            id: "ses_hoxi_b",
+            title: "B",
+            directory: "/repo-b",
+            projectID: "prj_b",
+            managed: true,
+            time: { created: 1, updated: 1 },
+          },
+        ],
+        sessionIndex: {},
+        statusBySession: { ses_hoxi_a: { type: "busy" } },
+        pendingPermissions: [
+          {
+            id: "per_subdir_b",
+            sessionID: "ses_unindexed_b",
+            permission: "bash",
+            patterns: ["npm test"],
+            metadata: { cwd: "/repo-b/packages/ui" },
+            always: [],
+          },
+          {
+            id: "per_busy_a",
+            sessionID: "ses_hoxi_a",
+            permission: "bash",
+            patterns: ["cargo test"],
+            metadata: { cwd: "/repo-a/crates/core" },
+            always: [],
+          },
+        ],
+        pendingQuestions: [
+          {
+            id: "que_busy_a",
+            sessionID: "ses_hoxi_a",
+            questions: [],
+          },
+        ],
+      });
+      indexSession({
+        id: "ses_hoxi_a",
+        title: "A",
+        directory: "/repo-a",
+        projectID: "prj_a",
+        managed: true,
+        time: { created: 1, updated: 1 },
+      });
+
+      hoxiAPI.listPermissions = async (dir) => {
+        if (dir === "/repo-b") return [];
+        if (dir === "/repo-a") return [workspace.pendingPermissions[1]];
+        return [];
+      };
+      await syncPendingPermissions();
+      assertEqual(workspace.pendingPermissions.length, 1);
+      assertEqual(workspace.pendingPermissions[0].id, "per_busy_a");
+
+      // Once ses_hoxi_a transitions to idle in the authoritative snapshot, both its
+      // pending permissions and pending questions are cleared immediately.
+      applyManagedStatusSnapshot(["ses_hoxi_a"]);
+      applyManagedStatusSnapshot([]);
+      assertEqual(workspace.pendingPermissions.length, 0);
+      assertEqual(workspace.pendingQuestions.length, 0);
+    } finally {
+      Object.assign(hoxiAPI, originalAPI);
+      setWorkspace(reconcile(saved));
+    }
+  });
 });

@@ -26,7 +26,8 @@ import {
   type ApprovalMode,
 } from "./settings";
 import { setWorkspace, workspace } from "./workspace-state";
-import { sessionDirectory } from "./session-query";
+import { isSessionArchived, isSessionDeleted, sessionDirectory } from "./session-query";
+import { resolveRootSessionID } from "./subagent-sessions";
 import { normalizeFolderPath } from "./workspace-folders";
 import { fetchGlobalConfig, updateGlobalPermissions } from "./global-config";
 import { getInternalLLMProviderModelGroups, isInternalLLMModel } from "./provider-catalog";
@@ -351,8 +352,35 @@ function addPendingPermissionToStore(req: PermissionRequest) {
   }
 }
 
+export function clearSessionPendingApprovals(sessionID: string): void {
+  const clean = sessionID?.trim();
+  if (!clean) return;
+  const rootID = resolveRootSessionID(clean) || clean;
+  const matches = (sid: string) =>
+    sid === clean || sid === rootID || resolveRootSessionID(sid) === rootID;
+  if (workspace.pendingPermissions.some((p) => matches(p.sessionID))) {
+    setWorkspace("pendingPermissions", (prev) => prev.filter((p) => !matches(p.sessionID)));
+  }
+  if (workspace.pendingQuestions.some((q) => matches(q.sessionID))) {
+    setWorkspace("pendingQuestions", (prev) => prev.filter((q) => !matches(q.sessionID)));
+  }
+}
+
+function isDisqualifiedApprovalSession(sessionID?: string | null): boolean {
+  const clean = sessionID?.trim();
+  if (!clean) return true;
+  if (isSessionDeleted(clean) || workspace.archivedSessionIDs.includes(clean)) return true;
+  const rootID = resolveRootSessionID(clean) || clean;
+  if (isSessionDeleted(rootID) || workspace.archivedSessionIDs.includes(rootID)) return true;
+  const found = workspace.sessions.find((s) => s.id === rootID || s.id === clean);
+  if (found && isSessionArchived(found)) return true;
+  return false;
+}
+
 export function handleIncomingPermissionRequest(req: PermissionRequest): void {
-  if (!req?.id || resolvedPermissionIDs.has(req.id)) return;
+  if (!req?.id || resolvedPermissionIDs.has(req.id) || isDisqualifiedApprovalSession(req.sessionID)) {
+    return;
+  }
   addPendingPermissionToStore(req); // Dock only; auto-approval happens in the Go gate
 }
 
@@ -376,23 +404,36 @@ function permissionSyncScopes(primary?: string): string[] {
   return Array.from(scopes);
 }
 
+function explicitSessionDirectory(sessionID?: string | null): string | undefined {
+  if (!sessionID) return undefined;
+  const direct =
+    workspace.worktreeBySession[sessionID]?.directory ||
+    workspace.sessions.find((s) => s.id === sessionID)?.directory ||
+    workspace.sessionIndex[sessionID]?.directory;
+  return normalizeFolderPath(direct) || undefined;
+}
+
 function resolvePermissionDirectory(req: PermissionRequest): string | undefined {
-  const metaDir =
-    typeof req.metadata?.directory === "string"
-      ? req.metadata.directory
-      : typeof req.metadata?.cwd === "string"
-        ? req.metadata.cwd
-        : undefined;
-  const cleanMeta = normalizeFolderPath(metaDir);
-  if (cleanMeta) return cleanMeta;
+  const cleanMetaDir = normalizeFolderPath(
+    typeof req.metadata?.directory === "string" ? req.metadata.directory : undefined
+  );
+  if (cleanMetaDir) return cleanMetaDir;
+  const rootID = resolveRootSessionID(req.sessionID) || req.sessionID;
+  const knownSessionDir =
+    explicitSessionDirectory(req.sessionID) || explicitSessionDirectory(rootID);
+  if (knownSessionDir) return knownSessionDir;
+  const cleanMetaCwd = normalizeFolderPath(
+    typeof req.metadata?.cwd === "string" ? req.metadata.cwd : undefined
+  );
+  if (cleanMetaCwd) return cleanMetaCwd;
   const sessionDir = normalizeFolderPath(sessionDirectory(req.sessionID));
   if (sessionDir) return sessionDir;
-  const indexed = workspace.sessionIndex[req.sessionID];
+  const indexed = workspace.sessionIndex[req.sessionID] || workspace.sessionIndex[rootID];
   if (indexed) {
     if (indexed.projectID && workspace.activeProjectID && indexed.projectID !== workspace.activeProjectID) {
       return undefined;
     }
-    if (!indexed.projectID && !workspace.sessions.some((s) => s.id === req.sessionID)) {
+    if (!indexed.projectID && !workspace.sessions.some((s) => s.id === req.sessionID || s.id === rootID)) {
       return undefined;
     }
   }
@@ -404,6 +445,9 @@ function isDirectoryInScopes(dir: string | undefined, scopes: Set<string>): bool
   if (scopes.has(dir)) return true;
   const wtIdx = dir.indexOf("/.hoxi/worktrees/");
   if (wtIdx > 0 && scopes.has(dir.slice(0, wtIdx))) return true;
+  for (const scope of scopes) {
+    if (scope && dir.startsWith(scope + "/")) return true;
+  }
   return false;
 }
 
@@ -427,7 +471,12 @@ export async function syncPendingPermissions(directory?: string): Promise<void> 
       // from projects we did not query must survive; otherwise switching
       // projects would drop approvals that are still waiting on the user.
       setWorkspace("pendingPermissions", (prev) =>
-        prev.filter((p) => remoteIDs.has(p.id) || !isDirectoryInScopes(resolvePermissionDirectory(p), answeredScopes))
+        prev.filter(
+          (p) =>
+            !isDisqualifiedApprovalSession(p?.sessionID) &&
+            (remoteIDs.has(p.id) ||
+              !isDirectoryInScopes(resolvePermissionDirectory(p), answeredScopes))
+        )
       );
     }
     for (const req of merged.values()) {

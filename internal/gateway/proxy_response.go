@@ -25,9 +25,10 @@ func filterRunnerResponse(resp *http.Response, svc *runner.Service) error {
 	}
 	requestPath := resp.Request.URL.Path
 	isSessionList := requestPath == "/session"
+	isQuestionList := requestPath == "/question" && resp.Request.Method == http.MethodGet
 	segments := strings.Split(strings.TrimPrefix(requestPath, "/"), "/")
 	isMessage := len(segments) >= 3 && segments[0] == "session" && segments[2] == "message"
-	if !isSessionList && !isMessage {
+	if !isSessionList && !isQuestionList && !isMessage {
 		return nil
 	}
 	// Limit to 16 MB to prevent memory exhaustion from a malicious or broken upstream.
@@ -57,6 +58,9 @@ func filterRunnerResponse(resp *http.Response, svc *runner.Service) error {
 		if err != nil {
 			return err
 		}
+	}
+	if isQuestionList {
+		raw = svc.FilterOpenCodeQuestions(raw, resp.Request.URL.Query().Get("directory"))
 	}
 	if isMessage {
 		raw = runner.SanitizeOpenCodeToolJSON(raw)

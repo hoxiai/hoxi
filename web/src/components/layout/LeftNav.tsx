@@ -28,7 +28,7 @@ import {
   workspace,
 } from "../../store/workspace";
 import { Icon, Spinner } from "../icons";
-import { buildAllProjects, collectPendingSessionIDs, findProjectDropTarget, resolveActiveRootSessionID, sameStringSet, type ProjectNavEntry } from "./left-nav-helpers";
+import { buildAllProjects, collectPendingApprovalRoots, collectPendingSessionIDs, findProjectDropTarget, resolveActiveRootSessionID, sameStringSet, type ProjectNavEntry } from "./left-nav-helpers";
 import MultiProjectTreeItem from "./MultiProjectItem";
 import SingleProjectNavView, { RecentTasksNavView } from "./SingleProjectNavView";
 import { AttentionNavView, RunningNavView } from "./CrossProjectNavView";
@@ -162,15 +162,8 @@ export default function LeftNav() {
   const pendingSessions = createMemo(() => collectPendingSessionIDs(), new Set<string>(), {
     equals: sameStringSet,
   });
-  const pendingApprovalRoots = createMemo(() => {
-    const roots = new Set<string>();
-    for (const p of workspace.pendingPermissions) {
-      roots.add(resolveRootSessionID(p.sessionID) || p.sessionID);
-    }
-    for (const q of workspace.pendingQuestions) {
-      roots.add(resolveRootSessionID(q.sessionID) || q.sessionID);
-    }
-    return roots;
+  const pendingApprovalRoots = createMemo(() => collectPendingApprovalRoots(), new Set<string>(), {
+    equals: sameStringSet,
   });
   const pendingApprovalCount = createMemo(() => pendingApprovalRoots().size);
   const hasUnfocusedPendingApproval = createMemo(() => {

@@ -72,11 +72,16 @@ func TestStatusTrackerInspectSSELine(t *testing.T) {
 		t.Fatalf("expected Running=0 after idle and error events, got %+v", snap)
 	}
 
-	// Re-mark ses_1 busy then transition via session.status idle
+	// Re-mark ses_1 busy, ask a permission, then transition via session.status idle:
+	// both Running and Attention/PendingApprovals must be cleared.
 	tracker.InspectSSELine(`data: {"type":"session.status","properties":{"sessionID":"ses_1","status":{"type":"busy"}}}`)
+	tracker.InspectSSELine(`data: {"type":"permission.asked","properties":{"id":"perm_stale_idle","sessionID":"ses_1"}}`)
+	if snap := tracker.Snapshot(); snap.Running != 1 || snap.Attention != 1 || snap.PendingApprovals != 1 {
+		t.Fatalf("expected Running=1 Attention=1 PendingApprovals=1 before idle, got %+v", snap)
+	}
 	tracker.InspectSSELine(`data: {"type":"session.status","properties":{"sessionID":"ses_1","status":{"type":"idle"}}}`)
-	if snap := tracker.Snapshot(); snap.Running != 0 {
-		t.Fatalf("expected Running=0 after session.status idle, got %+v", snap)
+	if snap := tracker.Snapshot(); snap.Running != 0 || snap.Attention != 0 || snap.PendingApprovals != 0 {
+		t.Fatalf("expected Running=0 Attention=0 PendingApprovals=0 after session.status idle, got %+v", snap)
 	}
 }
 

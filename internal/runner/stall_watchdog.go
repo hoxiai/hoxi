@@ -159,6 +159,8 @@ func (s *Service) noteOpenCodeChildEvent(rec SessionRecord, evt SSEEvent) bool {
 			return false
 		}
 		ap.openCodeChildren.Store(id, true)
+		s.openCodeChildParent.Store(id, rec.ID)
+		s.managedOpenCode.Store(id, true)
 		s.noteOpenCodeActivity(rec.ID, evt)
 		return true
 	}
@@ -166,8 +168,10 @@ func (s *Service) noteOpenCodeChildEvent(rec SessionRecord, evt SSEEvent) bool {
 	if sid == "" || sid == rec.ExternalID || !ap.isOpenCodeChild(sid) {
 		return false
 	}
-	if evt.Type == "permission.asked" || evt.Type == "permission.replied" ||
-		evt.Type == "question.asked" || evt.Type == "question.replied" {
+	switch evt.Type {
+	case "permission.asked", "permission.replied",
+		"question.asked", "question.replied", "question.rejected",
+		"question.v2.asked", "question.v2.replied", "question.v2.rejected":
 		if evt.Properties != nil {
 			evt.Properties["sessionID"] = rec.ExternalID
 		}
@@ -185,6 +189,9 @@ func (ap *activeProcess) isOpenCodeChild(sessionID string) bool {
 func (s *Service) isManagedOpenCodeChild(sessionID string) bool {
 	if sessionID == "" {
 		return false
+	}
+	if _, ok := s.openCodeChildParent.Load(sessionID); ok {
+		return true
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
