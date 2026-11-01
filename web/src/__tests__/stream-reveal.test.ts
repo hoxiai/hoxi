@@ -1,6 +1,9 @@
 import {
   advanceStreamingSlice,
   createIncrementalMarkdownParser,
+  inlineCodeRenderer,
+  isInlineCodeFileChip,
+  parseInline,
   parseMarkdownBlocks,
 } from "../components/timeline/markdown-parser";
 import { createStreamPacer } from "../components/timeline/markdown/reveal";
@@ -139,5 +142,35 @@ describe("incremental markdown streaming", () => {
     assertEqual(after[1].items[0], before[1].items[0]);
     assertEqual(before[1].items[1].text, "sec");
     assertEqual(after[1].items[1].text, "second");
+  });
+});
+
+describe("streamed inline code spans", () => {
+  type CodeSpan = { type: "code"; text: string; unclosed?: boolean };
+  const codeSpans = (text: string) =>
+    parseInline(text).filter((span): span is CodeSpan => span.type === "code");
+
+  it("keeps file names on one renderer from the first character to the closing backtick", () => {
+    const source = "See `ThoughtBox.tsx` and `web/src/services/sse.ts`, then `https://hoxi.ai`";
+    const seen = new Map<number, Set<string>>();
+    for (let end = 1; end <= source.length; end++) {
+      codeSpans(source.slice(0, end)).forEach((span, index) => {
+        const kinds = seen.get(index) ?? new Set<string>();
+        kinds.add(inlineCodeRenderer(span));
+        seen.set(index, kinds);
+      });
+    }
+    assertDeepEqual([...(seen.get(0) ?? [])], ["code"]);
+    assertDeepEqual([...(seen.get(1) ?? [])], ["code"]);
+    // A URL only becomes a link once it is closed.
+    assertDeepEqual([...(seen.get(2) ?? [])], ["code", "url"]);
+  });
+
+  it("shows a file chip only for candidates, preferring a known check result", () => {
+    assertEqual(isInlineCodeFileChip("ThoughtBox.tsx", undefined), false);
+    assertEqual(isInlineCodeFileChip("ThoughtBox.tsx", true), true);
+    assertEqual(isInlineCodeFileChip("web/src/services/sse.ts", undefined), true);
+    assertEqual(isInlineCodeFileChip("web/src/services/sse.ts", false), false);
+    assertEqual(isInlineCodeFileChip("requestAnimationFrame", true), false);
   });
 });

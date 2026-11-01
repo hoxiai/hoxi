@@ -6,7 +6,6 @@ import {
   checkFile,
   extractFilePathFromHref,
   getCachedFileCheck,
-  looksLikeFilePath,
   openExternalURL,
   openFileInInspector,
   openURLInInspector,
@@ -15,7 +14,10 @@ import {
 import { FileIcon } from "../icons";
 import { t } from "../../i18n";
 import {
+  inlineCodeRenderer,
   type InlineSpan,
+  isHttpUrl,
+  isInlineCodeFileChip,
   isLikelyFilePath,
   isSameInlineSpan,
   parseInline,
@@ -34,10 +36,6 @@ function hasNestedInlineSyntax(text: string): boolean {
     text.includes("~~") ||
     /\*\*[^*\n]+\*\*|__[^_\n]+__|\*[^*\n]+\*|\[[^\]\n]+\]\([^)\n]*\)/.test(text)
   );
-}
-
-function isHttpUrl(raw: string): boolean {
-  return /^https?:\/\/[^\s<>"]+$/i.test(raw.trim());
 }
 
 function isCodeOrFileLinkLabel(rawLabel: string): boolean {
@@ -82,7 +80,9 @@ function scrollToHeadingAnchor(e: MouseEvent, rawHref: string) {
   }
 }
 
-function FileCodeSpan(props: { text: string; unclosed?: boolean }) {
+// Every inline code span, file path or not, so a streamed span keeps one
+// component (and one fade-in) from its first character to its file check.
+function InlineCodeSpan(props: { text: string; unclosed?: boolean }) {
   const inlineRevealRef = useInlineRevealRef();
   const baseFilePath = useMarkdownBaseFilePath();
   const effectivePath = () => {
@@ -92,38 +92,33 @@ function FileCodeSpan(props: { text: string; unclosed?: boolean }) {
     }
     return raw;
   };
-  const resolveSyncVerified = (raw: string) => {
-    const dir = activeDirectory() || workspace.rootDir || "";
-    const cached = getCachedFileCheck(raw, dir);
-    if (cached !== undefined) return cached;
-    return looksLikeFilePath(raw);
-  };
-  const [verified, setVerified] = createSignal(resolveSyncVerified(effectivePath()));
+  const directory = () => activeDirectory() || workspace.rootDir || "";
+  const checkKey = () => `${directory()}\n${effectivePath()}`;
+  const [checked, setChecked] = createSignal<{ key: string; exists: boolean }>();
+  const verified = createMemo(() => {
+    const result = checked();
+    const known =
+      getCachedFileCheck(effectivePath(), directory()) ??
+      (result?.key === checkKey() ? result.exists : undefined);
+    return isInlineCodeFileChip(props.text, known);
+  });
   const cleanPath = () => stripFileLineSuffix(effectivePath());
 
   createEffect(() => {
     const raw = effectivePath();
-    const dir = activeDirectory() || workspace.rootDir || "";
-    const cached = getCachedFileCheck(raw, dir);
-    if (cached !== undefined) {
-      setVerified(cached);
-      return;
-    }
-    if (props.unclosed) {
-      setVerified(looksLikeFilePath(raw));
-      return;
-    }
+    const dir = directory();
+    const key = checkKey();
+    if (props.unclosed || !isLikelyFilePath(props.text)) return;
+    if (getCachedFileCheck(raw, dir) !== undefined) return;
+    // Only query backend when connected or when we have a rootDir
+    if (!workspace.connected && !dir) return;
     const sid = workspace.activeSessionID || undefined;
     let cancelled = false;
     onCleanup(() => {
       cancelled = true;
     });
-    // Only query backend when connected or when we have a rootDir
-    if (!workspace.connected && !dir) return;
     void checkFile(raw, dir, sid).then((exists) => {
-      if (!cancelled) {
-        setVerified(exists);
-      }
+      if (!cancelled) setChecked({ key, exists });
     });
   });
 
@@ -188,25 +183,7 @@ export default function MarkdownInline(props: { text: string }) {
           <Match
             when={
               span().type === "code" &&
-              isLikelyFilePath((span() as Extract<InlineSpan, { type: "code" }>).text) &&
-              (!(span() as Extract<InlineSpan, { type: "code" }>).unclosed ||
-                looksLikeFilePath((span() as Extract<InlineSpan, { type: "code" }>).text) ||
-                getCachedFileCheck(
-                  (span() as Extract<InlineSpan, { type: "code" }>).text,
-                  activeDirectory() || workspace.rootDir || ""
-                ) === true)
-            }
-          >
-            <FileCodeSpan
-              text={(span() as Extract<InlineSpan, { type: "code" }>).text}
-              unclosed={(span() as Extract<InlineSpan, { type: "code" }>).unclosed}
-            />
-          </Match>
-          <Match
-            when={
-              span().type === "code" &&
-              !(span() as Extract<InlineSpan, { type: "code" }>).unclosed &&
-              isHttpUrl((span() as Extract<InlineSpan, { type: "code" }>).text)
+              inlineCodeRenderer(span() as Extract<InlineSpan, { type: "code" }>) === "url"
             }
           >
             {(_) => {
@@ -261,17 +238,10 @@ export default function MarkdownInline(props: { text: string }) {
             }}
           </Match>
           <Match when={span().type === "code"}>
-            {(_) => {
-              const inlineRevealRef = useInlineRevealRef();
-              return (
-                <code
-                  ref={inlineRevealRef}
-                  class="rounded-md border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-1.5 py-0.5 font-mono text-[0.88em] text-[var(--text-primary)]"
-                >
-                  {(span() as Extract<InlineSpan, { type: "code" }>).text}
-                </code>
-              );
-            }}
+            <InlineCodeSpan
+              text={(span() as Extract<InlineSpan, { type: "code" }>).text}
+              unclosed={(span() as Extract<InlineSpan, { type: "code" }>).unclosed}
+            />
           </Match>
           <Match when={span().type === "bold"}>
             {(_) => {

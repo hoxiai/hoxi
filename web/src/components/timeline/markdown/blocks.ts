@@ -3,6 +3,7 @@ import {
   extractFileSuffix,
   extractFilePathFromHref,
   looksLikeCandidate,
+  looksLikeFilePath,
   normalizeCandidatePath,
 } from "../../../store/workspace";
 import type {
@@ -19,6 +20,30 @@ export function isLikelyFilePath(text: string): boolean {
   if (!trimmed || trimmed.length > 512) return false;
   if (/^\/[^/]+$/.test(trimmed)) return false;
   return looksLikeCandidate(trimmed);
+}
+
+export function isHttpUrl(raw: string): boolean {
+  return /^https?:\/\/[^\s<>"]+$/i.test(raw.trim());
+}
+
+/**
+ * Picks the renderer for an inline code span. Plain code and file paths share
+ * one renderer, so a span stays mounted when its closing backtick arrives or
+ * its file check resolves. A remount replays the fade-in, which looks like a blink.
+ */
+export function inlineCodeRenderer(span: { text: string; unclosed?: boolean }): "url" | "code" {
+  return !span.unclosed && isHttpUrl(span.text) ? "url" : "code";
+}
+
+/**
+ * Whether an inline code span shows as a clickable file chip. A known answer
+ * (cache or a finished check) wins; until then path-shaped text is assumed to
+ * exist and bare names (`foo.ts`) wait for the check.
+ */
+export function isInlineCodeFileChip(text: string, known: boolean | undefined): boolean {
+  if (!isLikelyFilePath(text)) return false;
+  if (known !== undefined) return known;
+  return looksLikeFilePath(text);
 }
 
 export function stripFileLineSuffix(text: string): string {

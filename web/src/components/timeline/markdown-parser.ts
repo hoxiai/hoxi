@@ -16,6 +16,9 @@ export type {
 export {
   computeHeadingSlugList,
   extractMarkdownHeadings,
+  inlineCodeRenderer,
+  isHttpUrl,
+  isInlineCodeFileChip,
   isLikelyFilePath,
   parseMarkdownBlocks,
   parseNestedBlockquote,

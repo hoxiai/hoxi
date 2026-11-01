@@ -227,15 +227,13 @@ describe("Session reading restoration", () => {
   it("marks unhydrated background-SSE sessions as loading and emits follow requests on active-task selectSession", async () => {
     const saved = structuredClone(unwrap(workspace));
     const origGetMessages = hoxiAPI.getMessages;
-    const origGetPending = hoxiAPI.getPendingPermissions;
+    const origGetPending = hoxiAPI.listPermissions;
     const origGetDiffs = hoxiAPI.getSessionDiff;
-    const origGetWorktree = hoxiAPI.getWorktree;
     try {
       let resolveMessages!: (turns: MessageTurn[]) => void;
       hoxiAPI.getMessages = () => new Promise((r) => { resolveMessages = r; });
-      hoxiAPI.getPendingPermissions = async () => [];
+      hoxiAPI.listPermissions = async () => [];
       hoxiAPI.getSessionDiff = async () => [];
-      hoxiAPI.getWorktree = async () => ({ sessionID: "", isolated: false, directory: "/proj", createdAt: "" });
 
       hydratedSessionIDs.delete("busy-sse");
       hydratedSessionIDs.add("idle-hydrated");
@@ -292,9 +290,8 @@ describe("Session reading restoration", () => {
       hydratedSessionIDs.delete("idle-hydrated");
       setWorkspace(reconcile(saved));
       hoxiAPI.getMessages = origGetMessages;
-      hoxiAPI.getPendingPermissions = origGetPending;
+      hoxiAPI.listPermissions = origGetPending;
       hoxiAPI.getSessionDiff = origGetDiffs;
-      hoxiAPI.getWorktree = origGetWorktree;
     }
   });
 });
