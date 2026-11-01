@@ -263,8 +263,41 @@ func MeasureDatabaseBytes(dbPath string) int64 {
 	return total
 }
 
-// CleanDatabaseEventLog purges transient OpenCode event rows in a single batch
-// and runs VACUUM only when the delete step succeeds.
+// PruneOversizedMessageDiffs strips bloated $.summary.diffs arrays from
+// OpenCode message rows exceeding 64 KiB while keeping $.summary.diffs as a
+// valid empty JSON array ([]), preventing multi-megabyte message payloads from
+// breaking engine history reads.
+func PruneOversizedMessageDiffs(ctx context.Context, dbPath string) error {
+	dbPath = strings.TrimSpace(dbPath)
+	if dbPath == "" {
+		return nil
+	}
+	if st, err := os.Stat(dbPath); err != nil || st.IsDir() {
+		return nil
+	}
+	pruneCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	cmd := subproc.CommandContext(
+		pruneCtx,
+		sqlitecli.Executable(),
+		"-cmd", ".timeout 10000",
+		dbPath,
+		"UPDATE message SET data = json_set(data, '$.summary.diffs', json('[]')) WHERE length(data) > 65536 AND json_type(data, '$.summary.diffs') = 'array' AND json_array_length(data, '$.summary.diffs') > 0;",
+	)
+	cmd.WaitDelay = time.Second
+	if out, err := cmd.CombinedOutput(); err != nil {
+		msg := strings.TrimSpace(string(out))
+		if strings.Contains(msg, "no such table: message") {
+			return nil
+		}
+		return fmt.Errorf("prune oversized message diffs: %w (%s)", err, msg)
+	}
+	return nil
+}
+
+// CleanDatabaseEventLog purges transient OpenCode event rows and oversized
+// message summary diffs in a single batch and runs VACUUM only when the delete
+// step succeeds.
 func CleanDatabaseEventLog(ctx context.Context, dbPath string) error {
 	dbPath = strings.TrimSpace(dbPath)
 	if dbPath == "" {
@@ -273,6 +306,8 @@ func CleanDatabaseEventLog(ctx context.Context, dbPath string) error {
 	if st, err := os.Stat(dbPath); err != nil || st.IsDir() {
 		return nil
 	}
+
+	_ = PruneOversizedMessageDiffs(ctx, dbPath)
 
 	purgeCtx, cancelPurge := context.WithTimeout(ctx, 30*time.Second)
 	defer cancelPurge()

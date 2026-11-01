@@ -438,7 +438,7 @@ function scheduleFlush(applyDeltaToStore: (key: string, delta: string) => void) 
    - 右侧展示 OpenCode 引擎在线状态指示灯与右侧审查栏折叠开关。
 2. **左栏 (`LeftNav` - 默认 `268px`，可拖拽缩放 `220–360px`，开关与宽度持久化)**：
    - 顶部 `+ New Isolated Session` 按钮（点击触发 Worktree 沙箱创建 + OpenCode Session 创建）。
-   - 按时间分组的会话列表，每项实时展示：会话标题、状态徽标（蓝点 Running / 黄点 Approval / 空闲）、以及该会话的变更统计（如 `+128 -34`）。
+   - 按时间分组的会话列表（支持 Single / Multi / Running / Attention 视图切换），每项实时展示：会话标题、状态徽标（蓝点 Running / 黄点 Approval / 空闲）、Git 分支 / PR 状态胶囊，并将非归档子 Agent 会话（Subagent / Convoy 子任务）折叠归组在根父会话下方（子会话运行中、待审批、被选中或命中搜索时自动展开）。
 3. **中栏 (`MessageStream` + `Composer` - 弹性自适应 `flex-1`，目标最小 `560px`)**：
    - 消息流按 `MessagePart` 顺序渲染：`ReasoningPart` -> `ToolPart` -> `TextPart`。
    - 底部 Composer 支持：
@@ -579,6 +579,7 @@ Go 网关在转发 `/api/hoxi/event` SSE 流及多运行时事件时，旁路解
 
 1. **多运行时执行引擎（[`internal/runner/`](internal/runner/)）**：
    - 除默认 `opencode` 运行时外，原生支持驱动 **Claude Code (`claude`)**、**Google Antigravity (`agy`)**、**Gemini CLI (`gemini`)**、**Qoder (`qoder`)** 与 **CodeBuddy (`codebuddy`)** 子进程，并将各 CLI 的流式 JSONL 事件实时转译为统一的 OpenCode SSE 事件契约（`message.updated`、`message.part.delta`、`permission.asked`、`session.status`），使前端 Timeline、ToolCard、ThoughtBox、ApprovalGateCard 与状态栏托盘对底层运行时完全透明。其中 Qoder 与 CodeBuddy 因无 PreToolUse 门控能力，强制仅允许在只读模式（Plan）下运行。
+   - 针对外部 CLI 瞬态网络故障或空输出中断，内置最多 2 次指数退避自动重连续跑（[`internal/runner/turn_retry.go`](internal/runner/turn_retry.go)，复用 `--resume` 并在产生真实工具副作用后禁止自动重跑）；对 OpenCode 派生的子会话（Subagent），自动追踪父子映射并将子会话审批与忙闲状态聚合至根托管会话。
    - 详见专项文档：[`docs/antigravity-runner-probe.md`](docs/antigravity-runner-probe.md)、[`docs/antigravity-approval-hook.md`](docs/antigravity-approval-hook.md)、[`docs/claude-code-approval-hook.md`](docs/claude-code-approval-hook.md)。
 2. **跨软件会话接管与本地 CLI 协议桥接（[`internal/handoff/`](internal/handoff/)）**：
    - 支持一键扫描本机 Grok CLI、Claude Code、OpenAI Codex、Google Antigravity / Gemini CLI、OpenCode CLI、Trae、Qoder、CodeBuddy 的历史会话，归一化为统一 IR 并物化写入会话存储与 `<project>/.hoxi/memory/sessions/<sessionID>.md` 8 维交接记忆。

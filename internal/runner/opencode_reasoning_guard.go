@@ -1,13 +1,20 @@
 package runner
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
+	"github.com/hoxiai/hoxi/internal/opencode/ocstate"
 )
 
 const (
@@ -15,7 +22,75 @@ const (
 	maxOpenCodeReasoningRecoveries = 2
 	reasoningDeltaTailLimit        = 1024
 	runawayClosingTagThreshold     = 6
+	maxOpenCodeSSELineBytes        = 16 << 20
+	postTurnSnapshotLimit          = 50
+	reasoningCheckSnapshotLimit    = 20
 )
+
+// scanOpenCodeSSEDataLines reads SSE lines from r and invokes onData with the
+// trimmed payload of each "data:" line. Unlike bufio.Scanner, a single line
+// exceeding maxOpenCodeSSELineBytes (for example a multi-tens-of-MB
+// session.diff event) is drained to the next newline without terminating the
+// stream for subsequent events.
+func scanOpenCodeSSEDataLines(r io.Reader, onData func([]byte)) {
+	br := bufio.NewReaderSize(r, 64*1024)
+	var lineBuf bytes.Buffer
+	oversized := false
+	flushLine := func(raw []byte) {
+		line := strings.TrimSpace(strings.TrimRight(string(raw), "\r\n"))
+		if strings.HasPrefix(line, "data:") {
+			onData([]byte(strings.TrimSpace(strings.TrimPrefix(line, "data:"))))
+		}
+	}
+	for {
+		frag, err := br.ReadSlice('\n')
+		if err == bufio.ErrBufferFull {
+			if !oversized {
+				if lineBuf.Len()+len(frag) <= maxOpenCodeSSELineBytes {
+					_, _ = lineBuf.Write(frag)
+				} else {
+					lineBuf.Reset()
+					oversized = true
+				}
+			}
+			continue
+		}
+		if len(frag) > 0 {
+			if !oversized {
+				if lineBuf.Len() == 0 && len(frag) <= maxOpenCodeSSELineBytes {
+					flushLine(frag)
+				} else if lineBuf.Len()+len(frag) <= maxOpenCodeSSELineBytes {
+					_, _ = lineBuf.Write(frag)
+					flushLine(lineBuf.Bytes())
+					lineBuf.Reset()
+				} else {
+					lineBuf.Reset()
+				}
+			}
+			oversized = false
+		}
+		if err != nil {
+			return
+		}
+	}
+}
+
+func (s *Service) fetchOpenCodeRecentMessages(ctx context.Context, sessionID, directory string, limit int) ([]MessageTurn, error) {
+	endpoint := "/session/" + sessionID + "/message"
+	if limit > 0 {
+		endpoint = fmt.Sprintf("%s?limit=%d", endpoint, limit)
+	}
+	var turns []MessageTurn
+	err := s.openCodeJSON(ctx, "GET", endpoint, directory, nil, &turns)
+	if err != nil && (errors.Is(err, io.ErrUnexpectedEOF) || strings.Contains(err.Error(), "unexpected EOF")) {
+		if dbPath := hoxipaths.DBPath(); dbPath != "" {
+			_ = ocstate.PruneOversizedMessageDiffs(ctx, dbPath)
+		}
+		turns = nil
+		err = s.openCodeJSON(ctx, "GET", endpoint, directory, nil, &turns)
+	}
+	return turns, err
+}
 
 const openCodeReasoningRecoveryPrompt = "Your previous step stopped inside reasoning without emitting a tool call or visible reply (or emitted raw <invoke>/<parameter> tags inside reasoning). Continue from where you left off: either invoke the next tool via standard tool calls (never write <invoke> or <parameter> XML inside reasoning) or output your visible reply directly."
 
@@ -388,8 +463,7 @@ func (s *Service) recoverOpenCodeReasoningIfNeeded(ctx context.Context, rec Sess
 			break
 		}
 		checkCtx, checkCancel := context.WithTimeout(ctx, 10*time.Second)
-		var checkTurns []MessageTurn
-		fetchErr := s.openCodeJSON(checkCtx, "GET", "/session/"+rec.ExternalID+"/message", rec.WorktreePath, nil, &checkTurns)
+		checkTurns, fetchErr := s.fetchOpenCodeRecentMessages(checkCtx, rec.ExternalID, rec.WorktreePath, reasoningCheckSnapshotLimit)
 		checkCancel()
 		if fetchErr != nil || !shouldRecoverOpenCodeTurn(checkTurns, ap) {
 			ap.reasoningLoop.consumePendingRecovery()

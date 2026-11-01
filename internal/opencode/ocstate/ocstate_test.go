@@ -1,6 +1,7 @@
 package ocstate
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -57,5 +58,32 @@ INSERT INTO account_state VALUES (1, 'user_1', 'org_1');
 	dst := ReadConsoleState(filepath.Join(home, ".hoxi", "hoxi.db"))
 	if dst == nil || dst.ActiveOrgID != "org_1" || len(dst.Accounts) != 1 {
 		t.Fatalf("unexpected seeded state: %+v", dst)
+	}
+}
+
+func TestPruneOversizedMessageDiffsPreservesSchemaAndSmallDiffs(t *testing.T) {
+	if _, err := exec.LookPath("sqlite3"); err != nil {
+		t.Skip("sqlite3 not installed")
+	}
+	db := filepath.Join(t.TempDir(), "hoxi.db")
+	bigPatch := strings.Repeat("A", 80_000)
+	runSQLite(t, db, `
+CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, data TEXT);
+INSERT INTO message VALUES ('msg_big', 'ses_1', '{"role":"user","summary":{"title":"Move Fastix","diffs":[{"file":"a.php","before":"`+bigPatch+`","after":""}]}}');
+INSERT INTO message VALUES ('msg_small', 'ses_1', '{"role":"user","summary":{"title":"Small edit","diffs":[{"file":"b.php","before":"x","after":"y"}]}}');
+`)
+	if err := PruneOversizedMessageDiffs(context.Background(), db); err != nil {
+		t.Fatalf("PruneOversizedMessageDiffs: %v", err)
+	}
+	out, err := exec.Command("sqlite3", db,
+		"SELECT id, length(data) < 1024, json_type(data, '$.summary.diffs'), json_array_length(data, '$.summary.diffs'), json_extract(data, '$.summary.title') FROM message ORDER BY id;",
+	).CombinedOutput()
+	if err != nil {
+		t.Fatalf("query pruned rows: %v (%s)", err, out)
+	}
+	got := strings.TrimSpace(string(out))
+	want := "msg_big|1|array|0|Move Fastix\nmsg_small|1|array|1|Small edit"
+	if got != want {
+		t.Fatalf("unexpected rows after prune:\ngot:  %s\nwant: %s", got, want)
 	}
 }

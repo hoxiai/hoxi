@@ -96,14 +96,26 @@
 
 规则：
 - Wails / 浏览器平台 API、HTTP、SSE 只能出现在 `services/`；组件只调用 store。订阅类 API 必须返回并使用 unsubscribe 函数。
-- 数据加载、合并、轮询、世代号属于 store；组件只渲染。
+- 数据加载、合并、轮询、世代号与跨视图会话分组/聚合（如子 Agent 归组 `groupSubagentsByRoot`、运行态计数）属于 `store/`；**严禁在 `components/` 下新建领域模型文件直接读取 `workspace.sessions` 或复制改写 `store/` 的父/根会话解析逻辑**。
 - **禁止复制已有的 store 逻辑**到组件里"改一改再用"。需要变体就把 store 函数参数化。
-- 列表行的局部 UI 状态（展开等）必须按稳定 ID 存储，不能依附于每次重算都会新建的对象。
+- 列表行与卡片的局部 UI 状态（如侧边栏子 Agent 抽屉 `manualExpanded`、`ThoughtBox` 展开集合）必须按稳定 ID（`session.id` / `part.id`）存储在 Store 或有容量上限（FIFO/LRU）的模块级集合中，不能依附于组件局部 Signal（切换视图或搜索重挂载即丢失），也不得无上限增长。
+- 避免脱离 Solid 响应式代理后用多组平行数组或首键抽样（如只比对 `firstSessionKey`）手写脏检查；需要规避深层 Proxy 开销时，在写入口统一递增单调修订版本号（Revision Signal）。
 - 任何"挂起等待"（pending deep link、pending action）都必须有过期条件（切换项目 / 超时），不得在无关时刻突然执行。
 - 所有异步写入 store 的地方都要有防过期响应校验，包括弹窗（目录变化 / 关闭重开）。
 - 只有一个地方可以写派生的全局状态（如 `activeProjectID`）；SSE 事件不得顺手改它。
 
-## 8. 测试纪律
+## 8. 会话级内存状态、轮询幂等与跨层契约卫生
+
+**事故**：`lastDispatchBySession` 在轮次正常 `idle` 完成或会话删除时未清理，迟到的 `session.error` 把已完成的上一轮提示词与大图附件重新发送；`FilterOpenCodeQuestions` 在每 4s 轮询路径无幂等保护地派生后台 `/reject` 请求；`runner.Service` 上的 `openCodeChildParent` 等多个 `sync.Map` 在会话删除时漏清理且跨重启丢失子会话映射；后端把 OpenCode 子会话审批的 `sessionID` 覆写为根会话 ID 导致前端子会话级清理失效。
+
+规则：
+- **会话级与轮次级内存状态成对清理**：凡在 `runner.Service`（如 `openCodeChildParent`、`managedOpenCode`、`editedFiles`、`userSkillByMsg`、`stoppedTools`、`cliSystemDelivered`）或前端 Store（如 `lastDispatchBySession`、`autoFailoverPendingAtBySession`）中按 `sessionID` / `messageID` 索引的运行时状态，**必须**在会话删除（`deleteConversation` / `purgeSessionsFromStoreState`）及轮次正常完成（`session.idle` / `session.status(idle)`）时统一清理，严禁新增"只写不删"的旁路 Map。
+- **跨重启身份映射持久化**：凡影响会话归属或父子层级的关系（如 OpenCode 子会话到 Hoxi 父会话的映射），必须落盘到 `SessionRecord` 并在启动时恢复，不得仅存内存 `sync.Map`。
+- **重写父会话 ID 时保留原始子会话元数据**：后端将子会话审批/问题事件的 `sessionID` 归一化为根会话 `hoxiID` 时，必须在 `metadata`（如 `subagentSessionID`）保留原始子会话 ID，确保前端按单个子会话生命周期精确清理残留卡片。
+- **轮询/过滤路径触发的后台写操作必须幂等去重**：在 `GET /permission`、`GET /question` 等高频轮询读取路径中顺带清理孤儿条目（如 `rejectStaleOpenCodePermission` / `rejectStaleOpenCodeQuestion`）时，必须通过单次 claim/settled 状态机防重，严禁每次轮询无锁派生后台请求。
+- **跨层错误与冷却解析保持一致**：Go `runner`（`turn_retry.go`）、Go `provider`（`quota_reset.go`）与前端 `auto-failover.ts` 的错误分类及重置时间解析规则必须保持语义对齐，避免宽泛正则（如无上下文前缀的 `in 2m`）误判冷却时间。
+
+## 9. 测试纪律
 
 - 新增 Go 代码必须通过 `go test -race`。测试不得在 `t.Cleanup` 中修改仍被后台 goroutine 读取的全局变量；先等 goroutine 退出。
 - 复现 bug 的测试写好就转为正式回归测试，禁止以 `zz_scratch_*` 形式留在工作区让主干变红。
@@ -119,5 +131,6 @@
 - [ ] 状态文件写入是否原子、错误是否处理、解析失败是否备份？
 - [ ] Go / JS 审批策略是否同步、`cases.json` 是否更新？
 - [ ] 后台外发的目的地是否是用户明确选择的？
-- [ ] 前端是否有平台 API / 网络调用 / 数据加载出现在组件里？是否复制了 store 逻辑？
+- [ ] 前端是否有平台 API / 网络调用 / 数据加载 / 领域聚合出现在 `components/` 里？是否复制了 store 逻辑？列表局部状态是否按稳定 ID 且有界存储？
+- [ ] 新增的按 `sessionID` / `messageID` 索引的内存 Map/Set，是否在轮次 `idle` 和会话删除时成对清理？轮询触发的后台清理是否幂等？
 - [ ] `go test -race`、`npm --prefix web run lint && npm --prefix web test && npm --prefix web run build` 是否全绿？

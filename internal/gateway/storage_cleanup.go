@@ -109,6 +109,7 @@ func (g *Gateway) runBackgroundStorageMaintenance(ctx context.Context) {
 		_, _, _ = g.runner.Store().CleanStorage(time.Hour)
 	}
 	if dbPath := hoxipaths.DBPath(); dbPath != "" {
+		_ = ocstate.PruneOversizedMessageDiffs(ctx, dbPath)
 		if ocstate.MeasureDatabaseBytes(dbPath) >= autoCleanDBThresholdBytes {
 			if err := ocstate.CleanDatabaseEventLog(ctx, dbPath); err != nil {
 				diagnostics.Record(diagnostics.Entry{

@@ -1,7 +1,6 @@
 package runner
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -285,14 +284,9 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 	streamDone := make(chan struct{})
 	go func() {
 		defer close(streamDone)
-		scanner := bufio.NewScanner(stream.Body)
-		scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
-		for scanner.Scan() {
-			line := scanner.Text()
-			if strings.HasPrefix(line, "data:") {
-				s.relayOpenCodeEventWithFiles(rec, []byte(strings.TrimSpace(strings.TrimPrefix(line, "data:"))), fileURLByMsgAndName)
-			}
-		}
+		scanOpenCodeSSEDataLines(stream.Body, func(payload []byte) {
+			s.relayOpenCodeEventWithFiles(rec, payload, fileURLByMsgAndName)
+		})
 	}()
 	go func() {
 		defer func() {
@@ -376,8 +370,7 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 			s.markContextDelivered(rec.ID)
 			refreshCtx, done := context.WithTimeout(context.Background(), 15*time.Second)
 			defer done()
-			var turns []MessageTurn
-			if fetchErr := s.openCodeJSON(refreshCtx, "GET", "/session/"+rec.ExternalID+"/message", rec.WorktreePath, nil, &turns); fetchErr == nil {
+			if turns, fetchErr := s.fetchOpenCodeRecentMessages(refreshCtx, rec.ExternalID, rec.WorktreePath, postTurnSnapshotLimit); fetchErr == nil {
 				existingInfoByID := make(map[string]MessageInfo)
 				existingPartByKey := make(map[partKey]MessagePart)
 				if current, ok := s.store.Get(rec.ID); ok {
@@ -423,27 +416,25 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 				if len(dropTurnIDs) > 0 {
 					s.pruneOpenCodeTurnsFromStore(rec.ID, dropTurnIDs)
 				}
-				if _, hasSkill := s.userSkillByMsg.Load(user.ID); hasSkill {
-					hasUserTurn := false
-					if current, ok := s.store.Get(rec.ID); ok {
-						for _, t := range current.Turns {
-							if t.Info.ID == user.ID {
-								hasUserTurn = true
-								break
-							}
-						}
-					}
-					if !hasUserTurn {
-						s.broadcast(rec.ID, SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": user}})
-						for _, sp := range storedParts {
-							s.broadcast(rec.ID, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": sp}})
+			}
+			if _, hasSkill := s.userSkillByMsg.Load(user.ID); hasSkill {
+				hasUserTurn := false
+				if current, ok := s.store.Get(rec.ID); ok {
+					for _, t := range current.Turns {
+						if t.Info.ID == user.ID {
+							hasUserTurn = true
+							break
 						}
 					}
 				}
-				s.syncSessionMemoryFile(rec.ID)
-			} else {
-				err = fetchErr
+				if !hasUserTurn {
+					s.broadcast(rec.ID, SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": user}})
+					for _, sp := range storedParts {
+						s.broadcast(rec.ID, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": sp}})
+					}
+				}
 			}
+			s.syncSessionMemoryFile(rec.ID)
 		}
 		if stallErr := ap.stall.abortError(); stallErr != nil {
 			ap.setPendingError(SSEEvent{Type: "session.error", Properties: map[string]interface{}{"sessionID": rec.ID, "error": stallErr}})
