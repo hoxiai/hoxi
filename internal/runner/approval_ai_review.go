@@ -98,18 +98,18 @@ Respond with ONLY a single-line JSON object:
 Return "allow" ONLY when ALL of the following hold:
 1. Every operation in the command only performs:
    - read-only inspection or text/data processing (git status/rev-parse/remote/log/diff/show/branch/ls-files/symbolic-ref/tag -l, find without -delete/-exec/-ok/-fprint, ls, stat, file, wc, sort, uniq, cut, tr, head, tail, grep, rg, sed, awk without system(), jq, cat, dirname, basename, realpath, pwd, echo/printf, test/[, node -e / python3 -c inspection), OR
-   - standard local workspace verification/test/lint/build commands (go test/vet/build/list, npm test/run lint/run check/run build, pnpm test/lint/check/build, node --test, pytest, tsc, cargo check/test), OR
-   - creating or updating normal project files strictly inside the provided Workspace directory or temporary files inside /tmp or /var/folders/.../T/ ($TMPDIR) (including via inline scripts such as python3 -c, node -e, or heredocs), OR
-   - routine local git staging/commit/stash operations (git add, git commit, git stash push/list/show) inside the Workspace directory, OR
+   - standard local workspace verification/test/lint/build/dependency commands (go test/vet/build/list/mod, npm/pnpm/yarn/bun test/install/run lint/run check/run build, node --test, pytest, tsc, cargo check/test/build), OR
+   - creating or updating normal project files strictly inside the provided Workspace directory or temporary files inside /tmp or /var/folders/.../T/ ($TMPDIR) (including via inline scripts such as python3 -c, node -e, or heredocs, and cleaning up temporary files created under /tmp or $TMPDIR), OR
+   - routine local git operations (git add, git commit, git stash push/list/show, git fetch, git switch/checkout without -f or discarding tracked files) inside the Workspace directory, OR
    - local loopback HTTP checks (curl/wget to 127.0.0.1, localhost, or [::1]).
 2. Any file writes, tee, or output redirections (>, >>, : >) only target /dev/null, standard streams (2>&1), temporary files inside /tmp or /var/folders/.../T/ ($TMPDIR), or normal non-protected project files inside the provided Workspace directory.
 3. Environment variable reads, assignments, or unsets (env -u) only involve non-secret local/test/build variables (such as PATH, HOME, TMPDIR, CI, NODE_ENV, LOG, GOOS, GOARCH, CGO_ENABLED, HOXI_BROWSER_TEST, HOXI_SERVER_URL, HOXI_GATEWAY_URL, HOXI_BRIDGE_URL).
 
 Return "ask" if ANY of the following hold:
-1. Deletes, removes, truncates, or wipes any file or directory (rm, rmdir, unlink, shred, find -delete, os.remove, fs.unlink, fs.rm, shutil.rmtree), or writes/modifies any file outside the Workspace directory, /tmp, and /var/folders/.../T/, or touches protected paths (.git/, .hoxi/, .opencode/, .claude/, .agents/, .vscode/, .idea/, .env*).
-2. Contacts git remotes or performs destructive/history-rewriting git operations (push, pull, fetch, reset, clean, checkout --, checkout -f, restore, switch -f, merge, rebase, cherry-pick, tag -d, branch -d/-D/-m, stash drop/clear, remote add/remove/set-url, config write, worktree add/remove/prune, submodule update).
+1. Deletes, removes, truncates, or wipes any workspace or user file or directory (rm, rmdir, unlink, shred, find -delete, os.remove, fs.unlink, fs.rm, shutil.rmtree outside /tmp and /var/folders/.../T/), or writes/modifies any file outside the Workspace directory, /tmp, and /var/folders/.../T/, or touches protected paths (.git/, .hoxi/, .opencode/, .claude/, .agents/, .vscode/, .idea/, .env*).
+2. Pushes/publishes or performs destructive/history-rewriting git operations (push, reset, clean, checkout --, checkout -f, restore, switch -f, rebase, tag -d, branch -d/-D/-m, stash drop/clear, remote add/remove/set-url, config write, worktree remove/prune, submodule update).
 3. Reads, searches, or prints secrets, credentials, .env files, SSH/AWS/cloud keys, keychain, ~/.hoxi credential/policy files, or environment variables holding tokens, passwords, or keys (including HOXI_BROWSER_TOKEN, HOXI_HOOK_TOKEN).
-4. Makes external (non-loopback) network or remote requests (curl/wget to non-local hosts, ssh, scp, rsync, nc), installs/uninstalls/publishes packages, kills/signals processes (kill, pkill, killall), changes permissions/ownership (chmod, chown, sudo), or starts background servers/daemons.
+4. Makes external network requests that upload/exfiltrate data or pipe remote content to a shell/interpreter, publishes packages/releases, kills/signals processes (kill, pkill, killall), or changes permissions/ownership (chmod, chown, sudo).
 5. Uses dynamic command names ($cmd, eval) or anything ambiguous.`
 
 func aiReviewPromptForPolicy(pol ApprovalPolicy) string {
@@ -204,7 +204,7 @@ func canAIReviewCommandRequest(item map[string]interface{}, pol ApprovalPolicy, 
 	if worktree == "" {
 		worktree = firstString(itemMetadata(item)["worktree"], itemMetadata(item)["directory"], itemMetadata(item)["cwd"])
 	}
-	if unattendedHardDeny(item, worktree) != "" || isDestructivePermissionRequest(item) {
+	if aiReviewHardDeny(item, worktree) || isDestructivePermissionRequest(item) {
 		return "", "", false
 	}
 	candidates := opacityCandidates(item)
@@ -224,6 +224,62 @@ func canAIReviewCommandRequest(item map[string]interface{}, pol ApprovalPolicy, 
 		return "", "", false
 	}
 	return command, modelSpec, true
+}
+
+// aiReviewHardDeny enforces the same hard-refuse boundaries as unattended mode
+// (secret reads, push/publish, privilege escalation, credential egress, and
+// dynamic command-name execution like eval or `$CMD`), while letting literal
+// inline interpreter scripts and self-contained double-quoted `bash -c "..."`
+// scripts reach the LLM reviewer.
+func aiReviewHardDeny(item map[string]interface{}, _ string) bool {
+	for _, cmd := range commandCandidates(item) {
+		if unattendedCommandCategory(cmd) != "" {
+			return true
+		}
+	}
+	for _, cmd := range opacityCandidates(item) {
+		if unattendedDynamicCategoryFor(cmd, true) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// unquoteDoubleQuotedArg extracts the inner text of a single double-quoted
+// shell word (`"..."`) so AI review can inspect `bash -c "for f in ..."` for
+// hard-deny categories instead of rejecting it solely because the outer word
+// contains `$`.
+func unquoteDoubleQuotedArg(src string, a uWord) (string, bool) {
+	if a.start < 0 || a.end > len(src) || a.end-a.start < 2 {
+		return "", false
+	}
+	raw := src[a.start:a.end]
+	if raw[0] != '"' || raw[len(raw)-1] != '"' {
+		return "", false
+	}
+	inner := raw[1 : len(raw)-1]
+	var b strings.Builder
+	b.Grow(len(inner))
+	for i := 0; i < len(inner); i++ {
+		c := inner[i]
+		if c == '"' {
+			return "", false
+		}
+		if c == '\\' && i+1 < len(inner) {
+			next := inner[i+1]
+			switch next {
+			case '"', '\\', '$', '`':
+				b.WriteByte(next)
+				i++
+				continue
+			case '\n':
+				i++
+				continue
+			}
+		}
+		b.WriteByte(c)
+	}
+	return b.String(), true
 }
 
 // aiReviewCommand asks the user-configured lightweight model whether an
@@ -496,6 +552,12 @@ func (s *Service) reconcilePendingWithAIReview(pending []*pendingApproval) {
 			outcome := s.aiReviewCommand(ctx, pa.req, dir)
 			cancel()
 			if !outcome.allowed() {
+				if outcome.status != "" {
+					annotateAIReview(pa.req, outcome)
+					if pa.sid != "" {
+						s.broadcast(pa.sid, SSEEvent{Type: "permission.asked", Properties: pa.req})
+					}
+				}
 				continue
 			}
 			select {

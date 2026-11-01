@@ -513,6 +513,12 @@ func (s *Service) reconcilePendingApprovals() {
 		}
 	}
 	s.reconcilePendingWithAIReview(pending)
+	s.openCodeAutoReplies.Range(func(key, value interface{}) bool {
+		if value == openCodeAutoReplyFailed {
+			s.openCodeAutoReplies.Delete(key)
+		}
+		return true
+	})
 	if s.openCode == nil || !s.openCode.Available() {
 		return
 	}

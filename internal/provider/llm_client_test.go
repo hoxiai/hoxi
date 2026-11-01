@@ -106,6 +106,8 @@ func TestIsReasoningEffortRejection(t *testing.T) {
 	cases := map[string]bool{
 		"HTTP 400: Unsupported parameter: 'reasoning_effort' is not supported with this model.": true,
 		"HTTP 422: unknown field reasoningEffort":                                               true,
+		"HTTP 400: Extra inputs are not permitted":                                              true,
+		"HTTP 400: Unrecognized request argument supplied: reasoning_effort":                    true,
 		"HTTP 400: context length exceeded":                                                     false,
 		"HTTP 503: reasoning_effort backend overloaded":                                         false,
 		"dial tcp: connection refused":                                                          false,

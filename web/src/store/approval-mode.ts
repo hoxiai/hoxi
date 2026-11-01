@@ -140,6 +140,13 @@ export async function setApprovalMode(mode: ApprovalMode): Promise<void> {
 }
 
 const FAST_REVIEW_KEYWORDS = ["flash", "mini", "haiku", "lite", "nano", "small", "fast"];
+const REASONING_MODEL_ID_RE = /(?:^|[-_/.])(?:r1|qwq|reasoner|thinking|o1|o3|o4)(?:$|[-_/.])/i;
+
+function isLikelyReasoningModel(modelID: string, mInfo?: any): boolean {
+  return Boolean(
+    mInfo?.reasoning || mInfo?.capabilities?.reasoning || REASONING_MODEL_ID_RE.test(modelID)
+  );
+}
 
 function parseInternalModelSpec(raw?: unknown): { providerID: string; modelID: string } | null {
   if (typeof raw !== "string") return null;
@@ -156,11 +163,18 @@ function parseInternalModelSpec(raw?: unknown): { providerID: string; modelID: s
 function pickFastestProviderModel(providerID: string, fallbackModelID: string): string {
   const prov = workspace.providers.find((p) => p.id === providerID);
   if (!prov?.models) return `${providerID}/${fallbackModelID}`;
-  for (const [mID, mInfo] of Object.entries(prov.models)) {
-    const isReasoning = Boolean(mInfo?.reasoning || mInfo?.capabilities?.reasoning);
-    if (!isReasoning && FAST_REVIEW_KEYWORDS.some((kw) => mID.toLowerCase().includes(kw))) {
+  const entries = Object.entries(prov.models);
+  for (const [mID, mInfo] of entries) {
+    if (
+      !isLikelyReasoningModel(mID, mInfo) &&
+      FAST_REVIEW_KEYWORDS.some((kw) => mID.toLowerCase().includes(kw))
+    ) {
       return `${providerID}/${mID}`;
     }
+  }
+  if (isLikelyReasoningModel(fallbackModelID, prov.models[fallbackModelID])) {
+    const nonReasoning = entries.find(([mID, mInfo]) => !isLikelyReasoningModel(mID, mInfo));
+    if (nonReasoning) return `${providerID}/${nonReasoning[0]}`;
   }
   return `${providerID}/${fallbackModelID}`;
 }
@@ -199,10 +213,19 @@ export function resolveDefaultAIReviewModel(): string {
 
   for (const group of getInternalLLMProviderModelGroups()) {
     if (!isUserConnected(group.providerID) || group.models.length === 0) continue;
+    const provModels = workspace.providers.find((p) => p.id === group.providerID)?.models;
+    const fastNonReasoning = group.models.find(
+      (m) =>
+        !isLikelyReasoningModel(m.id, provModels?.[m.id]) &&
+        FAST_REVIEW_KEYWORDS.some((kw) => m.id.toLowerCase().includes(kw))
+    );
+    const anyNonReasoning = group.models.find(
+      (m) => !isLikelyReasoningModel(m.id, provModels?.[m.id])
+    );
     const fast = group.models.find((m) =>
       FAST_REVIEW_KEYWORDS.some((kw) => m.id.toLowerCase().includes(kw))
     );
-    return (fast || group.models[0]).fullKey;
+    return (fastNonReasoning || anyNonReasoning || fast || group.models[0]).fullKey;
   }
 
   return "";

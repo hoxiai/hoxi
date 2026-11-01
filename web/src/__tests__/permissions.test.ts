@@ -331,6 +331,23 @@ describe("approval policy store and migration", () => {
       await setApprovalAIReview({ aiReview: true });
       assertEqual(puts[puts.length - 1].aiReview, true);
       assertEqual(puts[puts.length - 1].aiReviewModel, "hoxi-gateway/deepseek-flash");
+
+      // Unannotated reasoning models (e.g. o3-mini, flash-thinking, r1 without reasoning flag) are skipped in favor of non-reasoning models
+      await setApprovalAIReview({ aiReview: false, aiReviewModel: "" });
+      setWorkspace("providers", [
+        {
+          id: "custom-gw",
+          name: "Custom Gateway",
+          source: "api",
+          models: {
+            "o3-mini": { name: "o3 Mini" },
+            "gemini-2.5-flash-thinking": { name: "Flash Thinking" },
+            "gpt-4o-mini": { name: "GPT-4o Mini" },
+          },
+        },
+      ] as never);
+      setWorkspace("connectedProviders", ["custom-gw"]);
+      assertEqual(resolveDefaultAIReviewModel(), "custom-gw/gpt-4o-mini");
     } finally {
       hoxiAPI.updateApprovalPolicy = origUpdatePolicy;
       setWorkspace("providers", prevProviders);

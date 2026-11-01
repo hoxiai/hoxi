@@ -77,14 +77,24 @@ func (s *Service) Complete(ctx context.Context, target llm.Target, req llm.Reque
 }
 
 // isReasoningEffortRejection reports whether an endpoint refused the request
-// because of the reasoning_effort parameter itself.
+// because of the reasoning_effort parameter itself. Because callSimpleLLM sends
+// only the standard {model, messages, max_tokens, temperature} fields plus
+// reasoning_effort, generic schema errors ("extra inputs are not permitted",
+// "unknown field", etc.) on HTTP 400/422 also indicate reasoning_effort was
+// rejected.
 func isReasoningEffortRejection(err error) bool {
 	msg := strings.ToLower(err.Error())
 	if !strings.HasPrefix(msg, "http 400") && !strings.HasPrefix(msg, "http 422") {
 		return false
 	}
 	return strings.Contains(msg, "reasoning_effort") || strings.Contains(msg, "reasoning effort") ||
-		strings.Contains(msg, "reasoningeffort")
+		strings.Contains(msg, "reasoningeffort") ||
+		strings.Contains(msg, "extra inputs are not permitted") ||
+		strings.Contains(msg, "additional properties") ||
+		strings.Contains(msg, "unrecognized request argument") ||
+		strings.Contains(msg, "unsupported parameter") ||
+		strings.Contains(msg, "unknown field") ||
+		strings.Contains(msg, "unknown parameter")
 }
 
 // RecordAuditResult folds an observer verdict into the worker model's stats.

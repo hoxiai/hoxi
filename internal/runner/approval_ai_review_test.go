@@ -138,6 +138,9 @@ func TestAIReviewNeverCalledForDestructiveOrHardDenyCommands(t *testing.T) {
 		"bash -c 'cat ~/.ssh/id_rsa'",
 		`eval "$USER_CMD"`,
 		`bash -c '$CMD --help'`,
+		`bash -c "$CMD --help"`,
+		`python3 -c 'open(".env").read()'`,
+		`python3 -c "$USER_CODE"`,
 		"kill -9 1234",
 		"echo sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJ",
 	}
@@ -154,6 +157,43 @@ func TestAIReviewNeverCalledForDestructiveOrHardDenyCommands(t *testing.T) {
 	}
 	if got := mockLLM.calls.Load(); got != 0 {
 		t.Fatalf("expected 0 LLM calls for destructive/hard-deny commands, got %d", got)
+	}
+}
+
+func TestAIReviewReviewsInlineInterpreterAndDoubleQuotedBashScripts(t *testing.T) {
+	f := newGateFixture(t)
+	defer f.revoke()
+
+	mockLLM := &stubAIReviewLLM{
+		ready:    true,
+		response: `{"decision":"allow","reason":"routine workspace inspection"}`,
+	}
+	f.svc.SetLLM(mockLLM)
+	setTestApprovalPolicy(t, f.svc, ApprovalPolicy{
+		Mode:          ApprovalModeAuto,
+		AIReview:      true,
+		AIReviewModel: "openai/gpt-4o-mini",
+	})
+
+	eligible := []string{
+		`python3 -c 'import os, pathlib; print(__name__, os.environ.get(" CI", ""), len(list(pathlib.Path(".").glob("*.go"))))'`,
+		"node -e 'const fs = require(\"fs\"); console.log(`files: ${fs.readdirSync(\".\").length}`)'",
+		`bash -c "for f in a.go b.go; do wc -l \"$f\"; done"`,
+		"python3 - <<'EOF'\nimport subprocess\nprint(subprocess.check_output(['git', 'status', '-s']).decode())\nEOF",
+	}
+
+	for i, cmd := range eligible {
+		item := map[string]interface{}{
+			"permission": "bash",
+			"patterns":   []string{cmd},
+			"metadata":   map[string]interface{}{"command": cmd},
+		}
+		if !f.svc.aiReviewCommand(context.Background(), item, f.dir).allowed() {
+			t.Fatalf("expected %q to reach AI review and be allowed", cmd)
+		}
+		if got := int(mockLLM.calls.Load()); got != i+1 {
+			t.Fatalf("expected %d LLM calls after %q, got %d", i+1, cmd, got)
+		}
 	}
 }
 

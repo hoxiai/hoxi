@@ -48,16 +48,22 @@ var (
 // unattendedCtx accumulates what the whole command does across nested
 // scripts, for the egress check.
 type unattendedCtx struct {
-	credRef bool // references a credential-named variable
-	envDump bool // prints the whole environment
-	network bool // runs a tool that can send data off the machine
+	credRef  bool   // references a credential-named variable
+	envDump  bool   // prints the whole environment
+	network  bool   // runs a tool that can send data off the machine
+	aiReview bool   // true when gating AI review rather than unattended execution
+	src      string // current script text for slicing double-quoted shell/code args
 }
 
 // unattendedDynamicCategory classifies a command the static rules passed:
 // it parses quoting and expansions, so `git p\ush` and `"git" push` are seen
 // as `git push`, and it refuses dynamic execution. "" means allow.
 func unattendedDynamicCategory(command string) string {
-	ctx := &unattendedCtx{}
+	return unattendedDynamicCategoryFor(command, false)
+}
+
+func unattendedDynamicCategoryFor(command string, aiReview bool) string {
+	ctx := &unattendedCtx{aiReview: aiReview}
 	if cat := unattendedScriptCategory(command, 0, ctx); cat != "" {
 		return cat
 	}
@@ -80,6 +86,9 @@ func unattendedScriptCategory(text string, depth int, ctx *unattendedCtx) string
 	if !ok {
 		return unattendedCategoryDynamic
 	}
+	prevSrc := ctx.src
+	ctx.src = text
+	defer func() { ctx.src = prevSrc }()
 	return sc.category(depth, ctx)
 }
 
@@ -306,21 +315,21 @@ func unattendedShellCategory(seg *uSeg, args []uWord, depth int, ctx *unattended
 	cmdMode, stdinMode := false, false
 	for i := 0; i < len(args); i++ {
 		a := args[i]
-		if a.dynamic || a.procSub {
-			return unattendedCategoryDynamic
-		}
 		t := a.text
-		if t == "-" {
+		if t == "-" && !a.dynamic && !a.procSub {
 			stdinMode = true
 			break
 		}
-		if t == "--" {
+		if t == "--" && !a.dynamic && !a.procSub {
 			if i+1 < len(args) && !stdinMode {
 				return unattendedShellScriptArg(args[i+1], cmdMode, depth, ctx)
 			}
 			break
 		}
 		if len(t) > 1 && (t[0] == '-' || t[0] == '+') {
+			if a.dynamic || a.procSub {
+				return unattendedCategoryDynamic
+			}
 			if t == "-o" || t == "+o" || t == "-O" || t == "+O" || t == "--rcfile" || t == "--init-file" {
 				i++
 				continue
@@ -332,6 +341,9 @@ func unattendedShellCategory(seg *uSeg, args []uWord, depth int, ctx *unattended
 			continue
 		}
 		if stdinMode {
+			if a.dynamic || a.procSub {
+				return unattendedCategoryDynamic
+			}
 			break // positional parameters for a script read from stdin
 		}
 		return unattendedShellScriptArg(a, cmdMode, depth, ctx)
@@ -339,13 +351,21 @@ func unattendedShellCategory(seg *uSeg, args []uWord, depth int, ctx *unattended
 	if cmdMode && !stdinMode {
 		return ""
 	}
-	return unattendedStdinScriptCategory(seg, func(text string) string {
+	return unattendedStdinScriptCategory(seg, ctx, func(text string) string {
 		return unattendedScriptCategory(text, depth+1, ctx)
 	})
 }
 
 func unattendedShellScriptArg(a uWord, cmdMode bool, depth int, ctx *unattendedCtx) string {
-	if a.dynamic || a.procSub {
+	if a.procSub {
+		return unattendedCategoryDynamic
+	}
+	if a.dynamic {
+		if ctx.aiReview && cmdMode {
+			if inner, ok := unquoteDoubleQuotedArg(ctx.src, a); ok {
+				return unattendedScriptCategory(inner, depth+1, ctx)
+			}
+		}
 		return unattendedCategoryDynamic
 	}
 	if cmdMode {
@@ -369,12 +389,12 @@ func isStdinPath(p string) bool {
 
 // unattendedStdinScriptCategory judges a program a shell or interpreter
 // reads from standard input.
-func unattendedStdinScriptCategory(seg *uSeg, judge func(string) string) string {
+func unattendedStdinScriptCategory(seg *uSeg, ctx *unattendedCtx, judge func(string) string) string {
 	switch {
 	case seg.stdin == "procsub":
 		return unattendedCategoryDynamic
 	case seg.stdin == "heredoc" || seg.stdin == "herestring":
-		if seg.stdinDynamic {
+		if seg.stdinDynamic && !(ctx.aiReview && seg.stdin == "heredoc") {
 			return unattendedCategoryDynamic
 		}
 		return judge(seg.stdinText)
@@ -426,7 +446,7 @@ func unattendedInlineFlag(family, arg string) bool {
 // program piped in or built from an expansion is refused.
 func unattendedInterpreterCategory(seg *uSeg, family string, args []uWord, ctx *unattendedCtx) string {
 	judge := func(code string) string {
-		if unattendedScriptCapabilityRe.MatchString(code) {
+		if !ctx.aiReview && unattendedScriptCapabilityRe.MatchString(code) {
 			return unattendedCategoryDynamic
 		}
 		return scanUnattendedText(code)
@@ -481,7 +501,7 @@ func unattendedInterpreterCategory(seg *uSeg, family string, args []uWord, ctx *
 		// Modules loaded by option (`perl -MLWP::Simple -e …`) count too.
 		return judge(strings.Join(options, " "))
 	}
-	return unattendedStdinScriptCategory(seg, judge)
+	return unattendedStdinScriptCategory(seg, ctx, judge)
 }
 
 // unattendedXargsCategory judges the command xargs runs. Arguments read
