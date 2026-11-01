@@ -115,11 +115,16 @@ export function isPlaceholderSessionTitle(title?: string | null): boolean {
   );
 }
 
-// OpenCode names child sessions "<description> (@<agent> subagent)".
+// OpenCode names child sessions "<description> (@<agent> subagent)";
+// Convoy names task sessions "Convoy · plan_<id> · <taskID>".
 const SUBAGENT_TITLE_SUFFIX = /\s*\(@[\w.-]+ subagent\)\s*$/i;
+const CONVOY_TITLE_PREFIX = /^Convoy\s*·\s*plan_[a-z0-9_-]+\s*·\s*/i;
 
 export function stripSubagentTitleSuffix(title?: string | null): string {
-  return (title || "").replace(SUBAGENT_TITLE_SUFFIX, "").trim();
+  return (title || "")
+    .replace(CONVOY_TITLE_PREFIX, "")
+    .replace(SUBAGENT_TITLE_SUFFIX, "")
+    .trim();
 }
 
 function normalizeTitleForCompare(title: string): string {

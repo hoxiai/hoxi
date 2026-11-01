@@ -162,6 +162,21 @@ func (s *Service) noteOpenCodeChildEvent(rec SessionRecord, evt SSEEvent) bool {
 		s.openCodeChildParent.Store(id, rec.ID)
 		s.managedOpenCode.Store(id, true)
 		s.noteOpenCodeActivity(rec.ID, evt)
+		mappedInfo := make(map[string]interface{}, len(info)+3)
+		for k, v := range info {
+			mappedInfo[k] = v
+		}
+		mappedInfo["parentID"] = rec.ID
+		if dir := firstNonEmptyStr(rec.WorktreePath, rec.ProjectDir); dir != "" {
+			mappedInfo["directory"] = dir
+		}
+		if rec.ProjectID != "" {
+			mappedInfo["projectID"] = rec.ProjectID
+		}
+		s.broadcast(id, SSEEvent{
+			Type:       evt.Type,
+			Properties: map[string]interface{}{"info": mappedInfo},
+		})
 		return true
 	}
 	sid := openCodeEventSessionID(evt)

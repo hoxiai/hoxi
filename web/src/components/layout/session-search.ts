@@ -13,11 +13,21 @@ export function matchesProjectSearch(project: SearchProject, query: string): boo
     project.folders.some((folder) => folder.path.toLowerCase().includes(q));
 }
 
-export function matchesSessionSearch(session: SessionInfo, query: string): boolean {
+export function matchesSessionQueryText(session: SessionInfo, query: string): boolean {
   const q = query.trim().toLowerCase();
-  return !session.parentID && (!q ||
+  return !q ||
     (session.title || "").toLowerCase().includes(q) ||
-    (session.slug || "").toLowerCase().includes(q));
+    (session.slug || "").toLowerCase().includes(q);
+}
+
+export function matchesSessionSearch(
+  session: SessionInfo,
+  query: string,
+  subagents?: readonly SessionInfo[],
+): boolean {
+  if (session.parentID) return false;
+  if (matchesSessionQueryText(session, query)) return true;
+  return Boolean(subagents?.some((sub) => !sub.time?.archived && matchesSessionQueryText(sub, query)));
 }
 
 export function matchesProjectSessionSearch(
@@ -25,6 +35,16 @@ export function matchesProjectSessionSearch(
   sessions: readonly SessionInfo[],
   query: string,
 ): boolean {
-  return matchesProjectSearch(project, query) ||
-    sessions.some((session) => matchesSessionSearch(session, query));
+  if (matchesProjectSearch(project, query)) return true;
+  const childrenByParent = new Map<string, SessionInfo[]>();
+  for (const s of sessions) {
+    if (s.parentID && !s.time?.archived) {
+      const list = childrenByParent.get(s.parentID);
+      if (list) list.push(s);
+      else childrenByParent.set(s.parentID, [s]);
+    }
+  }
+  return sessions.some((session) =>
+    matchesSessionSearch(session, query, childrenByParent.get(session.id))
+  );
 }

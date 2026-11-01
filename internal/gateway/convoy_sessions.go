@@ -49,6 +49,7 @@ func (c convoySessions) Create(ctx context.Context, req orchestration.SessionReq
 	body := runner.CreateSessionRequest{
 		Title:       req.Title,
 		Directory:   req.Directory,
+		ParentID:    strings.TrimSpace(req.ParentSessionID),
 		Runtime:     runtime,
 		Mode:        req.Mode,
 		ProviderID:  provider,

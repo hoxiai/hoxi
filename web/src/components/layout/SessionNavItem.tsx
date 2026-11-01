@@ -1,9 +1,10 @@
 // web/src/components/layout/SessionNavItem.tsx
-import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js";
-import { Pencil, Square } from "lucide-solid";
+import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
+import { Bot, Pencil, Square } from "lucide-solid";
 import {
   isPlaceholderSessionTitle,
   renameSessionTitle,
+  selectSession,
   sessionDirectory,
   setWorkspace,
   workspace,
@@ -17,6 +18,11 @@ import { badgeFor } from "./left-nav-helpers";
 import SessionPullRequestPill from "./SessionPullRequestPill";
 import { fetchPullRequests, type ForgePullRequest } from "../../services/forge";
 import { SessionRenamePopover } from "./SessionRenamePopover";
+import { SubagentNavRow } from "./SubagentNavRow";
+import {
+  countRunningSubagents,
+  shouldAutoExpandSubagents,
+} from "./subagent-nav";
 import {
   formatCompactRelativeTime,
   formatExactTime,
@@ -30,7 +36,10 @@ export interface SessionNavItemProps {
   isArchived?: boolean;
   showBranchIcon?: boolean;
   pendingSessions: Set<string>;
+  subagents?: SessionInfo[];
+  filterQuery?: string;
   onSelect: () => void;
+  onSelectSubagent?: (subagentID: string) => void;
   onArchive?: (ev: MouseEvent, sessionID: string) => void;
   onUnarchive?: (ev: MouseEvent, sessionID: string) => void;
   onDiscard: (ev: MouseEvent, sessionID: string) => Promise<void> | void;
@@ -40,10 +49,29 @@ export function SessionNavItem(props: SessionNavItemProps) {
   const [editing, setEditing] = createSignal(false);
   const [confirmingDelete, setConfirmingDelete] = createSignal(false);
   const [deleting, setDeleting] = createSignal(false);
+  const [manualExpanded, setManualExpanded] = createSignal<boolean | null>(null);
   let rowRef: HTMLDivElement | undefined;
 
   const nowTick = useNowTicker(30000);
-  const isEffectiveActive = () => props.active;
+  const subagents = () => props.subagents ?? [];
+  const hasSubagents = () => !props.isArchived && subagents().length > 0;
+  const runningSubagents = createMemo(() => countRunningSubagents(subagents()));
+  const autoExpand = createMemo(() =>
+    shouldAutoExpandSubagents(subagents(), props.pendingSessions, props.filterQuery)
+  );
+  createEffect((prevAuto: boolean | undefined) => {
+    const nextAuto = autoExpand();
+    if (prevAuto !== undefined && prevAuto !== nextAuto) {
+      setManualExpanded(null);
+    }
+    return nextAuto;
+  });
+  const expanded = () => hasSubagents() && (manualExpanded() ?? autoExpand());
+  const hasActiveSubagent = createMemo(() =>
+    subagents().some((sub) => sub.id === workspace.activeSessionID)
+  );
+  const isEffectiveActive = () =>
+    props.active && !(expanded() && hasActiveSubagent());
   const status = () => workspace.statusBySession[props.session.id]?.type;
   const isBusy = () => status() === "busy" || status() === "retry";
   const isInterrupted = () =>
@@ -169,61 +197,107 @@ export function SessionNavItem(props: SessionNavItemProps) {
   };
 
   return (
-    <div
-      ref={rowRef}
-      class={`group/row relative flex items-center justify-between gap-1 rounded-lg px-2.5 py-1.5 cursor-pointer overflow-hidden transition-colors duration-120 ${
-        confirmingDelete()
-          ? "bg-[var(--danger-surface)] text-[var(--text-primary)] ring-1 ring-[var(--danger-border)]"
-          : isEffectiveActive()
-            ? "bg-[var(--bg-hover)] text-[var(--text-primary)]"
-            : badge() === "completed"
-              ? "text-[var(--text-primary)] hover:bg-[var(--bg-hover)]/60"
-              : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]/60 hover:text-[var(--text-primary)]"
-      }`}
-      onClick={() => {
-        if (!editing() && !confirmingDelete()) props.onSelect();
-      }}
-    >
-      <div class="flex items-center gap-1.5 min-w-0 flex-1 mr-1">
-        <Show when={badge() === "approval"}>
-          <span class="shrink-0 w-2 h-2 rounded-full bg-[var(--warn)] animate-pulse" />
-        </Show>
-        <Show when={badge() === "completed"}>
-          <span
-            class="shrink-0 w-2 h-2 rounded-full bg-blue-500 shadow-[0_0_6px_rgba(59,130,246,0.5)]"
-            title={t("timeline.turnCompleted")}
-          />
-        </Show>
-        <Show when={badge() === "idle" && isInterrupted() && !isPaused()}>
-          <span
-            class="shrink-0 w-1.5 h-1.5 rounded-full bg-[var(--warn)]/75"
-            title={t("timeline.turnPaused")}
-          />
-        </Show>
-        <Show when={isPaused()}>
-          <span class="shrink-0 rounded border border-[var(--border-subtle)] bg-[var(--bg-hover)] px-1 py-0.5 text-[11px] font-medium leading-none text-[var(--text-muted)]">
-            {t("timeline.turnPaused")}
-          </span>
-        </Show>
-        <span
-          class={`session-row-title truncate text-[14px] flex-1 leading-snug ${
-            props.isArchived ? "text-[var(--text-muted)]" : ""
-          }`}
-          title={props.session.title || ""}
-          onDblClick={(ev) => startEditing(ev)}
-        >
-          {isPlaceholderSessionTitle(props.session.title)
-            ? t("leftNav.newThread")
-            : props.session.title}
-        </span>
-      </div>
-
-      {/* Static Badges (Branch, Queue, Time or Loading) shown when not hovered and not confirming delete */}
-      <Show when={!confirmingDelete()}>
-        <div class="flex items-center gap-1.5 shrink-0 text-[12px] font-mono group-hover/row:opacity-0 group-hover/row:invisible group-has-[:focus-visible]/row:opacity-0 group-has-[:focus-visible]/row:invisible transition-opacity duration-120 ease-out">
-          <Show when={pullRequest()}>
-            {(pr) => <SessionPullRequestPill pr={pr()} />}
+    <div class="flex flex-col">
+      <div
+        ref={rowRef}
+        class={`group/row relative flex items-center justify-between gap-1 rounded-lg px-2.5 py-1.5 cursor-pointer overflow-hidden transition-colors duration-120 ${
+          confirmingDelete()
+            ? "bg-[var(--danger-surface)] text-[var(--text-primary)] ring-1 ring-[var(--danger-border)]"
+            : isEffectiveActive()
+              ? "bg-[var(--bg-hover)] text-[var(--text-primary)]"
+              : expanded() && hasActiveSubagent()
+                ? "bg-[var(--bg-hover)]/40 text-[var(--text-primary)] hover:bg-[var(--bg-hover)]/70"
+                : badge() === "completed"
+                  ? "text-[var(--text-primary)] hover:bg-[var(--bg-hover)]/60"
+                  : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]/60 hover:text-[var(--text-primary)]"
+        }`}
+        onClick={() => {
+          if (!editing() && !confirmingDelete()) props.onSelect();
+        }}
+      >
+        <div class="flex items-center gap-1.5 min-w-0 flex-1 mr-1">
+          <Show when={hasSubagents()}>
+            <button
+              type="button"
+              data-subagent-chevron
+              class="shrink-0 -ml-1 inline-flex h-4 w-4 items-center justify-center rounded text-[var(--text-faint)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+              title={
+                expanded()
+                  ? t("leftNav.collapseSubagents")
+                  : t("leftNav.expandSubagents", { count: subagents().length })
+              }
+              onClick={(ev) => {
+                ev.stopPropagation();
+                setManualExpanded(!expanded());
+              }}
+            >
+              <Icon
+                name="chevron-right"
+                size="small"
+                class={`w-3 h-3 transition-transform duration-150 ${
+                  expanded() ? "rotate-90" : ""
+                }`}
+              />
+            </button>
           </Show>
+          <Show when={badge() === "approval"}>
+            <span class="shrink-0 w-2 h-2 rounded-full bg-[var(--warn)] animate-pulse" />
+          </Show>
+          <Show when={badge() === "completed"}>
+            <span
+              class="shrink-0 w-2 h-2 rounded-full bg-blue-500 shadow-[0_0_6px_rgba(59,130,246,0.5)]"
+              title={t("timeline.turnCompleted")}
+            />
+          </Show>
+          <Show when={badge() === "idle" && isInterrupted() && !isPaused()}>
+            <span
+              class="shrink-0 w-1.5 h-1.5 rounded-full bg-[var(--warn)]/75"
+              title={t("timeline.turnPaused")}
+            />
+          </Show>
+          <Show when={isPaused()}>
+            <span class="shrink-0 rounded border border-[var(--border-subtle)] bg-[var(--bg-hover)] px-1 py-0.5 text-[11px] font-medium leading-none text-[var(--text-muted)]">
+              {t("timeline.turnPaused")}
+            </span>
+          </Show>
+          <span
+            class={`session-row-title truncate text-[14px] flex-1 leading-snug ${
+              props.isArchived ? "text-[var(--text-muted)]" : ""
+            }`}
+            title={props.session.title || ""}
+            onDblClick={(ev) => startEditing(ev)}
+          >
+            {isPlaceholderSessionTitle(props.session.title)
+              ? t("leftNav.newThread")
+              : props.session.title}
+          </span>
+        </div>
+
+        {/* Static Badges (Branch, Subagents, Queue, Time or Loading) shown when not hovered and not confirming delete */}
+        <Show when={!confirmingDelete()}>
+          <div class="flex items-center gap-1.5 shrink-0 text-[12px] font-mono group-hover/row:opacity-0 group-hover/row:invisible group-has-[:focus-visible]/row:opacity-0 group-has-[:focus-visible]/row:invisible transition-opacity duration-120 ease-out">
+            <Show when={hasSubagents()}>
+              <span
+                data-subagent-badge
+                class={`inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[10.5px] leading-none tabular-nums select-none ${
+                  runningSubagents() > 0
+                    ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
+                    : "text-[var(--text-faint)]"
+                }`}
+                title={
+                  expanded()
+                    ? t("leftNav.collapseSubagents")
+                    : t("leftNav.expandSubagents", { count: subagents().length })
+                }
+              >
+                <Bot size={10.5} class="shrink-0" />
+                <span>{subagents().length}</span>
+              </span>
+            </Show>
+
+            <Show when={pullRequest()}>
+              {(pr) => <SessionPullRequestPill pr={pr()} />}
+            </Show>
 
           <Show when={wt()?.isolated && wt()?.branch}>
             <span class="inline-flex items-center gap-0.5 text-[var(--text-faint)] truncate max-w-[68px]">
@@ -407,6 +481,37 @@ export function SessionNavItem(props: SessionNavItemProps) {
           onSave={commitEdit}
           onClose={() => setEditing(false)}
         />
+      </Show>
+      </div>
+
+      <Show when={hasSubagents()}>
+        <div
+          class="hoxi-drawer-grid"
+          data-open={expanded() ? "true" : "false"}
+        >
+          <div class="hoxi-drawer-inner">
+            <div class="ml-3.5 pl-2 my-0.5 border-l border-[var(--border-subtle)]/60 flex flex-col gap-0.5">
+              <For each={subagents()}>
+                {(sub) => (
+                  <SubagentNavRow
+                    parentSessionID={props.session.id}
+                    session={sub}
+                    active={workspace.activeSessionID === sub.id}
+                    pendingSessions={props.pendingSessions}
+                    nowTick={nowTick()}
+                    onSelect={() => {
+                      if (props.onSelectSubagent) {
+                        props.onSelectSubagent(sub.id);
+                      } else {
+                        void selectSession(sub.id);
+                      }
+                    }}
+                  />
+                )}
+              </For>
+            </div>
+          </div>
+        </div>
       </Show>
     </div>
   );

@@ -32,6 +32,14 @@ describe("Sidebar task search", () => {
     assertEqual(matchesProjectSessionSearch(project, [
       { ...session, parentID: "ses_parent" },
     ], "login"), false);
+    const parent: SessionInfo = {
+      id: "ses_parent", title: "Main Refactor", time: { created: 1, updated: 1 },
+    };
+    const child: SessionInfo = {
+      id: "ses_child", parentID: "ses_parent", title: "Audit Auth Module", time: { created: 2, updated: 2 },
+    };
+    assertEqual(matchesSessionSearch(parent, "audit", [child]), true);
+    assertEqual(matchesProjectSessionSearch(project, [parent, child], "audit"), true);
   });
 
   it("rejects unrelated projects and restores all projects for an empty query", () => {

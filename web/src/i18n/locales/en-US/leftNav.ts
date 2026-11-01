@@ -35,6 +35,8 @@ export const leftNav = {
   archivedSessions: "Archived",
   olderSessions: "Older sessions ({count})",
   collapseSessions: "Collapse",
+  expandSubagents: "Show {count} subagents",
+  collapseSubagents: "Hide subagents",
   confirmDelete: "Delete",
   cancelDelete: "Cancel",
   exportSessionTooltip: "Export session to Markdown",

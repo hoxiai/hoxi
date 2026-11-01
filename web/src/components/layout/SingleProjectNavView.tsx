@@ -37,6 +37,8 @@ import { WorkspaceActionMenu } from "./MultiProjectItem";
 import { t } from "../../i18n";
 import { SessionHistoryList, useSessionHistory } from "./SessionHistory";
 import { compareSessionRunning } from "./session-history";
+import { matchesSessionQueryText, matchesSessionSearch } from "./session-search";
+import { groupSubagentsByRoot } from "./subagent-nav";
 
 export default function SingleProjectNavView(props: {
   allProjects: ProjectNavEntry[];
@@ -86,15 +88,20 @@ export default function SingleProjectNavView(props: {
     );
   });
 
+  const subagentsByRoot = createMemo(() =>
+    groupSubagentsByRoot(
+      workspace.sessions.filter((s) => resolveSessionSurface(s) === "code")
+    )
+  );
+
   const filteredSessions = createMemo(() => {
-    const q = props.filterQuery.trim().toLowerCase();
+    const q = props.filterQuery.trim();
     const raw = sortSessionsByActivity(
       workspace.sessions.filter((s) => !s.parentID && resolveSessionSurface(s) === "code")
     );
     if (!q) return raw;
-    return raw.filter(
-      (s) => (s.title || "").toLowerCase().includes(q) || (s.slug || "").toLowerCase().includes(q)
-    );
+    const byRoot = subagentsByRoot();
+    return raw.filter((s) => matchesSessionSearch(s, q, byRoot.get(s.id)));
   });
 
   const history = useSessionHistory(
@@ -309,6 +316,8 @@ export default function SingleProjectNavView(props: {
                       isArchived={false}
                       showBranchIcon={true}
                       pendingSessions={props.pendingSessions}
+                      subagents={subagentsByRoot().get(session.id)}
+                      filterQuery={props.filterQuery}
                       onSelect={() => void selectSession(session.id)}
                       onArchive={props.onArchive}
                       onDiscard={props.onDiscard}
@@ -399,6 +408,7 @@ export function RecentTasksNavView(props: {
     const q = props.filterQuery.trim().toLowerCase();
     const sessions: SessionInfo[] = [];
     const projBySession = new Map<string, ProjectNavEntry>();
+    const subagentsByRoot = new Map<string, SessionInfo[]>();
     const activeRoot = normalizeFolderPath(workspace.rootDir);
 
     for (const proj of props.allProjects) {
@@ -408,13 +418,19 @@ export function RecentTasksNavView(props: {
         isActive && !workspace.bootstrappingSessions
           ? workspace.sessions
           : props.projectSessions[normProjPath] || props.projectSessions[proj.path] || [];
-      for (const s of list) {
-        if (s.parentID || isSessionArchived(s) || resolveSessionSurface(s) !== "code") continue;
+      const codeList = list.filter((s) => resolveSessionSurface(s) === "code");
+      const projSubagents = groupSubagentsByRoot(codeList);
+      for (const s of codeList) {
+        if (s.parentID || isSessionArchived(s)) continue;
+        const subs = projSubagents.get(s.id);
+        if (subs && subs.length > 0) {
+          subagentsByRoot.set(s.id, subs);
+        }
         if (
           q &&
-          !(s.title || "").toLowerCase().includes(q) &&
-          !(s.slug || "").toLowerCase().includes(q) &&
-          !proj.name.toLowerCase().includes(q)
+          !matchesSessionQueryText(s, q) &&
+          !proj.name.toLowerCase().includes(q) &&
+          !subs?.some((sub) => matchesSessionQueryText(sub, q))
         ) {
           continue;
         }
@@ -430,7 +446,7 @@ export function RecentTasksNavView(props: {
         (a.time.updated || a.time.created)
     );
 
-    return { sessions, projBySession };
+    return { sessions, projBySession, subagentsByRoot };
   });
 
   const recentSessions = createMemo(
@@ -479,9 +495,15 @@ export function RecentTasksNavView(props: {
                   isArchived={false}
                   showBranchIcon={true}
                   pendingSessions={props.pendingSessions}
+                  subagents={recentData().subagentsByRoot.get(session.id)}
+                  filterQuery={props.filterQuery}
                   onSelect={() => {
                     const p = proj()?.path;
                     if (p) props.onSelectSession(p, session.id);
+                  }}
+                  onSelectSubagent={(subID) => {
+                    const p = proj()?.path;
+                    if (p) props.onSelectSession(p, subID);
                   }}
                   onArchive={(ev, id) => {
                     const p = proj()?.path;

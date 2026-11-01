@@ -145,6 +145,9 @@ func (s *Service) sessionEditedFileSet(sessionID string) map[string]struct{} {
 		visited[sid] = true
 		var subChildren []string
 		if s.store.VisitTurns(sid, func(rec SessionRecord) {
+			if sid != sessionID && !rec.Subagent && normalizeComparePath(rec.WorktreePath) != normalizeComparePath(rootRec.WorktreePath) {
+				return
+			}
 			walkTurns(rec.Turns, rec.ProjectDir, rec.WorktreePath, &subChildren)
 		}) {
 			for _, cid := range subChildren {

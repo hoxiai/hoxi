@@ -5,6 +5,12 @@ import {
   groupRunningByProject,
   partitionAttentionSessions,
 } from "../components/layout/cross-project-nav";
+import {
+  countRunningSubagents,
+  groupSubagentsByRoot,
+  shouldAutoExpandSubagents,
+} from "../components/layout/subagent-nav";
+import { stripSubagentTitleSuffix } from "../store/session-title";
 import type { ProjectNavEntry } from "../components/layout/left-nav-helpers";
 import { setWorkspace, workspace, type WorkspaceState } from "../store/workspace";
 import { assertDeepEqual, assertEqual, describe, it } from "./test-harness";
@@ -182,6 +188,65 @@ describe("Cross-project sidebar views", () => {
           sections[0].items.map((i) => i.session.id),
           ["ses_stalled"],
         );
+      },
+    );
+  });
+
+  it("groups nested subagents under their root session and auto-expands when active, busy, or pending approval", () => {
+    withWorkspace(
+      {
+        rootDir: "/repo-a",
+        bootstrappingSessions: false,
+        activeSessionID: null,
+        sessions: [
+          session("ses_root", 100, { title: "Implement Convoy" }),
+          session("ses_child_2", 250, {
+            parentID: "ses_root",
+            title: "Convoy · plan_abc123 · task-b",
+            time: { created: 20, updated: 250 },
+          }),
+          session("ses_child_1", 200, {
+            parentID: "ses_root",
+            title: "Explore repo (@explore subagent)",
+            time: { created: 10, updated: 200 },
+          }),
+          session("ses_grandchild", 300, {
+            parentID: "ses_child_1",
+            title: "Read schema (@explore subagent)",
+            time: { created: 30, updated: 300 },
+          }),
+        ],
+        statusBySession: {},
+      },
+      () => {
+        const grouped = groupSubagentsByRoot(workspace.sessions);
+        const subs = grouped.get("ses_root") ?? [];
+        assertDeepEqual(
+          subs.map((s) => s.id),
+          ["ses_child_1", "ses_child_2", "ses_grandchild"],
+        );
+        assertEqual(stripSubagentTitleSuffix(subs[0].title), "Explore repo");
+        assertEqual(stripSubagentTitleSuffix(subs[1].title), "task-b");
+
+        // All idle, no approvals, not active -> collapsed by default
+        assertEqual(shouldAutoExpandSubagents(subs, new Set(), ""), false);
+        assertEqual(countRunningSubagents(subs), 0);
+
+        // Selecting a child session auto-expands the parent drawer
+        setWorkspace("activeSessionID", "ses_child_2");
+        assertEqual(shouldAutoExpandSubagents(subs, new Set(), ""), true);
+        setWorkspace("activeSessionID", null);
+
+        // Pending approval on a child session auto-expands
+        assertEqual(shouldAutoExpandSubagents(subs, new Set(["ses_grandchild"]), ""), true);
+
+        // Search filter matching a child session auto-expands
+        assertEqual(shouldAutoExpandSubagents(subs, new Set(), "schema"), true);
+
+        // Busy child session auto-expands and counts as running
+        setWorkspace("statusBySession", "ses_child_1", { type: "busy" });
+        assertEqual(shouldAutoExpandSubagents(subs, new Set(), ""), true);
+        assertEqual(countRunningSubagents(subs), 1);
       },
     );
   });

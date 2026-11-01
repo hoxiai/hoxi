@@ -385,11 +385,12 @@ func (s *Service) AllowOpenCodeSSELine(line string) bool {
 			}
 		}
 	}
-	if s.IsManagedOpenCodeSession(id) {
+	if s.IsManagedOpenCodeSession(id) && !s.isManagedOpenCodeChild(id) {
 		return false
 	}
 	switch envelope.Type {
-	case "permission.asked", "permission.replied", "question.asked", "question.replied", "question.rejected", "question.v2.asked", "question.v2.replied", "question.v2.rejected":
+	case "session.created", "session.updated",
+		"permission.asked", "permission.replied", "question.asked", "question.replied", "question.rejected", "question.v2.asked", "question.v2.replied", "question.v2.rejected":
 		if s.isManagedOpenCodeChild(id) {
 			return false
 		}

@@ -13,10 +13,12 @@ import {
 import type { ProjectNavEntry } from "./left-nav-helpers";
 import { compareSessionRunning } from "./session-history";
 import { matchesProjectSearch, matchesSessionSearch } from "./session-search";
+import { groupSubagentsByRoot } from "./subagent-nav";
 
 export interface CrossProjectSession {
   session: SessionInfo;
   proj: ProjectNavEntry;
+  subagents?: SessionInfo[];
 }
 
 export interface CrossProjectSource {
@@ -39,7 +41,10 @@ function isRunning(sessionID: string): boolean {
 
 function matchesQuery(item: CrossProjectSession, query: string): boolean {
   if (!query) return true;
-  return matchesSessionSearch(item.session, query) || matchesProjectSearch(item.proj, query);
+  return (
+    matchesSessionSearch(item.session, query, item.subagents) ||
+    matchesProjectSearch(item.proj, query)
+  );
 }
 
 /** Active root sessions live in `workspace.sessions`; other projects use the cache. */
@@ -60,10 +65,15 @@ export function collectCrossProjectSessions(source: CrossProjectSource): CrossPr
   const seen = new Set<string>();
   const out: CrossProjectSession[] = [];
   for (const proj of source.allProjects) {
-    for (const session of sessionsForProject(source, proj, activeRoot)) {
-      if (!session?.id || seen.has(session.id) || session.parentID || isSessionArchived(session) || resolveSessionSurface(session) !== "code") continue;
+    const codeList = sessionsForProject(source, proj, activeRoot).filter(
+      (s) => resolveSessionSurface(s) === "code"
+    );
+    const subagentsByRoot = groupSubagentsByRoot(codeList);
+    for (const session of codeList) {
+      if (!session?.id || seen.has(session.id) || session.parentID || isSessionArchived(session)) continue;
       seen.add(session.id);
-      const item = { session, proj };
+      const subagents = subagentsByRoot.get(session.id);
+      const item: CrossProjectSession = subagents ? { session, proj, subagents } : { session, proj };
       if (!matchesQuery(item, query)) continue;
       out.push(item);
     }
@@ -74,18 +84,29 @@ export function collectCrossProjectSessions(source: CrossProjectSource): CrossPr
 export interface RunningGroup {
   proj: ProjectNavEntry;
   sessions: SessionInfo[];
+  subagentsByRoot?: Map<string, SessionInfo[]>;
 }
 
 /** Executing tasks grouped by project, newest activity first inside each group. */
 export function groupRunningByProject(items: CrossProjectSession[]): RunningGroup[] {
   const groups = new Map<string, RunningGroup>();
-  const running = items.filter((item) => isRunning(item.session.id));
+  const running = items.filter(
+    (item) =>
+      isRunning(item.session.id) ||
+      Boolean(item.subagents?.some((sub) => isRunning(sub.id))),
+  );
   running.sort((a, b) => sessionActivityTime(b.session) - sessionActivityTime(a.session));
   for (const item of running) {
     const key = normalizeFolderPath(item.proj.path);
-    const group = groups.get(key);
-    if (group) group.sessions.push(item.session);
-    else groups.set(key, { proj: item.proj, sessions: [item.session] });
+    let group = groups.get(key);
+    if (!group) {
+      group = { proj: item.proj, sessions: [], subagentsByRoot: new Map() };
+      groups.set(key, group);
+    }
+    group.sessions.push(item.session);
+    if (item.subagents && item.subagents.length > 0) {
+      group.subagentsByRoot?.set(item.session.id, item.subagents);
+    }
   }
   return Array.from(groups.values());
 }
@@ -108,7 +129,10 @@ export function partitionAttentionSessions(
   };
   for (const item of items) {
     const id = item.session.id;
-    if (pendingSessions.has(id)) buckets.approvals.push(item);
+    const hasPendingApproval =
+      pendingSessions.has(id) ||
+      Boolean(item.subagents?.some((sub) => pendingSessions.has(sub.id)));
+    if (hasPendingApproval) buckets.approvals.push(item);
     else if (workspace.unreadCompletedBySession[id]) buckets.completed.push(item);
     else if ((!isRunning(id) && workspace.interruptedBySession[id]) || workspace.stalledSinceBySession[id]) {
       buckets.paused.push(item);

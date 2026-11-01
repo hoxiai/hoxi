@@ -36,6 +36,8 @@ export const leftNav: LeftNavI18n = {
   archivedSessions: "已归档",
   olderSessions: "更早的会话（{count}）",
   collapseSessions: "收起",
+  expandSubagents: "展开 {count} 个子代理",
+  collapseSubagents: "收起子代理",
   confirmDelete: "确认",
   cancelDelete: "取消",
   exportSessionTooltip: "导出会话为 Markdown",

@@ -28,6 +28,7 @@ import { useAnchoredPopover } from "./anchored-popover";
 import { t } from "../../i18n";
 import { SessionHistoryList, useSessionHistory } from "./SessionHistory";
 import { matchesProjectSearch, matchesSessionSearch } from "./session-search";
+import { groupSubagentsByRoot } from "./subagent-nav";
 import { isWorkSurface } from "./surface-extension";
 
 export function WorkspaceActionMenu(props: {
@@ -202,18 +203,27 @@ export default function MultiProjectTreeItem(props: {
     if (props.isArchivedOpen) setEverArchivedOpen(true);
   });
 
-  const allFilteredSessions = createMemo<SessionInfo[]>((prev) => {
+  const rawCodeSessions = createMemo<SessionInfo[]>((prev) => {
     if (!everExpanded()) return [];
     if (isWorkSurface()) return prev ?? [];
-    const q = props.filterQuery.trim().toLowerCase();
     const rawList =
       isActive() && !workspace.bootstrappingSessions && workspace.sessions.length > 0
         ? workspace.sessions
         : props.cachedSessions;
-    const list = rawList.filter((s) => !s.parentID && resolveSessionSurface(s) === "code");
+    return rawList.filter((s) => resolveSessionSurface(s) === "code");
+  });
+
+  const subagentsByRoot = createMemo(() => groupSubagentsByRoot(rawCodeSessions()));
+
+  const allFilteredSessions = createMemo<SessionInfo[]>((prev) => {
+    if (!everExpanded()) return [];
+    if (isWorkSurface()) return prev ?? [];
+    const q = props.filterQuery.trim().toLowerCase();
+    const list = rawCodeSessions().filter((s) => !s.parentID);
     const sorted = sortSessionsByActivity(list);
     if (matchesProjectSearch(props.proj, q)) return sorted;
-    return sorted.filter((s) => matchesSessionSearch(s, q));
+    const byRoot = subagentsByRoot();
+    return sorted.filter((s) => matchesSessionSearch(s, q, byRoot.get(s.id)));
   });
 
   const activeSessions = createMemo(() =>
@@ -353,7 +363,12 @@ export default function MultiProjectTreeItem(props: {
                       canDelete={true}
                       isArchived={false}
                       pendingSessions={props.pendingSessions}
+                      subagents={subagentsByRoot().get(session.id)}
+                      filterQuery={props.filterQuery}
                       onSelect={() => props.onSelectSession(props.proj.path, session.id)}
+                      onSelectSubagent={(subID) =>
+                        props.onSelectSession(props.proj.path, subID)
+                      }
                       onArchive={(ev, id) =>
                         props.onArchiveSession(props.proj.path, ev, id)
                       }

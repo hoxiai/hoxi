@@ -16,6 +16,7 @@ import (
 type CreateSessionRequest struct {
 	Title          string `json:"title"`
 	Directory      string `json:"directory"`
+	ParentID       string `json:"parentID,omitempty"`
 	Surface        string `json:"surface"`
 	Runtime        string `json:"runtime"`
 	ModelID        string `json:"modelID"`
@@ -124,6 +125,7 @@ func (s *Service) CreateSession(body CreateSessionRequest, directory string) (Se
 	rec := SessionRecord{
 		ID:             sessionID,
 		ProjectID:      projectID,
+		ParentID:       strings.TrimSpace(body.ParentID),
 		Surface:        surface,
 		Runtime:        rt,
 		ProjectDir:     projDir,

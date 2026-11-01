@@ -69,6 +69,7 @@ function SectionHeader(props: { label: string; count: number; title?: string; co
 
 function SessionRow(props: {
   item: CrossProjectSession;
+  filterQuery: string;
   isSelected: (id: string) => boolean;
   pendingSessions: Set<string>;
   onSelectSession: (path: string, sessionID: string) => void;
@@ -85,7 +86,10 @@ function SessionRow(props: {
       isArchived={false}
       showBranchIcon={true}
       pendingSessions={props.pendingSessions}
+      subagents={props.item.subagents}
+      filterQuery={props.filterQuery}
       onSelect={() => props.onSelectSession(props.item.proj.path, props.item.session.id)}
+      onSelectSubagent={(subID) => props.onSelectSession(props.item.proj.path, subID)}
       onArchive={(ev, id) => props.onArchiveSession(props.item.proj.path, ev, id)}
       onDiscard={(ev, id) => props.onDiscardSession(props.item.proj.path, ev, id)}
     />
@@ -145,7 +149,12 @@ export function RunningNavView(props: CrossProjectNavProps) {
               <For each={group.sessions}>
                 {(session) => (
                   <SessionRow
-                    item={{ session, proj: group.proj }}
+                    item={{
+                      session,
+                      proj: group.proj,
+                      subagents: group.subagentsByRoot?.get(session.id),
+                    }}
+                    filterQuery={props.filterQuery}
                     isSelected={isSelectedSession}
                     pendingSessions={props.pendingSessions}
                     onSelectSession={props.onSelectSession}
@@ -219,6 +228,7 @@ export function AttentionNavView(props: CrossProjectNavProps) {
                 {(item) => (
                   <SessionRow
                     item={item}
+                    filterQuery={props.filterQuery}
                     isSelected={isSelectedSession}
                     pendingSessions={props.pendingSessions}
                     onSelectSession={props.onSelectSession}

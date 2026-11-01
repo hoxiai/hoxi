@@ -311,9 +311,13 @@ export async function loadSessionMessages(sessionID: string): Promise<void> {
   loadRequestRevisions.set(sessionID, revision);
   const isCurrent = () => loadRequestRevisions.get(sessionID) === revision &&
     sessionDirectory(sessionID) === directory && !isSessionDeleted(sessionID);
-  const parentID = workspace.sessions.find((s) => s.id === sessionID)?.parentID;
+  const sessionInfo = workspace.sessions.find((s) => s.id === sessionID);
+  const parentID = sessionInfo?.parentID;
   const isChildSession = Boolean(parentID);
-  if (!isChildSession) scheduleRefreshWorktreeStatus(sessionID, 120);
+  const hasOwnWorktree =
+    sessionInfo?.sandboxMode === "worktree" ||
+    Boolean(workspace.worktreeBySession[sessionID]?.isolated);
+  if (!isChildSession || hasOwnWorktree) scheduleRefreshWorktreeStatus(sessionID, 120);
   if (workspace.messagesBySession[sessionID] === undefined) {
     setWorkspace("loadingMessagesBySession", sessionID, true);
   }
@@ -351,7 +355,7 @@ export async function loadSessionMessages(sessionID: string): Promise<void> {
     finishRead();
     setWorkspace("loadingMessagesBySession", sessionID, false);
   }
-  if (isChildSession && sessionID !== workspace.activeSessionID) {
+  if (isChildSession && !hasOwnWorktree && sessionID !== workspace.activeSessionID) {
     if (parentID && !isSessionDeleted(parentID)) scheduleRefreshSessionDiff(parentID);
     return;
   }
@@ -397,8 +401,12 @@ export async function selectSession(sessionID: string): Promise<void> {
   // Background SSE events create a partial transcript for sessions that were
   // never loaded, so only a fully hydrated one may skip the history fetch.
   if (skipHydration) {
-    const isChildSession = Boolean(workspace.sessions.find((s) => s.id === sessionID)?.parentID);
-    if (!isChildSession) void refreshSessionDiff(sessionID);
+    const info = workspace.sessions.find((s) => s.id === sessionID);
+    const isChildWithoutWorktree =
+      Boolean(info?.parentID) &&
+      info?.sandboxMode !== "worktree" &&
+      !workspace.worktreeBySession[sessionID]?.isolated;
+    if (!isChildWithoutWorktree) void refreshSessionDiff(sessionID);
     return;
   }
   try {
@@ -656,11 +664,13 @@ export function ensureChildSubagentSessionLoaded(
       .then((info) => {
         if (info?.id) {
           replaceSession(
-            parentSessionID && !info.parentID ? { ...info, parentID: parentSessionID } : info
+            parentSessionID ? { ...info, parentID: parentSessionID } : info
           );
         }
       })
       .catch(() => {});
+  } else if (parentSessionID && existing.parentID !== parentSessionID) {
+    replaceSession({ ...existing, parentID: parentSessionID });
   }
 
   const needsInitialLoad = !loadedChildSessionIDs.has(childSessionID) ||

@@ -126,6 +126,9 @@ func TestConvoySessionsIsolateTasksAndMergePrerequisites(t *testing.T) {
 	if inheritedRec.ProviderID != "deepseek" || inheritedRec.ModelID != "deepseek-chat" {
 		t.Fatalf("expected inherited provider/model deepseek/deepseek-chat, got %q/%q", inheritedRec.ProviderID, inheritedRec.ModelID)
 	}
+	if inheritedRec.ParentID != parentInfo.ID {
+		t.Fatalf("expected inherited session ParentID %q, got %q", parentInfo.ID, inheritedRec.ParentID)
+	}
 	if err := backend.Merge(parentInfo.ID, []string{second}); err != nil {
 		t.Fatalf("merge convoy task into local parent session: %v", err)
 	}

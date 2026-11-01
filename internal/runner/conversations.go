@@ -72,8 +72,19 @@ func (s *Service) listConversationsWithSurface(ctx context.Context, projectID, d
 	}
 	var entries []entry
 	owned := make(map[string]bool)
+	engineToHoxi := make(map[string]string)
 	for _, info := range s.store.ListProject(projectID, s.projectScopeDirectory(projectID, directory)) {
 		owned[info.ID] = true
+		if info.ExternalID != "" {
+			engineToHoxi[info.ExternalID] = info.ID
+		}
+		if rec, ok := s.store.Meta(info.ID); ok {
+			for _, ocID := range rec.OpenCodeIDs {
+				if ocID != "" {
+					engineToHoxi[ocID] = info.ID
+				}
+			}
+		}
 		if (surfaceFilter == "work" || surfaceFilter == "code") && info.Surface != surfaceFilter {
 			continue
 		}
@@ -93,6 +104,7 @@ func (s *Service) listConversationsWithSurface(ctx context.Context, projectID, d
 		for _, item := range items {
 			var info struct {
 				ID        string `json:"id"`
+				ParentID  string `json:"parentID"`
 				Directory string `json:"directory"`
 				Surface   string `json:"surface"`
 				Time      struct {
@@ -101,7 +113,16 @@ func (s *Service) listConversationsWithSurface(ctx context.Context, projectID, d
 				Metadata map[string]interface{} `json:"metadata"`
 			}
 			if json.Unmarshal(item, &info) != nil || info.ID == "" || owned[info.ID] || seenEngine[info.ID] ||
-				s.IsManagedOpenCodeSession(info.ID) || info.Metadata["hoxiConversation"] != nil {
+				info.Metadata["hoxiConversation"] != nil {
+				continue
+			}
+			parentHoxiID := engineToHoxi[strings.TrimSpace(info.ParentID)]
+			if parentHoxiID == "" {
+				if v, ok := s.openCodeChildParent.Load(info.ID); ok {
+					parentHoxiID, _ = v.(string)
+				}
+			}
+			if s.IsManagedOpenCodeSession(info.ID) && !s.isManagedOpenCodeChild(info.ID) && parentHoxiID == "" {
 				continue
 			}
 			entryProjectID := projectID
@@ -131,7 +152,7 @@ func (s *Service) listConversationsWithSurface(ctx context.Context, projectID, d
 				continue
 			}
 			seenEngine[info.ID] = true
-			entries = append(entries, entry{info.Time.Updated, withProjectIDAndSurface(item, entryProjectID, inferredSurface)})
+			entries = append(entries, entry{info.Time.Updated, withProjectIDAndSurface(item, entryProjectID, inferredSurface, parentHoxiID)})
 		}
 	}
 	sort.SliceStable(entries, func(i, j int) bool { return entries[i].updated > entries[j].updated })
@@ -182,7 +203,7 @@ func (s *Service) conversationDirectories(projectID, directory string) []string 
 
 // withProjectID gives unadopted OpenCode sessions the same stable attribution
 // as Hoxi-owned conversations before they are adopted.
-func withProjectIDAndSurface(item json.RawMessage, projectID, surface string) json.RawMessage {
+func withProjectIDAndSurface(item json.RawMessage, projectID, surface, parentHoxiID string) json.RawMessage {
 	var object map[string]json.RawMessage
 	if json.Unmarshal(item, &object) != nil {
 		return item
@@ -202,6 +223,12 @@ func withProjectIDAndSurface(item json.RawMessage, projectID, surface string) js
 				object["surface"] = raw
 				changed = true
 			}
+		}
+	}
+	if strings.TrimSpace(parentHoxiID) != "" {
+		if raw, err := json.Marshal(parentHoxiID); err == nil {
+			object["parentID"] = raw
+			changed = true
 		}
 	}
 	if !changed {
@@ -240,7 +267,7 @@ func (s *Service) conversationStatuses(ctx context.Context, projectID, directory
 			continue
 		}
 		for id, st := range engine {
-			if !s.IsManagedOpenCodeSession(id) {
+			if !s.IsManagedOpenCodeSession(id) || s.isManagedOpenCodeChild(id) {
 				out[id] = st
 			}
 		}
@@ -318,6 +345,7 @@ func (s *Service) CreateConversation(ctx context.Context, body CreateSessionRequ
 	rec := SessionRecord{
 		ID:             sessionID,
 		ProjectID:      projectID,
+		ParentID:       strings.TrimSpace(body.ParentID),
 		Surface:        NormalizeSessionSurface(body.Surface, projDir),
 		Runtime:        "opencode",
 		ProjectDir:     projDir,
