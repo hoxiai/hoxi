@@ -2,11 +2,14 @@
 import { Show } from "solid-js";
 import { ArrowUpCircle } from "lucide-solid";
 import {
+  desktopUpdateButtonLabel,
   desktopUpdater,
   hasDesktopUpdate,
+  isDesktopUpdateInstalling,
   isUpdateDraining,
   openDesktopUpdateModal,
 } from "../../store/workspace";
+import { Spinner } from "../icons";
 import { t } from "../../i18n";
 
 /**
@@ -17,7 +20,10 @@ import { t } from "../../i18n";
 export default function UpdateIndicator() {
   const latestVersion = () => `v${desktopUpdater.result?.latestVersion || ""}`;
 
-  const title = () => t("header.updateAvailableTooltip", { version: latestVersion() });
+  const title = () =>
+    isDesktopUpdateInstalling()
+      ? desktopUpdateButtonLabel()
+      : t("header.updateAvailableTooltip", { version: latestVersion() });
 
   return (
     <Show when={hasDesktopUpdate() && !isUpdateDraining()}>
@@ -29,9 +35,13 @@ export default function UpdateIndicator() {
         title={title()}
         aria-label={title()}
       >
-        <ArrowUpCircle size={13} class="shrink-0" />
-        <span class="max-w-[120px] truncate">
-          {t("header.updateAvailableBadge", { version: latestVersion() })}
+        <Show when={isDesktopUpdateInstalling()} fallback={<ArrowUpCircle size={13} class="shrink-0" />}>
+          <Spinner class="h-3 w-3 shrink-0" />
+        </Show>
+        <span class="max-w-[140px] truncate">
+          {isDesktopUpdateInstalling()
+            ? desktopUpdateButtonLabel()
+            : t("header.updateAvailableBadge", { version: latestVersion() })}
         </span>
       </button>
     </Show>

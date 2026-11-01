@@ -2,6 +2,7 @@
 import { onCleanup, onMount, Show, type Accessor } from "solid-js";
 import { Presence, type PresenceState } from "../motion/Presence";
 import { ArrowUpCircle, Download, ExternalLink, X } from "lucide-solid";
+import { Spinner } from "../icons";
 import {
   closeDesktopUpdateModal,
   desktopUpdater,
@@ -44,7 +45,9 @@ function UpdateDialog(props: { state: Accessor<PresenceState> }) {
           <div class="flex items-start justify-between">
             <div class="flex items-center gap-3">
               <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--accent-primary)] text-[var(--accent-foreground)] shadow-md">
-                <ArrowUpCircle size={20} />
+                <Show when={installing()} fallback={<ArrowUpCircle size={20} />}>
+                  <Spinner class="h-5 w-5" />
+                </Show>
               </div>
               <div>
                 <h3 class="text-[15px] font-bold text-[var(--text-primary)]">
@@ -92,7 +95,10 @@ function UpdateDialog(props: { state: Accessor<PresenceState> }) {
           <Show when={installing()}>
             <div role="status" class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)]/60 p-3 space-y-2 text-[12px] text-[var(--text-secondary)]">
               <div class="flex items-center justify-between gap-2">
-                <span class="font-medium text-[var(--text-primary)]">{desktopUpdateStatusLabel()}</span>
+                <span class="inline-flex items-center gap-2 font-medium text-[var(--text-primary)]">
+                  <Spinner class="h-3.5 w-3.5 text-[var(--accent-primary)] shrink-0" />
+                  <span>{desktopUpdateStatusLabel()}</span>
+                </span>
                 <Show when={percent() !== undefined}>
                   <span class="font-mono font-semibold text-[var(--accent-text)]">{percent()}%</span>
                 </Show>
@@ -163,7 +169,9 @@ function UpdateDialog(props: { state: Accessor<PresenceState> }) {
                 onClick={() => void startDesktopUpdate()}
                 class="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] hover:opacity-90 px-3.5 py-1.5 text-[12px] font-semibold text-[var(--accent-foreground)] shadow-xs transition-opacity cursor-pointer disabled:opacity-50 disabled:cursor-wait"
               >
-                <ArrowUpCircle size={13} />
+                <Show when={installing()} fallback={<ArrowUpCircle size={13} />}>
+                  <Spinner class="h-3.5 w-3.5" />
+                </Show>
                 {installing() ? desktopUpdateButtonLabel() : t("header.updateInApp")}
               </button>
             </Show>

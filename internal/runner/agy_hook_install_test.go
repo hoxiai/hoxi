@@ -131,19 +131,35 @@ func TestAutoInstallIsOptIn(t *testing.T) {
 	}
 }
 
-// The hook command runs under `sh -c`; it must exec Hoxi when present and
-// fall back to a passthrough allow when the binary is gone.
+// The hook command runs under `sh -c`; it must short-circuit in shell when
+// HOXI_RUNNER_SESSION_ID is unset, exec Hoxi when set and present, and fall
+// back to a passthrough allow when the binary is gone.
 func TestAgyHookCommandShellBehavior(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "it's here")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	exe := execstub.Write(t, dir, "hoxi", "echo \"ran $1\"\n")
-	out, err := exec.Command("sh", "-c", agyHookCommand(exe)).Output()
+
+	// Outside Hoxi (no HOXI_RUNNER_SESSION_ID): shell fast-path without spawning Hoxi.
+	cmdUnset := exec.Command("sh", "-c", agyHookCommand(exe))
+	cmdUnset.Env = append(os.Environ(), "HOXI_RUNNER_SESSION_ID=")
+	out, err := cmdUnset.Output()
+	if err != nil || strings.TrimSpace(string(out)) != `{"decision":"allow"}` {
+		t.Fatalf("unset session fast-path: %q %v", out, err)
+	}
+
+	// Inside a Hoxi runner session: execs the Hoxi binary.
+	cmdSet := exec.Command("sh", "-c", agyHookCommand(exe))
+	cmdSet.Env = append(os.Environ(), "HOXI_RUNNER_SESSION_ID=sess-1")
+	out, err = cmdSet.Output()
 	if err != nil || strings.TrimSpace(string(out)) != "ran agy-hook" {
 		t.Fatalf("present binary: %q %v", out, err)
 	}
-	out, err = exec.Command("sh", "-c", agyHookCommand(filepath.Join(dir, "missing"))).Output()
+
+	cmdMissing := exec.Command("sh", "-c", agyHookCommand(filepath.Join(dir, "missing")))
+	cmdMissing.Env = append(os.Environ(), "HOXI_RUNNER_SESSION_ID=sess-1")
+	out, err = cmdMissing.Output()
 	if err != nil || strings.TrimSpace(string(out)) != `{"decision":"allow"}` {
 		t.Fatalf("missing binary: %q %v", out, err)
 	}
@@ -151,12 +167,12 @@ func TestAgyHookCommandShellBehavior(t *testing.T) {
 
 func TestAgyHookCommandForWindowsUsesCmdIfExist(t *testing.T) {
 	winCmd := agyHookCommandForOS("windows", `C:\Program Files\Hoxi\Hoxi.exe`)
-	want := `if exist "C:\Program Files\Hoxi\Hoxi.exe" ("C:\Program Files\Hoxi\Hoxi.exe" agy-hook) else (echo {"decision":"allow"})`
+	want := `if defined HOXI_RUNNER_SESSION_ID (if exist "C:\Program Files\Hoxi\Hoxi.exe" ("C:\Program Files\Hoxi\Hoxi.exe" agy-hook) else (echo {"decision":"allow"})) else (echo {"decision":"allow"})`
 	if winCmd != want {
 		t.Fatalf("agyHookCommandForOS(windows) = %q, want %q", winCmd, want)
 	}
 	unixCmd := agyHookCommandForOS("darwin", "/Applications/Hoxi.app/Contents/MacOS/hoxi")
-	if !strings.HasPrefix(unixCmd, "[ -x '/Applications/Hoxi.app/Contents/MacOS/hoxi' ] && exec ") {
+	if !strings.HasPrefix(unixCmd, `[ -n "$HOXI_RUNNER_SESSION_ID" ] && [ -x '/Applications/Hoxi.app/Contents/MacOS/hoxi' ] && exec `) {
 		t.Fatalf("agyHookCommandForOS(darwin) = %q", unixCmd)
 	}
 }

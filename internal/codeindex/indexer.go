@@ -71,6 +71,7 @@ var ignoredFolders = map[string]bool{
 	"go-build": true, "go-build-cache": true, ".gocache": true, ".gomodcache": true,
 	".venv": true, "venv": true, "coverage": true, ".bundle": true,
 	"cache": true, "caches": true, "tmp": true, "temp": true, "logs": true,
+	"Library": true, "Containers": true,
 }
 
 var indexableExtensions = map[string]bool{}
@@ -315,7 +316,28 @@ func isProtectedOrSecretRelPath(rel string) bool {
 }
 
 func isForbiddenWorkspaceRoot(absDir string) bool {
-	slash := filepath.ToSlash(strings.TrimSpace(absDir))
+	cleaned := filepath.Clean(strings.TrimSpace(absDir))
+	if cleaned == "" || cleaned == "/" || cleaned == `\` || filepath.Dir(cleaned) == cleaned {
+		return true
+	}
+	slash := strings.TrimRight(filepath.ToSlash(cleaned), "/")
+	lowerSlash := strings.ToLower(slash)
+	switch lowerSlash {
+	case "", "/users", "/home", "/system", "/library", "/applications", "/volumes",
+		"/var", "/var/folders", "/private", "/private/var", "/private/var/folders",
+		"/tmp", "/private/tmp", "c:/windows", "c:/users", "c:/program files", "c:/program files (x86)":
+		return true
+	}
+	if home, err := os.UserHomeDir(); err == nil && strings.TrimSpace(home) != "" {
+		cleanHome := strings.TrimRight(filepath.ToSlash(filepath.Clean(home)), "/")
+		if resolvedHome, err := filepath.EvalSymlinks(home); err == nil && resolvedHome != "" {
+			cleanHome = strings.TrimRight(filepath.ToSlash(filepath.Clean(resolvedHome)), "/")
+		}
+		lowerHome := strings.ToLower(cleanHome)
+		if lowerSlash == lowerHome || lowerSlash == lowerHome+"/library" || strings.HasPrefix(lowerSlash, lowerHome+"/library/") {
+			return true
+		}
+	}
 	segs := strings.Split(slash, "/")
 	for i, raw := range segs {
 		seg := strings.ToLower(strings.TrimSpace(raw))
@@ -366,10 +388,16 @@ func (s *Service) build(directory string, previous *Index) (*Index, error) {
 	index := &Index{Version: indexVersion, Directory: directory, BuiltAt: s.now(), Files: map[string]*FileRecord{}}
 	var total int64
 	files := 0
+	visited := 0
+	maxVisited := max(cfg.MaxFiles*5, 50000)
 	dirCounts := make(map[string]int)
 	err := filepath.WalkDir(directory, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
+		}
+		visited++
+		if visited > maxVisited {
+			return filepath.SkipAll
 		}
 		if entry.IsDir() {
 			if path != directory {

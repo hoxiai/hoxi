@@ -121,3 +121,32 @@ func TestNativeStagedAdmissionHeldUntilShutdown(t *testing.T) {
 		t.Fatal("final shutdown must force release exactly once")
 	}
 }
+
+func TestNativeProgressBridgeUpdatesAndClearsInstallProgress(t *testing.T) {
+	installProgress.Store(nil)
+	t.Cleanup(func() {
+		installProgress.Store(nil)
+		hoxiNativeRelease(0, 1)
+	})
+	nativeCallbacks.Lock()
+	nativeCallbacks.entries[0] = &nativeAdmission{
+		canInstall: func(bool) bool { return true },
+		release:    func() {},
+	}
+	nativeCallbacks.Unlock()
+
+	setNativeProgressForTest(0, "preparing", 0, 0, "")
+	if p := installProgress.Load(); p == nil || p.Phase != "preparing" {
+		t.Fatalf("expected preparing progress, got %+v", p)
+	}
+
+	setNativeProgressForTest(0, "downloading", 512, 1024, "")
+	if p := installProgress.Load(); p == nil || p.Phase != "downloading" || p.DownloadedBytes != 512 || p.TotalBytes != 1024 {
+		t.Fatalf("expected downloading progress 512/1024, got %+v", p)
+	}
+
+	setNativeProgressForTest(0, "", 0, 0, "")
+	if p := installProgress.Load(); p != nil {
+		t.Fatalf("expected progress cleared, got %+v", p)
+	}
+}

@@ -250,7 +250,8 @@ export async function refreshDesktopUpdateStatus(): Promise<void> {
   try {
     const status = await updaterAPI.nativeStatus();
     if (generation !== statusGeneration) return;
-    const nextProgress = status.progress ?? null;
+    const nextProgress =
+      status.progress ?? (desktopUpdater.isInstalling ? desktopUpdater.progress : null);
     const metrics = recordUpdateDownloadSample(nextProgress);
     setDesktopUpdater({
       nativeAvailable: status.available,
@@ -270,10 +271,16 @@ export async function startDesktopUpdate(): Promise<void> {
 
   ++statusGeneration;
   resetUpdateDownloadMetrics();
+  const initialProgress: NativeUpdateProgress = {
+    phase: "preparing",
+    downloadedBytes: 0,
+    totalBytes: 0,
+  };
+  recordUpdateDownloadSample(initialProgress);
   setDesktopUpdater({
     isInstalling: true,
     error: null,
-    progress: null,
+    progress: initialProgress,
     downloadSpeedBps: 0,
     downloadSlow: false,
   });
@@ -284,12 +291,15 @@ export async function startDesktopUpdate(): Promise<void> {
   try {
     await updaterAPI.install();
   } catch (err: unknown) {
-    setDesktopUpdater("error", errorMessageOf(err, t("header.updateInstallFailed")));
+    setDesktopUpdater({
+      progress: null,
+      error: errorMessageOf(err, t("header.updateInstallFailed")),
+    });
   } finally {
     clearTimeout(earlyPoll);
     clearInterval(activePoll);
-    await refreshDesktopUpdateStatus();
     setDesktopUpdater("isInstalling", false);
+    await refreshDesktopUpdateStatus();
   }
 }
 

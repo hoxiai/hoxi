@@ -200,7 +200,9 @@ export function SystemRuntimeSettingsTab() {
                 onClick={() => void startDesktopUpdate()}
                 class="hoxi-press inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] hover:opacity-90 px-4 py-2 text-[13px] font-semibold text-[var(--accent-foreground)] shadow-xs transition-opacity cursor-pointer disabled:opacity-50 disabled:cursor-wait"
               >
-                <ArrowUpCircle size={14} />
+                <Show when={isDesktopUpdateInstalling()} fallback={<ArrowUpCircle size={14} />}>
+                  <Spinner class="h-3.5 w-3.5" />
+                </Show>
                 <span>
                   {isDesktopUpdateInstalling()
                     ? desktopUpdateButtonLabel()
@@ -241,8 +243,9 @@ export function SystemRuntimeSettingsTab() {
             class="px-5 py-3.5 bg-[var(--bg-inset)]/55 space-y-2 text-[12px] text-[var(--text-secondary)]"
           >
             <div class="flex items-center justify-between gap-2">
-              <span class="font-medium text-[var(--text-primary)]">
-                {desktopUpdateStatusLabel()}
+              <span class="inline-flex items-center gap-2 font-medium text-[var(--text-primary)]">
+                <Spinner class="h-3.5 w-3.5 text-[var(--accent-primary)] shrink-0" />
+                <span>{desktopUpdateStatusLabel()}</span>
               </span>
               <Show when={desktopUpdateProgressPercent(desktopUpdater.progress) !== undefined}>
                 <span class="font-mono font-semibold text-[var(--accent-primary)]">

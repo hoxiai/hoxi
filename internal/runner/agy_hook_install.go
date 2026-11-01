@@ -65,10 +65,10 @@ func agyHookCommand(exe string) string {
 func agyHookCommandForOS(goos, exe string) string {
 	if goos == "windows" {
 		q := `"` + strings.ReplaceAll(exe, `"`, `""`) + `"`
-		return fmt.Sprintf(`if exist %s (%s %s) else (echo {"decision":"allow"})`, q, q, agyhook.Subcommand)
+		return fmt.Sprintf(`if defined %s (if exist %s (%s %s) else (echo {"decision":"allow"})) else (echo {"decision":"allow"})`, agyhook.EnvSessionID, q, q, agyhook.Subcommand)
 	}
 	q := shellQuote(exe)
-	return fmt.Sprintf(`[ -x %s ] && exec %s %s || echo '{"decision":"allow"}'`, q, q, agyhook.Subcommand)
+	return fmt.Sprintf(`[ -n "$%s" ] && [ -x %s ] && exec %s %s || echo '{"decision":"allow"}'`, agyhook.EnvSessionID, q, q, agyhook.Subcommand)
 }
 
 // marshalJSON keeps `&&` and quotes readable in the user's hooks.json.

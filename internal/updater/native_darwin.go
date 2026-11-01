@@ -104,6 +104,7 @@ func StartNative(canInstall func(force bool) bool, release func()) error {
 	if canInstall == nil || release == nil {
 		return errors.New("native updater requires admission and release callbacks")
 	}
+	installProgress.Store(nil)
 	nativeCallbacks.Lock()
 	nativeCallbacks.next++
 	token := nativeCallbacks.next
@@ -165,6 +166,7 @@ func CheckNative() error {
 // for an already staged installer; StopNative is not an update cancellation API.
 func StopNative() {
 	if nativeReady.Swap(false) {
+		installProgress.Store(nil)
 		if darwinSparkleReady.Swap(false) {
 			C.hoxi_native_stop()
 			return
@@ -415,4 +417,49 @@ func hoxiNativeStaged(token C.ulonglong) {
 	if !entry.stopped {
 		entry.staged = true
 	}
+}
+
+//export hoxiNativeProgress
+func hoxiNativeProgress(token C.ulonglong, phase *C.char, downloaded C.longlong, total C.longlong, errMsg *C.char) {
+	nativeCallbacks.Lock()
+	entry := nativeCallbacks.entries[uint64(token)]
+	nativeCallbacks.Unlock()
+	if entry == nil {
+		return
+	}
+	entry.Lock()
+	stopped := entry.stopped
+	entry.Unlock()
+	if stopped {
+		return
+	}
+	var p string
+	if phase != nil {
+		p = strings.TrimSpace(C.GoString(phase))
+	}
+	if p == "" {
+		installProgress.Store(nil)
+		return
+	}
+	var errStr string
+	if errMsg != nil {
+		errStr = strings.TrimSpace(C.GoString(errMsg))
+	}
+	installProgress.Store(&InstallProgress{
+		Phase:           p,
+		DownloadedBytes: max(int64(downloaded), 0),
+		TotalBytes:      max(int64(total), 0),
+		Error:           errStr,
+	})
+}
+
+func setNativeProgressForTest(token uint64, phase string, downloaded, total int64, errMsg string) {
+	cPhase := C.CString(phase)
+	defer C.free(unsafe.Pointer(cPhase))
+	var cErr *C.char
+	if errMsg != "" {
+		cErr = C.CString(errMsg)
+		defer C.free(unsafe.Pointer(cErr))
+	}
+	hoxiNativeProgress(C.ulonglong(token), cPhase, C.longlong(downloaded), C.longlong(total), cErr)
 }

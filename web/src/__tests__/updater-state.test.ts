@@ -77,6 +77,39 @@ describe("desktop self-update progress", () => {
     }
   });
 
+  it("immediately enters preparing state on install click and stays active while Sparkle runs asynchronously", async () => {
+    const oldStatus = updaterAPI.nativeStatus;
+    const oldInstall = updaterAPI.install;
+    const saved = { ...desktopUpdater };
+    let observedDuringInstall: string | undefined;
+    try {
+      setDesktopUpdater({
+        nativeAvailable: true,
+        isInstalling: false,
+        draining: false,
+        progress: null,
+        error: null,
+      });
+      updaterAPI.install = async () => {
+        observedDuringInstall = desktopUpdater.progress?.phase;
+        return { started: true };
+      };
+      updaterAPI.nativeStatus = async () => ({
+        available: true,
+        draining: false,
+        progress: { phase: "preparing", downloadedBytes: 0, totalBytes: 0 },
+      });
+      await startDesktopUpdate();
+      assertEqual(observedDuringInstall, "preparing");
+      assertEqual(desktopUpdater.progress?.phase, "preparing");
+      assertEqual(isDesktopUpdateInstalling(), true);
+    } finally {
+      updaterAPI.nativeStatus = oldStatus;
+      updaterAPI.install = oldInstall;
+      setDesktopUpdater(saved);
+    }
+  });
+
   it("discards a late poll that would overwrite a download failure", async () => {
     const oldStatus = updaterAPI.nativeStatus;
     const saved = { ...desktopUpdater };

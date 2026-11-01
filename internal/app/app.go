@@ -123,6 +123,7 @@ func Run(distFS fs.FS) {
 	if len(os.Args) > 1 && os.Args[1] == agyhook.Subcommand {
 		os.Exit(agyhook.Run(os.Stdin, os.Stdout, os.Getenv))
 	}
+	raiseOpenFileLimit()
 	opencode.EnrichSystemPath()
 
 	exePath, _ := os.Executable()

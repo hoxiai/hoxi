@@ -104,6 +104,14 @@ func TestSearchRejectsMissingDirectory(t *testing.T) {
 	if _, err := svc.Search("", "x", 5); err == nil {
 		t.Fatal("expected empty directory to fail")
 	}
+	if _, err := svc.Search("/", "x", 5); err == nil {
+		t.Fatal("expected filesystem root to be rejected")
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		if _, err := svc.Search(home, "x", 5); err == nil {
+			t.Fatal("expected user home directory root to be rejected")
+		}
+	}
 }
 
 func TestEmptyQueryReturnsNoResults(t *testing.T) {

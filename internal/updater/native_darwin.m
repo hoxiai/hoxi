@@ -23,6 +23,18 @@
 - (void)showUpdateFoundWithAppcastItem:(id)item state:(id)state reply:(void (^)(NSInteger))reply;
 - (void)showReadyToInstallAndRelaunch:(void (^)(NSInteger))reply;
 - (void)dismissUpdateInstallation;
+@optional
+- (id)activeUpdateAlert;
+- (void)installUpdate:(id)sender;
+- (void)showUserInitiatedUpdateCheckWithCancellation:(void (^)(void))cancellation;
+- (void)showDownloadInitiatedWithCancellation:(void (^)(void))cancellation;
+- (void)showDownloadDidReceiveExpectedContentLength:(uint64_t)expectedContentLength;
+- (void)showDownloadDidReceiveDataOfLength:(uint64_t)length;
+- (void)showDownloadDidStartExtractingUpdate;
+- (void)showExtractionReceivedProgress:(double)progress;
+- (void)showInstallingUpdateWithApplicationTerminated:(BOOL)terminated retryTerminatingApplication:(void (^)(void))retry;
+- (void)showUpdaterError:(NSError *)error acknowledgement:(void (^)(void))acknowledgement;
+- (void)showUpdateNotFoundWithError:(NSError *)error acknowledgement:(void (^)(void))acknowledgement;
 @end
 
 static NSString *HoxiLocalized(NSString *zh, NSString *en) {
@@ -33,6 +45,7 @@ static NSString *HoxiLocalized(NSString *zh, NSString *en) {
 // Sparkle installs cannot be paused once extraction starts. Ask before
 // interrupting active agent work, then let the user proceed anyway.
 static BOOL HoxiConfirmBusyUpdate(void) {
+    [NSApp activateIgnoringOtherApps:YES];
     NSAlert *alert = [[NSAlert alloc] init];
     alert.alertStyle = NSAlertStyleWarning;
     alert.messageText = HoxiLocalized(@"Hoxi 有任务正在运行", @"Hoxi is still running tasks");
@@ -56,6 +69,11 @@ static BOOL HoxiConfirmUpdate(void) {
 @property(nonatomic) unsigned long long token;
 @property(nonatomic) BOOL forced;
 @property(nonatomic) BOOL active;
+@property(nonatomic) BOOL userRequested;
+@property(nonatomic) BOOL installing;
+@property(nonatomic) BOOL failed;
+@property(nonatomic) long long downloadedBytes;
+@property(nonatomic) long long totalBytes;
 @property(nonatomic, copy) NSString *feed;
 @end
 
@@ -76,25 +94,57 @@ static BOOL HoxiConfirmUpdate(void) {
         *error = [NSError errorWithDomain:NSCocoaErrorDomain code:NSUserCancelledError userInfo:nil];
     }
     self.forced = NO;
+    self.userRequested = NO;
+    self.installing = NO;
+    hoxiNativeProgress(self.token, "", 0, 0, NULL);
     hoxiNativeRelease(self.token, 0);
     return NO;
 }
 - (BOOL)updaterShouldRelaunchApplication:(id)updater {
     // Staging already started; relaunch must not be blocked by new work.
-    if (self.active && hoxiNativeCanInstall(self.token, 1)) return YES;
+    if (self.active && hoxiNativeCanInstall(self.token, 1)) {
+        hoxiNativeProgress(self.token, "restarting", self.downloadedBytes, self.totalBytes, NULL);
+        return YES;
+    }
     hoxiNativeRelease(self.token, 0);
     return NO;
 }
 - (void)updater:(id)updater didAbortWithError:(NSError *)error {
+    BOOL wasUserInstall = self.userRequested || self.installing;
     self.forced = NO;
+    self.userRequested = NO;
+    self.installing = NO;
+    BOOL cancelled = error != nil &&
+        (([error.domain isEqualToString:NSCocoaErrorDomain] && error.code == NSUserCancelledError) ||
+         error.code == 4007);
+    if (cancelled) {
+        if (!self.failed) {
+            hoxiNativeProgress(self.token, "", 0, 0, NULL);
+        }
+    } else if (error != nil && wasUserInstall && !self.failed) {
+        self.failed = YES;
+        const char *msg = error.localizedDescription.UTF8String;
+        hoxiNativeProgress(self.token, "failed", self.downloadedBytes, self.totalBytes, (char *)(msg ?: "update failed"));
+    } else if (!self.failed) {
+        hoxiNativeProgress(self.token, "", 0, 0, NULL);
+    }
     hoxiNativeRelease(self.token, 0);
 }
 - (void)updater:(id)updater didFinishUpdateCycleForUpdateCheck:(NSInteger)check error:(NSError *)error {
     self.forced = NO;
+    self.userRequested = NO;
+    self.installing = NO;
+    if (!self.failed) {
+        hoxiNativeProgress(self.token, "", 0, 0, NULL);
+    }
     hoxiNativeRelease(self.token, 0);
 }
 - (void)userDidCancelDownload:(id)updater {
     self.forced = NO;
+    self.userRequested = NO;
+    self.installing = NO;
+    self.failed = NO;
+    hoxiNativeProgress(self.token, "", 0, 0, NULL);
     hoxiNativeRelease(self.token, 0);
 }
 - (void)updater:(id)updater willExtractUpdate:(id)item {
@@ -102,6 +152,9 @@ static BOOL HoxiConfirmUpdate(void) {
     // notification that reliably proves install-on-quit has been disarmed.
     // Retain admission conservatively even if extraction subsequently fails.
     hoxiNativeStaged(self.token);
+    if (self.active) {
+        hoxiNativeProgress(self.token, "staging", self.downloadedBytes, self.totalBytes, NULL);
+    }
 }
 - (BOOL)updater:(id)updater willInstallUpdateOnQuit:(id)item immediateInstallationBlock:(void (^)(void))handler {
     hoxiNativeStaged(self.token);
@@ -135,29 +188,173 @@ static BOOL HoxiConfirmUpdate(void) {
 - (NSInteger)admittedChoice:(NSInteger)choice {
     if (choice == 1) {
         if (self.admission.active &&
-            hoxiNativeCanInstall(self.admission.token, self.admission.forced ? 1 : 0)) return choice;
+            hoxiNativeCanInstall(self.admission.token, self.admission.forced ? 1 : 0)) {
+            self.admission.installing = YES;
+            self.admission.failed = NO;
+            if (self.admission.downloadedBytes == 0 && self.admission.totalBytes == 0) {
+                hoxiNativeProgress(self.admission.token, "downloading", 0, 0, NULL);
+            }
+            return choice;
+        }
         // Never dismiss silently: let the user override active agent work.
         if (self.admission.active && HoxiConfirmUpdate()) {
             self.admission.forced = YES;
-            if (hoxiNativeCanInstall(self.admission.token, 1)) return choice;
+            if (hoxiNativeCanInstall(self.admission.token, 1)) {
+                self.admission.installing = YES;
+                self.admission.failed = NO;
+                if (self.admission.downloadedBytes == 0 && self.admission.totalBytes == 0) {
+                    hoxiNativeProgress(self.admission.token, "downloading", 0, 0, NULL);
+                }
+                return choice;
+            }
         }
         self.admission.forced = NO;
+        self.admission.userRequested = NO;
+        self.admission.installing = NO;
+        hoxiNativeProgress(self.admission.token, "", 0, 0, NULL);
         hoxiNativeRelease(self.admission.token, 0);
         return 2; // Deny before Sparkle begins downloading or staging.
     }
     self.admission.forced = NO;
+    self.admission.userRequested = NO;
+    self.admission.installing = NO;
+    hoxiNativeProgress(self.admission.token, "", 0, 0, NULL);
     hoxiNativeRelease(self.admission.token, 0);
     return choice;
 }
+- (void)showUserInitiatedUpdateCheckWithCancellation:(void (^)(void))cancellation {
+    if (self.admission.active && !self.admission.installing) {
+        self.admission.failed = NO;
+        hoxiNativeProgress(self.admission.token, "preparing", 0, 0, NULL);
+    }
+    if ([self.target respondsToSelector:@selector(showUserInitiatedUpdateCheckWithCancellation:)]) {
+        [self.target showUserInitiatedUpdateCheckWithCancellation:cancellation];
+    }
+}
 - (void)showUpdateFoundWithAppcastItem:(id)item state:(id)state reply:(void (^)(NSInteger))reply {
+    if (self.admission.userRequested) {
+        NSInteger choice = [self admittedChoice:1];
+        if (choice != 1 && [self.target respondsToSelector:@selector(dismissUpdateInstallation)]) {
+            [self.target dismissUpdateInstallation];
+        }
+        reply(choice);
+        return;
+    }
     [self.target showUpdateFoundWithAppcastItem:item state:state reply:^(NSInteger choice) {
         reply([self admittedChoice:choice]);
     }];
 }
+- (void)showDownloadInitiatedWithCancellation:(void (^)(void))cancellation {
+    if (self.admission.active) {
+        self.admission.installing = YES;
+        self.admission.failed = NO;
+        self.admission.downloadedBytes = 0;
+        self.admission.totalBytes = 0;
+        hoxiNativeProgress(self.admission.token, "downloading", 0, 0, NULL);
+    }
+    if ([self.target respondsToSelector:@selector(showDownloadInitiatedWithCancellation:)]) {
+        [self.target showDownloadInitiatedWithCancellation:cancellation];
+    }
+}
+- (void)showDownloadDidReceiveExpectedContentLength:(uint64_t)expectedContentLength {
+    if (self.admission.active) {
+        if (expectedContentLength > 0 && expectedContentLength < (uint64_t)LLONG_MAX) {
+            self.admission.totalBytes = (long long)expectedContentLength;
+        }
+        hoxiNativeProgress(self.admission.token, "downloading", self.admission.downloadedBytes, self.admission.totalBytes, NULL);
+    }
+    if ([self.target respondsToSelector:@selector(showDownloadDidReceiveExpectedContentLength:)]) {
+        [self.target showDownloadDidReceiveExpectedContentLength:expectedContentLength];
+    }
+}
+- (void)showDownloadDidReceiveDataOfLength:(uint64_t)length {
+    if (self.admission.active) {
+        if (length > 0 && self.admission.downloadedBytes <= LLONG_MAX - (long long)length) {
+            self.admission.downloadedBytes += (long long)length;
+        }
+        if (self.admission.totalBytes > 0 && self.admission.downloadedBytes > self.admission.totalBytes) {
+            self.admission.totalBytes = self.admission.downloadedBytes;
+        }
+        hoxiNativeProgress(self.admission.token, "downloading", self.admission.downloadedBytes, self.admission.totalBytes, NULL);
+    }
+    if ([self.target respondsToSelector:@selector(showDownloadDidReceiveDataOfLength:)]) {
+        [self.target showDownloadDidReceiveDataOfLength:length];
+    }
+}
+- (void)showDownloadDidStartExtractingUpdate {
+    if (self.admission.active) {
+        hoxiNativeStaged(self.admission.token);
+        hoxiNativeProgress(self.admission.token, "staging", self.admission.downloadedBytes, self.admission.totalBytes, NULL);
+    }
+    if ([self.target respondsToSelector:@selector(showDownloadDidStartExtractingUpdate)]) {
+        [self.target showDownloadDidStartExtractingUpdate];
+    }
+}
+- (void)showExtractionReceivedProgress:(double)progress {
+    if (self.admission.active) {
+        hoxiNativeProgress(self.admission.token, "staging", self.admission.downloadedBytes, self.admission.totalBytes, NULL);
+    }
+    if ([self.target respondsToSelector:@selector(showExtractionReceivedProgress:)]) {
+        [self.target showExtractionReceivedProgress:progress];
+    }
+}
 - (void)showReadyToInstallAndRelaunch:(void (^)(NSInteger))reply {
+    if (self.admission.userRequested) {
+        NSInteger choice = [self admittedChoice:1];
+        if (choice == 1) {
+            hoxiNativeProgress(self.admission.token, "restarting", self.admission.downloadedBytes, self.admission.totalBytes, NULL);
+        }
+        reply(choice);
+        return;
+    }
     [self.target showReadyToInstallAndRelaunch:^(NSInteger choice) {
-        reply([self admittedChoice:choice]);
+        NSInteger admitted = [self admittedChoice:choice];
+        if (admitted == 1) {
+            hoxiNativeProgress(self.admission.token, "restarting", self.admission.downloadedBytes, self.admission.totalBytes, NULL);
+        }
+        reply(admitted);
     }];
+}
+- (void)showInstallingUpdateWithApplicationTerminated:(BOOL)terminated retryTerminatingApplication:(void (^)(void))retry {
+    if (self.admission.active) {
+        hoxiNativeProgress(self.admission.token, "restarting", self.admission.downloadedBytes, self.admission.totalBytes, NULL);
+    }
+    if ([self.target respondsToSelector:@selector(showInstallingUpdateWithApplicationTerminated:retryTerminatingApplication:)]) {
+        [self.target showInstallingUpdateWithApplicationTerminated:terminated retryTerminatingApplication:retry];
+    }
+}
+- (void)showUpdaterError:(NSError *)error acknowledgement:(void (^)(void))acknowledgement {
+    if (self.admission.active) {
+        self.admission.installing = NO;
+        self.admission.userRequested = NO;
+        self.admission.failed = YES;
+        const char *msg = error ? error.localizedDescription.UTF8String : NULL;
+        hoxiNativeProgress(self.admission.token, "failed", self.admission.downloadedBytes, self.admission.totalBytes, (char *)(msg ?: "update failed"));
+    }
+    if ([self.target respondsToSelector:@selector(showUpdaterError:acknowledgement:)]) {
+        [self.target showUpdaterError:error acknowledgement:acknowledgement];
+    } else if (acknowledgement != nil) {
+        acknowledgement();
+    }
+}
+- (void)showUpdateNotFoundWithError:(NSError *)error acknowledgement:(void (^)(void))acknowledgement {
+    if (self.admission.active) {
+        BOOL wasRequested = self.admission.userRequested;
+        self.admission.installing = NO;
+        self.admission.userRequested = NO;
+        if (wasRequested) {
+            self.admission.failed = YES;
+            const char *msg = error ? error.localizedDescription.UTF8String : NULL;
+            hoxiNativeProgress(self.admission.token, "failed", 0, 0, (char *)(msg ?: "application is already up to date"));
+        } else if (!self.admission.failed) {
+            hoxiNativeProgress(self.admission.token, "", 0, 0, NULL);
+        }
+    }
+    if ([self.target respondsToSelector:@selector(showUpdateNotFoundWithError:acknowledgement:)]) {
+        [self.target showUpdateNotFoundWithError:error acknowledgement:acknowledgement];
+    } else if (acknowledgement != nil) {
+        acknowledgement();
+    }
 }
 @end
 
@@ -244,9 +441,22 @@ char *hoxi_native_check(void) {
     onMain(^{ @autoreleasepool {
         if (updater == nil || !delegate.active) failure = strdup("native updater is unavailable");
         else {
-            // Repeated clicks must refocus an in-progress update instead of failing.
-            // Sparkle's -checkForUpdates shows or refocuses the current session.
+            delegate.userRequested = YES;
+            delegate.failed = NO;
+            if (!delegate.installing) {
+                delegate.downloadedBytes = 0;
+                delegate.totalBytes = 0;
+                hoxiNativeProgress(delegate.token, "preparing", 0, 0, NULL);
+            }
+            // Repeated clicks must refocus or trigger an in-progress update instead of failing.
             [NSApp activateIgnoringOtherApps:YES];
+            if ([driver.target respondsToSelector:@selector(activeUpdateAlert)]) {
+                id alert = [driver.target activeUpdateAlert];
+                if (alert != nil && [alert respondsToSelector:@selector(installUpdate:)]) {
+                    [alert installUpdate:nil];
+                    return;
+                }
+            }
             [updater checkForUpdates];
         }
     }});
@@ -257,9 +467,13 @@ void hoxi_native_stop(void) {
     onMain(^{ @autoreleasepool {
         if (updater == nil) return;
         delegate.active = NO;
+        delegate.userRequested = NO;
+        delegate.installing = NO;
+        delegate.failed = NO;
         updater.automaticallyChecksForUpdates = NO;
         [updater resetUpdateCycle];
         [driver.target dismissUpdateInstallation];
+        hoxiNativeProgress(delegate.token, "", 0, 0, NULL);
         hoxiNativeRelease(delegate.token, 1);
         // No public SPUUpdater stop method exists. Keep a denying delegate alive
         // for any in-flight driver that outlives its controller. Do not unload
