@@ -491,7 +491,7 @@ export function handleIncomingPermissionRequest(req: PermissionRequest): void {
 // Approvals waiting on a session in another project are invisible to a query
 // scoped to the active project, so the refresh also covers the directories of
 // sessions that are still running.
-function permissionSyncScopes(primary?: string): string[] {
+export function permissionSyncScopes(primary?: string): string[] {
   const scopes = new Set<string>();
   const add = (value?: string | null) => {
     const clean = normalizeFolderPath(value);
@@ -508,7 +508,7 @@ function permissionSyncScopes(primary?: string): string[] {
   return Array.from(scopes);
 }
 
-function explicitSessionDirectory(sessionID?: string | null): string | undefined {
+export function explicitSessionDirectory(sessionID?: string | null): string | undefined {
   if (!sessionID) return undefined;
   const direct =
     workspace.worktreeBySession[sessionID]?.directory ||
@@ -544,7 +544,7 @@ function resolvePermissionDirectory(req: PermissionRequest): string | undefined 
   return normalizeFolderPath(workspace.rootDir) || undefined;
 }
 
-function isDirectoryInScopes(dir: string | undefined, scopes: Set<string>): boolean {
+export function isDirectoryInScopes(dir: string | undefined, scopes: Set<string>): boolean {
   if (!dir) return false;
   if (scopes.has(dir)) return true;
   const wtIdx = dir.indexOf("/.hoxi/worktrees/");

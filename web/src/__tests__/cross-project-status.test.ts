@@ -7,6 +7,7 @@ import {
 } from "../store/session-status-sync";
 import { isManagedSession, sessionDirectory } from "../store/session-query";
 import { clearSessionPendingApprovals, syncPendingPermissions } from "../store/approval-mode";
+import { findQuestionReply, syncPendingQuestions } from "../store/question-answers";
 import { setWorkspace, workspace } from "../store/workspace";
 import { assertEqual, describe, it } from "./test-harness";
 
@@ -112,6 +113,72 @@ describe("cross-project execution status", () => {
       await syncPendingPermissions();
       assertEqual(workspace.pendingPermissions.length, 1);
       assertEqual(workspace.pendingPermissions[0].id, "per_a");
+    } finally {
+      Object.assign(hoxiAPI, originalAPI);
+      setWorkspace(reconcile(saved));
+    }
+  });
+
+  it("keeps and discovers pending questions across projects without dropping foreign questions", async () => {
+    const saved = structuredClone(unwrap(workspace));
+    const originalAPI = { ...hoxiAPI };
+    try {
+      setWorkspace({
+        rootDir: "/repo-b",
+        activeProjectID: "prj_b",
+        sessions: [],
+        sessionIndex: {},
+        statusBySession: { ses_hoxi_a: { type: "busy" } },
+        pendingQuestions: [
+          {
+            id: "que_foreign_idle",
+            sessionID: "ses_hoxi_c",
+            questions: [],
+          },
+        ],
+      });
+      indexSession({
+        id: "ses_hoxi_a",
+        title: "A",
+        directory: "/repo-a",
+        projectID: "prj_a",
+        managed: true,
+        time: { created: 1, updated: 1 },
+      });
+      indexSession({
+        id: "ses_hoxi_c",
+        title: "C",
+        directory: "/repo-c",
+        projectID: "prj_c",
+        managed: true,
+        time: { created: 1, updated: 1 },
+      });
+      hoxiAPI.listQuestions = async (dir) => {
+        if (dir === "/repo-b") return [];
+        if (dir === "/repo-a") {
+          return [
+            {
+              id: "que_a",
+              sessionID: "ses_hoxi_a",
+              directory: "/repo-a",
+              questions: [],
+              tool: { messageID: "msg_a", callID: "call_a" },
+            },
+          ];
+        }
+        return [];
+      };
+      await syncPendingQuestions();
+      assertEqual(workspace.pendingQuestions.length, 2);
+      assertEqual(
+        workspace.pendingQuestions.some((q) => q.id === "que_foreign_idle"),
+        true
+      );
+      assertEqual(
+        workspace.pendingQuestions.some((q) => q.id === "que_a"),
+        true
+      );
+      assertEqual(findQuestionReply("call_a")?.requestID, "que_a");
     } finally {
       Object.assign(hoxiAPI, originalAPI);
       setWorkspace(reconcile(saved));

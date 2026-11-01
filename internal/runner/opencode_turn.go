@@ -516,6 +516,11 @@ func (s *Service) relayOpenCodeEventWithFiles(rec SessionRecord, raw []byte, fil
 		}
 	}
 	s.noteOpenCodeActivity(rec.ID, evt)
+	if evt.Type == "question.asked" || evt.Type == "question.v2.asked" {
+		if evt.Properties != nil && rec.WorktreePath != "" && firstString(evt.Properties["directory"]) == "" {
+			evt.Properties["directory"] = rec.WorktreePath
+		}
+	}
 	if evt.Type == "permission.asked" {
 		sanitizeOpenCodePermissionItem(evt.Properties)
 		if evt.Properties != nil && (rec.WorktreePath != "" || rec.ExternalID != "") {

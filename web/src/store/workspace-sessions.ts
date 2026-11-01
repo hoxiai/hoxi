@@ -10,6 +10,7 @@ import {
 import { persistSessionAI, restoreSessionAI } from "./session-ai";
 import { forgetSessionHistory, noteSessionHistoryTail, SESSION_HISTORY_PAGE_TURNS } from "./session-history";
 import { clearSessionPendingApprovals, syncPendingPermissions } from "./approval-mode";
+import { syncPendingQuestions } from "./question-answers";
 import { ARCHIVED_SESSIONS_KEY, setWorkspace, workspace } from "./workspace-state";
 import {
   forgetSessionTitles,
@@ -399,7 +400,9 @@ export async function selectSession(sessionID: string): Promise<void> {
   if (isSessionTaskActive(sessionID)) {
     requestTimelineFollow(sessionID);
   }
-  void syncPendingPermissions(sessionDirectory(sessionID));
+  const dir = sessionDirectory(sessionID);
+  void syncPendingPermissions(dir);
+  void syncPendingQuestions(dir);
   // Background SSE events create a partial transcript for sessions that were
   // never loaded, so only a fully hydrated one may skip the history fetch.
   if (skipHydration) {

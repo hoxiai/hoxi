@@ -3,8 +3,16 @@ import { createSignal } from "solid-js";
 import type { QuestionInfo, QuestionRequest, ToolPart } from "../services/sse-types";
 import { hoxiAPI } from "../services/api";
 import { t } from "../i18n";
+import {
+  explicitSessionDirectory,
+  isActionableApprovalSession,
+  isDirectoryInScopes,
+  permissionSyncScopes,
+} from "./approval-mode";
 import { sessionDirectory } from "./session-query";
-import { setWorkspace } from "./workspace-state";
+import { resolveRootSessionID } from "./subagent-sessions";
+import { normalizeFolderPath } from "./workspace-folders";
+import { setWorkspace, workspace } from "./workspace-state";
 
 /**
  * Records `question.asked` / `question.replied` / `question.rejected` payloads so the
@@ -119,10 +127,15 @@ function isQuestionGoneError(err: unknown): boolean {
   return /\bHTTP\s+(400|404)\b/i.test(msg) || /not\s+found|already\s+answered/i.test(msg);
 }
 
+function resolveQuestionRequestDirectory(request: QuestionRequest): string | undefined {
+  const explicit = typeof request.directory === "string" ? request.directory.trim() : "";
+  return explicit || sessionDirectory(request.sessionID);
+}
+
 /** Sends the user's answers for a docked question and records them for the tool card. */
 export async function replyQuestionRequest(request: QuestionRequest, answers: string[][]): Promise<void> {
   try {
-    await hoxiAPI.replyQuestion(request.id, answers, sessionDirectory(request.sessionID));
+    await hoxiAPI.replyQuestion(request.id, answers, resolveQuestionRequestDirectory(request));
   } catch (err) {
     if (isQuestionGoneError(err)) {
       dropPendingQuestion(request.id);
@@ -136,7 +149,7 @@ export async function replyQuestionRequest(request: QuestionRequest, answers: st
 
 export async function rejectQuestionRequest(request: QuestionRequest): Promise<void> {
   try {
-    await hoxiAPI.rejectQuestion(request.id, sessionDirectory(request.sessionID));
+    await hoxiAPI.rejectQuestion(request.id, resolveQuestionRequestDirectory(request));
   } catch (err) {
     if (isQuestionGoneError(err)) {
       dropPendingQuestion(request.id);
@@ -146,6 +159,95 @@ export async function rejectQuestionRequest(request: QuestionRequest): Promise<v
   }
   rememberQuestionReject(request.id, request.sessionID);
   dropPendingQuestion(request.id);
+}
+
+export function findPendingQuestionForPart(part: ToolPart): QuestionRequest | undefined {
+  if (part.state.status !== "pending" && part.state.status !== "running") {
+    return undefined;
+  }
+  const pending = workspace.pendingQuestions;
+  if (!pending.length) return undefined;
+  if (part.callID) {
+    const byCall = pending.find((q) => toolCallID(q) === part.callID);
+    if (byCall) return byCall;
+  }
+  return pending.find(
+    (q) =>
+      (!part.callID || !toolCallID(q)) &&
+      (q.sessionID === part.sessionID || q.subagentSessionID === part.sessionID)
+  );
+}
+
+function resolveQuestionDirectory(req: QuestionRequest): string | undefined {
+  const cleanExplicit = normalizeFolderPath(
+    typeof req.directory === "string" ? req.directory : undefined
+  );
+  if (cleanExplicit) return cleanExplicit;
+  const rootID = resolveRootSessionID(req.sessionID) || req.sessionID;
+  const knownSessionDir =
+    explicitSessionDirectory(req.sessionID) ||
+    explicitSessionDirectory(req.subagentSessionID) ||
+    explicitSessionDirectory(rootID);
+  if (knownSessionDir) return knownSessionDir;
+  const sessionDir = normalizeFolderPath(sessionDirectory(req.sessionID));
+  if (sessionDir) return sessionDir;
+  const indexed =
+    workspace.sessionIndex[req.sessionID] ||
+    (req.subagentSessionID ? workspace.sessionIndex[req.subagentSessionID] : undefined) ||
+    workspace.sessionIndex[rootID];
+  if (indexed) {
+    if (indexed.projectID && workspace.activeProjectID && indexed.projectID !== workspace.activeProjectID) {
+      return undefined;
+    }
+    if (!indexed.projectID && !workspace.sessions.some((s) => s.id === req.sessionID || s.id === rootID)) {
+      return undefined;
+    }
+  }
+  return normalizeFolderPath(workspace.rootDir) || undefined;
+}
+
+export async function syncPendingQuestions(directory?: string): Promise<void> {
+  const scopes = permissionSyncScopes(directory);
+  try {
+    const results = await Promise.allSettled(
+      scopes.map((scope) => hoxiAPI.listQuestions(scope))
+    );
+    const merged = new Map<string, QuestionRequest>();
+    const answeredScopes = new Set<string>();
+    results.forEach((res, index) => {
+      if (res.status !== "fulfilled" || !Array.isArray(res.value)) return;
+      answeredScopes.add(scopes[index]);
+      for (const req of res.value) {
+        if (req?.id && isActionableApprovalSession(req.sessionID)) {
+          merged.set(req.id, req);
+        }
+      }
+    });
+    if (answeredScopes.size === 0) return;
+    const remoteIDs = new Set(merged.keys());
+    for (const req of merged.values()) {
+      rememberQuestionRequest(req);
+    }
+    setWorkspace("pendingQuestions", (prev) => {
+      const kept = prev.filter(
+        (q) =>
+          isActionableApprovalSession(q?.sessionID) &&
+          (remoteIDs.has(q.id) ||
+            !isDirectoryInScopes(resolveQuestionDirectory(q), answeredScopes))
+      );
+      const existingIDs = new Set(kept.map((q) => q.id));
+      const added: QuestionRequest[] = [];
+      for (const req of merged.values()) {
+        if (!existingIDs.has(req.id)) {
+          added.push(req);
+        }
+      }
+      if (added.length === 0 && kept.length === prev.length) return prev;
+      return [...kept, ...added];
+    });
+  } catch {
+    /* ignore if endpoint not ready */
+  }
 }
 
 export function findQuestionReply(callID?: string): QuestionReplyRecord | undefined {

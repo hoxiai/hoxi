@@ -1,6 +1,7 @@
 // web/src/__tests__/question-answers.test.ts
 import {
   clearQuestionRecords,
+  findPendingQuestionForPart,
   findQuestionReply,
   questionSummaryText,
   rememberQuestionReject,
@@ -8,6 +9,7 @@ import {
   rememberQuestionRequest,
   resolveQuestionItems,
 } from "../store/question-answers";
+import { setWorkspace } from "../store/workspace-state";
 import type { ToolPart } from "../services/sse-types";
 import { assertDeepEqual, assertEqual, assertTrue, describe, it } from "./test-harness";
 
@@ -142,5 +144,37 @@ describe("question-answers resolveQuestionItems", () => {
     const summary = questionSummaryText(part);
     assertTrue(summary.includes("macOS"), `summary should mention answer, got: ${summary}`);
     assertTrue(summary.includes("Billing"), `summary should mention answer, got: ${summary}`);
+  });
+
+  it("matches running question tool parts to pendingQuestions by callID or sessionID", () => {
+    try {
+      const req = {
+        id: "que_live_1",
+        sessionID: "ses_q",
+        questions: questions as any,
+        tool: { messageID: "msg_q", callID: "call_live" },
+      };
+      setWorkspace("pendingQuestions", [req]);
+      const runningPart = questionPart(
+        { status: "running", input: { questions }, time: { start: 1 } },
+        "call_live"
+      );
+      assertEqual(findPendingQuestionForPart(runningPart)?.id, "que_live_1");
+
+      const completedPart = questionPart(
+        {
+          status: "completed",
+          input: { questions },
+          output: "",
+          title: "Questions",
+          metadata: {},
+          time: { start: 1, end: 2 },
+        },
+        "call_live"
+      );
+      assertEqual(findPendingQuestionForPart(completedPart), undefined);
+    } finally {
+      setWorkspace("pendingQuestions", []);
+    }
   });
 });

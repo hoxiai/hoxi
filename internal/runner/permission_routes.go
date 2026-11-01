@@ -530,10 +530,37 @@ func (s *Service) FilterOpenCodeQuestions(raw []byte, directory string) []byte {
 	if json.Unmarshal(raw, &questions) != nil {
 		return raw
 	}
+	if s.openCode != nil {
+		reqKey := normalizeComparePath(directory)
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		for _, dir := range s.openCodeCandidateDirs(directory) {
+			if normalizeComparePath(dir) == reqKey {
+				continue
+			}
+			qStatus, qRaw, qErr := s.openCodeRaw(ctx, http.MethodGet, "/question", directoryQuery(dir, nil), nil)
+			var extra []map[string]interface{}
+			if qErr == nil && qStatus == http.StatusOK && json.Unmarshal(qRaw, &extra) == nil {
+				for _, item := range extra {
+					if dir != "" && firstString(item["directory"]) == "" {
+						item["directory"] = dir
+					}
+					questions = append(questions, item)
+				}
+			}
+		}
+		cancel()
+	}
 	engineToHoxi, sessionDirByID, archivedHoxi := s.openCodeEngineSessionMap()
 	kept := make([]map[string]interface{}, 0, len(questions))
+	seenIDs := make(map[string]bool, len(questions))
 	for _, item := range questions {
 		qid, _ := item["id"].(string)
+		if qid != "" {
+			if seenIDs[qid] {
+				continue
+			}
+			seenIDs[qid] = true
+		}
 		rawSid, _ := item["sessionID"].(string)
 		hoxiID := engineToHoxi[rawSid]
 		if hoxiID == "" && IsRunnerSessionID(rawSid) {
@@ -541,10 +568,13 @@ func (s *Service) FilterOpenCodeQuestions(raw []byte, directory string) []byte {
 				hoxiID = rec.ID
 			}
 		}
+		qDir := firstNonEmptyStr(firstString(item["directory"]), sessionDirByID[rawSid], sessionDirByID[hoxiID], directory)
 		if s.isOrphanedOpenCodeSession(rawSid, hoxiID, archivedHoxi) || (hoxiID != "" && !s.isSessionBusy(hoxiID)) {
-			qDir := firstNonEmptyStr(sessionDirByID[rawSid], sessionDirByID[hoxiID], directory)
 			go s.rejectStaleOpenCodeQuestion(qid, qDir)
 			continue
+		}
+		if qDir != "" && firstString(item["directory"]) == "" {
+			item["directory"] = qDir
 		}
 		if rawSid != "" && hoxiID != "" && rawSid != hoxiID && s.isManagedOpenCodeChild(rawSid) {
 			item["subagentSessionID"] = rawSid

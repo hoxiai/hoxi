@@ -1,12 +1,16 @@
 // web/src/components/timeline/question-card.tsx
-import { createMemo, For, Show } from "solid-js";
+import { createEffect, createMemo, For, Show } from "solid-js";
 import { Check, X } from "lucide-solid";
 import type { ToolPart } from "../../services/sse-types";
 import {
+  findPendingQuestionForPart,
   findQuestionReply,
   resolveQuestionItems,
+  syncPendingQuestions,
   type QuestionItemView,
 } from "../../store/question-answers";
+import { isSessionBusy, sessionDirectory } from "../../store/session-query";
+import QuestionDock from "../approval/QuestionDock";
 import { t } from "../../i18n";
 
 /**
@@ -16,23 +20,51 @@ import { t } from "../../i18n";
  */
 export default function QuestionToolBody(props: { part: ToolPart }) {
   const reply = createMemo(() => findQuestionReply(props.part.callID));
+  const pendingRequest = createMemo(() => findPendingQuestionForPart(props.part));
+  const isAwaitingAnswer = createMemo(
+    () =>
+      (props.part.state.status === "pending" || props.part.state.status === "running") &&
+      isSessionBusy(props.part.sessionID) &&
+      !reply()?.answers &&
+      !reply()?.rejected
+  );
+
+  createEffect(() => {
+    if (isAwaitingAnswer() && !pendingRequest()) {
+      void syncPendingQuestions(sessionDirectory(props.part.sessionID));
+    }
+  });
+
   const items = createMemo(() => resolveQuestionItems(props.part, reply()));
   const rejected = createMemo(() => Boolean(reply()?.rejected));
 
   return (
-    <div class="p-3 space-y-2.5">
-      <Show when={rejected()}>
-        <div class="inline-flex items-center gap-1.5 text-[12px] text-[var(--text-muted)]">
-          <X size={12} class="text-[var(--warn-text)]" />
-          <span>{t("toolCard.questionSkipped")}</span>
+    <Show
+      when={isAwaitingAnswer() && pendingRequest()}
+      fallback={
+        <div class="p-3 space-y-2.5">
+          <Show when={rejected()}>
+            <div class="inline-flex items-center gap-1.5 text-[12px] text-[var(--text-muted)]">
+              <X size={12} class="text-[var(--warn-text)]" />
+              <span>{t("toolCard.questionSkipped")}</span>
+            </div>
+          </Show>
+          <For each={items()}>
+            {(item) => <QuestionRow item={item} awaiting={isAwaitingAnswer()} />}
+          </For>
         </div>
-      </Show>
-      <For each={items()}>{(item) => <QuestionRow item={item} />}</For>
-    </div>
+      }
+    >
+      {(req) => (
+        <div class="p-2">
+          <QuestionDock request={req()} />
+        </div>
+      )}
+    </Show>
   );
 }
 
-function QuestionRow(props: { item: QuestionItemView }) {
+function QuestionRow(props: { item: QuestionItemView; awaiting?: boolean }) {
   return (
     <div class="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)]/60 px-3 py-2.5 space-y-2">
       <div class="flex items-baseline justify-between gap-2">
@@ -49,9 +81,11 @@ function QuestionRow(props: { item: QuestionItemView }) {
       <Show
         when={props.item.options.length > 0 || props.item.customAnswers.length > 0}
         fallback={
-          <div class="text-[12px] text-[var(--text-muted)] italic">
-            {t("toolCard.questionUnanswered")}
-          </div>
+          <Show when={!props.awaiting}>
+            <div class="text-[12px] text-[var(--text-muted)] italic">
+              {t("toolCard.questionUnanswered")}
+            </div>
+          </Show>
         }
       >
         <div class="space-y-1">
@@ -115,7 +149,7 @@ function QuestionRow(props: { item: QuestionItemView }) {
             )}
           </For>
         </div>
-        <Show when={!props.item.answered}>
+        <Show when={!props.item.answered && !props.awaiting}>
           <div class="text-[12px] text-[var(--text-muted)] italic">
             {t("toolCard.questionUnanswered")}
           </div>

@@ -261,6 +261,7 @@ export interface QuestionRequest {
   id: string;
   sessionID: string;
   subagentSessionID?: string;
+  directory?: string;
   questions: QuestionInfo[];
   tool?: {
     messageID: string;

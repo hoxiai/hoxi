@@ -62,6 +62,7 @@ import {
   surfaceOnboardingOpen,
   syncActiveProjectID,
   syncPendingPermissions,
+  syncPendingQuestions,
   syncSessionStatuses,
   triggerDesktopNotification,
   trimSessionTranscripts,
@@ -117,15 +118,8 @@ export default function App() {
       if (hasBusySession || workspace.pendingPermissions.length > 0) {
         void syncPendingPermissions();
       }
-      if (workspace.pendingQuestions.length > 0) {
-        void hoxiAPI
-          .listQuestions(workspace.rootDir || undefined)
-          .then((qs) => {
-            if (Array.isArray(qs)) {
-              setWorkspace("pendingQuestions", qs.filter((q) => isActionableApprovalSession(q?.sessionID)));
-            }
-          })
-          .catch(() => {});
+      if (hasBusySession || workspace.pendingQuestions.length > 0) {
+        void syncPendingQuestions();
       }
     }, 4000);
 
@@ -182,14 +176,7 @@ export default function App() {
         void loadAgents();
         void loadGitAttribution();
         void syncPendingPermissions(eagerBootRoot || undefined);
-        void hoxiAPI
-          .listQuestions(eagerBootRoot || undefined)
-          .then((qs) => {
-            if (Array.isArray(qs)) {
-              setWorkspace("pendingQuestions", qs.filter((q) => isActionableApprovalSession(q?.sessionID)));
-            }
-          })
-          .catch(() => {});
+        void syncPendingQuestions(eagerBootRoot || undefined);
 
         await Promise.all([loadSavedWorkspaces(), loadProjects()]);
 
@@ -234,15 +221,10 @@ export default function App() {
           while (resyncRequested) {
             resyncRequested = false;
             await Promise.allSettled([
-              syncSessionStatuses(), syncPendingPermissions(), resyncResidentTranscripts(),
+              syncSessionStatuses(), syncPendingPermissions(), syncPendingQuestions(), resyncResidentTranscripts(),
               workspace.rootDir
                 ? bootstrapProjectSessions(workspace.rootDir, false, workspace.activeProjectID)
                 : Promise.resolve(),
-              hoxiAPI.listQuestions(workspace.rootDir || undefined).then((questions) => {
-                if (Array.isArray(questions)) {
-                  setWorkspace("pendingQuestions", questions.filter((q) => isActionableApprovalSession(q?.sessionID)));
-                }
-              }),
             ]);
           }
         } finally { resyncing = false; }

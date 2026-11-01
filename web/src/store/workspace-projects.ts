@@ -8,6 +8,7 @@ import {
 import { loadAgents, loadProviders } from "./workspace-providers";
 import { isPlaceholderSessionTitle, preserveSessionTitle, sortSessionsByActivity } from "./session-title";
 import { syncPendingPermissions } from "./approval-mode";
+import { syncPendingQuestions } from "./question-answers";
 import { syncSessionStatuses } from "./session-status-sync";
 import { loadSessionMessagesOnly, reconcileSessionsInPlace, selectSession } from "./workspace-sessions";
 import { hydratedSessionIDs } from "./session-transcripts";
@@ -325,6 +326,7 @@ export async function bootstrapProjectSessions(
   }
   void syncSessionStatuses(cleaned);
   void syncPendingPermissions(cleaned);
+  void syncPendingQuestions(cleaned);
   if (selectInitial && workspace.newThreadRequest === initialNewThreadReq && workspace.activeSessionID) {
     const active = titledSessions.find((s) => s.id === workspace.activeSessionID);
     if (active && !isSessionInWorkspaceFolders(active, cleaned)) {
