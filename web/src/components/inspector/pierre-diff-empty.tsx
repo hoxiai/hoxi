@@ -14,7 +14,6 @@ import {
 } from "lucide-solid";
 import {
   activeDirectory,
-  isPlanOnlyRuntimeModel,
   isSessionBusy,
   setWorkspace,
   setActiveAgent,
@@ -169,7 +168,7 @@ export default function DiffEmptyState(props: {
       </div>
 
       {/* 3. Read-Only Plan Mode Hint Banner */}
-      <Show when={workspace.activeMode === "plan" && !isPlanOnlyRuntimeModel(workspace.selectedModel)}>
+      <Show when={workspace.activeMode === "plan"}>
         <div class="w-full rounded-xl border border-[var(--accent-border)]/70 bg-[var(--accent-surface)]/35 p-3 text-left space-y-2">
           <div class="flex items-center gap-1.5 text-[12px] font-semibold text-[var(--accent-primary)]">
             <Compass size={13} class="shrink-0" />

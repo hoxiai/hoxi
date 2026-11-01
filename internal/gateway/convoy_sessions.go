@@ -60,9 +60,6 @@ func (c convoySessions) Create(ctx context.Context, req orchestration.SessionReq
 		// Native runtimes are addressed by their runtime ID as the provider.
 		body.Runtime = provider
 	}
-	if !runner.RuntimeCapabilities(body.Runtime, false).Approval {
-		body.Mode = "plan"
-	}
 	if req.Isolated {
 		body.SandboxMode = "worktree"
 	}
@@ -89,11 +86,6 @@ func (c convoySessions) Run(ctx context.Context, sessionID, prompt string, req o
 	}
 	if provider != "" && provider != "hoxi-auto" && model != "" {
 		turn.Model = &runner.PromptModel{ProviderID: provider, ModelID: model}
-	}
-	if rec, ok := c.runner.Store().Get(sessionID); ok && !runner.RuntimeCapabilities(rec.Runtime, false).Approval {
-		turn.Agent = "plan"
-	} else if runner.IsValidRuntime(provider) && !runner.RuntimeCapabilities(provider, false).Approval {
-		turn.Agent = "plan"
 	}
 	return c.runner.RunPromptAndWait(ctx, sessionID, turn)
 }

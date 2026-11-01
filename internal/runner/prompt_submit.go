@@ -218,9 +218,6 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 	}
 
 	mode := firstNonEmptyStr(body.Agent, rec.Mode, "build")
-	if !RuntimeCapabilities(rec.Runtime, false).Approval && !isReadOnlyAgentMode(mode) {
-		return http.StatusConflict, PromptReceipt{}, fmt.Errorf("runtime %s does not support the unified approval gate; switch to Plan mode or a runtime with approval gate support", rec.Runtime)
-	}
 	modelID := rec.ModelID
 	if body.Model != nil && strings.TrimSpace(body.Model.ModelID) != "" {
 		modelID = strings.TrimSpace(body.Model.ModelID)

@@ -238,10 +238,9 @@ func TestOpaqueShellCommandsRequireApprovalInAutoAndTrusted(t *testing.T) {
 	}
 }
 
-func TestUngatedRuntimesRefuseNonReadOnlyTurnsWhenApprovalGateRequired(t *testing.T) {
+func TestQoderAndCodeBuddyRunInBuildMode(t *testing.T) {
 	binDir := t.TempDir()
-	markerFile := filepath.Join(t.TempDir(), "ran.txt")
-	execstub.Write(t, binDir, "qodercli", "#!/bin/sh\necho ran > "+markerFile+"\nexit 0\n")
+	execstub.Write(t, binDir, "qodercli", "#!/bin/sh\ncat >/dev/null\nprintf '{\"type\":\"result\",\"is_error\":false,\"result\":\"ok\"}\\n'\nexit 0\n")
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	repo := initTestGitRepo(t)
@@ -249,11 +248,8 @@ func TestUngatedRuntimesRefuseNonReadOnlyTurnsWhenApprovalGateRequired(t *testin
 	svc := NewService(repo, worktree.NewManager(repo), nil, storeDir)
 	defer svc.CloseAll()
 
-	if _, err := svc.policy.set(ApprovalPolicy{Mode: ApprovalModeManual}); err != nil {
-		t.Fatal(err)
-	}
 	rec := SessionRecord{
-		ID:           "ses_qoder_manual",
+		ID:           "ses_qoder_build",
 		Runtime:      string(RuntimeQoder),
 		ProjectDir:   repo,
 		WorktreePath: repo,
@@ -267,41 +263,11 @@ func TestUngatedRuntimesRefuseNonReadOnlyTurnsWhenApprovalGateRequired(t *testin
 
 	mux := http.NewServeMux()
 	svc.RegisterRoutes(mux)
-	httpReq := httptest.NewRequest(http.MethodPost, "/api/hoxi/runner/sessions/ses_qoder_manual/prompt", strings.NewReader(`{"text":"edit main.go"}`))
+	httpReq := httptest.NewRequest(http.MethodPost, "/api/hoxi/runner/sessions/ses_qoder_build/prompt", strings.NewReader(`{"text":"edit main.go"}`))
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, httpReq)
-	if w.Code != http.StatusConflict {
-		t.Fatalf("expected 409 Conflict for ungated Qoder turn under manual policy, got %d: %s", w.Code, w.Body.String())
-	}
-	if _, err := os.Stat(markerFile); !os.IsNotExist(err) {
-		t.Fatalf("ungated Qoder binary must not be executed under manual approval policy")
-	}
-}
-
-// Qoder and CodeBuddy have no PreToolUse gate, so the mandatory approval floor
-// (secrets, destructive commands, opaque execution) cannot be honored in any
-// non-read-only mode, including auto and trusted.
-func TestUngatedRuntimesRefusedInAutoAndTrusted(t *testing.T) {
-	for _, runtime := range []string{string(RuntimeQoder), string(RuntimeCodeBuddy)} {
-		for _, mode := range []string{ApprovalModeAuto, ApprovalModeTrusted} {
-			t.Run(runtime+"/"+mode, func(t *testing.T) {
-				repo := initTestGitRepo(t)
-				svc := NewService(repo, worktree.NewManager(repo), nil, filepath.Join(t.TempDir(), "sessions"))
-				defer svc.CloseAll()
-				if _, err := svc.policy.set(ApprovalPolicy{Mode: mode}); err != nil {
-					t.Fatal(err)
-				}
-				rec := SessionRecord{ID: "ses_ungated_" + mode, Runtime: runtime, ProjectDir: repo, WorktreePath: repo, SandboxMode: "local", Mode: "build", ModelID: "auto"}
-				if err := svc.Store().Put(rec); err != nil {
-					t.Fatal(err)
-				}
-				bin := execstub.Write(t, t.TempDir(), "auditcli", "#!/bin/sh\ncat >/dev/null\nexit 0\n")
-				err := svc.startTurnProcess(rec, bin, "build", "auto", "", "audit", MessageInfo{ID: "msg_user", SessionID: rec.ID, Role: "user"}, nil, nil, "msg_asst")
-				if err == nil {
-					t.Fatalf("started ungated %s under %s policy despite the mandatory approval floor", runtime, mode)
-				}
-			})
-		}
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for Qoder turn in build mode, got %d: %s", w.Code, w.Body.String())
 	}
 }
 

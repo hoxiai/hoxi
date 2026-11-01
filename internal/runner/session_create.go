@@ -121,10 +121,6 @@ func (s *Service) CreateSession(body CreateSessionRequest, directory string) (Se
 			title = "Antigravity Session"
 		}
 	}
-	defaultMode := "build"
-	if !RuntimeCapabilities(rt, false).Approval {
-		defaultMode = "plan"
-	}
 	now := time.Now().UnixMilli()
 	rec := SessionRecord{
 		ID:             sessionID,
@@ -137,7 +133,7 @@ func (s *Service) CreateSession(body CreateSessionRequest, directory string) (Se
 		CommandSandbox: commandSandbox,
 		ModelID:        modelID,
 		ProviderID:     provID,
-		Mode:           firstNonEmptyStr(body.Mode, defaultMode),
+		Mode:           firstNonEmptyStr(body.Mode, "build"),
 		Title:          title,
 		CreatedAt:      now,
 		UpdatedAt:      now,

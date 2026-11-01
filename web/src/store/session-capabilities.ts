@@ -36,17 +36,6 @@ export function canSteerSession(
   return !isRunnerSessionID(sessionID);
 }
 
-export function isPlanOnlyRuntimeModel(
-  model?: { providerID: string; modelID?: string } | null
-): boolean {
-  if (!model?.providerID) return false;
-  const rt = resolveRunnerRuntimeForProvider(
-    model.providerID,
-    Boolean(workspace.hoxiProviders?.[model.providerID])
-  );
-  return rt === "codebuddy" || rt === "qoder";
-}
-
 export function canApproveSession(sessionID?: string | null): boolean {
   if (!sessionID) return false;
   const session = workspace.sessions.find((s) => s.id === sessionID);

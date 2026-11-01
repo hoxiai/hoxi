@@ -285,13 +285,6 @@ func (s *Service) startTurnProcess(
 	} else if rec.Runtime == string(RuntimeAntigravity) {
 		s.ensureAgyHookInstalled()
 		hookEnv, revokeHook = s.issueHookEnv(rec.ID, asstMsgID)
-	} else if rec.Runtime == string(RuntimeCodeBuddy) || rec.Runtime == string(RuntimeQoder) {
-		// Every approval mode keeps the mandatory floor (secret reads,
-		// destructive commands, opaque execution), and these runtimes have no
-		// PreToolUse gate to ask. Only verifiable read-only modes may run.
-		if !isReadOnlyAgentMode(mode) {
-			return fmt.Errorf("runtime %s does not support PreToolUse approval gate; refusing to run in non-read-only mode %q", rec.Runtime, mode)
-		}
 	}
 
 	args := buildTurnCLIArgs(rec.Runtime, mode, modelID, effort, rec.ExternalID, geminiUsesAgy, claudeHookArgs)

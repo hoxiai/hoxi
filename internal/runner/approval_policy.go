@@ -119,13 +119,6 @@ func (p ApprovalPolicy) effectiveRule(category string) string {
 	return "allow"
 }
 
-// isReadOnlyAgentMode reports whether a mode is verifiably read-only for a
-// runtime without an approval gate. Only Plan is accepted: Ask still leaves the
-// CLI free to run shell tools that the hard floor cannot gate.
-func isReadOnlyAgentMode(mode string) bool {
-	return strings.EqualFold(strings.TrimSpace(mode), "plan")
-}
-
 // validate rejects unknown values instead of silently dropping them.
 func (p ApprovalPolicy) validate() error {
 	switch p.Mode {
