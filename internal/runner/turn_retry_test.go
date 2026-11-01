@@ -66,6 +66,8 @@ func TestIsRetryableTurnError(t *testing.T) {
 		{"请 6 秒后重试", 6 * time.Second},
 		{"retry after 2 minutes", maxTurnRetryDelay},
 		{"请 1 分钟后重试", maxTurnRetryDelay},
+		{"read tcp: connection reset by peer after 30s", 0},
+		{"dial tcp: i/o timeout in 2m", 0},
 	}
 	for _, tc := range delayCases {
 		if got := parseTurnRetryDelay(tc.msg); got != tc.want {

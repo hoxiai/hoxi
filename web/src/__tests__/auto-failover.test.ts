@@ -91,6 +91,7 @@ describe("auto-pool failover decision", () => {
     assertEqual(parseQuotaResetMs("resets at 2027-01-01T00:00:00Z", now), 24 * 60 * 60 * 1000);
     assertEqual(parseQuotaResetMs("\u5c06\u5728 2026-10-29 22:48:16 UTC+8 \u91cd\u7f6e", now), undefined);
     assertEqual(parseQuotaResetMs("429 Too Many Requests", now), undefined);
+    assertEqual(parseQuotaResetMs("read tcp: connection reset by peer after 30s", now), undefined);
   });
 });
 

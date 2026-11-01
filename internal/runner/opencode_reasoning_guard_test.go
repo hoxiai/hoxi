@@ -531,4 +531,128 @@ func TestOpenCodeSessionErrorReleasesProcessBeforeBroadcast(t *testing.T) {
 	}
 }
 
+func TestScanOpenCodeSSEDataLinesSkipsOversizedLine(t *testing.T) {
+	t.Parallel()
+
+	oversized := "data: " + strings.Repeat("x", maxOpenCodeSSELineBytes+1024) + "\n\n"
+	stream := "data: {\"seq\":1}\n\n" + oversized + "data: {\"seq\":2}\r\n\n"
+	var got []string
+	scanOpenCodeSSEDataLines(strings.NewReader(stream), func(payload []byte) {
+		got = append(got, string(payload))
+	})
+	if len(got) != 2 || got[0] != `{"seq":1}` || got[1] != `{"seq":2}` {
+		t.Fatalf("expected oversized line to be skipped and subsequent event preserved, got: %v", got)
+	}
+}
+
+func TestStartOpenCodeTurnBoundsPostTurnSnapshotAndIgnoresPostTurnFetchError(t *testing.T) {
+	t.Parallel()
+
+	var (
+		mu       sync.Mutex
+		getQuery []string
+	)
+	events := make(chan SSEEvent, 8)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/event":
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			if f, ok := w.(http.Flusher); ok {
+				_, _ = w.Write([]byte(": connected\n\n"))
+				f.Flush()
+			}
+			for {
+				select {
+				case <-r.Context().Done():
+					return
+				case evt := <-events:
+					raw, _ := json.Marshal(evt)
+					_, _ = w.Write([]byte("data: " + string(raw) + "\n\n"))
+					if f, ok := w.(http.Flusher); ok {
+						f.Flush()
+					}
+				}
+			}
+		case r.Method == http.MethodPost && r.URL.Path == "/session/ses_oc_eof/message":
+			now := time.Now().UnixMilli()
+			msg := MessageInfo{ID: "msg_a_eof", SessionID: "ses_oc_eof", Role: "assistant", Finish: "stop", Time: MessageTime{Created: now, Completed: now}}
+			part := MessagePart{ID: "prt_a_eof", SessionID: "ses_oc_eof", MessageID: msg.ID, Type: "text", Text: "streamed reply ok"}
+			events <- SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": msg}}
+			events <- SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": part}}
+			time.Sleep(30 * time.Millisecond)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/session/ses_oc_eof/message":
+			mu.Lock()
+			getQuery = append(getQuery, r.URL.Query().Get("limit"))
+			mu.Unlock()
+			// Simulate truncated JSON (unexpected EOF) on post-turn snapshot read.
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`[{"info":{"id":"msg_truncated"`))
+		default:
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{}`))
+		}
+	}))
+	defer srv.Close()
+
+	root := t.TempDir()
+	svc := NewService(root, nil, nil, filepath.Join(t.TempDir(), "sessions"))
+	svc.ConfigureOpenCode(srv.URL, "secret")
+	rec := SessionRecord{
+		ID:           "ses_hoxi_eof",
+		ExternalID:   "ses_oc_eof",
+		Runtime:      "opencode",
+		ProjectDir:   root,
+		WorktreePath: root,
+		SandboxMode:  "local",
+	}
+	if err := svc.store.Put(rec); err != nil {
+		t.Fatal(err)
+	}
+	sub, unsub := svc.Subscribe(rec.ID)
+	defer unsub()
+
+	user := MessageInfo{ID: "msg_u_eof", SessionID: rec.ID, Role: "user", Time: MessageTime{Created: 100}}
+	parts := []MessagePart{{ID: "prt_u_eof", SessionID: rec.ID, MessageID: user.ID, Type: "text", Text: "hello"}}
+	if err := svc.startOpenCodeTurn(rec, "build", "deepseek-v4", "", "", user, parts, parts); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.After(3 * time.Second)
+	for {
+		select {
+		case evt := <-sub:
+			if evt.Type == "session.error" {
+				t.Fatalf("completed streaming turn must not emit session.error on post-turn snapshot EOF: %+v", evt)
+			}
+			if evt.Type == "session.status" {
+				if st, ok := evt.Properties["status"].(SessionStatus); ok && st.Type == "idle" {
+					goto doneTurn
+				}
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for turn idle")
+		}
+	}
+doneTurn:
+	mu.Lock()
+	limits := append([]string(nil), getQuery...)
+	mu.Unlock()
+	if len(limits) == 0 {
+		t.Fatal("expected post-turn message snapshot GET request")
+	}
+	for _, lim := range limits {
+		if lim == "" {
+			t.Fatalf("expected bounded ?limit= on message snapshot GET, got %v", limits)
+		}
+	}
+	stored, ok := svc.store.Get(rec.ID)
+	if !ok || len(stored.Turns) == 0 {
+		t.Fatalf("expected streamed assistant turn to remain in store, got %+v", stored)
+	}
+}
+
 

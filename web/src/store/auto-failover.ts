@@ -131,7 +131,7 @@ export function parseQuotaResetMs(message: string, now = Date.now()): number | u
 
   const rel =
     text.match(
-      /(?:retry[-_\s]+after|try\s+again\s+in|reset(?:s|\s+in)?|in|after)\s*[:=]?\s*(\d+(?:\.\d+)?)\s*(ms|milliseconds?|s|secs?|seconds?|m|mins?|minutes?|h|hrs?|hours?)\b/
+      /\b(?:retry(?:[-_\s]+after|\s+in)?|try\s+again\s+(?:in|after)|reset(?:s)?\s+(?:in|after)|available\s+(?:again\s+)?(?:in|after)|wait(?:\s+for)?)\s*[:=]?\s*(\d+(?:\.\d+)?)\s*(ms|milliseconds?|s|secs?|seconds?|m|mins?|minutes?|h|hrs?|hours?)\b/
     ) || text.match(/(\d+(?:\.\d+)?)\s*(\u6beb\u79d2|\u79d2|\u5206\u949f|\u5c0f\u65f6)\s*\u540e/);
   if (rel) {
     const n = Number(rel[1]);

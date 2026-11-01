@@ -20,9 +20,9 @@ var (
 	resetAbsoluteRe = regexp.MustCompile(
 		`(\d{4}-\d{2}-\d{2})[ t](\d{2}:\d{2}(?::\d{2})?)(?:\.\d+)?\s*(z|(?:utc|gmt)?\s*[+-]\d{1,2}(?::?\d{2})?|utc|gmt)?`)
 	resetRelativeRe = regexp.MustCompile(
-		`(?:retry[-_\s]+after|try\s+again\s+in|reset(?:s|\s+in)?|in|after)\s*[:=]?\s*(\d+(?:\.\d+)?)\s*(ms|milliseconds?|s|secs?|seconds?|m|mins?|minutes?|h|hrs?|hours?)\b`)
+		`\b(?:retry(?:[-_\s]+after|\s+in)?|try\s+again\s+(?:in|after)|reset(?:s)?\s+(?:in|after)|available\s+(?:again\s+)?(?:in|after)|wait(?:\s+for)?)\s*[:=]?\s*(\d+(?:\.\d+)?)\s*(ms|milliseconds?|s|secs?|seconds?|m|mins?|minutes?|h|hrs?|hours?)\b`)
 	resetRelativeZhRe = regexp.MustCompile(`(\d+(?:\.\d+)?)\s*(毫秒|秒|分钟|小时)\s*后`)
-	resetWordRe       = regexp.MustCompile(`重置|重试|恢复|reset|retry|try again|available|until`)
+	resetWordRe       = regexp.MustCompile(`重置|重试|恢复|\b(?:resets?(?:\s+(?:at|in|after|on))?|retry(?:[-_\s]+after|\s+in)?|try\s+again|available(?:\s+again)?|until)\b`)
 
 	permanentStatusRe = regexp.MustCompile(`\b(?:http|status|statuscode|code)[:\s=]+(?:400|401|402|403|404|413|422)\b`)
 	transientStatusRe = regexp.MustCompile(`\b(?:(?:http|status|statuscode|error|code)[:\s=]+(?:408|429|500|502|503|504|520|522|524|529)|(?:502|503|504|529)\s+(?:bad gateway|service unavailable|gateway timeout|overloaded)|429\s+too many requests)\b`)
@@ -57,23 +57,6 @@ func ParseResetTime(reason string, now time.Time) (time.Time, bool) {
 // ParseRetryDelay extracts a relative or absolute retry delay from an error
 // message, capped at maxWait when maxWait > 0.
 func ParseRetryDelay(reason string, now time.Time, maxWait time.Duration) time.Duration {
-	text := strings.ToLower(reason)
-	if m := resetRelativeRe.FindStringSubmatch(text); m != nil {
-		if d, ok := parseResetDuration(m[1], m[2]); ok {
-			if maxWait > 0 && d > maxWait {
-				return maxWait
-			}
-			return d
-		}
-	}
-	if m := resetRelativeZhRe.FindStringSubmatch(text); m != nil {
-		if d, ok := parseResetDuration(m[1], m[2]); ok {
-			if maxWait > 0 && d > maxWait {
-				return maxWait
-			}
-			return d
-		}
-	}
 	at, ok := ParseResetTime(reason, now)
 	if !ok {
 		return 0

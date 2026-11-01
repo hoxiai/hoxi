@@ -146,16 +146,13 @@ export function computeProviderHealth(
   if (codePassRate !== null && codePassRate < 65 && auditTotal > auditPass) {
     riskTags.push("low_pass_rate");
   }
-  if (target.timeoutTurns >= 1 && (timeoutRatio >= 0.15 || target.timeoutTurns >= 2)) {
+  if (target.timeoutTurns >= 2 && timeoutRatio >= 0.15) {
     riskTags.push("timeout_prone");
   }
   if (avgTtftMs !== null && avgTtftMs > 7_500) {
     riskTags.push("slow_ttft");
   }
-  if (
-    target.hallucinationFlags >= 1 &&
-    (hallucinationRatio >= 0.15 || target.hallucinationFlags >= 2)
-  ) {
+  if (target.hallucinationFlags >= 2 && hallucinationRatio >= 0.15) {
     riskTags.push("high_hallucination");
   }
   if (toolSuccessRate !== null && toolSuccessRate < 82 && target.toolCallsFailed >= 2) {

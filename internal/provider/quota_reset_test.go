@@ -45,6 +45,7 @@ func TestParseQuotaReset(t *testing.T) {
 		{name: "date without reset wording is ignored", reason: "request 2026-10-30 22:48:16 failed", ok: false},
 		{name: "plain rate limit", reason: "429 Too Many Requests", ok: false},
 		{name: "bad offset", reason: "reset at 2026-10-30 22:48:16 UTC+99", ok: false},
+		{name: "connection reset with bare after is ignored", reason: "read tcp: connection reset by peer after 30s", ok: false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

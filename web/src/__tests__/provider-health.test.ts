@@ -340,6 +340,25 @@ describe("provider telemetry health scoring", () => {
     assertDeepEqual(pushSample([90], 0, true), [90, 0]);
     assertDeepEqual(pushSample([90], 0), [90]);
   });
+
+  it("does not permanently flag high-volume providers when lifetime timeout or hallucination ratio is low", () => {
+    setWorkspace("providerTelemetry", "high_volume_subapi", {
+      ...emptyStats("high_volume_subapi"),
+      totalTurns: 40_000,
+      successTurns: 39_920,
+      errorTurns: 80,
+      timeoutTurns: 6,
+      hallucinationFlags: 70,
+      toolCallsTotal: 12_000,
+      toolCallsFailed: 10,
+      ttftSamplesMs: [420, 480],
+      tpsSamples: [60, 75],
+    });
+    const health = computeProviderHealth("high_volume_subapi");
+    assertEqual(health.stabilityScore, 100);
+    assertDeepEqual(health.riskTags, []);
+    assertEqual(health.status, "healthy");
+  });
 });
 
 describe("context overflow detection", () => {
