@@ -10,6 +10,7 @@ export function createSessionScrollController(options: {
   ensureTurnVisible: (id: string) => void;
   shouldFollowBottom?: (id: string) => boolean;
 }) {
+  const MAX_SAVED_POSITIONS = 200;
   const positions = new Map<string, Position>();
   let sessionID: string | null = null;
   let pending: Position | undefined;
@@ -18,6 +19,15 @@ export function createSessionScrollController(options: {
   let frame: number | undefined;
   let settling: number | undefined;
 
+  const rememberPosition = (id: string, pos: Position) => {
+    if (positions.has(id)) positions.delete(id);
+    positions.set(id, pos);
+    if (positions.size > MAX_SAVED_POSITIONS) {
+      const oldest = positions.keys().next().value;
+      if (oldest !== undefined) positions.delete(oldest);
+    }
+  };
+
   const capture = () => {
     const el = options.scroller();
     if (!sessionID || pending || !el || el.clientHeight === 0) return;
@@ -25,7 +35,7 @@ export function createSessionScrollController(options: {
       (options.scroll.isFollowing?.() ?? false) ||
       el.scrollHeight - el.scrollTop - el.clientHeight < 64;
     if (isAtBottom) {
-      positions.set(sessionID, {
+      rememberPosition(sessionID, {
         bottom: true,
         top: el.scrollTop,
         offset: 0,
@@ -35,7 +45,7 @@ export function createSessionScrollController(options: {
     const top = el.getBoundingClientRect().top;
     const anchor = Array.from(el.querySelectorAll<HTMLElement>("[data-turn-id]"))
       .find((node) => node.getBoundingClientRect().bottom > top);
-    positions.set(sessionID, {
+    rememberPosition(sessionID, {
       bottom: false,
       top: el.scrollTop,
       turnID: anchor?.dataset.turnId,
@@ -100,12 +110,16 @@ export function createSessionScrollController(options: {
       sessionID = id;
       ready = false;
       hasTurns = false;
-      const followBottom = Boolean(id && options.shouldFollowBottom?.(id));
+      if (!id) {
+        pending = undefined;
+        return;
+      }
+      const followBottom = Boolean(options.shouldFollowBottom?.(id));
       pending = followBottom
         ? { bottom: true, top: 0, offset: 0 }
-        : positions.get(id || "") || { bottom: true, top: 0, offset: 0 };
-      if (followBottom && id) {
-        positions.set(id, pending);
+        : positions.get(id) || { bottom: true, top: 0, offset: 0 };
+      if (followBottom) {
+        rememberPosition(id, pending);
       }
       if (pending.bottom) options.scroll.resume();
       else options.scroll.pause();
@@ -115,12 +129,13 @@ export function createSessionScrollController(options: {
       if (settling !== undefined) cancelAnimationFrame(settling);
       frame = settling = undefined;
       pending = { bottom: true, top: 0, offset: 0 };
-      if (sessionID) positions.set(sessionID, pending);
+      if (sessionID) rememberPosition(sessionID, pending);
       options.scroll.resume();
       applyPending();
       if (ready) scheduleRestore();
     },
     ready(turnIDs: string[], loading: boolean) {
+      if (!sessionID) return;
       ready = !loading;
       hasTurns = turnIDs.length > 0;
       if (!pending) return;

@@ -2,11 +2,10 @@
 import { Show } from "solid-js";
 import {
   DEFAULT_WORKSPACE_IDENTITY_COLOR,
+  isActionableApprovalSession,
   isDefaultWorkspacePath,
   isDismissedProjectPath,
   isInvalidProjectPath,
-  isSessionArchived,
-  isSessionDeleted,
   isWorkSurfacePath,
   normalizeFolderPath,
   normalizeWorkspaceIdentityColor,
@@ -89,30 +88,19 @@ export function resolveActiveRootSessionID(): string | null {
   return resolveRootSessionID(activeID) || activeID;
 }
 
-function isActionablePendingSession(sessionID?: string | null): boolean {
-  const clean = sessionID?.trim();
-  if (!clean) return false;
-  if (isSessionDeleted(clean) || workspace.archivedSessionIDs.includes(clean)) return false;
-  const root = resolveRootSessionID(clean) || clean;
-  if (isSessionDeleted(root) || workspace.archivedSessionIDs.includes(root)) return false;
-  const found = workspace.sessions.find((s) => s.id === root || s.id === clean);
-  if (found && isSessionArchived(found)) return false;
-  return true;
-}
-
 export function collectPendingSessionIDs(): Set<string> {
   if (workspace.pendingPermissions.length === 0 && workspace.pendingQuestions.length === 0) {
     return EMPTY_PENDING_SET;
   }
   const set = new Set<string>();
   for (const p of workspace.pendingPermissions) {
-    if (!isActionablePendingSession(p?.sessionID)) continue;
+    if (!isActionableApprovalSession(p?.sessionID)) continue;
     set.add(p.sessionID);
     const root = resolveRootSessionID(p.sessionID);
     if (root) set.add(root);
   }
   for (const q of workspace.pendingQuestions) {
-    if (!isActionablePendingSession(q?.sessionID)) continue;
+    if (!isActionableApprovalSession(q?.sessionID)) continue;
     set.add(q.sessionID);
     const root = resolveRootSessionID(q.sessionID);
     if (root) set.add(root);
@@ -126,11 +114,11 @@ export function collectPendingApprovalRoots(): Set<string> {
   }
   const roots = new Set<string>();
   for (const p of workspace.pendingPermissions) {
-    if (!isActionablePendingSession(p?.sessionID)) continue;
+    if (!isActionableApprovalSession(p?.sessionID)) continue;
     roots.add(resolveRootSessionID(p.sessionID) || p.sessionID);
   }
   for (const q of workspace.pendingQuestions) {
-    if (!isActionablePendingSession(q?.sessionID)) continue;
+    if (!isActionableApprovalSession(q?.sessionID)) continue;
     roots.add(resolveRootSessionID(q.sessionID) || q.sessionID);
   }
   return roots.size > 0 ? roots : EMPTY_PENDING_SET;

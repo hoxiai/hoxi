@@ -6,7 +6,7 @@ import {
   syncSessionStatuses,
 } from "../store/session-status-sync";
 import { isManagedSession, sessionDirectory } from "../store/session-query";
-import { syncPendingPermissions } from "../store/approval-mode";
+import { clearSessionPendingApprovals, syncPendingPermissions } from "../store/approval-mode";
 import { setWorkspace, workspace } from "../store/workspace";
 import { assertEqual, describe, it } from "./test-harness";
 
@@ -247,6 +247,24 @@ describe("cross-project execution status", () => {
       applyManagedStatusSnapshot([]);
       assertEqual(workspace.pendingPermissions.length, 0);
       assertEqual(workspace.pendingQuestions.length, 0);
+
+      // A finishing child subagent only clears its own pending items, preserving
+      // approvals/questions on its still-running parent or sibling subagent.
+      setWorkspace("sessions", [
+        { id: "ses_root", title: "Root", directory: "/repo-a", time: { created: 1, updated: 1 } },
+        { id: "ses_child_1", parentID: "ses_root", title: "C1", directory: "/repo-a", time: { created: 2, updated: 2 } },
+        { id: "ses_child_2", parentID: "ses_root", title: "C2", directory: "/repo-a", time: { created: 3, updated: 3 } },
+      ]);
+      setWorkspace("pendingPermissions", [
+        { id: "per_root", sessionID: "ses_root", permission: "bash", patterns: ["a"], metadata: {}, always: [] },
+        { id: "per_c1", sessionID: "ses_child_1", permission: "bash", patterns: ["b"], metadata: {}, always: [] },
+        { id: "per_c2", sessionID: "ses_child_2", permission: "bash", patterns: ["c"], metadata: {}, always: [] },
+      ]);
+      clearSessionPendingApprovals("ses_child_1");
+      assertEqual(workspace.pendingPermissions.length, 2);
+      assertEqual(workspace.pendingPermissions.some((p) => p.id === "per_c1"), false);
+      clearSessionPendingApprovals("ses_root");
+      assertEqual(workspace.pendingPermissions.length, 0);
     } finally {
       Object.assign(hoxiAPI, originalAPI);
       setWorkspace(reconcile(saved));

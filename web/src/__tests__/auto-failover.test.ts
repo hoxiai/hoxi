@@ -13,6 +13,7 @@ import {
   handleSessionErrorEvent,
   isAutoFailoverPending,
   isCandidateCoolingDown,
+  markSessionInterrupted,
   parseQuotaResetMs,
   resetAutoPoolToDefault,
   saveAutoPool,
@@ -339,6 +340,28 @@ describe("auto-pool failover dispatch", () => {
       });
       assertEqual(attempted.length, 3);
       assertEqual(workspace.statusBySession[sid]?.type, "idle");
+
+      // If the user stops the session while a retry dispatch is in flight, it must stay idle.
+      let abortedCount = 0;
+      const origAbort = hoxiAPI.abortSession;
+      hoxiAPI.abortSession = async () => {
+        abortedCount++;
+      };
+      try {
+        await dispatchSessionPrompt("ping2", sid, { forceImmediate: true });
+        hoxiAPI.sendPromptAsync = async () => {
+          markSessionInterrupted(sid, "stopped");
+        };
+        await handleSessionErrorEvent(sid, {
+          name: "APIError",
+          data: { message: "502 Bad Gateway", statusCode: 502 },
+        });
+        assertEqual(workspace.statusBySession[sid]?.type, "idle");
+        assertEqual(isAutoFailoverPending(sid), false);
+        assertEqual(abortedCount, 1);
+      } finally {
+        hoxiAPI.abortSession = origAbort;
+      }
     } finally {
       clearAutoFailoverPending(sid);
       hoxiAPI.sendPromptAsync = origSend;

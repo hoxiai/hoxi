@@ -21,6 +21,7 @@ import {
   clearAutoFailoverPending,
   clearSessionPendingApprovals,
   handleSessionErrorEvent,
+  isActionableApprovalSession,
   isAutoFailoverPending,
   isDismissedProjectPath,
   isInvalidProjectPath,
@@ -118,7 +119,9 @@ export default function App() {
         void hoxiAPI
           .listQuestions(workspace.rootDir || undefined)
           .then((qs) => {
-            if (Array.isArray(qs)) setWorkspace("pendingQuestions", qs);
+            if (Array.isArray(qs)) {
+              setWorkspace("pendingQuestions", qs.filter((q) => isActionableApprovalSession(q?.sessionID)));
+            }
           })
           .catch(() => {});
       }
@@ -177,7 +180,9 @@ export default function App() {
         void hoxiAPI
           .listQuestions(eagerBootRoot || undefined)
           .then((qs) => {
-            if (Array.isArray(qs)) setWorkspace("pendingQuestions", qs);
+            if (Array.isArray(qs)) {
+              setWorkspace("pendingQuestions", qs.filter((q) => isActionableApprovalSession(q?.sessionID)));
+            }
           })
           .catch(() => {});
 
@@ -229,7 +234,9 @@ export default function App() {
                 ? bootstrapProjectSessions(workspace.rootDir, false, workspace.activeProjectID)
                 : Promise.resolve(),
               hoxiAPI.listQuestions(workspace.rootDir || undefined).then((questions) => {
-                if (Array.isArray(questions)) setWorkspace("pendingQuestions", questions);
+                if (Array.isArray(questions)) {
+                  setWorkspace("pendingQuestions", questions.filter((q) => isActionableApprovalSession(q?.sessionID)));
+                }
               }),
             ]);
           }
@@ -398,6 +405,9 @@ export default function App() {
               break;
             case "question.asked":
             case "question.v2.asked":
+              if (!isActionableApprovalSession(evt.properties?.sessionID)) {
+                break;
+              }
               rememberQuestionRequest(evt.properties);
               setWorkspace("pendingQuestions", (prev) =>
                 prev.some((q) => q.id === evt.properties.id) ? prev : [...prev, evt.properties]

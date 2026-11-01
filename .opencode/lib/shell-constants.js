@@ -154,7 +154,7 @@ function wordAt(s, i, word) {
   return i + word.length === s.length || isBoundary(s[i + word.length]);
 }
 
-function shellExpansionNames(s) {
+export function shellExpansionNames(s) {
   const names = [];
   let quote = "";
   for (let i = 0; i < s.length; i++) {
@@ -191,12 +191,12 @@ function shellExpansionNames(s) {
     } else if (next === "?" || next === "!") {
       names.push(next);
       i++;
-    } else if (/[0-9_('"@*#$-]/.test(next)) return null;
+    } else if (/[0-9_('"@*#$-]/.test(next) && !(quote === '"' && next === '"')) return null;
   }
   return names;
 }
 
-function wordExpansionNames(word) {
+export function wordExpansionNames(word) {
   const names = [];
   for (let i = 0; i < word.length; i++) {
     if (word[i] !== "$" || i + 1 >= word.length) continue;

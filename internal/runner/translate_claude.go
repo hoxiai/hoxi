@@ -530,17 +530,19 @@ func normalizeRunnerTool(rawName string, rawParams map[string]interface{}) (norm
 	}
 	lower := strings.ToLower(strings.TrimSpace(rawName))
 	switch lower {
-	case "view_file", "read", "read_file", "read_many_files", "read_resource":
+	case "view_file", "read", "read_file", "read_many_files", "read_resource", "read_file_content", "open_file":
 		normTool = "read"
 	case "write_to_file", "write_file", "write", "create_file":
 		normTool = "write"
-	case "replace_file_content", "multi_replace_file_content", "sed_file", "edit", "edit_file", "replace", "notebook_edit":
+	case "replace_file_content", "multi_replace_file_content", "sed_file", "edit", "edit_file", "replace", "str_replace", "str_replace_editor", "notebook_edit":
 		normTool = "edit"
-	case "run_command", "run_shell_command", "bash", "shell", "cmd_command", "execute_command":
+	case "patch", "apply_patch":
+		normTool = "patch"
+	case "run_command", "run_shell_command", "bash", "shell", "terminal", "cmd_command", "cmd", "command", "powershell", "pwsh", "execute_command":
 		normTool = "bash"
-	case "grep_search", "search_file_content", "grep":
+	case "grep_search", "search_file_content", "grep", "ripgrep", "rg", "search_file", "search":
 		normTool = "grep"
-	case "find_by_name", "list_dir", "list_directory", "list_files", "list_resources", "glob":
+	case "find_by_name", "find", "list", "ls", "list_dir", "list_directory", "list_files", "list_resources", "glob":
 		normTool = "glob"
 	case "search_web", "google_web_search", "web_search", "websearch":
 		normTool = "websearch"
@@ -558,7 +560,7 @@ func normalizeRunnerTool(rawName string, rawParams map[string]interface{}) (norm
 		// Qoder's task board tools are not TodoWrite; keep them distinct so the
 		// timeline still shows them as work steps.
 		normTool = lower
-	case "ask_question":
+	case "ask_question", "askuserquestion", "ask_user_question", "ask_user":
 		normTool = "question"
 	default:
 		normTool = lower

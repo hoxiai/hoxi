@@ -7,7 +7,8 @@ import { createEffect, createRoot, createSignal, untrack } from "solid-js";
 import { hoxiAPI, type DesktopIntent } from "../services/api";
 import { onDesktopIntent } from "../services/desktop-events";
 import { saveLayoutPrefs, setLeftNavOpen } from "./layout";
-import { isSessionArchived, isSessionBusy, isSessionDeleted, sessionDirectory } from "./session-query";
+import { isActionableApprovalSession } from "./approval-mode";
+import { isSessionArchived, isSessionBusy, sessionDirectory } from "./session-query";
 import { startNewThreadDraft } from "./session-sandbox";
 import {
   closeHandoffModal,
@@ -221,11 +222,9 @@ export function focusFirstAttentionSession(targetSessionID?: string, directory?:
     ) || undefined;
   const pushTarget = (rawSessionID?: string, fallbackDir?: string) => {
     const sid = rawSessionID?.trim();
-    if (!sid || isSessionDeleted(sid) || workspace.archivedSessionIDs.includes(sid)) return;
+    if (!sid || !isActionableApprovalSession(sid)) return;
     const rootID = resolveRootSessionID(sid) || sid;
-    if (seen.has(rootID) || isSessionDeleted(rootID) || workspace.archivedSessionIDs.includes(rootID)) return;
-    const existing = workspace.sessions.find((s) => s.id === rootID || s.id === sid);
-    if (existing && isSessionArchived(existing)) return;
+    if (seen.has(rootID)) return;
     seen.add(rootID);
     const metaDir = normalizeFolderPath(fallbackDir) || undefined;
     targets.push({

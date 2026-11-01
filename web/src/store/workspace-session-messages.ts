@@ -3,70 +3,21 @@ import { produce } from "solid-js/store";
 import { t } from "../i18n";
 import { hoxiAPI, resolveRunnerRuntimeForProvider, type SkillSelection } from "../services/api";
 import type { MessagePart } from "../services/sse-types";
-import {
-  extractUserTurnSkillSelection,
-  revalidateSkillForTargetDirectory,
-  setComposerSkillNotice,
-  transferDraftComposerSkill,
-} from "./skills";
-import {
-  recordPromptDispatched,
-  recordSessionRetry,
-  recordUserAbortAction,
-} from "./provider-telemetry";
-import {
-  extractLocalFallbackTitle,
-  isPlaceholderSessionTitle,
-  summarizeAndRenameSession,
-} from "./session-title";
-import {
-  isAutoModel,
-  markAutoCandidateCooldown,
-  modelSupportsImageInput,
-  resolveAutoModelTarget,
-} from "./auto-models";
+import { extractUserTurnSkillSelection, revalidateSkillForTargetDirectory, setComposerSkillNotice, transferDraftComposerSkill } from "./skills";
+import { recordPromptDispatched, recordSessionRetry, recordUserAbortAction } from "./provider-telemetry";
+import { extractLocalFallbackTitle, isPlaceholderSessionTitle, summarizeAndRenameSession } from "./session-title";
+import { isAutoModel, markAutoCandidateCooldown, modelSupportsImageInput, resolveAutoModelTarget } from "./auto-models";
 import { reportAutoCandidateOutcome } from "./auto-breaker";
-import {
-  clearAutoFailoverPending,
-  clearTurnDispatchState,
-  getTurnDispatchState,
-  markAutoFailoverPending,
-  recordAutoFailover,
-  rememberTurnDispatch,
-  selectNextDispatchTarget,
-  type AutoFailoverReason,
-} from "./auto-failover";
+import { clearAutoFailoverPending, clearTurnDispatchState, getTurnDispatchState, markAutoFailoverPending, recordAutoFailover, rememberTurnDispatch, selectNextDispatchTarget, type AutoFailoverReason } from "./auto-failover";
 import { newIsolatedSession, waitForSessionSandbox } from "./session-sandbox";
 import { buildCombinedSystemPrompt } from "./settings";
 import { setWorkspace, workspace, type ReasoningEffort } from "./workspace-state";
 import { initializeSessionAI, parseModelString, sessionAIConfig } from "./session-ai";
-import {
-  loadSessionMessages,
-  renameSessionTitle,
-  replaceSession,
-} from "./workspace-sessions";
-import {
-  buildWorkspaceFoldersSystemPrompt,
-  normalizeFolderPath,
-  workspaceFoldersForDir,
-} from "./workspace-folders";
-import {
-  isSessionBusy,
-  isSessionDeleted,
-  requestTimelineFollow,
-  sessionDirectory,
-  sessionRuntimeForID,
-  timelineFollowRequest,
-} from "./session-query";
+import { loadSessionMessages, renameSessionTitle, replaceSession } from "./workspace-sessions";
+import { buildWorkspaceFoldersSystemPrompt, normalizeFolderPath, workspaceFoldersForDir } from "./workspace-folders";
+import { isSessionBusy, isSessionDeleted, requestTimelineFollow, sessionDirectory, sessionRuntimeForID, timelineFollowRequest } from "./session-query";
 import { pauseSessionGoal } from "./session-goal-state";
-import {
-  beginQueueDrain,
-  endQueueDrain,
-  enqueueSessionPrompt,
-  markSessionPromptDispatched,
-  removeQueuedPrompt,
-  restoreQueuedPromptAt,
-} from "./prompt-queue";
+import { beginQueueDrain, endQueueDrain, enqueueSessionPrompt, markSessionPromptDispatched, removeQueuedPrompt, restoreQueuedPromptAt } from "./prompt-queue";
 import { collectChildSubagentSessionIDs } from "./subagent-sessions";
 
 const lastInterruptAtBySession = new Map<string, number>();
@@ -100,7 +51,19 @@ export async function handleSessionErrorEvent(
   const initialFailed = autoState ? { ...autoState.target } : undefined;
   let initialReason: AutoFailoverReason | undefined;
   let initialCooldownUntil: number | undefined;
-  while (autoState && currentError && currentError.name !== "RunnerStalledError") {
+  const isGone = () =>
+    isSessionDeleted(sessionID) || workspace.archivedSessionIDs.includes(sessionID);
+  const isSuperseded = () =>
+    autoState !== undefined && getTurnDispatchState(sessionID) !== autoState;
+  const isStoppedOrSuperseded = () =>
+    isGone() || Boolean(workspace.interruptedBySession[sessionID]) || isSuperseded();
+
+  while (
+    autoState &&
+    currentError &&
+    currentError.name !== "RunnerStalledError" &&
+    !isStoppedOrSuperseded()
+  ) {
     const failed = { ...autoState.target };
     const nextStep = selectNextDispatchTarget(sessionID, currentError, autoState);
     if (!nextStep) break;
@@ -129,6 +92,14 @@ export async function handleSessionErrorEvent(
           Boolean(workspace.hoxiProviders?.[nextStep.target.providerID || ""])
         ),
       });
+      if (isStoppedOrSuperseded()) {
+        clearAutoFailoverPending(sessionID);
+        if (isGone() || workspace.interruptedBySession[sessionID]) {
+          setWorkspace("statusBySession", sessionID, { type: "idle" });
+          void hoxiAPI.abortSession(sessionID, sessionDirectory(sessionID)).catch(() => {});
+        }
+        return;
+      }
       if (nextStep.switchedPoolCandidate) {
         recordAutoFailover({
           sessionID,
@@ -142,6 +113,7 @@ export async function handleSessionErrorEvent(
       markSessionPromptDispatched(sessionID);
       return;
     } catch (sendErr) {
+      if (isStoppedOrSuperseded()) break;
       const errMsg = sendErr instanceof Error ? sendErr.message : String(sendErr || "error");
       const statusMatch = errMsg.match(/\bHTTP (\d{3})\b/);
       currentError = {
@@ -151,12 +123,22 @@ export async function handleSessionErrorEvent(
     }
   }
   clearAutoFailoverPending(sessionID);
+  if (isGone() || workspace.interruptedBySession[sessionID] || (isSuperseded() && isSessionBusy(sessionID))) {
+    return;
+  }
   pauseSessionGoal(sessionID, "error");
   lastInterruptAtBySession.set(sessionID, Date.now());
   setWorkspace("statusBySession", sessionID, { type: "idle" });
   setWorkspace("unreadCompletedBySession", sessionID, false);
   await loadSessionMessages(sessionID);
-  if (!currentError) return;
+  if (
+    !currentError ||
+    isGone() ||
+    workspace.interruptedBySession[sessionID] ||
+    (isSuperseded() && isSessionBusy(sessionID))
+  ) {
+    return;
+  }
   setWorkspace(
     produce((state) => {
       const list = (state.messagesBySession[sessionID] ||= []);

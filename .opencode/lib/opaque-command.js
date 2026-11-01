@@ -44,8 +44,10 @@ import {
   findSubshellSpans,
   isHarmlessSet,
   setLiteralJudge,
+  shellExpansionNames,
   skipSafeBraceSpan,
   unwrapCommandPrefixes,
+  wordExpansionNames,
 } from "./shell-constants.js";
 import {
   SEQ_LOOP_PLACEHOLDER,
@@ -566,50 +568,6 @@ function loopBindings(segments, pipedIn, valueClass = false) {
   return vars;
 }
 
-function shellExpansionNames(s) {
-  const names = [];
-  let quote = "";
-  for (let i = 0; i < s.length; i++) {
-    const c = s[i];
-    if (quote === "'") {
-      if (c === "'") quote = "";
-      continue;
-    }
-    if (c === "\\") {
-      i++;
-      continue;
-    }
-    if (c === '"') {
-      quote = quote === '"' ? "" : '"';
-      continue;
-    }
-    if (c === "'" && quote === "") {
-      quote = "'";
-      continue;
-    }
-    if (c !== "$" || i + 1 >= s.length) continue;
-    const next = s[i + 1];
-    if (next === "{") {
-      const end = s.indexOf("}", i + 2);
-      const name = end < 0 ? "" : braceVarName(s.slice(i + 2, end));
-      if (!name) return null;
-      names.push(name);
-      i = end;
-    } else if (/[A-Za-z_]/.test(next)) {
-      let k = i + 1;
-      while (k < s.length && /[A-Za-z0-9_]/.test(s[k])) k++;
-      names.push(s.slice(i + 1, k));
-      i = k - 1;
-    } else if (next === "?" || next === "!") {
-      names.push(next);
-      i++;
-    } else if (DOLLAR_EXPAND_RE.test(next) && !(quote === '"' && next === '"')) {
-      return null;
-    }
-  }
-  return names;
-}
-
 // Expansions only in the message of `git commit|tag|merge|stash -m …`.
 function gitMessageExpansionsOnly(args, vars) {
   let i = 0;
@@ -637,32 +595,6 @@ function gitMessageExpansionsOnly(args, vars) {
     }
   }
   return true;
-}
-
-function wordExpansionNames(word) {
-  const names = [];
-  for (let i = 0; i < word.length; i++) {
-    if (word[i] !== "$" || i + 1 >= word.length) continue;
-    const next = word[i + 1];
-    if (next === "{") {
-      const end = word.indexOf("}", i + 2);
-      const name = end < 0 ? "" : braceVarName(word.slice(i + 2, end));
-      if (!name) return null;
-      names.push(name);
-      i = end;
-    } else if (/[A-Za-z_]/.test(next)) {
-      let k = i + 1;
-      while (k < word.length && /[A-Za-z0-9_]/.test(word[k])) k++;
-      names.push(word.slice(i + 1, k));
-      i = k - 1;
-    } else if (next === "?" || next === "!") {
-      names.push(next);
-      i++;
-    } else {
-      return null;
-    }
-  }
-  return names;
 }
 
 function isBenignPathAssignment(word) {

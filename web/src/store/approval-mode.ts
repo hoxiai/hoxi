@@ -27,7 +27,7 @@ import {
 } from "./settings";
 import { setWorkspace, workspace } from "./workspace-state";
 import { isSessionArchived, isSessionDeleted, sessionDirectory } from "./session-query";
-import { resolveRootSessionID } from "./subagent-sessions";
+import { resolveParentSessionID, resolveRootSessionID } from "./subagent-sessions";
 import { normalizeFolderPath } from "./workspace-folders";
 import { fetchGlobalConfig, updateGlobalPermissions } from "./global-config";
 import { getInternalLLMProviderModelGroups, isInternalLLMModel } from "./provider-catalog";
@@ -356,8 +356,11 @@ export function clearSessionPendingApprovals(sessionID: string): void {
   const clean = sessionID?.trim();
   if (!clean) return;
   const rootID = resolveRootSessionID(clean) || clean;
+  const isRoot = clean === rootID;
   const matches = (sid: string) =>
-    sid === clean || sid === rootID || resolveRootSessionID(sid) === rootID;
+    isRoot
+      ? sid === clean || resolveRootSessionID(sid) === clean
+      : sid === clean || resolveParentSessionID(sid) === clean;
   if (workspace.pendingPermissions.some((p) => matches(p.sessionID))) {
     setWorkspace("pendingPermissions", (prev) => prev.filter((p) => !matches(p.sessionID)));
   }
@@ -366,19 +369,19 @@ export function clearSessionPendingApprovals(sessionID: string): void {
   }
 }
 
-function isDisqualifiedApprovalSession(sessionID?: string | null): boolean {
+export function isActionableApprovalSession(sessionID?: string | null): boolean {
   const clean = sessionID?.trim();
-  if (!clean) return true;
-  if (isSessionDeleted(clean) || workspace.archivedSessionIDs.includes(clean)) return true;
+  if (!clean) return false;
+  if (isSessionDeleted(clean) || workspace.archivedSessionIDs.includes(clean)) return false;
   const rootID = resolveRootSessionID(clean) || clean;
-  if (isSessionDeleted(rootID) || workspace.archivedSessionIDs.includes(rootID)) return true;
+  if (isSessionDeleted(rootID) || workspace.archivedSessionIDs.includes(rootID)) return false;
   const found = workspace.sessions.find((s) => s.id === rootID || s.id === clean);
-  if (found && isSessionArchived(found)) return true;
-  return false;
+  if (found && isSessionArchived(found)) return false;
+  return true;
 }
 
 export function handleIncomingPermissionRequest(req: PermissionRequest): void {
-  if (!req?.id || resolvedPermissionIDs.has(req.id) || isDisqualifiedApprovalSession(req.sessionID)) {
+  if (!req?.id || resolvedPermissionIDs.has(req.id) || !isActionableApprovalSession(req.sessionID)) {
     return;
   }
   addPendingPermissionToStore(req); // Dock only; auto-approval happens in the Go gate
@@ -473,7 +476,7 @@ export async function syncPendingPermissions(directory?: string): Promise<void> 
       setWorkspace("pendingPermissions", (prev) =>
         prev.filter(
           (p) =>
-            !isDisqualifiedApprovalSession(p?.sessionID) &&
+            isActionableApprovalSession(p?.sessionID) &&
             (remoteIDs.has(p.id) ||
               !isDirectoryInScopes(resolvePermissionDirectory(p), answeredScopes))
         )
