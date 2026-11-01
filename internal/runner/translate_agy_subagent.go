@@ -152,6 +152,11 @@ func (t *TurnTranslator) handleAgySubagentStep(su *agyStepUpdate, now int64) []S
 	return evts
 }
 
+func isAgyServerRestartNotice(sender, body string) bool {
+	return strings.EqualFold(strings.TrimSpace(sender), "system") &&
+		strings.Contains(body, "stopped due to server restart")
+}
+
 // handleAgySystemMessage attaches a subagent report to its task part.
 func (t *TurnTranslator) handleAgySystemMessage(su *agyStepUpdate, now int64) []SSEEvent {
 	var content string
@@ -159,6 +164,10 @@ func (t *TurnTranslator) handleAgySystemMessage(su *agyStepUpdate, now int64) []
 		content = t.lookupStep(t.externalID, su.StepIndex)
 	}
 	sender, body := parseAgySystemMessage(content)
+	if isAgyServerRestartNotice(sender, body) {
+		return nil
+	}
+	t.agyFinalResponseDone = false
 	tr := t.subagentByConv[sender]
 	if tr == nil || tr.reported {
 		tr = t.firstUnreportedSubagent()

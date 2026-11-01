@@ -422,7 +422,7 @@ func (s *Service) startTurnProcess(
 					if ap.wasAborted() && isStreamResultLine(line) {
 						return
 					}
-					if isFailedStreamResultLine(line) && !ap.wasAborted() && ap.stall.abortError() == nil {
+					if isFailedStreamResultLine(line) && !tr.IsStaleAgyResultError(line) && !ap.wasAborted() && ap.stall.abortError() == nil {
 						resErr := extractFailedStreamResultError(line, tr.LastErrorText())
 						canResume := !tr.HasToolParts() || strings.TrimSpace(firstNonEmptyStr(tr.ExternalID(), rec.ExternalID)) != ""
 						if (retryAttempt < len(retryDelays) && isRetryableTurnError(resErr) && canResume) ||

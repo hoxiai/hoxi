@@ -442,3 +442,127 @@ finished:
 		t.Fatalf("expected only 1 CLI invocation before abort during backoff, got %q", strings.TrimSpace(string(countBytes)))
 	}
 }
+
+func TestRunnerIgnoresStaleAgyResultErrorWhenTurnResponseCompleted(t *testing.T) {
+	repoDir := initTestGitRepo(t)
+	storePath := filepath.Join(t.TempDir(), "runner-sessions.json")
+	tracker := statusbar.NewTracker()
+	wtMgr := worktree.NewManager(repoDir)
+	svc := NewService(repoDir, wtMgr, tracker, storePath)
+	svc.turnRetryDelays = []time.Duration{15 * time.Millisecond, 30 * time.Millisecond}
+	defer svc.CloseAll()
+
+	mux := http.NewServeMux()
+	svc.RegisterRoutes(mux)
+
+	createBody, _ := json.Marshal(map[string]string{
+		"runtime":     "antigravity",
+		"title":       "Stale Result Error Test",
+		"modelID":     "gemini-4-argon-high",
+		"directory":   repoDir,
+		"sandboxMode": "worktree",
+	})
+	recCreate := httptest.NewRecorder()
+	mux.ServeHTTP(recCreate, httptest.NewRequest(http.MethodPost, "/api/hoxi/runner/sessions", bytes.NewReader(createBody)))
+	if recCreate.Code != http.StatusOK {
+		t.Fatalf("create session failed (%d): %s", recCreate.Code, recCreate.Body.String())
+	}
+	var created SessionInfo
+	if err := json.Unmarshal(recCreate.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+
+	binRoot := t.TempDir()
+	agyDir := filepath.Join(binRoot, "bin")
+	if err := os.MkdirAll(agyDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	convID := "conv-stale-err-1"
+	logDir := agyTranscriptLogDir(filepath.Join(binRoot, "antigravity-cli", "brain"), convID)
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	transcriptRow := `{"step_index":1,"type":"GENERIC","status":"DONE","content":"The following is a <SYSTEM_MESSAGE> not actually sent by the user.\n\n<SYSTEM_MESSAGE>\n[Message] timestamp=2026-11-01T09:16:08Z sender=system priority=MESSAGE_PRIORITY_LOW content=[Notice] All your subagents and background tasks have been stopped due to server restart. If you need any of them to continue, please restart them.\n</SYSTEM_MESSAGE>"}` + "\n"
+	if err := os.WriteFile(filepath.Join(logDir, "transcript.jsonl"), []byte(transcriptRow), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	countFile := filepath.Join(created.Directory, ".stale_attempt_count")
+	t.Setenv("GEMINI_HOME", binRoot)
+	t.Setenv("PATH", agyDir+string(os.PathListSeparator)+"/usr/bin:/bin")
+	t.Setenv("TEST_ATTEMPT_FILE", countFile)
+
+	script := `#!/bin/sh
+cat >/dev/null
+count=0
+if [ -f "$TEST_ATTEMPT_FILE" ]; then
+  read -r count < "$TEST_ATTEMPT_FILE"
+fi
+count=$((count + 1))
+printf '%s\n' "$count" > "$TEST_ATTEMPT_FILE"
+printf '%s\n' '{"conversation_id":"conv-stale-err-1","event":"init","init":{"model":"gemini-4-argon-high","permission_mode":"accept-edits"}}'
+printf '%s\n' '{"conversation_id":"conv-stale-err-1","event":"step_update","step_update":{"conversation_id":"conv-stale-err-1","state":"DONE","step_index":1,"step_type":"system_message"}}'
+printf '%s\n' '{"conversation_id":"conv-stale-err-1","event":"step_update","step_update":{"conversation_id":"conv-stale-err-1","duration_seconds":0.05,"state":"DONE","step_index":2,"step_type":"tool","tool_info":{"name":"run_command","output":"ok\n","parameters":{"CommandLine":"echo ok"}},"tool_name":"run_command"}}'
+printf '%s\n' '{"conversation_id":"conv-stale-err-1","event":"step_update","step_update":{"conversation_id":"conv-stale-err-1","state":"ACTIVE","step_index":3,"step_type":"agent_response","text_delta":"所有改动与验证均已完成并提交。"}}'
+printf '%s\n' '{"conversation_id":"conv-stale-err-1","event":"step_update","step_update":{"conversation_id":"conv-stale-err-1","duration_seconds":1.1,"state":"DONE","step_index":3,"step_type":"agent_response"}}'
+printf '%s\n' '{"conversation_id":"conv-stale-err-1","event":"result","result":{"conversation_id":"conv-stale-err-1","error":"There was a network issue connecting to the server, please try again.","status":"ERROR"}}'
+`
+	execstub.Write(t, agyDir, "agy", script)
+
+	ch, unsub := svc.Subscribe(created.ID)
+	defer unsub()
+
+	recPrompt := httptest.NewRecorder()
+	mux.ServeHTTP(recPrompt, httptest.NewRequest(http.MethodPost, "/api/hoxi/runner/sessions/"+created.ID+"/prompt", strings.NewReader(`{"text":"status"}`)))
+	if recPrompt.Code != http.StatusOK {
+		t.Fatalf("prompt failed (%d): %s", recPrompt.Code, recPrompt.Body.String())
+	}
+
+	deadline := time.After(5 * time.Second)
+	sawRetry := false
+	sawSessionError := false
+	sawIdle := false
+	for !sawIdle {
+		select {
+		case evt := <-ch:
+			switch evt.Type {
+			case "session.status":
+				if st, ok := evt.Properties["status"].(SessionStatus); ok && st.Type == "retry" {
+					sawRetry = true
+				}
+			case "session.error":
+				sawSessionError = true
+			case "session.idle":
+				sawIdle = true
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for session.idle")
+		}
+	}
+
+	if sawRetry {
+		t.Fatal("did not expect retry when final agent_response already completed")
+	}
+	if sawSessionError {
+		t.Fatal("did not expect session.error when final agent_response already completed")
+	}
+	countBytes, _ := os.ReadFile(countFile)
+	if strings.TrimSpace(string(countBytes)) != "1" {
+		t.Fatalf("expected exactly 1 agy invocation, got %q", strings.TrimSpace(string(countBytes)))
+	}
+
+	time.Sleep(30 * time.Millisecond)
+	recStored, ok := svc.store.Get(created.ID)
+	if !ok || len(recStored.Turns) < 2 {
+		t.Fatalf("expected user + assistant turns stored, got %+v", recStored)
+	}
+	asstTurn := recStored.Turns[len(recStored.Turns)-1]
+	if asstTurn.Info.Error != nil || asstTurn.Info.Finish != "stop" {
+		t.Fatalf("expected clean assistant turn (finish=stop, err=nil), got finish=%q err=%+v", asstTurn.Info.Finish, asstTurn.Info.Error)
+	}
+	for _, p := range asstTurn.Parts {
+		if p.Type == "tool" && p.Tool == "agent_report" {
+			t.Fatalf("did not expect server-restart system_message to create agent_report tool part: %+v", p)
+		}
+	}
+}

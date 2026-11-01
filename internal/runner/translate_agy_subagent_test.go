@@ -350,3 +350,53 @@ func TestParseAgySystemMessage(t *testing.T) {
 		t.Fatalf("got sender=%q body=%q", sender, body)
 	}
 }
+
+func TestAgyServerRestartSystemNoticeIsIgnored(t *testing.T) {
+	t.Parallel()
+	restartNotice := "The following is a <SYSTEM_MESSAGE> not actually sent by the user.\n\n<SYSTEM_MESSAGE>\n[Message] timestamp=2026-11-01T08:52:09Z sender=system priority=MESSAGE_PRIORITY_LOW content=[Notice] All your subagents and background tasks have been stopped due to server restart. If you need any of them to continue, please restart them.\n</SYSTEM_MESSAGE>"
+	tr, _ := newAgyTestTranslator(func(_ string, step int) string {
+		if step == 1 {
+			return restartNotice
+		}
+		return ""
+	})
+	tr.FeedLine(`{"event":"init","conversation_id":"` + agyParentConv + `","init":{"model":"gemini-4-argon-high"}}`)
+	evts := tr.FeedLine(`{"event":"step_update","step_update":{"conversation_id":"` + agyParentConv + `","step_index":1,"state":"DONE","step_type":"system_message"}}`)
+	if len(evts) != 0 || len(tr.partsByID) != 0 || tr.HasToolParts() {
+		t.Fatalf("server restart notice must not become an agent_report tool part: evts=%d parts=%+v hasTools=%v", len(evts), tr.partsByID, tr.HasToolParts())
+	}
+}
+
+func TestAgyStaleHistoricalResultErrorAfterCompletedResponseFinishesCleanly(t *testing.T) {
+	t.Parallel()
+	tr, _ := newAgyTestTranslator(func(string, int) string { return "" })
+	tr.FeedLine(`{"event":"init","conversation_id":"` + agyParentConv + `","init":{"model":"gemini-4-argon-high"}}`)
+	tr.FeedLine(`{"event":"step_update","step_update":{"conversation_id":"` + agyParentConv + `","step_index":1,"state":"ACTIVE","step_type":"agent_response","text_delta":"All tasks completed."}}`)
+
+	staleResultLine := `{"event":"result","result":{"conversation_id":"` + agyParentConv + `","status":"ERROR","error":"There was a network issue connecting to the server, please try again."}}`
+	if tr.IsStaleAgyResultError(staleResultLine) {
+		t.Fatal("active (incomplete) agent_response must not suppress result error")
+	}
+
+	tr.FeedLine(`{"event":"step_update","step_update":{"conversation_id":"` + agyParentConv + `","step_index":1,"state":"DONE","step_type":"agent_response","duration_seconds":1.2}}`)
+	if !tr.IsStaleAgyResultError(staleResultLine) {
+		t.Fatal("completed agent_response must mark retryable historical result error as stale")
+	}
+
+	evts := tr.FeedLine(staleResultLine)
+	if tr.msgInfo.Error != nil || tr.msgInfo.Finish != "stop" {
+		t.Fatalf("expected clean stop finish without RunnerError, got finish=%q err=%+v", tr.msgInfo.Finish, tr.msgInfo.Error)
+	}
+	sawIdle := false
+	for _, e := range evts {
+		if e.Type == "session.error" {
+			t.Fatalf("unexpected session.error event: %+v", e)
+		}
+		if e.Type == "session.idle" {
+			sawIdle = true
+		}
+	}
+	if !sawIdle {
+		t.Fatal("expected session.idle event when stale result error is ignored")
+	}
+}

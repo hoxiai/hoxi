@@ -27,15 +27,16 @@ type TurnTranslator struct {
 	geminiLastErrMsg   string
 	startedAtMs        int64
 
-	msgInfo      MessageInfo
-	partOrder    []string
-	partsByID    map[string]*MessagePart
-	stepStartMs  map[int]int64
-	hasTextPart  bool
-	turnFinished bool
-	lookupThink   func(externalID string, stepIndex int) string
-	lookupStep    func(externalID string, stepIndex int) string
-	editPayloads  *agyEditPayloadCursor
+	msgInfo              MessageInfo
+	partOrder            []string
+	partsByID            map[string]*MessagePart
+	stepStartMs          map[int]int64
+	hasTextPart          bool
+	agyFinalResponseDone bool
+	turnFinished         bool
+	lookupThink          func(externalID string, stepIndex int) string
+	lookupStep           func(externalID string, stepIndex int) string
+	editPayloads         *agyEditPayloadCursor
 
 	// mu serialises stdout feeding against the subagent activity poller.
 	mu             sync.Mutex
@@ -116,6 +117,7 @@ func (t *TurnTranslator) ResetForFreshRetry() {
 	t.convPinned = false
 	t.editPayloads = nil
 	t.geminiLastErrMsg = ""
+	t.agyFinalResponseDone = false
 }
 
 // noteAgyConversation pins externalID to the first conversation this turn
@@ -259,8 +261,10 @@ func (t *TurnTranslator) feedAgyLine(line string) []SSEEvent {
 		case "agent_response":
 			return t.handleAgyAgentResponse(su, now)
 		case "subagent":
+			t.agyFinalResponseDone = false
 			return t.handleAgySubagentStep(su, now)
 		case "tool":
+			t.agyFinalResponseDone = false
 			if isAgySubagentDispatch(su) {
 				return t.handleAgySubagentStep(su, now)
 			}
@@ -287,6 +291,7 @@ func (t *TurnTranslator) feedAgyLine(line string) []SSEEvent {
 }
 
 func (t *TurnTranslator) handleAgyAgentResponse(su *agyStepUpdate, now int64) []SSEEvent {
+	t.agyFinalResponseDone = false
 	var evts []SSEEvent
 	startMs := t.stepStartMs[su.StepIndex]
 	endMs := now
@@ -380,6 +385,7 @@ func (t *TurnTranslator) handleAgyAgentResponse(su *agyStepUpdate, now int64) []
 		}
 		if part, exists := t.partsByID[txtID]; exists {
 			part.Time = &PartTime{Start: startMs, End: endMs}
+			t.agyFinalResponseDone = strings.TrimSpace(part.Text) != ""
 			evts = append(evts, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": clonePart(*part)}})
 		}
 		if tokensUpdated {
@@ -527,14 +533,60 @@ func (t *TurnTranslator) handleAgyToolStep(su *agyStepUpdate, now int64) []SSEEv
 	return evts
 }
 
+// IsStaleAgyResultError reports whether a stream `result` line is a historical
+// trajectory error re-emitted by `agy` on a resumed conversation after the
+// current turn has already finished its final assistant response cleanly.
+func (t *TurnTranslator) IsStaleAgyResultError(rawLine string) bool {
+	line := strings.TrimSpace(rawLine)
+	if line == "" || !strings.HasPrefix(line, "{") {
+		return false
+	}
+	var env agyRawEvent
+	if err := json.Unmarshal([]byte(line), &env); err != nil {
+		return false
+	}
+	if env.Event != "result" || env.Result == nil {
+		return false
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if id := strings.TrimSpace(firstNonEmptyStr(env.Result.ConversationID, env.ConversationID)); id != "" && t.convPinned && id != t.externalID {
+		return false
+	}
+	return t.isStaleAgyResultErrorLocked(env.Result)
+}
+
+func (t *TurnTranslator) isStaleAgyResultErrorLocked(res *agyResult) bool {
+	if res == nil || res.Status != "ERROR" || !t.agyFinalResponseDone {
+		return false
+	}
+	if len(res.DeniedActions) > 0 || t.hasWaitingSubagents() {
+		return false
+	}
+	errMsg := strings.TrimSpace(res.Error)
+	if strings.EqualFold(errMsg, "interrupted") || !isRetryableTurnError(errMsg) {
+		return false
+	}
+	for _, p := range t.partsByID {
+		if p != nil && p.Type == "tool" && p.State != nil {
+			switch p.State.Status {
+			case "pending", "running", "error":
+				return false
+			}
+		}
+	}
+	return true
+}
+
 func (t *TurnTranslator) handleAgyResult(res *agyResult) []SSEEvent {
 	t.turnFinished = true
 	now := time.Now().UnixMilli()
 	var evts []SSEEvent
 
+	isErr := res.Status == "ERROR" && !t.isStaleAgyResultErrorLocked(res)
 	t.msgInfo.Time.Completed = now
-	evts = append(evts, t.finishAgySubagents(res.Status == "ERROR", now)...)
-	evts = append(evts, t.closeAllChildren(res.Status == "ERROR", now)...)
+	evts = append(evts, t.finishAgySubagents(isErr, now)...)
+	evts = append(evts, t.closeAllChildren(isErr, now)...)
 	// On resumed conversations (`--conversation <id>`), `result.usage` reports the
 	// cumulative total across the entire conversation since step 0, and on errors
 	// or interruptions it reports all zeros. Prefer the per-step usage accumulated
@@ -583,7 +635,7 @@ func (t *TurnTranslator) handleAgyResult(res *agyResult) []SSEEvent {
 		evts = append(evts, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": part}})
 	}
 
-	if res.Status == "ERROR" {
+	if isErr {
 		if strings.EqualFold(strings.TrimSpace(res.Error), "interrupted") {
 			t.msgInfo.Finish = "aborted"
 			evts = append(evts,
@@ -660,6 +712,7 @@ func (t *TurnTranslator) ResetUncommittedTurnForRetry(initialExternalID string) 
 	t.agyStepUsage = make(map[string]agyUsage)
 	t.claudeMsgUsage = make(map[string]claudeUsage)
 	t.hasTextPart = false
+	t.agyFinalResponseDone = false
 	t.turnFinished = false
 	t.externalID = initialExternalID
 	t.convPinned = false
@@ -712,6 +765,7 @@ func (t *TurnTranslator) PrepareForResumeRetry(nowMs int64) []SSEEvent {
 			evts = append(evts, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": clonePart(*part)}})
 		}
 	}
+	t.agyFinalResponseDone = false
 	t.turnFinished = false
 	t.geminiStepIdx++
 	t.geminiReasonPartID = ""
