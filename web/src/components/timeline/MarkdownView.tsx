@@ -1,6 +1,6 @@
 import { createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js";
 import { createIncrementalMarkdownParser } from "./markdown-parser";
-import { createStreamPacer, REVEAL_REPLAY_MAX_CHARS } from "./markdown/reveal";
+import { createStreamPacer, initialRevealSlice, REVEAL_REPLAY_MAX_CHARS } from "./markdown/reveal";
 import {
   prefersReducedMotion,
   StreamRevealContext,
@@ -55,9 +55,12 @@ export default function MarkdownView(props: {
     !isDocumentHidden() &&
     !prefersReducedMotion() &&
     initial.length <= REVEAL_REPLAY_MAX_CHARS;
-  const pacer = createStreamPacer(replay ? "" : initial, clock());
-  const [displayed, setDisplayed] = createSignal(replay ? "" : initial);
-  const [revealActive, setRevealActive] = createSignal(false);
+  // Replay starts from the first visible character, not empty: the view must
+  // take up space in the same frame the waiting row above it disappears.
+  const mounted = replay ? initialRevealSlice(initial) : initial;
+  const pacer = createStreamPacer(mounted, clock());
+  const [displayed, setDisplayed] = createSignal(mounted);
+  const [revealActive, setRevealActive] = createSignal(replay);
   let rafId: number | undefined;
 
   const cancelFrame = () => {

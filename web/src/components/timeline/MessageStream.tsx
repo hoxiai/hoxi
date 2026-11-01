@@ -63,6 +63,7 @@ import {
 import { createTranscriptControls } from "./transcript-controls";
 import { createReadingPositionTracker } from "./reading-position";
 import { createSessionScroll } from "./session-scroll";
+import { createTailHeightHold } from "./tail-hold";
 import { resolveActiveExecutionCycle, resolveTurnNavigationTarget } from "./context-activity-turns";
 
 export default function MessageStream(props: { hidden?: boolean }) {
@@ -182,6 +183,12 @@ export default function MessageStream(props: { hidden?: boolean }) {
     if (hasLiveTailRenderedOutput(cycle.cycleTurns)) return false;
 
     return true;
+  });
+
+  const tailHold = createTailHeightHold({
+    sessionID: renderedSessionID,
+    waiting: showThinkingPlaceholder,
+    busy: isSessionBusy,
   });
 
   const cycleStartedAt = createMemo(() => {
@@ -492,7 +499,7 @@ export default function MessageStream(props: { hidden?: boolean }) {
             </Show>
           }
         >
-          <div class="flex flex-col">
+          <div ref={tailHold.list} class="flex flex-col">
             <EarlierTurnsBanner
               hiddenMessageCount={turnWindow.hiddenMessageCount()}
               totalCount={countUserMessages(turns())}
@@ -727,6 +734,7 @@ export default function MessageStream(props: { hidden?: boolean }) {
             </For>
 
             {/* Live Execution Control Bar (Thinking / Executing + Pause / Stop / Resume) */}
+            <div ref={tailHold.row} class="flex flex-col">
               <LiveExecutionControlBar
                 sessionID={workspace.activeSessionID}
                 isSessionBusy={isSessionBusy()}
@@ -738,6 +746,8 @@ export default function MessageStream(props: { hidden?: boolean }) {
                 activeStepLabel={executionCycleMeta().activeStepLabel}
                 lastTurnRole={turns()[turns().length - 1]?.info.role}
               />
+            </div>
+            <div aria-hidden="true" style={{ height: `${tailHold.spacer()}px` }} />
 
             {/* Queued Follow-Up Prompts (Send Now | Edit | Delete) */}
             <QueuedPromptsList

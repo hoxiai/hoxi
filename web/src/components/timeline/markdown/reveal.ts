@@ -36,6 +36,18 @@ const MIN_CHARS_PER_SECOND = 48;
 const FRAME_MS = 1000 / 60;
 
 /**
+ * What a replaying view shows on mount: up to its first visible character.
+ * Mounting empty and revealing on the next frame left one frame with no
+ * content; the waiting row it replaces had already gone, so the timeline
+ * shrank and jumped back.
+ */
+export function initialRevealSlice(content: string): string {
+  const firstVisible = content.search(/\S/);
+  if (firstVisible < 0) return content;
+  return content.slice(0, advanceStreamingSlice(content, 0, firstVisible + 1));
+}
+
+/**
  * Rate-matched streaming pacer: estimates the chunk arrival interval and spreads
  * buffered characters evenly across animation frames until the next chunk is due,
  * while accelerating smoothly on large backlogs.

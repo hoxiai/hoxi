@@ -6,7 +6,8 @@ import {
   parseInline,
   parseMarkdownBlocks,
 } from "../components/timeline/markdown-parser";
-import { createStreamPacer } from "../components/timeline/markdown/reveal";
+import { createStreamPacer, initialRevealSlice } from "../components/timeline/markdown/reveal";
+import { createTailHoldState } from "../components/timeline/tail-hold";
 import { assertDeepEqual, assertEqual, assertTrue, describe, it } from "./test-harness";
 
 const FRAME = 1000 / 60;
@@ -172,5 +173,49 @@ describe("streamed inline code spans", () => {
     assertEqual(isInlineCodeFileChip("web/src/services/sse.ts", undefined), true);
     assertEqual(isInlineCodeFileChip("web/src/services/sse.ts", false), false);
     assertEqual(isInlineCodeFileChip("requestAnimationFrame", true), false);
+  });
+});
+
+describe("replay mount slice", () => {
+  it("mounts with the first visible character so the view never starts empty", () => {
+    assertEqual(initialRevealSlice("Hello there"), "H");
+    assertEqual(initialRevealSlice("\n\n  Answer: 4"), "\n\n  A");
+    assertEqual(initialRevealSlice("**bold** rest"), "**bold**");
+    assertEqual(initialRevealSlice("   "), "   ");
+    assertEqual(initialRevealSlice(""), "");
+  });
+
+  it("paces the rest of the content from the mount slice", () => {
+    const content = "The answer is four.";
+    const pacer = createStreamPacer(initialRevealSlice(content), 0);
+    assertTrue(pacer.push(content, 0), "full content appends to the mount slice");
+    let t = 0;
+    while (pacer.pending && t < 5_000) pacer.step((t += FRAME));
+    assertEqual(pacer.shown, content.length);
+  });
+});
+
+describe("waiting row hand-off", () => {
+  it("keeps the timeline height while the first reply line replaces the waiting row", () => {
+    const hold = createTailHoldState();
+    // Row shown: list is 1000px including the 61px row.
+    hold.measure(1000, 61, true);
+    // Row unmounts in the same update that mounts the reply.
+    assertEqual(hold.handOff(), 61);
+    // Layout: the row is gone, a 45px first line arrived, the spacer is 61px.
+    assertEqual(hold.measure(939 + 45 + 61, 0, false), 16);
+    // The reply grows past the row's height: the spacer is no longer needed.
+    assertEqual(hold.measure(939 + 70 + 16, 0, false), 0);
+    assertEqual(hold.measure(939 + 120, 0, false), 0);
+  });
+
+  it("never holds space it did not measure and clears on release", () => {
+    const hold = createTailHoldState();
+    assertEqual(hold.handOff(), 0);
+    hold.measure(800, 40, true);
+    assertEqual(hold.handOff(), 40);
+    assertEqual(hold.release(), 0);
+    assertEqual(hold.measure(780, 0, false), 0);
+    assertEqual(hold.handOff(), 0);
   });
 });
