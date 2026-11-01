@@ -13,6 +13,7 @@ import {
   isDestructivePermissionRequest,
   loadApprovalPolicy,
   markPermissionResolved,
+  reconcileApprovalAIReview,
   replyPermissionRequest,
   resolveDefaultAIReviewModel,
   resolveEffectivePermissionSummary,
@@ -348,12 +349,35 @@ describe("approval policy store and migration", () => {
       ] as never);
       setWorkspace("connectedProviders", ["custom-gw"]);
       assertEqual(resolveDefaultAIReviewModel(), "custom-gw/gpt-4o-mini");
+
+      // Reconcile upgrades a previously saved reasoning aiReviewModel to a fast non-reasoning model
+      await setApprovalAIReview({ aiReview: true, aiReviewModel: "custom-gw/o3-mini" });
+      assertEqual(approvalPolicy().aiReviewModel, "custom-gw/o3-mini");
+      await reconcileApprovalAIReview();
+      assertEqual(approvalPolicy().aiReview, true);
+      assertEqual(approvalPolicy().aiReviewModel, "custom-gw/gpt-4o-mini");
+
+      // User explicitly disabling AI review prevents reconcileApprovalAIReview from re-enabling it
+      await setApprovalAIReview({ aiReview: false });
+      assertEqual(approvalPolicy().aiReview, false);
+      await reconcileApprovalAIReview();
+      assertEqual(approvalPolicy().aiReview, false);
     } finally {
       hoxiAPI.updateApprovalPolicy = origUpdatePolicy;
       setWorkspace("providers", prevProviders);
       setWorkspace("connectedProviders", prevConnected);
       setWorkspace("globalConfig", prevConfig);
     }
+  });
+
+  it("masks data arguments inside subshells, env prefixes, process substitutions, and literal bash -c", () => {
+    const req = (cmd: string) => ({ permission: "bash", patterns: [cmd], metadata: { command: cmd } });
+    assertEqual(isDestructivePermissionRequest(req(`(cd web && git commit -m "fix: avoid rm -rf false positive")`)), false);
+    assertEqual(isDestructivePermissionRequest(req(`LC_ALL=C rg "rm -rf|sudo|\\.env" src`)), false);
+    assertEqual(isDestructivePermissionRequest(req(`diff <(rg "rm -rf" a.txt) <(rg "sudo" b.txt)`)), false);
+    assertEqual(isDestructivePermissionRequest(req(`bash -c 'rg "rm -rf|sudo|\\.env" src'`)), false);
+    assertEqual(isDestructivePermissionRequest(req(`bash -c 'rm -rf ./dist'`)), true);
+    assertEqual(isDestructivePermissionRequest(req(`(cd web && rm -rf dist)`)), true);
   });
 });
 

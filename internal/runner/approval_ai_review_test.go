@@ -491,3 +491,135 @@ func TestAIReviewNestedChildScriptSourceSlice(t *testing.T) {
 		}
 	}
 }
+
+func TestAIReviewDataArgumentsSubshellsAndTempDelete(t *testing.T) {
+	f := newGateFixture(t)
+	defer f.revoke()
+	mockLLM := &stubAIReviewLLM{ready: true, response: `{"decision":"allow","reason":"safe local command"}`}
+	f.svc.SetLLM(mockLLM)
+
+	autoPol := ApprovalPolicy{Mode: ApprovalModeAuto, AIReview: true, AIReviewModel: "openai/gpt-4o-mini"}
+	smartPol := ApprovalPolicy{Mode: ApprovalModeSmart, AIReview: true, AIReviewModel: "openai/gpt-4o-mini"}
+	setTestApprovalPolicy(t, f.svc, autoPol)
+
+	makeItem := func(cmd string) map[string]interface{} {
+		return map[string]interface{}{
+			"permission": "bash",
+			"patterns":   []string{cmd},
+			"metadata":   map[string]interface{}{"command": cmd},
+		}
+	}
+
+	// Non-destructive commands with data arguments in subshells, env prefixes, or literal bash -c:
+	nonDestructive := []string{
+		`bash -c 'rg "rm -rf|sudo|\.env" src'`,
+		`(cd web && git commit -m "fix: avoid rm -rf false positive")`,
+		`LC_ALL=C rg "rm -rf|sudo|\.env" internal/runner`,
+		`diff <(rg "rm -rf" a.txt) <(rg "sudo" b.txt)`,
+	}
+	for _, cmd := range nonDestructive {
+		if isDestructiveCommand(cmd) {
+			t.Fatalf("expected non-destructive after data-arg masking: %s", cmd)
+		}
+	}
+
+	// Truly destructive commands inside subshells or literal bash -c must still be flagged:
+	stillDestructive := []string{
+		`bash -c 'rm -rf ./dist'`,
+		`(cd web && rm -rf dist)`,
+		`FOO=1 rm -rf build`,
+	}
+	for _, cmd := range stillDestructive {
+		if !isDestructiveCommand(cmd) {
+			t.Fatalf("expected destructive command to remain flagged: %s", cmd)
+		}
+		if _, _, ok := canAIReviewCommandRequest(makeItem(cmd), autoPol, nil, f.dir); ok {
+			t.Fatalf("workspace delete must not be eligible for AI review: %s", cmd)
+		}
+	}
+
+	// Temp-only delete (/tmp or $TMPDIR) is eligible for AI review in auto mode, but not in smart mode.
+	for _, cmd := range []string{`rm -f /tmp/hoxi-test.out`, `rm -rf "$TMPDIR/hoxi-build"`} {
+		if _, _, ok := canAIReviewCommandRequest(makeItem(cmd), autoPol, nil, f.dir); !ok {
+			t.Fatalf("expected temp-only delete to be eligible in auto mode: %s", cmd)
+		}
+		if _, _, ok := canAIReviewCommandRequest(makeItem(cmd), smartPol, nil, f.dir); ok {
+			t.Fatalf("expected temp-only delete to stay blocked in smart mode: %s", cmd)
+		}
+		if !f.svc.aiReviewCommand(context.Background(), makeItem(cmd), f.dir).allowed() {
+			t.Fatalf("expected AI review to approve temp-only delete in auto mode: %s", cmd)
+		}
+	}
+}
+
+type fallbackStubLLM struct {
+	mu          sync.Mutex
+	modelsTried []string
+}
+
+func (s *fallbackStubLLM) Resolve(providerID, modelID, baseURL, npm string) llm.Target {
+	if providerID == "hoxi-auto" && modelID == "fast" {
+		return llm.Target{
+			ProviderID:  "fast-gw",
+			ModelID:     "gpt-4o-mini",
+			BaseURL:     "https://example.test/v1",
+			HasEndpoint: true,
+		}
+	}
+	return llm.Target{
+		ProviderID:  providerID,
+		ModelID:     modelID,
+		BaseURL:     "https://example.test/v1",
+		HasEndpoint: true,
+	}
+}
+
+func (s *fallbackStubLLM) Complete(_ context.Context, target llm.Target, _ llm.Request) (string, error) {
+	s.mu.Lock()
+	s.modelsTried = append(s.modelsTried, target.ProviderID+"/"+target.ModelID)
+	s.mu.Unlock()
+	if target.ProviderID == "slow" {
+		return "<think>exhausted token budget while thinking", nil
+	}
+	return `{"decision":"allow","reason":"fast fallback approved"}`, nil
+}
+
+func TestAIReviewFastModelFallbackAndCache(t *testing.T) {
+	f := newGateFixture(t)
+	defer f.revoke()
+	stub := &fallbackStubLLM{}
+	f.svc.SetLLM(stub)
+	setTestApprovalPolicy(t, f.svc, ApprovalPolicy{
+		Mode:          ApprovalModeAuto,
+		AIReview:      true,
+		AIReviewModel: "slow/deepseek-r1",
+	})
+
+	item1 := map[string]interface{}{
+		"permission": "bash",
+		"patterns":   []string{`bash -c 'for x in a b; do echo "$x"; done'`},
+		"metadata":   map[string]interface{}{"command": `bash -c 'for x in a b; do echo "$x"; done'`},
+	}
+	item2 := map[string]interface{}{
+		"permission": "bash",
+		"patterns":   []string{`bash -c 'for y in c d; do echo "$y"; done'`},
+		"metadata":   map[string]interface{}{"command": `bash -c 'for y in c d; do echo "$y"; done'`},
+	}
+
+	out1 := f.svc.aiReviewCommand(context.Background(), item1, f.dir)
+	if !out1.allowed() {
+		t.Fatalf("expected fallback model to approve first command, got %+v", out1)
+	}
+	out2 := f.svc.aiReviewCommand(context.Background(), item2, f.dir)
+	if !out2.allowed() {
+		t.Fatalf("expected cached fallback model to approve second command, got %+v", out2)
+	}
+
+	stub.mu.Lock()
+	got := append([]string(nil), stub.modelsTried...)
+	stub.mu.Unlock()
+	want := []string{"slow/deepseek-r1", "fast-gw/gpt-4o-mini", "fast-gw/gpt-4o-mini"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("modelsTried = %v, want %v", got, want)
+	}
+}

@@ -116,7 +116,7 @@ func opacityCandidates(item map[string]interface{}) []string {
 
 // destructiveScanForms returns the texts the destructive patterns scan.
 func destructiveScanForms(cmd string) []string {
-	baseCmd := joinLineContinuations(strings.TrimSpace(unwrapSandboxCommand(cmd)))
+	baseCmd := unwrapLiteralShellCommand(joinLineContinuations(strings.TrimSpace(unwrapSandboxCommand(cmd))))
 	prepared := baseCmd
 	hadBenignHeredoc := false
 	if strings.Contains(prepared, "<<") {
@@ -132,18 +132,21 @@ func destructiveScanForms(cmd string) []string {
 		baseCmd = maskRemoteSSHAndSCP(baseCmd)
 		prepared = maskRemoteSSHAndSCP(prepared)
 	}
-	forms := []string{maskCommandDataArguments(baseCmd)}
+	var forms []string
 	if unpacked := extractProcessSubstitutions(baseCmd); unpacked != baseCmd {
 		forms = append(forms, maskCommandDataArguments(unpacked))
+	} else {
+		forms = append(forms, maskCommandDataArguments(baseCmd))
 	}
 	if spans, ok := findSubshellSpans(prepared); ok && len(spans) > 0 {
 		prepared = eraseSubshells(prepared)
 	}
 	if expanded, status := concretizeLiterals(prepared); status == constApplied || status == constSecret {
 		maskedExp := maskRemoteSSHAndSCP(expanded)
-		forms = append(forms, maskCommandDataArguments(maskedExp))
 		if unpacked := extractProcessSubstitutions(maskedExp); unpacked != maskedExp {
 			forms = append(forms, maskCommandDataArguments(unpacked))
+		} else {
+			forms = append(forms, maskCommandDataArguments(maskedExp))
 		}
 	}
 	return forms

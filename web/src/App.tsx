@@ -36,6 +36,7 @@ import {
   loadProjects,
   loadProviders,
   loadProviderTelemetry,
+  reconcileApprovalAIReview,
   refreshAuthStatus,
   syncProviderBreakers,
   loadSavedWorkspaces,
@@ -169,13 +170,16 @@ export default function App() {
           : null;
 
         // Kick off non-blocking background loads while awaiting saved workspaces & projects
-        void Promise.all([loadProviders(), refreshAuthStatus()]).then(() => ensureOfficialProviderConnected());
+        const approvalReady = loadApprovalPolicy().catch((e) => {
+          console.warn("Failed to load approval policy:", e);
+        });
+        void Promise.all([loadProviders(), refreshAuthStatus(), approvalReady])
+          .then(() => ensureOfficialProviderConnected())
+          .then(() => reconcileApprovalAIReview())
+          .catch(() => {});
         void loadProviderTelemetry();
         void syncProviderBreakers();
         void loadAgents();
-        void loadApprovalPolicy().catch((e) => {
-          console.warn("Failed to load approval policy:", e);
-        });
         void loadGitAttribution();
         void syncPendingPermissions(eagerBootRoot || undefined);
         void hoxiAPI

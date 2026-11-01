@@ -3,8 +3,9 @@
 // stripLiteralHeredocs in internal/runner/opaque_command.go: `<(cmd)` becomes
 // a placeholder argument and `$(cmd)` the $__hoxi_cmdsub__ variable, and cmd
 // is appended as its own line, so it is judged like any other command.
-import { maskCommandDataArguments } from "./command-data-args.js";
+import { maskCommandDataArguments, unwrapLiteralShellSegment } from "./command-data-args.js";
 import {
+  CD_SEGMENT_RE,
   DOLLAR_EXPAND_RE,
   isProtectedPath,
   isSecretPath,
@@ -12,6 +13,7 @@ import {
   normalizeAbsoluteTool,
   shellWords,
   splitCommandChainWithPipes,
+  stripCDNullRedirects,
   stripNullRedirects,
 } from "./permission-policy.js";
 import { concretizeLiterals, eraseSubshells, findSubshellSpans, unwrapCommandPrefixes } from "./shell-constants.js";
@@ -104,8 +106,8 @@ export function extractProcessSubstitutions(s) {
 // The texts the destructive patterns scan: the masked command, plus its
 // unpacked form when it uses `<(…)` (`cat <(cat .env)` → `cat .env`).
 export function destructiveScanForms(cmd) {
-  let scanBase = String(cmd ?? "");
-  let prepared = joinLineContinuations(scanBase.trim());
+  let scanBase = unwrapLiteralShellCommand(joinLineContinuations(String(cmd ?? "").trim()));
+  let prepared = scanBase;
   let hadBenignHeredoc = false;
   if (prepared.includes("<<")) {
     const benign = stripBenignHeredocs(prepared);
@@ -122,18 +124,35 @@ export function destructiveScanForms(cmd) {
     scanBase = maskRemoteSSHAndSCP(scanBase);
     prepared = maskRemoteSSHAndSCP(prepared);
   }
-  const forms = [maskCommandDataArguments(scanBase)];
   const unpacked = extractProcessSubstitutions(scanBase);
-  if (unpacked !== scanBase) forms.push(maskCommandDataArguments(unpacked));
+  const forms = [maskCommandDataArguments(unpacked !== scanBase ? unpacked : scanBase)];
   if (findSubshellSpans(prepared)) prepared = eraseSubshells(prepared);
   const expanded = concretizeLiterals(prepared);
   if (expanded.status === "applied" || expanded.status === "secret") {
     const maskedExp = maskRemoteSSHAndSCP(expanded.text);
-    forms.push(maskCommandDataArguments(maskedExp));
     const again = extractProcessSubstitutions(maskedExp);
-    if (again !== maskedExp) forms.push(maskCommandDataArguments(again));
+    forms.push(maskCommandDataArguments(again !== maskedExp ? again : maskedExp));
   }
   return forms;
+}
+
+function unwrapLiteralShellCommand(s) {
+  let unwrappedAny = false;
+  let validChain = true;
+  const res = mapTopLevelSegments(s, (seg) => {
+    const inner = unwrapLiteralShellSegment(seg, normalizeAbsoluteTool);
+    if (inner) {
+      unwrappedAny = true;
+      return inner;
+    }
+    const trimmed = String(seg || "").trim();
+    if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith("trap ") || CD_SEGMENT_RE.test(stripCDNullRedirects(trimmed))) {
+      return seg;
+    }
+    validChain = false;
+    return seg;
+  });
+  return unwrappedAny && validChain ? res : s;
 }
 
 // Folds `\` + newline into a space, as the shell does.

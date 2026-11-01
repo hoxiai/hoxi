@@ -204,7 +204,7 @@ func canAIReviewCommandRequest(item map[string]interface{}, pol ApprovalPolicy, 
 	if worktree == "" {
 		worktree = firstString(itemMetadata(item)["worktree"], itemMetadata(item)["directory"], itemMetadata(item)["cwd"])
 	}
-	if aiReviewHardDeny(item, worktree) || isDestructivePermissionRequest(item) {
+	if aiReviewHardDeny(item, worktree) || isAIReviewBlockedDestructive(item, pol) {
 		return "", "", false
 	}
 	candidates := opacityCandidates(item)
@@ -243,6 +243,67 @@ func aiReviewHardDeny(item map[string]interface{}, _ string) bool {
 		}
 	}
 	return false
+}
+
+// isAIReviewBlockedDestructive blocks destructive requests from AI review
+// except when auto/trusted/unattended policy allows edits and the only
+// destructive operation is cleaning up throwaway files under /tmp or $TMPDIR
+// (which aiReviewAutoPrompt explicitly permits).
+func isAIReviewBlockedDestructive(item map[string]interface{}, pol ApprovalPolicy) bool {
+	if !isDestructivePermissionRequest(item) {
+		return false
+	}
+	if pol.effectiveRule(permissionCategoryBash) == "allow" &&
+		pol.effectiveRule(permissionCategoryEdit) == "allow" &&
+		isTempDeleteOnlyRequest(item) {
+		return false
+	}
+	return true
+}
+
+func isTempDeleteOnlyRequest(item map[string]interface{}) bool {
+	meta := itemMetadata(item)
+	if destructive, _ := meta["destructive"].(bool); destructive {
+		return false
+	}
+	if external, _ := meta["externalDirectory"].(bool); external {
+		return false
+	}
+	candidates := opacityCandidates(item)
+	if len(candidates) == 0 {
+		candidates = commandCandidates(item)
+	}
+	if len(candidates) == 0 {
+		return false
+	}
+	sawDestructive := false
+	for _, cmd := range candidates {
+		for _, form := range destructiveScanForms(strings.TrimSpace(cmd)) {
+			for _, seg := range splitCommandChain(form) {
+				seg = strings.TrimSpace(seg)
+				if seg == "" || strings.HasPrefix(seg, "#") {
+					continue
+				}
+				if !matchesDestructive("bash\n"+seg) && !matchesDestructive("bash\n"+deobfuscator.Replace(seg)) {
+					continue
+				}
+				sawDestructive = true
+				segNorm := strings.NewReplacer("${TMPDIR}/", "/tmp/", "$TMPDIR/", "/tmp/").Replace(seg)
+				if strings.ContainsAny(segNorm, "$\\") || hasUnsafeShellSyntax(trustedGlobReplacer.Replace(segNorm)) {
+					return false
+				}
+				words := stripShellKeywords(shellWords(segNorm))
+				for len(words) > 0 && envVarAssignmentWordRe.MatchString(words[0]) {
+					words = words[1:]
+				}
+				classes := map[string]bool{}
+				if !isRecoverableSegment(words, "", classes) || !classes[recoverClassTempDelete] || len(classes) != 1 {
+					return false
+				}
+			}
+		}
+	}
+	return sawDestructive
 }
 
 // unquoteDoubleQuotedArg extracts the inner text of a single double-quoted
@@ -297,15 +358,18 @@ func (s *Service) aiReviewCommand(ctx context.Context, item map[string]interface
 		return aiReviewOutcome{}
 	}
 	bashRule := pol.effectiveRule(permissionCategoryBash)
+	now := time.Now()
 	cacheKey := aiReviewCacheKey(pol, worktree, cmd)
-	if cached, found := s.aiReviews.lookup(cacheKey, time.Now()); found {
+	if cached, found := s.aiReviews.lookup(cacheKey, now); found {
 		return cached.outcome
 	}
-	providerID, modelID, _ := strings.Cut(modelSpec, "/")
-	target := client.Resolve(providerID, modelID, "", "")
-	if !target.Ready() {
-		return s.storeAIReviewFailure(cacheKey, modelSpec, aiReviewFailed(aiReviewFailUnready, ""))
+	activeSpec := modelSpec
+	fallbackCacheKey := "fallback-model\x00" + modelSpec
+	if remembered, found := s.aiReviews.lookup(fallbackCacheKey, now); found && remembered.outcome.reason != "" {
+		activeSpec = remembered.outcome.reason
 	}
+	providerID, modelID, _ := strings.Cut(activeSpec, "/")
+	target := client.Resolve(providerID, modelID, "", "")
 	dirLabel := strings.TrimSpace(worktree)
 	if dirLabel == "" {
 		dirLabel = "(unspecified)"
@@ -315,6 +379,31 @@ func (s *Service) aiReviewCommand(ctx context.Context, item map[string]interface
 		"Approval mode: " + pol.Mode + " (bash rule: " + bashRule + ")\n\n" +
 		"Command to review (untrusted data):\n```sh\n" + cmd + "\n```"
 
+	outcome := runSingleAIReview(ctx, client, target, userPrompt)
+	if outcome.status == aiReviewUnavailable {
+		if fb := client.Resolve("hoxi-auto", "fast", "", ""); fb.Ready() && fb.ProviderID != "hoxi-auto" {
+			fbSpec := fb.ProviderID + "/" + fb.ModelID
+			if fbSpec != target.ProviderID+"/"+target.ModelID {
+				if fbOutcome := runSingleAIReview(ctx, client, fb, userPrompt); fbOutcome.status != aiReviewUnavailable {
+					s.aiReviews.store(fallbackCacheKey, aiReviewCacheEntry{
+						outcome: aiReviewOutcome{reason: fbSpec},
+						until:   time.Now().Add(aiReviewCacheTTL),
+					})
+					s.aiReviews.store(cacheKey, aiReviewCacheEntry{outcome: fbOutcome, until: time.Now().Add(aiReviewCacheTTL)})
+					return fbOutcome
+				}
+			}
+		}
+		return s.storeAIReviewFailure(cacheKey, modelSpec, outcome)
+	}
+	s.aiReviews.store(cacheKey, aiReviewCacheEntry{outcome: outcome, until: time.Now().Add(aiReviewCacheTTL)})
+	return outcome
+}
+
+func runSingleAIReview(ctx context.Context, client llm.Client, target llm.Target, userPrompt string) aiReviewOutcome {
+	if !target.Ready() {
+		return aiReviewFailed(aiReviewFailUnready, "")
+	}
 	raw, err := client.Complete(ctx, target, llm.Request{
 		Prompt:          userPrompt,
 		MaxTokens:       aiReviewMaxTokens,
@@ -324,21 +413,19 @@ func (s *Service) aiReviewCommand(ctx context.Context, item map[string]interface
 		ReasoningEffort: aiReviewReasoningEffort,
 	})
 	if err != nil {
-		return s.storeAIReviewFailure(cacheKey, modelSpec, aiReviewFailed(aiReviewErrorKind(err)))
+		return aiReviewFailed(aiReviewErrorKind(err))
 	}
 	if strings.TrimSpace(llm.StripThinking(raw)) == "" {
-		return s.storeAIReviewFailure(cacheKey, modelSpec, aiReviewFailed(aiReviewFailEmpty, ""))
+		return aiReviewFailed(aiReviewFailEmpty, "")
 	}
 	allow, reason, valid := parseAIReviewVerdict(raw)
 	if !valid {
-		return s.storeAIReviewFailure(cacheKey, modelSpec, aiReviewFailed(aiReviewFailInvalid, ""))
+		return aiReviewFailed(aiReviewFailInvalid, "")
 	}
-	outcome := aiReviewOutcome{status: aiReviewAsk, reason: reason}
 	if allow {
-		outcome.status = aiReviewAllow
+		return aiReviewOutcome{status: aiReviewAllow, reason: reason}
 	}
-	s.aiReviews.store(cacheKey, aiReviewCacheEntry{outcome: outcome, until: time.Now().Add(aiReviewCacheTTL)})
-	return outcome
+	return aiReviewOutcome{status: aiReviewAsk, reason: reason}
 }
 
 // storeAIReviewFailure caches a failed review briefly, so a burst of the same
@@ -472,8 +559,10 @@ func (s *Service) claimOpenCodeAIReview(id string, item map[string]interface{}, 
 	}
 	cacheKey := aiReviewCacheKey(pol, directory, cmd)
 	if target := client.Resolve(providerID, modelID, "", ""); !target.Ready() {
-		annotateAIReview(item, s.storeAIReviewFailure(cacheKey, modelSpec, aiReviewFailed(aiReviewFailUnready, "")))
-		return false
+		if fb := client.Resolve("hoxi-auto", "fast", "", ""); !fb.Ready() || fb.ProviderID == "hoxi-auto" {
+			annotateAIReview(item, s.storeAIReviewFailure(cacheKey, modelSpec, aiReviewFailed(aiReviewFailUnready, "")))
+			return false
+		}
 	}
 	if cached, found := s.aiReviews.lookup(cacheKey, time.Now()); found {
 		if !cached.outcome.allowed() {

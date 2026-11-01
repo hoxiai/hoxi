@@ -29,6 +29,7 @@ const GREP_VALUE_FLAGS = setOf("-A", "-B", "-C", "-m", "-d", "-D", "--include", 
   "--before-context", "--color", "--colour", "--label", "--binary-files", "--devices",
   "--directories", "--group-separator");
 const ECHO_OPTION_RE = /^-[neE]+$/;
+const DATA_ENV_ASSIGN_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
 const GIT_GLOBAL_VALUE_FLAGS = setOf("-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path");
 const NON_LITERAL_CHARS = new Set(["\\", "$", "*", "?", "[", "<", ">", "~", "{", "}", "!"]);
 const WORD_END = new Set([" ", "\t", "\r", ";", "\n", "|", "&"]);
@@ -38,9 +39,18 @@ function baseName(word) {
   return slash === -1 ? word : word.slice(slash + 1);
 }
 
-// Returns null for unbalanced quotes and grouping parentheses.
+function stripDataSegmentEnv(seg) {
+  let k = 0;
+  while (k < seg.length && DATA_ENV_ASSIGN_RE.test(seg[k].value) && !/[<>]/.test(seg[k].value)) {
+    k++;
+  }
+  return k > 0 && k < seg.length ? seg.slice(k) : seg;
+}
+
+// Returns null for unbalanced quotes and mid-word parentheses.
 function tokenize(s) {
   const tokens = [];
+  let parenDepth = 0;
   let i = 0;
   while (i < s.length) {
     let c = s[i];
@@ -48,7 +58,19 @@ function tokenize(s) {
       i++;
       continue;
     }
-    if (c === "(" || c === ")") return null;
+    if (c === "(") {
+      parenDepth++;
+      tokens.push({ start: i, end: i + 1, separator: true });
+      i++;
+      continue;
+    }
+    if (c === ")") {
+      if (parenDepth <= 0) return null;
+      parenDepth--;
+      tokens.push({ start: i, end: i + 1, separator: true });
+      i++;
+      continue;
+    }
     if (c === ";" || c === "\n" || c === "|" || c === "&") {
       let j = i + 1;
       if (j < s.length && (s[j] === "|" || s[j] === "&")) j++;
@@ -61,7 +83,7 @@ function tokenize(s) {
     let literal = true;
     while (i < s.length) {
       c = s[i];
-      if (WORD_END.has(c)) break;
+      if (WORD_END.has(c) || (c === ")" && parenDepth > 0)) break;
       if (c === "(" || c === ")") return null;
       if (c === "'") {
         const end = s.indexOf("'", i + 1);
@@ -97,7 +119,7 @@ function tokenize(s) {
     }
     tokens.push({ start, end: i, value, literal });
   }
-  return tokens;
+  return parenDepth === 0 ? tokens : null;
 }
 
 function gitDataArguments(seg) {
@@ -189,18 +211,21 @@ export function maskCommandDataArguments(command) {
   let lastSep = "";
   for (const tok of tokens) {
     if (tok.separator) {
+      const sepText = s.slice(tok.start, tok.end);
       if (cur.length > 0) {
-        segments.push(cur);
+        segments.push(stripDataSegmentEnv(cur));
         pipedIn.push(lastSep === "|");
+        cur = [];
+        lastSep = sepText;
+      } else if (sepText !== "(" && sepText !== ")") {
+        lastSep = sepText;
       }
-      cur = [];
-      lastSep = s.slice(tok.start, tok.end);
     } else {
       cur.push(tok);
     }
   }
   if (cur.length > 0) {
-    segments.push(cur);
+    segments.push(stripDataSegmentEnv(cur));
     pipedIn.push(lastSep === "|");
   }
   const isEcho = (seg) => ["echo", "printf"].includes(baseName(seg[0].value));
@@ -227,4 +252,159 @@ export function maskCommandDataArguments(command) {
     last = tok.end;
   }
   return out + s.slice(last);
+}
+
+const SHELL_C_FLAG_RE = /^-[leuxf]*c$/;
+const SHELL_SAFE_OPT_FLAG_RE = /^-[leuxfo]+$/;
+const REDIRECT_WORD_RE = /^(?:\d*|&)>>?$/;
+const DEV_NULL_WORD_RE = /^(?:\d*|&)>>?\/dev\/null$/;
+const DUP_STREAM_WORD_RE = /^\d*>&[12]$/;
+
+export function unwrapLiteralShellSegment(seg, normalizeAbsoluteTool) {
+  const s = String(seg || "").trim();
+  if (!s || s.startsWith("#")) return "";
+  const spans = scanShellWordSpans(s);
+  if (!spans || spans.length < 3) return "";
+  let idx = 0;
+  while (idx < spans.length && DATA_ENV_ASSIGN_RE.test(spans[idx].word) && !/[$`]/.test(spans[idx].word)) {
+    idx++;
+  }
+  if (idx >= spans.length) return "";
+  const base = baseName(normalizeAbsoluteTool ? normalizeAbsoluteTool(spans[idx].word) : spans[idx].word);
+  if (base !== "sh" && base !== "bash" && base !== "zsh") return "";
+  idx++;
+  let foundC = false;
+  while (idx < spans.length) {
+    const w = spans[idx].word;
+    if (w === "-o" && idx + 1 < spans.length && (spans[idx + 1].word === "pipefail" || spans[idx + 1].word === "errexit")) {
+      idx += 2;
+      continue;
+    }
+    if (SHELL_C_FLAG_RE.test(w)) {
+      foundC = true;
+      idx++;
+      break;
+    }
+    if (SHELL_SAFE_OPT_FLAG_RE.test(w) && !w.includes("o")) {
+      idx++;
+      continue;
+    }
+    return "";
+  }
+  if (!foundC || idx >= spans.length) return "";
+  const rawScript = s.slice(spans[idx].start, spans[idx].end);
+  idx++;
+  while (idx < spans.length) {
+    const w = spans[idx].word;
+    if (DEV_NULL_WORD_RE.test(w) || DUP_STREAM_WORD_RE.test(w)) {
+      idx++;
+      continue;
+    }
+    if (REDIRECT_WORD_RE.test(w) && idx + 1 < spans.length && spans[idx + 1].word === "/dev/null") {
+      idx += 2;
+      continue;
+    }
+    return "";
+  }
+  const inner = unquoteLiteralShellScriptArg(rawScript);
+  return inner && inner.trim() ? inner : "";
+}
+
+function scanShellWordSpans(s) {
+  const out = [];
+  let i = 0;
+  while (i < s.length) {
+    while (i < s.length && (s[i] === " " || s[i] === "\t" || s[i] === "\r" || s[i] === "\n")) i++;
+    if (i >= s.length) break;
+    const start = i;
+    let word = "";
+    let quote = "";
+    while (i < s.length) {
+      const c = s[i];
+      if (!quote && (c === " " || c === "\t" || c === "\r" || c === "\n")) break;
+      if (quote === "'") {
+        if (c === "'") quote = "";
+        else word += c;
+        i++;
+        continue;
+      }
+      if (quote === '"') {
+        if (c === "\\" && i + 1 < s.length) {
+          word += s[i + 1];
+          i += 2;
+          continue;
+        }
+        if (c === '"') {
+          quote = "";
+          i++;
+          continue;
+        }
+        word += c;
+        i++;
+        continue;
+      }
+      if (c === "'" || c === '"') {
+        quote = c;
+        i++;
+        continue;
+      }
+      if (c === "\\" && i + 1 < s.length) {
+        word += s[i + 1];
+        i += 2;
+        continue;
+      }
+      word += c;
+      i++;
+    }
+    if (quote) return null;
+    out.push({ start, end: i, word });
+  }
+  return out;
+}
+
+function unquoteLiteralShellScriptArg(raw) {
+  if (!raw || raw.length < 2) return "";
+  if (raw[0] === "'" && raw[raw.length - 1] === "'") {
+    let out = "";
+    let i = 0;
+    while (i < raw.length) {
+      if (raw[i] !== "'") return "";
+      const end = raw.indexOf("'", i + 1);
+      if (end < 0) return "";
+      out += raw.slice(i + 1, end);
+      i = end + 1;
+      if (i === raw.length) return out;
+      if (raw.slice(i).startsWith("\\'")) {
+        out += "'";
+        i += 2;
+      } else {
+        return "";
+      }
+    }
+    return "";
+  }
+  if (raw[0] === '"' && raw[raw.length - 1] === '"') {
+    const inner = raw.slice(1, -1);
+    let out = "";
+    for (let i = 0; i < inner.length; i++) {
+      const c = inner[i];
+      if (c === '"' || c === "`") return "";
+      if (c === "$" && inner[i + 1] === "(") return "";
+      if (c === "\\" && i + 1 < inner.length) {
+        const next = inner[i + 1];
+        if (next === '"' || next === "\\" || next === "$" || next === "`") {
+          out += next;
+          i++;
+          continue;
+        }
+        if (next === "\n") {
+          i++;
+          continue;
+        }
+      }
+      out += c;
+    }
+    return out;
+  }
+  return "";
 }

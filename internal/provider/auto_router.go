@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -220,7 +221,98 @@ func (g *Service) resolveBackendAutoCandidate(providerID, modelID string) (strin
 	if poolID == "" {
 		poolID = "free"
 	}
+	if poolID == "fast" {
+		return g.selectFastReviewCandidate()
+	}
 	return g.selectAutoCandidate(poolID, nil)
+}
+
+var (
+	fastReviewModelKeywords = []string{"flash", "mini", "haiku", "lite", "nano", "small", "fast"}
+	reasoningModelIDRe      = regexp.MustCompile(`(?i)(?:^|[-_/.])(?:r1|qwq|reasoner|thinking|o1|o3|o4)(?:$|[-_/.])`)
+)
+
+func isLikelyReasoningCandidate(modelID string, mObj map[string]interface{}) bool {
+	if reasoningModelIDRe.MatchString(modelID) {
+		return true
+	}
+	if mObj == nil {
+		return false
+	}
+	if r, ok := mObj["reasoning"].(bool); ok && r {
+		return true
+	}
+	if caps, ok := mObj["capabilities"].(map[string]interface{}); ok {
+		if r, ok := caps["reasoning"].(bool); ok && r {
+			return true
+		}
+	}
+	return false
+}
+
+func isFastKeywordModel(modelID string) bool {
+	lower := strings.ToLower(modelID)
+	for _, kw := range fastReviewModelKeywords {
+		if strings.Contains(lower, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+// selectFastReviewCandidate picks a connected, healthy HTTP model for
+// latency-sensitive approval review, preferring non-reasoning fast models.
+func (g *Service) selectFastReviewCandidate() (string, string) {
+	disabledSet := g.disabledProvidersSet()
+	merged := g.loadOpenCodeImportedProviderMap()
+	for k, v := range g.loadHoxiProvidersMap() {
+		merged[k] = v
+	}
+	var fastNonReasoning, nonReasoning, anyHealthy []AutoPoolCandidate
+	for _, pid := range sortedKeys(merged) {
+		if pid == AutoProviderID || disabledSet[pid] || disabledSet[strings.ToLower(pid)] {
+			continue
+		}
+		baseURL, apiKey, _, _ := g.resolveProviderConnection(pid, "", "")
+		if !isHTTPEndpoint(baseURL) || (apiKey == "" && !isLoopbackURL(baseURL)) {
+			continue
+		}
+		pObj, ok := merged[pid].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		mMap, ok := pObj["models"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		for _, mid := range sortedKeys(mMap) {
+			mObj, _ := mMap[mid].(map[string]interface{})
+			if isNonChatUtilityCandidate(mid, mObj) {
+				continue
+			}
+			if g.breaker != nil {
+				if ok, _ := g.breaker.Evaluate(pid, mid); !ok {
+					continue
+				}
+			}
+			cand := AutoPoolCandidate{ProviderID: pid, ModelID: mid}
+			if !isLikelyReasoningCandidate(mid, mObj) {
+				if isFastKeywordModel(mid) {
+					fastNonReasoning = append(fastNonReasoning, cand)
+				} else {
+					nonReasoning = append(nonReasoning, cand)
+				}
+			} else {
+				anyHealthy = append(anyHealthy, cand)
+			}
+		}
+	}
+	for _, list := range [][]AutoPoolCandidate{fastNonReasoning, nonReasoning, anyHealthy} {
+		if len(list) > 0 {
+			return list[0].ProviderID, list[0].ModelID
+		}
+	}
+	return g.selectAutoCandidate("frontier", nil)
 }
 
 func (g *Service) disabledProvidersSet() map[string]bool {

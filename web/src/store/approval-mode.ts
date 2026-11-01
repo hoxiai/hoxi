@@ -128,19 +128,33 @@ export async function setApprovalTimeout(seconds: number): Promise<void> {
 export async function setApprovalMode(mode: ApprovalMode): Promise<void> {
   const gen = ++approvalPolicyGen;
   const cur = approvalPolicy();
+  const autoModel = !cur.aiReview && mode !== "manual" && !isAIReviewUserDisabled() ? resolveDefaultAIReviewModel() : "";
+  const aiReview = Boolean(cur.aiReview || autoModel);
+  const aiReviewModel = cur.aiReviewModel || autoModel;
   // Switching approval modes clears per-tool overrides while keeping timeout and AI reviewer settings.
   const state = await hoxiAPI.updateApprovalPolicy({
     mode,
-    ...(cur.aiReview ? { aiReview: true } : {}),
-    ...(cur.aiReviewModel ? { aiReviewModel: cur.aiReviewModel } : {}),
+    ...(aiReview ? { aiReview: true } : {}),
+    ...(aiReviewModel ? { aiReviewModel } : {}),
     ...(cur.approvalTimeoutSeconds ? { approvalTimeoutSeconds: cur.approvalTimeoutSeconds } : {}),
   });
   if (gen !== approvalPolicyGen) return;
   applyApprovalPolicy(state.policy);
 }
 
+const AI_REVIEW_DISABLED_KEY = "hoxi.aiReviewUserDisabled";
 const FAST_REVIEW_KEYWORDS = ["flash", "mini", "haiku", "lite", "nano", "small", "fast"];
 const REASONING_MODEL_ID_RE = /(?:^|[-_/.])(?:r1|qwq|reasoner|thinking|o1|o3|o4)(?:$|[-_/.])/i;
+let aiReviewUserDisabledMem = false;
+
+function isAIReviewUserDisabled(): boolean {
+  if (aiReviewUserDisabledMem) return true;
+  try {
+    return typeof localStorage !== "undefined" && localStorage.getItem(AI_REVIEW_DISABLED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
 
 function isLikelyReasoningModel(modelID: string, mInfo?: any): boolean {
   return Boolean(
@@ -185,12 +199,6 @@ function pickFastestProviderModel(providerID: string, fallbackModelID: string): 
  * HTTP providers the user has explicitly connected or configured.
  */
 export function resolveDefaultAIReviewModel(): string {
-  const existing = parseInternalModelSpec(approvalPolicy().aiReviewModel);
-  if (existing) return `${existing.providerID}/${existing.modelID}`;
-
-  const small = parseInternalModelSpec(workspace.globalConfig?.small_model);
-  if (small) return `${small.providerID}/${small.modelID}`;
-
   const connSet = new Set(workspace.connectedProviders);
   const cfgProviders = workspace.globalConfig?.provider ?? {};
   const isUserConnected = (providerID: string) =>
@@ -200,6 +208,23 @@ export function resolveDefaultAIReviewModel(): string {
     (providerID !== "opencode" ||
       Boolean(cfgProviders.opencode) ||
       Boolean(workspace.hoxiProviders?.opencode));
+
+  const existing = parseInternalModelSpec(approvalPolicy().aiReviewModel);
+  if (existing) {
+    if (workspace.providers.length === 0) return `${existing.providerID}/${existing.modelID}`;
+    if (isUserConnected(existing.providerID)) {
+      const prov = workspace.providers.find((p) => p.id === existing.providerID);
+      if (isLikelyReasoningModel(existing.modelID, prov?.models?.[existing.modelID])) {
+        return pickFastestProviderModel(existing.providerID, existing.modelID);
+      }
+      return `${existing.providerID}/${existing.modelID}`;
+    }
+  }
+
+  const small = parseInternalModelSpec(workspace.globalConfig?.small_model);
+  if (small && (workspace.providers.length === 0 || isUserConnected(small.providerID))) {
+    return pickFastestProviderModel(small.providerID, small.modelID);
+  }
 
   for (const cand of [
     workspace.selectedModel,
@@ -235,6 +260,13 @@ export async function setApprovalAIReview(patch: {
   aiReview?: boolean;
   aiReviewModel?: string;
 }): Promise<void> {
+  if (patch.aiReview === false) {
+    aiReviewUserDisabledMem = true;
+    try { localStorage.setItem(AI_REVIEW_DISABLED_KEY, "1"); } catch { /* ignore */ }
+  } else if (patch.aiReview === true) {
+    aiReviewUserDisabledMem = false;
+    try { localStorage.removeItem(AI_REVIEW_DISABLED_KEY); } catch { /* ignore */ }
+  }
   const gen = ++approvalPolicyGen;
   const cur = approvalPolicy();
   let aiReviewModel =
@@ -254,6 +286,27 @@ export async function setApprovalAIReview(patch: {
   });
   if (gen !== approvalPolicyGen) return;
   applyApprovalPolicy(state.policy);
+}
+
+/**
+ * Reconciles AI approval review once providers and approval policy have loaded:
+ * - Upgrades a previously saved reasoning or disconnected `aiReviewModel` to a fast model.
+ * - Auto-enables AI review in non-manual modes when a connected HTTP model is available
+ *   and the user has not explicitly turned AI review off.
+ */
+export async function reconcileApprovalAIReview(): Promise<void> {
+  const cur = approvalPolicy();
+  const resolved = resolveDefaultAIReviewModel();
+  if (!resolved) return;
+  if (cur.aiReview) {
+    if (cur.aiReviewModel !== resolved) {
+      await setApprovalAIReview({ aiReview: true, aiReviewModel: resolved });
+    }
+    return;
+  }
+  if (cur.mode !== "manual" && !isAIReviewUserDisabled()) {
+    await setApprovalAIReview({ aiReview: true, aiReviewModel: resolved });
+  }
 }
 
 export async function updateToolPermissionRule(

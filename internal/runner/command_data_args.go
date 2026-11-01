@@ -51,8 +51,20 @@ var (
 		"--before-context", "--color", "--colour", "--label", "--binary-files", "--devices",
 		"--directories", "--group-separator")
 	echoOptionRe        = regexp.MustCompile(`^-[neE]+$`)
+	dataEnvAssignRe     = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
 	gitGlobalValueFlags = setOf("-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path")
 )
+
+func stripDataSegmentEnv(seg []dataToken) []dataToken {
+	k := 0
+	for k < len(seg) && dataEnvAssignRe.MatchString(seg[k].value) && !strings.ContainsAny(seg[k].value, "<>") {
+		k++
+	}
+	if k > 0 && k < len(seg) {
+		return seg[k:]
+	}
+	return seg
+}
 
 func maskCommandDataArguments(command string) string {
 	if strings.Contains(command, "`") || strings.Contains(command, "$(") || strings.Contains(command, "<<") {
@@ -68,18 +80,21 @@ func maskCommandDataArguments(command string) string {
 	lastSep := ""
 	for _, tok := range tokens {
 		if tok.separator {
+			sepText := command[tok.start:tok.end]
 			if len(cur) > 0 {
-				segments = append(segments, cur)
+				segments = append(segments, stripDataSegmentEnv(cur))
 				pipedIn = append(pipedIn, lastSep == "|")
+				cur = nil
+				lastSep = sepText
+			} else if sepText != "(" && sepText != ")" {
+				lastSep = sepText
 			}
-			cur = nil
-			lastSep = command[tok.start:tok.end]
 			continue
 		}
 		cur = append(cur, tok)
 	}
 	if len(cur) > 0 {
-		segments = append(segments, cur)
+		segments = append(segments, stripDataSegmentEnv(cur))
 		pipedIn = append(pipedIn, lastSep == "|")
 	}
 	echoWritesFile := false
@@ -125,10 +140,11 @@ func maskCommandDataArguments(command string) string {
 }
 
 // tokenizeDataCommand splits a command into words and separators, recording
-// each word's raw span. It refuses (ok=false) unbalanced quotes and grouping
-// parentheses, which it does not model.
+// each word's raw span. It refuses (ok=false) unbalanced quotes and mid-word
+// parentheses, while allowing balanced subshell grouping parentheses.
 func tokenizeDataCommand(s string) ([]dataToken, bool) {
 	var tokens []dataToken
+	parenDepth := 0
 	i := 0
 	for i < len(s) {
 		c := s[i]
@@ -136,8 +152,19 @@ func tokenizeDataCommand(s string) ([]dataToken, bool) {
 		case c == ' ' || c == '\t' || c == '\r':
 			i++
 			continue
-		case c == '(' || c == ')':
-			return nil, false
+		case c == '(':
+			parenDepth++
+			tokens = append(tokens, dataToken{start: i, end: i + 1, separator: true})
+			i++
+			continue
+		case c == ')':
+			if parenDepth <= 0 {
+				return nil, false
+			}
+			parenDepth--
+			tokens = append(tokens, dataToken{start: i, end: i + 1, separator: true})
+			i++
+			continue
 		case c == ';' || c == '\n' || c == '|' || c == '&':
 			j := i + 1
 			if j < len(s) && (s[j] == '|' || s[j] == '&') {
@@ -152,7 +179,7 @@ func tokenizeDataCommand(s string) ([]dataToken, bool) {
 		literal := true
 		for i < len(s) {
 			c = s[i]
-			if c == ' ' || c == '\t' || c == '\r' || c == ';' || c == '\n' || c == '|' || c == '&' {
+			if c == ' ' || c == '\t' || c == '\r' || c == ';' || c == '\n' || c == '|' || c == '&' || (c == ')' && parenDepth > 0) {
 				break
 			}
 			switch c {
@@ -197,6 +224,9 @@ func tokenizeDataCommand(s string) ([]dataToken, bool) {
 			i++
 		}
 		tokens = append(tokens, dataToken{start: start, end: i, value: value.String(), literal: literal})
+	}
+	if parenDepth != 0 {
+		return nil, false
 	}
 	return tokens, true
 }
@@ -300,4 +330,224 @@ func searchPatternArguments(seg []dataToken, valueFlags map[string]bool) []int {
 		return []int{positional}
 	}
 	return nil
+}
+
+var (
+	shellCFlagRe       = regexp.MustCompile(`^-[leuxf]*c$`)
+	shellSafeOptFlagRe = regexp.MustCompile(`^-[leuxfo]+$`)
+)
+
+// unwrapLiteralShellCommand unwraps a top-level `sh/bash/zsh -c '<literal>'`
+// (or double-quoted script without command substitutions) so data arguments
+// inside the script are masked and literal loops/assignments are expanded
+// before destructive regexes run.
+func unwrapLiteralShellCommand(s string) string {
+	unwrappedAny := false
+	validChain := true
+	res := mapTopLevelSegments(s, func(seg string) string {
+		if inner, ok := unwrapLiteralShellSegment(seg); ok {
+			unwrappedAny = true
+			return inner
+		}
+		trimmed := strings.TrimSpace(seg)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "trap ") || cdSegmentRe.MatchString(stripCDNullRedirects(trimmed)) {
+			return seg
+		}
+		validChain = false
+		return seg
+	})
+	if !unwrappedAny || !validChain {
+		return s
+	}
+	return res
+}
+
+func unwrapLiteralShellSegment(seg string) (string, bool) {
+	s := strings.TrimSpace(seg)
+	if s == "" || strings.HasPrefix(s, "#") {
+		return "", false
+	}
+	spans := scanShellWordSpans(s)
+	if len(spans) < 3 {
+		return "", false
+	}
+	idx := 0
+	for idx < len(spans) && envVarAssignmentWordRe.MatchString(spans[idx].word) && !strings.ContainsAny(spans[idx].word, "$`") {
+		idx++
+	}
+	if idx >= len(spans) {
+		return "", false
+	}
+	base := filepath.Base(normalizeAbsoluteTool(spans[idx].word))
+	if base != "sh" && base != "bash" && base != "zsh" {
+		return "", false
+	}
+	idx++
+	foundC := false
+	for idx < len(spans) {
+		w := spans[idx].word
+		if w == "-o" && idx+1 < len(spans) && (spans[idx+1].word == "pipefail" || spans[idx+1].word == "errexit") {
+			idx += 2
+			continue
+		}
+		if shellCFlagRe.MatchString(w) {
+			foundC = true
+			idx++
+			break
+		}
+		if shellSafeOptFlagRe.MatchString(w) && !strings.Contains(w, "o") {
+			idx++
+			continue
+		}
+		return "", false
+	}
+	if !foundC || idx >= len(spans) {
+		return "", false
+	}
+	rawScript := s[spans[idx].start:spans[idx].end]
+	idx++
+	for idx < len(spans) {
+		w := spans[idx].word
+		if devNullWordRe.MatchString(w) || dupStreamWordRe.MatchString(w) {
+			idx++
+			continue
+		}
+		if redirectWordRe.MatchString(w) && idx+1 < len(spans) && spans[idx+1].word == "/dev/null" {
+			idx += 2
+			continue
+		}
+		return "", false
+	}
+	inner, ok := unquoteLiteralShellScriptArg(rawScript)
+	if !ok || strings.TrimSpace(inner) == "" {
+		return "", false
+	}
+	return inner, true
+}
+
+type shellWordSpan struct {
+	start, end int
+	word       string
+}
+
+func scanShellWordSpans(s string) []shellWordSpan {
+	var out []shellWordSpan
+	i := 0
+	for i < len(s) {
+		for i < len(s) && (s[i] == ' ' || s[i] == '\t' || s[i] == '\r' || s[i] == '\n') {
+			i++
+		}
+		if i >= len(s) {
+			break
+		}
+		start := i
+		var b strings.Builder
+		var quote byte
+		for i < len(s) {
+			c := s[i]
+			if quote == 0 && (c == ' ' || c == '\t' || c == '\r' || c == '\n') {
+				break
+			}
+			if quote == '\'' {
+				if c == '\'' {
+					quote = 0
+				} else {
+					b.WriteByte(c)
+				}
+				i++
+				continue
+			}
+			if quote == '"' {
+				if c == '\\' && i+1 < len(s) {
+					b.WriteByte(s[i+1])
+					i += 2
+					continue
+				}
+				if c == '"' {
+					quote = 0
+					i++
+					continue
+				}
+				b.WriteByte(c)
+				i++
+				continue
+			}
+			if c == '\'' || c == '"' {
+				quote = c
+				i++
+				continue
+			}
+			if c == '\\' && i+1 < len(s) {
+				b.WriteByte(s[i+1])
+				i += 2
+				continue
+			}
+			b.WriteByte(c)
+			i++
+		}
+		if quote != 0 {
+			return nil
+		}
+		out = append(out, shellWordSpan{start: start, end: i, word: b.String()})
+	}
+	return out
+}
+
+func unquoteLiteralShellScriptArg(raw string) (string, bool) {
+	if len(raw) < 2 {
+		return "", false
+	}
+	if raw[0] == '\'' && raw[len(raw)-1] == '\'' {
+		var b strings.Builder
+		i := 0
+		for i < len(raw) {
+			if raw[i] != '\'' {
+				return "", false
+			}
+			end := strings.IndexByte(raw[i+1:], '\'')
+			if end < 0 {
+				return "", false
+			}
+			b.WriteString(raw[i+1 : i+1+end])
+			i += end + 2
+			if i == len(raw) {
+				return b.String(), true
+			}
+			if strings.HasPrefix(raw[i:], `\'`) {
+				b.WriteByte('\'')
+				i += 2
+			} else {
+				return "", false
+			}
+		}
+		return "", false
+	}
+	if raw[0] == '"' && raw[len(raw)-1] == '"' {
+		inner := raw[1 : len(raw)-1]
+		var b strings.Builder
+		for i := 0; i < len(inner); i++ {
+			c := inner[i]
+			if c == '"' || c == '`' {
+				return "", false
+			}
+			if c == '$' && i+1 < len(inner) && inner[i+1] == '(' {
+				return "", false
+			}
+			if c == '\\' && i+1 < len(inner) {
+				next := inner[i+1]
+				switch next {
+				case '"', '\\', '$', '`':
+					b.WriteByte(next)
+					i++
+					continue
+				case '\n':
+					i++
+					continue
+				}
+			}
+			b.WriteByte(c)
+		}
+		return b.String(), true
+	}
+	return "", false
 }
