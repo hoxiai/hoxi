@@ -771,6 +771,9 @@ func TestOpenCodeChildMappingPersistsAcrossRestartAndCleansUpOnDelete(t *testing
 		}
 	}
 
+	restarted.stoppedTools.Store(rec.ID+"\x00call:1", true)
+	restarted.promptReceipts.Store(rec.ID+"\x00req_1", true)
+	restarted.cliSystemDelivered.Store(rec.ID+"\x00claude", "sys")
 	if err := restarted.deleteConversation(context.Background(), rec.ID); err != nil {
 		t.Fatalf("deleteConversation: %v", err)
 	}
@@ -778,6 +781,15 @@ func TestOpenCodeChildMappingPersistsAcrossRestartAndCleansUpOnDelete(t *testing
 		if restarted.IsManagedOpenCodeSession(sid) || restarted.isManagedOpenCodeChild(sid) {
 			t.Fatalf("expected %s removed from managedOpenCode / openCodeChildParent after delete", sid)
 		}
+	}
+	if _, ok := restarted.stoppedTools.Load(rec.ID + "\x00call:1"); ok {
+		t.Fatalf("expected stoppedTools entry cleared on delete")
+	}
+	if _, ok := restarted.promptReceipts.Load(rec.ID + "\x00req_1"); ok {
+		t.Fatalf("expected promptReceipts entry cleared on delete")
+	}
+	if _, ok := restarted.cliSystemDelivered.Load(rec.ID + "\x00claude"); ok {
+		t.Fatalf("expected cliSystemDelivered entry cleared on delete")
 	}
 	mu.Lock()
 	defer mu.Unlock()

@@ -528,6 +528,12 @@ func normalizeRunnerTool(rawName string, rawParams map[string]interface{}) (norm
 	if cmd := firstString(clean["CommandLine"], clean["command"], clean["cmd"]); cmd != "" {
 		clean["command"] = cmd
 	}
+	if u := firstString(clean["url"], clean["Url"], clean["URL"]); u != "" && clean["url"] == nil {
+		clean["url"] = u
+	}
+	if pat := firstString(clean["pattern"], clean["Pattern"], clean["query"], clean["Query"], clean["SearchQuery"]); pat != "" && clean["pattern"] == nil {
+		clean["pattern"] = pat
+	}
 	lower := strings.ToLower(strings.TrimSpace(rawName))
 	switch lower {
 	case "view_file", "read", "read_file", "read_many_files", "read_resource", "read_file_content", "open_file":

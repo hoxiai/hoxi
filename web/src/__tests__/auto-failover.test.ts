@@ -5,6 +5,7 @@ import {
   AUTO_PROVIDER_ID,
   applyProviderBreakers,
   clearAutoFailoverPending,
+  clearTurnDispatchState,
   getAutoCandidateCooldown,
   clearAutoPoolCooldowns,
   decideAutoFailover,
@@ -15,6 +16,7 @@ import {
   isCandidateCoolingDown,
   markSessionInterrupted,
   parseQuotaResetMs,
+  purgeSessionsFromStoreState,
   resetAutoPoolToDefault,
   saveAutoPool,
   setWorkspace,
@@ -362,6 +364,24 @@ describe("auto-pool failover dispatch", () => {
       } finally {
         hoxiAPI.abortSession = origAbort;
       }
+      // Clearing dispatch state on normal turn completion or session purge must prevent late errors from re-sending
+      await dispatchSessionPrompt("completed-turn", sid, { forceImmediate: true });
+      const countAfterSend = attempted.length;
+      clearTurnDispatchState(sid);
+      await handleSessionErrorEvent(sid, {
+        name: "APIError",
+        data: { message: "502 Bad Gateway", statusCode: 502 },
+      });
+      assertEqual(attempted.length, countAfterSend);
+
+      await dispatchSessionPrompt("purged-session-turn", sid, { forceImmediate: true });
+      const countAfterSecondSend = attempted.length;
+      purgeSessionsFromStoreState(workspace, [sid]);
+      await handleSessionErrorEvent(sid, {
+        name: "APIError",
+        data: { message: "502 Bad Gateway", statusCode: 502 },
+      });
+      assertEqual(attempted.length, countAfterSecondSend);
     } finally {
       clearAutoFailoverPending(sid);
       hoxiAPI.sendPromptAsync = origSend;

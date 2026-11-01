@@ -20,6 +20,7 @@ import {
   markSessionBackendRetried,
   clearAutoFailoverPending,
   clearSessionPendingApprovals,
+  clearTurnDispatchState,
   handleSessionErrorEvent,
   isActionableApprovalSession,
   isAutoFailoverPending,
@@ -310,6 +311,7 @@ export default function App() {
               if (evt.properties.status.type === "busy") {
                 setWorkspace("unreadCompletedBySession", sid, false);
               } else if (evt.properties.status.type === "idle") {
+                clearTurnDispatchState(sid);
                 clearSessionPendingApprovals(sid);
                 setWorkspace("sessionFinishedAt", sid, Date.now());
                 const parentID = resolveParentSessionID(sid);
@@ -318,7 +320,9 @@ export default function App() {
                   void loadSessionMessagesOnly(parentID);
                   scheduleRefreshWorktreeStatus(parentID, 600);
                 } else if (wasBusy) {
-                  void loadSessionMessages(sid).catch(console.error);
+                  void loadSessionMessages(sid)
+                    .then(() => refreshDesktopMemberAfterTurn(sid))
+                    .catch(console.error);
                 }
                 if (
                   wasBusy &&
@@ -352,6 +356,7 @@ export default function App() {
               const nextPromptRunning =
                 isSessionBusy(sid) && Date.now() - lastPromptDispatchedAt(sid) <= 3500;
               if (!nextPromptRunning) {
+                clearTurnDispatchState(sid);
                 clearSessionPendingApprovals(sid);
                 setWorkspace("statusBySession", sid, { type: "idle" });
                 setWorkspace("stalledSinceBySession", sid, 0);
@@ -372,6 +377,7 @@ export default function App() {
                 }
                 triggerDesktopNotification("Hoxi", t("timeline.turnCompleted"), { sessionID: sid, kind: "complete" });
                 void loadSessionMessages(sid).then(() => {
+                  refreshDesktopMemberAfterTurn(sid);
                   void drainNextQueuedPrompt(sid);
                   void advanceSessionGoal(sid);
                   if (!(isWorkSurface() && surfaceExtension.skipCodeAudit)) {

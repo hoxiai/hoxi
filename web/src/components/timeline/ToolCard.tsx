@@ -51,12 +51,19 @@ export { extractTargetFile, kiloToolIconName, processCarriageReturns };
 // Expansion chosen by the reader survives remounts (session switches unmount the
 // transcript), like ThoughtBox and activity groups; otherwise the layout shrinks
 // and the restored reading position lands on different content.
+const MAX_TOOL_CARD_EXPANSION_ENTRIES = 512;
 const toolCardExpansion = new Map<string, boolean>();
 
 export default function ToolCard(props: { part: ToolPart; defaultExpanded?: boolean }) {
   const initiallyExpanded = toolCardExpansion.get(props.part.id) ?? props.defaultExpanded ?? false;
   const [expanded, setExpandedSignal] = createSignal(initiallyExpanded);
   const setExpanded = (next: boolean) => {
+    if (toolCardExpansion.has(props.part.id)) {
+      toolCardExpansion.delete(props.part.id);
+    } else if (toolCardExpansion.size >= MAX_TOOL_CARD_EXPANSION_ENTRIES) {
+      const oldest = toolCardExpansion.keys().next().value;
+      if (oldest !== undefined) toolCardExpansion.delete(oldest);
+    }
     toolCardExpansion.set(props.part.id, next);
     setExpandedSignal(next);
   };

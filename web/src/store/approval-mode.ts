@@ -380,15 +380,40 @@ export function clearSessionPendingApprovals(sessionID: string): void {
   if (!clean) return;
   const rootID = resolveRootSessionID(clean) || clean;
   const isRoot = clean === rootID;
-  const matches = (sid: string) =>
-    isRoot
-      ? sid === clean || resolveRootSessionID(sid) === clean
-      : sid === clean || resolveParentSessionID(sid) === clean;
-  if (workspace.pendingPermissions.some((p) => matches(p.sessionID))) {
-    setWorkspace("pendingPermissions", (prev) => prev.filter((p) => !matches(p.sessionID)));
+  const matches = (sid?: string | null) => {
+    const target = sid?.trim();
+    if (!target) return false;
+    return isRoot
+      ? target === clean || resolveRootSessionID(target) === clean
+      : target === clean || resolveParentSessionID(target) === clean;
+  };
+  const matchesPerm = (p: PermissionRequest) => {
+    const subID =
+      typeof p.subagentSessionID === "string" && p.subagentSessionID.trim()
+        ? p.subagentSessionID
+        : typeof p.metadata?.subagentSessionID === "string"
+          ? p.metadata.subagentSessionID
+          : undefined;
+    if (!isRoot && subID) {
+      return matches(subID);
+    }
+    return matches(p.sessionID) || matches(subID);
+  };
+  const matchesQuestion = (q: { sessionID: string; subagentSessionID?: string }) => {
+    const subID =
+      typeof q.subagentSessionID === "string" && q.subagentSessionID.trim()
+        ? q.subagentSessionID
+        : undefined;
+    if (!isRoot && subID) {
+      return matches(subID);
+    }
+    return matches(q.sessionID) || matches(subID);
+  };
+  if (workspace.pendingPermissions.some(matchesPerm)) {
+    setWorkspace("pendingPermissions", (prev) => prev.filter((p) => !matchesPerm(p)));
   }
-  if (workspace.pendingQuestions.some((q) => matches(q.sessionID))) {
-    setWorkspace("pendingQuestions", (prev) => prev.filter((q) => !matches(q.sessionID)));
+  if (workspace.pendingQuestions.some(matchesQuestion)) {
+    setWorkspace("pendingQuestions", (prev) => prev.filter((q) => !matchesQuestion(q)));
   }
 }
 

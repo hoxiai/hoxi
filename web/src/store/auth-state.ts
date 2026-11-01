@@ -281,8 +281,17 @@ export function sessionLastTurnUsedOfficialModel(sessionID: string): boolean {
   for (let i = turns.length - 1; i >= 0; i--) {
     const info = turns[i]?.info;
     if (!info) continue;
-    if (info.role === "user") break;
     if (info.providerID === OFFICIAL_PROVIDER_ID) return true;
+    if (info.role === "user") break;
+  }
+  if (turns.length === 0) {
+    if (workspace.aiBySession[sessionID]?.model?.providerID === OFFICIAL_PROVIDER_ID) {
+      return true;
+    }
+    const sess = workspace.sessions.find((s) => s.id === sessionID);
+    if (sess?.providerID === OFFICIAL_PROVIDER_ID) {
+      return true;
+    }
   }
   return false;
 }

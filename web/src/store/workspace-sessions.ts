@@ -46,10 +46,12 @@ import {
   scheduleRefreshWorktreeStatus,
 } from "./session-diffs";
 import {
+  clearSubagentDrawerOverride,
   collectChildSubagentSessionIDs,
   deleteChildSubagentSessionsBackend,
   extractChildSubagentSessionId,
 } from "./subagent-sessions";
+import { clearAutoFailoverPending, clearTurnDispatchState } from "./auto-failover";
 import { forgetPromptQueueState } from "./prompt-queue";
 import { indexSession, indexSessions, sessionBelongsToProject } from "./session-index";
 import { bumpSessionSurfaceRevision, normalizeFolderPath } from "./workspace-folders";
@@ -699,6 +701,9 @@ export function purgeSessionsFromStoreState(
   forgetPromptQueueState(allIDs);
   let surfaceRemoved = false;
   for (const id of allIDs) {
+    clearTurnDispatchState(id);
+    clearAutoFailoverPending(id);
+    clearSubagentDrawerOverride(id);
     loadedChildSessionIDs.delete(id);
     settledChildSessionIDs.delete(id);
     delete state.messagesBySession[id];
@@ -724,10 +729,12 @@ export function purgeSessionsFromStoreState(
     (s) => !idSet.has(s.id) && (!s.parentID || !idSet.has(s.parentID))
   );
   state.pendingPermissions = state.pendingPermissions.filter(
-    (p) => !idSet.has(p.sessionID)
+    (p) =>
+      !idSet.has(p.sessionID) &&
+      !idSet.has(p.subagentSessionID || p.metadata?.subagentSessionID)
   );
   state.pendingQuestions = state.pendingQuestions.filter(
-    (q) => !idSet.has(q.sessionID)
+    (q) => !idSet.has(q.sessionID) && (!q.subagentSessionID || !idSet.has(q.subagentSessionID))
   );
 }
 

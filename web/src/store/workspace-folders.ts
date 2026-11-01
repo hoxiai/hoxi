@@ -177,22 +177,31 @@ interface FolderLookup {
   workSurfaceByDir: Map<string, boolean>;
 }
 
+interface SavedProfileSnap {
+  ref: WorkspaceProfile;
+  id: string | undefined;
+  name: string | undefined;
+  color: string | undefined;
+  surface: WorkspaceProfile["surface"];
+  hidden: boolean | undefined;
+  foldersRef: WorkspaceFolder[] | undefined;
+  folders: Array<{ path: string; isPrimary: boolean | undefined }>;
+}
+
+interface SessionEntrySnap {
+  ref: SessionIndexEntry;
+  directory: string | undefined;
+  surface: SessionIndexEntry["surface"];
+}
+
 let cachedLookup: FolderLookup | null = null;
 let cachedDefDir = "";
 let cachedWorkDirs: string[] | null = null;
 let cachedSessRev = -1;
 let cachedRawSessionIndex: Record<string, SessionIndexEntry> | null = null;
-let cachedFirstSessionKey: string | undefined;
-let cachedFirstSessionEntry: SessionIndexEntry | undefined;
+let cachedSessionEntries = new Map<string, SessionEntrySnap>();
 let cachedSessionSurfaceByDir = new Map<string, "work" | "code">();
-let cachedSavedItems: WorkspaceProfile[] = [];
-let cachedSavedFolders: Array<WorkspaceFolder[] | undefined> = [];
-let cachedSavedFolderSnaps: Array<Array<{ path: string; isPrimary: boolean | undefined }>> = [];
-let cachedSavedIds: Array<string | undefined> = [];
-let cachedSavedSurfaces: Array<WorkspaceProfile["surface"]> = [];
-let cachedSavedHidden: Array<boolean | undefined> = [];
-let cachedSavedNames: Array<string | undefined> = [];
-let cachedSavedColors: Array<string | undefined> = [];
+let cachedSavedSnaps: SavedProfileSnap[] = [];
 let cachedDismissedItems: string[] = [];
 
 function buildProfileDirMap(list: WorkspaceProfile[]): Map<string, WorkspaceProfile> {
@@ -255,6 +264,45 @@ function trackFolderLookupSources(): void {
   for (let i = 0; i < dismissed.length; i++) void dismissed[i];
 }
 
+function sessionIndexMatchesCache(
+  rawSessionIndex: Record<string, SessionIndexEntry>,
+  sessRev: number
+): boolean {
+  if (sessRev !== cachedSessRev || rawSessionIndex !== cachedRawSessionIndex) {
+    return false;
+  }
+  let count = 0;
+  for (const id in rawSessionIndex) {
+    count++;
+    const entry = rawSessionIndex[id];
+    const snap = cachedSessionEntries.get(id);
+    if (
+      !snap ||
+      snap.ref !== entry ||
+      snap.directory !== entry?.directory ||
+      snap.surface !== entry?.surface
+    ) {
+      return false;
+    }
+  }
+  return count === cachedSessionEntries.size;
+}
+
+function savedProfileMatchesSnap(w: WorkspaceProfile | undefined, snap: SavedProfileSnap | undefined): boolean {
+  return Boolean(
+    w &&
+      snap &&
+      w === snap.ref &&
+      w.id === snap.id &&
+      w.folders === snap.foldersRef &&
+      foldersMatchSnapshot(w.folders, snap.folders) &&
+      w.surface === snap.surface &&
+      w.hidden === snap.hidden &&
+      w.name === snap.name &&
+      w.color === snap.color
+  );
+}
+
 function getFolderLookup(): FolderLookup {
   const defDir = normalizeFolderPath(defaultWorkspaceDir());
   const wDirs = workWorkspaceDirs();
@@ -265,24 +313,20 @@ function getFolderLookup(): FolderLookup {
   const rawDismissed = unwrap(workspace.dismissedProjects) || [];
   const rawSessionIndex = unwrap(workspace.sessionIndex) || {};
 
-  let firstSessionKey: string | undefined;
-  for (const k in rawSessionIndex) {
-    firstSessionKey = k;
-    break;
-  }
-  const firstSessionEntry =
-    firstSessionKey !== undefined ? rawSessionIndex[firstSessionKey] : undefined;
-  const sessionIndexSame =
-    sessRev === cachedSessRev &&
-    rawSessionIndex === cachedRawSessionIndex &&
-    firstSessionKey === cachedFirstSessionKey &&
-    firstSessionEntry === cachedFirstSessionEntry;
+  const sessionIndexSame = sessionIndexMatchesCache(rawSessionIndex, sessRev);
 
   if (!sessionIndexSame) {
     const nextSessionSurface = new Map<string, "work" | "code">();
+    const nextSessionEntries = new Map<string, SessionEntrySnap>();
     for (const id in rawSessionIndex) {
       const entry = rawSessionIndex[id];
-      if (!entry?.directory || (entry.surface !== "work" && entry.surface !== "code")) continue;
+      if (!entry) continue;
+      nextSessionEntries.set(id, {
+        ref: entry,
+        directory: entry.directory,
+        surface: entry.surface,
+      });
+      if (!entry.directory || (entry.surface !== "work" && entry.surface !== "code")) continue;
       const dir = stripWorktreePath(entry.directory);
       if (!dir) continue;
       if (entry.surface === "code") {
@@ -292,10 +336,9 @@ function getFolderLookup(): FolderLookup {
       }
     }
     cachedSessionSurfaceByDir = nextSessionSurface;
+    cachedSessionEntries = nextSessionEntries;
     cachedSessRev = sessRev;
     cachedRawSessionIndex = rawSessionIndex;
-    cachedFirstSessionKey = firstSessionKey;
-    cachedFirstSessionEntry = firstSessionEntry;
   }
 
   let savedSame =
@@ -303,22 +346,12 @@ function getFolderLookup(): FolderLookup {
     defDir === cachedDefDir &&
     wDirs === cachedWorkDirs &&
     sessionIndexSame &&
-    rawSaved.length === cachedSavedItems.length &&
+    rawSaved.length === cachedSavedSnaps.length &&
     rawDismissed.length === cachedDismissedItems.length;
 
   if (savedSame) {
     for (let i = 0; i < rawSaved.length; i++) {
-      const w = rawSaved[i];
-      if (
-        w !== cachedSavedItems[i] ||
-        w?.id !== cachedSavedIds[i] ||
-        w?.folders !== cachedSavedFolders[i] ||
-        !foldersMatchSnapshot(w?.folders, cachedSavedFolderSnaps[i]) ||
-        w?.surface !== cachedSavedSurfaces[i] ||
-        w?.hidden !== cachedSavedHidden[i] ||
-        w?.name !== cachedSavedNames[i] ||
-        w?.color !== cachedSavedColors[i]
-      ) {
+      if (!savedProfileMatchesSnap(rawSaved[i], cachedSavedSnaps[i])) {
         savedSame = false;
         break;
       }
@@ -374,14 +407,16 @@ function getFolderLookup(): FolderLookup {
 
   cachedDefDir = defDir;
   cachedWorkDirs = wDirs;
-  cachedSavedItems = rawSaved.slice();
-  cachedSavedFolders = rawSaved.map((w) => w?.folders);
-  cachedSavedFolderSnaps = rawSaved.map((w) => snapshotFolders(w?.folders));
-  cachedSavedIds = rawSaved.map((w) => w?.id);
-  cachedSavedSurfaces = rawSaved.map((w) => w?.surface);
-  cachedSavedHidden = rawSaved.map((w) => w?.hidden);
-  cachedSavedNames = rawSaved.map((w) => w?.name);
-  cachedSavedColors = rawSaved.map((w) => w?.color);
+  cachedSavedSnaps = rawSaved.map((w) => ({
+    ref: w,
+    id: w?.id,
+    name: w?.name,
+    color: w?.color,
+    surface: w?.surface,
+    hidden: w?.hidden,
+    foldersRef: w?.folders,
+    folders: snapshotFolders(w?.folders),
+  }));
   cachedDismissedItems = rawDismissed.slice();
 
   cachedLookup = {

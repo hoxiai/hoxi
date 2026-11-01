@@ -196,9 +196,21 @@ func (s *Service) noteOpenCodeChildEvent(rec SessionRecord, evt SSEEvent) bool {
 		"question.asked", "question.replied", "question.rejected",
 		"question.v2.asked", "question.v2.replied", "question.v2.rejected":
 		if evt.Properties != nil {
+			evt.Properties["subagentSessionID"] = sid
+			if meta, ok := evt.Properties["metadata"].(map[string]interface{}); ok && meta != nil {
+				if firstString(meta["subagentSessionID"]) == "" {
+					meta["subagentSessionID"] = sid
+				}
+			} else if evt.Type == "permission.asked" {
+				evt.Properties["metadata"] = map[string]interface{}{"subagentSessionID": sid}
+			}
 			evt.Properties["sessionID"] = rec.ExternalID
 		}
 		return false
+	case "session.status", "session.idle":
+		s.noteOpenCodeActivity(rec.ID, evt)
+		s.broadcast(sid, evt)
+		return true
 	}
 	s.noteOpenCodeActivity(rec.ID, evt)
 	return true

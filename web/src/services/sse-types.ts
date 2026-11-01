@@ -181,6 +181,7 @@ export interface SnapshotFileDiff {
 export interface PermissionRequest {
   id: string;
   sessionID: string;
+  subagentSessionID?: string;
   permission: string;
   patterns: string[];
   metadata: Record<string, any>;
@@ -259,6 +260,7 @@ export interface QuestionInfo {
 export interface QuestionRequest {
   id: string;
   sessionID: string;
+  subagentSessionID?: string;
   questions: QuestionInfo[];
   tool?: {
     messageID: string;

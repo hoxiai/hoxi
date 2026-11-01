@@ -8,9 +8,12 @@ import {
 import { stripSubagentTitleSuffix } from "../store/session-title";
 import type { ProjectNavEntry } from "../components/layout/left-nav-helpers";
 import {
+  clearSessionPendingApprovals,
   countRunningSubagents,
   groupSubagentsByRoot,
   isSubagentDrawerExpanded,
+  isWorkSurfacePath,
+  sessionsWithPendingPermission,
   setSubagentDrawerExpanded,
   setWorkspace,
   shouldAutoExpandSubagents,
@@ -260,6 +263,54 @@ describe("Cross-project sidebar views", () => {
         setSubagentDrawerExpanded("ses_root", false, true);
         assertEqual(isSubagentDrawerExpanded("ses_root", true), false);
         assertEqual(isSubagentDrawerExpanded("ses_root", false), false);
+
+        // OpenCode child approvals rewritten to root sessionID with subagentSessionID
+        // are attributed to the child and cleared individually when that child finishes.
+        setWorkspace("pendingPermissions", [
+          {
+            id: "perm_child_1",
+            sessionID: "ses_root",
+            subagentSessionID: "ses_child_1",
+            permission: "bash",
+            patterns: ["ls"],
+            metadata: { subagentSessionID: "ses_child_1" },
+            always: [],
+          },
+          {
+            id: "perm_child_2",
+            sessionID: "ses_root",
+            subagentSessionID: "ses_child_2",
+            permission: "bash",
+            patterns: ["pwd"],
+            metadata: { subagentSessionID: "ses_child_2" },
+            always: [],
+          },
+        ]);
+        assertEqual(sessionsWithPendingPermission().has("ses_child_1"), true);
+        assertEqual(sessionsWithPendingPermission().has("ses_child_2"), true);
+        clearSessionPendingApprovals("ses_child_1");
+        assertDeepEqual(
+          workspace.pendingPermissions.map((p) => p.id),
+          ["perm_child_2"],
+        );
+        clearSessionPendingApprovals("ses_root");
+        assertEqual(workspace.pendingPermissions.length, 0);
+
+        // Non-first sessionIndex mutations invalidate the folder lookup cache immediately.
+        setWorkspace(
+          "sessionIndex",
+          reconcile({
+            ses_1: { directory: "/code-first", surface: "code" as const, updated: 1 },
+            ses_2: { directory: "/dynamic-second", surface: "code" as const, updated: 1 },
+          }),
+        );
+        assertEqual(isWorkSurfacePath("/dynamic-second"), false);
+        setWorkspace("sessionIndex", "ses_2", {
+          directory: "/dynamic-second",
+          surface: "work",
+          updated: 2,
+        });
+        assertEqual(isWorkSurfacePath("/dynamic-second"), true);
       },
     );
   });

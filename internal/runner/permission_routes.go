@@ -418,6 +418,27 @@ func (s *Service) rejectStaleOpenCodePermission(pid, dir string) {
 	release()
 }
 
+func (s *Service) rejectOpenCodeQuestion(ctx context.Context, qid, dir string) (int, []byte, error) {
+	endpoint := "/question/" + url.PathEscape(qid) + "/reject"
+	status, raw, err := s.openCodeRaw(ctx, http.MethodPost, endpoint, directoryQuery(dir, nil), nil)
+	if err != nil || status != http.StatusNotFound {
+		return status, raw, err
+	}
+	tried := map[string]bool{normalizeComparePath(dir): true}
+	for _, candidate := range s.openCodeCandidateDirs("") {
+		key := normalizeComparePath(candidate)
+		if tried[key] {
+			continue
+		}
+		tried[key] = true
+		cStatus, cRaw, cErr := s.openCodeRaw(ctx, http.MethodPost, endpoint, directoryQuery(candidate, nil), nil)
+		if cErr == nil && cStatus != http.StatusNotFound {
+			return cStatus, cRaw, nil
+		}
+	}
+	return status, raw, nil
+}
+
 func (s *Service) rejectStaleOpenCodeQuestion(qid, dir string) {
 	if qid == "" || s.openCode == nil {
 		return
@@ -429,7 +450,7 @@ func (s *Service) rejectStaleOpenCodeQuestion(qid, dir string) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	rStatus, _, err := s.openCodeRaw(ctx, http.MethodPost, "/question/"+url.PathEscape(qid)+"/reject", directoryQuery(dir, nil), nil)
+	rStatus, _, err := s.rejectOpenCodeQuestion(ctx, qid, dir)
 	if err == nil && rStatus > 0 && rStatus < 500 {
 		s.settleOpenCodePermission(key)
 		return
@@ -455,8 +476,12 @@ func (s *Service) listUnifiedPermissions(ctx context.Context, directory string) 
 				}
 				rawSid, _ := item["sessionID"].(string)
 				hoxiID := engineToHoxi[rawSid]
+				isChild := rawSid != "" && hoxiID != "" && rawSid != hoxiID && s.isManagedOpenCodeChild(rawSid)
 				if hoxiID != "" {
 					item["sessionID"] = hoxiID
+				}
+				if isChild {
+					item["subagentSessionID"] = rawSid
 				}
 				sessionID, _ := item["sessionID"].(string)
 				meta, _ := item["metadata"].(map[string]interface{})
@@ -470,13 +495,16 @@ func (s *Service) listUnifiedPermissions(ctx context.Context, directory string) 
 					go s.rejectStaleOpenCodePermission(pid, itemDir)
 					continue
 				}
-				if itemDir != "" {
+				if itemDir != "" || isChild {
 					if meta == nil {
 						meta = make(map[string]interface{})
 						item["metadata"] = meta
 					}
-					if firstString(meta["directory"]) == "" {
+					if itemDir != "" && firstString(meta["directory"]) == "" {
 						meta["directory"] = itemDir
+					}
+					if isChild && firstString(meta["subagentSessionID"]) == "" {
+						meta["subagentSessionID"] = rawSid
 					}
 				}
 				sanitizeOpenCodePermissionItem(item)
@@ -517,6 +545,9 @@ func (s *Service) FilterOpenCodeQuestions(raw []byte, directory string) []byte {
 			qDir := firstNonEmptyStr(sessionDirByID[rawSid], sessionDirByID[hoxiID], directory)
 			go s.rejectStaleOpenCodeQuestion(qid, qDir)
 			continue
+		}
+		if rawSid != "" && hoxiID != "" && rawSid != hoxiID && s.isManagedOpenCodeChild(rawSid) {
+			item["subagentSessionID"] = rawSid
 		}
 		if hoxiID != "" {
 			item["sessionID"] = hoxiID

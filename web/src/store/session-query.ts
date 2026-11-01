@@ -107,15 +107,31 @@ export function isSessionTaskActive(sessionID: string | null): boolean {
   if (!sessionID) return false;
   if (isSessionBusy(sessionID)) return true;
   return (
-    workspace.pendingPermissions.some((p) => p.sessionID === sessionID) ||
-    workspace.pendingQuestions.some((q) => q.sessionID === sessionID)
+    workspace.pendingPermissions.some(
+      (p) =>
+        p.sessionID === sessionID ||
+        p.subagentSessionID === sessionID ||
+        p.metadata?.subagentSessionID === sessionID
+    ) ||
+    workspace.pendingQuestions.some(
+      (q) => q.sessionID === sessionID || q.subagentSessionID === sessionID
+    )
   );
 }
 
 export function sessionsWithPendingPermission(): Set<string> {
   const set = new Set<string>();
-  for (const p of workspace.pendingPermissions) set.add(p.sessionID);
-  for (const q of workspace.pendingQuestions) set.add(q.sessionID);
+  for (const p of workspace.pendingPermissions) {
+    set.add(p.sessionID);
+    const subID = p.subagentSessionID || p.metadata?.subagentSessionID;
+    if (typeof subID === "string" && subID) set.add(subID);
+  }
+  for (const q of workspace.pendingQuestions) {
+    set.add(q.sessionID);
+    if (typeof q.subagentSessionID === "string" && q.subagentSessionID) {
+      set.add(q.subagentSessionID);
+    }
+  }
   return set;
 }
 

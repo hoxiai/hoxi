@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hoxiai/hoxi/internal/opencode/ocapi"
@@ -511,11 +512,25 @@ func (s *Service) collectOpenCodeChildIDs(id string, rec SessionRecord, ap *acti
 }
 
 func (s *Service) forgetOpenCodeMappings(id string, rec SessionRecord, ap *activeProcess) {
+	for _, turn := range rec.Turns {
+		if turn.Info.ID != "" {
+			s.userSkillByMsg.Delete(turn.Info.ID)
+		}
+	}
+	for _, turn := range rec.RevertedTurns {
+		if turn.Info.ID != "" {
+			s.userSkillByMsg.Delete(turn.Info.ID)
+		}
+	}
+	var prefixes []string
+	seen := make(map[string]bool)
 	drop := func(sid string) {
 		sid = strings.TrimSpace(sid)
-		if sid == "" {
+		if sid == "" || seen[sid] {
 			return
 		}
+		seen[sid] = true
+		prefixes = append(prefixes, sid+"\x00")
 		s.managedOpenCode.Delete(sid)
 		s.openCodeChildParent.Delete(sid)
 		s.childTurns.Delete(sid)
@@ -529,6 +544,24 @@ func (s *Service) forgetOpenCodeMappings(id string, rec SessionRecord, ap *activ
 	}
 	for _, childID := range s.collectOpenCodeChildIDs(id, rec, ap) {
 		drop(childID)
+	}
+	if len(prefixes) > 0 {
+		deletePrefixed := func(m *sync.Map) {
+			m.Range(func(k, _ interface{}) bool {
+				if key, ok := k.(string); ok {
+					for _, pfx := range prefixes {
+						if strings.HasPrefix(key, pfx) {
+							m.Delete(k)
+							break
+						}
+					}
+				}
+				return true
+			})
+		}
+		deletePrefixed(&s.stoppedTools)
+		deletePrefixed(&s.promptReceipts)
+		deletePrefixed(&s.cliSystemDelivered)
 	}
 }
 

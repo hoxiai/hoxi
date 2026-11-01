@@ -318,6 +318,8 @@ interface SubagentDrawerOverride {
   autoSnapshot: boolean;
 }
 
+const MAX_SUBAGENT_DRAWER_OVERRIDES = 512;
+
 const [subagentDrawerOverrides, setSubagentDrawerOverrides] = createSignal<
   Record<string, SubagentDrawerOverride>
 >({});
@@ -337,8 +339,24 @@ export function setSubagentDrawerExpanded(
   autoExpand: boolean,
 ): void {
   if (!sessionID) return;
-  setSubagentDrawerOverrides((prev) => ({
-    ...prev,
-    [sessionID]: { manual: expanded, autoSnapshot: autoExpand },
-  }));
+  setSubagentDrawerOverrides((prev) => {
+    const next: Record<string, SubagentDrawerOverride> = { ...prev };
+    delete next[sessionID];
+    const keys = Object.keys(next);
+    if (keys.length >= MAX_SUBAGENT_DRAWER_OVERRIDES) {
+      delete next[keys[0]!];
+    }
+    next[sessionID] = { manual: expanded, autoSnapshot: autoExpand };
+    return next;
+  });
+}
+
+export function clearSubagentDrawerOverride(sessionID: string): void {
+  if (!sessionID) return;
+  setSubagentDrawerOverrides((prev) => {
+    if (!(sessionID in prev)) return prev;
+    const next = { ...prev };
+    delete next[sessionID];
+    return next;
+  });
 }

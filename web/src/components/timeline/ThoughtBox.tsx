@@ -222,8 +222,19 @@ export function liveReasoningTicker(rawText: string, isStreaming = false): strin
 }
 
 // Persistent open/collapse state across reactive updates (ported from kilocode)
+const MAX_THOUGHT_BOX_OVERRIDE_ENTRIES = 512;
 const userOpened = new Set<string>();
 const userCollapsed = new Set<string>();
+
+function addBoundedSetEntry(set: Set<string>, id: string): void {
+  if (set.has(id)) {
+    set.delete(id);
+  } else if (set.size >= MAX_THOUGHT_BOX_OVERRIDE_ENTRIES) {
+    const oldest = set.values().next().value;
+    if (oldest !== undefined) set.delete(oldest);
+  }
+  set.add(id);
+}
 
 export default function ThoughtBox(props: {
   part: ReasoningPart;
@@ -296,7 +307,7 @@ export default function ThoughtBox(props: {
     const id = props.part.id;
     if (id) {
       userCollapsed.delete(id);
-      userOpened.add(id);
+      addBoundedSetEntry(userOpened, id);
     }
     setAnimateToggle(true);
     setOpen(true);
@@ -386,10 +397,10 @@ export default function ThoughtBox(props: {
     const next = !open();
     if (next) {
       userCollapsed.delete(id);
-      userOpened.add(id);
+      addBoundedSetEntry(userOpened, id);
     } else {
       userOpened.delete(id);
-      userCollapsed.add(id);
+      addBoundedSetEntry(userCollapsed, id);
     }
     setAnimateToggle(true);
     setOpen(next);
