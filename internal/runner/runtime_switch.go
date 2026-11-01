@@ -95,6 +95,9 @@ func (s *Service) handleRuntimeSwitch(w http.ResponseWriter, r *http.Request, id
 		rec.Runtime, rec.ExternalID, rec.ContextPending = body.Runtime, "", len(rec.Turns) > 0
 		rec.ContextTurnCount = len(rec.Turns)
 	}
+	if !RuntimeCapabilities(body.Runtime, false).Approval && !isReadOnlyAgentMode(rec.Mode) {
+		rec.Mode = "plan"
+	}
 	rec.ProviderID, rec.ModelID = body.ProviderID, body.ModelID
 	if err := s.store.Put(rec); err != nil {
 		writeJSONError(w, 500, err.Error())

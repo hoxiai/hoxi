@@ -596,4 +596,23 @@ describe("session AI configuration", () => {
       assertDeepEqual(workspace.selectedModel, { providerID: "default-provider", modelID: "default-model" });
     });
   });
+
+  it("switches Qoder and CodeBuddy models to plan mode on selection and prompt dispatch", async () => {
+    await withAIFixture(async (a) => {
+      setWorkspace("activeSessionID", a);
+      setActiveAgent("build", a);
+      selectModel({ providerID: "qoder", modelID: "Qwen3.8-Max" });
+      assertEqual(workspace.activeMode, "plan");
+
+      // Even if mode was manually set back to build, dispatching a Qoder turn coerces to plan.
+      setActiveAgent("build", a);
+      let dispatchedAgent = "";
+      hoxiAPI.sendPromptAsync = async (_id, _text, opts) => {
+        dispatchedAgent = opts?.agent || "";
+      };
+      await submitSessionPrompt("continue", a);
+      assertEqual(dispatchedAgent, "plan");
+      assertEqual(workspace.activeMode, "plan");
+    });
+  });
 });

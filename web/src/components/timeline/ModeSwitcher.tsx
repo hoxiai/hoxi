@@ -13,7 +13,7 @@ import {
   Sparkles,
   Wrench,
 } from "lucide-solid";
-import { setActiveAgent, workspace } from "../../store/workspace";
+import { isPlanOnlyRuntimeModel, setActiveAgent, workspace } from "../../store/workspace";
 import type { AgentInfo } from "../../services/api";
 import { isWorkSurface, surfaceExtension } from "../layout/surface-extension";
 import { locale, t } from "../../i18n";
@@ -60,9 +60,17 @@ export default function ModeSwitcher() {
   let menuRef: HTMLDivElement | undefined;
 
   const agents = createMemo(() => {
-    const all = workspace.agents || [];
+    let all = workspace.agents || [];
     if (isWorkSurface() && surfaceExtension.hideCodeComposerControls) {
-      return all.filter((a) => a.name.toLowerCase() !== "debug");
+      all = all.filter((a) => a.name.toLowerCase() !== "debug");
+    }
+    if (isPlanOnlyRuntimeModel(workspace.selectedModel)) {
+      const filtered = all.filter(
+        (a) =>
+          a.name.toLowerCase() === "plan" ||
+          Boolean(workspace.globalConfig?.agent?.[a.name]?.model)
+      );
+      if (filtered.length > 0) return filtered;
     }
     return all;
   });

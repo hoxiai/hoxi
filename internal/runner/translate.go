@@ -646,6 +646,9 @@ func (t *TurnTranslator) handleAgyResult(res *agyResult) []SSEEvent {
 		}
 		errMsg := strings.TrimSpace(res.Error)
 		if errMsg == "" {
+			errMsg = t.lastClaudeErrorText()
+		}
+		if errMsg == "" {
 			errMsg = "Antigravity CLI execution error"
 		}
 		msgErr := &MessageError{
@@ -685,7 +688,10 @@ func (t *TurnTranslator) HasToolParts() bool {
 func (t *TurnTranslator) LastErrorText() string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return t.geminiLastErrMsg
+	if t.geminiLastErrMsg != "" {
+		return t.geminiLastErrMsg
+	}
+	return t.lastClaudeErrorText()
 }
 
 // ResetUncommittedTurnForRetry clears any partial text/reasoning parts emitted

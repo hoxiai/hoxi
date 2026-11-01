@@ -7,6 +7,7 @@ import {
   type SelectedModel,
   type SessionAIConfig,
 } from "./workspace-state";
+import { isPlanOnlyRuntimeModel } from "./session-capabilities";
 
 
 const pendingHistoryPatches = new Map<string, Partial<SessionAIConfig>>();
@@ -36,11 +37,20 @@ export function restoreSessionAI(sessionID: string, turns: MessageTurn[]): void 
     session?.providerID && session?.modelID
       ? { providerID: session.providerID, modelID: session.modelID }
       : workspace.defaultAI.model;
-  const agent = latest.find((turn) => turn.info.agent)?.info.agent;
+  const resolvedModel = model
+    ? { providerID: model.providerID!, modelID: model.modelID! }
+    : fallbackModel;
+  const planOnly =
+    session?.runtime === "qoder" ||
+    session?.runtime === "codebuddy" ||
+    isPlanOnlyRuntimeModel(resolvedModel);
+  const agent = planOnly
+    ? "plan"
+    : latest.find((turn) => turn.info.agent)?.info.agent || workspace.defaultAI.agent;
   const config: SessionAIConfig = {
     ...workspace.defaultAI,
-    model: model ? { providerID: model.providerID!, modelID: model.modelID! } : fallbackModel,
-    agent: agent || workspace.defaultAI.agent,
+    model: resolvedModel,
+    agent,
     ...pending,
   };
   if (pending) {

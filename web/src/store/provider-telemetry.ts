@@ -403,7 +403,7 @@ export function isModelUnavailableError(info?: MessageInfo | null): boolean {
 // Out of balance, credits or prepaid quota (余额不足, 积分不足, 欠费). Chinese is
 // \u-escaped for the i18n lint. Rate limits ("429", "均已限额") are not billing.
 const BALANCE_RE =
-  /insufficient.?(quota|balance|credits?|funds)|exceeded your current quota|credit balance|out of credits|payment required|\u4f59\u989d\u4e0d\u8db3|\u79ef\u5206\u4e0d\u8db3|\u6b20\u8d39/;
+  /insufficient.?(quota|balance|credits?|funds)|exceeded your current quota|credit balance|out of credits|payment required|plan limit reached|daily usage limit|usage limit reached|freeusagelimiterror|\u4f59\u989d\u4e0d\u8db3|\u989d\u5ea6\u5df2\u7528\u5b8c|\u914d\u989d\u5df2\u7528\u5c3d|\u8c03\u7528\u6b21\u6570\u5df2\u8fbe\u4e0a\u9650|\u79ef\u5206\u4e0d\u8db3|\u6b20\u8d39/;
 
 /**
  * The provider refused the request because the account has no balance left.

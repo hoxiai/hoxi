@@ -3,6 +3,8 @@ import { createMemo, createSignal, Show } from "solid-js";
 import { GitBranchPlus, LoaderCircle, Play, Sparkles, Workflow, X } from "lucide-solid";
 import {
   buildProposeSubtasksPrompt,
+  canApproveSession,
+  isPlanOnlyRuntimeModel,
   isSessionBusy,
   newIsolatedSession,
   setWorkspace,
@@ -29,11 +31,19 @@ export default function PlanFollowupBar() {
   const planTurnInfo = createMemo(() => {
     const id = sessionID();
     if (!id || isSessionBusy(id)) return null;
+    if (!canApproveSession(id) || isPlanOnlyRuntimeModel(workspace.selectedModel)) return null;
     const turns = workspace.messagesBySession[id] ?? [];
     if (turns.length === 0) return null;
 
     const lastTurn = turns[turns.length - 1];
     if (lastTurn.info.role !== "assistant") return null;
+    if (
+      lastTurn.info.error ||
+      lastTurn.info.finish === "error" ||
+      lastTurn.info.finish === "aborted"
+    ) {
+      return null;
+    }
 
     const isPlanAgent =
       (lastTurn.info.agent ?? lastTurn.info.mode ?? "").toLowerCase() === "plan" ||

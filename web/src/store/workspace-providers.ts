@@ -24,6 +24,7 @@ import {
   splitAgyModelEffortSuffix,
 } from "./provider-catalog";
 import { parseModelString, updateSessionAI } from "./session-ai";
+import { isPlanOnlyRuntimeModel } from "./session-capabilities";
 import { desktopAuth, desktopAuthGeneration } from "./auth-state";
 import {
   DEFAULT_AGENTS,
@@ -106,7 +107,10 @@ function pushRecentModel(model: SelectedModel) {
 }
 
 export function selectModel(model: SelectedModel, _autoRetryOnError = false) {
-  const patch: { model: SelectedModel; effort?: ReasoningEffort } = { model };
+  const patch: { model: SelectedModel; effort?: ReasoningEffort; agent?: string } = { model };
+  if (isPlanOnlyRuntimeModel(model)) {
+    patch.agent = "plan";
+  }
   if (model.providerID === "antigravity" && workspace.reasoningEffort) {
     const agySplit = splitAgyModelEffortSuffix(model.modelID);
     if (agySplit && agySplit.effort !== workspace.reasoningEffort) {
@@ -136,7 +140,11 @@ export function activeModelInfo() {
 }
 
 function selectDefaultModel(model: SelectedModel) {
-  updateSessionAI({ model }, null);
+  const patch: { model: SelectedModel; agent?: string } = { model };
+  if (isPlanOnlyRuntimeModel(model)) {
+    patch.agent = "plan";
+  }
+  updateSessionAI(patch, null);
   try { localStorage.setItem(SELECTED_MODEL_KEY, JSON.stringify(model)); } catch { /* storage unavailable */ }
 }
 

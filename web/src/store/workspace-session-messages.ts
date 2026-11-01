@@ -12,7 +12,8 @@ import { clearAutoFailoverPending, clearTurnDispatchState, getTurnDispatchState,
 import { newIsolatedSession, waitForSessionSandbox } from "./session-sandbox";
 import { buildCombinedSystemPrompt } from "./settings";
 import { setWorkspace, workspace, type ReasoningEffort } from "./workspace-state";
-import { initializeSessionAI, parseModelString, sessionAIConfig } from "./session-ai";
+import { initializeSessionAI, parseModelString, sessionAIConfig, updateSessionAI } from "./session-ai";
+import { isPlanOnlyRuntimeModel } from "./session-capabilities";
 import { loadSessionMessages, renameSessionTitle, replaceSession } from "./workspace-sessions";
 import { buildWorkspaceFoldersSystemPrompt, normalizeFolderPath, workspaceFoldersForDir } from "./workspace-folders";
 import { isSessionBusy, isSessionDeleted, requestTimelineFollow, sessionDirectory, sessionRuntimeForID, timelineFollowRequest } from "./session-query";
@@ -80,7 +81,7 @@ export async function handleSessionErrorEvent(
     setWorkspace("statusBySession", sessionID, { type: "busy" });
     try {
       await hoxiAPI.sendPromptAsync(sessionID, autoState.promptText, {
-        agent: autoState.agent,
+        agent: isPlanOnlyRuntimeModel(nextStep.target) ? "plan" : autoState.agent,
         model: nextStep.target,
         variant: autoState.effort || undefined,
         directory: sessionDirectory(sessionID),
@@ -295,8 +296,8 @@ export async function dispatchSessionPrompt(
     await loadSessionMessages(id);
   }
   const config = sessionAIConfig(id);
-  const effectiveAgent = options?.agent || config.agent;
-  const agentDedicatedModelKey = workspace.globalConfig?.agent?.[effectiveAgent]?.model;
+  const requestedAgent = options?.agent || config.agent;
+  const agentDedicatedModelKey = workspace.globalConfig?.agent?.[requestedAgent]?.model;
   const agentDedicatedModel =
     !options?.model && typeof agentDedicatedModelKey === "string" && agentDedicatedModelKey
       ? parseModelString(agentDedicatedModelKey)
@@ -320,6 +321,13 @@ export async function dispatchSessionPrompt(
     : chosenModel
     ? { ...chosenModel }
     : undefined;
+  const effectiveAgent =
+    effectiveModel && isPlanOnlyRuntimeModel(effectiveModel)
+      ? "plan"
+      : options?.agent || config.agent;
+  if (effectiveModel && isPlanOnlyRuntimeModel(effectiveModel) && config.agent !== "plan") {
+    updateSessionAI({ agent: "plan" }, id);
+  }
   if (!effectiveModel && sessionRuntimeForID(id) === "opencode") {
     throw new Error(t("timeline.selectModelToSend"));
   }

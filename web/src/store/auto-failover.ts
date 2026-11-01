@@ -62,7 +62,7 @@ const CONTEXT_RE =
 const POLICY_RE = /content.?(policy|filter|management)|safety system|\u5185\u5bb9\u5b89\u5168|\u8fdd\u89c4|\u654f\u611f\u5185\u5bb9/;
 const MODEL_RE = /model not found|model_not_found|model.*not.*available|is not loaded in the running engine|unknown model/;
 const QUOTA_RE =
-  /insufficient.?(quota|balance|credits?|funds)|exceeded your current quota|quota exceeded for|credit balance|out of credits|payment required|billing|freeusagelimiterror|plan limit reached|budget exceeded|\u4f59\u989d\u4e0d\u8db3|\u989d\u5ea6|\u79ef\u5206\u4e0d\u8db3|\u6b20\u8d39|\u5747\u5df2\u9650\u989d|\u4f7f\u7528\u91cf\u5df2\u8d85\u51fa|\u914d\u989d\u5df2\u7528\u5c3d|\u8c03\u7528\u6b21\u6570\u5df2\u8fbe\u4e0a\u9650/;
+  /insufficient.?(quota|balance|credits?|funds)|exceeded your current quota|quota exceeded for|credit balance|out of credits|payment required|billing|freeusagelimiterror|plan limit reached|daily usage limit|usage limit reached|budget exceeded|\u4f59\u989d\u4e0d\u8db3|\u989d\u5ea6|\u79ef\u5206\u4e0d\u8db3|\u6b20\u8d39|\u5747\u5df2\u9650\u989d|\u4f7f\u7528\u91cf\u5df2\u8d85\u51fa|\u914d\u989d\u5df2\u7528\u5c3d|\u8c03\u7528\u6b21\u6570\u5df2\u8fbe\u4e0a\u9650/;
 const RATE_RE = /\b429\b|rate.?limit|too many requests|\u9891\u7387|\u9650\u6d41|\u8bf7\u6c42\u8fc7\u4e8e\u9891\u7e41/;
 const AUTH_RE = /unauthorized|invalid api key|incorrect api key|authentication|forbidden|\u9274\u6743|\u8ba4\u8bc1\u5931\u8d25|\u65e0\u6548.{0,4}(key|\u4ee4\u724c)/;
 const SERVER_RE =

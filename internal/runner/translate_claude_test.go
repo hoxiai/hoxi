@@ -264,3 +264,35 @@ func TestCodeBuddyNormalizesPromptCacheMissAndResumedResultUsage(t *testing.T) {
 		t.Fatalf("cumulative CodeBuddy result.usage overwrote current turn usage: %+v", tr.msgInfo.Tokens)
 	}
 }
+
+func TestQoderAndCodeBuddyResultErrorUsesAssistantTextAndRuntimeFallback(t *testing.T) {
+	t.Parallel()
+	limitMsg := "You've reached your daily usage limit for Chat. Come back tomorrow to continue working with me. Report Issue (input /feedback)"
+	tr := NewTurnTranslator("ses_qdr_err", string(RuntimeQoder), "msg_a_1", "msg_u_1", "qoder", "Qwen3.8-Max", "plan", "")
+	tr.FeedLine(`{"type":"assistant","message":{"id":"q_err_1","content":[{"type":"text","text":"` + limitMsg + `"}]}}`)
+	if got := tr.LastErrorText(); got != limitMsg {
+		t.Fatalf("LastErrorText() = %q, want %q", got, limitMsg)
+	}
+	tr.FeedLine(`{"type":"result","is_error":true,"result":""}`)
+	if tr.msgInfo.Error == nil || tr.msgInfo.Error.Data == nil || tr.msgInfo.Error.Data.Message != limitMsg {
+		t.Fatalf("expected Qoder assistant error text in RunnerError, got %+v", tr.msgInfo.Error)
+	}
+	if tr.msgInfo.Error.Data.IsRetryable {
+		t.Fatalf("daily usage limit must not be marked retryable")
+	}
+
+	for _, tc := range []struct {
+		runtime string
+		want    string
+	}{
+		{string(RuntimeQoder), "Qoder CLI execution failed"},
+		{string(RuntimeCodeBuddy), "CodeBuddy CLI execution failed"},
+		{string(RuntimeClaudeCode), "Claude Code CLI execution failed"},
+	} {
+		emptyTr := NewTurnTranslator("ses_empty", tc.runtime, "msg_a", "msg_u", tc.runtime, "auto", "plan", "")
+		emptyTr.FeedLine(`{"type":"result","is_error":true}`)
+		if emptyTr.msgInfo.Error == nil || emptyTr.msgInfo.Error.Data == nil || emptyTr.msgInfo.Error.Data.Message != tc.want {
+			t.Fatalf("runtime %s fallback error = %+v, want %q", tc.runtime, emptyTr.msgInfo.Error, tc.want)
+		}
+	}
+}

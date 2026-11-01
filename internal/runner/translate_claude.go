@@ -475,7 +475,10 @@ func (t *TurnTranslator) feedClaudeEvent(env *claudeRawEvent, now int64) []SSEEv
 				errMsg = strings.TrimSpace(env.Error)
 			}
 			if errMsg == "" {
-				errMsg = "Claude Code CLI execution failed"
+				errMsg = t.lastClaudeErrorText()
+			}
+			if errMsg == "" {
+				errMsg = t.defaultCLIErrorMessage()
 			}
 			msgErr := &MessageError{
 				Name: "RunnerError",
@@ -513,6 +516,43 @@ func (t *TurnTranslator) feedClaudeEvent(env *claudeRawEvent, now int64) []SSEEv
 		return evts
 	}
 	return nil
+}
+
+func (t *TurnTranslator) lastClaudeErrorText() string {
+	if t.claudeTextPartID != "" {
+		if p := t.partsByID[t.claudeTextPartID]; p != nil && p.Type == "text" {
+			if txt := strings.TrimSpace(p.Text); txt != "" {
+				return txt
+			}
+		}
+	}
+	for _, p := range t.partsByID {
+		if p != nil && p.Type == "tool" {
+			return ""
+		}
+	}
+	if len(t.subagentOrder) > 0 || len(t.claudeTasks) > 0 || len(t.childOrder) > 0 {
+		return ""
+	}
+	for i := len(t.partOrder) - 1; i >= 0; i-- {
+		if p := t.partsByID[t.partOrder[i]]; p != nil && p.Type == "text" {
+			if txt := strings.TrimSpace(p.Text); txt != "" {
+				return txt
+			}
+		}
+	}
+	return ""
+}
+
+func (t *TurnTranslator) defaultCLIErrorMessage() string {
+	switch t.runtime {
+	case string(RuntimeQoder):
+		return "Qoder CLI execution failed"
+	case string(RuntimeCodeBuddy):
+		return "CodeBuddy CLI execution failed"
+	default:
+		return "Claude Code CLI execution failed"
+	}
 }
 
 func normalizeRunnerTool(rawName string, rawParams map[string]interface{}) (normTool, title string, clean map[string]interface{}) {

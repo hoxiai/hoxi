@@ -183,6 +183,8 @@ var quotaExhaustedMarkers = []string{
 	"monthly spend limit",
 	"budget exceeded",
 	"plan limit reached",
+	"daily usage limit",
+	"usage limit reached",
 	"freeusagelimiterror",
 	"均已限额",
 	"额度已用完",

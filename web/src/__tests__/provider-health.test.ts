@@ -460,6 +460,15 @@ describe("balance exhausted detection", () => {
     );
     assertEqual(isBalanceError(info({ name: "APIError", message: "\u8d26\u6237\u4f59\u989d\u4e0d\u8db3" })), true);
     assertEqual(isBalanceError(info({ name: "APIError", message: "Your credit balance is too low" })), true);
+    assertEqual(
+      isBalanceError(
+        info({
+          name: "RunnerError",
+          message: "You've reached your daily usage limit for Chat. Come back tomorrow to continue working with me.",
+        })
+      ),
+      true
+    );
   });
 
   it("does not treat rate limits or other failures as balance", () => {
