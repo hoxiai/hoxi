@@ -6,14 +6,13 @@ import type { SessionInfo } from "../../services/sse-types";
 import {
   isSessionArchived,
   normalizeFolderPath,
-  resolveSessionSurface,
+  partitionCodeSessions,
   sessionActivityTime,
   workspace,
 } from "../../store/workspace";
 import type { ProjectNavEntry } from "./left-nav-helpers";
 import { compareSessionRunning } from "./session-history";
 import { matchesProjectSearch, matchesSessionSearch } from "./session-search";
-import { groupSubagentsByRoot } from "./subagent-nav";
 
 export interface CrossProjectSession {
   session: SessionInfo;
@@ -65,12 +64,11 @@ export function collectCrossProjectSessions(source: CrossProjectSource): CrossPr
   const seen = new Set<string>();
   const out: CrossProjectSession[] = [];
   for (const proj of source.allProjects) {
-    const codeList = sessionsForProject(source, proj, activeRoot).filter(
-      (s) => resolveSessionSurface(s) === "code"
+    const { roots, subagentsByRoot } = partitionCodeSessions(
+      sessionsForProject(source, proj, activeRoot),
     );
-    const subagentsByRoot = groupSubagentsByRoot(codeList);
-    for (const session of codeList) {
-      if (!session?.id || seen.has(session.id) || session.parentID || isSessionArchived(session)) continue;
+    for (const session of roots) {
+      if (!session?.id || seen.has(session.id) || isSessionArchived(session)) continue;
       seen.add(session.id);
       const subagents = subagentsByRoot.get(session.id);
       const item: CrossProjectSession = subagents ? { session, proj, subagents } : { session, proj };

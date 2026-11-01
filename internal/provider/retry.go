@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/llm"
 )
 
 const (
@@ -48,39 +50,8 @@ func isTransientLLMError(err error, status int) bool {
 
 // Providers report an exhausted balance or quota as 429 too (OpenAI's
 // insufficient_quota); retrying it only delays the real error.
-var quotaExhaustedMarkers = []string{
-	"insufficient_quota",
-	"exceeded your current quota",
-	"insufficient balance",
-	"insufficient_balance",
-	"insufficient credits",
-	"insufficient_credits",
-	"insufficient credit",
-	"insufficient_credit",
-	"insufficient funds",
-	"insufficient_funds",
-	"credit balance is too low",
-	"credit balance",
-	"out of credits",
-	"payment required",
-	"billing_hard_limit",
-	"freeusagelimiterror",
-	"均已限额",
-	"额度已用完",
-	"额度不足",
-	"余额不足",
-	"积分不足",
-	"欠费",
-}
-
 func isQuotaExhausted(body []byte) bool {
-	lower := strings.ToLower(string(body))
-	for _, marker := range quotaExhaustedMarkers {
-		if strings.Contains(lower, marker) {
-			return true
-		}
-	}
-	return false
+	return llm.IsQuotaExhausted(string(body))
 }
 
 func llmRetryWait(attempt int, retryAfter time.Duration) time.Duration {

@@ -18,11 +18,25 @@ func (s *Service) ConfigureOpenCode(baseURL, password string) {
 	s.openCode = ocapi.New(baseURL, password)
 	for _, info := range s.store.List("") {
 		rec, _ := s.store.Meta(info.ID)
-		if rec.ExternalID != "" && rec.Runtime == "opencode" {
-			s.managedOpenCode.Store(rec.ExternalID, true)
-		}
-		for _, id := range rec.OpenCodeIDs {
+		s.restoreOpenCodeSessionMappings(rec)
+	}
+}
+
+func (s *Service) restoreOpenCodeSessionMappings(rec SessionRecord) {
+	if rec.ExternalID != "" && rec.Runtime == "opencode" {
+		s.managedOpenCode.Store(rec.ExternalID, true)
+	}
+	for _, id := range rec.OpenCodeIDs {
+		if id != "" {
 			s.managedOpenCode.Store(id, true)
+		}
+	}
+	for _, childID := range rec.OpenCodeChildIDs {
+		if childID != "" {
+			s.managedOpenCode.Store(childID, true)
+			if rec.ID != "" {
+				s.openCodeChildParent.Store(childID, rec.ID)
+			}
 		}
 	}
 }
@@ -422,6 +436,7 @@ func (s *Service) deleteConversation(ctx context.Context, id string) error {
 	}
 	rec, ok := s.store.Get(id)
 	if !ok {
+		s.forgetOpenCodeMappings(id, SessionRecord{}, ap)
 		if s.attachments != nil {
 			s.attachments.DeleteBySession(id)
 		}
@@ -429,7 +444,7 @@ func (s *Service) deleteConversation(ctx context.Context, id string) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	if rec.Runtime == "opencode" || len(rec.OpenCodeIDs) > 0 {
+	if rec.Runtime == "opencode" || len(rec.OpenCodeIDs) > 0 || len(rec.OpenCodeChildIDs) > 0 {
 		s.rejectOpenCodeSessionPermissions(ctx, rec)
 	}
 	for _, engineID := range rec.OpenCodeIDs {
@@ -445,11 +460,76 @@ func (s *Service) deleteConversation(ctx context.Context, id string) error {
 			s.attachments.DeleteBySession(engineID)
 		}
 	}
+	childDir := firstNonEmptyStr(rec.WorktreePath, rec.ProjectDir)
+	for _, childID := range s.collectOpenCodeChildIDs(id, rec, ap) {
+		if s.openCode != nil {
+			_ = s.openCodeJSON(ctx, "DELETE", "/session/"+childID, childDir, nil, nil)
+		}
+		if s.attachments != nil {
+			s.attachments.DeleteBySession(childID)
+		}
+	}
+	s.forgetOpenCodeMappings(id, rec, ap)
 	if s.attachments != nil {
 		s.attachments.DeleteBySession(id)
 	}
 	s.deleteChildSessions(id)
 	return s.store.Delete(id)
+}
+
+func (s *Service) collectOpenCodeChildIDs(id string, rec SessionRecord, ap *activeProcess) []string {
+	seen := make(map[string]bool)
+	var out []string
+	add := func(childID string) {
+		childID = strings.TrimSpace(childID)
+		if childID == "" || seen[childID] {
+			return
+		}
+		seen[childID] = true
+		out = append(out, childID)
+	}
+	for _, childID := range rec.OpenCodeChildIDs {
+		add(childID)
+	}
+	if ap != nil {
+		ap.openCodeChildren.Range(func(key, _ interface{}) bool {
+			if childID, ok := key.(string); ok {
+				add(childID)
+			}
+			return true
+		})
+	}
+	s.openCodeChildParent.Range(func(key, value interface{}) bool {
+		childID, _ := key.(string)
+		parentID, _ := value.(string)
+		if parentID == id {
+			add(childID)
+		}
+		return true
+	})
+	return out
+}
+
+func (s *Service) forgetOpenCodeMappings(id string, rec SessionRecord, ap *activeProcess) {
+	drop := func(sid string) {
+		sid = strings.TrimSpace(sid)
+		if sid == "" {
+			return
+		}
+		s.managedOpenCode.Delete(sid)
+		s.openCodeChildParent.Delete(sid)
+		s.childTurns.Delete(sid)
+		s.editedFiles.Delete(sid)
+		s.turnStats.Delete(sid)
+	}
+	drop(id)
+	drop(rec.ExternalID)
+	for _, ocID := range rec.OpenCodeIDs {
+		drop(ocID)
+	}
+	for _, childID := range s.collectOpenCodeChildIDs(id, rec, ap) {
+		drop(childID)
+	}
 }
 
 func (s *Service) DeleteSessionAttachments(sessionID string) {

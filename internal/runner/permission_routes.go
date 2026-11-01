@@ -317,6 +317,14 @@ func (s *Service) openCodeEngineSessionMap() (map[string]string, map[string]stri
 				}
 			}
 		}
+		for _, childID := range rec.OpenCodeChildIDs {
+			if childID != "" {
+				engineToHoxi[childID] = rec.ID
+				if recDir != "" {
+					sessionDirByID[childID] = recDir
+				}
+			}
+		}
 	}
 	s.openCodeChildParent.Range(func(key, value interface{}) bool {
 		childID, _ := key.(string)
@@ -403,7 +411,7 @@ func (s *Service) rejectStaleOpenCodePermission(pid, dir string) {
 	defer cancel()
 	replyBody := []byte(`{"reply":"reject","message":"the session was stopped"}`)
 	rStatus, _, err := s.replyOpenCodePermission(ctx, pid, dir, replyBody)
-	if err == nil && (rStatus == http.StatusNotFound || (rStatus >= 200 && rStatus < 300)) {
+	if err == nil && rStatus > 0 && rStatus < 500 {
 		s.settleOpenCodePermission(pid)
 		return
 	}
@@ -414,9 +422,19 @@ func (s *Service) rejectStaleOpenCodeQuestion(qid, dir string) {
 	if qid == "" || s.openCode == nil {
 		return
 	}
+	key := "question:" + qid
+	release, claimed := s.claimOpenCodeAnswer(key)
+	if !claimed {
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_, _, _ = s.openCodeRaw(ctx, http.MethodPost, "/question/"+url.PathEscape(qid)+"/reject", directoryQuery(dir, nil), nil)
+	rStatus, _, err := s.openCodeRaw(ctx, http.MethodPost, "/question/"+url.PathEscape(qid)+"/reject", directoryQuery(dir, nil), nil)
+	if err == nil && rStatus > 0 && rStatus < 500 {
+		s.settleOpenCodePermission(key)
+		return
+	}
+	release()
 }
 
 func (s *Service) listUnifiedPermissions(ctx context.Context, directory string) []map[string]interface{} {
@@ -531,6 +549,11 @@ func (s *Service) rejectOpenCodeSessionPermissions(ctx context.Context, rec Sess
 				return true
 			}
 		}
+		for _, childID := range rec.OpenCodeChildIDs {
+			if childID != "" && sid == childID {
+				return true
+			}
+		}
 		if ap != nil && ap.isOpenCodeChild(sid) {
 			return true
 		}
@@ -622,6 +645,7 @@ func (s *Service) rejectOpenCodeSessionPermissions(ctx context.Context, rec Sess
 				if rErr != nil || (rStatus != http.StatusNotFound && (rStatus < 200 || rStatus >= 300)) {
 					continue
 				}
+				s.settleOpenCodePermission("question:" + qid)
 				rejectedEvt := SSEEvent{
 					Type:       "question.rejected",
 					Properties: map[string]interface{}{"sessionID": rec.ID, "requestID": qid},

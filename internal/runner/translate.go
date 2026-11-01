@@ -618,3 +618,108 @@ func (t *TurnTranslator) handleAgyResult(res *agyResult) []SSEEvent {
 	)
 	return evts
 }
+
+func (t *TurnTranslator) HasToolParts() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, p := range t.partsByID {
+		if p != nil && p.Type == "tool" {
+			return true
+		}
+	}
+	return len(t.subagentOrder) > 0 || len(t.claudeTasks) > 0 || len(t.childOrder) > 0
+}
+
+func (t *TurnTranslator) LastErrorText() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.geminiLastErrMsg
+}
+
+// ResetUncommittedTurnForRetry clears any partial text/reasoning parts emitted
+// before a retry when no tool calls have executed yet in this turn.
+func (t *TurnTranslator) ResetUncommittedTurnForRetry(initialExternalID string) []SSEEvent {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	var evts []SSEEvent
+	for _, id := range t.partOrder {
+		part := t.partsByID[id]
+		if part == nil || (part.Type != "text" && part.Type != "reasoning") {
+			continue
+		}
+		cleared := clonePart(*part)
+		cleared.Text = ""
+		evts = append(evts, SSEEvent{
+			Type:       "message.part.updated",
+			Properties: map[string]interface{}{"part": cleared},
+		})
+	}
+	t.partsByID = make(map[string]*MessagePart)
+	t.partOrder = nil
+	t.stepStartMs = make(map[int]int64)
+	t.agyStepUsage = make(map[string]agyUsage)
+	t.claudeMsgUsage = make(map[string]claudeUsage)
+	t.hasTextPart = false
+	t.turnFinished = false
+	t.externalID = initialExternalID
+	t.convPinned = false
+	t.editPayloads = nil
+	t.geminiLastErrMsg = ""
+	t.claudeMessageID = ""
+	t.claudeReasonPartID = ""
+	t.claudeTextPartID = ""
+	t.claudeRetrying = false
+	t.geminiReasonPartID = ""
+	t.geminiTextPartID = ""
+	return evts
+}
+
+// PrepareForResumeRetry settles any in-flight parts and resets active streaming
+// cursors so a resumed retry CLI appends new steps to the same assistant turn.
+func (t *TurnTranslator) PrepareForResumeRetry(nowMs int64) []SSEEvent {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	evts := t.finishAgySubagents(true, nowMs)
+	evts = append(evts, t.finishClaudeSubagents(true, nowMs)...)
+	evts = append(evts, t.closeAllChildren(true, nowMs)...)
+	evts = append(evts, t.closeActiveGeminiPart(t.geminiReasonPartID, nowMs)...)
+	evts = append(evts, t.closeActiveGeminiPart(t.geminiTextPartID, nowMs)...)
+	evts = append(evts, t.closeActiveGeminiPart(t.claudeReasonPartID, nowMs)...)
+	evts = append(evts, t.closeActiveGeminiPart(t.claudeTextPartID, nowMs)...)
+	for _, id := range t.partOrder {
+		part := t.partsByID[id]
+		if part == nil {
+			continue
+		}
+		if (part.Type == "text" || part.Type == "reasoning") && (part.Time == nil || part.Time.End == 0) {
+			start := nowMs
+			if part.Time != nil && part.Time.Start > 0 {
+				start = part.Time.Start
+			}
+			part.Time = &PartTime{Start: start, End: nowMs}
+			evts = append(evts, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": clonePart(*part)}})
+		} else if part.Type == "tool" && part.Tool != "task" && part.State != nil &&
+			(part.State.Status == "pending" || part.State.Status == "running") {
+			start := nowMs
+			if part.State.Time != nil && part.State.Time.Start > 0 {
+				start = part.State.Time.Start
+			}
+			part.State.Status = "error"
+			if strings.TrimSpace(part.State.Error) == "" {
+				part.State.Error = "Interrupted before completion"
+			}
+			part.State.Time = &PartTime{Start: start, End: nowMs}
+			evts = append(evts, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": clonePart(*part)}})
+		}
+	}
+	t.turnFinished = false
+	t.geminiStepIdx++
+	t.geminiReasonPartID = ""
+	t.geminiTextPartID = ""
+	t.geminiLastErrMsg = ""
+	t.claudeMessageID = ""
+	t.claudeReasonPartID = ""
+	t.claudeTextPartID = ""
+	t.claudeRetrying = false
+	return evts
+}

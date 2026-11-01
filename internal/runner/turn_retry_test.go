@@ -56,6 +56,22 @@ func TestIsRetryableTurnError(t *testing.T) {
 			t.Fatalf("expected error to be non-retryable: %q", tc)
 		}
 	}
+
+	delayCases := []struct {
+		msg  string
+		want time.Duration
+	}{
+		{"please retry after 500ms", 500 * time.Millisecond},
+		{"try again in 4s", 4 * time.Second},
+		{"请 6 秒后重试", 6 * time.Second},
+		{"retry after 2 minutes", maxTurnRetryDelay},
+		{"请 1 分钟后重试", maxTurnRetryDelay},
+	}
+	for _, tc := range delayCases {
+		if got := parseTurnRetryDelay(tc.msg); got != tc.want {
+			t.Fatalf("parseTurnRetryDelay(%q) = %v, want %v", tc.msg, got, tc.want)
+		}
+	}
 }
 
 func TestRunnerTransientErrorAutoRetriesBeforeToolExecution(t *testing.T) {

@@ -116,14 +116,7 @@ func NewService(rootDir string, worktrees *worktree.Manager, status *statusbar.T
 	}
 	for _, info := range svc.store.List("") {
 		rec, _ := svc.store.Meta(info.ID)
-		if rec.ExternalID != "" && rec.Runtime == "opencode" {
-			svc.managedOpenCode.Store(rec.ExternalID, true)
-		}
-		for _, ocID := range rec.OpenCodeIDs {
-			if ocID != "" {
-				svc.managedOpenCode.Store(ocID, true)
-			}
-		}
+		svc.restoreOpenCodeSessionMappings(rec)
 		if rec.Subagent || validateSessionDirectory(rec) != nil {
 			continue
 		}

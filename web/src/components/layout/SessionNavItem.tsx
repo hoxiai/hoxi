@@ -2,11 +2,15 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import { Bot, Pencil, Square } from "lucide-solid";
 import {
+  countRunningSubagents,
   isPlaceholderSessionTitle,
+  isSubagentDrawerExpanded,
   renameSessionTitle,
   selectSession,
   sessionDirectory,
+  setSubagentDrawerExpanded,
   setWorkspace,
+  shouldAutoExpandSubagents,
   workspace,
 } from "../../store/workspace";
 import { stopSessionTask } from "../../store/workspace-session-messages";
@@ -19,10 +23,6 @@ import SessionPullRequestPill from "./SessionPullRequestPill";
 import { fetchPullRequests, type ForgePullRequest } from "../../services/forge";
 import { SessionRenamePopover } from "./SessionRenamePopover";
 import { SubagentNavRow } from "./SubagentNavRow";
-import {
-  countRunningSubagents,
-  shouldAutoExpandSubagents,
-} from "./subagent-nav";
 import {
   formatCompactRelativeTime,
   formatExactTime,
@@ -49,7 +49,6 @@ export function SessionNavItem(props: SessionNavItemProps) {
   const [editing, setEditing] = createSignal(false);
   const [confirmingDelete, setConfirmingDelete] = createSignal(false);
   const [deleting, setDeleting] = createSignal(false);
-  const [manualExpanded, setManualExpanded] = createSignal<boolean | null>(null);
   let rowRef: HTMLDivElement | undefined;
 
   const nowTick = useNowTicker(30000);
@@ -59,14 +58,8 @@ export function SessionNavItem(props: SessionNavItemProps) {
   const autoExpand = createMemo(() =>
     shouldAutoExpandSubagents(subagents(), props.pendingSessions, props.filterQuery)
   );
-  createEffect((prevAuto: boolean | undefined) => {
-    const nextAuto = autoExpand();
-    if (prevAuto !== undefined && prevAuto !== nextAuto) {
-      setManualExpanded(null);
-    }
-    return nextAuto;
-  });
-  const expanded = () => hasSubagents() && (manualExpanded() ?? autoExpand());
+  const expanded = () =>
+    hasSubagents() && isSubagentDrawerExpanded(props.session.id, autoExpand());
   const hasActiveSubagent = createMemo(() =>
     subagents().some((sub) => sub.id === workspace.activeSessionID)
   );
@@ -228,7 +221,7 @@ export function SessionNavItem(props: SessionNavItemProps) {
               }
               onClick={(ev) => {
                 ev.stopPropagation();
-                setManualExpanded(!expanded());
+                setSubagentDrawerExpanded(props.session.id, !expanded(), autoExpand());
               }}
             >
               <Icon

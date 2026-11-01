@@ -1,11 +1,12 @@
 // web/src/store/subagent-sessions.ts
-// Subagent (task tool) session tree: child-ID resolution, titles, liveness and
-// parent/root lookups. Read-mostly; loading children lives in workspace-sessions.
+// Subagent (task tool) session tree: child-ID resolution, titles, liveness,
+// parent/root lookups, code-session partitioning and drawer expansion state.
+import { createSignal } from "solid-js";
 import { hoxiAPI } from "../services/api";
-import type { ToolPart } from "../services/sse-types";
+import type { SessionInfo, ToolPart } from "../services/sse-types";
 import { lookupSubagentParent, subagentChildIDFromPart } from "./message-lookup";
 import { isSessionBusy } from "./session-query";
-import { indexedSession } from "./session-index";
+import { indexedSession, resolveSessionSurface } from "./session-index";
 import { subagentDisplayTitle, type SubagentTitle } from "./session-title";
 import { workspace } from "./workspace-state";
 
@@ -155,10 +156,15 @@ export async function deleteChildSubagentSessionsBackend(
 
 /**
  * Resolves the immediate parent session ID of `sessionID` (if it is a subagent session),
- * checking both `workspace.sessions` (`parentID`) and `task` tool calls in `messagesBySession`.
+ * checking optional `byID`, `workspace.sessions`, `sessionIndex`, and `task` tool calls.
  */
-export function resolveParentSessionID(sessionID: string | null | undefined): string | null {
+export function resolveParentSessionID(
+  sessionID: string | null | undefined,
+  byID?: ReadonlyMap<string, SessionInfo>,
+): string | null {
   if (!sessionID) return null;
+  const localParent = (byID?.get(sessionID)?.parentID || "").trim();
+  if (localParent) return localParent;
   const info = workspace.sessions.find((s) => s.id === sessionID);
   if (info?.parentID) return info.parentID;
   const indexedParent = indexedSession(sessionID)?.parentID;
@@ -169,15 +175,170 @@ export function resolveParentSessionID(sessionID: string | null | undefined): st
 /**
  * Walks up parent links to return the root/primary session ID.
  */
-export function resolveRootSessionID(sessionID: string | null | undefined): string | null {
+export function resolveRootSessionID(
+  sessionID: string | null | undefined,
+  byID?: ReadonlyMap<string, SessionInfo>,
+): string | null {
   if (!sessionID) return null;
   let curr: string = sessionID;
   const visited = new Set<string>([curr]);
   for (let depth = 0; depth < 8; depth++) {
-    const parent = resolveParentSessionID(curr);
+    const parent = resolveParentSessionID(curr, byID);
     if (!parent || visited.has(parent)) break;
     visited.add(parent);
     curr = parent;
   }
   return curr;
+}
+
+/**
+ * Groups non-archived child sessions (subagents and convoy subtasks) under
+ * their root parent session ID in chronological spawn order.
+ */
+export function groupSubagentsByRoot(
+  rawSessions: readonly SessionInfo[],
+): Map<string, SessionInfo[]> {
+  const byID = new Map<string, SessionInfo>();
+  for (const s of rawSessions) {
+    if (s?.id) byID.set(s.id, s);
+  }
+  const globalByID = new Map<string, SessionInfo>();
+  for (const s of workspace.sessions) {
+    if (s?.id) globalByID.set(s.id, s);
+  }
+  const lookup = (id: string): SessionInfo | undefined =>
+    byID.get(id) ?? globalByID.get(id);
+
+  const grouped = new Map<string, Map<string, SessionInfo>>();
+  const addChild = (rootID: string, child: SessionInfo) => {
+    if (!rootID || !child?.id || child.id === rootID || child.time?.archived) return;
+    let bucket = grouped.get(rootID);
+    if (!bucket) {
+      bucket = new Map<string, SessionInfo>();
+      grouped.set(rootID, bucket);
+    }
+    if (!bucket.has(child.id)) {
+      bucket.set(child.id, child);
+    }
+  };
+
+  for (const s of rawSessions) {
+    if (!s?.id || s.time?.archived) continue;
+    const rootID = resolveRootSessionID(s.id, byID);
+    if (rootID && rootID !== s.id) {
+      addChild(rootID, s);
+    }
+  }
+
+  for (const s of rawSessions) {
+    if (!s?.id || s.time?.archived || s.parentID) continue;
+    for (const childID of collectChildSubagentSessionIDs(s.id)) {
+      const child = lookup(childID);
+      if (child && !child.time?.archived) {
+        addChild(s.id, child);
+      }
+    }
+  }
+
+  const result = new Map<string, SessionInfo[]>();
+  for (const [rootID, bucket] of grouped.entries()) {
+    const list = Array.from(bucket.values()).sort((a, b) => {
+      const ta = a.time?.created || a.time?.updated || 0;
+      const tb = b.time?.created || b.time?.updated || 0;
+      return ta !== tb ? ta - tb : a.id.localeCompare(b.id);
+    });
+    if (list.length > 0) {
+      result.set(rootID, list);
+    }
+  }
+  return result;
+}
+
+export interface CodeSessionPartition {
+  codeSessions: SessionInfo[];
+  roots: SessionInfo[];
+  subagentsByRoot: Map<string, SessionInfo[]>;
+}
+
+/**
+ * Filters a project's session list down to the code surface and partitions it
+ * into top-level root sessions and subagent groups keyed by root session ID.
+ */
+export function partitionCodeSessions(
+  rawSessions: readonly SessionInfo[],
+): CodeSessionPartition {
+  const codeSessions = rawSessions.filter((s) => resolveSessionSurface(s) === "code");
+  const roots = codeSessions.filter((s) => !s.parentID);
+  const subagentsByRoot = groupSubagentsByRoot(codeSessions);
+  return { codeSessions, roots, subagentsByRoot };
+}
+
+function matchesSubagentQuery(session: SessionInfo, queryLower: string): boolean {
+  return (
+    !queryLower ||
+    (session.title || "").toLowerCase().includes(queryLower) ||
+    (session.slug || "").toLowerCase().includes(queryLower)
+  );
+}
+
+/**
+ * Returns true when the subagent drawer under a parent session should
+ * automatically expand (running child, pending approval, active selection, or search match).
+ */
+export function shouldAutoExpandSubagents(
+  subagents: readonly SessionInfo[] | undefined,
+  pendingSessions: ReadonlySet<string>,
+  filterQuery?: string,
+): boolean {
+  if (!subagents || subagents.length === 0) return false;
+  const activeID = workspace.activeSessionID;
+  const q = (filterQuery ?? "").trim().toLowerCase();
+  for (const sub of subagents) {
+    if (sub.id === activeID) return true;
+    if (isSessionBusy(sub.id)) return true;
+    if (pendingSessions.has(sub.id)) return true;
+    if (q && matchesSubagentQuery(sub, q)) return true;
+  }
+  return false;
+}
+
+export function countRunningSubagents(
+  subagents: readonly SessionInfo[] | undefined,
+): number {
+  if (!subagents || subagents.length === 0) return 0;
+  let count = 0;
+  for (const sub of subagents) {
+    if (isSessionBusy(sub.id)) count++;
+  }
+  return count;
+}
+
+interface SubagentDrawerOverride {
+  manual: boolean;
+  autoSnapshot: boolean;
+}
+
+const [subagentDrawerOverrides, setSubagentDrawerOverrides] = createSignal<
+  Record<string, SubagentDrawerOverride>
+>({});
+
+export function isSubagentDrawerExpanded(
+  sessionID: string,
+  autoExpand: boolean,
+): boolean {
+  const entry = subagentDrawerOverrides()[sessionID];
+  if (!entry || entry.autoSnapshot !== autoExpand) return autoExpand;
+  return entry.manual;
+}
+
+export function setSubagentDrawerExpanded(
+  sessionID: string,
+  expanded: boolean,
+  autoExpand: boolean,
+): void {
+  if (!sessionID) return;
+  setSubagentDrawerOverrides((prev) => ({
+    ...prev,
+    [sessionID]: { manual: expanded, autoSnapshot: autoExpand },
+  }));
 }

@@ -9,8 +9,8 @@ import {
   openDeleteWorkspaceModal,
   openEditWorkspaceModal,
   openManageWorkspacesModal,
+  partitionCodeSessions,
   quickAddFolderToWorkspace,
-  resolveSessionSurface,
   sortSessionsByActivity,
   workspace,
 } from "../../store/workspace";
@@ -28,7 +28,6 @@ import { useAnchoredPopover } from "./anchored-popover";
 import { t } from "../../i18n";
 import { SessionHistoryList, useSessionHistory } from "./SessionHistory";
 import { matchesProjectSearch, matchesSessionSearch } from "./session-search";
-import { groupSubagentsByRoot } from "./subagent-nav";
 import { isWorkSurface } from "./surface-extension";
 
 export function WorkspaceActionMenu(props: {
@@ -203,24 +202,23 @@ export default function MultiProjectTreeItem(props: {
     if (props.isArchivedOpen) setEverArchivedOpen(true);
   });
 
-  const rawCodeSessions = createMemo<SessionInfo[]>((prev) => {
-    if (!everExpanded()) return [];
-    if (isWorkSurface()) return prev ?? [];
+  const codeProjection = createMemo((prev?: ReturnType<typeof partitionCodeSessions>) => {
+    if (!everExpanded()) return { codeSessions: [], roots: [], subagentsByRoot: new Map<string, SessionInfo[]>() };
+    if (isWorkSurface() && prev) return prev;
     const rawList =
       isActive() && !workspace.bootstrappingSessions && workspace.sessions.length > 0
         ? workspace.sessions
         : props.cachedSessions;
-    return rawList.filter((s) => resolveSessionSurface(s) === "code");
+    return partitionCodeSessions(rawList);
   });
 
-  const subagentsByRoot = createMemo(() => groupSubagentsByRoot(rawCodeSessions()));
+  const subagentsByRoot = () => codeProjection().subagentsByRoot;
 
   const allFilteredSessions = createMemo<SessionInfo[]>((prev) => {
     if (!everExpanded()) return [];
     if (isWorkSurface()) return prev ?? [];
     const q = props.filterQuery.trim().toLowerCase();
-    const list = rawCodeSessions().filter((s) => !s.parentID);
-    const sorted = sortSessionsByActivity(list);
+    const sorted = sortSessionsByActivity(codeProjection().roots);
     if (matchesProjectSearch(props.proj, q)) return sorted;
     const byRoot = subagentsByRoot();
     return sorted.filter((s) => matchesSessionSearch(s, q, byRoot.get(s.id)));

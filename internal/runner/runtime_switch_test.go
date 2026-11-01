@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -641,5 +642,146 @@ func TestSteerOpenCodeTurnWaitsForPostMessageAsyncCompletion(t *testing.T) {
 		case <-deadline:
 			t.Fatal("timed out waiting for steered turn to settle")
 		}
+	}
+}
+
+func TestFilterOpenCodeQuestionsDeduplicatesStaleReject(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	svc := NewService(root, nil, nil, filepath.Join(t.TempDir(), "sessions"))
+	if err := svc.store.Put(SessionRecord{
+		ID:           "ses_hoxi_idle",
+		Runtime:      "opencode",
+		ExternalID:   "ses_opc_idle",
+		OpenCodeIDs:  []string{"ses_opc_idle"},
+		ProjectDir:   root,
+		WorktreePath: root,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var rejectCalls atomic.Int32
+	rejected := make(chan struct{}, 4)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/question/que_stale_1/reject" {
+			rejectCalls.Add(1)
+			select {
+			case rejected <- struct{}{}:
+			default:
+			}
+			// Simulate an upstream that accepts or refuses the reject without
+			// immediately removing the question from subsequent GET /question polls.
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+	svc.ConfigureOpenCode(server.URL, "secret")
+
+	raw := []byte(`[{"id":"que_stale_1","sessionID":"ses_opc_idle"}]`)
+	for i := 0; i < 4; i++ {
+		filtered := svc.FilterOpenCodeQuestions(raw, root)
+		if string(filtered) != "[]" {
+			t.Fatalf("poll %d: expected stale question filtered out, got %s", i, string(filtered))
+		}
+		if i == 0 {
+			select {
+			case <-rejected:
+			case <-time.After(2 * time.Second):
+				t.Fatal("timed out waiting for first stale question reject")
+			}
+		}
+	}
+	time.Sleep(80 * time.Millisecond)
+	if got := rejectCalls.Load(); got != 1 {
+		t.Fatalf("expected exactly 1 background /question/que_stale_1/reject call across repeated polls, got %d", got)
+	}
+}
+
+func TestOpenCodeChildMappingPersistsAcrossRestartAndCleansUpOnDelete(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	storeDir := filepath.Join(t.TempDir(), "sessions")
+	svc := NewService(root, nil, nil, storeDir)
+	rec := SessionRecord{
+		ID:           "ses_hoxi_parent",
+		Runtime:      "opencode",
+		ExternalID:   "ses_opc_parent",
+		OpenCodeIDs:  []string{"ses_opc_parent"},
+		ProjectDir:   root,
+		WorktreePath: root,
+	}
+	if err := svc.store.Put(rec); err != nil {
+		t.Fatal(err)
+	}
+
+	ap := &activeProcess{done: make(chan struct{})}
+	close(ap.done)
+	svc.mu.Lock()
+	svc.procs[rec.ID] = ap
+	svc.mu.Unlock()
+	if !svc.noteOpenCodeChildEvent(rec, SSEEvent{
+		Type: "session.created",
+		Properties: map[string]interface{}{
+			"info": map[string]interface{}{"id": "ses_opc_child_1", "parentID": rec.ExternalID},
+		},
+	}) {
+		t.Fatal("expected direct OpenCode child event to be claimed")
+	}
+	if !svc.noteOpenCodeChildEvent(rec, SSEEvent{
+		Type: "session.created",
+		Properties: map[string]interface{}{
+			"info": map[string]interface{}{"id": "ses_opc_grandchild_1", "parentID": "ses_opc_child_1"},
+		},
+	}) {
+		t.Fatal("expected nested OpenCode grandchild event to be claimed")
+	}
+	svc.mu.Lock()
+	delete(svc.procs, rec.ID)
+	svc.mu.Unlock()
+
+	// Restart service against the same storeDir and verify child mappings survive.
+	restarted := NewService(root, nil, nil, storeDir)
+	var deletedPaths []string
+	var mu sync.Mutex
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/session/") {
+			mu.Lock()
+			deletedPaths = append(deletedPaths, r.URL.Path)
+			mu.Unlock()
+			writeJSON(w, http.StatusOK, true)
+			return
+		}
+		if r.Method == http.MethodGet && (r.URL.Path == "/permission" || r.URL.Path == "/question") {
+			writeJSON(w, http.StatusOK, []interface{}{})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+	restarted.ConfigureOpenCode(server.URL, "secret")
+
+	for _, cid := range []string{"ses_opc_child_1", "ses_opc_grandchild_1"} {
+		if !restarted.IsManagedOpenCodeSession(cid) || !restarted.isManagedOpenCodeChild(cid) {
+			t.Fatalf("expected %s to remain a managed OpenCode child after restart", cid)
+		}
+		if gotParent, _ := restarted.openCodeChildParent.Load(cid); gotParent != rec.ID {
+			t.Fatalf("expected %s parent %s after restart, got %v", cid, rec.ID, gotParent)
+		}
+	}
+
+	if err := restarted.deleteConversation(context.Background(), rec.ID); err != nil {
+		t.Fatalf("deleteConversation: %v", err)
+	}
+	for _, sid := range []string{rec.ID, rec.ExternalID, "ses_opc_child_1", "ses_opc_grandchild_1"} {
+		if restarted.IsManagedOpenCodeSession(sid) || restarted.isManagedOpenCodeChild(sid) {
+			t.Fatalf("expected %s removed from managedOpenCode / openCodeChildParent after delete", sid)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(deletedPaths) != 3 {
+		t.Fatalf("expected parent + 2 child OpenCode sessions deleted, got %v", deletedPaths)
 	}
 }

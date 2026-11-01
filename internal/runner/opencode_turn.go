@@ -749,3 +749,27 @@ func (s *Service) steerOpenCodeTurn(ctx context.Context, rec SessionRecord, mode
 	}
 	return seq, steerMsgID, nil
 }
+
+func (ap *activeProcess) shouldRelayOpenCodeStatus(raw interface{}) bool {
+	if ap == nil {
+		return false
+	}
+	var stType string
+	switch v := raw.(type) {
+	case SessionStatus:
+		stType = v.Type
+	case map[string]interface{}:
+		stType, _ = v["type"].(string)
+	}
+	ap.mu.Lock()
+	defer ap.mu.Unlock()
+	if stType == "retry" {
+		ap.retrying = true
+		return true
+	}
+	if stType == "busy" && ap.retrying {
+		ap.retrying = false
+		return true
+	}
+	return false
+}

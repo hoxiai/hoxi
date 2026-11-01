@@ -452,3 +452,42 @@ func TestOpenCodeAIReviewFailureStaysOnListedRequest(t *testing.T) {
 		t.Fatalf("a failed review must not answer OpenCode, sent %v", sent)
 	}
 }
+
+func TestAIReviewNestedChildScriptSourceSlice(t *testing.T) {
+	// Outer command places benign double-quoted text near the beginning so
+	// that slicing the outer source with a child uScript's 0-based word span
+	// would read the wrong quoted string if ctx.src were not updated per child.
+	pol := ApprovalPolicy{Mode: ApprovalModeAuto, AIReview: true, AIReviewModel: "openai/gpt-4o-mini"}
+	makeItem := func(cmd string) map[string]interface{} {
+		return map[string]interface{}{
+			"permission": "bash",
+			"patterns":   []string{cmd},
+			"metadata":   map[string]interface{}{"command": cmd},
+		}
+	}
+	mustBlock := []string{
+		`printf "%s" "echo safe                        " ${UNSET:- $(bash -c "for f in a; do git push origin \"\$f\"; done")}`,
+		"printf \"%s\" \"echo safe                        \" `bash -c \"for f in a; do git push origin \\\"\\$f\\\"; done\"`",
+		"cat <<EOF\n\"echo safe                        \"\n$(bash -c \"for f in a; do git push origin \\\"\\$f\\\"; done\")\nEOF",
+	}
+	for _, cmd := range mustBlock {
+		if cat := unattendedDynamicCategoryFor(cmd, true); cat == "" {
+			t.Fatalf("nested dangerous bash -c must stay blocked, got empty category for:\n%s", cmd)
+		}
+		if _, _, ok := canAIReviewCommandRequest(makeItem(cmd), pol, nil, "/tmp"); ok {
+			t.Fatalf("nested dangerous bash -c must not be eligible for AI review:\n%s", cmd)
+		}
+	}
+
+	mustBeEligible := []string{
+		`printf "%s" "git push origin main             " ${UNSET:- $(bash -c "for f in a b; do head -n 1 \"\$f\"; done")}`,
+		"printf \"%s\" \"git push origin main             \" `bash -c \"for f in a b; do head -n 1 \\\"\\$f\\\"; done\"`",
+		"cat <<EOF\n\"git push origin main             \"\n$(bash -c \"for f in a b; do head -n 1 \\\"\\$f\\\"; done\")\nEOF",
+	}
+	for _, cmd := range mustBeEligible {
+		if _, _, ok := canAIReviewCommandRequest(makeItem(cmd), pol, nil, "/tmp"); !ok {
+			t.Fatalf("nested read-only bash -c loop should be eligible for AI review, got cat=%q for:\n%s",
+				unattendedDynamicCategoryFor(cmd, true), cmd)
+		}
+	}
+}

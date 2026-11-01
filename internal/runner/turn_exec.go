@@ -694,3 +694,88 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 func writeJSONError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]interface{}{"error": msg})
 }
+
+func buildTurnCLIArgs(runtime, mode, modelID, effort, externalID string, geminiUsesAgy bool, claudeHookArgs []string) []string {
+	switch runtime {
+	case string(RuntimeClaudeCode):
+		return append(BuildClaudeArgs(mode, modelID, effort, externalID), claudeHookArgs...)
+	case string(RuntimeGeminiCLI):
+		if geminiUsesAgy {
+			agyModel, agyEffort := ResolveGeminiAgyModelAndEffort(modelID, effort)
+			return BuildAgyArgs(mode, agyModel, agyEffort, externalID)
+		}
+		return BuildGeminiArgs(mode, modelID, effort, externalID)
+	case string(RuntimeCodeBuddy):
+		return BuildCodeBuddyArgs(mode, modelID, effort, externalID)
+	case string(RuntimeQoder):
+		return BuildQoderArgs(mode, modelID, effort, externalID)
+	default:
+		return BuildAgyArgs(mode, modelID, effort, externalID)
+	}
+}
+
+func (s *Service) runRetrySubprocess(
+	rec SessionRecord,
+	rawBinPath string,
+	retryArgs []string,
+	procEnv []string,
+	retryInput []byte,
+	ap *activeProcess,
+	stderrBuf *bytes.Buffer,
+	emitBusy bool,
+	feedStdout func(*os.File) <-chan struct{},
+) (bool, error) {
+	retryBin, wrappedArgs, wrapErr := s.confineRuntimeCommand(rec, rawBinPath, retryArgs)
+	if wrapErr != nil {
+		return false, nil
+	}
+	retryCmd := subproc.Command(retryBin, wrappedArgs...)
+	retryCmd.Dir = rec.WorktreePath
+	retryCmd.Env = procEnv
+	retryStdin, inErr := retryCmd.StdinPipe()
+	if inErr != nil {
+		return false, nil
+	}
+	retryOutR, retryOutW, pipeErr := os.Pipe()
+	if pipeErr != nil {
+		_ = retryStdin.Close()
+		return false, nil
+	}
+	var retryStderr bytes.Buffer
+	retryCmd.Stdout = retryOutW
+	retryCmd.Stderr = &retryStderr
+	retryCmd.WaitDelay = orphanDrainGrace
+	setProcessGroup(retryCmd)
+	if startErr := retryCmd.Start(); startErr != nil {
+		_ = retryStdin.Close()
+		_ = retryOutR.Close()
+		_ = retryOutW.Close()
+		return false, nil
+	}
+	_ = retryOutW.Close()
+	stderrBuf.Reset()
+	ap.mu.Lock()
+	ap.cmd = retryCmd
+	ap.stdin = retryStdin
+	ap.mu.Unlock()
+	s.noteActivity(ap)
+	if emitBusy {
+		s.broadcast(rec.ID, SSEEvent{
+			Type: "session.status",
+			Properties: map[string]interface{}{
+				"sessionID": rec.ID,
+				"status":    SessionStatus{Type: "busy"},
+			},
+		})
+	}
+	_, _ = retryStdin.Write(retryInput)
+	_ = retryStdin.Close()
+
+	retryReaderDone := feedStdout(retryOutR)
+	waitErr := retryCmd.Wait()
+	reapOrphanedOutput(retryCmd.Process, retryOutR, retryReaderDone)
+	if retryStderr.Len() > 0 {
+		*stderrBuf = retryStderr
+	}
+	return true, waitErr
+}

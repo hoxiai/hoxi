@@ -5,14 +5,18 @@ import {
   groupRunningByProject,
   partitionAttentionSessions,
 } from "../components/layout/cross-project-nav";
+import { stripSubagentTitleSuffix } from "../store/session-title";
+import type { ProjectNavEntry } from "../components/layout/left-nav-helpers";
 import {
   countRunningSubagents,
   groupSubagentsByRoot,
+  isSubagentDrawerExpanded,
+  setSubagentDrawerExpanded,
+  setWorkspace,
   shouldAutoExpandSubagents,
-} from "../components/layout/subagent-nav";
-import { stripSubagentTitleSuffix } from "../store/session-title";
-import type { ProjectNavEntry } from "../components/layout/left-nav-helpers";
-import { setWorkspace, workspace, type WorkspaceState } from "../store/workspace";
+  workspace,
+  type WorkspaceState,
+} from "../store/workspace";
 import { assertDeepEqual, assertEqual, describe, it } from "./test-harness";
 
 function project(path: string, name: string): ProjectNavEntry {
@@ -247,6 +251,15 @@ describe("Cross-project sidebar views", () => {
         setWorkspace("statusBySession", "ses_child_1", { type: "busy" });
         assertEqual(shouldAutoExpandSubagents(subs, new Set(), ""), true);
         assertEqual(countRunningSubagents(subs), 1);
+
+        // Manual drawer toggle persists by session ID and resets when autoExpand changes
+        setSubagentDrawerExpanded("ses_root", true, false);
+        assertEqual(isSubagentDrawerExpanded("ses_root", false), true);
+        // When autoExpand transitions false -> true, the stale manual override yields to autoExpand
+        assertEqual(isSubagentDrawerExpanded("ses_root", true), true);
+        setSubagentDrawerExpanded("ses_root", false, true);
+        assertEqual(isSubagentDrawerExpanded("ses_root", true), false);
+        assertEqual(isSubagentDrawerExpanded("ses_root", false), false);
       },
     );
   });

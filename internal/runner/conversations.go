@@ -84,6 +84,11 @@ func (s *Service) listConversationsWithSurface(ctx context.Context, projectID, d
 					engineToHoxi[ocID] = info.ID
 				}
 			}
+			for _, childID := range rec.OpenCodeChildIDs {
+				if childID != "" {
+					engineToHoxi[childID] = info.ID
+				}
+			}
 		}
 		if (surfaceFilter == "work" || surfaceFilter == "code") && info.Surface != surfaceFilter {
 			continue

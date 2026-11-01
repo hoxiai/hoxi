@@ -304,6 +304,7 @@ func (s *Store) RelinkSession(sessionID, projectDir, worktreePath, branch, baseC
 		r.Branch, r.BaseCommit = branch, baseCommit
 		r.ExternalID = ""
 		r.OpenCodeIDs = nil
+		r.OpenCodeChildIDs = nil
 		r.OpenCodeDirectories = nil
 		r.ContextPending = len(r.Turns) > 0
 		r.ContextTurnCount = len(r.Turns)
@@ -551,6 +552,10 @@ func cloneRecord(r SessionRecord) SessionRecord {
 	if r.OpenCodeIDs != nil {
 		out.OpenCodeIDs = make([]string, len(r.OpenCodeIDs))
 		copy(out.OpenCodeIDs, r.OpenCodeIDs)
+	}
+	if r.OpenCodeChildIDs != nil {
+		out.OpenCodeChildIDs = make([]string, len(r.OpenCodeChildIDs))
+		copy(out.OpenCodeChildIDs, r.OpenCodeChildIDs)
 	}
 	out.OpenCodeDirectories = cloneStringMap(r.OpenCodeDirectories)
 	return out

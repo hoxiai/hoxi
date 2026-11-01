@@ -86,13 +86,13 @@ func unattendedScriptCategory(text string, depth int, ctx *unattendedCtx) string
 	if !ok {
 		return unattendedCategoryDynamic
 	}
-	prevSrc := ctx.src
-	ctx.src = text
-	defer func() { ctx.src = prevSrc }()
 	return sc.category(depth, ctx)
 }
 
 func (sc *uScript) category(depth int, ctx *unattendedCtx) string {
+	prevSrc := ctx.src
+	ctx.src = sc.src
+	defer func() { ctx.src = prevSrc }()
 	for name := range sc.vars {
 		if name == indirectExpansion || isCredentialEnvName(name) {
 			ctx.credRef = true

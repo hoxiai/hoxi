@@ -12,7 +12,7 @@ import {
   openEditWorkspaceModal,
   openHandoffModal,
   openManageWorkspacesModal,
-  resolveSessionSurface,
+  partitionCodeSessions,
   selectSession,
   setWorkspace,
   sortSessionsByActivity,
@@ -38,7 +38,6 @@ import { t } from "../../i18n";
 import { SessionHistoryList, useSessionHistory } from "./SessionHistory";
 import { compareSessionRunning } from "./session-history";
 import { matchesSessionQueryText, matchesSessionSearch } from "./session-search";
-import { groupSubagentsByRoot } from "./subagent-nav";
 
 export default function SingleProjectNavView(props: {
   allProjects: ProjectNavEntry[];
@@ -88,17 +87,12 @@ export default function SingleProjectNavView(props: {
     );
   });
 
-  const subagentsByRoot = createMemo(() =>
-    groupSubagentsByRoot(
-      workspace.sessions.filter((s) => resolveSessionSurface(s) === "code")
-    )
-  );
+  const codeProjection = createMemo(() => partitionCodeSessions(workspace.sessions));
+  const subagentsByRoot = () => codeProjection().subagentsByRoot;
 
   const filteredSessions = createMemo(() => {
     const q = props.filterQuery.trim();
-    const raw = sortSessionsByActivity(
-      workspace.sessions.filter((s) => !s.parentID && resolveSessionSurface(s) === "code")
-    );
+    const raw = sortSessionsByActivity(codeProjection().roots);
     if (!q) return raw;
     const byRoot = subagentsByRoot();
     return raw.filter((s) => matchesSessionSearch(s, q, byRoot.get(s.id)));
@@ -418,10 +412,9 @@ export function RecentTasksNavView(props: {
         isActive && !workspace.bootstrappingSessions
           ? workspace.sessions
           : props.projectSessions[normProjPath] || props.projectSessions[proj.path] || [];
-      const codeList = list.filter((s) => resolveSessionSurface(s) === "code");
-      const projSubagents = groupSubagentsByRoot(codeList);
-      for (const s of codeList) {
-        if (s.parentID || isSessionArchived(s)) continue;
+      const { roots, subagentsByRoot: projSubagents } = partitionCodeSessions(list);
+      for (const s of roots) {
+        if (isSessionArchived(s)) continue;
         const subs = projSubagents.get(s.id);
         if (subs && subs.length > 0) {
           subagentsByRoot.set(s.id, subs);

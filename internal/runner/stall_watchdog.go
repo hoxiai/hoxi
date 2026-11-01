@@ -3,6 +3,7 @@ package runner
 import (
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -159,8 +160,15 @@ func (s *Service) noteOpenCodeChildEvent(rec SessionRecord, evt SSEEvent) bool {
 			return false
 		}
 		ap.openCodeChildren.Store(id, true)
-		s.openCodeChildParent.Store(id, rec.ID)
+		prevParent, hadParent := s.openCodeChildParent.Swap(id, rec.ID)
 		s.managedOpenCode.Store(id, true)
+		if !hadParent || prevParent != rec.ID {
+			_, _, _ = s.store.updateWithoutActivity(rec.ID, func(r *SessionRecord) {
+				if !slices.Contains(r.OpenCodeChildIDs, id) {
+					r.OpenCodeChildIDs = append(r.OpenCodeChildIDs, id)
+				}
+			})
+		}
 		s.noteOpenCodeActivity(rec.ID, evt)
 		mappedInfo := make(map[string]interface{}, len(info)+3)
 		for k, v := range info {

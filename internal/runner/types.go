@@ -296,6 +296,7 @@ type SessionRecord struct {
 	RevertScope string `json:"revertScope,omitempty"`
 	Snapshots           map[string]string `json:"snapshots,omitempty"`
 	OpenCodeIDs         []string          `json:"openCodeIDs,omitempty"`
+	OpenCodeChildIDs    []string          `json:"openCodeChildIDs,omitempty"`
 	OpenCodeDirectories map[string]string `json:"openCodeDirectories,omitempty"`
 	ContextPending      bool              `json:"contextPending,omitempty"`
 	ContextTurnCount    int               `json:"contextTurnCount,omitempty"`
