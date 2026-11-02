@@ -366,57 +366,12 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 		// append to an already complete snapshot.
 		_ = stream.Body.Close()
 		<-streamDone
-		if err == nil {
+		if err != nil && ap.reasoningLoop.shouldSuppressAbortError(err.Error()) {
+			err = nil
+		}
+		if err == nil || ap.reasoningLoop.hasTriggered() {
 			s.markContextDelivered(rec.ID)
-			refreshCtx, done := context.WithTimeout(context.Background(), 15*time.Second)
-			defer done()
-			if turns, fetchErr := s.fetchOpenCodeRecentMessages(refreshCtx, rec.ExternalID, rec.WorktreePath, postTurnSnapshotLimit); fetchErr == nil {
-				existingInfoByID := make(map[string]MessageInfo)
-				existingPartByKey := make(map[partKey]MessagePart)
-				if current, ok := s.store.Get(rec.ID); ok {
-					for _, t := range current.Turns {
-						existingInfoByID[t.Info.ID] = t.Info
-						for _, p := range t.Parts {
-							existingPartByKey[partKey{messageID: p.MessageID, partID: p.ID}] = p
-						}
-					}
-				}
-				lastVisibleUserID := user.ID
-				dropTurnIDs := make(map[string]bool)
-				for i, turn := range turns {
-					if isInternalRecoveryMessageID(turn.Info.ID) {
-						dropTurnIDs[turn.Info.ID] = true
-						continue
-					}
-					if isSupersededEmptyRecoveryStubTurn(turns, i) {
-						dropTurnIDs[turn.Info.ID] = true
-						continue
-					}
-					if turn.Info.Role == "user" {
-						lastVisibleUserID = turn.Info.ID
-					}
-					if isInternalRecoveryMessageID(turn.Info.ParentID) {
-						turn.Info.ParentID = lastVisibleUserID
-					}
-					sanitizeRunawayTriggeredInfo(&turn.Info, ap)
-					turn.Info.SessionID = rec.ID
-					if prevInfo, exists := existingInfoByID[turn.Info.ID]; !exists || !equalMessageInfo(prevInfo, turn.Info) {
-						s.broadcast(rec.ID, SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": turn.Info}})
-					}
-					for _, part := range turn.Parts {
-						part.SessionID = rec.ID
-						if !s.normalizeOpenCodePart(rec, &part, fileURLByMsgAndName) {
-							continue
-						}
-						if prevPart, exists := existingPartByKey[partKey{messageID: part.MessageID, partID: part.ID}]; !exists || !equalMessagePart(prevPart, part) {
-							s.broadcast(rec.ID, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": part}})
-						}
-					}
-				}
-				if len(dropTurnIDs) > 0 {
-					s.pruneOpenCodeTurnsFromStore(rec.ID, dropTurnIDs)
-				}
-			}
+			s.reconcileOpenCodePostTurnMessages(rec, ap, user.ID, fileURLByMsgAndName)
 			if _, hasSkill := s.userSkillByMsg.Load(user.ID); hasSkill {
 				hasUserTurn := false
 				if current, ok := s.store.Get(rec.ID); ok {
@@ -576,8 +531,15 @@ func (s *Service) relayOpenCodeEventWithFiles(rec SessionRecord, raw []byte, fil
 		if json.Unmarshal(data, &part) != nil || isInternalRecoveryMessageID(part.MessageID) {
 			return
 		}
-		if ap != nil && ap.reasoningLoop.observePart(part) {
-			s.abortOpenCodeRunawayTurn(rec)
+		if ap != nil {
+			triggered, drop := ap.reasoningLoop.observePart(part)
+			if triggered {
+				s.abortOpenCodeRunawayTurn(rec)
+			}
+			if drop {
+				s.pruneOpenCodePartsFromStore(rec.ID, part.MessageID, ap.reasoningLoop.droppedPartsSnapshot())
+				return
+			}
 		}
 		if !s.normalizeOpenCodePart(rec, &part, fileURLByMsgAndName) {
 			return

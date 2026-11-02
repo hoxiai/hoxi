@@ -28,7 +28,7 @@ import {
   ActionIconButton,
   extractCommand, extractDescription, extractRollingShellLines,
   extractShellOutput, extractTargetFile, formatToolDisplayName, getDirectory, getFilename,
-  InlineDiagnosticsDisplay, isComputerTool, isEditingTool, isQuestionTool, isReadTool, isShellTool, isShellAwaitingFirstOutput,
+  hasDistinctShellDescription, InlineDiagnosticsDisplay, isComputerTool, isEditingTool, isQuestionTool, isReadTool, isShellTool, isShellAwaitingFirstOutput,
   isTaskTool, isTodoTool, kiloToolIconName, processCarriageReturns,
   ToolCardExpandedBody, type ToolPart,
 } from "./tool-card-helpers";
@@ -314,7 +314,7 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
                       active={isRunning()}
                     />
                   </span>
-                  <Show when={description() && shellCmd()}>
+                  <Show when={hasDistinctShellDescription(description(), shellCmd())}>
                     <code class="hidden sm:inline-block truncate max-w-[420px] font-mono text-[12px] text-[var(--text-faint)]">
                       $ {shellCmd()}
                     </code>

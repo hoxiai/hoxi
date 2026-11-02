@@ -290,4 +290,81 @@ test("sandbox plugin", async (t) => {
     await hooks["tool.execute.before"]({ tool: "write", sessionID: "ses_tag", callID: "c9" }, output);
     assert.deepEqual(output, { args: { filePath: inside } });
   });
+
+  await t.test("stops repeated identical bash or read calls in the same turn and resets after file edit or new user turn", async () => {
+    const { workspace } = fixture("deny");
+    const hooks = await HoxiSandboxPlugin();
+
+    // 1. Consecutive identical bash calls trip on the 3rd call (and continue rejecting subsequent identical calls in a burst),
+    // even when unique callIDs or different descriptions are passed.
+    await hooks["tool.execute.before"](
+      { tool: "bash", sessionID: "ses_loop", callID: "call_1" },
+      { args: { command: "grep -rn 'super_store_id' .", description: "search 1" } }
+    );
+    await hooks["tool.execute.before"](
+      { tool: "bash", sessionID: "ses_loop", callID: "call_2" },
+      { args: { command: "grep -rn 'super_store_id' .", description: "search 2" } }
+    );
+    for (const cid of ["call_3", "call_4", "call_5"]) {
+      await assert.rejects(
+        hooks["tool.execute.before"](
+          { tool: "bash", sessionID: "ses_loop", callID: cid },
+          { args: { command: "grep -rn 'super_store_id' .", description: `search ${cid}` } }
+        ),
+        /Hoxi stopped a repeated tool call: bash/
+      );
+    }
+
+    // 2. Interleaving read-only calls without any file mutation still trips on the 3rd identical bash call.
+    await hooks["tool.execute.before"](
+      { tool: "bash", sessionID: "ses_interleaved", callID: "ic_1" },
+      { args: { command: "go test ./..." } }
+    );
+    await hooks["tool.execute.before"](
+      { tool: "read", sessionID: "ses_interleaved", callID: "ir_1" },
+      { args: { filePath: path.join(workspace, "a.go") } }
+    );
+    await hooks["tool.execute.before"](
+      { tool: "bash", sessionID: "ses_interleaved", callID: "ic_2" },
+      { args: { command: "go test ./..." } }
+    );
+    await hooks["tool.execute.before"](
+      { tool: "read", sessionID: "ses_interleaved", callID: "ir_2" },
+      { args: { filePath: path.join(workspace, "b.go") } }
+    );
+    await assert.rejects(
+      hooks["tool.execute.before"](
+        { tool: "bash", sessionID: "ses_interleaved", callID: "ic_3" },
+        { args: { command: "go test ./..." } }
+      ),
+      /Hoxi stopped a repeated tool call: bash/
+    );
+
+    // 3. A file edit resets non-consecutive repeat counts so re-running tests after each edit is allowed.
+    for (let i = 1; i <= 4; i++) {
+      await hooks["tool.execute.before"](
+        { tool: "edit", sessionID: "ses_productive", callID: `pe_${i}` },
+        { args: { filePath: path.join(workspace, "main.go"), oldString: `v${i}`, newString: `v${i + 1}` } }
+      );
+      await hooks["tool.execute.before"](
+        { tool: "bash", sessionID: "ses_productive", callID: `pt_${i}` },
+        { args: { command: "go test ./..." } }
+      );
+    }
+
+    // 4. A new user message in messages.transform or session.idle event resets the turn guard.
+    await hooks["experimental.chat.messages.transform"](
+      {},
+      { messages: [{ info: { id: "msg_u_next", sessionID: "ses_loop", role: "user" }, parts: [] }] }
+    );
+    await hooks["tool.execute.before"](
+      { tool: "bash", sessionID: "ses_loop", callID: "call_next_1" },
+      { args: { command: "grep -rn 'super_store_id' ." } }
+    );
+    await hooks.event({ event: { type: "session.idle", properties: { sessionID: "ses_interleaved" } } });
+    await hooks["tool.execute.before"](
+      { tool: "bash", sessionID: "ses_interleaved", callID: "ic_after_idle" },
+      { args: { command: "go test ./..." } }
+    );
+  });
 });

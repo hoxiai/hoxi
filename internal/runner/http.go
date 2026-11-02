@@ -34,13 +34,13 @@ type Service struct {
 	doomLoop    *doomLoopGuard
 	stall       stallPolicy
 
-	mu              sync.Mutex
-	llm             llm.Client
-	turnMu          sessionTurnLocks
-	procs           map[string]*activeProcess
-	childBusy       map[string]bool
-	subs            map[chan SSEEvent]string
-	seqSeed         int64
+	mu                  sync.Mutex
+	llm                 llm.Client
+	turnMu              sessionTurnLocks
+	procs               map[string]*activeProcess
+	childBusy           map[string]bool
+	subs                map[chan SSEEvent]string
+	seqSeed             int64
 	openCode            *ocapi.Client
 	managedOpenCode     sync.Map
 	openCodeChildParent sync.Map // openCode child session ID -> hoxi session ID
@@ -59,6 +59,7 @@ type Service struct {
 	onSummary func(sessionID, body string)
 	// openCodeAutoReplies tracks OpenCode requests the policy is answering.
 	openCodeAutoReplies sync.Map // request ID -> openCodeAutoReply* state or openCodeSettledMark
+	openCodeReplySem    chan struct{}
 	turnStats           sync.Map // session ID -> *turnCounts
 	promptReceipts      sync.Map // sessionID\x00clientRequestID -> cachedPromptReceipt
 	permissionReplies   sync.Map // permissionID\x00clientRequestID -> cachedPermissionReply
@@ -97,22 +98,23 @@ func NewService(rootDir string, worktrees *worktree.Manager, status *statusbar.T
 		attDir = filepath.Join(filepath.Dir(customStorePath), "attachments")
 	}
 	svc := &Service{
-		rootDir:     rootDir,
-		store:       NewStore(customStorePath),
-		attachments: attachment.NewStore(attDir),
-		worktrees:   worktrees,
-		status:      status,
-		gate:        newApprovalGate(),
-		audit:       newApprovalAuditStore(customStorePath),
-		deferred:    newDeferredStore(customStorePath),
-		policy:      newApprovalPolicyStore(customStorePath),
-		aiReviews:   newAIReviewCache(),
-		ownedProcs:  newOwnedProcessLedger(),
-		doomLoop:    newDoomLoopGuard(),
-		stall:       stallPolicyFromEnv(),
-		procs:       make(map[string]*activeProcess),
-		childBusy:   make(map[string]bool),
-		subs:        make(map[chan SSEEvent]string),
+		rootDir:          rootDir,
+		store:            NewStore(customStorePath),
+		attachments:      attachment.NewStore(attDir),
+		worktrees:        worktrees,
+		status:           status,
+		gate:             newApprovalGate(),
+		audit:            newApprovalAuditStore(customStorePath),
+		deferred:         newDeferredStore(customStorePath),
+		policy:           newApprovalPolicyStore(customStorePath),
+		aiReviews:        newAIReviewCache(),
+		ownedProcs:       newOwnedProcessLedger(),
+		doomLoop:         newDoomLoopGuard(),
+		stall:            stallPolicyFromEnv(),
+		procs:            make(map[string]*activeProcess),
+		childBusy:        make(map[string]bool),
+		subs:             make(map[chan SSEEvent]string),
+		openCodeReplySem: make(chan struct{}, maxConcurrentOpenCodeAutoReplies),
 	}
 	for _, info := range svc.store.List("") {
 		rec, _ := svc.store.Meta(info.ID)

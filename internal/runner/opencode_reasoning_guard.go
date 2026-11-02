@@ -22,6 +22,7 @@ const (
 	maxOpenCodeReasoningRecoveries = 2
 	reasoningDeltaTailLimit        = 1024
 	runawayClosingTagThreshold     = 6
+	runawayDuplicateToolThreshold  = 3
 	maxOpenCodeSSELineBytes        = 16 << 20
 	postTurnSnapshotLimit          = 50
 	reasoningCheckSnapshotLimit    = 20
@@ -223,6 +224,11 @@ type openCodeReasoningGuard struct {
 	mu              sync.Mutex
 	partTails       map[string]string
 	partTypes       map[string]string
+	toolPartFP      map[string]string
+	toolPartMsg     map[string]string
+	msgToolCounts   map[string]map[string]int
+	msgFirstToolID  map[string]map[string]string
+	droppedPartIDs  map[string]bool
 	triggeredMsgs   map[string]bool
 	pendingRecovery bool
 }
@@ -270,7 +276,7 @@ func (g *openCodeReasoningGuard) observeDelta(msgID, partID, delta string) (newl
 	return true, true
 }
 
-func (g *openCodeReasoningGuard) observePart(part MessagePart) bool {
+func (g *openCodeReasoningGuard) observePart(part MessagePart) (newlyTriggered bool, dropPart bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if part.ID != "" && part.Type != "" {
@@ -279,20 +285,94 @@ func (g *openCodeReasoningGuard) observePart(part MessagePart) bool {
 		}
 		g.partTypes[part.ID] = part.Type
 	}
+	if part.Type == "tool" && part.ID != "" && part.MessageID != "" {
+		if g.droppedPartIDs[part.ID] {
+			return false, true
+		}
+		fp := canonicalToolPartFingerprint(part)
+		if fp == "" {
+			if g.triggeredMsgs[part.MessageID] && (part.State == nil || len(part.State.Input) == 0) {
+				if g.droppedPartIDs == nil {
+					g.droppedPartIDs = make(map[string]bool)
+				}
+				g.droppedPartIDs[part.ID] = true
+				return false, true
+			}
+			return false, false
+		}
+		if g.toolPartFP == nil {
+			g.toolPartFP = make(map[string]string)
+			g.toolPartMsg = make(map[string]string)
+			g.msgToolCounts = make(map[string]map[string]int)
+			g.msgFirstToolID = make(map[string]map[string]string)
+			g.droppedPartIDs = make(map[string]bool)
+		}
+		if g.toolPartFP[part.ID] == "" {
+			g.toolPartFP[part.ID] = fp
+			g.toolPartMsg[part.ID] = part.MessageID
+			if g.msgToolCounts[part.MessageID] == nil {
+				g.msgToolCounts[part.MessageID] = make(map[string]int)
+				g.msgFirstToolID[part.MessageID] = make(map[string]string)
+			}
+			count := g.msgToolCounts[part.MessageID][fp] + 1
+			g.msgToolCounts[part.MessageID][fp] = count
+			if count == 1 {
+				g.msgFirstToolID[part.MessageID][fp] = part.ID
+			}
+			if count > runawayDuplicateToolThreshold {
+				firstID := g.msgFirstToolID[part.MessageID][fp]
+				g.droppedPartIDs[part.ID] = true
+				for pid, pfp := range g.toolPartFP {
+					if pfp == fp && g.toolPartMsg[pid] == part.MessageID && pid != firstID {
+						g.droppedPartIDs[pid] = true
+					}
+				}
+				if g.triggeredMsgs == nil {
+					g.triggeredMsgs = make(map[string]bool)
+				}
+				newly := !g.triggeredMsgs[part.MessageID]
+				g.triggeredMsgs[part.MessageID] = true
+				g.pendingRecovery = true
+				return newly, true
+			}
+		}
+		return false, g.droppedPartIDs[part.ID]
+	}
 	if part.Type != "reasoning" || !hasRunawayReasoningToolLoop(part.Text) {
-		return false
+		return false, false
 	}
 	if g.triggeredMsgs == nil {
 		g.triggeredMsgs = make(map[string]bool)
 	}
 	if part.MessageID != "" && g.triggeredMsgs[part.MessageID] {
-		return false
+		return false, false
 	}
 	if part.MessageID != "" {
 		g.triggeredMsgs[part.MessageID] = true
 	}
 	g.pendingRecovery = true
-	return true
+	return true, false
+}
+
+func (g *openCodeReasoningGuard) hasTriggered() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.pendingRecovery || len(g.triggeredMsgs) > 0
+}
+
+func (g *openCodeReasoningGuard) droppedPartsSnapshot() map[string]bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if len(g.droppedPartIDs) == 0 {
+		return nil
+	}
+	out := make(map[string]bool, len(g.droppedPartIDs))
+	for k, v := range g.droppedPartIDs {
+		if v {
+			out[k] = true
+		}
+	}
+	return out
 }
 
 func (g *openCodeReasoningGuard) wasTriggered(msgID string) bool {
@@ -514,6 +594,108 @@ func (s *Service) pruneOpenCodeTurnsFromStore(sessionID string, dropIDs map[stri
 		}
 		r.Turns = filtered
 	})
+}
+
+func (s *Service) pruneOpenCodePartsFromStore(sessionID, messageID string, dropPartIDs map[string]bool) {
+	if len(dropPartIDs) == 0 {
+		return
+	}
+	_, _, _ = s.store.updateWithoutActivity(sessionID, func(r *SessionRecord) {
+		for i := range r.Turns {
+			if messageID != "" && r.Turns[i].Info.ID != messageID {
+				continue
+			}
+			parts := r.Turns[i].Parts
+			filtered := parts[:0]
+			for _, p := range parts {
+				if dropPartIDs[p.ID] {
+					continue
+				}
+				filtered = append(filtered, p)
+			}
+			r.Turns[i].Parts = pruneRunawayDuplicateToolParts(filtered)
+		}
+	})
+}
+
+func (s *Service) reconcileOpenCodePostTurnMessages(rec SessionRecord, ap *activeProcess, userMsgID string, fileURLByMsgAndName map[string]string) {
+	refreshCtx, done := context.WithTimeout(context.Background(), 15*time.Second)
+	defer done()
+	turns, fetchErr := s.fetchOpenCodeRecentMessages(refreshCtx, rec.ExternalID, rec.WorktreePath, postTurnSnapshotLimit)
+	if fetchErr != nil {
+		return
+	}
+	droppedParts := ap.reasoningLoop.droppedPartsSnapshot()
+	existingInfoByID := make(map[string]MessageInfo)
+	existingPartByKey := make(map[partKey]MessagePart)
+	if current, ok := s.store.Get(rec.ID); ok {
+		for _, t := range current.Turns {
+			existingInfoByID[t.Info.ID] = t.Info
+			for _, p := range t.Parts {
+				existingPartByKey[partKey{messageID: p.MessageID, partID: p.ID}] = p
+			}
+		}
+	}
+	lastVisibleUserID := userMsgID
+	dropTurnIDs := make(map[string]bool)
+	for i, turn := range turns {
+		if isInternalRecoveryMessageID(turn.Info.ID) {
+			dropTurnIDs[turn.Info.ID] = true
+			continue
+		}
+		if isSupersededEmptyRecoveryStubTurn(turns, i) {
+			dropTurnIDs[turn.Info.ID] = true
+			continue
+		}
+		if turn.Info.Role == "user" {
+			lastVisibleUserID = turn.Info.ID
+		}
+		if isInternalRecoveryMessageID(turn.Info.ParentID) {
+			turn.Info.ParentID = lastVisibleUserID
+		}
+		sanitizeRunawayTriggeredInfo(&turn.Info, ap)
+		turn.Info.SessionID = rec.ID
+		if prevInfo, exists := existingInfoByID[turn.Info.ID]; !exists || !equalMessageInfo(prevInfo, turn.Info) {
+			s.broadcast(rec.ID, SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": turn.Info}})
+		}
+		normalizedParts := make([]MessagePart, 0, len(turn.Parts))
+		for _, part := range turn.Parts {
+			if droppedParts[part.ID] {
+				continue
+			}
+			part.SessionID = rec.ID
+			if !s.normalizeOpenCodePart(rec, &part, fileURLByMsgAndName) {
+				continue
+			}
+			normalizedParts = append(normalizedParts, part)
+		}
+		prunedParts := pruneRunawayDuplicateToolParts(normalizedParts)
+		if len(prunedParts) < len(normalizedParts) {
+			keep := make(map[string]bool, len(prunedParts))
+			for _, p := range prunedParts {
+				keep[p.ID] = true
+			}
+			if droppedParts == nil {
+				droppedParts = make(map[string]bool)
+			}
+			for _, p := range normalizedParts {
+				if !keep[p.ID] {
+					droppedParts[p.ID] = true
+				}
+			}
+		}
+		for _, part := range prunedParts {
+			if prevPart, exists := existingPartByKey[partKey{messageID: part.MessageID, partID: part.ID}]; !exists || !equalMessagePart(prevPart, part) {
+				s.broadcast(rec.ID, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": part}})
+			}
+		}
+	}
+	if len(dropTurnIDs) > 0 {
+		s.pruneOpenCodeTurnsFromStore(rec.ID, dropTurnIDs)
+	}
+	if len(droppedParts) > 0 {
+		s.pruneOpenCodePartsFromStore(rec.ID, "", droppedParts)
+	}
 }
 
 func (s *Service) abandonOpenCodeInFlightParts(sessionID string, now int64) {

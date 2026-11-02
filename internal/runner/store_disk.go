@@ -153,6 +153,7 @@ func (s *Store) readTurns(id string) ([]MessageTurn, int) {
 	}
 	for i := range turns {
 		turns[i].Parts = dedupeClaudeStreamParts(turns[i].Parts)
+		turns[i].Parts = pruneRunawayDuplicateToolParts(turns[i].Parts)
 	}
 	return turns, lines
 }
@@ -349,7 +350,6 @@ func PruneTempFiles(root string, minAge time.Duration) (int, int64) {
 	})
 	return count, freed
 }
-
 
 // migrateLegacy imports the single-file store used before per-session
 // directories. The old file is renamed only after every record was written,

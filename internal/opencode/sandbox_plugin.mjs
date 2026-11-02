@@ -83,8 +83,157 @@ function assertWritable(value, workspace) {
 }
 
 const FILE_WRITE_TOOLS = new Set(["write", "edit", "multiedit", "apply_patch"]);
+const MUTATING_TOOLS = new Set(["write", "edit", "multiedit", "apply_patch", "patch"]);
 const NETWORK_TOOLS = new Set(["webfetch", "websearch", "codesearch", "hoxi_browser", "hoxi_tools"]);
+const POLLING_TOOLS = new Set([
+  "todoread",
+  "todowrite",
+  "goal_report",
+  "question",
+  "wait",
+  "wait_5_seconds",
+  "command_status",
+  "agent_status",
+  "agent_wait",
+  "bashoutput",
+  "taskoutput",
+  "taskget",
+  "tasklist",
+]);
+const MUTATING_UI_ACTIONS = new Set([
+  "click",
+  "type",
+  "navigate",
+  "fill",
+  "press",
+  "key",
+  "drag",
+  "scroll",
+  "evaluate",
+  "select",
+]);
+const DOOM_LOOP_THRESHOLD = 3;
+const MAX_GUARDED_SESSIONS = 256;
 const PATCH_PATH_RE = /^\*\*\* (?:Add File|Update File|Delete File|Move to):\s*(.+?)\s*$/gm;
+
+function normalizeAction(args) {
+  const raw = typeof args?.Action === "string" ? args.Action : typeof args?.action === "string" ? args.action : "";
+  return raw.trim().replace(/^"+|"+$/g, "").trim().toLowerCase();
+}
+
+function isPollingToolCall(tool, args) {
+  const name = String(tool || "").trim().toLowerCase();
+  if (!name || POLLING_TOOLS.has(name)) return true;
+  if (name === "manage_task") {
+    const act = normalizeAction(args);
+    return act === "status" || act === "list";
+  }
+  if (name === "manage_subagents") {
+    return normalizeAction(args) === "list";
+  }
+  return false;
+}
+
+function isMutatingToolCall(tool, args) {
+  const name = String(tool || "").trim().toLowerCase();
+  if (MUTATING_TOOLS.has(name)) return true;
+  if (name === "hoxi_browser" || name === "hoxi_computer") {
+    return MUTATING_UI_ACTIONS.has(normalizeAction(args));
+  }
+  return false;
+}
+
+function canonicalizeValue(value) {
+  if (Array.isArray(value)) return value.map(canonicalizeValue);
+  if (value && typeof value === "object") {
+    const out = {};
+    for (const key of Object.keys(value).sort()) {
+      out[key] = canonicalizeValue(value[key]);
+    }
+    return out;
+  }
+  return value;
+}
+
+function toolCallFingerprint(tool, args, cleanBashCommand) {
+  const name = String(tool || "").trim();
+  if (name === "bash" && typeof cleanBashCommand === "string") {
+    const workdir = typeof args?.workdir === "string" ? args.workdir.trim() : "";
+    return hash(`bash\0${workdir}\0${cleanBashCommand.trim()}`);
+  }
+  return hash(`${name}\0${JSON.stringify(canonicalizeValue(args ?? null))}`);
+}
+
+function ensureSessionGuard(turnGuards, sessionID) {
+  let state = turnGuards.get(sessionID);
+  if (!state) {
+    if (turnGuards.size >= MAX_GUARDED_SESSIONS) {
+      const oldest = turnGuards.keys().next().value;
+      if (oldest !== undefined) turnGuards.delete(oldest);
+    }
+    state = { turnID: "", recent: [], sinceEdit: new Map() };
+    turnGuards.set(sessionID, state);
+  }
+  return state;
+}
+
+function observeToolCall(turnGuards, input, args, cleanBashCommand) {
+  const sessionID = typeof input?.sessionID === "string" ? input.sessionID.trim() : "";
+  const tool = typeof input?.tool === "string" ? input.tool.trim() : "";
+  if (!sessionID || !tool || isPollingToolCall(tool, args)) return;
+
+  const state = ensureSessionGuard(turnGuards, sessionID);
+  const fp = toolCallFingerprint(tool, args, cleanBashCommand);
+  state.recent.push(fp);
+  if (state.recent.length > DOOM_LOOP_THRESHOLD) {
+    state.recent.shift();
+  }
+  const consecutiveRepeat =
+    state.recent.length >= DOOM_LOOP_THRESHOLD && state.recent.every((item) => item === fp);
+
+  let noEditRepeat = false;
+  if (isMutatingToolCall(tool, args)) {
+    state.sinceEdit = new Map([[fp, 1]]);
+  } else {
+    const count = (state.sinceEdit.get(fp) || 0) + 1;
+    state.sinceEdit.set(fp, count);
+    noEditRepeat = count >= DOOM_LOOP_THRESHOLD;
+  }
+
+  if (consecutiveRepeat || noEditRepeat) {
+    throw new Error(
+      `Hoxi stopped a repeated tool call: ${tool} was called ${DOOM_LOOP_THRESHOLD} times with identical input in the same turn without changes. Do not repeat the same tool call; use the output already returned or try a different approach.`
+    );
+  }
+}
+
+function syncTurnFromMessages(turnGuards, messages) {
+  if (!Array.isArray(messages)) return;
+  let sessionID = "";
+  let lastUserMessageID = "";
+  for (const message of messages) {
+    const info = message?.info;
+    if (!info || typeof info !== "object") continue;
+    if (typeof info.sessionID === "string" && info.sessionID) {
+      sessionID = info.sessionID;
+    }
+    if (
+      info.role === "user" &&
+      typeof info.id === "string" &&
+      info.id &&
+      !info.id.startsWith("msg_u_recover_")
+    ) {
+      lastUserMessageID = info.id;
+    }
+  }
+  if (!sessionID || !lastUserMessageID) return;
+  const state = turnGuards.get(sessionID);
+  if (state && state.turnID !== lastUserMessageID) {
+    state.turnID = lastUserMessageID;
+    state.recent = [];
+    state.sinceEdit.clear();
+  }
+}
 
 function patchTargets(args) {
   const text = args.patchText ?? args.patch ?? args.input;
@@ -198,47 +347,88 @@ function cleanHistory(messages) {
   }
 }
 
-const HoxiSandboxPlugin = async () => ({
-  "tool.execute.before": async (input, output) => {
-    const args = output?.args;
-    const isBash = input?.tool === "bash" && args && typeof args === "object" && typeof args.command === "string";
-    // The model may echo tags it saw in old history; only the tag added below
-    // may reach the shell, so a stop never targets an invented call.
-    const clean = isBash ? stripStopMarkers(args.command) : undefined;
-    let final = clean;
-    // Wrap in the sandbox first, then tag the final command: the tag must stay
-    // the first line of what actually runs, so a stop can find this exact
-    // process and the UI can strip it back to the user's command.
-    const value = isBash || (input?.tool !== "bash" && output?.args) ? snapshot(input?.sessionID) : undefined;
-    if (value) {
-      if (!command(value, input)) return;
-      if (isBash) {
-        if (clean.trim() === "") {
-          throw new Error("Hoxi sandbox requires a non-empty shell command");
+const HoxiSandboxPlugin = async () => {
+  const turnGuards = new Map();
+  return {
+    "tool.execute.before": async (input, output) => {
+      const args = output?.args;
+      const isBash = input?.tool === "bash" && args && typeof args === "object" && typeof args.command === "string";
+      // The model may echo tags it saw in old history; only the tag added below
+      // may reach the shell, so a stop never targets an invented call.
+      const clean = isBash ? stripStopMarkers(args.command) : undefined;
+      let final = clean;
+      // Wrap in the sandbox first, then tag the final command: the tag must stay
+      // the first line of what actually runs, so a stop can find this exact
+      // process and the UI can strip it back to the user's command.
+      const value = isBash || (input?.tool !== "bash" && output?.args) ? snapshot(input?.sessionID) : undefined;
+      if (value) {
+        if (!command(value, input)) return;
+        if (isBash) {
+          if (clean.trim() === "") {
+            throw new Error("Hoxi sandbox requires a non-empty shell command");
+          }
+          final = `${quote(executable)} -f ${quote(value.profilePath)} -- /bin/sh -c ${quote(clean)}`;
+        } else if (input.tool === "apply_patch") {
+          const targets = patchTargets(args);
+          if (targets.length === 0) throw new Error("Hoxi sandbox could not read the patch file paths");
+          for (const target of targets) assertWritable(target, value.workspace);
+        } else if (FILE_WRITE_TOOLS.has(input.tool)) {
+          const target = args.filePath ?? args.path ?? args.file;
+          assertWritable(target, value.workspace);
         }
-        final = `${quote(executable)} -f ${quote(value.profilePath)} -- /bin/sh -c ${quote(clean)}`;
-      } else if (input.tool === "apply_patch") {
-        const targets = patchTargets(args);
-        if (targets.length === 0) throw new Error("Hoxi sandbox could not read the patch file paths");
-        for (const target of targets) assertWritable(target, value.workspace);
-      } else if (FILE_WRITE_TOOLS.has(input.tool)) {
-        const target = args.filePath ?? args.path ?? args.file;
-        assertWritable(target, value.workspace);
       }
-    }
-    if (!isBash) return;
-    const tag = stopMarker(input);
-    if (!tag) {
-      args.command = final;
-    } else if (trapSupported()) {
-      args.command = `${tag}\n${STOP_TRAP}\n${final}`;
-    } else {
-      args.command = `${tag}\n${final}`;
-    }
-  },
-  "experimental.chat.messages.transform": async (_input, output) => {
-    cleanHistory(output?.messages);
-  },
-});
+      observeToolCall(turnGuards, input, args, clean);
+      if (!isBash) return;
+      const tag = stopMarker(input);
+      if (!tag) {
+        args.command = final;
+      } else if (trapSupported()) {
+        args.command = `${tag}\n${STOP_TRAP}\n${final}`;
+      } else {
+        args.command = `${tag}\n${final}`;
+      }
+    },
+    "experimental.chat.messages.transform": async (_input, output) => {
+      syncTurnFromMessages(turnGuards, output?.messages);
+      cleanHistory(output?.messages);
+    },
+    event: async ({ event }) => {
+      const props = event?.properties || {};
+      const type = event?.type;
+      if (type === "session.deleted") {
+        const sid = props.sessionID || props.info?.id;
+        if (typeof sid === "string" && sid) turnGuards.delete(sid);
+        return;
+      }
+      if (type === "session.idle" && typeof props.sessionID === "string" && props.sessionID) {
+        turnGuards.delete(props.sessionID);
+        return;
+      }
+      if (
+        type === "session.status" &&
+        typeof props.sessionID === "string" &&
+        props.sessionID &&
+        props.status?.type === "idle"
+      ) {
+        turnGuards.delete(props.sessionID);
+        return;
+      }
+      if (
+        type === "message.updated" &&
+        props.info?.role === "user" &&
+        typeof props.info?.sessionID === "string" &&
+        typeof props.info?.id === "string" &&
+        !props.info.id.startsWith("msg_u_recover_")
+      ) {
+        const state = turnGuards.get(props.info.sessionID);
+        if (state && state.turnID !== props.info.id) {
+          state.turnID = props.info.id;
+          state.recent = [];
+          state.sinceEdit.clear();
+        }
+      }
+    },
+  };
+};
 
 export default HoxiSandboxPlugin;

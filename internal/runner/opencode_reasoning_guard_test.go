@@ -655,4 +655,108 @@ doneTurn:
 	}
 }
 
+func TestRelayAndPruneRunawayDuplicateToolPartsInSingleMessage(t *testing.T) {
+	t.Parallel()
 
+	var abortCalls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/abort") {
+			abortCalls.Add(1)
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	root := t.TempDir()
+	svc := NewService(root, nil, nil, filepath.Join(t.TempDir(), "sessions"))
+	svc.ConfigureOpenCode(srv.URL, "secret")
+	rec := SessionRecord{
+		ID:           "ses_hoxi_tool_flood",
+		ExternalID:   "ses_oc_tool_flood",
+		Runtime:      "opencode",
+		ProjectDir:   root,
+		WorktreePath: root,
+		SandboxMode:  "local",
+	}
+	if err := svc.store.Put(rec); err != nil {
+		t.Fatal(err)
+	}
+	ap := &activeProcess{sessionID: rec.ID, runtime: "opencode", done: make(chan struct{}), idleCh: make(chan struct{}, 1)}
+	svc.mu.Lock()
+	svc.procs[rec.ID] = ap
+	svc.mu.Unlock()
+
+	msgEvt, _ := json.Marshal(SSEEvent{
+		Type: "message.updated",
+		Properties: map[string]interface{}{
+			"info": MessageInfo{ID: "msg_a_flood", SessionID: rec.ExternalID, Role: "assistant"},
+		},
+	})
+	svc.relayOpenCodeEvent(rec, msgEvt)
+
+	for i := 1; i <= 6; i++ {
+		partID := "prt_bash_" + string(rune('0'+i))
+		status := "running"
+		if i == 1 {
+			status = "completed"
+		}
+		partEvt, _ := json.Marshal(SSEEvent{
+			Type: "message.part.updated",
+			Properties: map[string]interface{}{
+				"part": MessagePart{
+					ID:        partID,
+					SessionID: rec.ExternalID,
+					MessageID: "msg_a_flood",
+					Type:      "tool",
+					Tool:      "bash",
+					CallID:    "call_" + string(rune('0'+i)),
+					State: &ToolState{
+						Status: status,
+						Input: map[string]interface{}{
+							"command": "# hoxi-stop:ses_oc_tool_flood:call_" + string(rune('0'+i)) + "\ncd /repo && grep -rn super_store_id .",
+						},
+					},
+				},
+			},
+		})
+		svc.relayOpenCodeEvent(rec, partEvt)
+	}
+
+	// Trailing truncated empty-input SchemaError stub at finish="length" must also be dropped.
+	stubEvt, _ := json.Marshal(SSEEvent{
+		Type: "message.part.updated",
+		Properties: map[string]interface{}{
+			"part": MessagePart{
+				ID:        "prt_bash_stub",
+				SessionID: rec.ExternalID,
+				MessageID: "msg_a_flood",
+				Type:      "tool",
+				Tool:      "bash",
+				CallID:    "call_stub",
+				State: &ToolState{
+					Status: "error",
+					Input:  map[string]interface{}{},
+					Error:  `SchemaError(Missing key at ["command"])`,
+				},
+			},
+		},
+	})
+	svc.relayOpenCodeEvent(rec, stubEvt)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for abortCalls.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if abortCalls.Load() != 1 {
+		t.Fatalf("expected 1 abort call on runaway duplicate tool flood, got %d", abortCalls.Load())
+	}
+
+	stored, ok := svc.store.Get(rec.ID)
+	if !ok || len(stored.Turns) != 1 {
+		t.Fatalf("expected 1 assistant turn in store, got %+v", stored)
+	}
+	if len(stored.Turns[0].Parts) != 1 || stored.Turns[0].Parts[0].ID != "prt_bash_1" {
+		t.Fatalf("expected runaway duplicate tool flood and empty-input stub to be collapsed to prt_bash_1, got %+v", stored.Turns[0].Parts)
+	}
+}

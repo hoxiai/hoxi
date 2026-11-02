@@ -356,3 +356,81 @@ func TestReconcilePendingApprovalsHonorsUnattendedIsolationAndHardDeny(t *testin
 		t.Fatal("expected hard-deny command to be rejected on switch to unattended")
 	}
 }
+
+func TestAutoReplyOpenCodeBoundsConcurrencyUnderBurst(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	svc := NewService(dir, nil, statusbar.NewTracker(), filepath.Join(t.TempDir(), "sessions.json"))
+
+	var (
+		mu             sync.Mutex
+		inFlight       int
+		maxInFlight    int
+		completedCount int
+	)
+	releaseCh := make(chan struct{})
+	allReachedMax := make(chan struct{})
+	var once sync.Once
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/permission/") && strings.HasSuffix(r.URL.Path, "/reply") {
+			mu.Lock()
+			inFlight++
+			if inFlight > maxInFlight {
+				maxInFlight = inFlight
+			}
+			if inFlight == maxConcurrentOpenCodeAutoReplies {
+				once.Do(func() { close(allReachedMax) })
+			}
+			mu.Unlock()
+
+			<-releaseCh
+
+			mu.Lock()
+			inFlight--
+			completedCount++
+			mu.Unlock()
+			writeJSON(w, http.StatusOK, true)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+	svc.ConfigureOpenCode(server.URL, "secret")
+
+	const totalBurst = 24
+	for i := 0; i < totalBurst; i++ {
+		id := "per_burst_" + string(rune('a'+i))
+		svc.autoReplyOpenCode(id, "ses_burst", dir, approvalSourcePolicy, nil)
+	}
+
+	select {
+	case <-allReachedMax:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for semaphore to reach max concurrency")
+	}
+	time.Sleep(25 * time.Millisecond)
+	mu.Lock()
+	peakWhileBlocked := maxInFlight
+	mu.Unlock()
+	if peakWhileBlocked > maxConcurrentOpenCodeAutoReplies {
+		t.Fatalf("max concurrent auto-replies = %d, want <= %d", peakWhileBlocked, maxConcurrentOpenCodeAutoReplies)
+	}
+
+	close(releaseCh)
+	waitFor(t, "all burst auto-replies settled", func() bool {
+		mu.Lock()
+		done := completedCount == totalBurst
+		mu.Unlock()
+		if !done {
+			return false
+		}
+		for i := 0; i < totalBurst; i++ {
+			id := "per_burst_" + string(rune('a'+i))
+			if svc.openCodeAutoReplyState(id) != openCodeAutoReplySettled {
+				return false
+			}
+		}
+		return true
+	})
+}

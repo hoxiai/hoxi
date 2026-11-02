@@ -139,3 +139,85 @@ func SanitizeOpenCodeDisplaySSELine(line string) string {
 	}
 	return "data: " + string(cleaned) + line[len(trimmed):]
 }
+
+func canonicalToolPartFingerprint(p MessagePart) string {
+	if p.Type != "tool" || p.State == nil || len(p.State.Input) == 0 {
+		return ""
+	}
+	tool := strings.TrimSpace(p.Tool)
+	if tool == "" || doomLoopPollingTools[tool] || doomLoopPollingTools[strings.ToLower(tool)] {
+		return ""
+	}
+	if tool == "bash" {
+		cmd := strings.TrimSpace(cleanOpenCodeToolDisplayText(firstString(p.State.Input["command"], p.State.Input["cmd"])))
+		if cmd == "" {
+			return ""
+		}
+		workdir := strings.TrimSpace(firstString(p.State.Input["workdir"], p.State.Input["cwd"]))
+		return "bash\x00" + workdir + "\x00" + cmd
+	}
+	rawInput, err := json.Marshal(p.State.Input)
+	if err != nil || len(rawInput) == 0 || string(rawInput) == "{}" {
+		return ""
+	}
+	if isDoomLoopPollingCall(tool, rawInput) {
+		return ""
+	}
+	return tool + "\x00" + string(rawInput)
+}
+
+// pruneRunawayDuplicateToolParts collapses degenerate duplicate tool-call floods
+// within a single assistant message (> runawayDuplicateToolThreshold identical
+// tool calls in the same message) down to a single representative part per
+// repeated fingerprint, and drops trailing empty-input truncated tool stubs in
+// that runaway message. Normal messages are returned untouched.
+func pruneRunawayDuplicateToolParts(parts []MessagePart) []MessagePart {
+	if len(parts) <= runawayDuplicateToolThreshold {
+		return parts
+	}
+	counts := make(map[string]int)
+	chosenIdx := make(map[string]int)
+	for i, p := range parts {
+		fp := canonicalToolPartFingerprint(p)
+		if fp == "" {
+			continue
+		}
+		counts[fp]++
+		if prevIdx, exists := chosenIdx[fp]; !exists {
+			chosenIdx[fp] = i
+		} else if parts[prevIdx].State != nil && parts[prevIdx].State.Status != "completed" &&
+			p.State != nil && p.State.Status == "completed" {
+			chosenIdx[fp] = i
+		}
+	}
+	hasRunaway := false
+	for _, c := range counts {
+		if c > runawayDuplicateToolThreshold {
+			hasRunaway = true
+			break
+		}
+	}
+	if !hasRunaway {
+		return parts
+	}
+	out := make([]MessagePart, 0, len(parts))
+	for i, p := range parts {
+		if p.Type != "tool" {
+			out = append(out, p)
+			continue
+		}
+		fp := canonicalToolPartFingerprint(p)
+		if fp == "" {
+			if p.State == nil || len(p.State.Input) == 0 {
+				continue
+			}
+			out = append(out, p)
+			continue
+		}
+		if counts[fp] > runawayDuplicateToolThreshold && i != chosenIdx[fp] {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
+}

@@ -4,6 +4,7 @@ import {
   extractShellOutput,
   extractRollingShellLines,
   formatToolDisplayName,
+  hasDistinctShellDescription,
   isShellAwaitingFirstOutput,
 } from "../components/timeline/tool-card-helpers";
 import type { ToolPart, ToolState } from "../services/sse-types";
@@ -101,6 +102,28 @@ describe("shell tool display", () => {
     });
     assertEqual(extractCommand(part), "git status");
     assertEqual(extractDescription(part), "git status");
+  });
+
+  it("hides duplicate secondary shell command preview when description is the command itself", () => {
+    const withoutDesc = shellPart({
+      status: "running",
+      input: { command: "cd /repo && grep -rn foo .\necho done" },
+      title: "cd /repo && grep -rn foo .",
+      time: { start: 1 },
+    });
+    assertEqual(
+      hasDistinctShellDescription(extractDescription(withoutDesc), extractCommand(withoutDesc)),
+      false,
+    );
+    const withDesc = shellPart({
+      status: "running",
+      input: { command: "cd /repo && grep -rn foo .", description: "Search for foo references" },
+      time: { start: 1 },
+    });
+    assertEqual(
+      hasDistinctShellDescription(extractDescription(withDesc), extractCommand(withDesc)),
+      true,
+    );
   });
 });
 

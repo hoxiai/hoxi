@@ -247,6 +247,14 @@ function cleanShellDisplayText(text: string): string {
   return cur;
 }
 
+export function hasDistinctShellDescription(description: string, command: string): boolean {
+  const desc = description.trim();
+  const cmd = command.trim();
+  if (!desc || !cmd) return false;
+  const firstLine = cmd.split(/\r?\n/, 1)[0].trim();
+  return desc !== cmd && desc !== firstLine && desc !== `$ ${cmd}` && desc !== `$ ${firstLine}`;
+}
+
 export function extractDescription(part: ToolPart): string {
   const input = resolveToolInput(part);
   if (isShellTool(part.tool)) {

@@ -30,7 +30,10 @@ const (
 // that still returns it (one that lags behind the reply, or a reply that
 // reached an instance without the request) is ignored for that long instead
 // of being shown, timed out and audited again on every poll.
-const openCodeSettledFor = 15 * time.Minute
+const (
+	openCodeSettledFor               = 15 * time.Minute
+	maxConcurrentOpenCodeAutoReplies = 8
+)
 
 type openCodeSettledMark struct{ until time.Time }
 
@@ -111,6 +114,10 @@ func (s *Service) autoReplyOpenCodeMessage(id, sessionID, directory, reply, mess
 		return
 	}
 	go func() {
+		if s.openCodeReplySem != nil {
+			s.openCodeReplySem <- struct{}{}
+			defer func() { <-s.openCodeReplySem }()
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		status, _, err := s.replyOpenCodePermission(ctx, id, directory, body)
