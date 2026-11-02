@@ -19,8 +19,15 @@ type RemoteTurn = { info: MessageInfo; parts: MessagePart[] };
 
 // true = the server still has turns older than the loaded ones.
 const [olderHistory, setOlderHistory] = createStore<Record<string, boolean>>({});
-const olderReads = new Map<string, Promise<number>>();
-const fullReads = new Map<string, Promise<void>>();
+interface HistoryRead<T> { directory: string | undefined; turns: RemoteTurn[] | undefined; token: object; promise: Promise<T> }
+const olderReads = new Map<string, HistoryRead<number>>();
+const fullReads = new Map<string, HistoryRead<void>>();
+
+function isCurrentRead<T>(sessionID: string, token: object, reads: Map<string, HistoryRead<T>>): boolean {
+  const read = reads.get(sessionID);
+  return read?.token === token && !isSessionDeleted(sessionID) &&
+    sessionDirectory(sessionID) === read.directory && workspace.messagesBySession[sessionID] === read.turns;
+}
 
 /** Exports read a fresh full snapshot, never a paged or cache-seeded transcript. */
 export async function fetchSessionExportTurns(sessionID: string): Promise<RemoteTurn[]> {
@@ -37,8 +44,14 @@ export function hasOlderSessionHistory(sessionID: string | null | undefined): bo
   return Boolean(sessionID && olderHistory[sessionID]);
 }
 
-export function forgetSessionHistory(sessionID: string): void {
+function markHistoryComplete(sessionID: string): void {
   if (sessionID in olderHistory) setOlderHistory(produce((state) => { delete state[sessionID]; }));
+}
+
+export function forgetSessionHistory(sessionID: string): void {
+  markHistoryComplete(sessionID);
+  olderReads.delete(sessionID);
+  fullReads.delete(sessionID);
 }
 
 /**
@@ -86,38 +99,48 @@ export function loadOlderSessionHistory(
   around: (apply: () => number) => number = (apply) => apply()
 ): Promise<number> {
   if (!hasOlderSessionHistory(sessionID)) return Promise.resolve(0);
+  const directory = sessionDirectory(sessionID);
+  const source = workspace.messagesBySession[sessionID];
   const pending = olderReads.get(sessionID);
-  if (pending) return pending;
-  const read = (async () => {
-    const oldest = workspace.messagesBySession[sessionID]?.[0]?.info.id;
+  if (pending && pending.directory === directory && pending.turns === source) return pending.promise;
+  const token = {};
+  const promise = (async () => {
+    const oldest = source?.[0]?.info.id;
     if (!oldest) {
-      forgetSessionHistory(sessionID);
+      markHistoryComplete(sessionID);
       return 0;
     }
-    const older = await hoxiAPI.getMessages(sessionID, sessionDirectory(sessionID), limit, oldest);
-    if (workspace.messagesBySession[sessionID]?.[0]?.info.id !== oldest) return 0;
+    const older = await hoxiAPI.getMessages(sessionID, directory, limit, oldest);
+    if (!isCurrentRead(sessionID, token, olderReads) || source?.[0]?.info.id !== oldest) return 0;
     const added = around(() => prependOlderTurns(sessionID, older));
-    if (added === 0 || older.length < limit) forgetSessionHistory(sessionID);
+    if (added === 0 || older.length < limit) markHistoryComplete(sessionID);
     return added;
-  })().finally(() => olderReads.delete(sessionID));
+  })();
+  const read: HistoryRead<number> = { directory, turns: source, token,
+    promise: promise.finally(() => { if (olderReads.get(sessionID) === read) olderReads.delete(sessionID); }) };
   olderReads.set(sessionID, read);
-  return read;
+  return read.promise;
 }
 
 /** Loads the whole transcript once for features that must see every turn. */
 export function ensureFullSessionHistory(sessionID: string): Promise<void> {
   if (!hasOlderSessionHistory(sessionID)) return Promise.resolve();
+  const directory = sessionDirectory(sessionID);
+  const source = workspace.messagesBySession[sessionID];
   const pending = fullReads.get(sessionID);
-  if (pending) return pending;
-  const read = (async () => {
-    const turns = await hoxiAPI.getMessages(sessionID, sessionDirectory(sessionID), "all");
-    if (workspace.messagesBySession[sessionID] === undefined) return;
+  if (pending && pending.directory === directory && pending.turns === source) return pending.promise;
+  const token = {};
+  const promise = (async () => {
+    const turns = await hoxiAPI.getMessages(sessionID, directory, "all");
+    if (!source || !isCurrentRead(sessionID, token, fullReads)) return;
     setWorkspace(produce((state) => {
       const list = state.messagesBySession[sessionID];
       if (list) mergeServerTurnsInto(list, turns);
     }));
-    forgetSessionHistory(sessionID);
-  })().finally(() => fullReads.delete(sessionID));
+    markHistoryComplete(sessionID);
+  })();
+  const read: HistoryRead<void> = { directory, turns: source, token,
+    promise: promise.finally(() => { if (fullReads.get(sessionID) === read) fullReads.delete(sessionID); }) };
   fullReads.set(sessionID, read);
-  return read;
+  return read.promise;
 }

@@ -350,6 +350,35 @@ func TestWindowModeAndPersistentProfile(t *testing.T) {
 	if _, err := os.Stat(cookieMarker); err != nil {
 		t.Fatalf("persistent profile should not be deleted on resetBrowser: %v", err)
 	}
+
+	// Verify busy scope on store-a does not force store-b onto a fallback -sessions directory.
+	s.SetProfileResolver(func(sessionID, _ string) string {
+		if sessionID == "a" {
+			return "store-a"
+		}
+		if sessionID == "b" {
+			return "store-b"
+		}
+		return ""
+	})
+	scA, err := s.acquire(context.Background(), scopeKey{dir, "a"}, true)
+	if err != nil || scA == nil {
+		t.Fatalf("acquire scope a: %v %v", scA, err)
+	}
+	scB, err := s.acquire(context.Background(), scopeKey{dir, "b"}, true)
+	if err != nil || scB == nil {
+		<-scA.gate
+		t.Fatalf("acquire scope b: %v %v", scB, err)
+	}
+	// While scA.gate is held (in-flight operation on store-a), scB must still get primary store-b root.
+	gotStoreB, err := s.acquirePersistentProfile(scB)
+	wantStoreB := filepath.Join(profileDir+"-stores", "store-b")
+	<-scB.gate
+	<-scA.gate
+	if err != nil || gotStoreB != wantStoreB {
+		t.Fatalf("acquirePersistentProfile(scB) while scA busy = %q, %v; want %q", gotStoreB, err, wantStoreB)
+	}
+
 	s.Close()
 	if _, err := os.Stat(cookieMarker); err != nil {
 		t.Fatalf("persistent profile should not be deleted on Close: %v", err)

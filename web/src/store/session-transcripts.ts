@@ -1,6 +1,9 @@
 import { produce } from "solid-js/store";
 import type { MessageInfo } from "../services/sse-types";
-import { normalizeMessagePartInPlace } from "./message-lookup";
+import {
+  normalizeMessagePartInPlace,
+  orderSameStepReasoningPartsInPlace,
+} from "./message-lookup";
 import { setWorkspace, workspace } from "./workspace-state";
 import type { MessageTurn } from "./workspace-state";
 import { invalidateSessionDiffReads } from "./session-diffs";
@@ -269,6 +272,7 @@ export function readCachedSessionTurns(sessionID: string): MessageTurn[] | undef
   if (!Array.isArray(turns) || turns.length === 0) return undefined;
   for (const turn of turns) {
     for (const part of turn.parts) normalizeMessagePartInPlace(part);
+    orderSameStepReasoningPartsInPlace(turn.parts);
   }
   return turns;
 }

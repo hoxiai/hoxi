@@ -148,9 +148,11 @@ func collectSessionConstraints(turns []MessageTurn) []string {
 
 func isMutatingToolName(tool string) bool {
 	switch strings.ToLower(strings.TrimSpace(tool)) {
-	case "edit", "write", "multiedit", "apply_patch", "patch",
+	case "edit", "write", "multiedit", "apply_patch", "patch", "replace",
+		"notebookedit", "notebook_edit",
 		"replace_file_content", "multi_replace_file_content",
-		"write_to_file", "write_file", "edit_file", "create_file", "sed_file":
+		"write_to_file", "write_file", "edit_file", "create_file", "sed_file",
+		"insert_edit_into_file", "str_replace_editor", "str_replace_based_edit_tool":
 		return true
 	default:
 		return false

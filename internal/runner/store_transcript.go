@@ -1,12 +1,35 @@
 package runner
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // Index both replay and live updates so a token/tool update does not scan the
 // entire conversation, and first load stays linear in transcript size.
 type transcriptIndex struct {
 	messages map[string]int
 	parts    map[partKey]int
+}
+
+func pairedStepTextPartID(part MessagePart) string {
+	if part.Type != "reasoning" {
+		return ""
+	}
+	idx := strings.LastIndex(part.ID, "_reason_")
+	if idx <= 0 {
+		return ""
+	}
+	suffix := part.ID[idx+len("_reason_"):]
+	if suffix == "" {
+		return ""
+	}
+	for i := 0; i < len(suffix); i++ {
+		if suffix[i] < '0' || suffix[i] > '9' {
+			return ""
+		}
+	}
+	return part.ID[:idx] + "_text_" + suffix
 }
 
 func (idx *transcriptIndex) rebuild(turns []MessageTurn) {
@@ -55,6 +78,20 @@ func (idx *transcriptIndex) upsertPart(turns []MessageTurn, part MessagePart) bo
 		preserveToolEditInput(&part, turns[i].Parts[j])
 		turns[i].Parts[j] = part
 		return true
+	}
+	// Antigravity flushes step thinking on DONE after ACTIVE has already streamed
+	// the step's text_delta; keep same-step reasoning ahead of its paired text part.
+	if textID := pairedStepTextPartID(part); textID != "" {
+		if textIdx, exists := idx.parts[partKey{part.MessageID, textID}]; exists {
+			parts := append(turns[i].Parts, MessagePart{})
+			copy(parts[textIdx+1:], parts[textIdx:])
+			parts[textIdx] = part
+			turns[i].Parts = parts
+			for k := textIdx; k < len(parts); k++ {
+				idx.parts[partKey{part.MessageID, parts[k].ID}] = k
+			}
+			return true
+		}
 	}
 	idx.parts[key] = len(turns[i].Parts)
 	turns[i].Parts = append(turns[i].Parts, part)

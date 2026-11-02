@@ -34,6 +34,26 @@ function isOptimisticPartID(id: string): boolean {
   return /^prt_(file_)?\d+(_\d+)?$/.test(id);
 }
 
+// Antigravity flushes step thinking on DONE after ACTIVE has already streamed
+// `text_delta`; map `prt_<stem>_reason_<step>` to its same-step `text` part ID.
+function pairedStepTextPartID(part: MessagePart): string | undefined {
+  if (part.type !== "reasoning") return undefined;
+  const match = /^(.*)_reason_(\d+)$/.exec(part.id);
+  return match ? `${match[1]}_text_${match[2]}` : undefined;
+}
+
+export function orderSameStepReasoningPartsInPlace(parts: MessagePart[]): void {
+  for (let i = 1; i < parts.length; i++) {
+    const pairedTextID = pairedStepTextPartID(parts[i]);
+    if (!pairedTextID) continue;
+    const textIdx = findPartIndex(parts, pairedTextID);
+    if (textIdx >= 0 && textIdx < i) {
+      const [reasonPart] = parts.splice(i, 1);
+      parts.splice(textIdx, 0, reasonPart);
+    }
+  }
+}
+
 // Runner user IDs (`msg_u_<ms>_<n>`) and OpenCode IDs (`msg_<hex>`) do not sort
 // against each other as strings ("msg_u" > "msg_1"), so order by creation time.
 function compareTurnOrder(a: MessageInfo, b: MessageInfo): number {
@@ -156,7 +176,13 @@ export function upsertTurnPart(list: MessageTurn[], part: MessagePart) {
   if (pIdx >= 0) {
     Object.assign(turn.parts[pIdx], part);
   } else {
-    turn.parts.push(part);
+    const pairedTextID = pairedStepTextPartID(part);
+    const textIdx = pairedTextID ? findPartIndex(turn.parts, pairedTextID) : -1;
+    if (textIdx >= 0) {
+      turn.parts.splice(textIdx, 0, part);
+    } else {
+      turn.parts.push(part);
+    }
   }
 }
 
@@ -394,6 +420,7 @@ function mergeTurnInto(local: MessageTurn, remote: { info: MessageInfo; parts: M
     if (isOptimisticPartID(lp.id) && remote.parts.length > 0) continue;
     nextParts.push(lp);
   }
+  orderSameStepReasoningPartsInPlace(nextParts);
   if (
     local.parts.length !== nextParts.length ||
     local.parts.some((p, i) => p !== nextParts[i])
@@ -436,6 +463,7 @@ export function mergeServerTurnsInto(
   let promoted: MessageTurn | undefined;
   for (const remote of remoteTurns) {
     for (const rp of remote.parts) normalizeMessagePartInPlace(rp);
+    orderSameStepReasoningPartsInPlace(remote.parts);
     remoteIDs.add(remote.info.id);
     const idx = findMessageIndex(existing, remote.info.id);
     if (idx < 0) {

@@ -6,7 +6,7 @@ import { t } from "../i18n";
 import { loadSessionMessages } from "./workspace-sessions";
 import { setWorkspace, workspace } from "./workspace-state";
 import { normalizeFolderPath } from "./workspace-folders";
-import { sessionDirectory } from "./session-query";
+import { isSessionDeleted, sessionDirectory } from "./session-query";
 
 const MAX_TERMINAL_BUFFER_CHARS = 24_000;
 export const MAX_TERMINAL_CONTEXT_CHARS = 6_000;
@@ -16,17 +16,41 @@ export const MAX_WORKTREE_CONTEXT_CHARS = 6_000;
 
 const terminalBuffersByDir = new Map<string, string>();
 const [terminalBufferVersion, setTerminalBufferVersion] = createSignal(0);
-const inflightSessionLoads = new Set<string>();
-const inflightDiffLoads = new Set<string>();
+interface MentionRead { directory: string | undefined; token: object; promise: Promise<void> }
+interface MentionAttempt { directory: string | undefined; at: number }
+const inflightSessionLoads = new Map<string, MentionRead>();
+const inflightDiffLoads = new Map<string, MentionRead>();
 // Mention chips re-run on every keystroke; remember recent attempts so a clean
 // worktree, an empty session or a half-typed ID is fetched at most once per window.
 const MENTION_REFETCH_MS = 15_000;
-const sessionLoadAttemptAt = new Map<string, number>();
-const diffLoadAttemptAt = new Map<string, number>();
+const sessionLoadAttemptAt = new Map<string, MentionAttempt>();
+const diffLoadAttemptAt = new Map<string, MentionAttempt>();
 
-function attemptedRecently(attempts: Map<string, number>, key: string): boolean {
-  const at = attempts.get(key);
-  return at !== undefined && Date.now() - at < MENTION_REFETCH_MS;
+function mentionDirectory(key: string): string | undefined {
+  return sessionDirectory(key) || workspace.rootDir || undefined;
+}
+
+function loadMentionData(
+  key: string, forSend: boolean, reads: Map<string, MentionRead>, attempts: Map<string, MentionAttempt>,
+  hasData: () => boolean, load: (isCurrent: () => boolean) => Promise<void>
+): Promise<void> {
+  const directory = mentionDirectory(key);
+  const pending = reads.get(key);
+  if (pending && pending.directory === directory) return pending.promise;
+  if (hasData()) return Promise.resolve();
+  const attempt = attempts.get(key);
+  if (!forSend && attempt && attempt.directory === directory && Date.now() - attempt.at < MENTION_REFETCH_MS) return Promise.resolve();
+  attempts.delete(key);
+  if (attempts.size >= 512) attempts.delete(attempts.keys().next().value!);
+  attempts.set(key, { directory, at: Date.now() });
+  const token = {};
+  const isCurrent = () => reads.get(key)?.token === token && mentionDirectory(key) === directory && !isSessionDeleted(key);
+  const promise = (async () => {
+    await load(isCurrent);
+    if (!isCurrent()) throw new Error(t("timeline.sessionUnavailable"));
+  })().finally(() => { if (reads.get(key)?.token === token) reads.delete(key); });
+  reads.set(key, { directory, token, promise });
+  return promise;
 }
 
 export interface ContextMentionChipInfo {
@@ -169,6 +193,14 @@ function resolveDiffsForSession(sessionID: string | null): SnapshotFileDiff[] {
   if (sessionDiffs.length > 0) return sessionDiffs;
   const wtDiffs = workspace.worktreeDiffsBySession[sessionID] ?? [];
   if (wtDiffs.length > 0) return wtDiffs;
+  const isIsolated =
+    Boolean(workspace.worktreeBySession[sessionID]?.isolated) ||
+    workspace.sessions.find((s) => s.id === sessionID)?.sandboxMode === "worktree";
+  if (isIsolated) return [];
+  const dir = sessionDirectory(sessionID);
+  if (dir && workspace.rootDir && normalizeFolderPath(dir) !== normalizeFolderPath(workspace.rootDir)) {
+    return [];
+  }
   return workspace.worktreeDiffsBySession["__root__"] ?? [];
 }
 
@@ -308,40 +340,29 @@ export function formatSessionContextBlock(
   };
 }
 
-async function ensureSessionMessagesLoaded(refID: string): Promise<void> {
-  if (!refID || (workspace.messagesBySession[refID]?.length ?? 0) > 0) return;
-  if (inflightSessionLoads.has(refID) || attemptedRecently(sessionLoadAttemptAt, refID)) return;
-  inflightSessionLoads.add(refID);
-  sessionLoadAttemptAt.set(refID, Date.now());
-  try {
-    await loadSessionMessages(refID);
-  } catch {
-    /* ignore background fetch errors */
-  } finally {
-    inflightSessionLoads.delete(refID);
-  }
+function ensureSessionMessagesLoaded(refID: string, forSend = false): Promise<void> {
+  if (!refID) return Promise.resolve();
+  return loadMentionData(refID, forSend, inflightSessionLoads, sessionLoadAttemptAt,
+    () => (workspace.messagesBySession[refID]?.length ?? 0) > 0,
+    () => loadSessionMessages(refID));
 }
 
-async function ensureWorktreeDiffsLoaded(refID: string): Promise<void> {
+function ensureWorktreeDiffsLoaded(refID: string, forSend = false): Promise<void> {
   const key = refID || "__root__";
-  const existing = resolveDiffsForSession(refID);
-  if (existing.length > 0 || inflightDiffLoads.has(key) || attemptedRecently(diffLoadAttemptAt, key)) return;
-  inflightDiffLoads.add(key);
-  diffLoadAttemptAt.set(key, Date.now());
-  try {
-    const dir = sessionDirectory(refID) || workspace.rootDir || undefined;
+  const hasOwnDiffs = () =>
+    (refID ? (workspace.diffsBySession[refID]?.length ?? 0) > 0 : false) ||
+    (workspace.worktreeDiffsBySession[key]?.length ?? 0) > 0;
+  return loadMentionData(key, forSend, inflightDiffLoads, diffLoadAttemptAt, hasOwnDiffs, async (isCurrent) => {
+    const dir = mentionDirectory(key);
     const diffs = await hoxiAPI.getWorktreeDiff(key, dir);
+    if (!isCurrent()) return;
     if (Array.isArray(diffs)) {
       setWorkspace("worktreeDiffsBySession", key, diffs);
       if (refID && (workspace.diffsBySession[refID]?.length ?? 0) === 0) {
         setWorkspace("diffsBySession", refID, diffs);
       }
     }
-  } catch {
-    /* ignore background fetch errors */
-  } finally {
-    inflightDiffLoads.delete(key);
-  }
+  });
 }
 
 /**
@@ -374,7 +395,7 @@ export function inspectPromptContextMentions(
 
   if (/(?:^|[^a-zA-Z0-9_])@changes\b/.test(rawPrompt)) {
     seen.add("@changes");
-    void ensureWorktreeDiffsLoaded(sessionID || "__root__");
+    void ensureWorktreeDiffsLoaded(sessionID || "__root__").catch(() => {});
     const diffs = resolveDiffsForSession(sessionID);
     const formatted = formatUnifiedDiffsContext(diffs, MAX_CHANGES_CONTEXT_CHARS);
     chips.push({
@@ -395,7 +416,7 @@ export function inspectPromptContextMentions(
     const token = `@session:${refID}`;
     if (seen.has(token)) continue;
     seen.add(token);
-    void ensureSessionMessagesLoaded(refID);
+    void ensureSessionMessagesLoaded(refID).catch(() => {});
     const info = formatSessionContextBlock(refID, MAX_SESSION_CONTEXT_CHARS);
     chips.push({
       token,
@@ -421,7 +442,7 @@ export function inspectPromptContextMentions(
     const token = `@worktree:${refID}`;
     if (seen.has(token)) continue;
     seen.add(token);
-    void ensureWorktreeDiffsLoaded(refID);
+    void ensureWorktreeDiffsLoaded(refID).catch(() => {});
     const wt = workspace.worktreeBySession[refID];
     const diffs = resolveDiffsForSession(refID);
     const formatted = formatUnifiedDiffsContext(diffs, MAX_WORKTREE_CONTEXT_CHARS);
@@ -449,18 +470,25 @@ export async function resolveContextMentionsForSend(
   rawPrompt: string,
   sessionID: string | null
 ): Promise<string> {
+  const directory = sessionDirectory(sessionID) || workspace.rootDir;
   const tasks: Promise<void>[] = [];
+  const requireMention = (mention: string, read: Promise<void>) => read.catch((error) => {
+    throw new Error(t("timeline.mentionLoadFailed", { mention, error: error instanceof Error ? error.message : String(error) }));
+  });
   if (/(?:^|[^a-zA-Z0-9_])@changes\b/.test(rawPrompt)) {
-    tasks.push(ensureWorktreeDiffsLoaded(sessionID || "__root__"));
+    tasks.push(requireMention("@changes", ensureWorktreeDiffsLoaded(sessionID || "__root__", true)));
   }
   for (const match of rawPrompt.matchAll(/@session:([a-zA-Z0-9_-]+)/g)) {
-    tasks.push(ensureSessionMessagesLoaded(match[1]));
+    tasks.push(requireMention(match[0], ensureSessionMessagesLoaded(match[1], true)));
   }
   for (const match of rawPrompt.matchAll(/@worktree:([a-zA-Z0-9_-]+)/g)) {
-    tasks.push(ensureWorktreeDiffsLoaded(match[1]));
+    tasks.push(requireMention(match[0], ensureWorktreeDiffsLoaded(match[1], true)));
   }
   if (tasks.length > 0) {
-    await Promise.allSettled(tasks);
+    await Promise.all(tasks);
+  }
+  if ((sessionDirectory(sessionID) || workspace.rootDir) !== directory || (sessionID && isSessionDeleted(sessionID))) {
+    throw new Error(t("timeline.sessionUnavailable"));
   }
   return expandContextMentions(rawPrompt, sessionID);
 }

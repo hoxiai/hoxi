@@ -3,13 +3,14 @@ import { createComputed, createEffect, createMemo, createSignal, on, onCleanup, 
 import { FolderOpen } from "lucide-solid";
 import {
   appSettings,
-  clearReviewComments,
+  removeReviewComment,
   consumeComposerDraftEdit,
   defaultWorkspaceDir,
   forkFromMessage,
   getComposerSkill,
   getComposerSkillNotice,
   isSessionBusy,
+  isSessionDeleted,
   loadSkillDetail,
   loadSkillsCatalog,
   selectComposerSkill,
@@ -298,10 +299,11 @@ export default function Composer() {
     !switchingSandbox() &&
     !choosingFolder();
 
-  const buildPayloadWithReviews = async (rawInput: string, sid: string | null): Promise<string> => {
+  const buildPayloadWithReviews = async (rawInput: string, sid: string | null): Promise<{ prompt: string; reviewIDs: string[] }> => {
+    const comments = (sid ? workspace.reviewCommentsBySession[sid] ?? [] : []).map((comment) => ({ ...comment }));
     const raw = await resolveContextMentionsForSend(rawInput, sid);
-    const comments = reviewComments();
-    if (comments.length === 0) return raw;
+    const reviewIDs = comments.map((comment) => comment.id);
+    if (comments.length === 0) return { prompt: raw, reviewIDs };
 
     const reviewLines = comments.map((c) => {
       const loc = c.line ? `${c.file}:${c.line}` : c.file;
@@ -310,7 +312,7 @@ export default function Composer() {
     const header =
       "Please address the following inline code review comments:\n" +
       reviewLines.join("\n");
-    return raw ? `${header}\n\n${raw}` : header;
+    return { prompt: raw ? `${header}\n\n${raw}` : header, reviewIDs };
   };
 
   const onSend = async () => {
@@ -337,6 +339,7 @@ export default function Composer() {
     setEnhanceError(null);
     const draftSessionID = sessionID();
     const draftDirectory = workspace.rootDir;
+    let targetSessionID = draftSessionID;
     const draft = {
       text: text(),
       images: imgAttach.images(),
@@ -350,17 +353,26 @@ export default function Composer() {
     setSending(true);
     ac.reset();
     let cleared = false;
-    const clearComposerInput = () => {
+    const clearComposerInput = (resolvedID?: string) => {
+      if (resolvedID) targetSessionID = resolvedID;
       if (cleared) return;
       cleared = true;
-      setText("");
+      if (
+        draftSync.isCurrentTarget(draftSessionID, draftDirectory) ||
+        (targetSessionID && draftSync.isCurrentTarget(targetSessionID, draftDirectory))
+      ) {
+        setText("");
+        pasteCollapse.clearPastes();
+        imgAttach.clearImages();
+        if (textareaRef) textareaRef.style.height = "48px";
+      }
       selectComposerSkill(draftSessionID, null, undefined, draftDirectory);
       setComposerSkillNotice(draftSessionID, null, draftDirectory);
-      pasteCollapse.clearPastes();
-      imgAttach.clearImages();
       draftSync.clearCurrentDraft(draftSessionID, draftDirectory);
-      if (textareaRef) {
-        textareaRef.style.height = "48px";
+      if (targetSessionID && targetSessionID !== draftSessionID) {
+        selectComposerSkill(targetSessionID, null, undefined, draftDirectory);
+        setComposerSkillNotice(targetSessionID, null, draftDirectory);
+        draftSync.clearCurrentDraft(targetSessionID, draftDirectory);
       }
     };
     if (draftSessionID) {
@@ -368,28 +380,23 @@ export default function Composer() {
     }
     try {
       const payload = await buildPayloadWithReviews(withPastes, draftSessionID);
-      const id = await submitSessionPrompt(payload, draftSessionID, {
+      const id = await submitSessionPrompt(payload.prompt, draftSessionID, {
         directory: draftDirectory,
         attachments,
         skillSelection: currentSkill,
         onTurnStaged: clearComposerInput,
       });
-      clearComposerInput();
-      clearReviewComments(id);
+      clearComposerInput(id);
+      for (const commentID of payload.reviewIDs) removeReviewComment(id, commentID);
     } catch (err) {
       console.error("send prompt failed:", err);
+      const restoreID = targetSessionID ?? draftSessionID;
+      if (restoreID && isSessionDeleted(restoreID)) return;
       const errMsg = err instanceof Error ? err.message : String(err || "");
-      if (workspace.rootDir === draftDirectory && (!draftSessionID || sessionID() === draftSessionID)) {
-        if (!text()) setText(draft.text);
-        if (draft.skill && !getComposerSkill(sessionID())) {
-          selectComposerSkill(sessionID(), draft.skill);
-        }
-        imgAttach.replaceImages([...draft.images, ...imgAttach.images()]);
-        pasteCollapse.replacePastes([...draft.pastes, ...pasteCollapse.pastes()]);
-        requestAnimationFrame(adjustHeight);
+      if (draft.skill && !getComposerSkill(restoreID, draftDirectory)) {
+        selectComposerSkill(restoreID, draft.skill, undefined, draftDirectory);
       }
-      // Set after restoring the draft: replaceImages clears the notice.
-      if (errMsg) imgAttach.setNotice(errMsg);
+      draftSync.restoreFailedDraft(draft, restoreID, draftDirectory, errMsg);
     } finally {
       setSending(false);
     }

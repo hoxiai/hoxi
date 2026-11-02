@@ -284,3 +284,97 @@ func TestStoreHydratesTruncatedAndMissingAgyEditPayloadsOnLoad(t *testing.T) {
 		t.Fatalf("part 2 missing payload not repaired: %+v", parts[2].State.Input)
 	}
 }
+
+func TestAgyDoneThinkingOrdersBeforeSameStepTextAndPersistsOrder(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("GEMINI_HOME", home)
+	const conv = "e058382d-b78a-4ea5-bbc6-914bd834b9c5"
+	logDir := agyTranscriptLogDir(filepath.Join(home, "antigravity-cli", "brain"), conv)
+	if err := os.MkdirAll(logDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	thinking := "I'm thinking through how to approach this.\n\nThe task involves a security audit of a specific repository."
+	row, err := json.Marshal(map[string]interface{}{
+		"step_index": 147,
+		"type":       "PLANNER_RESPONSE",
+		"thinking":   thinking,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(logDir, "transcript.jsonl"), append(row, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	tr := NewTurnTranslator("ses_agy_order", string(RuntimeAntigravity), "msg_a_1", "msg_u_1", "antigravity", "gemini", "build", conv)
+	activeLine := fmt.Sprintf(`{"conversation_id":"%s","event":"step_update","step_update":{"conversation_id":"%s","state":"ACTIVE","step_index":147,"step_type":"agent_response","text_delta":"## Audit Summary\n\nAll checks complete."}}`, conv, conv)
+	doneLine := fmt.Sprintf(`{"conversation_id":"%s","event":"step_update","step_update":{"conversation_id":"%s","state":"DONE","step_index":147,"step_type":"agent_response","usage":{"thinking_tokens":1969}}}`, conv, conv)
+
+	evts := tr.FeedLine(activeLine)
+	txtAfterActive := tr.partsByID["prt_msg_a_1_text_147"]
+	if txtAfterActive == nil || txtAfterActive.Time == nil || txtAfterActive.Time.Start <= 0 {
+		t.Fatalf("expected active text part with start time, got %+v", txtAfterActive)
+	}
+	activeTextStart := txtAfterActive.Time.Start
+
+	// Simulate pre-thinking step start earlier than the first text_delta.
+	tr.stepStartMs[147] = activeTextStart - 5000
+	evts = append(evts, tr.FeedLine(doneLine)...)
+
+	if len(tr.partOrder) != 2 || tr.partOrder[0] != "prt_msg_a_1_reason_147" || tr.partOrder[1] != "prt_msg_a_1_text_147" {
+		t.Fatalf("expected reasoning part ordered before same-step text part, got %v", tr.partOrder)
+	}
+	rPart := tr.partsByID["prt_msg_a_1_reason_147"]
+	txtPart := tr.partsByID["prt_msg_a_1_text_147"]
+	if rPart == nil || rPart.Text != thinking || rPart.Time == nil {
+		t.Fatalf("unexpected reasoning part: %+v", rPart)
+	}
+	if txtPart == nil || txtPart.Time == nil {
+		t.Fatalf("unexpected text part: %+v", txtPart)
+	}
+	if txtPart.Time.Start != activeTextStart {
+		t.Fatalf("expected text part start %d to be preserved, got %d", activeTextStart, txtPart.Time.Start)
+	}
+	if rPart.Time.End != txtPart.Time.Start {
+		t.Fatalf("expected reasoning end %d to cap at text start %d", rPart.Time.End, txtPart.Time.Start)
+	}
+
+	// Verify Store orders prt_<msg>_reason_<step> before prt_<msg>_text_<step> both live and on reload from turns.jsonl.
+	storeDir := t.TempDir()
+	s1 := NewStore(storeDir)
+	if err := s1.Put(SessionRecord{
+		ID:         "ses_agy_order",
+		Runtime:    string(RuntimeAntigravity),
+		ExternalID: conv,
+		ProjectDir: "/repo",
+		Turns: []MessageTurn{
+			{Info: MessageInfo{ID: "msg_a_1", SessionID: "ses_agy_order", Role: "assistant"}},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, evt := range evts {
+		if evt.Type != "message.part.updated" {
+			continue
+		}
+		if part, ok := evt.Properties["part"].(MessagePart); ok {
+			s1.UpsertTurnPart("ses_agy_order", part)
+		}
+	}
+
+	assertReasonBeforeText := func(label string, s *Store) {
+		t.Helper()
+		rec, ok := s.Get("ses_agy_order")
+		if !ok || len(rec.Turns) != 1 || len(rec.Turns[0].Parts) != 2 {
+			t.Fatalf("%s: unexpected stored turns: %+v", label, rec.Turns)
+		}
+		got := []string{rec.Turns[0].Parts[0].ID, rec.Turns[0].Parts[1].ID}
+		if got[0] != "prt_msg_a_1_reason_147" || got[1] != "prt_msg_a_1_text_147" {
+			t.Fatalf("%s: expected reason before text, got %v", label, got)
+		}
+	}
+	assertReasonBeforeText("live store", s1)
+	assertReasonBeforeText("reloaded store", NewStore(storeDir))
+}
+

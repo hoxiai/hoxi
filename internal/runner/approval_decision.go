@@ -246,10 +246,14 @@ func permissionCategory(item map[string]interface{}) string {
 }
 
 func isReadOnlyTaskStatusItem(item map[string]interface{}) bool {
+	perm := permissionName(item)
+	if perm != "" && perm != "tool" && perm != "manage_task" && perm != "manage_subagents" {
+		return false
+	}
 	meta := itemMetadata(item)
 	toolObj, _ := item["tool"].(map[string]interface{})
 	var toolName string
-	for _, cand := range []string{firstString(meta["tool"]), firstString(toolObj["name"]), permissionName(item), firstPattern(item)} {
+	for _, cand := range []string{firstString(meta["tool"]), firstString(toolObj["name"]), perm, firstPattern(item)} {
 		if lower := strings.ToLower(strings.TrimSpace(cand)); lower == "manage_task" || lower == "manage_subagents" {
 			toolName = lower
 			break

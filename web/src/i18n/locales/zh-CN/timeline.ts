@@ -482,6 +482,7 @@ export const timeline: TimelineI18n = {
   mentionStatusTruncated: "已截断",
   mentionStatusEmpty: "无内容",
   mentionStatusUnavailable: "读取失败",
+  mentionLoadFailed: "加载 {mention} 失败：{error}",
   verifySectionTitle: "运行与验证",
   verifyRunBtn: "运行",
   verifyTestBtn: "测试",

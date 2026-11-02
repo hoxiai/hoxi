@@ -57,8 +57,10 @@ export function createBrowserController() {
   const [streamGeneration, setStreamGeneration] = createSignal(0);
   let frameSize = { width: 0, height: 0 };
   const scope = createMemo(() => {
-    const sessionID = workspace.activeSessionID;
-    const directory = sessionID ? sessionDirectory(sessionID) : undefined;
+    const sessionID = workspace.activeBrowserScopeID || workspace.activeSessionID;
+    const directory = workspace.activeSessionID
+      ? sessionDirectory(workspace.activeSessionID)
+      : workspace.rootDir;
     return sessionID && directory ? { sessionID, directory } : null;
   }, null, { equals: (left, right) => left?.sessionID === right?.sessionID && left?.directory === right?.directory });
   let current: Connection | null = null;

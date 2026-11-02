@@ -123,6 +123,16 @@ func TestDoomLoopGuardCatchesInterleavedNoEditLoopAndAllowsPostEditReverificatio
 			t.Fatalf("re-running test after edit %d must not trip the guard", i)
 		}
 	}
+	// Gemini CLI `replace` tool must also reset the non-consecutive repeat count.
+	for i := 1; i <= 4; i++ {
+		replaceInput := json.RawMessage(`{"file_path":"internal/auth/handler.go","old_string":"a","new_string":"b"}`)
+		if g.observe("s3", "turn_3", "replace", replaceInput) {
+			t.Fatalf("productive replace %d should not trip", i)
+		}
+		if g.observe("s3", "turn_3", "run_shell_command", testCmd) {
+			t.Fatalf("re-running test after replace %d must not trip the guard", i)
+		}
+	}
 }
 
 func TestDoomLoopGuardExemptsReadOnlyTaskPollingAndTripsMutatingTaskActions(t *testing.T) {

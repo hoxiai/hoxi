@@ -269,15 +269,14 @@ func isTempDeleteOnlyRequest(item map[string]interface{}) bool {
 	if external, _ := meta["externalDirectory"].(bool); external {
 		return false
 	}
-	candidates := opacityCandidates(item)
-	if len(candidates) == 0 {
-		candidates = commandCandidates(item)
-	}
+	candidates := commandCandidates(item)
 	if len(candidates) == 0 {
 		return false
 	}
+	tmpDirReplacer := strings.NewReplacer("${TMPDIR}/", "/tmp/", "$TMPDIR/", "/tmp/")
 	sawDestructive := false
 	for _, cmd := range candidates {
+		allowTmpDirVar := !strings.Contains(tmpDirReplacer.Replace(cmd), "TMPDIR")
 		for _, form := range destructiveScanForms(strings.TrimSpace(cmd)) {
 			for _, seg := range splitCommandChain(form) {
 				seg = strings.TrimSpace(seg)
@@ -288,7 +287,10 @@ func isTempDeleteOnlyRequest(item map[string]interface{}) bool {
 					continue
 				}
 				sawDestructive = true
-				segNorm := strings.NewReplacer("${TMPDIR}/", "/tmp/", "$TMPDIR/", "/tmp/").Replace(seg)
+				segNorm := seg
+				if allowTmpDirVar && !strings.Contains(tmpDirReplacer.Replace(form), "TMPDIR") {
+					segNorm = tmpDirReplacer.Replace(seg)
+				}
 				if strings.ContainsAny(segNorm, "$\\") || hasUnsafeShellSyntax(trustedGlobReplacer.Replace(segNorm)) {
 					return false
 				}

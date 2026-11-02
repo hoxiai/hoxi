@@ -233,6 +233,7 @@ func (s *Service) persistEventToStore(sessionID string, evt SSEEvent) {
 	case "session.idle", "session.error":
 		s.store.FlushSession(sessionID)
 		s.store.SetActive(sessionID, false)
+		s.doomLoop.resetTurn(sessionID)
 		s.finishTurnSummary(sessionID, evt.Type)
 	}
 }

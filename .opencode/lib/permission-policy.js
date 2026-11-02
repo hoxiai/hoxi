@@ -616,19 +616,20 @@ export function externalDirectoryTargets(input) {
 const OWN_SESSION_READ_TOOLS = new Set([
   "read", "glob", "grep", "list", "lsp", "todoread", "hoxi_code_index", "ls", "notebookread", "notebook_read",
   "read_file", "read_many_files", "view_file", "list_dir", "list_directory", "find_by_name", "grep_search",
-  "search_file_content", "read_resource",
-  "list_resources", "read_browser_page", "browser_get_dom", "browser_get_network_request",
-  "browser_list_network_requests", "list_browser_pages", "capture_browser_console_logs",
-  "capture_browser_screenshot", "list_permissions", "list_plugin_accounts", "search_marketplace",
-  "command_status", "wait", "wait_5_seconds",
+  "search_file_content", "read_resource", "list_resources", "read_browser_page", "browser_get_dom",
+  "browser_get_network_request", "browser_list_network_requests", "list_browser_pages",
+  "capture_browser_console_logs", "capture_browser_screenshot", "list_permissions", "list_plugin_accounts",
+  "search_marketplace", "command_status", "wait", "wait_5_seconds",
 ]);
 const OWN_SESSION_EDIT_TOOLS = new Set([
   ...EDIT_PERMISSIONS, "insert_edit_into_file", "str_replace_editor", "str_replace_based_edit_tool",
 ]);
 
 function isReadOnlyTaskStatusRequest(input) {
+  const perm = String(input?.permission || input?.type || "").trim().toLowerCase();
+  if (perm && perm !== "tool" && perm !== "manage_task" && perm !== "manage_subagents") return false;
   const meta = input?.metadata || {};
-  const tool = [meta.tool, input?.tool?.name, input?.permission, input?.type, input?.patterns?.[0]]
+  const tool = [meta.tool, input?.tool?.name, perm, input?.patterns?.[0]]
     .map((v) => String(v || "").trim().toLowerCase())
     .find((v) => v === "manage_task" || v === "manage_subagents");
   if (!tool) return false;
@@ -721,9 +722,7 @@ export function isDestructivePermissionRequest(input) {
   if (permission === "hoxi_computer" || String(input?.metadata?.tool || "").toLowerCase() === "hoxi_computer") return true;
   if (permission === "doom_loop") return true;
   const hoxiTools = hoxiToolsAction(input);
-  if (hoxiTools.isHoxiTools) {
-    return hoxiTools.action !== "discover" && hoxiTools.action !== "inspect";
-  }
+  if (hoxiTools.isHoxiTools) return hoxiTools.action !== "discover" && hoxiTools.action !== "inspect";
   if (permission === "external_directory") {
     // OpenCode raises this for every read/write outside the session directory,
     // including sibling folders the user already registered as a workspace.

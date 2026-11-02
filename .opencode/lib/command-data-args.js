@@ -209,9 +209,11 @@ export function maskCommandDataArguments(command) {
   const pipedIn = [];
   let cur = [];
   let lastSep = "";
+  let hasParen = false;
   for (const tok of tokens) {
     if (tok.separator) {
       const sepText = s.slice(tok.start, tok.end);
+      if (sepText === "(" || sepText === ")") hasParen = true;
       if (cur.length > 0) {
         segments.push(stripDataSegmentEnv(cur));
         pipedIn.push(lastSep === "|");
@@ -229,13 +231,17 @@ export function maskCommandDataArguments(command) {
     pipedIn.push(lastSep === "|");
   }
   const isEcho = (seg) => ["echo", "printf"].includes(baseName(seg[0].value));
+  const hasEcho = segments.some(isEcho);
   const echoWritesFile = segments.some((seg) => isEcho(seg) && seg.slice(1).some((w) => /[<>]/.test(w.value)));
+  let echoInPipe = false;
   for (let i = 0; i < segments.length; i++) {
+    if (!pipedIn[i]) echoInPipe = false;
     const name = baseName(segments[i][0].value);
     if (DATA_ARG_INTERPRETERS.has(name)) return s;
-    if (DATA_SCRIPT_INTERPRETERS.has(name) && (echoWritesFile || (pipedIn[i] && i > 0 && isEcho(segments[i - 1])))) {
+    if (DATA_SCRIPT_INTERPRETERS.has(name) && (echoWritesFile || echoInPipe || (hasEcho && hasParen))) {
       return s;
     }
+    if (isEcho(segments[i])) echoInPipe = true;
   }
   const masked = [];
   for (const seg of segments) {
@@ -404,6 +410,7 @@ function unquoteLiteralShellScriptArg(raw) {
       }
       out += c;
     }
+    if (out.includes("`") || out.includes("$(")) return "";
     return out;
   }
   return "";

@@ -81,3 +81,43 @@ func TestFetchAndConcurrentSavePreserveUpdates(t *testing.T) {
 		t.Fatalf("expected 200 on PUT /api/hoxi/work/apps, got %d (%s)", putRec.Code, putRec.Body.String())
 	}
 }
+
+func TestResolveBrowserProfileKey(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "work-apps.json"))
+	svc := NewService(nil, store)
+
+	if err := svc.SaveState(map[string]any{
+		"sessionStoreBindings": map[string]any{
+			"ses_bound_1688": map[string]any{
+				"appId":   "1688",
+				"storeId": "store-1688-factory1",
+			},
+			"ses_unbound": map[string]any{
+				"appId":   "1688",
+				"storeId": "unbound",
+			},
+			"ses_traversal": map[string]any{
+				"appId":   "1688",
+				"storeId": "../escape",
+			},
+		},
+	}); err != nil {
+		t.Fatalf("SaveState failed: %v", err)
+	}
+
+	if got := svc.ResolveBrowserProfileKey("workstore_store-1688-factory1"); got != "store-1688-factory1" {
+		t.Fatalf("expected direct workstore_ scope to resolve store-1688-factory1, got %q", got)
+	}
+	if got := svc.ResolveBrowserProfileKey("ses_bound_1688"); got != "store-1688-factory1" {
+		t.Fatalf("expected bound session to resolve store-1688-factory1, got %q", got)
+	}
+	if got := svc.ResolveBrowserProfileKey("ses_unbound"); got != "" {
+		t.Fatalf("expected unbound session to resolve empty profile key, got %q", got)
+	}
+	if got := svc.ResolveBrowserProfileKey("ses_traversal"); got != "" {
+		t.Fatalf("expected unsafe storeId to be rejected, got %q", got)
+	}
+	if got := svc.ResolveBrowserProfileKey("workstore_../escape"); got != "" {
+		t.Fatalf("expected unsafe direct workstore_ key to be rejected, got %q", got)
+	}
+}

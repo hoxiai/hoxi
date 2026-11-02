@@ -64,5 +64,6 @@
   {"name": "computer input always requires desktop approval", "destructive": true, "request": {"permission": "hoxi_computer", "patterns": ["click Fixture"], "metadata": {"tool": "hoxi_computer"}}},
   {"name": "manage_task status is routine read", "destructive": false, "request": {"permission": "tool", "patterns": ["manage_task"], "metadata": {"tool": "manage_task", "args": "{\"Action\":\"status\",\"TaskId\":\"conv/task-1\"}"}}},
   {"name": "manage_task double-quoted status is routine read", "destructive": false, "request": {"permission": "tool", "patterns": ["manage_task"], "metadata": {"tool": "manage_task", "args": "{\"Action\":\"\\\"status\\\"\",\"TaskId\":\"\\\"conv/task-1\\\"\"}"}}},
-  {"name": "manage_subagents list is routine read", "destructive": false, "request": {"permission": "tool", "patterns": ["manage_subagents"], "metadata": {"tool": "manage_subagents", "args": "{\"Action\":\"list\"}"}}}
+  {"name": "manage_subagents list is routine read", "destructive": false, "request": {"permission": "tool", "patterns": ["manage_subagents"], "metadata": {"tool": "manage_subagents", "args": "{\"Action\":\"list\"}"}}},
+  {"name": "bash request with manage_task metadata is not treated as read", "destructive": true, "request": {"permission": "bash", "patterns": ["rm -rf build"], "metadata": {"tool": "manage_task", "action": "status", "command": "rm -rf build"}}}
 ]

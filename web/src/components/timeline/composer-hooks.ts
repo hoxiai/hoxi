@@ -1,5 +1,5 @@
 // web/src/components/timeline/composer-hooks.ts
-import { type Accessor, createComputed, createSignal, type Setter, untrack } from "solid-js";
+import { type Accessor, createComputed, createSignal, onCleanup, type Setter, untrack } from "solid-js";
 import { t } from "../../i18n";
 import {
   createPromptHistory,
@@ -208,7 +208,11 @@ export interface CollapsedPasteItem {
   content: string;
 }
 
-let draftResetEpoch = 0;
+const draftResetEpochByKey = new Map<string, number>();
+const getDraftEpoch = (key: string) => draftResetEpochByKey.get(key) ?? 0;
+const bumpDraftEpoch = (key: string) => {
+  draftResetEpochByKey.set(key, getDraftEpoch(key) + 1);
+};
 
 export function composerDraftKey(
   sessionID?: string | null,
@@ -239,7 +243,7 @@ export function createImageAttachments(
     targetEpoch: number,
     item: ImageItem
   ) => {
-    if (targetEpoch !== draftResetEpoch) return;
+    if (targetEpoch !== getDraftEpoch(targetKey)) return;
     if (currentKey() !== targetKey) {
       const existing = sessionDrafts.get(targetKey) ?? {
         text: "",
@@ -247,7 +251,7 @@ export function createImageAttachments(
         pastes: [],
       };
       if (existing.images.length < MAX_ATTACHMENTS) {
-        sessionDrafts.set(targetKey, {
+        setSessionDraft(targetKey, {
           ...existing,
           images: [...existing.images, item],
         });
@@ -266,7 +270,7 @@ export function createImageAttachments(
   const addDataUrlImage = (
     item: { filename: string; mime: string; dataUrl: string; size?: number },
     targetKey = currentKey(),
-    targetEpoch = draftResetEpoch
+    targetEpoch = getDraftEpoch(targetKey)
   ) => {
     if (!item.dataUrl) return;
     const rawName = item.filename || "screenshot.png";
@@ -344,7 +348,7 @@ export function createImageAttachments(
     }
 
     const originKey = currentKey();
-    const originEpoch = draftResetEpoch;
+    const originEpoch = getDraftEpoch(originKey);
     const normMime = normalizeAttachmentMime(file.type, rawName, kind);
     setPendingCount((n) => n + 1);
 
@@ -392,7 +396,7 @@ export function createImageAttachments(
     onFallbackText?: (text: string) => void
   ): boolean => {
     const originKey = currentKey();
-    const originEpoch = draftResetEpoch;
+    const originEpoch = getDraftEpoch(originKey);
     const items = Array.from(ev.clipboardData?.items ?? []);
     const itemFiles: File[] = [];
     for (const item of items) {
@@ -618,9 +622,21 @@ interface SessionComposerDraft {
   text: string;
   images: ImageItem[];
   pastes: CollapsedPasteItem[];
+  notice?: string | null;
 }
 
+const MAX_SESSION_DRAFTS = 64;
 const sessionDrafts = new Map<string, SessionComposerDraft>();
+
+function setSessionDraft(key: string, draft: SessionComposerDraft) {
+  if (sessionDrafts.has(key)) sessionDrafts.delete(key);
+  sessionDrafts.set(key, draft);
+  while (sessionDrafts.size > MAX_SESSION_DRAFTS) {
+    const oldest = sessionDrafts.keys().next().value;
+    if (oldest === undefined) break;
+    sessionDrafts.delete(oldest);
+  }
+}
 
 export function createSessionDraftSync(params: {
   sessionID: Accessor<string | null>;
@@ -636,6 +652,17 @@ export function createSessionDraftSync(params: {
   let activeDir = normalizeFolderPath(params.directory?.() ?? workspace.rootDir);
   let activeKey = composerDraftKey(activeSessionID, activeDir);
   let resetRequest = params.resetRequest?.();
+  let disposed = false;
+  onCleanup(() => {
+    const draft = {
+      text: params.text(), images: params.imgAttach.images(), pastes: params.pasteCollapse.pastes(), notice: params.imgAttach.notice(),
+    };
+    if (draft.text.trim() || draft.images.length || draft.pastes.length || draft.notice) setSessionDraft(activeKey, draft);
+    else sessionDrafts.delete(activeKey);
+    disposed = true;
+  });
+  const isCurrentTarget = (sessionID: string | null, directory: string) =>
+    !disposed && composerDraftKey(params.sessionID(), params.directory?.()) === composerDraftKey(sessionID, directory);
 
   const sync = () => {
     const nextSessionID = params.sessionID();
@@ -653,11 +680,13 @@ export function createSessionDraftSync(params: {
       const prevText = params.text();
       const prevImages = params.imgAttach.images();
       const prevPastes = params.pasteCollapse.pastes();
-      if (prevText.trim() || prevImages.length > 0 || prevPastes.length > 0) {
-        sessionDrafts.set(activeKey, {
+      const prevNotice = params.imgAttach.notice();
+      if (prevText.trim() || prevImages.length > 0 || prevPastes.length > 0 || prevNotice) {
+        setSessionDraft(activeKey, {
           text: prevText,
           images: prevImages,
           pastes: prevPastes,
+          notice: prevNotice,
         });
       } else {
         sessionDrafts.delete(activeKey);
@@ -673,7 +702,7 @@ export function createSessionDraftSync(params: {
         !sessionDrafts.has(nextKey) &&
         sessionDrafts.has(activeKey)
       ) {
-        sessionDrafts.set(nextKey, sessionDrafts.get(activeKey)!);
+        setSessionDraft(nextKey, sessionDrafts.get(activeKey)!);
         sessionDrafts.delete(activeKey);
       }
 
@@ -684,10 +713,19 @@ export function createSessionDraftSync(params: {
       params.setText(saved?.text ?? "");
       params.imgAttach.replaceImages(saved?.images ?? []);
       params.pasteCollapse.replacePastes(saved?.pastes ?? []);
+      params.imgAttach.setNotice(saved?.notice ?? null);
       params.onAfterRestore();
     });
   };
 
+  const initial = sessionDrafts.get(activeKey);
+  if (initial) {
+    params.setText(initial.text);
+    params.imgAttach.replaceImages(initial.images);
+    params.pasteCollapse.replacePastes(initial.pastes);
+    params.imgAttach.setNotice(initial.notice ?? null);
+    params.onAfterRestore();
+  }
   createComputed(sync);
 
   const clearCurrentDraft = (targetSessionID?: string | null, targetDir?: string | null) => {
@@ -695,9 +733,35 @@ export function createSessionDraftSync(params: {
       targetSessionID !== undefined || targetDir !== undefined
         ? composerDraftKey(targetSessionID, targetDir)
         : composerDraftKey(params.sessionID(), params.directory?.() ?? workspace.rootDir);
-    draftResetEpoch++;
+    bumpDraftEpoch(key);
     sessionDrafts.delete(key);
   };
 
-  return { clearCurrentDraft, sync };
+  const restoreFailedDraft = (
+    draft: SessionComposerDraft, sessionID: string | null, directory: string, notice: string
+  ) => {
+    const key = composerDraftKey(sessionID, directory);
+    const active = isCurrentTarget(sessionID, directory);
+    const existing = active ? {
+      text: params.text(), images: params.imgAttach.images(), pastes: params.pasteCollapse.pastes(),
+    } : sessionDrafts.get(key);
+    const mergeItems = <T extends { id: string }>(failed: T[], current: T[] = []) =>
+      Array.from(new Map([...failed, ...current].map((item) => [item.id, item])).values());
+    const restored: SessionComposerDraft = {
+      text: existing?.text && existing.text !== draft.text
+        ? [draft.text, existing.text].filter(Boolean).join("\n\n") : draft.text,
+      images: mergeItems(draft.images, existing?.images),
+      pastes: mergeItems(draft.pastes, existing?.pastes),
+      notice,
+    };
+    setSessionDraft(key, restored);
+    if (!active) return;
+    params.setText(restored.text);
+    params.imgAttach.replaceImages(restored.images);
+    params.pasteCollapse.replacePastes(restored.pastes);
+    params.imgAttach.setNotice(notice);
+    params.onAfterRestore();
+  };
+
+  return { clearCurrentDraft, restoreFailedDraft, isCurrentTarget, sync };
 }

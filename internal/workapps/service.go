@@ -115,3 +115,56 @@ func (s *Service) SaveState(patch map[string]any) error {
 	})
 	return err
 }
+
+// ResolveBrowserProfileKey maps a browser session ID (either a direct
+// "workstore_<storeId>" scope or a Hoxi session bound in sessionStoreBindings)
+// to a sanitized persistent profile key so each bound store has an isolated
+// Chrome login profile.
+func (s *Service) ResolveBrowserProfileKey(sessionID string) string {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" || s == nil || s.store == nil {
+		return ""
+	}
+	if strings.HasPrefix(sessionID, "workstore_") {
+		candidate := strings.TrimSpace(strings.TrimPrefix(sessionID, "workstore_"))
+		if isSafeStoreProfileKey(candidate) {
+			return candidate
+		}
+		return ""
+	}
+	state, err := s.store.Load()
+	if err != nil || state == nil {
+		return ""
+	}
+	bindings, ok := state["sessionStoreBindings"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	entry, ok := bindings[sessionID].(map[string]any)
+	if !ok {
+		return ""
+	}
+	storeID, _ := entry["storeId"].(string)
+	storeID = strings.TrimSpace(storeID)
+	if isSafeStoreProfileKey(storeID) {
+		return storeID
+	}
+	return ""
+}
+
+func isSafeStoreProfileKey(raw string) bool {
+	if raw == "" || raw == "unbound" || len(raw) > 96 {
+		return false
+	}
+	for i := 0; i < len(raw); i++ {
+		c := raw[i]
+		isAlphaNum := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+		if i == 0 && !isAlphaNum {
+			return false
+		}
+		if !isAlphaNum && c != '_' && c != '-' && c != '.' {
+			return false
+		}
+	}
+	return !strings.Contains(raw, "..")
+}

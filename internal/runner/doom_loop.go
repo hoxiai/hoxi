@@ -147,6 +147,15 @@ func (g *doomLoopGuard) settle(sessionID, tool string, always bool) {
 	g.exempt[sessionID][tool] = time.Now().UnixMilli()
 }
 
+// resetTurn clears per-turn repeat counters when a turn finishes.
+func (g *doomLoopGuard) resetTurn(sessionID string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	delete(g.recent, sessionID)
+	delete(g.sinceEdit, sessionID)
+	delete(g.turn, sessionID)
+}
+
 // forget drops a session's guard state once it is deleted.
 func (g *doomLoopGuard) forget(sessionID string) {
 	g.mu.Lock()
@@ -240,13 +249,18 @@ func (s *Service) gateDoomLoop(r *http.Request, cred hookCredential, tool string
 			"callID":    callID,
 		},
 	}
+	reason := "Hoxi stopped a repeated tool call: " + tool + " was called " +
+		"several times in a row with identical input. Try a different approach."
+	if s.ApprovalPolicy().Mode == ApprovalModeUnattended {
+		s.doomLoop.settle(cred.sessionID, tool, false)
+		s.recordUnattendedDeny(cred, req, unattendedCategoryTool)
+		return false, reason
+	}
 	answer := s.awaitReply(r, cred, id, req)
 	s.doomLoop.settle(cred.sessionID, tool, answer.Reply == "always")
 	if answer.Reply == "once" || answer.Reply == "always" {
 		return true, ""
 	}
-	reason := "Hoxi stopped a repeated tool call: " + tool + " was called " +
-		"several times in a row with identical input. Try a different approach."
 	if msg := strings.TrimSpace(answer.Message); msg != "" {
 		reason += " User note: " + msg
 	}

@@ -290,6 +290,18 @@ func (t *TurnTranslator) feedAgyLine(line string) []SSEEvent {
 	return nil
 }
 
+func (t *TurnTranslator) insertPartOrderBefore(id, beforeID string) {
+	for i, existing := range t.partOrder {
+		if existing == beforeID {
+			t.partOrder = append(t.partOrder, "")
+			copy(t.partOrder[i+1:], t.partOrder[i:])
+			t.partOrder[i] = id
+			return
+		}
+	}
+	t.partOrder = append(t.partOrder, id)
+}
+
 func (t *TurnTranslator) handleAgyAgentResponse(su *agyStepUpdate, now int64) []SSEEvent {
 	t.agyFinalResponseDone = false
 	var evts []SSEEvent
@@ -310,6 +322,7 @@ func (t *TurnTranslator) handleAgyAgentResponse(su *agyStepUpdate, now int64) []
 		thinkDelta = t.lookupThink(t.externalID, su.StepIndex)
 	}
 	rID := fmt.Sprintf("prt_%s_reason_%d", t.messageID, su.StepIndex)
+	txtID := fmt.Sprintf("prt_%s_text_%d", t.messageID, su.StepIndex)
 	if thinkDelta != "" {
 		part, exists := t.partsByID[rID]
 		if !exists {
@@ -322,7 +335,7 @@ func (t *TurnTranslator) handleAgyAgentResponse(su *agyStepUpdate, now int64) []
 				Time:      &PartTime{Start: startMs},
 			}
 			t.partsByID[rID] = part
-			t.partOrder = append(t.partOrder, rID)
+			t.insertPartOrderBefore(rID, txtID)
 			evts = append(evts, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": clonePart(*part)}})
 		}
 		part.Text += thinkDelta
@@ -340,16 +353,19 @@ func (t *TurnTranslator) handleAgyAgentResponse(su *agyStepUpdate, now int64) []
 	if su.TextDelta != "" || su.State == "DONE" {
 		if rPart, exists := t.partsByID[rID]; exists && (rPart.Time == nil || rPart.Time.End == 0) {
 			rStart := startMs
-			if rPart.Time != nil && rPart.Time.Start > 0 {
+			if rPart.Time != nil && rPart.Time.Start > 0 && rPart.Time.Start < rStart {
 				rStart = rPart.Time.Start
 			}
-			rPart.Time = &PartTime{Start: rStart, End: endMs}
+			rEnd := endMs
+			if txtPart, hasTxt := t.partsByID[txtID]; hasTxt && txtPart.Time != nil && txtPart.Time.Start > rStart && txtPart.Time.Start <= endMs {
+				rEnd = txtPart.Time.Start
+			}
+			rPart.Time = &PartTime{Start: rStart, End: rEnd}
 			evts = append(evts, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": clonePart(*rPart)}})
 		}
 	}
 
 	// 2. Handle text delta
-	txtID := fmt.Sprintf("prt_%s_text_%d", t.messageID, su.StepIndex)
 	if su.TextDelta != "" {
 		t.hasTextPart = true
 		part, exists := t.partsByID[txtID]
@@ -384,7 +400,11 @@ func (t *TurnTranslator) handleAgyAgentResponse(su *agyStepUpdate, now int64) []
 			tokensUpdated = t.noteAgyStepUsage(fmt.Sprintf("step:%d", su.StepIndex), *su.Usage)
 		}
 		if part, exists := t.partsByID[txtID]; exists {
-			part.Time = &PartTime{Start: startMs, End: endMs}
+			txtStart := startMs
+			if _, hasReason := t.partsByID[rID]; hasReason && part.Time != nil && part.Time.Start > txtStart && part.Time.Start <= endMs {
+				txtStart = part.Time.Start
+			}
+			part.Time = &PartTime{Start: txtStart, End: endMs}
 			t.agyFinalResponseDone = strings.TrimSpace(part.Text) != ""
 			evts = append(evts, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": clonePart(*part)}})
 		}
@@ -531,51 +551,6 @@ func (t *TurnTranslator) handleAgyToolStep(su *agyStepUpdate, now int64) []SSEEv
 	}
 	evts = append(evts, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": clonePart(*part)}})
 	return evts
-}
-
-// IsStaleAgyResultError reports whether a stream `result` line is a historical
-// trajectory error re-emitted by `agy` on a resumed conversation after the
-// current turn has already finished its final assistant response cleanly.
-func (t *TurnTranslator) IsStaleAgyResultError(rawLine string) bool {
-	line := strings.TrimSpace(rawLine)
-	if line == "" || !strings.HasPrefix(line, "{") {
-		return false
-	}
-	var env agyRawEvent
-	if err := json.Unmarshal([]byte(line), &env); err != nil {
-		return false
-	}
-	if env.Event != "result" || env.Result == nil {
-		return false
-	}
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if id := strings.TrimSpace(firstNonEmptyStr(env.Result.ConversationID, env.ConversationID)); id != "" && t.convPinned && id != t.externalID {
-		return false
-	}
-	return t.isStaleAgyResultErrorLocked(env.Result)
-}
-
-func (t *TurnTranslator) isStaleAgyResultErrorLocked(res *agyResult) bool {
-	if res == nil || res.Status != "ERROR" || !t.agyFinalResponseDone {
-		return false
-	}
-	if len(res.DeniedActions) > 0 || t.hasWaitingSubagents() {
-		return false
-	}
-	errMsg := strings.TrimSpace(res.Error)
-	if strings.EqualFold(errMsg, "interrupted") || !isRetryableTurnError(errMsg) {
-		return false
-	}
-	for _, p := range t.partsByID {
-		if p != nil && p.Type == "tool" && p.State != nil {
-			switch p.State.Status {
-			case "pending", "running", "error":
-				return false
-			}
-		}
-	}
-	return true
 }
 
 func (t *TurnTranslator) handleAgyResult(res *agyResult) []SSEEvent {

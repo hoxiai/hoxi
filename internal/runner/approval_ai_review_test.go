@@ -528,6 +528,8 @@ func TestAIReviewDataArgumentsSubshellsAndTempDelete(t *testing.T) {
 		`bash -c 'rm -rf ./dist'`,
 		`(cd web && rm -rf dist)`,
 		`FOO=1 rm -rf build`,
+		`TMPDIR=/Users/hugh; TMPDIR=/Users/hugh/project; rm -rf "$TMPDIR/src"`,
+		`for TMPDIR in /Users/hugh/project; do rm -rf "$TMPDIR/src"; done`,
 	}
 	for _, cmd := range stillDestructive {
 		if !isDestructiveCommand(cmd) {
@@ -536,6 +538,13 @@ func TestAIReviewDataArgumentsSubshellsAndTempDelete(t *testing.T) {
 		if _, _, ok := canAIReviewCommandRequest(makeItem(cmd), autoPol, nil, f.dir); ok {
 			t.Fatalf("workspace delete must not be eligible for AI review: %s", cmd)
 		}
+	}
+	if _, _, ok := canAIReviewCommandRequest(map[string]interface{}{
+		"permission": "bash",
+		"patterns":   []string{"rm -rf ./dist"},
+		"metadata":   map[string]interface{}{"command": "rm -f /tmp/hoxi-test.out"},
+	}, autoPol, nil, f.dir); ok {
+		t.Fatalf("non-temp destructive pattern alongside temp metadata command must stay blocked")
 	}
 
 	// Temp-only delete (/tmp or $TMPDIR) is eligible for AI review in auto mode, but not in smart mode.

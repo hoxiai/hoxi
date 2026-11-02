@@ -78,9 +78,13 @@ func maskCommandDataArguments(command string) string {
 	var pipedIn []bool // whether segment i reads the previous segment's output
 	var cur []dataToken
 	lastSep := ""
+	hasParen := false
 	for _, tok := range tokens {
 		if tok.separator {
 			sepText := command[tok.start:tok.end]
+			if sepText == "(" || sepText == ")" {
+				hasParen = true
+			}
 			if len(cur) > 0 {
 				segments = append(segments, stripDataSegmentEnv(cur))
 				pipedIn = append(pipedIn, lastSep == "|")
@@ -97,9 +101,11 @@ func maskCommandDataArguments(command string) string {
 		segments = append(segments, stripDataSegmentEnv(cur))
 		pipedIn = append(pipedIn, lastSep == "|")
 	}
+	hasEcho := false
 	echoWritesFile := false
 	for _, seg := range segments {
 		if isEchoSegment(seg) {
+			hasEcho = true
 			for _, w := range seg[1:] {
 				if strings.ContainsAny(w.value, "<>") {
 					echoWritesFile = true
@@ -107,13 +113,20 @@ func maskCommandDataArguments(command string) string {
 			}
 		}
 	}
+	echoInPipe := false
 	for i, seg := range segments {
+		if !pipedIn[i] {
+			echoInPipe = false
+		}
 		name := filepath.Base(seg[0].value)
 		if dataArgInterpreters[name] {
 			return command
 		}
-		if dataScriptInterpreters[name] && (echoWritesFile || (pipedIn[i] && i > 0 && isEchoSegment(segments[i-1]))) {
+		if dataScriptInterpreters[name] && (echoWritesFile || echoInPipe || (hasEcho && hasParen)) {
 			return command
+		}
+		if isEchoSegment(seg) {
+			echoInPipe = true
 		}
 	}
 	var masked []dataToken
@@ -342,11 +355,11 @@ var (
 // inside the script are masked and literal loops/assignments are expanded
 // before destructive regexes run.
 func unwrapLiteralShellCommand(s string) string {
-	unwrappedAny := false
+	unwrappedCount := 0
 	validChain := true
 	res := mapTopLevelSegments(s, func(seg string) string {
 		if inner, ok := unwrapLiteralShellSegment(seg); ok {
-			unwrappedAny = true
+			unwrappedCount++
 			return inner
 		}
 		trimmed := strings.TrimSpace(seg)
@@ -356,7 +369,7 @@ func unwrapLiteralShellCommand(s string) string {
 		validChain = false
 		return seg
 	})
-	if !unwrappedAny || !validChain {
+	if unwrappedCount != 1 || !validChain {
 		return s
 	}
 	return res
@@ -547,7 +560,11 @@ func unquoteLiteralShellScriptArg(raw string) (string, bool) {
 			}
 			b.WriteByte(c)
 		}
-		return b.String(), true
+		out := b.String()
+		if strings.Contains(out, "`") || strings.Contains(out, "$(") {
+			return "", false
+		}
+		return out, true
 	}
 	return "", false
 }

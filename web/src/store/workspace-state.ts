@@ -227,6 +227,7 @@ export interface WorkspaceState {
   inspectedFileDiff: SnapshotFileDiff | null;
   inspectedDiffFile: string | null;
   inspectedBrowserURL: string | null;
+  activeBrowserScopeID: string | null;
   activeInspectorFolder: string | null;
   workspaceModalMode: WorkspaceModalMode;
   editingWorkspaceID: string | null;
@@ -470,6 +471,7 @@ export const [workspace, setWorkspace] = createStore<WorkspaceState>({
   inspectedFileDiff: null,
   inspectedDiffFile: null,
   inspectedBrowserURL: null,
+  activeBrowserScopeID: null,
   activeInspectorFolder: null,
   workspaceModalMode: null,
   editingWorkspaceID: null,

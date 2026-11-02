@@ -588,7 +588,7 @@ func (s *Service) openCodeCandidateDirs(directory string) []string {
 	}
 	normFilter := normalizeComparePath(directory)
 	addRec := func(rec SessionRecord, ok bool) {
-		if !ok || rec.Runtime != "opencode" {
+		if !ok || rec.Runtime != "opencode" || rec.ArchivedAt > 0 {
 			return
 		}
 		if normFilter != "" && normalizeComparePath(rec.ProjectDir) != normFilter && normalizeComparePath(rec.WorktreePath) != normFilter {

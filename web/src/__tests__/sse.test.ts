@@ -1,6 +1,6 @@
 // web/src/__tests__/sse.test.ts
 import { connectEventStream, type StreamFrameBatch } from "../services/sse";
-import { findMessageIndex, findPartIndex } from "../store/message-lookup";
+import { findMessageIndex, findPartIndex, mergeServerTurnsInto } from "../store/message-lookup";
 import type { MessageTurn } from "../store/workspace";
 import { createStore, produce, reconcile, unwrap } from "solid-js/store";
 import type { OpenCodeEvent, SessionInfo } from "../services/sse-types";
@@ -9,6 +9,7 @@ import { replaceSessionFromEvent } from "../store/workspace-sessions";
 import { assertDeepEqual, assertEqual, assertTrue, describe, it } from "./test-harness";
 import { applyPartDeltaBatch, applyStreamFrameBatch } from "../store/session-stream";
 import { collectCycleChangedFiles, resolveToolFileDiff } from "../components/timeline/tool-card-state";
+import { groupAssistantParts } from "../components/timeline/context-activity-turns";
 
 class MockEventSource {
   static latest: MockEventSource | null = null;
@@ -609,6 +610,91 @@ describe("SSE client & 120Hz rAF delta batching", () => {
       );
       assertEqual(legacyTruncatedDiff?.additions, 2);
       assertEqual(legacyTruncatedDiff?.deletions, 1);
+    } finally {
+      setWorkspace(reconcile(saved));
+    }
+  });
+
+  it("orders late same-step reasoning parts before their paired text parts so trailing thoughts do not render after the final reply", () => {
+    const saved = structuredClone(unwrap(workspace));
+    try {
+      const sid = "ses_agy_reason_order";
+      setWorkspace({
+        activeSessionID: sid,
+        messagesBySession: {},
+      });
+
+      // 1. Live SSE stream: ACTIVE step creates prt_<msg>_text_147 first, then DONE flushes prt_<msg>_reason_147
+      applyStreamFrameBatch({
+        infos: [{ id: "m_agy", sessionID: sid, role: "assistant", time: { created: 1, completed: 3 } }],
+        parts: [
+          {
+            id: "prt_m_agy_tool_146",
+            messageID: "m_agy",
+            sessionID: sid,
+            type: "tool",
+            tool: "read",
+            callID: "call_146",
+            state: { status: "completed", input: { Path: "README.md" }, output: "", title: "read", metadata: {}, time: { start: 1, end: 2 } },
+          },
+          {
+            id: "prt_m_agy_text_147",
+            messageID: "m_agy",
+            sessionID: sid,
+            type: "text",
+            text: "## Security Audit Report\n\nAll findings documented.",
+          },
+          {
+            id: "prt_m_agy_reason_147",
+            messageID: "m_agy",
+            sessionID: sid,
+            type: "reasoning",
+            text: "I'm thinking through how to approach this.\n\nThe task involves a security audit of a specific repository.",
+            time: { start: 1, end: 2 },
+          },
+        ],
+        deltas: [],
+      });
+
+      const liveParts = workspace.messagesBySession[sid]?.[0]?.parts ?? [];
+      assertDeepEqual(
+        liveParts.map((p) => p.id),
+        ["prt_m_agy_tool_146", "prt_m_agy_reason_147", "prt_m_agy_text_147"]
+      );
+      const grouped = groupAssistantParts(liveParts);
+      assertDeepEqual(
+        grouped.map((g) => (g.kind === "activity-group" ? `group:${g.parts.length}` : `single:${g.part.id}`)),
+        ["group:2", "single:prt_m_agy_text_147"]
+      );
+
+      // 2. Persisted/server turn merge with stale ordering also normalizes reason_147 before text_147
+      const merged: MessageTurn[] = [];
+      mergeServerTurnsInto(merged, [
+        {
+          info: { id: "m_agy", sessionID: sid, role: "assistant", time: { created: 1, completed: 3 } },
+          parts: [
+            {
+              id: "prt_m_agy_text_147",
+              messageID: "m_agy",
+              sessionID: sid,
+              type: "text",
+              text: "## Security Audit Report",
+            },
+            {
+              id: "prt_m_agy_reason_147",
+              messageID: "m_agy",
+              sessionID: sid,
+              type: "reasoning",
+              text: "I'm thinking through how to approach this.",
+              time: { start: 1, end: 2 },
+            },
+          ],
+        },
+      ]);
+      assertDeepEqual(
+        merged[0].parts.map((p) => p.id),
+        ["prt_m_agy_reason_147", "prt_m_agy_text_147"]
+      );
     } finally {
       setWorkspace(reconcile(saved));
     }

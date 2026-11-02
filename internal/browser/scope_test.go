@@ -2,6 +2,7 @@ package browser
 
 import (
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -50,5 +51,54 @@ func TestResolvedScopeSharesManualOwnershipAcrossUIAndAgent(t *testing.T) {
 	}
 	if w := request(t, s, dir, "ses_engine", "state", "", true); w.Code != 200 {
 		t.Fatal("returning control did not unblock engine", w.Code, w.Body.String())
+	}
+}
+
+func TestProfileResolverIsolatesPersistentStoreProfiles(t *testing.T) {
+	s := New()
+	defer s.Close()
+	root := filepath.Join(t.TempDir(), "browser-profile")
+	s.SetProfileRoot(root)
+	s.SetProfileResolver(func(sessionID, _ string) string {
+		switch sessionID {
+		case "ses_store_a", "workstore_store-1688-a":
+			return "store-1688-a"
+		case "ses_store_b":
+			return "store-1688-b"
+		case "ses_unsafe":
+			return "../escape"
+		default:
+			return ""
+		}
+	})
+
+	dir := t.TempDir()
+	scA := &scope{service: s, sessionID: "ses_store_a", directory: dir, window: true}
+	profA, err := s.acquirePersistentProfile(scA)
+	if err != nil {
+		t.Fatalf("acquirePersistentProfile for store A failed: %v", err)
+	}
+	wantA := filepath.Join(root+"-stores", "store-1688-a")
+	if profA != wantA {
+		t.Fatalf("expected store A profile %q, got %q", wantA, profA)
+	}
+
+	scB := &scope{service: s, sessionID: "ses_store_b", directory: dir, window: true}
+	profB, err := s.acquirePersistentProfile(scB)
+	if err != nil {
+		t.Fatalf("acquirePersistentProfile for store B failed: %v", err)
+	}
+	wantB := filepath.Join(root+"-stores", "store-1688-b")
+	if profB != wantB {
+		t.Fatalf("expected store B profile %q, got %q", wantB, profB)
+	}
+
+	scUnsafe := &scope{service: s, sessionID: "ses_unsafe", directory: dir, window: true}
+	profUnsafe, err := s.acquirePersistentProfile(scUnsafe)
+	if err != nil {
+		t.Fatalf("acquirePersistentProfile for unsafe failed: %v", err)
+	}
+	if profUnsafe != root {
+		t.Fatalf("expected unsafe profile key to fall back to root %q, got %q", root, profUnsafe)
 	}
 }

@@ -5,6 +5,7 @@ import type { MessageInfo, MessagePart } from "../services/sse-types";
 import {
   ensureFullSessionHistory,
   fetchSessionExportTurns,
+  forgetSessionHistory,
   hasOlderSessionHistory,
   loadOlderSessionHistory,
   loadSessionMessagesOnly,
@@ -62,6 +63,48 @@ async function withPagingFixture(run: (sid: string) => Promise<void>) {
 }
 
 describe("Session history paging", () => {
+  for (const kind of ["older", "full"] as const) {
+    it(`discards ${kind} history from a previous directory without disturbing the newer request`, async () => {
+      await withPagingFixture(async (sid) => {
+        const tail = transcript(sid, 8).slice(-4);
+        setWorkspace("messagesBySession", sid, tail);
+        noteSessionHistoryTail(sid, 4, 4, 0);
+        const requests: Array<(turns: Remote[]) => void> = [];
+        hoxiAPI.getMessages = () => new Promise((resolve) => { requests.push(resolve); });
+        const read = () => kind === "older" ? loadOlderSessionHistory(sid) : ensureFullSessionHistory(sid);
+        const old = read();
+        setWorkspace("sessions", (session) => session.id === sid, "directory", "/new-directory");
+        const current = read();
+        assertEqual(requests.length, 2, "new directory must start a separate request");
+        requests[0]([transcript(sid, 1)[0]]);
+        await old;
+        assertDeepEqual(ids(sid), tail.map((turn) => turn.info.id));
+        assertTrue(hasOlderSessionHistory(sid), "stale short pages must not clear the history marker");
+        assertEqual(read(), current, "old cleanup must not remove the new singleflight");
+        requests[1](transcript(sid, 8));
+        await current;
+        assertDeepEqual(ids(sid), transcript(sid, 8).map((turn) => turn.info.id));
+      });
+    });
+
+    it(`invalidates ${kind} history after eviction even when the directory and cursor are reused`, async () => {
+      await withPagingFixture(async (sid) => {
+        setWorkspace("messagesBySession", sid, transcript(sid, 8).slice(-4));
+        noteSessionHistoryTail(sid, 4, 4, 0);
+        let finish!: (turns: Remote[]) => void;
+        hoxiAPI.getMessages = () => new Promise((resolve) => { finish = resolve; });
+        const pending = kind === "older" ? loadOlderSessionHistory(sid) : ensureFullSessionHistory(sid);
+        forgetSessionHistory(sid);
+        setWorkspace("messagesBySession", sid, structuredClone(transcript(sid, 8).slice(-4)));
+        noteSessionHistoryTail(sid, 4, 4, 0);
+        finish(transcript(sid, 8));
+        await pending;
+        assertEqual(ids(sid).length, 4, "late history must not refill an evicted transcript");
+        assertTrue(hasOlderSessionHistory(sid));
+      });
+    });
+  }
+
   it("exports a fresh full snapshot and rejects failures instead of returning a cached tail", async () => {
     await withPagingFixture(async (sid) => {
       const all = transcript(sid, 230);

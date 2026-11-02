@@ -12,6 +12,7 @@ import {
 import type { MessagePart, ToolPart } from "../../services/sse-types";
 import {
   extractChildSubagentSessionId,
+  appSettings,
   isSessionBusy,
   isSubagentToolAlive,
   resolveSubagentTitle,
@@ -27,6 +28,7 @@ import {
 import { resolveSubagentCurrentStepLabel } from "./SubagentInlineTimeline";
 import { liveReasoningTicker, reasoningHeading, reasoningSummary } from "./ThoughtBox";
 import HoxiActivityLogo from "./HoxiActivityLogo";
+import { Presence } from "../motion/Presence";
 import { formatElapsedSeconds, startAdaptiveElapsedTimer } from "./duration-label";
 
 import {
@@ -103,31 +105,49 @@ function summarizeStepTarget(part: ToolPart): string {
 
 
 // Persistent manual expand state keyed by the first part ID of each group
-const expandedActivityGroupKeys = new Set<string>();
-const collapsedActivityGroupKeys = new Set<string>();
+const MAX_ACTIVITY_GROUP_ENTRIES = 512;
+const activityGroupExpansion = new Map<string, boolean>();
 // Earlier steps the reader revealed, kept across session-switch remounts.
 const STEP_PAGE = 40;
 const activityGroupStepLimits = new Map<string, number>();
 
+function rememberGroupValue<T>(values: Map<string, T>, key: string, value: T) {
+  if (values.has(key)) values.delete(key);
+  else if (values.size >= MAX_ACTIVITY_GROUP_ENTRIES) {
+    const oldest = values.keys().next().value;
+    if (oldest !== undefined) values.delete(oldest);
+  }
+  values.set(key, value);
+}
+
 export default function ContextActivityGroupView(props: {
   parts: MessagePart[];
-  renderFallbackPart: (part: MessagePart, revealKey?: string) => JSX.Element;
+  renderFallbackPart: (part: MessagePart, revealKey?: string, defaultOpenReasoning?: boolean) => JSX.Element;
   isLiveTail?: boolean;
   startedAt?: number;
   revealKey?: string;
+  defaultOpenReasoning?: boolean;
 }) {
   let rootRef: HTMLDivElement | undefined;
   const groupKey = createMemo(() => props.parts[0]?.id || "");
-  const [open, setOpen] = createSignal(
-    expandedActivityGroupKeys.has(groupKey()) && !collapsedActivityGroupKeys.has(groupKey())
+  // A completed reasoning-only reply can later acquire a tool part. Keep its
+  // opened reasoning visible instead of retracting the final-output hint then.
+  const reasoningDefault = createMemo<{ key: string; open: boolean }>((previous) => {
+    const key = groupKey();
+    return { key, open: Boolean(props.defaultOpenReasoning || (previous?.key === key && previous.open)) };
+  });
+  const resolveOpen = () => activityGroupExpansion.get(groupKey()) ?? (
+    appSettings.reasoningDisplay === "expanded" ||
+    (reasoningDefault().open && appSettings.reasoningDisplay !== "collapsed")
   );
+  const [open, setOpen] = createSignal(resolveOpen());
   const [stepLimit, setStepLimitSignal] = createSignal(
     activityGroupStepLimits.get(groupKey()) ?? STEP_PAGE
   );
   const setStepLimit = (next: number) => {
     const key = groupKey();
     if (key) {
-      if (next > STEP_PAGE) activityGroupStepLimits.set(key, next);
+      if (next > STEP_PAGE) rememberGroupValue(activityGroupStepLimits, key, next);
       else activityGroupStepLimits.delete(key);
     }
     setStepLimitSignal(next);
@@ -141,15 +161,14 @@ export default function ContextActivityGroupView(props: {
     const key = groupKey();
     if (!key) return;
     setStepLimitSignal(activityGroupStepLimits.get(key) ?? STEP_PAGE);
-    setOpen(expandedActivityGroupKeys.has(key) && !collapsedActivityGroupKeys.has(key));
+    setOpen(resolveOpen());
   });
 
   createEffect(on(() => props.revealKey, (revealKey) => {
     if (!revealKey) return;
     const key = groupKey();
     if (key) {
-      expandedActivityGroupKeys.add(key);
-      collapsedActivityGroupKeys.delete(key);
+      rememberGroupValue(activityGroupExpansion, key, true);
     }
     setOpen(true);
     setStepLimit(props.parts.length);
@@ -169,12 +188,7 @@ export default function ContextActivityGroupView(props: {
       }
     }
     if (key) {
-      if (next) expandedActivityGroupKeys.add(key);
-      else {
-        expandedActivityGroupKeys.delete(key);
-        collapsedActivityGroupKeys.add(key);
-      }
-      if (next) collapsedActivityGroupKeys.delete(key);
+      rememberGroupValue(activityGroupExpansion, key, next);
     }
     setOpen(next);
   };
@@ -188,7 +202,7 @@ export default function ContextActivityGroupView(props: {
         {tI18n("timeline.loadEarlierSteps", { count: Math.min(STEP_PAGE, props.parts.length - stepLimit()) })}
       </button>
     </Show>
-    <For each={visibleSteps()}>{(part) => props.renderFallbackPart(part, props.revealKey)}</For>
+    <For each={visibleSteps()}>{(part) => props.renderFallbackPart(part, props.revealKey, reasoningDefault().open)}</For>
   </>;
 
   const isRunning = createMemo(() => {
@@ -458,18 +472,11 @@ export default function ContextActivityGroupView(props: {
   });
 
   return (
-    <Show
-      when={stats().toolCount > 0}
-      fallback={
-        <div class="space-y-1">
-          {renderStepWindow()}
-        </div>
-      }
-    >
-      <div ref={rootRef}>
+      <div ref={rootRef} data-activity-group={groupKey()}>
         <button
           type="button"
           onClick={toggleOpen}
+          aria-expanded={open()}
           class={`group/activity flex w-full items-center justify-between gap-2 rounded-md border border-transparent px-2 py-1.5 text-left text-[13px] transition-all cursor-pointer select-none ${
             open()
               ? "sticky top-0 z-10 bg-[var(--bg-panel)]/92 backdrop-blur-md border-[var(--border-subtle)]/50 text-[var(--text-primary)] shadow-xs"
@@ -603,14 +610,17 @@ export default function ContextActivityGroupView(props: {
         </button>
 
         {/* Full chronological step list with smooth collapse transition */}
-        <Show when={open()}>
+        <Presence when={open()} exitMs={220}>
+          {() => (
           <div
-            class={`grid transition-[grid-template-rows,opacity,margin-top] duration-200 ease-out ${
+            data-activity-group-body
+            class={`grid transition-[grid-template-rows,opacity,margin-top] duration-200 ease-out motion-reduce:transition-none ${
               open()
                 ? "mt-1.5 grid-rows-[1fr] opacity-100"
                 : "mt-0 grid-rows-[0fr] opacity-0 pointer-events-none"
             }`}
             aria-hidden={!open()}
+            inert={!open()}
           >
             <div class="min-h-0 overflow-hidden">
               <div class="ml-2 border-l-2 border-[var(--border-subtle)] pl-3.5 space-y-1">
@@ -618,8 +628,8 @@ export default function ContextActivityGroupView(props: {
               </div>
             </div>
           </div>
-        </Show>
+          )}
+        </Presence>
       </div>
-    </Show>
   );
 }

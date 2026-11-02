@@ -83,13 +83,33 @@ func (s *Service) defaultModeWindow() bool {
 	return s.defaultWindow
 }
 
+func (s *Service) desiredProfileRoot(sc *scope) string {
+	s.mu.Lock()
+	root := s.profileRoot
+	resolveProfile := s.resolveProfile
+	s.mu.Unlock()
+	if root == "" {
+		return ""
+	}
+	root = filepath.Clean(root)
+	if resolveProfile != nil {
+		if subKey := sanitizeProfileSubKey(resolveProfile(sc.sessionID, sc.directory)); subKey != "" {
+			root = filepath.Join(root+"-stores", subKey)
+		}
+	}
+	return root
+}
+
 // acquirePersistentProfile selects and prepares the persistent profile
 // directory for sc. When another idle scope is holding the primary profile,
 // its Chrome is closed first so the user's primary login state can be reused
 // without a Chrome SingletonLock conflict.
 func (s *Service) acquirePersistentProfile(sc *scope) (string, error) {
+	root := s.desiredProfileRoot(sc)
+	if root == "" {
+		return "", nil
+	}
 	s.mu.Lock()
-	root := s.profileRoot
 	var others []*scope
 	for _, other := range s.scopes {
 		if other != sc {
@@ -97,25 +117,30 @@ func (s *Service) acquirePersistentProfile(sc *scope) (string, error) {
 		}
 	}
 	s.mu.Unlock()
-	if root == "" {
-		return "", nil
-	}
-	root = filepath.Clean(root)
 	busyPrimary := false
+	usedFallback := make(map[string]bool)
 	for _, other := range others {
+		if s.desiredProfileRoot(other) != root {
+			continue
+		}
 		select {
 		case other.gate <- struct{}{}:
-			if !other.closed && other.browser != nil && other.profile == root {
-				if other.manual {
-					busyPrimary = true
-				} else {
-					other.resetBrowser()
+			if !other.closed && other.browser != nil {
+				if other.profile == root {
+					if other.manual {
+						busyPrimary = true
+					} else {
+						other.resetBrowser()
+					}
+				} else if other.profile != "" {
+					usedFallback[other.profile] = true
 				}
 			}
 			<-other.gate
 		default:
-			// Another scope is actively executing an operation; do not block
-			// on its gate (which could deadlock) or steal its profile.
+			// Another scope sharing this profile root is actively executing an
+			// operation; do not block on its gate (which could deadlock) or steal
+			// its profile.
 			busyPrimary = true
 		}
 	}
@@ -126,12 +151,34 @@ func (s *Service) acquirePersistentProfile(sc *scope) (string, error) {
 			session = "default"
 		}
 		profile = filepath.Join(root+"-sessions", session)
+		for suffix := 2; usedFallback[profile]; suffix++ {
+			profile = filepath.Join(root+"-sessions", fmt.Sprintf("%s-%d", session, suffix))
+		}
 	}
 	if err := os.MkdirAll(profile, 0o700); err != nil {
 		return "", err
 	}
+	sc.profileRootUsed = root
 	cleanStaleSingletonLocks(profile)
 	return profile, nil
+}
+
+func sanitizeProfileSubKey(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || len(raw) > 96 || strings.Contains(raw, "..") {
+		return ""
+	}
+	for i := 0; i < len(raw); i++ {
+		c := raw[i]
+		isAlphaNum := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+		if i == 0 && !isAlphaNum {
+			return ""
+		}
+		if !isAlphaNum && c != '_' && c != '-' && c != '.' {
+			return ""
+		}
+	}
+	return raw
 }
 
 // cleanStaleSingletonLocks removes leftover Chromium Singleton* lock files
@@ -174,6 +221,7 @@ func (sc *scope) resetBrowser() {
 	}
 	sc.browser = nil
 	sc.tabID = ""
+	sc.profileRootUsed = ""
 	if sc.persistentProfile {
 		sc.ledger.Forget(sc.ledgerID)
 		sc.ledgerID = ""

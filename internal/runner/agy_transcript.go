@@ -677,3 +677,48 @@ func advanceAgySubagentLog(tr *agySubagentTrack) (rows []agyTranscriptRow, modMs
 	tr.readOffset += int64(end + 1)
 	return rows, st.ModTime().UnixMilli(), true
 }
+
+// IsStaleAgyResultError reports whether a stream `result` line is a historical
+// trajectory error re-emitted by `agy` on a resumed conversation after the
+// current turn has already finished its final assistant response cleanly.
+func (t *TurnTranslator) IsStaleAgyResultError(rawLine string) bool {
+	line := strings.TrimSpace(rawLine)
+	if line == "" || !strings.HasPrefix(line, "{") {
+		return false
+	}
+	var env agyRawEvent
+	if err := json.Unmarshal([]byte(line), &env); err != nil {
+		return false
+	}
+	if env.Event != "result" || env.Result == nil {
+		return false
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if id := strings.TrimSpace(firstNonEmptyStr(env.Result.ConversationID, env.ConversationID)); id != "" && t.convPinned && id != t.externalID {
+		return false
+	}
+	return t.isStaleAgyResultErrorLocked(env.Result)
+}
+
+func (t *TurnTranslator) isStaleAgyResultErrorLocked(res *agyResult) bool {
+	if res == nil || res.Status != "ERROR" || !t.agyFinalResponseDone {
+		return false
+	}
+	if len(res.DeniedActions) > 0 || t.hasWaitingSubagents() {
+		return false
+	}
+	errMsg := strings.TrimSpace(res.Error)
+	if strings.EqualFold(errMsg, "interrupted") || !isRetryableTurnError(errMsg) {
+		return false
+	}
+	for _, p := range t.partsByID {
+		if p != nil && p.Type == "tool" && p.State != nil {
+			switch p.State.Status {
+			case "pending", "running", "error":
+				return false
+			}
+		}
+	}
+	return true
+}

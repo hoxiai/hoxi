@@ -127,12 +127,13 @@ export function ContextActivityGroupView(props: {
       isLiveTail={props.isLiveTail}
       startedAt={props.startedAt}
       revealKey={props.revealKey}
-      renderFallbackPart={(part, revealKey) => (
+      defaultOpenReasoning={props.defaultOpenReasoning}
+      renderFallbackPart={(part, revealKey, defaultOpenReasoning) => (
         <PartView
           part={part}
           revealKey={revealKey}
           streaming={props.isLiveTail}
-          defaultOpenReasoning={props.defaultOpenReasoning}
+          defaultOpenReasoning={defaultOpenReasoning}
         />
       )}
     />

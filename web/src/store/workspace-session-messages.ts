@@ -284,7 +284,7 @@ export async function dispatchSessionPrompt(
     /** false for automatic dispatches that must not move the reader's scroll position. */
     followTimeline?: boolean;
     beforeSend?: () => Promise<void>;
-    onTurnStaged?: () => void;
+    onTurnStaged?: (sessionID: string) => void;
   }
 ): Promise<string> {
   let id = targetSessionID ?? workspace.activeSessionID;
@@ -356,7 +356,7 @@ export async function dispatchSessionPrompt(
       skillSelection: effectiveSkill,
       system: options?.system,
     });
-    options?.onTurnStaged?.();
+    options?.onTurnStaged?.(id);
     if (options?.followTimeline !== false) requestTimelineFollow(id);
     return id;
   }
@@ -433,7 +433,7 @@ export async function dispatchSessionPrompt(
           });
         })
       );
-      options?.onTurnStaged?.();
+      options?.onTurnStaged?.(sessionID);
       markSessionPromptDispatched(sessionID);
       recordPromptDispatched(sessionID, effectiveModel?.providerID, effectiveModel?.modelID);
       setWorkspace("statusBySession", sessionID, { type: "busy" });

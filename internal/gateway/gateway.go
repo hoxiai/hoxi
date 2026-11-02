@@ -205,6 +205,25 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 		forge:        forgeSvc,
 	}
 	g.browser.SetSessionResolver(runnerSvc.ResolveBrowserSession)
+	if g.workApps != nil {
+		g.browser.SetProfileResolver(func(sessionID, _ string) string {
+			cur := strings.TrimSpace(sessionID)
+			for depth := 0; cur != "" && depth < 8; depth++ {
+				if key := g.workApps.ResolveBrowserProfileKey(cur); key != "" {
+					return key
+				}
+				if runnerSvc == nil || runnerSvc.Store() == nil {
+					break
+				}
+				rec, ok := runnerSvc.Store().Meta(cur)
+				if !ok || strings.TrimSpace(rec.ParentID) == "" || rec.ParentID == cur {
+					break
+				}
+				cur = strings.TrimSpace(rec.ParentID)
+			}
+			return ""
+		})
+	}
 	if profileDir := hoxipaths.BrowserProfileDir(); profileDir != "" {
 		g.browser.SetProfileRoot(profileDir)
 		g.browser.SetDefaultWindowMode(true)

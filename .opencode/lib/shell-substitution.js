@@ -15,6 +15,7 @@ import {
   splitCommandChainWithPipes,
   stripCDNullRedirects,
   stripNullRedirects,
+  unwrapSandboxCommand,
 } from "./permission-policy.js";
 import { concretizeLiterals, eraseSubshells, findSubshellSpans, unwrapCommandPrefixes } from "./shell-constants.js";
 import { isReadOnlySedArgs, isSafeCurlOutputTarget, normalizeHomePrefixPath } from "./shell-loops.js";
@@ -106,7 +107,7 @@ export function extractProcessSubstitutions(s) {
 // The texts the destructive patterns scan: the masked command, plus its
 // unpacked form when it uses `<(…)` (`cat <(cat .env)` → `cat .env`).
 export function destructiveScanForms(cmd) {
-  let scanBase = unwrapLiteralShellCommand(joinLineContinuations(String(cmd ?? "").trim()));
+  let scanBase = unwrapLiteralShellCommand(joinLineContinuations(unwrapSandboxCommand(cmd).trim()));
   let prepared = scanBase;
   let hadBenignHeredoc = false;
   if (prepared.includes("<<")) {
@@ -137,12 +138,12 @@ export function destructiveScanForms(cmd) {
 }
 
 function unwrapLiteralShellCommand(s) {
-  let unwrappedAny = false;
+  let unwrappedCount = 0;
   let validChain = true;
   const res = mapTopLevelSegments(s, (seg) => {
     const inner = unwrapLiteralShellSegment(seg, normalizeAbsoluteTool);
     if (inner) {
-      unwrappedAny = true;
+      unwrappedCount++;
       return inner;
     }
     const trimmed = String(seg || "").trim();
@@ -152,7 +153,7 @@ function unwrapLiteralShellCommand(s) {
     validChain = false;
     return seg;
   });
-  return unwrappedAny && validChain ? res : s;
+  return unwrappedCount === 1 && validChain ? res : s;
 }
 
 // Folds `\` + newline into a space, as the shell does.

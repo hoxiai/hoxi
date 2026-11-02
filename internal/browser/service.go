@@ -44,6 +44,7 @@ func (v viewport) action() *emulation.SetDeviceMetricsOverrideParams {
 type scope struct {
 	service           *Service
 	sessionID         string
+	directory         string
 	diagnostics       map[string]*diagnosticTracker
 	wheelGesture      wheelGesture
 	gate              chan struct{}
@@ -57,6 +58,7 @@ type scope struct {
 	browserCancel     context.CancelFunc
 	tabID             string
 	profile           string
+	profileRootUsed   string
 	persistentProfile bool
 	window            bool
 	ledger            *reclaim.Ledger
@@ -92,6 +94,7 @@ type Service struct {
 	closed         bool
 	closeDone      chan struct{}
 	resolveSession func(sessionID, directory string) (string, error)
+	resolveProfile func(sessionID, directory string) string
 	bridgeURL      string
 	ledger         *reclaim.Ledger
 	now            func() time.Time
@@ -116,6 +119,14 @@ func (s *Service) SetLedger(ledger *reclaim.Ledger) {
 func (s *Service) SetSessionResolver(resolve func(sessionID, directory string) (string, error)) {
 	s.mu.Lock()
 	s.resolveSession = resolve
+	s.mu.Unlock()
+}
+
+// SetProfileResolver lets the host map a browser session scope to an isolated
+// persistent profile key (e.g., per bound Work store account).
+func (s *Service) SetProfileResolver(resolve func(sessionID, directory string) string) {
+	s.mu.Lock()
+	s.resolveProfile = resolve
 	s.mu.Unlock()
 }
 
@@ -266,7 +277,7 @@ func (s *Service) acquire(ctx context.Context, key scopeKey, create bool) (*scop
 			return nil, errors.New("browser scope limit reached")
 		}
 		life, cancel := context.WithCancel(s.ctx)
-		sc = &scope{service: s, sessionID: key.session, window: s.defaultWindow, gate: make(chan struct{}, 1), ctx: life, cancel: cancel, tabs: make(map[string]context.Context), tabCancels: make(map[string]context.CancelFunc), width: 1280, height: 800, scale: 1, viewports: make(map[string]viewport), ledger: s.ledger, lastUsed: s.now(), pointerHold: s.pointerHold}
+		sc = &scope{service: s, sessionID: key.session, directory: key.directory, window: s.defaultWindow, gate: make(chan struct{}, 1), ctx: life, cancel: cancel, tabs: make(map[string]context.Context), tabCancels: make(map[string]context.CancelFunc), width: 1280, height: 800, scale: 1, viewports: make(map[string]viewport), ledger: s.ledger, lastUsed: s.now(), pointerHold: s.pointerHold}
 		sc.workflows = &workflowTracker{uploads: make(map[string]UploadRequest), dialogs: make(map[string]PageDialog), tabs: make(map[string]context.Context)}
 		s.scopes[key] = sc
 		delete(s.idleClosed, key)
@@ -322,6 +333,11 @@ func (s *Service) remove(key scopeKey, sc *scope) {
 func (sc *scope) start(ctx context.Context) error {
 	if sc.browser != nil && sc.browser.Err() != nil {
 		sc.resetBrowser()
+	}
+	if sc.browser != nil && sc.window && sc.service != nil {
+		if desired := sc.service.desiredProfileRoot(sc); desired != "" && sc.profileRootUsed != "" && desired != sc.profileRootUsed {
+			sc.resetBrowser()
+		}
 	}
 	if sc.browser != nil {
 		return nil

@@ -486,6 +486,7 @@ export const timeline = {
   mentionStatusTruncated: "Truncated",
   mentionStatusEmpty: "Empty",
   mentionStatusUnavailable: "Unavailable",
+  mentionLoadFailed: "Could not load {mention}: {error}",
   verifySectionTitle: "Run & Verify",
   verifyRunBtn: "Run",
   verifyTestBtn: "Test",
