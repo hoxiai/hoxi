@@ -1,5 +1,7 @@
+import { createRoot } from "solid-js";
 import { browserAPI, browserPoint, browserStreamURL, browserURL, connectBrowserStream, observeBrowserZoom } from "../services/browser";
 import { browserLoadPhase, normalizeBrowserAddress, requiresBrowserTakeover } from "../store/browser";
+import { createBrowserController } from "../store/browser-controller";
 import { assertDeepEqual, assertEqual, describe, it } from "./test-harness";
 
 describe("Browser inspector", () => {
@@ -209,6 +211,32 @@ describe("Browser inspector", () => {
       assertDeepEqual((await browserAPI.action(scope, { action: "resize", width: 375, height: 667 }, signal)).tabs, []);
     } finally {
       globalThis.fetch = original;
+    }
+  });
+
+  it("keeps desktop window mode active when developer viewportMode defaults to page", () => {
+    const originalDoc = Object.getOwnPropertyDescriptor(globalThis, "document");
+    let dispose = () => {};
+    try {
+      Object.defineProperty(globalThis, "document", {
+        configurable: true,
+        value: {
+          hidden: false,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+        },
+      });
+      const controller = createRoot(d => {
+        dispose = d;
+        return createBrowserController();
+      });
+      assertEqual(controller.developer.viewportMode(), "page");
+      assertEqual(controller.windowMode(), true);
+      assertEqual(controller.headlessMode(), false);
+    } finally {
+      dispose();
+      if (originalDoc) Object.defineProperty(globalThis, "document", originalDoc);
+      else Reflect.deleteProperty(globalThis, "document");
     }
   });
 });

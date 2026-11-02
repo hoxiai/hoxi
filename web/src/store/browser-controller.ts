@@ -398,26 +398,6 @@ export function createBrowserController() {
       measuredPageKey = key;
       untrack(() => enqueueAction(connection, { action: "resize", ...size, fullPage: true }));
     });
-    let switchingToIsolated = false;
-    createEffect(() => {
-      // Full page needs an emulated viewport, which the real Chrome window
-      // cannot provide, so selecting it switches an owned window to isolated.
-      // The active page is re-opened in the isolated browser afterwards.
-      if (developer.viewportMode() !== "page" || !windowMode()) { switchingToIsolated = false; return; }
-      if (!running() || chromeLinked() || pairing() || busy() || stopping()) return;
-      if (switchingToIsolated) return;
-      switchingToIsolated = true;
-      const target = state()?.navigation?.url || state()?.url || "";
-      untrack(() => {
-        const pending = enqueueAction(connection, { action: "mode", window: false });
-        if (!pending || !target || target === "about:blank") return;
-        void pending.then(() => {
-          if (valid(connection) && state()?.mode !== "window") {
-            enqueueAction(connection, { action: "navigate", url: target, async: true });
-          }
-        });
-      });
-    });
     untrack(consumePendingBrowserURL);
     let timer: ReturnType<typeof setTimeout> | undefined;
     async function poll() {
