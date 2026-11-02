@@ -175,6 +175,7 @@ export default function ContextProgressPill() {
   // Local estimate only: the engine's own system prompt and tool schemas are not
   // visible here, so this is a hint, not an authoritative breakdown.
   const topContributors = createMemo(() => {
+    if (!open()) return [];
     const id = workspace.activeSessionID;
     if (!id) return [];
     const turns = workspace.messagesBySession[id] ?? [];

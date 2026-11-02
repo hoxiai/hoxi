@@ -1,5 +1,6 @@
 // web/src/components/timeline/markdown/inline.ts
 import type { InlineSpan } from "./types";
+import { scanInlineTokens } from "./inline-tokens";
 
 const EXTENSIONS_SOURCE =
   "ts|tsx|js|jsx|mjs|cjs|mts|cts|go|py|pyi|rs|md|mdx|markdown|json|jsonc|json5|yaml|yml|toml|xml|plist|svg|png|jpg|jpeg|gif|webp|ico|bmp|avif|pdf|css|scss|sass|less|html|htm|sh|zsh|bash|fish|sql|vue|svelte|astro|c|cpp|cc|cxx|h|hpp|m|mm|java|kt|kts|swift|rb|php|proto|graphql|gql|ini|cfg|conf|env|lock|mod|sum|work|gradle|properties|cmake|mk|dockerfile|tf|tfvars|hcl|prisma|sol|zig|lua|ex|exs|erl|hrl|hs|ml|mli|fs|fsx|cs|vb|dart|groovy|scala|clj|cljs|edn|nim|cr|v|sv|vhd|vhdl|glsl|wgsl|hlsl|metal|wasm|wat|csv|tsv|txt|log"
@@ -51,7 +52,7 @@ const BARE_URL_SOURCE =
   "https?:\\/\\/[^\\s<>[\\]()\"'`\\u3000-\\u303f\\u3400-\\u4dbf\\u4e00-\\u9fff\\uf900-\\ufaff\\uff00-\\uffef\\u2014\\u2018\\u2019\\u201c\\u201d\\u2026\\u00ab\\u00bb]+";
 
 const INLINE_TOKEN_REGEX = new RegExp(
-  `(${IMAGE_SOURCE}|${INLINE_CODE_SPAN_SOURCE}|${UNCLOSED_CODE_SPAN_SOURCE}|<br\\s*\\/?>|${CLOSED_BOLD_ASTERISK_SOURCE}|${UNCLOSED_BOLD_ASTERISK_SOURCE}|${CLOSED_BOLD_UNDERSCORE_SOURCE}|~~[^~\\n]+~~|${CLOSED_LINK_SOURCE}|${UNCLOSED_LINK_SOURCE}|${UNCLOSED_BRACKET_LINK_SOURCE}|\\*[^*\\n]+\\*|${BARE_URL_SOURCE}|${BARE_FILE_PATH_SOURCE})`,
+  `(${IMAGE_SOURCE}|${INLINE_CODE_SPAN_SOURCE}|${UNCLOSED_CODE_SPAN_SOURCE}|<br\\s*\\/?>|${CLOSED_BOLD_ASTERISK_SOURCE}|${UNCLOSED_BOLD_ASTERISK_SOURCE}|${CLOSED_BOLD_UNDERSCORE_SOURCE}|~~[^~\\n]+~~|${CLOSED_LINK_SOURCE}|${UNCLOSED_LINK_SOURCE}|${UNCLOSED_BRACKET_LINK_SOURCE}|\\*[^*\\n]+\\*|${BARE_URL_SOURCE})`,
   "gi"
 );
 
@@ -101,12 +102,10 @@ function parseImageSpan(token: string): InlineSpan | null {
 
 export function parseInline(text: string): InlineSpan[] {
   const spans: InlineSpan[] = [];
-  const regex = new RegExp(INLINE_TOKEN_REGEX.source, "gi");
   let lastIdx = 0;
-  let match: RegExpExecArray | null;
 
-  while ((match = regex.exec(text)) !== null) {
-    const token = match[0];
+  for (const match of scanInlineTokens(text, INLINE_TOKEN_REGEX, BARE_FILE_PATH_SOURCE)) {
+    const token = match.token;
 
     if (token.startsWith("![")) {
       if (match.index > lastIdx) {
@@ -118,7 +117,7 @@ export function parseInline(text: string): InlineSpan[] {
       } else {
         appendPlainTextSpan(spans, token);
       }
-      lastIdx = regex.lastIndex;
+      lastIdx = match.end;
       continue;
     }
 
@@ -140,7 +139,7 @@ export function parseInline(text: string): InlineSpan[] {
         appendPlainTextSpan(spans, text.slice(lastIdx, match.index));
       }
       spans.push({ type: "code", text: token });
-      lastIdx = regex.lastIndex;
+      lastIdx = match.end;
       continue;
     }
 
@@ -177,7 +176,7 @@ export function parseInline(text: string): InlineSpan[] {
       // instead of rendering a broken image plus a separate link.
       if (match.index > 0 && text[match.index - 1] === "!") {
         appendPlainTextSpan(spans, token);
-        lastIdx = regex.lastIndex;
+        lastIdx = match.end;
         continue;
       }
       const closedMatch = token.match(CLOSED_LINK_MATCH_REGEX);
@@ -223,7 +222,7 @@ export function parseInline(text: string): InlineSpan[] {
     } else {
       appendPlainTextSpan(spans, token);
     }
-    lastIdx = regex.lastIndex;
+    lastIdx = match.end;
   }
 
   if (lastIdx < text.length) {

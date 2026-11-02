@@ -1,5 +1,6 @@
 // web/src/components/timeline/markdown/stream.ts
 import { parseMarkdownBlocks } from "./blocks";
+import { scanInlineTokens } from "./inline-tokens";
 import type { BlockToken, ListItemEntry } from "./types";
 
 function isSameStringArray(a: string[], b: string[]): boolean {
@@ -209,7 +210,10 @@ export function createIncrementalMarkdownParser(): (src: string) => BlockToken[]
 }
 
 const STREAM_ATOMIC_INLINE_REGEX =
-  /!?\[(?:`[^`\n]+`|[^\]`\n])+\]\((?:[^()\s]|\([^()\s]*\))+(?:\s+(?:"[^"\n]*"|'[^'\n]*'))?\)|!?\[(?:`[^`\n]+`|[^\]`\n])+\]\([^()\s]*$|`[^`\n]+`|\*\*(?:`[^`\n]+`|[^*`\n]|\*(?!\*)){1,48}\*\*|__(?:`[^`\n]+`|[^_`\n]|_(?!_)){1,48}__|~~[^~\n]{1,48}~~|\*[^*\n]{1,48}\*|https?:\/\/[^\s<>[\]()"'`\u3000-\u303f\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef\u2014\u2018\u2019\u201c\u201d\u2026\u00ab\u00bb]+|(?:~\/|\.\.?\/|\/)?(?:[\w@.+\-\u4e00-\u9fa5]+\/)+[\w.+\-\u4e00-\u9fa5]+(?::\d+(?:[:\-–—]\d+)?|#L\d+(?:[-–—]L?\d+)?)?/g;
+  /!?\[(?:`[^`\n]+`|[^\]`\n])+\]\((?:[^()\s]|\([^()\s]*\))+(?:\s+(?:"[^"\n]*"|'[^'\n]*'))?\)|!?\[(?:`[^`\n]+`|[^\]`\n])+\]\([^()\s]*$|`[^`\n]+`|\*\*(?:`[^`\n]+`|[^*`\n]|\*(?!\*)){1,48}\*\*|__(?:`[^`\n]+`|[^_`\n]|_(?!_)){1,48}__|~~[^~\n]{1,48}~~|\*[^*\n]{1,48}\*|https?:\/\/[^\s<>[\]()"'`\u3000-\u303f\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef\u2014\u2018\u2019\u201c\u201d\u2026\u00ab\u00bb]+/g;
+
+const STREAM_PATH_SOURCE =
+  "(?:~\\/|\\.\\.?\\/|\\/)?(?:[\\w@.+\\-\\u4e00-\\u9fa5]+\\/)+[\\w.+\\-\\u4e00-\\u9fa5]+(?::\\d+(?:[:\\-–—]\\d+)?|#L\\d+(?:[-–—]L?\\d+)?)?";
 
 const STREAM_LINE_PREFIX_REGEX =
   /^(\s*(?:#{1,6}[ \t]+\S?|(?:`{3,}|~{3,})[^\n]*|(?:[-*+]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?\S?|>\s*(?:\[![A-Za-z]+\]\s*)?|(?:[-*_]\s*){3,}$))/;
@@ -255,11 +259,9 @@ export function advanceStreamingSlice(
   }
 
   // Snap past complete inline tokens (links, images, code spans, file paths, short emphasis)
-  const inlineRe = new RegExp(STREAM_ATOMIC_INLINE_REGEX.source, "g");
-  let m: RegExpExecArray | null;
-  while ((m = inlineRe.exec(line)) !== null) {
-    const start = m.index;
-    const end = start + m[0].length;
+  for (const match of scanInlineTokens(line, STREAM_ATOMIC_INLINE_REGEX, STREAM_PATH_SOURCE)) {
+    const start = match.index;
+    const end = match.end;
     if (start < relPos && relPos < end) {
       relPos = end;
       break;
