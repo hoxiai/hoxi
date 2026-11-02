@@ -277,18 +277,22 @@ export async function startDesktopUpdate(): Promise<void> {
     totalBytes: 0,
   };
   recordUpdateDownloadSample(initialProgress);
-  setDesktopUpdater({
-    isInstalling: true,
-    error: null,
-    progress: initialProgress,
-    downloadSpeedBps: 0,
-    downloadSlow: false,
-  });
-  const earlyPoll = setTimeout(() => void refreshDesktopUpdateStatus(), 120);
-  const activePoll = setInterval(() => void refreshDesktopUpdateStatus(), INSTALL_ACTIVE_POLL_MS);
-  (earlyPoll as { unref?: () => void }).unref?.();
-  (activePoll as { unref?: () => void }).unref?.();
+  let earlyPoll: ReturnType<typeof setTimeout> | undefined;
+  let activePoll: ReturnType<typeof setInterval> | undefined;
+  // Everything after the click runs inside try: a throw while rendering the
+  // progress state must surface as an error, not silently skip the request.
   try {
+    setDesktopUpdater({
+      isInstalling: true,
+      error: null,
+      progress: initialProgress,
+      downloadSpeedBps: 0,
+      downloadSlow: false,
+    });
+    earlyPoll = setTimeout(() => void refreshDesktopUpdateStatus(), 120);
+    activePoll = setInterval(() => void refreshDesktopUpdateStatus(), INSTALL_ACTIVE_POLL_MS);
+    (earlyPoll as { unref?: () => void }).unref?.();
+    (activePoll as { unref?: () => void }).unref?.();
     await updaterAPI.install();
   } catch (err: unknown) {
     setDesktopUpdater({

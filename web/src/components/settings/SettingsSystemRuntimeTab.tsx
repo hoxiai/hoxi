@@ -24,6 +24,7 @@ import {
   workspace,
 } from "../../store/workspace";
 import { Spinner } from "../icons";
+import UpdateProgressBar from "../layout/UpdateProgressBar";
 import { t } from "../../i18n";
 import { SettingGroup, SettingRow, ToggleSwitch } from "./setting-controls";
 import { confirmAction } from "./confirm-dialog";
@@ -253,11 +254,9 @@ export function SystemRuntimeSettingsTab() {
                 </span>
               </Show>
             </div>
-            <progress
-              aria-label={desktopUpdateStatusLabel()}
-              max={100}
-              value={desktopUpdateProgressPercent(desktopUpdater.progress)}
-              class="block h-1.5 w-full overflow-hidden rounded-full accent-[var(--accent-primary)]"
+            <UpdateProgressBar
+              percent={desktopUpdateProgressPercent(desktopUpdater.progress)}
+              label={desktopUpdateStatusLabel()}
             />
             <div class="flex flex-wrap items-center justify-between gap-2 text-[11px] text-[var(--text-muted)]">
               <span

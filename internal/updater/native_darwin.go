@@ -248,6 +248,7 @@ func checkDarwinDMGSelfUpdate() (installErr error) {
 	appBundle := darwinAppBundle
 	darwinInstalling = true
 	darwinDMGMu.Unlock()
+	traceUpdate("updater dmg self-update started", 0, 0)
 	setInstallPhase("preparing")
 	defer func() {
 		finishInstallProgress(installErr)
@@ -372,9 +373,12 @@ func hoxiNativeCanInstall(token C.ulonglong, force C.int) (allowed C.int) {
 		return 0
 	}
 	entry.touched = true
+	started := time.Now()
 	if entry.canInstall(force != 0) {
+		traceUpdate("updater admission checked", 200, time.Since(started))
 		return 1
 	}
+	traceUpdate("updater admission checked", 409, time.Since(started))
 	return 0
 }
 
@@ -437,6 +441,7 @@ func hoxiNativeProgress(token C.ulonglong, phase *C.char, downloaded C.longlong,
 	if phase != nil {
 		p = strings.TrimSpace(C.GoString(phase))
 	}
+	tracePhase(p)
 	if p == "" {
 		installProgress.Store(nil)
 		return
@@ -451,6 +456,14 @@ func hoxiNativeProgress(token C.ulonglong, phase *C.char, downloaded C.longlong,
 		TotalBytes:      max(int64(total), 0),
 		Error:           errStr,
 	})
+}
+
+//export hoxiNativeTrace
+func hoxiNativeTrace(event *C.char) {
+	if event == nil {
+		return
+	}
+	traceUpdate(C.GoString(event), 0, 0)
 }
 
 func setNativeProgressForTest(token uint64, phase string, downloaded, total int64, errMsg string) {

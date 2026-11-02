@@ -37,6 +37,8 @@
 - (void)showUpdateNotFoundWithError:(NSError *)error acknowledgement:(void (^)(void))acknowledgement;
 @end
 
+#define HOXI_TRACE(event) hoxiNativeTrace((char *)(event))
+
 static NSString *HoxiLocalized(NSString *zh, NSString *en) {
     NSString *language = [[NSLocale preferredLanguages] firstObject] ?: @"en";
     return [language hasPrefix:@"zh"] ? zh : en;
@@ -54,7 +56,9 @@ static BOOL HoxiConfirmBusyUpdate(void) {
         @"Updating will quit Hoxi and interrupt running agent tasks. Update now?");
     [alert addButtonWithTitle:HoxiLocalized(@"仍然更新", @"Update Anyway")];
     [alert addButtonWithTitle:HoxiLocalized(@"取消", @"Cancel")];
+    HOXI_TRACE("updater busy confirm shown");
     BOOL confirmed = [alert runModal] == NSAlertFirstButtonReturn;
+    HOXI_TRACE("updater busy confirm answered");
     [alert release];
     return confirmed;
 }
@@ -110,6 +114,7 @@ static BOOL HoxiConfirmUpdate(void) {
     return NO;
 }
 - (void)updater:(id)updater didAbortWithError:(NSError *)error {
+    HOXI_TRACE("updater sparkle aborted");
     BOOL wasUserInstall = self.userRequested || self.installing;
     self.forced = NO;
     self.userRequested = NO;
@@ -131,6 +136,7 @@ static BOOL HoxiConfirmUpdate(void) {
     hoxiNativeRelease(self.token, 0);
 }
 - (void)updater:(id)updater didFinishUpdateCycleForUpdateCheck:(NSInteger)check error:(NSError *)error {
+    HOXI_TRACE("updater sparkle check finished");
     self.forced = NO;
     self.userRequested = NO;
     self.installing = NO;
@@ -232,6 +238,7 @@ static BOOL HoxiConfirmUpdate(void) {
     }
 }
 - (void)showUpdateFoundWithAppcastItem:(id)item state:(id)state reply:(void (^)(NSInteger))reply {
+    HOXI_TRACE("updater sparkle update found");
     if (self.admission.userRequested) {
         NSInteger choice = [self admittedChoice:1];
         if (choice != 1 && [self.target respondsToSelector:@selector(dismissUpdateInstallation)]) {
@@ -324,6 +331,7 @@ static BOOL HoxiConfirmUpdate(void) {
     }
 }
 - (void)showUpdaterError:(NSError *)error acknowledgement:(void (^)(void))acknowledgement {
+    HOXI_TRACE("updater sparkle error");
     if (self.admission.active) {
         self.admission.installing = NO;
         self.admission.userRequested = NO;
@@ -338,6 +346,7 @@ static BOOL HoxiConfirmUpdate(void) {
     }
 }
 - (void)showUpdateNotFoundWithError:(NSError *)error acknowledgement:(void (^)(void))acknowledgement {
+    HOXI_TRACE("updater sparkle up to date");
     if (self.admission.active) {
         BOOL wasRequested = self.admission.userRequested;
         self.admission.installing = NO;
@@ -453,10 +462,12 @@ char *hoxi_native_check(void) {
             if ([driver.target respondsToSelector:@selector(activeUpdateAlert)]) {
                 id alert = [driver.target activeUpdateAlert];
                 if (alert != nil && [alert respondsToSelector:@selector(installUpdate:)]) {
+                    HOXI_TRACE("updater sparkle alert reused");
                     [alert installUpdate:nil];
                     return;
                 }
             }
+            HOXI_TRACE("updater sparkle check started");
             [updater checkForUpdates];
         }
     }});

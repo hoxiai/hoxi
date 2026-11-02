@@ -9,6 +9,7 @@ int hoxi_native_confirm_busy(void);
 extern int hoxiNativeCanInstall(unsigned long long token, int force);
 extern void hoxiNativeStaged(unsigned long long token);
 extern void hoxiNativeRelease(unsigned long long token, int stop);
+extern void hoxiNativeTrace(char *event);
 extern void hoxiNativeProgress(unsigned long long token, char *phase, long long downloaded, long long total, char *errMsg);
 
 #endif

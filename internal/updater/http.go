@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"sync/atomic"
+	"time"
 )
 
 var activeChecker atomic.Pointer[Checker]
@@ -36,15 +37,20 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Progress  *InstallProgress `json:"progress,omitempty"`
 		}{NativeAvailable(), draining, installProgress.Load()})
 	case path == "/install" && r.Method == http.MethodPost:
+		started := time.Now()
+		traceUpdate("updater install requested", 0, 0)
 		if !NativeAvailable() {
+			traceUpdate("updater install rejected", http.StatusServiceUnavailable, time.Since(started))
 			http.Error(w, `{"error":"native updater is not configured"}`, http.StatusServiceUnavailable)
 			return
 		}
 		if err := CheckNative(); err != nil {
+			traceUpdate("updater install rejected", http.StatusConflict, time.Since(started))
 			w.WriteHeader(http.StatusConflict)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 			return
 		}
+		traceUpdate("updater install returned", http.StatusOK, time.Since(started))
 		_ = json.NewEncoder(w).Encode(map[string]bool{"started": true})
 	case (path == "/check" || path == "") && r.Method == http.MethodGet:
 		h.handleCheck(w, r)

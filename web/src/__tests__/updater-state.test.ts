@@ -110,6 +110,34 @@ describe("desktop self-update progress", () => {
     }
   });
 
+  it("surfaces a failure while entering the preparing state instead of silently skipping the install", async () => {
+    // Regression: rendering the progress bar threw in WebKit, the click handler
+    // swallowed it, and no install request was ever sent.
+    const oldStatus = updaterAPI.nativeStatus;
+    const oldInstall = updaterAPI.install;
+    const oldSetInterval = globalThis.setInterval;
+    const saved = { ...desktopUpdater };
+    let installs = 0;
+    try {
+      setDesktopUpdater({ nativeAvailable: true, isInstalling: false, draining: false, progress: null, error: null });
+      updaterAPI.install = async () => { installs++; return { started: true }; };
+      updaterAPI.nativeStatus = async () => ({ available: true, draining: false });
+      globalThis.setInterval = (() => {
+        throw new TypeError("The provided value is non-finite");
+      }) as unknown as typeof setInterval;
+      await startDesktopUpdate();
+      assertEqual(installs, 0);
+      assertEqual(desktopUpdater.error, "The provided value is non-finite");
+      assertEqual(desktopUpdater.progress, null);
+      assertEqual(isDesktopUpdateInstalling(), false);
+    } finally {
+      globalThis.setInterval = oldSetInterval;
+      updaterAPI.nativeStatus = oldStatus;
+      updaterAPI.install = oldInstall;
+      setDesktopUpdater(saved);
+    }
+  });
+
   it("discards a late poll that would overwrite a download failure", async () => {
     const oldStatus = updaterAPI.nativeStatus;
     const saved = { ...desktopUpdater };

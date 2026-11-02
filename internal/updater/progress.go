@@ -17,11 +17,13 @@ type InstallProgress struct {
 var installProgress atomic.Pointer[InstallProgress]
 
 func setInstallPhase(phase string) {
+	tracePhase(phase)
 	installProgress.Store(&InstallProgress{Phase: phase})
 }
 
 func finishInstallProgress(err error) {
 	if err != nil {
+		tracePhase("failed")
 		installProgress.Store(&InstallProgress{Phase: "failed", Error: err.Error()})
 	}
 }

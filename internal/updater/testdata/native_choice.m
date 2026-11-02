@@ -11,6 +11,7 @@ static char lastError[128];
 int hoxiNativeCanInstall(unsigned long long token, int force) { checks++; return allowed; }
 void hoxiNativeRelease(unsigned long long token, int stop) {}
 void hoxiNativeStaged(unsigned long long token) {}
+void hoxiNativeTrace(char *event) {}
 void hoxiNativeProgress(unsigned long long token, char *phase, long long downloaded, long long total, char *errMsg) {
     strncpy(lastPhase, phase ? phase : "", sizeof(lastPhase) - 1);
     lastPhase[sizeof(lastPhase) - 1] = '\0';

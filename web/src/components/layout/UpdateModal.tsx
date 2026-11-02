@@ -3,6 +3,7 @@ import { onCleanup, onMount, Show, type Accessor } from "solid-js";
 import { Presence, type PresenceState } from "../motion/Presence";
 import { ArrowUpCircle, Download, ExternalLink, X } from "lucide-solid";
 import { Spinner } from "../icons";
+import UpdateProgressBar from "./UpdateProgressBar";
 import {
   closeDesktopUpdateModal,
   desktopUpdater,
@@ -103,12 +104,7 @@ function UpdateDialog(props: { state: Accessor<PresenceState> }) {
                   <span class="font-mono font-semibold text-[var(--accent-text)]">{percent()}%</span>
                 </Show>
               </div>
-              <progress
-                aria-label={desktopUpdateStatusLabel()}
-                max={100}
-                value={percent()}
-                class="block h-1.5 w-full overflow-hidden rounded-full accent-[var(--accent-primary)]"
-              />
+              <UpdateProgressBar percent={percent()} label={desktopUpdateStatusLabel()} />
               <div class="flex flex-wrap items-center justify-between gap-2 text-[11px] text-[var(--text-muted)]">
                 <span
                   class={
