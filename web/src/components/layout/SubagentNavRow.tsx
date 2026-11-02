@@ -83,14 +83,14 @@ export function SubagentNavRow(props: SubagentNavRowProps) {
     <div
       ref={rowRef}
       data-subagent-row={props.session.id}
-      class={`group/subrow relative flex items-center justify-between gap-1 rounded-md px-2 py-1 cursor-pointer overflow-hidden transition-colors duration-120 ${
+      class={`group/subrow relative flex items-center justify-between gap-1 rounded-md px-2 py-1 cursor-pointer min-w-0 overflow-hidden transition-colors duration-120 ${
         props.active
           ? "bg-[var(--bg-hover)] text-[var(--text-primary)] font-medium"
           : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]/60 hover:text-[var(--text-primary)]"
       }`}
       onClick={() => props.onSelect()}
     >
-      <div class="flex items-center gap-1.5 min-w-0 flex-1 mr-1">
+      <div class="flex items-center gap-1.5 min-w-0 flex-1 mr-1 overflow-hidden">
         <Show
           when={badge() !== "approval"}
           fallback={
@@ -120,7 +120,7 @@ export function SubagentNavRow(props: SubagentNavRowProps) {
         </Show>
 
         <span
-          class="truncate text-[12.5px] leading-snug flex-1"
+          class="truncate text-[12.5px] leading-snug min-w-0 flex-1"
           title={props.session.title || displayTitle()}
         >
           {displayTitle()}

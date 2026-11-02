@@ -1,6 +1,7 @@
 import type { MessageInfo, MessagePart } from "../../services/sse-types";
-import { hoxiAPI } from "../../services/api";
-import { hasOlderSessionHistory, sessionDirectory, workspace } from "../../store/workspace";
+import { fetchSessionExportTurns, workspace } from "../../store/workspace";
+import { t } from "../../i18n";
+import { showMessage } from "../settings/confirm-dialog";
 import { expandInlineThinkingParts } from "./context-activity-parts";
 import { normalizeReasoningText } from "./ThoughtBox";
 
@@ -130,21 +131,23 @@ function safeFilename(value: string): string {
 }
 
 export async function downloadSessionExport(sessionID: string, format: "markdown" | "json" = "markdown") {
-  let turns = workspace.messagesBySession[sessionID];
-  // Long conversations are paged; an export must contain every turn.
-  if (!turns || turns.length === 0 || hasOlderSessionHistory(sessionID)) {
-    const directory = workspace.sessions.find((item) => item.id === sessionID)?.directory
-      || sessionDirectory(sessionID);
-    const loaded = turns ?? [];
-    turns = await hoxiAPI.getMessages(sessionID, directory, "all").catch(() => loaded);
+  const title = workspace.sessions.find((item) => item.id === sessionID)?.title || sessionID;
+  try {
+    const turns = await fetchSessionExportTurns(sessionID);
+    const base = safeFilename(title);
+    if (format === "json") {
+      download(buildSessionJSON(sessionID, turns), `${base}.json`, "application/json");
+    } else {
+      download(buildSessionMarkdown(sessionID, turns), `${base}.md`, "text/markdown");
+    }
+    return true;
+  } catch (error) {
+    await showMessage(t("timeline.exportSessionFailed", {
+      session: title,
+      error: error instanceof Error ? error.message : String(error),
+    }));
+    return false;
   }
-  const session = workspace.sessions.find((item) => item.id === sessionID);
-  const base = safeFilename(session?.title || sessionID);
-  if (format === "json") {
-    download(buildSessionJSON(sessionID, turns), `${base}.json`, "application/json");
-    return;
-  }
-  download(buildSessionMarkdown(sessionID, turns), `${base}.md`, "text/markdown");
 }
 
 export function buildMessageLink(sessionID: string, messageID?: string): string {

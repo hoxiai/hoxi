@@ -27,6 +27,7 @@ import {
   openImagePreview,
   isUserTurnTaskActive as isUserTurnTaskActiveInStore,
   resolveTurnSkillStatus,
+  sessionDirectory,
   revertToHere,
   stopSessionTask,
   timelineFollowRequest,
@@ -64,7 +65,8 @@ import { createTranscriptControls } from "./transcript-controls";
 import { createReadingPositionTracker } from "./reading-position";
 import { createSessionScroll } from "./session-scroll";
 import { createTailHeightHold } from "./tail-hold";
-import { resolveActiveExecutionCycle, resolveTurnNavigationTarget } from "./context-activity-turns";
+import { resolveActiveExecutionCycle } from "./context-activity-turns";
+import { createMessageNavigation } from "./message-navigation";
 
 export default function MessageStream(props: { hidden?: boolean }) {
   let scroller: HTMLDivElement | undefined;
@@ -316,24 +318,17 @@ export default function MessageStream(props: { hidden?: boolean }) {
     }
   };
 
-  const scrollToTurn = (messageID: string, partID?: string) => {
-    sessionScroll.interrupt();
-    scroll.pause();
-    const targetID = resolveTurnNavigationTarget(turns(), messageID, partID);
-    setNavigationRevision((value) => value + 1);
-    turnWindow.ensureTurnVisible(targetID);
-    queueMicrotask(() => {
-      if (!scroller) return;
-      const partEl = partID
-        ? scroller.querySelector(`[data-part-id="${CSS.escape(partID)}"]`)
-        : null;
-      const el =
-        partEl ?? scroller.querySelector(`[data-turn-id="${CSS.escape(targetID)}"]`);
-      if (el instanceof HTMLElement) {
-        el.scrollIntoView({ behavior: "smooth", block: "center" });
-      }
-    });
-  };
+  const { scrollToTurn } = createMessageNavigation({
+    sessionID: () => workspace.activeSessionID,
+    directory: () => sessionDirectory(workspace.activeSessionID),
+    hidden: () => props.hidden,
+    turns,
+    scroller: () => scroller,
+    interrupt: sessionScroll.interrupt,
+    pause: scroll.pause,
+    ensureTurnVisible: turnWindow.ensureTurnVisible,
+    onNavigate: () => setNavigationRevision((value) => value + 1),
+  });
 
   onMount(() => {
     if (content) onCleanup(scroll.observe(content));
@@ -359,17 +354,9 @@ export default function MessageStream(props: { hidden?: boolean }) {
         void stopSessionTask(workspace.activeSessionID);
       }
     };
-    const onFocusMessage = (event: Event) => {
-      const messageID = (event as CustomEvent<{ messageID?: string }>).detail?.messageID;
-      if (!messageID) return;
-      scrollToTurn(messageID);
-      setTimeout(() => scrollToTurn(messageID), 450);
-    };
     window.addEventListener("keydown", onWindowKeyDown);
-    window.addEventListener("hoxi:focus-message", onFocusMessage);
     onCleanup(() => {
       window.removeEventListener("keydown", onWindowKeyDown);
-      window.removeEventListener("hoxi:focus-message", onFocusMessage);
     });
     // Scrollbar drags can be released outside the transcript.
     const endPointerScroll = () => scroll.setPointerScrolling(false);

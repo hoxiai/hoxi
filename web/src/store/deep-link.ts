@@ -50,6 +50,8 @@ const FOCUS_MESSAGE_DELAY_MS = 350;
 const [pending, setPending] = createSignal<PendingDeepLink | null>(null);
 let expiryTimer: ReturnType<typeof setTimeout> | undefined;
 let focusTimer: ReturnType<typeof setTimeout> | undefined;
+let focusGeneration = 0;
+let focusTarget: { sessionID: string; rootDir: string } | undefined;
 
 /** The link still waiting for its session; null once focused, dropped or expired. */
 export function pendingDeepLink(): SessionDeepLink | null {
@@ -62,12 +64,15 @@ function clearExpiryTimer() {
 }
 
 function clearFocusTimer() {
+  focusGeneration++;
+  focusTarget = undefined;
   if (focusTimer !== undefined) clearTimeout(focusTimer);
   focusTimer = undefined;
 }
 
 export function clearPendingDeepLink(): void {
   clearExpiryTimer();
+  clearFocusTimer();
   setPending(null);
 }
 
@@ -83,12 +88,19 @@ function projectRootForDirectory(directory?: string): string {
 
 function focusSessionLink(link: SessionDeepLink) {
   clearFocusTimer();
+  const generation = focusGeneration;
+  const rootDir = workspace.rootDir;
+  const directory = sessionDirectory(link.sessionID);
+  focusTarget = { sessionID: link.sessionID, rootDir };
+  const isCurrent = () => generation === focusGeneration && workspace.activeSessionID === link.sessionID &&
+    workspace.rootDir === rootDir && sessionDirectory(link.sessionID) === directory;
   void selectSession(link.sessionID).then(() => {
-    if (!link.messageID || typeof window === "undefined") return;
-    clearFocusTimer();
+    if (!link.messageID || typeof window === "undefined" || !isCurrent()) return;
     focusTimer = setTimeout(() => {
       focusTimer = undefined;
-      window.dispatchEvent(new CustomEvent("hoxi:focus-message", { detail: { messageID: link.messageID } }));
+      if (!isCurrent()) return;
+      focusTarget = undefined;
+      window.dispatchEvent(new CustomEvent("hoxi:focus-message", { detail: { sessionID: link.sessionID, messageID: link.messageID } }));
     }, FOCUS_MESSAGE_DELAY_MS);
   });
 }
@@ -380,6 +392,11 @@ async function consumeAndOpenDesktopIntent(): Promise<void> {
  */
 export function startDeepLinkNavigation(): () => void {
   const disposeRoot = createRoot((dispose) => {
+    createEffect(() => {
+      const sessionID = workspace.activeSessionID;
+      const rootDir = workspace.rootDir;
+      if (focusTarget && (focusTarget.sessionID !== sessionID || focusTarget.rootDir !== rootDir)) clearFocusTimer();
+    });
     // Track only the inputs the link depends on; navigation side effects
     // (selectSession / switchWorkspace) run untracked.
     createEffect(() => {

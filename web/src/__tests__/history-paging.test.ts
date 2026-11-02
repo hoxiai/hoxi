@@ -4,6 +4,7 @@ import { hoxiAPI } from "../services/api";
 import type { MessageInfo, MessagePart } from "../services/sse-types";
 import {
   ensureFullSessionHistory,
+  fetchSessionExportTurns,
   hasOlderSessionHistory,
   loadOlderSessionHistory,
   loadSessionMessagesOnly,
@@ -61,6 +62,35 @@ async function withPagingFixture(run: (sid: string) => Promise<void>) {
 }
 
 describe("Session history paging", () => {
+  it("exports a fresh full snapshot and rejects failures instead of returning a cached tail", async () => {
+    await withPagingFixture(async (sid) => {
+      const all = transcript(sid, 230);
+      setWorkspace("messagesBySession", sid, all.slice(-20));
+      const calls: string[] = [];
+      hoxiAPI.getMessages = pagedServer(all, calls);
+      assertDeepEqual((await fetchSessionExportTurns(sid)).map((turn) => turn.info.id), all.map((turn) => turn.info.id));
+      assertDeepEqual(calls, ["all:"], "cache seeds without an older-history marker must still fetch everything");
+      assertEqual(ids(sid).length, 20, "export does not replace the resident paged transcript");
+      hoxiAPI.getMessages = async () => { throw new Error("History fetch failed"); };
+      let failure: unknown;
+      try { await fetchSessionExportTurns(sid); } catch (error) { failure = error; }
+      assertTrue(failure instanceof Error && failure.message === "History fetch failed", "failure must reach the export UI");
+    });
+  });
+
+  it("rejects an export snapshot from the session's previous directory", async () => {
+    await withPagingFixture(async (sid) => {
+      let finish!: (turns: Remote[]) => void;
+      hoxiAPI.getMessages = () => new Promise((resolve) => { finish = resolve; });
+      const pending = fetchSessionExportTurns(sid);
+      setWorkspace("sessions", (session) => session.id === sid, "directory", "/moved");
+      finish(transcript(sid, 10));
+      let rejected = false;
+      try { await pending; } catch { rejected = true; }
+      assertTrue(rejected, "a late response from the previous directory must not be exported");
+    });
+  });
+
   it("keeps already loaded older turns when a newest-page snapshot is merged", () => {
     const all = transcript("ses_merge", 8);
     const list = structuredClone(all.slice(0, 6)) as MessageTurn[];

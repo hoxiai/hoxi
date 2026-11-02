@@ -1,5 +1,5 @@
 // web/src/components/timeline/Composer.tsx
-import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js";
+import { createComputed, createEffect, createMemo, createSignal, on, onCleanup, Show } from "solid-js";
 import { FolderOpen } from "lucide-solid";
 import {
   appSettings,
@@ -68,6 +68,8 @@ export default function Composer() {
   const [enhancing, setEnhancing] = createSignal(false);
   const [enhanceError, setEnhanceError] = createSignal<string | null>(null);
   const [enhanceState, setEnhanceState] = createSignal<{ original: string; enhanced: string } | null>(null);
+  let enhanceGeneration = 0;
+  onCleanup(() => { enhanceGeneration++; });
   const [codeSearchOpen, setCodeSearchOpen] = createSignal(false);
   const [convoyOpen, setConvoyOpen] = createSignal(false);
   const [choosingFolder, setChoosingFolder] = createSignal(false);
@@ -97,11 +99,12 @@ export default function Composer() {
   let composing = false;
 
   const sessionID = () => workspace.activeSessionID;
-  createEffect(() => {
-    sessionID();
+  createComputed(on([sessionID, () => workspace.rootDir, () => workspace.newThreadRequest, text], () => {
+    enhanceGeneration++;
+    setEnhancing(false);
     setEnhanceState(null);
     setEnhanceError(null);
-  });
+  }));
   const busy = createMemo(() => isSessionBusy(sessionID()));
   const selectedSkill = createMemo(() => getComposerSkill(sessionID()));
   const skillNotice = createMemo(() => getComposerSkillNotice(sessionID()));
@@ -413,6 +416,7 @@ export default function Composer() {
     }
     setEnhancing(true);
     setEnhanceError(null);
+    const generation = ++enhanceGeneration;
     try {
       const result = await hoxiAPI.enhancePrompt({
         providerID: model.providerID,
@@ -420,6 +424,7 @@ export default function Composer() {
         prompt: original,
         locale: locale(),
       });
+      if (generation !== enhanceGeneration) return;
       const enhanced = result?.prompt?.trim();
       if (result?.ok && enhanced) {
         setEnhanceState({ original, enhanced });
@@ -427,9 +432,9 @@ export default function Composer() {
         setEnhanceError(result?.error || t("timeline.enhanceFailed"));
       }
     } catch (err) {
-      setEnhanceError(err instanceof Error ? err.message : t("timeline.enhanceFailed"));
+      if (generation === enhanceGeneration) setEnhanceError(err instanceof Error ? err.message : t("timeline.enhanceFailed"));
     } finally {
-      setEnhancing(false);
+      if (generation === enhanceGeneration) setEnhancing(false);
     }
   };
 
@@ -644,10 +649,6 @@ export default function Composer() {
               promptHistory.resetHistoryCursor();
               setCursorOffset(ev.currentTarget.selectionStart ?? ev.currentTarget.value.length);
               setText(ev.currentTarget.value);
-              if (enhanceState()) {
-                setEnhanceState(null);
-                setEnhanceError(null);
-              }
               adjustHeight();
             }}
             onClick={(ev) => {

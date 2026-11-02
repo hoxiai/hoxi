@@ -47,6 +47,8 @@ var (
 		"list_plugin_accounts":          true,
 		"search_marketplace":            true,
 		"command_status":                true,
+		"wait":                          true,
+		"wait_5_seconds":                true,
 	}
 	hookPathScopedReadTools = map[string]bool{
 		"read_file":           true,
@@ -111,6 +113,36 @@ func hookToolAction(name string) string {
 		return hookActionPassthrough
 	}
 	return hookActionUnknown
+}
+
+func hookToolActionWithArgs(name string, args map[string]interface{}) string {
+	if act := hookToolAction(name); act != hookActionUnknown {
+		return act
+	}
+	if isReadOnlyTaskControlCall(name, args) {
+		return hookActionRead
+	}
+	return hookActionUnknown
+}
+
+func isReadOnlyTaskControlCall(name string, args map[string]interface{}) bool {
+	if len(args) == 0 {
+		return false
+	}
+	raw := strings.TrimSpace(firstString(args["Action"], args["action"]))
+	if len(raw) >= 2 && raw[0] == '"' && raw[len(raw)-1] == '"' {
+		if unquoted, err := strconv.Unquote(raw); err == nil {
+			raw = strings.TrimSpace(unquoted)
+		}
+	}
+	act := strings.ToLower(raw)
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "manage_task":
+		return act == "status" || act == "list"
+	case "manage_subagents":
+		return act == "list"
+	}
+	return false
 }
 
 // isReadToolAllowedInWorktree reports whether a read-class tool may be
@@ -270,7 +302,7 @@ func (s *Service) inspectHookToolRiskIn(sessionID, tool, cwd string, args map[st
 		externalDir = true
 		destructive = true
 	}
-	isReadTool := (hookToolAction(lowerTool) == hookActionRead || readToolNames[lowerTool]) && !hookEditTools[lowerTool] && !editToolNames[lowerTool]
+	isReadTool := (hookToolActionWithArgs(lowerTool, args) == hookActionRead || readToolNames[lowerTool]) && !hookEditTools[lowerTool] && !editToolNames[lowerTool]
 	isRiskyPath := func(p string) bool {
 		if p == "" {
 			return false

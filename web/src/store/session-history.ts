@@ -6,9 +6,10 @@
 // and refresh, and every full-list memo re-scanned thousands of turns.
 import { createStore, produce } from "solid-js/store";
 import { hoxiAPI } from "../services/api";
+import { t } from "../i18n";
 import type { MessageInfo, MessagePart } from "../services/sse-types";
 import { mergeServerTurnsInto, normalizeMessagePartInPlace } from "./message-lookup";
-import { sessionDirectory } from "./session-query";
+import { isSessionDeleted, sessionDirectory } from "./session-query";
 import { setWorkspace, workspace } from "./workspace-state";
 
 /** Newest turns fetched when a conversation opens or refreshes. */
@@ -20,6 +21,17 @@ type RemoteTurn = { info: MessageInfo; parts: MessagePart[] };
 const [olderHistory, setOlderHistory] = createStore<Record<string, boolean>>({});
 const olderReads = new Map<string, Promise<number>>();
 const fullReads = new Map<string, Promise<void>>();
+
+/** Exports read a fresh full snapshot, never a paged or cache-seeded transcript. */
+export async function fetchSessionExportTurns(sessionID: string): Promise<RemoteTurn[]> {
+  const directory = sessionDirectory(sessionID);
+  if (isSessionDeleted(sessionID)) throw new Error(t("timeline.sessionUnavailable"));
+  const turns = await hoxiAPI.getMessages(sessionID, directory, "all");
+  if (isSessionDeleted(sessionID) || sessionDirectory(sessionID) !== directory) {
+    throw new Error(t("timeline.sessionUnavailable"));
+  }
+  return turns;
+}
 
 export function hasOlderSessionHistory(sessionID: string | null | undefined): boolean {
   return Boolean(sessionID && olderHistory[sessionID]);

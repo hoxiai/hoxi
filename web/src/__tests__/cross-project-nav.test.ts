@@ -235,31 +235,34 @@ describe("Cross-project sidebar views", () => {
         assertEqual(stripSubagentTitleSuffix(subs[0].title), "Explore repo");
         assertEqual(stripSubagentTitleSuffix(subs[1].title), "task-b");
 
-        // All idle, no approvals, not active -> collapsed by default
+        // Subagent drawer is expanded by default when a session has subtasks
         assertEqual(shouldAutoExpandSubagents(subs, new Set(), ""), false);
+        assertEqual(isSubagentDrawerExpanded("ses_root", false), true);
         assertEqual(countRunningSubagents(subs), 0);
 
-        // Selecting a child session auto-expands the parent drawer
+        // Selecting a child session triggers autoExpand
         setWorkspace("activeSessionID", "ses_child_2");
         assertEqual(shouldAutoExpandSubagents(subs, new Set(), ""), true);
         setWorkspace("activeSessionID", null);
 
-        // Pending approval on a child session auto-expands
+        // Pending approval on a child session triggers autoExpand
         assertEqual(shouldAutoExpandSubagents(subs, new Set(["ses_grandchild"]), ""), true);
 
-        // Search filter matching a child session auto-expands
+        // Search filter matching a child session triggers autoExpand
         assertEqual(shouldAutoExpandSubagents(subs, new Set(), "schema"), true);
 
-        // Busy child session auto-expands and counts as running
+        // Busy child session triggers autoExpand and counts as running
         setWorkspace("statusBySession", "ses_child_1", { type: "busy" });
         assertEqual(shouldAutoExpandSubagents(subs, new Set(), ""), true);
         assertEqual(countRunningSubagents(subs), 1);
 
-        // Manual drawer toggle persists by session ID and resets when autoExpand changes
-        setSubagentDrawerExpanded("ses_root", true, false);
-        assertEqual(isSubagentDrawerExpanded("ses_root", false), true);
-        // When autoExpand transitions false -> true, the stale manual override yields to autoExpand
+        // Manual collapse persists by session ID, and re-opens when autoExpand transitions false -> true
+        setSubagentDrawerExpanded("ses_root", false, false);
+        assertEqual(isSubagentDrawerExpanded("ses_root", false), false);
+        // When autoExpand transitions false -> true, the manual collapse yields to autoExpand and stays open
         assertEqual(isSubagentDrawerExpanded("ses_root", true), true);
+        assertEqual(isSubagentDrawerExpanded("ses_root", false), true);
+        // Manual collapse while autoExpand is true stays collapsed even after autoExpand returns to false
         setSubagentDrawerExpanded("ses_root", false, true);
         assertEqual(isSubagentDrawerExpanded("ses_root", true), false);
         assertEqual(isSubagentDrawerExpanded("ses_root", false), false);

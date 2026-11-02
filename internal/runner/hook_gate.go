@@ -221,7 +221,7 @@ func (s *Service) decideHookCall(r *http.Request, cred hookCredential, p hookPay
 	}
 	args, _ := json.Marshal(p.ToolCall.Args)
 	callID := fmt.Sprintf("call_%s_%d", cred.messageID, p.StepIdx)
-	action := hookToolAction(p.ToolCall.Name)
+	action := hookToolActionWithArgs(p.ToolCall.Name, p.ToolCall.Args)
 	if _, _, destructive, _ := s.inspectHookToolRisk(cred.sessionID, p.ToolCall.Name, p.ToolCall.Args); !destructive &&
 		action != hookActionCommand &&
 		s.gate.hasToolAlways(cred.sessionID, hookToolGrantKey(p.ToolCall.Name, p.ToolCall.Args)) {

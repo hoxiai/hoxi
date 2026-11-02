@@ -61,5 +61,8 @@
   { "name": "write to hoxi skill script requires approval", "destructive": true, "request": { "permission": "write", "patterns": ["/repo/.hoxi/skills/foo/run.sh"] } },
   { "name": "write to hoxi attachment stays routine", "destructive": false, "request": { "permission": "write", "patterns": ["/repo/.hoxi/attachments/paste.png"] } },
   { "name": "skill script piped to tee tmp log is not a skill write", "destructive": false, "request": { "permission": "bash", "patterns": ["tee /tmp/hoxi-site-deploy-1.0.32.log", "\"$HOME/.agents/skills/hoxi-site/scripts/deploy-hoxi-site.sh\" 1.0.32 --allow-dirty 2>&1"], "metadata": { "command": "\"$HOME/.agents/skills/hoxi-site/scripts/deploy-hoxi-site.sh\" 1.0.32 --allow-dirty 2>&1 | tee /tmp/hoxi-site-deploy-1.0.32.log" } } },
-  {"name": "computer input always requires desktop approval", "destructive": true, "request": {"permission": "hoxi_computer", "patterns": ["click Fixture"], "metadata": {"tool": "hoxi_computer"}}}
+  {"name": "computer input always requires desktop approval", "destructive": true, "request": {"permission": "hoxi_computer", "patterns": ["click Fixture"], "metadata": {"tool": "hoxi_computer"}}},
+  {"name": "manage_task status is routine read", "destructive": false, "request": {"permission": "tool", "patterns": ["manage_task"], "metadata": {"tool": "manage_task", "args": "{\"Action\":\"status\",\"TaskId\":\"conv/task-1\"}"}}},
+  {"name": "manage_task double-quoted status is routine read", "destructive": false, "request": {"permission": "tool", "patterns": ["manage_task"], "metadata": {"tool": "manage_task", "args": "{\"Action\":\"\\\"status\\\"\",\"TaskId\":\"\\\"conv/task-1\\\"\"}"}}},
+  {"name": "manage_subagents list is routine read", "destructive": false, "request": {"permission": "tool", "patterns": ["manage_subagents"], "metadata": {"tool": "manage_subagents", "args": "{\"Action\":\"list\"}"}}}
 ]

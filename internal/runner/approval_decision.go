@@ -38,7 +38,7 @@ var (
 		"read_browser_page", "browser_get_dom", "browser_get_network_request",
 		"browser_list_network_requests", "list_browser_pages", "capture_browser_console_logs",
 		"capture_browser_screenshot", "list_permissions", "list_plugin_accounts",
-		"search_marketplace", "command_status")
+		"search_marketplace", "command_status", "wait", "wait_5_seconds")
 
 	editToolNames = setOf("edit", "write", "patch", "multiedit", "apply_patch", "notebookedit",
 		"notebook_edit", "write_to_file", "write_file", "create_file", "edit_file", "replace",
@@ -229,6 +229,9 @@ func permissionCategory(item map[string]interface{}) string {
 		}
 		return permissionCategoryOther
 	}
+	if isReadOnlyTaskStatusItem(item) {
+		return permissionCategoryRead
+	}
 	if c := classifyToolName(permissionName(item)); c != "" {
 		return c
 	}
@@ -240,6 +243,24 @@ func permissionCategory(item map[string]interface{}) string {
 		}
 	}
 	return permissionCategoryOther
+}
+
+func isReadOnlyTaskStatusItem(item map[string]interface{}) bool {
+	meta := itemMetadata(item)
+	toolObj, _ := item["tool"].(map[string]interface{})
+	var toolName string
+	for _, cand := range []string{firstString(meta["tool"]), firstString(toolObj["name"]), permissionName(item), firstPattern(item)} {
+		if lower := strings.ToLower(strings.TrimSpace(cand)); lower == "manage_task" || lower == "manage_subagents" {
+			toolName = lower
+			break
+		}
+	}
+	if toolName == "" {
+		return false
+	}
+	args := parseToolArgs(meta["args"])
+	act := firstString(meta["action"], args["Action"], args["action"])
+	return isReadOnlyTaskControlCall(toolName, map[string]interface{}{"Action": act})
 }
 
 func hoxiToolsAction(item map[string]interface{}) (bool, string) {
@@ -469,7 +490,7 @@ func isDestructivePermissionRequest(item map[string]interface{}) bool {
 		}
 		candidates = append(candidates, metadataFilePaths(meta)...)
 		candidates = append(candidates, toolArgPaths(meta["args"])...)
-		readOnlyTool := perm == "tool" && !editToolNames[tool] && readToolNames[tool]
+		readOnlyTool := perm == "tool" && !editToolNames[tool] && (readToolNames[tool] || isReadOnlyTaskStatusItem(item))
 		for _, p := range candidates {
 			risky := isProtectedRelPath(p) || isSensitiveExternalPath(p)
 			if readOnlyTool {

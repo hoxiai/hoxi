@@ -190,10 +190,10 @@ export function SessionNavItem(props: SessionNavItemProps) {
   };
 
   return (
-    <div class="flex flex-col">
+    <div class="flex flex-col min-w-0">
       <div
         ref={rowRef}
-        class={`group/row relative flex items-center justify-between gap-1 rounded-lg px-2.5 py-1.5 cursor-pointer overflow-hidden transition-colors duration-120 ${
+        class={`group/row relative flex items-center justify-between gap-1 rounded-lg px-2.5 py-1.5 cursor-pointer min-w-0 overflow-hidden transition-colors duration-120 ${
           confirmingDelete()
             ? "bg-[var(--danger-surface)] text-[var(--text-primary)] ring-1 ring-[var(--danger-border)]"
             : isEffectiveActive()
@@ -481,9 +481,10 @@ export function SessionNavItem(props: SessionNavItemProps) {
         <div
           class="hoxi-drawer-grid"
           data-open={expanded() ? "true" : "false"}
+          aria-hidden={!expanded()}
         >
-          <div class="hoxi-drawer-inner">
-            <div class="ml-3.5 pl-2 my-0.5 border-l border-[var(--border-subtle)]/60 flex flex-col gap-0.5">
+          <div class="hoxi-drawer-inner min-h-0 min-w-0 overflow-hidden">
+            <div class="ml-3.5 pl-2 my-0.5 border-l border-[var(--border-subtle)]/60 flex flex-col gap-0.5 min-w-0 overflow-hidden">
               <For each={subagents()}>
                 {(sub) => (
                   <SubagentNavRow

@@ -316,10 +316,18 @@ dialog[open]::backdrop {
  * ============================================================================ */
 .hoxi-drawer-grid {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
   transition:
     grid-template-rows var(--motion-move) var(--ease-spring),
     opacity var(--motion-exit) var(--ease-exit),
     margin-top var(--motion-move) var(--ease-spring);
+}
+
+.hoxi-drawer-inner {
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .hoxi-drawer-grid[data-open="true"] {

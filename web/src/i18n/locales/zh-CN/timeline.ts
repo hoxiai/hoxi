@@ -2,6 +2,7 @@
 import type { TimelineI18n } from "../../types";
 
 export const timeline: TimelineI18n = {
+  exportSessionFailed: "导出 {session} 失败：{error}\n未保存任何文件，请重试",
   loadEarlierSteps: "加载之前的 {count} 个步骤",
   scrollToBottom: "回到底部",
   welcomeTitle: "开始新任务",

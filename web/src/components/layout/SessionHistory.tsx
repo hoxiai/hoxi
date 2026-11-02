@@ -114,7 +114,7 @@ export function SessionHistoryList(props: {
         return previous && dayLabel(sessionActivityTime(previous)) === current ? "" : current;
       });
       return (
-        <div class="space-y-0.5">
+        <div class="space-y-0.5 min-w-0">
           <Show when={label()}>
             <div class="px-2 py-0.5 text-[11px] font-medium text-[var(--text-faint)]">{label()}</div>
           </Show>

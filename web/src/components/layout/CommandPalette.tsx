@@ -229,7 +229,7 @@ export default function CommandPalette(props: CommandPaletteProps) {
           group: "actions",
           label: t("commandPalette.actionExportSession"),
           icon: Download,
-          run: () => downloadSessionExport(sessionID),
+          run: async () => { await downloadSessionExport(sessionID); },
         },
         {
           id: "copy-session-link",

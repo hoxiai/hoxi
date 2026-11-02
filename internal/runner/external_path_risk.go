@@ -18,7 +18,7 @@ func isReadOnlyToolRequest(item map[string]interface{}) bool {
 	perm := permissionName(item)
 	meta := itemMetadata(item)
 	tool := strings.ToLower(strings.TrimSpace(firstString(meta["tool"], firstPattern(item))))
-	return perm == "tool" && !editToolNames[tool] && readToolNames[tool]
+	return perm == "tool" && !editToolNames[tool] && (readToolNames[tool] || isReadOnlyTaskStatusItem(item))
 }
 
 func externalDirectoryTargetsAreRoutine(item map[string]interface{}) bool {
@@ -57,7 +57,7 @@ func isOwnSessionRecordRead(item map[string]interface{}, rawPath string) bool {
 	if perm == "external_directory" {
 		return true
 	}
-	return perm == "read" || readPermissions[perm] || readToolNames[perm] || readToolNames[tool] || hookReadTools[tool]
+	return perm == "read" || readPermissions[perm] || readToolNames[perm] || readToolNames[tool] || hookReadTools[tool] || isReadOnlyTaskStatusItem(item)
 }
 
 func requestSessionIDs(item map[string]interface{}) []string {

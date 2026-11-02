@@ -620,11 +620,29 @@ const OWN_SESSION_READ_TOOLS = new Set([
   "list_resources", "read_browser_page", "browser_get_dom", "browser_get_network_request",
   "browser_list_network_requests", "list_browser_pages", "capture_browser_console_logs",
   "capture_browser_screenshot", "list_permissions", "list_plugin_accounts", "search_marketplace",
-  "command_status",
+  "command_status", "wait", "wait_5_seconds",
 ]);
 const OWN_SESSION_EDIT_TOOLS = new Set([
   ...EDIT_PERMISSIONS, "insert_edit_into_file", "str_replace_editor", "str_replace_based_edit_tool",
 ]);
+
+function isReadOnlyTaskStatusRequest(input) {
+  const meta = input?.metadata || {};
+  const tool = [meta.tool, input?.tool?.name, input?.permission, input?.type, input?.patterns?.[0]]
+    .map((v) => String(v || "").trim().toLowerCase())
+    .find((v) => v === "manage_task" || v === "manage_subagents");
+  if (!tool) return false;
+  let argsObj = meta.args && typeof meta.args === "object" ? meta.args : null;
+  if (!argsObj && typeof meta.args === "string" && meta.args.trim().startsWith("{")) {
+    try { argsObj = JSON.parse(meta.args); } catch {}
+  }
+  let raw = String(meta.action ?? argsObj?.Action ?? argsObj?.action ?? "").trim();
+  if (raw.length >= 2 && raw.startsWith('"') && raw.endsWith('"')) {
+    try { raw = String(JSON.parse(raw)).trim(); } catch {}
+  }
+  const act = raw.toLowerCase();
+  return tool === "manage_task" ? act === "status" || act === "list" : act === "list";
+}
 
 export function isOwnSessionRecordRead(input, rawPath) {
   if (!pathUnderOwnSession(rawPath, requestSessionIDs(input))) return false;
@@ -632,7 +650,7 @@ export function isOwnSessionRecordRead(input, rawPath) {
   const tool = String(input?.metadata?.tool || (Array.isArray(input?.patterns) ? input.patterns[0] : "") || "").trim().toLowerCase();
   if (OWN_SESSION_EDIT_TOOLS.has(perm) || OWN_SESSION_EDIT_TOOLS.has(tool)) return false;
   if (perm === "external_directory") return true;
-  return perm === "read" || READ_PERMISSIONS.has(perm) || OWN_SESSION_READ_TOOLS.has(perm) || OWN_SESSION_READ_TOOLS.has(tool);
+  return perm === "read" || READ_PERMISSIONS.has(perm) || OWN_SESSION_READ_TOOLS.has(perm) || OWN_SESSION_READ_TOOLS.has(tool) || isReadOnlyTaskStatusRequest(input);
 }
 
 function requestSessionIDs(input) {
@@ -716,7 +734,7 @@ export function isDestructivePermissionRequest(input) {
   }
   if (input?.metadata?.destructive === true) return true;
   const toolName = String(input?.metadata?.tool || input?.patterns?.[0] || "").trim().toLowerCase();
-  const readOnlyTool = permission === "tool" && !OWN_SESSION_EDIT_TOOLS.has(toolName) && OWN_SESSION_READ_TOOLS.has(toolName);
+  const readOnlyTool = permission === "tool" && !OWN_SESSION_EDIT_TOOLS.has(toolName) && (OWN_SESSION_READ_TOOLS.has(toolName) || isReadOnlyTaskStatusRequest(input));
   if (input?.metadata?.externalDirectory === true) {
     const targets = externalDirectoryTargets(input);
     const isSens = readOnlyTool ? isSensitiveExternalReadPath : isSensitiveExternalPath;
@@ -726,35 +744,22 @@ export function isDestructivePermissionRequest(input) {
     // Search patterns are not paths; only a file read can expose a secret.
     if (permission !== "read") return false;
     const meta = input?.metadata || {};
-    return [
-      ...(Array.isArray(input?.patterns) ? input.patterns : []),
-      input?.pattern,
-      meta.filepath,
-      meta.filePath,
-      meta.path,
-    ].some((p) => isSecretPath(p) && !isOwnSessionRecordRead(input, p));
+    const readPaths = [...(Array.isArray(input?.patterns) ? input.patterns : []), input?.pattern, meta.filepath, meta.filePath, meta.path];
+    return readPaths.some((p) => isSecretPath(p) && !isOwnSessionRecordRead(input, p));
   }
   if (EDIT_PERMISSIONS.has(permission) || permission === "tool") {
     if (toolName === "unsandboxed") return true;
+    const meta = input?.metadata || {};
     const candidates = [
       ...(permission === "tool" ? [] : Array.isArray(input?.patterns) ? input.patterns : []),
       ...(permission === "tool" ? [] : [input?.pattern]),
-      input?.metadata?.filepath,
-      input?.metadata?.filePath,
-      input?.metadata?.path,
-      input?.metadata?.target,
-      ...(Array.isArray(input?.metadata?.files)
-        ? input.metadata.files.map((f) => f?.filePath || f?.filepath || f?.file || f?.path || "")
-        : []),
-      ...extractToolArgPaths(input?.metadata?.args),
+      meta.filepath, meta.filePath, meta.path, meta.target,
+      ...(Array.isArray(meta.files) ? meta.files.map((f) => f?.filePath || f?.filepath || f?.file || f?.path || "") : []),
+      ...extractToolArgPaths(meta.args),
     ];
     if (sensitiveOutsideOwnSession(input, candidates, readOnlyTool)) return true;
     if (EDIT_PERMISSIONS.has(permission)) return false;
-    const hasCommandMeta =
-      typeof input?.metadata?.command === "string" ||
-      typeof input?.metadata?.cmd === "string" ||
-      Array.isArray(input?.metadata?.commands);
-    if (!hasCommandMeta) return false;
+    if (typeof meta.command !== "string" && typeof meta.cmd !== "string" && !Array.isArray(meta.commands)) return false;
   }
   const blob = [permission, ...commandCandidates(input).flatMap(destructiveScanForms)].join("\n");
   const deobfuscated = blob.replace(/[\\'"\[\]]/g, "");
@@ -777,6 +782,7 @@ export function decidePermission(input, options) {
   if (isDestructivePermissionRequest(input)) return "ask";
   const hoxiTools = hoxiToolsAction(input);
   if (hoxiTools.isHoxiTools && (hoxiTools.action === "discover" || hoxiTools.action === "inspect")) return "allow";
+  if (isReadOnlyTaskStatusRequest(input)) return "allow";
   const permission = String(input?.permission || input?.type || "").toLowerCase();
   if (READ_PERMISSIONS.has(permission) || permission === "external_directory") return "allow";
   return isSafeCommandPermissionRequest(input, options) ? "allow" : "ask";

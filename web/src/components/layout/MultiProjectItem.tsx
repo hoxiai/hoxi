@@ -338,8 +338,8 @@ export default function MultiProjectTreeItem(props: {
           data-open={props.expanded ? "true" : "false"}
           aria-hidden={!props.expanded}
         >
-          <div class="min-h-0 overflow-hidden">
-            <div class="ml-3.5 pl-2 border-l border-[var(--border-subtle)]/60 my-1 space-y-1">
+          <div class="min-h-0 min-w-0 overflow-hidden">
+            <div class="ml-3.5 pl-2 border-l border-[var(--border-subtle)]/60 my-1 space-y-1 min-w-0">
               <Show when={props.isLoadingSessions}>
                 <div class="flex items-center gap-1.5 px-2 py-1 text-[12px] text-[var(--text-faint)]">
                   <Spinner class="w-3 h-3" />

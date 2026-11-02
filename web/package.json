@@ -9,6 +9,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "node scripts/run-script.js scripts/run-tests.ts",
+    "test:commit-transition": "node scripts/run-browser-test.mjs src/__tests__/commit-transition.browser.tsx",
+    "test:session-page": "node scripts/run-browser-test.mjs src/__tests__/session-page.browser.tsx",
     "check:i18n": "node scripts/run-script.js scripts/check-i18n.ts",
     "check:lines": "node scripts/run-script.js scripts/check-lines.ts",
     "check:cycles": "node scripts/run-script.js scripts/check-cycles.ts",

@@ -6,7 +6,11 @@ import { t } from "../../i18n";
 
 let closeActive: ((value: boolean) => void) | null = null;
 
-export function confirmAction(message: string): Promise<boolean> {
+export function showMessage(message: string): Promise<void> {
+  return confirmAction(message, { dismissOnly: true }).then(() => {});
+}
+
+export function confirmAction(message: string, options: { dismissOnly?: boolean } = {}): Promise<boolean> {
   return new Promise((resolve) => {
     closeActive?.(false);
 
@@ -36,11 +40,13 @@ export function confirmAction(message: string): Promise<boolean> {
     confirm.type = "button";
     confirm.className =
       "hoxi-press rounded-xl bg-[var(--accent-primary)] px-4 py-2 text-[13px] font-semibold text-[var(--accent-foreground)] hover:opacity-90 cursor-pointer";
-    confirm.textContent = t("common.confirm");
+    confirm.textContent = t(options.dismissOnly ? "common.close" : "common.confirm");
 
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") close(false);
-      else if (event.key === "Enter") close(true);
+      if (event.key !== "Escape" && event.key !== "Enter") return;
+      event.preventDefault();
+      event.stopPropagation();
+      close(event.key === "Enter");
     };
 
     function close(value: boolean) {
@@ -56,7 +62,8 @@ export function confirmAction(message: string): Promise<boolean> {
       if (event.target === overlay) close(false);
     });
 
-    actions.append(cancel, confirm);
+    if (!options.dismissOnly) actions.append(cancel);
+    actions.append(confirm);
     card.append(text, actions);
     overlay.append(card);
     document.body.append(overlay);

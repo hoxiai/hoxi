@@ -35,6 +35,12 @@ describe("permission command chains", () => {
     assertEqual(decidePermission({ permission: "read", patterns: ["/repo/.env"] }), "ask");
     assertEqual(decidePermission({ permission: "grep", patterns: ["sudo rm -rf"] }), "allow");
     assertEqual(isDestructivePermissionRequest({ permission: "grep", patterns: ["sudo rm -rf"] }), false);
+    assertEqual(decidePermission({ permission: "manage_task", patterns: ["status"], metadata: { action: '"status"' } }), "allow");
+    assertEqual(decidePermission({ permission: "manage_task", patterns: ["list"], metadata: { action: "list" } }), "allow");
+    assertEqual(decidePermission({ permission: "manage_subagents", patterns: ["list"], metadata: { action: '"list"' } }), "allow");
+    assertEqual(decidePermission({ permission: "manage_task", patterns: ["kill"], metadata: { action: '"kill"' } }), "ask");
+    assertEqual(decidePermission({ permission: "manage_task", patterns: ["send_input"], metadata: { action: "send_input" } }), "ask");
+    assertEqual(decidePermission({ permission: "manage_subagents", patterns: ["kill"], metadata: { action: "kill" } }), "ask");
   });
 
   it("asks when a safe prefix is chained to an unrecognized or destructive command", () => {

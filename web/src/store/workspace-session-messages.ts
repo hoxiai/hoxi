@@ -573,17 +573,21 @@ export async function dispatchSessionPrompt(
       }
     }, 900);
   } catch (err) {
-    setWorkspace(
-      produce((state) => {
-        const list = state.messagesBySession[id!];
-        if (!list) return;
-        const optIdx = list.findIndex((m) => m.info.id === optimisticMsgID);
-        if (optIdx >= 0) list.splice(optIdx, 1);
-      })
-    );
-    if (!wasBusyBeforeSubmit) {
-      setWorkspace("statusBySession", id, { type: "idle" });
-    }
+    // Restore the transcript and status together. A transient busy state with
+    // no new user turn hides/remounts the previous footer and loses its error UI.
+    batch(() => {
+      setWorkspace(
+        produce((state) => {
+          const list = state.messagesBySession[id!];
+          if (!list) return;
+          const optIdx = list.findIndex((m) => m.info.id === optimisticMsgID);
+          if (optIdx >= 0) list.splice(optIdx, 1);
+        })
+      );
+      if (!wasBusyBeforeSubmit) {
+        setWorkspace("statusBySession", id, { type: "idle" });
+      }
+    });
     throw err;
   }
 

@@ -96,10 +96,6 @@ const COMPONENT_SERVICE_READONLY_ALLOWLIST: Record<
     allowed: ["hoxiAPI.readClipboardImages"],
     reason: "Read-only native clipboard image reader for Cmd+V paste in the composer",
   },
-  "web/src/components/timeline/session-export.ts": {
-    allowed: ["hoxiAPI.getMessages"],
-    reason: "Read-only full session message history fetch when exporting a transcript to Markdown",
-  },
 };
 
 function extractRuntimeServiceImports(content: string): {

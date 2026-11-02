@@ -329,8 +329,20 @@ export function isSubagentDrawerExpanded(
   autoExpand: boolean,
 ): boolean {
   const entry = subagentDrawerOverrides()[sessionID];
-  if (!entry || entry.autoSnapshot !== autoExpand) return autoExpand;
-  return entry.manual;
+  if (!entry) return true;
+  if (!entry.manual) {
+    if (!entry.autoSnapshot && autoExpand) {
+      entry.manual = true;
+      entry.autoSnapshot = true;
+      return true;
+    }
+    if (entry.autoSnapshot && !autoExpand) {
+      entry.autoSnapshot = false;
+    }
+    return false;
+  }
+  entry.autoSnapshot = autoExpand;
+  return true;
 }
 
 export function setSubagentDrawerExpanded(

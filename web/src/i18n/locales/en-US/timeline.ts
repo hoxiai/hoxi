@@ -1,6 +1,7 @@
 // web/src/i18n/locales/en-US/timeline.ts
 
 export const timeline = {
+  exportSessionFailed: "Could not export {session}: {error}\nNo file was saved. Please try again",
   loadEarlierSteps: "Load {count} earlier steps",
   scrollToBottom: "Scroll to bottom",
   welcomeTitle: "Start a New Task",

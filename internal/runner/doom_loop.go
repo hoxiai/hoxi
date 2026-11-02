@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -30,6 +31,36 @@ var doomLoopPollingTools = map[string]bool{
 	"command_status": true,
 	"agent_status":   true,
 	"agent_wait":     true,
+	"wait":           true,
+	"wait_5_seconds": true,
+}
+
+func isDoomLoopPollingCall(tool string, input json.RawMessage) bool {
+	if doomLoopPollingTools[tool] || doomLoopPollingTools[strings.ToLower(strings.TrimSpace(tool))] {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(tool)) {
+	case "manage_task":
+		act := extractDoomLoopToolAction(input)
+		return act == "status" || act == "list"
+	case "manage_subagents":
+		return extractDoomLoopToolAction(input) == "list"
+	}
+	return false
+}
+
+func extractDoomLoopToolAction(input json.RawMessage) string {
+	var parsed map[string]interface{}
+	if json.Unmarshal(input, &parsed) != nil || parsed == nil {
+		return ""
+	}
+	raw := strings.TrimSpace(firstString(parsed["Action"], parsed["action"]))
+	if len(raw) >= 2 && raw[0] == '"' && raw[len(raw)-1] == '"' {
+		if unquoted, err := strconv.Unquote(raw); err == nil {
+			raw = strings.TrimSpace(unquoted)
+		}
+	}
+	return strings.ToLower(raw)
 }
 
 type doomLoopGuard struct {
@@ -55,7 +86,7 @@ func newDoomLoopGuard() *doomLoopGuard {
 // modification in between): the user asking for the same check (`go test ./...`)
 // in consecutive turns, or re-running a check after editing a file, is not a loop.
 func (g *doomLoopGuard) observe(sessionID, turnID, tool string, input json.RawMessage) bool {
-	if doomLoopPollingTools[tool] {
+	if isDoomLoopPollingCall(tool, input) {
 		return false
 	}
 	fp := toolCallFingerprint(tool, input)

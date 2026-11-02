@@ -598,13 +598,12 @@ export function AssistantTurnFooter(props: {
               }
             />
 
-            <Show when={isLatestExchange() && !interruptMode()}>
-              <SandboxMergePromptCard
-                sessionID={props.info.sessionID}
-                messageID={props.info.id}
-                changedFiles={summary().changedFiles}
-              />
-            </Show>
+            <SandboxMergePromptCard
+              active={isLatestExchange() && !interruptMode()}
+              sessionID={props.info.sessionID}
+              messageID={props.info.id}
+              changedFiles={summary().changedFiles}
+            />
 
             <div class="flex items-center gap-2 flex-wrap text-[12px] text-[var(--text-faint)]">
               <Show when={interruptMode()}>
