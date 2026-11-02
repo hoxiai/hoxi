@@ -5,6 +5,7 @@ import { Icon, TextReveal, TextShimmer } from "../icons";
 import MarkdownView from "./MarkdownView";
 import { t } from "../../i18n";
 import { formatElapsedSeconds } from "./duration-label";
+import { createDeferredOpen } from "../motion/Presence";
 
 type ReasoningPart = Extract<MessagePart, { type: "reasoning" }>;
 
@@ -269,6 +270,8 @@ export default function ThoughtBox(props: {
   const [open, setOpen] = createSignal(resolveDefaultOpen());
   const [everOpened, setEverOpened] = createSignal(open());
   const [animateToggle, setAnimateToggle] = createSignal(false);
+  // The body mounts on the first open; render it closed for a frame so it can grow.
+  const bodyOpen = createDeferredOpen(open, animateToggle);
   let bodyRef: HTMLDivElement | undefined;
   let innerRef: HTMLDivElement | undefined;
   let userScrolledUp = false;
@@ -455,7 +458,7 @@ export default function ThoughtBox(props: {
                 ? "transition-[grid-template-rows,opacity,margin-top] duration-200 ease-out"
                 : ""
             } ${
-              open()
+              bodyOpen()
                 ? "mt-1.5 grid-rows-[1fr] opacity-100"
                 : "mt-0 grid-rows-[0fr] opacity-0 pointer-events-none"
             }`}

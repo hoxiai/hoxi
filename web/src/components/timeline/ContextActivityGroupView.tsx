@@ -28,7 +28,7 @@ import {
 import { resolveSubagentCurrentStepLabel } from "./SubagentInlineTimeline";
 import { liveReasoningTicker, reasoningHeading, reasoningSummary } from "./ThoughtBox";
 import HoxiActivityLogo from "./HoxiActivityLogo";
-import { Presence } from "../motion/Presence";
+import { createDeferredOpen, Presence } from "../motion/Presence";
 import { formatElapsedSeconds, startAdaptiveElapsedTimer } from "./duration-label";
 
 import {
@@ -141,6 +141,8 @@ export default function ContextActivityGroupView(props: {
     (reasoningDefault().open && appSettings.reasoningDisplay !== "collapsed")
   );
   const [open, setOpen] = createSignal(resolveOpen());
+  // The body mounts when it opens; render it closed for a frame so it can grow.
+  const bodyOpen = createDeferredOpen(open);
   const [stepLimit, setStepLimitSignal] = createSignal(
     activityGroupStepLimits.get(groupKey()) ?? STEP_PAGE
   );
@@ -615,7 +617,7 @@ export default function ContextActivityGroupView(props: {
           <div
             data-activity-group-body
             class={`grid transition-[grid-template-rows,opacity,margin-top] duration-200 ease-out motion-reduce:transition-none ${
-              open()
+              bodyOpen()
                 ? "mt-1.5 grid-rows-[1fr] opacity-100"
                 : "mt-0 grid-rows-[0fr] opacity-0 pointer-events-none"
             }`}

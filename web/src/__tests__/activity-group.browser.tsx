@@ -3,6 +3,7 @@ import { render } from "solid-js/web";
 import { produce } from "solid-js/store";
 import { ContextActivityGroupView } from "../components/timeline/message-stream-parts";
 import MessageStream from "../components/timeline/MessageStream";
+import ThoughtBox from "../components/timeline/ThoughtBox";
 import { t } from "../i18n";
 import { hoxiAPI } from "../services/api";
 import type { MessagePart, ToolPart } from "../services/sse-types";
@@ -118,6 +119,48 @@ async function testCollapseAndReopen() {
   } finally { f.cleanup(); }
 }
 
+async function testExpandAnimates() {
+  const f = fixture("auto-collapse");
+  try {
+    f.setParts([f.reasoning, f.tool()]);
+    await frame();
+    f.header().click();
+    await frame();
+    const body = f.body()!;
+    const opening = body.getBoundingClientRect().height;
+    await wait(320);
+    const settled = body.getBoundingClientRect().height;
+    assertTrue(settled > 30, "an opened group should show its steps");
+    assertTrue(opening < settled * 0.6,
+      `expanding must grow from closed, not jump: ${Math.round(opening)}px of ${Math.round(settled)}px on the first frame`);
+  } finally { f.cleanup(); }
+}
+
+async function testThoughtBoxFirstExpandAnimates() {
+  setAppSettings("reasoningDisplay", "auto-collapse");
+  const host = document.createElement("div");
+  host.style.cssText = "width:900px";
+  document.body.append(host);
+  const part: Extract<MessagePart, { type: "reasoning" }> = {
+    type: "reasoning", id: "prt_thought_first_open", sessionID: "ses_thought_idle", messageID: "msg_thought",
+    text: "A finished line of reasoning\n\n".repeat(20), time: { start: 1, end: 2 },
+  };
+  const dispose = render(() => <ThoughtBox part={part} />, host);
+  try {
+    await frame();
+    host.querySelector<HTMLButtonElement>("button")!.click();
+    await frame();
+    const body = host.querySelector<HTMLElement>("div.grid")!;
+    assertTrue(Boolean(body), "the first open should mount the reasoning body");
+    const opening = body.getBoundingClientRect().height;
+    await wait(320);
+    const settled = body.getBoundingClientRect().height;
+    assertTrue(settled > 30, "an opened thought should show its text");
+    assertTrue(opening < settled * 0.6,
+      `the first expand must grow from closed, not jump: ${Math.round(opening)}px of ${Math.round(settled)}px on the first frame`);
+  } finally { dispose(); host.remove(); }
+}
+
 async function testSearchReveal() {
   const f = fixture("collapsed");
   try {
@@ -223,6 +266,8 @@ export async function runBrowserTest(): Promise<string[]> {
     ["compact reasoning-to-tool transition keeps its header and height", testCompactTransition],
     ["expanded reasoning survives the first tool and task completion", testExpandedTransition],
     ["collapse animates, rapid reopen cancels exit, and manual choices persist", testCollapseAndReopen],
+    ["expanding a closed group grows instead of jumping open", testExpandAnimates],
+    ["a thought's first expand grows instead of jumping open", testThoughtBoxFirstExpandAnimates],
     ["search reveals closed groups and all earlier steps", testSearchReveal],
     ["reasoning-only final output stays readable when a tool arrives late", testFinalReasoning],
     ["timeline commit keeps the activity container through reasoning, tools, and its result", testCommitExecutionStream],
