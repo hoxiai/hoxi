@@ -54,8 +54,10 @@ func TestRequestPairApprovedConnectsAndRegistersGateway(t *testing.T) {
 	if !waitFor(t, 5*time.Second, func() bool { return m.Status().State == StateOnline }) {
 		t.Fatalf("state = %s, want online", m.Status().State)
 	}
-	if m.Status().Pending != nil {
-		t.Fatal("pending must clear once the request is approved and connected")
+	// Connecting flips the state online from the tunnel goroutine, so the
+	// pending entry is cleared a moment later once exchangeAndConnect returns.
+	if !waitFor(t, 5*time.Second, func() bool { return m.Status().Pending == nil }) {
+		t.Fatalf("pending %+v must clear once the request is approved and connected", m.Status().Pending)
 	}
 }
 
