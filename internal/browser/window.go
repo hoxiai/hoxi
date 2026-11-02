@@ -83,6 +83,34 @@ func (s *Service) defaultModeWindow() bool {
 	return s.defaultWindow
 }
 
+// allocatorOptions builds Chrome launch flags. Desktop window mode avoids
+// chromedp's headless test flags (--enable-automation, --disable-extensions,
+// --use-mock-keychain, --disable-features=site-per-process, etc.) so persistent
+// profiles behave like a normal desktop Chrome window.
+func (sc *scope) allocatorOptions(profile string) []chromedp.ExecAllocatorOption {
+	var opts []chromedp.ExecAllocatorOption
+	if sc.window {
+		opts = []chromedp.ExecAllocatorOption{
+			chromedp.NoFirstRun,
+			chromedp.NoDefaultBrowserCheck,
+			chromedp.Flag("disable-blink-features", "AutomationControlled"),
+		}
+	} else {
+		opts = append(opts, chromedp.DefaultExecAllocatorOptions[:]...)
+	}
+	opts = append(opts,
+		chromedp.UserDataDir(profile),
+		chromedp.WindowSize(sc.width, sc.height),
+		// Back/forward-cache restores fire no document load, so chromedp's
+		// history actions would wait until the request deadline.
+		chromedp.Flag("disable-back-forward-cache", true),
+	)
+	if execPath := resolveBrowserExecPath(); execPath != "" {
+		opts = append(opts, chromedp.ExecPath(execPath))
+	}
+	return opts
+}
+
 func (s *Service) desiredProfileRoot(sc *scope) string {
 	s.mu.Lock()
 	root := s.profileRoot

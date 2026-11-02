@@ -1,10 +1,15 @@
 package browser
 
 import (
+	"context"
 	"errors"
+	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/chromedp/chromedp"
 )
 
 func TestResolvedScopeSharesManualOwnershipAcrossUIAndAgent(t *testing.T) {
@@ -116,5 +121,57 @@ func TestProfileResolverIsolatesPersistentStoreProfiles(t *testing.T) {
 	}
 	if profUnsafe != root {
 		t.Fatalf("expected unsafe profile key to fall back to root %q, got %q", root, profUnsafe)
+	}
+}
+
+func TestWindowAllocatorOptionsAvoidAutomationFlags(t *testing.T) {
+	collectArgs := func(t *testing.T, window bool) []string {
+		t.Helper()
+		sc := &scope{window: window, width: 1280, height: 800}
+		var captured []string
+		opts := append(sc.allocatorOptions("/tmp/hoxi-test-profile"),
+			chromedp.ExecPath("/nonexistent-chrome-binary"),
+			chromedp.ModifyCmdFunc(func(cmd *exec.Cmd) {
+				captured = append([]string(nil), cmd.Args...)
+			}),
+		)
+		allocCtx, cancel := chromedp.NewExecAllocator(context.Background(), opts...)
+		defer cancel()
+		browserCtx, browserCancel := chromedp.NewContext(allocCtx)
+		defer browserCancel()
+		_ = chromedp.Run(browserCtx)
+		if len(captured) == 0 {
+			t.Fatal("expected ModifyCmdFunc to capture command args before Start failed")
+		}
+		return captured
+	}
+
+	winArgs := collectArgs(t, true)
+	for _, forbidden := range []string{
+		"--headless",
+		"--enable-automation",
+		"--disable-extensions",
+		"--use-mock-keychain",
+		"--password-store=basic",
+	} {
+		if slices.Contains(winArgs, forbidden) {
+			t.Fatalf("window mode should not pass %q, got args: %v", forbidden, winArgs)
+		}
+	}
+	for _, required := range []string{
+		"--no-first-run",
+		"--no-default-browser-check",
+		"--disable-blink-features=AutomationControlled",
+		"--disable-back-forward-cache",
+		"--user-data-dir=/tmp/hoxi-test-profile",
+	} {
+		if !slices.Contains(winArgs, required) {
+			t.Fatalf("window mode missing %q in args: %v", required, winArgs)
+		}
+	}
+
+	headlessArgs := collectArgs(t, false)
+	if !slices.Contains(headlessArgs, "--headless") {
+		t.Fatalf("headless mode should still include --headless, got: %v", headlessArgs)
 	}
 }

@@ -373,21 +373,7 @@ func (sc *scope) start(ctx context.Context) error {
 		sc.persistentProfile = false
 	}
 	sc.profile, sc.ledgerID = profile, ledgerID
-	opts := append([]chromedp.ExecAllocatorOption{}, chromedp.DefaultExecAllocatorOptions[:]...)
-	opts = append(opts, chromedp.UserDataDir(profile), chromedp.WindowSize(sc.width, sc.height),
-		// Back/forward-cache restores fire no document load, so chromedp's
-		// history actions would wait until the request deadline.
-		chromedp.Flag("disable-back-forward-cache", true))
-	if sc.window {
-		opts = append(opts,
-			chromedp.Flag("headless", false),
-			chromedp.Flag("hide-scrollbars", false),
-			chromedp.Flag("mute-audio", false),
-		)
-	}
-	if execPath := resolveBrowserExecPath(); execPath != "" {
-		opts = append(opts, chromedp.ExecPath(execPath))
-	}
+	opts := sc.allocatorOptions(profile)
 	alloc, cancel := chromedp.NewExecAllocator(sc.ctx, opts...)
 	sc.allocatorCancel = cancel
 	browser, browserCancel := chromedp.NewContext(alloc)
