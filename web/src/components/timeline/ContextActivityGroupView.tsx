@@ -9,7 +9,7 @@ import {
   Show,
   type JSX,
 } from "solid-js";
-import { unwrap } from "solid-js/store";
+import { $RAW } from "solid-js/store";
 import type { MessagePart, ToolPart } from "../../services/sse-types";
 import {
   extractChildSubagentSessionId,
@@ -243,10 +243,57 @@ export default function ContextActivityGroupView(props: {
     return `${header}\n${lines}${extra}`;
   };
 
+  interface PrefixSnap {
+    id: string;
+    tool?: string;
+    status?: string;
+    timeStart?: number;
+    timeEnd?: number;
+    error?: string;
+    inputRef?: unknown;
+    metaRef?: unknown;
+  }
+  const rawOf = <T,>(v: T): T =>
+    v && typeof v === "object" ? (v as { [$RAW]?: T })[$RAW] ?? v : v;
+  const snapPart = (raw: MessagePart): PrefixSnap => {
+    if (raw.type === "tool") {
+      const st = raw.state as { status: string; time?: { start?: number; end?: number }; error?: string; input?: unknown; metadata?: unknown };
+      return {
+        id: raw.id,
+        tool: raw.tool,
+        status: st.status,
+        timeStart: st.time?.start,
+        timeEnd: st.time?.end,
+        error: st.error,
+        inputRef: rawOf(st.input),
+        metaRef: rawOf(st.metadata),
+      };
+    }
+    const rt = (raw as { time?: { start?: number; end?: number } }).time;
+    return { id: raw.id, timeStart: rt?.start, timeEnd: rt?.end };
+  };
+  const isSnapValid = (raw: MessagePart | undefined, s: PrefixSnap): boolean => {
+    if (!raw || raw.id !== s.id) return false;
+    if (raw.type !== "tool") {
+      const rt = (raw as { time?: { start?: number; end?: number } }).time;
+      return rt?.start === s.timeStart && rt?.end === s.timeEnd;
+    }
+    const st = raw.state as { status: string; time?: { start?: number; end?: number }; error?: string; input?: unknown; metadata?: unknown };
+    return (
+      raw.tool === s.tool &&
+      st.status === s.status &&
+      st.time?.start === s.timeStart &&
+      st.time?.end === s.timeEnd &&
+      st.error === s.error &&
+      rawOf(st.input) === s.inputRef &&
+      rawOf(st.metadata) === s.metaRef
+    );
+  };
+
   const createPrefixCache = () => ({
     cursor: 0,
-    firstID: "",
-    lastID: "",
+    snaps: [] as PrefixSnap[],
+    editIndices: [] as number[],
     reads: 0,
     searches: 0,
     edits: 0,
@@ -259,9 +306,6 @@ export default function ContextActivityGroupView(props: {
     cmdBucket: makeBucket(),
     searchBucket: makeBucket(),
     subagentBucket: makeBucket(),
-    diffByFile: new Map<string, { additions: number; deletions: number }>(),
-    diffAdditions: 0,
-    diffDeletions: 0,
     attentionTools: [] as ToolPart[],
     lastTool: undefined as ToolPart | undefined,
     start: undefined as number | undefined,
@@ -279,7 +323,7 @@ export default function ContextActivityGroupView(props: {
     return true;
   };
 
-  const accumulatePrefixStep = (p: MessagePart) => {
+  const accumulatePrefixStep = (p: MessagePart, index: number) => {
     if (p.type === "reasoning") {
       prefixCache.thoughts++;
       if (p.time?.start && (!prefixCache.start || p.time.start < prefixCache.start)) {
@@ -298,24 +342,8 @@ export default function ContextActivityGroupView(props: {
       addBucketTarget(prefixCache.readBucket, target);
     } else if (isEditingTool(p.tool)) {
       prefixCache.edits++;
+      prefixCache.editIndices.push(index);
       addBucketTarget(prefixCache.editBucket, target);
-      if (p.state.status === "completed") {
-        const fileTarget = extractTargetFile(p) || "";
-        for (const d of resolveToolFileDiffs(p, true, fileTarget)) {
-          if (!d.file || isSessionScratchFile(normalizeWorkspaceRelPath(d.file), p.sessionID)) {
-            continue;
-          }
-          const prev = prefixCache.diffByFile.get(d.file);
-          if (prev) {
-            prefixCache.diffAdditions -= prev.additions;
-            prefixCache.diffDeletions -= prev.deletions;
-          }
-          const next = { additions: d.additions || 0, deletions: d.deletions || 0 };
-          prefixCache.diffByFile.set(d.file, next);
-          prefixCache.diffAdditions += next.additions;
-          prefixCache.diffDeletions += next.deletions;
-        }
-      }
     } else if (isShellTool(p.tool)) {
       prefixCache.commands++;
       addBucketTarget(prefixCache.cmdBucket, target);
@@ -343,22 +371,28 @@ export default function ContextActivityGroupView(props: {
 
   const stepSummary = createMemo(() => {
     const len = props.parts.length;
-    const rawParts = unwrap(props.parts);
-    if (
-      len < prefixCache.cursor ||
-      (prefixCache.cursor > 0 &&
-        (rawParts[0]?.id !== prefixCache.firstID ||
-          rawParts[prefixCache.cursor - 1]?.id !== prefixCache.lastID))
-    ) {
-      prefixCache = createPrefixCache();
+    const rawParts = rawOf(props.parts);
+    let cacheValid = len >= prefixCache.cursor;
+    for (let i = 0; cacheValid && i < prefixCache.cursor; i++) {
+      cacheValid = isSnapValid(rawOf(rawParts[i]), prefixCache.snaps[i]);
     }
+    if (!cacheValid) prefixCache = createPrefixCache();
     while (prefixCache.cursor < len - 1) {
-      const raw = rawParts[prefixCache.cursor];
+      const idx = prefixCache.cursor;
+      const raw = rawOf(rawParts[idx]);
       if (!raw || !isSettledPrefixStep(raw)) break;
-      if (prefixCache.cursor === 0) prefixCache.firstID = raw.id;
-      accumulatePrefixStep(raw);
-      prefixCache.lastID = raw.id;
+      accumulatePrefixStep(raw, idx);
+      prefixCache.snaps.push(snapPart(raw));
       prefixCache.cursor++;
+    }
+    const tailWatchStart = Math.max(0, prefixCache.cursor - 32);
+    for (let i = tailWatchStart; i < prefixCache.cursor; i++) {
+      const rp = props.parts[i];
+      if (rp?.type === "tool") {
+        void rp.state.status;
+        void rp.state.metadata;
+        if (rp.state.status === "completed" || rp.state.status === "error") void rp.state.time?.end;
+      }
     }
 
     let reads = prefixCache.reads;
@@ -374,7 +408,7 @@ export default function ContextActivityGroupView(props: {
     const tailSearches: string[] = [];
     const tailSubagents: string[] = [];
     const runningTools: ToolPart[] = [];
-    let tailDiffByFile: Map<string, { additions: number; deletions: number }> | undefined;
+    let diffByFile: Map<string, { additions: number; deletions: number }> | undefined;
     let tailAttention: ToolPart[] | undefined;
     let start = props.startedAt && props.startedAt > 0 ? props.startedAt : prefixCache.start;
     if (prefixCache.start && (!start || prefixCache.start < start)) start = prefixCache.start;
@@ -382,6 +416,24 @@ export default function ContextActivityGroupView(props: {
     let hasRunningPart = false;
     let activeReasoning: Extract<MessagePart, { type: "reasoning" }> | undefined;
     let lastTool = prefixCache.lastTool;
+
+    const recordToolDiffs = (p: ToolPart) => {
+      if (p.state.status !== "completed") return;
+      const fileTarget = extractTargetFile(p) || "";
+      for (const d of resolveToolFileDiffs(p, true, fileTarget)) {
+        if (!d.file || isSessionScratchFile(normalizeWorkspaceRelPath(d.file), p.sessionID)) {
+          continue;
+        }
+        (diffByFile ||= new Map()).set(d.file, {
+          additions: d.additions || 0,
+          deletions: d.deletions || 0,
+        });
+      }
+    };
+    for (const idx of prefixCache.editIndices) {
+      const ep = props.parts[idx];
+      if (ep?.type === "tool") recordToolDiffs(ep);
+    }
 
     for (let i = prefixCache.cursor; i < len; i++) {
       const p = props.parts[i];
@@ -411,18 +463,7 @@ export default function ContextActivityGroupView(props: {
         } else if (isEditingTool(p.tool)) {
           edits++;
           if (target) tailEdits.push(target);
-          if (status === "completed") {
-            const fileTarget = extractTargetFile(p) || "";
-            for (const d of resolveToolFileDiffs(p, true, fileTarget)) {
-              if (!d.file || isSessionScratchFile(normalizeWorkspaceRelPath(d.file), p.sessionID)) {
-                continue;
-              }
-              (tailDiffByFile ||= new Map()).set(d.file, {
-                additions: d.additions || 0,
-                deletions: d.deletions || 0,
-              });
-            }
-          }
+          recordToolDiffs(p);
         } else if (isShellTool(p.tool)) {
           commands++;
           if (target) tailCmds.push(target);
@@ -472,15 +513,10 @@ export default function ContextActivityGroupView(props: {
     pushBadge("magnifying-glass", searches, "timeline.searches", prefixCache.searchBucket, tailSearches);
     pushBadge("task", subagents, "timeline.subagentsCount", prefixCache.subagentBucket, tailSubagents);
 
-    let additions = prefixCache.diffAdditions;
-    let deletions = prefixCache.diffDeletions;
-    if (tailDiffByFile) {
-      for (const [file, item] of tailDiffByFile) {
-        const prev = prefixCache.diffByFile.get(file);
-        if (prev) {
-          additions -= prev.additions;
-          deletions -= prev.deletions;
-        }
+    let additions = 0;
+    let deletions = 0;
+    if (diffByFile) {
+      for (const item of diffByFile.values()) {
         additions += item.additions;
         deletions += item.deletions;
       }

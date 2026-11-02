@@ -87,7 +87,7 @@ const AUTH_RE = /unauthorized|invalid api key|incorrect api key|authentication|f
 const SERVER_RE =
   /overloaded|service unavailable|bad gateway|gateway timeout|temporarily unavailable|\b50[0234]\b|\b52[0249]\b|internal server error|\u670d\u52a1.{0,4}(\u7e41\u5fd9|\u4e0d\u53ef\u7528)/;
 const NETWORK_RE =
-  /timeout|timed out|econn|connection reset|connection refused|connection aborted|connection closed|closed network connection|closed idle connection|broken pipe|epipe|enetunreach|ehostunreach|eai_again|unexpected eof|\beof\b|fetch failed|network|socket|stream was interrupted|read tcp|write tcp|dial tcp|tls handshake|deadline exceeded|i\/o timeout|client connection lost|server sent goaway|\u8d85\u65f6|\u8fde\u63a5.{0,4}(\u5931\u8d25|\u4e2d\u65ad|\u91cd\u7f6e|\u8d85\u65f6)|\u7f51\u7edc.{0,4}(\u5f02\u5e38|\u9519\u8bef|\u4e2d\u65ad)/;
+  /timeout|timed out|econn|connection reset|connection refused|connection aborted|software caused connection abort|connection closed|closed network connection|closed idle connection|broken pipe|epipe|enetunreach|ehostunreach|eai_again|unexpected eof|\beof\b|fetch failed|network|socket|stream was interrupted|read tcp|write tcp|dial tcp|tls handshake|deadline exceeded|i\/o timeout|client connection lost|server sent goaway|\u8d85\u65f6|\u8fde\u63a5.{0,4}(\u5931\u8d25|\u4e2d\u65ad|\u91cd\u7f6e|\u8d85\u65f6)|\u7f51\u7edc.{0,4}(\u5f02\u5e38|\u9519\u8bef|\u4e2d\u65ad)/;
 
 export function decideAutoFailover(
   error: AutoFailoverError,
@@ -117,7 +117,7 @@ export function decideAutoFailover(
       return yes(kind);
   }
 
-  if (NEVER_SWITCH_NAMES.has(name) || ABORT_RE.test(name) || ABORT_RE.test(msg)) return notEndpoint;
+  if (NEVER_SWITCH_NAMES.has(name) || ABORT_RE.test(name) || (ABORT_RE.test(msg) && !NETWORK_RE.test(msg))) return notEndpoint;
   if (CONTEXT_RE.test(msg) || POLICY_RE.test(msg)) return notEndpoint;
   if (name === "providermodelnotfounderror" || MODEL_RE.test(msg)) return yes("model");
   if (status === 402 || QUOTA_RE.test(msg)) return yes("quota");

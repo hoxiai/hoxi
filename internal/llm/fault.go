@@ -118,6 +118,7 @@ var (
 		"econnrefused",
 		"connection aborted",
 		"econnaborted",
+		"software caused connection abort",
 		"connection closed",
 		"connection terminated",
 		"closed network connection",
@@ -184,6 +185,11 @@ func hasAnyMarker(lower string, markers []string) bool {
 	return false
 }
 
+func isNetworkFault(lowerMsg string, statusCode int) bool {
+	return statusCode == 408 || hasAnyMarker(lowerMsg, networkFaultMarkers) ||
+		strings.HasSuffix(lowerMsg, ": eof") || strings.Contains(lowerMsg, ": eof ") || lowerMsg == "eof"
+}
+
 // ClassifyFault derives a structured FaultDetails classification from an error
 // code/name, free-form message, and optional HTTP status code.
 func ClassifyFault(name, message string, statusCode int, now time.Time) FaultDetails {
@@ -199,7 +205,8 @@ func ClassifyFault(name, message string, statusCode int, now time.Time) FaultDet
 		strings.Contains(lowerMsg, "runnerstallederror") || strings.Contains(lowerMsg, "repeatedtoolfailureerror") {
 		return FaultDetails{Kind: FaultKindStalled}
 	}
-	if lowerName == "messageabortederror" || lowerName == "aborterror" || hasAnyMarker(lowerMsg, abortedFaultMarkers) {
+	isNet := isNetworkFault(lowerMsg, statusCode)
+	if lowerName == "messageabortederror" || lowerName == "aborterror" || (!isNet && hasAnyMarker(lowerMsg, abortedFaultMarkers)) {
 		return FaultDetails{Kind: FaultKindAborted}
 	}
 	if lowerName == "contextoverflowerror" || lowerName == "messageoutputlengtherror" || hasAnyMarker(lowerMsg, contextFaultMarkers) {
@@ -225,8 +232,7 @@ func ClassifyFault(name, message string, statusCode int, now time.Time) FaultDet
 	if statusCode == 404 && lowerName != "notfounderror" {
 		return FaultDetails{Kind: FaultKindModel}
 	}
-	if statusCode == 408 || hasAnyMarker(lowerMsg, networkFaultMarkers) ||
-		strings.HasSuffix(lowerMsg, ": eof") || strings.Contains(lowerMsg, ": eof ") || lowerMsg == "eof" {
+	if isNet {
 		return FaultDetails{Kind: FaultKindNetwork, IsRetryable: true, RetryAfterMs: retryAfterMs}
 	}
 	if statusCode >= 500 || hasAnyMarker(lowerMsg, serverFaultMarkers) || transientStatusRe.MatchString(lowerMsg) {

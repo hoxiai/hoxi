@@ -1,6 +1,8 @@
 // web/src/__tests__/merge-turns.test.ts
 import { createStore, produce } from "solid-js/store";
 import {
+  findMessageIndex,
+  findPartIndex,
   forgetSubagentLinks,
   getFullToolOutput,
   lookupSubagentParent,
@@ -259,5 +261,65 @@ describe("REST snapshot merge", () => {
     assertEqual((snap![0].info as { summary?: unknown }).summary, undefined, "summary payload is not cached");
     assertEqual(snap![0].parts[0].type, "text");
     evictCachedSessionTurns(["ses_summary"]);
+  });
+
+  it("promotes middle optimistic attachments via REST without stale cache misses or duplicate SSE parts", () => {
+    const filePart = (id: string, messageID: string, filename: string, url = "data:image/png;base64,AAA"): MessagePart => ({
+      id,
+      sessionID: sid,
+      messageID,
+      type: "file",
+      mime: "image/png",
+      filename,
+      url,
+    });
+    const [state, setState] = createStore<{ turns: MessageTurn[] }>({
+      turns: [
+        {
+          info: info("optimistic_900", "user"),
+          parts: [
+            filePart("prt_file_900_0", "optimistic_900", "first.png"),
+            filePart("prt_file_900_1", "optimistic_900", "middle.png"),
+            text("prt_900", "optimistic_900", "check middle attachment"),
+          ],
+        },
+      ],
+    });
+
+    // Warm the lookup caches while optimistic IDs are still present.
+    assertEqual(findMessageIndex(state.turns, "optimistic_900"), 0);
+    assertEqual(findPartIndex(state.turns[0].parts, "prt_file_900_1"), 1);
+
+    // REST promotes the turn and its middle attachment from temporary ID to real ID.
+    setState(
+      produce((s) => {
+        mergeServerTurnsInto(s.turns, [
+          {
+            info: info("msg_u_900", "user"),
+            parts: [
+              filePart("prt_real_first", "msg_u_900", "first.png"),
+              filePart("prt_real_middle", "msg_u_900", "middle.png"),
+              text("prt_real_text", "msg_u_900", "check middle attachment"),
+            ],
+          },
+        ]);
+      })
+    );
+
+    assertEqual(findMessageIndex(state.turns, "msg_u_900"), 0);
+    assertEqual(findPartIndex(state.turns[0].parts, "prt_real_middle"), 1, "middle attachment lookup must find promoted real ID");
+    assertEqual(findPartIndex(state.turns[0].parts, "prt_file_900_1"), -1, "old temporary ID must not remain indexed");
+
+    // Subsequent SSE update for the middle attachment must update in place rather than appending a duplicate.
+    setState(
+      produce((s) => {
+        upsertTurnPart(
+          s.turns,
+          filePart("prt_real_middle", "msg_u_900", "middle.png", "data:image/png;base64,UPDATED")
+        );
+      })
+    );
+    assertEqual(state.turns[0].parts.length, 3, "SSE update must not append a duplicate middle attachment");
+    assertEqual((state.turns[0].parts[1] as Extract<MessagePart, { type: "file" }>).url, "data:image/png;base64,UPDATED");
   });
 });

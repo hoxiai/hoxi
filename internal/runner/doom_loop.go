@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -45,6 +46,62 @@ func isDoomLoopPollingCall(tool string, input json.RawMessage) bool {
 		return act == "status" || act == "list"
 	case "manage_subagents":
 		return extractDoomLoopToolAction(input) == "list"
+	}
+	return false
+}
+
+func isDoomLoopScrollCall(tool string, input json.RawMessage) bool {
+	name := strings.ToLower(strings.TrimSpace(tool))
+	if name == "scroll" || strings.HasSuffix(name, "_scroll") || strings.HasSuffix(name, ".scroll") {
+		return true
+	}
+	act := extractDoomLoopToolAction(input)
+	return act == "scroll" || strings.HasPrefix(act, "scroll_") || strings.HasPrefix(act, "scroll-")
+}
+
+var (
+	doomLoopDevNullRedirRe = regexp.MustCompile(`(?:&|\d+)?>>?\s*/dev/null\b`)
+	doomLoopFdDupRe        = regexp.MustCompile(`\d*>&\d+`)
+	doomLoopHereStrRe      = regexp.MustCompile(`<<<?`)
+	doomLoopFileRedirRe    = regexp.MustCompile(`(?:^|[^<>&])\d*>>?\|?\s*\S`)
+	doomLoopSedInPlaceRe   = regexp.MustCompile(`\bsed\b[^\n;|&]*\s-(?:[a-zA-Z]*i|--in-place)\b`)
+	doomLoopPerlInPlaceRe  = regexp.MustCompile(`\bperl\b[^\n;|&]*\s-[a-zA-Z]*i`)
+	doomLoopMutatingBinRe  = regexp.MustCompile(`\b(?:tee|patch|cp|mv|rm|mkdir|rmdir|touch|truncate|install|dd|chmod|chown|ln)\b`)
+	doomLoopGitMutateRe    = regexp.MustCompile(`\bgit\s+(?:apply|am|checkout|restore|reset|clean|revert|cherry-pick|merge|rebase|stash|mv|rm)\b`)
+	doomLoopInlineEvalRe   = regexp.MustCompile(`\b(?:python3?|node|ruby|perl|php)\b[^\n]*\s-(?:c|e)\b`)
+	doomLoopHeredocEvalRe  = regexp.MustCompile(`\b(?:python3?|node|ruby|perl|php|sh|bash|zsh)\b[^\n]*<<`)
+)
+
+func isDoomLoopMutatingBash(cmd string) bool {
+	cmd = strings.TrimSpace(cmd)
+	if cmd == "" {
+		return false
+	}
+	scrubbed := doomLoopDevNullRedirRe.ReplaceAllString(cmd, " ")
+	scrubbed = doomLoopFdDupRe.ReplaceAllString(scrubbed, " ")
+	scrubbed = doomLoopHereStrRe.ReplaceAllString(scrubbed, " ")
+	if doomLoopFileRedirRe.MatchString(scrubbed) {
+		return true
+	}
+	return doomLoopSedInPlaceRe.MatchString(cmd) ||
+		doomLoopPerlInPlaceRe.MatchString(cmd) ||
+		doomLoopMutatingBinRe.MatchString(cmd) ||
+		doomLoopGitMutateRe.MatchString(cmd) ||
+		doomLoopInlineEvalRe.MatchString(cmd) ||
+		doomLoopHeredocEvalRe.MatchString(cmd)
+}
+
+func isDoomLoopMutatingCall(tool string, input json.RawMessage) bool {
+	if isMutatingToolName(tool) {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(tool)) {
+	case "bash", "run_shell_command", "run_command", "shell":
+		var parsed map[string]interface{}
+		if json.Unmarshal(input, &parsed) == nil && parsed != nil {
+			cmd := firstString(parsed["command"], parsed["CommandLine"], parsed["cmd"])
+			return isDoomLoopMutatingBash(cmd)
+		}
 	}
 	return false
 }
@@ -100,6 +157,11 @@ func (g *doomLoopGuard) observe(sessionID, turnID, tool string, input json.RawMe
 		delete(g.recent, sessionID)
 		delete(g.sinceEdit, sessionID)
 	}
+	if isDoomLoopScrollCall(tool, input) {
+		delete(g.recent, sessionID)
+		delete(g.sinceEdit, sessionID)
+		return false
+	}
 	calls := append(g.recent[sessionID], fp)
 	if len(calls) > doomLoopThreshold {
 		calls = calls[len(calls)-doomLoopThreshold:]
@@ -118,7 +180,7 @@ func (g *doomLoopGuard) observe(sessionID, turnID, tool string, input json.RawMe
 		return true
 	}
 
-	if isMutatingToolName(tool) {
+	if isDoomLoopMutatingCall(tool, input) {
 		// A file mutation changes workspace state, so reset non-consecutive
 		// repeat counts while recording this mutation's own fingerprint.
 		g.sinceEdit[sessionID] = map[string]int{fp: 1}

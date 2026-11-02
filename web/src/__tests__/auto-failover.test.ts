@@ -52,6 +52,8 @@ describe("auto-pool failover decision", () => {
       ],
       ["io timeout", { name: "APIError", data: { message: "dial tcp 1.2.3.4:443: i/o timeout" } }, "network"],
       ["unexpected eof", { name: "APIError", data: { message: "unexpected EOF" } }, "network"],
+      ["stream interrupted eof", { name: "APIError", data: { message: "stream was interrupted: unexpected EOF" } }, "network"],
+      ["connection aborted", { name: "APIError", data: { message: "read tcp: connection aborted" } }, "network"],
     ];
     for (const [label, error, reason] of cases) {
       const d = decideAutoFailover(error as never, slow);

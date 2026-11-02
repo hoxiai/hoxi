@@ -352,7 +352,41 @@ test("sandbox plugin", async (t) => {
       );
     }
 
-    // 4. A new user message in messages.transform or session.idle event resets the turn guard.
+    // 4. Modifying a file via bash twice and reading the same file a 3rd time must be allowed.
+    const targetFile = path.join(workspace, "mod_via_bash.txt");
+    fs.writeFileSync(targetFile, "v1\n");
+    await hooks["tool.execute.before"](
+      { tool: "read", sessionID: "ses_bash_edit", callID: "be_r1" },
+      { args: { filePath: targetFile } }
+    );
+    await hooks["tool.execute.before"](
+      { tool: "bash", sessionID: "ses_bash_edit", callID: "be_b1" },
+      { args: { command: "./custom_ step_1" } }
+    );
+    fs.writeFileSync(targetFile, "v2\n");
+    await hooks["tool.execute.before"](
+      { tool: "read", sessionID: "ses_bash_edit", callID: "be_r2" },
+      { args: { filePath: targetFile } }
+    );
+    await hooks["tool.execute.before"](
+      { tool: "bash", sessionID: "ses_bash_edit", callID: "be_b2" },
+      { args: { command: "./custom_step_2" } }
+    );
+    fs.writeFileSync(targetFile, "v3\n");
+    await hooks["tool.execute.before"](
+      { tool: "read", sessionID: "ses_bash_edit", callID: "be_r3" },
+      { args: { filePath: targetFile } }
+    );
+
+    // 5. Repeated scroll actions with identical parameters move the viewport and must not be rejected.
+    for (let i = 1; i <= 5; i++) {
+      await hooks["tool.execute.before"](
+        { tool: "hoxi_computer", sessionID: "ses_scroll", callID: `sc_${i}` },
+        { args: { action: "scroll", direction: "down", amount: 500 } }
+      );
+    }
+
+    // 6. A new user message in messages.transform or session.idle event resets the turn guard.
     await hooks["experimental.chat.messages.transform"](
       {},
       { messages: [{ info: { id: "msg_u_next", sessionID: "ses_loop", role: "user" }, parts: [] }] }

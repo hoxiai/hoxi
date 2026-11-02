@@ -133,6 +133,28 @@ func TestDoomLoopGuardCatchesInterleavedNoEditLoopAndAllowsPostEditReverificatio
 			t.Fatalf("re-running test after replace %d must not trip the guard", i)
 		}
 	}
+	// Mutating bash commands and repeated scroll actions must not false-positive.
+	readSame := json.RawMessage(`{"file_path":"internal/auth/handler.go"}`)
+	if g.observe("s4", "turn_4", "Read", readSame) {
+		t.Fatal("1st read should not trip")
+	}
+	if g.observe("s4", "turn_4", "Bash", json.RawMessage(`{"command":"sed -i '' 's/old/new/' internal/auth/handler.go"}`)) {
+		t.Fatal("1st mutating bash should not trip")
+	}
+	if g.observe("s4", "turn_4", "Read", readSame) {
+		t.Fatal("2nd read after bash edit should not trip")
+	}
+	if g.observe("s4", "turn_4", "Bash", json.RawMessage(`{"command":"echo '// footer' >> internal/auth/handler.go"}`)) {
+		t.Fatal("2nd mutating bash should not trip")
+	}
+	if g.observe("s4", "turn_4", "Read", readSame) {
+		t.Fatal("3rd read after two bash edits must not trip")
+	}
+	for i := 1; i <= 5; i++ {
+		if g.observe("s5", "turn_5", "hoxi_computer", json.RawMessage(`{"action":"scroll","direction":"down","amount":400}`)) {
+			t.Fatalf("scroll call %d with identical parameters must not trip", i)
+		}
+	}
 }
 
 func TestDoomLoopGuardExemptsReadOnlyTaskPollingAndTripsMutatingTaskActions(t *testing.T) {

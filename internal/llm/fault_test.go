@@ -84,6 +84,20 @@ func TestClassifyFault(t *testing.T) {
 			wantRetry: true,
 		},
 		{
+			name:      "stream interrupted unexpected EOF is network not aborted",
+			errName:   "APIError",
+			message:   "stream was interrupted: unexpected EOF",
+			wantKind:  FaultKindNetwork,
+			wantRetry: true,
+		},
+		{
+			name:      "connection aborted is network not aborted",
+			errName:   "RunnerError",
+			message:   "read tcp 10.0.0.1:443: software caused connection abort",
+			wantKind:  FaultKindNetwork,
+			wantRetry: true,
+		},
+		{
 			name:      "server 502",
 			errName:   "APIError",
 			message:   "502 Bad Gateway",
@@ -113,5 +127,12 @@ func TestClassifyFault(t *testing.T) {
 				t.Fatalf("RetryAfterMs = %d, want >= %d", got.RetryAfterMs, tc.wantMinMs)
 			}
 		})
+	}
+
+	if IsPermanentTurnError("stream was interrupted: unexpected EOF") || !IsTransientTurnError("stream was interrupted: unexpected EOF") {
+		t.Fatal("stream was interrupted: unexpected EOF must be transient and not permanent")
+	}
+	if IsPermanentTurnError("read tcp: connection aborted") || !IsTransientTurnError("read tcp: connection aborted") {
+		t.Fatal("connection aborted must be transient and not permanent")
 	}
 }

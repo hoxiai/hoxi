@@ -1,81 +1,140 @@
 import { createSignal } from "solid-js";
+import { $RAW } from "solid-js/store";
 import type { MessageInfo, MessagePart } from "../services/sse-types";
 import type { MessageTurn } from "./workspace-state";
 
 interface IndexCache {
   length: number;
-  firstID?: string;
-  lastID?: string;
-  hasOptimistic?: boolean;
+  ids: string[];
+  refs: unknown[];
+  hasGetter: boolean;
+  hasOptimistic: boolean;
   byID: Map<string, number>;
 }
 
 const indexes = new WeakMap<object, IndexCache>();
 
-// Validate cached positions: reloads, optimistic removal and revert can replace/reorder arrays.
+function rawOf<T>(value: T): T {
+  if (value && typeof value === "object") {
+    return (value as { [$RAW]?: T })[$RAW] ?? value;
+  }
+  return value;
+}
+
+function hasIdGetter(ref: unknown): boolean {
+  if (!ref || typeof ref !== "object") return false;
+  return Boolean(Object.getOwnPropertyDescriptor(ref, "id")?.get);
+}
+
+function invalidateIndex(items: object): void {
+  indexes.delete(items);
+  indexes.delete(rawOf(items));
+}
+
+function getIndexCache(items: object): IndexCache | undefined {
+  return indexes.get(rawOf(items)) ?? indexes.get(items);
+}
+
+function isCachePrefixValid<T>(
+  rawItems: T[],
+  cache: IndexCache,
+  count: number,
+  getID: (item: T) => string,
+  getRef: (item: T) => unknown
+): boolean {
+  if (count <= 0 || rawItems.length < count) return false;
+  if (cache.hasGetter) {
+    for (let i = 0; i < count; i++) {
+      if (getRef(rawItems[i]) !== cache.refs[i]) return false;
+    }
+    return (
+      getID(rawItems[0]) === cache.ids[0] &&
+      (count === 1 || getID(rawItems[count - 1]) === cache.ids[count - 1])
+    );
+  }
+  for (let i = 0; i < count; i++) {
+    const item = rawItems[i];
+    if (getRef(item) !== cache.refs[i] || getID(item) !== cache.ids[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Validate cached positions: reloads, optimistic promotion/removal and revert can replace/reorder arrays or mutate middle IDs in place.
 function findIndex<T>(
   items: T[],
   id: string,
   getID: (item: T) => string,
+  getRef: (item: T) => unknown,
   isOpt?: (id: string) => boolean
 ): number {
-  const len = items.length;
+  const rawItems = rawOf(items);
+  const len = rawItems.length;
   if (len === 0) {
-    indexes.delete(items);
+    invalidateIndex(items);
     return -1;
   }
-  let cache = indexes.get(items);
+  let cache = getIndexCache(items);
   if (cache) {
     if (
       len > cache.length &&
-      cache.length > 0 &&
-      getID(items[0]) === cache.firstID &&
-      getID(items[cache.length - 1]) === cache.lastID
+      isCachePrefixValid(rawItems, cache, cache.length, getID, getRef)
     ) {
       for (let i = cache.length; i < len; i++) {
-        const itemID = getID(items[i]);
+        const item = rawItems[i];
+        const itemID = getID(item);
+        const ref = getRef(item);
+        cache.ids.push(itemID);
+        cache.refs.push(ref);
+        if (!cache.hasGetter && hasIdGetter(ref)) cache.hasGetter = true;
         cache.byID.set(itemID, i);
         if (isOpt?.(itemID)) cache.hasOptimistic = true;
       }
       cache.length = len;
-      cache.lastID = getID(items[len - 1]);
     }
     if (cache.length === len) {
       const index = cache.byID.get(id);
       if (index !== undefined) {
-        if (index < len && getID(items[index]) === id) return index;
-      } else if (
-        getID(items[0]) === cache.firstID &&
-        getID(items[len - 1]) === cache.lastID
-      ) {
+        if (index < len && getID(rawItems[index]) === id) return index;
+      } else if (isCachePrefixValid(rawItems, cache, len, getID, getRef)) {
         return -1;
       }
     }
   }
   const byID = new Map<string, number>();
+  const ids = new Array<string>(len);
+  const refs = new Array<unknown>(len);
+  let hasGetter = false;
   let hasOptimistic = false;
   for (let i = 0; i < len; i++) {
-    const itemID = getID(items[i]);
+    const item = rawItems[i];
+    const itemID = getID(item);
+    const ref = getRef(item);
+    ids[i] = itemID;
+    refs[i] = ref;
+    if (!hasGetter && hasIdGetter(ref)) hasGetter = true;
     byID.set(itemID, i);
     if (isOpt?.(itemID)) hasOptimistic = true;
   }
   cache = {
     length: len,
-    firstID: getID(items[0]),
-    lastID: getID(items[len - 1]),
+    ids,
+    refs,
+    hasGetter,
     hasOptimistic,
     byID,
   };
-  indexes.set(items, cache);
+  indexes.set(rawItems, cache);
   return byID.get(id) ?? -1;
 }
 
 export function findMessageIndex(turns: MessageTurn[], id: string): number {
-  return findIndex(turns, id, (turn) => turn.info.id, isOptimisticID);
+  return findIndex(turns, id, (turn) => turn.info.id, (turn) => rawOf(turn.info), isOptimisticID);
 }
 
 export function findPartIndex(parts: MessagePart[], id: string): number {
-  return findIndex(parts, id, (part) => part.id, isOptimisticPartID);
+  return findIndex(parts, id, (part) => part.id, (part) => rawOf(part), isOptimisticPartID);
 }
 
 function isOptimisticID(id: string): boolean {
@@ -103,7 +162,7 @@ export function orderSameStepReasoningPartsInPlace(parts: MessagePart[]): void {
     if (textIdx >= 0 && textIdx < i) {
       const [reasonPart] = parts.splice(i, 1);
       parts.splice(textIdx, 0, reasonPart);
-      indexes.delete(parts);
+      invalidateIndex(parts);
     }
   }
 }
@@ -140,20 +199,20 @@ function bubbleTurnIntoOrder(list: MessageTurn[], idx: number) {
     }
     break;
   }
-  if (pos !== idx) indexes.delete(list);
+  if (pos !== idx) invalidateIndex(list);
 }
 
 export function upsertTurnInfo(list: MessageTurn[], info: MessageInfo) {
   let idx = findMessageIndex(list, info.id);
 
-  if (info.role === "user" && !isOptimisticID(info.id) && indexes.get(list)?.hasOptimistic !== false) {
+  if (info.role === "user" && !isOptimisticID(info.id) && getIndexCache(list)?.hasOptimistic !== false) {
     const optIdx = list.findIndex((m) => isOptimisticID(m.info.id));
     if (optIdx >= 0 && idx < 0) {
       // Promote the optimistic turn in place: a new object would remount the bubble.
       const turn = list[optIdx];
       Object.assign(turn.info, info);
       for (const part of turn.parts) part.messageID = info.id;
-      indexes.delete(list);
+      invalidateIndex(list);
       bubbleTurnIntoOrder(list, optIdx);
       return;
     }
@@ -165,7 +224,7 @@ export function upsertTurnInfo(list: MessageTurn[], info: MessageInfo) {
         upsertTurnPart([turn], part);
       }
       list.splice(idx, 1);
-      indexes.delete(list);
+      invalidateIndex(list);
       const nextIdx = optIdx > idx ? optIdx - 1 : optIdx;
       bubbleTurnIntoOrder(list, nextIdx);
       return;
@@ -173,7 +232,9 @@ export function upsertTurnInfo(list: MessageTurn[], info: MessageInfo) {
   }
 
   if (idx >= 0) {
+    const prevID = list[idx].info.id;
     Object.assign(list[idx].info, info);
+    if (prevID !== info.id) invalidateIndex(list);
     bubbleTurnIntoOrder(list, idx);
   } else {
     list.push({ info, parts: [] });
@@ -187,7 +248,7 @@ export function upsertTurnPart(list: MessageTurn[], part: MessagePart) {
   if (
     turnIdx < 0 &&
     (part.type === "text" || part.type === "file") &&
-    indexes.get(list)?.hasOptimistic !== false
+    getIndexCache(list)?.hasOptimistic !== false
   ) {
     const optIdx = list.findIndex(
       (m) =>
@@ -201,7 +262,7 @@ export function upsertTurnPart(list: MessageTurn[], part: MessagePart) {
     if (optIdx >= 0) {
       list[optIdx].info.id = part.messageID;
       for (const p of list[optIdx].parts) p.messageID = part.messageID;
-      indexes.delete(list);
+      invalidateIndex(list);
       turnIdx = optIdx;
       bubbleTurnIntoOrder(list, turnIdx);
     }
@@ -223,7 +284,7 @@ export function upsertTurnPart(list: MessageTurn[], part: MessagePart) {
   }
 
   let pIdx = findPartIndex(turn.parts, part.id);
-  if (pIdx < 0 && !isOptimisticPartID(part.id) && indexes.get(turn.parts)?.hasOptimistic !== false) {
+  if (pIdx < 0 && !isOptimisticPartID(part.id) && getIndexCache(turn.parts)?.hasOptimistic !== false) {
     pIdx = turn.parts.findIndex(
       (p) =>
         isOptimisticPartID(p.id) &&
@@ -238,13 +299,13 @@ export function upsertTurnPart(list: MessageTurn[], part: MessagePart) {
   if (pIdx >= 0) {
     const prevID = turn.parts[pIdx].id;
     Object.assign(turn.parts[pIdx], part);
-    if (prevID !== part.id) indexes.delete(turn.parts);
+    if (prevID !== part.id) invalidateIndex(turn.parts);
   } else {
     const pairedTextID = pairedStepTextPartID(part);
     const textIdx = pairedTextID ? findPartIndex(turn.parts, pairedTextID) : -1;
     if (textIdx >= 0) {
       turn.parts.splice(textIdx, 0, part);
-      indexes.delete(turn.parts);
+      invalidateIndex(turn.parts);
     } else {
       turn.parts.push(part);
     }
@@ -476,7 +537,9 @@ function mergeTurnInto(local: MessageTurn, remote: { info: MessageInfo; parts: M
     preserveTextPartSkillMeta(rp, lp);
     preserveToolPartEditInput(rp, lp);
     preserveToolPartEditInput(lp, rp);
+    const prevID = lp.id;
     if (!isLocalPartAhead(lp, rp)) Object.assign(lp, rp);
+    if (prevID !== lp.id) invalidateIndex(local.parts);
     nextParts.push(lp);
   }
   // Parts streamed in after the snapshot was taken; optimistic placeholders yield to real parts.
@@ -492,6 +555,7 @@ function mergeTurnInto(local: MessageTurn, remote: { info: MessageInfo; parts: M
   ) {
     local.parts.splice(0, local.parts.length, ...nextParts);
   }
+  invalidateIndex(local.parts);
 }
 
 /**
@@ -579,6 +643,7 @@ export function mergeServerTurnsInto(
   ) {
     list.splice(0, list.length, ...next);
   }
+  invalidateIndex(list);
   return older.length;
 }
 

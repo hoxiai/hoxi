@@ -374,8 +374,11 @@ export function recordToolPartUpdate(part: MessagePart) {
 
 export function isUserAbortError(info?: MessageInfo | null): boolean {
   if (!info?.error) return false;
+  const kind = (info.error.data?.kind || "").trim();
+  if (kind) return kind === "aborted";
   const name = (info.error.name || "").toLowerCase();
   const msg = (info.error.data?.message || "").toLowerCase();
+  if (/connection aborted|econnaborted|software caused connection abort/.test(msg)) return false;
   return name.includes("abort") || msg.includes("aborted") || msg.includes("abort");
 }
 

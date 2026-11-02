@@ -279,6 +279,7 @@ var transientTurnErrorMarkers = []string{
 	"econnrefused",
 	"connection aborted",
 	"econnaborted",
+	"software caused connection abort",
 	"connection closed",
 	"connection terminated",
 	"use of closed network connection",
@@ -352,7 +353,11 @@ func IsPermanentTurnError(msg string) bool {
 	if IsQuotaExhausted(lower) {
 		return true
 	}
+	isNet := isNetworkFault(lower, 0)
 	for _, marker := range permanentTurnErrorMarkers {
+		if isNet && (marker == "interrupted" || marker == "aborted") {
+			continue
+		}
 		if strings.Contains(lower, marker) {
 			return true
 		}

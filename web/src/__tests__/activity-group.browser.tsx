@@ -257,6 +257,116 @@ async function testCommitExecutionStream() {
   } finally { dispose(); host.remove(); }
 }
 
+async function testCompletedStepMetadataDiffStatsUpdate() {
+  const sid = `ses_activity_diff_${++nextFixture}`;
+  setAppSettings("reasoningDisplay", "collapsed");
+  setWorkspace({
+    rootDir: "/probe",
+    activeSessionID: sid,
+    sessions: [{ id: sid, title: "Diff update fixture", directory: "/probe", time: { created: 1, updated: 1 } }],
+  });
+  setWorkspace("statusBySession", sid, { type: "busy" });
+  setWorkspace("messagesBySession", sid, [
+    {
+      info: { id: `msg_${sid}`, sessionID: sid, role: "assistant", time: { created: 1 } },
+      parts: [
+        {
+          type: "tool",
+          id: "prt_edit_1",
+          sessionID: sid,
+          messageID: `msg_${sid}`,
+          callID: "call_edit_1",
+          tool: "edit",
+          state: {
+            status: "completed",
+            input: { filePath: "/probe/src/index.ts", oldString: "a", newString: "b" },
+            output: "ok",
+            title: "Edit src/index.ts",
+            metadata: { filediff: { file: "/probe/src/index.ts", additions: 1, deletions: 0 } },
+            time: { start: 1, end: 2 },
+          },
+        },
+        {
+          type: "tool",
+          id: "prt_read_2",
+          sessionID: sid,
+          messageID: `msg_${sid}`,
+          callID: "call_read_2",
+          tool: "read",
+          state: {
+            status: "completed",
+            input: { filePath: "/probe/src/index.ts" },
+            output: "ok",
+            title: "Read src/index.ts",
+            metadata: {},
+            time: { start: 2, end: 3 },
+          },
+        },
+      ],
+    },
+  ]);
+
+  const host = document.createElement("div");
+  host.style.cssText = "width:900px";
+  document.body.append(host);
+  const dispose = render(
+    () => (
+      <ContextActivityGroupView
+        parts={[...workspace.messagesBySession[sid][0].parts]}
+        isLiveTail={false}
+      />
+    ),
+    host
+  );
+  try {
+    await frame();
+    const header = host.querySelector<HTMLButtonElement>("[data-activity-group] > button")!;
+    assertTrue(header.textContent?.includes("+1"), `initial collapsed bar should show +1, got ${header.textContent}`);
+
+    // Late metadata corrects the completed edit step's additions from +1 to +9.
+    setWorkspace(
+      produce((state) => {
+        const editPart = state.messagesBySession[sid][0].parts[0];
+        if (editPart.type === "tool") {
+          editPart.state.metadata = {
+            ...editPart.state.metadata,
+            filediff: { file: "/probe/src/index.ts", additions: 9, deletions: 0 },
+          };
+        }
+      })
+    );
+    await frame();
+    assertTrue(header.textContent?.includes("+9"), `collapsed bar must immediately update to +9, got ${header.textContent}`);
+
+    // Appending a subsequent step must preserve the corrected +9 stat.
+    setWorkspace(
+      produce((state) => {
+        state.messagesBySession[sid][0].parts.push({
+          type: "tool",
+          id: "prt_bash_3",
+          sessionID: sid,
+          messageID: `msg_${sid}`,
+          callID: "call_bash_3",
+          tool: "bash",
+          state: {
+            status: "completed",
+            input: { command: "npm test" },
+            output: "ok",
+            title: "npm test",
+            metadata: {},
+            time: { start: 3, end: 4 },
+          },
+        });
+      })
+    );
+    await frame();
+    assertTrue(header.textContent?.includes("+9"), `collapsed bar must retain +9 after appending next step, got ${header.textContent}`);
+  } finally {
+    dispose();
+    host.remove();
+  }
+}
+
 export async function runBrowserTest(): Promise<string[]> {
   window.fetch = async () => new Response("{}", { headers: { "Content-Type": "application/json" } });
   hoxiAPI.getSessionDiff = async () => [];
@@ -271,6 +381,7 @@ export async function runBrowserTest(): Promise<string[]> {
     ["search reveals closed groups and all earlier steps", testSearchReveal],
     ["reasoning-only final output stays readable when a tool arrives late", testFinalReasoning],
     ["timeline commit keeps the activity container through reasoning, tools, and its result", testCommitExecutionStream],
+    ["completed step metadata corrections update collapsed diff stats immediately and across appends", testCompletedStepMetadataDiffStatsUpdate],
   ] as const) { await run(); results.push(name); }
   return results;
 }

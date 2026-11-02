@@ -338,9 +338,13 @@ describe("SSE client & 120Hz rAF delta batching", () => {
     assertEqual(part.type === "text" ? part.text : "", "xx");
     setState("turns", 99, { info: { id: "replacement", sessionID: "s", role: "assistant",
       time: { created: 1 } }, parts: [] });
+    setState("turns", 50, { info: { id: "middle_replacement", sessionID: "s", role: "assistant",
+      time: { created: 1 } }, parts: [] });
     setState(produce((draft) => {
       assertEqual(findMessageIndex(draft.turns, "m_99"), -1);
       assertEqual(findMessageIndex(draft.turns, "replacement"), 99);
+      assertEqual(findMessageIndex(draft.turns, "m_50"), -1);
+      assertEqual(findMessageIndex(draft.turns, "middle_replacement"), 50);
     }));
   });
 

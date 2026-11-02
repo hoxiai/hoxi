@@ -108,7 +108,6 @@ const MUTATING_UI_ACTIONS = new Set([
   "press",
   "key",
   "drag",
-  "scroll",
   "evaluate",
   "select",
 ]);
@@ -119,6 +118,14 @@ const PATCH_PATH_RE = /^\*\*\* (?:Add File|Update File|Delete File|Move to):\s*(
 function normalizeAction(args) {
   const raw = typeof args?.Action === "string" ? args.Action : typeof args?.action === "string" ? args.action : "";
   return raw.trim().replace(/^"+|"+$/g, "").trim().toLowerCase();
+}
+
+function isScrollToolCall(tool, args) {
+  const name = String(tool || "").trim().toLowerCase();
+  if (name === "scroll" || name.endsWith("_scroll") || name.endsWith(".scroll")) return true;
+  const act = normalizeAction(args);
+  if (act === "scroll" || act.startsWith("scroll_") || act.startsWith("scroll-")) return true;
+  return false;
 }
 
 function isPollingToolCall(tool, args) {
@@ -134,13 +141,84 @@ function isPollingToolCall(tool, args) {
   return false;
 }
 
-function isMutatingToolCall(tool, args) {
+function isMutatingBashCommand(command) {
+  if (typeof command !== "string" || command.trim() === "") return false;
+  const scrubbed = command
+    .replace(/(?:&|\d+)?>>?\s*\/dev\/null\b/g, " ")
+    .replace(/\d*>&\d+/g, " ")
+    .replace(/<<<?/g, " ");
+  if (/(?:^|[^<>&])\d*>>?\|?\s*\S/.test(scrubbed)) return true;
+  if (/\bsed\b[^\n;|&]*\s-(?:[a-zA-Z]*i|--in-place)\b/.test(command)) return true;
+  if (/\bperl\b[^\n;|&]*\s-[a-zA-Z]*i/.test(command)) return true;
+  if (/\b(?:tee|patch|cp|mv|rm|mkdir|rmdir|touch|truncate|install|dd|chmod|chown|ln)\b/.test(command)) return true;
+  if (/\bgit\s+(?:apply|am|checkout|restore|reset|clean|revert|cherry-pick|merge|rebase|stash|mv|rm)\b/.test(command)) {
+    return true;
+  }
+  if (/\b(?:python3?|node|ruby|perl|php)\b[^\n]*\s-(?:c|e)\b/.test(command)) return true;
+  if (/\b(?:python3?|node|ruby|perl|php|sh|bash|zsh)\b[^\n]*<</.test(command)) return true;
+  return false;
+}
+
+function isMutatingToolCall(tool, args, cleanBashCommand) {
   const name = String(tool || "").trim().toLowerCase();
   if (MUTATING_TOOLS.has(name)) return true;
+  if (name === "bash") return isMutatingBashCommand(cleanBashCommand ?? args?.command);
   if (name === "hoxi_browser" || name === "hoxi_computer") {
     return MUTATING_UI_ACTIONS.has(normalizeAction(args));
   }
   return false;
+}
+
+function readFileSignature(filePath) {
+  if (!filePath) return undefined;
+  try {
+    const st = fs.statSync(filePath);
+    if (!st.isFile()) return `dir:${st.mtimeMs}`;
+    if (st.size <= 4 * 1024 * 1024) {
+      return hash(fs.readFileSync(filePath));
+    }
+    return `${st.size}:${st.mtimeMs}:${st.ctimeMs}`;
+  } catch {
+    return "missing";
+  }
+}
+
+function resolveToolFileTarget(args, workspace) {
+  const raw =
+    args?.filePath ?? args?.path ?? args?.file ?? args?.target_file ?? args?.AbsolutePath ?? args?.Path;
+  if (typeof raw !== "string" || raw.trim() === "") return undefined;
+  return resolveTarget(raw, workspace || args?.workdir || process.cwd());
+}
+
+function recordBashCandidateFiles(state, cleanBashCommand, workspace, workdir) {
+  if (typeof cleanBashCommand !== "string" || state.fileSignatures.size >= 64) return;
+  const baseDir = workdir || workspace || process.cwd();
+  const tokens = cleanBashCommand.match(/(?:[^\s"';|&<>()`]+|"[^"\n]*"|'[^'\n]*')+/g) || [];
+  for (const raw of tokens) {
+    if (state.fileSignatures.size >= 64) break;
+    const token = raw.replace(/^['"]+|['"]+$/g, "").trim();
+    if (!token || token.startsWith("-") || token.startsWith("$") || token === "/dev/null") continue;
+    if (!token.includes("/") && !token.includes(".")) continue;
+    const resolved = resolveTarget(token, baseDir);
+    if (resolved && !state.fileSignatures.has(resolved)) {
+      state.fileSignatures.set(resolved, readFileSignature(resolved));
+    }
+  }
+}
+
+function hasTrackedFileChanged(state, targetFile) {
+  let changed = false;
+  for (const [trackedPath, prevSig] of state.fileSignatures) {
+    const curSig = readFileSignature(trackedPath);
+    if (curSig !== prevSig) {
+      state.fileSignatures.set(trackedPath, curSig);
+      changed = true;
+    }
+  }
+  if (targetFile && !state.fileSignatures.has(targetFile) && state.fileSignatures.size < 64) {
+    state.fileSignatures.set(targetFile, readFileSignature(targetFile));
+  }
+  return changed;
 }
 
 function canonicalizeValue(value) {
@@ -171,18 +249,33 @@ function ensureSessionGuard(turnGuards, sessionID) {
       const oldest = turnGuards.keys().next().value;
       if (oldest !== undefined) turnGuards.delete(oldest);
     }
-    state = { turnID: "", recent: [], sinceEdit: new Map() };
+    state = { turnID: "", recent: [], sinceEdit: new Map(), fileSignatures: new Map() };
     turnGuards.set(sessionID, state);
   }
   return state;
 }
 
-function observeToolCall(turnGuards, input, args, cleanBashCommand) {
+function observeToolCall(turnGuards, input, args, cleanBashCommand, workspace) {
   const sessionID = typeof input?.sessionID === "string" ? input.sessionID.trim() : "";
   const tool = typeof input?.tool === "string" ? input.tool.trim() : "";
   if (!sessionID || !tool || isPollingToolCall(tool, args)) return;
 
   const state = ensureSessionGuard(turnGuards, sessionID);
+  if (isScrollToolCall(tool, args)) {
+    state.recent = [];
+    state.sinceEdit.clear();
+    return;
+  }
+
+  const targetFile = resolveToolFileTarget(args, workspace);
+  if (hasTrackedFileChanged(state, targetFile)) {
+    state.recent = [];
+    state.sinceEdit.clear();
+  }
+  if (tool.toLowerCase() === "bash") {
+    recordBashCandidateFiles(state, cleanBashCommand, workspace, args?.workdir);
+  }
+
   const fp = toolCallFingerprint(tool, args, cleanBashCommand);
   state.recent.push(fp);
   if (state.recent.length > DOOM_LOOP_THRESHOLD) {
@@ -192,7 +285,7 @@ function observeToolCall(turnGuards, input, args, cleanBashCommand) {
     state.recent.length >= DOOM_LOOP_THRESHOLD && state.recent.every((item) => item === fp);
 
   let noEditRepeat = false;
-  if (isMutatingToolCall(tool, args)) {
+  if (isMutatingToolCall(tool, args, cleanBashCommand)) {
     state.sinceEdit = new Map([[fp, 1]]);
   } else {
     const count = (state.sinceEdit.get(fp) || 0) + 1;
@@ -232,6 +325,7 @@ function syncTurnFromMessages(turnGuards, messages) {
     state.turnID = lastUserMessageID;
     state.recent = [];
     state.sinceEdit.clear();
+    state.fileSignatures.clear();
   }
 }
 
@@ -377,7 +471,7 @@ const HoxiSandboxPlugin = async () => {
           assertWritable(target, value.workspace);
         }
       }
-      observeToolCall(turnGuards, input, args, clean);
+      observeToolCall(turnGuards, input, args, clean, value?.workspace);
       if (!isBash) return;
       const tag = stopMarker(input);
       if (!tag) {
@@ -425,6 +519,7 @@ const HoxiSandboxPlugin = async () => {
           state.turnID = props.info.id;
           state.recent = [];
           state.sinceEdit.clear();
+          state.fileSignatures.clear();
         }
       }
     },
