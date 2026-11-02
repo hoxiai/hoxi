@@ -2,6 +2,12 @@
 
 All notable releases of **Hoxi Desktop** are documented below. Full per-version release notes are archived under [`docs/release-notes/`](docs/release-notes/) and consumed directly by `.github/workflows/release.yml` and `scripts/ai-release.sh`.
 
+## [v0.6.8](docs/release-notes/v0.6.8.md) — 2026-11-02
+
+- **Fault Classification & Failover**: Classify stream EOF and network interruptions as retryable faults so automatic failover retries transient errors instead of failing the turn; align candidate health and failover on one shared fault structure.
+- **Timeline & Approval**: Remove streaming markdown stalls and hidden context rescans; animate step groups and thoughts on first expand; tighten static approval gates and isolate browser profile directories; guard runaway duplicate tool loops and dedupe shell command headers.
+- **Engineering Gates**: Enforce Wails host isolation, gateway/CLI layering and gofmt checks in CI; keep Windows version metadata and the root CHANGELOG in sync with release notes.
+
 ## [v0.6.7](docs/release-notes/v0.6.7.md) — 2026-11-02
 
 - **Approval Gate**: Treat read-only `manage_task` / `manage_subagents` (`status`, `list`) and wait tools (`wait`, `wait_5_seconds`) as read-only without triggering confirmation or doom-loop false positives; parse quoted `Action` fields accurately and allow "Always allow" on doom-loop cards.
