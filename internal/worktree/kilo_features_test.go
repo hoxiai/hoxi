@@ -492,5 +492,3 @@ func TestOnDemandNestedGitRepoLoadingWhenRootIsGitRepo(t *testing.T) {
 		t.Fatalf("expected root + touched stripe repo (2 repos, not untouched paypal), got %d: %+v", len(stAfter.Repos), stAfter.Repos)
 	}
 }
-
-

@@ -52,20 +52,20 @@ func TestLANRequestRejectsPublicSource(t *testing.T) {
 
 func TestIsLANClient(t *testing.T) {
 	cases := map[string]bool{
-		"127.0.0.1:5000":      true,
-		"[::1]:5000":          true,
-		"[fd00::1]:5000":      true,
-		"[fe80::1%en0]:54321": true,  // IPv6 link-local with interface zone ID
-		"192.168.1.30:40000":  true,
-		"10.0.0.9:1234":       true,
-		"172.16.4.4:80":       true,
-		"100.101.102.103:80":  true,  // CGNAT / Tailscale-style
-		"169.254.1.1:80":      true,  // link-local
-		"8.8.8.8:53":          false, // public
-		"1.1.1.1:80":          false,
+		"127.0.0.1:5000":             true,
+		"[::1]:5000":                 true,
+		"[fd00::1]:5000":             true,
+		"[fe80::1%en0]:54321":        true, // IPv6 link-local with interface zone ID
+		"192.168.1.30:40000":         true,
+		"10.0.0.9:1234":              true,
+		"172.16.4.4:80":              true,
+		"100.101.102.103:80":         true,  // CGNAT / Tailscale-style
+		"169.254.1.1:80":             true,  // link-local
+		"8.8.8.8:53":                 false, // public
+		"1.1.1.1:80":                 false,
 		"[2001:4860:4860::8888]:443": false,
-		"":                    false,
-		"not-an-address":      false,
+		"":                           false,
+		"not-an-address":             false,
 	}
 	for addr, want := range cases {
 		if got := isLANClient(addr); got != want {

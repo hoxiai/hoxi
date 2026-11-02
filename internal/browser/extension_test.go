@@ -331,4 +331,3 @@ func TestExtensionPersistentLinkTokenReconnect(t *testing.T) {
 		t.Fatalf("expected persistent linkToken reconnect to succeed, got %v", hello2)
 	}
 }
-

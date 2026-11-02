@@ -184,9 +184,11 @@ type MessageTokens struct {
 }
 
 type MessageErrorData struct {
-	Message     string `json:"message,omitempty"`
-	StatusCode  int    `json:"statusCode,omitempty"`
-	IsRetryable bool   `json:"isRetryable,omitempty"`
+	Message      string `json:"message,omitempty"`
+	StatusCode   int    `json:"statusCode,omitempty"`
+	IsRetryable  bool   `json:"isRetryable,omitempty"`
+	Kind         string `json:"kind,omitempty"`
+	RetryAfterMs int64  `json:"retryAfterMs,omitempty"`
 }
 
 type MessageError struct {
@@ -265,35 +267,35 @@ type SSEEvent struct {
 }
 
 type SessionRecord struct {
-	ID                  string            `json:"id"`
-	ProjectID           string            `json:"projectID,omitempty"`
-	ParentID            string            `json:"parentID,omitempty"`
-	Surface             string            `json:"surface,omitempty"`
-	Subagent            bool              `json:"subagent,omitempty"`
-	Runtime             string            `json:"runtime"`
-	ExternalID          string            `json:"externalID,omitempty"`
-	ProjectDir          string            `json:"projectDir"`
-	WorktreePath        string            `json:"worktreePath"`
-	Branch              string            `json:"branch,omitempty"`
-	BaseCommit          string            `json:"baseCommit,omitempty"`
-	SandboxMode         string            `json:"sandboxMode,omitempty"`
-	CommandSandbox      bool              `json:"commandSandbox,omitempty"`
-	RetainedBranch      string            `json:"retainedBranch,omitempty"`
-	ModelID             string            `json:"modelID"`
-	ProviderID          string            `json:"providerID"`
-	Mode                string            `json:"mode,omitempty"`
-	Title               string            `json:"title"`
-	CreatedAt           int64             `json:"createdAt"`
-	UpdatedAt           int64             `json:"updatedAt"`
-	ArchivedAt          int64             `json:"archivedAt,omitempty"`
-	Turns               []MessageTurn     `json:"turns,omitempty"`
-	Revert              *SessionRevert    `json:"revert,omitempty"`
-	RevertedTurns       []MessageTurn     `json:"revertedTurns,omitempty"`
-	RevertSnapshot      string            `json:"revertSnapshot,omitempty"`
-	RevertPaths         []string          `json:"revertPaths,omitempty"`
+	ID             string         `json:"id"`
+	ProjectID      string         `json:"projectID,omitempty"`
+	ParentID       string         `json:"parentID,omitempty"`
+	Surface        string         `json:"surface,omitempty"`
+	Subagent       bool           `json:"subagent,omitempty"`
+	Runtime        string         `json:"runtime"`
+	ExternalID     string         `json:"externalID,omitempty"`
+	ProjectDir     string         `json:"projectDir"`
+	WorktreePath   string         `json:"worktreePath"`
+	Branch         string         `json:"branch,omitempty"`
+	BaseCommit     string         `json:"baseCommit,omitempty"`
+	SandboxMode    string         `json:"sandboxMode,omitempty"`
+	CommandSandbox bool           `json:"commandSandbox,omitempty"`
+	RetainedBranch string         `json:"retainedBranch,omitempty"`
+	ModelID        string         `json:"modelID"`
+	ProviderID     string         `json:"providerID"`
+	Mode           string         `json:"mode,omitempty"`
+	Title          string         `json:"title"`
+	CreatedAt      int64          `json:"createdAt"`
+	UpdatedAt      int64          `json:"updatedAt"`
+	ArchivedAt     int64          `json:"archivedAt,omitempty"`
+	Turns          []MessageTurn  `json:"turns,omitempty"`
+	Revert         *SessionRevert `json:"revert,omitempty"`
+	RevertedTurns  []MessageTurn  `json:"revertedTurns,omitempty"`
+	RevertSnapshot string         `json:"revertSnapshot,omitempty"`
+	RevertPaths    []string       `json:"revertPaths,omitempty"`
 	// RevertScope records which part of the workspace an unrevert may restore:
 	// the whole exclusive worktree or only RevertPaths (which may be empty).
-	RevertScope string `json:"revertScope,omitempty"`
+	RevertScope         string            `json:"revertScope,omitempty"`
 	Snapshots           map[string]string `json:"snapshots,omitempty"`
 	OpenCodeIDs         []string          `json:"openCodeIDs,omitempty"`
 	OpenCodeChildIDs    []string          `json:"openCodeChildIDs,omitempty"`

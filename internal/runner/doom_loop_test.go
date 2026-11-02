@@ -230,4 +230,3 @@ func TestAgyHookAllowsReadOnlyTaskPollingAndGatesMutatingTaskControl(t *testing.
 		t.Fatalf("expected tool permission request for kill action, got %+v", asked.Properties)
 	}
 }
-

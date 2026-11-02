@@ -371,18 +371,18 @@ func EncodeStreamInputTurnWithParts(runtime, promptText string, parts []MessageP
 }
 
 type activeProcess struct {
-	sessionID string
-	runtime   string
-	cmd       *exec.Cmd
-	stdin     io.WriteCloser
-	done      chan struct{}
-	abortCh   chan struct{}
-	aborted   bool
-	steered   bool
-	retrying  bool
-	idleCh    chan struct{}
-	cancel    func()
-	mu        sync.Mutex
+	sessionID     string
+	runtime       string
+	cmd           *exec.Cmd
+	stdin         io.WriteCloser
+	done          chan struct{}
+	abortCh       chan struct{}
+	aborted       bool
+	steered       bool
+	retrying      bool
+	idleCh        chan struct{}
+	cancel        func()
+	mu            sync.Mutex
 	stall         stallState
 	toolFails     toolFailureStreak
 	reasoningLoop openCodeReasoningGuard

@@ -222,4 +222,3 @@ func TestRunnerReentryFallsBackWhenRetainedBranchDeletedOrCheckedOut(t *testing.
 		t.Fatalf("expected worktree mode, got %+v", reentered)
 	}
 }
-

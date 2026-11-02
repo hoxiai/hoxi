@@ -377,4 +377,3 @@ func TestAgyDoneThinkingOrdersBeforeSameStepTextAndPersistsOrder(t *testing.T) {
 	assertReasonBeforeText("live store", s1)
 	assertReasonBeforeText("reloaded store", NewStore(storeDir))
 }
-

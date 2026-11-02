@@ -1,12 +1,12 @@
 package leaderboard
 
 type ModelItem struct {
-	Rank          int      `json:"rank"`
-	Slug          string   `json:"slug"`
-	Name          string   `json:"name"`
-	Vendor        string   `json:"vendor"`
-	APIName       string   `json:"apiName"`
-	Price         struct {
+	Rank    int    `json:"rank"`
+	Slug    string `json:"slug"`
+	Name    string `json:"name"`
+	Vendor  string `json:"vendor"`
+	APIName string `json:"apiName"`
+	Price   struct {
 		Currency   string  `json:"currency"`
 		Input      float64 `json:"input"`
 		Output     float64 `json:"output"`
@@ -70,12 +70,12 @@ type GatewaysResponse struct {
 }
 
 type ModelPricingItem struct {
-	Slug             string   `json:"slug"`
-	Name             string   `json:"name"`
-	Vendor           string   `json:"vendor"`
-	APIName          string   `json:"apiName,omitempty"`
-	GatewayModelName string   `json:"gatewayModelName,omitempty"`
-	AASlug           string   `json:"aaSlug,omitempty"`
+	Slug             string `json:"slug"`
+	Name             string `json:"name"`
+	Vendor           string `json:"vendor"`
+	APIName          string `json:"apiName,omitempty"`
+	GatewayModelName string `json:"gatewayModelName,omitempty"`
+	AASlug           string `json:"aaSlug,omitempty"`
 	Price            struct {
 		Currency   string  `json:"currency"`
 		Input      float64 `json:"input"`

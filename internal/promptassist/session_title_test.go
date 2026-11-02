@@ -66,4 +66,3 @@ func TestHandleSummarizeTitleSkipsLLMForDirectShortTitles(t *testing.T) {
 		t.Fatalf("expected direct short en title with 0 LLM calls (got %d calls): %s", client.calls, bodyEn)
 	}
 }
-

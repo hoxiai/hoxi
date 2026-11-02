@@ -12,11 +12,11 @@ import (
 )
 
 var (
-	modkernel32              = windows.NewLazySystemDLL("kernel32.dll")
-	procPowerCreateRequest   = modkernel32.NewProc("PowerCreateRequest")
-	procPowerSetRequest      = modkernel32.NewProc("PowerSetRequest")
-	procPowerClearRequest    = modkernel32.NewProc("PowerClearRequest")
-	procSetThreadExecState   = modkernel32.NewProc("SetThreadExecutionState")
+	modkernel32            = windows.NewLazySystemDLL("kernel32.dll")
+	procPowerCreateRequest = modkernel32.NewProc("PowerCreateRequest")
+	procPowerSetRequest    = modkernel32.NewProc("PowerSetRequest")
+	procPowerClearRequest  = modkernel32.NewProc("PowerClearRequest")
+	procSetThreadExecState = modkernel32.NewProc("SetThreadExecutionState")
 )
 
 const (

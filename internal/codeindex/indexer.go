@@ -88,9 +88,9 @@ func init() {
 }
 
 var (
-	declarationRe = regexp.MustCompile(`(?m)^\s*(?:export\s+)?(?:default\s+)?(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:static\s+)?(?:abstract\s+)?(?:readonly\s+)?(?:function|class|interface|type|struct|enum|trait|impl|def|func|fn|const|let|var|module|namespace|object|record)\s+([A-Za-z_$][\w$]*)`)
-	goMethodRe    = regexp.MustCompile(`(?m)^\s*func\s*\([^)]+\)\s*([A-Za-z_]\w*)`)
-	assignRe      = regexp.MustCompile(`(?m)^\s*(?:export\s+)?(?:(?:const|let|var)\s+)?([A-Za-z_$][\w$]*)\s*(?::[^=\n]+)?[:=]\s*(?:async\s*)?(?:function|\(|=>)`)
+	declarationRe  = regexp.MustCompile(`(?m)^\s*(?:export\s+)?(?:default\s+)?(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:static\s+)?(?:abstract\s+)?(?:readonly\s+)?(?:function|class|interface|type|struct|enum|trait|impl|def|func|fn|const|let|var|module|namespace|object|record)\s+([A-Za-z_$][\w$]*)`)
+	goMethodRe     = regexp.MustCompile(`(?m)^\s*func\s*\([^)]+\)\s*([A-Za-z_]\w*)`)
+	assignRe       = regexp.MustCompile(`(?m)^\s*(?:export\s+)?(?:(?:const|let|var)\s+)?([A-Za-z_$][\w$]*)\s*(?::[^=\n]+)?[:=]\s*(?:async\s*)?(?:function|\(|=>)`)
 	quotedImportRe = regexp.MustCompile(`["']([^"'\s]+)["']`)
 	pyFromImportRe = regexp.MustCompile(`^\s*from\s+([A-Za-z0-9_.]+)\s+import\b`)
 	pyImportRe     = regexp.MustCompile(`^\s*import\s+([A-Za-z0-9_.]+)`)

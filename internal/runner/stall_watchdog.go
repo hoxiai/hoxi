@@ -333,7 +333,7 @@ func (s *Service) publishStall(ap *activeProcess) {
 
 func (s *Service) abortStalled(ap *activeProcess, idle time.Duration) {
 	msg := fmt.Sprintf("No output for %s, so Hoxi stopped this run. Ask it to continue, or narrow down the task.", idle.Round(time.Second))
-	s.abortTurn(ap, &MessageError{Name: stallErrorName, Data: &MessageErrorData{Message: msg}})
+	s.abortTurn(ap, newClassifiedMessageError(stallErrorName, msg, 0))
 }
 
 // abortTurn stops the turn; err is reported as the turn's error once it ends.

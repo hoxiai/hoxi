@@ -237,7 +237,7 @@ func TestNativeCLISystemDeduplicatedOnResumedTurnsAndToolSummaryDedup(t *testing
 	// Verify runtimeContext deduplicates identical tool summaries within the same turn and strips ANSI from excerpts.
 	rec.Turns = []MessageTurn{
 		{
-			Info: MessageInfo{ID: "u1", Role: "user"},
+			Info:  MessageInfo{ID: "u1", Role: "user"},
 			Parts: []MessagePart{{Type: "text", Text: "Inspect foo.go"}},
 		},
 		{
@@ -257,4 +257,3 @@ func TestNativeCLISystemDeduplicatedOnResumedTurnsAndToolSummaryDedup(t *testing
 		t.Fatalf("expected ANSI codes to be stripped in singleLineExcerpt, got:\n%s", ctx)
 	}
 }
-

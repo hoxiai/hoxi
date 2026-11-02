@@ -14,9 +14,28 @@ import {
 } from "./auto-models";
 import type { ReasoningEffort } from "./workspace-state";
 
+export type AutoFailoverFaultKind =
+  | "aborted"
+  | "stalled"
+  | "context"
+  | "policy"
+  | "model"
+  | "quota"
+  | "rateLimit"
+  | "auth"
+  | "server"
+  | "network"
+  | "badRequest";
+
 export interface AutoFailoverError {
   name: string;
-  data?: { message?: string; statusCode?: number; isRetryable?: boolean };
+  data?: {
+    message?: string;
+    statusCode?: number;
+    isRetryable?: boolean;
+    kind?: AutoFailoverFaultKind | string;
+    retryAfterMs?: number;
+  };
 }
 
 export type AutoFailoverReason =
@@ -77,9 +96,26 @@ export function decideAutoFailover(
   const name = (error.name || "").toLowerCase();
   const msg = `${error.data?.message || ""}`.toLowerCase();
   const status = error.data?.statusCode;
+  const kind = (error.data?.kind || "").trim();
   // Not the endpoint's fault: neither switch nor bench the candidate.
   const notEndpoint = { failover: false, penalize: false, reason: "other" as const };
   const yes = (reason: AutoFailoverReason) => ({ failover: true, penalize: true, reason });
+
+  switch (kind) {
+    case "aborted":
+    case "stalled":
+    case "context":
+    case "policy":
+    case "badRequest":
+      return notEndpoint;
+    case "model":
+    case "quota":
+    case "rateLimit":
+    case "auth":
+    case "server":
+    case "network":
+      return yes(kind);
+  }
 
   if (NEVER_SWITCH_NAMES.has(name) || ABORT_RE.test(name) || ABORT_RE.test(msg)) return notEndpoint;
   if (CONTEXT_RE.test(msg) || POLICY_RE.test(msg)) return notEndpoint;
@@ -306,6 +342,23 @@ export function shouldRetrySameModelOnError(
   return decision.reason === "network" || decision.reason === "server";
 }
 
+function breakerClassForReason(reason: AutoFailoverReason): string | undefined {
+  switch (reason) {
+    case "rateLimit":
+      return "rate_limit";
+    case "quota":
+      return "quota";
+    case "auth":
+    case "model":
+      return "config";
+    case "server":
+    case "network":
+      return "transient";
+    default:
+      return undefined;
+  }
+}
+
 export function selectNextDispatchTarget(
   sessionID: string,
   currentError: AutoFailoverError,
@@ -320,7 +373,11 @@ export function selectNextDispatchTarget(
   const errText = currentError.data?.message || currentError.name || "error";
   const status = currentError.data?.statusCode;
   const failed = autoState.target;
-  const cooldownMs = parseQuotaResetMs(errText);
+  const rawRetryAfterMs = currentError.data?.retryAfterMs;
+  const cooldownMs =
+    typeof rawRetryAfterMs === "number" && rawRetryAfterMs > 0
+      ? Math.min(rawRetryAfterMs, MAX_RESET_WAIT_MS)
+      : parseQuotaResetMs(errText);
   const decision = decideAutoFailover(currentError, Date.now() - autoState.dispatchedAt);
   if (autoState.poolID && decision.penalize) {
     markAutoCandidateCooldown(failed.providerID, failed.modelID, errText, status, cooldownMs);
@@ -330,6 +387,7 @@ export function selectNextDispatchTarget(
       ok: false,
       statusCode: status,
       message: errText,
+      class: breakerClassForReason(decision.reason),
     });
   }
   let nextCand: { providerID: string; modelID: string } | null = null;

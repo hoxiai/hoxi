@@ -88,7 +88,7 @@ func (s *Service) noteToolOutcome(sessionID string, part MessagePart) {
 	tool := ap.toolFails.last
 	ap.toolFails.mu.Unlock()
 	msg := fmt.Sprintf("Stopped after %d tool calls in a row with invalid arguments (latest: %s). The model kept re-sending malformed input, so Hoxi ended the run to save tokens. Rephrase the task or switch models.", repeatedToolFailureLimit, tool)
-	s.abortTurn(ap, &MessageError{Name: repeatedToolErrorName, Data: &MessageErrorData{Message: msg}})
+	s.abortTurn(ap, newClassifiedMessageError(repeatedToolErrorName, msg, 0))
 }
 
 // noteToolEvents scans translated CLI events for tool outcomes.

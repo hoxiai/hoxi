@@ -91,11 +91,26 @@ func TestOpenCodeEngineErrorWithoutHTTPStatus(t *testing.T) {
 	if got == nil || got.Name != "OpenCodeError" || got.Data == nil || got.Data.StatusCode != 0 {
 		t.Fatalf("%+v", got)
 	}
+	if got.Data.Kind != "network" || !got.Data.IsRetryable {
+		t.Fatalf("expected structured network fault, got %+v", got.Data)
+	}
 	if !strings.Contains(got.Data.Message, "connection refused") {
 		t.Fatalf("reason lost: %+v", got.Data)
 	}
 	if openCodeEngineError(nil) != nil {
 		t.Fatal("nil error produced a failure")
+	}
+}
+
+func TestNewClassifiedMessageErrorStructuredFault(t *testing.T) {
+	t.Parallel()
+	rateErr := newClassifiedMessageError("APIError", "Rate limit exceeded, please retry in 30s", 429)
+	if rateErr.Data == nil || rateErr.Data.Kind != "rateLimit" || !rateErr.Data.IsRetryable || rateErr.Data.RetryAfterMs != 30_000 {
+		t.Fatalf("unexpected rate limit fault details: %+v", rateErr.Data)
+	}
+	stallErr := newClassifiedMessageError(stallErrorName, "No output for 90s", 0)
+	if stallErr.Data == nil || stallErr.Data.Kind != "stalled" || stallErr.Data.IsRetryable {
+		t.Fatalf("unexpected stall fault details: %+v", stallErr.Data)
 	}
 }
 

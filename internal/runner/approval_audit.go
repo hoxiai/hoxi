@@ -65,7 +65,7 @@ type ApprovalAuditEntry struct {
 	Directory    string `json:"directory,omitempty"`
 	Destructive  bool   `json:"destructive,omitempty"`
 	Decision     string `json:"decision"` // "once" | "always" | "reject" | "timeout" | "interrupted"
-	Source       string `json:"source"` // "desktop" | "tunnel" | "lan" | "relay" | "system" | "policy" | "unattended" | "timeout"
+	Source       string `json:"source"`   // "desktop" | "tunnel" | "lan" | "relay" | "system" | "policy" | "unattended" | "timeout"
 	Category     string `json:"category,omitempty"`
 	Message      string `json:"message,omitempty"`
 }

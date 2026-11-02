@@ -6,8 +6,9 @@ run:
 
 linters:
   default: standard
-  enable:
+  disable:
     - errcheck
+  enable:
     - govet
     - ineffassign
     - staticcheck

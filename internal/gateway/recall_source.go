@@ -134,7 +134,7 @@ type upstreamSession struct {
 	Title     string `json:"title"`
 	ParentID  string `json:"parentID"`
 	Directory string `json:"directory"`
-	Time     struct {
+	Time      struct {
 		Created  int64 `json:"created"`
 		Updated  int64 `json:"updated"`
 		Archived int64 `json:"archived"`

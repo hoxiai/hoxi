@@ -55,8 +55,8 @@ jobs:
       - name: Run release pipeline regression tests
         run: node --test scripts/release.test.mjs
 
-      - name: Run browser and sandbox plugin tests
-        run: node --test internal/opencode/browser_plugin_test.mjs internal/opencode/sandbox_plugin_test.mjs
+      - name: Run browser, sandbox, computer and Chrome Link extension tests
+        run: node --test internal/opencode/browser_plugin_test.mjs internal/opencode/sandbox_plugin_test.mjs internal/opencode/computer_tool_test.mjs extensions/chrome/*.test.mjs
 
       - name: Build frontend production bundle
         run: npm --prefix web run build
@@ -76,6 +76,15 @@ jobs:
 
       - name: Prepare embedded asset placeholder
         run: mkdir -p web/dist && touch web/dist/placeholder
+
+      - name: Check Go formatting (gofmt)
+        run: |
+          UNFORMATTED="$(gofmt -l main.go cmd internal)"
+          if [[ -n "$UNFORMATTED" ]]; then
+            echo "The following Go files are not formatted with gofmt:" >&2
+            echo "$UNFORMATTED" >&2
+            exit 1
+          fi
 
       - name: Run Go vet
         run: go vet ./...

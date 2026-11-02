@@ -299,7 +299,6 @@ func TestPromoteLocalSessionToWorktreeTransfersWorkingStateAndContext(t *testing
 	}
 }
 
-
 // A non-git folder nested inside a git repository must fail closed when the
 // caller asks for isolation: creating a parent worktree would silently run the
 // session outside the folder the user opened.

@@ -733,4 +733,3 @@ func regularFileStaysWithinResolvedRepo(resolvedRepo, fullPath string) bool {
 	resolvedFile = filepath.Clean(resolvedFile)
 	return resolvedFile == resolvedRepo || strings.HasPrefix(resolvedFile, resolvedRepo+string(filepath.Separator))
 }
-

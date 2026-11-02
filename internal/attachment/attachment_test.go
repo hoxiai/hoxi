@@ -191,4 +191,3 @@ func TestExtractPDFTextPureGo(t *testing.T) {
 		t.Fatalf("extractPDFTextPureGo = %q, want both lines", got)
 	}
 }
-

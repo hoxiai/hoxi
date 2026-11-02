@@ -65,7 +65,13 @@ if [[ "${BUILD_ONLY}" -eq 1 && "${CREATE_TAG}" -eq 1 ]]; then
   echo '--tag requires a published release; it cannot be used with --build-only' >&2
   exit 1
 fi
-if [[ -z "${NOTES}" ]]; then NOTES="Hoxi Desktop v${VERSION}"; fi
+if [[ -z "${NOTES}" ]]; then
+  if [[ -f "docs/release-notes/v${VERSION}.md" ]]; then
+    NOTES="$(cat "docs/release-notes/v${VERSION}.md")"
+  else
+    NOTES="Hoxi Desktop v${VERSION}"
+  fi
+fi
 
 PUBLISHER="scripts/release-publisher.mjs"
 if [[ "${FORCE_DB}" -eq 1 ]]; then PUBLISHER="scripts/publish-release-to-posts.mjs"; fi

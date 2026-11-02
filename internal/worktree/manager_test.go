@@ -563,7 +563,6 @@ func TestMultiRepoSubdirectoriesStatusDiffRevertAndCommit(t *testing.T) {
 	}
 }
 
-
 // A folder nested inside a git repository is a separate project. Isolating it
 // would check out the parent repository, so the session would work on files
 // outside the folder the user opened and be listed under both workspaces.
@@ -663,4 +662,3 @@ func TestDiffFileBlocksUntrackedEnvIgnoredUnchangedAndEscapingSymlinks(t *testin
 		t.Fatalf("unexpected DiffFile(new.txt): %+v", diff)
 	}
 }
-

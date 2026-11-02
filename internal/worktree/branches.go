@@ -342,4 +342,3 @@ func (m *worktreeManager) SyncWithBase(sessionID string) (worktreeStatus, error)
 	}
 	return m.Status(sessionID)
 }
-

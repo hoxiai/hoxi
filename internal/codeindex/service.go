@@ -78,7 +78,6 @@ func (s *Service) StorageBytes() int64 {
 	return total
 }
 
-
 // ClearCache drops in-memory and on-disk cached indexes under s.root.
 func (s *Service) ClearCache() int64 {
 	s.mu.Lock()

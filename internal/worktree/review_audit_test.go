@@ -110,4 +110,3 @@ func TestParseObserverAuditJSONStripsThinkingBlocks(t *testing.T) {
 		t.Fatalf("expected thinking block stripped and JSON parsed, got score=%d summary=%q issues=%v err=%v", score, summary, issues, err)
 	}
 }
-

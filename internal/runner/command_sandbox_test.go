@@ -126,4 +126,3 @@ func TestOpenCodeConversationAndAdoptPreserveCommandSandbox(t *testing.T) {
 		t.Fatalf("adoptOpenCodeSession dropped CommandSandbox: %+v", adopted)
 	}
 }
-

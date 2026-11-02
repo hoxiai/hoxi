@@ -36,8 +36,8 @@ type Action struct {
 	DeviceScaleFactor *float64 `json:"deviceScaleFactor,omitempty"`
 	// FullPage makes resize capture the whole document: the emulated viewport
 	// height follows the page content instead of the panel height.
-	FullPage *bool `json:"fullPage,omitempty"`
-	ScaleFactor       *float64 `json:"scaleFactor,omitempty"`
+	FullPage    *bool    `json:"fullPage,omitempty"`
+	ScaleFactor *float64 `json:"scaleFactor,omitempty"`
 	// UI-only pointer input: phase down/move/up/cancel, button
 	// left/middle/right, clickCount 1..3, CDP modifier bits Alt=1 Ctrl=2 Meta=4 Shift=8.
 	Phase      string `json:"phase,omitempty"`

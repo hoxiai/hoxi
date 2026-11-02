@@ -10,14 +10,14 @@ import (
 )
 
 type fakeDesktop struct {
-	mu         sync.Mutex
-	app        App
-	resized    bool
-	inputs     int
+	mu          sync.Mutex
+	app         App
+	resized     bool
+	inputs      int
 	lastActions []Action
-	entered    chan struct{}
-	wait       bool
-	secure     bool
+	entered     chan struct{}
+	wait        bool
+	secure      bool
 }
 
 func (f *fakeDesktop) Permissions(context.Context, string) (Permissions, error) {

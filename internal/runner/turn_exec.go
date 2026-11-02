@@ -605,10 +605,7 @@ func (s *Service) startTurnProcess(
 			if errText == "" {
 				errText = "CLI process exited unexpectedly without a result event"
 			}
-			msgErr := &MessageError{
-				Name: "RunnerProcessError",
-				Data: &MessageErrorData{Message: errText, IsRetryable: isRetryableTurnError(errText)},
-			}
+			msgErr := newClassifiedMessageError("RunnerProcessError", errText, 0)
 			if stallErr != nil {
 				msgErr = stallErr
 			}

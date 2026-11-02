@@ -303,4 +303,3 @@ func TestTruncatePatchOnBoundaryPreservesNewlinesAndUTF8(t *testing.T) {
 		t.Fatalf("expected UTF-8 boundary truncation %q, got %q", "+你", gotUTF8)
 	}
 }
-

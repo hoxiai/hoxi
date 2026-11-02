@@ -52,21 +52,21 @@ func (w *cappedGitOutputBuffer) String() string {
 }
 
 var knownLockfileNames = map[string]struct{}{
-	"package-lock.json": {},
-	"pnpm-lock.yaml":    {},
-	"yarn.lock":         {},
-	"bun.lock":          {},
-	"bun.lockb":         {},
-	"go.sum":            {},
-	"cargo.lock":        {},
-	"gemfile.lock":      {},
-	"poetry.lock":       {},
-	"uv.lock":           {},
-	"composer.lock":     {},
-	"podfile.lock":      {},
-	"pubspec.lock":      {},
-	"flake.lock":        {},
-	"shrinkwrap.yaml":   {},
+	"package-lock.json":   {},
+	"pnpm-lock.yaml":      {},
+	"yarn.lock":           {},
+	"bun.lock":            {},
+	"bun.lockb":           {},
+	"go.sum":              {},
+	"cargo.lock":          {},
+	"gemfile.lock":        {},
+	"poetry.lock":         {},
+	"uv.lock":             {},
+	"composer.lock":       {},
+	"podfile.lock":        {},
+	"pubspec.lock":        {},
+	"flake.lock":          {},
+	"shrinkwrap.yaml":     {},
 	"npm-shrinkwrap.json": {},
 }
 
@@ -757,4 +757,3 @@ func truncatePatchOnBoundary(patch string, limit int) string {
 	}
 	return sub
 }
-

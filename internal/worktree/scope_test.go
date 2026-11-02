@@ -95,4 +95,3 @@ func TestScopedResolvesParentManagerWhenGivenDiskSandboxPath(t *testing.T) {
 		t.Fatalf("scoped.RootDir() = %q, want parent repo %q", scoped.RootDir(), root)
 	}
 }
-

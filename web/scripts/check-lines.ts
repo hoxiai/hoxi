@@ -8,9 +8,6 @@ const MAX_LINES = 800;
 const EXEMPT_SUFFIXES = [
   "web/src/components/icons/file-icons/types.ts",
   "web/src/components/icons/file-icons/icon-maps.ts",
-  "client/lib/l10n/gen/app_localizations.dart",
-  "client/lib/l10n/gen/app_localizations_en.dart",
-  "client/lib/l10n/gen/app_localizations_zh.dart",
 ];
 
 // Read-only services/ calls permitted directly in components/ (all writes must go through store/).
@@ -136,6 +133,7 @@ const IGNORE_DIRS = new Set([
   ".git",
   ".hoxi",
   ".claude",
+  "client",
   ".dart_tool",
   ".pub-cache",
   "node_modules",
@@ -179,7 +177,7 @@ const GO_ALLOWED_DOMAIN_IMPORTS: Record<string, string[]> = {
   telemetry: ["auth"],
 };
 
-const SOURCE_EXT = /\.(go|ts|tsx|js|m|dart)$/;
+const SOURCE_EXT = /\.(go|ts|tsx|js|m)$/;
 
 function walkRepo(dir: string): string[] {
   let results: string[] = [];
@@ -382,11 +380,6 @@ for (const file of files) {
       /["']\/(?:v1\/messages|chat\/completions)["']/.test(content)
     ) {
       console.error(`  ✗ [boundary violation] ${rel} must not hand-roll '/v1/messages' or '/chat/completions' requests; reuse callSimpleLLM in internal/provider/http.go.`);
-      violations++;
-    }
-  } else if (rel.startsWith("client/lib/") && rel.endsWith(".dart")) {
-    if (!/^[a-z0-9_]+\.dart$/.test(baseName)) {
-      console.error(`  ✗ [naming violation] ${rel} must use lowercase snake_case.dart filename.`);
       violations++;
     }
   }

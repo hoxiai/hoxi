@@ -49,6 +49,8 @@ export interface MessageError {
     message?: string;
     statusCode?: number;
     isRetryable?: boolean;
+    kind?: string;
+    retryAfterMs?: number;
     [key: string]: any;
   };
 }

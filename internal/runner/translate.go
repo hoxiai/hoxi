@@ -626,10 +626,7 @@ func (t *TurnTranslator) handleAgyResult(res *agyResult) []SSEEvent {
 		if errMsg == "" {
 			errMsg = "Antigravity CLI execution error"
 		}
-		msgErr := &MessageError{
-			Name: "RunnerError",
-			Data: &MessageErrorData{Message: errMsg, IsRetryable: isRetryableTurnError(errMsg)},
-		}
+		msgErr := newClassifiedMessageError("RunnerError", errMsg, 0)
 		t.msgInfo.Error = msgErr
 		t.msgInfo.Finish = "error"
 		evts = append(evts,

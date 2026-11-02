@@ -22,10 +22,10 @@ import (
 // request is answered by the desktop, the CLI, the phone, or nobody is
 // watching. An empty override follows the mode's preset.
 type ApprovalPolicy struct {
-	Mode      string `json:"mode"`
-	Edit      string `json:"edit,omitempty"`     // "" | "allow" | "ask"
-	Webfetch  string `json:"webfetch,omitempty"` // "" | "allow" | "ask"
-	Bash      string `json:"bash,omitempty"`     // "" | "allow" | "smart" | "ask"
+	Mode     string `json:"mode"`
+	Edit     string `json:"edit,omitempty"`     // "" | "allow" | "ask"
+	Webfetch string `json:"webfetch,omitempty"` // "" | "allow" | "ask"
+	Bash     string `json:"bash,omitempty"`     // "" | "allow" | "smart" | "ask"
 	// AIReview lets a user-selected lightweight model inspect complex
 	// non-destructive bash commands that fail static checks and allow strictly
 	// read-only inspection commands without prompting.

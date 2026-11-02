@@ -43,7 +43,16 @@ export function clearSessionInterrupted(sessionID: string) {
 
 export async function handleSessionErrorEvent(
   sessionID: string,
-  error?: { name: string; data?: { message?: string; statusCode?: number; isRetryable?: boolean } }
+  error?: {
+    name: string;
+    data?: {
+      message?: string;
+      statusCode?: number;
+      isRetryable?: boolean;
+      kind?: string;
+      retryAfterMs?: number;
+    };
+  }
 ): Promise<void> {
   if (!sessionID) return;
   const autoState = getTurnDispatchState(sessionID);

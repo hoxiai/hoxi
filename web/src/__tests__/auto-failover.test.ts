@@ -83,6 +83,25 @@ describe("auto-pool failover decision", () => {
     assertEqual(decideAutoFailover(unknown, 60_000).failover, false);
   });
 
+  it("prefers structured fault kind over opaque error text", () => {
+    const structuredQuota = {
+      name: "RunnerError",
+      data: { message: "opaque upstream code E_9001", kind: "quota", retryAfterMs: 120_000 },
+    };
+    const d1 = decideAutoFailover(structuredQuota, 90_000);
+    assertEqual(d1.failover, true);
+    assertEqual(d1.penalize, true);
+    assertEqual(d1.reason, "quota");
+
+    const structuredPolicy = {
+      name: "RunnerError",
+      data: { message: "opaque upstream code E_9002", kind: "policy" },
+    };
+    const d2 = decideAutoFailover(structuredPolicy, 1_000);
+    assertEqual(d2.failover, false);
+    assertEqual(d2.penalize, false);
+  });
+
   it("parses the stated reset time", () => {
     const now = Date.UTC(2026, 9, 30, 5, 24, 0); // 13:24 UTC+8
     assertEqual(parseQuotaResetMs(RATE_429, now), Date.UTC(2026, 9, 30, 14, 48, 16) - now);

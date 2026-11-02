@@ -13,11 +13,11 @@ type ApprovalNotice struct {
 	Permission string `json:"permission,omitempty"`
 	Pending    int    `json:"pending,omitempty"`
 	// Summary counts only. Never a title, command, path or code.
-	Status    string `json:"status,omitempty"`
-	Allowed   int    `json:"allowed,omitempty"`
-	Denied    int    `json:"denied,omitempty"`
-	TimedOut  int    `json:"timedOut,omitempty"`
-	Deferred  int    `json:"deferred,omitempty"`
+	Status   string `json:"status,omitempty"`
+	Allowed  int    `json:"allowed,omitempty"`
+	Denied   int    `json:"denied,omitempty"`
+	TimedOut int    `json:"timedOut,omitempty"`
+	Deferred int    `json:"deferred,omitempty"`
 }
 
 // SetApprovalListener registers fn for newly pending approvals and questions.

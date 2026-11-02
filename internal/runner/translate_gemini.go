@@ -314,10 +314,7 @@ func (t *TurnTranslator) feedGeminiLine(line string) []SSEEvent {
 		isErr := strings.EqualFold(env.Status, "error") || errText != ""
 		if isErr {
 			errMsg := firstNonEmptyStr(errText, env.Message, t.geminiLastErrMsg, t.lastClaudeErrorText(), "Gemini CLI execution failed")
-			msgErr := &MessageError{
-				Name: "RunnerError",
-				Data: &MessageErrorData{Message: errMsg, IsRetryable: isRetryableTurnError(errMsg)},
-			}
+			msgErr := newClassifiedMessageError("RunnerError", errMsg, 0)
 			t.msgInfo.Error = msgErr
 			t.msgInfo.Finish = "error"
 			evts = append(evts,

@@ -384,4 +384,3 @@ func TestWindowModeAndPersistentProfile(t *testing.T) {
 		t.Fatalf("persistent profile should not be deleted on Close: %v", err)
 	}
 }
-

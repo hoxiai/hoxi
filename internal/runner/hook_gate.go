@@ -410,7 +410,8 @@ func (s *Service) approvalDedupWaiters() int {
 	return total
 }
 
-func pendingCallKey(sessionID string, req map[string]interface{}) string {	toolMap, _ := req["tool"].(map[string]interface{})
+func pendingCallKey(sessionID string, req map[string]interface{}) string {
+	toolMap, _ := req["tool"].(map[string]interface{})
 	callID, _ := toolMap["callID"].(string)
 	callID = strings.TrimSpace(callID)
 	if sessionID == "" || callID == "" {

@@ -43,9 +43,9 @@ func TestComputerGatewayRejectsUntrustedOriginsAndAgentGrants(t *testing.T) {
 	}
 
 	g.uiOrigins = map[string]bool{
-		"http://127.0.0.1:5420":          true,
-		"http://localhost:5421":          true,
-		"wails://wails.localhost:34115":  true,
+		"http://127.0.0.1:5420":         true,
+		"http://localhost:5421":         true,
+		"wails://wails.localhost:34115": true,
 	}
 	checkCaller := func(host, origin, site string, want bool) {
 		t.Helper()

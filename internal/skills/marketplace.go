@@ -50,9 +50,9 @@ var marketplaceSkillSlug = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
 // fetched from. The catalog host itself is always allowed; everything else is
 // rejected so a compromised entry cannot turn install into an SSRF primitive.
 var extraMarketplaceHosts = map[string]bool{
-	"github.com":               true,
+	"github.com":                true,
 	"raw.githubusercontent.com": true,
-	"cdn.jsdelivr.net":         true,
+	"cdn.jsdelivr.net":          true,
 }
 
 type MarketplaceSkill struct {

@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/hoxiai/hoxi/internal/diagnostics"
+	"github.com/hoxiai/hoxi/internal/llm"
 	"github.com/hoxiai/hoxi/internal/opencode/ocapi"
 )
 
@@ -14,6 +16,20 @@ const (
 	engineErrorNameMax    = 64
 	engineErrorMessageMax = 400
 )
+
+func newClassifiedMessageError(name, message string, status int) *MessageError {
+	fault := llm.ClassifyFault(name, message, status, time.Now())
+	return &MessageError{
+		Name: name,
+		Data: &MessageErrorData{
+			Message:      message,
+			StatusCode:   status,
+			IsRetryable:  fault.IsRetryable,
+			Kind:         string(fault.Kind),
+			RetryAfterMs: fault.RetryAfterMs,
+		},
+	}
+}
 
 // engineBodyError mirrors the engine's structured error envelope. Only the
 // stable code and the human-readable reason are read; anything else (refs,
@@ -34,16 +50,13 @@ func openCodeEngineError(err error) *MessageError {
 	}
 	var httpErr *ocapi.HTTPError
 	if !errors.As(err, &httpErr) {
-		return &MessageError{Name: "OpenCodeError", Data: &MessageErrorData{Message: boundEngineText(err.Error())}}
+		return newClassifiedMessageError("OpenCodeError", boundEngineText(err.Error()), 0)
 	}
 	name, message := parseEngineBodyError(httpErr.Body)
 	if name == "" {
 		name = "OpenCodeError"
 	}
-	return &MessageError{
-		Name: name,
-		Data: &MessageErrorData{Message: message, StatusCode: httpErr.Status},
-	}
+	return newClassifiedMessageError(name, message, httpErr.Status)
 }
 
 // parseEngineBodyError reads the stable code and bounded reason from the engine

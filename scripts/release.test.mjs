@@ -502,3 +502,41 @@ test("skipped publisher results and local signatures fail without creating a tag
   assert.notEqual(f.run(["0.2.1", "--skip-build"], { TEST_ADHOC: "1" }).status, 0);
   assert.equal(f.calls().slice(before.length).includes("publisher"), false);
 });
+
+test("ai-release.sh resolves docs/release-notes/v<version>.md when notes argument is omitted", (t) => {
+  const f = fixture(t);
+  f.dmg("0.2.1");
+  fs.mkdirSync(path.join(f.root, "docs/release-notes"), { recursive: true });
+  fs.writeFileSync(path.join(f.root, "docs/release-notes/v0.2.1.md"), "Hoxi Desktop v0.2.1\n\n- Audited note\n");
+  const result = f.run(["0.2.1", "--skip-build", "--dry-run", "--json"], { HOXI_RELEASE_KEY: "" });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(JSON.parse(result.stdout).notes, /Audited note/);
+});
+
+test("release version metadata, release notes and root CHANGELOG stay synchronized", () => {
+  const repoRoot = path.join(scripts, "..");
+  const wails = JSON.parse(fs.readFileSync(path.join(repoRoot, "wails.json"), "utf8"));
+  const webPkg = JSON.parse(fs.readFileSync(path.join(repoRoot, "web/package.json"), "utf8"));
+  const winInfo = JSON.parse(fs.readFileSync(path.join(repoRoot, "build/windows/info.json"), "utf8"));
+  const buildInfoGo = fs.readFileSync(path.join(repoRoot, "internal/buildinfo/version.go"), "utf8");
+  const changelog = fs.readFileSync(path.join(repoRoot, "CHANGELOG.md"), "utf8");
+
+  const version = normalizeVersion(wails?.info?.productVersion || "");
+  assert.equal(webPkg.version, version, "web/package.json version must match wails.json");
+  assert.equal(winInfo.productVersion, `${version}.0`, "build/windows/info.json productVersion must match wails.json");
+  assert.equal(winInfo.fileVersion, `${version}.0`, "build/windows/info.json fileVersion must match wails.json");
+  assert.match(buildInfoGo, new RegExp(`var\\s+Version\\s*=\\s*"${version.replace(/\./g, "\\.")}"`));
+
+  const notesPath = path.join(repoRoot, `docs/release-notes/v${version}.md`);
+  assert.equal(fs.existsSync(notesPath), true, `Missing release notes: docs/release-notes/v${version}.md`);
+  assert.ok(fs.readFileSync(notesPath, "utf8").trim().length > 0);
+
+  for (const entry of fs.readdirSync(path.join(repoRoot, "docs/release-notes"))) {
+    if (!/^v\d+\.\d+\.\d+\.md$/.test(entry)) continue;
+    assert.equal(
+      changelog.includes(`docs/release-notes/${entry}`),
+      true,
+      `CHANGELOG.md must index docs/release-notes/${entry}`
+    );
+  }
+});
