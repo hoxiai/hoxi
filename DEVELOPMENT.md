@@ -38,7 +38,7 @@
    - [9.1 Wails 窗口配置与单实例锁](#91-wails-窗口配置与单实例锁)
    - [9.2 原生状态栏 / 系统托盘状态机联动](#92-原生状态栏--系统托盘状态机联动)
 10. [多运行时执行引擎与跨软件会话接管 (`internal/runner/` & `internal/handoff/`)](#10-多运行时执行引擎与跨软件会话接管-internalrunner--internalhandoff)
-11. [移动端控制中枢与三通道远程架构 (`client/`)](#11-移动端控制中枢与三通道远程架构-client)
+11. [远程访问与多通道接入架构 (`internal/tunnel/`, `internal/pairing/`, `internal/cloudflared/`)](#11-远程访问与多通道接入架构-internaltunnel-internalpairing-internalcloudflared)
 
 ---
 
@@ -587,36 +587,35 @@ Go 网关在转发 `/api/hoxi/event` SSE 流及多运行时事件时，旁路解
 
 ---
 
-## 11. 移动端控制中枢与三通道远程架构 (`client/`)
+## 11. 远程访问与多通道接入架构 (`internal/tunnel/`, `internal/pairing/`, `internal/cloudflared/`)
 
-移动端 [`client/`](client/)（Flutter + Riverpod + GoRouter + Dio）采用 **「沟通 · 工作台 · 一人公司 · 我的」** 四栏导航（[`main_scaffold_screen.dart`](client/lib/app/presentation/screens/main_scaffold_screen.dart)），连接 **Hoxi 桌面电脑**与 **GoPanel 服务器**两类受控节点。完整现状与约束以 [`client/AGENTS.md`](client/AGENTS.md) 为准。
+Hoxi 桌面端支持通过三种远程通道安全接收外部客户端（如移动端、GoPanel 控制面板）的指令与审批，不开放公网未授权端口。完整远程隧道契约以 [`docs/gopanel-hoxi-remote-tunnel.md`](docs/gopanel-hoxi-remote-tunnel.md) 为准。
 
-### 11.1 核心架构与安全边界
+### 11.1 三通道接入架构与安全边界
 
-1. **三通道弹性连接（身份 ⟂ 传输，`HoxiTransportResolver`）**：
-   - **局域网扫码直连（`:5417`）**：桌面端 `internal/pairing` 生成配对二维码，监听 `:5417`（`internal/gateway/lan.go`），校验配对令牌并限制局域网来源地址。
-   - **Cloudflare Tunnel 中继（`:5418`）**：桌面端 `internal/cloudflared` 监管连接器并将流量转发至本机 `127.0.0.1:5418`（`internal/gateway/ingress.go`），仅认独立中继令牌 `relayToken`。手机端优先走局域网，失败自动回落中继（不自动重放非幂等修改请求）。
-   - **GoPanel 反向隧道（`internal/tunnel`）**：桌面主动外连 GoPanel（`WSS /api/tunnel/connect`），手机经 `ALL /api/tunnel/hoxi-nodes/:nodeId/proxy/*` 访问白名单内的 HTTP 与 SSE；待审批提醒通过 Notify 帧触发 iPhone APNs 推送（仅含计数，点开连接对应节点并进入 `CodeAttentionScreen` 待审批列表，不自动开启麦克风）。详见 [`docs/gopanel-hoxi-remote-tunnel.md`](docs/gopanel-hoxi-remote-tunnel.md)。
-2. **工具调用意图识别 + 修改类操作强制确认卡片**：
-   - 聊天层通过模型工具调用（`chat_intent_tools.dart` + `chat_intent_dispatcher.dart`）或关键词回退（`ChatActionExecutor`）识别查询与控制意图，目标必须与实时数据原样匹配。
-   - **所有修改类操作**（审批决定、新建/停止会话、下发编码指令、Git 提交、容器/证书/站点/数据库操作）一律先生成 **2 分钟有效、单次消费的确认卡片**（`chat_action_confirmation.dart`），经用户显式确认后才下发，并携带 `X-Idempotency-Key` / `instructionId` 幂等保护。
-3. **数据外发透明告知**：
-   - 首次对话前与模型网关设置页均通过 `model_gateway_disclosure.dart` / `model_gateway_disclosure_sheet.dart` 明确展示外发网关地址与上下文清单（含主动拍照图片）；清单版本升级或抹除本地数据后重新要求确认。
-4. **原生语音链路（手动开启，待真机长稳验收）**：
-   - 默认采用 iOS `.voiceChat` / Android 原生语音识别（iOS 50 秒主动轮转）+ 网关 `/v1/audio/speech` TTS（失败回落系统语音），保持单一原生音频引擎常驻并支持 `onUserBargeIn` 开口或点击打断；另含实验性 Realtime 语音客户端（`realtime_voice_client.dart` + `chat_realtime_voice_control.dart`）。
+1. **局域网配对直连（`:5417`）**：
+   - 桌面端 [`internal/pairing`](internal/pairing/pairing.go) 生成含局域网 IPv4、端口 `5417` 与配对令牌的二维码（`GET /api/hoxi/pairing/qr`）。
+   - 桌面监听 `:5417`（[`internal/gateway/lan.go`](internal/gateway/lan.go)），使用局域网独立令牌鉴权并复用远程路由白名单，仅服务局域网来源地址（loopback / RFC1918 / ULA / 链路本地 / CGNAT），公网来源一律 403。
+   - 令牌保存在 `~/.hoxi/pairing.json`（0600，受保护状态文件），支持一键重新生成（`POST /api/hoxi/pairing/rotate`）。
 
-### 11.2 移动端关键模块职责索引
+2. **Cloudflare Tunnel 反向代理入口（`:5418`）**：
+   - 本机回环地址开辟独立入口 `127.0.0.1:5418`（[`internal/gateway/ingress.go`](internal/gateway/ingress.go)），供 `cloudflared` 等本地转发器把公网请求代理进来。
+   - 复用同一份远程路由白名单，但只认独立中继令牌（`relayToken`，局域网令牌在此一律 401），由转发器前置鉴权把关。
+   - 桌面端 [`internal/cloudflared`](internal/cloudflared/manager.go) 监管 `cloudflared` 进程生命周期与断线退避重启，令牌存储在 `~/.hoxi/cloudflared.json`。
 
-| 模块路径 | 核心职责说明 |
-| :--- | :--- |
-| [`client/lib/app/presentation/screens/main_scaffold_screen.dart`](client/lib/app/presentation/screens/main_scaffold_screen.dart) | 「沟通 · 工作台 · 一人公司 · 我的」四栏主导航外壳 |
-| [`client/lib/core/network/hoxi_transport_resolver.dart`](client/lib/core/network/hoxi_transport_resolver.dart) | 节点多传输候选（局域网 `:5417` 优先、失败回落中继 `:5418`）探测与选路 |
-| [`client/lib/features/chat_hub/data/chat_information_engine.dart`](client/lib/features/chat_hub/data/chat_information_engine.dart) | 采集受控节点实时快照并标注数据来源与时效（`SnapshotProvenance`） |
-| [`client/lib/features/chat_hub/data/chat_intent_dispatcher.dart`](client/lib/features/chat_hub/data/chat_intent_dispatcher.dart) | 模型工具调用意图校验、目标精确匹配与确认计划分发 |
-| [`client/lib/features/chat_hub/data/chat_action_executor.dart`](client/lib/features/chat_hub/data/chat_action_executor.dart) | 关键词回退路径与确认卡片执行器（共用 `ChatSessionActions` / `ChatInfrastructureActions`） |
-| [`client/lib/features/chat_hub/data/chat_voice_service.dart`](client/lib/features/chat_hub/data/chat_voice_service.dart) | 原生 ASR + 服务端/系统 TTS 语音控制器、流式分句与 `onUserBargeIn` 打断联动 |
-| [`client/lib/features/chat_hub/data/realtime_voice_client.dart`](client/lib/features/chat_hub/data/realtime_voice_client.dart) | 实验性 Realtime WebSocket 24kHz PCM16 语音客户端（配合 `chat_realtime_voice_control.dart`） |
-| [`client/lib/features/chat_hub/presentation/widgets/chat_hub_voice_call_sheet.dart`](client/lib/features/chat_hub/presentation/widgets/chat_hub_voice_call_sheet.dart) | 手动开启的连续语音通话面板与声控状态交互 |
-| [`client/ios/Runner/AppDelegate.swift`](client/ios/Runner/AppDelegate.swift) / [`MainActivity.kt`](client/android/app/src/main/kotlin/ai/hoxi/app/MainActivity.kt) | iOS `.voiceChat` 硬件回声消除与 50s 识别轮转、Android 语音识别/16kHz PCM 采集、PCM16 播放与 APNs 桥接 |
+3. **GoPanel 反向隧道（[`internal/tunnel`](internal/tunnel/manager.go)）**：
+   - 桌面主动外连 GoPanel（`WSS /api/tunnel/connect`），桌面不开放任何公网端口。
+   - 仅对白名单内的 HTTP / SSE 路由在进程内交给网关（[`internal/gateway/tunnel.go`](internal/gateway/tunnel.go)）。
+   - 待处理审批与会话提问通过 Notify 帧（类型 9）交给 GoPanel 触发 APNs 推送（仅含计数与摘要，不含命令、代码、路径或会话内容）。
+
+### 11.2 关键模块与路由白名单
+
+| 模块 / 契约 | 核心职责说明 | 源码位置 |
+| :--- | :--- | :--- |
+| **GoPanel 反向隧道管理器** | 负责主动建立 WebSocket 反向隧道、心跳保活、请求解包分发与 Notify 帧推送 | [`internal/tunnel/`](internal/tunnel/manager.go) |
+| **局域网配对二维码与监听** | 负责本机局域网 IPv4 探测、配对令牌生成与 `:5417` 局域网白名单鉴权服务 | [`internal/pairing/`](internal/pairing/pairing.go) + [`internal/gateway/lan.go`](internal/gateway/lan.go) |
+| **反向代理入口与中继令牌** | 负责 `127.0.0.1:5418` 入口请求转发与 `relayToken` 独立中继校验 | [`internal/gateway/ingress.go`](internal/gateway/ingress.go) |
+| **Cloudflare 连接器监管** | 负责本地 `cloudflared` 进程拉起、环境变量凭据注入与崩溃退避重启 | [`internal/cloudflared/`](internal/cloudflared/manager.go) |
+| **远程路由安全白名单** | 严格限定远程可访问的 HTTP/SSE 路由集合（拒绝账号、配置、更新与未受控执行接口） | [`internal/gateway/tunnel.go`](internal/gateway/tunnel.go) |
 
 

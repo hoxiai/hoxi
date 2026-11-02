@@ -293,12 +293,12 @@ describe("markdown document reader helpers", () => {
       "docs/gopanel-hoxi-remote-tunnel.md"
     );
     assertEqual(
-      resolveMarkdownRelativePath("../client/AGENTS.md#L12-L20", "docs/guide.md"),
-      "client/AGENTS.md#L12-L20"
+      resolveMarkdownRelativePath("../AGENTS.md#L12-L20", "docs/guide.md"),
+      "AGENTS.md#L12-L20"
     );
     assertEqual(
-      resolveMarkdownRelativePath("../../client/AGENTS.md#L12-L20", "docs/sub/guide.md"),
-      "client/AGENTS.md#L12-L20"
+      resolveMarkdownRelativePath("../../AGENTS.md#L12-L20", "docs/sub/guide.md"),
+      "AGENTS.md#L12-L20"
     );
     assertEqual(
       resolveMarkdownRelativePath("assets/arch.png", "docs/guide.md"),
@@ -400,7 +400,7 @@ describe("markdown document reader helpers", () => {
 
 describe("markdown document file links", () => {
   it("resolves the original href only once across sibling directories", () => {
-    assertEqual(resolveMarkdownFileLink("../client/AGENTS.md", "Mobile", "docs/guide.md"), "client/AGENTS.md");
+    assertEqual(resolveMarkdownFileLink("../AGENTS.md", "Rules", "docs/guide.md"), "AGENTS.md");
     assertEqual(resolveMarkdownFileLink("../README.md#L10", "Home", "docs/guide.md"), "README.md#L10");
     assertEqual(resolveMarkdownFileLink("./contract.md", "Contract", "docs/guide.md"), "docs/contract.md");
   });

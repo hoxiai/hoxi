@@ -277,4 +277,4 @@ npm --prefix web run lint && npm --prefix web test && npm --prefix web run build
 
 - Qoder / CodeBuddy 没有 PreToolUse 门控能力，现已在 `internal/runner/` 中限制为仅允许只读模式（Plan）运行，非只读模式一律拒绝启动。
 - “总是允许”在两边语义仍不同：OpenCode 写入的是全局持久的 pattern 规则；Claude / Antigravity / Gemini CLI 是会话内存里的授权（可通过 `/api/hoxi/permission/grants` 查看与撤销），重启后丢失。
-- 手机端首次模型网关披露弹窗已在 `client/lib/core/compliance/model_gateway_disclosure.dart` 实现。
+- 移动端首次模型网关披露弹窗已在移动端独立仓库实现。

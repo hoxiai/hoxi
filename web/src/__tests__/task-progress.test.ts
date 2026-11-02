@@ -503,19 +503,19 @@ describe("task progress todo staleness", () => {
       state: {
         status: "completed",
         input: {
-          filePath: "client/lib/chat_hub_controller.dart",
-          Path: "client/lib/chat_hub_controller.dart",
+          filePath: "web/src/chat_hub_controller.ts",
+          Path: "web/src/chat_hub_controller.ts",
           Target: "const a = 1;",
           Replacement: "const a = 2;\nconst b = 3;",
         },
         output: "",
-        title: "Edit chat_hub_controller.dart",
+        title: "Edit chat_hub_controller.ts",
         metadata: {},
         time: { start: 1, end: 2 },
       },
     };
-    assertDeepEqual(resolveToolFileDiff(editPart, true, "client/lib/chat_hub_controller.dart"), {
-      file: "client/lib/chat_hub_controller.dart",
+    assertDeepEqual(resolveToolFileDiff(editPart, true, "web/src/chat_hub_controller.ts"), {
+      file: "web/src/chat_hub_controller.ts",
       patch: undefined,
       before: "const a = 1;",
       after: "const a = 2;\nconst b = 3;",
@@ -529,10 +529,10 @@ describe("task progress todo staleness", () => {
       tool: "write",
       state: {
         ...editPart.state,
-        input: { filePath: "client/lib/new_file.dart", Content: "line 1\nline 2" },
+        input: { filePath: "web/src/new_file.ts", Content: "line 1\nline 2" },
       },
     };
-    const written = resolveToolFileDiff(writePart, true, "client/lib/new_file.dart");
+    const written = resolveToolFileDiff(writePart, true, "web/src/new_file.ts");
     assertEqual(written?.additions, 2);
     assertEqual(written?.deletions, 0);
   });
@@ -694,10 +694,10 @@ describe("task progress todo staleness", () => {
 
   it("normalizes Codex concatenated reasoning headings and inline <thinking> blocks without breaking part identity", () => {
     const concatenated =
-      "**Running build and mobile checks****Checking Go build and Flutter status****Reviewing potential frontend issue**";
+      "**Running build checks****Checking Go build and test status****Reviewing potential frontend issue**";
     assertEqual(
       normalizeReasoningText(concatenated),
-      "**Running build and mobile checks**\n\n**Checking Go build and Flutter status**\n\n**Reviewing potential frontend issue**"
+      "**Running build checks**\n\n**Checking Go build and test status**\n\n**Reviewing potential frontend issue**"
     );
     assertEqual(
       liveReasoningTicker(concatenated, true),
@@ -705,20 +705,20 @@ describe("task progress todo staleness", () => {
     );
     assertEqual(
       reasoningHeading(concatenated).title,
-      "Running build and mobile checks"
+      "Running build checks"
     );
     assertEqual(
       liveReasoningTicker(
-        "<thinking>**Running build and mobile checks****Checking Go build and Flutter status****Reviewing potential frontend issue**",
+        "<thinking>**Running build checks****Checking Go build and test status****Reviewing potential frontend issue**",
         true
       ),
       "Reviewing potential frontend issue"
     );
     assertEqual(
       reasoningHeading(
-        "<thinking>**Running build and mobile checks****Checking Go build and Flutter status****Reviewing potential frontend issue**</thinking>"
+        "<thinking>**Running build checks****Checking Go build and test status****Reviewing potential frontend issue**</thinking>"
       ).title,
-      "Running build and mobile checks"
+      "Running build checks"
     );
 
     // Unclosed <thinking> emitted right before tool call stays pure reasoning work

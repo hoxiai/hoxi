@@ -440,12 +440,6 @@ npm --prefix web run lint && npm --prefix web test && npm --prefix web run build
 go vet ./... && go test ./... && go build ./...
 ```
 
-涉及移动端追加：
-
-```bash
-flutter analyze client && (cd client && flutter test)
-```
-
 UI 使用 `t("skills.camelCaseKey")`，保持中英文键和插值对齐。遵守 SolidJS 响应式访问、生命周期清理、源码 800 行门禁和 `components → store → services` 边界。
 
 本文修订仅修改文档与探测证据，不宣称已经通过上述功能或构建验收。

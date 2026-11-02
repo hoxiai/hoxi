@@ -25,7 +25,7 @@
 
 ---
 
-**Hoxi** ([hoxi.ai](https://hoxi.ai)) unifies **OpenCode**, **Claude Code**, **Google Antigravity (`agy`)**, **Gemini CLI (`gemini`)**, **Qoder**, and **CodeBuddy** inside a native macOS & Windows workspace (typically **~30 MB** RAM and **~0.2s** cold start)—and extends to your phone (`client/`) to command running AI agents and manage [**GoPanel**](https://github.com/hoxiai/gopanel) Linux servers on the go.
+**Hoxi** ([hoxi.ai](https://hoxi.ai)) unifies **OpenCode**, **Claude Code**, **Google Antigravity (`agy`)**, **Gemini CLI (`gemini`)**, **Qoder**, and **CodeBuddy** inside a native macOS & Windows workspace (typically **~30 MB** RAM and **~0.2s** cold start)—and supports remote mobile control to command running AI agents and manage [**GoPanel**](https://github.com/hoxiai/gopanel) Linux servers on the go.
 
 ---
 
@@ -51,10 +51,9 @@ Giving agents blanket shell access risks `rm -rf` or `git push --force`. Approvi
 
 ### 4. Stepping Away from Your Desk (Mobile AI + [GoPanel](https://github.com/hoxiai/gopanel) Server Ops)
 Solo builders and lean teams don't just write code—they also deploy and maintain servers. Being away from your laptop shouldn't stall a long-running agent or leave a production alert unanswered.
-- **Resilient Dual-Transport Mobile Console ([`client/`](client/README.md) — `Chat · Workbench · Solo Company · Me`)**:
-  - **3-Path Connectivity (LAN-First with Relay Failover)**: Pair your phone via **LAN Direct QR** (`:5417`), **Cloudflare Tunnel Connector** (`:5418`), or **[GoPanel](https://github.com/hoxiai/gopanel) Reverse Tunnel + iOS APNs Approval Push** (push payloads carry pending counts only—never raw commands, code, or file paths).
-  - **Tool-Call Intent Routing & Mandatory Confirmation Cards**: Query live coding progress on your Hoxi desktop or server metrics on GoPanel, or dispatch commands to run tests, inspect/commit Git worktree changes, approve PreToolUse safety gates, restart Docker containers, and renew SSL certificates. Every mutating action requires a **2-minute, single-use confirmation card** backed by `X-Idempotency-Key` and `instructionId` deduplication.
-  - **Native Voice Pipeline & Barge-In (manual start; on-device acceptance pending)**: Built-in iOS `.voiceChat` hardware AEC, 50s ASR rollover, and **Speak or Tap to Interrupt (`onUserBargeIn`)** over native ASR + gateway `/v1/audio/speech` TTS (with automatic system speech fallback), plus remote Node Skill discovery and mounting.
+- **Resilient Multi-Transport Remote Control (LAN Direct, Cloudflare Relay & GoPanel Tunnel)**:
+  - **3-Path Connectivity (LAN-First with Relay Failover)**: Pair via **LAN Direct QR** (`:5417`), **Cloudflare Tunnel Connector** (`:5418`), or **[GoPanel](https://github.com/hoxiai/gopanel) Reverse Tunnel + iOS APNs Approval Push** (push payloads carry pending counts only—never raw commands, code, or file paths).
+  - **Remote Action Safety & Idempotency**: Query live coding progress on your Hoxi desktop or server metrics on GoPanel, or dispatch commands to run tests, inspect Git worktree changes, and approve PreToolUse safety gates with `X-Idempotency-Key` and `instructionId` deduplication.
 
 ### 5. Context Rot, Endpoint Degradation & Electron Bloat
 Long sessions forget early architectural constraints; third-party API gateways silently degrade or stall; Electron forks eat 1.5 GB+ RAM per window.
@@ -77,10 +76,10 @@ Most AI coding tools stop at the repository. Hoxi also lets a session act on nat
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────────┐
-│ Native Host & Mobile Client (Wails v2 + Tray + Flutter App)             │
+│ Native Host & Remote Access (Wails v2 + Tray + LAN/Relay Channels)      │
 │  • macOS WKWebView & Windows WebView2 (~30MB RAM, ~0.2s cold start)     │
 │  • Native tray (`NSStatusBar` / `Shell_NotifyIconW`) Running/Attention  │
-│  • Mobile App (`client/`): LAN & Relay control for Hoxi & GoPanel       │
+│  • Remote Channels: LAN / Relay / GoPanel reverse tunnel control        │
 ├─────────────────────────────────────────────────────────────────────────┤
 │ 3-Pane SolidJS Workspace (Zero-VDOM, 120Hz rAF Batched Streaming)       │
 │  • Left: Projects, Worktree Sandboxes, Multi-Runtime Sessions           │
@@ -153,8 +152,7 @@ npm --prefix web test && npm --prefix web run build
 ## Documentation & Ecosystem
 
 - **[README.zh-CN.md](README.zh-CN.md)**: 简体中文文档（针对国内模型生态、中转站防降智测评、多工具接力与 GoPanel 手机运维）
-- **[GoPanel (`hoxiai/gopanel`)](https://github.com/hoxiai/gopanel)**: Lightweight server ops panel & remote AI coding node managed by Hoxi Mobile
-- **[client/README.md](client/README.md)**: Hoxi Mobile App (Flutter, iOS/Android — AI Command Center & GoPanel Server Manager)
+- **[GoPanel (`hoxiai/gopanel`)](https://github.com/hoxiai/gopanel)**: Lightweight server ops panel & remote AI coding node (supports reverse tunnel integration with Hoxi)
 - **[DEVELOPMENT.md](DEVELOPMENT.md)**: Deep-dive architecture, OpenAPI/SSE contracts, Worktree state machines, and plugin hooks
 - **[HANDOFF_AND_CLI_BRIDGE.md](HANDOFF_AND_CLI_BRIDGE.md)**: Cross-CLI session handoff IR, local credential discovery, and protocol bridges
 - **[COMPUTER.md](COMPUTER.md)**: Native macOS & Windows computer control (`hoxi_computer`), per-app authorization, and validation boundaries

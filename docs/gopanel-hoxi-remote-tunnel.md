@@ -177,14 +177,13 @@ Type(1B) | StreamID(8B, BigEndian uint64) | Payload(≤ 4MB)
 - 只有桌面主进程（含 `--no-desktop` 守护模式）启用隧道；CLI 临时拉起的 headless 网关没有凭据路径，配对会在兑换配对码**之前**被拒绝，避免在 GoPanel 留下孤儿节点。
 - 桌面 UI：设置 → 系统 → 经 GoPanel 远程控制（`web/src/components/settings/RemoteTunnelControls.tsx`）。
 
-## 7. 手机端（`client/`）
+## 7. 移动端与远程客户端接入契约
 
-- **中继地址**：`https://<gopanel>/api/tunnel/hoxi-nodes/<nodeId>/proxy`，作为 `nodeType = 'hoxi'` 的 `ServerConnection.url` 保存；现有 Hoxi 适配器把 `/api/hoxi/...` 直接拼在后面，无需改业务代码。
-- **凭据**：中继连接复用所属 GoPanel 的登录 JWT 与安全入口，由现有鉴权拦截器发送 `X-Auth` 与 `EntranceCode`。GoPanel 重新登录保存连接时，会同步刷新它名下所有中继连接的凭据。
-- **地址规范化**：`normalizeServerAddress` 不再把中继路径当作安全入口剥离（`isHoxiRelayUrl`），App 每次启动时的迁移也会保留中继路径。
-- **入口**：服务器列表 → GoPanel 卡片的电脑图标 → `HoxiRelayNodesSheet`；离线电脑不可选。
+- **中继地址**：`https://<gopanel>/api/tunnel/hoxi-nodes/<nodeId>/proxy`，作为受控节点的 `url` 保存；客户端把 `/api/hoxi/...` 直接拼在后面，无需修改业务协议。
+- **凭据**：中继连接复用所属 GoPanel 的登录 JWT 与安全入口，由鉴权拦截器发送 `X-Auth` 与 `EntranceCode`。GoPanel 重新登录保存连接时，会同步刷新它名下所有中继连接的凭据。
+- **地址规范化**：客户端规范化地址时不应把中继路径当作安全入口剥离，连接迁移时保留中继路径。
+- **入口**：服务器列表 → GoPanel 卡片的电脑图标；离线电脑不可选。
 - **扫码添加中继节点**：两个位置都能出同一种二维码（payload 为 `{"type":"gopanel-relay","panel":"<面板根地址>","nodeId":N,"name":"..."}`，只带面板地址与节点身份、不含凭据）：① Hoxi 桌面配对成功后，设置 → 远程 直接展示（`GET /api/hoxi/tunnel/qr`）；② 面板「主机 → 隧道 → 隧道节点」对 Hoxi 节点的「手机扫码」。手机扫码后若已登录同面板就直接保存为经中继访问的 Hoxi 节点，否则提示先登录面板（不签发登录态）。
-- 代码：`lib/shared/models/server_connection.dart`、`lib/features/server/data/hoxi_relay_repository.dart`、`lib/features/server/presentation/widgets/hoxi_relay_nodes_sheet.dart`、`lib/features/auth/presentation/screens/qr_scanner_screen.dart`。
 
 ## 8. 安全模型与已知限制
 
@@ -210,12 +209,11 @@ Type(1B) | StreamID(8B, BigEndian uint64) | Payload(≤ 4MB)
 | Hoxi 隧道客户端 | `go test ./internal/tunnel/`（配对、`0600` 凭据、ServiceSync、请求转发、凭据头剥离、Reset 场景、解除配对：删除本机凭据并向 GoPanel 自注销、凭据被拒后自动清理并停止重试；一键授权：批准后自动连接、拒绝/过期/超时/网络错误/取消均不落盘、无凭据路径时拒绝且不产生孤儿请求） |
 | Hoxi 路由白名单 | `go test ./internal/gateway/ -run Tunnel` |
 | GoPanel 代理 | `go test ./app/service/ -run HoxiTunnel`（SSE 逐块到达、GoPanel 凭据不泄漏、丢弃 Set-Cookie、未注册服务拒绝） |
-| 手机中继连接 | `flutter test test/hoxi_relay_test.dart` |
 | 双仓互通 | 用临时 `go.work` 同时引入两个模块，让真实 GoPanel `HandleTunnelConnection` 与真实 Hoxi `tunnel.Manager` 对接：SSE 首块约 2ms 到达、200KB 请求体完整。该测试不入库，修改帧协议时需重跑 |
 
 ## 11. 审批提醒推送
 
-Agent 等待审批或向用户提问时，iPhone 收到通知；点开后 App 连接对应的 Hoxi 电脑并直接打开结构化待审批列表（`CodeAttentionScreen`），不会自动开启麦克风或启动语音通话（见 `client/lib/app/push_launch_listener.dart`）。
+Agent 等待审批或向用户提问时，iPhone 收到通知；点开后 App 连接对应的 Hoxi 电脑并直接打开结构化待审批列表，不会自动开启麦克风或启动语音通话。
 
 ```text
 Hoxi statusbar.Tracker（OpenCode permission/question.asked 与 Runner PreToolUse 审批）
@@ -231,6 +229,6 @@ Hoxi statusbar.Tracker（OpenCode permission/question.asked 与 Runner PreToolUs
 - **失效设备**：APNs 返回 410 / BadDeviceToken / DeviceTokenNotForTopic 时自动停用该设备
 - **限制**：离线期间产生的提醒不排队（重新打开 App 仍能看到待处理项）；OpenCode 运行时的审批依赖网关 SSE 旁路观测，桌面端没有任何客户端订阅事件流时可能漏报；未做真机验收
 
-验证：Hoxi `go test ./internal/statusbar/ ./internal/tunnel/`（只通知一次、不含命令文本、Notify 帧类型固定为 9）；GoPanel `go test ./app/service/ -run 'APNs|HoxiNotice|TunnelNotify|RegisterPushDevice'`（ES256 JWT 与请求头、经真实隧道读循环触发推送、去重、停用失效设备、通用正文）；手机 `flutter test test/push_notification_test.dart`，iOS 模拟器构建通过。
+验证：Hoxi `go test ./internal/statusbar/ ./internal/tunnel/`（只通知一次、不含命令文本、Notify 帧类型固定为 9）；GoPanel `go test ./app/service/ -run 'APNs|HoxiNotice|TunnelNotify|RegisterPushDevice'`（ES256 JWT 与请求头、经真实隧道读循环触发推送、去重、停用失效设备、通用正文）。
 
 尚未做真机联调：真实公网 GoPanel + 真实 Mac + 手机 4G 下的端到端验收、长时间 SSE 稳定性与重连表现。

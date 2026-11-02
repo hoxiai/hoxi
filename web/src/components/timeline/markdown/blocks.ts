@@ -626,7 +626,7 @@ export function extractMarkdownHeadings(
 
 /**
  * Resolves a relative file or image reference inside a Markdown document against `baseFilePath`
- * (e.g. resolving `./contract.md` or `../client/AGENTS.md` when reading `docs/guide.md`),
+ * (e.g. resolving `./contract.md` or `../AGENTS.md` when reading `docs/guide.md`),
  * while preserving `#L10` / `:10` line suffixes and leaving workspace-root or absolute paths intact.
  */
 export function resolveMarkdownFileLink(href: string, label: string, baseFilePath?: string): string {

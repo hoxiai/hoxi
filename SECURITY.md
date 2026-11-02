@@ -34,7 +34,6 @@ In scope:
   `internal/agyhook`, `.opencode/plugins/`)
 - Headless browser bridge, manual takeover and inspector boundaries
 - Handoff parsers and credential discovery
-- The Flutter mobile client (`client/`)
 
 Out of scope:
 

@@ -1,8 +1,8 @@
 # AGENTS.md
 
-`Hoxi` 是面向独立开发者的本地多 Agent 研发工作台，由三部分组成：**macOS 与 Windows 桌面端**（本仓库根目录，Go + Wails + SolidJS）、**Flutter 手机端**（[`client/`](client/)）、以及配套的 **GoPanel 服务器面板**（独立仓库 `gopanel_v2`）。手机端经局域网直连、Cloudflare Tunnel 或 GoPanel 反向隧道远程查看与控制 Hoxi 桌面。
+`Hoxi` 是面向独立开发者的本地多 Agent 研发工作台（**macOS 与 Windows 桌面端**，Go + Wails + SolidJS），可与配套的 **GoPanel 服务器面板**（独立仓库 `gopanel_v2`）及移动端进行远程协同（经局域网直连、Cloudflare Tunnel 或 GoPanel 反向隧道远程查看与控制 Hoxi 桌面）。
 
-本文分三段：**现状**（已实现，可在代码或测试中找到）、**边界与约束**（写代码时必须遵守）、**规划**（未实现，不能当作现有能力引用）。手机端细节见 [`client/AGENTS.md`](client/AGENTS.md)；远程通道以 [远程隧道契约](docs/gopanel-hoxi-remote-tunnel.md) 为准。文档与代码冲突时以代码和测试为准，并同步修正文档。
+本文分三段：**现状**（已实现，可在代码或测试中找到）、**边界与约束**（写代码时必须遵守）、**规划**（未实现，不能当作现有能力引用）。远程通道以 [远程隧道契约](docs/gopanel-hoxi-remote-tunnel.md) 为准。文档与代码冲突时以代码和测试为准，并同步修正文档。
 
 ---
 
@@ -27,11 +27,7 @@
 - **官方账号网关直连**（`internal/provider/official.go`）：用桌面端已登录的 Hoxi 账号 device token（经 `SetAuthSource` 注入 `internal/auth`，provider 不 import auth）走官方租户路径——`GET /api/hoxi/provider/official/models` 预览该账号可调用的模型与积分价，`POST /api/hoxi/provider/official/connect` 用会员 Key（`/api/hoxi/member/keys`）与渠道模型（`/api/hoxi/member/models`）直接原子写入**独立** provider `hoxi-official`（与第三方 `hoxi-gateway` 网关 provider 分开，互不覆盖/混显）；退出登录或 401 失效走 `InvalidateDeviceToken` 与 `ClearOfficialProvider` 同步清理已落盘的 `hoxi-official` 配置及引擎 `auth.json` 凭据；凭据落盘与账号退出/切换串行校验，清理失败会返回错误并禁用残留官方配置，目录异常响应不会覆盖已有模型；退出后失效的官方选模清空且不自动切换其他提供商。凭据只在 Go 侧注入、不下发渲染层，路由不经隧道开放
 - **模型池候选熔断与选模**（`internal/provider/auto_router.go` + `breaker.go`）：`hoxi-auto` 自动池按策略（`round-robin` / `priority` / `smart-health`）选模；按 `provider/model` 记录失败分类（transient / rate_limit / quota / config）与延迟 EWMA，失败即冷却、到期自愈（状态存 `~/.hoxi/provider-breakers.json`，配置类错误也会过期）；上游在报错里给出重置时间（如「将在 … 重置」「try again in 20s」）时冷却到该时间，最长 24 小时，10 分钟以上按额度用尽计（`internal/provider/quota_reset.go`）。**所有策略**都跳过熔断中的候选与比最快健康候选慢 3 倍以上的慢模型，`smart-health` 额外按健康分排序（快且稳优先）。判定的延迟口径为 TTFT，会话侧（`web/src/store/auto-breaker.ts`）消费同一快照并经 `POST /api/hoxi/provider/candidate-outcome` 回报结果，路由不经隧道开放。会话侧（`web/src/store/auto-models.ts`）另做**会话粘性选模**：同一会话在某池选中候选后，后续轮次只要该候选仍健康、未被排除就继续复用（保住上游 prompt 缓存前缀），仅在冷却 / 不可用 / 被剔除时才轮换；粘性命中不推进轮询游标，因此不同会话仍会分到不同候选，无 `sessionID` 的调用方（池预览、后端任务）保持原有轮询。会话轮次失败时由 `web/src/store/auto-failover.ts` 判定是否换下一个候选或同模型重试：限流 / 额度 / 鉴权 / 模型不可用 / 5xx / 网络错误直接换（不论耗时），未走自动池或池中无下一候选但属网络 / 5xx 瞬态错误时同模型最多自动重发 2 次（`MAX_SAME_MODEL_RETRIES`）；用户中止、上下文超长、内容审核、400 类请求错误既不换也不计入熔断，未知错误仅在 45 秒内失败时换；每条消息最多试池内 5 个候选，已自动换过的报错在时间线显示为「已自动切换模型」提示；另支持按 MCP OAuth 2.1 PKCE（`POST /api/hoxi/provider/mcp-oauth/start`、`GET /api/hoxi/provider/mcp-oauth/poll`，`internal/provider/mcp_oauth.go`）一键连接兼容服务商并在后端原子落盘凭据、模型列表与远程 MCP 配置（poll 响应不回传明文 Key/Token）
 
-### 1.2 手机端（`client/`）
-
-Flutter + Riverpod + GoRouter + Dio，四栏：沟通 · 工作台 · 一人公司 · 我的。已实现并有测试：节点连接与代次隔离、三通道弹性连接（局域网 `:5417` 优先、失败回落 Cloudflare Tunnel `:5418` 中继或经 GoPanel 隧道访问 Hoxi HTTP / SSE）、模型工具调用意图识别 + 关键词回退、修改类操作确认卡片、Hoxi 编码会话 / 审批 / Git 审查 / 节点 Skill 挂载与 Work 应用、GoPanel 资源页、hoxi.ai 账号登录 / 会员中心 / 每日签到、iPhone 审批提醒推送。手动开启的连续语音通话与 iOS Realtime 语音客户端有代码，未做真机验收。完整清单与测试对应关系见 [`client/AGENTS.md`](client/AGENTS.md)。
-
-### 1.3 目录结构
+### 1.2 目录结构
 
 ```text
 /
@@ -91,17 +87,6 @@ Flutter + Riverpod + GoRouter + Dio，四栏：沟通 · 工作台 · 一人公�
 │   │   ├── store/                    # SolidJS reactive store & domain modules (flat barrel export in workspace.ts)
 │   │   └── __tests__/                # Node-based unit/integration tests (sse, session-isolation, permissions, …)
 │   └── scripts/                      # check-i18n.ts, check-lines.ts (line & boundary lint), run-tests.ts
-├── client/                           # Hoxi Mobile App (Flutter + Riverpod + GoRouter); see client/AGENTS.md
-│   ├── ios/Runner/AppDelegate.swift  # iOS .voiceChat audio engine, speech recognition, PCM16 player, barge-in & APNs bridge
-│   ├── android/app/src/main/kotlin/  # Android SpeechRecognizer, AudioFocus, AudioTrack & barge-in
-│   └── lib/
-│       ├── app/                      # 4-tab shell (沟通·工作台·一人公司·我的), router & push launch listener
-│       ├── core/                     # Network (SSE & REST ApiClient), StorageService (node activation & generations), push, compliance & theme
-│       └── features/
-│           ├── chat_hub/             # 沟通：意图识别（模型工具调用 + 关键词回退）、确认计划、查询上下文、语音通话
-│           ├── portal/               # 一人公司：hoxi.ai 文章、省钱（专线/模型/套餐）、五维自测与工具箱
-│           ├── ai_workspace/         # 工作台：Hoxi (/api/hoxi/*) 与 GoPanel (/api/code/*) 编码会话、Git 审查与终端
-│           └── account/checkin/membership/work_apps/server/container/database/website/ssl/apps/resources/task_center/auth/settings
 ├── extensions/
 │   └── chrome/                       # Chrome Link MV3 extension (manually loaded): worker.js bridge, protocol.js, popup & _locales; node --test *.test.mjs
 ├── .opencode/                        # Upstream OpenCode config root; Hoxi only reads it, never writes memory here
@@ -120,7 +105,7 @@ Flutter + Riverpod + GoRouter + Dio，四栏：沟通 · 工作台 · 一人公�
 └── AGENTS.md                         # Engineering rules & quick reference
 ```
 
-### 1.4 构建与验证命令
+### 1.3 构建与验证命令
 
 - **Desktop Development (Hot Reloading, 本地开发默认优先对接本地 `http://127.0.0.1:5400` 服务端)**:
   ```bash
@@ -145,10 +130,6 @@ Flutter + Riverpod + GoRouter + Dio，四栏：沟通 · 工作台 · 一人公�
   ```bash
   npm --prefix web run lint && npm --prefix web test && npm --prefix web run build
   ```
-- **Mobile App (`client/`) Analyze & Test**:
-  ```bash
-  flutter analyze client && (cd client && flutter test)
-  ```
 - **AI One-Click Release (一键发版上线与同步官网发版记录)**:
   ```bash
   ./scripts/ai-release.sh <version> "<release-notes>"
@@ -158,21 +139,18 @@ Flutter + Riverpod + GoRouter + Dio，四栏：沟通 · 工作台 · 一人公�
 
 ## 二、边界与约束
 
-### 2.1 远程控制与手机端边界
+### 2.1 远程控制与隧道接入边界
 
-- **信任边界**：配对即授权。能以管理员身份登录已配对 GoPanel 的人，可在隧道白名单内远程操作这台 Mac（新建会话、下发指令、批准审批）。GoPanel 能看到经它转发的明文，没有端到端加密。隧道白名单之外的路由（账号、提供商配置、浏览器、更新器、OpenCode 原始透传等）一律 403，新增经隧道开放的路由必须同步更新契约文档并补测试
-- **意图识别**：手机配置模型网关时由大模型通过工具调用提出意图；目标必须与实时数据原样匹配，找不到或有歧义时追问；修改类操作一律走确认卡片；未配置模型或网关不支持工具时回退关键词路径。实现见 `client/lib/features/chat_hub/data/chat_intent_*.dart`
-- **数据外发**：手机调用模型时会把会话标题、待审批摘要、最近会话输出片段、节点资源名称、主动拍照图片等上下文发给用户配置的模型网关。模型网关配置处可随时查看外发说明，首次对话前强制弹窗确认（`model_gateway_disclosure.dart`、`model_gateway_disclosure_sheet.dart`），抹除本地数据或扩大外发清单版本后会重置确认；未经同步更新 `ModelGatewayDisclosure.contextItems` 与确认版本，严禁扩大发送范围
-- **提示词注入**：会话内容可能诱导模型调用工具。当前由目标校验与确认卡片兜底；桌面端 PreToolUse 审批门控与破坏性命令审批仍是最终防线，不能因手机端有确认而放宽
+- **信任边界**：配对即授权。能以管理员身份登录已配对 GoPanel 的人，可在隧道白名单内远程操作这台电脑（新建会话、下发指令、批准审批）。GoPanel 能看到经它转发的明文，没有端到端加密。隧道白名单之外的路由（账号、提供商配置、浏览器、更新器、OpenCode 原始透传等）一律 403，新增经隧道开放的路由必须同步更新契约文档并补测试
+- **提示词注入与审批最终防线**：远程会话内容可能诱导模型调用工具，桌面端 PreToolUse 审批门控与破坏性命令审批仍是最终防线，不能因客户端有前置确认而放宽
 - **推送**：只发计数——待审批时发“有几项待处理”，无人值守或出现审批超时的任务结束时发一条摘要（`kind: "summary"`，正文形如“任务已结束：自动放行 X，拒绝 Y，待处理 Z”）；载荷不含命令、代码、路径、会话标题或会话内容；目前仅 iOS APNs，Android 未实现
-- **语音入口**：iOS 不允许第三方 App 后台持续监听自定义唤醒词，可行入口是 Siri / App Intents、操作按钮、小组件和推送点开
-- **业务归节点**：垂直业务（Shoply、轻铺等）的私有 API 与凭据只在桌面 / GoPanel 侧的 Skill 运行环境；手机不实现其 CRUD 页面，也不保存其凭据
+- **业务归节点**：垂直业务（Shoply、轻铺等）的私有 API 与凭据只在桌面 / GoPanel 侧的 Skill 运行环境，不直接向远程客户端暴露私有凭据
 
 ### 2.2 工程与功能约束
 
 1. **按领域高内聚、单向分层边界与单文件 800 行上限 (Domain Cohesion, Unidirectional Layering & 800-Line Limit)**
    - **领域高内聚与禁止张冠李戴**：模块拆分以**单一职责与业务领域高内聚**为第一原则，**严禁为了凑行数把属于模块 A 的函数跨文件塞进无关的模块 B**（如禁止把 Codex/Gemini/Claude 逻辑塞进 Grok 或 `types.go`/`helpers.go`），也禁止拆分出仅几十行的 `*-storage.ts` 脚手架文件。
-   - **单文件 800 行上限**：任何源码文件（`.go`, `.ts`, `.tsx`, `.js`, `.m`, `.dart`）上限为 **800 行**（纯静态图标 SVG 字典或自动生成常量表除外）。当文件接近 800 行时，应按正交子领域或独立子组件/Hook 拆分。
+   - **单文件 800 行上限**：任何源码文件（`.go`, `.ts`, `.tsx`, `.js`, `.m`）上限为 **800 行**（纯静态图标 SVG 字典或自动生成常量表除外）。当文件接近 800 行时，应按正交子领域或独立子组件/Hook 拆分。
    - **前端严格单向分层 (`components/ -> store/ -> services/`)**：
      - `services/` 仅负责 HTTP/REST/SSE 网络通信与协议传输，**严禁**反向 `import` 任何 `store/` 或 `components/` 模块，也不得混入纯 UI 渲染工具。
      - `store/` 负责响应式状态、领域数据计算（含会话父子解析、跨视图分组聚合）与本地持久化，**严禁**反向 `import` 任何 `components/` 模块；所有子模块统一在 [`web/src/store/workspace.ts`](web/src/store/workspace.ts) 底部扁平重导出，禁止在子模块末尾做二级链式 `export *`。
@@ -218,7 +196,7 @@ Flutter + Riverpod + GoRouter + Dio，四栏：沟通 · 工作台 · 一人公�
 8. **文件、符号与协议命名规范 (Naming Conventions)**
    - **目录与文件命名**：
      - Go 包名（`internal/<pkg>`）使用全小写无下划线单词（如 `worktree`, `handoff`, `agyhook`）；Go 源文件统一使用小写 `snake_case.go`（测试为 `*_test.go`），禁止在文件名中重复包名前缀（如 `internal/worktree/` 下命名为 `diff.go` 而非 `worktree_diff.go`）。
-     - 前端 `web/src/store/` 与 `web/src/services/` 统一使用小写 `kebab-case.ts`（如 `session-sandbox.ts`, `api-types.ts`）；`web/src/components/<domain>/` 下独立导出组件使用 `PascalCase.tsx`（如 `ApprovalGateCard.tsx`），局部子部件/纯辅助逻辑使用 `kebab-case.ts(x)`（如 `tool-card-helpers.tsx`）；移动端 `client/lib/` 统一使用 `snake_case.dart`。
+     - 前端 `web/src/store/` 与 `web/src/services/` 统一使用小写 `kebab-case.ts`（如 `session-sandbox.ts`, `api-types.ts`）；`web/src/components/<domain>/` 下独立导出组件使用 `PascalCase.tsx`（如 `ApprovalGateCard.tsx`），局部子部件/纯辅助逻辑使用 `kebab-case.ts(x)`（如 `tool-card-helpers.tsx`）。
    - **代码符号与函数命名**：
      - Go 各领域包核心结构体统一命名为 `Service` / `Manager` / `Store`（构造函数 `NewService` / `NewManager` / `NewStore`），HTTP 路由注册统一使用 `RegisterRoutes(mux)` 与 `handle<Action>`。
      - 前端 `services/api.ts` 请求函数与 Store 异步 Action 统一使用语义化动词前缀（`fetch*`, `load*`, `create*`, `update*`, `delete*`, `apply*`, `switch*`），布尔派生状态使用 `is*` / `has*` / `can*`。
@@ -228,17 +206,12 @@ Flutter + Riverpod + GoRouter + Dio，四栏：沟通 · 工作台 · 一人公�
      - 前端 `localStorage` 键名必须以 `hoxi.` 或 `hoxi:` 命名空间开头，严禁使用无前缀通用词；i18n 键名严格采用 `<domain>.<camelCaseKey>` 两级扁平点分结构。
 
 9. **修改后必验闭环 (Verification Before Done)**
-   - 每次代码变更完成后，必须通过类型检查、行数与架构边界门禁、语言包校验、单元测试与构建验证（前端执行 `npm --prefix web run lint && npm --prefix web test && npm --prefix web run build`，后端执行 `go vet ./... && go test ./... && go build ./...`，移动端执行 `python3 client/scripts/check_source_lines.py && flutter analyze client && (cd client && flutter test)`），确保零编译错误、零越界引用、零词条缺失与测试全绿。
+   - 每次代码变更完成后，必须通过类型检查、行数与架构边界门禁、语言包校验、单元测试与构建验证（前端执行 `npm --prefix web run lint && npm --prefix web test && npm --prefix web run build`，后端执行 `go vet ./... && go test ./... && go build ./...`），确保零编译错误、零越界引用、零词条缺失与测试全绿。
 
 10. **Git 提交共同作者署名规范 (Git Commit Co-Author Attribution)**
-    - 凡由 Hoxi 参与开发的项目（包括当前仓库本身及通过 Hoxi 开发的任意工作区），在执行 Git 提交时（含 Worktree UI 提交、会话合并提交、移动端语音提交及 Agent 执行 `git commit`），默认在 Commit Message 尾部追加共同作者尾注：`Co-authored-by: Hoxi <code@hoxi.ai>`。桌面端与 Runner 提交遵循桌面 Git 署名配置（`~/.hoxi/git-attribution.json`，`GET/PUT /api/hoxi/git/attribution`）：默认 `auto` 只给 Hoxi 隔离会话工作树（`<project>/.hoxi/worktrees/*`）的提交署名，用户自己仓库里的提交保持原样，避免给上游/客户仓库留下意外尾注；`always` 全部署，`never` 全部关闭。旧版布尔 `{"enabled":bool}` 仍可读（true→always、false→never）。
+    - 凡由 Hoxi 参与开发的项目（包括当前仓库本身及通过 Hoxi 开发的任意工作区），在执行 Git 提交时（含 Worktree UI 提交、会话合并提交及 Agent 执行 `git commit`），默认在 Commit Message 尾部追加共同作者尾注：`Co-authored-by: Hoxi <code@hoxi.ai>`。桌面端与 Runner 提交遵循桌面 Git 署名配置（`~/.hoxi/git-attribution.json`，`GET/PUT /api/hoxi/git/attribution`）：默认 `auto` 只给 Hoxi 隔离会话工作树（`<project>/.hoxi/worktrees/*`）的提交署名，用户自己仓库里的提交保持原样，避免给上游/客户仓库留下意外尾注；`always` 全部署，`never` 全部关闭。旧版布尔 `{"enabled":bool}` 仍可读（true→always、false→never）。
 
-11. **移动端控制链路与语音约束 (Mobile Control & Voice Constraints)**
-    - **聊天内直达，但修改必须确认**：移动端新增查询能力接入 [`ChatInformationEngine`](client/lib/features/chat_hub/data/chat_information_engine.dart)；新增控制动作放入 `ChatSessionActions` / `ChatInfrastructureActions`，同时接入工具清单（`chat_intent_tools.dart` + `chat_intent_dispatcher.dart`）与关键词路径（[`ChatActionExecutor`](client/lib/features/chat_hub/data/chat_action_executor.dart)），修改类动作必须生成确认计划，不得按列表首项默认执行。
-    - **语音引擎常驻与打断**：语音通话保持单一 `.voiceChat` 原生音频引擎常驻（严禁每轮对话销毁重建 `AVAudioEngine`），并保留 `onUserBargeIn`（AI 播报时用户开口或点击即中止当前播报与生成流）。
-    - **不伪造结果**：未取得真实数据时显示不可用；提交、接收、完成分别表述，不把“已下发”写成“已完成”。
-
-12. **AI 编码红线 (AI Guardrails, 来自真实事故)** —— 详见 [`docs/ai-coding-guardrails.md`](docs/ai-coding-guardrails.md)，修改审批、隧道、工作区/会话迁移、持久化、进程控制前必读
+11. **AI 编码红线 (AI Guardrails, 来自真实事故)** —— 详见 [`docs/ai-coding-guardrails.md`](docs/ai-coding-guardrails.md)，修改审批、隧道、工作区/会话迁移、持久化、进程控制前必读
     - **审批策略只解析一次、失败即 ask**：禁止把拆好的命令段重新拼成字符串再解析；含引号/反斜杠/`$(`/反引号等无法确定语义的输入不得走安全白名单；白名单按 token 锚定（禁止 `\b`）；未知工具与网络工具按策略判定，禁止按工具名前缀放行；Go 与 JS 策略必须同步修改并写入两个 fixture：`.opencode/lib/permission-policy.cases.json`（命令级）和 `.opencode/lib/permission-request.cases.json`（请求级）。
 - **审批超时只拒绝，永不放行**（`approvalTimeoutSeconds`，默认 600，范围 60–3600）。硬拒绝类（密钥、推送发布、提权、凭据外发）不得被任何模式、会话授权或「始终允许」放宽。待处理清单不经隧道开放。
     - **隧道白名单只用显式「方法 + 路由」清单**，禁止前缀匹配；执行命令、`open` 程序、工作区外文件、凭据与 OpenCode 原始透传永不经隧道开放。
@@ -263,9 +236,6 @@ Flutter + Riverpod + GoRouter + Dio，四栏：沟通 · 工作台 · 一人公�
 | **前端响应式状态与纯领域计算** | `web/src/store/<domain>.ts`，在 [`workspace.ts`](web/src/store/workspace.ts) 底部扁平导出 | 严禁反向导入 `components/`；严禁新建 `*-storage.ts` 或二级 `export *` | [`web/src/store/git-commit.ts`](web/src/store/git-commit.ts) |
 | **前端独立业务弹窗 / 功能面板** | `web/src/components/<domain>/`（`models/`, `handoff/`, `settings/`, `approval/`） | 严禁将非布局类的业务 Modal 塞进 `components/layout/` | [`web/src/components/handoff/`](web/src/components/handoff/ExternalHandoffModal.tsx) |
 | **前端多语言词条** | 同步写入 `web/src/i18n/locales/en-US/<domain>.ts` 与 `zh-CN/<domain>.ts` | 严禁手写维护冗长 interface（由 [`types.ts`](web/src/i18n/types.ts) 自动推导） | [`web/src/i18n/types.ts`](web/src/i18n/types.ts) |
-| **移动端聊天查询上下文** | [`chat_information_engine.dart`](client/lib/features/chat_hub/data/chat_information_engine.dart) | 严禁在 UI Widget 中硬编码业务拼接逻辑 | [`ChatInformationEngine`](client/lib/features/chat_hub/data/chat_information_engine.dart) |
-| **移动端聊天内控制动作** | `chat_session_actions.dart` / `chat_infrastructure_actions.dart`，接入 `chat_intent_tools.dart` 与 [`chat_action_executor.dart`](client/lib/features/chat_hub/data/chat_action_executor.dart) | 严禁跳过确认计划直接执行修改；严禁要求用户退出聊天进入多层菜单才能完成常规控制 | [`ChatIntentDispatcher`](client/lib/features/chat_hub/data/chat_intent_dispatcher.dart) |
-| **移动端语音** | [`chat_voice_service.dart`](client/lib/features/chat_hub/data/chat_voice_service.dart) + [`realtime_voice_client.dart`](client/lib/features/chat_hub/data/realtime_voice_client.dart) + [`chat_realtime_voice_control.dart`](client/lib/features/chat_hub/data/chat_realtime_voice_control.dart) + [`chat_hub_voice_call_sheet.dart`](client/lib/features/chat_hub/presentation/widgets/chat_hub_voice_call_sheet.dart) | 严禁在每轮语音回合反复销毁重建原生 `AVAudioEngine` | [`ChatHubVoiceCallSheet`](client/lib/features/chat_hub/presentation/widgets/chat_hub_voice_call_sheet.dart) |
 
 ### 2.4 专项文档
 
@@ -276,7 +246,6 @@ Flutter + Riverpod + GoRouter + Dio，四栏：沟通 · 工作台 · 一人公�
 - **整体架构、OpenCode REST/SSE 协议契约、Worktree 状态机** → [`DEVELOPMENT.md`](DEVELOPMENT.md)
 - **Hoxi ⇄ GoPanel 远程隧道与审批推送（`internal/tunnel` + 网关路由白名单，双仓同步）** → [`docs/gopanel-hoxi-remote-tunnel.md`](docs/gopanel-hoxi-remote-tunnel.md)
 - **远程可达性与端到端加密（局域网直连、配对票据、盲目中继回落；LAN 已实现，跨网 E2E 为草案）** → [`docs/remote-access-e2e-contract.md`](docs/remote-access-e2e-contract.md)
-- **移动端现状、控制链路与语音实现边界** → [`client/AGENTS.md`](client/AGENTS.md)、[`client/README.zh-CN.md`](client/README.zh-CN.md)、[`client/VOICE_REMOTE_ARCHITECTURE.md`](client/VOICE_REMOTE_ARCHITECTURE.md)、[`client/ROADMAP.md`](client/ROADMAP.md)
 - **跨 CLI 会话接管（Handoff IR）与本地 CLI 协议桥接** → [`HANDOFF_AND_CLI_BRIDGE.md`](HANDOFF_AND_CLI_BRIDGE.md)
 - **原生电脑控制、桌面应用授权与平台验证边界** → [`COMPUTER.md`](COMPUTER.md)
 - **内置无头 Chrome 浏览器检视器、人工接管与安全边界** → [`BROWSER.md`](BROWSER.md)、[`internal/browser/README.md`](internal/browser/README.md)
@@ -295,9 +264,6 @@ Flutter + Riverpod + GoRouter + Dio，四栏：沟通 · 工作台 · 一人公�
 | 远程端到端加密与盲目中继 | 跨网直连优先、打不通回落只转发密文的中继，中继读不到内容；配对票据服务与数据面分离。LAN 直连与 `5417` 令牌监听**已实现**，跨网部分见 [`docs/remote-access-e2e-contract.md`](docs/remote-access-e2e-contract.md) |
 | 隧道 WebSocket | 经隧道使用远程终端（`/pty`），当前 GoPanel 返回 501 |
 | 隧道凭据入钥匙串 | 当前为 `0600` 明文文件 |
-| 桌面/锁屏小组件与系统级操作按钮定制 | Siri / App Intents（`OpenHoxiVoiceIntent`、`OpenHoxiApprovalsIntent`、`HoxiShortcuts`）与 `hoxi://voice`、`hoxi://approvals` 深链**已实现**；桌面/锁屏 Widget 与操作按钮专属配置未实现；iOS 不做后台自定义唤醒词 |
-| 真机语音长稳与指标验收 | iOS 50 秒识别主动轮转与 Android 16kHz 原始 PCM 采集（`startPcmCapture`）已在代码中实现；30 分钟连续通话、蓝牙/弱网路由、Realtime 长通话与端到端时延指标待真机验收 |
 | Android 推送 | 需厂商推送或第三方通道 |
-| 手机端结构化业务 Skill 契约与独立回执 | 枚举桌面 Skill 并以 `skillSelection{key,name}` 在会话内下发及核验原生 `skill` 工具回执**已实现**；脱离编码会话的通用结构化入参/回执契约未实现 |
 | 跨重启任务状态查询与 GoPanel 通道幂等键 | Hoxi 通道 `prompt_async` 与审批 `reply` 的 `clientRequestId` / `X-Idempotency-Key` 去重及 `instructionId` **已实现**；跨进程重启的持久化任务账本与 GoPanel 通道通用幂等键未实现 |
-| 真机端到端验收 | 公网 GoPanel + 真实电脑 + 手机 4G 的隧道、SSE 与推送 |
+| 真机端到端验收 | 公网 GoPanel + 真实电脑的隧道、SSE 与推送 |
