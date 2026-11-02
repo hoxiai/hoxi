@@ -649,6 +649,7 @@ export async function resyncResidentTranscripts(): Promise<void> {
 
 const loadedChildSessionIDs = new Set<string>();
 const settledChildSessionIDs = new Set<string>();
+const inflightChildSessionLookups = new Map<string, string | undefined>();
 
 export function ensureChildSubagentSessionLoaded(
   childSessionID?: string,
@@ -664,16 +665,25 @@ export function ensureChildSubagentSessionLoaded(
     undefined;
 
   if (!existing) {
-    void hoxiAPI
-      .getSession(childSessionID, directory)
-      .then((info) => {
-        if (info?.id) {
-          replaceSession(
-            parentSessionID ? { ...info, parentID: parentSessionID } : info
-          );
-        }
-      })
-      .catch(() => {});
+    if (inflightChildSessionLookups.has(childSessionID)) {
+      if (parentSessionID) inflightChildSessionLookups.set(childSessionID, parentSessionID);
+    } else {
+      inflightChildSessionLookups.set(childSessionID, parentSessionID);
+      void hoxiAPI
+        .getSession(childSessionID, directory)
+        .then((info) => {
+          const resolvedParentID = inflightChildSessionLookups.get(childSessionID) ?? parentSessionID;
+          if (info?.id) {
+            replaceSession(
+              resolvedParentID ? { ...info, parentID: resolvedParentID } : info
+            );
+          }
+        })
+        .catch(() => {})
+        .finally(() => {
+          inflightChildSessionLookups.delete(childSessionID);
+        });
+    }
   } else if (parentSessionID && existing.parentID !== parentSessionID) {
     replaceSession({ ...existing, parentID: parentSessionID });
   }
@@ -709,6 +719,7 @@ export function purgeSessionsFromStoreState(
     clearSubagentDrawerOverride(id);
     loadedChildSessionIDs.delete(id);
     settledChildSessionIDs.delete(id);
+    inflightChildSessionLookups.delete(id);
     delete state.messagesBySession[id];
     delete state.aiBySession[id];
     delete state.loadingMessagesBySession[id];

@@ -9,6 +9,7 @@ import {
   Show,
   type JSX,
 } from "solid-js";
+import { unwrap } from "solid-js/store";
 import type { MessagePart, ToolPart } from "../../services/sse-types";
 import {
   extractChildSubagentSessionId,
@@ -207,19 +208,301 @@ export default function ContextActivityGroupView(props: {
     <For each={visibleSteps()}>{(part) => props.renderFallbackPart(part, props.revealKey, reasoningDefault().open)}</For>
   </>;
 
+  interface TargetBucket {
+    preview: string[];
+    seen: Set<string>;
+  }
+  const makeBucket = (): TargetBucket => ({ preview: [], seen: new Set() });
+  const addBucketTarget = (bucket: TargetBucket, val: string) => {
+    const clean = val.trim();
+    if (!clean || bucket.seen.has(clean)) return;
+    bucket.seen.add(clean);
+    if (bucket.preview.length < 6) bucket.preview.push(clean);
+  };
+  const buildBucketTooltip = (
+    header: string,
+    bucket: TargetBucket,
+    tailItems: string[]
+  ): string => {
+    let total = bucket.seen.size;
+    let preview = bucket.preview;
+    let tailSeen: Set<string> | undefined;
+    for (const raw of tailItems) {
+      const clean = raw.trim();
+      if (!clean || bucket.seen.has(clean) || tailSeen?.has(clean)) continue;
+      (tailSeen ||= new Set()).add(clean);
+      total++;
+      if (preview.length < 6) {
+        if (preview === bucket.preview) preview = preview.slice();
+        preview.push(clean);
+      }
+    }
+    if (total === 0) return header;
+    const lines = preview.map((item) => `• ${item}`).join("\n");
+    const extra = total > 6 ? `\n… +${total - 6}` : "";
+    return `${header}\n${lines}${extra}`;
+  };
+
+  const createPrefixCache = () => ({
+    cursor: 0,
+    firstID: "",
+    lastID: "",
+    reads: 0,
+    searches: 0,
+    edits: 0,
+    commands: 0,
+    subagents: 0,
+    otherTools: 0,
+    thoughts: 0,
+    readBucket: makeBucket(),
+    editBucket: makeBucket(),
+    cmdBucket: makeBucket(),
+    searchBucket: makeBucket(),
+    subagentBucket: makeBucket(),
+    diffByFile: new Map<string, { additions: number; deletions: number }>(),
+    diffAdditions: 0,
+    diffDeletions: 0,
+    attentionTools: [] as ToolPart[],
+    lastTool: undefined as ToolPart | undefined,
+    start: undefined as number | undefined,
+    end: undefined as number | undefined,
+  });
+  let prefixCache = createPrefixCache();
+
+  const isSettledPrefixStep = (p: MessagePart): boolean => {
+    if (p.type === "tool") {
+      return !isTaskTool(p.tool) && (p.state.status === "completed" || p.state.status === "error");
+    }
+    if (p.type === "reasoning") {
+      return p.time?.end != null;
+    }
+    return true;
+  };
+
+  const accumulatePrefixStep = (p: MessagePart) => {
+    if (p.type === "reasoning") {
+      prefixCache.thoughts++;
+      if (p.time?.start && (!prefixCache.start || p.time.start < prefixCache.start)) {
+        prefixCache.start = p.time.start;
+      }
+      if (p.time?.end && (!prefixCache.end || p.time.end > prefixCache.end)) {
+        prefixCache.end = p.time.end;
+      }
+      return;
+    }
+    if (p.type !== "tool") return;
+    prefixCache.lastTool = p;
+    const target = summarizeStepTarget(p);
+    if (isReadTool(p.tool)) {
+      prefixCache.reads++;
+      addBucketTarget(prefixCache.readBucket, target);
+    } else if (isEditingTool(p.tool)) {
+      prefixCache.edits++;
+      addBucketTarget(prefixCache.editBucket, target);
+      if (p.state.status === "completed") {
+        const fileTarget = extractTargetFile(p) || "";
+        for (const d of resolveToolFileDiffs(p, true, fileTarget)) {
+          if (!d.file || isSessionScratchFile(normalizeWorkspaceRelPath(d.file), p.sessionID)) {
+            continue;
+          }
+          const prev = prefixCache.diffByFile.get(d.file);
+          if (prev) {
+            prefixCache.diffAdditions -= prev.additions;
+            prefixCache.diffDeletions -= prev.deletions;
+          }
+          const next = { additions: d.additions || 0, deletions: d.deletions || 0 };
+          prefixCache.diffByFile.set(d.file, next);
+          prefixCache.diffAdditions += next.additions;
+          prefixCache.diffDeletions += next.deletions;
+        }
+      }
+    } else if (isShellTool(p.tool)) {
+      prefixCache.commands++;
+      addBucketTarget(prefixCache.cmdBucket, target);
+    } else if (isSearchOrListTool(p.tool)) {
+      prefixCache.searches++;
+      addBucketTarget(prefixCache.searchBucket, target);
+    } else if (isTaskTool(p.tool)) {
+      prefixCache.subagents++;
+      addBucketTarget(prefixCache.subagentBucket, target);
+    } else {
+      prefixCache.otherTools++;
+    }
+    if (isAttentionToolPart(p)) {
+      prefixCache.attentionTools.push(p);
+    }
+    if (p.state.status !== "pending") {
+      const s = p.state.time?.start;
+      if (s && (!prefixCache.start || s < prefixCache.start)) prefixCache.start = s;
+      if (p.state.status === "completed" || p.state.status === "error") {
+        const e = p.state.time?.end;
+        if (e && (!prefixCache.end || e > prefixCache.end)) prefixCache.end = e;
+      }
+    }
+  };
+
+  const stepSummary = createMemo(() => {
+    const len = props.parts.length;
+    const rawParts = unwrap(props.parts);
+    if (
+      len < prefixCache.cursor ||
+      (prefixCache.cursor > 0 &&
+        (rawParts[0]?.id !== prefixCache.firstID ||
+          rawParts[prefixCache.cursor - 1]?.id !== prefixCache.lastID))
+    ) {
+      prefixCache = createPrefixCache();
+    }
+    while (prefixCache.cursor < len - 1) {
+      const raw = rawParts[prefixCache.cursor];
+      if (!raw || !isSettledPrefixStep(raw)) break;
+      if (prefixCache.cursor === 0) prefixCache.firstID = raw.id;
+      accumulatePrefixStep(raw);
+      prefixCache.lastID = raw.id;
+      prefixCache.cursor++;
+    }
+
+    let reads = prefixCache.reads;
+    let searches = prefixCache.searches;
+    let edits = prefixCache.edits;
+    let commands = prefixCache.commands;
+    let subagents = prefixCache.subagents;
+    let otherTools = prefixCache.otherTools;
+    let thoughts = prefixCache.thoughts;
+    const tailReads: string[] = [];
+    const tailEdits: string[] = [];
+    const tailCmds: string[] = [];
+    const tailSearches: string[] = [];
+    const tailSubagents: string[] = [];
+    const runningTools: ToolPart[] = [];
+    let tailDiffByFile: Map<string, { additions: number; deletions: number }> | undefined;
+    let tailAttention: ToolPart[] | undefined;
+    let start = props.startedAt && props.startedAt > 0 ? props.startedAt : prefixCache.start;
+    if (prefixCache.start && (!start || prefixCache.start < start)) start = prefixCache.start;
+    let end = prefixCache.end;
+    let hasRunningPart = false;
+    let activeReasoning: Extract<MessagePart, { type: "reasoning" }> | undefined;
+    let lastTool = prefixCache.lastTool;
+
+    for (let i = prefixCache.cursor; i < len; i++) {
+      const p = props.parts[i];
+      if (p.type === "reasoning") {
+        thoughts++;
+        if (p.time?.start && (!start || p.time.start < start)) start = p.time.start;
+        if (p.time?.end && (!end || p.time.end > end)) end = p.time.end;
+        if (p.time?.end == null) {
+          activeReasoning = p;
+          if (!hasRunningPart && isSessionBusy(p.sessionID)) hasRunningPart = true;
+        }
+      } else if (p.type === "tool") {
+        lastTool = p;
+        const status = p.state.status;
+        if (status === "pending" || status === "running") {
+          runningTools.push(p);
+          if (!hasRunningPart) {
+            hasRunningPart = isTaskTool(p.tool)
+              ? isSubagentToolAlive(p, p.sessionID)
+              : isSessionBusy(p.sessionID);
+          }
+        }
+        const target = summarizeStepTarget(p);
+        if (isReadTool(p.tool)) {
+          reads++;
+          if (target) tailReads.push(target);
+        } else if (isEditingTool(p.tool)) {
+          edits++;
+          if (target) tailEdits.push(target);
+          if (status === "completed") {
+            const fileTarget = extractTargetFile(p) || "";
+            for (const d of resolveToolFileDiffs(p, true, fileTarget)) {
+              if (!d.file || isSessionScratchFile(normalizeWorkspaceRelPath(d.file), p.sessionID)) {
+                continue;
+              }
+              (tailDiffByFile ||= new Map()).set(d.file, {
+                additions: d.additions || 0,
+                deletions: d.deletions || 0,
+              });
+            }
+          }
+        } else if (isShellTool(p.tool)) {
+          commands++;
+          if (target) tailCmds.push(target);
+        } else if (isSearchOrListTool(p.tool)) {
+          searches++;
+          if (target) tailSearches.push(target);
+        } else if (isTaskTool(p.tool)) {
+          subagents++;
+          if (target) tailSubagents.push(target);
+        } else {
+          otherTools++;
+        }
+        if (isAttentionToolPart(p)) {
+          (tailAttention ||= prefixCache.attentionTools.slice()).push(p);
+        }
+        if (status !== "pending") {
+          const s = p.state.time?.start;
+          if (s && (!start || s < start)) start = s;
+          if (status === "completed" || status === "error") {
+            const e = p.state.time?.end;
+            if (e && (!end || e > end)) end = e;
+          }
+        }
+      }
+    }
+
+    const toolCount = reads + searches + edits + commands + subagents + otherTools;
+    const badges: Array<{ icon: IconName; count: number; tooltip: string }> = [];
+    const pushBadge = (
+      icon: IconName,
+      count: number,
+      key: Parameters<typeof tI18n>[0],
+      bucket: TargetBucket,
+      tail: string[]
+    ) => {
+      if (count > 0) {
+        badges.push({
+          icon,
+          count,
+          tooltip: buildBucketTooltip(tI18n(key, { count }), bucket, tail),
+        });
+      }
+    };
+    pushBadge("glasses", reads, "timeline.reads", prefixCache.readBucket, tailReads);
+    pushBadge("edit-small-2", edits, "timeline.editsCount", prefixCache.editBucket, tailEdits);
+    pushBadge("console", commands, "timeline.commandsCount", prefixCache.cmdBucket, tailCmds);
+    pushBadge("magnifying-glass", searches, "timeline.searches", prefixCache.searchBucket, tailSearches);
+    pushBadge("task", subagents, "timeline.subagentsCount", prefixCache.subagentBucket, tailSubagents);
+
+    let additions = prefixCache.diffAdditions;
+    let deletions = prefixCache.diffDeletions;
+    if (tailDiffByFile) {
+      for (const [file, item] of tailDiffByFile) {
+        const prev = prefixCache.diffByFile.get(file);
+        if (prev) {
+          additions -= prev.additions;
+          deletions -= prev.deletions;
+        }
+        additions += item.additions;
+        deletions += item.deletions;
+      }
+    }
+    const diffStats = additions > 0 || deletions > 0 ? { additions, deletions } : undefined;
+    const attentionTools = tailAttention ?? prefixCache.attentionTools;
+
+    return {
+      stats: { toolCount, thoughts, badges },
+      runningTools,
+      activeReasoning,
+      lastTool,
+      hasRunningPart,
+      diffStats,
+      attentionTools,
+      timeRange: { start, end },
+    };
+  });
+
   const isRunning = createMemo(() => {
     if (props.isLiveTail) return true;
-    return props.parts.some((p) => {
-      if (p.type === "reasoning") {
-        return p.time?.end == null && isSessionBusy(p.sessionID);
-      }
-      if (p.type === "tool") {
-        if (p.state.status !== "pending" && p.state.status !== "running") return false;
-        if (isTaskTool(p.tool)) return isSubagentToolAlive(p, p.sessionID);
-        return isSessionBusy(p.sessionID);
-      }
-      return false;
-    });
+    return stepSummary().hasRunningPart;
   });
 
   const hasPendingApproval = createMemo(() => {
@@ -228,117 +511,10 @@ export default function ContextActivityGroupView(props: {
     return workspace.pendingPermissions.some((req) => req.sessionID === sid);
   });
 
-  const stats = createMemo(() => {
-    let reads = 0;
-    let searches = 0;
-    let edits = 0;
-    let commands = 0;
-    let subagents = 0;
-    let otherTools = 0;
-    let thoughts = 0;
-    const readTargets: string[] = [];
-    const editTargets: string[] = [];
-    const cmdTargets: string[] = [];
-    const searchTargets: string[] = [];
-    const subagentTargets: string[] = [];
-
-    const pushUnique = (arr: string[], val: string) => {
-      const clean = val.trim();
-      if (clean && !arr.includes(clean)) arr.push(clean);
-    };
-
-    for (const p of props.parts) {
-      if (p.type === "reasoning") {
-        thoughts++;
-      } else if (p.type === "tool") {
-        const target = summarizeStepTarget(p);
-        if (isReadTool(p.tool)) {
-          reads++;
-          pushUnique(readTargets, target);
-        } else if (isEditingTool(p.tool)) {
-          edits++;
-          pushUnique(editTargets, target);
-        } else if (isShellTool(p.tool)) {
-          commands++;
-          pushUnique(cmdTargets, target);
-        } else if (isSearchOrListTool(p.tool)) {
-          searches++;
-          pushUnique(searchTargets, target);
-        } else if (isTaskTool(p.tool)) {
-          subagents++;
-          pushUnique(subagentTargets, target);
-        } else {
-          otherTools++;
-        }
-      }
-    }
-
-    const buildTooltip = (header: string, items: string[]): string => {
-      if (items.length === 0) return header;
-      const preview = items.slice(0, 6).map((item) => `• ${item}`).join("\n");
-      const extra = items.length > 6 ? `\n… +${items.length - 6}` : "";
-      return `${header}\n${preview}${extra}`;
-    };
-
-    const toolCount = reads + searches + edits + commands + subagents + otherTools;
-    const badges: Array<{ icon: IconName; count: number; tooltip: string }> = [];
-    if (reads > 0) {
-      badges.push({
-        icon: "glasses",
-        count: reads,
-        tooltip: buildTooltip(tI18n("timeline.reads", { count: reads }), readTargets),
-      });
-    }
-    if (edits > 0) {
-      badges.push({
-        icon: "edit-small-2",
-        count: edits,
-        tooltip: buildTooltip(tI18n("timeline.editsCount", { count: edits }), editTargets),
-      });
-    }
-    if (commands > 0) {
-      badges.push({
-        icon: "console",
-        count: commands,
-        tooltip: buildTooltip(tI18n("timeline.commandsCount", { count: commands }), cmdTargets),
-      });
-    }
-    if (searches > 0) {
-      badges.push({
-        icon: "magnifying-glass",
-        count: searches,
-        tooltip: buildTooltip(tI18n("timeline.searches", { count: searches }), searchTargets),
-      });
-    }
-    if (subagents > 0) {
-      badges.push({
-        icon: "task",
-        count: subagents,
-        tooltip: buildTooltip(
-          tI18n("timeline.subagentsCount", { count: subagents }),
-          subagentTargets
-        ),
-      });
-    }
-
-    return {
-      toolCount,
-      thoughts,
-      badges,
-    };
-  });
+  const stats = () => stepSummary().stats;
 
   const activeStepDisplay = createMemo(() => {
-    const runningTools: ToolPart[] = [];
-    for (const p of props.parts) {
-      if (
-        p.type === "tool" &&
-        (p.state.status === "pending" || p.state.status === "running")
-      ) {
-        runningTools.push(p);
-      }
-    }
-
+    const { runningTools, activeReasoning, lastTool } = stepSummary();
     if (runningTools.length > 0) {
       const active = runningTools[runningTools.length - 1];
       const action = formatToolDisplayName(active.tool, active);
@@ -350,26 +526,20 @@ export default function ContextActivityGroupView(props: {
       };
     }
 
-    for (let i = props.parts.length - 1; i >= 0; i--) {
-      const p = props.parts[i];
-      if (p.type === "reasoning" && p.time?.end == null) {
-        const heading = liveReasoningTicker(p.text ?? "", true);
-        return {
-          action: tI18n("timeline.thinking"),
-          detail: heading || "",
-        };
-      }
+    if (activeReasoning) {
+      const heading = liveReasoningTicker(activeReasoning.text ?? "", true);
+      return {
+        action: tI18n("timeline.thinking"),
+        detail: heading || "",
+      };
     }
 
     // Fallback during brief transitions between steps while `isLiveTail` is true
-    for (let i = props.parts.length - 1; i >= 0; i--) {
-      const p = props.parts[i];
-      if (p.type === "tool") {
-        return {
-          action: formatToolDisplayName(p.tool, p),
-          detail: summarizeStepTarget(p),
-        };
-      }
+    if (lastTool) {
+      return {
+        action: formatToolDisplayName(lastTool.tool, lastTool),
+        detail: summarizeStepTarget(lastTool),
+      };
     }
 
     return {
@@ -398,60 +568,11 @@ export default function ContextActivityGroupView(props: {
     return "";
   });
 
-  const groupDiffStats = createMemo(() => {
-    const byFile = new Map<string, { additions: number; deletions: number }>();
-    for (const p of props.parts) {
-      if (
-        p.type !== "tool" ||
-        p.state.status !== "completed" ||
-        !isEditingTool(p.tool)
-      ) {
-        continue;
-      }
-      const target = extractTargetFile(p) || "";
-      const diffs = resolveToolFileDiffs(p, true, target);
-      for (const d of diffs) {
-        if (!d.file) continue;
-        // Match the changed-files card: temp-dir scratch edits are not project changes.
-        if (isSessionScratchFile(normalizeWorkspaceRelPath(d.file), p.sessionID)) continue;
-        byFile.set(d.file, {
-          additions: d.additions || 0,
-          deletions: d.deletions || 0,
-        });
-      }
-    }
-    if (byFile.size === 0) return undefined;
-    let additions = 0;
-    let deletions = 0;
-    for (const item of byFile.values()) {
-      additions += item.additions;
-      deletions += item.deletions;
-    }
-    return additions > 0 || deletions > 0 ? { additions, deletions } : undefined;
-  });
+  const groupDiffStats = () => stepSummary().diffStats;
 
-  const attentionTools = createMemo<ToolPart[]>(() =>
-    props.parts.filter(isAttentionToolPart)
-  );
+  const attentionTools = () => stepSummary().attentionTools;
 
-  const timeRange = createMemo(() => {
-    let start = props.startedAt && props.startedAt > 0 ? props.startedAt : undefined;
-    let end: number | undefined;
-    for (const p of props.parts) {
-      if (p.type === "reasoning") {
-        if (p.time?.start && (!start || p.time.start < start)) start = p.time.start;
-        if (p.time?.end && (!end || p.time.end > end)) end = p.time.end;
-      } else if (p.type === "tool" && p.state.status !== "pending") {
-        const s = p.state.time?.start;
-        if (s && (!start || s < start)) start = s;
-        if (p.state.status === "completed" || p.state.status === "error") {
-          const e = p.state.time?.end;
-          if (e && (!end || e > end)) end = e;
-        }
-      }
-    }
-    return { start, end };
-  });
+  const timeRange = () => stepSummary().timeRange;
 
   const [now, setNow] = createSignal(Date.now());
   createEffect(() => {

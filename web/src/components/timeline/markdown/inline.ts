@@ -22,7 +22,7 @@ const BARE_FILE_PATH_SOURCE = `(?:~\\/|\\.\\.?\\/|\\/)?(?:[\\w@.+\\-\\u4e00-\\u9
 
 const PAREN_URL_BODY_SOURCE = "(?:[^()\\s]|\\([^()\\s]*\\))+";
 
-const IMAGE_SOURCE = `!\\[[^\\]\\n]*\\]\\(${PAREN_URL_BODY_SOURCE}(?:\\s+(?:"[^"\\n]*"|'[^'\\n]*'))?\\)`;
+const IMAGE_SOURCE = `!\\[[^\\[\\]\\n]*\\]\\(${PAREN_URL_BODY_SOURCE}(?:\\s+(?:"[^"\\n]*"|'[^'\\n]*'))?\\)`;
 
 const INLINE_CODE_SPAN_SOURCE = "`[^`\\n]+`";
 const UNCLOSED_CODE_SPAN_SOURCE = "`[^`\\n]*$";
@@ -32,8 +32,8 @@ const CLOSED_BOLD_ASTERISK_SOURCE = `\\*\\*(?:${INLINE_CODE_SPAN_SOURCE}|[^*\`]|
 const UNCLOSED_BOLD_ASTERISK_SOURCE = `\\*\\*(?:${INLINE_CODE_SPAN_SOURCE}|[^*\`\\n]|${LONE_BACKTICK_SOURCE}|\\*(?!\\*))*$`;
 const CLOSED_BOLD_UNDERSCORE_SOURCE = `__(?:${INLINE_CODE_SPAN_SOURCE}|[^_\`]|${LONE_BACKTICK_SOURCE}|_(?!_))+__`;
 
-const LINK_LABEL_SOURCE = `(?:${INLINE_CODE_SPAN_SOURCE}|[^\\]\`]|${LONE_BACKTICK_SOURCE})+`;
-const UNCLOSED_LINK_LABEL_SOURCE = `(?:${INLINE_CODE_SPAN_SOURCE}|[^\\]\`\\n]|${LONE_BACKTICK_SOURCE})+`;
+const LINK_LABEL_SOURCE = `(?:${INLINE_CODE_SPAN_SOURCE}|[^\\[\\]\`]|${LONE_BACKTICK_SOURCE})+`;
+const UNCLOSED_LINK_LABEL_SOURCE = `(?:${INLINE_CODE_SPAN_SOURCE}|[^\\[\\]\`\\n]|${LONE_BACKTICK_SOURCE})+`;
 const CLOSED_LINK_SOURCE = `\\[${LINK_LABEL_SOURCE}\\]\\(${PAREN_URL_BODY_SOURCE}\\)`;
 const UNCLOSED_LINK_SOURCE = `\\[${UNCLOSED_LINK_LABEL_SOURCE}\\]\\([^()\\s]*$`;
 const UNCLOSED_BRACKET_LINK_SOURCE = `\\[(?:${INLINE_CODE_SPAN_SOURCE}\\]?|${UNCLOSED_CODE_SPAN_SOURCE}|(?:[\\w@.+\\-\\u4e00-\\u9fa5]+\\/)*${FILE_LEAF_SOURCE}${LINE_SUFFIX_SOURCE}\\]?|[\\u4e00-\\u9fa5][^\\[\\]\\n]*|[A-Za-z][^\\[\\]\\n]+)$`;

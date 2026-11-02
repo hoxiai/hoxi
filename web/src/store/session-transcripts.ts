@@ -1,4 +1,4 @@
-import { produce } from "solid-js/store";
+import { produce, unwrap } from "solid-js/store";
 import type { MessageInfo } from "../services/sse-types";
 import {
   normalizeMessagePartInPlace,
@@ -48,14 +48,26 @@ function valueBytes(value: unknown, depth = 0): number {
   return 8;
 }
 
+const settledToolStateBytes = new WeakMap<object, number>();
+
 export function estimateTranscriptBytes(turns: MessageTurn[]): number {
-  let bytes = turns.length * 256;
-  for (const turn of turns) {
+  const rawTurns = unwrap(turns);
+  let bytes = rawTurns.length * 256;
+  for (const turn of rawTurns) {
     for (const part of turn.parts) {
       bytes += 256;
       if (part.type === "text" || part.type === "reasoning") bytes += (part.text?.length ?? 0) * 2;
       else if (part.type === "file") bytes += (part.url?.length ?? 0) * 2;
-      else if (part.type === "tool") bytes += valueBytes(part.state);
+      else if (part.type === "tool") {
+        const state = part.state;
+        const settled = state.status === "completed" || state.status === "error";
+        let stateBytes = settled ? settledToolStateBytes.get(state) : undefined;
+        if (stateBytes === undefined) {
+          stateBytes = valueBytes(state);
+          if (settled) settledToolStateBytes.set(state, stateBytes);
+        }
+        bytes += stateBytes;
+      }
     }
   }
   return bytes;
@@ -99,6 +111,7 @@ export function trimSessionTranscripts(
   const present = new Set(ids);
   for (const id of lastUsed.keys()) if (!present.has(id) && !pendingReads.has(id)) lastUsed.delete(id);
   const protectedIDs = protectedTranscripts();
+  if (!ids.some((id) => !protectedIDs.has(id))) return [];
   const entries = ids.map((id) => ({ id, bytes: estimateTranscriptBytes(workspace.messagesBySession[id]), used: lastUsed.get(id) ?? 0 }));
   let bytes = entries.reduce((total, entry) => total + entry.bytes, 0);
   let count = entries.length;

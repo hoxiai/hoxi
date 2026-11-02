@@ -1,6 +1,6 @@
 // web/src/__tests__/sse.test.ts
 import { connectEventStream, type StreamFrameBatch } from "../services/sse";
-import { findMessageIndex, findPartIndex, mergeServerTurnsInto } from "../store/message-lookup";
+import { findMessageIndex, findPartIndex, mergeServerTurnsInto, upsertTurnPart } from "../store/message-lookup";
 import type { MessageTurn } from "../store/workspace";
 import { createStore, produce, reconcile, unwrap } from "solid-js/store";
 import type { OpenCodeEvent, SessionInfo } from "../services/sse-types";
@@ -298,21 +298,42 @@ describe("SSE client & 120Hz rAF delta batching", () => {
 
   it("reuses lookups across Solid produce calls and validates replaced store entries", () => {
     let reads = 0;
+    let partReads = 0;
     const turns: MessageTurn[] = Array.from({ length: 100 }, (_, index) => ({
       info: { get id() { reads++; return `m_${index}`; }, sessionID: "s",
         role: "assistant", time: { created: 1 } },
-      parts: [{ id: `p_${index}`, sessionID: "s", messageID: `m_${index}`, type: "text", text: "" }],
+      parts: Array.from({ length: index === 99 ? 100 : 1 }, (_, pIdx) => ({
+        get id() { partReads++; return `p_${index}_${pIdx}`; },
+        sessionID: "s",
+        messageID: `m_${index}`,
+        type: "text" as const,
+        text: "",
+      })),
     }));
     const [state, setState] = createStore({ turns });
     const append = () => setState(produce((draft) => {
       const turn = draft.turns[findMessageIndex(draft.turns, "m_99")];
-      const part = turn.parts[findPartIndex(turn.parts, "p_99")];
+      const part = turn.parts[findPartIndex(turn.parts, "p_99_0")];
       if (part.type === "text") part.text += "x";
     }));
     append();
     reads = 0;
+    partReads = 0;
     append();
-    assertTrue(reads < 10, "warm lookup should validate its position without scanning history");
+    assertTrue(reads < 10 && partReads < 10, "warm lookup should validate its position without scanning history");
+    setState(produce((draft) => {
+      for (let i = 0; i < 10; i++) {
+        assertEqual(findPartIndex(draft.turns[99].parts, `missing_${i}`), -1);
+        upsertTurnPart(draft.turns, {
+          id: `p_new_${i}`,
+          sessionID: "s",
+          messageID: "m_99",
+          type: "text",
+          text: "n",
+        });
+      }
+    }));
+    assertTrue(partReads < 80, `incremental part append should not rescan all 100 parts 10 times (got ${partReads} reads)`);
     const part = state.turns[99].parts[0];
     assertEqual(part.type === "text" ? part.text : "", "xx");
     setState("turns", 99, { info: { id: "replacement", sessionID: "s", role: "assistant",

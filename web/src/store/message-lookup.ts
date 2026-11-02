@@ -2,27 +2,80 @@ import { createSignal } from "solid-js";
 import type { MessageInfo, MessagePart } from "../services/sse-types";
 import type { MessageTurn } from "./workspace-state";
 
-const indexes = new WeakMap<object, { length: number; byID: Map<string, number> }>();
+interface IndexCache {
+  length: number;
+  firstID?: string;
+  lastID?: string;
+  hasOptimistic?: boolean;
+  byID: Map<string, number>;
+}
+
+const indexes = new WeakMap<object, IndexCache>();
 
 // Validate cached positions: reloads, optimistic removal and revert can replace/reorder arrays.
-function findIndex<T>(items: T[], id: string, getID: (item: T) => string): number {
-  let cache = indexes.get(items);
-  const index = cache?.byID.get(id);
-  if (cache?.length === items.length && index !== undefined && getID(items[index]) === id) {
-    return index;
+function findIndex<T>(
+  items: T[],
+  id: string,
+  getID: (item: T) => string,
+  isOpt?: (id: string) => boolean
+): number {
+  const len = items.length;
+  if (len === 0) {
+    indexes.delete(items);
+    return -1;
   }
-  cache = { length: items.length, byID: new Map() };
-  for (let i = 0; i < items.length; i++) cache.byID.set(getID(items[i]), i);
+  let cache = indexes.get(items);
+  if (cache) {
+    if (
+      len > cache.length &&
+      cache.length > 0 &&
+      getID(items[0]) === cache.firstID &&
+      getID(items[cache.length - 1]) === cache.lastID
+    ) {
+      for (let i = cache.length; i < len; i++) {
+        const itemID = getID(items[i]);
+        cache.byID.set(itemID, i);
+        if (isOpt?.(itemID)) cache.hasOptimistic = true;
+      }
+      cache.length = len;
+      cache.lastID = getID(items[len - 1]);
+    }
+    if (cache.length === len) {
+      const index = cache.byID.get(id);
+      if (index !== undefined) {
+        if (index < len && getID(items[index]) === id) return index;
+      } else if (
+        getID(items[0]) === cache.firstID &&
+        getID(items[len - 1]) === cache.lastID
+      ) {
+        return -1;
+      }
+    }
+  }
+  const byID = new Map<string, number>();
+  let hasOptimistic = false;
+  for (let i = 0; i < len; i++) {
+    const itemID = getID(items[i]);
+    byID.set(itemID, i);
+    if (isOpt?.(itemID)) hasOptimistic = true;
+  }
+  cache = {
+    length: len,
+    firstID: getID(items[0]),
+    lastID: getID(items[len - 1]),
+    hasOptimistic,
+    byID,
+  };
   indexes.set(items, cache);
-  return cache.byID.get(id) ?? -1;
+  return byID.get(id) ?? -1;
 }
 
 export function findMessageIndex(turns: MessageTurn[], id: string): number {
-  return findIndex(turns, id, (turn) => turn.info.id);
+  return findIndex(turns, id, (turn) => turn.info.id, isOptimisticID);
 }
 
 export function findPartIndex(parts: MessagePart[], id: string): number {
-  return findIndex(parts, id, (part) => part.id);
+  return findIndex(parts, id, (part) => part.id, isOptimisticPartID);
 }
 
 function isOptimisticID(id: string): boolean {
@@ -50,6 +103,7 @@ export function orderSameStepReasoningPartsInPlace(parts: MessagePart[]): void {
     if (textIdx >= 0 && textIdx < i) {
       const [reasonPart] = parts.splice(i, 1);
       parts.splice(textIdx, 0, reasonPart);
+      indexes.delete(parts);
     }
   }
 }
@@ -86,18 +140,20 @@ function bubbleTurnIntoOrder(list: MessageTurn[], idx: number) {
     }
     break;
   }
+  if (pos !== idx) indexes.delete(list);
 }
 
 export function upsertTurnInfo(list: MessageTurn[], info: MessageInfo) {
   let idx = findMessageIndex(list, info.id);
 
-  if (info.role === "user" && !isOptimisticID(info.id)) {
+  if (info.role === "user" && !isOptimisticID(info.id) && indexes.get(list)?.hasOptimistic !== false) {
     const optIdx = list.findIndex((m) => isOptimisticID(m.info.id));
     if (optIdx >= 0 && idx < 0) {
       // Promote the optimistic turn in place: a new object would remount the bubble.
       const turn = list[optIdx];
       Object.assign(turn.info, info);
       for (const part of turn.parts) part.messageID = info.id;
+      indexes.delete(list);
       bubbleTurnIntoOrder(list, optIdx);
       return;
     }
@@ -109,6 +165,7 @@ export function upsertTurnInfo(list: MessageTurn[], info: MessageInfo) {
         upsertTurnPart([turn], part);
       }
       list.splice(idx, 1);
+      indexes.delete(list);
       const nextIdx = optIdx > idx ? optIdx - 1 : optIdx;
       bubbleTurnIntoOrder(list, nextIdx);
       return;
@@ -127,7 +184,11 @@ export function upsertTurnInfo(list: MessageTurn[], info: MessageInfo) {
 export function upsertTurnPart(list: MessageTurn[], part: MessagePart) {
   let turnIdx = findMessageIndex(list, part.messageID);
 
-  if (turnIdx < 0 && (part.type === "text" || part.type === "file")) {
+  if (
+    turnIdx < 0 &&
+    (part.type === "text" || part.type === "file") &&
+    indexes.get(list)?.hasOptimistic !== false
+  ) {
     const optIdx = list.findIndex(
       (m) =>
         isOptimisticID(m.info.id) &&
@@ -140,6 +201,7 @@ export function upsertTurnPart(list: MessageTurn[], part: MessagePart) {
     if (optIdx >= 0) {
       list[optIdx].info.id = part.messageID;
       for (const p of list[optIdx].parts) p.messageID = part.messageID;
+      indexes.delete(list);
       turnIdx = optIdx;
       bubbleTurnIntoOrder(list, turnIdx);
     }
@@ -161,7 +223,7 @@ export function upsertTurnPart(list: MessageTurn[], part: MessagePart) {
   }
 
   let pIdx = findPartIndex(turn.parts, part.id);
-  if (pIdx < 0 && !isOptimisticPartID(part.id)) {
+  if (pIdx < 0 && !isOptimisticPartID(part.id) && indexes.get(turn.parts)?.hasOptimistic !== false) {
     pIdx = turn.parts.findIndex(
       (p) =>
         isOptimisticPartID(p.id) &&
@@ -174,12 +236,15 @@ export function upsertTurnPart(list: MessageTurn[], part: MessagePart) {
   }
   normalizeMessagePartInPlace(part, pIdx >= 0 ? turn.parts[pIdx] : undefined);
   if (pIdx >= 0) {
+    const prevID = turn.parts[pIdx].id;
     Object.assign(turn.parts[pIdx], part);
+    if (prevID !== part.id) indexes.delete(turn.parts);
   } else {
     const pairedTextID = pairedStepTextPartID(part);
     const textIdx = pairedTextID ? findPartIndex(turn.parts, pairedTextID) : -1;
     if (textIdx >= 0) {
       turn.parts.splice(textIdx, 0, part);
+      indexes.delete(turn.parts);
     } else {
       turn.parts.push(part);
     }
