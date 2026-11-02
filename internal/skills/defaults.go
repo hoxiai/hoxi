@@ -144,20 +144,53 @@ func seedExternalSkillDir(root string) (int, error) {
 			continue
 		}
 		name := entry.Name()
-		src := filepath.Join(dir, name, "SKILL.md")
+		srcDir := filepath.Join(dir, name)
+		src := filepath.Join(srcDir, "SKILL.md")
 		data, err := os.ReadFile(src)
 		if err != nil {
 			continue
 		}
-		target := filepath.Join(root, name, "SKILL.md")
-		if _, err := os.Stat(target); err == nil {
-			continue
+		targetDir := filepath.Join(root, name)
+		target := filepath.Join(targetDir, "SKILL.md")
+		upgraded := false
+		if existing, statErr := os.ReadFile(target); statErr == nil {
+			if shouldUpgradeBundledSkill(existing, data) {
+				if replaceSkillFile(target, data) == nil {
+					seeded++
+					upgraded = true
+				}
+			}
+		} else if os.IsNotExist(statErr) {
+			if writeNewSkillFile(target, data) == nil {
+				seeded++
+				upgraded = true
+			}
 		}
-		if err := writeNewSkillFile(target, data); err == nil {
-			seeded++
-		}
+		seedExternalSkillSubdir(filepath.Join(srcDir, "scripts"), filepath.Join(targetDir, "scripts"), upgraded)
 	}
 	return seeded, nil
+}
+
+func seedExternalSkillSubdir(srcSubdir, dstSubdir string, overwrite bool) {
+	items, err := os.ReadDir(srcSubdir)
+	if err != nil {
+		return
+	}
+	for _, item := range items {
+		if item.IsDir() {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(srcSubdir, item.Name()))
+		if err != nil {
+			continue
+		}
+		dstFile := filepath.Join(dstSubdir, item.Name())
+		if overwrite {
+			_ = replaceSkillFile(dstFile, data)
+		} else if _, err := os.Stat(dstFile); os.IsNotExist(err) {
+			_ = writeNewSkillFile(dstFile, data)
+		}
+	}
 }
 
 func replaceSkillFile(target string, data []byte) error {

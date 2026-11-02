@@ -57,13 +57,14 @@ func TestResolvedScopeSharesManualOwnershipAcrossUIAndAgent(t *testing.T) {
 func TestProfileResolverIsolatesPersistentStoreProfiles(t *testing.T) {
 	s := New()
 	defer s.Close()
+	s.SetAgentToken("secret")
 	root := filepath.Join(t.TempDir(), "browser-profile")
 	s.SetProfileRoot(root)
 	s.SetProfileResolver(func(sessionID, _ string) string {
 		switch sessionID {
 		case "ses_store_a", "workstore_store-1688-a":
 			return "store-1688-a"
-		case "ses_store_b":
+		case "ses_store_b", "workstore_store-1688-b":
 			return "store-1688-b"
 		case "ses_unsafe":
 			return "../escape"
@@ -73,7 +74,22 @@ func TestProfileResolverIsolatesPersistentStoreProfiles(t *testing.T) {
 	})
 
 	dir := t.TempDir()
-	scA := &scope{service: s, sessionID: "ses_store_a", directory: dir, window: true}
+	// Opening/controlling via workstore_store-1688-a and then accessing via ses_store_a
+	// must hit the exact same live store browser scope without allocating a duplicate scope.
+	if w := request(t, s, dir, "workstore_store-1688-a", "action", `{"action":"control","manual":true}`, false); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if len(s.scopes) != 1 {
+		t.Fatalf("expected 1 scope after workstore_ action, got %d", len(s.scopes))
+	}
+	if w := request(t, s, dir, "ses_store_a", "state", "", false); w.Code != 200 || !strings.Contains(w.Body.String(), `"manual":true`) {
+		t.Fatalf("expected ses_store_a to share workstore_store-1688-a scope state, got %d %s", w.Code, w.Body.String())
+	}
+	if len(s.scopes) != 1 {
+		t.Fatalf("expected ses_store_a to reuse the store scope, got %d scopes", len(s.scopes))
+	}
+
+	scA := &scope{service: s, sessionID: "workstore_store-1688-a", directory: dir, window: true}
 	profA, err := s.acquirePersistentProfile(scA)
 	if err != nil {
 		t.Fatalf("acquirePersistentProfile for store A failed: %v", err)

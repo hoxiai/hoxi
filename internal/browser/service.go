@@ -251,6 +251,7 @@ func (s *Service) requestScope(r *http.Request) (scopeKey, error) {
 	}
 	s.mu.Lock()
 	resolve := s.resolveSession
+	resolveProfile := s.resolveProfile
 	s.mu.Unlock()
 	if resolve != nil {
 		key.session, err = resolve(key.session, key.directory)
@@ -259,6 +260,14 @@ func (s *Service) requestScope(r *http.Request) (scopeKey, error) {
 		}
 		if !sessionPattern.MatchString(key.session) {
 			return scopeKey{}, errors.New("invalid resolved browser session")
+		}
+	}
+	if resolveProfile != nil {
+		if storeKey := strings.TrimSpace(resolveProfile(key.session, key.directory)); storeKey != "" {
+			unified := "workstore_" + storeKey
+			if sessionPattern.MatchString(unified) {
+				key.session = unified
+			}
 		}
 	}
 	return key, nil
