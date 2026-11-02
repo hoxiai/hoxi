@@ -88,8 +88,9 @@ export function createPromptHistory(sessionID: Accessor<string | null>) {
 
     const browsing = cursorIdx() >= 0;
     if (direction === "up") {
+      if (!browsing && currentText.trim().length > 0) return null;
       const onFirstLine = !currentText.slice(0, selectionStart).includes("\n");
-      if (!browsing && currentText.trim().length > 0 && !onFirstLine) return null;
+      if (!onFirstLine) return null;
 
       if (cursorIdx() === -1) {
         savedDraft = currentText;
@@ -118,6 +119,9 @@ export function createPromptHistory(sessionID: Accessor<string | null>) {
   return {
     recordPrompt,
     navigateHistory,
-    resetHistoryCursor: () => setCursorIdx(-1),
+    resetHistoryCursor: () => {
+      setCursorIdx(-1);
+      savedDraft = "";
+    },
   };
 }

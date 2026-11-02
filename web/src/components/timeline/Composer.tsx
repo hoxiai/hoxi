@@ -3,9 +3,10 @@ import { createComputed, createEffect, createMemo, createSignal, on, onCleanup, 
 import { FolderOpen } from "lucide-solid";
 import {
   appSettings,
-  removeReviewComment,
-  consumeComposerDraftEdit,
+  bindComposerQueuedEditBridge,
+  cancelQueuedEditInComposer,
   defaultWorkspaceDir,
+  drainNextQueuedPrompt,
   forkFromMessage,
   getComposerSkill,
   getComposerSkillNotice,
@@ -13,17 +14,18 @@ import {
   isSessionDeleted,
   loadSkillDetail,
   loadSkillsCatalog,
+  removeReviewComment,
   selectComposerSkill,
   sessionDirectory,
   sessionNeedsModelSelection,
   sessionRuntimeForID,
   setComposerSkillNotice,
+  setWorkspace,
   spawnBackgroundSubtask,
   stopSessionTask,
   submitSessionPrompt,
   switchActiveSessionSandboxMode,
   switchWorkspace,
-  setWorkspace,
   workspace,
 } from "../../store/workspace";
 import ModelSelector from "../models/ModelSelector";
@@ -210,27 +212,36 @@ export default function Composer() {
     },
   });
 
-  // Restore draft when user clicks "Edit" on a queued prompt or reverts a user message
-  createEffect(() => {
-    const id = sessionID();
-    if (!id) return;
-    const draft = workspace.composerDraftEditBySession[id];
-    if (!draft) return;
-    consumeComposerDraftEdit(id);
-    if (draft.text) {
-      setText((prev) => (prev.trim() ? `${prev}\n${draft.text}` : draft.text));
-    }
-    if (draft.attachments?.length) {
-      imgAttach.restoreFromAttachments(draft.attachments);
-    }
-    if (draft.skillSelection) {
-      selectComposerSkill(id, draft.skillSelection);
-    }
-    requestAnimationFrame(() => {
-      adjustHeight();
-      textareaRef?.focus();
-    });
+  const queuedEditBridge = bindComposerQueuedEditBridge({
+    sessionID,
+    getText: text,
+    setText,
+    setCursorOffset,
+    getExpandedText: () => pasteCollapse.expandIntoPrompt(text()),
+    getPromptAttachments: () => imgAttach.toPromptAttachments(),
+    getImages: () => imgAttach.images(),
+    replaceImages: (items) => imgAttach.replaceImages(items),
+    restoreFromAttachments: (atts) => imgAttach.restoreFromAttachments(atts),
+    getPastes: () => pasteCollapse.pastes(),
+    replacePastes: (items) => pasteCollapse.replacePastes(items),
+    getSelectedSkill: () => selectedSkill() ?? null,
+    selectSkill: (id, skill, dir) => selectComposerSkill(id, skill, undefined, dir),
+    resetHistoryCursor: () => promptHistory.resetHistoryCursor(),
+    focusEnd: (len) => {
+      requestAnimationFrame(() => {
+        adjustHeight();
+        if (textareaRef) {
+          textareaRef.focus();
+          textareaRef.setSelectionRange(len, len);
+        }
+      });
+    },
+    onDrain: (sid) => void drainNextQueuedPrompt(sid),
   });
+  onCleanup(() => queuedEditBridge.dispose());
+
+  // Restore draft when user clicks "Edit" on a queued prompt or reverts a user message
+  createEffect(() => queuedEditBridge.syncDraftEdit());
 
   createEffect(() => {
     const onComposerFill = (ev: Event) => {
@@ -352,21 +363,20 @@ export default function Composer() {
     }
     setSending(true);
     ac.reset();
+    const stashedBeforeQueuedEdit = queuedEditBridge.popStashedBeforeSend(draftSessionID);
     let cleared = false;
     const clearComposerInput = (resolvedID?: string) => {
       if (resolvedID) targetSessionID = resolvedID;
       if (cleared) return;
       cleared = true;
-      if (
+      const isCurrent =
         draftSync.isCurrentTarget(draftSessionID, draftDirectory) ||
-        (targetSessionID && draftSync.isCurrentTarget(targetSessionID, draftDirectory))
-      ) {
-        setText("");
-        pasteCollapse.clearPastes();
-        imgAttach.clearImages();
+        Boolean(targetSessionID && draftSync.isCurrentTarget(targetSessionID, draftDirectory));
+      queuedEditBridge.applyAfterClear(draftSessionID, draftDirectory, isCurrent, stashedBeforeQueuedEdit);
+      if (isCurrent) {
         if (textareaRef) textareaRef.style.height = "48px";
+        if (stashedBeforeQueuedEdit?.text) requestAnimationFrame(adjustHeight);
       }
-      selectComposerSkill(draftSessionID, null, undefined, draftDirectory);
       setComposerSkillNotice(draftSessionID, null, draftDirectory);
       draftSync.clearCurrentDraft(draftSessionID, draftDirectory);
       if (targetSessionID && targetSessionID !== draftSessionID) {
@@ -392,6 +402,15 @@ export default function Composer() {
       console.error("send prompt failed:", err);
       const restoreID = targetSessionID ?? draftSessionID;
       if (restoreID && isSessionDeleted(restoreID)) return;
+      if (
+        queuedEditBridge.rollbackStashedOnError(
+          restoreID,
+          draftSync.isCurrentTarget(restoreID, draftDirectory),
+          stashedBeforeQueuedEdit
+        )
+      ) {
+        draftSync.clearCurrentDraft(restoreID, draftDirectory);
+      }
       const errMsg = err instanceof Error ? err.message : String(err || "");
       if (draft.skill && !getComposerSkill(restoreID, draftDirectory)) {
         selectComposerSkill(restoreID, draft.skill, undefined, draftDirectory);
@@ -532,6 +551,11 @@ export default function Composer() {
         ac.reset();
         return;
       }
+    }
+
+    if (ev.key === "Escape" && cancelQueuedEditInComposer(sessionID())) {
+      ev.preventDefault();
+      return;
     }
 
     if (ev.key === "Escape" && busy()) {

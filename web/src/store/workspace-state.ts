@@ -153,6 +153,7 @@ export interface ComposerDraftEdit {
   text: string;
   attachments: QueuedPromptAttachment[];
   skillSelection?: SkillSelection;
+  queuedEdit?: boolean;
 }
 
 export interface MessageTurn {

@@ -3,7 +3,13 @@ import { type Accessor, createComputed, createSignal, onCleanup, type Setter, un
 import { t } from "../../i18n";
 import {
   createPromptHistory,
+  drainNextQueuedPrompt,
+  flushEditingQueuedPromptToQueue,
+  getComposerSkill,
+  hasEditingQueuedPrompt,
   normalizeFolderPath,
+  popStashedComposerDraft,
+  selectComposerSkill,
   uploadPromptAttachment,
   workspace,
 } from "../../store/workspace";
@@ -653,12 +659,31 @@ export function createSessionDraftSync(params: {
   let activeKey = composerDraftKey(activeSessionID, activeDir);
   let resetRequest = params.resetRequest?.();
   let disposed = false;
-  onCleanup(() => {
+  const saveOutgoingDraft = () => {
+    if (activeSessionID && hasEditingQueuedPrompt(activeSessionID)) {
+      flushEditingQueuedPromptToQueue(activeSessionID, {
+        text: params.pasteCollapse.expandIntoPrompt(params.text()),
+        attachments: params.imgAttach.toPromptAttachments(),
+        skillSelection: getComposerSkill(activeSessionID, activeDir) ?? undefined,
+      });
+      const stashed = popStashedComposerDraft<ImageItem, CollapsedPasteItem>(activeSessionID);
+      selectComposerSkill(activeSessionID, stashed?.skillSelection ?? null, undefined, activeDir);
+      if (stashed && (stashed.text.trim() || stashed.images.length || stashed.pastes.length)) {
+        setSessionDraft(activeKey, { text: stashed.text, images: stashed.images, pastes: stashed.pastes, notice: null });
+      } else {
+        sessionDrafts.delete(activeKey);
+      }
+      void drainNextQueuedPrompt(activeSessionID);
+      return;
+    }
     const draft = {
       text: params.text(), images: params.imgAttach.images(), pastes: params.pasteCollapse.pastes(), notice: params.imgAttach.notice(),
     };
     if (draft.text.trim() || draft.images.length || draft.pastes.length || draft.notice) setSessionDraft(activeKey, draft);
     else sessionDrafts.delete(activeKey);
+  };
+  onCleanup(() => {
+    saveOutgoingDraft();
     disposed = true;
   });
   const isCurrentTarget = (sessionID: string | null, directory: string) =>
@@ -677,20 +702,7 @@ export function createSessionDraftSync(params: {
     }
 
     untrack(() => {
-      const prevText = params.text();
-      const prevImages = params.imgAttach.images();
-      const prevPastes = params.pasteCollapse.pastes();
-      const prevNotice = params.imgAttach.notice();
-      if (prevText.trim() || prevImages.length > 0 || prevPastes.length > 0 || prevNotice) {
-        setSessionDraft(activeKey, {
-          text: prevText,
-          images: prevImages,
-          pastes: prevPastes,
-          notice: prevNotice,
-        });
-      } else {
-        sessionDrafts.delete(activeKey);
-      }
+      saveOutgoingDraft();
 
       // If the user typed in the rootless "__new__" state before choosing their
       // first folder, carry that unsent draft into the newly selected workspace.

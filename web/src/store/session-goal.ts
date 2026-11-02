@@ -9,6 +9,7 @@ import {
   spawnBackgroundSubtask,
 } from "./orchestration";
 import { isSessionBusy } from "./session-query";
+import { hasEditingQueuedPrompt } from "./prompt-queue";
 import { dispatchSessionPrompt } from "./workspace-session-messages";
 import { loadSessionMessagesOnly } from "./workspace-sessions";
 import { workspace } from "./workspace-state";
@@ -95,7 +96,7 @@ export async function resumeSessionGoal(sessionID: string): Promise<void> {
 export async function advanceSessionGoal(sessionID: string): Promise<void> {
   const goal = sessionGoal(sessionID);
   if (!goal || goal.status !== "active" || advancing.has(sessionID)) return;
-  if ((workspace.queuedPromptsBySession[sessionID] ?? []).length > 0) return;
+  if ((workspace.queuedPromptsBySession[sessionID] ?? []).length > 0 || hasEditingQueuedPrompt(sessionID)) return;
 
   advancing.add(sessionID);
   try {

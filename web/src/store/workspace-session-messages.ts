@@ -17,7 +17,7 @@ import { loadSessionMessages, renameSessionTitle, replaceSession } from "./works
 import { buildWorkspaceFoldersSystemPrompt, normalizeFolderPath, workspaceFoldersForDir } from "./workspace-folders";
 import { isSessionBusy, isSessionDeleted, requestTimelineFollow, sessionDirectory, sessionRuntimeForID, timelineFollowRequest } from "./session-query";
 import { pauseSessionGoal } from "./session-goal-state";
-import { beginQueueDrain, endQueueDrain, enqueueSessionPrompt, markSessionPromptDispatched, removeQueuedPrompt, restoreQueuedPromptAt } from "./prompt-queue";
+import { beginQueueDrain, commitEditingQueuedPromptToQueue, endQueueDrain, enqueueSessionPrompt, getEditingQueuedPrompt, isQueuedPromptDrainBlocked, markQueuedTurnShown, markSessionPromptDispatched, removeQueuedPrompt, restoreEditingQueuedPrompt, restoreQueuedPromptAt, takeEditingQueuedPrompt } from "./prompt-queue";
 import { collectChildSubagentSessionIDs } from "./subagent-sessions";
 
 const lastInterruptAtBySession = new Map<string, number>();
@@ -292,6 +292,8 @@ export async function dispatchSessionPrompt(
     forceImmediate?: boolean;
     /** false for automatic dispatches that must not move the reader's scroll position. */
     followTimeline?: boolean;
+    /** The prompt was on screen as a queued bubble; its turn replaces it without a fade-in. */
+    fromQueue?: boolean;
     beforeSend?: () => Promise<void>;
     onTurnStaged?: (sessionID: string) => void;
   }
@@ -304,7 +306,8 @@ export async function dispatchSessionPrompt(
     await loadSessionMessages(id);
   }
   const config = sessionAIConfig(id);
-  const effectiveAgent = options?.agent || config.agent;
+  const editingQueued = !options?.forceImmediate && id ? getEditingQueuedPrompt(id) : undefined;
+  const effectiveAgent = options?.agent || editingQueued?.item.agent || config.agent;
   const agentDedicatedModelKey = workspace.globalConfig?.agent?.[effectiveAgent]?.model;
   const agentDedicatedModel =
     !options?.model && typeof agentDedicatedModelKey === "string" && agentDedicatedModelKey
@@ -314,7 +317,7 @@ export async function dispatchSessionPrompt(
   const hasImageAttachment = attachments.some(
     (a) => (a.mime || "").toLowerCase().startsWith("image/") || /^data:image\//i.test(a.url || "")
   );
-  const chosenModel = options?.model || agentDedicatedModel || config.model;
+  const chosenModel = options?.model || agentDedicatedModel || config.model || editingQueued?.item.model;
   const isAuto = isAutoModel(chosenModel);
   const resolvedConcrete =
     isAuto && chosenModel
@@ -345,7 +348,8 @@ export async function dispatchSessionPrompt(
   ) {
     throw new Error(t("timeline.modelDoesNotSupportImages", { model: effectiveModel.modelID }));
   }
-  const effort = options?.effort ?? config.effort;
+  const effort = options?.effort ?? config.effort ?? editingQueued?.item.effort;
+  const explicitSystem = options?.system ?? editingQueued?.item.system;
 
   if (id) {
     await waitForSessionSandbox(id);
@@ -354,21 +358,28 @@ export async function dispatchSessionPrompt(
 
   let effectiveSkill = options?.skillSelection ? { ...options.skillSelection } : undefined;
   const wasBusyBeforeSubmit = Boolean(id && isSessionBusy(id));
+  const deferEditedBehindQueue = Boolean(
+    editingQueued && editingQueued.index > 0 && (workspace.queuedPromptsBySession[id!]?.length ?? 0) > 0
+  );
 
   // If the session is currently busy and not forced immediate, enqueue the message!
-  if (id && !options?.forceImmediate && wasBusyBeforeSubmit) {
-    enqueueSessionPrompt(id, promptText, {
+  if (id && !options?.forceImmediate && (wasBusyBeforeSubmit || deferEditedBehindQueue)) {
+    const queueOpts = {
       agent: effectiveAgent,
       model: effectiveModel,
       effort,
       attachments,
       skillSelection: effectiveSkill,
-      system: options?.system,
-    });
+      system: explicitSystem,
+    };
+    if (editingQueued) commitEditingQueuedPromptToQueue(id, { text: promptText, ...queueOpts });
+    else enqueueSessionPrompt(id, promptText, queueOpts);
     options?.onTurnStaged?.(id);
     if (options?.followTimeline !== false) requestTimelineFollow(id);
+    if (!wasBusyBeforeSubmit) void drainNextQueuedPrompt(id);
     return id;
   }
+  const takenQueuedEdit = editingQueued && id ? takeEditingQueuedPrompt(id) : undefined;
 
   const now = Date.now();
   const optimisticMsgID = `optimistic_${now}`;
@@ -378,6 +389,7 @@ export async function dispatchSessionPrompt(
   const stageOptimisticTurn = (sessionID: string) => {
     if (stagedOptimistic) return;
     stagedOptimistic = true;
+    if (options?.fromQueue) markQueuedTurnShown(optimisticMsgID);
     const existingTurns = workspace.messagesBySession[sessionID] ?? [];
     const hasPriorUserTurn = existingTurns.some((m) => m.info.role === "user");
     const currentSessionObj = workspace.sessions.find((s) => s.id === sessionID);
@@ -467,7 +479,7 @@ export async function dispatchSessionPrompt(
   const targetDir = sessionDirectory(id) || requestedDir || undefined;
   // Caller-supplied instructions ride along as a system prefix so the visible
   // user message stays exactly what the user (or the triggering action) said.
-  const system = [options?.system?.trim(), buildCombinedSystemPrompt(
+  const system = [explicitSystem?.trim(), buildCombinedSystemPrompt(
     buildWorkspaceFoldersSystemPrompt(workspaceFoldersForDir(targetDir || ""))
   )].filter(Boolean).join("\n\n") || undefined;
 
@@ -582,6 +594,7 @@ export async function dispatchSessionPrompt(
       }
     }, 900);
   } catch (err) {
+    if (takenQueuedEdit && id) restoreEditingQueuedPrompt(id, takenQueuedEdit);
     // Restore the transcript and status together. A transient busy state with
     // no new user turn hides/remounts the previous footer and loses its error UI.
     batch(() => {
@@ -648,6 +661,7 @@ export async function sendQueuedPromptNow(sessionID: string, itemID: string): Pr
       skillSelection: target.skillSelection,
       system: target.system,
       forceImmediate: true,
+      fromQueue: true,
     });
   } catch (err) {
     restoreQueuedPromptAt(sessionID, target, targetIdx);
@@ -657,7 +671,7 @@ export async function sendQueuedPromptNow(sessionID: string, itemID: string): Pr
 
 export async function drainNextQueuedPrompt(sessionID: string): Promise<void> {
   if (!sessionID || isSessionBusy(sessionID)) return;
-  if (workspace.interruptedBySession[sessionID]) return;
+  if (workspace.interruptedBySession[sessionID] || isQueuedPromptDrainBlocked(sessionID)) return;
 
   const queue = workspace.queuedPromptsBySession[sessionID] ?? [];
   if (queue.length === 0) return;
@@ -684,6 +698,14 @@ export async function drainNextQueuedPrompt(sessionID: string): Promise<void> {
       }
       validatedSkill = check.selection;
     }
+    if (
+      isSessionBusy(sessionID) ||
+      workspace.interruptedBySession[sessionID] ||
+      isQueuedPromptDrainBlocked(sessionID) ||
+      workspace.queuedPromptsBySession[sessionID]?.[0]?.id !== next.id
+    ) {
+      return;
+    }
     removeQueuedPrompt(sessionID, next.id);
     try {
       await dispatchSessionPrompt(next.text, sessionID, {
@@ -695,6 +717,7 @@ export async function drainNextQueuedPrompt(sessionID: string): Promise<void> {
         system: next.system,
         forceImmediate: true,
         followTimeline: false,
+        fromQueue: true,
       });
     } catch (err) {
       restoreQueuedPromptAt(sessionID, next, 0);

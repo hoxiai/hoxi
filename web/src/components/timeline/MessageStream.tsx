@@ -15,6 +15,7 @@ import type { MessagePart, SessionStatus, ToolPart } from "../../services/sse-ty
 import type { MessageTurn } from "../../store/workspace";
 import {
   appSettings,
+  cancelQueuedEditInComposer,
   canForkSession,
   canRevertSession,
   ensureFullSessionHistory,
@@ -31,6 +32,7 @@ import {
   revertToHere,
   stopSessionTask,
   timelineFollowRequest,
+  wasQueuedTurnShown,
   workspace,
 } from "../../store/workspace";
 import { FileIcon, Icon } from "../icons";
@@ -342,6 +344,18 @@ export default function MessageStream(props: { hidden?: boolean }) {
         return;
       }
       if (
+        !ev.defaultPrevented &&
+        !searchOpen() &&
+        !imageViewerOpen() &&
+        !appSettings.modalOpen &&
+        !workspace.arenaModalOpen &&
+        ev.key === "Escape" &&
+        cancelQueuedEditInComposer(workspace.activeSessionID)
+      ) {
+        ev.preventDefault();
+        return;
+      }
+      if (
         isSessionBusy() &&
         !ev.defaultPrevented &&
         !searchOpen() &&
@@ -498,7 +512,8 @@ export default function MessageStream(props: { hidden?: boolean }) {
             <For each={turnWindow.visibleTurns()}>
               {(turn, idx) => {
                 const globalIndex = () => turnWindow.globalIndex(idx());
-                const enterClass = idx() > 0 && turn.info.id.startsWith("optimistic_") ? "hoxi-item-enter " : "";
+                const enterClass = idx() > 0 && turn.info.id.startsWith("optimistic_") &&
+                  !wasQueuedTurnShown(turn.info.id) ? "hoxi-item-enter " : "";
                 return (
                   <Show
                     when={turn.info.role === "user"}

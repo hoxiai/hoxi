@@ -2,10 +2,12 @@ import { createRoot, createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import { unwrap } from "solid-js/store";
 import Composer from "../components/timeline/Composer";
+import MessageStream from "../components/timeline/MessageStream";
 import { createImageAttachments, createPasteCollapse, createSessionDraftSync } from "../components/timeline/composer-hooks";
 import { hoxiAPI } from "../services/api";
 import { t } from "../i18n";
 import { setWorkspace, workspace, type MessageTurn } from "../store/workspace-state";
+import { dispatchSessionPrompt, drainNextQueuedPrompt, enqueueSessionPrompt } from "../store/workspace";
 import { assertEqual, assertTrue } from "./test-harness";
 import "../styles.css";
 
@@ -158,6 +160,33 @@ async function testDraftAttachments() {
   });
 }
 
+async function testQueuedDispatchStaysVisible() {
+  const { sid } = fixture();
+  hoxiAPI.sendPromptAsync = async () => {};
+  const host = document.createElement("div");
+  host.style.cssText = "width:900px;height:650px;display:flex;flex-direction:column";
+  document.body.append(host);
+  const dispose = render(() => <MessageStream />, host);
+  const userTurn = (text: string) => Array.from(host.querySelectorAll<HTMLElement>("[data-turn-id]"))
+    .find((el) => el.textContent?.includes(text));
+  try {
+    await frame();
+    enqueueSessionPrompt(sid, "Queued follow-up text");
+    await frame();
+    assertTrue(Boolean(host.querySelector("[data-queued-id]")), "fixture should show the queued bubble");
+    await drainNextQueuedPrompt(sid);
+    const queued = userTurn("Queued follow-up text");
+    assertTrue(Boolean(queued) && !host.querySelector("[data-queued-id]"), "the queued bubble becomes a user turn");
+    assertTrue(!queued!.classList.contains("hoxi-item-enter"), "a dispatched queued prompt must not replay the fade-in");
+    assertEqual(getComputedStyle(queued!).opacity, "1", "text already on screen must not blink out");
+
+    setWorkspace("statusBySession", sid, { type: "idle" });
+    await dispatchSessionPrompt("Typed and sent directly", sid);
+    assertTrue(Boolean(userTurn("Typed and sent directly")?.classList.contains("hoxi-item-enter")),
+      "a freshly sent prompt keeps its entrance");
+  } finally { dispose(); host.remove(); }
+}
+
 export async function runBrowserTest(): Promise<string[]> {
   window.fetch = async () => new Response("{}", { headers: { "Content-Type": "application/json" } });
   const results: string[] = [];
@@ -167,6 +196,7 @@ export async function runBrowserTest(): Promise<string[]> {
     ["sending awaits context and keeps reviews bound to the originating session", testReferencedSend],
     ["context failure prevents dispatch and immediate retry succeeds", testReferenceFailure],
     ["failed draft restoration preserves attachments and pasted blocks without duplicates", testDraftAttachments],
+    ["a dispatched queued prompt replaces its bubble without blinking", testQueuedDispatchStaysVisible],
   ] as const) { await run(); results.push(name); }
   return results;
 }
