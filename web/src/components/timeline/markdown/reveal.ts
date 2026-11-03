@@ -48,7 +48,7 @@ const TABLE_LINE_RE = /^\s*\|/;
 export function holdIncompleteTableRows(text: string): string {
   const partialStart = text.lastIndexOf("\n") + 1;
   const partial = text.slice(partialStart);
-  if (partial !== "" && !TABLE_LINE_RE.test(partial)) return text;
+  if (!/^\s*$/.test(partial) && !TABLE_LINE_RE.test(partial)) return text;
   // The complete lines just before the one being written, newest first.
   const starts: number[] = [];
   let lineEnd = partialStart - 1;
@@ -64,7 +64,9 @@ export function holdIncompleteTableRows(text: string): string {
   if (isTable(last) && TABLE_SEPARATOR_RE.test(last!) && isTable(before) && !isTable(earlier)) {
     return text.slice(0, starts[1]);
   }
-  return text.slice(0, partialStart);
+  return partial === "" || TABLE_LINE_RE.test(partial) || isTable(last)
+    ? text.slice(0, partialStart)
+    : text;
 }
 
 /**

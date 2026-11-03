@@ -31,6 +31,8 @@ const LONE_BACKTICK_SOURCE = "`(?![^`\\n]+`)";
 const CLOSED_BOLD_ASTERISK_SOURCE = `\\*\\*(?:${INLINE_CODE_SPAN_SOURCE}|[^*\`]|${LONE_BACKTICK_SOURCE}|\\*(?!\\*))+\\*\\*`;
 const UNCLOSED_BOLD_ASTERISK_SOURCE = `\\*\\*(?:${INLINE_CODE_SPAN_SOURCE}|[^*\`\\n]|${LONE_BACKTICK_SOURCE}|\\*(?!\\*))*$`;
 const CLOSED_BOLD_UNDERSCORE_SOURCE = `__(?:${INLINE_CODE_SPAN_SOURCE}|[^_\`]|${LONE_BACKTICK_SOURCE}|_(?!_))+__`;
+const CLOSED_STRIKE_SOURCE = `~~[^~\\n]+~~`;
+const UNCLOSED_STRIKE_SOURCE = `~~(?:[^~\\n]|~(?!~))*$`;
 
 const LINK_LABEL_SOURCE = `(?:${INLINE_CODE_SPAN_SOURCE}|[^\\[\\]\`]|${LONE_BACKTICK_SOURCE})+`;
 const UNCLOSED_LINK_LABEL_SOURCE = `(?:${INLINE_CODE_SPAN_SOURCE}|[^\\[\\]\`\\n]|${LONE_BACKTICK_SOURCE})+`;
@@ -52,7 +54,7 @@ const BARE_URL_SOURCE =
   "https?:\\/\\/[^\\s<>[\\]()\"'`\\u3000-\\u303f\\u3400-\\u4dbf\\u4e00-\\u9fff\\uf900-\\ufaff\\uff00-\\uffef\\u2014\\u2018\\u2019\\u201c\\u201d\\u2026\\u00ab\\u00bb]+";
 
 const INLINE_TOKEN_REGEX = new RegExp(
-  `(${IMAGE_SOURCE}|${INLINE_CODE_SPAN_SOURCE}|${UNCLOSED_CODE_SPAN_SOURCE}|<br\\s*\\/?>|${CLOSED_BOLD_ASTERISK_SOURCE}|${UNCLOSED_BOLD_ASTERISK_SOURCE}|${CLOSED_BOLD_UNDERSCORE_SOURCE}|~~[^~\\n]+~~|${CLOSED_LINK_SOURCE}|${UNCLOSED_LINK_SOURCE}|${UNCLOSED_BRACKET_LINK_SOURCE}|\\*[^*\\n]+\\*|${BARE_URL_SOURCE})`,
+  `(${IMAGE_SOURCE}|${INLINE_CODE_SPAN_SOURCE}|${UNCLOSED_CODE_SPAN_SOURCE}|<br\\s*\\/?>|${CLOSED_BOLD_ASTERISK_SOURCE}|${UNCLOSED_BOLD_ASTERISK_SOURCE}|${CLOSED_BOLD_UNDERSCORE_SOURCE}|${CLOSED_STRIKE_SOURCE}|${UNCLOSED_STRIKE_SOURCE}|${CLOSED_LINK_SOURCE}|${UNCLOSED_LINK_SOURCE}|${UNCLOSED_BRACKET_LINK_SOURCE}|\\*[^*\\n]+\\*|${BARE_URL_SOURCE})`,
   "gi"
 );
 
@@ -67,9 +69,15 @@ function appendPlainTextSpan(spans: InlineSpan[], text: string) {
 }
 
 function stripPendingTrailingDelimiter(tail: string): string {
-  // Hold back a lone trailing `*` or `[` after start-of-line, whitespace, CJK, or open punctuation
-  // so the opening delimiter of an upcoming `**bold**` or `[link](...)` doesn't flash for one frame.
-  if (tail === "*" || tail === "[" || /[\s:：,，(（\u4e00-\u9fa5][*[]$/.test(tail)) {
+  // Hold back a lone trailing `*`, `[`, or `~` after start-of-line, whitespace, CJK, or
+  // sentence/clause punctuation so the opening delimiter of an upcoming `**bold**`,
+  // `~~strike~~`, or `[link](...)` never flashes as literal text for one frame.
+  if (
+    tail === "*" ||
+    tail === "[" ||
+    tail === "~" ||
+    /[\s:\uff1a,\uff0c.\u3002!\uff01?\uff1f;\uff1b\u3001()\uff08\uff09"\u201c\u201d'\u2018\u2019\u2014\-\u4e00-\u9fa5][*[~]$/.test(tail)
+  ) {
     return tail.slice(0, -1);
   }
   return tail;
@@ -163,14 +171,21 @@ export function parseInline(text: string): InlineSpan[] {
       (token.startsWith("__") && token.length >= 4 && token.endsWith("__"))
     ) {
       spans.push({ type: "bold", text: token.slice(2, -2) });
-    } else if (token.startsWith("**")) {
+    } else if (token.startsWith("**") || token.startsWith("__")) {
+      const delim = token[0];
       const rawBody = token.slice(2);
-      const boldBody = rawBody.endsWith("*") ? rawBody.slice(0, -1) : rawBody;
+      const boldBody = rawBody.endsWith(delim) ? rawBody.slice(0, -1) : rawBody;
       if (boldBody.length > 0) {
         spans.push({ type: "bold", text: boldBody });
       }
-    } else if (token.startsWith("~~") && token.endsWith("~~")) {
+    } else if (token.startsWith("~~") && token.length >= 4 && token.endsWith("~~")) {
       spans.push({ type: "strike", text: token.slice(2, -2) });
+    } else if (token.startsWith("~~")) {
+      const rawBody = token.slice(2);
+      const strikeBody = rawBody.endsWith("~") ? rawBody.slice(0, -1) : rawBody;
+      if (strikeBody.length > 0) {
+        spans.push({ type: "strike", text: strikeBody });
+      }
     } else if (token.startsWith("[")) {
       // A failed image token leaves a stray `!`; keep the whole thing literal
       // instead of rendering a broken image plus a separate link.

@@ -96,11 +96,12 @@ function InlineCodeSpan(props: { text: string; unclosed?: boolean }) {
   const checkKey = () => `${directory()}\n${effectivePath()}`;
   const [checked, setChecked] = createSignal<{ key: string; exists: boolean }>();
   const verified = createMemo(() => {
+    if (props.unclosed) return false;
     const result = checked();
     const known =
       getCachedFileCheck(effectivePath(), directory()) ??
       (result?.key === checkKey() ? result.exists : undefined);
-    return isInlineCodeFileChip(props.text, known);
+    return isInlineCodeFileChip(props.text, known, props.unclosed);
   });
   const cleanPath = () => stripFileLineSuffix(effectivePath());
 
@@ -122,29 +123,38 @@ function InlineCodeSpan(props: { text: string; unclosed?: boolean }) {
     });
   });
 
+  const handleActivate = () => {
+    if (verified()) openFileInInspector(effectivePath());
+  };
+
   return (
-    <Show
-      when={verified()}
-      fallback={
-        <code
-          ref={inlineRevealRef}
-          class="rounded-md border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-1.5 py-0.5 font-mono text-[0.88em] text-[var(--text-primary)]"
-        >
-          {props.text}
-        </code>
+    <code
+      ref={inlineRevealRef}
+      role={verified() ? "button" : undefined}
+      tabIndex={verified() ? 0 : undefined}
+      onClick={verified() ? handleActivate : undefined}
+      onKeyDown={
+        verified()
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                handleActivate();
+              }
+            }
+          : undefined
       }
+      title={verified() ? t("timeline.openInInspectorTooltip") : undefined}
+      class={`rounded-md border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-1.5 py-0.5 font-mono text-[0.88em] text-[var(--text-primary)] ${
+        verified()
+          ? "inline-flex items-center gap-1.5 hover:border-[var(--accent-border)] hover:bg-[var(--accent-surface)] hover:text-[var(--accent-text)] transition-colors cursor-pointer align-baseline"
+          : ""
+      }`}
     >
-      <button
-        ref={inlineRevealRef}
-        type="button"
-        onClick={() => openFileInInspector(effectivePath())}
-        title={t("timeline.openInInspectorTooltip")}
-        class="inline-flex items-center gap-1.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-elevated)] hover:border-[var(--accent-border)] hover:bg-[var(--accent-surface)] px-1.5 py-0.5 font-mono text-[0.88em] text-[var(--text-primary)] hover:text-[var(--accent-text)] transition-colors cursor-pointer align-baseline"
-      >
+      <Show when={verified()}>
         <FileIcon node={{ path: cleanPath(), type: "file" }} class="w-3.5 h-3.5 shrink-0" />
-        <span class="break-all">{props.text}</span>
-      </button>
-    </Show>
+      </Show>
+      <span class={verified() ? "break-all" : undefined}>{props.text}</span>
+    </code>
   );
 }
 

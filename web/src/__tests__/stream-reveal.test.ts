@@ -7,6 +7,7 @@ import {
   parseMarkdownBlocks,
 } from "../components/timeline/markdown-parser";
 import { createStreamPacer, holdIncompleteTableRows, initialRevealSlice } from "../components/timeline/markdown/reveal";
+import { expandInlineThinkingParts } from "../components/timeline/context-activity-parts";
 import { createTailHoldState } from "../components/timeline/tail-hold";
 import { assertDeepEqual, assertEqual, assertTrue, describe, it } from "./test-harness";
 
@@ -240,4 +241,53 @@ describe("streamed table rows", () => {
       assertEqual(holdIncompleteTableRows(text), text);
     }
   });
+
+  it("never regresses held table slice when an indented separator or body row streams in", () => {
+    const doc = "Files:\n\n| File | Role |\n  |---|---|\n  | a.ts | main |\n";
+    let prev = "";
+    for (let i = 1; i <= doc.length; i++) {
+      const next = holdIncompleteTableRows(doc.slice(0, i));
+      assertTrue(next.startsWith(prev), `held table slice regressed at index ${i}: ${JSON.stringify(prev)} -> ${JSON.stringify(next)}`);
+      prev = next;
+    }
+    assertEqual(prev, doc);
+  });
+
+  it("suppresses file chip state while an inline code span is still unclosed", () => {
+    assertEqual(isInlineCodeFileChip("web/src/services/sse.ts", undefined, true), false);
+    assertEqual(isInlineCodeFileChip("web/src/services/sse.ts", true, true), false);
+    assertEqual(isInlineCodeFileChip("web/src/services/sse.ts", undefined, false), true);
+  });
+
+  it("holds trailing markdown delimiters after CJK text and punctuation and parses unclosed strikethrough", () => {
+    assertDeepEqual(parseInline("\u4e2d\u6587*"), [{ type: "text", text: "\u4e2d\u6587" }]);
+    assertDeepEqual(parseInline("\u5bf9\u6bd4\uff1a*"), [{ type: "text", text: "\u5bf9\u6bd4\uff1a" }]);
+    assertDeepEqual(parseInline("hello ~"), [{ type: "text", text: "hello " }]);
+    assertDeepEqual(parseInline("hello ~~strike"), [
+      { type: "text", text: "hello " },
+      { type: "strike", text: "strike" },
+    ]);
+  });
+
+  it("preserves the same reasoning wrapper object reference across pure thinking to inline answer transitions", () => {
+    const part: { id: string; sessionID: string; messageID: string; type: "text"; text: string } = {
+      id: "part_think_transition",
+      sessionID: "ses_1",
+      messageID: "msg_1",
+      type: "text",
+      text: "<think>planning",
+    };
+    const duringThinking = expandInlineThinkingParts([part]);
+    assertEqual(duringThinking.length, 1);
+    const reasoningWrapper = duringThinking[0];
+    assertEqual(reasoningWrapper.type, "reasoning");
+
+    part.text = "<think>planning</think>\nFinal answer";
+    const afterTransition = expandInlineThinkingParts([part]);
+    assertEqual(afterTransition.length, 2);
+    assertEqual(afterTransition[0], reasoningWrapper);
+    assertEqual(afterTransition[1].type, "text");
+  });
 });
+
+

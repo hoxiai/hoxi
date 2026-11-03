@@ -254,8 +254,10 @@ export default function ThoughtBox(props: {
     );
   });
 
+  const partKey = () => (props.part.id || "").replace(/#thinking$/, "");
+
   const resolveDefaultOpen = () => {
-    const id = props.part.id;
+    const id = partKey();
     if (userOpened.has(id)) return true;
     if (userCollapsed.has(id)) return false;
     if (props.defaultOpen && appSettings.reasoningDisplay !== "collapsed") {
@@ -307,7 +309,7 @@ export default function ThoughtBox(props: {
 
   createEffect(() => {
     if (!props.revealKey) return;
-    const id = props.part.id;
+    const id = partKey();
     if (id) {
       userCollapsed.delete(id);
       addBoundedSetEntry(userOpened, id);
@@ -318,7 +320,7 @@ export default function ThoughtBox(props: {
 
   // Respect user's global reasoningDisplay setting unless manually toggled on this card
   createEffect(() => {
-    const id = props.part.id;
+    const id = partKey();
     const mode = appSettings.reasoningDisplay;
     const forceDefaultOpen = Boolean(props.defaultOpen) && mode !== "collapsed";
     if (userOpened.has(id) || userCollapsed.has(id)) return;
@@ -396,7 +398,7 @@ export default function ThoughtBox(props: {
   };
 
   const toggleOpen = () => {
-    const id = props.part.id;
+    const id = partKey();
     const next = !open();
     if (next) {
       userCollapsed.delete(id);

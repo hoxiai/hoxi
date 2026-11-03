@@ -133,7 +133,7 @@ export default function ContextActivityGroupView(props: {
   defaultOpenReasoning?: boolean;
 }) {
   let rootRef: HTMLDivElement | undefined;
-  const groupKey = createMemo(() => props.parts[0]?.id || "");
+  const groupKey = createMemo(() => (props.parts[0]?.id || "").replace(/#thinking$/, ""));
   // A completed reasoning-only reply can later acquire a tool part. Keep its
   // opened reasoning visible instead of retracting the final-output hint then.
   const reasoningDefault = createMemo<{ key: string; open: boolean }>((previous) => {

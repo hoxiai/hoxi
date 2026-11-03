@@ -118,17 +118,61 @@ export function StreamRevealText(props: { text: string }) {
     host.appendChild(el);
   };
 
+  const trimTrailingChars = (dropCount: number) => {
+    let remaining = dropCount;
+    while (remaining > 0 && chunks.length > 0) {
+      const last = chunks[chunks.length - 1]!;
+      if (last.text.length <= remaining) {
+        remaining -= last.text.length;
+        clearTimeout(last.timer);
+        last.el.remove();
+        chunks.pop();
+      } else {
+        last.text = last.text.slice(0, last.text.length - remaining);
+        last.el.textContent = last.text;
+        remaining = 0;
+      }
+    }
+    if (remaining > 0 && prefixNode.data.length > 0) {
+      prefixNode.data = prefixNode.data.slice(
+        0,
+        Math.max(0, prefixNode.data.length - remaining)
+      );
+    }
+  };
+
   createRenderEffect(() => {
     const next = props.text;
     if (next === shownText) return;
     const active = untrack(reveal.active);
     if (!active || prefersReducedMotion()) {
-      clearChunks();
-      if (next.startsWith(prefixNode.data)) {
-        prefixNode.appendData(next.slice(prefixNode.length));
-      } else {
+      if (prefersReducedMotion()) {
+        clearChunks();
         prefixNode.data = next;
+        shownText = next;
+        return;
       }
+      // When streaming finishes while chunks are still mid-fade, let existing
+      // fading chunks finish naturally and only append/trim the difference.
+      if (next.startsWith(shownText)) {
+        const delta = next.slice(shownText.length);
+        shownText = next;
+        if (delta) {
+          if (chunks.length > 0) {
+            appendFadingChunk(delta);
+          } else {
+            prefixNode.appendData(delta);
+          }
+        }
+        return;
+      }
+      if (shownText.startsWith(next)) {
+        trimTrailingChars(shownText.length - next.length);
+        shownText = next;
+        return;
+      }
+      clearChunks();
+      prefixNode.data = next;
       shownText = next;
       return;
     }
@@ -136,6 +180,14 @@ export function StreamRevealText(props: { text: string }) {
       const delta = next.slice(shownText.length);
       shownText = next;
       if (delta) appendFadingChunk(delta);
+      return;
+    }
+    // If a trailing token/delimiter at the end of this text run was absorbed into
+    // a newly formed sibling span, trim only the absorbed tail so earlier fading
+    // chunks keep their animation instead of snapping to full opacity.
+    if (shownText.startsWith(next)) {
+      trimTrailingChars(shownText.length - next.length);
+      shownText = next;
       return;
     }
     clearChunks();

@@ -106,8 +106,7 @@ type TextPartWithTime = Extract<MessagePart, { type: "text" }> & {
 type ReasoningPart = Extract<MessagePart, { type: "reasoning" }>;
 
 interface InlinePartWrappers {
-  pureReasoning: ReasoningPart;
-  leadReasoning: ReasoningPart;
+  reasoning: ReasoningPart;
   visibleText: TextPartWithTime;
 }
 
@@ -130,9 +129,13 @@ function getInlinePartWrappers(part: TextPartWithTime): InlinePartWrappers {
     return { start };
   };
 
-  const pureReasoning: ReasoningPart = {
+  // Single unified reasoning wrapper per underlying text part so transitioning
+  // from pure `<think>...` to `<think>...</think>answer` preserves the exact
+  // same object reference across `<For>` and `stabilizeTurnRenderItems`.
+  const reasoning: ReasoningPart = {
     get id() {
-      return part.id;
+      const split = splitInlineThinking(part.text);
+      return NON_WHITESPACE_RE.test(split.visibleText) ? `${part.id}#thinking` : part.id;
     },
     get sessionID() {
       return part.sessionID;
@@ -145,26 +148,8 @@ function getInlinePartWrappers(part: TextPartWithTime): InlinePartWrappers {
       return splitInlineThinking(part.text).thinkingText;
     },
     get time() {
-      return resolveTime(false);
-    },
-  };
-
-  const leadReasoning: ReasoningPart = {
-    get id() {
-      return `${part.id}#thinking`;
-    },
-    get sessionID() {
-      return part.sessionID;
-    },
-    get messageID() {
-      return part.messageID;
-    },
-    type: "reasoning",
-    get text() {
-      return splitInlineThinking(part.text).thinkingText;
-    },
-    get time() {
-      return resolveTime(true);
+      const split = splitInlineThinking(part.text);
+      return resolveTime(NON_WHITESPACE_RE.test(split.visibleText));
     },
   };
 
@@ -190,7 +175,7 @@ function getInlinePartWrappers(part: TextPartWithTime): InlinePartWrappers {
     },
   };
 
-  cached = { pureReasoning, leadReasoning, visibleText };
+  cached = { reasoning, visibleText };
   inlinePartWrapperCache.set(part, cached);
   return cached;
 }
@@ -218,11 +203,11 @@ export function expandInlineThinkingParts(parts: MessagePart[]): MessagePart[] {
     const hasVisible = split.visibleText.trim().length > 0;
     const hasThinking = split.thinkingText.trim().length > 0 || split.isUnclosedThinking;
     if (!hasVisible) {
-      if (hasThinking) out.push(wrappers.pureReasoning);
+      if (hasThinking) out.push(wrappers.reasoning);
       continue;
     }
     if (split.thinkingText.trim().length > 0) {
-      out.push(wrappers.leadReasoning);
+      out.push(wrappers.reasoning);
     }
     out.push(wrappers.visibleText);
   }

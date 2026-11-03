@@ -40,8 +40,12 @@ export function inlineCodeRenderer(span: { text: string; unclosed?: boolean }): 
  * (cache or a finished check) wins; until then path-shaped text is assumed to
  * exist and bare names (`foo.ts`) wait for the check.
  */
-export function isInlineCodeFileChip(text: string, known: boolean | undefined): boolean {
-  if (!isLikelyFilePath(text)) return false;
+export function isInlineCodeFileChip(
+  text: string,
+  known: boolean | undefined,
+  unclosed = false
+): boolean {
+  if (unclosed || !isLikelyFilePath(text)) return false;
   if (known !== undefined) return known;
   return looksLikeFilePath(text);
 }

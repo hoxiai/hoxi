@@ -110,7 +110,18 @@ export default function MarkdownView(props: {
 
   createEffect(() => {
     const streaming = Boolean(props.streaming);
-    const next = revealable(props.content, streaming);
+    const rawText = (props.content || "").replace(/\r\n/g, "\n");
+    let next = revealable(props.content, streaming);
+    // Never let a transient table-row hold shrink the pacer target while raw
+    // content is still growing; shrinking would reset the pacer and flash.
+    if (
+      streaming &&
+      rawText.startsWith(pacer.target) &&
+      pacer.target.startsWith(next) &&
+      next.length < pacer.target.length
+    ) {
+      next = pacer.target;
+    }
     const at = clock();
     const shouldPace =
       canAnimate &&
