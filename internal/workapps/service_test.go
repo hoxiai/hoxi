@@ -135,6 +135,28 @@ func TestResolveBrowserProfileKey(t *testing.T) {
 			"1688": []any{
 				map[string]any{
 					"id":                "store-1688-factory1",
+					"browserProfileKey": "store-1688-factory1",
+				},
+				map[string]any{
+					"id":                "store-1688-factory2",
+					"browserProfileKey": "store-1688-factory2",
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("SaveState storesByApp legacy primary failed: %v", err)
+	}
+	if got := svc.ResolveBrowserProfileKey("ses_bound_1688"); got != "default" {
+		t.Fatalf("expected legacy primary store (idx 0) with auto-generated browserProfileKey to normalize to default, got %q", got)
+	}
+	if got := svc.ResolveBrowserProfileKey("workstore_store-1688-factory2"); got != "store-1688-factory2" {
+		t.Fatalf("expected second store (idx 1) to stay isolated as store-1688-factory2, got %q", got)
+	}
+	if err := svc.SaveState(map[string]any{
+		"storesByApp": map[string]any{
+			"1688": []any{
+				map[string]any{
+					"id":                "store-1688-factory1",
 					"browserProfileKey": "store-1688-provisional",
 				},
 			},
@@ -143,10 +165,10 @@ func TestResolveBrowserProfileKey(t *testing.T) {
 		t.Fatalf("SaveState storesByApp failed: %v", err)
 	}
 	if got := svc.ResolveBrowserProfileKey("ses_bound_1688"); got != "store-1688-provisional" {
-		t.Fatalf("expected bound session to honor store browserProfileKey, got %q", got)
+		t.Fatalf("expected bound session to honor custom store browserProfileKey, got %q", got)
 	}
 	if got := svc.ResolveBrowserProfileKey("workstore_store-1688-factory1"); got != "store-1688-provisional" {
-		t.Fatalf("expected workstore_ scope to honor store browserProfileKey, got %q", got)
+		t.Fatalf("expected workstore_ scope to honor custom store browserProfileKey, got %q", got)
 	}
 	if got := svc.ResolveBrowserProfileKey("workapp_1688"); got != "store-1688-provisional" {
 		t.Fatalf("expected workapp_ scope with active store to resolve store-1688-provisional, got %q", got)

@@ -122,7 +122,7 @@ func (s *Service) serveDiagnostics(w http.ResponseWriter, r *http.Request) {
 		fail(w, 405, errors.New("GET or POST required"))
 		return
 	}
-	key, err := s.requestScope(r)
+	key, callerSession, err := s.requestScopeWithCaller(r)
 	if err != nil {
 		fail(w, 400, err)
 		return
@@ -152,6 +152,7 @@ func (s *Service) serveDiagnostics(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, result)
 		return
 	}
+	sc.prepareCallerTab(ctx, callerSession, nil)
 	items := []Diagnostic{}
 	if d := sc.diagnostics[sc.tabID]; d != nil {
 		items = d.snapshot(r.Method == "POST")

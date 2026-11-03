@@ -205,7 +205,7 @@ func lookupStoreProfileKey(state map[string]any, storeID, appID string) string {
 		if !ok {
 			return ""
 		}
-		for _, item := range items {
+		for idx, item := range items {
 			m, ok := item.(map[string]any)
 			if !ok {
 				continue
@@ -215,7 +215,14 @@ func lookupStoreProfileKey(state map[string]any, storeID, appID string) string {
 				continue
 			}
 			if profKey, _ := m["browserProfileKey"].(string); isSafeStoreProfileKey(strings.TrimSpace(profKey)) {
-				return strings.TrimSpace(profKey)
+				profKey = strings.TrimSpace(profKey)
+				if idx == 0 && profKey == storeID {
+					return "default"
+				}
+				return profKey
+			}
+			if idx == 0 {
+				return "default"
 			}
 			return storeID
 		}

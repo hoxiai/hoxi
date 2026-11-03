@@ -356,7 +356,7 @@ func (sc *scope) prepareCallerTab(ctx context.Context, callerSession string, a *
 }
 
 func (sc *scope) perform(ctx context.Context, a Action) (map[string]any, error) {
-	if a.Async {
+	if a.Async && a.Action != "tab_new" {
 		return nil, sc.startNavigation(ctx, a)
 	}
 	if a.Action == "stop_loading" {
@@ -454,7 +454,14 @@ func (sc *scope) perform(ctx context.Context, a Action) (map[string]any, error) 
 				return target.ActivateTarget(id).Do(ctx)
 			})
 			if u != "" && u != "about:blank" {
-				err = sc.withTab(ctx, activate, chromedp.Navigate(u))
+				if a.Async {
+					err = sc.withTab(ctx, activate)
+					if err == nil {
+						err = sc.startNavigation(ctx, Action{Action: "navigate", URL: u})
+					}
+				} else {
+					err = sc.withTab(ctx, activate, chromedp.Navigate(u))
+				}
 			} else {
 				err = sc.withTab(ctx, activate)
 			}

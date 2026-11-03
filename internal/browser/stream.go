@@ -146,7 +146,7 @@ func (s *Service) serveStream(w http.ResponseWriter, r *http.Request) {
 		fail(w, 405, errors.New("method not allowed"))
 		return
 	}
-	key, err := s.requestScope(r)
+	key, callerSession, err := s.requestScopeWithCaller(r)
 	if err != nil {
 		fail(w, 400, err)
 		return
@@ -178,6 +178,7 @@ func (s *Service) serveStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Attach/apply metrics and start CDP under the gate, never upgrade or write there.
+	sc.prepareCallerTab(setup, callerSession, nil)
 	sc.stopStream()
 	err = sc.withTab(setup)
 	if err == nil && !sc.window {
