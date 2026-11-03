@@ -146,14 +146,7 @@ func (s *Service) Status(directory string) (StatusInfo, error) {
 	if err != nil {
 		return StatusInfo{}, err
 	}
-	return StatusInfo{
-		Directory: directory,
-		Ready:     true,
-		Files:     len(c.index.Files),
-		Chunks:    c.chunkCount(),
-		IndexedAt: c.index.BuiltAt,
-		Root:      s.root,
-	}, nil
+	return statusFromCached(directory, s.root, c), nil
 }
 
 func (s *Service) Refresh(directory string) (StatusInfo, error) {
@@ -161,10 +154,22 @@ func (s *Service) Refresh(directory string) (StatusInfo, error) {
 	if err != nil {
 		return StatusInfo{}, err
 	}
-	s.mu.Lock()
-	delete(s.cache, directory)
-	s.mu.Unlock()
-	return s.Status(directory)
+	c, err := s.ensureIndex(directory, true)
+	if err != nil {
+		return StatusInfo{}, err
+	}
+	return statusFromCached(directory, s.root, c), nil
+}
+
+func statusFromCached(directory, root string, c *cachedIndex) StatusInfo {
+	return StatusInfo{
+		Directory: directory,
+		Ready:     true,
+		Files:     len(c.index.Files),
+		Chunks:    c.chunkCount(),
+		IndexedAt: c.index.BuiltAt,
+		Root:      root,
+	}
 }
 
 // Evict drops the in-memory cached index for directory.
@@ -183,20 +188,34 @@ func (s *Service) Evict(directory string) {
 }
 
 func (s *Service) ensure(directory string) (*cachedIndex, error) {
+	return s.ensureIndex(directory, false)
+}
+
+func (s *Service) ensureIndex(directory string, forceRebuild bool) (*cachedIndex, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := s.now()
-	if cached := s.cache[directory]; cached != nil && now-cached.index.BuiltAt < cacheTTL {
-		s.clock++
-		cached.access = s.clock
-		s.trimCacheLocked(directory, now)
-		return cached, nil
+	if !forceRebuild {
+		if cached := s.cache[directory]; cached != nil && now-cached.index.BuiltAt < cacheTTL {
+			s.clock++
+			cached.access = s.clock
+			s.trimCacheLocked(directory, now)
+			return cached, nil
+		}
 	}
 	var previous *Index
 	if cached := s.cache[directory]; cached != nil {
 		previous = cached.index
 	} else {
 		previous = s.load(directory)
+		if !forceRebuild && previous != nil && now-previous.BuiltAt < cacheTTL {
+			cached := buildDocs(previous)
+			s.clock++
+			cached.access = s.clock
+			s.cache[directory] = cached
+			s.trimCacheLocked(directory, now)
+			return cached, nil
+		}
 	}
 	if previous == nil {
 		previous = &Index{Files: map[string]*FileRecord{}}
@@ -227,11 +246,11 @@ func (s *Service) trimCacheLocked(keepDir string, now int64) {
 	}
 	maxDirs := s.cfg.MaxCachedDirs
 	if maxDirs <= 0 {
-		maxDirs = 2
+		maxDirs = 8
 	}
 	maxBytes := s.cfg.MaxCachedBytes
 	if maxBytes <= 0 {
-		maxBytes = 8 * 1024 * 1024
+		maxBytes = 12 * 1024 * 1024
 	}
 	var totalBytes int64
 	for _, entry := range s.cache {

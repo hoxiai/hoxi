@@ -2,6 +2,7 @@ import {
   fileLanguage,
   getCachedHighlight,
   highlightCode,
+  highlightCodeSync,
   stabilizeHighlightedLines,
 } from "../components/timeline/syntax-highlight";
 import { isSameTextRevealStream } from "../components/icons/TextShimmer";
@@ -190,13 +191,25 @@ describe("Chat code syntax highlighting", () => {
     assertTrue(stabilized[2][0] === pass1!.tokens[2][0]);
 
     const base = Array.from({ length: 120 }, (_, i) => `const v${i} = { a: 1, b: "value", c: true };`).join("\n");
-    await highlightCode(base, "javascript", "dark");
+    const initial = await highlightCode(base, "javascript", "dark");
+    assertTrue(!!initial);
+    let prevCode = base;
+    let lastResult = initial!;
     for (let i = 0; i < 12; i++) {
-      await highlightCode(`${base}\n// streamed ${i}`, "javascript", "dark");
+      const nextCode = `${base}\n// streamed ${i}`;
+      const syncOut = highlightCodeSync(nextCode, "javascript", "dark", prevCode);
+      assertTrue(!!syncOut, `Expected synchronous incremental highlight for step ${i}`);
+      assertEqual(syncOut!.tokens[0], initial!.tokens[0]);
+      assertEqual(
+        syncOut!.tokens.map((l) => l.map((t) => t.content).join("")).join("\n"),
+        nextCode
+      );
+      prevCode = nextCode;
+      lastResult = syncOut!;
     }
     assertEqual(getCachedHighlight(base, "javascript", "dark"), undefined);
     assertEqual(getCachedHighlight(`${base}\n// streamed 0`, "javascript", "dark"), undefined);
-    assertTrue(!!getCachedHighlight(`${base}\n// streamed 11`, "javascript", "dark"));
+    assertEqual(getCachedHighlight(`${base}\n// streamed 11`, "javascript", "dark"), lastResult);
   });
 
   it("recognizes streaming TextReveal updates across 85-char ellipsis truncation boundaries", () => {

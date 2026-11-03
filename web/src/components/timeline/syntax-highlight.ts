@@ -57,7 +57,27 @@ const MAX_HIGHLIGHT_CACHE_CHARS = 256 * 1024;
 const highlightCache = new Map<string, HighlightedCode>();
 let highlightCacheChars = 0;
 
-let shikiPromise: Promise<typeof import("shiki")> | undefined;
+type ShikiModule = typeof import("shiki");
+type ShikiHighlighter = Awaited<ReturnType<ShikiModule["getSingletonHighlighter"]>>;
+type ShikiGrammarState = NonNullable<ReturnType<ShikiHighlighter["codeToTokens"]>["grammarState"]>;
+
+type HighlightCheckpoint = {
+  scopePrefix: string;
+  prefixCode: string;
+  tokens: ThemedToken[][];
+  grammarState: ShikiGrammarState;
+};
+
+const MAX_CHECKPOINT_CACHE = 16;
+const MAX_CHECKPOINT_CACHE_CHARS = 256 * 1024;
+const checkpointCache = new Map<string, HighlightCheckpoint>();
+let checkpointCacheChars = 0;
+
+let shikiPromise: Promise<ShikiModule> | undefined;
+let shikiModule: ShikiModule | undefined;
+let shikiHighlighter: ShikiHighlighter | undefined;
+const loadedShikiLangs = new Set<string>();
+const loadedShikiThemes = new Set<string>();
 
 const LANG_CACHE_ALIASES: Record<string, string> = {
   js: "javascript",
@@ -96,6 +116,71 @@ function isSupersededHighlightCode(existing: string, next: string): boolean {
   const shorter = Math.min(existing.length, next.length);
   if (shorter < 64) return false;
   return commonPrefixLength(existing, next) >= Math.max(64, Math.floor(shorter * 0.8));
+}
+
+function deleteCheckpointKey(key: string): void {
+  const existing = checkpointCache.get(key);
+  if (!existing) return;
+  checkpointCache.delete(key);
+  checkpointCacheChars = Math.max(0, checkpointCacheChars - existing.prefixCode.length);
+}
+
+function findCheckpoint(scopePrefix: string, code: string): HighlightCheckpoint | undefined {
+  let bestKey: string | undefined;
+  let bestEntry: HighlightCheckpoint | undefined;
+  for (const [k, entry] of checkpointCache) {
+    if (entry.scopePrefix !== scopePrefix) continue;
+    const pLen = entry.prefixCode.length;
+    if (code.length > pLen && code.charCodeAt(pLen) === 10 && code.startsWith(entry.prefixCode)) {
+      if (!bestEntry || pLen > bestEntry.prefixCode.length) {
+        bestKey = k;
+        bestEntry = entry;
+      }
+    }
+  }
+  if (bestKey && bestEntry) {
+    checkpointCache.delete(bestKey);
+    checkpointCache.set(bestKey, bestEntry);
+  }
+  return bestEntry;
+}
+
+function saveCheckpoint(
+  scopePrefix: string,
+  prefixCode: string,
+  tokens: ThemedToken[][],
+  grammarState: ShikiGrammarState | undefined,
+): void {
+  if (!grammarState || !prefixCode) return;
+  const key = `${scopePrefix}${prefixCode}`;
+  for (const [k, entry] of checkpointCache) {
+    if (entry.scopePrefix !== scopePrefix || k === key) continue;
+    if (isSupersededHighlightCode(entry.prefixCode, prefixCode)) {
+      deleteCheckpointKey(k);
+    }
+  }
+  deleteCheckpointKey(key);
+  checkpointCache.set(key, { scopePrefix, prefixCode, tokens, grammarState });
+  checkpointCacheChars += prefixCode.length;
+  while (
+    checkpointCache.size > MAX_CHECKPOINT_CACHE ||
+    (checkpointCache.size > 1 && checkpointCacheChars > MAX_CHECKPOINT_CACHE_CHARS)
+  ) {
+    const oldest = checkpointCache.keys().next().value;
+    if (oldest === undefined) break;
+    deleteCheckpointKey(oldest);
+  }
+}
+
+function shiftTokenOffsets(lines: ThemedToken[][], offsetDelta: number): ThemedToken[][] {
+  if (offsetDelta === 0) return lines;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    for (let j = 0; j < line.length; j++) {
+      line[j].offset += offsetDelta;
+    }
+  }
+  return lines;
 }
 
 function deleteCachedHighlightKey(key: string): HighlightedCode | undefined {
@@ -151,6 +236,14 @@ function setCachedHighlight(
     ? { code: value.code, tokens: stabilizeHighlightedLines(priorTokens, value.tokens) }
     : value;
 
+  const lastNewline = code.lastIndexOf("\n");
+  if (lastNewline > 0) {
+    const cp = checkpointCache.get(`${scopePrefix}${code.slice(0, lastNewline)}`);
+    if (cp && cp.tokens.length <= stabilized.tokens.length) {
+      cp.tokens = stabilized.tokens.slice(0, cp.tokens.length);
+    }
+  }
+
   deleteCachedHighlightKey(key);
   highlightCache.set(key, stabilized);
   highlightCacheChars += code.length;
@@ -181,6 +274,121 @@ export function fileLanguage(path: string): string {
   return aliases[extension] ?? extension;
 }
 
+function isWithinHighlightLimits(code: string, lang: string): boolean {
+  if (!code || code.length > 50_000 || ["", "text", "txt", "plaintext", "plain"].includes(lang)) {
+    return false;
+  }
+  let lines = 1;
+  for (let i = 0; i < code.length; i++) {
+    if (code.charCodeAt(i) === 10 && ++lines > 1_000) return false;
+  }
+  return true;
+}
+
+function tokenizeWithCheckpoints(
+  hl: ShikiHighlighter,
+  code: string,
+  lang: string,
+  shikiTheme: "github-dark" | "github-light",
+  scopePrefix: string,
+): ThemedToken[][] {
+  const typedLang = lang as Parameters<ShikiHighlighter["codeToTokens"]>[1]["lang"];
+  const lastNewline = code.lastIndexOf("\n");
+  const cp = findCheckpoint(scopePrefix, code);
+  if (cp) {
+    const baseOffset = cp.prefixCode.length + 1;
+    if (lastNewline > cp.prefixCode.length && code.charCodeAt(lastNewline - 1) !== 13) {
+      const midCode = code.slice(baseOffset, lastNewline);
+      const midRes = hl.codeToTokens(midCode, {
+        lang: typedLang,
+        theme: shikiTheme,
+        grammarState: cp.grammarState,
+      });
+      const midTokens = cp.tokens.concat(shiftTokenOffsets(midRes.tokens, baseOffset));
+      saveCheckpoint(scopePrefix, code.slice(0, lastNewline), midTokens, midRes.grammarState);
+      const tailCode = code.slice(lastNewline + 1);
+      const tailRes = hl.codeToTokens(tailCode, {
+        lang: typedLang,
+        theme: shikiTheme,
+        grammarState: midRes.grammarState,
+      });
+      return midTokens.concat(shiftTokenOffsets(tailRes.tokens, lastNewline + 1));
+    }
+    const tailCode = code.slice(baseOffset);
+    const tailRes = hl.codeToTokens(tailCode, {
+      lang: typedLang,
+      theme: shikiTheme,
+      grammarState: cp.grammarState,
+    });
+    return cp.tokens.concat(shiftTokenOffsets(tailRes.tokens, baseOffset));
+  }
+
+  if (lastNewline > 0 && code.charCodeAt(lastNewline - 1) !== 13) {
+    const prefixCode = code.slice(0, lastNewline);
+    const prefRes = hl.codeToTokens(prefixCode, { lang: typedLang, theme: shikiTheme });
+    saveCheckpoint(scopePrefix, prefixCode, prefRes.tokens, prefRes.grammarState);
+    const tailCode = code.slice(lastNewline + 1);
+    const tailRes = hl.codeToTokens(tailCode, {
+      lang: typedLang,
+      theme: shikiTheme,
+      grammarState: prefRes.grammarState,
+    });
+    return prefRes.tokens.concat(shiftTokenOffsets(tailRes.tokens, lastNewline + 1));
+  }
+
+  const fullRes = hl.codeToTokens(code, { lang: typedLang, theme: shikiTheme });
+  if (!code.endsWith("\r")) {
+    saveCheckpoint(scopePrefix, code, fullRes.tokens, fullRes.grammarState);
+  }
+  return fullRes.tokens;
+}
+
+export function highlightCodeSync(
+  code: string,
+  language: string,
+  theme: "dark" | "light",
+  previousCode?: string,
+): HighlightedCode | undefined {
+  const lang = language.trim().toLowerCase();
+  if (!isWithinHighlightLimits(code, lang)) return undefined;
+
+  const cached = getCachedHighlight(code, lang, theme);
+  if (cached) {
+    if (previousCode && previousCode !== code) {
+      deleteCachedHighlightKey(buildHighlightCacheKey(previousCode, lang, theme));
+    }
+    return cached;
+  }
+
+  const shikiTheme = theme === "dark" ? "github-dark" : "github-light";
+  if (
+    !shikiHighlighter ||
+    !shikiModule ||
+    !Object.hasOwn(shikiModule.bundledLanguages, lang) ||
+    !loadedShikiLangs.has(lang) ||
+    !loadedShikiThemes.has(shikiTheme)
+  ) {
+    return undefined;
+  }
+
+  const normLang = normalizeHighlightLang(lang);
+  const scopePrefix = `${theme}\0${normLang}\0`;
+  const cp = findCheckpoint(scopePrefix, code);
+  if (!cp && code.length > 1024) {
+    return undefined;
+  }
+  if (cp && code.length - cp.prefixCode.length > 4096) {
+    return undefined;
+  }
+
+  try {
+    const tokens = tokenizeWithCheckpoints(shikiHighlighter, code, lang, shikiTheme, scopePrefix);
+    return setCachedHighlight(code, lang, theme, { code, tokens }, previousCode);
+  } catch {
+    return undefined;
+  }
+}
+
 export async function highlightCode(
   code: string,
   language: string,
@@ -189,8 +397,7 @@ export async function highlightCode(
 ): Promise<HighlightedCode | undefined> {
   const lang = language.trim().toLowerCase();
   // Keep large blocks and unlabelled output cheap while preserving their full text.
-  if (!code || code.length > 50_000 || code.split("\n").length > 1_000 ||
-      ["", "text", "txt", "plaintext", "plain"].includes(lang)) return;
+  if (!isWithinHighlightLimits(code, lang)) return;
 
   const cached = getCachedHighlight(code, lang, theme);
   if (cached) {
@@ -202,12 +409,24 @@ export async function highlightCode(
 
   try {
     const shiki = await (shikiPromise ??= import("shiki"));
+    shikiModule = shiki;
     if (!Object.hasOwn(shiki.bundledLanguages, lang)) return;
-    const result = await shiki.codeToTokens(code, {
-      lang: lang as keyof typeof shiki.bundledLanguages,
-      theme: theme === "dark" ? "github-dark" : "github-light",
-    });
-    const entry: HighlightedCode = { code, tokens: result.tokens };
+    const shikiTheme = theme === "dark" ? "github-dark" : "github-light";
+    if (!shikiHighlighter || !loadedShikiLangs.has(lang) || !loadedShikiThemes.has(shikiTheme)) {
+      const hl = await shiki.getSingletonHighlighter({
+        langs: [lang as keyof typeof shiki.bundledLanguages],
+        themes: [shikiTheme],
+      });
+      shikiHighlighter = hl;
+      for (const l of hl.getLoadedLanguages()) loadedShikiLangs.add(l);
+      loadedShikiLangs.add(lang);
+      for (const t of hl.getLoadedThemes()) loadedShikiThemes.add(t);
+      loadedShikiThemes.add(shikiTheme);
+    }
+    const normLang = normalizeHighlightLang(lang);
+    const scopePrefix = `${theme}\0${normLang}\0`;
+    const tokens = tokenizeWithCheckpoints(shikiHighlighter, code, lang, shikiTheme, scopePrefix);
+    const entry: HighlightedCode = { code, tokens };
     return setCachedHighlight(code, lang, theme, entry, previousCode);
   } catch {
     // Loading or tokenization failures must never hide the original code.

@@ -481,6 +481,7 @@ func TestLongFunctionChunkSymbolPropagationAndPolyglotCallerRanking(t *testing.T
 
 func TestInMemoryIndexCacheEvictsLRUAndExpiredDirectories(t *testing.T) {
 	svc := NewService(t.TempDir())
+	svc.cfg.MaxCachedDirs = 2
 	var clock int64 = 1_000_000
 	svc.now = func() int64 { return clock }
 
@@ -516,5 +517,22 @@ func TestInMemoryIndexCacheEvictsLRUAndExpiredDirectories(t *testing.T) {
 	res, err := svc.Search(dirs[4], "HandleRequest", 5)
 	if err != nil || len(res.Results) == 0 {
 		t.Fatalf("expected evicted directory to reload and search cleanly, got %+v (%v)", res, err)
+	}
+}
+
+func TestDefaultCacheRetainsEightConcurrentWorkspaces(t *testing.T) {
+	svc := NewService(t.TempDir())
+	dirs := make([]string, 8)
+	for i := range dirs {
+		dirs[i] = fixtureWorkspace(t)
+		if _, err := svc.Search(dirs[i], "HandleRequest", 5); err != nil {
+			t.Fatalf("Search(dirs[%d]) failed: %v", i, err)
+		}
+	}
+	svc.mu.Lock()
+	cachedCount := len(svc.cache)
+	svc.mu.Unlock()
+	if cachedCount != 8 {
+		t.Fatalf("expected all 8 active directories to stay cached in memory, got %d", cachedCount)
 	}
 }

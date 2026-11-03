@@ -3,6 +3,7 @@ import { t } from "../../i18n";
 import {
   getCachedHighlight,
   highlightCode,
+  highlightCodeSync,
   type HighlightedCode,
   stabilizeHighlightedLines,
 } from "./syntax-highlight";
@@ -32,9 +33,12 @@ export default function CodeBlockCard(props: {
   const initialCached = getCachedHighlight(props.code, props.lang, initialTheme);
   const [copied, setCopied] = createSignal(false);
   const wrap = codeWrapEnabled;
+  let lastState: (HighlightedCode & { lang: string; theme: string }) | undefined = initialCached
+    ? { ...initialCached, lang: props.lang, theme: initialTheme }
+    : undefined;
   const [highlighted, setHighlighted] = createSignal<
     (HighlightedCode & { lang: string; theme: string }) | undefined
-  >(initialCached ? { ...initialCached, lang: props.lang, theme: initialTheme } : undefined);
+  >(lastState);
   let copyTimer: ReturnType<typeof setTimeout> | undefined;
   let highlightTimer: ReturnType<typeof setTimeout> | undefined;
   let revision = 0;
@@ -48,19 +52,61 @@ export default function CodeBlockCard(props: {
     theme: string
   ) => {
     if (!result) {
+      lastState = undefined;
       setHighlighted(undefined);
       return;
     }
-    setHighlighted((prev) => ({
+    const next = {
       code: result.code,
       tokens:
-        prev && prev.lang === lang && prev.theme === theme
-          ? stabilizeHighlightedLines(prev.tokens, result.tokens)
+        lastState && lastState.lang === lang && lastState.theme === theme
+          ? stabilizeHighlightedLines(lastState.tokens, result.tokens)
           : result.tokens,
       lang,
       theme,
-    }));
+    };
+    lastState = next;
+    setHighlighted(next);
   };
+
+  const visibleHighlight = createMemo(() => {
+    const theme = workspace.theme === "dark" ? "dark" : "light";
+    const asyncRes = highlighted();
+    if (
+      asyncRes &&
+      asyncRes.code === props.code &&
+      asyncRes.lang === props.lang &&
+      asyncRes.theme === theme
+    ) {
+      lastState = asyncRes;
+      lastCachedCode = asyncRes.code;
+      return asyncRes;
+    }
+    const sync = highlightCodeSync(
+      props.code,
+      props.lang,
+      theme,
+      lastCachedCode || undefined
+    );
+    if (sync) {
+      lastCachedCode = sync.code;
+      const tokens =
+        lastState && lastState.lang === props.lang && lastState.theme === theme
+          ? stabilizeHighlightedLines(lastState.tokens, sync.tokens)
+          : sync.tokens;
+      lastState = { code: sync.code, tokens, lang: props.lang, theme };
+      return lastState;
+    }
+    if (
+      lastState &&
+      lastState.lang === props.lang &&
+      lastState.theme === theme &&
+      props.code.startsWith(lastState.code)
+    ) {
+      return lastState;
+    }
+    return undefined;
+  });
 
   createEffect(() => {
     const theme = workspace.theme === "dark" ? "dark" : "light";
@@ -70,14 +116,12 @@ export default function CodeBlockCard(props: {
       theme,
     };
     revision++;
-    const cached = getCachedHighlight(latest.code, latest.lang, latest.theme);
-    if (cached) {
-      lastCachedCode = cached.code;
+    const current = visibleHighlight();
+    if (current && current.code === latest.code) {
       if (highlightTimer !== undefined) {
         clearTimeout(highlightTimer);
         highlightTimer = undefined;
       }
-      applyHighlight(cached, latest.lang, latest.theme);
       return;
     }
     // Throttle rather than debounce so continuous streaming still gets highlighted.
@@ -93,8 +137,21 @@ export default function CodeBlockCard(props: {
         lastCachedCode || undefined
       );
       if (result) lastCachedCode = result.code;
-      if (!disposed && request === revision) {
-        applyHighlight(result, snapshot.lang, snapshot.theme);
+      if (!disposed) {
+        if (request === revision) {
+          applyHighlight(result, snapshot.lang, snapshot.theme);
+        } else {
+          const caughtUp = highlightCodeSync(
+            latest.code,
+            latest.lang,
+            latest.theme,
+            lastCachedCode || undefined
+          );
+          if (caughtUp) {
+            lastCachedCode = caughtUp.code;
+            applyHighlight(caughtUp, latest.lang, latest.theme);
+          }
+        }
       }
     }, 80);
   });
@@ -103,13 +160,6 @@ export default function CodeBlockCard(props: {
     disposed = true;
     clearTimeout(highlightTimer);
     clearTimeout(copyTimer);
-  });
-
-  const visibleHighlight = createMemo(() => {
-    const result = highlighted();
-    if (!result || result.lang !== props.lang || result.theme !== workspace.theme ||
-        !props.code.startsWith(result.code)) return;
-    return result;
   });
 
   const onCopy = async () => {

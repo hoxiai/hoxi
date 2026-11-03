@@ -31,8 +31,8 @@ func DefaultConfig() Config {
 		ChunkLines:     80,
 		ChunkOverlap:   12,
 		MaxFileChunks:  200,
-		MaxCachedDirs:  2,
-		MaxCachedBytes: 8 * 1024 * 1024,
+		MaxCachedDirs:  8,
+		MaxCachedBytes: 12 * 1024 * 1024,
 	}
 }
 
