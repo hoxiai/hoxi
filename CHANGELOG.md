@@ -2,6 +2,11 @@
 
 All notable releases of **Hoxi Desktop** are documented below. Full per-version release notes are archived under [`docs/release-notes/`](docs/release-notes/) and consumed directly by `.github/workflows/release.yml` and `scripts/ai-release.sh`.
 
+## [v0.6.10](docs/release-notes/v0.6.10.md) — 2026-11-04
+
+- **Updater**: Align cross-architecture update URLs to the running host arch for Darwin DMG and Windows ZIP; resolve the checksum from the sibling `checksums.txt` by filename; keep polling native install progress after the install API returns; report a failed user-initiated install instead of ending silently; reuse a pending install reply on a repeated click.
+- **Gate, Skills & Release**: Block updates while a permission approval is pending as well as while a session runs; honor the service `baseURL` and default `hoxi.ai` catalog host in `marketplaceHostAllowed` when `HOXI_SERVER_URL` is overridden; publish per-DMG `.sha256` files with each release.
+
 ## [v0.6.9](docs/release-notes/v0.6.9.md) — 2026-11-02
 
 - **Approval**: Stop treating `$"` / `$'` inside double quotes as ANSI-C or locale quoting; allow safe `python3 -m` pipelines while blocking REPL, code-exec and publish modules; mask data arguments after benign literal prefixes; avoid duplicate pending-approval broadcasts when AI review falls back to manual confirmation.
