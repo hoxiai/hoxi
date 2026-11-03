@@ -206,6 +206,28 @@ func multipartDirectoryFields(raw []byte, contentType string) (sessionID, direct
 	return sessionID, directory, true
 }
 
+type bufferedTunnelBody struct {
+	*bytes.Reader
+	raw []byte
+}
+
+func (b *bufferedTunnelBody) Close() error { return nil }
+
+func readTunnelRequestBody(r *http.Request) ([]byte, bool) {
+	if b, ok := r.Body.(*bufferedTunnelBody); ok {
+		b.Reader.Reset(b.raw)
+		return b.raw, true
+	}
+	raw, err := io.ReadAll(io.LimitReader(r.Body, maxTunnelInspectedBody+1))
+	_ = r.Body.Close()
+	if err != nil || len(raw) > maxTunnelInspectedBody {
+		return nil, false
+	}
+	r.Body = &bufferedTunnelBody{Reader: bytes.NewReader(raw), raw: raw}
+	r.ContentLength = int64(len(raw))
+	return raw, true
+}
+
 // tunnelBodyAllowed rejects request bodies that would turn an allowed route
 // into a desktop-only operation. The body is restored for the real handler.
 func tunnelBodyAllowed(r *http.Request) bool {
@@ -220,13 +242,10 @@ func tunnelBodyAllowed(r *http.Request) bool {
 	if r.Body == nil || r.Body == http.NoBody {
 		return isCommit
 	}
-	raw, err := io.ReadAll(io.LimitReader(r.Body, maxTunnelInspectedBody+1))
-	_ = r.Body.Close()
-	if err != nil || len(raw) > maxTunnelInspectedBody {
+	raw, ok := readTunnelRequestBody(r)
+	if !ok {
 		return false
 	}
-	r.Body = io.NopCloser(bytes.NewReader(raw))
-	r.ContentLength = int64(len(raw))
 	if isPermReply {
 		var body struct {
 			Reply      string `json:"reply"`
@@ -354,13 +373,10 @@ func (g *Gateway) tunnelRequestDirectoriesAllowed(r *http.Request) bool {
 		}
 	}
 	if r.Method == http.MethodPost && r.Body != nil && r.Body != http.NoBody {
-		raw, readErr := io.ReadAll(io.LimitReader(r.Body, maxTunnelInspectedBody+1))
-		_ = r.Body.Close()
-		if readErr != nil || len(raw) > maxTunnelInspectedBody {
+		raw, ok := readTunnelRequestBody(r)
+		if !ok {
 			return false
 		}
-		r.Body = io.NopCloser(bytes.NewReader(raw))
-		r.ContentLength = int64(len(raw))
 		contentType := strings.TrimSpace(r.Header.Get("Content-Type"))
 		if strings.HasPrefix(strings.ToLower(contentType), "multipart/") {
 			// A multipart body is only legitimate on the one route that parses

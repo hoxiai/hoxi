@@ -91,4 +91,32 @@ func TestSessionEditedFileSetCachesOpenCodeChildTranscripts(t *testing.T) {
 	if _, ok := editedAfterFail["child.go"]; !ok {
 		t.Fatalf("expected stale child.go to be preserved on transient error, got %v", editedAfterFail)
 	}
+
+	// Non-empty entries that have been expired beyond childTurnsStaleTTL are evicted on the next sweep.
+	staleKey := childTurnsKey{dir: filepath.Clean(otherDir), sid: "ses_child"}
+	if v, ok := svc.childTurns.Load(staleKey); ok {
+		entry := v.(childTurnsEntry)
+		entry.expires = time.Now().Add(-childTurnsStaleTTL - time.Second)
+		svc.childTurns.Store(staleKey, entry)
+	}
+	_ = svc.openCodeChildTurns("ses_uncached", ws)
+	if _, ok := svc.childTurns.Load(staleKey); ok {
+		t.Fatal("expected positive childTurns entry older than childTurnsStaleTTL to be evicted")
+	}
+
+	// forgetOpenCodeMappings removes childTurns entries keyed by childTurnsKey{dir, sid}
+	// and pending OpenCode asks/failed replies for the deleted session.
+	rec, _ := svc.store.Get("ses_root")
+	svc.openCodeAutoReplies.Store("per_oc_orphan", openCodeAutoReplyFailed)
+	svc.gate.rememberOpenCodeAsk("per_oc_orphan", openCodeAsk{sessionID: "ses_root", dir: ws})
+	svc.forgetOpenCodeMappings("ses_root", rec, nil)
+	if _, ok := svc.childTurns.Load(key); ok {
+		t.Fatal("expected forgetOpenCodeMappings to delete childTurns entry for ses_child")
+	}
+	if _, ok := svc.childTurns.Load(childTurnsKey{dir: filepath.Clean(ws), sid: "ses_gone"}); ok {
+		t.Fatal("expected forgetOpenCodeMappings to delete childTurns entry for ses_gone")
+	}
+	if _, ok := svc.openCodeAutoReplies.Load("per_oc_orphan"); ok {
+		t.Fatal("expected forgetOpenCodeMappings to delete orphaned openCodeAutoReplies entry")
+	}
 }

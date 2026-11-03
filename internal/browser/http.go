@@ -338,7 +338,7 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	defer stop()
 	defer opcancel()
 	if path != "action" && callerSession != "" && callerSession != sc.sessionID {
-		sc.prepareCallerTab(opctx, callerSession, nil)
+		sc.prepareCallerTab(opctx, callerSession, Action{})
 	}
 	if path == "frame" {
 		if sc.tabID == "" {
@@ -369,7 +369,7 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		sc.prepareCallerTab(opctx, callerSession, &action)
+		action = sc.prepareCallerTab(opctx, callerSession, action)
 		prevTab := sc.tabID
 		extra, err = sc.perform(opctx, action)
 		if err != nil && !liveInput && action.Action != "tab_new" && action.Action != "tab_select" && action.Action != "tab_close" {

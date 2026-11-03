@@ -64,7 +64,7 @@ func (s *Service) serveTransfer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if callerSession != "" && callerSession != sc.sessionID && sc.browser != nil {
-		sc.prepareCallerTab(ctx, callerSession, nil)
+		sc.prepareCallerTab(ctx, callerSession, Action{})
 	}
 	if strings.HasSuffix(r.URL.Path, "/upload") {
 		if !sc.manual {

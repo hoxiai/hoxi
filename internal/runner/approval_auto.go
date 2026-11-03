@@ -273,7 +273,11 @@ func (s *Service) claimOpenCodePermission(item map[string]interface{}, sessionID
 // judged against it, and arms its timeout the first time it is shown.
 func (s *Service) askOpenCodeUser(item map[string]interface{}, sessionID, directory string) {
 	id, _ := item["id"].(string)
-	if s.gate.rememberOpenCodeAsk(id, openCodeAsk{item: item, sessionID: sessionID, dir: directory}) {
+	added, evictedID := s.gate.rememberOpenCodeAsk(id, openCodeAsk{item: item, sessionID: sessionID, dir: directory})
+	if evictedID != "" {
+		s.openCodeAutoReplies.Delete(evictedID)
+	}
+	if added {
 		s.armOpenCodeTimeout(id, sessionID, directory, item)
 	}
 }

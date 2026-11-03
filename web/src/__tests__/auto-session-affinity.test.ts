@@ -2,10 +2,12 @@
 import {
   clearAutoPoolCooldowns,
   markAutoCandidateCooldown,
+  purgeSessionsFromStoreState,
   resetAutoPoolToDefault,
   resolveAutoModelTarget,
   saveAutoPool,
   setWorkspace,
+  workspace,
 } from "../store/workspace";
 import { assertDeepEqual, assertTrue, describe, it } from "./test-harness";
 
@@ -83,6 +85,19 @@ describe("auto pool session affinity", () => {
     assertTrue(Boolean(first && second));
     assertTrue(first!.providerID !== second!.providerID);
 
+    await resetAutoPoolToDefault("free");
+  });
+
+  it("clears the pinned candidate when a session is purged", async () => {
+    await seedTwoCandidateFreePool();
+
+    const first = resolveAutoModelTarget("free", { advance: true, sessionID: "ses_aff_purge" });
+    purgeSessionsFromStoreState(workspace, ["ses_aff_purge"]);
+    const afterPurge = resolveAutoModelTarget("free", { advance: true, sessionID: "ses_aff_purge" });
+    assertTrue(Boolean(first && afterPurge));
+    assertTrue(first!.providerID !== afterPurge!.providerID);
+
+    purgeSessionsFromStoreState(workspace, ["ses_aff_purge"]);
     await resetAutoPoolToDefault("free");
   });
 });

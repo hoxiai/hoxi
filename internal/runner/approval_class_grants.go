@@ -141,9 +141,9 @@ func (g *approvalGate) hasClassGrants(sessionID string, classes []string) bool {
 	return len(classes) > 0
 }
 
-func (g *approvalGate) rememberOpenCodeAsk(id string, ask openCodeAsk) bool {
+func (g *approvalGate) rememberOpenCodeAsk(id string, ask openCodeAsk) (added bool, evictedID string) {
 	if id == "" {
-		return false
+		return false, ""
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -156,10 +156,11 @@ func (g *approvalGate) rememberOpenCodeAsk(id string, ask openCodeAsk) bool {
 			}
 		}
 		delete(g.openCodeAsks, oldestID)
+		evictedID = oldestID
 	}
 	ask.at = time.Now()
 	g.openCodeAsks[id] = ask
-	return !exists
+	return !exists, evictedID
 }
 
 func (g *approvalGate) openCodeAskFor(id string) (openCodeAsk, bool) {
@@ -173,6 +174,22 @@ func (g *approvalGate) forgetOpenCodeAsk(id string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	delete(g.openCodeAsks, id)
+}
+
+func (g *approvalGate) forgetOpenCodeSessionAsks(sessionIDs map[string]bool) []string {
+	if len(sessionIDs) == 0 {
+		return nil
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	var removed []string
+	for id, ask := range g.openCodeAsks {
+		if sessionIDs[ask.sessionID] {
+			delete(g.openCodeAsks, id)
+			removed = append(removed, id)
+		}
+	}
+	return removed
 }
 
 // grantClassesForReply validates a grant reply: only the desktop may grant,

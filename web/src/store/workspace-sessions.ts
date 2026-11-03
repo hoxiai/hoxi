@@ -54,6 +54,7 @@ import {
   extractChildSubagentSessionId,
 } from "./subagent-sessions";
 import { clearAutoFailoverPending, clearTurnDispatchState } from "./auto-failover";
+import { clearSessionAutoTarget } from "./auto-models";
 import { forgetPromptQueueState } from "./prompt-queue";
 import { indexSession, indexSessions, sessionBelongsToProject } from "./session-index";
 import { bumpSessionSurfaceRevision, normalizeFolderPath } from "./workspace-folders";
@@ -718,6 +719,7 @@ export function purgeSessionsFromStoreState(
   for (const id of allIDs) {
     clearTurnDispatchState(id);
     clearAutoFailoverPending(id);
+    clearSessionAutoTarget(id);
     clearSubagentDrawerOverride(id);
     loadedChildSessionIDs.delete(id);
     settledChildSessionIDs.delete(id);

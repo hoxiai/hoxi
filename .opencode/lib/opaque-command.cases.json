@@ -702,7 +702,7 @@
     "opaque": true
   },
   {
-    "command": "L=/var/folders/13/5t054pmd2bn5dkgqvfk2vct80000gn/T/opencode/shoply-v1.0.8-build.log; a=$(wc -c < $L); sleep 45; b=$(wc -c < $L); echo \"log_bytes_before=$a after=$b\"; tail -n 3 $L",
+    "command": "L=/var/folders/13/5t054pmd2bn5dkgqvfk2vct80000gn/T/opencode/shopark-v1.0.8-build.log; a=$(wc -c < $L); sleep 45; b=$(wc -c < $L); echo \"log_bytes_before=$a after=$b\"; tail -n 3 $L",
     "opaque": false
   },
   {
@@ -718,7 +718,7 @@
     "opaque": false
   },
   {
-    "command": "TGT=/Users/u/code/site/app/themes/aix\nSRC=/Users/u/code/kuaiqin/shoply/plugins/app/Fastix\ncp \"$SRC/res/img/\"* \"$TGT/public/img/\" 2>/dev/null || true",
+    "command": "TGT=/Users/u/code/site/app/themes/aix\nSRC=/Users/u/code/kuaiqin/shopark/plugins/app/Fastix\ncp \"$SRC/res/img/\"* \"$TGT/public/img/\" 2>/dev/null || true",
     "opaque": false
   },
   {
@@ -834,7 +834,7 @@
     "opaque": true
   },
   {
-    "command": "bash \"$HOME/.agents/skills/shoply-release-and-deploy/scripts/verify-shoply-release.sh\" v1.0.13 2>&1 | tail -n 20",
+    "command": "bash \"$HOME/.agents/skills/shopark-release-and-deploy/scripts/verify-shopark-release.sh\" v1.0.13 2>&1 | tail -n 20",
     "opaque": false
   },
   {

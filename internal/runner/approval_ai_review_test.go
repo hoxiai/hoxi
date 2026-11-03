@@ -54,8 +54,8 @@ func (s *stubAIReviewLLM) Complete(_ context.Context, _ llm.Target, req llm.Requ
 	return s.response, nil
 }
 
-const shoplyInspectionScript = `bash -c '
-cd /Users/u/code/kuaiqin/shoply
+const shoparkInspectionScript = `bash -c '
+cd /Users/u/code/kuaiqin/shopark
 find . -name .git -not -path "*/node_modules/*" -not -path "*/vendor/*" -not -path "*/.claude/*" | sort | while read -r gitdir; do
   repo=$(dirname "$gitdir")
   [ "$repo" = "." ] && repo="."
@@ -85,7 +85,7 @@ func TestAIReviewApprovesOpaqueReadOnlyInspectionAndCaches(t *testing.T) {
 		AIReviewModel: "openai/gpt-4o-mini",
 	})
 
-	d1 := f.callHook(t, f.payload(shoplyInspectionScript, f.dir, "conv-1"))
+	d1 := f.callHook(t, f.payload(shoparkInspectionScript, f.dir, "conv-1"))
 	if d1.Decision != hookDecisionApprove {
 		t.Fatalf("expected approve from AI review, got %+v", d1)
 	}
@@ -94,7 +94,7 @@ func TestAIReviewApprovesOpaqueReadOnlyInspectionAndCaches(t *testing.T) {
 	}
 
 	// Second call with identical command and workspace must hit the in-memory cache.
-	d2 := f.callHook(t, f.payload(shoplyInspectionScript, f.dir, "conv-1"))
+	d2 := f.callHook(t, f.payload(shoparkInspectionScript, f.dir, "conv-1"))
 	if d2.Decision != hookDecisionApprove {
 		t.Fatalf("expected cached approve from AI review, got %+v", d2)
 	}
@@ -209,8 +209,8 @@ func TestAIReviewRespectsModeAndFailsClosed(t *testing.T) {
 
 	item := map[string]interface{}{
 		"permission": "bash",
-		"patterns":   []string{shoplyInspectionScript},
-		"metadata":   map[string]interface{}{"command": shoplyInspectionScript},
+		"patterns":   []string{shoparkInspectionScript},
+		"metadata":   map[string]interface{}{"command": shoparkInspectionScript},
 	}
 
 	// 1. Disabled by default -> never calls LLM.
@@ -328,8 +328,8 @@ func TestAIReviewLeavesRoomForReasoningModels(t *testing.T) {
 	setTestApprovalPolicy(t, f.svc, ApprovalPolicy{Mode: ApprovalModeAuto, AIReview: true, AIReviewModel: "subapi/flash"})
 	item := map[string]interface{}{
 		"permission": "bash",
-		"patterns":   []string{shoplyInspectionScript},
-		"metadata":   map[string]interface{}{"command": shoplyInspectionScript},
+		"patterns":   []string{shoparkInspectionScript},
+		"metadata":   map[string]interface{}{"command": shoparkInspectionScript},
 	}
 	if !f.svc.aiReviewCommand(context.Background(), item, f.dir).allowed() {
 		t.Fatalf("expected allow")
@@ -346,8 +346,8 @@ func TestAIReviewOutcomeSaysWhyItDidNotAllow(t *testing.T) {
 	setTestApprovalPolicy(t, f.svc, ApprovalPolicy{Mode: ApprovalModeAuto, AIReview: true, AIReviewModel: "subapi/flash"})
 	item := map[string]interface{}{
 		"permission": "bash",
-		"patterns":   []string{shoplyInspectionScript},
-		"metadata":   map[string]interface{}{"command": shoplyInspectionScript},
+		"patterns":   []string{shoparkInspectionScript},
+		"metadata":   map[string]interface{}{"command": shoparkInspectionScript},
 	}
 	cases := []struct {
 		name     string
@@ -389,7 +389,7 @@ func TestAIReviewFailureReachesApprovalCard(t *testing.T) {
 	events, unsub := f.svc.Subscribe("ses_agy_gate")
 	defer unsub()
 
-	result := f.asyncHook(t, f.payload(shoplyInspectionScript, f.dir, "conv-1"))
+	result := f.asyncHook(t, f.payload(shoparkInspectionScript, f.dir, "conv-1"))
 	asked := waitForEvent(t, events, "permission.asked")
 	note, _ := itemMetadata(asked.Properties)[aiReviewMetaKey].(map[string]interface{})
 	if note["status"] != aiReviewUnavailable || note["failure"] != aiReviewFailEmpty {
@@ -423,8 +423,8 @@ func TestOpenCodeAIReviewFailureStaysOnListedRequest(t *testing.T) {
 	setTestApprovalPolicy(t, svc, ApprovalPolicy{Mode: ApprovalModeAuto, AIReview: true, AIReviewModel: "subapi/flash"})
 	item := map[string]interface{}{
 		"id": "per_oc_review", "sessionID": "oc-review", "permission": "bash",
-		"patterns": []interface{}{shoplyInspectionScript},
-		"metadata": map[string]interface{}{"command": shoplyInspectionScript},
+		"patterns": []interface{}{shoparkInspectionScript},
+		"metadata": map[string]interface{}{"command": shoparkInspectionScript},
 	}
 	fake := &flakyOpenCodePermissions{pending: []map[string]interface{}{item}}
 	server := httptest.NewServer(http.HandlerFunc(fake.handler))

@@ -186,8 +186,9 @@ func (s *Service) sessionEditedFileSet(sessionID string) map[string]struct{} {
 // serving last-known turns on transient failure) so the changed-files shelf
 // does not drop entries under load jitter.
 const (
-	childTurnsTTL    = 3 * time.Second
-	childTurnsErrTTL = 250 * time.Millisecond
+	childTurnsTTL      = 3 * time.Second
+	childTurnsErrTTL   = 250 * time.Millisecond
+	childTurnsStaleTTL = 5 * time.Minute
 )
 
 type childTurnsKey struct {
@@ -225,7 +226,7 @@ func (s *Service) openCodeChildTurns(sid, dir string) []MessageTurn {
 	}
 	s.childTurns.Range(func(k, v any) bool {
 		entry := v.(childTurnsEntry)
-		if k != key && !now.Before(entry.expires) && len(entry.turns) == 0 {
+		if k != key && !now.Before(entry.expires) && (len(entry.turns) == 0 || now.Sub(entry.expires) >= childTurnsStaleTTL) {
 			s.childTurns.Delete(k)
 		}
 		return true

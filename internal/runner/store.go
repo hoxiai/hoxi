@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
@@ -563,7 +564,12 @@ func cloneRecord(r SessionRecord) SessionRecord {
 	return out
 }
 
-var normalizedComparePathCache sync.Map
+const maxNormalizedPathCacheEntries = 2048
+
+var (
+	normalizedComparePathCache     sync.Map
+	normalizedComparePathCacheSize atomic.Int64
+)
 
 func normalizeComparePath(p string) string {
 	p = strings.TrimSpace(p)
@@ -585,7 +591,16 @@ func normalizeComparePath(p string) string {
 		cleaned = strings.ToLower(cleaned)
 	}
 	if resolvedOK {
-		normalizedComparePathCache.Store(raw, cleaned)
+		if _, loaded := normalizedComparePathCache.LoadOrStore(raw, cleaned); !loaded {
+			if normalizedComparePathCacheSize.Add(1) > maxNormalizedPathCacheEntries {
+				normalizedComparePathCache.Range(func(k, _ any) bool {
+					normalizedComparePathCache.Delete(k)
+					return true
+				})
+				normalizedComparePathCacheSize.Store(1)
+				normalizedComparePathCache.Store(raw, cleaned)
+			}
+		}
 	}
 	return cleaned
 }

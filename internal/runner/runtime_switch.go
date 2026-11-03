@@ -512,16 +512,6 @@ func (s *Service) collectOpenCodeChildIDs(id string, rec SessionRecord, ap *acti
 }
 
 func (s *Service) forgetOpenCodeMappings(id string, rec SessionRecord, ap *activeProcess) {
-	for _, turn := range rec.Turns {
-		if turn.Info.ID != "" {
-			s.userSkillByMsg.Delete(turn.Info.ID)
-		}
-	}
-	for _, turn := range rec.RevertedTurns {
-		if turn.Info.ID != "" {
-			s.userSkillByMsg.Delete(turn.Info.ID)
-		}
-	}
 	var prefixes []string
 	seen := make(map[string]bool)
 	drop := func(sid string) {
@@ -533,10 +523,25 @@ func (s *Service) forgetOpenCodeMappings(id string, rec SessionRecord, ap *activ
 		prefixes = append(prefixes, sid+"\x00")
 		s.managedOpenCode.Delete(sid)
 		s.openCodeChildParent.Delete(sid)
-		s.childTurns.Delete(sid)
 		s.editedFiles.Delete(sid)
 		s.turnStats.Delete(sid)
 	}
+	dropTurnMappings := func(turns []MessageTurn) {
+		for _, turn := range turns {
+			if turn.Info.ID != "" {
+				s.userSkillByMsg.Delete(turn.Info.ID)
+			}
+			for _, part := range turn.Parts {
+				if part.Type == "tool" && part.State != nil && isRunnerTaskTool(part.Tool) {
+					for _, cid := range extractChildSessionIDsFromPart(part) {
+						drop(cid)
+					}
+				}
+			}
+		}
+	}
+	dropTurnMappings(rec.Turns)
+	dropTurnMappings(rec.RevertedTurns)
 	drop(id)
 	drop(rec.ExternalID)
 	for _, ocID := range rec.OpenCodeIDs {
@@ -544,6 +549,17 @@ func (s *Service) forgetOpenCodeMappings(id string, rec SessionRecord, ap *activ
 	}
 	for _, childID := range s.collectOpenCodeChildIDs(id, rec, ap) {
 		drop(childID)
+	}
+	if len(seen) > 0 {
+		s.childTurns.Range(func(k, _ interface{}) bool {
+			if ck, ok := k.(childTurnsKey); ok && seen[ck.sid] {
+				s.childTurns.Delete(k)
+			}
+			return true
+		})
+		for _, askID := range s.gate.forgetOpenCodeSessionAsks(seen) {
+			s.openCodeAutoReplies.Delete(askID)
+		}
 	}
 	if len(prefixes) > 0 {
 		deletePrefixed := func(m *sync.Map) {

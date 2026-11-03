@@ -11,10 +11,14 @@ import {
 import {
   cancelRemoteTunnel,
   loadRemoteTunnelStatus,
+  localizeTunnelError,
+  pairRemoteTunnel,
   remoteTunnel,
   requestRemoteTunnel,
   setRemoteTunnel,
+  validateControllerUrl,
 } from "../store/remote-tunnel";
+import { t } from "../i18n";
 import { assertEqual, assertTrue, describe, it } from "./test-harness";
 
 function reset() {
@@ -174,5 +178,29 @@ describe("cloudflare tunnel connector", () => {
       Object.assign(remoteTunnelAPI, rtApi);
       setRemoteTunnel({ status: { enabled: false, state: "disabled" }, loaded: false, busy: false, error: "" });
     }
+  });
+
+  it("validates GoPanel controller URLs and localizes HTTPS requirement errors", async () => {
+    assertEqual(validateControllerUrl("http://192.168.1.10:8080"), t("remoteTunnel.errHttpsRequired"));
+    assertEqual(validateControllerUrl("http://panel.example.com"), t("remoteTunnel.errHttpsRequired"));
+    assertEqual(validateControllerUrl("panel.example.com"), t("remoteTunnel.errScheme"));
+    assertEqual(validateControllerUrl("ftp://panel.example.com"), t("remoteTunnel.errScheme"));
+    assertEqual(validateControllerUrl("https://panel.example.com:8080"), null);
+    assertEqual(validateControllerUrl("http://localhost:8080"), null);
+    assertEqual(validateControllerUrl("http://127.0.0.1:8080"), null);
+
+    assertEqual(localizeTunnelError("public GoPanel must use HTTPS", "fallback"), t("remoteTunnel.errHttpsRequired"));
+    assertEqual(localizeTunnelError("GoPanel URL must start with https://", "fallback"), t("remoteTunnel.errScheme"));
+    assertEqual(localizeTunnelError("GoPanel URL is invalid", "fallback"), t("remoteTunnel.errInvalidUrl"));
+    assertEqual(localizeTunnelError("pairing code must be the 32-character code issued by GoPanel", "fallback"), t("remoteTunnel.errCodeInvalid"));
+    assertEqual(localizeTunnelError("connect GoPanel: connection refused", "fallback"), t("remoteTunnel.errConnectFailed", { reason: "connection refused" }));
+
+    const ok = await requestRemoteTunnel({ controllerUrl: "http://192.168.1.10:8080", name: "Mac" });
+    assertEqual(ok, false);
+    assertEqual(remoteTunnel.error, t("remoteTunnel.errHttpsRequired"));
+
+    const pairOk = await pairRemoteTunnel({ controllerUrl: "http://192.168.1.10:8080", code: "abc", name: "Mac" });
+    assertEqual(pairOk, false);
+    assertEqual(remoteTunnel.error, t("remoteTunnel.errHttpsRequired"));
   });
 });

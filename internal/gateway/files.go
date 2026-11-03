@@ -90,25 +90,67 @@ func cleanRequestedFilePath(raw string) (string, int) {
 	return str, line
 }
 
+func resolveGatewayPathWithSymlinks(p string, depth int) (string, bool) {
+	if depth > 40 {
+		return "", false
+	}
+	p = strings.TrimSpace(p)
+	if p == "" {
+		return "", false
+	}
+	if abs, err := filepath.Abs(p); err == nil {
+		p = abs
+	}
+	p = filepath.Clean(p)
+	if real, err := filepath.EvalSymlinks(p); err == nil {
+		if abs, err := filepath.Abs(real); err == nil {
+			return filepath.Clean(abs), true
+		}
+		return filepath.Clean(real), true
+	}
+	suffix := ""
+	for cur := p; ; {
+		if real, err := filepath.EvalSymlinks(cur); err == nil {
+			if abs, err := filepath.Abs(real); err == nil {
+				real = abs
+			}
+			return filepath.Clean(filepath.Join(real, suffix)), true
+		}
+		info, err := os.Lstat(cur)
+		if err == nil {
+			if info.Mode()&os.ModeSymlink != 0 {
+				link, err := os.Readlink(cur)
+				if err != nil {
+					return "", false
+				}
+				if !filepath.IsAbs(link) {
+					link = filepath.Join(filepath.Dir(cur), link)
+				}
+				return resolveGatewayPathWithSymlinks(filepath.Join(link, suffix), depth+1)
+			}
+		} else if !os.IsNotExist(err) {
+			return "", false
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return p, true
+		}
+		suffix = filepath.Join(filepath.Base(cur), suffix)
+		cur = parent
+	}
+}
+
 func isPathWithinDir(baseDir, targetPath string) bool {
 	if strings.TrimSpace(baseDir) == "" || strings.TrimSpace(targetPath) == "" {
 		return false
 	}
-	cleanBase, baseOK := canonicalDirectory(baseDir)
+	cleanBase, baseOK := resolveGatewayPathWithSymlinks(baseDir, 0)
 	if !baseOK {
-		absBase, err := filepath.Abs(baseDir)
-		if err != nil {
-			return false
-		}
-		cleanBase = filepath.Clean(absBase)
+		return false
 	}
-	cleanTarget := filepath.Clean(targetPath)
-	if resolved, err := filepath.EvalSymlinks(targetPath); err == nil {
-		if absResolved, err := filepath.Abs(resolved); err == nil {
-			cleanTarget = filepath.Clean(absResolved)
-		}
-	} else if absTarget, err := filepath.Abs(targetPath); err == nil {
-		cleanTarget = filepath.Clean(absTarget)
+	cleanTarget, targetOK := resolveGatewayPathWithSymlinks(targetPath, 0)
+	if !targetOK {
+		return false
 	}
 	rel, err := filepath.Rel(cleanBase, cleanTarget)
 	if err != nil {

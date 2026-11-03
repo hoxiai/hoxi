@@ -4,11 +4,8 @@ import { t } from "../i18n";
 import { hoxiAPI, leaderboardAPI, type ProviderInfo, type ProviderModelInfo } from "../services/api";
 import { setWorkspace, workspace, type SelectedModel } from "./workspace-state";
 import {
-  candidateBreakerRemainingMs,
-  candidateBreakerScore,
-  clearCandidateBreaker,
-  filterSlowCandidates,
-  isCandidateBreakerOpen,
+  candidateBreakerRemainingMs, candidateBreakerScore, clearCandidateBreaker,
+  filterSlowCandidates, isCandidateBreakerOpen,
 } from "./auto-breaker";
 
 export const AUTO_PROVIDER_ID = "hoxi-auto";
@@ -205,20 +202,18 @@ const [autoPoolsSignal, setAutoPoolsSignal] = createSignal<Record<string, AutoMo
 const [autoCooldownsSignal, setAutoCooldownsSignal] = createSignal<
   Record<string, AutoCandidateCooldown>
 >(loadInitialCooldowns());
-const [providerKeyCountsSignal, setProviderKeyCountsSignal] = createSignal<Record<string, number>>(
-  {}
-);
+const [providerKeyCountsSignal, setProviderKeyCountsSignal] = createSignal<Record<string, number>>({});
 const [poolCursorsSignal, setPoolCursorsSignal] = createSignal<Record<string, number>>({});
-const [lastResolvedByPoolSignal, setLastResolvedByPoolSignal] = createSignal<
-  Record<string, SelectedModel>
->({});
+const [lastResolvedByPoolSignal, setLastResolvedByPoolSignal] = createSignal<Record<string, SelectedModel>>({});
 
-// Session affinity: once a session resolves an Auto pool it keeps reusing the
-// same candidate turn after turn while that candidate stays healthy, so the
-// upstream prompt-cache prefix stays warm instead of failing over to a cold
-// model on every turn. Rotation resumes only when the pinned candidate is gone,
-// cooling down or excluded. Keyed by sessionID, value is pool + candidate.
+// Session affinity: reuse the resolved candidate across turns while healthy so
+// the upstream prompt-cache prefix stays warm.
+const MAX_SESSION_AUTO_TARGETS = 500;
 const sessionAutoTarget = new Map<string, { poolID: string; providerID: string; modelID: string }>();
+
+export function clearSessionAutoTarget(sessionID: string): void {
+  if (sessionID) sessionAutoTarget.delete(sessionID);
+}
 
 function persistAutoPoolsLocal(pools: Record<string, AutoModelPoolConfig>) {
   try {
@@ -556,9 +551,7 @@ export function resolveAutoModelTarget(
   const activePool = filterSlowCandidates(basePool);
 
   // Session affinity short-circuit: reuse the candidate already pinned to this
-  // session when it survived the exclude / image / cooldown / slowness filters
-  // above. This keeps the prompt cache warm and does not consume a pool cursor
-  // slot, so other sessions still rotate fairly.
+  // session when it survived the filters above.
   if (opts?.sessionID) {
     const pinned = sessionAutoTarget.get(opts.sessionID);
     if (pinned && pinned.poolID === poolID) {
@@ -589,6 +582,10 @@ export function resolveAutoModelTarget(
   }
 
   if (opts?.sessionID) {
+    if (!sessionAutoTarget.has(opts.sessionID) && sessionAutoTarget.size >= MAX_SESSION_AUTO_TARGETS) {
+      const oldest = sessionAutoTarget.keys().next().value;
+      if (oldest !== undefined) sessionAutoTarget.delete(oldest);
+    }
     sessionAutoTarget.set(opts.sessionID, {
       poolID,
       providerID: chosen.providerID,

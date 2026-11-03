@@ -178,7 +178,7 @@ func (s *Service) serveStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Attach/apply metrics and start CDP under the gate, never upgrade or write there.
-	sc.prepareCallerTab(setup, callerSession, nil)
+	sc.prepareCallerTab(setup, callerSession, Action{})
 	sc.stopStream()
 	err = sc.withTab(setup)
 	if err == nil && !sc.window {

@@ -313,3 +313,30 @@ func TestTunnelMultipartLabelCannotSkipDirectoryGuard(t *testing.T) {
 		})
 	}
 }
+
+func TestTunnelRejectsDanglingSymlinkOutsideWorkspace(t *testing.T) {
+	root, outside := t.TempDir(), t.TempDir()
+	danglingLink := filepath.Join(root, "dangling-outside.txt")
+	if err := os.Symlink(filepath.Join(outside, "missing.txt"), danglingLink); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	dirLink := filepath.Join(root, "escape-dir")
+	if err := os.Symlink(outside, dirLink); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	if isPathWithinDir(root, danglingLink) {
+		t.Fatal("dangling symlink pointing outside workspace must not be considered within root")
+	}
+	if isPathWithinDir(root, filepath.Join(dirLink, "nonexistent.txt")) {
+		t.Fatal("nonexistent path through outside symlink directory must not be considered within root")
+	}
+	g := New(0, "test", root, nil, nil)
+	defer g.CloseBrowser()
+	for _, rel := range []string{"dangling-outside.txt", "escape-dir/nonexistent.txt"} {
+		rec := httptest.NewRecorder()
+		g.serveTunnelRequest(rec, localRequest(http.MethodGet, "/api/hoxi/file/content?path="+rel, nil))
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("GET %s over tunnel = %d (%s), want 403", rel, rec.Code, rec.Body.String())
+		}
+	}
+}

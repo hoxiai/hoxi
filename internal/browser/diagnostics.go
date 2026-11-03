@@ -152,7 +152,7 @@ func (s *Service) serveDiagnostics(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, result)
 		return
 	}
-	sc.prepareCallerTab(ctx, callerSession, nil)
+	sc.prepareCallerTab(ctx, callerSession, Action{})
 	items := []Diagnostic{}
 	if d := sc.diagnostics[sc.tabID]; d != nil {
 		items = d.snapshot(r.Method == "POST")

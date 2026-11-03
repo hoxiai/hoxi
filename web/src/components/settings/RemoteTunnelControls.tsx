@@ -215,6 +215,7 @@ export function RemoteTunnelControls() {
                 placeholder={t("remoteTunnel.controllerPlaceholder")}
                 onInput={(event) => setControllerUrl(event.currentTarget.value)}
               />
+              <span class="block text-[11px] text-[var(--text-muted)]">{t("remoteTunnel.controllerHint")}</span>
             </label>
             <label class="space-y-1 sm:col-span-2">
               <span class="text-[12px] text-[var(--text-secondary)]">{t("remoteTunnel.nameLabel")}</span>

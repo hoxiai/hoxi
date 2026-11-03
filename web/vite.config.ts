@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
 import solidPlugin from "vite-plugin-solid";
 import tailwindcss from "@tailwindcss/vite";
 
@@ -33,13 +33,31 @@ const workExtEntry = toPosixPath(path.join(workRepoDir, "web/index.tsx"));
 const hasWorkExt =
   process.env.HOXI_DISABLE_WORK_EXT !== "1" && fs.existsSync(workExtEntry);
 
+// Tailwind v4 only scans the core web/src tree by default, so utilities that
+// appear solely in the optional hoxi-work repo (for example the app switcher's
+// list height cap) were never generated and the popover had no height bound.
+// Inject an extra @source for the work repo into the Tailwind CSS entry.
+const workTailwindSource = toPosixPath(
+  path.relative(srcRoot, path.join(workRepoDir, "web")),
+);
+const stylesEntry = `${srcRoot}/styles.css`;
+
+const tailwindWorkSource = (): Plugin => ({
+  name: "hoxi:tailwind-work-source",
+  enforce: "pre",
+  transform(code, id) {
+    if (!hasWorkExt || id.split("?")[0] !== stylesEntry) return null;
+    return { code: `${code}\n@source "${workTailwindSource}";\n`, map: null };
+  },
+});
+
 const isRelease = (process.env.HOXI_VARIANT || "").trim().toLowerCase() === "release";
 const target =
   process.env.HOXI_BACKEND_URL || (isRelease ? "http://127.0.0.1:5410" : "http://127.0.0.1:5420");
 const port = Number(process.env.HOXI_WEB_PORT) || (isRelease ? 5411 : 5421);
 
 export default defineConfig({
-  plugins: [tailwindcss(), solidPlugin()],
+  plugins: [tailwindWorkSource(), tailwindcss(), solidPlugin()],
   resolve: {
     dedupe: ["solid-js", "solid-js/web", "solid-js/store", "lucide-solid"],
     alias: [

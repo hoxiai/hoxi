@@ -45,7 +45,7 @@ type Service struct {
 	managedOpenCode     sync.Map
 	openCodeChildParent sync.Map // openCode child session ID -> hoxi session ID
 	// childTurns caches OpenCode subagent transcripts read while filtering diffs.
-	childTurns      sync.Map // session ID -> childTurnsEntry
+	childTurns      sync.Map // childTurnsKey -> childTurnsEntry
 	editedFiles     sync.Map // session ID -> editedFilesEntry
 	userSkillByMsg  sync.Map // message ID -> userSkillOverride
 	stoppedTools    sync.Map // sessionID\x00(part|call):id -> bool

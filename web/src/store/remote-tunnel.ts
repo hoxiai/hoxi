@@ -24,16 +24,72 @@ export const [remoteTunnel, setRemoteTunnel] = createStore<{
 });
 
 // requestJSON throws "HTTP <status>: <body>"; surface the gateway's {"error"} text.
+export function isTunnelLoopbackHost(hostname: string): boolean {
+  const host = hostname.trim().toLowerCase().replace(/^\[|\]$/g, "");
+  return host === "localhost" || host === "127.0.0.1" || host === "::1";
+}
+
+export function validateControllerUrl(value: string): string | null {
+  const trimmed = value.trim().replace(/\/+$/, "");
+  if (!trimmed) return t("remoteTunnel.errInvalidUrl");
+  if (!/^https?:\/\//i.test(trimmed)) {
+    return t("remoteTunnel.errScheme");
+  }
+  try {
+    const parsed = new URL(trimmed);
+    if (!parsed.hostname) {
+      return t("remoteTunnel.errInvalidUrl");
+    }
+    if (parsed.protocol === "http:" && !isTunnelLoopbackHost(parsed.hostname)) {
+      return t("remoteTunnel.errHttpsRequired");
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return t("remoteTunnel.errScheme");
+    }
+  } catch {
+    return t("remoteTunnel.errInvalidUrl");
+  }
+  return null;
+}
+
+export function localizeTunnelError(raw: string, fallback: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return fallback;
+  const lower = trimmed.toLowerCase();
+  if (lower.includes("public gopanel must use https") || lower.includes("must use https")) {
+    return t("remoteTunnel.errHttpsRequired");
+  }
+  if (lower.includes("must start with https://")) {
+    return t("remoteTunnel.errScheme");
+  }
+  if (lower.includes("url is invalid")) {
+    return t("remoteTunnel.errInvalidUrl");
+  }
+  if (lower.includes("32-character")) {
+    return t("remoteTunnel.errCodeInvalid");
+  }
+  if (lower.includes("remote tunnel is not available")) {
+    return t("remoteTunnel.errUnavailable");
+  }
+  if (lower.startsWith("connect gopanel:")) {
+    const reason = trimmed.replace(/^connect gopanel:\s*/i, "");
+    return t("remoteTunnel.errConnectFailed", { reason });
+  }
+  return trimmed;
+}
+
 function errorText(err: unknown, fallback: string): string {
   const message = err instanceof Error ? err.message : "";
   const body = message.replace(/^HTTP \d+:\s*/, "");
   try {
     const parsed = JSON.parse(body) as { error?: unknown };
-    if (typeof parsed.error === "string" && parsed.error.trim()) return parsed.error.trim();
+    if (typeof parsed.error === "string" && parsed.error.trim()) {
+      return localizeTunnelError(parsed.error, fallback);
+    }
   } catch {
     /* not JSON */
   }
-  return fallback;
+  return localizeTunnelError(message, fallback);
 }
 
 let remoteTunnelGen = 0;
@@ -68,6 +124,11 @@ export async function loadRelayQr(): Promise<void> {
 
 export async function requestRemoteTunnel(req: RemoteTunnelRequestPairRequest): Promise<boolean> {
   if (remoteTunnel.busy) return false;
+  const validationError = validateControllerUrl(req.controllerUrl);
+  if (validationError) {
+    setRemoteTunnel("error", validationError);
+    return false;
+  }
   ++remoteTunnelGen;
   setRemoteTunnel({ busy: true, error: "" });
   try {
@@ -102,6 +163,11 @@ export async function cancelRemoteTunnel(): Promise<void> {
 
 export async function pairRemoteTunnel(req: RemoteTunnelPairRequest): Promise<boolean> {
   if (remoteTunnel.busy) return false;
+  const validationError = validateControllerUrl(req.controllerUrl);
+  if (validationError) {
+    setRemoteTunnel("error", validationError);
+    return false;
+  }
   ++remoteTunnelGen;
   setRemoteTunnel({ busy: true, error: "" });
   try {

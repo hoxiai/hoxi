@@ -295,17 +295,17 @@ func (sc *scope) contentHeight(ctx context.Context) (int, error) {
 // unified store/app browser scope, each new conversation session opens a new
 // tab in the already-running Chrome window on its first navigation rather than
 // overwriting an existing tab or restarting Chrome.
-func (sc *scope) prepareCallerTab(ctx context.Context, callerSession string, a *Action) {
+func (sc *scope) prepareCallerTab(ctx context.Context, callerSession string, a Action) Action {
 	callerSession = strings.TrimSpace(callerSession)
 	if callerSession == "" || callerSession == sc.sessionID || sc.browser == nil {
-		return
+		return a
 	}
 	if sc.sessionTabs == nil {
 		sc.sessionTabs = make(map[string]string)
 	}
 	state, err := sc.state(ctx)
 	if err != nil || len(state.Tabs) == 0 {
-		return
+		return a
 	}
 	if boundTab := sc.sessionTabs[callerSession]; boundTab != "" {
 		live := false
@@ -323,12 +323,12 @@ func (sc *scope) prepareCallerTab(ctx context.Context, callerSession string, a *
 					return target.ActivateTarget(target.ID(boundTab)).Do(ctx)
 				}))
 			}
-			return
+			return a
 		}
 		delete(sc.sessionTabs, callerSession)
 	}
-	if a == nil || a.Action != "navigate" || a.URL == "" || a.URL == "about:blank" {
-		return
+	if a.Action != "navigate" || a.URL == "" || a.URL == "about:blank" {
+		return a
 	}
 	cleanTarget := strings.TrimRight(strings.TrimSpace(a.URL), "/")
 	for _, tab := range state.Tabs {
@@ -341,18 +341,19 @@ func (sc *scope) prepareCallerTab(ctx context.Context, callerSession string, a *
 				}))
 			}
 			sc.sessionTabs[callerSession] = tab.ID
-			return
+			return a
 		}
 	}
 	onlyBlank := len(state.Tabs) == 1 && (strings.TrimSpace(state.Tabs[0].URL) == "" || strings.TrimSpace(state.Tabs[0].URL) == "about:blank")
 	if onlyBlank {
 		sc.tabID = state.Tabs[0].ID
 		sc.sessionTabs[callerSession] = sc.tabID
-		return
+		return a
 	}
 	// Existing non-blank tabs are open in Chrome: open a new tab in the running
 	// Chrome window so the new conversation reuses the logged-in browser session.
 	a.Action = "tab_new"
+	return a
 }
 
 func (sc *scope) perform(ctx context.Context, a Action) (map[string]any, error) {
