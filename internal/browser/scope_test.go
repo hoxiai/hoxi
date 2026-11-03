@@ -268,8 +268,8 @@ func TestConversationsUseDifferentTabsForSameURL(t *testing.T) {
 		return out
 	}
 
-	first := doPost("ses_conv_a", `{"action":"navigate","url":`+ strconvQuote(sharedURL) +`}`)
-	second := doPost("ses_conv_b", `{"action":"navigate","url":`+ strconvQuote(sharedURL) +`}`)
+	first := doPost("ses_conv_a", `{"action":"navigate","url":`+strconvQuote(sharedURL)+`}`)
+	second := doPost("ses_conv_b", `{"action":"navigate","url":`+strconvQuote(sharedURL)+`}`)
 	if first["tabID"] == second["tabID"] {
 		t.Fatalf("independent conversations attached to the same tab %q for shared URL", first["tabID"])
 	}
