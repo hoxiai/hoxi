@@ -63,7 +63,7 @@ func (s *Service) serveTransfer(w http.ResponseWriter, r *http.Request) {
 		fail(w, 409, errors.New("use Chrome's native upload and download dialogs for Chrome Link"))
 		return
 	}
-	if callerSession != "" && callerSession != sc.sessionID && sc.browser != nil {
+	if callerSession != "" && sc.browser != nil {
 		sc.prepareCallerTab(ctx, callerSession, Action{})
 	}
 	if strings.HasSuffix(r.URL.Path, "/upload") {

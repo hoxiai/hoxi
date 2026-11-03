@@ -54,6 +54,7 @@ type scope struct {
 	browser           context.Context
 	tabs              map[string]context.Context
 	sessionTabs       map[string]string
+	tabOwners         map[string]string
 	navigations       map[string]*navigationTracker
 	tabCancels        map[string]context.CancelFunc
 	browserCancel     context.CancelFunc
@@ -246,6 +247,9 @@ func requestScope(r *http.Request) (scopeKey, error) {
 }
 
 func (s *Service) hasUnifiedWindowScope(sessionID, directory string) bool {
+	if strings.HasPrefix(strings.TrimSpace(sessionID), "workstore_") {
+		return false
+	}
 	s.mu.Lock()
 	resolveProfile := s.resolveProfile
 	defaultWindow := s.defaultWindow
@@ -326,7 +330,7 @@ func (s *Service) acquire(ctx context.Context, key scopeKey, create bool) (*scop
 			return nil, errors.New("browser scope limit reached")
 		}
 		life, cancel := context.WithCancel(s.ctx)
-		sc = &scope{service: s, sessionID: key.session, directory: key.directory, window: s.defaultWindow, gate: make(chan struct{}, 1), ctx: life, cancel: cancel, tabs: make(map[string]context.Context), sessionTabs: make(map[string]string), tabCancels: make(map[string]context.CancelFunc), width: 1280, height: 800, scale: 1, viewports: make(map[string]viewport), ledger: s.ledger, lastUsed: s.now(), pointerHold: s.pointerHold}
+		sc = &scope{service: s, sessionID: key.session, directory: key.directory, window: s.defaultWindow, gate: make(chan struct{}, 1), ctx: life, cancel: cancel, tabs: make(map[string]context.Context), sessionTabs: make(map[string]string), tabOwners: make(map[string]string), tabCancels: make(map[string]context.CancelFunc), width: 1280, height: 800, scale: 1, viewports: make(map[string]viewport), ledger: s.ledger, lastUsed: s.now(), pointerHold: s.pointerHold}
 		sc.workflows = &workflowTracker{uploads: make(map[string]UploadRequest), dialogs: make(map[string]PageDialog), tabs: make(map[string]context.Context)}
 		s.scopes[key] = sc
 		delete(s.idleClosed, key)

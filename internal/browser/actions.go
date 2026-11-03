@@ -292,8 +292,11 @@ func (sc *scope) contentHeight(ctx context.Context) (int, error) {
 }
 
 func (sc *scope) tabOwnedByOtherSession(tabID, callerSession string) bool {
-	if tabID == "" || len(sc.sessionTabs) == 0 {
+	if tabID == "" {
 		return false
+	}
+	if owner := sc.tabOwners[tabID]; owner != "" && owner != callerSession {
+		return true
 	}
 	for session, bound := range sc.sessionTabs {
 		if session != callerSession && bound == tabID {
@@ -303,12 +306,30 @@ func (sc *scope) tabOwnedByOtherSession(tabID, callerSession string) bool {
 	return false
 }
 
-// prepareCallerTab ensures that when multiple conversation sessions share a
-// unified store/app browser scope, each conversation session owns its own tab
-// in the shared Chrome window rather than overwriting another session's tab.
+func (sc *scope) bindCallerTab(callerSession, tabID string) {
+	callerSession = strings.TrimSpace(callerSession)
+	if callerSession == "" || tabID == "" {
+		return
+	}
+	if sc.sessionTabs == nil {
+		sc.sessionTabs = make(map[string]string)
+	}
+	if sc.tabOwners == nil {
+		sc.tabOwners = make(map[string]string)
+	}
+	sc.sessionTabs[callerSession] = tabID
+	if sc.tabOwners[tabID] == "" || sc.tabOwners[tabID] == callerSession {
+		sc.tabOwners[tabID] = callerSession
+	}
+}
+
+// prepareCallerTab ensures that when multiple conversation sessions or a direct
+// workstore_* caller share a unified browser scope, each caller owns and
+// restores its own tab in the shared Chrome window rather than overwriting
+// another caller's tab.
 func (sc *scope) prepareCallerTab(ctx context.Context, callerSession string, a Action) Action {
 	callerSession = strings.TrimSpace(callerSession)
-	if callerSession == "" || callerSession == sc.sessionID || sc.browser == nil {
+	if callerSession == "" || sc.browser == nil {
 		return a
 	}
 	if sc.sessionTabs == nil {
@@ -318,7 +339,8 @@ func (sc *scope) prepareCallerTab(ctx context.Context, callerSession string, a A
 	if err != nil || len(state.Tabs) == 0 {
 		return a
 	}
-	if boundTab := sc.sessionTabs[callerSession]; boundTab != "" {
+	boundTab := sc.sessionTabs[callerSession]
+	if boundTab != "" {
 		live := false
 		for _, tab := range state.Tabs {
 			if tab.ID == boundTab {
@@ -326,17 +348,29 @@ func (sc *scope) prepareCallerTab(ctx context.Context, callerSession string, a A
 				break
 			}
 		}
-		if live {
-			if a.Action != "tab_select" && sc.tabID != boundTab {
-				sc.stopStream()
-				sc.tabID = boundTab
-				_ = sc.withTab(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
-					return target.ActivateTarget(target.ID(boundTab)).Do(ctx)
-				}))
-			}
-			return a
+		if !live {
+			delete(sc.sessionTabs, callerSession)
+			boundTab = ""
 		}
-		delete(sc.sessionTabs, callerSession)
+	}
+	if boundTab == "" && len(sc.tabOwners) > 0 {
+		for _, tab := range state.Tabs {
+			if sc.tabOwners[tab.ID] == callerSession {
+				boundTab = tab.ID
+				sc.sessionTabs[callerSession] = boundTab
+				break
+			}
+		}
+	}
+	if boundTab != "" {
+		if a.Action != "tab_select" && sc.tabID != boundTab {
+			sc.stopStream()
+			sc.tabID = boundTab
+			_ = sc.withTab(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+				return target.ActivateTarget(target.ID(boundTab)).Do(ctx)
+			}))
+		}
+		return a
 	}
 	if a.Action == "" || a.Action == "tab_new" || a.Action == "tab_select" || a.Action == "tab_close" || a.Action == "focus" || a.Action == "resize" || a.Action == "viewport_reset" {
 		return a
@@ -346,7 +380,7 @@ func (sc *scope) prepareCallerTab(ctx context.Context, callerSession string, a A
 		!sc.tabOwnedByOtherSession(state.Tabs[0].ID, callerSession)
 	if onlyBlank {
 		sc.tabID = state.Tabs[0].ID
-		sc.sessionTabs[callerSession] = sc.tabID
+		sc.bindCallerTab(callerSession, sc.tabID)
 		return a
 	}
 	if a.Action == "navigate" {
@@ -357,7 +391,7 @@ func (sc *scope) prepareCallerTab(ctx context.Context, callerSession string, a A
 		return a
 	}
 	if _, err := sc.perform(ctx, Action{Action: "tab_new", URL: "about:blank"}); err == nil && sc.tabID != "" {
-		sc.sessionTabs[callerSession] = sc.tabID
+		sc.bindCallerTab(callerSession, sc.tabID)
 	}
 	return a
 }
@@ -553,6 +587,7 @@ func (sc *scope) releaseTab(id string) {
 		delete(sc.tabCancels, id)
 	}
 	delete(sc.tabs, id)
+	delete(sc.tabOwners, id)
 	for k, tabID := range sc.sessionTabs {
 		if tabID == id {
 			delete(sc.sessionTabs, k)

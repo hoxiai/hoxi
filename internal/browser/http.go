@@ -349,7 +349,7 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	stop := context.AfterFunc(ctx, opcancel)
 	defer stop()
 	defer opcancel()
-	if path != "action" && callerSession != "" && callerSession != sc.sessionID {
+	if path != "action" && callerSession != "" {
 		sc.prepareCallerTab(opctx, callerSession, Action{})
 	}
 	if path == "frame" {
@@ -394,10 +394,7 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if callerSession != "" && sc.tabID != "" && (action.Action == "navigate" || action.Action == "tab_new" || action.Action == "tab_select") {
-			if sc.sessionTabs == nil {
-				sc.sessionTabs = make(map[string]string)
-			}
-			sc.sessionTabs[callerSession] = sc.tabID
+			sc.bindCallerTab(callerSession, sc.tabID)
 		}
 	}
 	state, err := sc.state(opctx)

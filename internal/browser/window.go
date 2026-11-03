@@ -241,6 +241,7 @@ func (sc *scope) resetBrowser() {
 	}
 	clear(sc.tabs)
 	clear(sc.sessionTabs)
+	clear(sc.tabOwners)
 	clear(sc.tabCancels)
 	clear(sc.viewports)
 	clear(sc.diagnostics)
