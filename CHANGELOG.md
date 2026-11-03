@@ -2,6 +2,11 @@
 
 All notable releases of **Hoxi Desktop** are documented below. Full per-version release notes are archived under [`docs/release-notes/`](docs/release-notes/) and consumed directly by `.github/workflows/release.yml` and `scripts/ai-release.sh`.
 
+## [v0.6.9](docs/release-notes/v0.6.9.md) — 2026-11-02
+
+- **Approval**: Stop treating `$"` / `$'` inside double quotes as ANSI-C or locale quoting; allow safe `python3 -m` pipelines while blocking REPL, code-exec and publish modules; mask data arguments after benign literal prefixes; avoid duplicate pending-approval broadcasts when AI review falls back to manual confirmation.
+- **Window & Dev Server**: Fall back to embedded assets when `assetdir` lacks `index.html`; bypass the system proxy for loopback hosts; restore original Host/URL and response headers after a failed Vite proxy; accept the macOS WKWebView Host in the Vite dev server and allow repo-root assets.
+
 ## [v0.6.8](docs/release-notes/v0.6.8.md) — 2026-11-02
 
 - **Fault Classification & Failover**: Classify stream EOF and network interruptions as retryable faults so automatic failover retries transient errors instead of failing the turn; align candidate health and failover on one shared fault structure.
