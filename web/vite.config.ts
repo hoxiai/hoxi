@@ -7,12 +7,21 @@ import tailwindcss from "@tailwindcss/vite";
 
 const toPosixPath = (p: string) => p.replace(/\\/g, "/");
 const webRoot = toPosixPath(fileURLToPath(new URL(".", import.meta.url)));
+const repoRoot = toPosixPath(path.resolve(webRoot, ".."));
 const srcRoot = toPosixPath(fileURLToPath(new URL("./src", import.meta.url)));
 const lucideSolidEsm = toPosixPath(
   fileURLToPath(
     new URL("./node_modules/lucide-solid/dist/esm/lucide-solid.js", import.meta.url),
   ),
 );
+const isReadableFile = (filePath: string) => {
+  try {
+    fs.accessSync(filePath, fs.constants.R_OK);
+    return fs.statSync(filePath).isFile();
+  } catch {
+    return false;
+  }
+};
 const resolveWorkRepoDir = () => {
   if (process.env.HOXI_WORK_DIR) {
     return path.resolve(webRoot, process.env.HOXI_WORK_DIR);
@@ -22,7 +31,7 @@ const resolveWorkRepoDir = () => {
     path.resolve(webRoot, "../../../../../hoxi-work"),
   ];
   for (const candidate of candidates) {
-    if (fs.existsSync(path.join(candidate, "web/index.tsx"))) {
+    if (isReadableFile(path.join(candidate, "web/index.tsx"))) {
       return candidate;
     }
   }
@@ -31,7 +40,7 @@ const resolveWorkRepoDir = () => {
 const workRepoDir = toPosixPath(resolveWorkRepoDir());
 const workExtEntry = toPosixPath(path.join(workRepoDir, "web/index.tsx"));
 const hasWorkExt =
-  process.env.HOXI_DISABLE_WORK_EXT !== "1" && fs.existsSync(workExtEntry);
+  process.env.HOXI_DISABLE_WORK_EXT !== "1" && isReadableFile(workExtEntry);
 
 // Tailwind v4 only scans the core web/src tree by default, so utilities that
 // appear solely in the optional hoxi-work repo (for example the app switcher's
@@ -96,7 +105,7 @@ export default defineConfig({
   },
   server: {
     fs: {
-      allow: [webRoot, ...(hasWorkExt ? [workRepoDir] : [])],
+      allow: [webRoot, repoRoot, ...(hasWorkExt ? [workRepoDir] : [])],
     },
     port,
     strictPort: false,

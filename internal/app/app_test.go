@@ -172,14 +172,32 @@ func TestSanitizeFrontendDevServerEnv(t *testing.T) {
 	}
 
 	_ = ln.Close()
+	t.Setenv("assetdir", filepath.Join(t.TempDir(), "missing-dist"))
 	sanitizeFrontendDevServerEnv(logger, 150*time.Millisecond)
 	if got := os.Getenv("frontenddevserverurl"); got != "" {
 		t.Fatalf("expected dead frontenddevserverurl to be cleared, got %q", got)
 	}
+	if got := os.Getenv("assetdir"); got != "" {
+		t.Fatalf("expected invalid assetdir without index.html to be cleared, got %q", got)
+	}
+
+	validAssetDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(validAssetDir, "index.html"), []byte("<!doctype html>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("assetdir", validAssetDir)
+	sanitizeFrontendDevServerEnv(logger, 50*time.Millisecond)
+	if got := os.Getenv("assetdir"); got != validAssetDir {
+		t.Fatalf("expected valid assetdir %q to be preserved, got %q", validAssetDir, got)
+	}
 }
 
 func TestAssetServerMiddlewareFallsBackOnBadGateway(t *testing.T) {
+	var seenFallbackHost string
+	var seenFallbackPath string
 	gw := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenFallbackHost = r.Host
+		seenFallbackPath = r.URL.Path
 		w.Header().Set("X-Served-By", "gateway")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("gateway:" + r.URL.Path))
@@ -198,14 +216,25 @@ func TestAssetServerMiddlewareFallsBackOnBadGateway(t *testing.T) {
 		t.Fatalf("unexpected /api/ response: code=%d body=%q nextCalled=%v", rec.Code, rec.Body.String(), nextCalled)
 	}
 
-	// 2. 502 Bad Gateway from dead external Vite proxy falls back to gateway assets.
-	h502 := mw(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	// 2. 502 Bad Gateway from dead external Vite proxy falls back to gateway assets
+	// and restores request Host/URL and original response headers mutated by ReverseProxy.
+	h502 := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Host = "127.0.0.1:5421"
+		r.URL.Host = "127.0.0.1:5421"
+		w.Header().Set("X-Proxy-Error", "true")
 		w.WriteHeader(http.StatusBadGateway)
 	}))
 	rec502 := httptest.NewRecorder()
-	h502.ServeHTTP(rec502, httptest.NewRequest(http.MethodGet, "/", nil))
+	req502 := httptest.NewRequest(http.MethodGet, "http://wails.localhost/", nil)
+	h502.ServeHTTP(rec502, req502)
 	if rec502.Code != http.StatusOK || rec502.Body.String() != "gateway:/" || rec502.Header().Get("X-Served-By") != "gateway" {
 		t.Fatalf("expected 502 fallback to gateway, got code=%d body=%q", rec502.Code, rec502.Body.String())
+	}
+	if rec502.Header().Get("X-Proxy-Error") != "" {
+		t.Fatalf("expected failed proxy header X-Proxy-Error to be cleared, got %q", rec502.Header().Get("X-Proxy-Error"))
+	}
+	if seenFallbackHost != "wails.localhost" || seenFallbackPath != "/" {
+		t.Fatalf("expected original Host/Path restored on fallback, got host=%q path=%q", seenFallbackHost, seenFallbackPath)
 	}
 
 	// 3. Healthy 200 OK from external Vite proxy passes through untouched.

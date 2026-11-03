@@ -389,6 +389,11 @@ describe("approval policy store and migration", () => {
     assertEqual(isDestructivePermissionRequest(req(`(cd web && rm -rf dist)`)), true);
     assertEqual(unattendedCommandDecision(`rg "foo$" src`).expect, "allow");
     assertEqual(unattendedCommandDecision(`curl -s http://127.0.0.1:8080/health | python3 -m json.tool`).expect, "allow");
+    assertEqual(unattendedCommandDecision(`echo "import os" | python3 -m code`).expect, "deny");
+    assertEqual(unattendedCommandDecision(`python3 -m twine upload dist/*`).expect, "deny");
+    assertEqual(unattendedCommandDecision(`python3 -m timeit "import os; os.system('id')"`).expect, "deny");
+    assertEqual(unattendedCommandDecision(`perl -e 'print 1' "$FLAG"`).expect, "deny");
+    assertEqual(isDestructivePermissionRequest(req(`echo "rm -rf /" | time "$CMD"`)), true);
   });
 });
 

@@ -6,11 +6,43 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 )
+
+var bypassLoopbackProxyOnce sync.Once
+
+func ensureLoopbackBypassesDefaultProxy() {
+	bypassLoopbackProxyOnce.Do(func() {
+		tr, ok := http.DefaultTransport.(*http.Transport)
+		if !ok || tr == nil {
+			return
+		}
+		origProxy := tr.Proxy
+		if origProxy == nil {
+			return
+		}
+		tr.Proxy = func(req *http.Request) (*url.URL, error) {
+			if req != nil && req.URL != nil && isLoopbackHost(req.URL.Hostname()) {
+				return nil, nil
+			}
+			return origProxy(req)
+		}
+	})
+}
+
+func isLoopbackHost(host string) bool {
+	h := strings.TrimSpace(strings.ToLower(host))
+	if h == "localhost" || strings.HasSuffix(h, ".localhost") {
+		return true
+	}
+	ip := net.ParseIP(h)
+	return ip != nil && ip.IsLoopback()
+}
 
 // sanitizeFrontendDevServerEnv checks whether a Wails `frontenddevserverurl`
 // environment variable points to a live dev server. When `wails dev`'s Vite
@@ -19,6 +51,17 @@ import (
 // (returning 502 Bad Gateway / a blank white window). Clearing the unreachable
 // variable lets Wails fall back immediately to `assetdir` / embedded `distFS`.
 func sanitizeFrontendDevServerEnv(logger *slog.Logger, timeout time.Duration) {
+	ensureLoopbackBypassesDefaultProxy()
+
+	if assetDir := strings.TrimSpace(os.Getenv("assetdir")); assetDir != "" {
+		if info, err := os.Stat(filepath.Join(assetDir, "index.html")); err != nil || info.IsDir() {
+			if logger != nil {
+				logger.Warn("assetdir missing index.html; falling back to embedded assets", "assetdir", assetDir)
+			}
+			_ = os.Unsetenv("assetdir")
+		}
+	}
+
 	raw := strings.TrimSpace(os.Getenv("frontenddevserverurl"))
 	if raw == "" {
 		return
@@ -72,12 +115,18 @@ func assetServerMiddleware(gw http.Handler) assetserver.Middleware {
 				next.ServeHTTP(w, r)
 				return
 			}
+			origHost := r.Host
+			origURL := *r.URL
+			origHeader := w.Header().Clone()
 			fbw := &badGatewayFallbackWriter{
 				ResponseWriter: w,
-				header:         w.Header().Clone(),
+				header:         origHeader.Clone(),
 			}
 			next.ServeHTTP(fbw, r)
 			if fbw.badGateway {
+				r.Host = origHost
+				*r.URL = origURL
+				replaceHeaders(w.Header(), origHeader)
 				gw.ServeHTTP(w, r)
 				return
 			}
@@ -85,6 +134,15 @@ func assetServerMiddleware(gw http.Handler) assetserver.Middleware {
 				fbw.copyHeaders()
 			}
 		})
+	}
+}
+
+func replaceHeaders(dst, src http.Header) {
+	for k := range dst {
+		delete(dst, k)
+	}
+	for k, vals := range src {
+		dst[k] = append([]string(nil), vals...)
 	}
 }
 
@@ -100,13 +158,7 @@ func (w *badGatewayFallbackWriter) Header() http.Header {
 }
 
 func (w *badGatewayFallbackWriter) copyHeaders() {
-	dst := w.ResponseWriter.Header()
-	for k := range dst {
-		delete(dst, k)
-	}
-	for k, vals := range w.header {
-		dst[k] = append([]string(nil), vals...)
-	}
+	replaceHeaders(w.ResponseWriter.Header(), w.header)
 }
 
 func (w *badGatewayFallbackWriter) WriteHeader(code int) {
