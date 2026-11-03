@@ -264,11 +264,13 @@ export function getAutoPoolDescription(poolID: string): string {
   return t("models.autoPoolFreeDesc");
 }
 
-function isRealModelAvailable(providerID: string, modelID: string): boolean {
-  if (!providerID || !modelID || providerID === AUTO_PROVIDER_ID) return false;
-  return workspace.providers.some(
-    (p) => p.id === providerID && p.models && Boolean(p.models[modelID])
-  );
+function resolveAvailableModelID(providerID: string, modelID: string): string | null {
+  if (!providerID || !modelID || providerID === AUTO_PROVIDER_ID) return null;
+  const models = workspace.providers.find((p) => p.id === providerID)?.models;
+  if (!models) return null;
+  if (models[modelID]) return modelID;
+  const matches = Object.keys(models).filter((id) => id.toLowerCase() === modelID.toLowerCase());
+  return matches.length === 1 ? matches[0] : null;
 }
 
 export function computeSmartDefaultCandidates(poolID: string): AutoPoolCandidate[] {
@@ -353,7 +355,10 @@ export function getEffectivePoolCandidates(poolID: string): AutoPoolCandidate[] 
   // candidate. Falling back to the smart defaults here would resurrect the
   // models that were just removed and make deletion look like a no-op loop.
   if (pool?.customized) {
-    return pool.candidates.filter((c) => isRealModelAvailable(c.providerID, c.modelID));
+    return pool.candidates.flatMap((c) => {
+      const canonical = resolveAvailableModelID(c.providerID, c.modelID);
+      return canonical ? [{ providerID: c.providerID, modelID: canonical }] : [];
+    });
   }
   return computeSmartDefaultCandidates(poolID);
 }

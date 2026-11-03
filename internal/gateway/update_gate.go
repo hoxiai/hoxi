@@ -81,7 +81,7 @@ func (g *Gateway) isAnySessionBusy() bool {
 	}
 	if g.status != nil {
 		st := g.status.Snapshot()
-		if st.Running > 0 || st.Attention > 0 {
+		if st.Running > 0 || st.PendingApprovals > 0 {
 			return true
 		}
 	}

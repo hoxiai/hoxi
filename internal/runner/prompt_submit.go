@@ -199,8 +199,12 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 			if body.Model != nil {
 				modelID, providerID = body.Model.ModelID, body.Model.ProviderID
 			}
-			if checkErr := s.ensureOpenCodeModelAvailable(ctx, rec.WorktreePath, firstNonEmptyStr(providerID, rec.ProviderID), firstNonEmptyStr(modelID, rec.ModelID)); checkErr != nil {
+			resolvedModel, checkErr := s.ensureOpenCodeModelAvailable(ctx, rec.WorktreePath, firstNonEmptyStr(providerID, rec.ProviderID), firstNonEmptyStr(modelID, rec.ModelID), false)
+			if checkErr != nil {
 				return http.StatusConflict, PromptReceipt{}, checkErr
+			}
+			if modelID != "" && resolvedModel != "" {
+				modelID = resolvedModel
 			}
 			steerSeq, steerMsgID, err := s.steerOpenCodeTurn(ctx, rec, firstNonEmptyStr(body.Agent, rec.Mode, "build"), modelID, providerID, body.Variant, body.System, promptText, body.Parts, body.SkillSelection)
 			if err != nil {
@@ -308,8 +312,19 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 
 	var err error
 	if rec.Runtime == "opencode" {
-		if checkErr := s.ensureOpenCodeModelAvailable(ctx, rec.WorktreePath, rec.ProviderID, modelID); checkErr != nil {
+		resolvedModel, checkErr := s.ensureOpenCodeModelAvailable(ctx, rec.WorktreePath, rec.ProviderID, modelID, true)
+		if checkErr != nil {
 			return http.StatusConflict, PromptReceipt{}, checkErr
+		}
+		if resolvedModel != "" && resolvedModel != modelID {
+			modelID = resolvedModel
+			userInfo.ModelID = resolvedModel
+			_, _, _ = s.store.Update(sessionID, func(r *SessionRecord) {
+				r.ModelID = resolvedModel
+			})
+			if updated, ok := s.store.Get(sessionID); ok {
+				rec = updated
+			}
 		}
 		err = s.startOpenCodeTurn(rec, mode, modelID, effort, body.System, userInfo, storedParts, deliveryParts)
 	} else {
