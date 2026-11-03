@@ -15,7 +15,7 @@ function isSameTokenLine(a: ThemedToken[] | undefined, b: ThemedToken[]): boolea
   if (!a) return false;
   if (a === b) return true;
   if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
+  for (let i = a.length - 1; i >= 0; i--) {
     if (!isSameThemedToken(a[i], b[i])) return false;
   }
   return true;
@@ -66,12 +66,14 @@ type HighlightCheckpoint = {
   prefixCode: string;
   tokens: ThemedToken[][];
   grammarState: ShikiGrammarState;
+  inlineSafe: boolean;
 };
 
 const MAX_CHECKPOINT_CACHE = 16;
 const MAX_CHECKPOINT_CACHE_CHARS = 256 * 1024;
 const checkpointCache = new Map<string, HighlightCheckpoint>();
 let checkpointCacheChars = 0;
+const semicolonProtoCache = new Map<string, ThemedToken | null>();
 
 let shikiPromise: Promise<ShikiModule> | undefined;
 let shikiModule: ShikiModule | undefined;
@@ -131,7 +133,11 @@ function findCheckpoint(scopePrefix: string, code: string): HighlightCheckpoint 
   for (const [k, entry] of checkpointCache) {
     if (entry.scopePrefix !== scopePrefix) continue;
     const pLen = entry.prefixCode.length;
-    if (code.length > pLen && code.charCodeAt(pLen) === 10 && code.startsWith(entry.prefixCode)) {
+    if (
+      code.length > pLen &&
+      (code.charCodeAt(pLen) === 10 || entry.inlineSafe) &&
+      code.startsWith(entry.prefixCode)
+    ) {
       if (!bestEntry || pLen > bestEntry.prefixCode.length) {
         bestKey = k;
         bestEntry = entry;
@@ -150,6 +156,7 @@ function saveCheckpoint(
   prefixCode: string,
   tokens: ThemedToken[][],
   grammarState: ShikiGrammarState | undefined,
+  inlineSafe = false,
 ): void {
   if (!grammarState || !prefixCode) return;
   const key = `${scopePrefix}${prefixCode}`;
@@ -160,7 +167,7 @@ function saveCheckpoint(
     }
   }
   deleteCheckpointKey(key);
-  checkpointCache.set(key, { scopePrefix, prefixCode, tokens, grammarState });
+  checkpointCache.set(key, { scopePrefix, prefixCode, tokens, grammarState, inlineSafe });
   checkpointCacheChars += prefixCode.length;
   while (
     checkpointCache.size > MAX_CHECKPOINT_CACHE ||
@@ -170,6 +177,86 @@ function saveCheckpoint(
     if (oldest === undefined) break;
     deleteCheckpointKey(oldest);
   }
+}
+
+function getSemicolonProto(
+  hl: ShikiHighlighter,
+  typedLang: Parameters<ShikiHighlighter["codeToTokens"]>[1]["lang"],
+  shikiTheme: "github-dark" | "github-light",
+  scopePrefix: string,
+): ThemedToken | null {
+  if (semicolonProtoCache.has(scopePrefix)) {
+    return semicolonProtoCache.get(scopePrefix) ?? null;
+  }
+  const res = hl.codeToTokens(";", { lang: typedLang, theme: shikiTheme });
+  const tok = res.tokens[0]?.[0] ?? null;
+  semicolonProtoCache.set(scopePrefix, tok);
+  return tok;
+}
+
+function isInlineSafeCheckpoint(
+  hl: ShikiHighlighter,
+  typedLang: Parameters<ShikiHighlighter["codeToTokens"]>[1]["lang"],
+  shikiTheme: "github-dark" | "github-light",
+  scopePrefix: string,
+  prefixCode: string,
+  tokens: ThemedToken[][],
+  grammarState: ShikiGrammarState | undefined,
+): boolean {
+  if (!grammarState || !prefixCode.endsWith(";") || tokens.length === 0) return false;
+  const scopes = (grammarState as { getScopes?: () => string[] }).getScopes?.();
+  if (!scopes || scopes.length !== 1) return false;
+  const lastLine = tokens[tokens.length - 1];
+  if (!lastLine || lastLine.length === 0) return false;
+  const lastTok = lastLine[lastLine.length - 1];
+  if (!/^[\s}\])]*;$/.test(lastTok.content)) {
+    return false;
+  }
+  const proto = getSemicolonProto(hl, typedLang, shikiTheme, scopePrefix);
+  if (!proto) return false;
+  return (
+    lastTok.color === proto.color &&
+    (lastTok.fontStyle ?? 0) === (proto.fontStyle ?? 0)
+  );
+}
+
+function mergeInlineTokens(
+  prefixLines: ThemedToken[][],
+  tailLines: ThemedToken[][],
+): ThemedToken[][] {
+  if (prefixLines.length === 0) return tailLines;
+  if (tailLines.length === 0) return prefixLines;
+  const out = prefixLines.slice(0, -1);
+  const lastPrefixLine = prefixLines[prefixLines.length - 1];
+  const firstTailLine = tailLines[0];
+  let mergedLine: ThemedToken[];
+  if (lastPrefixLine.length > 0 && firstTailLine.length > 0) {
+    const lastTok = lastPrefixLine[lastPrefixLine.length - 1];
+    const firstTok = firstTailLine[0];
+    if (
+      lastTok.color === firstTok.color &&
+      (lastTok.fontStyle ?? 0) === (firstTok.fontStyle ?? 0)
+    ) {
+      mergedLine = lastPrefixLine
+        .slice(0, -1)
+        .concat(
+          {
+            ...lastTok,
+            content: lastTok.content + firstTok.content,
+          },
+          firstTailLine.slice(1),
+        );
+    } else {
+      mergedLine = lastPrefixLine.concat(firstTailLine);
+    }
+  } else {
+    mergedLine = lastPrefixLine.concat(firstTailLine);
+  }
+  out.push(mergedLine);
+  for (let i = 1; i < tailLines.length; i++) {
+    out.push(tailLines[i]);
+  }
+  return out;
 }
 
 function shiftTokenOffsets(lines: ThemedToken[][], offsetDelta: number): ThemedToken[][] {
@@ -236,11 +323,23 @@ function setCachedHighlight(
     ? { code: value.code, tokens: stabilizeHighlightedLines(priorTokens, value.tokens) }
     : value;
 
-  const lastNewline = code.lastIndexOf("\n");
-  if (lastNewline > 0) {
-    const cp = checkpointCache.get(`${scopePrefix}${code.slice(0, lastNewline)}`);
-    if (cp && cp.tokens.length <= stabilized.tokens.length) {
-      cp.tokens = stabilized.tokens.slice(0, cp.tokens.length);
+  const exactCp = checkpointCache.get(`${scopePrefix}${code}`);
+  if (exactCp) {
+    exactCp.tokens = stabilized.tokens;
+  } else {
+    const cp = findCheckpoint(scopePrefix, code);
+    if (cp) {
+      if (code.charCodeAt(cp.prefixCode.length) === 10 && cp.tokens.length <= stabilized.tokens.length) {
+        cp.tokens = stabilized.tokens.slice(0, cp.tokens.length);
+      } else if (cp.inlineSafe && cp.tokens.length === 1 && stabilized.tokens.length >= 1) {
+        const prefixTokCount = cp.tokens[0].length;
+        if (
+          prefixTokCount <= stabilized.tokens[0].length &&
+          stabilized.tokens[0][prefixTokCount - 1]?.content === cp.tokens[0][prefixTokCount - 1]?.content
+        ) {
+          cp.tokens = [stabilized.tokens[0].slice(0, prefixTokCount)];
+        }
+      }
     }
   }
 
@@ -296,15 +395,57 @@ function tokenizeWithCheckpoints(
   const lastNewline = code.lastIndexOf("\n");
   const cp = findCheckpoint(scopePrefix, code);
   if (cp) {
-    const baseOffset = cp.prefixCode.length + 1;
-    if (lastNewline > cp.prefixCode.length && code.charCodeAt(lastNewline - 1) !== 13) {
+    if (code.charCodeAt(cp.prefixCode.length) === 10) {
+      const baseOffset = cp.prefixCode.length + 1;
+      if (lastNewline > cp.prefixCode.length && code.charCodeAt(lastNewline - 1) !== 13) {
+        const midCode = code.slice(baseOffset, lastNewline);
+        const midRes = hl.codeToTokens(midCode, {
+          lang: typedLang,
+          theme: shikiTheme,
+          grammarState: cp.grammarState,
+        });
+        const midTokens = cp.tokens.concat(shiftTokenOffsets(midRes.tokens, baseOffset));
+        saveCheckpoint(scopePrefix, code.slice(0, lastNewline), midTokens, midRes.grammarState);
+        const tailCode = code.slice(lastNewline + 1);
+        const tailRes = hl.codeToTokens(tailCode, {
+          lang: typedLang,
+          theme: shikiTheme,
+          grammarState: midRes.grammarState,
+        });
+        const out = midTokens.concat(shiftTokenOffsets(tailRes.tokens, lastNewline + 1));
+        if (
+          !code.endsWith("\r") &&
+          isInlineSafeCheckpoint(hl, typedLang, shikiTheme, scopePrefix, code, out, tailRes.grammarState)
+        ) {
+          saveCheckpoint(scopePrefix, code, out, tailRes.grammarState, true);
+        }
+        return out;
+      }
+      const tailCode = code.slice(baseOffset);
+      const tailRes = hl.codeToTokens(tailCode, {
+        lang: typedLang,
+        theme: shikiTheme,
+        grammarState: cp.grammarState,
+      });
+      const out = cp.tokens.concat(shiftTokenOffsets(tailRes.tokens, baseOffset));
+      if (
+        !code.endsWith("\r") &&
+        isInlineSafeCheckpoint(hl, typedLang, shikiTheme, scopePrefix, code, out, tailRes.grammarState)
+      ) {
+        saveCheckpoint(scopePrefix, code, out, tailRes.grammarState, true);
+      }
+      return out;
+    }
+
+    const baseOffset = cp.prefixCode.length;
+    if (lastNewline >= baseOffset && code.charCodeAt(lastNewline - 1) !== 13) {
       const midCode = code.slice(baseOffset, lastNewline);
       const midRes = hl.codeToTokens(midCode, {
         lang: typedLang,
         theme: shikiTheme,
         grammarState: cp.grammarState,
       });
-      const midTokens = cp.tokens.concat(shiftTokenOffsets(midRes.tokens, baseOffset));
+      const midTokens = mergeInlineTokens(cp.tokens, shiftTokenOffsets(midRes.tokens, baseOffset));
       saveCheckpoint(scopePrefix, code.slice(0, lastNewline), midTokens, midRes.grammarState);
       const tailCode = code.slice(lastNewline + 1);
       const tailRes = hl.codeToTokens(tailCode, {
@@ -314,13 +455,53 @@ function tokenizeWithCheckpoints(
       });
       return midTokens.concat(shiftTokenOffsets(tailRes.tokens, lastNewline + 1));
     }
+
+    const lastSemi = code.lastIndexOf(";", code.length - 2);
+    if (lastSemi >= baseOffset + 128) {
+      const midCode = code.slice(baseOffset, lastSemi + 1);
+      const midRes = hl.codeToTokens(midCode, {
+        lang: typedLang,
+        theme: shikiTheme,
+        grammarState: cp.grammarState,
+      });
+      const midPrefix = code.slice(0, lastSemi + 1);
+      const midTokens = mergeInlineTokens(cp.tokens, shiftTokenOffsets(midRes.tokens, baseOffset));
+      if (
+        isInlineSafeCheckpoint(
+          hl,
+          typedLang,
+          shikiTheme,
+          scopePrefix,
+          midPrefix,
+          midTokens,
+          midRes.grammarState,
+        )
+      ) {
+        saveCheckpoint(scopePrefix, midPrefix, midTokens, midRes.grammarState, true);
+        const tailCode = code.slice(lastSemi + 1);
+        const tailRes = hl.codeToTokens(tailCode, {
+          lang: typedLang,
+          theme: shikiTheme,
+          grammarState: midRes.grammarState,
+        });
+        return mergeInlineTokens(midTokens, shiftTokenOffsets(tailRes.tokens, lastSemi + 1));
+      }
+    }
+
     const tailCode = code.slice(baseOffset);
     const tailRes = hl.codeToTokens(tailCode, {
       lang: typedLang,
       theme: shikiTheme,
       grammarState: cp.grammarState,
     });
-    return cp.tokens.concat(shiftTokenOffsets(tailRes.tokens, baseOffset));
+    const out = mergeInlineTokens(cp.tokens, shiftTokenOffsets(tailRes.tokens, baseOffset));
+    if (
+      !code.endsWith("\r") &&
+      isInlineSafeCheckpoint(hl, typedLang, shikiTheme, scopePrefix, code, out, tailRes.grammarState)
+    ) {
+      saveCheckpoint(scopePrefix, code, out, tailRes.grammarState, true);
+    }
+    return out;
   }
 
   if (lastNewline > 0 && code.charCodeAt(lastNewline - 1) !== 13) {
@@ -333,12 +514,54 @@ function tokenizeWithCheckpoints(
       theme: shikiTheme,
       grammarState: prefRes.grammarState,
     });
-    return prefRes.tokens.concat(shiftTokenOffsets(tailRes.tokens, lastNewline + 1));
+    const out = prefRes.tokens.concat(shiftTokenOffsets(tailRes.tokens, lastNewline + 1));
+    if (
+      !code.endsWith("\r") &&
+      isInlineSafeCheckpoint(hl, typedLang, shikiTheme, scopePrefix, code, out, tailRes.grammarState)
+    ) {
+      saveCheckpoint(scopePrefix, code, out, tailRes.grammarState, true);
+    }
+    return out;
+  }
+
+  const lastSemi = code.length > 256 && !code.endsWith(";") ? code.lastIndexOf(";", code.length - 2) : -1;
+  if (lastSemi > 128) {
+    const prefixCode = code.slice(0, lastSemi + 1);
+    const prefRes = hl.codeToTokens(prefixCode, { lang: typedLang, theme: shikiTheme });
+    if (
+      isInlineSafeCheckpoint(
+        hl,
+        typedLang,
+        shikiTheme,
+        scopePrefix,
+        prefixCode,
+        prefRes.tokens,
+        prefRes.grammarState,
+      )
+    ) {
+      saveCheckpoint(scopePrefix, prefixCode, prefRes.tokens, prefRes.grammarState, true);
+      const tailCode = code.slice(lastSemi + 1);
+      const tailRes = hl.codeToTokens(tailCode, {
+        lang: typedLang,
+        theme: shikiTheme,
+        grammarState: prefRes.grammarState,
+      });
+      return mergeInlineTokens(prefRes.tokens, shiftTokenOffsets(tailRes.tokens, lastSemi + 1));
+    }
   }
 
   const fullRes = hl.codeToTokens(code, { lang: typedLang, theme: shikiTheme });
   if (!code.endsWith("\r")) {
-    saveCheckpoint(scopePrefix, code, fullRes.tokens, fullRes.grammarState);
+    const inlineSafe = isInlineSafeCheckpoint(
+      hl,
+      typedLang,
+      shikiTheme,
+      scopePrefix,
+      code,
+      fullRes.tokens,
+      fullRes.grammarState,
+    );
+    saveCheckpoint(scopePrefix, code, fullRes.tokens, fullRes.grammarState, inlineSafe);
   }
   return fullRes.tokens;
 }

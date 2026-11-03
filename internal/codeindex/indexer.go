@@ -455,8 +455,9 @@ func (s *Service) build(directory string, previous *Index) (*Index, error) {
 		sum := sha256.Sum256(raw)
 		hash := hex.EncodeToString(sum[:])
 		if prev := previous.Files[rel]; prev != nil && prev.Hash == hash {
-			prev.Size, prev.ModTime = info.Size(), info.ModTime().UnixMilli()
-			index.Files[rel] = prev
+			updated := *prev
+			updated.Size, updated.ModTime = info.Size(), info.ModTime().UnixMilli()
+			index.Files[rel] = &updated
 			return nil
 		}
 		contentStr := string(raw)

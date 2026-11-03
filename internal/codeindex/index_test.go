@@ -2,6 +2,7 @@ package codeindex
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func writeFile(t *testing.T, path, content string) {
@@ -534,5 +536,53 @@ func TestDefaultCacheRetainsEightConcurrentWorkspaces(t *testing.T) {
 	svc.mu.Unlock()
 	if cachedCount != 8 {
 		t.Fatalf("expected all 8 active directories to stay cached in memory, got %d", cachedCount)
+	}
+}
+
+func TestColdBuildDoesNotBlockWarmDirectorySearch(t *testing.T) {
+	svc := NewService(t.TempDir())
+	warm := t.TempDir()
+	cold := t.TempDir()
+	writeFile(t, filepath.Join(warm, "file.ts"), "export function resourceAudit() { return 'resource audit'; }\n")
+	for j := 0; j < 1000; j++ {
+		var b strings.Builder
+		for k := 0; k < 20; k++ {
+			fmt.Fprintf(&b, "// module%d source%d token%d value%d resource audit text\n", j, k, k, j+k)
+		}
+		writeFile(t, filepath.Join(cold, fmt.Sprintf("file%d.ts", j)), b.String())
+	}
+	if _, err := svc.Search(warm, "resource audit", 5); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := svc.Status(cold)
+		done <- err
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	observedInflight := false
+	for time.Now().Before(deadline) {
+		svc.mu.Lock()
+		n := len(svc.inflight)
+		svc.mu.Unlock()
+		if n > 0 {
+			observedInflight = true
+			break
+		}
+	}
+	if !observedInflight {
+		t.Fatal("expected to observe cold build in flight")
+	}
+	start := time.Now()
+	if _, err := svc.Search(warm, "resource audit", 5); err != nil {
+		t.Fatal(err)
+	}
+	elapsed := time.Since(start)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("warmSearchDuringColdBuildMs=%.3f", float64(elapsed.Microseconds())/1000)
+	if elapsed > 10*time.Millisecond {
+		t.Fatalf("expected warm search during cold build to complete under 10ms, took %v", elapsed)
 	}
 }

@@ -210,6 +210,25 @@ describe("Chat code syntax highlighting", () => {
     assertEqual(getCachedHighlight(base, "javascript", "dark"), undefined);
     assertEqual(getCachedHighlight(`${base}\n// streamed 0`, "javascript", "dark"), undefined);
     assertEqual(getCachedHighlight(`${base}\n// streamed 11`, "javascript", "dark"), lastResult);
+
+    const singleLineBase = Array.from(
+      { length: 120 },
+      (_, i) => `const single${i} = { a: 1, b: "value", c: true };`
+    ).join("");
+    const singleInitial = await highlightCode(singleLineBase, "javascript", "dark");
+    assertTrue(!!singleInitial);
+    let prevSingle = singleLineBase;
+    for (let i = 0; i < 8; i++) {
+      const nextSingle = `${singleLineBase}// update ${i}`;
+      const syncSingle = highlightCodeSync(nextSingle, "javascript", "dark", prevSingle);
+      assertTrue(!!syncSingle, `Expected synchronous single-line highlight for step ${i}`);
+      assertEqual(syncSingle!.tokens[0][0], singleInitial!.tokens[0][0]);
+      assertEqual(
+        syncSingle!.tokens.map((l) => l.map((t) => t.content).join("")).join("\n"),
+        nextSingle
+      );
+      prevSingle = nextSingle;
+    }
   });
 
   it("recognizes streaming TextReveal updates across 85-char ellipsis truncation boundaries", () => {

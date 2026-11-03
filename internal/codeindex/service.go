@@ -17,13 +17,21 @@ import (
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
 
+type indexFlight struct {
+	done         chan struct{}
+	forceRebuild bool
+	cached       *cachedIndex
+	err          error
+}
+
 type Service struct {
-	root  string
-	cfg   Config
-	now   func() int64
-	mu    sync.Mutex
-	clock uint64
-	cache map[string]*cachedIndex
+	root     string
+	cfg      Config
+	now      func() int64
+	mu       sync.Mutex
+	clock    uint64
+	cache    map[string]*cachedIndex
+	inflight map[string]*indexFlight
 }
 
 type StatusInfo struct {
@@ -192,47 +200,76 @@ func (s *Service) ensure(directory string) (*cachedIndex, error) {
 }
 
 func (s *Service) ensureIndex(directory string, forceRebuild bool) (*cachedIndex, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	now := s.now()
-	if !forceRebuild {
-		if cached := s.cache[directory]; cached != nil && now-cached.index.BuiltAt < cacheTTL {
-			s.clock++
-			cached.access = s.clock
-			s.trimCacheLocked(directory, now)
-			return cached, nil
+	for {
+		s.mu.Lock()
+		now := s.now()
+		if !forceRebuild {
+			if cached := s.cache[directory]; cached != nil && now-cached.index.BuiltAt < cacheTTL {
+				s.clock++
+				cached.access = s.clock
+				s.trimCacheLocked(directory, now)
+				s.mu.Unlock()
+				return cached, nil
+			}
 		}
-	}
-	var previous *Index
-	if cached := s.cache[directory]; cached != nil {
-		previous = cached.index
-	} else {
-		previous = s.load(directory)
-		if !forceRebuild && previous != nil && now-previous.BuiltAt < cacheTTL {
-			cached := buildDocs(previous)
+		if s.inflight == nil {
+			s.inflight = make(map[string]*indexFlight)
+		}
+		if flight := s.inflight[directory]; flight != nil {
+			s.mu.Unlock()
+			<-flight.done
+			if !forceRebuild || flight.forceRebuild {
+				return flight.cached, flight.err
+			}
+			continue
+		}
+		var previous *Index
+		if cached := s.cache[directory]; cached != nil {
+			previous = cached.index
+		}
+		flight := &indexFlight{
+			done:         make(chan struct{}),
+			forceRebuild: forceRebuild,
+		}
+		s.inflight[directory] = flight
+		s.mu.Unlock()
+
+		var cached *cachedIndex
+		var err error
+		if previous == nil {
+			previous = s.load(directory)
+			if !forceRebuild && previous != nil && now-previous.BuiltAt < cacheTTL {
+				cached = buildDocs(previous)
+			}
+		}
+		if cached == nil {
+			if previous == nil {
+				previous = &Index{Files: map[string]*FileRecord{}}
+			}
+			var index *Index
+			index, err = s.build(directory, previous)
+			if err == nil {
+				err = s.save(index)
+			}
+			if err == nil {
+				cached = buildDocs(index)
+			}
+		}
+
+		s.mu.Lock()
+		delete(s.inflight, directory)
+		if err == nil && cached != nil {
 			s.clock++
 			cached.access = s.clock
 			s.cache[directory] = cached
-			s.trimCacheLocked(directory, now)
-			return cached, nil
+			s.trimCacheLocked(directory, cached.index.BuiltAt)
 		}
+		flight.cached = cached
+		flight.err = err
+		close(flight.done)
+		s.mu.Unlock()
+		return cached, err
 	}
-	if previous == nil {
-		previous = &Index{Files: map[string]*FileRecord{}}
-	}
-	index, err := s.build(directory, previous)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.save(index); err != nil {
-		return nil, err
-	}
-	cached := buildDocs(index)
-	s.clock++
-	cached.access = s.clock
-	s.cache[directory] = cached
-	s.trimCacheLocked(directory, index.BuiltAt)
-	return cached, nil
 }
 
 func (s *Service) trimCacheLocked(keepDir string, now int64) {
