@@ -6,7 +6,7 @@ import {
   parseInline,
   parseMarkdownBlocks,
 } from "../components/timeline/markdown-parser";
-import { createStreamPacer, initialRevealSlice } from "../components/timeline/markdown/reveal";
+import { createStreamPacer, holdIncompleteTableRows, initialRevealSlice } from "../components/timeline/markdown/reveal";
 import { createTailHoldState } from "../components/timeline/tail-hold";
 import { assertDeepEqual, assertEqual, assertTrue, describe, it } from "./test-harness";
 
@@ -110,11 +110,11 @@ describe("stream pacer", () => {
     assertEqual(pacer.pending, false);
   });
 
-  it("reveals a table row as a whole line", () => {
-    const doc = "intro\n| a | b |\n|---|---|\n| 1 | 2 |";
+  it("reveals a table row as a whole line, and a header with its separator and first row", () => {
+    const doc = "intro\n| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |";
     const rowStart = doc.indexOf("| a");
-    assertEqual(advanceStreamingSlice(doc, rowStart, rowStart + 2), doc.indexOf("|---"));
-    const lastRow = doc.lastIndexOf("| 1");
+    assertEqual(advanceStreamingSlice(doc, rowStart, rowStart + 2), doc.indexOf("| 3"));
+    const lastRow = doc.lastIndexOf("| 3");
     assertEqual(advanceStreamingSlice(doc, lastRow, lastRow + 1), doc.length);
   });
 });
@@ -217,5 +217,27 @@ describe("waiting row hand-off", () => {
     assertEqual(hold.release(), 0);
     assertEqual(hold.measure(780, 0, false), 0);
     assertEqual(hold.handOff(), 0);
+  });
+});
+
+describe("streamed table rows", () => {
+  it("holds a row until its line is complete", () => {
+    const head = "Files:\n\n| File | Role |\n|---|---|\n| `a.ts` | first |\n";
+    assertEqual(holdIncompleteTableRows(`${head}| \`ToolCard.tsx\` | ren`), head);
+    assertEqual(holdIncompleteTableRows(`${head}| \`ToolCard.tsx\` | renders |\n`), `${head}| \`ToolCard.tsx\` | renders |\n`);
+  });
+
+  it("holds a header until its separator and first row arrive", () => {
+    assertEqual(holdIncompleteTableRows("Files:\n\n| File | Role |\n"), "Files:\n\n");
+    assertEqual(holdIncompleteTableRows("Files:\n\n| File | Role |\n|--"), "Files:\n\n");
+    assertEqual(holdIncompleteTableRows("Files:\n\n| File | Role |\n|---|---|\n"), "Files:\n\n");
+    assertEqual(holdIncompleteTableRows("Files:\n\n| File | Role |\n|---|---|\n| a.ts | x"), "Files:\n\n");
+    assertEqual(holdIncompleteTableRows("| File |"), "");
+  });
+
+  it("leaves text without a pending table untouched", () => {
+    for (const text of ["", "Plain answer", "Line one\nline tw", "Done.\n", "| a | b |\n|---|---|\n| 1 | 2 |\n\nAfter"]) {
+      assertEqual(holdIncompleteTableRows(text), text);
+    }
   });
 });

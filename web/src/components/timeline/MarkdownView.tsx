@@ -1,6 +1,6 @@
 import { createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js";
 import { createIncrementalMarkdownParser } from "./markdown-parser";
-import { createStreamPacer, initialRevealSlice, REVEAL_REPLAY_MAX_CHARS } from "./markdown/reveal";
+import { createStreamPacer, holdIncompleteTableRows, initialRevealSlice, REVEAL_REPLAY_MAX_CHARS } from "./markdown/reveal";
 import {
   prefersReducedMotion,
   StreamRevealContext,
@@ -48,7 +48,12 @@ export default function MarkdownView(props: {
 }) {
   const parseIncremental = createIncrementalMarkdownParser();
   const canAnimate = typeof requestAnimationFrame === "function";
-  const initial = (props.content || "").replace(/\r\n/g, "\n");
+  // While streaming, a table row is revealed only once its whole line has arrived.
+  const revealable = (content: string | undefined, streaming: boolean) => {
+    const text = (content || "").replace(/\r\n/g, "\n");
+    return streaming ? holdIncompleteTableRows(text) : text;
+  };
+  const initial = revealable(props.content, Boolean(props.streaming));
   const replay =
     Boolean(props.streaming) &&
     canAnimate &&
@@ -104,8 +109,8 @@ export default function MarkdownView(props: {
   };
 
   createEffect(() => {
-    const next = (props.content || "").replace(/\r\n/g, "\n");
     const streaming = Boolean(props.streaming);
+    const next = revealable(props.content, streaming);
     const at = clock();
     const shouldPace =
       canAnimate &&

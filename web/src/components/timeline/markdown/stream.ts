@@ -223,6 +223,9 @@ const STREAM_LINE_PREFIX_REGEX =
  * `` `code` ``, `**bold**`, file paths) and line-start markers (`### `, `- `, ```` ``` ````)
  * already present in `target` are never cut into half-closed intermediate states.
  */
+/** A Markdown table separator line such as `|---|:---:|`. */
+export const TABLE_SEPARATOR_RE = /^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*$/;
+
 export function advanceStreamingSlice(
   target: string,
   currentLen: number,
@@ -246,7 +249,14 @@ export function advanceStreamingSlice(
   // Reveal table rows (header, separator, body) a whole line at a time so the block
   // never flips between paragraph and table, or reflows cells, while pipes type in.
   if (/^\s*\|/.test(line)) {
-    return lineEndIdx === -1 ? lineEnd : lineEnd + 1;
+    if (lineEndIdx === -1) return lineEnd;
+    // A header appears together with its separator (or it shows as a paragraph for a
+    // frame) and with its first complete row (or the columns resize when that row lands).
+    const sepEnd = target.indexOf("\n", lineEnd + 1);
+    if (sepEnd === -1 || !TABLE_SEPARATOR_RE.test(target.slice(lineEnd + 1, sepEnd))) return lineEnd + 1;
+    const rowEnd = target.indexOf("\n", sepEnd + 1);
+    const row = target.slice(sepEnd + 1, rowEnd === -1 ? target.length : rowEnd);
+    return rowEnd !== -1 && /^\s*\|/.test(row) ? rowEnd + 1 : sepEnd + 1;
   }
 
   // Snap past line-start block markers (`### `, `- `, `1. `, code fence opener)

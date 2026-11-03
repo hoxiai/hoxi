@@ -1,5 +1,5 @@
 // web/src/components/timeline/markdown/reveal.ts
-import { advanceStreamingSlice } from "./stream";
+import { advanceStreamingSlice, TABLE_SEPARATOR_RE } from "./stream";
 
 /**
  * Duration (ms) for each newly revealed inline text slice to softly fade from
@@ -34,6 +34,38 @@ const CATCHUP_CHARS = 180;
 const CATCHUP_RATIO_PER_FRAME = 0.14;
 const MIN_CHARS_PER_SECOND = 48;
 const FRAME_MS = 1000 / 60;
+
+const TABLE_LINE_RE = /^\s*\|/;
+
+/**
+ * Text a streaming view may reveal while more is still arriving. A table row
+ * is held back until its line is complete, and a table's header and separator
+ * until its first body row is complete, so the table first appears with real
+ * content. Revealing rows as they type in made the table reflow its columns on
+ * every chunk, and a header shown alone was resized again by its first row.
+ * Once the stream ends, the caller reveals the full text.
+ */
+export function holdIncompleteTableRows(text: string): string {
+  const partialStart = text.lastIndexOf("\n") + 1;
+  const partial = text.slice(partialStart);
+  if (partial !== "" && !TABLE_LINE_RE.test(partial)) return text;
+  // The complete lines just before the one being written, newest first.
+  const starts: number[] = [];
+  let lineEnd = partialStart - 1;
+  while (lineEnd >= 0 && starts.length < 3) {
+    const start = text.lastIndexOf("\n", lineEnd - 1) + 1;
+    starts.push(start);
+    lineEnd = start - 1;
+  }
+  const line = (i: number) => (i < starts.length ? text.slice(starts[i], (i === 0 ? partialStart : starts[i - 1]) - 1) : undefined);
+  const isTable = (value: string | undefined) => value !== undefined && TABLE_LINE_RE.test(value);
+  const [last, before, earlier] = [line(0), line(1), line(2)];
+  if (isTable(last) && !TABLE_SEPARATOR_RE.test(last!) && !isTable(before)) return text.slice(0, starts[0]);
+  if (isTable(last) && TABLE_SEPARATOR_RE.test(last!) && isTable(before) && !isTable(earlier)) {
+    return text.slice(0, starts[1]);
+  }
+  return text.slice(0, partialStart);
+}
 
 /**
  * What a replaying view shows on mount: up to its first visible character.

@@ -3,6 +3,8 @@ import { render } from "solid-js/web";
 import { produce, unwrap } from "solid-js/store";
 import Composer from "../components/timeline/Composer";
 import MessageStream from "../components/timeline/MessageStream";
+import MarkdownView from "../components/timeline/MarkdownView";
+import { createSignal } from "solid-js";
 import SandboxMergePromptCard from "../components/timeline/SandboxMergePromptCard";
 import { downloadSessionExport } from "../components/timeline/session-export";
 import { t } from "../i18n";
@@ -260,6 +262,40 @@ async function testNavigation() {
   } finally { dispose(); root.remove(); HTMLElement.prototype.scrollIntoView = originalScrollIntoView; }
 }
 
+async function testStreamedTableRowsAppearWhole() {
+  const rows = ["| `ToolCard.tsx` | renders tool steps |", "| `ThoughtBox.tsx` | shows reasoning |", "| `tail-hold.ts` | keeps height |"];
+  const doc = `Files:\n\n| File | Role |\n|---|---|\n${rows.join("\n")}\n\nDone.\n`;
+  const cells = (line: string) => line.split("|").slice(1, -1).map((cell) => cell.trim().replace(/`/g, ""));
+  const fullRows = new Set(rows.map((line) => cells(line).join("|")));
+  const [content, setContent] = createSignal("");
+  const [streaming, setStreaming] = createSignal(true);
+  const element = host();
+  const dispose = render(() => <MarkdownView content={content()} streaming={streaming()} />, element);
+  const problems: string[] = [];
+  let checking = true;
+  const check = () => {
+    if (!checking) return;
+    for (const p of element.querySelectorAll("p")) {
+      if (p.textContent?.trim().startsWith("|")) problems.push(`table text shown as a paragraph: ${p.textContent}`);
+    }
+    for (const tr of element.querySelectorAll("tbody tr")) {
+      const text = Array.from(tr.querySelectorAll("td")).map((td) => td.textContent?.trim() ?? "").join("|");
+      if (!fullRows.has(text)) problems.push(`partial row rendered: ${text}`);
+    }
+    requestAnimationFrame(check);
+  };
+  requestAnimationFrame(check);
+  try {
+    for (let i = 0; i < doc.length; i += 4) { setContent(doc.slice(0, i + 4)); await wait(40); }
+    await wait(600);
+    setStreaming(false);
+    await wait(300);
+    checking = false;
+    assertEqual(element.querySelectorAll("tbody tr").length, rows.length, "every row is shown once the stream ends");
+    assertEqual(problems.length, 0, `rows must appear whole while streaming: ${problems.slice(0, 3).join("; ")}`);
+  } finally { checking = false; dispose(); element.remove(); }
+}
+
 export async function runBrowserTest(): Promise<string[]> {
   window.fetch = async () => new Response("{}", { headers: { "Content-Type": "application/json" } });
   hoxiAPI.commitWorktree = async () => { throw new Error("Unexpected real commit"); };
@@ -270,6 +306,7 @@ export async function runBrowserTest(): Promise<string[]> {
     ["enhancement stays bound to the session and unchanged draft", testEnhancement],
     ["export errors never save partial files; retry saves full JSON and Markdown", testExport],
     ["message focus cancels stale work and preserves valid navigation", testNavigation],
+    ["a streamed table shows only whole rows", testStreamedTableRowsAppearWhole],
   ] as const) { await run(); results.push(name); }
   return results;
 }
