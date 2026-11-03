@@ -148,6 +148,7 @@ func TestMarketplaceRefusesOverwriteOfUserEditedSkill(t *testing.T) {
 func TestMarketplaceRejectsInvalidSlugsAndHosts(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("HOXI_SERVER_URL", "http://127.0.0.1:5400")
 	svc := NewMarketplaceService("https://hoxi.ai", nil)
 
 	for _, slug := range []string{"", "../escape", "Upper", "with space", "-leading", strings.Repeat("a", 65)} {
@@ -186,6 +187,14 @@ func TestMarketplaceRejectsInvalidSlugsAndHosts(t *testing.T) {
 	}
 	if cleaned.HomepageURL != "https://hoxi.ai/skills/demo-skill" {
 		t.Fatalf("https homepageUrl should be preserved, got %q", cleaned.HomepageURL)
+	}
+
+	if _, err := sanitizeMarketplaceSkillForBase(MarketplaceSkill{
+		Slug:          "demo-skill",
+		ContentURL:    "https://catalog.example.com/skills/demo-skill/SKILL.md",
+		ContentSHA256: strings.Repeat("a", 64),
+	}, "https://catalog.example.com"); err != nil {
+		t.Fatalf("expected service baseURL host to be allowed, got %v", err)
 	}
 }
 

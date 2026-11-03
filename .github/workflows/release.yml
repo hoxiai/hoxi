@@ -195,6 +195,7 @@ jobs:
             cp -f "$RUNNER_TEMP/artifacts/${name}" "$DMG"
             node scripts/release-artifact.mjs verify-dmg "$DMG" "$RELEASE_VERSION" "$ARCH" > "build/bin/release-artifact-${ARCH}.json"
             node scripts/release-artifact.mjs verify-distribution "$DMG"
+            (cd build/bin && shasum -a 256 "${name}" > "${name}.sha256")
           done
           (cd build/bin && shasum -a 256 Hoxi-${RELEASE_VERSION}-darwin-*.dmg > checksums.txt)
           DMG="build/bin/Hoxi-${RELEASE_VERSION}-darwin-arm64.dmg"
@@ -207,7 +208,9 @@ jobs:
           body: ${{ env.RELEASE_NOTES }}
           files: |
             build/bin/Hoxi-${{ env.RELEASE_VERSION }}-darwin-arm64.dmg
+            build/bin/Hoxi-${{ env.RELEASE_VERSION }}-darwin-arm64.dmg.sha256
             build/bin/Hoxi-${{ env.RELEASE_VERSION }}-darwin-amd64.dmg
+            build/bin/Hoxi-${{ env.RELEASE_VERSION }}-darwin-amd64.dmg.sha256
             build/bin/checksums.txt
             build/bin/sparkle.json
           fail_on_unmatched_files: true

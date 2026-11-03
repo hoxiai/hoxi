@@ -94,6 +94,18 @@ int main(void) { @autoreleasepool {
     [proxy showUpdateFoundWithAppcastItem:nil state:nil reply:^(NSInteger choice) { result = choice; }];
     assert(result == 2 && standard.dismissed == 1 && strcmp(lastPhase, "") == 0);
 
+    // Background update discovery followed by user-initiated in-app install click
+    // reuses the pending reply immediately without stalling on a duplicate check.
+    admission.userRequested = NO;
+    admission.installing = NO;
+    allowed = 1;
+    result = -1;
+    [proxy showUpdateFoundWithAppcastItem:nil state:nil reply:^(NSInteger choice) { result = choice; }];
+    assert(result == -1);
+    admission.userRequested = YES;
+    assert([proxy acceptPendingInstallIfAvailable] == YES);
+    assert(result == 1 && strcmp(lastPhase, "downloading") == 0);
+
     standard.reply = nil;
     [proxy release]; [standard release]; [admission release];
 } return 0; }

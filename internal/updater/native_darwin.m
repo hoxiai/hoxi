@@ -137,10 +137,18 @@ static BOOL HoxiConfirmUpdate(void) {
 }
 - (void)updater:(id)updater didFinishUpdateCycleForUpdateCheck:(NSInteger)check error:(NSError *)error {
     HOXI_TRACE("updater sparkle check finished");
+    BOOL wasUserInstall = self.userRequested || self.installing;
     self.forced = NO;
     self.userRequested = NO;
     self.installing = NO;
-    if (!self.failed) {
+    BOOL cancelled = error != nil &&
+        (([error.domain isEqualToString:NSCocoaErrorDomain] && error.code == NSUserCancelledError) ||
+         error.code == 4007);
+    if (error != nil && !cancelled && wasUserInstall && !self.failed) {
+        self.failed = YES;
+        const char *msg = error.localizedDescription.UTF8String;
+        hoxiNativeProgress(self.token, "failed", self.downloadedBytes, self.totalBytes, (char *)(msg ?: "update failed"));
+    } else if (!self.failed) {
         hoxiNativeProgress(self.token, "", 0, 0, NULL);
     }
     hoxiNativeRelease(self.token, 0);
@@ -174,13 +182,48 @@ static BOOL HoxiConfirmUpdate(void) {
 @interface HoxiSparkleDriver : NSProxy
 @property(nonatomic, retain) id<HoxiSparkleUserDriver> target;
 @property(nonatomic, retain) HoxiSparkleDelegate *admission;
+@property(nonatomic, copy) void (^pendingUpdateReply)(NSInteger);
+@property(nonatomic, copy) void (^pendingRelaunchReply)(NSInteger);
+- (void)clearPendingReplies;
+- (BOOL)acceptPendingInstallIfAvailable;
 @end
 
 @implementation HoxiSparkleDriver
 - (void)dealloc {
+    [_pendingUpdateReply release];
+    [_pendingRelaunchReply release];
     [_target release];
     [_admission release];
     [super dealloc];
+}
+- (void)clearPendingReplies {
+    self.pendingUpdateReply = nil;
+    self.pendingRelaunchReply = nil;
+}
+- (BOOL)acceptPendingInstallIfAvailable {
+    if (self.pendingRelaunchReply != nil) {
+        void (^reply)(NSInteger) = [[self.pendingRelaunchReply retain] autorelease];
+        self.pendingRelaunchReply = nil;
+        NSInteger choice = [self admittedChoice:1];
+        if (choice == 1) {
+            hoxiNativeProgress(self.admission.token, "restarting", self.admission.downloadedBytes, self.admission.totalBytes, NULL);
+        }
+        reply(choice);
+        return YES;
+    }
+    if (self.pendingUpdateReply != nil) {
+        void (^reply)(NSInteger) = [[self.pendingUpdateReply retain] autorelease];
+        self.pendingUpdateReply = nil;
+        self.admission.downloadedBytes = 0;
+        self.admission.totalBytes = 0;
+        NSInteger choice = [self admittedChoice:1];
+        if (choice != 1 && [self.target respondsToSelector:@selector(dismissUpdateInstallation)]) {
+            [self.target dismissUpdateInstallation];
+        }
+        reply(choice);
+        return YES;
+    }
+    return NO;
 }
 - (BOOL)respondsToSelector:(SEL)selector {
     return class_getInstanceMethod(object_getClass(self), selector) != NULL || [self.target respondsToSelector:selector];
@@ -217,6 +260,8 @@ static BOOL HoxiConfirmUpdate(void) {
         self.admission.forced = NO;
         self.admission.userRequested = NO;
         self.admission.installing = NO;
+        self.admission.downloadedBytes = 0;
+        self.admission.totalBytes = 0;
         hoxiNativeProgress(self.admission.token, "", 0, 0, NULL);
         hoxiNativeRelease(self.admission.token, 0);
         return 2; // Deny before Sparkle begins downloading or staging.
@@ -224,6 +269,8 @@ static BOOL HoxiConfirmUpdate(void) {
     self.admission.forced = NO;
     self.admission.userRequested = NO;
     self.admission.installing = NO;
+    self.admission.downloadedBytes = 0;
+    self.admission.totalBytes = 0;
     hoxiNativeProgress(self.admission.token, "", 0, 0, NULL);
     hoxiNativeRelease(self.admission.token, 0);
     return choice;
@@ -240,6 +287,7 @@ static BOOL HoxiConfirmUpdate(void) {
 - (void)showUpdateFoundWithAppcastItem:(id)item state:(id)state reply:(void (^)(NSInteger))reply {
     HOXI_TRACE("updater sparkle update found");
     if (self.admission.userRequested) {
+        self.pendingUpdateReply = nil;
         NSInteger choice = [self admittedChoice:1];
         if (choice != 1 && [self.target respondsToSelector:@selector(dismissUpdateInstallation)]) {
             [self.target dismissUpdateInstallation];
@@ -247,11 +295,14 @@ static BOOL HoxiConfirmUpdate(void) {
         reply(choice);
         return;
     }
+    self.pendingUpdateReply = reply;
     [self.target showUpdateFoundWithAppcastItem:item state:state reply:^(NSInteger choice) {
+        self.pendingUpdateReply = nil;
         reply([self admittedChoice:choice]);
     }];
 }
 - (void)showDownloadInitiatedWithCancellation:(void (^)(void))cancellation {
+    self.pendingUpdateReply = nil;
     if (self.admission.active) {
         self.admission.installing = YES;
         self.admission.failed = NO;
@@ -307,6 +358,7 @@ static BOOL HoxiConfirmUpdate(void) {
 }
 - (void)showReadyToInstallAndRelaunch:(void (^)(NSInteger))reply {
     if (self.admission.userRequested) {
+        self.pendingRelaunchReply = nil;
         NSInteger choice = [self admittedChoice:1];
         if (choice == 1) {
             hoxiNativeProgress(self.admission.token, "restarting", self.admission.downloadedBytes, self.admission.totalBytes, NULL);
@@ -314,7 +366,9 @@ static BOOL HoxiConfirmUpdate(void) {
         reply(choice);
         return;
     }
+    self.pendingRelaunchReply = reply;
     [self.target showReadyToInstallAndRelaunch:^(NSInteger choice) {
+        self.pendingRelaunchReply = nil;
         NSInteger admitted = [self admittedChoice:choice];
         if (admitted == 1) {
             hoxiNativeProgress(self.admission.token, "restarting", self.admission.downloadedBytes, self.admission.totalBytes, NULL);
@@ -332,6 +386,7 @@ static BOOL HoxiConfirmUpdate(void) {
 }
 - (void)showUpdaterError:(NSError *)error acknowledgement:(void (^)(void))acknowledgement {
     HOXI_TRACE("updater sparkle error");
+    [self clearPendingReplies];
     if (self.admission.active) {
         self.admission.installing = NO;
         self.admission.userRequested = NO;
@@ -347,6 +402,7 @@ static BOOL HoxiConfirmUpdate(void) {
 }
 - (void)showUpdateNotFoundWithError:(NSError *)error acknowledgement:(void (^)(void))acknowledgement {
     HOXI_TRACE("updater sparkle up to date");
+    [self clearPendingReplies];
     if (self.admission.active) {
         BOOL wasRequested = self.admission.userRequested;
         self.admission.installing = NO;
@@ -457,8 +513,13 @@ char *hoxi_native_check(void) {
                 delegate.totalBytes = 0;
                 hoxiNativeProgress(delegate.token, "preparing", 0, 0, NULL);
             }
-            // Repeated clicks must refocus or trigger an in-progress update instead of failing.
+            // Repeated clicks or a background-discovered update must immediately
+            // proceed to install instead of stalling on a duplicate check cycle.
             [NSApp activateIgnoringOtherApps:YES];
+            if ([driver acceptPendingInstallIfAvailable]) {
+                HOXI_TRACE("updater sparkle alert reused");
+                return;
+            }
             if ([driver.target respondsToSelector:@selector(activeUpdateAlert)]) {
                 id alert = [driver.target activeUpdateAlert];
                 if (alert != nil && [alert respondsToSelector:@selector(installUpdate:)]) {
@@ -482,6 +543,7 @@ void hoxi_native_stop(void) {
         delegate.installing = NO;
         delegate.failed = NO;
         updater.automaticallyChecksForUpdates = NO;
+        [driver clearPendingReplies];
         [updater resetUpdateCycle];
         [driver.target dismissUpdateInstallation];
         hoxiNativeProgress(delegate.token, "", 0, 0, NULL);

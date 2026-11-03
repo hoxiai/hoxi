@@ -238,6 +238,16 @@ func TestUpdateLocalStatus(t *testing.T) {
 			}
 		})
 	}
+	t.Run("degraded-provider-does-not-block-idle-update", func(t *testing.T) {
+		g := updateTestGateway(t, func(w http.ResponseWriter, r *http.Request) {
+			fmt.Fprint(w, `{}`)
+		})
+		g.status.SetProviderDegraded("openai", true)
+		if !g.BeginUpdate() || !g.UpdateDraining() {
+			t.Fatal("degraded provider should not block update when no session or approval is active")
+		}
+		g.ReleaseUpdate()
+	})
 }
 
 func TestUpdateStatusTimeout(t *testing.T) {

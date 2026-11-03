@@ -63,23 +63,40 @@ func newUpdateHTTPClient() *http.Client {
 	}
 }
 
+func alignWindowsArchiveArch(rawURL, arch string) string {
+	if arch == "" {
+		return rawURL
+	}
+	for _, other := range []string{"amd64", "arm64"} {
+		if other == arch {
+			continue
+		}
+		oldSuffix := "-windows-" + other + ".zip"
+		if strings.HasSuffix(strings.ToLower(rawURL), oldSuffix) {
+			return rawURL[:len(rawURL)-len(oldSuffix)] + "-windows-" + arch + ".zip"
+		}
+	}
+	return rawURL
+}
+
 func resolveWindowsArchiveURL(res *UpdateCheckResult) string {
 	if res == nil {
 		return ""
 	}
+	arch := windowsReleaseArch()
 	for _, cand := range []string{res.DownloadURL, res.Mirrors.Global} {
 		trimmed := strings.TrimSpace(cand)
 		lower := strings.ToLower(trimmed)
 		if trimmed != "" && strings.HasSuffix(lower, ".zip") {
-			return trimmed
+			return alignWindowsArchiveArch(trimmed, arch)
 		}
 		if trimmed != "" && strings.HasSuffix(lower, "-setup.exe") {
-			return trimmed[:len(trimmed)-len("-setup.exe")] + ".zip"
+			return alignWindowsArchiveArch(trimmed[:len(trimmed)-len("-setup.exe")]+".zip", arch)
 		}
 	}
 	ver := strings.TrimPrefix(strings.TrimSpace(res.LatestVersion), "v")
 	if ver != "" {
-		return fmt.Sprintf("https://github.com/hoxiai/hoxi/releases/download/v%s/Hoxi-%s-windows-%s.zip", ver, ver, windowsReleaseArch())
+		return fmt.Sprintf("https://github.com/hoxiai/hoxi/releases/download/v%s/Hoxi-%s-windows-%s.zip", ver, ver, arch)
 	}
 	if d := strings.TrimSpace(res.DownloadURL); d != "" {
 		return d
@@ -105,19 +122,36 @@ func darwinReleaseArch() string {
 	return "arm64"
 }
 
+func alignDarwinDMGArch(rawURL, arch string) string {
+	if arch == "" {
+		return rawURL
+	}
+	for _, other := range []string{"arm64", "amd64"} {
+		if other == arch {
+			continue
+		}
+		oldSuffix := "-darwin-" + other + ".dmg"
+		if strings.HasSuffix(strings.ToLower(rawURL), oldSuffix) {
+			return rawURL[:len(rawURL)-len(oldSuffix)] + "-darwin-" + arch + ".dmg"
+		}
+	}
+	return rawURL
+}
+
 func resolveDarwinDMGURL(res *UpdateCheckResult) string {
 	if res == nil {
 		return ""
 	}
+	arch := darwinReleaseArch()
 	for _, cand := range []string{res.DownloadURL, res.Mirrors.Global} {
 		trimmed := strings.TrimSpace(cand)
 		if trimmed != "" && strings.HasSuffix(strings.ToLower(trimmed), ".dmg") {
-			return trimmed
+			return alignDarwinDMGArch(trimmed, arch)
 		}
 	}
 	ver := strings.TrimPrefix(strings.TrimSpace(res.LatestVersion), "v")
 	if ver != "" {
-		return fmt.Sprintf("https://github.com/hoxiai/hoxi/releases/download/v%s/Hoxi-%s-darwin-%s.dmg", ver, ver, darwinReleaseArch())
+		return fmt.Sprintf("https://github.com/hoxiai/hoxi/releases/download/v%s/Hoxi-%s-darwin-%s.dmg", ver, ver, arch)
 	}
 	if d := strings.TrimSpace(res.DownloadURL); d != "" {
 		return d
@@ -236,6 +270,45 @@ func parseSHA256Text(raw string) string {
 	return ""
 }
 
+func parseSHA256ForFilename(raw, filename string) string {
+	target := strings.TrimSpace(filename)
+	if target == "" {
+		return ""
+	}
+	for _, line := range strings.Split(raw, "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) < 2 {
+			continue
+		}
+		sum := strings.ToLower(strings.TrimSpace(fields[0]))
+		if len(sum) != 64 || !isHexString(sum) {
+			continue
+		}
+		for _, field := range fields[1:] {
+			cleaned := strings.TrimPrefix(strings.TrimSpace(field), "*")
+			if path.Base(cleaned) == target {
+				return sum
+			}
+		}
+	}
+	return ""
+}
+
+func resolveChecksumsURL(archiveURL string) (string, string) {
+	u, err := url.Parse(strings.TrimSpace(archiveURL))
+	if err != nil || u.Host == "" {
+		return "", ""
+	}
+	filename := path.Base(u.Path)
+	if filename == "" || filename == "." || filename == "/" {
+		return "", ""
+	}
+	u.Path = path.Join(path.Dir(u.Path), "checksums.txt")
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String(), filename
+}
+
 func isHexString(s string) bool {
 	for i := 0; i < len(s); i++ {
 		c := s[i]
@@ -258,6 +331,24 @@ func resolveArchiveSHA256(ctx context.Context, client *http.Client, archiveURL, 
 				_ = resp.Body.Close()
 				if resp.StatusCode == http.StatusOK {
 					if sum := parseSHA256Text(string(body)); sum != "" {
+						cancel()
+						return sum, nil
+					}
+				}
+			}
+		}
+		cancel()
+	}
+	if checksumsURL, filename := resolveChecksumsURL(archiveURL); isAllowedUpdateURL(checksumsURL) && filename != "" {
+		checksumsCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		req, err := http.NewRequestWithContext(checksumsCtx, http.MethodGet, checksumsURL, nil)
+		if err == nil {
+			resp, err := client.Do(req)
+			if err == nil {
+				body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+				_ = resp.Body.Close()
+				if resp.StatusCode == http.StatusOK {
+					if sum := parseSHA256ForFilename(string(body), filename); sum != "" {
 						cancel()
 						return sum, nil
 					}

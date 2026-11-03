@@ -117,7 +117,9 @@ func TestDownloadAndStageWindowsZipVerifiesSHA256AndExtracts(t *testing.T) {
 		LatestVersion: "0.4.5",
 		DownloadURL:   "https://gitcode.com/hoxiai/hoxi/releases/download/v0.4.5/Hoxi-0.4.5-windows-amd64-setup.exe",
 	})
-	wantSetupConverted := "https://gitcode.com/hoxiai/hoxi/releases/download/v0.4.5/Hoxi-0.4.5-windows-amd64.zip"
+	// A foreign-arch installer URL is aligned to the running host architecture
+	// so a shared or stale mirror cannot hand an arm64 host an amd64 package.
+	wantSetupConverted := "https://gitcode.com/hoxiai/hoxi/releases/download/v0.4.5/Hoxi-0.4.5-windows-" + windowsReleaseArch() + ".zip"
 	if gotSetupConverted != wantSetupConverted {
 		t.Fatalf("resolveWindowsArchiveURL(-setup.exe) = %q, want %q", gotSetupConverted, wantSetupConverted)
 	}
@@ -183,8 +185,9 @@ func TestDownloadAndVerifyDMGAndBundleResolution(t *testing.T) {
 		LatestVersion: "0.5.0",
 		DownloadURL:   "https://github.com/hoxiai/hoxi/releases/download/v0.5.0/Hoxi-0.5.0-darwin-arm64.dmg",
 	})
-	if gotDMG != "https://github.com/hoxiai/hoxi/releases/download/v0.5.0/Hoxi-0.5.0-darwin-arm64.dmg" {
-		t.Fatalf("resolveDarwinDMGURL = %q", gotDMG)
+	wantDMG := "https://github.com/hoxiai/hoxi/releases/download/v0.5.0/Hoxi-0.5.0-darwin-" + darwinReleaseArch() + ".dmg"
+	if gotDMG != wantDMG {
+		t.Fatalf("resolveDarwinDMGURL = %q, want %q", gotDMG, wantDMG)
 	}
 }
 
@@ -198,6 +201,32 @@ func TestResolveDarwinDMGURLFallsBackToHostArchitecture(t *testing.T) {
 	if got != want {
 		t.Fatalf("resolveDarwinDMGURL fallback = %q, want %q", got, want)
 	}
+	// Cross-arch URL in DownloadURL is aligned to the running host architecture.
+	otherArch := "amd64"
+	if arch == "amd64" {
+		otherArch = "arm64"
+	}
+	gotAligned := resolveDarwinDMGURL(&UpdateCheckResult{
+		LatestVersion: "0.5.0",
+		DownloadURL:   "https://github.com/hoxiai/hoxi/releases/download/v0.5.0/Hoxi-0.5.0-darwin-" + otherArch + ".dmg",
+	})
+	if gotAligned != want {
+		t.Fatalf("resolveDarwinDMGURL aligned = %q, want %q", gotAligned, want)
+	}
+}
+
+func TestResolveArchiveSHA256FromChecksumsTxt(t *testing.T) {
+	got := parseSHA256ForFilename(
+		strings.Repeat("0", 64)+"  Hoxi-0.6.9-darwin-arm64.dmg\n"+strings.Repeat("a", 64)+"  *Hoxi-0.6.9-darwin-amd64.dmg\n",
+		"Hoxi-0.6.9-darwin-amd64.dmg",
+	)
+	if got != strings.Repeat("a", 64) {
+		t.Fatalf("parseSHA256ForFilename = %q", got)
+	}
+	csURL, name := resolveChecksumsURL("https://github.com/hoxiai/hoxi/releases/download/v0.6.9/Hoxi-0.6.9-darwin-amd64.dmg")
+	if csURL != "https://github.com/hoxiai/hoxi/releases/download/v0.6.9/checksums.txt" || name != "Hoxi-0.6.9-darwin-amd64.dmg" {
+		t.Fatalf("resolveChecksumsURL = %q, %q", csURL, name)
+	}
 }
 
 func TestResolveWindowsArchiveURLFallsBackToHostArchitecture(t *testing.T) {
@@ -209,6 +238,18 @@ func TestResolveWindowsArchiveURLFallsBackToHostArchitecture(t *testing.T) {
 	want := "https://github.com/hoxiai/hoxi/releases/download/v0.5.0/Hoxi-0.5.0-windows-" + arch + ".zip"
 	if got != want {
 		t.Fatalf("resolveWindowsArchiveURL fallback = %q, want %q", got, want)
+	}
+	// A foreign-arch ZIP is aligned to the running host architecture.
+	otherArch := "amd64"
+	if arch == "amd64" {
+		otherArch = "arm64"
+	}
+	gotAligned := resolveWindowsArchiveURL(&UpdateCheckResult{
+		LatestVersion: "0.5.0",
+		DownloadURL:   "https://github.com/hoxiai/hoxi/releases/download/v0.5.0/Hoxi-0.5.0-windows-" + otherArch + ".zip",
+	})
+	if gotAligned != want {
+		t.Fatalf("resolveWindowsArchiveURL aligned = %q, want %q", gotAligned, want)
 	}
 }
 

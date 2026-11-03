@@ -71,7 +71,7 @@ func (g *Gateway) updateLocallyIdle() bool {
 		return false
 	}
 	st := g.status.Snapshot()
-	return st.Available && st.Running == 0 && st.Attention == 0 &&
+	return st.Available && st.Running == 0 && st.PendingApprovals == 0 &&
 		(g.runner == nil || g.runner.ActiveProcessCount() == 0)
 }
 

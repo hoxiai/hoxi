@@ -48,8 +48,17 @@ let downloadStartedAtMs = 0;
 let lastSampleAtMs = 0;
 let lastSampleBytes = 0;
 let smoothedSpeedBps = 0;
+let backgroundInstallPoll: ReturnType<typeof setInterval> | undefined;
+
+function stopBackgroundInstallPoll(): void {
+  if (backgroundInstallPoll !== undefined) {
+    clearInterval(backgroundInstallPoll);
+    backgroundInstallPoll = undefined;
+  }
+}
 
 export function resetUpdateDownloadMetrics(): void {
+  stopBackgroundInstallPoll();
   downloadStartedAtMs = 0;
   lastSampleAtMs = 0;
   lastSampleBytes = 0;
@@ -252,6 +261,9 @@ export async function refreshDesktopUpdateStatus(): Promise<void> {
     if (generation !== statusGeneration) return;
     const nextProgress =
       status.progress ?? (desktopUpdater.isInstalling ? desktopUpdater.progress : null);
+    if (!isSelfUpdateActive(nextProgress)) {
+      stopBackgroundInstallPoll();
+    }
     const metrics = recordUpdateDownloadSample(nextProgress);
     setDesktopUpdater({
       nativeAvailable: status.available,
@@ -279,6 +291,7 @@ export async function startDesktopUpdate(): Promise<void> {
   recordUpdateDownloadSample(initialProgress);
   let earlyPoll: ReturnType<typeof setTimeout> | undefined;
   let activePoll: ReturnType<typeof setInterval> | undefined;
+  let failed = false;
   // Everything after the click runs inside try: a throw while rendering the
   // progress state must surface as an error, not silently skip the request.
   try {
@@ -295,15 +308,32 @@ export async function startDesktopUpdate(): Promise<void> {
     (activePoll as { unref?: () => void }).unref?.();
     await updaterAPI.install();
   } catch (err: unknown) {
+    failed = true;
     setDesktopUpdater({
+      isInstalling: false,
       progress: null,
       error: errorMessageOf(err, t("header.updateInstallFailed")),
     });
   } finally {
     clearTimeout(earlyPoll);
     clearInterval(activePoll);
-    setDesktopUpdater("isInstalling", false);
-    await refreshDesktopUpdateStatus();
+    if (!failed) {
+      await refreshDesktopUpdateStatus();
+      setDesktopUpdater("isInstalling", false);
+      if (isSelfUpdateActive(desktopUpdater.progress) && backgroundInstallPoll === undefined) {
+        backgroundInstallPoll = setInterval(() => {
+          if (!isSelfUpdateActive(desktopUpdater.progress)) {
+            stopBackgroundInstallPoll();
+            return;
+          }
+          void refreshDesktopUpdateStatus();
+        }, INSTALL_ACTIVE_POLL_MS);
+        (backgroundInstallPoll as { unref?: () => void }).unref?.();
+      }
+    } else {
+      stopBackgroundInstallPoll();
+      await refreshDesktopUpdateStatus();
+    }
   }
 }
 

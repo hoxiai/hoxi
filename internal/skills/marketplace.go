@@ -122,7 +122,7 @@ func NewMarketplaceService(baseURL string, client *http.Client) *MarketplaceServ
 		if len(via) >= 5 {
 			return fmt.Errorf("%w: too many redirects", ErrMarketplaceUnavailable)
 		}
-		if err := validateMarketplaceDownloadURL(req.URL); err != nil {
+		if err := validateMarketplaceDownloadURL(req.URL, baseURL); err != nil {
 			return err
 		}
 		if prevRedirect != nil {
@@ -264,7 +264,7 @@ func (s *MarketplaceService) catalog(ctx context.Context, forceRefresh bool) ([]
 
 	skills := make([]MarketplaceSkill, 0, len(payload.Data.Items))
 	for _, item := range payload.Data.Items {
-		clean, err := sanitizeMarketplaceSkill(item)
+		clean, err := sanitizeMarketplaceSkillForBase(item, s.baseURL)
 		if err != nil {
 			continue
 		}
@@ -280,6 +280,10 @@ func (s *MarketplaceService) catalog(ctx context.Context, forceRefresh bool) ([]
 // sanitizeMarketplaceSkill drops entries whose slug or URL would let the
 // catalog write outside ~/.hoxi/skills or fetch from an unapproved host.
 func sanitizeMarketplaceSkill(item MarketplaceSkill) (MarketplaceSkill, error) {
+	return sanitizeMarketplaceSkillForBase(item, "")
+}
+
+func sanitizeMarketplaceSkillForBase(item MarketplaceSkill, baseURL string) (MarketplaceSkill, error) {
 	slug := strings.TrimSpace(item.Slug)
 	if !marketplaceSkillSlug.MatchString(slug) || len(slug) > 64 {
 		return MarketplaceSkill{}, fmt.Errorf("%w: %q", ErrInvalidSkillSlug, slug)
@@ -289,7 +293,7 @@ func sanitizeMarketplaceSkill(item MarketplaceSkill) (MarketplaceSkill, error) {
 	if err != nil {
 		return MarketplaceSkill{}, fmt.Errorf("%w: invalid contentUrl", ErrBadRequest)
 	}
-	if err := validateMarketplaceDownloadURL(parsed); err != nil {
+	if err := validateMarketplaceDownloadURL(parsed, baseURL); err != nil {
 		return MarketplaceSkill{}, err
 	}
 	if len(item.ContentSHA256) != 64 {
@@ -310,7 +314,7 @@ func sanitizeMarketplaceSkill(item MarketplaceSkill) (MarketplaceSkill, error) {
 	return item, nil
 }
 
-func validateMarketplaceDownloadURL(parsed *url.URL) error {
+func validateMarketplaceDownloadURL(parsed *url.URL, baseURL string) error {
 	if parsed == nil || parsed.Host == "" {
 		return fmt.Errorf("%w: invalid contentUrl", ErrBadRequest)
 	}
@@ -320,7 +324,7 @@ func validateMarketplaceDownloadURL(parsed *url.URL) error {
 	if parsed.Scheme == "http" && !isLoopbackHost(parsed.Hostname()) {
 		return fmt.Errorf("%w: plain http is only allowed for loopback", ErrBadRequest)
 	}
-	if !marketplaceHostAllowed(parsed.Hostname()) {
+	if !marketplaceHostAllowed(parsed.Hostname(), baseURL) {
 		return fmt.Errorf("%w: host %q is not approved for skill downloads", ErrBadRequest, parsed.Hostname())
 	}
 	return nil
@@ -341,7 +345,7 @@ func sanitizeSafeWebURL(raw string) string {
 	return u.String()
 }
 
-func marketplaceHostAllowed(host string) bool {
+func marketplaceHostAllowed(host, baseURL string) bool {
 	host = strings.ToLower(strings.TrimSpace(host))
 	if host == "" {
 		return false
@@ -352,11 +356,16 @@ func marketplaceHostAllowed(host string) bool {
 	if isLoopbackHost(host) {
 		return true
 	}
-	base, err := url.Parse(hoxipaths.ServerBaseURL())
-	if err != nil {
-		return false
+	for _, candidate := range []string{baseURL, hoxipaths.ServerBaseURL(), hoxipaths.DefaultServerBaseURL} {
+		raw := strings.TrimSpace(candidate)
+		if raw == "" {
+			continue
+		}
+		if base, err := url.Parse(raw); err == nil && strings.EqualFold(base.Hostname(), host) {
+			return true
+		}
 	}
-	return strings.EqualFold(base.Hostname(), host)
+	return false
 }
 
 func isLoopbackHost(host string) bool {
