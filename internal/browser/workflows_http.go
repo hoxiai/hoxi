@@ -24,7 +24,7 @@ func (s *Service) serveWorkflows(w http.ResponseWriter, r *http.Request) {
 		fail(w, 405, errors.New("GET or POST required"))
 		return
 	}
-	key, err := s.requestScope(r)
+	key, callerSession, err := s.requestScopeWithCaller(r)
 	if err != nil {
 		fail(w, 400, err)
 		return
@@ -36,6 +36,13 @@ func (s *Service) serveWorkflows(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	sc := s.scopes[key]
+	if sc != nil && tab == "" {
+		if callerSession != "" && sc.sessionTabs != nil && sc.sessionTabs[callerSession] != "" {
+			tab = sc.sessionTabs[callerSession]
+		} else {
+			tab = sc.tabID
+		}
+	}
 	s.mu.Unlock()
 	if sc == nil || sc.workflows == nil {
 		if r.Method == "GET" {

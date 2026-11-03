@@ -40,7 +40,7 @@ func (s *Service) serveTransfer(w http.ResponseWriter, r *http.Request) {
 		fail(w, 405, errors.New("POST required"))
 		return
 	}
-	key, err := s.requestScope(r)
+	key, callerSession, err := s.requestScopeWithCaller(r)
 	if err != nil {
 		fail(w, 400, err)
 		return
@@ -62,6 +62,9 @@ func (s *Service) serveTransfer(w http.ResponseWriter, r *http.Request) {
 	if sc.extension != nil || sc.workflows == nil {
 		fail(w, 409, errors.New("use Chrome's native upload and download dialogs for Chrome Link"))
 		return
+	}
+	if callerSession != "" && callerSession != sc.sessionID && sc.browser != nil {
+		sc.prepareCallerTab(ctx, callerSession, nil)
 	}
 	if strings.HasSuffix(r.URL.Path, "/upload") {
 		if !sc.manual {
