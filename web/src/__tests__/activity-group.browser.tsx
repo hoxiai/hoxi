@@ -161,6 +161,69 @@ async function testThoughtBoxFirstExpandAnimates() {
   } finally { dispose(); host.remove(); }
 }
 
+function readStep(sid: string, index: number, file: string | undefined, status: "pending" | "running" | "completed"): ToolPart {
+  return {
+    type: "tool", id: `prt_read_${sid}_${index}`, sessionID: sid, messageID: `msg_${sid}`, callID: `read_${index}`, tool: "read",
+    state: { status, input: file ? { filePath: file } : {}, time: status === "completed" ? { start: 2, end: 3 } : { start: 2 }, metadata: {} },
+  } as ToolPart;
+}
+
+async function testPendingStepKeepsTarget() {
+  const f = fixture("auto-collapse");
+  const thought = { ...f.reasoning, time: { start: 1, end: 2 } } as MessagePart;
+  const detail = () => f.header().querySelector("[data-component='text-reveal']")?.getAttribute("aria-label") ?? "";
+  try {
+    f.setParts([thought, readStep(f.sid, 0, "/probe/alpha.ts", "running")]);
+    await wait(1100); // the bar swaps at most once a second, counting the mount
+    assertEqual(detail(), "alpha.ts");
+    // The next read starts before its arguments arrive.
+    f.setParts([thought, readStep(f.sid, 0, "/probe/alpha.ts", "completed"), readStep(f.sid, 1, undefined, "pending")]);
+    await frame();
+    assertEqual(detail(), "alpha.ts", "a step without its target yet must not blank the collapsed bar");
+    f.setParts([thought, readStep(f.sid, 0, "/probe/alpha.ts", "completed"), readStep(f.sid, 1, "/probe/beta.ts", "running")]);
+    await wait(1300);
+    assertEqual(detail(), "beta.ts", "the bar moves on once the new target is known");
+  } finally { f.cleanup(); }
+}
+
+async function testParallelStepsNameAKnownTarget() {
+  const f = fixture("auto-collapse");
+  const thought = { ...f.reasoning, time: { start: 1, end: 2 } } as MessagePart;
+  try {
+    f.setParts([thought, readStep(f.sid, 0, "/probe/alpha.ts", "running"), readStep(f.sid, 1, undefined, "pending")]);
+    await wait(1100);
+    const detail = f.header().querySelector("[data-component='text-reveal']")?.getAttribute("aria-label");
+    assertEqual(detail, "alpha.ts (+1)", "parallel steps should name a step whose target is known, never a lone count");
+  } finally { f.cleanup(); }
+}
+
+async function testRapidStepsSwapCalmly() {
+  const f = fixture("auto-collapse");
+  const thought = { ...f.reasoning, time: { start: 1, end: 2 } } as MessagePart;
+  const detail = () => f.header().querySelector<HTMLElement>("[data-component='text-reveal']");
+  try {
+    f.setParts([thought, readStep(f.sid, 0, "/probe/a0.ts", "running")]);
+    await wait(1200);
+    let swaps = 0;
+    const observer = new MutationObserver((records) => {
+      for (const record of records) {
+        if ((record.target as HTMLElement).getAttribute("data-swapping") === "true") swaps++;
+      }
+    });
+    observer.observe(f.group(), { subtree: true, attributes: true, attributeFilter: ["data-swapping"] });
+    const done: ToolPart[] = [];
+    for (let i = 1; i <= 4; i++) {
+      done.push(readStep(f.sid, i - 1, `/probe/a${i - 1}.ts`, "completed"));
+      f.setParts([thought, ...done, readStep(f.sid, i, `/probe/a${i}.ts`, "running")]);
+      await wait(60);
+    }
+    observer.disconnect();
+    assertTrue(swaps <= 1, `four steps in 240ms should swap the bar at most once, swapped ${swaps} times`);
+    await wait(1300);
+    assertEqual(detail()?.getAttribute("aria-label"), "a4.ts", "the bar settles on the latest step");
+  } finally { f.cleanup(); }
+}
+
 async function testSearchReveal() {
   const f = fixture("collapsed");
   try {
@@ -378,6 +441,9 @@ export async function runBrowserTest(): Promise<string[]> {
     ["collapse animates, rapid reopen cancels exit, and manual choices persist", testCollapseAndReopen],
     ["expanding a closed group grows instead of jumping open", testExpandAnimates],
     ["a thought's first expand grows instead of jumping open", testThoughtBoxFirstExpandAnimates],
+    ["a step waiting for its arguments keeps the previous target", testPendingStepKeepsTarget],
+    ["parallel steps name a known target instead of a bare count", testParallelStepsNameAKnownTarget],
+    ["rapid steps swap the collapsed bar at most once per interval", testRapidStepsSwapCalmly],
     ["search reveals closed groups and all earlier steps", testSearchReveal],
     ["reasoning-only final output stays readable when a tool arrives late", testFinalReasoning],
     ["timeline commit keeps the activity container through reasoning, tools, and its result", testCommitExecutionStream],

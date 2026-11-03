@@ -23,6 +23,7 @@ import {
   DiffChanges,
   Icon,
   type IconName,
+  LIVE_STATUS_SWAP_MS,
   TextReveal,
   TextShimmer,
 } from "../icons";
@@ -120,6 +121,8 @@ function rememberGroupValue<T>(values: Map<string, T>, key: string, value: T) {
   }
   values.set(key, value);
 }
+
+type StepDisplay = { action: string; detail: string };
 
 export default function ContextActivityGroupView(props: {
   parts: MessagePart[];
@@ -549,17 +552,17 @@ export default function ContextActivityGroupView(props: {
 
   const stats = () => stepSummary().stats;
 
-  const activeStepDisplay = createMemo(() => {
+  const activeStepDisplay = createMemo<StepDisplay, StepDisplay | undefined>((previous) => {
     const { runningTools, activeReasoning, lastTool } = stepSummary();
     if (runningTools.length > 0) {
-      const active = runningTools[runningTools.length - 1];
-      const action = formatToolDisplayName(active.tool, active);
-      const detail = summarizeStepTarget(active);
-      const extra = runningTools.length > 1 ? ` (+${runningTools.length - 1})` : "";
-      return {
-        action,
-        detail: `${detail}${extra}`.trim(),
-      };
+      // Show the newest running step whose target is known; steps whose arguments haven't arrived keep the bar as it was.
+      const targeted = runningTools.findLast((tool) => summarizeStepTarget(tool) !== "");
+      const awaitingArgs = runningTools.every((tool) => Object.keys(tool.state.input ?? {}).length === 0);
+      if (!targeted && awaitingArgs && previous?.detail) return previous;
+      const active = targeted ?? runningTools[runningTools.length - 1];
+      const detail = targeted ? summarizeStepTarget(targeted) : "";
+      const extra = detail && runningTools.length > 1 ? ` (+${runningTools.length - 1})` : "";
+      return { action: formatToolDisplayName(active.tool, active), detail: `${detail}${extra}`.trim() };
     }
 
     if (activeReasoning) {
@@ -706,7 +709,7 @@ export default function ContextActivityGroupView(props: {
               </span>
               <Show when={activeStepDisplay().detail}>
                 <span class="font-mono text-[12px] text-[var(--text-secondary)] truncate max-w-[360px] inline-flex items-center min-w-0">
-                  <TextReveal text={activeStepDisplay().detail} truncate />
+                  <TextReveal text={activeStepDisplay().detail} truncate minSwapMs={LIVE_STATUS_SWAP_MS} />
                 </span>
               </Show>
               <Show when={stats().badges.length > 0}>

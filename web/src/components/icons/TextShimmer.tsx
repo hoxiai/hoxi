@@ -1,4 +1,4 @@
-import { createEffect, createMemo, on, onCleanup, onMount, type ValidComponent } from "solid-js"
+import { createEffect, createMemo, createSignal, on, onCleanup, onMount, untrack, type ValidComponent } from "solid-js"
 import { createStore } from "solid-js/store"
 import { Dynamic } from "solid-js/web"
 import { observeSpinner } from "./Spinner"
@@ -125,6 +125,9 @@ export function isSameTextRevealStream(prev: string | undefined, next: string | 
   return false
 }
 
+/** At most one swap per second for live status lines (current step, thinking summary). */
+export const LIVE_STATUS_SWAP_MS = 1000
+
 /**
  * Kilo's TextReveal — top-to-bottom CSS gradient mask wipe animation for live
  * step details and reasoning summaries without vertical height changes.
@@ -139,7 +142,52 @@ export function TextReveal(props: {
   springSoft?: string
   growOnly?: boolean
   truncate?: boolean
+  /**
+   * Least time between two swaps. A live status line can change several
+   * times a second; each swap is an animation, so faster changes read as
+   * flicker. Later replacements wait and only the newest one is shown.
+   * Text that keeps growing the current line updates at once.
+   */
+  minSwapMs?: number
 }) {
+  const [paced, setPaced] = createSignal(props.text)
+  // Mounting with text counts as showing it, so a change right after mount waits too.
+  let lastSwapAt = props.text ? Date.now() : 0
+  let swapTimer: ReturnType<typeof setTimeout> | undefined
+  const clearSwapTimer = () => {
+    if (swapTimer !== undefined) clearTimeout(swapTimer)
+    swapTimer = undefined
+  }
+  const showNow = (text: string | undefined) => {
+    clearSwapTimer()
+    lastSwapAt = Date.now()
+    setPaced(text)
+  }
+  createEffect(
+    on(
+      () => props.text,
+      (next) => {
+        const shown = untrack(paced)
+        if (next === shown) return clearSwapTimer()
+        const min = props.minSwapMs ?? 0
+        if (min <= 0 || isSameTextRevealStream(shown, next)) {
+          clearSwapTimer()
+          setPaced(next)
+          return
+        }
+        const wait = lastSwapAt + min - Date.now()
+        if (wait <= 0) return showNow(next)
+        swapTimer ??= setTimeout(() => {
+          swapTimer = undefined
+          const latest = untrack(() => props.text)
+          if (latest !== untrack(paced)) showNow(latest)
+        }, wait)
+      },
+      { defer: true },
+    ),
+  )
+  onCleanup(clearSwapTimer)
+
   const [state, setState] = createStore({
     cur: props.text,
     old: undefined as string | undefined,
@@ -166,7 +214,7 @@ export function TextReveal(props: {
 
   createEffect(
     on(
-      () => props.text,
+      paced,
       (next, prev) => {
         if (next === prev) return
         if (isSameTextRevealStream(prev, next)) {
@@ -225,7 +273,7 @@ export function TextReveal(props: {
       data-swapping={state.swapping ? "true" : "false"}
       data-truncate={props.truncate ? "true" : "false"}
       class={props.class}
-      aria-label={props.text ?? ""}
+      aria-label={paced() ?? ""}
       style={{
         "--text-reveal-duration": ms(props.duration, 380),
         "--text-reveal-edge": pct(props.edge, 17),

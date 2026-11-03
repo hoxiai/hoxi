@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js";
 import type { MessagePart } from "../../services/sse-types";
 import { appSettings, isSessionBusy } from "../../store/workspace";
-import { Icon, TextReveal, TextShimmer } from "../icons";
+import { Icon, LIVE_STATUS_SWAP_MS, TextReveal, TextShimmer } from "../icons";
 import MarkdownView from "./MarkdownView";
 import { t } from "../../i18n";
 import { formatElapsedSeconds } from "./duration-label";
@@ -435,7 +435,7 @@ export default function ThoughtBox(props: {
           <Show when={headerTitle()}>
             <span class="truncate text-[13px] font-normal text-[var(--text-muted)] max-w-[540px] inline-flex items-center gap-1 min-w-0">
               <span class="shrink-0">·</span>
-              <TextReveal text={headerTitle()} truncate />
+              <TextReveal text={headerTitle()} truncate minSwapMs={LIVE_STATUS_SWAP_MS} />
             </span>
           </Show>
           <Show when={!streaming() && durationSec() >= 0.05}>
