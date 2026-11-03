@@ -295,11 +295,15 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 	resetGeminiResume := rec.Runtime == string(RuntimeGeminiCLI) &&
 		strings.TrimSpace(rec.ExternalID) != "" &&
 		ShouldGeminiCLIUseAgy(rec.ModelID) != ShouldGeminiCLIUseAgy(modelID)
+	resetAgySplitBrain := (rec.Runtime == string(RuntimeAntigravity) ||
+		(rec.Runtime == string(RuntimeGeminiCLI) && ShouldGeminiCLIUseAgy(modelID))) &&
+		len(rec.Turns) > 0 &&
+		hasAgySplitBrainConversation(rec.ExternalID)
 	_, _, _ = s.store.Update(sessionID, func(r *SessionRecord) {
 		r.ModelID = modelID
 		r.Mode = mode
 		r.ProviderID = rec.ProviderID
-		if resetGeminiResume {
+		if resetGeminiResume || resetAgySplitBrain {
 			r.ExternalID = ""
 			r.ContextPending = len(r.Turns) > 0
 			r.ContextTurnCount = len(r.Turns)

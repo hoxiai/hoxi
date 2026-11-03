@@ -139,11 +139,46 @@ func agyBrainRoots() []string {
 	}
 }
 
+func agyConversationRoots() []string {
+	gRoot := geminiHomeDir()
+	if gRoot == "" {
+		return nil
+	}
+	return []string{
+		filepath.Join(gRoot, "antigravity-cli", "conversations"),
+		filepath.Join(gRoot, "antigravity", "conversations"),
+	}
+}
+
+// hasAgySplitBrainConversation reports whether an Antigravity conversation
+// wrote its initial trajectory to the legacy Protobuf store (<id>.pb) while
+// leaving a competing SQLite store (<id>.db) on disk (caused by a schema-init
+// SQLite lock race in agy). Resuming such a conversation via --conversation
+// opens the SQLite store and drops the Protobuf trajectory.
+func hasAgySplitBrainConversation(conversationID string) bool {
+	conversationID = strings.TrimSpace(conversationID)
+	if !validStoreID(conversationID) {
+		return false
+	}
+	for _, root := range agyConversationRoots() {
+		pbInfo, pbErr := os.Stat(filepath.Join(root, conversationID+".pb"))
+		if pbErr != nil || pbInfo.IsDir() || pbInfo.Size() == 0 {
+			continue
+		}
+		dbInfo, dbErr := os.Stat(filepath.Join(root, conversationID+".db"))
+		if dbErr == nil && !dbInfo.IsDir() && dbInfo.Size() > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func agyTranscriptLogDir(root, conversationID string) string {
 	return filepath.Join(root, conversationID, ".system_generated", "logs")
 }
 
-// lookupAgyTranscriptRow returns the first row for stepIndex that satisfies keep.
+// lookupAgyTranscriptRow returns the latest row for stepIndex in the active
+// trajectory segment (after any step_index=0 USER_INPUT reset) that satisfies keep.
 func lookupAgyTranscriptRow(conversationID string, stepIndex int, keep func(agyTranscriptRow) bool) (agyTranscriptRow, bool) {
 	if !validStoreID(conversationID) {
 		return agyTranscriptRow{}, false
@@ -155,16 +190,28 @@ func lookupAgyTranscriptRow(conversationID string, stepIndex int, keep func(agyT
 			if err != nil {
 				continue
 			}
+			var lastRow agyTranscriptRow
+			matched := false
 			scanner := bufio.NewScanner(f)
 			scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
 			for scanner.Scan() {
 				var row agyTranscriptRow
-				if json.Unmarshal(bytes.TrimSpace(scanner.Bytes()), &row) == nil && row.StepIndex == stepIndex && keep(row) {
-					_ = f.Close()
-					return row, true
+				if json.Unmarshal(bytes.TrimSpace(scanner.Bytes()), &row) != nil {
+					continue
+				}
+				if row.StepIndex == 0 && row.Type == "USER_INPUT" {
+					lastRow = agyTranscriptRow{}
+					matched = false
+				}
+				if row.StepIndex == stepIndex && keep(row) {
+					lastRow = row
+					matched = true
 				}
 			}
 			_ = f.Close()
+			if matched {
+				return lastRow, true
+			}
 		}
 	}
 	return agyTranscriptRow{}, false
@@ -371,6 +418,10 @@ func (c *agyEditPayloadCursor) pull() {
 			}
 			if row.Type == "USER_INPUT" {
 				c.pending = nil
+				if row.StepIndex == 0 {
+					clear(c.byStep)
+					clear(c.assigned)
+				}
 				continue
 			}
 			for i, call := range row.ToolCalls {

@@ -566,3 +566,174 @@ printf '%s\n' '{"conversation_id":"conv-stale-err-1","event":"result","result":{
 		}
 	}
 }
+
+func TestLookupAgyTranscriptResetsOnStepZeroUserInput(t *testing.T) {
+	binRoot := t.TempDir()
+	t.Setenv("GEMINI_HOME", binRoot)
+
+	convID := "conv-step-reset-1"
+	logDir := agyTranscriptLogDir(filepath.Join(binRoot, "antigravity-cli", "brain"), convID)
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rows := strings.Join([]string{
+		`{"step_index":0,"type":"USER_INPUT","content":"Turn 1 question"}`,
+		`{"step_index":1,"type":"PLANNER_RESPONSE","thinking":"Turn 1 stale thinking step 1","tool_calls":[{"name":"write_file","args":{"Path":"old.go","Content":"old-body"}}]}`,
+		`{"step_index":2,"type":"PLANNER_RESPONSE","thinking":"Turn 1 stale thinking step 2","content":"Turn 1 answer"}`,
+		`{"step_index":0,"type":"USER_INPUT","content":"Turn 2 question after split-brain reset"}`,
+		`{"step_index":1,"type":"PLANNER_RESPONSE","content":"Turn 2 step 1 without thinking","tool_calls":[{"name":"write_file","args":{"Path":"new.go","Content":"new-body"}}]}`,
+		`{"step_index":2,"type":"PLANNER_RESPONSE","thinking":"Turn 2 fresh thinking step 2","content":"Turn 2 answer"}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(logDir, "transcript_full.jsonl"), []byte(rows), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := lookupAgyTranscriptThinking(convID, 1); got != "" {
+		t.Fatalf("expected step 1 after reset with empty thinking not to leak Turn 1 thinking, got %q", got)
+	}
+	if got := lookupAgyTranscriptThinking(convID, 2); got != "Turn 2 fresh thinking step 2" {
+		t.Fatalf("expected step 2 to return Turn 2 thinking, got %q", got)
+	}
+
+	cursor := newAgyEditPayloadCursor(convID)
+	name, args := cursor.lookup(2, map[string]interface{}{"Path": "new.go"}, false)
+	if name != "write_file" || args["Content"] != "new-body" {
+		t.Fatalf("expected edit payload cursor to return post-reset edit for step 2, got name=%q args=%+v", name, args)
+	}
+}
+
+func TestRunnerAgySplitBrainConversationRecoversWithFullPlanContext(t *testing.T) {
+	repoDir := initTestGitRepo(t)
+	storePath := filepath.Join(t.TempDir(), "runner-sessions.json")
+	tracker := statusbar.NewTracker()
+	wtMgr := worktree.NewManager(repoDir)
+	svc := NewService(repoDir, wtMgr, tracker, storePath)
+	defer svc.CloseAll()
+
+	mux := http.NewServeMux()
+	svc.RegisterRoutes(mux)
+
+	createBody, _ := json.Marshal(map[string]string{
+		"runtime":     "antigravity",
+		"title":       "Backup Plan Split-Brain Test",
+		"modelID":     "gemini-4-argon-high",
+		"directory":   repoDir,
+		"sandboxMode": "worktree",
+	})
+	recCreate := httptest.NewRecorder()
+	mux.ServeHTTP(recCreate, httptest.NewRequest(http.MethodPost, "/api/hoxi/runner/sessions", bytes.NewReader(createBody)))
+	if recCreate.Code != http.StatusOK {
+		t.Fatalf("create session failed (%d): %s", recCreate.Code, recCreate.Body.String())
+	}
+	var created SessionInfo
+	if err := json.Unmarshal(recCreate.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+
+	binRoot := t.TempDir()
+	agyDir := filepath.Join(binRoot, "bin")
+	convDir := filepath.Join(binRoot, "antigravity-cli", "conversations")
+	if err := os.MkdirAll(agyDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(convDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate Turn 1 having already completed with a 4,500-char backup plan,
+	// while agy wrote conv-split-1.pb + stub conv-split-1.db due to SQLite lock.
+	longPlan := "## 备份架构规划\n" + strings.Repeat("详细数据库备份与恢复阶段性实施细则说明段落。", 180) + "\nTAIL_MARKER_BACKUP_PLAN_END"
+	_, _, _ = svc.store.Update(created.ID, func(r *SessionRecord) {
+		r.ExternalID = "conv-split-1"
+		r.ContextPending = false
+		r.Turns = []MessageTurn{
+			{
+				Info:  MessageInfo{ID: "msg_u_1", SessionID: created.ID, Role: "user"},
+				Parts: []MessagePart{{ID: "prt_u_1", Type: "text", Text: "帮我规划一下关于数据库备份的方案"}},
+			},
+			{
+				Info:  MessageInfo{ID: "msg_a_1", SessionID: created.ID, Role: "assistant"},
+				Parts: []MessagePart{{ID: "prt_a_1", Type: "text", Text: longPlan}},
+			},
+		}
+	})
+	if err := os.WriteFile(filepath.Join(convDir, "conv-split-1.pb"), []byte("proto-trajectory-data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(convDir, "conv-split-1.db"), []byte("sqlite-empty-stub"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Healthy conversation created on Turn 2 has only a .db file (no .pb file).
+	if err := os.WriteFile(filepath.Join(convDir, "conv-healed-2.db"), []byte("sqlite-healthy-trajectory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	argsFile := filepath.Join(created.Directory, ".split_args")
+	stdinFile := filepath.Join(created.Directory, ".split_stdin")
+	t.Setenv("GEMINI_HOME", binRoot)
+	t.Setenv("PATH", agyDir+string(os.PathListSeparator)+"/usr/bin:/bin")
+	t.Setenv("TEST_SPLIT_ARGS", argsFile)
+	t.Setenv("TEST_SPLIT_STDIN", stdinFile)
+
+	script := `#!/bin/sh
+printf '%s\n' "$@" > "$TEST_SPLIT_ARGS"
+cat > "$TEST_SPLIT_STDIN"
+printf '%s\n' '{"conversation_id":"conv-healed-2","event":"init","init":{"model":"gemini-4-argon-high","permission_mode":"accept-edits"}}'
+printf '%s\n' '{"conversation_id":"conv-healed-2","event":"step_update","step_update":{"conversation_id":"conv-healed-2","state":"ACTIVE","step_index":1,"step_type":"agent_response","text_delta":"STARTED_IMPLEMENTATION"}}'
+printf '%s\n' '{"conversation_id":"conv-healed-2","event":"result","result":{"conversation_id":"conv-healed-2","response":"STARTED_IMPLEMENTATION","status":"DONE"}}'
+`
+	execstub.Write(t, agyDir, "agy", script)
+
+	ch, unsub := svc.Subscribe(created.ID)
+	defer unsub()
+
+	// Turn 2: should detect conv-split-1 (.pb + .db), omit --conversation conv-split-1,
+	// and inject Turn 1's full backup plan including TAIL_MARKER_BACKUP_PLAN_END.
+	recPrompt := httptest.NewRecorder()
+	mux.ServeHTTP(recPrompt, httptest.NewRequest(http.MethodPost, "/api/hoxi/runner/sessions/"+created.ID+"/prompt", strings.NewReader(`{"text":"好，结合项目实际情况开始做"}`)))
+	if recPrompt.Code != http.StatusOK {
+		t.Fatalf("prompt 2 failed (%d): %s", recPrompt.Code, recPrompt.Body.String())
+	}
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case evt := <-ch:
+			if evt.Type == "session.idle" {
+				goto turn2Done
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for Turn 2 session.idle")
+		}
+	}
+turn2Done:
+	argsRaw, _ := os.ReadFile(argsFile)
+	if strings.Contains(string(argsRaw), "conv-split-1") {
+		t.Fatalf("expected Turn 2 not to pass broken --conversation conv-split-1, got args:\n%s", string(argsRaw))
+	}
+	stdinRaw, _ := os.ReadFile(stdinFile)
+	if !strings.Contains(string(stdinRaw), "TAIL_MARKER_BACKUP_PLAN_END") {
+		t.Fatalf("expected Turn 2 stdin to carry the full Turn 1 backup plan tail marker, got len=%d:\n%s", len(stdinRaw), string(stdinRaw))
+	}
+
+	// Turn 3: conv-healed-2 only has .db (no .pb), so it must resume natively via --conversation conv-healed-2.
+	recPrompt3 := httptest.NewRecorder()
+	mux.ServeHTTP(recPrompt3, httptest.NewRequest(http.MethodPost, "/api/hoxi/runner/sessions/"+created.ID+"/prompt", strings.NewReader(`{"text":"继续下一步"}`)))
+	if recPrompt3.Code != http.StatusOK {
+		t.Fatalf("prompt 3 failed (%d): %s", recPrompt3.Code, recPrompt3.Body.String())
+	}
+	deadline3 := time.After(5 * time.Second)
+	for {
+		select {
+		case evt := <-ch:
+			if evt.Type == "session.idle" {
+				goto turn3Done
+			}
+		case <-deadline3:
+			t.Fatal("timed out waiting for Turn 3 session.idle")
+		}
+	}
+turn3Done:
+	args3Raw, _ := os.ReadFile(argsFile)
+	if !strings.Contains(string(args3Raw), "conv-healed-2") {
+		t.Fatalf("expected Turn 3 to resume healthy --conversation conv-healed-2, got args:\n%s", string(args3Raw))
+	}
+}
