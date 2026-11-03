@@ -221,7 +221,7 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 				}
 				cur = strings.TrimSpace(rec.ParentID)
 			}
-			return ""
+			return "default"
 		})
 	}
 	if profileDir := hoxipaths.BrowserProfileDir(); profileDir != "" {

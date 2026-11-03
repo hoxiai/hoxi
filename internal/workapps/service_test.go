@@ -108,14 +108,48 @@ func TestResolveBrowserProfileKey(t *testing.T) {
 	if got := svc.ResolveBrowserProfileKey("workstore_store-1688-factory1"); got != "store-1688-factory1" {
 		t.Fatalf("expected direct workstore_ scope to resolve store-1688-factory1, got %q", got)
 	}
+	if got := svc.ResolveBrowserProfileKey("workapp_1688"); got != "default" {
+		t.Fatalf("expected direct workapp_ scope without active store to resolve default, got %q", got)
+	}
 	if got := svc.ResolveBrowserProfileKey("ses_bound_1688"); got != "store-1688-factory1" {
 		t.Fatalf("expected bound session to resolve store-1688-factory1, got %q", got)
 	}
-	if got := svc.ResolveBrowserProfileKey("ses_unbound"); got != "" {
-		t.Fatalf("expected unbound session to resolve empty profile key, got %q", got)
+	if got := svc.ResolveBrowserProfileKey("ses_unbound"); got != "default" {
+		t.Fatalf("expected unbound session to resolve default profile key, got %q", got)
 	}
-	if got := svc.ResolveBrowserProfileKey("ses_traversal"); got != "" {
-		t.Fatalf("expected unsafe storeId to be rejected, got %q", got)
+	if err := svc.SaveState(map[string]any{
+		"activeStoreIdByApp": map[string]any{
+			"1688": "store-1688-factory1",
+		},
+	}); err != nil {
+		t.Fatalf("SaveState activeStoreIdByApp failed: %v", err)
+	}
+	if got := svc.ResolveBrowserProfileKey("ses_unbound"); got != "store-1688-factory1" {
+		t.Fatalf("expected unbound session to upgrade to activeStoreIdByApp store-1688-factory1, got %q", got)
+	}
+	if got := svc.ResolveBrowserProfileKey("ses_traversal"); got != "store-1688-factory1" {
+		t.Fatalf("expected unsafe storeId to fall back to active store for app 1688, got %q", got)
+	}
+	if err := svc.SaveState(map[string]any{
+		"storesByApp": map[string]any{
+			"1688": []any{
+				map[string]any{
+					"id":                "store-1688-factory1",
+					"browserProfileKey": "store-1688-provisional",
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("SaveState storesByApp failed: %v", err)
+	}
+	if got := svc.ResolveBrowserProfileKey("ses_bound_1688"); got != "store-1688-provisional" {
+		t.Fatalf("expected bound session to honor store browserProfileKey, got %q", got)
+	}
+	if got := svc.ResolveBrowserProfileKey("workstore_store-1688-factory1"); got != "store-1688-provisional" {
+		t.Fatalf("expected workstore_ scope to honor store browserProfileKey, got %q", got)
+	}
+	if got := svc.ResolveBrowserProfileKey("workapp_1688"); got != "store-1688-provisional" {
+		t.Fatalf("expected workapp_ scope with active store to resolve store-1688-provisional, got %q", got)
 	}
 	if got := svc.ResolveBrowserProfileKey("workstore_../escape"); got != "" {
 		t.Fatalf("expected unsafe direct workstore_ key to be rejected, got %q", got)

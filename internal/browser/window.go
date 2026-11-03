@@ -121,7 +121,7 @@ func (s *Service) desiredProfileRoot(sc *scope) string {
 	}
 	root = filepath.Clean(root)
 	if resolveProfile != nil {
-		if subKey := sanitizeProfileSubKey(resolveProfile(sc.sessionID, sc.directory)); subKey != "" {
+		if subKey := sanitizeProfileSubKey(resolveProfile(sc.sessionID, sc.directory)); subKey != "" && subKey != "default" {
 			root = filepath.Join(root+"-stores", subKey)
 		}
 	}
@@ -240,6 +240,7 @@ func (sc *scope) resetBrowser() {
 		sc.browserCancel = nil
 	}
 	clear(sc.tabs)
+	clear(sc.sessionTabs)
 	clear(sc.tabCancels)
 	clear(sc.viewports)
 	clear(sc.diagnostics)

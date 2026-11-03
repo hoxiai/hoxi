@@ -53,6 +53,7 @@ type scope struct {
 	allocatorCancel   context.CancelFunc
 	browser           context.Context
 	tabs              map[string]context.Context
+	sessionTabs       map[string]string
 	navigations       map[string]*navigationTracker
 	tabCancels        map[string]context.CancelFunc
 	browserCancel     context.CancelFunc
@@ -245,9 +246,14 @@ func requestScope(r *http.Request) (scopeKey, error) {
 }
 
 func (s *Service) requestScope(r *http.Request) (scopeKey, error) {
+	key, _, err := s.requestScopeWithCaller(r)
+	return key, err
+}
+
+func (s *Service) requestScopeWithCaller(r *http.Request) (scopeKey, string, error) {
 	key, err := requestScope(r)
 	if err != nil {
-		return scopeKey{}, err
+		return scopeKey{}, "", err
 	}
 	s.mu.Lock()
 	resolve := s.resolveSession
@@ -256,21 +262,30 @@ func (s *Service) requestScope(r *http.Request) (scopeKey, error) {
 	if resolve != nil {
 		key.session, err = resolve(key.session, key.directory)
 		if err != nil {
-			return scopeKey{}, err
+			return scopeKey{}, "", err
 		}
 		if !sessionPattern.MatchString(key.session) {
-			return scopeKey{}, errors.New("invalid resolved browser session")
+			return scopeKey{}, "", errors.New("invalid resolved browser session")
 		}
 	}
+	callerSession := key.session
 	if resolveProfile != nil {
 		if storeKey := strings.TrimSpace(resolveProfile(key.session, key.directory)); storeKey != "" {
 			unified := "workstore_" + storeKey
 			if sessionPattern.MatchString(unified) {
 				key.session = unified
+				s.mu.Lock()
+				for existingKey, existingScope := range s.scopes {
+					if existingKey.session == unified && existingScope != nil && !existingScope.closed {
+						key.directory = existingKey.directory
+						break
+					}
+				}
+				s.mu.Unlock()
 			}
 		}
 	}
-	return key, nil
+	return key, callerSession, nil
 }
 
 func (s *Service) acquire(ctx context.Context, key scopeKey, create bool) (*scope, error) {
@@ -286,7 +301,7 @@ func (s *Service) acquire(ctx context.Context, key scopeKey, create bool) (*scop
 			return nil, errors.New("browser scope limit reached")
 		}
 		life, cancel := context.WithCancel(s.ctx)
-		sc = &scope{service: s, sessionID: key.session, directory: key.directory, window: s.defaultWindow, gate: make(chan struct{}, 1), ctx: life, cancel: cancel, tabs: make(map[string]context.Context), tabCancels: make(map[string]context.CancelFunc), width: 1280, height: 800, scale: 1, viewports: make(map[string]viewport), ledger: s.ledger, lastUsed: s.now(), pointerHold: s.pointerHold}
+		sc = &scope{service: s, sessionID: key.session, directory: key.directory, window: s.defaultWindow, gate: make(chan struct{}, 1), ctx: life, cancel: cancel, tabs: make(map[string]context.Context), sessionTabs: make(map[string]string), tabCancels: make(map[string]context.CancelFunc), width: 1280, height: 800, scale: 1, viewports: make(map[string]viewport), ledger: s.ledger, lastUsed: s.now(), pointerHold: s.pointerHold}
 		sc.workflows = &workflowTracker{uploads: make(map[string]UploadRequest), dialogs: make(map[string]PageDialog), tabs: make(map[string]context.Context)}
 		s.scopes[key] = sc
 		delete(s.idleClosed, key)

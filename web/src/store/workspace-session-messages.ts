@@ -294,7 +294,7 @@ export async function dispatchSessionPrompt(
     followTimeline?: boolean;
     /** The prompt was on screen as a queued bubble; its turn replaces it without a fade-in. */
     fromQueue?: boolean;
-    beforeSend?: () => Promise<void>;
+    beforeSend?: (sessionID: string) => Promise<void>;
     onTurnStaged?: (sessionID: string) => void;
   }
 ): Promise<string> {
@@ -513,7 +513,7 @@ export async function dispatchSessionPrompt(
       );
     }
     if (options?.beforeSend) {
-      await options.beforeSend();
+      await options.beforeSend(id);
     }
     const usedAutoPool = Boolean(isAuto && chosenModel && effectiveModel);
     if (effectiveModel) {

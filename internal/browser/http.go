@@ -188,7 +188,7 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		fail(w, 405, errors.New("method not allowed"))
 		return
 	}
-	key, err := s.requestScope(r)
+	key, callerSession, err := s.requestScopeWithCaller(r)
 	if err != nil {
 		fail(w, 400, err)
 		return
@@ -337,6 +337,9 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	stop := context.AfterFunc(ctx, opcancel)
 	defer stop()
 	defer opcancel()
+	if path != "action" && callerSession != "" && callerSession != sc.sessionID {
+		sc.prepareCallerTab(opctx, callerSession, nil)
+	}
 	if path == "frame" {
 		if sc.tabID == "" {
 			if _, err := sc.state(opctx); err != nil {
@@ -366,6 +369,7 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		sc.prepareCallerTab(opctx, callerSession, &action)
 		prevTab := sc.tabID
 		extra, err = sc.perform(opctx, action)
 		if err != nil && !liveInput && action.Action != "tab_new" && action.Action != "tab_select" && action.Action != "tab_close" {
@@ -376,6 +380,12 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			fail(w, 502, err)
 			return
+		}
+		if callerSession != "" && callerSession != sc.sessionID && sc.tabID != "" && (action.Action == "navigate" || action.Action == "tab_new" || action.Action == "tab_select") {
+			if sc.sessionTabs == nil {
+				sc.sessionTabs = make(map[string]string)
+			}
+			sc.sessionTabs[callerSession] = sc.tabID
 		}
 	}
 	state, err := sc.state(opctx)

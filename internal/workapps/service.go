@@ -117,23 +117,36 @@ func (s *Service) SaveState(patch map[string]any) error {
 }
 
 // ResolveBrowserProfileKey maps a browser session ID (either a direct
-// "workstore_<storeId>" scope or a Hoxi session bound in sessionStoreBindings)
-// to a sanitized persistent profile key so each bound store has an isolated
-// Chrome login profile.
+// "workstore_<storeId>" / "workapp_<appId>" scope or a Hoxi session bound in
+// sessionStoreBindings) to a sanitized persistent profile key so bound stores
+// and unbound app sessions share a stable Chrome login profile.
 func (s *Service) ResolveBrowserProfileKey(sessionID string) string {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" || s == nil || s.store == nil {
 		return ""
 	}
+	state, _ := s.store.Load()
 	if strings.HasPrefix(sessionID, "workstore_") {
 		candidate := strings.TrimSpace(strings.TrimPrefix(sessionID, "workstore_"))
 		if isSafeStoreProfileKey(candidate) {
+			if mapped := lookupStoreProfileKey(state, candidate, ""); mapped != "" {
+				return mapped
+			}
 			return candidate
 		}
 		return ""
 	}
-	state, err := s.store.Load()
-	if err != nil || state == nil {
+	if strings.HasPrefix(sessionID, "workapp_") {
+		candidate := strings.TrimSpace(strings.TrimPrefix(sessionID, "workapp_"))
+		if isSafeStoreProfileKey(candidate) {
+			if activeKey := lookupActiveAppStoreProfileKey(state, candidate); activeKey != "" {
+				return activeKey
+			}
+			return "default"
+		}
+		return ""
+	}
+	if state == nil {
 		return ""
 	}
 	bindings, ok := state["sessionStoreBindings"].(map[string]any)
@@ -144,10 +157,79 @@ func (s *Service) ResolveBrowserProfileKey(sessionID string) string {
 	if !ok {
 		return ""
 	}
+	appID, _ := entry["appId"].(string)
+	appID = strings.TrimSpace(appID)
 	storeID, _ := entry["storeId"].(string)
 	storeID = strings.TrimSpace(storeID)
 	if isSafeStoreProfileKey(storeID) {
+		if mapped := lookupStoreProfileKey(state, storeID, appID); mapped != "" {
+			return mapped
+		}
 		return storeID
+	}
+	if isSafeStoreProfileKey(appID) {
+		if activeKey := lookupActiveAppStoreProfileKey(state, appID); activeKey != "" {
+			return activeKey
+		}
+		return "default"
+	}
+	return ""
+}
+
+func lookupActiveAppStoreProfileKey(state map[string]any, appID string) string {
+	if state == nil || !isSafeStoreProfileKey(appID) {
+		return ""
+	}
+	if activeByApp, ok := state["activeStoreIdByApp"].(map[string]any); ok {
+		if activeStoreID, _ := activeByApp[appID].(string); isSafeStoreProfileKey(strings.TrimSpace(activeStoreID)) {
+			activeStoreID = strings.TrimSpace(activeStoreID)
+			if mapped := lookupStoreProfileKey(state, activeStoreID, appID); mapped != "" {
+				return mapped
+			}
+			return activeStoreID
+		}
+	}
+	return ""
+}
+
+func lookupStoreProfileKey(state map[string]any, storeID, appID string) string {
+	if state == nil || !isSafeStoreProfileKey(storeID) {
+		return ""
+	}
+	storesByApp, ok := state["storesByApp"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	checkList := func(raw any) string {
+		items, ok := raw.([]any)
+		if !ok {
+			return ""
+		}
+		for _, item := range items {
+			m, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			id, _ := m["id"].(string)
+			if strings.TrimSpace(id) != storeID {
+				continue
+			}
+			if profKey, _ := m["browserProfileKey"].(string); isSafeStoreProfileKey(strings.TrimSpace(profKey)) {
+				return strings.TrimSpace(profKey)
+			}
+			return storeID
+		}
+		return ""
+	}
+	if appID != "" {
+		if found := checkList(storesByApp[appID]); found != "" {
+			return found
+		}
+	}
+	for _, list := range storesByApp {
+		if found := checkList(list); found != "" {
+			return found
+		}
 	}
 	return ""
 }
