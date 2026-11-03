@@ -1,10 +1,13 @@
 // web/src/__tests__/skills.test.ts
+import { createComputed, createRoot } from "solid-js";
+import { unwrap } from "solid-js/store";
 import { assertEqual, assertTrue, describe, it } from "./test-harness";
 import {
   extractUserTurnSkillSelection,
   getComposerSkill,
   installSkillFromMarketplace,
   loadSkillMarketplace,
+  loadSkillsCatalog,
   resolveTurnSkillStatus,
   selectComposerSkill,
   skillsStore,
@@ -295,5 +298,25 @@ describe("skills capability", () => {
       },
     };
     assertEqual(extractDescription(part), "git-release");
+  });
+
+  it("does not recursively re-trigger a calling computation when directory is empty", async () => {
+    await loadSkillsCatalog({ sessionID: null, directory: "", runtime: "opencode" });
+    const initialArrayRef = unwrap(skillsStore.skills);
+    let runs = 0;
+    createRoot((dispose) => {
+      try {
+        createComputed(() => {
+          runs++;
+          if (skillsStore.skills.length === 0 && !skillsStore.loading) {
+            void loadSkillsCatalog({ sessionID: null, directory: "", runtime: "opencode" });
+          }
+        });
+      } finally {
+        dispose();
+      }
+    });
+    assertEqual(runs, 1);
+    assertTrue(unwrap(skillsStore.skills) === initialArrayRef);
   });
 });

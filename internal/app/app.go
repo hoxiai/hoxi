@@ -422,6 +422,8 @@ func Run(distFS fs.FS) {
 		}
 	})
 
+	sanitizeFrontendDevServerEnv(logger, 1500*time.Millisecond)
+
 	err = wails.Run(&options.App{
 		Title:                    identity.Title,
 		Width:                    1360,
@@ -432,17 +434,9 @@ func Run(distFS fs.FS) {
 		EnableDefaultContextMenu: true,
 		BackgroundColour:         options.NewRGBA(0, 0, 0, 0),
 		AssetServer: &assetserver.Options{
-			Assets:  distFS,
-			Handler: gw,
-			Middleware: func(next http.Handler) http.Handler {
-				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					if strings.HasPrefix(r.URL.Path, "/api/") {
-						gw.ServeHTTP(w, r)
-						return
-					}
-					next.ServeHTTP(w, r)
-				})
-			},
+			Assets:     distFS,
+			Handler:    gw,
+			Middleware: assetServerMiddleware(gw),
 		},
 		Mac: &mac.Options{
 			OnUrlOpen:            app.onURLOpen,

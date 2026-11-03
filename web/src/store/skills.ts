@@ -1,5 +1,5 @@
 // web/src/store/skills.ts
-import { createSignal } from "solid-js";
+import { createSignal, untrack } from "solid-js";
 import { createStore } from "solid-js/store";
 import { t } from "../i18n";
 import {
@@ -207,19 +207,40 @@ export async function loadSkillsCatalog(options?: {
   runtime?: string;
   forceRefresh?: boolean;
 }): Promise<SkillListResponse | null> {
-  const sid = options?.sessionID !== undefined ? options.sessionID : workspace.activeSessionID;
-  const dir = options?.directory ?? (sessionDirectory(sid) || workspace.rootDir || "");
-  const rt = options?.runtime ?? sessionRuntimeForID(sid);
-  const version = workspace.appVersion || "0";
+  const { sid, dir, rt, version } = untrack(() => {
+    const resolvedSid =
+      options?.sessionID !== undefined ? options.sessionID : workspace.activeSessionID;
+    const resolvedDir =
+      options?.directory ?? (sessionDirectory(resolvedSid) || workspace.rootDir || "");
+    const resolvedRt = options?.runtime ?? sessionRuntimeForID(resolvedSid);
+    const resolvedVersion = workspace.appVersion || "0";
+    return {
+      sid: resolvedSid,
+      dir: resolvedDir,
+      rt: resolvedRt,
+      version: resolvedVersion,
+    };
+  });
 
   if (!dir) {
-    setSkillsStore({
-      skills: [],
-      supported: true,
-      runtime: rt,
-      directory: "",
-      loading: false,
-      error: null,
+    untrack(() => {
+      if (
+        skillsStore.skills.length > 0 ||
+        skillsStore.directory !== "" ||
+        skillsStore.loading ||
+        skillsStore.error !== null ||
+        skillsStore.runtime !== rt ||
+        !skillsStore.supported
+      ) {
+        setSkillsStore({
+          skills: [],
+          supported: true,
+          runtime: rt,
+          directory: "",
+          loading: false,
+          error: null,
+        });
+      }
     });
     return null;
   }
@@ -228,22 +249,26 @@ export async function loadSkillsCatalog(options?: {
   if (!options?.forceRefresh) {
     const cached = catalogCache.get(cKey);
     if (cached && Date.now() <= cached.expiresAt) {
-      recordSkillDescriptors(cached.response.skills ?? []);
-      setSkillsStore({
-        skills: cached.response.skills ?? [],
-        supported: cached.response.supported,
-        runtime: cached.response.runtime || rt,
-        directory: cached.response.directory || dir,
-        cacheHint: cached.response.cacheHint || "",
-        loading: false,
-        error: null,
+      untrack(() => {
+        recordSkillDescriptors(cached.response.skills ?? []);
+        setSkillsStore({
+          skills: cached.response.skills ?? [],
+          supported: cached.response.supported,
+          runtime: cached.response.runtime || rt,
+          directory: cached.response.directory || dir,
+          cacheHint: cached.response.cacheHint || "",
+          loading: false,
+          error: null,
+        });
       });
       return cached.response;
     }
   }
 
   const reqGen = ++listRequestGen;
-  setSkillsStore({ loading: true, error: null, runtime: rt, directory: dir });
+  untrack(() => {
+    setSkillsStore({ loading: true, error: null, runtime: rt, directory: dir });
+  });
 
   try {
     const resp = await skillsAPI.fetchSkillsList({

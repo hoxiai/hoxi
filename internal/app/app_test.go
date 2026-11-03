@@ -6,7 +6,10 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httptest"
+	"os"
 	"testing"
+	"time"
 
 	"github.com/hoxiai/hoxi/internal/statusbar"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -149,5 +152,69 @@ func TestResolveIdentity(t *testing.T) {
 	devByEnv := ResolveIdentity("release", "/Applications/Hoxi.app/Contents/MacOS/Hoxi")
 	if devByEnv.Variant != "dev" || devByEnv.BundleID != "ai.hoxi.desktop.dev" {
 		t.Fatalf("unexpected dev identity from env: %+v", devByEnv)
+	}
+}
+
+func TestSanitizeFrontendDevServerEnv(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen failed: %v", err)
+	}
+	liveURL := "http://" + ln.Addr().String() + "/"
+	t.Setenv("frontenddevserverurl", liveURL)
+	sanitizeFrontendDevServerEnv(logger, 200*time.Millisecond)
+	if got := os.Getenv("frontenddevserverurl"); got != liveURL {
+		t.Fatalf("expected live frontenddevserverurl %q to be preserved, got %q", liveURL, got)
+	}
+
+	_ = ln.Close()
+	sanitizeFrontendDevServerEnv(logger, 150*time.Millisecond)
+	if got := os.Getenv("frontenddevserverurl"); got != "" {
+		t.Fatalf("expected dead frontenddevserverurl to be cleared, got %q", got)
+	}
+}
+
+func TestAssetServerMiddlewareFallsBackOnBadGateway(t *testing.T) {
+	gw := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Served-By", "gateway")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("gateway:" + r.URL.Path))
+	})
+	mw := assetServerMiddleware(gw)
+
+	// 1. /api/* goes directly to gateway without hitting next.
+	nextCalled := false
+	h := mw(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		nextCalled = true
+		w.WriteHeader(http.StatusTeapot)
+	}))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/hoxi/bootstrap", nil))
+	if nextCalled || rec.Code != http.StatusOK || rec.Body.String() != "gateway:/api/hoxi/bootstrap" {
+		t.Fatalf("unexpected /api/ response: code=%d body=%q nextCalled=%v", rec.Code, rec.Body.String(), nextCalled)
+	}
+
+	// 2. 502 Bad Gateway from dead external Vite proxy falls back to gateway assets.
+	h502 := mw(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	rec502 := httptest.NewRecorder()
+	h502.ServeHTTP(rec502, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec502.Code != http.StatusOK || rec502.Body.String() != "gateway:/" || rec502.Header().Get("X-Served-By") != "gateway" {
+		t.Fatalf("expected 502 fallback to gateway, got code=%d body=%q", rec502.Code, rec502.Body.String())
+	}
+
+	// 3. Healthy 200 OK from external Vite proxy passes through untouched.
+	h200 := mw(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("X-Served-By", "vite")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("vite-index"))
+	}))
+	rec200 := httptest.NewRecorder()
+	h200.ServeHTTP(rec200, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec200.Code != http.StatusOK || rec200.Body.String() != "vite-index" || rec200.Header().Get("X-Served-By") != "vite" {
+		t.Fatalf("expected healthy vite response, got code=%d body=%q", rec200.Code, rec200.Body.String())
 	}
 }
