@@ -100,6 +100,11 @@ export default defineConfig({
     },
     port,
     strictPort: false,
+    // macOS WKWebView loads `wails://wails/` without a Host header, so Wails
+    // proxies dev requests with `Host: wails`. Vite's host check would answer
+    // 403, which shows up as a blank window. (Windows uses wails.localhost,
+    // which Vite already allows.)
+    allowedHosts: ["wails"],
     proxy: {
       "/api": { target, changeOrigin: true, ws: true },
       "/healthz": { target, changeOrigin: true },
