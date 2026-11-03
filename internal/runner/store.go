@@ -48,6 +48,7 @@ type storedSession struct {
 	rev              int64
 	metaDirty        bool
 	dirty            map[partKey]struct{}
+	deltas           map[partKey]*strings.Builder
 	pending          []turnLogEntry
 	index            transcriptIndex
 	bodyBytes        int64
@@ -131,6 +132,7 @@ func (s *Store) ensureTurnsLocked(ss *storedSession) {
 		}
 	}
 	ss.turnsLoaded = true
+	ss.deltas = nil
 	ss.index.rebuild(ss.rec.Turns)
 	ss.bodyBytes = estimateTurnsBytes(ss.rec.Turns) + estimateTurnsBytes(ss.rec.RevertedTurns)
 	ss.rev++
@@ -162,7 +164,7 @@ func (s *Store) commitLocked(next SessionRecord, ss *storedSession) error {
 		return err
 	}
 	ss.rec, ss.turnsLoaded, ss.logLines = next, true, lines
-	ss.metaDirty, ss.dirty, ss.pending = false, nil, nil
+	ss.metaDirty, ss.dirty, ss.deltas, ss.pending = false, nil, nil, nil
 	ss.hasRevertedTurns = len(next.RevertedTurns) > 0
 	ss.index.rebuild(next.Turns)
 	ss.bodyBytes = estimateTurnsBytes(next.Turns) + estimateTurnsBytes(next.RevertedTurns)

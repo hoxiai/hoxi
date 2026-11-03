@@ -39,6 +39,7 @@ export default function CodeBlockCard(props: {
   let highlightTimer: ReturnType<typeof setTimeout> | undefined;
   let revision = 0;
   let disposed = false;
+  let lastCachedCode = initialCached?.code ?? "";
   let latest = { code: "", lang: "", theme: "dark" as "dark" | "light" };
 
   const applyHighlight = (
@@ -71,6 +72,7 @@ export default function CodeBlockCard(props: {
     revision++;
     const cached = getCachedHighlight(latest.code, latest.lang, latest.theme);
     if (cached) {
+      lastCachedCode = cached.code;
       if (highlightTimer !== undefined) {
         clearTimeout(highlightTimer);
         highlightTimer = undefined;
@@ -84,7 +86,13 @@ export default function CodeBlockCard(props: {
       highlightTimer = undefined;
       const snapshot = latest;
       const request = revision;
-      const result = await highlightCode(snapshot.code, snapshot.lang, snapshot.theme);
+      const result = await highlightCode(
+        snapshot.code,
+        snapshot.lang,
+        snapshot.theme,
+        lastCachedCode || undefined
+      );
+      if (result) lastCachedCode = result.code;
       if (!disposed && request === revision) {
         applyHighlight(result, snapshot.lang, snapshot.theme);
       }

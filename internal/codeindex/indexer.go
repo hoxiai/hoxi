@@ -13,22 +13,26 @@ import (
 )
 
 type Config struct {
-	MaxFiles      int
-	MaxFileBytes  int64
-	MaxTotalBytes int64
-	ChunkLines    int
-	ChunkOverlap  int
-	MaxFileChunks int
+	MaxFiles       int
+	MaxFileBytes   int64
+	MaxTotalBytes  int64
+	ChunkLines     int
+	ChunkOverlap   int
+	MaxFileChunks  int
+	MaxCachedDirs  int
+	MaxCachedBytes int64
 }
 
 func DefaultConfig() Config {
 	return Config{
-		MaxFiles:      20000,
-		MaxFileBytes:  512 * 1024,
-		MaxTotalBytes: 48 * 1024 * 1024,
-		ChunkLines:    80,
-		ChunkOverlap:  12,
-		MaxFileChunks: 200,
+		MaxFiles:       20000,
+		MaxFileBytes:   512 * 1024,
+		MaxTotalBytes:  48 * 1024 * 1024,
+		ChunkLines:     80,
+		ChunkOverlap:   12,
+		MaxFileChunks:  200,
+		MaxCachedDirs:  2,
+		MaxCachedBytes: 8 * 1024 * 1024,
 	}
 }
 

@@ -4,6 +4,7 @@ import type { SessionInfo } from "../services/sse-types";
 import { hoxiAPI } from "../services/api";
 import { registerRunnerSessions } from "../services/runner-api";
 import {
+  forgetSessionToolOutputs,
   forgetSubagentLinks,
   mergeServerTurnsInto,
 } from "./message-lookup";
@@ -711,6 +712,7 @@ export function purgeSessionsFromStoreState(
 ) {
   const idSet = new Set(allIDs);
   forgetSubagentLinks(allIDs);
+  forgetSessionToolOutputs(allIDs);
   forgetPromptQueueState(allIDs);
   let surfaceRemoved = false;
   for (const id of allIDs) {

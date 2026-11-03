@@ -43,6 +43,8 @@ type cachedIndex struct {
 	df      map[string]int
 	avgLen  float64
 	symbols map[string][]symbolDecl
+	bytes   int64
+	access  uint64
 }
 
 func (c *cachedIndex) chunkCount() int { return len(c.docs) }
@@ -50,12 +52,18 @@ func (c *cachedIndex) chunkCount() int { return len(c.docs) }
 func buildDocs(index *Index) *cachedIndex {
 	c := &cachedIndex{index: index, df: make(map[string]int)}
 	total := 0
+	var approxBytes int64 = 1024
 	for _, file := range index.Files {
+		approxBytes += int64(128 + len(file.Path) + len(file.Hash))
+		for _, imp := range file.Imports {
+			approxBytes += int64(16 + len(imp))
+		}
 		if isProtectedOrSecretRelPath(file.Path) {
 			continue
 		}
 		for i := range file.Chunks {
 			chunk := &file.Chunks[i]
+			approxBytes += int64(96 + len(chunk.Path) + len(chunk.Symbol) + len(chunk.Text))
 			if isProtectedOrSecretRelPath(chunk.Path) {
 				continue
 			}
@@ -67,6 +75,7 @@ func buildDocs(index *Index) *cachedIndex {
 			for token := range tokens {
 				c.df[token]++
 				length += tokens[token]
+				approxBytes += int64(48 + len(token))
 			}
 			c.docs = append(c.docs, document{chunk: chunk, tokens: tokens, length: length})
 			total += length
@@ -76,6 +85,10 @@ func buildDocs(index *Index) *cachedIndex {
 		c.avgLen = float64(total) / float64(len(c.docs))
 	}
 	c.symbols = buildWorkspaceSymbolMap(index)
+	for sym, decls := range c.symbols {
+		approxBytes += int64(32 + len(sym) + len(decls)*64)
+	}
+	c.bytes = approxBytes
 	return c
 }
 

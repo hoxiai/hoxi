@@ -53,7 +53,9 @@ export function stabilizeHighlightedLines(
 }
 
 const MAX_HIGHLIGHT_CACHE = 240;
+const MAX_HIGHLIGHT_CACHE_CHARS = 256 * 1024;
 const highlightCache = new Map<string, HighlightedCode>();
+let highlightCacheChars = 0;
 
 let shikiPromise: Promise<typeof import("shiki")> | undefined;
 
@@ -81,6 +83,29 @@ function buildHighlightCacheKey(code: string, lang: string, theme: "dark" | "lig
   return `${theme}\0${normalizeHighlightLang(lang)}\0${code}`;
 }
 
+function commonPrefixLength(a: string, b: string): number {
+  const limit = Math.min(a.length, b.length);
+  let i = 0;
+  while (i < limit && a.charCodeAt(i) === b.charCodeAt(i)) i++;
+  return i;
+}
+
+function isSupersededHighlightCode(existing: string, next: string): boolean {
+  if (!existing || !next || existing === next) return false;
+  if (next.startsWith(existing) || existing.startsWith(next)) return true;
+  const shorter = Math.min(existing.length, next.length);
+  if (shorter < 64) return false;
+  return commonPrefixLength(existing, next) >= Math.max(64, Math.floor(shorter * 0.8));
+}
+
+function deleteCachedHighlightKey(key: string): HighlightedCode | undefined {
+  const existing = highlightCache.get(key);
+  if (!existing) return undefined;
+  highlightCache.delete(key);
+  highlightCacheChars = Math.max(0, highlightCacheChars - existing.code.length);
+  return existing;
+}
+
 export function getCachedHighlight(
   code: string,
   language: string,
@@ -102,14 +127,43 @@ function setCachedHighlight(
   lang: string,
   theme: "dark" | "light",
   value: HighlightedCode,
-) {
-  const key = buildHighlightCacheKey(code, lang, theme);
-  highlightCache.delete(key);
-  highlightCache.set(key, value);
-  if (highlightCache.size > MAX_HIGHLIGHT_CACHE) {
-    const oldest = highlightCache.keys().next().value;
-    if (oldest !== undefined) highlightCache.delete(oldest);
+  previousCode?: string,
+): HighlightedCode {
+  const normLang = normalizeHighlightLang(lang);
+  const scopePrefix = `${theme}\0${normLang}\0`;
+  const key = `${scopePrefix}${code}`;
+  let priorTokens: ThemedToken[][] | undefined;
+
+  if (previousCode && previousCode !== code) {
+    const prevHit = deleteCachedHighlightKey(`${scopePrefix}${previousCode}`);
+    if (prevHit) priorTokens = prevHit.tokens;
   }
+
+  for (const [k, entry] of highlightCache) {
+    if (k === key || !k.startsWith(scopePrefix)) continue;
+    if (isSupersededHighlightCode(entry.code, code)) {
+      priorTokens ??= entry.tokens;
+      deleteCachedHighlightKey(k);
+    }
+  }
+
+  const stabilized: HighlightedCode = priorTokens
+    ? { code: value.code, tokens: stabilizeHighlightedLines(priorTokens, value.tokens) }
+    : value;
+
+  deleteCachedHighlightKey(key);
+  highlightCache.set(key, stabilized);
+  highlightCacheChars += code.length;
+
+  while (
+    highlightCache.size > MAX_HIGHLIGHT_CACHE ||
+    (highlightCache.size > 1 && highlightCacheChars > MAX_HIGHLIGHT_CACHE_CHARS)
+  ) {
+    const oldest = highlightCache.keys().next().value;
+    if (oldest === undefined) break;
+    deleteCachedHighlightKey(oldest);
+  }
+  return stabilized;
 }
 
 export function fileLanguage(path: string): string {
@@ -131,6 +185,7 @@ export async function highlightCode(
   code: string,
   language: string,
   theme: "dark" | "light",
+  previousCode?: string,
 ): Promise<HighlightedCode | undefined> {
   const lang = language.trim().toLowerCase();
   // Keep large blocks and unlabelled output cheap while preserving their full text.
@@ -138,7 +193,12 @@ export async function highlightCode(
       ["", "text", "txt", "plaintext", "plain"].includes(lang)) return;
 
   const cached = getCachedHighlight(code, lang, theme);
-  if (cached) return cached;
+  if (cached) {
+    if (previousCode && previousCode !== code) {
+      deleteCachedHighlightKey(buildHighlightCacheKey(previousCode, lang, theme));
+    }
+    return cached;
+  }
 
   try {
     const shiki = await (shikiPromise ??= import("shiki"));
@@ -148,8 +208,7 @@ export async function highlightCode(
       theme: theme === "dark" ? "github-dark" : "github-light",
     });
     const entry: HighlightedCode = { code, tokens: result.tokens };
-    setCachedHighlight(code, lang, theme, entry);
-    return entry;
+    return setCachedHighlight(code, lang, theme, entry, previousCode);
   } catch {
     // Loading or tokenization failures must never hide the original code.
     shikiPromise = undefined;

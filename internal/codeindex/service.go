@@ -22,6 +22,7 @@ type Service struct {
 	cfg   Config
 	now   func() int64
 	mu    sync.Mutex
+	clock uint64
 	cache map[string]*cachedIndex
 }
 
@@ -166,10 +167,29 @@ func (s *Service) Refresh(directory string) (StatusInfo, error) {
 	return s.Status(directory)
 }
 
+// Evict drops the in-memory cached index for directory.
+func (s *Service) Evict(directory string) {
+	if s == nil {
+		return
+	}
+	if clean, err := canonicalDir(directory); err == nil {
+		directory = clean
+	} else {
+		directory = filepath.Clean(strings.TrimSpace(directory))
+	}
+	s.mu.Lock()
+	delete(s.cache, directory)
+	s.mu.Unlock()
+}
+
 func (s *Service) ensure(directory string) (*cachedIndex, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if cached := s.cache[directory]; cached != nil && s.now()-cached.index.BuiltAt < cacheTTL {
+	now := s.now()
+	if cached := s.cache[directory]; cached != nil && now-cached.index.BuiltAt < cacheTTL {
+		s.clock++
+		cached.access = s.clock
+		s.trimCacheLocked(directory, now)
 		return cached, nil
 	}
 	var previous *Index
@@ -189,8 +209,52 @@ func (s *Service) ensure(directory string) (*cachedIndex, error) {
 		return nil, err
 	}
 	cached := buildDocs(index)
+	s.clock++
+	cached.access = s.clock
 	s.cache[directory] = cached
+	s.trimCacheLocked(directory, index.BuiltAt)
 	return cached, nil
+}
+
+func (s *Service) trimCacheLocked(keepDir string, now int64) {
+	for dir, entry := range s.cache {
+		if dir == keepDir {
+			continue
+		}
+		if entry == nil || entry.index == nil || now-entry.index.BuiltAt >= cacheTTL {
+			delete(s.cache, dir)
+		}
+	}
+	maxDirs := s.cfg.MaxCachedDirs
+	if maxDirs <= 0 {
+		maxDirs = 2
+	}
+	maxBytes := s.cfg.MaxCachedBytes
+	if maxBytes <= 0 {
+		maxBytes = 8 * 1024 * 1024
+	}
+	var totalBytes int64
+	for _, entry := range s.cache {
+		totalBytes += entry.bytes
+	}
+	for len(s.cache) > maxDirs || (len(s.cache) > 1 && totalBytes > maxBytes) {
+		oldestDir := ""
+		var oldestAccess uint64
+		for dir, entry := range s.cache {
+			if dir == keepDir {
+				continue
+			}
+			if oldestDir == "" || entry.access < oldestAccess {
+				oldestDir = dir
+				oldestAccess = entry.access
+			}
+		}
+		if oldestDir == "" {
+			break
+		}
+		totalBytes -= s.cache[oldestDir].bytes
+		delete(s.cache, oldestDir)
+	}
 }
 
 func (s *Service) indexPath(directory string) string {

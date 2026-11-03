@@ -44,7 +44,15 @@ func metadataOnly(rec SessionRecord) SessionRecord {
 }
 
 func (s *Store) publishSessionLocked(ss *storedSession) {
-	meta := metadataOnly(ss.rec)
+	s.publishSessionAccountingLocked(ss, true)
+}
+
+func (s *Store) publishSessionAccountingLocked(ss *storedSession, refreshMeta bool) {
+	var meta SessionRecord
+	if refreshMeta || ss.meta.ID == "" {
+		meta = metadataOnly(ss.rec)
+		refreshMeta = true
+	}
 	s.mu.Lock()
 	if s.records[ss.rec.ID] == ss {
 		if ss.cache.loaded {
@@ -56,7 +64,9 @@ func (s *Store) publishSessionLocked(ss *storedSession) {
 			s.cachedBytes += ss.bodyBytes
 		}
 		s.clock++
-		ss.meta = meta
+		if refreshMeta {
+			ss.meta = meta
+		}
 		ss.cache = transcriptCacheEntry{loaded: ss.turnsLoaded, active: ss.active,
 			bytes: ss.bodyBytes, access: s.clock, stamp: ss.rev}
 	}
@@ -72,6 +82,15 @@ func (s *Store) finishSession(ss *storedSession) {
 	}
 }
 
+func (s *Store) finishDeltaSession(ss *storedSession) {
+	s.publishSessionAccountingLocked(ss, false)
+	maintain := !ss.active
+	ss.mu.Unlock()
+	if maintain {
+		s.trimCache()
+	}
+}
+
 // SetActive protects live runtime/subagent transcripts from cache eviction.
 func (s *Store) SetActive(id string, active bool) {
 	ss := s.lockSession(id, false)
@@ -80,6 +99,9 @@ func (s *Store) SetActive(id string, active bool) {
 	}
 	defer s.finishSession(ss)
 	ss.active = active
+	if !active {
+		compactPartDeltaBuildersLocked(ss)
+	}
 }
 
 // Idle transcripts are a bounded LRU cache, not durable state. Persist before
@@ -141,6 +163,7 @@ func (s *Store) trimCache() {
 		count--
 		ss.rec.Turns, ss.rec.RevertedTurns = nil, nil
 		ss.turnsLoaded, ss.bodyBytes = false, 0
+		ss.deltas = nil
 		ss.index = transcriptIndex{}
 		s.publishSessionLocked(ss)
 		ss.mu.Unlock()

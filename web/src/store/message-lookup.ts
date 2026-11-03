@@ -369,7 +369,30 @@ function preserveToolPartEditInput(target: MessagePart, source?: MessagePart): v
 
 const MAX_REACTIVE_TOOL_OUTPUT_CHARS = 32 * 1024;
 const MAX_FULL_TOOL_OUTPUT_LRU = 64;
-const fullToolOutputCache = new Map<string, string>();
+export const MAX_FULL_TOOL_OUTPUT_BYTES = 4 * 1024 * 1024;
+
+interface CachedToolOutput {
+  text: string;
+  sessionID?: string;
+  bytes: number;
+}
+
+const fullToolOutputCache = new Map<string, CachedToolOutput>();
+let fullToolOutputCacheBytes = 0;
+
+function detachSlicedString(text: string): string {
+  if (typeof structuredClone === "function") {
+    return structuredClone(text);
+  }
+  return JSON.parse(JSON.stringify(text)) as string;
+}
+
+function deleteCachedToolOutput(partID: string): void {
+  const existing = fullToolOutputCache.get(partID);
+  if (!existing) return;
+  fullToolOutputCache.delete(partID);
+  fullToolOutputCacheBytes = Math.max(0, fullToolOutputCacheBytes - existing.bytes);
+}
 
 export function normalizeMessagePartInPlace(part: MessagePart, previous?: MessagePart): void {
   if (part.type === "text" || part.type === "reasoning") {
@@ -432,31 +455,60 @@ export function forgetSubagentLinks(sessionIDs: string[]): void {
   if (changed) setSubagentLinkVersion((v) => v + 1);
 }
 
-function cacheFullToolOutput(partID: string, fullText: string) {
+function cacheFullToolOutput(partID: string, fullText: string, sessionID?: string) {
   if (!partID || !fullText) return;
-  if (fullToolOutputCache.has(partID)) {
-    fullToolOutputCache.delete(partID);
-  } else if (fullToolOutputCache.size >= MAX_FULL_TOOL_OUTPUT_LRU) {
-    const oldest = fullToolOutputCache.keys().next().value;
-    if (oldest !== undefined) fullToolOutputCache.delete(oldest);
+  deleteCachedToolOutput(partID);
+  if (fullText.length * 2 > MAX_FULL_TOOL_OUTPUT_BYTES) {
+    const maxChars = Math.floor(MAX_FULL_TOOL_OUTPUT_BYTES / 2);
+    fullText = detachSlicedString(fullText.slice(0, maxChars));
   }
-  fullToolOutputCache.set(partID, fullText);
+  const entryBytes = fullText.length * 2;
+  while (
+    fullToolOutputCache.size >= MAX_FULL_TOOL_OUTPUT_LRU ||
+    (fullToolOutputCache.size > 0 && fullToolOutputCacheBytes + entryBytes > MAX_FULL_TOOL_OUTPUT_BYTES)
+  ) {
+    const oldest = fullToolOutputCache.keys().next().value;
+    if (oldest === undefined) break;
+    deleteCachedToolOutput(oldest);
+  }
+  fullToolOutputCache.set(partID, { text: fullText, sessionID, bytes: entryBytes });
+  fullToolOutputCacheBytes += entryBytes;
 }
 
 export function getFullToolOutput(partID: string): string | undefined {
-  if (!partID || !fullToolOutputCache.has(partID)) return undefined;
-  const val = fullToolOutputCache.get(partID)!;
+  if (!partID) return undefined;
+  const entry = fullToolOutputCache.get(partID);
+  if (!entry) return undefined;
   fullToolOutputCache.delete(partID);
-  fullToolOutputCache.set(partID, val);
-  return val;
+  fullToolOutputCache.set(partID, entry);
+  return entry.text;
+}
+
+export function estimateSessionFullToolOutputBytes(sessionID: string): number {
+  if (!sessionID) return 0;
+  let total = 0;
+  for (const entry of fullToolOutputCache.values()) {
+    if (entry.sessionID === sessionID) total += entry.bytes;
+  }
+  return total;
+}
+
+export function forgetSessionToolOutputs(sessionIDs: Iterable<string>): void {
+  const ids = new Set(sessionIDs);
+  if (ids.size === 0) return;
+  for (const [partID, entry] of fullToolOutputCache) {
+    if (entry.sessionID && ids.has(entry.sessionID)) {
+      deleteCachedToolOutput(partID);
+    }
+  }
 }
 
 export function compactToolPartOutputInPlace(part: MessagePart): void {
   if (part.type !== "tool" || part.state.status !== "completed") return;
   const out = part.state.output;
   if (typeof out === "string" && out.length > MAX_REACTIVE_TOOL_OUTPUT_CHARS) {
-    cacheFullToolOutput(part.id, out);
-    part.state.output = out.slice(0, MAX_REACTIVE_TOOL_OUTPUT_CHARS);
+    cacheFullToolOutput(part.id, out, part.sessionID);
+    part.state.output = detachSlicedString(out.slice(0, MAX_REACTIVE_TOOL_OUTPUT_CHARS));
     part.state.metadata = {
       ...(part.state.metadata || {}),
       truncatedChars: out.length - MAX_REACTIVE_TOOL_OUTPUT_CHARS,
@@ -465,10 +517,10 @@ export function compactToolPartOutputInPlace(part: MessagePart): void {
   }
   const metaOut = part.state.metadata?.output;
   if (typeof metaOut === "string" && metaOut.length > MAX_REACTIVE_TOOL_OUTPUT_CHARS) {
-    cacheFullToolOutput(part.id, metaOut);
+    cacheFullToolOutput(part.id, metaOut, part.sessionID);
     part.state.metadata = {
       ...part.state.metadata,
-      output: metaOut.slice(0, MAX_REACTIVE_TOOL_OUTPUT_CHARS),
+      output: detachSlicedString(metaOut.slice(0, MAX_REACTIVE_TOOL_OUTPUT_CHARS)),
       truncatedChars: metaOut.length - MAX_REACTIVE_TOOL_OUTPUT_CHARS,
       fullOutputLength: metaOut.length,
     };

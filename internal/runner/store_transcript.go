@@ -122,7 +122,9 @@ func (s *Store) UpsertTurnPart(sessionID string, part MessagePart) {
 	s.ensureTurnsLocked(ss)
 	copied := clonePart(part)
 	previousBytes := int64(0)
-	if previous := ss.index.part(ss.rec.Turns, partKey{part.MessageID, part.ID}); previous != nil {
+	key := partKey{part.MessageID, part.ID}
+	delete(ss.deltas, key)
+	if previous := ss.index.part(ss.rec.Turns, key); previous != nil {
 		previousBytes = estimatePartBytes(*previous)
 		preserveToolEditInput(&copied, *previous)
 	}
@@ -134,17 +136,42 @@ func (s *Store) UpsertTurnPart(sessionID string, part MessagePart) {
 	s.appendLocked(ss, true, turnLogEntry{Part: &copied})
 }
 
+func compactPartDeltaBuildersLocked(ss *storedSession) {
+	for key, b := range ss.deltas {
+		if b != nil && b.Cap()-b.Len() > 4096 {
+			if part := ss.index.part(ss.rec.Turns, key); part != nil && b.String() == part.Text {
+				part.Text = strings.Clone(part.Text)
+			}
+		}
+	}
+	ss.deltas = nil
+}
+
 // Deltas stay in memory until a snapshot or FlushSession persists them.
 func (s *Store) AppendPartDelta(sessionID, messageID, partID, delta string) {
+	if delta == "" {
+		return
+	}
 	ss := s.lockSession(sessionID, false)
 	if ss == nil {
 		return
 	}
-	defer s.finishSession(ss)
+	defer s.finishDeltaSession(ss)
 	s.ensureTurnsLocked(ss)
 	key := partKey{messageID, partID}
 	if part := ss.index.part(ss.rec.Turns, key); part != nil {
-		part.Text += delta
+		if ss.deltas == nil {
+			ss.deltas = make(map[partKey]*strings.Builder)
+		}
+		b := ss.deltas[key]
+		if b == nil || b.String() != part.Text {
+			b = &strings.Builder{}
+			b.Grow(len(part.Text) + max(len(delta)*4, 64))
+			b.WriteString(part.Text)
+			ss.deltas[key] = b
+		}
+		b.WriteString(delta)
+		part.Text = b.String()
 		ss.bodyBytes += int64(len(delta))
 		ss.rev++
 		if ss.dirty == nil {
@@ -178,6 +205,9 @@ func (s *Store) Flush() {
 func (s *Store) flushSessionLocked(ss *storedSession) bool {
 	if len(ss.dirty) > 0 || len(ss.pending) > 0 {
 		s.appendLocked(ss, false)
+	}
+	if !ss.active {
+		compactPartDeltaBuildersLocked(ss)
 	}
 	if ss.metaDirty && s.writeMeta(ss.rec) == nil {
 		ss.metaDirty = false

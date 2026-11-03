@@ -1,6 +1,8 @@
 import { produce, unwrap } from "solid-js/store";
 import type { MessageInfo } from "../services/sse-types";
 import {
+  estimateSessionFullToolOutputBytes,
+  forgetSessionToolOutputs,
   normalizeMessagePartInPlace,
   orderSameStepReasoningPartsInPlace,
 } from "./message-lookup";
@@ -50,9 +52,11 @@ function valueBytes(value: unknown, depth = 0): number {
 
 const settledToolStateBytes = new WeakMap<object, number>();
 
-export function estimateTranscriptBytes(turns: MessageTurn[]): number {
+export function estimateTranscriptBytes(turns: MessageTurn[], sessionID?: string): number {
   const rawTurns = unwrap(turns);
   let bytes = rawTurns.length * 256;
+  const sid = sessionID ?? rawTurns[0]?.info?.sessionID;
+  if (sid) bytes += estimateSessionFullToolOutputBytes(sid);
   for (const turn of rawTurns) {
     for (const part of turn.parts) {
       bytes += 256;
@@ -112,7 +116,7 @@ export function trimSessionTranscripts(
   for (const id of lastUsed.keys()) if (!present.has(id) && !pendingReads.has(id)) lastUsed.delete(id);
   const protectedIDs = protectedTranscripts();
   if (!ids.some((id) => !protectedIDs.has(id))) return [];
-  const entries = ids.map((id) => ({ id, bytes: estimateTranscriptBytes(workspace.messagesBySession[id]), used: lastUsed.get(id) ?? 0 }));
+  const entries = ids.map((id) => ({ id, bytes: estimateTranscriptBytes(workspace.messagesBySession[id], id), used: lastUsed.get(id) ?? 0 }));
   let bytes = entries.reduce((total, entry) => total + entry.bytes, 0);
   let count = entries.length;
   const evicted: string[] = [];
@@ -123,17 +127,20 @@ export function trimSessionTranscripts(
     bytes -= entry.bytes;
     count--;
   }
-  if (evicted.length) setWorkspace(produce((state) => {
-    for (const id of evicted) {
-      invalidateSessionDiffReads(id);
-      delete state.messagesBySession[id];
-      delete state.diffsBySession[id];
-      delete state.worktreeDiffsBySession[id];
-      hydratedSessionIDs.delete(id);
-      forgetSessionHistory(id);
-      lastUsed.delete(id);
-    }
-  }));
+  if (evicted.length) {
+    forgetSessionToolOutputs(evicted);
+    setWorkspace(produce((state) => {
+      for (const id of evicted) {
+        invalidateSessionDiffReads(id);
+        delete state.messagesBySession[id];
+        delete state.diffsBySession[id];
+        delete state.worktreeDiffsBySession[id];
+        hydratedSessionIDs.delete(id);
+        forgetSessionHistory(id);
+        lastUsed.delete(id);
+      }
+    }));
+  }
   return evicted;
 }
 

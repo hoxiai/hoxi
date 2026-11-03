@@ -478,3 +478,43 @@ func TestLongFunctionChunkSymbolPropagationAndPolyglotCallerRanking(t *testing.T
 		t.Fatalf("expected top caller to be zzz_workflow.go [LongOrderWorkflow], got: %+v (all: %+v)", top, callers.Callers)
 	}
 }
+
+func TestInMemoryIndexCacheEvictsLRUAndExpiredDirectories(t *testing.T) {
+	svc := NewService(t.TempDir())
+	var clock int64 = 1_000_000
+	svc.now = func() int64 { return clock }
+
+	dirs := make([]string, 5)
+	for i := range dirs {
+		dirs[i] = fixtureWorkspace(t)
+		if _, err := svc.Status(dirs[i]); err != nil {
+			t.Fatalf("Status(dirs[%d]) failed: %v", i, err)
+		}
+		clock += 100
+	}
+
+	svc.mu.Lock()
+	cachedCount := len(svc.cache)
+	svc.mu.Unlock()
+	if cachedCount > svc.cfg.MaxCachedDirs {
+		t.Fatalf("expected in-memory cache size <= %d after indexing %d directories, got %d", svc.cfg.MaxCachedDirs, len(dirs), cachedCount)
+	}
+
+	// Advance past cacheTTL; touching one directory must purge expired entries for other directories.
+	clock += cacheTTL + 1000
+	if _, err := svc.Status(dirs[0]); err != nil {
+		t.Fatalf("Status(dirs[0]) after TTL failed: %v", err)
+	}
+	svc.mu.Lock()
+	afterExpiryCount := len(svc.cache)
+	svc.mu.Unlock()
+	if afterExpiryCount != 1 {
+		t.Fatalf("expected expired sibling indexes to be purged leaving 1 active entry, got %d", afterExpiryCount)
+	}
+
+	// Evicted directories remain searchable by reloading their persisted index from disk.
+	res, err := svc.Search(dirs[4], "HandleRequest", 5)
+	if err != nil || len(res.Results) == 0 {
+		t.Fatalf("expected evicted directory to reload and search cleanly, got %+v (%v)", res, err)
+	}
+}

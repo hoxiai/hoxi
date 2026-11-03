@@ -2,10 +2,15 @@ import { reconcile, unwrap } from "solid-js/store";
 import { setWorkspace, workspace, type MessageTurn } from "../store/workspace";
 import {
   beginSessionTranscriptRead,
+  estimateTranscriptBytes,
   hydratedSessionIDs,
   touchSessionTranscript,
   trimSessionTranscripts,
 } from "../store/session-transcripts";
+import {
+  getFullToolOutput,
+  normalizeMessagePartInPlace,
+} from "../store/message-lookup";
 import { hoxiAPI } from "../services/api";
 import { assertEqual, assertTrue, describe, it } from "./test-harness";
 import { resyncResidentTranscripts } from "../store/workspace-sessions";
@@ -85,5 +90,47 @@ describe("Resident session transcript budget", () => {
       assertTrue(workspace.messagesBySession.reading !== undefined);
     } finally { finish(); }
     assertEqual(trimSessionTranscripts(0, 0).join(), "reading");
+  }));
+
+  it("bounds cached full tool outputs by total bytes and evicts them with their session transcript", () => fixture(() => {
+    for (let i = 0; i < 8; i++) {
+      const part: any = {
+        id: `prt_bounded_${i}`,
+        sessionID: "ses_tool_burst",
+        messageID: "msg_tool_burst",
+        type: "tool",
+        callID: `call_${i}`,
+        tool: "bash",
+        state: {
+          status: "completed",
+          input: { command: "cat big.log" },
+          output: "X".repeat(512 * 1024),
+          metadata: {},
+          time: { start: 1, end: 2 },
+          title: "cat big.log",
+        },
+      };
+      normalizeMessagePartInPlace(part);
+    }
+    assertEqual(getFullToolOutput("prt_bounded_0"), undefined);
+    assertTrue(!!getFullToolOutput("prt_bounded_7"));
+
+    const toolTurn: MessageTurn = {
+      info: { id: "msg_tool_burst", sessionID: "ses_tool_burst", role: "assistant", time: { created: 1 } },
+      parts: [{ id: "prt_bounded_7", sessionID: "ses_tool_burst", messageID: "msg_tool_burst", type: "text", text: "done" }],
+    };
+    assertTrue(estimateTranscriptBytes([toolTurn], "ses_tool_burst") > 512 * 1024 * 2);
+
+    setWorkspace("sessions", [
+      { id: "ses_tool_burst", title: "burst", time: { created: 1, updated: 1 } },
+      { id: "active", title: "active", time: { created: 1, updated: 2 } },
+    ]);
+    setWorkspace("messagesBySession", {
+      ses_tool_burst: [toolTurn],
+      active: [turn("active")],
+    });
+    setWorkspace("activeSessionID", "active");
+    assertEqual(trimSessionTranscripts(1).join(), "ses_tool_burst");
+    assertEqual(getFullToolOutput("prt_bounded_7"), undefined);
   }));
 });

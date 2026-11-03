@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -380,5 +381,46 @@ func TestVisitTurnsTransientAndCompactIdleTurns(t *testing.T) {
 	compacted, freed := cold.CompactIdleTurns()
 	if compacted != 1 || freed <= 0 {
 		t.Fatalf("expected 1 compacted session with freed > 0, got compacted=%d freed=%d", compacted, freed)
+	}
+}
+
+func TestAppendPartDeltaAvoidsQuadraticAllocations(t *testing.T) {
+	storeDir := t.TempDir()
+	s := NewStore(storeDir)
+	sid := "ses_cld_delta_alloc"
+	if err := s.Put(SessionRecord{ID: sid, Runtime: string(RuntimeClaudeCode)}); err != nil {
+		t.Fatal(err)
+	}
+	s.SetActive(sid, true)
+	s.UpsertTurnInfo(sid, MessageInfo{ID: "msg_delta", SessionID: sid, Role: "assistant"})
+	s.UpsertTurnPart(sid, MessagePart{ID: "prt_delta", MessageID: "msg_delta", SessionID: sid, Type: "text"})
+
+	const (
+		totalChars = 256_000
+		chunkSize  = 16
+		chunks     = totalChars / chunkSize
+	)
+	chunk := strings.Repeat("a", chunkSize)
+	runtime.GC()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	for i := 0; i < chunks; i++ {
+		s.AppendPartDelta(sid, "msg_delta", "prt_delta", chunk)
+	}
+	runtime.ReadMemStats(&after)
+	s.FlushSession(sid)
+	s.SetActive(sid, false)
+
+	allocatedMiB := float64(after.TotalAlloc-before.TotalAlloc) / (1 << 20)
+	if allocatedMiB > 16 {
+		t.Fatalf("AppendPartDelta allocated %.2f MiB for %d chunks (%d bytes), expected linear < 16 MiB", allocatedMiB, chunks, totalChars)
+	}
+	rec, ok := s.Get(sid)
+	if !ok || len(rec.Turns) != 1 || len(rec.Turns[0].Parts) != 1 || len(rec.Turns[0].Parts[0].Text) != totalChars {
+		t.Fatalf("unexpected final streamed text length = %d, want %d", len(rec.Turns[0].Parts[0].Text), totalChars)
+	}
+	reloaded, ok := NewStore(storeDir).Get(sid)
+	if !ok || len(reloaded.Turns) != 1 || len(reloaded.Turns[0].Parts) != 1 || len(reloaded.Turns[0].Parts[0].Text) != totalChars {
+		t.Fatalf("unexpected reloaded text length = %d, want %d", len(reloaded.Turns[0].Parts[0].Text), totalChars)
 	}
 }

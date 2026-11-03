@@ -177,15 +177,26 @@ describe("Chat code syntax highlighting", () => {
     assertTrue(latestBlocks[1] === blocks1[1]);
   });
 
-  it("stabilizes highlighted token line and token references across streaming passes", async () => {
+  it("stabilizes highlighted token line and token references across streaming passes and evicts superseded snapshots", async () => {
     const pass1 = await highlightCode("const a = 1;\nconst b = 2;\nconst c = ", "ts", "dark");
     const pass2 = await highlightCode("const a = 1;\nconst b = 2;\nconst c = 3;", "ts", "dark");
     assertTrue(!!pass1 && !!pass2);
+    assertEqual(getCachedHighlight("const a = 1;\nconst b = 2;\nconst c = ", "ts", "dark"), undefined);
+    assertEqual(getCachedHighlight("const a = 1;\nconst b = 2;\nconst c = 3;", "ts", "dark"), pass2);
     const stabilized = stabilizeHighlightedLines(pass1!.tokens, pass2!.tokens);
     assertTrue(stabilized[0] === pass1!.tokens[0]);
     assertTrue(stabilized[1] === pass1!.tokens[1]);
     assertTrue(stabilized[2] !== pass1!.tokens[2]);
     assertTrue(stabilized[2][0] === pass1!.tokens[2][0]);
+
+    const base = Array.from({ length: 120 }, (_, i) => `const v${i} = { a: 1, b: "value", c: true };`).join("\n");
+    await highlightCode(base, "javascript", "dark");
+    for (let i = 0; i < 12; i++) {
+      await highlightCode(`${base}\n// streamed ${i}`, "javascript", "dark");
+    }
+    assertEqual(getCachedHighlight(base, "javascript", "dark"), undefined);
+    assertEqual(getCachedHighlight(`${base}\n// streamed 0`, "javascript", "dark"), undefined);
+    assertTrue(!!getCachedHighlight(`${base}\n// streamed 11`, "javascript", "dark"));
   });
 
   it("recognizes streaming TextReveal updates across 85-char ellipsis truncation boundaries", () => {
