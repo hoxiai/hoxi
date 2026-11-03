@@ -87,7 +87,7 @@ function unattendedCommandCategory(command) {
     const cat = scanUnattendedText(form);
     if (cat) return cat;
   }
-  return isOpaqueShellCommand(cmd, "") ? scanUnattendedText(cmd) : "";
+  return "";
 }
 
 function scanUnattendedText(text) {
@@ -108,7 +108,7 @@ export function unattendedDynamicCategory(command) {
 function scriptCategory(text, depth, ctx) {
   if (depth > MAX_DEPTH) return "dynamic";
   if (depth > 0) {
-    const cat = scanUnattendedText(text);
+    const cat = unattendedCommandCategory(text);
     if (cat) return cat;
   }
   const sc = parseUnattendedScript(text);
@@ -365,14 +365,66 @@ function inlineFlag(family, arg) {
   }
 }
 
+const SAFE_PIPED_PYTHON_MODULES = set("json.tool", "base64", "gzip", "zipfile", "tarfile", "unittest", "pytest", "doctest", "ast", "dis", "tokenize", "calendar", "mypy", "ruff", "flake8", "black");
+const DYNAMIC_PYTHON_MODULES = set("code", "pdb", "idlelib", "runpy", "trace", "profile", "cprofile");
+
+function pythonModuleCategory(seg, mod, rest, options, judge) {
+  if (mod.dynamic || mod.procSub) return "dynamic";
+  const name = mod.text.trim().toLowerCase();
+  if (DYNAMIC_PYTHON_MODULES.has(name)) return "dynamic";
+  const cat = scanUnattendedText(mod.text);
+  if (cat) return cat;
+  for (const w of rest) {
+    if (w.procSub) return "dynamic";
+  }
+  const restText = rest.map((w) => w.text);
+  if (name === "twine") {
+    if (rest.some((w) => w.dynamic && !w.text.startsWith("-"))) return "dynamic";
+    if (argvHas(restText, "upload")) return "publish";
+  } else if (["flit", "hatch", "poetry", "pdm"].includes(name)) {
+    if (rest.some((w) => w.dynamic && !w.text.startsWith("-"))) return "dynamic";
+    if (argvHas(restText, "publish")) return "publish";
+  } else if (name === "timeit") {
+    for (const w of rest) {
+      if (w.dynamic) return "dynamic";
+      const c = judge(w.text);
+      if (c) return c;
+    }
+    const optCat = judge(options.join(" "));
+    return optCat || stdinScriptCategory(seg, judge);
+  }
+  const optCat = judge(options.join(" "));
+  if (optCat) return optCat;
+  if (!SAFE_PIPED_PYTHON_MODULES.has(name)) return stdinScriptCategory(seg, judge);
+  return "";
+}
+
 function interpreterCategory(seg, family, args) {
   const judge = (code) => (SCRIPT_CAPABILITY_RE.test(code) ? "dynamic" : scanUnattendedText(code));
   const options = [];
   let hasCode = false;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
-    if (a.dynamic || a.procSub) return "dynamic";
     const t = a.text;
+    if (hasCode) {
+      if (family === "python" || family === "python3") {
+        if (args.slice(i).some((w) => w.procSub)) return "dynamic";
+        break;
+      }
+      if (t === "--" && !a.dynamic && !a.procSub) {
+        if (args.slice(i + 1).some((w) => w.procSub)) return "dynamic";
+        break;
+      }
+      if (!a.dynamic && !a.procSub && !t.startsWith("-") && t !== "-" && !isStdinPath(t)) {
+        if (args.slice(i).some((w) => w.procSub)) return "dynamic";
+        break;
+      }
+    }
+    if (a.dynamic || a.procSub) return "dynamic";
+    if ((family === "python" || family === "python3") && t === "-m") {
+      if (i + 1 >= args.length) return "";
+      return pythonModuleCategory(seg, args[i + 1], args.slice(i + 2), options, judge);
+    }
     if (inlineFlag(family, t)) {
       if (i + 1 >= args.length) return "";
       const code = args[i + 1];
@@ -393,7 +445,6 @@ function interpreterCategory(seg, family, args) {
       }
       continue;
     }
-    if (hasCode) break;
     return "";
   }
   if (hasCode) return judge(options.join(" "));

@@ -590,8 +590,7 @@ func (s *Service) claimOpenCodeAIReview(id string, item map[string]interface{}, 
 			annotateAIReview(item, outcome)
 			if userFallback != nil {
 				userFallback()
-			}
-			if sessionID != "" {
+			} else if sessionID != "" {
 				s.broadcast(sessionID, SSEEvent{Type: "permission.asked", Properties: item})
 			}
 			return

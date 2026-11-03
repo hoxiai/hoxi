@@ -114,7 +114,7 @@ func (p *uParser) run(nested bool) (int, bool) {
 				return 0, false
 			}
 		case c == '$':
-			if !p.readDollar() {
+			if !p.readDollar(false) {
 				return 0, false
 			}
 		case c == '`':
@@ -276,7 +276,7 @@ func (p *uParser) readDouble(term byte) bool {
 			}
 			p.i += 2
 		case c == '$':
-			if !p.readDollar() {
+			if !p.readDollar(true) {
 				return false
 			}
 		case c == '`':
@@ -291,7 +291,7 @@ func (p *uParser) readDouble(term byte) bool {
 	return term == 0
 }
 
-func (p *uParser) readDollar() bool {
+func (p *uParser) readDollar(inDouble bool) bool {
 	next := p.peek(1)
 	switch {
 	case next == '(':
@@ -323,7 +323,7 @@ func (p *uParser) readDollar() bool {
 		p.inWord, p.dyn = true, true
 		p.i = end + 1
 		return true
-	case next == '\'':
+	case !inDouble && next == '\'':
 		j := p.i + 2
 		for j < len(p.s) && p.s[j] != '\'' {
 			if p.s[j] == '\\' {
@@ -338,7 +338,7 @@ func (p *uParser) readDollar() bool {
 		p.inWord, p.dyn = true, true
 		p.i = j + 1
 		return true
-	case next == '"':
+	case !inDouble && next == '"':
 		p.inWord = true
 		p.i += 2
 		return p.readDouble('"')

@@ -56,14 +56,123 @@ var (
 )
 
 func stripDataSegmentEnv(seg []dataToken) []dataToken {
-	k := 0
-	for k < len(seg) && dataEnvAssignRe.MatchString(seg[k].value) && !strings.ContainsAny(seg[k].value, "<>") {
-		k++
-	}
-	if k > 0 && k < len(seg) {
-		return seg[k:]
+	for len(seg) > 0 {
+		k := 0
+		for k < len(seg) && dataEnvAssignRe.MatchString(seg[k].value) && !strings.ContainsAny(seg[k].value, "<>") {
+			k++
+		}
+		if k > 0 && k < len(seg) {
+			seg = seg[k:]
+		}
+		if !seg[0].literal || len(seg) < 2 {
+			return seg
+		}
+		switch filepath.Base(seg[0].value) {
+		case "do", "then", "else", "elif", "{", "!":
+			seg = seg[1:]
+		case "nohup", "time":
+			i := 1
+			for i < len(seg) && strings.HasPrefix(seg[i].value, "-") {
+				if !seg[i].literal {
+					return seg
+				}
+				if seg[i].value == "--" {
+					i++
+					break
+				}
+				i++
+			}
+			if i >= len(seg) || !seg[i].literal {
+				return seg
+			}
+			seg = seg[i:]
+		case "command":
+			i := 1
+			for i < len(seg) && strings.HasPrefix(seg[i].value, "-") {
+				if !seg[i].literal || seg[i].value == "-v" || seg[i].value == "-V" {
+					return seg
+				}
+				if seg[i].value == "--" {
+					i++
+					break
+				}
+				i++
+			}
+			if i >= len(seg) || !seg[i].literal {
+				return seg
+			}
+			seg = seg[i:]
+		case "env":
+			i := 1
+			for i < len(seg) {
+				v := seg[i].value
+				if !seg[i].literal || v == "-S" || strings.HasPrefix(v, "--split-string") || (strings.HasPrefix(v, "-") && !strings.HasPrefix(v, "--") && strings.Contains(v, "S")) {
+					return seg
+				}
+				if v == "-u" || v == "-P" || v == "-C" || v == "--unset" || v == "--chdir" {
+					if i+1 >= len(seg) || !seg[i+1].literal {
+						return seg
+					}
+					i += 2
+					continue
+				}
+				if v == "--" {
+					i++
+					break
+				}
+				if strings.HasPrefix(v, "-") || (dataEnvAssignRe.MatchString(v) && !strings.ContainsAny(v, "<>")) {
+					i++
+					continue
+				}
+				break
+			}
+			if i >= len(seg) || !seg[i].literal {
+				return seg
+			}
+			seg = seg[i:]
+		case "timeout", "gtimeout":
+			i := 1
+			for i < len(seg) && strings.HasPrefix(seg[i].value, "-") {
+				v := seg[i].value
+				if !seg[i].literal {
+					return seg
+				}
+				if v == "--" {
+					i++
+					break
+				}
+				if v == "-s" || v == "--signal" || v == "-k" || v == "--kill-after" {
+					if i+1 >= len(seg) || !seg[i+1].literal {
+						return seg
+					}
+					i++
+				}
+				i++
+			}
+			if i >= len(seg) || !seg[i].literal {
+				return seg
+			}
+			i++ // duration positional arg
+			if i >= len(seg) || !seg[i].literal {
+				return seg
+			}
+			seg = seg[i:]
+		default:
+			return seg
+		}
 	}
 	return seg
+}
+
+func isDoubleQuoteDollarExpansion(next byte) bool {
+	if (next >= 'a' && next <= 'z') || (next >= 'A' && next <= 'Z') || (next >= '0' && next <= '9') || next == '_' {
+		return true
+	}
+	switch next {
+	case '(', '{', '@', '*', '#', '?', '$', '!', '-':
+		return true
+	}
+	return false
 }
 
 func maskCommandDataArguments(command string) string {
@@ -119,7 +228,7 @@ func maskCommandDataArguments(command string) string {
 			echoInPipe = false
 		}
 		name := filepath.Base(seg[0].value)
-		if dataArgInterpreters[name] {
+		if !seg[0].literal || dataArgInterpreters[name] {
 			return command
 		}
 		if dataScriptInterpreters[name] && (echoWritesFile || echoInPipe || (hasEcho && hasParen)) {
@@ -219,7 +328,7 @@ func tokenizeDataCommand(s string) ([]dataToken, bool) {
 						closed = true
 						break
 					}
-					if s[j] == '$' {
+					if s[j] == '$' && j+1 < len(s) && isDoubleQuoteDollarExpansion(s[j+1]) {
 						literal = false
 					}
 					value.WriteByte(s[j])

@@ -111,21 +111,27 @@ func TestAIReviewApprovesOpaqueReadOnlyInspectionAndCaches(t *testing.T) {
 	}
 }
 
+func newAIReviewTestService(t *testing.T) (*Service, string) {
+	t.Helper()
+	dir := t.TempDir()
+	svc := NewService(dir, nil, statusbar.NewTracker(), filepath.Join(t.TempDir(), "sessions.json"))
+	return svc, dir
+}
+
 func TestAIReviewNeverCalledForDestructiveOrHardDenyCommands(t *testing.T) {
-	f := newGateFixture(t)
-	defer f.revoke()
+	svc, dir := newAIReviewTestService(t)
 
 	mockLLM := &stubAIReviewLLM{
 		ready:    true,
 		response: `{"decision":"allow","reason":"maliciously trying to allow"}`,
 	}
-	f.svc.SetLLM(mockLLM)
+	svc.SetLLM(mockLLM)
 	pol := ApprovalPolicy{
 		Mode:          ApprovalModeAuto,
 		AIReview:      true,
 		AIReviewModel: "openai/gpt-4o-mini",
 	}
-	setTestApprovalPolicy(t, f.svc, pol)
+	setTestApprovalPolicy(t, svc, pol)
 
 	refused := []string{
 		"rm -rf ./dist",
@@ -151,7 +157,7 @@ func TestAIReviewNeverCalledForDestructiveOrHardDenyCommands(t *testing.T) {
 			"patterns":   []string{cmd},
 			"metadata":   map[string]interface{}{"command": cmd},
 		}
-		if f.svc.aiReviewCommand(context.Background(), item, f.dir).allowed() {
+		if svc.aiReviewCommand(context.Background(), item, dir).allowed() {
 			t.Fatalf("expected %q to be refused before AI review", cmd)
 		}
 	}
@@ -161,15 +167,14 @@ func TestAIReviewNeverCalledForDestructiveOrHardDenyCommands(t *testing.T) {
 }
 
 func TestAIReviewReviewsInlineInterpreterAndDoubleQuotedBashScripts(t *testing.T) {
-	f := newGateFixture(t)
-	defer f.revoke()
+	svc, dir := newAIReviewTestService(t)
 
 	mockLLM := &stubAIReviewLLM{
 		ready:    true,
 		response: `{"decision":"allow","reason":"routine workspace inspection"}`,
 	}
-	f.svc.SetLLM(mockLLM)
-	setTestApprovalPolicy(t, f.svc, ApprovalPolicy{
+	svc.SetLLM(mockLLM)
+	setTestApprovalPolicy(t, svc, ApprovalPolicy{
 		Mode:          ApprovalModeAuto,
 		AIReview:      true,
 		AIReviewModel: "openai/gpt-4o-mini",
@@ -188,7 +193,7 @@ func TestAIReviewReviewsInlineInterpreterAndDoubleQuotedBashScripts(t *testing.T
 			"patterns":   []string{cmd},
 			"metadata":   map[string]interface{}{"command": cmd},
 		}
-		if !f.svc.aiReviewCommand(context.Background(), item, f.dir).allowed() {
+		if !svc.aiReviewCommand(context.Background(), item, dir).allowed() {
 			t.Fatalf("expected %q to reach AI review and be allowed", cmd)
 		}
 		if got := int(mockLLM.calls.Load()); got != i+1 {
@@ -198,14 +203,13 @@ func TestAIReviewReviewsInlineInterpreterAndDoubleQuotedBashScripts(t *testing.T
 }
 
 func TestAIReviewRespectsModeAndFailsClosed(t *testing.T) {
-	f := newGateFixture(t)
-	defer f.revoke()
+	svc, dir := newAIReviewTestService(t)
 
 	mockLLM := &stubAIReviewLLM{
 		ready:    true,
 		response: `{"decision":"allow","reason":"read-only"}`,
 	}
-	f.svc.SetLLM(mockLLM)
+	svc.SetLLM(mockLLM)
 
 	item := map[string]interface{}{
 		"permission": "bash",
@@ -214,27 +218,27 @@ func TestAIReviewRespectsModeAndFailsClosed(t *testing.T) {
 	}
 
 	// 1. Disabled by default -> never calls LLM.
-	setTestApprovalPolicy(t, f.svc, ApprovalPolicy{Mode: ApprovalModeAuto})
-	if f.svc.aiReviewCommand(context.Background(), item, f.dir).allowed() {
+	setTestApprovalPolicy(t, svc, ApprovalPolicy{Mode: ApprovalModeAuto})
+	if svc.aiReviewCommand(context.Background(), item, dir).allowed() {
 		t.Fatalf("expected false when AIReview is disabled")
 	}
 	// 2. Manual mode -> never calls LLM even when AIReview is true.
-	setTestApprovalPolicy(t, f.svc, ApprovalPolicy{
+	setTestApprovalPolicy(t, svc, ApprovalPolicy{
 		Mode:          ApprovalModeManual,
 		AIReview:      true,
 		AIReviewModel: "openai/gpt-4o-mini",
 	})
-	if f.svc.aiReviewCommand(context.Background(), item, f.dir).allowed() {
+	if svc.aiReviewCommand(context.Background(), item, dir).allowed() {
 		t.Fatalf("expected false in manual mode")
 	}
 	// 3. Bash override = ask -> never calls LLM.
-	setTestApprovalPolicy(t, f.svc, ApprovalPolicy{
+	setTestApprovalPolicy(t, svc, ApprovalPolicy{
 		Mode:          ApprovalModeAuto,
 		Bash:          "ask",
 		AIReview:      true,
 		AIReviewModel: "openai/gpt-4o-mini",
 	})
-	if f.svc.aiReviewCommand(context.Background(), item, f.dir).allowed() {
+	if svc.aiReviewCommand(context.Background(), item, dir).allowed() {
 		t.Fatalf("expected false when bash rule is ask")
 	}
 	if got := mockLLM.calls.Load(); got != 0 {
@@ -242,26 +246,26 @@ func TestAIReviewRespectsModeAndFailsClosed(t *testing.T) {
 	}
 
 	// 4. LLM returns "ask" -> fails closed.
-	setTestApprovalPolicy(t, f.svc, ApprovalPolicy{
+	setTestApprovalPolicy(t, svc, ApprovalPolicy{
 		Mode:          ApprovalModeAuto,
 		AIReview:      true,
 		AIReviewModel: "openai/gpt-4o-mini",
 	})
 	mockLLM.response = `{"decision":"ask","reason":"mutates state"}`
-	if f.svc.aiReviewCommand(context.Background(), item, f.dir).allowed() {
+	if svc.aiReviewCommand(context.Background(), item, dir).allowed() {
 		t.Fatalf("expected false when LLM returns ask")
 	}
 
 	// 5. LLM returns invalid JSON or error -> fails closed.
-	f.svc.aiReviews = newAIReviewCache()
+	svc.aiReviews = newAIReviewCache()
 	mockLLM.response = `not json at all`
-	if f.svc.aiReviewCommand(context.Background(), item, f.dir).allowed() {
+	if svc.aiReviewCommand(context.Background(), item, dir).allowed() {
 		t.Fatalf("expected false on invalid JSON")
 	}
 
-	f.svc.aiReviews = newAIReviewCache()
+	svc.aiReviews = newAIReviewCache()
 	mockLLM.err = errors.New("upstream timeout")
-	if f.svc.aiReviewCommand(context.Background(), item, f.dir).allowed() {
+	if svc.aiReviewCommand(context.Background(), item, dir).allowed() {
 		t.Fatalf("expected false on LLM error")
 	}
 }
@@ -321,17 +325,16 @@ func TestApprovalPolicyValidateAIReviewModel(t *testing.T) {
 // 1024 tokens within 10s still left a third of real commands with none (they
 // showed up as timeouts). 4096 tokens and 25s answered all of them.
 func TestAIReviewLeavesRoomForReasoningModels(t *testing.T) {
-	f := newGateFixture(t)
-	defer f.revoke()
+	svc, dir := newAIReviewTestService(t)
 	mockLLM := &stubAIReviewLLM{ready: true, response: `{"decision":"allow","reason":"read-only"}`}
-	f.svc.SetLLM(mockLLM)
-	setTestApprovalPolicy(t, f.svc, ApprovalPolicy{Mode: ApprovalModeAuto, AIReview: true, AIReviewModel: "subapi/flash"})
+	svc.SetLLM(mockLLM)
+	setTestApprovalPolicy(t, svc, ApprovalPolicy{Mode: ApprovalModeAuto, AIReview: true, AIReviewModel: "subapi/flash"})
 	item := map[string]interface{}{
 		"permission": "bash",
 		"patterns":   []string{shoparkInspectionScript},
 		"metadata":   map[string]interface{}{"command": shoparkInspectionScript},
 	}
-	if !f.svc.aiReviewCommand(context.Background(), item, f.dir).allowed() {
+	if !svc.aiReviewCommand(context.Background(), item, dir).allowed() {
 		t.Fatalf("expected allow")
 	}
 	req := mockLLM.lastRequest()
@@ -341,9 +344,8 @@ func TestAIReviewLeavesRoomForReasoningModels(t *testing.T) {
 }
 
 func TestAIReviewOutcomeSaysWhyItDidNotAllow(t *testing.T) {
-	f := newGateFixture(t)
-	defer f.revoke()
-	setTestApprovalPolicy(t, f.svc, ApprovalPolicy{Mode: ApprovalModeAuto, AIReview: true, AIReviewModel: "subapi/flash"})
+	svc, dir := newAIReviewTestService(t)
+	setTestApprovalPolicy(t, svc, ApprovalPolicy{Mode: ApprovalModeAuto, AIReview: true, AIReviewModel: "subapi/flash"})
 	item := map[string]interface{}{
 		"permission": "bash",
 		"patterns":   []string{shoparkInspectionScript},
@@ -365,9 +367,9 @@ func TestAIReviewOutcomeSaysWhyItDidNotAllow(t *testing.T) {
 		{"model asks", &stubAIReviewLLM{ready: true, response: `{"decision":"ask","reason":"writes files"}`}, aiReviewAsk, "", "writes files"},
 	}
 	for _, tc := range cases {
-		f.svc.aiReviews = newAIReviewCache()
-		f.svc.SetLLM(tc.stub)
-		got := f.svc.aiReviewCommand(context.Background(), item, f.dir)
+		svc.aiReviews = newAIReviewCache()
+		svc.SetLLM(tc.stub)
+		got := svc.aiReviewCommand(context.Background(), item, dir)
 		if got.allowed() || got.status != tc.status || got.failure != tc.failure {
 			t.Fatalf("%s: got %+v, want status=%s failure=%s", tc.name, got, tc.status, tc.failure)
 		}
@@ -375,7 +377,7 @@ func TestAIReviewOutcomeSaysWhyItDidNotAllow(t *testing.T) {
 			t.Fatalf("%s: expected %q in %+v", tc.name, tc.contains, got)
 		}
 		// A failed review is cached briefly with the same explanation.
-		if again := f.svc.aiReviewCommand(context.Background(), item, f.dir); again != got {
+		if again := svc.aiReviewCommand(context.Background(), item, dir); again != got {
 			t.Fatalf("%s: cached outcome %+v differs from %+v", tc.name, again, got)
 		}
 	}
@@ -493,14 +495,13 @@ func TestAIReviewNestedChildScriptSourceSlice(t *testing.T) {
 }
 
 func TestAIReviewDataArgumentsSubshellsAndTempDelete(t *testing.T) {
-	f := newGateFixture(t)
-	defer f.revoke()
+	svc, dir := newAIReviewTestService(t)
 	mockLLM := &stubAIReviewLLM{ready: true, response: `{"decision":"allow","reason":"safe local command"}`}
-	f.svc.SetLLM(mockLLM)
+	svc.SetLLM(mockLLM)
 
 	autoPol := ApprovalPolicy{Mode: ApprovalModeAuto, AIReview: true, AIReviewModel: "openai/gpt-4o-mini"}
 	smartPol := ApprovalPolicy{Mode: ApprovalModeSmart, AIReview: true, AIReviewModel: "openai/gpt-4o-mini"}
-	setTestApprovalPolicy(t, f.svc, autoPol)
+	setTestApprovalPolicy(t, svc, autoPol)
 
 	makeItem := func(cmd string) map[string]interface{} {
 		return map[string]interface{}{
@@ -515,11 +516,44 @@ func TestAIReviewDataArgumentsSubshellsAndTempDelete(t *testing.T) {
 		`bash -c 'rg "rm -rf|sudo|\.env" src'`,
 		`(cd web && git commit -m "fix: avoid rm -rf false positive")`,
 		`LC_ALL=C rg "rm -rf|sudo|\.env" internal/runner`,
+		`env LC_ALL=C rg "rm -rf$" internal/runner`,
+		`timeout 5 rg "^(sudo|rm -rf)$" internal/runner`,
+		`time git commit -m "fix: rm -rf false positive$"`,
 		`diff <(rg "rm -rf" a.txt) <(rg "sudo" b.txt)`,
 	}
 	for _, cmd := range nonDestructive {
 		if isDestructiveCommand(cmd) {
 			t.Fatalf("expected non-destructive after data-arg masking: %s", cmd)
+		}
+		if cat := unattendedDynamicCategoryFor(cmd, true); cat != "" {
+			t.Fatalf("expected %q to pass unattendedDynamicCategoryFor, got %q", cmd, cat)
+		}
+	}
+
+	// Piped python -m module and inline scripts with regex $ or positional dynamic args:
+	for _, cmd := range []string{
+		`curl -s http://127.0.0.1:8080/api/health | python3 -m json.tool`,
+		`python3 -c "import re; print(bool(re.search(r'foo$', 'foo')))"`,
+		`bash -c 'for f in a.json b.json; do python3 -c "import sys; print(sys.argv[1])" "$f"; done'`,
+	} {
+		if cat := unattendedDynamicCategoryFor(cmd, true); cat != "" {
+			t.Fatalf("expected %q to pass unattendedDynamicCategoryFor, got %q", cmd, cat)
+		}
+		if _, _, ok := canAIReviewCommandRequest(makeItem(cmd), autoPol, nil, dir); !ok {
+			t.Fatalf("expected %q to be eligible for AI review", cmd)
+		}
+	}
+
+	// Dangerous python -m modules and non-literal wrapper heads must stay blocked:
+	for _, cmd := range []string{
+		`echo "import os; os.system('git push')" | python3 -m code`,
+		`python3 -m pdb script.py`,
+		`python3 -m twine upload dist/*`,
+		`perl -e 'print 1' "$FLAG"`,
+		`echo "rm -rf /" | time "$CMD"`,
+	} {
+		if _, _, ok := canAIReviewCommandRequest(makeItem(cmd), autoPol, nil, dir); ok {
+			t.Fatalf("expected %q to be blocked before AI review", cmd)
 		}
 	}
 
@@ -535,7 +569,7 @@ func TestAIReviewDataArgumentsSubshellsAndTempDelete(t *testing.T) {
 		if !isDestructiveCommand(cmd) {
 			t.Fatalf("expected destructive command to remain flagged: %s", cmd)
 		}
-		if _, _, ok := canAIReviewCommandRequest(makeItem(cmd), autoPol, nil, f.dir); ok {
+		if _, _, ok := canAIReviewCommandRequest(makeItem(cmd), autoPol, nil, dir); ok {
 			t.Fatalf("workspace delete must not be eligible for AI review: %s", cmd)
 		}
 	}
@@ -543,19 +577,19 @@ func TestAIReviewDataArgumentsSubshellsAndTempDelete(t *testing.T) {
 		"permission": "bash",
 		"patterns":   []string{"rm -rf ./dist"},
 		"metadata":   map[string]interface{}{"command": "rm -f /tmp/hoxi-test.out"},
-	}, autoPol, nil, f.dir); ok {
+	}, autoPol, nil, dir); ok {
 		t.Fatalf("non-temp destructive pattern alongside temp metadata command must stay blocked")
 	}
 
 	// Temp-only delete (/tmp or $TMPDIR) is eligible for AI review in auto mode, but not in smart mode.
 	for _, cmd := range []string{`rm -f /tmp/hoxi-test.out`, `rm -rf "$TMPDIR/hoxi-build"`} {
-		if _, _, ok := canAIReviewCommandRequest(makeItem(cmd), autoPol, nil, f.dir); !ok {
+		if _, _, ok := canAIReviewCommandRequest(makeItem(cmd), autoPol, nil, dir); !ok {
 			t.Fatalf("expected temp-only delete to be eligible in auto mode: %s", cmd)
 		}
-		if _, _, ok := canAIReviewCommandRequest(makeItem(cmd), smartPol, nil, f.dir); ok {
+		if _, _, ok := canAIReviewCommandRequest(makeItem(cmd), smartPol, nil, dir); ok {
 			t.Fatalf("expected temp-only delete to stay blocked in smart mode: %s", cmd)
 		}
-		if !f.svc.aiReviewCommand(context.Background(), makeItem(cmd), f.dir).allowed() {
+		if !svc.aiReviewCommand(context.Background(), makeItem(cmd), dir).allowed() {
 			t.Fatalf("expected AI review to approve temp-only delete in auto mode: %s", cmd)
 		}
 	}
@@ -594,11 +628,10 @@ func (s *fallbackStubLLM) Complete(_ context.Context, target llm.Target, _ llm.R
 }
 
 func TestAIReviewFastModelFallbackAndCache(t *testing.T) {
-	f := newGateFixture(t)
-	defer f.revoke()
+	svc, dir := newAIReviewTestService(t)
 	stub := &fallbackStubLLM{}
-	f.svc.SetLLM(stub)
-	setTestApprovalPolicy(t, f.svc, ApprovalPolicy{
+	svc.SetLLM(stub)
+	setTestApprovalPolicy(t, svc, ApprovalPolicy{
 		Mode:          ApprovalModeAuto,
 		AIReview:      true,
 		AIReviewModel: "slow/deepseek-r1",
@@ -615,11 +648,11 @@ func TestAIReviewFastModelFallbackAndCache(t *testing.T) {
 		"metadata":   map[string]interface{}{"command": `bash -c 'for y in c d; do echo "$y"; done'`},
 	}
 
-	out1 := f.svc.aiReviewCommand(context.Background(), item1, f.dir)
+	out1 := svc.aiReviewCommand(context.Background(), item1, dir)
 	if !out1.allowed() {
 		t.Fatalf("expected fallback model to approve first command, got %+v", out1)
 	}
-	out2 := f.svc.aiReviewCommand(context.Background(), item2, f.dir)
+	out2 := svc.aiReviewCommand(context.Background(), item2, dir)
 	if !out2.allowed() {
 		t.Fatalf("expected cached fallback model to approve second command, got %+v", out2)
 	}

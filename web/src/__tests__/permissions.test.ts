@@ -380,10 +380,15 @@ describe("approval policy store and migration", () => {
     const req = (cmd: string) => ({ permission: "bash", patterns: [cmd], metadata: { command: cmd } });
     assertEqual(isDestructivePermissionRequest(req(`(cd web && git commit -m "fix: avoid rm -rf false positive")`)), false);
     assertEqual(isDestructivePermissionRequest(req(`LC_ALL=C rg "rm -rf|sudo|\\.env" src`)), false);
+    assertEqual(isDestructivePermissionRequest(req(`env LC_ALL=C rg "rm -rf$" src`)), false);
+    assertEqual(isDestructivePermissionRequest(req(`timeout 5 rg "^(sudo|rm -rf)$" src`)), false);
+    assertEqual(isDestructivePermissionRequest(req(`time git commit -m "fix: rm -rf false positive$"`)), false);
     assertEqual(isDestructivePermissionRequest(req(`diff <(rg "rm -rf" a.txt) <(rg "sudo" b.txt)`)), false);
     assertEqual(isDestructivePermissionRequest(req(`bash -c 'rg "rm -rf|sudo|\\.env" src'`)), false);
     assertEqual(isDestructivePermissionRequest(req(`bash -c 'rm -rf ./dist'`)), true);
     assertEqual(isDestructivePermissionRequest(req(`(cd web && rm -rf dist)`)), true);
+    assertEqual(unattendedCommandDecision(`rg "foo$" src`).expect, "allow");
+    assertEqual(unattendedCommandDecision(`curl -s http://127.0.0.1:8080/health | python3 -m json.tool`).expect, "allow");
   });
 });
 

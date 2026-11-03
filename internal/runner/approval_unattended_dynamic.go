@@ -78,7 +78,7 @@ func unattendedScriptCategory(text string, depth int, ctx *unattendedCtx) string
 		return unattendedCategoryDynamic
 	}
 	if depth > 0 {
-		if cat := scanUnattendedText(text); cat != "" {
+		if cat := unattendedCommandCategory(text); cat != "" {
 			return cat
 		}
 	}
@@ -441,6 +441,69 @@ func unattendedInlineFlag(family, arg string) bool {
 	}
 }
 
+var safePipedPythonModules = setOf("json.tool", "base64", "gzip", "zipfile", "tarfile", "unittest", "pytest", "doctest", "ast", "dis", "tokenize", "calendar", "mypy", "ruff", "flake8", "black")
+var dynamicPythonModules = setOf("code", "pdb", "idlelib", "runpy", "trace", "profile", "cprofile")
+
+func pythonModuleCategory(seg *uSeg, mod uWord, rest []uWord, options []string, ctx *unattendedCtx, judge func(string) string) string {
+	if mod.dynamic || mod.procSub {
+		return unattendedCategoryDynamic
+	}
+	name := strings.ToLower(strings.TrimSpace(mod.text))
+	if dynamicPythonModules[name] {
+		return unattendedCategoryDynamic
+	}
+	if cat := scanUnattendedText(mod.text); cat != "" {
+		return cat
+	}
+	restText := make([]string, 0, len(rest))
+	for _, w := range rest {
+		if w.procSub {
+			return unattendedCategoryDynamic
+		}
+		restText = append(restText, w.text)
+	}
+	switch name {
+	case "twine":
+		for _, w := range rest {
+			if w.dynamic && !strings.HasPrefix(w.text, "-") {
+				return unattendedCategoryDynamic
+			}
+		}
+		if argvHas(restText, "upload") {
+			return unattendedCategoryPublish
+		}
+	case "flit", "hatch", "poetry", "pdm":
+		for _, w := range rest {
+			if w.dynamic && !strings.HasPrefix(w.text, "-") {
+				return unattendedCategoryDynamic
+			}
+		}
+		if argvHas(restText, "publish") {
+			return unattendedCategoryPublish
+		}
+	case "timeit":
+		for _, w := range rest {
+			if w.dynamic {
+				return unattendedCategoryDynamic
+			}
+			if cat := judge(w.text); cat != "" {
+				return cat
+			}
+		}
+		if cat := judge(strings.Join(options, " ")); cat != "" {
+			return cat
+		}
+		return unattendedStdinScriptCategory(seg, ctx, judge)
+	}
+	if cat := judge(strings.Join(options, " ")); cat != "" {
+		return cat
+	}
+	if !ctx.aiReview && !safePipedPythonModules[name] {
+		return unattendedStdinScriptCategory(seg, ctx, judge)
+	}
+	return ""
+}
+
 // unattendedInterpreterCategory judges an interpreter. Inline code passes
 // only when it is literal and shows none of unattendedScriptCapabilityRe; a
 // program piped in or built from an expansion is refused.
@@ -455,10 +518,42 @@ func unattendedInterpreterCategory(seg *uSeg, family string, args []uWord, ctx *
 	hasCode := false
 	for i := 0; i < len(args); i++ {
 		a := args[i]
+		t := a.text
+		if hasCode {
+			if family == "python" || family == "python3" {
+				for _, w := range args[i:] {
+					if w.procSub {
+						return unattendedCategoryDynamic
+					}
+				}
+				break // CPython -c terminates option parsing; remaining words are sys.argv[1:]
+			}
+			if t == "--" && !a.dynamic && !a.procSub {
+				for _, w := range args[i+1:] {
+					if w.procSub {
+						return unattendedCategoryDynamic
+					}
+				}
+				break
+			}
+			if !a.dynamic && !a.procSub && !strings.HasPrefix(t, "-") && t != "-" && !isStdinPath(t) {
+				for _, w := range args[i:] {
+					if w.procSub {
+						return unattendedCategoryDynamic
+					}
+				}
+				break
+			}
+		}
 		if a.dynamic || a.procSub {
 			return unattendedCategoryDynamic
 		}
-		t := a.text
+		if (family == "python" || family == "python3") && t == "-m" {
+			if i+1 >= len(args) {
+				return ""
+			}
+			return pythonModuleCategory(seg, args[i+1], args[i+2:], options, ctx, judge)
+		}
 		if unattendedInlineFlag(family, t) {
 			if i+1 >= len(args) {
 				return ""
@@ -491,9 +586,6 @@ func unattendedInterpreterCategory(seg *uSeg, family string, args []uWord, ctx *
 				i++
 			}
 			continue
-		}
-		if hasCode {
-			break // positional arguments to the inline code
 		}
 		return "" // a script file (or a deno subcommand) runs as written
 	}

@@ -39,12 +39,96 @@ function baseName(word) {
   return slash === -1 ? word : word.slice(slash + 1);
 }
 
+const DOUBLE_QUOTE_DOLLAR_EXPAND_RE = /^[A-Za-z0-9_({@*#?!$-]/;
+
 function stripDataSegmentEnv(seg) {
-  let k = 0;
-  while (k < seg.length && DATA_ENV_ASSIGN_RE.test(seg[k].value) && !/[<>]/.test(seg[k].value)) {
-    k++;
+  while (seg.length > 0) {
+    let k = 0;
+    while (k < seg.length && DATA_ENV_ASSIGN_RE.test(seg[k].value) && !/[<>]/.test(seg[k].value)) {
+      k++;
+    }
+    if (k > 0 && k < seg.length) seg = seg.slice(k);
+    if (!seg[0].literal || seg.length < 2) return seg;
+    const head = baseName(seg[0].value);
+    if (["do", "then", "else", "elif", "{", "!"].includes(head)) {
+      seg = seg.slice(1);
+    } else if (head === "nohup" || head === "time") {
+      let i = 1;
+      while (i < seg.length && seg[i].value.startsWith("-")) {
+        if (!seg[i].literal) return seg;
+        if (seg[i].value === "--") {
+          i++;
+          break;
+        }
+        i++;
+      }
+      if (i >= seg.length || !seg[i].literal) return seg;
+      seg = seg.slice(i);
+    } else if (head === "command") {
+      let i = 1;
+      while (i < seg.length && seg[i].value.startsWith("-")) {
+        if (!seg[i].literal || seg[i].value === "-v" || seg[i].value === "-V") return seg;
+        if (seg[i].value === "--") {
+          i++;
+          break;
+        }
+        i++;
+      }
+      if (i >= seg.length || !seg[i].literal) return seg;
+      seg = seg.slice(i);
+    } else if (head === "env") {
+      let i = 1;
+      while (i < seg.length) {
+        const v = seg[i].value;
+        if (
+          !seg[i].literal ||
+          v === "-S" ||
+          v.startsWith("--split-string") ||
+          (v.startsWith("-") && !v.startsWith("--") && v.includes("S"))
+        ) {
+          return seg;
+        }
+        if (["-u", "-P", "-C", "--unset", "--chdir"].includes(v)) {
+          if (i + 1 >= seg.length || !seg[i + 1].literal) return seg;
+          i += 2;
+          continue;
+        }
+        if (v === "--") {
+          i++;
+          break;
+        }
+        if (v.startsWith("-") || (DATA_ENV_ASSIGN_RE.test(v) && !/[<>]/.test(v))) {
+          i++;
+          continue;
+        }
+        break;
+      }
+      if (i >= seg.length || !seg[i].literal) return seg;
+      seg = seg.slice(i);
+    } else if (head === "timeout" || head === "gtimeout") {
+      let i = 1;
+      while (i < seg.length && seg[i].value.startsWith("-")) {
+        const v = seg[i].value;
+        if (!seg[i].literal) return seg;
+        if (v === "--") {
+          i++;
+          break;
+        }
+        if (["-s", "--signal", "-k", "--kill-after"].includes(v)) {
+          if (i + 1 >= seg.length || !seg[i + 1].literal) return seg;
+          i++;
+        }
+        i++;
+      }
+      if (i >= seg.length || !seg[i].literal) return seg;
+      i++;
+      if (i >= seg.length || !seg[i].literal) return seg;
+      seg = seg.slice(i);
+    } else {
+      return seg;
+    }
   }
-  return k > 0 && k < seg.length ? seg.slice(k) : seg;
+  return seg;
 }
 
 // Returns null for unbalanced quotes and mid-word parentheses.
@@ -105,7 +189,9 @@ function tokenize(s) {
             closed = true;
             break;
           }
-          if (s[j] === "$") literal = false;
+          if (s[j] === "$" && j + 1 < s.length && DOUBLE_QUOTE_DOLLAR_EXPAND_RE.test(s[j + 1])) {
+            literal = false;
+          }
           value += s[j];
           j++;
         }
@@ -237,7 +323,7 @@ export function maskCommandDataArguments(command) {
   for (let i = 0; i < segments.length; i++) {
     if (!pipedIn[i]) echoInPipe = false;
     const name = baseName(segments[i][0].value);
-    if (DATA_ARG_INTERPRETERS.has(name)) return s;
+    if (!segments[i][0].literal || DATA_ARG_INTERPRETERS.has(name)) return s;
     if (DATA_SCRIPT_INTERPRETERS.has(name) && (echoWritesFile || echoInPipe || (hasEcho && hasParen))) {
       return s;
     }

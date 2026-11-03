@@ -224,6 +224,8 @@ func (s *Service) claimOpenCodePermission(item map[string]interface{}, sessionID
 		s.askOpenCodeUser(item, sessionID, directory)
 		if onFail != nil {
 			onFail()
+		} else if sessionID != "" {
+			s.broadcast(sessionID, SSEEvent{Type: "permission.asked", Properties: item})
 		}
 	}
 	if s.ApprovalPolicy().Mode == ApprovalModeUnattended {

@@ -206,12 +206,7 @@ func unattendedCommandCategory(command string) string {
 		if cat := scanUnattendedText(form); cat != "" {
 			return cat
 		}
-	}
-	if cat := unattendedSegmentCategory(command); cat != "" {
-		return cat
-	}
-	if isOpaqueShellCommand(command, "") {
-		if cat := scanUnattendedText(command); cat != "" {
+		if cat := unattendedSegmentCategory(form); cat != "" {
 			return cat
 		}
 	}

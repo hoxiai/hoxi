@@ -84,7 +84,7 @@ class Parser {
         this.i++;
         if (!this.readDouble('"')) return -1;
       } else if (c === "$") {
-        if (!this.readDollar()) return -1;
+        if (!this.readDollar(false)) return -1;
       } else if (c === "`") {
         if (!this.readBacktick()) return -1;
       } else if (c === " " || c === "\t" || c === "\r") {
@@ -172,7 +172,7 @@ class Parser {
         if (s[this.i + 1] !== "\n") this.word += s[this.i + 1];
         this.i += 2;
       } else if (c === "$") {
-        if (!this.readDollar()) return false;
+        if (!this.readDollar(true)) return false;
       } else if (c === "`") {
         if (!this.readBacktick()) return false;
       } else {
@@ -183,7 +183,7 @@ class Parser {
     return term === "";
   }
 
-  readDollar() {
+  readDollar(inDouble) {
     const s = this.s;
     const next = this.peek(1);
     if (next === "(") {
@@ -208,7 +208,7 @@ class Parser {
       this.i = end + 1;
       return true;
     }
-    if (next === "'") {
+    if (!inDouble && next === "'") {
       let j = this.i + 2;
       while (j < s.length && s[j] !== "'") {
         if (s[j] === "\\") j++;
@@ -220,7 +220,7 @@ class Parser {
       this.i = j + 1;
       return true;
     }
-    if (next === '"') {
+    if (!inDouble && next === '"') {
       this.inWord = true;
       this.i += 2;
       return this.readDouble('"');
