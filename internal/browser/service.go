@@ -245,6 +245,21 @@ func requestScope(r *http.Request) (scopeKey, error) {
 	return scopeKey{dir, q.Get("sessionID")}, nil
 }
 
+func (s *Service) hasUnifiedWindowScope(sessionID, directory string) bool {
+	s.mu.Lock()
+	resolveProfile := s.resolveProfile
+	defaultWindow := s.defaultWindow
+	s.mu.Unlock()
+	if resolveProfile == nil {
+		return false
+	}
+	storeKey := strings.TrimSpace(resolveProfile(sessionID, directory))
+	if storeKey == "" || (storeKey == "default" && !defaultWindow) {
+		return false
+	}
+	return sessionPattern.MatchString("workstore_" + storeKey)
+}
+
 func (s *Service) requestScope(r *http.Request) (scopeKey, error) {
 	key, _, err := s.requestScopeWithCaller(r)
 	return key, err
@@ -258,6 +273,7 @@ func (s *Service) requestScopeWithCaller(r *http.Request) (scopeKey, string, err
 	s.mu.Lock()
 	resolve := s.resolveSession
 	resolveProfile := s.resolveProfile
+	defaultWindow := s.defaultWindow
 	s.mu.Unlock()
 	if resolve != nil {
 		key.session, err = resolve(key.session, key.directory)
@@ -269,8 +285,17 @@ func (s *Service) requestScopeWithCaller(r *http.Request) (scopeKey, string, err
 		}
 	}
 	callerSession := key.session
+	s.mu.Lock()
+	if isolated := s.scopes[key]; isolated != nil && !isolated.closed && !isolated.window {
+		s.mu.Unlock()
+		return key, callerSession, nil
+	}
+	s.mu.Unlock()
 	if resolveProfile != nil {
 		if storeKey := strings.TrimSpace(resolveProfile(key.session, key.directory)); storeKey != "" {
+			if storeKey == "default" && !defaultWindow {
+				return key, callerSession, nil
+			}
 			unified := "workstore_" + storeKey
 			if sessionPattern.MatchString(unified) {
 				key.session = unified

@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -294,5 +295,57 @@ func TestQoderAndCodeBuddyResultErrorUsesAssistantTextAndRuntimeFallback(t *test
 		if emptyTr.msgInfo.Error == nil || emptyTr.msgInfo.Error.Data == nil || emptyTr.msgInfo.Error.Data.Message != tc.want {
 			t.Fatalf("runtime %s fallback error = %+v, want %q", tc.runtime, emptyTr.msgInfo.Error, tc.want)
 		}
+	}
+}
+
+func TestTurnTranslatorStreamingAccumulationIsLinear(t *testing.T) {
+	const (
+		chunks = 8192
+		chunk  = "0123456789abcdef"
+		want   = chunks * len(chunk)
+	)
+	claudeLine := `{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"` + chunk + `"}}}`
+	geminiLine := `{"type":"message","role":"assistant","content":"` + chunk + `","delta":true}`
+	agyLine := `{"event":"step_update","conversation_id":"conv_1","step_update":{"conversation_id":"conv_1","step_index":0,"state":"ACTIVE","step_type":"agent_response","text_delta":"` + chunk + `"}}`
+
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+
+	trClaude := NewTurnTranslator("ses_c", string(RuntimeClaudeCode), "msg_c", "msg_u", "claude-code", "sonnet", "build", "")
+	trClaude.FeedLine(`{"type":"stream_event","event":{"type":"message_start","message":{"id":"msg_1"}}}`)
+	for i := 0; i < chunks; i++ {
+		trClaude.FeedLine(claudeLine)
+	}
+
+	trGemini := NewTurnTranslator("ses_g", string(RuntimeGeminiCLI), "msg_g", "msg_u", "gemini-cli", "gemini-2.5-pro", "build", "")
+	for i := 0; i < chunks; i++ {
+		trGemini.FeedLine(geminiLine)
+	}
+
+	trAgy := NewTurnTranslator("ses_a", string(RuntimeAntigravity), "msg_a", "msg_u", "antigravity", "auto", "build", "conv_1")
+	for i := 0; i < chunks; i++ {
+		trAgy.FeedLine(agyLine)
+	}
+
+	runtime.ReadMemStats(&after)
+	totalAlloc := after.TotalAlloc - before.TotalAlloc
+
+	for name, tr := range map[string]*TurnTranslator{"claude": trClaude, "gemini": trGemini, "agy": trAgy} {
+		var got int
+		for _, p := range tr.partsByID {
+			if p.Type == "text" {
+				got = len(p.Text)
+			}
+		}
+		if got != want {
+			t.Fatalf("%s text len = %d, want %d", name, got, want)
+		}
+	}
+	// Quadratic string concatenation across 3 x 8192 chunks of 16B allocates >500 MiB;
+	// strings.Builder keeps total allocations (including JSON unmarshaling) well under 80 MiB.
+	const maxAllowedAlloc = 80 << 20
+	if totalAlloc > maxAllowedAlloc {
+		t.Fatalf("expected linear streaming allocations <= %d MiB, got %d MiB", maxAllowedAlloc>>20, totalAlloc>>20)
 	}
 }

@@ -72,10 +72,17 @@ func assetServerMiddleware(gw http.Handler) assetserver.Middleware {
 				next.ServeHTTP(w, r)
 				return
 			}
-			fbw := &badGatewayFallbackWriter{ResponseWriter: w}
+			fbw := &badGatewayFallbackWriter{
+				ResponseWriter: w,
+				header:         w.Header().Clone(),
+			}
 			next.ServeHTTP(fbw, r)
 			if fbw.badGateway {
 				gw.ServeHTTP(w, r)
+				return
+			}
+			if !fbw.wroteHeader {
+				fbw.copyHeaders()
 			}
 		})
 	}
@@ -83,8 +90,23 @@ func assetServerMiddleware(gw http.Handler) assetserver.Middleware {
 
 type badGatewayFallbackWriter struct {
 	http.ResponseWriter
+	header      http.Header
 	wroteHeader bool
 	badGateway  bool
+}
+
+func (w *badGatewayFallbackWriter) Header() http.Header {
+	return w.header
+}
+
+func (w *badGatewayFallbackWriter) copyHeaders() {
+	dst := w.ResponseWriter.Header()
+	for k := range dst {
+		delete(dst, k)
+	}
+	for k, vals := range w.header {
+		dst[k] = append([]string(nil), vals...)
+	}
 }
 
 func (w *badGatewayFallbackWriter) WriteHeader(code int) {
@@ -96,6 +118,7 @@ func (w *badGatewayFallbackWriter) WriteHeader(code int) {
 		w.badGateway = true
 		return
 	}
+	w.copyHeaders()
 	w.ResponseWriter.WriteHeader(code)
 }
 

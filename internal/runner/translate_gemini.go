@@ -112,7 +112,7 @@ func (t *TurnTranslator) streamGeminiReasoning(delta string, isDelta bool, now i
 		t.partsByID[rID] = part
 		t.partOrder = append(t.partOrder, rID)
 		evts = append(evts, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": clonePart(*part)}})
-		part.Text = delta
+		t.appendPartText(part, delta)
 		evts = append(evts, SSEEvent{
 			Type: "message.part.delta",
 			Properties: map[string]interface{}{
@@ -126,7 +126,7 @@ func (t *TurnTranslator) streamGeminiReasoning(delta string, isDelta bool, now i
 		return evts
 	}
 	if isDelta {
-		part.Text += delta
+		t.appendPartText(part, delta)
 		evts = append(evts, SSEEvent{
 			Type: "message.part.delta",
 			Properties: map[string]interface{}{
@@ -139,7 +139,7 @@ func (t *TurnTranslator) streamGeminiReasoning(delta string, isDelta bool, now i
 		})
 		return evts
 	}
-	part.Text = delta
+	t.setPartText(part, delta)
 	evts = append(evts, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": clonePart(*part)}})
 	return evts
 }
@@ -198,7 +198,7 @@ func (t *TurnTranslator) feedGeminiLine(line string) []SSEEvent {
 			t.partsByID[txtID] = part
 			t.partOrder = append(t.partOrder, txtID)
 			evts = append(evts, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": clonePart(*part)}})
-			part.Text = env.Content
+			t.appendPartText(part, env.Content)
 			evts = append(evts, SSEEvent{
 				Type: "message.part.delta",
 				Properties: map[string]interface{}{
@@ -212,7 +212,7 @@ func (t *TurnTranslator) feedGeminiLine(line string) []SSEEvent {
 			return evts
 		}
 		if env.Delta {
-			part.Text += env.Content
+			t.appendPartText(part, env.Content)
 			evts = append(evts, SSEEvent{
 				Type: "message.part.delta",
 				Properties: map[string]interface{}{
@@ -225,7 +225,7 @@ func (t *TurnTranslator) feedGeminiLine(line string) []SSEEvent {
 			})
 			return evts
 		}
-		part.Text = env.Content
+		t.setPartText(part, env.Content)
 		evts = append(evts, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": clonePart(*part)}})
 		return evts
 

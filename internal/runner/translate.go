@@ -30,6 +30,7 @@ type TurnTranslator struct {
 	msgInfo              MessageInfo
 	partOrder            []string
 	partsByID            map[string]*MessagePart
+	partBuilders         map[string]*strings.Builder
 	stepStartMs          map[int]int64
 	hasTextPart          bool
 	agyFinalResponseDone bool
@@ -84,6 +85,7 @@ func NewTurnTranslator(sessionID, runtime, messageID, parentUserMsgID, providerI
 		startedAtMs:     now,
 		msgInfo:         info,
 		partsByID:       make(map[string]*MessagePart),
+		partBuilders:    make(map[string]*strings.Builder),
 		stepStartMs:     make(map[int]int64),
 		lookupThink:     lookupAgyTranscriptThinking,
 		lookupStep:      lookupAgyTranscriptContent,
@@ -290,6 +292,34 @@ func (t *TurnTranslator) feedAgyLine(line string) []SSEEvent {
 	return nil
 }
 
+func (t *TurnTranslator) appendPartText(part *MessagePart, delta string) {
+	if part == nil || delta == "" {
+		return
+	}
+	if t.partBuilders == nil {
+		t.partBuilders = make(map[string]*strings.Builder)
+	}
+	b := t.partBuilders[part.ID]
+	if b == nil {
+		b = &strings.Builder{}
+		if part.Text != "" {
+			b.Grow(len(part.Text) + len(delta))
+			b.WriteString(part.Text)
+		}
+		t.partBuilders[part.ID] = b
+	}
+	b.WriteString(delta)
+	part.Text = b.String()
+}
+
+func (t *TurnTranslator) setPartText(part *MessagePart, text string) {
+	if part == nil {
+		return
+	}
+	part.Text = text
+	delete(t.partBuilders, part.ID)
+}
+
 func (t *TurnTranslator) insertPartOrderBefore(id, beforeID string) {
 	for i, existing := range t.partOrder {
 		if existing == beforeID {
@@ -338,7 +368,7 @@ func (t *TurnTranslator) handleAgyAgentResponse(su *agyStepUpdate, now int64) []
 			t.insertPartOrderBefore(rID, txtID)
 			evts = append(evts, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": clonePart(*part)}})
 		}
-		part.Text += thinkDelta
+		t.appendPartText(part, thinkDelta)
 		evts = append(evts, SSEEvent{
 			Type: "message.part.delta",
 			Properties: map[string]interface{}{
@@ -382,7 +412,7 @@ func (t *TurnTranslator) handleAgyAgentResponse(su *agyStepUpdate, now int64) []
 			t.partOrder = append(t.partOrder, txtID)
 			evts = append(evts, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": clonePart(*part)}})
 		}
-		part.Text += su.TextDelta
+		t.appendPartText(part, su.TextDelta)
 		evts = append(evts, SSEEvent{
 			Type: "message.part.delta",
 			Properties: map[string]interface{}{
@@ -685,6 +715,7 @@ func (t *TurnTranslator) ResetUncommittedTurnForRetry(initialExternalID string) 
 		})
 	}
 	t.partsByID = make(map[string]*MessagePart)
+	t.partBuilders = make(map[string]*strings.Builder)
 	t.partOrder = nil
 	t.stepStartMs = make(map[int]int64)
 	t.agyStepUsage = make(map[string]agyUsage)
@@ -745,6 +776,7 @@ func (t *TurnTranslator) PrepareForResumeRetry(nowMs int64) []SSEEvent {
 	}
 	t.agyFinalResponseDone = false
 	t.turnFinished = false
+	t.partBuilders = make(map[string]*strings.Builder)
 	t.geminiStepIdx++
 	t.geminiReasonPartID = ""
 	t.geminiTextPartID = ""

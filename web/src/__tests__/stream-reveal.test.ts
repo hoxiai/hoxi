@@ -259,14 +259,21 @@ describe("streamed table rows", () => {
     assertEqual(isInlineCodeFileChip("web/src/services/sse.ts", undefined, false), true);
   });
 
-  it("holds trailing markdown delimiters after CJK text and punctuation and parses unclosed strikethrough", () => {
-    assertDeepEqual(parseInline("\u4e2d\u6587*"), [{ type: "text", text: "\u4e2d\u6587" }]);
-    assertDeepEqual(parseInline("\u5bf9\u6bd4\uff1a*"), [{ type: "text", text: "\u5bf9\u6bd4\uff1a" }]);
-    assertDeepEqual(parseInline("hello ~"), [{ type: "text", text: "hello " }]);
-    assertDeepEqual(parseInline("hello ~~strike"), [
+  it("holds trailing markdown delimiters while streaming and preserves them in static markdown", () => {
+    assertDeepEqual(parseInline("\u4e2d\u6587*", { streaming: true }), [{ type: "text", text: "\u4e2d\u6587" }]);
+    assertDeepEqual(parseInline("\u5bf9\u6bd4\uff1a*", { streaming: true }), [{ type: "text", text: "\u5bf9\u6bd4\uff1a" }]);
+    assertDeepEqual(parseInline("hello ~", { streaming: true }), [{ type: "text", text: "hello " }]);
+    assertDeepEqual(parseInline("hello ~~strike", { streaming: true }), [
       { type: "text", text: "hello " },
       { type: "strike", text: "strike" },
     ]);
+
+    // Static / completed Markdown must preserve trailing literal characters (`~`, `*`, `[`, `` ` ``).
+    assertDeepEqual(parseInline("~"), [{ type: "text", text: "~" }]);
+    assertDeepEqual(parseInline("Home: ~"), [{ type: "text", text: "Home: ~" }]);
+    assertDeepEqual(parseInline("\u8bf4\u660e\uff1a~"), [{ type: "text", text: "\u8bf4\u660e\uff1a~" }]);
+    assertDeepEqual(parseInline("Result. *"), [{ type: "text", text: "Result. *" }]);
+    assertDeepEqual(parseInline("See ["), [{ type: "text", text: "See [" }]);
   });
 
   it("preserves the same reasoning wrapper object reference across pure thinking to inline answer transitions", () => {

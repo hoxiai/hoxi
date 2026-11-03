@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -216,5 +218,24 @@ func TestAssetServerMiddlewareFallsBackOnBadGateway(t *testing.T) {
 	h200.ServeHTTP(rec200, httptest.NewRequest(http.MethodGet, "/", nil))
 	if rec200.Code != http.StatusOK || rec200.Body.String() != "vite-index" || rec200.Header().Get("X-Served-By") != "vite" {
 		t.Fatalf("expected healthy vite response, got code=%d body=%q", rec200.Code, rec200.Body.String())
+	}
+
+	// 4. 502 via http.Error (which sets Content-Type: text/plain + X-Content-Type-Options: nosniff)
+	// must discard failed response headers so http.FileServer serves .js with JavaScript MIME type.
+	assetDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(assetDir, "assets"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(assetDir, "assets", "app.js"), []byte("console.log('ok');\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fileServerMW := assetServerMiddleware(http.FileServer(http.Dir(assetDir)))
+	h502JS := fileServerMW(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "bad gateway", http.StatusBadGateway)
+	}))
+	recJS := httptest.NewRecorder()
+	h502JS.ServeHTTP(recJS, httptest.NewRequest(http.MethodGet, "/assets/app.js", nil))
+	if recJS.Code != http.StatusOK || !strings.Contains(recJS.Header().Get("Content-Type"), "javascript") {
+		t.Fatalf("expected JavaScript Content-Type after 502 fallback, got code=%d content-type=%q", recJS.Code, recJS.Header().Get("Content-Type"))
 	}
 }

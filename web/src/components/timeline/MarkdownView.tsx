@@ -163,6 +163,7 @@ export default function MarkdownView(props: {
 
   const reveal: StreamReveal = {
     active: revealActive,
+    streaming: () => Boolean(props.streaming) || revealActive(),
     baseFilePath: () => props.baseFilePath,
   };
 

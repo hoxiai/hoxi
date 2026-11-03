@@ -214,6 +214,11 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 			fail(w, 400, err)
 			return
 		}
+		if action.Window != nil && !*action.Window && callerSession != "" && key.session != callerSession {
+			if rawKey, rawErr := requestScope(r); rawErr == nil {
+				key = scopeKey{directory: rawKey.directory, session: callerSession}
+			}
+		}
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
@@ -281,6 +286,13 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	if path == "action" && action.Action == "control" {
 		sc.manual = *action.Manual
 	} else if path == "action" && action.Action == "mode" {
+		if *action.Window && !sc.window && callerSession != "" && key.session == callerSession && s.hasUnifiedWindowScope(callerSession, key.directory) {
+			s.remove(key, sc)
+			state := emptyState()
+			state.Mode = "window"
+			writeJSON(w, 200, state)
+			return
+		}
 		if sc.window != *action.Window {
 			if sc.browser != nil {
 				sc.resetBrowser()
@@ -381,7 +393,7 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 			fail(w, 502, err)
 			return
 		}
-		if callerSession != "" && callerSession != sc.sessionID && sc.tabID != "" && (action.Action == "navigate" || action.Action == "tab_new" || action.Action == "tab_select") {
+		if callerSession != "" && sc.tabID != "" && (action.Action == "navigate" || action.Action == "tab_new" || action.Action == "tab_select") {
 			if sc.sessionTabs == nil {
 				sc.sessionTabs = make(map[string]string)
 			}

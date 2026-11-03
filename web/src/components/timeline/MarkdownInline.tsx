@@ -27,7 +27,12 @@ import {
   stripFileLineSuffix,
 } from "./markdown-parser";
 import MarkdownImage from "./MarkdownImage";
-import { StreamRevealText, useInlineRevealRef, useMarkdownBaseFilePath } from "./stream-reveal";
+import {
+  StreamRevealText,
+  useInlineRevealRef,
+  useMarkdownBaseFilePath,
+  useMarkdownStreaming,
+} from "./stream-reveal";
 
 function hasNestedInlineSyntax(text: string): boolean {
   return (
@@ -127,22 +132,21 @@ function InlineCodeSpan(props: { text: string; unclosed?: boolean }) {
     if (verified()) openFileInInspector(effectivePath());
   };
 
+  const handleKeyDown = (e: KeyboardEvent) => {
+    if (!verified()) return;
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      handleActivate();
+    }
+  };
+
   return (
     <code
       ref={inlineRevealRef}
       role={verified() ? "button" : undefined}
       tabIndex={verified() ? 0 : undefined}
-      onClick={verified() ? handleActivate : undefined}
-      onKeyDown={
-        verified()
-          ? (e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                handleActivate();
-              }
-            }
-          : undefined
-      }
+      onClick={handleActivate}
+      onKeyDown={handleKeyDown}
       title={verified() ? t("timeline.openInInspectorTooltip") : undefined}
       class={`rounded-md border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-1.5 py-0.5 font-mono text-[0.88em] text-[var(--text-primary)] ${
         verified()
@@ -160,8 +164,9 @@ function InlineCodeSpan(props: { text: string; unclosed?: boolean }) {
 
 export default function MarkdownInline(props: { text: string }) {
   const text = createMemo(() => props.text);
+  const streaming = useMarkdownStreaming();
   const spans = createMemo<InlineSpan[]>((prev) => {
-    const next = parseInline(text());
+    const next = parseInline(text(), { streaming: streaming() });
     for (let i = 0; i < next.length; i++) {
       if (isSameInlineSpan(prev[i], next[i])) {
         next[i] = prev[i];

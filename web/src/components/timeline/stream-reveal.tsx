@@ -17,6 +17,8 @@ import { REVEAL_BLOCK_MS, REVEAL_CHUNK_MS } from "./markdown/reveal";
 export interface StreamReveal {
   /** True while the view is actively pacing out newly arrived streamed content. */
   active: () => boolean;
+  /** True while the MarkdownView is in streaming mode or still pacing streamed content. */
+  streaming?: () => boolean;
   /** Optional relative file path of the Markdown document being rendered (e.g. "docs/guide.md"). */
   baseFilePath?: () => string | undefined;
 }
@@ -26,6 +28,11 @@ export const StreamRevealContext = createContext<StreamReveal>();
 export function useMarkdownBaseFilePath(): () => string | undefined {
   const reveal = useContext(StreamRevealContext);
   return () => reveal?.baseFilePath?.();
+}
+
+export function useMarkdownStreaming(): () => boolean {
+  const reveal = useContext(StreamRevealContext);
+  return () => Boolean(reveal?.streaming ? reveal.streaming() : reveal?.active());
 }
 
 const BLOCK_EASE = "cubic-bezier(0.22, 1, 0.36, 1)";

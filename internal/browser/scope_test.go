@@ -2,7 +2,11 @@ package browser
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
@@ -174,4 +178,110 @@ func TestWindowAllocatorOptionsAvoidAutomationFlags(t *testing.T) {
 	if !slices.Contains(headlessArgs, "--headless") {
 		t.Fatalf("headless mode should still include --headless, got: %v", headlessArgs)
 	}
+}
+
+func TestHeadlessModeIsolatesFromSharedDefaultWindowScope(t *testing.T) {
+	s := New()
+	defer s.Close()
+	s.SetAgentToken("secret")
+	s.SetDefaultWindowMode(true)
+	s.SetProfileResolver(func(_, _ string) string { return "default" })
+
+	dirA := t.TempDir()
+	dirB := t.TempDir()
+
+	// Two window-mode sessions share workstore_default.
+	if w := request(t, s, dirA, "ses_win_a", "action", `{"action":"control","manual":true}`, false); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if w := request(t, s, dirB, "ses_win_b", "state", "", false); w.Code != 200 || !strings.Contains(w.Body.String(), `"manual":true`) {
+		t.Fatalf("expected window-mode sessions to share workstore_default, got %d %s", w.Code, w.Body.String())
+	}
+	if len(s.scopes) != 1 {
+		t.Fatalf("expected 1 unified window scope, got %d", len(s.scopes))
+	}
+
+	// Switching ses_headless to headless mode allocates an isolated scope without resetting workstore_default.
+	if w := request(t, s, dirB, "ses_headless", "action", `{"action":"mode","window":false}`, false); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if len(s.scopes) != 2 {
+		t.Fatalf("expected isolated headless scope alongside unified window scope, got %d", len(s.scopes))
+	}
+	if w := request(t, s, dirB, "ses_headless", "state", "", false); w.Code != 200 || strings.Contains(w.Body.String(), `"manual":true`) || strings.Contains(w.Body.String(), `"mode":"window"`) {
+		t.Fatalf("expected ses_headless to have isolated headless state, got %d %s", w.Code, w.Body.String())
+	}
+	if w := request(t, s, dirA, "ses_win_a", "state", "", false); w.Code != 200 || !strings.Contains(w.Body.String(), `"manual":true`) {
+		t.Fatalf("expected workstore_default manual state untouched, got %d %s", w.Code, w.Body.String())
+	}
+
+	// Switching ses_headless back to window mode removes its isolated scope and rejoins workstore_default.
+	if w := request(t, s, dirB, "ses_headless", "action", `{"action":"mode","window":true}`, false); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if len(s.scopes) != 1 {
+		t.Fatalf("expected isolated headless scope removed after returning to window mode, got %d", len(s.scopes))
+	}
+	if w := request(t, s, dirB, "ses_headless", "state", "", false); w.Code != 200 || !strings.Contains(w.Body.String(), `"manual":true`) {
+		t.Fatalf("expected ses_headless to rejoin workstore_default, got %d %s", w.Code, w.Body.String())
+	}
+
+	sc := &scope{sessionID: "workstore_default", sessionTabs: map[string]string{"ses_a": "tab_1"}}
+	if !sc.tabOwnedByOtherSession("tab_1", "ses_b") {
+		t.Fatal("expected tab_1 owned by ses_a to be reported as owned for ses_b")
+	}
+	if sc.tabOwnedByOtherSession("tab_1", "ses_a") {
+		t.Fatal("expected tab_1 not reported as owned by other session for its owner ses_a")
+	}
+}
+
+func TestConversationsUseDifferentTabsForSameURL(t *testing.T) {
+	if os.Getenv("HOXI_BROWSER_TEST") != "1" {
+		t.Skip("set HOXI_BROWSER_TEST=1 to run Chrome integration tests")
+	}
+	pageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte("<!doctype html><title>" + r.URL.Path + "</title><p>" + r.URL.String() + "</p>"))
+	}))
+	defer pageServer.Close()
+
+	s := New()
+	defer s.Close()
+	s.SetAgentToken("secret")
+	s.SetProfileRoot(filepath.Join(t.TempDir(), "browser-profile"))
+	s.SetProfileResolver(func(_, _ string) string { return "store-shared" })
+
+	dir := t.TempDir()
+	sharedURL := pageServer.URL + "/shared?from=first"
+	secondURL := pageServer.URL + "/second"
+
+	doPost := func(session, body string) map[string]any {
+		t.Helper()
+		w := request(t, s, dir, session, "action", body, true)
+		if w.Code != 200 {
+			t.Fatalf("session=%s body=%s status=%d resp=%s", session, body, w.Code, w.Body.String())
+		}
+		var out map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+
+	first := doPost("ses_conv_a", `{"action":"navigate","url":`+ strconvQuote(sharedURL) +`}`)
+	second := doPost("ses_conv_b", `{"action":"navigate","url":`+ strconvQuote(sharedURL) +`}`)
+	if first["tabID"] == second["tabID"] {
+		t.Fatalf("independent conversations attached to the same tab %q for shared URL", first["tabID"])
+	}
+
+	doPost("ses_conv_b", `{"action":"navigate","url":`+strconvQuote(secondURL)+`}`)
+	evalA := doPost("ses_conv_a", `{"action":"evaluate","text":"window.location.href"}`)
+	if evalA["result"] != strconvQuote(sharedURL) || evalA["url"] != sharedURL {
+		t.Fatalf("conversation A tab was overwritten by conversation B: got result=%v url=%v, want %q", evalA["result"], evalA["url"], sharedURL)
+	}
+}
+
+func strconvQuote(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
 }

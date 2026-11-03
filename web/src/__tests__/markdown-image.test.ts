@@ -139,8 +139,8 @@ describe("markdown inline streaming & backtracking guard", () => {
 
   it("stabilizes unclosed bracket links, compound file extensions, and pending heading prefixes while streaming", () => {
     // Hold lone trailing `[` and `[` + backtick so brackets never flash before link label starts
-    assertDeepEqual(parseInline("See ["), [{ type: "text", text: "See " }]);
-    assertDeepEqual(parseInline("See [`"), [{ type: "text", text: "See " }]);
+    assertDeepEqual(parseInline("See [", { streaming: true }), [{ type: "text", text: "See " }]);
+    assertDeepEqual(parseInline("See [`", { streaming: true }), [{ type: "text", text: "See " }]);
 
     // Keep `[`parseInline` -> `[`parseInline`] -> `[`parseInline`](file://...) as a single link span throughout
     for (const step of [

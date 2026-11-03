@@ -291,10 +291,21 @@ func (sc *scope) contentHeight(ctx context.Context) (int, error) {
 	return measured, nil
 }
 
+func (sc *scope) tabOwnedByOtherSession(tabID, callerSession string) bool {
+	if tabID == "" || len(sc.sessionTabs) == 0 {
+		return false
+	}
+	for session, bound := range sc.sessionTabs {
+		if session != callerSession && bound == tabID {
+			return true
+		}
+	}
+	return false
+}
+
 // prepareCallerTab ensures that when multiple conversation sessions share a
-// unified store/app browser scope, each new conversation session opens a new
-// tab in the already-running Chrome window on its first navigation rather than
-// overwriting an existing tab or restarting Chrome.
+// unified store/app browser scope, each conversation session owns its own tab
+// in the shared Chrome window rather than overwriting another session's tab.
 func (sc *scope) prepareCallerTab(ctx context.Context, callerSession string, a Action) Action {
 	callerSession = strings.TrimSpace(callerSession)
 	if callerSession == "" || callerSession == sc.sessionID || sc.browser == nil {
@@ -316,7 +327,7 @@ func (sc *scope) prepareCallerTab(ctx context.Context, callerSession string, a A
 			}
 		}
 		if live {
-			if sc.tabID != boundTab {
+			if a.Action != "tab_select" && sc.tabID != boundTab {
 				sc.stopStream()
 				sc.tabID = boundTab
 				_ = sc.withTab(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
@@ -327,32 +338,27 @@ func (sc *scope) prepareCallerTab(ctx context.Context, callerSession string, a A
 		}
 		delete(sc.sessionTabs, callerSession)
 	}
-	if a.Action != "navigate" || a.URL == "" || a.URL == "about:blank" {
+	if a.Action == "" || a.Action == "tab_new" || a.Action == "tab_select" || a.Action == "tab_close" || a.Action == "focus" || a.Action == "resize" || a.Action == "viewport_reset" {
 		return a
 	}
-	cleanTarget := strings.TrimRight(strings.TrimSpace(a.URL), "/")
-	for _, tab := range state.Tabs {
-		if strings.TrimRight(strings.TrimSpace(tab.URL), "/") == cleanTarget {
-			if sc.tabID != tab.ID {
-				sc.stopStream()
-				sc.tabID = tab.ID
-				_ = sc.withTab(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
-					return target.ActivateTarget(target.ID(tab.ID)).Do(ctx)
-				}))
-			}
-			sc.sessionTabs[callerSession] = tab.ID
-			return a
-		}
-	}
-	onlyBlank := len(state.Tabs) == 1 && (strings.TrimSpace(state.Tabs[0].URL) == "" || strings.TrimSpace(state.Tabs[0].URL) == "about:blank")
+	onlyBlank := len(state.Tabs) == 1 &&
+		(strings.TrimSpace(state.Tabs[0].URL) == "" || strings.TrimSpace(state.Tabs[0].URL) == "about:blank") &&
+		!sc.tabOwnedByOtherSession(state.Tabs[0].ID, callerSession)
 	if onlyBlank {
 		sc.tabID = state.Tabs[0].ID
 		sc.sessionTabs[callerSession] = sc.tabID
 		return a
 	}
-	// Existing non-blank tabs are open in Chrome: open a new tab in the running
-	// Chrome window so the new conversation reuses the logged-in browser session.
-	a.Action = "tab_new"
+	if a.Action == "navigate" {
+		// Existing tabs are non-blank or owned by other sessions: open a new
+		// tab in the running Chrome window so the conversation reuses the
+		// logged-in profile without overwriting another session's page.
+		a.Action = "tab_new"
+		return a
+	}
+	if _, err := sc.perform(ctx, Action{Action: "tab_new", URL: "about:blank"}); err == nil && sc.tabID != "" {
+		sc.sessionTabs[callerSession] = sc.tabID
+	}
 	return a
 }
 

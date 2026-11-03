@@ -102,11 +102,15 @@ session ID, so agent tools and the inspector share the same browser and manual
 ownership. Requests with a mismatched worktree are rejected.
 
 By default, Hoxi launches a visible **Desktop Window (`window`)** backed by the
-persistent profile at `~/.hoxi/browser-profile`. When running in **Headless Sandbox
-(`headless`)** mode, each session/directory pair receives a separate headless Chrome
-process and temporary profile. Up to eight browser scopes can coexist. Closing an
-isolated headless browser frees its slot and deletes its temporary profile; app
-shutdown closes all browsers.
+persistent profile at `~/.hoxi/browser-profile` (or `~/.hoxi/browser-profile-stores/<store>`
+when bound to a Work store account). Conversations sharing a persistent window
+profile reuse the running Chrome instance and its signed-in cookies while opening
+and tracking a dedicated tab per conversation so sessions never overwrite each
+other's active page. When running in **Headless Sandbox (`headless`)** mode, each
+session/directory pair receives a separate headless Chrome process and temporary
+profile. Up to eight browser scopes can coexist. Closing an isolated headless
+browser frees its slot and deletes its temporary profile; app shutdown closes all
+browsers.
 
 All actions except snapshots and screenshots request browser permission. The
 plugin sets the browser permission to `ask`; existing explicit per-agent policy

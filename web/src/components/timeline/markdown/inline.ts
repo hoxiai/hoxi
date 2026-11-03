@@ -108,7 +108,11 @@ function parseImageSpan(token: string): InlineSpan | null {
     : { type: "image", alt: match[1], src };
 }
 
-export function parseInline(text: string): InlineSpan[] {
+export function parseInline(
+  text: string,
+  options?: { streaming?: boolean }
+): InlineSpan[] {
+  const streaming = Boolean(options?.streaming);
   const spans: InlineSpan[] = [];
   let lastIdx = 0;
 
@@ -164,6 +168,8 @@ export function parseInline(text: string): InlineSpan[] {
         const codeBody = token.slice(1);
         if (codeBody.length > 0) {
           spans.push({ type: "code", text: codeBody, unclosed: true });
+        } else if (!streaming) {
+          appendPlainTextSpan(spans, token);
         }
       }
     } else if (
@@ -174,17 +180,21 @@ export function parseInline(text: string): InlineSpan[] {
     } else if (token.startsWith("**") || token.startsWith("__")) {
       const delim = token[0];
       const rawBody = token.slice(2);
-      const boldBody = rawBody.endsWith(delim) ? rawBody.slice(0, -1) : rawBody;
+      const boldBody = streaming && rawBody.endsWith(delim) ? rawBody.slice(0, -1) : rawBody;
       if (boldBody.length > 0) {
         spans.push({ type: "bold", text: boldBody });
+      } else if (!streaming) {
+        appendPlainTextSpan(spans, token);
       }
     } else if (token.startsWith("~~") && token.length >= 4 && token.endsWith("~~")) {
       spans.push({ type: "strike", text: token.slice(2, -2) });
     } else if (token.startsWith("~~")) {
       const rawBody = token.slice(2);
-      const strikeBody = rawBody.endsWith("~") ? rawBody.slice(0, -1) : rawBody;
+      const strikeBody = streaming && rawBody.endsWith("~") ? rawBody.slice(0, -1) : rawBody;
       if (strikeBody.length > 0) {
         spans.push({ type: "strike", text: strikeBody });
+      } else if (!streaming) {
+        appendPlainTextSpan(spans, token);
       }
     } else if (token.startsWith("[")) {
       // A failed image token leaves a stray `!`; keep the whole thing literal
@@ -219,6 +229,8 @@ export function parseInline(text: string): InlineSpan[] {
                 text: rawLabel,
                 href: "#",
               });
+            } else if (!streaming) {
+              appendPlainTextSpan(spans, token);
             }
           } else {
             appendPlainTextSpan(spans, token);
@@ -241,7 +253,8 @@ export function parseInline(text: string): InlineSpan[] {
   }
 
   if (lastIdx < text.length) {
-    appendPlainTextSpan(spans, stripPendingTrailingDelimiter(text.slice(lastIdx)));
+    const tail = text.slice(lastIdx);
+    appendPlainTextSpan(spans, streaming ? stripPendingTrailingDelimiter(tail) : tail);
   }
   return spans;
 }

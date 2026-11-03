@@ -252,7 +252,7 @@ func (t *TurnTranslator) feedClaudeEvent(env *claudeRawEvent, now int64) []SSEEv
 				t.partOrder = append(t.partOrder, rID)
 				evts = append(evts, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": clonePart(*part)}})
 			}
-			part.Text += delta
+			t.appendPartText(part, delta)
 			evts = append(evts, SSEEvent{
 				Type: "message.part.delta",
 				Properties: map[string]interface{}{
@@ -287,7 +287,7 @@ func (t *TurnTranslator) feedClaudeEvent(env *claudeRawEvent, now int64) []SSEEv
 				t.partOrder = append(t.partOrder, txtID)
 				evts = append(evts, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": clonePart(*part)}})
 			}
-			part.Text += delta
+			t.appendPartText(part, delta)
 			evts = append(evts, SSEEvent{
 				Type: "message.part.delta",
 				Properties: map[string]interface{}{
@@ -341,7 +341,7 @@ func (t *TurnTranslator) feedClaudeEvent(env *claudeRawEvent, now int64) []SSEEv
 							end = existing.Time.End
 						}
 					}
-					existing.Text = blk.Thinking
+					t.setPartText(existing, blk.Thinking)
 					existing.Time = &PartTime{Start: start, End: end}
 					evts = append(evts, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": clonePart(*existing)}})
 				} else {
@@ -369,7 +369,7 @@ func (t *TurnTranslator) feedClaudeEvent(env *claudeRawEvent, now int64) []SSEEv
 					if existing.Time != nil && existing.Time.Start > 0 {
 						start = existing.Time.Start
 					}
-					existing.Text = blk.Text
+					t.setPartText(existing, blk.Text)
 					existing.Time = &PartTime{Start: start, End: now}
 					evts = append(evts, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": clonePart(*existing)}})
 				} else {

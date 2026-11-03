@@ -633,28 +633,28 @@ describe("task progress todo staleness", () => {
     ]);
 
     // 4. Inline bold streaming: no raw `*` / `**` flash and stable bold span identity
-    assertDeepEqual(parseInline("Prefix *"), [{ type: "text", text: "Prefix " }]);
-    assertDeepEqual(parseInline("Prefix **"), [{ type: "text", text: "Prefix " }]);
-    assertDeepEqual(parseInline("Prefix **bo"), [
+    assertDeepEqual(parseInline("Prefix *", { streaming: true }), [{ type: "text", text: "Prefix " }]);
+    assertDeepEqual(parseInline("Prefix **", { streaming: true }), [{ type: "text", text: "Prefix " }]);
+    assertDeepEqual(parseInline("Prefix **bo", { streaming: true }), [
       { type: "text", text: "Prefix " },
       { type: "bold", text: "bo" },
     ]);
-    assertDeepEqual(parseInline("Prefix **bold*"), [
+    assertDeepEqual(parseInline("Prefix **bold*", { streaming: true }), [
       { type: "text", text: "Prefix " },
       { type: "bold", text: "bold" },
     ]);
-    assertDeepEqual(parseInline("Prefix **bold**"), [
+    assertDeepEqual(parseInline("Prefix **bold**", { streaming: true }), [
       { type: "text", text: "Prefix " },
       { type: "bold", text: "bold" },
     ]);
 
     // 5. Inline code streaming: unclosed backtick marks `unclosed: true` and prevents bare file path hijack
-    assertDeepEqual(parseInline("Check `"), [{ type: "text", text: "Check " }]);
-    assertDeepEqual(parseInline("Check `see web/src/App.tsx"), [
+    assertDeepEqual(parseInline("Check `", { streaming: true }), [{ type: "text", text: "Check " }]);
+    assertDeepEqual(parseInline("Check `see web/src/App.tsx", { streaming: true }), [
       { type: "text", text: "Check " },
       { type: "code", text: "see web/src/App.tsx", unclosed: true },
     ]);
-    assertDeepEqual(parseInline("Check `see web/src/App.tsx`"), [
+    assertDeepEqual(parseInline("Check `see web/src/App.tsx`", { streaming: true }), [
       { type: "text", text: "Check " },
       { type: "code", text: "see web/src/App.tsx" },
     ]);
