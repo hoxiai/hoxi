@@ -185,12 +185,135 @@ export function computeSmartDefaultCandidates(poolID: string): AutoPoolCandidate
   return res.length > 0 ? res : pickSorted(freeList, 8);
 }
 
+const MEDIA_IMAGE_GEN_MODEL_RE =
+  /dall-e|gpt-image|imagen|flux-|flux\.|flux\/|midjourney|stable-diffusion|sdxl|ideogram|recraft/i;
+const MEDIA_VIDEO_GEN_MODEL_RE =
+  /seedance|kling|veo-|veo2|veo3|sora|wanx|wan2|cogvideo|hailuo|luma-|runway/i;
+const MEDIA_AUDIO_GEN_MODEL_RE =
+  /tts|speech|elevenlabs|fishaudio|cosyvoice|suno|udio/i;
 const NON_CHAT_UTILITY_MODEL_RE =
   /embedding|embed|rerank|bge-|whisper|tts|speech|moderation/i;
 
+export type DedicatedMediaModality = "image" | "video" | "audio" | null;
+
+export function inferDedicatedMediaModality(modelID?: string | null): DedicatedMediaModality {
+  if (!modelID) return null;
+  const trimmed = modelID.trim();
+  if (MEDIA_VIDEO_GEN_MODEL_RE.test(trimmed)) return "video";
+  if (MEDIA_IMAGE_GEN_MODEL_RE.test(trimmed)) return "image";
+  if (MEDIA_AUDIO_GEN_MODEL_RE.test(trimmed)) return "audio";
+  return null;
+}
+
 export function isNonChatUtilityModelID(modelID?: string | null): boolean {
   if (!modelID) return false;
-  return NON_CHAT_UTILITY_MODEL_RE.test(modelID.trim());
+  const trimmed = modelID.trim();
+  if (!trimmed) return false;
+  if (inferDedicatedMediaModality(trimmed) !== null) return true;
+  return NON_CHAT_UTILITY_MODEL_RE.test(trimmed);
+}
+
+export type PromptIntentKind =
+  | "chat"
+  | "image_gen"
+  | "video_gen"
+  | "visual_review"
+  | "audio_tts"
+  | "coding_reasoning";
+
+export interface PromptIntentEvaluation {
+  kind: PromptIntentKind;
+  requiresVisionBrain: boolean;
+  recommendedPoolID: PresetAutoPoolID;
+  logicalMediaModelID: string | null;
+  mediaModality: DedicatedMediaModality;
+  defaultAspectRatio: "1:1" | "3:4" | "4:5" | "9:16" | "16:9";
+  mediaRoutingDirective?: string;
+}
+
+const VIDEO_INTENT_RE =
+  /storyboard-pipeline|15-ffmpeg-compose|\u751f\u89c6\u9891|\u751f\u6210\u89c6\u9891|\u77ed\u89c6\u9891\u811a\u672c|\u5206\u955c\u89c6\u9891|\u5e26\u8d27\u89c6\u9891|\u77ed\u5267|\u9996\u5c3e\u5e27|\u6302\u8f66\u89c6\u9891|seedance|kling|\u53ef\u7075|veo|sora|wanx|\u4e07\u76f8|\u5206\u955c\u72b6\u6001\u673a/i;
+const VISUAL_REVIEW_INTENT_RE =
+  /visual-brief-and-review|14-visual-review|\u89c6\u89c9\u590d\u76d8|\u81ea\u52a8\u590d\u76d8|\u5ba1\u56fe|\u68c0\u67e5\u4e3b\u56fe|\u5c01\u9762\u8bca\u65ad|\u5b89\u5168\u533a\u68c0\u67e5|\u906e\u6321\u68c0\u67e5|visual\s+review/i;
+const IMAGE_INTENT_RE =
+  /xhs-cover-3x4\.svg|hero-card\.svg|storyboard-9x16\.svg|\u751f\u56fe|\u751f\u6210\u56fe\u7247|\u751f\u6210\u4e3b\u56fe|\u5546\u54c1\u4e3b\u56fe|\u751f\u6210\u5c01\u9762|3:4\s*\u7ad6\u7248\u5c01\u9762|\u767d\u5e95\u56fe|\u573a\u666f\u56fe|\u5546\u62cd\u56fe|\u6d77\u62a5\u56fe|\u9996\u5c4f\u56fe\u5361|9\s*\u56fe\u811a\u672c|generate\s+image|product\s+photo/i;
+const AUDIO_INTENT_RE =
+  /\u914d\u97f3|\u53e3\u64ad\u97f3\u9891|\u8bed\u97f3\u5408\u6210|\u751f\u6210\u97f3\u9891|elevenlabs|fishaudio|tts|voiceover/i;
+const XHS_VERTICAL_RE = /xiaohongshu|\u5c0f\u7ea2\u4e66|3:4|\u7ad6\u7248/i;
+
+export function evaluatePromptModalityIntent(
+  promptText: string,
+  opts?: {
+    hasImageAttachment?: boolean;
+    skillName?: string;
+    categoryId?: string;
+    chipId?: string;
+  }
+): PromptIntentEvaluation {
+  const raw = (promptText || "").trim();
+  const combined = `${raw} ${opts?.skillName || ""} ${opts?.categoryId || ""} ${opts?.chipId || ""}`;
+
+  if (VIDEO_INTENT_RE.test(combined)) {
+    return {
+      kind: "video_gen",
+      requiresVisionBrain: true,
+      recommendedPoolID: "daily",
+      logicalMediaModelID: "hoxi-video-seedance",
+      mediaModality: "video",
+      defaultAspectRatio: "9:16",
+      mediaRoutingDirective:
+        "[Modality Router: Video & Storyboard Generation]\n- Keep the session orchestrator on a tool-calling Vision chat model.\n- Anchor subject & first-frame storageKeys via `storyboard-pipeline` (`15-storyboard-shots.csv`, `15-subtitles.srt`, `15-ffmpeg-compose.sh`) or invoke `hoxi_tools` (`bytedance` / `alibaba` video endpoints) when external video synthesis is requested.",
+    };
+  }
+
+  if (VISUAL_REVIEW_INTENT_RE.test(combined)) {
+    return {
+      kind: "visual_review",
+      requiresVisionBrain: true,
+      recommendedPoolID: "frontier",
+      logicalMediaModelID: "hoxi-image-pro",
+      mediaModality: "image",
+      defaultAspectRatio: "3:4",
+      mediaRoutingDirective:
+        "[Modality Router: Automated Visual Review]\n- Use Vision inspection capabilities and `visual-brief-and-review` to verify aspect ratios (1:1 / 3:4 / 9:16), UI safe-zone clearance, 1688 source image anchoring, contrast hierarchy, and ad compliance.",
+    };
+  }
+
+  if (IMAGE_INTENT_RE.test(combined)) {
+    const isXhsOrVertical = XHS_VERTICAL_RE.test(combined);
+    const ratio = isXhsOrVertical ? "3:4" : "1:1";
+    return {
+      kind: "image_gen",
+      requiresVisionBrain: true,
+      recommendedPoolID: "daily",
+      logicalMediaModelID: "hoxi-image-pro",
+      mediaModality: "image",
+      defaultAspectRatio: ratio,
+      mediaRoutingDirective: `[Modality Router: Product Image & Cover Generation]\n- Do NOT treat a text-only chat response as the final visual deliverable.\n- Generate deterministic SVG/image assets (\`hero-card.svg\`, \`xhs-cover-3x4.svg\`, \`storyboard-9x16.svg\`) with stable workspace \`storageKey\` paths, or call \`hoxi_tools\` image generation endpoints when photorealistic rendering is requested.`,
+    };
+  }
+
+  if (AUDIO_INTENT_RE.test(combined)) {
+    return {
+      kind: "audio_tts",
+      requiresVisionBrain: Boolean(opts?.hasImageAttachment),
+      recommendedPoolID: "daily",
+      logicalMediaModelID: "hoxi-audio-tts",
+      mediaModality: "audio",
+      defaultAspectRatio: "9:16",
+      mediaRoutingDirective:
+        "[Modality Router: Voiceover & Subtitle Alignment]\n- Generate time-aligned `.srt` subtitles (`15-subtitles.srt`) and invoke `hoxi_tools` (`elevenlabs` / `fishaudio`) when audio synthesis is requested.",
+    };
+  }
+
+  return {
+    kind: opts?.hasImageAttachment ? "visual_review" : "chat",
+    requiresVisionBrain: Boolean(opts?.hasImageAttachment),
+    recommendedPoolID: "daily",
+    logicalMediaModelID: null,
+    mediaModality: null,
+    defaultAspectRatio: "1:1",
+  };
 }
 
 export function modelSupportsImageInput(providerID: string, modelID: string): boolean {

@@ -18,8 +18,10 @@ import {
   AUTO_PROVIDER_ID,
   PRESET_AUTO_POOL_IDS,
   computeSmartDefaultCandidates,
+  evaluatePromptModalityIntent,
   fetchFreeTierGuides,
   getFreeTierGuideItems,
+  inferDedicatedMediaModality,
   isModelFree,
   isNonChatUtilityModelID,
   modelSupportsImageInput,
@@ -27,16 +29,21 @@ import {
   type AutoModelPoolConfig,
   type AutoPoolCandidate,
   type AutoRotationStrategy,
+  type DedicatedMediaModality,
   type FreeTierGuideItem,
   type PresetAutoPoolID,
+  type PromptIntentEvaluation,
+  type PromptIntentKind,
 } from "./auto-pool-defaults";
 
 export {
   AUTO_PROVIDER_ID,
   PRESET_AUTO_POOL_IDS,
   computeSmartDefaultCandidates,
+  evaluatePromptModalityIntent,
   fetchFreeTierGuides,
   getFreeTierGuideItems,
+  inferDedicatedMediaModality,
   isModelFree,
   isNonChatUtilityModelID,
   modelSupportsImageInput,
@@ -44,8 +51,11 @@ export {
   type AutoModelPoolConfig,
   type AutoPoolCandidate,
   type AutoRotationStrategy,
+  type DedicatedMediaModality,
   type FreeTierGuideItem,
   type PresetAutoPoolID,
+  type PromptIntentEvaluation,
+  type PromptIntentKind,
 };
 
 export const AUTO_POOLS_STORAGE_KEY = "hoxi-auto-pools:v1";

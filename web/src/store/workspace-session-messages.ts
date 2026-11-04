@@ -6,7 +6,7 @@ import type { MessagePart } from "../services/sse-types";
 import { extractUserTurnSkillSelection, revalidateSkillForTargetDirectory, setComposerSkillNotice, transferDraftComposerSkill } from "./skills";
 import { recordPromptDispatched } from "./provider-telemetry";
 import { extractLocalFallbackTitle, isPlaceholderSessionTitle, summarizeAndRenameSession } from "./session-title";
-import { isAutoModel, markAutoCandidateCooldown, modelSupportsImageInput, resolveAutoModelTarget } from "./auto-models";
+import { evaluatePromptModalityIntent, isAutoModel, isNonChatUtilityModelID, markAutoCandidateCooldown, modelSupportsImageInput, resolveAutoModelTarget } from "./auto-models";
 import { reportAutoCandidateOutcome } from "./auto-breaker";
 import {
   clearAutoFailoverPending,
@@ -117,21 +117,45 @@ export async function dispatchSessionPrompt(
   const hasImageAttachment = attachments.some(
     (a) => (a.mime || "").toLowerCase().startsWith("image/") || /^data:image\//i.test(a.url || "")
   );
+  const turnIntent = evaluatePromptModalityIntent(promptText, {
+    hasImageAttachment,
+    skillName: options?.skillSelection?.name || editingQueued?.item.skillSelection?.name,
+  });
+  const requireVisionBrain = hasImageAttachment || turnIntent.requiresVisionBrain;
   const chosenModel = options?.model || config.model || agentDedicatedModel || editingQueued?.item.model;
   const isAuto = isAutoModel(chosenModel);
   const resolvedConcrete =
     isAuto && chosenModel
       ? resolveAutoModelTarget(chosenModel, {
           advance: true,
-          requireImage: hasImageAttachment,
+          requireImage: requireVisionBrain,
           sessionID: id ?? undefined,
         })
       : null;
-  const effectiveModel = resolvedConcrete
+  let effectiveModel = resolvedConcrete
     ? { ...resolvedConcrete }
     : chosenModel
     ? { ...chosenModel }
     : undefined;
+  // Guardrail: if the user selected a dedicated image/video/audio endpoint or a text-only
+  // model for a visual/media turn, reroute the session brain to a Vision + Tool-Calling model
+  // when one is available in the auto pool so the session orchestrator never 400s.
+  if (
+    effectiveModel &&
+    (isNonChatUtilityModelID(effectiveModel.modelID) ||
+      (requireVisionBrain &&
+        !hasImageAttachment &&
+        !modelSupportsImageInput(effectiveModel.providerID, effectiveModel.modelID)))
+  ) {
+    const fallbackBrain = resolveAutoModelTarget(turnIntent.recommendedPoolID, {
+      advance: false,
+      requireImage: requireVisionBrain,
+      sessionID: id ?? undefined,
+    });
+    if (fallbackBrain) {
+      effectiveModel = { ...fallbackBrain };
+    }
+  }
   if (!effectiveModel && sessionRuntimeForID(id) === "opencode") {
     throw new Error(t("timeline.selectModelToSend"));
   }
@@ -149,7 +173,11 @@ export async function dispatchSessionPrompt(
     throw new Error(t("timeline.modelDoesNotSupportImages", { model: effectiveModel.modelID }));
   }
   const effort = options?.effort ?? config.effort ?? editingQueued?.item.effort;
-  const explicitSystem = options?.system ?? editingQueued?.item.system;
+  const baseExplicitSystem = options?.system ?? editingQueued?.item.system;
+  const explicitSystem =
+    [baseExplicitSystem?.trim(), turnIntent.mediaRoutingDirective?.trim()]
+      .filter(Boolean)
+      .join("\n\n") || undefined;
 
   if (id) {
     await waitForSessionSandbox(id);

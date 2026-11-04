@@ -98,15 +98,47 @@ func defaultModelVariants(providerID, npm, modelID string) map[string]interface{
 	}
 }
 
-// isNonChatUtilityModel returns true only for non-conversational utility endpoints
-// (embeddings, rerankers, speech/audio transcription, moderation). All other chat/coding
-// models default to supporting image attachments and reasoning unless explicitly disabled.
+// inferMediaGenerationModality returns "image", "video", or "audio" for dedicated
+// non-conversational media generation endpoints (e.g. dall-e-3, gpt-image-1, flux,
+// imagen, seedance, kling, veo, sora, wanx, elevenlabs) so they are never routed as
+// primary tool-calling chat models. Conversational multimodal models (gemini, gpt-4o,
+// claude) return "".
+func inferMediaGenerationModality(modelID string) string {
+	id := strings.ToLower(strings.TrimSpace(modelID))
+	if id == "" {
+		return ""
+	}
+	for _, tok := range []string{"seedance", "kling", "veo-", "veo2", "veo3", "sora", "wanx", "wan2", "cogvideo", "hailuo", "luma-", "runway"} {
+		if strings.Contains(id, tok) {
+			return "video"
+		}
+	}
+	for _, tok := range []string{"dall-e", "gpt-image", "imagen", "flux-", "flux.", "flux/", "midjourney", "stable-diffusion", "sdxl", "ideogram", "recraft"} {
+		if strings.Contains(id, tok) {
+			return "image"
+		}
+	}
+	for _, tok := range []string{"tts", "speech", "elevenlabs", "fishaudio", "cosyvoice", "suno", "udio"} {
+		if strings.Contains(id, tok) {
+			return "audio"
+		}
+	}
+	return ""
+}
+
+// isNonChatUtilityModel returns true only for non-conversational utility or pure
+// media-generation endpoints (embeddings, rerankers, speech/audio, moderation,
+// dedicated image/video generators). Conversational models default to supporting
+// image attachments and reasoning unless explicitly disabled.
 func isNonChatUtilityModel(modelID string) bool {
 	id := strings.ToLower(strings.TrimSpace(modelID))
 	if id == "" {
 		return true
 	}
-	for _, tok := range []string{"embedding", "embed", "rerank", "bge-", "whisper", "tts", "speech", "moderation"} {
+	if inferMediaGenerationModality(id) != "" {
+		return true
+	}
+	for _, tok := range []string{"embedding", "embed", "rerank", "bge-", "whisper", "moderation"} {
 		if strings.Contains(id, tok) {
 			return true
 		}

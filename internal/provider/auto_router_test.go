@@ -194,3 +194,37 @@ func TestConcurrentProviderSavesPreserveBothCredentials(t *testing.T) {
 		t.Fatalf("both saves returned 200, but only %d of 2 providers remain in credential store", len(providers))
 	}
 }
+
+func TestAutoPoolExcludesDedicatedMediaGenerationEndpoints(t *testing.T) {
+	home, root := setupIsolatedEnv(t)
+	t.Setenv("HOXI_HOME", filepath.Join(home, ".hoxi"))
+	svc := NewService(0, "test", root, nil)
+	err := writeJSONMapFile(svc.workspaceHoxiModelsPath(), map[string]interface{}{
+		"provider": map[string]interface{}{
+			"media-hub": map[string]interface{}{
+				"npm": "@ai-sdk/openai-compatible",
+				"options": map[string]interface{}{
+					"baseURL": "https://media.invalid/v1",
+					"apiKey":  "synthetic",
+				},
+				"models": map[string]interface{}{
+					"dall-e-3":       map[string]interface{}{"free": true},
+					"gpt-image-1":    map[string]interface{}{"free": true},
+					"flux-pro-1.1":   map[string]interface{}{"free": true},
+					"seedance-2.0":   map[string]interface{}{"free": true},
+					"veo-3-fast":     map[string]interface{}{"free": true},
+					"gemini-2.5-pro": map[string]interface{}{"free": true},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 4; i++ {
+		pid, mid := svc.selectAutoCandidate("daily", nil)
+		if pid != "media-hub" || mid != "gemini-2.5-pro" {
+			t.Fatalf("auto pool selected non-chat media model %s/%s, want media-hub/gemini-2.5-pro", pid, mid)
+		}
+	}
+}
