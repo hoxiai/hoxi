@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -271,5 +272,59 @@ func TestRequestLogIncludesCompletedZeroTokenNativeTurnsAndMixedSessions(t *test
 	entries := gw.collectRequestLog()
 	if len(entries) != 1 || entries[0].ID != "msg_a_qdr_1" || entries[0].ProviderID != string(runner.RuntimeQoder) || entries[0].DurationMs != 2000 {
 		t.Fatalf("expected completed zero-token Qoder turn in request log, got %+v", entries)
+	}
+}
+
+func TestRequestLogCacheReusesUntilSourcesChange(t *testing.T) {
+	t.Setenv("OPENCODE_DB", "")
+	dbPath := filepath.Join(t.TempDir(), "hoxi.db")
+	t.Setenv("HOXI_DB_PATH", dbPath)
+
+	repo := t.TempDir()
+	svc := runner.NewService(repo, nil, nil, filepath.Join(t.TempDir(), "sessions"))
+	now := time.Now().UnixMilli()
+	put := func(id, msgID string, created int64) {
+		t.Helper()
+		msg := pulseTokenMessage(msgID, id, "claude-sonnet", created, 10, 5, 0, 0)
+		msg.Time.Completed = created + 100
+		if err := svc.Store().Put(runner.SessionRecord{
+			ID: id, Runtime: string(runner.RuntimeClaudeCode), ProjectDir: repo, WorktreePath: repo,
+			Title: id, CreatedAt: created, UpdatedAt: created,
+			Turns: []runner.MessageTurn{{Info: msg}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put("ses_cache_a", "msg_a", now-1000)
+
+	gw := New(0, "pass", repo, nil, nil)
+	gw.runner = svc
+	first := gw.cachedRequestLog()
+	if len(first) != 1 || first[0].ID != "msg_a" {
+		t.Fatalf("first log: %+v", first)
+	}
+	if again := gw.cachedRequestLog(); len(again) != 1 || &again[0] != &first[0] {
+		t.Fatal("unchanged sources should reuse the cached entries")
+	}
+
+	put("ses_cache_b", "msg_b", now)
+	afterRunner := gw.cachedRequestLog()
+	if len(afterRunner) != 2 || afterRunner[0].ID != "msg_b" {
+		t.Fatalf("a runner write must invalidate the cache: %+v", afterRunner)
+	}
+
+	if err := os.WriteFile(dbPath, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if afterDB := gw.cachedRequestLog(); len(afterDB) != 2 || &afterDB[0] == &afterRunner[0] {
+		t.Fatal("an engine database change must invalidate the cache")
+	}
+
+	gw.requestLog.mu.Lock()
+	gw.requestLog.at = time.Now().Add(-requestLogMaxReuse)
+	stale := gw.requestLog.entries
+	gw.requestLog.mu.Unlock()
+	if expired := gw.cachedRequestLog(); &expired[0] == &stale[0] {
+		t.Fatal("entries older than the reuse window must be recollected")
 	}
 }

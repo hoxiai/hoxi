@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -295,9 +296,54 @@ func PruneOversizedMessageDiffs(ctx context.Context, dbPath string) error {
 	return nil
 }
 
+const (
+	// vacuumMinFreeBytes skips VACUUM when too little space would be reclaimed.
+	vacuumMinFreeBytes = 8 << 20
+	// vacuumAlwaysFreeBytes reclaims a large free list even in a big database.
+	vacuumAlwaysFreeBytes = 256 << 20
+)
+
+// VacuumWorthwhile reports whether rewriting the whole database file pays off.
+// VACUUM rewrites every page and blocks the engine's writers, so a large
+// database that is mostly live data must not be rewritten just for its size.
+func VacuumWorthwhile(pageSize, pageCount, freePages int64) bool {
+	if pageSize <= 0 || pageCount <= 0 || freePages <= 0 {
+		return false
+	}
+	freeBytes := pageSize * freePages
+	if freeBytes < vacuumMinFreeBytes {
+		return false
+	}
+	return freePages*5 >= pageCount || freeBytes >= vacuumAlwaysFreeBytes
+}
+
+// readFreeListStats returns page_size, page_count and freelist_count.
+func readFreeListStats(ctx context.Context, dbPath string) (pageSize, pageCount, freePages int64, err error) {
+	statCtx, cancel := context.WithTimeout(ctx, sqliteReadTimeout)
+	defer cancel()
+	cmd := subproc.CommandContext(statCtx, sqlitecli.Executable(), "-readonly", "-cmd", ".timeout 3000", dbPath,
+		"SELECT (SELECT page_size FROM pragma_page_size()) || '|' || (SELECT page_count FROM pragma_page_count()) || '|' || (SELECT freelist_count FROM pragma_freelist_count());")
+	cmd.WaitDelay = time.Second
+	out, err := cmd.Output()
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("read sqlite free list: %w", err)
+	}
+	fields := strings.Split(strings.TrimSpace(string(out)), "|")
+	if len(fields) != 3 {
+		return 0, 0, 0, fmt.Errorf("read sqlite free list: unexpected output %q", strings.TrimSpace(string(out)))
+	}
+	values := make([]int64, 3)
+	for i, field := range fields {
+		if values[i], err = strconv.ParseInt(field, 10, 64); err != nil {
+			return 0, 0, 0, fmt.Errorf("read sqlite free list: %w", err)
+		}
+	}
+	return values[0], values[1], values[2], nil
+}
+
 // CleanDatabaseEventLog purges transient OpenCode event rows and oversized
-// message summary diffs in a single batch and runs VACUUM only when the delete
-// step succeeds.
+// message summary diffs, then runs VACUUM only when the delete step succeeded
+// and the free list is large enough to be worth a full rewrite.
 func CleanDatabaseEventLog(ctx context.Context, dbPath string) error {
 	dbPath = strings.TrimSpace(dbPath)
 	if dbPath == "" {
@@ -321,6 +367,14 @@ func CleanDatabaseEventLog(ctx context.Context, dbPath string) error {
 	purgeCmd.WaitDelay = time.Second
 	if out, err := purgeCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("purge sqlite event log: %w (%s)", err, strings.TrimSpace(string(out)))
+	}
+
+	pageSize, pageCount, freePages, err := readFreeListStats(ctx, dbPath)
+	if err != nil {
+		return err
+	}
+	if !VacuumWorthwhile(pageSize, pageCount, freePages) {
+		return nil
 	}
 
 	vacuumCtx, cancelVacuum := context.WithTimeout(ctx, 45*time.Second)

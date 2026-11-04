@@ -110,6 +110,7 @@ func (s *Store) UpsertTurnInfo(sessionID string, info MessageInfo) {
 		ss.bodyBytes += 256
 	}
 	ss.rev++
+	s.mutations.Add(1)
 	s.appendLocked(ss, true, turnLogEntry{Info: &copied})
 }
 
@@ -133,6 +134,7 @@ func (s *Store) UpsertTurnPart(sessionID string, part MessagePart) {
 	}
 	ss.bodyBytes += estimatePartBytes(copied) - previousBytes
 	ss.rev++
+	s.mutations.Add(1)
 	s.appendLocked(ss, true, turnLogEntry{Part: &copied})
 }
 
@@ -174,6 +176,7 @@ func (s *Store) AppendPartDelta(sessionID, messageID, partID, delta string) {
 		part.Text = b.String()
 		ss.bodyBytes += int64(len(delta))
 		ss.rev++
+		s.mutations.Add(1)
 		if ss.dirty == nil {
 			ss.dirty = make(map[partKey]struct{})
 		}

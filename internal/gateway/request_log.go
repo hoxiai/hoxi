@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
@@ -84,7 +85,7 @@ func (g *Gateway) handleRequestLog(w http.ResponseWriter, r *http.Request) {
 		limit = n
 	}
 
-	entries := g.collectRequestLog()
+	entries := g.cachedRequestLog()
 	total := len(entries)
 	if len(entries) > limit {
 		entries = entries[:limit]
@@ -95,6 +96,86 @@ func (g *Gateway) handleRequestLog(w http.ResponseWriter, r *http.Request) {
 		Local:    true,
 		Timezone: time.Now().Location().String(),
 	})
+}
+
+// requestLogKey fingerprints every source the log is built from: the engine
+// database (main file and WAL) and the runner transcript store.
+type requestLogKey struct {
+	dbSize, dbMod, walSize, walMod int64
+	runnerRev                      uint64
+}
+
+type requestLogFlight struct {
+	done    chan struct{}
+	entries []requestLogEntry
+}
+
+type requestLogCache struct {
+	mu       sync.Mutex
+	at       time.Time
+	key      requestLogKey
+	entries  []requestLogEntry
+	inflight *requestLogFlight
+}
+
+// requestLogMaxReuse bounds reuse of unchanged data, because "pending" rows
+// expire with time even when no source changes.
+const requestLogMaxReuse = time.Minute
+
+func fileStamp(path string) (size, mod int64) {
+	if path == "" {
+		return 0, 0
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return -1, 0
+	}
+	return info.Size(), info.ModTime().UnixNano()
+}
+
+func (g *Gateway) requestLogSourceKey() requestLogKey {
+	var key requestLogKey
+	if dbPath := hoxipaths.DBPath(); dbPath != "" {
+		key.dbSize, key.dbMod = fileStamp(dbPath)
+		key.walSize, key.walMod = fileStamp(dbPath + "-wal")
+	}
+	if g.runner != nil {
+		key.runnerRev = g.runner.Store().Revision()
+	}
+	return key
+}
+
+// cachedRequestLog reuses the last result while its sources are unchanged and
+// lets concurrent callers share one in-flight collection. The caller must not
+// modify the returned slice.
+func (g *Gateway) cachedRequestLog() []requestLogEntry {
+	c := &g.requestLog
+	key := g.requestLogSourceKey()
+	now := time.Now()
+	c.mu.Lock()
+	if !c.at.IsZero() && c.key == key && now.Sub(c.at) < requestLogMaxReuse {
+		entries := c.entries
+		c.mu.Unlock()
+		return entries
+	}
+	if flight := c.inflight; flight != nil {
+		c.mu.Unlock()
+		<-flight.done
+		return flight.entries
+	}
+	flight := &requestLogFlight{done: make(chan struct{})}
+	c.inflight = flight
+	c.mu.Unlock()
+
+	defer func() {
+		c.mu.Lock()
+		c.at, c.key, c.entries = time.Now(), key, flight.entries
+		c.inflight = nil
+		c.mu.Unlock()
+		close(flight.done)
+	}()
+	flight.entries = g.collectRequestLog()
+	return flight.entries
 }
 
 func (g *Gateway) collectRequestLog() []requestLogEntry {

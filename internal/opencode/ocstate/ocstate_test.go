@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -85,5 +86,91 @@ INSERT INTO message VALUES ('msg_small', 'ses_1', '{"role":"user","summary":{"ti
 	want := "msg_big|1|array|0|Move Fastix\nmsg_small|1|array|1|Small edit"
 	if got != want {
 		t.Fatalf("unexpected rows after prune:\ngot:  %s\nwant: %s", got, want)
+	}
+}
+
+func TestVacuumWorthwhile(t *testing.T) {
+	const page = 4096
+	cases := []struct {
+		name            string
+		pageCount, free int64
+		want            bool
+	}{
+		{"large live database", 261_045, 0, false},
+		{"tiny free list", 10_000, 1_000, false},
+		{"small share of a big database", 261_045, 10_000, false},
+		{"fifth of the database free", 50_000, 10_000, true},
+		{"large absolute free list", 2_000_000, 70_000, true},
+		{"invalid stats", 0, 10, false},
+	}
+	for _, tc := range cases {
+		if got := VacuumWorthwhile(page, tc.pageCount, tc.free); got != tc.want {
+			t.Errorf("%s: VacuumWorthwhile(%d, %d) = %v, want %v", tc.name, tc.pageCount, tc.free, got, tc.want)
+		}
+	}
+}
+
+func sqliteFreePages(t *testing.T, db string) string {
+	t.Helper()
+	out, err := exec.Command("sqlite3", db, "PRAGMA freelist_count;").CombinedOutput()
+	if err != nil {
+		t.Fatalf("freelist_count: %v %s", err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func seedEventDB(t *testing.T, db string, liveRows, deadRows int) {
+	t.Helper()
+	// Match the engine database: some sqlite3 builds default to auto_vacuum,
+	// which would empty the free list on its own.
+	runSQLite(t, db, `
+PRAGMA auto_vacuum = NONE;
+CREATE TABLE event (id INTEGER PRIMARY KEY, data TEXT);
+CREATE TABLE event_sequence (id INTEGER PRIMARY KEY);
+CREATE TABLE live (id INTEGER PRIMARY KEY, data TEXT);
+CREATE TABLE dead (id INTEGER PRIMARY KEY, data TEXT);
+WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < `+strconv.Itoa(liveRows)+`)
+INSERT INTO live SELECT i, randomblob(4096) FROM n;
+WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < `+strconv.Itoa(deadRows)+`)
+INSERT INTO dead SELECT i, randomblob(4096) FROM n;
+DROP TABLE dead;
+`)
+}
+
+func TestCleanDatabaseEventLogSkipsVacuumWhenFreeListIsSmall(t *testing.T) {
+	if _, err := exec.LookPath("sqlite3"); err != nil {
+		t.Skip("sqlite3 not installed")
+	}
+	db := filepath.Join(t.TempDir(), "hoxi.db")
+	// ~40 MB live data with ~1 MB free: a rewrite would reclaim almost nothing.
+	seedEventDB(t, db, 10_000, 250)
+	before := sqliteFreePages(t, db)
+	if before == "0" {
+		t.Fatal("expected a non-empty free list before cleanup")
+	}
+	if err := CleanDatabaseEventLog(context.Background(), db); err != nil {
+		t.Fatalf("CleanDatabaseEventLog: %v", err)
+	}
+	if after := sqliteFreePages(t, db); after != before {
+		t.Fatalf("free list changed from %s to %s: VACUUM ran on a mostly live database", before, after)
+	}
+}
+
+func TestCleanDatabaseEventLogVacuumsLargeFreeList(t *testing.T) {
+	if _, err := exec.LookPath("sqlite3"); err != nil {
+		t.Skip("sqlite3 not installed")
+	}
+	db := filepath.Join(t.TempDir(), "hoxi.db")
+	// ~4 MB live data with ~12 MB free: well past the reclaim thresholds.
+	seedEventDB(t, db, 1_000, 3_000)
+	sizeBefore := MeasureDatabaseBytes(db)
+	if err := CleanDatabaseEventLog(context.Background(), db); err != nil {
+		t.Fatalf("CleanDatabaseEventLog: %v", err)
+	}
+	if free := sqliteFreePages(t, db); free != "0" {
+		t.Fatalf("free list = %s after cleanup, want 0", free)
+	}
+	if sizeAfter := MeasureDatabaseBytes(db); sizeAfter >= sizeBefore {
+		t.Fatalf("database did not shrink: %d -> %d", sizeBefore, sizeAfter)
 	}
 }

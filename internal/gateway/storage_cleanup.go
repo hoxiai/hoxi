@@ -16,8 +16,10 @@ import (
 )
 
 const (
-	// autoCleanDBThresholdBytes triggers background event-table purge + VACUUM
-	// when ~/.hoxi/hoxi.db grows past 512 MB.
+	// autoCleanDBThresholdBytes triggers the background event-table purge when
+	// ~/.hoxi/hoxi.db grows past 512 MB. VACUUM then runs only if the free list
+	// is worth a rewrite (ocstate.VacuumWorthwhile), not merely because the
+	// database is large.
 	autoCleanDBThresholdBytes = 512 << 20
 	// autoCleanLogMaxAge is the retention window for background log/tool-output pruning.
 	autoCleanLogMaxAge = 7 * 24 * time.Hour

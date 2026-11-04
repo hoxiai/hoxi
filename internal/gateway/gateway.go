@@ -78,6 +78,7 @@ type Gateway struct {
 	updateGateState
 	engineGateState
 	pulseCache     devPulseCache
+	requestLog     requestLogCache
 	storageCleanMu sync.Mutex
 }
 

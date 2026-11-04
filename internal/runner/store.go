@@ -32,6 +32,9 @@ type Store struct {
 	cacheMaxBytes    int64
 	cachedSessions   int
 	cachedBytes      int64
+	// mutations counts transcript and metadata writes (not cache loads), so
+	// readers can tell whether derived views are still current.
+	mutations atomic.Uint64
 	// canonicalProject maps a stored project ID to its live project (see
 	// ProjectResolver); nil treats every ID as live. Protected by mu.
 	canonicalProject func(projectID string) (string, bool)
@@ -170,7 +173,14 @@ func (s *Store) commitLocked(next SessionRecord, ss *storedSession) error {
 	ss.index.rebuild(next.Turns)
 	ss.bodyBytes = estimateTurnsBytes(next.Turns) + estimateTurnsBytes(next.RevertedTurns)
 	ss.rev++
+	s.mutations.Add(1)
 	return nil
+}
+
+// Revision changes whenever any session is written or deleted. Loading or
+// evicting a cached transcript leaves it unchanged.
+func (s *Store) Revision() uint64 {
+	return s.mutations.Load()
 }
 
 func (s *Store) Put(rec SessionRecord) error {
@@ -332,6 +342,7 @@ func (s *Store) Delete(sessionID string) error {
 	}
 	delete(s.records, ss.rec.ID)
 	s.mu.Unlock()
+	s.mutations.Add(1)
 	return nil
 }
 

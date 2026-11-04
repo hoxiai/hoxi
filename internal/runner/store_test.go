@@ -424,3 +424,32 @@ func TestAppendPartDeltaAvoidsQuadraticAllocations(t *testing.T) {
 		t.Fatalf("unexpected reloaded text length = %d, want %d", len(reloaded.Turns[0].Parts[0].Text), totalChars)
 	}
 }
+
+func TestStoreRevisionTracksWritesNotReads(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "sessions"))
+	start := store.Revision()
+	if err := store.Put(SessionRecord{ID: "ses_rev", Title: "rev"}); err != nil {
+		t.Fatal(err)
+	}
+	afterPut := store.Revision()
+	if afterPut == start {
+		t.Fatal("Put must advance the revision")
+	}
+	store.Get("ses_rev")
+	store.Meta("ses_rev")
+	store.VisitTurnsTransient("ses_rev", func(SessionRecord) {})
+	if got := store.Revision(); got != afterPut {
+		t.Fatalf("reads changed the revision: %d -> %d", afterPut, got)
+	}
+	store.UpsertTurnInfo("ses_rev", MessageInfo{ID: "msg_rev", SessionID: "ses_rev", Role: "assistant"})
+	afterUpsert := store.Revision()
+	if afterUpsert == afterPut {
+		t.Fatal("UpsertTurnInfo must advance the revision")
+	}
+	if err := store.Delete("ses_rev"); err != nil {
+		t.Fatal(err)
+	}
+	if store.Revision() == afterUpsert {
+		t.Fatal("Delete must advance the revision")
+	}
+}
