@@ -18,7 +18,6 @@ import {
   fetchConvoyPlan,
   getSessionSpawnedConvoyPlans,
   isConvoyPlanTerminal,
-  isSessionBusy,
   mergeConvoyPlan,
   openFileInInspector,
   recordSessionConvoyPlan,
@@ -32,12 +31,9 @@ import {
 import ApprovalGateCard from "../approval/ApprovalGateCard";
 import QuestionDock from "../approval/QuestionDock";
 import { FileIcon } from "../icons";
-import ChangedFilesSummary from "./ChangedFilesSummary";
 import PlanFollowupBar from "./PlanFollowupBar";
 import RevertBanner from "./RevertBanner";
 import TaskProgressCard from "./TaskProgressCard";
-import { collectSessionChangedFiles } from "./tool-card-state";
-import { filterVisibleTurnsByRevert } from "./turn-window";
 import { t } from "../../i18n";
 
 export default function ComposerShelf() {
@@ -73,26 +69,6 @@ export default function ComposerShelf() {
       disposed = true;
       clearInterval(timer);
     });
-  });
-
-  const activeSession = createMemo(() => {
-    const id = sessionID();
-    return id ? workspace.sessions.find((s) => s.id === id) : undefined;
-  });
-
-  const visibleTurns = createMemo(() => {
-    const id = sessionID();
-    const turns = id ? workspace.messagesBySession[id] ?? [] : [];
-    return filterVisibleTurnsByRevert(turns, activeSession()?.revert);
-  });
-
-  // Transient chip: it tracks the live transcript only while the agent is
-  // working and clears once the turn settles. The durable commit affordance
-  // lives on the latest per-turn "view changes" card instead.
-  const changedFiles = createMemo(() => {
-    const id = sessionID();
-    if (!id || !isSessionBusy(id)) return [];
-    return collectSessionChangedFiles(visibleTurns(), id);
   });
 
   const pendingPermissions = createMemo(() => {
@@ -189,7 +165,6 @@ export default function ComposerShelf() {
         <div class="flex min-w-0 flex-1 items-center justify-center gap-2 flex-wrap empty:hidden">
           <RevertBanner />
           <PlanFollowupBar />
-          <ChangedFilesSummary files={changedFiles()} variant="pill" />
 
           <Show when={spawnedPlans().length > 0}>
             <div ref={subtasksContainerRef} class="relative inline-flex items-center">

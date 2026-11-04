@@ -16,11 +16,14 @@ import {
   formatToolDisplayName,
   formatToolStatusLabel,
   getFilename,
+  hasDistinctShellDescription,
   isEditingTool,
+  isShellTool,
   isTodoTool,
   kiloToolIconName,
   type ToolPart,
 } from "./tool-card-helpers";
+import { analyzeShellCommand } from "./shell-command-summary";
 import { collectCycleChangedFiles, resolveToolFileDiff } from "./tool-card-state";
 
 export function resolveSubagentCurrentStepLabel(
@@ -45,7 +48,12 @@ export function resolveSubagentCurrentStepLabel(
   const file = extractTargetFile(activeTool);
   const cmd = extractCommand(activeTool);
   const desc = extractDescription(activeTool);
-  const detail = file ? getFilename(file) : cmd ? `$ ${cmd}` : desc || "";
+  const shellSummary = isShellTool(activeTool.tool)
+    ? hasDistinctShellDescription(desc, cmd)
+      ? desc
+      : analyzeShellCommand(cmd).summary
+    : "";
+  const detail = file ? getFilename(file) : shellSummary || (cmd ? `$ ${cmd}` : desc || "");
   const toolLabel = formatToolDisplayName(activeTool.tool);
   return detail ? `${toolLabel} ${detail}` : toolLabel;
 }
@@ -164,10 +172,20 @@ export default function SubagentInlineTimeline(props: {
             const running = () => rawRunning() && childAlive();
             const interrupted = () => rawRunning() && !childAlive();
             const file = () => extractTargetFile(toolPart);
-            const desc = () =>
-              extractDescription(toolPart) ||
-              (extractCommand(toolPart) ? `$ ${extractCommand(toolPart)}` : "") ||
-              String(toolPart.state.input?.pattern || toolPart.state.input?.url || "");
+            const desc = () => {
+              if (isShellTool(toolPart.tool)) {
+                const rawDesc = extractDescription(toolPart);
+                const cmd = extractCommand(toolPart);
+                if (hasDistinctShellDescription(rawDesc, cmd)) return rawDesc;
+                const summary = analyzeShellCommand(cmd).summary;
+                if (summary) return summary;
+              }
+              return (
+                extractDescription(toolPart) ||
+                (extractCommand(toolPart) ? `$ ${extractCommand(toolPart)}` : "") ||
+                String(toolPart.state.input?.pattern || toolPart.state.input?.url || "")
+              );
+            };
             const fileDiff = () => {
               const f = file();
               return f && isEditingTool(toolPart.tool)

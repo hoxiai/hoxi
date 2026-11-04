@@ -556,8 +556,22 @@ export function AssistantTurnItem(props: {
     );
   });
 
+  const isLatestExchange = createMemo(() => {
+    if (typeof props.latestUserIndex !== "number") return true;
+    return props.globalIndex > props.latestUserIndex;
+  });
+
+  const lastActivityGroupIndex = createMemo(() => {
+    const items = groupedItems();
+    for (let i = items.length - 1; i >= 0; i--) {
+      if (items[i]?.kind === "activity-group") return i;
+    }
+    return -1;
+  });
+
   const defaultOpenFinalReasoning = createMemo(
     () =>
+      !props.isSessionBusy &&
       merged().isCycleEnd &&
       Boolean(props.turn.info.time?.completed) &&
       !props.turn.info.error &&
@@ -581,14 +595,14 @@ export function AssistantTurnItem(props: {
     >
       <div
         data-turn-id={props.turn.info.id}
-        class={`group/turn flex flex-col gap-y-2.5 px-1 rounded-xl transition-colors ${
+        class={`group/turn flex flex-col gap-y-4 px-1 rounded-xl transition-colors ${
           merged().isVisuallyEmpty && !props.turn.info.error
             ? "mt-0"
             : props.globalIndex === 0
               ? "mt-0"
                 : merged().isFirstVisualTurnInCycle
                   ? "mt-5"
-                  : "mt-2.5"
+                  : "mt-4"
         } ${
           isHighlighted()
             ? "ring-2 ring-[var(--accent-primary)] bg-[var(--accent-surface)]/20 p-2"
@@ -635,6 +649,7 @@ export function AssistantTurnItem(props: {
                       : []
                   }
                   isLiveTail={isTailActivityGroup()}
+                  isActiveGroup={isLatestExchange() && itemIdx === lastActivityGroupIndex()}
                   startedAt={isTailActivityGroup() ? props.cycleStartedAt : undefined}
                   defaultOpenReasoning={defaultOpenFinalReasoning()}
                 />

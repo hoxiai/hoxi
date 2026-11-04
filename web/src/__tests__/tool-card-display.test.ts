@@ -7,8 +7,13 @@ import {
   hasDistinctShellDescription,
   isShellAwaitingFirstOutput,
 } from "../components/timeline/tool-card-helpers";
+import {
+  analyzeShellCommand,
+  groupVisibleActivitySteps,
+} from "../components/timeline/shell-command-summary";
 import type { ToolPart, ToolState } from "../services/sse-types";
 import { dictionaries, setLocale } from "../i18n";
+import { setWorkspace } from "../store/workspace-state";
 import { assertDeepEqual, assertEqual, describe, it } from "./test-harness";
 
 const marker = "# hoxi-stop:ses_display:call_1";
@@ -181,5 +186,77 @@ describe("localized tool labels for CLI runtimes", () => {
     assertEqual(extractDescription(read), "");
     const real = part("read", { title: "Reading a.ts", input: { filePath: "a.ts" } });
     assertEqual(extractDescription(real), "Reading a.ts");
+  });
+
+  it("summarizes noisy shell exploration and ssh commands into concise semantic intents", () => {
+    setWorkspace("rootDir", "/Users/hugh/code/hoxi/shopark");
+
+    const sedRead = analyzeShellCommand(
+      "cd /Users/hugh/code/hoxi/shopark && sed -n '340,420p' go-fast/app/service/theme_decor_bundle.go"
+    );
+    assertEqual(sedRead.kind, "read");
+    assertEqual(sedRead.targetFile, "go-fast/app/service/theme_decor_bundle.go");
+    assertEqual(sedRead.lineRange, "340-420");
+    assertEqual(sedRead.summary, "theme_decor_bundle.go:340-420");
+    assertEqual(sedRead.isReadOnlyExploration, true);
+
+    const rgSearch = analyzeShellCommand(
+      `cd /Users/hugh/code/hoxi/shopark && rg -n "published decor missing" --glob '*.go' go-fast | head -5`
+    );
+    assertEqual(rgSearch.kind, "search");
+    assertEqual(rgSearch.searchPattern, "published decor missing");
+    assertEqual(rgSearch.searchPath, "go-fast");
+    assertEqual(rgSearch.summary, `"published decor missing" (go-fast)`);
+    assertEqual(rgSearch.isReadOnlyExploration, true);
+
+    const sshCmd = analyzeShellCommand(
+      "ssh -o BatchMode=yes -o ConnectTimeout=10 root@8.135.58.57 'cd /opt/gopanel && sudo -u gopanel env'"
+    );
+    assertEqual(sshCmd.kind, "ssh");
+    assertEqual(sshCmd.sshHost, "root@8.135.58.57");
+    assertEqual(sshCmd.summary, "root@8.135.58.57 · sudo -u gopanel env");
+    assertEqual(sshCmd.isReadOnlyExploration, false);
+
+    // Consecutive completed exploration steps fold into a single group while ssh/running steps stay top-level
+    const completedShell = (id: string, command: string): ToolPart =>
+      shellPart({
+        status: "completed",
+        input: { command },
+        output: "ok",
+        title: command,
+        metadata: {},
+        time: { start: 1, end: 2 },
+      }) && {
+        id,
+        sessionID: "ses_display",
+        messageID: "msg_display",
+        callID: id,
+        type: "tool",
+        tool: "bash",
+        state: {
+          status: "completed",
+          input: { command },
+          output: "ok",
+          title: command,
+          metadata: {},
+          time: { start: 1, end: 2 },
+        },
+      };
+
+    const grouped = groupVisibleActivitySteps(
+      [
+        completedShell("s1", "ssh -o BatchMode=yes root@8.135.58.57 'cd /opt/gopanel && ls'"),
+        completedShell("s2", "cd /Users/hugh/code/hoxi/shopark && sed -n '1,120p' go-fast/app/service/theme_decor.go"),
+        completedShell("s3", `cd /Users/hugh/code/hoxi/shopark && rg -n "ErrDecorPublishedMissing" --glob '*.go' go-fast | head -10`),
+        completedShell("s4", "cd /Users/hugh/code/hoxi/shopark && sed -n '340,420p' go-fast/app/service/theme_decor_bundle.go"),
+      ],
+      extractCommand
+    );
+    assertEqual(grouped.length, 2);
+    assertEqual(grouped[0].kind, "part");
+    assertEqual(grouped[1].kind, "exploration-fold");
+    if (grouped[1].kind === "exploration-fold") {
+      assertEqual(grouped[1].parts.length, 3);
+    }
   });
 });

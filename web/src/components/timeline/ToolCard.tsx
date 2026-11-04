@@ -1,16 +1,14 @@
 // web/src/components/timeline/ToolCard.tsx
-import { createEffect, createMemo, createSignal, For, onCleanup, Show, untrack } from "solid-js";
-import { RotateCcw } from "lucide-solid";
+import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import {
   extractChildSubagentSessionId,
   canRevertSession,
   isSessionBusy,
   isSubagentToolAlive,
   isSubagentToolInterrupted,
-   openChangedFileInInspector,
+  openChangedFileInInspector,
   openFileInInspector,
   resolveSubagentTitle,
-  resumeSubagentTask,
   revertToHere,
   selectSession,
   sessionsWithPendingPermission,
@@ -26,7 +24,7 @@ import SubagentTaskDetails from "./SubagentTaskDetails";
 
 import {
   ActionIconButton,
-  extractCommand, extractDescription, extractRollingShellLines,
+  extractCommand, extractDescription,
   extractShellOutput, extractTargetFile, formatToolDisplayName, getDirectory, getFilename,
   hasDistinctShellDescription, InlineDiagnosticsDisplay, isComputerTool, isEditingTool, isQuestionTool, isReadTool, isShellTool, isShellAwaitingFirstOutput,
   isTaskTool, isTodoTool, kiloToolIconName, processCarriageReturns,
@@ -38,13 +36,10 @@ import {
   resolveToolTodoItems,
 } from "./tool-card-state";
 import { formatElapsedSeconds, startAdaptiveElapsedTimer } from "./duration-label";
+import { analyzeShellCommand } from "./shell-command-summary";
 
 // Silence shorter than this is normal model latency, not worth flagging.
 const RUNNER_IDLE_HINT_SECONDS = 15;
-// Short commands finish before this; mounting their preview only flashed a block.
-const ROLLING_PREVIEW_DELAY_SECONDS = 0.6;
-// Keeps the last lines mounted while the drawer collapses (--motion-move).
-const ROLLING_PREVIEW_RELEASE_MS = 280;
 
 export { extractTargetFile, kiloToolIconName, processCarriageReturns };
 
@@ -55,7 +50,7 @@ const MAX_TOOL_CARD_EXPANSION_ENTRIES = 512;
 const toolCardExpansion = new Map<string, boolean>();
 
 export default function ToolCard(props: { part: ToolPart; defaultExpanded?: boolean }) {
-  const initiallyExpanded = toolCardExpansion.get(props.part.id) ?? props.defaultExpanded ?? false;
+  const initiallyExpanded = toolCardExpansion.get(props.part.id) ?? false;
   const [expanded, setExpandedSignal] = createSignal(initiallyExpanded);
   const setExpanded = (next: boolean) => {
     if (toolCardExpansion.has(props.part.id)) {
@@ -73,7 +68,6 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
   const [stoppingCmd, setStoppingCmd] = createSignal(false);
   const [stopFailed, setStopFailed] = createSignal(false);
   let outputRef: HTMLPreElement | undefined;
-  let rollingShellRef: HTMLDivElement | undefined;
 
   createEffect(() => {
     if (expanded()) setEverExpanded(true);
@@ -94,46 +88,37 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
     return isSessionBusy(props.part.sessionID);
   });
 
-  const isInterruptedSubagent = createMemo(
-    () => isTask() && isSubagentToolInterrupted(props.part, props.part.sessionID)
-  );
-  const isInterruptedTool = createMemo(
-    () =>
-      !isTask() &&
-      (status() === "pending" || status() === "running") &&
-      !isRunning()
+  const isInterruptedTool = createMemo(() =>
+    isTask()
+      ? isSubagentToolInterrupted(props.part, props.part.sessionID)
+      : (status() === "pending" || status() === "running") && !isRunning()
   );
 
   const targetFile = createMemo(() => extractTargetFile(props.part));
   const extraTargetFiles = createMemo(() => extractTargetFiles(props.part).slice(1));
   const shellCmd = createMemo(() => (isShell() ? extractCommand(props.part) : ""));
   const description = createMemo(() => extractDescription(props.part));
+  const shellIntent = createMemo(() => (isShell() ? analyzeShellCommand(shellCmd()) : undefined));
+  const hasCustomShellDesc = createMemo(
+    () => isShell() && hasDistinctShellDescription(description(), shellCmd())
+  );
+  const toolIconName = createMemo(() => {
+    const intent = shellIntent();
+    if (intent && !hasCustomShellDesc()) {
+      if (intent.kind === "read") return "glasses";
+      if (intent.kind === "search") return "magnifying-glass-menu";
+      if (intent.kind === "list") return "bullet-list";
+    }
+    return kiloToolIconName(props.part.tool);
+  });
   const shellOut = createMemo(() =>
     isShell() && everExpanded() ? extractShellOutput(props.part.state, props.part.id) : ""
   );
   const awaitingFirstOutput = createMemo(() =>
+    expanded() &&
     isShellAwaitingFirstOutput(props.part, isRunning(), elapsed()) &&
     !sessionsWithPendingPermission().has(props.part.sessionID)
   );
-
-  // Rolling 5 lines of shell output while running & collapsed (ported from Kilo ShellRollingResults)
-  const isRollingPreviewDue = createMemo(
-    () => isShell() && isRunning() && !expanded() && elapsed() >= ROLLING_PREVIEW_DELAY_SECONDS
-  );
-  const rollingShellLines = createMemo(() =>
-    isRollingPreviewDue() ? extractRollingShellLines(props.part.state) : []
-  );
-  const [rollingHold, setRollingHold] = createSignal<string[]>([]);
-  createEffect(() => {
-    const lines = rollingShellLines();
-    if (lines.length > 0) {
-      setRollingHold(lines);
-      return;
-    }
-    if (untrack(rollingHold).length === 0) return;
-    const timer = setTimeout(() => setRollingHold([]), ROLLING_PREVIEW_RELEASE_MS);
-    onCleanup(() => clearTimeout(timer));
-  });
 
   const loadedFiles = createMemo(() => (isRead() ? resolveLoadedContextFiles(props.part) : []));
   const toolArgPills = createMemo(() => resolveToolArgPills(props.part));
@@ -180,11 +165,10 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
 
   // Auto-scroll shell output while streaming
   createEffect(() => {
-    if (!isShell() || !isRunning()) return;
-    expanded() ? void shellOut() : void rollingShellLines();
+    if (!isShell() || !isRunning() || !expanded()) return;
+    void shellOut();
     requestAnimationFrame(() => {
       if (outputRef) outputRef.scrollTop = outputRef.scrollHeight;
-      if (rollingShellRef) rollingShellRef.scrollTop = rollingShellRef.scrollHeight;
     });
   });
 
@@ -244,17 +228,14 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
 
   const isSubagentPopoverMode = () => Boolean(isTask() && childSessionID());
 
-  const hasBody = () =>
-    (expanded() && !isSubagentPopoverMode()) ||
-    Boolean(isShell() && isRunning() && rollingShellLines().length > 0) ||
-    fileDiagnostics().length > 0;
+  const hasBody = () => expanded() && !isSubagentPopoverMode();
 
   return (
-    <div class={isRunning() ? "hoxi-item-pop" : undefined}>
+    <div>
       <div class="group/tool relative">
         {/* Clean borderless single-line tool trigger */}
         <div
-          class={`flex items-center justify-between px-2 py-1.5 -mx-2 rounded-lg cursor-pointer select-none transition-colors gap-2 ${
+          class={`flex items-center justify-between px-2 py-1 -mx-2 rounded-lg cursor-pointer select-none transition-colors gap-2 ${
             expanded()
               ? "bg-[var(--bg-hover)]/70"
               : "hover:bg-[var(--bg-hover)]/60"
@@ -271,62 +252,109 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
                 </span>
               }
             >
-              <Show
-                when={status() === "completed" && !isInterruptedTool()}
-                fallback={
-                  <span
-                    class={
-                      status() === "error" || isInterruptedTool()
-                        ? "shrink-0 text-[var(--warn-text)]/80 inline-flex items-center"
-                        : "shrink-0 text-[var(--text-muted)] inline-flex items-center"
-                    }
-                  >
-                    <Icon
-                      name={
-                        status() === "error" || isInterruptedTool()
-                          ? "warning"
-                          : kiloToolIconName(props.part.tool)
-                      }
-                      size="small"
-                    />
-                  </span>
+              <span
+                class={
+                  status() === "error" || isInterruptedTool()
+                    ? "shrink-0 text-[var(--warn-text)]/80 inline-flex items-center"
+                    : "shrink-0 text-[var(--text-faint)] group-hover/tool:text-[var(--text-secondary)] transition-colors inline-flex items-center"
                 }
               >
-                <span class="shrink-0 inline-grid place-items-center">
-                  <span class="[grid-area:1/1] inline-flex items-center text-[var(--ok-text)] transition-opacity duration-150 group-hover/tool:opacity-0">
-                    <Icon name="circle-check" size="small" />
-                  </span>
-                  <span class="[grid-area:1/1] inline-flex items-center text-[var(--text-secondary)] opacity-0 transition-opacity duration-150 group-hover/tool:opacity-100">
-                    <Icon name={kiloToolIconName(props.part.tool)} size="small" />
-                  </span>
-                </span>
-              </Show>
+                <Icon
+                  name={
+                    status() === "error" || isInterruptedTool()
+                      ? "warning"
+                      : toolIconName()
+                  }
+                  size="small"
+                />
+              </span>
             </Show>
 
             {/* Tool Title & Semantic Target */}
             <Show
               when={!isShell()}
               fallback={
-                <div class="flex items-center gap-2 min-w-0 flex-1">
-                  <span class="text-[13px] font-medium text-[var(--text-secondary)] truncate">
-                    <TextShimmer
-                      text={description() || (shellCmd() ? `$ ${shellCmd()}` : t("toolCard.actionShell"))}
-                      active={isRunning()}
-                    />
-                  </span>
-                  <Show when={hasDistinctShellDescription(description(), shellCmd())}>
-                    <code class="hidden sm:inline-block truncate max-w-[420px] font-mono text-[12px] text-[var(--text-faint)]">
-                      $ {shellCmd()}
-                    </code>
-                  </Show>
-                </div>
+                <Show
+                  when={!hasCustomShellDesc() && shellIntent()?.kind === "read" && shellIntent()?.targetFile}
+                  fallback={
+                    <Show
+                      when={!hasCustomShellDesc() && shellIntent()?.kind === "search" && shellIntent()?.searchPattern}
+                      fallback={
+                        <div class="flex items-center gap-2 min-w-0 flex-1">
+                          <span class="text-[13px] text-[var(--text-muted)] group-hover/tool:text-[var(--text-secondary)] transition-colors truncate">
+                            <TextShimmer
+                              text={
+                                hasCustomShellDesc()
+                                  ? description()
+                                  : shellIntent()?.summary ||
+                                    description() ||
+                                    (shellCmd() ? `$ ${shellCmd()}` : t("toolCard.actionShell"))
+                              }
+                              active={isRunning()}
+                            />
+                          </span>
+                        </div>
+                      }
+                    >
+                      {(pattern) => (
+                        <div class="flex items-center gap-2 min-w-0 flex-1">
+                          <span class="text-[13px] text-[var(--text-muted)] group-hover/tool:text-[var(--text-secondary)] transition-colors shrink-0">
+                            <TextShimmer text={t("toolCard.actionSearch")} active={isRunning()} />
+                          </span>
+                          <span class="font-mono text-[12px] text-[var(--text-muted)] truncate">
+                            "{pattern()}"
+                          </span>
+                          <Show when={shellIntent()?.searchPath}>
+                            {(p) => (
+                              <span class="hidden sm:inline-block font-mono text-[12px] text-[var(--text-faint)] truncate max-w-[200px]">
+                                {p()}
+                              </span>
+                            )}
+                          </Show>
+                        </div>
+                      )}
+                    </Show>
+                  }
+                >
+                  {(file) => (
+                    <div class="flex items-center gap-1.5 min-w-0 flex-1">
+                      <span class="text-[13px] text-[var(--text-muted)] group-hover/tool:text-[var(--text-secondary)] transition-colors shrink-0">
+                        <TextShimmer text={t("toolCard.actionRead")} active={isRunning()} />
+                      </span>
+                      <FileIcon node={{ path: file(), type: "file" }} class="w-3.5 h-3.5 shrink-0" />
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openFileInInspector(file());
+                        }}
+                        class="font-mono text-[13px] text-[var(--text-secondary)] hover:text-[var(--accent-primary)] hover:underline truncate cursor-pointer"
+                        title={file()}
+                      >
+                        {getFilename(file())}
+                      </button>
+                      <Show when={getDirectory(file())}>
+                        <span class="hidden md:inline truncate font-mono text-[12px] text-[var(--text-faint)]">
+                          {getDirectory(file())}/
+                        </span>
+                      </Show>
+                      <Show when={shellIntent()?.lineRange}>
+                        {(range) => (
+                          <span class="font-mono text-[12px] text-[var(--text-faint)] shrink-0">
+                            :{range()}
+                          </span>
+                        )}
+                      </Show>
+                    </div>
+                  )}
+                </Show>
               }
             >
               <Show
                 when={targetFile()}
                 fallback={
                   <div class="flex items-center gap-2 min-w-0 flex-1">
-                    <span class="text-[13px] font-medium text-[var(--text-secondary)] shrink-0">
+                    <span class="text-[13px] text-[var(--text-muted)] group-hover/tool:text-[var(--text-secondary)] transition-colors shrink-0">
                       <Show
                         when={isTodo()}
                         fallback={
@@ -374,7 +402,7 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
               >
                 {(file) => (
                   <div class="flex items-center gap-1.5 min-w-0 flex-1">
-                    <span class="text-[13px] font-medium text-[var(--text-secondary)] shrink-0">
+                    <span class="text-[13px] text-[var(--text-muted)] group-hover/tool:text-[var(--text-secondary)] transition-colors shrink-0">
                       <TextShimmer
                         text={formatToolDisplayName(props.part.tool, props.part)}
                         active={isRunning()}
@@ -389,7 +417,7 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
                           ? openChangedFileInInspector(fileDiff() ?? file())
                           : openFileInInspector(file());
                       }}
-                      class="font-mono text-[13px] font-medium text-[var(--text-primary)] hover:text-[var(--accent-primary)] hover:underline truncate cursor-pointer"
+                      class="font-mono text-[13px] text-[var(--text-secondary)] hover:text-[var(--accent-primary)] hover:underline truncate cursor-pointer"
                       title={file()}
                     >
                       {getFilename(file())}
@@ -429,30 +457,6 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
               <span class="rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--text-muted)]">
                 {t("timeline.stepsCompleted", { count: subagentTelemetry().stepCount })}
               </span>
-            </Show>
-
-            {/* Runner subagents cannot be resumed through an OpenCode task_id */}
-            <Show when={isInterruptedSubagent() && !isRunnerSubagent() && childSessionID()}>
-              {(subId) => (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    const inp = props.part.state.input as Record<string, any> | undefined;
-                    void resumeSubagentTask({
-                      parentSessionID: props.part.sessionID,
-                      childSessionID: subId(),
-                      agentType: String(inp?.subagent_type || "general"),
-                      description: description() || subId(),
-                    });
-                  }}
-                  title={t("timeline.resumeSubagentTooltip")}
-                  class="inline-flex items-center gap-1 rounded-md border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2 py-0.5 text-[12px] font-medium text-[var(--accent-primary)] hover:opacity-90 transition-opacity cursor-pointer"
-                >
-                  <RotateCcw size={11} />
-                  <span>{t("timeline.resumeSubagentBtn")}</span>
-                </button>
-              )}
             </Show>
 
             <Show when={childSessionID()}>
@@ -508,7 +512,7 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
                 disabled={stoppingCmd()}
                 onClick={(e) => void stopCommand(e)}
                 title={t("toolCard.stopCommandTooltip")}
-                class="inline-flex items-center gap-1 rounded-md border border-[var(--danger-border)] bg-[var(--danger-surface)] px-2 py-0.5 text-[11px] font-medium text-[var(--danger-text)] hover:opacity-90 disabled:opacity-60 transition-opacity cursor-pointer"
+                class="-my-1 inline-flex items-center gap-1 rounded-md border border-[var(--danger-border)] bg-[var(--danger-surface)] px-2 py-0.5 text-[11px] font-medium text-[var(--danger-text)] hover:opacity-90 disabled:opacity-60 transition-opacity cursor-pointer"
               >
                 <span class="inline-block w-2 h-2 rounded-[1.5px] bg-current shrink-0" />
                 <span class={stoppingCmd() ? "" : "hidden group-hover/tool:inline"}>
@@ -533,7 +537,11 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
             </Show>
 
             <Show when={elapsed() >= 0.05}>
-              <span class="font-mono text-[12px] text-[var(--text-faint)] tabular-nums">
+              <span
+                class={`font-mono text-[12px] text-[var(--text-faint)] tabular-nums transition-opacity ${
+                  isRunning() ? "" : "opacity-0 group-hover/tool:opacity-100"
+                }`}
+              >
                 {formatElapsedSeconds(elapsed())}
               </span>
             </Show>
@@ -572,12 +580,8 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
           )}
         </Show>
 
-        {/* Collapsible / Live Body Container (only bordered when visible) */}
-        <Show
-          when={
-            hasBody() || rollingHold().length > 0 || (everExpanded() && !isSubagentPopoverMode())
-          }
-        >
+        {/* Collapsible Body Container (strictly closed by default) */}
+        <Show when={everExpanded() && !isSubagentPopoverMode()}>
           <div
             class="hoxi-drawer-grid"
             data-open={hasBody() ? "true" : "false"}
@@ -585,60 +589,31 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
           >
             <div class="min-h-0 overflow-hidden">
               <div class="mt-1 ml-3 overflow-hidden border-l-2 border-[var(--border-subtle)] pl-3">
-                {/* Kilo ShellRollingResults: Live 5-line rolling output preview while bash command is running & collapsed */}
-                <Show when={!expanded() && rollingHold().length > 0}>
-                  <div
-                    ref={rollingShellRef}
-                    onClick={() => setExpanded(true)}
-                    class="rounded-md bg-[var(--bg-code)] px-3.5 py-2 font-mono text-[12px] leading-[1.55] text-[var(--text-secondary)] max-h-[104px] overflow-hidden cursor-pointer relative"
-                    style={{
-                      "-webkit-mask-image":
-                        "linear-gradient(to bottom, transparent 0%, black 24%, black 100%)",
-                      "mask-image": "linear-gradient(to bottom, transparent 0%, black 24%, black 100%)",
-                    }}
-                  >
-                    <For each={rollingHold()}>
-                      {(line) => <div class="truncate kilo-rolling-row">{line || " "}</div>}
-                    </For>
-                  </div>
-                </Show>
-
                 {/* Inline Post-Edit LSP Compiler/Type Diagnostics */}
                 <Show when={fileDiagnostics().length > 0}>
                   <InlineDiagnosticsDisplay diagnostics={fileDiagnostics()} />
                 </Show>
 
-                {/* Expanded Body */}
-                <Show when={everExpanded() && !isSubagentPopoverMode()}>
-                  <div
-                    class="hoxi-drawer-grid"
-                    data-open={expanded() ? "true" : "false"}
-                    aria-hidden={!expanded()}
-                  >
-                    <div class="min-h-0 overflow-hidden">
-                      <ToolCardExpandedBody
-                        part={props.part}
-                        isShell={isShell()}
-                        isRunning={isRunning()}
-                        stoppingCmd={stoppingCmd()}
-                        onStopCommand={(e) => void stopCommand(e)}
-                        isEdit={isEdit()}
-                        isTodo={isTodo()}
-                        isQuestion={isQuestion()}
-                        shellCmd={shellCmd()}
-                        shellOut={shellOut()}
-                        copiedCmd={copiedCmd()}
-                        onCopyCommand={(e) => void copyCommand(e)}
-                        setOutputRef={(el) => {
-                          outputRef = el;
-                        }}
-                        todoItems={todoItems()}
-                        fileDiff={fileDiff()}
-                        fileDiffs={fileDiffs()}
-                      />
-                    </div>
-                  </div>
-                </Show>
+                <ToolCardExpandedBody
+                  part={props.part}
+                  isShell={isShell()}
+                  isRunning={isRunning()}
+                  stoppingCmd={stoppingCmd()}
+                  onStopCommand={(e) => void stopCommand(e)}
+                  isEdit={isEdit()}
+                  isTodo={isTodo()}
+                  isQuestion={isQuestion()}
+                  shellCmd={shellCmd()}
+                  shellOut={shellOut()}
+                  copiedCmd={copiedCmd()}
+                  onCopyCommand={(e) => void copyCommand(e)}
+                  setOutputRef={(el) => {
+                    outputRef = el;
+                  }}
+                  todoItems={todoItems()}
+                  fileDiff={fileDiff()}
+                  fileDiffs={fileDiffs()}
+                />
               </div>
             </div>
           </div>

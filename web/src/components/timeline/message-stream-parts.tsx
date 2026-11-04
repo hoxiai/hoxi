@@ -19,11 +19,7 @@ import ContextActivityGroupComponent, {
   type TurnRenderItem,
 } from "./ContextActivityGroupView";
 import type { MessageInfo, MessagePart } from "../../services/sse-types";
-import {
-  resumePausedSession,
-  retryLastUserPrompt,
-  workspace,
-} from "../../store/workspace";
+import { workspace } from "../../store/workspace";
 import { Icon } from "../icons";
 import { t } from "../../i18n";
 import { AssistantErrorCard, SessionRetryCard } from "./assistant-error-card";
@@ -34,8 +30,11 @@ import {
   extractTargetFile,
   formatToolDisplayName,
   getFilename,
+  hasDistinctShellDescription,
+  isShellTool,
   type ToolPart,
 } from "./tool-card-helpers";
+import { analyzeShellCommand } from "./shell-command-summary";
 import ExecutionWaitingIndicator from "./ExecutionWaitingIndicator";
 import StalledNotice from "./StalledNotice";
 import { AssistantTurnFooter } from "./AssistantTurnFooter";
@@ -77,7 +76,12 @@ export function resolveActiveCycleStepLabel(
     const file = extractTargetFile(active);
     const cmd = extractCommand(active);
     const desc = extractDescription(active);
-    const detail = file ? getFilename(file) : cmd ? `$ ${cmd}` : desc || "";
+    const shellSummary = isShellTool(active.tool)
+      ? hasDistinctShellDescription(desc, cmd)
+        ? desc
+        : analyzeShellCommand(cmd).summary
+      : "";
+    const detail = file ? getFilename(file) : shellSummary || (cmd ? `$ ${cmd}` : desc || "");
     const base = detail ? `${toolName} · ${detail}` : toolName;
     return runningTools.length > 1 ? `${base} (+${runningTools.length - 1})` : base;
   }
@@ -103,6 +107,7 @@ export function basename(p: string): string {
 export function ContextActivityGroupView(props: {
   parts: MessagePart[];
   isLiveTail?: boolean;
+  isActiveGroup?: boolean;
   startedAt?: number;
   revealKey?: string;
   defaultOpenReasoning?: boolean;
@@ -111,6 +116,7 @@ export function ContextActivityGroupView(props: {
     <ContextActivityGroupComponent
       parts={props.parts}
       isLiveTail={props.isLiveTail}
+      isActiveGroup={props.isActiveGroup}
       startedAt={props.startedAt}
       revealKey={props.revealKey}
       defaultOpenReasoning={props.defaultOpenReasoning}
@@ -304,23 +310,6 @@ export function LiveExecutionControlBar(props: {
   activeStepLabel?: string;
   lastTurnRole?: string;
 }) {
-  const [busyAction, setBusyAction] = createSignal(false);
-
-  const interruptedMode = createMemo(() => {
-    const id = props.sessionID;
-    return id ? workspace.interruptedBySession[id] : undefined;
-  });
-
-  const onResume = async () => {
-    if (!props.sessionID || busyAction()) return;
-    setBusyAction(true);
-    try {
-      await resumePausedSession(props.sessionID);
-    } finally {
-      setBusyAction(false);
-    }
-  };
-
   return (
     <>
       <Show when={props.showThinking}>
@@ -335,53 +324,6 @@ export function LiveExecutionControlBar(props: {
 
       <Show when={props.isSessionBusy && props.sessionID}>
         {(id) => <StalledNotice stalledSince={workspace.stalledSinceBySession[id()]} />}
-      </Show>
-
-      <Show
-        when={
-          !props.isSessionBusy &&
-          interruptedMode() &&
-          props.lastTurnRole === "user"
-        }
-      >
-        <div class="mt-3 flex items-center gap-2 flex-wrap px-1 text-[12px] text-[var(--text-faint)] select-none">
-          <span
-            class={`inline-flex items-center gap-1 font-medium ${
-              interruptedMode() === "paused"
-                ? "text-[var(--warn-text)]"
-                : "text-[var(--danger-text)]"
-            }`}
-          >
-            <span class="font-mono text-[11px] leading-none">
-              {interruptedMode() === "paused" ? "⏸" : "■"}
-            </span>
-            <span>
-              {interruptedMode() === "paused"
-                ? t("timeline.turnPaused")
-                : t("timeline.turnStopped")}
-            </span>
-          </span>
-
-          <button
-            type="button"
-            disabled={busyAction()}
-            onClick={() => void onResume()}
-            title={t("timeline.resumeTooltip")}
-            class="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[12px] font-medium text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] disabled:opacity-50 transition-colors cursor-pointer"
-          >
-            <span class="text-[11px] leading-none">▶</span>
-            <span>{t("timeline.resume")}</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => void retryLastUserPrompt(props.sessionID)}
-            class="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[12px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
-          >
-            <span>↺</span>
-            <span>{t("timeline.retryTask")}</span>
-          </button>
-        </div>
       </Show>
     </>
   );

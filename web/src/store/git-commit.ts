@@ -1,12 +1,10 @@
 // web/src/store/git-commit.ts
 import { createSignal } from "solid-js";
-import { locale, t } from "../i18n";
+import { locale } from "../i18n";
 import { hoxiAPI, type CommitAndPushResponse } from "../services/api";
 import type { MessagePart, SnapshotFileDiff } from "../services/sse-types";
 import { AUTO_PROVIDER_ID, isModelFree, resolveAutoModelTarget } from "./auto-models";
-import { gitAttributionEnabledFor } from "./git-attribution";
 import { resolveInternalLLMModel } from "./provider-catalog";
-import { canSteerSession } from "./session-capabilities";
 import {
   readStorageItem,
   removeStorageItem,
@@ -14,10 +12,8 @@ import {
   writeStorageItem,
   type SelectedModel,
 } from "./workspace-state";
-import { activeDirectory, isSessionBusy, sessionDirectory } from "./session-query";
-import { submitSessionPrompt } from "./session-goal";
-import { collectSessionTouchedPaths, refreshWorktreeStatus } from "./session-diffs";
-import { ensureFullSessionHistory } from "./session-history";
+import { activeDirectory, sessionDirectory } from "./session-query";
+import { refreshWorktreeStatus } from "./session-diffs";
 import { loadSessionMessages, loadSessionMessagesOnly } from "./workspace-sessions";
 
 export const COMMIT_MODEL_STORAGE_KEY = "hoxi-commit-model:v1";
@@ -320,62 +316,11 @@ export async function generateSmartCommitMessage(
 
 /**
  * Real uncommitted worktree files for a session (from the git diff, not the
- * transcript). Keeps the commit affordance tied to what is actually pending
- * instead of whichever turn last touched files.
+ * transcript).
  */
 export function uncommittedSessionFiles(sessionID?: string | null): SnapshotFileDiff[] {
   if (!sessionID) return [];
   return workspace.diffsBySession[sessionID] ?? [];
-}
-
-/** Whether the session can be committed right now: pending files and idle. */
-export function canQuickCommitSession(sessionID?: string | null): boolean {
-  if (!sessionID || isSessionBusy(sessionID)) return false;
-  return uncommittedSessionFiles(sessionID).length > 0;
-}
-
-export async function executeTaskCommitAndPush(
-  sessionID?: string | null,
-  options?: { push?: boolean; customMessage?: string; files?: string[] }
-): Promise<string> {
-  const activeID = sessionID ?? workspace.activeSessionID;
-  if (!activeID || activeID === "__root__") {
-    throw new Error(t("timeline.gitSessionRequired"));
-  }
-  const directory = sessionDirectory(activeID);
-  if (!directory) throw new Error(t("timeline.gitSessionRequired"));
-  const customMessage = options?.customMessage?.trim();
-  const explicitFiles = Array.isArray(options?.files)
-    ? Array.from(new Set(options.files.map((f) => f.trim()).filter(Boolean)))
-    : [];
-  // Commit scoping must see edits from older, not yet loaded history pages.
-  if (explicitFiles.length === 0) await ensureFullSessionHistory(activeID).catch(() => {});
-  const targetFiles = explicitFiles.length > 0
-    ? explicitFiles
-    : collectSessionTouchedPaths(activeID, workspace.messagesBySession, directory);
-  const cheapModel = canSteerSession(activeID)
-    ? resolveEffectiveCommitModel() || undefined
-    : undefined;
-  const prompt = [
-    // With a known file list the agent must not re-inspect the whole worktree.
-    targetFiles.length > 0
-      ? t("timeline.gitAgentCommitScopedPrompt", { directory: JSON.stringify(directory), files: JSON.stringify(targetFiles) })
-      : t("timeline.gitAgentCommitPrompt", { directory: JSON.stringify(directory) }),
-    t(options?.push === false ? "timeline.gitAgentCommitOnlyPrompt" : "timeline.gitAgentCommitPushPrompt"),
-    customMessage ? t("timeline.gitAgentCommitMessagePrompt", { message: JSON.stringify(customMessage) }) : "",
-  ].filter(Boolean).join("\n\n");
-  // Attribution is an instruction to the model, not part of what the user said:
-  // send it as a turn-scoped system prefix so the timeline shows only the task.
-  const alreadyHasCoAuthor = Boolean(
-    customMessage && /Co-authored-by:\s*Hoxi\s*<code@hoxi\.ai>/i.test(customMessage)
-  );
-  const system =
-    !alreadyHasCoAuthor && gitAttributionEnabledFor(directory)
-      ? t("timeline.gitAgentCommitAttributionPrompt")
-      : undefined;
-  // Dispatch is not completion; the agent reports actual Git results in the timeline.
-  // Override only this prompt; the session's saved model remains unchanged.
-  return submitSessionPrompt(prompt, activeID, { agent: "build", model: cheapModel, system });
 }
 
 function worktreeTarget(directory?: string): { sessionID: string | null; key: string; directory?: string } {

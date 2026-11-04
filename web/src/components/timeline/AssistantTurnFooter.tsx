@@ -125,8 +125,7 @@ export function AssistantTurnFooter(props: {
       if (
         !next &&
         !props.info.time?.completed &&
-        props.parts.length === 0 &&
-        !interruptMode()
+        props.parts.length === 0
       ) {
         return null;
       }
@@ -302,14 +301,25 @@ export function AssistantTurnFooter(props: {
     }
   };
 
+  const showTruncatedControls = createMemo(
+    () => !interruptMode() && isTruncatedTurn()
+  );
+
   return (
     <Show when={cycleSummary()}>
       {(summary) => (
-        <Show when={!isTurnExecuting()}>
+        <Show
+          when={
+            !isTurnExecuting() &&
+            (summary().changedFiles.length > 0 ||
+              summary().finalText.length > 0 ||
+              Boolean(durationLabel()) ||
+              showTruncatedControls())
+          }
+        >
           <div class="mt-4 space-y-2 select-none">
             <ChangedFilesSummary
               files={summary().changedFiles}
-              commitSessionID={isLatestExchange() ? props.info.sessionID : undefined}
               onUndo={
                 canRevertSession(props.info.sessionID)
                   ? () => void revertToHere(props.info.sessionID, summary().revertMessageID)
@@ -325,23 +335,14 @@ export function AssistantTurnFooter(props: {
             />
 
             <div class="flex items-center gap-2 flex-wrap text-[12px] text-[var(--text-faint)]">
-              <Show when={interruptMode()}>
-                {(mode) => (
-                  <span class={`inline-flex items-center gap-1 font-medium ${mode() === "paused" ? "text-[var(--warn-text)]" : "text-[var(--danger-text)]"}`}>
-                    <span class="font-mono text-[11px] leading-none">{mode() === "paused" ? "⏸" : "■"}</span>
-                    <span>{mode() === "paused" ? t("timeline.turnPaused") : t("timeline.turnStopped")}</span>
-                  </span>
-                )}
-              </Show>
-
-              <Show when={!interruptMode() && isTruncatedTurn()}>
+              <Show when={showTruncatedControls()}>
                 <span class="inline-flex items-center gap-1 font-medium text-[var(--warn-text)]">
                   <span class="font-mono text-[11px] leading-none">⏸</span>
                   <span>{t("timeline.turnTruncated")}</span>
                 </span>
               </Show>
 
-              <Show when={isLatestTurn() && (interruptMode() || isTruncatedTurn()) && !props.isSessionBusy}>
+              <Show when={isLatestTurn() && showTruncatedControls() && !props.isSessionBusy}>
                 <button
                   type="button"
                   disabled={resuming()}

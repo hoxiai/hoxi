@@ -2,24 +2,20 @@
 import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js";
 import { Presence } from "../motion/Presence";
 import {
-  ArrowUpFromLine,
   Check,
   ChevronDown,
   FileDiff,
   Folder,
   GitBranch,
-  GitCommitHorizontal,
   GitFork,
   LoaderCircle,
   ShieldCheck,
 } from "lucide-solid";
 import {
   canForkSession,
-  executeTaskCommitAndPush,
   fetchSandboxSession,
   openDiffInInspector,
   refreshWorktreeStatus,
-  uncommittedSessionFiles,
   workspace,
 } from "../../store/workspace";
 import { t } from "../../i18n";
@@ -39,8 +35,6 @@ export function ComposerSandboxPill(props: {
   onFork?: () => void;
 }) {
   const [open, setOpen] = createSignal(false);
-  const [gitAction, setGitAction] = createSignal<"commit-push" | "commit" | "push" | null>(null);
-  const [toastMsg, setToastMsg] = createSignal<string | null>(null);
   const [errorMsg, setErrorMsg] = createSignal<string | null>(null);
   const [commandSandboxOn, setCommandSandboxOn] = createSignal(false);
 
@@ -105,36 +99,6 @@ export function ComposerSandboxPill(props: {
     }
     return (workspace.diffsBySession["__root__"] ?? []).length;
   });
-  const isDirty = createMemo(() =>
-    props.mode === "worktree" || !props.sessionID
-      ? Boolean(activeWorktree()?.dirty || changedFilesCount() > 0)
-      : changedFilesCount() > 0
-  );
-  const aheadCount = createMemo(() => activeWorktree()?.aheadCount || 0);
-  const canCommitOrPush = createMemo(
-    () => isDirty() || aheadCount() > 0 || (Boolean(gitBranch()) && !activeWorktree()?.hasUpstream)
-  );
-
-  const handleGitCommitAction = async (push: boolean) => {
-    if (gitAction() || props.busy || props.switching) return;
-    const mode = !isDirty() && push ? "push" : push ? "commit-push" : "commit";
-    setGitAction(mode);
-    setErrorMsg(null);
-    setToastMsg(null);
-    try {
-      const files = uncommittedSessionFiles(props.sessionID).map((d) => d.file);
-      await executeTaskCommitAndPush(props.sessionID, {
-        push,
-        ...(files.length > 0 ? { files } : {}),
-      });
-      setToastMsg(t("timeline.gitTaskRequested"));
-      setTimeout(() => setToastMsg(null), 4000);
-    } catch (err: any) {
-      setErrorMsg(err?.message || String(err));
-    } finally {
-      setGitAction(null);
-    }
-  };
 
   return (
     <div class="relative inline-block select-none">
@@ -159,7 +123,7 @@ export function ComposerSandboxPill(props: {
         }
       >
         <Show
-          when={!props.switching && !gitAction()}
+          when={!props.switching}
           fallback={<LoaderCircle size={12} class="animate-spin shrink-0" />}
         >
           <GitBranch
@@ -308,81 +272,11 @@ export function ComposerSandboxPill(props: {
             onStateChange={(next) => setCommandSandboxOn(next.enabled)}
           />
 
-          {/* One-Click Git Commit & Push Section */}
-          <div class="mt-1.5 pt-1.5 border-t border-[var(--border-subtle)] px-1 space-y-1.5">
-            <Show when={errorMsg()}>
-              <div class="rounded-lg border border-[var(--danger-border)] bg-[var(--danger-surface)] px-2 py-1 text-[11px] text-[var(--danger-text)] break-words">
-                {errorMsg()}
-              </div>
-            </Show>
-
-            <Show when={toastMsg()}>
-              <div class="flex items-center gap-1.5 rounded-lg border border-[var(--ok)]/30 bg-[var(--ok-surface)] px-2 py-1 text-[11px] text-[var(--ok-text)]">
-                <Check size={12} class="shrink-0" />
-                <span class="truncate">{toastMsg()}</span>
-              </div>
-            </Show>
-
-            <div class="flex items-center gap-1.5">
-              <button
-                type="button"
-                disabled={!canCommitOrPush() || Boolean(gitAction()) || props.busy || props.switching}
-                onClick={() => void handleGitCommitAction(true)}
-                class="flex-1 min-w-0 flex items-center justify-between gap-1.5 rounded-xl bg-[var(--accent-primary)] px-2.5 py-1.5 text-[12px] font-medium text-[var(--accent-foreground)] hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity cursor-pointer"
-              >
-                <span class="inline-flex items-center gap-1.5 min-w-0 truncate">
-                  <Show
-                    when={gitAction() !== "commit-push" && gitAction() !== "push"}
-                    fallback={<LoaderCircle size={13} class="animate-spin shrink-0" />}
-                  >
-                    <ArrowUpFromLine size={13} class="shrink-0" />
-                  </Show>
-                  <span class="truncate">
-                    {gitAction() === "commit-push"
-                      ? t("timeline.gitCommittingAndPushing")
-                      : gitAction() === "push"
-                        ? t("timeline.gitPushingOnly")
-                        : !isDirty() && aheadCount() > 0
-                          ? t("timeline.gitPushOnly")
-                          : t("timeline.gitCommitAndPush")}
-                  </span>
-                </span>
-
-                <Show when={changedFilesCount() > 0}>
-                  <span class="shrink-0 rounded-md bg-white/20 px-1.5 py-0.5 font-mono text-[11px]">
-                    {t("timeline.filesAttached", { count: changedFilesCount() })}
-                  </span>
-                </Show>
-                <Show when={!isDirty() && aheadCount() > 0}>
-                  <span class="shrink-0 rounded-md bg-white/20 px-1.5 py-0.5 font-mono text-[11px]">
-                    {t("timeline.gitAheadCountBadge", { count: aheadCount() })}
-                  </span>
-                </Show>
-              </button>
-
-              <Show when={isDirty()}>
-                <button
-                  type="button"
-                  disabled={Boolean(gitAction()) || props.busy || props.switching}
-                  onClick={() => void handleGitCommitAction(false)}
-                  title={t("timeline.gitCommitOnly")}
-                  class="shrink-0 inline-flex items-center gap-1 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-2.5 py-1.5 text-[12px] font-medium text-[var(--text-primary)] disabled:opacity-40 transition-colors cursor-pointer"
-                >
-                  <Show
-                    when={gitAction() !== "commit"}
-                    fallback={<LoaderCircle size={12} class="animate-spin shrink-0" />}
-                  >
-                    <GitCommitHorizontal size={13} class="shrink-0 text-[var(--text-secondary)]" />
-                  </Show>
-                  <span>{t("timeline.gitCommitOnly")}</span>
-                </button>
-              </Show>
+          <Show when={errorMsg()}>
+            <div class="mt-1.5 mx-1 rounded-lg border border-[var(--danger-border)] bg-[var(--danger-surface)] px-2 py-1 text-[11px] text-[var(--danger-text)] break-words">
+              {errorMsg()}
             </div>
-
-            <p class="px-1 py-0.5 text-[11px] leading-snug text-[var(--text-muted)]">
-              {t("timeline.gitAgentCommitHint")}
-            </p>
-          </div>
+          </Show>
 
           {/* Worktree Setup Status/Retry & One-Click Run/Test/Preview */}
           <WorktreeVerifySection
@@ -393,7 +287,7 @@ export function ComposerSandboxPill(props: {
 
           <SandboxLifecycleSection
             sessionID={props.sessionID}
-            busy={props.busy || props.switching || Boolean(gitAction())}
+            busy={props.busy || props.switching}
             onClose={() => setOpen(false)}
           />
 

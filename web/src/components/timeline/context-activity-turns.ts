@@ -1,6 +1,6 @@
 // web/src/components/timeline/context-activity-turns.ts
 import type { MessageInfo, MessagePart } from "../../services/sse-types";
-import type { MessageTurn } from "../../store/workspace";
+import { isSessionBusy, type MessageTurn } from "../../store/workspace";
 import {
   expandInlineThinkingParts,
   isVisibleTextPart,
@@ -127,7 +127,13 @@ export function isCompletedStandaloneReasoningTurn(
   index: number
 ): boolean {
   const turn = allTurns[index];
-  if (!turn || turn.info.role !== "assistant" || turn.info.error || !turn.info.time?.completed) {
+  if (
+    !turn ||
+    turn.info.role !== "assistant" ||
+    turn.info.error ||
+    !turn.info.time?.completed ||
+    isSessionBusy(turn.info.sessionID)
+  ) {
     return false;
   }
   const isEnd =

@@ -184,8 +184,12 @@ export function createTimelineScroll(
       // Compare actual upward scrollTop delta (`upwardDelta`) rather than `distance`.
       const currentTop = scroller.scrollTop;
       const currentHeight = scroller.scrollHeight;
-      const upwardDelta = previousScrollTop - currentTop;
-      const heightChanged = currentHeight !== previousScrollHeight;
+      const heightDelta = currentHeight - previousScrollHeight;
+      const upwardDelta =
+        heightDelta < 0
+          ? Math.max(0, previousScrollTop + heightDelta - currentTop)
+          : previousScrollTop - currentTop;
+      const heightChanged = heightDelta !== 0;
       const movedUp = upwardDelta > 1;
       const movedDown = currentTop - previousScrollTop > 1;
       previousScrollTop = currentTop;

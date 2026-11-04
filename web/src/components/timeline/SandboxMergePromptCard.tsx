@@ -2,7 +2,6 @@
 import { createComputed, createEffect, createMemo, createSignal, on, onCleanup, Show } from "solid-js";
 import {
   Check,
-  FolderGit2,
   GitBranch,
   GitMerge,
   GitPullRequestArrow,
@@ -12,9 +11,7 @@ import {
 } from "lucide-solid";
 import type { SnapshotFileDiff } from "../../services/sse-types";
 import {
-  appSettings,
   applyAndExitSessionWorktree,
-  applySessionWorktree,
   dismissSandboxMergePrompt,
   generateSmartCommitMessage,
   isSessionBusy,
@@ -39,7 +36,7 @@ export default function SandboxMergePromptCard(props: {
   const [commitMsg, setCommitMsg] = createSignal("");
   const [generatingMsg, setGeneratingMsg] = createSignal(false);
   const [busyAction, setBusyAction] = createSignal<
-    "merge-exit" | "patch-exit" | "apply-keep" | "sync-base" | null
+    "merge-exit" | "sync-base" | null
   >(null);
   const [errorMsg, setErrorMsg] = createSignal<string | null>(null);
   const [notice, setNotice] = createSignal<string | null>(null);
@@ -178,7 +175,7 @@ export default function SandboxMergePromptCard(props: {
   };
 
   const runAction = async (
-    action: "merge-exit" | "patch-exit" | "apply-keep" | "sync-base",
+    action: "merge-exit" | "sync-base",
     fn: () => Promise<void>
   ) => {
     if (busyAction()) return;
@@ -212,26 +209,6 @@ export default function SandboxMergePromptCard(props: {
       setNotice(
         t("timeline.sandboxMergeCompletedNotice", { branch: targetBranch })
       );
-    });
-
-  const onPatchAndExit = () =>
-    runAction("patch-exit", async () => {
-      const targetBranch = baseBranch();
-      await applyAndExitSessionWorktree(
-        props.sessionID,
-        "patch",
-        isPromotedBranch()
-      );
-      setCommitOpen(false);
-      setNotice(
-        t("timeline.sandboxPatchCompletedNotice", { branch: targetBranch })
-      );
-    });
-
-  const onApplyKeepSandbox = () =>
-    runAction("apply-keep", async () => {
-      await applySessionWorktree(props.sessionID, appSettings.worktreeApplyMode);
-      setNotice(t("timeline.sandboxAppliedSuccess"));
     });
 
   const onSyncWithBase = () =>
@@ -293,44 +270,6 @@ export default function SandboxMergePromptCard(props: {
                       </Show>
                       <span>
                         {t("timeline.sandboxMergeCommitExitBtn", {
-                          branch: baseBranch(),
-                        })}
-                      </span>
-                    </button>
-
-                    <button
-                      type="button"
-                      disabled={!!busyAction()}
-                      onClick={() => void onPatchAndExit()}
-                      class="inline-flex items-center gap-1.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] hover:bg-[var(--bg-hover)] hover:border-[var(--border-strong)] px-2.5 py-1.5 text-[12px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] disabled:opacity-50 transition-colors cursor-pointer"
-                    >
-                      <Show
-                        when={busyAction() !== "patch-exit"}
-                        fallback={<LoaderCircle size={12} class="animate-spin shrink-0" />}
-                      >
-                        <FolderGit2 size={12} class="shrink-0 text-[var(--text-muted)]" />
-                      </Show>
-                      <span>
-                        {t("timeline.sandboxPatchExitBtn", {
-                          branch: baseBranch(),
-                        })}
-                      </span>
-                    </button>
-
-                    <button
-                      type="button"
-                      disabled={!!busyAction()}
-                      onClick={() => void onApplyKeepSandbox()}
-                      class="inline-flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-[12px] text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:opacity-50 transition-colors cursor-pointer"
-                    >
-                      <Show
-                        when={busyAction() !== "apply-keep"}
-                        fallback={<LoaderCircle size={12} class="animate-spin shrink-0" />}
-                      >
-                        <Check size={12} class="shrink-0" />
-                      </Show>
-                      <span>
-                        {t("timeline.sandboxMergeKeepBtn", {
                           branch: baseBranch(),
                         })}
                       </span>

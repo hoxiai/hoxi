@@ -7,6 +7,7 @@ import {
   on,
   onCleanup,
   Show,
+  untrack,
   type JSX,
 } from "solid-js";
 import type { MessagePart } from "../../services/sse-types";
@@ -24,14 +25,12 @@ import {
 import HoxiActivityLogo from "./HoxiActivityLogo";
 import { createDeferredOpen, Presence } from "../motion/Presence";
 import { formatElapsedSeconds, startAdaptiveElapsedTimer } from "./duration-label";
-import { formatToolDisplayName } from "./tool-card-helpers";
 import { t as tI18n } from "../../i18n";
 import {
   computeActivityStepSummary,
   createPrefixCache,
   extractThoughtOnlyPreview,
   resolveActiveStepDisplay,
-  summarizeStepTarget,
   type StepDisplay,
 } from "./context-activity-summary";
 
@@ -76,25 +75,43 @@ export default function ContextActivityGroupView(props: {
   parts: MessagePart[];
   renderFallbackPart: (part: MessagePart, revealKey?: string, defaultOpenReasoning?: boolean) => JSX.Element;
   isLiveTail?: boolean;
+  isActiveGroup?: boolean;
   startedAt?: number;
   revealKey?: string;
   defaultOpenReasoning?: boolean;
 }) {
   let rootRef: HTMLDivElement | undefined;
+  let trackedOpenGroupKey = "";
   const groupKey = createMemo(() => (props.parts[0]?.id || "").replace(/#thinking$/, ""));
-  // A completed reasoning-only reply can later acquire a tool part. Keep its
-  // opened reasoning visible instead of retracting the final-output hint then.
-  const reasoningDefault = createMemo<{ key: string; open: boolean }>((previous) => {
-    const key = groupKey();
-    return { key, open: Boolean(props.defaultOpenReasoning || (previous?.key === key && previous.open)) };
-  });
-  const resolveOpen = () => activityGroupExpansion.get(groupKey()) ?? (
-    appSettings.reasoningDisplay === "expanded" ||
-    (reasoningDefault().open && appSettings.reasoningDisplay !== "collapsed")
+
+  const prefixCacheRef = { current: createPrefixCache() };
+  const stepSummary = createMemo(() =>
+    computeActivityStepSummary(props.parts, props.startedAt, prefixCacheRef)
   );
+
+  const isRunning = createMemo(() => {
+    if (props.isLiveTail) return true;
+    return stepSummary().hasRunningPart;
+  });
+
+  const stats = () => stepSummary().stats;
+  const isActiveGroup = () => props.isActiveGroup ?? true;
+
+  // Level-1 activity group is expanded while it belongs to the active task,
+  // and collapses once a new task starts (unless manually toggled or globally set).
+  const resolveOpen = () => {
+    const key = groupKey();
+    const manual = activityGroupExpansion.get(key);
+    if (manual !== undefined) return manual;
+    if (appSettings.reasoningDisplay === "collapsed") return false;
+    if (appSettings.reasoningDisplay === "expanded") return true;
+    return isActiveGroup();
+  };
+
   const [open, setOpen] = createSignal(resolveOpen());
-  // The body mounts when it opens; render it closed for a frame so it can grow.
-  const bodyOpen = createDeferredOpen(open);
+  const [animateToggle, setAnimateToggle] = createSignal(false);
+  // The body mounts when it opens; render it closed for a frame only on interactive toggles.
+  const bodyOpen = createDeferredOpen(open, animateToggle);
   const [stepLimit, setStepLimitSignal] = createSignal(
     activityGroupStepLimits.get(groupKey()) ?? STEP_PAGE
   );
@@ -108,14 +125,57 @@ export default function ContextActivityGroupView(props: {
   };
   const visibleSteps = createMemo(() => props.parts.slice(-stepLimit()));
 
-  // Sync open state when groupKey changes across virtualized/reused turns,
-  // keeping the bar compact by default so transitioning from live steps to
-  // answer text never collapses a multi-hundred-pixel drawer.
+  // Sync open state across virtualized/reused turns, new-task auto-collapse, or setting changes.
   createEffect(() => {
     const key = groupKey();
     if (!key) return;
+    const nextOpen = resolveOpen();
+    const prevKey = trackedOpenGroupKey;
+    const prevOpen = untrack(open);
+    trackedOpenGroupKey = key;
     setStepLimitSignal(activityGroupStepLimits.get(key) ?? STEP_PAGE);
-    setOpen(resolveOpen());
+
+    if (prevKey === key && prevOpen && !nextOpen && rootRef) {
+      const scroller = rootRef.closest(".timeline-result-scroll");
+      if (scroller instanceof HTMLElement) {
+        const groupRect = rootRef.getBoundingClientRect();
+        const scrollerRect = scroller.getBoundingClientRect();
+        // Entirely above the viewport: collapse in 0ms and compensate scrollTop
+        // so the visible viewport does not shift by even 1px.
+        if (groupRect.bottom <= scrollerRect.top + 4) {
+          const beforeHeight = rootRef.offsetHeight;
+          setAnimateToggle(false);
+          setOpen(false);
+          queueMicrotask(() => {
+            if (!rootRef) return;
+            const delta = beforeHeight - rootRef.offsetHeight;
+            if (delta > 0) {
+              scroller.scrollTop = Math.max(0, scroller.scrollTop - delta);
+            }
+          });
+          return;
+        }
+        // Partially scrolled past the top (sticky header pinned): anchor the header at top.
+        if (groupRect.top < scrollerRect.top) {
+          scroller.scrollTop = Math.max(
+            0,
+            scroller.scrollTop + (groupRect.top - scrollerRect.top - 8)
+          );
+        }
+      }
+      setAnimateToggle(true);
+      setOpen(false);
+      return;
+    }
+
+    if (prevKey === key && !prevOpen && nextOpen) {
+      setAnimateToggle(true);
+      setOpen(true);
+      return;
+    }
+
+    setAnimateToggle(false);
+    setOpen(nextOpen);
   });
 
   createEffect(on(() => props.revealKey, (revealKey) => {
@@ -124,6 +184,7 @@ export default function ContextActivityGroupView(props: {
     if (key) {
       rememberGroupValue(activityGroupExpansion, key, true);
     }
+    setAnimateToggle(true);
     setOpen(true);
     setStepLimit(props.parts.length);
   }));
@@ -137,17 +198,65 @@ export default function ContextActivityGroupView(props: {
         const groupTop = rootRef.getBoundingClientRect().top;
         const scrollerTop = scroller.getBoundingClientRect().top;
         if (groupTop < scrollerTop) {
-          scroller.scrollTop += groupTop - scrollerTop - 8;
+          scroller.scrollTop = Math.max(0, scroller.scrollTop + (groupTop - scrollerTop - 8));
         }
       }
     }
     if (key) {
       rememberGroupValue(activityGroupExpansion, key, next);
     }
+    setAnimateToggle(true);
     setOpen(next);
   };
 
   const sessionID = createMemo(() => props.parts[0]?.sessionID || workspace.activeSessionID);
+
+  let trackedGroupKey = "";
+  const seenStepIDs = new Set<string>();
+  const syncSeenGroupSteps = () => {
+    const key = groupKey();
+    if (key === trackedGroupKey) return;
+    trackedGroupKey = key;
+    seenStepIDs.clear();
+    for (const part of props.parts) {
+      if (part?.id) seenStepIDs.add(part.id);
+    }
+  };
+  syncSeenGroupSteps();
+
+  const renderStepItem = (part: MessagePart) => {
+    syncSeenGroupSteps();
+    const id = part?.id || "";
+    const isAppendedLive = Boolean(id && !seenStepIDs.has(id) && isRunning());
+    const isInitialLiveSingle = Boolean(
+      !isAppendedLive && props.isLiveTail && props.parts.length === 1
+    );
+    if (id) seenStepIDs.add(id);
+
+    if (!isAppendedLive) {
+      return (
+        <div class={isInitialLiveSingle ? "hoxi-step-enter" : undefined}>
+          {props.renderFallbackPart(part, props.revealKey, false)}
+        </div>
+      );
+    }
+
+    const [unfolded, setUnfolded] = createSignal(false);
+    if (typeof requestAnimationFrame === "function") {
+      const frame = requestAnimationFrame(() => setUnfolded(true));
+      onCleanup(() => cancelAnimationFrame(frame));
+    } else {
+      setUnfolded(true);
+    }
+
+    return (
+      <div class="hoxi-step-grid" data-open={unfolded() ? "true" : "false"}>
+        <div class="-mx-2 px-2 min-h-0 overflow-hidden hoxi-step-enter">
+          {props.renderFallbackPart(part, props.revealKey, false)}
+        </div>
+      </div>
+    );
+  };
 
   const renderStepWindow = () => <>
     <Show when={props.parts.length > stepLimit()}>
@@ -156,18 +265,10 @@ export default function ContextActivityGroupView(props: {
         {tI18n("timeline.loadEarlierSteps", { count: Math.min(STEP_PAGE, props.parts.length - stepLimit()) })}
       </button>
     </Show>
-    <For each={visibleSteps()}>{(part) => props.renderFallbackPart(part, props.revealKey, reasoningDefault().open)}</For>
+    <For each={visibleSteps()}>
+      {(part) => renderStepItem(part)}
+    </For>
   </>;
-
-  const prefixCacheRef = { current: createPrefixCache() };
-  const stepSummary = createMemo(() =>
-    computeActivityStepSummary(props.parts, props.startedAt, prefixCacheRef)
-  );
-
-  const isRunning = createMemo(() => {
-    if (props.isLiveTail) return true;
-    return stepSummary().hasRunningPart;
-  });
 
   const hasPendingApproval = createMemo(() => {
     const sid = sessionID();
@@ -175,7 +276,22 @@ export default function ContextActivityGroupView(props: {
     return workspace.pendingPermissions.some((req) => req.sessionID === sid);
   });
 
-  const stats = () => stepSummary().stats;
+  const isInterStepGap = createMemo(
+    () =>
+      isRunning() &&
+      !stepSummary().hasRunningPart &&
+      !hasPendingApproval() &&
+      stats().toolCount > 0
+  );
+  const [awaitingNextStep, setAwaitingNextStep] = createSignal(false);
+  createEffect(() => {
+    if (!isInterStepGap()) {
+      setAwaitingNextStep(false);
+      return;
+    }
+    const timer = setTimeout(() => setAwaitingNextStep(true), 220);
+    onCleanup(() => clearTimeout(timer));
+  });
 
   const activeStepDisplay = createMemo<StepDisplay, StepDisplay | undefined>(
     (previous) => resolveActiveStepDisplay(stepSummary(), previous),
@@ -219,12 +335,12 @@ export default function ContextActivityGroupView(props: {
           type="button"
           onClick={toggleOpen}
           aria-expanded={open()}
-          class={`group/activity flex w-full items-center justify-between gap-2 rounded-md border border-transparent px-2 py-1.5 text-left text-[13px] transition-all cursor-pointer select-none ${
+          class={`group/activity flex w-full items-center justify-between gap-2 rounded-md -mx-2 px-2 py-1.5 text-left text-[13px] transition-colors cursor-pointer select-none ${
             open()
-              ? "sticky top-0 z-10 bg-[var(--bg-panel)]/92 backdrop-blur-md border-[var(--border-subtle)]/50 text-[var(--text-primary)] shadow-xs"
+              ? "sticky top-0 z-10 backdrop-blur-md bg-[var(--bg-app)]/90 hover:bg-[var(--bg-hover)] text-[var(--text-primary)]"
               : isRunning()
-                ? "bg-[var(--accent-surface)]/15 hover:bg-[var(--accent-surface)]/30 text-[var(--text-primary)]"
-                : "bg-[var(--bg-inset)]/35 hover:bg-[var(--bg-inset)]/75 text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                ? "hover:bg-[var(--bg-hover)] text-[var(--text-primary)]"
+                : "hover:bg-[var(--bg-hover)] text-[var(--text-muted)] hover:text-[var(--text-primary)]"
           }`}
         >
           <div class="flex items-center gap-2 min-w-0 flex-1">
@@ -244,7 +360,7 @@ export default function ContextActivityGroupView(props: {
                 </span>
               }
             >
-              <span class="text-[var(--accent-primary)] inline-flex items-center shrink-0">
+              <span class="-my-1 text-[var(--accent-primary)] inline-flex items-center shrink-0">
                 <HoxiActivityLogo active={!hasPendingApproval()} />
               </span>
             </Show>
@@ -284,13 +400,37 @@ export default function ContextActivityGroupView(props: {
                 </>
               }
             >
-              <span class="font-medium text-[var(--accent-primary)] shrink-0">
-                <TextShimmer text={activeStepDisplay().action} active={!hasPendingApproval()} />
-              </span>
-              <Show when={activeStepDisplay().detail}>
-                <span class="font-mono text-[12px] text-[var(--text-secondary)] truncate max-w-[360px] inline-flex items-center min-w-0">
-                  <TextReveal text={activeStepDisplay().detail} truncate minSwapMs={LIVE_STATUS_SWAP_MS} />
+              <Show
+                when={!open()}
+                fallback={
+                  <span class="inline-flex items-center gap-1.5 font-medium text-[var(--accent-primary)] shrink-0">
+                    <TextShimmer
+                      text={
+                        stats().toolCount > 0
+                          ? tI18n("timeline.executedStepsSummary", {
+                              count: stats().toolCount,
+                            })
+                          : tI18n("timeline.thinking")
+                      }
+                      active={!stepSummary().hasRunningPart && !hasPendingApproval()}
+                    />
+                    <Show when={awaitingNextStep()}>
+                      <span class="inline-flex items-center gap-1.5 text-[var(--text-muted)] font-normal hoxi-step-enter">
+                        <span class="text-[var(--text-faint)]">·</span>
+                        <TextShimmer text={tI18n("timeline.thinking")} active={true} />
+                      </span>
+                    </Show>
+                  </span>
+                }
+              >
+                <span class="font-medium text-[var(--accent-primary)] shrink-0">
+                  <TextShimmer text={activeStepDisplay().action} active={!hasPendingApproval()} />
                 </span>
+                <Show when={activeStepDisplay().detail}>
+                  <span class="font-mono text-[12px] text-[var(--text-secondary)] truncate max-w-[360px] inline-flex items-center min-w-0">
+                    <TextReveal text={activeStepDisplay().detail} truncate minSwapMs={LIVE_STATUS_SWAP_MS} />
+                  </span>
+                </Show>
               </Show>
               <Show when={stats().badges.length > 0}>
                 <span class="hidden lg:inline-flex items-center gap-2 text-[var(--text-muted)] shrink-0">
@@ -352,20 +492,24 @@ export default function ContextActivityGroupView(props: {
         </button>
 
         {/* Full chronological step list with smooth collapse transition */}
-        <Presence when={open()} exitMs={220}>
+        <Presence when={open()} exitMs={animateToggle() ? 180 : 0}>
           {() => (
           <div
             data-activity-group-body
-            class={`grid transition-[grid-template-rows,opacity,margin-top] duration-200 ease-out motion-reduce:transition-none ${
+            class={`grid ${
+              animateToggle()
+                ? "transition-[grid-template-rows,opacity,margin-top] duration-150 ease-out motion-reduce:transition-none"
+                : "transition-none"
+            } ${
               bodyOpen()
-                ? "mt-1.5 grid-rows-[1fr] opacity-100"
+                ? "mt-1 grid-rows-[1fr] opacity-100"
                 : "mt-0 grid-rows-[0fr] opacity-0 pointer-events-none"
             }`}
             aria-hidden={!open()}
             inert={!open()}
           >
             <div class="min-h-0 overflow-hidden">
-              <div class="ml-2 border-l-2 border-[var(--border-subtle)] pl-3.5 space-y-1">
+              <div class="ml-[7.5px] border-l border-[var(--border-subtle)]/50 pl-4 space-y-0.5">
                 {renderStepWindow()}
               </div>
             </div>

@@ -61,6 +61,7 @@ export const toolCard = {
   lastActivity: "last activity {seconds}s ago",
   gatheringContext: "Gathering context",
   gatheredContext: "Gathered context",
+  exploredStepsFold: "Explored {count} items",
   waitingForOutput: "Waiting for output…",
   outputPendingHint: "No command output received yet; scripts or pipes such as tail may hold logs until completion. Expand to inspect the command, or stop it if needed",
   noOutput: "Command completed with no output.",

@@ -16,12 +16,14 @@ import {
   extractTargetFile,
   formatToolDisplayName,
   getFilename,
+  hasDistinctShellDescription,
   isEditingTool,
   isReadTool,
   isSearchOrListTool,
   isShellTool,
   isTaskTool,
 } from "./tool-card-helpers";
+import { analyzeShellCommand } from "./shell-command-summary";
 import {
   isSessionScratchFile,
   normalizeWorkspaceRelPath,
@@ -50,8 +52,13 @@ export function summarizeStepTarget(part: ToolPart): string {
   if (file) return getFilename(file) || basename(file);
   if (isShellTool(part.tool)) {
     const desc = extractDescription(part);
-    if (desc) return desc;
     const cmd = extractCommand(part);
+    if (hasDistinctShellDescription(desc, cmd)) return desc;
+    const intent = analyzeShellCommand(cmd);
+    if (intent.summary) {
+      return intent.kind === "command" ? `$ ${intent.summary}` : intent.summary;
+    }
+    if (desc) return desc;
     return cmd ? `$ ${cmd}` : "";
   }
   const desc = extractDescription(part);
@@ -241,8 +248,17 @@ function accumulatePrefixStep(prefixCache: ActivityPrefixCache, p: MessagePart, 
     prefixCache.editIndices.push(index);
     addBucketTarget(prefixCache.editBucket, target);
   } else if (isShellTool(p.tool)) {
-    prefixCache.commands++;
-    addBucketTarget(prefixCache.cmdBucket, target);
+    const shellKind = analyzeShellCommand(extractCommand(p)).kind;
+    if (shellKind === "read") {
+      prefixCache.reads++;
+      addBucketTarget(prefixCache.readBucket, target);
+    } else if (shellKind === "search" || shellKind === "list") {
+      prefixCache.searches++;
+      addBucketTarget(prefixCache.searchBucket, target);
+    } else {
+      prefixCache.commands++;
+      addBucketTarget(prefixCache.cmdBucket, target);
+    }
   } else if (isSearchOrListTool(p.tool)) {
     prefixCache.searches++;
     addBucketTarget(prefixCache.searchBucket, target);
@@ -384,8 +400,17 @@ export function computeActivityStepSummary(
         if (target) tailEdits.push(target);
         recordToolDiffs(p);
       } else if (isShellTool(p.tool)) {
-        commands++;
-        if (target) tailCmds.push(target);
+        const shellKind = analyzeShellCommand(extractCommand(p)).kind;
+        if (shellKind === "read") {
+          reads++;
+          if (target) tailReads.push(target);
+        } else if (shellKind === "search" || shellKind === "list") {
+          searches++;
+          if (target) tailSearches.push(target);
+        } else {
+          commands++;
+          if (target) tailCmds.push(target);
+        }
       } else if (isSearchOrListTool(p.tool)) {
         searches++;
         if (target) tailSearches.push(target);
@@ -455,6 +480,20 @@ export function computeActivityStepSummary(
   };
 }
 
+function resolveStepActionName(part: ToolPart): string {
+  if (isShellTool(part.tool)) {
+    const desc = extractDescription(part);
+    const cmd = extractCommand(part);
+    if (!hasDistinctShellDescription(desc, cmd)) {
+      const intent = analyzeShellCommand(cmd);
+      if (intent.kind === "read") return tI18n("toolCard.actionRead");
+      if (intent.kind === "search") return tI18n("toolCard.actionSearch");
+      if (intent.kind === "list") return tI18n("toolCard.actionList");
+    }
+  }
+  return formatToolDisplayName(part.tool, part);
+}
+
 export function resolveActiveStepDisplay(
   summary: ActivityStepSummary,
   previous?: StepDisplay
@@ -468,7 +507,7 @@ export function resolveActiveStepDisplay(
     const active = targeted ?? runningTools[runningTools.length - 1];
     const detail = targeted ? summarizeStepTarget(targeted) : "";
     const extra = detail && runningTools.length > 1 ? ` (+${runningTools.length - 1})` : "";
-    return { action: formatToolDisplayName(active.tool, active), detail: `${detail}${extra}`.trim() };
+    return { action: resolveStepActionName(active), detail: `${detail}${extra}`.trim() };
   }
 
   if (activeReasoning) {
@@ -482,7 +521,7 @@ export function resolveActiveStepDisplay(
   // Fallback during brief transitions between steps while `isLiveTail` is true
   if (lastTool) {
     return {
-      action: formatToolDisplayName(lastTool.tool, lastTool),
+      action: resolveStepActionName(lastTool),
       detail: summarizeStepTarget(lastTool),
     };
   }

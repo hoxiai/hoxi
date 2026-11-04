@@ -260,13 +260,7 @@ export default function ThoughtBox(props: {
     const id = partKey();
     if (userOpened.has(id)) return true;
     if (userCollapsed.has(id)) return false;
-    if (props.defaultOpen && appSettings.reasoningDisplay !== "collapsed") {
-      return true;
-    }
-    // Only open full box by default when the user explicitly selects "expanded";
-    // in default "auto-collapse" mode, keep the compact single-line live ticker
-    // so transitioning from thinking to answer causes zero height collapse.
-    return appSettings.reasoningDisplay === "expanded";
+    return false;
   };
 
   const [open, setOpen] = createSignal(resolveDefaultOpen());
@@ -316,16 +310,6 @@ export default function ThoughtBox(props: {
     }
     setAnimateToggle(true);
     setOpen(true);
-  });
-
-  // Respect user's global reasoningDisplay setting unless manually toggled on this card
-  createEffect(() => {
-    const id = partKey();
-    const mode = appSettings.reasoningDisplay;
-    const forceDefaultOpen = Boolean(props.defaultOpen) && mode !== "collapsed";
-    if (userOpened.has(id) || userCollapsed.has(id)) return;
-    setAnimateToggle(false);
-    setOpen(forceDefaultOpen || mode === "expanded");
   });
 
   // Observe inner reasoning body height (KiloCode pattern): snap immediately on
@@ -416,41 +400,56 @@ export default function ThoughtBox(props: {
       <div>
         <button
           type="button"
-          class="group/trigger inline-flex max-w-full items-center gap-2 rounded-lg py-1.5 text-[13px] text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+          class="group/trigger flex w-full items-center justify-between gap-2 px-2 py-1 -mx-2 rounded-lg text-[13px] text-[var(--text-muted)] hover:bg-[var(--bg-hover)]/60 hover:text-[var(--text-primary)] transition-colors cursor-pointer"
           onClick={toggleOpen}
         >
-          <span
-            class={
-              streaming()
-                ? "shrink-0 text-[var(--accent-primary)] inline-flex items-center"
-                : "shrink-0 text-[var(--text-muted)] group-hover/trigger:text-[var(--text-primary)] inline-flex items-center"
-            }
-          >
-            <Icon name="brain" size="small" />
-          </span>
-          <span class={streaming() ? "shrink-0 text-[var(--accent-primary)] font-medium" : "shrink-0 font-medium"}>
-            <TextShimmer
-              text={streaming() ? t("timeline.thinking") : t("timeline.thought")}
-              active={streaming()}
-            />
-          </span>
-          <Show when={headerTitle()}>
-            <span class="truncate text-[13px] font-normal text-[var(--text-muted)] max-w-[540px] inline-flex items-center gap-1 min-w-0">
-              <span class="shrink-0">·</span>
-              <TextReveal text={headerTitle()} truncate minSwapMs={LIVE_STATUS_SWAP_MS} />
+          <div class="flex items-center gap-2 min-w-0 flex-1">
+            <span
+              class={
+                streaming()
+                  ? "shrink-0 text-[var(--accent-primary)] inline-flex items-center"
+                  : "shrink-0 text-[var(--text-faint)] group-hover/trigger:text-[var(--text-secondary)] transition-colors inline-flex items-center"
+              }
+            >
+              <Icon name="brain" size="small" />
             </span>
-          </Show>
-          <Show when={!streaming() && durationSec() >= 0.05}>
-            <span class="shrink-0 font-mono text-[12px] tabular-nums text-[var(--text-faint)]">
-              {formatElapsedSeconds(durationSec())}
+            <Show
+              when={!streaming() && headerTitle()}
+              fallback={
+                <>
+                  <span class={streaming() ? "shrink-0 text-[var(--accent-primary)] font-medium" : "shrink-0 text-[var(--text-muted)]"}>
+                    <TextShimmer
+                      text={streaming() ? t("timeline.thinking") : t("timeline.thought")}
+                      active={streaming()}
+                    />
+                  </span>
+                  <Show when={headerTitle()}>
+                    <span class="truncate text-[13px] font-normal text-[var(--text-muted)] max-w-[540px] inline-flex items-center gap-1 min-w-0">
+                      <span class="shrink-0">·</span>
+                      <TextReveal text={headerTitle()} truncate minSwapMs={LIVE_STATUS_SWAP_MS} />
+                    </span>
+                  </Show>
+                </>
+              }
+            >
+              <span class="truncate text-[13px] font-normal text-[var(--text-muted)] group-hover/trigger:text-[var(--text-secondary)] transition-colors min-w-0">
+                <TextReveal text={headerTitle()} truncate minSwapMs={LIVE_STATUS_SWAP_MS} />
+              </span>
+            </Show>
+          </div>
+          <div class="flex items-center gap-2 shrink-0 opacity-0 group-hover/trigger:opacity-100 transition-opacity">
+            <Show when={!streaming() && durationSec() >= 0.05}>
+              <span class="shrink-0 font-mono text-[12px] tabular-nums text-[var(--text-faint)]">
+                {formatElapsedSeconds(durationSec())}
+              </span>
+            </Show>
+            <span
+              class="hoxi-chevron shrink-0 text-[var(--text-faint)]"
+              data-open={open() ? "true" : "false"}
+            >
+              <Icon name="chevron-right" size="small" />
             </span>
-          </Show>
-          <span
-            class="hoxi-chevron shrink-0 text-[var(--text-faint)]"
-            data-open={open() ? "true" : "false"}
-          >
-            <Icon name="chevron-right" size="small" />
-          </span>
+          </div>
         </button>
 
         <Show when={everOpened()}>

@@ -8,7 +8,7 @@ import { t } from "../i18n";
 import { hoxiAPI } from "../services/api";
 import type { MessagePart, ToolPart } from "../services/sse-types";
 import { setAppSettings } from "../store/settings";
-import { setCommitModelSpec } from "../store/git-commit";
+import { submitSessionPrompt } from "../store/session-goal";
 import { upsertTurnInfo, upsertTurnPart } from "../store/message-lookup";
 import { setWorkspace, workspace } from "../store/workspace-state";
 import { assertEqual, assertTrue } from "./test-harness";
@@ -52,7 +52,7 @@ function fixture(mode: "auto-collapse" | "expanded" | "collapsed", finalReasonin
 }
 
 async function testCompactTransition() {
-  const f = fixture("auto-collapse");
+  const f = fixture("collapsed");
   try {
     await wait(60);
     const group = f.group(), header = f.header();
@@ -80,7 +80,7 @@ async function testExpandedTransition() {
     const group = f.group(), body = f.body();
     const reasoning = f.host.querySelector(`[data-part-id="${f.reasoning.id}"]`);
     const before = group.getBoundingClientRect().height;
-    assertTrue(Boolean(body && reasoning && before > 100), "fixture must begin with expanded reasoning");
+    assertTrue(Boolean(body && reasoning && before > 40), "fixture must begin with level-1 expanded and level-2 compact");
     f.setParts([f.reasoning, f.tool()]);
     await frame();
     assertTrue(f.group() === group && f.body() === body, "the first tool must retain the expanded container");
@@ -94,7 +94,7 @@ async function testExpandedTransition() {
 }
 
 async function testCollapseAndReopen() {
-  const f = fixture("auto-collapse");
+  const f = fixture("collapsed");
   try {
     f.setParts([f.reasoning, f.tool()]);
     f.header().click(); await wait(80);
@@ -106,6 +106,8 @@ async function testCollapseAndReopen() {
     assertTrue(f.body() === body, "closing must not synchronously unmount the drawer");
     assertTrue(body.inert && body.getAttribute("aria-hidden") === "true", "closing steps must not remain interactive");
     assertTrue(body.getBoundingClientRect().height > 0, "collapse must animate instead of instantly dropping to zero");
+    await wait(60);
+    assertTrue(f.body() === body, "drawer must stay mounted while the 200ms exit transition is in flight");
     f.header().click();
     await wait(250);
     assertTrue(f.body() === body && !body.inert, "reopening must cancel the exit and keep the existing cards");
@@ -120,7 +122,7 @@ async function testCollapseAndReopen() {
 }
 
 async function testExpandAnimates() {
-  const f = fixture("auto-collapse");
+  const f = fixture("collapsed");
   try {
     f.setParts([f.reasoning, f.tool()]);
     await frame();
@@ -169,7 +171,7 @@ function readStep(sid: string, index: number, file: string | undefined, status: 
 }
 
 async function testPendingStepKeepsTarget() {
-  const f = fixture("auto-collapse");
+  const f = fixture("collapsed");
   const thought = { ...f.reasoning, time: { start: 1, end: 2 } } as MessagePart;
   const detail = () => f.header().querySelector("[data-component='text-reveal']")?.getAttribute("aria-label") ?? "";
   try {
@@ -187,7 +189,7 @@ async function testPendingStepKeepsTarget() {
 }
 
 async function testParallelStepsNameAKnownTarget() {
-  const f = fixture("auto-collapse");
+  const f = fixture("collapsed");
   const thought = { ...f.reasoning, time: { start: 1, end: 2 } } as MessagePart;
   try {
     f.setParts([thought, readStep(f.sid, 0, "/probe/alpha.ts", "running"), readStep(f.sid, 1, undefined, "pending")]);
@@ -198,7 +200,7 @@ async function testParallelStepsNameAKnownTarget() {
 }
 
 async function testRapidStepsSwapCalmly() {
-  const f = fixture("auto-collapse");
+  const f = fixture("collapsed");
   const thought = { ...f.reasoning, time: { start: 1, end: 2 } } as MessagePart;
   const detail = () => f.header().querySelector<HTMLElement>("[data-component='text-reveal']");
   try {
@@ -243,10 +245,10 @@ async function testFinalReasoning() {
     await wait(80);
     const body = f.body();
     const before = f.group().getBoundingClientRect().height;
-    assertTrue(Boolean(body && before > 100), "a reasoning-only final answer must remain readable by default");
+    assertTrue(Boolean(body && before > 40), "level-1 stays expanded while level-2 reasoning stays compact by default");
     batch(() => { f.setDefaultOpen(false); f.setParts([f.reasoning, f.tool()]); });
     await frame();
-    assertTrue(f.body() === body, "a late first tool must not retract the final reasoning");
+    assertTrue(f.body() === body, "a late first tool must not retract the activity group");
     assertTrue(f.group().getBoundingClientRect().height >= before - 2);
   } finally { f.cleanup(); }
 }
@@ -275,16 +277,14 @@ async function testCommitExecutionStream() {
   let dispatched = 0;
   hoxiAPI.sendPromptAsync = async () => { dispatched++; };
   hoxiAPI.getWorktreeStatus = async () => ({ sessionID: f.sid, directory, isolated: false, dirty: true, changedFiles: 1, additions: 1, deletions: 1, uncommittedLines: 2 });
-  setCommitModelSpec("none");
   const host = document.createElement("div");
   host.style.cssText = "width:900px;height:650px;display:flex;flex-direction:column";
   document.body.append(host);
   const dispose = render(() => <MessageStream />, host);
   try {
     await wait(80);
-    const commit = Array.from(host.querySelectorAll("button")).find((button) => button.textContent?.trim() === t("timeline.gitQuickCommit"));
-    assertTrue(Boolean(commit), "fixture must offer the actual timeline commit action");
-    commit!.click(); await frame(); await frame();
+    await submitSessionPrompt("Continue task", f.sid);
+    await frame(); await frame();
     assertEqual(dispatched, 1);
     const now = Date.now();
     setWorkspace(produce((state) => {
@@ -299,7 +299,7 @@ async function testCommitExecutionStream() {
     setWorkspace(produce((state) => upsertTurnPart(state.messagesBySession[f.sid], f.tool())));
     await frame();
     assertTrue(host.querySelector(`[data-activity-group="${f.reasoning.id}"]`) === group, "commit's first tool must retain the reasoning container");
-    assertTrue(!group.querySelector("[data-activity-group-body]"), "commit execution must not auto-expand steps");
+    assertTrue(Boolean(group.querySelector("[data-activity-group-body]")), "live tool execution in auto-collapse mode expands the step drawer");
     batch(() => {
       setWorkspace(produce((state) => {
         const turns = state.messagesBySession[f.sid];
@@ -430,6 +430,160 @@ async function testCompletedStepMetadataDiffStatsUpdate() {
   }
 }
 
+async function testAutoCollapseOnlyAfterScrollingOffscreen() {
+  const sid = `ses_activity_offscreen_${++nextFixture}`;
+  setAppSettings("reasoningDisplay", "auto-collapse");
+  setWorkspace({
+    rootDir: "/Users/hugh/code/hoxi/shopark",
+    activeSessionID: sid,
+    sessions: [{ id: sid, title: "Offscreen auto-collapse", directory: "/Users/hugh/code/hoxi/shopark", time: { created: 1, updated: 1 } }],
+  });
+  setWorkspace("statusBySession", sid, { type: "busy" });
+
+  const baseNow = Date.now();
+  const makeShell = (
+    index: number,
+    command: string,
+    status: "pending" | "running" | "completed" = "completed"
+  ): ToolPart => ({
+    type: "tool",
+    id: `prt_exp_${sid}_${index}`,
+    sessionID: sid,
+    messageID: `msg_${sid}`,
+    callID: `call_exp_${index}`,
+    tool: "bash",
+    state:
+      status === "pending"
+        ? { status: "pending", input: command ? { command } : {}, raw: "" }
+        : status === "running"
+          ? { status: "running", input: { command }, metadata: {}, time: { start: baseNow + index * 10 } }
+          : {
+              status: "completed",
+              input: { command },
+              output: "ok",
+              title: command,
+              metadata: {},
+              time: { start: baseNow + index * 10, end: baseNow + index * 10 + 50 },
+            },
+  });
+
+  const [parts, setParts] = createSignal<MessagePart[]>([
+    makeShell(
+      1,
+      "ssh -o BatchMode=yes -o ConnectTimeout=10 root@8.135.58.57 'cd /opt/gopanel && sudo -u gopanel env'"
+    ),
+    makeShell(
+      2,
+      "cd /Users/hugh/code/hoxi/shopark && sed -n '1,120p' go-fast/app/service/theme_decor.go"
+    ),
+    makeShell(
+      3,
+      `cd /Users/hugh/code/hoxi/shopark && rg -n "ErrDecorPublishedMissing" --glob '*.go' go-fast | head -10`
+    ),
+    makeShell(
+      4,
+      "cd /Users/hugh/code/hoxi/shopark && sed -n '340,420p' go-fast/app/service/theme_decor_bundle.go",
+      "running"
+    ),
+  ]);
+  const [live, setLive] = createSignal(true);
+  const [activeGroup, setActiveGroup] = createSignal(true);
+
+  const scroller = document.createElement("div");
+  scroller.className = "timeline-result-scroll";
+  scroller.style.cssText = "width:900px;height:220px;overflow-y:auto;position:relative";
+  const content = document.createElement("div");
+  const tailSpacer = document.createElement("div");
+  tailSpacer.style.cssText = "height:600px";
+  scroller.append(content, tailSpacer);
+  document.body.append(scroller);
+
+  const dispose = render(
+    () => <ContextActivityGroupView parts={parts()} isLiveTail={live()} isActiveGroup={activeGroup()} />,
+    content
+  );
+
+  try {
+    await wait(100);
+    const group = scroller.querySelector<HTMLElement>("[data-activity-group]")!;
+    const header = group.querySelector<HTMLButtonElement>(":scope > button")!;
+    assertEqual(header.getAttribute("aria-expanded"), "true", "live tool steps expand automatically in auto-collapse mode");
+    assertEqual(
+      getComputedStyle(header).position,
+      "sticky",
+      "expanded first-level header stays sticky while scrolling a long activity group"
+    );
+    assertTrue(
+      !header.querySelector("[data-component='text-reveal']"),
+      "expanded header must show group summary instead of duplicating the last running step"
+    );
+    assertTrue(
+      Boolean(scroller.textContent?.includes("root@8.135.58.57 · sudo -u gopanel env")),
+      "ssh step is de-noised and directly visible"
+    );
+    assertEqual(
+      scroller.querySelectorAll("[data-part-id]").length,
+      4,
+      "all 4 steps render directly with live momentum without nested sub-folding"
+    );
+
+    // Finish execution while still visible on screen: must NOT collapse or jump.
+    const heightWhileRunning = group.getBoundingClientRect().height;
+    batch(() => {
+      setParts([
+        ...parts().slice(0, 3),
+        makeShell(
+          4,
+          "cd /Users/hugh/code/hoxi/shopark && sed -n '340,420p' go-fast/app/service/theme_decor_bundle.go",
+          "completed"
+        ),
+      ]);
+      setLive(false);
+      setWorkspace("statusBySession", sid, { type: "idle" });
+    });
+    await wait(120);
+    assertEqual(
+      header.getAttribute("aria-expanded"),
+      "true",
+      "completed group must remain expanded while still in the viewport"
+    );
+    const heightAfterFinish = group.getBoundingClientRect().height;
+    assertTrue(
+      Math.abs(heightAfterFinish - heightWhileRunning) < 4,
+      `completing execution on screen must cause zero height collapse (${heightWhileRunning} -> ${heightAfterFinish})`
+    );
+
+    // Scroll down so the completed group leaves the top of the viewport:
+    // level-1 remains stably expanded while it is still the latest group.
+    scroller.scrollTop = 450;
+    await wait(60);
+    assertEqual(
+      header.getAttribute("aria-expanded"),
+      "true",
+      "completed group stays expanded until a newer activity group starts"
+    );
+
+    // Once a newer activity group starts, the offscreen completed group folds
+    // in 0ms and compensates scrollTop so the visible viewport does not jump.
+    const spacerTopBefore = tailSpacer.getBoundingClientRect().top;
+    setActiveGroup(false);
+    await frame();
+    assertEqual(
+      header.getAttribute("aria-expanded"),
+      "false",
+      "completed group folds automatically when a newer activity group starts"
+    );
+    const spacerTopAfter = tailSpacer.getBoundingClientRect().top;
+    assertTrue(
+      Math.abs(spacerTopAfter - spacerTopBefore) < 2,
+      `offscreen auto-collapse must preserve viewport position (${spacerTopBefore} -> ${spacerTopAfter})`
+    );
+  } finally {
+    dispose();
+    scroller.remove();
+  }
+}
+
 export async function runBrowserTest(): Promise<string[]> {
   window.fetch = async () => new Response("{}", { headers: { "Content-Type": "application/json" } });
   hoxiAPI.getSessionDiff = async () => [];
@@ -448,6 +602,7 @@ export async function runBrowserTest(): Promise<string[]> {
     ["reasoning-only final output stays readable when a tool arrives late", testFinalReasoning],
     ["timeline commit keeps the activity container through reasoning, tools, and its result", testCommitExecutionStream],
     ["completed step metadata corrections update collapsed diff stats immediately and across appends", testCompletedStepMetadataDiffStatsUpdate],
+    ["auto-collapse expands live steps without header duplication and collapses only after scrolling offscreen", testAutoCollapseOnlyAfterScrollingOffscreen],
   ] as const) { await run(); results.push(name); }
   return results;
 }

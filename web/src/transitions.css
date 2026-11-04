@@ -290,6 +290,40 @@ dialog[open]::backdrop {
   animation: hoxi-item-pop 150ms var(--ease-enter) both;
 }
 
+@keyframes hoxi-step-in {
+  0% {
+    opacity: 0;
+    transform: translate3d(-3px, 4px, 0);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+.hoxi-step-enter {
+  animation: hoxi-step-in 210ms var(--ease-spring) both;
+}
+
+.hoxi-step-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  transition:
+    grid-template-rows 180ms var(--ease-spring),
+    opacity 160ms var(--ease-enter);
+}
+
+.hoxi-step-grid[data-open="true"] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+.hoxi-step-grid[data-open="false"] {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+
 /*
  * Soft stream reveal (`StreamRevealText`). Freshly revealed slices fade gently
  * from faint to full contrast using a two-stage opacity curve so the trailing
