@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func sessionTestGit(t *testing.T, dir string, args ...string) string {
@@ -176,6 +177,11 @@ func TestSessionCommitRejectsUnsafeChanges(t *testing.T) {
 func TestSessionCommitAddDelete(t *testing.T) {
 	t.Parallel()
 	dir, manager, base := sessionFixture(t)
+	sessionTestWrite(t, dir, ".git/index.lock", "crashed")
+	staleTime := time.Now().Add(-20 * time.Minute)
+	if err := os.Chtimes(filepath.Join(dir, ".git/index.lock"), staleTime, staleTime); err != nil {
+		t.Fatal(err)
+	}
 	sessionTestWrite(t, dir, "new.txt", "new\n")
 	if err := os.Remove(filepath.Join(dir, "file.txt")); err != nil {
 		t.Fatal(err)

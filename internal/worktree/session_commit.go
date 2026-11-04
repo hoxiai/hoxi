@@ -12,10 +12,13 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/hoxiai/hoxi/internal/subproc"
 )
+
+const staleIndexLockMaxAge = 10 * time.Minute
 
 // SessionDiff is the original OpenCode session diff, not a workspace diff.
 // Pointers distinguish a missing snapshot from a valid empty file.
@@ -224,14 +227,21 @@ func (m *worktreeManager) CommitSessionChanges(sessionID, message string, push b
 		return fail(err)
 	}
 	index := filepath.Join(gitDir, "index")
-	lock, err := os.OpenFile(index+".lock", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	lockPath := index + ".lock"
+	lock, err := os.OpenFile(lockPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil && os.IsExist(err) {
+		if info, statErr := os.Lstat(lockPath); statErr == nil && info.Mode().IsRegular() && time.Since(info.ModTime()) > staleIndexLockMaxAge {
+			_ = os.Remove(lockPath)
+			lock, err = os.OpenFile(lockPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		}
+	}
 	if err != nil {
 		return fail(fmt.Errorf("lock real index: %w", err))
 	}
 	lockHeld := true
 	defer func() {
 		if lockHeld {
-			os.Remove(index + ".lock")
+			os.Remove(lockPath)
 		}
 	}()
 	defer lock.Close()

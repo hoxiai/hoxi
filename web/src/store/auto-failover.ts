@@ -374,6 +374,7 @@ export function shouldRetrySameModelOnError(
   decision: AutoFailoverDecision,
   state: TurnDispatchState
 ): boolean {
+  if (!state.poolID) return false;
   if (state.backendRetried || state.sameModelRetries >= MAX_SAME_MODEL_RETRIES) return false;
   const name = (error.name || "").toLowerCase();
   // Native CLI turns already run their own in-process retry loop in Go runner.
@@ -521,7 +522,10 @@ export function selectNextDispatchTarget(
       nextCand = resolved;
     }
   }
-  const sameModelRetry = !nextCand && shouldRetrySameModelOnError(currentError, decision, autoState);
+  const sameModelRetry =
+    Boolean(autoState.poolID) &&
+    !nextCand &&
+    shouldRetrySameModelOnError(currentError, decision, autoState);
   if (!nextCand && !sameModelRetry) return null;
   const target = nextCand ?? failed;
   if (nextCand) {

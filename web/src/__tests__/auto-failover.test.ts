@@ -317,29 +317,60 @@ describe("auto-pool failover dispatch", () => {
     }
   });
 
-  it("retries a non-auto single-model turn up to 2 times on transient network or server errors", async () => {
+  it("does not retry non-auto single-model turns and retries single-candidate auto-pool turns up to 2 times on transient errors", async () => {
     const origSend = hoxiAPI.sendPromptAsync;
     const origGetMessages = hoxiAPI.getMessages;
+    const origGet = hoxiAPI.getProviderCandidates;
+    const origReport = hoxiAPI.reportCandidateOutcome;
     const origSummarize = hoxiAPI.summarizeSessionTitle;
     const sid = "ses_same_model_retry";
     try {
       hoxiAPI.getMessages = async () => [];
+      hoxiAPI.getProviderCandidates = async () => ({ ok: true, breakers: {} });
+      hoxiAPI.reportCandidateOutcome = async () => ({ ok: true });
       hoxiAPI.summarizeSessionTitle = async () => ({ ok: true, title: "Test" });
       const model = (id: string) => ({ id, name: id, capabilities: { toolcall: true } });
       setWorkspace("providers", [{ id: "openai", name: "OpenAI", models: { "gpt-5": model("gpt-5") } }]);
       setWorkspace("connectedProviders", ["openai"]);
       setWorkspace("sessions", [{ id: sid, title: "Retry", time: { created: 1, updated: 1 } } as never]);
       setWorkspace("activeSessionID", sid);
-      setWorkspace("aiBySession", sid, {
-        agent: "build",
-        model: { providerID: "openai", modelID: "gpt-5" },
-        effort: "",
-      });
 
       const attempted: string[] = [];
       hoxiAPI.sendPromptAsync = async (_sid, _text, opts) => {
         attempted.push(`${opts?.model?.providerID}/${opts?.model?.modelID}`);
       };
+
+      // Non-auto session must NOT silently re-send the prompt on transient errors
+      setWorkspace("aiBySession", sid, {
+        agent: "build",
+        model: { providerID: "openai", modelID: "gpt-5" },
+        effort: "",
+      });
+      await dispatchSessionPrompt("non-auto-ping", sid, { forceImmediate: true });
+      assertDeepEqual(attempted, ["openai/gpt-5"]);
+      await handleSessionErrorEvent(sid, {
+        name: "APIError",
+        data: { message: "read tcp 10.0.0.1:443: read: connection reset by peer" },
+      });
+      assertDeepEqual(attempted, ["openai/gpt-5"]);
+      assertEqual(workspace.statusBySession[sid]?.type, "idle");
+
+      // Single-candidate auto-pool session retries up to 2 times when no other candidate exists
+      attempted.length = 0;
+      await saveAutoPool("free", {
+        id: "free",
+        preset: true,
+        strategy: "priority",
+        customized: true,
+        candidates: [{ providerID: "openai", modelID: "gpt-5" }],
+      });
+      clearAutoPoolCooldowns("free");
+      applyProviderBreakers({});
+      setWorkspace("aiBySession", sid, {
+        agent: "build",
+        model: { providerID: AUTO_PROVIDER_ID, modelID: "free" },
+        effort: "",
+      });
 
       await dispatchSessionPrompt("ping", sid, { forceImmediate: true });
       assertDeepEqual(attempted, ["openai/gpt-5"]);
@@ -375,6 +406,7 @@ describe("auto-pool failover dispatch", () => {
         abortedCount++;
       };
       try {
+        clearAutoPoolCooldowns("free");
         await dispatchSessionPrompt("ping2", sid, { forceImmediate: true });
         hoxiAPI.sendPromptAsync = async () => {
           markSessionInterrupted(sid, "stopped");
@@ -390,6 +422,7 @@ describe("auto-pool failover dispatch", () => {
         hoxiAPI.abortSession = origAbort;
       }
       // Clearing dispatch state on normal turn completion or session purge must prevent late errors from re-sending
+      clearAutoPoolCooldowns("free");
       await dispatchSessionPrompt("completed-turn", sid, { forceImmediate: true });
       const countAfterSend = attempted.length;
       clearTurnDispatchState(sid);
@@ -399,6 +432,7 @@ describe("auto-pool failover dispatch", () => {
       });
       assertEqual(attempted.length, countAfterSend);
 
+      clearAutoPoolCooldowns("free");
       await dispatchSessionPrompt("purged-session-turn", sid, { forceImmediate: true });
       const countAfterSecondSend = attempted.length;
       purgeSessionsFromStoreState(workspace, [sid]);
@@ -411,12 +445,17 @@ describe("auto-pool failover dispatch", () => {
       clearAutoFailoverPending(sid);
       hoxiAPI.sendPromptAsync = origSend;
       hoxiAPI.getMessages = origGetMessages;
+      hoxiAPI.getProviderCandidates = origGet;
+      hoxiAPI.reportCandidateOutcome = origReport;
       hoxiAPI.summarizeSessionTitle = origSummarize;
       setWorkspace("activeSessionID", null);
       setWorkspace("sessions", []);
       setWorkspace("aiBySession", reconcile({}));
       setWorkspace("messagesBySession", reconcile({}));
       setWorkspace("statusBySession", reconcile({}));
+      clearAutoPoolCooldowns("free");
+      await resetAutoPoolToDefault("free");
+      applyProviderBreakers({});
     }
   });
 
