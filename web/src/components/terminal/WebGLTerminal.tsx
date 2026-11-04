@@ -189,7 +189,7 @@ export default function WebGLTerminal() {
 
   return (
     <div class="flex flex-col h-full">
-      <div class="shrink-0 flex items-center gap-2 px-3 py-2 border-b border-white/[0.07]">
+      <div class="shrink-0 flex items-center gap-2 px-3 py-1.5">
         <span
           class={`inline-block w-1.5 h-1.5 rounded-full ${
             status() === "ready"

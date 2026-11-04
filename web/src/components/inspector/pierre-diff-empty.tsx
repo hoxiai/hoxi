@@ -10,12 +10,10 @@ import {
   Hammer,
   LoaderCircle,
   RefreshCw,
-  Terminal,
 } from "lucide-solid";
 import {
   activeDirectory,
   isSessionBusy,
-  setWorkspace,
   setActiveAgent,
   workspace,
 } from "../../store/workspace";
@@ -62,16 +60,16 @@ export default function DiffEmptyState(props: {
         <Show
           when={!busy()}
           fallback={
-            <div class="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl border border-[var(--accent-border)] bg-[var(--accent-surface)] text-[var(--accent-primary)] shadow-2xs">
-              <LoaderCircle size={22} class="animate-spin" />
+            <div class="mb-3 flex h-11 w-11 items-center justify-center rounded-2xl bg-[var(--accent-surface)] text-[var(--accent-primary)]">
+              <LoaderCircle size={20} class="animate-spin" />
             </div>
           }
         >
-          <div class="relative mb-3 flex h-12 w-12 items-center justify-center rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] text-[var(--accent-primary)] shadow-2xs">
-            <FileDiff size={22} />
+          <div class="relative mb-3 flex h-11 w-11 items-center justify-center rounded-2xl bg-[var(--bg-inset)] text-[var(--text-secondary)]">
+            <FileDiff size={20} />
             <Show when={!sessionScope() && dirty() === false}>
-              <span class="absolute -bottom-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full border-2 border-[var(--bg-panel)] bg-[var(--ok-surface)] text-[var(--ok-text)]">
-                <CheckCircle2 size={11} />
+              <span class="absolute -bottom-1 -right-1 flex h-4.5 w-4.5 items-center justify-center rounded-full border-2 border-[var(--bg-panel)] bg-[var(--ok-surface)] text-[var(--ok-text)]">
+                <CheckCircle2 size={10} />
               </span>
             </Show>
           </div>
@@ -85,17 +83,17 @@ export default function DiffEmptyState(props: {
         </p>
       </div>
 
-      {/* 2. Live Worktree & Git Context Card */}
-      <div class="w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)]/60 p-3 text-left space-y-2">
-        <div class="flex items-center justify-between gap-2 pb-1 border-b border-[var(--border-subtle)]/70">
-          <span class="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
+      {/* 2. Quiet Worktree & Git Context Surface */}
+      <div class="w-full rounded-xl bg-[var(--bg-inset)]/60 p-3 text-left space-y-2">
+        <div class="flex items-center justify-between gap-2">
+          <span class="text-[11px] font-medium text-[var(--text-faint)]">
             {t("inspector.diffs.envCardTitle")}
           </span>
           <span
             class={`rounded-md px-1.5 py-0.5 text-[11px] font-medium ${
               worktree()?.isolated
-                ? "border border-[var(--accent-border)] bg-[var(--accent-surface)] text-[var(--accent-text)]"
-                : "border border-[var(--border-subtle)] bg-[var(--bg-panel)] text-[var(--text-secondary)]"
+                ? "bg-[var(--accent-surface)] text-[var(--accent-text)]"
+                : "bg-[var(--bg-panel)]/80 text-[var(--text-secondary)]"
             }`}
           >
             {worktree()?.isolated === true
@@ -128,7 +126,7 @@ export default function DiffEmptyState(props: {
             <span class="text-[var(--text-muted)] shrink-0">
               {t("inspector.diffs.envBranchLabel")}
             </span>
-            <span class="inline-flex items-center gap-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-0.5 font-mono text-[11px] font-medium text-[var(--text-primary)] max-w-[200px] truncate">
+            <span class="inline-flex items-center gap-1 rounded-md bg-[var(--bg-panel)]/80 px-2 py-0.5 font-mono text-[11px] font-medium text-[var(--text-primary)] max-w-[200px] truncate">
               <GitBranch size={11} class="text-[var(--accent-primary)] shrink-0" />
               <span class="truncate">{worktree()?.branch}</span>
             </span>
@@ -142,7 +140,7 @@ export default function DiffEmptyState(props: {
               {t("inspector.diffs.envCommitLabel")}
             </span>
             <div class="flex items-center gap-1.5 min-w-0 justify-end">
-              <span class="inline-flex items-center gap-1 rounded bg-[var(--bg-panel)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--accent-text)] shrink-0">
+              <span class="inline-flex items-center gap-1 rounded bg-[var(--bg-panel)]/80 px-1.5 py-0.5 font-mono text-[11px] text-[var(--accent-text)] shrink-0">
                 <GitCommitHorizontal size={11} />
                 {commitHash()}
               </span>
@@ -159,7 +157,7 @@ export default function DiffEmptyState(props: {
         </Show>
 
         {/* Directory Path */}
-        <div class="pt-1 border-t border-[var(--border-subtle)]/60 flex items-center gap-1.5 text-[11px] text-[var(--text-faint)] font-mono">
+        <div class="pt-0.5 flex items-center gap-1.5 text-[11px] text-[var(--text-faint)] font-mono">
           <FolderOpen size={11} class="shrink-0 text-[var(--text-muted)]" />
           <span class="truncate" title={dirPath()}>
             {dirPath()}
@@ -169,7 +167,7 @@ export default function DiffEmptyState(props: {
 
       {/* 3. Read-Only Plan Mode Hint Banner */}
       <Show when={workspace.activeMode === "plan"}>
-        <div class="w-full rounded-xl border border-[var(--accent-border)]/70 bg-[var(--accent-surface)]/35 p-3 text-left space-y-2">
+        <div class="w-full rounded-xl bg-[var(--accent-surface)]/45 p-3 text-left space-y-2">
           <div class="flex items-center gap-1.5 text-[12px] font-semibold text-[var(--accent-primary)]">
             <Compass size={13} class="shrink-0" />
             <span>{t("inspector.diffs.planModeTipTitle")}</span>
@@ -188,13 +186,13 @@ export default function DiffEmptyState(props: {
         </div>
       </Show>
 
-      {/* 4. Quick Action Bar */}
-      <div class="w-full flex flex-wrap items-center justify-center gap-1.5 pt-0.5">
+      {/* 4. Single Quiet Refresh Action */}
+      <div class="w-full flex items-center justify-center">
         <button
           type="button"
           disabled={props.refreshing}
           onClick={() => props.onRefresh()}
-          class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-strong)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-2.5 py-1.5 text-[11px] font-medium text-[var(--text-primary)] disabled:opacity-50 transition-colors cursor-pointer"
+          class="inline-flex items-center gap-1.5 rounded-lg bg-[var(--bg-inset)] hover:bg-[var(--bg-hover)] px-3 py-1.5 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] disabled:opacity-50 transition-colors cursor-pointer"
         >
           <RefreshCw size={12} class={props.refreshing ? "animate-spin text-[var(--accent-primary)]" : "text-[var(--text-muted)]"} />
           <span>
@@ -202,24 +200,6 @@ export default function DiffEmptyState(props: {
               ? t("inspector.diffs.checkingChangesBtn")
               : t("inspector.diffs.checkChangesBtn")}
           </span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setWorkspace("inspectorTab", "files")}
-          class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] hover:bg-[var(--bg-hover)] px-2.5 py-1.5 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
-        >
-          <FolderOpen size={12} class="text-[var(--text-muted)]" />
-          <span>{t("inspector.diffs.browseFilesBtn")}</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setWorkspace("inspectorTab", "terminal")}
-          class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] hover:bg-[var(--bg-hover)] px-2.5 py-1.5 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
-        >
-          <Terminal size={12} class="text-[var(--text-muted)]" />
-          <span>{t("inspector.diffs.openTerminalBtn")}</span>
         </button>
       </div>
     </div>

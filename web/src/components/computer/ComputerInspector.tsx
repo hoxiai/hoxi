@@ -27,7 +27,7 @@ import { t } from "../../i18n";
 export default function ComputerInspector() {
   const control = createComputerController();
   const btnBase =
-    "inline-flex items-center gap-1.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11.5px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer";
+    "inline-flex items-center gap-1.5 rounded-md bg-[var(--bg-panel)] px-2.5 py-1 text-[11.5px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer";
   const ready = () =>
     Boolean(
       control.permissions()?.supported &&
@@ -78,14 +78,14 @@ export default function ComputerInspector() {
   return (
     <div class="flex h-full min-h-0 flex-col text-xs text-[var(--text-primary)]">
       {/* Top Toolbar */}
-      <div class="flex shrink-0 items-center justify-between gap-2 border-b border-[var(--border-subtle)] bg-[var(--bg-panel)]/60 px-3 py-2">
+      <div class="flex shrink-0 items-center justify-between gap-2 px-3 pt-1.5 pb-1">
         <div class="flex items-center gap-2 min-w-0">
           <Monitor size={14} class="text-[var(--accent-primary)] shrink-0" />
           <span class="font-semibold text-[12.5px] truncate">{t("computer.title")}</span>
         </div>
         <button
           type="button"
-          class="inline-flex items-center gap-1 rounded-md border border-[var(--danger-border)] bg-[var(--danger-surface)] px-2.5 py-1 text-[11px] font-medium text-[var(--danger-text)] hover:opacity-90 transition-opacity cursor-pointer shrink-0"
+          class="inline-flex items-center gap-1 rounded-md bg-[var(--danger-surface)] px-2.5 py-1 text-[11px] font-medium text-[var(--danger-text)] hover:opacity-90 transition-opacity cursor-pointer shrink-0"
           onClick={() => void control.updateAccess("stop")}
         >
           <Square size={10} class="fill-current" />
@@ -94,7 +94,7 @@ export default function ComputerInspector() {
       </div>
 
       {/* Main Content */}
-      <div class="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
+      <div class="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-2">
         <p class="leading-relaxed text-[11.5px] text-[var(--text-muted)]">
           {t("computer.foregroundHint")}
         </p>
@@ -102,7 +102,7 @@ export default function ComputerInspector() {
         {/* System Permissions Card */}
         <Show when={control.permissions()}>
           {(permission) => (
-            <div class="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)]/50 p-2.5 space-y-2">
+            <div class="rounded-xl bg-[var(--bg-inset)]/60 p-2.5 space-y-2">
               <div class="flex flex-wrap items-center justify-between gap-2">
                 <span class="inline-flex items-center gap-1.5 font-medium text-[11.5px] text-[var(--text-secondary)]">
                   <Show
@@ -141,7 +141,7 @@ export default function ComputerInspector() {
 
               <Show when={permission().platform === "darwin" && !ready()}>
                 <Show when={permission().appName || permission().appPath}>
-                  <div class="flex flex-wrap items-center justify-between gap-2 rounded bg-[var(--bg-inset)] px-2 py-1.5 text-[11px]">
+                  <div class="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-[var(--bg-panel)]/70 px-2 py-1.5 text-[11px]">
                     <div class="min-w-0 flex-1 space-y-0.5">
                       <Show when={permission().appName}>
                         <div class="font-medium text-[var(--text-secondary)]">
@@ -190,7 +190,7 @@ export default function ComputerInspector() {
                   </button>
                   <button
                     type="button"
-                    class="inline-flex items-center gap-1.5 rounded-md border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2.5 py-1 text-[11.5px] font-medium text-[var(--accent-primary)] hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity cursor-pointer"
+                    class="inline-flex items-center gap-1.5 rounded-md bg-[var(--accent-surface)] px-2.5 py-1 text-[11.5px] font-medium text-[var(--accent-primary)] hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity cursor-pointer"
                     disabled={control.busy()}
                     onClick={() => void control.permission("reset")}
                   >
@@ -201,7 +201,7 @@ export default function ComputerInspector() {
                 <p class="text-[11px] leading-relaxed text-[var(--text-muted)]">
                   {t("computer.systemPermissionHint")}
                 </p>
-                <p class="rounded bg-[var(--warn-surface)]/40 px-2 py-1.5 text-[11px] leading-relaxed text-[var(--warn-text)]">
+                <p class="rounded-lg bg-[var(--warn-surface)]/40 px-2 py-1.5 text-[11px] leading-relaxed text-[var(--warn-text)]">
                   {t("computer.resetPermissionHint")}
                 </p>
               </Show>
@@ -218,16 +218,16 @@ export default function ComputerInspector() {
         <Show
           when={control.canAuthorize()}
           fallback={
-            <div class="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-3 text-center text-[var(--text-muted)]">
+            <div class="rounded-xl bg-[var(--bg-inset)]/60 p-3 text-center text-[var(--text-muted)]">
               {t("computer.selectSession")}
             </div>
           }
         >
-          <div class="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)]/70 p-2.5 text-[11.5px] leading-relaxed text-[var(--text-secondary)]">
+          <div class="rounded-xl bg-[var(--bg-inset)]/60 p-2.5 text-[11.5px] leading-relaxed text-[var(--text-secondary)]">
             {t("computer.disclosure")}
           </div>
 
-          <div class="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)]/50 p-2.5 space-y-2">
+          <div class="rounded-xl bg-[var(--bg-inset)]/60 p-2.5 space-y-2">
             <Show when={control.apps().length > 6}>
               <div class="relative">
                 <Search
@@ -239,14 +239,14 @@ export default function ComputerInspector() {
                   value={control.appFilter()}
                   onInput={(e) => control.setAppFilter(e.currentTarget.value)}
                   placeholder={t("computer.filterAppsPlaceholder")}
-                  class="w-full rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] pl-7 pr-2.5 py-1 text-[11.5px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none focus:border-[var(--accent-border)]"
+                  class="w-full rounded-md border border-transparent bg-[var(--bg-panel)] pl-7 pr-2.5 py-1 text-[11.5px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none focus:border-[var(--accent-border)]"
                 />
               </div>
             </Show>
 
             <div class="flex items-center gap-2">
               <select
-                class="min-w-0 flex-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-1.5 text-[12px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-border)]"
+                class="min-w-0 flex-1 rounded-md border border-transparent bg-[var(--bg-panel)] px-2 py-1.5 text-[12px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-border)]"
                 value={control.selected()}
                 aria-label={t("computer.targetApp")}
                 onChange={(event) => {
@@ -280,7 +280,7 @@ export default function ComputerInspector() {
 
             <Show when={selectedApp()}>
               {(app) => (
-                <div class="rounded bg-[var(--bg-inset)] px-2 py-1.5 space-y-0.5 font-mono text-[10.5px] text-[var(--text-muted)]">
+                <div class="rounded-lg bg-[var(--bg-panel)]/70 px-2 py-1.5 space-y-0.5 font-mono text-[10.5px] text-[var(--text-muted)]">
                   <Show when={app().bundleID}>
                     <div class="truncate text-[var(--text-secondary)]">
                       {app().bundleID} · PID {app().pid}
@@ -293,7 +293,7 @@ export default function ComputerInspector() {
 
             <button
               type="button"
-              class="w-full inline-flex items-center justify-center gap-1.5 rounded-md border border-[var(--accent-border)] bg-[var(--accent-surface)] px-3 py-1.5 text-[12px] font-medium text-[var(--accent-primary)] hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity cursor-pointer"
+              class="w-full inline-flex items-center justify-center gap-1.5 rounded-md bg-[var(--accent-surface)] px-3 py-1.5 text-[12px] font-medium text-[var(--accent-primary)] hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity cursor-pointer"
               disabled={!control.permissions()?.supported || !control.selected() || control.busy()}
               onClick={() => void control.authorize()}
             >
@@ -306,7 +306,7 @@ export default function ComputerInspector() {
         {/* Active Grant Card */}
         <Show when={control.grant()}>
           {(grant) => (
-            <div class="space-y-2.5 rounded-lg border border-[var(--accent-border)] bg-[var(--accent-surface)]/35 p-3">
+            <div class="space-y-2.5 rounded-xl bg-[var(--accent-surface)]/35 p-3">
               <div class="flex flex-wrap items-center justify-between gap-2">
                 <div class="flex items-center gap-2 min-w-0">
                   <span
@@ -329,7 +329,7 @@ export default function ComputerInspector() {
               <div class="flex flex-wrap gap-1.5">
                 <button
                   type="button"
-                  class="inline-flex items-center gap-1.5 rounded-md border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2.5 py-1 text-[11.5px] font-medium text-[var(--accent-primary)] hover:opacity-90 disabled:opacity-40 cursor-pointer"
+                  class="inline-flex items-center gap-1.5 rounded-md bg-[var(--accent-surface)] px-2.5 py-1 text-[11.5px] font-medium text-[var(--accent-primary)] hover:opacity-90 disabled:opacity-40 cursor-pointer"
                   disabled={control.busy() || grant().paused}
                   onClick={() => void control.inspect(true)}
                 >
@@ -384,7 +384,7 @@ export default function ComputerInspector() {
 
         {/*Copied Toast Pill */}
         <Show when={control.copiedValue()}>
-          <div class="inline-flex items-center gap-1.5 rounded-md border border-[var(--ok-border)] bg-[var(--ok-surface)] px-2.5 py-1 font-mono text-[11px] text-[var(--ok-text)]">
+          <div class="inline-flex items-center gap-1.5 rounded-md bg-[var(--ok-surface)] px-2.5 py-1 font-mono text-[11px] text-[var(--ok-text)]">
             <Check size={11} />
             <span>{t("computer.copiedValue", { value: control.copiedValue() })}</span>
           </div>
@@ -397,7 +397,7 @@ export default function ComputerInspector() {
               {/* Target Window Selector */}
               <div class="flex items-center gap-2">
                 <select
-                  class="min-w-0 flex-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-1.5 text-[12px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-border)]"
+                  class="min-w-0 flex-1 rounded-md border border-transparent bg-[var(--bg-inset)] px-2 py-1.5 text-[12px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-border)]"
                   aria-label={t("computer.targetWindow")}
                   value={control.windowID()}
                   onChange={(event) => control.setWindowID(event.currentTarget.value)}
@@ -427,7 +427,7 @@ export default function ComputerInspector() {
               <Show when={snapshot().image}>
                 <div class="space-y-1.5">
                   <div
-                    class="group/preview relative overflow-hidden rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] cursor-crosshair select-none"
+                    class="group/preview relative overflow-hidden rounded-xl bg-[var(--bg-inset)] cursor-crosshair select-none"
                     onMouseMove={handlePreviewMouseMove}
                     onMouseLeave={() => control.setCursorPoint(null)}
                     onClick={() => {
@@ -497,7 +497,7 @@ export default function ComputerInspector() {
               </Show>
 
               {/* Accessible Elements Section */}
-              <div class="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)]/50 p-2.5 space-y-2">
+              <div class="rounded-xl bg-[var(--bg-inset)]/60 p-2.5 space-y-2">
                 <div class="flex items-center justify-between gap-2">
                   <p class="font-medium text-[11.5px] text-[var(--text-secondary)]">
                     {t("computer.elementCount", { count: snapshot().elements?.length || 0 })}
@@ -515,7 +515,7 @@ export default function ComputerInspector() {
                       value={control.elementFilter()}
                       onInput={(e) => control.setElementFilter(e.currentTarget.value)}
                       placeholder={t("computer.filterElementsPlaceholder")}
-                      class="w-full rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] pl-7 pr-2.5 py-1 text-[11.5px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none focus:border-[var(--accent-border)]"
+                      class="w-full rounded-md border border-transparent bg-[var(--bg-panel)] pl-7 pr-2.5 py-1 text-[11.5px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none focus:border-[var(--accent-border)]"
                     />
                   </div>
 

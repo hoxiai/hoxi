@@ -182,7 +182,7 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
   return (
     <div class={`flex-1 min-h-0 flex flex-col ${drillEnterClass()}`}>
       {/* Preview Header Toolbar */}
-      <div class="shrink-0 flex items-center gap-1.5 px-3 py-2 border-b border-[var(--border-subtle)] bg-[var(--bg-inset)]/60">
+      <div class="shrink-0 flex items-center gap-1.5 px-2.5 py-1.5">
         <button
           type="button"
           class="hoxi-press inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer shrink-0"
@@ -229,7 +229,7 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
 
         <Show when={props.previewMeta?.outsideWorkspace}>
           <span
-            class="shrink-0 inline-flex items-center rounded bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-mono font-medium text-amber-400 border border-amber-500/30"
+            class="shrink-0 inline-flex items-center rounded bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-mono font-medium text-amber-400"
             title={`${t("inspector.files.externalTooltip")}: ${props.previewMeta?.resolvedPath || props.previewPath}`}
           >
             {t("inspector.files.externalBadge")}
@@ -255,13 +255,13 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
 
         {/* Markdown / SVG Preview vs Source Switcher */}
         <Show when={canTogglePreview()}>
-          <div class="shrink-0 inline-flex items-center rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-0.5">
+          <div class="shrink-0 inline-flex items-center rounded-md bg-[var(--bg-inset)] p-0.5">
             <button
               type="button"
               onClick={() => props.onChangeViewMode("preview")}
               class={`hoxi-press inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] cursor-pointer ${
                 props.viewMode === "preview"
-                  ? "bg-[var(--accent-surface)] text-[var(--accent-primary)] font-medium"
+                  ? "bg-[var(--bg-panel)] text-[var(--text-primary)] font-medium shadow-2xs"
                   : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
               }`}
               title={t("inspector.files.previewMode")}
@@ -290,10 +290,10 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
           <button
             type="button"
             onClick={() => setOutlineOpen((v) => !v)}
-            class={`hoxi-press shrink-0 inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] cursor-pointer ${
+            class={`hoxi-press shrink-0 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] cursor-pointer ${
               outlineOpen()
-                ? "border-[var(--accent-border)] bg-[var(--accent-surface)] text-[var(--accent-primary)] font-medium"
-                : "border-[var(--border-subtle)] bg-[var(--bg-panel)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                ? "bg-[var(--accent-surface)] text-[var(--accent-primary)] font-medium"
+                : "bg-[var(--bg-inset)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
             }`}
             title={t("inspector.files.outlineTitle")}
           >
@@ -355,7 +355,7 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
           <button
             type="button"
             onClick={() => openDiffInInspector(props.activeDiff || props.resolvedDiffPath)}
-            class="shrink-0 inline-flex items-center gap-1.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-0.5 text-[11px] text-[var(--text-secondary)] hover:text-[var(--accent-primary)] hover:border-[var(--accent-border)] transition-colors cursor-pointer"
+            class="shrink-0 inline-flex items-center gap-1.5 rounded-md bg-[var(--bg-inset)] px-2 py-0.5 text-[11px] text-[var(--text-secondary)] hover:text-[var(--accent-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
             title={t("toolCard.openInDiffInspector")}
           >
             <DiffChanges

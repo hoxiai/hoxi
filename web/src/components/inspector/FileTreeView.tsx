@@ -306,81 +306,83 @@ export default function FileTreeView() {
 
   return (
     <div class="flex flex-col h-full">
-      <div class="shrink-0 px-3 py-2 border-b border-[var(--border-subtle)]">
-        {/* Multi-Folder Workspace Switcher Bar */}
-        <Show when={folders().length > 1}>
-          <div class="mb-2 flex items-center gap-1 overflow-x-auto pb-0.5">
-            <For each={folders()}>
-              {(folder) => {
-                const isSelected = () =>
-                  normalizeFolderPath(targetDirectory()) ===
-                  normalizeFolderPath(folder.path);
-                return (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setWorkspace(
-                        "activeInspectorFolder",
-                        folder.isPrimary ? null : folder.path
-                      )
-                    }
-                    title={folder.path}
-                    class={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-mono transition-colors cursor-pointer shrink-0 ${
-                      isSelected()
-                        ? "bg-[var(--accent-surface)] text-[var(--accent-primary)] border border-[var(--accent-border)] font-medium"
-                        : "bg-[var(--bg-inset)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-transparent"
-                    }`}
-                  >
-                    <FolderIcon
-                      open={isSelected()}
-                      color={workspaceIdentityColor(workspace.rootDir)}
-                      class="w-3 h-3 shrink-0"
-                    />
-                    <span>{baseName(folder.path)}</span>
-                  </button>
-                );
-              }}
-            </For>
-          </div>
-        </Show>
-
-        <div class="flex items-center gap-2 rounded-lg border border-[var(--border-strong)] bg-[var(--bg-inset)] px-2.5 py-1.5 focus-within:border-[var(--accent-border)]">
-          <Search size={13} class="shrink-0 text-[var(--text-muted)]" />
-          <input
-            class="flex-1 bg-transparent text-[12px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none selectable-text"
-            placeholder={t("inspector.files.searchPlaceholder")}
-            value={query()}
-            onInput={(ev) => {
-              setQuery(ev.currentTarget.value);
-              if (!ev.currentTarget.value.trim()) void loadInitialFiles();
-            }}
-            onKeyDown={onKeyDown}
-          />
-          <Show when={searching()}>
-            <LoaderCircle size={12} class="shrink-0 animate-spin text-[var(--text-muted)]" />
+      <Show when={!previewPath()}>
+        <div class="shrink-0 px-2.5 pt-1.5 pb-1">
+          {/* Multi-Folder Workspace Switcher Bar */}
+          <Show when={folders().length > 1}>
+            <div class="mb-2 flex items-center gap-1 overflow-x-auto pb-0.5">
+              <For each={folders()}>
+                {(folder) => {
+                  const isSelected = () =>
+                    normalizeFolderPath(targetDirectory()) ===
+                    normalizeFolderPath(folder.path);
+                  return (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setWorkspace(
+                          "activeInspectorFolder",
+                          folder.isPrimary ? null : folder.path
+                        )
+                      }
+                      title={folder.path}
+                      class={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-mono transition-colors cursor-pointer shrink-0 ${
+                        isSelected()
+                          ? "bg-[var(--accent-surface)] text-[var(--accent-primary)] font-medium"
+                          : "bg-[var(--bg-inset)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                      }`}
+                    >
+                      <FolderIcon
+                        open={isSelected()}
+                        color={workspaceIdentityColor(workspace.rootDir)}
+                        class="w-3 h-3 shrink-0"
+                      />
+                      <span>{baseName(folder.path)}</span>
+                    </button>
+                  );
+                }}
+              </For>
+            </div>
           </Show>
-        </div>
-        <div class="mt-1.5 flex items-center justify-between gap-1 text-[11px] text-[var(--text-faint)] font-mono">
-          <div class="flex items-center gap-1 min-w-0 truncate">
-            <FolderOpen size={10} class="shrink-0" />
-            <span class="truncate" title={targetDirectory()}>
-              {targetDirectory() || "—"}
-            </span>
+
+          <div class="flex items-center gap-2 rounded-lg border border-transparent bg-[var(--bg-inset)] px-2.5 py-1.5 transition-colors focus-within:border-[var(--accent-border)] focus-within:bg-[var(--bg-panel)]">
+            <Search size={13} class="shrink-0 text-[var(--text-muted)]" />
+            <input
+              class="flex-1 bg-transparent text-[12px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none selectable-text"
+              placeholder={t("inspector.files.searchPlaceholder")}
+              value={query()}
+              onInput={(ev) => {
+                setQuery(ev.currentTarget.value);
+                if (!ev.currentTarget.value.trim()) void loadInitialFiles();
+              }}
+              onKeyDown={onKeyDown}
+            />
+            <Show when={searching()}>
+              <LoaderCircle size={12} class="shrink-0 animate-spin text-[var(--text-muted)]" />
+            </Show>
           </div>
-          <button
-            type="button"
-            onClick={() => openEditWorkspaceModal(workspace.rootDir)}
-            class="shrink-0 inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[11px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
-            title={t("leftNav.editWorkspace")}
-          >
-            <FolderPlus size={10} />
-            <span>{t("leftNav.editWorkspace")}</span>
-          </button>
+          <div class="mt-1.5 flex items-center justify-between gap-1 px-0.5 text-[11px] text-[var(--text-faint)] font-mono">
+            <div class="flex items-center gap-1 min-w-0 truncate">
+              <FolderOpen size={10} class="shrink-0" />
+              <span class="truncate" title={targetDirectory()}>
+                {targetDirectory() || "—"}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => openEditWorkspaceModal(workspace.rootDir)}
+              class="shrink-0 inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[11px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+              title={t("leftNav.editWorkspace")}
+            >
+              <FolderPlus size={10} />
+              <span>{t("leftNav.editWorkspace")}</span>
+            </button>
+          </div>
         </div>
-      </div>
+      </Show>
 
       <div
-        class={`inspector-scroll flex-1 min-h-0 overflow-y-auto px-2 py-2 space-y-0.5 ${
+        class={`inspector-scroll flex-1 min-h-0 overflow-y-auto px-2 py-1 space-y-0.5 ${
           previewPath() ? "hidden" : "hoxi-view-enter"
         }`}
       >

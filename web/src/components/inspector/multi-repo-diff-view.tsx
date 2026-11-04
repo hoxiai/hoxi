@@ -113,9 +113,9 @@ function RepoDiffCard(props: {
   };
 
   return (
-    <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] overflow-hidden">
+    <div class="rounded-xl bg-[var(--bg-inset)]/55 overflow-hidden">
       {/* Repo Card Header */}
-      <div class="flex items-center justify-between gap-2 px-2.5 py-1.5 border-b border-[var(--border-subtle)] bg-[var(--bg-panel)]/75">
+      <div class="flex items-center justify-between gap-2 px-2.5 py-1.5">
         <button
           type="button"
           onClick={() => setCollapsed((v) => !v)}
@@ -149,7 +149,7 @@ function RepoDiffCard(props: {
             </span>
           </Show>
           <Show when={props.bucket.branch}>
-            <span class="shrink-0 inline-flex items-center gap-1 rounded bg-[var(--accent-surface)] px-1.5 py-0 text-[11px] font-mono text-[var(--accent-primary)] border border-[var(--accent-border)]">
+            <span class="shrink-0 inline-flex items-center gap-1 rounded-md bg-[var(--accent-surface)] px-1.5 py-0.5 text-[11px] font-mono text-[var(--accent-primary)]">
               <GitBranch size={9} />
               <span>{props.bucket.branch}</span>
             </span>
@@ -180,7 +180,7 @@ function RepoDiffCard(props: {
               title={t("inspector.diffs.pushAheadBtn", {
                 count: props.bucket.aheadCount,
               })}
-              class="hoxi-press inline-flex items-center gap-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-1.5 py-0.5 text-[11px] font-mono text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:opacity-40 cursor-pointer"
+              class="hoxi-press inline-flex items-center gap-1 rounded-md bg-[var(--bg-panel)] px-1.5 py-0.5 text-[11px] font-mono text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:opacity-40 cursor-pointer"
             >
               <ArrowUpFromLine size={10} class={pushing() ? "animate-bounce" : ""} />
               <span>
@@ -215,8 +215,8 @@ function RepoDiffCard(props: {
               })}
               class={`hoxi-press inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium cursor-pointer ${
                 commitOpen()
-                  ? "bg-[var(--accent-surface)] text-[var(--accent-primary)] border border-[var(--accent-border)]"
-                  : "border border-[var(--border-subtle)] bg-[var(--bg-inset)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
+                  ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
+                  : "bg-[var(--bg-panel)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
               }`}
             >
               <GitCommitHorizontal size={11} />
@@ -237,7 +237,7 @@ function RepoDiffCard(props: {
         aria-hidden={!(props.bucket.diffs.length > 0 && commitOpen())}
       >
         <div class="min-h-0 overflow-hidden">
-          <div class="grid grid-cols-[1fr_auto] items-center gap-2 px-2.5 py-2 border-b border-[var(--border-subtle)] bg-[var(--bg-panel)]/50">
+          <div class="grid grid-cols-[1fr_auto] items-center gap-2 mx-2 my-1 px-2.5 py-2 rounded-lg bg-[var(--bg-panel)]/75">
             <input
               type="text"
               value={commitMsg()}
@@ -250,7 +250,7 @@ function RepoDiffCard(props: {
                 }
               }}
               placeholder={t("inspector.diffs.commitPlaceholder")}
-              class="min-w-0 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-1 text-[12px] font-mono text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none focus:border-[var(--accent-border)]"
+              class="min-w-0 rounded-md border border-transparent bg-[var(--bg-inset)] px-2 py-1 text-[12px] font-mono text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none focus:border-[var(--accent-border)]"
             />
             <button
               type="button"
@@ -265,7 +265,7 @@ function RepoDiffCard(props: {
                 type="button"
                 disabled={!commitMsg().trim() || committing() || pushing()}
                 onClick={() => void onCommitRepo(false)}
-                class="hoxi-press inline-flex items-center gap-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-0.5 text-[11px] font-medium text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-40 cursor-pointer"
+                class="hoxi-press inline-flex items-center gap-1 rounded-md bg-[var(--bg-inset)] px-2 py-0.5 text-[11px] font-medium text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-40 cursor-pointer"
               >
                 <GitCommitHorizontal size={11} />
                 <span>
@@ -299,7 +299,7 @@ function RepoDiffCard(props: {
       {/* Per-Repo Commit Toast */}
       <Show when={committedHash()}>
         {(hash) => (
-          <div class="hoxi-view-enter flex items-center justify-between gap-2 px-2.5 py-1 bg-[var(--ok-surface)] text-[11px] font-mono text-[var(--ok-text)] border-b border-[var(--ok-border)]">
+          <div class="hoxi-view-enter flex items-center justify-between gap-2 mx-2 my-1 px-2.5 py-1 rounded-lg bg-[var(--ok-surface)] text-[11px] font-mono text-[var(--ok-text)]">
             <div class="flex items-center gap-1.5 min-w-0 truncate">
               <Check size={10} class="shrink-0" />
               <span class="truncate">
@@ -482,7 +482,7 @@ export default function MultiRepoDiffView(props: {
   return (
     <div class="space-y-2">
       {/* Multi-Repo Overview Bar */}
-      <div class="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)]/60 text-[11px]">
+      <div class="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-[var(--bg-inset)]/60 text-[11px]">
         <div class="flex items-center gap-1.5 min-w-0 truncate text-[var(--text-secondary)] font-medium">
           <FolderGit2 size={13} class="text-[var(--accent-primary)] shrink-0" />
           <span class="truncate">
@@ -510,7 +510,7 @@ export default function MultiRepoDiffView(props: {
 
       {/* Clean & Synced Repositories Collapsed Summary Bar */}
       <Show when={grouped().clean.length > 0}>
-        <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)]/60 overflow-hidden">
+        <div class="rounded-xl bg-[var(--bg-inset)]/50 overflow-hidden">
           <button
             type="button"
             onClick={() => setShowCleanRepos((v) => !v)}
@@ -532,7 +532,7 @@ export default function MultiRepoDiffView(props: {
             <div class="flex items-center gap-1 min-w-0 overflow-hidden justify-end flex-wrap">
               <For each={grouped().clean.slice(0, 4)}>
                 {(repo) => (
-                  <span class="inline-flex items-center gap-1 rounded bg-[var(--bg-panel)] px-1.5 py-0 text-[11px] font-mono text-[var(--text-secondary)] border border-[var(--border-subtle)] truncate max-w-[140px]">
+                  <span class="inline-flex items-center gap-1 rounded-md bg-[var(--bg-panel)] px-1.5 py-0.5 text-[11px] font-mono text-[var(--text-secondary)] truncate max-w-[140px]">
                     <span class="truncate">{repo.name}</span>
                     <Show when={repo.branch}>
                       <span class="text-[var(--text-faint)]">·</span>
@@ -551,10 +551,10 @@ export default function MultiRepoDiffView(props: {
             aria-hidden={!showCleanRepos()}
           >
             <div class="min-h-0 overflow-hidden">
-              <div class="border-t border-[var(--border-subtle)] divide-y divide-[var(--border-subtle)]/60">
+              <div class="px-1 pb-1.5 space-y-0.5">
                 <For each={grouped().clean}>
                   {(repo) => (
-                    <div class="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px]">
+                    <div class="flex items-center justify-between gap-2 rounded-lg px-2 py-1 text-[11px]">
                       <div class="flex items-center gap-1.5 min-w-0 truncate">
                         <FolderGit2 size={12} class="text-[var(--text-muted)] shrink-0" />
                         <span
@@ -564,7 +564,7 @@ export default function MultiRepoDiffView(props: {
                           {repo.name}
                         </span>
                         <Show when={repo.branch}>
-                          <span class="inline-flex items-center gap-0.5 rounded bg-[var(--bg-panel)] px-1.5 py-0 text-[11px] font-mono text-[var(--text-muted)] border border-[var(--border-subtle)]">
+                          <span class="inline-flex items-center gap-0.5 rounded-md bg-[var(--bg-panel)] px-1.5 py-0 text-[11px] font-mono text-[var(--text-muted)]">
                             <GitBranch size={9} />
                             <span>{repo.branch}</span>
                           </span>

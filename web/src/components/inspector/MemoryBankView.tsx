@@ -108,7 +108,7 @@ export default function MemoryBankView() {
 
   return (
     <div class="flex flex-col h-full">
-      <div class="shrink-0 flex items-center justify-between gap-2 px-3 py-2 border-b border-[var(--border-subtle)]">
+      <div class="shrink-0 flex items-center justify-between gap-2 px-2.5 pt-1.5 pb-1">
         <div class="flex items-center gap-1.5 min-w-0">
           <Brain size={13} class="text-[var(--accent-primary)] shrink-0" />
           <div class="inline-flex rounded-lg bg-[var(--bg-inset)] p-0.5 text-[12px]">
@@ -138,13 +138,13 @@ export default function MemoryBankView() {
         </div>
         <div class="flex items-center gap-1.5 shrink-0">
           <Show when={content() && !error()}>
-            <div class="inline-flex items-center rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-0.5">
+            <div class="inline-flex items-center rounded-md bg-[var(--bg-inset)] p-0.5">
               <button
                 type="button"
                 onClick={() => setViewMode("preview")}
                 class={`hoxi-press inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] cursor-pointer ${
                   viewMode() === "preview"
-                    ? "bg-[var(--accent-surface)] text-[var(--accent-primary)] font-medium"
+                    ? "bg-[var(--bg-panel)] text-[var(--text-primary)] font-medium shadow-2xs"
                     : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
                 }`}
                 title={t("inspector.files.previewMode")}
@@ -157,7 +157,7 @@ export default function MemoryBankView() {
                 onClick={() => setViewMode("source")}
                 class={`hoxi-press inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] cursor-pointer ${
                   viewMode() === "source"
-                    ? "bg-[var(--accent-surface)] text-[var(--accent-primary)] font-medium"
+                    ? "bg-[var(--bg-panel)] text-[var(--text-primary)] font-medium shadow-2xs"
                     : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
                 }`}
                 title={t("inspector.files.sourceMode")}
@@ -168,7 +168,7 @@ export default function MemoryBankView() {
             </div>
           </Show>
           <button
-            class="hoxi-press shrink-0 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+            class="hoxi-press shrink-0 rounded-md p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer"
             onClick={() => void load()}
             title={`${t("inspector.memory.reload")} (${activeFile()})`}
           >
@@ -180,7 +180,7 @@ export default function MemoryBankView() {
       <div
         ref={scrollRef}
         data-markdown-reader-root="true"
-        class={`inspector-scroll flex-1 min-h-0 overflow-y-auto px-2.5 py-2.5 space-y-2 ${memoryEnterClass()}`}
+        class={`inspector-scroll flex-1 min-h-0 overflow-y-auto px-3 py-2 space-y-2.5 ${memoryEnterClass()}`}
       >
         <Show when={dims().length > 0}>
           <div class="flex flex-wrap gap-1">
@@ -189,7 +189,7 @@ export default function MemoryBankView() {
                 <button
                   type="button"
                   onClick={() => handleJumpDimension(d)}
-                  class="hoxi-press rounded bg-[var(--bg-inset)] hover:bg-[var(--accent-surface)] px-1.5 py-[1px] font-mono text-[11px] text-[var(--text-secondary)] hover:text-[var(--accent-primary)] transition-colors cursor-pointer"
+                  class="hoxi-press rounded-md bg-[var(--bg-inset)] hover:bg-[var(--accent-surface)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--text-secondary)] hover:text-[var(--accent-primary)] transition-colors cursor-pointer"
                 >
                   {d}
                 </button>
@@ -199,7 +199,7 @@ export default function MemoryBankView() {
         </Show>
 
         <Show when={error()}>
-          <div class="rounded-md border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-3 py-6 text-center text-[11px] text-[var(--text-muted)]">
+          <div class="rounded-xl bg-[var(--bg-inset)]/60 px-3 py-6 text-center text-[12px] text-[var(--text-muted)]">
             {error()}
           </div>
         </Show>
@@ -209,14 +209,14 @@ export default function MemoryBankView() {
             when={viewMode() === "preview"}
             fallback={
               <pre
-                class="rounded-md border border-[var(--border-subtle)] bg-[var(--bg-canvas)] p-2.5 font-mono leading-relaxed text-[var(--text-secondary)] whitespace-pre-wrap break-words selectable-text"
+                class="rounded-xl bg-[var(--bg-inset)]/60 p-3 font-mono leading-relaxed text-[var(--text-secondary)] whitespace-pre-wrap break-words selectable-text"
                 style={{ "font-size": "var(--app-code-text-size)" }}
               >
                 {content()}
               </pre>
             }
           >
-            <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-3.5">
+            <div class="px-0.5 py-1">
               <MarkdownView
                 content={content()}
                 density="document"

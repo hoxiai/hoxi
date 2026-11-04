@@ -258,7 +258,7 @@ export function FileDiffBlock(props: {
         typeof props.diff?.before !== "string" &&
         typeof props.diff?.after !== "string"
       }
-      class="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-code)] overflow-auto text-[11px]"
+      class="rounded-xl bg-[var(--bg-code)] overflow-auto text-[11px]"
       style={
         props.fillHeight
           ? undefined
@@ -450,21 +450,21 @@ export function SelectedDiffDetail(props: {
   });
 
   return (
-    <div class={`rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] overflow-hidden ${diffEnterClass()}`}>
+    <div class={`space-y-1.5 ${diffEnterClass()}`}>
       {/* Row 1: Back to Tree & Prev/Next Stepper + File Actions */}
-      <div class="flex items-center justify-between gap-2 px-3 py-2 border-b border-[var(--border-subtle)] bg-[var(--bg-panel)]/70">
+      <div class="flex items-center justify-between gap-2 px-1 py-0.5">
         <button
           type="button"
           onClick={() => props.onBack()}
-          class="hoxi-press inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-2 py-1 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer"
+          class="hoxi-press inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer"
         >
           <ArrowLeft size={12} />
           <span>{t("inspector.diffs.backToTree")}</span>
         </button>
 
-        <div class="flex items-center gap-1.5">
+        <div class="flex items-center gap-1">
           <Show when={props.totalFiles > 1}>
-            <div class="inline-flex items-center rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-0.5">
+            <div class="inline-flex items-center rounded-lg bg-[var(--bg-inset)] p-0.5">
               <button
                 type="button"
                 disabled={props.currentIndex <= 0}
@@ -492,7 +492,7 @@ export function SelectedDiffDetail(props: {
           <Show when={isMarkdownDiff()}>
             <button
               type="button"
-              class="hoxi-press shrink-0 inline-flex items-center gap-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-2 py-1 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--accent-primary)] hover:border-[var(--accent-border)] cursor-pointer"
+              class="hoxi-press shrink-0 inline-flex items-center gap-1 rounded-md bg-[var(--bg-inset)] px-2 py-1 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--accent-primary)] hover:bg-[var(--bg-hover)] cursor-pointer"
               onClick={() => {
                 const target = props.diff.repoDir
                   ? `${props.diff.repoDir.replace(/\/+$/, "")}/${stripRepoPrefixFromFile(props.diff.file, props.diff.repo)}`
@@ -544,7 +544,7 @@ export function SelectedDiffDetail(props: {
       </div>
 
       {/* Row 2: Active File Path & Line Changes Summary */}
-      <div class="flex items-center justify-between gap-2 px-3 py-2 border-b border-[var(--border-subtle)] bg-[var(--bg-inset)]">
+      <div class="flex items-center justify-between gap-2 px-1.5 py-1">
         <div class="flex items-center gap-2 min-w-0 flex-1">
           <FileIcon node={{ path: props.diff.file, type: "file" }} class="w-4 h-4 shrink-0" />
           <div class="truncate font-mono text-[12px]" title={props.diff.file}>
@@ -553,11 +553,13 @@ export function SelectedDiffDetail(props: {
             </Show>
             <span class="font-semibold text-[var(--text-primary)]">{baseName()}</span>
           </div>
-          <DiffStatusBadge status={effectiveDiff().status} />
+          <Show when={effectiveDiff().status === "added" || effectiveDiff().status === "deleted"}>
+            <DiffStatusBadge status={effectiveDiff().status} />
+          </Show>
           <GeneratedFileBadge generated={effectiveDiff().generatedLike} />
           <Show when={props.diff.repo}>
             <span
-              class="shrink-0 inline-flex items-center gap-1 rounded bg-[var(--accent-surface)] px-1.5 py-0 text-[11px] font-mono text-[var(--accent-primary)] border border-[var(--accent-border)]"
+              class="shrink-0 inline-flex items-center gap-1 rounded bg-[var(--accent-surface)] px-1.5 py-0 text-[11px] font-mono text-[var(--accent-primary)]"
               title={
                 props.diff.branch
                   ? `${props.diff.repo} (${props.diff.branch})`
@@ -577,10 +579,6 @@ export function SelectedDiffDetail(props: {
           <DiffChanges
             changes={{ additions: effectiveDiff().additions, deletions: effectiveDiff().deletions }}
           />
-          <DiffChanges
-            changes={{ additions: effectiveDiff().additions, deletions: effectiveDiff().deletions }}
-            variant="bars"
-          />
         </div>
       </div>
 
@@ -591,7 +589,7 @@ export function SelectedDiffDetail(props: {
         aria-hidden={!commenting()}
       >
         <div class="min-h-0 overflow-hidden">
-          <div class="border-b border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3 py-2.5 space-y-2">
+          <div class="rounded-xl bg-[var(--bg-inset)] p-2.5 space-y-2">
             <div class="flex items-center gap-2">
               <span class="text-[11px] font-medium text-[var(--text-secondary)]">
                 {t("inspector.diffs.reviewNoteOn")}{" "}
@@ -604,7 +602,7 @@ export function SelectedDiffDetail(props: {
                 tabIndex={commenting() ? 0 : -1}
                 onInput={(ev) => setLineNum(ev.currentTarget.value)}
                 placeholder={t("inspector.diffs.lineNumPlaceholder")}
-                class="ml-auto w-24 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-2 py-0.5 font-mono text-[11px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-border)]"
+                class="ml-auto w-24 rounded-md border border-transparent bg-[var(--bg-panel)] px-2 py-0.5 font-mono text-[11px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-border)]"
               />
             </div>
             <textarea
@@ -621,7 +619,7 @@ export function SelectedDiffDetail(props: {
                 }
               }}
               placeholder={t("inspector.diffs.commentPlaceholder")}
-              class="w-full rounded-lg border border-[var(--border-strong)] bg-[var(--bg-inset)] px-2.5 py-1.5 text-[12px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none focus:border-[var(--accent-border)]"
+              class="w-full rounded-lg border border-transparent bg-[var(--bg-panel)] px-2.5 py-1.5 text-[12px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none focus:border-[var(--accent-border)]"
             />
             <div class="flex items-center justify-end gap-1.5">
               <button
@@ -653,13 +651,13 @@ export function SelectedDiffDetail(props: {
         }
         fallback={
           <Show when={effectiveDiff().large}>
-            <div class="flex items-center justify-between gap-2 px-3 py-3 text-[12px] text-[var(--text-muted)]">
+            <div class="flex items-center justify-between gap-2 rounded-xl bg-[var(--bg-inset)] px-3 py-2.5 text-[12px] text-[var(--text-muted)]">
               <span>{t("inspector.diffs.largeDiffHint")}</span>
               <button
                 type="button"
                 disabled={loadingFull()}
                 onClick={() => void fetchFullFileDiff(props.diff.file)}
-                class="hoxi-press shrink-0 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11px] font-medium text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-40 cursor-pointer"
+                class="hoxi-press shrink-0 rounded-lg bg-[var(--bg-panel)] px-2.5 py-1 text-[11px] font-medium text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-40 cursor-pointer"
               >
                 {t("inspector.diffs.loadFullDiffBtn")}
               </button>
@@ -667,14 +665,12 @@ export function SelectedDiffDetail(props: {
           </Show>
         }
       >
-        <div class="p-2">
-          <FileDiffBlock
-            diff={effectiveDiff()}
-            patch={effectiveDiff().patch}
-            diffStyle={props.diffStyle}
-            fillHeight={true}
-          />
-        </div>
+        <FileDiffBlock
+          diff={effectiveDiff()}
+          patch={effectiveDiff().patch}
+          diffStyle={props.diffStyle}
+          fillHeight={true}
+        />
       </Show>
     </div>
   );

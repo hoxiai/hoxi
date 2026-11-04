@@ -30,13 +30,13 @@ function hostOf(rawUrl: string): string {
 function badgeClass(tone?: string): string {
   switch (tone) {
     case "positive":
-      return "border-emerald-500/30 bg-emerald-500/10 text-emerald-500";
+      return "bg-emerald-500/10 text-emerald-500";
     case "warning":
-      return "border-amber-500/30 bg-amber-500/10 text-amber-500";
+      return "bg-amber-500/10 text-amber-500";
     case "info":
-      return "border-sky-500/30 bg-sky-500/10 text-sky-500";
+      return "bg-sky-500/10 text-sky-500";
     default:
-      return "border-[var(--border-subtle)] bg-[var(--bg-inset)] text-[var(--text-muted)]";
+      return "bg-[var(--bg-panel)] text-[var(--text-muted)]";
   }
 }
 
@@ -81,13 +81,13 @@ export default function SkillsMarketplaceView() {
 
   return (
     <div class="space-y-3">
-      <div class="flex items-start gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-2.5 py-1.5 text-[11px] text-[var(--text-muted)]">
+      <div class="flex items-start gap-1.5 rounded-lg bg-[var(--bg-inset)]/60 px-2.5 py-1.5 text-[11px] text-[var(--text-muted)]">
         <ShieldCheck size={12} class="mt-0.5 shrink-0 text-[var(--accent-primary)]" />
         <span>{t("skills.marketplaceHint")}</span>
       </div>
 
       <Show when={skillsStore.installNotice}>
-        <div class="flex items-start justify-between gap-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1.5 text-[11px] text-[var(--text-secondary)]">
+        <div class="flex items-start justify-between gap-2 rounded-lg bg-[var(--bg-inset)] px-2.5 py-1.5 text-[11px] text-[var(--text-secondary)]">
           <span>{skillsStore.installNotice}</span>
           <button
             type="button"
@@ -101,7 +101,7 @@ export default function SkillsMarketplaceView() {
 
       <Show when={pendingOverwrite()}>
         {(item) => (
-          <div class="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 space-y-2">
+          <div class="rounded-xl bg-amber-500/10 p-3 space-y-2">
             <div class="text-xs font-semibold text-[var(--text-primary)]">
               {t("skills.overwriteTitle", { name: item().name })}
             </div>
@@ -112,7 +112,7 @@ export default function SkillsMarketplaceView() {
               <button
                 type="button"
                 onClick={() => setPendingOverwrite(null)}
-                class="rounded-md border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-2 py-1 text-[11px] text-[var(--text-primary)] hover:border-[var(--border-strong)] cursor-pointer"
+                class="rounded-md bg-[var(--bg-panel)] px-2 py-1 text-[11px] text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer"
               >
                 {t("skills.cancel")}
               </button>
@@ -136,7 +136,7 @@ export default function SkillsMarketplaceView() {
             value={query()}
             onInput={(e) => setQuery(e.currentTarget.value)}
             placeholder={t("skills.searchPlaceholder")}
-            class="w-full rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] pl-8 pr-3 py-1.5 text-xs text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none focus:border-[var(--accent-border)]"
+            class="w-full rounded-lg border border-transparent bg-[var(--bg-inset)] pl-8 pr-3 py-1.5 text-xs text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none transition-colors focus:border-[var(--accent-border)] focus:bg-[var(--bg-panel)]"
           />
         </div>
         <button
@@ -181,7 +181,7 @@ export default function SkillsMarketplaceView() {
           <Show
             when={filtered().length > 0}
             fallback={
-              <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-4 text-center text-xs text-[var(--text-muted)]">
+              <div class="rounded-xl bg-[var(--bg-inset)]/60 p-4 text-center text-xs text-[var(--text-muted)]">
                 {skillsStore.marketplace.length === 0
                   ? t("skills.marketplaceEmpty")
                   : t("skills.emptyFiltered")}
@@ -193,7 +193,7 @@ export default function SkillsMarketplaceView() {
                 {(item) => {
                   const installing = () => skillsStore.installingSlug === item.slug;
                   return (
-                    <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-2.5 hover:border-[var(--border-strong)] transition-colors">
+                    <div class="rounded-xl bg-[var(--bg-inset)]/55 p-2.5 hover:bg-[var(--bg-inset)] transition-colors">
                       <div class="flex items-start justify-between gap-2">
                         <div class="min-w-0 flex-1">
                           <div class="flex items-center gap-1.5 flex-wrap">
@@ -201,13 +201,13 @@ export default function SkillsMarketplaceView() {
                               /{item.name}
                             </span>
                             <Show when={item.version}>
-                              <span class="rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--text-faint)]">
+                              <span class="rounded bg-[var(--bg-panel)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--text-faint)]">
                                 v{item.version}
                               </span>
                             </Show>
                             <Show when={item.badge}>
                               <span
-                                class={`rounded border px-1.5 py-0.5 text-[11px] font-medium ${badgeClass(
+                                class={`rounded-md px-1.5 py-0.5 text-[11px] font-medium ${badgeClass(
                                   item.badgeTone
                                 )}`}
                               >
@@ -215,12 +215,12 @@ export default function SkillsMarketplaceView() {
                               </span>
                             </Show>
                             <Show when={item.installed && !item.updateAvailable}>
-                              <span class="rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[11px] font-medium text-emerald-500">
+                              <span class="rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-[11px] font-medium text-emerald-500">
                                 {t("skills.installedBadge")}
                               </span>
                             </Show>
                             <Show when={item.updateAvailable}>
-                              <span class="rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-medium text-amber-500">
+                              <span class="rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-medium text-amber-500">
                                 {t("skills.localDiffers")}
                               </span>
                             </Show>
@@ -256,7 +256,7 @@ export default function SkillsMarketplaceView() {
                             type="button"
                             onClick={() => void handleInstall(item)}
                             disabled={installing()}
-                            class="inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-2 py-1 text-[11px] font-medium text-[var(--text-primary)] transition-colors hover:border-[var(--accent-border)] disabled:opacity-50 cursor-pointer disabled:cursor-default"
+                            class="inline-flex items-center gap-1 rounded-lg bg-[var(--bg-panel)] px-2 py-1 text-[11px] font-medium text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-hover)] disabled:opacity-50 cursor-pointer disabled:cursor-default"
                           >
                             <Show
                               when={installing()}

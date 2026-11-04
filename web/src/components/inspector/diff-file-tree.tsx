@@ -7,7 +7,6 @@ import {
   ExternalLink,
   Folder,
   FolderOpen,
-  FolderTree,
   GitBranch,
   MessageSquareText,
   RotateCcw,
@@ -192,17 +191,17 @@ export function DiffStatusBadge(props: { status?: SnapshotFileDiff["status"] }) 
   };
   const cls = () => {
     if (props.status === "added") {
-      return "bg-[var(--ok-surface)] text-[var(--ok-text)] border-[var(--ok-border)]";
+      return "bg-[var(--ok-surface)] text-[var(--ok-text)]";
     }
     if (props.status === "deleted") {
-      return "bg-[var(--danger-surface)] text-[var(--danger-text)] border-[var(--danger-border)]";
+      return "bg-[var(--danger-surface)] text-[var(--danger-text)]";
     }
-    return "bg-[var(--accent-surface)] text-[var(--accent-primary)] border-[var(--accent-border)]";
+    return "bg-[var(--accent-surface)] text-[var(--accent-primary)]";
   };
 
   return (
     <span
-      class={`shrink-0 inline-flex items-center justify-center rounded border px-1 py-0 text-[11px] font-mono font-semibold leading-4 ${cls()}`}
+      class={`shrink-0 inline-flex items-center justify-center rounded px-1 py-0 text-[10px] font-mono font-semibold leading-4 ${cls()}`}
       title={label()}
     >
       {code()}
@@ -214,7 +213,7 @@ export function GeneratedFileBadge(props: { generated?: boolean }) {
   return (
     <Show when={props.generated}>
       <span
-        class="shrink-0 inline-flex items-center justify-center rounded border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-1 py-0 text-[11px] font-mono font-medium leading-4 text-[var(--text-muted)]"
+        class="shrink-0 inline-flex items-center justify-center rounded bg-[var(--bg-inset)] px-1 py-0 text-[10px] font-mono font-medium leading-4 text-[var(--text-muted)]"
         title={t("inspector.diffs.generatedTooltip")}
       >
         {t("inspector.diffs.generatedBadge")}
@@ -314,52 +313,37 @@ export default function DiffFileTree(props: {
   };
 
   return (
-    <div
-      class={
-        props.hideHeader
-          ? "overflow-hidden"
-          : "rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)]/60 overflow-hidden"
-      }
-    >
-      {/* Tree Header Bar */}
-      <Show when={!props.hideHeader}>
-        <div class="flex items-center justify-between gap-2 px-2.5 py-1 border-b border-[var(--border-subtle)] bg-[var(--bg-inset)]">
-          <div class="flex items-center gap-1.5 min-w-0">
-            <FolderTree size={13} class="text-[var(--accent-primary)] shrink-0" />
-            <span class="text-[12px] font-semibold text-[var(--text-primary)] truncate">
-              {t("inspector.diffs.treeTitle")}
-            </span>
-          </div>
-
-          <Show when={allFolderIds().length > 0}>
-            <button
-              type="button"
-              onClick={toggleAllFolders}
-              class="shrink-0 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
-              title={
-                anyCollapsed()
-                  ? t("inspector.diffs.expandAll")
-                  : t("inspector.diffs.collapseAll")
-              }
+    <div class="space-y-0.5">
+      {/* Quiet Collapse/Expand Control when multiple folders exist */}
+      <Show when={!props.hideHeader && allFolderIds().length > 1}>
+        <div class="flex items-center justify-end px-1 pb-0.5">
+          <button
+            type="button"
+            onClick={toggleAllFolders}
+            class="shrink-0 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-[var(--text-faint)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+            title={
+              anyCollapsed()
+                ? t("inspector.diffs.expandAll")
+                : t("inspector.diffs.collapseAll")
+            }
+          >
+            <Show
+              when={anyCollapsed()}
+              fallback={<ChevronsDownUp size={11} />}
             >
-              <Show
-                when={anyCollapsed()}
-                fallback={<ChevronsDownUp size={12} />}
-              >
-                <ChevronsUpDown size={12} />
-              </Show>
-              <span>
-                {anyCollapsed()
-                  ? t("inspector.diffs.expandAll")
-                  : t("inspector.diffs.collapseAll")}
-              </span>
-            </button>
-          </Show>
+              <ChevronsUpDown size={11} />
+            </Show>
+            <span>
+              {anyCollapsed()
+                ? t("inspector.diffs.expandAll")
+                : t("inspector.diffs.collapseAll")}
+            </span>
+          </button>
         </div>
       </Show>
 
       {/* Tree Rows */}
-      <div class="divide-y divide-[var(--border-subtle)]/50">
+      <div class="space-y-0.5">
         <For each={rows()}>
           {(row) => (
             <Show
@@ -371,7 +355,7 @@ export default function DiffFileTree(props: {
                   <button
                     type="button"
                     onClick={() => toggleFolder(folderRow.id)}
-                    class="w-full flex items-center justify-between gap-2 py-1.5 pr-3 text-left bg-[var(--bg-inset)]/40 hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+                    class="w-full flex items-center justify-between gap-2 rounded-lg py-1.5 pr-2.5 text-left hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
                     style={{ "padding-left": `${folderRow.depth * 14 + 10}px` }}
                   >
                     <div class="flex items-center gap-1.5 min-w-0 flex-1">
@@ -397,13 +381,13 @@ export default function DiffFileTree(props: {
                       </span>
                       <Show when={repoBranch()}>
                         {(br) => (
-                          <span class="shrink-0 inline-flex items-center gap-0.5 rounded bg-[var(--accent-surface)] px-1.5 py-0 text-[11px] font-mono text-[var(--accent-primary)] border border-[var(--accent-border)]">
+                          <span class="shrink-0 inline-flex items-center gap-0.5 rounded bg-[var(--accent-surface)] px-1.5 py-0 text-[11px] font-mono text-[var(--accent-primary)]">
                             <GitBranch size={9} />
                             <span>{br()}</span>
                           </span>
                         )}
                       </Show>
-                      <span class="rounded-full bg-[var(--bg-panel)] px-1.5 py-0 text-[11px] font-mono text-[var(--text-muted)] border border-[var(--border-subtle)]">
+                      <span class="text-[11px] font-mono text-[var(--text-faint)]">
                         {folderRow.fileCount}
                       </span>
                     </div>
@@ -435,7 +419,7 @@ export default function DiffFileTree(props: {
                         props.onSelectFile(diff.file);
                       }
                     }}
-                    class="group w-full flex items-center justify-between gap-2 py-2 pr-2.5 text-left bg-[var(--bg-panel)]/50 hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+                    class="group w-full flex items-center justify-between gap-2 rounded-lg py-1.5 pr-2.5 text-left hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
                     style={{ "padding-left": `${fileRow.depth * 14 + 12}px` }}
                     title={diff.file}
                   >
@@ -447,7 +431,9 @@ export default function DiffFileTree(props: {
                       <span class="font-mono text-[12px] font-medium text-[var(--text-primary)] group-hover:text-[var(--accent-primary)] truncate">
                         {fileRow.name}
                       </span>
-                      <DiffStatusBadge status={diff.status} />
+                      <Show when={diff.status === "added" || diff.status === "deleted"}>
+                        <DiffStatusBadge status={diff.status} />
+                      </Show>
                       <GeneratedFileBadge generated={diff.generatedLike} />
                       <Show when={noteCount() > 0}>
                         <span class="inline-flex items-center gap-0.5 rounded bg-[var(--accent-surface)] px-1 py-0 text-[11px] font-mono text-[var(--accent-primary)]">
@@ -457,16 +443,8 @@ export default function DiffFileTree(props: {
                       </Show>
                     </div>
 
-                    <div class="flex items-center gap-2 shrink-0">
-                      <DiffChanges
-                        changes={{ additions: diff.additions, deletions: diff.deletions }}
-                      />
-                      <DiffChanges
-                        changes={{ additions: diff.additions, deletions: diff.deletions }}
-                        variant="bars"
-                      />
-
-                      <div class="hidden group-hover:flex items-center gap-1">
+                    <div class="flex items-center gap-1.5 shrink-0">
+                      <div class="hidden group-hover:flex items-center gap-0.5">
                         <button
                           type="button"
                           disabled={revertingFile() === diff.file}
@@ -492,9 +470,8 @@ export default function DiffFileTree(props: {
                         </button>
                       </div>
 
-                      <ChevronRight
-                        size={13}
-                        class="text-[var(--text-faint)] group-hover:text-[var(--accent-primary)] group-hover:translate-x-0.5 transition-all shrink-0"
+                      <DiffChanges
+                        changes={{ additions: diff.additions, deletions: diff.deletions }}
                       />
                     </div>
                   </div>

@@ -108,7 +108,7 @@ export default function InspectorPane() {
 
   return (
     <aside class="h-full w-full flex flex-col bg-transparent">
-      <div class="shrink-0 flex items-center gap-1 px-2 py-1.5 border-b border-[var(--border-subtle)] overflow-x-auto no-scrollbar">
+      <div class="shrink-0 flex items-center gap-1 px-2.5 pt-2 pb-1 overflow-x-auto no-scrollbar">
         <For each={tabs()}>
           {(tab) => (
             <button
