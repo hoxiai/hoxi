@@ -2,6 +2,12 @@
 
 All notable releases of **Hoxi Desktop** are documented below. Full per-version release notes are archived under [`docs/release-notes/`](docs/release-notes/) and consumed directly by `.github/workflows/release.yml` and `scripts/ai-release.sh`.
 
+## [v0.6.11](docs/release-notes/v0.6.11.md) — 2026-11-04
+
+- **Timeline**: Keep only the active execution group expanded and auto-collapse earlier completed groups; add entrance transitions for streamed steps and thinking indicators; de-noise Level-2 tool and thought rows; fold brief pre-tool narration into the activity group; compact non-document markdown; fix blank screens when scrolling up in long sessions by skipping zero-height folded turns and prefetching history.
+- **Runtime & Storage**: Gate same-model retry on the auto pool so non-auto sessions stop silently re-sending; recover stale `index.lock`; deep-copy and atomically persist provider telemetry; invalidate relay-key cache on file change; preserve custom `.env`, guard `.git/info/exclude`, include untracked binaries in diffs, and clean discovered repo caches.
+- **Safety & Cleanup**: Guard local file open against symlink swap, skip body buffering for runner-owned routes, reject oversized archives, and clear subagent links, diff revisions and deleted-session timers in the store.
+
 ## [v0.6.10](docs/release-notes/v0.6.10.md) — 2026-11-04
 
 - **Updater**: Align cross-architecture update URLs to the running host arch for Darwin DMG and Windows ZIP; resolve the checksum from the sibling `checksums.txt` by filename; keep polling native install progress after the install API returns; report a failed user-initiated install instead of ending silently; reuse a pending install reply on a repeated click.
