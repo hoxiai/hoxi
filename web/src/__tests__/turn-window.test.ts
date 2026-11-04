@@ -6,6 +6,7 @@ import {
   INITIAL_VISIBLE_TURNS,
   MAX_AUTO_EXPANDED_TURNS,
   nextProgressiveTurnLimit,
+  nextVisualWindowLimit,
   resolveLimitForEarlierMessages,
   resolveNextWindowLimit,
   TURN_BATCH_SIZE,
@@ -102,6 +103,66 @@ describe("TurnWindow windowing slice & prompt cycle protection", () => {
     assertEqual(full.startIndex, 0);
     assertEqual(full.visibleTurns.length, 7);
     assertEqual(full.hiddenCount, 0);
+  });
+
+  it("walks anchorIndex past short transitional text before tool calls", () => {
+    const turns: MessageTurn[] = [
+      mockTurn("u0", "user"),
+      {
+        ...mockTurn("a_start"),
+        parts: [{ type: "reasoning", id: "r0", messageID: "a_start", sessionID: "test-ses", text: "plan", time: { start: 1, end: 2 } }],
+      },
+      {
+        ...mockTurn("a_transition"),
+        parts: [{ type: "text", id: "t0", messageID: "a_transition", sessionID: "test-ses", text: "Let me check the files." }],
+      },
+      ...Array.from({ length: 30 }, (_, i) => ({
+        ...mockTurn(`a_tool_${i}`),
+        parts: [
+          {
+            type: "tool" as const,
+            id: `tool_${i}`,
+            callID: `call_${i}`,
+            messageID: `a_tool_${i}`,
+            sessionID: "test-ses",
+            tool: "read",
+            state: {
+              status: "completed" as const,
+              input: {},
+              output: "ok",
+              title: "read",
+              metadata: {},
+              time: { start: 1, end: 2 },
+            },
+          },
+        ],
+      })),
+    ];
+    const slice = computeTurnWindowSlice(turns, INITIAL_VISIBLE_TURNS);
+    assertEqual(slice.anchorIndex, 1);
+  });
+
+  it("nextVisualWindowLimit skips 0-height folded tool turns in a single step", () => {
+    const turns: MessageTurn[] = [
+      mockTurn("u1", "user"),
+      ...Array.from({ length: 30 }, (_, i) => ({
+        ...mockTurn(`a1_${i}`),
+        parts: [{ type: "reasoning" as const, id: `r1_${i}`, messageID: `a1_${i}`, sessionID: "test-ses", text: "work", time: { start: 1, end: 2 } }],
+      })),
+      {
+        ...mockTurn("a1_final"),
+        parts: [{ type: "text", id: "t1_final", messageID: "a1_final", sessionID: "test-ses", text: "Here is the detailed summary of the changes and verification results." }],
+      },
+      mockTurn("u2", "user"),
+      ...Array.from({ length: 14 }, (_, i) => ({
+        ...mockTurn(`a2_${i}`),
+        parts: [{ type: "reasoning" as const, id: `r2_${i}`, messageID: `a2_${i}`, sessionID: "test-ses", text: "work", time: { start: 1, end: 2 } }],
+      })),
+    ];
+    const target = resolveLimitForEarlierMessages(turns, INITIAL_VISIBLE_TURNS, 1);
+    assertEqual(target, turns.length);
+    const next = nextVisualWindowLimit(turns, INITIAL_VISIBLE_TURNS, target, TURN_MOUNT_CHUNK);
+    assertEqual(next, turns.length);
   });
 });
 

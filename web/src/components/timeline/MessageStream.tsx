@@ -42,6 +42,7 @@ import {
   createTurnWindow,
   EarlierTurnsBanner,
   filterVisibleTurnsByRevert,
+  TOP_SCROLL_THRESHOLD_PX,
 } from "./turn-window";
 import { UserTurnItem } from "./UserTurnItem";
 import TaskTimelineBar from "./TaskTimelineBar";
@@ -100,6 +101,10 @@ export default function MessageStream(props: { hidden?: boolean }) {
     loadAll: () => {
       const id = renderedSessionID();
       return id ? ensureFullSessionHistory(id) : Promise.resolve();
+    },
+    onTopPrepend: (delta) => {
+      scroll.noteTopPrepend(delta);
+      transcriptControls.noteTopPrepend(delta);
     },
   });
   // Transcript search must cover turns that are not paged in yet.
@@ -261,12 +266,33 @@ export default function MessageStream(props: { hidden?: boolean }) {
     }
   });
 
+  let runwayFrame: number | undefined;
+  onCleanup(() => {
+    if (runwayFrame !== undefined) cancelAnimationFrame(runwayFrame);
+  });
+  createEffect(() => {
+    void renderedSessionID();
+    void isLoadingSession();
+    const count = turnWindow.visibleTurns().length;
+    if (count === 0 || props.hidden || isLoadingSession()) return;
+    if (runwayFrame !== undefined) cancelAnimationFrame(runwayFrame);
+    runwayFrame = requestAnimationFrame(() => {
+      runwayFrame = undefined;
+      if (!scroller || props.hidden || isLoadingSession() || sessionScroll.isRestoring()) return;
+      turnWindow.ensureTopRunway(scroller, scroll.isFollowing());
+      if (appSettings.autoScrollStream && scroll.isFollowing()) {
+        scroll.jumpToBottom();
+      }
+    });
+  });
+
   const onScroll = () => {
     if (!scroller) return;
     readingPosition.schedule();
     transcriptControls.onScroll(scroller.scrollTop);
     if (sessionScroll.isRestoring()) return;
-    if (scroll.onScroll()) {
+    const paused = scroll.onScroll();
+    if (paused || scroller.scrollTop <= TOP_SCROLL_THRESHOLD_PX) {
       turnWindow.handleTopScroll(scroller);
     }
     sessionScroll.capture();
@@ -363,10 +389,17 @@ export default function MessageStream(props: { hidden?: boolean }) {
           onWheel={(event) => {
             transcriptControls.markIntent();
             if (!scroller) return;
-            if (event.deltaY < -1 && scroller.scrollTop > 0) {
-              sessionScroll.interrupt();
-              scroll.markUserScrollInput();
-              scroll.pause();
+            if (event.deltaY < 0) {
+              if (
+                scroller.scrollTop > 0 ||
+                turnWindow.hiddenCount() > 0 ||
+                hasOlderSessionHistory(renderedSessionID())
+              ) {
+                sessionScroll.interrupt();
+                scroll.markUserScrollInput();
+                scroll.pause();
+              }
+              turnWindow.handleTopScroll(scroller);
             } else if (event.deltaY > 1) {
               scroll.markUserScrollInput();
             }
@@ -383,10 +416,17 @@ export default function MessageStream(props: { hidden?: boolean }) {
           return;
         }
         // Stop following before the async scroll lands, or the next resize re-anchors.
-        if (event.deltaY < -1 && scroller.scrollTop > 0) {
-          sessionScroll.interrupt();
-          scroll.markUserScrollInput();
-          scroll.pause();
+        if (event.deltaY < 0) {
+          if (
+            scroller.scrollTop > 0 ||
+            turnWindow.hiddenCount() > 0 ||
+            hasOlderSessionHistory(renderedSessionID())
+          ) {
+            sessionScroll.interrupt();
+            scroll.markUserScrollInput();
+            scroll.pause();
+          }
+          turnWindow.handleTopScroll(scroller);
         }
       }}
       onTouchStart={() => scroll.setPointerScrolling(true)}
@@ -396,6 +436,7 @@ export default function MessageStream(props: { hidden?: boolean }) {
         sessionScroll.interrupt();
         transcriptControls.markIntent();
         scroll.markUserScrollInput();
+        if (scroller) turnWindow.handleTopScroll(scroller);
       }}
       onPointerDown={(event) => {
         transcriptControls.startPointer();
@@ -426,6 +467,7 @@ export default function MessageStream(props: { hidden?: boolean }) {
             sessionScroll.interrupt();
             scroll.markUserScrollInput();
             scroll.pause();
+            if (scroller) turnWindow.handleTopScroll(scroller);
           }
         }
       }}
@@ -463,7 +505,7 @@ export default function MessageStream(props: { hidden?: boolean }) {
 
             <For each={turnWindow.visibleTurns()}>
               {(turn, idx) => {
-                const globalIndex = () => turnWindow.globalIndex(idx());
+                const globalIndex = createMemo(() => turnWindow.globalIndex(idx()));
                 const enterClass = idx() > 0 && turn.info.id.startsWith("optimistic_") &&
                   !wasQueuedTurnShown(turn.info.id) ? "hoxi-item-enter " : "";
                 return (

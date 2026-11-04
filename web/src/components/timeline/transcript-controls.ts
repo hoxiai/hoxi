@@ -29,6 +29,9 @@ export function createTranscriptControls(sessionID: () => string | null) {
     markIntent: () => { intentUntil = Date.now() + 1000; },
     startPointer: () => { dragging = true; intentUntil = Date.now() + 1000; },
     endPointer,
+    noteTopPrepend: (delta: number) => {
+      if (delta > 0) previousTop += delta;
+    },
     onScroll: (top: number) => {
       const delta = previousTop - top;
       previousTop = top;

@@ -296,6 +296,53 @@ async function testStreamedTableRowsAppearWhole() {
   } finally { checking = false; dispose(); element.remove(); }
 }
 
+async function testScrollUpRevealsEarlierTurnsWithoutBlankTop() {
+  const { sid } = fixture();
+  const turns: MessageTurn[] = [];
+  for (let i = 0; i < 6; i++) {
+    turns.push({
+      info: { id: `u_${i}`, sessionID: sid, role: "user", time: { created: i * 100 + 1, completed: i * 100 + 1 } },
+      parts: [{ type: "text", id: `p_u_${i}`, sessionID: sid, messageID: `u_${i}`, text: `Prompt ${i}\n\n` + "User line\n".repeat(4) }],
+    });
+    for (let s = 0; s < 15; s++) {
+      turns.push({
+        info: { id: `a_${i}_s_${s}`, sessionID: sid, role: "assistant", time: { created: i * 100 + s + 2, completed: i * 100 + s + 3 } },
+        parts: [{
+          type: "tool", id: `t_${i}_${s}`, callID: `c_${i}_${s}`, sessionID: sid, messageID: `a_${i}_s_${s}`, tool: "read",
+          state: { status: "completed", input: { filePath: `src/file_${s}.ts` }, output: "ok", title: "read", metadata: {}, time: { start: 1, end: 2 } },
+        }],
+      });
+    }
+    turns.push(turn(`a_${i}_final`, sid, `Answer ${i}\n\n` + "Detailed paragraph content.\n\n".repeat(8)));
+  }
+  setWorkspace("messagesBySession", sid, turns);
+  const root = host();
+  const dispose = render(() => <MessageStream />, root);
+  try {
+    await wait(240);
+    await frame();
+    const scroller = root.querySelector<HTMLElement>(".timeline-result-scroll")!;
+    assertTrue(scroller.scrollHeight > scroller.clientHeight, "initial window must have scrollable height");
+    assertTrue(!root.querySelector('[data-turn-id="u_0"]'), "oldest prompt starts unmounted");
+    // Simulate scrolling up into the top threshold zone: earlier turns must mount
+    // immediately without getting stuck on the 15 folded 0-height tool turns per cycle.
+    scroller.scrollTop = 280;
+    scroller.dispatchEvent(new Event("scroll"));
+    await frame();
+    await frame();
+    assertTrue(Boolean(root.querySelector('[data-turn-id="u_1"]')), "first top-scroll batch reveals 4 earlier user prompts across 60+ folded tool turns");
+    assertTrue(scroller.scrollTop > 800, "scrollTop is compensated when earlier turns prepend above the viewport");
+    scroller.scrollTop = 280;
+    scroller.dispatchEvent(new Event("scroll"));
+    await frame();
+    await frame();
+    assertTrue(Boolean(root.querySelector('[data-turn-id="u_0"]')), "scrolling up again reveals the oldest user prompt");
+  } finally {
+    dispose();
+    root.remove();
+  }
+}
+
 export async function runBrowserTest(): Promise<string[]> {
   window.fetch = async () => new Response("{}", { headers: { "Content-Type": "application/json" } });
   hoxiAPI.commitWorktree = async () => { throw new Error("Unexpected real commit"); };
@@ -307,6 +354,7 @@ export async function runBrowserTest(): Promise<string[]> {
     ["export errors never save partial files; retry saves full JSON and Markdown", testExport],
     ["message focus cancels stale work and preserves valid navigation", testNavigation],
     ["a streamed table shows only whole rows", testStreamedTableRowsAppearWhole],
+    ["scrolling up reveals earlier turns across folded tool runs and compensates scrollTop", testScrollUpRevealsEarlierTurnsWithoutBlankTop],
   ] as const) { await run(); results.push(name); }
   return results;
 }

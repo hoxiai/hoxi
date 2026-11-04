@@ -228,6 +228,18 @@ describe("Timeline layout following", () => {
       assertEqual(scroll.onScroll(), false);
       assertEqual(scroll.isFollowing(), true);
 
+      // Prepending older turns at the top shifts scrollTop and scrollHeight by +delta;
+      // noteTopPrepend(delta) must prevent onScroll() from misinterpreting the
+      // compensated scrollTop increase as downward scrolling near the bottom.
+      scroller.scrollTop = 1730;
+      scroll.pause();
+      assertEqual(scroll.isFollowing(), false);
+      scroller.scrollHeight += 500;
+      scroller.scrollTop += 500;
+      scroll.noteTopPrepend(500);
+      assertEqual(scroll.onScroll(), true);
+      assertEqual(scroll.isFollowing(), false);
+
       scroll.schedule();
       dispose();
       assertEqual(disconnected, true);

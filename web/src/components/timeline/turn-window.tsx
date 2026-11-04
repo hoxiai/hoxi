@@ -14,6 +14,7 @@ import { Icon } from "../icons";
 import { t } from "../../i18n";
 import { isVisibleTextPart, isWorkPart } from "./context-activity-parts";
 import {
+  hasSubstantiveTurnText,
   type MergedTurnResolution,
   stabilizeMergedTurnResolution,
 } from "./context-activity-turns";
@@ -34,12 +35,13 @@ export const MAX_AUTO_EXPANDED_TURNS = 32;
 // Older turns are mounted in small animation-frame chunks so opening the
 // "earlier messages" fold (or "load all") never blocks a single long frame.
 export const TURN_MOUNT_CHUNK = 4;
+// Begin mounting earlier turns well before the user reaches `scrollTop = 0` so
+// trackpad/wheel momentum never outruns DOM prepends and flashes a blank top.
+export const TOP_SCROLL_THRESHOLD_PX = 640;
+export const SCROLL_REVEAL_MESSAGES = 4;
+export const PREFETCH_HISTORY_MESSAGES = 8;
 
-export function nextProgressiveTurnLimit(
-  current: number,
-  target: number,
-  chunk = TURN_MOUNT_CHUNK
-): number {
+export function nextProgressiveTurnLimit(current: number, target: number, chunk = TURN_MOUNT_CHUNK): number {
   if (current >= target) return current;
   return Math.min(current + Math.max(1, chunk), target);
 }
@@ -51,17 +53,11 @@ export function filterVisibleTurnsByRevert(
   if (!revert?.messageID) return rawTurns;
   const idx = rawTurns.findIndex((t) => t.info.id === revert.messageID);
   if (idx >= 0) {
-    if (!revert.partID) {
-      return rawTurns.slice(0, idx);
-    }
+    if (!revert.partID) return rawTurns.slice(0, idx);
     const boundaryTurn = rawTurns[idx];
     const pIdx = boundaryTurn.parts.findIndex((p) => p.id === revert.partID);
-    const slicedParts =
-      pIdx >= 0 ? boundaryTurn.parts.slice(0, pIdx) : boundaryTurn.parts;
-    return [
-      ...rawTurns.slice(0, idx),
-      { info: boundaryTurn.info, parts: slicedParts },
-    ];
+    const slicedParts = pIdx >= 0 ? boundaryTurn.parts.slice(0, pIdx) : boundaryTurn.parts;
+    return [...rawTurns.slice(0, idx), { info: boundaryTurn.info, parts: slicedParts }];
   }
   return rawTurns.filter((t) => t.info.id < revert.messageID);
 }
@@ -76,6 +72,7 @@ export interface TurnWindowHistory {
   hasOlder: Accessor<boolean>;
   loadOlder: (around: (apply: () => number) => number) => Promise<number>;
   loadAll: () => Promise<void>;
+  onTopPrepend?: (delta: number) => void;
 }
 
 export interface TurnWindowController {
@@ -89,6 +86,7 @@ export interface TurnWindowController {
   loadAllEarlier: (scroller?: HTMLElement) => void;
   ensureTurnVisible: (messageID: string) => void;
   handleTopScroll: (scroller: HTMLElement) => void;
+  ensureTopRunway: (scroller: HTMLElement | undefined, followingBottom: boolean) => void;
 }
 
 export function computeTurnWindowSlice(
@@ -120,7 +118,7 @@ export function computeTurnWindowSlice(
       const prior = turns[index];
       if (prior.info.error) break;
       if (prior.parts.some(isWorkPart) || prior.parts.some(isVisibleTextPart)) anchorIndex = index;
-      if (prior.parts.some(isVisibleTextPart)) break;
+      if (hasSubstantiveTurnText(turns, index)) break;
     }
   }
   const context = [promptIndex, anchorIndex].filter((index): index is number => index !== undefined);
@@ -141,6 +139,58 @@ export function computeTurnWindowSlice(
     anchorIndex,
     indexes,
   };
+}
+
+/**
+ * Advances `current` toward `target` by at least `chunk` visually non-empty
+ * turns, skipping intermediate tool/reasoning turns that fold into an activity
+ * group and render at 0px height.
+ */
+export function nextVisualWindowLimit(
+  turns: MessageTurn[],
+  current: number,
+  target: number,
+  chunk = TURN_MOUNT_CHUNK
+): number {
+  const clampedTarget = Math.min(target, turns.length);
+  if (current >= clampedTarget) return current;
+  const currentSlice = computeTurnWindowSlice(turns, current);
+  const effectiveStart = currentSlice.startIndex;
+  const minStart = Math.max(0, turns.length - clampedTarget);
+  if (effectiveStart <= minStart) {
+    return nextProgressiveTurnLimit(current, clampedTarget, chunk);
+  }
+
+  let visualCount = 0;
+  let index = effectiveStart - 1;
+  for (; index >= minStart; index--) {
+    if (index === currentSlice.promptIndex || index === currentSlice.anchorIndex) {
+      continue;
+    }
+    const turn = turns[index];
+    if (!turn) continue;
+    const isVisual =
+      turn.info.role === "user" ||
+      Boolean(turn.info.error) ||
+      hasSubstantiveTurnText(turns, index) ||
+      ((index === 0 || turns[index - 1]?.info.role !== "assistant") &&
+        (turn.parts.some(isWorkPart) || turn.parts.some(isVisibleTextPart)));
+    if (isVisual) {
+      visualCount++;
+      if (visualCount >= Math.max(1, chunk)) break;
+    }
+  }
+  while (index > minStart && turns[index]?.info.role === "assistant") {
+    index--;
+  }
+  const nextStart = Math.max(minStart, index);
+  return Math.min(
+    clampedTarget,
+    Math.max(
+      nextProgressiveTurnLimit(current, clampedTarget, chunk),
+      turns.length - nextStart
+    )
+  );
 }
 
 /**
@@ -317,6 +367,56 @@ export function createTurnWindow(
   const hiddenCount = createMemo(() => slice().hiddenCount);
   const hiddenMessageCount = createMemo(() => slice().hiddenMessageCount);
   const visibleTurns = createMemo(() => slice().visibleTurns);
+  let lastRunwaySession = "";
+  let lastRunwayScrollHeight = -1;
+
+  const topScrollThreshold = (scroller: HTMLElement | undefined): number =>
+    Math.max(TOP_SCROLL_THRESHOLD_PX, Math.round((scroller?.clientHeight || 0) * 1.5));
+
+  const compensatePrependScroll = (scroller: HTMLElement | undefined, apply: () => void): number => {
+    const prevScrollHeight = scroller?.scrollHeight ?? 0;
+    const prevScrollTop = scroller?.scrollTop ?? 0;
+    apply();
+    if (!scroller) return 0;
+    const delta = scroller.scrollHeight - prevScrollHeight;
+    if (delta > 0) {
+      scroller.scrollTop = prevScrollTop + delta;
+      history?.onTopPrepend?.(delta);
+    }
+    return delta;
+  };
+
+  // Prepending older turns can mount a carried prompt row above the reader;
+  // keep the visible content where it was.
+  const keepScrollAround = (scroller: HTMLElement | undefined) => (apply: () => number) => {
+    let added = 0;
+    compensatePrependScroll(scroller, () => { added = apply(); });
+    return added;
+  };
+
+  const fetchOlderPage = async (scroller: HTMLElement | undefined): Promise<number> => {
+    const sid = sessionID();
+    if (!sid || !history?.hasOlder() || fetchingOlder) return 0;
+    fetchingOlder = true;
+    let added = 0;
+    try {
+      added = await history.loadOlder(keepScrollAround(scroller));
+    } catch (err) {
+      console.warn("load older session history failed:", err);
+    } finally {
+      fetchingOlder = false;
+    }
+    if (
+      sessionID() === sid &&
+      added > 0 &&
+      scroller &&
+      scroller.clientHeight > 0 &&
+      scroller.scrollTop <= topScrollThreshold(scroller)
+    ) {
+      handleTopScroll(scroller);
+    }
+    return added;
+  };
 
   // Mounts older turns in animation-frame chunks and compensates the scroll
   // position after each chunk. A single big `setVisibleLimit` used to mount the
@@ -324,7 +424,8 @@ export function createTurnWindow(
   // which is what made opening the folded conversation stall.
   const mountEarlierProgressively = (
     scroller: HTMLElement | undefined,
-    targetLimit: number
+    targetLimit: number,
+    chunk = TURN_MOUNT_CHUNK
   ) => {
     const sid = sessionID();
     const target = Math.min(targetLimit, turns().length);
@@ -335,7 +436,7 @@ export function createTurnWindow(
     prependingLock = true;
 
     if (typeof requestAnimationFrame !== "function") {
-      setVisibleLimit(target, sid);
+      compensatePrependScroll(scroller, () => setVisibleLimit(target, sid));
       prependingLock = false;
       return;
     }
@@ -348,37 +449,29 @@ export function createTurnWindow(
         return;
       }
 
-      const prevScrollHeight = scroller?.scrollHeight ?? 0;
-      const prevScrollTop = scroller?.scrollTop ?? 0;
-      setVisibleLimit(
-        nextProgressiveTurnLimit(visibleLimit(), target),
-        sid
-      );
-      if (scroller) {
-        const delta = scroller.scrollHeight - prevScrollHeight;
-        if (delta > 0) scroller.scrollTop = prevScrollTop + delta;
-      }
+      const lastDelta = compensatePrependScroll(scroller, () => {
+        setVisibleLimit(nextVisualWindowLimit(turns(), visibleLimit(), target, chunk), sid);
+      });
 
       if (sessionID() === sid && visibleLimit() < target) {
         mountFrame = requestAnimationFrame(pump);
       } else {
         prependingLock = false;
+        if (
+          lastDelta > 0 &&
+          scroller &&
+          scroller.clientHeight > 0 &&
+          scroller.scrollTop <= topScrollThreshold(scroller) &&
+          ((hiddenCount() > 0 && hasUnmountedVisualTurns(turns(), slice())) || history?.hasOlder())
+        ) {
+          mountFrame = requestAnimationFrame(() => {
+            mountFrame = undefined;
+            if (sessionID() === sid) handleTopScroll(scroller);
+          });
+        }
       }
     };
     pump();
-  };
-
-  // Prepending older turns can mount a carried prompt row above the reader;
-  // keep the visible content where it was.
-  const keepScrollAround = (scroller: HTMLElement | undefined) => (apply: () => number) => {
-    const prevScrollHeight = scroller?.scrollHeight ?? 0;
-    const prevScrollTop = scroller?.scrollTop ?? 0;
-    const added = apply();
-    if (scroller) {
-      const delta = scroller.scrollHeight - prevScrollHeight;
-      if (delta > 0) scroller.scrollTop = prevScrollTop + delta;
-    }
-    return added;
   };
 
   // Pulls older server history when the loaded turns cannot reveal `count`
@@ -386,19 +479,13 @@ export function createTurnWindow(
   const revealEarlier = async (scroller: HTMLElement | undefined, count: number) => {
     const sid = sessionID();
     if (history?.hasOlder() && hiddenMessageCount() < count && !fetchingOlder) {
-      fetchingOlder = true;
-      try {
-        await history.loadOlder(keepScrollAround(scroller));
-      } catch (err) {
-        console.warn("load older session history failed:", err);
-      } finally {
-        fetchingOlder = false;
-      }
+      await fetchOlderPage(scroller);
       if (sessionID() !== sid) return;
     }
     mountEarlierProgressively(
       scroller,
-      resolveLimitForEarlierMessages(turns(), visibleLimit(), count)
+      resolveLimitForEarlierMessages(turns(), visibleLimit(), count),
+      TURN_MOUNT_CHUNK * 2
     );
   };
 
@@ -420,23 +507,57 @@ export function createTurnWindow(
   const ensureTurnVisible = (messageID: string) => {
     const list = turns();
     const idx = list.findIndex((t) => t.info.id === messageID);
-    if (idx < 0) return;
-    if (slice().indexes.includes(idx)) return;
+    if (idx < 0 || slice().indexes.includes(idx)) return;
     const needed = list.length - idx + 2;
     if (needed > visibleLimit()) setVisibleLimit(needed);
   };
 
-  const handleTopScroll = (scroller: HTMLElement) => {
-    if (prependingLock || fetchingOlder || scroller.scrollTop > 120) return;
+  function handleTopScroll(scroller: HTMLElement) {
+    const threshold = topScrollThreshold(scroller);
+    if (
+      history?.hasOlder() &&
+      !fetchingOlder &&
+      scroller.scrollTop <= threshold * 2 &&
+      hiddenMessageCount() <= PREFETCH_HISTORY_MESSAGES
+    ) {
+      void fetchOlderPage(scroller);
+    }
+    if (prependingLock || scroller.scrollTop > threshold) return;
     if (hiddenCount() > 0 && hasUnmountedVisualTurns(turns(), slice())) {
-      // Scrolling is incremental: reveal one older message per top hit. Counting
-      // turns here would leave the reader stuck at the top of a long folded run.
       mountEarlierProgressively(
         scroller,
-        resolveLimitForEarlierMessages(turns(), visibleLimit(), 1)
+        resolveLimitForEarlierMessages(turns(), visibleLimit(), SCROLL_REVEAL_MESSAGES),
+        TURN_MOUNT_CHUNK * 2
       );
-    } else if (history?.hasOlder()) {
-      void revealEarlier(scroller, 1);
+    } else if (history?.hasOlder() && !fetchingOlder) {
+      void revealEarlier(scroller, SCROLL_REVEAL_MESSAGES);
+    }
+  }
+
+  const ensureTopRunway = (scroller: HTMLElement | undefined, followingBottom: boolean) => {
+    if (!scroller || scroller.clientHeight <= 0 || prependingLock) return;
+    if (!followingBottom) {
+      handleTopScroll(scroller);
+      return;
+    }
+    const minRunway = Math.max(320, Math.round(scroller.clientHeight * 0.6));
+    if (scroller.scrollHeight - scroller.clientHeight >= minRunway) return;
+    const sid = sessionID() ?? "";
+    if (sid !== lastRunwaySession) {
+      lastRunwaySession = sid;
+      lastRunwayScrollHeight = -1;
+    }
+    if (scroller.scrollHeight === lastRunwayScrollHeight) return;
+    if (hiddenCount() > 0 && hasUnmountedVisualTurns(turns(), slice())) {
+      lastRunwayScrollHeight = scroller.scrollHeight;
+      const next = resolveLimitForEarlierMessages(turns(), visibleLimit(), SCROLL_REVEAL_MESSAGES);
+      if (next > visibleLimit()) {
+        setVisibleLimit(next, sessionID());
+        scroller.scrollTop = scroller.scrollHeight;
+      }
+    } else if (history?.hasOlder() && !fetchingOlder) {
+      lastRunwayScrollHeight = scroller.scrollHeight;
+      void fetchOlderPage(scroller);
     }
   };
 
@@ -451,6 +572,7 @@ export function createTurnWindow(
     loadAllEarlier,
     ensureTurnVisible,
     handleTopScroll,
+    ensureTopRunway,
   };
 }
 
@@ -524,14 +646,23 @@ export function AssistantTurnItem(props: {
   /** Index of the newest user turn, computed once by the stream. */
   latestUserIndex?: number;
 }) {
+  // Isolate `windowStartIndex` changes so expanding the window at the top does
+  // not re-run `resolveMergedTurnParts` for already-mounted cycles below it.
+  const effectiveWindowStart = createMemo(() => {
+    const winStart = props.windowStartIndex ?? 0;
+    if (winStart <= 0 || props.globalIndex <= winStart) return winStart;
+    for (let i = props.globalIndex - 1; i >= 0; i--) {
+      if (props.allTurns[i]?.info.role !== "assistant") {
+        return winStart <= i + 1 ? 0 : winStart;
+      }
+    }
+    return winStart;
+  });
+
   const merged = createMemo<MergedTurnResolution>((prev) =>
     stabilizeMergedTurnResolution(
       prev,
-      resolveMergedTurnParts(
-        props.allTurns,
-        props.globalIndex,
-        props.windowStartIndex ?? 0
-      )
+      resolveMergedTurnParts(props.allTurns, props.globalIndex, effectiveWindowStart())
     )
   );
 
@@ -581,17 +712,8 @@ export function AssistantTurnItem(props: {
 
   return (
     <Show
-      when={
-        !merged().isVisuallyEmpty ||
-        (merged().isCycleEnd && !props.isSessionBusy) ||
-        Boolean(props.turn.info.error)
-      }
-      fallback={
-        <div
-          data-merged-turn-id={props.turn.info.id}
-          class="h-0 overflow-hidden pointer-events-none"
-        />
-      }
+      when={!merged().isVisuallyEmpty || (merged().isCycleEnd && !props.isSessionBusy) || Boolean(props.turn.info.error)}
+      fallback={<div data-merged-turn-id={props.turn.info.id} class="h-0 overflow-hidden pointer-events-none" />}
     >
       <div
         data-turn-id={props.turn.info.id}
@@ -600,23 +722,16 @@ export function AssistantTurnItem(props: {
             ? "mt-0"
             : props.globalIndex === 0
               ? "mt-0"
-                : merged().isFirstVisualTurnInCycle
-                  ? "mt-5"
-                  : "mt-4"
-        } ${
-          isHighlighted()
-            ? "ring-2 ring-[var(--accent-primary)] bg-[var(--accent-surface)]/20 p-2"
-            : ""
-        }`}
+              : merged().isFirstVisualTurnInCycle
+                ? "mt-5"
+                : "mt-4"
+        } ${isHighlighted() ? "ring-2 ring-[var(--accent-primary)] bg-[var(--accent-surface)]/20 p-2" : ""}`}
       >
         <Index each={groupedItems()}>
           {(item, itemIdx) => {
             const isLiveTailItem = () =>
-              props.isSessionBusy &&
-              merged().ownsLiveTail &&
-              itemIdx === groupedItems().length - 1;
-            const isTailActivityGroup = () =>
-              isLiveTailItem() && item().kind === "activity-group";
+              props.isSessionBusy && merged().ownsLiveTail && itemIdx === groupedItems().length - 1;
+            const isTailActivityGroup = () => isLiveTailItem() && item().kind === "activity-group";
             return (
               <Show
                 when={item().kind === "activity-group"}
@@ -644,8 +759,7 @@ export function AssistantTurnItem(props: {
                     ? `${props.activeMatchTurnID}:${props.navigationRevision ?? 0}` : undefined}
                   parts={
                     item().kind === "activity-group"
-                      ? (item() as Extract<ReturnType<typeof item>, { kind: "activity-group" }>)
-                          .parts
+                      ? (item() as Extract<ReturnType<typeof item>, { kind: "activity-group" }>).parts
                       : []
                   }
                   isLiveTail={isTailActivityGroup()}

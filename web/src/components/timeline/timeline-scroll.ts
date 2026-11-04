@@ -148,6 +148,11 @@ export function createTimelineScroll(
     markUserScrollInput() {
       lastUserInputAt = Date.now();
     },
+    noteTopPrepend(delta: number) {
+      if (!(delta > 0)) return;
+      previousScrollTop += delta;
+      previousScrollHeight += delta;
+    },
     resume() {
       following = true;
       lastUserInputAt = 0;
@@ -185,16 +190,20 @@ export function createTimelineScroll(
       const currentTop = scroller.scrollTop;
       const currentHeight = scroller.scrollHeight;
       const heightDelta = currentHeight - previousScrollHeight;
+      const previousDistance = Math.max(
+        0,
+        previousScrollHeight - previousScrollTop - scroller.clientHeight
+      );
+      const distance = distanceFromBottom(scroller);
       const upwardDelta =
         heightDelta < 0
           ? Math.max(0, previousScrollTop + heightDelta - currentTop)
           : previousScrollTop - currentTop;
       const heightChanged = heightDelta !== 0;
       const movedUp = upwardDelta > 1;
-      const movedDown = currentTop - previousScrollTop > 1;
+      const movedDown = currentTop - previousScrollTop > 1 && previousDistance - distance > 1;
       previousScrollTop = currentTop;
       previousScrollHeight = currentHeight;
-      const distance = distanceFromBottom(scroller);
       const hasRecentUserInput =
         pointerScrolling ||
         (lastUserInputAt > 0 && Date.now() - lastUserInputAt < USER_INPUT_GRACE_MS);

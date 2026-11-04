@@ -165,7 +165,7 @@ function hasToolAfterInCycle(
   return false;
 }
 
-function findFirstSubstantiveTextIndex(
+export function findFirstSubstantiveTextIndex(
   allTurns: MessageTurn[],
   turnIdx: number,
   expandedParts: MessagePart[]
@@ -183,6 +183,15 @@ function findFirstSubstantiveTextIndex(
     return idx;
   }
   return -1;
+}
+
+export function hasSubstantiveTurnText(
+  allTurns: MessageTurn[],
+  turnIdx: number
+): boolean {
+  const turn = allTurns[turnIdx];
+  if (!turn) return false;
+  return findFirstSubstantiveTextIndex(allTurns, turnIdx, expandInlineThinkingParts(turn.parts)) >= 0;
 }
 
 /**
