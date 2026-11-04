@@ -60,7 +60,7 @@
    - `chat_history.jsonl`：按行存储的对话记录，包含 `type: "user" | "reasoning" | "assistant" | "tool_call" | "tool_result"`（或 OpenAI 兼容 message 结构）。
    - `updates.jsonl`：ACP 协议 `session/update` 增量流（当 `chat_history.jsonl` 缺失或仅含部分记录时，可聚合 `user_message_chunk`、`agent_thought_chunk`、`agent_message_chunk`、`tool_call` 重建完整对话）。
 3. **凭证与模型缓存**：
-   - `~/.grok/auth.json`：`{"https://cli-chat-proxy.grok.com": {"type": "api", "key": "xai-..."}}`
+   - `~/.grok/auth.json`：`{"grok.com": {"type": "api", "key": "xai-...", "refresh_token": "...", "expires_at": "..."}}`（`grok login` 生成的 OIDC Bearer Token 默认有效期 6 小时，含单次轮换 `refresh_token`；Hoxi 从不直接回写 `auth.json`，当检测到 `expires_at` 已过期或距过期不足 5 分钟时，自动委托本机 `grok models` 在其自身文件锁下刷新凭证）。
    - `~/.grok/models_cache.json`：`models: ["grok-4.7", "grok-4.7-build-fast", "grok-4.6", "grok-4.5"]`，`default_model: "grok-4.7"`
    - `~/.grok/version.json`：`{"latest_version": "1.0.52"}`
    - **上游专有协议要求**：
@@ -269,7 +269,7 @@ type NormalizedTurn struct {
 ### 4.3 本地 CLI 协议转换网关 (`/api/hoxi/bridge/grok-cli/v1/*`)
 - `GET /api/hoxi/bridge/grok-cli/v1/models`：动态读取 `~/.grok/models_cache.json` 并返回标准 OpenAI `{ "object": "list", "data": [...] }`。
 - `POST /api/hoxi/bridge/grok-cli/v1/chat/completions`：
-  - 实时从 `~/.grok/auth.json` 读取最新 Bearer Key，从 `~/.grok/version.json` 读取 `latest_version`。
+  - 实时从 `~/.grok/auth.json` 读取最新 Bearer Key，从 `~/.grok/version.json` 读取 `latest_version`；后台 `credentialSyncLoop` 每 60s 巡检一次，且每次请求前若发现 OIDC Token 已过期或 5 分钟内即将过期，自动调用本机 `grok models` 刷新 `~/.grok/auth.json`；若上游仍返回 `401 Unauthorized`，网关自动触发一次强制提前刷新并透明重放请求。
   - 解析请求 JSON 中的 `model` 与 `stream` 字段，注入 `X-XAI-Token-Auth: xai-grok-cli`、`x-grok-client-version`、`x-grok-model-override: <model>`。
   - 若调用方请求 `"stream": false`（例如模型连通性探测、代码审计或标题总结），网关在转发上游时自动改写为 `"stream": true`，并在内存中聚合 SSE `delta.content` / `delta.reasoning_content` / `delta.tool_calls` 后返回标准非流式 OpenAI JSON 响应；若调用方请求 `"stream": true`，则零缓冲直通转发 SSE 流。
 

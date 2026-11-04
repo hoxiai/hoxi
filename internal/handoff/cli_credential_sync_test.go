@@ -1,19 +1,29 @@
 package handoff
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
 	"github.com/hoxiai/hoxi/internal/provider"
+	"github.com/hoxiai/hoxi/internal/testutil/execstub"
 )
+
+func TestMain(m *testing.M) {
+	execstub.Main()
+	os.Exit(m.Run())
+}
 
 func TestReadGrokAPIKeySkipsExpiredEntries(t *testing.T) {
 	dir := t.TempDir()
@@ -266,5 +276,160 @@ func TestStartAndStopCredentialSyncRaceFree(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		svc.startCredentialSync()
 		svc.StopCredentialSync()
+	}
+}
+
+func writeGrokAuthFile(t *testing.T, authPath, key, refreshToken string, expiresAt time.Time) {
+	t.Helper()
+	doc := map[string]interface{}{
+		"grok.com": map[string]string{
+			"key":           key,
+			"refresh_token": refreshToken,
+			"expires_at":    expiresAt.UTC().Format(time.RFC3339),
+		},
+	}
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(authPath, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestGrokCLIRefreshesExpiredTokenAndSyncsProactively(t *testing.T) {
+	home := t.TempDir()
+	grokDir := filepath.Join(home, ".grok")
+	binDir := filepath.Join(grokDir, "bin")
+	if err := os.MkdirAll(binDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("GROK_HOME", grokDir)
+
+	authPath := filepath.Join(grokDir, "auth.json")
+	freshExpiry := time.Now().Add(6 * time.Hour).UTC().Format(time.RFC3339)
+
+	stubScript := fmt.Sprintf(`#!/bin/sh
+if [ "$1" = "models" ]; then
+  cat > %q <<'EOF'
+{"grok.com":{"key":"key-refreshed-by-cli","refresh_token":"rt-fresh","expires_at":"%s"}}
+EOF
+  exit 0
+fi
+exit 1
+`, authPath, freshExpiry)
+	stubPath := execstub.Write(t, binDir, "grok", stubScript)
+	t.Setenv("GROK_BIN", stubPath)
+
+	// 1. Expired token is refreshed automatically via `grok models`.
+	writeGrokAuthFile(t, authPath, "key-expired", "rt-old", time.Now().Add(-15*time.Minute))
+	creds := loadGrokLocalCredentialsWithRefresh(context.Background())
+	if creds.APIKey != "key-refreshed-by-cli" {
+		t.Fatalf("expected expired token to be refreshed by grok CLI, got %q", creds.APIKey)
+	}
+
+	// 2. Background syncGrokCredential refreshes a token inside the 5-minute proactive window.
+	grokRefreshMu.Lock()
+	lastGrokRefreshAt = time.Time{}
+	grokRefreshMu.Unlock()
+
+	proactiveExpiry := time.Now().Add(6 * time.Hour).UTC().Format(time.RFC3339)
+	proactiveScript := fmt.Sprintf(`#!/bin/sh
+if [ "$1" = "models" ]; then
+  cat > %q <<'EOF'
+{"grok.com":{"key":"key-proactive-sync","refresh_token":"rt-proactive","expires_at":"%s"}}
+EOF
+  exit 0
+fi
+exit 1
+`, authPath, proactiveExpiry)
+	if err := os.Remove(stubPath); err != nil {
+		t.Fatal(err)
+	}
+	stubPath = execstub.Write(t, binDir, "grok", proactiveScript)
+	t.Setenv("GROK_BIN", stubPath)
+
+	writeGrokAuthFile(t, authPath, "key-expiring-soon", "rt-soon", time.Now().Add(2*time.Minute))
+	root := t.TempDir()
+	svc := NewService(0, "", root, provider.NewService(0, "", root, nil))
+	if err := svc.persistHoxiConfigDoc(map[string]interface{}{
+		"provider": map[string]interface{}{
+			"grok-cli": map[string]interface{}{"name": "Grok CLI (Local)"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	svc.syncGrokCredential(context.Background())
+	if got := readGrokAPIKey(authPath, time.Now()); got != "key-proactive-sync" {
+		t.Fatalf("expected background syncGrokCredential to refresh expiring token, got %q", got)
+	}
+}
+
+func TestGrokCLIBridgeRetriesOnceOn401WithForcedRefresh(t *testing.T) {
+	home := t.TempDir()
+	grokDir := filepath.Join(home, ".grok")
+	binDir := filepath.Join(grokDir, "bin")
+	if err := os.MkdirAll(binDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("GROK_HOME", grokDir)
+
+	authPath := filepath.Join(grokDir, "auth.json")
+	// Token looks unexpired locally (+2h), but upstream rejects it with 401.
+	writeGrokAuthFile(t, authPath, "key-revoked-upstream", "rt-revoked", time.Now().Add(2*time.Hour))
+
+	freshExpiry := time.Now().Add(6 * time.Hour).UTC().Format(time.RFC3339)
+	stubScript := fmt.Sprintf(`#!/bin/sh
+if [ "$1" = "models" ] && [ -n "$GROK_AUTH_EARLY_INVALIDATION_SECS" ]; then
+  cat > %q <<'EOF'
+{"grok.com":{"key":"key-rotated-on-401","refresh_token":"rt-rotated","expires_at":"%s"}}
+EOF
+  exit 0
+fi
+exit 1
+`, authPath, freshExpiry)
+	stubPath := execstub.Write(t, binDir, "grok", stubScript)
+	t.Setenv("GROK_BIN", stubPath)
+
+	var seenAuthHeaders []string
+	var mu sync.Mutex
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth := r.Header.Get("Authorization")
+		mu.Lock()
+		seenAuthHeaders = append(seenAuthHeaders, auth)
+		mu.Unlock()
+		if auth != "Bearer key-rotated-on-401" {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":"Unauthorized: Invalid or expired credentials"}`))
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"recovered\"}}]}\n\ndata: [DONE]\n\n"))
+	}))
+	t.Cleanup(upstream.Close)
+	t.Setenv("HOXI_GROK_UPSTREAM_URL", upstream.URL)
+
+	root := t.TempDir()
+	svc := NewService(0, "", root, provider.NewService(0, "", root, nil))
+	reqBody := []byte(`{"model":"grok-4.7","stream":false,"messages":[{"role":"user","content":"ping"}]}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/hoxi/bridge/grok-cli/v1/chat/completions", bytes.NewReader(reqBody))
+	rec := httptest.NewRecorder()
+	svc.handleGrokCLIBridge(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 after 401 refresh retry, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "recovered") {
+		t.Fatalf("expected recovered response content, got %s", rec.Body.String())
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seenAuthHeaders) != 2 || seenAuthHeaders[0] != "Bearer key-revoked-upstream" || seenAuthHeaders[1] != "Bearer key-rotated-on-401" {
+		t.Fatalf("unexpected upstream auth sequence: %#v", seenAuthHeaders)
 	}
 }

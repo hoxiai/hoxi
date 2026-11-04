@@ -43,6 +43,7 @@ type Service struct {
 
 	credSyncMu       sync.Mutex
 	credSyncStarted  bool
+	credSyncCancel   context.CancelFunc
 	credSyncStop     chan struct{}
 	credSyncDone     chan struct{}
 	codexAuthApplied string
@@ -80,32 +81,38 @@ func (g *Service) SetWSBaseURL(string) {
 const credentialSyncInterval = 60 * time.Second
 
 // startCredentialSync keeps imported CLI credentials current. It runs once,
-// from the moment the gateway has its loopback address. Grok needs nothing
-// here: its bridge re-reads ~/.grok/auth.json on every request.
+// from the moment the gateway has its loopback address.
 func (g *Service) startCredentialSync() {
 	g.credSyncMu.Lock()
 	defer g.credSyncMu.Unlock()
 	if g.credSyncStarted {
 		return
 	}
+	ctx, cancel := context.WithCancel(context.Background())
 	stop := make(chan struct{})
 	done := make(chan struct{})
 	g.credSyncStarted = true
+	g.credSyncCancel = cancel
 	g.credSyncStop = stop
 	g.credSyncDone = done
-	go g.credentialSyncLoop(stop, done)
+	go g.credentialSyncLoop(ctx, stop, done)
 }
 
 // StopCredentialSync ends the background sync. Tests that start it must call
 // this so the goroutine is gone before the test mutates the environment.
 func (g *Service) StopCredentialSync() {
 	g.credSyncMu.Lock()
+	cancel := g.credSyncCancel
 	stop := g.credSyncStop
 	done := g.credSyncDone
+	g.credSyncCancel = nil
 	g.credSyncStop = nil
 	g.credSyncDone = nil
 	g.credSyncStarted = false
 	g.credSyncMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 	if stop != nil {
 		close(stop)
 	}
@@ -114,9 +121,10 @@ func (g *Service) StopCredentialSync() {
 	}
 }
 
-func (g *Service) credentialSyncLoop(stop <-chan struct{}, done chan<- struct{}) {
+func (g *Service) credentialSyncLoop(ctx context.Context, stop <-chan struct{}, done chan<- struct{}) {
 	defer close(done)
 	g.syncCodexCredential()
+	g.syncGrokCredential(ctx)
 	ticker := time.NewTicker(credentialSyncInterval)
 	defer ticker.Stop()
 	for {
@@ -125,6 +133,7 @@ func (g *Service) credentialSyncLoop(stop <-chan struct{}, done chan<- struct{})
 			return
 		case <-ticker.C:
 			g.syncCodexCredential()
+			g.syncGrokCredential(ctx)
 		}
 	}
 }

@@ -9,10 +9,16 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/agentcli"
+	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 const grokUpstreamBaseURL = "https://cli-chat-proxy.grok.com"
@@ -161,30 +167,54 @@ func loadGrokLocalCredentials() grokLocalCredentials {
 	return out
 }
 
+const (
+	grokProactiveRefreshWindow = 5 * time.Minute
+	grokRefreshCooldown        = 15 * time.Second
+	grokRefreshTimeout         = 15 * time.Second
+)
+
+var (
+	grokRefreshMu       sync.Mutex
+	lastGrokRefreshAt   time.Time
+	lastGrokRefreshHome string
+	lastGrokForceKey    string
+)
+
 // grokAuthEntry is one credential in ~/.grok/auth.json. The Grok CLI refreshes
 // the file itself; Hoxi only reads it and must never write a token back.
 type grokAuthEntry struct {
-	Key       string `json:"key"`
-	ExpiresAt string `json:"expires_at"`
+	Key          string `json:"key"`
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	ExpiresAt    string `json:"expires_at"`
 }
 
-// readGrokAPIKey returns the newest credential that has not expired. A key
-// without expires_at never expires. When every key is expired the newest one
-// is returned anyway: the CLI may not have refreshed yet, and a stale key
-// fails the request instead of silently dropping the provider.
-func readGrokAPIKey(path string, now time.Time) string {
+type grokAuthState struct {
+	apiKey       string
+	bestExpiry   time.Time
+	isExpired    bool
+	expiringSoon bool
+	canRefresh   bool
+}
+
+func (s grokAuthState) needsRefresh() bool {
+	return s.canRefresh && (s.isExpired || s.expiringSoon)
+}
+
+func inspectGrokAuthFile(path string, now time.Time) grokAuthState {
 	authData, err := os.ReadFile(path)
 	if err != nil {
-		return ""
+		return grokAuthState{}
 	}
 	var authMap map[string]grokAuthEntry
 	if json.Unmarshal(authData, &authMap) != nil {
-		return ""
+		return grokAuthState{}
 	}
 	var bestKey string
 	var bestExpiry time.Time
 	var fallbackKey string
 	var fallbackExpiry time.Time
+	canRefresh := false
 	keys := make([]string, 0, len(authMap))
 	for k := range authMap {
 		keys = append(keys, k)
@@ -192,13 +222,16 @@ func readGrokAPIKey(path string, now time.Time) string {
 	sort.Strings(keys)
 	for _, k := range keys {
 		entry := authMap[k]
-		key := strings.TrimSpace(entry.Key)
+		key := firstNonEmpty(strings.TrimSpace(entry.Key), strings.TrimSpace(entry.AccessToken))
 		if key == "" {
 			continue
 		}
 		expiry, hasExpiry := parseGrokExpiry(entry.ExpiresAt)
 		if !hasExpiry {
-			return key
+			return grokAuthState{apiKey: key}
+		}
+		if strings.TrimSpace(entry.RefreshToken) != "" || hasExpiry {
+			canRefresh = true
 		}
 		if fallbackKey == "" || expiry.After(fallbackExpiry) {
 			fallbackKey = key
@@ -213,9 +246,27 @@ func readGrokAPIKey(path string, now time.Time) string {
 		}
 	}
 	if bestKey != "" {
-		return bestKey
+		return grokAuthState{
+			apiKey:       bestKey,
+			bestExpiry:   bestExpiry,
+			expiringSoon: !bestExpiry.After(now.Add(grokProactiveRefreshWindow)),
+			canRefresh:   canRefresh,
+		}
 	}
-	return fallbackKey
+	return grokAuthState{
+		apiKey:     fallbackKey,
+		bestExpiry: fallbackExpiry,
+		isExpired:  fallbackKey != "",
+		canRefresh: canRefresh,
+	}
+}
+
+// readGrokAPIKey returns the newest credential that has not expired. A key
+// without expires_at never expires. When every key is expired the newest one
+// is returned anyway: the CLI may not have refreshed yet, and a stale key
+// fails the request instead of silently dropping the provider.
+func readGrokAPIKey(path string, now time.Time) string {
+	return inspectGrokAuthFile(path, now).apiKey
 }
 
 func parseGrokExpiry(raw string) (time.Time, bool) {
@@ -231,8 +282,167 @@ func parseGrokExpiry(raw string) (time.Time, bool) {
 	return time.Time{}, false
 }
 
+func belongsToOtherGrokHome(binPath, activeGrokHome string) bool {
+	if activeGrokHome == "" {
+		return false
+	}
+	want := comparableFolderPath(activeGrokHome)
+	for _, cand := range []string{binPath, evalSymlinksOrSelf(binPath)} {
+		slash := filepath.ToSlash(filepath.Clean(cand))
+		if idx := strings.Index(slash, "/.grok/bin/"); idx > 0 {
+			owner := filepath.FromSlash(slash[:idx] + "/.grok")
+			if comparableFolderPath(owner) != want {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func evalSymlinksOrSelf(p string) string {
+	if resolved, err := filepath.EvalSymlinks(p); err == nil && resolved != "" {
+		return resolved
+	}
+	return p
+}
+
+func resolveGrokBinary() string {
+	if env := strings.TrimSpace(os.Getenv("GROK_BIN")); env != "" {
+		return agentcli.FirstExecutableFile(env)
+	}
+	gDir := grokHomeDir()
+	if gDir != "" {
+		if p := agentcli.FirstExecutableFile(filepath.Join(gDir, "bin", "grok")); p != "" {
+			return p
+		}
+		if strings.TrimSpace(os.Getenv("GROK_HOME")) != "" {
+			return ""
+		}
+	}
+	if p, err := exec.LookPath("grok"); err == nil && !belongsToOtherGrokHome(p, gDir) {
+		return p
+	}
+	var candidates []string
+	if home, _ := os.UserHomeDir(); home != "" {
+		candidates = append(candidates,
+			filepath.Join(home, ".local", "bin", "grok"),
+			filepath.Join(home, ".grok", "bin", "grok"),
+		)
+	}
+	for _, dir := range agentcli.CommonUserBinDirs() {
+		candidates = append(candidates, filepath.Join(dir, "grok"))
+	}
+	for _, c := range candidates {
+		if p := agentcli.FirstExecutableFile(c); p != "" && !belongsToOtherGrokHome(p, gDir) {
+			return p
+		}
+	}
+	return ""
+}
+
+// refreshGrokAuthViaCLI asks the local `grok` CLI (`grok models`) to rotate an
+// expired or near-expiry OIDC session token in ~/.grok/auth.json using its own
+// lock file and refresh_token flow. Hoxi never writes ~/.grok/auth.json itself.
+func refreshGrokAuthViaCLI(ctx context.Context, forceInvalidate bool) bool {
+	gDir := grokHomeDir()
+	if gDir == "" {
+		return false
+	}
+	authPath := filepath.Join(gDir, "auth.json")
+
+	grokRefreshMu.Lock()
+	defer grokRefreshMu.Unlock()
+
+	now := time.Now()
+	if comparableFolderPath(gDir) != lastGrokRefreshHome {
+		lastGrokRefreshHome = comparableFolderPath(gDir)
+		lastGrokRefreshAt = time.Time{}
+		lastGrokForceKey = ""
+	}
+	before := inspectGrokAuthFile(authPath, now)
+	if before.apiKey == "" || !before.canRefresh {
+		return false
+	}
+	if !forceInvalidate && !before.needsRefresh() {
+		return true
+	}
+	if !forceInvalidate {
+		if !lastGrokRefreshAt.IsZero() && now.Sub(lastGrokRefreshAt) < grokRefreshCooldown {
+			return false
+		}
+	} else if lastGrokForceKey == before.apiKey && !lastGrokRefreshAt.IsZero() && now.Sub(lastGrokRefreshAt) < grokRefreshCooldown {
+		return false
+	}
+
+	grokBin := resolveGrokBinary()
+	if grokBin == "" {
+		return false
+	}
+	lastGrokRefreshAt = now
+	if forceInvalidate {
+		lastGrokForceKey = before.apiKey
+	}
+
+	baseCtx := ctx
+	if baseCtx == nil {
+		baseCtx = context.Background()
+	}
+	runCtx, cancel := context.WithTimeout(baseCtx, grokRefreshTimeout)
+	defer cancel()
+
+	cmd := subproc.CommandContext(runCtx, grokBin, "models")
+	cmd.WaitDelay = time.Second
+	env := agentcli.WithUserBinPath(os.Environ())
+	if forceInvalidate && !before.bestExpiry.IsZero() && before.bestExpiry.After(now) {
+		remSecs := int(before.bestExpiry.Sub(now).Seconds()) + 60
+		if remSecs < 300 {
+			remSecs = 300
+		}
+		if remSecs > 20000 {
+			remSecs = 20000
+		}
+		env = append(env, "GROK_AUTH_EARLY_INVALIDATION_SECS="+strconv.Itoa(remSecs))
+	}
+	cmd.Env = env
+	_ = cmd.Run()
+
+	after := inspectGrokAuthFile(authPath, time.Now())
+	return after.apiKey != "" && (!after.isExpired || after.apiKey != before.apiKey)
+}
+
+func loadGrokLocalCredentialsWithRefresh(ctx context.Context) grokLocalCredentials {
+	if gDir := grokHomeDir(); gDir != "" {
+		state := inspectGrokAuthFile(filepath.Join(gDir, "auth.json"), time.Now())
+		if state.needsRefresh() {
+			refreshGrokAuthViaCLI(ctx, false)
+		}
+	}
+	return loadGrokLocalCredentials()
+}
+
+func isImportedGrokProvider(raw interface{}) bool {
+	prov, ok := raw.(map[string]interface{})
+	return ok && len(prov) > 0
+}
+
+// syncGrokCredential proactively renews an imported Grok CLI OIDC token when
+// ~/.grok/auth.json is expired or within grokProactiveRefreshWindow of expiry.
+func (g *Service) syncGrokCredential(ctx context.Context) {
+	if !isImportedGrokProvider(g.loadHoxiProvidersMap()["grok-cli"]) {
+		return
+	}
+	gDir := grokHomeDir()
+	if gDir == "" {
+		return
+	}
+	state := inspectGrokAuthFile(filepath.Join(gDir, "auth.json"), time.Now())
+	if state.needsRefresh() {
+		refreshGrokAuthViaCLI(ctx, false)
+	}
+}
+
 func detectGrokCLIStatus(hoxiMap map[string]interface{}) LocalCLIStatusItem {
-	creds := loadGrokLocalCredentials()
+	creds := loadGrokLocalCredentialsWithRefresh(context.Background())
 	sessions, stats := scanGrokSessions("", "")
 	for _, s := range sessions {
 		if s.Model != "" {
@@ -259,7 +469,7 @@ func detectGrokCLIStatus(hoxiMap map[string]interface{}) LocalCLIStatusItem {
 }
 
 func (g *Service) importGrokCLIProvider() LocalCLIImportResponse {
-	creds := loadGrokLocalCredentials()
+	creds := loadGrokLocalCredentialsWithRefresh(context.Background())
 	if creds.APIKey == "" {
 		return LocalCLIImportResponse{
 			OK:     false,
@@ -327,7 +537,7 @@ func (g *Service) importGrokCLIProvider() LocalCLIImportResponse {
 func (g *Service) handleGrokCLIBridge(w http.ResponseWriter, r *http.Request) {
 	subPath := strings.TrimPrefix(r.URL.Path, "/api/hoxi/bridge/grok-cli")
 	if subPath == "/v1/models" && r.Method == http.MethodGet {
-		creds := loadGrokLocalCredentials()
+		creds := loadGrokLocalCredentialsWithRefresh(r.Context())
 		items := make([]map[string]interface{}, 0, len(creds.Models))
 		for _, m := range creds.Models {
 			items = append(items, map[string]interface{}{
@@ -343,7 +553,7 @@ func (g *Service) handleGrokCLIBridge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	creds := loadGrokLocalCredentials()
+	creds := loadGrokLocalCredentialsWithRefresh(r.Context())
 	if creds.APIKey == "" {
 		writeJSONError(w, http.StatusUnauthorized, "Missing Grok CLI credentials in ~/.grok/auth.json")
 		return
@@ -381,16 +591,24 @@ func (g *Service) handleGrokCLIBridge(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
 
-	outReq, err := http.NewRequestWithContext(ctx, r.Method, upstreamURL, bytes.NewReader(rawBody))
+	newUpstreamReq := func(c grokLocalCredentials) (*http.Request, error) {
+		req, reqErr := http.NewRequestWithContext(ctx, r.Method, upstreamURL, bytes.NewReader(rawBody))
+		if reqErr != nil {
+			return nil, reqErr
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+c.APIKey)
+		req.Header.Set("X-XAI-Token-Auth", "xai-grok-cli")
+		req.Header.Set("x-grok-client-version", c.Version)
+		req.Header.Set("x-grok-model-override", modelName)
+		return req, nil
+	}
+
+	outReq, err := newUpstreamReq(creds)
 	if err != nil {
 		writeJSONError(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	outReq.Header.Set("Content-Type", "application/json")
-	outReq.Header.Set("Authorization", "Bearer "+creds.APIKey)
-	outReq.Header.Set("X-XAI-Token-Auth", "xai-grok-cli")
-	outReq.Header.Set("x-grok-client-version", creds.Version)
-	outReq.Header.Set("x-grok-model-override", modelName)
 
 	client := &http.Client{
 		Transport: grokBridgeTransport,
@@ -400,6 +618,16 @@ func (g *Service) handleGrokCLIBridge(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeJSONError(w, http.StatusBadGateway, err.Error())
 		return
+	}
+	if resp.StatusCode == http.StatusUnauthorized && refreshGrokAuthViaCLI(ctx, true) {
+		if fresh := loadGrokLocalCredentials(); fresh.APIKey != "" && fresh.APIKey != creds.APIKey {
+			if retryReq, rErr := newUpstreamReq(fresh); rErr == nil {
+				if retryResp, doErr := client.Do(retryReq); doErr == nil {
+					_ = resp.Body.Close()
+					resp = retryResp
+				}
+			}
+		}
 	}
 	defer resp.Body.Close()
 
