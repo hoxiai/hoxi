@@ -9,7 +9,11 @@ import {
   mergeServerTurnsInto,
 } from "./message-lookup";
 import { restoreSessionAI } from "./session-ai";
-import { noteSessionHistoryTail, SESSION_HISTORY_PAGE_TURNS } from "./session-history";
+import {
+  forgetSessionHistory,
+  noteSessionHistoryTail,
+  SESSION_HISTORY_PAGE_TURNS,
+} from "./session-history";
 import { syncPendingPermissions } from "./approval-mode";
 import { syncPendingQuestions } from "./question-answers";
 import { setWorkspace, workspace } from "./workspace-state";
@@ -34,6 +38,7 @@ import {
   sessionDirectory,
 } from "./session-query";
 import {
+  forgetSessionDiffState,
   refreshSessionDiff,
   scheduleRefreshSessionDiff,
   scheduleRefreshWorktreeStatus,
@@ -502,6 +507,12 @@ export function purgeSessionsFromStoreState(
     clearAutoFailoverPending(id);
     clearSessionAutoTarget(id);
     clearSubagentDrawerOverride(id);
+    forgetSessionDiffState(id);
+    forgetSessionHistory(id);
+    hydratedSessionIDs.delete(id);
+    loadRequestRevisions.delete(id);
+    sessionMessageLoads.delete(id);
+    deferredCreatedEvents.delete(id);
     loadedChildSessionIDs.delete(id);
     settledChildSessionIDs.delete(id);
     inflightChildSessionLookups.delete(id);
@@ -509,6 +520,7 @@ export function purgeSessionsFromStoreState(
     delete state.aiBySession[id];
     delete state.loadingMessagesBySession[id];
     delete state.statusBySession[id];
+    delete state.stalledSinceBySession[id];
     delete state.sessionFinishedAt[id];
     delete state.unreadCompletedBySession[id];
     delete state.diffsBySession[id];

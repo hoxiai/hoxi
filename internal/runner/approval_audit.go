@@ -208,10 +208,51 @@ func (s *approvalAuditStore) record(e ApprovalAuditEntry) {
 	path := s.path
 	s.mu.Unlock()
 
-	if path == "" || blocked != nil {
+	if path == "" {
+		return
+	}
+	if blocked != nil && s.tryUnblockPersistenceLocked(path) != nil {
 		return
 	}
 	_ = s.persistSnapshotLocked(path, seq, snapshot)
+}
+
+func (s *approvalAuditStore) tryUnblockPersistenceLocked(path string) error {
+	s.mu.Lock()
+	blocked := s.persistBlocked
+	s.mu.Unlock()
+	if blocked == nil {
+		return nil
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			s.mu.Lock()
+			s.persistBlocked = nil
+			s.mu.Unlock()
+			return nil
+		}
+		err = fmt.Errorf("approval audit file is unreadable: %w", err)
+		s.mu.Lock()
+		s.persistBlocked = err
+		s.mu.Unlock()
+		return err
+	}
+	var doc approvalAuditFileDoc
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		backup := fmt.Sprintf("%s.corrupt-%s", path, time.Now().UTC().Format("20060102T150405.000000000"))
+		if renameErr := os.Rename(path, backup); renameErr != nil && !errors.Is(renameErr, os.ErrNotExist) {
+			err = fmt.Errorf("approval audit file is corrupt and could not be backed up: %w", renameErr)
+			s.mu.Lock()
+			s.persistBlocked = err
+			s.mu.Unlock()
+			return err
+		}
+	}
+	s.mu.Lock()
+	s.persistBlocked = nil
+	s.mu.Unlock()
+	return nil
 }
 
 func (s *approvalAuditStore) persistSnapshot(path string, seq uint64, snapshot []ApprovalAuditEntry) error {
@@ -231,6 +272,9 @@ func (s *approvalAuditStore) persistSnapshotLocked(path string, seq uint64, snap
 		return err
 	}
 	s.persistedSeq = seq
+	s.mu.Lock()
+	s.persistBlocked = nil
+	s.mu.Unlock()
 	return nil
 }
 
@@ -271,7 +315,9 @@ func (s *approvalAuditStore) clear() error {
 	path := s.path
 	s.mu.Unlock()
 	if blocked != nil {
-		return blocked
+		if err := s.tryUnblockPersistenceLocked(path); err != nil {
+			return err
+		}
 	}
 	if path == "" {
 		return nil

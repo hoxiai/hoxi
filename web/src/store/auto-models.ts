@@ -1,5 +1,6 @@
 // web/src/store/auto-models.ts
 import { createSignal } from "solid-js";
+import { produce } from "solid-js/store";
 import { t } from "../i18n";
 import { hoxiAPI, type ProviderInfo, type ProviderModelInfo } from "../services/api";
 import {
@@ -203,6 +204,9 @@ function resolveAvailableModelID(providerID: string, modelID: string): string | 
 
 export function getEffectivePoolCandidates(poolID: string): AutoPoolCandidate[] {
   const pool = autoPoolsSignal()[poolID];
+  if (!pool && !(PRESET_AUTO_POOL_IDS as readonly string[]).includes(poolID)) {
+    return [];
+  }
   // A customized pool is authoritative, including when the user deleted every
   // candidate. Falling back to the smart defaults here would resurrect the
   // models that were just removed and make deletion look like a no-op loop.
@@ -581,12 +585,27 @@ export async function deleteCustomAutoPool(poolID: string): Promise<void> {
   delete next[poolID];
   setAutoPoolsSignal(next);
   persistAutoPoolsLocal(next);
-  if (
-    workspace.selectedModel?.providerID === AUTO_PROVIDER_ID &&
-    workspace.selectedModel?.modelID === poolID
-  ) {
-    setWorkspace("defaultAI", "model", { providerID: AUTO_PROVIDER_ID, modelID: "free" });
+  for (const [sid, pinned] of sessionAutoTarget.entries()) {
+    if (pinned.poolID === poolID) sessionAutoTarget.delete(sid);
   }
+  setWorkspace(
+    produce((state) => {
+      if (
+        state.defaultAI.model?.providerID === AUTO_PROVIDER_ID &&
+        state.defaultAI.model?.modelID === poolID
+      ) {
+        state.defaultAI.model = { providerID: AUTO_PROVIDER_ID, modelID: "free" };
+      }
+      for (const [sid, cfg] of Object.entries(state.aiBySession)) {
+        if (cfg?.model?.providerID === AUTO_PROVIDER_ID && cfg.model.modelID === poolID) {
+          state.aiBySession[sid] = {
+            ...cfg,
+            model: { providerID: AUTO_PROVIDER_ID, modelID: "free" },
+          };
+        }
+      }
+    })
+  );
   refreshWorkspaceAutoProvider();
   await hoxiAPI.deleteAutoPoolConfig(poolID).catch(() => {});
 }

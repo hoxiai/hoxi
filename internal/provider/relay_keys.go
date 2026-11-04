@@ -89,8 +89,22 @@ func writeRelayKeyDoc(path string, doc relayKeyDoc) error {
 }
 
 func (s *Service) cachedRelayKeys(path string) []relayKeyRecord {
+	info, statErr := os.Stat(path)
+	if statErr != nil {
+		if os.IsNotExist(statErr) {
+			s.relayMu.Lock()
+			s.relayKeysPath = path
+			s.relayKeysLoaded = true
+			s.relayKeysModTime = time.Time{}
+			s.relayKeysSize = -1
+			s.relayKeys = nil
+			s.relayMu.Unlock()
+		}
+		return nil
+	}
+
 	s.relayMu.Lock()
-	if s.relayKeysLoaded && s.relayKeysPath == path {
+	if s.relayKeysLoaded && s.relayKeysPath == path && s.relayKeysModTime.Equal(info.ModTime()) && s.relayKeysSize == info.Size() {
 		out := append([]relayKeyRecord(nil), s.relayKeys...)
 		s.relayMu.Unlock()
 		return out
@@ -101,21 +115,32 @@ func (s *Service) cachedRelayKeys(path string) []relayKeyRecord {
 	if err != nil {
 		return nil
 	}
-	s.relayMu.Lock()
-	if !s.relayKeysLoaded || s.relayKeysPath != path {
-		s.relayKeysPath = path
-		s.relayKeysLoaded = true
-		s.relayKeys = append([]relayKeyRecord(nil), doc.Keys...)
+	if latestInfo, err := os.Stat(path); err == nil {
+		info = latestInfo
 	}
+	s.relayMu.Lock()
+	s.relayKeysPath = path
+	s.relayKeysLoaded = true
+	s.relayKeysModTime = info.ModTime()
+	s.relayKeysSize = info.Size()
+	s.relayKeys = append([]relayKeyRecord(nil), doc.Keys...)
 	out := append([]relayKeyRecord(nil), s.relayKeys...)
 	s.relayMu.Unlock()
 	return out
 }
 
 func (s *Service) setCachedRelayKeys(path string, keys []relayKeyRecord) {
+	info, statErr := os.Stat(path)
 	s.relayMu.Lock()
 	s.relayKeysPath = path
 	s.relayKeysLoaded = true
+	if statErr == nil {
+		s.relayKeysModTime = info.ModTime()
+		s.relayKeysSize = info.Size()
+	} else {
+		s.relayKeysModTime = time.Time{}
+		s.relayKeysSize = -1
+	}
 	s.relayKeys = append([]relayKeyRecord(nil), keys...)
 	s.relayMu.Unlock()
 }

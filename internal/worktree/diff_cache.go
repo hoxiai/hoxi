@@ -352,12 +352,13 @@ func (g *repoFlightGroup[T]) do(key string, fn func() T) T {
 	g.calls[key] = c
 	g.mu.Unlock()
 
+	defer func() {
+		c.wg.Done()
+		g.mu.Lock()
+		delete(g.calls, key)
+		g.mu.Unlock()
+	}()
 	c.val = fn()
-	c.wg.Done()
-
-	g.mu.Lock()
-	delete(g.calls, key)
-	g.mu.Unlock()
 	return c.val
 }
 
@@ -575,6 +576,7 @@ func (c *repoDiffCache) put(repoDir, diffTarget, fingerprint string, diffs []wor
 
 func (c *repoDiffCache) invalidate(repoDir string) {
 	globalRepoStatusCache.invalidate(repoDir)
+	invalidateDiscoveredRepos(repoDir)
 	if strings.TrimSpace(repoDir) == "" {
 		return
 	}

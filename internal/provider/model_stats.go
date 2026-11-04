@@ -1,7 +1,10 @@
 package provider
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -168,17 +171,20 @@ func (s *modelStatsStore) loadFromDisk() {
 	defer s.mu.Unlock()
 
 	data, err := os.ReadFile(s.filePath)
-	if err != nil || len(data) == 0 {
+	if err != nil || len(bytes.TrimSpace(data)) == 0 {
 		return
 	}
 	var loaded map[string]*providerTelemetryStats
-	if err := json.Unmarshal(data, &loaded); err == nil && loaded != nil {
-		for pid, rec := range loaded {
-			if rec == nil || len(rec.Models) == 0 {
-				continue
-			}
-			s.records[pid] = rec
+	if err := json.Unmarshal(data, &loaded); err != nil {
+		backup := fmt.Sprintf("%s.corrupt-%d", s.filePath, time.Now().UnixNano())
+		_ = os.Rename(s.filePath, backup)
+		return
+	}
+	for pid, rec := range loaded {
+		if rec == nil || len(rec.Models) == 0 {
+			continue
 		}
+		s.records[pid] = rec
 	}
 }
 
@@ -190,8 +196,44 @@ func (s *modelStatsStore) saveToDiskLocked() {
 	if err != nil {
 		return
 	}
-	_ = os.MkdirAll(filepath.Dir(s.filePath), 0o755)
-	_ = os.WriteFile(s.filePath, data, 0o644)
+	_ = hoxipaths.WriteFileAtomic(s.filePath, data, 0o600)
+}
+
+func cloneProviderTelemetryStats(v *providerTelemetryStats) providerTelemetryStats {
+	cp := *v
+	if v.LastProbeOk != nil {
+		ok := *v.LastProbeOk
+		cp.LastProbeOk = &ok
+	}
+	if len(v.TtftSamplesMs) > 0 {
+		cp.TtftSamplesMs = append([]int64(nil), v.TtftSamplesMs...)
+	}
+	if len(v.TpsSamples) > 0 {
+		cp.TpsSamples = append([]float64(nil), v.TpsSamples...)
+	}
+	if v.Models != nil {
+		cp.Models = make(map[string]*modelTelemetryStats, len(v.Models))
+		for mk, mv := range v.Models {
+			if mv != nil {
+				mCopy := *mv
+				if mv.LastProbeOk != nil {
+					ok := *mv.LastProbeOk
+					mCopy.LastProbeOk = &ok
+				}
+				if len(mv.TtftSamplesMs) > 0 {
+					mCopy.TtftSamplesMs = append([]int64(nil), mv.TtftSamplesMs...)
+				}
+				if len(mv.TpsSamples) > 0 {
+					mCopy.TpsSamples = append([]float64(nil), mv.TpsSamples...)
+				}
+				cp.Models[mk] = &mCopy
+			}
+		}
+	}
+	if len(v.RecentIncidents) > 0 {
+		cp.RecentIncidents = append([]providerIncident(nil), v.RecentIncidents...)
+	}
+	return cp
 }
 
 func (s *modelStatsStore) ensureRecordLocked(providerID string) *providerTelemetryStats {
@@ -278,7 +320,7 @@ func (s *modelStatsStore) registerRoutes(mux *http.ServeMux) {
 			snapshot := make(map[string]providerTelemetryStats, len(s.records))
 			for k, v := range s.records {
 				if v != nil {
-					snapshot[k] = *v
+					snapshot[k] = cloneProviderTelemetryStats(v)
 				}
 			}
 			s.mu.Unlock()
@@ -288,7 +330,7 @@ func (s *modelStatsStore) registerRoutes(mux *http.ServeMux) {
 			var payload struct {
 				Providers map[string]*providerTelemetryStats `json:"providers"`
 			}
-			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			if err := json.NewDecoder(io.LimitReader(r.Body, 2<<20)).Decode(&payload); err != nil {
 				writeJSONError(w, http.StatusBadRequest, "invalid telemetry payload")
 				return
 			}
@@ -316,14 +358,33 @@ func (s *modelStatsStore) registerRoutes(mux *http.ServeMux) {
 
 		case http.MethodDelete:
 			pid := strings.TrimSpace(r.URL.Query().Get("providerID"))
+			var clearedDegraded []string
 			s.mu.Lock()
+			onChange := s.onDegradedChange
 			if pid != "" {
 				delete(s.records, pid)
+				delete(s.consecutiveFail, pid)
+				if s.degraded[pid] {
+					delete(s.degraded, pid)
+					clearedDegraded = append(clearedDegraded, pid)
+				}
 			} else {
 				s.records = make(map[string]*providerTelemetryStats)
+				s.consecutiveFail = make(map[string]int)
+				for k, wasDegraded := range s.degraded {
+					if wasDegraded {
+						clearedDegraded = append(clearedDegraded, k)
+					}
+				}
+				s.degraded = make(map[string]bool)
 			}
 			s.saveToDiskLocked()
 			s.mu.Unlock()
+			if onChange != nil {
+				for _, id := range clearedDegraded {
+					onChange(id, false)
+				}
+			}
 			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 
 		default:

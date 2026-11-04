@@ -559,6 +559,17 @@ func DiscardBinaryBackup(binPath string) {
 
 const maxExtractedBinaryBytes = 250 * 1024 * 1024
 
+func readExtractedBinary(r io.Reader, binName string) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(r, maxExtractedBinaryBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxExtractedBinaryBytes {
+		return nil, fmt.Errorf("%s exceeds maximum extracted binary size (%d bytes)", binName, maxExtractedBinaryBytes)
+	}
+	return data, nil
+}
+
 func extractBinaryFromZip(raw []byte, binName string) ([]byte, error) {
 	zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
 	if err != nil {
@@ -571,7 +582,7 @@ func extractBinaryFromZip(raw []byte, binName string) ([]byte, error) {
 				return nil, err
 			}
 			defer rc.Close()
-			return io.ReadAll(io.LimitReader(rc, maxExtractedBinaryBytes))
+			return readExtractedBinary(rc, binName)
 		}
 	}
 	return nil, fmt.Errorf("%s not found in zip archive", binName)
@@ -593,7 +604,7 @@ func extractBinaryFromTarGz(raw []byte, binName string) ([]byte, error) {
 			return nil, err
 		}
 		if filepath.Base(hdr.Name) == binName && hdr.Typeflag == tar.TypeReg {
-			return io.ReadAll(io.LimitReader(tr, maxExtractedBinaryBytes))
+			return readExtractedBinary(tr, binName)
 		}
 	}
 	return nil, fmt.Errorf("%s not found in tar.gz archive", binName)

@@ -132,7 +132,7 @@ export function partitionAttentionSessions(
       Boolean(item.subagents?.some((sub) => pendingSessions.has(sub.id)));
     if (hasPendingApproval) buckets.approvals.push(item);
     else if (workspace.unreadCompletedBySession[id]) buckets.completed.push(item);
-    else if ((!isRunning(id) && workspace.interruptedBySession[id]) || workspace.stalledSinceBySession[id]) {
+    else if ((!isRunning(id) && workspace.interruptedBySession[id] === "paused") || workspace.stalledSinceBySession[id]) {
       buckets.paused.push(item);
     }
   }

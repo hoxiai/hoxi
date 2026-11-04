@@ -31,6 +31,27 @@ var (
 	activeSubReposByRoot = make(map[string]map[string]gitRepoTarget)
 )
 
+func invalidateDiscoveredRepos(baseDir string) {
+	clean := filepath.Clean(strings.TrimSpace(baseDir))
+	if clean == "" || clean == "." {
+		return
+	}
+	prefix := clean + string(filepath.Separator)
+	now := time.Now()
+	discoveredReposMu.Lock()
+	for k, v := range discoveredReposCache {
+		if k == clean || strings.HasPrefix(k, prefix) || now.After(v.expiresAt) {
+			delete(discoveredReposCache, k)
+		}
+	}
+	for k := range activeSubReposByRoot {
+		if k == clean || strings.HasPrefix(k, prefix) {
+			delete(activeSubReposByRoot, k)
+		}
+	}
+	discoveredReposMu.Unlock()
+}
+
 func registerActiveSubRepo(baseDir, subRepoDir string) {
 	baseDir = filepath.Clean(strings.TrimSpace(baseDir))
 	subRepoDir = filepath.Clean(strings.TrimSpace(subRepoDir))
@@ -206,6 +227,11 @@ func discoverGitRepos(rawDir string) []gitRepoTarget {
 		cloned := make([]gitRepoTarget, len(result))
 		copy(cloned, result)
 		discoveredReposMu.Lock()
+		for k, v := range discoveredReposCache {
+			if now.After(v.expiresAt) {
+				delete(discoveredReposCache, k)
+			}
+		}
 		discoveredReposCache[baseDir] = cachedDiscoveredRepos{
 			modTime:   modNano,
 			expiresAt: now.Add(discoveredReposTTL),
@@ -515,7 +541,20 @@ func computeDiffSingleRepo(repo gitRepoTarget, diffTarget, fingerprint, porcelai
 			continue
 		}
 		data, err := os.ReadFile(full)
-		if err != nil || bytes.IndexByte(data, 0) != -1 {
+		if err != nil {
+			continue
+		}
+		if bytes.IndexByte(data, 0) != -1 {
+			results = append(results, worktreeFileDiff{
+				File:          relFile,
+				Status:        "added",
+				Repo:          repo.RelPrefix,
+				RepoDir:       repoDir,
+				Branch:        repoBranch,
+				Binary:        true,
+				GeneratedLike: generated,
+				Stamp:         stamp,
+			})
 			continue
 		}
 		text := strings.ReplaceAll(string(data), "\r\n", "\n")

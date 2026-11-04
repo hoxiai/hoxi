@@ -6,7 +6,6 @@ import {
   ChevronLeft,
   ChevronRight,
   LoaderCircle,
-  RotateCcw,
   Square,
 } from "lucide-solid";
 import type { ToolPart } from "../../services/sse-types";
@@ -21,7 +20,6 @@ import {
   resolveParentSessionID,
   resolveRootSessionID,
   resolveSubagentTitle,
-  resumeSubagentTask,
   selectSession,
   stopSessionTask,
   workspace,
@@ -262,20 +260,6 @@ export function SubagentSessionBanner() {
     }
   };
 
-  const resumeCurrentSubagent = async () => {
-    const pid = parentID();
-    const id = activeID();
-    const sub = currentSub();
-    if (!pid || !id) return;
-    await selectSession(pid);
-    await resumeSubagentTask({
-      parentSessionID: pid,
-      childSessionID: id,
-      agentType: sub?.agentType,
-      description: sub?.description,
-    });
-  };
-
   return (
     <Show when={parentID()}>
       {(pid) => (
@@ -367,18 +351,6 @@ export function SubagentSessionBanner() {
                   <ChevronRight size={12} />
                 </button>
               </div>
-            </Show>
-
-            <Show when={!isRunning() && currentSub()?.status === "interrupted"}>
-              <button
-                type="button"
-                onClick={() => void resumeCurrentSubagent()}
-                class="inline-flex items-center gap-1 rounded-lg border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2.5 py-1 text-[11px] font-medium text-[var(--accent-primary)] hover:opacity-90 transition-opacity cursor-pointer"
-                title={t("timeline.resumeSubagentTooltip")}
-              >
-                <RotateCcw size={11} />
-                <span>{t("timeline.resumeSubagentBtn")}</span>
-              </button>
             </Show>
 
             <Show when={isRunning()}>

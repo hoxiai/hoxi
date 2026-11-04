@@ -132,6 +132,12 @@ func TestClassifyFault(t *testing.T) {
 	if IsPermanentTurnError("stream was interrupted: unexpected EOF") || !IsTransientTurnError("stream was interrupted: unexpected EOF") {
 		t.Fatal("stream was interrupted: unexpected EOF must be transient and not permanent")
 	}
+	if IsPermanentTurnError("connection interrupted by peer") || !IsTransientTurnError("connection interrupted by peer") {
+		t.Fatal("connection interrupted must be transient and not permanent")
+	}
+	if IsPermanentTurnError("stream interrupted") || !IsTransientTurnError("stream interrupted") {
+		t.Fatal("stream interrupted must be transient and not permanent")
+	}
 	if IsPermanentTurnError("read tcp: connection aborted") || !IsTransientTurnError("read tcp: connection aborted") {
 		t.Fatal("connection aborted must be transient and not permanent")
 	}

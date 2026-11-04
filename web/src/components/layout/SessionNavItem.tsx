@@ -67,8 +67,6 @@ export function SessionNavItem(props: SessionNavItemProps) {
     props.active && !(expanded() && hasActiveSubagent());
   const status = () => workspace.statusBySession[props.session.id]?.type;
   const isBusy = () => status() === "busy" || status() === "retry";
-  const isInterrupted = () =>
-    !isBusy() && Boolean(workspace.interruptedBySession[props.session.id]);
   const isPaused = () =>
     !isBusy() && workspace.interruptedBySession[props.session.id] === "paused";
   const queuedCount = () =>
@@ -240,12 +238,6 @@ export function SessionNavItem(props: SessionNavItemProps) {
             <span
               class="shrink-0 w-2 h-2 rounded-full bg-blue-500 shadow-[0_0_6px_rgba(59,130,246,0.5)]"
               title={t("timeline.turnCompleted")}
-            />
-          </Show>
-          <Show when={badge() === "idle" && isInterrupted() && !isPaused()}>
-            <span
-              class="shrink-0 w-1.5 h-1.5 rounded-full bg-[var(--warn)]/75"
-              title={t("timeline.turnPaused")}
             />
           </Show>
           <Show when={isPaused()}>

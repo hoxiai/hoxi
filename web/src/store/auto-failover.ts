@@ -9,10 +9,17 @@ import type { SkillSelection } from "../services/api";
 import { reportAutoCandidateOutcome } from "./auto-breaker";
 import {
   getEffectivePoolCandidates,
+  isAutoModel,
   markAutoCandidateCooldown,
   resolveAutoModelTarget,
 } from "./auto-models";
-import { readStorageJSON, workspace, writeStorageJSON, type ReasoningEffort } from "./workspace-state";
+import {
+  readStorageJSON,
+  workspace,
+  writeStorageJSON,
+  type ReasoningEffort,
+  type SelectedModel,
+} from "./workspace-state";
 
 export type AutoFailoverFaultKind =
   | "aborted"
@@ -87,7 +94,7 @@ const AUTH_RE = /unauthorized|invalid api key|incorrect api key|authentication|f
 const SERVER_RE =
   /overloaded|service unavailable|bad gateway|gateway timeout|temporarily unavailable|\b50[0234]\b|\b52[0249]\b|internal server error|\u670d\u52a1.{0,4}(\u7e41\u5fd9|\u4e0d\u53ef\u7528)/;
 const NETWORK_RE =
-  /timeout|timed out|econn|connection reset|connection refused|connection aborted|software caused connection abort|connection closed|closed network connection|closed idle connection|broken pipe|epipe|enetunreach|ehostunreach|eai_again|unexpected eof|\beof\b|fetch failed|network|socket|stream was interrupted|read tcp|write tcp|dial tcp|tls handshake|deadline exceeded|i\/o timeout|client connection lost|server sent goaway|\u8d85\u65f6|\u8fde\u63a5.{0,4}(\u5931\u8d25|\u4e2d\u65ad|\u91cd\u7f6e|\u8d85\u65f6)|\u7f51\u7edc.{0,4}(\u5f02\u5e38|\u9519\u8bef|\u4e2d\u65ad)/;
+  /timeout|timed out|econn|connection reset|connection refused|connection aborted|software caused connection abort|connection closed|closed network connection|closed idle connection|broken pipe|epipe|enetunreach|ehostunreach|eai_again|unexpected eof|\beof\b|fetch failed|network|socket|stream was interrupted|stream interrupted|connection interrupted|network interrupted|unexpectedly interrupted|read tcp|write tcp|dial tcp|tls handshake|deadline exceeded|i\/o timeout|client connection lost|server sent goaway|\u8d85\u65f6|\u8fde\u63a5.{0,4}(\u5931\u8d25|\u4e2d\u65ad|\u91cd\u7f6e|\u8d85\u65f6)|\u7f51\u7edc.{0,4}(\u5f02\u5e38|\u9519\u8bef|\u4e2d\u65ad)/;
 
 export function decideAutoFailover(
   error: AutoFailoverError,
@@ -294,6 +301,9 @@ export interface TurnDispatchState {
   triedKeys: Set<string>;
   sameModelRetries: number;
   backendRetried: boolean;
+  retrying?: boolean;
+  manualModel?: SelectedModel;
+  manualEffort?: ReasoningEffort;
   dispatchedAt: number;
 }
 
@@ -317,7 +327,46 @@ export function clearTurnDispatchState(sessionID: string): void {
 export function markSessionBackendRetried(sessionID: string): void {
   if (!sessionID) return;
   const st = lastDispatchBySession.get(sessionID);
-  if (st) st.backendRetried = true;
+  if (st) {
+    st.backendRetried = true;
+    st.retrying = true;
+  }
+}
+
+export function clearSessionRetrying(sessionID: string): void {
+  if (!sessionID) return;
+  const st = lastDispatchBySession.get(sessionID);
+  if (st && st.retrying) st.retrying = false;
+}
+
+export function isSessionTurnRetrying(sessionID: string): boolean {
+  if (!sessionID) return false;
+  if (workspace.statusBySession[sessionID]?.type === "retry") return true;
+  if (isAutoFailoverPending(sessionID)) return true;
+  return Boolean(lastDispatchBySession.get(sessionID)?.retrying);
+}
+
+export function noteTurnManualModelSelection(
+  sessionID: string,
+  model: SelectedModel,
+  effort?: ReasoningEffort
+): void {
+  if (!sessionID) return;
+  const st = lastDispatchBySession.get(sessionID);
+  if (!st) return;
+  st.manualModel = { ...model };
+  if (effort !== undefined) st.manualEffort = effort;
+}
+
+export function noteTurnManualEffortSelection(
+  sessionID: string,
+  effort: ReasoningEffort
+): void {
+  if (!sessionID) return;
+  const st = lastDispatchBySession.get(sessionID);
+  if (!st) return;
+  st.manualEffort = effort;
+  st.effort = effort || undefined;
 }
 
 export function shouldRetrySameModelOnError(
@@ -370,6 +419,62 @@ export function selectNextDispatchTarget(
       ? Math.min(rawRetryAfterMs, MAX_RESET_WAIT_MS)
       : parseQuotaResetMs(errText);
   const decision = decideAutoFailover(currentError, Date.now() - autoState.dispatchedAt);
+  const lowerErrName = (currentError.name || "").toLowerCase();
+  const isAbortedOrStalled =
+    NEVER_SWITCH_NAMES.has(lowerErrName) ||
+    ABORT_RE.test(lowerErrName) ||
+    currentError.data?.kind === "aborted" ||
+    currentError.data?.kind === "stalled";
+  if (autoState.manualModel && !isAbortedOrStalled) {
+    if (autoState.poolID && decision.penalize) {
+      markAutoCandidateCooldown(failed.providerID, failed.modelID, errText, status, cooldownMs);
+      reportAutoCandidateOutcome({
+        providerID: failed.providerID,
+        modelID: failed.modelID,
+        ok: false,
+        statusCode: status,
+        message: errText,
+        class: breakerClassForReason(decision.reason),
+      });
+    }
+    const manual = autoState.manualModel;
+    autoState.manualModel = undefined;
+    if (autoState.manualEffort !== undefined) {
+      autoState.effort = autoState.manualEffort || undefined;
+      autoState.manualEffort = undefined;
+    }
+    const retryHasImage = (autoState.attachments ?? []).some(
+      (a) => (a.mime || "").toLowerCase().startsWith("image/") || /^data:image\//i.test(a.url || "")
+    );
+    const nextPoolID = isAutoModel(manual) ? manual.modelID : "";
+    const resolvedManual = nextPoolID
+      ? resolveAutoModelTarget(nextPoolID, {
+          advance: true,
+          excludeKeys: autoState.triedKeys,
+          requireImage: retryHasImage,
+          sessionID,
+        })
+      : manual;
+    if (resolvedManual) {
+      const switched =
+        `${resolvedManual.providerID}/${resolvedManual.modelID}` !==
+        `${failed.providerID}/${failed.modelID}`;
+      autoState.poolID = nextPoolID;
+      autoState.target = { ...resolvedManual };
+      autoState.triedKeys.add(`${resolvedManual.providerID}/${resolvedManual.modelID}`);
+      autoState.sameModelRetries = 0;
+      autoState.backendRetried = false;
+      autoState.retrying = true;
+      autoState.dispatchedAt = Date.now();
+      return {
+        target: { ...resolvedManual },
+        switchedPoolCandidate: switched,
+        reason: decision.reason,
+        cooldownUntil: cooldownMs ? Date.now() + cooldownMs : undefined,
+        errText,
+      };
+    }
+  }
   const hasWarmPrefixOnFailed = (workspace.messagesBySession[sessionID] ?? []).some(
     (t) =>
       t.info.role === "assistant" &&
@@ -425,6 +530,7 @@ export function selectNextDispatchTarget(
   } else {
     autoState.sameModelRetries += 1;
   }
+  autoState.retrying = true;
   autoState.dispatchedAt = Date.now();
   return {
     target,

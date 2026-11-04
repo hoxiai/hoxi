@@ -8,10 +8,17 @@ import { recordPromptDispatched } from "./provider-telemetry";
 import { extractLocalFallbackTitle, isPlaceholderSessionTitle, summarizeAndRenameSession } from "./session-title";
 import { isAutoModel, markAutoCandidateCooldown, modelSupportsImageInput, resolveAutoModelTarget } from "./auto-models";
 import { reportAutoCandidateOutcome } from "./auto-breaker";
-import { clearTurnDispatchState, rememberTurnDispatch } from "./auto-failover";
+import {
+  clearAutoFailoverPending,
+  clearTurnDispatchState,
+  isSessionTurnRetrying,
+  noteTurnManualEffortSelection,
+  noteTurnManualModelSelection,
+  rememberTurnDispatch,
+} from "./auto-failover";
 import { newIsolatedSession, waitForSessionSandbox } from "./session-sandbox";
 import { buildCombinedSystemPrompt } from "./settings";
-import { setWorkspace, workspace, type ReasoningEffort } from "./workspace-state";
+import { setWorkspace, workspace, type ReasoningEffort, type SelectedModel } from "./workspace-state";
 import { initializeSessionAI, parseModelString, sessionAIConfig } from "./session-ai";
 import { loadSessionMessages, replaceSession } from "./workspace-sessions";
 import { renameSessionTitle } from "./session-lifecycle";
@@ -23,8 +30,10 @@ import {
   clearSessionInterrupted,
   handleSessionErrorEvent,
   hasRecentSessionInterrupt,
+  isRerouteAbortInFlight,
   markSessionInterrupted,
   pauseSessionTask,
+  rerouteRetryingTurnToModel,
   stopSessionTask,
   stopSessionToolCommand,
 } from "./session-task-control";
@@ -33,8 +42,10 @@ export {
   abortChildSubagentSessions,
   clearSessionInterrupted,
   handleSessionErrorEvent,
+  isRerouteAbortInFlight,
   markSessionInterrupted,
   pauseSessionTask,
+  rerouteRetryingTurnToModel,
   stopSessionTask,
   stopSessionToolCommand,
 };
@@ -106,7 +117,7 @@ export async function dispatchSessionPrompt(
   const hasImageAttachment = attachments.some(
     (a) => (a.mime || "").toLowerCase().startsWith("image/") || /^data:image\//i.test(a.url || "")
   );
-  const chosenModel = options?.model || agentDedicatedModel || config.model || editingQueued?.item.model;
+  const chosenModel = options?.model || config.model || agentDedicatedModel || editingQueued?.item.model;
   const isAuto = isAutoModel(chosenModel);
   const resolvedConcrete =
     isAuto && chosenModel
@@ -363,6 +374,7 @@ export async function dispatchSessionPrompt(
     }
     setTimeout(() => {
       const targetID = id!;
+      if (isSessionDeleted(targetID)) return;
       const turns = workspace.messagesBySession[targetID] ?? [];
       const lastTurn = turns[turns.length - 1];
       const hasInFlightAssistant = turns.some(
@@ -405,9 +417,57 @@ export async function dispatchSessionPrompt(
 }
 
 
+export function applyManualModelSwitchToSession(
+  sessionID: string,
+  model: SelectedModel,
+  effort?: ReasoningEffort
+): void {
+  if (!sessionID) return;
+  if (isSessionTurnRetrying(sessionID)) {
+    void rerouteRetryingTurnToModel(sessionID, model, effort).then((rerouted) => {
+      if (!rerouted && isSessionTurnRetrying(sessionID)) {
+        void retryLastUserPrompt(sessionID);
+      }
+    });
+    return;
+  }
+  if (isSessionBusy(sessionID)) {
+    noteTurnManualModelSelection(sessionID, model, effort);
+  }
+}
+
+export function applyManualEffortSwitchToSession(
+  sessionID: string,
+  effort: ReasoningEffort,
+  model?: SelectedModel
+): void {
+  if (!sessionID) return;
+  if (model) {
+    applyManualModelSwitchToSession(sessionID, model, effort);
+    return;
+  }
+  if (isSessionTurnRetrying(sessionID)) {
+    void rerouteRetryingTurnToModel(sessionID, undefined, effort);
+    return;
+  }
+  if (isSessionBusy(sessionID)) {
+    noteTurnManualEffortSelection(sessionID, effort);
+  }
+}
+
 export async function retryLastUserPrompt(sessionID?: string | null): Promise<void> {
   const id = sessionID ?? workspace.activeSessionID;
   if (!id) return;
+  const wasRetrying = isSessionTurnRetrying(id);
+  if (wasRetrying) {
+    if (await rerouteRetryingTurnToModel(id)) {
+      return;
+    }
+    clearAutoFailoverPending(id);
+    clearTurnDispatchState(id);
+    setWorkspace("statusBySession", id, { type: "idle" });
+    await hoxiAPI.abortSession(id, sessionDirectory(id)).catch(() => {});
+  }
   const turns = workspace.messagesBySession[id] ?? [];
   for (let i = turns.length - 1; i >= 0; i--) {
     if (turns[i].info.role === "user") {
@@ -426,7 +486,11 @@ export async function retryLastUserPrompt(sessionID?: string | null): Promise<vo
         }));
       const skillSelection = extractUserTurnSkillSelection(turns[i].parts) ?? undefined;
       if (text || attachments.length > 0 || skillSelection) {
-        await dispatchSessionPrompt(text, id, { attachments, skillSelection });
+        await dispatchSessionPrompt(text, id, {
+          attachments,
+          skillSelection,
+          ...(wasRetrying ? { forceImmediate: true } : {}),
+        });
       }
       return;
     }

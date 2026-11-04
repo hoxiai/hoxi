@@ -31,8 +31,8 @@ export function SubagentNavRow(props: SubagentNavRowProps) {
 
   const status = () => workspace.statusBySession[props.session.id]?.type;
   const isBusy = () => status() === "busy" || status() === "retry";
-  const isInterrupted = () =>
-    !isBusy() && Boolean(workspace.interruptedBySession[props.session.id]);
+  const isPaused = () =>
+    !isBusy() && workspace.interruptedBySession[props.session.id] === "paused";
   const badge = () => badgeFor(props.session.id, props.pendingSessions, status());
 
   createEffect(() => {
@@ -98,7 +98,7 @@ export function SubagentNavRow(props: SubagentNavRowProps) {
           }
         >
           <Show
-            when={!isInterrupted()}
+            when={!isPaused()}
             fallback={
               <span
                 class="shrink-0 w-1.5 h-1.5 rounded-full bg-[var(--warn)]/75"

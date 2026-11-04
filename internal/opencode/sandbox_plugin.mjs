@@ -467,7 +467,13 @@ const HoxiSandboxPlugin = async () => {
           if (targets.length === 0) throw new Error("Hoxi sandbox could not read the patch file paths");
           for (const target of targets) assertWritable(target, value.workspace);
         } else if (FILE_WRITE_TOOLS.has(input.tool)) {
-          const target = args.filePath ?? args.path ?? args.file;
+          const target =
+            args.filePath ??
+            args.path ??
+            args.file ??
+            args.target_file ??
+            args.AbsolutePath ??
+            args.Path;
           assertWritable(target, value.workspace);
         }
       }

@@ -79,6 +79,17 @@ func (s *Service) claimIndexPrewarm(directory string, enforceRootCap bool) bool 
 	return !loaded
 }
 
+func (s *Service) forgetWarmedDirectory(directory string) {
+	if s == nil {
+		return
+	}
+	clean := filepath.Clean(strings.TrimSpace(directory))
+	if clean == "" || clean == "." {
+		return
+	}
+	s.warmedDirs.Delete(clean)
+}
+
 func (s *Service) runDirectoryWarmerOnce(ctx context.Context, directory string, enforceRootCap bool) {
 	dir := strings.TrimSpace(directory)
 	if s == nil || dir == "" || ctx == nil || ctx.Err() != nil {

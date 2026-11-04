@@ -100,11 +100,12 @@ describe("Cross-project sidebar views", () => {
           session("ses_approval", 100),
           session("ses_done", 200),
           session("ses_paused", 300),
+          session("ses_stopped", 350),
           session("ses_quiet", 400),
         ],
         statusBySession: {},
         unreadCompletedBySession: { ses_done: true, ses_approval: true },
-        interruptedBySession: { ses_paused: "paused", ses_done: "stopped" },
+        interruptedBySession: { ses_paused: "paused", ses_done: "stopped", ses_stopped: "stopped" },
       },
       () => {
         const sections = partitionAttentionSessions(

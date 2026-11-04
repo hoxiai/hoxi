@@ -460,6 +460,12 @@ func (g *Gateway) handleFileContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer f.Close()
+	if openedInfo, statErr := f.Stat(); statErr != nil || openedInfo.IsDir() || !os.SameFile(info, openedInfo) {
+		writeJSONError(w, http.StatusBadRequest, "file target changed during open")
+		return
+	} else {
+		info = openedInfo
+	}
 
 	data, err := io.ReadAll(io.LimitReader(f, maxLocalFilePreviewBytes))
 	if err != nil {

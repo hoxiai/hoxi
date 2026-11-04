@@ -12,7 +12,12 @@ import {
   syncAutoPoolsFromServer,
 } from "./auto-models";
 import { splitAgyModelEffortSuffix } from "./provider-catalog";
-import { parseModelString, updateSessionAI } from "./session-ai";
+import { getTurnDispatchState } from "./auto-failover";
+import { parseModelString, sessionAIConfig, updateSessionAI } from "./session-ai";
+import {
+  applyManualEffortSwitchToSession,
+  applyManualModelSwitchToSession,
+} from "./workspace-session-messages";
 import { desktopAuth, desktopAuthGeneration } from "./auth-state";
 import {
   DEFAULT_AGENTS,
@@ -73,7 +78,11 @@ export function pushRecentModel(model: SelectedModel) {
   writeStorageJSON(RECENT_MODELS_KEY, next);
 }
 
-export function selectModel(model: SelectedModel, _autoRetryOnError = false) {
+export function selectModel(model: SelectedModel, autoRetryOnError = true) {
+  const sid = workspace.activeSessionID;
+  const prev = sid ? sessionAIConfig(sid) : workspace.defaultAI;
+  const prevModel = prev.model;
+  const dispatchTarget = sid ? getTurnDispatchState(sid)?.target : undefined;
   const patch: { model: SelectedModel; effort?: ReasoningEffort } = { model };
   if (model.providerID === "antigravity" && workspace.reasoningEffort) {
     const agySplit = splitAgyModelEffortSuffix(model.modelID);
@@ -81,11 +90,19 @@ export function selectModel(model: SelectedModel, _autoRetryOnError = false) {
       patch.effort = agySplit.effort;
     }
   }
+  const changed =
+    prevModel?.providerID !== model.providerID ||
+    prevModel?.modelID !== model.modelID ||
+    (patch.effort !== undefined && patch.effort !== prev.effort) ||
+    (dispatchTarget !== undefined &&
+      (dispatchTarget.providerID !== model.providerID || dispatchTarget.modelID !== model.modelID));
   updateSessionAI(patch);
   pushRecentModel(model);
-  if (!workspace.activeSessionID) {
+  if (!sid) {
     writeStorageJSON(SELECTED_MODEL_KEY, model);
     if (patch.effort !== undefined) writeStorageItem(EFFORT_KEY, patch.effort);
+  } else if (autoRetryOnError && changed) {
+    applyManualModelSwitchToSession(sid, model, patch.effort);
   }
 }
 
@@ -121,6 +138,9 @@ export function selectProviderModelPreservingBusySession(model: SelectedModel) {
 }
 
 export function setReasoningEffort(effort: ReasoningEffort) {
+  const sid = workspace.activeSessionID;
+  const prev = sid ? sessionAIConfig(sid) : workspace.defaultAI;
+  const dispatchState = sid ? getTurnDispatchState(sid) : undefined;
   const patch: { effort: ReasoningEffort; model?: SelectedModel } = { effort };
   const sel = workspace.selectedModel;
   if (sel?.providerID === "antigravity" && effort) {
@@ -133,10 +153,18 @@ export function setReasoningEffort(effort: ReasoningEffort) {
       }
     }
   }
+  const changed =
+    prev.effort !== effort ||
+    (patch.model !== undefined &&
+      (prev.model?.providerID !== patch.model.providerID ||
+        prev.model?.modelID !== patch.model.modelID)) ||
+    (dispatchState !== undefined && (dispatchState.effort || "") !== effort);
   updateSessionAI(patch);
-  if (!workspace.activeSessionID) {
+  if (!sid) {
     writeStorageItem(EFFORT_KEY, effort);
     if (patch.model) writeStorageJSON(SELECTED_MODEL_KEY, patch.model);
+  } else if (changed) {
+    applyManualEffortSwitchToSession(sid, effort, patch.model);
   }
 }
 

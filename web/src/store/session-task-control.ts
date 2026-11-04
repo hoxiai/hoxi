@@ -1,25 +1,41 @@
 // web/src/store/session-task-control.ts
 import { produce } from "solid-js/store";
 import { hoxiAPI, resolveRunnerRuntimeForProvider } from "../services/api";
+import { isAutoModel, resolveAutoModelTarget } from "./auto-models";
 import { recordPromptDispatched, recordSessionRetry, recordUserAbortAction } from "./provider-telemetry";
 import {
   clearAutoFailoverPending,
   clearTurnDispatchState,
   getTurnDispatchState,
+  isAutoFailoverPending,
   markAutoFailoverPending,
   recordAutoFailover,
+  rememberTurnDispatch,
   selectNextDispatchTarget,
   type AutoFailoverReason,
+  type TurnDispatchState,
 } from "./auto-failover";
-import { setWorkspace, workspace } from "./workspace-state";
+import {
+  setWorkspace,
+  workspace,
+  type ReasoningEffort,
+  type SelectedModel,
+} from "./workspace-state";
 import { sessionAIConfig } from "./session-ai";
 import { loadSessionMessages } from "./workspace-sessions";
-import { isSessionBusy, isSessionDeleted, sessionDirectory } from "./session-query";
+import { isSessionDeleted, sessionDirectory } from "./session-query";
 import { pauseSessionGoal } from "./session-goal-state";
 import { markSessionPromptDispatched } from "./prompt-queue";
 import { collectChildSubagentSessionIDs } from "./subagent-sessions";
 
 const lastInterruptAtBySession = new Map<string, number>();
+const rerouteGenBySession = new Map<string, number>();
+const rerouteAbortInFlightBySession = new Set<string>();
+const lastRerouteAbortAtBySession = new Map<string, number>();
+
+export function isRerouteAbortInFlight(sessionID: string): boolean {
+  return Boolean(sessionID && rerouteAbortInFlightBySession.has(sessionID));
+}
 
 export function hasRecentSessionInterrupt(sessionID: string): boolean {
   return lastInterruptAtBySession.has(sessionID);
@@ -30,6 +46,9 @@ export function markSessionInterrupted(
   kind: "paused" | "stopped" = "stopped"
 ) {
   if (!sessionID) return;
+  rerouteGenBySession.delete(sessionID);
+  rerouteAbortInFlightBySession.delete(sessionID);
+  lastRerouteAbortAtBySession.delete(sessionID);
   clearAutoFailoverPending(sessionID);
   clearTurnDispatchState(sessionID);
   pauseSessionGoal(sessionID, "stopped");
@@ -40,8 +59,131 @@ export function markSessionInterrupted(
 
 export function clearSessionInterrupted(sessionID: string) {
   if (!sessionID) return;
+  rerouteGenBySession.delete(sessionID);
+  rerouteAbortInFlightBySession.delete(sessionID);
+  lastRerouteAbortAtBySession.delete(sessionID);
   lastInterruptAtBySession.delete(sessionID);
   setWorkspace("interruptedBySession", sessionID, undefined);
+}
+
+export async function rerouteRetryingTurnToModel(
+  sessionID: string,
+  model?: SelectedModel | null,
+  effort?: ReasoningEffort
+): Promise<boolean> {
+  if (!sessionID || isSessionDeleted(sessionID) || workspace.archivedSessionIDs.includes(sessionID)) {
+    return false;
+  }
+  const prev = getTurnDispatchState(sessionID);
+  if (!prev) return false;
+  const cfg = sessionAIConfig(sessionID);
+  const chosen = model ?? prev.manualModel ?? cfg.model;
+  if (!chosen?.providerID || !chosen?.modelID) return false;
+  const nextEffort =
+    effort !== undefined
+      ? effort
+      : prev.manualEffort !== undefined
+        ? prev.manualEffort
+        : cfg.effort ?? prev.effort;
+  const hasImage = (prev.attachments ?? []).some(
+    (a) => (a.mime || "").toLowerCase().startsWith("image/") || /^data:image\//i.test(a.url || "")
+  );
+  const usedAutoPool = isAutoModel(chosen);
+  const resolved = usedAutoPool
+    ? resolveAutoModelTarget(chosen, {
+        advance: true,
+        requireImage: hasImage,
+        sessionID,
+      })
+    : null;
+  const effectiveModel = resolved ? { ...resolved } : { ...chosen };
+  const gen = (rerouteGenBySession.get(sessionID) ?? 0) + 1;
+  rerouteGenBySession.set(sessionID, gen);
+
+  const nextState: TurnDispatchState = {
+    poolID: usedAutoPool ? chosen.modelID : "",
+    target: effectiveModel,
+    promptText: prev.promptText,
+    agent: prev.agent,
+    effort: nextEffort || undefined,
+    attachments: prev.attachments,
+    skillSelection: prev.skillSelection,
+    system: prev.system,
+    triedKeys: new Set([`${effectiveModel.providerID}/${effectiveModel.modelID}`]),
+    sameModelRetries: 0,
+    backendRetried: false,
+    retrying: true,
+    dispatchedAt: Date.now(),
+  };
+  rememberTurnDispatch(sessionID, nextState);
+  markAutoFailoverPending(sessionID);
+  markSessionPromptDispatched(sessionID);
+  recordPromptDispatched(sessionID, effectiveModel.providerID, effectiveModel.modelID);
+  setWorkspace("statusBySession", sessionID, { type: "busy" });
+
+  const dir = sessionDirectory(sessionID);
+  rerouteAbortInFlightBySession.add(sessionID);
+  try {
+    await hoxiAPI.abortSession(sessionID, dir);
+  } catch {
+    /* ignore abort errors when no active process is running */
+  } finally {
+    if (rerouteGenBySession.get(sessionID) === gen) {
+      rerouteAbortInFlightBySession.delete(sessionID);
+      lastRerouteAbortAtBySession.set(sessionID, Date.now());
+    }
+  }
+
+  if (
+    rerouteGenBySession.get(sessionID) !== gen ||
+    getTurnDispatchState(sessionID) !== nextState ||
+    isSessionDeleted(sessionID) ||
+    workspace.archivedSessionIDs.includes(sessionID) ||
+    Boolean(workspace.interruptedBySession[sessionID])
+  ) {
+    return true;
+  }
+
+  markAutoFailoverPending(sessionID);
+  markSessionPromptDispatched(sessionID);
+  setWorkspace("statusBySession", sessionID, { type: "busy" });
+  try {
+    await hoxiAPI.sendPromptAsync(sessionID, nextState.promptText, {
+      agent: nextState.agent,
+      model: effectiveModel,
+      variant: nextState.effort || undefined,
+      directory: dir,
+      attachments: nextState.attachments,
+      skillSelection: nextState.skillSelection,
+      system: nextState.system,
+      runtime: resolveRunnerRuntimeForProvider(
+        effectiveModel.providerID,
+        Boolean(workspace.hoxiProviders?.[effectiveModel.providerID || ""])
+      ),
+    });
+    if (
+      rerouteGenBySession.get(sessionID) === gen &&
+      getTurnDispatchState(sessionID) === nextState &&
+      !workspace.interruptedBySession[sessionID]
+    ) {
+      markSessionPromptDispatched(sessionID);
+    }
+  } catch (sendErr) {
+    if (
+      rerouteGenBySession.get(sessionID) !== gen ||
+      getTurnDispatchState(sessionID) !== nextState ||
+      Boolean(workspace.interruptedBySession[sessionID])
+    ) {
+      return true;
+    }
+    const errMsg = sendErr instanceof Error ? sendErr.message : String(sendErr || "error");
+    const statusMatch = errMsg.match(/\bHTTP (\d{3})\b/);
+    await handleSessionErrorEvent(sessionID, {
+      name: "APIError",
+      data: { message: errMsg, statusCode: statusMatch ? Number(statusMatch[1]) : undefined },
+    });
+  }
+  return true;
 }
 
 export async function handleSessionErrorEvent(
@@ -58,6 +200,22 @@ export async function handleSessionErrorEvent(
   }
 ): Promise<void> {
   if (!sessionID) return;
+  if (rerouteAbortInFlightBySession.has(sessionID)) return;
+  const lowerErrName = (error?.name || "").toLowerCase();
+  const lowerErrMsg = `${error?.data?.message || ""}`.toLowerCase();
+  const isAbortErr =
+    error?.data?.kind === "aborted" ||
+    lowerErrName === "messageabortederror" ||
+    /\baborted?\b/.test(lowerErrName) ||
+    (/\baborted?\b/.test(lowerErrMsg) && !/connection|network|socket|tcp/.test(lowerErrMsg));
+  const lastRerouteAbortAt = lastRerouteAbortAtBySession.get(sessionID) ?? 0;
+  if (
+    isAbortErr &&
+    !workspace.interruptedBySession[sessionID] &&
+    (isAutoFailoverPending(sessionID) || Date.now() - lastRerouteAbortAt < 5_000)
+  ) {
+    return;
+  }
   const autoState = getTurnDispatchState(sessionID);
   let currentError = error;
   const initialFailed = autoState ? { ...autoState.target } : undefined;
@@ -105,7 +263,9 @@ export async function handleSessionErrorEvent(
         ),
       });
       if (isStoppedOrSuperseded()) {
-        clearAutoFailoverPending(sessionID);
+        if (!isSuperseded()) {
+          clearAutoFailoverPending(sessionID);
+        }
         if (isGone() || workspace.interruptedBySession[sessionID]) {
           setWorkspace("statusBySession", sessionID, { type: "idle" });
           void hoxiAPI.abortSession(sessionID, sessionDirectory(sessionID)).catch(() => {});
@@ -134,8 +294,11 @@ export async function handleSessionErrorEvent(
       };
     }
   }
+  if (isSuperseded()) {
+    return;
+  }
   clearAutoFailoverPending(sessionID);
-  if (isGone() || workspace.interruptedBySession[sessionID] || (isSuperseded() && isSessionBusy(sessionID))) {
+  if (isGone() || workspace.interruptedBySession[sessionID]) {
     return;
   }
   pauseSessionGoal(sessionID, "error");
@@ -147,7 +310,7 @@ export async function handleSessionErrorEvent(
     !currentError ||
     isGone() ||
     workspace.interruptedBySession[sessionID] ||
-    (isSuperseded() && isSessionBusy(sessionID))
+    isSuperseded()
   ) {
     return;
   }

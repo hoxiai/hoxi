@@ -11,6 +11,7 @@ import {
   recordFirstToken,
   recordToolPartUpdate,
 } from "./provider-telemetry";
+import { clearSessionRetrying } from "./auto-failover";
 import { scheduleRefreshWorktreeStatus } from "./session-diffs";
 import { findMessageIndex, findPartIndex, upsertTurnInfo, upsertTurnPart } from "./message-lookup";
 import { touchSessionTranscript } from "./session-transcripts";
@@ -89,6 +90,7 @@ export function upsertMessageInfo(info: MessageInfo) {
 
 export function upsertMessagePart(part: MessagePart) {
   recordFirstToken(part.sessionID);
+  clearSessionRetrying(part.sessionID);
   recordToolPartUpdate(part);
   if (part.type === "tool" && part.tool === "hoxi_browser" &&
       part.state.status === "running" && part.sessionID === workspace.activeSessionID) {
@@ -130,6 +132,7 @@ export function applyPartDeltaBatch(
 ) {
   for (const b of batches) {
     recordFirstToken(b.sessionID);
+    clearSessionRetrying(b.sessionID);
   }
   setWorkspace(
     produce((state) => {
@@ -162,6 +165,7 @@ export function applyStreamFrameBatch(batch: StreamFrameBatch) {
   let shouldRefreshActiveWorktree = false;
   for (const part of batch.parts) {
     recordFirstToken(part.sessionID);
+    clearSessionRetrying(part.sessionID);
     recordToolPartUpdate(part);
     if (
       part.type === "tool" &&
@@ -203,6 +207,7 @@ export function applyStreamFrameBatch(batch: StreamFrameBatch) {
 
   for (const d of batch.deltas) {
     recordFirstToken(d.sessionID);
+    clearSessionRetrying(d.sessionID);
   }
 
   setWorkspace(

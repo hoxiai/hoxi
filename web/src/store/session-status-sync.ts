@@ -172,20 +172,15 @@ export async function syncSessionStatuses(directory?: string): Promise<void> {
           const dispatchedAt = lastPromptDispatchedAt(sid);
           if (now - dispatchedAt > 3500) {
             state.statusBySession[sid] = { type: "idle" };
+            state.sessionFinishedAt[sid] = now;
+            delete state.stalledSinceBySession[sid];
             newlyIdleSessions.push(sid);
           }
         }
       })
     );
 
-    for (const sid of newlyIdleSessions) {
-      clearSessionPendingApprovals(sid);
-      if (sid === workspace.activeSessionID || workspace.messagesBySession[sid] !== undefined) {
-        void loadSessionMessagesOnly(sid).catch(() => {});
-      }
-      void drainNextQueuedPrompt(sid);
-      void advanceSessionGoal(sid);
-    }
+    finishIdleSessions(newlyIdleSessions);
   } catch (err) {
     console.warn("syncSessionStatuses warning:", err);
   }

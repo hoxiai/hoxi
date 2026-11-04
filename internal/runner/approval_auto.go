@@ -526,8 +526,11 @@ func (s *Service) reconcilePendingApprovals() {
 		}
 	}
 	s.reconcilePendingWithAIReview(pending)
+	now := time.Now()
 	s.openCodeAutoReplies.Range(func(key string, value any) bool {
 		if value == openCodeAutoReplyFailed {
+			s.openCodeAutoReplies.Delete(key)
+		} else if mark, ok := value.(openCodeSettledMark); ok && now.After(mark.until) {
 			s.openCodeAutoReplies.Delete(key)
 		}
 		return true

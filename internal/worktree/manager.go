@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 	"github.com/hoxiai/hoxi/internal/llm"
 	"github.com/hoxiai/hoxi/internal/subproc"
 )
@@ -558,15 +559,16 @@ func (m *worktreeManager) RemoveWithOptions(sessionID string, force bool, keepBr
 		m.roots.verify.StopDirectory(meta.Directory)
 	}
 	if !force {
-		cleanupSyncedEnvFiles(m.rootDir, meta.Directory)
+		envModified := cleanupSyncedEnvFiles(m.rootDir, meta.Directory)
 		if lstat, lErr := os.Lstat(filepath.Join(meta.Directory, ".opencode")); lErr == nil && lstat.Mode()&os.ModeSymlink != 0 {
 			_ = os.Remove(filepath.Join(meta.Directory, ".opencode"))
 		}
 		porcelain, err := runGit(meta.Directory, "status", "--porcelain")
 		if err != nil {
+			syncWorktreeEnvFiles(m.rootDir, meta.Directory)
 			return fmt.Errorf("read worktree status: %w", err)
 		}
-		if strings.TrimSpace(porcelain) != "" {
+		if envModified || strings.TrimSpace(porcelain) != "" {
 			syncWorktreeEnvFiles(m.rootDir, meta.Directory)
 			return errors.New("worktree has uncommitted changes; pass force=true to discard")
 		}
@@ -643,10 +645,14 @@ func gitIgnoresPath(dir, rel string) bool {
 	return err == nil
 }
 
+var gitExcludeMu sync.Mutex
+
 func ensureGitExclude(repoRoot string, patterns ...string) {
 	if len(patterns) == 0 {
 		return
 	}
+	gitExcludeMu.Lock()
+	defer gitExcludeMu.Unlock()
 	gitPath := filepath.Join(repoRoot, ".git")
 	if _, err := os.Stat(gitPath); err != nil {
 		return
@@ -695,7 +701,7 @@ func ensureGitExclude(repoRoot string, patterns ...string) {
 		existing[norm] = true
 	}
 	if toAppend.Len() > 0 {
-		_ = os.WriteFile(excludeFile, append(data, []byte(toAppend.String())...), 0o644)
+		_ = hoxipaths.WriteFileAtomic(excludeFile, append(data, []byte(toAppend.String())...), 0o644)
 	}
 }
 

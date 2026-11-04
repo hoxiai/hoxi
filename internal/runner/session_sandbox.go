@@ -195,6 +195,9 @@ func (s *Service) changeSessionSandboxWithOptions(sessionID, mode string, force,
 		if err := manager.UseLocalDirectory(sessionID); err != nil {
 			return SessionInfo{}, err
 		}
+		if original.WorktreePath != "" && filepath.Clean(original.WorktreePath) != filepath.Clean(rec.ProjectDir) {
+			s.forgetWarmedDirectory(original.WorktreePath)
+		}
 	}
 	if updated.Runtime == "opencode" {
 		_ = syncOpenCodeCommandSandbox(updated)

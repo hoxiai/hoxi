@@ -254,6 +254,17 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 	}
 
 	s.mu.Lock()
+	ap := s.procs[sessionID]
+	s.mu.Unlock()
+	if ap != nil && (ap.wasAborted() || ap.hasPendingError()) {
+		select {
+		case <-ap.done:
+		case <-ctx.Done():
+			return http.StatusRequestTimeout, PromptReceipt{}, ctx.Err()
+		case <-time.After(5 * time.Second):
+		}
+	}
+	s.mu.Lock()
 	if s.procs[sessionID] != nil {
 		s.mu.Unlock()
 		return http.StatusConflict, PromptReceipt{}, errors.New("session already has an active CLI process running")

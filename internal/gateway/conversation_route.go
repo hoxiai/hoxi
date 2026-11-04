@@ -9,7 +9,10 @@ import (
 	"strings"
 )
 
-const conversationPrefix = "/api/hoxi/sessions/"
+const (
+	conversationPrefix         = "/api/hoxi/sessions/"
+	maxSkillSelectionScanBytes = 64 << 20
+)
 
 type internalConversationRouteKey struct{}
 
@@ -30,7 +33,7 @@ func requestHasSkillSelection(r *http.Request) bool {
 	// image attachments travel inline, so prompts are often several MB.
 	body := r.Body
 	var consumed bytes.Buffer
-	found := scanSkillSelection(json.NewDecoder(io.TeeReader(body, &consumed)))
+	found := scanSkillSelection(json.NewDecoder(io.TeeReader(io.LimitReader(body, maxSkillSelectionScanBytes), &consumed)))
 	r.Body = struct {
 		io.Reader
 		io.Closer
@@ -83,14 +86,16 @@ func (g *Gateway) routeConversation(w http.ResponseWriter, r *http.Request) bool
 		suffix = "/" + action
 	}
 	// Runtime switches, tool-stop actions, and skill-selected prompts always go to the runner.
-	hasSkill := (action == "prompt" || action == "prompt_async") && requestHasSkillSelection(r)
-	if action != "runtime" && action != "stop-tool" && !hasSkill && !g.runner.OwnsSession(id) {
-		if r.Method == http.MethodDelete && action == "" {
-			g.runner.DeleteSessionAttachments(id)
+	if action != "runtime" && action != "stop-tool" && !g.runner.OwnsSession(id) {
+		hasSkill := (action == "prompt" || action == "prompt_async") && requestHasSkillSelection(r)
+		if !hasSkill {
+			if r.Method == http.MethodDelete && action == "" {
+				g.runner.DeleteSessionAttachments(id)
+			}
+			markInternalConversationRoute(r)
+			setRequestPath(r, "/session/"+id+suffix)
+			return true
 		}
-		markInternalConversationRoute(r)
-		setRequestPath(r, "/session/"+id+suffix)
-		return true
 	}
 	setRequestPath(r, "/api/hoxi/runner/sessions/"+id+suffix)
 	return true

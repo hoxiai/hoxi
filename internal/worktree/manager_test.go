@@ -662,3 +662,47 @@ func TestDiffFileBlocksUntrackedEnvIgnoredUnchangedAndEscapingSymlinks(t *testin
 		t.Fatalf("unexpected DiffFile(new.txt): %+v", diff)
 	}
 }
+
+func TestRemovePreservesModifiedWorktreeEnvFileAndUntrackedBinaryInDiff(t *testing.T) {
+	t.Parallel()
+	repo := initTempGitRepo(t)
+	if err := os.WriteFile(filepath.Join(repo, ".env"), []byte("API_KEY=root\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mgr := NewManager(repo)
+	meta, err := mgr.Create("ses_env_guard")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// User customizes .env inside the worktree.
+	wtEnv := filepath.Join(meta.Directory, ".env")
+	if err := os.WriteFile(wtEnv, []byte("API_KEY=worktree_custom\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Non-forced remove must refuse and keep the customized .env intact.
+	if err := mgr.Remove("ses_env_guard", false); err == nil {
+		t.Fatal("expected non-forced Remove to fail when worktree .env was customized")
+	}
+	gotEnv, err := os.ReadFile(wtEnv)
+	if err != nil || string(gotEnv) != "API_KEY=worktree_custom\n" {
+		t.Fatalf("customized .env was lost or overwritten: %q (err=%v)", string(gotEnv), err)
+	}
+
+	// Untracked binary file in worktree appears in Diff with Binary=true.
+	if err := os.WriteFile(filepath.Join(meta.Directory, "icon.png"), []byte{0x89, 'P', 'N', 'G', 0x00, 0x01}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	diffs, err := mgr.Diff("ses_env_guard")
+	if err != nil {
+		t.Fatalf("Diff failed: %v", err)
+	}
+	foundBin := false
+	for _, d := range diffs {
+		if d.File == "icon.png" && d.Binary && d.Status == "added" {
+			foundBin = true
+		}
+	}
+	if !foundBin {
+		t.Fatalf("expected untracked binary file icon.png in diffs, got %+v", diffs)
+	}
+}

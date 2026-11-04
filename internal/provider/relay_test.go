@@ -395,3 +395,47 @@ func TestRelayChatRecordsHeaderTTFTNotFullStreamDuration(t *testing.T) {
 		t.Fatalf("breaker latency = %v ms, want header TTFT (<80ms, not 120ms body sleep)", lat)
 	}
 }
+
+func TestRelayKeyCacheInvalidatesOnExternalDiskChangeAndTelemetryDeleteResetsDegraded(t *testing.T) {
+	svc1, mux := newRelayTestService(t, "http://127.0.0.1:9/v1")
+	svc2 := NewService(0, "", svc1.rootDir, nil)
+
+	keyInfo, token1, err := svc1.CreateRelayKey("first")
+	if err != nil {
+		t.Fatalf("CreateRelayKey: %v", err)
+	}
+	// Prime svc2 cache.
+	if !svc2.verifyRelayToken(token1) {
+		t.Fatal("expected svc2 to validate initial token")
+	}
+	// Revoke via svc1 (simulating another process modifying relay-keys.json).
+	if err := svc1.RevokeRelayKey(keyInfo.ID); err != nil {
+		t.Fatalf("expected RevokeRelayKey to succeed, got %v", err)
+	}
+	if svc2.verifyRelayToken(token1) {
+		t.Fatal("expected svc2 cache to invalidate after external revocation")
+	}
+
+	// Telemetry DELETE clears degraded state and notifies listener.
+	var degradedHistory []bool
+	svc1.SetOnProviderDegraded(func(pid string, deg bool) {
+		if pid == "relay-up" {
+			degradedHistory = append(degradedHistory, deg)
+		}
+	})
+	for i := 0; i < llmDegradedThreshold; i++ {
+		svc1.stats.recordLLMRequest("relay-up", "gpt-test", 1, fmt.Errorf("502 bad gateway"))
+	}
+	if len(degradedHistory) != 1 || !degradedHistory[0] {
+		t.Fatalf("expected provider to become degraded, got %v", degradedHistory)
+	}
+	delReq := httptest.NewRequest(http.MethodDelete, "/api/hoxi/provider/telemetry?providerID=relay-up", nil)
+	delRec := httptest.NewRecorder()
+	mux.ServeHTTP(delRec, delReq)
+	if delRec.Code != http.StatusOK {
+		t.Fatalf("telemetry delete status = %d", delRec.Code)
+	}
+	if len(degradedHistory) != 2 || degradedHistory[1] {
+		t.Fatalf("expected telemetry delete to clear degraded state, got %v", degradedHistory)
+	}
+}

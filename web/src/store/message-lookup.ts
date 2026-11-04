@@ -558,7 +558,11 @@ function isLocalPartAhead(local: MessagePart, remote: MessagePart): boolean {
 
 function mergeTurnInto(local: MessageTurn, remote: { info: MessageInfo; parts: MessagePart[] }) {
   if (!(isTurnSettled(local.info) && !isTurnSettled(remote.info))) {
+    const prevCompleted = local.info.time?.completed;
     Object.assign(local.info, remote.info);
+    if (prevCompleted && local.info.time && !local.info.time.completed) {
+      local.info.time = { ...local.info.time, completed: prevCompleted };
+    }
   }
   const localSkillPart = local.parts.find(
     (p): p is Extract<MessagePart, { type: "text" }> =>

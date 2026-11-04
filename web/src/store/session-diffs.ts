@@ -111,6 +111,12 @@ export function invalidateSessionDiffReads(id: string): void {
   diffRefreshTimers.delete(id);
 }
 
+export function forgetSessionDiffState(id: string): void {
+  invalidateSessionDiffReads(id);
+  diffRevisions.delete(id);
+  worktreeRevisions.delete(id);
+}
+
 export function cancelScheduledWorktreeStatus(sessionID?: string | null): void {
   const key = sessionID || "__root__";
   const timer = worktreeRefreshTimers.get(key);

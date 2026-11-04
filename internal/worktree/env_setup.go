@@ -1,6 +1,7 @@
 package worktree
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -117,25 +118,33 @@ func syncWorktreeEnvFiles(repoRoot, worktreeDir string) ([]string, error) {
 }
 
 // cleanupSyncedEnvFiles removes untracked .env* files in worktreeDir that still
-// match repoRoot or are untracked before a non-forced `git worktree remove`.
-func cleanupSyncedEnvFiles(repoRoot, worktreeDir string) {
+// match repoRoot before a non-forced `git worktree remove`. It returns true if
+// any untracked .env* file in worktreeDir differs from repoRoot.
+func cleanupSyncedEnvFiles(repoRoot, worktreeDir string) bool {
 	entries, err := os.ReadDir(worktreeDir)
 	if err != nil {
-		return
+		return false
 	}
+	modified := false
 	for _, entry := range entries {
 		name := entry.Name()
 		if !isRootEnvFile(name) || entry.IsDir() {
 			continue
 		}
-		// Only remove if it exists in repoRoot (i.e., was synced from root) and is not tracked by git.
-		if _, err := os.Stat(filepath.Join(repoRoot, name)); err != nil {
+		tracked, tErr := runGit(worktreeDir, "ls-files", "--", name)
+		if tErr != nil || strings.TrimSpace(tracked) != "" {
 			continue
 		}
-		if tracked, err := runGit(worktreeDir, "ls-files", "--", name); err == nil && strings.TrimSpace(tracked) == "" {
-			_ = os.Remove(filepath.Join(worktreeDir, name))
+		dstPath := filepath.Join(worktreeDir, name)
+		srcBytes, sErr := os.ReadFile(filepath.Join(repoRoot, name))
+		dstBytes, dErr := os.ReadFile(dstPath)
+		if sErr != nil || dErr != nil || !bytes.Equal(srcBytes, dstBytes) {
+			modified = true
+			continue
 		}
+		_ = os.Remove(dstPath)
 	}
+	return modified
 }
 
 func copyFileExclusive(src, dst string, perm os.FileMode) error {

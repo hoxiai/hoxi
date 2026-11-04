@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"io/fs"
 	"net/http"
@@ -489,7 +490,10 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 			Directory string `json:"directory"`
 			SessionID string `json:"sessionID"`
 		}
-		_ = json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&body)
+		if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+			writeJSONError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
 		g.dialogMu.RLock()
 		focusFn := g.onFocusDesktop
 		g.dialogMu.RUnlock()

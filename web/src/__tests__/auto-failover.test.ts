@@ -9,6 +9,7 @@ import {
   getAutoCandidateCooldown,
   clearAutoPoolCooldowns,
   decideAutoFailover,
+  deleteCustomAutoPool,
   dispatchSessionPrompt,
   findAutoFailoverNotice,
   handleSessionErrorEvent,
@@ -18,7 +19,10 @@ import {
   parseQuotaResetMs,
   purgeSessionsFromStoreState,
   resetAutoPoolToDefault,
+  resolveAutoModelTarget,
+  retryLastUserPrompt,
   saveAutoPool,
+  selectModel,
   setWorkspace,
   workspace,
 } from "../store/workspace";
@@ -509,6 +513,191 @@ describe("auto-pool failover dispatch", () => {
       clearAutoPoolCooldowns("free");
       await resetAutoPoolToDefault("free");
       applyProviderBreakers({});
+    }
+  });
+
+  it("immediately aborts retry backoff and re-dispatches with new model when selectModel is called during retry", async () => {
+    const sid = "ses_manual_switch_during_retry";
+    const origSend = hoxiAPI.sendPromptAsync;
+    const origAbort = hoxiAPI.abortSession;
+    const origGetMessages = hoxiAPI.getMessages;
+    const origSummarize = hoxiAPI.summarizeSessionTitle;
+
+    try {
+      hoxiAPI.getMessages = async () => [];
+      hoxiAPI.summarizeSessionTitle = async () => ({ ok: false, title: "" });
+      setWorkspace("providers", [
+        { id: "alpha", name: "Alpha", models: { m1: { id: "m1", name: "M1" } } },
+        { id: "beta", name: "Beta", models: { m2: { id: "m2", name: "M2" } } },
+      ]);
+      setWorkspace("connectedProviders", ["alpha", "beta"]);
+      setWorkspace("sessions", [
+        {
+          id: sid,
+          title: "Manual switch during retry",
+          directory: "/tmp",
+          time: { created: 1, updated: 1 },
+        },
+      ]);
+      setWorkspace("activeSessionID", sid);
+      setWorkspace("aiBySession", sid, {
+        agent: "build",
+        model: { providerID: "alpha", modelID: "m1" },
+        effort: "",
+      });
+
+      const events: string[] = [];
+      hoxiAPI.abortSession = async (targetID) => {
+        events.push(`abort:${targetID}`);
+      };
+      hoxiAPI.sendPromptAsync = async (_sid, _text, opts) => {
+        events.push(`send:${opts?.model?.providerID}/${opts?.model?.modelID}`);
+      };
+
+      await dispatchSessionPrompt("hello world", sid, { forceImmediate: true });
+      assertDeepEqual(events, ["send:alpha/m1"]);
+
+      // Backend enters retry countdown for alpha/m1.
+      setWorkspace("statusBySession", sid, {
+        type: "retry",
+        attempt: 1,
+        message: "HTTP 429 rate limit",
+        next: Date.now() + 10_000,
+      });
+
+      // User manually switches model in the input box to beta/m2 while retrying.
+      selectModel({ providerID: "beta", modelID: "m2" });
+      await new Promise((r) => setTimeout(r, 20));
+
+      assertDeepEqual(events, ["send:alpha/m1", `abort:${sid}`, "send:beta/m2"]);
+      assertEqual(workspace.statusBySession[sid]?.type, "busy");
+
+      // A late MessageAbortedError from the aborted alpha/m1 turn must not flip beta/m2 back to idle.
+      await handleSessionErrorEvent(sid, {
+        name: "MessageAbortedError",
+        data: { message: "The operation was aborted", kind: "aborted" },
+      });
+      assertEqual(workspace.statusBySession[sid]?.type, "busy");
+    } finally {
+      clearAutoFailoverPending(sid);
+      clearTurnDispatchState(sid);
+      hoxiAPI.sendPromptAsync = origSend;
+      hoxiAPI.abortSession = origAbort;
+      hoxiAPI.getMessages = origGetMessages;
+      hoxiAPI.summarizeSessionTitle = origSummarize;
+      setWorkspace("activeSessionID", null);
+      setWorkspace("sessions", []);
+      setWorkspace("aiBySession", reconcile({}));
+      setWorkspace("messagesBySession", reconcile({}));
+      setWorkspace("statusBySession", reconcile({}));
+    }
+  });
+
+  it("retries with manually selected model when switched while busy before error arrives", async () => {
+    const sid = "ses_manual_switch_while_busy";
+    const origSend = hoxiAPI.sendPromptAsync;
+    const origGetMessages = hoxiAPI.getMessages;
+    const origSummarize = hoxiAPI.summarizeSessionTitle;
+
+    try {
+      hoxiAPI.getMessages = async () => [];
+      hoxiAPI.summarizeSessionTitle = async () => ({ ok: false, title: "" });
+      setWorkspace("providers", [
+        { id: "alpha", name: "Alpha", models: { m1: { id: "m1", name: "M1" } } },
+        { id: "beta", name: "Beta", models: { m2: { id: "m2", name: "M2" } } },
+      ]);
+      setWorkspace("connectedProviders", ["alpha", "beta"]);
+      setWorkspace("globalConfig", {
+        agent: { build: { model: "alpha/m1" } },
+      });
+      setWorkspace("sessions", [
+        {
+          id: sid,
+          title: "Manual switch while busy",
+          directory: "/tmp",
+          time: { created: 1, updated: 1 },
+        },
+      ]);
+      setWorkspace("activeSessionID", sid);
+      setWorkspace("aiBySession", sid, {
+        agent: "build",
+        model: { providerID: "alpha", modelID: "m1" },
+        effort: "",
+      });
+
+      const attempted: string[] = [];
+      hoxiAPI.sendPromptAsync = async (_sid, _text, opts) => {
+        attempted.push(`${opts?.model?.providerID}/${opts?.model?.modelID}`);
+      };
+
+      await dispatchSessionPrompt("first prompt", sid, { forceImmediate: true });
+      assertDeepEqual(attempted, ["alpha/m1"]);
+
+      // User manually switches model in input box while the initial turn is still busy.
+      selectModel({ providerID: "beta", modelID: "m2" });
+      assertEqual(attempted.length, 1);
+
+      // Initial turn then fails with 502; instead of same-model retrying alpha/m1, it switches to beta/m2.
+      await handleSessionErrorEvent(sid, {
+        name: "APIError",
+        data: { message: "502 Bad Gateway", statusCode: 502 },
+      });
+      assertDeepEqual(attempted, ["alpha/m1", "beta/m2"]);
+
+      // Manual retryLastUserPrompt also respects the session's selected model over globalConfig.agent.build.model.
+      clearAutoFailoverPending(sid);
+      clearTurnDispatchState(sid);
+      setWorkspace("statusBySession", sid, { type: "idle" });
+      await retryLastUserPrompt(sid);
+      assertDeepEqual(attempted, ["alpha/m1", "beta/m2", "beta/m2"]);
+    } finally {
+      clearAutoFailoverPending(sid);
+      clearTurnDispatchState(sid);
+      hoxiAPI.sendPromptAsync = origSend;
+      hoxiAPI.getMessages = origGetMessages;
+      hoxiAPI.summarizeSessionTitle = origSummarize;
+      setWorkspace("globalConfig", {});
+      setWorkspace("activeSessionID", null);
+      setWorkspace("sessions", []);
+      setWorkspace("aiBySession", reconcile({}));
+      setWorkspace("messagesBySession", reconcile({}));
+      setWorkspace("statusBySession", reconcile({}));
+    }
+  });
+
+  it("returns null for a deleted custom auto pool and resets sessions pointing to it", async () => {
+    const sid = "ses_custom_pool";
+    try {
+      setWorkspace("providers", [
+        { id: "alpha", name: "Alpha", models: { m1: { id: "m1", name: "M1" } } },
+      ]);
+      setWorkspace("connectedProviders", ["alpha"]);
+      await saveAutoPool("my-custom", {
+        id: "my-custom",
+        name: "My Custom",
+        preset: false,
+        strategy: "priority",
+        customized: true,
+        candidates: [{ providerID: "alpha", modelID: "m1" }],
+      });
+      setWorkspace("aiBySession", sid, {
+        agent: "build",
+        model: { providerID: AUTO_PROVIDER_ID, modelID: "my-custom" },
+        effort: "",
+      });
+      assertDeepEqual(resolveAutoModelTarget("my-custom", { sessionID: sid }), {
+        providerID: "alpha",
+        modelID: "m1",
+      });
+
+      await deleteCustomAutoPool("my-custom");
+      assertEqual(resolveAutoModelTarget("my-custom", { sessionID: sid }), null);
+      assertDeepEqual(workspace.aiBySession[sid]?.model, {
+        providerID: AUTO_PROVIDER_ID,
+        modelID: "free",
+      });
+    } finally {
+      setWorkspace("aiBySession", reconcile({}));
     }
   });
 });

@@ -292,3 +292,51 @@ func TestExternalDirectoryRiskClassifiesRoutineAndSensitiveTargets(t *testing.T)
 		t.Error("explicit destructive metadata must still win")
 	}
 }
+
+func TestApprovalAuditRecoversAfterTransientPersistBlockAndForgetsWarmedDirs(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, approvalAuditFile)
+	// Simulate a directory at path during startup so loadFromDisk sets persistBlocked.
+	if err := os.MkdirAll(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	store := newApprovalAuditStore(filepath.Join(dir, "sessions.json"))
+	if store.persistBlocked == nil {
+		t.Fatal("expected persistBlocked when audit path is a directory")
+	}
+	// Resolve the obstacle and record an entry; persistence should unblock and write to disk.
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	store.record(ApprovalAuditEntry{
+		ID:         "aud_recover",
+		SessionID:  "ses_recover",
+		Permission: "bash",
+		Summary:    "ls",
+		Decision:   "once",
+		Source:     "desktop",
+	})
+	if store.persistBlocked != nil {
+		t.Fatalf("expected persistBlocked to clear after recovery, got %v", store.persistBlocked)
+	}
+	onDisk, err := os.ReadFile(path)
+	if err != nil || !strings.Contains(string(onDisk), "aud_recover") {
+		t.Fatalf("expected recovered audit entry on disk, got %q (err=%v)", string(onDisk), err)
+	}
+
+	// Verify forgetOpenCodeMappings removes isolated worktree from warmedDirs.
+	svc := NewService(dir, nil, nil, filepath.Join(t.TempDir(), "sessions.json"))
+	wtDir := filepath.Join(dir, ".hoxi", "worktrees", "ses_warm")
+	if !svc.claimIndexPrewarm(wtDir, false) {
+		t.Fatal("expected initial claimIndexPrewarm to succeed")
+	}
+	svc.forgetOpenCodeMappings("ses_warm", SessionRecord{
+		ID:           "ses_warm",
+		ProjectDir:   dir,
+		WorktreePath: wtDir,
+	}, nil)
+	if !svc.claimIndexPrewarm(wtDir, false) {
+		t.Fatal("expected warmedDirs entry for worktree to be forgotten on session cleanup")
+	}
+}

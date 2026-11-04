@@ -220,10 +220,10 @@ export async function updateGlobalModelConfig(patch: Record<string, any>): Promi
       const nextAgentModel = patch.agent[active]?.model;
       if (typeof nextAgentModel === "string" && nextAgentModel) {
         const parsed = parseModelString(nextAgentModel);
-        if (parsed) selectModel(parsed);
+        if (parsed) selectModel(parsed, false);
       } else if (nextAgentModel === null || nextAgentModel === "") {
         if (workspace.defaultAI.model) {
-          selectModel(workspace.defaultAI.model);
+          selectModel(workspace.defaultAI.model, false);
         }
       }
     }

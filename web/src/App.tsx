@@ -21,9 +21,11 @@ import {
   clearAutoFailoverPending,
   clearSessionPendingApprovals,
   clearTurnDispatchState,
+  getTurnDispatchState,
   handleSessionErrorEvent,
   isActionableApprovalSession,
   isAutoFailoverPending,
+  isRerouteAbortInFlight,
   isDismissedProjectPath,
   isInvalidProjectPath,
   isManagedSession,
@@ -49,6 +51,7 @@ import {
   rememberQuestionRequest,
   removeSessionFromStore,
   replaceSessionFromEvent,
+  rerouteRetryingTurnToModel,
   resolveDefaultProjectDir,
   resolveParentSessionID,
   resyncResidentTranscripts,
@@ -283,10 +286,13 @@ export default function App() {
             }
             case "session.status": {
               const sid = evt.properties.sessionID;
-              if (evt.properties.status.type === "idle" && isAutoFailoverPending(sid)) {
+              if (
+                (evt.properties.status.type === "idle" && isAutoFailoverPending(sid)) ||
+                (evt.properties.status.type === "retry" && isRerouteAbortInFlight(sid))
+              ) {
                 break;
               }
-              if (evt.properties.status.type === "busy") {
+              if (evt.properties.status.type === "busy" && !isRerouteAbortInFlight(sid)) {
                 clearAutoFailoverPending(sid);
               }
               const previousStatus = workspace.statusBySession[sid]?.type;
@@ -322,6 +328,10 @@ export default function App() {
                 if (wasBusy) refreshDesktopMemberAfterTurn(sid);
               } else if (evt.properties.status.type === "retry") {
                 markSessionBackendRetried(sid);
+                if (getTurnDispatchState(sid)?.manualModel) {
+                  void rerouteRetryingTurnToModel(sid);
+                  break;
+                }
                 recordSessionRetry(
                   sid,
                   evt.properties.status.attempt,

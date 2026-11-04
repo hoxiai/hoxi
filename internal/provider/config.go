@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -590,7 +591,7 @@ func (g *Service) handleModelsConfig(w http.ResponseWriter, r *http.Request) {
 
 	case http.MethodPost, http.MethodPut:
 		var req saveHoxiProviderRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if err := json.NewDecoder(io.LimitReader(r.Body, 4<<20)).Decode(&req); err != nil {
 			writeJSONError(w, http.StatusBadRequest, "Invalid JSON payload")
 			return
 		}

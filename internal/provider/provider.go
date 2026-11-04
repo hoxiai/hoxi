@@ -36,6 +36,8 @@ type Service struct {
 	relayBaseURL         string
 	relayKeysPath        string
 	relayKeysLoaded      bool
+	relayKeysModTime     time.Time
+	relayKeysSize        int64
 	relayKeys            []relayKeyRecord
 	mcpOAuthMu           sync.Mutex
 	mcpOAuthSessions     map[string]*mcpOAuthSession

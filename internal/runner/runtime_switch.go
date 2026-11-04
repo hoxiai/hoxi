@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -61,6 +62,15 @@ func (s *Service) handleRuntimeSwitch(w http.ResponseWriter, r *http.Request, id
 	ap := s.procs[id]
 	busy := ap != nil && !ap.hasPendingError() && !ap.wasAborted()
 	s.mu.Unlock()
+	if ap != nil && !busy {
+		select {
+		case <-ap.done:
+		case <-r.Context().Done():
+			writeJSONError(w, http.StatusRequestTimeout, r.Context().Err().Error())
+			return
+		case <-time.After(5 * time.Second):
+		}
+	}
 	rec, ok := s.store.Get(id)
 	if ok && rec.Subagent {
 		writeJSONError(w, 409, errSubagentSessionReadOnly.Error())
@@ -610,6 +620,19 @@ func (s *Service) forgetOpenCodeMappings(id string, rec SessionRecord, ap *activ
 		deletePrefixedKeys(&s.stoppedTools, prefixes)
 		deletePrefixedKeys(&s.promptReceipts, prefixes)
 		deletePrefixedKeys(&s.cliSystemDelivered, prefixes)
+	}
+	projectClean := filepath.Clean(strings.TrimSpace(rec.ProjectDir))
+	rootClean := filepath.Clean(strings.TrimSpace(s.rootDir))
+	dropWarmedIfIsolated := func(dir string) {
+		clean := filepath.Clean(strings.TrimSpace(dir))
+		if clean == "" || clean == "." || clean == projectClean || clean == rootClean {
+			return
+		}
+		s.forgetWarmedDirectory(clean)
+	}
+	dropWarmedIfIsolated(rec.WorktreePath)
+	for _, d := range rec.OpenCodeDirectories {
+		dropWarmedIfIsolated(d)
 	}
 }
 

@@ -2,11 +2,10 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, Show, untrack } from "solid-js";
 import {
   ArrowLeft, Bot, CheckCircle2, ChevronDown, ChevronUp, ExternalLink,
-  LoaderCircle, RotateCcw, ShieldAlert, Square, X,
+  LoaderCircle, ShieldAlert, Square, X,
 } from "lucide-solid";
 import {
-  resumeAllInterruptedSubagents, resumeSubagentTask, selectSession, stopSessionTask,
-  workspace,
+  selectSession, stopSessionTask, workspace,
 } from "../../store/workspace";
 import { DiffChanges, Spinner } from "../icons";
 import { t } from "../../i18n";
@@ -23,7 +22,6 @@ export {
 export default function AgentStackPill() {
   const [expanded, setExpanded] = createSignal(false);
   const [stoppingID, setStoppingID] = createSignal<string | null>(null);
-  const [resumingID, setResumingID] = createSignal<string | null>(null);
   const [dismissedSigBySession, setDismissedSigBySession] = createSignal<Record<string, string>>({});
   const [justFinishedBySession, setJustFinishedBySession] = createSignal<Record<string, boolean>>({});
   const wasRunningSessions = new Set<string>();
@@ -54,18 +52,9 @@ export default function AgentStackPill() {
   const stackSignature = createMemo(() =>
     subagents().map((s) => `${s.sessionID}:${s.status}`).join("|")
   );
-  const isActionable = createMemo(() => {
-    const rid = rootID();
-    const hasExplicitInterrupt =
-      Boolean(rid && workspace.interruptedBySession[rid]) ||
-      interruptedList().some((s) => Boolean(workspace.interruptedBySession[s.sessionID]));
-    return (
-      runningCount() > 0 ||
-      attentionCount() > 0 ||
-      isViewingSubagent() ||
-      (hasExplicitInterrupt && interruptedList().length > 0)
-    );
-  });
+  const isActionable = createMemo(
+    () => runningCount() > 0 || attentionCount() > 0 || isViewingSubagent()
+  );
   const isAllDone = createMemo(() => subagents().length > 0 && !isActionable());
   const isDismissed = createMemo(() => {
     const rid = rootID();
@@ -149,43 +138,6 @@ export default function AgentStackPill() {
       await Promise.all(running.map((s) => stopSessionTask(s.sessionID)));
     } finally {
       setStoppingID(null);
-    }
-  };
-
-  const handleResumeOne = async (sub: SubagentStackItem) => {
-    const pid = rootID();
-    if (!pid || resumingID()) return;
-    setResumingID(sub.sessionID);
-    try {
-      if (isViewingSubagent()) await selectSession(pid);
-      await resumeSubagentTask({
-        parentSessionID: pid,
-        childSessionID: sub.sessionID,
-        agentType: sub.agentType,
-        description: sub.description,
-      });
-    } finally {
-      setResumingID(null);
-    }
-  };
-
-  const handleResumeAll = async () => {
-    const pid = rootID();
-    const list = interruptedList();
-    if (!pid || list.length === 0 || resumingID()) return;
-    setResumingID("all");
-    try {
-      if (isViewingSubagent()) await selectSession(pid);
-      await resumeAllInterruptedSubagents(
-        pid,
-        list.map((s) => ({
-          childSessionID: s.sessionID,
-          agentType: s.agentType,
-          description: s.description,
-        }))
-      );
-    } finally {
-      setResumingID(null);
     }
   };
 
@@ -311,23 +263,6 @@ export default function AgentStackPill() {
                 </span>
               </div>
               <div class="flex items-center gap-1.5">
-                <Show when={interruptedList().length > 0 && runningCount() === 0}>
-                  <button
-                    type="button"
-                    disabled={!!resumingID()}
-                    onClick={() => void handleResumeAll()}
-                    class="inline-flex items-center gap-1 rounded-md border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2 py-0.5 text-[11px] font-medium text-[var(--accent-primary)] hover:opacity-90 cursor-pointer"
-                    title={t("timeline.resumeSubagentTooltip")}
-                  >
-                    <RotateCcw size={10} />
-                    <span>
-                      {interruptedList().length > 1
-                        ? t("timeline.resumeAllSubagentsBtn", { count: interruptedList().length })
-                        : t("timeline.resumeSubagentBtn")}
-                    </span>
-                  </button>
-                </Show>
-
                 <Show when={runningCount() > 1}>
                   <button
                     type="button"
@@ -421,19 +356,6 @@ export default function AgentStackPill() {
                         class="flex items-center gap-1.5 shrink-0"
                         onClick={(e) => e.stopPropagation()}
                       >
-                        <Show when={sub.status === "interrupted"}>
-                          <button
-                            type="button"
-                            disabled={!!resumingID()}
-                            onClick={() => void handleResumeOne(sub)}
-                            class="inline-flex items-center gap-1 rounded border border-[var(--accent-border)] bg-[var(--accent-surface)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--accent-primary)] hover:opacity-90 cursor-pointer"
-                            title={t("timeline.resumeSubagentTooltip")}
-                          >
-                            <RotateCcw size={9.5} />
-                            <span>{t("timeline.resumeSubagentBtn")}</span>
-                          </button>
-                        </Show>
-
                         <Show when={sub.status === "running"}>
                           <button
                             type="button"

@@ -279,7 +279,10 @@ export function focusFirstAttentionSession(targetSessionID?: string, directory?:
     (s) =>
       !s.parentID &&
       !isSessionArchived(s) &&
-      Boolean(workspace.unreadCompletedBySession[s.id] || workspace.interruptedBySession[s.id])
+      Boolean(
+        workspace.unreadCompletedBySession[s.id] ||
+          workspace.interruptedBySession[s.id] === "paused"
+      )
   );
   if (candidate) {
     openSessionDeepLink({

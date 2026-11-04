@@ -3,6 +3,7 @@ import type { MessageInfo } from "../services/sse-types";
 import {
   estimateSessionFullToolOutputBytes,
   forgetSessionToolOutputs,
+  forgetSubagentLinks,
   normalizeMessagePartInPlace,
   orderSameStepReasoningPartsInPlace,
 } from "./message-lookup";
@@ -129,6 +130,7 @@ export function trimSessionTranscripts(
   }
   if (evicted.length) {
     forgetSessionToolOutputs(evicted);
+    forgetSubagentLinks(evicted);
     setWorkspace(produce((state) => {
       for (const id of evicted) {
         invalidateSessionDiffReads(id);

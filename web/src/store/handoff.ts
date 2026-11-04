@@ -65,7 +65,7 @@ export async function importExternalSession(req: ExternalSessionImportRequest): 
   const { resolvedProviderID, resolvedModelID } = res;
   if (resolvedProviderID && resolvedModelID &&
       workspace.providers.some((p) => p.id === resolvedProviderID && Boolean(p.models?.[resolvedModelID]))) {
-    selectModel({ providerID: resolvedProviderID, modelID: resolvedModelID });
+    selectModel({ providerID: resolvedProviderID, modelID: resolvedModelID }, false);
   }
   return null;
 }
