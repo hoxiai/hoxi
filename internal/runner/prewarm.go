@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -19,18 +20,82 @@ const (
 	projectPrewarmRetry = 3 * time.Second
 	// projectPrewarmTimeout bounds a single directory's warm request.
 	projectPrewarmTimeout = 5 * time.Second
+	// indexPrewarmTimeout bounds a single directory's background index warm call.
+	indexPrewarmTimeout = 15 * time.Second
+	// maxPrewarmIndexRoots caps automatic startup index prewarming to match the
+	// in-memory code-index LRU capacity so idle projects do not thrash cache or disk.
+	maxPrewarmIndexRoots = 8
 )
 
-// SetDirectoryWarmer registers an optional hook (such as codeindex.Service.Status)
-// that warms workspace indexes in the background when project roots or new
-// session worktrees are provisioned.
+// SetDirectoryWarmer registers an optional hook that warms workspace indexes in
+// the background when project roots or new session worktrees are provisioned.
 func (s *Service) SetDirectoryWarmer(fn func(directory string)) {
+	if fn == nil {
+		s.SetDirectoryWarmerContext(nil)
+		return
+	}
+	s.SetDirectoryWarmerContext(func(ctx context.Context, directory string) {
+		if ctx != nil && ctx.Err() != nil {
+			return
+		}
+		fn(directory)
+	})
+}
+
+// SetDirectoryWarmerContext registers a context-aware directory warmer hook
+// (such as codeindex.Service.StatusContext) bounded by indexPrewarmTimeout.
+func (s *Service) SetDirectoryWarmerContext(fn func(ctx context.Context, directory string)) {
 	if s == nil {
 		return
 	}
 	s.mu.Lock()
 	s.directoryWarmer = fn
 	s.mu.Unlock()
+	s.warmedDirs.Range(func(dir string, _ bool) bool {
+		s.warmedDirs.Delete(dir)
+		return true
+	})
+}
+
+func (s *Service) claimIndexPrewarm(directory string, enforceRootCap bool) bool {
+	clean := filepath.Clean(strings.TrimSpace(directory))
+	if clean == "" || clean == "." {
+		return false
+	}
+	if _, already := s.warmedDirs.Load(clean); already {
+		return false
+	}
+	if enforceRootCap {
+		count := 0
+		s.warmedDirs.Range(func(_ string, _ bool) bool {
+			count++
+			return count < maxPrewarmIndexRoots
+		})
+		if count >= maxPrewarmIndexRoots {
+			return false
+		}
+	}
+	_, loaded := s.warmedDirs.LoadOrStore(clean, true)
+	return !loaded
+}
+
+func (s *Service) runDirectoryWarmerOnce(ctx context.Context, directory string, enforceRootCap bool) {
+	dir := strings.TrimSpace(directory)
+	if s == nil || dir == "" || ctx == nil || ctx.Err() != nil {
+		return
+	}
+	s.mu.Lock()
+	warmer := s.directoryWarmer
+	s.mu.Unlock()
+	if warmer == nil {
+		return
+	}
+	if !s.claimIndexPrewarm(dir, enforceRootCap) {
+		return
+	}
+	warmCtx, cancel := context.WithTimeout(ctx, indexPrewarmTimeout)
+	defer cancel()
+	warmer(warmCtx, dir)
 }
 
 func (s *Service) warmDirectoryAsync(directory string) {
@@ -45,15 +110,11 @@ func (s *Service) warmDirectoryAsync(directory string) {
 	if warmer == nil || ctx == nil || ctx.Err() != nil {
 		return
 	}
-	go func() {
-		if ctx.Err() != nil {
-			return
-		}
-		warmer(dir)
-	}()
+	go s.runDirectoryWarmerOnce(ctx, dir, false)
 }
 
-// StartProjectPrewarm keeps the OpenCode daemon's per-directory caches warm.
+// StartProjectPrewarm keeps the OpenCode daemon's per-directory caches warm
+// and schedules a decoupled one-shot index prewarm for active project roots.
 //
 // The daemon lazily boots an instance per directory (about half a second even
 // for an empty directory), and the unified /api/hoxi/sessions listing always
@@ -71,7 +132,37 @@ func (s *Service) StartProjectPrewarm(ctx context.Context) {
 	s.mu.Lock()
 	s.prewarmCtx = ctx
 	s.mu.Unlock()
+	go s.prewarmIndexRoots(ctx)
 	go s.prewarmLoop(ctx)
+}
+
+func (s *Service) prewarmIndexRoots(ctx context.Context) {
+	if ctx == nil || ctx.Err() != nil {
+		return
+	}
+	s.mu.Lock()
+	warmer := s.directoryWarmer
+	s.mu.Unlock()
+	if warmer == nil {
+		return
+	}
+	enumerator, ok := s.projectResolver.(projectEnumerator)
+	if !ok {
+		return
+	}
+	for _, root := range enumerator.AllProjectRoots() {
+		if ctx.Err() != nil {
+			return
+		}
+		dir := strings.TrimSpace(root)
+		if dir == "" {
+			continue
+		}
+		if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+			continue
+		}
+		s.runDirectoryWarmerOnce(ctx, dir, true)
+	}
 }
 
 func (s *Service) prewarmLoop(ctx context.Context) {
@@ -97,10 +188,7 @@ func (s *Service) prewarmProjectRoots(ctx context.Context) bool {
 	if ctx.Err() != nil {
 		return true
 	}
-	s.mu.Lock()
-	warmer := s.directoryWarmer
-	s.mu.Unlock()
-	if s.openCode == nil && warmer == nil {
+	if s.openCode == nil {
 		return true
 	}
 	enumerator, ok := s.projectResolver.(projectEnumerator)
@@ -116,17 +204,12 @@ func (s *Service) prewarmProjectRoots(ctx context.Context) bool {
 		if info, err := os.Stat(dir); err != nil || !info.IsDir() {
 			continue
 		}
-		if warmer != nil && ctx.Err() == nil {
-			warmer(dir)
-		}
-		if s.openCode != nil {
-			attempted = true
-			warmCtx, cancel := context.WithTimeout(ctx, projectPrewarmTimeout)
-			_, _, err := s.openCodeRaw(warmCtx, http.MethodGet, "/session", directoryQuery(dir, url.Values{"limit": {"200"}}), nil)
-			cancel()
-			if err == nil {
-				answered = true
-			}
+		attempted = true
+		warmCtx, cancel := context.WithTimeout(ctx, projectPrewarmTimeout)
+		_, _, err := s.openCodeRaw(warmCtx, http.MethodGet, "/session", directoryQuery(dir, url.Values{"limit": {"200"}}), nil)
+		cancel()
+		if err == nil {
+			answered = true
 		}
 		if ctx.Err() != nil {
 			break

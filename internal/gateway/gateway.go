@@ -206,8 +206,8 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 	}
 	g.browser.SetSessionResolver(runnerSvc.ResolveBrowserSession)
 	if g.codeIndex != nil {
-		runnerSvc.SetDirectoryWarmer(func(dir string) {
-			_, _ = g.codeIndex.Status(dir)
+		runnerSvc.SetDirectoryWarmerContext(func(ctx context.Context, dir string) {
+			_, _ = g.codeIndex.StatusContext(ctx, dir)
 		})
 	}
 	if g.workApps != nil {

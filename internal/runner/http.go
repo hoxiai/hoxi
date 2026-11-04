@@ -51,8 +51,9 @@ type Service struct {
 	stoppedTools    syncMap[string, bool] // sessionID\x00(part|call):id -> bool
 	skillResolver   func(ctx context.Context, directory, sessionID string, sel SkillSelection) (ResolvedSkill, error)
 	projectResolver ProjectResolver
-	directoryWarmer func(directory string)
+	directoryWarmer func(ctx context.Context, directory string)
 	prewarmCtx      context.Context
+	warmedDirs      syncMap[string, bool]
 	// permissionRules returns OpenCode's `permission` block; onPolicySaved
 	// keeps OpenCode asking Hoxi after the approval policy changes.
 	permissionRules func() map[string]interface{}

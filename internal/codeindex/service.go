@@ -1,6 +1,7 @@
 package codeindex
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -146,11 +147,18 @@ func (s *Service) SearchWithPath(directory, query, pathPrefix string, limit int)
 }
 
 func (s *Service) Status(directory string) (StatusInfo, error) {
+	return s.StatusContext(context.Background(), directory)
+}
+
+func (s *Service) StatusContext(ctx context.Context, directory string) (StatusInfo, error) {
+	if ctx != nil && ctx.Err() != nil {
+		return StatusInfo{}, ctx.Err()
+	}
 	directory, err := canonicalDir(directory)
 	if err != nil {
 		return StatusInfo{}, err
 	}
-	c, err := s.ensure(directory)
+	c, err := s.ensureIndexContext(ctx, directory, false)
 	if err != nil {
 		return StatusInfo{}, err
 	}
@@ -162,7 +170,7 @@ func (s *Service) Refresh(directory string) (StatusInfo, error) {
 	if err != nil {
 		return StatusInfo{}, err
 	}
-	c, err := s.ensureIndex(directory, true)
+	c, err := s.ensureIndexContext(context.Background(), directory, true)
 	if err != nil {
 		return StatusInfo{}, err
 	}
@@ -196,11 +204,18 @@ func (s *Service) Evict(directory string) {
 }
 
 func (s *Service) ensure(directory string) (*cachedIndex, error) {
-	return s.ensureIndex(directory, false)
+	return s.ensureIndexContext(context.Background(), directory, false)
 }
 
 func (s *Service) ensureIndex(directory string, forceRebuild bool) (*cachedIndex, error) {
+	return s.ensureIndexContext(context.Background(), directory, forceRebuild)
+}
+
+func (s *Service) ensureIndexContext(ctx context.Context, directory string, forceRebuild bool) (*cachedIndex, error) {
 	for {
+		if ctx != nil && ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		s.mu.Lock()
 		now := s.now()
 		if !forceRebuild {
@@ -217,15 +232,24 @@ func (s *Service) ensureIndex(directory string, forceRebuild bool) (*cachedIndex
 		}
 		if flight := s.inflight[directory]; flight != nil {
 			s.mu.Unlock()
-			<-flight.done
+			if ctx != nil {
+				select {
+				case <-flight.done:
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				}
+			} else {
+				<-flight.done
+			}
 			if !forceRebuild || flight.forceRebuild {
 				return flight.cached, flight.err
 			}
 			continue
 		}
+		prevCached := s.cache[directory]
 		var previous *Index
-		if cached := s.cache[directory]; cached != nil {
-			previous = cached.index
+		if prevCached != nil {
+			previous = prevCached.index
 		}
 		flight := &indexFlight{
 			done:         make(chan struct{}),
@@ -243,16 +267,24 @@ func (s *Service) ensureIndex(directory string, forceRebuild bool) (*cachedIndex
 			}
 		}
 		if cached == nil {
+			hadPrevious := previous != nil
 			if previous == nil {
 				previous = &Index{Files: map[string]*FileRecord{}}
 			}
 			var index *Index
-			index, err = s.build(directory, previous)
-			if err == nil {
+			var changed bool
+			index, changed, err = s.build(ctx, directory, previous)
+			if err == nil && (forceRebuild || !hadPrevious || changed) {
 				err = s.save(index)
 			}
 			if err == nil {
-				cached = buildDocs(index)
+				if !forceRebuild && !changed && prevCached != nil {
+					reused := *prevCached
+					reused.index = index
+					cached = &reused
+				} else {
+					cached = buildDocs(index)
+				}
 			}
 		}
 

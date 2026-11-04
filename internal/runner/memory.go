@@ -107,18 +107,105 @@ func headTailExcerpt(s string, maxRunes int) string {
 }
 
 func summarizeUserMessage(txt string, maxRunes int) string {
+	return summarizeUserMessageExcluding(txt, maxRunes, nil)
+}
+
+func summarizeUserMessageExcluding(txt string, maxRunes int, exclude map[string]bool) string {
 	excerpt := redactMemorySecrets(headTailExcerpt(txt, maxRunes))
 	clauses := extractConstraintClauses(txt)
 	var missing []string
 	for _, c := range clauses {
-		if !strings.Contains(excerpt, c) {
-			missing = append(missing, c)
+		if exclude[c] || strings.Contains(excerpt, c) {
+			continue
 		}
+		missing = append(missing, c)
 	}
 	if len(missing) > 0 {
 		excerpt += " [Constraints: " + strings.Join(missing, "; ") + "]"
 	}
 	return excerpt
+}
+
+func truncateUTF8Bytes(s string, maxBytes int) string {
+	if maxBytes <= 0 || len(s) <= maxBytes {
+		return s
+	}
+	const ellipsis = "…"
+	if maxBytes <= len(ellipsis) {
+		return s[:maxBytes]
+	}
+	target := maxBytes - len(ellipsis)
+	cut := 0
+	for idx := range s {
+		if idx > target {
+			break
+		}
+		cut = idx
+	}
+	return strings.TrimRight(s[:cut], " \t\r\n") + ellipsis
+}
+
+func formatHandoffConstraints(constraints []string, maxBytes int) (string, map[string]bool) {
+	included := make(map[string]bool, len(constraints))
+	if len(constraints) == 0 || maxBytes <= 0 {
+		return "", included
+	}
+	const heading = "Active user constraints (must be respected):\n"
+	limit := maxBytes - len(heading) - 1
+	if limit <= 0 {
+		return "", included
+	}
+	totalBytes := 0
+	for _, c := range constraints {
+		totalBytes += 2 + len(c) + 1
+	}
+	kept := constraints
+	if totalBytes > limit {
+		var tail []string
+		used := 0
+		first := constraints[0]
+		keepFirst := len(constraints) > 1 && (2+len(first)+1)*2 <= limit
+		if keepFirst {
+			used += 2 + len(first) + 1
+		}
+		for i := len(constraints) - 1; i >= 0; i-- {
+			if keepFirst && i == 0 {
+				break
+			}
+			lineLen := 2 + len(constraints[i]) + 1
+			if used+lineLen > limit {
+				if len(tail) == 0 && !keepFirst {
+					short := truncateUTF8Bytes(constraints[i], limit-3)
+					if short != "" {
+						tail = append(tail, short)
+					}
+				}
+				break
+			}
+			tail = append(tail, constraints[i])
+			used += lineLen
+		}
+		kept = make([]string, 0, len(tail)+1)
+		if keepFirst {
+			kept = append(kept, first)
+		}
+		for i := len(tail) - 1; i >= 0; i-- {
+			kept = append(kept, tail[i])
+		}
+	}
+	if len(kept) == 0 {
+		return "", included
+	}
+	var b strings.Builder
+	b.WriteString(heading)
+	for _, c := range kept {
+		included[c] = true
+		b.WriteString("- ")
+		b.WriteString(c)
+		b.WriteByte('\n')
+	}
+	b.WriteByte('\n')
+	return b.String(), included
 }
 
 func collectSessionConstraints(turns []MessageTurn) []string {
@@ -225,28 +312,47 @@ func stripVolatileMemoryHeader(md string) string {
 	return strings.TrimSpace(volatileUpdatedLine.ReplaceAllString(md, ""))
 }
 
-// dedupHandoffMemorySection6 collapses Section 6 (All User Messages) or repeated
-// intermediate user bullets in Section 1 (Goals) when runtimeContext(rec) is also
-// being appended in the same handoff prompt, so the last 10 user messages are not
-// serialized twice back-to-back.
+// dedupHandoffMemorySection6 collapses Section 6 (All User Messages), strips
+// duplicated user constraints in Section 1 (Primary Request and Intent), and
+// collapses repeated intermediate user bullets in Section 1 (Goals) when
+// runtimeContext(rec) is appended in the same handoff prompt.
 func dedupHandoffMemorySection6(md string) string {
 	const sec6 = "## 6. All User Messages\n"
 	const sec7 = "\n## 7."
 	if i := strings.Index(md, sec6); i >= 0 {
 		rest := md[i+len(sec6):]
 		if j := strings.Index(rest, sec7); j >= 0 {
-			return md[:i+len(sec6)] + "- Carried in quoted conversation history below.\n" + rest[j:]
+			md = md[:i+len(sec6)] + "- Carried in quoted conversation history below.\n" + rest[j:]
+		}
+	}
+	const sec1Primary = "## 1. Primary Request and Intent\n"
+	const sec2 = "\n## 2."
+	if i := strings.Index(md, sec1Primary); i >= 0 {
+		rest := md[i+len(sec1Primary):]
+		if j := strings.Index(rest, sec2); j >= 0 {
+			var kept []string
+			for _, line := range strings.Split(strings.TrimSpace(rest[:j]), "\n") {
+				if strings.HasPrefix(strings.TrimSpace(line), "- User Constraint:") {
+					continue
+				}
+				if k := strings.Index(line, " [Constraints: "); k > 0 && strings.HasSuffix(line, "]") {
+					line = line[:k]
+				}
+				kept = append(kept, line)
+			}
+			if len(kept) > 0 {
+				md = md[:i+len(sec1Primary)] + strings.Join(kept, "\n") + "\n" + rest[j:]
+			}
 		}
 	}
 	const sec1 = "## 1. Goals\n"
-	const sec2 = "\n## 2."
 	if i := strings.Index(md, sec1); i >= 0 {
 		rest := md[i+len(sec1):]
 		if j := strings.Index(rest, sec2); j >= 0 {
 			lines := strings.Split(strings.TrimSpace(rest[:j]), "\n")
 			if len(lines) > 2 {
 				collapsed := lines[0] + "\n- Carried in quoted conversation history below.\n" + lines[len(lines)-1] + "\n"
-				return md[:i+len(sec1)] + collapsed + rest[j:]
+				md = md[:i+len(sec1)] + collapsed + rest[j:]
 			}
 		}
 	}
@@ -443,7 +549,7 @@ func buildEightDimSessionMarkdown(rec SessionRecord) string {
 					continue
 				}
 				if role == "user" {
-					excerpt := summarizeUserMessage(txt, 260)
+					excerpt := redactMemorySecrets(headTailExcerpt(txt, 260))
 					userMessages = append(userMessages, excerpt)
 					clauses := extractConstraintClauses(txt)
 					for _, clause := range clauses {

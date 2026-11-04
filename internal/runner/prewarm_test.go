@@ -111,3 +111,48 @@ func TestPrewarmProjectRootsRequestsRetryWhenEngineDown(t *testing.T) {
 		t.Fatal("expected retry cadence while the engine is unreachable")
 	}
 }
+
+func TestIndexPrewarmDecoupledFromEngineKeepAliveAndCapped(t *testing.T) {
+	t.Parallel()
+	roots := make([]string, maxPrewarmIndexRoots+4)
+	for i := range roots {
+		roots[i] = t.TempDir()
+	}
+
+	var mu sync.Mutex
+	warmed := map[string]int{}
+	hasDeadline := false
+
+	svc := NewService(t.TempDir(), nil, nil, t.TempDir())
+	svc.ConfigureOpenCode("http://127.0.0.1:1", "pw")
+	svc.SetProjectResolver(projectRootsResolver{roots: roots})
+	svc.SetDirectoryWarmerContext(func(ctx context.Context, dir string) {
+		mu.Lock()
+		warmed[dir]++
+		if _, ok := ctx.Deadline(); ok {
+			hasDeadline = true
+		}
+		mu.Unlock()
+	})
+
+	ctx := context.Background()
+	svc.prewarmIndexRoots(ctx)
+	// Repeated engine keep-alive ticks and second index prewarm passes must not re-index idle roots.
+	_ = svc.prewarmProjectRoots(ctx)
+	_ = svc.prewarmProjectRoots(ctx)
+	svc.prewarmIndexRoots(ctx)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !hasDeadline {
+		t.Fatal("expected directory warmer context to carry a timeout deadline")
+	}
+	if len(warmed) != maxPrewarmIndexRoots {
+		t.Fatalf("expected index prewarm capped at %d roots, got %d", maxPrewarmIndexRoots, len(warmed))
+	}
+	for dir, count := range warmed {
+		if count != 1 {
+			t.Fatalf("expected root %s to be index-warmed once, got %d", dir, count)
+		}
+	}
+}

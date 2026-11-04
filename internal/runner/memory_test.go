@@ -358,3 +358,57 @@ func TestOpenCodeHandoffIncludesSessionMemoryAndSymbolLineQualifiers(t *testing.
 		t.Fatalf("expected OpenCode handoff context to remain 100%% byte-identical across subsequent turns")
 	}
 }
+
+func TestOpenCodeHandoffRespectsBudgetAndDeduplicates48Constraints(t *testing.T) {
+	t.Parallel()
+	var turns []MessageTurn
+	for i := 1; i <= 48; i++ {
+		turns = append(turns,
+			MessageTurn{
+				Info: MessageInfo{ID: fmt.Sprintf("u_c_%d", i), Role: "user"},
+				Parts: []MessagePart{{
+					Type: "text",
+					Text: fmt.Sprintf("Constraint %d: 严禁修改核心模块 module_alpha_%02d 的公开接口签名与序列化协议字段，必须保持跨版本严格兼容且不得删除任何现有验证分支 (%s)", i, i, strings.Repeat("详细上下文说明", 12)),
+				}},
+			},
+			MessageTurn{
+				Info: MessageInfo{ID: fmt.Sprintf("a_c_%d", i), Role: "assistant"},
+				Parts: []MessagePart{
+					{
+						Type: "tool",
+						Tool: "edit",
+						State: &ToolState{
+							Status: "completed",
+							Input:  map[string]interface{}{"filePath": fmt.Sprintf("internal/mod_%02d/service.go", i)},
+							Output: "patched",
+						},
+					},
+					{Type: "text", Text: fmt.Sprintf("Recorded constraint %d and updated service %d with full compatibility checks.", i, i)},
+				},
+			},
+		)
+	}
+	rec := SessionRecord{
+		ID:               "ses_oc_budget_48",
+		Runtime:          "opencode",
+		ExternalID:       "ses_oc_ext_48",
+		WorktreePath:     "/tmp/proj/.hoxi/worktrees/ses_oc_budget_48",
+		Branch:           "hoxi/ses_oc_budget_48",
+		ContextPending:   false,
+		ContextTurnCount: len(turns),
+		Turns:            turns,
+	}
+	ctx := runtimeContext(rec)
+	if len(ctx) > maxHandoffContextBytes {
+		t.Fatalf("expected OpenCode handoff context len <= %d, got %d", maxHandoffContextBytes, len(ctx))
+	}
+	if !strings.Contains(ctx, "<session_handoff_memory>") {
+		t.Fatalf("expected <session_handoff_memory> in OpenCode handoff context")
+	}
+	if strings.Contains(ctx, "- User Constraint:") {
+		t.Fatalf("expected <session_handoff_memory> not to duplicate - User Constraint lines when Active user constraints section is present")
+	}
+	if !strings.Contains(ctx, "module_alpha_48") {
+		t.Fatalf("expected latest constraint to survive within budget, got len=%d", len(ctx))
+	}
+}

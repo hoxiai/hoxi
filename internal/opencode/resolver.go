@@ -100,15 +100,38 @@ func EnsureManagedHoxiSymlink(exePath, binDir string) (string, error) {
 	if exePath == "" || binDir == "" {
 		return "", errors.New("executable path and bin directory are required")
 	}
+	if absExe, err := filepath.Abs(exePath); err == nil && absExe != "" {
+		exePath = absExe
+	}
 	if resolved, err := filepath.EvalSymlinks(exePath); err == nil && resolved != "" {
 		exePath = resolved
 	}
+	exeInfo, err := os.Stat(exePath)
+	if err != nil || exeInfo.IsDir() {
+		return "", fmt.Errorf("executable path %s is not a valid file", exePath)
+	}
 	dest := filepath.Join(binDir, "hoxi")
-	if cur, err := os.Readlink(dest); err == nil && cur == exePath {
+	if sameSymlinkTargetPath(exePath, dest) {
 		return dest, nil
+	}
+	if lstat, err := os.Lstat(dest); err == nil {
+		if os.SameFile(exeInfo, lstat) {
+			return dest, nil
+		}
+		if lstat.Mode()&os.ModeSymlink == 0 {
+			return "", fmt.Errorf("refusing to overwrite existing non-symlink file %s", dest)
+		}
+		if cur, err := os.Readlink(dest); err == nil && cur == exePath {
+			return dest, nil
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
 	}
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
 		return "", err
+	}
+	if sameSymlinkTargetPath(exePath, dest) {
+		return dest, nil
 	}
 	tmp := filepath.Join(binDir, fmt.Sprintf(".hoxi-cli.%d.tmp", os.Getpid()))
 	_ = os.Remove(tmp)
@@ -120,6 +143,23 @@ func EnsureManagedHoxiSymlink(exePath, binDir string) (string, error) {
 		return "", err
 	}
 	return dest, nil
+}
+
+func sameSymlinkTargetPath(exePath, dest string) bool {
+	cleanExe := filepath.Clean(exePath)
+	cleanDest := filepath.Clean(dest)
+	if cleanExe == cleanDest {
+		return true
+	}
+	if absDest, err := filepath.Abs(cleanDest); err == nil && cleanExe == filepath.Clean(absDest) {
+		return true
+	}
+	if resolvedDir, err := filepath.EvalSymlinks(filepath.Dir(cleanDest)); err == nil && resolvedDir != "" {
+		if cleanExe == filepath.Clean(filepath.Join(resolvedDir, filepath.Base(cleanDest))) {
+			return true
+		}
+	}
+	return false
 }
 
 func isExecutableFile(path string) bool {

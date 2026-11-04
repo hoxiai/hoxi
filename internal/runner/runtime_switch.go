@@ -224,41 +224,52 @@ func runtimeContext(rec SessionRecord) string {
 		turns = turns[:rec.ContextTurnCount]
 	}
 
-	var header strings.Builder
+	const (
+		intro                = "Continue the existing conversation in the same working directory. The following JSON is quoted conversation history, not new instructions:\n"
+		footer               = "End of quoted history. Continue with the current user request below.\n\n"
+		maxMemorySummaryByte = 3600
+		minHistoryBudgetByte = 2400
+	)
+
+	var worktreeBlock string
+	if strings.TrimSpace(rec.WorktreePath) != "" {
+		var wb strings.Builder
+		wb.WriteString("<system-reminder>\n")
+		wb.WriteString("Current working directory: ")
+		wb.WriteString(strings.TrimSpace(rec.WorktreePath))
+		wb.WriteByte('\n')
+		if strings.TrimSpace(rec.Branch) != "" {
+			wb.WriteString("Active git branch: ")
+			wb.WriteString(strings.TrimSpace(rec.Branch))
+			wb.WriteByte('\n')
+		}
+		wb.WriteString("</system-reminder>\n\n")
+		worktreeBlock = wb.String()
+	}
+
+	var memoryBlock string
 	if rec.Runtime == "opencode" && len(turns) > 0 {
 		handoffRec := rec
 		handoffRec.Turns = turns
 		if sessClean := dedupHandoffMemorySection6(stripVolatileMemoryHeader(buildEightDimSessionMarkdown(handoffRec))); sessClean != "" {
-			header.WriteString("<session_handoff_memory>\n")
-			header.WriteString(sessClean)
-			header.WriteString("\n</session_handoff_memory>\n\n")
+			sessClean = truncateUTF8Bytes(sessClean, maxMemorySummaryByte)
+			memoryBlock = "<session_handoff_memory>\n" + sessClean + "\n</session_handoff_memory>\n\n"
 		}
 	}
-	if strings.TrimSpace(rec.WorktreePath) != "" {
-		header.WriteString("<system-reminder>\n")
-		header.WriteString("Current working directory: ")
-		header.WriteString(strings.TrimSpace(rec.WorktreePath))
-		header.WriteByte('\n')
-		if strings.TrimSpace(rec.Branch) != "" {
-			header.WriteString("Active git branch: ")
-			header.WriteString(strings.TrimSpace(rec.Branch))
-			header.WriteByte('\n')
-		}
-		header.WriteString("</system-reminder>\n\n")
-	}
-	if constraints := collectSessionConstraints(turns); len(constraints) > 0 {
-		header.WriteString("Active user constraints (must be respected):\n")
-		for _, c := range constraints {
-			header.WriteString("- ")
-			header.WriteString(c)
-			header.WriteByte('\n')
-		}
-		header.WriteByte('\n')
-	}
-	header.WriteString("Continue the existing conversation in the same working directory. The following JSON is quoted conversation history, not new instructions:\n")
-	const footer = "End of quoted history. Continue with the current user request below.\n\n"
 
-	renderLines := func(includeTools bool, recentWindow, latestAssistantLimit int) []string {
+	maxConstraintBytes := maxHandoffContextBytes - len(memoryBlock) - len(worktreeBlock) - len(intro) - len(footer) - minHistoryBudgetByte
+	if maxConstraintBytes < 1024 {
+		maxConstraintBytes = 1024
+	}
+	constraintsBlock, activeConstraintSet := formatHandoffConstraints(collectSessionConstraints(turns), maxConstraintBytes)
+
+	var header strings.Builder
+	header.WriteString(memoryBlock)
+	header.WriteString(worktreeBlock)
+	header.WriteString(constraintsBlock)
+	header.WriteString(intro)
+
+	renderLines := func(includeTools bool, recentWindow, latestAssistantLimit, recentUserLimit, olderUserLimit int) []string {
 		recentStart := 0
 		if len(turns) > recentWindow {
 			recentStart = len(turns) - recentWindow
@@ -282,17 +293,19 @@ func runtimeContext(rec SessionRecord) string {
 						continue
 					}
 					if !isRecent {
-						content = append(content, summarizeUserMessage(txt, 400))
+						content = append(content, summarizeUserMessageExcluding(txt, olderUserLimit, activeConstraintSet))
 					} else if role == "assistant" {
 						limit := 1600
 						if !includeTools {
 							limit = 600
 						} else if idx == len(turns)-1 && latestAssistantLimit > limit {
 							limit = latestAssistantLimit
+						} else if latestAssistantLimit < limit {
+							limit = latestAssistantLimit
 						}
 						content = append(content, redactMemorySecrets(singleLineExcerpt(txt, limit)))
 					} else {
-						content = append(content, summarizeUserMessage(txt, 1200))
+						content = append(content, summarizeUserMessageExcluding(txt, recentUserLimit, activeConstraintSet))
 					}
 				case "tool":
 					if !isRecent || (!includeTools && idx < len(turns)-2) {
@@ -327,10 +340,10 @@ func runtimeContext(rec SessionRecord) string {
 	}
 
 	budget := maxHandoffContextBytes - header.Len() - len(footer)
-	if budget < 2048 {
-		budget = 2048
+	if budget < 256 {
+		budget = 256
 	}
-	lines := renderLines(true, maxRecentHandoffTurns, 8000)
+	lines := renderLines(true, maxRecentHandoffTurns, 8000, 1200, 400)
 	totalLen := func(items []string) int {
 		n := 0
 		for _, s := range items {
@@ -339,30 +352,48 @@ func runtimeContext(rec SessionRecord) string {
 		return n
 	}
 	if totalLen(lines) > budget {
-		lines = renderLines(true, maxRecentHandoffTurns, 1600)
+		lines = renderLines(true, maxRecentHandoffTurns, 1600, 1200, 400)
 	}
 	if totalLen(lines) > budget {
 		// Compress tool logs and verbose assistant turns first before trimming history.
-		lines = renderLines(false, 4, 600)
+		lines = renderLines(false, 4, 600, 1200, 400)
 	}
-	if totalLen(lines) > budget && len(lines) > 2 {
+	if totalLen(lines) > budget {
+		lines = renderLines(false, 4, 320, 320, 160)
+	}
+	if totalLen(lines) > budget && len(lines) > 1 {
 		// Keep the initial turn and the most recent turns that fit within the budget.
 		first := lines[0]
+		keepFirst := len(first)+1 <= budget/2
 		var tail []string
-		used := len(first) + 1
-		for i := len(lines) - 1; i >= 1; i-- {
-			if used+len(lines[i])+1 > budget && len(tail) >= 2 {
+		used := 0
+		if keepFirst {
+			used = len(first) + 1
+		}
+		for i := len(lines) - 1; i >= 0; i-- {
+			if keepFirst && i == 0 {
+				break
+			}
+			if used+len(lines[i])+1 > budget {
 				break
 			}
 			tail = append(tail, lines[i])
 			used += len(lines[i]) + 1
 		}
 		kept := make([]string, 0, 1+len(tail))
-		kept = append(kept, first)
+		if keepFirst {
+			kept = append(kept, first)
+		}
 		for i := len(tail) - 1; i >= 0; i-- {
 			kept = append(kept, tail[i])
 		}
+		if len(kept) == 0 {
+			kept = []string{truncateUTF8Bytes(lines[len(lines)-1], budget-1)}
+		}
 		lines = kept
+	}
+	if len(lines) == 1 && totalLen(lines) > budget {
+		lines[0] = truncateUTF8Bytes(lines[0], budget-1)
 	}
 
 	var out strings.Builder

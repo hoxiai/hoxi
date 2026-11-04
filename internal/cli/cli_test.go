@@ -126,6 +126,25 @@ func TestInstallSymlink(t *testing.T) {
 	if !strings.HasSuffix(target, "Hoxi") {
 		t.Fatalf("unexpected symlink target: %s", target)
 	}
+
+	// Protecting a real standalone binary at <binDir>/hoxi from self-symlink overwrite.
+	realDir := filepath.Join(tmpDir, "real-bin")
+	if err := os.MkdirAll(realDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	realExe := filepath.Join(realDir, "hoxi")
+	if err := os.WriteFile(realExe, []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := InstallSymlink(realExe, realDir); err != nil || got != realExe {
+		t.Fatalf("InstallSymlink(same file) = %q, %v; want %q, nil", got, err, realExe)
+	}
+	if fi, err := os.Lstat(realExe); err != nil || fi.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("expected %s to remain a regular file, mode=%v err=%v", realExe, fi.Mode(), err)
+	}
+	if _, err := InstallSymlink(fakeExe, realDir); err == nil {
+		t.Fatalf("expected InstallSymlink to refuse overwriting existing regular file %s", realExe)
+	}
 }
 
 func TestCLISingleTurnAndREPLWithGateway(t *testing.T) {

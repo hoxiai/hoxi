@@ -463,8 +463,15 @@ func runInstallCLICommand(args []string, stdout, stderr io.Writer) int {
 
 // InstallSymlink creates or updates a `hoxi` symlink pointing to exePath.
 func InstallSymlink(exePath, preferredBinDir string) (string, error) {
-	if resolved, err := filepath.EvalSymlinks(exePath); err == nil {
+	if absExe, err := filepath.Abs(exePath); err == nil && absExe != "" {
+		exePath = absExe
+	}
+	if resolved, err := filepath.EvalSymlinks(exePath); err == nil && resolved != "" {
 		exePath = resolved
+	}
+	exeInfo, err := os.Stat(exePath)
+	if err != nil || exeInfo.IsDir() {
+		return "", fmt.Errorf("executable path %s is not a valid file", exePath)
 	}
 	candidates := []string{}
 	if strings.TrimSpace(preferredBinDir) != "" {
@@ -483,6 +490,23 @@ func InstallSymlink(exePath, preferredBinDir string) (string, error) {
 			continue
 		}
 		dest := filepath.Join(dir, "hoxi")
+		if resolvedDir, err := filepath.EvalSymlinks(dir); err == nil && resolvedDir != "" {
+			if filepath.Clean(filepath.Join(resolvedDir, "hoxi")) == filepath.Clean(exePath) {
+				return dest, nil
+			}
+		}
+		if lstat, err := os.Lstat(dest); err == nil {
+			if os.SameFile(exeInfo, lstat) {
+				return dest, nil
+			}
+			if lstat.Mode()&os.ModeSymlink == 0 {
+				lastErr = fmt.Errorf("refusing to overwrite existing non-symlink file %s", dest)
+				continue
+			}
+			if cur, err := os.Readlink(dest); err == nil && cur == exePath {
+				return dest, nil
+			}
+		}
 		tmp := filepath.Join(dir, ".hoxi-link.tmp")
 		_ = os.Remove(tmp)
 		if err := os.Symlink(exePath, tmp); err != nil {

@@ -520,5 +520,32 @@ func TestEnsureHoxiEngineDataDir(t *testing.T) {
 		if target != wantExe {
 			t.Fatalf("symlink target = %q, want %q", target, wantExe)
 		}
+
+		// When ~/.hoxi/bin/hoxi is already a real executable file, EnsureManagedHoxiSymlink
+		// must never overwrite it with a self-referential symlink or clobber a regular file.
+		standaloneBinDir := filepath.Join(home, "standalone-bin")
+		if err := os.MkdirAll(standaloneBinDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		realBin := filepath.Join(standaloneBinDir, "hoxi")
+		wantBinBytes := []byte("#!/bin/sh\necho real-binary\n")
+		if err := os.WriteFile(realBin, wantBinBytes, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		gotSame, err := EnsureManagedHoxiSymlink(realBin, standaloneBinDir)
+		if err != nil || gotSame != realBin {
+			t.Fatalf("EnsureManagedHoxiSymlink(same file) = %q, %v; want %q, nil", gotSame, err, realBin)
+		}
+		lstat, err := os.Lstat(realBin)
+		if err != nil || lstat.Mode()&os.ModeSymlink != 0 {
+			t.Fatalf("expected %s to remain a regular file, got mode=%v err=%v", realBin, lstat.Mode(), err)
+		}
+		if _, err := EnsureManagedHoxiSymlink(fakeExe, standaloneBinDir); err == nil {
+			t.Fatalf("expected EnsureManagedHoxiSymlink to refuse overwriting existing regular file %s", realBin)
+		}
+		afterBytes, err := os.ReadFile(realBin)
+		if err != nil || !bytes.Equal(afterBytes, wantBinBytes) {
+			t.Fatalf("expected regular file content preserved, got %q (err=%v)", string(afterBytes), err)
+		}
 	}
 }

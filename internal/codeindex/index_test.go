@@ -1,7 +1,9 @@
 package codeindex
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -584,5 +586,53 @@ func TestColdBuildDoesNotBlockWarmDirectorySearch(t *testing.T) {
 	t.Logf("warmSearchDuringColdBuildMs=%.3f", float64(elapsed.Microseconds())/1000)
 	if elapsed > 10*time.Millisecond {
 		t.Fatalf("expected warm search during cold build to complete under 10ms, took %v", elapsed)
+	}
+}
+
+func TestStatusContextHonorsCancellationAndSkipsUnchangedDiskRewrite(t *testing.T) {
+	dir := fixtureWorkspace(t)
+	svc := NewService(t.TempDir())
+	var clock int64 = 1_000_000
+	svc.now = func() int64 { return clock }
+
+	cancelledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := svc.StatusContext(cancelledCtx, dir); !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled from StatusContext, got %v", err)
+	}
+
+	if _, err := svc.Status(dir); err != nil {
+		t.Fatalf("initial Status failed: %v", err)
+	}
+	canon, err := canonicalDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	idxFile := svc.indexPath(canon)
+	firstStat, err := os.Stat(idxFile)
+	if err != nil {
+		t.Fatalf("expected persisted index file: %v", err)
+	}
+	backdated := time.Now().Add(-10 * time.Minute)
+	if err := os.Chtimes(idxFile, backdated, backdated); err != nil {
+		t.Fatal(err)
+	}
+	beforeStat, err := os.Stat(idxFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = firstStat
+
+	// Advance past cacheTTL without changing any workspace files: Status must not rewrite the disk index.
+	clock += cacheTTL + 5000
+	if _, err := svc.Status(dir); err != nil {
+		t.Fatalf("Status after TTL failed: %v", err)
+	}
+	afterStat, err := os.Stat(idxFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !afterStat.ModTime().Equal(beforeStat.ModTime()) {
+		t.Fatalf("expected unchanged workspace after TTL not to rewrite disk index (before=%v after=%v)", beforeStat.ModTime(), afterStat.ModTime())
 	}
 }

@@ -1,6 +1,7 @@
 package codeindex
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"io/fs"
@@ -386,8 +387,9 @@ func indexableFile(path string) bool {
 const maxFilesPerDir = 500
 
 // build walks the workspace and incrementally reuses chunks for unchanged
-// files. It mirrors Kilo's ignore list and file-size bounds.
-func (s *Service) build(directory string, previous *Index) (*Index, error) {
+// files. It mirrors Kilo's ignore list and file-size bounds, and reports
+// whether any indexed file was added, removed, or modified relative to previous.
+func (s *Service) build(ctx context.Context, directory string, previous *Index) (*Index, bool, error) {
 	cfg := s.cfg
 	index := &Index{Version: indexVersion, Directory: directory, BuiltAt: s.now(), Files: map[string]*FileRecord{}}
 	var total int64
@@ -395,7 +397,11 @@ func (s *Service) build(directory string, previous *Index) (*Index, error) {
 	visited := 0
 	maxVisited := max(cfg.MaxFiles*5, 50000)
 	dirCounts := make(map[string]int)
+	changed := previous == nil || previous.Files == nil
 	err := filepath.WalkDir(directory, func(path string, entry fs.DirEntry, err error) error {
+		if ctx != nil && ctx.Err() != nil {
+			return ctx.Err()
+		}
 		if err != nil {
 			return nil
 		}
@@ -460,6 +466,7 @@ func (s *Service) build(directory string, previous *Index) (*Index, error) {
 			index.Files[rel] = &updated
 			return nil
 		}
+		changed = true
 		contentStr := string(raw)
 		chunks := chunkFile(rel, contentStr, cfg)
 		imports := extractFileImports(contentStr)
@@ -469,9 +476,12 @@ func (s *Service) build(directory string, previous *Index) (*Index, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return index, nil
+	if !changed && len(index.Files) != len(previous.Files) {
+		changed = true
+	}
+	return index, changed, nil
 }
 
 func isBinary(raw []byte) bool {
