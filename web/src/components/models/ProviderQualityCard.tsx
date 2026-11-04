@@ -4,7 +4,6 @@ import { Presence } from "../motion/Presence";
 import {
   Activity,
   AlertTriangle,
-  CheckCircle2,
   Clock,
   RotateCcw,
   ShieldAlert,
@@ -132,35 +131,19 @@ export default function ProviderQualityCard(props: { providerID: string }) {
                   </Show>
                 </div>
 
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          <div class="py-2 space-y-1">
-            <div class="text-[11px] font-medium text-[var(--text-secondary)]">
-              {t("models.qualityStabilityScore")}
-            </div>
-            <div class="font-mono text-[15px] text-[var(--text-secondary)]">
-              {formatHealthScore(health().stabilityScore)}
-            </div>
-            <div class="text-[11px] text-[var(--text-muted)]">
-              {t("models.qualityTurnsCount", { count: health().totalTurns })}
-            </div>
-            <p class="text-[11px] text-[var(--text-muted)]">
-              {t("models.qualityStabilityExplanation")}
-            </p>
+        <div class="py-2 space-y-1">
+          <div class="text-[11px] font-medium text-[var(--text-secondary)]">
+            {t("models.qualityStabilityScore")}
           </div>
-          <div class="py-2 space-y-1">
-            <div class="text-[11px] font-medium text-[var(--text-secondary)]">
-              {t("models.qualityQualityScore")}
-            </div>
-            <div class="font-mono text-[15px] text-[var(--text-secondary)]">
-              {formatHealthScore(health().qualityScore)}
-            </div>
-            <div class="text-[11px] text-[var(--text-muted)]">
-              {t("models.qualitySamplesCount", { count: health().qualitySampleCount })}
-            </div>
-            <p class="text-[11px] text-[var(--text-muted)]">
-              {t("models.qualityQualityExplanation")}
-            </p>
+          <div class="font-mono text-[15px] text-[var(--text-secondary)]">
+            {formatHealthScore(health().stabilityScore)}
           </div>
+          <div class="text-[11px] text-[var(--text-muted)]">
+            {t("models.qualityTurnsCount", { count: health().totalTurns })}
+          </div>
+          <p class="text-[11px] text-[var(--text-muted)]">
+            {t("models.qualityStabilityExplanation")}
+          </p>
         </div>
 
         <Show
@@ -185,8 +168,8 @@ export default function ProviderQualityCard(props: { providerID: string }) {
             </div>
           </Show>
 
-          {/* 4-Dimension Metric Grid */}
-          <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {/* 3-Dimension Metric Grid */}
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
             {/* 1. Speed: TTFT & TPS */}
             <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-2 space-y-0.5">
               <div class="flex items-center gap-1 text-[11px] text-[var(--text-muted)]">
@@ -235,29 +218,6 @@ export default function ProviderQualityCard(props: { providerID: string }) {
                   loops: health().hallucinationFlags,
                   reverts: health().revertCount,
                 })}
-              </div>
-            </div>
-
-            {/* 4. Observer Code Pass Rate & Quality Score */}
-            <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-2 space-y-0.5">
-              <div class="flex items-center gap-1 text-[11px] text-[var(--text-muted)]">
-                <CheckCircle2 size={11} class="text-[var(--accent-primary)]" />
-                <span class="truncate">{t("models.qualityMetricPassRate")}</span>
-              </div>
-              <div class="font-mono text-[13px] font-semibold text-[var(--text-primary)]">
-                {health().codePassRate !== null ? `${health().codePassRate}%` : "—"}
-              </div>
-              <div class="text-[11px] font-mono text-[var(--text-faint)] truncate">
-                <Show
-                  when={health().auditTotalCount > 0}
-                  fallback={<span>{t("models.qualityNoAuditYet")}</span>}
-                >
-                  {t("models.qualityPassRateSub", {
-                    passed: health().auditPassCount,
-                    total: health().auditTotalCount,
-                    avgScore: health().avgAuditScore ?? t("models.qualityNoData"),
-                  })}
-                </Show>
               </div>
             </div>
           </div>

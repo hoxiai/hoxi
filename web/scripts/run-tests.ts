@@ -64,7 +64,6 @@ import "../src/__tests__/auto-breaker.test";
 import "../src/__tests__/auto-failover.test";
 import "../src/__tests__/auto-candidate-status.test";
 import "../src/__tests__/auto-session-affinity.test";
-import "../src/__tests__/workspace-review.test";
 import "../src/__tests__/session-goal.test";
 import "../src/__tests__/skills.test";
 import "../src/__tests__/context-mentions.test";

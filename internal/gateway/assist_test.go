@@ -18,7 +18,6 @@ func TestAssistRoutesKeepProviderPaths(t *testing.T) {
 		{"/api/hoxi/provider/summarize-title", `{"prompt":"Fix the login button alignment on macOS.","locale":"en-US"}`, "Fix the login button alignment on macOS"},
 		{"/api/hoxi/provider/enhance-prompt", `{"prompt":"retry"}`, "No model is available for prompt enhancement"},
 		{"/api/hoxi/provider/generate-commit-message", `{"diffSummary":"M a.go"}`, "LLM commit synthesis unavailable"},
-		{"/api/hoxi/provider/audit", `{}`, "Observer model is not configured"},
 	} {
 		req := localRequest(http.MethodPost, tc.path, strings.NewReader(tc.body))
 		req.Header.Set("Content-Type", "application/json")

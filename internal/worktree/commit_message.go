@@ -35,6 +35,19 @@ var (
 	conventionalCommitRegex = regexp.MustCompile(`^(feat|fix|refactor|perf|style|docs|test|build|ci|chore|revert)(\([a-zA-Z0-9_.\-,/]+\))?!?:\s+.+`)
 )
 
+// SetLLM wires the LLM client used by the commit message helper.
+func (m *Manager) SetLLM(client llm.Client) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.llm = client
+}
+
+func (m *Manager) llmClient() llm.Client {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.llm
+}
+
 // HandleGenerateCommitMessage drafts a Conventional Commit subject from the
 // session context and diff summary. It is served at the public
 // /api/hoxi/provider/generate-commit-message route.
@@ -56,7 +69,7 @@ func (m *Manager) HandleGenerateCommitMessage(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if client, _ := m.reviewLLM(); client != nil {
+	if client := m.llmClient(); client != nil {
 		target := client.Resolve(req.ProviderID, req.ModelID, req.BaseURL, req.NPM)
 		if msg, err := invokeCommitMessageLLM(r.Context(), client, target, req); err == nil && msg != "" {
 			writeJSON(w, http.StatusOK, generateCommitMessageResponse{

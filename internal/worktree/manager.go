@@ -67,9 +67,8 @@ type worktreeManager struct {
 	rootDir  string
 	sessions map[string]worktreeMeta
 	roots    *managerRoots
-	// llm and recordAudit back the AI review helpers (audit, commit message).
-	llm         llm.Client
-	recordAudit AuditRecorder
+	// llm backs the AI commit message helper.
+	llm llm.Client
 }
 
 type Manager = worktreeManager

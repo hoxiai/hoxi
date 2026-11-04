@@ -629,7 +629,7 @@ export const LOCAL_CLI_RUNTIME_PROVIDERS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Internal LLM calls (session titles, commit messages, observer audits) go
+ * Internal LLM calls (session titles, commit messages) go
  * through Hoxi's HTTP provider client. Local CLI runtime models (CodeBuddy,
  * Claude Code, Antigravity, Qoder) can only be driven by the runner, so they
  * must never be selected for those roles.

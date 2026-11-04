@@ -258,11 +258,6 @@ export const settings: SettingsI18n = {
   gitAttributionNeverDesc: "Hoxi 不添加共同作者尾注",
   gitAttributionLoadError: "无法读取提交署名设置",
   gitAttributionSaveError: "无法保存提交署名设置",
-  sectionCodeAuditTitle: "代码审查",
-  sectionCodeAuditDesc: "每轮结束后用独立模型审查代码",
-  autoAuditLabel: "自动审查",
-  autoAuditDesc: "检查回归或遗漏改动",
-  configureObserverBtn: "审查模型",
 
   // Terminal & Safety
   sectionTerminalTitle: "终端",

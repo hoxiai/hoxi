@@ -38,7 +38,6 @@ export * from "./approval-mode";
 export * from "./approval-records";
 export * from "./provider-telemetry";
 export * from "./provider-health";
-export * from "./provider-audit";
 export * from "./settings";
 export * from "./daily-pulse";
 export * from "./model-pricing";

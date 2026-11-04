@@ -267,13 +267,6 @@ export const timeline: TimelineI18n = {
   todoStaleSubagents: "子任务 {running}/{total} 运行中",
   worktreeClean: "工作区干净",
   worktreeIsolatedBadge: "隔离工作树",
-  auditRunningBadge: "代码审查中…",
-  auditPassedBadge: "审查通过 · {score}分",
-  auditFailedBadge: "审查未过 · {score}分",
-  auditFixWithFeedbackBtn: "按审查意见修复",
-  auditSwitchAndFixBtn: "用 {model} 修复",
-  auditFeedbackPromptPrefix:
-    "代码审查发现以下问题（得分：{score}/100），请修复：",
   pause: "暂停",
   pauseTooltip: "暂停当前任务，检查改动后可随时继续",
   stopTooltip: "立即停止当前任务 (Esc)",

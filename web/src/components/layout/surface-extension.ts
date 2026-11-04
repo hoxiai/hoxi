@@ -30,7 +30,6 @@ export interface SurfaceExtension {
   hideGitControls?: boolean;
   hideCodeComposerControls?: boolean;
   preferFilePreview?: boolean;
-  skipCodeAudit?: boolean;
   formatModeLabel?: (agentName: string, locale: string) => string | null;
   formatModeDescription?: (agentName: string, locale: string) => string | null;
 }

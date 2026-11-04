@@ -33,10 +33,6 @@ func (s *Service) Complete(ctx context.Context, target llm.Target, req llm.Reque
 	if !isHTTPEndpoint(baseURL) {
 		return "", llm.ErrUnavailable
 	}
-	transport := titleTransport
-	if req.Purpose == llm.PurposeReview {
-		transport = providerTransport
-	}
 	call := llmCompletionRequest{
 		ProviderID:  target.ProviderID,
 		ModelID:     target.ModelID,
@@ -48,7 +44,7 @@ func (s *Service) Complete(ctx context.Context, target llm.Target, req llm.Reque
 		MaxTokens:   req.MaxTokens,
 		Temperature: req.Temperature,
 		Timeout:     req.Timeout,
-		Transport:   transport,
+		Transport:   titleTransport,
 		Stats:       s.stats,
 		Breaker:     s.breaker,
 	}
@@ -97,13 +93,6 @@ func isReasoningEffortRejection(err error) bool {
 		strings.Contains(msg, "unknown parameter")
 }
 
-// RecordAuditResult folds an observer verdict into the worker model's stats.
-func (s *Service) RecordAuditResult(providerID, modelID string, score int, pass bool, summary string) {
-	if s.stats != nil {
-		s.stats.recordAuditResult(providerID, modelID, score, pass, summary)
-	}
-}
-
 func isHTTPEndpoint(baseURL string) bool {
 	return strings.HasPrefix(baseURL, "http://") || strings.HasPrefix(baseURL, "https://")
 }
@@ -112,13 +101,12 @@ func isHTTPEndpoint(baseURL string) bool {
 // while the handlers live in the domain packages that own each feature and are
 // injected by the gateway through SetAssistHandler.
 const (
-	AssistAudit                 = "audit"
 	AssistSummarizeTitle        = "summarize-title"
 	AssistGenerateCommitMessage = "generate-commit-message"
 	AssistEnhancePrompt         = "enhance-prompt"
 )
 
-var assistActions = []string{AssistAudit, AssistSummarizeTitle, AssistGenerateCommitMessage, AssistEnhancePrompt}
+var assistActions = []string{AssistSummarizeTitle, AssistGenerateCommitMessage, AssistEnhancePrompt}
 
 // SetAssistHandler mounts h behind /api/hoxi/provider/<action>.
 func (s *Service) SetAssistHandler(action string, h http.HandlerFunc) {

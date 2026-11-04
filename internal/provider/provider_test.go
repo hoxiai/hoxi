@@ -200,21 +200,14 @@ func TestModelStatsStorePersistenceAndRecording(t *testing.T) {
 	store.recordProbeResult("openai", false, 500, "HTTP 401: bad key", "gpt-4o")
 	store.recordProbeResult("openai", false, 15000, "context deadline exceeded (timeout)", "gpt-4o")
 
-	// Record audit results (pass and fail)
-	store.recordAuditResult("openai", "gpt-4o", 92, true, "Clean implementation")
-	store.recordAuditResult("openai", "gpt-4o", 55, false, "")
-
 	rec := store.records["openai"]
 	if rec == nil {
 		t.Fatalf("expected telemetry record for openai")
 	}
-	if rec.AuditTotalCount != 2 || rec.AuditPassCount != 1 || rec.HallucinationFlags != 1 {
-		t.Fatalf("unexpected provider audit counts: %+v", rec)
+	if len(rec.RecentIncidents) != 2 {
+		t.Fatalf("expected 2 incidents (api_error, timeout), got %+v", rec.RecentIncidents)
 	}
-	if len(rec.RecentIncidents) != 3 {
-		t.Fatalf("expected 3 incidents (api_error, timeout, code_audit_fail), got %+v", rec.RecentIncidents)
-	}
-	if rec.RecentIncidents[0].Type != "code_audit_fail" || rec.RecentIncidents[1].Type != "timeout" || rec.RecentIncidents[2].Type != "api_error" {
+	if rec.RecentIncidents[0].Type != "timeout" || rec.RecentIncidents[1].Type != "api_error" {
 		t.Errorf("unexpected incident order/types: %+v", rec.RecentIncidents)
 	}
 
@@ -224,7 +217,7 @@ func TestModelStatsStorePersistenceAndRecording(t *testing.T) {
 	if reloadedRec == nil || reloadedRec.Models["gpt-4o"] == nil {
 		t.Fatalf("expected telemetry record and model stats to persist on disk, got %+v", reloadedStore.records)
 	}
-	if reloadedRec.Models["gpt-4o"].AuditTotalCount != 2 || reloadedRec.Models["gpt-4o"].HallucinationFlags != 1 {
+	if reloadedRec.Models["gpt-4o"].LastProbeLatencyMs != 15000 {
 		t.Errorf("unexpected persisted model telemetry stats: %+v", reloadedRec.Models["gpt-4o"])
 	}
 }

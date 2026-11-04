@@ -22,8 +22,6 @@ export function formatHealthScore(score: number | null): string {
 
 export function riskTagLabel(tag: ProviderRiskTag): string {
   switch (tag) {
-    case "low_pass_rate":
-      return t("models.qualityRiskLowPassRate");
     case "timeout_prone":
       return t("models.qualityRiskTimeout");
     case "slow_ttft":
@@ -39,8 +37,6 @@ export function riskTagLabel(tag: ProviderRiskTag): string {
 
 export function incidentTypeLabel(type: ProviderIncidentType): string {
   switch (type) {
-    case "code_audit_fail":
-      return t("models.qualityIncidentAuditFail");
     case "timeout":
       return t("models.qualityIncidentTimeout");
     case "api_error":
@@ -101,7 +97,6 @@ export function ProviderHealthBadge(props: {
 
   const primaryRisk = createMemo(() => {
     const tags = health().riskTags;
-    if (tags.includes("low_pass_rate")) return riskTagLabel("low_pass_rate");
     if (tags.includes("high_hallucination")) return riskTagLabel("high_hallucination");
     if (tags.includes("timeout_prone")) return riskTagLabel("timeout_prone");
     if (tags.length > 0) return riskTagLabel(tags[0]);
@@ -112,9 +107,7 @@ export function ProviderHealthBadge(props: {
     t("models.qualityScoresTooltip", {
       status: statusText(),
       stability: formatHealthScore(health().stabilityScore),
-      quality: formatHealthScore(health().qualityScore),
       turns: health().totalTurns,
-      audits: health().qualitySampleCount,
     });
 
   /** 紧凑模式只展示数字，避免长标签挤占同行空间 */
@@ -133,10 +126,6 @@ export function ProviderHealthBadge(props: {
           <span class="font-mono">
             {t("models.qualityStabilityShort")} {compactScore(health().stabilityScore)}
           </span>
-          <span class="opacity-40">·</span>
-          <span class="font-mono">
-            {t("models.qualityQualityShort")} {compactScore(health().qualityScore)}
-          </span>
         </span>
       }
     >
@@ -147,18 +136,13 @@ export function ProviderHealthBadge(props: {
         <span class="font-mono">
           {t("models.qualityStabilityScore")}: {formatHealthScore(health().stabilityScore)}
         </span>
-        <span class="font-mono">
-          · {t("models.qualityQualityScore")}: {formatHealthScore(health().qualityScore)}
-        </span>
         <Show
           when={primaryRisk()}
           fallback={
-            <Show when={health().codePassRate !== null || health().avgTps || health().avgTtftMs}>
+            <Show when={health().avgTps || health().avgTtftMs}>
               <span class="opacity-85 font-mono">
                 ·{" "}
-                {health().codePassRate !== null
-                  ? `${health().codePassRate}%`
-                  : health().avgTps
+                {health().avgTps
                   ? `${health().avgTps}t/s`
                   : formatTtftLabel(health().avgTtftMs)}
               </span>

@@ -137,28 +137,6 @@ func doMuxReq(t *testing.T, mux *http.ServeMux, method, path string, body any) *
 	return rec
 }
 
-func TestAuditResultStatsSerializeZeroScores(t *testing.T) {
-	_, workspaceDir := setupIsolatedEnv(t)
-	_, ocPort := newMockOpenCodeServer(t)
-	svc := NewService(ocPort, "secret", workspaceDir, nil)
-	svc.stats = &modelStatsStore{records: make(map[string]*providerTelemetryStats)}
-	svc.RecordAuditResult("worker", "model", 95, true, "Previous audit")
-	svc.RecordAuditResult("worker", "model", 0, false, "Incorrect implementation")
-	mux := http.NewServeMux()
-	svc.RegisterRoutes(mux)
-
-	stats := svc.stats.records["worker"]
-	model := stats.Models["model"]
-	if stats.AuditTotalCount != 2 || model.AuditTotalCount != 2 || len(stats.AuditScores) != 2 || stats.AuditScores[1] != 0 ||
-		len(model.AuditScores) != 2 || model.AuditScores[1] != 0 {
-		t.Fatalf("zero score was not recorded correctly: %+v, %+v", stats, model)
-	}
-	rec := doMuxReq(t, mux, http.MethodGet, "/api/hoxi/provider/telemetry", nil)
-	if strings.Count(rec.Body.String(), `"lastAuditScore":0`) != 2 {
-		t.Fatalf("provider and model must serialize lastAuditScore zero: %s", rec.Body.String())
-	}
-}
-
 func TestAssistRoutesForwardToInjectedHandlers(t *testing.T) {
 	_, workspaceDir := setupIsolatedEnv(t)
 	svc := NewService(0, "secret", workspaceDir, nil)
@@ -172,7 +150,7 @@ func TestAssistRoutesForwardToInjectedHandlers(t *testing.T) {
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"path":"/api/hoxi/provider/summarize-title"`) {
 		t.Fatalf("assist route must forward to the injected handler: %d %s", rec.Code, rec.Body.String())
 	}
-	for _, action := range []string{AssistAudit, AssistGenerateCommitMessage, AssistEnhancePrompt} {
+	for _, action := range []string{AssistGenerateCommitMessage, AssistEnhancePrompt} {
 		rec := doMuxReq(t, mux, http.MethodPost, "/api/hoxi/provider/"+action, map[string]any{})
 		if rec.Code != http.StatusServiceUnavailable {
 			t.Fatalf("unwired assist route %s must report 503, got %d", action, rec.Code)
@@ -211,7 +189,7 @@ func TestLLMClientResolveAndComplete(t *testing.T) {
 		},
 	})
 	target = svc.Resolve("anthropic", "claude-3-7-sonnet", "", "")
-	text, err = svc.Complete(ctx, target, llm.Request{Prompt: "Senior Code Auditor", Timeout: 5 * time.Second, Purpose: llm.PurposeReview})
+	text, err = svc.Complete(ctx, target, llm.Request{Prompt: "Senior Code Auditor", Timeout: 5 * time.Second, Purpose: llm.PurposeInteractive})
 	if err != nil || !strings.Contains(text, "Anthropic audit pass") {
 		t.Fatalf("Anthropic completion = %q, %v", text, err)
 	}
@@ -445,10 +423,7 @@ func TestFetchProbeAndTelemetryRoutes(t *testing.T) {
 		t.Fatalf("expected test-model failure response, got %s", rec.Body.String())
 	}
 
-	// 3. Audit verdicts recorded through the LLM client surface in telemetry
-	svc.RecordAuditResult("custom-oai", "gpt-4o", 94, true, "Well structured changes")
-
-	// 5. GET / POST / DELETE /api/hoxi/provider/telemetry
+	// 3. GET / POST / DELETE /api/hoxi/provider/telemetry
 	rec = doMuxReq(t, mux, http.MethodGet, "/api/hoxi/provider/telemetry", nil)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "custom-oai") {
 		t.Fatalf("GET telemetry failed: %d %s", rec.Code, rec.Body.String())

@@ -207,7 +207,7 @@ export const models: ModelsI18n = {
   useGlobalDefault: "使用全局默认",
   rolesTitle: "默认与辅助模型分配",
   rolesSubtitle:
-    "为主对话、轻量任务、Git 提交说明、上下文压缩与代码审查分配模型",
+    "为主对话、轻量任务、Git 提交说明与上下文压缩分配模型",
   agentsTitle: "主 Agent 与模式配置",
   agentsSubtitle:
     "管理主会话可切换的内置与自定义模式，以及全局系统指令",
@@ -284,27 +284,22 @@ export const models: ModelsI18n = {
   agentRemoved: "已移除自定义模式 \"{id}\"",
   removeAgentTooltip: "移除此自定义模式",
   modeBadge: "模式",
-  qualityTitle: "服务商稳定性与质量",
+  qualityTitle: "服务商稳定性",
   qualitySubtitle:
-    "回合成功率与代码质量评分（0–100）",
+    "回合成功率与延迟吞吐表现（0–100）",
   qualityUntested: "暂无评估数据（发送任务或测试连接后自动生成）",
   qualityGradeHealthy: "稳定",
   qualityGradeWarning: "偶发波动",
   qualityGradeDegraded: "质量预警",
   qualityScoreBadge: "{score}/100",
   qualityStabilityScore: "稳定性",
-  qualityQualityScore: "质量",
   qualityStabilityShort: "稳",
-  qualityQualityShort: "质",
   qualityNoRating: "暂无评分",
   qualityNoData: "—",
-  qualitySamplesCount: "{count} 次有效代码审查",
   qualityStabilityExplanation:
-    "回合成功率（0–100），与审查质量独立",
-  qualityQualityExplanation:
-    "代码审查平均分（0–100），与回合成功率独立",
+    "回合成功率（0–100）",
   qualityScoresTooltip:
-    "状态 {status} · 稳定性 {stability}（{turns} 回合）· 质量 {quality}（{audits} 次审查）",
+    "状态 {status} · 稳定性 {stability}（{turns} 回合）",
   qualityMetricSpeed: "首字延迟 / 吞吐",
   qualityMetricSuccess: "成功率 / 超时重试",
   qualityMetricTools: "工具调用准确率",
@@ -325,16 +320,6 @@ export const models: ModelsI18n = {
   qualityIncidentToolError: "工具失败",
   qualityIncidentHallucination: "连续调用出错",
   qualityIncidentRevert: "人工回滚",
-  qualityIncidentAuditFail: "代码审查未过",
-  observerModelTitle: "代码审查模型",
-  observerModelDesc:
-    "回合结束后审查代码的独立模型",
-  observerAutoAuditLabel: "代码变更后自动审查",
-  observerDisabledOption: "不启用（仅静态检查或手动触发）",
-  qualityMetricPassRate: "代码审查通过率",
-  qualityPassRateSub: "{passed}/{total} 通过 · 均分 {avgScore}",
-  qualityNoAuditYet: "暂无审查记录",
-  qualityRiskLowPassRate: "通过率偏低",
   sourceOpenCode: "OpenCode 导入",
   sourceHoxi: ".hoxi 配置",
   importedOpenCodeReadonlyBanner:

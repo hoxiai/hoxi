@@ -209,7 +209,7 @@ export const models = {
   useGlobalDefault: "Use Global Default",
   rolesTitle: "Default & Auxiliary Models",
   rolesSubtitle:
-    "Assign models for primary chat, fast tasks, commits, compaction and code review",
+    "Assign models for primary chat, fast tasks, commits and compaction",
   agentsTitle: "Primary Agents & Modes",
   agentsSubtitle:
     "Configure switchable primary agent modes and global system instructions",
@@ -287,27 +287,22 @@ export const models = {
   agentRemoved: "Removed custom mode \"{id}\".",
   removeAgentTooltip: "Remove custom mode",
   modeBadge: "mode",
-  qualityTitle: "Provider Stability & Quality",
+  qualityTitle: "Provider Stability",
   qualitySubtitle:
-    "Turn success and code quality scores (0–100)",
+    "Turn success rate and latency metrics (0–100)",
   qualityUntested: "No metrics yet (send a message or test connection)",
   qualityGradeHealthy: "Stable",
   qualityGradeWarning: "Fluctuating",
   qualityGradeDegraded: "Degraded",
   qualityScoreBadge: "{score}/100",
   qualityStabilityScore: "Stability",
-  qualityQualityScore: "Quality",
   qualityStabilityShort: "S",
-  qualityQualityShort: "Q",
   qualityNoRating: "No rating",
   qualityNoData: "—",
-  qualitySamplesCount: "{count} valid code reviews",
   qualityStabilityExplanation:
-    "Turn success rate (0–100); independent of review quality",
-  qualityQualityExplanation:
-    "Average code review score (0–100); independent of turn success",
+    "Turn success rate (0–100)",
   qualityScoresTooltip:
-    "Status {status} · stability {stability} ({turns} turns) · quality {quality} ({audits} reviews)",
+    "Status {status} · stability {stability} ({turns} turns)",
   qualityMetricSpeed: "TTFT / Throughput",
   qualityMetricSuccess: "Success / Timeouts",
   qualityMetricTools: "Tool Accuracy",
@@ -328,16 +323,6 @@ export const models = {
   qualityIncidentToolError: "Tool Failed",
   qualityIncidentHallucination: "Repeated Tool Error",
   qualityIncidentRevert: "User Revert",
-  qualityIncidentAuditFail: "Code Review Failed",
-  observerModelTitle: "Code Review Model",
-  observerModelDesc:
-    "Independent model that reviews changes",
-  observerAutoAuditLabel: "Auto-review when code changes",
-  observerDisabledOption: "Disabled (Static checks / manual review only)",
-  qualityMetricPassRate: "Code Review Pass Rate",
-  qualityPassRateSub: "{passed}/{total} passed · avg {avgScore} pts",
-  qualityNoAuditYet: "No code reviews yet",
-  qualityRiskLowPassRate: "Low Pass Rate",
   sourceOpenCode: "OpenCode Imported",
   sourceHoxi: ".hoxi Config",
   importedOpenCodeReadonlyBanner:

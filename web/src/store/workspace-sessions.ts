@@ -515,8 +515,6 @@ export function purgeSessionsFromStoreState(
     delete state.worktreeDiffsBySession[id];
     delete state.worktreeBySession[id];
     delete state.reviewCommentsBySession[id];
-    delete state.auditsBySession[id];
-    delete state.auditingBySession[id];
     delete state.interruptedBySession[id];
     delete state.queuedPromptsBySession[id];
     delete state.composerDraftEditBySession[id];

@@ -13,7 +13,7 @@ import (
 )
 
 // Model usage and quality statistics per provider/model (turn outcomes,
-// latency samples, probe and audit results), persisted to
+// latency samples, and probe results), persisted to
 // ~/.hoxi/provider-telemetry.json and served at /api/hoxi/provider/telemetry.
 // Not to be confused with internal/telemetry, the anonymous launch beacon.
 
@@ -22,7 +22,7 @@ const maxTelemetryIncidents = 10
 
 type providerIncident struct {
 	Timestamp int64  `json:"timestamp"`
-	Type      string `json:"type"` // "timeout" | "api_error" | "retry" | "tool_error" | "hallucination_loop" | "user_revert" | "code_audit_fail"
+	Type      string `json:"type"` // "timeout" | "api_error" | "retry" | "tool_error" | "hallucination_loop" | "user_revert"
 	ModelID   string `json:"modelID,omitempty"`
 	Detail    string `json:"detail,omitempty"`
 }
@@ -40,12 +40,6 @@ type modelTelemetryStats struct {
 	RevertCount        int       `json:"revertCount"`
 	CacheHitTurns      int       `json:"cacheHitTurns"`
 	ReasoningTurns     int       `json:"reasoningTurns"`
-	AuditTotalCount    int       `json:"auditTotalCount"`
-	AuditPassCount     int       `json:"auditPassCount"`
-	AuditScores        []int     `json:"auditScores,omitempty"`
-	LastAuditScore     int       `json:"lastAuditScore"`
-	LastAuditPass      *bool     `json:"lastAuditPass,omitempty"`
-	LastAuditSummary   string    `json:"lastAuditSummary,omitempty"`
 	TtftSamplesMs      []int64   `json:"ttftSamplesMs,omitempty"`
 	TpsSamples         []float64 `json:"tpsSamples,omitempty"`
 	LastProbeLatencyMs int64     `json:"lastProbeLatencyMs,omitempty"`
@@ -66,12 +60,6 @@ type providerTelemetryStats struct {
 	RevertCount        int                             `json:"revertCount"`
 	CacheHitTurns      int                             `json:"cacheHitTurns"`
 	ReasoningTurns     int                             `json:"reasoningTurns"`
-	AuditTotalCount    int                             `json:"auditTotalCount"`
-	AuditPassCount     int                             `json:"auditPassCount"`
-	AuditScores        []int                           `json:"auditScores,omitempty"`
-	LastAuditScore     int                             `json:"lastAuditScore"`
-	LastAuditPass      *bool                           `json:"lastAuditPass,omitempty"`
-	LastAuditSummary   string                          `json:"lastAuditSummary,omitempty"`
 	TtftSamplesMs      []int64                         `json:"ttftSamplesMs,omitempty"`
 	TpsSamples         []float64                       `json:"tpsSamples,omitempty"`
 	LastProbeLatencyMs int64                           `json:"lastProbeLatencyMs,omitempty"`
@@ -275,71 +263,11 @@ func (s *modelStatsStore) recordProbeResult(providerID string, ok bool, latencyM
 	s.saveToDiskLocked()
 }
 
-func (s *modelStatsStore) recordAuditResult(providerID, modelID string, score int, pass bool, summary string) {
-	providerID = strings.TrimSpace(providerID)
-	if providerID == "" {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	rec := s.ensureRecordLocked(providerID)
-	rec.AuditTotalCount++
-	if pass {
-		rec.AuditPassCount++
-	}
-	rec.AuditScores = appendIntSample(rec.AuditScores, score)
-	rec.LastAuditScore = score
-	rec.LastAuditPass = &pass
-	rec.LastAuditSummary = summary
-	rec.UpdatedAt = time.Now().UnixMilli()
-
-	if m := ensureModelRecordLocked(rec, modelID); m != nil {
-		m.AuditTotalCount++
-		if pass {
-			m.AuditPassCount++
-		} else {
-			m.HallucinationFlags++
-		}
-		m.AuditScores = appendIntSample(m.AuditScores, score)
-		m.LastAuditScore = score
-		m.LastAuditPass = &pass
-		m.LastAuditSummary = summary
-		m.UpdatedAt = rec.UpdatedAt
-	}
-
-	if !pass {
-		rec.HallucinationFlags++
-		detail := summary
-		if detail == "" {
-			detail = "Observer audit failed"
-		}
-		appendIncidentLocked(rec, providerIncident{
-			Timestamp: rec.UpdatedAt,
-			Type:      "code_audit_fail",
-			ModelID:   modelID,
-			Detail:    detail,
-		})
-	}
-	s.saveToDiskLocked()
-}
-
 func appendIncidentLocked(rec *providerTelemetryStats, inc providerIncident) {
 	rec.RecentIncidents = append([]providerIncident{inc}, rec.RecentIncidents...)
 	if len(rec.RecentIncidents) > maxTelemetryIncidents {
 		rec.RecentIncidents = rec.RecentIncidents[:maxTelemetryIncidents]
 	}
-}
-
-func appendIntSample(list []int, val int) []int {
-	if val < 0 {
-		val = 0
-	}
-	next := append(list, val)
-	if len(next) > maxTelemetrySamples {
-		next = next[len(next)-maxTelemetrySamples:]
-	}
-	return next
 }
 
 func (s *modelStatsStore) registerRoutes(mux *http.ServeMux) {
@@ -376,9 +304,6 @@ func (s *modelStatsStore) registerRoutes(mux *http.ServeMux) {
 				}
 				if len(incoming.TpsSamples) > maxTelemetrySamples {
 					incoming.TpsSamples = incoming.TpsSamples[len(incoming.TpsSamples)-maxTelemetrySamples:]
-				}
-				if len(incoming.AuditScores) > maxTelemetrySamples {
-					incoming.AuditScores = incoming.AuditScores[len(incoming.AuditScores)-maxTelemetrySamples:]
 				}
 				if len(incoming.RecentIncidents) > maxTelemetryIncidents {
 					incoming.RecentIncidents = incoming.RecentIncidents[:maxTelemetryIncidents]

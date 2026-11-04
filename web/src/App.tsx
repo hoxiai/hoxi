@@ -52,7 +52,6 @@ import {
   resolveDefaultProjectDir,
   resolveParentSessionID,
   resyncResidentTranscripts,
-  runSessionCodeAudit,
   scheduleRefreshWorktreeStatus,
   selectSession,
   setDefaultWorkspaceDir,
@@ -366,9 +365,6 @@ export default function App() {
                   refreshDesktopMemberAfterTurn(sid);
                   void drainNextQueuedPrompt(sid);
                   void advanceSessionGoal(sid);
-                  if (!(isWorkSurface() && surfaceExtension.skipCodeAudit)) {
-                    void runSessionCodeAudit(sid, false);
-                  }
                 });
               }
               break;

@@ -15,14 +15,12 @@ import type {
 } from "../services/sse-types";
 import type {
   AgentInfo,
-  CodeAuditResult,
   ProjectInfo,
   ProviderAuthMethod,
   ProviderInfo,
   ProviderTelemetryStats,
   SkillSelection,
   WorkspaceProfile,
-  WorkspaceReviewResult,
   WorktreeMeta,
 } from "../services/api";
 
@@ -142,17 +140,6 @@ export const PROVIDER_TELEMETRY_KEY = "hoxi-provider-telemetry:v2";
 
 export function initialProviderTelemetry(): Record<string, ProviderTelemetryStats> {
   return readStorageRecord<ProviderTelemetryStats>(PROVIDER_TELEMETRY_KEY);
-}
-
-export const OBSERVER_MODEL_KEY = "hoxi-observer-model:v1";
-export const OBSERVER_AUTO_AUDIT_KEY = "hoxi-observer-auto-audit:v1";
-
-export function initialObserverModel(): string {
-  return readStorageItem(OBSERVER_MODEL_KEY) || "";
-}
-
-export function initialObserverAutoAudit(): boolean {
-  return readStorageItem(OBSERVER_AUTO_AUDIT_KEY) !== "false";
 }
 
 export interface QueuedPromptAttachment {
@@ -312,11 +299,6 @@ export interface WorkspaceState {
   dismissedPlanFollowups: Record<string, boolean>;
   dismissedSandboxMergePrompts: Record<string, boolean>;
   providerTelemetry: Record<string, ProviderTelemetryStats>;
-  observerModel: string;
-  observerAutoAudit: boolean;
-  auditsBySession: Record<string, CodeAuditResult>;
-  auditingBySession: Record<string, boolean>;
-  reviewsBySession: Record<string, WorkspaceReviewResult>;
   interruptedBySession: Record<string, "paused" | "stopped" | undefined>;
   sessionFinishedAt: Record<string, number>;
   unreadCompletedBySession: Record<string, boolean>;
@@ -498,11 +480,6 @@ export const [workspace, setWorkspace] = createStore<WorkspaceState>({
   dismissedPlanFollowups: {},
   dismissedSandboxMergePrompts: {},
   providerTelemetry: initialProviderTelemetry(),
-  observerModel: initialObserverModel(),
-  observerAutoAudit: initialObserverAutoAudit(),
-  auditsBySession: {},
-  auditingBySession: {},
-  reviewsBySession: {},
   interruptedBySession: {},
   sessionFinishedAt: {},
   unreadCompletedBySession: {},

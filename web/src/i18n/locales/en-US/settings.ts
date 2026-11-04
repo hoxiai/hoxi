@@ -257,11 +257,6 @@ export const settings = {
   gitAttributionNeverDesc: "Hoxi never adds the co-author trailer",
   gitAttributionLoadError: "Could not load the commit attribution setting",
   gitAttributionSaveError: "Could not save the commit attribution setting",
-  sectionCodeAuditTitle: "Code Review",
-  sectionCodeAuditDesc: "Review changes with an independent model after each turn",
-  autoAuditLabel: "Auto-Review",
-  autoAuditDesc: "Check for regressions or incomplete edits",
-  configureObserverBtn: "Review Model",
 
   // Terminal & Safety
   sectionTerminalTitle: "Terminal",

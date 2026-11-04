@@ -288,10 +288,7 @@ export function AssistantErrorCard(props: { info: MessageInfo }) {
                 <div class="font-semibold">
                   {t("timeline.relayDegradedWarningTitle", {
                     provider: providerID(),
-                    score:
-                      providerHealth()!.stabilityScore ??
-                      providerHealth()!.qualityScore ??
-                      "—",
+                    score: providerHealth()!.stabilityScore ?? "—",
                   })}
                 </div>
                 <div class="opacity-90">{t("timeline.relayDegradedWarningDesc")}</div>

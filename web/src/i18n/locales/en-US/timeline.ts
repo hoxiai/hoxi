@@ -270,13 +270,6 @@ export const timeline = {
   todoStaleSubagents: "Subagents {running}/{total} running",
   worktreeClean: "Clean",
   worktreeIsolatedBadge: "Worktree",
-  auditRunningBadge: "Code review running…",
-  auditPassedBadge: "Review Passed · {score} pts",
-  auditFailedBadge: "Review Failed · {score} pts",
-  auditFixWithFeedbackBtn: "Fix Issues",
-  auditSwitchAndFixBtn: "Fix with {model}",
-  auditFeedbackPromptPrefix:
-    "Code review found the following issues (Score: {score}/100). Please fix them:",
   pause: "Pause",
   pauseTooltip: "Pause current task so you can inspect changes and resume anytime",
   stopTooltip: "Stop task immediately (Esc)",

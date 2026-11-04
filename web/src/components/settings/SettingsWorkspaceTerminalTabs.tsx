@@ -6,15 +6,12 @@ import {
   GitMerge,
   LayoutList,
   Signature,
-  SlidersHorizontal,
 } from "lucide-solid";
 import {
   appSettings,
   gitAttribution,
   loadGitAttribution,
-  openProviderModal,
   saveGitAttribution,
-  setObserverAutoAudit,
   setSessionSandboxMode,
   setSidebarProjectMode,
   updateAppSetting,
@@ -29,7 +26,6 @@ import {
   SegmentedPills,
   SettingGroup,
   SettingRow,
-  ToggleSwitch,
 } from "./setting-controls";
 
 export function WorkspaceGitSettingsTab() {
@@ -178,34 +174,6 @@ export function WorkspaceGitSettingsTab() {
       <Show when={gitAttribution.error}>
         <p role="alert" class="px-1 text-[13px] text-red-500">{gitAttribution.error}</p>
       </Show>
-
-      {/* 2. Observer AI Code Audit */}
-      <SettingGroup
-        title={t("settings.sectionCodeAuditTitle")}
-        tip={t("settings.sectionCodeAuditDesc")}
-        action={
-          <button
-            type="button"
-            onClick={() => {
-              openProviderModal("models");
-            }}
-            class="inline-flex items-center gap-1.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-3 py-1 text-[13px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
-          >
-            <SlidersHorizontal size={13} />
-            {t("settings.configureObserverBtn")}
-          </button>
-        }
-      >
-        <SettingRow
-          label={t("settings.autoAuditLabel")}
-          tip={t("settings.autoAuditDesc")}
-        >
-          <ToggleSwitch
-            checked={workspace.observerAutoAudit}
-            onChange={(val) => setObserverAutoAudit(val)}
-          />
-        </SettingRow>
-      </SettingGroup>
     </div>
   );
 }

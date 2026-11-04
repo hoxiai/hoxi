@@ -308,9 +308,6 @@ function candidateHealthScore(c: AutoPoolCandidate): number {
     const successRate = (mStats.successTurns / mStats.totalTurns) * 100;
     score = successRate;
   }
-  if (typeof mStats.lastAuditScore === "number" && mStats.lastAuditScore > 0) {
-    score = score * 0.7 + mStats.lastAuditScore * 0.3;
-  }
   if (Array.isArray(mStats.ttftSamplesMs) && mStats.ttftSamplesMs.length > 0) {
     const avgTtft =
       mStats.ttftSamplesMs.reduce((a, b) => a + b, 0) / mStats.ttftSamplesMs.length;

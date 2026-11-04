@@ -1,5 +1,5 @@
 // Package llm is the narrow contract for Hoxi-internal, single-shot LLM calls
-// (session titles, commit messages, prompt rewrites, observer audits).
+// (session titles, commit messages, prompt rewrites).
 //
 // It is a foundation package: provider.Service implements Client on top of its
 // credential resolution and callSimpleLLM, and the gateway injects that Client
@@ -50,8 +50,6 @@ type Purpose int
 const (
 	// PurposeInteractive is for UI-blocking helpers that should fail fast.
 	PurposeInteractive Purpose = iota
-	// PurposeReview is for observer audits that may wait a little longer to connect.
-	PurposeReview
 )
 
 // Request is one completion prompt with its sampling budget.

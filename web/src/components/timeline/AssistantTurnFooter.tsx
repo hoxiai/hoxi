@@ -12,7 +12,6 @@ import {
   revertToHere,
   workspace,
 } from "../../store/workspace";
-import { ObserverAuditBadge } from "../inspector/ObserverAuditBanner";
 import { Icon } from "../icons";
 import { t } from "../../i18n";
 import { copyMessageLink } from "./session-export";
@@ -361,10 +360,6 @@ export function AssistantTurnFooter(props: {
                   <span>↺</span>
                   <span>{t("timeline.retryTask")}</span>
                 </button>
-              </Show>
-
-              <Show when={isLatestTurn()}>
-                <ObserverAuditBadge sessionID={props.info.sessionID} />
               </Show>
 
               <div class="pointer-events-none flex items-center gap-2 opacity-0 transition-opacity duration-150 motion-reduce:transition-none group-hover/turn:pointer-events-auto group-hover/turn:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">

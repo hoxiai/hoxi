@@ -367,8 +367,7 @@ export type ProviderIncidentType =
   | "retry"
   | "tool_error"
   | "hallucination_loop"
-  | "user_revert"
-  | "code_audit_fail";
+  | "user_revert";
 
 export interface ProviderIncident {
   timestamp: number;
@@ -390,12 +389,6 @@ export interface ModelTelemetryStats {
   revertCount: number;
   cacheHitTurns: number;
   reasoningTurns?: number;
-  auditTotalCount?: number;
-  auditPassCount?: number;
-  auditScores?: number[];
-  lastAuditScore?: number;
-  lastAuditPass?: boolean;
-  lastAuditSummary?: string;
   ttftSamplesMs?: number[];
   tpsSamples?: number[];
   lastProbeLatencyMs?: number;
@@ -416,12 +409,6 @@ export interface ProviderTelemetryStats {
   revertCount: number;
   cacheHitTurns: number;
   reasoningTurns?: number;
-  auditTotalCount?: number;
-  auditPassCount?: number;
-  auditScores?: number[];
-  lastAuditScore?: number;
-  lastAuditPass?: boolean;
-  lastAuditSummary?: string;
   ttftSamplesMs?: number[];
   tpsSamples?: number[];
   lastProbeLatencyMs?: number;
@@ -455,53 +442,6 @@ export interface CandidateOutcomeInput {
   message?: string;
   latencyMs?: number;
   class?: string;
-}
-
-export interface CodeAuditResult {
-  ok: boolean;
-  score: number;
-  pass: boolean;
-  summary: string;
-  issues?: string[];
-  observerProvider: string;
-  observerModel: string;
-  latencyMs?: number;
-  error?: string;
-  timestamp?: number;
-  workerProviderID?: string;
-  workerModelID?: string;
-}
-
-export interface CodeAuditRequest {
-  sessionID?: string;
-  workerProviderID: string;
-  workerModelID: string;
-  observerProviderID: string;
-  observerModelID: string;
-  observerBaseURL?: string;
-  observerNPM?: string;
-  userPrompt: string;
-  diffs: Array<{
-    file: string;
-    before?: string;
-    after?: string;
-    additions: number;
-    deletions: number;
-  }>;
-  lspErrorCount: number;
-  lspErrorsSummary?: string;
-  locale?: string;
-  /** Workspace review: diffs and REVIEW.md are collected server-side from repoDir. */
-  reviewScope?: WorkspaceReviewScope;
-  repoDir?: string;
-  baseRef?: string;
-}
-
-export type WorkspaceReviewScope = "uncommitted" | "branch";
-
-export interface WorkspaceReviewResult extends CodeAuditResult {
-  scope: WorkspaceReviewScope;
-  baseRef?: string;
 }
 
 export * from "./handoff-types";

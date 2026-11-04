@@ -2,8 +2,6 @@
 import type {
   CandidateBreakerSnapshot,
   CandidateOutcomeInput,
-  CodeAuditRequest,
-  CodeAuditResult,
   ProviderAuthAuthorization,
   ProviderAuthMethod,
   ProviderListResponse,
@@ -157,9 +155,6 @@ export const providerAndAssistAPI = {
     if (modelID) params.set("modelID", modelID);
     const qs = params.toString();
     return requestJSON(`/api/hoxi/provider/candidates${qs ? `?${qs}` : ""}`, { method: "DELETE" });
-  },
-  auditProviderCode(req: CodeAuditRequest): Promise<CodeAuditResult> {
-    return requestJSON("/api/hoxi/provider/audit", { method: "POST", body: JSON.stringify(req) });
   },
   summarizeSessionTitle(req: {
     providerID: string;

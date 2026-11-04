@@ -138,7 +138,6 @@ export default function SettingsModal() {
           keywords: () => [
             t("settings.sectionSandboxTitle"),
             t("settings.sectionDiffStyleTitle"),
-            t("settings.sectionCodeAuditTitle"),
             "Worktree",
             "Diff",
           ],

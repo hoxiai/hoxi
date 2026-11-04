@@ -8,15 +8,12 @@ export type ProviderRiskTag =
   | "slow_ttft"
   | "high_hallucination"
   | "tool_instability"
-  | "frequent_retry"
-  | "low_pass_rate";
+  | "frequent_retry";
 
 export interface ProviderHealthSummary {
   providerID: string;
   modelID?: string;
   stabilityScore: number | null;
-  qualityScore: number | null;
-  qualitySampleCount: number;
   status: "untested" | "healthy" | "warning" | "degraded";
   totalTurns: number;
   successRate: number;
@@ -25,10 +22,6 @@ export interface ProviderHealthSummary {
   avgTtftMs: number | null;
   avgTps: number | null;
   cacheHitRate: number | null;
-  auditTotalCount: number;
-  auditPassCount: number;
-  codePassRate: number | null;
-  avgAuditScore: number | null;
   hallucinationFlags: number;
   revertCount: number;
   retryCount: number;
@@ -43,8 +36,6 @@ function emptyUntestedSummary(providerID: string, modelID?: string): ProviderHea
     providerID,
     modelID,
     stabilityScore: null,
-    qualityScore: null,
-    qualitySampleCount: 0,
     status: "untested",
     totalTurns: 0,
     successRate: 100,
@@ -53,10 +44,6 @@ function emptyUntestedSummary(providerID: string, modelID?: string): ProviderHea
     avgTtftMs: null,
     avgTps: null,
     cacheHitRate: null,
-    auditTotalCount: 0,
-    auditPassCount: 0,
-    codePassRate: null,
-    avgAuditScore: null,
     hallucinationFlags: 0,
     revertCount: 0,
     retryCount: 0,
@@ -66,7 +53,7 @@ function emptyUntestedSummary(providerID: string, modelID?: string): ProviderHea
 }
 
 /**
- * Execution success measures stability; valid result audits alone measure quality.
+ * Execution success measures provider stability.
  * Missing evidence stays unrated instead of receiving a synthetic 100 or zero.
  */
 export function computeProviderHealth(
@@ -83,11 +70,10 @@ export function computeProviderHealth(
     ? providerRec.models?.[trimmedModel]
     : providerRec;
 
-  const auditTotal = target?.auditTotalCount ?? 0;
   const totalTurns = target?.totalTurns ?? 0;
 
-  // Strictly require actual execution turns or Observer code audits before showing any score
-  if (!target || (totalTurns === 0 && auditTotal === 0)) {
+  // Strictly require actual execution turns before showing any score
+  if (!target || totalTurns === 0) {
     return emptyUntestedSummary(providerID, trimmedModel || undefined);
   }
 
@@ -109,23 +95,6 @@ export function computeProviderHealth(
       ? Math.round((target.cacheHitTurns / target.successTurns) * 100)
       : null;
 
-  const auditPass = target.auditPassCount ?? 0;
-  const codePassRate =
-    auditTotal > 0 ? Math.round((auditPass / auditTotal) * 100) : null;
-
-  const auditScoreList = (target.auditScores ?? []).filter(
-    (score) => Number.isFinite(score) && score >= 0 && score <= 100
-  );
-  const lastScore = target.lastAuditScore;
-  const avgAuditScore =
-    auditScoreList.length > 0
-      ? Math.round(auditScoreList.reduce((a, b) => a + b, 0) / auditScoreList.length)
-      : auditTotal > 0 && lastScore !== undefined && Number.isFinite(lastScore) && lastScore >= 0 && lastScore <= 100
-      ? lastScore
-      : null;
-  const qualityScore = avgAuditScore;
-  const qualitySampleCount = auditScoreList.length || (qualityScore !== null ? 1 : 0);
-
   const ttftList = target.ttftSamplesMs ?? [];
   const avgTtftMs =
     ttftList.length > 0
@@ -143,9 +112,6 @@ export function computeProviderHealth(
   const hallucinationRatio = target.hallucinationFlags / turns;
 
   const riskTags: ProviderRiskTag[] = [];
-  if (codePassRate !== null && codePassRate < 65 && auditTotal > auditPass) {
-    riskTags.push("low_pass_rate");
-  }
   if (target.timeoutTurns >= 2 && timeoutRatio >= 0.15) {
     riskTags.push("timeout_prone");
   }
@@ -162,14 +128,13 @@ export function computeProviderHealth(
     riskTags.push("frequent_retry");
   }
 
-  const lowestScore = Math.min(stabilityScore ?? 100, qualityScore ?? 100);
+  const lowestScore = stabilityScore ?? 100;
   const status: ProviderHealthSummary["status"] =
-    stabilityScore === null && qualityScore === null ? "untested" :
-    lowestScore >= 82 && riskTags.length === 0
+    stabilityScore === null
+      ? "untested"
+      : lowestScore >= 82 && riskTags.length === 0
       ? "healthy"
-      : lowestScore >= 62 &&
-        !riskTags.includes("high_hallucination") &&
-        !(riskTags.includes("low_pass_rate") && (codePassRate ?? 100) <= 50)
+      : lowestScore >= 62 && !riskTags.includes("high_hallucination")
       ? "warning"
       : "degraded";
 
@@ -181,8 +146,6 @@ export function computeProviderHealth(
     providerID,
     modelID: trimmedModel || undefined,
     stabilityScore,
-    qualityScore,
-    qualitySampleCount,
     status,
     totalTurns,
     successRate,
@@ -191,10 +154,6 @@ export function computeProviderHealth(
     avgTtftMs,
     avgTps,
     cacheHitRate,
-    auditTotalCount: auditTotal,
-    auditPassCount: auditPass,
-    codePassRate,
-    avgAuditScore,
     hallucinationFlags: target.hallucinationFlags,
     revertCount: target.revertCount,
     retryCount: target.retryCount,

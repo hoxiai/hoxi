@@ -1,6 +1,6 @@
 // web/src/components/inspector/PierreDiffViewer.tsx
 import { createEffect, createMemo, createSignal, on, onCleanup, Show } from "solid-js";
-import { ArrowUpFromLine, Check, Columns2, FolderSync, GitCommitHorizontal, GitPullRequestArrow, RefreshCw, Rows2, ShieldCheck, Sparkles } from "lucide-solid";
+import { ArrowUpFromLine, Check, Columns2, FolderSync, GitCommitHorizontal, GitPullRequestArrow, RefreshCw, Rows2, Sparkles } from "lucide-solid";
 import {
   activeDirectory,
   activeWorkspaceFolders,
@@ -12,7 +12,6 @@ import {
   pushWorktreeChanges,
   refreshWorktreeStatus,
   restoreSessionWorktree,
-  runSessionCodeAudit,
   setWorkspace,
   syncSessionWorktree,
   updateAppSetting,
@@ -24,8 +23,6 @@ import {
 } from "../timeline/tool-card-state";
 import { t } from "../../i18n";
 import AICommitFallbackToast from "./ai-commit-fallback-toast";
-import ObserverAuditBanner from "./ObserverAuditBanner";
-import WorkspaceReviewPanel from "./WorkspaceReviewPanel";
 import PullRequestBadge from "./PullRequestBadge";
 import PullRequestIssuesButton from "./PullRequestIssuesButton";
 import DiffEmptyState from "./pierre-diff-empty";
@@ -147,9 +144,6 @@ export default function PierreDiffViewer() {
     const idx = selectedIndex();
     return idx >= 0 ? previewDiffs()[idx] : null;
   });
-
-  const isAuditing = () =>
-    Boolean(workspace.activeSessionID && workspace.auditingBySession[workspace.activeSessionID]);
 
   const hasMultipleRepos = createMemo(() => {
     if (repos().length > 1) return true;
@@ -333,13 +327,6 @@ export default function PierreDiffViewer() {
           disabled={pushing() || committing()}
         />
         <Show when={diffs().length > 0}>
-          <button type="button" disabled={isAuditing() || !workspace.activeSessionID}
-            onClick={() => workspace.activeSessionID && void runSessionCodeAudit(workspace.activeSessionID, true)}
-            title={t("inspector.diffs.auditTooltip")}
-            aria-label={isAuditing() ? t("inspector.diffs.auditingBtn") : t("inspector.diffs.auditBtn")}
-            class="shrink-0 rounded-md p-1.5 text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--accent-primary)] disabled:opacity-40 cursor-pointer">
-            <ShieldCheck size={13} class={isAuditing() ? "animate-pulse" : ""} />
-          </button>
           <button type="button" onClick={() => setCommitExpanded(!commitExpanded())}
             aria-expanded={commitExpanded()} aria-controls="diff-commit-editor"
             title={t("inspector.diffs.commitBtn", { count: diffs().length })}
@@ -489,12 +476,6 @@ export default function PierreDiffViewer() {
       </Show>
 
       <div class="inspector-scroll flex-1 min-h-0 overflow-y-auto px-2 py-1.5 space-y-1.5">
-        <Show when={workspace.activeSessionID}>
-          {(sid) => <ObserverAuditBanner sessionID={sid()} />}
-        </Show>
-        <Show when={workspace.activeSessionID} keyed>
-          {(sid) => <WorkspaceReviewPanel sessionID={sid} />}
-        </Show>
         <Show
           when={
             previewDiffs().length > 0 ||
