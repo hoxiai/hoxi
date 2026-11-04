@@ -11,7 +11,9 @@ import (
 
 func reviewTestGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	cmd := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=Test", "-c", "user.email=test@example.com"}, args...)...)
+	// Windows installs Git with core.autocrlf=true; pin it off so the fixture
+	// blobs, working files and patches share one line ending and --3way applies.
+	cmd := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", "-c", "core.autocrlf=false"}, args...)...)
 	cmd.Env = nonInteractiveGitEnv()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
