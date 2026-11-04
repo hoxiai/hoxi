@@ -1,6 +1,10 @@
 // web/scripts/check-lines.ts
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
+import type tsType from "typescript";
+
+const ts = createRequire(path.resolve(process.cwd(), "package.json"))("typescript") as typeof tsType;
 
 const MAX_LINES = 800;
 
@@ -95,38 +99,69 @@ const COMPONENT_SERVICE_READONLY_ALLOWLIST: Record<
   },
 };
 
-function extractRuntimeServiceImports(content: string): {
+function extractRuntimeServiceUsage(
+  file: string,
+  content: string
+): {
   hasRuntimeImportStmt: boolean;
-  runtimeSymbols: string[];
+  usedMembers: Set<string>;
 } {
-  const re =
-    /(?:^|\n)\s*import\s+(?!type\b)([^;]+?)\s+from\s+["'][^"']*\/services\/[^"']+["']\s*;?/g;
+  const kind = file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+  const sf = ts.createSourceFile(file, content, ts.ScriptTarget.Latest, true, kind);
   let hasRuntimeImportStmt = false;
-  const runtimeSymbols: string[] = [];
-  let match: RegExpExecArray | null;
-  while ((match = re.exec(content)) !== null) {
-    hasRuntimeImportStmt = true;
-    const clause = match[1].trim();
-    const braceMatch = clause.match(/\{([\s\S]*?)\}/);
-    if (braceMatch) {
-      for (const rawPart of braceMatch[1].split(",")) {
-        const part = rawPart.trim();
-        if (!part || /^type\s+/.test(part)) continue;
-        const localName = part.split(/\s+as\s+/).pop()?.trim();
-        if (localName) runtimeSymbols.push(localName);
-      }
+  const runtimeSymbols = new Set<string>();
+
+  for (const stmt of sf.statements) {
+    if (!ts.isImportDeclaration(stmt) || !ts.isStringLiteral(stmt.moduleSpecifier)) continue;
+    const spec = stmt.moduleSpecifier.text;
+    if (!spec.includes("/services/")) continue;
+    const clause = stmt.importClause;
+    if (!clause) {
+      hasRuntimeImportStmt = true;
+      continue;
     }
-    const outsideBraces = clause.replace(/\{[\s\S]*?\}/, "").replace(/,/g, "").trim();
-    if (outsideBraces && !/^type\s+/.test(outsideBraces)) {
-      const nsMatch = outsideBraces.match(/\*\s+as\s+([A-Za-z_$][A-Za-z0-9_$]*)/);
-      if (nsMatch) {
-        runtimeSymbols.push(nsMatch[1]);
-      } else {
-        runtimeSymbols.push(outsideBraces);
+    if (clause.isTypeOnly) continue;
+    if (clause.name) {
+      hasRuntimeImportStmt = true;
+      runtimeSymbols.add(clause.name.text);
+    }
+    const bindings = clause.namedBindings;
+    if (!bindings) continue;
+    if (ts.isNamespaceImport(bindings)) {
+      hasRuntimeImportStmt = true;
+      runtimeSymbols.add(bindings.name.text);
+    } else if (ts.isNamedImports(bindings)) {
+      for (const el of bindings.elements) {
+        if (!el.isTypeOnly) {
+          hasRuntimeImportStmt = true;
+          runtimeSymbols.add(el.name.text);
+        }
       }
     }
   }
-  return { hasRuntimeImportStmt, runtimeSymbols };
+
+  const usedMembers = new Set<string>();
+  if (runtimeSymbols.size > 0) {
+    const visit = (node: ts.Node) => {
+      if (ts.isImportDeclaration(node) || ts.isTypeNode(node)) return;
+      if (ts.isIdentifier(node) && runtimeSymbols.has(node.text)) {
+        const parent = node.parent;
+        if (ts.isPropertyAccessExpression(parent) && parent.name === node) {
+          return;
+        }
+        if (ts.isPropertyAccessExpression(parent) && parent.expression === node) {
+          usedMembers.add(`${node.text}.${parent.name.text}`);
+          return;
+        }
+        usedMembers.add(node.text);
+        return;
+      }
+      ts.forEachChild(node, visit);
+    };
+    ts.forEachChild(sf, visit);
+  }
+
+  return { hasRuntimeImportStmt, usedMembers };
 }
 
 const IGNORE_DIRS = new Set([
@@ -267,7 +302,7 @@ for (const file of files) {
       console.error(`  ✗ [layering violation] ${rel} must not access Wails window.runtime or EventsOn/EventsOff directly in components/; route through web/src/services/ and web/src/store/.`);
       violations++;
     }
-    const { hasRuntimeImportStmt, runtimeSymbols } = extractRuntimeServiceImports(content);
+    const { hasRuntimeImportStmt, usedMembers } = extractRuntimeServiceUsage(rel, content);
     const allowEntry = COMPONENT_SERVICE_READONLY_ALLOWLIST[rel];
     if (hasRuntimeImportStmt) {
       if (!allowEntry) {
@@ -277,18 +312,6 @@ for (const file of files) {
         violations++;
       } else {
         seenAllowlistFiles.add(rel);
-        const bodyOnly = content.replace(
-          /(?:^|\n)\s*import\s+[^;]+?from\s+["'][^"']+["']\s*;?/g,
-          ""
-        );
-        const usedMembers = new Set<string>();
-        for (const sym of runtimeSymbols) {
-          const propRe = new RegExp(`\\b${sym}(?:\\s*\\.\\s*([A-Za-z_$][A-Za-z0-9_$]*))?`, "g");
-          let pm: RegExpExecArray | null;
-          while ((pm = propRe.exec(bodyOnly)) !== null) {
-            usedMembers.add(pm[1] ? `${sym}.${pm[1]}` : sym);
-          }
-        }
         for (const used of usedMembers) {
           if (!allowEntry.allowed.includes(used)) {
             console.error(

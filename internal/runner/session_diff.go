@@ -20,6 +20,13 @@ type editedFilesEntry struct {
 	files map[string]struct{}
 }
 
+// sessionDiffState caches per-session edited file sets and OpenCode subagent
+// transcripts inspected while filtering diffs.
+type sessionDiffState struct {
+	childTurns  syncMap[childTurnsKey, childTurnsEntry]
+	editedFiles syncMap[string, editedFilesEntry]
+}
+
 func (s *Service) handleSessionDiff(w http.ResponseWriter, r *http.Request, sessionID string) {
 	if r.Method != http.MethodGet {
 		writeJSONError(w, http.StatusMethodNotAllowed, "GET required")

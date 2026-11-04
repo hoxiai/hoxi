@@ -8,11 +8,21 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
 	"github.com/hoxiai/hoxi/internal/opencode"
 )
+
+// engineGateState tracks OpenCode daemon installation hooks and cached readiness probes.
+type engineGateState struct {
+	engineMu        sync.Mutex
+	engineInstaller func(context.Context, bool) (string, error)
+	engineReadyMu   sync.Mutex
+	engineReadyAt   time.Time
+	engineReadyOK   bool
+}
 
 const (
 	engineInstallTimeout = 6 * time.Minute

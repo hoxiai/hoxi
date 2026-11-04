@@ -13,6 +13,16 @@ import (
 	"time"
 )
 
+// updateGateState coordinates mutation draining and active directory tracking
+// before an in-place desktop update.
+type updateGateState struct {
+	updateMu          sync.Mutex
+	updateCheckMu     sync.Mutex
+	updateDraining    bool
+	updateMutations   int
+	updateDirectories map[string]bool
+}
+
 func updateMutation(r *http.Request) bool {
 	return r.Method != http.MethodGet && r.Method != http.MethodOptions &&
 		r.URL.Path != "/api/hoxi/updater" && !strings.HasPrefix(r.URL.Path, "/api/hoxi/updater/")

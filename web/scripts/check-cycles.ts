@@ -2,7 +2,11 @@
 // Fails when web/src has a circular runtime import. Type-only imports and
 // lazy `import()` calls are ignored because they do not run at module init.
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
+import type tsType from "typescript";
+
+const ts = createRequire(path.resolve(process.cwd(), "package.json"))("typescript") as typeof tsType;
 
 const SRC = path.resolve(process.cwd(), "src");
 const EXTENSIONS = [".ts", ".tsx"];
@@ -26,21 +30,44 @@ function resolveImport(from: string, spec: string): string | undefined {
   return candidates.find((p) => fs.existsSync(p) && fs.statSync(p).isFile());
 }
 
-// Static `import ... from "./x"` and `export ... from "./x"`, minus `import type` /
-// `export type`. Inline `type` specifiers still count when any value is imported.
-const STATIC_IMPORT_RE = /^\s*(import|export)\s+(?!type\s)([\s\S]*?)\s+from\s+["'](\.{1,2}\/[^"']+)["']/gm;
-const SIDE_EFFECT_IMPORT_RE = /^\s*import\s+["'](\.{1,2}\/[^"']+)["']/gm;
+function isRelativeSpecifier(spec: string): boolean {
+  return spec.startsWith("./") || spec.startsWith("../");
+}
+
+function hasRuntimeImportClause(clause: ts.ImportClause | undefined): boolean {
+  if (!clause) return true; // Side-effect `import "./x"` executes at module init.
+  if (clause.isTypeOnly) return false;
+  if (clause.name) return true;
+  const bindings = clause.namedBindings;
+  if (!bindings) return false;
+  if (ts.isNamespaceImport(bindings)) return true;
+  return bindings.elements.some((el) => !el.isTypeOnly);
+}
+
+function hasRuntimeExportClause(decl: ts.ExportDeclaration): boolean {
+  if (decl.isTypeOnly) return false;
+  if (!decl.exportClause || ts.isNamespaceExport(decl.exportClause)) return true;
+  return decl.exportClause.elements.some((el) => !el.isTypeOnly);
+}
 
 function runtimeImports(file: string): string[] {
   const text = fs.readFileSync(file, "utf8");
+  const kind = file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+  const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, false, kind);
   const specs: string[] = [];
-  for (const m of text.matchAll(STATIC_IMPORT_RE)) {
-    const clause = m[2].trim();
-    const braced = clause.match(/^\{([\s\S]*)\}$/);
-    if (braced && braced[1].split(",").every((part) => !part.trim() || /^type\s/.test(part.trim()))) continue;
-    specs.push(m[3]);
+  for (const stmt of sf.statements) {
+    if (ts.isImportDeclaration(stmt) && ts.isStringLiteral(stmt.moduleSpecifier)) {
+      const spec = stmt.moduleSpecifier.text;
+      if (isRelativeSpecifier(spec) && hasRuntimeImportClause(stmt.importClause)) {
+        specs.push(spec);
+      }
+    } else if (ts.isExportDeclaration(stmt) && stmt.moduleSpecifier && ts.isStringLiteral(stmt.moduleSpecifier)) {
+      const spec = stmt.moduleSpecifier.text;
+      if (isRelativeSpecifier(spec) && hasRuntimeExportClause(stmt)) {
+        specs.push(spec);
+      }
+    }
   }
-  for (const m of text.matchAll(SIDE_EFFECT_IMPORT_RE)) specs.push(m[1]);
   return specs.map((spec) => resolveImport(file, spec)).filter((p): p is string => Boolean(p));
 }
 

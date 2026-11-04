@@ -19,6 +19,29 @@ import (
 	"github.com/hoxiai/hoxi/internal/worktree"
 )
 
+// openCodeBridgeState holds OpenCode daemon client state, session mappings,
+// and auto-reply concurrency tracking.
+type openCodeBridgeState struct {
+	openCode               *ocapi.Client
+	managedOpenCode        syncMap[string, bool]
+	openCodeChildParent    syncMap[string, string] // openCode child session ID -> hoxi session ID
+	openCodeAutoReplies    syncMap[string, any]    // request ID -> openCodeAutoReply* state or openCodeSettledMark
+	openCodeReplySem       chan struct{}
+	openCodeTimeoutRetries []time.Duration
+}
+
+// turnLedgerState holds bounded per-session / per-turn ephemera cleaned up on
+// turn completion or session deletion.
+type turnLedgerState struct {
+	userSkillByMsg     syncMap[string, userSkillOverride]
+	stoppedTools       syncMap[string, bool] // sessionID\x00(part|call):id -> bool
+	turnStats          syncMap[string, *turnCounts]
+	promptReceipts     syncMap[string, cachedPromptReceipt]   // sessionID\x00clientRequestID -> cachedPromptReceipt
+	permissionReplies  syncMap[string, cachedPermissionReply] // permissionID\x00clientRequestID -> cachedPermissionReply
+	cliSystemDelivered syncMap[string, string]                // sessionID\x00runtime -> last delivered caller system prompt
+	turnRetryDelays    []time.Duration
+}
+
 type Service struct {
 	rootDir     string
 	store       *Store
@@ -34,44 +57,23 @@ type Service struct {
 	doomLoop    *doomLoopGuard
 	stall       stallPolicy
 
-	mu                  sync.Mutex
-	llm                 llm.Client
-	turnMu              sessionTurnLocks
-	procs               map[string]*activeProcess
-	childBusy           map[string]bool
-	subs                map[chan SSEEvent]string
-	seqSeed             int64
-	openCode            *ocapi.Client
-	managedOpenCode     syncMap[string, bool]
-	openCodeChildParent syncMap[string, string] // openCode child session ID -> hoxi session ID
-	// childTurns caches OpenCode subagent transcripts read while filtering diffs.
-	childTurns      syncMap[childTurnsKey, childTurnsEntry]
-	editedFiles     syncMap[string, editedFilesEntry]
-	userSkillByMsg  syncMap[string, userSkillOverride]
-	stoppedTools    syncMap[string, bool] // sessionID\x00(part|call):id -> bool
+	mu              sync.Mutex
+	llm             llm.Client
+	turnMu          sessionTurnLocks
+	procs           map[string]*activeProcess
+	childBusy       map[string]bool
+	subs            map[chan SSEEvent]string
+	seqSeed         int64
 	skillResolver   func(ctx context.Context, directory, sessionID string, sel SkillSelection) (ResolvedSkill, error)
 	projectResolver ProjectResolver
-	directoryWarmer func(ctx context.Context, directory string)
-	prewarmCtx      context.Context
-	warmedDirs      syncMap[string, bool]
-	// permissionRules returns OpenCode's `permission` block; onPolicySaved
-	// keeps OpenCode asking Hoxi after the approval policy changes.
 	permissionRules func() map[string]interface{}
 	onPolicySaved   func()
-	// onSummary delivers the end-of-turn count line. Counts only, no command text.
-	onSummary func(sessionID, body string)
-	// openCodeAutoReplies tracks OpenCode requests the policy is answering.
-	openCodeAutoReplies syncMap[string, any] // request ID -> openCodeAutoReply* state or openCodeSettledMark
-	openCodeReplySem    chan struct{}
-	turnStats           syncMap[string, *turnCounts]
-	promptReceipts      syncMap[string, cachedPromptReceipt]   // sessionID\x00clientRequestID -> cachedPromptReceipt
-	permissionReplies   syncMap[string, cachedPermissionReply] // permissionID\x00clientRequestID -> cachedPermissionReply
-	cliSystemDelivered  syncMap[string, string]                // sessionID\x00runtime -> last delivered caller system prompt
+	onSummary       func(sessionID, body string)
 
-	// openCodeTimeoutRetries overrides openCodeTimeoutRetryDelays in tests.
-	openCodeTimeoutRetries []time.Duration
-	// turnRetryDelays overrides defaultTurnRetryDelays in tests.
-	turnRetryDelays []time.Duration
+	openCodeBridgeState
+	sessionDiffState
+	prewarmState
+	turnLedgerState
 }
 
 // SetSummaryNotifier receives the end-of-turn count line. The body contains
@@ -101,24 +103,24 @@ func NewService(rootDir string, worktrees *worktree.Manager, status *statusbar.T
 		attDir = filepath.Join(filepath.Dir(customStorePath), "attachments")
 	}
 	svc := &Service{
-		rootDir:          rootDir,
-		store:            NewStore(customStorePath),
-		attachments:      attachment.NewStore(attDir),
-		worktrees:        worktrees,
-		status:           status,
-		gate:             newApprovalGate(),
-		audit:            newApprovalAuditStore(customStorePath),
-		deferred:         newDeferredStore(customStorePath),
-		policy:           newApprovalPolicyStore(customStorePath),
-		aiReviews:        newAIReviewCache(),
-		ownedProcs:       newOwnedProcessLedger(),
-		doomLoop:         newDoomLoopGuard(),
-		stall:            stallPolicyFromEnv(),
-		procs:            make(map[string]*activeProcess),
-		childBusy:        make(map[string]bool),
-		subs:             make(map[chan SSEEvent]string),
-		openCodeReplySem: make(chan struct{}, maxConcurrentOpenCodeAutoReplies),
+		rootDir:     rootDir,
+		store:       NewStore(customStorePath),
+		attachments: attachment.NewStore(attDir),
+		worktrees:   worktrees,
+		status:      status,
+		gate:        newApprovalGate(),
+		audit:       newApprovalAuditStore(customStorePath),
+		deferred:    newDeferredStore(customStorePath),
+		policy:      newApprovalPolicyStore(customStorePath),
+		aiReviews:   newAIReviewCache(),
+		ownedProcs:  newOwnedProcessLedger(),
+		doomLoop:    newDoomLoopGuard(),
+		stall:       stallPolicyFromEnv(),
+		procs:       make(map[string]*activeProcess),
+		childBusy:   make(map[string]bool),
+		subs:        make(map[chan SSEEvent]string),
 	}
+	svc.openCodeReplySem = make(chan struct{}, maxConcurrentOpenCodeAutoReplies)
 	for _, info := range svc.store.List("") {
 		rec, _ := svc.store.Meta(info.ID)
 		svc.restoreOpenCodeSessionMappings(rec)

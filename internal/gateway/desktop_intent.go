@@ -3,7 +3,25 @@ package gateway
 import (
 	"path/filepath"
 	"strings"
+	"sync"
 )
+
+// desktopBridgeState groups host window callbacks (directory picker, window
+// focus, native notifications, and one-shot navigation intents).
+type desktopBridgeState struct {
+	dialogMu              sync.RWMutex
+	onOpenDirectoryDialog func() (string, error)
+	onFocusDesktop        func(directory, sessionID string)
+
+	notifyMu              sync.RWMutex
+	onDesktopNotify       func(DesktopNotification) error
+	onDesktopNotifyStatus func() DesktopNotificationPermission
+	onDesktopNotifyAsk    func() DesktopNotificationPermission
+
+	intentMu        sync.Mutex
+	pendingIntent   *DesktopIntent
+	onDesktopIntent func()
+}
 
 const (
 	maxDesktopEntityIDLength = 96

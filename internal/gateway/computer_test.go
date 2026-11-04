@@ -9,7 +9,7 @@ import (
 )
 
 func TestComputerGatewayRejectsUntrustedOriginsAndAgentGrants(t *testing.T) {
-	g := &Gateway{computer: computer.New(), uiOrigins: map[string]bool{}}
+	g := &Gateway{computer: computer.New()}
 	g.SetComputerAgentToken("secret")
 	for _, path := range []string{"permissions", "apps", "state", "grant", "revoke", "pause", "stop", "action"} {
 		request := httptest.NewRequest("POST", "http://127.0.0.1/api/hoxi/computer/"+path, strings.NewReader(`{}`))

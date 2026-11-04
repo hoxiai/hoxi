@@ -83,6 +83,65 @@ var (
 		regexp.QuoteMeta(openCodeStopTrap) + `|` + regexp.QuoteMeta(openCodeStopTrapUSR1) + `|trap : EXIT)(?:[ \t]*\r?\n|[ \t]+|$)))+`)
 )
 
+// permissionRequestView normalizes a raw permission payload from OpenCode or
+// a PreToolUse CLI hook into a typed view so policy checks do not repeatedly
+// traverse untyped nested maps.
+type permissionRequestView struct {
+	raw             map[string]interface{}
+	meta            map[string]interface{}
+	permission      string
+	toolName        string
+	firstPattern    string
+	patterns        []string
+	pattern         []string
+	worktree        string
+	destructive     bool
+	externalDir     bool
+	hasCommandField bool
+}
+
+func parsePermissionRequest(item map[string]interface{}) permissionRequestView {
+	meta := itemMetadata(item)
+	perm := permissionName(item)
+	patterns := stringList(item["patterns"])
+	pattern := stringList(item["pattern"])
+	firstPat := ""
+	if len(patterns) > 0 {
+		firstPat = patterns[0]
+	}
+	toolObj, _ := item["tool"].(map[string]interface{})
+	toolName := strings.ToLower(strings.TrimSpace(firstString(meta["tool"], toolObj["name"], firstPat, firstString(item["pattern"]))))
+	destructive, _ := meta["destructive"].(bool)
+	external, _ := meta["externalDirectory"].(bool)
+	_, hasCommand := meta["command"].(string)
+	_, hasCmd := meta["cmd"].(string)
+	_, hasCommands := meta["commands"].([]interface{})
+	return permissionRequestView{
+		raw:             item,
+		meta:            meta,
+		permission:      perm,
+		toolName:        toolName,
+		firstPattern:    firstPat,
+		patterns:        patterns,
+		pattern:         pattern,
+		worktree:        firstString(meta["worktree"]),
+		destructive:     destructive,
+		externalDir:     external,
+		hasCommandField: hasCommand || hasCmd || hasCommands,
+	}
+}
+
+func (req permissionRequestView) isComputerUse() bool {
+	return req.permission == "hoxi_computer" || strings.EqualFold(firstString(req.meta["tool"]), "hoxi_computer")
+}
+
+func (req permissionRequestView) resolveWorktree(fallback string) string {
+	if fallback != "" {
+		return fallback
+	}
+	return req.worktree
+}
+
 // approvalAutoApproves reports whether item may run without asking the user
 // under pol. rules is the OpenCode `permission` block, whose pattern objects
 // (written by "always allow" on an approval card) apply to every runtime.
@@ -96,7 +155,8 @@ func approvalAutoApproves(item map[string]interface{}, pol ApprovalPolicy, rules
 // Hoxi worktree and its runtime commands are OS-sandboxed; unattended mode
 // then allows everything the hard-refuse list does not name.
 func approvalAutoApprovesIsolated(item map[string]interface{}, pol ApprovalPolicy, rules map[string]interface{}, worktree string, isolated bool) bool {
-	if permissionName(item) == "hoxi_computer" || strings.EqualFold(firstString(itemMetadata(item)["tool"]), "hoxi_computer") {
+	req := parsePermissionRequest(item)
+	if req.isComputerUse() {
 		return false
 	}
 	if pol.Mode == ApprovalModeUnattended && isolated {
@@ -111,14 +171,11 @@ func approvalAutoApprovesIsolated(item map[string]interface{}, pol ApprovalPolic
 		!((pol.Mode == ApprovalModeTrusted || pol.Mode == ApprovalModeUnattended) && trustedRecoverableRequest(item, worktree)) {
 		return false
 	}
-	perm := permissionName(item)
-	if readPermissions[perm] {
+	if readPermissions[req.permission] {
 		return true
 	}
-	meta := itemMetadata(item)
-	external, _ := meta["externalDirectory"].(bool)
 	category := permissionCategory(item)
-	if category == permissionCategoryRead && !external {
+	if category == permissionCategoryRead && !req.externalDir {
 		return true
 	}
 	switch category {
@@ -148,11 +205,11 @@ func approvalAutoApprovesIsolated(item map[string]interface{}, pol ApprovalPolic
 	case ApprovalModeManual:
 		return false
 	case ApprovalModeSmart:
-		if category == permissionCategoryRead || smartControlPermissions[perm] {
+		if category == permissionCategoryRead || smartControlPermissions[req.permission] {
 			return true
 		}
-		if perm == "tool" {
-			tool := strings.ToLower(strings.TrimSpace(firstString(meta["tool"], firstPattern(item))))
+		if req.permission == "tool" {
+			tool := strings.ToLower(strings.TrimSpace(firstString(req.meta["tool"], req.firstPattern)))
 			return readToolNames[tool] || smartControlPermissions[tool]
 		}
 		return false
@@ -447,11 +504,12 @@ func metadataFilePaths(meta map[string]interface{}) []string {
 // isDestructivePermissionRequest mirrors isDestructivePermissionRequest in
 // permission-policy.js: requests that must reach the user in every mode.
 func isDestructivePermissionRequest(item map[string]interface{}) bool {
-	if permissionName(item) == "hoxi_computer" || strings.EqualFold(firstString(itemMetadata(item)["tool"]), "hoxi_computer") {
+	req := parsePermissionRequest(item)
+	if req.isComputerUse() {
 		return true
 	}
-	perm := permissionName(item)
-	meta := itemMetadata(item)
+	perm := req.permission
+	meta := req.meta
 	if perm == "doom_loop" {
 		return true
 	}
@@ -461,10 +519,10 @@ func isDestructivePermissionRequest(item map[string]interface{}) bool {
 	if perm == "external_directory" {
 		return !externalDirectoryTargetsAreRoutine(item)
 	}
-	if destructive, _ := meta["destructive"].(bool); destructive {
+	if req.destructive {
 		return true
 	}
-	if external, _ := meta["externalDirectory"].(bool); external && !externalDirectoryTargetsAreRoutine(item) {
+	if req.externalDir && !externalDirectoryTargetsAreRoutine(item) {
 		return true
 	}
 	if readPermissions[perm] {
@@ -480,14 +538,14 @@ func isDestructivePermissionRequest(item map[string]interface{}) bool {
 		return false
 	}
 	if editPermissions[perm] || perm == "tool" {
-		tool := strings.ToLower(strings.TrimSpace(firstString(meta["tool"], firstPattern(item))))
+		tool := strings.ToLower(strings.TrimSpace(firstString(meta["tool"], req.firstPattern)))
 		if tool == "unsandboxed" {
 			return true
 		}
 		var candidates []string
 		if perm != "tool" {
-			candidates = append(candidates, stringList(item["patterns"])...)
-			candidates = append(candidates, stringList(item["pattern"])...)
+			candidates = append(candidates, req.patterns...)
+			candidates = append(candidates, req.pattern...)
 		}
 		for _, key := range []string{"filepath", "filePath", "path", "target"} {
 			candidates = append(candidates, stringList(meta[key])...)
@@ -504,13 +562,7 @@ func isDestructivePermissionRequest(item map[string]interface{}) bool {
 				return true
 			}
 		}
-		if editPermissions[perm] {
-			return false
-		}
-		_, hasCommand := meta["command"].(string)
-		_, hasCmd := meta["cmd"].(string)
-		_, hasCommands := meta["commands"].([]interface{})
-		if !hasCommand && !hasCmd && !hasCommands {
+		if editPermissions[perm] || !req.hasCommandField {
 			return false
 		}
 	}
@@ -532,22 +584,15 @@ func readTargets(item map[string]interface{}) []string {
 }
 
 func isOpaquePermissionRequestWith(item map[string]interface{}, worktree string, allowInlineScripts bool) bool {
-	if permissionName(item) == "external_directory" {
+	req := parsePermissionRequest(item)
+	if req.permission == "external_directory" {
 		return false
 	}
-	if worktree == "" {
-		worktree = firstString(itemMetadata(item)["worktree"])
-	}
+	worktree = req.resolveWorktree(worktree)
 	category := permissionCategory(item)
 	candidates := opacityCandidates(item)
-	if category != permissionCategoryBash {
-		meta := itemMetadata(item)
-		_, hasCommand := meta["command"].(string)
-		_, hasCmd := meta["cmd"].(string)
-		_, hasCommands := meta["commands"].([]interface{})
-		if !hasCommand && !hasCmd && !hasCommands {
-			return false
-		}
+	if category != permissionCategoryBash && !req.hasCommandField {
+		return false
 	}
 	if len(candidates) == 0 {
 		return true
@@ -564,12 +609,10 @@ func isSafeCommandPermissionRequest(item map[string]interface{}, worktree string
 	if isDestructivePermissionRequest(item) {
 		return false
 	}
-	meta := itemMetadata(item)
-	if worktree == "" {
-		worktree = firstString(meta["worktree"])
-	}
+	req := parsePermissionRequest(item)
+	worktree = req.resolveWorktree(worktree)
 	candidates := commandCandidates(item)
-	if cmd := strings.TrimSpace(unwrapSandboxCommand(firstString(meta["command"]))); cmd != "" {
+	if cmd := strings.TrimSpace(unwrapSandboxCommand(firstString(req.meta["command"]))); cmd != "" {
 		filtered := []string{cmd}
 		for _, piece := range candidates {
 			if piece != "" && !strings.Contains(cmd, piece) {

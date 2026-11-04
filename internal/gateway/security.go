@@ -1,13 +1,28 @@
 package gateway
 
 import (
+	"context"
 	"crypto/subtle"
 	"net"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 )
+
+// securityGateState groups loopback origin/token guards and native computer-use
+// confirmation state.
+type securityGateState struct {
+	originMu           sync.RWMutex
+	uiOrigins          map[string]bool
+	gatewayToken       string
+	computerAgentToken string
+	confirmComputerApp func(context.Context, ComputerAppConfirmation) (bool, error)
+	computerLocale     string
+	computerConfirming atomic.Bool
+}
 
 const (
 	gatewayTokenHeader     = "X-Hoxi-Token"

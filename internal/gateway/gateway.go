@@ -13,8 +13,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
-	"time"
 
 	"github.com/hoxiai/hoxi/internal/auth"
 	"github.com/hoxiai/hoxi/internal/browser"
@@ -46,63 +44,41 @@ import (
 )
 
 type Gateway struct {
-	computer              *computer.Service
-	computerAgentToken    string
-	confirmComputerApp    func(context.Context, ComputerAppConfirmation) (bool, error)
-	computerLocale        string
-	computerConfirming    atomic.Bool
-	openCodePort          int
-	openCode              *ocapi.Client
-	rootDir               string
-	wsBaseURL             string
-	proxy                 *httputil.ReverseProxy
-	mux                   *http.ServeMux
-	status                *statusbar.Tracker
-	worktrees             *worktree.Manager
-	workspaces            *workspace.Store
-	providers             *provider.Service
-	handoff               *handoff.Service
-	runner                *runner.Service
-	skills                *skills.Service
-	browser               *browser.Service
-	auth                  *auth.Service
-	workApps              *workapps.Service
-	tools                 *tools.Service
-	updater               *updater.Checker
-	leaderboard           *leaderboard.Service
-	sandbox               *sandbox.Manager
-	codeIndex             *codeindex.Service
-	recallSvc             *recall.Service
-	orchestration         *orchestration.Service
-	forge                 *forge.Service
-	tunnel                *tunnel.Manager
-	pairing               *pairing.Service
-	cloudflared           *cloudflared.Manager
-	onOpenDirectoryDialog func() (string, error)
-	onFocusDesktop        func(directory, sessionID string)
-	dialogMu              sync.RWMutex
-	notifyMu              sync.RWMutex
-	onDesktopNotify       func(DesktopNotification) error
-	onDesktopNotifyStatus func() DesktopNotificationPermission
-	onDesktopNotifyAsk    func() DesktopNotificationPermission
-	intentMu              sync.Mutex
-	pendingIntent         *DesktopIntent
-	onDesktopIntent       func()
-	originMu              sync.RWMutex
-	uiOrigins             map[string]bool
-	gatewayToken          string
-	updateMu              sync.Mutex
-	updateCheckMu         sync.Mutex
-	updateDraining        bool
-	updateMutations       int
-	updateDirectories     map[string]bool
-	pulseCache            devPulseCache
-	engineMu              sync.Mutex
-	engineInstaller       func(context.Context, bool) (string, error)
-	engineReadyMu         sync.Mutex
-	engineReadyAt         time.Time
-	engineReadyOK         bool
-	storageCleanMu        sync.Mutex
+	openCodePort  int
+	openCode      *ocapi.Client
+	rootDir       string
+	wsBaseURL     string
+	proxy         *httputil.ReverseProxy
+	mux           *http.ServeMux
+	status        *statusbar.Tracker
+	worktrees     *worktree.Manager
+	workspaces    *workspace.Store
+	providers     *provider.Service
+	handoff       *handoff.Service
+	runner        *runner.Service
+	skills        *skills.Service
+	browser       *browser.Service
+	computer      *computer.Service
+	auth          *auth.Service
+	workApps      *workapps.Service
+	tools         *tools.Service
+	updater       *updater.Checker
+	leaderboard   *leaderboard.Service
+	sandbox       *sandbox.Manager
+	codeIndex     *codeindex.Service
+	recallSvc     *recall.Service
+	orchestration *orchestration.Service
+	forge         *forge.Service
+	tunnel        *tunnel.Manager
+	pairing       *pairing.Service
+	cloudflared   *cloudflared.Manager
+
+	desktopBridgeState
+	securityGateState
+	updateGateState
+	engineGateState
+	pulseCache     devPulseCache
+	storageCleanMu sync.Mutex
 }
 
 func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statusbar.Tracker) *Gateway {

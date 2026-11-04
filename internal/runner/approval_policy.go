@@ -269,6 +269,22 @@ func (s *Service) ApprovalPolicy() ApprovalPolicy {
 	return p
 }
 
+// UpdateApprovalPolicy validates, persists, and reconciles a new approval policy.
+func (s *Service) UpdateApprovalPolicy(p ApprovalPolicy) (ApprovalPolicy, error) {
+	saved, err := s.policy.set(p)
+	if err != nil {
+		return ApprovalPolicy{}, err
+	}
+	s.mu.Lock()
+	hook := s.onPolicySaved
+	s.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
+	s.reconcilePendingApprovals()
+	return saved, nil
+}
+
 // SetPermissionRulesSource wires the OpenCode `permission` block (pattern
 // rules saved from approval cards) into every runtime's approval decision.
 func (s *Service) SetPermissionRulesSource(fn func() map[string]interface{}) {

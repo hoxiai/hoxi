@@ -27,6 +27,13 @@ const (
 	maxPrewarmIndexRoots = 8
 )
 
+// prewarmState tracks workspace directory prewarming hooks and warmed roots.
+type prewarmState struct {
+	directoryWarmer func(ctx context.Context, directory string)
+	prewarmCtx      context.Context
+	warmedDirs      syncMap[string, bool]
+}
+
 // SetDirectoryWarmer registers an optional hook that warms workspace indexes in
 // the background when project roots or new session worktrees are provisioned.
 func (s *Service) SetDirectoryWarmer(fn func(directory string)) {
