@@ -601,6 +601,14 @@ type fallbackStubLLM struct {
 }
 
 func (s *fallbackStubLLM) Resolve(providerID, modelID, baseURL, npm string) llm.Target {
+	if providerID == "hoxi-auto" && modelID == "free" {
+		return llm.Target{
+			ProviderID:  "slow",
+			ModelID:     "deepseek-r1",
+			BaseURL:     "https://example.test/v1",
+			HasEndpoint: true,
+		}
+	}
 	if providerID == "hoxi-auto" && modelID == "fast" {
 		return llm.Target{
 			ProviderID:  "fast-gw",
@@ -631,11 +639,6 @@ func TestAIReviewFastModelFallbackAndCache(t *testing.T) {
 	svc, dir := newAIReviewTestService(t)
 	stub := &fallbackStubLLM{}
 	svc.SetLLM(stub)
-	setTestApprovalPolicy(t, svc, ApprovalPolicy{
-		Mode:          ApprovalModeAuto,
-		AIReview:      true,
-		AIReviewModel: "slow/deepseek-r1",
-	})
 
 	item1 := map[string]interface{}{
 		"permission": "bash",
@@ -648,13 +651,38 @@ func TestAIReviewFastModelFallbackAndCache(t *testing.T) {
 		"metadata":   map[string]interface{}{"command": `bash -c 'for y in c d; do echo "$y"; done'`},
 	}
 
+	// 1. Explicit single-provider configuration must never silently cross providers.
+	setTestApprovalPolicy(t, svc, ApprovalPolicy{
+		Mode:          ApprovalModeAuto,
+		AIReview:      true,
+		AIReviewModel: "slow/deepseek-r1",
+	})
+	explicitOut := svc.aiReviewCommand(context.Background(), item1, dir)
+	if explicitOut.allowed() || explicitOut.status != aiReviewUnavailable {
+		t.Fatalf("expected explicit provider failure to fail closed without cross-provider fallback, got %+v", explicitOut)
+	}
+	stub.mu.Lock()
+	explicitTried := append([]string(nil), stub.modelsTried...)
+	stub.modelsTried = nil
+	stub.mu.Unlock()
+	if fmt.Sprint(explicitTried) != fmt.Sprint([]string{"slow/deepseek-r1"}) {
+		t.Fatalf("explicit provider modelsTried = %v, want [slow/deepseek-r1]", explicitTried)
+	}
+
+	// 2. When user explicitly selects hoxi-auto/*, fast fallback within auto pool is allowed and cached.
+	svc.aiReviews = newAIReviewCache()
+	setTestApprovalPolicy(t, svc, ApprovalPolicy{
+		Mode:          ApprovalModeAuto,
+		AIReview:      true,
+		AIReviewModel: "hoxi-auto/free",
+	})
 	out1 := svc.aiReviewCommand(context.Background(), item1, dir)
 	if !out1.allowed() {
-		t.Fatalf("expected fallback model to approve first command, got %+v", out1)
+		t.Fatalf("expected hoxi-auto fallback model to approve first command, got %+v", out1)
 	}
 	out2 := svc.aiReviewCommand(context.Background(), item2, dir)
 	if !out2.allowed() {
-		t.Fatalf("expected cached fallback model to approve second command, got %+v", out2)
+		t.Fatalf("expected cached hoxi-auto fallback model to approve second command, got %+v", out2)
 	}
 
 	stub.mu.Lock()

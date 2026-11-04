@@ -33,7 +33,9 @@
 - 每发现一个绕过，必须作为回归用例写进对应 `*.cases.json`。
 - **审批超时只拒绝，永不放行**。到点的请求回复 reject，不得改写成放行。
 - **硬拒绝类不得放宽**：无人值守模式的密钥读取、任何 `git push` 与发布、提权、凭据外发，不能被模式、会话授权或「始终允许」绕过。用例在 `.opencode/lib/unattended.cases.json`，Go 与 `.opencode/lib/unattended-policy.js` 共用。
-- **无人值守不能直接放行动态代码**：静态分类器看不穿 `eval`、管道进 Shell、`$CMD args`、解释器内联代码，这些一律按 `dynamic` 拒绝；每发现一种绕过写法，就把它作为拒绝用例加进 `unattended.cases.json`（Go 与 JS 同时通过）。静态判定只是尽力而为，凭据隔离靠沙箱：命令沙箱会话的运行时环境由 `sandboxedRuntimeEnv` 剥除凭据，新增运行时要在 `runtimeModelEnv` 里只列它调模型必需的 Key。
+- **无人值守不能直接放行动态代码**：静态分类器看不穿 `eval`、管道/heredoc/进程替换/`/dev/stdin` 进 Shell 或解释器、`$CMD args`、`env -S`、`parallel`、`xargs`/`find -exec` 拼出的敏感子命令、git 未知子命令（可能是别名）与会执行命令的 `git -c` 配置，以及会起进程、动态加载、读环境变量或联网的解释器内联代码（`python3 -c`、`node -e`、`python3 - <<'EOF'` 等），这些一律按 `dynamic` 拒绝；每发现一种绕过写法，就把它作为拒绝用例加进 `unattended.cases.json`（Go `approval_unattended_parse.go` + `approval_unattended_dynamic.go` 与 JS `.opencode/lib/unattended-shell.js` + `unattended-policy.js` 同时通过）。静态判定只是尽力而为，凭据隔离靠沙箱：
+  - **沙箱保证**：命令沙箱禁读 `~/.ssh`、`~/.aws`、`~/.gnupg`、`~/.kube`、`~/.config/gh`、`~/.config/gcloud`、`~/.azure`、`~/.docker/config.json`、`~/.netrc`、`~/.npmrc`、`~/.pypirc`、`~/.git-credentials`、`~/.cargo`、`~/.hoxi` 受保护状态文件，以及工作树根和 `web`/`client`/`server` 下的 `.env*`（`.env.example` 仍可读；`~/Library/Keychains` 由审批平面硬拒绝，Seatbelt 层保留可读以供 `claude`/`agy` 读取自身 OAuth 凭据）；写入限于工作树等可写根，`.git/config` 与 hooks 不可写；运行时环境由 `internal/runner/sandbox_env.go` 剥除凭据变量（只保留该运行时调模型所需的 Key，开启 Bedrock/Vertex 时才保留对应云凭据）；Seatbelt 拒绝连接 SSH/GPG/1Password/Secretive agent 套接字。
+  - **沙箱不保证**：网络放开（运行时需调模型），钥匙串查询（`git osxkeychain`、`gh` keyring）及模型 Key 外发靠静态拒绝拦截。仅隔离 worktree + 命令沙箱且运行时进程被 Seatbelt 包裹的会话可启用无人值守（OpenCode 文件工具跑在守护进程内，不享受无人值守全部放行）。
 - **待处理清单不经隧道**。`/api/hoxi/permission/deferred` 保持在白名单之外，并保留隧道 403 用例。
 
 自检：对你新增的每条"allow"路径，尝试用引号、反斜杠、`;`/`&&`/`|` 链接、`$()` 构造绕过，并写成用例。
@@ -78,7 +80,7 @@
 - 杀进程的范围必须严格限定在**本会话自己的进程树**。找不到目标就什么也不做并返回未找到。
 - **禁止"匹配不到就扩大范围"的回退**，尤其是破坏性操作（kill、删除、reset）。
 - 共享资源（OpenCode 守护进程、PTY、MCP）不属于任何单个会话，不得被会话级操作波及。
-- 审批侧「结束本会话自己的进程」放行（`internal/runner/owned_process.go`）同样遵守这条：归属只认 Hoxi 自己在命令运行时记下的进程组，不按命令文本或进程名猜；`pkill` 只要有一个匹配目标不属于本会话就照常询问，绝不因为「大部分是本会话的」而放行。改动这里必须同时补允许与拒绝两类测试（`owned_process_unix_test.go`、`process_control_test.go`）。
+- 审批侧「结束本会话自己的进程」放行（`internal/runner/owned_process.go` + `process_control.go`，仅 Go 侧动态判定）同样遵守这条：归属只认 Hoxi 自己在命令运行时记下的进程组（OpenCode 按 `# hoxi-stop:<会话>:<调用>` 标记，原生 CLI 按运行时进程树内的组长），不按命令文本或进程名猜；仅限顶层 `pkill [-信号] [-f|-x|-i] <字面量模式>` 与 `kill [-信号] <字面量 PID…>`，核实所有目标均属本会话后原地替换为 `true`（审计来源 `own_process`）；`pkill` 只要有一个匹配目标不属于本会话就照常询问，绝不因为「大部分是本会话的」而放行。`killall`、动态参数、进程组/作业号、`-u`/`-v`/`-F`、前缀包装（`sudo`/`timeout`/`env`/`FOO=1`）、`$(…)` 内命令及同命令含 `alias`/`source`/改 `PATH` 等一律不遮蔽；AI 审查不使用遮蔽结果，Windows 不核实 `pkill`。改动这里必须同时补允许与拒绝两类测试（`owned_process_unix_test.go`、`process_control_test.go`）。
 - 有并发入口的安装 / 启动流程（后台自举与用户点击安装）必须走同一个锁或 singleflight；下载写唯一临时文件，校验后再原子替换。
 - 校验（SHA256）放在每个下载源的循环内，失败就尝试下一个源；校验失败绝不能落到"未校验安装"。
 

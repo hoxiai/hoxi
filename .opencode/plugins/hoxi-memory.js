@@ -235,6 +235,17 @@ async function fetchEvidence(client, directory, sessionID) {
   };
 }
 
+// When OpenCode runs inside Hoxi's supervised daemon (HOXI_GATEWAY_URL +
+// HOXI_BROWSER_TOKEN injected by internal/opencode), Go's runner.syncSessionMemoryFile
+// already persists <project>/.hoxi/memory/sessions/ses_hoxi_<id>.md on every turn,
+// so this repo-local plugin skips duplicate HTTP fetches and ses_<opencodeID>.md writes.
+function isHoxiManagedDaemon() {
+  return Boolean(
+    (process.env.HOXI_GATEWAY_URL?.trim() || process.env.HOXI_BROWSER_URL?.trim()) &&
+      process.env.HOXI_BROWSER_TOKEN?.trim()
+  );
+}
+
 export const HoxiMemoryPlugin = async ({ client, directory } = {}) => {
   const baseDir = directory || process.cwd();
   const memoryRoot = projectMemoryRoot(baseDir);
@@ -333,10 +344,12 @@ export const HoxiMemoryPlugin = async ({ client, directory } = {}) => {
     },
 
     "tool.execute.after": async (input) => {
+      if (isHoxiManagedDaemon()) return;
       noteTool(ensure(input?.sessionID), input?.tool, input?.args, "", "", "completed");
     },
 
     event: async ({ event }) => {
+      if (isHoxiManagedDaemon()) return;
       const props = event?.properties || {};
       if (event?.type === "message.updated" && props.info) noteMessage(ensure(props.info.sessionID), props.info);
       if (event?.type === "message.part.updated" && props.part) notePart(ensure(props.part.sessionID), props.part);

@@ -142,6 +142,32 @@ describe("8-dim session memory", () => {
       // config root it would populate with a plugin bundle.
       const written = await fs.readFile(path.join(tmpDir, ".hoxi", "memory", "sessions", "ses_resumed.md"), "utf8");
       assertTrue(written.includes("New turn goal"));
+
+      // When running inside Hoxi's supervised OpenCode daemon, Go runner already
+      // writes ses_hoxi_*.md, so repo-local hoxi-memory.js must skip duplicate writes.
+      const env = (globalThis as any).process.env as Record<string, string | undefined>;
+      const prevGw = env.HOXI_GATEWAY_URL;
+      const prevTok = env.HOXI_BROWSER_TOKEN;
+      try {
+        env.HOXI_GATEWAY_URL = "http://127.0.0.1:5410";
+        env.HOXI_BROWSER_TOKEN = "secret";
+        await plugin.event({
+          event: { type: "session.idle", properties: { sessionID: "ses_managed_oc" } },
+        });
+        assertEqual(fetchCalls, 0);
+        let duplicateExists = true;
+        try {
+          await fs.access(path.join(tmpDir, ".hoxi", "memory", "sessions", "ses_managed_oc.md"));
+        } catch {
+          duplicateExists = false;
+        }
+        assertEqual(duplicateExists, false);
+      } finally {
+        if (prevGw === undefined) delete env.HOXI_GATEWAY_URL;
+        else env.HOXI_GATEWAY_URL = prevGw;
+        if (prevTok === undefined) delete env.HOXI_BROWSER_TOKEN;
+        else env.HOXI_BROWSER_TOKEN = prevTok;
+      }
     } finally {
       await fs.rm(tmpDir, { recursive: true, force: true });
     }

@@ -415,4 +415,100 @@ describe("auto-pool failover dispatch", () => {
       setWorkspace("statusBySession", reconcile({}));
     }
   });
+
+  it("retries the warm sticky candidate once on transient network/5xx errors in a multi-turn session before switching pool candidates", async () => {
+    const origSend = hoxiAPI.sendPromptAsync;
+    const origGetMessages = hoxiAPI.getMessages;
+    const origReport = hoxiAPI.reportCandidateOutcome;
+    const origGet = hoxiAPI.getProviderCandidates;
+    const origSummarize = hoxiAPI.summarizeSessionTitle;
+    const sid = "ses_multiturn_cache_retry";
+    try {
+      hoxiAPI.reportCandidateOutcome = async () => ({ ok: true });
+      hoxiAPI.getProviderCandidates = async () => ({ ok: true, breakers: {} });
+      hoxiAPI.getMessages = async () => [];
+      hoxiAPI.summarizeSessionTitle = async () => ({ ok: true, title: "Test" });
+      const model = (id: string) => ({ id, name: id, capabilities: { toolcall: true } });
+      setWorkspace("providers", [
+        { id: "alpha", name: "Alpha", models: { m: model("m") } },
+        { id: "beta", name: "Beta", models: { m: model("m") } },
+      ]);
+      setWorkspace("connectedProviders", ["alpha", "beta"]);
+      setWorkspace("sessions", [{ id: sid, title: "WarmCache", time: { created: 1, updated: 1 } } as never]);
+      setWorkspace("activeSessionID", sid);
+      setWorkspace("aiBySession", sid, {
+        agent: "build",
+        model: { providerID: AUTO_PROVIDER_ID, modelID: "free" },
+        effort: "",
+      });
+      setWorkspace("messagesBySession", sid, [
+        {
+          info: { id: "msg_u1", sessionID: sid, role: "user", time: { created: 1 } },
+          parts: [{ id: "prt_u1", sessionID: sid, messageID: "msg_u1", type: "text", text: "first turn" }],
+        },
+        {
+          info: {
+            id: "msg_a1",
+            sessionID: sid,
+            role: "assistant",
+            providerID: "alpha",
+            modelID: "m",
+            time: { created: 2, completed: 3 },
+          },
+          parts: [{ id: "prt_a1", sessionID: sid, messageID: "msg_a1", type: "text", text: "done" }],
+        },
+      ] as never);
+      await saveAutoPool("free", {
+        id: "free",
+        preset: true,
+        strategy: "priority",
+        customized: true,
+        candidates: [
+          { providerID: "alpha", modelID: "m" },
+          { providerID: "beta", modelID: "m" },
+        ],
+      });
+      clearAutoPoolCooldowns("free");
+      applyProviderBreakers({});
+
+      const attempted: string[] = [];
+      hoxiAPI.sendPromptAsync = async (_sid, _text, opts) => {
+        attempted.push(`${opts?.model?.providerID}/${opts?.model?.modelID}`);
+      };
+
+      await dispatchSessionPrompt("second turn", sid, { forceImmediate: true });
+      assertDeepEqual(attempted, ["alpha/m"]);
+
+      // First transient 502 on a warm multi-turn session retries alpha/m once to preserve KV cache.
+      await handleSessionErrorEvent(sid, {
+        name: "APIError",
+        data: { message: "502 Bad Gateway", statusCode: 502 },
+      });
+      assertDeepEqual(attempted, ["alpha/m", "alpha/m"]);
+      assertEqual(isCandidateCoolingDown("alpha", "m"), false);
+
+      // If the same-model retry also fails, it cools down alpha/m and switches to beta/m.
+      await handleSessionErrorEvent(sid, {
+        name: "APIError",
+        data: { message: "502 Bad Gateway", statusCode: 502 },
+      });
+      assertDeepEqual(attempted, ["alpha/m", "alpha/m", "beta/m"]);
+      assertTrue(isCandidateCoolingDown("alpha", "m"));
+    } finally {
+      clearAutoFailoverPending(sid);
+      hoxiAPI.sendPromptAsync = origSend;
+      hoxiAPI.getMessages = origGetMessages;
+      hoxiAPI.reportCandidateOutcome = origReport;
+      hoxiAPI.getProviderCandidates = origGet;
+      hoxiAPI.summarizeSessionTitle = origSummarize;
+      setWorkspace("activeSessionID", null);
+      setWorkspace("sessions", []);
+      setWorkspace("aiBySession", reconcile({}));
+      setWorkspace("messagesBySession", reconcile({}));
+      setWorkspace("statusBySession", reconcile({}));
+      clearAutoPoolCooldowns("free");
+      await resetAutoPoolToDefault("free");
+      applyProviderBreakers({});
+    }
+  });
 });

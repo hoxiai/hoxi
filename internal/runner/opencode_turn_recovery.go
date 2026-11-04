@@ -82,6 +82,13 @@ var transitionalClausePrefixes = []string{
 	"我来",
 }
 
+const (
+	openCodePreambleRecoveryPrompt = "Your previous reply ended with a transitional sentence announcing your next action without emitting a tool call. Execute that action now by calling the appropriate tool, or provide your final answer directly."
+	recoveryKindNone               = ""
+	recoveryKindReasoning          = "reasoning"
+	recoveryKindPreamble           = "preamble"
+)
+
 // shouldRecoverOpenCodeTurn reports whether the latest assistant step ended
 // prematurely (runaway DSML tool-tag loop, leaked tool call in reasoning,
 // `finish: "length"` before any visible text or tool call was emitted, or a
@@ -89,8 +96,12 @@ var transitionalClausePrefixes = []string{
 // emitting its announced tool call) and should be automatically continued
 // within the same turn.
 func shouldRecoverOpenCodeTurn(turns []MessageTurn, ap *activeProcess) bool {
+	return classifyOpenCodeTurnRecovery(turns, ap) != recoveryKindNone
+}
+
+func classifyOpenCodeTurnRecovery(turns []MessageTurn, ap *activeProcess) string {
 	if ap == nil || ap.wasAborted() {
-		return false
+		return recoveryKindNone
 	}
 	loopAborted := ap.reasoningLoop.hasPendingRecovery()
 	lastIdx := -1
@@ -102,11 +113,14 @@ func shouldRecoverOpenCodeTurn(turns []MessageTurn, ap *activeProcess) bool {
 		break
 	}
 	if lastIdx < 0 || turns[lastIdx].Info.Role != "assistant" {
-		return loopAborted
+		if loopAborted {
+			return recoveryKindReasoning
+		}
+		return recoveryKindNone
 	}
 	last := &turns[lastIdx]
 	if last.Info.Error != nil && !ap.reasoningLoop.wasTriggered(last.Info.ID) {
-		return false
+		return recoveryKindNone
 	}
 	hasReasoning := false
 	hasLeakedTool := false
@@ -114,7 +128,7 @@ func shouldRecoverOpenCodeTurn(turns []MessageTurn, ap *activeProcess) bool {
 	for _, p := range last.Parts {
 		switch p.Type {
 		case "tool":
-			return false
+			return recoveryKindNone
 		case "text":
 			if trimmed := strings.TrimSpace(p.Text); trimmed != "" {
 				if visibleText.Len() > 0 {
@@ -132,16 +146,19 @@ func shouldRecoverOpenCodeTurn(turns []MessageTurn, ap *activeProcess) bool {
 		}
 	}
 	if loopAborted || hasLeakedTool {
-		return true
+		return recoveryKindReasoning
 	}
 	text := visibleText.String()
 	if text == "" {
-		return hasReasoning && last.Info.Finish == "length"
+		if hasReasoning && last.Info.Finish == "length" {
+			return recoveryKindReasoning
+		}
+		return recoveryKindNone
 	}
-	if last.Info.Finish == "stop" && (hasReasoning || hasPriorToolInCycle(turns[:lastIdx])) {
-		return isTransitionalActionPreamble(text)
+	if last.Info.Finish == "stop" && (hasReasoning || hasPriorToolInCycle(turns[:lastIdx])) && isTransitionalActionPreamble(text) {
+		return recoveryKindPreamble
 	}
-	return false
+	return recoveryKindNone
 }
 
 func hasPriorToolInCycle(priorTurns []MessageTurn) bool {
@@ -168,24 +185,40 @@ func hasPriorToolInCycle(priorTurns []MessageTurn) bool {
 	return false
 }
 
-// isTransitionalActionPreamble reports whether text is a compact, single-line
-// transitional status update whose final sentence or clause announces an
-// immediate tool action (e.g. "Let me verify the available release keys and set
-// pins.") without asking the user a question or emitting a goal verdict.
+// isTransitionalActionPreamble reports whether text is a compact transitional
+// status update whose final sentence or clause announces an immediate tool
+// action (e.g. "Let me verify the available release keys and set pins.")
+// without asking the user a question or emitting a goal verdict.
 func isTransitionalActionPreamble(text string) bool {
 	s := strings.TrimSpace(text)
 	if s == "" || utf8.RuneCountInString(s) > maxTransitionalActionRunes {
 		return false
 	}
-	if strings.ContainsAny(s, "\r\n") || strings.Contains(s, "[[goal:") {
+	if strings.Contains(s, "[[goal:") || strings.Contains(s, "```") {
 		return false
 	}
+	lastLine := s
+	if strings.ContainsAny(s, "\r\n") {
+		lines := strings.Split(strings.ReplaceAll(s, "\r\n", "\n"), "\n")
+		nonEmpty := 0
+		for _, rawLine := range lines {
+			line := strings.TrimSpace(rawLine)
+			if line == "" {
+				continue
+			}
+			nonEmpty++
+			if nonEmpty > 4 || isStructuredListOrHeadingLine(line) {
+				return false
+			}
+			lastLine = line
+		}
+	}
 	for _, suffix := range []string{"?", "？", ":", "："} {
-		if strings.HasSuffix(s, suffix) {
+		if strings.HasSuffix(lastLine, suffix) {
 			return false
 		}
 	}
-	tail := strings.TrimLeft(strings.ToLower(trailingSentence(s)), " \t—-–,;，")
+	tail := strings.TrimLeft(strings.ToLower(trailingSentence(lastLine)), " \t—-–,;，")
 	if tail == "" {
 		return false
 	}
@@ -194,6 +227,22 @@ func isTransitionalActionPreamble(text string) bool {
 	}
 	if clause := trailingCommaClause(tail); clause != "" && clause != tail {
 		return hasAnyPrefix(clause, transitionalClausePrefixes)
+	}
+	return false
+}
+
+func isStructuredListOrHeadingLine(line string) bool {
+	if strings.HasPrefix(line, "#") || strings.HasPrefix(line, "- ") ||
+		strings.HasPrefix(line, "* ") || strings.HasPrefix(line, "+ ") ||
+		strings.HasPrefix(line, "> ") {
+		return true
+	}
+	digits := 0
+	for digits < len(line) && line[digits] >= '0' && line[digits] <= '9' {
+		digits++
+	}
+	if digits > 0 && digits+1 < len(line) && (line[digits] == '.' || line[digits] == ')') && line[digits+1] == ' ' {
+		return true
 	}
 	return false
 }
@@ -281,13 +330,17 @@ func isSupersededEmptyRecoveryStubTurn(turns []MessageTurn, idx int) bool {
 	return true
 }
 
-func buildOpenCodeReasoningRecoveryPayload(rec SessionRecord, mode, modelID, effort, system string, attempt int) map[string]interface{} {
+func buildOpenCodeReasoningRecoveryPayload(rec SessionRecord, mode, modelID, effort, system string, attempt int, recoveryKind string) map[string]interface{} {
 	recoverID := fmt.Sprintf("%s%d_%d", internalRecoveryMsgPrefix, time.Now().UnixMilli(), attempt)
+	prompt := openCodeReasoningRecoveryPrompt
+	if recoveryKind == recoveryKindPreamble {
+		prompt = openCodePreambleRecoveryPrompt
+	}
 	payload := map[string]interface{}{
 		"messageID": recoverID,
 		"agent":     mode,
 		"parts": []map[string]interface{}{
-			{"type": "text", "text": openCodeReasoningRecoveryPrompt},
+			{"type": "text", "text": prompt},
 		},
 	}
 	if rec.ProviderID != "" && modelID != "" {
@@ -312,7 +365,8 @@ func (s *Service) recoverOpenCodeReasoningIfNeeded(ctx context.Context, rec Sess
 		checkCtx, checkCancel := context.WithTimeout(ctx, 10*time.Second)
 		checkTurns, fetchErr := s.fetchOpenCodeRecentMessages(checkCtx, rec.ExternalID, rec.WorktreePath, reasoningCheckSnapshotLimit)
 		checkCancel()
-		if fetchErr != nil || !shouldRecoverOpenCodeTurn(checkTurns, ap) {
+		recoveryKind := classifyOpenCodeTurnRecovery(checkTurns, ap)
+		if fetchErr != nil || recoveryKind == recoveryKindNone {
 			ap.reasoningLoop.consumePendingRecovery()
 			return curErr
 		}
@@ -320,7 +374,7 @@ func (s *Service) recoverOpenCodeReasoningIfNeeded(ctx context.Context, rec Sess
 		_, _ = ap.takePendingError()
 		curErr = nil
 		ap.stall.touch(time.Now())
-		recoverPayload := buildOpenCodeReasoningRecoveryPayload(rec, mode, modelID, effort, system, attempt)
+		recoverPayload := buildOpenCodeReasoningRecoveryPayload(rec, mode, modelID, effort, system, attempt, recoveryKind)
 		postErr := s.openCodeJSON(ctx, "POST", "/session/"+rec.ExternalID+"/message", rec.WorktreePath, recoverPayload, nil)
 		if postErr != nil && !ap.reasoningLoop.hasPendingRecovery() {
 			return postErr

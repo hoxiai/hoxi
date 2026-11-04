@@ -12,7 +12,7 @@ import {
   markAutoCandidateCooldown,
   resolveAutoModelTarget,
 } from "./auto-models";
-import type { ReasoningEffort } from "./workspace-state";
+import { workspace, type ReasoningEffort } from "./workspace-state";
 
 export type AutoFailoverFaultKind =
   | "aborted"
@@ -379,7 +379,22 @@ export function selectNextDispatchTarget(
       ? Math.min(rawRetryAfterMs, MAX_RESET_WAIT_MS)
       : parseQuotaResetMs(errText);
   const decision = decideAutoFailover(currentError, Date.now() - autoState.dispatchedAt);
-  if (autoState.poolID && decision.penalize) {
+  const hasWarmPrefixOnFailed = (workspace.messagesBySession[sessionID] ?? []).some(
+    (t) =>
+      t.info.role === "assistant" &&
+      !t.info.error &&
+      (!t.info.providerID ||
+        (t.info.providerID === failed.providerID && t.info.modelID === failed.modelID))
+  );
+  // Preserve multi-turn KV cache on transient network/5xx blips by retrying the
+  // warm sticky candidate once before cooling it down and switching providers.
+  const preferSameModelForCache =
+    Boolean(autoState.poolID) &&
+    hasWarmPrefixOnFailed &&
+    autoState.sameModelRetries === 0 &&
+    shouldRetrySameModelOnError(currentError, decision, autoState);
+
+  if (autoState.poolID && decision.penalize && !preferSameModelForCache) {
     markAutoCandidateCooldown(failed.providerID, failed.modelID, errText, status, cooldownMs);
     reportAutoCandidateOutcome({
       providerID: failed.providerID,
@@ -394,6 +409,7 @@ export function selectNextDispatchTarget(
   if (
     autoState.poolID &&
     decision.failover &&
+    !preferSameModelForCache &&
     autoState.triedKeys.size < maxAutoFailoverAttempts(autoState.poolID)
   ) {
     const retryHasImage = (autoState.attachments ?? []).some(

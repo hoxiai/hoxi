@@ -365,13 +365,17 @@ func (s *Service) aiReviewCommand(ctx context.Context, item map[string]interface
 	if cached, found := s.aiReviews.lookup(cacheKey, now); found {
 		return cached.outcome
 	}
+	providerID, _, _ := strings.Cut(modelSpec, "/")
+	allowAutoFastFallback := providerID == "hoxi-auto"
 	activeSpec := modelSpec
 	fallbackCacheKey := "fallback-model\x00" + modelSpec
-	if remembered, found := s.aiReviews.lookup(fallbackCacheKey, now); found && remembered.outcome.reason != "" {
-		activeSpec = remembered.outcome.reason
+	if allowAutoFastFallback {
+		if remembered, found := s.aiReviews.lookup(fallbackCacheKey, now); found && remembered.outcome.reason != "" {
+			activeSpec = remembered.outcome.reason
+		}
 	}
-	providerID, modelID, _ := strings.Cut(activeSpec, "/")
-	target := client.Resolve(providerID, modelID, "", "")
+	activeProviderID, activeModelID, _ := strings.Cut(activeSpec, "/")
+	target := client.Resolve(activeProviderID, activeModelID, "", "")
 	dirLabel := strings.TrimSpace(worktree)
 	if dirLabel == "" {
 		dirLabel = "(unspecified)"
@@ -383,16 +387,18 @@ func (s *Service) aiReviewCommand(ctx context.Context, item map[string]interface
 
 	outcome := runSingleAIReview(ctx, client, target, userPrompt)
 	if outcome.status == aiReviewUnavailable {
-		if fb := client.Resolve("hoxi-auto", "fast", "", ""); fb.Ready() && fb.ProviderID != "hoxi-auto" {
-			fbSpec := fb.ProviderID + "/" + fb.ModelID
-			if fbSpec != target.ProviderID+"/"+target.ModelID {
-				if fbOutcome := runSingleAIReview(ctx, client, fb, userPrompt); fbOutcome.status != aiReviewUnavailable {
-					s.aiReviews.store(fallbackCacheKey, aiReviewCacheEntry{
-						outcome: aiReviewOutcome{reason: fbSpec},
-						until:   time.Now().Add(aiReviewCacheTTL),
-					})
-					s.aiReviews.store(cacheKey, aiReviewCacheEntry{outcome: fbOutcome, until: time.Now().Add(aiReviewCacheTTL)})
-					return fbOutcome
+		if allowAutoFastFallback {
+			if fb := client.Resolve("hoxi-auto", "fast", "", ""); fb.Ready() && fb.ProviderID != "hoxi-auto" {
+				fbSpec := fb.ProviderID + "/" + fb.ModelID
+				if fbSpec != target.ProviderID+"/"+target.ModelID {
+					if fbOutcome := runSingleAIReview(ctx, client, fb, userPrompt); fbOutcome.status != aiReviewUnavailable {
+						s.aiReviews.store(fallbackCacheKey, aiReviewCacheEntry{
+							outcome: aiReviewOutcome{reason: fbSpec},
+							until:   time.Now().Add(aiReviewCacheTTL),
+						})
+						s.aiReviews.store(cacheKey, aiReviewCacheEntry{outcome: fbOutcome, until: time.Now().Add(aiReviewCacheTTL)})
+						return fbOutcome
+					}
 				}
 			}
 		}
@@ -561,6 +567,10 @@ func (s *Service) claimOpenCodeAIReview(id string, item map[string]interface{}, 
 	}
 	cacheKey := aiReviewCacheKey(pol, directory, cmd)
 	if target := client.Resolve(providerID, modelID, "", ""); !target.Ready() {
+		if providerID != "hoxi-auto" {
+			annotateAIReview(item, s.storeAIReviewFailure(cacheKey, modelSpec, aiReviewFailed(aiReviewFailUnready, "")))
+			return false
+		}
 		if fb := client.Resolve("hoxi-auto", "fast", "", ""); !fb.Ready() || fb.ProviderID == "hoxi-auto" {
 			annotateAIReview(item, s.storeAIReviewFailure(cacheKey, modelSpec, aiReviewFailed(aiReviewFailUnready, "")))
 			return false

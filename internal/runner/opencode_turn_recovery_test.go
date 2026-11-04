@@ -21,6 +21,7 @@ func TestIsTransitionalActionPreambleAndShouldRecoverOpenCodeTurn(t *testing.T) 
 		"检查完毕，v1.2.4 的 pin 为空。让我查看可用的 release key 并设置 pin。",
 		"原因已经确认，让我先验证可用的 release key 并设置 pin。",
 		"容器已正常启动，接下来我检查 /health 与域名访问。",
+		"258 张表只说明表壳齐了。\n\n我先确认到底哪个站的库缺表。",
 	}
 	for _, sample := range positiveTexts {
 		if !isTransitionalActionPreamble(sample) {
@@ -130,9 +131,10 @@ func TestStartOpenCodeTurnAutoRecoversFromMidTaskTransitionalStop(t *testing.T) 
 	t.Parallel()
 
 	var (
-		mu           sync.Mutex
-		postedMsgIDs []string
-		turns        []MessageTurn
+		mu             sync.Mutex
+		postedMsgIDs   []string
+		postedMsgTexts []string
+		turns          []MessageTurn
 	)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -150,8 +152,15 @@ func TestStartOpenCodeTurnAutoRecoversFromMidTaskTransitionalStop(t *testing.T) 
 			var body map[string]interface{}
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			msgID, _ := body["messageID"].(string)
+			var msgText string
+			if rawParts, ok := body["parts"].([]interface{}); ok && len(rawParts) > 0 {
+				if p0, ok := rawParts[0].(map[string]interface{}); ok {
+					msgText, _ = p0["text"].(string)
+				}
+			}
 			mu.Lock()
 			postedMsgIDs = append(postedMsgIDs, msgID)
+			postedMsgTexts = append(postedMsgTexts, msgText)
 			callNum := len(postedMsgIDs)
 			if callNum == 1 {
 				turns = []MessageTurn{
@@ -190,7 +199,7 @@ func TestStartOpenCodeTurnAutoRecoversFromMidTaskTransitionalStop(t *testing.T) 
 				turns = append(turns,
 					MessageTurn{
 						Info:  MessageInfo{ID: msgID, SessionID: "ses_oc_midtask", Role: "user", Time: MessageTime{Created: 105}},
-						Parts: []MessagePart{{ID: "prt_u_rec", SessionID: "ses_oc_midtask", MessageID: msgID, Type: "text", Text: openCodeReasoningRecoveryPrompt}},
+						Parts: []MessagePart{{ID: "prt_u_rec", SessionID: "ses_oc_midtask", MessageID: msgID, Type: "text", Text: msgText}},
 					},
 					MessageTurn{
 						Info: MessageInfo{
@@ -249,9 +258,13 @@ func TestStartOpenCodeTurnAutoRecoversFromMidTaskTransitionalStop(t *testing.T) 
 
 	mu.Lock()
 	gotPosts := append([]string(nil), postedMsgIDs...)
+	gotTexts := append([]string(nil), postedMsgTexts...)
 	mu.Unlock()
 	if len(gotPosts) != 2 || gotPosts[0] != "msg_u_initial" || !isInternalRecoveryMessageID(gotPosts[1]) {
 		t.Fatalf("expected initial post + 1 internal recovery post, got: %v", gotPosts)
+	}
+	if len(gotTexts) != 2 || gotTexts[1] != openCodePreambleRecoveryPrompt {
+		t.Fatalf("expected preamble recovery prompt %q, got %v", openCodePreambleRecoveryPrompt, gotTexts)
 	}
 
 	stored, ok := svc.store.Get(rec.ID)
