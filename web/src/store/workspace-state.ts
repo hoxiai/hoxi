@@ -46,7 +46,7 @@ export interface SessionAIConfig {
 export const SESSION_AI_KEY = "hoxi-session-ai:v1";
 export const DEFAULT_AGENT_KEY = "hoxi-default-agent:v1";
 
-function readStorageItem(key: string): string | null {
+export function readStorageItem(key: string): string | null {
   try {
     return localStorage.getItem(key);
   } catch {
@@ -54,7 +54,19 @@ function readStorageItem(key: string): string | null {
   }
 }
 
-function readStorageJSON<T = unknown>(key: string): T | null {
+export function writeStorageItem(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {}
+}
+
+export function removeStorageItem(key: string): void {
+  try {
+    localStorage.removeItem(key);
+  } catch {}
+}
+
+export function readStorageJSON<T = unknown>(key: string): T | null {
   const raw = readStorageItem(key);
   if (!raw) return null;
   try {
@@ -64,7 +76,13 @@ function readStorageJSON<T = unknown>(key: string): T | null {
   }
 }
 
-function readStorageRecord<T>(key: string): Record<string, T> {
+export function writeStorageJSON(key: string, value: unknown): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {}
+}
+
+export function readStorageRecord<T>(key: string): Record<string, T> {
   const parsed = readStorageJSON(key);
   if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
     return parsed as Record<string, T>;
@@ -72,7 +90,7 @@ function readStorageRecord<T>(key: string): Record<string, T> {
   return {};
 }
 
-function readStorageArray<T>(key: string, guard: (item: unknown) => item is T): T[] {
+export function readStorageArray<T>(key: string, guard: (item: unknown) => item is T): T[] {
   const parsed = readStorageJSON(key);
   return Array.isArray(parsed) ? parsed.filter(guard) : [];
 }
@@ -204,6 +222,27 @@ export interface SessionIndexEntry {
 
 export type SidebarProjectMode = "multi" | "single" | "recent" | "attention" | "running";
 
+export interface HoxiProviderConfig {
+  name?: string;
+  npm?: string;
+  options?: {
+    baseURL?: string;
+    apiKey?: string;
+    headers?: Record<string, string>;
+    [key: string]: any;
+  };
+  models?: Record<string, any>;
+  [key: string]: any;
+}
+
+export interface OpenCodeGlobalConfig {
+  provider?: Record<string, HoxiProviderConfig | undefined>;
+  agent?: Record<string, any>;
+  permission?: Record<string, any>;
+  mcp?: Record<string, any>;
+  [key: string]: any;
+}
+
 export interface WorkspaceState {
   appVersion: string;
   connected: boolean;
@@ -250,8 +289,8 @@ export interface WorkspaceState {
   providers: ProviderInfo[];
   connectedProviders: string[];
   defaultModels: Record<string, string>;
-  globalConfig: Record<string, any>;
-  hoxiProviders: Record<string, any>;
+  globalConfig: OpenCodeGlobalConfig;
+  hoxiProviders: Record<string, HoxiProviderConfig | undefined>;
   openCodeImportedProviders: string[];
   providerAuthMethods: Record<string, ProviderAuthMethod[]>;
   selectedModel: SelectedModel | null;

@@ -1,15 +1,12 @@
 package runner
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -30,26 +27,6 @@ const (
 	maxApprovalAuditEntries  = 500
 	maxOpenCodePermSnapshots = 256
 )
-
-// ApprovalGrant describes one in-memory session-scoped "always" grant.
-// Grants live in memory only for the lifetime of the Hoxi process and never
-// cover destructive commands.
-type ApprovalGrant struct {
-	ID           string `json:"id"`
-	SessionID    string `json:"sessionID"`
-	SessionTitle string `json:"sessionTitle,omitempty"`
-	Runtime      string `json:"runtime,omitempty"`
-	Kind         string `json:"kind"` // "bash" | "tool" | "doom_loop"
-	Tool         string `json:"tool"` // "bash" or tool name
-	// Key is the internal lookup key (the raw command or a tool+args hash).
-	// It is never serialized: it can contain credentials the redacted
-	// Pattern hides, and only the gate needs it.
-	Key       string `json:"-"`       // internal lookup key
-	Pattern   string `json:"pattern"` // redacted human-readable command or args summary
-	Scope     string `json:"scope"`   // "session_memory"
-	Source    string `json:"source"`  // "desktop"
-	CreatedAt int64  `json:"createdAt"`
-}
 
 // ApprovalAuditEntry records one completed permission decision on disk.
 type ApprovalAuditEntry struct {
@@ -247,14 +224,10 @@ func (s *approvalAuditStore) persistSnapshotLocked(path string, seq uint64, snap
 	if seq <= s.persistedSeq {
 		return nil
 	}
-	raw, err := json.MarshalIndent(approvalAuditFileDoc{
+	if err := hoxipaths.WriteJSONAtomic(path, approvalAuditFileDoc{
 		Version: 1,
 		Entries: snapshot,
-	}, "", "  ")
-	if err != nil {
-		return err
-	}
-	if err := writeApprovalAuditAtomic(path, append(raw, '\n')); err != nil {
+	}, 0o600); err != nil {
 		return err
 	}
 	s.persistedSeq = seq
@@ -262,39 +235,7 @@ func (s *approvalAuditStore) persistSnapshotLocked(path string, seq uint64, snap
 }
 
 func writeApprovalAuditAtomic(path string, data []byte) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	cleanup := func() { _ = os.Remove(tmpName) }
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		cleanup()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		cleanup()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		cleanup()
-		return err
-	}
-	if err := os.Chmod(tmpName, 0o600); err != nil {
-		cleanup()
-		return err
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		cleanup()
-		return err
-	}
-	return nil
+	return hoxipaths.WriteFileAtomic(path, data, 0o600)
 }
 
 func (s *approvalAuditStore) list(sessionID string, limit int) []ApprovalAuditEntry {
@@ -453,11 +394,6 @@ func redactApprovalText(v string, limit int) string {
 	return v
 }
 
-func makeGrantID(sessionID, kind, key string) string {
-	sum := sha256.Sum256([]byte(sessionID + "\x00" + kind + "\x00" + key))
-	return "grt_" + hex.EncodeToString(sum[:8])
-}
-
 func requestApprovalSource(r *http.Request) string {
 	if r == nil {
 		return "desktop"
@@ -602,46 +538,6 @@ func (s *Service) recordOpenCodeAudit(id, fallbackSessionID, directory, reply, m
 	})
 }
 
-func (s *Service) listApprovalGrants(sessionID, directory string) []ApprovalGrant {
-	sidFilter := strings.TrimSpace(sessionID)
-	dirFilter := normalizeComparePath(directory)
-
-	raw := s.gate.listGrants()
-	raw = append(raw, s.doomLoop.listExemptGrants()...)
-
-	out := make([]ApprovalGrant, 0, len(raw))
-	for _, g := range raw {
-		if sidFilter != "" && g.SessionID != sidFilter {
-			continue
-		}
-		title, rt, _ := s.enrichSessionMeta(g.SessionID)
-		if dirFilter != "" {
-			rec, ok := s.store.Meta(g.SessionID)
-			if !ok || (normalizeComparePath(rec.ProjectDir) != dirFilter && normalizeComparePath(rec.WorktreePath) != dirFilter) {
-				continue
-			}
-		}
-		g.SessionTitle = title
-		g.Runtime = rt
-		out = append(out, g)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].CreatedAt != out[j].CreatedAt {
-			return out[i].CreatedAt > out[j].CreatedAt
-		}
-		return out[i].ID < out[j].ID
-	})
-	return out
-}
-
-func (s *Service) revokeApprovalGrants(id, sessionID string, all bool) int {
-	id = strings.TrimSpace(id)
-	sessionID = strings.TrimSpace(sessionID)
-	revoked := s.gate.revokeGrants(id, sessionID, all)
-	revoked += s.doomLoop.revokeExemptGrants(id, sessionID, all)
-	return revoked
-}
-
 func (s *Service) handleApprovalAudit(w http.ResponseWriter, r *http.Request) {
 	if isRemoteApprovalSource(requestApprovalSource(r)) {
 		writeJSONError(w, http.StatusForbidden, "route is not available for remote controllers")
@@ -681,103 +577,4 @@ func (s *Service) handleApprovalAudit(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeJSONError(w, http.StatusMethodNotAllowed, "GET or DELETE required")
 	}
-}
-
-func (s *Service) handleApprovalGrants(w http.ResponseWriter, r *http.Request) {
-	if isRemoteApprovalSource(requestApprovalSource(r)) {
-		writeJSONError(w, http.StatusForbidden, "route is not available for remote controllers")
-		return
-	}
-	q := r.URL.Query()
-	switch r.Method {
-	case http.MethodGet:
-		grants := s.listApprovalGrants(q.Get("sessionID"), q.Get("directory"))
-		writeJSON(w, http.StatusOK, map[string]interface{}{"grants": grants})
-	case http.MethodDelete:
-		id := strings.TrimSpace(q.Get("id"))
-		sessionID := strings.TrimSpace(q.Get("sessionID"))
-		all := q.Get("all") == "1" || q.Get("all") == "true"
-		if id == "" && sessionID == "" && !all {
-			writeJSONError(w, http.StatusBadRequest, "id, sessionID, or all=1 is required to revoke grants")
-			return
-		}
-		revoked := s.revokeApprovalGrants(id, sessionID, all)
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"revoked": revoked,
-			"grants":  s.listApprovalGrants("", ""),
-		})
-	default:
-		writeJSONError(w, http.StatusMethodNotAllowed, "GET or DELETE required")
-	}
-}
-
-func (g *approvalGate) listGrants() []ApprovalGrant {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	var out []ApprovalGrant
-	for _, cmds := range g.always {
-		for _, gr := range cmds {
-			out = append(out, gr)
-		}
-	}
-	for _, tools := range g.toolAlways {
-		for _, gr := range tools {
-			out = append(out, gr)
-		}
-	}
-	for _, classes := range g.classGrants {
-		for _, gr := range classes {
-			out = append(out, gr)
-		}
-	}
-	return out
-}
-
-func (g *approvalGate) revokeGrants(id, sessionID string, all bool) int {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	revoked := 0
-	for sid, cmds := range g.always {
-		if sessionID != "" && sid != sessionID {
-			continue
-		}
-		for k, gr := range cmds {
-			if all || (sessionID != "" && id == "") || (id != "" && gr.ID == id) {
-				delete(cmds, k)
-				revoked++
-			}
-		}
-		if len(cmds) == 0 {
-			delete(g.always, sid)
-		}
-	}
-	for sid, classes := range g.classGrants {
-		if sessionID != "" && sid != sessionID {
-			continue
-		}
-		for k, gr := range classes {
-			if all || (sessionID != "" && id == "") || (id != "" && gr.ID == id) {
-				delete(classes, k)
-				revoked++
-			}
-		}
-		if len(classes) == 0 {
-			delete(g.classGrants, sid)
-		}
-	}
-	for sid, tools := range g.toolAlways {
-		if sessionID != "" && sid != sessionID {
-			continue
-		}
-		for k, gr := range tools {
-			if all || (sessionID != "" && id == "") || (id != "" && gr.ID == id) {
-				delete(tools, k)
-				revoked++
-			}
-		}
-		if len(tools) == 0 {
-			delete(g.toolAlways, sid)
-		}
-	}
-	return revoked
 }
