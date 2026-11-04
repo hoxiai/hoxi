@@ -1,4 +1,5 @@
 import { createSignal } from "solid-js";
+import { readStorageItem, readStorageJSON, writeStorageItem, writeStorageJSON } from "./workspace-state";
 
 export const LAYOUT_PREFS_KEY = "hoxi.layout:v1";
 export const SURFACE_MODE_KEY = "hoxi.surface-mode:v1";
@@ -28,37 +29,27 @@ function clampWidth(value: number, min: number, max: number): number {
 }
 
 function initialLayout(): LayoutPrefs {
-  try {
-    const raw = localStorage.getItem(LAYOUT_PREFS_KEY);
-    if (!raw) return DEFAULT_LAYOUT;
-    const parsed = JSON.parse(raw) as Partial<LayoutPrefs> | null;
-    if (!parsed || typeof parsed !== "object") return DEFAULT_LAYOUT;
-    return {
-      leftNavOpen:
-        typeof parsed.leftNavOpen === "boolean"
-          ? parsed.leftNavOpen
-          : DEFAULT_LAYOUT.leftNavOpen,
-      leftWidth:
-        typeof parsed.leftWidth === "number" && Number.isFinite(parsed.leftWidth)
-          ? clampWidth(parsed.leftWidth, LEFT_PANE_MIN, LEFT_PANE_MAX)
-          : DEFAULT_LAYOUT.leftWidth,
-      rightWidth:
-        typeof parsed.rightWidth === "number" && Number.isFinite(parsed.rightWidth)
-          ? clampWidth(parsed.rightWidth, RIGHT_PANE_MIN, RIGHT_PANE_MAX)
-          : DEFAULT_LAYOUT.rightWidth,
-    };
-  } catch {
-    return DEFAULT_LAYOUT;
-  }
+  const parsed = readStorageJSON<Partial<LayoutPrefs>>(LAYOUT_PREFS_KEY);
+  if (!parsed || typeof parsed !== "object") return DEFAULT_LAYOUT;
+  return {
+    leftNavOpen:
+      typeof parsed.leftNavOpen === "boolean"
+        ? parsed.leftNavOpen
+        : DEFAULT_LAYOUT.leftNavOpen,
+    leftWidth:
+      typeof parsed.leftWidth === "number" && Number.isFinite(parsed.leftWidth)
+        ? clampWidth(parsed.leftWidth, LEFT_PANE_MIN, LEFT_PANE_MAX)
+        : DEFAULT_LAYOUT.leftWidth,
+    rightWidth:
+      typeof parsed.rightWidth === "number" && Number.isFinite(parsed.rightWidth)
+        ? clampWidth(parsed.rightWidth, RIGHT_PANE_MIN, RIGHT_PANE_MAX)
+        : DEFAULT_LAYOUT.rightWidth,
+  };
 }
 
 function readStoredSurfaceMode(): SurfaceMode | null {
-  try {
-    const saved = localStorage.getItem(SURFACE_MODE_KEY);
-    if (saved === "work" || saved === "code") return saved;
-  } catch {
-    /* storage unavailable */
-  }
+  const saved = readStorageItem(SURFACE_MODE_KEY);
+  if (saved === "work" || saved === "code") return saved;
   return null;
 }
 
@@ -69,11 +60,7 @@ export function hasStoredSurfaceMode(): boolean {
 const initial = initialLayout();
 
 function readStoredDefaultWorkspaceDir(): string {
-  try {
-    return localStorage.getItem(DEFAULT_WORKSPACE_DIR_KEY) || "";
-  } catch {
-    return "";
-  }
+  return readStorageItem(DEFAULT_WORKSPACE_DIR_KEY) || "";
 }
 
 export const [leftNavOpen, setLeftNavOpen] = createSignal(initial.leftNavOpen);
@@ -88,20 +75,12 @@ export const [defaultWorkspaceDir, setDefaultWorkspaceDirSignal] = createSignal(
 
 export function setDefaultWorkspaceDir(dir: string): void {
   setDefaultWorkspaceDirSignal(dir);
-  try {
-    if (dir) localStorage.setItem(DEFAULT_WORKSPACE_DIR_KEY, dir);
-  } catch {
-    /* storage unavailable */
-  }
+  if (dir) writeStorageItem(DEFAULT_WORKSPACE_DIR_KEY, dir);
 }
 
 export function setSurfaceMode(mode: SurfaceMode): void {
   setSurfaceModeSignal(mode);
-  try {
-    localStorage.setItem(SURFACE_MODE_KEY, mode);
-  } catch {
-    /* storage unavailable */
-  }
+  writeStorageItem(SURFACE_MODE_KEY, mode);
 }
 
 // First-launch surface chooser. Startup holds its mode-dependent steps until
@@ -131,16 +110,9 @@ export function dismissSurfaceOnboarding(): void {
 }
 
 export function saveLayoutPrefs(): void {
-  try {
-    localStorage.setItem(
-      LAYOUT_PREFS_KEY,
-      JSON.stringify({
-        leftNavOpen: leftNavOpen(),
-        leftWidth: leftWidth(),
-        rightWidth: rightWidth(),
-      } satisfies LayoutPrefs)
-    );
-  } catch {
-    /* storage unavailable */
-  }
+  writeStorageJSON(LAYOUT_PREFS_KEY, {
+    leftNavOpen: leftNavOpen(),
+    leftWidth: leftWidth(),
+    rightWidth: rightWidth(),
+  } satisfies LayoutPrefs);
 }

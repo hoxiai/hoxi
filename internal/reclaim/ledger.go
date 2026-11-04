@@ -25,6 +25,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
 
 const (
@@ -284,27 +286,7 @@ func (l *Ledger) save(entries []entry) error {
 }
 
 func writeFileAtomic(path string, data []byte) error {
-	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
-	if err != nil {
-		return err
-	}
-	name := tmp.Name()
-	if _, err = tmp.Write(data); err == nil {
-		err = tmp.Sync()
-	}
-	if closeErr := tmp.Close(); err == nil {
-		err = closeErr
-	}
-	if err == nil {
-		err = os.Chmod(name, 0o600)
-	}
-	if err == nil {
-		err = os.Rename(name, path)
-	}
-	if err != nil {
-		_ = os.Remove(name)
-	}
-	return err
+	return hoxipaths.WriteFileAtomic(path, data, 0o600)
 }
 
 func newID() string {

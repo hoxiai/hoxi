@@ -1,7 +1,8 @@
 import { reconcile, unwrap } from "solid-js/store";
 import { hoxiAPI } from "../services/api";
 import { setWorkspace, workspace } from "../store/workspace";
-import { renameSessionTitle, replaceSession } from "../store/workspace-sessions";
+import { replaceSession } from "../store/workspace-sessions";
+import { renameSessionTitle } from "../store/session-lifecycle";
 import {
   forgetSessionTitles, hasManualSessionTitle, isRedundantSubagentTitle, loadManualSessionTitles,
   preserveSessionTitle, subagentDisplayTitle, summarizeAndRenameSession,

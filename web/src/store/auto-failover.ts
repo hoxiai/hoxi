@@ -12,7 +12,7 @@ import {
   markAutoCandidateCooldown,
   resolveAutoModelTarget,
 } from "./auto-models";
-import { workspace, type ReasoningEffort } from "./workspace-state";
+import { readStorageJSON, workspace, writeStorageJSON, type ReasoningEffort } from "./workspace-state";
 
 export type AutoFailoverFaultKind =
   | "aborted"
@@ -239,14 +239,9 @@ export function isAutoFailoverPending(sessionID: string): boolean {
 }
 
 function loadNotices(): AutoFailoverNotice[] {
-  try {
-    const raw = localStorage.getItem(AUTO_FAILOVER_STORAGE_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    const cutoff = Date.now() - NOTICE_TTL_MS;
-    return Array.isArray(parsed) ? parsed.filter((n) => n && n.at > cutoff) : [];
-  } catch {
-    return [];
-  }
+  const parsed = readStorageJSON<AutoFailoverNotice[]>(AUTO_FAILOVER_STORAGE_KEY);
+  const cutoff = Date.now() - NOTICE_TTL_MS;
+  return Array.isArray(parsed) ? parsed.filter((n) => n && n.at > cutoff) : [];
 }
 
 const [autoFailoverNotices, setAutoFailoverNotices] = createSignal<AutoFailoverNotice[]>(loadNotices());
@@ -254,11 +249,7 @@ const [autoFailoverNotices, setAutoFailoverNotices] = createSignal<AutoFailoverN
 export function recordAutoFailover(notice: AutoFailoverNotice): void {
   const next = [...autoFailoverNotices(), notice].slice(-MAX_NOTICES);
   setAutoFailoverNotices(next);
-  try {
-    localStorage.setItem(AUTO_FAILOVER_STORAGE_KEY, JSON.stringify(next));
-  } catch {
-    /* ignore */
-  }
+  writeStorageJSON(AUTO_FAILOVER_STORAGE_KEY, next);
 }
 
 /** The switch made after this failed assistant turn, if the pool made one. */

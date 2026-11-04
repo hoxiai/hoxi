@@ -18,7 +18,7 @@ import {
 } from "../services/orchestration-api";
 import { isAutoModel, resolveAutoModelTarget } from "./auto-models";
 import { sessionDirectory } from "./session-query";
-import { workspace } from "./workspace-state";
+import { readStorageRecord, workspace, writeStorageJSON } from "./workspace-state";
 
 export type {
   ConvoyDraftRequest,
@@ -45,36 +45,23 @@ const INLINE_CONVOY_STORAGE_KEY = "hoxi.inlineConvoyByKey";
 const MAX_STORED_INLINE_CONVOYS = 100;
 
 function loadStoredInlineConvoyMap(): Record<string, string> {
-  if (typeof localStorage === "undefined") return {};
-  try {
-    const raw = localStorage.getItem(INLINE_CONVOY_STORAGE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-    const out: Record<string, string> = {};
-    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
-      if (typeof k === "string" && typeof v === "string" && v.trim()) {
-        out[k] = v.trim();
-      }
+  const parsed = readStorageRecord<unknown>(INLINE_CONVOY_STORAGE_KEY);
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(parsed)) {
+    if (typeof k === "string" && typeof v === "string" && v.trim()) {
+      out[k] = v.trim();
     }
-    return out;
-  } catch {
-    return {};
   }
+  return out;
 }
 
 function saveStoredInlineConvoyMap(map: Record<string, string>): void {
-  if (typeof localStorage === "undefined") return;
-  try {
-    const entries = Object.entries(map);
-    const trimmed =
-      entries.length > MAX_STORED_INLINE_CONVOYS
-        ? Object.fromEntries(entries.slice(entries.length - MAX_STORED_INLINE_CONVOYS))
-        : map;
-    localStorage.setItem(INLINE_CONVOY_STORAGE_KEY, JSON.stringify(trimmed));
-  } catch {
-    /* ignore storage quota errors */
-  }
+  const entries = Object.entries(map);
+  const trimmed =
+    entries.length > MAX_STORED_INLINE_CONVOYS
+      ? Object.fromEntries(entries.slice(entries.length - MAX_STORED_INLINE_CONVOYS))
+      : map;
+  writeStorageJSON(INLINE_CONVOY_STORAGE_KEY, trimmed);
 }
 
 const [inlineConvoyByKey, setInlineConvoyByKey] = createSignal<Record<string, string>>(

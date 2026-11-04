@@ -8,7 +8,7 @@ import {
   type ProviderTelemetryStats,
 } from "../services/api";
 import type { MessageInfo, MessagePart } from "../services/sse-types";
-import { PROVIDER_TELEMETRY_KEY, setWorkspace, workspace } from "./workspace-state";
+import { PROVIDER_TELEMETRY_KEY, setWorkspace, workspace, writeStorageJSON } from "./workspace-state";
 import { reportAutoCandidateOutcome } from "./auto-breaker";
 
 const MAX_SAMPLES = 30;
@@ -88,11 +88,7 @@ export function schedulePersistTelemetry() {
 }
 
 function persistLocalTelemetry() {
-  try {
-    localStorage.setItem(PROVIDER_TELEMETRY_KEY, JSON.stringify(workspace.providerTelemetry));
-  } catch {
-    /* ignore */
-  }
+  writeStorageJSON(PROVIDER_TELEMETRY_KEY, workspace.providerTelemetry);
 }
 
 if (typeof window !== "undefined") {
@@ -135,14 +131,7 @@ export async function resetProviderTelemetry(providerID?: string): Promise<void>
       }
     })
   );
-  try {
-    localStorage.setItem(
-      PROVIDER_TELEMETRY_KEY,
-      JSON.stringify(workspace.providerTelemetry)
-    );
-  } catch {
-    /* ignore */
-  }
+  writeStorageJSON(PROVIDER_TELEMETRY_KEY, workspace.providerTelemetry);
   await hoxiAPI.clearProviderTelemetry(providerID).catch(() => {});
 }
 

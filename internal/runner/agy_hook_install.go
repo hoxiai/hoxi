@@ -14,6 +14,7 @@ import (
 	"sync"
 
 	"github.com/hoxiai/hoxi/internal/agyhook"
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
 
 // Hoxi owns exactly one named hook in agy's global hooks.json and leaves
@@ -123,26 +124,7 @@ func readAgyHooksDoc(path string) (map[string]json.RawMessage, os.FileMode, erro
 
 func writeAgyHooksDoc(path string, doc map[string]json.RawMessage, mode os.FileMode) error {
 	out := marshalJSON(doc, true)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".hooks-*.json")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmp.Name())
-	if _, err := tmp.Write(append(out, '\n')); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Chmod(mode); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp.Name(), path)
+	return hoxipaths.WriteFileAtomic(path, append(out, '\n'), mode)
 }
 
 func sameJSON(a, b json.RawMessage) bool {

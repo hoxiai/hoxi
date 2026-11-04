@@ -15,10 +15,11 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
 
 // Payload is the scannable pairing record the mobile app reads. It mirrors the
@@ -271,37 +272,10 @@ func writeTokens(path, lanToken, relayToken string) error {
 			backupCorruptTokenFile(path)
 		}
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(tokenRecord{
+	return hoxipaths.WriteJSONAtomic(path, tokenRecord{
 		Token:      lanToken,
 		RelayToken: relayToken,
-	}, "", "  ")
-	if err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".pairing-*.json")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmp.Name())
-	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp.Name(), path)
+	}, 0o600)
 }
 
 func defaultHostname() string {

@@ -9,7 +9,16 @@ import {
   type DesktopNotificationPermission,
 } from "../services/desktop-notify";
 import { openExternalBrowserURL } from "../services/desktop-events";
-import { setWorkspace, THEME_KEY, workspace, type ProviderModalTab } from "./workspace-state";
+import {
+  readStorageItem,
+  readStorageJSON,
+  setWorkspace,
+  THEME_KEY,
+  workspace,
+  writeStorageItem,
+  writeStorageJSON,
+  type ProviderModalTab,
+} from "./workspace-state";
 
 export type ApprovalMode = "auto" | "smart" | "manual" | "trusted" | "unattended";
 export type BashApprovalRule = "" | "allow" | "smart" | "ask";
@@ -125,21 +134,13 @@ function isColorScheme(value: unknown): value is ColorScheme {
 
 export function loadInitialSettings(): PersistedSettings {
   let baseTheme: ThemeMode = "light";
-  try {
-    const savedLegacyTheme = localStorage.getItem(THEME_KEY);
-    if (savedLegacyTheme === "dark" || savedLegacyTheme === "light") {
-      baseTheme = savedLegacyTheme;
-    }
-  } catch {
-    /* ignore */
+  const savedLegacyTheme = readStorageItem(THEME_KEY);
+  if (savedLegacyTheme === "dark" || savedLegacyTheme === "light") {
+    baseTheme = savedLegacyTheme;
   }
 
   try {
-    const raw = localStorage.getItem(APP_SETTINGS_KEY);
-    if (!raw) {
-      return { ...DEFAULT_SETTINGS, themeMode: baseTheme };
-    }
-    const parsed = JSON.parse(raw);
+    const parsed = readStorageJSON<Record<string, any>>(APP_SETTINGS_KEY);
     if (!parsed || typeof parsed !== "object") {
       return { ...DEFAULT_SETTINGS, themeMode: baseTheme };
     }
@@ -284,41 +285,37 @@ export const [appSettings, setAppSettings] = createStore<AppSettingsState>({
 });
 
 function persistAppSettings() {
-  try {
-    const payload: PersistedSettings = {
-      themeMode: appSettings.themeMode,
-      colorScheme: appSettings.colorScheme,
-      fontScale: appSettings.fontScale,
-      sidebarAutoCollapse: appSettings.sidebarAutoCollapse,
-      sidebarMinSessions: appSettings.sidebarMinSessions,
-      sidebarRecentMinutes: appSettings.sidebarRecentMinutes,
-      userLoggedIn: appSettings.userLoggedIn,
-      userDisplayName: appSettings.userDisplayName,
-      userEmail: appSettings.userEmail,
-      sendShortcut: appSettings.sendShortcut,
-      approvalMode: appSettings.approvalMode,
-      bashApprovalRule: appSettings.bashApprovalRule,
-      reasoningDisplay: appSettings.reasoningDisplay,
-      autoScrollStream: appSettings.autoScrollStream,
-      confirmBeforeRevert: appSettings.confirmBeforeRevert,
-      customSystemPrompt: appSettings.customSystemPrompt,
-      defaultSandboxMode: appSettings.defaultSandboxMode,
-      defaultDiffStyle: appSettings.defaultDiffStyle,
-      worktreeApplyMode: appSettings.worktreeApplyMode,
-      terminalFontSize: appSettings.terminalFontSize,
-      terminalCursorBlink: appSettings.terminalCursorBlink,
-      desktopNotifications: appSettings.desktopNotifications,
-      notificationSound: appSettings.notificationSound,
-      notifyOnComplete: appSettings.notifyOnComplete,
-      notifyOnAttention: appSettings.notifyOnAttention,
-      notifyOnStall: appSettings.notifyOnStall,
-      keepAwakeWhileRunning: appSettings.keepAwakeWhileRunning,
-      linkOpenTarget: appSettings.linkOpenTarget,
-    };
-    localStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(payload));
-  } catch {
-    /* ignore */
-  }
+  const payload: PersistedSettings = {
+    themeMode: appSettings.themeMode,
+    colorScheme: appSettings.colorScheme,
+    fontScale: appSettings.fontScale,
+    sidebarAutoCollapse: appSettings.sidebarAutoCollapse,
+    sidebarMinSessions: appSettings.sidebarMinSessions,
+    sidebarRecentMinutes: appSettings.sidebarRecentMinutes,
+    userLoggedIn: appSettings.userLoggedIn,
+    userDisplayName: appSettings.userDisplayName,
+    userEmail: appSettings.userEmail,
+    sendShortcut: appSettings.sendShortcut,
+    approvalMode: appSettings.approvalMode,
+    bashApprovalRule: appSettings.bashApprovalRule,
+    reasoningDisplay: appSettings.reasoningDisplay,
+    autoScrollStream: appSettings.autoScrollStream,
+    confirmBeforeRevert: appSettings.confirmBeforeRevert,
+    customSystemPrompt: appSettings.customSystemPrompt,
+    defaultSandboxMode: appSettings.defaultSandboxMode,
+    defaultDiffStyle: appSettings.defaultDiffStyle,
+    worktreeApplyMode: appSettings.worktreeApplyMode,
+    terminalFontSize: appSettings.terminalFontSize,
+    terminalCursorBlink: appSettings.terminalCursorBlink,
+    desktopNotifications: appSettings.desktopNotifications,
+    notificationSound: appSettings.notificationSound,
+    notifyOnComplete: appSettings.notifyOnComplete,
+    notifyOnAttention: appSettings.notifyOnAttention,
+    notifyOnStall: appSettings.notifyOnStall,
+    keepAwakeWhileRunning: appSettings.keepAwakeWhileRunning,
+    linkOpenTarget: appSettings.linkOpenTarget,
+  };
+  writeStorageJSON(APP_SETTINGS_KEY, payload);
 }
 
 export function hydrateLocalUserIdentity(info: {
@@ -405,11 +402,7 @@ export function syncSettingsSideEffects() {
   if (typeof document !== "undefined") {
     document.documentElement.dataset.colorScheme = appSettings.colorScheme;
   }
-  try {
-    localStorage.setItem(THEME_KEY, effective);
-  } catch {
-    /* ignore */
-  }
+  writeStorageItem(THEME_KEY, effective);
   applyFontScaleToDOM(appSettings.fontScale);
 }
 
@@ -619,11 +612,7 @@ export function buildCombinedSystemPrompt(
 const CODE_WRAP_STORAGE_KEY = "hoxi.codeWrap";
 
 function readInitialCodeWrap(): boolean {
-  try {
-    return typeof localStorage !== "undefined" && localStorage.getItem(CODE_WRAP_STORAGE_KEY) === "1";
-  } catch {
-    return false;
-  }
+  return readStorageItem(CODE_WRAP_STORAGE_KEY) === "1";
 }
 
 export const [codeWrapEnabled, setCodeWrapEnabled] = createSignal(readInitialCodeWrap());
@@ -631,10 +620,6 @@ export const [codeWrapEnabled, setCodeWrapEnabled] = createSignal(readInitialCod
 export function toggleCodeWrap(): void {
   const next = !codeWrapEnabled();
   setCodeWrapEnabled(next);
-  try {
-    localStorage.setItem(CODE_WRAP_STORAGE_KEY, next ? "1" : "0");
-  } catch {
-    /* ignore */
-  }
+  writeStorageItem(CODE_WRAP_STORAGE_KEY, next ? "1" : "0");
 }
 

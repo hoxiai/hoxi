@@ -15,7 +15,7 @@ import {
   shouldAutoSelectProvisionedModel,
   waitForInFlightProvidersLoad,
 } from "./workspace-providers";
-import { OFFICIAL_PROVIDER_ID, SELECTED_MODEL_KEY, setWorkspace, workspace } from "./workspace-state";
+import { OFFICIAL_PROVIDER_ID, removeStorageItem, SELECTED_MODEL_KEY, setWorkspace, workspace } from "./workspace-state";
 import { persistSessionAI, updateSessionAI } from "./session-ai";
 
 export interface OfficialChannelConnectResult {
@@ -52,7 +52,7 @@ export function purgeOfficialProviderFromWorkspace(): void {
   setWorkspace("providers", workspace.providers.filter((p) => p.id !== OFFICIAL_PROVIDER_ID));
   if (workspace.defaultAI.model?.providerID === OFFICIAL_PROVIDER_ID) {
     updateSessionAI({ model: null }, null);
-    try { localStorage.removeItem(SELECTED_MODEL_KEY); } catch { /* storage unavailable */ }
+    removeStorageItem(SELECTED_MODEL_KEY);
   }
   for (const [sid, ai] of Object.entries(workspace.aiBySession)) {
     if (ai?.model?.providerID === OFFICIAL_PROVIDER_ID) {

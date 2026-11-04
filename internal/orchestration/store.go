@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
 
 // maxPlanFileSize caps how much of a persisted plan file is read. Plan prompts
@@ -47,34 +49,7 @@ func (s *Store) SaveSeq(plan Plan, seq uint64) error {
 	if seq > 0 && seq <= s.seq[plan.ID] {
 		return nil
 	}
-	if err := os.MkdirAll(s.dir, 0o700); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(s.dir, ".plan-*.tmp")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	fail := func(err error) error {
-		_ = tmp.Close()
-		_ = os.Remove(tmpName)
-		return err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		return fail(err)
-	}
-	if err := tmp.Sync(); err != nil {
-		return fail(err)
-	}
-	if err := tmp.Chmod(0o600); err != nil {
-		return fail(err)
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpName)
-		return err
-	}
-	if err := os.Rename(tmpName, s.path(plan.ID)); err != nil {
-		_ = os.Remove(tmpName)
+	if err := hoxipaths.WriteFileAtomic(s.path(plan.ID), data, 0o600); err != nil {
 		return err
 	}
 	if s.seq == nil {

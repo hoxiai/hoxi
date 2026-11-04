@@ -7,7 +7,13 @@ import { AUTO_PROVIDER_ID, isModelFree, resolveAutoModelTarget } from "./auto-mo
 import { gitAttributionEnabledFor } from "./git-attribution";
 import { resolveInternalLLMModel } from "./provider-catalog";
 import { canSteerSession } from "./session-capabilities";
-import { workspace, type SelectedModel } from "./workspace-state";
+import {
+  readStorageItem,
+  removeStorageItem,
+  workspace,
+  writeStorageItem,
+  type SelectedModel,
+} from "./workspace-state";
 import { activeDirectory, isSessionBusy, sessionDirectory } from "./session-query";
 import { submitSessionPrompt } from "./session-goal";
 import { collectSessionTouchedPaths, refreshWorktreeStatus } from "./session-diffs";
@@ -17,13 +23,8 @@ import { loadSessionMessages, loadSessionMessagesOnly } from "./workspace-sessio
 export const COMMIT_MODEL_STORAGE_KEY = "hoxi-commit-model:v1";
 
 function loadInitialCommitModelSpec(): string {
-  try {
-    const saved = localStorage.getItem(COMMIT_MODEL_STORAGE_KEY);
-    if (typeof saved === "string") return saved.trim();
-  } catch {
-    /* ignore */
-  }
-  return "";
+  const saved = readStorageItem(COMMIT_MODEL_STORAGE_KEY);
+  return typeof saved === "string" ? saved.trim() : "";
 }
 
 const [commitModelSpecSignal, setCommitModelSpecSignal] = createSignal<string>(
@@ -43,14 +44,10 @@ export function commitModelSpec(): string {
 export function setCommitModelSpec(spec: string): void {
   const cleaned = spec.trim();
   setCommitModelSpecSignal(cleaned);
-  try {
-    if (cleaned) {
-      localStorage.setItem(COMMIT_MODEL_STORAGE_KEY, cleaned);
-    } else {
-      localStorage.removeItem(COMMIT_MODEL_STORAGE_KEY);
-    }
-  } catch {
-    /* ignore */
+  if (cleaned) {
+    writeStorageItem(COMMIT_MODEL_STORAGE_KEY, cleaned);
+  } else {
+    removeStorageItem(COMMIT_MODEL_STORAGE_KEY);
   }
 }
 

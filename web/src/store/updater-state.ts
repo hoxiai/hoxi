@@ -5,6 +5,7 @@ import { updaterAPI, type NativeUpdateProgress, type UpdateCheckResult } from ".
 import { errorMessageOf } from "../services/http";
 import { t } from "../i18n";
 import { appSettings, sendDesktopNotification } from "./settings";
+import { readStorageItem, writeStorageItem } from "./workspace-state";
 
 export interface DesktopUpdaterState {
   isChecking: boolean;
@@ -190,19 +191,11 @@ export function desktopUpdateSpeedEtaLabel(): string {
 }
 
 function readNotifiedVersion(): string {
-  try {
-    return localStorage.getItem(NOTIFIED_VERSION_KEY) || "";
-  } catch {
-    return "";
-  }
+  return readStorageItem(NOTIFIED_VERSION_KEY) || "";
 }
 
 function rememberNotifiedVersion(version: string): void {
-  try {
-    localStorage.setItem(NOTIFIED_VERSION_KEY, version);
-  } catch {
-    /* storage unavailable */
-  }
+  writeStorageItem(NOTIFIED_VERSION_KEY, version);
 }
 
 /** True when an automatic re-check is worth the request. */

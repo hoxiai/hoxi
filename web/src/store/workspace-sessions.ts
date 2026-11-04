@@ -8,22 +8,17 @@ import {
   forgetSubagentLinks,
   mergeServerTurnsInto,
 } from "./message-lookup";
-import { persistSessionAI, restoreSessionAI } from "./session-ai";
-import { forgetSessionHistory, noteSessionHistoryTail, SESSION_HISTORY_PAGE_TURNS } from "./session-history";
-import { clearSessionPendingApprovals, syncPendingPermissions } from "./approval-mode";
+import { restoreSessionAI } from "./session-ai";
+import { noteSessionHistoryTail, SESSION_HISTORY_PAGE_TURNS } from "./session-history";
+import { syncPendingPermissions } from "./approval-mode";
 import { syncPendingQuestions } from "./question-answers";
-import { ARCHIVED_SESSIONS_KEY, setWorkspace, workspace } from "./workspace-state";
+import { setWorkspace, workspace } from "./workspace-state";
 import {
-  forgetSessionTitles,
-  hasManualSessionTitle,
   preserveSessionTitle,
-  recordCustomSessionTitle,
-  recordManualSessionTitle,
   sortSessionsByActivity,
 } from "./session-title";
 import {
   beginSessionTranscriptRead,
-  evictCachedSessionTurns,
   hydratedSessionIDs,
   isReadingSessionTranscript,
   persistCachedSessionTurns,
@@ -31,26 +26,20 @@ import {
   touchSessionTranscript,
 } from "./session-transcripts";
 import {
-  isManagedSession,
   isSessionArchived,
   isSessionBusy,
   isSessionDeleted,
   isSessionTaskActive,
-  markSessionDeleted,
   requestTimelineFollow,
   sessionDirectory,
 } from "./session-query";
 import {
-  cancelScheduledWorktreeStatus,
   refreshSessionDiff,
-  refreshWorktreeStatus,
   scheduleRefreshSessionDiff,
   scheduleRefreshWorktreeStatus,
 } from "./session-diffs";
 import {
   clearSubagentDrawerOverride,
-  collectChildSubagentSessionIDs,
-  deleteChildSubagentSessionsBackend,
   extractChildSubagentSessionId,
 } from "./subagent-sessions";
 import { clearAutoFailoverPending, clearTurnDispatchState } from "./auto-failover";
@@ -81,15 +70,7 @@ export function endLocalSessionCreation(createdSessionID?: string): void {
   }
 }
 
-function persistArchivedSessionIDs(ids: string[]) {
-  try {
-    localStorage.setItem(ARCHIVED_SESSIONS_KEY, JSON.stringify(ids));
-  } catch {
-    /* ignore */
-  }
-}
-
-function nextActiveSessionCandidate(excludeID?: string): SessionInfo | undefined {
+export function nextActiveSessionCandidate(excludeID?: string): SessionInfo | undefined {
   const candidates = workspace.sessions.filter(
     (s) => s.id !== excludeID && !s.parentID && !isSessionArchived(s)
   );
@@ -434,206 +415,6 @@ export async function selectSession(sessionID: string): Promise<void> {
   }
 }
 
-export async function exitSessionWorktree(sessionID: string, keepBranch = false): Promise<void> {
-  await leaveSessionWorktree(sessionID, keepBranch);
-  await refreshWorktreeStatus(sessionID);
-  await refreshWorktreeStatus("__root__");
-}
-
-async function leaveSessionWorktree(sessionID: string, keepBranch: boolean): Promise<void> {
-  if (isManagedSession(sessionID)) {
-    const targetSelector = sessionDirectory(sessionID) || workspace.rootDir || undefined;
-    replaceSession(
-      await hoxiAPI.setSandboxMode(
-        sessionID,
-        "local",
-        { force: true, keepBranch },
-        targetSelector
-      )
-    );
-  } else {
-    await hoxiAPI.removeWorktree(sessionID, true, keepBranch);
-    if (workspace.rootDir) {
-      setWorkspace("worktreeBySession", sessionID, {
-        sessionID,
-        isolated: false,
-        directory: workspace.rootDir,
-        branch: workspace.worktreeBySession["__root__"]?.branch,
-        createdAt: new Date().toISOString(),
-      });
-    }
-  }
-}
-
-export async function renameSessionTitle(
-  sessionID: string, title: string, source: "manual" | "automatic" = "manual"
-): Promise<void> {
-  const cleaned = title.trim();
-  if (!cleaned || (source === "automatic" && hasManualSessionTitle(sessionID))) return;
-  if (source === "manual") recordManualSessionTitle(sessionID, cleaned);
-  recordCustomSessionTitle(sessionID, cleaned);
-  // Optimistically update local session title
-  setWorkspace(
-    "sessions",
-    (s) => s.id === sessionID,
-    "title",
-    cleaned
-  );
-  try {
-    const updated = await hoxiAPI.renameSession(sessionID, cleaned, sessionDirectory(sessionID));
-    if (updated?.id) {
-      replaceSession({ ...updated, title: cleaned });
-    }
-  } catch (err) {
-    console.error("rename session failed:", err);
-  }
-}
-
-export async function archiveSession(sessionID: string, directory?: string): Promise<void> {
-  const existing = workspace.sessions.find((s) => s.id === sessionID);
-  const targetDir =
-    directory || existing?.directory || sessionDirectory(sessionID) || workspace.rootDir || undefined;
-
-  if (!workspace.archivedSessionIDs.includes(sessionID)) {
-    const nextArchived = [...workspace.archivedSessionIDs, sessionID];
-    setWorkspace("archivedSessionIDs", nextArchived);
-    persistArchivedSessionIDs(nextArchived);
-  }
-
-  const now = Date.now();
-  setWorkspace(
-    produce((state) => {
-      const target = state.sessions.find((s) => s.id === sessionID);
-      if (target) {
-        if (!target.time) target.time = { created: now, updated: now, archived: now };
-        else target.time.archived = now;
-      }
-    })
-  );
-  clearSessionPendingApprovals(sessionID);
-
-  if (workspace.activeSessionID === sessionID) {
-    const next = nextActiveSessionCandidate(sessionID);
-    if (next) {
-      await selectSession(next.id);
-    } else {
-      setWorkspace("activeSessionID", null);
-    }
-  }
-
-  try {
-    await hoxiAPI.archiveSession(sessionID, true, targetDir);
-  } catch (err) {
-    console.warn("archive session backend sync warning:", err);
-  }
-}
-
-export async function unarchiveSession(sessionID: string, directory?: string): Promise<void> {
-  const existing = workspace.sessions.find((s) => s.id === sessionID);
-  const targetDir =
-    directory || existing?.directory || sessionDirectory(sessionID) || workspace.rootDir || undefined;
-
-  if (workspace.archivedSessionIDs.includes(sessionID)) {
-    const nextArchived = workspace.archivedSessionIDs.filter((id) => id !== sessionID);
-    setWorkspace("archivedSessionIDs", nextArchived);
-    persistArchivedSessionIDs(nextArchived);
-  }
-
-  setWorkspace(
-    produce((state) => {
-      const target = state.sessions.find((s) => s.id === sessionID);
-      if (target?.time) {
-        delete target.time.archived;
-      }
-    })
-  );
-
-  try {
-    await hoxiAPI.archiveSession(sessionID, false, targetDir);
-  } catch (err) {
-    console.warn("unarchive session backend sync warning:", err);
-  }
-}
-
-export function removeSessionFromStore(sessionID: string): SessionInfo | undefined {
-  const childIDs = collectChildSubagentSessionIDs(sessionID);
-  const allIDs = [sessionID, ...childIDs];
-  for (const id of allIDs) {
-    cancelScheduledWorktreeStatus(id);
-    hydratedSessionIDs.delete(id);
-    forgetSessionHistory(id);
-    markSessionDeleted(id);
-  }
-  forgetSessionTitles(allIDs);
-  evictCachedSessionTurns(allIDs);
-  const nextCandidate = nextActiveSessionCandidate(sessionID);
-  if (workspace.archivedSessionIDs.some((id) => allIDs.includes(id))) {
-    const nextArchived = workspace.archivedSessionIDs.filter((id) => !allIDs.includes(id));
-    setWorkspace("archivedSessionIDs", nextArchived);
-    persistArchivedSessionIDs(nextArchived);
-  }
-  setWorkspace(produce((state) => purgeSessionsFromStoreState(state, allIDs)));
-  persistSessionAI();
-  return nextCandidate;
-}
-
-export async function discardSession(
-  sessionID: string,
-  force = true,
-  directory?: string
-): Promise<void> {
-  const existing = workspace.sessions.find((s) => s.id === sessionID);
-  const targetDir =
-    directory || existing?.directory || sessionDirectory(sessionID) || workspace.rootDir || undefined;
-  const childIDs = collectChildSubagentSessionIDs(sessionID);
-  const wasActive =
-    workspace.activeSessionID === sessionID ||
-    (Boolean(workspace.activeSessionID) && childIDs.includes(workspace.activeSessionID!));
-  const wasBusy = isSessionBusy(sessionID);
-
-  // Optimistically remove from UI and switch active session immediately
-  const nextCandidate = removeSessionFromStore(sessionID);
-  if (wasActive) {
-    if (nextCandidate) {
-      void selectSession(nextCandidate.id);
-    } else {
-      setWorkspace("activeSessionID", null);
-    }
-  }
-
-  if (childIDs.length > 0) {
-    void deleteChildSubagentSessionsBackend(childIDs, targetDir);
-  }
-
-  if (wasBusy) {
-    try {
-      await hoxiAPI.abortSession(sessionID, targetDir);
-    } catch {
-      /* ignore abort error */
-    }
-  }
-
-  try {
-    await hoxiAPI.removeWorktree(sessionID, force);
-  } catch (err) {
-    console.warn("remove worktree warning:", err);
-  }
-
-  try {
-    await hoxiAPI.deleteSession(sessionID, targetDir);
-  } catch (err) {
-    if (workspace.rootDir && targetDir !== workspace.rootDir) {
-      try {
-        await hoxiAPI.deleteSession(sessionID, workspace.rootDir);
-        return;
-      } catch {
-        /* ignore fallback error */
-      }
-    }
-    console.error("delete session failed:", err);
-  }
-}
-
 // Queue-overflow recovery includes busy transcripts: waiting for the next idle
 // event would leave missing text/parts on screen for the rest of a long run.
 export async function resyncResidentTranscripts(): Promise<void> {
@@ -754,19 +535,4 @@ export function purgeSessionsFromStoreState(
   state.pendingQuestions = state.pendingQuestions.filter(
     (q) => !idSet.has(q.sessionID) && (!q.subagentSessionID || !idSet.has(q.subagentSessionID))
   );
-}
-
-/** Asks the runtime to compact (summarize) a session's context, then reloads its transcript. */
-export async function compactSessionContext(
-  sessionID: string,
-  model: { providerID: string; modelID: string }
-): Promise<boolean> {
-  const compacted = await hoxiAPI.summarizeSession(
-    sessionID,
-    model.providerID,
-    model.modelID,
-    sessionDirectory(sessionID)
-  );
-  if (compacted) await loadSessionMessages(sessionID);
-  return Boolean(compacted);
 }

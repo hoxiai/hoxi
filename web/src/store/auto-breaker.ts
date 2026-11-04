@@ -7,7 +7,7 @@
 // and rank the faster, healthier ones.
 import { createSignal } from "solid-js";
 import { hoxiAPI, type CandidateBreakerSnapshot, type CandidateOutcomeInput } from "../services/api";
-import { workspace } from "./workspace-state";
+import { readStorageRecord, workspace, writeStorageJSON } from "./workspace-state";
 
 export const AUTO_BREAKERS_STORAGE_KEY = "hoxi:auto-breakers:v1";
 
@@ -20,15 +20,7 @@ const OPTIMISTIC_OPEN_TTL_MS = 90_000;
 type BreakerMap = Record<string, CandidateBreakerSnapshot>;
 
 function loadInitialBreakers(): BreakerMap {
-  try {
-    const raw = localStorage.getItem(AUTO_BREAKERS_STORAGE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return {};
-    return parsed as BreakerMap;
-  } catch {
-    return {};
-  }
+  return readStorageRecord<CandidateBreakerSnapshot>(AUTO_BREAKERS_STORAGE_KEY);
 }
 
 const [providerBreakersSignal, setProviderBreakersSignal] = createSignal<BreakerMap>(
@@ -36,11 +28,7 @@ const [providerBreakersSignal, setProviderBreakersSignal] = createSignal<Breaker
 );
 
 function persistBreakers(next: BreakerMap) {
-  try {
-    localStorage.setItem(AUTO_BREAKERS_STORAGE_KEY, JSON.stringify(next));
-  } catch {
-    /* ignore */
-  }
+  writeStorageJSON(AUTO_BREAKERS_STORAGE_KEY, next);
 }
 
 export function candidateBreakerKey(providerID: string, modelID: string): string {

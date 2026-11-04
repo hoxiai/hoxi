@@ -11,7 +11,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -85,35 +84,8 @@ func writeRelayKeyDoc(path string, doc relayKeyDoc) error {
 	if path == "" {
 		return errors.New("relay key store is unavailable")
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
 	sort.Slice(doc.Keys, func(i, j int) bool { return doc.Keys[i].CreatedAt > doc.Keys[j].CreatedAt })
-	raw, err := json.MarshalIndent(doc, "", "  ")
-	if err != nil {
-		return err
-	}
-	f, err := os.CreateTemp(filepath.Dir(path), ".relay-*")
-	if err != nil {
-		return err
-	}
-	tmpName := f.Name()
-	defer os.Remove(tmpName)
-	if _, err := f.Write(append(raw, '\n')); err != nil {
-		_ = f.Close()
-		return err
-	}
-	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	if err := os.Chmod(tmpName, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmpName, path)
+	return hoxipaths.WriteJSONAtomic(path, doc, 0o600)
 }
 
 func (s *Service) cachedRelayKeys(path string) []relayKeyRecord {

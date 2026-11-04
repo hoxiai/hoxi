@@ -4,7 +4,7 @@
 // sends prompts lives in session-goal.ts.
 import { createStore, produce, unwrap } from "solid-js/store";
 import type { MessagePart } from "../services/sse-types";
-import type { MessageTurn } from "./workspace-state";
+import { readStorageJSON, writeStorageJSON, type MessageTurn } from "./workspace-state";
 
 export const GOAL_MAX_OBJECTIVE_LENGTH = 10000;
 /** Automatic continuations allowed before the goal pauses for review (cost guard). */
@@ -148,22 +148,11 @@ export function restoreStoredGoals(raw: unknown): Record<string, SessionGoal> {
 }
 
 function loadGoals(): Record<string, SessionGoal> {
-  try {
-    const raw = typeof localStorage === "undefined" ? null : localStorage.getItem(GOAL_STORAGE_KEY);
-    return restoreStoredGoals(raw ? JSON.parse(raw) : null);
-  } catch {
-    return {};
-  }
+  return restoreStoredGoals(readStorageJSON(GOAL_STORAGE_KEY));
 }
 
 function persistGoals(): void {
-  try {
-    if (typeof localStorage !== "undefined") {
-      localStorage.setItem(GOAL_STORAGE_KEY, JSON.stringify(unwrap(goals)));
-    }
-  } catch {
-    /* storage can be full or disabled; the goal still works for this run */
-  }
+  writeStorageJSON(GOAL_STORAGE_KEY, unwrap(goals));
 }
 
 const [goals, setGoals] = createStore<Record<string, SessionGoal>>(loadGoals());

@@ -12,7 +12,7 @@ import {
   type SkillListResponse,
   type SkillSelection,
 } from "../services/api";
-import { setWorkspace, workspace } from "./workspace-state";
+import { readStorageJSON, setWorkspace, workspace, writeStorageJSON } from "./workspace-state";
 import { sessionDirectory, sessionRuntimeForID } from "./session-query";
 import { normalizeFolderPath } from "./workspace-folders";
 
@@ -49,15 +49,9 @@ interface SkillsStoreState {
 }
 
 function loadHiddenSkills(): string[] {
-  try {
-    const raw = localStorage.getItem(HIDDEN_SKILLS_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) {
-      return parsed.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
-    }
-  } catch {
-    /* ignore */
+  const parsed = readStorageJSON<unknown>(HIDDEN_SKILLS_STORAGE_KEY);
+  if (Array.isArray(parsed)) {
+    return parsed.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
   }
   return [];
 }
@@ -76,11 +70,7 @@ export function toggleSkillHidden(name: string) {
     const next = prev.includes(clean)
       ? prev.filter((n) => n !== clean)
       : [...prev, clean];
-    try {
-      localStorage.setItem(HIDDEN_SKILLS_STORAGE_KEY, JSON.stringify(next));
-    } catch {
-      /* ignore */
-    }
+    writeStorageJSON(HIDDEN_SKILLS_STORAGE_KEY, next);
     return next;
   });
 }

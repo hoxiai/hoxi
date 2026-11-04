@@ -1,11 +1,11 @@
 import { reconcile, unwrap } from "solid-js/store";
 import { hoxiAPI, authAPI, runnerAPI, type LocalCLIStatusItem, type ProviderInfo } from "../services/api";
+import { loadProviders } from "../store/workspace-providers";
 import {
   connectProviderWithKey,
-  loadProviders,
   saveCustomProvider,
   syncLocalCLIModel,
-} from "../store/workspace-providers";
+} from "../store/provider-connections";
 import { setWorkspace, workspace } from "../store/workspace";
 import { desktopAuth, logoutDesktopAccount, setDesktopAuth } from "../store/auth-state";
 import { assertDeepEqual, describe, it } from "./test-harness";

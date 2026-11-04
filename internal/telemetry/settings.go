@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 
@@ -81,24 +80,5 @@ func SetEnabled(enabled bool) error {
 	if path == "" {
 		return errors.New("telemetry settings path unavailable")
 	}
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	f, err := os.CreateTemp(dir, ".telemetry-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(f.Name())
-	defer f.Close()
-	if err := json.NewEncoder(f).Encode(State{Enabled: enabled}); err != nil {
-		return err
-	}
-	if err := f.Sync(); err != nil {
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	return os.Rename(f.Name(), path)
+	return hoxipaths.WriteJSONAtomic(path, State{Enabled: enabled}, 0o600)
 }

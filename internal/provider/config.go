@@ -173,29 +173,7 @@ func writeJSONMapFile(path string, payload interface{}) error {
 	if path == "" {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	raw, err := json.MarshalIndent(payload, "", "  ")
-	if err != nil {
-		return err
-	}
-	// Replace rather than truncate so existing permissive files also become private,
-	// and a failed write cannot destroy the previous credentials.
-	f, err := os.CreateTemp(filepath.Dir(path), ".models-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(f.Name())
-	if _, err := f.Write(append(raw, '\n')); err != nil {
-		_ = f.Close()
-		return err
-	}
-	_ = f.Sync()
-	if err := f.Close(); err != nil {
-		return err
-	}
-	return os.Rename(f.Name(), path)
+	return hoxipaths.WriteJSONAtomic(path, payload, 0o600)
 }
 
 func persistHoxiModelsFiles(userPath, workspacePath string, doc map[string]interface{}) error {

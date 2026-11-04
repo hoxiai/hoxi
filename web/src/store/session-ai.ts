@@ -3,6 +3,8 @@ import {
   SESSION_AI_KEY,
   setWorkspace,
   workspace,
+  writeStorageItem,
+  writeStorageJSON,
   type MessageTurn,
   type SelectedModel,
   type SessionAIConfig,
@@ -12,8 +14,7 @@ import {
 const pendingHistoryPatches = new Map<string, Partial<SessionAIConfig>>();
 
 export function persistSessionAI(): void {
-  try { localStorage.setItem(SESSION_AI_KEY, JSON.stringify(workspace.aiBySession)); }
-  catch { /* storage unavailable */ }
+  writeStorageJSON(SESSION_AI_KEY, workspace.aiBySession);
 }
 
 export function sessionAIConfig(sessionID: string | null = workspace.activeSessionID): SessionAIConfig {
@@ -94,6 +95,6 @@ export function setActiveAgent(agent: string, sessionID = workspace.activeSessio
 
   updateSessionAI(patch, sessionID);
   if (!sessionID) {
-    try { localStorage.setItem(DEFAULT_AGENT_KEY, agent); } catch { /* storage unavailable */ }
+    writeStorageItem(DEFAULT_AGENT_KEY, agent);
   }
 }

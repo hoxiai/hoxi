@@ -13,7 +13,8 @@ import {
   setWorkspace,
   workspace,
 } from "../store/workspace";
-import { renameSessionTitle, replaceSession, replaceSessionFromEvent } from "../store/workspace-sessions";
+import { replaceSession, replaceSessionFromEvent } from "../store/workspace-sessions";
+import { renameSessionTitle } from "../store/session-lifecycle";
 import { buildAllProjects } from "../components/layout/left-nav-helpers";
 import { assertEqual, describe, it } from "./test-harness";
 

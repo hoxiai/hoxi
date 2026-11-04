@@ -1,4 +1,5 @@
 import { type Accessor, createSignal, onCleanup } from "solid-js";
+import { readStorageJSON, removeStorageItem, writeStorageJSON } from "./workspace-state";
 
 export const PROMPT_HISTORY_KEY = "hoxi-prompt-history:v1";
 export const PROMPT_HISTORY_CLEARED_EVENT = "hoxi:prompt-history-cleared";
@@ -6,28 +7,16 @@ export const PROMPT_HISTORY_CLEARED_EVENT = "hoxi:prompt-history-cleared";
 const MAX_HISTORY = 50;
 
 function loadStoredHistory(): string[] {
-  try {
-    if (typeof localStorage === "undefined") return [];
-    const raw = localStorage.getItem(PROMPT_HISTORY_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) return parsed.filter((s) => typeof s === "string");
-  } catch {
-    /* ignore */
-  }
-  return [];
+  const parsed = readStorageJSON<unknown>(PROMPT_HISTORY_KEY);
+  return Array.isArray(parsed) ? parsed.filter((s): s is string => typeof s === "string") : [];
 }
 
 export function clearLocalPromptHistory(): boolean {
-  try {
-    localStorage.removeItem(PROMPT_HISTORY_KEY);
-    if (typeof window !== "undefined") {
-      window.dispatchEvent(new Event(PROMPT_HISTORY_CLEARED_EVENT));
-    }
-    return true;
-  } catch {
-    return false;
+  removeStorageItem(PROMPT_HISTORY_KEY);
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event(PROMPT_HISTORY_CLEARED_EVENT));
   }
+  return true;
 }
 
 /**
@@ -68,11 +57,7 @@ export function createPromptHistory(sessionID: Accessor<string | null>) {
         0,
         MAX_HISTORY
       );
-      try {
-        localStorage.setItem(PROMPT_HISTORY_KEY, JSON.stringify(deduped));
-      } catch {
-        /* ignore */
-      }
+      writeStorageJSON(PROMPT_HISTORY_KEY, deduped);
       return deduped;
     });
   };

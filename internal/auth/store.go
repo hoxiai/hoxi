@@ -191,7 +191,7 @@ func (s *TokenStore) SaveForServer(baseURL string, auth *StoredAuth) error {
 		return err
 	}
 
-	return writeFileAtomic(s.filePath, data, 0o600)
+	return hoxipaths.WriteFileAtomic(s.filePath, data, 0o600)
 }
 
 // Clear 清理本地凭据（退出登录）
@@ -300,39 +300,5 @@ func (s *TokenStore) ClearForServer(baseURL string, token ...string) error {
 	if err != nil {
 		return err
 	}
-	return writeFileAtomic(s.filePath, data, 0o600)
-}
-
-func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".*.tmp")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	cleanup := func() {
-		_ = tmp.Close()
-		_ = os.Remove(tmpName)
-	}
-	if err := tmp.Chmod(perm); err != nil {
-		cleanup()
-		return err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		cleanup()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		cleanup()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpName)
-		return err
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		_ = os.Remove(tmpName)
-		return err
-	}
-	return nil
+	return hoxipaths.WriteFileAtomic(s.filePath, data, 0o600)
 }

@@ -412,21 +412,13 @@ function initialSidebarProjectMode(): SidebarProjectMode {
     return saved as SidebarProjectMode;
   }
   if (saved === "attention" || saved === "running") {
-    try {
-      localStorage.setItem(SIDEBAR_PROJECT_MODE_KEY, "multi");
-    } catch {
-      /* ignore */
-    }
+    writeStorageItem(SIDEBAR_PROJECT_MODE_KEY, "multi");
   }
   return "multi";
 }
 
 function initialSessionSandboxMode(): "local" | "worktree" {
-  try {
-    localStorage.removeItem(SESSION_SANDBOX_MODE_KEY);
-  } catch {
-    /* ignore */
-  }
+  removeStorageItem(SESSION_SANDBOX_MODE_KEY);
   const parsed = readStorageJSON<{ defaultSandboxMode?: string }>("hoxi-app-settings:v1");
   if (parsed?.defaultSandboxMode === "local" || parsed?.defaultSandboxMode === "worktree") {
     return parsed.defaultSandboxMode;

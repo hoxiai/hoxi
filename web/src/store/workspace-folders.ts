@@ -9,9 +9,11 @@ import { defaultWorkspaceDir } from "./layout";
 import {
   DISMISSED_PROJECTS_KEY,
   PROJECT_ORDER_KEY,
+  readStorageJSON,
   RECENT_PROJECTS_KEY,
   setWorkspace,
   workspace,
+  writeStorageJSON,
   type SessionIndexEntry,
 } from "./workspace-state";
 
@@ -53,7 +55,7 @@ export function recordDismissedProject(pathOrID?: string | null): void {
   if (clean && !next.includes(clean)) next.push(clean);
   if (norm && !next.includes(norm)) next.push(norm);
   setWorkspace("dismissedProjects", next);
-  try { localStorage.setItem(DISMISSED_PROJECTS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+  writeStorageJSON(DISMISSED_PROJECTS_KEY, next);
 }
 
 export function unrecordDismissedProject(pathOrID?: string | null): void {
@@ -64,7 +66,7 @@ export function unrecordDismissedProject(pathOrID?: string | null): void {
     (item) => item !== clean && normalizeFolderPath(item) !== norm
   );
   setWorkspace("dismissedProjects", next);
-  try { localStorage.setItem(DISMISSED_PROJECTS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+  writeStorageJSON(DISMISSED_PROJECTS_KEY, next);
 }
 
 export function normalizeFolderPath(p?: string | null): string {
@@ -133,14 +135,10 @@ const REMEMBERED_CODE_SURFACE_KEY = "hoxi:remembered-code-surface";
 const REMEMBERED_WORK_SURFACE_KEY = "hoxi:remembered-work-surface";
 
 function initialWorkWorkspaceDirs(): string[] {
-  try {
-    const raw = localStorage.getItem(WORK_WORKSPACE_DIRS_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) {
-      return Array.from(new Set(parsed.map((p) => stripWorktreePath(String(p))).filter(Boolean)));
-    }
-  } catch { /* ignore */ }
+  const parsed = readStorageJSON<unknown>(WORK_WORKSPACE_DIRS_KEY);
+  if (Array.isArray(parsed)) {
+    return Array.from(new Set(parsed.map((p) => stripWorktreePath(String(p))).filter(Boolean)));
+  }
   return [];
 }
 
@@ -153,7 +151,7 @@ export function recordWorkWorkspaceDir(pathOrDir?: string | null): void {
   if (current.includes(norm)) return;
   const next = [...current, norm];
   setWorkWorkspaceDirs(next);
-  try { localStorage.setItem(WORK_WORKSPACE_DIRS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+  writeStorageJSON(WORK_WORKSPACE_DIRS_KEY, next);
 }
 
 export function unrecordWorkWorkspaceDir(pathOrDir?: string | null): void {
@@ -163,7 +161,7 @@ export function unrecordWorkWorkspaceDir(pathOrDir?: string | null): void {
   if (!current.includes(norm)) return;
   const next = current.filter((item) => item !== norm);
   setWorkWorkspaceDirs(next);
-  try { localStorage.setItem(WORK_WORKSPACE_DIRS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+  writeStorageJSON(WORK_WORKSPACE_DIRS_KEY, next);
 }
 
 interface FolderLookup {
@@ -480,27 +478,23 @@ export interface RememberedSurfaceState {
 }
 
 function readRememberedSurface(storageKey: string, expectWork: boolean): RememberedSurfaceState {
-  try {
-    const raw = localStorage.getItem(storageKey);
-    if (!raw) return { rootDir: "", sessionID: null };
-    const parsed = JSON.parse(raw);
-    const rootDir = normalizeFolderPath(parsed?.rootDir);
-    if (
-      rootDir &&
-      !isInvalidProjectPath(rootDir) &&
-      (expectWork ? true : !isWorkSurfacePath(rootDir))
-    ) {
-      return {
-        rootDir,
-        sessionID: typeof parsed?.sessionID === "string" ? parsed.sessionID : null,
-      };
-    }
-  } catch { /* ignore */ }
+  const parsed = readStorageJSON<Record<string, unknown>>(storageKey);
+  const rootDir = normalizeFolderPath(typeof parsed?.rootDir === "string" ? parsed.rootDir : "");
+  if (
+    rootDir &&
+    !isInvalidProjectPath(rootDir) &&
+    (expectWork ? true : !isWorkSurfacePath(rootDir))
+  ) {
+    return {
+      rootDir,
+      sessionID: typeof parsed?.sessionID === "string" ? parsed.sessionID : null,
+    };
+  }
   return { rootDir: "", sessionID: null };
 }
 
 function writeRememberedSurface(storageKey: string, state: { rootDir: string; sessionID: string | null }): void {
-  try { localStorage.setItem(storageKey, JSON.stringify(state)); } catch { /* ignore */ }
+  writeStorageJSON(storageKey, state);
 }
 
 let rememberedCodeSurface: RememberedSurfaceState = readRememberedSurface(REMEMBERED_CODE_SURFACE_KEY, false);
@@ -581,12 +575,12 @@ export function pruneWorkPathsFromCodeState(): void {
   const filteredRecents = workspace.recentProjects.filter((p) => !isWorkSurfacePath(p));
   if (filteredRecents.length !== workspace.recentProjects.length) {
     setWorkspace("recentProjects", filteredRecents);
-    try { localStorage.setItem(RECENT_PROJECTS_KEY, JSON.stringify(filteredRecents)); } catch { /* ignore */ }
+    writeStorageJSON(RECENT_PROJECTS_KEY, filteredRecents);
   }
   const filteredOrder = workspace.projectOrder.filter((p) => !isWorkSurfacePath(p));
   if (filteredOrder.length !== workspace.projectOrder.length) {
     setWorkspace("projectOrder", filteredOrder);
-    try { localStorage.setItem(PROJECT_ORDER_KEY, JSON.stringify(filteredOrder)); } catch { /* ignore */ }
+    writeStorageJSON(PROJECT_ORDER_KEY, filteredOrder);
   }
   if (workspace.projects.some((p) => isWorkSurfacePath(p.worktree))) {
     setWorkspace("projects", (prev) => prev.filter((p) => !isWorkSurfacePath(p.worktree)));

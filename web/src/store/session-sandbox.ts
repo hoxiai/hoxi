@@ -21,10 +21,9 @@ import {
 import {
   beginLocalSessionCreation,
   endLocalSessionCreation,
-  exitSessionWorktree,
-  removeSessionFromStore,
   replaceSession,
 } from "./workspace-sessions";
+import { exitSessionWorktree, removeSessionFromStore } from "./session-lifecycle";
 import { isManagedSession, isSessionBusy, sessionDirectory, sessionRuntimeForID } from "./session-query";
 import { refreshWorktreeStatus } from "./session-diffs";
 import { indexSession } from "./session-index";

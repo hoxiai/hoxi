@@ -21,11 +21,11 @@ import { resolveRootSessionID } from "./subagent-sessions";
 import { setWorkspace, workspace } from "./workspace-state";
 import { findWorkspaceProfileByDir, normalizeFolderPath, workspacePrimaryFolder } from "./workspace-folders";
 import {
-  closeWorkspaceModal,
   selectInitialProjectSession,
   setSidebarProjectMode,
   switchWorkspace,
 } from "./workspace-projects";
+import { closeWorkspaceModal } from "./workspace-profiles";
 import { selectSession } from "./workspace-sessions";
 
 export interface SessionDeepLink {

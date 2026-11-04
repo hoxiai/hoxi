@@ -2,7 +2,7 @@ import { reconcile, unwrap } from "solid-js/store";
 import { hoxiAPI } from "../services/api";
 import type { SnapshotFileDiff } from "../services/sse-types";
 import { inspectPromptContextMentions, resolveContextMentionsForSend } from "../store/terminal-context";
-import { removeSessionFromStore } from "../store/workspace-sessions";
+import { removeSessionFromStore } from "../store/session-lifecycle";
 import { setWorkspace, workspace, type MessageTurn } from "../store/workspace-state";
 import { assertEqual, assertTrue, describe, it } from "./test-harness";
 
