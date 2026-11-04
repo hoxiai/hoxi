@@ -297,8 +297,7 @@ func (s *Service) applyUserSkillOverride(sessionID string, part *MessagePart) {
 	if part == nil || part.Type != "text" {
 		return
 	}
-	if raw, ok := s.userSkillByMsg.Load(part.MessageID); ok {
-		ov := raw.(userSkillOverride)
+	if ov, ok := s.userSkillByMsg.Load(part.MessageID); ok {
 		part.Text = ov.originalText
 		if part.Metadata == nil {
 			part.Metadata = make(map[string]interface{})

@@ -389,8 +389,8 @@ type activeProcess struct {
 	pendingErr    *SSEEvent
 	// openCodeChildren holds the OpenCode subagent session IDs spawned by
 	// this turn, so their activity counts toward the parent's watchdog.
-	openCodeChildren sync.Map
-	fileURLs         sync.Map
+	openCodeChildren syncMap[string, bool]
+	fileURLs         syncMap[string, string]
 }
 
 var abortInterruptGrace = 2 * time.Second

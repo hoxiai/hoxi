@@ -772,7 +772,7 @@ func TestOpenCodeChildMappingPersistsAcrossRestartAndCleansUpOnDelete(t *testing
 	}
 
 	restarted.stoppedTools.Store(rec.ID+"\x00call:1", true)
-	restarted.promptReceipts.Store(rec.ID+"\x00req_1", true)
+	restarted.promptReceipts.Store(rec.ID+"\x00req_1", cachedPromptReceipt{})
 	restarted.cliSystemDelivered.Store(rec.ID+"\x00claude", "sys")
 	if err := restarted.deleteConversation(context.Background(), rec.ID); err != nil {
 		t.Fatalf("deleteConversation: %v", err)

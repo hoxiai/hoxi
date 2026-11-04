@@ -22,12 +22,11 @@ func (s *Service) lookupPermissionReply(permissionID, clientRequestID, reply str
 		return nil, false
 	}
 	key := permissionID + "\x00" + clientRequestID
-	raw, ok := s.permissionReplies.Load(key)
+	entry, ok := s.permissionReplies.Load(key)
 	if !ok {
 		return nil, false
 	}
-	entry, ok := raw.(cachedPermissionReply)
-	if !ok || time.Now().After(entry.expiresAt) {
+	if time.Now().After(entry.expiresAt) {
 		s.permissionReplies.Delete(key)
 		return nil, false
 	}
@@ -43,8 +42,8 @@ func (s *Service) storePermissionReply(permissionID, clientRequestID, reply stri
 		return
 	}
 	now := time.Now()
-	s.permissionReplies.Range(func(k, v interface{}) bool {
-		if entry, ok := v.(cachedPermissionReply); !ok || now.After(entry.expiresAt) {
+	s.permissionReplies.Range(func(k string, entry cachedPermissionReply) bool {
+		if now.After(entry.expiresAt) {
 			s.permissionReplies.Delete(k)
 		}
 		return true
@@ -326,9 +325,7 @@ func (s *Service) openCodeEngineSessionMap() (map[string]string, map[string]stri
 			}
 		}
 	}
-	s.openCodeChildParent.Range(func(key, value interface{}) bool {
-		childID, _ := key.(string)
-		parentID, _ := value.(string)
+	s.openCodeChildParent.Range(func(childID, parentID string) bool {
 		if childID == "" || parentID == "" {
 			return true
 		}
@@ -346,8 +343,8 @@ func (s *Service) openCodeEngineSessionMap() (map[string]string, map[string]stri
 		if ap == nil {
 			continue
 		}
-		ap.openCodeChildren.Range(func(key, _ interface{}) bool {
-			if childID, ok := key.(string); ok && childID != "" {
+		ap.openCodeChildren.Range(func(childID string, _ bool) bool {
+			if childID != "" {
 				engineToHoxi[childID] = hoxiID
 				if hoxiDir := sessionDirByID[hoxiID]; hoxiDir != "" {
 					sessionDirByID[childID] = hoxiDir

@@ -567,7 +567,7 @@ func cloneRecord(r SessionRecord) SessionRecord {
 const maxNormalizedPathCacheEntries = 2048
 
 var (
-	normalizedComparePathCache     sync.Map
+	normalizedComparePathCache     syncMap[string, string]
 	normalizedComparePathCacheSize atomic.Int64
 )
 
@@ -577,7 +577,7 @@ func normalizeComparePath(p string) string {
 		return ""
 	}
 	if cached, ok := normalizedComparePathCache.Load(p); ok {
-		return cached.(string)
+		return cached
 	}
 	raw := p
 	resolvedOK := false
@@ -593,7 +593,7 @@ func normalizeComparePath(p string) string {
 	if resolvedOK {
 		if _, loaded := normalizedComparePathCache.LoadOrStore(raw, cleaned); !loaded {
 			if normalizedComparePathCacheSize.Add(1) > maxNormalizedPathCacheEntries {
-				normalizedComparePathCache.Range(func(k, _ any) bool {
+				normalizedComparePathCache.Range(func(k, _ string) bool {
 					normalizedComparePathCache.Delete(k)
 					return true
 				})

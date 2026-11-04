@@ -8,6 +8,7 @@ import {
   ClipboardPaste,
   Clock,
   FileText,
+  FolderOpen,
   LoaderCircle,
   RefreshCw,
   Slash,
@@ -19,6 +20,13 @@ import {
 import { FileIcon } from "../icons";
 import { t } from "../../i18n";
 import type { SkillSelection } from "../../services/api";
+import ModelSelector from "../models/ModelSelector";
+import { ComposerSandboxPill } from "./ComposerSandboxPill";
+import ContextProgressPill from "./ContextProgressPill";
+import ApprovalModePill from "./ApprovalModePill";
+import ModeSwitcher from "./ModeSwitcher";
+import ComposerToolsPopover from "./ComposerToolsPopover";
+import { isWorkSurface, surfaceExtension } from "../layout/surface-extension";
 import {
   classifyAttachmentKind,
   type AutocompleteItem,
@@ -477,5 +485,110 @@ export function ComposerSendButtons(props: {
         </button>
       </Show>
     </>
+  );
+}
+
+export function ComposerBottomToolbar(props: {
+  workspaceReady: boolean;
+  hasRootDir: boolean;
+  skillActive: boolean;
+  sandboxMode: "local" | "worktree";
+  runtime: string;
+  canEnhance: boolean;
+  enhancing: boolean;
+  choosingFolder: boolean;
+  switchingSandbox: boolean;
+  busy: boolean;
+  sessionID: string | null;
+  directory: string;
+  forking: boolean;
+  modelPickerRequest: number;
+  canSend: boolean;
+  canSpawnSubtask: boolean;
+  sending: boolean;
+  spawningSubtask: boolean;
+  stopping: boolean;
+  sendShortcut: "enter" | "mod-enter";
+  onAttach: () => void;
+  onOpenSkills: () => void;
+  onOpenCodeSearch: () => void;
+  onOpenConvoy: () => void;
+  onSwitchSandbox: (mode: "local" | "worktree") => void;
+  onEnhance: () => void;
+  onChooseFolder: () => void;
+  onFork: () => void;
+  onSend: () => void;
+  onSpawnSubtask: () => void;
+  onStop: () => void;
+}) {
+  return (
+    <div class="mt-2 flex items-center justify-between gap-2 flex-wrap">
+      <div class="flex items-center gap-1 flex-wrap">
+        <ComposerToolsPopover
+          workspaceReady={props.workspaceReady}
+          skillActive={props.skillActive}
+          sandboxMode={props.sandboxMode}
+          runtime={props.runtime}
+          canEnhance={props.canEnhance}
+          enhancing={props.enhancing}
+          onAttach={props.onAttach}
+          onOpenSkills={props.onOpenSkills}
+          onOpenCodeSearch={props.onOpenCodeSearch}
+          onOpenConvoy={props.onOpenConvoy}
+          onSwitchSandbox={() => props.onSwitchSandbox("worktree")}
+          onEnhance={props.onEnhance}
+        />
+
+        <ModeSwitcher />
+        <ModelSelector openRequest={props.modelPickerRequest} />
+
+        <Show when={!(isWorkSurface() && surfaceExtension.hideCodeComposerControls)}>
+          <Show
+            when={props.hasRootDir}
+            fallback={
+              <button
+                type="button"
+                onClick={props.onChooseFolder}
+                disabled={props.choosingFolder}
+                title={t("timeline.selectFolderHint")}
+                class="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[12px] text-[var(--text-muted)] hover:bg-[var(--bg-hover)] disabled:opacity-50 cursor-pointer"
+              >
+                <FolderOpen size={14} />
+                {t("timeline.selectFolder")}
+              </button>
+            }
+          >
+            <ComposerSandboxPill
+              mode={props.sandboxMode}
+              switching={props.switchingSandbox}
+              busy={props.busy}
+              sessionID={props.sessionID}
+              directory={props.directory}
+              forking={props.forking}
+              onToggle={(m) => props.onSwitchSandbox(m)}
+              onFork={props.onFork}
+            />
+          </Show>
+        </Show>
+      </div>
+
+      <div class="flex items-center gap-1.5">
+        <ContextProgressPill />
+        <ApprovalModePill runtime={props.runtime} sandboxMode={props.sandboxMode} />
+
+        <ComposerSendButtons
+          busy={props.busy}
+          canSend={props.canSend}
+          canSpawnSubtask={props.canSpawnSubtask}
+          sending={props.sending}
+          spawningSubtask={props.spawningSubtask}
+          stopping={props.stopping}
+          sendShortcut={props.sendShortcut}
+          onSend={props.onSend}
+          onSpawnSubtask={props.onSpawnSubtask}
+          onStop={props.onStop}
+        />
+      </div>
+    </div>
   );
 }

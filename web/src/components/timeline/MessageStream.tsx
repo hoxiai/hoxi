@@ -4,47 +4,37 @@ import {
   createMemo,
   createSignal,
   For,
-  Index,
   on,
   onCleanup,
   onMount,
   Show,
   untrack,
 } from "solid-js";
-import type { MessagePart, SessionStatus, ToolPart } from "../../services/sse-types";
+import type { SessionStatus, ToolPart } from "../../services/sse-types";
 import type { MessageTurn } from "../../store/workspace";
 import {
   appSettings,
   cancelQueuedEditInComposer,
-  canForkSession,
-  canRevertSession,
   ensureFullSessionHistory,
   findLatestUserTurnID,
-  forkFromMessage,
   hasOlderSessionHistory,
   imageViewerOpen,
   isSessionTaskActive,
   loadOlderSessionHistory,
-  openImagePreview,
   isUserTurnTaskActive as isUserTurnTaskActiveInStore,
-  resolveTurnSkillStatus,
   sessionDirectory,
-  revertToHere,
   stopSessionTask,
   timelineFollowRequest,
   wasQueuedTurnShown,
   workspace,
 } from "../../store/workspace";
-import { FileIcon, Icon } from "../icons";
+import { Icon } from "../icons";
 import {
-  ActionIconButton,
-  formatMessageTime,
   hasLiveTailRenderedOutput,
   isTodoTool,
   LiveExecutionControlBar,
   resolveActiveCycleStepLabel,
   SessionRetryCard,
-  UserTextPartView,
 } from "./message-stream-parts";
 import {
   AssistantTurnItem,
@@ -53,6 +43,7 @@ import {
   EarlierTurnsBanner,
   filterVisibleTurnsByRevert,
 } from "./turn-window";
+import { UserTurnItem } from "./UserTurnItem";
 import TaskTimelineBar from "./TaskTimelineBar";
 import { SubagentSessionBanner } from "./AgentStackPill";
 import QueuedPromptsList from "./QueuedPromptsList";
@@ -75,7 +66,6 @@ export default function MessageStream(props: { hidden?: boolean }) {
   let content: HTMLDivElement | undefined;
   const scroll = createTimelineScroll(() => scroller, () => appSettings.autoScrollStream);
   const transcriptControls = createTranscriptControls(() => workspace.activeSessionID);
-  const [copiedUserMsgId, setCopiedUserMsgId] = createSignal<string | null>(null);
   const [searchOpen, setSearchOpen] = createSignal(false);
   const [activeMatchTurnID, setActiveMatchTurnID] = createSignal<string | null>(null);
   const [navigationRevision, setNavigationRevision] = createSignal(0);
@@ -280,44 +270,6 @@ export default function MessageStream(props: { hidden?: boolean }) {
       turnWindow.handleTopScroll(scroller);
     }
     sessionScroll.capture();
-  };
-
-  const onRevertToMessage = async (messageID: string) => {
-    const id = workspace.activeSessionID;
-    if (!id) return;
-    try {
-      await revertToHere(id, messageID);
-    } catch (err) {
-      console.error("revert failed:", err);
-    }
-  };
-
-  const onForkFromMessage = async (messageID: string) => {
-    const id = workspace.activeSessionID;
-    if (!id) return;
-    try {
-      await forkFromMessage(id, messageID);
-    } catch (err) {
-      console.error("fork failed:", err);
-    }
-  };
-
-  const onCopyUserMessage = async (messageID: string, parts: MessagePart[]) => {
-    const text = parts
-      .filter((p): p is Extract<MessagePart, { type: "text" }> => p.type === "text")
-      .map((p) => p.text)
-      .join("\n")
-      .trim();
-    if (!text) return;
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopiedUserMsgId(messageID);
-      setTimeout(() => {
-        if (copiedUserMsgId() === messageID) setCopiedUserMsgId(null);
-      }, 1600);
-    } catch {
-      /* ignore */
-    }
   };
 
   const { scrollToTurn } = createMessageNavigation({
@@ -532,204 +484,16 @@ export default function MessageStream(props: { hidden?: boolean }) {
                       />
                     }
                   >
-                    {/* Kilo-style Right-Aligned User Message Bubble */}
-                    <div
-                      data-turn-id={turn.info.id}
-                      class={`${enterClass}group/turn flex flex-col items-end rounded-xl transition-colors ${
-                        idx() === 0 ? "mt-0" : "mt-6"
-                      } ${
-                        activeMatchTurnID() === turn.info.id
-                          ? "ring-2 ring-[var(--accent-primary)] p-1.5"
-                          : ""
-                      }`}
-                    >
-                      <div class="max-w-[88%] rounded-lg bg-[var(--bg-inset)]/70 px-3.5 py-2.5 space-y-2">
-                        <Show
-                          when={resolveTurnSkillStatus(
-                            turns(),
-                            globalIndex(),
-                            isSessionBusy()
-                          )}
-                        >
-                          {(skillInfo) => {
-                            const statusLabel = () => {
-                              const st = skillInfo().status;
-                              const name = skillInfo().skill.name;
-                              switch (st) {
-                                case "requested":
-                                  return `${name} · ${t("skills.statusRequested")}`;
-                                case "loading":
-                                  return `${name} · ${t("skills.statusLoading")}`;
-                                case "loaded":
-                                  return `${name} · ${t("skills.statusLoaded")}`;
-                                case "error":
-                                  return `${name} · ${t("skills.statusError")}`;
-                                case "unconfirmed":
-                                  return `${name} · ${t("skills.statusUnconfirmed")}`;
-                              }
-                            };
-                            const statusClass = () => {
-                              switch (skillInfo().status) {
-                                case "loaded":
-                                  return "border-emerald-500/30 bg-emerald-500/10 text-emerald-500";
-                                case "error":
-                                  return "border-[var(--danger-border)] bg-[var(--danger-surface)] text-[var(--danger-text)]";
-                                case "unconfirmed":
-                                  return "border-[var(--border-subtle)] bg-[var(--bg-panel)] text-[var(--text-muted)]";
-                                default:
-                                  return "border-[var(--accent-border)] bg-[var(--accent-surface)] text-[var(--accent-text)]";
-                              }
-                            };
-                            return (
-                              <div class="flex items-center">
-                                <span
-                                  class={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 font-mono text-[11px] font-medium ${statusClass()}`}
-                                >
-                                  <Icon name="brain" size="small" class="shrink-0" />
-                                  <span>{statusLabel()}</span>
-                                </span>
-                              </div>
-                            );
-                          }}
-                        </Show>
-                        <Index each={turn.parts}>
-                          {(part) => (
-                            <>
-                              <Show when={part().type === "file"}>
-                                {(() => {
-                                  const fp = part() as Extract<MessagePart, { type: "file" }>;
-                                  const isImg =
-                                    (fp.mime || "").toLowerCase().startsWith("image/") ||
-                                    /^data:image\//i.test(fp.url || "") ||
-                                    /\.(png|jpe?g|webp|gif|bmp|tiff?|svg|heic|heif|avif)$/i.test(
-                                      fp.filename || ""
-                                    );
-                                  const extLabel =
-                                    (fp.mime || "").toLowerCase() === "application/pdf" ||
-                                    /\.pdf$/i.test(fp.filename || "")
-                                      ? "PDF"
-                                      : ((fp.filename || "").split(".").pop() || "FILE")
-                                          .toUpperCase()
-                                          .slice(0, 4);
-                                  const isSheet =
-                                    /\.(xlsx|xls|ods|csv|tsv)$/i.test(fp.filename || "") ||
-                                    (fp.mime || "").includes("spreadsheet") ||
-                                    (fp.mime || "").includes("excel") ||
-                                    (fp.mime || "").includes("csv");
-                                  const badgeColor = isSheet
-                                    ? "text-emerald-500"
-                                    : extLabel === "PDF"
-                                      ? "text-rose-500"
-                                      : "text-[var(--accent-primary)]";
-                                  return (
-                                    <Show
-                                      when={isImg}
-                                      fallback={
-                                        <a
-                                          data-part-id={fp.id}
-                                          href={fp.url}
-                                          target="_blank"
-                                          rel="noreferrer"
-                                          download={fp.filename || "attachment"}
-                                          class="inline-flex items-center gap-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1.5 text-[12px] text-[var(--text-primary)] hover:border-[var(--accent-border)] transition-colors max-w-[260px]"
-                                        >
-                                          <FileIcon
-                                            node={{
-                                              path: fp.filename || "file.txt",
-                                              type: "file",
-                                            }}
-                                            class="h-4 w-4 shrink-0"
-                                          />
-                                          <span class="truncate font-mono text-[12px]">
-                                            {fp.filename || "attachment"}
-                                          </span>
-                                          <span class={`ml-auto shrink-0 rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[11px] font-semibold ${badgeColor}`}>
-                                            {extLabel}
-                                          </span>
-                                        </a>
-                                      }
-                                    >
-                                      <button
-                                        type="button"
-                                        data-part-id={fp.id}
-                                        onClick={() =>
-                                          openImagePreview({
-                                            src: fp.url,
-                                            alt: fp.filename || "attachment",
-                                          })
-                                        }
-                                        title={t("timeline.previewImageTooltip")}
-                                        class="block max-w-[260px] overflow-hidden rounded-lg border border-[var(--border-subtle)] cursor-zoom-in transition-colors hover:border-[var(--accent-border)]"
-                                      >
-                                        <img
-                                          src={fp.url}
-                                          alt={fp.filename || "attachment"}
-                                          class="max-h-48 w-auto object-contain block"
-                                        />
-                                      </button>
-                                    </Show>
-                                  );
-                                })()}
-                              </Show>
-                              <Show when={part().type === "text"}>
-                                <UserTextPartView
-                                  part={part() as Extract<MessagePart, { type: "text" }>}
-                                  forceExpand={activeMatchTurnID() === turn.info.id}
-                                />
-                              </Show>
-                            </>
-                          )}
-                        </Index>
-                      </div>
-
-                      {/* Kilo-style User Message Hover Actions & Metadata */}
-                      <div class="mt-1 flex items-center justify-end gap-1 px-1 text-[12px] text-[var(--text-faint)] opacity-0 group-hover/turn:opacity-100 transition-opacity">
-                        <Show when={formatMessageTime(turn.info.time?.created)}>
-                          <span class="mr-1 font-mono text-[12px]">{formatMessageTime(turn.info.time?.created)}</span>
-                        </Show>
-
-                        <ActionIconButton
-                          label={copiedUserMsgId() === turn.info.id ? t("common.copied") : t("common.copy")}
-                          onClick={() => void onCopyUserMessage(turn.info.id, turn.parts)}
-                        >
-                          <Show
-                            when={copiedUserMsgId() === turn.info.id}
-                            fallback={<Icon name="copy" size="small" />}
-                          >
-                            <Icon name="check" size="small" class="text-[var(--ok-text)]" />
-                          </Show>
-                        </ActionIconButton>
-
-                        <Show when={isUserTurnTaskActive(turn, globalIndex())}>
-                          <ActionIconButton
-                            disabled={!canForkSession(workspace.activeSessionID)}
-                            label={
-                              !canForkSession(workspace.activeSessionID)
-                                ? t("timeline.runnerFeatureUnsupported")
-                                : t("timeline.forkBtn")
-                            }
-                            onClick={() => void onForkFromMessage(turn.info.id)}
-                          >
-                            <Icon name="fork" size="small" />
-                          </ActionIconButton>
-
-                          <ActionIconButton
-                            disabled={!canRevertSession(workspace.activeSessionID)}
-                            variant="warn"
-                            label={
-                              !canRevertSession(workspace.activeSessionID)
-                                ? isSessionBusy()
-                                  ? t("timeline.revertWhileBusy")
-                                  : t("timeline.runnerFeatureUnsupported")
-                                : t("timeline.revertBtn")
-                            }
-                            onClick={() => void onRevertToMessage(turn.info.id)}
-                          >
-                            <Icon name="arrow-undo-down" size="small" />
-                          </ActionIconButton>
-                        </Show>
-                      </div>
-                    </div>
+                    <UserTurnItem
+                      turn={turn}
+                      index={idx()}
+                      globalIndex={globalIndex()}
+                      allTurns={turns()}
+                      enterClass={enterClass}
+                      isSessionBusy={isSessionBusy()}
+                      isTaskActive={isUserTurnTaskActive(turn, globalIndex())}
+                      isHighlighted={activeMatchTurnID() === turn.info.id}
+                    />
                   </Show>
                 );
               }}

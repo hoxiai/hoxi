@@ -56,12 +56,11 @@ func (s *Service) lookupPromptReceipt(sessionID, clientRequestID string) (Prompt
 		return PromptReceipt{}, false
 	}
 	key := sessionID + "\x00" + clientRequestID
-	raw, ok := s.promptReceipts.Load(key)
+	entry, ok := s.promptReceipts.Load(key)
 	if !ok {
 		return PromptReceipt{}, false
 	}
-	entry, ok := raw.(cachedPromptReceipt)
-	if !ok || time.Now().After(entry.expiresAt) {
+	if time.Now().After(entry.expiresAt) {
 		s.promptReceipts.Delete(key)
 		return PromptReceipt{}, false
 	}
@@ -76,8 +75,8 @@ func (s *Service) storePromptReceipt(sessionID, clientRequestID string, receipt 
 		return
 	}
 	now := time.Now()
-	s.promptReceipts.Range(func(k, v interface{}) bool {
-		if entry, ok := v.(cachedPromptReceipt); !ok || now.After(entry.expiresAt) {
+	s.promptReceipts.Range(func(k string, entry cachedPromptReceipt) bool {
+		if now.After(entry.expiresAt) {
 			s.promptReceipts.Delete(k)
 		}
 		return true
@@ -365,11 +364,10 @@ func (s *Service) nativeCLISystemForTurn(rec SessionRecord, callerSystem, fullSy
 	if strings.TrimSpace(rec.ExternalID) == "" || rec.ContextPending {
 		return fullSystem
 	}
-	prev, ok := s.cliSystemDelivered.Load(rec.ID + "\x00" + rec.Runtime)
+	prevCaller, ok := s.cliSystemDelivered.Load(rec.ID + "\x00" + rec.Runtime)
 	if !ok {
 		return fullSystem
 	}
-	prevCaller, _ := prev.(string)
 	if callerSystem == "" || callerSystem == prevCaller {
 		return ""
 	}
@@ -385,8 +383,8 @@ func (s *Service) recordCLISystemDelivered(sessionID, runtime, callerSystem stri
 
 func (s *Service) fallbackCLISystemForFreshRetry(sessionID, runtime string) string {
 	sys := commandExecutionGuidance
-	if prev, ok := s.cliSystemDelivered.Load(sessionID + "\x00" + runtime); ok {
-		if caller, _ := prev.(string); strings.TrimSpace(caller) != "" {
+	if caller, ok := s.cliSystemDelivered.Load(sessionID + "\x00" + runtime); ok {
+		if strings.TrimSpace(caller) != "" {
 			sys += "\n\n" + strings.TrimSpace(caller)
 		}
 	}

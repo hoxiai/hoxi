@@ -81,8 +81,7 @@ func TestSessionEditedFileSetCachesOpenCodeChildTranscripts(t *testing.T) {
 	// Stale-if-error: if ses_child's positive cache expires and the refresh fails transiently,
 	// previously discovered turns are preserved instead of dropping child.go from the shelf.
 	key := childTurnsKey{dir: filepath.Clean(ws), sid: "ses_child"}
-	if v, ok := svc.childTurns.Load(key); ok {
-		entry := v.(childTurnsEntry)
+	if entry, ok := svc.childTurns.Load(key); ok {
 		entry.expires = time.Now().Add(-time.Second)
 		svc.childTurns.Store(key, entry)
 	}
@@ -94,8 +93,7 @@ func TestSessionEditedFileSetCachesOpenCodeChildTranscripts(t *testing.T) {
 
 	// Non-empty entries that have been expired beyond childTurnsStaleTTL are evicted on the next sweep.
 	staleKey := childTurnsKey{dir: filepath.Clean(otherDir), sid: "ses_child"}
-	if v, ok := svc.childTurns.Load(staleKey); ok {
-		entry := v.(childTurnsEntry)
+	if entry, ok := svc.childTurns.Load(staleKey); ok {
 		entry.expires = time.Now().Add(-childTurnsStaleTTL - time.Second)
 		svc.childTurns.Store(staleKey, entry)
 	}

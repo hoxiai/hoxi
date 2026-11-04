@@ -123,7 +123,7 @@ func (s *Service) listConversationsWithSurface(ctx context.Context, projectID, d
 			parentHoxiID := engineToHoxi[strings.TrimSpace(info.ParentID)]
 			if parentHoxiID == "" {
 				if v, ok := s.openCodeChildParent.Load(info.ID); ok {
-					parentHoxiID, _ = v.(string)
+					parentHoxiID = v
 				}
 			}
 			if s.IsManagedOpenCodeSession(info.ID) && !s.isManagedOpenCodeChild(info.ID) && parentHoxiID == "" {

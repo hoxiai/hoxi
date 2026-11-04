@@ -181,8 +181,7 @@ func (s *Service) noteTurn(sessionID, kind string) {
 	if sessionID == "" {
 		return
 	}
-	v, _ := s.turnStats.LoadOrStore(sessionID, &turnCounts{})
-	c, _ := v.(*turnCounts)
+	c, _ := s.turnStats.LoadOrStore(sessionID, &turnCounts{})
 	if c == nil {
 		return
 	}
@@ -204,8 +203,7 @@ func (s *Service) finishTurnSummary(sessionID, status string) {
 	if !ok || rec.Subagent || rec.ParentID != "" {
 		return
 	}
-	v, loaded := s.turnStats.LoadAndDelete(sessionID)
-	c, _ := v.(*turnCounts)
+	c, loaded := s.turnStats.LoadAndDelete(sessionID)
 	var allowed, denied, timedOut int
 	if c != nil {
 		allowed = int(c.allowed.Load())

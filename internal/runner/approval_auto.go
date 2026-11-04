@@ -191,7 +191,7 @@ func (s *Service) claimOpenCodeAnswer(id string) (release func(), ok bool) {
 func (s *Service) settleOpenCodePermission(id string) {
 	s.gate.forgetOpenCodeAsk(id)
 	now := time.Now()
-	s.openCodeAutoReplies.Range(func(key, v interface{}) bool {
+	s.openCodeAutoReplies.Range(func(key string, v any) bool {
 		if mark, ok := v.(openCodeSettledMark); ok && !now.Before(mark.until) {
 			s.openCodeAutoReplies.CompareAndDelete(key, v)
 		}
@@ -526,7 +526,7 @@ func (s *Service) reconcilePendingApprovals() {
 		}
 	}
 	s.reconcilePendingWithAIReview(pending)
-	s.openCodeAutoReplies.Range(func(key, value interface{}) bool {
+	s.openCodeAutoReplies.Range(func(key string, value any) bool {
 		if value == openCodeAutoReplyFailed {
 			s.openCodeAutoReplies.Delete(key)
 		}

@@ -46,25 +46,55 @@ export interface SessionAIConfig {
 export const SESSION_AI_KEY = "hoxi-session-ai:v1";
 export const DEFAULT_AGENT_KEY = "hoxi-default-agent:v1";
 
+function readStorageItem(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function readStorageJSON<T = unknown>(key: string): T | null {
+  const raw = readStorageItem(key);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
+  }
+}
+
+function readStorageRecord<T>(key: string): Record<string, T> {
+  const parsed = readStorageJSON(key);
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+    return parsed as Record<string, T>;
+  }
+  return {};
+}
+
+function readStorageArray<T>(key: string, guard: (item: unknown) => item is T): T[] {
+  const parsed = readStorageJSON(key);
+  return Array.isArray(parsed) ? parsed.filter(guard) : [];
+}
+
 export function initialDefaultAgent(): string {
-  try { return localStorage.getItem(DEFAULT_AGENT_KEY) || "build"; }
-  catch { return "build"; }
+  return readStorageItem(DEFAULT_AGENT_KEY) || "build";
 }
 
 export function initialSessionAI(): Record<string, SessionAIConfig> {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(SESSION_AI_KEY) || "{}");
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-    return Object.fromEntries(Object.entries(parsed).filter(([, value]) => {
-      const c = value as SessionAIConfig | null;
-      return c && typeof c.agent === "string" && c.agent.length > 0 &&
-        VALID_REASONING_EFFORTS.includes(c.effort) &&
-        (c.model === null || (typeof c.model?.providerID === "string" &&
-          typeof c.model?.modelID === "string"));
-    })) as Record<string, SessionAIConfig>;
-  } catch {
-    return {};
-  }
+  const parsed = readStorageRecord<SessionAIConfig | null>(SESSION_AI_KEY);
+  return Object.fromEntries(
+    Object.entries(parsed).filter(([, c]) =>
+      Boolean(
+        c &&
+          typeof c.agent === "string" &&
+          c.agent.length > 0 &&
+          VALID_REASONING_EFFORTS.includes(c.effort) &&
+          (c.model === null ||
+            (typeof c.model?.providerID === "string" && typeof c.model?.modelID === "string"))
+      )
+    )
+  ) as Record<string, SessionAIConfig>;
 }
 
 export const DEFAULT_AGENTS: AgentInfo[] = [
@@ -93,38 +123,18 @@ export const DEFAULT_AGENTS: AgentInfo[] = [
 export const PROVIDER_TELEMETRY_KEY = "hoxi-provider-telemetry:v2";
 
 export function initialProviderTelemetry(): Record<string, ProviderTelemetryStats> {
-  try {
-    const raw = localStorage.getItem(PROVIDER_TELEMETRY_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      return parsed;
-    }
-  } catch {
-    /* ignore */
-  }
-  return {};
+  return readStorageRecord<ProviderTelemetryStats>(PROVIDER_TELEMETRY_KEY);
 }
 
 export const OBSERVER_MODEL_KEY = "hoxi-observer-model:v1";
 export const OBSERVER_AUTO_AUDIT_KEY = "hoxi-observer-auto-audit:v1";
 
 export function initialObserverModel(): string {
-  try {
-    return localStorage.getItem(OBSERVER_MODEL_KEY) || "";
-  } catch {
-    return "";
-  }
+  return readStorageItem(OBSERVER_MODEL_KEY) || "";
 }
 
 export function initialObserverAutoAudit(): boolean {
-  try {
-    const raw = localStorage.getItem(OBSERVER_AUTO_AUDIT_KEY);
-    if (raw === "false") return false;
-    return true;
-  } catch {
-    return true;
-  }
+  return readStorageItem(OBSERVER_AUTO_AUDIT_KEY) !== "false";
 }
 
 export interface QueuedPromptAttachment {
@@ -294,79 +304,44 @@ export const ARCHIVED_SESSIONS_KEY = "hoxi-archived-sessions:v1";
 export const DISMISSED_PROJECTS_KEY = "hoxi-dismissed-projects:v1";
 
 export function initialDismissedProjects(storageKey: string): string[] {
-  try {
-    const raw = localStorage.getItem(storageKey);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) return parsed.map((p) => String(p));
-  } catch {
-    /* ignore */
-  }
-  return [];
+  const parsed = readStorageJSON(storageKey);
+  return Array.isArray(parsed) ? parsed.map((p) => String(p)) : [];
 }
 
 export function initialArchivedSessions(storageKey: string): string[] {
-  try {
-    const raw = localStorage.getItem(storageKey);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) return parsed.filter((id) => typeof id === "string");
-  } catch {
-    /* ignore */
-  }
-  return [];
+  return readStorageArray(storageKey, (id): id is string => typeof id === "string");
 }
 
 function initialTheme(): "light" | "dark" {
-  try {
-    const saved = localStorage.getItem(THEME_KEY);
-    if (saved === "light" || saved === "dark") return saved;
-  } catch {
-    /* storage unavailable */
-  }
-  return "light";
+  const saved = readStorageItem(THEME_KEY);
+  return saved === "light" || saved === "dark" ? saved : "light";
+}
+
+function isSelectedModelValue(m: unknown): m is SelectedModel {
+  return Boolean(
+    m &&
+      typeof m === "object" &&
+      typeof (m as SelectedModel).providerID === "string" &&
+      typeof (m as SelectedModel).modelID === "string"
+  );
 }
 
 function initialSelectedModel(): SelectedModel | null {
-  try {
-    const raw = localStorage.getItem(SELECTED_MODEL_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed.providerID === "string" && typeof parsed.modelID === "string") {
-      return { providerID: parsed.providerID, modelID: parsed.modelID };
-    }
-  } catch {
-    /* ignore */
-  }
-  return null;
+  const parsed = readStorageJSON(SELECTED_MODEL_KEY);
+  return isSelectedModelValue(parsed)
+    ? { providerID: parsed.providerID, modelID: parsed.modelID }
+    : null;
 }
 
 function initialModelList(storageKey: string): SelectedModel[] {
-  try {
-    const raw = localStorage.getItem(storageKey);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) {
-      return parsed.filter(
-        (m) => m && typeof m.providerID === "string" && typeof m.modelID === "string"
-      );
-    }
-  } catch {
-    /* ignore */
-  }
-  return [];
+  return readStorageArray(storageKey, isSelectedModelValue);
 }
 
 function initialEffort(): ReasoningEffort {
-  try {
-    const saved = localStorage.getItem(EFFORT_KEY);
-    if (saved !== null && (VALID_REASONING_EFFORTS as readonly string[]).includes(saved)) {
-      return saved as ReasoningEffort;
-    }
-  } catch {
-    /* ignore */
-  }
-  return "";
+  const saved = readStorageItem(EFFORT_KEY);
+  return saved !== null && (VALID_REASONING_EFFORTS as readonly string[]).includes(saved)
+    ? (saved as ReasoningEffort)
+    : "";
 }
 
 export function isValidStoredProjectPath(p: unknown): p is string {
@@ -383,42 +358,26 @@ export function isValidStoredProjectPath(p: unknown): p is string {
 }
 
 function initialRecentProjects(): string[] {
-  try {
-    const raw = localStorage.getItem(RECENT_PROJECTS_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) return parsed.filter(isValidStoredProjectPath);
-  } catch {
-    /* ignore */
-  }
-  return [];
+  return readStorageArray(RECENT_PROJECTS_KEY, isValidStoredProjectPath);
 }
 
 function initialProjectOrder(): string[] {
-  try {
-    const raw = localStorage.getItem(PROJECT_ORDER_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) return parsed.filter(isValidStoredProjectPath);
-  } catch {
-    /* ignore */
-  }
-  return [];
+  return readStorageArray(PROJECT_ORDER_KEY, isValidStoredProjectPath);
 }
 
 const PERSISTED_SIDEBAR_PROJECT_MODES: SidebarProjectMode[] = ["multi", "single", "recent"];
 
 function initialSidebarProjectMode(): SidebarProjectMode {
-  try {
-    const saved = localStorage.getItem(SIDEBAR_PROJECT_MODE_KEY);
-    if (PERSISTED_SIDEBAR_PROJECT_MODES.includes(saved as SidebarProjectMode)) {
-      return saved as SidebarProjectMode;
-    }
-    if (saved === "attention" || saved === "running") {
+  const saved = readStorageItem(SIDEBAR_PROJECT_MODE_KEY);
+  if (PERSISTED_SIDEBAR_PROJECT_MODES.includes(saved as SidebarProjectMode)) {
+    return saved as SidebarProjectMode;
+  }
+  if (saved === "attention" || saved === "running") {
+    try {
       localStorage.setItem(SIDEBAR_PROJECT_MODE_KEY, "multi");
+    } catch {
+      /* ignore */
     }
-  } catch {
-    /* ignore */
   }
   return "multi";
 }
@@ -426,15 +385,12 @@ function initialSidebarProjectMode(): SidebarProjectMode {
 function initialSessionSandboxMode(): "local" | "worktree" {
   try {
     localStorage.removeItem(SESSION_SANDBOX_MODE_KEY);
-    const raw = localStorage.getItem("hoxi-app-settings:v1");
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (parsed?.defaultSandboxMode === "local" || parsed?.defaultSandboxMode === "worktree") {
-        return parsed.defaultSandboxMode;
-      }
-    }
   } catch {
     /* ignore */
+  }
+  const parsed = readStorageJSON<{ defaultSandboxMode?: string }>("hoxi-app-settings:v1");
+  if (parsed?.defaultSandboxMode === "local" || parsed?.defaultSandboxMode === "worktree") {
+    return parsed.defaultSandboxMode;
   }
   return "local";
 }

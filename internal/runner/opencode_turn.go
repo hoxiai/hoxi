@@ -154,11 +154,9 @@ func (s *Service) normalizeOpenCodePart(rec SessionRecord, part *MessagePart, fi
 		ap := s.procs[rec.ID]
 		s.mu.Unlock()
 		if ap != nil {
-			if v, ok := ap.fileURLs.Load(key); ok {
-				if mapped, _ := v.(string); mapped != "" {
-					part.URL = mapped
-					return true
-				}
+			if mapped, ok := ap.fileURLs.Load(key); ok && mapped != "" {
+				part.URL = mapped
+				return true
 			}
 		}
 		if s.attachments != nil {

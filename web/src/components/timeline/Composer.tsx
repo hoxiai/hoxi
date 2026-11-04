@@ -1,6 +1,5 @@
 // web/src/components/timeline/Composer.tsx
 import { createComputed, createEffect, createMemo, createSignal, on, onCleanup, Show } from "solid-js";
-import { FolderOpen } from "lucide-solid";
 import {
   appSettings,
   bindComposerQueuedEditBridge,
@@ -28,23 +27,17 @@ import {
   switchWorkspace,
   workspace,
 } from "../../store/workspace";
-import ModelSelector from "../models/ModelSelector";
 import ComposerShelf from "./ComposerShelf";
 import SessionGoalBar from "./SessionGoalBar";
 import {
   ComposerAttachmentChips,
   ComposerAutocompletePopover,
+  ComposerBottomToolbar,
   ComposerEnhancePreview,
-  ComposerSendButtons,
 } from "./composer-subcomponents";
-import { ComposerSandboxPill } from "./ComposerSandboxPill";
 import CodeSearchModal from "../codeindex/CodeSearchModal";
 import ConvoyModal from "../orchestration/ConvoyModal";
-import ContextProgressPill from "./ContextProgressPill";
-import ApprovalModePill from "./ApprovalModePill";
-import ModeSwitcher from "./ModeSwitcher";
-import ComposerToolsPopover from "./ComposerToolsPopover";
-import { isWorkSurface, surfaceExtension } from "../layout/surface-extension";
+import { isWorkSurface } from "../layout/surface-extension";
 import {
   createComposerAutocomplete,
   createImageAttachments,
@@ -713,68 +706,39 @@ export default function Composer() {
             }}
           />
 
-          <div class="mt-2 flex items-center justify-between gap-2 flex-wrap">
-            {/* Left Action Pills: Attach (+), Agent Mode, Model Selector, Git Dropdown */}
-            <div class="flex items-center gap-1 flex-wrap">
-              <ComposerToolsPopover
-                workspaceReady={Boolean(workspace.rootDir || (isWorkSurface() && defaultWorkspaceDir()))}
-                skillActive={Boolean(selectedSkill())}
-                sandboxMode={effectiveSandboxMode()}
-                runtime={sessionRuntimeForID(sessionID())}
-                canEnhance={Boolean(text().trim())}
-                enhancing={enhancing()}
-                onAttach={() => fileInputRef?.click()}
-                onOpenSkills={() => openSkillsBrowser(selectedSkill()?.key)}
-                onOpenCodeSearch={() => setCodeSearchOpen(true)}
-                onOpenConvoy={() => setConvoyOpen(true)}
-                onSwitchSandbox={() => void onToggleSandbox("worktree")}
-                onEnhance={() => void onEnhance()}
-              />
-
-              <ModeSwitcher />
-              <ModelSelector openRequest={modelPickerRequest()} />
-
-              <Show when={!(isWorkSurface() && surfaceExtension.hideCodeComposerControls)}>
-                <Show when={workspace.rootDir} fallback={
-                  <button type="button" onClick={() => void chooseFolder()} disabled={choosingFolder()}
-                    title={t("timeline.selectFolderHint")}
-                    class="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[12px] text-[var(--text-muted)] hover:bg-[var(--bg-hover)] disabled:opacity-50 cursor-pointer">
-                    <FolderOpen size={14} />{t("timeline.selectFolder")}
-                  </button>
-                }>
-                  <ComposerSandboxPill
-                    mode={effectiveSandboxMode()}
-                    switching={switchingSandbox()}
-                    busy={busy()}
-                    sessionID={sessionID()}
-                    directory={sessionDirectory(sessionID()) || workspace.rootDir}
-                    forking={forking()}
-                    onToggle={(m) => void onToggleSandbox(m)}
-                    onFork={onFork}
-                  />
-                </Show>
-              </Show>
-            </div>
-
-            {/* Right Context Progress + Approval Mode + Send / Queue / Stop Buttons */}
-            <div class="flex items-center gap-1.5">
-              <ContextProgressPill />
-              <ApprovalModePill runtime={sessionRuntimeForID(sessionID())} sandboxMode={effectiveSandboxMode()} />
-
-              <ComposerSendButtons
-                busy={busy()}
-                canSend={canSend()}
-                canSpawnSubtask={Boolean(text().trim() || pasteCollapse.pastes().length > 0)}
-                sending={sending()}
-                spawningSubtask={spawningSubtask()}
-                stopping={stopping()}
-                sendShortcut={appSettings.sendShortcut}
-                onSend={() => void onSend()}
-                onSpawnSubtask={() => void onSpawnSubtask()}
-                onStop={() => void onStop()}
-              />
-            </div>
-          </div>
+          <ComposerBottomToolbar
+            workspaceReady={Boolean(workspace.rootDir || (isWorkSurface() && defaultWorkspaceDir()))}
+            hasRootDir={Boolean(workspace.rootDir)}
+            skillActive={Boolean(selectedSkill())}
+            sandboxMode={effectiveSandboxMode()}
+            runtime={sessionRuntimeForID(sessionID())}
+            canEnhance={Boolean(text().trim())}
+            enhancing={enhancing()}
+            choosingFolder={choosingFolder()}
+            switchingSandbox={switchingSandbox()}
+            busy={busy()}
+            sessionID={sessionID()}
+            directory={sessionDirectory(sessionID()) || workspace.rootDir}
+            forking={forking()}
+            modelPickerRequest={modelPickerRequest()}
+            canSend={canSend()}
+            canSpawnSubtask={Boolean(text().trim() || pasteCollapse.pastes().length > 0)}
+            sending={sending()}
+            spawningSubtask={spawningSubtask()}
+            stopping={stopping()}
+            sendShortcut={appSettings.sendShortcut}
+            onAttach={() => fileInputRef?.click()}
+            onOpenSkills={() => openSkillsBrowser(selectedSkill()?.key)}
+            onOpenCodeSearch={() => setCodeSearchOpen(true)}
+            onOpenConvoy={() => setConvoyOpen(true)}
+            onSwitchSandbox={(m) => void onToggleSandbox(m)}
+            onEnhance={() => void onEnhance()}
+            onChooseFolder={() => void chooseFolder()}
+            onFork={onFork}
+            onSend={() => void onSend()}
+            onSpawnSubtask={() => void onSpawnSubtask()}
+            onStop={() => void onStop()}
+          />
         </div>
         <Show when={!workspace.rootDir && !(isWorkSurface() && defaultWorkspaceDir())}>
           <p class="mt-2 px-1 text-xs text-[var(--text-faint)]">{t("timeline.selectFolderHint")}</p>

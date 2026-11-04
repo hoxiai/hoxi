@@ -98,8 +98,7 @@ func (s *Service) sessionEditedFileSet(sessionID string) map[string]struct{} {
 	}
 	childIDs, stamp := s.store.ChildSessionIDs(sessionID)
 	if stamp != 0 {
-		if cached, hit := s.editedFiles.Load(sessionID); hit {
-			entry := cached.(editedFilesEntry)
+		if entry, hit := s.editedFiles.Load(sessionID); hit {
 			if entry.stamp == stamp {
 				return entry.files
 			}
@@ -209,8 +208,7 @@ func (s *Service) openCodeChildTurns(sid, dir string) []MessageTurn {
 	key := childTurnsKey{dir: cleanDir, sid: strings.TrimSpace(sid)}
 	now := time.Now()
 	var staleTurns []MessageTurn
-	if v, ok := s.childTurns.Load(key); ok {
-		entry := v.(childTurnsEntry)
+	if entry, ok := s.childTurns.Load(key); ok {
 		if now.Before(entry.expires) {
 			return entry.turns
 		}
@@ -224,8 +222,7 @@ func (s *Service) openCodeChildTurns(sid, dir string) []MessageTurn {
 		turns = staleTurns
 		ttl = childTurnsErrTTL
 	}
-	s.childTurns.Range(func(k, v any) bool {
-		entry := v.(childTurnsEntry)
+	s.childTurns.Range(func(k childTurnsKey, entry childTurnsEntry) bool {
 		if k != key && !now.Before(entry.expires) && (len(entry.turns) == 0 || now.Sub(entry.expires) >= childTurnsStaleTTL) {
 			s.childTurns.Delete(k)
 		}

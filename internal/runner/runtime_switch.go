@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/hoxiai/hoxi/internal/opencode/ocapi"
@@ -498,16 +497,12 @@ func (s *Service) collectOpenCodeChildIDs(id string, rec SessionRecord, ap *acti
 		add(childID)
 	}
 	if ap != nil {
-		ap.openCodeChildren.Range(func(key, _ interface{}) bool {
-			if childID, ok := key.(string); ok {
-				add(childID)
-			}
+		ap.openCodeChildren.Range(func(childID string, _ bool) bool {
+			add(childID)
 			return true
 		})
 	}
-	s.openCodeChildParent.Range(func(key, value interface{}) bool {
-		childID, _ := key.(string)
-		parentID, _ := value.(string)
+	s.openCodeChildParent.Range(func(childID, parentID string) bool {
 		if parentID == id {
 			add(childID)
 		}
@@ -556,9 +551,9 @@ func (s *Service) forgetOpenCodeMappings(id string, rec SessionRecord, ap *activ
 		drop(childID)
 	}
 	if len(seen) > 0 {
-		s.childTurns.Range(func(k, _ interface{}) bool {
-			if ck, ok := k.(childTurnsKey); ok && seen[ck.sid] {
-				s.childTurns.Delete(k)
+		s.childTurns.Range(func(ck childTurnsKey, _ childTurnsEntry) bool {
+			if seen[ck.sid] {
+				s.childTurns.Delete(ck)
 			}
 			return true
 		})
@@ -567,22 +562,9 @@ func (s *Service) forgetOpenCodeMappings(id string, rec SessionRecord, ap *activ
 		}
 	}
 	if len(prefixes) > 0 {
-		deletePrefixed := func(m *sync.Map) {
-			m.Range(func(k, _ interface{}) bool {
-				if key, ok := k.(string); ok {
-					for _, pfx := range prefixes {
-						if strings.HasPrefix(key, pfx) {
-							m.Delete(k)
-							break
-						}
-					}
-				}
-				return true
-			})
-		}
-		deletePrefixed(&s.stoppedTools)
-		deletePrefixed(&s.promptReceipts)
-		deletePrefixed(&s.cliSystemDelivered)
+		deletePrefixedKeys(&s.stoppedTools, prefixes)
+		deletePrefixedKeys(&s.promptReceipts, prefixes)
+		deletePrefixedKeys(&s.cliSystemDelivered, prefixes)
 	}
 }
 

@@ -42,13 +42,13 @@ type Service struct {
 	subs                map[chan SSEEvent]string
 	seqSeed             int64
 	openCode            *ocapi.Client
-	managedOpenCode     sync.Map
-	openCodeChildParent sync.Map // openCode child session ID -> hoxi session ID
+	managedOpenCode     syncMap[string, bool]
+	openCodeChildParent syncMap[string, string] // openCode child session ID -> hoxi session ID
 	// childTurns caches OpenCode subagent transcripts read while filtering diffs.
-	childTurns      sync.Map // childTurnsKey -> childTurnsEntry
-	editedFiles     sync.Map // session ID -> editedFilesEntry
-	userSkillByMsg  sync.Map // message ID -> userSkillOverride
-	stoppedTools    sync.Map // sessionID\x00(part|call):id -> bool
+	childTurns      syncMap[childTurnsKey, childTurnsEntry]
+	editedFiles     syncMap[string, editedFilesEntry]
+	userSkillByMsg  syncMap[string, userSkillOverride]
+	stoppedTools    syncMap[string, bool] // sessionID\x00(part|call):id -> bool
 	skillResolver   func(ctx context.Context, directory, sessionID string, sel SkillSelection) (ResolvedSkill, error)
 	projectResolver ProjectResolver
 	// permissionRules returns OpenCode's `permission` block; onPolicySaved
@@ -58,12 +58,12 @@ type Service struct {
 	// onSummary delivers the end-of-turn count line. Counts only, no command text.
 	onSummary func(sessionID, body string)
 	// openCodeAutoReplies tracks OpenCode requests the policy is answering.
-	openCodeAutoReplies sync.Map // request ID -> openCodeAutoReply* state or openCodeSettledMark
+	openCodeAutoReplies syncMap[string, any] // request ID -> openCodeAutoReply* state or openCodeSettledMark
 	openCodeReplySem    chan struct{}
-	turnStats           sync.Map // session ID -> *turnCounts
-	promptReceipts      sync.Map // sessionID\x00clientRequestID -> cachedPromptReceipt
-	permissionReplies   sync.Map // permissionID\x00clientRequestID -> cachedPermissionReply
-	cliSystemDelivered  sync.Map // sessionID\x00runtime -> last delivered caller system prompt
+	turnStats           syncMap[string, *turnCounts]
+	promptReceipts      syncMap[string, cachedPromptReceipt]   // sessionID\x00clientRequestID -> cachedPromptReceipt
+	permissionReplies   syncMap[string, cachedPermissionReply] // permissionID\x00clientRequestID -> cachedPermissionReply
+	cliSystemDelivered  syncMap[string, string]                // sessionID\x00runtime -> last delivered caller system prompt
 
 	// openCodeTimeoutRetries overrides openCodeTimeoutRetryDelays in tests.
 	openCodeTimeoutRetries []time.Duration
