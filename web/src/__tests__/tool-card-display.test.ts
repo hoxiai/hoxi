@@ -11,10 +11,15 @@ import {
   analyzeShellCommand,
   groupVisibleActivitySteps,
 } from "../components/timeline/shell-command-summary";
-import type { ToolPart, ToolState } from "../services/sse-types";
+import {
+  groupAssistantParts,
+  isShortTransitionalText,
+  resolveMergedTurnParts,
+} from "../components/timeline/context-activity-turns";
+import type { MessagePart, ToolPart, ToolState } from "../services/sse-types";
 import { dictionaries, setLocale } from "../i18n";
-import { setWorkspace } from "../store/workspace-state";
-import { assertDeepEqual, assertEqual, describe, it } from "./test-harness";
+import { type MessageTurn, setWorkspace } from "../store/workspace-state";
+import { assertDeepEqual, assertEqual, assertTrue, describe, it } from "./test-harness";
 
 const marker = "# hoxi-stop:ses_display:call_1";
 const command = "git status\nprintf 'done\\n'";
@@ -258,5 +263,72 @@ describe("localized tool labels for CLI runtimes", () => {
     if (grouped[1].kind === "exploration-fold") {
       assertEqual(grouped[1].parts.length, 3);
     }
+  });
+
+  it("folds short transitional tool preambles into unified activity groups while preserving substantive replies", () => {
+    assertTrue(isShortTransitionalText("Let me inspect the relevant files first:"));
+    assertTrue(isShortTransitionalText("Let me check the configuration first."));
+    assertEqual(isShortTransitionalText("### Root Cause\nHere is why it failed:"), false);
+    assertEqual(isShortTransitionalText("```ts\nconst x = 1;\n```"), false);
+
+    const sid = "ses_transitional";
+    const turns: MessageTurn[] = [
+      {
+        info: { id: "msg_u", sessionID: sid, role: "user", time: { created: 1 } },
+        parts: [{ id: "u1", sessionID: sid, messageID: "msg_u", type: "text", text: "Check bug" }],
+      },
+      {
+        info: { id: "msg_a1", sessionID: sid, role: "assistant", time: { created: 2 } },
+        parts: [
+          { id: "r1", sessionID: sid, messageID: "msg_a1", type: "reasoning", text: "Thinking 1", time: { start: 1, end: 2 } },
+          { id: "p1", sessionID: sid, messageID: "msg_a1", type: "text", text: "Let me read the first file:" },
+          {
+            id: "t1",
+            sessionID: sid,
+            messageID: "msg_a1",
+            type: "tool",
+            callID: "t1",
+            tool: "read",
+            state: { status: "completed", input: { filePath: "a.go" }, output: "ok", title: "a.go", metadata: {}, time: { start: 2, end: 3 } },
+          },
+        ],
+      },
+      {
+        info: { id: "msg_a2", sessionID: sid, role: "assistant", time: { created: 3 } },
+        parts: [
+          { id: "r2", sessionID: sid, messageID: "msg_a2", type: "reasoning", text: "Thinking 2", time: { start: 3, end: 4 } },
+          { id: "p2", sessionID: sid, messageID: "msg_a2", type: "text", text: "Now let me check the second file:" },
+          {
+            id: "t2",
+            sessionID: sid,
+            messageID: "msg_a2",
+            type: "tool",
+            callID: "t2",
+            tool: "read",
+            state: { status: "completed", input: { filePath: "b.go" }, output: "ok", title: "b.go", metadata: {}, time: { start: 4, end: 5 } },
+          },
+        ],
+      },
+      {
+        info: { id: "msg_a3", sessionID: sid, role: "assistant", time: { created: 4, completed: 5 } },
+        parts: [
+          { id: "r3", sessionID: sid, messageID: "msg_a3", type: "reasoning", text: "Final thought", time: { start: 5, end: 6 } },
+          { id: "final", sessionID: sid, messageID: "msg_a3", type: "text", text: "Root cause identified and fixed." },
+        ],
+      },
+    ];
+
+    const m1 = resolveMergedTurnParts(turns, 1);
+    const m2 = resolveMergedTurnParts(turns, 2);
+    const m3 = resolveMergedTurnParts(turns, 3);
+
+    assertTrue(!m1.isVisuallyEmpty);
+    assertTrue(m2.isVisuallyEmpty, "intermediate turn with only transitional text + tool folds into anchor");
+    assertTrue(!m3.isVisuallyEmpty);
+    assertDeepEqual(m3.effectiveParts.map((p: MessagePart) => p.id), ["final"]);
+
+    const grouped1 = groupAssistantParts(m1.effectiveParts);
+    assertEqual(grouped1.length, 1, "all steps and transitional preambles stay in one unified activity group");
+    assertEqual(grouped1[0].kind, "activity-group");
   });
 });

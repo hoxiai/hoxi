@@ -6,6 +6,7 @@ const COUNT = 1024;
 const ASSEMBLE_MS = 1800;
 const FLIGHT_MS = 450;
 const ACCENT_FALLBACK = "#2563eb";
+const LOADING_ALPHA_BANDS = [0.06, 0.09, 0.13, 0.17, 0.22, 0.28];
 
 function readAccentColor(element: HTMLElement): string {
   const value = getComputedStyle(element).getPropertyValue("--accent-primary").trim();
@@ -22,6 +23,19 @@ interface Particle {
   vx: number;
   vy: number;
   delay: number;
+  u: number;
+  v: number;
+  crest: number;
+}
+
+function sampleLoadingShimmer(particle: Particle, elapsedSec: number): number {
+  const sweep = ((elapsedSec * 0.65) % 1.6) - 0.25;
+  const proj = particle.u + (particle.v - 0.5) * 0.18;
+  const dist = Math.abs(proj - sweep);
+  const rawBand = Math.max(0, 1 - dist / 0.28);
+  const smoothBand = rawBand * rawBand * (3 - 2 * rawBand);
+  const ripple = 0.5 + 0.5 * Math.sin(particle.u * 8.5 + particle.v * 4.5 - elapsedSec * 3.0);
+  return Math.min(1, smoothBand * 0.82 + ripple * 0.18);
 }
 
 interface CachedWordmarkGrid {
@@ -76,7 +90,7 @@ function resolveWordmarkGrid(): CachedWordmarkGrid | null {
   return cachedWordmarkGrid;
 }
 
-export default function ParticleLogo(props: { play?: boolean }) {
+export default function ParticleLogo(props: { play?: boolean; loading?: boolean }) {
   let canvas!: HTMLCanvasElement;
   let restartLogo: (() => void) | null = null;
 
@@ -88,13 +102,31 @@ export default function ParticleLogo(props: { play?: boolean }) {
     if (!grid) return;
     const { points, gridStep, minX, maxX } = grid;
     const radius = gridStep * 0.3;
+    const isLoadingMode = Boolean(props.loading);
+    const shimmerBuckets: Particle[][] = Array.from({ length: LOADING_ALPHA_BANDS.length }, () => []);
     const particles: Particle[] = points.map((point) => {
+      const u = (point.x - minX) / (maxX - minX || 1);
+      const v = point.y / HEIGHT;
       const sx = WIDTH + 50 + Math.random() * 160;
       const sy = point.y + (Math.random() - 0.5) * 80;
-      return {
-        tx: point.x, ty: point.y, x: sx, y: sy, sx, sy, vx: 0, vy: 0,
-        delay: (point.x - minX) / (maxX - minX || 1) * (ASSEMBLE_MS - FLIGHT_MS) + point.y / HEIGHT * 22,
+      const particle: Particle = {
+        tx: point.x,
+        ty: point.y,
+        x: isLoadingMode ? point.x : sx,
+        y: isLoadingMode ? point.y : sy,
+        sx,
+        sy,
+        vx: 0,
+        vy: 0,
+        delay: u * (ASSEMBLE_MS - FLIGHT_MS) + v * 22,
+        u,
+        v,
+        crest: 1,
       };
+      if (isLoadingMode) {
+        particle.crest = sampleLoadingShimmer(particle, 0);
+      }
+      return particle;
     });
 
     let accent = readAccentColor(canvas);
@@ -102,7 +134,7 @@ export default function ParticleLogo(props: { play?: boolean }) {
     let frame = 0;
     let startedAt = performance.now();
     let previousTime = startedAt;
-    let assembled = reducedMotion.matches;
+    let assembled = isLoadingMode || reducedMotion.matches;
     let visible = true;
     let disposed = false;
     let mouseX = -9999;
@@ -112,6 +144,41 @@ export default function ParticleLogo(props: { play?: boolean }) {
     const draw = () => {
       context.clearRect(0, 0, WIDTH, HEIGHT);
       context.fillStyle = accent;
+      if (isLoadingMode) {
+        if (reducedMotion.matches) {
+          context.globalAlpha = 0.12;
+          context.beginPath();
+          for (const particle of particles) {
+            context.moveTo(particle.x + radius, particle.y);
+            context.arc(particle.x, particle.y, radius, 0, Math.PI * 2);
+          }
+          context.fill();
+          context.globalAlpha = 1;
+          return;
+        }
+        const bandCount = LOADING_ALPHA_BANDS.length;
+        for (let i = 0; i < bandCount; i++) {
+          shimmerBuckets[i].length = 0;
+        }
+        for (const particle of particles) {
+          const idx = Math.min(bandCount - 1, Math.max(0, Math.floor(particle.crest * bandCount)));
+          shimmerBuckets[idx].push(particle);
+        }
+        for (let i = 0; i < bandCount; i++) {
+          const bucket = shimmerBuckets[i];
+          if (!bucket.length) continue;
+          context.globalAlpha = LOADING_ALPHA_BANDS[i];
+          context.beginPath();
+          for (const particle of bucket) {
+            const r = radius * (0.78 + 0.34 * particle.crest);
+            context.moveTo(particle.x + r, particle.y);
+            context.arc(particle.x, particle.y, r, 0, Math.PI * 2);
+          }
+          context.fill();
+        }
+        context.globalAlpha = 1;
+        return;
+      }
       context.beginPath();
       for (const particle of particles) {
         if (!assembled && previousTime - startedAt < particle.delay) continue;
@@ -127,6 +194,7 @@ export default function ParticleLogo(props: { play?: boolean }) {
         particle.x = particle.tx;
         particle.y = particle.ty;
         particle.vx = particle.vy = 0;
+        particle.crest = 1;
       }
       draw();
     };
@@ -135,18 +203,23 @@ export default function ParticleLogo(props: { play?: boolean }) {
       frame = 0;
       if (disposed || !visible || document.hidden) return;
       const elapsed = now - startedAt;
+      const elapsedSec = elapsed / 1000;
       // Normalize the spring simulation across 60 Hz and high-refresh displays.
       const step = Math.min(2, Math.max(0.1, (now - previousTime) / (1000 / 60)));
       previousTime = now;
-      let moving = false;
+      let moving = isLoadingMode;
       for (const particle of particles) {
-        if (!assembled && elapsed < particle.delay + FLIGHT_MS) {
+        if (!isLoadingMode && !assembled && elapsed < particle.delay + FLIGHT_MS) {
           moving = true;
           if (elapsed < particle.delay) continue;
           const progress = Math.min(1, (elapsed - particle.delay) / FLIGHT_MS);
           const eased = 1 - (1 - progress) ** 3;
           particle.x = particle.sx + (particle.tx - particle.sx) * eased;
           particle.y = particle.sy + (particle.ty - particle.sy) * eased;
+          continue;
+        }
+        if (isLoadingMode) {
+          particle.crest = sampleLoadingShimmer(particle, elapsedSec);
           continue;
         }
         const dx = particle.tx - particle.x;
@@ -173,7 +246,7 @@ export default function ParticleLogo(props: { play?: boolean }) {
           particle.vx = particle.vy = 0;
         }
       }
-      if (elapsed >= ASSEMBLE_MS + 22) assembled = true;
+      if (!isLoadingMode && elapsed >= ASSEMBLE_MS + 22) assembled = true;
       draw();
       if (moving) wake();
     };
@@ -212,7 +285,7 @@ export default function ParticleLogo(props: { play?: boolean }) {
       draw();
     };
     const move = (event: PointerEvent) => {
-      if (reducedMotion.matches) return;
+      if (reducedMotion.matches || isLoadingMode) return;
       const bounds = canvas.getBoundingClientRect();
       mouseX = (event.clientX - bounds.left) / scale;
       mouseY = (event.clientY - bounds.top) / scale;
@@ -220,6 +293,7 @@ export default function ParticleLogo(props: { play?: boolean }) {
       wake();
     };
     const leave = () => {
+      if (isLoadingMode) return;
       mouseX = mouseY = -9999;
       wake();
     };
@@ -237,6 +311,9 @@ export default function ParticleLogo(props: { play?: boolean }) {
         cancelAnimationFrame(frame);
         frame = 0;
         settle();
+      } else if (isLoadingMode) {
+        previousTime = performance.now();
+        wake();
       }
     };
     const resizeObserver = new ResizeObserver(resize);
@@ -298,7 +375,10 @@ export default function ParticleLogo(props: { play?: boolean }) {
   );
 
   return (
-    <div class="mx-auto mb-4 w-[min(100%,480px)] shrink-0 px-6" aria-hidden="true">
+    <div
+      class={`mx-auto w-full max-w-[480px] shrink-0 px-6 ${props.loading ? "" : "mb-4"}`}
+      aria-hidden="true"
+    >
       <canvas ref={canvas} class="block aspect-[8/3] w-full" />
     </div>
   );

@@ -3,6 +3,7 @@ import type { MessageInfo, MessagePart } from "../../services/sse-types";
 import { isSessionBusy, type MessageTurn } from "../../store/workspace";
 import {
   expandInlineThinkingParts,
+  extractVisibleAssistantText,
   isVisibleTextPart,
   isWorkPart,
 } from "./context-activity-parts";
@@ -10,6 +11,31 @@ import {
 export type TurnRenderItem =
   | { kind: "single"; part: MessagePart }
   | { kind: "activity-group"; parts: MessagePart[] };
+
+const TRANSITIONAL_TEXT_MAX_CHARS = 180;
+
+/**
+ * Identifies brief 1–2 line procedural narration ("Let me check the files:",
+ * "我先看一下相关配置：") that models emit right before invoking a tool.
+ */
+export function isShortTransitionalText(rawText: string): boolean {
+  const visible = extractVisibleAssistantText(rawText ?? "").trim();
+  if (!visible || visible.length > TRANSITIONAL_TEXT_MAX_CHARS) return false;
+  if (visible.includes("```") || visible.includes("~~~")) return false;
+  const lines = visible
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length === 0 || lines.length > 2) return false;
+  for (const line of lines) {
+    if (/^#{1,6}\s/.test(line)) return false;
+    if (/^\|.*\|$/.test(line)) return false;
+  }
+  if (lines.length === 2 && lines.every((line) => /^(?:[-*+]|\d+\.)\s/.test(line))) {
+    return false;
+  }
+  return true;
+}
 
 export function groupAssistantParts(parts: MessagePart[]): TurnRenderItem[] {
   const expanded = expandInlineThinkingParts(parts);
@@ -22,10 +48,16 @@ export function groupAssistantParts(parts: MessagePart[]): TurnRenderItem[] {
     buffer = [];
   };
 
-  for (const part of expanded) {
+  for (let idx = 0; idx < expanded.length; idx++) {
+    const part = expanded[idx];
     if (isWorkPart(part)) {
       buffer.push(part);
     } else if (isVisibleTextPart(part)) {
+      const hasToolAfter = expanded.slice(idx + 1).some((p) => p.type === "tool");
+      if (hasToolAfter && part.type === "text" && isShortTransitionalText(part.text)) {
+        buffer.push(part);
+        continue;
+      }
       flushBuffer();
       items.push({ kind: "single", part });
     }
@@ -116,6 +148,43 @@ export function stabilizeMergedTurnResolution(
 
 const isRenderablePart = (part: MessagePart) => isWorkPart(part) || isVisibleTextPart(part);
 
+function hasToolAfterInCycle(
+  allTurns: MessageTurn[],
+  turnIdx: number,
+  expandedParts: MessagePart[],
+  partIdx: number
+): boolean {
+  for (let p = partIdx + 1; p < expandedParts.length; p++) {
+    if (expandedParts[p]?.type === "tool") return true;
+  }
+  for (let t = turnIdx + 1; t < allTurns.length && allTurns[t]?.info.role === "assistant"; t++) {
+    const nextTurn = allTurns[t];
+    if (nextTurn.info.error) break;
+    if (nextTurn.parts.some((p) => p.type === "tool")) return true;
+  }
+  return false;
+}
+
+function findFirstSubstantiveTextIndex(
+  allTurns: MessageTurn[],
+  turnIdx: number,
+  expandedParts: MessagePart[]
+): number {
+  for (let idx = 0; idx < expandedParts.length; idx++) {
+    const part = expandedParts[idx];
+    if (!isVisibleTextPart(part)) continue;
+    if (
+      part.type === "text" &&
+      isShortTransitionalText(part.text) &&
+      hasToolAfterInCycle(allTurns, turnIdx, expandedParts, idx)
+    ) {
+      continue;
+    }
+    return idx;
+  }
+  return -1;
+}
+
 /**
  * Returns true when an assistant cycle ends with a completed turn that emitted
  * ONLY `reasoning` parts (0 `tool` parts and 0 visible `text` parts).
@@ -194,10 +263,10 @@ export function resolveMergedTurnParts(
   }
 
   const turnParts = expandInlineThinkingParts(turn.parts);
-  const firstTextIdx = turnParts.findIndex(isVisibleTextPart);
+  const firstTextIdx = findFirstSubstantiveTextIndex(allTurns, globalIndex, turnParts);
   const error = Boolean(turn.info.error);
   const standaloneFinalReasoning = isCompletedStandaloneReasoningTurn(allTurns, globalIndex);
-  // Leading work joins the open run; this turn renders from its first visible text
+  // Leading work joins the open run; this turn renders from its first substantive text
   // (or its own reasoning when it is a completed cycle-ending reasoning-only turn).
   const own =
     error || !runOpen || standaloneFinalReasoning
@@ -216,8 +285,10 @@ export function resolveMergedTurnParts(
       const next = allTurns[i];
       if (next.info.error || isCompletedStandaloneReasoningTurn(allTurns, i)) break;
       const nextParts = expandInlineThinkingParts(next.parts);
-      const nextTextIdx = nextParts.findIndex(isVisibleTextPart);
-      const lead = (nextTextIdx < 0 ? nextParts : nextParts.slice(0, nextTextIdx)).filter(isWorkPart);
+      const nextTextIdx = findFirstSubstantiveTextIndex(allTurns, i, nextParts);
+      const lead = (nextTextIdx < 0 ? nextParts : nextParts.slice(0, nextTextIdx)).filter(
+        (p) => isWorkPart(p) || isVisibleTextPart(p)
+      );
       if (lead.length > 0) {
         carriedWork.push(...lead);
         carriedTurnIDs.push(next.info.id);

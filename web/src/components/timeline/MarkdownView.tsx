@@ -177,7 +177,7 @@ export default function MarkdownView(props: {
             ? "gap-y-2 leading-[1.62]"
             : props.density === "document"
               ? "gap-y-4 leading-[1.75]"
-              : "gap-y-4 leading-[1.7]"
+              : "gap-y-2.5 leading-[1.66]"
         }`}
         style={{ "font-size": "var(--app-chat-text-size)" }}
       >

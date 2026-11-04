@@ -4,74 +4,20 @@ import { t } from "../../i18n";
 import { submitSessionPrompt, workspace } from "../../store/workspace";
 import { Icon } from "../icons";
 import { basename } from "./message-stream-parts";
+import ParticleLogo from "./ParticleLogo";
 
 /**
  * Conversation skeleton shown while a session's messages are being fetched
- * for the first time, preventing the Welcome Hero from flashing on session switch.
+ * for the first time, rendering the Hoxi particle wordmark with a gentle wave shimmer.
  */
 export function SessionSkeleton() {
   return (
     <div
       aria-busy="true"
       aria-live="polite"
-      class="flex flex-col select-none pointer-events-none py-1 animate-pulse"
+      class="my-auto flex w-full flex-1 flex-col items-center justify-center py-8 select-none"
     >
-      {/* Turn 1: User Prompt Bubble (Right-Aligned) */}
-      <div class="flex flex-col items-end">
-        <div class="w-[54%] max-w-[420px] rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)] px-4 py-3.5 shadow-2xs space-y-2.5">
-          <div class="h-3.5 w-[90%] rounded-md bg-[var(--bg-hover)]" />
-          <div class="h-3.5 w-[64%] rounded-md bg-[var(--bg-hover)]" />
-        </div>
-      </div>
-
-      {/* Turn 1: Assistant Work + Response (Left-Aligned) */}
-      <div class="mt-6 flex flex-col gap-y-3.5 px-1">
-        {/* Compact folded tool/reasoning activity pill */}
-        <div class="inline-flex items-center gap-2 self-start rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-3 py-1.5">
-          <div class="h-3 w-3 rounded-xs bg-[var(--bg-hover)]" />
-          <div class="h-3 w-36 rounded-xs bg-[var(--bg-hover)]" />
-        </div>
-
-        {/* Assistant markdown text lines */}
-        <div class="space-y-2.5 pt-0.5">
-          <div class="h-3.5 w-[84%] rounded-md bg-[var(--bg-inset)]" />
-          <div class="h-3.5 w-[76%] rounded-md bg-[var(--bg-inset)]" />
-          <div class="h-3.5 w-[58%] rounded-md bg-[var(--bg-inset)]" />
-        </div>
-
-        {/* Simulated tool / code card */}
-        <div class="mt-1 max-w-2xl rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/65 p-3.5 space-y-2.5">
-          <div class="flex items-center justify-between">
-            <div class="flex items-center gap-2">
-              <div class="h-3.5 w-3.5 rounded-xs bg-[var(--bg-hover)]" />
-              <div class="h-3 w-44 rounded-xs bg-[var(--bg-hover)]" />
-            </div>
-            <div class="h-3 w-12 rounded-xs bg-[var(--bg-hover)]" />
-          </div>
-          <div class="space-y-1.5 pt-1">
-            <div class="h-2.5 w-[92%] rounded-xs bg-[var(--bg-inset)]" />
-            <div class="h-2.5 w-[78%] rounded-xs bg-[var(--bg-inset)]" />
-          </div>
-        </div>
-      </div>
-
-      {/* Turn 2: Follow-up User Prompt + Assistant Response (Subtle fade) */}
-      <div class="mt-7 flex flex-col items-end opacity-75">
-        <div class="w-[38%] max-w-[300px] rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)] px-4 py-3 shadow-2xs">
-          <div class="h-3.5 w-[82%] rounded-md bg-[var(--bg-hover)]" />
-        </div>
-      </div>
-
-      <div class="mt-6 flex flex-col gap-y-3.5 px-1 opacity-65">
-        <div class="inline-flex items-center gap-2 self-start rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-3 py-1.5">
-          <div class="h-3 w-3 rounded-xs bg-[var(--bg-hover)]" />
-          <div class="h-3 w-28 rounded-xs bg-[var(--bg-hover)]" />
-        </div>
-        <div class="space-y-2.5 pt-0.5">
-          <div class="h-3.5 w-[72%] rounded-md bg-[var(--bg-inset)]" />
-          <div class="h-3.5 w-[48%] rounded-md bg-[var(--bg-inset)]" />
-        </div>
-      </div>
+      <ParticleLogo loading />
     </div>
   );
 }

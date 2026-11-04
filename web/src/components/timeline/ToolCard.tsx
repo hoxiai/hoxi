@@ -321,14 +321,18 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
                       <span class="text-[13px] text-[var(--text-muted)] group-hover/tool:text-[var(--text-secondary)] transition-colors shrink-0">
                         <TextShimmer text={t("toolCard.actionRead")} active={isRunning()} />
                       </span>
-                      <FileIcon node={{ path: file(), type: "file" }} class="w-3.5 h-3.5 shrink-0" />
+                      <FileIcon node={{ path: file(), type: "file" }} class="w-3.5 h-3.5 shrink-0 opacity-75 group-hover/tool:opacity-100 transition-opacity" />
                       <button
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
                           openFileInInspector(file());
                         }}
-                        class="font-mono text-[13px] text-[var(--text-secondary)] hover:text-[var(--accent-primary)] hover:underline truncate cursor-pointer"
+                        class={`font-mono text-[13px] hover:text-[var(--accent-primary)] hover:underline truncate cursor-pointer transition-colors ${
+                          isRunning()
+                            ? "text-[var(--text-secondary)]"
+                            : "text-[var(--text-muted)] group-hover/tool:text-[var(--text-secondary)]"
+                        }`}
                         title={file()}
                       >
                         {getFilename(file())}
@@ -408,7 +412,7 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
                         active={isRunning()}
                       />
                     </span>
-                    <FileIcon node={{ path: file(), type: "file" }} class="w-3.5 h-3.5 shrink-0" />
+                    <FileIcon node={{ path: file(), type: "file" }} class="w-3.5 h-3.5 shrink-0 opacity-75 group-hover/tool:opacity-100 transition-opacity" />
                     <button
                       type="button"
                       onClick={(e) => {
@@ -417,7 +421,11 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
                           ? openChangedFileInInspector(fileDiff() ?? file())
                           : openFileInInspector(file());
                       }}
-                      class="font-mono text-[13px] text-[var(--text-secondary)] hover:text-[var(--accent-primary)] hover:underline truncate cursor-pointer"
+                      class={`font-mono text-[13px] hover:text-[var(--accent-primary)] hover:underline truncate cursor-pointer transition-colors ${
+                        isRunning()
+                          ? "text-[var(--text-secondary)]"
+                          : "text-[var(--text-muted)] group-hover/tool:text-[var(--text-secondary)]"
+                      }`}
                       title={file()}
                     >
                       {getFilename(file())}

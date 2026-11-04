@@ -30,7 +30,7 @@ import {
   resolveToolFileDiffs,
 } from "./tool-card-state";
 import { t as tI18n } from "../../i18n";
-import { isAttentionToolPart } from "./context-activity-parts";
+import { isAttentionToolPart, isTodoToolPart } from "./context-activity-parts";
 
 export type StepDisplay = { action: string; detail: string };
 
@@ -237,7 +237,7 @@ function accumulatePrefixStep(prefixCache: ActivityPrefixCache, p: MessagePart, 
     }
     return;
   }
-  if (p.type !== "tool") return;
+  if (p.type !== "tool" || isTodoToolPart(p)) return;
   prefixCache.lastTool = p;
   const target = summarizeStepTarget(p);
   if (isReadTool(p.tool)) {
@@ -380,7 +380,7 @@ export function computeActivityStepSummary(
         activeReasoning = p;
         if (!hasRunningPart && isSessionBusy(p.sessionID)) hasRunningPart = true;
       }
-    } else if (p.type === "tool") {
+    } else if (p.type === "tool" && !isTodoToolPart(p)) {
       lastTool = p;
       const status = p.state.status;
       if (status === "pending" || status === "running") {

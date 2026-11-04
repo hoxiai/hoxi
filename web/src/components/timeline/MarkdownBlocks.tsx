@@ -109,8 +109,10 @@ export default function MarkdownBlocks(props: {
               ref={(el) =>
                 revealBlock(el, blockBirth(blockIdx), { startOpacity: 0.45, translateY: 2 })
               }
-              class={`first:mt-0 mt-4 -mb-1 text-[1.32em] font-semibold tracking-tight text-[var(--text-primary)] scroll-mt-12 ${
-                isDoc() ? "border-b border-[var(--border-subtle)] pb-2 mb-0.5" : ""
+              class={`first:mt-0 font-semibold tracking-tight text-[var(--text-primary)] scroll-mt-12 ${
+                isDoc()
+                  ? "mt-4 -mb-1 text-[1.32em] border-b border-[var(--border-subtle)] pb-2 mb-0.5"
+                  : "mt-2.5 -mb-0.5 text-[1.16em]"
               }`}
             >
               <MarkdownInline
@@ -130,8 +132,10 @@ export default function MarkdownBlocks(props: {
               ref={(el) =>
                 revealBlock(el, blockBirth(blockIdx), { startOpacity: 0.45, translateY: 2 })
               }
-              class={`first:mt-0 mt-3.5 -mb-1 text-[1.16em] font-semibold tracking-tight text-[var(--text-primary)] scroll-mt-12 ${
-                isDoc() ? "border-b border-[var(--border-subtle)]/70 pb-1.5 mb-0.5" : ""
+              class={`first:mt-0 font-semibold tracking-tight text-[var(--text-primary)] scroll-mt-12 ${
+                isDoc()
+                  ? "mt-3.5 -mb-1 text-[1.16em] border-b border-[var(--border-subtle)]/70 pb-1.5 mb-0.5"
+                  : "mt-2 -mb-0.5 text-[1.08em]"
               }`}
             >
               <MarkdownInline
@@ -151,7 +155,9 @@ export default function MarkdownBlocks(props: {
               ref={(el) =>
                 revealBlock(el, blockBirth(blockIdx), { startOpacity: 0.45, translateY: 2 })
               }
-              class="first:mt-0 mt-2.5 -mb-1 text-[1.05em] font-semibold text-[var(--text-primary)] scroll-mt-12"
+              class={`first:mt-0 font-semibold text-[var(--text-primary)] scroll-mt-12 ${
+                isDoc() ? "mt-2.5 -mb-1 text-[1.05em]" : "mt-1.5 -mb-0.5 text-[1.02em]"
+              }`}
             >
               <MarkdownInline
                 text={(block() as Extract<BlockToken, { type: "heading" }>).text || "\u00A0"}
@@ -165,7 +171,9 @@ export default function MarkdownBlocks(props: {
               ref={(el) =>
                 revealBlock(el, blockBirth(blockIdx), { startOpacity: 0.45, translateY: 2 })
               }
-              class="first:mt-0 mt-2 -mb-1 text-[0.98em] font-semibold text-[var(--text-secondary)] scroll-mt-12"
+              class={`first:mt-0 font-semibold text-[var(--text-secondary)] scroll-mt-12 ${
+                isDoc() ? "mt-2 -mb-1 text-[0.98em]" : "mt-1 -mb-0.5 text-[0.96em]"
+              }`}
             >
               <MarkdownInline
                 text={(block() as Extract<BlockToken, { type: "heading" }>).text || "\u00A0"}
@@ -177,7 +185,7 @@ export default function MarkdownBlocks(props: {
               const listBlock = () => block() as Extract<BlockToken, { type: "list" }>;
               const itemBirth = createRevealBirths();
               return (
-                <div class={`my-0.5 text-[var(--text-primary)] ${compact() ? "space-y-1.5" : "space-y-2"}`}>
+                <div class={`my-0.5 text-[var(--text-primary)] ${ isDoc() ? "space-y-2" : "space-y-1.5"}`}>
                   <Index each={listBlock().items}>
                     {(item, itemIdx) => {
                       const taskMatch = () => item().text.match(/^\[([ xX])\]\s+([\s\S]*)$/);
@@ -356,10 +364,16 @@ export default function MarkdownBlocks(props: {
             }}
           </Match>
           <Match when={block().type === "hr"}>
-            <hr
-              ref={(el) => revealBlock(el, blockBirth(blockIdx))}
-              class="my-2 border-[var(--border-subtle)]"
-            />
+            <Show when={isDoc() || props.blocks[blockIdx + 1]?.type !== "heading"}>
+              <hr
+                ref={(el) => revealBlock(el, blockBirth(blockIdx))}
+                class={
+                  isDoc()
+                    ? "my-2 border-[var(--border-subtle)]"
+                    : "my-1 border-[var(--border-subtle)]/45"
+                }
+              />
+            </Show>
           </Match>
           <Match when={block().type === "paragraph"}>
             <p

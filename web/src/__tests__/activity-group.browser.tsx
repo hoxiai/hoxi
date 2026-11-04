@@ -468,10 +468,42 @@ async function testAutoCollapseOnlyAfterScrollingOffscreen() {
   });
 
   const [parts, setParts] = createSignal<MessagePart[]>([
+    {
+      type: "reasoning",
+      id: `prt_reason_noise_${sid}_1`,
+      sessionID: sid,
+      messageID: `msg_${sid}`,
+      text: "Internal monologue before ssh",
+      time: { start: baseNow, end: baseNow + 5 },
+    },
+    {
+      type: "tool",
+      id: `prt_todo_noise_${sid}_1`,
+      sessionID: sid,
+      messageID: `msg_${sid}`,
+      callID: `call_todo_1`,
+      tool: "todowrite",
+      state: {
+        status: "completed",
+        input: { todos: [{ id: "1", content: "Check decor", status: "in_progress" }] },
+        output: "ok",
+        title: "Update todos",
+        metadata: {},
+        time: { start: baseNow + 5, end: baseNow + 8 },
+      },
+    },
     makeShell(
       1,
       "ssh -o BatchMode=yes -o ConnectTimeout=10 root@8.135.58.57 'cd /opt/gopanel && sudo -u gopanel env'"
     ),
+    {
+      type: "reasoning",
+      id: `prt_reason_noise_${sid}_2`,
+      sessionID: sid,
+      messageID: `msg_${sid}`,
+      text: "Internal monologue between tools",
+      time: { start: baseNow + 15, end: baseNow + 18 },
+    },
     makeShell(
       2,
       "cd /Users/hugh/code/hoxi/shopark && sed -n '1,120p' go-fast/app/service/theme_decor.go"
@@ -531,7 +563,7 @@ async function testAutoCollapseOnlyAfterScrollingOffscreen() {
     const heightWhileRunning = group.getBoundingClientRect().height;
     batch(() => {
       setParts([
-        ...parts().slice(0, 3),
+        ...parts().slice(0, -1),
         makeShell(
           4,
           "cd /Users/hugh/code/hoxi/shopark && sed -n '340,420p' go-fast/app/service/theme_decor_bundle.go",

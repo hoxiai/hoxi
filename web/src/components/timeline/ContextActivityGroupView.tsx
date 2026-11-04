@@ -34,7 +34,7 @@ import {
   type StepDisplay,
 } from "./context-activity-summary";
 
-export {
+import {
   isTodoToolPart,
   isVisibleTextPart,
   isContextToolPart,
@@ -45,6 +45,17 @@ export {
   extractVisibleAssistantText,
   expandInlineThinkingParts,
 } from "./context-activity-parts";
+export {
+  isTodoToolPart,
+  isVisibleTextPart,
+  isContextToolPart,
+  isWorkPart,
+  isExplorationPart,
+  isAttentionToolPart,
+  splitInlineThinking,
+  extractVisibleAssistantText,
+  expandInlineThinkingParts,
+};
 export {
   groupAssistantParts,
   stabilizeTurnRenderItems,
@@ -123,7 +134,22 @@ export default function ContextActivityGroupView(props: {
     }
     setStepLimitSignal(next);
   };
-  const visibleSteps = createMemo(() => props.parts.slice(-stepLimit()));
+  const displayParts = createMemo(() => {
+    const raw = props.parts;
+    if (props.revealKey || raw.length === 0) return raw;
+    const hideReasoning =
+      stats().toolCount > 0 &&
+      appSettings.reasoningDisplay === "auto-collapse" &&
+      !props.defaultOpenReasoning;
+    const filtered = raw.filter((part) => {
+      if (isTodoToolPart(part)) return false;
+      if (part.type === "text" && stats().toolCount > 0) return false;
+      if (hideReasoning && part.type === "reasoning") return false;
+      return true;
+    });
+    return filtered.length > 0 ? filtered : raw;
+  });
+  const visibleSteps = createMemo(() => displayParts().slice(-stepLimit()));
 
   // Sync open state across virtualized/reused turns, new-task auto-collapse, or setting changes.
   createEffect(() => {
@@ -144,13 +170,14 @@ export default function ContextActivityGroupView(props: {
         // so the visible viewport does not shift by even 1px.
         if (groupRect.bottom <= scrollerRect.top + 4) {
           const beforeHeight = rootRef.offsetHeight;
+          const beforeScrollTop = scroller.scrollTop;
           setAnimateToggle(false);
           setOpen(false);
           queueMicrotask(() => {
             if (!rootRef) return;
             const delta = beforeHeight - rootRef.offsetHeight;
             if (delta > 0) {
-              scroller.scrollTop = Math.max(0, scroller.scrollTop - delta);
+              scroller.scrollTop = Math.max(0, beforeScrollTop - delta);
             }
           });
           return;
@@ -227,9 +254,17 @@ export default function ContextActivityGroupView(props: {
   const renderStepItem = (part: MessagePart) => {
     syncSeenGroupSteps();
     const id = part?.id || "";
-    const isAppendedLive = Boolean(id && !seenStepIDs.has(id) && isRunning());
+    const isFirstToolReplacingInitialStep =
+      part.type === "tool" &&
+      stats().toolCount <= 1 &&
+      props.parts.length >= 2 &&
+      props.parts[0]?.type !== "tool";
+    const isAppendedLive = Boolean(
+      id && !seenStepIDs.has(id) && isRunning() && !isFirstToolReplacingInitialStep
+    );
     const isInitialLiveSingle = Boolean(
-      !isAppendedLive && props.isLiveTail && props.parts.length === 1
+      (!isAppendedLive && props.isLiveTail && props.parts.length === 1) ||
+        isFirstToolReplacingInitialStep
     );
     if (id) seenStepIDs.add(id);
 
@@ -259,10 +294,10 @@ export default function ContextActivityGroupView(props: {
   };
 
   const renderStepWindow = () => <>
-    <Show when={props.parts.length > stepLimit()}>
+    <Show when={displayParts().length > stepLimit()}>
       <button type="button" class="text-[12px] text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
         onClick={() => setStepLimit(stepLimit() + STEP_PAGE)}>
-        {tI18n("timeline.loadEarlierSteps", { count: Math.min(STEP_PAGE, props.parts.length - stepLimit()) })}
+        {tI18n("timeline.loadEarlierSteps", { count: Math.min(STEP_PAGE, displayParts().length - stepLimit()) })}
       </button>
     </Show>
     <For each={visibleSteps()}>
@@ -279,7 +314,7 @@ export default function ContextActivityGroupView(props: {
   const isInterStepGap = createMemo(
     () =>
       isRunning() &&
-      !stepSummary().hasRunningPart &&
+      stepSummary().runningTools.length === 0 &&
       !hasPendingApproval() &&
       stats().toolCount > 0
   );
@@ -287,6 +322,10 @@ export default function ContextActivityGroupView(props: {
   createEffect(() => {
     if (!isInterStepGap()) {
       setAwaitingNextStep(false);
+      return;
+    }
+    if (stepSummary().activeReasoning) {
+      setAwaitingNextStep(true);
       return;
     }
     const timer = setTimeout(() => setAwaitingNextStep(true), 220);
@@ -348,10 +387,10 @@ export default function ContextActivityGroupView(props: {
               when={isRunning()}
               fallback={
                 <span class="inline-grid place-items-center shrink-0">
-                  <span class="[grid-area:1/1] inline-flex items-center text-[var(--ok-text)] transition-opacity duration-150 group-hover/activity:opacity-0">
+                  <span class="[grid-area:1/1] inline-flex items-center text-[var(--text-faint)] transition-opacity duration-150 group-hover/activity:opacity-0">
                     <Icon name="circle-check" size="small" />
                   </span>
-                  <span class="[grid-area:1/1] inline-flex items-center text-[var(--accent-primary)] opacity-0 transition-opacity duration-150 group-hover/activity:opacity-100">
+                  <span class="[grid-area:1/1] inline-flex items-center text-[var(--text-secondary)] opacity-0 transition-opacity duration-150 group-hover/activity:opacity-100">
                     <Icon
                       name={stats().toolCount > 0 ? "layers" : "brain"}
                       size="small"
@@ -369,7 +408,7 @@ export default function ContextActivityGroupView(props: {
               when={isRunning()}
               fallback={
                 <>
-                  <span class="font-medium text-[var(--text-secondary)] shrink-0">
+                  <span class="font-normal text-[var(--text-faint)] group-hover/activity:text-[var(--text-secondary)] transition-colors shrink-0">
                     {stats().toolCount > 0
                       ? tI18n("timeline.executedStepsSummary", {
                           count: stats().toolCount,
@@ -473,17 +512,27 @@ export default function ContextActivityGroupView(props: {
             </Show>
 
             <Show when={groupDiffStats()}>
-              {(diffStats) => <DiffChanges changes={diffStats()} />}
+              {(diffStats) => (
+                <span class={isRunning() ? "" : "opacity-70 group-hover/activity:opacity-100 transition-opacity"}>
+                  <DiffChanges changes={diffStats()} />
+                </span>
+              )}
             </Show>
 
             <Show when={durationLabel()}>
-              <span class="font-mono text-[12px] tabular-nums text-[var(--text-faint)]">
+              <span
+                class={`font-mono text-[12px] tabular-nums text-[var(--text-faint)] transition-opacity ${
+                  isRunning() ? "" : "opacity-0 group-hover/activity:opacity-100"
+                }`}
+              >
                 {durationLabel()}
               </span>
             </Show>
 
             <span
-              class="hoxi-chevron text-[var(--text-faint)]"
+              class={`hoxi-chevron text-[var(--text-faint)] transition-opacity ${
+                isRunning() || open() ? "" : "opacity-0 group-hover/activity:opacity-100"
+              }`}
               data-open={open() ? "true" : "false"}
             >
               <Icon name="chevron-right" size="small" />

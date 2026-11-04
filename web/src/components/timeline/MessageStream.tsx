@@ -446,7 +446,7 @@ export default function MessageStream(props: { hidden?: boolean }) {
           when={!isEmpty()}
           fallback={
             <Show when={isLoadingSession()}>
-              <div class="hoxi-fade-enter">
+              <div class="my-auto flex w-full flex-1 flex-col items-center justify-center hoxi-fade-enter">
                 <SessionSkeleton />
               </div>
             </Show>
