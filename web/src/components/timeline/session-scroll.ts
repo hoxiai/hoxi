@@ -18,6 +18,7 @@ export function createSessionScrollController(options: {
   let hasTurns = false;
   let frame: number | undefined;
   let settling: number | undefined;
+  let wasZeroHeight = false;
 
   const rememberPosition = (id: string, pos: Position) => {
     if (positions.has(id)) positions.delete(id);
@@ -150,6 +151,26 @@ export function createSessionScrollController(options: {
       scheduleRestore();
     },
     resized() {
+      const el = options.scroller();
+      if (el && el.clientHeight === 0) {
+        wasZeroHeight = true;
+        return;
+      }
+      if (wasZeroHeight && el && el.clientHeight > 0) {
+        wasZeroHeight = false;
+        if (!pending && sessionID) {
+          const saved = positions.get(sessionID);
+          if (saved) {
+            if (saved.bottom) {
+              options.scroll.jumpToBottom();
+            } else if (Math.abs(el.scrollTop - saved.top) > 1) {
+              el.scrollTop = saved.top;
+              options.scroll.updatePosition();
+            }
+            return;
+          }
+        }
+      }
       if (pending) {
         applyPending();
         if (ready) scheduleRestore();

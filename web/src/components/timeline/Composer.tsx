@@ -96,6 +96,7 @@ export default function Composer() {
 
   const sessionID = () => workspace.activeSessionID;
   createComputed(on([sessionID, () => workspace.rootDir, () => workspace.newThreadRequest, text], () => {
+    if (isWorkSurface()) return;
     enhanceGeneration++;
     setEnhancing(false);
     setEnhanceState(null);
@@ -191,6 +192,7 @@ export default function Composer() {
   const draftSync = createSessionDraftSync({
     sessionID,
     directory: () => workspace.rootDir,
+    enabled: () => !isWorkSurface(),
     resetRequest: () => workspace.newThreadRequest,
     text,
     setText,
@@ -198,7 +200,9 @@ export default function Composer() {
     pasteCollapse,
     onAfterRestore: () => {
       ac.reset();
+      if (isWorkSurface()) return;
       requestAnimationFrame(() => {
+        if (isWorkSurface()) return;
         adjustHeight();
         if (!sessionID()) textareaRef?.focus();
       });
@@ -234,10 +238,13 @@ export default function Composer() {
   onCleanup(() => queuedEditBridge.dispose());
 
   // Restore draft when user clicks "Edit" on a queued prompt or reverts a user message
-  createEffect(() => queuedEditBridge.syncDraftEdit());
+  createEffect(() => {
+    if (!isWorkSurface()) queuedEditBridge.syncDraftEdit();
+  });
 
   createEffect(() => {
     const onComposerFill = (ev: Event) => {
+      if (isWorkSurface()) return;
       const detail = (
         ev as CustomEvent<{
           text?: string;

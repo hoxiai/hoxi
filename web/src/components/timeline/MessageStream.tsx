@@ -81,16 +81,31 @@ export default function MessageStream(props: { hidden?: boolean }) {
   });
   const renderedSessionID = () => workspace.activeSessionID ?? retainedSessionID();
 
-  const activeSession = createMemo(() => {
+  const activeSessionRevert = createMemo(() => {
     const id = renderedSessionID();
-    return id ? workspace.sessions.find((s) => s.id === id) : undefined;
+    return id ? workspace.sessions.find((s) => s.id === id)?.revert : undefined;
   });
 
   const turns = createMemo(() => {
     const id = renderedSessionID();
     const raw = id ? workspace.messagesBySession[id] ?? [] : [];
-    return filterVisibleTurnsByRevert(raw, activeSession()?.revert);
+    return filterVisibleTurnsByRevert(raw, activeSessionRevert());
   });
+
+  const turnIDs = createMemo(
+    () => turns().map((turn) => turn.info.id),
+    [],
+    { equals: (a, b) => a.length === b.length && a.every((v, i) => v === b[i]) }
+  );
+
+  const assistantTurnIDs = createMemo(
+    () =>
+      turns()
+        .filter((turn) => turn.info.role === "assistant")
+        .map((turn) => turn.info.id),
+    [],
+    { equals: (a, b) => a.length === b.length && a.every((v, i) => v === b[i]) }
+  );
 
   const turnWindow = createTurnWindow(renderedSessionID, turns, {
     hasOlder: () => hasOlderSessionHistory(renderedSessionID()),
@@ -116,11 +131,8 @@ export default function MessageStream(props: { hidden?: boolean }) {
   const readingPosition = createReadingPositionTracker({
     scroller: () => scroller,
     content: () => content,
-    sessionID: () => workspace.activeSessionID,
-    assistantTurnIDs: () =>
-      turns()
-        .filter((turn) => turn.info.role === "assistant")
-        .map((turn) => turn.info.id),
+    sessionID: renderedSessionID,
+    assistantTurnIDs,
   });
 
   const activeStatus = createMemo<SessionStatus>(() => {
@@ -225,11 +237,12 @@ export default function MessageStream(props: { hidden?: boolean }) {
   });
 
   const sessionScroll = createSessionScroll({
-    sessionID: () => workspace.activeSessionID,
-    turnIDs: () => turns().map((turn) => turn.info.id),
-    loading: () =>
-      isLoadingSession() ||
-      Boolean(workspace.activeSessionID && workspace.loadingMessagesBySession[workspace.activeSessionID]),
+    sessionID: renderedSessionID,
+    turnIDs,
+    loading: () => {
+      const id = renderedSessionID();
+      return isLoadingSession() || Boolean(id && workspace.loadingMessagesBySession[id]);
+    },
     scroller: () => scroller,
     content: () => content,
     scroll,

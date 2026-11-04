@@ -301,7 +301,7 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
             }`}
           >
             <div class={isNewConversation() ? "hidden" : "flex flex-1 min-h-0 flex-col overflow-hidden"}>
-              <MessageStream hidden={false} />
+              <MessageStream hidden={isNewConversation()} />
             </div>
           </div>
           <div class="flex flex-col shrink-0 pt-2">

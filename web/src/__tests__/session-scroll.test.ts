@@ -120,6 +120,18 @@ describe("Session reading restoration", () => {
       controller.interrupt();
       assertEqual(scroll.isFollowing(), true);
 
+      // Hiding the scroller (clientHeight = 0 while on Launchpad) and WebKit resetting
+      // scrollTop to 0 must restore the saved scroll offset immediately when unhidden.
+      scroll.pause();
+      el.scrollTop = 420;
+      controller.capture();
+      el.clientHeight = 0;
+      el.scrollTop = 0;
+      controller.resized();
+      el.clientHeight = 400;
+      controller.resized();
+      assertEqual(el.scrollTop, 420);
+
       controller.dispose();
       assertEqual(frames.size, 0);
     } finally {

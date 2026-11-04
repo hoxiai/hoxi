@@ -102,7 +102,7 @@ const catalogCache = new Map<string, { response: SkillListResponse; expiresAt: n
 const detailCache = new Map<string, { detail: SkillDetail; expiresAt: number }>();
 const descriptorBySelectionKey = new Map<string, SkillDescriptor>();
 
-const CATALOG_CACHE_TTL_MS = 20_000;
+const CATALOG_CACHE_TTL_MS = 60_000;
 let listRequestGen = 0;
 let detailRequestGen = 0;
 const [skillsCatalogRevision, setSkillsCatalogRevision] = createSignal(0);
@@ -240,13 +240,28 @@ export async function loadSkillsCatalog(options?: {
     const cached = catalogCache.get(cKey);
     if (cached && Date.now() <= cached.expiresAt) {
       untrack(() => {
-        recordSkillDescriptors(cached.response.skills ?? []);
+        const nextSkills = cached.response.skills ?? [];
+        const nextRuntime = cached.response.runtime || rt;
+        const nextDir = cached.response.directory || dir;
+        const nextHint = cached.response.cacheHint || "";
+        recordSkillDescriptors(nextSkills);
+        if (
+          skillsStore.skills === nextSkills &&
+          skillsStore.supported === cached.response.supported &&
+          skillsStore.runtime === nextRuntime &&
+          skillsStore.directory === nextDir &&
+          skillsStore.cacheHint === nextHint &&
+          !skillsStore.loading &&
+          skillsStore.error === null
+        ) {
+          return;
+        }
         setSkillsStore({
-          skills: cached.response.skills ?? [],
+          skills: nextSkills,
           supported: cached.response.supported,
-          runtime: cached.response.runtime || rt,
-          directory: cached.response.directory || dir,
-          cacheHint: cached.response.cacheHint || "",
+          runtime: nextRuntime,
+          directory: nextDir,
+          cacheHint: nextHint,
           loading: false,
           error: null,
         });

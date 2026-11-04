@@ -399,10 +399,12 @@ export async function switchWorkspace(
 
   const knownProjectID = findWorkspaceProfileByDir(cleaned)?.id || null;
   const hasCachedSessions = rawCached !== undefined;
+  const willSelectSession = Boolean(targetSessionID || selectInitial);
   const warmSurfaceSwitch =
-    Boolean(opts.fastSurfaceSwitch) && hasCachedSessions;
+    Boolean(opts.fastSurfaceSwitch) && (hasCachedSessions || !willSelectSession);
   const recentlyBootstrapped =
     warmSurfaceSwitch &&
+    hasCachedSessions &&
     Date.now() - (lastBootstrappedAtByDir.get(cleaned) || 0) < 30_000;
 
   setWorkspace({
@@ -415,7 +417,7 @@ export async function switchWorkspace(
     inspectedDiffFile: null,
     activeSessionID: targetSessionID,
     activeProjectID: knownProjectID,
-    bootstrappingSessions: !warmSurfaceSwitch && hydratedSessions.length === 0,
+    bootstrappingSessions: !warmSurfaceSwitch && willSelectSession && hydratedSessions.length === 0,
   });
 
   if (warmSurfaceSwitch) {

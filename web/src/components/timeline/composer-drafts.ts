@@ -135,6 +135,7 @@ export interface DraftImageAttachmentsBridge {
 export function createSessionDraftSync(params: {
   sessionID: Accessor<string | null>;
   directory?: Accessor<string>;
+  enabled?: Accessor<boolean>;
   resetRequest?: Accessor<number>;
   text: Accessor<string>;
   setText: Setter<string>;
@@ -145,6 +146,7 @@ export function createSessionDraftSync(params: {
   let activeSessionID = params.sessionID();
   let activeDir = normalizeFolderPath(params.directory?.() ?? workspace.rootDir);
   let activeKey = composerDraftKey(activeSessionID, activeDir);
+  let wasEnabled = params.enabled ? params.enabled() : true;
   let resetRequest = params.resetRequest?.();
   let disposed = false;
   const saveOutgoingDraft = () => {
@@ -177,30 +179,43 @@ export function createSessionDraftSync(params: {
     }
   };
   onCleanup(() => {
-    saveOutgoingDraft();
+    if (wasEnabled) saveOutgoingDraft();
     disposed = true;
   });
   const isCurrentTarget = (sessionID: string | null, directory: string) =>
     !disposed && composerDraftKey(params.sessionID(), params.directory?.()) === composerDraftKey(sessionID, directory);
 
   const sync = () => {
+    const nowEnabled = params.enabled ? params.enabled() : true;
+    if (!nowEnabled) {
+      if (wasEnabled) {
+        untrack(() => saveOutgoingDraft());
+        wasEnabled = false;
+      }
+      return;
+    }
     const nextSessionID = params.sessionID();
     const nextDir = normalizeFolderPath(params.directory?.() ?? workspace.rootDir);
     const nextKey = composerDraftKey(nextSessionID, nextDir);
     const request = params.resetRequest?.();
     const reset = request !== resetRequest;
     resetRequest = request;
-    if (nextKey === activeKey) {
+    const justEnabled = !wasEnabled;
+    wasEnabled = true;
+    if (nextKey === activeKey && !justEnabled) {
       if (reset) params.onAfterRestore();
       return;
     }
 
     untrack(() => {
-      saveOutgoingDraft();
+      if (!justEnabled) {
+        saveOutgoingDraft();
+      }
 
       // If the user typed in the rootless "__new__" state before choosing their
       // first folder, carry that unsent draft into the newly selected workspace.
       if (
+        !justEnabled &&
         !activeSessionID &&
         !activeDir &&
         !nextSessionID &&
