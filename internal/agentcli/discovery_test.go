@@ -155,6 +155,9 @@ func TestWithUserBinPathPrependsMissingDirs(t *testing.T) {
 	if first := filepath.SplitList(path)[0]; first == "/usr/bin" {
 		t.Fatalf("user bin dirs were not prepended: %q", path)
 	}
+	if !strings.Contains(path, filepath.Join(".hoxi", "bin")) {
+		t.Fatalf("expected ~/.hoxi/bin in prepended PATH so native CLIs can invoke hoxi code-index, got %q", path)
+	}
 }
 
 func TestWithUserBinPathAddsPATHWhenMissing(t *testing.T) {

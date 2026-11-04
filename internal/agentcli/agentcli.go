@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
@@ -52,8 +53,12 @@ type ModelItem struct {
 // CommonUserBinDirs lists user-level bin directories that GUI apps miss from PATH.
 func CommonUserBinDirs() []string {
 	var dirs []string
+	if binDir := hoxipaths.BinDir(); binDir != "" {
+		dirs = append(dirs, binDir)
+	}
 	if home, _ := os.UserHomeDir(); home != "" {
 		dirs = append(dirs,
+			filepath.Join(home, ".hoxi", "bin"),
 			filepath.Join(home, ".opencode", "bin"),
 			filepath.Join(home, ".bun", "bin"),
 			filepath.Join(home, ".local", "bin"),

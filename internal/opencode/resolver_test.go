@@ -498,4 +498,27 @@ func TestEnsureHoxiEngineDataDir(t *testing.T) {
 	if err != nil || !bytes.Equal(seededAuth, wantAuth) {
 		t.Fatalf("expected seeded auth.json, got %q (err=%v)", string(seededAuth), err)
 	}
+
+	if runtime.GOOS != "windows" {
+		binDir := filepath.Join(home, ".hoxi", "bin")
+		fakeExe := filepath.Join(home, "Hoxi")
+		if err := os.WriteFile(fakeExe, []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		linkPath, err := EnsureManagedHoxiSymlink(fakeExe, binDir)
+		if err != nil {
+			t.Fatalf("EnsureManagedHoxiSymlink failed: %v", err)
+		}
+		target, err := os.Readlink(linkPath)
+		if err != nil {
+			t.Fatalf("Readlink(%s) failed: %v", linkPath, err)
+		}
+		wantExe := fakeExe
+		if resolved, err := filepath.EvalSymlinks(fakeExe); err == nil && resolved != "" {
+			wantExe = resolved
+		}
+		if target != wantExe {
+			t.Fatalf("symlink target = %q, want %q", target, wantExe)
+		}
+	}
 }

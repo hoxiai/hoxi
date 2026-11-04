@@ -330,11 +330,36 @@ func isSupersededEmptyRecoveryStubTurn(turns []MessageTurn, idx int) bool {
 	return true
 }
 
-func buildOpenCodeReasoningRecoveryPayload(rec SessionRecord, mode, modelID, effort, system string, attempt int, recoveryKind string) map[string]interface{} {
+func extractLeakedToolFromTurns(turns []MessageTurn, ap *activeProcess) string {
+	for i := len(turns) - 1; i >= 0; i-- {
+		if isInternalRecoveryMessageID(turns[i].Info.ID) {
+			continue
+		}
+		if turns[i].Info.Role != "assistant" {
+			break
+		}
+		for _, p := range turns[i].Parts {
+			if p.Type == "reasoning" {
+				if tool := extractLeakedReasoningToolName(p.Text); tool != "" {
+					return tool
+				}
+			}
+		}
+		break
+	}
+	if ap != nil {
+		return ap.reasoningLoop.leakedToolName()
+	}
+	return ""
+}
+
+func buildOpenCodeReasoningRecoveryPayload(rec SessionRecord, mode, modelID, effort, system string, attempt int, recoveryKind string, leakedTool string) map[string]interface{} {
 	recoverID := fmt.Sprintf("%s%d_%d", internalRecoveryMsgPrefix, time.Now().UnixMilli(), attempt)
 	prompt := openCodeReasoningRecoveryPrompt
 	if recoveryKind == recoveryKindPreamble {
 		prompt = openCodePreambleRecoveryPrompt
+	} else if leakedTool = strings.TrimSpace(leakedTool); leakedTool != "" {
+		prompt += fmt.Sprintf(" Specifically, invoke the %q tool now via a standard structured tool call.", leakedTool)
 	}
 	payload := map[string]interface{}{
 		"messageID": recoverID,
@@ -370,11 +395,12 @@ func (s *Service) recoverOpenCodeReasoningIfNeeded(ctx context.Context, rec Sess
 			ap.reasoningLoop.consumePendingRecovery()
 			return curErr
 		}
+		leakedTool := extractLeakedToolFromTurns(checkTurns, ap)
 		ap.reasoningLoop.consumePendingRecovery()
 		_, _ = ap.takePendingError()
 		curErr = nil
 		ap.stall.touch(time.Now())
-		recoverPayload := buildOpenCodeReasoningRecoveryPayload(rec, mode, modelID, effort, system, attempt, recoveryKind)
+		recoverPayload := buildOpenCodeReasoningRecoveryPayload(rec, mode, modelID, effort, system, attempt, recoveryKind, leakedTool)
 		postErr := s.openCodeJSON(ctx, "POST", "/session/"+rec.ExternalID+"/message", rec.WorktreePath, recoverPayload, nil)
 		if postErr != nil && !ap.reasoningLoop.hasPendingRecovery() {
 			return postErr

@@ -257,3 +257,104 @@ func TestNativeCLISystemDeduplicatedOnResumedTurnsAndToolSummaryDedup(t *testing
 		t.Fatalf("expected ANSI codes to be stripped in singleLineExcerpt, got:\n%s", ctx)
 	}
 }
+
+func TestOpenCodeHandoffIncludesSessionMemoryAndSymbolLineQualifiers(t *testing.T) {
+	t.Parallel()
+	var turns []MessageTurn
+	turns = append(turns,
+		MessageTurn{
+			Info:  MessageInfo{ID: "u_init", Role: "user"},
+			Parts: []MessagePart{{Type: "text", Text: "Refactor token verifier and keep backwards compatibility"}},
+		},
+		MessageTurn{
+			Info: MessageInfo{ID: "a_early", Role: "assistant"},
+			Parts: []MessagePart{
+				{
+					Type: "tool",
+					Tool: "hoxi_code_index",
+					State: &ToolState{
+						Status: "completed",
+						Input: map[string]interface{}{
+							"action":    "inspect",
+							"path":      "internal/auth/verifier.go",
+							"symbol":    "VerifyToken",
+							"startLine": 42,
+							"endLine":   98,
+						},
+						Output: "func VerifyToken() {}",
+					},
+				},
+				{
+					Type: "tool",
+					Tool: "edit",
+					State: &ToolState{
+						Status: "completed",
+						Input: map[string]interface{}{
+							"filePath": "internal/auth/early_modified.go",
+						},
+						Output: "ok",
+					},
+				},
+			},
+		},
+	)
+	for i := 1; i <= 10; i++ {
+		turns = append(turns,
+			MessageTurn{
+				Info:  MessageInfo{ID: fmt.Sprintf("u_%d", i), Role: "user"},
+				Parts: []MessagePart{{Type: "text", Text: fmt.Sprintf("Follow-up step %d", i)}},
+			},
+			MessageTurn{
+				Info: MessageInfo{ID: fmt.Sprintf("a_%d", i), Role: "assistant"},
+				Parts: []MessagePart{
+					{
+						Type: "tool",
+						Tool: "read",
+						State: &ToolState{
+							Status: "completed",
+							Input: map[string]interface{}{
+								"filePath": "internal/auth/handler.go",
+								"offset":   100,
+								"limit":    50,
+							},
+						},
+					},
+					{Type: "text", Text: fmt.Sprintf("Done step %d", i)},
+				},
+			},
+		)
+	}
+
+	rec := SessionRecord{
+		ID:               "ses_oc_handoff",
+		Runtime:          "opencode",
+		ExternalID:       "ses_oc_engine_1",
+		ContextPending:   false,
+		ContextTurnCount: len(turns),
+		Turns:            turns,
+	}
+	ctx1 := runtimeContext(rec)
+	if !strings.Contains(ctx1, "<session_handoff_memory>") {
+		t.Fatalf("expected OpenCode handoff context to include <session_handoff_memory>, got:\n%s", ctx1)
+	}
+	if !strings.Contains(ctx1, "`internal/auth/early_modified.go` (modified)") {
+		t.Fatalf("expected early modified file outside recent window to survive via <session_handoff_memory>, got:\n%s", ctx1)
+	}
+	if !strings.Contains(ctx1, "`internal/auth/verifier.go` [symbol VerifyToken, L42-98]") {
+		t.Fatalf("expected symbol and line range qualifier in 8-dim session memory, got:\n%s", ctx1)
+	}
+	if !strings.Contains(ctx1, "Tool read [completed]: internal/auth/handler.go [L100-149]") {
+		t.Fatalf("expected offset/limit line range qualifier in recent tool summary, got:\n%s", ctx1)
+	}
+
+	// Subsequent turns in OpenCode append new messages to rec.Turns while ContextTurnCount stays fixed;
+	// runtimeContext must remain 100% byte-identical to preserve the LLM KV prefix cache.
+	rec.Turns = append(rec.Turns, MessageTurn{
+		Info:  MessageInfo{ID: "u_after_switch", Role: "user"},
+		Parts: []MessagePart{{Type: "text", Text: "New turn after switch"}},
+	})
+	ctx2 := runtimeContext(rec)
+	if ctx1 != ctx2 {
+		t.Fatalf("expected OpenCode handoff context to remain 100%% byte-identical across subsequent turns")
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -129,6 +130,26 @@ var leakedReasoningCloseMarkers = []string{
 	"<｜DSML｜",
 }
 
+var leakedReasoningToolNamePatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)<(?:｜DSML｜|rfl:)?invoke\s+name=["']?([a-zA-Z0-9_-]{1,64})["']?`),
+	regexp.MustCompile(`(?i)\bassistant\s+to=(?:functions\.)?([a-zA-Z0-9_-]{1,64})\b`),
+	regexp.MustCompile(`(?i)<tool_call[^>]*>\s*\{\s*"name"\s*:\s*"([a-zA-Z0-9_-]{1,64})"`),
+}
+
+// extractLeakedReasoningToolName returns the intended tool name from a raw
+// reasoning string that leaked XML/DSML/Harmony/JSON tool-call markup, or "".
+func extractLeakedReasoningToolName(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	for _, re := range leakedReasoningToolNamePatterns {
+		if m := re.FindStringSubmatch(raw); len(m) >= 2 && m[1] != "" {
+			return m[1]
+		}
+	}
+	return ""
+}
+
 // stripLeakedReasoningToolMarkup removes raw DSML / XML tool-call payloads and
 // runaway closing-tag repetition loops (`</invoke>\n</parameter>...`) that some
 // OpenAI-compatible reasoning proxies leak into `reasoning_content`.
@@ -237,6 +258,7 @@ type openCodeReasoningGuard struct {
 	droppedPartIDs  map[string]bool
 	triggeredMsgs   map[string]bool
 	pendingRecovery bool
+	leakedTool      string
 }
 
 func (g *openCodeReasoningGuard) observeDelta(msgID, partID, delta string) (newlyTriggered bool, dropDelta bool) {
@@ -277,6 +299,9 @@ func (g *openCodeReasoningGuard) observeDelta(msgID, partID, delta string) (newl
 	}
 	if msgID != "" {
 		g.triggeredMsgs[msgID] = true
+	}
+	if tool := extractLeakedReasoningToolName(tail); tool != "" {
+		g.leakedTool = tool
 	}
 	g.pendingRecovery = true
 	return true, true
@@ -356,8 +381,17 @@ func (g *openCodeReasoningGuard) observePart(part MessagePart) (newlyTriggered b
 	if part.MessageID != "" {
 		g.triggeredMsgs[part.MessageID] = true
 	}
+	if tool := extractLeakedReasoningToolName(part.Text); tool != "" {
+		g.leakedTool = tool
+	}
 	g.pendingRecovery = true
 	return true, false
+}
+
+func (g *openCodeReasoningGuard) leakedToolName() string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.leakedTool
 }
 
 func (g *openCodeReasoningGuard) hasTriggered() bool {

@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -157,6 +158,65 @@ func isMutatingToolName(tool string) bool {
 	default:
 		return false
 	}
+}
+
+func toolInputInt(v interface{}) int {
+	switch n := v.(type) {
+	case float64:
+		return int(n)
+	case int:
+		return n
+	case int64:
+		return int(n)
+	case json.Number:
+		if i, err := n.Int64(); err == nil {
+			return int(i)
+		}
+	}
+	return 0
+}
+
+func extractToolLocationQualifier(input map[string]interface{}) string {
+	if len(input) == 0 {
+		return ""
+	}
+	sym := strings.TrimSpace(firstString(input["symbol"], input["Symbol"]))
+	if len([]rune(sym)) > 64 {
+		sym = string([]rune(sym)[:64])
+	}
+	startLine := toolInputInt(input["startLine"])
+	if startLine <= 0 {
+		startLine = toolInputInt(input["StartLine"])
+	}
+	endLine := toolInputInt(input["endLine"])
+	if endLine <= 0 {
+		endLine = toolInputInt(input["EndLine"])
+	}
+	if startLine <= 0 {
+		offset := toolInputInt(input["offset"])
+		limit := toolInputInt(input["limit"])
+		if offset > 0 {
+			startLine = offset
+			if limit > 0 {
+				endLine = offset + limit - 1
+			}
+		}
+	}
+	var parts []string
+	if sym != "" {
+		parts = append(parts, "symbol "+sym)
+	}
+	if startLine > 0 {
+		if endLine >= startLine {
+			parts = append(parts, fmt.Sprintf("L%d-%d", startLine, endLine))
+		} else {
+			parts = append(parts, fmt.Sprintf("L%d", startLine))
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
 }
 
 // stripVolatileMemoryHeader removes dynamic "Updated: <timestamp>" headers so
@@ -332,6 +392,7 @@ func buildEightDimSessionMarkdown(rec SessionRecord) string {
 		seenChanged     = make(map[string]bool)
 		filesInspected  []string
 		seenInspected   = make(map[string]bool)
+		fileQualifiers  = make(map[string]string)
 		errorsObserved  []string
 		verifications   []string
 		pendingTodos    []string
@@ -351,10 +412,13 @@ func buildEightDimSessionMarkdown(rec SessionRecord) string {
 		userConstraints = append(userConstraints, c)
 	}
 
-	addFile := func(raw string, mutated bool) {
+	addFile := func(raw string, mutated bool, qual string) {
 		p := strings.TrimSpace(raw)
 		if p == "" {
 			return
+		}
+		if qual != "" {
+			fileQualifiers[p] = qual
 		}
 		if mutated {
 			if !seenChanged[p] && len(filesChanged) < 24 {
@@ -397,9 +461,10 @@ func buildEightDimSessionMarkdown(rec SessionRecord) string {
 				}
 				toolCount++
 				mutated := isMutatingToolName(part.Tool)
+				qual := extractToolLocationQualifier(part.State.Input)
 				for _, key := range []string{"filePath", "path", "file", "TargetFile", "AbsolutePath"} {
 					if v, ok := part.State.Input[key].(string); ok {
-						addFile(v, mutated)
+						addFile(v, mutated, qual)
 					}
 				}
 				if cmd, ok := part.State.Input["command"].(string); ok && verificationCmdRe.MatchString(cmd) {
@@ -472,14 +537,22 @@ func buildEightDimSessionMarkdown(rec SessionRecord) string {
 	b.WriteString("## 3. Files and Code Sections\n")
 	totalFiles := 0
 	for _, f := range filesChanged {
-		b.WriteString("- `" + f + "` (modified)\n")
+		line := "- `" + f + "` (modified)"
+		if q := fileQualifiers[f]; q != "" {
+			line += " " + q
+		}
+		b.WriteString(line + "\n")
 		totalFiles++
 	}
 	for _, f := range filesInspected {
 		if seenChanged[f] || totalFiles >= 24 {
 			continue
 		}
-		b.WriteString("- `" + f + "`\n")
+		line := "- `" + f + "`"
+		if q := fileQualifiers[f]; q != "" {
+			line += " " + q
+		}
+		b.WriteString(line + "\n")
 		totalFiles++
 	}
 	if totalFiles == 0 {

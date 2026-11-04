@@ -26,6 +26,7 @@ func TestStartProjectPrewarmWarmsEveryProjectRoot(t *testing.T) {
 
 	var mu sync.Mutex
 	hits := map[string]int{}
+	warmed := map[string]int{}
 	engine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/session" {
 			w.WriteHeader(http.StatusNotFound)
@@ -42,6 +43,11 @@ func TestStartProjectPrewarmWarmsEveryProjectRoot(t *testing.T) {
 	svc := NewService(t.TempDir(), nil, nil, t.TempDir())
 	svc.ConfigureOpenCode(engine.URL, "pw")
 	svc.SetProjectResolver(projectRootsResolver{roots: []string{rootA, rootB}})
+	svc.SetDirectoryWarmer(func(dir string) {
+		mu.Lock()
+		warmed[dir]++
+		mu.Unlock()
+	})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -50,7 +56,7 @@ func TestStartProjectPrewarmWarmsEveryProjectRoot(t *testing.T) {
 	deadline := time.Now().Add(3 * time.Second)
 	for {
 		mu.Lock()
-		done := hits[rootA] > 0 && hits[rootB] > 0
+		done := hits[rootA] > 0 && hits[rootB] > 0 && warmed[rootA] > 0 && warmed[rootB] > 0
 		snapshot := map[string]int{}
 		for k, v := range hits {
 			snapshot[k] = v

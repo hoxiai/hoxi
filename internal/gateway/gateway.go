@@ -205,6 +205,11 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 		forge:        forgeSvc,
 	}
 	g.browser.SetSessionResolver(runnerSvc.ResolveBrowserSession)
+	if g.codeIndex != nil {
+		runnerSvc.SetDirectoryWarmer(func(dir string) {
+			_, _ = g.codeIndex.Status(dir)
+		})
+	}
 	if g.workApps != nil {
 		g.browser.SetProfileResolver(func(sessionID, _ string) string {
 			cur := strings.TrimSpace(sessionID)

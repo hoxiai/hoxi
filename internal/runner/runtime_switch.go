@@ -181,6 +181,8 @@ func summarizeHandoffToolPart(p MessagePart) string {
 		p.State.Input["file"],
 		p.State.Input["TargetFile"],
 		p.State.Input["AbsolutePath"],
+		p.State.Input["symbol"],
+		p.State.Input["Symbol"],
 		p.State.Input["command"],
 		p.State.Input["CommandLine"],
 		p.State.Input["pattern"],
@@ -190,6 +192,9 @@ func summarizeHandoffToolPart(p MessagePart) string {
 	summary := fmt.Sprintf("Tool %s [%s]", tool, status)
 	if target != "" {
 		summary += ": " + singleLineExcerpt(target, 160)
+		if qual := extractToolLocationQualifier(p.State.Input); qual != "" && !strings.Contains(target, qual) {
+			summary += " " + qual
+		}
 	}
 	if status == "error" || strings.TrimSpace(p.State.Error) != "" {
 		errTxt := firstNonEmptyStr(p.State.Error, p.State.Output)
@@ -220,6 +225,15 @@ func runtimeContext(rec SessionRecord) string {
 	}
 
 	var header strings.Builder
+	if rec.Runtime == "opencode" && len(turns) > 0 {
+		handoffRec := rec
+		handoffRec.Turns = turns
+		if sessClean := dedupHandoffMemorySection6(stripVolatileMemoryHeader(buildEightDimSessionMarkdown(handoffRec))); sessClean != "" {
+			header.WriteString("<session_handoff_memory>\n")
+			header.WriteString(sessClean)
+			header.WriteString("\n</session_handoff_memory>\n\n")
+		}
+	}
 	if strings.TrimSpace(rec.WorktreePath) != "" {
 		header.WriteString("<system-reminder>\n")
 		header.WriteString("Current working directory: ")

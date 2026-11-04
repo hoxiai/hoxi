@@ -85,7 +85,11 @@ func (s *Service) provisionSessionDirectory(rec *SessionRecord) error {
 		if err := validateSessionDirectory(*rec); err != nil {
 			return err
 		}
-		return s.worktrees.ForDirectory(rec.ProjectDir).UseLocalDirectory(rec.ID)
+		if err := s.worktrees.ForDirectory(rec.ProjectDir).UseLocalDirectory(rec.ID); err != nil {
+			return err
+		}
+		s.warmDirectoryAsync(rec.WorktreePath)
+		return nil
 	}
 	meta, err := s.worktrees.ForDirectory(rec.ProjectDir).CreateOnBranch(rec.ID, rec.RetainedBranch)
 	if err != nil {
@@ -99,6 +103,7 @@ func (s *Service) provisionSessionDirectory(rec *SessionRecord) error {
 	}
 	rec.WorktreePath, rec.Branch, rec.BaseCommit = meta.Directory, meta.Branch, meta.BaseCommit
 	rec.RetainedBranch = ""
+	s.warmDirectoryAsync(rec.WorktreePath)
 	return nil
 }
 

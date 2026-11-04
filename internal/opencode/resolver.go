@@ -41,11 +41,15 @@ func EnrichSystemPath() {
 	}
 
 	var extra []string
+	binDir := hoxipaths.BinDir()
 	if exe, err := os.Executable(); err == nil && exe != "" {
 		exeDir := filepath.Dir(exe)
 		extra = append(extra, exeDir, filepath.Clean(filepath.Join(exeDir, "..", "Resources")))
+		if runtime.GOOS != "windows" && binDir != "" && strings.EqualFold(strings.TrimSuffix(filepath.Base(exe), ".exe"), "hoxi") {
+			_, _ = EnsureManagedHoxiSymlink(exe, binDir)
+		}
 	}
-	if binDir := hoxipaths.BinDir(); binDir != "" {
+	if binDir != "" {
 		extra = append(extra, binDir)
 	}
 	extra = append(extra, agentcli.CommonUserBinDirs()...)
@@ -84,6 +88,38 @@ func EnrichSystemPath() {
 	}
 	combined = append(combined, parts...)
 	_ = os.Setenv("PATH", strings.Join(combined, string(os.PathListSeparator)))
+}
+
+// EnsureManagedHoxiSymlink atomically maintains `<binDir>/hoxi -> <exePath>` so
+// child CLI runtimes (Claude Code, Antigravity, Gemini CLI, Qoder, CodeBuddy)
+// can invoke lowercase `hoxi code-index ...` even when Hoxi runs from
+// `Hoxi.app/Contents/MacOS/Hoxi` without a prior manual `hoxi install-cli`.
+func EnsureManagedHoxiSymlink(exePath, binDir string) (string, error) {
+	exePath = strings.TrimSpace(exePath)
+	binDir = strings.TrimSpace(binDir)
+	if exePath == "" || binDir == "" {
+		return "", errors.New("executable path and bin directory are required")
+	}
+	if resolved, err := filepath.EvalSymlinks(exePath); err == nil && resolved != "" {
+		exePath = resolved
+	}
+	dest := filepath.Join(binDir, "hoxi")
+	if cur, err := os.Readlink(dest); err == nil && cur == exePath {
+		return dest, nil
+	}
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		return "", err
+	}
+	tmp := filepath.Join(binDir, fmt.Sprintf(".hoxi-cli.%d.tmp", os.Getpid()))
+	_ = os.Remove(tmp)
+	if err := os.Symlink(exePath, tmp); err != nil {
+		return "", err
+	}
+	if err := os.Rename(tmp, dest); err != nil {
+		_ = os.Remove(tmp)
+		return "", err
+	}
+	return dest, nil
 }
 
 func isExecutableFile(path string) bool {

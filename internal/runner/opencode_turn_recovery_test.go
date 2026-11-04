@@ -94,6 +94,17 @@ func TestIsTransitionalActionPreambleAndShouldRecoverOpenCodeTurn(t *testing.T) 
 	if !leaked || cleaned != "No reasoning available." {
 		t.Fatalf("expected <rfl:parameter> markup to be stripped, got leaked=%v cleaned=%q", leaked, cleaned)
 	}
+	if gotTool := extractLeakedToolFromTurns(leakedWithText, ap); gotTool != "bash" {
+		t.Fatalf("expected extractLeakedToolFromTurns to identify leaked tool 'bash', got %q", gotTool)
+	}
+	recPayload := buildOpenCodeReasoningRecoveryPayload(SessionRecord{ProviderID: "openai"}, "build", "gpt-5", "", "", 1, recoveryKindReasoning, "bash")
+	recParts, _ := recPayload["parts"].([]map[string]interface{})
+	if len(recParts) != 1 || !json.Valid([]byte(`"ok"`)) {
+		t.Fatalf("unexpected recovery parts: %+v", recParts)
+	}
+	if txt, _ := recParts[0]["text"].(string); txt == openCodeReasoningRecoveryPrompt {
+		t.Fatalf("expected recovery prompt to include specific leaked tool name 'bash', got %q", txt)
+	}
 
 	// 3. Normal final summary after tool calls must NOT trigger recovery.
 	completedTurn := []MessageTurn{

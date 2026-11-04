@@ -21,6 +21,38 @@ const (
 	projectPrewarmTimeout = 5 * time.Second
 )
 
+// SetDirectoryWarmer registers an optional hook (such as codeindex.Service.Status)
+// that warms workspace indexes in the background when project roots or new
+// session worktrees are provisioned.
+func (s *Service) SetDirectoryWarmer(fn func(directory string)) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.directoryWarmer = fn
+	s.mu.Unlock()
+}
+
+func (s *Service) warmDirectoryAsync(directory string) {
+	dir := strings.TrimSpace(directory)
+	if s == nil || dir == "" {
+		return
+	}
+	s.mu.Lock()
+	warmer := s.directoryWarmer
+	ctx := s.prewarmCtx
+	s.mu.Unlock()
+	if warmer == nil || ctx == nil || ctx.Err() != nil {
+		return
+	}
+	go func() {
+		if ctx.Err() != nil {
+			return
+		}
+		warmer(dir)
+	}()
+}
+
 // StartProjectPrewarm keeps the OpenCode daemon's per-directory caches warm.
 //
 // The daemon lazily boots an instance per directory (about half a second even
@@ -36,6 +68,9 @@ func (s *Service) StartProjectPrewarm(ctx context.Context) {
 	if ctx == nil {
 		return
 	}
+	s.mu.Lock()
+	s.prewarmCtx = ctx
+	s.mu.Unlock()
 	go s.prewarmLoop(ctx)
 }
 
@@ -62,7 +97,10 @@ func (s *Service) prewarmProjectRoots(ctx context.Context) bool {
 	if ctx.Err() != nil {
 		return true
 	}
-	if s.openCode == nil {
+	s.mu.Lock()
+	warmer := s.directoryWarmer
+	s.mu.Unlock()
+	if s.openCode == nil && warmer == nil {
 		return true
 	}
 	enumerator, ok := s.projectResolver.(projectEnumerator)
@@ -78,12 +116,17 @@ func (s *Service) prewarmProjectRoots(ctx context.Context) bool {
 		if info, err := os.Stat(dir); err != nil || !info.IsDir() {
 			continue
 		}
-		attempted = true
-		warmCtx, cancel := context.WithTimeout(ctx, projectPrewarmTimeout)
-		_, _, err := s.openCodeRaw(warmCtx, http.MethodGet, "/session", directoryQuery(dir, url.Values{"limit": {"200"}}), nil)
-		cancel()
-		if err == nil {
-			answered = true
+		if warmer != nil && ctx.Err() == nil {
+			warmer(dir)
+		}
+		if s.openCode != nil {
+			attempted = true
+			warmCtx, cancel := context.WithTimeout(ctx, projectPrewarmTimeout)
+			_, _, err := s.openCodeRaw(warmCtx, http.MethodGet, "/session", directoryQuery(dir, url.Values{"limit": {"200"}}), nil)
+			cancel()
+			if err == nil {
+				answered = true
+			}
 		}
 		if ctx.Err() != nil {
 			break
