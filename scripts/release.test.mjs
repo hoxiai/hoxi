@@ -160,9 +160,19 @@ test("opencode.lock pins every shipped platform and release workflows consume it
   const nsisProject = fs.readFileSync(path.join(scripts, "../build/windows/installer/project.nsi"), "utf8");
   assert.match(nsisProject, /!define WAILS_INSTALL_SCOPE "user"/);
   assert.match(nsisProject, /!define REQUEST_EXECUTION_LEVEL "user"/);
+  assert.match(nsisProject, /!include "MUI2\.nsh"/);
+  assert.match(nsisProject, /!include "nsDialogs\.nsh"/);
+  assert.match(nsisProject, /Page custom HoxiQuickInstallPageCreate HoxiQuickInstallPageLeave/);
+  assert.match(nsisProject, /Page custom HoxiFinishPageCreate HoxiFinishPageLeave/);
+  assert.match(nsisProject, /ShowInstDetails nevershow/);
   assert.match(nsisProject, /File "\/oname=opencode\.exe"/);
   assert.match(nsisProject, /!insertmacro wails\.webview2runtime/);
   assert.match(nsisProject, /!insertmacro wails\.associateCustomProtocols/);
+  for (const bmp of ["banner.bmp", "header.bmp", "wizard.bmp"]) {
+    const bmpPath = path.join(scripts, "../build/windows/installer", bmp);
+    assert.equal(fs.existsSync(bmpPath), true, `Missing Windows installer asset: ${bmp}`);
+    assert.equal(fs.readFileSync(bmpPath).subarray(0, 2).toString("ascii"), "BM");
+  }
   // Killing Hoxi.exe alone orphans its opencode.exe child, which keeps the file
   // locked: install and uninstall must both stop sidecars running from $INSTDIR,
   // matched by full path rather than by process name.
