@@ -710,9 +710,11 @@ export function AssistantTurnItem(props: {
       !merged().effectiveParts.some((p) => p.type === "tool")
   );
 
+  // An empty historical cycle end can own the whole task summary. Keep it
+  // mounted while a new task runs so its merge actions can finish their exit.
   return (
     <Show
-      when={!merged().isVisuallyEmpty || (merged().isCycleEnd && !props.isSessionBusy) || Boolean(props.turn.info.error)}
+      when={!merged().isVisuallyEmpty || (merged().isCycleEnd && (!props.isSessionBusy || !isLatestExchange())) || Boolean(props.turn.info.error)}
       fallback={<div data-merged-turn-id={props.turn.info.id} class="h-0 overflow-hidden pointer-events-none" />}
     >
       <div

@@ -402,6 +402,7 @@ body {
 
 /* Kilo-style Translucent Glass Composer */
 .chat-composer-glass {
+  container-type: inline-size;
   background-color: var(--bg-composer);
   -webkit-backdrop-filter: blur(16px) saturate(1.14);
   backdrop-filter: blur(16px) saturate(1.14);
@@ -417,6 +418,18 @@ body {
   box-shadow:
     var(--composer-shadow),
     0 0 0 3px color-mix(in srgb, var(--accent-primary) 10%, transparent);
+}
+
+/* Keep narrow toolbars on two rows when draft-only send actions disappear. */
+@container (min-width: 56rem) {
+  .composer-toolbar {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .composer-toolbar > :last-child {
+    align-self: auto;
+  }
 }
 
 /* Frosted Glass Pill for Session Row Hover Actions */

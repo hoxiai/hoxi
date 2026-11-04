@@ -522,7 +522,7 @@ export function ComposerBottomToolbar(props: {
   onStop: () => void;
 }) {
   return (
-    <div class="mt-2 flex items-center justify-between gap-2 flex-wrap">
+    <div class="composer-toolbar mt-2 flex flex-col items-stretch justify-between gap-2">
       <div class="flex items-center gap-1 flex-wrap">
         <ComposerToolsPopover
           workspaceReady={props.workspaceReady}
@@ -572,7 +572,7 @@ export function ComposerBottomToolbar(props: {
         </Show>
       </div>
 
-      <div class="flex items-center gap-1.5">
+      <div class="flex items-center gap-1.5 self-end">
         <ContextProgressPill />
         <ApprovalModePill runtime={props.runtime} sandboxMode={props.sandboxMode} />
 
