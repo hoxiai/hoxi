@@ -90,6 +90,11 @@ describe("8-dim session memory", () => {
         diff: async () => { fetchCalls++; return []; },
       },
     };
+    const env = (globalThis as any).process.env as Record<string, string | undefined>;
+    const prevGw = env.HOXI_GATEWAY_URL;
+    const prevTok = env.HOXI_BROWSER_TOKEN;
+    delete env.HOXI_GATEWAY_URL;
+    delete env.HOXI_BROWSER_TOKEN;
     try {
       // Pre-migration memory lives under .opencode/memory and must still be read.
       const legacyMemoryDir = path.join(tmpDir, ".opencode", "memory");
@@ -145,30 +150,24 @@ describe("8-dim session memory", () => {
 
       // When running inside Hoxi's supervised OpenCode daemon, Go runner already
       // writes ses_hoxi_*.md, so repo-local hoxi-memory.js must skip duplicate writes.
-      const env = (globalThis as any).process.env as Record<string, string | undefined>;
-      const prevGw = env.HOXI_GATEWAY_URL;
-      const prevTok = env.HOXI_BROWSER_TOKEN;
+      env.HOXI_GATEWAY_URL = "http://127.0.0.1:5410";
+      env.HOXI_BROWSER_TOKEN = "secret";
+      await plugin.event({
+        event: { type: "session.idle", properties: { sessionID: "ses_managed_oc" } },
+      });
+      assertEqual(fetchCalls, 0);
+      let duplicateExists = true;
       try {
-        env.HOXI_GATEWAY_URL = "http://127.0.0.1:5410";
-        env.HOXI_BROWSER_TOKEN = "secret";
-        await plugin.event({
-          event: { type: "session.idle", properties: { sessionID: "ses_managed_oc" } },
-        });
-        assertEqual(fetchCalls, 0);
-        let duplicateExists = true;
-        try {
-          await fs.access(path.join(tmpDir, ".hoxi", "memory", "sessions", "ses_managed_oc.md"));
-        } catch {
-          duplicateExists = false;
-        }
-        assertEqual(duplicateExists, false);
-      } finally {
-        if (prevGw === undefined) delete env.HOXI_GATEWAY_URL;
-        else env.HOXI_GATEWAY_URL = prevGw;
-        if (prevTok === undefined) delete env.HOXI_BROWSER_TOKEN;
-        else env.HOXI_BROWSER_TOKEN = prevTok;
+        await fs.access(path.join(tmpDir, ".hoxi", "memory", "sessions", "ses_managed_oc.md"));
+      } catch {
+        duplicateExists = false;
       }
+      assertEqual(duplicateExists, false);
     } finally {
+      if (prevGw === undefined) delete env.HOXI_GATEWAY_URL;
+      else env.HOXI_GATEWAY_URL = prevGw;
+      if (prevTok === undefined) delete env.HOXI_BROWSER_TOKEN;
+      else env.HOXI_BROWSER_TOKEN = prevTok;
       await fs.rm(tmpDir, { recursive: true, force: true });
     }
   });

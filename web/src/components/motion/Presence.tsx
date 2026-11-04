@@ -7,7 +7,7 @@ const DEFERRED_OPEN_FALLBACK_MS = 50;
 
 export function createPresence(
   when: Accessor<boolean>,
-  exitMs = DEFAULT_EXIT_MS,
+  exitMs: number | Accessor<number | undefined> = DEFAULT_EXIT_MS,
 ): {
   mounted: Accessor<boolean>;
   state: Accessor<PresenceState>;
@@ -29,6 +29,11 @@ export function createPresence(
     }
   };
 
+  const resolveExitMs = () => {
+    const raw = typeof exitMs === "function" ? exitMs() : exitMs;
+    return raw ?? DEFAULT_EXIT_MS;
+  };
+
   createEffect(() => {
     const open = when();
     clear();
@@ -46,12 +51,18 @@ export function createPresence(
     }
 
     if (untrack(() => mounted())) {
+      const duration = resolveExitMs();
+      if (duration <= 0) {
+        setMounted(false);
+        setState("closed");
+        return;
+      }
       setState("exit");
       exitTimer = setTimeout(() => {
         exitTimer = undefined;
         setMounted(false);
         setState("closed");
-      }, exitMs);
+      }, duration);
     }
   });
 
@@ -117,7 +128,7 @@ export function Presence(props: {
   exitMs?: number;
   children: (state: Accessor<PresenceState>) => JSX.Element;
 }) {
-  const presence = createPresence(() => props.when, props.exitMs);
+  const presence = createPresence(() => props.when, () => props.exitMs);
   return (
     <Show when={presence.mounted()}>
       {(_mounted) => props.children(presence.state)}

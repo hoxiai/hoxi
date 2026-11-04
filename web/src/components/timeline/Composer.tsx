@@ -488,6 +488,7 @@ export default function Composer() {
     const draftSessionID = sessionID();
     const draftDirectory = (draftSessionID ? sessionDirectory(draftSessionID) : "") || workspace.rootDir;
     const prevText = text();
+    const prevPastes = pasteCollapse.pastes();
     setSpawningSubtask(true);
     setText("");
     pasteCollapse.clearPastes();
@@ -498,8 +499,12 @@ export default function Composer() {
       const payload = await resolveContextMentionsForSend(raw, draftSessionID);
       await spawnBackgroundSubtask(payload, draftSessionID, draftDirectory);
     } catch (err) {
-      if (!text()) setText(prevText);
-      imgAttach.setNotice(err instanceof Error ? err.message : String(err));
+      draftSync.restoreFailedDraft(
+        { text: prevText, images: [], pastes: prevPastes },
+        draftSessionID,
+        draftDirectory,
+        err instanceof Error ? err.message : String(err)
+      );
     } finally {
       setSpawningSubtask(false);
     }
