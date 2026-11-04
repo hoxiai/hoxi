@@ -2,6 +2,11 @@
 
 All notable releases of **Hoxi Desktop** are documented below. Full per-version release notes are archived under [`docs/release-notes/`](docs/release-notes/) and consumed directly by `.github/workflows/release.yml` and `scripts/ai-release.sh`.
 
+## [v0.6.12](docs/release-notes/v0.6.12.md) — 2026-11-04
+
+- **Hotfix**: Fix the blank window on launch after upgrading to v0.6.11 — the Work sidebar read `isLoaded` before it was initialized (TDZ) whenever a Work workspace existed; the release build had bundled a stale `hoxi-work` revision without the fix.
+- **Tests**: Pin `core.autocrlf` off in the worktree merge fixture so it passes on Windows runners.
+
 ## [v0.6.11](docs/release-notes/v0.6.11.md) — 2026-11-04
 
 - **Timeline**: Keep only the active execution group expanded and auto-collapse earlier completed groups; add entrance transitions for streamed steps and thinking indicators; de-noise Level-2 tool and thought rows; fold brief pre-tool narration into the activity group; compact non-document markdown; fix blank screens when scrolling up in long sessions by skipping zero-height folded turns and prefetching history.
