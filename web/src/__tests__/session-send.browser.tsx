@@ -187,6 +187,37 @@ async function testQueuedDispatchStaysVisible() {
   } finally { dispose(); host.remove(); }
 }
 
+async function testBusyQueueSendKeepsComposerFocus() {
+  const { sid } = fixture();
+  setWorkspace("statusBySession", sid, { type: "busy" });
+  const c = composer();
+  try {
+    c.type("A short follow-up");
+    const glass = c.host.querySelector<HTMLElement>(".chat-composer-glass")!;
+    const button = Array.from(c.host.querySelectorAll("button"))
+      .find((item) => item.title === t("timeline.queueSend"))!;
+    assertTrue(Boolean(button), "busy composer should offer queue send");
+    button.focus();
+    assertTrue(glass.matches(":focus-within"), "send button starts inside the focused composer");
+    button.click();
+    await frame();
+    assertEqual(workspace.queuedPromptsBySession[sid]?.length, 1);
+    assertTrue(document.activeElement === c.field(), "sending must return focus to the input before removing its button");
+    assertTrue(glass.matches(":focus-within"), "queue send must retain the composer's focus border and shadow");
+    const outside = document.createElement("button");
+    document.body.append(outside);
+    try {
+      outside.focus();
+      c.type("Follow-up from an external action");
+      Array.from(c.host.querySelectorAll("button"))
+        .find((item) => item.title === t("timeline.queueSend"))!.click();
+      await frame();
+      assertEqual(workspace.queuedPromptsBySession[sid]?.length, 2);
+      assertTrue(document.activeElement === outside, "external actions must not steal focus into the composer");
+    } finally { outside.remove(); }
+  } finally { c.cleanup(); }
+}
+
 export async function runBrowserTest(): Promise<string[]> {
   window.fetch = async () => new Response("{}", { headers: { "Content-Type": "application/json" } });
   const results: string[] = [];
@@ -197,6 +228,7 @@ export async function runBrowserTest(): Promise<string[]> {
     ["context failure prevents dispatch and immediate retry succeeds", testReferenceFailure],
     ["failed draft restoration preserves attachments and pasted blocks without duplicates", testDraftAttachments],
     ["a dispatched queued prompt replaces its bubble without blinking", testQueuedDispatchStaysVisible],
+    ["queue send retains composer focus and its focus styling", testBusyQueueSendKeepsComposerFocus],
   ] as const) { await run(); results.push(name); }
   return results;
 }

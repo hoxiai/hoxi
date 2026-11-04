@@ -361,6 +361,11 @@ export default function Composer() {
     if (text().trim()) {
       promptHistory.recordPrompt(text().trim());
     }
+    // Busy queue-send buttons disappear when sending starts. Move their focus
+    // to the persistent input first so the glass never loses :focus-within.
+    if (textareaRef?.closest(".chat-composer-glass")?.contains(document.activeElement)) {
+      textareaRef.focus({ preventScroll: true });
+    }
     setSending(true);
     ac.reset();
     const stashedBeforeQueuedEdit = queuedEditBridge.popStashedBeforeSend(draftSessionID);
