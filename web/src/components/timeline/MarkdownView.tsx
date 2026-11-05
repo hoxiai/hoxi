@@ -172,14 +172,14 @@ export default function MarkdownView(props: {
   return (
     <StreamRevealContext.Provider value={reveal}>
       <div
-        class={`flex flex-col text-[var(--text-primary)] selectable-text ${
+        class={`flex flex-col selectable-text ${
           props.density === "compact"
-            ? "gap-y-2 leading-[1.62]"
+            ? "gap-y-1.5 text-[13px] leading-[1.58] text-[var(--text-secondary)]"
             : props.density === "document"
-              ? "gap-y-4 leading-[1.75]"
-              : "gap-y-2.5 leading-[1.66]"
+              ? "gap-y-4 leading-[1.75] text-[var(--text-primary)]"
+              : "gap-y-2.5 leading-[1.66] text-[var(--text-primary)]"
         }`}
-        style={{ "font-size": "var(--app-chat-text-size)" }}
+        style={props.density === "compact" ? undefined : { "font-size": "var(--app-chat-text-size)" }}
       >
         <MarkdownBlocks blocks={blocks()} density={props.density ?? "chat"} />
       </div>

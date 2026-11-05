@@ -142,7 +142,7 @@ function extractRawField(raw: string, key: string): string | undefined {
 
 const RAW_KEYS = [
   "filePath", "file_path", "path", "file", "TargetFile", "targetFile", "target_file", "command", "cmd",
-  "description", "pattern", "include", "url", "subagent_type", "patchText", "name", "action", "key", "text",
+  "description", "toolSummary", "toolAction", "pattern", "include", "url", "subagent_type", "patchText", "name", "action", "key", "text",
 ] as const;
 
 export function resolveToolInput(part: ToolPart): Record<string, any> {
@@ -239,13 +239,28 @@ export function hasDistinctShellDescription(description: string, command: string
 export function extractDescription(part: ToolPart): string {
   const input = resolveToolInput(part);
   if (isShellTool(part.tool)) {
-    for (const value of [input.description, meaningfulToolTitle(part.state.title, part.tool)]) {
+    const cmd = extractCommand(part);
+    const candidates = [
+      input.description,
+      input.toolSummary,
+      input.toolAction,
+      meaningfulToolTitle(part.state.title, part.tool),
+    ];
+    for (const value of candidates) {
+      if (typeof value === "string") {
+        const description = cleanShellDisplayText(value).trim();
+        if (description && hasDistinctShellDescription(description, cmd)) {
+          return description;
+        }
+      }
+    }
+    for (const value of candidates) {
       if (typeof value === "string") {
         const description = cleanShellDisplayText(value).trim();
         if (description) return description;
       }
     }
-    return extractCommand(part).split(/\r?\n/, 1)[0].trim();
+    return cmd.split(/\r?\n/, 1)[0].trim();
   }
   if (isQuestionTool(part.tool)) return questionSummaryText(part, findQuestionReply(part.callID));
   if (isComputerTool(part.tool)) {
@@ -282,8 +297,10 @@ export function extractDescription(part: ToolPart): string {
         : "");
     if (skillName) return skillName;
   }
-  if (typeof input.description === "string" && input.description.trim()) {
-    return input.description.trim();
+  for (const cand of [input.description, input.toolSummary, input.toolAction]) {
+    if (typeof cand === "string" && cand.trim()) {
+      return cand.trim();
+    }
   }
   if (typeof input.pattern === "string" && input.pattern.trim()) {
     const dir = typeof input.path === "string" && input.path.trim() ? getFilename(input.path) : "";

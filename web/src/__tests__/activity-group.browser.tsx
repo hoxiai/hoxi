@@ -504,6 +504,13 @@ async function testAutoCollapseOnlyAfterScrollingOffscreen() {
       text: "Internal monologue between tools",
       time: { start: baseNow + 15, end: baseNow + 18 },
     },
+    {
+      type: "text",
+      id: `prt_transitional_${sid}_1`,
+      sessionID: sid,
+      messageID: `msg_${sid}`,
+      text: "Let me inspect the theme decor service next:",
+    },
     makeShell(
       2,
       "cd /Users/hugh/code/hoxi/shopark && sed -n '1,120p' go-fast/app/service/theme_decor.go"
@@ -553,10 +560,15 @@ async function testAutoCollapseOnlyAfterScrollingOffscreen() {
       Boolean(scroller.textContent?.includes("root@8.135.58.57 · sudo -u gopanel env")),
       "ssh step is de-noised and directly visible"
     );
+    assertTrue(
+      Boolean(scroller.textContent?.includes("Internal monologue before ssh")) &&
+        Boolean(scroller.textContent?.includes("Let me inspect the theme decor service next:")),
+      "reasoning ThoughtBox and transitional text explanation remain visible in the expanded activity group"
+    );
     assertEqual(
       scroller.querySelectorAll("[data-part-id]").length,
-      4,
-      "all 4 steps render directly with live momentum without nested sub-folding"
+      7,
+      "all 4 tool steps, 2 reasoning thoughts, and 1 transitional text render in chronological order while hiding todowrite"
     );
 
     // Finish execution while still visible on screen: must NOT collapse or jump.

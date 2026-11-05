@@ -126,6 +126,7 @@ export function ContextActivityGroupView(props: {
           revealKey={revealKey}
           streaming={props.isLiveTail}
           defaultOpenReasoning={defaultOpenReasoning}
+          inActivityGroup={true}
         />
       )}
     />
@@ -138,6 +139,7 @@ export function PartView(props: {
   revealKey?: string;
   streaming?: boolean;
   defaultOpenReasoning?: boolean;
+  inActivityGroup?: boolean;
 }) {
   const mayHaveInlineThinking = createMemo(() => {
     const raw = props.part;
@@ -180,13 +182,14 @@ export function PartView(props: {
               <ToolCard part={part as Extract<MessagePart, { type: "tool" }>} />
             </Match>
             <Match when={part.type === "text"}>
-              <div>
+              <div class={props.inActivityGroup ? "py-1 text-[13px] text-[var(--text-secondary)]" : undefined}>
                 <MarkdownView
                   content={
                     mayHaveInlineThinking()
                       ? extractVisibleAssistantText((part as Extract<MessagePart, { type: "text" }>).text)
                       : (part as Extract<MessagePart, { type: "text" }>).text
                   }
+                  density={props.inActivityGroup ? "compact" : "chat"}
                   streaming={Boolean(props.streaming) && partIdx() === expanded().length - 1}
                 />
               </div>

@@ -136,6 +136,17 @@ describe("shell tool display", () => {
       hasDistinctShellDescription(extractDescription(withDesc), extractCommand(withDesc)),
       true,
     );
+    const withToolSummary = shellPart({
+      status: "running",
+      input: { command: "git log -n 20 --oneline", toolSummary: "Check recent git commits" },
+      title: "git log -n 20 --oneline",
+      time: { start: 1 },
+    });
+    assertEqual(extractDescription(withToolSummary), "Check recent git commits");
+    assertEqual(
+      hasDistinctShellDescription(extractDescription(withToolSummary), extractCommand(withToolSummary)),
+      true,
+    );
   });
 });
 

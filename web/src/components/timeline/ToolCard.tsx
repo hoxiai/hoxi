@@ -293,6 +293,13 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
                               active={isRunning()}
                             />
                           </span>
+                          <Show when={hasCustomShellDesc() && (shellIntent()?.summary || shellCmd())}>
+                            <code class="hidden sm:inline-block truncate max-w-[380px] font-mono text-[12px] text-[var(--text-faint)]">
+                              {shellIntent()?.summary && shellIntent()?.kind !== "command"
+                                ? shellIntent()!.summary
+                                : `$ ${shellIntent()?.summary || shellCmd().split(/\r?\n/, 1)[0].trim()}`}
+                            </code>
+                          </Show>
                         </div>
                       }
                     >

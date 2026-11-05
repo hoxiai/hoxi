@@ -34,6 +34,7 @@ import {
   resolveActiveStepDisplay,
   type StepDisplay,
 } from "./context-activity-summary";
+import { liveReasoningTicker } from "./ThoughtBox";
 
 import {
   isTodoToolPart,
@@ -138,14 +139,11 @@ export default function ContextActivityGroupView(props: {
   const displayParts = createMemo(() => {
     const raw = props.parts;
     if (props.revealKey || raw.length === 0) return raw;
-    const hideReasoning =
-      stats().toolCount > 0 &&
-      appSettings.reasoningDisplay === "auto-collapse" &&
-      !props.defaultOpenReasoning;
     const filtered = raw.filter((part) => {
       if (isTodoToolPart(part)) return false;
-      if (part.type === "text" && stats().toolCount > 0) return false;
-      if (hideReasoning && part.type === "reasoning") return false;
+      if (part.type === "reasoning" && !part.text?.trim() && part.time?.end != null) {
+        return false;
+      }
       return true;
     });
     return filtered.length > 0 ? filtered : raw;
@@ -264,17 +262,9 @@ export default function ContextActivityGroupView(props: {
   const renderStepItem = (part: MessagePart) => {
     syncSeenGroupSteps();
     const id = part?.id || "";
-    const isFirstToolReplacingInitialStep =
-      part.type === "tool" &&
-      stats().toolCount <= 1 &&
-      props.parts.length >= 2 &&
-      props.parts[0]?.type !== "tool";
-    const isAppendedLive = Boolean(
-      id && !seenStepIDs.has(id) && isRunning() && !isFirstToolReplacingInitialStep
-    );
+    const isAppendedLive = Boolean(id && !seenStepIDs.has(id) && isRunning());
     const isInitialLiveSingle = Boolean(
-      (!isAppendedLive && props.isLiveTail && props.parts.length === 1) ||
-        isFirstToolReplacingInitialStep
+      !isAppendedLive && props.isLiveTail && displayParts().length === 1
     );
     if (id) seenStepIDs.add(id);
 
@@ -464,9 +454,19 @@ export default function ContextActivityGroupView(props: {
                       active={!stepSummary().hasRunningPart && !hasPendingApproval()}
                     />
                     <Show when={awaitingNextStep()}>
-                      <span class="inline-flex items-center gap-1.5 text-[var(--text-muted)] font-normal hoxi-step-enter">
-                        <span class="text-[var(--text-faint)]">·</span>
-                        <TextShimmer text={tI18n("timeline.thinking")} active={true} />
+                      <span class="inline-flex items-center gap-1.5 text-[var(--text-muted)] font-normal min-w-0 truncate max-w-[420px] hoxi-step-enter">
+                        <span class="text-[var(--text-faint)] shrink-0">·</span>
+                        <TextShimmer
+                          text={
+                            (stepSummary().activeReasoning &&
+                              liveReasoningTicker(
+                                stepSummary().activeReasoning!.text ?? "",
+                                true
+                              )) ||
+                            tI18n("timeline.thinking")
+                          }
+                          active={true}
+                        />
                       </span>
                     </Show>
                   </span>
