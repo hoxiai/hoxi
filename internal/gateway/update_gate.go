@@ -154,7 +154,7 @@ func (g *Gateway) openCodeSessionStatuses(ctx context.Context, dir string) (map[
 	return statuses, true
 }
 
-var updateStatusTimeout = 2 * time.Second
+var updateStatusTimeout = 10 * time.Second
 
 // BeginUpdate closes mutation admission before consulting authoritative runtime
 // state. Repeated calls revalidate, preserving an already-held drain on failure.

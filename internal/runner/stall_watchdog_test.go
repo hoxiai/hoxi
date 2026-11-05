@@ -5,6 +5,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/statusbar"
 )
 
 // shortenTurnGraces lowers the drain/abort grace periods once for the whole
@@ -19,7 +21,7 @@ func newStallTestService(t *testing.T) *Service {
 		orphanDrainGrace = 120 * time.Millisecond
 		abortInterruptGrace = 120 * time.Millisecond
 	})
-	svc := NewService(t.TempDir(), nil, nil, filepath.Join(t.TempDir(), "sessions.json"))
+	svc := NewService(t.TempDir(), nil, statusbar.NewTracker(), filepath.Join(t.TempDir(), "sessions.json"))
 	svc.stall = stallPolicy{warnAfter: 5 * time.Minute, abortAfter: 30 * time.Minute}.normalized()
 	return svc
 }
@@ -166,5 +168,14 @@ func TestOpenCodeSubagentActivityKeepsParentAlive(t *testing.T) {
 	svc.relayOpenCodeEvent(rec, []byte(other))
 	if idle := now.Sub(time.UnixMilli(ap.stall.lastActivity.Load())); idle < 30*time.Minute {
 		t.Fatal("unrelated session activity refreshed the turn")
+	}
+
+	// Releasing the parent turn must clear busy/pending status for tracked OpenCode children too.
+	svc.status.SetSessionBusy("ses_hoxi_parent", true)
+	svc.status.SetSessionBusy("ses_oc_child", true)
+	svc.status.SetPendingApproval("per_child", "ses_oc_grand", true)
+	svc.releaseActiveProcess("ses_hoxi_parent", ap)
+	if snap := svc.status.Snapshot(); snap.Running != 0 || snap.PendingApprovals != 0 {
+		t.Fatalf("releaseActiveProcess left stale child status: %+v", snap)
 	}
 }

@@ -14,18 +14,80 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
+
+	"golang.org/x/sys/windows"
 
 	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 var (
-	winNativeReady atomic.Bool
-	winNativeMu    sync.Mutex
-	winCanInstall  func(force bool) bool
-	winRelease     func()
-	winInstalling  bool
-	winExecutable  string
+	winNativeReady       atomic.Bool
+	winNativeMu          sync.Mutex
+	winCanInstall        func(force bool) bool
+	winRelease           func()
+	winInstalling        bool
+	winExecutable        string
+	winConfirmBusyUpdate = confirmWindowsBusyUpdate
+
+	user32DLL                = windows.NewLazySystemDLL("user32.dll")
+	procMessageBoxW          = user32DLL.NewProc("MessageBoxW")
+	kernel32DLL              = windows.NewLazySystemDLL("kernel32.dll")
+	procGetUserDefaultUILang = kernel32DLL.NewProc("GetUserDefaultUILanguage")
 )
+
+const (
+	mbYesNo         = 0x00000004
+	mbIconWarning   = 0x00000030
+	mbSetForeground = 0x00010000
+	mbTopMost       = 0x00040000
+	idYes           = 6
+	langChinese     = 0x04
+)
+
+func isWindowsChineseLocale() bool {
+	if procGetUserDefaultUILang.Find() == nil {
+		langID, _, _ := procGetUserDefaultUILang.Call()
+		if langID&0x3ff == langChinese {
+			return true
+		}
+	}
+	for _, key := range []string{"LC_ALL", "LC_MESSAGES", "LANG"} {
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(os.Getenv(key))), "zh") {
+			return true
+		}
+	}
+	return false
+}
+
+func confirmWindowsBusyUpdate() bool {
+	if procMessageBoxW.Find() != nil {
+		return false
+	}
+	title := "Hoxi is still running tasks"
+	body := "Updating will quit Hoxi and interrupt running agent tasks. Update now?"
+	if isWindowsChineseLocale() {
+		title = "Hoxi 有任务正在运行"
+		body = "更新会退出 Hoxi 并中断正在运行的 Agent 任务。仍要现在更新吗？"
+	}
+	titlePtr, err := windows.UTF16PtrFromString(title)
+	if err != nil {
+		return false
+	}
+	bodyPtr, err := windows.UTF16PtrFromString(body)
+	if err != nil {
+		return false
+	}
+	traceUpdate("updater busy confirm shown", 0, 0)
+	ret, _, _ := procMessageBoxW.Call(
+		0,
+		uintptr(unsafe.Pointer(bodyPtr)),
+		uintptr(unsafe.Pointer(titlePtr)),
+		uintptr(mbYesNo|mbIconWarning|mbSetForeground|mbTopMost),
+	)
+	traceUpdate("updater busy confirm answered", 0, 0)
+	return ret == idYes
+}
 
 const windowsSwapAndRestartPS = `
 $ErrorActionPreference = 'SilentlyContinue'
@@ -110,7 +172,7 @@ func CheckNative() (installErr error) {
 		}
 	}
 
-	if canInstall == nil || !canInstall(false) {
+	if !admitSelfUpdate(canInstall, winConfirmBusyUpdate) {
 		cleanupAbort()
 		return errors.New("cannot install update while agent sessions are active")
 	}

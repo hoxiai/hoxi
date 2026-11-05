@@ -295,3 +295,54 @@ func TestDownloadAbortsPromptlyWhenStreamStalls(t *testing.T) {
 		t.Fatalf("expected stalled partial DMG to be removed")
 	}
 }
+
+func TestAdmitSelfUpdateHandlesIdleBusyConfirmAndCancel(t *testing.T) {
+	if admitSelfUpdate(nil, nil) {
+		t.Fatal("nil canInstall must fail closed")
+	}
+
+	var calls []bool
+	var confirmCalls int
+	if !admitSelfUpdate(func(force bool) bool {
+		calls = append(calls, force)
+		return true
+	}, func() bool {
+		confirmCalls++
+		return true
+	}) {
+		t.Fatal("idle workspace must be admitted without prompting")
+	}
+	if len(calls) != 1 || calls[0] || confirmCalls != 0 {
+		t.Fatalf("unexpected idle calls=%v confirmCalls=%d", calls, confirmCalls)
+	}
+
+	calls = nil
+	confirmCalls = 0
+	if !admitSelfUpdate(func(force bool) bool {
+		calls = append(calls, force)
+		return force
+	}, func() bool {
+		confirmCalls++
+		return true
+	}) {
+		t.Fatal("busy workspace must admit forced update when user confirms")
+	}
+	if len(calls) != 2 || calls[0] || !calls[1] || confirmCalls != 1 {
+		t.Fatalf("unexpected confirmed busy calls=%v confirmCalls=%d", calls, confirmCalls)
+	}
+
+	calls = nil
+	confirmCalls = 0
+	if admitSelfUpdate(func(force bool) bool {
+		calls = append(calls, force)
+		return force
+	}, func() bool {
+		confirmCalls++
+		return false
+	}) {
+		t.Fatal("busy workspace must reject update when user cancels confirmation")
+	}
+	if len(calls) != 1 || calls[0] || confirmCalls != 1 {
+		t.Fatalf("unexpected cancelled busy calls=%v confirmCalls=%d", calls, confirmCalls)
+	}
+}

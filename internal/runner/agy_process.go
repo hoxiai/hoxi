@@ -494,6 +494,12 @@ func (s *Service) releaseActiveProcess(sessionID string, ap *activeProcess) {
 	s.mu.Unlock()
 	if s.status != nil {
 		s.status.SetSessionBusy(sessionID, false)
+		if ap != nil {
+			ap.openCodeChildren.Range(func(childID string, _ bool) bool {
+				s.status.SetSessionBusy(childID, false)
+				return true
+			})
+		}
 	}
 }
 

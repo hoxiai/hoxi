@@ -612,6 +612,9 @@ func (s *Service) forgetOpenCodeMappings(id string, rec SessionRecord, ap *activ
 		if s.ownedProcs != nil {
 			s.ownedProcs.forget(sid)
 		}
+		if s.status != nil {
+			s.status.SetSessionBusy(sid, false)
+		}
 		if s.worktrees != nil {
 			s.worktrees.ForgetSession(sid)
 		}

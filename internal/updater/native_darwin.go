@@ -269,10 +269,9 @@ func checkDarwinDMGSelfUpdate() (installErr error) {
 		cleanupAbort()
 		return errors.New("native updater is not configured")
 	}
-	admitted := canInstall(false)
-	if !admitted && C.hoxi_native_confirm_busy() != 0 {
-		admitted = canInstall(true)
-	}
+	admitted := admitSelfUpdate(canInstall, func() bool {
+		return C.hoxi_native_confirm_busy() != 0
+	})
 	if !admitted {
 		cleanupAbort()
 		return errors.New("cannot install update while agent sessions are active")

@@ -23,6 +23,28 @@ const maxUpdateArchiveBytes = 512 << 20 // 512 MiB
 
 var downloadStallTimeout = 45 * time.Second
 
+func admitSelfUpdate(canInstall func(force bool) bool, confirmBusy func() bool) bool {
+	if canInstall == nil {
+		return false
+	}
+	started := time.Now()
+	if canInstall(false) {
+		traceUpdate("updater admission checked", 200, time.Since(started))
+		return true
+	}
+	traceUpdate("updater admission checked", 409, time.Since(started))
+	if confirmBusy == nil || !confirmBusy() {
+		return false
+	}
+	started = time.Now()
+	if canInstall(true) {
+		traceUpdate("updater admission checked", 200, time.Since(started))
+		return true
+	}
+	traceUpdate("updater admission checked", 409, time.Since(started))
+	return false
+}
+
 type stallTimeoutReader struct {
 	r       io.Reader
 	timeout time.Duration
