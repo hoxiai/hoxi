@@ -44,14 +44,14 @@ const DEFAULT_MEMBER_STATE: DesktopMemberState = {
   checkedInToday: false,
   streak: 0,
   maxStreak: 0,
-  todayPoints: 5000,
-  nextPoints: 100000,
-  todayPointsRange: { min: 5000, max: 100000 },
-  nextPointsRange: { min: 5000, max: 100000 },
+  todayPoints: 0,
+  nextPoints: 0,
+  todayPointsRange: { min: 0, max: 0 },
+  nextPointsRange: { min: 0, max: 0 },
   points: 0,
   pendingPoints: 0,
   rewardStatus: "none",
-  nextMilestone: { day: 3, points: 10, daysLeft: 3 },
+  nextMilestone: null,
   error: null,
 };
 
@@ -159,18 +159,19 @@ export function desktopUserInitial(): string {
   return name ? name.charAt(0).toUpperCase() : "U";
 }
 
-export function desktopCheckinSubtitle(): string {
+export function desktopCheckinTitle(): string {
   const m = desktopAuth.member;
-  if (m.nextMilestone && m.nextMilestone.day > 0) {
-    return t("settings.accountCheckinMilestoneDesc", {
-      streak: m.streak,
-      day: m.nextMilestone.day,
-      bonus: m.nextMilestone.points,
+  if (m.checkedInToday) {
+    return t("settings.accountCheckedInTitle", {
+      points: formatMemberPoints(m.todayPoints),
     });
   }
+  return t("settings.accountCheckinTitle");
+}
+
+export function desktopCheckinSubtitle(): string {
   return t("settings.accountCheckinStreakDesc", {
-    streak: m.streak,
-    next: formatMemberPointsRange(m.nextPointsRange, m.nextPoints),
+    streak: desktopAuth.member.streak,
   });
 }
 
@@ -196,8 +197,8 @@ function applyMemberStatus(status: MemberCheckinStatus) {
     typeof status.walletPoints === "number" && Number.isFinite(status.walletPoints)
       ? status.walletPoints
       : toFiniteNumber(status.balance, 0);
-  const todayPts = toFiniteNumber(status.todayPoints, 5);
-  const nextPts = toFiniteNumber(status.nextPoints, 6);
+  const todayPts = toFiniteNumber(status.todayPoints, 0);
+  const nextPts = toFiniteNumber(status.nextPoints, 0);
   const todayMin = toFiniteNumber(status.todayPointsRange?.min, todayPts);
   const todayMax = Math.max(todayMin, toFiniteNumber(status.todayPointsRange?.max, todayPts));
   const nextMin = toFiniteNumber(status.nextPointsRange?.min, nextPts);

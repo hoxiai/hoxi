@@ -88,6 +88,7 @@ type Grant struct {
 	Scope        Scope  `json:"scope"`
 	Paused       bool   `json:"paused"`
 	Active       bool   `json:"active"`
+	AutoApprove  bool   `json:"autoApprove,omitempty"`
 	LastAction   string `json:"lastAction,omitempty"`
 	LastActionAt int64  `json:"lastActionAt,omitempty"`
 }
@@ -109,15 +110,22 @@ type sessionGrant struct {
 	cancel       context.CancelFunc
 }
 type Service struct {
-	mu         sync.Mutex
-	operation  chan struct{}
-	backend    Backend
-	grants     map[Scope]*sessionGrant
-	generation uint64
-	now        func() time.Time
+	mu             sync.Mutex
+	operation      chan struct{}
+	backend        Backend
+	grants         map[Scope]*sessionGrant
+	generation     uint64
+	now            func() time.Time
+	postInputDelay time.Duration
 }
 
-func New() *Service { return newService(nativeBackend{}) }
+func New() *Service {
+	s := newService(nativeBackend{})
+	s.postInputDelay = 120 * time.Millisecond
+	return s
+}
+
+func (s *Service) PostInputDelay() time.Duration { return s.postInputDelay }
 
 // NewWithBackend builds a Service over another desktop backend, for tests in
 // packages that drive the computer routes.
@@ -256,10 +264,20 @@ func (s *Service) Pause(scope Scope, paused bool) {
 	if grant := s.grants[scope]; grant != nil {
 		grant.generation = s.generation
 		grant.Paused = paused
+		if paused {
+			grant.AutoApprove = false
+		}
 		clear(grant.observations)
 		if grant.cancel != nil {
 			grant.cancel()
 		}
+	}
+}
+func (s *Service) SetAutoApprove(scope Scope, enabled bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if grant := s.grants[scope]; grant != nil && !grant.Paused {
+		grant.AutoApprove = enabled
 	}
 }
 func (s *Service) Revoke(scope Scope) {
@@ -405,6 +423,11 @@ func ValidateAction(a Action) error {
 		if a.Text == "" {
 			return errors.New("text_required")
 		}
+		if a.Key != "" {
+			if _, err := ParseKey(a.Key); err != nil {
+				return err
+			}
+		}
 	case "key":
 		if _, err := ParseKey(a.Key); err != nil {
 			return err
@@ -511,7 +534,7 @@ func (s *Service) Execute(ctx context.Context, scope Scope, a Action) error {
 	if err := op.Err(); err != nil {
 		return err
 	}
-	if a.Action == "type" && a.ElementID > 0 {
+	if a.Action == "type" && (a.ElementID > 0 || a.X > 0 || a.Y > 0) {
 		clickAction := Action{
 			Action:        "click",
 			ObservationID: a.ObservationID,
@@ -525,8 +548,25 @@ func (s *Service) Execute(ctx context.Context, scope Scope, a Action) error {
 			return fmt.Errorf("computer_input: %w", err)
 		}
 	}
-	if err := s.backend.Input(op, target, *window, a); err != nil {
-		return fmt.Errorf("computer_input: %w", err)
+	if a.Action == "type" && a.Key != "" {
+		typeAction := a
+		typeAction.Key = ""
+		if err := s.backend.Input(op, target, *window, typeAction); err != nil {
+			return fmt.Errorf("computer_input: %w", err)
+		}
+		keyAction := Action{
+			Action:        "key",
+			ObservationID: a.ObservationID,
+			WindowID:      a.WindowID,
+			Key:           a.Key,
+		}
+		if err := s.backend.Input(op, target, *window, keyAction); err != nil {
+			return fmt.Errorf("computer_input: %w", err)
+		}
+	} else {
+		if err := s.backend.Input(op, target, *window, a); err != nil {
+			return fmt.Errorf("computer_input: %w", err)
+		}
 	}
 	s.mu.Lock()
 	if s.grants[scope] == grant {

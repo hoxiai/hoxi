@@ -150,3 +150,28 @@ func TestSeedDefaultsMigratesLegacyAndUpgradesOutdatedBundledSkill(t *testing.T)
 		t.Fatalf("expected tools/SKILL.md to be upgraded to 1.2.0, got:\n%s", string(upgraded))
 	}
 }
+
+func TestSeedDefaultsInstallsStockTradingSkills(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("HOXI_HOME", filepath.Join(home, ".hoxi"))
+
+	if _, err := SeedDefaults(); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, slug := range []string{"ashare-ops", "hk-warrant-ops", "us-options-ops"} {
+		target := filepath.Join(home, ".hoxi", "skills", slug, "SKILL.md")
+		data, err := os.ReadFile(target)
+		if err != nil {
+			t.Fatalf("expected bundled stock skill %s to be seeded: %v", slug, err)
+		}
+		if got := frontmatterName(data); got != slug {
+			t.Fatalf("frontmatter name for %s = %q, want %q", slug, got, slug)
+		}
+		author, ver := extractFrontmatterMeta(data)
+		if author != "Hoxi" || ver == "" {
+			t.Fatalf("unexpected frontmatter meta for %s: author=%q version=%q", slug, author, ver)
+		}
+	}
+}

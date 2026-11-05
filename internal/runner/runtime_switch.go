@@ -468,6 +468,13 @@ func (s *Service) AllowOpenCodeSSELine(line string) bool {
 		if s.isManagedOpenCodeChild(id) {
 			return false
 		}
+	case "session.status":
+		var st SessionStatus
+		if json.Unmarshal(envelope.Properties["status"], &st) == nil && st.Type == "retry" {
+			if _, cut := shouldCutOffTurnRetry(st, time.Now()); cut {
+				return false
+			}
+		}
 	}
 	return true
 }

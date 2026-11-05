@@ -20,7 +20,7 @@ import {
 import { t } from "../../i18n";
 import {
   desktopAuth,
-  desktopCheckinSubtitle,
+  desktopCheckinTitle,
   desktopUserAvatar,
   desktopUserDisplayName,
   desktopUserEmail,
@@ -165,7 +165,7 @@ export function AccountSettingsTab() {
           <SettingRow
             icon={Flame}
             label={t("settings.accountStreakLabel")}
-            tip={desktopCheckinSubtitle()}
+            tip={desktopCheckinTitle()}
           >
             <span class="font-mono text-[13px] font-medium tabular-nums text-[var(--text-secondary)]">
               {t("settings.accountStreakValue", { streak: desktopAuth.member.streak })}

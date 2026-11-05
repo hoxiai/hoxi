@@ -10,6 +10,7 @@ import { resolveParentSessionID } from "./subagent-sessions";
 import { drainNextQueuedPrompt } from "./workspace-session-messages";
 import { lastPromptDispatchedAt } from "./prompt-queue";
 import { normalizeFolderPath } from "./workspace-folders";
+import { handleSessionRetryStatus } from "./session-task-control";
 
 // Hoxi-managed conversations report busy status globally from the runner process
 // table, which the unified stream pushes as `hoxi.status.snapshot`. That snapshot
@@ -134,6 +135,9 @@ export async function syncSessionStatuses(directory?: string): Promise<void> {
             status?.type === "idle" &&
             now - lastPromptDispatchedAt(sid) <= 3500
           ) {
+            continue;
+          }
+          if (status?.type === "retry" && handleSessionRetryStatus(sid, status)) {
             continue;
           }
           const prevStatus = state.statusBySession[sid];

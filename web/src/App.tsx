@@ -17,12 +17,11 @@ import {
   handleIncomingPermissionRequest,
   hasStoredSurfaceMode,
   markPermissionResolved,
-  markSessionBackendRetried,
   clearAutoFailoverPending,
   clearSessionPendingApprovals,
   clearTurnDispatchState,
-  getTurnDispatchState,
   handleSessionErrorEvent,
+  handleSessionRetryStatus,
   isActionableApprovalSession,
   isAutoFailoverPending,
   isRerouteAbortInFlight,
@@ -51,7 +50,6 @@ import {
   rememberQuestionRequest,
   removeSessionFromStore,
   replaceSessionFromEvent,
-  rerouteRetryingTurnToModel,
   resolveDefaultProjectDir,
   resolveParentSessionID,
   resyncResidentTranscripts,
@@ -292,6 +290,12 @@ export default function App() {
               ) {
                 break;
               }
+              if (
+                evt.properties.status.type === "retry" &&
+                handleSessionRetryStatus(sid, evt.properties.status)
+              ) {
+                break;
+              }
               if (evt.properties.status.type === "busy" && !isRerouteAbortInFlight(sid)) {
                 clearAutoFailoverPending(sid);
               }
@@ -327,11 +331,6 @@ export default function App() {
                 if (wasBusy && !parentID) void advanceSessionGoal(sid);
                 if (wasBusy) refreshDesktopMemberAfterTurn(sid);
               } else if (evt.properties.status.type === "retry") {
-                markSessionBackendRetried(sid);
-                if (getTurnDispatchState(sid)?.manualModel) {
-                  void rerouteRetryingTurnToModel(sid);
-                  break;
-                }
                 recordSessionRetry(
                   sid,
                   evt.properties.status.attempt,

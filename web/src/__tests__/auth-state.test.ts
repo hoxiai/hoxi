@@ -3,6 +3,8 @@ import { errorMessageOf } from "../services/http";
 import type { MemberCheckinStatus } from "../services/platform-api";
 import {
   desktopAuth,
+  desktopCheckinSubtitle,
+  desktopCheckinTitle,
   desktopUserDisplayName,
   desktopUserInitial,
   desktopUserPlan,
@@ -191,10 +193,25 @@ describe("desktop auth member state & race protection", () => {
     setDesktopAuth({
       isLoggedIn: true,
       user: { id: 1, email: "alice@hoxi.ai", nickname: "Alice", plan: "Pro" },
+      member: {
+        ...desktopAuth.member,
+        checkedInToday: false,
+        streak: 3,
+        todayPoints: 5000,
+        nextPoints: 100000,
+        todayPointsRange: { min: 5000, max: 100000 },
+        nextPointsRange: { min: 5000, max: 100000 },
+      },
     });
     assertEqual(desktopUserDisplayName(), "Alice");
     assertEqual(desktopUserPlan(), "Pro");
     assertEqual(desktopUserInitial(), "A");
+    assertEqual(desktopCheckinTitle().includes("5,000"), false);
+    assertEqual(desktopCheckinSubtitle().includes("100,000"), false);
+
+    setDesktopAuth("member", { checkedInToday: true, todayPoints: 12500 });
+    assertEqual(desktopCheckinTitle().includes("12,500"), true);
+    assertEqual(desktopCheckinSubtitle().includes("100,000"), false);
   });
 });
 

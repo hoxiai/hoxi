@@ -20,6 +20,7 @@ describe("desktop computer transport", () => {
       await computerAPI.observe(scope, "window-one", signal);
       await computerAPI.observe(scope, "window-one", signal, false);
       await computerAPI.pause(scope, true, signal);
+      await computerAPI.setAutoApprove(scope, true, signal);
       await computerAPI.revoke(scope, signal);
       for (const call of calls) {
         assertEqual(call.url.searchParams.get("sessionID"), scope.sessionID);
@@ -35,14 +36,15 @@ describe("desktop computer transport", () => {
       assertDeepEqual(JSON.parse(calls[1].init.body as string), { action: "screenshot", windowID: "window-one" });
       assertDeepEqual(JSON.parse(calls[2].init.body as string), { action: "state", windowID: "window-one" });
       assertDeepEqual(JSON.parse(calls[3].init.body as string), { paused: true });
+      assertDeepEqual(JSON.parse(calls[4].init.body as string), { autoApprove: true });
       await computerAPI.stop(signal);
-      assertEqual(calls[5].url.pathname, "/api/hoxi/computer/stop");
-      assertEqual(calls[5].url.search, "");
+      assertEqual(calls[6].url.pathname, "/api/hoxi/computer/stop");
+      assertEqual(calls[6].url.search, "");
       await computerAPI.requestPermission("reset", signal);
-      assertEqual(calls[6].url.pathname, "/api/hoxi/computer/permissions");
-      assertDeepEqual(JSON.parse(calls[6].init.body as string), { permission: "reset" });
+      assertEqual(calls[7].url.pathname, "/api/hoxi/computer/permissions");
+      assertDeepEqual(JSON.parse(calls[7].init.body as string), { permission: "reset" });
       await computerAPI.requestPermission("reveal", signal);
-      assertDeepEqual(JSON.parse(calls[7].init.body as string), { permission: "reveal" });
+      assertDeepEqual(JSON.parse(calls[8].init.body as string), { permission: "reveal" });
       assertTrue(!("input" in computerAPI), "UI must not expose an input bypass");
     } finally { globalThis.fetch = previous.fetch; setGatewayToken(previous.token); }
   });
@@ -87,9 +89,9 @@ describe("desktop computer transport", () => {
         type: "tool",
         tool: "hoxi_computer",
         callID: "c2",
-        state: { status: "running", input: { action: "type", elementID: 1, text: "hello world" }, time: { start: 1 } },
+        state: { status: "running", input: { action: "type", elementID: 1, text: "hello world", key: "Enter" }, time: { start: 1 } },
       }),
-      'type #1 "hello world"'
+      'type #1 "hello world" + Enter'
     );
   });
 });

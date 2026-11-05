@@ -56,11 +56,11 @@ func isQuotaExhausted(body []byte) bool {
 
 func llmRetryWait(attempt int, retryAfter time.Duration) time.Duration {
 	wait := llmRetryBaseWait << (attempt - 1)
-	if wait > llmRetryMaxWait {
-		wait = llmRetryMaxWait
-	}
 	if retryAfter > wait {
 		wait = retryAfter
+	}
+	if wait > llmRetryMaxWait {
+		wait = llmRetryMaxWait
 	}
 	return wait + time.Duration(rand.Int64N(int64(wait)/4+1))
 }

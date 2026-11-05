@@ -204,6 +204,14 @@ func (s *Service) startTurnProcess(
 					}
 					var liveEvts []SSEEvent
 					for _, evt := range evts {
+						if evt.Type == "session.status" {
+							if st, ok := parseSessionStatus(evt.Properties["status"]); ok && st.Type == "retry" {
+								if retryErr, cut := shouldCutOffTurnRetry(st, time.Now()); cut {
+									s.abortTurnAsync(ap, retryErr)
+									continue
+								}
+							}
+						}
 						if evt.Type == "session.error" || evt.Type == "session.idle" || (evt.Type == "session.status" && isOpenCodeIdleStatus(evt.Properties["status"])) {
 							terminalEvts = append(terminalEvts, evt)
 						} else {

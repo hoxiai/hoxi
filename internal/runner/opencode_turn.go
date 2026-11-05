@@ -367,7 +367,7 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 		if err != nil && ap.reasoningLoop.shouldSuppressAbortError(err.Error()) {
 			err = nil
 		}
-		if err == nil || ap.reasoningLoop.hasTriggered() {
+		if err == nil || ap.reasoningLoop.hasTriggered() || ap.stall.abortError() != nil {
 			s.markContextDelivered(rec.ID)
 			s.reconcileOpenCodePostTurnMessages(rec, ap, user.ID, fileURLByMsgAndName)
 			if _, hasSkill := s.userSkillByMsg.Load(user.ID); hasSkill {
@@ -390,6 +390,7 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 			s.syncSessionMemoryFile(rec.ID)
 		}
 		if stallErr := ap.stall.abortError(); stallErr != nil {
+			s.stampAbortedTurnErrorOnStore(rec.ID, stallErr)
 			ap.setPendingError(SSEEvent{Type: "session.error", Properties: map[string]interface{}{"sessionID": rec.ID, "error": stallErr}})
 		} else if err != nil && !ap.wasAborted() && !ap.hasPendingError() {
 			ap.setPendingError(SSEEvent{Type: "session.error", Properties: map[string]interface{}{"sessionID": rec.ID, "error": openCodeEngineError(err)}})
@@ -505,6 +506,18 @@ func (s *Service) relayOpenCodeEventWithFiles(rec SessionRecord, raw []byte, fil
 			return
 		}
 	}
+	if evt.Type == "session.status" {
+		if st, ok := parseSessionStatus(evt.Properties["status"]); ok && st.Type == "retry" {
+			if retryErr, cut := shouldCutOffTurnRetry(st, time.Now()); cut {
+				if ap != nil {
+					s.abortTurnAsync(ap, retryErr)
+				} else {
+					s.abortOpenCodeRunawayTurn(rec)
+				}
+				return
+			}
+		}
+	}
 	if evt.Type == "session.idle" || (evt.Type == "session.status" && !ap.shouldRelayOpenCodeStatus(evt.Properties["status"])) {
 		if evt.Type == "session.idle" || isOpenCodeIdleStatus(evt.Properties["status"]) {
 			if ap != nil {
@@ -522,6 +535,7 @@ func (s *Service) relayOpenCodeEventWithFiles(rec SessionRecord, raw []byte, fil
 		}
 		s.rewriteRecoveryParentID(rec.ID, &info)
 		sanitizeRunawayTriggeredInfo(&info, ap)
+		sanitizeAbortedTurnErrorInfo(&info, ap)
 		evt.Properties["info"] = info
 	case "message.part.updated":
 		data, _ := json.Marshal(evt.Properties["part"])
@@ -547,7 +561,8 @@ func (s *Service) relayOpenCodeEventWithFiles(rec SessionRecord, raw []byte, fil
 	case "session.diff":
 		evt.Properties["diff"] = s.filterLocalSessionDiffEvent(rec.ID, evt.Properties["diff"])
 	case "session.error":
-		if ap != nil && ap.reasoningLoop.shouldSuppressAbortError(evt.Properties["error"]) {
+		if ap != nil && (ap.reasoningLoop.shouldSuppressAbortError(evt.Properties["error"]) || ap.stall.abortError() != nil) {
+			ap.notifyIdle()
 			return
 		}
 		if ap != nil {

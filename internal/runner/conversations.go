@@ -273,6 +273,13 @@ func (s *Service) conversationStatuses(ctx context.Context, projectID, directory
 		}
 		for id, st := range engine {
 			if !s.IsManagedOpenCodeSession(id) || s.isManagedOpenCodeChild(id) {
+				var parsed SessionStatus
+				if json.Unmarshal(st, &parsed) == nil && parsed.Type == "retry" {
+					if _, cut := shouldCutOffTurnRetry(parsed, time.Now()); cut {
+						s.abortOpenCodeRunawayTurn(SessionRecord{ExternalID: id, WorktreePath: engineDir})
+						continue
+					}
+				}
 				out[id] = st
 			}
 		}

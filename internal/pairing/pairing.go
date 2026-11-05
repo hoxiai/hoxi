@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -26,16 +27,17 @@ import (
 // JSON shape the phone's QR scanner already understands:
 // {"url","token","type","entrance"}.
 type Payload struct {
-	URL        string `json:"url"`
-	Token      string `json:"token"`
-	RelayToken string `json:"relayToken,omitempty"`
-	Type       string `json:"type"`
-	Entrance   string `json:"entrance"`
-	Relay      string `json:"relay,omitempty"`
-	Host       string `json:"host"`
-	Port       int    `json:"port"`
-	Hostname   string `json:"hostname"`
-	Available  bool   `json:"available"`
+	URL        string   `json:"url"`
+	Peers      []string `json:"peers,omitempty"`
+	Token      string   `json:"token"`
+	RelayToken string   `json:"relayToken,omitempty"`
+	Type       string   `json:"type"`
+	Entrance   string   `json:"entrance"`
+	Relay      string   `json:"relay,omitempty"`
+	Host       string   `json:"host"`
+	Port       int      `json:"port"`
+	Hostname   string   `json:"hostname"`
+	Available  bool     `json:"available"`
 }
 
 // Code is a Payload plus the rendered QR image.
@@ -52,6 +54,7 @@ type Service struct {
 	port      int
 	hostname  func() string
 	lanHost   func() string
+	lanPeers  func() []string
 	relayURL  func() string
 
 	mu          sync.Mutex
@@ -67,6 +70,7 @@ func NewService(tokenPath string, port int) *Service {
 		port:      port,
 		hostname:  defaultHostname,
 		lanHost:   primaryLANIPv4,
+		lanPeers:  allLANIPv4s,
 	}
 }
 
@@ -105,11 +109,29 @@ func (s *Service) Code() (Code, error) {
 	code.URL = fmt.Sprintf("http://%s:%d", host, s.port)
 	code.Available = true
 
-	scannable := map[string]string{
+	if s.lanPeers != nil {
+		candidates := s.lanPeers()
+		if containsHost(candidates, host) {
+			seen := map[string]bool{host: true}
+			for _, peer := range candidates {
+				peer = strings.TrimSpace(peer)
+				if peer == "" || seen[peer] {
+					continue
+				}
+				seen[peer] = true
+				code.Peers = append(code.Peers, fmt.Sprintf("http://%s:%d", peer, s.port))
+			}
+		}
+	}
+
+	scannable := map[string]any{
 		"url":      code.URL,
 		"token":    code.Token,
 		"type":     code.Type,
 		"entrance": code.Entrance,
+	}
+	if len(code.Peers) > 0 {
+		scannable["peers"] = code.Peers
 	}
 	if code.Relay != "" {
 		scannable["relay"] = code.Relay
@@ -286,49 +308,109 @@ func defaultHostname() string {
 	return strings.TrimSpace(name)
 }
 
+func containsHost(hosts []string, want string) bool {
+	for _, h := range hosts {
+		if strings.TrimSpace(h) == want {
+			return true
+		}
+	}
+	return false
+}
+
 func isCGNATIPv4(v4 net.IP) bool {
 	return len(v4) == net.IPv4len && v4[0] == 100 && v4[1] >= 64 && v4[1] <= 127
 }
 
-func selectLANIPv4(ips []net.IP) string {
-	cgnatFallback := ""
-	linkLocalFallback := ""
-	for _, ip := range ips {
-		v4 := ip.To4()
-		if v4 == nil || v4.IsLoopback() {
-			continue
-		}
-		if v4.IsPrivate() {
-			return v4.String()
-		}
-		if isCGNATIPv4(v4) {
-			if cgnatFallback == "" {
-				cgnatFallback = v4.String()
+func lanIPv4Rank(v4 net.IP) int {
+	if len(v4) != net.IPv4len || v4.IsLoopback() {
+		return 0
+	}
+	if v4.IsPrivate() {
+		switch v4[0] {
+		case 192:
+			// 192.168.64.0/24 and 192.168.65.0/24 are commonly macOS VM / Docker bridges.
+			if v4[2] == 64 || v4[2] == 65 {
+				return 35
 			}
-			continue
-		}
-		if v4.IsLinkLocalUnicast() {
-			if linkLocalFallback == "" {
-				linkLocalFallback = v4.String()
-			}
+			return 50
+		case 10:
+			return 40
+		case 172:
+			return 30
+		default:
+			return 35
 		}
 	}
-	if cgnatFallback != "" {
-		return cgnatFallback
+	if isCGNATIPv4(v4) {
+		return 20
 	}
-	return linkLocalFallback
+	if v4.IsLinkLocalUnicast() {
+		return 10
+	}
+	return 0
 }
 
-// primaryLANIPv4 returns the machine's most likely LAN address: a private
-// RFC1918 IPv4 on an up, non-loopback interface, falling back to CGNAT /
-// Tailscale (100.64.0.0/10) or link-local (169.254.0.0/16). Public IPv4
-// addresses are never returned because the LAN listener refuses public clients.
-func primaryLANIPv4() string {
+func isVirtualInterfaceName(name string) bool {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	for _, prefix := range []string{
+		"utun", "tun", "tap", "ppp", "gif", "stf",
+		"awdl", "llw", "anpi", "bridge", "veth",
+		"docker", "br-", "vmnet", "vboxnet", "virbr",
+		"wg", "tailscale", "zt", "cni", "flannel", "cali", "lo",
+	} {
+		if strings.HasPrefix(lower, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func interfacePriorityBonus(name string) int {
+	if isVirtualInterfaceName(name) {
+		return -25
+	}
+	lower := strings.ToLower(strings.TrimSpace(name))
+	if lower == "en0" || lower == "wlan0" || lower == "eth0" {
+		return 15
+	}
+	for _, prefix := range []string{"en", "eth", "wlan", "wl", "wi-fi", "ethernet"} {
+		if strings.HasPrefix(lower, prefix) {
+			return 10
+		}
+	}
+	return 0
+}
+
+func selectLANIPv4(ips []net.IP) string {
+	bestIP := ""
+	bestRank := 0
+	for _, ip := range ips {
+		v4 := ip.To4()
+		rank := lanIPv4Rank(v4)
+		if rank > bestRank {
+			bestRank = rank
+			bestIP = v4.String()
+		}
+	}
+	return bestIP
+}
+
+type scoredLANIP struct {
+	ip    string
+	score int
+	order int
+}
+
+// allLANIPv4s returns all non-loopback, non-public IPv4 addresses on up
+// interfaces, ordered with physical Wi-Fi/Ethernet RFC1918 addresses ahead of
+// virtual/tunnel, CGNAT, and link-local addresses.
+func allLANIPv4s() []string {
 	ifaces, err := net.Interfaces()
 	if err != nil {
-		return ""
+		return nil
 	}
-	var ips []net.IP
+	var scored []scoredLANIP
+	order := 0
 	for _, iface := range ifaces {
 		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
 			continue
@@ -337,14 +419,54 @@ func primaryLANIPv4() string {
 		if err != nil {
 			continue
 		}
+		bonus := interfacePriorityBonus(iface.Name)
 		for _, addr := range addrs {
+			var rawIP net.IP
 			switch v := addr.(type) {
 			case *net.IPNet:
-				ips = append(ips, v.IP)
+				rawIP = v.IP
 			case *net.IPAddr:
-				ips = append(ips, v.IP)
+				rawIP = v.IP
 			}
+			v4 := rawIP.To4()
+			rank := lanIPv4Rank(v4)
+			if rank == 0 {
+				continue
+			}
+			scored = append(scored, scoredLANIP{
+				ip:    v4.String(),
+				score: rank + bonus,
+				order: order,
+			})
+			order++
 		}
 	}
-	return selectLANIPv4(ips)
+	sort.SliceStable(scored, func(i, j int) bool {
+		if scored[i].score != scored[j].score {
+			return scored[i].score > scored[j].score
+		}
+		return scored[i].order < scored[j].order
+	})
+	seen := make(map[string]bool, len(scored))
+	out := make([]string, 0, len(scored))
+	for _, item := range scored {
+		if !seen[item.ip] {
+			seen[item.ip] = true
+			out = append(out, item.ip)
+		}
+	}
+	return out
+}
+
+// primaryLANIPv4 returns the machine's most likely LAN address: a private
+// RFC1918 IPv4 on an up, non-loopback physical interface, falling back to
+// virtual/CGNAT/Tailscale (100.64.0.0/10) or link-local (169.254.0.0/16).
+// Public IPv4 addresses are never returned because the LAN listener refuses
+// public clients.
+func primaryLANIPv4() string {
+	all := allLANIPv4s()
+	if len(all) == 0 {
+		return ""
+	}
+	return all[0]
 }

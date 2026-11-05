@@ -69,6 +69,10 @@ const FAST_FAILURE_MS = 45_000;
 // endpoints should not turn one prompt into a long chain of resends.
 const MAX_FAILOVER_ATTEMPTS = 5;
 const MAX_RESET_WAIT_MS = 24 * 60 * 60 * 1000;
+const QUOTA_RESET_PROMOTE_AFTER_MS = 10 * 60 * 1000;
+
+export const MAX_TURN_RETRY_DELAY_MS = 15_000;
+export const MAX_TURN_RETRY_ATTEMPTS = 3;
 
 // Errors caused by the conversation or by the user: another endpoint of the
 // same pool would fail the same way, so the error card handles them.
@@ -383,6 +387,54 @@ export function shouldRetrySameModelOnError(
   return decision.reason === "network" || decision.reason === "server";
 }
 
+export function isPermanentRetryMessage(message: string, statedResetMs = 0): boolean {
+  const msg = (message || "").toLowerCase();
+  if (!msg) return false;
+  if (statedResetMs >= QUOTA_RESET_PROMOTE_AFTER_MS) return true;
+  return (
+    QUOTA_RE.test(msg) ||
+    AUTH_RE.test(msg) ||
+    MODEL_RE.test(msg) ||
+    CONTEXT_RE.test(msg) ||
+    POLICY_RE.test(msg)
+  );
+}
+
+export function hasWarmPrefixForCandidate(
+  sessionID: string,
+  candidate: { providerID: string; modelID: string }
+): boolean {
+  return (workspace.messagesBySession[sessionID] ?? []).some(
+    (t) =>
+      t.info.role === "assistant" &&
+      !t.info.error &&
+      (!t.info.providerID ||
+        (t.info.providerID === candidate.providerID && t.info.modelID === candidate.modelID))
+  );
+}
+
+export function canSwitchPoolCandidate(
+  sessionID: string,
+  autoState: TurnDispatchState
+): boolean {
+  if (!autoState.poolID) return false;
+  if (autoState.triedKeys.size >= maxAutoFailoverAttempts(autoState.poolID)) return false;
+  const retryHasImage = (autoState.attachments ?? []).some(
+    (a) => (a.mime || "").toLowerCase().startsWith("image/") || /^data:image\//i.test(a.url || "")
+  );
+  const resolved = resolveAutoModelTarget(autoState.poolID, {
+    advance: true,
+    excludeKeys: autoState.triedKeys,
+    requireImage: retryHasImage,
+    sessionID,
+  });
+  return Boolean(
+    resolved &&
+      `${resolved.providerID}/${resolved.modelID}` !==
+        `${autoState.target.providerID}/${autoState.target.modelID}`
+  );
+}
+
 function breakerClassForReason(reason: AutoFailoverReason): string | undefined {
   switch (reason) {
     case "rateLimit":
@@ -476,13 +528,7 @@ export function selectNextDispatchTarget(
       };
     }
   }
-  const hasWarmPrefixOnFailed = (workspace.messagesBySession[sessionID] ?? []).some(
-    (t) =>
-      t.info.role === "assistant" &&
-      !t.info.error &&
-      (!t.info.providerID ||
-        (t.info.providerID === failed.providerID && t.info.modelID === failed.modelID))
-  );
+  const hasWarmPrefixOnFailed = hasWarmPrefixForCandidate(sessionID, failed);
   // Preserve multi-turn KV cache on transient network/5xx blips by retrying the
   // warm sticky candidate once before cooling it down and switching providers.
   const preferSameModelForCache =

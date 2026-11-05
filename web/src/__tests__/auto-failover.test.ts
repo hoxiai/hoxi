@@ -13,6 +13,7 @@ import {
   dispatchSessionPrompt,
   findAutoFailoverNotice,
   handleSessionErrorEvent,
+  handleSessionRetryStatus,
   isAutoFailoverPending,
   isCandidateCoolingDown,
   markSessionInterrupted,
@@ -707,36 +708,73 @@ describe("auto-pool failover dispatch", () => {
   it("returns null for a deleted custom auto pool and resets sessions pointing to it", async () => {
     const sid = "ses_custom_pool";
     try {
-      setWorkspace("providers", [
-        { id: "alpha", name: "Alpha", models: { m1: { id: "m1", name: "M1" } } },
-      ]);
+      setWorkspace("providers", [{ id: "alpha", name: "Alpha", models: { m1: { id: "m1", name: "M1" } } }]);
       setWorkspace("connectedProviders", ["alpha"]);
       await saveAutoPool("my-custom", {
-        id: "my-custom",
-        name: "My Custom",
-        preset: false,
-        strategy: "priority",
-        customized: true,
+        id: "my-custom", name: "My Custom", preset: false, strategy: "priority", customized: true,
         candidates: [{ providerID: "alpha", modelID: "m1" }],
       });
-      setWorkspace("aiBySession", sid, {
-        agent: "build",
-        model: { providerID: AUTO_PROVIDER_ID, modelID: "my-custom" },
-        effort: "",
-      });
-      assertDeepEqual(resolveAutoModelTarget("my-custom", { sessionID: sid }), {
-        providerID: "alpha",
-        modelID: "m1",
-      });
+      setWorkspace("aiBySession", sid, { agent: "build", model: { providerID: AUTO_PROVIDER_ID, modelID: "my-custom" }, effort: "" });
+      assertDeepEqual(resolveAutoModelTarget("my-custom", { sessionID: sid }), { providerID: "alpha", modelID: "m1" });
 
       await deleteCustomAutoPool("my-custom");
       assertEqual(resolveAutoModelTarget("my-custom", { sessionID: sid }), null);
-      assertDeepEqual(workspace.aiBySession[sid]?.model, {
-        providerID: AUTO_PROVIDER_ID,
-        modelID: "free",
-      });
+      assertDeepEqual(workspace.aiBySession[sid]?.model, { providerID: AUTO_PROVIDER_ID, modelID: "free" });
     } finally {
       setWorkspace("aiBySession", reconcile({}));
+    }
+  });
+
+  it("cuts off 5000s retry countdowns and fails over immediately on auto-pool rate-limit retry", async () => {
+    const sid = "ses_cutoff_5000s_retry";
+    const orig = {
+      send: hoxiAPI.sendPromptAsync, abort: hoxiAPI.abortSession, msgs: hoxiAPI.getMessages,
+      report: hoxiAPI.reportCandidateOutcome, cands: hoxiAPI.getProviderCandidates, sum: hoxiAPI.summarizeSessionTitle,
+    };
+    try {
+      hoxiAPI.getMessages = async () => [];
+      hoxiAPI.reportCandidateOutcome = async () => ({ ok: true });
+      hoxiAPI.getProviderCandidates = async () => ({ ok: true, breakers: {} });
+      hoxiAPI.summarizeSessionTitle = async () => ({ ok: false, title: "" });
+      setWorkspace("providers", [
+        { id: "alpha", name: "Alpha", models: { m: { id: "m", name: "M" } } },
+        { id: "beta", name: "Beta", models: { m: { id: "m", name: "M" } } },
+      ]);
+      setWorkspace("connectedProviders", ["alpha", "beta"]);
+      setWorkspace("sessions", [{ id: sid, title: "Cutoff", time: { created: 1, updated: 1 } } as never]);
+      setWorkspace("activeSessionID", sid);
+      setWorkspace("aiBySession", sid, { agent: "build", model: { providerID: AUTO_PROVIDER_ID, modelID: "free" }, effort: "" });
+      await saveAutoPool("free", {
+        id: "free", preset: true, strategy: "priority", customized: true,
+        candidates: [{ providerID: "alpha", modelID: "m" }, { providerID: "beta", modelID: "m" }],
+      });
+      clearAutoPoolCooldowns("free");
+      applyProviderBreakers({});
+
+      const events: string[] = [];
+      hoxiAPI.abortSession = async (id) => { events.push(`abort:${id}`); };
+      hoxiAPI.sendPromptAsync = async (_id, _text, opts) => { events.push(`send:${opts?.model?.providerID}/${opts?.model?.modelID}`); };
+
+      await dispatchSessionPrompt("run task", sid, { forceImmediate: true });
+      assertTrue(handleSessionRetryStatus(sid, { type: "retry", attempt: 1, message: "Rate limit exceeded", next: Date.now() + 5_400_000 }));
+      await new Promise((r) => setTimeout(r, 20));
+      assertDeepEqual(events, ["send:alpha/m", `abort:${sid}`, "send:beta/m"]);
+      assertTrue(isCandidateCoolingDown("alpha", "m"));
+    } finally {
+      clearAutoFailoverPending(sid);
+      clearTurnDispatchState(sid);
+      Object.assign(hoxiAPI, {
+        sendPromptAsync: orig.send, abortSession: orig.abort, getMessages: orig.msgs,
+        reportCandidateOutcome: orig.report, getProviderCandidates: orig.cands, summarizeSessionTitle: orig.sum,
+      });
+      setWorkspace("activeSessionID", null);
+      setWorkspace("sessions", []);
+      setWorkspace("aiBySession", reconcile({}));
+      setWorkspace("messagesBySession", reconcile({}));
+      setWorkspace("statusBySession", reconcile({}));
+      clearAutoPoolCooldowns("free");
+      await resetAutoPoolToDefault("free");
+      applyProviderBreakers({});
     }
   });
 });

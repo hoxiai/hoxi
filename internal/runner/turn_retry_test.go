@@ -737,3 +737,58 @@ turn3Done:
 		t.Fatalf("expected Turn 3 to resume healthy --conversation conv-healed-2, got args:\n%s", string(args3Raw))
 	}
 }
+
+func TestOpenCodeStatusRelayCutsOffExcessiveRetryDelayAndAttempts(t *testing.T) {
+	t.Parallel()
+	svc := NewService(t.TempDir(), nil, nil, filepath.Join(t.TempDir(), "store.json"))
+	defer svc.CloseAll()
+
+	now := time.Now()
+	// 1. 5400-second retry delay must be cut off and promoted to quota fault.
+	stLong := SessionStatus{
+		Type:    "retry",
+		Attempt: 1,
+		Message: "Rate limit exceeded",
+		Next:    now.Add(5400 * time.Second).UnixMilli(),
+	}
+	errLong, cut := shouldCutOffTurnRetry(stLong, now)
+	if !cut || errLong == nil || errLong.Data == nil {
+		t.Fatalf("expected 5400s retry to be cut off, got cut=%v err=%+v", cut, errLong)
+	}
+	if errLong.Data.Kind != "quota" || errLong.Data.StatusCode != 429 || errLong.Data.RetryAfterMs < 5_000_000 {
+		t.Fatalf("unexpected cutoff error classification for 5400s retry: %+v", errLong.Data)
+	}
+
+	// 2. Attempt > maxTurnRetryAttempts (3) must be cut off even with a short delay.
+	if _, cut4 := shouldCutOffTurnRetry(SessionStatus{
+		Type:    "retry",
+		Attempt: 4,
+		Message: "502 Bad Gateway",
+		Next:    now.Add(2 * time.Second).UnixMilli(),
+	}, now); !cut4 {
+		t.Fatal("expected retry attempt 4 to be cut off")
+	}
+
+	// 3. Relay drops excessive retry status and aborts the active turn with the cutoff error.
+	const sid = "ses_oc_cutoff_5400"
+	ch, unsub := svc.Subscribe(sid)
+	defer unsub()
+	ap := &activeProcess{sessionID: sid, runtime: "opencode", idleCh: make(chan struct{}, 1)}
+	svc.mu.Lock()
+	svc.procs[sid] = ap
+	svc.mu.Unlock()
+	rec := SessionRecord{ID: sid, Runtime: "opencode", ExternalID: "oc_ext_cutoff"}
+	payload, _ := json.Marshal(SSEEvent{
+		Type:       "session.status",
+		Properties: map[string]interface{}{"sessionID": "oc_ext_cutoff", "status": stLong},
+	})
+	svc.relayOpenCodeEvent(rec, payload)
+	select {
+	case evt := <-ch:
+		t.Fatalf("expected 5400s retry status to be dropped, got %+v", evt)
+	default:
+	}
+	if gotErr := ap.stall.abortError(); gotErr == nil || gotErr.Data == nil || gotErr.Data.Kind != "quota" {
+		t.Fatalf("expected active process abortError to be set to quota cutoff, got %+v", gotErr)
+	}
+}

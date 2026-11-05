@@ -208,6 +208,14 @@ func (s *Service) noteOpenCodeChildEvent(rec SessionRecord, evt SSEEvent) bool {
 		}
 		return false
 	case "session.status", "session.idle":
+		if evt.Type == "session.status" {
+			if st, ok := parseSessionStatus(evt.Properties["status"]); ok && st.Type == "retry" {
+				if _, cut := shouldCutOffTurnRetry(st, time.Now()); cut {
+					s.abortOpenCodeRunawayTurn(SessionRecord{ExternalID: sid, WorktreePath: rec.WorktreePath})
+					return true
+				}
+			}
+		}
 		s.noteOpenCodeActivity(rec.ID, evt)
 		s.broadcast(sid, evt)
 		return true

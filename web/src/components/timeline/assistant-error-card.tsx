@@ -15,6 +15,7 @@ import {
   isRunnerStallError,
   isSessionBusy,
   isUserAbortError,
+  MAX_TURN_RETRY_DELAY_MS,
   openDiagnostics,
   openProviderModal,
   refreshProviders,
@@ -463,13 +464,17 @@ export function AssistantErrorCard(props: { info: MessageInfo }) {
  * Live 1-second countdown card when a session status is `retry` (e.g. rate limit / transient network backoff).
  */
 export function SessionRetryCard(props: { status: Extract<SessionStatus, { type: "retry" }> }) {
-  const [seconds, setSeconds] = createSignal(
-    Math.max(0, Math.round((props.status.next - Date.now()) / 1000))
-  );
+  const maxRetrySeconds = Math.ceil(MAX_TURN_RETRY_DELAY_MS / 1000);
+  const clampSeconds = () =>
+    Math.min(
+      maxRetrySeconds,
+      Math.max(0, Math.round((props.status.next - Date.now()) / 1000))
+    );
+  const [seconds, setSeconds] = createSignal(clampSeconds());
 
   createEffect(() => {
     const update = () => {
-      setSeconds(Math.max(0, Math.round((props.status.next - Date.now()) / 1000)));
+      setSeconds(clampSeconds());
     };
     update();
     const timer = setInterval(update, 1000);

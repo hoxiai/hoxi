@@ -231,8 +231,9 @@ func (g *Gateway) handleComputer(w http.ResponseWriter, r *http.Request) {
 	switch operation {
 	case "grant":
 		var req struct {
-			AppID  string `json:"appID"`
-			Locale string `json:"locale,omitempty"`
+			AppID       string `json:"appID"`
+			Locale      string `json:"locale,omitempty"`
+			AutoApprove bool   `json:"autoApprove,omitempty"`
 		}
 		if decodeComputerJSON(w, r, &req) != nil || strings.TrimSpace(req.AppID) == "" {
 			writeJSONError(w, 400, "app_id_required")
@@ -252,6 +253,10 @@ func (g *Gateway) handleComputer(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, status, err.Error())
 			return
 		}
+		if req.AutoApprove {
+			g.computer.SetAutoApprove(scope, true)
+			grant = g.computer.Current(scope)
+		}
 		writeJSON(w, 200, map[string]any{"grant": grant})
 	case "revoke":
 		g.computer.Revoke(scope)
@@ -259,15 +264,21 @@ func (g *Gateway) handleComputer(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"grant": nil})
 	case "pause":
 		var req struct {
-			Paused *bool `json:"paused"`
+			Paused      *bool `json:"paused,omitempty"`
+			AutoApprove *bool `json:"autoApprove,omitempty"`
 		}
-		if decodeComputerJSON(w, r, &req) != nil || req.Paused == nil {
+		if decodeComputerJSON(w, r, &req) != nil || (req.Paused == nil && req.AutoApprove == nil) {
 			writeJSONError(w, 400, "paused_required")
 			return
 		}
-		g.computer.Pause(scope, *req.Paused)
-		if *req.Paused {
-			g.runner.CancelComputerApprovals(scope.SessionID)
+		if req.Paused != nil {
+			g.computer.Pause(scope, *req.Paused)
+			if *req.Paused {
+				g.runner.CancelComputerApprovals(scope.SessionID)
+			}
+		}
+		if req.AutoApprove != nil {
+			g.computer.SetAutoApprove(scope, *req.AutoApprove)
 		}
 		writeJSON(w, 200, map[string]any{"grant": g.computer.Current(scope)})
 	case "action":
@@ -287,6 +298,7 @@ func (g *Gateway) handleComputer(w http.ResponseWriter, r *http.Request) {
 			ClickCount    int     `json:"clickCount,omitempty"`
 			Text          string  `json:"text,omitempty"`
 			Key           string  `json:"key,omitempty"`
+			Screenshot    bool    `json:"screenshot,omitempty"`
 		}
 		if decodeComputerJSON(w, r, &req) != nil {
 			writeJSONError(w, 400, "invalid_computer_action")
@@ -347,13 +359,53 @@ func (g *Gateway) handleComputer(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, 403, "app_permission_required_or_paused")
 			return
 		}
-		approved, err := g.runner.RequestComputerApproval(ctx, scope.SessionID, scope.Directory, grant.App.Name, action)
-		if err != nil || !approved {
-			writeJSONError(w, 403, "computer_action_not_approved")
-			return
+		if grant.AutoApprove {
+			if g.runner == nil {
+				writeJSONError(w, 403, "computer_action_not_approved")
+				return
+			}
+			if err := g.runner.ValidateComputerActionScope(scope.SessionID, scope.Directory); err != nil {
+				writeJSONError(w, 403, "computer_action_not_approved")
+				return
+			}
+		} else {
+			if g.runner == nil {
+				writeJSONError(w, 403, "computer_action_not_approved")
+				return
+			}
+			approved, err := g.runner.RequestComputerApproval(ctx, scope.SessionID, scope.Directory, grant.App.Name, action)
+			if err != nil || !approved {
+				writeJSONError(w, 403, "computer_action_not_approved")
+				return
+			}
 		}
 		if err := g.computer.Execute(ctx, scope, action); err != nil {
 			writeJSONError(w, 409, err.Error())
+			return
+		}
+		if delay := g.computer.PostInputDelay(); delay > 0 {
+			timer := time.NewTimer(delay)
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+				timer.Stop()
+			}
+		}
+		if snapshot, obsErr := g.computer.Observe(ctx, scope, action.WindowID, req.Screenshot); obsErr == nil {
+			out := map[string]any{
+				"completed":     true,
+				"app":           snapshot.App,
+				"windows":       snapshot.Windows,
+				"elements":      snapshot.Elements,
+				"windowID":      snapshot.WindowID,
+				"observationID": snapshot.ObservationID,
+				"width":         snapshot.Width,
+				"height":        snapshot.Height,
+			}
+			if snapshot.Image != "" {
+				out["image"] = snapshot.Image
+			}
+			writeJSON(w, 200, out)
 			return
 		}
 		writeJSON(w, 200, map[string]any{"completed": true, "next": "Capture a fresh screenshot before the next input"})

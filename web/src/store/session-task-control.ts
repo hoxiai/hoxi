@@ -4,14 +4,23 @@ import { hoxiAPI, resolveRunnerRuntimeForProvider } from "../services/api";
 import { isAutoModel, resolveAutoModelTarget } from "./auto-models";
 import { recordPromptDispatched, recordSessionRetry, recordUserAbortAction } from "./provider-telemetry";
 import {
+  canSwitchPoolCandidate,
   clearAutoFailoverPending,
   clearTurnDispatchState,
+  decideAutoFailover,
   getTurnDispatchState,
+  hasWarmPrefixForCandidate,
   isAutoFailoverPending,
+  isPermanentRetryMessage,
   markAutoFailoverPending,
+  markSessionBackendRetried,
+  MAX_TURN_RETRY_ATTEMPTS,
+  MAX_TURN_RETRY_DELAY_MS,
+  parseQuotaResetMs,
   recordAutoFailover,
   rememberTurnDispatch,
   selectNextDispatchTarget,
+  type AutoFailoverError,
   type AutoFailoverReason,
   type TurnDispatchState,
 } from "./auto-failover";
@@ -186,6 +195,99 @@ export async function rerouteRetryingTurnToModel(
   return true;
 }
 
+async function cutoffSessionRetry(
+  sessionID: string,
+  retryError: AutoFailoverError
+): Promise<void> {
+  const gen = (rerouteGenBySession.get(sessionID) ?? 0) + 1;
+  rerouteGenBySession.set(sessionID, gen);
+  const dir = sessionDirectory(sessionID);
+  rerouteAbortInFlightBySession.add(sessionID);
+  try {
+    await hoxiAPI.abortSession(sessionID, dir);
+  } catch {
+    /* ignore abort errors when no active process is running */
+  } finally {
+    if (rerouteGenBySession.get(sessionID) === gen) {
+      rerouteAbortInFlightBySession.delete(sessionID);
+      lastRerouteAbortAtBySession.set(sessionID, Date.now());
+    }
+  }
+  if (
+    rerouteGenBySession.get(sessionID) !== gen ||
+    isSessionDeleted(sessionID) ||
+    workspace.archivedSessionIDs.includes(sessionID) ||
+    Boolean(workspace.interruptedBySession[sessionID])
+  ) {
+    return;
+  }
+  await handleSessionErrorEvent(sessionID, retryError);
+}
+
+/**
+ * Inspects an incoming `session.status` `{ type: "retry" }` event and reports
+ * whether the retry was intercepted (to cut off an excessive countdown, abort a
+ * permanent failure, reroute a manual model selection, or fail over immediately
+ * to the next `hoxi-auto` candidate).
+ */
+export function handleSessionRetryStatus(
+  sessionID: string,
+  status: { type: "retry"; attempt: number; message: string; next: number }
+): boolean {
+  if (!sessionID) return false;
+  markSessionBackendRetried(sessionID);
+  const autoState = getTurnDispatchState(sessionID);
+  if (autoState?.manualModel) {
+    void rerouteRetryingTurnToModel(sessionID);
+    return true;
+  }
+  const now = Date.now();
+  const waitMs = Math.max(0, (status.next || 0) - now);
+  const statedResetMs = parseQuotaResetMs(status.message || "", now) ?? 0;
+  const effectiveWaitMs = Math.max(waitMs, statedResetMs);
+  const attempt = status.attempt || 1;
+  const retryError: AutoFailoverError = {
+    name: "APIError",
+    data: {
+      message: status.message || "Model request failed after retry limit",
+      isRetryable:
+        effectiveWaitMs <= MAX_TURN_RETRY_DELAY_MS && attempt <= MAX_TURN_RETRY_ATTEMPTS,
+      retryAfterMs: effectiveWaitMs > 0 ? effectiveWaitMs : undefined,
+    },
+  };
+  const exceedsRetryBounds =
+    effectiveWaitMs > MAX_TURN_RETRY_DELAY_MS ||
+    attempt > MAX_TURN_RETRY_ATTEMPTS ||
+    isPermanentRetryMessage(status.message || "", effectiveWaitMs);
+  let shouldFailoverNow = false;
+  if (!exceedsRetryBounds && autoState?.poolID && canSwitchPoolCandidate(sessionID, autoState)) {
+    const decision = decideAutoFailover(retryError, now - autoState.dispatchedAt);
+    if (
+      decision.failover &&
+      (decision.reason === "rateLimit" ||
+        decision.reason === "quota" ||
+        decision.reason === "auth" ||
+        decision.reason === "model")
+    ) {
+      shouldFailoverNow = true;
+    } else if (
+      decision.failover &&
+      (decision.reason === "server" || decision.reason === "network") &&
+      (attempt >= 2 || !hasWarmPrefixForCandidate(sessionID, autoState.target))
+    ) {
+      shouldFailoverNow = true;
+    }
+  }
+  if (!exceedsRetryBounds && !shouldFailoverNow) {
+    return false;
+  }
+  if (autoState?.poolID) {
+    markAutoFailoverPending(sessionID);
+  }
+  void cutoffSessionRetry(sessionID, retryError);
+  return true;
+}
+
 export async function handleSessionErrorEvent(
   sessionID: string,
   error?: {
@@ -298,6 +400,7 @@ export async function handleSessionErrorEvent(
     return;
   }
   clearAutoFailoverPending(sessionID);
+  clearTurnDispatchState(sessionID);
   if (isGone() || workspace.interruptedBySession[sessionID]) {
     return;
   }
@@ -319,9 +422,19 @@ export async function handleSessionErrorEvent(
       const list = (state.messagesBySession[sessionID] ||= []);
       const last = list[list.length - 1];
       if (last?.info.role === "assistant") {
-        // A runner stop (watchdog, repeated invalid tool calls) explains the engine's own "aborted" error.
-        if (currentError.name === "RunnerStalledError" || currentError.name === "RepeatedToolFailureError") last.info.error = currentError;
-        else last.info.error ||= currentError;
+        // A runner stop (watchdog, repeated invalid tool calls, or retry cutoff) explains the engine's own "aborted" error.
+        const existingErrName = (last.info.error?.name || "").toLowerCase();
+        const existingIsAbort =
+          existingErrName === "messageabortederror" || /\baborted?\b/.test(existingErrName);
+        if (
+          currentError.name === "RunnerStalledError" ||
+          currentError.name === "RepeatedToolFailureError" ||
+          existingIsAbort
+        ) {
+          last.info.error = currentError;
+        } else {
+          last.info.error ||= currentError;
+        }
         return;
       }
       const now = Date.now();

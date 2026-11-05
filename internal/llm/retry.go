@@ -357,6 +357,9 @@ func IsPermanentTurnError(msg string) bool {
 	if IsQuotaExhausted(lower) {
 		return true
 	}
+	if ParseRetryDelay(trimmed, time.Now(), 0) >= QuotaResetPromoteAfter {
+		return true
+	}
 	isNet := isNetworkFault(lower, 0)
 	for _, marker := range permanentTurnErrorMarkers {
 		if isNet && (marker == "interrupted" || marker == "aborted") {

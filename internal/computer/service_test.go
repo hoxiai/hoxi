@@ -35,6 +35,10 @@ func (f *fakeDesktop) Inspect(_ context.Context, app App, window string, image b
 	if f.resized {
 		width = 600
 	}
+	img := ""
+	if image {
+		img = "jpeg-data"
+	}
 	return Snapshot{
 		WindowID: "one",
 		Windows:  []Window{{ID: "one", Bounds: Rect{X: 100, Y: 50, Width: width, Height: 600}}},
@@ -42,6 +46,9 @@ func (f *fakeDesktop) Inspect(_ context.Context, app App, window string, image b
 			{ID: 1, Role: "AXTextField", Name: "private", Value: "password", Bounds: Rect{X: 140, Y: 90, Width: 200, Height: 30}, Secure: f.secure},
 			{ID: 2, Role: "AXButton", Name: "Submit", Bounds: Rect{X: 200, Y: 150, Width: 100, Height: 40}},
 		},
+		Image:  img,
+		Width:  int(width),
+		Height: 600,
 	}, nil
 }
 func (f *fakeDesktop) Input(ctx context.Context, _ App, _ Window, a Action) error {
@@ -220,6 +227,9 @@ func TestDesktopInputValidationAndGlobalShortcuts(t *testing.T) {
 		if _, err := ParseKey(key); err == nil {
 			t.Fatal("unsafe shortcut accepted", key)
 		}
+		if ValidateAction(Action{Action: "type", ObservationID: strings.Repeat("a", 32), WindowID: "one", Text: "hello", Key: key}) == nil {
+			t.Fatal("unsafe shortcut accepted on compound type+key", key)
+		}
 	}
 	for _, key := range []string{"Enter", "Control+a", "Meta+c", "Shift+ArrowLeft", "Alt+ArrowRight", "F1", "F5", "F12", "Shift+F10"} {
 		if _, err := ParseKey(key); err != nil {
@@ -264,7 +274,7 @@ func TestDesktopElementTargetingWindowBoundsAndLastAction(t *testing.T) {
 		t.Fatalf("expected LastAction=click on grant, got %+v", grant)
 	}
 
-	// Type into element 1 by elementID: should click first to focus, then type
+	// Type into element 1 by elementID with compound Key="Enter": should click first, then type, then key Enter
 	snapshot2, err := s.Observe(context.Background(), scope, "", false)
 	if err != nil {
 		t.Fatal(err)
@@ -275,13 +285,29 @@ func TestDesktopElementTargetingWindowBoundsAndLastAction(t *testing.T) {
 		WindowID:      "one",
 		ElementID:     1,
 		Text:          "hello",
+		Key:           "Enter",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(f.lastActions) != 3 || f.lastActions[1].Action != "click" || f.lastActions[2].Action != "type" {
-		t.Fatalf("expected click+type sequence, got %+v", f.lastActions)
+	if len(f.lastActions) != 4 || f.lastActions[1].Action != "click" || f.lastActions[2].Action != "type" || f.lastActions[2].Key != "" || f.lastActions[3].Action != "key" || f.lastActions[3].Key != "Enter" {
+		t.Fatalf("expected click+type+key sequence, got %+v", f.lastActions)
 	}
+
+	// AutoApprove resets on Pause and cannot be enabled while paused
+	s.SetAutoApprove(scope, true)
+	if !s.Current(scope).AutoApprove {
+		t.Fatal("expected AutoApprove=true on active grant")
+	}
+	s.Pause(scope, true)
+	if s.Current(scope).AutoApprove {
+		t.Fatal("expected Pause(true) to clear AutoApprove")
+	}
+	s.SetAutoApprove(scope, true)
+	if s.Current(scope).AutoApprove {
+		t.Fatal("expected SetAutoApprove on paused grant to be ignored")
+	}
+	s.Pause(scope, false)
 
 	// Secure element should reject elementID targeting
 	f.secure = true

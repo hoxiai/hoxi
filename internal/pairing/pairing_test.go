@@ -122,6 +122,25 @@ func TestSelectLANIPv4NeverFallsBackToPublic(t *testing.T) {
 	if got := selectLANIPv4([]net.IP{net.ParseIP("100.100.10.5"), net.ParseIP("192.168.1.9")}); got != "192.168.1.9" {
 		t.Fatalf("selectLANIPv4(CGNAT + RFC1918) = %q, want 192.168.1.9", got)
 	}
+	if got := selectLANIPv4([]net.IP{net.ParseIP("172.17.0.1"), net.ParseIP("192.168.64.1"), net.ParseIP("192.168.1.25")}); got != "192.168.1.25" {
+		t.Fatalf("selectLANIPv4(docker + vm + wifi) = %q, want 192.168.1.25", got)
+	}
+}
+
+func TestCodeIncludesPeerLANURLsWhenMultipleInterfacesExist(t *testing.T) {
+	svc, _ := newTestService(t, "192.168.1.20")
+	svc.lanPeers = func() []string {
+		return []string{"192.168.1.20", "10.0.0.15", "100.90.1.2"}
+	}
+
+	code, err := svc.Code()
+	if err != nil {
+		t.Fatalf("Code: %v", err)
+	}
+	wantPeers := []string{"http://10.0.0.15:5417", "http://100.90.1.2:5417"}
+	if len(code.Peers) != len(wantPeers) || code.Peers[0] != wantPeers[0] || code.Peers[1] != wantPeers[1] {
+		t.Fatalf("code.Peers = %v, want %v", code.Peers, wantPeers)
+	}
 }
 
 func TestCodeIncludesRelayWhenConfigured(t *testing.T) {

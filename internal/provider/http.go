@@ -155,7 +155,7 @@ func callSimpleLLM(parentCtx context.Context, req llmCompletionRequest) (text st
 			return res.text, nil
 		}
 		resultErr = res.err
-		if parentCtx.Err() != nil || attempt >= llmMaxAttempts || res.quotaExhausted || !isTransientLLMError(res.err, res.status) {
+		if parentCtx.Err() != nil || attempt >= llmMaxAttempts || res.quotaExhausted || res.retryAfter > llmRetryMaxWait || !isTransientLLMError(res.err, res.status) {
 			break
 		}
 		wait := llmRetryWait(attempt, res.retryAfter)

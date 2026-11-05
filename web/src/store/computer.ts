@@ -254,6 +254,23 @@ export function createComputerController() {
       if (valid(connection) && connection.revision === revision) report(err);
     }
   }
+  async function toggleAutoApprove() {
+    const connection = current,
+      activeGrant = grant();
+    if (!connection?.scope || !valid(connection) || !activeGrant || activeGrant.paused || busy()) return;
+    const revision = ++connection.revision;
+    setError("");
+    try {
+      const next = await computerAPI.setAutoApprove(
+        connection.scope,
+        !activeGrant.autoApprove,
+        connection.abort.signal
+      );
+      if (valid(connection) && connection.revision === revision) setGrant(next.grant);
+    } catch (err) {
+      if (valid(connection) && connection.revision === revision) report(err);
+    }
+  }
   async function inspect(withImage = true) {
     const connection = current,
       target = grant();
@@ -319,6 +336,7 @@ export function createComputerController() {
       target_app_not_allowed: "computer.errorTargetAppNotAllowed",
       app_owned_by_another_session: "computer.errorAppOwnedByAnotherSession",
       app_permission_not_granted: "computer.errorAppPermissionNotGranted",
+      native_desktop_appConfirmation_required: "computer.errorNativeDesktopAppConfirmationRequired",
       native_desktop_app_confirmation_required: "computer.errorNativeDesktopAppConfirmationRequired",
       screen_recording_permission_required: "computer.errorScreenRecordingPermissionRequired",
       accessibility_permission_required: "computer.errorAccessibilityPermissionRequired",
@@ -367,6 +385,7 @@ export function createComputerController() {
     permission,
     authorize,
     updateAccess,
+    toggleAutoApprove,
     inspect,
   };
 }

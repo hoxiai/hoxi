@@ -285,7 +285,8 @@ export function extractDescription(part: ToolPart): string {
     }
     if (action === "type" && typeof input.text === "string") {
       const snippet = input.text.length > 32 ? `${input.text.slice(0, 32)}…` : input.text;
-      return `type${target ? ` ${target}` : ""} "${snippet}"`;
+      const keySuffix = typeof input.key === "string" && input.key.trim() ? ` + ${input.key.trim()}` : "";
+      return `type${target ? ` ${target}` : ""} "${snippet}"${keySuffix}`;
     }
     if (action === "key" && typeof input.key === "string") return `key ${input.key}`;
     if (action === "scroll") return `scroll Δ(${input.deltaX ?? 0}, ${input.deltaY ?? 0})`;

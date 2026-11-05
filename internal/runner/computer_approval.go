@@ -8,15 +8,22 @@ import (
 	"time"
 )
 
+// ValidateComputerActionScope verifies that the computer session is a valid
+// managed session in its expected directory and that unattended mode is not active.
+func (s *Service) ValidateComputerActionScope(sessionID, directory string) error {
+	if s.ApprovalPolicy().Mode == ApprovalModeUnattended {
+		return errors.New("desktop_input_unavailable_in_unattended_mode")
+	}
+	_, err := s.ResolveComputerSession(sessionID, directory)
+	return err
+}
+
 // RequestComputerApproval uses the shared permission plane. Desktop input acts
 // outside the worktree and its sandbox (a keystroke can do anything the target
 // app can), so no approval mode, stored "always" grant, AI review or remote
 // reply approves it: only a one-time "allow" on this desktop does.
 func (s *Service) RequestComputerApproval(ctx context.Context, sessionID, directory, app string, action any) (bool, error) {
-	if s.ApprovalPolicy().Mode == ApprovalModeUnattended {
-		return false, errors.New("desktop_input_unavailable_in_unattended_mode")
-	}
-	if _, err := s.ResolveComputerSession(sessionID, directory); err != nil {
+	if err := s.ValidateComputerActionScope(sessionID, directory); err != nil {
 		return false, err
 	}
 	encoded, err := json.Marshal(action)

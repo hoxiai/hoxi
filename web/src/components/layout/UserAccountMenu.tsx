@@ -19,13 +19,13 @@ import {
   appSettings,
   desktopAuth,
   desktopCheckinSubtitle,
+  desktopCheckinTitle,
   desktopUserAvatar,
   desktopUserDisplayName,
   desktopUserEmail,
   desktopUserInitial,
   desktopUserPlan,
   formatMemberPoints,
-  formatMemberPointsRange,
   logoutDesktopAccount,
   openDesktopPortalPage,
   openProviderModal,
@@ -180,16 +180,7 @@ export default function UserAccountMenu() {
                 <div class="rounded-xl bg-[var(--bg-inset)]/90 border border-[var(--border-subtle)]/70 px-3 py-2.5 flex items-center justify-between gap-2.5">
                   <div class="min-w-0 flex-1">
                     <div class="text-[13px] font-bold text-[var(--text-primary)] leading-tight truncate">
-                      {desktopAuth.member.checkedInToday
-                        ? t("settings.accountCheckedInTitle", {
-                            points: formatMemberPoints(desktopAuth.member.todayPoints),
-                          })
-                        : t("settings.accountCheckinTitle", {
-                            points: formatMemberPointsRange(
-                              desktopAuth.member.todayPointsRange,
-                              desktopAuth.member.todayPoints,
-                            ),
-                          })}
+                      {desktopCheckinTitle()}
                     </div>
                     <div class="text-[11px] text-[var(--text-muted)] leading-tight mt-1 truncate">
                       {desktopCheckinSubtitle()}

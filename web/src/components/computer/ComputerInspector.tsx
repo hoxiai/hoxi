@@ -365,6 +365,25 @@ export default function ComputerInspector() {
                 </button>
               </div>
 
+              {/* Per-Grant Continuous Input Toggle */}
+              <div class="rounded-lg bg-[var(--bg-panel)]/70 px-2.5 py-2 space-y-1">
+                <label class="flex items-center justify-between gap-2 cursor-pointer select-none">
+                  <span class="font-medium text-[11.5px] text-[var(--text-primary)]">
+                    {t("computer.autoApprove")}
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(grant().autoApprove)}
+                    disabled={grant().paused || control.busy()}
+                    onChange={() => void control.toggleAutoApprove()}
+                    class="h-3.5 w-3.5 accent-[var(--accent-primary)] cursor-pointer disabled:cursor-not-allowed"
+                  />
+                </label>
+                <p class="text-[10.5px] leading-relaxed text-[var(--text-muted)]">
+                  {t("computer.autoApproveHint")}
+                </p>
+              </div>
+
               <p class="text-[11px] leading-relaxed text-[var(--text-muted)]">
                 {t("computer.nextStep")}
               </p>
