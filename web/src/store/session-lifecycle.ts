@@ -159,9 +159,17 @@ export async function unarchiveSession(sessionID: string, directory?: string): P
   }
 }
 
-export function removeSessionFromStore(sessionID: string): SessionInfo | undefined {
-  const childIDs = collectChildSubagentSessionIDs(sessionID);
-  const allIDs = [sessionID, ...childIDs];
+export function removeSessionsFromStore(sessionIDs: string[]): SessionInfo | undefined {
+  if (sessionIDs.length === 0) return undefined;
+  const allSet = new Set<string>();
+  for (const sessionID of sessionIDs) {
+    if (!sessionID) continue;
+    allSet.add(sessionID);
+    for (const childID of collectChildSubagentSessionIDs(sessionID)) {
+      allSet.add(childID);
+    }
+  }
+  const allIDs = Array.from(allSet);
   for (const id of allIDs) {
     cancelScheduledWorktreeStatus(id);
     hydratedSessionIDs.delete(id);
@@ -170,15 +178,24 @@ export function removeSessionFromStore(sessionID: string): SessionInfo | undefin
   }
   forgetSessionTitles(allIDs);
   evictCachedSessionTurns(allIDs);
-  const nextCandidate = nextActiveSessionCandidate(sessionID);
-  if (workspace.archivedSessionIDs.some((id) => allIDs.includes(id))) {
-    const nextArchived = workspace.archivedSessionIDs.filter((id) => !allIDs.includes(id));
+  const candidates = workspace.sessions.filter(
+    (s) => !allSet.has(s.id) && !s.parentID && !s.time?.archived && !workspace.archivedSessionIDs.includes(s.id)
+  );
+  const nextCandidate = candidates.length > 0
+    ? [...candidates].sort((a, b) => (b.time?.updated || b.time?.created || 0) - (a.time?.updated || a.time?.created || 0))[0]
+    : undefined;
+  if (workspace.archivedSessionIDs.some((id) => allSet.has(id))) {
+    const nextArchived = workspace.archivedSessionIDs.filter((id) => !allSet.has(id));
     setWorkspace("archivedSessionIDs", nextArchived);
     persistArchivedSessionIDs(nextArchived);
   }
   setWorkspace(produce((state) => purgeSessionsFromStoreState(state, allIDs)));
   persistSessionAI();
   return nextCandidate;
+}
+
+export function removeSessionFromStore(sessionID: string): SessionInfo | undefined {
+  return removeSessionsFromStore([sessionID]);
 }
 
 export async function discardSession(
@@ -269,20 +286,15 @@ export async function deleteOldSessions(olderThanDays: number, sessionIDs: strin
 
 function forgetDeletedSessions(ids: string[]) {
   if (ids.length === 0) return;
-  const removed = new Set<string>();
+  const active = workspace.activeSessionID;
+  const removed = new Set<string>(ids);
   for (const id of ids) {
-    removed.add(id);
     for (const child of collectChildSubagentSessionIDs(id)) removed.add(child);
   }
-  const active = workspace.activeSessionID;
   const activeRemoved = Boolean(active) && removed.has(active!);
-  let next: SessionInfo | undefined;
-  for (const id of ids) {
-    const candidate = removeSessionFromStore(id);
-    if (candidate && !removed.has(candidate.id)) next = candidate;
-  }
+  const next = removeSessionsFromStore(ids);
   if (!activeRemoved) return;
-  if (next && workspace.sessions.some((s) => s.id === next!.id)) {
+  if (next && workspace.sessions.some((s) => s.id === next.id)) {
     void selectSession(next.id);
   } else {
     setWorkspace("activeSessionID", null);

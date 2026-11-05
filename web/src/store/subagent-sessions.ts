@@ -163,8 +163,13 @@ export function resolveParentSessionID(
   byID?: ReadonlyMap<string, SessionInfo>,
 ): string | null {
   if (!sessionID) return null;
-  const localParent = (byID?.get(sessionID)?.parentID || "").trim();
-  if (localParent) return localParent;
+  if (byID?.has(sessionID)) {
+    const localParent = (byID.get(sessionID)?.parentID || "").trim();
+    if (localParent) return localParent;
+    const indexedParent = indexedSession(sessionID)?.parentID;
+    if (indexedParent) return indexedParent;
+    return lookupSubagentParent(sessionID);
+  }
   const info = workspace.sessions.find((s) => s.id === sessionID);
   if (info?.parentID) return info.parentID;
   const indexedParent = indexedSession(sessionID)?.parentID;
@@ -198,16 +203,13 @@ export function resolveRootSessionID(
 export function groupSubagentsByRoot(
   rawSessions: readonly SessionInfo[],
 ): Map<string, SessionInfo[]> {
-  const byID = new Map<string, SessionInfo>();
-  for (const s of rawSessions) {
-    if (s?.id) byID.set(s.id, s);
-  }
-  const globalByID = new Map<string, SessionInfo>();
+  const combinedByID = new Map<string, SessionInfo>();
   for (const s of workspace.sessions) {
-    if (s?.id) globalByID.set(s.id, s);
+    if (s?.id) combinedByID.set(s.id, s);
   }
-  const lookup = (id: string): SessionInfo | undefined =>
-    byID.get(id) ?? globalByID.get(id);
+  for (const s of rawSessions) {
+    if (s?.id) combinedByID.set(s.id, s);
+  }
 
   const grouped = new Map<string, Map<string, SessionInfo>>();
   const addChild = (rootID: string, child: SessionInfo) => {
@@ -224,7 +226,7 @@ export function groupSubagentsByRoot(
 
   for (const s of rawSessions) {
     if (!s?.id || s.time?.archived) continue;
-    const rootID = resolveRootSessionID(s.id, byID);
+    const rootID = resolveRootSessionID(s.id, combinedByID);
     if (rootID && rootID !== s.id) {
       addChild(rootID, s);
     }
@@ -232,10 +234,20 @@ export function groupSubagentsByRoot(
 
   for (const s of rawSessions) {
     if (!s?.id || s.time?.archived || s.parentID) continue;
-    for (const childID of collectChildSubagentSessionIDs(s.id)) {
-      const child = lookup(childID);
-      if (child && !child.time?.archived) {
-        addChild(s.id, child);
+    const turns = workspace.messagesBySession[s.id];
+    if (!turns || turns.length === 0) continue;
+    for (const turn of turns) {
+      for (const part of turn.parts) {
+        if (part.type === "tool") {
+          const lower = (part.tool || "").toLowerCase();
+          if (lower === "task" || lower === "agent" || lower.includes("subagent")) {
+            const childID = extractChildSubagentSessionId(part);
+            const child = childID ? combinedByID.get(childID) : undefined;
+            if (child && !child.time?.archived) {
+              addChild(s.id, child);
+            }
+          }
+        }
       }
     }
   }

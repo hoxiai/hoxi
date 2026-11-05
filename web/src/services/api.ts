@@ -14,7 +14,15 @@ import type {
   SnapshotFileDiff,
 } from "./sse-types";
 
-export type { ApprovalAuditEntry, ApprovalGrant, ApprovalPolicy, ApprovalPolicyState, MessageInfo, MessagePart };
+export type {
+  ApprovalAuditEntry,
+  ApprovalGrant,
+  ApprovalPolicy,
+  ApprovalPolicyState,
+  MessageInfo,
+  MessagePart,
+  SessionInfo,
+};
 import type {
   AgentInfo,
   BootstrapInfo,

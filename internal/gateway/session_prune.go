@@ -166,13 +166,24 @@ func (g *Gateway) oldSessionCandidates(ctx context.Context, cutoff int64, withSi
 	if withSizes {
 		engineBytes, _ = ocstate.SessionContentBytes(ctx, hoxipaths.DBPath())
 	}
+	infos := store.List("")
+	byID := make(map[string]runner.SessionRecord, len(infos))
+	childrenByParent := make(map[string][]string)
+	for _, info := range infos {
+		if rec, ok := store.Meta(info.ID); ok && rec.ID != "" {
+			byID[rec.ID] = rec
+			if parentID := strings.TrimSpace(rec.ParentID); parentID != "" {
+				childrenByParent[parentID] = append(childrenByParent[parentID], rec.ID)
+			}
+		}
+	}
 	var out []sessionPruneCandidate
-	for _, info := range store.List("") {
-		rec, ok := store.Meta(info.ID)
+	for _, info := range infos {
+		rec, ok := byID[info.ID]
 		if !ok || rec.ParentID != "" || rec.Subagent {
 			continue
 		}
-		tree := sessionTree(store, rec)
+		tree := sessionTreeFromIndex(rec, byID, childrenByParent)
 		lastActive := int64(0)
 		busy := false
 		for _, node := range tree {
@@ -222,19 +233,22 @@ func deletedWithRoot(tree []runner.SessionRecord) []runner.SessionRecord {
 	return out
 }
 
-// sessionTree returns rec followed by every descendant. Activity and busy
-// checks span the whole tree, so a recently used child keeps its root.
-func sessionTree(store *runner.Store, rec runner.SessionRecord) []runner.SessionRecord {
+// sessionTreeFromIndex returns rec followed by every descendant using pre-built
+// parent-to-child maps in O(tree size) instead of scanning the store per node.
+func sessionTreeFromIndex(
+	rec runner.SessionRecord,
+	byID map[string]runner.SessionRecord,
+	childrenByParent map[string][]string,
+) []runner.SessionRecord {
 	tree := []runner.SessionRecord{rec}
 	seen := map[string]bool{rec.ID: true}
 	for i := 0; i < len(tree); i++ {
-		children, _ := store.ChildSessionIDs(tree[i].ID)
-		for _, id := range children {
+		for _, id := range childrenByParent[tree[i].ID] {
 			if seen[id] {
 				continue
 			}
 			seen[id] = true
-			if child, ok := store.Meta(id); ok {
+			if child, ok := byID[id]; ok {
 				tree = append(tree, child)
 			}
 		}
@@ -288,7 +302,11 @@ func (g *Gateway) deleteOldSessions(ctx context.Context, days int, ids []string)
 	defer g.storageCleanMu.Unlock()
 
 	res := sessionPruneResult{Deleted: []string{}, Skipped: []sessionPruneSkip{}}
-	before := g.InspectStorage()
+	dbPath := hoxipaths.DBPath()
+	beforeSessionsAndDB := ocstate.MeasureDatabaseBytes(dbPath)
+	if g.runner != nil && g.runner.Store() != nil {
+		beforeSessionsAndDB += g.runner.Store().StorageBytes()
+	}
 	// Re-evaluate eligibility now: a session may have been reopened, become
 	// busy or been deleted since the preview.
 	eligible := map[string]sessionPruneCandidate{}
@@ -323,7 +341,6 @@ func (g *Gateway) deleteOldSessions(ctx context.Context, days int, ids []string)
 	}
 
 	if len(res.Deleted) > 0 {
-		dbPath := hoxipaths.DBPath()
 		if dbPath != "" && !g.isAnySessionBusy() {
 			if err := ocstate.CleanDatabaseEventLog(ctx, dbPath); err != nil {
 				diagnostics.Record(diagnostics.Entry{Kind: "system", Level: "warn", Source: "storage", Message: err.Error()})
@@ -333,7 +350,8 @@ func (g *Gateway) deleteOldSessions(ctx context.Context, days int, ids []string)
 		}
 	}
 	res.Storage = g.InspectStorage()
-	res.FreedBytes = max(0, before.TotalBytes-res.Storage.TotalBytes)
+	afterSessionsAndDB := res.Storage.DatabaseBytes + res.Storage.SessionsBytes
+	res.FreedBytes = max(0, beforeSessionsAndDB-afterSessionsAndDB)
 	return res
 }
 
