@@ -30,9 +30,6 @@ import { resolveParentSessionID, resolveRootSessionID } from "./subagent-session
 import { normalizeFolderPath } from "./workspace-folders";
 import { fetchGlobalConfig, updateGlobalPermissions } from "./global-config";
 import {
-  aiReviewNote,
-  aiReviewNoteSuggestsModelChange,
-  aiReviewNoteText,
   approvalAuditEntries,
   approvalGrants,
   approvalRecordsLoading,
@@ -42,25 +39,18 @@ import {
   grantClassLabel,
   grantableClasses,
   installAgyHook,
-  isAIReviewUserDisabled,
   loadApprovalAudit,
   loadApprovalGrants,
   loadDeferred,
-  resolveDefaultAIReviewModelFor,
   resolveDeferred,
   revokeAllApprovalGrants,
   revokeApprovalGrant,
-  setAIReviewUserDisabled,
   uninstallAgyHook,
-  type AIReviewNote,
   type DeferredEntry,
 } from "./approval-records";
 import { isDestructivePermissionRequest } from "../../../.opencode/lib/permission-policy.js";
 
 export {
-  aiReviewNote,
-  aiReviewNoteSuggestsModelChange,
-  aiReviewNoteText,
   approvalAuditEntries,
   approvalGrants,
   approvalRecordsLoading,
@@ -79,7 +69,6 @@ export {
   revokeAllApprovalGrants,
   revokeApprovalGrant,
   uninstallAgyHook,
-  type AIReviewNote,
   type DeferredEntry,
 };
 
@@ -173,78 +162,13 @@ export async function setApprovalTimeout(seconds: number): Promise<void> {
 export async function setApprovalMode(mode: ApprovalMode): Promise<void> {
   const gen = ++approvalPolicyGen;
   const cur = approvalPolicy();
-  const autoModel = !cur.aiReview && mode !== "manual" && !isAIReviewUserDisabled() ? resolveDefaultAIReviewModel() : "";
-  const aiReview = Boolean(cur.aiReview || autoModel);
-  const aiReviewModel = cur.aiReviewModel || autoModel;
-  // Switching approval modes clears per-tool overrides while keeping timeout and AI reviewer settings.
+  // Switching approval modes clears per-tool overrides while keeping timeout settings.
   const state = await hoxiAPI.updateApprovalPolicy({
     mode,
-    ...(aiReview ? { aiReview: true } : {}),
-    ...(aiReviewModel ? { aiReviewModel } : {}),
     ...(cur.approvalTimeoutSeconds ? { approvalTimeoutSeconds: cur.approvalTimeoutSeconds } : {}),
   });
   if (gen !== approvalPolicyGen) return;
   applyApprovalPolicy(state.policy);
-}
-
-/**
- * Resolves a default lightweight model for AI approval review when the user
- * enables AI review without having picked a specific model yet. Only considers
- * HTTP providers the user has explicitly connected or configured.
- */
-export function resolveDefaultAIReviewModel(): string {
-  return resolveDefaultAIReviewModelFor(approvalPolicy().aiReviewModel);
-}
-
-export async function setApprovalAIReview(patch: {
-  aiReview?: boolean;
-  aiReviewModel?: string;
-}): Promise<void> {
-  if (patch.aiReview === false) {
-    setAIReviewUserDisabled(true);
-  } else if (patch.aiReview === true) {
-    setAIReviewUserDisabled(false);
-  }
-  const gen = ++approvalPolicyGen;
-  const cur = approvalPolicy();
-  let aiReviewModel =
-    patch.aiReviewModel !== undefined ? patch.aiReviewModel.trim() : cur.aiReviewModel || "";
-  let aiReview =
-    patch.aiReview !== undefined ? patch.aiReview : Boolean(cur.aiReview);
-  if (aiReview && !aiReviewModel && patch.aiReviewModel === undefined) {
-    aiReviewModel = resolveDefaultAIReviewModel();
-  }
-  if (!aiReviewModel) {
-    aiReview = false;
-  }
-  const state = await hoxiAPI.updateApprovalPolicy({
-    ...cur,
-    aiReview,
-    aiReviewModel,
-  });
-  if (gen !== approvalPolicyGen) return;
-  applyApprovalPolicy(state.policy);
-}
-
-/**
- * Reconciles AI approval review once providers and approval policy have loaded:
- * - Upgrades a previously saved reasoning or disconnected `aiReviewModel` to a fast model.
- * - Auto-enables AI review in non-manual modes when a connected HTTP model is available
- *   and the user has not explicitly turned AI review off.
- */
-export async function reconcileApprovalAIReview(): Promise<void> {
-  const cur = approvalPolicy();
-  const resolved = resolveDefaultAIReviewModel();
-  if (!resolved) return;
-  if (cur.aiReview) {
-    if (cur.aiReviewModel !== resolved) {
-      await setApprovalAIReview({ aiReview: true, aiReviewModel: resolved });
-    }
-    return;
-  }
-  if (cur.mode !== "manual" && !isAIReviewUserDisabled()) {
-    await setApprovalAIReview({ aiReview: true, aiReviewModel: resolved });
-  }
 }
 
 export async function updateToolPermissionRule(

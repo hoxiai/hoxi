@@ -457,6 +457,15 @@ func (s *Store) List(directory string) []SessionInfo {
 // workspace), still match by their strict directory scope; directory is only
 // a fallback, never a second ownership source for a live project.
 func (s *Store) ListProject(projectID, directory string) []SessionInfo {
+	records := s.listProjectRecords(projectID, directory)
+	out := make([]SessionInfo, len(records))
+	for i := range records {
+		out[i] = records[i].ToSessionInfo()
+	}
+	return out
+}
+
+func (s *Store) listProjectRecords(projectID, directory string) []SessionRecord {
 	projectID = strings.TrimSpace(projectID)
 	normFilter := normalizeComparePath(directory)
 	s.mu.RLock()
@@ -485,7 +494,7 @@ func (s *Store) ListProject(projectID, directory string) []SessionInfo {
 		owners[id] = owner
 		return owner
 	}
-	var out []SessionInfo
+	var out []SessionRecord
 	for _, rec := range metas {
 		if projectID != "" {
 			if rec.ProjectID != projectID {
@@ -493,7 +502,7 @@ func (s *Store) ListProject(projectID, directory string) []SessionInfo {
 				if !fallback {
 					owner := resolve(rec.ProjectID)
 					if owner.live && owner.id == projectID {
-						out = append(out, rec.ToSessionInfo())
+						out = append(out, rec)
 						continue
 					}
 					fallback = !owner.live
@@ -505,9 +514,9 @@ func (s *Store) ListProject(projectID, directory string) []SessionInfo {
 		} else if normFilter != "" && !sessionMatchesDirectory(rec, normFilter) {
 			continue
 		}
-		out = append(out, rec.ToSessionInfo())
+		out = append(out, rec)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Time.Updated > out[j].Time.Updated })
+	sort.Slice(out, func(i, j int) bool { return out[i].UpdatedAt > out[j].UpdatedAt })
 	return out
 }
 

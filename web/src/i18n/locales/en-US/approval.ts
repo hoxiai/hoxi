@@ -58,29 +58,6 @@ export const approval = {
   unattendedInactive: "Inactive",
   timeoutLabel: "Approval timeout",
   timeoutHint: "A request nobody answers is rejected after this many seconds. A timeout never becomes an approval",
-  aiReviewTitle: "AI Review for Complex Shell Commands",
-  aiReviewTip:
-    "When static analysis cannot verify a complex command (such as bash -c, loops, inline scripts, or command substitutions), ask the selected lightweight model whether it is safe under the current approval mode",
-  aiReviewEnableLabel: "Auto-review opaque non-destructive commands",
-  aiReviewModelLabel: "Reviewer model",
-  aiReviewModelEmpty: "Select a lightweight model…",
-  enableAIReviewQuick: "Enable AI Auto-Review",
-  enableAIReviewQuickHint:
-    "Use {model} to auto-review non-destructive complex commands",
-  aiReviewModelHint:
-    "Pick a fast model without reasoning. Reasoning models think before answering and often time out or return no verdict",
-  aiReviewNoteAsk: "AI review wants your confirmation: {reason}",
-  aiReviewNoteAskNoReason: "AI review wants your confirmation",
-  aiReviewNoteEmpty:
-    "AI review unavailable: the reviewer model returned no verdict. Reasoning models often use up the token budget while thinking; a fast non-reasoning model works better",
-  aiReviewNoteTimeout: "AI review unavailable: the reviewer model did not answer within {seconds}s",
-  aiReviewNoteInvalid: "AI review unavailable: the reviewer model's answer was not a verdict",
-  aiReviewNoteUnready: "AI review unavailable: the reviewer model is not configured or has no endpoint",
-  aiReviewNoteError: "AI review unavailable: the request to the reviewer model failed ({detail})",
-  aiReviewNoteErrorNoDetail: "AI review unavailable: the request to the reviewer model failed",
-  aiReviewChangeModel: "Change reviewer model",
-  aiReviewEgressNotice:
-    "Hard-denied and destructive commands (rm, sudo, git push, .env/.ssh reads) are blocked locally and never sent. Only non-destructive commands that fail static checks send the command string and workspace directory path to the selected model provider. Any timeout, error, or uncertainty falls back to manual confirmation",
   deferredTitle: "Waiting for you",
   deferredEmpty: "Nothing is waiting",
   deferredResolved: "Handled",
@@ -150,7 +127,6 @@ export const approval = {
   sourceSystem: "System",
   sourceGrant: "Session kind grant",
   sourcePolicy: "Approval mode",
-  sourceAIReview: "AI review",
   sourceOwnProcess: "Stops own session process",
   decisionOnce: "Allow Once",
   decisionAlways: "Session Always",

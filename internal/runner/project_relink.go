@@ -156,8 +156,26 @@ func (s *Service) HealProjectSessions(projectID, directory string) {
 	if projectID == "" {
 		return
 	}
-	for _, info := range s.store.ListProject(projectID, s.projectScopeDirectory(projectID, directory)) {
-		_ = s.HealSessionDirectory(info.ID)
+	canonicalID, live := s.canonicalProjectID(projectID)
+	if !live || canonicalID == "" {
+		return
+	}
+	roots := s.projectResolver.ProjectRoots(canonicalID)
+	if len(roots) == 0 {
+		return
+	}
+	rootSet := make(map[string]bool, len(roots))
+	for _, root := range roots {
+		rootSet[normalizeComparePath(root)] = true
+	}
+	for _, rec := range s.store.listProjectRecords(projectID, s.projectScopeDirectory(projectID, directory)) {
+		if rec.Subagent || strings.TrimSpace(rec.ProjectID) == "" || strings.TrimSpace(rec.ProjectDir) == "" {
+			continue
+		}
+		if rootSet[normalizeComparePath(rec.ProjectDir)] {
+			continue
+		}
+		_ = s.HealSessionDirectory(rec.ID)
 	}
 }
 

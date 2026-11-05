@@ -214,7 +214,6 @@ func (s *Service) claimOpenCodePermission(item map[string]interface{}, sessionID
 	case openCodeAutoReplyFailed:
 		// The policy already tried once; the user or the timeout answers.
 		annotateGrantClasses(item, directory)
-		s.carryAIReviewNote(id, item)
 		s.askOpenCodeUser(item, sessionID, directory)
 		return false
 	}
@@ -260,9 +259,6 @@ func (s *Service) claimOpenCodePermission(item map[string]interface{}, sessionID
 	}
 	if s.classGrantApproves(item, sessionID, directory) {
 		s.autoReplyOpenCode(id, sessionID, directory, grantSourceSession, userFallback)
-		return true
-	}
-	if s.claimOpenCodeAIReview(id, item, sessionID, directory, userFallback) {
 		return true
 	}
 	// Shown to the user: offer a session grant when Go would honour one.
@@ -525,7 +521,6 @@ func (s *Service) reconcilePendingApprovals() {
 		default:
 		}
 	}
-	s.reconcilePendingWithAIReview(pending)
 	now := time.Now()
 	s.openCodeAutoReplies.Range(func(key string, value any) bool {
 		if value == openCodeAutoReplyFailed {

@@ -154,7 +154,7 @@ agy 发起 run_command
 
 与原方案的差异：
 
-- 审批决策统一由 Go 端 `approvalAutoApproves`（`internal/runner/approval_decision.go`）按 `~/.hoxi/approval-policy.json`（5 种模式：`auto` / `trusted` / `smart` / `manual` / `unattended`，及工具覆盖与可选轻量模型审查 `aiReview`）判定：策略允许的请求由 Go 直接 `auto_approve`，不推送 `permission.asked` 事件、不计入状态栏 Attention；策略不允许的请求（含任何模式下的破坏性命令、敏感凭据读取及受保护路径修改）推送 `permission.asked` 等待用户确认。前端只负责展示与编辑策略，不再替用户自动回复。
+- 审批决策统一由 Go 端 `approvalAutoApproves`（`internal/runner/approval_decision.go`）按 `~/.hoxi/approval-policy.json`（5 种模式：`auto` / `trusted` / `smart` / `manual` / `unattended`，及工具覆盖）判定：策略允许的请求由 Go 直接 `auto_approve`，不推送 `permission.asked` 事件、不计入状态栏 Attention；策略不允许的请求（含任何模式下的破坏性命令、敏感凭据读取及受保护路径修改）推送 `permission.asked` 等待用户确认。前端只负责展示与编辑策略，不再替用户自动回复。
 - 会话内的 always 规则只保存在内存里，按完全相同的命令匹配，Hoxi 重启后失效。破坏性命令永远不会被 always 记住。
 
 端到端测试（需要真实的 agy，会消耗少量模型请求）：

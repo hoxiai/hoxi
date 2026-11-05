@@ -26,11 +26,6 @@ type ApprovalPolicy struct {
 	Edit     string `json:"edit,omitempty"`     // "" | "allow" | "ask"
 	Webfetch string `json:"webfetch,omitempty"` // "" | "allow" | "ask"
 	Bash     string `json:"bash,omitempty"`     // "" | "allow" | "smart" | "ask"
-	// AIReview lets a user-selected lightweight model inspect complex
-	// non-destructive bash commands that fail static checks and allow strictly
-	// read-only inspection commands without prompting.
-	AIReview      bool   `json:"aiReview,omitempty"`
-	AIReviewModel string `json:"aiReviewModel,omitempty"` // "providerID/modelID"
 	// ApprovalTimeoutSeconds is how long a pending request waits before it is
 	// rejected. Zero means the default. A timeout only ever rejects.
 	ApprovalTimeoutSeconds int   `json:"approvalTimeoutSeconds,omitempty"`
@@ -137,32 +132,7 @@ func (p ApprovalPolicy) validate() error {
 	if p.Bash != "" && p.Bash != "allow" && p.Bash != "smart" && p.Bash != "ask" {
 		return fmt.Errorf("bash must be empty, allow, smart or ask")
 	}
-	if !validAIReviewModelSpec(p.AIReviewModel) {
-		return fmt.Errorf("aiReviewModel must be empty or provider/model")
-	}
 	return nil
-}
-
-func validAIReviewModelSpec(spec string) bool {
-	if spec == "" {
-		return true
-	}
-	if len(spec) > 200 || spec != strings.TrimSpace(spec) {
-		return false
-	}
-	prov, model, ok := strings.Cut(spec, "/")
-	if !ok || prov == "" || model == "" {
-		return false
-	}
-	if strings.Contains(spec, "..") || strings.ContainsRune(spec, '\\') {
-		return false
-	}
-	for _, r := range spec {
-		if r <= 32 || r == 127 {
-			return false
-		}
-	}
-	return true
 }
 
 type approvalPolicyStore struct {
@@ -221,10 +191,6 @@ func (s *approvalPolicyStore) load() {
 		s.seedDefaultLocked()
 		return
 	}
-	p.AIReviewModel = strings.TrimSpace(p.AIReviewModel)
-	if p.AIReviewModel == "" {
-		p.AIReview = false
-	}
 	s.policy = p
 	s.exists = p.UpdatedAt > 0 || p != defaultApprovalPolicy()
 }
@@ -236,12 +202,8 @@ func (s *approvalPolicyStore) get() (ApprovalPolicy, bool) {
 }
 
 func (s *approvalPolicyStore) set(p ApprovalPolicy) (ApprovalPolicy, error) {
-	p.AIReviewModel = strings.TrimSpace(p.AIReviewModel)
 	if err := p.validate(); err != nil {
 		return ApprovalPolicy{}, err
-	}
-	if p.AIReviewModel == "" {
-		p.AIReview = false
 	}
 	p.UpdatedAt = time.Now().UnixMilli()
 	s.mu.Lock()

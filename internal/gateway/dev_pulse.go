@@ -125,14 +125,19 @@ type devPulseFlight struct {
 }
 
 type devPulseCache struct {
-	mu       sync.Mutex
-	entries  map[string]devPulseEntry
-	inflight map[string]*devPulseFlight
+	mu           sync.Mutex
+	entries      map[string]devPulseEntry
+	inflight     map[string]*devPulseFlight
+	usageAt      time.Time
+	usageStartMs int64
+	usageKey     requestLogKey
+	usageRes     gitDailyPulseResponse
 }
 
 const (
 	devPulseCacheTTL        = 15 * time.Second
 	maxDevPulseCacheEntries = 16
+	partMessageLookbackMs   = 24 * 60 * 60 * 1000
 )
 
 func (g *Gateway) handleDevPulse(w http.ResponseWriter, r *http.Request) {
@@ -196,12 +201,9 @@ func (g *Gateway) handleDevPulse(w http.ResponseWriter, r *http.Request) {
 		DbModels: []dailyModelStat{},
 	}
 
-	// 1. Query authoritative OpenCode SQLite DB for today's exact token & cost usage
-	queryOpenCodeDailyDB(startOfTodayMs, &res)
-
-	// 2. Native CLI runtimes (Claude Code, Antigravity, Qoder, CodeBuddy) never
-	// write to hoxi.db, so their usage is only in the runner transcript store.
-	g.collectRunnerDailyUsage(startOfTodayMs, &res)
+	// 1 & 2. Global daily token/tool usage from OpenCode SQLite DB and native
+	// CLI runtimes (independent of workDir; cached across worktree switches).
+	g.collectDailyUsage(now, startOfTodayMs, forced, &res)
 
 	// 3. Query Git repository for today's source code additions & deletions
 	if workDir != "" {
@@ -210,10 +212,20 @@ func (g *Gateway) handleDevPulse(w http.ResponseWriter, r *http.Request) {
 
 	g.pulseCache.mu.Lock()
 	if len(g.pulseCache.entries) >= maxDevPulseCacheEntries {
+		var oldestKey string
+		var oldestAt time.Time
 		for k, v := range g.pulseCache.entries {
 			if now.Sub(v.at) >= devPulseCacheTTL {
 				delete(g.pulseCache.entries, k)
+				continue
 			}
+			if oldestKey == "" || v.at.Before(oldestAt) {
+				oldestKey = k
+				oldestAt = v.at
+			}
+		}
+		if len(g.pulseCache.entries) >= maxDevPulseCacheEntries && oldestKey != "" {
+			delete(g.pulseCache.entries, oldestKey)
 		}
 	}
 	g.pulseCache.entries[workDir] = devPulseEntry{at: time.Now(), res: res}
@@ -225,6 +237,53 @@ func (g *Gateway) handleDevPulse(w http.ResponseWriter, r *http.Request) {
 	g.pulseCache.mu.Unlock()
 
 	writeJSON(w, http.StatusOK, res)
+}
+
+func copyDailyUsage(dst *gitDailyPulseResponse, src gitDailyPulseResponse) {
+	dst.DbTurnsCount = src.DbTurnsCount
+	dst.DbSessionsCount = src.DbSessionsCount
+	dst.DbToolCallsTotal = src.DbToolCallsTotal
+	dst.DbToolCallsFailed = src.DbToolCallsFailed
+	dst.DbLatestTurnTs = src.DbLatestTurnTs
+	dst.DbTotalTokens = src.DbTotalTokens
+	dst.DbInputTokens = src.DbInputTokens
+	dst.DbOutputTokens = src.DbOutputTokens
+	dst.DbReasoningTokens = src.DbReasoningTokens
+	dst.DbCacheReadTokens = src.DbCacheReadTokens
+	dst.DbCacheWriteTokens = src.DbCacheWriteTokens
+	dst.DbTotalCost = src.DbTotalCost
+	dst.DbModels = make([]dailyModelStat, len(src.DbModels))
+	copy(dst.DbModels, src.DbModels)
+}
+
+func (g *Gateway) collectDailyUsage(now time.Time, startOfTodayMs int64, forced bool, res *gitDailyPulseResponse) {
+	sourceKey := g.requestLogSourceKey()
+	if !forced {
+		g.pulseCache.mu.Lock()
+		if !g.pulseCache.usageAt.IsZero() &&
+			g.pulseCache.usageStartMs == startOfTodayMs &&
+			(now.Sub(g.pulseCache.usageAt) < devPulseCacheTTL || g.pulseCache.usageKey == sourceKey) {
+			copyDailyUsage(res, g.pulseCache.usageRes)
+			g.pulseCache.mu.Unlock()
+			return
+		}
+		g.pulseCache.mu.Unlock()
+	}
+
+	usage := gitDailyPulseResponse{
+		DbModels: []dailyModelStat{},
+	}
+	queryOpenCodeDailyDB(startOfTodayMs, &usage)
+	g.collectRunnerDailyUsage(startOfTodayMs, &usage)
+
+	g.pulseCache.mu.Lock()
+	g.pulseCache.usageAt = time.Now()
+	g.pulseCache.usageStartMs = startOfTodayMs
+	g.pulseCache.usageKey = sourceKey
+	g.pulseCache.usageRes = usage
+	g.pulseCache.mu.Unlock()
+
+	copyDailyUsage(res, usage)
 }
 
 // sessionPulseDirectory returns the directory a session actually works in, or
@@ -581,8 +640,8 @@ SELECT json_object(
           CAST(COALESCE(json_extract(m.data, '$.tokens.reasoning'), 0) AS INTEGER) as tok_reason,
           CAST(COALESCE(json_extract(m.data, '$.tokens.cache.read'), 0) AS INTEGER) as cache_read,
           CAST(COALESCE(json_extract(m.data, '$.tokens.cache.write'), 0) AS INTEGER) as cache_write
-        FROM message m
-        JOIN session s ON s.id = m.session_id
+        FROM session s
+        CROSS JOIN message m ON m.session_id = s.id
         WHERE m.time_created >= %d
           AND json_extract(m.data, '$.role') = 'assistant'
           AND %s
@@ -599,15 +658,17 @@ SELECT json_object(
   'sessionsCount', (
     SELECT COUNT(DISTINCT s.id)
     FROM session s
-    JOIN message m ON m.session_id = s.id
+    CROSS JOIN message m ON m.session_id = s.id
     WHERE m.time_created >= %d
       AND %s
   ),
   'toolsTotal', (
     SELECT COUNT(*) FROM (
-      SELECT 1 FROM part p
-      JOIN session s ON s.id = p.session_id
-      WHERE p.time_created >= %d
+      SELECT 1 FROM session s
+      CROSS JOIN message m ON m.session_id = s.id
+      CROSS JOIN part p ON p.message_id = m.id
+      WHERE m.time_created >= %d
+        AND p.time_created >= %d
         AND json_extract(p.data, '$.type') = 'tool'
         AND %s
       GROUP BY COALESCE(json_extract(p.data, '$.callID'), p.id)
@@ -615,9 +676,11 @@ SELECT json_object(
   ),
   'toolsFailed', (
     SELECT COUNT(*) FROM (
-      SELECT 1 FROM part p
-      JOIN session s ON s.id = p.session_id
-      WHERE p.time_created >= %d
+      SELECT 1 FROM session s
+      CROSS JOIN message m ON m.session_id = s.id
+      CROSS JOIN part p ON p.message_id = m.id
+      WHERE m.time_created >= %d
+        AND p.time_created >= %d
         AND json_extract(p.data, '$.type') = 'tool'
         AND json_extract(p.data, '$.state.status') = 'error'
         AND %s
@@ -627,8 +690,8 @@ SELECT json_object(
 );`,
 		startOfTodayMs, handoff.SQLNotImportedTurnClause("s.title", "m.data", "m.time_created", "s.time_created"),
 		startOfTodayMs, handoff.SQLNotImportedTurnClause("s.title", "m.data", "m.time_created", "s.time_created"),
-		startOfTodayMs, handoff.SQLNotImportedTurnClause("s.title", "p.data", "p.time_created", "s.time_created"),
-		startOfTodayMs, handoff.SQLNotImportedTurnClause("s.title", "p.data", "p.time_created", "s.time_created"))
+		startOfTodayMs-partMessageLookbackMs, startOfTodayMs, handoff.SQLNotImportedTurnClause("s.title", "p.data", "p.time_created", "s.time_created"),
+		startOfTodayMs-partMessageLookbackMs, startOfTodayMs, handoff.SQLNotImportedTurnClause("s.title", "p.data", "p.time_created", "s.time_created"))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 	defer cancel()

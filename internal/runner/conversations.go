@@ -73,21 +73,20 @@ func (s *Service) listConversationsWithSurface(ctx context.Context, projectID, d
 	owned := make(map[string]bool)
 	engineToHoxi := make(map[string]string)
 	s.HealProjectSessions(projectID, directory)
-	for _, info := range s.store.ListProject(projectID, s.projectScopeDirectory(projectID, directory)) {
+	for _, rec := range s.store.listProjectRecords(projectID, s.projectScopeDirectory(projectID, directory)) {
+		info := rec.ToSessionInfo()
 		owned[info.ID] = true
 		if info.ExternalID != "" {
 			engineToHoxi[info.ExternalID] = info.ID
 		}
-		if rec, ok := s.store.Meta(info.ID); ok {
-			for _, ocID := range rec.OpenCodeIDs {
-				if ocID != "" {
-					engineToHoxi[ocID] = info.ID
-				}
+		for _, ocID := range rec.OpenCodeIDs {
+			if ocID != "" {
+				engineToHoxi[ocID] = info.ID
 			}
-			for _, childID := range rec.OpenCodeChildIDs {
-				if childID != "" {
-					engineToHoxi[childID] = info.ID
-				}
+		}
+		for _, childID := range rec.OpenCodeChildIDs {
+			if childID != "" {
+				engineToHoxi[childID] = info.ID
 			}
 		}
 		if (surfaceFilter == "work" || surfaceFilter == "code") && info.Surface != surfaceFilter {

@@ -207,8 +207,8 @@ SELECT
         THEN CAST(COALESCE(json_extract(m.data, '$.time.completed'), 0) AS INTEGER) - m.time_created ELSE 0 END) AS dur_sum,
   SUM(CASE WHEN CAST(COALESCE(json_extract(m.data, '$.time.completed'), 0) AS INTEGER) > m.time_created
         THEN 1 ELSE 0 END) AS dur_n
-FROM message m
-JOIN session s ON s.id = m.session_id
+FROM session s
+CROSS JOIN message m ON m.session_id = s.id
 WHERE m.time_created >= %d
   AND m.time_created < %d
   AND json_extract(m.data, '$.role') = 'assistant'
@@ -289,16 +289,19 @@ FROM (
   SELECT
     date(p.time_created / 1000, 'unixepoch', 'localtime') AS day,
     MAX(CASE WHEN json_extract(p.data, '$.state.status') = 'error' THEN 1 ELSE 0 END) AS is_error
-  FROM part p
-  JOIN session s ON s.id = p.session_id
-  WHERE p.time_created >= %d
+  FROM session s
+  CROSS JOIN message m ON m.session_id = s.id
+  CROSS JOIN part p ON p.message_id = m.id
+  WHERE m.time_created >= %d
+    AND m.time_created < %d
+    AND p.time_created >= %d
     AND p.time_created < %d
     AND json_extract(p.data, '$.type') = 'tool'
     AND %s
   GROUP BY date(p.time_created / 1000, 'unixepoch', 'localtime'), COALESCE(json_extract(p.data, '$.callID'), p.id)
 )
 GROUP BY day
-ORDER BY day;`, startMs, endMs, handoff.SQLNotImportedTurnClause("s.title", "p.data", "p.time_created", "s.time_created"))
+ORDER BY day;`, startMs-partMessageLookbackMs, endMs, startMs, endMs, handoff.SQLNotImportedTurnClause("s.title", "p.data", "p.time_created", "s.time_created"))
 
 	tCtx, tCancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer tCancel()

@@ -182,7 +182,7 @@ func (g *Gateway) collectRequestLog() []requestLogEntry {
 	now := time.Now()
 	cutoffMs := now.Add(-requestLogPendingWindow).UnixMilli()
 	earliestMs := now.Add(-requestLogMaxAge).UnixMilli()
-	entries := queryOpenCodeRequestLog(cutoffMs)
+	entries := queryOpenCodeRequestLog(cutoffMs, earliestMs)
 	if g.runner == nil {
 		sort.SliceStable(entries, func(i, j int) bool { return entries[i].Time > entries[j].Time })
 		return entries
@@ -332,7 +332,7 @@ func trimLogText(v string) string {
 	return v
 }
 
-func queryOpenCodeRequestLog(cutoffMs int64) []requestLogEntry {
+func queryOpenCodeRequestLog(cutoffMs, earliestMs int64) []requestLogEntry {
 	dbPath := hoxipaths.DBPath()
 	if dbPath == "" {
 		return nil
@@ -376,9 +376,10 @@ FROM (
     CAST(COALESCE(json_extract(m.data, '$.cost'), 0) AS REAL) AS cost,
     CAST(COALESCE(json_extract(m.data, '$.error.data.statusCode'), 0) AS INTEGER) AS status,
     COALESCE(json_extract(m.data, '$.error.data.message'), json_extract(m.data, '$.error.name'), '') AS error
-  FROM message m
-  JOIN session s ON s.id = m.session_id
-  WHERE json_extract(m.data, '$.role') = 'assistant'
+  FROM session s
+  CROSS JOIN message m ON m.session_id = s.id
+  WHERE m.time_created >= %d
+    AND json_extract(m.data, '$.role') = 'assistant'
     AND (
       CAST(COALESCE(json_extract(m.data, '$.tokens.input'), 0) AS INTEGER) > 0
       OR CAST(COALESCE(json_extract(m.data, '$.tokens.output'), 0) AS INTEGER) > 0
@@ -388,7 +389,7 @@ FROM (
     )
   ORDER BY m.time_created DESC
   LIMIT %d
-) top_m;`, cutoffMs, requestLogMaxLimit)
+) top_m;`, earliestMs, cutoffMs, requestLogMaxLimit)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()

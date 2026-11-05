@@ -44,7 +44,6 @@ type approvalAsk struct {
 	description string
 	callID      string
 	source      string
-	aiReview    aiReviewOutcome // shown on the card when review did not allow
 }
 
 type approvalReply struct {
@@ -348,12 +347,6 @@ func (s *Service) gateCommand(r *http.Request, cred hookCredential, rec SessionR
 		s.recordRunnerApprovalAudit(cred, item, "once", approvalReply{Reply: "once", Source: grantSourceSession})
 		return true, ""
 	}
-	review := s.aiReviewCommand(r.Context(), item, rec.WorktreePath)
-	if review.allowed() {
-		s.recordAIReviewApproval(cred, item, review.reason)
-		return true, ""
-	}
-	ask.aiReview = review
 	return s.awaitApproval(r, cred, ask)
 }
 
@@ -380,7 +373,6 @@ func (s *Service) awaitApproval(r *http.Request, cred hookCredential, ask approv
 		},
 	}
 	annotateGrantClasses(req, s.sessionWorktree(cred.sessionID))
-	annotateAIReview(req, ask.aiReview)
 	answer := s.awaitReply(r, cred, id, req)
 	switch answer.Reply {
 	case "always":

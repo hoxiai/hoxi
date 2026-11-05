@@ -330,3 +330,41 @@ func TestCrossDirectoryCDAndSkillsApproval(t *testing.T) {
 		}
 	}
 }
+
+func TestDataArgumentsInSubshellsAndPrefixesAreNotDestructive(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	for _, cmd := range []string{
+		`(cd pkg && git commit -m "fix: avoid rm -rf false positive")`,
+		`LC_ALL=C rg "rm -rf|sudo|\.env" src`,
+		`env LC_ALL=C rg "rm -rf$" src`,
+		`timeout 5 rg "^(sudo|rm -rf)$" src`,
+		`time git commit -m "fix: rm -rf false positive$"`,
+		`diff <(rg "rm -rf" a.txt) <(rg "sudo" b.txt)`,
+		`bash -c 'rg "rm -rf|sudo|\.env" src'`,
+	} {
+		if isDestructiveCommand(cmd) {
+			t.Fatalf("command with data argument inside subshell/prefix was treated as destructive: %s", cmd)
+		}
+	}
+	for _, cmd := range []string{
+		`(cd pkg && rg "rm -rf|sudo|\.env" internal/)`,
+		`env LC_ALL=C rg "rm -rf$" src`,
+	} {
+		if !approvalAutoApproves(req("bash", cmd), ApprovalPolicy{Mode: ApprovalModeAuto}, nil, dir) {
+			t.Fatalf("safe subshell/prefix data-argument command was not auto-approved: %s", cmd)
+		}
+	}
+	for _, cmd := range []string{
+		`bash -c 'rm -rf ./dist'`,
+		`(cd web && rm -rf dist)`,
+	} {
+		if !isDestructiveCommand(cmd) {
+			t.Fatalf("destructive command inside subshell/bash -c was not detected: %s", cmd)
+		}
+	}
+	if approvalAutoApproves(req("bash", `(cd pkg && cat .env)`), ApprovalPolicy{Mode: ApprovalModeAuto}, nil, dir) {
+		t.Fatal("real .env file read inside subshell must still ask")
+	}
+}
+

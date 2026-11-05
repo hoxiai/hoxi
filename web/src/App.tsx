@@ -37,7 +37,6 @@ import {
   loadProjects,
   loadProviders,
   loadProviderTelemetry,
-  reconcileApprovalAIReview,
   refreshAuthStatus,
   syncProviderBreakers,
   loadSavedWorkspaces,
@@ -169,7 +168,6 @@ export default function App() {
         });
         void Promise.all([loadProviders(), refreshAuthStatus(), approvalReady])
           .then(() => ensureOfficialProviderConnected())
-          .then(() => reconcileApprovalAIReview())
           .catch(() => {});
         void loadProviderTelemetry();
         void syncProviderBreakers();

@@ -31,7 +31,6 @@ type uSeg struct {
 
 // uScript is a parsed command with the commands nested inside it.
 type uScript struct {
-	src      string // exact source text that uWord.start / uWord.end index into
 	segs     []*uSeg
 	children []*uScript // `$(…)`, backticks, `<(…)`, `>(…)` and `${…}` bodies
 	vars     map[string]bool
@@ -78,7 +77,7 @@ func parseUnattendedScript(s string) (*uScript, bool) {
 }
 
 func newUParser(s string) *uParser {
-	return &uParser{s: s, out: &uScript{src: s, vars: map[string]bool{}}, cur: &uSeg{}}
+	return &uParser{s: s, out: &uScript{vars: map[string]bool{}}, cur: &uSeg{}}
 }
 
 // run parses until the end of input or, when nested, the `)` that closes the

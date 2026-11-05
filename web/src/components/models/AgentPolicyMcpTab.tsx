@@ -14,9 +14,7 @@ import {
   approvalGrants,
   approvalPolicy,
   fetchGlobalConfig,
-  resolveDefaultAIReviewModel,
   resolveEffectivePermissionSummary,
-  setApprovalAIReview,
   setApprovalMode,
   setApprovalTimeout,
   updateToolPermissionRule,
@@ -30,10 +28,7 @@ import {
   SegmentedPills,
   SettingGroup,
   SettingRow,
-  ToggleSwitch,
 } from "../settings/setting-controls";
-import { getInternalLLMProviderModelGroups } from "./model-selector-utils";
-import ModelRolePicker from "./ModelRolePicker";
 
 interface PresetCardOption {
   id: ApprovalMode;
@@ -97,7 +92,6 @@ export default function AgentPolicyMcpTab() {
   });
 
   const currentMode = (): ApprovalMode => appSettings.approvalMode || "auto";
-  const connectedGroups = createMemo(() => getInternalLLMProviderModelGroups());
 
   const effective = createMemo(() =>
     resolveEffectivePermissionSummary(
@@ -294,42 +288,6 @@ export default function AgentPolicyMcpTab() {
               class="w-24 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-1 text-[12px]"
             />
           </SettingRow>
-        </SettingGroup>
-
-        <SettingGroup title={t("approval.aiReviewTitle")} tip={t("approval.aiReviewTip")}>
-          <SettingRow label={t("approval.aiReviewEnableLabel")} tip={t("approval.aiReviewTip")}>
-            <ToggleSwitch
-              checked={Boolean(approvalPolicy().aiReview && approvalPolicy().aiReviewModel)}
-              onChange={(enabled) => {
-                if (enabled && !approvalPolicy().aiReviewModel && !resolveDefaultAIReviewModel()) {
-                  showSavedFeedback(false, t("approval.aiReviewModelEmpty"));
-                  return;
-                }
-                void setApprovalAIReview({ aiReview: enabled })
-                  .then(() => showSavedFeedback(true, t("models.policyUpdated")))
-                  .catch((err) => showSavedFeedback(false, err?.message || String(err)));
-              }}
-            />
-          </SettingRow>
-          <SettingRow label={t("approval.aiReviewModelLabel")} tip={t("approval.aiReviewModelHint")}>
-            <ModelRolePicker
-              value={approvalPolicy().aiReviewModel || ""}
-              groups={connectedGroups()}
-              allowEmpty={true}
-              emptyLabel={t("approval.aiReviewModelEmpty")}
-              onChange={(val) => {
-                void setApprovalAIReview({
-                  aiReviewModel: val,
-                  aiReview: val ? true : false,
-                })
-                  .then(() => showSavedFeedback(true, t("models.policyUpdated")))
-                  .catch((err) => showSavedFeedback(false, err?.message || String(err)));
-              }}
-            />
-          </SettingRow>
-          <div class="px-5 py-3 text-[12px] leading-relaxed text-[var(--text-muted)]">
-            {t("approval.aiReviewEgressNotice")}
-          </div>
         </SettingGroup>
 
         <DeferredList />

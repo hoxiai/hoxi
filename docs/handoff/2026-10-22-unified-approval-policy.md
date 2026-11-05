@@ -1,6 +1,6 @@
 # 交接：审批决策统一收口到 Go（2026-10-22）
 
-> 状态：**已完成（Go 后端、前端与文档均已完成并通过测试）**。后续在此基础上已扩展至 5 种审批模式（`auto` / `trusted` / `smart` / `manual` / `unattended`）、审批超时（`approvalTimeoutSeconds`）、可选轻量模型审查（`aiReview` + `aiReviewModel`，`internal/runner/approval_ai_review.go`）以及 Gemini CLI `BeforeTool` Hook（`internal/runner/gemini_hook_gate.go`）。最新行为以 [`AGENTS.md`](../../AGENTS.md) 与 [`docs/ai-coding-guardrails.md`](../ai-coding-guardrails.md) 第 1 节为准。
+> 状态：**已完成（Go 后端、前端与文档均已完成并通过测试）**。后续在此基础上已扩展至 5 种审批模式（`auto` / `trusted` / `smart` / `manual` / `unattended`）、审批超时（`approvalTimeoutSeconds`）以及 Gemini CLI `BeforeTool` Hook（`internal/runner/gemini_hook_gate.go`）。最新行为以 [`AGENTS.md`](../../AGENTS.md) 与 [`docs/ai-coding-guardrails.md`](../ai-coding-guardrails.md) 第 1 节为准。
 
 ## 1. 要解决的问题
 

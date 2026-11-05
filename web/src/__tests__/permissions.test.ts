@@ -13,11 +13,8 @@ import {
   isDestructivePermissionRequest,
   loadApprovalPolicy,
   markPermissionResolved,
-  reconcileApprovalAIReview,
   replyPermissionRequest,
-  resolveDefaultAIReviewModel,
   resolveEffectivePermissionSummary,
-  setApprovalAIReview,
   setApprovalMode,
   unattendedGapFor,
   updateToolPermissionRule,
@@ -293,86 +290,6 @@ describe("approval policy store and migration", () => {
     } finally {
       hoxiAPI.updateApprovalPolicy = origUpdatePolicy;
       setAppSettings("approvalMode", prevMode);
-    }
-  });
-
-  it("setApprovalAIReview auto-selects a connected HTTP model and never enables without one", async () => {
-    const prevProviders = [...workspace.providers];
-    const prevConnected = [...workspace.connectedProviders];
-    const prevConfig = workspace.globalConfig;
-    const origUpdatePolicy = hoxiAPI.updateApprovalPolicy;
-    try {
-      const puts: ApprovalPolicy[] = [];
-      hoxiAPI.updateApprovalPolicy = async (policy) => {
-        puts.push(policy);
-        return { policy, exists: true };
-      };
-
-      // Only CLI runtime + unconfigured opencode -> cannot enable AI review without a model
-      await setApprovalMode("auto");
-      setWorkspace("providers", [
-        { id: "opencode", name: "OpenCode", source: "api", models: { free: { name: "Free" } } },
-        { id: "claude-code", name: "Claude Code", source: "runner", models: { sonnet: { name: "Sonnet" } } },
-      ] as never);
-      setWorkspace("connectedProviders", ["claude-code"]);
-      setWorkspace("globalConfig", {});
-      assertEqual(resolveDefaultAIReviewModel(), "");
-      await setApprovalAIReview({ aiReview: true });
-      assertEqual(puts[puts.length - 1].aiReview, false);
-      assertEqual(puts[puts.length - 1].aiReviewModel, "");
-
-      // Connected HTTP provider -> picks fast model automatically when enabling AI review
-      setWorkspace("providers", [
-        {
-          id: "hoxi-gateway",
-          name: "Hoxi Gateway",
-          source: "api",
-          models: {
-            "deepseek-r1": { name: "R1", reasoning: true },
-            "deepseek-flash": { name: "Flash", reasoning: false },
-          },
-        },
-      ] as never);
-      setWorkspace("connectedProviders", ["hoxi-gateway"]);
-      assertEqual(resolveDefaultAIReviewModel(), "hoxi-gateway/deepseek-flash");
-      await setApprovalAIReview({ aiReview: true });
-      assertEqual(puts[puts.length - 1].aiReview, true);
-      assertEqual(puts[puts.length - 1].aiReviewModel, "hoxi-gateway/deepseek-flash");
-
-      // Unannotated reasoning models (e.g. o3-mini, flash-thinking, r1 without reasoning flag) are skipped in favor of non-reasoning models
-      await setApprovalAIReview({ aiReview: false, aiReviewModel: "" });
-      setWorkspace("providers", [
-        {
-          id: "custom-gw",
-          name: "Custom Gateway",
-          source: "api",
-          models: {
-            "o3-mini": { name: "o3 Mini" },
-            "gemini-2.5-flash-thinking": { name: "Flash Thinking" },
-            "gpt-4o-mini": { name: "GPT-4o Mini" },
-          },
-        },
-      ] as never);
-      setWorkspace("connectedProviders", ["custom-gw"]);
-      assertEqual(resolveDefaultAIReviewModel(), "custom-gw/gpt-4o-mini");
-
-      // Reconcile upgrades a previously saved reasoning aiReviewModel to a fast non-reasoning model
-      await setApprovalAIReview({ aiReview: true, aiReviewModel: "custom-gw/o3-mini" });
-      assertEqual(approvalPolicy().aiReviewModel, "custom-gw/o3-mini");
-      await reconcileApprovalAIReview();
-      assertEqual(approvalPolicy().aiReview, true);
-      assertEqual(approvalPolicy().aiReviewModel, "custom-gw/gpt-4o-mini");
-
-      // User explicitly disabling AI review prevents reconcileApprovalAIReview from re-enabling it
-      await setApprovalAIReview({ aiReview: false });
-      assertEqual(approvalPolicy().aiReview, false);
-      await reconcileApprovalAIReview();
-      assertEqual(approvalPolicy().aiReview, false);
-    } finally {
-      hoxiAPI.updateApprovalPolicy = origUpdatePolicy;
-      setWorkspace("providers", prevProviders);
-      setWorkspace("connectedProviders", prevConnected);
-      setWorkspace("globalConfig", prevConfig);
     }
   });
 

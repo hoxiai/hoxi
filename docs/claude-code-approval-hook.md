@@ -39,7 +39,7 @@
 - plan 模式不挂 hook，继续由 Claude 自己做只读限制。
 - `POST /api/hoxi/runner/hook/claude-pretool` 和 agy 共用 `gateCommand` / `awaitApproval`（及 `permission_policy.go` 单次解析策略、`approval_decision.go` 统一审批策略与 `pathWithin` 符号链接/悬空符号链接校验）：
   - `cwd` 超出会话 worktree（含经符号链接/悬空符号链接指向区外）→ `deny`
-  - 非破坏性命令按 `~/.hoxi/approval-policy.json` 策略（`auto` / `trusted` / `smart` / `manual` / `unattended`，及工具覆盖、对象规则与可选轻量模型审查 `aiReview`）与会话内 always 授权判定是否直接 `allow`（manual 模式下只读命令也会询问）
+  - 非破坏性命令按 `~/.hoxi/approval-policy.json` 策略（`auto` / `trusted` / `smart` / `manual` / `unattended`，及工具覆盖与对象规则）与会话内 always 授权判定是否直接 `allow`（manual 模式下只读命令也会询问）
   - 其他命令（包括策略要求询问的命令、含引号/转义/`$(`/反引号的命令、危险参数如 `find -exec/-delete/-fprint*` / `fd -x` / `rg --pre` / `git --output` / `go env -w`，以及 `rm`、`unlink`、`sudo`、`git push --force`/`-uf`/`+refspec`、`git reset --hard`/`--har` 等破坏性命令）→ `per_rnr_*` 请求、ApprovalGateCard，状态栏显示 Attention
   - 破坏性命令（含转义/引号混淆变体）永远不会被记成 always 规则
 - doom-loop 守卫（`internal/runner/doom_loop.go`）：同一会话连续 3 次以相同参数调用同一工具（参数按 key 排序后比较；`BashOutput`、`TaskOutput` 等轮询工具除外）时，第 3 次调用会先发出 `doom_loop` 审批。拒绝时返回 `deny`，并把原因交给模型；允许一次后重新计数；选择 always 后本会话不再检查该工具。Antigravity 与 Gemini CLI 的工具调用也走同一个守卫。
