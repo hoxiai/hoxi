@@ -2,6 +2,12 @@
 
 All notable releases of **Hoxi Desktop** are documented below. Full per-version release notes are archived under [`docs/release-notes/`](docs/release-notes/) and consumed directly by `.github/workflows/release.yml` and `scripts/ai-release.sh`.
 
+## [v0.6.13](docs/release-notes/v0.6.13.md) — 2026-11-05
+
+- **Turn Retry Bounds**: Abort engine retry events beyond 15s, 3 attempts or a permanent/quota fault, stamp the error on the last assistant message, and stop auto-retrying long quota resets; keep `Retry-After` inside the retry ceiling.
+- **Computer & Pairing**: Tighten computer-control grants per session and app with inspector state; harden the pairing poll lifecycle and surface progress in the settings menu.
+- **Bundled Skills**: Seed `ashare-ops`, `hk-warrant-ops` and `us-options-ops` as default skills.
+
 ## [v0.6.12](docs/release-notes/v0.6.12.md) — 2026-11-04
 
 - **Hotfix**: Fix the blank window on launch after upgrading to v0.6.11 — the Work sidebar read `isLoaded` before it was initialized (TDZ) whenever a Work workspace existed; the release build had bundled a stale `hoxi-work` revision without the fix.
