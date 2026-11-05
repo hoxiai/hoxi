@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
@@ -54,33 +55,11 @@ func savePersistedKeepAwakeEnabled(enabled bool) error {
 	persistKeepAwakeMu.Lock()
 	defer persistKeepAwakeMu.Unlock()
 
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
 	raw, err := json.MarshalIndent(persistedKeepAwakeConfig{Enabled: enabled}, "", "  ")
 	if err != nil {
 		return err
 	}
-	tmpFile, err := os.CreateTemp(dir, ".keep-awake-*.tmp")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmpFile.Name()
-	if _, err := tmpFile.Write(raw); err != nil {
-		_ = tmpFile.Close()
-		_ = os.Remove(tmpPath)
-		return err
-	}
-	if err := tmpFile.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		return err
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		_ = os.Remove(tmpPath)
-		return err
-	}
-	return nil
+	return hoxipaths.WriteFileAtomic(path, raw, 0o600)
 }
 
 // KeepAwakeSupported reports whether the host OS supports idle sleep prevention.

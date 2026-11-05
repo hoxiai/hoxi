@@ -52,10 +52,7 @@ func LoadOrCreateInstallID() (id string, created bool, err error) {
 	}
 
 	id = newInstallID()
-	if mkErr := os.MkdirAll(filepath.Dir(path), 0o700); mkErr != nil {
-		return id, true, mkErr
-	}
-	if writeErr := os.WriteFile(path, []byte(id), 0o600); writeErr != nil {
+	if writeErr := hoxipaths.WriteFileAtomic(path, []byte(id), 0o600); writeErr != nil {
 		return id, true, writeErr
 	}
 	return id, true, nil

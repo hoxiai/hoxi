@@ -609,6 +609,12 @@ func (s *Service) forgetOpenCodeMappings(id string, rec SessionRecord, ap *activ
 		s.openCodeChildParent.Delete(sid)
 		s.editedFiles.Delete(sid)
 		s.turnStats.Delete(sid)
+		if s.ownedProcs != nil {
+			s.ownedProcs.forget(sid)
+		}
+		if s.worktrees != nil {
+			s.worktrees.ForgetSession(sid)
+		}
 	}
 	dropTurnMappings := func(turns []MessageTurn) {
 		for _, turn := range turns {

@@ -44,7 +44,7 @@ func (s *Service) relinkSession(sessionID, oldRoot, newRoot string) error {
 	if busy {
 		return errors.New("session is running; it was not relinked")
 	}
-	rec, ok := s.store.Get(sessionID)
+	rec, ok := s.store.Meta(sessionID)
 	if !ok || normalizeComparePath(rec.ProjectDir) != normalizeComparePath(oldRoot) {
 		return nil
 	}

@@ -215,7 +215,7 @@ func (s *Service) broadcast(sessionID string, evts ...SSEEvent) {
 		s.noteRuntimeShellEvent(sessionID, evt)
 		if evt.Type == "session.error" {
 			if entry := sessionErrorDiagnostic(sessionID, evt.Properties["error"]); entry != nil {
-				if rec, ok := s.store.Get(sessionID); ok {
+				if rec, ok := s.store.Meta(sessionID); ok {
 					entry.ProviderID, entry.ModelID = rec.ProviderID, rec.ModelID
 				}
 				diagnostics.Record(*entry)
@@ -440,7 +440,7 @@ func (s *Service) handleSessionSubroutes(w http.ResponseWriter, r *http.Request)
 func (s *Service) handleSingleSession(w http.ResponseWriter, r *http.Request, sessionID string) {
 	switch r.Method {
 	case http.MethodGet:
-		rec, ok := s.store.Get(sessionID)
+		rec, ok := s.store.Meta(sessionID)
 		if !ok {
 			writeJSONError(w, http.StatusNotFound, "runner session not found")
 			return

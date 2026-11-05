@@ -4,14 +4,18 @@ package runner
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
 )
+
+var uniqueSleepSeq uint64
 
 // startDetachedServer runs `sh -c 'nohup sleep <secs> &'` as the leader of
 // its own process group, the way a session's shell starts a dev server. The
@@ -25,13 +29,13 @@ func startDetachedServer(t *testing.T, secs string) (shellPID, serverPID int) {
 		t.Fatal(err)
 	}
 	shellPID = cmd.Process.Pid
+	t.Cleanup(func() { _ = syscall.Kill(-shellPID, syscall.SIGKILL) })
 	_ = cmd.Wait()
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
 		byPID, _ := readProcessSnapshots()
 		for pid, snap := range byPID {
 			if snap.pgid == shellPID && strings.Contains(snap.args, "sleep "+secs) {
-				t.Cleanup(func() { _ = syscall.Kill(-shellPID, syscall.SIGKILL) })
 				return shellPID, pid
 			}
 		}
@@ -42,7 +46,8 @@ func startDetachedServer(t *testing.T, secs string) (shellPID, serverPID int) {
 }
 
 func uniqueSleepSeconds() string {
-	return fmt.Sprintf("%d.%03d", 300+time.Now().UnixNano()%600, time.Now().UnixNano()%1000)
+	seq := atomic.AddUint64(&uniqueSleepSeq, 1)
+	return fmt.Sprintf("%d.%03d", 300+(os.Getpid()+int(seq))%600, (os.Getpid()*31+int(seq))%1000)
 }
 
 func TestOwnedProcessVerifierFindsReparentedBackgroundJobs(t *testing.T) {

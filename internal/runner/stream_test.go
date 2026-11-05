@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hoxiai/hoxi/internal/statusbar"
 )
@@ -29,7 +30,7 @@ func (w *streamReadyWriter) Flush() {
 func TestSSESubscribesBeforeHeadersAreFlushed(t *testing.T) {
 	t.Parallel()
 	svc := NewService(t.TempDir(), nil, nil, filepath.Join(t.TempDir(), "store.json"))
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	w := &streamReadyWriter{ResponseRecorder: httptest.NewRecorder()}
 	w.onFlush = func() {
@@ -89,7 +90,7 @@ func TestUnifiedSSEStreamMergesRunnerAndFilteredOpenCodeEvents(t *testing.T) {
 	defer upstream.Close()
 	svc.ConfigureOpenCode(upstream.URL, "secret")
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	w := &streamReadyWriter{ResponseRecorder: httptest.NewRecorder()}
 	checkDone := func() {
@@ -168,7 +169,7 @@ func TestUnifiedSSEStartsWithStatusSnapshot(t *testing.T) {
 	svc.procs["ses_qdr_running"] = &activeProcess{sessionID: "ses_qdr_running", done: make(chan struct{})}
 	svc.mu.Unlock()
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	w := &streamReadyWriter{ResponseRecorder: httptest.NewRecorder()}
 	w.onFlush = func() {

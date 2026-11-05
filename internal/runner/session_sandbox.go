@@ -223,7 +223,7 @@ func (s *Service) setCommandSandbox(sessionID string, enabled bool) (SessionInfo
 	if busy {
 		return SessionInfo{}, errors.New("cannot change command sandbox while the session is running")
 	}
-	rec, ok := s.store.Get(sessionID)
+	rec, ok := s.store.Meta(sessionID)
 	if !ok {
 		return SessionInfo{}, errors.New("runner session not found")
 	}
@@ -253,7 +253,7 @@ func (s *Service) setCommandSandbox(sessionID string, enabled bool) (SessionInfo
 func (s *Service) guardWorktreeApply(sessionID string, apply func() error) error {
 	unlock := s.turnMu.lock(sessionID)
 	defer unlock()
-	if _, known := s.store.Get(sessionID); known {
+	if _, known := s.store.Meta(sessionID); known {
 		s.mu.Lock()
 		busy := s.procs[sessionID] != nil
 		s.mu.Unlock()

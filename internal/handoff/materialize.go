@@ -542,7 +542,7 @@ func writeEightDimHandoffMemory(memPath, newSessionID, targetDir string, detail 
 		"",
 	}, "\n")
 
-	return os.WriteFile(memPath, []byte(md), 0o644)
+	return hoxipaths.WriteFileAtomic(memPath, []byte(md), 0o600)
 }
 
 func firstNonEmpty(vals ...string) string {

@@ -268,7 +268,7 @@ func hookOwnSessionRead(s *Service, sessionID, tool, filepathOut, rawPath string
 	if validSessionID(sessionID) {
 		ids = append(ids, sessionID)
 	}
-	if rec, ok := s.store.Get(sessionID); ok && validSessionID(rec.ExternalID) {
+	if rec, ok := s.store.Meta(sessionID); ok && validSessionID(rec.ExternalID) {
 		ids = append(ids, rec.ExternalID)
 	}
 	return pathUnderOwnSession(filepathOut, ids) || pathUnderOwnSession(rawPath, ids)
@@ -280,7 +280,7 @@ func (s *Service) inspectHookToolRisk(sessionID, tool string, args map[string]in
 
 func (s *Service) inspectHookToolRiskIn(sessionID, tool, cwd string, args map[string]interface{}) (filepathOut, worktree string, destructive, externalDir bool) {
 	worktree = ""
-	if rec, ok := s.store.Get(sessionID); ok {
+	if rec, ok := s.store.Meta(sessionID); ok {
 		worktree = strings.TrimSpace(rec.WorktreePath)
 	}
 	baseDir := firstNonEmptyStr(strings.TrimSpace(cwd), worktree)
@@ -392,7 +392,7 @@ func (s *Service) gateToolCallIn(r *http.Request, cred hookCredential, tool stri
 	if desc := firstString(args["toolSummary"], args["description"], args["Action"]); desc != "" {
 		meta["description"] = desc
 	}
-	if rec, ok := s.store.Get(cred.sessionID); ok && strings.TrimSpace(rec.ExternalID) != "" {
+	if rec, ok := s.store.Meta(cred.sessionID); ok && strings.TrimSpace(rec.ExternalID) != "" {
 		meta["externalID"] = rec.ExternalID
 	}
 	req := map[string]interface{}{
@@ -412,7 +412,7 @@ func (s *Service) gateToolCallIn(r *http.Request, cred hookCredential, tool stri
 			s.recordUnattendedDeny(cred, req, category)
 			return false, unattendedDenyReason(category)
 		}
-		if rec, ok := s.store.Get(cred.sessionID); ok && unattendedIsolated(rec) && s.policyApprovesIsolated(req, worktree, true) {
+		if rec, ok := s.store.Meta(cred.sessionID); ok && unattendedIsolated(rec) && s.policyApprovesIsolated(req, worktree, true) {
 			s.recordPolicyApproval(cred, req)
 			s.noteTurn(cred.sessionID, "allow")
 			return true, ""

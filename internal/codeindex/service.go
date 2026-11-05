@@ -367,27 +367,7 @@ func (s *Service) save(index *Index) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(s.root, 0o700); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(s.root, ".index-*.tmp")
-	if err != nil {
-		return err
-	}
-	name := tmp.Name()
-	defer func() { _ = os.Remove(name) }()
-	if _, err := tmp.Write(raw); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(name, s.indexPath(index.Directory))
+	return hoxipaths.WriteFileAtomic(s.indexPath(index.Directory), raw, 0o600)
 }
 
 func canonicalDir(directory string) (string, error) {

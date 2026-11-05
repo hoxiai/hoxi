@@ -49,7 +49,22 @@ func writeFileAtomic(path string, raw []byte) error {
 		return err
 	}
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(raw); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmp)
 		return err
 	}
 	return os.Rename(tmp, path)
@@ -332,7 +347,7 @@ func PruneTempFiles(root string, minAge time.Duration) (int, int64) {
 	var count int
 	var freed int64
 	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() || !strings.HasSuffix(d.Name(), ".tmp") {
+		if err != nil || d.IsDir() || (!strings.HasSuffix(d.Name(), ".tmp") && !strings.Contains(d.Name(), ".tmp-")) {
 			return nil
 		}
 		info, infoErr := d.Info()

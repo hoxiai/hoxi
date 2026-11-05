@@ -42,7 +42,7 @@ func (s *Service) ResolveSessionContext(ctx context.Context, sessionID, director
 	if sessionID == "" {
 		return "", "", "", false, nil
 	}
-	if rec, exists := s.store.Get(sessionID); exists {
+	if rec, exists := s.store.Meta(sessionID); exists {
 		dir := rec.WorktreePath
 		if dir == "" {
 			dir = rec.ProjectDir

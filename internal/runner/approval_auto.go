@@ -59,7 +59,7 @@ func (s *Service) policyApprovesIsolated(item map[string]interface{}, worktree s
 }
 
 func (s *Service) sessionIsolated(sessionID string) (worktree string, isolated bool) {
-	rec, ok := s.store.Get(sessionID)
+	rec, ok := s.store.Meta(sessionID)
 	if !ok {
 		return "", false
 	}
@@ -77,7 +77,7 @@ func (s *Service) policyApprovesWorktreeEdit(rec SessionRecord, path string) boo
 }
 
 func (s *Service) sessionWorktree(sessionID string) string {
-	if rec, ok := s.store.Get(sessionID); ok {
+	if rec, ok := s.store.Meta(sessionID); ok {
 		return rec.WorktreePath
 	}
 	return ""

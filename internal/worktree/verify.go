@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
 
 const (
@@ -342,22 +344,7 @@ func (m *worktreeManager) SaveVerifyConfig(cfg WorktreeVerifyConfig) (WorktreeVe
 	if err != nil {
 		return cfg, err
 	}
-	tmp, err := os.CreateTemp(hoxiDir, ".verify-cfg-*.tmp")
-	if err != nil {
-		return cfg, err
-	}
-	tmpPath := tmp.Name()
-	if _, err := tmp.Write(raw); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmpPath)
-		return cfg, err
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		return cfg, err
-	}
-	if err := os.Rename(tmpPath, cfgPath); err != nil {
-		_ = os.Remove(tmpPath)
+	if err := hoxipaths.WriteFileAtomic(cfgPath, raw, 0o600); err != nil {
 		return cfg, err
 	}
 	return m.LoadVerifyConfig(m.rootDir), nil

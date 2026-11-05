@@ -111,7 +111,11 @@ func TestSessionSummarizePreservesConcurrentUpdates(t *testing.T) {
 		done <- w
 	}()
 
-	<-started
+	select {
+	case <-started:
+	case w := <-done:
+		t.Fatalf("summarize finished before reaching upstream: %d %s", w.Code, w.Body.String())
+	}
 	if _, ok, err := svc.store.Update(rec.ID, func(r *SessionRecord) { r.Title = "renamed" }); err != nil || !ok {
 		t.Fatalf("concurrent update failed: %v %v", ok, err)
 	}

@@ -200,6 +200,7 @@ export function PartView(props: {
 
 const USER_PROMPT_FOLD_LINES = 10;
 const USER_PROMPT_FOLD_CHARS = 600;
+const MAX_EXPANDED_USER_PROMPTS = 512;
 
 // Survives session-switch remounts so restored reading positions keep their layout.
 const expandedUserPrompts = new Set<string>();
@@ -210,8 +211,16 @@ export function UserTextPartView(props: {
 }) {
   const [expanded, setExpandedSignal] = createSignal(expandedUserPrompts.has(props.part.id));
   const setExpanded = (next: boolean) => {
-    if (next) expandedUserPrompts.add(props.part.id);
-    else expandedUserPrompts.delete(props.part.id);
+    if (next) {
+      expandedUserPrompts.delete(props.part.id);
+      if (expandedUserPrompts.size >= MAX_EXPANDED_USER_PROMPTS) {
+        const oldest = expandedUserPrompts.values().next().value;
+        if (oldest !== undefined) expandedUserPrompts.delete(oldest);
+      }
+      expandedUserPrompts.add(props.part.id);
+    } else {
+      expandedUserPrompts.delete(props.part.id);
+    }
     setExpandedSignal(next);
   };
   let containerRef: HTMLDivElement | undefined;

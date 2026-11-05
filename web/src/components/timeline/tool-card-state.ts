@@ -5,6 +5,7 @@ import {
   extractChildSubagentSessionId,
   type MessageTurn,
   normalizeFolderPath,
+  resolveRootSessionID,
   sessionDirectory,
   workspace,
   workspaceFoldersForDir,
@@ -119,17 +120,7 @@ export function enrichDiffWithWorktree(
 
 function resolveDiffOwnerSessionID(sessionID: string): string {
   if (!sessionID) return sessionID;
-  const seen = new Set<string>();
-  let cur = sessionID;
-  while (cur && !seen.has(cur)) {
-    seen.add(cur);
-    const s = workspace.sessions.find((item) => item.id === cur);
-    if (s?.parentID) {
-      cur = s.parentID;
-      continue;
-    }
-    break;
-  }
+  const cur = resolveRootSessionID(sessionID) || sessionID;
   if (
     cur === sessionID &&
     !workspace.diffsBySession[cur] &&

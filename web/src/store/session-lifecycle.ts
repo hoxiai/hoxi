@@ -37,6 +37,7 @@ import {
   replaceSession,
   selectSession,
 } from "./workspace-sessions";
+import { forgetSessionTaskControl } from "./session-task-control";
 
 function persistArchivedSessionIDs(ids: string[]) {
   writeStorageJSON(ARCHIVED_SESSIONS_KEY, ids);
@@ -174,6 +175,7 @@ export function removeSessionsFromStore(sessionIDs: string[]): SessionInfo | und
     cancelScheduledWorktreeStatus(id);
     hydratedSessionIDs.delete(id);
     forgetSessionHistory(id);
+    forgetSessionTaskControl(id);
     markSessionDeleted(id);
   }
   forgetSessionTitles(allIDs);

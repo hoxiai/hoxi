@@ -98,3 +98,8 @@ export function setActiveAgent(agent: string, sessionID = workspace.activeSessio
     writeStorageItem(DEFAULT_AGENT_KEY, agent);
   }
 }
+
+export function forgetPendingSessionAI(sessionID: string): void {
+  if (!sessionID) return;
+  pendingHistoryPatches.delete(sessionID);
+}

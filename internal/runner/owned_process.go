@@ -79,6 +79,22 @@ func (l *ownedProcessLedger) endWatch(sessionID, callID string) {
 	l.mu.Unlock()
 }
 
+// forget drops all recorded process groups and watch keys for a deleted session.
+func (l *ownedProcessLedger) forget(sessionID string) {
+	if l == nil || sessionID == "" {
+		return
+	}
+	prefix := sessionID + "\x00"
+	l.mu.Lock()
+	delete(l.groups, sessionID)
+	for k := range l.watching {
+		if strings.HasPrefix(k, prefix) {
+			delete(l.watching, k)
+		}
+	}
+	l.mu.Unlock()
+}
+
 func (l *ownedProcessLedger) record(sessionID string, pgid int, leaderArgs string) {
 	if l == nil || sessionID == "" || pgid <= 1 {
 		return

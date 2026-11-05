@@ -289,6 +289,24 @@ func (s *Service) Revoke(scope Scope) {
 	}
 	delete(s.grants, scope)
 }
+func (s *Service) ForgetSession(sessionID string) {
+	sessionID = strings.TrimSpace(sessionID)
+	if s == nil || sessionID == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.generation++
+	for scope, grant := range s.grants {
+		if scope.SessionID != sessionID {
+			continue
+		}
+		if grant != nil && grant.cancel != nil {
+			grant.cancel()
+		}
+		delete(s.grants, scope)
+	}
+}
 func (s *Service) Stop() {
 	s.mu.Lock()
 	defer s.mu.Unlock()

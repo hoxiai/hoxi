@@ -50,6 +50,14 @@ export function hasRecentSessionInterrupt(sessionID: string): boolean {
   return lastInterruptAtBySession.has(sessionID);
 }
 
+export function forgetSessionTaskControl(sessionID: string): void {
+  if (!sessionID) return;
+  lastInterruptAtBySession.delete(sessionID);
+  rerouteGenBySession.delete(sessionID);
+  rerouteAbortInFlightBySession.delete(sessionID);
+  lastRerouteAbortAtBySession.delete(sessionID);
+}
+
 export function markSessionInterrupted(
   sessionID: string,
   kind: "paused" | "stopped" = "stopped"

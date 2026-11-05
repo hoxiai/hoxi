@@ -131,7 +131,7 @@ func (s *Service) isOpenCodeDirectoryBusy(ctx context.Context, directory string)
 		if ap == nil || ap.hasPendingError() || ap.wasAborted() {
 			continue
 		}
-		rec, ok := s.store.Get(sid)
+		rec, ok := s.store.Meta(sid)
 		if !ok || rec.Runtime != "opencode" {
 			continue
 		}

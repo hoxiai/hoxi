@@ -2,7 +2,12 @@ import { createMemo, createSignal, For, Show } from "solid-js";
 import type { Accessor, JSX } from "solid-js";
 import type { SessionInfo } from "../../services/sse-types";
 import { appSettings } from "../../store/settings";
-import { normalizeFolderPath, sessionActivityTime, workspace } from "../../store/workspace";
+import {
+  groupSubagentsByRoot,
+  normalizeFolderPath,
+  sessionActivityTime,
+  workspace,
+} from "../../store/workspace";
 import { t } from "../../i18n";
 import { Icon } from "../icons";
 import { useNowTicker } from "./session-time-helpers";
@@ -31,15 +36,9 @@ export function useSessionHistory(
     const pendingSet = pending();
     const isActiveProject = normalizeFolderPath(path()) === normalizeFolderPath(workspace.rootDir);
     const activeID = isActiveProject ? workspace.activeSessionID : null;
-    const childrenByParent = new Map<string, SessionInfo[]>();
-    if (isActiveProject) {
-      for (const s of workspace.sessions) {
-        if (!s.parentID) continue;
-        const bucket = childrenByParent.get(s.parentID);
-        if (bucket) bucket.push(s);
-        else childrenByParent.set(s.parentID, [s]);
-      }
-    }
+    const childrenByParent = isActiveProject
+      ? groupSubagentsByRoot(workspace.sessions)
+      : new Map<string, SessionInfo[]>();
     return partitionSessionHistory(sorted, {
       enabled: appSettings.sidebarAutoCollapse && !query().trim(),
       minimum: appSettings.sidebarMinSessions,

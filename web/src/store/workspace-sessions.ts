@@ -2,13 +2,14 @@ import { batch } from "solid-js";
 import { produce } from "solid-js/store";
 import type { SessionInfo } from "../services/sse-types";
 import { hoxiAPI } from "../services/api";
-import { registerRunnerSessions } from "../services/runner-api";
+import { forgetRunnerSession, registerRunnerSessions } from "../services/runner-api";
 import {
   forgetSessionToolOutputs,
   forgetSubagentLinks,
   mergeServerTurnsInto,
 } from "./message-lookup";
-import { restoreSessionAI } from "./session-ai";
+import { forgetPendingSessionAI, restoreSessionAI } from "./session-ai";
+import { clearSessionGoal } from "./session-goal-state";
 import {
   forgetSessionHistory,
   noteSessionHistoryTail,
@@ -516,6 +517,9 @@ export function purgeSessionsFromStoreState(
     clearAutoFailoverPending(id);
     clearSessionAutoTarget(id);
     clearSubagentDrawerOverride(id);
+    clearSessionGoal(id);
+    forgetPendingSessionAI(id);
+    forgetRunnerSession(id);
     forgetSessionDiffState(id);
     forgetSessionHistory(id);
     hydratedSessionIDs.delete(id);
@@ -539,6 +543,13 @@ export function purgeSessionsFromStoreState(
     delete state.interruptedBySession[id];
     delete state.queuedPromptsBySession[id];
     delete state.composerDraftEditBySession[id];
+    const keyPrefix = `${id}:`;
+    for (const k of Object.keys(state.dismissedPlanFollowups)) {
+      if (k.startsWith(keyPrefix)) delete state.dismissedPlanFollowups[k];
+    }
+    for (const k of Object.keys(state.dismissedSandboxMergePrompts)) {
+      if (k.startsWith(keyPrefix)) delete state.dismissedSandboxMergePrompts[k];
+    }
     if (state.sessionIndex[id]?.surface) surfaceRemoved = true;
     delete state.sessionIndex[id];
   }

@@ -2,14 +2,19 @@ import { reconcile, unwrap } from "solid-js/store";
 import { hoxiAPI, type OldSessionsDeleteResult } from "../services/api";
 import type { SessionInfo } from "../services/sse-types";
 import {
+  clearSessionGoal,
   deleteOldSessions,
+  hasRecentSessionInterrupt,
+  markSessionInterrupted,
   nextActiveSessionCandidate,
   partitionCodeSessions,
   removeSessionFromStore,
   resolveParentSessionID,
   resolveRootSessionID,
+  sessionGoal,
   setWorkspace,
   workspace,
+  writeSessionGoal,
 } from "../store/workspace";
 import { assertDeepEqual, assertEqual, describe, it } from "./test-harness";
 
@@ -112,6 +117,32 @@ describe("old session cleanup", () => {
         ["ses_cld_fork_sub"],
       );
     } finally {
+      setWorkspace(reconcile(saved));
+    }
+  });
+
+  it("purges session goal, interrupt state, and dismissed prompt keys on removeSessionFromStore", () => {
+    const saved = structuredClone(unwrap(workspace));
+    try {
+      setWorkspace("sessions", reconcile([session("ses_drop"), session("ses_stay")]));
+      writeSessionGoal("ses_drop", { objective: "Finish migration", status: "active", continuations: 0, updatedAt: 1 });
+      writeSessionGoal("ses_stay", { objective: "Keep running", status: "active", continuations: 0, updatedAt: 1 });
+      markSessionInterrupted("ses_drop", "stopped");
+      markSessionInterrupted("ses_stay", "stopped");
+      setWorkspace("dismissedPlanFollowups", { "ses_drop:msg_1": true, "ses_stay:msg_2": true });
+      setWorkspace("dismissedSandboxMergePrompts", { "ses_drop:head_1": true, "ses_stay:head_2": true });
+
+      removeSessionFromStore("ses_drop");
+
+      assertEqual(sessionGoal("ses_drop"), undefined, "deleted session goal must be cleared");
+      assertEqual(sessionGoal("ses_stay")?.objective, "Keep running", "other session goal stays intact");
+      assertEqual(hasRecentSessionInterrupt("ses_drop"), false, "deleted session interrupt record must be cleared");
+      assertEqual(hasRecentSessionInterrupt("ses_stay"), true, "other session interrupt record stays intact");
+      assertDeepEqual(workspace.dismissedPlanFollowups, { "ses_stay:msg_2": true });
+      assertDeepEqual(workspace.dismissedSandboxMergePrompts, { "ses_stay:head_2": true });
+    } finally {
+      clearSessionGoal("ses_drop");
+      clearSessionGoal("ses_stay");
       setWorkspace(reconcile(saved));
     }
   });

@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -314,9 +313,8 @@ func (s *Service) GetModelPricing(forceRefresh bool) (*ModelPricingResponse, err
 					}
 					s.mu.Unlock()
 					if p := pricingDiskCachePath(); p != "" {
-						_ = os.MkdirAll(filepath.Dir(p), 0o700)
 						if raw, err := json.Marshal(result); err == nil {
-							_ = os.WriteFile(p, raw, 0o600)
+							_ = hoxipaths.WriteFileAtomic(p, raw, 0o600)
 						}
 					}
 					return result, nil

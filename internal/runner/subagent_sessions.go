@@ -93,7 +93,14 @@ func (s *Service) deleteChildSessions(parentID string) {
 			continue
 		}
 		if rec, ok := s.store.Meta(info.ID); ok && rec.Subagent {
+			fullRec, _ := s.store.Get(info.ID)
 			s.setChildBusy(info.ID, false)
+			s.doomLoop.forget(info.ID)
+			s.gate.forgetSession(info.ID)
+			s.forgetOpenCodeMappings(info.ID, fullRec, nil)
+			if s.attachments != nil {
+				s.attachments.DeleteBySession(info.ID)
+			}
 			if s.store.Delete(info.ID) == nil {
 				s.notifySessionDeleted(info.ID)
 			}

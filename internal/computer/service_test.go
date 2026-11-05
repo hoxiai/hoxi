@@ -325,3 +325,18 @@ func TestDesktopElementTargetingWindowBoundsAndLastAction(t *testing.T) {
 		t.Fatalf("expected secure_field_requires_manual_input, got %v", err)
 	}
 }
+
+func TestDesktopForgetSessionReleasesAppOwnershipAndGrantSlots(t *testing.T) {
+	s, _, scope := desktopFixture(t)
+	otherScope := Scope{SessionID: "ses_two", Directory: "/repo"}
+	if _, err := s.Authorize(context.Background(), otherScope, "target"); err == nil {
+		t.Fatal("expected app_owned_by_another_session before ForgetSession")
+	}
+	s.ForgetSession(scope.SessionID)
+	if s.Current(scope) != nil {
+		t.Fatal("expected grant for forgotten session to be cleared")
+	}
+	if _, err := s.Authorize(context.Background(), otherScope, "target"); err != nil {
+		t.Fatalf("expected another session to authorize target app after ForgetSession, got %v", err)
+	}
+}

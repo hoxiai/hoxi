@@ -589,20 +589,7 @@ func truncateUTF8(s string, n int) string {
 }
 
 func writeFileAtomic(path string, data []byte) error {
-	f, err := os.CreateTemp(filepath.Dir(path), ".att-*")
-	if err != nil {
-		return err
-	}
-	tmpName := f.Name()
-	defer os.Remove(tmpName)
-	if _, err := f.Write(data); err != nil {
-		_ = f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpName, path)
+	return hoxipaths.WriteFileAtomic(path, data, 0o600)
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload interface{}) {

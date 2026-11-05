@@ -13,6 +13,7 @@ import (
 	"github.com/chromedp/cdproto/target"
 	"github.com/chromedp/chromedp"
 
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
@@ -51,9 +52,7 @@ func (s *Service) persistLinkToken() {
 	if _, err := os.Stat(tokenPath); err == nil {
 		return
 	}
-	if err := os.MkdirAll(dir, 0o700); err == nil {
-		_ = os.WriteFile(tokenPath, []byte(token+"\n"), 0o600)
-	}
+	_ = hoxipaths.WriteFileAtomic(tokenPath, []byte(token+"\n"), 0o600)
 }
 
 func isHexToken(s string) bool {
