@@ -109,7 +109,7 @@ func TestComputerAutoObserveCompoundTypeAndAutoApproveBoundaries(t *testing.T) {
 
 	// Create a managed runner session in root
 	recCreate := httptest.NewRecorder()
-	reqCreate := localRequest(http.MethodPost, "/api/hoxi/sessions", strings.NewReader(`{"runtime":"claude-code","directory":`+ string(mustJSON(t, root)) +`}`))
+	reqCreate := localRequest(http.MethodPost, "/api/hoxi/sessions", strings.NewReader(`{"runtime":"claude-code","directory":`+string(mustJSON(t, root))+`}`))
 	reqCreate.Header.Set("Content-Type", "application/json")
 	gw.ServeHTTP(recCreate, reqCreate)
 	if recCreate.Code != http.StatusOK {

@@ -310,4 +310,3 @@ func TestParseOfficialModelsAndPersistCategories(t *testing.T) {
 		t.Fatalf("expected cosyvoice-v3-flash in mediaModels, got %+v", mediaModels)
 	}
 }
-

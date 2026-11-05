@@ -42,10 +42,12 @@ INSERT INTO message (id, session_id, data) VALUES ('msg_keep', 'ses_keep', '{"ro
 	}
 	var insertEvents strings.Builder
 	insertEvents.WriteString("BEGIN;")
-	for i := 0; i < 32; i++ {
+	// Seed enough transient event bloat (well past ocstate's 8 MiB VACUUM
+	// threshold) that deleting it leaves a free list worth rewriting.
+	for i := 0; i < 512; i++ {
 		insertEvents.WriteString("INSERT INTO event (type, data) VALUES ('message.updated.1', hex(zeroblob(32768)));")
 	}
-	insertEvents.WriteString("INSERT INTO event_sequence (seq) VALUES (32); COMMIT;")
+	insertEvents.WriteString("INSERT INTO event_sequence (seq) VALUES (512); COMMIT;")
 	if out, err := exec.Command("sqlite3", dbPath, insertEvents.String()).CombinedOutput(); err != nil {
 		t.Fatalf("insert events: %v: %s", err, out)
 	}

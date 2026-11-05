@@ -23,11 +23,11 @@ import (
 type Store struct {
 	// mu protects the registry and immutable metadata/cache summaries only.
 	// Never acquire a session mutex or perform disk I/O while holding mu.
-	mu               sync.RWMutex
-	cacheMu          sync.Mutex
-	dir              string
-	records          map[string]*storedSession
-	clock            uint64
+	mu                 sync.RWMutex
+	cacheMu            sync.Mutex
+	dir                string
+	records            map[string]*storedSession
+	clock              uint64
 	cacheMaxSessions   int
 	cacheMaxBytes      int64
 	cachedSessions     int
