@@ -392,3 +392,35 @@ func CleanDatabaseEventLog(ctx context.Context, dbPath string) error {
 	}
 	return nil
 }
+
+// SessionContentBytes returns the message and part payload bytes stored per
+// engine session, read-only. A missing database yields an empty map.
+func SessionContentBytes(ctx context.Context, dbPath string) (map[string]int64, error) {
+	out := map[string]int64{}
+	dbPath = strings.TrimSpace(dbPath)
+	if dbPath == "" {
+		return out, nil
+	}
+	if st, err := os.Stat(dbPath); err != nil || st.IsDir() {
+		return out, nil
+	}
+	readCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	cmd := subproc.CommandContext(readCtx, sqlitecli.Executable(), "-readonly", "-cmd", ".timeout 5000", dbPath,
+		"SELECT session_id || '|' || SUM(b) FROM (SELECT session_id, length(data) AS b FROM part UNION ALL SELECT session_id, length(data) FROM message) GROUP BY session_id;")
+	cmd.WaitDelay = time.Second
+	raw, err := cmd.Output()
+	if err != nil {
+		return out, fmt.Errorf("read session sizes: %w", err)
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		id, size, ok := strings.Cut(strings.TrimSpace(line), "|")
+		if !ok || id == "" {
+			continue
+		}
+		if n, err := strconv.ParseInt(size, 10, 64); err == nil {
+			out[id] = n
+		}
+	}
+	return out, nil
+}

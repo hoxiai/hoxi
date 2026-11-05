@@ -24,6 +24,7 @@ import "../src/__tests__/worktree-refresh.test";
 import "../src/__tests__/new-thread.test";
 import "../src/__tests__/runner-sandbox.test";
 import "../src/__tests__/session-ai.test";
+import "../src/__tests__/old-sessions.test";
 import "../src/__tests__/git-commit.test";
 import "../src/__tests__/daily-pulse-cost.test";
 import "../src/__tests__/usage-history.test";

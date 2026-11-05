@@ -1,0 +1,67 @@
+import { reconcile, unwrap } from "solid-js/store";
+import { hoxiAPI, type OldSessionsDeleteResult } from "../services/api";
+import type { SessionInfo } from "../services/sse-types";
+import { deleteOldSessions, setWorkspace, workspace } from "../store/workspace";
+import { assertDeepEqual, assertEqual, describe, it } from "./test-harness";
+
+function session(id: string): SessionInfo {
+  return { id, title: id, directory: "/tmp/project", time: { created: 1, updated: 1 } } as SessionInfo;
+}
+
+const storage = { totalBytes: 0, databaseBytes: 0, sessionsBytes: 0, engineLogsBytes: 0, cacheIndexBytes: 0, dataDir: "" };
+
+async function withCleanupFixture(
+  result: OldSessionsDeleteResult,
+  run: (sent: { days?: number; ids?: string[] }) => Promise<void>
+) {
+  const saved = structuredClone(unwrap(workspace));
+  const originalDelete = hoxiAPI.deleteOldSessions;
+  const originalFetch = globalThis.fetch;
+  const sent: { days?: number; ids?: string[] } = {};
+  globalThis.fetch = async () => {
+    throw new Error("Unexpected network request in old session cleanup test");
+  };
+  hoxiAPI.deleteOldSessions = async (days, ids) => {
+    sent.days = days;
+    sent.ids = ids;
+    return result;
+  };
+  try {
+    await run(sent);
+  } finally {
+    hoxiAPI.deleteOldSessions = originalDelete;
+    globalThis.fetch = originalFetch;
+    setWorkspace(reconcile(saved));
+  }
+}
+
+describe("old session cleanup", () => {
+  it("removes only the sessions the backend confirmed as deleted", async () => {
+    await withCleanupFixture(
+      { deleted: ["ses_old_a"], skipped: [{ id: "ses_old_b", reason: "worktreeDirty" }], freedBytes: 10, storage },
+      async (sent) => {
+        setWorkspace("sessions", reconcile([session("ses_old_a"), session("ses_old_b"), session("ses_keep")]));
+        setWorkspace("activeSessionID", "ses_keep");
+        const res = await deleteOldSessions(30, ["ses_old_a", "ses_old_b"]);
+        assertDeepEqual(sent, { days: 30, ids: ["ses_old_a", "ses_old_b"] });
+        assertDeepEqual(res.deleted, ["ses_old_a"]);
+        assertDeepEqual(
+          workspace.sessions.map((s) => s.id),
+          ["ses_old_b", "ses_keep"],
+          "a skipped session must stay in the sidebar"
+        );
+        assertEqual(workspace.activeSessionID, "ses_keep", "an untouched active session stays selected");
+      }
+    );
+  });
+
+  it("clears the selection when the active session was deleted and nothing remains", async () => {
+    await withCleanupFixture({ deleted: ["ses_only"], skipped: [], freedBytes: 5, storage }, async () => {
+      setWorkspace("sessions", reconcile([session("ses_only")]));
+      setWorkspace("activeSessionID", "ses_only");
+      await deleteOldSessions(60, ["ses_only"]);
+      assertDeepEqual(workspace.sessions.map((s) => s.id), []);
+      assertEqual(workspace.activeSessionID, null);
+    });
+  });
+});

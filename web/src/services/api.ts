@@ -23,6 +23,8 @@ import type {
   PromptAttachment,
   SlashCommandInfo,
   SystemRuntimeInfo,
+  OldSessionsDeleteResult,
+  OldSessionsPreview,
   SystemStorageCleanResult,
   SystemStorageStats,
 } from "./api-types";
@@ -104,6 +106,19 @@ export const hoxiAPI = {
     return requestJSON("/api/hoxi/system/storage/clean", {
       method: "POST",
     });
+  },
+
+  previewOldSessions(olderThanDays: number): Promise<OldSessionsPreview> {
+    return requestJSON(`/api/hoxi/system/storage/old-sessions?olderThanDays=${encodeURIComponent(String(olderThanDays))}`);
+  },
+
+  async deleteOldSessions(olderThanDays: number, sessionIDs: string[]): Promise<OldSessionsDeleteResult> {
+    const res = await requestJSON<OldSessionsDeleteResult>("/api/hoxi/system/storage/old-sessions/delete", {
+      method: "POST",
+      body: JSON.stringify({ olderThanDays, sessionIDs }),
+    });
+    for (const id of res.deleted) forgetRunnerSession(id);
+    return res;
   },
 
   installEngine(restart = false): Promise<{

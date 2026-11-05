@@ -495,11 +495,10 @@ func (s *Service) handleSingleSession(w http.ResponseWriter, r *http.Request, se
 		writeJSON(w, http.StatusOK, info)
 
 	case http.MethodDelete:
-		if err := s.deleteConversation(r.Context(), sessionID); err != nil {
+		if err := s.DeleteConversation(r.Context(), sessionID); err != nil {
 			writeJSONError(w, http.StatusConflict, err.Error())
 			return
 		}
-		s.broadcast(sessionID, SSEEvent{Type: "session.deleted", Properties: map[string]interface{}{"sessionID": sessionID}})
 		w.WriteHeader(http.StatusNoContent)
 
 	default:

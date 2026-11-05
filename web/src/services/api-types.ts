@@ -618,5 +618,44 @@ export interface SystemStorageCleanResult {
   storage: SystemStorageStats;
 }
 
+/** A root conversation idle long enough to be offered for manual cleanup. */
+export interface OldSessionCandidate {
+  id: string;
+  title: string;
+  directory?: string;
+  runtime?: string;
+  /** Latest activity across the conversation and its subagents (ms). */
+  updatedAt: number;
+  /** Estimated bytes reclaimed, including subagent children. */
+  bytes: number;
+  children: number;
+  archived?: boolean;
+  /** Has an isolated worktree that is removed (branch kept) if clean. */
+  worktree?: boolean;
+}
+
+export interface OldSessionsPreview {
+  olderThanDays: number;
+  cutoff: number;
+  sessions: OldSessionCandidate[];
+  totalBytes: number;
+  busySkipped: number;
+}
+
+export type OldSessionSkipReason =
+  | "notEligible"
+  | "busy"
+  | "worktreeDirty"
+  | "worktreeFailed"
+  | "deleteFailed";
+
+export interface OldSessionsDeleteResult {
+  deleted: string[];
+  skipped: Array<{ id: string; reason: OldSessionSkipReason; error?: string }>;
+  freedBytes: number;
+  vacuumDeferred?: boolean;
+  storage: SystemStorageStats;
+}
+
 
 

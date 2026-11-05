@@ -476,6 +476,23 @@ func (s *Service) markContextDelivered(id string) {
 	_, _, _ = s.store.Update(id, func(r *SessionRecord) { r.ContextPending = false; r.UpdatedAt = time.Now().UnixMilli() })
 }
 
+// DeleteConversation removes a conversation exactly like the session DELETE
+// route (engine sessions, subagent children, attachments, transcript) and
+// tells connected clients it is gone.
+func (s *Service) DeleteConversation(ctx context.Context, id string) error {
+	if err := s.deleteConversation(ctx, id); err != nil {
+		return err
+	}
+	s.broadcast(id, SSEEvent{Type: "session.deleted", Properties: map[string]interface{}{"sessionID": id}})
+	return nil
+}
+
+// IsSessionBusy reports whether the conversation or one of its subagents has
+// a live turn.
+func (s *Service) IsSessionBusy(id string) bool {
+	return s.isSessionBusy(strings.TrimSpace(id))
+}
+
 // Remove execution handles as well, so an adopted OpenCode chat cannot reappear
 // in the sidebar after the conversation controller is restarted.
 func (s *Service) deleteConversation(ctx context.Context, id string) error {

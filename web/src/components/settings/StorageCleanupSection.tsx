@@ -6,19 +6,8 @@ import { cleanSystemStorage, fetchSystemStorage } from "../../store/workspace";
 import { Spinner } from "../icons";
 import { t } from "../../i18n";
 import { SettingGroup } from "./setting-controls";
-
-function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let value = bytes;
-  let unitIdx = 0;
-  while (value >= 1024 && unitIdx < units.length - 1) {
-    value /= 1024;
-    unitIdx++;
-  }
-  const decimals = unitIdx >= 2 ? (value >= 100 ? 0 : 1) : 0;
-  return `${value.toFixed(decimals)} ${units[unitIdx]}`;
-}
+import { OldSessionsCleanup } from "./OldSessionsCleanup";
+import { formatBytes } from "./storage-format";
 
 export function StorageCleanupSection(props: { onToast: (msg: string) => void }) {
   const [storage, setStorage] = createSignal<SystemStorageStats | null>(null);
@@ -215,6 +204,8 @@ export function StorageCleanupSection(props: { onToast: (msg: string) => void })
           }}
         </For>
       </div>
+
+      <OldSessionsCleanup onToast={props.onToast} onStorage={setStorage} />
     </SettingGroup>
   );
 }

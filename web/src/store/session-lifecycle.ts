@@ -251,3 +251,40 @@ export async function compactSessionContext(
   if (compacted) await loadSessionMessages(sessionID);
   return Boolean(compacted);
 }
+
+/** Lists root conversations idle for at least `olderThanDays` days. */
+export function previewOldSessions(olderThanDays: number) {
+  return hoxiAPI.previewOldSessions(olderThanDays);
+}
+
+/**
+ * Permanently deletes the confirmed old conversations. The backend re-checks
+ * each ID, so only the ones it reports as deleted leave the sidebar.
+ */
+export async function deleteOldSessions(olderThanDays: number, sessionIDs: string[]) {
+  const res = await hoxiAPI.deleteOldSessions(olderThanDays, sessionIDs);
+  forgetDeletedSessions(res.deleted);
+  return res;
+}
+
+function forgetDeletedSessions(ids: string[]) {
+  if (ids.length === 0) return;
+  const removed = new Set<string>();
+  for (const id of ids) {
+    removed.add(id);
+    for (const child of collectChildSubagentSessionIDs(id)) removed.add(child);
+  }
+  const active = workspace.activeSessionID;
+  const activeRemoved = Boolean(active) && removed.has(active!);
+  let next: SessionInfo | undefined;
+  for (const id of ids) {
+    const candidate = removeSessionFromStore(id);
+    if (candidate && !removed.has(candidate.id)) next = candidate;
+  }
+  if (!activeRemoved) return;
+  if (next && workspace.sessions.some((s) => s.id === next!.id)) {
+    void selectSession(next.id);
+  } else {
+    setWorkspace("activeSessionID", null);
+  }
+}
