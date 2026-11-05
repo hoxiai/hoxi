@@ -51,8 +51,9 @@ type TurnTranslator struct {
 	children    map[string]*childSink
 	childOrder  []string
 
-	claudeMsgUsage map[string]claudeUsage
-	agyStepUsage   map[string]agyUsage
+	claudeMsgUsage         map[string]claudeUsage
+	claudeLastParentMsgKey string
+	agyStepUsage           map[string]agyUsage
 }
 
 func NewTurnTranslator(sessionID, runtime, messageID, parentUserMsgID, providerID, modelID, mode, externalID string) *TurnTranslator {
@@ -254,6 +255,7 @@ func (t *TurnTranslator) ResetUncommittedTurnForRetry(initialExternalID string) 
 	t.stepStartMs = make(map[int]int64)
 	t.agyStepUsage = make(map[string]agyUsage)
 	t.claudeMsgUsage = make(map[string]claudeUsage)
+	t.claudeLastParentMsgKey = ""
 	t.hasTextPart = false
 	t.agyFinalResponseDone = false
 	t.turnFinished = false

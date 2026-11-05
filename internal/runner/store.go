@@ -122,7 +122,9 @@ func (s *Store) ensureTurnsLocked(ss *storedSession) {
 		return
 	}
 	ss.rec.Turns, ss.logLines = s.readTurns(ss.rec.ID)
-	if hydrateAgyTranscriptEditParts(ss.rec.ExternalID, ss.rec.Turns) {
+	editsHydrated := hydrateAgyTranscriptEditParts(ss.rec.ExternalID, ss.rec.Turns)
+	tokensHydrated := hydrateAgyTranscriptTurnTokens(ss.rec.ExternalID, ss.rec.Turns)
+	if editsHydrated || tokensHydrated {
 		if n, err := s.rewriteTurns(ss.rec.ID, ss.rec.Turns); err == nil {
 			ss.logLines = n
 		}
@@ -245,6 +247,7 @@ func (s *Store) VisitTurnsTransient(sessionID string, fn func(rec SessionRecord)
 	rec := ss.rec
 	rec.Turns, _ = s.readTurns(ss.rec.ID)
 	hydrateAgyTranscriptEditParts(rec.ExternalID, rec.Turns)
+	hydrateAgyTranscriptTurnTokens(rec.ExternalID, rec.Turns)
 	fn(rec)
 	return true
 }

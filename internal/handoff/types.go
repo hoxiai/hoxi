@@ -50,25 +50,55 @@ type NormalizedToolCall struct {
 // TurnUsage is token usage reported by the source CLI for one assistant turn.
 // Fields stay zero when the source recorded none.
 type TurnUsage struct {
-	Input      int64   `json:"input,omitempty"`
-	Output     int64   `json:"output,omitempty"`
-	Reasoning  int64   `json:"reasoning,omitempty"`
-	CacheRead  int64   `json:"cacheRead,omitempty"`
-	CacheWrite int64   `json:"cacheWrite,omitempty"`
-	Cost       float64 `json:"cost,omitempty"`
+	Input         int64   `json:"input,omitempty"`
+	Output        int64   `json:"output,omitempty"`
+	Reasoning     int64   `json:"reasoning,omitempty"`
+	CacheRead     int64   `json:"cacheRead,omitempty"`
+	CacheWrite    int64   `json:"cacheWrite,omitempty"`
+	ContextTokens int64   `json:"contextTokens,omitempty"`
+	RatioDerived  bool    `json:"-"`
+	Cost          float64 `json:"cost,omitempty"`
 }
 
 func (u TurnUsage) empty() bool {
-	return u.Input == 0 && u.Output == 0 && u.Reasoning == 0 && u.CacheRead == 0 && u.CacheWrite == 0 && u.Cost == 0
+	return u.Input == 0 && u.Output == 0 && u.Reasoning == 0 && u.CacheRead == 0 && u.CacheWrite == 0 && u.ContextTokens == 0 && u.Cost == 0
+}
+
+func (u TurnUsage) stepTokens() int64 {
+	return u.Input + u.Output + u.Reasoning + u.CacheRead + u.CacheWrite
+}
+
+func (u TurnUsage) totalContextTokens() int64 {
+	if u.ContextTokens > 0 {
+		return u.ContextTokens
+	}
+	return u.stepTokens()
 }
 
 func (u TurnUsage) add(other TurnUsage) TurnUsage {
-	u.Input += other.Input
+	if other.empty() {
+		return u
+	}
+	if u.empty() {
+		return other
+	}
+	latestContext := other.totalContextTokens()
+	if u.RatioDerived && other.RatioDerived {
+		u.Input = max(u.Input, other.Input)
+	} else {
+		u.Input += other.Input
+		u.RatioDerived = false
+	}
 	u.Output += other.Output
 	u.Reasoning += other.Reasoning
 	u.CacheRead += other.CacheRead
 	u.CacheWrite += other.CacheWrite
 	u.Cost += other.Cost
+	if latestContext > 0 && latestContext != u.stepTokens() {
+		u.ContextTokens = latestContext
+	} else {
+		u.ContextTokens = 0
+	}
 	return u
 }
 
@@ -426,9 +456,11 @@ func parseTurnUsage(raw interface{}) TurnUsage {
 			input = 0
 		}
 	}
+	ratioDerived := false
 	if input == 0 && output == 0 && cacheRead == 0 && cacheWrite == 0 {
 		if ratio := asFloat64(m["context_usage_ratio"]); ratio > 0 {
 			input = int64(math.Round(ratio * 180000))
+			ratioDerived = true
 		}
 	}
 	cost := asFloat64(m["cost"])
@@ -438,12 +470,13 @@ func parseTurnUsage(raw interface{}) TurnUsage {
 		}
 	}
 	return TurnUsage{
-		Input:      input,
-		Output:     output,
-		Reasoning:  reasoning,
-		CacheRead:  cacheRead,
-		CacheWrite: cacheWrite,
-		Cost:       cost,
+		Input:        input,
+		Output:       output,
+		Reasoning:    reasoning,
+		CacheRead:    cacheRead,
+		CacheWrite:   cacheWrite,
+		RatioDerived: ratioDerived,
+		Cost:         cost,
 	}
 }
 

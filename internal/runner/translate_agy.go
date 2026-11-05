@@ -3,6 +3,7 @@ package runner
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -66,6 +67,31 @@ type agyUsage struct {
 
 func (u agyUsage) empty() bool {
 	return u.InputTokens == 0 && u.OutputTokens == 0 && u.ThinkingTokens == 0 && u.CacheReadTokens == 0 && u.TotalTokens == 0
+}
+
+// contextTokens returns the single-step context window occupancy for an agy
+// LLM call. Antigravity's stream-json sets total_tokens = input_tokens +
+// output_tokens (where output_tokens already includes thinking_tokens) and
+// omits cache_read_tokens, so the true context occupancy is
+// input_tokens + cache_read_tokens + output_tokens.
+func (u agyUsage) contextTokens() int {
+	out := u.OutputTokens
+	if out == 0 && u.ThinkingTokens > 0 {
+		out = u.ThinkingTokens
+	}
+	return max(u.TotalTokens, u.InputTokens+u.CacheReadTokens+out)
+}
+
+func parseAgyParentStepKey(key string) (int, bool) {
+	rest, ok := strings.CutPrefix(key, "step:")
+	if !ok || rest == "" {
+		return 0, false
+	}
+	step, err := strconv.Atoi(rest)
+	if err != nil || step < 0 {
+		return 0, false
+	}
+	return step, true
 }
 
 func (t *TurnTranslator) feedAgyLine(line string) []SSEEvent {
@@ -252,13 +278,27 @@ func (t *TurnTranslator) noteAgyStepUsage(key string, u agyUsage) bool {
 		return false
 	}
 	t.agyStepUsage[key] = u
-	var in, out, reasoning, cacheRead, total int
-	for _, s := range t.agyStepUsage {
+	var in, out, reasoning, cacheRead int
+	latestStep := -1
+	var latestParentUsage agyUsage
+	var fallbackContext int
+	for k, s := range t.agyStepUsage {
 		in += s.InputTokens
 		out += s.OutputTokens
 		reasoning += s.ThinkingTokens
 		cacheRead += s.CacheReadTokens
-		total += s.TotalTokens
+		if stepIdx, ok := parseAgyParentStepKey(k); ok && stepIdx >= latestStep {
+			latestStep = stepIdx
+			latestParentUsage = s
+		} else if !strings.HasPrefix(k, "sub:") {
+			if ctx := s.contextTokens(); ctx > fallbackContext {
+				fallbackContext = ctx
+			}
+		}
+	}
+	total := latestParentUsage.contextTokens()
+	if total == 0 {
+		total = fallbackContext
 	}
 	if total == 0 {
 		total = in + out + reasoning + cacheRead

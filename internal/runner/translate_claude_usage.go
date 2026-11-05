@@ -65,8 +65,11 @@ func mergeClaudeUsage(prev claudeUsage, incoming *claudeUsage) claudeUsage {
 	if incoming == nil {
 		return prev
 	}
-	if in := incoming.effectiveInputTokens(); in > prev.InputTokens {
-		prev.InputTokens = in
+	if incoming.InputTokens > prev.InputTokens {
+		prev.InputTokens = incoming.InputTokens
+	}
+	if incoming.ContextUsageRatio > prev.ContextUsageRatio {
+		prev.ContextUsageRatio = incoming.ContextUsageRatio
 	}
 	if incoming.OutputTokens > prev.OutputTokens {
 		prev.OutputTokens = incoming.OutputTokens
@@ -95,15 +98,30 @@ func normalizeClaudeOutputTokens(rawOutput, thinking int) int {
 	return rawOutput
 }
 
+// contextTokens returns the single-step context window occupancy for one
+// Claude-protocol assistant message.
+func (u claudeUsage) contextTokens() int {
+	th := u.thinkingTokens()
+	out := normalizeClaudeOutputTokens(u.OutputTokens, th)
+	return u.effectiveInputTokens() + out + th + u.CacheReadInputTokens + u.CacheCreationInputTokens
+}
+
 func sumClaudeUsageMap(m map[string]claudeUsage) *MessageTokens {
-	var in, out, reasoning, cacheRead, cacheWrite int
+	var in, maxRatioIn, out, reasoning, cacheRead, cacheWrite int
 	for _, u := range m {
 		th := u.thinkingTokens()
-		in += u.InputTokens
+		if u.InputTokens > 0 || u.CacheReadInputTokens > 0 || u.CacheCreationInputTokens > 0 {
+			in += u.InputTokens
+		} else if rIn := u.effectiveInputTokens(); rIn > maxRatioIn {
+			maxRatioIn = rIn
+		}
 		out += normalizeClaudeOutputTokens(u.OutputTokens, th)
 		reasoning += th
 		cacheRead += u.CacheReadInputTokens
 		cacheWrite += u.CacheCreationInputTokens
+	}
+	if in == 0 && maxRatioIn > 0 {
+		in = maxRatioIn
 	}
 	total := in + out + reasoning + cacheRead + cacheWrite
 	if total == 0 {
@@ -120,6 +138,31 @@ func sumClaudeUsageMap(m map[string]claudeUsage) *MessageTokens {
 	return tokens
 }
 
+func (t *TurnTranslator) latestClaudeParentContextTokens(resUsage *claudeUsage) int {
+	var parentSteps int
+	for k := range t.claudeMsgUsage {
+		if !strings.HasPrefix(k, "child:") {
+			parentSteps++
+		}
+	}
+	var latest claudeUsage
+	hasLatest := false
+	if t.claudeLastParentMsgKey != "" {
+		if cu, ok := t.claudeMsgUsage[t.claudeLastParentMsgKey]; ok {
+			latest = cu
+			hasLatest = true
+		}
+	}
+	if resUsage != nil && t.runtime != string(RuntimeCodeBuddy) && parentSteps <= 1 {
+		latest = mergeClaudeUsage(latest, resUsage)
+		hasLatest = true
+	}
+	if !hasLatest {
+		return 0
+	}
+	return latest.contextTokens()
+}
+
 func (t *TurnTranslator) noteClaudeMsgUsage(msgID string, u *claudeUsage) bool {
 	u = u.normalizeForRuntime(t.runtime)
 	if u == nil {
@@ -130,8 +173,17 @@ func (t *TurnTranslator) noteClaudeMsgUsage(msgID string, u *claudeUsage) bool {
 		key = "_default"
 	}
 	t.claudeMsgUsage[key] = mergeClaudeUsage(t.claudeMsgUsage[key], u)
+	if !strings.HasPrefix(key, "child:") {
+		t.claudeLastParentMsgKey = key
+	}
 	tokens := sumClaudeUsageMap(t.claudeMsgUsage)
-	if tokens == nil || messageTokensEqual(t.msgInfo.Tokens, tokens) {
+	if tokens == nil {
+		return false
+	}
+	if ctx := t.latestClaudeParentContextTokens(nil); ctx > 0 {
+		tokens.Total = ctx
+	}
+	if messageTokensEqual(t.msgInfo.Tokens, tokens) {
 		return false
 	}
 	t.msgInfo.Tokens = tokens
@@ -145,6 +197,8 @@ func (t *TurnTranslator) applyClaudeResultUsage(env *claudeRawEvent) {
 	if env.TotalCostUSD > 0 {
 		t.msgInfo.Cost = env.TotalCostUSD
 	}
+	resUsage := env.Usage.normalizeForRuntime(t.runtime)
+	latestContext := t.latestClaudeParentContextTokens(resUsage)
 	if len(env.ModelUsage) > 0 {
 		var in, rawOut, reasoning, cacheRead, cacheWrite int
 		var modelCost float64
@@ -168,6 +222,9 @@ func (t *TurnTranslator) applyClaudeResultUsage(env *claudeRawEvent) {
 		}
 		total := in + out + reasoning + cacheRead + cacheWrite
 		if total > 0 {
+			if latestContext > 0 {
+				total = latestContext
+			}
 			tokens := &MessageTokens{
 				Total:     total,
 				Input:     in,
@@ -184,11 +241,13 @@ func (t *TurnTranslator) applyClaudeResultUsage(env *claudeRawEvent) {
 	// whereas t.claudeMsgUsage contains only the assistant messages of this turn.
 	if t.runtime == string(RuntimeCodeBuddy) {
 		if streamed := sumClaudeUsageMap(t.claudeMsgUsage); streamed != nil {
+			if latestContext > 0 {
+				streamed.Total = latestContext
+			}
 			t.msgInfo.Tokens = streamed
 			return
 		}
 	}
-	resUsage := env.Usage.normalizeForRuntime(t.runtime)
 	if resUsage != nil {
 		var parentStreamedTh int
 		for k, cu := range t.claudeMsgUsage {
@@ -222,6 +281,9 @@ func (t *TurnTranslator) applyClaudeResultUsage(env *claudeRawEvent) {
 		}
 		total := in + out + reasoning + cacheRead + cacheWrite
 		if total > 0 {
+			if latestContext > 0 {
+				total = latestContext
+			}
 			tokens := &MessageTokens{
 				Total:     total,
 				Input:     in,

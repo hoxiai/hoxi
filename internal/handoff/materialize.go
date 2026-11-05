@@ -357,7 +357,7 @@ func insertNormalizedTurnsToOpenCodeDB(
 			"path":     map[string]interface{}{"cwd": targetDir, "root": targetDir},
 			"cost":     usage.Cost,
 			"tokens": map[string]interface{}{
-				"total":     usage.Input + usage.Output + usage.Reasoning + usage.CacheRead + usage.CacheWrite,
+				"total":     usage.totalContextTokens(),
 				"input":     usage.Input,
 				"output":    usage.Output,
 				"reasoning": usage.Reasoning,

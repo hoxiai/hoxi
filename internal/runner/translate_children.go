@@ -20,14 +20,15 @@ type ChildSessionSpec struct {
 }
 
 type childSink struct {
-	info     SessionInfo
-	asst     MessageInfo
-	parts    map[string]*MessagePart
-	pending  []string          // tool part IDs still waiting for a result, oldest first
-	byCallID map[string]string // runtime tool call ID -> part ID
-	msgUsage map[string]claudeUsage
-	agySteps map[int]agyUsage
-	closed   bool
+	info       SessionInfo
+	asst       MessageInfo
+	parts      map[string]*MessagePart
+	pending    []string          // tool part IDs still waiting for a result, oldest first
+	byCallID   map[string]string // runtime tool call ID -> part ID
+	msgUsage   map[string]claudeUsage
+	lastMsgKey string
+	agySteps   map[int]agyUsage
+	closed     bool
 }
 
 // openChild creates the child session for key once; it returns nil when the
@@ -104,8 +105,17 @@ func (c *childSink) noteClaudeUsage(msgID string, u *claudeUsage) bool {
 		key = "_default"
 	}
 	c.msgUsage[key] = mergeClaudeUsage(c.msgUsage[key], u)
+	c.lastMsgKey = key
 	tokens := sumClaudeUsageMap(c.msgUsage)
-	if tokens == nil || messageTokensEqual(c.asst.Tokens, tokens) {
+	if tokens == nil {
+		return false
+	}
+	if cu, ok := c.msgUsage[c.lastMsgKey]; ok {
+		if ctx := cu.contextTokens(); ctx > 0 {
+			tokens.Total = ctx
+		}
+	}
+	if messageTokensEqual(c.asst.Tokens, tokens) {
 		return false
 	}
 	c.asst.Tokens = tokens
@@ -117,14 +127,20 @@ func (c *childSink) noteAgyUsage(stepIndex int, u agyUsage) bool {
 		return false
 	}
 	c.agySteps[stepIndex] = u
-	var in, out, reasoning, cacheRead, total int
-	for _, s := range c.agySteps {
+	var in, out, reasoning, cacheRead int
+	latestStep := -1
+	var latestUsage agyUsage
+	for idx, s := range c.agySteps {
 		in += s.InputTokens
 		out += s.OutputTokens
 		reasoning += s.ThinkingTokens
 		cacheRead += s.CacheReadTokens
-		total += s.TotalTokens
+		if idx >= latestStep {
+			latestStep = idx
+			latestUsage = s
+		}
 	}
+	total := latestUsage.contextTokens()
 	if total == 0 {
 		total = in + out + reasoning + cacheRead
 	}

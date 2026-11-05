@@ -709,4 +709,18 @@ func TestHelperFunctions(t *testing.T) {
 	if extractedModel != "gemini-4-argon-medium" {
 		t.Fatalf("extractAntigravityUserPrompt model = %q, want gemini-4-argon-medium", extractedModel)
 	}
+
+	// 10. Multi-step TurnUsage tracks latest step context window size without summing Qoder ratio snapshots
+	step1 := parseTurnUsage(map[string]interface{}{"input_tokens": 1000, "output_tokens": 50, "cache_read_input_tokens": 9000})
+	step2 := parseTurnUsage(map[string]interface{}{"input_tokens": 500, "output_tokens": 100, "cache_read_input_tokens": 10050})
+	combined := step1.add(step2)
+	if combined.Input != 1500 || combined.Output != 150 || combined.CacheRead != 19050 || combined.totalContextTokens() != 10650 {
+		t.Fatalf("expected combined TurnUsage to keep latest step context 10650, got %+v (total=%d)", combined, combined.totalContextTokens())
+	}
+	qStep1 := parseTurnUsage(map[string]interface{}{"input_tokens": 0, "output_tokens": 0, "context_usage_ratio": 0.10})
+	qStep2 := parseTurnUsage(map[string]interface{}{"input_tokens": 0, "output_tokens": 0, "context_usage_ratio": 0.20})
+	qCombined := qStep1.add(qStep2)
+	if qCombined.Input != 36000 || qCombined.totalContextTokens() != 36000 {
+		t.Fatalf("expected Qoder multi-step ratio TurnUsage to be 36000 (not 54000), got %+v (total=%d)", qCombined, qCombined.totalContextTokens())
+	}
 }

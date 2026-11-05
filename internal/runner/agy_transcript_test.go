@@ -377,3 +377,82 @@ func TestAgyDoneThinkingOrdersBeforeSameStepTextAndPersistsOrder(t *testing.T) {
 	assertReasonBeforeText("live store", s1)
 	assertReasonBeforeText("reloaded store", NewStore(storeDir))
 }
+
+func TestStoreHydratesLegacyAgyMultiStepTurnContextTokensOnLoad(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("GEMINI_HOME", home)
+	const conv = "dc62d52e-cf46-417b-bc2b-f6416457f971"
+	logDir := agyTranscriptLogDir(filepath.Join(home, "antigravity-cli", "brain"), conv)
+	if err := os.MkdirAll(logDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	rows := []map[string]interface{}{
+		{"step_index": 0, "type": "USER_INPUT", "content": "investigate issue"},
+		{"step_index": 1, "type": "PLANNER_RESPONSE", "input_tokens": 37466, "output_tokens": 399, "thinking_tokens": 236, "cache_read_tokens": 0},
+		{"step_index": 234, "type": "PLANNER_RESPONSE", "input_tokens": 2256, "output_tokens": 1591, "thinking_tokens": 800, "cache_read_tokens": 200150},
+	}
+	var buf bytes.Buffer
+	for _, r := range rows {
+		b, err := json.Marshal(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		buf.Write(b)
+		buf.WriteByte('\n')
+	}
+	if err := os.WriteFile(filepath.Join(logDir, "transcript.jsonl"), buf.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	storeDir := t.TempDir()
+	s1 := NewStore(storeDir)
+	legacyTokens := &MessageTokens{
+		Total:     986765, // legacy sum of Input + Output across 83 steps
+		Input:     882081,
+		Output:    104684,
+		Reasoning: 78645,
+	}
+	legacyTokens.Cache.Read = 11258494
+	rec := SessionRecord{
+		ID:         "ses_agy_legacy_tokens",
+		Runtime:    string(RuntimeAntigravity),
+		ExternalID: conv,
+		ProjectDir: "/repo",
+		Turns: []MessageTurn{
+			{
+				Info:  MessageInfo{ID: "msg_u_1", SessionID: "ses_agy_legacy_tokens", Role: "user"},
+				Parts: []MessagePart{{ID: "prt_u_1", SessionID: "ses_agy_legacy_tokens", MessageID: "msg_u_1", Type: "text", Text: "investigate"}},
+			},
+			{
+				Info: MessageInfo{
+					ID:        "msg_a_1",
+					SessionID: "ses_agy_legacy_tokens",
+					Role:      "assistant",
+					Tokens:    legacyTokens,
+				},
+				Parts: []MessagePart{
+					{ID: "prt_msg_a_1_reason_1", SessionID: "ses_agy_legacy_tokens", MessageID: "msg_a_1", Type: "reasoning", Text: "step 1"},
+					{ID: "prt_msg_a_1_text_234", SessionID: "ses_agy_legacy_tokens", MessageID: "msg_a_1", Type: "text", Text: "final answer"},
+				},
+			},
+		},
+	}
+	if err := s1.Put(rec); err != nil {
+		t.Fatal(err)
+	}
+
+	s2 := NewStore(storeDir)
+	loaded, ok := s2.Get("ses_agy_legacy_tokens")
+	if !ok || len(loaded.Turns) != 2 || loaded.Turns[1].Info.Tokens == nil {
+		t.Fatalf("unexpected loaded record: %+v", loaded)
+	}
+	tok := loaded.Turns[1].Info.Tokens
+	wantContext := 2256 + 200150 + 1591 // 203,997
+	if tok.Total != wantContext {
+		t.Fatalf("hydrated Tokens.Total = %d, want %d", tok.Total, wantContext)
+	}
+	if tok.Input != 882081 || tok.Output != 104684 || tok.Reasoning != 78645 || tok.Cache.Read != 11258494 {
+		t.Fatalf("hydration must preserve cumulative billing/telemetry tokens, got %+v", tok)
+	}
+}

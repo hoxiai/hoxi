@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -356,4 +357,146 @@ func (t *TurnTranslator) isStaleAgyResultErrorLocked(res *agyResult) bool {
 		}
 	}
 	return true
+}
+
+func parseAgyPartStepIndex(partID string) (int, bool) {
+	for _, marker := range []string{"_reason_", "_text_", "_tool_", "_subagent_"} {
+		idx := strings.LastIndex(partID, marker)
+		if idx < 0 {
+			continue
+		}
+		rest := partID[idx+len(marker):]
+		if rest == "" || strings.Contains(rest, "_") {
+			continue
+		}
+		step, err := strconv.Atoi(rest)
+		if err != nil || step <= 0 {
+			continue
+		}
+		return step, true
+	}
+	return 0, false
+}
+
+func turnAgyStepInfo(parts []MessagePart) (maxStep, stepCount int) {
+	seen := make(map[int]struct{}, len(parts))
+	for _, p := range parts {
+		step, ok := parseAgyPartStepIndex(p.ID)
+		if !ok {
+			continue
+		}
+		seen[step] = struct{}{}
+		if step > maxStep {
+			maxStep = step
+		}
+	}
+	return maxStep, len(seen)
+}
+
+func turnNeedsAgyTokenHydration(turn MessageTurn) bool {
+	if turn.Info.Role != "assistant" || turn.Info.Tokens == nil {
+		return false
+	}
+	tok := turn.Info.Tokens
+	if tok.Total <= 0 || tok.Total != tok.Input+tok.Output {
+		return false
+	}
+	_, stepCount := turnAgyStepInfo(turn.Parts)
+	return tok.Cache.Read > 0 || stepCount > 1
+}
+
+func loadAgyTranscriptStepUsage(conversationID string) []agyTranscriptRow {
+	if !validStoreID(conversationID) {
+		return nil
+	}
+	for _, root := range agyBrainRoots() {
+		dir := agyTranscriptLogDir(root, conversationID)
+		for _, name := range []string{"transcript.jsonl", "transcript_full.jsonl"} {
+			f, err := os.Open(filepath.Join(dir, name))
+			if err != nil {
+				continue
+			}
+			var rows []agyTranscriptRow
+			scanner := bufio.NewScanner(f)
+			scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
+			for scanner.Scan() {
+				var row agyTranscriptRow
+				if json.Unmarshal(bytes.TrimSpace(scanner.Bytes()), &row) != nil {
+					continue
+				}
+				if row.StepIndex == 0 && row.Type == "USER_INPUT" {
+					rows = nil
+					continue
+				}
+				if row.Type == "PLANNER_RESPONSE" &&
+					(row.InputTokens > 0 || row.OutputTokens > 0 || row.ThinkingTokens > 0 || row.CacheReadTokens > 0) {
+					rows = append(rows, row)
+				}
+			}
+			_ = f.Close()
+			if len(rows) > 0 {
+				return rows
+			}
+		}
+	}
+	return nil
+}
+
+// hydrateAgyTranscriptTurnTokens repairs legacy Antigravity assistant turns
+// where Tokens.Total summed InputTokens+OutputTokens across every tool-loop
+// step instead of recording the final parent step's context window occupancy.
+func hydrateAgyTranscriptTurnTokens(externalID string, turns []MessageTurn) bool {
+	needsRepair := false
+	for i := range turns {
+		if turnNeedsAgyTokenHydration(turns[i]) {
+			needsRepair = true
+			break
+		}
+	}
+	if !needsRepair {
+		return false
+	}
+	rows := loadAgyTranscriptStepUsage(strings.TrimSpace(externalID))
+	if len(rows) == 0 {
+		return false
+	}
+	changed := false
+	prevMaxStep := 0
+	for i := range turns {
+		if turns[i].Info.Role != "assistant" {
+			continue
+		}
+		maxStep, _ := turnAgyStepInfo(turns[i].Parts)
+		if maxStep > 0 && maxStep < prevMaxStep {
+			prevMaxStep = 0
+		}
+		if turnNeedsAgyTokenHydration(turns[i]) {
+			var matched *agyTranscriptRow
+			if maxStep > 0 {
+				for j := range rows {
+					if rows[j].StepIndex > prevMaxStep && rows[j].StepIndex <= maxStep {
+						matched = &rows[j]
+					}
+				}
+			} else if i == len(turns)-1 {
+				matched = &rows[len(rows)-1]
+			}
+			if matched != nil {
+				u := agyUsage{
+					InputTokens:     matched.InputTokens,
+					OutputTokens:    matched.OutputTokens,
+					ThinkingTokens:  matched.ThinkingTokens,
+					CacheReadTokens: matched.CacheReadTokens,
+				}
+				if ctx := u.contextTokens(); ctx > 0 && turns[i].Info.Tokens.Total != ctx {
+					turns[i].Info.Tokens.Total = ctx
+					changed = true
+				}
+			}
+		}
+		if maxStep > prevMaxStep {
+			prevMaxStep = maxStep
+		}
+	}
+	return changed
 }

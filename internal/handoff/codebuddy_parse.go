@@ -424,6 +424,15 @@ func parseCodeBuddyCLIJSONL(path string, baseTs int64, defaultModel string) ([]N
 				u = delta
 			}
 			last.Usage = last.Usage.add(u)
+			if msgID != "" {
+				if ctx := seenMsgUsage[msgID].stepTokens(); ctx > 0 {
+					if ctx == last.Usage.stepTokens() {
+						last.Usage.ContextTokens = 0
+					} else {
+						last.Usage.ContextTokens = ctx
+					}
+				}
+			}
 		}
 
 		switch asString(row["type"]) {

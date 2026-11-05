@@ -156,7 +156,8 @@ func TestClaudeResultUsageAndSubagentRollup(t *testing.T) {
 	}
 
 	// Final result with modelUsage (including subagent rollup) and total_cost_usd.
-	// modelUsage outputTokens (210) includes thinkingTokens (45), so normalized Output is 165 and Total is 20 + 165 + 45 + 3400 + 900 = 4530.
+	// modelUsage outputTokens (210) includes thinkingTokens (45), so normalized Output is 165,
+	// while Total tracks the latest parent step's context window occupancy (12 + 55 + 30 + 1200 + 500 = 1797).
 	evts := tr.FeedLine(`{"type":"result","subtype":"success","is_error":false,"result":"Done","total_cost_usd":0.00817,"usage":{"input_tokens":12,"cache_creation_input_tokens":500,"cache_read_input_tokens":1200,"output_tokens":85,"output_tokens_details":{"thinking_tokens":30}},"modelUsage":{"claude-sonnet-4-5":{"inputTokens":20,"outputTokens":210,"cacheReadInputTokens":3400,"cacheCreationInputTokens":900,"thinkingTokens":45,"costUSD":0.00817}}}`)
 	var updated *MessageInfo
 	for _, evt := range evts {
@@ -172,12 +173,25 @@ func TestClaudeResultUsageAndSubagentRollup(t *testing.T) {
 	if updated.Tokens.Input != 20 || updated.Tokens.Output != 165 || updated.Tokens.Reasoning != 45 || updated.Tokens.Cache.Read != 3400 || updated.Tokens.Cache.Write != 900 {
 		t.Fatalf("unexpected final tokens: %+v", updated.Tokens)
 	}
-	wantTotal := 20 + 210 + 3400 + 900
+	wantTotal := 12 + 85 + 1200 + 500
 	if updated.Tokens.Total != wantTotal {
 		t.Fatalf("total tokens = %d, want %d", updated.Tokens.Total, wantTotal)
 	}
 	if updated.Cost != 0.00817 {
 		t.Fatalf("cost = %v, want 0.00817", updated.Cost)
+	}
+
+	// Multi-step Claude turn: Input/Output/Reasoning/Cache accumulate across steps,
+	// while Total reflects the latest parent step's context window size.
+	trMulti := NewTurnTranslator("ses_cld_multi", string(RuntimeClaudeCode), "msg_turn_m", "msg_user_m", "claude-code", "claude-sonnet-4-5", "build", "")
+	trMulti.FeedLine(`{"type":"assistant","message":{"id":"msg_step_1","usage":{"input_tokens":100,"cache_creation_input_tokens":2000,"cache_read_input_tokens":10000,"output_tokens":50},"content":[{"type":"text","text":"Step 1"}]}}`)
+	trMulti.FeedLine(`{"type":"assistant","message":{"id":"msg_step_2","usage":{"input_tokens":300,"cache_creation_input_tokens":400,"cache_read_input_tokens":12100,"output_tokens":90},"content":[{"type":"text","text":"Step 2"}]}}`)
+	trMulti.FeedLine(`{"type":"result","subtype":"success","is_error":false,"result":"Step 2","usage":{"input_tokens":400,"cache_creation_input_tokens":2400,"cache_read_input_tokens":22100,"output_tokens":140}}`)
+	if trMulti.msgInfo.Tokens == nil || trMulti.msgInfo.Tokens.Input != 400 || trMulti.msgInfo.Tokens.Output != 140 || trMulti.msgInfo.Tokens.Cache.Read != 22100 || trMulti.msgInfo.Tokens.Cache.Write != 2400 {
+		t.Fatalf("expected cumulative multi-step tokens, got %+v", trMulti.msgInfo.Tokens)
+	}
+	if wantCtx := 300 + 400 + 12100 + 90; trMulti.msgInfo.Tokens.Total != wantCtx {
+		t.Fatalf("multi-step Claude Total = %d, want latest step context %d", trMulti.msgInfo.Tokens.Total, wantCtx)
 	}
 
 	// Verify exact reviewer case: input=10, output=100, thinking=30 -> Total=110 (Output=70, Reasoning=30).
@@ -211,6 +225,12 @@ func TestQoderContextUsageRatioAndIncrementalMessageUpdated(t *testing.T) {
 	if !sawMsgUpdated || tr.msgInfo.Tokens == nil || tr.msgInfo.Tokens.Input != 24608 {
 		t.Fatalf("expected immediate message.updated with input=24608 from context_usage_ratio, got tokens=%+v evts=%+v", tr.msgInfo.Tokens, evts)
 	}
+	// Subsequent tool-loop steps emit updated context_usage_ratio snapshots of the whole
+	// conversation window; Input and Total must reflect the latest ratio snapshot rather than summing snapshots.
+	tr.FeedLine(`{"type":"assistant","message":{"id":"q_msg_2","model":"dfmodel","usage":{"input_tokens":0,"output_tokens":0,"context_usage_ratio":0.20},"content":[{"type":"text","text":"Done"}]}}`)
+	if tr.msgInfo.Tokens == nil || tr.msgInfo.Tokens.Input != 36000 || tr.msgInfo.Tokens.Total != 36000 {
+		t.Fatalf("expected multi-step Qoder ratio to report latest context window 36000 (not sum 60608), got %+v", tr.msgInfo.Tokens)
+	}
 }
 
 func TestAgyStepUsageStreamsImmediatelyAndIgnoresCumulativeOrZeroResultOverwrite(t *testing.T) {
@@ -229,6 +249,24 @@ func TestAgyStepUsageStreamsImmediatelyAndIgnoresCumulativeOrZeroResultOverwrite
 		t.Fatalf("expected step DONE to emit message.updated with tokens, got %+v", evts)
 	}
 
+	// Second step in the same turn (where agy sets total_tokens = input_tokens + output_tokens
+	// without cache_read_tokens): Input/Output/Reasoning/Cache.Read accumulate across steps,
+	// while Total reflects the latest step's full context window (input + cache_read + output).
+	evts2 := tr.FeedLine(`{"event":"step_update","step_update":{"conversation_id":"conv-1","step_index":12,"state":"DONE","step_type":"agent_response","text_delta":"Step 12","usage":{"input_tokens":300,"output_tokens":120,"thinking_tokens":40,"cache_read_tokens":2000,"total_tokens":420}}}`)
+	for _, evt := range evts2 {
+		if evt.Type == "message.updated" {
+			if info, ok := evt.Properties["info"].(MessageInfo); ok {
+				stepUpdated = &info
+			}
+		}
+	}
+	if stepUpdated == nil || stepUpdated.Tokens == nil ||
+		stepUpdated.Tokens.Input != 1500 || stepUpdated.Tokens.Output != 200 ||
+		stepUpdated.Tokens.Reasoning != 60 || stepUpdated.Tokens.Cache.Read != 2500 ||
+		stepUpdated.Tokens.Total != 2420 {
+		t.Fatalf("expected multi-step agy tokens (total=2420, in=1500, out=200, reason=60, cacheRead=2500), got %+v", stepUpdated.Tokens)
+	}
+
 	// Resumed conversation result.usage carries cumulative history (999,999); must not overwrite current turn's step sum.
 	resEvts := tr.FeedLine(`{"event":"result","result":{"conversation_id":"conv-1","status":"SUCCESS","usage":{"input_tokens":500000,"output_tokens":50000,"thinking_tokens":10000,"cache_read_tokens":439999,"total_tokens":999999}}}`)
 	for _, evt := range resEvts {
@@ -238,7 +276,7 @@ func TestAgyStepUsageStreamsImmediatelyAndIgnoresCumulativeOrZeroResultOverwrite
 			}
 		}
 	}
-	if stepUpdated == nil || stepUpdated.Tokens == nil || stepUpdated.Tokens.Total != 1800 || stepUpdated.Tokens.Input != 1200 {
+	if stepUpdated == nil || stepUpdated.Tokens == nil || stepUpdated.Tokens.Total != 2420 || stepUpdated.Tokens.Input != 1500 {
 		t.Fatalf("cumulative result.usage overwrote current turn step tokens: %+v", stepUpdated.Tokens)
 	}
 

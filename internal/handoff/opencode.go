@@ -384,7 +384,7 @@ func openCodeTurnUsage(mDoc map[string]interface{}) TurnUsage {
 		return parseTurnUsage(mDoc["usage"])
 	}
 	cache, _ := tokens["cache"].(map[string]interface{})
-	return TurnUsage{
+	u := TurnUsage{
 		Input:      asInt64(tokens["input"]),
 		Output:     asInt64(tokens["output"]),
 		Reasoning:  asInt64(tokens["reasoning"]),
@@ -392,6 +392,10 @@ func openCodeTurnUsage(mDoc map[string]interface{}) TurnUsage {
 		CacheWrite: asInt64(cache["write"]),
 		Cost:       asFloat64(mDoc["cost"]),
 	}
+	if total := asInt64(tokens["total"]); total > 0 && total != u.stepTokens() {
+		u.ContextTokens = total
+	}
+	return u
 }
 
 func extractOpenCodeMsgModel(mDoc map[string]interface{}) string {
