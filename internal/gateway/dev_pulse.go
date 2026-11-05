@@ -87,7 +87,7 @@ func isGeneratedOrLockFile(relPath string) bool {
 		"node_modules/",
 		"vendor/",
 		".next/",
-		"build/",
+		"build/bin/",
 	}
 	for _, pref := range ignoredPrefixes {
 		if strings.HasPrefix(p, pref) || strings.Contains(p, "/"+pref) {
@@ -148,19 +148,10 @@ func (g *Gateway) handleDevPulse(w http.ResponseWriter, r *http.Request) {
 
 	dir := strings.TrimSpace(r.URL.Query().Get("directory"))
 	sessionID := strings.TrimSpace(r.URL.Query().Get("sessionID"))
-	workDir := g.rootDir
-	if g.worktrees != nil {
-		if rt := g.worktrees.RootDir(); rt != "" {
-			workDir = rt
-		}
-	}
-	if dir != "" {
-		workDir = dir
-	}
-	// A sandboxed session commits inside its own worktree, so the pulse must
-	// read code velocity from that worktree rather than the project root.
-	if sessionID != "" && g.sessionPulseDirectory(sessionID) != "" {
-		workDir = g.sessionPulseDirectory(sessionID)
+	workDir, extraWorktreeDir := g.resolvePulseGitDirs(dir, sessionID)
+	cacheKey := workDir
+	if extraWorktreeDir != "" {
+		cacheKey = workDir + "\x00" + extraWorktreeDir
 	}
 
 	forced := strings.TrimSpace(r.URL.Query().Get("refresh")) != ""
@@ -174,12 +165,12 @@ func (g *Gateway) handleDevPulse(w http.ResponseWriter, r *http.Request) {
 		g.pulseCache.inflight = make(map[string]*devPulseFlight)
 	}
 	if !forced {
-		if entry, ok := g.pulseCache.entries[workDir]; ok && !entry.at.IsZero() && now.Sub(entry.at) < devPulseCacheTTL {
+		if entry, ok := g.pulseCache.entries[cacheKey]; ok && !entry.at.IsZero() && now.Sub(entry.at) < devPulseCacheTTL {
 			g.pulseCache.mu.Unlock()
 			writeJSON(w, http.StatusOK, entry.res)
 			return
 		}
-		if flight, ok := g.pulseCache.inflight[workDir]; ok {
+		if flight, ok := g.pulseCache.inflight[cacheKey]; ok {
 			g.pulseCache.mu.Unlock()
 			flight.wg.Wait()
 			writeJSON(w, http.StatusOK, flight.res)
@@ -190,7 +181,7 @@ func (g *Gateway) handleDevPulse(w http.ResponseWriter, r *http.Request) {
 	if !forced {
 		flight = &devPulseFlight{}
 		flight.wg.Add(1)
-		g.pulseCache.inflight[workDir] = flight
+		g.pulseCache.inflight[cacheKey] = flight
 	}
 	g.pulseCache.mu.Unlock()
 
@@ -207,7 +198,7 @@ func (g *Gateway) handleDevPulse(w http.ResponseWriter, r *http.Request) {
 
 	// 3. Query Git repository for today's source code additions & deletions
 	if workDir != "" {
-		collectGitDailyStats(workDir, startOfToday, &res)
+		collectGitDailyStats(workDir, startOfToday, &res, extraWorktreeDir)
 	}
 
 	g.pulseCache.mu.Lock()
@@ -228,10 +219,10 @@ func (g *Gateway) handleDevPulse(w http.ResponseWriter, r *http.Request) {
 			delete(g.pulseCache.entries, oldestKey)
 		}
 	}
-	g.pulseCache.entries[workDir] = devPulseEntry{at: time.Now(), res: res}
+	g.pulseCache.entries[cacheKey] = devPulseEntry{at: time.Now(), res: res}
 	if flight != nil {
 		flight.res = res
-		delete(g.pulseCache.inflight, workDir)
+		delete(g.pulseCache.inflight, cacheKey)
 		flight.wg.Done()
 	}
 	g.pulseCache.mu.Unlock()
@@ -289,24 +280,42 @@ func (g *Gateway) collectDailyUsage(now time.Time, startOfTodayMs int64, forced 
 // sessionPulseDirectory returns the directory a session actually works in, or
 // "" when the session is unknown or its directory is unavailable.
 func (g *Gateway) sessionPulseDirectory(sessionID string) string {
-	if g.runner == nil {
-		return ""
-	}
-	rec, ok := g.runner.Store().Meta(sessionID)
-	if !ok {
-		return ""
-	}
-	dir := strings.TrimSpace(rec.WorktreePath)
-	if dir == "" {
-		dir = strings.TrimSpace(rec.ProjectDir)
-	}
-	if dir == "" {
-		return ""
-	}
-	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
-		return ""
-	}
+	dir, _ := g.sessionPulseDirectories(sessionID)
 	return dir
+}
+
+func (g *Gateway) sessionPulseDirectories(sessionID string) (workDir, projectDir string) {
+	if sessionID == "" {
+		return "", ""
+	}
+	if g.runner != nil {
+		if rec, ok := g.runner.Store().Meta(sessionID); ok {
+			proj := strings.TrimSpace(rec.ProjectDir)
+			if proj != "" {
+				if info, err := os.Stat(proj); err == nil && info.IsDir() {
+					projectDir = proj
+				}
+			}
+			dir := strings.TrimSpace(rec.WorktreePath)
+			if dir == "" {
+				dir = proj
+			}
+			if dir != "" {
+				if info, err := os.Stat(dir); err == nil && info.IsDir() {
+					return dir, projectDir
+				}
+				return projectDir, projectDir
+			}
+		}
+	}
+	if g.worktrees != nil {
+		if b, ok, err := g.worktrees.BindingForSession(sessionID); err == nil && ok && b.Directory != "" {
+			if info, err := os.Stat(b.Directory); err == nil && info.IsDir() {
+				return b.Directory, hoxipaths.ProjectRootForWorktree(b.Directory)
+			}
+		}
+	}
+	return "", ""
 }
 
 // collectRunnerDailyUsage folds native-runtime token usage into the pulse.
@@ -478,108 +487,109 @@ func firstNonEmptyString(values ...string) string {
 	return ""
 }
 
-func collectGitDailyStats(workDir string, startOfToday time.Time, res *gitDailyPulseResponse) {
+func parseGitNumstatLine(rawLine string) (int, int, string, bool) {
+	line := strings.TrimSpace(rawLine)
+	if line == "" {
+		return 0, 0, "", false
+	}
+	var addStr, delStr, file string
+	if parts := strings.SplitN(line, "\t", 3); len(parts) == 3 {
+		addStr = strings.TrimSpace(parts[0])
+		delStr = strings.TrimSpace(parts[1])
+		file = strings.TrimSpace(parts[2])
+	} else {
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			return 0, 0, "", false
+		}
+		addStr = fields[0]
+		delStr = fields[1]
+		file = fields[len(fields)-1]
+	}
+	file = strings.Trim(file, "\"")
+	if file == "" || isGeneratedOrLockFile(file) {
+		return 0, 0, "", false
+	}
+	add, _ := strconv.Atoi(addStr)
+	del, _ := strconv.Atoi(delStr)
+	return add, del, file, true
+}
+
+func collectGitDailyStats(workDir string, startOfToday time.Time, res *gitDailyPulseResponse, extraDirs ...string) {
 	committedFileSet := make(map[string]struct{})
+	seenCommits := make(map[string]struct{})
 	sinceArg := "--since=" + startOfToday.Format(time.RFC3339)
-	if logOut, err := worktree.RunGitRaw(workDir, "log", sinceArg, "--no-merges", "--numstat", "--pretty=format:COMMIT:%H"); err == nil {
+
+	dirs := make([]string, 0, 1+len(extraDirs))
+	if strings.TrimSpace(workDir) != "" {
+		dirs = append(dirs, workDir)
+	}
+	for _, d := range extraDirs {
+		if strings.TrimSpace(d) != "" && !samePulseDir(workDir, d) {
+			dirs = append(dirs, d)
+		}
+	}
+
+	for idx, dir := range dirs {
+		logOut, err := worktree.RunGitRaw(dir, "log", sinceArg, "--no-merges", "--no-renames", "--numstat", "--pretty=format:COMMIT:%H\t%s")
+		if err != nil {
+			continue
+		}
+		skipCurrent := false
 		for _, rawLine := range strings.Split(logOut, "\n") {
 			line := strings.TrimSpace(rawLine)
 			if line == "" {
 				continue
 			}
 			if strings.HasPrefix(line, "COMMIT:") {
+				rest := strings.TrimPrefix(line, "COMMIT:")
+				parts := strings.SplitN(rest, "\t", 2)
+				sha := strings.TrimSpace(parts[0])
+				var subject string
+				if len(parts) > 1 {
+					subject = strings.TrimSpace(parts[1])
+				}
+				if sha != "" {
+					if _, exists := seenCommits[sha]; exists {
+						skipCurrent = true
+						continue
+					}
+					seenCommits[sha] = struct{}{}
+				}
+				if idx > 0 && isInternalSnapshotCommitSubject(subject) {
+					skipCurrent = true
+					continue
+				}
+				skipCurrent = false
 				res.TodayCommits++
 				continue
 			}
-			fields := strings.Fields(line)
-			if len(fields) < 3 {
+			if skipCurrent {
 				continue
 			}
-			file := fields[len(fields)-1]
-			if isGeneratedOrLockFile(file) {
+			add, del, file, ok := parseGitNumstatLine(rawLine)
+			if !ok {
 				continue
 			}
-			add, errAdd := strconv.Atoi(fields[0])
-			del, errDel := strconv.Atoi(fields[1])
-			if errAdd == nil {
-				res.CommittedAdditions += add
-			}
-			if errDel == nil {
-				res.CommittedDeletions += del
-			}
+			res.CommittedAdditions += add
+			res.CommittedDeletions += del
 			committedFileSet[file] = struct{}{}
 		}
-		res.CommittedFiles = len(committedFileSet)
 	}
+	res.CommittedFiles = len(committedFileSet)
 
 	uncommittedFileSet := make(map[string]struct{})
-	if numstat, err := worktree.RunGit(workDir, "diff", "--numstat", "HEAD"); err == nil {
-		for _, line := range strings.Split(strings.TrimSpace(numstat), "\n") {
-			fields := strings.Fields(line)
-			if len(fields) < 3 {
-				continue
-			}
-			file := fields[len(fields)-1]
-			if isGeneratedOrLockFile(file) {
-				continue
-			}
-			if a, err := strconv.Atoi(fields[0]); err == nil {
-				res.UncommittedAdditions += a
-			}
-			if d, err := strconv.Atoi(fields[1]); err == nil {
-				res.UncommittedDeletions += d
-			}
-			uncommittedFileSet[file] = struct{}{}
-		}
-	}
-
-	untrackedReadCount := 0
-	untrackedReadBytes := int64(0)
-	untrackedTruncated := false
-	if porcelain, err := worktree.RunGitRaw(workDir, "status", "--porcelain", "-b"); err == nil {
-		for _, rawLine := range strings.Split(porcelain, "\n") {
-			if strings.HasPrefix(rawLine, "## ") {
-				if br := worktree.ParseBranchFromPorcelainHeader(rawLine); br != "" {
-					res.Branch = br
-				}
-				continue
-			}
-			if !strings.HasPrefix(rawLine, "?? ") {
-				continue
-			}
-			rel := strings.TrimSpace(rawLine[3:])
-			if isGeneratedOrLockFile(rel) {
-				continue
-			}
-			uncommittedFileSet[rel] = struct{}{}
-			if untrackedTruncated || untrackedReadCount >= maxUntrackedFilesToCount {
-				untrackedTruncated = true
-				continue
-			}
-			full := filepath.Join(workDir, rel)
-			info, err := os.Stat(full)
-			if err != nil || info.IsDir() || info.Size() > maxUntrackedFileSize {
-				continue
-			}
-			if untrackedReadBytes+info.Size() > maxUntrackedTotalBytes {
-				untrackedTruncated = true
-				continue
-			}
-			data, err := os.ReadFile(full)
-			if err != nil || len(data) == 0 || bytes.IndexByte(data, 0) != -1 {
-				continue
-			}
-			untrackedReadCount++
-			untrackedReadBytes += int64(len(data))
-			cnt := bytes.Count(data, []byte{'\n'})
-			if data[len(data)-1] != '\n' {
-				cnt++
-			}
-			res.UncommittedAdditions += cnt
+	var budget untrackedBudget
+	for _, dir := range dirs {
+		add, del, branch := collectGitUncommittedInto(dir, uncommittedFileSet, &budget)
+		res.UncommittedAdditions += add
+		res.UncommittedDeletions += del
+		if branch != "" {
+			res.Branch = branch
 		}
 	}
 	res.UncommittedFiles = len(uncommittedFileSet)
-	res.UncommittedTruncated = untrackedTruncated
+	res.UncommittedTruncated = budget.truncated
 
 	changed := make(map[string]struct{}, len(committedFileSet)+len(uncommittedFileSet))
 	for file := range committedFileSet {

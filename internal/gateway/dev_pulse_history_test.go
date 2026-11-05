@@ -318,3 +318,200 @@ INSERT INTO message VALUES ('m_new', 'ses_imp', %d, '{"role":"assistant","provid
 		t.Fatalf("expected only post-import turn counted (in=300, out=40), got %+v", todayRow)
 	}
 }
+
+func TestDevPulseAndHistoryAgreeOnTodayUncommittedCommitterDateAndBuildFiles(t *testing.T) {
+	t.Setenv("OPENCODE_DB", "")
+	t.Setenv("HOXI_DB_PATH", filepath.Join(t.TempDir(), "hoxi.db"))
+
+	repo := t.TempDir()
+	now := time.Now()
+	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	yesterdayNoon := todayStart.AddDate(0, 0, -1).Add(12 * time.Hour).Format(time.RFC3339)
+	todayTime := todayStart.Add(1 * time.Second)
+	if now.After(todayTime) {
+		todayTime = now
+	}
+	todayStr := todayTime.Format(time.RFC3339)
+
+	gitAt(t, repo, yesterdayNoon, "init", "-q", "-b", "main")
+	if err := os.WriteFile(filepath.Join(repo, "seed.go"), []byte("package main\nline1\nline2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitAt(t, repo, yesterdayNoon, "add", ".")
+	gitAt(t, repo, yesterdayNoon, "commit", "-q", "-m", "yesterday seed")
+
+	// Commit authored yesterday but committed today, touching seed.go (+2/-1),
+	// tracked Wails installer script build/windows/installer/project.nsi (+4/0),
+	// and compiled output build/bin/app (+10/0, must be ignored).
+	if err := os.WriteFile(filepath.Join(repo, "seed.go"), []byte("package main\nline1_mod\nline2\nline3\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repo, "build", "windows", "installer"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "build", "windows", "installer", "project.nsi"), []byte("Section\nDetailPrint 1\nDetailPrint 2\nSectionEnd\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repo, "build", "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "build", "bin", "out.txt"), []byte("1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitAt(t, repo, yesterdayNoon, "add", ".")
+	cmd := exec.Command("git", "-C", repo, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "rebased today")
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=hoxi-test", "GIT_AUTHOR_EMAIL=test@hoxi.local",
+		"GIT_COMMITTER_NAME=hoxi-test", "GIT_COMMITTER_EMAIL=test@hoxi.local",
+		"GIT_AUTHOR_DATE="+yesterdayNoon, "GIT_COMMITTER_DATE="+todayStr,
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git commit: %v\n%s", err, out)
+	}
+
+	// Uncommitted tracked change to seed.go (+1/-1) and untracked nested dir newpkg/sub.go (+3/0).
+	if err := os.WriteFile(filepath.Join(repo, "seed.go"), []byte("package main\nline1_mod\nline2_dirty\nline3\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repo, "newpkg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "newpkg", "sub.go"), []byte("package newpkg\nvar X = 1\nvar Y = 2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	gw := New(0, "pass", repo, nil, nil)
+
+	recPulse := httptest.NewRecorder()
+	gw.ServeHTTP(recPulse, localRequest(http.MethodGet, "/api/hoxi/dev-pulse?directory="+repo, nil))
+	if recPulse.Code != http.StatusOK {
+		t.Fatalf("dev-pulse status = %d: %s", recPulse.Code, recPulse.Body.String())
+	}
+	var pulse gitDailyPulseResponse
+	if err := json.Unmarshal(recPulse.Body.Bytes(), &pulse); err != nil {
+		t.Fatal(err)
+	}
+	// Committed today: seed.go (+2/-1) + build/windows/installer/project.nsi (+4/0) = +6/-1 across 2 files, 1 commit.
+	if pulse.TodayCommits != 1 || pulse.CommittedAdditions != 6 || pulse.CommittedDeletions != 1 || pulse.CommittedFiles != 2 {
+		t.Fatalf("unexpected pulse committed stats: %+v", pulse)
+	}
+	// Uncommitted today: seed.go (+1/-1) + newpkg/sub.go (+3/0) = +4/-1 across 2 files; union ChangedFiles = 3.
+	if pulse.UncommittedAdditions != 4 || pulse.UncommittedDeletions != 1 || pulse.UncommittedFiles != 2 || pulse.ChangedFiles != 3 {
+		t.Fatalf("unexpected pulse uncommitted stats: %+v", pulse)
+	}
+
+	recHist := httptest.NewRecorder()
+	gw.ServeHTTP(recHist, localRequest(http.MethodGet, "/api/hoxi/dev-pulse/history?days=2&directory="+repo, nil))
+	if recHist.Code != http.StatusOK {
+		t.Fatalf("dev-pulse/history status = %d: %s", recHist.Code, recHist.Body.String())
+	}
+	var hist devPulseHistoryResponse
+	if err := json.Unmarshal(recHist.Body.Bytes(), &hist); err != nil {
+		t.Fatal(err)
+	}
+	todayRow := historyDayByDate(hist.Days, now.Format("2006-01-02"))
+	if todayRow == nil {
+		t.Fatal("missing today row")
+	}
+	wantAdd := pulse.CommittedAdditions + pulse.UncommittedAdditions
+	wantDel := pulse.CommittedDeletions + pulse.UncommittedDeletions
+	if todayRow.Commits != pulse.TodayCommits || todayRow.Additions != wantAdd || todayRow.Deletions != wantDel || todayRow.Files != pulse.ChangedFiles {
+		t.Fatalf("history today row %+v does not match dev-pulse (commits=%d add=%d del=%d files=%d)",
+			todayRow, pulse.TodayCommits, wantAdd, wantDel, pulse.ChangedFiles)
+	}
+}
+
+func TestDevPulseCombinesProjectRootAndActiveWorktreeWithoutCrossProjectLeak(t *testing.T) {
+	t.Setenv("OPENCODE_DB", "")
+	t.Setenv("HOXI_DB_PATH", filepath.Join(t.TempDir(), "hoxi.db"))
+
+	now := time.Now().Format(time.RFC3339)
+	repoA := t.TempDir()
+	gitAt(t, repoA, now, "init", "-q", "-b", "main")
+	if err := os.WriteFile(filepath.Join(repoA, "base.go"), []byte("package a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitAt(t, repoA, now, "add", ".")
+	gitAt(t, repoA, now, "commit", "-q", "-m", "base")
+
+	wtDir := filepath.Join(repoA, ".hoxi", "worktrees", "ses_wt")
+	if err := os.MkdirAll(filepath.Dir(wtDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitAt(t, repoA, now, "worktree", "add", "-q", "-b", "hoxi/ses_wt", wtDir, "HEAD")
+
+	// Root repo gets a new commit on main after ses_wt branched off (+2/0).
+	if err := os.WriteFile(filepath.Join(repoA, "main_feature.go"), []byte("package a\nvar M = 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitAt(t, repoA, now, "add", "main_feature.go")
+	gitAt(t, repoA, now, "commit", "-q", "-m", "main feature")
+
+	// Worktree gets one real commit (+3/0), one internal apply snapshot commit (must be skipped),
+	// and one uncommitted file (+2/0).
+	if err := os.WriteFile(filepath.Join(wtDir, "wt_feature.go"), []byte("package a\nvar W1 = 1\nvar W2 = 2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitAt(t, wtDir, now, "add", "wt_feature.go")
+	gitAt(t, wtDir, now, "commit", "-q", "-m", "worktree feature")
+
+	if err := os.WriteFile(filepath.Join(wtDir, "snap.go"), []byte("package a\nvar S = 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitAt(t, wtDir, now, "add", "snap.go")
+	gitAt(t, wtDir, now, "commit", "-q", "-m", "chore(hoxi): snapshot before apply (ses_wt)")
+
+	if err := os.WriteFile(filepath.Join(wtDir, "wt_dirty.go"), []byte("package a\nvar D = 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := runner.NewService(repoA, nil, nil, filepath.Join(t.TempDir(), "sessions"))
+	if err := svc.Store().Put(runner.SessionRecord{
+		ID:           "ses_wt",
+		Runtime:      "opencode",
+		ProjectDir:   repoA,
+		WorktreePath: wtDir,
+		SandboxMode:  "worktree",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	gw := New(0, "pass", repoA, nil, nil)
+	gw.runner = svc
+
+	recPulse := httptest.NewRecorder()
+	gw.ServeHTTP(recPulse, localRequest(http.MethodGet, "/api/hoxi/dev-pulse?directory="+repoA+"&sessionID=ses_wt", nil))
+	if recPulse.Code != http.StatusOK {
+		t.Fatalf("dev-pulse status = %d: %s", recPulse.Code, recPulse.Body.String())
+	}
+	var pulse gitDailyPulseResponse
+	if err := json.Unmarshal(recPulse.Body.Bytes(), &pulse); err != nil {
+		t.Fatal(err)
+	}
+	// 3 real commits (base +1, main_feature +2, wt_feature +3 = +6), 1 uncommitted file (wt_dirty +2).
+	if pulse.TodayCommits != 3 || pulse.CommittedAdditions != 6 || pulse.UncommittedAdditions != 2 {
+		t.Fatalf("expected combined root + worktree stats without snapshot commit, got %+v", pulse)
+	}
+
+	// Explicit ?directory=repoB must not be hijacked by ses_wt from repoA.
+	repoB := t.TempDir()
+	gitAt(t, repoB, now, "init", "-q", "-b", "main")
+	if err := os.WriteFile(filepath.Join(repoB, "b.go"), []byte("package b\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitAt(t, repoB, now, "add", ".")
+	gitAt(t, repoB, now, "commit", "-q", "-m", "init b")
+
+	recB := httptest.NewRecorder()
+	gw.ServeHTTP(recB, localRequest(http.MethodGet, "/api/hoxi/dev-pulse?directory="+repoB+"&sessionID=ses_wt", nil))
+	if recB.Code != http.StatusOK {
+		t.Fatalf("dev-pulse repoB status = %d: %s", recB.Code, recB.Body.String())
+	}
+	var pulseB gitDailyPulseResponse
+	if err := json.Unmarshal(recB.Body.Bytes(), &pulseB); err != nil {
+		t.Fatal(err)
+	}
+	if pulseB.TodayCommits != 1 || pulseB.CommittedAdditions != 1 || pulseB.UncommittedAdditions != 0 {
+		t.Fatalf("repoB stats leaked from ses_wt: %+v", pulseB)
+	}
+}

@@ -1,4 +1,4 @@
-import { createMemo, Index, onMount, Show } from "solid-js";
+import { createEffect, createMemo, Index, Show } from "solid-js";
 import { BarChart3, ChevronRight, Trophy } from "lucide-solid";
 import {
   computeDailyDevPulseStats,
@@ -6,6 +6,7 @@ import {
   openLeaderboardModal,
   openSettingsModal,
   refreshDailyDevPulse,
+  workspace,
 } from "../../store/workspace";
 import { ProviderIcon } from "../icons";
 import { t } from "../../i18n";
@@ -29,7 +30,9 @@ export default function DevPulseContent(props: { onNavigate: () => void }) {
     }
   );
 
-  onMount(() => {
+  createEffect(() => {
+    void workspace.rootDir;
+    void workspace.activeSessionID;
     void refreshDailyDevPulse(false);
   });
 
@@ -71,6 +74,10 @@ export default function DevPulseContent(props: { onNavigate: () => void }) {
             props.onNavigate();
             openDiffInInspector();
           }}
+          title={t("header.pulseLinesAddedSub", {
+            uncommitted: stats().uncommittedAdditions.toLocaleString(),
+            committed: stats().committedAdditions.toLocaleString(),
+          })}
           class="rounded-lg bg-[var(--bg-inset)]/60 hover:bg-[var(--bg-hover)] px-2.5 py-2 text-left transition-colors cursor-pointer"
         >
           <div class="text-[11px] text-[var(--text-muted)]">{t("header.pulseLinesAdded")}</div>
@@ -85,6 +92,13 @@ export default function DevPulseContent(props: { onNavigate: () => void }) {
             props.onNavigate();
             openDiffInInspector();
           }}
+          title={t("header.pulseLinesDeletedSub", {
+            net:
+              stats().netLines >= 0
+                ? `+${stats().netLines.toLocaleString()}`
+                : stats().netLines.toLocaleString(),
+            files: stats().changedFilesCount.toLocaleString(),
+          })}
           class="rounded-lg bg-[var(--bg-inset)]/60 hover:bg-[var(--bg-hover)] px-2.5 py-2 text-left transition-colors cursor-pointer"
         >
           <div class="text-[11px] text-[var(--text-muted)]">{t("header.pulseLinesDeleted")}</div>

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -149,17 +150,11 @@ func (g *Gateway) handleDevPulseHistory(w http.ResponseWriter, r *http.Request) 
 	queryHistoryFromDB(start.UnixMilli(), endExclusive.UnixMilli(), day)
 	g.collectRunnerHistory(start.UnixMilli(), endExclusive.UnixMilli(), day)
 
-	workDir := g.rootDir
-	if g.worktrees != nil {
-		if rt := g.worktrees.RootDir(); rt != "" {
-			workDir = rt
-		}
-	}
-	if dir := strings.TrimSpace(r.URL.Query().Get("directory")); dir != "" {
-		workDir = dir
-	}
+	dir := strings.TrimSpace(r.URL.Query().Get("directory"))
+	sessionID := strings.TrimSpace(r.URL.Query().Get("sessionID"))
+	workDir, extraWorktreeDir := g.resolvePulseGitDirs(dir, sessionID)
 	if workDir != "" {
-		collectGitHistory(workDir, start, endExclusive, day)
+		collectGitHistory(workDir, start, endExclusive, todayStart, day, extraWorktreeDir)
 	}
 
 	sortHistoryModels(byDate)
@@ -440,63 +435,280 @@ func (g *Gateway) collectRunnerHistory(startMs, endMs int64, day func(string) *h
 	}
 }
 
-// collectGitHistory buckets today's commit numstat into per-day totals with a
-// single git invocation instead of one call per day.
-func collectGitHistory(workDir string, start, end time.Time, day func(string) *historyDay) {
+// collectGitHistory buckets commit numstat into per-day totals with a single
+// git invocation per directory, and folds today's uncommitted working-tree
+// changes into today's bucket when today falls within [start, end).
+func collectGitHistory(workDir string, start, end, todayStart time.Time, day func(string) *historyDay, extraDirs ...string) {
 	sinceArg := "--since=" + start.Format(time.RFC3339)
 	untilArg := "--until=" + end.Format(time.RFC3339)
-	logOut, err := worktree.RunGitRaw(workDir,
-		"log", sinceArg, untilArg, "--no-merges", "--numstat",
-		"--pretty=format:COMMIT:%at")
-	if err != nil {
-		return
+	startKey := start.Format("2006-01-02")
+	endInclusiveKey := end.AddDate(0, 0, -1).Format("2006-01-02")
+
+	dirs := make([]string, 0, 1+len(extraDirs))
+	if strings.TrimSpace(workDir) != "" {
+		dirs = append(dirs, workDir)
+	}
+	for _, d := range extraDirs {
+		if strings.TrimSpace(d) != "" && !samePulseDir(workDir, d) {
+			dirs = append(dirs, d)
+		}
 	}
 
-	loc := time.Now().Location()
+	loc := start.Location()
 	fileSets := make(map[string]map[string]struct{})
-	var current string
-	for _, rawLine := range strings.Split(logOut, "\n") {
-		line := strings.TrimSpace(rawLine)
-		if line == "" {
+	seenCommits := make(map[string]struct{})
+
+	for idx, dir := range dirs {
+		logOut, err := worktree.RunGitRaw(dir,
+			"log", sinceArg, untilArg, "--no-merges", "--no-renames", "--numstat",
+			"--pretty=format:COMMIT:%H\t%ct\t%s")
+		if err != nil {
 			continue
 		}
-		if strings.HasPrefix(line, "COMMIT:") {
-			sec, convErr := strconv.ParseInt(strings.TrimPrefix(line, "COMMIT:"), 10, 64)
-			if convErr != nil {
-				current = ""
+		var current string
+		for _, rawLine := range strings.Split(logOut, "\n") {
+			line := strings.TrimSpace(rawLine)
+			if line == "" {
 				continue
 			}
-			current = historyDayKey(sec*1000, loc)
-			target := day(current)
-			target.Commits++
-			if fileSets[current] == nil {
-				fileSets[current] = make(map[string]struct{})
+			if strings.HasPrefix(line, "COMMIT:") {
+				rest := strings.TrimPrefix(line, "COMMIT:")
+				parts := strings.SplitN(rest, "\t", 3)
+				var sha, tsStr, subject string
+				if len(parts) == 1 {
+					tsStr = strings.TrimSpace(parts[0])
+				} else {
+					sha = strings.TrimSpace(parts[0])
+					tsStr = strings.TrimSpace(parts[1])
+					if len(parts) > 2 {
+						subject = strings.TrimSpace(parts[2])
+					}
+				}
+				if sha != "" {
+					if _, exists := seenCommits[sha]; exists {
+						current = ""
+						continue
+					}
+					seenCommits[sha] = struct{}{}
+				}
+				if idx > 0 && isInternalSnapshotCommitSubject(subject) {
+					current = ""
+					continue
+				}
+				sec, convErr := strconv.ParseInt(tsStr, 10, 64)
+				if convErr != nil {
+					current = ""
+					continue
+				}
+				key := historyDayKey(sec*1000, loc)
+				if key < startKey || key > endInclusiveKey {
+					current = ""
+					continue
+				}
+				current = key
+				target := day(current)
+				target.Commits++
+				if fileSets[current] == nil {
+					fileSets[current] = make(map[string]struct{})
+				}
+				continue
 			}
-			continue
+			if current == "" {
+				continue
+			}
+			add, del, file, ok := parseGitNumstatLine(rawLine)
+			if !ok {
+				continue
+			}
+			target := day(current)
+			target.Additions += add
+			target.Deletions += del
+			fileSets[current][file] = struct{}{}
 		}
-		if current == "" {
-			continue
-		}
-		fields := strings.Fields(line)
-		if len(fields) < 3 {
-			continue
-		}
-		file := fields[len(fields)-1]
-		if isGeneratedOrLockFile(file) {
-			continue
-		}
-		target := day(current)
-		if n, convErr := strconv.Atoi(fields[0]); convErr == nil {
-			target.Additions += n
-		}
-		if n, convErr := strconv.Atoi(fields[1]); convErr == nil {
-			target.Deletions += n
-		}
-		fileSets[current][file] = struct{}{}
 	}
+
+	if !todayStart.Before(start) && todayStart.Before(end) {
+		todayKey := todayStart.Format("2006-01-02")
+		uncommittedFileSet := make(map[string]struct{})
+		var budget untrackedBudget
+		var uncommAdd, uncommDel int
+		for _, dir := range dirs {
+			a, d, _ := collectGitUncommittedInto(dir, uncommittedFileSet, &budget)
+			uncommAdd += a
+			uncommDel += d
+		}
+		if uncommAdd > 0 || uncommDel > 0 || len(uncommittedFileSet) > 0 {
+			target := day(todayKey)
+			target.Additions += uncommAdd
+			target.Deletions += uncommDel
+			if fileSets[todayKey] == nil {
+				fileSets[todayKey] = make(map[string]struct{}, len(uncommittedFileSet))
+			}
+			for f := range uncommittedFileSet {
+				fileSets[todayKey][f] = struct{}{}
+			}
+		}
+	}
+
 	for key, set := range fileSets {
 		day(key).Files = len(set)
 	}
+}
+
+type untrackedBudget struct {
+	readCount int
+	readBytes int64
+	truncated bool
+}
+
+func collectGitUncommittedInto(workDir string, uncommittedFileSet map[string]struct{}, budget *untrackedBudget) (additions, deletions int, branch string) {
+	if numstat, err := worktree.RunGit(workDir, "diff", "--no-renames", "--numstat", "HEAD"); err == nil {
+		for _, line := range strings.Split(strings.TrimSpace(numstat), "\n") {
+			add, del, file, ok := parseGitNumstatLine(line)
+			if !ok {
+				continue
+			}
+			if _, seen := uncommittedFileSet[file]; seen {
+				continue
+			}
+			additions += add
+			deletions += del
+			uncommittedFileSet[file] = struct{}{}
+		}
+	}
+
+	countUntrackedFile := func(rel string) {
+		rel = strings.Trim(strings.TrimSpace(rel), "\"")
+		if rel == "" || strings.HasSuffix(rel, "/") || isGeneratedOrLockFile(rel) {
+			return
+		}
+		if _, seen := uncommittedFileSet[rel]; seen {
+			return
+		}
+		uncommittedFileSet[rel] = struct{}{}
+		if budget.truncated || budget.readCount >= maxUntrackedFilesToCount {
+			budget.truncated = true
+			return
+		}
+		full := filepath.Join(workDir, filepath.FromSlash(rel))
+		info, err := os.Stat(full)
+		if err != nil || info.IsDir() || info.Size() > maxUntrackedFileSize {
+			return
+		}
+		if budget.readBytes+info.Size() > maxUntrackedTotalBytes {
+			budget.truncated = true
+			return
+		}
+		data, err := os.ReadFile(full)
+		if err != nil || len(data) == 0 || bytes.IndexByte(data, 0) != -1 {
+			return
+		}
+		budget.readCount++
+		budget.readBytes += int64(len(data))
+		cnt := bytes.Count(data, []byte{'\n'})
+		if data[len(data)-1] != '\n' {
+			cnt++
+		}
+		additions += cnt
+	}
+
+	if porcelain, err := worktree.RunGitRaw(workDir, "status", "--porcelain", "-b"); err == nil {
+		var expandDirs []string
+		for _, rawLine := range strings.Split(porcelain, "\n") {
+			if strings.HasPrefix(rawLine, "## ") {
+				if br := worktree.ParseBranchFromPorcelainHeader(rawLine); br != "" {
+					branch = br
+				}
+				continue
+			}
+			if !strings.HasPrefix(rawLine, "?? ") {
+				continue
+			}
+			rel := strings.Trim(strings.TrimSpace(rawLine[3:]), "\"")
+			if isGeneratedOrLockFile(rel) {
+				continue
+			}
+			if strings.HasSuffix(rel, "/") {
+				expandDirs = append(expandDirs, rel)
+				continue
+			}
+			countUntrackedFile(rel)
+		}
+		if len(expandDirs) > 0 && !budget.truncated {
+			args := append([]string{"ls-files", "--others", "--exclude-standard", "-z", "--"}, expandDirs...)
+			if untrackedOut, err := worktree.RunGitRaw(workDir, args...); err == nil && untrackedOut != "" {
+				for _, rel := range strings.Split(untrackedOut, "\x00") {
+					countUntrackedFile(rel)
+				}
+			}
+		}
+	}
+	return additions, deletions, branch
+}
+
+func isInternalSnapshotCommitSubject(subject string) bool {
+	return strings.HasPrefix(strings.TrimSpace(subject), "chore(hoxi): snapshot before apply (")
+}
+
+func samePulseDir(a, b string) bool {
+	ca := canonicalPulseDir(a)
+	cb := canonicalPulseDir(b)
+	return ca != "" && ca == cb
+}
+
+func canonicalPulseDir(dir string) string {
+	clean := filepath.Clean(strings.TrimSpace(dir))
+	if clean == "" || clean == "." {
+		return ""
+	}
+	if resolved, err := filepath.EvalSymlinks(clean); err == nil && resolved != "" {
+		return filepath.Clean(resolved)
+	}
+	if abs, err := filepath.Abs(clean); err == nil {
+		return filepath.Clean(abs)
+	}
+	return clean
+}
+
+func (g *Gateway) resolvePulseGitDirs(rawDir, sessionID string) (primaryDir, extraWorktreeDir string) {
+	workDir := strings.TrimSpace(rawDir)
+	if workDir == "" {
+		workDir = g.rootDir
+		if g.worktrees != nil {
+			if rt := g.worktrees.RootDir(); rt != "" {
+				workDir = rt
+			}
+		}
+	}
+	sessDir, sessProj := g.sessionPulseDirectories(sessionID)
+	if strings.TrimSpace(rawDir) == "" && sessDir != "" {
+		if sessProj != "" {
+			workDir = sessProj
+		} else {
+			workDir = sessDir
+		}
+	}
+	if root := hoxipaths.ProjectRootForWorktree(workDir); root != "" {
+		if info, err := os.Stat(root); err == nil && info.IsDir() {
+			if !samePulseDir(root, workDir) {
+				extraWorktreeDir = workDir
+			}
+			workDir = root
+		}
+	}
+	if sessDir != "" && !samePulseDir(workDir, sessDir) {
+		sessRoot := sessProj
+		if r := hoxipaths.ProjectRootForWorktree(sessDir); r != "" {
+			sessRoot = r
+		}
+		if sessRoot == "" {
+			sessRoot = sessDir
+		}
+		if samePulseDir(workDir, sessRoot) {
+			extraWorktreeDir = sessDir
+		}
+	}
+	return workDir, extraWorktreeDir
 }
 
 // sortHistoryModels keeps the per-day model list stable for the UI.

@@ -2,7 +2,7 @@
 // Usage & cost panel. Defaults to a year overview (heatmap + today's tally);
 // picking a window switches to a plain daily list, since the bar charts no
 // longer add anything over the table.
-import { createMemo, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, untrack, type JSX } from "solid-js";
 import { ChevronRight, RefreshCw, X } from "lucide-solid";
 import { t } from "../../i18n";
 import {
@@ -17,6 +17,7 @@ import {
   usageHistoryTotals,
   usageSelection,
   USAGE_HISTORY_RANGES,
+  workspace,
   type UsageHistoryDay,
   type UsageHistoryRange,
   type UsageHistoryTotals,
@@ -93,10 +94,10 @@ function MetricGrid(props: { totals: UsageHistoryTotals }) {
           label={t("settings.usageTotalCommits")}
           value={
             <>
-              {props.totals.commits} ·{" "}
-              <span class="text-emerald-500">+{props.totals.additions}</span>
+              {props.totals.commits.toLocaleString()} ·{" "}
+              <span class="text-emerald-500">+{props.totals.additions.toLocaleString()}</span>
               <span class="text-[var(--text-muted)]">/</span>
-              <span class="text-rose-500">-{props.totals.deletions}</span>
+              <span class="text-rose-500">-{props.totals.deletions.toLocaleString()}</span>
             </>
           }
         />
@@ -152,10 +153,13 @@ function DayRow(props: { day: UsageHistoryDay; onViewModels: () => void }) {
         {formatUsd(props.day.cost)}
       </td>
       <td class="px-2 py-1.5 text-right font-mono text-[11px] text-[var(--text-muted)]">
-        <Show when={props.day.commits > 0} fallback="—">
-          {props.day.commits}
-          <span class="ml-1 text-emerald-500">+{props.day.additions}</span>
-          <span class="ml-1 text-rose-500">-{props.day.deletions}</span>
+        <Show
+          when={props.day.commits > 0 || props.day.additions > 0 || props.day.deletions > 0}
+          fallback="—"
+        >
+          {props.day.commits.toLocaleString()}
+          <span class="ml-1 text-emerald-500">+{props.day.additions.toLocaleString()}</span>
+          <span class="ml-1 text-rose-500">-{props.day.deletions.toLocaleString()}</span>
         </Show>
       </td>
     </tr>
@@ -222,8 +226,13 @@ export default function UsageHistoryTab() {
     initial.kind === "custom" ? initial.range.end : todayDate()
   );
 
+  createEffect(() => {
+    void workspace.rootDir;
+    void workspace.activeSessionID;
+    void loadUsageHistory(untrack(usageSelection));
+  });
+
   onMount(() => {
-    void loadUsageHistory(usageSelection());
     const timer = window.setInterval(() => setTodayDate(toDateInput(new Date())), 60_000);
     onCleanup(() => window.clearInterval(timer));
   });

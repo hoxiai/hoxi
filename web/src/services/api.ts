@@ -209,13 +209,14 @@ export const hoxiAPI = {
   getDevPulseHistory(
     days = 30,
     directory?: string,
-    window?: { startDate?: string; endDate?: string }
+    window?: { startDate?: string; endDate?: string; sessionID?: string }
   ): Promise<import("./api-types").DevPulseHistoryResponse> {
     const params = new URLSearchParams();
     params.set("days", String(days));
     if (window?.startDate) params.set("start", window.startDate);
     if (window?.endDate) params.set("end", window.endDate);
     if (directory) params.set("directory", directory);
+    if (window?.sessionID) params.set("sessionID", window.sessionID);
     return requestJSON(`/api/hoxi/dev-pulse/history?${params.toString()}`);
   },
 

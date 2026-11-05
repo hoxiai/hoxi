@@ -6,6 +6,7 @@ import {
   refreshDailyDevPulse,
 } from "../store/daily-pulse";
 import { leaderboardState, setLeaderboardState } from "../store/leaderboard-state";
+import { setWorkspace, workspace } from "../store/workspace-state";
 import { assertEqual, assertTrue, describe, it } from "./test-harness";
 
 function pricingItem(partial: Partial<ModelPricingItem> & { slug: string }): ModelPricingItem {
@@ -438,5 +439,61 @@ describe("daily pulse market cost", () => {
         );
       }
     );
+  });
+
+  it("discards stale refreshDailyDevPulse response when workspace rootDir changes in flight", async () => {
+    const origGet = hoxiAPI.getGitDailyPulse;
+    const savedRoot = workspace.rootDir;
+    const savedSid = workspace.activeSessionID;
+    let resolveA!: (res: GitDailyPulseResponse) => void;
+    let resolveB!: (res: GitDailyPulseResponse) => void;
+    try {
+      hoxiAPI.getGitDailyPulse = (dir) => {
+        if (dir === "/repo-a") {
+          return new Promise<GitDailyPulseResponse>((r) => {
+            resolveA = r;
+          });
+        }
+        return new Promise<GitDailyPulseResponse>((r) => {
+          resolveB = r;
+        });
+      };
+
+      setWorkspace({ rootDir: "/repo-a", activeSessionID: "ses_a" });
+      const pA = refreshDailyDevPulse(false);
+      setWorkspace({ rootDir: "/repo-b", activeSessionID: "ses_b" });
+      const pB = refreshDailyDevPulse(false);
+
+      resolveB({
+        todayCommits: 4,
+        committedAdditions: 120,
+        committedDeletions: 30,
+        committedFiles: 5,
+        uncommittedAdditions: 15,
+        uncommittedDeletions: 5,
+        uncommittedFiles: 2,
+        changedFiles: 6,
+      });
+      await pB;
+      assertEqual(computeDailyDevPulseStats().totalAdditions, 135);
+      assertEqual(computeDailyDevPulseStats().totalDeletions, 35);
+
+      resolveA({
+        todayCommits: 1,
+        committedAdditions: 10,
+        committedDeletions: 2,
+        committedFiles: 1,
+        uncommittedAdditions: 0,
+        uncommittedDeletions: 0,
+        uncommittedFiles: 0,
+        changedFiles: 1,
+      });
+      await pA;
+      assertEqual(computeDailyDevPulseStats().totalAdditions, 135, "stale repo-a response ignored");
+      assertEqual(computeDailyDevPulseStats().totalDeletions, 35, "stale repo-a deletions ignored");
+    } finally {
+      hoxiAPI.getGitDailyPulse = origGet;
+      setWorkspace({ rootDir: savedRoot, activeSessionID: savedSid });
+    }
   });
 });
