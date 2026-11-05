@@ -2,6 +2,12 @@
 
 All notable releases of **Hoxi Desktop** are documented below. Full per-version release notes are archived under [`docs/release-notes/`](docs/release-notes/) and consumed directly by `.github/workflows/release.yml` and `scripts/ai-release.sh`.
 
+## [v0.6.14](docs/release-notes/v0.6.14.md) — 2026-11-05
+
+- **Theme & Sidebar**: Align light surface, border and elevation tokens with the default blue palette; use lucide folder icons, selected-surface active rows, accent user-turn cards and a quiet completed badge.
+- **Timeline**: Stop yanking the viewport back to an older activity group after sending while the transcript follows the live tail; restore the floating changed-files pill in the composer shelf while busy; add a send-scroll-anchor browser regression.
+- **Runtime & Storage**: Decode CP936/GB18030 to fix garbled Windows terminal output; wait for OpenCode turn teardown in `CloseAll` and cancel process scans on forget; tighten session cleanup, atomic persistence and store boundaries.
+
 ## [v0.6.13](docs/release-notes/v0.6.13.md) — 2026-11-05
 
 - **Turn Retry Bounds**: Abort engine retry events beyond 15s, 3 attempts or a permanent/quota fault, stamp the error on the last assistant message, and stop auto-retrying long quota resets; keep `Retry-After` inside the retry ceiling.
