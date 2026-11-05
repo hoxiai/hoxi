@@ -46,6 +46,7 @@ import {
 import {
   clearSubagentDrawerOverride,
   extractChildSubagentSessionId,
+  resolveParentSessionID,
 } from "./subagent-sessions";
 import { clearAutoFailoverPending, clearTurnDispatchState } from "./auto-failover";
 import { clearSessionAutoTarget } from "./auto-models";
@@ -75,9 +76,17 @@ export function endLocalSessionCreation(createdSessionID?: string): void {
   }
 }
 
-export function nextActiveSessionCandidate(excludeID?: string): SessionInfo | undefined {
+export function nextActiveSessionCandidate(
+  exclude?: string | ReadonlySet<string>
+): SessionInfo | undefined {
+  const isExcluded =
+    typeof exclude === "string"
+      ? (id: string) => id === exclude
+      : exclude
+        ? (id: string) => exclude.has(id)
+        : () => false;
   const candidates = workspace.sessions.filter(
-    (s) => s.id !== excludeID && !s.parentID && !isSessionArchived(s)
+    (s) => !isExcluded(s.id) && !resolveParentSessionID(s.id) && !isSessionArchived(s)
   );
   if (candidates.length === 0) return undefined;
   return sortSessionsByActivity(candidates)[0];

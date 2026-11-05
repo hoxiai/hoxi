@@ -28,10 +28,12 @@ type Store struct {
 	dir              string
 	records          map[string]*storedSession
 	clock            uint64
-	cacheMaxSessions int
-	cacheMaxBytes    int64
-	cachedSessions   int
-	cachedBytes      int64
+	cacheMaxSessions   int
+	cacheMaxBytes      int64
+	cachedSessions     int
+	cachedBytes        int64
+	summaryMaxSessions int
+	summarySessions    int
 	// mutations counts transcript and metadata writes (not cache loads), so
 	// readers can tell whether derived views are still current.
 	mutations atomic.Uint64
@@ -45,6 +47,7 @@ type storedSession struct {
 	rec              SessionRecord
 	meta             SessionRecord        // protected by Store.mu; no transcript references
 	cache            transcriptCacheEntry // protected by Store.mu
+	summaryAccess    uint64               // protected by Store.mu; >0 when summaryTurns is cached
 	summaryTurns     []MessageTurn
 	turnsLoaded      bool
 	hasRevertedTurns bool
@@ -78,7 +81,13 @@ func NewStore(customDir string) *Store {
 	if dir == "" {
 		dir, legacy = defaultStoreDir()
 	}
-	s := &Store{dir: filepath.Clean(dir), records: make(map[string]*storedSession), cacheMaxSessions: 12, cacheMaxBytes: 32 << 20}
+	s := &Store{
+		dir:                filepath.Clean(dir),
+		records:            make(map[string]*storedSession),
+		cacheMaxSessions:   12,
+		cacheMaxBytes:      32 << 20,
+		summaryMaxSessions: 64,
+	}
 	s.loadAllMeta()
 	if legacy != "" {
 		s.migrateLegacy(legacy)
@@ -302,18 +311,33 @@ func (s *Store) VisitTurnsSummary(sessionID string, fn func(rec SessionRecord)) 
 	if ss == nil {
 		return false
 	}
-	defer ss.mu.Unlock()
 	if ss.turnsLoaded {
 		fn(ss.rec)
+		ss.mu.Unlock()
 		return true
 	}
+	loaded := false
 	if ss.summaryTurns == nil {
 		turns, _ := s.readTurns(ss.rec.ID)
 		ss.summaryTurns = compactSummaryTurns(turns)
+		loaded = true
 	}
+	s.mu.Lock()
+	if s.records[ss.rec.ID] == ss && ss.summaryTurns != nil {
+		if ss.summaryAccess == 0 {
+			s.summarySessions++
+		}
+		s.clock++
+		ss.summaryAccess = s.clock
+	}
+	s.mu.Unlock()
 	rec := ss.rec
 	rec.Turns = ss.summaryTurns
 	fn(rec)
+	ss.mu.Unlock()
+	if loaded {
+		s.trimSummaryCache()
+	}
 	return true
 }
 
@@ -406,10 +430,15 @@ func (s *Store) Delete(sessionID string) error {
 	if err := os.RemoveAll(s.sessionDir(ss.rec.ID)); err != nil {
 		return err
 	}
+	ss.summaryTurns = nil
 	s.mu.Lock()
 	if ss.cache.loaded {
 		s.cachedSessions--
 		s.cachedBytes -= ss.cache.bytes
+	}
+	if ss.summaryAccess > 0 {
+		ss.summaryAccess = 0
+		s.summarySessions--
 	}
 	delete(s.records, ss.rec.ID)
 	s.mu.Unlock()

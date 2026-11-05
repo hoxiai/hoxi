@@ -21,6 +21,10 @@ const (
 	maxUntrackedFileSize     = 64 * 1024
 )
 
+// ErrUncommittedChanges reports that a worktree cannot be removed without
+// force because tracked or untracked changes are still present.
+var ErrUncommittedChanges = errors.New("worktree has uncommitted changes")
+
 type worktreeMeta struct {
 	SessionID     string `json:"sessionID"`
 	Isolated      bool   `json:"isolated"`
@@ -570,7 +574,7 @@ func (m *worktreeManager) RemoveWithOptions(sessionID string, force bool, keepBr
 		}
 		if envModified || strings.TrimSpace(porcelain) != "" {
 			syncWorktreeEnvFiles(m.rootDir, meta.Directory)
-			return errors.New("worktree has uncommitted changes; pass force=true to discard")
+			return fmt.Errorf("%w; pass force=true to discard", ErrUncommittedChanges)
 		}
 	}
 

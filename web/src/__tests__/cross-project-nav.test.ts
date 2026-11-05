@@ -8,6 +8,7 @@ import {
 import { stripSubagentTitleSuffix } from "../store/session-title";
 import type { ProjectNavEntry } from "../components/layout/left-nav-helpers";
 import {
+  childSubagentIDsFromTurns,
   clearSessionPendingApprovals,
   countRunningSubagents,
   groupSubagentsByRoot,
@@ -317,5 +318,53 @@ describe("Cross-project sidebar views", () => {
         assertEqual(isWorkSurfacePath("/dynamic-second"), true);
       },
     );
+  });
+
+  it("extracts unique child subagent IDs from task, agent, and subagent tool parts in order", () => {
+    const turns = [
+      {
+        info: { id: "msg_1", sessionID: "ses_p", role: "assistant" as const, time: { created: 1 } },
+        parts: [
+          {
+            id: "prt_1",
+            sessionID: "ses_p",
+            messageID: "msg_1",
+            type: "tool" as const,
+            callID: "call_1",
+            tool: "task",
+            state: { status: "completed" as const, input: {}, output: "", title: "", metadata: { sessionId: "ses_sub_1" }, time: { start: 1, end: 2 } },
+          },
+          {
+            id: "prt_2",
+            sessionID: "ses_p",
+            messageID: "msg_1",
+            type: "tool" as const,
+            callID: "call_2",
+            tool: "Agent",
+            state: { status: "completed" as const, input: {}, output: "", title: "", metadata: { sessionId: "ses_sub_2" }, time: { start: 1, end: 2 } },
+          },
+          {
+            id: "prt_3",
+            sessionID: "ses_p",
+            messageID: "msg_1",
+            type: "tool" as const,
+            callID: "call_3",
+            tool: "invoke_subagent",
+            state: { status: "completed" as const, input: {}, output: "", title: "", metadata: { sessionId: "ses_sub_1" }, time: { start: 1, end: 2 } },
+          },
+          {
+            id: "prt_4",
+            sessionID: "ses_p",
+            messageID: "msg_1",
+            type: "tool" as const,
+            callID: "call_4",
+            tool: "bash",
+            state: { status: "completed" as const, input: {}, output: "", title: "", metadata: { sessionId: "ses_ignored" }, time: { start: 1, end: 2 } },
+          },
+        ],
+      },
+    ];
+    assertDeepEqual(childSubagentIDsFromTurns(turns), ["ses_sub_1", "ses_sub_2"]);
+    assertDeepEqual(childSubagentIDsFromTurns(undefined), []);
   });
 });

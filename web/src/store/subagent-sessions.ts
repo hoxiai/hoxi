@@ -8,7 +8,7 @@ import { lookupSubagentParent, subagentChildIDFromPart } from "./message-lookup"
 import { isSessionBusy } from "./session-query";
 import { indexedSession, resolveSessionSurface } from "./session-index";
 import { subagentDisplayTitle, type SubagentTitle } from "./session-title";
-import { workspace } from "./workspace-state";
+import { workspace, type MessageTurn } from "./workspace-state";
 
 export function extractChildSubagentSessionId(tp: ToolPart): string | undefined {
   const direct = subagentChildIDFromPart(tp);
@@ -114,22 +114,36 @@ export function isSubagentToolInterrupted(
   return rawStatus === "error" && Boolean(childSessionID);
 }
 
+export function childSubagentIDsFromTurns(
+  turns: readonly MessageTurn[] | undefined,
+): string[] {
+  if (!turns || turns.length === 0) return [];
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  for (const turn of turns) {
+    for (const part of turn.parts ?? []) {
+      if (part.type === "tool") {
+        const lower = (part.tool || "").toLowerCase();
+        if (lower === "task" || lower === "agent" || lower.includes("subagent")) {
+          const cid = extractChildSubagentSessionId(part);
+          if (cid && !seen.has(cid)) {
+            seen.add(cid);
+            ids.push(cid);
+          }
+        }
+      }
+    }
+  }
+  return ids;
+}
+
 export function collectChildSubagentSessionIDs(parentSessionID: string): string[] {
   const childIDs = new Set<string>();
   for (const s of workspace.sessions) {
     if (s.parentID === parentSessionID) childIDs.add(s.id);
   }
-  const turns = workspace.messagesBySession[parentSessionID] ?? [];
-  for (const turn of turns) {
-    for (const part of turn.parts) {
-      if (part.type === "tool") {
-        const lower = (part.tool || "").toLowerCase();
-        if (lower === "task" || lower === "agent" || lower.includes("subagent")) {
-          const cid = extractChildSubagentSessionId(part);
-          if (cid) childIDs.add(cid);
-        }
-      }
-    }
+  for (const cid of childSubagentIDsFromTurns(workspace.messagesBySession[parentSessionID])) {
+    childIDs.add(cid);
   }
   return Array.from(childIDs);
 }
@@ -154,9 +168,24 @@ export async function deleteChildSubagentSessionsBackend(
   );
 }
 
+function isKnownParentSession(
+  parentID: string | null | undefined,
+  sessionID: string,
+  byID?: ReadonlyMap<string, SessionInfo>,
+): string | null {
+  const clean = (parentID || "").trim();
+  if (!clean || clean === sessionID) return null;
+  if (byID) return byID.has(clean) ? clean : null;
+  if (workspace.sessions.some((s) => s.id === clean)) return clean;
+  if (indexedSession(clean)) return clean;
+  if (workspace.messagesBySession[clean]) return clean;
+  return null;
+}
+
 /**
  * Resolves the immediate parent session ID of `sessionID` (if it is a subagent session),
  * checking optional `byID`, `workspace.sessions`, `sessionIndex`, and `task` tool calls.
+ * An orphaned reference whose parent session no longer exists returns `null`.
  */
 export function resolveParentSessionID(
   sessionID: string | null | undefined,
@@ -164,17 +193,18 @@ export function resolveParentSessionID(
 ): string | null {
   if (!sessionID) return null;
   if (byID?.has(sessionID)) {
-    const localParent = (byID.get(sessionID)?.parentID || "").trim();
+    const localParent = isKnownParentSession(byID.get(sessionID)?.parentID, sessionID, byID);
     if (localParent) return localParent;
-    const indexedParent = indexedSession(sessionID)?.parentID;
+    const indexedParent = isKnownParentSession(indexedSession(sessionID)?.parentID, sessionID, byID);
     if (indexedParent) return indexedParent;
-    return lookupSubagentParent(sessionID);
+    return isKnownParentSession(lookupSubagentParent(sessionID), sessionID, byID);
   }
   const info = workspace.sessions.find((s) => s.id === sessionID);
-  if (info?.parentID) return info.parentID;
-  const indexedParent = indexedSession(sessionID)?.parentID;
+  const directParent = isKnownParentSession(info?.parentID, sessionID, byID);
+  if (directParent) return directParent;
+  const indexedParent = isKnownParentSession(indexedSession(sessionID)?.parentID, sessionID, byID);
   if (indexedParent) return indexedParent;
-  return lookupSubagentParent(sessionID);
+  return isKnownParentSession(lookupSubagentParent(sessionID), sessionID, byID);
 }
 
 /**
@@ -233,21 +263,11 @@ export function groupSubagentsByRoot(
   }
 
   for (const s of rawSessions) {
-    if (!s?.id || s.time?.archived || s.parentID) continue;
-    const turns = workspace.messagesBySession[s.id];
-    if (!turns || turns.length === 0) continue;
-    for (const turn of turns) {
-      for (const part of turn.parts) {
-        if (part.type === "tool") {
-          const lower = (part.tool || "").toLowerCase();
-          if (lower === "task" || lower === "agent" || lower.includes("subagent")) {
-            const childID = extractChildSubagentSessionId(part);
-            const child = childID ? combinedByID.get(childID) : undefined;
-            if (child && !child.time?.archived) {
-              addChild(s.id, child);
-            }
-          }
-        }
+    if (!s?.id || s.time?.archived || resolveParentSessionID(s.id, combinedByID)) continue;
+    for (const childID of childSubagentIDsFromTurns(workspace.messagesBySession[s.id])) {
+      const child = combinedByID.get(childID);
+      if (child && !child.time?.archived) {
+        addChild(s.id, child);
       }
     }
   }
@@ -280,7 +300,11 @@ export function partitionCodeSessions(
   rawSessions: readonly SessionInfo[],
 ): CodeSessionPartition {
   const codeSessions = rawSessions.filter((s) => resolveSessionSurface(s) === "code");
-  const roots = codeSessions.filter((s) => !s.parentID);
+  const byID = new Map<string, SessionInfo>();
+  for (const s of codeSessions) {
+    if (s?.id) byID.set(s.id, s);
+  }
+  const roots = codeSessions.filter((s) => !resolveParentSessionID(s.id, byID));
   const subagentsByRoot = groupSubagentsByRoot(codeSessions);
   return { codeSessions, roots, subagentsByRoot };
 }

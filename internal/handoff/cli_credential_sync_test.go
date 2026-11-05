@@ -368,6 +368,53 @@ exit 1
 	}
 }
 
+func TestGrokWithoutRefreshTokenOrDuringStatusDetectionNeverSpawnsCLI(t *testing.T) {
+	home := t.TempDir()
+	grokDir := filepath.Join(home, ".grok")
+	binDir := filepath.Join(grokDir, "bin")
+	if err := os.MkdirAll(binDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("GROK_HOME", grokDir)
+
+	marker := filepath.Join(grokDir, "spawned.marker")
+	stubScript := fmt.Sprintf("#!/bin/sh\necho spawned > %q\nexit 0\n", marker)
+	stubPath := execstub.Write(t, binDir, "grok", stubScript)
+	t.Setenv("GROK_BIN", stubPath)
+
+	authPath := filepath.Join(grokDir, "auth.json")
+	grokRefreshMu.Lock()
+	lastGrokRefreshAt = time.Time{}
+	grokRefreshMu.Unlock()
+
+	// 1. An expired entry with expires_at but no refresh_token cannot be refreshed via CLI.
+	writeGrokAuthFile(t, authPath, "key-no-rt", "", time.Now().Add(-30*time.Minute))
+	state := inspectGrokAuthFile(authPath, time.Now())
+	if !state.isExpired || state.canRefresh || state.needsRefresh() {
+		t.Fatalf("expected expired entry without refresh_token to have canRefresh=false and needsRefresh()=false, got %+v", state)
+	}
+	_ = loadGrokLocalCredentialsWithRefresh(context.Background())
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("loadGrokLocalCredentialsWithRefresh must not spawn grok CLI when refresh_token is empty, stat err = %v", err)
+	}
+
+	// 2. Read-only detectGrokCLIStatus must never spawn the grok CLI even when refresh_token is present and expired.
+	writeGrokAuthFile(t, authPath, "key-expired-with-rt", "rt-present", time.Now().Add(-30*time.Minute))
+	stateWithRT := inspectGrokAuthFile(authPath, time.Now())
+	if !stateWithRT.needsRefresh() {
+		t.Fatalf("expected expired entry with refresh_token to need refresh, got %+v", stateWithRT)
+	}
+	status := detectGrokCLIStatus(map[string]interface{}{})
+	if !status.Authenticated {
+		t.Fatalf("expected detectGrokCLIStatus to report local credential presence without refreshing, got %+v", status)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("detectGrokCLIStatus must be read-only and never spawn grok CLI, stat err = %v", err)
+	}
+}
+
 func TestGrokCLIBridgeRetriesOnceOn401WithForcedRefresh(t *testing.T) {
 	home := t.TempDir()
 	grokDir := filepath.Join(home, ".grok")

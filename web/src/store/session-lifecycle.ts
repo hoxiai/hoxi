@@ -178,12 +178,7 @@ export function removeSessionsFromStore(sessionIDs: string[]): SessionInfo | und
   }
   forgetSessionTitles(allIDs);
   evictCachedSessionTurns(allIDs);
-  const candidates = workspace.sessions.filter(
-    (s) => !allSet.has(s.id) && !s.parentID && !s.time?.archived && !workspace.archivedSessionIDs.includes(s.id)
-  );
-  const nextCandidate = candidates.length > 0
-    ? [...candidates].sort((a, b) => (b.time?.updated || b.time?.created || 0) - (a.time?.updated || a.time?.created || 0))[0]
-    : undefined;
+  const nextCandidate = nextActiveSessionCandidate(allSet);
   if (workspace.archivedSessionIDs.some((id) => allSet.has(id))) {
     const nextArchived = workspace.archivedSessionIDs.filter((id) => !allSet.has(id));
     setWorkspace("archivedSessionIDs", nextArchived);

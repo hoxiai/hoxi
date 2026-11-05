@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
 	"github.com/hoxiai/hoxi/internal/opencode/ocstate"
 	"github.com/hoxiai/hoxi/internal/runner"
+	"github.com/hoxiai/hoxi/internal/worktree"
 )
 
 // Old-session cleanup is a two-step, desktop-only flow: the preview lists
@@ -68,9 +70,10 @@ type sessionPruneRequest struct {
 }
 
 type sessionPruneSkip struct {
-	ID     string `json:"id"`
-	Reason string `json:"reason"`
-	Error  string `json:"error,omitempty"`
+	ID              string `json:"id"`
+	Reason          string `json:"reason"`
+	Error           string `json:"error,omitempty"`
+	WorktreeRemoved bool   `json:"worktreeRemoved,omitempty"`
 }
 
 type sessionPruneResult struct {
@@ -177,10 +180,18 @@ func (g *Gateway) oldSessionCandidates(ctx context.Context, cutoff int64, withSi
 			}
 		}
 	}
+	hasLiveParent := func(rec runner.SessionRecord) bool {
+		parentID := strings.TrimSpace(rec.ParentID)
+		if parentID == "" || parentID == rec.ID {
+			return false
+		}
+		_, ok := byID[parentID]
+		return ok
+	}
 	var out []sessionPruneCandidate
 	for _, info := range infos {
 		rec, ok := byID[info.ID]
-		if !ok || rec.ParentID != "" || rec.Subagent {
+		if !ok || hasLiveParent(rec) || rec.Subagent {
 			continue
 		}
 		tree := sessionTreeFromIndex(rec, byID, childrenByParent)
@@ -334,7 +345,12 @@ func (g *Gateway) deleteOldSessions(ctx context.Context, days int, ids []string)
 			continue
 		}
 		if err := g.runner.DeleteConversation(ctx, id); err != nil {
-			res.Skipped = append(res.Skipped, sessionPruneSkip{ID: id, Reason: pruneSkipDeleteError, Error: err.Error()})
+			skip := sessionPruneSkip{ID: id, Reason: pruneSkipDeleteError, Error: err.Error()}
+			if c.worktreeDir != "" {
+				skip.WorktreeRemoved = true
+				skip.Error = err.Error() + "; worktree removed, branch kept"
+			}
+			res.Skipped = append(res.Skipped, skip)
 			continue
 		}
 		res.Deleted = append(res.Deleted, id)
@@ -367,7 +383,7 @@ func (g *Gateway) removeOldSessionWorktree(c sessionPruneCandidate) (sessionPrun
 	}
 	if err := g.worktrees.ForDirectory(c.Directory).RemoveWithOptions(c.ID, false, true); err != nil {
 		reason := pruneSkipWorktreeError
-		if strings.Contains(err.Error(), "uncommitted changes") {
+		if errors.Is(err, worktree.ErrUncommittedChanges) {
 			reason = pruneSkipWorktreeDirty
 		}
 		return sessionPruneSkip{ID: c.ID, Reason: reason, Error: err.Error()}, false

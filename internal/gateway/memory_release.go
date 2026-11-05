@@ -2,11 +2,8 @@ package gateway
 
 import (
 	"context"
-	"os"
 	"runtime"
 	"runtime/debug"
-	"strings"
-	"sync"
 	"time"
 )
 
@@ -15,22 +12,9 @@ import (
 // quiet frees it at once on Windows, and on macOS marks it reclaimable (the
 // kernel takes those pages back under memory pressure).
 const (
-	// defaultGoMemoryLimit is a soft ceiling, not a target: the collector only
-	// works harder as the heap approaches it. GOMEMLIMIT overrides it.
-	defaultGoMemoryLimit   = 768 << 20
 	idleMemoryCheckEvery   = time.Minute
 	idleMemoryReleaseAfter = 2 * time.Minute
 )
-
-var memoryLimitOnce sync.Once
-
-func applyDefaultMemoryLimit() {
-	memoryLimitOnce.Do(func() {
-		if strings.TrimSpace(os.Getenv("GOMEMLIMIT")) == "" {
-			debug.SetMemoryLimit(defaultGoMemoryLimit)
-		}
-	})
-}
 
 // goMemoryStats is the Go heap as the runtime sees it, for diagnostics.
 type goMemoryStats struct {
@@ -94,10 +78,9 @@ func (r *idleMemoryReleaser) tick(now time.Time) {
 	}
 }
 
-// StartIdleMemoryRelease applies the soft memory limit and returns idle heap
-// to the OS after each period of inactivity, until ctx is cancelled.
+// StartIdleMemoryRelease returns idle heap to the OS after each period of
+// inactivity, until ctx is cancelled.
 func (g *Gateway) StartIdleMemoryRelease(ctx context.Context) {
-	applyDefaultMemoryLimit()
 	r := &idleMemoryReleaser{idle: g.isLocallyIdle, release: debug.FreeOSMemory}
 	go func() {
 		ticker := time.NewTicker(idleMemoryCheckEvery)

@@ -230,7 +230,7 @@ func inspectGrokAuthFile(path string, now time.Time) grokAuthState {
 		if !hasExpiry {
 			return grokAuthState{apiKey: key}
 		}
-		if strings.TrimSpace(entry.RefreshToken) != "" || hasExpiry {
+		if strings.TrimSpace(entry.RefreshToken) != "" {
 			canRefresh = true
 		}
 		if fallbackKey == "" || expiry.After(fallbackExpiry) {
@@ -442,7 +442,7 @@ func (g *Service) syncGrokCredential(ctx context.Context) {
 }
 
 func detectGrokCLIStatus(hoxiMap map[string]interface{}) LocalCLIStatusItem {
-	creds := loadGrokLocalCredentialsWithRefresh(context.Background())
+	creds := loadGrokLocalCredentials()
 	sessions, stats := scanGrokSessions("", "")
 	for _, s := range sessions {
 		if s.Model != "" {
@@ -469,7 +469,7 @@ func detectGrokCLIStatus(hoxiMap map[string]interface{}) LocalCLIStatusItem {
 }
 
 func (g *Service) importGrokCLIProvider() LocalCLIImportResponse {
-	creds := loadGrokLocalCredentialsWithRefresh(context.Background())
+	creds := loadGrokLocalCredentials()
 	if creds.APIKey == "" {
 		return LocalCLIImportResponse{
 			OK:     false,
@@ -537,7 +537,7 @@ func (g *Service) importGrokCLIProvider() LocalCLIImportResponse {
 func (g *Service) handleGrokCLIBridge(w http.ResponseWriter, r *http.Request) {
 	subPath := strings.TrimPrefix(r.URL.Path, "/api/hoxi/bridge/grok-cli")
 	if subPath == "/v1/models" && r.Method == http.MethodGet {
-		creds := loadGrokLocalCredentialsWithRefresh(r.Context())
+		creds := loadGrokLocalCredentials()
 		items := make([]map[string]interface{}, 0, len(creds.Models))
 		for _, m := range creds.Models {
 			items = append(items, map[string]interface{}{

@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"syscall"
@@ -42,7 +43,21 @@ var (
 	// Production builds override this via -ldflags "-X github.com/hoxiai/hoxi/internal/app.BuildVariant=release".
 	BuildVariant = "dev"
 	appIconBytes []byte
+
+	memoryLimitOnce sync.Once
 )
+
+// defaultGoMemoryLimit is a soft ceiling, not a target: the collector only
+// works harder as the heap approaches it. GOMEMLIMIT overrides it.
+const defaultGoMemoryLimit = 768 << 20
+
+func applyDefaultMemoryLimit() {
+	memoryLimitOnce.Do(func() {
+		if strings.TrimSpace(os.Getenv("GOMEMLIMIT")) == "" {
+			debug.SetMemoryLimit(defaultGoMemoryLimit)
+		}
+	})
+}
 
 func SetAppIcon(icon []byte) {
 	appIconBytes = icon
@@ -150,10 +165,13 @@ func Run(distFS fs.FS) {
 		os.Exit(1)
 	}
 
+	applyDefaultMemoryLimit()
 	statusTracker := statusbar.NewTracker()
 	gw := gateway.New(port, password, cfg.RootDir, distFS, statusTracker)
 	gw.EnableAgyApprovalHook()
 	gw.StartEnginePrewarm(ctx)
+	gw.StartStorageMaintenance(ctx)
+	gw.StartIdleMemoryRelease(ctx)
 	defer gw.CloseBrowser()
 	ledger := openReclaimLedger(logger)
 	gw.SetBrowserLedger(ledger)

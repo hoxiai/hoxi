@@ -88,11 +88,14 @@ func StartEphemeralHeadless(ctx context.Context, rootDir string) (string, func()
 	if err != nil {
 		return "", nil, err
 	}
+	applyDefaultMemoryLimit()
 	quietLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	statusTracker := statusbar.NewTracker()
 	gw := gateway.New(port, password, rootDir, nil, statusTracker)
 	gw.EnableAgyApprovalHook()
 	gw.StartEnginePrewarm(ctx)
+	gw.StartStorageMaintenance(ctx)
+	gw.StartIdleMemoryRelease(ctx)
 	// Record, but leave sweeping to the long-lived desktop or daemon process.
 	ledger := openReclaimLedger(quietLogger)
 	gw.SetBrowserLedger(ledger)

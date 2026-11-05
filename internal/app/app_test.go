@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"testing"
 	"time"
@@ -266,5 +267,13 @@ func TestAssetServerMiddlewareFallsBackOnBadGateway(t *testing.T) {
 	h502JS.ServeHTTP(recJS, httptest.NewRequest(http.MethodGet, "/assets/app.js", nil))
 	if recJS.Code != http.StatusOK || !strings.Contains(recJS.Header().Get("Content-Type"), "javascript") {
 		t.Fatalf("expected JavaScript Content-Type after 502 fallback, got code=%d content-type=%q", recJS.Code, recJS.Header().Get("Content-Type"))
+	}
+}
+
+func TestApplyDefaultMemoryLimit(t *testing.T) {
+	t.Setenv("GOMEMLIMIT", "")
+	applyDefaultMemoryLimit()
+	if got := debug.SetMemoryLimit(-1); got != defaultGoMemoryLimit {
+		t.Fatalf("debug.SetMemoryLimit(-1) = %d, want %d", got, int64(defaultGoMemoryLimit))
 	}
 }

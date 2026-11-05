@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -484,5 +485,86 @@ func TestDeleteConversationNotifiesRootAndSubagentChildren(t *testing.T) {
 	}
 	if _, ok := svc.Store().Meta("ses_cld_other"); !ok {
 		t.Fatal("unrelated sessions must survive")
+	}
+}
+
+func TestSummaryTurnsCacheIsBoundedAndCleanedOnDelete(t *testing.T) {
+	t.Parallel()
+	s := NewStore(filepath.Join(t.TempDir(), "sessions"))
+	s.cacheMaxSessions = 2
+	s.summaryMaxSessions = 4
+
+	countCachedSummaries := func() (acct int, actual int) {
+		s.mu.RLock()
+		defer s.mu.RUnlock()
+		acct = s.summarySessions
+		for _, ss := range s.records {
+			if ss.summaryTurns != nil {
+				actual++
+			}
+		}
+		return acct, actual
+	}
+
+	for i := 0; i < 10; i++ {
+		id := fmt.Sprintf("ses_cld_sum_%d", i)
+		rec := SessionRecord{
+			ID:      id,
+			Runtime: string(RuntimeClaudeCode),
+			Title:   fmt.Sprintf("Title %d", i),
+			Turns: []MessageTurn{{
+				Info: MessageInfo{ID: fmt.Sprintf("msg_%d", i), SessionID: id, Role: "assistant"},
+				Parts: []MessagePart{{
+					ID:        fmt.Sprintf("prt_%d", i),
+					SessionID: id,
+					MessageID: fmt.Sprintf("msg_%d", i),
+					Type:      "tool",
+					Tool:      "bash",
+					Text:      strings.Repeat("payload-", 64),
+					State:     &ToolState{Status: "completed", Title: fmt.Sprintf("Run %d", i), Output: "big output"},
+				}},
+			}},
+		}
+		if err := s.Put(rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	acct, actual := countCachedSummaries()
+	if acct != actual || actual > s.summaryMaxSessions {
+		t.Fatalf("after transcript evictions: summarySessions=%d actual=%d, want both <= %d", acct, actual, s.summaryMaxSessions)
+	}
+
+	// Visiting an evicted cold session reloads its summary accurately while respecting the cap.
+	for i := 0; i < 10; i++ {
+		id := fmt.Sprintf("ses_cld_sum_%d", i)
+		var gotTitle, gotStatus string
+		if !s.VisitTurnsSummary(id, func(rec SessionRecord) {
+			if len(rec.Turns) == 1 && len(rec.Turns[0].Parts) == 1 && rec.Turns[0].Parts[0].State != nil {
+				gotTitle = rec.Turns[0].Parts[0].State.Title
+				gotStatus = rec.Turns[0].Parts[0].State.Status
+			}
+		}) {
+			t.Fatalf("VisitTurnsSummary(%s) returned false", id)
+		}
+		if gotTitle != fmt.Sprintf("Run %d", i) || gotStatus != "completed" {
+			t.Fatalf("VisitTurnsSummary(%s) = (%q, %q), want (%q, completed)", id, gotTitle, gotStatus, fmt.Sprintf("Run %d", i))
+		}
+	}
+
+	acct, actual = countCachedSummaries()
+	if acct != actual || actual > s.summaryMaxSessions {
+		t.Fatalf("after VisitTurnsSummary sweep: summarySessions=%d actual=%d, want both <= %d", acct, actual, s.summaryMaxSessions)
+	}
+
+	// Deleting a session with a cached summary decrements summarySessions.
+	for i := 0; i < 10; i++ {
+		if err := s.Delete(fmt.Sprintf("ses_cld_sum_%d", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	acct, actual = countCachedSummaries()
+	if acct != 0 || actual != 0 {
+		t.Fatalf("after deleting all sessions: summarySessions=%d actual=%d, want 0", acct, actual)
 	}
 }

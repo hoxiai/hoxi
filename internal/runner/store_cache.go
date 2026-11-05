@@ -63,6 +63,16 @@ func (s *Store) publishSessionAccountingLocked(ss *storedSession, refreshMeta bo
 			s.cachedSessions++
 			s.cachedBytes += ss.bodyBytes
 		}
+		if ss.summaryAccess > 0 && ss.summaryTurns == nil {
+			ss.summaryAccess = 0
+			s.summarySessions--
+		} else if ss.summaryTurns != nil && !ss.turnsLoaded {
+			if ss.summaryAccess == 0 {
+				s.summarySessions++
+			}
+			s.clock++
+			ss.summaryAccess = s.clock
+		}
 		s.clock++
 		if refreshMeta {
 			ss.meta = meta
@@ -167,6 +177,67 @@ func (s *Store) trimCache() {
 		ss.deltas = nil
 		ss.index = transcriptIndex{}
 		s.publishSessionLocked(ss)
+		ss.mu.Unlock()
+	}
+	s.trimSummaryCacheLocked()
+}
+
+func (s *Store) trimSummaryCache() {
+	s.mu.RLock()
+	over := s.summaryMaxSessions > 0 && s.summarySessions > s.summaryMaxSessions
+	s.mu.RUnlock()
+	if !over {
+		return
+	}
+	if !s.cacheMu.TryLock() {
+		return
+	}
+	defer s.cacheMu.Unlock()
+	s.trimSummaryCacheLocked()
+}
+
+func (s *Store) trimSummaryCacheLocked() {
+	s.mu.RLock()
+	limit := s.summaryMaxSessions
+	if limit <= 0 || s.summarySessions <= limit {
+		s.mu.RUnlock()
+		return
+	}
+	type candidate struct {
+		ss     *storedSession
+		access uint64
+	}
+	candidates := make([]candidate, 0, s.summarySessions)
+	for _, ss := range s.records {
+		if ss.summaryAccess > 0 {
+			candidates = append(candidates, candidate{ss: ss, access: ss.summaryAccess})
+		}
+	}
+	count := len(candidates)
+	s.mu.RUnlock()
+	if count <= limit {
+		return
+	}
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].access < candidates[j].access })
+	for _, c := range candidates {
+		if count <= limit {
+			break
+		}
+		ss := c.ss
+		if !ss.mu.TryLock() {
+			continue
+		}
+		s.mu.Lock()
+		evict := s.records[ss.rec.ID] == ss && ss.summaryAccess == c.access && s.summarySessions > limit
+		if evict {
+			ss.summaryAccess = 0
+			s.summarySessions--
+		}
+		count = s.summarySessions
+		s.mu.Unlock()
+		if evict {
+			ss.summaryTurns = nil
+		}
 		ss.mu.Unlock()
 	}
 }

@@ -465,6 +465,22 @@ func sanitizeRunawayTriggeredInfo(info *MessageInfo, ap *activeProcess) {
 	}
 }
 
+func sanitizeAbortedTurnErrorInfo(info *MessageInfo, ap *activeProcess) {
+	if info == nil || ap == nil || info.Role != "assistant" {
+		return
+	}
+	abortErr := ap.stall.abortError()
+	if abortErr == nil {
+		return
+	}
+	if info.Error == nil || strings.Contains(strings.ToLower(info.Error.Name), "abort") {
+		info.Error = abortErr
+	}
+	if info.Finish == "" || info.Finish == "aborted" {
+		info.Finish = "error"
+	}
+}
+
 func (s *Service) abortOpenCodeRunawayTurn(rec SessionRecord) {
 	if rec.ExternalID == "" {
 		return

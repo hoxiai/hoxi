@@ -1,7 +1,16 @@
 import { reconcile, unwrap } from "solid-js/store";
 import { hoxiAPI, type OldSessionsDeleteResult } from "../services/api";
 import type { SessionInfo } from "../services/sse-types";
-import { deleteOldSessions, setWorkspace, workspace } from "../store/workspace";
+import {
+  deleteOldSessions,
+  nextActiveSessionCandidate,
+  partitionCodeSessions,
+  removeSessionFromStore,
+  resolveParentSessionID,
+  resolveRootSessionID,
+  setWorkspace,
+  workspace,
+} from "../store/workspace";
 import { assertDeepEqual, assertEqual, describe, it } from "./test-harness";
 
 function session(id: string): SessionInfo {
@@ -63,5 +72,47 @@ describe("old session cleanup", () => {
       assertDeepEqual(workspace.sessions.map((s) => s.id), []);
       assertEqual(workspace.activeSessionID, null);
     });
+  });
+
+  it("removeSessionFromStore picks the same next session as nextActiveSessionCandidate", () => {
+    const saved = structuredClone(unwrap(workspace));
+    try {
+      const s = (id: string, updated: number) =>
+        ({ id, title: id, directory: "/tmp/p", time: { created: 1, updated } }) as SessionInfo;
+      setWorkspace("sessions", reconcile([s("ses_del", 50), s("ses_a", 200), s("ses_b", 100)]));
+      setWorkspace("sessionFinishedAt", { ses_b: 999 });
+      const expected = nextActiveSessionCandidate("ses_del")?.id;
+      assertEqual(removeSessionFromStore("ses_del")?.id, expected);
+      assertEqual(expected, "ses_b");
+    } finally {
+      setWorkspace(reconcile(saved));
+    }
+  });
+
+  it("keeps orphaned child conversations visible as roots once their parent is gone", () => {
+    const saved = structuredClone(unwrap(workspace));
+    try {
+      const orphan = {
+        ...session("ses_cld_fork"),
+        parentID: "ses_deleted_root",
+      };
+      const orphanSub = {
+        ...session("ses_cld_fork_sub"),
+        parentID: "ses_cld_fork",
+      };
+      setWorkspace("sessions", reconcile([orphan, orphanSub]));
+      setWorkspace("sessionIndex", reconcile({}));
+      assertEqual(resolveParentSessionID("ses_cld_fork"), null);
+      assertEqual(resolveRootSessionID("ses_cld_fork"), "ses_cld_fork");
+      assertEqual(resolveRootSessionID("ses_cld_fork_sub"), "ses_cld_fork");
+      const { roots, subagentsByRoot } = partitionCodeSessions(workspace.sessions);
+      assertDeepEqual(roots.map((s) => s.id), ["ses_cld_fork"]);
+      assertDeepEqual(
+        (subagentsByRoot.get("ses_cld_fork") ?? []).map((s) => s.id),
+        ["ses_cld_fork_sub"],
+      );
+    } finally {
+      setWorkspace(reconcile(saved));
+    }
   });
 });

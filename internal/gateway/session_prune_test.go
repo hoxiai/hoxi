@@ -270,3 +270,72 @@ func TestOldSessionsPreviewCountsTheSessionsBrowserProfile(t *testing.T) {
 		t.Fatalf("estimate grew by %d, want the 50000-byte browser profile", got)
 	}
 }
+
+func TestOldSessionsListsOrphanedNonSubagentChildren(t *testing.T) {
+	f := newPruneFixture(t)
+	f.put(t, runner.SessionRecord{ID: "ses_cld_root", Title: "root", CreatedAt: daysAgo(60), UpdatedAt: daysAgo(60)})
+	f.put(t, runner.SessionRecord{ID: "ses_cld_fork", Title: "fork", ParentID: "ses_cld_root", CreatedAt: daysAgo(59), UpdatedAt: daysAgo(59)})
+
+	if code, res := f.delete(t, `{"olderThanDays":30,"sessionIDs":["ses_cld_root"]}`); code != http.StatusOK || len(res.Deleted) != 1 {
+		t.Fatalf("root delete: code=%d res=%+v", code, res)
+	}
+	if _, ok := f.svc.Store().Meta("ses_cld_fork"); !ok {
+		t.Fatal("a non-subagent child must not be deleted silently with its root")
+	}
+	_, preview := f.preview(t, "30")
+	if len(preview.Sessions) != 1 || preview.Sessions[0].ID != "ses_cld_fork" {
+		t.Fatalf("an old orphan whose parent is gone must be listed for cleanup: %+v", preview.Sessions)
+	}
+	if code, res := f.delete(t, `{"olderThanDays":30,"sessionIDs":["ses_cld_fork"]}`); code != http.StatusOK || len(res.Deleted) != 1 || res.Deleted[0] != "ses_cld_fork" {
+		t.Fatalf("orphan delete: code=%d res=%+v", code, res)
+	}
+	if _, ok := f.svc.Store().Meta("ses_cld_fork"); ok {
+		t.Fatal("confirmed orphan session should be deleted")
+	}
+}
+
+func TestOldSessionsDeleteFailureReportsRemovedWorktreeState(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	f := newPruneFixture(t)
+	runGitT(t, f.repo, "init", "-q", "-b", "main")
+	if err := os.WriteFile(filepath.Join(f.repo, "README.md"), []byte("hi\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitT(t, f.repo, "add", "README.md")
+	runGitT(t, f.repo, "commit", "-q", "-m", "init")
+
+	id := "ses_hoxi_fail_del"
+	wtDir := filepath.Join(f.repo, ".hoxi", "worktrees", id)
+	runGitT(t, f.repo, "worktree", "add", "-q", "-b", "hoxi/"+id, wtDir)
+	// Runtime "opencode" with an OpenCodeIDs entry and no reachable OpenCode
+	// server makes DeleteConversation fail after the clean worktree is removed.
+	f.put(t, runner.SessionRecord{
+		ID:           id,
+		Runtime:      "opencode",
+		ExternalID:   "ses_oc_upstream",
+		OpenCodeIDs:  []string{"ses_oc_upstream"},
+		ProjectDir:   f.repo,
+		WorktreePath: wtDir,
+		SandboxMode:  "isolated",
+		CreatedAt:    daysAgo(60),
+		UpdatedAt:    daysAgo(60),
+	})
+
+	code, res := f.delete(t, `{"olderThanDays":30,"sessionIDs":["`+id+`"]}`)
+	if code != http.StatusOK || len(res.Deleted) != 0 || len(res.Skipped) != 1 {
+		t.Fatalf("expected delete to skip failing session: code=%d res=%+v", code, res)
+	}
+	skip := res.Skipped[0]
+	if skip.ID != id || skip.Reason != pruneSkipDeleteError || !skip.WorktreeRemoved || !strings.Contains(skip.Error, "worktree removed, branch kept") {
+		t.Fatalf("expected skip to report worktreeRemoved and branch retention, got %+v", skip)
+	}
+	if _, ok := f.svc.Store().Meta(id); !ok {
+		t.Fatal("session must still be present in store when DeleteConversation failed")
+	}
+	out, err := exec.Command("git", "-C", f.repo, "branch", "--list", "hoxi/"+id).CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "hoxi/"+id) {
+		t.Fatalf("the removed worktree's branch must be preserved: %q %v", out, err)
+	}
+}
