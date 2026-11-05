@@ -10,11 +10,11 @@ import (
 )
 
 var (
-	kernel32DLL              = windows.NewLazySystemDLL("kernel32.dll")
-	procSetConsoleCP         = kernel32DLL.NewProc("SetConsoleCP")
-	procSetConsoleOutputCP   = kernel32DLL.NewProc("SetConsoleOutputCP")
-	procGetOEMCP             = kernel32DLL.NewProc("GetOEMCP")
-	procGetACP               = kernel32DLL.NewProc("GetACP")
+	kernel32DLL            = windows.NewLazySystemDLL("kernel32.dll")
+	procSetConsoleCP       = kernel32DLL.NewProc("SetConsoleCP")
+	procSetConsoleOutputCP = kernel32DLL.NewProc("SetConsoleOutputCP")
+	procGetOEMCP           = kernel32DLL.NewProc("GetOEMCP")
+	procGetACP             = kernel32DLL.NewProc("GetACP")
 )
 
 const (
