@@ -107,6 +107,11 @@ type officialModelView struct {
 	ID               string  `json:"id"`
 	Name             string  `json:"name"`
 	Vendor           string  `json:"vendor"`
+	Category         string  `json:"category,omitempty"`
+	Modality         string  `json:"modality,omitempty"`
+	IsChatModel      bool    `json:"isChatModel"`
+	IsDefault        bool    `json:"isDefault,omitempty"`
+	DefaultVoice     string  `json:"defaultVoice,omitempty"`
 	BillingMode      string  `json:"billingMode"`
 	InputPointsPerM  float64 `json:"inputPointsPerM"`
 	OutputPointsPerM float64 `json:"outputPointsPerM"`
@@ -118,6 +123,8 @@ type officialModelsResponse struct {
 	GatewayAvailable bool                `json:"gatewayAvailable"`
 	BaseURL          string              `json:"baseUrl"`
 	Models           []officialModelView `json:"models"`
+	Categories       map[string][]string `json:"categories,omitempty"`
+	Defaults         map[string]string   `json:"defaults,omitempty"`
 	Error            string              `json:"error,omitempty"`
 }
 
@@ -127,6 +134,8 @@ type officialConnectResponse struct {
 	BaseURL       string              `json:"baseUrl"`
 	ModelCount    int                 `json:"modelCount"`
 	Models        []officialModelView `json:"models"`
+	Categories    map[string][]string `json:"categories,omitempty"`
+	Defaults      map[string]string   `json:"defaults,omitempty"`
 }
 
 func (s *Service) officialAuth() (AuthSource, string, string) {
@@ -178,12 +187,14 @@ func (s *Service) handleOfficialModels(w http.ResponseWriter, r *http.Request) {
 	if baseURL == "" {
 		baseURL = deriveGatewayAPIBaseURLFromSite(site)
 	}
-	models, errMsg := parseOfficialModels(payload)
+	models, categories, defaults, errMsg := parseOfficialModelsWithMeta(payload)
 	writeJSON(w, http.StatusOK, officialModelsResponse{
 		Authenticated:    true,
 		GatewayAvailable: baseURL != "",
 		BaseURL:          baseURL,
 		Models:           models,
+		Categories:       categories,
+		Defaults:         defaults,
 		Error:            errMsg,
 	})
 }
@@ -214,7 +225,7 @@ func (s *Service) handleOfficialConnect(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	models, catalogErr := parseOfficialModels(payload)
+	models, categories, defaults, catalogErr := parseOfficialModelsWithMeta(payload)
 	if status < 200 || status >= 300 || catalogErr != "" {
 		writeJSONError(w, http.StatusBadGateway, "official model catalog unavailable")
 		return
@@ -233,7 +244,7 @@ func (s *Service) handleOfficialConnect(w http.ResponseWriter, r *http.Request) 
 	}
 
 	committed, persistErr := auth.WithCurrentDeviceToken(token, site, func() error {
-		return s.persistOfficialProvider(baseURL, apiKey, models)
+		return s.persistOfficialProvider(baseURL, apiKey, models, defaults)
 	})
 	if !committed {
 		writeJSONError(w, http.StatusUnauthorized, "account changed during official connection")
@@ -250,6 +261,8 @@ func (s *Service) handleOfficialConnect(w http.ResponseWriter, r *http.Request) 
 		BaseURL:       baseURL,
 		ModelCount:    len(models),
 		Models:        models,
+		Categories:    categories,
+		Defaults:      defaults,
 	})
 }
 
@@ -331,7 +344,7 @@ func (s *Service) fetchOrMintOfficialMemberKey(ctx context.Context, site, token 
 	return "", status
 }
 
-func (s *Service) persistOfficialProvider(baseURL, apiKey string, models []officialModelView) error {
+func (s *Service) persistOfficialProvider(baseURL, apiKey string, models []officialModelView, defaultsOpt ...map[string]string) error {
 	s.officialMu.Lock()
 	defer s.officialMu.Unlock()
 	s.officialBlocked.Store(true)
@@ -341,6 +354,11 @@ func (s *Service) persistOfficialProvider(baseURL, apiKey string, models []offic
 		if err := s.persistEngineProviderAuthMap(officialProviderID, map[string]interface{}{"type": "api", "key": resolvedKey}); err != nil {
 			return err
 		}
+	}
+
+	var defaults map[string]string
+	if len(defaultsOpt) > 0 {
+		defaults = defaultsOpt[0]
 	}
 
 	s.configPersistMu.Lock()
@@ -372,22 +390,33 @@ func (s *Service) persistOfficialProvider(baseURL, apiKey string, models []offic
 	if resolvedKey != "" {
 		nextOpts["apiKey"] = resolvedKey
 	}
+	if len(defaults) > 0 {
+		if defChat := firstNonEmptyString(defaults["chat"], defaults["coding"]); defChat != "" {
+			nextOpts["defaultModel"] = defChat
+		}
+		nextProv["defaults"] = defaults
+	}
 	nextProv["options"] = nextOpts
 
-	modelsMap := make(map[string]interface{}, len(models))
+	chatModelsMap := make(map[string]interface{}, len(models))
+	allModelsMap := make(map[string]interface{}, len(models))
+	mediaModelsMap := make(map[string]interface{})
+
 	for _, m := range models {
 		mid := strings.TrimSpace(m.ID)
 		if mid == "" {
 			continue
 		}
 		mName := firstNonEmptyString(m.Name, mid)
-		isChat := !isNonChatUtilityModel(mid)
+		category := inferModelCategory(mid, m.Category, m.Modality)
+		isChat := isConversationalCategory(category)
 		inputs := []interface{}{"text"}
 		if isChat {
 			inputs = []interface{}{"text", "image"}
 		}
 		mEntry := map[string]interface{}{
 			"name":       mName,
+			"category":   category,
 			"attachment": isChat,
 			"reasoning":  isChat,
 			"modalities": map[string]interface{}{
@@ -395,15 +424,35 @@ func (s *Service) persistOfficialProvider(baseURL, apiKey string, models []offic
 				"output": []interface{}{"text"},
 			},
 		}
+		if m.IsDefault {
+			mEntry["isDefault"] = true
+		}
+		if m.DefaultVoice != "" {
+			mEntry["defaultVoice"] = m.DefaultVoice
+		}
 		if m.InputPointsPerM > 0 || m.OutputPointsPerM > 0 {
 			mEntry["cost"] = map[string]interface{}{
 				"input":  round4(m.InputPointsPerM / officialPointsPerUsd),
 				"output": round4(m.OutputPointsPerM / officialPointsPerUsd),
 			}
 		}
-		modelsMap[mid] = mEntry
+		allModelsMap[mid] = mEntry
+		if isChat {
+			chatModelsMap[mid] = mEntry
+		} else {
+			mediaModelsMap[mid] = mEntry
+		}
 	}
-	nextProv["models"] = modelsMap
+	if len(chatModelsMap) > 0 {
+		nextProv["models"] = chatModelsMap
+	} else {
+		nextProv["models"] = allModelsMap
+	}
+	if len(mediaModelsMap) > 0 {
+		nextProv["mediaModels"] = mediaModelsMap
+	} else {
+		delete(nextProv, "mediaModels")
+	}
 
 	s.normalizeAndStoreMultiKeys(officialProviderID, nextProv)
 	hoxiMap[officialProviderID] = nextProv
@@ -460,12 +509,28 @@ func officialGatewayBaseURL(payload map[string]any, site string) string {
 }
 
 func parseOfficialModels(payload map[string]any) ([]officialModelView, string) {
+	views, _, _, errMsg := parseOfficialModelsWithMeta(payload)
+	return views, errMsg
+}
+
+func parseOfficialModelsWithMeta(payload map[string]any) ([]officialModelView, map[string][]string, map[string]string, string) {
 	if payload == nil {
-		return []officialModelView{}, "model catalog unavailable"
+		return []officialModelView{}, nil, nil, "model catalog unavailable"
 	}
 	items, _ := payload["models"].([]any)
 	views := make([]officialModelView, 0, len(items))
+	categories := map[string][]string{}
 	seen := map[string]struct{}{}
+
+	defaults := map[string]string{}
+	if rawDefs, ok := payload["defaults"].(map[string]any); ok {
+		for k, v := range rawDefs {
+			if s := firstNonEmptyString(v); s != "" {
+				defaults[k] = s
+			}
+		}
+	}
+
 	for _, raw := range items {
 		m, ok := raw.(map[string]any)
 		if !ok {
@@ -483,6 +548,12 @@ func parseOfficialModels(payload map[string]any) ([]officialModelView, string) {
 		}
 		seen[id] = struct{}{}
 
+		rawModality := firstNonEmptyString(m["modality"])
+		category := inferModelCategory(id, firstNonEmptyString(m["category"]), rawModality)
+		isChat := isConversationalCategory(category)
+		isDefault, _ := m["isDefault"].(bool)
+		defaultVoice := firstNonEmptyString(m["defaultVoice"], m["voice"])
+
 		inputUsd := toFloat64(m["inputUsdPerM"], m["inputPrice"], m["priceInput"])
 		outputUsd := toFloat64(m["outputUsdPerM"], m["outputPrice"], m["priceOutput"])
 		perCallUsd := toFloat64(m["perCallUsd"], m["perCallPrice"])
@@ -490,16 +561,56 @@ func parseOfficialModels(payload map[string]any) ([]officialModelView, string) {
 			ID:               id,
 			Name:             firstNonEmptyString(m["displayName"], m["label"], id),
 			Vendor:           firstNonEmptyString(m["vendor"], m["provider"]),
+			Category:         category,
+			Modality:         rawModality,
+			IsChatModel:      isChat,
+			IsDefault:        isDefault,
+			DefaultVoice:     defaultVoice,
 			BillingMode:      firstNonEmptyString(m["billingMode"], m["pricingMode"], m["type"], "token"),
 			InputPointsPerM:  officialPointsFrom(m, "inputPointsPerM", inputUsd),
 			OutputPointsPerM: officialPointsFrom(m, "outputPointsPerM", outputUsd),
 			PerCallPoints:    officialPointsFrom(m, "perCallPoints", perCallUsd),
 		})
+		categories[category] = append(categories[category], id)
 	}
 	if len(views) == 0 {
-		return views, "no callable models"
+		return views, nil, nil, "no callable models"
 	}
-	return views, ""
+
+	// Ensure defaults has sensible fallbacks for each present category if server didn't specify.
+	if defaults["chat"] == "" {
+		if len(categories["chat"]) > 0 {
+			defaults["chat"] = categories["chat"][0]
+		} else if len(categories["coding"]) > 0 {
+			defaults["chat"] = categories["coding"][0]
+		}
+	}
+	if defaults["coding"] == "" {
+		if len(categories["coding"]) > 0 {
+			defaults["coding"] = categories["coding"][0]
+		} else if defaults["chat"] != "" {
+			defaults["coding"] = defaults["chat"]
+		}
+	}
+	for _, cat := range []string{"tts", "realtime", "asr", "image", "video"} {
+		if defaults[cat] == "" && len(categories[cat]) > 0 {
+			defaults[cat] = categories[cat][0]
+		}
+	}
+
+	defaultSet := map[string]bool{}
+	for _, k := range []string{"chat", "coding", "tts", "realtime", "asr", "image", "video"} {
+		if v := defaults[k]; v != "" {
+			defaultSet[v] = true
+		}
+	}
+	for i := range views {
+		if defaultSet[views[i].ID] {
+			views[i].IsDefault = true
+		}
+	}
+
+	return views, categories, defaults, ""
 }
 
 func officialPointsFrom(m map[string]any, pointsKey string, usdFallback float64) float64 {

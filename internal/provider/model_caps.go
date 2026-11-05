@@ -98,6 +98,78 @@ func defaultModelVariants(providerID, npm, modelID string) map[string]interface{
 	}
 }
 
+// normalizeModelCategory normalizes an explicit model category from hoxi.ai or AINode.
+// Supported categories: chat | coding | tts | realtime | asr | image | video | embedding.
+func normalizeModelCategory(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "chat", "coding", "tts", "realtime", "asr", "image", "video", "embedding":
+		return strings.ToLower(strings.TrimSpace(raw))
+	default:
+		return ""
+	}
+}
+
+func isConversationalCategory(category string) bool {
+	c := normalizeModelCategory(category)
+	return c == "" || c == "chat" || c == "coding"
+}
+
+// inferModelCategory resolves the canonical category for a model using explicit
+// server metadata first, then modality, then model ID heuristics.
+func inferModelCategory(modelID, explicitCategory, modality string) string {
+	if c := normalizeModelCategory(explicitCategory); c != "" {
+		return c
+	}
+	id := strings.ToLower(strings.TrimSpace(modelID))
+	mod := strings.ToLower(strings.TrimSpace(modality))
+
+	for _, tok := range []string{"realtime", "qwen-omni"} {
+		if strings.Contains(id, tok) {
+			return "realtime"
+		}
+	}
+	for _, tok := range []string{"tts", "cosyvoice", "speech", "elevenlabs", "fishaudio", "suno", "udio"} {
+		if strings.Contains(id, tok) {
+			return "tts"
+		}
+	}
+	for _, tok := range []string{"asr", "whisper", "paraformer", "fun-asr", "sensevoice", "transcribe"} {
+		if strings.Contains(id, tok) {
+			return "asr"
+		}
+	}
+	if mod == "audio" {
+		return "tts"
+	}
+	if mod == "video" {
+		return "video"
+	}
+	for _, tok := range []string{"seedance", "kling", "veo-", "veo2", "veo3", "sora", "wanx", "wan2", "cogvideo", "hailuo", "luma-", "runway", "vidu"} {
+		if strings.Contains(id, tok) {
+			return "video"
+		}
+	}
+	if mod == "image" {
+		return "image"
+	}
+	for _, tok := range []string{"dall-e", "gpt-image", "imagen", "flux-", "flux.", "flux/", "midjourney", "stable-diffusion", "sdxl", "ideogram", "recraft", "cogview"} {
+		if strings.Contains(id, tok) {
+			return "image"
+		}
+	}
+	for _, tok := range []string{"embedding", "embed", "rerank", "bge-", "moderation"} {
+		if strings.Contains(id, tok) {
+			return "embedding"
+		}
+	}
+	for _, tok := range []string{"codex", "codestral", "qwen-coder", "qwen2.5-coder", "qwen3-coder", "deepseek-coder"} {
+		if strings.Contains(id, tok) {
+			return "coding"
+		}
+	}
+	return "chat"
+}
+
 // inferMediaGenerationModality returns "image", "video", or "audio" for dedicated
 // non-conversational media generation endpoints (e.g. dall-e-3, gpt-image-1, flux,
 // imagen, seedance, kling, veo, sora, wanx, elevenlabs) so they are never routed as
@@ -108,22 +180,16 @@ func inferMediaGenerationModality(modelID string) string {
 	if id == "" {
 		return ""
 	}
-	for _, tok := range []string{"seedance", "kling", "veo-", "veo2", "veo3", "sora", "wanx", "wan2", "cogvideo", "hailuo", "luma-", "runway"} {
-		if strings.Contains(id, tok) {
-			return "video"
-		}
+	switch inferModelCategory(id, "", "") {
+	case "video":
+		return "video"
+	case "image":
+		return "image"
+	case "tts", "realtime":
+		return "audio"
+	default:
+		return ""
 	}
-	for _, tok := range []string{"dall-e", "gpt-image", "imagen", "flux-", "flux.", "flux/", "midjourney", "stable-diffusion", "sdxl", "ideogram", "recraft"} {
-		if strings.Contains(id, tok) {
-			return "image"
-		}
-	}
-	for _, tok := range []string{"tts", "speech", "elevenlabs", "fishaudio", "cosyvoice", "suno", "udio"} {
-		if strings.Contains(id, tok) {
-			return "audio"
-		}
-	}
-	return ""
 }
 
 // isNonChatUtilityModel returns true only for non-conversational utility or pure
@@ -135,15 +201,7 @@ func isNonChatUtilityModel(modelID string) bool {
 	if id == "" {
 		return true
 	}
-	if inferMediaGenerationModality(id) != "" {
-		return true
-	}
-	for _, tok := range []string{"embedding", "embed", "rerank", "bge-", "whisper", "moderation"} {
-		if strings.Contains(id, tok) {
-			return true
-		}
-	}
-	return false
+	return !isConversationalCategory(inferModelCategory(id, "", ""))
 }
 
 func hasImageInputModality(mObj map[string]interface{}) bool {

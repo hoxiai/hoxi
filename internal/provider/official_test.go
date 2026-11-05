@@ -68,9 +68,15 @@ func newOfficialTestSite(t *testing.T, unauthorized bool) *httptest.Server {
 				"code":             0,
 				"gatewayAvailable": true,
 				"gatewayBaseUrl":   "https://api.hoxi.ai",
+				"defaults": map[string]any{
+					"chat":   "gpt-5.4",
+					"coding": "claude-sonnet-4-6",
+					"tts":    "cosyvoice-v3-flash",
+				},
 				"models": []map[string]any{
-					{"modelName": "claude-sonnet-4-6", "displayName": "Claude Sonnet 4.6", "vendor": "Anthropic", "billingMode": "token", "inputPointsPerM": 30000, "outputPointsPerM": 150000},
-					{"modelName": "gpt-5.4", "displayName": "GPT-5.4", "vendor": "OpenAI", "billingMode": "token", "inputUsdPerM": 2.5, "outputUsdPerM": 10},
+					{"modelName": "claude-sonnet-4-6", "displayName": "Claude Sonnet 4.6", "vendor": "Anthropic", "category": "coding", "billingMode": "token", "inputPointsPerM": 30000, "outputPointsPerM": 150000},
+					{"modelName": "gpt-5.4", "displayName": "GPT-5.4", "vendor": "OpenAI", "category": "chat", "isDefault": true, "billingMode": "token", "inputUsdPerM": 2.5, "outputUsdPerM": 10},
+					{"modelName": "cosyvoice-v3-flash", "displayName": "CosyVoice v3 Flash", "vendor": "Qwen", "category": "tts", "modality": "audio", "defaultVoice": "longanhuan", "billingMode": "token", "inputPointsPerM": 5000, "outputPointsPerM": 5000},
 					{"modelName": "disabled-model", "enabled": false},
 				},
 			})
@@ -109,11 +115,17 @@ func TestOfficialModelsPreview(t *testing.T) {
 	if !resp.Authenticated || !resp.GatewayAvailable || resp.BaseURL != "https://api.hoxi.ai/v1" {
 		t.Fatalf("unexpected envelope: %+v", resp)
 	}
-	if len(resp.Models) != 2 {
-		t.Fatalf("expected 2 enabled models, got %d: %+v", len(resp.Models), resp.Models)
+	if len(resp.Models) != 3 {
+		t.Fatalf("expected 3 enabled models, got %d: %+v", len(resp.Models), resp.Models)
 	}
 	if resp.Models[1].InputPointsPerM != 25000 || resp.Models[1].OutputPointsPerM != 100000 {
 		t.Fatalf("expected USD fallback converted to points, got %+v", resp.Models[1])
+	}
+	if resp.Defaults["chat"] != "gpt-5.4" || resp.Defaults["coding"] != "claude-sonnet-4-6" || resp.Defaults["tts"] != "cosyvoice-v3-flash" {
+		t.Fatalf("expected defaults parsed, got %+v", resp.Defaults)
+	}
+	if resp.Models[2].Category != "tts" || resp.Models[2].IsChatModel {
+		t.Fatalf("expected cosyvoice-v3-flash categorized as non-chat tts, got %+v", resp.Models[2])
 	}
 }
 
@@ -136,7 +148,7 @@ func TestOfficialConnectProvisionsProvider(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if resp.ProviderID != "hoxi-official" || resp.ModelCount != 2 {
+	if resp.ProviderID != "hoxi-official" || resp.ModelCount != 3 {
 		t.Fatalf("unexpected connect response: %+v", resp)
 	}
 	if bytes.Contains(rec.Body.Bytes(), []byte("sk-hoxi-official-key")) || bytes.Contains(rec.Body.Bytes(), []byte("hox_dt_test")) {
@@ -153,9 +165,16 @@ func TestOfficialConnectProvisionsProvider(t *testing.T) {
 	if got, _ := opts["baseURL"].(string); got != "https://api.hoxi.ai/v1" {
 		t.Fatalf("expected persisted baseURL, got %q", got)
 	}
+	if gotDef, _ := opts["defaultModel"].(string); gotDef != "gpt-5.4" {
+		t.Fatalf("expected persisted defaultModel gpt-5.4, got %q", gotDef)
+	}
 	models, _ := official["models"].(map[string]interface{})
 	if len(models) != 2 {
-		t.Fatalf("expected exactly 2 enabled models persisted (excluding disabled-model), got %d: %+v", len(models), models)
+		t.Fatalf("expected only 2 conversational models persisted in models (excluding tts and disabled-model), got %d: %+v", len(models), models)
+	}
+	mediaModels, _ := official["mediaModels"].(map[string]interface{})
+	if _, hasTts := mediaModels["cosyvoice-v3-flash"]; !hasTts {
+		t.Fatalf("expected cosyvoice-v3-flash persisted in mediaModels, got %+v", mediaModels)
 	}
 	sonnet, ok := models["claude-sonnet-4-6"].(map[string]interface{})
 	if !ok {
@@ -239,3 +258,56 @@ func TestOfficialConnectInvalidatesRevokedToken(t *testing.T) {
 		t.Fatalf("expected hoxi-official removed on 401")
 	}
 }
+
+func TestParseOfficialModelsAndPersistCategories(t *testing.T) {
+	t.Setenv("HOXI_HOME", t.TempDir())
+	svc := NewService(0, "", t.TempDir(), http.NotFoundHandler())
+
+	payload := map[string]any{
+		"gatewayBaseUrl": "https://api.hoxi.ai",
+		"defaults": map[string]any{
+			"chat":   "gpt-5.4",
+			"coding": "claude-sonnet-4-6",
+			"tts":    "cosyvoice-v3-flash",
+		},
+		"models": []any{
+			map[string]any{"modelName": "claude-sonnet-4-6", "displayName": "Claude Sonnet 4.6", "vendor": "Anthropic", "category": "coding", "inputPointsPerM": 30000.0, "outputPointsPerM": 150000.0},
+			map[string]any{"modelName": "gpt-5.4", "displayName": "GPT-5.4", "vendor": "OpenAI", "category": "chat", "isDefault": true, "inputUsdPerM": 2.5, "outputUsdPerM": 10.0},
+			map[string]any{"modelName": "cosyvoice-v3-flash", "displayName": "CosyVoice v3 Flash", "vendor": "Qwen", "category": "tts", "modality": "audio", "defaultVoice": "longanhuan", "inputPointsPerM": 5000.0, "outputPointsPerM": 5000.0},
+		},
+	}
+
+	views, categories, defaults, errMsg := parseOfficialModelsWithMeta(payload)
+	if errMsg != "" {
+		t.Fatalf("unexpected error: %s", errMsg)
+	}
+	if len(views) != 3 {
+		t.Fatalf("expected 3 models, got %d", len(views))
+	}
+	if defaults["chat"] != "gpt-5.4" || defaults["coding"] != "claude-sonnet-4-6" || defaults["tts"] != "cosyvoice-v3-flash" {
+		t.Fatalf("unexpected defaults: %+v", defaults)
+	}
+	if len(categories["chat"]) != 1 || len(categories["coding"]) != 1 || len(categories["tts"]) != 1 {
+		t.Fatalf("unexpected categories: %+v", categories)
+	}
+
+	if err := svc.persistOfficialProvider("https://api.hoxi.ai/v1", "sk-hoxi-official-key", views, defaults); err != nil {
+		t.Fatalf("persistOfficialProvider: %v", err)
+	}
+	doc := svc.LoadHoxiConfigDoc()
+	provMap, _ := doc["provider"].(map[string]interface{})
+	official, _ := provMap["hoxi-official"].(map[string]interface{})
+	opts, _ := official["options"].(map[string]interface{})
+	if gotDef, _ := opts["defaultModel"].(string); gotDef != "gpt-5.4" {
+		t.Fatalf("expected defaultModel=gpt-5.4, got %q", gotDef)
+	}
+	models, _ := official["models"].(map[string]interface{})
+	if len(models) != 2 {
+		t.Fatalf("expected 2 conversational models in models, got %+v", models)
+	}
+	mediaModels, _ := official["mediaModels"].(map[string]interface{})
+	if _, ok := mediaModels["cosyvoice-v3-flash"]; !ok {
+		t.Fatalf("expected cosyvoice-v3-flash in mediaModels, got %+v", mediaModels)
+	}
+}
+
