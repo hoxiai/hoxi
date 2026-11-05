@@ -367,4 +367,3 @@ func TestDataArgumentsInSubshellsAndPrefixesAreNotDestructive(t *testing.T) {
 		t.Fatal("real .env file read inside subshell must still ask")
 	}
 }
-
