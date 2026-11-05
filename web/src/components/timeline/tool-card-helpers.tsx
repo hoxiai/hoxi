@@ -7,6 +7,7 @@ import { Icon, type IconName } from "../icons";
 import FileDiffBlock from "../inspector/LazyFileDiffBlock";
 import QuestionToolBody from "./question-card";
 import { t } from "../../i18n";
+import { processCarriageReturns, repairWindowsMojibake } from "./terminal-output-text";
 import {
   formatToolDisplayName,
   isBrowserTool,
@@ -78,33 +79,7 @@ export function ActionIconButton(props: {
   );
 }
 
-// Strip ANSI CSI, OSC (e.g. Windows ConPTY/PowerShell window title & shell integration),
-// and UTF-8 BOM for clean shell rolling output (ported from kilocode).
-const ANSI_OSC_REGEX =
-  // eslint-disable-next-line no-control-regex
-  /(?:\u001b\][\s\S]*?(?:\u0007|\u001b\\)|\u009d[\s\S]*?(?:\u0007|\u009c))/g;
-const ANSI_REGEX =
-  // eslint-disable-next-line no-control-regex
-  /[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:[;:][0-9]{0,4})*)?[0-9A-ORZcf-nqry=><~]/g;
-
-/**
- * Ported from @kilocode/kilo-ui/src/components/shell-rolling-results.tsx
- * Resolves carriage returns (\r) like a real terminal: within each line (\n),
- * only text after the last \r is kept so CLI progress bars overwrite in place.
- */
-export function processCarriageReturns(input: string): string {
-  return (input || "")
-    .replace(/^\uFEFF/, "")
-    .replace(ANSI_OSC_REGEX, "")
-    .replace(ANSI_REGEX, "")
-    .replace(/\r\n/g, "\n")
-    .split("\n")
-    .map((line) => {
-      const idx = line.lastIndexOf("\r");
-      return idx === -1 ? line : line.slice(idx + 1);
-    })
-    .join("\n");
-}
+export { processCarriageReturns, repairWindowsMojibake };
 
 // Tool-name taxonomy lives in its own module so display helpers, activity
 // grouping and subagent summaries share one mapping table.
@@ -250,7 +225,7 @@ function cleanShellDisplayText(text: string): string {
     if (next === cur) break;
     cur = next;
   }
-  return cur;
+  return repairWindowsMojibake(cur);
 }
 
 export function hasDistinctShellDescription(description: string, command: string): boolean {
@@ -331,7 +306,7 @@ export function truncateToolOutput(text: string): string {
 function rawShellOutputFromState(state: ToolState): string {
   if (state.status === "completed") {
     const metaOut = state.metadata?.output ?? state.metadata?.stdout;
-    return typeof metaOut === "string" ? metaOut : state.output || "";
+    return typeof metaOut === "string" && metaOut.length > 0 ? metaOut : state.output || "";
   }
   if (state.status === "running") {
     const metaOut = state.metadata?.output ?? state.metadata?.stdout;
@@ -339,7 +314,7 @@ function rawShellOutputFromState(state: ToolState): string {
   }
   if (state.status === "error") {
     const metaOut = state.metadata?.output ?? state.metadata?.stderr;
-    return typeof metaOut === "string" ? `${metaOut}\n${state.error}` : state.error || "";
+    return typeof metaOut === "string" && metaOut.length > 0 ? `${metaOut}\n${state.error}` : state.error || "";
   }
   return "";
 }
@@ -685,7 +660,7 @@ export function ToolCardExpandedBody(props: {
                 {t("toolCard.error")}
               </div>
               <pre class="text-[12px] font-mono bg-[var(--danger-surface)] border border-[var(--danger-border)] p-2.5 rounded-lg overflow-x-auto text-[var(--danger-text)] whitespace-pre-wrap selectable-text">
-                {(props.part.state as Extract<ToolState, { status: "error" }>).error}
+                {processCarriageReturns((props.part.state as Extract<ToolState, { status: "error" }>).error)}
               </pre>
             </div>
           </Show>

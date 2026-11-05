@@ -425,5 +425,33 @@ test("sandbox plugin", async (t) => {
     const fullUTF8 = Buffer.from("Hello世界", "utf8");
     const splitUTF8 = fullUTF8.subarray(0, fullUTF8.length - 1);
     assert.equal(decode(splitUTF8, splitUTF8.toString("utf8")), "Hello世");
+
+    // 5. UTF-8 decoded as CP936/GBK Mojibake ("涓枃" -> "中文", "涓€" -> "一", "寮€" -> "开") is repaired
+    const repair = HoxiSandboxPlugin._repairWindowsMojibake;
+    assert.equal(typeof repair, "function");
+    const cp936Mojibake = new TextDecoder("gb18030").decode(Buffer.from("// 中文注释: 测试成功\n", "utf8"));
+    assert.notEqual(cp936Mojibake, "// 中文注释: 测试成功\n");
+    assert.equal(repair(cp936Mojibake), "// 中文注释: 测试成功\n");
+    assert.equal(repair("涓€个寮€始"), "一个开始");
+    assert.equal(repair("正常中文输出"), "正常中文输出");
+  });
+
+  await t.test("injects UTF-8 shell.env defaults and repairs Mojibake in tool.execute.after", async () => {
+    const hooks = await HoxiSandboxPlugin();
+    const envOut = { env: {} };
+    await hooks["shell.env"]({}, envOut);
+    assert.equal(envOut.env.PYTHONUTF8, "1");
+    assert.equal(envOut.env.PYTHONIOENCODING, "utf-8");
+    assert.equal(envOut.env.LANG, "C.UTF-8");
+
+    const mojibakeLine = new TextDecoder("gb18030").decode(Buffer.from("// 中文注释\n", "utf8"));
+    const toolOut = {
+      output: mojibakeLine,
+      metadata: { output: mojibakeLine, stdout: "娴嬭瘯鎴愬姛" },
+    };
+    await hooks["tool.execute.after"]({ tool: "bash" }, toolOut);
+    assert.equal(toolOut.output, "// 中文注释\n");
+    assert.equal(toolOut.metadata.output, "// 中文注释\n");
+    assert.equal(toolOut.metadata.stdout, "测试成功");
   });
 });

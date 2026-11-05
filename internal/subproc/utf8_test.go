@@ -90,3 +90,26 @@ func TestTruncateUTF8TailPreservesRuneBoundary(t *testing.T) {
 		t.Fatalf("TruncateUTF8Tail = %q, want %q", string(cut), "文字符测试")
 	}
 }
+
+func TestRepairUTF8Mojibake(t *testing.T) {
+	original := "// 中文注释: 测试成功\nconst ok = true;\n"
+	suffixMojibake, err := simplifiedchinese.GB18030.NewDecoder().Bytes([]byte("注释: 测试成功\nconst ok = true;\n"))
+	if err != nil {
+		t.Fatalf("simulate CP936 mojibake: %v", err)
+	}
+	// In CP936 / WHATWG gb18030, "中文" (E4 B8 AD E6 96 87) decodes to "涓枃" (\u6d93\ue15f\u6783).
+	mojibake := "// \u6d93\ue15f\u6783" + string(suffixMojibake)
+	if got := RepairUTF8Mojibake(mojibake); got != original {
+		t.Fatalf("RepairUTF8Mojibake = %q, want %q", got, original)
+	}
+	if got := DecodeOutputBytes([]byte(mojibake)); got != original {
+		t.Fatalf("DecodeOutputBytes(mojibake) = %q, want %q", got, original)
+	}
+	if got := RepairUTF8Mojibake("├──涓枃 / 涓€个寮€始"); got != "├──中文 / 一个开始" {
+		t.Fatalf("RepairUTF8Mojibake(mixed) = %q, want %q", got, "├──中文 / 一个开始")
+	}
+	normal := "// 正常中文输出与错误提示: 文件不存在"
+	if got := RepairUTF8Mojibake(normal); got != normal {
+		t.Fatalf("RepairUTF8Mojibake(normal) = %q, want %q", got, normal)
+	}
+}

@@ -7,6 +7,7 @@ import {
   hasDistinctShellDescription,
   isShellAwaitingFirstOutput,
   processCarriageReturns,
+  repairWindowsMojibake,
 } from "../components/timeline/tool-card-helpers";
 import {
   analyzeShellCommand,
@@ -338,5 +339,39 @@ describe("localized tool labels for CLI runtimes", () => {
     const raw =
       `\uFEFF\u001b]0;Administrator: Windows PowerShell\u0007\u001b]9;4;1;50\u001b\\\u001b[38:2:0:255:128mDownloading 10%\rDownloading 100%\u001b[0m\r\nWindows IP ${cjkSuffix}\r\n`;
     assertEqual(processCarriageReturns(raw), `Downloading 100%\nWindows IP ${cjkSuffix}\n`);
+  });
+
+  it("repairs Windows CP936/GBK and Latin-1 Mojibake in historical and live terminal outputs and commands", () => {
+    const expectedComment = "// \u4e2d\u6587\u6ce8\u91ca: \u6d4b\u8bd5\u6210\u529f\nconst ok = true;";
+    const mojibakeComment = new TextDecoder("gb18030").decode(new TextEncoder().encode(expectedComment));
+    const mixedComment = "// \u6d93\ue15f\u6783\u6ce8\u91ca: \u5a34\u5b2d\u762f\u6210\u529f\nconst ok = true;";
+    assertEqual(repairWindowsMojibake(mojibakeComment), expectedComment);
+    assertEqual(repairWindowsMojibake(mixedComment), expectedComment);
+    assertEqual(processCarriageReturns(mojibakeComment), expectedComment);
+
+    // Odd-byte CJK + CP936 PUA overrides ("\u4e00" -> "\u6d93\u20ac", "\u5f00" -> "\u5bee\u20ac") and box-drawing prefix
+    assertEqual(repairWindowsMojibake("\u251c\u2500\u2500\u6d93\ue15f\u6783"), "\u251c\u2500\u2500\u4e2d\u6587");
+    assertEqual(repairWindowsMojibake("\u6d93\u20ac\u4e2a\u5bee\u20ac\u59cb"), "\u4e00\u4e2a\u5f00\u59cb");
+
+    // UTF-8 decoded as Latin-1/CP1252 ("\u4e2d\u6587" -> "\u00e4\u00b8\u00ad\u00e6\u2013\u2021") and GBK decoded as Latin-1 ("\u914d\u7f6e" -> "\u00c5\u00e4\u00d6\u00c3")
+    assertEqual(repairWindowsMojibake("output: \u00e4\u00b8\u00ad\u00e6\u2013\u2021"), "output: \u4e2d\u6587");
+    assertEqual(repairWindowsMojibake("Windows IP \u00c5\u00e4\u00d6\u00c3"), "Windows IP \u914d\u7f6e");
+
+    // Normal Chinese text and code must remain untouched
+    const normalChinese = "// \u6b63\u5e38\u4e2d\u6587\u8f93\u51fa\u4e0e\u9519\u8bef\u63d0\u793a: \u6587\u4ef6\u4e0d\u5b58\u5728";
+    assertEqual(repairWindowsMojibake(normalChinese), normalChinese);
+
+    // Persisted tool card state with empty metadata.output falls back to state.output and repairs command + output
+    const part = shellPart({
+      status: "completed",
+      input: { command: "echo \u6d93\ue15f\u6783" },
+      output: mojibakeComment,
+      title: "\u6d93\ue15f\u6783",
+      metadata: { output: "" },
+      time: { start: 1, end: 2 },
+    });
+    assertEqual(extractCommand(part), "echo \u4e2d\u6587");
+    assertEqual(extractDescription(part), "\u4e2d\u6587");
+    assertEqual(extractShellOutput(part.state), expectedComment);
   });
 });

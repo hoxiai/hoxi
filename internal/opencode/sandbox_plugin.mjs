@@ -8,11 +8,20 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { StringDecoder } from "node:string_decoder";
 
 const executable = "/usr/bin/sandbox-exec";
 
 const utf8FatalDecoder = new TextDecoder("utf-8", { fatal: true });
 let gb18030Decoder;
+let gbReverseTable;
+const CP936_PUA_OVERRIDES = [
+  [0x20ac, 0x80], [0xe78d, 0xa6d9], [0xe78e, 0xa6da], [0xe78f, 0xa6db], [0xe790, 0xa6dc],
+  [0xe791, 0xa6dd], [0xe792, 0xa6de], [0xe793, 0xa6df], [0xe794, 0xa6ec], [0xe795, 0xa6ed],
+  [0xe796, 0xa6f3], [0xe81e, 0xfe59], [0xe826, 0xfe61], [0xe82b, 0xfe66], [0xe82c, 0xfe67],
+  [0xe832, 0xfe6d], [0xe843, 0xfe7e], [0xe854, 0xfe90], [0xe864, 0xfea0],
+];
+
 function getGB18030Decoder() {
   if (!gb18030Decoder) {
     try {
@@ -24,6 +33,28 @@ function getGB18030Decoder() {
   return gb18030Decoder;
 }
 
+function getGB18030ReverseTable() {
+  if (gbReverseTable) return gbReverseTable;
+  const table = new Uint16Array(65536);
+  const dec = getGB18030Decoder();
+  const pair = new Uint8Array(2);
+  for (let b1 = 0x81; b1 <= 0xfe; b1++) {
+    pair[0] = b1;
+    for (let b2 = 0x40; b2 <= 0xfe; b2++) {
+      if (b2 === 0x7f) continue;
+      pair[1] = b2;
+      const ch = dec.decode(pair);
+      if (ch.length === 1) {
+        const code = ch.charCodeAt(0);
+        if (code >= 0x80 && code !== 0xfffd && table[code] === 0) table[code] = (b1 << 8) | b2;
+      }
+    }
+  }
+  for (const [code, val] of CP936_PUA_OVERRIDES) table[code] = val;
+  gbReverseTable = table;
+  return table;
+}
+
 function isValidUTF8Slice(buf) {
   try {
     utf8FatalDecoder.decode(buf);
@@ -31,6 +62,93 @@ function isValidUTF8Slice(buf) {
   } catch {
     return false;
   }
+}
+
+function isNaturalDecodedText(text) {
+  if (!text) return false;
+  let cjk = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    const allowed =
+      c === 0x09 || c === 0x0a || c === 0x0d || (c >= 0x20 && c <= 0x7e) ||
+      c === 0x00b7 || c === 0x00d7 || c === 0x00f7 ||
+      (c >= 0x2010 && c <= 0x26ff) || (c >= 0x3000 && c <= 0x303f) ||
+      (c >= 0x4e00 && c <= 0x9fa5) || (c >= 0xff01 && c <= 0xff5e);
+    if (!allowed) return false;
+    if ((c >= 0x4e00 && c <= 0x9fa5) || (c >= 0x3000 && c <= 0x303f) || (c >= 0xff01 && c <= 0xff5e)) cjk++;
+  }
+  return cjk > 0;
+}
+
+const GBK_MOJIBAKE_RUN_RE = /[\u0080-\uffff]{2,}/g;
+
+function tryRecoverGBKRun(run, table) {
+  const bytes = new Uint8Array(run.length * 2);
+  const offsets = new Int32Array(run.length + 1);
+  let len = 0;
+  for (let i = 0; i < run.length; i++) {
+    offsets[i] = len;
+    const v = table[run.charCodeAt(i)];
+    if (v === 0) return run;
+    if (v <= 0xff) bytes[len++] = v;
+    else {
+      bytes[len++] = (v >> 8) & 0xff;
+      bytes[len++] = v & 0xff;
+    }
+  }
+  offsets[run.length] = len;
+  let out = "";
+  let pos = 0;
+  let changed = false;
+  while (pos < run.length) {
+    let matchedEnd = -1;
+    let matchedDecoded = "";
+    for (let end = run.length; end >= pos + 2; end--) {
+      const bStart = offsets[pos];
+      const bEnd = offsets[end];
+      if (bEnd - bStart < 3) continue;
+      let hasHigh = false;
+      for (let k = bStart; k < bEnd; k++) {
+        if (bytes[k] >= 0x80) {
+          hasHigh = true;
+          break;
+        }
+      }
+      if (!hasHigh) continue;
+      try {
+        const decoded = utf8FatalDecoder.decode(bytes.subarray(bStart, bEnd));
+        if (decoded !== run.slice(pos, end) && isNaturalDecodedText(decoded)) {
+          matchedEnd = end;
+          matchedDecoded = decoded;
+          break;
+        }
+      } catch {
+        // Try shorter slice
+      }
+    }
+    if (matchedEnd !== -1) {
+      out += matchedDecoded;
+      pos = matchedEnd;
+      changed = true;
+    } else {
+      out += run[pos++];
+    }
+  }
+  return changed ? out : run;
+}
+
+function repairWindowsMojibake(input) {
+  if (typeof input !== "string" || input.length < 2) return input || "";
+  let hasNonASCII = false;
+  for (let i = 0; i < input.length; i++) {
+    if (input.charCodeAt(i) >= 0x80) {
+      hasNonASCII = true;
+      break;
+    }
+  }
+  if (!hasNonASCII) return input;
+  const table = getGB18030ReverseTable();
+  return input.replace(GBK_MOJIBAKE_RUN_RE, (run) => tryRecoverGBKRun(run, table));
 }
 
 function countLeadingUTF8Continuation(buf) {
@@ -45,28 +163,25 @@ function trimTrailingIncompleteUTF8End(buf) {
     const b = buf[n - i];
     if ((b & 0x80) === 0) return n;
     if ((b & 0xc0) === 0x80) continue;
-    let need = 0;
-    if ((b & 0xe0) === 0xc0) need = 2;
-    else if ((b & 0xf0) === 0xe0) need = 3;
-    else if ((b & 0xf8) === 0xf0) need = 4;
-    else return n;
-    return i < need ? n - i : n;
+    const need = (b & 0xe0) === 0xc0 ? 2 : (b & 0xf0) === 0xe0 ? 3 : (b & 0xf8) === 0xf0 ? 4 : 0;
+    return need > 0 && i < need ? n - i : n;
   }
   return n;
 }
 
 function decodeWindowsOutputBuffer(buf, utf8Str) {
-  if (!buf || buf.length === 0) return typeof utf8Str === "string" ? utf8Str : "";
-  const raw = Buffer.isBuffer(buf) ? buf : Buffer.from(buf);
+  if (!buf || buf.length === 0) return typeof utf8Str === "string" ? repairWindowsMojibake(utf8Str) : "";
+  const raw = Buffer.isBuffer(buf) ? buf : Buffer.from(buf.buffer || buf, buf.byteOffset || 0, buf.byteLength ?? buf.length);
   const str = typeof utf8Str === "string" ? utf8Str : raw.toString("utf8");
-  if (!str.includes("\uFFFD") || raw.includes(0)) return str;
+  if (raw.includes(0)) return str;
+  if (!str.includes("\uFFFD")) return repairWindowsMojibake(str);
 
   const lead = countLeadingUTF8Continuation(raw);
   const end = trimTrailingIncompleteUTF8End(raw);
   if (lead >= end) return "";
   const interior = raw.subarray(lead, end);
   if (isValidUTF8Slice(interior)) {
-    return lead === 0 && end === raw.length ? str : interior.toString("utf8");
+    return repairWindowsMojibake(lead === 0 && end === raw.length ? str : interior.toString("utf8"));
   }
 
   const decoder = getGB18030Decoder();
@@ -79,38 +194,39 @@ function decodeWindowsOutputBuffer(buf, utf8Str) {
     const hasCR = lineEnd > lineStart && interior[lineEnd - 1] === 0x0d;
     if (hasCR) lineEnd--;
     const lineBytes = interior.subarray(lineStart, lineEnd);
-    let text;
-    if (lineBytes.length === 0) {
-      text = "";
-    } else if (isValidUTF8Slice(lineBytes)) {
-      text = lineBytes.toString("utf8");
-    } else {
-      const decoded = decoder.decode(lineBytes);
-      text = !decoded.includes("\uFFFD") ? decoded : lineBytes.toString("utf8");
+    let text = "";
+    if (lineBytes.length > 0) {
+      if (isValidUTF8Slice(lineBytes)) {
+        text = lineBytes.toString("utf8");
+      } else {
+        const decoded = decoder.decode(lineBytes);
+        text = !decoded.includes("\uFFFD") ? decoded : lineBytes.toString("utf8");
+      }
     }
-    out.push(text + (hasCR ? "\r" : "") + (hasLF ? "\n" : ""));
+    out.push(repairWindowsMojibake(text) + (hasCR ? "\r" : "") + (hasLF ? "\n" : ""));
     lineStart = i + 1;
   }
   return out.join("");
 }
 
+const UTF8_SHELL_ENV = {
+  PYTHONUTF8: "1",
+  PYTHONIOENCODING: "utf-8",
+  LANG: "C.UTF-8",
+  LC_CTYPE: "UTF-8",
+  LESSCHARSET: "utf-8",
+};
+
 function ensureWindowsUTF8Runtime() {
   if (process.platform !== "win32") return;
-  const defaults = {
-    PYTHONUTF8: "1",
-    PYTHONIOENCODING: "utf-8",
-    LANG: "C.UTF-8",
-    LC_CTYPE: "UTF-8",
-    LESSCHARSET: "utf-8",
-  };
-  for (const [k, v] of Object.entries(defaults)) {
+  for (const [k, v] of Object.entries(UTF8_SHELL_ENV)) {
     if (!process.env[k]) process.env[k] = v;
   }
   if (!process.env.BASH_ENV) {
     try {
       const scriptPath = path.join(os.tmpdir(), "hoxi-bash-utf8.sh");
       const script =
-        '#!/bin/sh\nchcp.com 65001 >/dev/null 2>&1 || true\nexport LANG="${LANG:-C.UTF-8}"\nexport LC_CTYPE="${LC_CTYPE:-UTF-8}"\nexport PYTHONUTF8="${PYTHONUTF8:-1}"\nexport PYTHONIOENCODING="${PYTHONIOENCODING:-utf-8}"\n';
+        '#!/bin/sh\nexport LANG="${LANG:-C.UTF-8}"\nexport LC_CTYPE="${LC_CTYPE:-UTF-8}"\nexport PYTHONUTF8="${PYTHONUTF8:-1}"\nexport PYTHONIOENCODING="${PYTHONIOENCODING:-utf-8}"\nexport LESSCHARSET="${LESSCHARSET:-utf-8}"\n';
       if (!fs.existsSync(scriptPath) || fs.readFileSync(scriptPath, "utf8") !== script) {
         fs.writeFileSync(scriptPath, script, { mode: 0o600 });
       }
@@ -135,8 +251,29 @@ function ensureWindowsUTF8Runtime() {
       return str;
     };
   }
+  if (!TextDecoder.prototype[patchSym]) {
+    const origDecode = TextDecoder.prototype.decode;
+    Object.defineProperty(TextDecoder.prototype, patchSym, { value: true });
+    TextDecoder.prototype.decode = function hoxiTextDecode(input, options) {
+      const str = origDecode.apply(this, arguments);
+      if (str.includes("\uFFFD") && !this.fatal && (this.encoding === "utf-8" || this.encoding === "utf8") && input && !options?.stream) {
+        return decodeWindowsOutputBuffer(input, str);
+      }
+      return str;
+    };
+  }
+  if (StringDecoder?.prototype && !StringDecoder.prototype[patchSym]) {
+    const origWrite = StringDecoder.prototype.write;
+    Object.defineProperty(StringDecoder.prototype, patchSym, { value: true });
+    StringDecoder.prototype.write = function hoxiStringDecoderWrite(buf) {
+      const str = origWrite.apply(this, arguments);
+      if (str.includes("\uFFFD") && (!this.encoding || this.encoding === "utf8" || this.encoding === "utf-8") && buf) {
+        return decodeWindowsOutputBuffer(buf, str);
+      }
+      return str;
+    };
+  }
   try {
-    // Switch the attached Windows console code page to UTF-8 (65001) when running under Bun.
     import("bun:ffi")
       .then(({ dlopen, FFIType }) => {
         const k32 = dlopen("kernel32.dll", {
@@ -229,30 +366,11 @@ const FILE_WRITE_TOOLS = new Set(["write", "edit", "multiedit", "apply_patch"]);
 const MUTATING_TOOLS = new Set(["write", "edit", "multiedit", "apply_patch", "patch"]);
 const NETWORK_TOOLS = new Set(["webfetch", "websearch", "codesearch", "hoxi_browser", "hoxi_tools"]);
 const POLLING_TOOLS = new Set([
-  "todoread",
-  "todowrite",
-  "goal_report",
-  "question",
-  "wait",
-  "wait_5_seconds",
-  "command_status",
-  "agent_status",
-  "agent_wait",
-  "bashoutput",
-  "taskoutput",
-  "taskget",
-  "tasklist",
+  "todoread", "todowrite", "goal_report", "question", "wait", "wait_5_seconds",
+  "command_status", "agent_status", "agent_wait", "bashoutput", "taskoutput", "taskget", "tasklist",
 ]);
 const MUTATING_UI_ACTIONS = new Set([
-  "click",
-  "type",
-  "navigate",
-  "fill",
-  "press",
-  "key",
-  "drag",
-  "evaluate",
-  "select",
+  "click", "type", "navigate", "fill", "press", "key", "drag", "evaluate", "select",
 ]);
 const DOOM_LOOP_THRESHOLD = 3;
 const MAX_GUARDED_SESSIONS = 256;
@@ -587,6 +705,15 @@ function cleanHistory(messages) {
 const HoxiSandboxPlugin = async () => {
   const turnGuards = new Map();
   return {
+    "shell.env": async (_input, output) => {
+      if (!output || typeof output.env !== "object" || !output.env) return;
+      for (const [k, v] of Object.entries(UTF8_SHELL_ENV)) {
+        if (!output.env[k]) output.env[k] = process.env[k] || v;
+      }
+      if (process.platform === "win32" && process.env.BASH_ENV && !output.env.BASH_ENV) {
+        output.env.BASH_ENV = process.env.BASH_ENV;
+      }
+    },
     "tool.execute.before": async (input, output) => {
       const args = output?.args;
       const isBash = input?.tool === "bash" && args && typeof args === "object" && typeof args.command === "string";
@@ -601,9 +728,7 @@ const HoxiSandboxPlugin = async () => {
       if (value) {
         if (!command(value, input)) return;
         if (isBash) {
-          if (clean.trim() === "") {
-            throw new Error("Hoxi sandbox requires a non-empty shell command");
-          }
+          if (clean.trim() === "") throw new Error("Hoxi sandbox requires a non-empty shell command");
           final = `${quote(executable)} -f ${quote(value.profilePath)} -- /bin/sh -c ${quote(clean)}`;
         } else if (input.tool === "apply_patch") {
           const targets = patchTargets(args);
@@ -611,12 +736,7 @@ const HoxiSandboxPlugin = async () => {
           for (const target of targets) assertWritable(target, value.workspace);
         } else if (FILE_WRITE_TOOLS.has(input.tool)) {
           const target =
-            args.filePath ??
-            args.path ??
-            args.file ??
-            args.target_file ??
-            args.AbsolutePath ??
-            args.Path;
+            args.filePath ?? args.path ?? args.file ?? args.target_file ?? args.AbsolutePath ?? args.Path;
           assertWritable(target, value.workspace);
         }
       }
@@ -629,6 +749,16 @@ const HoxiSandboxPlugin = async () => {
         args.command = `${tag}\n${STOP_TRAP}\n${final}`;
       } else {
         args.command = `${tag}\n${final}`;
+      }
+    },
+    "tool.execute.after": async (_input, output) => {
+      if (!output || typeof output !== "object") return;
+      if (typeof output.output === "string") output.output = repairWindowsMojibake(output.output);
+      const meta = output.metadata;
+      if (meta && typeof meta === "object") {
+        for (const k of ["output", "stdout", "stderr"]) {
+          if (typeof meta[k] === "string") meta[k] = repairWindowsMojibake(meta[k]);
+        }
       }
     },
     "experimental.chat.messages.transform": async (_input, output) => {
@@ -677,6 +807,10 @@ const HoxiSandboxPlugin = async () => {
 
 Object.defineProperty(HoxiSandboxPlugin, "_decodeWindowsOutputBuffer", {
   value: decodeWindowsOutputBuffer,
+  enumerable: false,
+});
+Object.defineProperty(HoxiSandboxPlugin, "_repairWindowsMojibake", {
+  value: repairWindowsMojibake,
   enumerable: false,
 });
 
