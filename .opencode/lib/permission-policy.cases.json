@@ -726,5 +726,12 @@
   { "command": "(echo 'rm -rf ~') > x.py; python3 x.py", "decision": "ask", "destructive": true },
   { "command": "bash -c 'echo \"rm -rf ~\"' | bash -c 'true; python3 -'", "decision": "ask", "destructive": true },
   { "command": "bash -c \"echo \\$(rm -rf /)\"", "decision": "ask", "destructive": true },
-  { "command": "bash -c \"echo \\`rm -rf /\\`\"", "decision": "ask", "destructive": true }
+  { "command": "bash -c \"echo \\`rm -rf /\\`\"", "decision": "ask", "destructive": true },
+  { "command": "ssh -o BatchMode=yes root@8.135.58.57 'sudo -u gopanel env HOME=/opt/gopanel XDG_RUNTIME_DIR=/run/user/102 podman exec redis redis-cli --scan --pattern \"*blog*\" 2>&1 | head -10; echo \"--- ttl ---\"; for k in $(sudo -u gopanel env HOME=/opt/gopanel XDG_RUNTIME_DIR=/run/user/102 podman exec redis redis-cli --scan --pattern \"*blog*\" 2>/dev/null | head -5); do echo -n \"$k \"; sudo -u gopanel env HOME=/opt/gopanel XDG_RUNTIME_DIR=/run/user/102 podman exec redis redis-cli ttl \"$k\" 2>/dev/null; done' 2>&1 | head -20", "decision": "ask", "destructive": false },
+  { "command": "ssh -o BatchMode=yes root@8.135.58.57 'ls -la /opt/gopanel/apps/shopark_gjk/runtime/log/ 2>/dev/null | head -10; grep -i \"blog\" /opt/gopanel/apps/shopark_gjk/runtime/log/system_error.log 2>/dev/null | tail -20' 2>&1 | head -30", "decision": "ask", "destructive": false },
+  { "command": "ssh -o BatchMode=yes root@8.135.58.57 \"psql -c \\\"SELECT 1\\\" 2>&1\" 2>/dev/null", "decision": "ask", "destructive": false },
+  { "command": "ssh root@8.135.58.57 'sudo rm -rf /tmp/x' > /tmp/local_out", "decision": "ask", "destructive": true },
+  { "command": "ssh root@8.135.58.57 'cat' < .env", "decision": "ask", "destructive": true },
+  { "command": "ssh root@8.135.58.57 \"echo \\$(rm -rf /)\"", "decision": "ask", "destructive": true },
+  { "command": "ssh -o 'LogFile=>/tmp/x' root@8.135.58.57 'sudo rm -rf /tmp/x'", "decision": "ask", "destructive": true }
 ]

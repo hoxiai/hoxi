@@ -459,16 +459,31 @@ function stripShellKw(words) {
   return words.slice(i);
 }
 
-function hasUnsafeLocalSSHExpansion(seg) {
+function scanSSHSegmentWords(seg) {
+  const tokens = [];
+  let cur = "";
   let quote = "";
+  let inWord = false;
+  let quoted = false;
+  let unquotedRedir = false;
   for (let i = 0; i < seg.length; i++) {
     const c = seg[i];
     if (quote === "'") {
       if (c === "'") quote = "";
+      else {
+        cur += c;
+        inWord = true;
+      }
       continue;
     }
     if (quote === '"') {
-      if (c === "\\" && i + 1 < seg.length) {
+      if (c === "\\") {
+        if (i + 1 >= seg.length) return null;
+        const next = seg[i + 1];
+        if (next === "$" || next === "`" || next === "\n" || next === "\r") return null;
+        if (next !== '"' && next !== "\\") cur += "\\";
+        cur += next;
+        inWord = true;
         i++;
         continue;
       }
@@ -476,18 +491,37 @@ function hasUnsafeLocalSSHExpansion(seg) {
         quote = "";
         continue;
       }
-      if (c === "`") return true;
-      if (c === "$" && !seg.slice(i).startsWith("$HOME/") && !seg.slice(i).startsWith("${HOME}/")) return true;
+      if (c === "`") return null;
+      if (c === "$" && !seg.slice(i).startsWith("$HOME/") && !seg.slice(i).startsWith("${HOME}/")) return null;
+      cur += c;
+      inWord = true;
       continue;
     }
     if (c === "'" || c === '"') {
       quote = c;
+      quoted = true;
+      inWord = true;
       continue;
     }
-    if (c === "\\" || c === "`") return true;
-    if (c === "$" && !seg.slice(i).startsWith("$HOME/") && !seg.slice(i).startsWith("${HOME}/")) return true;
+    if (c === "\\" || c === "`" || c === "(" || c === ")") return null;
+    if (c === "$" && !seg.slice(i).startsWith("$HOME/") && !seg.slice(i).startsWith("${HOME}/")) return null;
+    if (c === " " || c === "\t" || c === "\n" || c === "\r") {
+      if (inWord) {
+        tokens.push({ val: cur, quoted, unquotedRedir });
+        cur = "";
+        inWord = false;
+        quoted = false;
+        unquotedRedir = false;
+      }
+      continue;
+    }
+    if (c === "<" || c === ">") unquotedRedir = true;
+    cur += c;
+    inWord = true;
   }
-  return quote !== "";
+  if (quote !== "") return null;
+  if (inWord) tokens.push({ val: cur, quoted, unquotedRedir });
+  return tokens;
 }
 
 function isSSHIdentityKeyArg(raw) {
@@ -521,18 +555,34 @@ function isNonLoopbackSSHHost(target) {
 }
 
 function unwrapSSHCommandWords(seg) {
-  if (hasUnsafeLocalSSHExpansion(seg)) return null;
-  const words = stripNullRedirects(stripShellKw(shellWords(seg)));
-  if (!words || words.length === 0) return null;
-  let j = 0;
-  while (j < words.length && ENV_ASSIGN_RE.test(words[j])) {
-    if (words[j].includes("$")) return null;
-    j++;
+  let tokens = scanSSHSegmentWords(seg);
+  if (!tokens) return null;
+  while (tokens.length > 0 && !tokens[0].quoted && SHELL_KEYWORDS.has(tokens[0].val)) {
+    tokens = tokens.slice(1);
   }
+  const words = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i];
+    if (!tok.quoted) {
+      if (DEV_NULL_WORD_RE.test(tok.val) || DUP_STREAM_WORD_RE.test(tok.val)) continue;
+      if (REDIRECT_WORD_RE.test(tok.val) && i + 1 < tokens.length && !tokens[i + 1].quoted && tokens[i + 1].val === "/dev/null") {
+        i++;
+        continue;
+      }
+    }
+    if (tok.unquotedRedir) return null;
+    words.push(tok.val);
+  }
+  if (words.length === 0) return null;
+  let j = 0;
+  while (j < words.length && ENV_ASSIGN_RE.test(words[j])) j++;
   if (j >= words.length) return null;
   const unwrappedRes = unwrapCommandPrefixes(words.slice(j), normalizeAbsoluteTool);
   if (!unwrappedRes || unwrappedRes.lookupOnly || unwrappedRes.words.length === 0) return null;
   let unwrapped = unwrappedRes.words;
+  for (let k = 0; k < words.length - unwrapped.length; k++) {
+    if (/[$<>]/.test(words[k])) return null;
+  }
   if (baseName(normalizeAbsoluteTool(unwrapped[0])) === "timeout") {
     if (unwrapped.length < 3 || !SSH_DURATION_RE.test(unwrapped[1])) return null;
     unwrapped = unwrapped.slice(2);
@@ -546,18 +596,19 @@ function isSafeRemoteSSHSegment(seg) {
   const args = words.slice(1);
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
+    if (a.includes("<") || a.includes(">")) return false;
     if (a === "-i") {
       if (i + 1 >= args.length || !isSSHIdentityKeyArg(args[i + 1])) return false;
       i++;
     } else if (a.startsWith("-i") && a.length > 2) {
       if (!isSSHIdentityKeyArg(a.slice(2))) return false;
     } else if (a === "-o") {
-      if (i + 1 >= args.length || SSH_UNSAFE_OPT_RE.test(args[i + 1])) return false;
+      if (i + 1 >= args.length || args[i + 1].includes("<") || args[i + 1].includes(">") || SSH_UNSAFE_OPT_RE.test(args[i + 1])) return false;
       i++;
     } else if (a.startsWith("-o") && a.length > 2) {
       if (SSH_UNSAFE_OPT_RE.test(a.slice(2))) return false;
     } else if (a === "-p" || a === "-l" || a === "-J") {
-      if (i + 1 >= args.length) return false;
+      if (i + 1 >= args.length || args[i + 1].includes("<") || args[i + 1].includes(">")) return false;
       i++;
     } else if (a.startsWith("-p") && a.length > 2) {
       continue;
@@ -575,6 +626,7 @@ function isSafeRemoteSSHSegment(seg) {
 function rewriteSafeRemoteSCPSegment(seg) {
   const words = unwrapSSHCommandWords(seg);
   if (!words || baseName(normalizeAbsoluteTool(words[0])) !== "scp") return "";
+  if (words.some((w) => w.includes("<") || w.includes(">"))) return "";
   const args = words.slice(1);
   const out = ["scp"];
   const pos = [];

@@ -83,10 +83,14 @@ var transitionalClausePrefixes = []string{
 }
 
 const (
-	openCodePreambleRecoveryPrompt = "Your previous reply ended with a transitional sentence announcing your next action without emitting a tool call. Execute that action now by calling the appropriate tool, or provide your final answer directly."
-	recoveryKindNone               = ""
-	recoveryKindReasoning          = "reasoning"
-	recoveryKindPreamble           = "preamble"
+	openCodePreambleRecoveryPrompt          = "Your previous reply ended with a transitional sentence announcing your next action without emitting a tool call. Execute that action now by calling the appropriate tool, or provide your final answer directly."
+	openCodePermissionCascadeRecoveryPrompt = "One or more concurrent tool calls in your previous step were not executed because an approval request was rejected or timed out (which also cancelled sibling pending tool calls in the same step). Do not re-run the rejected command; either continue with an alternative that does not require that permission or summarize your findings and current status for the user."
+	openCodeFeedbackRejectPrefix            = "The user rejected permission to use this specific tool call with the following feedback:"
+	openCodeBareRejectError                 = "The user rejected permission to use this specific tool call."
+	recoveryKindNone                        = ""
+	recoveryKindReasoning                   = "reasoning"
+	recoveryKindPreamble                    = "preamble"
+	recoveryKindPermissionCascade           = "permission-cascade"
 )
 
 // shouldRecoverOpenCodeTurn reports whether the latest assistant step ended
@@ -124,11 +128,25 @@ func classifyOpenCodeTurnRecovery(turns []MessageTurn, ap *activeProcess) string
 	}
 	hasReasoning := false
 	hasLeakedTool := false
+	hasTool := false
+	hasActiveTool := false
+	hasFeedbackRejection := false
+	hasCascadeBareRejection := false
 	var visibleText strings.Builder
 	for _, p := range last.Parts {
 		switch p.Type {
 		case "tool":
-			return recoveryKindNone
+			hasTool = true
+			if p.State == nil || p.State.Status == "pending" || p.State.Status == "running" {
+				hasActiveTool = true
+				continue
+			}
+			errText := strings.TrimSpace(p.State.Error)
+			if strings.HasPrefix(errText, openCodeFeedbackRejectPrefix) {
+				hasFeedbackRejection = true
+			} else if errText == openCodeBareRejectError {
+				hasCascadeBareRejection = true
+			}
 		case "text":
 			if trimmed := strings.TrimSpace(p.Text); trimmed != "" {
 				if visibleText.Len() > 0 {
@@ -144,6 +162,12 @@ func classifyOpenCodeTurnRecovery(turns []MessageTurn, ap *activeProcess) string
 				hasLeakedTool = true
 			}
 		}
+	}
+	if hasTool {
+		if !hasActiveTool && hasFeedbackRejection && hasCascadeBareRejection && (last.Info.Finish == "tool-calls" || last.Info.Finish == "") {
+			return recoveryKindPermissionCascade
+		}
+		return recoveryKindNone
 	}
 	if loopAborted || hasLeakedTool {
 		return recoveryKindReasoning
@@ -356,10 +380,15 @@ func extractLeakedToolFromTurns(turns []MessageTurn, ap *activeProcess) string {
 func buildOpenCodeReasoningRecoveryPayload(rec SessionRecord, mode, modelID, effort, system string, attempt int, recoveryKind string, leakedTool string) map[string]interface{} {
 	recoverID := fmt.Sprintf("%s%d_%d", internalRecoveryMsgPrefix, time.Now().UnixMilli(), attempt)
 	prompt := openCodeReasoningRecoveryPrompt
-	if recoveryKind == recoveryKindPreamble {
+	switch recoveryKind {
+	case recoveryKindPreamble:
 		prompt = openCodePreambleRecoveryPrompt
-	} else if leakedTool = strings.TrimSpace(leakedTool); leakedTool != "" {
-		prompt += fmt.Sprintf(" Specifically, invoke the %q tool now via a standard structured tool call.", leakedTool)
+	case recoveryKindPermissionCascade:
+		prompt = openCodePermissionCascadeRecoveryPrompt
+	default:
+		if leakedTool = strings.TrimSpace(leakedTool); leakedTool != "" {
+			prompt += fmt.Sprintf(" Specifically, invoke the %q tool now via a standard structured tool call.", leakedTool)
+		}
 	}
 	payload := map[string]interface{}{
 		"messageID": recoverID,
@@ -501,6 +530,7 @@ func (s *Service) reconcileOpenCodePostTurnMessages(rec SessionRecord, ap *activ
 			turn.Info.ParentID = lastVisibleUserID
 		}
 		sanitizeRunawayTriggeredInfo(&turn.Info, ap)
+		sanitizeAbortedTurnErrorInfo(&turn.Info, ap)
 		turn.Info.SessionID = rec.ID
 		if prevInfo, exists := existingInfoByID[turn.Info.ID]; !exists || !equalMessageInfo(prevInfo, turn.Info) {
 			s.broadcast(rec.ID, SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": turn.Info}})

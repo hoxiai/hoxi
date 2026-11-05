@@ -136,6 +136,59 @@ func TestIsTransitionalActionPreambleAndShouldRecoverOpenCodeTurn(t *testing.T) 
 	if shouldRecoverOpenCodeTurn(withTool, ap) {
 		t.Fatal("step with actual tool part must not trigger recovery")
 	}
+
+	// 5. Concurrent multi-tool step where one tool was rejected with feedback (e.g. approval timeout)
+	// and a sibling tool was cascade-rejected by OpenCode with bare RejectedError must trigger recovery.
+	cascadeTimeoutTurn := []MessageTurn{
+		midTaskStop[0],
+		{
+			Info: MessageInfo{ID: "msg_a_cascade", Role: "assistant", ParentID: "msg_u1", Finish: "tool-calls"},
+			Parts: []MessagePart{
+				{
+					ID: "prt_tool_timeout", MessageID: "msg_a_cascade", Type: "tool", Tool: "bash",
+					State: &ToolState{
+						Status: "error",
+						Error:  "The user rejected permission to use this specific tool call with the following feedback: Approval timed out after 10 minute(s) with no response and was rejected. Try an approach that does not need this permission, or say so in the summary.",
+					},
+				},
+				{
+					ID: "prt_tool_sibling", MessageID: "msg_a_cascade", Type: "tool", Tool: "bash",
+					State: &ToolState{
+						Status: "error",
+						Error:  "The user rejected permission to use this specific tool call.",
+					},
+				},
+			},
+		},
+	}
+	if gotKind := classifyOpenCodeTurnRecovery(cascadeTimeoutTurn, ap); gotKind != recoveryKindPermissionCascade {
+		t.Fatalf("expected classifyOpenCodeTurnRecovery = %q for concurrent timeout cascade, got %q", recoveryKindPermissionCascade, gotKind)
+	}
+	cascadePayload := buildOpenCodeReasoningRecoveryPayload(SessionRecord{ProviderID: "hoxi-official"}, "build", "deepseek-flash", "", "", 1, recoveryKindPermissionCascade, "")
+	cascadeParts, _ := cascadePayload["parts"].([]map[string]interface{})
+	if len(cascadeParts) != 1 || cascadeParts[0]["text"] != openCodePermissionCascadeRecoveryPrompt {
+		t.Fatalf("expected permission cascade recovery prompt, got %+v", cascadeParts)
+	}
+
+	// 6. Bare user rejection without any feedback rejection must NOT trigger recovery.
+	bareRejectTurn := []MessageTurn{
+		midTaskStop[0],
+		{
+			Info: MessageInfo{ID: "msg_a_bare", Role: "assistant", ParentID: "msg_u1", Finish: "tool-calls"},
+			Parts: []MessagePart{
+				{
+					ID: "prt_tool_bare", MessageID: "msg_a_bare", Type: "tool", Tool: "bash",
+					State: &ToolState{
+						Status: "error",
+						Error:  "The user rejected permission to use this specific tool call.",
+					},
+				},
+			},
+		},
+	}
+	if shouldRecoverOpenCodeTurn(bareRejectTurn, ap) {
+		t.Fatal("bare user rejection without feedback must not trigger recovery")
+	}
 }
 
 func TestStartOpenCodeTurnAutoRecoversFromMidTaskTransitionalStop(t *testing.T) {

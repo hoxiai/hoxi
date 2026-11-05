@@ -399,18 +399,46 @@ func mapTopLevelSegments(s string, fn func(seg string) string) string {
 	return out.String()
 }
 
-func hasUnsafeLocalSSHExpansion(seg string) bool {
-	var quote byte
+type sshSegmentWord struct {
+	val           string
+	quoted        bool
+	unquotedRedir bool
+}
+
+func scanSSHSegmentWords(seg string) ([]sshSegmentWord, bool) {
+	var (
+		tokens        []sshSegmentWord
+		cur           strings.Builder
+		quote         byte
+		inWord        bool
+		quoted        bool
+		unquotedRedir bool
+	)
 	for i := 0; i < len(seg); i++ {
 		c := seg[i]
 		if quote == '\'' {
 			if c == '\'' {
 				quote = 0
+			} else {
+				cur.WriteByte(c)
+				inWord = true
 			}
 			continue
 		}
 		if quote == '"' {
-			if c == '\\' && i+1 < len(seg) {
+			if c == '\\' {
+				if i+1 >= len(seg) {
+					return nil, false
+				}
+				next := seg[i+1]
+				if next == '$' || next == '`' || next == '\n' || next == '\r' {
+					return nil, false
+				}
+				if next != '"' && next != '\\' {
+					cur.WriteByte('\\')
+				}
+				cur.WriteByte(next)
+				inWord = true
 				i++
 				continue
 			}
@@ -419,25 +447,50 @@ func hasUnsafeLocalSSHExpansion(seg string) bool {
 				continue
 			}
 			if c == '`' {
-				return true
+				return nil, false
 			}
 			if c == '$' && !strings.HasPrefix(seg[i:], "$HOME/") && !strings.HasPrefix(seg[i:], "${HOME}/") {
-				return true
+				return nil, false
 			}
+			cur.WriteByte(c)
+			inWord = true
 			continue
 		}
 		if c == '\'' || c == '"' {
 			quote = c
+			quoted = true
+			inWord = true
 			continue
 		}
-		if c == '\\' || c == '`' {
-			return true
+		if c == '\\' || c == '`' || c == '(' || c == ')' {
+			return nil, false
 		}
 		if c == '$' && !strings.HasPrefix(seg[i:], "$HOME/") && !strings.HasPrefix(seg[i:], "${HOME}/") {
-			return true
+			return nil, false
 		}
+		if c == ' ' || c == '\t' || c == '\n' || c == '\r' {
+			if inWord {
+				tokens = append(tokens, sshSegmentWord{val: cur.String(), quoted: quoted, unquotedRedir: unquotedRedir})
+				cur.Reset()
+				inWord = false
+				quoted = false
+				unquotedRedir = false
+			}
+			continue
+		}
+		if c == '<' || c == '>' {
+			unquotedRedir = true
+		}
+		cur.WriteByte(c)
+		inWord = true
 	}
-	return quote != 0
+	if quote != 0 {
+		return nil, false
+	}
+	if inWord {
+		tokens = append(tokens, sshSegmentWord{val: cur.String(), quoted: quoted, unquotedRedir: unquotedRedir})
+	}
+	return tokens, true
 }
 
 func isSSHIdentityKeyArg(p string) bool {
@@ -481,18 +534,35 @@ func isNonLoopbackSSHHost(target string) bool {
 }
 
 func unwrapSSHCommandWords(seg string) ([]string, bool) {
-	if hasUnsafeLocalSSHExpansion(seg) {
+	tokens, ok := scanSSHSegmentWords(seg)
+	if !ok {
 		return nil, false
 	}
-	words, ok := stripNullRedirects(stripShellKeywords(shellWords(seg)))
-	if !ok || len(words) == 0 {
+	for len(tokens) > 0 && !tokens[0].quoted && shellKeywords[tokens[0].val] {
+		tokens = tokens[1:]
+	}
+	words := make([]string, 0, len(tokens))
+	for i := 0; i < len(tokens); i++ {
+		tok := tokens[i]
+		if !tok.quoted {
+			if devNullWordRe.MatchString(tok.val) || dupStreamWordRe.MatchString(tok.val) {
+				continue
+			}
+			if redirectWordRe.MatchString(tok.val) && i+1 < len(tokens) && !tokens[i+1].quoted && tokens[i+1].val == "/dev/null" {
+				i++
+				continue
+			}
+		}
+		if tok.unquotedRedir {
+			return nil, false
+		}
+		words = append(words, tok.val)
+	}
+	if len(words) == 0 {
 		return nil, false
 	}
 	j := 0
 	for j < len(words) && envVarAssignmentWordRe.MatchString(words[j]) {
-		if strings.Contains(words[j], "$") {
-			return nil, false
-		}
 		j++
 	}
 	if j >= len(words) {
@@ -501,6 +571,11 @@ func unwrapSSHCommandWords(seg string) ([]string, bool) {
 	unwrapped, lookupOnly, ok := unwrapCommandPrefixes(words[j:])
 	if !ok || lookupOnly || len(unwrapped) == 0 {
 		return nil, false
+	}
+	for _, w := range words[:len(words)-len(unwrapped)] {
+		if strings.ContainsAny(w, "$<>") {
+			return nil, false
+		}
 	}
 	if filepath.Base(normalizeAbsoluteTool(unwrapped[0])) == "timeout" {
 		if len(unwrapped) < 3 || !sshDurationRe.MatchString(unwrapped[1]) {
@@ -519,6 +594,9 @@ func isSafeRemoteSSHSegment(seg string) bool {
 	args := words[1:]
 	for i := 0; i < len(args); i++ {
 		a := args[i]
+		if strings.ContainsAny(a, "<>") {
+			return false
+		}
 		switch {
 		case a == "-i":
 			if i+1 >= len(args) || !isSSHIdentityKeyArg(args[i+1]) {
@@ -530,7 +608,7 @@ func isSafeRemoteSSHSegment(seg string) bool {
 				return false
 			}
 		case a == "-o":
-			if i+1 >= len(args) || sshUnsafeOptRe.MatchString(args[i+1]) {
+			if i+1 >= len(args) || strings.ContainsAny(args[i+1], "<>") || sshUnsafeOptRe.MatchString(args[i+1]) {
 				return false
 			}
 			i++
@@ -539,7 +617,7 @@ func isSafeRemoteSSHSegment(seg string) bool {
 				return false
 			}
 		case a == "-p" || a == "-l" || a == "-J":
-			if i+1 >= len(args) {
+			if i+1 >= len(args) || strings.ContainsAny(args[i+1], "<>") {
 				return false
 			}
 			i++
@@ -558,6 +636,11 @@ func rewriteSafeRemoteSCPSegment(seg string) (string, bool) {
 	words, ok := unwrapSSHCommandWords(seg)
 	if !ok || filepath.Base(normalizeAbsoluteTool(words[0])) != "scp" {
 		return "", false
+	}
+	for _, w := range words {
+		if strings.ContainsAny(w, "<>") {
+			return "", false
+		}
 	}
 	args := words[1:]
 	out := []string{"scp"}
