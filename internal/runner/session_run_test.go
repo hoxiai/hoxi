@@ -78,6 +78,43 @@ func newRunTestService(t *testing.T, engineURL string) (*Service, string) {
 	return svc, info.ID
 }
 
+func TestCloseAllWaitsForTurnTeardownAfterCancelingAllTurns(t *testing.T) {
+	svc := NewService(t.TempDir(), nil, nil, filepath.Join(t.TempDir(), "sessions"))
+	firstCtx, firstCancel := context.WithCancel(context.Background())
+	defer firstCancel()
+	secondCtx, secondCancel := context.WithCancel(context.Background())
+	defer secondCancel()
+	first := &activeProcess{cancel: firstCancel, done: make(chan struct{})}
+	second := &activeProcess{cancel: secondCancel, done: make(chan struct{})}
+	svc.procs["ses_first"], svc.procs["ses_second"] = first, second
+	closed := make(chan struct{})
+	go func() {
+		svc.CloseAll()
+		close(closed)
+	}()
+	defer func() {
+		close(first.done)
+		close(second.done)
+		select {
+		case <-closed:
+		case <-time.After(time.Second):
+			t.Error("CloseAll did not return after turn teardown finished")
+		}
+	}()
+	for _, ctx := range []context.Context{firstCtx, secondCtx} {
+		select {
+		case <-ctx.Done():
+		case <-time.After(time.Second):
+			t.Fatal("CloseAll must cancel all turns before waiting for teardown")
+		}
+	}
+	select {
+	case <-closed:
+		t.Fatal("CloseAll returned before the turns finished their final flush")
+	case <-time.After(30 * time.Millisecond):
+	}
+}
+
 func TestRunPromptAndWaitReturnsAssistantText(t *testing.T) {
 	t.Parallel()
 	var aborts atomic.Int32

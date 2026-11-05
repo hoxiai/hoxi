@@ -45,37 +45,64 @@ type ownedProcessGroup struct {
 type ownedProcessLedger struct {
 	mu       sync.Mutex
 	groups   map[string][]ownedProcessGroup // Hoxi session ID -> groups
-	watching map[string]bool                // sessionID\x00callID being looked for
+	watching map[string]*ownedProcessWatch  // sessionID\x00callID being looked for
+}
+
+type ownedProcessWatch struct {
+	done chan struct{}
+}
+
+func (w *ownedProcessWatch) wait(delay time.Duration) bool {
+	select {
+	case <-w.done:
+		return false
+	default:
+	}
+	if delay <= 0 {
+		return true
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-w.done:
+		return false
+	case <-timer.C:
+		return true
+	}
 }
 
 func newOwnedProcessLedger() *ownedProcessLedger {
-	return &ownedProcessLedger{groups: map[string][]ownedProcessGroup{}, watching: map[string]bool{}}
+	return &ownedProcessLedger{groups: map[string][]ownedProcessGroup{}, watching: map[string]*ownedProcessWatch{}}
 }
 
 // startWatch reports whether the caller should look for this call's shell;
 // each call is looked for once.
-func (l *ownedProcessLedger) startWatch(sessionID, callID string) bool {
+func (l *ownedProcessLedger) startWatch(sessionID, callID string) *ownedProcessWatch {
 	if l == nil || sessionID == "" || callID == "" {
-		return false
+		return nil
 	}
 	key := sessionID + "\x00" + callID
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.watching[key] {
-		return false
+	if l.watching[key] != nil {
+		return nil
 	}
-	l.watching[key] = true
-	return true
+	watch := &ownedProcessWatch{done: make(chan struct{})}
+	l.watching[key] = watch
+	return watch
 }
 
 // endWatch forgets a call after its scans, keeping the map small. A call ID
 // that comes back later is a new tool call and is looked for again.
-func (l *ownedProcessLedger) endWatch(sessionID, callID string) {
+func (l *ownedProcessLedger) endWatch(sessionID, callID string, watch *ownedProcessWatch) {
 	if l == nil {
 		return
 	}
 	l.mu.Lock()
-	delete(l.watching, sessionID+"\x00"+callID)
+	key := sessionID + "\x00" + callID
+	if l.watching[key] == watch {
+		delete(l.watching, key)
+	}
 	l.mu.Unlock()
 }
 
@@ -89,6 +116,7 @@ func (l *ownedProcessLedger) forget(sessionID string) {
 	delete(l.groups, sessionID)
 	for k := range l.watching {
 		if strings.HasPrefix(k, prefix) {
+			close(l.watching[k].done)
 			delete(l.watching, k)
 		}
 	}
@@ -101,6 +129,24 @@ func (l *ownedProcessLedger) record(sessionID string, pgid int, leaderArgs strin
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.recordLocked(sessionID, pgid, leaderArgs)
+}
+
+// A scan may already be reading the process table when forget cancels it.
+// Check its identity under the write lock so it cannot restore deleted state
+// or interfere with a later watch using the same session and call IDs.
+func (l *ownedProcessLedger) recordWatched(sessionID, callID string, watch *ownedProcessWatch, pgid int, leaderArgs string) {
+	if l == nil || watch == nil || pgid <= 1 {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.watching[sessionID+"\x00"+callID] == watch {
+		l.recordLocked(sessionID, pgid, leaderArgs)
+	}
+}
+
+func (l *ownedProcessLedger) recordLocked(sessionID string, pgid int, leaderArgs string) {
 	groups := l.groups[sessionID]
 	for i, g := range groups {
 		if g.pgid == pgid {
@@ -187,16 +233,19 @@ func (s *Service) noteOpenCodeShellEvent(rec SessionRecord, evt SSEEvent) {
 	}
 	port := u.Port()
 	sessionID := rec.ID
-	if !s.ownedProcs.startWatch(sessionID, callID) {
+	watch := s.ownedProcs.startWatch(sessionID, callID)
+	if watch == nil {
 		return
 	}
 	go func() {
-		defer s.ownedProcs.endWatch(sessionID, callID)
+		defer s.ownedProcs.endWatch(sessionID, callID, watch)
 		for _, delay := range ownedShellScanDelays {
-			time.Sleep(delay)
+			if !watch.wait(delay) {
+				return
+			}
 			byPID, children := readProcessSnapshots()
 			if shell := findOpenCodeShellGroup(byPID, children, port, marker); shell > 1 {
-				s.ownedProcs.record(sessionID, shell, byPID[shell].args)
+				s.ownedProcs.recordWatched(sessionID, callID, watch, shell, byPID[shell].args)
 				return
 			}
 		}
@@ -236,21 +285,27 @@ func (s *Service) noteRuntimeShellEvent(sessionID string, evt SSEEvent) {
 		return
 	}
 	root := s.runtimeRootPID(sessionID)
-	if root <= 1 || !s.ownedProcs.startWatch(sessionID, part.CallID) {
+	if root <= 1 {
 		return
 	}
 	callID := part.CallID
+	watch := s.ownedProcs.startWatch(sessionID, callID)
+	if watch == nil {
+		return
+	}
 	go func() {
-		defer s.ownedProcs.endWatch(sessionID, callID)
+		defer s.ownedProcs.endWatch(sessionID, callID, watch)
 		protected := selfProcessGroupID()
 		for _, delay := range ownedShellScanDelays {
-			time.Sleep(delay)
+			if !watch.wait(delay) {
+				return
+			}
 			byPID, children := readProcessSnapshots()
 			if _, alive := byPID[root]; !alive {
 				return
 			}
 			for _, pid := range runtimeShellGroups(byPID, children, root, protected) {
-				s.ownedProcs.record(sessionID, pid, byPID[pid].args)
+				s.ownedProcs.recordWatched(sessionID, callID, watch, pid, byPID[pid].args)
 			}
 		}
 	}()

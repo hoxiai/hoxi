@@ -163,11 +163,31 @@ func (s *Service) CloseAll() {
 	s.mu.Lock()
 	active := make([]*activeProcess, 0, len(s.procs))
 	for _, p := range s.procs {
-		active = append(active, p)
+		if p != nil {
+			active = append(active, p)
+		}
 	}
 	s.mu.Unlock()
+	if len(active) == 0 {
+		return
+	}
 	for _, p := range active {
 		p.Abort()
+	}
+	// OpenCode turns have no OS process for Abort to wait on. Let their
+	// teardown finish flushing the transcript before the host exits or removes
+	// the store, with a shared deadline so shutdown remains bounded.
+	timer := time.NewTimer(abortSettleTimeout)
+	defer timer.Stop()
+	for _, p := range active {
+		if p.done == nil {
+			continue
+		}
+		select {
+		case <-p.done:
+		case <-timer.C:
+			return
+		}
 	}
 }
 
