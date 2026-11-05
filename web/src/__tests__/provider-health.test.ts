@@ -318,6 +318,23 @@ describe("provider telemetry health scoring", () => {
     assertDeepEqual(health.riskTags, []);
     assertEqual(health.status, "healthy");
   });
+
+  it("does not flag high_hallucination when tool success rate is healthy and revertCount is zero", () => {
+    setWorkspace("providerTelemetry", "agy_agentic", {
+      ...emptyStats("agy_agentic"),
+      totalTurns: 50,
+      successTurns: 49,
+      errorTurns: 1,
+      revertCount: 0,
+      hallucinationFlags: 10,
+      toolCallsTotal: 400,
+      toolCallsFailed: 8,
+    });
+    const health = computeProviderHealth("agy_agentic");
+    assertEqual(health.stabilityScore, 98);
+    assertDeepEqual(health.riskTags, []);
+    assertEqual(health.status, "healthy");
+  });
 });
 
 describe("context overflow detection", () => {

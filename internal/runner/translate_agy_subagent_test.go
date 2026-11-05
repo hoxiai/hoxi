@@ -400,3 +400,31 @@ func TestAgyStaleHistoricalResultErrorAfterCompletedResponseFinishesCleanly(t *t
 		t.Fatal("expected session.idle event when stale result error is ignored")
 	}
 }
+
+func TestAgyRecoveredMidTurnToolErrorDoesNotPoisonStaleResultSuppression(t *testing.T) {
+	t.Parallel()
+	tr, _ := newAgyTestTranslator(func(string, int) string { return "" })
+	tr.FeedLine(`{"event":"init","conversation_id":"` + agyParentConv + `","init":{"model":"gemini-4-argon-high"}}`)
+	// Step 89: mid-turn tool fails (e.g. manage_task kill on an already finished task).
+	tr.FeedLine(`{"event":"step_update","step_update":{"conversation_id":"` + agyParentConv + `","step_index":89,"state":"ERROR","step_type":"tool","tool_name":"manage_task","tool_info":{"name":"manage_task","error":{"type":"ERROR","message":"cannot kill task: task is not running (status: DONE)"}}}}`)
+	// Step 192: subsequent tool succeeds.
+	tr.FeedLine(`{"event":"step_update","step_update":{"conversation_id":"` + agyParentConv + `","step_index":192,"state":"DONE","step_type":"tool","tool_name":"run_command","tool_info":{"name":"run_command","output":"PASS\n"}}}`)
+	// Step 197: final assistant response completes cleanly.
+	tr.FeedLine(`{"event":"step_update","step_update":{"conversation_id":"` + agyParentConv + `","step_index":197,"state":"ACTIVE","step_type":"agent_response","text_delta":"已修复并通过全部前后端测试。"}}`)
+	tr.FeedLine(`{"event":"step_update","step_update":{"conversation_id":"` + agyParentConv + `","step_index":197,"state":"DONE","step_type":"agent_response","duration_seconds":1.4}}`)
+
+	eofResultLine := `{"event":"result","result":{"conversation_id":"` + agyParentConv + `","status":"ERROR","error":"API error (attempt 1): request failed: Post \"https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse\": EOF"}}`
+	if !tr.IsStaleAgyResultError(eofResultLine) {
+		t.Fatal("recovered earlier tool error must not prevent stale historical EOF result error from being suppressed")
+	}
+
+	evts := tr.FeedLine(eofResultLine)
+	if tr.msgInfo.Error != nil || tr.msgInfo.Finish != "stop" {
+		t.Fatalf("expected clean stop finish without RunnerError, got finish=%q err=%+v", tr.msgInfo.Finish, tr.msgInfo.Error)
+	}
+	for _, e := range evts {
+		if e.Type == "session.error" {
+			t.Fatalf("unexpected session.error event: %+v", e)
+		}
+	}
+}

@@ -132,9 +132,11 @@ func (t *TurnTranslator) feedAgyLine(line string) []SSEEvent {
 			return t.handleAgyAgentResponse(su, now)
 		case "subagent":
 			t.agyFinalResponseDone = false
+			t.agyFinalResponseStep = 0
 			return t.handleAgySubagentStep(su, now)
 		case "tool":
 			t.agyFinalResponseDone = false
+			t.agyFinalResponseStep = 0
 			if isAgySubagentDispatch(su) {
 				return t.handleAgySubagentStep(su, now)
 			}
@@ -162,6 +164,7 @@ func (t *TurnTranslator) feedAgyLine(line string) []SSEEvent {
 
 func (t *TurnTranslator) handleAgyAgentResponse(su *agyStepUpdate, now int64) []SSEEvent {
 	t.agyFinalResponseDone = false
+	t.agyFinalResponseStep = 0
 	var evts []SSEEvent
 	startMs := t.stepStartMs[su.StepIndex]
 	endMs := now
@@ -263,7 +266,10 @@ func (t *TurnTranslator) handleAgyAgentResponse(su *agyStepUpdate, now int64) []
 				txtStart = part.Time.Start
 			}
 			part.Time = &PartTime{Start: txtStart, End: endMs}
-			t.agyFinalResponseDone = strings.TrimSpace(part.Text) != ""
+			if strings.TrimSpace(part.Text) != "" {
+				t.agyFinalResponseDone = true
+				t.agyFinalResponseStep = su.StepIndex
+			}
 			evts = append(evts, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": clonePart(*part)}})
 		}
 		if tokensUpdated {

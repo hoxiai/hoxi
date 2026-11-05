@@ -280,6 +280,7 @@ export function AssistantErrorCard(props: { info: MessageInfo }) {
                 !isStall() &&
                 !isBalance() &&
                 providerHealth() &&
+                (providerHealth()!.stabilityScore ?? 100) < 82 &&
                 (providerHealth()!.status === "degraded" ||
                   providerHealth()!.status === "warning" ||
                   providerHealth()!.riskTags.length > 0)

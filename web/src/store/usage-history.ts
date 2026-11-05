@@ -10,7 +10,6 @@ import {
 } from "../services/api";
 import { syncOfficialModelPricing } from "./leaderboard-state";
 import { estimateTokenCostUsd } from "./model-pricing";
-import { workspace } from "./workspace-state";
 
 export interface UsageHistoryDay extends DevPulseHistoryDay {
   totalTokens: number;
@@ -43,7 +42,6 @@ const [usageHistoryLoading, setUsageHistoryLoading] = createSignal(false);
 const [usageHistoryError, setUsageHistoryError] = createSignal("");
 
 let inFlight = false;
-let inFlightTarget = "";
 let historyGeneration = 0;
 
 export { usageHistory, usageSelection, usageHistoryLoading, usageHistoryError };
@@ -89,13 +87,9 @@ export async function loadUsageHistory(
   selection: UsageSelection = usageSelection(),
   manual = false
 ): Promise<void> {
-  const dir = workspace.rootDir || undefined;
-  const sid = workspace.activeSessionID || undefined;
-  const target = `${dir ?? ""}\u0000${sid ?? ""}`;
-  if (inFlight && !manual && target === inFlightTarget && sameSelection(selection, usageSelection())) return;
+  if (inFlight && !manual && sameSelection(selection, usageSelection())) return;
   const gen = ++historyGeneration;
   inFlight = true;
-  inFlightTarget = target;
   setUsageSelection(selection);
   setUsageHistoryLoading(true);
   setUsageHistoryError("");
@@ -105,15 +99,12 @@ export async function loadUsageHistory(
     if (gen !== historyGeneration) return;
     const res =
       selection.kind === "custom"
-        ? await hoxiAPI.getDevPulseHistory(30, dir, {
+        ? await hoxiAPI.getDevPulseHistory(30, undefined, {
             startDate: selection.range.start,
             endDate: selection.range.end,
-            sessionID: sid,
           })
         : await hoxiAPI.getDevPulseHistory(
-            selection.kind === "overview" ? USAGE_OVERVIEW_DAYS : selection.days,
-            dir,
-            sid ? { sessionID: sid } : undefined
+            selection.kind === "overview" ? USAGE_OVERVIEW_DAYS : selection.days
           );
     if (gen !== historyGeneration) return;
     if (!res || !Array.isArray(res.days)) {

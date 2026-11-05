@@ -32,6 +32,7 @@ type TurnTranslator struct {
 	stepStartMs          map[int]int64
 	hasTextPart          bool
 	agyFinalResponseDone bool
+	agyFinalResponseStep int
 	turnFinished         bool
 	lookupThink          func(externalID string, stepIndex int) string
 	lookupStep           func(externalID string, stepIndex int) string
@@ -119,6 +120,7 @@ func (t *TurnTranslator) ResetForFreshRetry() {
 	t.editPayloads = nil
 	t.geminiLastErrMsg = ""
 	t.agyFinalResponseDone = false
+	t.agyFinalResponseStep = 0
 }
 
 // noteAgyConversation pins externalID to the first conversation this turn
@@ -258,6 +260,7 @@ func (t *TurnTranslator) ResetUncommittedTurnForRetry(initialExternalID string) 
 	t.claudeLastParentMsgKey = ""
 	t.hasTextPart = false
 	t.agyFinalResponseDone = false
+	t.agyFinalResponseStep = 0
 	t.turnFinished = false
 	t.externalID = initialExternalID
 	t.convPinned = false
@@ -311,6 +314,7 @@ func (t *TurnTranslator) PrepareForResumeRetry(nowMs int64) []SSEEvent {
 		}
 	}
 	t.agyFinalResponseDone = false
+	t.agyFinalResponseStep = 0
 	t.turnFinished = false
 	t.partBuilders = make(map[string]*strings.Builder)
 	t.geminiStepIdx++

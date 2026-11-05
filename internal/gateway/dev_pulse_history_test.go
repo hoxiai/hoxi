@@ -244,6 +244,7 @@ func TestDevPulseHistoryRejectsBadDates(t *testing.T) {
 }
 
 func TestDevPulseHistoryClampsWindow(t *testing.T) {
+	t.Setenv("HOXI_HOME", t.TempDir())
 	t.Setenv("OPENCODE_DB", "")
 	t.Setenv("HOXI_DB_PATH", filepath.Join(t.TempDir(), "hoxi.db"))
 	gw := New(0, "pass", t.TempDir(), nil, nil)
@@ -262,6 +263,7 @@ func TestDevPulseHistoryClampsWindow(t *testing.T) {
 }
 
 func TestDevPulseHistoryCustomWindowClampsInclusiveDayCount(t *testing.T) {
+	t.Setenv("HOXI_HOME", t.TempDir())
 	t.Setenv("OPENCODE_DB", "")
 	t.Setenv("HOXI_DB_PATH", filepath.Join(t.TempDir(), "hoxi.db"))
 	gw := New(0, "pass", t.TempDir(), nil, nil)
@@ -284,6 +286,7 @@ func TestDevPulseHistoryCustomWindowClampsInclusiveDayCount(t *testing.T) {
 
 func TestDevPulseHistoryCountsNewTurnsInImportedSessionWhileSkippingImportedTurns(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "hoxi.db")
+	t.Setenv("HOXI_HOME", t.TempDir())
 	t.Setenv("OPENCODE_DB", "")
 	t.Setenv("HOXI_DB_PATH", dbPath)
 
@@ -422,10 +425,12 @@ func TestDevPulseAndHistoryAgreeOnTodayUncommittedCommitterDateAndBuildFiles(t *
 }
 
 func TestDevPulseCombinesProjectRootAndActiveWorktreeWithoutCrossProjectLeak(t *testing.T) {
+	t.Setenv("HOXI_HOME", t.TempDir())
 	t.Setenv("OPENCODE_DB", "")
 	t.Setenv("HOXI_DB_PATH", filepath.Join(t.TempDir(), "hoxi.db"))
 
-	now := time.Now().Format(time.RFC3339)
+	nowTime := time.Now()
+	now := nowTime.Format(time.RFC3339)
 	repoA := t.TempDir()
 	gitAt(t, repoA, now, "init", "-q", "-b", "main")
 	if err := os.WriteFile(filepath.Join(repoA, "base.go"), []byte("package a\n"), 0o644); err != nil {
@@ -493,14 +498,17 @@ func TestDevPulseCombinesProjectRootAndActiveWorktreeWithoutCrossProjectLeak(t *
 		t.Fatalf("expected combined root + worktree stats without snapshot commit, got %+v", pulse)
 	}
 
-	// Explicit ?directory=repoB must not be hijacked by ses_wt from repoA.
+	// Second project repoB with same-named base.go (+4/0 committed, +1/0 uncommitted).
 	repoB := t.TempDir()
 	gitAt(t, repoB, now, "init", "-q", "-b", "main")
-	if err := os.WriteFile(filepath.Join(repoB, "b.go"), []byte("package b\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repoB, "base.go"), []byte("package b\nvar B1 = 1\nvar B2 = 2\nvar B3 = 3\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	gitAt(t, repoB, now, "add", ".")
 	gitAt(t, repoB, now, "commit", "-q", "-m", "init b")
+	if err := os.WriteFile(filepath.Join(repoB, "base.go"), []byte("package b\nvar B1 = 1\nvar B2 = 2\nvar B3 = 3\nvar B4 = 4\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	recB := httptest.NewRecorder()
 	gw.ServeHTTP(recB, localRequest(http.MethodGet, "/api/hoxi/dev-pulse?directory="+repoB+"&sessionID=ses_wt", nil))
@@ -511,7 +519,40 @@ func TestDevPulseCombinesProjectRootAndActiveWorktreeWithoutCrossProjectLeak(t *
 	if err := json.Unmarshal(recB.Body.Bytes(), &pulseB); err != nil {
 		t.Fatal(err)
 	}
-	if pulseB.TodayCommits != 1 || pulseB.CommittedAdditions != 1 || pulseB.UncommittedAdditions != 0 {
+	if pulseB.TodayCommits != 1 || pulseB.CommittedAdditions != 4 || pulseB.UncommittedAdditions != 1 {
 		t.Fatalf("repoB stats leaked from ses_wt: %+v", pulseB)
+	}
+
+	// Register repoB in workspaces: global dev-pulse and history (no ?directory=)
+	// must sum repoA + wtDir + repoB without colliding on same-named base.go.
+	if _, err := gw.workspaces.EnsureProjectForDirectory(repoB); err != nil {
+		t.Fatal(err)
+	}
+	recGlobal := httptest.NewRecorder()
+	gw.ServeHTTP(recGlobal, localRequest(http.MethodGet, "/api/hoxi/dev-pulse?refresh=1", nil))
+	if recGlobal.Code != http.StatusOK {
+		t.Fatalf("global dev-pulse status = %d: %s", recGlobal.Code, recGlobal.Body.String())
+	}
+	var globalPulse gitDailyPulseResponse
+	if err := json.Unmarshal(recGlobal.Body.Bytes(), &globalPulse); err != nil {
+		t.Fatal(err)
+	}
+	// Total across repoA (3 commits, +6 committed, +2 uncommitted, 4 files) + repoB (1 commit, +4 committed, +1 uncommitted, 1 file).
+	if globalPulse.TodayCommits != 4 || globalPulse.CommittedAdditions != 10 || globalPulse.UncommittedAdditions != 3 || globalPulse.ChangedFiles != 5 {
+		t.Fatalf("expected global pulse across repoA + wtDir + repoB (commits=4, commAdd=10, uncommAdd=3, files=5), got %+v", globalPulse)
+	}
+
+	recGlobalHist := httptest.NewRecorder()
+	gw.ServeHTTP(recGlobalHist, localRequest(http.MethodGet, "/api/hoxi/dev-pulse/history?days=2", nil))
+	if recGlobalHist.Code != http.StatusOK {
+		t.Fatalf("global history status = %d: %s", recGlobalHist.Code, recGlobalHist.Body.String())
+	}
+	var globalHist devPulseHistoryResponse
+	if err := json.Unmarshal(recGlobalHist.Body.Bytes(), &globalHist); err != nil {
+		t.Fatal(err)
+	}
+	todayRow := historyDayByDate(globalHist.Days, nowTime.Format("2006-01-02"))
+	if todayRow == nil || todayRow.Commits != 4 || todayRow.Additions != 13 || todayRow.Files != 5 {
+		t.Fatalf("expected global history today row to match global pulse (commits=4, add=13, files=5), got %+v", todayRow)
 	}
 }

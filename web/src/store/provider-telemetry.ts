@@ -181,6 +181,7 @@ interface ActiveTurnContext {
   firstTokenRecorded: boolean;
   ttftMs: number;
   consecutiveToolErrors: number;
+  hallucinationFlagged: boolean;
 }
 
 const activeTurnsBySession = new Map<string, ActiveTurnContext>();
@@ -223,6 +224,7 @@ export function recordPromptDispatched(
     firstTokenRecorded: false,
     ttftMs: 0,
     consecutiveToolErrors: 0,
+    hallucinationFlagged: false,
   });
 }
 
@@ -291,6 +293,18 @@ export function recordSessionRetry(sessionID: string, attempt: number, message?:
   schedulePersistTelemetry();
 }
 
+function isNonModelToolFailure(errText?: string): boolean {
+  if (!errText) return false;
+  const lower = errText.toLowerCase();
+  return (
+    lower.includes("interrupted before completion") ||
+    lower.includes("tool execution was canceled") ||
+    lower.includes("turn ended before the subagent reported") ||
+    lower.includes("operation not permitted") ||
+    lower.includes("task is not running")
+  );
+}
+
 export function recordToolPartUpdate(part: MessagePart) {
   if (part.type !== "tool") return;
   const status = part.state.status;
@@ -300,6 +314,10 @@ export function recordToolPartUpdate(part: MessagePart) {
   if (processedToolPartKeys.has(dedupKey)) return;
   processedToolPartKeys.add(dedupKey);
 
+  if (status === "error" && isNonModelToolFailure(part.state.error)) {
+    return;
+  }
+
   const resolved = resolveSessionProvider(part.sessionID);
   if (!resolved) return;
 
@@ -308,7 +326,8 @@ export function recordToolPartUpdate(part: MessagePart) {
   if (status === "error") {
     if (ctx) {
       ctx.consecutiveToolErrors += 1;
-      if (ctx.consecutiveToolErrors >= 2) {
+      if (ctx.consecutiveToolErrors >= 3 && !ctx.hallucinationFlagged) {
+        ctx.hallucinationFlagged = true;
         isHallucinationLoop = true;
       }
     }

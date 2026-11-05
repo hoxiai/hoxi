@@ -152,9 +152,8 @@ func (g *Gateway) handleDevPulseHistory(w http.ResponseWriter, r *http.Request) 
 
 	dir := strings.TrimSpace(r.URL.Query().Get("directory"))
 	sessionID := strings.TrimSpace(r.URL.Query().Get("sessionID"))
-	workDir, extraWorktreeDir := g.resolvePulseGitDirs(dir, sessionID)
-	if workDir != "" {
-		collectGitHistory(workDir, start, endExclusive, todayStart, day, extraWorktreeDir)
+	if targets := g.resolvePulseGitTargets(dir, sessionID); len(targets) > 0 {
+		collectGitHistory(targets, start, endExclusive, todayStart, day)
 	}
 
 	sortHistoryModels(byDate)
@@ -438,30 +437,25 @@ func (g *Gateway) collectRunnerHistory(startMs, endMs int64, day func(string) *h
 // collectGitHistory buckets commit numstat into per-day totals with a single
 // git invocation per directory, and folds today's uncommitted working-tree
 // changes into today's bucket when today falls within [start, end).
-func collectGitHistory(workDir string, start, end, todayStart time.Time, day func(string) *historyDay, extraDirs ...string) {
+func collectGitHistory(targets []pulseGitTarget, start, end, todayStart time.Time, day func(string) *historyDay) {
 	sinceArg := "--since=" + start.Format(time.RFC3339)
 	untilArg := "--until=" + end.Format(time.RFC3339)
 	startKey := start.Format("2006-01-02")
 	endInclusiveKey := end.AddDate(0, 0, -1).Format("2006-01-02")
 
-	dirs := make([]string, 0, 1+len(extraDirs))
-	if strings.TrimSpace(workDir) != "" {
-		dirs = append(dirs, workDir)
-	}
-	for _, d := range extraDirs {
-		if strings.TrimSpace(d) != "" && !samePulseDir(workDir, d) {
-			dirs = append(dirs, d)
-		}
-	}
-
 	loc := start.Location()
 	fileSets := make(map[string]map[string]struct{})
 	seenCommits := make(map[string]struct{})
 
-	for idx, dir := range dirs {
-		logOut, err := worktree.RunGitRaw(dir,
+	for _, t := range targets {
+		args := []string{
 			"log", sinceArg, untilArg, "--no-merges", "--no-renames", "--numstat",
-			"--pretty=format:COMMIT:%H\t%ct\t%s")
+			"--pretty=format:COMMIT:%H\t%ct\t%s",
+		}
+		if !t.isWorktree {
+			args = append(args, "--branches", "HEAD")
+		}
+		logOut, err := worktree.RunGitRaw(t.dir, args...)
 		if err != nil {
 			continue
 		}
@@ -491,7 +485,7 @@ func collectGitHistory(workDir string, start, end, todayStart time.Time, day fun
 					}
 					seenCommits[sha] = struct{}{}
 				}
-				if idx > 0 && isInternalSnapshotCommitSubject(subject) {
+				if isInternalSnapshotCommitSubject(subject) {
 					current = ""
 					continue
 				}
@@ -523,7 +517,7 @@ func collectGitHistory(workDir string, start, end, todayStart time.Time, day fun
 			target := day(current)
 			target.Additions += add
 			target.Deletions += del
-			fileSets[current][file] = struct{}{}
+			fileSets[current][t.repoRoot+"\x00"+file] = struct{}{}
 		}
 	}
 
@@ -532,8 +526,8 @@ func collectGitHistory(workDir string, start, end, todayStart time.Time, day fun
 		uncommittedFileSet := make(map[string]struct{})
 		var budget untrackedBudget
 		var uncommAdd, uncommDel int
-		for _, dir := range dirs {
-			a, d, _ := collectGitUncommittedInto(dir, uncommittedFileSet, &budget)
+		for _, t := range targets {
+			a, d, _ := collectGitUncommittedInto(t.dir, t.repoRoot, uncommittedFileSet, &budget)
 			uncommAdd += a
 			uncommDel += d
 		}
@@ -561,19 +555,24 @@ type untrackedBudget struct {
 	truncated bool
 }
 
-func collectGitUncommittedInto(workDir string, uncommittedFileSet map[string]struct{}, budget *untrackedBudget) (additions, deletions int, branch string) {
+func collectGitUncommittedInto(workDir, repoRoot string, uncommittedFileSet map[string]struct{}, budget *untrackedBudget) (additions, deletions int, branch string) {
+	if repoRoot == "" {
+		repoRoot = workDir
+	}
+	seenInWorktree := make(map[string]struct{})
 	if numstat, err := worktree.RunGit(workDir, "diff", "--no-renames", "--numstat", "HEAD"); err == nil {
 		for _, line := range strings.Split(strings.TrimSpace(numstat), "\n") {
 			add, del, file, ok := parseGitNumstatLine(line)
 			if !ok {
 				continue
 			}
-			if _, seen := uncommittedFileSet[file]; seen {
+			if _, seen := seenInWorktree[file]; seen {
 				continue
 			}
+			seenInWorktree[file] = struct{}{}
 			additions += add
 			deletions += del
-			uncommittedFileSet[file] = struct{}{}
+			uncommittedFileSet[repoRoot+"\x00"+file] = struct{}{}
 		}
 	}
 
@@ -582,10 +581,11 @@ func collectGitUncommittedInto(workDir string, uncommittedFileSet map[string]str
 		if rel == "" || strings.HasSuffix(rel, "/") || isGeneratedOrLockFile(rel) {
 			return
 		}
-		if _, seen := uncommittedFileSet[rel]; seen {
+		if _, seen := seenInWorktree[rel]; seen {
 			return
 		}
-		uncommittedFileSet[rel] = struct{}{}
+		seenInWorktree[rel] = struct{}{}
+		uncommittedFileSet[repoRoot+"\x00"+rel] = struct{}{}
 		if budget.truncated || budget.readCount >= maxUntrackedFilesToCount {
 			budget.truncated = true
 			return
@@ -605,11 +605,10 @@ func collectGitUncommittedInto(workDir string, uncommittedFileSet map[string]str
 		}
 		budget.readCount++
 		budget.readBytes += int64(len(data))
-		cnt := bytes.Count(data, []byte{'\n'})
+		additions += bytes.Count(data, []byte{'\n'})
 		if data[len(data)-1] != '\n' {
-			cnt++
+			additions++
 		}
-		additions += cnt
 	}
 
 	if porcelain, err := worktree.RunGitRaw(workDir, "status", "--porcelain", "-b"); err == nil {
@@ -652,8 +651,7 @@ func isInternalSnapshotCommitSubject(subject string) bool {
 
 func samePulseDir(a, b string) bool {
 	ca := canonicalPulseDir(a)
-	cb := canonicalPulseDir(b)
-	return ca != "" && ca == cb
+	return ca != "" && ca == canonicalPulseDir(b)
 }
 
 func canonicalPulseDir(dir string) string {
@@ -670,45 +668,120 @@ func canonicalPulseDir(dir string) string {
 	return clean
 }
 
-func (g *Gateway) resolvePulseGitDirs(rawDir, sessionID string) (primaryDir, extraWorktreeDir string) {
-	workDir := strings.TrimSpace(rawDir)
-	if workDir == "" {
-		workDir = g.rootDir
-		if g.worktrees != nil {
-			if rt := g.worktrees.RootDir(); rt != "" {
-				workDir = rt
-			}
-		}
+type pulseGitTarget struct {
+	dir, repoRoot string
+	isWorktree    bool
+}
+
+func pulseTargetsCacheKey(targets []pulseGitTarget) string {
+	parts := make([]string, len(targets))
+	for i, t := range targets {
+		parts[i] = t.dir
 	}
-	sessDir, sessProj := g.sessionPulseDirectories(sessionID)
-	if strings.TrimSpace(rawDir) == "" && sessDir != "" {
-		if sessProj != "" {
-			workDir = sessProj
+	return strings.Join(parts, "\x00")
+}
+
+func findGitWorkingTreeRoot(dir string) string {
+	curr := canonicalPulseDir(dir)
+	if info, err := os.Stat(curr); curr == "" || err != nil || !info.IsDir() {
+		return ""
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(curr, ".git")); err == nil {
+			return curr
+		}
+		parent := filepath.Dir(curr)
+		if parent == curr || parent == "" || parent == "." {
+			return ""
+		}
+		curr = parent
+	}
+}
+
+func (g *Gateway) resolvePulseGitTargets(rawDir, sessionID string) []pulseGitTarget {
+	var roots, worktrees []pulseGitTarget
+	seen := make(map[string]struct{})
+	addTarget := func(dir, repoRoot string, isWT bool) {
+		if dir == "" {
+			return
+		}
+		if _, ok := seen[dir]; ok {
+			return
+		}
+		seen[dir] = struct{}{}
+		t := pulseGitTarget{dir: dir, repoRoot: repoRoot, isWorktree: isWT}
+		if isWT {
+			worktrees = append(worktrees, t)
 		} else {
-			workDir = sessDir
+			roots = append(roots, t)
 		}
 	}
-	if root := hoxipaths.ProjectRootForWorktree(workDir); root != "" {
-		if info, err := os.Stat(root); err == nil && info.IsDir() {
-			if !samePulseDir(root, workDir) {
-				extraWorktreeDir = workDir
+	addCandidate := func(raw string) string {
+		wtTop := findGitWorkingTreeRoot(raw)
+		if wtTop == "" {
+			return ""
+		}
+		repoRoot := wtTop
+		if parent := hoxipaths.ProjectRootForWorktree(wtTop); parent != "" {
+			if pTop := findGitWorkingTreeRoot(parent); pTop != "" {
+				repoRoot = pTop
 			}
-			workDir = root
+		}
+		addTarget(repoRoot, repoRoot, false)
+		if !samePulseDir(wtTop, repoRoot) {
+			addTarget(wtTop, repoRoot, true)
+		}
+		return repoRoot
+	}
+
+	sessDir, sessProj := g.sessionPulseDirectories(sessionID)
+	if trimmed := strings.TrimSpace(rawDir); trimmed != "" {
+		if explicitRoot := addCandidate(trimmed); sessDir != "" && explicitRoot != "" {
+			sRoot := firstNonEmptyString(hoxipaths.ProjectRootForWorktree(sessDir), sessProj, sessDir)
+			if samePulseDir(explicitRoot, findGitWorkingTreeRoot(sRoot)) {
+				addCandidate(sessDir)
+			}
+		}
+	} else {
+		addCandidate(g.rootDir)
+		if g.worktrees != nil {
+			addCandidate(g.worktrees.RootDir())
+		}
+		if g.workspaces != nil {
+			for _, root := range g.workspaces.AllProjectRoots() {
+				addCandidate(root)
+			}
+		}
+		if g.runner != nil {
+			store := g.runner.Store()
+			for _, info := range store.List("") {
+				addCandidate(info.Directory)
+				if rec, ok := store.Meta(info.ID); ok {
+					addCandidate(rec.ProjectDir)
+					addCandidate(rec.WorktreePath)
+				}
+			}
+		}
+		for _, dir := range queryOpenCodeSessionDirs() {
+			addCandidate(dir)
+		}
+		addCandidate(sessProj)
+		addCandidate(sessDir)
+	}
+
+	for _, r := range roots {
+		entries, _ := os.ReadDir(filepath.Join(r.repoRoot, ".hoxi", "worktrees"))
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			wtDir := filepath.Join(r.repoRoot, ".hoxi", "worktrees", entry.Name())
+			if wtTop := findGitWorkingTreeRoot(wtDir); wtTop != "" && !samePulseDir(wtTop, r.repoRoot) {
+				addTarget(wtTop, r.repoRoot, true)
+			}
 		}
 	}
-	if sessDir != "" && !samePulseDir(workDir, sessDir) {
-		sessRoot := sessProj
-		if r := hoxipaths.ProjectRootForWorktree(sessDir); r != "" {
-			sessRoot = r
-		}
-		if sessRoot == "" {
-			sessRoot = sessDir
-		}
-		if samePulseDir(workDir, sessRoot) {
-			extraWorktreeDir = sessDir
-		}
-	}
-	return workDir, extraWorktreeDir
+	return append(roots, worktrees...)
 }
 
 // sortHistoryModels keeps the per-day model list stable for the UI.

@@ -148,11 +148,8 @@ func (g *Gateway) handleDevPulse(w http.ResponseWriter, r *http.Request) {
 
 	dir := strings.TrimSpace(r.URL.Query().Get("directory"))
 	sessionID := strings.TrimSpace(r.URL.Query().Get("sessionID"))
-	workDir, extraWorktreeDir := g.resolvePulseGitDirs(dir, sessionID)
-	cacheKey := workDir
-	if extraWorktreeDir != "" {
-		cacheKey = workDir + "\x00" + extraWorktreeDir
-	}
+	targets := g.resolvePulseGitTargets(dir, sessionID)
+	cacheKey := pulseTargetsCacheKey(targets)
 
 	forced := strings.TrimSpace(r.URL.Query().Get("refresh")) != ""
 
@@ -196,9 +193,9 @@ func (g *Gateway) handleDevPulse(w http.ResponseWriter, r *http.Request) {
 	// CLI runtimes (independent of workDir; cached across worktree switches).
 	g.collectDailyUsage(now, startOfTodayMs, forced, &res)
 
-	// 3. Query Git repository for today's source code additions & deletions
-	if workDir != "" {
-		collectGitDailyStats(workDir, startOfToday, &res, extraWorktreeDir)
+	// 3. Query Git repositories for today's source code additions & deletions
+	if len(targets) > 0 {
+		collectGitDailyStats(targets, startOfToday, &res)
 	}
 
 	g.pulseCache.mu.Lock()
@@ -515,23 +512,17 @@ func parseGitNumstatLine(rawLine string) (int, int, string, bool) {
 	return add, del, file, true
 }
 
-func collectGitDailyStats(workDir string, startOfToday time.Time, res *gitDailyPulseResponse, extraDirs ...string) {
+func collectGitDailyStats(targets []pulseGitTarget, startOfToday time.Time, res *gitDailyPulseResponse) {
 	committedFileSet := make(map[string]struct{})
 	seenCommits := make(map[string]struct{})
 	sinceArg := "--since=" + startOfToday.Format(time.RFC3339)
 
-	dirs := make([]string, 0, 1+len(extraDirs))
-	if strings.TrimSpace(workDir) != "" {
-		dirs = append(dirs, workDir)
-	}
-	for _, d := range extraDirs {
-		if strings.TrimSpace(d) != "" && !samePulseDir(workDir, d) {
-			dirs = append(dirs, d)
+	for _, t := range targets {
+		args := []string{"log", sinceArg, "--no-merges", "--no-renames", "--numstat", "--pretty=format:COMMIT:%H\t%s"}
+		if !t.isWorktree {
+			args = append(args, "--branches", "HEAD")
 		}
-	}
-
-	for idx, dir := range dirs {
-		logOut, err := worktree.RunGitRaw(dir, "log", sinceArg, "--no-merges", "--no-renames", "--numstat", "--pretty=format:COMMIT:%H\t%s")
+		logOut, err := worktree.RunGitRaw(t.dir, args...)
 		if err != nil {
 			continue
 		}
@@ -556,7 +547,7 @@ func collectGitDailyStats(workDir string, startOfToday time.Time, res *gitDailyP
 					}
 					seenCommits[sha] = struct{}{}
 				}
-				if idx > 0 && isInternalSnapshotCommitSubject(subject) {
+				if isInternalSnapshotCommitSubject(subject) {
 					skipCurrent = true
 					continue
 				}
@@ -573,18 +564,18 @@ func collectGitDailyStats(workDir string, startOfToday time.Time, res *gitDailyP
 			}
 			res.CommittedAdditions += add
 			res.CommittedDeletions += del
-			committedFileSet[file] = struct{}{}
+			committedFileSet[t.repoRoot+"\x00"+file] = struct{}{}
 		}
 	}
 	res.CommittedFiles = len(committedFileSet)
 
 	uncommittedFileSet := make(map[string]struct{})
 	var budget untrackedBudget
-	for _, dir := range dirs {
-		add, del, branch := collectGitUncommittedInto(dir, uncommittedFileSet, &budget)
+	for _, t := range targets {
+		add, del, branch := collectGitUncommittedInto(t.dir, t.repoRoot, uncommittedFileSet, &budget)
 		res.UncommittedAdditions += add
 		res.UncommittedDeletions += del
-		if branch != "" {
+		if res.Branch == "" && branch != "" {
 			res.Branch = branch
 		}
 	}
@@ -599,6 +590,26 @@ func collectGitDailyStats(workDir string, startOfToday time.Time, res *gitDailyP
 		changed[file] = struct{}{}
 	}
 	res.ChangedFiles = len(changed)
+}
+
+func queryOpenCodeSessionDirs() []string {
+	dbPath := hoxipaths.DBPath()
+	if dbPath == "" {
+		return nil
+	}
+	if _, err := os.Stat(dbPath); err != nil {
+		return nil
+	}
+	const q = `SELECT COALESCE(json_group_array(directory), '[]') FROM (SELECT DISTINCT directory FROM session WHERE directory IS NOT NULL AND directory != '' LIMIT 200);`
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	out, err := subproc.CommandContext(ctx, sqlitecli.Executable(), "-readonly", "-cmd", ".timeout 2000", dbPath, q).Output()
+	if err != nil || len(bytes.TrimSpace(out)) == 0 {
+		return nil
+	}
+	var dirs []string
+	_ = json.Unmarshal(bytes.TrimSpace(out), &dirs)
+	return dirs
 }
 
 func queryOpenCodeDailyDB(startOfTodayMs int64, res *gitDailyPulseResponse) {

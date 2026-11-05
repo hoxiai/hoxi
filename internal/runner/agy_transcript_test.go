@@ -467,3 +467,59 @@ func TestStoreHydratesLegacyAgyMultiStepTurnContextTokensOnLoad(t *testing.T) {
 		t.Fatalf("hydration must preserve cumulative billing/telemetry tokens, got %+v", tok)
 	}
 }
+
+func TestStoreHydrationClearsStaleAgyResultErrorOnCompletedTurn(t *testing.T) {
+	storeDir := t.TempDir()
+	s1 := NewStore(storeDir)
+	rec := SessionRecord{
+		ID:         "ses_agy_stale_err_hydrate",
+		Runtime:    string(RuntimeAntigravity),
+		ExternalID: "74f0a507-fbff-464d-b33a-6dd193ff5f77",
+		ProjectDir: "/repo",
+		Turns: []MessageTurn{
+			{
+				Info:  MessageInfo{ID: "msg_u_1", SessionID: "ses_agy_stale_err_hydrate", Role: "user"},
+				Parts: []MessagePart{{ID: "prt_u_1", SessionID: "ses_agy_stale_err_hydrate", MessageID: "msg_u_1", Type: "text", Text: "fix stats"}},
+			},
+			{
+				Info: MessageInfo{
+					ID:        "msg_a_1",
+					SessionID: "ses_agy_stale_err_hydrate",
+					Role:      "assistant",
+					Finish:    "error",
+					Error:     newClassifiedMessageError("RunnerError", `API error (attempt 1): request failed: Post "https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse": EOF`, 0),
+				},
+				Parts: []MessagePart{
+					{
+						ID:        "prt_msg_a_1_tool_89",
+						SessionID: "ses_agy_stale_err_hydrate",
+						MessageID: "msg_a_1",
+						Type:      "tool",
+						Tool:      "manage_task",
+						State:     &ToolState{Status: "error", Error: "task is not running", Time: &PartTime{Start: 100, End: 110}},
+					},
+					{
+						ID:        "prt_msg_a_1_text_197",
+						SessionID: "ses_agy_stale_err_hydrate",
+						MessageID: "msg_a_1",
+						Type:      "text",
+						Text:      "已修复并通过全部验证。",
+						Time:      &PartTime{Start: 200, End: 300},
+					},
+				},
+			},
+		},
+	}
+	if err := s1.Put(rec); err != nil {
+		t.Fatal(err)
+	}
+
+	s2 := NewStore(storeDir)
+	loaded, ok := s2.Get("ses_agy_stale_err_hydrate")
+	if !ok || len(loaded.Turns) != 2 {
+		t.Fatalf("unexpected loaded record: %+v", loaded)
+	}
+	if loaded.Turns[1].Info.Error != nil || loaded.Turns[1].Info.Finish != "stop" {
+		t.Fatalf("expected stale RunnerError cleared on completed turn, got finish=%q err=%+v", loaded.Turns[1].Info.Finish, loaded.Turns[1].Info.Error)
+	}
+}

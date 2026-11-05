@@ -1,4 +1,4 @@
-import { createEffect, createMemo, Index, Show } from "solid-js";
+import { createMemo, Index, onMount, Show } from "solid-js";
 import { BarChart3, ChevronRight, Trophy } from "lucide-solid";
 import {
   computeDailyDevPulseStats,
@@ -6,7 +6,6 @@ import {
   openLeaderboardModal,
   openSettingsModal,
   refreshDailyDevPulse,
-  workspace,
 } from "../../store/workspace";
 import { ProviderIcon } from "../icons";
 import { t } from "../../i18n";
@@ -30,9 +29,7 @@ export default function DevPulseContent(props: { onNavigate: () => void }) {
     }
   );
 
-  createEffect(() => {
-    void workspace.rootDir;
-    void workspace.activeSessionID;
+  onMount(() => {
     void refreshDailyDevPulse(false);
   });
 

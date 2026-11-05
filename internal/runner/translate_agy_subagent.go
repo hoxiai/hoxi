@@ -168,6 +168,7 @@ func (t *TurnTranslator) handleAgySystemMessage(su *agyStepUpdate, now int64) []
 		return nil
 	}
 	t.agyFinalResponseDone = false
+	t.agyFinalResponseStep = 0
 	tr := t.subagentByConv[sender]
 	if tr == nil || tr.reported {
 		tr = t.firstUnreportedSubagent()

@@ -88,22 +88,17 @@ const [gitDailyPulse, setGitDailyPulse] = createSignal<GitDailyPulseResponse>({
 const [syncingPulse, setSyncingPulse] = createSignal(false);
 
 let pulseInFlight = false;
-let pulseInFlightTarget = "";
 let pulseGeneration = 0;
 let lastPulseSignature = "";
 
 export async function refreshDailyDevPulse(manual = false): Promise<void> {
-  const dir = workspace.rootDir || undefined;
-  const sid = workspace.activeSessionID || undefined;
-  const target = `${dir ?? ""}\u0000${sid ?? ""}`;
-  if (pulseInFlight && !manual && target === pulseInFlightTarget) return;
+  if (pulseInFlight && !manual) return;
   const gen = ++pulseGeneration;
   pulseInFlight = true;
-  pulseInFlightTarget = target;
   if (manual) setSyncingPulse(true);
   void syncOfficialModelPricing();
   try {
-    const res = await hoxiAPI.getGitDailyPulse(dir, sid, manual);
+    const res = await hoxiAPI.getGitDailyPulse(undefined, undefined, manual);
     if (gen !== pulseGeneration) return;
     if (res) {
       const sig = JSON.stringify(res);

@@ -118,7 +118,12 @@ export function computeProviderHealth(
   if (avgTtftMs !== null && avgTtftMs > 7_500) {
     riskTags.push("slow_ttft");
   }
-  if (target.hallucinationFlags >= 2 && hallucinationRatio >= 0.15) {
+  const toolLoopSuppressed =
+    target.toolCallsFailed > 0 &&
+    target.revertCount === 0 &&
+    toolSuccessRate !== null &&
+    toolSuccessRate >= 85;
+  if (target.hallucinationFlags >= 2 && hallucinationRatio >= 0.15 && !toolLoopSuppressed) {
     riskTags.push("high_hallucination");
   }
   if (toolSuccessRate !== null && toolSuccessRate < 82 && target.toolCallsFailed >= 2) {

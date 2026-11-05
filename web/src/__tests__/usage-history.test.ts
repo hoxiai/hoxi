@@ -285,53 +285,30 @@ describe("usage history pricing", () => {
     }
   });
 
-  it("refetches and ignores stale loadUsageHistory when rootDir or activeSessionID changes with same selection", async () => {
+  it("queries global usage history without scoping to a single project", async () => {
     const origHistory = hoxiAPI.getDevPulseHistory;
     const savedRoot = workspace.rootDir;
     const savedSid = workspace.activeSessionID;
-    let resolveA!: (res: DevPulseHistoryResponse) => void;
-    let resolveB!: (res: DevPulseHistoryResponse) => void;
-    let seenSessionB: string | undefined;
+    let seenDir: string | undefined = "unset";
+    let seenSid: string | undefined = "unset";
     try {
-      hoxiAPI.getDevPulseHistory = (_days, dir, window) => {
-        if (dir === "/repo-a") {
-          return new Promise<DevPulseHistoryResponse>((r) => {
-            resolveA = r;
-          });
-        }
-        seenSessionB = window?.sessionID;
-        return new Promise<DevPulseHistoryResponse>((r) => {
-          resolveB = r;
-        });
+      hoxiAPI.getDevPulseHistory = async (_days, dir, window) => {
+        seenDir = dir;
+        seenSid = window?.sessionID;
+        return {
+          days: [historyDay({ date: "2026-11-05", additions: 88, deletions: 22, commits: 2 })],
+          startDate: "2025-11-06",
+          endDate: "2026-11-05",
+          timezone: "UTC",
+        };
       };
 
       setWorkspace({ rootDir: "/repo-a", activeSessionID: "ses_a" });
-      const pA = loadUsageHistory({ kind: "overview" }, false);
-      await new Promise((r) => setTimeout(r, 10));
-      setWorkspace({ rootDir: "/repo-b", activeSessionID: "ses_b" });
-      const pB = loadUsageHistory({ kind: "overview" }, false);
-      await new Promise((r) => setTimeout(r, 10));
-
-      resolveB({
-        days: [historyDay({ date: "2026-11-05", additions: 88, deletions: 22, commits: 2 })],
-        startDate: "2025-11-06",
-        endDate: "2026-11-05",
-        timezone: "UTC",
-      });
-      await pB;
-      assertEqual(seenSessionB, "ses_b", "forwards activeSessionID to history endpoint");
+      await loadUsageHistory({ kind: "overview" }, true);
+      assertEqual(seenDir, undefined, "usage history must not scope to a single project rootDir");
+      assertEqual(seenSid, undefined, "usage history must not scope to a single sessionID");
       assertEqual(usageHistory()[0].additions, 88);
       assertEqual(usageHistory()[0].deletions, 22);
-
-      resolveA({
-        days: [historyDay({ date: "2026-11-05", additions: 5, deletions: 1, commits: 1 })],
-        startDate: "2025-11-06",
-        endDate: "2026-11-05",
-        timezone: "UTC",
-      });
-      await pA;
-      assertEqual(usageHistory()[0].additions, 88, "stale repo-a response ignored");
-      assertEqual(usageHistory()[0].deletions, 22, "stale repo-a deletions ignored");
     } finally {
       hoxiAPI.getDevPulseHistory = origHistory;
       setWorkspace({ rootDir: savedRoot, activeSessionID: savedSid });

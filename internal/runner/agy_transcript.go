@@ -351,8 +351,15 @@ func (t *TurnTranslator) isStaleAgyResultErrorLocked(res *agyResult) bool {
 	for _, p := range t.partsByID {
 		if p != nil && p.Type == "tool" && p.State != nil {
 			switch p.State.Status {
-			case "pending", "running", "error":
+			case "pending", "running":
 				return false
+			case "error":
+				// A tool error from an earlier step that the model already
+				// recovered from (before completing a later agent_response)
+				// must not resurrect a stale historical trajectory error.
+				if step, ok := parseAgyPartStepIndex(p.ID); !ok || step >= t.agyFinalResponseStep {
+					return false
+				}
 			}
 		}
 	}
@@ -446,25 +453,67 @@ func loadAgyTranscriptStepUsage(conversationID string) []agyTranscriptRow {
 	return nil
 }
 
+func turnHasStaleAgyResultError(turn MessageTurn) bool {
+	if turn.Info.Role != "assistant" || turn.Info.Error == nil {
+		return false
+	}
+	errMsg := strings.TrimSpace(turn.Info.Error.Data.Message)
+	if strings.EqualFold(errMsg, "interrupted") || !isRetryableTurnError(errMsg) {
+		return false
+	}
+	maxStep := 0
+	maxDoneTextStep := 0
+	for _, p := range turn.Parts {
+		step, ok := parseAgyPartStepIndex(p.ID)
+		if ok && step > maxStep {
+			maxStep = step
+		}
+		if p.Type == "text" && ok && strings.TrimSpace(p.Text) != "" && p.Time != nil && p.Time.End > 0 && step > maxDoneTextStep {
+			maxDoneTextStep = step
+		}
+	}
+	if maxDoneTextStep <= 0 || maxDoneTextStep < maxStep {
+		return false
+	}
+	for _, p := range turn.Parts {
+		if p.Type == "tool" && p.State != nil {
+			switch p.State.Status {
+			case "pending", "running":
+				return false
+			case "error":
+				if step, ok := parseAgyPartStepIndex(p.ID); !ok || step >= maxDoneTextStep {
+					return false
+				}
+			}
+		}
+	}
+	return true
+}
+
 // hydrateAgyTranscriptTurnTokens repairs legacy Antigravity assistant turns
 // where Tokens.Total summed InputTokens+OutputTokens across every tool-loop
-// step instead of recording the final parent step's context window occupancy.
+// step instead of recording the final parent step's context window occupancy,
+// and clears stale historical result errors on turns whose final response completed.
 func hydrateAgyTranscriptTurnTokens(externalID string, turns []MessageTurn) bool {
+	changed := false
 	needsRepair := false
 	for i := range turns {
+		if turnHasStaleAgyResultError(turns[i]) {
+			turns[i].Info.Error = nil
+			turns[i].Info.Finish = "stop"
+			changed = true
+		}
 		if turnNeedsAgyTokenHydration(turns[i]) {
 			needsRepair = true
-			break
 		}
 	}
 	if !needsRepair {
-		return false
+		return changed
 	}
 	rows := loadAgyTranscriptStepUsage(strings.TrimSpace(externalID))
 	if len(rows) == 0 {
-		return false
+		return changed
 	}
-	changed := false
 	prevMaxStep := 0
 	for i := range turns {
 		if turns[i].Info.Role != "assistant" {

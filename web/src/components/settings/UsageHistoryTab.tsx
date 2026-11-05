@@ -2,7 +2,7 @@
 // Usage & cost panel. Defaults to a year overview (heatmap + today's tally);
 // picking a window switches to a plain daily list, since the bar charts no
 // longer add anything over the table.
-import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, untrack, type JSX } from "solid-js";
+import { createMemo, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js";
 import { ChevronRight, RefreshCw, X } from "lucide-solid";
 import { t } from "../../i18n";
 import {
@@ -17,7 +17,6 @@ import {
   usageHistoryTotals,
   usageSelection,
   USAGE_HISTORY_RANGES,
-  workspace,
   type UsageHistoryDay,
   type UsageHistoryRange,
   type UsageHistoryTotals,
@@ -226,13 +225,8 @@ export default function UsageHistoryTab() {
     initial.kind === "custom" ? initial.range.end : todayDate()
   );
 
-  createEffect(() => {
-    void workspace.rootDir;
-    void workspace.activeSessionID;
-    void loadUsageHistory(untrack(usageSelection));
-  });
-
   onMount(() => {
+    void loadUsageHistory(usageSelection());
     const timer = window.setInterval(() => setTodayDate(toDateInput(new Date())), 60_000);
     onCleanup(() => window.clearInterval(timer));
   });
