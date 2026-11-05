@@ -64,6 +64,8 @@ export const leftNav = {
   customColor: "Custom color",
   workspaceFoldersLabel: "Folders",
   primaryBadge: "Primary",
+  folderMissingBadge: "Deleted on disk",
+  folderMissingHint: "This folder was deleted or moved on disk. Click \"Change\" to select its new location and migrate existing sessions",
   makePrimary: "Make primary",
   changeFolder: "Change",
   removeFolder: "Remove",

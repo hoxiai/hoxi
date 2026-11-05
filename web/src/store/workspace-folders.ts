@@ -183,7 +183,7 @@ interface SavedProfileSnap {
   surface: WorkspaceProfile["surface"];
   hidden: boolean | undefined;
   foldersRef: WorkspaceFolder[] | undefined;
-  folders: Array<{ path: string; isPrimary: boolean | undefined }>;
+  folders: Array<{ path: string; isPrimary: boolean | undefined; missing: boolean | undefined }>;
 }
 
 interface SessionEntrySnap {
@@ -220,18 +220,26 @@ function buildProfileDirMap(list: WorkspaceProfile[]): Map<string, WorkspaceProf
   return map;
 }
 
-function snapshotFolders(folders: WorkspaceFolder[] | undefined): Array<{ path: string; isPrimary: boolean | undefined }> {
-  return (folders || []).map((f) => ({ path: f.path, isPrimary: f.isPrimary }));
+function snapshotFolders(
+  folders: WorkspaceFolder[] | undefined
+): Array<{ path: string; isPrimary: boolean | undefined; missing: boolean | undefined }> {
+  return (folders || []).map((f) => ({ path: f.path, isPrimary: f.isPrimary, missing: f.missing }));
 }
 
 function foldersMatchSnapshot(
   folders: WorkspaceFolder[] | undefined,
-  snap: Array<{ path: string; isPrimary: boolean | undefined }> | undefined
+  snap: Array<{ path: string; isPrimary: boolean | undefined; missing: boolean | undefined }> | undefined
 ): boolean {
   const list = folders || [];
   if (!snap || list.length !== snap.length) return false;
   for (let i = 0; i < list.length; i++) {
-    if (list[i]?.path !== snap[i].path || list[i]?.isPrimary !== snap[i].isPrimary) return false;
+    if (
+      list[i]?.path !== snap[i].path ||
+      list[i]?.isPrimary !== snap[i].isPrimary ||
+      list[i]?.missing !== snap[i].missing
+    ) {
+      return false;
+    }
   }
   return true;
 }
@@ -256,6 +264,7 @@ function trackFolderLookupSources(): void {
     for (let j = 0; j < folders.length; j++) {
       void folders[j]?.path;
       void folders[j]?.isPrimary;
+      void folders[j]?.missing;
     }
   }
   const dismissed = workspace.dismissedProjects;

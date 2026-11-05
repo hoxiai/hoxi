@@ -26,7 +26,7 @@ export interface ProjectNavEntry {
   name: string;
   path: string;
   color: string;
-  folders: Array<{ path: string; isPrimary: boolean }>;
+  folders: Array<{ path: string; isPrimary: boolean; missing?: boolean }>;
   sandboxes: number;
   vcs: boolean;
   isPinned: boolean;
@@ -238,7 +238,11 @@ export function buildAllProjects(surface: "code" | "work" = "code"): ProjectNavE
       name: saved.name || basename(primary),
       path: primary,
       color: normalizeWorkspaceIdentityColor(saved.color),
-      folders: saved.folders.map((f) => ({ path: f.path, isPrimary: f.isPrimary })),
+      folders: saved.folders.map((f) => ({
+        path: f.path,
+        isPrimary: f.isPrimary,
+        missing: f.missing,
+      })),
       sandboxes: 0,
       vcs: true,
       isPinned: primary === normalizeFolderPath(workspace.rootDir),

@@ -221,7 +221,7 @@ func TestFolderPathChangeWithoutIDNeverRelinks(t *testing.T) {
 	}
 }
 
-func TestExplicitReplaceKeepsSessionsWhenOldFolderStillExists(t *testing.T) {
+func TestExplicitReplaceRelinksWhenOldFolderStillExistsOrNewHadHiddenProject(t *testing.T) {
 	homeDir := setupTestEnv(t)
 	a := mkdirTempProject(t, homeDir, "proj-a")
 	b := mkdirTempProject(t, homeDir, "proj-b")
@@ -231,15 +231,21 @@ func TestExplicitReplaceKeepsSessionsWhenOldFolderStillExists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	relinked := false
-	store.SetFolderRelinkHandler(func(_, _, _ string) error { relinked = true; return nil })
+	if _, err := store.EnsureProjectForDirectory(b); err != nil {
+		t.Fatal(err)
+	}
+	var gotProjectID, gotOld, gotNew string
+	store.SetFolderRelinkHandler(func(projectID, oldPath, newPath string) error {
+		gotProjectID, gotOld, gotNew = projectID, oldPath, newPath
+		return nil
+	})
 	if _, err := store.Update(ws.ID, saveWorkspaceRequest{
 		Folders: []workspaceFolderInput{{ID: ws.Folders[0].ID, Path: b, IsPrimary: true}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if relinked {
-		t.Fatal("an existing old folder must not have its sessions moved")
+	if gotProjectID != ws.ID || gotOld != a || gotNew != b {
+		t.Fatalf("explicit replace relink = (%q, %q, %q), want (%q, %q, %q)", gotProjectID, gotOld, gotNew, ws.ID, a, b)
 	}
 }
 
@@ -312,8 +318,11 @@ func TestDeletedPrimaryFolderIsNotRelinkedToSibling(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(kept.Folders) != 2 || kept.Folders[0].Path != a {
-		t.Fatalf("missing primary must be kept: %+v", kept.Folders)
+	if len(kept.Folders) != 2 || kept.Folders[0].Path != a || !kept.Folders[0].Missing || kept.Folders[1].Missing {
+		t.Fatalf("missing primary must be kept and marked missing: %+v", kept.Folders)
+	}
+	if listed := store.List(); len(listed) != 1 || !listed[0].Folders[0].Missing || listed[0].Folders[1].Missing {
+		t.Fatalf("List() must report missing status for deleted folder: %+v", listed)
 	}
 	dropped, err := store.Update(ws.ID, saveWorkspaceRequest{
 		Folders: []workspaceFolderInput{{Path: b, IsPrimary: true}},

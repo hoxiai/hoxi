@@ -50,6 +50,17 @@ func (s *Service) projectIDForDirectory(directory string) (string, bool) {
 	return s.projectResolver.ProjectIDForDirectory(directory)
 }
 
+func (s *Service) canonicalProjectID(projectID string) (string, bool) {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" || s.projectResolver == nil {
+		return "", false
+	}
+	if c, ok := s.projectResolver.(projectCanonicalizer); ok {
+		return c.CanonicalProjectID(projectID)
+	}
+	return projectID, len(s.projectResolver.ProjectRoots(projectID)) > 0
+}
+
 func (s *Service) ensureProjectID(directory string) (string, error) {
 	return s.ensureProjectIDWithSurface(directory, "")
 }
@@ -88,6 +99,7 @@ func (s *Service) backfillProjectIDs() {
 			if live, ok := canonicalizer.CanonicalProjectID(current); ok && live != current {
 				_ = s.store.SetProjectID(rec.ID, live)
 			}
+			s.HealSessionDirectory(rec.ID)
 			continue
 		}
 		projectID, err := s.ensureProjectIDWithSurface(rec.ProjectDir, rec.Surface)

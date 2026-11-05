@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -14,6 +15,9 @@ func (g *Gateway) guardSessionScope(w http.ResponseWriter, r *http.Request) bool
 	sessionID, ok := sessionPathID(r.URL.Path)
 	if !ok || g.worktrees == nil {
 		return true
+	}
+	if g.runner != nil {
+		g.runner.HealSessionDirectory(sessionID)
 	}
 	queryDir, queryPresent, err := directoryQuery(r.URL.RawQuery)
 	if err != nil {
@@ -29,20 +33,24 @@ func (g *Gateway) guardSessionScope(w http.ResponseWriter, r *http.Request) bool
 	if len(headerValues) == 1 {
 		headerDir = strings.TrimSpace(headerValues[0])
 	}
-	if (queryPresent && !directorySelectorValid(queryDir)) || (headerDir != "" && !directorySelectorValid(headerDir)) {
+	binding, known, err := g.worktrees.BindingForSession(sessionID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return false
+	}
+	boundDir := ""
+	if known {
+		boundDir = binding.Directory
+	}
+	if (queryPresent && !directorySelectorValid(queryDir) && !g.allowsRelinkedSessionDirectory(sessionID, queryDir, boundDir)) ||
+		(headerDir != "" && !directorySelectorValid(headerDir) && !g.allowsRelinkedSessionDirectory(sessionID, headerDir, boundDir)) {
 		http.Error(w, "malformed session directory selector", http.StatusBadRequest)
 		return false
 	}
 	// This is a gateway-only selector; never let upstream interpret it.
 	r.Header.Del(sessionDirectoryHeader)
-	if queryPresent && headerDir != "" && !sameDirectory(queryDir, headerDir) {
+	if queryPresent && headerDir != "" && !sameDirectory(queryDir, headerDir) && filepath.Clean(queryDir) != filepath.Clean(headerDir) {
 		http.Error(w, "conflicting session directory selectors", http.StatusBadRequest)
-		return false
-	}
-
-	binding, known, err := g.worktrees.BindingForSession(sessionID)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusForbidden)
 		return false
 	}
 	if !known {
@@ -52,12 +60,28 @@ func (g *Gateway) guardSessionScope(w http.ResponseWriter, r *http.Request) bool
 	if selected == "" {
 		selected = headerDir
 	}
-	if selected != "" && !sameDirectory(selected, binding.Directory) && !allowsSandboxParentDirectory(r, binding.Directory, selected) {
+	if selected != "" && !sameDirectory(selected, binding.Directory) &&
+		!allowsSandboxParentDirectory(r, binding.Directory, selected) &&
+		!g.allowsRelinkedSessionDirectory(sessionID, selected, binding.Directory) {
 		http.Error(w, "session directory does not match its sandbox", http.StatusForbidden)
 		return false
 	}
 	setDirectoryQuery(r, binding.Directory)
 	return true
+}
+
+func (g *Gateway) allowsRelinkedSessionDirectory(sessionID, selected, boundDir string) bool {
+	selected = strings.TrimSpace(selected)
+	if selected == "" || boundDir == "" || !filepath.IsAbs(selected) || !directorySelectorValid(boundDir) {
+		return false
+	}
+	if g.runner == nil || !g.runner.IsSessionInLiveProjectOutsideRoot(sessionID, selected) {
+		return false
+	}
+	if _, statErr := os.Stat(filepath.Clean(selected)); errors.Is(statErr, os.ErrNotExist) {
+		return true
+	}
+	return g.workspaces != nil && g.workspaces.IsDismissed(selected)
 }
 
 func allowsSandboxParentDirectory(r *http.Request, boundDir, selected string) bool {

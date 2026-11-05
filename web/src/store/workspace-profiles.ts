@@ -1,4 +1,5 @@
 // web/src/store/workspace-profiles.ts
+import { produce } from "solid-js/store";
 import { hoxiAPI, type SaveWorkspaceInput, type WorkspaceProfile } from "../services/api";
 import {
   isValidStoredProjectPath,
@@ -59,7 +60,7 @@ export function openEditWorkspaceModal(dirOrWorkspaceID: string) {
     editingWorkspaceID: byDir?.id ?? null,
     editingWorkspaceDir: byDir ? workspacePrimaryFolder(byDir) : normalizeFolderPath(dirOrWorkspaceID),
   });
-  if (!byDir) void loadSavedWorkspaces();
+  void loadSavedWorkspaces();
 }
 
 export function openDeleteWorkspaceModal(dirOrWorkspaceID: string) {
@@ -73,6 +74,7 @@ export function openDeleteWorkspaceModal(dirOrWorkspaceID: string) {
 
 export function openManageWorkspacesModal() {
   setWorkspace({ workspaceModalMode: "manage", editingWorkspaceID: null, editingWorkspaceDir: null });
+  void loadSavedWorkspaces();
 }
 
 export function closeWorkspaceModal() {
@@ -243,6 +245,65 @@ export async function saveWorkspaceProfile(
   if (saved?.id) {
     unrecordDismissedProject(saved.id);
     for (const f of saved.folders || []) unrecordDismissedProject(f.path);
+  }
+
+  const relocatedByOldRoot = new Map<string, string>();
+  if (previous) {
+    const prevByID = new Map(
+      previous.folders
+        .filter((f) => Boolean(f.id))
+        .map((f) => [f.id, normalizeFolderPath(f.path)] as const)
+    );
+    for (const sf of saved.folders || []) {
+      const oldPath = sf.id ? prevByID.get(sf.id) : undefined;
+      const newPath = normalizeFolderPath(sf.path);
+      if (oldPath && newPath && oldPath !== newPath && !savedFolderSet.has(oldPath)) {
+        relocatedByOldRoot.set(oldPath, newPath);
+      }
+    }
+  } else if (
+    previousPrimary &&
+    savedPrimary &&
+    previousPrimary !== savedPrimary &&
+    (saved.folders?.length ?? 0) === 1
+  ) {
+    relocatedByOldRoot.set(previousPrimary, savedPrimary);
+  }
+  if (relocatedByOldRoot.size > 0) {
+    const ownedProjectIDs = new Set<string>([saved.id, ...(previous ? [previous.id] : []), ...aliasSet]);
+    const rewriteDir = (rawDir: string | undefined): string | undefined => {
+      if (!rawDir) return rawDir;
+      const norm = normalizeFolderPath(rawDir);
+      const root = stripWorktreePath(norm);
+      const newRoot = root ? relocatedByOldRoot.get(root) : undefined;
+      if (!newRoot) return rawDir;
+      return norm === root ? newRoot : `${newRoot}${norm.slice(root.length)}`;
+    };
+    setWorkspace(
+      produce((state) => {
+        for (const s of state.sessions) {
+          if (s.projectID && !ownedProjectIDs.has(s.projectID)) continue;
+          const nextDir = rewriteDir(s.directory);
+          if (nextDir && nextDir !== s.directory) s.directory = nextDir;
+        }
+        for (const [sid, entry] of Object.entries(state.sessionIndex)) {
+          if (!entry || (entry.projectID && !ownedProjectIDs.has(entry.projectID))) continue;
+          const nextDir = rewriteDir(entry.directory);
+          if (nextDir && nextDir !== entry.directory) {
+            state.sessionIndex[sid] = { ...entry, directory: nextDir };
+          }
+        }
+        for (const [sid, wt] of Object.entries(state.worktreeBySession)) {
+          if (!wt?.directory) continue;
+          const idxEntry = state.sessionIndex[sid];
+          if (idxEntry?.projectID && !ownedProjectIDs.has(idxEntry.projectID)) continue;
+          const nextDir = rewriteDir(wt.directory);
+          if (nextDir && nextDir !== wt.directory) {
+            state.worktreeBySession[sid] = { ...wt, directory: nextDir };
+          }
+        }
+      })
+    );
   }
 
   const activeRoot = normalizeFolderPath(workspace.rootDir);

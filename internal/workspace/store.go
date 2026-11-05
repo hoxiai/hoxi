@@ -187,6 +187,14 @@ func cloneProfile(profile workspaceProfile) workspaceProfile {
 	return profile
 }
 
+func cloneProfileWithDiskStatus(profile workspaceProfile) workspaceProfile {
+	cloned := cloneProfile(profile)
+	for i := range cloned.Folders {
+		cloned.Folders[i].Missing = folderMissingOnDisk(cloned.Folders[i].Path)
+	}
+	return cloned
+}
+
 func (s *workspaceStore) addDismissedLocked(target string) {
 	clean := strings.TrimSpace(target)
 	if clean == "" {
@@ -282,7 +290,7 @@ func (s *workspaceStore) List() []workspaceProfile {
 	defer s.mu.RUnlock()
 	out := make([]workspaceProfile, len(s.workspaces))
 	for i, profile := range s.workspaces {
-		out[i] = cloneProfile(profile)
+		out[i] = cloneProfileWithDiskStatus(profile)
 	}
 	return out
 }

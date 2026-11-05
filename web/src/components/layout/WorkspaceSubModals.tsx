@@ -151,6 +151,11 @@ export function ManageWorkspacesModalView() {
                           })}
                         </span>
                       </Show>
+                      <Show when={item.folders.some((f) => f.missing)}>
+                        <span class="px-1.5 py-0.5 rounded text-[11px] font-semibold bg-rose-500/15 text-rose-500 shrink-0">
+                          {t("leftNav.folderMissingBadge")}
+                        </span>
+                      </Show>
                     </div>
                     <div class="text-[11px] text-zinc-400 font-mono truncate">
                       {item.primaryDir}

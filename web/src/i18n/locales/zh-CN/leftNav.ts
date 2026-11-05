@@ -65,6 +65,8 @@ export const leftNav: LeftNavI18n = {
   customColor: "自定义颜色",
   workspaceFoldersLabel: "包含目录",
   primaryBadge: "主目录",
+  folderMissingBadge: "目录已删除",
+  folderMissingHint: "该目录在磁盘上已删除或移走，请点击「更改」选择新位置，原会话将自动迁移",
   makePrimary: "设为主目录",
   changeFolder: "更改",
   removeFolder: "移除",

@@ -72,6 +72,7 @@ func (s *Service) listConversationsWithSurface(ctx context.Context, projectID, d
 	var entries []entry
 	owned := make(map[string]bool)
 	engineToHoxi := make(map[string]string)
+	s.HealProjectSessions(projectID, directory)
 	for _, info := range s.store.ListProject(projectID, s.projectScopeDirectory(projectID, directory)) {
 		owned[info.ID] = true
 		if info.ExternalID != "" {

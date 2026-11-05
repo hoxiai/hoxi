@@ -124,6 +124,7 @@ export interface WorkspaceFolderInput {
   id?: string;
   path: string;
   isPrimary?: boolean;
+  missing?: boolean;
 }
 
 export interface WorkspaceFolder {
@@ -131,6 +132,7 @@ export interface WorkspaceFolder {
   path: string;
   isPrimary: boolean;
   position: number;
+  missing?: boolean;
 }
 
 export interface WorkspaceProfile {

@@ -56,6 +56,23 @@ type workspaceFolder struct {
 	Path      string `json:"path"`
 	IsPrimary bool   `json:"isPrimary"`
 	Position  int    `json:"position"`
+	Missing   bool   `json:"missing,omitempty"`
+}
+
+func folderMissingOnDisk(path string) bool {
+	trimmed := expandUserPath(path)
+	if trimmed == "" {
+		return false
+	}
+	cleaned := filepath.Clean(trimmed)
+	if realPath, err := filepath.EvalSymlinks(cleaned); err == nil && realPath != "" {
+		cleaned = filepath.Clean(realPath)
+	}
+	stat, err := os.Stat(cleaned)
+	if err != nil {
+		return errors.Is(err, os.ErrNotExist)
+	}
+	return !stat.IsDir()
 }
 
 type workspaceProfile struct {

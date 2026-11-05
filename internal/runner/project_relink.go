@@ -109,11 +109,117 @@ func (s *Service) relinkSession(sessionID, oldRoot, newRoot string) error {
 	if mode != rec.sandboxMode() {
 		sandboxMode = mode
 	}
-	if _, _, err := s.store.RelinkSession(rec.ID, newRoot, newWorktree, branch, baseCommit, sandboxMode); err != nil {
+	updated, updatedOK, err := s.store.RelinkSession(rec.ID, newRoot, newWorktree, branch, baseCommit, sandboxMode)
+	if err != nil {
 		restoreOld()
 		return err
 	}
+	if updatedOK {
+		s.broadcast(rec.ID, SSEEvent{
+			Type:       "session.updated",
+			Properties: map[string]interface{}{"info": updated.ToSessionInfo()},
+		})
+	}
 	return nil
+}
+
+// HealSessionDirectory relinks sessionID to its project's primary root when
+// the session belongs to a live project whose folder list no longer contains
+// the session's ProjectDir (and the old ProjectDir is not owned by another
+// project). This self-heals sessions whose workspace folder was changed while
+// the session was running or before relinking ran.
+func (s *Service) HealSessionDirectory(sessionID string) bool {
+	if s == nil || s.store == nil || s.projectResolver == nil {
+		return false
+	}
+	rec, ok := s.store.Meta(strings.TrimSpace(sessionID))
+	if !ok {
+		return false
+	}
+	targetRoot, shouldHeal := s.staleSessionTargetRoot(rec)
+	if !shouldHeal {
+		return false
+	}
+	return s.relinkSession(rec.ID, rec.ProjectDir, targetRoot) == nil
+}
+
+// HealProjectSessions relinks any stale sessions of projectID whose ProjectDir
+// is no longer part of the project's folders.
+func (s *Service) HealProjectSessions(projectID, directory string) {
+	if s == nil || s.store == nil || s.projectResolver == nil {
+		return
+	}
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" && strings.TrimSpace(directory) != "" {
+		projectID, _ = s.projectIDForDirectory(directory)
+	}
+	if projectID == "" {
+		return
+	}
+	for _, info := range s.store.ListProject(projectID, s.projectScopeDirectory(projectID, directory)) {
+		_ = s.HealSessionDirectory(info.ID)
+	}
+}
+
+func (s *Service) staleSessionTargetRoot(rec SessionRecord) (string, bool) {
+	if rec.ID == "" || rec.Subagent || strings.TrimSpace(rec.ProjectID) == "" || strings.TrimSpace(rec.ProjectDir) == "" {
+		return "", false
+	}
+	canonicalID, live := s.canonicalProjectID(rec.ProjectID)
+	if !live || canonicalID == "" {
+		return "", false
+	}
+	roots := s.projectResolver.ProjectRoots(canonicalID)
+	if len(roots) == 0 {
+		return "", false
+	}
+	normProj := normalizeComparePath(rec.ProjectDir)
+	for _, root := range roots {
+		if normalizeComparePath(root) == normProj {
+			return "", false
+		}
+	}
+	if otherID, ok := s.projectResolver.ProjectIDForDirectory(rec.ProjectDir); ok && otherID != "" && otherID != canonicalID {
+		return "", false
+	}
+	primaryRoot := filepath.Clean(strings.TrimSpace(roots[0]))
+	if info, err := os.Stat(primaryRoot); err != nil || !info.IsDir() {
+		return "", false
+	}
+	if len(roots) == 1 {
+		return primaryRoot, true
+	}
+	if _, err := os.Stat(rec.ProjectDir); errors.Is(err, os.ErrNotExist) {
+		return primaryRoot, true
+	}
+	return "", false
+}
+
+// IsSessionInLiveProjectOutsideRoot reports whether sessionID belongs to a
+// live workspace whose current folder roots do not include candidateDir.
+func (s *Service) IsSessionInLiveProjectOutsideRoot(sessionID, candidateDir string) bool {
+	if s == nil || s.store == nil || s.projectResolver == nil {
+		return false
+	}
+	rec, ok := s.store.Meta(strings.TrimSpace(sessionID))
+	if !ok || strings.TrimSpace(rec.ProjectID) == "" {
+		return false
+	}
+	canonicalID, live := s.canonicalProjectID(rec.ProjectID)
+	if !live || canonicalID == "" {
+		return false
+	}
+	roots := s.projectResolver.ProjectRoots(canonicalID)
+	if len(roots) == 0 {
+		return false
+	}
+	normCandidate := normalizeComparePath(candidateDir)
+	for _, root := range roots {
+		if normalizeComparePath(root) == normCandidate {
+			return false
+		}
+	}
+	return true
 }
 
 func relocatedWorktreePath(rec SessionRecord, newRoot string) string {

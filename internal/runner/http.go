@@ -398,6 +398,7 @@ func (s *Service) handleSessionSubroutes(w http.ResponseWriter, r *http.Request)
 		writeJSONError(w, http.StatusBadRequest, "session id required")
 		return
 	}
+	s.HealSessionDirectory(sessionID)
 
 	switch action {
 	case "":

@@ -229,6 +229,12 @@ func (s *workspaceStore) ProjectRoots(projectID string) []string {
 	return nil
 }
 
+func (s *workspaceStore) IsDismissed(target string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.isDismissedLocked(target)
+}
+
 func (s *workspaceStore) isDismissedLocked(target string) bool {
 	clean := strings.TrimSpace(target)
 	if clean == "" {

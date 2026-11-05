@@ -3,7 +3,6 @@ package workspace
 import (
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -100,7 +99,7 @@ func (s *workspaceStore) createLocked(folders []workspaceFolderInput, input save
 	if err := s.commitLocked(prev); err != nil {
 		return workspaceProfile{}, err
 	}
-	return cloneProfile(created), nil
+	return cloneProfileWithDiskStatus(created), nil
 }
 
 func (s *workspaceStore) Update(id string, input saveWorkspaceRequest) (result workspaceProfile, err error) {
@@ -123,7 +122,21 @@ func (s *workspaceStore) Update(id string, input saveWorkspaceRequest) (result w
 		if err != nil {
 			return workspaceProfile{}, err
 		}
-		return s.createLocked(folders, input, cleanID)
+		created, err := s.createLocked(folders, input, cleanID)
+		if err != nil {
+			return workspaceProfile{}, err
+		}
+		if len(folders) == 1 && (strings.ContainsAny(cleanID, `/\`) || strings.HasPrefix(cleanID, "~")) {
+			oldExpanded := filepath.Clean(expandUserPath(cleanID))
+			oldComp := comparableFolderPath(oldExpanded)
+			newComp := comparableFolderPath(folders[0].Path)
+			if oldComp != "" && oldComp != newComp &&
+				!s.folderPrimaryOfOtherVisibleLocked(oldComp, created.ID) &&
+				!s.folderPrimaryOfOtherVisibleLocked(newComp, created.ID) {
+				relinks = append(relinks, folderRelink{projectID: created.ID, oldPath: oldExpanded, newPath: folders[0].Path})
+			}
+		}
+		return created, nil
 	}
 	result, relinks, err = s.updateLocked(targetIdx, input)
 	return result, err
@@ -177,12 +190,6 @@ func (s *workspaceStore) updateLocked(targetIdx int, input saveWorkspaceRequest)
 	if err != nil {
 		return workspaceProfile{}, nil, err
 	}
-	hiddenOwned := make(map[string]bool)
-	for _, id := range hidden {
-		for _, f := range s.workspaces[s.indexOfLocked(id)].Folders {
-			hiddenOwned[comparableFolderPath(f.Path)] = true
-		}
-	}
 	inInput := make(map[string]bool, len(folders))
 	for _, f := range folders {
 		inInput[comparableFolderPath(f.Path)] = true
@@ -198,11 +205,13 @@ func (s *workspaceStore) updateLocked(targetIdx int, input saveWorkspaceRequest)
 		if old, ok := byPath[comp]; ok && old.ID != "" && !used[old.ID] {
 			id = old.ID
 		} else if old, ok := byID[f.ID]; ok && !used[old.ID] && !inInput[comparableFolderPath(old.Path)] {
-			// Explicit replace: the folder keeps its ID. Sessions follow only
-			// when the old folder is really gone and the new one is not a
-			// directory some other project already tracks.
+			// Explicit replace: the folder keeps its ID and sessions follow
+			// into the new directory unless either path is the primary folder
+			// of another visible workspace.
 			id = old.ID
-			if _, statErr := os.Stat(old.Path); errors.Is(statErr, os.ErrNotExist) && !hiddenOwned[comp] {
+			oldComp := comparableFolderPath(old.Path)
+			if !s.folderPrimaryOfOtherVisibleLocked(comp, before.ID) &&
+				!s.folderPrimaryOfOtherVisibleLocked(oldComp, before.ID) {
 				relinks = append(relinks, folderRelink{projectID: before.ID, oldPath: old.Path, newPath: f.Path})
 			}
 		}
@@ -251,7 +260,21 @@ func (s *workspaceStore) updateLocked(targetIdx int, input saveWorkspaceRequest)
 	if err := s.commitLocked(prev); err != nil {
 		return workspaceProfile{}, nil, err
 	}
-	return cloneProfile(updated), relinks, nil
+	return cloneProfileWithDiskStatus(updated), relinks, nil
+}
+
+func (s *workspaceStore) folderPrimaryOfOtherVisibleLocked(compPath, selfID string) bool {
+	for _, ws := range s.workspaces {
+		if ws.ID == selfID || ws.Hidden {
+			continue
+		}
+		for _, f := range ws.Folders {
+			if f.IsPrimary && comparableFolderPath(f.Path) == compPath {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (s *workspaceStore) folderOwnedByOtherLocked(compPath, selfID string) bool {

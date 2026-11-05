@@ -72,7 +72,12 @@ export default function WorkspaceModal() {
           );
           if (prof && prof.folders.length > 0) {
             setFolders(
-              prof.folders.map((f) => ({ id: f.id, path: f.path, isPrimary: f.isPrimary }))
+              prof.folders.map((f) => ({
+                id: f.id,
+                path: f.path,
+                isPrimary: f.isPrimary,
+                missing: f.missing,
+              }))
             );
           } else if (fallbackDir) {
             setFolders([{ path: fallbackDir, isPrimary: true }]);
@@ -105,6 +110,7 @@ export default function WorkspaceModal() {
           id: f.id,
           path: f.path,
           isPrimary: f.isPrimary,
+          missing: f.missing,
         }));
       }
       if (
@@ -113,17 +119,27 @@ export default function WorkspaceModal() {
         prof.folders.length === 1 &&
         prof.folders[0].id
       ) {
-        return [{ ...prev[0], id: prof.folders[0].id }];
+        return [
+          {
+            ...prev[0],
+            id: prof.folders[0].id,
+            missing: prof.folders[0].missing,
+          },
+        ];
       }
       let changed = false;
       const next = prev.map((f) => {
-        if (f.id) return f;
         const match = prof.folders.find(
-          (pf) => normalizeFolderPath(pf.path) === normalizeFolderPath(f.path)
+          (pf) =>
+            (f.id && pf.id === f.id && normalizeFolderPath(pf.path) === normalizeFolderPath(f.path)) ||
+            normalizeFolderPath(pf.path) === normalizeFolderPath(f.path)
         );
-        if (match?.id) {
+        if (!match) return f;
+        const nextID = f.id || match.id;
+        const nextMissing = match.missing;
+        if (nextID !== f.id || Boolean(nextMissing) !== Boolean(f.missing)) {
           changed = true;
-          return { ...f, id: match.id };
+          return { ...f, id: nextID, missing: nextMissing };
         }
         return f;
       });
@@ -166,7 +182,7 @@ export default function WorkspaceModal() {
           .filter((_, idx) => idx !== targetIdx);
       }
       const next = prev.slice();
-      next[targetIdx] = { ...targetFolder, path: cleaned };
+      next[targetIdx] = { ...targetFolder, path: cleaned, missing: false };
       return next;
     });
   };
@@ -466,7 +482,13 @@ export default function WorkspaceModal() {
                   >
                     <For each={folders()}>
                       {(folder) => (
-                        <div class="flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg border border-zinc-200/80 dark:border-zinc-800 bg-zinc-50/70 dark:bg-zinc-900/50">
+                        <div
+                          class={`flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg border ${
+                            folder.missing
+                              ? "border-rose-500/40 bg-rose-500/5"
+                              : "border-zinc-200/80 dark:border-zinc-800 bg-zinc-50/70 dark:bg-zinc-900/50"
+                          }`}
+                        >
                           <div class="flex items-center gap-2 min-w-0 flex-1">
                             <FolderIcon
                               open={folder.isPrimary}
@@ -474,12 +496,26 @@ export default function WorkspaceModal() {
                             />
                             <div class="min-w-0 flex-1">
                               <div class="flex items-center gap-1.5">
-                                <span class="text-[13px] font-medium text-zinc-800 dark:text-zinc-200 truncate">
+                                <span
+                                  class={`text-[13px] font-medium truncate ${
+                                    folder.missing
+                                      ? "text-rose-500 line-through"
+                                      : "text-zinc-800 dark:text-zinc-200"
+                                  }`}
+                                >
                                   {folderBaseName(folder.path)}
                                 </span>
                                 <Show when={folder.isPrimary}>
                                   <span class="px-1.5 py-0.5 rounded text-[11px] font-semibold bg-[var(--accent-surface)] text-[var(--accent-text)] shrink-0">
                                     {t("leftNav.primaryBadge")}
+                                  </span>
+                                </Show>
+                                <Show when={folder.missing}>
+                                  <span
+                                    class="px-1.5 py-0.5 rounded text-[11px] font-semibold bg-rose-500/15 text-rose-500 shrink-0"
+                                    title={t("leftNav.folderMissingHint")}
+                                  >
+                                    {t("leftNav.folderMissingBadge")}
                                   </span>
                                 </Show>
                               </div>
@@ -489,6 +525,11 @@ export default function WorkspaceModal() {
                               >
                                 {folder.path}
                               </div>
+                              <Show when={folder.missing}>
+                                <div class="mt-0.5 text-[11px] text-rose-500">
+                                  {t("leftNav.folderMissingHint")}
+                                </div>
+                              </Show>
                             </div>
                           </div>
 

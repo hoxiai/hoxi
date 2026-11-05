@@ -6,8 +6,11 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/hoxiai/hoxi/internal/runner"
+	"github.com/hoxiai/hoxi/internal/workspace"
 	"github.com/hoxiai/hoxi/internal/worktree"
 )
 
@@ -85,6 +88,69 @@ func TestSessionScopeSelectorsAndCompatibility(t *testing.T) {
 	patchRec := httptest.NewRecorder()
 	if !g.guardSessionScope(patchRec, patchReq) {
 		t.Fatalf("runner session PATCH with parent project root should be allowed, got %d: %s", patchRec.Code, patchRec.Body.String())
+	}
+}
+
+func TestSessionScopeHealsDeletedWorkspaceDirectorySelector(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	oldRoot := filepath.Join(home, "old-repo")
+	newRoot := filepath.Join(home, "new-repo")
+	unrelatedExisting := filepath.Join(home, "other-repo")
+	for _, dir := range []string{oldRoot, newRoot, unrelatedExisting} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	wsStore := workspace.NewStore(oldRoot)
+	projectID, err := wsStore.EnsureProjectForDirectory(oldRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	folderID := wsStore.List()[0].Folders[0].ID
+	wtMgr := worktree.NewManager(oldRoot)
+	runnerSvc := runner.NewService(oldRoot, wtMgr, nil, filepath.Join(home, "sessions"))
+	runnerSvc.SetProjectResolver(wsStore)
+	if err := runnerSvc.Store().Put(runner.SessionRecord{
+		ID: "ses_healed", ProjectID: projectID, Runtime: "claude-code",
+		ProjectDir: oldRoot, WorktreePath: oldRoot, SandboxMode: "local",
+		CreatedAt: 1, UpdatedAt: 2,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = wtMgr.ForDirectory(oldRoot).UseLocalDirectory("ses_healed")
+
+	// Simulate workspace folder replacement and deletion of the old directory on disk.
+	wsMux := http.NewServeMux()
+	wsStore.RegisterRoutes(wsMux)
+	updateRec := httptest.NewRecorder()
+	updateBody := `{"folders":[{"id":` + string(mustJSON(t, folderID)) + `,"path":` + string(mustJSON(t, newRoot)) + `,"isPrimary":true}]}`
+	wsMux.ServeHTTP(updateRec, httptest.NewRequest(http.MethodPut, "/api/hoxi/workspaces/"+projectID, strings.NewReader(updateBody)))
+	if updateRec.Code != http.StatusOK {
+		t.Fatalf("update workspace status = %d: %s", updateRec.Code, updateRec.Body.String())
+	}
+	if err := os.RemoveAll(oldRoot); err != nil {
+		t.Fatal(err)
+	}
+
+	gw := &Gateway{worktrees: wtMgr, workspaces: wsStore, runner: runnerSvc}
+	req := httptest.NewRequest(http.MethodPost, "/api/hoxi/runner/sessions/ses_healed/prompt_async?directory="+url.QueryEscape(oldRoot), nil)
+	rec := httptest.NewRecorder()
+	if !gw.guardSessionScope(rec, req) {
+		t.Fatalf("guardSessionScope rejected stale deleted directory selector: %d %s", rec.Code, rec.Body.String())
+	}
+	canonicalNew, _ := filepath.EvalSymlinks(newRoot)
+	if got := req.URL.Query().Get("directory"); got != canonicalNew && got != newRoot {
+		t.Fatalf("rewritten directory = %q, want %q", got, canonicalNew)
+	}
+
+	// An unrelated existing directory must still be rejected with 403 Forbidden.
+	badReq := httptest.NewRequest(http.MethodPost, "/api/hoxi/runner/sessions/ses_healed/prompt_async?directory="+url.QueryEscape(unrelatedExisting), nil)
+	badRec := httptest.NewRecorder()
+	if gw.guardSessionScope(badRec, badReq) || badRec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for unrelated existing directory, got allowed=%v code=%d", badRec.Code == 0, badRec.Code)
 	}
 }
 
