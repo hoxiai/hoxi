@@ -2,6 +2,12 @@
 
 All notable releases of **Hoxi Desktop** are documented below. Full per-version release notes are archived under [`docs/release-notes/`](docs/release-notes/) and consumed directly by `.github/workflows/release.yml` and `scripts/ai-release.sh`.
 
+## [v0.6.15](docs/release-notes/v0.6.15.md) — 2026-11-05
+
+- **Approval**: Remove the AI review pass so risky commands prompt for manual confirmation immediately instead of blocking on a synchronous model call.
+- **Dev Pulse & Usage**: Resolve pulse directories from the session worktree plus project root, count today's uncommitted tracked and untracked changes, bucket by committer date, dedupe and skip snapshot commits; narrow the ignore rule to `build/bin/`.
+- **Hot Paths & Updater**: Force the session-message-part index join order with time bounds, cache global daily usage, and stop re-cloning session records; add a Windows busy-update confirmation, widen the status probe timeout, and clear stale subagent busy state.
+
 ## [v0.6.14](docs/release-notes/v0.6.14.md) — 2026-11-05
 
 - **Theme & Sidebar**: Align light surface, border and elevation tokens with the default blue palette; use lucide folder icons, selected-surface active rows, accent user-turn cards and a quiet completed badge.
