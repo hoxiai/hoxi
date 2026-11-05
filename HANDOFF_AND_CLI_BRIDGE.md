@@ -97,7 +97,7 @@
      - `type: "response_item"` (`payload.type`: `"message"`, `"reasoning"`, `"function_call"`, `"function_call_output"`)
 2. **凭证与防互踢同步机制**：
    - `~/.codex/auth.json`：支持 `OPENAI_API_KEY`（API Key 模式）与 `tokens`（ChatGPT OAuth 模式：`access_token`, `refresh_token`, `account_id`）。
-   - **单向只读同步（防 Refresh Token 互踢）**：Hoxi 绝不自行刷新或回写 `~/.codex/auth.json`——注入 OpenCode `/auth/openai` 时将 `expires` 固定设为 `0`（未知过期时间），并由后台 `credentialSyncLoop` 每 60 秒按指纹比对 `~/.codex/auth.json`，仅当 Codex CLI 自身轮换了凭证时才同步更新给引擎，避免双端同时消费同一个 `refresh_token` 导致 Codex CLI 被登出。
+   - **单向只读同步（防 Refresh Token 抢先消费与防旧凭证回滚）**：Hoxi 绝不回写 `~/.codex/auth.json`——注入 OpenCode `/auth/openai` 时从 `access_token` JWT 中提取真实 `exp` 过期时间（毫秒；非 JWT 保持 `0`），使 JWT 未过期前双端直接共享同一个 `access_token` 而不提前消费 `refresh_token`；且后台 `credentialSyncLoop` 与引擎 `auth.json` 合并均采用「新 Token 优先（`isEngineOAuthNewer`）」策略，防止 Hoxi 重启时把引擎已刷新的新 Token 回滚为 `~/.codex/auth.json` 中的旧 Token。
    - `~/.codex/config.toml` 与 `~/.codex/models_cache.json`：提取 `model` 与可用模型列表。
 
 ### 2.4 Google Antigravity / Gemini CLI (`~/.gemini`)、OpenCode CLI、Trae、Qoder 与 CodeBuddy
@@ -263,7 +263,7 @@ type NormalizedTurn struct {
   - 请求体：`{ "toolID": "grok-cli" | "codex-cli" | "claude-code" | "gemini-antigravity" | "opencode-cli" }`
   - 行为：
     - `grok-cli`：在 `~/.hoxi/models.json` 中注册 `grok-cli` 提供商，落盘进程中立的 `grokCLIStoredBridgeURL`（`http://127.0.0.1:5410/api/hoxi/bridge/grok-cli/v1`），各运行实例在内存中将其重写为自身回环桥接端口（避免 release / dev / headless 多实例互改配置文件），并自动导入 `~/.grok/models_cache.json` 中的模型。
-    - `codex-cli`：读取 `~/.codex/auth.json` 的 OAuth 凭证（设置 `expires: 0`，由后台 `credentialSyncLoop` 每 60s 同步，不抢占刷新）或 API Key 同步至 OpenCode `/auth/openai` 与 `~/.hoxi/models.json`。
+    - `codex-cli`：读取 `~/.codex/auth.json` 的 OAuth 凭证（解析真实 JWT `exp` 毫秒过期时间，由后台 `credentialSyncLoop` 每 60s 按新旧比对同步，绝不用旧文件回滚引擎已刷新的 Token）或 API Key 同步至 OpenCode `/auth/openai` 与 `~/.hoxi/models.json`。
     - `claude-code`：仅当 `~/.claude/settings.json` 或环境变量配置了真实 API Key（`authMode: "claude-settings"`）时才导入 `~/.hoxi/models.json`；若为 Claude OAuth 登录（`authMode: "claude-runner"`），绝不将 OAuth Token 导入 OpenCode，而是由 `Claude Code` 原生运行时直接驱动。
 
 ### 4.3 本地 CLI 协议转换网关 (`/api/hoxi/bridge/grok-cli/v1/*`)

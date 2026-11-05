@@ -3,6 +3,7 @@ package handoff
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -431,5 +432,76 @@ exit 1
 	defer mu.Unlock()
 	if len(seenAuthHeaders) != 2 || seenAuthHeaders[0] != "Bearer key-revoked-upstream" || seenAuthHeaders[1] != "Bearer key-rotated-on-401" {
 		t.Fatalf("unexpected upstream auth sequence: %#v", seenAuthHeaders)
+	}
+}
+
+func makeFakeJWT(expSec int64, tag string) string {
+	hdr := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"RS256","typ":"JWT"}`))
+	payload := base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf(`{"exp":%d,"sub":%q}`, expSec, tag)))
+	return hdr + "." + payload + ".sig"
+}
+
+func TestCodexJWTExpiryAndNeverRollsBackNewerEngineOAuth(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	codexDir := filepath.Join(home, ".codex")
+	if err := os.MkdirAll(codexDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	exp1 := int64(1900000000)
+	jwt1 := makeFakeJWT(exp1, "v1")
+	writeCodexAuth(t, codexDir, jwt1)
+
+	rec := newRecordingAuthServer(t)
+	root := t.TempDir()
+	svc := NewService(rec.port, "testpass", root, provider.NewService(0, "", root, nil))
+	if resp := svc.importCodexCLIProvider(); !resp.OK {
+		t.Fatalf("import failed: %+v", resp)
+	}
+	rec.mu.Lock()
+	if len(rec.puts) != 1 || rec.puts[0]["expires"] != float64(exp1*1000) {
+		rec.mu.Unlock()
+		t.Fatalf("expected JWT exp %d ms to be forwarded, got %#v", exp1*1000, rec.puts)
+	}
+	rec.mu.Unlock()
+
+	// Simulate OpenCode's built-in OAuth refresher rotating the engine auth.json
+	// to a newer token (exp2 > exp1) while ~/.codex/auth.json still holds jwt1.
+	exp2 := exp1 + 3600
+	jwt2 := makeFakeJWT(exp2, "v2-engine-refreshed")
+	engineAuthPath := filepath.Join(hoxipaths.EngineOpenCodeDir(), "auth.json")
+	if err := writePrivateJSONFile(engineAuthPath, map[string]interface{}{
+		"openai": map[string]interface{}{
+			"type":      "oauth",
+			"access":    jwt2,
+			"refresh":   "refresh-v2",
+			"expires":   exp2 * 1000,
+			"accountId": "acct-1",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate a Hoxi restart (fresh Service with empty codexAuthApplied).
+	// syncCodexCredential must NOT roll back the engine's newer jwt2 to jwt1.
+	restarted := NewService(rec.port, "testpass", root, provider.NewService(0, "", root, nil))
+	restarted.syncCodexCredential()
+	if got := rec.putCount(); got != 1 {
+		t.Fatalf("stale ~/.codex/auth.json must not overwrite newer engine token on restart, putCount=%d", got)
+	}
+	if gotAccess := asString(readEngineOpenCodeAuthEntry("openai")["access"]); gotAccess != jwt2 {
+		t.Fatalf("engine auth.json was rolled back to %q", gotAccess)
+	}
+
+	// When the user later runs codex in terminal and ~/.codex/auth.json rotates to exp3 > exp2,
+	// syncCodexCredential forwards jwt3 to the engine.
+	exp3 := exp2 + 7200
+	jwt3 := makeFakeJWT(exp3, "v3-cli-rotated")
+	writeCodexAuth(t, codexDir, jwt3)
+	restarted.syncCodexCredential()
+	if got := rec.lastAccess(); got != jwt3 {
+		t.Fatalf("expected newer CLI token jwt3 to be synced, got %q", got)
 	}
 }

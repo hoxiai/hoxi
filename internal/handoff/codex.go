@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -595,7 +596,10 @@ func (g *Service) importCodexCLIProvider() LocalCLIImportResponse {
 		return LocalCLIImportResponse{OK: false, ToolID: string(ExternalToolCodex), Error: "No valid tokens in ~/.codex/auth.json"}
 	}
 
-	g.sendEngineAuth("openai", authBody, 5*time.Second)
+	if !isEngineOAuthNewer(readEngineOpenCodeAuthEntry("openai"), authBody) {
+		g.mergeOpenCodeEngineAuthFile(map[string]interface{}{"openai": authBody})
+		g.sendEngineAuth("openai", authBody, 5*time.Second)
+	}
 
 	_, _, models := readCodexLocalConfig()
 	sessions, _ := scanCodexSessions("", "")
@@ -649,11 +653,11 @@ func (g *Service) importCodexCLIProvider() LocalCLIImportResponse {
 }
 
 // readCodexAuthBody reads the credential the Codex CLI currently holds.
-// Hoxi never refreshes it and never writes it back: the CLI is the only
-// owner of the refresh token, and refreshing from both sides logs one of
-// them out. The expiry is therefore reported as unknown (0) rather than
-// invented, so the engine keeps using this access token until the CLI
-// rotates the file.
+// When the access token is a JWT with an "exp" claim, its real expiry (in ms)
+// is forwarded so OpenCode does not treat expires==0 as already-expired-in-1970
+// and immediately consume the shared refresh_token while the JWT is still valid.
+// When the token is opaque (no JWT exp), expires stays 0 (unknown) rather than
+// inventing a synthetic deadline.
 func readCodexAuthBody(path string) map[string]interface{} {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -675,13 +679,35 @@ func readCodexAuthBody(path string) map[string]interface{} {
 	if access == "" || refresh == "" {
 		return nil
 	}
+	expiresMs := parseJWTExpiryMs(access)
+	if expiresMs == 0 {
+		expiresMs = parseJWTExpiryMs(asString(tokens["id_token"]))
+	}
 	return map[string]interface{}{
 		"type":      "oauth",
 		"access":    access,
 		"refresh":   refresh,
-		"expires":   int64(0),
+		"expires":   expiresMs,
 		"accountId": strings.TrimSpace(asString(tokens["account_id"])),
 	}
+}
+
+func parseJWTExpiryMs(token string) int64 {
+	parts := strings.Split(strings.TrimSpace(token), ".")
+	if len(parts) != 3 || parts[1] == "" {
+		return 0
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return 0
+	}
+	var claims struct {
+		Exp float64 `json:"exp"`
+	}
+	if json.Unmarshal(payload, &claims) != nil || claims.Exp <= 0 {
+		return 0
+	}
+	return int64(claims.Exp * 1000)
 }
 
 // codexAuthFingerprint identifies a credential without the refresh token,

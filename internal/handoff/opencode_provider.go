@@ -441,6 +441,61 @@ func writePrivateJSONFile(path string, doc map[string]interface{}) error {
 	return os.Rename(f.Name(), path)
 }
 
+func readEngineOpenCodeAuthEntry(providerID string) map[string]interface{} {
+	dir := hoxipaths.EngineOpenCodeDir()
+	if dir == "" || strings.TrimSpace(providerID) == "" {
+		return nil
+	}
+	doc := readOpenCodeAuthFile(filepath.Join(dir, "auth.json"))
+	entry, _ := doc[providerID].(map[string]interface{})
+	return entry
+}
+
+func oauthCredentialExpiryMs(cred map[string]interface{}) int64 {
+	if cred == nil || asString(cred["type"]) != "oauth" {
+		return 0
+	}
+	if exp := parseJWTExpiryMs(asString(cred["access"])); exp > 0 {
+		return exp
+	}
+	switch v := cred["expires"].(type) {
+	case int64:
+		if v > 0 {
+			return v
+		}
+	case float64:
+		if v > 0 {
+			return int64(v)
+		}
+	case json.Number:
+		if n, err := v.Int64(); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 0
+}
+
+// isEngineOAuthNewer reports whether the engine already holds an OAuth
+// credential with a strictly newer expiry than incoming for the same account,
+// so a token refresh performed by the OpenCode engine is never rolled back by
+// an older external file on disk.
+func isEngineOAuthNewer(existing, incoming map[string]interface{}) bool {
+	if existing == nil || incoming == nil {
+		return false
+	}
+	if asString(existing["type"]) != "oauth" || asString(incoming["type"]) != "oauth" {
+		return false
+	}
+	if acctIn := strings.TrimSpace(asString(incoming["accountId"])); acctIn != "" {
+		if acctEx := strings.TrimSpace(asString(existing["accountId"])); acctEx != "" && acctEx != acctIn {
+			return false
+		}
+	}
+	exExp := oauthCredentialExpiryMs(existing)
+	inExp := oauthCredentialExpiryMs(incoming)
+	return exExp > 0 && inExp > 0 && exExp > inExp
+}
+
 // mergeOpenCodeEngineAuthFile keeps the Hoxi engine's auth.json in step with the
 // external OpenCode CLI so credentials survive restarts even when no server is running.
 func (g *Service) mergeOpenCodeEngineAuthFile(authMap map[string]interface{}) {
@@ -457,6 +512,11 @@ func (g *Service) mergeOpenCodeEngineAuthFile(authMap map[string]interface{}) {
 		merged = map[string]interface{}{}
 	}
 	for pid, cred := range authMap {
+		existing, _ := merged[pid].(map[string]interface{})
+		incoming, _ := cred.(map[string]interface{})
+		if isEngineOAuthNewer(existing, incoming) {
+			continue
+		}
 		merged[pid] = cred
 	}
 	_ = writePrivateJSONFile(path, merged)
@@ -484,6 +544,9 @@ func (g *Service) syncOpenCodeEngineAuth(authMap map[string]interface{}) {
 	}
 	for _, pid := range sortedStringKeys(authMap) {
 		if cred, ok := authMap[pid].(map[string]interface{}); ok {
+			if isEngineOAuthNewer(readEngineOpenCodeAuthEntry(pid), cred) {
+				continue
+			}
 			g.sendEngineAuth(pid, cred, 5*time.Second)
 		}
 	}

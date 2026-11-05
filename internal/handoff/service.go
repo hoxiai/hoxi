@@ -185,6 +185,12 @@ func (g *Service) syncCodexCredential() {
 	if unchanged {
 		return
 	}
+	if isEngineOAuthNewer(readEngineOpenCodeAuthEntry("openai"), body) {
+		g.credSyncMu.Lock()
+		g.codexAuthApplied = fingerprint
+		g.credSyncMu.Unlock()
+		return
+	}
 	g.mergeOpenCodeEngineAuthFile(map[string]interface{}{"openai": body})
 	if g.pushCodexEngineAuth(body, 5*time.Second) {
 		g.credSyncMu.Lock()
