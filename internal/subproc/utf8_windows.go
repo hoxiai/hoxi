@@ -4,9 +4,11 @@ package subproc
 
 import (
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"golang.org/x/sys/windows"
+	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
 var (
@@ -38,12 +40,42 @@ func decodePlatformLegacyBytes(b []byte) (string, bool) {
 			codePages = append(codePages, uint32(acp))
 		}
 	}
+	// GitHub's Windows runners use a Western ANSI code page, so the ACP path
+	// decodes GBK bytes byte-for-byte into mojibake. When the buffer really is
+	// Chinese legacy output, prefer the GB18030 reading (a superset of
+	// CP936/GBK) over that lossy result.
+	gbs, gbOK := decodeGB18030(b)
 	for _, cp := range codePages {
 		if s, ok := multiByteToUTF8(cp, b); ok {
+			if gbOK && hasHan(gbs) && !hasHan(s) {
+				return gbs, true
+			}
 			return s, true
 		}
 	}
+	if gbOK {
+		return gbs, true
+	}
 	return "", false
+}
+
+func decodeGB18030(b []byte) (string, bool) {
+	decoded, err := simplifiedchinese.GB18030.NewDecoder().Bytes(b)
+	if err != nil || len(decoded) == 0 || !utf8.Valid(decoded) || strings.ContainsRune(string(decoded), utf8.RuneError) {
+		return "", false
+	}
+	return string(decoded), true
+}
+
+// hasHan reports whether s carries at least one CJK ideograph, which is how a
+// genuine CP936/GB18030 payload is told apart from Western single-byte text.
+func hasHan(s string) bool {
+	for _, r := range s {
+		if unicode.Is(unicode.Han, r) {
+			return true
+		}
+	}
+	return false
 }
 
 func multiByteToUTF8(codePage uint32, b []byte) (string, bool) {
