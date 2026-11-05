@@ -261,6 +261,9 @@ export default function MessageStream(props: { hidden?: boolean }) {
     const sessionID = request?.sessionID;
     if (!sessionID || sessionID !== workspace.activeSessionID) return;
     sessionScroll.followToBottom();
+    queueMicrotask(() => {
+      if (workspace.activeSessionID === sessionID) scroll.jumpToBottom();
+    });
     // The optimistic turn and the first assistant activity are committed in
     // separate reactive updates; re-anchor once more after the next layout pass.
     if (promptFollowFrame !== undefined) cancelAnimationFrame(promptFollowFrame);

@@ -205,17 +205,18 @@ export function isCompletedStandaloneReasoningTurn(
   index: number
 ): boolean {
   const turn = allTurns[index];
+  const isLatestTurn = index === allTurns.length - 1;
   if (
     !turn ||
     turn.info.role !== "assistant" ||
     turn.info.error ||
     !turn.info.time?.completed ||
-    isSessionBusy(turn.info.sessionID)
+    (isLatestTurn && isSessionBusy(turn.info.sessionID))
   ) {
     return false;
   }
   const isEnd =
-    index === allTurns.length - 1 || allTurns[index + 1]?.info.role !== "assistant";
+    isLatestTurn || allTurns[index + 1]?.info.role !== "assistant";
   if (!isEnd) return false;
   const parts = expandInlineThinkingParts(turn.parts);
   if (parts.some(isVisibleTextPart) || parts.some((p) => p.type === "tool")) {

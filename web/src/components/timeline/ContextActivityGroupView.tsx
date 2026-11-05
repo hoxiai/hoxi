@@ -164,9 +164,15 @@ export default function ContextActivityGroupView(props: {
 
     if (prevKey === key && prevOpen && !nextOpen && rootRef) {
       const scroller = rootRef.closest(".timeline-result-scroll");
-      // While the transcript follows the live tail its pin keeps the reader at
-      // the bottom; anchoring this older group would yank them back up to it.
-      if (scroller instanceof HTMLElement && !isFollowingLiveTail(scroller)) {
+      if (scroller instanceof HTMLElement) {
+        // While the transcript follows the live tail, collapse in the same layout
+        // pass so a 150ms height transition above the reply never un-pins the
+        // sticky header or rubber-bands the bottom scroll anchor.
+        if (isFollowingLiveTail(scroller)) {
+          setAnimateToggle(false);
+          setOpen(false);
+          return;
+        }
         const groupRect = rootRef.getBoundingClientRect();
         const scrollerRect = scroller.getBoundingClientRect();
         // Entirely above the viewport: collapse in 0ms and compensate scrollTop

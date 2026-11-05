@@ -86,6 +86,12 @@ async function checkSend(busy: boolean, width: number, completedTools = 1, empty
         });
       }
       await frame();
+      if (!busy && completedTools > 1 && i === 0) {
+        assertTrue(
+          !original.querySelector("[data-activity-group-body]"),
+          "completed activity group must fold in the same frame when following the live tail"
+        );
+      }
       assertTrue(root.querySelector("section.pane-island") === island, "sending must retain the page island");
       assertTrue(root.querySelector('[data-turn-id="msg_work"]') === original, "sending must retain the historical reply");
       if (emptyTail) assertTrue(root.querySelector('[data-turn-id="msg_empty"]') === footer,

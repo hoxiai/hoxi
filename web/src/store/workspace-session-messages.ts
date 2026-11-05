@@ -416,6 +416,7 @@ export async function dispatchSessionPrompt(
         !lastTurn ||
         (lastTurn.info.role === "user" &&
           !hasInFlightAssistant &&
+          !isSessionBusy(targetID) &&
           lastTurn.info.id === optimisticMsgID)
       ) {
         void loadSessionMessages(targetID).catch(() => {});

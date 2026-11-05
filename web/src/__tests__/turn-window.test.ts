@@ -21,7 +21,9 @@ import {
   stabilizeTurnSegments,
 } from "../components/timeline/TaskTimelineBar";
 import type { MessageTurn } from "../store/workspace";
+import { setWorkspace } from "../store/workspace-state";
 import {
+  isCompletedStandaloneReasoningTurn,
   resolveMergedTurnParts,
   stabilizeMergedTurnResolution,
 } from "../components/timeline/context-activity-turns";
@@ -344,6 +346,77 @@ describe("TurnWindow limit resolution & session-switching lifecycle", () => {
     // Limit must remain 44 (not clamped down to 32)
     assertEqual(nextLimit, 44);
     assertEqual(state.limit, 44);
+  });
+
+  it("expands limit when sending a follow-up user turn after reaching MAX_AUTO_EXPANDED_TURNS", () => {
+    const list: MessageTurn[] = [
+      mockTurn("u_0", "user"),
+      ...Array.from({ length: 12 }, (_, i) => mockTurn(`a0_${i}`)),
+      mockTurn("u_1", "user"),
+      ...Array.from({ length: 30 }, (_, i) => mockTurn(`a1_${i}`)),
+    ];
+    const state = {
+      limit: MAX_AUTO_EXPANDED_TURNS,
+      seen: list.length,
+      lastTailID: list[list.length - 1].info.id,
+    };
+    const beforeSlice = computeTurnWindowSlice(list, state.limit);
+    assertEqual(beforeSlice.startIndex, 0);
+
+    const followUp = mockTurn("optimistic_followup", "user");
+    const withFollowUp = [...list, followUp];
+    const nextLimit = resolveNextWindowLimit({
+      currentSession: "session_cap",
+      lastActiveSessionID: "session_cap",
+      state,
+      total: withFollowUp.length,
+      tailID: followUp.info.id,
+      list: withFollowUp,
+    });
+    assertEqual(nextLimit, MAX_AUTO_EXPANDED_TURNS + 1);
+    const afterSlice = computeTurnWindowSlice(withFollowUp, nextLimit);
+    assertEqual(afterSlice.startIndex, 0);
+  });
+
+  it("keeps completed standalone reasoning turns visible when a follow-up turn makes the session busy", () => {
+    const sid = "ses_standalone_reasoning";
+    const turns: MessageTurn[] = [
+      {
+        info: { id: "u1", role: "user", sessionID: sid, time: { created: 1 } },
+        parts: [{ type: "text", id: "p_u1", messageID: "u1", sessionID: sid, text: "First prompt" }],
+      },
+      {
+        info: { id: "a1_tool", role: "assistant", sessionID: sid, time: { created: 2, completed: 3 } },
+        parts: [
+          {
+            type: "tool",
+            id: "p_tool",
+            callID: "c1",
+            messageID: "a1_tool",
+            sessionID: sid,
+            tool: "read",
+            state: { status: "completed", input: {}, output: "ok", title: "read", metadata: {}, time: { start: 2, end: 3 } },
+          },
+        ],
+      },
+      {
+        info: { id: "a1_reason", role: "assistant", sessionID: sid, time: { created: 4, completed: 5 } },
+        parts: [{ type: "reasoning", id: "p_r1", messageID: "a1_reason", sessionID: sid, text: "Final reasoning conclusion", time: { start: 4, end: 5 } }],
+      },
+      {
+        info: { id: "u2", role: "user", sessionID: sid, time: { created: 6 } },
+        parts: [{ type: "text", id: "p_u2", messageID: "u2", sessionID: sid, text: "Follow-up prompt" }],
+      },
+    ];
+    setWorkspace("statusBySession", sid, { type: "busy" });
+    try {
+      assertEqual(isCompletedStandaloneReasoningTurn(turns, 2), true);
+      const merged = resolveMergedTurnParts(turns, 2);
+      assertEqual(merged.isVisuallyEmpty, false);
+      assertEqual(merged.effectiveParts.length, 1);
+    } finally {
+      setWorkspace("statusBySession", sid, { type: "idle" });
+    }
   });
 });
 
