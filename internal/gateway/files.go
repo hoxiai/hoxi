@@ -299,12 +299,96 @@ func allowFallbackLookup(cleanedPath string) bool {
 	}
 }
 
+type fallbackDirIndex struct {
+	dirs   []string
+	built  bool
+	byBase map[string][]string
+}
+
+func (idx *fallbackDirIndex) ensure() {
+	if idx.built {
+		return
+	}
+	idx.built = true
+	idx.byBase = make(map[string][]string)
+	visited := 0
+	for _, root := range idx.dirs {
+		info, err := os.Stat(root)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return nil
+			}
+			if d.IsDir() {
+				if p != root && shouldSkipFallbackDir(d.Name()) {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			visited++
+			if visited > maxFallbackWalkEntries {
+				return filepath.SkipAll
+			}
+			name := d.Name()
+			idx.byBase[name] = append(idx.byBase[name], p)
+			return nil
+		})
+		if visited > maxFallbackWalkEntries {
+			break
+		}
+	}
+}
+
+func (idx *fallbackDirIndex) lookup(relQuery string) (string, os.FileInfo) {
+	cleanedSlash := strings.TrimPrefix(filepath.ToSlash(filepath.Clean(relQuery)), "./")
+	if cleanedSlash == "" || cleanedSlash == "." || strings.HasPrefix(cleanedSlash, "..") {
+		return "", nil
+	}
+	targetBase := filepath.Base(cleanedSlash)
+	if targetBase == "" || targetBase == "." || targetBase == "/" {
+		return "", nil
+	}
+	idx.ensure()
+	candidates := idx.byBase[targetBase]
+	if len(candidates) == 0 {
+		return "", nil
+	}
+	hasSlash := strings.Contains(cleanedSlash, "/")
+	suffixPattern := "/" + cleanedSlash
+
+	var basenameMatchPath string
+	var basenameMatchInfo os.FileInfo
+	for _, p := range candidates {
+		if hasSlash && strings.HasSuffix(filepath.ToSlash(p), suffixPattern) {
+			if fi, statErr := os.Stat(p); statErr == nil && !fi.IsDir() {
+				return p, fi
+			}
+		}
+		if basenameMatchPath == "" {
+			if fi, statErr := os.Stat(p); statErr == nil && !fi.IsDir() {
+				basenameMatchPath = p
+				basenameMatchInfo = fi
+				if !hasSlash {
+					return basenameMatchPath, basenameMatchInfo
+				}
+			}
+		}
+	}
+	return basenameMatchPath, basenameMatchInfo
+}
+
 func (g *Gateway) resolveLocalFileTarget(rawPath, rawDir, sessionID string, allowFallback bool) (string, os.FileInfo, bool, error) {
+	dirs := g.candidateBaseDirs(rawDir, sessionID)
+	return g.resolveLocalFileTargetInDirs(rawPath, dirs, allowFallback, nil)
+}
+
+func (g *Gateway) resolveLocalFileTargetInDirs(rawPath string, dirs []string, allowFallback bool, fbIndex *fallbackDirIndex) (string, os.FileInfo, bool, error) {
 	cleanedPath, _ := cleanRequestedFilePath(rawPath)
 	if cleanedPath == "" {
 		return "", nil, false, os.ErrNotExist
 	}
-	dirs := g.candidateBaseDirs(rawDir, sessionID)
 
 	checkOutside := func(target string) bool {
 		for _, d := range dirs {
@@ -357,7 +441,14 @@ func (g *Gateway) resolveLocalFileTarget(rawPath, rawDir, sessionID string, allo
 	}
 
 	if allowFallback && allowFallbackLookup(cleanedPath) {
-		if fbPath, fbInfo := findFallbackInDirs(dirs, cleanedPath); fbPath != "" && fbInfo != nil {
+		var fbPath string
+		var fbInfo os.FileInfo
+		if fbIndex != nil {
+			fbPath, fbInfo = fbIndex.lookup(cleanedPath)
+		} else {
+			fbPath, fbInfo = findFallbackInDirs(dirs, cleanedPath)
+		}
+		if fbPath != "" && fbInfo != nil {
 			return fbPath, fbInfo, checkOutside(fbPath), nil
 		}
 	}
@@ -518,13 +609,15 @@ func (g *Gateway) handleFileValidate(w http.ResponseWriter, r *http.Request) {
 
 	existing := make([]string, 0, len(paths))
 	resolved := make(map[string]string)
+	dirs := g.candidateBaseDirs(body.Directory, body.SessionID)
+	fbIndex := &fallbackDirIndex{dirs: dirs}
 
 	for _, raw := range paths {
 		trimmed := strings.TrimSpace(raw)
 		if trimmed == "" {
 			continue
 		}
-		targetPath, info, _, err := g.resolveLocalFileTarget(trimmed, body.Directory, body.SessionID, true)
+		targetPath, info, _, err := g.resolveLocalFileTargetInDirs(trimmed, dirs, true, fbIndex)
 		if err != nil || info == nil || info.IsDir() {
 			continue
 		}

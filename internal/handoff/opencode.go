@@ -93,16 +93,7 @@ type openCodeDBSessionRow struct {
 
 func queryExternalOpenCodeSessions(dbPath string) []openCodeDBSessionRow {
 	sqlRich := `
-SELECT json_group_array(json_object(
-  'id', s.id,
-  'directory', COALESCE(s.directory, ''),
-  'title', COALESCE(s.title, ''),
-  'timeCreated', COALESCE(s.time_created, 0),
-  'timeUpdated', COALESCE(s.time_updated, 0),
-  'model', COALESCE(s.model, ''),
-  'turnCount', (SELECT count(*) FROM message m WHERE m.session_id = s.id)
-))
-FROM (
+WITH top_sessions AS (
   SELECT id, directory, title, time_created, time_updated, model
   FROM session
   WHERE parent_id IS NULL
@@ -110,7 +101,24 @@ FROM (
     AND ` + SQLNotImportedTitleClause("title") + `
   ORDER BY time_updated DESC
   LIMIT 200
-) s;`
+),
+msg_counts AS (
+  SELECT session_id, COUNT(*) AS cnt
+  FROM message
+  WHERE session_id IN (SELECT id FROM top_sessions)
+  GROUP BY session_id
+)
+SELECT json_group_array(json_object(
+  'id', s.id,
+  'directory', COALESCE(s.directory, ''),
+  'title', COALESCE(s.title, ''),
+  'timeCreated', COALESCE(s.time_created, 0),
+  'timeUpdated', COALESCE(s.time_updated, 0),
+  'model', COALESCE(s.model, ''),
+  'turnCount', COALESCE(mc.cnt, 0)
+))
+FROM top_sessions s
+LEFT JOIN msg_counts mc ON mc.session_id = s.id;`
 
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 	defer cancel()

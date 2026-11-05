@@ -114,14 +114,26 @@ func isGeneratedOrLockFile(relPath string) bool {
 	return false
 }
 
-type devPulseCache struct {
-	mu  sync.Mutex
-	dir string
+type devPulseEntry struct {
 	at  time.Time
 	res gitDailyPulseResponse
 }
 
-const devPulseCacheTTL = 15 * time.Second
+type devPulseFlight struct {
+	wg  sync.WaitGroup
+	res gitDailyPulseResponse
+}
+
+type devPulseCache struct {
+	mu       sync.Mutex
+	entries  map[string]devPulseEntry
+	inflight map[string]*devPulseFlight
+}
+
+const (
+	devPulseCacheTTL        = 15 * time.Second
+	maxDevPulseCacheEntries = 16
+)
 
 func (g *Gateway) handleDevPulse(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -150,11 +162,30 @@ func (g *Gateway) handleDevPulse(w http.ResponseWriter, r *http.Request) {
 
 	now := time.Now()
 	g.pulseCache.mu.Lock()
-	if !forced && g.pulseCache.dir == workDir && !g.pulseCache.at.IsZero() && now.Sub(g.pulseCache.at) < devPulseCacheTTL {
-		cached := g.pulseCache.res
-		g.pulseCache.mu.Unlock()
-		writeJSON(w, http.StatusOK, cached)
-		return
+	if g.pulseCache.entries == nil {
+		g.pulseCache.entries = make(map[string]devPulseEntry)
+	}
+	if g.pulseCache.inflight == nil {
+		g.pulseCache.inflight = make(map[string]*devPulseFlight)
+	}
+	if !forced {
+		if entry, ok := g.pulseCache.entries[workDir]; ok && !entry.at.IsZero() && now.Sub(entry.at) < devPulseCacheTTL {
+			g.pulseCache.mu.Unlock()
+			writeJSON(w, http.StatusOK, entry.res)
+			return
+		}
+		if flight, ok := g.pulseCache.inflight[workDir]; ok {
+			g.pulseCache.mu.Unlock()
+			flight.wg.Wait()
+			writeJSON(w, http.StatusOK, flight.res)
+			return
+		}
+	}
+	var flight *devPulseFlight
+	if !forced {
+		flight = &devPulseFlight{}
+		flight.wg.Add(1)
+		g.pulseCache.inflight[workDir] = flight
 	}
 	g.pulseCache.mu.Unlock()
 
@@ -178,9 +209,19 @@ func (g *Gateway) handleDevPulse(w http.ResponseWriter, r *http.Request) {
 	}
 
 	g.pulseCache.mu.Lock()
-	g.pulseCache.dir = workDir
-	g.pulseCache.at = time.Now()
-	g.pulseCache.res = res
+	if len(g.pulseCache.entries) >= maxDevPulseCacheEntries {
+		for k, v := range g.pulseCache.entries {
+			if now.Sub(v.at) >= devPulseCacheTTL {
+				delete(g.pulseCache.entries, k)
+			}
+		}
+	}
+	g.pulseCache.entries[workDir] = devPulseEntry{at: time.Now(), res: res}
+	if flight != nil {
+		flight.res = res
+		delete(g.pulseCache.inflight, workDir)
+		flight.wg.Done()
+	}
 	g.pulseCache.mu.Unlock()
 
 	writeJSON(w, http.StatusOK, res)
@@ -242,7 +283,7 @@ func (g *Gateway) collectRunnerDailyUsage(startOfTodayMs int64, res *gitDailyPul
 		}
 		hasNativeTurnToday := false
 		hasOpenCodeTurnToday := false
-		store.VisitTurnsTransient(rec.ID, func(full runner.SessionRecord) {
+		store.VisitTurnsSummary(rec.ID, func(full runner.SessionRecord) {
 			for i := range full.Turns {
 				turn := full.Turns[i]
 				if turn.Info.Role != "assistant" || turn.Info.Time.Created < startOfTodayMs {

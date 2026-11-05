@@ -206,7 +206,7 @@ func (g *Gateway) collectRequestLog() []requestLogEntry {
 		if rec.UpdatedAt > 0 && rec.UpdatedAt < earliestMs {
 			continue
 		}
-		store.VisitTurnsTransient(rec.ID, func(full runner.SessionRecord) {
+		store.VisitTurnsSummary(rec.ID, func(full runner.SessionRecord) {
 			var maxCreated int64
 			for i := range full.Turns {
 				if full.Turns[i].Info.Time.Created > maxCreated {

@@ -33,13 +33,19 @@ type handoffScanCall struct {
 	res handoffScanResult
 }
 
+type cliStatusCall struct {
+	wg    sync.WaitGroup
+	tools []LocalCLIStatusItem
+}
+
 type Service struct {
-	openCode     *ocapi.Client
-	rootDir      string
-	providers    ProviderConfig
-	cacheMu      sync.RWMutex
-	inFlightScan map[string]*handoffScanCall
-	previewCache map[string]cachedHandoffPreview
+	openCode          *ocapi.Client
+	rootDir           string
+	providers         ProviderConfig
+	cacheMu           sync.RWMutex
+	inFlightScan      map[string]*handoffScanCall
+	inFlightCLIStatus *cliStatusCall
+	previewCache      map[string]cachedHandoffPreview
 
 	credSyncMu       sync.Mutex
 	credSyncStarted  bool

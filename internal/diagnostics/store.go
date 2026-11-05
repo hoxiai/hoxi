@@ -186,7 +186,10 @@ func (s *store) prepare() error {
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return errors.New("unsafe diagnostics directory")
 	}
-	return os.Chmod(s.directory, 0700)
+	if info.Mode().Perm() != 0700 {
+		return os.Chmod(s.directory, 0700)
+	}
+	return nil
 }
 
 type logFile struct {
@@ -213,33 +216,45 @@ func (s *store) files() ([]logFile, error) {
 		if !info.Mode().IsRegular() {
 			return nil, errors.New("unsafe diagnostics file")
 		}
-		if err := os.Chmod(filepath.Join(s.directory, name), 0600); err != nil {
-			return nil, err
+		fullPath := filepath.Join(s.directory, name)
+		if info.Mode().Perm() != 0600 {
+			if err := os.Chmod(fullPath, 0600); err != nil {
+				return nil, err
+			}
 		}
-		files = append(files, logFile{filepath.Join(s.directory, name), info.Size(), info.ModTime()})
+		files = append(files, logFile{fullPath, info.Size(), info.ModTime()})
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].modified.Before(files[j].modified) })
 	return files, nil
 }
 
 func (s *store) prune(incoming int64) error {
+	_, err := s.pruneFiles(incoming)
+	return err
+}
+
+func (s *store) pruneFiles(incoming int64) ([]logFile, error) {
 	files, err := s.files()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	var total int64
 	for _, f := range files {
 		total += f.size
 	}
+	kept := files[:0]
+	cutoff := s.now().Add(-retention)
 	for _, f := range files {
-		if f.modified.Before(s.now().Add(-retention)) || total+incoming > s.budget {
+		if f.modified.Before(cutoff) || total+incoming > s.budget {
 			if err := os.Remove(f.path); err != nil {
-				return err
+				return nil, err
 			}
 			total -= f.size
+			continue
 		}
+		kept = append(kept, f)
 	}
-	return nil
+	return kept, nil
 }
 
 func (s *store) record(e Entry) {
@@ -271,10 +286,7 @@ func (s *store) append(e Entry) error {
 	if len(data) > maxLineBytes {
 		return errors.New("diagnostics entry too large")
 	}
-	if err := s.prune(int64(len(data))); err != nil {
-		return err
-	}
-	files, err := s.files()
+	files, err := s.pruneFiles(int64(len(data)))
 	if err != nil {
 		return err
 	}
@@ -288,17 +300,21 @@ func (s *store) append(e Entry) error {
 		}
 	}
 	flags := os.O_WRONLY | os.O_APPEND
+	created := false
 	if name == "" {
 		name = filepath.Join(s.directory, prefix+fmt.Sprint(now.UnixNano())+".jsonl")
 		flags |= os.O_CREATE | os.O_EXCL
+		created = true
 	}
 	f, err := os.OpenFile(name, flags, 0600)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-	if err := f.Chmod(0600); err != nil {
-		return err
+	if created {
+		if err := f.Chmod(0600); err != nil {
+			return err
+		}
 	}
 	_, err = f.Write(data)
 	return err

@@ -17,7 +17,10 @@ import (
 	"github.com/hoxiai/hoxi/internal/textindex"
 )
 
-const cacheTTL = 30 * 1000
+const (
+	cacheTTL            = 30 * 1000
+	maxCachedRecallDirs = 16
+)
 
 type Turn struct {
 	Role    string
@@ -32,6 +35,14 @@ type Session struct {
 	Runtime   string
 	UpdatedAt int64
 	Turns     []Turn
+}
+
+type sessionMeta struct {
+	ID        string
+	Title     string
+	Directory string
+	Runtime   string
+	UpdatedAt int64
 }
 
 type Source interface {
@@ -58,7 +69,7 @@ type Response struct {
 }
 
 type document struct {
-	session Session
+	session sessionMeta
 	turn    *Turn
 	tokens  map[string]int
 	length  int
@@ -70,16 +81,29 @@ type cached struct {
 	avgLen    float64
 	sessions  int
 	indexedAt int64
+	access    uint64
+}
+
+type recallFlight struct {
+	done   chan struct{}
+	cached *cached
+	err    error
 }
 
 type Service struct {
-	source Source
-	mu     sync.Mutex
-	cache  map[string]*cached
+	source   Source
+	mu       sync.Mutex
+	clock    uint64
+	cache    map[string]*cached
+	inflight map[string]*recallFlight
 }
 
 func NewService(source Source) *Service {
-	return &Service{source: source, cache: make(map[string]*cached)}
+	return &Service{
+		source:   source,
+		cache:    make(map[string]*cached),
+		inflight: make(map[string]*recallFlight),
+	}
 }
 
 func (s *Service) RegisterRoutes(mux *http.ServeMux) {
@@ -154,52 +178,120 @@ func (s *Service) Search(ctx context.Context, directory, query string, limit int
 }
 
 func (s *Service) index(ctx context.Context, directory string) (*cached, error) {
+	now := time.Now().UnixMilli()
 	s.mu.Lock()
-	if cached := s.cache[directory]; cached != nil && time.Now().UnixMilli()-cached.indexedAt < cacheTTL {
+	if c := s.cache[directory]; c != nil && now-c.indexedAt < cacheTTL {
+		s.clock++
+		c.access = s.clock
 		s.mu.Unlock()
-		return cached, nil
+		return c, nil
 	}
+	if s.inflight == nil {
+		s.inflight = make(map[string]*recallFlight)
+	}
+	if flight := s.inflight[directory]; flight != nil {
+		s.mu.Unlock()
+		if ctx != nil {
+			select {
+			case <-flight.done:
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		} else {
+			<-flight.done
+		}
+		return flight.cached, flight.err
+	}
+	flight := &recallFlight{done: make(chan struct{})}
+	s.inflight[directory] = flight
 	s.mu.Unlock()
 
-	ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
+	reqCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
 	defer cancel()
-	sessions, err := s.source.Sessions(ctx, directory)
-	if err != nil {
-		return nil, err
-	}
-	result := &cached{df: make(map[string]int), sessions: len(sessions), indexedAt: time.Now().UnixMilli()}
-	total := 0
-	for _, session := range sessions {
-		if len(session.Turns) == 0 {
-			tokens := textindex.Counts(session.Title)
-			if len(tokens) > 0 {
-				result.docs = append(result.docs, document{session: session, tokens: tokens, length: tokenLength(tokens)})
+	sessions, err := s.source.Sessions(reqCtx, directory)
+	var result *cached
+	if err == nil {
+		builtAt := time.Now().UnixMilli()
+		result = &cached{df: make(map[string]int), sessions: len(sessions), indexedAt: builtAt}
+		total := 0
+		for _, session := range sessions {
+			meta := sessionMeta{
+				ID:        session.ID,
+				Title:     session.Title,
+				Directory: session.Directory,
+				Runtime:   session.Runtime,
+				UpdatedAt: session.UpdatedAt,
+			}
+			if len(session.Turns) == 0 {
+				tokens := textindex.Counts(session.Title)
+				if len(tokens) > 0 {
+					result.docs = append(result.docs, document{session: meta, tokens: tokens, length: tokenLength(tokens)})
+				}
+			}
+			for i := range session.Turns {
+				turn := session.Turns[i]
+				if strings.TrimSpace(turn.Text) == "" {
+					continue
+				}
+				tokens := textindex.Counts(turn.Text + " " + session.Title)
+				if len(tokens) == 0 {
+					continue
+				}
+				length := tokenLength(tokens)
+				for token := range tokens {
+					result.df[token]++
+				}
+				turnCopy := turn
+				result.docs = append(result.docs, document{session: meta, turn: &turnCopy, tokens: tokens, length: length})
+				total += length
 			}
 		}
-		for i := range session.Turns {
-			turn := &session.Turns[i]
-			if strings.TrimSpace(turn.Text) == "" {
-				continue
-			}
-			tokens := textindex.Counts(turn.Text + " " + session.Title)
-			if len(tokens) == 0 {
-				continue
-			}
-			length := tokenLength(tokens)
-			for token := range tokens {
-				result.df[token]++
-			}
-			result.docs = append(result.docs, document{session: session, turn: turn, tokens: tokens, length: length})
-			total += length
+		if len(result.docs) > 0 {
+			result.avgLen = float64(total) / float64(len(result.docs))
 		}
 	}
-	if len(result.docs) > 0 {
-		result.avgLen = float64(total) / float64(len(result.docs))
-	}
+
 	s.mu.Lock()
-	s.cache[directory] = result
+	delete(s.inflight, directory)
+	if err == nil && result != nil {
+		s.clock++
+		result.access = s.clock
+		s.cache[directory] = result
+		s.trimCacheLocked(directory, result.indexedAt)
+	}
+	flight.cached = result
+	flight.err = err
+	close(flight.done)
 	s.mu.Unlock()
-	return result, nil
+	return result, err
+}
+
+func (s *Service) trimCacheLocked(keepDir string, now int64) {
+	for dir, entry := range s.cache {
+		if dir == keepDir {
+			continue
+		}
+		if entry == nil || now-entry.indexedAt >= cacheTTL {
+			delete(s.cache, dir)
+		}
+	}
+	for len(s.cache) > maxCachedRecallDirs {
+		oldestDir := ""
+		var oldestAccess uint64
+		for dir, entry := range s.cache {
+			if dir == keepDir {
+				continue
+			}
+			if oldestDir == "" || entry.access < oldestAccess {
+				oldestDir = dir
+				oldestAccess = entry.access
+			}
+		}
+		if oldestDir == "" {
+			break
+		}
+		delete(s.cache, oldestDir)
+	}
 }
 
 func tokenLength(tokens map[string]int) int {

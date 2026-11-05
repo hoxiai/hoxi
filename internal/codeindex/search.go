@@ -37,13 +37,14 @@ type document struct {
 }
 
 type cachedIndex struct {
-	index    *Index
-	docs     []document
-	postings map[string][]uint32
-	avgLen   float64
-	symbols  map[string][]symbolDecl
-	bytes    int64
-	access   uint64
+	index       *Index
+	docs        []document
+	postings    map[string][]uint32
+	avgLen      float64
+	symbols     map[string][]symbolDecl
+	sortedPaths []string
+	bytes       int64
+	access      uint64
 }
 
 const (
@@ -121,6 +122,12 @@ func buildDocs(index *Index) *cachedIndex {
 		}
 		approxBytes += int64(totalPostings * 4)
 	}
+	sortedPaths := make([]string, 0, len(index.Files))
+	for p := range index.Files {
+		sortedPaths = append(sortedPaths, p)
+	}
+	sort.Strings(sortedPaths)
+	c.sortedPaths = sortedPaths
 	c.symbols = buildWorkspaceSymbolMap(index)
 	for sym, decls := range c.symbols {
 		approxBytes += int64(32 + len(sym) + len(decls)*64)

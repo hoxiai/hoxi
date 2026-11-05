@@ -105,9 +105,32 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
   const sourceLines = createMemo(() =>
     isBinaryPreview() ? [] : props.previewContent.split("\n")
   );
+  const INITIAL_SOURCE_LINE_LIMIT = 600;
+  const SOURCE_LINE_BATCH = 600;
+  const [renderedLineLimit, setRenderedLineLimit] = createSignal(INITIAL_SOURCE_LINE_LIMIT);
+  const visibleSourceLines = createMemo(() => {
+    const lines = sourceLines();
+    const limit = renderedLineLimit();
+    return lines.length > limit ? lines.slice(0, limit) : lines;
+  });
   const changedLines = createMemo(() =>
     computeChangedFileLines(props.activeDiff, sourceLines())
   );
+
+  createEffect(() => {
+    void props.previewPath;
+    setRenderedLineLimit(INITIAL_SOURCE_LINE_LIMIT);
+  });
+
+  const handleSourceScroll = (ev: Event) => {
+    const el = ev.currentTarget as HTMLElement | null;
+    if (!el) return;
+    const total = sourceLines().length;
+    if (renderedLineLimit() >= total) return;
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 480) {
+      setRenderedLineLimit((prev) => Math.min(total, prev + SOURCE_LINE_BATCH));
+    }
+  };
 
   createEffect(() => {
     const code = props.previewContent;
@@ -134,6 +157,9 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
     const firstChanged = changed.size > 0 ? Math.min(...changed) : null;
     const line = workspace.inspectedFileLine || props.highlightedLine || firstChanged;
     if (!line) return;
+    if (line > renderedLineLimit()) {
+      setRenderedLineLimit(Math.min(sourceLines().length, line + 200));
+    }
     requestAnimationFrame(() => {
       const target = sourceContainer?.querySelector<HTMLElement>(`[data-line="${line}"]`);
       target?.scrollIntoView({ block: "center", behavior: "smooth" });
@@ -194,7 +220,7 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
         </button>
 
         <Show when={props.canGoBack || props.canGoForward}>
-          <div class="shrink-0 inline-flex items-center rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-0.5">
+          <div class="shrink-0 inline-flex items-center rounded-md bg-[var(--bg-inset)] p-0.5">
             <button
               type="button"
               disabled={!props.canGoBack}
@@ -238,7 +264,7 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
 
         <Show when={props.activeDiff?.repo}>
           <span
-            class="shrink-0 inline-flex items-center gap-1 rounded bg-[var(--accent-surface)] px-1.5 py-0 text-[11px] font-mono text-[var(--accent-primary)] border border-[var(--accent-border)]"
+            class="shrink-0 inline-flex items-center gap-1 rounded-md bg-[var(--accent-surface)] px-1.5 py-0.5 text-[11px] font-mono text-[var(--accent-primary)]"
             title={
               props.activeDiff!.branch
                 ? `${props.activeDiff!.repo} (${props.activeDiff!.branch})`
@@ -274,7 +300,7 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
               onClick={() => props.onChangeViewMode("source")}
               class={`hoxi-press inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] cursor-pointer ${
                 props.viewMode === "source"
-                  ? "bg-[var(--accent-surface)] text-[var(--accent-primary)] font-medium"
+                  ? "bg-[var(--bg-panel)] text-[var(--text-primary)] font-medium shadow-2xs"
                   : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
               }`}
               title={t("inspector.files.sourceMode")}
@@ -369,7 +395,11 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
       </div>
 
       {/* Preview Body */}
-      <div ref={sourceContainer} class="flex-1 min-h-0 overflow-auto bg-[var(--bg-code)]">
+      <div
+        ref={sourceContainer}
+        onScroll={handleSourceScroll}
+        class="flex-1 min-h-0 overflow-auto bg-[var(--bg-code)]"
+      >
         <Show when={props.loadingPreview}>
           <div class="flex items-center justify-center py-8 text-[var(--text-muted)]">
             <LoaderCircle size={16} class="animate-spin" />
@@ -422,7 +452,7 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
                         class="py-3 font-mono leading-relaxed text-[var(--text-primary)] whitespace-pre selectable-text"
                         style={{ "font-size": "var(--app-code-text-size)" }}
                       >
-                        <For each={sourceLines()}>
+                        <For each={visibleSourceLines()}>
                           {(line, index) => {
                             const lineNo = () => index() + 1;
                             const isChanged = () => changedLines().has(lineNo());

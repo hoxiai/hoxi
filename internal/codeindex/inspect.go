@@ -220,11 +220,14 @@ func (s *Service) Callers(directory, symbol, excludePath string, limit int) (Cal
 	var testMatches []scoredCaller
 	seen := make(map[string]struct{})
 
-	paths := make([]string, 0, len(c.index.Files))
-	for p := range c.index.Files {
-		paths = append(paths, p)
+	paths := c.sortedPaths
+	if len(paths) == 0 && len(c.index.Files) > 0 {
+		paths = make([]string, 0, len(c.index.Files))
+		for p := range c.index.Files {
+			paths = append(paths, p)
+		}
+		sort.Strings(paths)
 	}
-	sort.Strings(paths)
 
 	for _, relPath := range paths {
 		if isProtectedOrSecretRelPath(relPath) || isNonCodeCallersFile(relPath) {
@@ -318,13 +321,27 @@ func (s *Service) Callers(directory, symbol, excludePath string, limit int) (Cal
 	}, nil
 }
 
+func fileChunksMightContainSymbol(rec *FileRecord, lowerTarget string, maxChunks int) bool {
+	if rec == nil || lowerTarget == "" {
+		return false
+	}
+	for i := range rec.Chunks {
+		ch := &rec.Chunks[i]
+		if strings.EqualFold(ch.Symbol, lowerTarget) || strings.Contains(strings.ToLower(ch.Text), lowerTarget) {
+			return true
+		}
+	}
+	return maxChunks > 0 && len(rec.Chunks) >= maxChunks
+}
+
 func (s *Service) locateSymbolInIndex(directory string, c *cachedIndex, symbol string) (path string, startLine, endLine int, resolvedSymbol string, ok bool) {
 	target := strings.TrimSpace(symbol)
 	if dot := strings.LastIndexByte(target, '.'); dot >= 0 && dot+1 < len(target) {
 		target = target[dot+1:]
 	}
+	lowerTarget := strings.ToLower(target)
 	if target != "" && len(c.symbols) > 0 {
-		if cands := c.symbols[strings.ToLower(target)]; len(cands) > 0 {
+		if cands := c.symbols[lowerTarget]; len(cands) > 0 {
 			best := cands[0]
 			for _, cand := range cands {
 				if cand.Symbol == target {
@@ -342,14 +359,20 @@ func (s *Service) locateSymbolInIndex(directory string, c *cachedIndex, symbol s
 			return best.Path, best.StartLine, best.EndLine, best.Symbol, true
 		}
 	}
-	paths := make([]string, 0, len(c.index.Files))
-	for p := range c.index.Files {
-		paths = append(paths, p)
+	paths := c.sortedPaths
+	if len(paths) == 0 && len(c.index.Files) > 0 {
+		paths = make([]string, 0, len(c.index.Files))
+		for p := range c.index.Files {
+			paths = append(paths, p)
+		}
+		sort.Strings(paths)
 	}
-	sort.Strings(paths)
-	// Fallback pass: check indexed files for exact/case-insensitive symbol declaration.
+	// Fallback pass: only read files whose in-memory chunks contain the target identifier.
 	for _, relPath := range paths {
 		if isProtectedOrSecretRelPath(relPath) {
+			continue
+		}
+		if !fileChunksMightContainSymbol(c.index.Files[relPath], lowerTarget, s.cfg.MaxFileChunks) {
 			continue
 		}
 		raw, err := os.ReadFile(filepath.Join(directory, filepath.FromSlash(relPath)))

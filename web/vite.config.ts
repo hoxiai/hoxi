@@ -156,19 +156,32 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks(id) {
-          if (id.includes("node_modules/solid-js")) {
+          const normalized = id.replace(/\\/g, "/");
+          if (normalized.includes("node_modules/solid-js")) {
             return "vendor-solid";
           }
-          if (id.includes("node_modules/lucide-solid")) {
+          if (normalized.includes("node_modules/lucide-solid")) {
             return "vendor-icons";
           }
-          if (id.includes("node_modules/@pierre/diffs")) {
+          if (normalized.includes("node_modules/@pierre/diffs")) {
             return "vendor-pierre-diffs";
           }
-          if (id.includes("node_modules/@shikijs") || id.includes("node_modules/shiki")) {
-            if (!id.includes("/langs/") && !id.includes("/themes/")) {
+          if (normalized.includes("node_modules/@xterm")) {
+            return "vendor-xterm";
+          }
+          if (normalized.includes("node_modules/@shikijs") || normalized.includes("node_modules/shiki")) {
+            if (!normalized.includes("/langs/") && !normalized.includes("/themes/")) {
               return "vendor-shiki-core";
             }
+          }
+          if (normalized.includes("/hoxi-work/")) {
+            return "surface-work";
+          }
+          if (normalized.includes("/src/i18n/")) {
+            return "app-i18n";
+          }
+          if (normalized.includes("/src/store/") || normalized.includes("/src/services/")) {
+            return "app-core";
           }
         },
       },

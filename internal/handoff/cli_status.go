@@ -89,6 +89,18 @@ func (g *Service) handleLocalCLIStatus(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusMethodNotAllowed, "GET required")
 		return
 	}
+	g.cacheMu.Lock()
+	if call := g.inFlightCLIStatus; call != nil {
+		g.cacheMu.Unlock()
+		call.wg.Wait()
+		writeJSON(w, http.StatusOK, LocalCLIStatusResponse{Tools: call.tools})
+		return
+	}
+	call := &cliStatusCall{}
+	call.wg.Add(1)
+	g.inFlightCLIStatus = call
+	g.cacheMu.Unlock()
+
 	hoxiMap := g.loadHoxiProvidersMap()
 	detections := []func() LocalCLIStatusItem{
 		func() LocalCLIStatusItem { return detectGrokCLIStatus(hoxiMap) },
@@ -110,6 +122,15 @@ func (g *Service) handleLocalCLIStatus(w http.ResponseWriter, r *http.Request) {
 		}(i, detect)
 	}
 	scans.Wait()
+
+	call.tools = tools
+	call.wg.Done()
+	g.cacheMu.Lock()
+	if g.inFlightCLIStatus == call {
+		g.inFlightCLIStatus = nil
+	}
+	g.cacheMu.Unlock()
+
 	writeJSON(w, http.StatusOK, LocalCLIStatusResponse{Tools: tools})
 }
 

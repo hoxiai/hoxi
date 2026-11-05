@@ -45,6 +45,7 @@ type storedSession struct {
 	rec              SessionRecord
 	meta             SessionRecord        // protected by Store.mu; no transcript references
 	cache            transcriptCacheEntry // protected by Store.mu
+	summaryTurns     []MessageTurn
 	turnsLoaded      bool
 	hasRevertedTurns bool
 	active           bool
@@ -136,6 +137,7 @@ func (s *Store) ensureTurnsLocked(ss *storedSession) {
 		}
 	}
 	ss.turnsLoaded = true
+	ss.summaryTurns = nil
 	ss.deltas = nil
 	ss.index.rebuild(ss.rec.Turns)
 	ss.bodyBytes = estimateTurnsBytes(ss.rec.Turns) + estimateTurnsBytes(ss.rec.RevertedTurns)
@@ -168,6 +170,7 @@ func (s *Store) commitLocked(next SessionRecord, ss *storedSession) error {
 		return err
 	}
 	ss.rec, ss.turnsLoaded, ss.logLines = next, true, lines
+	ss.summaryTurns = nil
 	ss.metaDirty, ss.dirty, ss.deltas, ss.pending = false, nil, nil, nil
 	ss.hasRevertedTurns = len(next.RevertedTurns) > 0
 	ss.index.rebuild(next.Turns)
@@ -242,6 +245,71 @@ func (s *Store) VisitTurnsTransient(sessionID string, fn func(rec SessionRecord)
 	rec := ss.rec
 	rec.Turns, _ = s.readTurns(ss.rec.ID)
 	hydrateAgyTranscriptEditParts(rec.ExternalID, rec.Turns)
+	fn(rec)
+	return true
+}
+
+func compactSummaryTurns(turns []MessageTurn) []MessageTurn {
+	if len(turns) == 0 {
+		return []MessageTurn{}
+	}
+	out := make([]MessageTurn, len(turns))
+	for i, t := range turns {
+		var parts []MessagePart
+		if len(t.Parts) > 0 {
+			parts = make([]MessagePart, len(t.Parts))
+			for j, p := range t.Parts {
+				sp := MessagePart{
+					ID:        p.ID,
+					SessionID: p.SessionID,
+					MessageID: p.MessageID,
+					Type:      p.Type,
+					Tool:      p.Tool,
+					CallID:    p.CallID,
+				}
+				if p.Time != nil {
+					tm := *p.Time
+					sp.Time = &tm
+				}
+				if p.State != nil {
+					st := ToolState{Status: p.State.Status, Title: p.State.Title}
+					if p.State.Time != nil {
+						tm := *p.State.Time
+						st.Time = &tm
+					}
+					sp.State = &st
+				}
+				parts[j] = sp
+			}
+		}
+		out[i] = MessageTurn{
+			Info:  cloneMessageInfo(t.Info),
+			Parts: parts,
+		}
+	}
+	return out
+}
+
+// VisitTurnsSummary reads turn metadata and tool statuses for usage rollups and
+// request logs, caching a stripped summary in memory when a session's full
+// transcript is cold on disk so repeated pulse/history/log queries avoid
+// re-reading turns.jsonl.
+func (s *Store) VisitTurnsSummary(sessionID string, fn func(rec SessionRecord)) bool {
+	ss := s.lockSession(sessionID, false)
+	if ss == nil {
+		return false
+	}
+	defer ss.mu.Unlock()
+	if ss.turnsLoaded {
+		fn(ss.rec)
+		return true
+	}
+	if ss.summaryTurns == nil {
+		turns, _ := s.readTurns(ss.rec.ID)
+		ss.summaryTurns = compactSummaryTurns(turns)
+	}
+	rec := ss.rec
+	rec.Turns = ss.summaryTurns
 	fn(rec)
 	return true
 }

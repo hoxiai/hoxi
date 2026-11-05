@@ -9,7 +9,6 @@ import MessageStream from "../timeline/MessageStream";
 import Composer from "../timeline/Composer";
 import ParticleLogo from "../timeline/ParticleLogo";
 import ImagePreviewOverlay from "../preview/ImagePreviewOverlay";
-import InspectorPane from "../inspector/InspectorPane";
 import {
   activateSurfaceMode,
   appSettings,
@@ -38,6 +37,7 @@ import {
 } from "../../store/workspace";
 import { isWorkSurface, surfaceExtension } from "./surface-extension";
 
+const InspectorPane = lazy(() => import("../inspector/InspectorPane"));
 const WorkspaceModal = lazy(() => import("./WorkspaceModal"));
 const ExternalHandoffModal = lazy(() => import("../handoff/ExternalHandoffModal"));
 const ModelLeaderboardModal = lazy(() => import("../models/ModelLeaderboardModal"));
@@ -382,9 +382,11 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
               width: workspace.inspectorMaximized ? "100%" : `${inspectorWidth()}px`,
             }}
           >
-            <Show when={inspectorEverOpened()}>
-              <InspectorPane />
-            </Show>
+            <Suspense>
+              <Show when={inspectorEverOpened()}>
+                <InspectorPane />
+              </Show>
+            </Suspense>
           </div>
         </div>
       </main>
