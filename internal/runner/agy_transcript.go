@@ -398,11 +398,15 @@ func turnNeedsAgyTokenHydration(turn MessageTurn) bool {
 		return false
 	}
 	tok := turn.Info.Tokens
-	if tok.Total <= 0 || tok.Total != tok.Input+tok.Output {
+	if tok.Total <= 0 {
 		return false
 	}
 	_, stepCount := turnAgyStepInfo(turn.Parts)
-	return tok.Cache.Read > 0 || stepCount > 1
+	if tok.Total == tok.Input+tok.Output {
+		return tok.Cache.Read > 0 || stepCount > 1
+	}
+	sumAll := tok.Input + tok.Output + tok.Reasoning + tok.Cache.Read + tok.Cache.Write
+	return stepCount > 1 && tok.Total == sumAll
 }
 
 func loadAgyTranscriptStepUsage(conversationID string) []agyTranscriptRow {

@@ -319,6 +319,7 @@ func (s *Store) VisitTurnsSummary(sessionID string, fn func(rec SessionRecord)) 
 	loaded := false
 	if ss.summaryTurns == nil {
 		turns, _ := s.readTurns(ss.rec.ID)
+		hydrateAgyTranscriptTurnTokens(ss.rec.ExternalID, turns)
 		ss.summaryTurns = compactSummaryTurns(turns)
 		loaded = true
 	}

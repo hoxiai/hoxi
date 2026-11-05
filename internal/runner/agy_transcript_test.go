@@ -443,12 +443,23 @@ func TestStoreHydratesLegacyAgyMultiStepTurnContextTokensOnLoad(t *testing.T) {
 	}
 
 	s2 := NewStore(storeDir)
+	var summaryTotal int
+	if !s2.VisitTurnsSummary("ses_agy_legacy_tokens", func(r SessionRecord) {
+		if len(r.Turns) == 2 && r.Turns[1].Info.Tokens != nil {
+			summaryTotal = r.Turns[1].Info.Tokens.Total
+		}
+	}) {
+		t.Fatal("VisitTurnsSummary failed")
+	}
 	loaded, ok := s2.Get("ses_agy_legacy_tokens")
 	if !ok || len(loaded.Turns) != 2 || loaded.Turns[1].Info.Tokens == nil {
 		t.Fatalf("unexpected loaded record: %+v", loaded)
 	}
 	tok := loaded.Turns[1].Info.Tokens
 	wantContext := 2256 + 200150 + 1591 // 203,997
+	if summaryTotal != wantContext {
+		t.Fatalf("VisitTurnsSummary Tokens.Total = %d, want %d", summaryTotal, wantContext)
+	}
 	if tok.Total != wantContext {
 		t.Fatalf("hydrated Tokens.Total = %d, want %d", tok.Total, wantContext)
 	}
