@@ -1,5 +1,6 @@
 // web/src/components/layout/left-nav-helpers.tsx
 import { Show } from "solid-js";
+import { Folder, FolderOpen } from "lucide-solid";
 import {
   DEFAULT_WORKSPACE_IDENTITY_COLOR,
   isActionableApprovalSession,
@@ -35,29 +36,30 @@ export interface ProjectNavEntry {
 export type SessionBadge = "running" | "approval" | "completed" | "idle";
 
 export function FolderIcon(props: { open?: boolean; color?: string; class?: string }) {
-  const fill = () => props.color || DEFAULT_WORKSPACE_IDENTITY_COLOR;
+  const strokeColor = () => {
+    const c = props.color?.trim();
+    if (!c || c.toUpperCase() === DEFAULT_WORKSPACE_IDENTITY_COLOR) {
+      return "var(--accent-primary)";
+    }
+    return c;
+  };
   return (
-    <svg
-      class={props.class || "w-4 h-4 shrink-0"}
-      viewBox="0 0 20 20"
-      fill="none"
-    >
-      <path
-        d={
-          props.open
-            ? "M2 5.5A1.5 1.5 0 013.5 4h3.879a1.5 1.5 0 011.06.44l1.122 1.12A1.5 1.5 0 0010.62 6H16.5A1.5 1.5 0 0118 7.5v1H3.25A1.25 1.25 0 002 9.75V5.5z"
-            : "M2 5.5A1.5 1.5 0 013.5 4h3.879a1.5 1.5 0 011.06.44l1.122 1.12A1.5 1.5 0 0010.62 6H16.5A1.5 1.5 0 0118 7.5v7a1.5 1.5 0 01-1.5 1.5h-13A1.5 1.5 0 012 14.5v-9z"
-        }
-        fill={fill()}
-        fill-opacity={props.open ? "0.85" : "0.9"}
-      />
-      <Show when={props.open}>
-        <path
-          d="M2.288 9.81A1 1 0 013.25 9h13.5a1 1 0 01.962 1.275l-1.428 5A1 1 0 0115.322 16H3.716a1 1 0 01-.962-.725l-1.428-5a1 1 0 01.962-1.275z"
-          fill={fill()}
+    <Show
+      when={props.open}
+      fallback={
+        <Folder
+          class={props.class || "w-4 h-4 shrink-0"}
+          style={{ color: strokeColor() }}
+          strokeWidth={1.85}
         />
-      </Show>
-    </svg>
+      }
+    >
+      <FolderOpen
+        class={props.class || "w-4 h-4 shrink-0"}
+        style={{ color: strokeColor() }}
+        strokeWidth={1.85}
+      />
+    </Show>
   );
 }
 

@@ -25,6 +25,7 @@ import {
 import HoxiActivityLogo from "./HoxiActivityLogo";
 import { createDeferredOpen, Presence } from "../motion/Presence";
 import { formatElapsedSeconds, startAdaptiveElapsedTimer } from "./duration-label";
+import { isFollowingLiveTail } from "./timeline-scroll";
 import { t as tI18n } from "../../i18n";
 import {
   computeActivityStepSummary,
@@ -163,7 +164,9 @@ export default function ContextActivityGroupView(props: {
 
     if (prevKey === key && prevOpen && !nextOpen && rootRef) {
       const scroller = rootRef.closest(".timeline-result-scroll");
-      if (scroller instanceof HTMLElement) {
+      // While the transcript follows the live tail its pin keeps the reader at
+      // the bottom; anchoring this older group would yank them back up to it.
+      if (scroller instanceof HTMLElement && !isFollowingLiveTail(scroller)) {
         const groupRect = rootRef.getBoundingClientRect();
         const scrollerRect = scroller.getBoundingClientRect();
         // Entirely above the viewport: collapse in 0ms and compensate scrollTop
@@ -174,7 +177,8 @@ export default function ContextActivityGroupView(props: {
           setAnimateToggle(false);
           setOpen(false);
           queueMicrotask(() => {
-            if (!rootRef) return;
+            // A send resumed following meanwhile; the tail pin owns the viewport now.
+            if (!rootRef || isFollowingLiveTail(scroller)) return;
             const delta = beforeHeight - rootRef.offsetHeight;
             if (delta > 0) {
               scroller.scrollTop = Math.max(0, beforeScrollTop - delta);

@@ -14,19 +14,19 @@
   --thread-max-width: calc(68rem - 100px);
   --composer-radius: 1rem;
 
-  /* Surfaces (Soft Mist palette for natural visual breathing room) */
-  --bg-canvas: #f1f3f6;
+  /* Surfaces (Aligned with Client Default Blue — crisp sky-tinted slate) */
+  --bg-canvas: #f4f7fb;
   --bg-panel: #ffffff;
-  --bg-elevated: #f4f6f9;
-  --bg-composer: rgba(255, 255, 255, 0.88);
-  --bg-inset: rgba(15, 23, 42, 0.04);
+  --bg-elevated: #f8fafc;
+  --bg-composer: rgba(255, 255, 255, 0.92);
+  --bg-inset: rgba(15, 23, 42, 0.035);
   --bg-hover: rgba(15, 23, 42, 0.045);
-  --bg-selected: rgba(37, 99, 235, 0.08);
-  --bg-code: #f4f6f9;
+  --bg-selected: rgba(37, 99, 235, 0.09);
+  --bg-code: #f8fafc;
 
-  /* Lines & Strokes */
-  --border-subtle: rgba(15, 23, 42, 0.075);
-  --border-strong: rgba(15, 23, 42, 0.13);
+  /* Lines & Strokes (Slate-200 family) */
+  --border-subtle: rgba(30, 41, 59, 0.08);
+  --border-strong: rgba(30, 41, 59, 0.13);
   --border-focus: rgba(37, 99, 235, 0.45);
 
   /* Motion System (durations + curves are shared by every transition primitive) */
@@ -39,39 +39,39 @@
   --ease-move: cubic-bezier(0.22, 0.61, 0.36, 1);
   --ease-spring: cubic-bezier(0.22, 1.14, 0.36, 1);
 
-  /* Elevation Ladder (light) */
-  --elevation-1: 0 1px 2px rgba(15, 23, 42, 0.05), 0 1px 1px rgba(15, 23, 42, 0.03);
-  --elevation-2: 0 1px 2px rgba(15, 23, 42, 0.05), 0 12px 30px -18px rgba(15, 23, 42, 0.22);
-  --elevation-3: 0 2px 8px rgba(15, 23, 42, 0.07), 0 20px 48px -20px rgba(15, 23, 42, 0.3);
-  --elevation-4: 0 4px 12px rgba(15, 23, 42, 0.09), 0 36px 80px -24px rgba(15, 23, 42, 0.4);
-  --overlay-backdrop: rgba(8, 12, 20, 0.5);
+  /* Elevation Ladder (light — airy & low-noise like Client cards) */
+  --elevation-1: 0 1px 2px rgba(15, 23, 42, 0.04), 0 1px 1px rgba(15, 23, 42, 0.02);
+  --elevation-2: 0 1px 3px rgba(15, 23, 42, 0.04), 0 10px 26px -18px rgba(15, 23, 42, 0.14);
+  --elevation-3: 0 2px 8px rgba(15, 23, 42, 0.06), 0 20px 48px -20px rgba(15, 23, 42, 0.22);
+  --elevation-4: 0 4px 12px rgba(15, 23, 42, 0.08), 0 36px 80px -24px rgba(15, 23, 42, 0.32);
+  --overlay-backdrop: rgba(11, 18, 32, 0.46);
   --overlay-blur: 4px;
 
   /* Shadows */
   --island-shadow: var(--elevation-2);
-  --composer-shadow: 0 18px 40px -20px rgba(15, 23, 42, 0.22), 0 2px 6px -1px rgba(15, 23, 42, 0.06);
-  --bg-glass-pill: rgba(255, 255, 255, 0.66);
-  --border-glass-pill: rgba(255, 255, 255, 0.72);
-  --shadow-glass-pill: 0 6px 18px -6px rgba(15, 23, 42, 0.16), 0 0 0 1px rgba(15, 23, 42, 0.06);
+  --composer-shadow: 0 14px 34px -18px rgba(37, 99, 235, 0.11), 0 4px 12px -2px rgba(15, 23, 42, 0.05);
+  --bg-glass-pill: rgba(255, 255, 255, 0.76);
+  --border-glass-pill: rgba(255, 255, 255, 0.84);
+  --shadow-glass-pill: 0 6px 18px -6px rgba(15, 23, 42, 0.12), 0 0 0 1px rgba(30, 41, 59, 0.06);
 
-  /* Text */
-  --text-primary: #14181f;
-  --text-secondary: #475467;
-  --text-muted: #667085;
-  --text-faint: #98a2b3;
+  /* Text (Tailwind Slate hierarchy aligned with Client) */
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #64748b;
+  --text-faint: #94a3b8;
 
-  /* Primary Brand Accent (Hoxi Blue) */
+  /* Primary Brand Accent (Hoxi Blue — #2563EB / #EFF6FF / #DBEAFE) */
   --accent-primary: #2563eb;
   --accent-foreground: #ffffff;
   --accent-text: #1d4ed8;
-  --accent-surface: rgba(37, 99, 235, 0.09);
-  --accent-border: rgba(37, 99, 235, 0.26);
+  --accent-surface: rgba(37, 99, 235, 0.08);
+  --accent-border: rgba(37, 99, 235, 0.22);
 
   /* Semantic Status */
   --status-running: #2563eb;
   --info-text: #1d4ed8;
   --info-surface: rgba(37, 99, 235, 0.08);
-  --info-border: rgba(37, 99, 235, 0.24);
+  --info-border: rgba(37, 99, 235, 0.22);
 
   --status-success: #10b981;
   --ok: #10b981;
@@ -85,10 +85,10 @@
   --warn-surface: rgba(245, 158, 11, 0.11);
   --warn-border: rgba(245, 158, 11, 0.34);
 
-  --status-danger: #ef4444;
-  --danger-text: #b91c1c;
-  --danger-surface: rgba(239, 68, 68, 0.08);
-  --danger-border: rgba(239, 68, 68, 0.26);
+  --status-danger: #f43f5e;
+  --danger-text: #e11d48;
+  --danger-surface: rgba(244, 63, 94, 0.08);
+  --danger-border: rgba(244, 63, 94, 0.25);
 
   --violet-text: #6d28d9;
   --violet-surface: rgba(139, 92, 246, 0.1);
@@ -101,69 +101,69 @@
 :root.dark {
   color-scheme: dark;
 
-  /* Surfaces (Kilo Mist Dark) */
-  --bg-canvas: #0c0e12;
-  --bg-panel: #12161d;
-  --bg-elevated: #1a202b;
-  --bg-composer: rgba(24, 30, 40, 0.86);
-  --bg-inset: rgba(255, 255, 255, 0.04);
-  --bg-hover: rgba(255, 255, 255, 0.055);
-  --bg-selected: rgba(59, 130, 246, 0.14);
-  --bg-code: rgba(0, 0, 0, 0.28);
+  /* Surfaces (Aligned with Client Deep-Sea Navy Dark) */
+  --bg-canvas: #0b1220;
+  --bg-panel: #141c2b;
+  --bg-elevated: #1b2436;
+  --bg-composer: rgba(20, 28, 43, 0.9);
+  --bg-inset: rgba(148, 163, 184, 0.06);
+  --bg-hover: rgba(148, 163, 184, 0.085);
+  --bg-selected: rgba(59, 130, 246, 0.16);
+  --bg-code: #0f1726;
 
-  /* Lines & Strokes */
-  --border-subtle: rgba(208, 214, 216, 0.075);
-  --border-strong: rgba(208, 214, 216, 0.13);
+  /* Lines & Strokes (#243044 navy-slate border family) */
+  --border-subtle: rgba(148, 163, 184, 0.12);
+  --border-strong: rgba(148, 163, 184, 0.2);
   --border-focus: rgba(59, 130, 246, 0.5);
 
   /* Elevation Ladder (dark: layered umbra + inset top highlight keeps edges readable) */
-  --elevation-1: 0 1px 2px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.04);
-  --elevation-2: 0 1px 2px rgba(0, 0, 0, 0.5), 0 14px 34px -20px rgba(0, 0, 0, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.045);
-  --elevation-3: 0 2px 8px rgba(0, 0, 0, 0.55), 0 22px 50px -22px rgba(0, 0, 0, 0.85), inset 0 1px 0 rgba(255, 255, 255, 0.05);
-  --elevation-4: 0 4px 12px rgba(0, 0, 0, 0.6), 0 36px 76px -26px rgba(0, 0, 0, 0.9), inset 0 1px 0 rgba(255, 255, 255, 0.055);
-  --overlay-backdrop: rgba(3, 5, 9, 0.62);
+  --elevation-1: 0 1px 2px rgba(2, 6, 23, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  --elevation-2: 0 1px 2px rgba(2, 6, 23, 0.5), 0 14px 34px -20px rgba(2, 6, 23, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.045);
+  --elevation-3: 0 2px 8px rgba(2, 6, 23, 0.55), 0 22px 50px -22px rgba(2, 6, 23, 0.85), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --elevation-4: 0 4px 12px rgba(2, 6, 23, 0.6), 0 36px 76px -26px rgba(2, 6, 23, 0.9), inset 0 1px 0 rgba(255, 255, 255, 0.055);
+  --overlay-backdrop: rgba(4, 8, 16, 0.64);
 
   /* Shadows */
   --island-shadow: var(--elevation-2);
-  --composer-shadow: 0 20px 44px -18px rgba(0, 0, 0, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.035);
-  --bg-glass-pill: rgba(24, 30, 40, 0.64);
-  --border-glass-pill: rgba(255, 255, 255, 0.09);
-  --shadow-glass-pill: 0 8px 22px -6px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  --composer-shadow: 0 20px 44px -18px rgba(2, 6, 23, 0.72), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  --bg-glass-pill: rgba(27, 36, 54, 0.72);
+  --border-glass-pill: rgba(148, 163, 184, 0.14);
+  --shadow-glass-pill: 0 8px 22px -6px rgba(2, 6, 23, 0.6), 0 0 0 1px rgba(148, 163, 184, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.04);
 
-  /* Text */
-  --text-primary: #e5e9f0;
-  --text-secondary: #9ba3b0;
-  --text-muted: #6e7785;
-  --text-faint: #525a68;
+  /* Text (Tailwind Slate dark hierarchy aligned with Client) */
+  --text-primary: #e2e8f0;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  --text-faint: #475569;
 
-  /* Primary Brand Accent (Hoxi Blue) */
+  /* Primary Brand Accent (Hoxi Blue Dark — #3B82F6 / #17233A / #1E3A5F) */
   --accent-primary: #3b82f6;
   --accent-text: #93c5fd;
-  --accent-surface: rgba(59, 130, 246, 0.13);
+  --accent-surface: rgba(59, 130, 246, 0.14);
   --accent-border: rgba(59, 130, 246, 0.32);
 
   /* Semantic Status */
   --status-running: #3b82f6;
   --info-text: #60a5fa;
-  --info-surface: rgba(59, 130, 246, 0.1);
+  --info-surface: rgba(59, 130, 246, 0.12);
   --info-border: rgba(59, 130, 246, 0.28);
 
   --status-success: #10b981;
   --ok: #10b981;
   --ok-text: #34d399;
-  --ok-surface: rgba(16, 185, 129, 0.11);
+  --ok-surface: rgba(16, 185, 129, 0.12);
   --ok-border: rgba(16, 185, 129, 0.3);
 
   --status-warning: #f59e0b;
   --warn: #f59e0b;
   --warn-text: #fcd34d;
-  --warn-surface: rgba(245, 158, 11, 0.1);
+  --warn-surface: rgba(245, 158, 11, 0.12);
   --warn-border: rgba(245, 158, 11, 0.35);
 
-  --status-danger: #ef4444;
-  --danger-text: #f87171;
-  --danger-surface: rgba(239, 68, 68, 0.11);
-  --danger-border: rgba(239, 68, 68, 0.32);
+  --status-danger: #f43f5e;
+  --danger-text: #fb7185;
+  --danger-surface: rgba(244, 63, 94, 0.12);
+  --danger-border: rgba(244, 63, 94, 0.32);
 
   --violet-text: #ddd6fe;
   --violet-surface: rgba(139, 92, 246, 0.14);

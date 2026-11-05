@@ -398,6 +398,8 @@ export default function WorkspaceModal() {
                     {(preset) => {
                       const active = () =>
                         normalizeWorkspaceIdentityColor(color()) === preset;
+                      const isDefaultPreset =
+                        preset === DEFAULT_WORKSPACE_IDENTITY_COLOR;
                       return (
                         <button
                           type="button"
@@ -407,11 +409,23 @@ export default function WorkspaceModal() {
                               ? "ring-2 ring-offset-2 ring-zinc-900 dark:ring-zinc-100 dark:ring-offset-[#16161A] scale-105"
                               : "hover:scale-105 opacity-85 hover:opacity-100"
                           }`}
-                          style={{ "background-color": preset }}
+                          style={{
+                            "background-color": isDefaultPreset
+                              ? "var(--accent-primary)"
+                              : preset,
+                          }}
                           title={preset}
                         >
                           <Show when={active()}>
-                            <svg class="w-3.5 h-3.5 text-zinc-950" viewBox="0 0 20 20" fill="currentColor">
+                            <svg
+                              class={`w-3.5 h-3.5 ${
+                                isDefaultPreset
+                                  ? "text-[var(--accent-foreground)]"
+                                  : "text-zinc-950"
+                              }`}
+                              viewBox="0 0 20 20"
+                              fill="currentColor"
+                            >
                               <path
                                 fill-rule="evenodd"
                                 d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 011.05-.143z"

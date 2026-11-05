@@ -72,6 +72,11 @@ export function isNestedScrollableWheelTarget(
   return false;
 }
 
+/** True while the transcript scroller is pinned to the live tail. */
+export function isFollowingLiveTail(scroller: HTMLElement): boolean {
+  return scroller.dataset?.followTail === "true";
+}
+
 // Keep following layout changes without pulling readers away from older messages.
 export function createTimelineScroll(
   getScroller: () => HTMLDivElement | undefined,
@@ -97,6 +102,7 @@ export function createTimelineScroll(
     // WebKit doesn't fight ResizeObserver's jumpToBottom() during streaming;
     // re-enable it when the reader scrolls up so their reading position stays anchored.
     el.style.overflowAnchor = enabled() && following ? "none" : "auto";
+    if (el.dataset) el.dataset.followTail = enabled() && following ? "true" : "false";
   };
 
   const updatePosition = () => {

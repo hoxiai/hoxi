@@ -87,7 +87,7 @@ export function UserTurnItem(props: {
           : ""
       }`}
     >
-      <div class="max-w-[88%] rounded-lg bg-[var(--bg-inset)]/70 px-3.5 py-2.5 space-y-2">
+      <div class="max-w-[88%] rounded-2xl border border-[var(--accent-border)]/75 bg-[var(--accent-surface)] px-3.5 py-2.5 space-y-2">
         <Show
           when={resolveTurnSkillStatus(
             props.allTurns,
@@ -121,7 +121,7 @@ export function UserTurnItem(props: {
                 case "unconfirmed":
                   return "border-[var(--border-subtle)] bg-[var(--bg-panel)] text-[var(--text-muted)]";
                 default:
-                  return "border-[var(--accent-border)] bg-[var(--accent-surface)] text-[var(--accent-text)]";
+                  return "border-[var(--accent-border)] bg-[var(--bg-panel)]/85 text-[var(--accent-text)]";
               }
             };
             return (

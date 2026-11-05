@@ -85,7 +85,7 @@ export function SubagentNavRow(props: SubagentNavRowProps) {
       data-subagent-row={props.session.id}
       class={`group/subrow relative flex items-center justify-between gap-1 rounded-md px-2 py-1 cursor-pointer min-w-0 overflow-hidden transition-colors duration-120 ${
         props.active
-          ? "bg-[var(--bg-hover)] text-[var(--text-primary)] font-medium"
+          ? "bg-[var(--bg-selected)] text-[var(--text-primary)] font-medium"
           : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]/60 hover:text-[var(--text-primary)]"
       }`}
       onClick={() => props.onSelect()}
@@ -109,11 +109,9 @@ export function SubagentNavRow(props: SubagentNavRowProps) {
             <Bot
               size={11.5}
               class={`shrink-0 ${
-                isBusy()
+                isBusy() || props.active
                   ? "text-[var(--accent-primary)]"
-                  : props.active
-                    ? "text-[var(--text-secondary)]"
-                    : "text-[var(--text-faint)]"
+                  : "text-[var(--text-faint)]"
               }`}
             />
           </Show>

@@ -262,7 +262,7 @@ export default function MultiProjectTreeItem(props: {
           </span>
 
           <FolderIcon
-            open={props.expanded || isActive()}
+            open={props.expanded}
             color={props.proj.color}
             class="w-3.5 h-3.5 shrink-0"
           />

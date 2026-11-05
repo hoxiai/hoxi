@@ -195,9 +195,9 @@ export function SessionNavItem(props: SessionNavItemProps) {
           confirmingDelete()
             ? "bg-[var(--danger-surface)] text-[var(--text-primary)] ring-1 ring-[var(--danger-border)]"
             : isEffectiveActive()
-              ? "bg-[var(--bg-hover)] text-[var(--text-primary)]"
+              ? "bg-[var(--bg-selected)] text-[var(--text-primary)] font-medium"
               : expanded() && hasActiveSubagent()
-                ? "bg-[var(--bg-hover)]/40 text-[var(--text-primary)] hover:bg-[var(--bg-hover)]/70"
+                ? "bg-[var(--bg-selected)]/45 text-[var(--text-primary)] hover:bg-[var(--bg-selected)]/70"
                 : badge() === "completed"
                   ? "text-[var(--text-primary)] hover:bg-[var(--bg-hover)]/60"
                   : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]/60 hover:text-[var(--text-primary)]"
@@ -236,7 +236,7 @@ export function SessionNavItem(props: SessionNavItemProps) {
           </Show>
           <Show when={badge() === "completed"}>
             <span
-              class="shrink-0 w-2 h-2 rounded-full bg-blue-500 shadow-[0_0_6px_rgba(59,130,246,0.5)]"
+              class="shrink-0 w-2 h-2 rounded-full bg-[var(--accent-primary)]"
               title={t("timeline.turnCompleted")}
             />
           </Show>

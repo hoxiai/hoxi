@@ -4,10 +4,10 @@
 - **工程类型**：`go-wails`
 - **母体血缘**：独立自研工程（由 GoPanel 统一部署托管）
 - **权威文档入口**：详见项目根目录 `AGENTS.md`（唯一权威架构事实源，必读！）
-- **硬性交付门禁**：修改后必须运行 `./verify.sh` 且退出码为 0；上线统一走 `/Users/hugh/code/hoxi/.hq/ship.sh`。
+- **硬性交付门禁**：修改后必须运行 `./verify.sh` 且退出码为 0；上线统一走 `../.hq/ship.sh`。
 
 ## 2. 核心不可触碰红线
-- 严格遵循根工作区 `/Users/hugh/code/hoxi/CLAUDE.md` 与本项目 `AGENTS.md` 的边界约束。
+- 严格遵循上级总工作区 `../CLAUDE.md` 与本项目 `AGENTS.md` 的边界约束。
 - 若本项目包含内嵌独立 Git 仓（如 `plugins/app/*`、`admin/`、`site/`），操作 Git 前必须用 `git -C <子目录> status` 核实归属。
 
 ## Pitfalls

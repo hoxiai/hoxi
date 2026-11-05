@@ -14,6 +14,7 @@
     "test:activity-group": "node scripts/run-browser-test.mjs src/__tests__/activity-group.browser.tsx",
     "test:session-send": "node scripts/run-browser-test.mjs src/__tests__/session-send.browser.tsx",
     "test:session-send-layout": "node scripts/run-browser-test.mjs src/__tests__/session-send-layout.browser.tsx",
+    "test:send-scroll-anchor": "node scripts/run-browser-test.mjs src/__tests__/send-scroll-anchor.browser.tsx",
     "test:task-performance": "node scripts/run-browser-test.mjs src/__tests__/task-performance.browser.tsx",
     "check:i18n": "node scripts/run-script.js scripts/check-i18n.ts",
     "check:lines": "node scripts/run-script.js scripts/check-lines.ts",

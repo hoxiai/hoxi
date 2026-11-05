@@ -221,7 +221,7 @@ export default function SingleProjectNavView(props: {
                       onClick={() => void onSelectProjectSingle(proj.path)}
                       class={`w-full flex items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left transition-colors cursor-pointer ${
                         isActive()
-                          ? "bg-[var(--bg-hover)] text-[var(--text-primary)] font-medium"
+                          ? "bg-[var(--bg-selected)] text-[var(--text-primary)] font-medium"
                           : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]/60 hover:text-[var(--text-primary)]"
                       }`}
                       title={shortenPath(proj.path)}

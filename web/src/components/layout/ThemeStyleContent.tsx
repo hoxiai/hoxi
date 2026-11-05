@@ -24,7 +24,7 @@ const STYLE_OPTIONS: Array<{
     id: "blue",
     labelKey: "header.styleBlue",
     descKey: "header.styleBlueDesc",
-    swatch: { canvas: "#f1f3f6", surface: "#ffffff", accent: "#2563eb" },
+    swatch: { canvas: "#f4f7fb", surface: "#ffffff", accent: "#2563eb" },
   },
   {
     id: "classic",
