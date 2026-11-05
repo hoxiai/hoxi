@@ -11,6 +11,149 @@ import path from "node:path";
 
 const executable = "/usr/bin/sandbox-exec";
 
+const utf8FatalDecoder = new TextDecoder("utf-8", { fatal: true });
+let gb18030Decoder;
+function getGB18030Decoder() {
+  if (!gb18030Decoder) {
+    try {
+      gb18030Decoder = new TextDecoder("gb18030", { fatal: false });
+    } catch {
+      gb18030Decoder = new TextDecoder("utf-8", { fatal: false });
+    }
+  }
+  return gb18030Decoder;
+}
+
+function isValidUTF8Slice(buf) {
+  try {
+    utf8FatalDecoder.decode(buf);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function countLeadingUTF8Continuation(buf) {
+  let i = 0;
+  while (i < buf.length && i < 3 && (buf[i] & 0xc0) === 0x80) i++;
+  return i;
+}
+
+function trimTrailingIncompleteUTF8End(buf) {
+  const n = buf.length;
+  for (let i = 1; i <= 3 && i <= n; i++) {
+    const b = buf[n - i];
+    if ((b & 0x80) === 0) return n;
+    if ((b & 0xc0) === 0x80) continue;
+    let need = 0;
+    if ((b & 0xe0) === 0xc0) need = 2;
+    else if ((b & 0xf0) === 0xe0) need = 3;
+    else if ((b & 0xf8) === 0xf0) need = 4;
+    else return n;
+    return i < need ? n - i : n;
+  }
+  return n;
+}
+
+function decodeWindowsOutputBuffer(buf, utf8Str) {
+  if (!buf || buf.length === 0) return typeof utf8Str === "string" ? utf8Str : "";
+  const raw = Buffer.isBuffer(buf) ? buf : Buffer.from(buf);
+  const str = typeof utf8Str === "string" ? utf8Str : raw.toString("utf8");
+  if (!str.includes("\uFFFD") || raw.includes(0)) return str;
+
+  const lead = countLeadingUTF8Continuation(raw);
+  const end = trimTrailingIncompleteUTF8End(raw);
+  if (lead >= end) return "";
+  const interior = raw.subarray(lead, end);
+  if (isValidUTF8Slice(interior)) {
+    return lead === 0 && end === raw.length ? str : interior.toString("utf8");
+  }
+
+  const decoder = getGB18030Decoder();
+  const out = [];
+  let lineStart = 0;
+  for (let i = 0; i <= interior.length; i++) {
+    if (i < interior.length && interior[i] !== 0x0a) continue;
+    const hasLF = i < interior.length && interior[i] === 0x0a;
+    let lineEnd = i;
+    const hasCR = lineEnd > lineStart && interior[lineEnd - 1] === 0x0d;
+    if (hasCR) lineEnd--;
+    const lineBytes = interior.subarray(lineStart, lineEnd);
+    let text;
+    if (lineBytes.length === 0) {
+      text = "";
+    } else if (isValidUTF8Slice(lineBytes)) {
+      text = lineBytes.toString("utf8");
+    } else {
+      const decoded = decoder.decode(lineBytes);
+      text = !decoded.includes("\uFFFD") ? decoded : lineBytes.toString("utf8");
+    }
+    out.push(text + (hasCR ? "\r" : "") + (hasLF ? "\n" : ""));
+    lineStart = i + 1;
+  }
+  return out.join("");
+}
+
+function ensureWindowsUTF8Runtime() {
+  if (process.platform !== "win32") return;
+  const defaults = {
+    PYTHONUTF8: "1",
+    PYTHONIOENCODING: "utf-8",
+    LANG: "C.UTF-8",
+    LC_CTYPE: "UTF-8",
+    LESSCHARSET: "utf-8",
+  };
+  for (const [k, v] of Object.entries(defaults)) {
+    if (!process.env[k]) process.env[k] = v;
+  }
+  if (!process.env.BASH_ENV) {
+    try {
+      const scriptPath = path.join(os.tmpdir(), "hoxi-bash-utf8.sh");
+      const script =
+        '#!/bin/sh\nchcp.com 65001 >/dev/null 2>&1 || true\nexport LANG="${LANG:-C.UTF-8}"\nexport LC_CTYPE="${LC_CTYPE:-UTF-8}"\nexport PYTHONUTF8="${PYTHONUTF8:-1}"\nexport PYTHONIOENCODING="${PYTHONIOENCODING:-utf-8}"\n';
+      if (!fs.existsSync(scriptPath) || fs.readFileSync(scriptPath, "utf8") !== script) {
+        fs.writeFileSync(scriptPath, script, { mode: 0o600 });
+      }
+      process.env.BASH_ENV = scriptPath.replaceAll("\\", "/");
+    } catch {
+      // Ignore temp script write errors in restricted environments.
+    }
+  }
+  const patchSym = Symbol.for("hoxi.win32.bufferToStringPatched");
+  if (!Buffer.prototype[patchSym]) {
+    const origToString = Buffer.prototype.toString;
+    Object.defineProperty(Buffer.prototype, patchSym, { value: true });
+    Buffer.prototype.toString = function hoxiToString(encoding, start, end) {
+      const str = origToString.apply(this, arguments);
+      if (
+        str.includes("\uFFFD") &&
+        (encoding === undefined || encoding === "utf8" || encoding === "utf-8" || encoding === "UTF8" || encoding === "UTF-8")
+      ) {
+        const slice = start !== undefined || end !== undefined ? this.subarray(start, end) : this;
+        return decodeWindowsOutputBuffer(slice, str);
+      }
+      return str;
+    };
+  }
+  try {
+    // Switch the attached Windows console code page to UTF-8 (65001) when running under Bun.
+    import("bun:ffi")
+      .then(({ dlopen, FFIType }) => {
+        const k32 = dlopen("kernel32.dll", {
+          SetConsoleCP: { args: [FFIType.u32], returns: FFIType.i32 },
+          SetConsoleOutputCP: { args: [FFIType.u32], returns: FFIType.i32 },
+        });
+        k32.symbols.SetConsoleCP(65001);
+        k32.symbols.SetConsoleOutputCP(65001);
+      })
+      .catch(() => {});
+  } catch {
+    // Ignore when not running under Bun.
+  }
+}
+
+ensureWindowsUTF8Runtime();
+
 function hash(value) {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -531,5 +674,10 @@ const HoxiSandboxPlugin = async () => {
     },
   };
 };
+
+Object.defineProperty(HoxiSandboxPlugin, "_decodeWindowsOutputBuffer", {
+  value: decodeWindowsOutputBuffer,
+  enumerable: false,
+});
 
 export default HoxiSandboxPlugin;

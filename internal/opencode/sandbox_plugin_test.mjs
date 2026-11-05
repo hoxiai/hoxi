@@ -401,4 +401,29 @@ test("sandbox plugin", async (t) => {
       { args: { command: "go test ./..." } }
     );
   });
+
+  test("decodes Windows GBK/CP936 command output and mixed UTF-8 without corrupting valid UTF-8", () => {
+    const decode = HoxiSandboxPlugin._decodeWindowsOutputBuffer;
+    assert.equal(typeof decode, "function");
+
+    // 1. Pure GBK line ("Windows IP 配置\r\n" -> 配置 = C5 E4 D6 C3)
+    const gbkBuf = Buffer.from([
+      0x57, 0x69, 0x6e, 0x64, 0x6f, 0x77, 0x73, 0x20, 0x49, 0x50, 0x20, 0xc5, 0xe4, 0xd6, 0xc3, 0x0d, 0x0a,
+    ]);
+    assert.equal(decode(gbkBuf, gbkBuf.toString("utf8")), "Windows IP 配置\r\n");
+
+    // 2. Mixed UTF-8 line + GBK line
+    const utf8Line = Buffer.from("=== 中文标题 ===\n", "utf8");
+    const mixedBuf = Buffer.concat([utf8Line, gbkBuf]);
+    assert.equal(decode(mixedBuf, mixedBuf.toString("utf8")), "=== 中文标题 ===\nWindows IP 配置\r\n");
+
+    // 3. Valid UTF-8 containing literal U+FFFD replacement character must stay untouched
+    const literalFFFD = Buffer.from("Valid UTF-8 with \uFFFD literal\n", "utf8");
+    assert.equal(decode(literalFFFD, literalFFFD.toString("utf8")), "Valid UTF-8 with \uFFFD literal\n");
+
+    // 4. Incomplete trailing multi-byte UTF-8 sequence at chunk boundary is trimmed cleanly
+    const fullUTF8 = Buffer.from("Hello世界", "utf8");
+    const splitUTF8 = fullUTF8.subarray(0, fullUTF8.length - 1);
+    assert.equal(decode(splitUTF8, splitUTF8.toString("utf8")), "Hello世");
+  });
 });

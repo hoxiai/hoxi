@@ -15,6 +15,7 @@ import (
 
 	"github.com/hoxiai/hoxi/internal/agentcli"
 	"github.com/hoxiai/hoxi/internal/claudeconfig"
+	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 func geminiHomeDir() string {
@@ -500,6 +501,6 @@ func readStreamLines(r io.Reader, onLine func(string)) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
 	for scanner.Scan() {
-		onLine(scanner.Text())
+		onLine(subproc.DecodeOutputBytes(scanner.Bytes()))
 	}
 }

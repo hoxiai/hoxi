@@ -78,10 +78,14 @@ export function ActionIconButton(props: {
   );
 }
 
-// Strip ANSI escape sequences for clean shell rolling output (ported from kilocode)
+// Strip ANSI CSI, OSC (e.g. Windows ConPTY/PowerShell window title & shell integration),
+// and UTF-8 BOM for clean shell rolling output (ported from kilocode).
+const ANSI_OSC_REGEX =
+  // eslint-disable-next-line no-control-regex
+  /(?:\u001b\][\s\S]*?(?:\u0007|\u001b\\)|\u009d[\s\S]*?(?:\u0007|\u009c))/g;
 const ANSI_REGEX =
   // eslint-disable-next-line no-control-regex
-  /[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g;
+  /[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:[;:][0-9]{0,4})*)?[0-9A-ORZcf-nqry=><~]/g;
 
 /**
  * Ported from @kilocode/kilo-ui/src/components/shell-rolling-results.tsx
@@ -90,6 +94,8 @@ const ANSI_REGEX =
  */
 export function processCarriageReturns(input: string): string {
   return (input || "")
+    .replace(/^\uFEFF/, "")
+    .replace(ANSI_OSC_REGEX, "")
     .replace(ANSI_REGEX, "")
     .replace(/\r\n/g, "\n")
     .split("\n")

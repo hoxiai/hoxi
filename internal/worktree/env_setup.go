@@ -63,7 +63,7 @@ func nonInteractiveGitEnv(extra ...string) []string {
 		out = append(out, "GIT_SSH_COMMAND="+KiloNonInteractiveSSHCommand)
 	}
 	out = append(out, extra...)
-	return out
+	return subproc.WithUTF8Env(out)
 }
 
 // markSpotlightNoIndex writes a .metadata_never_index marker inside the worktrees
@@ -188,8 +188,10 @@ func resolveWorktreeSetupScript(repoRoot string) string {
 }
 
 func resolveWindowsSh() string {
-	if p, err := exec.LookPath("sh"); err == nil && p != "" {
-		return p
+	for _, bin := range []string{"bash", "sh"} {
+		if p, err := exec.LookPath(bin); err == nil && p != "" {
+			return p
+		}
 	}
 	for _, k := range []string{"ProgramFiles", "ProgramFiles(x86)", "LocalAppData"} {
 		root := strings.TrimSpace(os.Getenv(k))
@@ -197,6 +199,9 @@ func resolveWindowsSh() string {
 			continue
 		}
 		for _, sub := range []string{
+			filepath.Join(root, "Git", "bin", "bash.exe"),
+			filepath.Join(root, "Git", "usr", "bin", "bash.exe"),
+			filepath.Join(root, "Programs", "Git", "bin", "bash.exe"),
 			filepath.Join(root, "Git", "bin", "sh.exe"),
 			filepath.Join(root, "Git", "usr", "bin", "sh.exe"),
 			filepath.Join(root, "Programs", "Git", "bin", "sh.exe"),
@@ -216,12 +221,12 @@ func newSetupScriptCommand(ctx context.Context, scriptPath string) *exec.Cmd {
 	}
 	if runtime.GOOS == "windows" {
 		if strings.HasSuffix(lower, ".cmd") || strings.HasSuffix(lower, ".bat") {
-			return subproc.CommandContext(ctx, "cmd", "/c", scriptPath)
+			return subproc.CommandContext(ctx, "cmd", "/c", "chcp 65001 >nul 2>&1 & call \""+scriptPath+"\"")
 		}
 		if sh := resolveWindowsSh(); sh != "" {
 			return subproc.CommandContext(ctx, sh, scriptPath)
 		}
-		return subproc.CommandContext(ctx, "cmd", "/c", scriptPath)
+		return subproc.CommandContext(ctx, "cmd", "/c", "chcp 65001 >nul 2>&1 & call \""+scriptPath+"\"")
 	}
 	return subproc.CommandContext(ctx, "sh", scriptPath)
 }
@@ -231,7 +236,7 @@ func newVerifyShellCommand(ctx context.Context, cmdStr string) *exec.Cmd {
 		if sh := resolveWindowsSh(); sh != "" {
 			return subproc.CommandContext(ctx, sh, "-c", cmdStr)
 		}
-		return subproc.CommandContext(ctx, "cmd", "/c", cmdStr)
+		return subproc.CommandContext(ctx, "cmd", "/c", "chcp 65001 >nul 2>&1 & "+cmdStr)
 	}
 	return subproc.CommandContext(ctx, "sh", "-c", cmdStr)
 }
@@ -269,9 +274,9 @@ func executeWorktreeSetupScript(repoRoot, worktreeDir, sessionID, branch string,
 	)
 	out, err := cmd.CombinedOutput()
 	if len(out) > maxSetupOutputBytes {
-		out = out[len(out)-maxSetupOutputBytes:]
+		out = subproc.TruncateUTF8Tail(out, maxSetupOutputBytes)
 	}
-	outputStr := strings.TrimSpace(string(out))
+	outputStr := strings.TrimSpace(subproc.DecodeOutputBytes(out))
 	if err != nil {
 		errMsg := fmt.Sprintf("worktree setup script (%s) failed: %v", scriptBase, err)
 		if outputStr != "" {

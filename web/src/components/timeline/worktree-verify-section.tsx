@@ -22,6 +22,7 @@ import {
   stopWorktreeVerifyRun,
 } from "../../store/workspace";
 import { t } from "../../i18n";
+import { processCarriageReturns } from "./tool-card-helpers";
 
 export function WorktreeVerifySection(props: {
   sessionID?: string | null;
@@ -209,7 +210,7 @@ export function WorktreeVerifySection(props: {
 
           <Show when={state()?.setupStatus === "failed" && (state()?.setupError || state()?.setupOutput)}>
             <pre class="max-h-20 overflow-y-auto rounded bg-black/20 p-1.5 font-mono text-[11px] leading-snug whitespace-pre-wrap break-all">
-              {(state()?.setupOutput || state()?.setupError || "").trim().slice(-400)}
+              {processCarriageReturns(state()?.setupOutput || state()?.setupError || "").trim().slice(-400)}
             </pre>
           </Show>
         </div>
@@ -396,7 +397,7 @@ export function WorktreeVerifySection(props: {
             </span>
           </div>
           <pre class="max-h-28 overflow-y-auto font-mono text-[11px] leading-relaxed text-gray-200 whitespace-pre-wrap break-all selectable-text">
-            {(state()?.output || "").trim().slice(-1500)}
+            {processCarriageReturns(state()?.output || "").trim().slice(-1500)}
           </pre>
         </div>
       </Show>

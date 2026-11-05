@@ -3,21 +3,63 @@
 package subproc
 
 import (
+	"os"
 	"os/exec"
+	"strings"
+	"sync"
 	"syscall"
 
 	"golang.org/x/sys/windows"
 )
 
-var procGetConsoleWindow = windows.NewLazySystemDLL("kernel32.dll").NewProc("GetConsoleWindow")
+var (
+	procGetConsoleWindow = kernel32DLL.NewProc("GetConsoleWindow")
+	windowsUTF8InitOnce  sync.Once
+)
+
+func init() {
+	ensureWindowsUTF8Defaults()
+}
+
+func ensureWindowsUTF8Defaults() {
+	windowsUTF8InitOnce.Do(func() {
+		if hasConsole() {
+			if procSetConsoleCP.Find() == nil {
+				_, _, _ = procSetConsoleCP.Call(cpUTF8)
+			}
+			if procSetConsoleOutputCP.Find() == nil {
+				_, _, _ = procSetConsoleOutputCP.Call(cpUTF8)
+			}
+		}
+		setDefaultEnv := func(key, value string) {
+			if strings.TrimSpace(os.Getenv(key)) == "" {
+				_ = os.Setenv(key, value)
+			}
+		}
+		if strings.TrimSpace(os.Getenv("LC_ALL")) == "" {
+			setDefaultEnv("LANG", "C.UTF-8")
+			setDefaultEnv("LC_CTYPE", "UTF-8")
+		}
+		setDefaultEnv("PYTHONUTF8", "1")
+		setDefaultEnv("PYTHONIOENCODING", "utf-8")
+		setDefaultEnv("LESSCHARSET", "utf-8")
+		if scriptPath := WindowsBashEnvScriptPath(); scriptPath != "" {
+			setDefaultEnv("BASH_ENV", scriptPath)
+		}
+	})
+}
 
 func hideWindow(cmd *exec.Cmd) {
+	ensureWindowsUTF8Defaults()
 	if cmd.SysProcAttr == nil {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
 	}
 	cmd.SysProcAttr.HideWindow = true
 	if !hasConsole() {
 		cmd.SysProcAttr.CreationFlags |= windows.CREATE_NO_WINDOW
+	}
+	if len(cmd.Env) > 0 {
+		cmd.Env = WithUTF8Env(cmd.Env)
 	}
 }
 

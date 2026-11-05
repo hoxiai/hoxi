@@ -234,7 +234,7 @@ func (s *Service) startTurnProcess(
 				transientErrText = extractFailedStreamResultError(heldFailedResultLine, tr.LastErrorText())
 			}
 			if transientErrText == "" {
-				transientErrText = firstNonEmptyStr(tr.LastErrorText(), stderrBuf.String())
+				transientErrText = firstNonEmptyStr(tr.LastErrorText(), subproc.DecodeOutputBytes(stderrBuf.Bytes()))
 				if transientErrText == "" && waitErr != nil {
 					transientErrText = waitErr.Error()
 				}
@@ -370,7 +370,7 @@ func (s *Service) startTurnProcess(
 				terminalEvts = append(terminalEvts, SSEEvent{Type: "session.status", Properties: map[string]interface{}{"sessionID": rec.ID, "status": SessionStatus{Type: "idle"}}})
 				return
 			}
-			errText := strings.TrimSpace(stderrBuf.String())
+			errText := strings.TrimSpace(subproc.DecodeOutputBytes(stderrBuf.Bytes()))
 			if errText == "" && waitErr != nil {
 				errText = waitErr.Error()
 			}

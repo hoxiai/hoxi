@@ -36,14 +36,14 @@ function decodeControlFrame(payload: string): string | undefined {
   return undefined;
 }
 
-function decodeFrame(data: string | ArrayBuffer): string {
+function decodeFrame(data: string | ArrayBuffer, streamDecoder: TextDecoder = utf8Decoder): string {
   if (typeof data !== "string") {
     const bytes = new Uint8Array(data);
     if (bytes.length > 0 && bytes[0] === 0) {
       const control = decodeControlFrame(utf8Decoder.decode(bytes.subarray(1)));
       if (control !== undefined) return control;
     }
-    return utf8Decoder.decode(bytes);
+    return streamDecoder.decode(bytes, { stream: true });
   }
   if (data.charCodeAt(0) === 0) {
     const control = decodeControlFrame(data.slice(1));
@@ -109,7 +109,8 @@ export default function WebGLTerminal() {
     }
 
     const term = new Terminal({
-      fontFamily: '"JetBrains Mono", "SF Mono", Menlo, monospace',
+      fontFamily:
+        '"JetBrains Mono", "Cascadia Mono", "SF Mono", Menlo, Consolas, "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", monospace',
       fontSize: appSettings.terminalFontSize,
       cursorBlink: appSettings.terminalCursorBlink,
       convertEol: true,
@@ -149,6 +150,7 @@ export default function WebGLTerminal() {
     };
 
     let connection: ReturnType<typeof startTerminalConnection> | undefined;
+    const frameDecoder = new TextDecoder("utf-8");
     const onData = term.onData((chunk) => connection?.send(chunk));
     const resizeObserver = new ResizeObserver(() => {
       if (workspace.inspectorTab !== "terminal") return;
@@ -161,7 +163,7 @@ export default function WebGLTerminal() {
       connect: (id, dir) => new WebSocket(wsEndpoint(id, dir)),
       size: fitSize,
       write: (data) => {
-        const decoded = decodeFrame(data);
+        const decoded = decodeFrame(data, frameDecoder);
         appendTerminalOutput(directory, decoded);
         term.write(decoded);
       },

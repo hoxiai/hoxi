@@ -263,6 +263,7 @@ func StartDaemonWithBin(
 		child.Env = append(child.Env, "OPENCODE_CONFIG="+configPath)
 	}
 	child.Env = append(child.Env, extraEnv...)
+	child.Env = subproc.WithUTF8Env(child.Env)
 	// Tied so a Hoxi that is killed (crash, taskkill /F from the installer)
 	// takes the daemon with it on Windows instead of leaving opencode.exe
 	// running and locked. The ledger below still covers an untied daemon.

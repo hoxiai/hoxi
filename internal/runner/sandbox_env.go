@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/hoxiai/hoxi/internal/agentcli"
+	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 // A confined runtime still has the network (it calls its model), so whatever
@@ -157,5 +158,5 @@ func runtimeProcessEnv(rec SessionRecord, base, hookEnv []string) []string {
 	if rec.CommandSandbox {
 		base = sandboxedRuntimeEnv(rec.Runtime, base)
 	}
-	return agentcli.WithUserBinPath(append(base, hookEnv...))
+	return subproc.WithUTF8Env(agentcli.WithUserBinPath(append(base, hookEnv...)))
 }

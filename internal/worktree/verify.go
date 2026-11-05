@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
+	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 const (
@@ -134,12 +135,11 @@ func (ent *verifySessionEntry) appendOutputLocked(p []byte) {
 	}
 	ent.outputBuf.Write(p)
 	if ent.outputBuf.Len() > maxVerifyOutputBytes {
-		raw := ent.outputBuf.Bytes()
-		keep := raw[len(raw)-maxVerifyOutputBytes:]
+		keep := subproc.TruncateUTF8Tail(ent.outputBuf.Bytes(), maxVerifyOutputBytes)
 		ent.outputBuf.Reset()
 		ent.outputBuf.Write(keep)
 	}
-	if detected := detectLocalPreviewURL(string(p)); detected != "" {
+	if detected := detectLocalPreviewURL(subproc.DecodeOutputBytes(p)); detected != "" {
 		ent.previewURL = detected
 	}
 	ent.updatedAt = time.Now().UTC().Format(time.RFC3339)
@@ -198,7 +198,7 @@ func (ent *verifySessionEntry) snapshot(cfg WorktreeVerifyConfig, defaultSetupSc
 		RunStatus:     runStatus,
 		AllocatedPort: ent.allocatedPort,
 		PreviewURL:    ent.previewURL,
-		Output:        ent.outputBuf.String(),
+		Output:        subproc.DecodeOutputBytes(ent.outputBuf.Bytes()),
 		ExitCode:      ent.exitCode,
 		UpdatedAt:     ent.updatedAt,
 	}

@@ -6,6 +6,7 @@ import {
   formatToolDisplayName,
   hasDistinctShellDescription,
   isShellAwaitingFirstOutput,
+  processCarriageReturns,
 } from "../components/timeline/tool-card-helpers";
 import {
   analyzeShellCommand,
@@ -330,5 +331,12 @@ describe("localized tool labels for CLI runtimes", () => {
     const grouped1 = groupAssistantParts(m1.effectiveParts);
     assertEqual(grouped1.length, 1, "all steps and transitional preambles stay in one unified activity group");
     assertEqual(grouped1[0].kind, "activity-group");
+  });
+
+  it("strips Windows ConPTY/PowerShell OSC sequences, UTF-8 BOM, and resolves carriage returns", () => {
+    const cjkSuffix = String.fromCodePoint(0x914d, 0x7f6e);
+    const raw =
+      `\uFEFF\u001b]0;Administrator: Windows PowerShell\u0007\u001b]9;4;1;50\u001b\\\u001b[38:2:0:255:128mDownloading 10%\rDownloading 100%\u001b[0m\r\nWindows IP ${cjkSuffix}\r\n`;
+    assertEqual(processCarriageReturns(raw), `Downloading 100%\nWindows IP ${cjkSuffix}\n`);
   });
 });
