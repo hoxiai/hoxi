@@ -198,6 +198,11 @@ func (g *Gateway) oldSessionCandidates(ctx context.Context, cutoff int64, withSi
 		}
 		if withSizes {
 			c.Bytes = sessionTreeBytes(store.Dir(), removed, engineBytes)
+			if g.browser != nil {
+				for _, node := range removed {
+					c.Bytes += g.browser.SessionProfileBytes(node.ID)
+				}
+			}
 		}
 		out = append(out, c)
 	}

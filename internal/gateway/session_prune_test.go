@@ -248,3 +248,25 @@ func TestOldSessionsKeepDirtyWorktreesAndBranches(t *testing.T) {
 		t.Fatalf("the removed sandbox's branch must be kept: %q %v", out, err)
 	}
 }
+
+func TestOldSessionsPreviewCountsTheSessionsBrowserProfile(t *testing.T) {
+	f := newPruneFixture(t)
+	f.put(t, runner.SessionRecord{ID: "ses_cld_web", Title: "web", CreatedAt: daysAgo(60), UpdatedAt: daysAgo(60)})
+	_, before := f.preview(t, "30")
+	if len(before.Sessions) != 1 {
+		t.Fatalf("preview: %+v", before.Sessions)
+	}
+	root := filepath.Join(os.Getenv("HOXI_HOME"), "browser-profile")
+	f.gw.browser.SetProfileRoot(root)
+	cookie := filepath.Join(root+"-sessions", "ses_cld_web", "Default", "Cookies")
+	if err := os.MkdirAll(filepath.Dir(cookie), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cookie, make([]byte, 50_000), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, after := f.preview(t, "30")
+	if got := after.Sessions[0].Bytes - before.Sessions[0].Bytes; got != 50_000 {
+		t.Fatalf("estimate grew by %d, want the 50000-byte browser profile", got)
+	}
+}

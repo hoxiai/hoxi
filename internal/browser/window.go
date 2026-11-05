@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -104,6 +105,7 @@ func (sc *scope) allocatorOptions(profile string) []chromedp.ExecAllocatorOption
 		// Back/forward-cache restores fire no document load, so chromedp's
 		// history actions would wait until the request deadline.
 		chromedp.Flag("disable-back-forward-cache", true),
+		chromedp.Flag("disk-cache-size", strconv.Itoa(diskCacheBytes)),
 	)
 	if execPath := resolveBrowserExecPath(); execPath != "" {
 		opts = append(opts, chromedp.ExecPath(execPath))

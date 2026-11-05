@@ -2,10 +2,12 @@ package runner
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -451,5 +453,36 @@ func TestStoreRevisionTracksWritesNotReads(t *testing.T) {
 	}
 	if store.Revision() == afterUpsert {
 		t.Fatal("Delete must advance the revision")
+	}
+}
+
+func TestDeleteConversationNotifiesRootAndSubagentChildren(t *testing.T) {
+	repo := t.TempDir()
+	svc := NewService(repo, nil, nil, filepath.Join(t.TempDir(), "sessions"))
+	var deleted []string
+	svc.SetSessionDeletedHook(func(id string) {
+		if _, ok := svc.Store().Meta(id); ok {
+			t.Errorf("hook for %s ran before its transcript was deleted", id)
+		}
+		deleted = append(deleted, id)
+	})
+	for _, rec := range []SessionRecord{
+		{ID: "ses_cld_root", Runtime: string(RuntimeClaudeCode), ProjectDir: repo, WorktreePath: repo},
+		{ID: "ses_cld_child", Runtime: string(RuntimeClaudeCode), ProjectDir: repo, WorktreePath: repo, ParentID: "ses_cld_root", Subagent: true},
+		{ID: "ses_cld_other", Runtime: string(RuntimeClaudeCode), ProjectDir: repo, WorktreePath: repo},
+	} {
+		if err := svc.Store().Put(rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := svc.DeleteConversation(context.Background(), "ses_cld_root"); err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(deleted)
+	if strings.Join(deleted, ",") != "ses_cld_child,ses_cld_root" {
+		t.Fatalf("hook calls = %v, want root and its subagent child", deleted)
+	}
+	if _, ok := svc.Store().Meta("ses_cld_other"); !ok {
+		t.Fatal("unrelated sessions must survive")
 	}
 }

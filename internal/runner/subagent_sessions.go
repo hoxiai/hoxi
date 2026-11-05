@@ -94,7 +94,9 @@ func (s *Service) deleteChildSessions(parentID string) {
 		}
 		if rec, ok := s.store.Meta(info.ID); ok && rec.Subagent {
 			s.setChildBusy(info.ID, false)
-			_ = s.store.Delete(info.ID)
+			if s.store.Delete(info.ID) == nil {
+				s.notifySessionDeleted(info.ID)
+			}
 			s.broadcast(info.ID, SSEEvent{Type: "session.deleted", Properties: map[string]interface{}{"sessionID": info.ID}})
 		}
 	}

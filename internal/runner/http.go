@@ -69,6 +69,7 @@ type Service struct {
 	permissionRules func() map[string]interface{}
 	onPolicySaved   func()
 	onSummary       func(sessionID, body string)
+	onDeleted       func(sessionID string)
 
 	openCodeBridgeState
 	sessionDiffState
@@ -81,6 +82,21 @@ type Service struct {
 func (s *Service) SetSummaryNotifier(fn func(sessionID, body string)) {
 	if s != nil {
 		s.onSummary = fn
+	}
+}
+
+// SetSessionDeletedHook is called once for each deleted conversation and each
+// subagent child removed with it, after its transcript is gone, so other
+// domains can drop per-session state such as browser profiles.
+func (s *Service) SetSessionDeletedHook(fn func(sessionID string)) {
+	if s != nil {
+		s.onDeleted = fn
+	}
+}
+
+func (s *Service) notifySessionDeleted(id string) {
+	if s.onDeleted != nil && strings.TrimSpace(id) != "" {
+		s.onDeleted(id)
 	}
 }
 

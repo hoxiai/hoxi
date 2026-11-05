@@ -183,6 +183,8 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 		forge:        forgeSvc,
 	}
 	g.browser.SetSessionResolver(runnerSvc.ResolveBrowserSession)
+	// A deleted conversation's own Chrome profile (often 100-200 MB) goes too.
+	runnerSvc.SetSessionDeletedHook(func(sessionID string) { g.browser.ForgetSession(sessionID) })
 	if g.codeIndex != nil {
 		runnerSvc.SetDirectoryWarmerContext(func(ctx context.Context, dir string) {
 			_, _ = g.codeIndex.StatusContext(ctx, dir)

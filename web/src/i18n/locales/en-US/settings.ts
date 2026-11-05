@@ -331,6 +331,8 @@ export const settings = {
   storageCatEngineLogsDesc: "Clears historical OpenCode logs, tool output blobs & snapshots",
   storageCatCacheIndex: "Code Index & Git Temp Packs",
   storageCatCacheIndexDesc: "Clears rebuildable code-index cache & stale tmp_pack_* files",
+  storageCatBrowser: "Built-in browser profiles",
+  storageCatBrowserDesc: "Clears Chrome caches of profiles that are not running; sign-ins and cookies are kept",
   storageCleanSuccess: "Reclaimed {size} of disk space",
   storageCleanAlreadyOptimal: "Storage is already compact",
   storageCleanFailed: "Storage cleanup failed: {error}",

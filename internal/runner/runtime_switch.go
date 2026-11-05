@@ -517,6 +517,7 @@ func (s *Service) deleteConversation(ctx context.Context, id string) error {
 		if s.attachments != nil {
 			s.attachments.DeleteBySession(id)
 		}
+		s.notifySessionDeleted(id)
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
@@ -551,7 +552,11 @@ func (s *Service) deleteConversation(ctx context.Context, id string) error {
 		s.attachments.DeleteBySession(id)
 	}
 	s.deleteChildSessions(id)
-	return s.store.Delete(id)
+	if err := s.store.Delete(id); err != nil {
+		return err
+	}
+	s.notifySessionDeleted(id)
+	return nil
 }
 
 func (s *Service) collectOpenCodeChildIDs(id string, rec SessionRecord, ap *activeProcess) []string {

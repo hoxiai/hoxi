@@ -80,6 +80,7 @@ func (g *Gateway) StartEnginePrewarm(ctx context.Context) {
 		g.runner.StartProjectPrewarm(ctx)
 	}
 	g.StartStorageMaintenance(ctx)
+	g.StartIdleMemoryRelease(ctx)
 }
 
 // openCodeBinarySource classifies the resolved binary for the settings page:

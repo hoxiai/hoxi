@@ -1,6 +1,6 @@
 // web/src/components/settings/StorageCleanupSection.tsx
 import { createSignal, For, onMount, Show } from "solid-js";
-import { Database, FileText, FolderArchive, HardDrive, RefreshCw, Sparkles } from "lucide-solid";
+import { Database, FileText, FolderArchive, Globe, HardDrive, RefreshCw, Sparkles } from "lucide-solid";
 import type { SystemStorageStats } from "../../services/api";
 import { cleanSystemStorage, fetchSystemStorage } from "../../store/workspace";
 import { Spinner } from "../icons";
@@ -89,6 +89,15 @@ export function StorageCleanupSection(props: { onToast: (msg: string) => void })
         color: "bg-violet-500",
         dotColor: "bg-violet-500",
         icon: FolderArchive,
+      },
+      {
+        key: "browser",
+        label: t("settings.storageCatBrowser"),
+        desc: t("settings.storageCatBrowserDesc"),
+        bytes: s?.browserBytes ?? 0,
+        color: "bg-sky-500",
+        dotColor: "bg-sky-500",
+        icon: Globe,
       },
     ];
   };

@@ -332,6 +332,8 @@ export const settings: SettingsI18n = {
   storageCatEngineLogsDesc: "清理历史 OpenCode 运行日志、大体积工具输出与快照",
   storageCatCacheIndex: "代码索引与 Git 临时包",
   storageCatCacheIndexDesc: "清理可重建的代码索引缓存与中断残留的 tmp_pack_* 文件",
+  storageCatBrowser: "内置浏览器配置",
+  storageCatBrowserDesc: "清理未在运行的浏览器配置里的 Chrome 缓存，登录状态和 Cookie 会保留",
   storageCleanSuccess: "已释放 {size} 磁盘空间",
   storageCleanAlreadyOptimal: "当前存储已处于精简状态",
   storageCleanFailed: "存储清理失败：{error}",

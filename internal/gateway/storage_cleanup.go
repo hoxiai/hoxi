@@ -34,6 +34,7 @@ type SystemStorageStats struct {
 	SessionsBytes   int64  `json:"sessionsBytes"`
 	EngineLogsBytes int64  `json:"engineLogsBytes"`
 	CacheIndexBytes int64  `json:"cacheIndexBytes"`
+	BrowserBytes    int64  `json:"browserBytes"`
 	DataDir         string `json:"dataDir"`
 }
 
@@ -143,13 +144,18 @@ func (g *Gateway) InspectStorage() SystemStorageStats {
 		codeIndexBytes = runner.MeasureDirBytes(hoxipaths.Join("code-index"))
 	}
 	cacheIndexBytes := codeIndexBytes + worktree.MeasureTempPacksBytes(g.knownWorkspaceDirs())
-	total := dbBytes + sessionsBytes + engineLogsBytes + cacheIndexBytes
+	var browserBytes int64
+	if g.browser != nil {
+		browserBytes = g.browser.ProfileStorageBytes()
+	}
+	total := dbBytes + sessionsBytes + engineLogsBytes + cacheIndexBytes + browserBytes
 	return SystemStorageStats{
 		TotalBytes:      total,
 		DatabaseBytes:   dbBytes,
 		SessionsBytes:   sessionsBytes,
 		EngineLogsBytes: engineLogsBytes,
 		CacheIndexBytes: cacheIndexBytes,
+		BrowserBytes:    browserBytes,
 		DataDir:         hoxipaths.Home(),
 	}
 }
@@ -203,6 +209,12 @@ func (g *Gateway) CleanStorage(ctx context.Context) SystemStorageCleanResult {
 
 	if g.codeIndex != nil {
 		explicitFreed += g.codeIndex.ClearCache()
+	}
+
+	// Chrome regenerates its caches; running profiles are left alone.
+	if g.browser != nil {
+		freedCache, _ := g.browser.ClearProfileCaches()
+		explicitFreed += freedCache
 	}
 
 	if files, freed := worktree.PruneTempPacks(g.knownWorkspaceDirs(), minAge); files > 0 || freed > 0 {

@@ -608,6 +608,8 @@ export interface SystemStorageStats {
   sessionsBytes: number;
   engineLogsBytes: number;
   cacheIndexBytes: number;
+  /** Persistent Chrome profiles of the built-in browser. */
+  browserBytes?: number;
   dataDir: string;
 }
 
