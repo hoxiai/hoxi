@@ -564,12 +564,12 @@ func buildEightDimSessionMarkdown(rec SessionRecord) string {
 				toolCount++
 				mutated := isMutatingToolName(part.Tool)
 				qual := extractToolLocationQualifier(part.State.Input)
-				for _, key := range []string{"filePath", "path", "file", "TargetFile", "AbsolutePath"} {
+				for _, key := range []string{"filePath", "file_path", "Path", "path", "file", "TargetFile", "target_file", "AbsolutePath"} {
 					if v, ok := part.State.Input[key].(string); ok {
 						addFile(v, mutated, qual)
 					}
 				}
-				if cmd, ok := part.State.Input["command"].(string); ok && verificationCmdRe.MatchString(cmd) {
+				if cmd := firstString(part.State.Input["command"], part.State.Input["CommandLine"]); cmd != "" && verificationCmdRe.MatchString(cmd) {
 					status := firstNonEmptyStr(part.State.Status, "completed")
 					entry := fmt.Sprintf("`%s` (%s)", singleLineExcerpt(cmd, 120), status)
 					if len(verifications) >= 6 {

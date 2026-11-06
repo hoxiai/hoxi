@@ -187,9 +187,12 @@ func summarizeHandoffToolPart(p MessagePart) string {
 	status := firstNonEmptyStr(p.State.Status, "completed")
 	target := firstString(
 		p.State.Input["filePath"],
+		p.State.Input["file_path"],
+		p.State.Input["Path"],
 		p.State.Input["path"],
 		p.State.Input["file"],
 		p.State.Input["TargetFile"],
+		p.State.Input["target_file"],
 		p.State.Input["AbsolutePath"],
 		p.State.Input["symbol"],
 		p.State.Input["Symbol"],
@@ -220,6 +223,53 @@ func summarizeHandoffToolPart(p MessagePart) string {
 		}
 	}
 	return summary
+}
+
+type handoffToolCandidate struct {
+	summary  string
+	priority bool
+}
+
+func selectTurnToolSummaries(parts []MessagePart, maxTools int) map[string]bool {
+	if maxTools <= 0 {
+		return nil
+	}
+	var all []handoffToolCandidate
+	idxBySummary := make(map[string]int)
+	for _, p := range parts {
+		if p.Type != "tool" || p.State == nil {
+			continue
+		}
+		summary := summarizeHandoffToolPart(p)
+		if summary == "" {
+			continue
+		}
+		prio := isMutatingToolName(p.Tool) || p.State.Status == "error" || strings.TrimSpace(p.State.Error) != ""
+		if idx, exists := idxBySummary[summary]; exists {
+			if prio {
+				all[idx].priority = true
+			}
+			continue
+		}
+		idxBySummary[summary] = len(all)
+		all = append(all, handoffToolCandidate{summary: summary, priority: prio})
+	}
+	allowed := make(map[string]bool, min(len(all), maxTools))
+	if len(all) <= maxTools {
+		for _, item := range all {
+			allowed[item.summary] = true
+		}
+		return allowed
+	}
+	for i := len(all) - 1; i >= 0 && len(allowed) < maxTools; i-- {
+		if all[i].priority {
+			allowed[all[i].summary] = true
+		}
+	}
+	for i := len(all) - 1; i >= 0 && len(allowed) < maxTools; i-- {
+		allowed[all[i].summary] = true
+	}
+	return allowed
 }
 
 // Each new engine receives a transcript once. Native resume handles later turns.
@@ -279,7 +329,7 @@ func runtimeContext(rec SessionRecord) string {
 	header.WriteString(constraintsBlock)
 	header.WriteString(intro)
 
-	renderLines := func(includeTools bool, recentWindow, latestAssistantLimit, recentUserLimit, olderUserLimit int) []string {
+	renderLines := func(maxToolsPerTurn, recentWindow, latestAssistantLimit, recentUserLimit, olderUserLimit int) []string {
 		recentStart := 0
 		if len(turns) > recentWindow {
 			recentStart = len(turns) - recentWindow
@@ -293,9 +343,19 @@ func runtimeContext(rec SessionRecord) string {
 				// <session_handoff_memory>; only carry older user turns concisely.
 				continue
 			}
+			lastTextIdx := -1
+			for partIdx, p := range turn.Parts {
+				if p.Type == "text" && strings.TrimSpace(p.Text) != "" {
+					lastTextIdx = partIdx
+				}
+			}
+			var allowedTools map[string]bool
+			if isRecent && maxToolsPerTurn > 0 {
+				allowedTools = selectTurnToolSummaries(turn.Parts, maxToolsPerTurn)
+			}
 			var content []string
 			seenTools := make(map[string]bool)
-			for _, p := range turn.Parts {
+			for partIdx, p := range turn.Parts {
 				switch p.Type {
 				case "text":
 					txt := strings.TrimSpace(p.Text)
@@ -305,11 +365,17 @@ func runtimeContext(rec SessionRecord) string {
 					if !isRecent {
 						content = append(content, summarizeUserMessageExcluding(txt, olderUserLimit, activeConstraintSet))
 					} else if role == "assistant" {
+						if partIdx != lastTextIdx && maxToolsPerTurn == 0 {
+							continue
+						}
 						limit := 1600
-						if !includeTools {
+						if maxToolsPerTurn == 0 {
 							limit = 600
-						} else if idx == len(turns)-1 && latestAssistantLimit > limit {
+						}
+						if idx == len(turns)-1 && partIdx == lastTextIdx {
 							limit = latestAssistantLimit
+						} else if partIdx != lastTextIdx {
+							limit = min(240, latestAssistantLimit)
 						} else if latestAssistantLimit < limit {
 							limit = latestAssistantLimit
 						}
@@ -318,10 +384,10 @@ func runtimeContext(rec SessionRecord) string {
 						content = append(content, summarizeUserMessageExcluding(txt, recentUserLimit, activeConstraintSet))
 					}
 				case "tool":
-					if !isRecent || (!includeTools && idx < len(turns)-2) {
+					if !isRecent || maxToolsPerTurn <= 0 {
 						continue
 					}
-					if summary := summarizeHandoffToolPart(p); summary != "" && !seenTools[summary] {
+					if summary := summarizeHandoffToolPart(p); summary != "" && allowedTools[summary] && !seenTools[summary] {
 						seenTools[summary] = true
 						content = append(content, summary)
 					}
@@ -353,7 +419,7 @@ func runtimeContext(rec SessionRecord) string {
 	if budget < 256 {
 		budget = 256
 	}
-	lines := renderLines(true, maxRecentHandoffTurns, 8000, 1200, 400)
+	lines := renderLines(24, maxRecentHandoffTurns, 8000, 1200, 400)
 	totalLen := func(items []string) int {
 		n := 0
 		for _, s := range items {
@@ -362,14 +428,20 @@ func runtimeContext(rec SessionRecord) string {
 		return n
 	}
 	if totalLen(lines) > budget {
-		lines = renderLines(true, maxRecentHandoffTurns, 1600, 1200, 400)
+		lines = renderLines(12, maxRecentHandoffTurns, 3200, 1200, 400)
 	}
 	if totalLen(lines) > budget {
-		// Compress tool logs and verbose assistant turns first before trimming history.
-		lines = renderLines(false, 4, 600, 1200, 400)
+		lines = renderLines(6, maxRecentHandoffTurns, 1600, 1200, 400)
 	}
 	if totalLen(lines) > budget {
-		lines = renderLines(false, 4, 320, 320, 160)
+		// Compress tool logs while still keeping a generous latest assistant summary.
+		lines = renderLines(0, 4, 1600, 1200, 400)
+	}
+	if totalLen(lines) > budget {
+		lines = renderLines(0, 4, 600, 600, 240)
+	}
+	if totalLen(lines) > budget {
+		lines = renderLines(0, 4, 320, 320, 160)
 	}
 	if totalLen(lines) > budget && len(lines) > 1 {
 		// Keep the initial turn and the most recent turns that fit within the budget.
@@ -385,6 +457,14 @@ func runtimeContext(rec SessionRecord) string {
 				break
 			}
 			if used+len(lines[i])+1 > budget {
+				if len(tail) == 0 {
+					if rem := budget - used - 1; rem >= 256 {
+						tail = append(tail, truncateUTF8Bytes(lines[i], rem))
+					} else {
+						keepFirst = false
+						tail = append(tail, truncateUTF8Bytes(lines[i], budget-1))
+					}
+				}
 				break
 			}
 			tail = append(tail, lines[i])

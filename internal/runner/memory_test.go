@@ -412,3 +412,117 @@ func TestOpenCodeHandoffRespectsBudgetAndDeduplicates48Constraints(t *testing.T)
 		t.Fatalf("expected latest constraint to survive within budget, got len=%d", len(ctx))
 	}
 }
+
+func TestToolHeavyAssistantTurnRetainsLatestReplyAndPathEditsOnFallback(t *testing.T) {
+	t.Parallel()
+	var assistantParts []MessagePart
+	assistantParts = append(assistantParts, MessagePart{
+		Type: "text",
+		Text: strings.Repeat("Transitional investigation step across workspace files. ", 12),
+	})
+	for i := 1; i <= 90; i++ {
+		assistantParts = append(assistantParts, MessagePart{
+			Type: "tool",
+			Tool: "read_file",
+			State: &ToolState{
+				Status: "completed",
+				Input: map[string]interface{}{
+					"Path":      fmt.Sprintf("internal/module_%03d/handler_%03d.go", i, i),
+					"StartLine": 1,
+					"EndLine":   120,
+				},
+			},
+		})
+	}
+	editedFiles := []string{
+		"web/src/components/layout/Sidebar.tsx",
+		"web/src/store/sessions.ts",
+		"internal/runner/sessions_crud.go",
+	}
+	for _, path := range editedFiles {
+		assistantParts = append(assistantParts, MessagePart{
+			Type: "tool",
+			Tool: "edit_file",
+			State: &ToolState{
+				Status: "completed",
+				Input: map[string]interface{}{
+					"Path": path,
+				},
+				Output: "Made 1 replacement",
+			},
+		})
+	}
+	for i := 91; i <= 180; i++ {
+		assistantParts = append(assistantParts, MessagePart{
+			Type: "tool",
+			Tool: "read_file",
+			State: &ToolState{
+				Status: "completed",
+				Input: map[string]interface{}{
+					"Path":      fmt.Sprintf("web/src/components/view_%03d/Panel_%03d.tsx", i, i),
+					"StartLine": 10,
+					"EndLine":   90,
+				},
+			},
+		})
+	}
+	assistantParts = append(assistantParts,
+		MessagePart{
+			Type: "tool",
+			Tool: "run_command",
+			State: &ToolState{
+				Status: "completed",
+				Input: map[string]interface{}{
+					"CommandLine": "go test ./internal/runner/... && npm --prefix web test",
+				},
+				Output: "ok",
+			},
+		},
+		MessagePart{
+			Type: "text",
+			Text: "FINAL_ASSISTANT_SUMMARY: Fixed deleted-session guard in Sidebar.tsx, sessions.ts, and sessions_crud.go; all unit tests passed.",
+		},
+	)
+
+	rec := SessionRecord{
+		ID:             "ses_agy_heavy_turn",
+		Runtime:        "antigravity",
+		ExternalID:     "",
+		ContextPending: true,
+		WorktreePath:   "/tmp/proj",
+		Branch:         "main",
+		Turns: []MessageTurn{
+			{
+				Info:  MessageInfo{ID: "msg_u1", Role: "user"},
+				Parts: []MessagePart{{Type: "text", Text: "Fix session deletion race where deleted sessions can still send prompts"}},
+			},
+			{
+				Info:  MessageInfo{ID: "msg_a1", Role: "assistant"},
+				Parts: assistantParts,
+			},
+		},
+	}
+
+	md := buildEightDimSessionMarkdown(rec)
+	for _, path := range editedFiles {
+		if !strings.Contains(md, fmt.Sprintf("`%s` (modified)", path)) {
+			t.Fatalf("expected 8-dim memory to record Path edit %s as modified, got:\n%s", path, md)
+		}
+	}
+	if !strings.Contains(md, "`go test ./internal/runner/... && npm --prefix web test` (completed)") {
+		t.Fatalf("expected 8-dim memory to record CommandLine verification, got:\n%s", md)
+	}
+
+	ctx := runtimeContext(rec)
+	if len(ctx) > maxHandoffContextBytes {
+		t.Fatalf("expected handoff context len <= %d, got %d", maxHandoffContextBytes, len(ctx))
+	}
+	if !strings.Contains(ctx, "FINAL_ASSISTANT_SUMMARY: Fixed deleted-session guard") {
+		t.Fatalf("expected latest assistant turn summary to survive 180+ tool calls, got:\n%s", ctx)
+	}
+	for _, path := range editedFiles {
+		if !strings.Contains(ctx, "Tool edit_file [completed]: "+path) {
+			t.Fatalf("expected prioritized mutating tool summary for %s to survive, got:\n%s", path, ctx)
+		}
+	}
+}
