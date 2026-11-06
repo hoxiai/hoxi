@@ -1,8 +1,11 @@
+/* The overlay spans the transcript, so it is the `cqw` container for its menus.
+ * Keep it off the transcript scroller's ancestors (see MessageStream). */
 .task-transcript-navigation {
   position: absolute;
   inset: 0;
   z-index: 35;
   pointer-events: none;
+  container-type: inline-size;
 }
 
 .task-activity-actions {

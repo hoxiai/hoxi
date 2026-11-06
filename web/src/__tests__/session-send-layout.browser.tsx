@@ -60,6 +60,12 @@ async function checkSend(busy: boolean, width: number, completedTools = 1, empty
     const scroller = root.querySelector<HTMLElement>(".timeline-result-scroll")!;
     const composer = root.querySelector<HTMLElement>(".chat-composer-glass")!;
     const toolbar = composer.querySelector<HTMLElement>(".composer-toolbar")!;
+    // WebKit lays out a size container's subtree before styling newly inserted
+    // nodes, so a container above the scroller clamps the pinned scrollTop (macOS blink).
+    for (let node = scroller.parentElement; node; node = node.parentElement) {
+      assertEqual(getComputedStyle(node).containerType, "normal",
+        `transcript scroller must not sit inside a size container: ${node.className}`);
+    }
     assertEqual(getComputedStyle(toolbar).flexDirection, width === 1100 ? "row" : "column",
       "toolbar rows should depend on pane width instead of draft contents");
     const input = composer.querySelector("textarea")!;
