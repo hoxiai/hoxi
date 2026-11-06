@@ -3,6 +3,7 @@ package runner
 import (
 	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -15,13 +16,38 @@ func isOpaqueShellCommand(command, worktree string) bool {
 	return isOpaqueShellCommandWith(command, worktree, false)
 }
 
-// isOpaqueShellCommandWith is isOpaqueShellCommand with full trust's one
+// isOpaqueShellCommandWith is isOpaqueShellCommand with full trust's
 // relaxation: allowInlineScripts lets interpreter scripts through (`python3 -
 // <<'EOF'`, `python3 -c`, `node -e`), matching `python3 script.py`, which was
-// never opaque. Shells (`sh`, `bash`, `eval`, `xargs`, ...), awk programs and
-// heredocs whose body still expands stay opaque.
+// never opaque, and lets a shell run a script file already on disk
+// (`bash build.sh`), matching `./build.sh`. Shell code (`sh -c`, `bash <<EOF`,
+// a pipe into a shell, `eval`, `xargs`), awk programs, heredocs whose body
+// still expands, attachments, and a script the same command also names (so it
+// may have just been written or downloaded) stay opaque.
 func isOpaqueShellCommandWith(command, worktree string, allowInlineScripts bool) bool {
-	return isOpaqueShellCommandDepth(command, worktree, allowInlineScripts, 0)
+	if isOpaqueShellCommandDepth(command, worktree, allowInlineScripts, 0) {
+		return true
+	}
+	// Only a command the relaxation cleared is reined back, so full trust is
+	// never stricter than auto (`bash -n x.sh` after writing x.sh stays clear).
+	return allowInlineScripts && runsScriptNamedElsewhere(unwrapSandboxCommand(command)) &&
+		isOpaqueShellCommandDepth(command, worktree, false, 0)
+}
+
+// shellScriptRunRe finds `sh|bash|zsh [flags] <file>.sh` anywhere in a command,
+// subshells included, so the file-script relaxation can see the whole text.
+var shellScriptRunRe = regexp.MustCompile(`(?:^|[\s;&|(])(?:\S*/)?(?:ba|z)?sh[ \t]+(?:-o[ \t]+\S+[ \t]+|-\S+[ \t]+)*["']?([^\s;&|()<>'"]+\.(?:sh|bash|zsh))`)
+
+// runsScriptNamedElsewhere reports a shell running a script whose file name
+// appears more than once in the command: `curl -o x.sh … && bash x.sh`,
+// `cat > x.sh <<'EOF' … bash x.sh`, `(cp /tmp/a x.sh) && sh x.sh`.
+func runsScriptNamedElsewhere(command string) bool {
+	for _, m := range shellScriptRunRe.FindAllStringSubmatch(command, -1) {
+		if strings.Count(command, path.Base(filepath.ToSlash(m[1]))) > 1 {
+			return true
+		}
+	}
+	return false
 }
 
 // isOpaqueShellCommandDepth judges command, treating each (...) subshell as
@@ -178,7 +204,7 @@ func opaqueShellCore(command, worktree string, allowInlineScripts, valueClass bo
 		if dataArgInterpreters[base] &&
 			!(base == "xargs" && isSafeXargsSegment(args, i > 0 && pipedIn[i], prevSeg)) &&
 			!(base == "ssh" && len(args) == 1 && args[0] == maskedDataArgument) &&
-			!isSafeShellScriptSegment(base, args, i > 0 && pipedIn[i]) {
+			!isSafeShellScriptSegmentWith(base, args, i > 0 && pipedIn[i], allowInlineScripts) {
 			return true
 		}
 		if awkProgramExecutes(base, args) {
@@ -250,12 +276,15 @@ func advanceScopedCD(seg, cwd, worktree string) (string, bool) {
 			slashCWD := filepath.ToSlash(cwd)
 			slashBase := strings.TrimSuffix(filepath.ToSlash(base), "/")
 			slashResolved := filepath.ToSlash(resolved)
-			if slashCWD == slashBase || strings.HasPrefix(slashCWD, slashBase+"/") {
-				if (slashResolved != slashBase && !strings.HasPrefix(slashResolved, slashBase+"/")) || !pathWithin(base, resolved) {
+			inside := slashResolved == slashBase || strings.HasPrefix(slashResolved, slashBase+"/")
+			if inside && (slashCWD == slashBase || strings.HasPrefix(slashCWD, slashBase+"/")) {
+				if !pathWithin(base, resolved) {
 					return "", false
 				}
 				return resolved, true
 			}
+			// A relative `cd ../sibling` that leaves the worktree is judged
+			// like the absolute `cd /…/sibling` below.
 		}
 		if !isSafeExternalCDTarget(resolved) {
 			return "", false

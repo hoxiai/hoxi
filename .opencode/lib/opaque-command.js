@@ -213,10 +213,13 @@ function advanceScopedCD(seg, cwd, worktree) {
     const resolved = rel === "." || rel === ".." || rel.startsWith("../") ? "/" : "/" + rel;
     if (wt && wt.startsWith("/")) {
       const base = "/" + cleanRelPosixPath(wt);
-      if (cwd === base || cwd.startsWith(base + "/")) {
+      const inside = resolved === base || resolved.startsWith(base + "/");
+      if (inside && (cwd === base || cwd.startsWith(base + "/"))) {
         if (!isWorktreeCD(`cd ${resolved}`, wt)) return ["", false];
         return [resolved, true];
       }
+      // A relative `cd ../sibling` that leaves the worktree is judged like
+      // the absolute `cd /…/sibling` above.
     }
     if (!isSafeExternalCDTarget(resolved)) return ["", false];
     return [resolved, true];
@@ -288,7 +291,28 @@ function hasInlineScriptFlag(base, args) {
 }
 
 export function isOpaqueShellCommand(command, worktree = "", options = {}) {
-  return isOpaqueShellCommandDepth(command, worktree, options, 0);
+  if (isOpaqueShellCommandDepth(command, worktree, options, 0)) return true;
+  // Only a command the relaxation cleared is reined back, so full trust is
+  // never stricter than auto (`bash -n x.sh` after writing x.sh stays clear).
+  return (
+    Boolean(options.allowInlineScripts) &&
+    runsScriptNamedElsewhere(unwrapSandboxCommand(String(command ?? ""))) &&
+    isOpaqueShellCommandDepth(command, worktree, {}, 0)
+  );
+}
+
+// Mirrors runsScriptNamedElsewhere in opaque_command.go: under full trust a
+// shell may run a script file already on disk (`bash build.sh`), but not one
+// the same command also names (`curl -o x.sh … && bash x.sh`).
+const SHELL_SCRIPT_RUN_RE = /(?:^|[\s;&|(])(?:\S*\/)?(?:ba|z)?sh[ \t]+(?:-o[ \t]+\S+[ \t]+|-\S+[ \t]+)*["']?([^\s;&|()<>'"]+\.(?:sh|bash|zsh))/g;
+
+function runsScriptNamedElsewhere(command) {
+  for (const m of command.matchAll(SHELL_SCRIPT_RUN_RE)) {
+    const slash = m[1].replaceAll("\\", "/");
+    const base = slash.slice(slash.lastIndexOf("/") + 1);
+    if (command.split(base).length - 1 > 1) return true;
+  }
+  return false;
 }
 
 function isOpaqueShellCommandDepth(command, worktree, options, depth) {
@@ -382,7 +406,7 @@ function opaqueShellCore(command, worktree, allowInlineScripts, valueClass) {
       DATA_ARG_INTERPRETERS.has(base) &&
       !(base === "xargs" && isSafeXargsSegment(args, i > 0 && pipedIn[i], prevSeg, { stripNullRedirects, normalizeAbsoluteTool, isSafeListingPipeline })) &&
       !(base === "ssh" && args.length === 1 && args[0] === "Q") &&
-      !isSafeShellScriptSegment(base, args, i > 0 && pipedIn[i], { stripNullRedirects, isSecretPath, isSensitiveExternalPath, isProtectedPath })
+      !isSafeShellScriptSegment(base, args, i > 0 && pipedIn[i], { stripNullRedirects, isSecretPath, isSensitiveExternalPath, isProtectedPath, allowFileScripts: allowInlineScripts })
     ) {
       return true;
     }

@@ -145,7 +145,9 @@ func (s *Service) decideClaudeHookCall(r *http.Request, cred hookCredential, p c
 		return "", ""
 	}
 	lowerTool := strings.ToLower(strings.TrimSpace(p.ToolName))
-	if lowerTool == "bash" {
+	// Monitor runs its `command` in a background shell, so it takes the same
+	// command policy as Bash instead of the generic tool gate.
+	if lowerTool == "bash" || lowerTool == "monitor" {
 		approved, reason := s.gateCommand(r, cred, rec, approvalAsk{
 			command:     p.ToolInput.Command,
 			cwd:         p.Cwd,
@@ -217,6 +219,7 @@ func (s *Service) decideClaudeHookCall(r *http.Request, cred hookCredential, p c
 var claudePassthroughTools = map[string]bool{
 	"todowrite":       true,
 	"todoread":        true,
+	"write_todos":     true, // Gemini CLI's todo list
 	"task":            true,
 	"agent":           true,
 	"exitplanmode":    true,

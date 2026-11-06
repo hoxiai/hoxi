@@ -110,6 +110,7 @@ func TestOpaqueCommandsMatchSharedFixture(t *testing.T) {
 	}
 	var cases []struct {
 		Command       string `json:"command"`
+		Worktree      string `json:"worktree"`
 		Opaque        bool   `json:"opaque"`
 		TrustedOpaque *bool  `json:"trustedOpaque"`
 	}
@@ -120,14 +121,14 @@ func TestOpaqueCommandsMatchSharedFixture(t *testing.T) {
 		t.Fatalf("fixture unexpectedly small: %d cases", len(cases))
 	}
 	for _, c := range cases {
-		if got := isOpaqueShellCommand(c.Command, ""); got != c.Opaque {
+		if got := isOpaqueShellCommand(c.Command, c.Worktree); got != c.Opaque {
 			t.Errorf("opaque(%q) = %v, want %v", c.Command, got, c.Opaque)
 		}
 		want := c.Opaque
 		if c.TrustedOpaque != nil {
 			want = *c.TrustedOpaque
 		}
-		if got := isOpaqueShellCommandWith(c.Command, "", true); got != want {
+		if got := isOpaqueShellCommandWith(c.Command, c.Worktree, true); got != want {
 			t.Errorf("trusted opaque(%q) = %v, want %v", c.Command, got, want)
 		}
 	}

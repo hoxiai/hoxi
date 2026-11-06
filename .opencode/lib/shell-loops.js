@@ -446,7 +446,10 @@ export function isSafeShellScriptSegment(base, rawArgs, piped, deps) {
     lower.startsWith(".hoxi/skills/") || lower.startsWith(".agents/skills/");
   const isSec = (p) => deps.isSecretPath(p) || deps.isSensitiveExternalPath(p);
   if (isSafeCurlOutputTarget(script, isSec) || isSec(script) || (!isSkill && deps.isProtectedPath(script))) return false;
-  if (!syntaxOnly && !isSkill) return false;
+  // Full trust also runs a plain script file outside attachments, matching
+  // `./build.sh` (isSafeShellScriptSegmentWith in opaque_expand.go).
+  const isAttachment = lower.includes("/.hoxi/attachments/") || lower.startsWith(".hoxi/attachments/");
+  if (!syntaxOnly && !isSkill && (!deps.allowFileScripts || isAttachment)) return false;
   return args.slice(i + 1).every((w) => !/[$`]/.test(w));
 }
 

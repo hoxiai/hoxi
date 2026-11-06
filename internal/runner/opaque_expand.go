@@ -709,6 +709,13 @@ func isSafeHomeScriptWord(word string, vars map[string]bool) bool {
 }
 
 func isSafeShellScriptSegment(base string, rawArgs []string, piped bool) bool {
+	return isSafeShellScriptSegmentWith(base, rawArgs, piped, false)
+}
+
+// isSafeShellScriptSegmentWith also accepts, when allowFileScripts (full
+// trust), any plain script file outside attachments: `bash build.sh` is
+// `./build.sh`. isOpaqueShellCommandWith refuses one the command also names.
+func isSafeShellScriptSegmentWith(base string, rawArgs []string, piped, allowFileScripts bool) bool {
 	if piped || (base != "sh" && base != "bash" && base != "zsh") {
 		return false
 	}
@@ -756,7 +763,7 @@ func isSafeShellScriptSegment(base string, rawArgs []string, piped bool) bool {
 	if isSafeCurlOutputTarget(script) || isSecretFilePath(script) || isSensitiveExternalPath(script) || (!isSkill && isProtectedRelPath(script)) {
 		return false
 	}
-	if !syntaxOnly && !isSkill {
+	if !syntaxOnly && !isSkill && (!allowFileScripts || isRoutineAttachmentSubpath(lower)) {
 		return false
 	}
 	for _, w := range args[i+1:] {
