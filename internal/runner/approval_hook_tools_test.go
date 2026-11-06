@@ -1,6 +1,8 @@
 package runner
 
 import (
+	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -89,5 +91,109 @@ func TestUnattendedMonitorAndGeminiTodos(t *testing.T) {
 	// Only the todo list became a control tool; other unknown tools keep the gate.
 	if d, _ := gemini("save_memory", `{"fact":"x"}`); d != "deny" {
 		t.Fatalf("unattended save_memory must stay refused, got %q", d)
+	}
+}
+
+// "Always" on a command full trust can reduce is kept, so the identical
+// command no longer prompts. An opaque or destructive command still asks every
+// time: the card hides the button for it (sessionGrantRefusal in
+// opaque-command.js) and the gate never stores the grant.
+func TestSessionGrantSticksOnlyWhenTheGateKeepsIt(t *testing.T) {
+	t.Parallel()
+	f := newClaudeGateFixture(t)
+	askAndAnswer := func(cmd, reply string) {
+		t.Helper()
+		events, unsub := f.svc.Subscribe("ses_cc_gate")
+		defer unsub()
+		result := f.asyncDecide(t, f.payload("Bash", cmd, "", "cc-uuid-1"))
+		asked := waitForEvent(t, events, "permission.asked")
+		id, _ := asked.Properties["id"].(string)
+		if code := f.reply(t, id, reply, ""); code != http.StatusOK {
+			t.Fatalf("reply status %d", code)
+		}
+		if d := <-result; d != "allow|" {
+			t.Fatalf("%q answered %s decided %q", cmd, reply, d)
+		}
+	}
+	kept := "python3 -c 'print(1)'"
+	askAndAnswer(kept, "always")
+	if d := f.decide(t, f.payload("Bash", kept, "", "cc-uuid-1")); d != "allow|" {
+		t.Fatalf("granted command asked again: %q", d)
+	}
+	for _, cmd := range []string{`bash -c "$X"`, "env | grep -i token", "rm -rf build"} {
+		if refusal := sessionGrantRefusal(cmd); refusal == "" {
+			t.Fatalf("%q must not get a session grant", cmd)
+		}
+		askAndAnswer(cmd, "always")
+		askAndAnswer(cmd, "once") // asked again: the grant was not stored
+	}
+}
+
+// A grant from another mode never outranks the unattended hard-refuse classes.
+func TestUnattendedHardDenyOutranksSessionGrant(t *testing.T) {
+	t.Parallel()
+	svc, worktree := newUnattendedHookService(t)
+	svc.gate.addAlways("ses_un_cc", "git push origin main", "desktop")
+	if !svc.gate.hasAlways("ses_un_cc", "git push origin main") {
+		t.Fatal("fixture: a plain push is grantable outside unattended mode")
+	}
+	var p claudeHookPayload
+	p.ToolName, p.Cwd, p.ToolUseID = "Bash", worktree, "toolu_push"
+	p.ToolInput.Command = "git push origin main"
+	p.rawInput = marshalJSON(map[string]interface{}{"command": p.ToolInput.Command}, false)
+	d, reason := svc.decideClaudeHookCall(httptest.NewRequest(http.MethodPost, "/", nil), hookCredential{runtime: "claude-code", sessionID: "ses_un_cc", messageID: "msg_1"}, p)
+	if d != "deny" || !strings.Contains(reason, "push/publish") {
+		t.Fatalf("granted push while unattended: %q %q", d, reason)
+	}
+}
+
+// OpenCode remembers "always" itself, so Hoxi answers it once for a command
+// the gate would never grant for the session, and passes it through otherwise.
+func TestOpenCodeAlwaysOnlyForCommandsTheGateWouldGrant(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	svc := NewService(dir, nil, nil, filepath.Join(t.TempDir(), "sessions.json"))
+	setTestApprovalPolicy(t, svc, ApprovalPolicy{Mode: ApprovalModeAuto})
+	fake := &fakeOpenCodePermissions{replies: map[string]string{}}
+	upstream := httptest.NewServer(http.HandlerFunc(fake.handler))
+	defer upstream.Close()
+	svc.ConfigureOpenCode(upstream.URL, "secret")
+	if err := svc.store.Put(SessionRecord{ID: "ses_oc_always", Runtime: "opencode", ProjectDir: dir, WorktreePath: dir, ExternalID: "oc-always"}); err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	svc.RegisterRoutes(mux)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	rec, _ := svc.store.Get("ses_oc_always")
+	events, unsub := svc.Subscribe("ses_oc_always")
+	defer unsub()
+	for i, c := range []struct{ command, want string }{
+		{`bash -c "$X"`, "once"},
+		{"env | grep -i token", "once"},
+		{"rm -rf dist", "once"},
+		{"python3 -c 'print(1)'", "always"},
+	} {
+		id := "per_oc_always" + string(rune('a'+i))
+		event, _ := json.Marshal(map[string]interface{}{"type": "permission.asked", "properties": map[string]interface{}{
+			"id": id, "sessionID": "oc-always", "permission": "bash", "patterns": []string{c.command},
+			"metadata": map[string]interface{}{"command": c.command},
+		}})
+		svc.relayOpenCodeEvent(rec, event)
+		if asked := waitForEvent(t, events, "permission.asked"); asked.Properties["id"] != id {
+			t.Fatalf("%q: asked %#v", c.command, asked.Properties)
+		}
+		body, _ := json.Marshal(map[string]string{"reply": "always"})
+		resp, err := http.Post(srv.URL+"/api/hoxi/permission/"+id+"/reply?directory="+dir, "application/json", bytes.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("%q: reply status %d", c.command, resp.StatusCode)
+		}
+		if got := fake.reply(id); got != c.want {
+			t.Fatalf("%q: OpenCode got %q, want %q", c.command, got, c.want)
+		}
 	}
 }

@@ -184,6 +184,14 @@ func (s *Service) handleUnifiedPermissionRoutes(w http.ResponseWriter, r *http.R
 			raw = cleaned
 		}
 	}
+	if parsedReply.Reply == "always" && !parsedReply.GrantClass {
+		// OpenCode would remember a pattern for a command the gate never grants
+		// for the session (sessionGrantRefusal); this one runs once.
+		if shown, known := s.gate.openCodeAskFor(id); known && openCodeSessionGrantRefused(shown.item) {
+			raw = []byte(`{"reply":"once"}`)
+			auditReply = "once"
+		}
+	}
 	status, respRaw, err := s.replyOpenCodePermission(r.Context(), id, dir, raw)
 	if err != nil {
 		release()

@@ -485,7 +485,10 @@ func TestUnifiedPermissionEndpointMergesAndRoutesReplies(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/permission":
-			_, _ = io.WriteString(w, `[{"id":"per_oc_1","sessionID":"ses_oc_backing","permission":"bash","patterns":["rm -rf dist"]}]`)
+			// Asks in auto mode yet is grantable: "always" for a destructive or
+			// opaque command reaches OpenCode as "once"
+			// (TestOpenCodeAlwaysOnlyForCommandsTheGateWouldGrant).
+			_, _ = io.WriteString(w, `[{"id":"per_oc_1","sessionID":"ses_oc_backing","permission":"bash","patterns":["python3 -c 'print(1)'"]}]`)
 		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/permission/"):
 			repliedEngineID = strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/permission/"), "/reply")
 			raw, _ := io.ReadAll(r.Body)

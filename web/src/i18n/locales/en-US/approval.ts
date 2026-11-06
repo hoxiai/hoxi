@@ -108,6 +108,8 @@ export const approval = {
     "Remembers this exact command in memory for the current session only; cleared on restart and revocable in Settings",
   sessionGrantScopeTool:
     "Remembers this tool + exact arguments in memory for the current session only; revocable in Settings",
+  sessionGrantUnavailableOpaque:
+    "What this command does is only decided when it runs (variables, command substitution, a pipe into a shell, or a script it just wrote), so it can't be allowed for the session and asks every time",
   expiresIn: "Auto-rejects in {seconds}s",
   toolArgsLabel: "Tool Arguments",
   grantsSectionTitle: "Active Session Grants (In-Memory)",

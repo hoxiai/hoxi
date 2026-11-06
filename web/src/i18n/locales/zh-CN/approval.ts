@@ -107,6 +107,8 @@ export const approval: ApprovalI18n = {
     "仅在本会话内存中记住此条完整命令，重启即失效，可在设置中随时撤销",
   sessionGrantScopeTool:
     "仅在本会话内存中记住此工具与完全相同的参数，可在设置中随时撤销",
+  sessionGrantUnavailableOpaque:
+    "这条命令的实际效果要到运行时才能确定（变量、命令替换、管道喂给 shell 或刚写入的脚本），无法记为本会话授权，每次运行都需要确认",
   expiresIn: "{seconds} 秒后超时自动拒绝",
   toolArgsLabel: "工具调用参数",
   grantsSectionTitle: "当前会话临时放行授权（内存）",

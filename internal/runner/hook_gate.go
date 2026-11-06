@@ -304,19 +304,21 @@ func (s *Service) gateCommand(r *http.Request, cred hookCredential, rec SessionR
 	if ask.cwd != "" && !pathWithin(rec.WorktreePath, ask.cwd) {
 		return false, "command working directory is outside this session's directory"
 	}
-	if s.gate.hasAlways(cred.sessionID, ask.command) {
-		return true, ""
-	}
 	item := map[string]interface{}{
 		"permission": "bash",
 		"patterns":   []string{ask.command},
 		"metadata":   map[string]interface{}{"command": ask.command, "source": ask.source},
 	}
+	// The hard-refuse classes come before any session grant: a command allowed
+	// for the session in another mode is still refused while unattended.
 	if s.ApprovalPolicy().Mode == ApprovalModeUnattended {
 		if allow, category := unattendedDecision(item, rec.WorktreePath); !allow && category != "" {
 			s.recordUnattendedDeny(cred, item, category)
 			return false, unattendedDenyReason(category)
 		}
+	}
+	if s.gate.hasAlways(cred.sessionID, ask.command) {
+		return true, ""
 	}
 	// Verified kills of the session's own processes are masked for the
 	// policy; the audit records the command as it was asked.
@@ -512,10 +514,10 @@ func (s *Service) awaitReply(r *http.Request, cred hookCredential, id string, re
 }
 
 // Session "always" grants live in Hoxi only, never in agy's global settings,
-// and never cover destructive commands (AGENTS.md rule 6).
+// and only cover what sessionGrantRefusal accepts (AGENTS.md rule 6).
 func (g *approvalGate) addAlways(sessionID, command, source string) {
 	trimmed := strings.TrimSpace(command)
-	if trimmed == "" || isDestructiveCommand(trimmed) || isOpaqueShellCommand(trimmed, "") {
+	if sessionGrantRefusal(trimmed) != "" {
 		return
 	}
 	g.mu.Lock()
@@ -538,7 +540,7 @@ func (g *approvalGate) addAlways(sessionID, command, source string) {
 
 func (g *approvalGate) hasAlways(sessionID, command string) bool {
 	trimmed := strings.TrimSpace(command)
-	if trimmed == "" || isDestructiveCommand(trimmed) || isOpaqueShellCommand(trimmed, "") {
+	if sessionGrantRefusal(trimmed) != "" {
 		return false
 	}
 	g.mu.Lock()

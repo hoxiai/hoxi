@@ -49,6 +49,7 @@ import {
   type DeferredEntry,
 } from "./approval-records";
 import { isDestructivePermissionRequest } from "../../../.opencode/lib/permission-policy.js";
+import { sessionGrantRefusal } from "../../../.opencode/lib/opaque-command.js";
 
 export {
   approvalAuditEntries,
@@ -62,6 +63,7 @@ export {
   installAgyHook,
   isDestructivePermissionRequest,
   isRunnerPermissionID,
+  sessionGrantRefusal,
   loadApprovalAudit,
   loadApprovalGrants,
   loadDeferred,

@@ -4,6 +4,7 @@ import {
   decidePermission,
   isDestructivePermissionRequest,
 } from "../../../.opencode/lib/permission-policy.js";
+import { sessionGrantRefusal } from "../../../.opencode/lib/opaque-command.js";
 import policyCases from "../../../.opencode/lib/permission-policy.cases.json";
 import { assertDeepEqual, assertEqual, assertTrue, describe, it } from "./test-harness";
 
@@ -139,10 +140,15 @@ describe("Antigravity runner permission routing", () => {
 describe("permission policy shared fixture", () => {
   it("matches every Go/JS parity case", () => {
     assertTrue(policyCases.length >= 20, "fixture unexpectedly small");
-    for (const c of policyCases) {
+    for (const c of policyCases as Array<{ command: string; decision: string; destructive: boolean; sessionGrant?: boolean }>) {
       const input = { permission: "bash", patterns: c.command ? [c.command] : [] };
       assertEqual(decidePermission(input), c.decision, c.command);
       assertEqual(isDestructivePermissionRequest(input), c.destructive, c.command);
+      if (c.sessionGrant !== undefined) {
+        // A runner request carries the whole command in metadata.command.
+        const runner = { permission: "bash", patterns: [c.command], metadata: { command: c.command } };
+        assertEqual(sessionGrantRefusal(runner) === "", c.sessionGrant, `session grant: ${c.command}`);
+      }
     }
   });
 

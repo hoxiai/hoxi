@@ -23,6 +23,7 @@ import {
   markPermissionResolved,
   openChangedFileInInspector,
   replyPermissionRequest,
+  sessionGrantRefusal,
   type PermissionReplyMode,
 } from "../../store/workspace";
 import { DiffChanges, FileIcon } from "../icons";
@@ -88,6 +89,11 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
   const isDestructive = createMemo(() => isDestructivePermissionRequest(props.request));
   const isRunner = createMemo(() => isRunnerPermissionID(props.request.id));
   const sessionClasses = createMemo(() => grantableClasses(props.request));
+  // The gate keeps no session grant for an opaque command, so the card does
+  // not offer one (sessionGrantRefusal mirrors internal/runner/approval_grants.go).
+  const grantUnavailable = createMemo(
+    () => sessionClasses().length === 0 && sessionGrantRefusal(props.request) === "opaque"
+  );
 
   const grantSessionClass = async () => {
     if (busy()) return;
@@ -146,7 +152,7 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
    */
   const applyRuleDecision = (rule: string, decision: "allow" | "deny") => {
     if (busy()) return;
-    if (decision === "allow" && isDestructive()) return;
+    if (decision === "allow" && (isDestructive() || grantUnavailable())) return;
     toggleRuleDecision(rule, decision);
     void reply(
       decision === "allow" ? "always" : "reject",
@@ -335,7 +341,7 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
                           {rule}
                         </code>
                         <div class="flex items-center gap-1 shrink-0">
-                          <Show when={!isDestructive()}>
+                          <Show when={!isDestructive() && !grantUnavailable()}>
                             <button
                               type="button"
                               disabled={!!busy()}
@@ -392,6 +398,12 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
           </div>
         </Show>
 
+        <Show when={grantUnavailable() && !isDestructive()}>
+          <div class="text-[11px] leading-relaxed text-[var(--text-muted)]">
+            {t("approval.sessionGrantUnavailableOpaque")}
+          </div>
+        </Show>
+
         <Show when={error()}>
           <div class="text-[11px] text-[var(--danger-text)] font-mono">{error()}</div>
         </Show>
@@ -416,6 +428,7 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
               <Show
                 when={
                   props.request.permission !== "hoxi_computer" &&
+                  !grantUnavailable() &&
                   (sessionClasses().length > 0 || !isDestructive() || props.request.permission === "doom_loop")
                 }
               >

@@ -10,6 +10,7 @@ import {
   CD_SEGMENT_RE,
   DOLLAR_EXPAND_RE,
   commandCandidates,
+  isDestructivePermissionRequest,
   isProtectedPath,
   isProtectedShellReadPath,
   isSecretPath,
@@ -439,6 +440,28 @@ export function isOpaquePermissionRequest(input, options) {
   if (candidates.length === 0) return true;
   const allowInlineScripts = Boolean(options?.allowInlineScripts);
   return candidates.some((cmd) => isOpaqueShellCommand(cmd, worktree, { allowInlineScripts }));
+}
+
+/**
+ * Mirrors sessionGrantRefusal in internal/runner/approval_grants.go: why an
+ * exact-command "always" grant would not be kept ("destructive" | "opaque"),
+ * or "" when it is. The approval card hides "always" for an opaque command
+ * instead of offering a grant the gate drops. Only shell requests carry
+ * exact-command grants; tool grants are keyed by their arguments.
+ */
+export function sessionGrantRefusal(input) {
+  const permission = String(input?.permission || input?.type || "").toLowerCase();
+  const meta = input?.metadata || {};
+  const whole = typeof meta.command === "string" ? meta.command.trim() : "";
+  if (permission !== "bash" && permission !== "shell" && permission !== "run_command") return "";
+  return sessionGrantRefusalForCommand(whole || commandCandidates(input)[0] || "");
+}
+
+export function sessionGrantRefusalForCommand(command) {
+  const trimmed = String(command ?? "").trim();
+  if (isDestructivePermissionRequest({ permission: "bash", patterns: trimmed ? [trimmed] : [] })) return "destructive";
+  if (isOpaqueShellCommand(trimmed, "", { allowInlineScripts: true })) return "opaque";
+  return "";
 }
 
 function stripShellKeywords(words) {

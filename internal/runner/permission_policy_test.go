@@ -12,6 +12,8 @@ type policyCase struct {
 	Command     string `json:"command"`
 	Decision    string `json:"decision"`
 	Destructive bool   `json:"destructive"`
+	// SessionGrant, when set, is whether an exact-command "always" is kept.
+	SessionGrant *bool `json:"sessionGrant"`
 }
 
 // The same fixture drives web/src/__tests__/permissions.test.ts, so the Go
@@ -35,6 +37,11 @@ func TestPermissionPolicyMatchesSharedFixture(t *testing.T) {
 		}
 		if got := isDestructiveCommand(c.Command); got != c.Destructive {
 			t.Errorf("destructive(%q) = %v, want %v", c.Command, got, c.Destructive)
+		}
+		if c.SessionGrant != nil {
+			if got := sessionGrantRefusal(c.Command) == ""; got != *c.SessionGrant {
+				t.Errorf("session grant kept(%q) = %v, want %v", c.Command, got, *c.SessionGrant)
+			}
 		}
 	}
 }
