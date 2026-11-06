@@ -558,36 +558,36 @@ func TestRuntimeCapabilitiesMatrix(t *testing.T) {
 	t.Parallel()
 	// 1. Subagent: all capabilities false
 	subCaps := RuntimeCapabilities("opencode", true)
-	if subCaps.Approval || subCaps.Steer || subCaps.Resume || subCaps.Revert || subCaps.Fork || subCaps.Attachments || subCaps.CostStats {
+	if subCaps.Approval || subCaps.Steer || subCaps.Resume || subCaps.Revert || subCaps.Fork || subCaps.Attachments || subCaps.CostStats || subCaps.Compact {
 		t.Fatalf("expected subagent to have zero mutable capabilities, got %+v", subCaps)
 	}
 
 	// 2. OpenCode: full capabilities
 	ocCaps := RuntimeCapabilities("opencode", false)
-	if !ocCaps.Approval || !ocCaps.Steer || !ocCaps.Resume || !ocCaps.Revert || !ocCaps.Fork || !ocCaps.Attachments || !ocCaps.CostStats {
+	if !ocCaps.Approval || !ocCaps.Steer || !ocCaps.Resume || !ocCaps.Revert || !ocCaps.Fork || !ocCaps.Attachments || !ocCaps.CostStats || !ocCaps.Compact {
 		t.Fatalf("expected opencode to support full capability matrix, got %+v", ocCaps)
 	}
 
 	// 3. Claude Code: approval supported, steer false
 	cldCaps := RuntimeCapabilities(string(RuntimeClaudeCode), false)
-	if !cldCaps.Approval || cldCaps.Steer || !cldCaps.Resume || !cldCaps.Revert || !cldCaps.Fork || !cldCaps.Attachments || !cldCaps.CostStats {
+	if !cldCaps.Approval || cldCaps.Steer || !cldCaps.Resume || !cldCaps.Revert || !cldCaps.Fork || !cldCaps.Attachments || !cldCaps.CostStats || cldCaps.Compact {
 		t.Fatalf("expected claude-code capabilities mismatch, got %+v", cldCaps)
 	}
 
 	// 4. Antigravity: approval and mid-turn steer supported
 	agyCaps := RuntimeCapabilities(string(RuntimeAntigravity), false)
-	if !agyCaps.Approval || !agyCaps.Steer || !agyCaps.Resume || !agyCaps.Revert || !agyCaps.Fork || !agyCaps.Attachments || !agyCaps.CostStats {
+	if !agyCaps.Approval || !agyCaps.Steer || !agyCaps.Resume || !agyCaps.Revert || !agyCaps.Fork || !agyCaps.Attachments || !agyCaps.CostStats || agyCaps.Compact {
 		t.Fatalf("expected antigravity capabilities mismatch, got %+v", agyCaps)
 	}
 
 	// 5. CodeBuddy & Qoder: approval false (no PreToolUse hook gate)
 	cbCaps := RuntimeCapabilities(string(RuntimeCodeBuddy), false)
-	if cbCaps.Approval || cbCaps.Steer || !cbCaps.Resume || !cbCaps.Revert || !cbCaps.Fork || cbCaps.Attachments || !cbCaps.CostStats {
+	if cbCaps.Approval || cbCaps.Steer || !cbCaps.Resume || !cbCaps.Revert || !cbCaps.Fork || cbCaps.Attachments || !cbCaps.CostStats || cbCaps.Compact {
 		t.Fatalf("expected codebuddy capabilities mismatch, got %+v", cbCaps)
 	}
 
 	qdCaps := RuntimeCapabilities(string(RuntimeQoder), false)
-	if qdCaps.Approval || qdCaps.Steer || !qdCaps.Resume || !qdCaps.Revert || !qdCaps.Fork || qdCaps.Attachments || !qdCaps.CostStats {
+	if qdCaps.Approval || qdCaps.Steer || !qdCaps.Resume || !qdCaps.Revert || !qdCaps.Fork || qdCaps.Attachments || !qdCaps.CostStats || qdCaps.Compact {
 		t.Fatalf("expected qoder capabilities mismatch, got %+v", qdCaps)
 	}
 }

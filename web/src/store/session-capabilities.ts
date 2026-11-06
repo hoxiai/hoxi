@@ -45,6 +45,16 @@ export function canSteerSession(
   return !isRunnerSessionID(sessionID);
 }
 
+/** Only OpenCode sessions can be compacted from Hoxi; native CLIs keep their own window. */
+export function canCompactSession(sessionID?: string | null): boolean {
+  if (!sessionID) return false;
+  const session = workspace.sessions.find((s) => s.id === sessionID);
+  if (session?.capabilities?.compact !== undefined) return session.capabilities.compact;
+  const runtime = session?.runtime || inferRunnerRuntimeFromSessionID(sessionID);
+  if (runtime) return runtime === "opencode";
+  return true;
+}
+
 export function canApproveSession(sessionID?: string | null): boolean {
   if (!sessionID) return false;
   const session = workspace.sessions.find((s) => s.id === sessionID);

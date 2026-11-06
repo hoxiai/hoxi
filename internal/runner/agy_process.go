@@ -79,13 +79,14 @@ func inferOfficialRunnerModelSpec(slug string) (ctxLimit, outLimit int, inCost, 
 		if effSuffix != "" {
 			supportsEffort = true
 		}
+		ctxLimit, outLimit = claudeModelLimits(lower)
 		switch {
 		case strings.Contains(lower, "opus") || strings.Contains(lower, "fable"):
-			return 200000, 64000, 5.00, 25.00, true, true
+			return ctxLimit, outLimit, 5.00, 25.00, true, true
 		case strings.Contains(lower, "haiku"):
-			return 200000, 64000, 0.80, 4.00, true, supportsEffort
+			return ctxLimit, outLimit, 0.80, 4.00, true, supportsEffort
 		default:
-			return 200000, 64000, 3.00, 15.00, true, true
+			return ctxLimit, outLimit, 3.00, 15.00, true, true
 		}
 	case strings.HasPrefix(lower, "gemini"):
 		switch {
@@ -107,6 +108,49 @@ func inferOfficialRunnerModelSpec(slug string) (ctxLimit, outLimit int, inCost, 
 		}
 	}
 	return 200000, 64000, 0, 0, image, reasoning
+}
+
+// claudeModelLimits matches the web family table (store/model-limits.ts):
+// Opus, Sonnet and Fable from major version 5 run a 1M window with 128K output;
+// older or unversioned ids keep 200K unless the id carries Claude Code's [1m] tag.
+func claudeModelLimits(lower string) (ctxLimit, outLimit int) {
+	ctxLimit, outLimit = 200000, 64000
+	if strings.Contains(lower, "[1m]") {
+		ctxLimit = 1000000
+	}
+	flagship := strings.Contains(lower, "opus") || strings.Contains(lower, "sonnet") || strings.Contains(lower, "fable")
+	if flagship && claudeMajorVersion(lower) >= 5 {
+		ctxLimit, outLimit = 1000000, 128000
+	}
+	return ctxLimit, outLimit
+}
+
+// claudeMajorVersion reads the first number after the "claude" segment, so
+// claude-opus-5-5-high gives 5, claude-3-5-sonnet gives 3 and "opus" gives 0.
+func claudeMajorVersion(lower string) int {
+	parts := strings.FieldsFunc(lower, func(r rune) bool {
+		return r == '-' || r == '_' || r == '.' || r == ' ' || r == '/'
+	})
+	for i, part := range parts {
+		if part != "claude" {
+			continue
+		}
+		for _, next := range parts[i+1:] {
+			major, digits := 0, 0
+			for _, r := range next {
+				if r < '0' || r > '9' {
+					break
+				}
+				major = major*10 + int(r-'0')
+				digits++
+			}
+			if digits > 0 {
+				return major
+			}
+		}
+		return 0
+	}
+	return 0
 }
 
 func buildAgyModelItems(slugs []string, displayBySlug map[string]string) []agentcli.ModelItem {

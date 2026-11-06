@@ -112,6 +112,10 @@ export const timeline = {
   reloadModelCatalog: "Reload model catalog",
   contextOverLimitHint: "This conversation is past the window — compact before sending more",
   contextNearLimitHint: "Context is {percent}% full — compact before the next long turn",
+  contextOverLimitNativeHint:
+    "Past the context window. This runtime manages its own context and can't be compacted here — start a new session to continue",
+  contextNearLimitNativeHint:
+    "Context is {percent}% full. This runtime manages its own context — start a new session before the next long turn",
   inputTokens: "Input tokens",
   outputTokens: "Output tokens",
   reasoningTokens: "Reasoning",

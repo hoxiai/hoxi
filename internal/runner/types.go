@@ -54,6 +54,9 @@ type SessionCapabilities struct {
 	Fork        bool `json:"fork"`
 	Attachments bool `json:"attachments"`
 	CostStats   bool `json:"costStats"`
+	// Compact is true only where Hoxi can compact the context itself
+	// (session_summarize.go); native CLIs manage their own window.
+	Compact bool `json:"compact"`
 }
 
 // RuntimeCapabilities returns the capability matrix for a given runtime.
@@ -129,6 +132,7 @@ func RuntimeCapabilities(rt string, subagent bool) SessionCapabilities {
 			Fork:        true,
 			Attachments: true,
 			CostStats:   true,
+			Compact:     rt == "opencode",
 		}
 	}
 }

@@ -3,6 +3,7 @@ import { describe, it, assertEqual } from "./test-harness";
 import {
   canApproveSession,
   canAttachToSession,
+  canCompactSession,
   canForkSession,
   canRevertSession,
   canSteerSession,
@@ -133,6 +134,50 @@ describe("session capabilities matrix", () => {
         false,
         "claude-code model target cannot steer running opencode session"
       );
+    } finally {
+      setWorkspace("sessions", prevSessions);
+    }
+  });
+
+  it("offers compaction only where Hoxi can compact the context", () => {
+    const prevSessions = workspace.sessions;
+    try {
+      setWorkspace("sessions", [
+        {
+          id: "ses_oc_compact",
+          title: "OpenCode",
+          runtime: "opencode",
+          time: { created: 1000, updated: 1000 },
+          capabilities: { compact: true },
+        },
+        {
+          id: "ses_agy_compact",
+          title: "Antigravity",
+          runtime: "antigravity",
+          time: { created: 1000, updated: 1000 },
+          capabilities: { compact: false },
+        },
+        // Older desktop builds omit the flag: fall back to the runtime.
+        {
+          id: "ses_cld_legacy",
+          title: "Claude legacy",
+          runtime: "claude-code",
+          time: { created: 1000, updated: 1000 },
+          capabilities: { steer: false },
+        },
+        {
+          id: "ses_oc_legacy",
+          title: "OpenCode legacy",
+          runtime: "opencode",
+          time: { created: 1000, updated: 1000 },
+        },
+      ]);
+      assertEqual(canCompactSession("ses_oc_compact"), true, "opencode compacts");
+      assertEqual(canCompactSession("ses_agy_compact"), false, "antigravity cannot compact");
+      assertEqual(canCompactSession("ses_cld_legacy"), false, "claude-code runtime fallback");
+      assertEqual(canCompactSession("ses_oc_legacy"), true, "opencode runtime fallback");
+      assertEqual(canCompactSession("ses_agy_unlisted"), false, "agy id prefix fallback");
+      assertEqual(canCompactSession(null), false, "no session");
     } finally {
       setWorkspace("sessions", prevSessions);
     }

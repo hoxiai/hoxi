@@ -112,6 +112,8 @@ export const timeline: TimelineI18n = {
   reloadModelCatalog: "刷新模型清单",
   contextOverLimitHint: "本轮对话已超出上下文窗口，请先压缩再继续",
   contextNearLimitHint: "上下文已占用 {percent}%，建议在下一次长任务前压缩",
+  contextOverLimitNativeHint: "已超出上下文窗口。该运行时自行管理上下文，无法在此压缩，建议新开会话继续",
+  contextNearLimitNativeHint: "上下文已占用 {percent}%。该运行时自行管理上下文，长任务前建议新开会话",
   inputTokens: "输入 Tokens",
   outputTokens: "输出 Tokens",
   reasoningTokens: "思考 Tokens",

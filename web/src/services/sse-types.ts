@@ -12,6 +12,8 @@ export interface SessionCapabilities {
   fork?: boolean;
   attachments?: boolean;
   costStats?: boolean;
+  /** Hoxi can compact the context itself (OpenCode only). */
+  compact?: boolean;
 }
 
 export interface SessionInfo {

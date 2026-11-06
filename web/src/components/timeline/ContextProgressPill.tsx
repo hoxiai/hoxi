@@ -4,6 +4,7 @@ import { Presence } from "../motion/Presence";
 import { Minimize2, LoaderCircle } from "lucide-solid";
 import type { MessagePart } from "../../services/sse-types";
 import {
+  canCompactSession,
   compactSessionContext,
   contextLimitForSelection,
   isAutoModel,
@@ -163,6 +164,8 @@ export default function ContextProgressPill() {
     };
   });
 
+  const compactable = createMemo(() => canCompactSession(workspace.activeSessionID));
+
   const usageColor = createMemo(() => {
     const s = stats();
     if (!s) return "var(--accent-primary)";
@@ -289,12 +292,16 @@ export default function ContextProgressPill() {
 
               <Show when={s().overLimit}>
                 <p role="status" class="mt-2 text-[11px] leading-relaxed text-[var(--danger-text)]">
-                  {t("timeline.contextOverLimitHint")}
+                  {compactable()
+                    ? t("timeline.contextOverLimitHint")
+                    : t("timeline.contextOverLimitNativeHint")}
                 </p>
               </Show>
               <Show when={!s().overLimit && s().percent >= 85}>
                 <p role="status" class="mt-2 text-[11px] leading-relaxed text-[var(--status-warning)]">
-                  {t("timeline.contextNearLimitHint", { percent: s().percent })}
+                  {compactable()
+                    ? t("timeline.contextNearLimitHint", { percent: s().percent })
+                    : t("timeline.contextNearLimitNativeHint", { percent: s().percent })}
                 </p>
               </Show>
 
@@ -378,26 +385,28 @@ export default function ContextProgressPill() {
                 </span>
               </div>
 
-              <button
-                type="button"
-                disabled={
-                  compacting() ||
-                  !workspace.selectedModel ||
-                  s().used === 0 ||
-                  isSessionBusy(workspace.activeSessionID)
-                }
-                aria-busy={compacting()}
-                onClick={() => void onCompact()}
-                class="mt-4 inline-flex h-8 w-full items-center justify-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-transparent text-[12px] text-[var(--text-secondary)] transition-colors duration-150 hover:border-[var(--border-strong)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:cursor-default disabled:opacity-50 cursor-pointer"
-              >
-                <Show
-                  when={!compacting()}
-                  fallback={<LoaderCircle size={12} class="animate-spin" />}
+              <Show when={compactable()}>
+                <button
+                  type="button"
+                  disabled={
+                    compacting() ||
+                    !workspace.selectedModel ||
+                    s().used === 0 ||
+                    isSessionBusy(workspace.activeSessionID)
+                  }
+                  aria-busy={compacting()}
+                  onClick={() => void onCompact()}
+                  class="mt-4 inline-flex h-8 w-full items-center justify-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-transparent text-[12px] text-[var(--text-secondary)] transition-colors duration-150 hover:border-[var(--border-strong)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:cursor-default disabled:opacity-50 cursor-pointer"
                 >
-                  <Minimize2 size={12} />
-                </Show>
-                <span>{t("timeline.compactAction")}</span>
-              </button>
+                  <Show
+                    when={!compacting()}
+                    fallback={<LoaderCircle size={12} class="animate-spin" />}
+                  >
+                    <Minimize2 size={12} />
+                  </Show>
+                  <span>{t("timeline.compactAction")}</span>
+                </button>
+              </Show>
 
               <Show when={notice()}>
                 <p
