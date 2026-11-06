@@ -7,6 +7,7 @@ All notable releases of **Hoxi Desktop** are documented below. Full per-version 
 - **Dev Pulse**: Count commits on every local branch for a project root while a worktree stays scoped to its own branch; key file sets and the cache by repo root; dedupe uncommitted files and skip Hoxi snapshot commits on every target.
 - **Antigravity & Terminal**: Clear a stale result error once a later step completes the final response, live and on transcript hydration; repair CP936/Latin-1 mojibake in Windows terminal records.
 - **Views**: Surface provider health and telemetry in the usage and pulse views; stop the layout flash when sending a follow-up after a completed task.
+- **Structure**: Extract daily and history aggregation into `internal/devpulse` so both share one git-target and caching model.
 
 ## [v0.6.15](docs/release-notes/v0.6.15.md) — 2026-11-05
 
