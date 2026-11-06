@@ -106,10 +106,6 @@ func headTailExcerpt(s string, maxRunes int) string {
 	return string(runes[:headLen]) + " … " + string(runes[len(runes)-tailLen:])
 }
 
-func summarizeUserMessage(txt string, maxRunes int) string {
-	return summarizeUserMessageExcluding(txt, maxRunes, nil)
-}
-
 func summarizeUserMessageExcluding(txt string, maxRunes int, exclude map[string]bool) string {
 	excerpt := redactMemorySecrets(headTailExcerpt(txt, maxRunes))
 	clauses := extractConstraintClauses(txt)

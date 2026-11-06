@@ -273,11 +273,6 @@ func (s *Service) hasUnifiedWindowScope(sessionID, directory string) bool {
 	return sessionPattern.MatchString("workstore_" + storeKey)
 }
 
-func (s *Service) requestScope(r *http.Request) (scopeKey, error) {
-	key, _, err := s.requestScopeWithCaller(r)
-	return key, err
-}
-
 func (s *Service) requestScopeWithCaller(r *http.Request) (scopeKey, string, error) {
 	key, err := requestScope(r)
 	if err != nil {

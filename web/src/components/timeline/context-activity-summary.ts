@@ -27,6 +27,7 @@ import { analyzeShellCommand } from "./shell-command-summary";
 import {
   isSessionScratchFile,
   normalizeWorkspaceRelPath,
+  resolveReadLineRange,
   resolveToolFileDiffs,
 } from "./tool-card-state";
 import { t as tI18n } from "../../i18n";
@@ -49,7 +50,14 @@ export function summarizeStepTarget(part: ToolPart): string {
     return desc || childStep || "";
   }
   const file = extractTargetFile(part);
-  if (file) return getFilename(file) || basename(file);
+  if (file) {
+    const name = getFilename(file) || basename(file);
+    if (isReadTool(part.tool)) {
+      const range = resolveReadLineRange(part);
+      if (range) return `${name}:${range}`;
+    }
+    return name;
+  }
   if (isShellTool(part.tool)) {
     const desc = extractDescription(part);
     const cmd = extractCommand(part);

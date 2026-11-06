@@ -1,9 +1,6 @@
 package runner
 
-import (
-	"path/filepath"
-	"strings"
-)
+import "strings"
 
 func hasOpaqueShellSyntax(s string) bool {
 	var quote byte
@@ -113,26 +110,6 @@ func isBenignPathExport(seg string) bool {
 	}
 	rest := strings.ReplaceAll(strings.ReplaceAll(trimmed, "${PATH}", ""), "$PATH", "")
 	return !strings.Contains(rest, "$")
-}
-
-func isScopedCDSegment(seg, worktree string) bool {
-	if strings.TrimSpace(worktree) != "" {
-		return isWorktreeCD(seg, worktree)
-	}
-	m := cdSegmentRe.FindStringSubmatch(strings.TrimSpace(seg))
-	if m == nil {
-		return false
-	}
-	target := m[1]
-	if strings.HasPrefix(target, "/") || strings.HasPrefix(target, "~") || strings.HasPrefix(target, "-") {
-		return false
-	}
-	for _, part := range strings.Split(filepath.ToSlash(target), "/") {
-		if part == ".." {
-			return false
-		}
-	}
-	return true
 }
 
 func hasInlineScriptFlag(base string, args []string) bool {

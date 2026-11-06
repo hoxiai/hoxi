@@ -197,10 +197,9 @@ func TestDeferredReloadWhileBusyDoesNotDisposeUntilIdle(t *testing.T) {
 	// Mark idle and verify the deferred reload flushes exactly once.
 	busy.Store(false)
 	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) && disposeCalls.Load() == 0 {
+	for time.Now().Before(deadline) && (disposeCalls.Load() == 0 || svc.HasPendingReload()) {
 		time.Sleep(25 * time.Millisecond)
 	}
-	svc.openCode = ocapi.NewForPort(0, "")
 	if got := disposeCalls.Load(); got != 1 {
 		t.Fatalf("dispose calls after idle = %d, want 1", got)
 	}

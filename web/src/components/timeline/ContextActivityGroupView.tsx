@@ -136,19 +136,11 @@ export default function ContextActivityGroupView(props: {
     }
     setStepLimitSignal(next);
   };
-  const hideReasoningInList = createMemo(
-    () =>
-      stats().toolCount > 0 &&
-      appSettings.reasoningDisplay === "auto-collapse" &&
-      !props.defaultOpenReasoning
-  );
   const displayParts = createMemo(() => {
     const raw = props.parts;
     if (props.revealKey || raw.length === 0) return raw;
-    const hideReasoning = hideReasoningInList();
     const filtered = raw.filter((part) => {
       if (isTodoToolPart(part)) return false;
-      if (hideReasoning && part.type === "reasoning") return false;
       if (part.type === "reasoning" && !part.text?.trim() && part.time?.end != null) {
         return false;
       }
@@ -474,8 +466,7 @@ export default function ContextActivityGroupView(props: {
                         <span class="text-[var(--text-faint)] shrink-0">·</span>
                         <TextShimmer
                           text={
-                            (hideReasoningInList() &&
-                              stepSummary().activeReasoning &&
+                            (stepSummary().activeReasoning &&
                               liveReasoningTicker(
                                 stepSummary().activeReasoning!.text ?? "",
                                 true

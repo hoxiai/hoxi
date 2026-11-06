@@ -440,10 +440,23 @@ func TestAgyTranscriptRunCommandSummaryHydration(t *testing.T) {
 	}
 	rows := strings.Join([]string{
 		`{"step_index":0,"type":"USER_INPUT","content":"Run checks"}`,
-		`{"step_index":1,"type":"PLANNER_RESPONSE","tool_calls":[{"name":"run_command","args":{"CommandLine":"\"go vet ./... && go build ./...\"","toolSummary":"\"Run Go vet and build\""}}]}`,
+		`{"step_index":1,"type":"PLANNER_RESPONSE","thinking":"Inspecting Go build and vet status before editing.","input_tokens":1000,"output_tokens":120,"tool_calls":[{"name":"run_command","args":{"CommandLine":"\"go vet ./... && go build ./...\"","toolSummary":"\"Run Go vet and build\""}}]}`,
 	}, "\n") + "\n"
 	if err := os.WriteFile(filepath.Join(logDir, "transcript.jsonl"), []byte(rows), 0o600); err != nil {
 		t.Fatal(err)
+	}
+
+	// 1. Live translator emits reasoning even when agy stdout reports thinking_tokens: 0.
+	tr := NewTurnTranslator("ses_1", string(RuntimeAntigravity), "msg_live_1", "msg_u_1", "antigravity", "gemini-4-argon-high", "build", convID)
+	evts := tr.FeedLine(`{"conversation_id":"` + convID + `","event":"step_update","step_update":{"conversation_id":"` + convID + `","step_index":1,"state":"DONE","step_type":"agent_response","duration_seconds":1.2,"usage":{"input_tokens":1000,"output_tokens":120,"thinking_tokens":0,"total_tokens":1120}}}`)
+	foundReason := false
+	for _, e := range evts {
+		if e.Type == "message.part.delta" && e.Properties["partID"] == "prt_msg_live_1_reason_1" && e.Properties["delta"] == "Inspecting Go build and vet status before editing." {
+			foundReason = true
+		}
+	}
+	if !foundReason {
+		t.Fatalf("expected live translator to emit reasoning delta when thinking_tokens is 0, got %+v", evts)
 	}
 
 	cursor := newAgyEditPayloadCursor(convID)
@@ -475,5 +488,11 @@ func TestAgyTranscriptRunCommandSummaryHydration(t *testing.T) {
 	gotPart := turns[0].Parts[0]
 	if gotPart.State.Title != "Run Go vet and build" || gotPart.State.Input["toolSummary"] != "Run Go vet and build" {
 		t.Fatalf("expected hydrated bash part to have title and toolSummary, got title=%q input=%+v", gotPart.State.Title, gotPart.State.Input)
+	}
+	if !hydrateAgyTranscriptTurnTokens(convID, turns) {
+		t.Fatal("expected hydrateAgyTranscriptTurnTokens to backfill missing reasoning part from transcript")
+	}
+	if len(turns[0].Parts) != 2 || turns[0].Parts[0].Type != "reasoning" || turns[0].Parts[0].Text != "Inspecting Go build and vet status before editing." {
+		t.Fatalf("expected reasoning part inserted before tool part, got %+v", turns[0].Parts)
 	}
 }

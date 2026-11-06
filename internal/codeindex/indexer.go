@@ -376,10 +376,7 @@ func indexableFile(path string) bool {
 		return true
 	}
 	ext := strings.ToLower(filepath.Ext(base))
-	if indexableExtensions[ext] {
-		return true
-	}
-	return false
+	return indexableExtensions[ext]
 }
 
 // maxFilesPerDir bounds how many files a single flat directory can contribute

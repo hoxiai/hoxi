@@ -178,7 +178,7 @@ func (t *TurnTranslator) handleAgyAgentResponse(su *agyStepUpdate, now int64) []
 	if thinkDelta == "" && su.Thinking != "" {
 		thinkDelta = su.Thinking
 	}
-	if thinkDelta == "" && su.State == "DONE" && su.Usage != nil && su.Usage.ThinkingTokens > 0 && t.lookupThink != nil && t.externalID != "" {
+	if thinkDelta == "" && su.State == "DONE" && t.lookupThink != nil && t.externalID != "" {
 		thinkDelta = t.lookupThink(t.externalID, su.StepIndex)
 	}
 	rID := fmt.Sprintf("prt_%s_reason_%d", t.messageID, su.StepIndex)
@@ -322,8 +322,43 @@ func (t *TurnTranslator) noteAgyStepUsage(key string, u agyUsage) bool {
 	return true
 }
 
+func (t *TurnTranslator) backfillAgyPrecedingThinking(toolStep int, endMs int64) []SSEEvent {
+	if toolStep <= 1 || t.lookupThink == nil || t.externalID == "" {
+		return nil
+	}
+	plannerStep := toolStep - 1
+	rID := fmt.Sprintf("prt_%s_reason_%d", t.messageID, plannerStep)
+	if _, exists := t.partsByID[rID]; exists {
+		return nil
+	}
+	if _, isTool := t.partsByID[fmt.Sprintf("prt_%s_tool_%d", t.messageID, plannerStep)]; isTool {
+		return nil
+	}
+	think := t.lookupThink(t.externalID, plannerStep)
+	if think == "" {
+		return nil
+	}
+	startMs := t.stepStartMs[plannerStep]
+	if startMs <= 0 || startMs > endMs {
+		startMs = endMs
+	}
+	part := &MessagePart{
+		ID:        rID,
+		SessionID: t.sessionID,
+		MessageID: t.messageID,
+		Type:      "reasoning",
+		Text:      think,
+		Time:      &PartTime{Start: startMs, End: endMs},
+	}
+	t.partsByID[rID] = part
+	t.insertPartOrderBefore(rID, fmt.Sprintf("prt_%s_text_%d", t.messageID, plannerStep))
+	return []SSEEvent{{Type: "message.part.updated", Properties: map[string]interface{}{"part": clonePart(*part)}}}
+}
+
 func (t *TurnTranslator) handleAgyToolStep(su *agyStepUpdate, now int64) []SSEEvent {
 	var evts []SSEEvent
+	startMs := t.stepStartMs[su.StepIndex]
+	evts = append(evts, t.backfillAgyPrecedingThinking(su.StepIndex, startMs)...)
 	partID := fmt.Sprintf("prt_%s_tool_%d", t.messageID, su.StepIndex)
 	callID := fmt.Sprintf("call_%s_%d", t.messageID, su.StepIndex)
 	rawName := su.ToolName
@@ -361,7 +396,6 @@ func (t *TurnTranslator) handleAgyToolStep(su *agyStepUpdate, now int64) []SSEEv
 		}
 	}
 	normTool, title, cleanInput := normalizeRunnerTool(rawName, rawParams)
-	startMs := t.stepStartMs[su.StepIndex]
 	endMs := now
 	if su.DurationSeconds > 0 {
 		endMs = startMs + int64(su.DurationSeconds*1000)

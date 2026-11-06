@@ -217,11 +217,31 @@ func lookupAgyTranscriptRow(conversationID string, stepIndex int, keep func(agyT
 	return agyTranscriptRow{}, false
 }
 
+func hasAgyTranscriptFile(conversationID string) bool {
+	if !validStoreID(conversationID) {
+		return false
+	}
+	for _, root := range agyBrainRoots() {
+		dir := agyTranscriptLogDir(root, conversationID)
+		for _, name := range []string{"transcript_full.jsonl", "transcript.jsonl"} {
+			if st, err := os.Stat(filepath.Join(dir, name)); err == nil && st.Size() > 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func lookupAgyTranscriptThinking(conversationID string, stepIndex int) string {
-	row, _ := lookupAgyTranscriptRow(conversationID, stepIndex, func(r agyTranscriptRow) bool {
-		return strings.TrimSpace(r.Thinking) != ""
-	})
-	return strings.TrimSpace(row.Thinking)
+	for attempt := 0; ; attempt++ {
+		row, ok := lookupAgyTranscriptRow(conversationID, stepIndex, func(r agyTranscriptRow) bool {
+			return r.Type == "PLANNER_RESPONSE" || strings.TrimSpace(r.Thinking) != ""
+		})
+		if ok || attempt == 1 || !hasAgyTranscriptFile(conversationID) {
+			return strings.TrimSpace(row.Thinking)
+		}
+		time.Sleep(40 * time.Millisecond)
+	}
 }
 
 // lookupAgyTranscriptContent retries briefly because stdout can announce a
@@ -540,15 +560,90 @@ func transcriptConfirmsAgyFinalStep(rows []agyTranscriptRow, prevMaxStep, doneSt
 	return strings.TrimSpace(matched.Content) != "" && len(matched.ToolCalls) == 0
 }
 
+func turnNeedsAgyReasoningHydration(turn MessageTurn) bool {
+	if turn.Info.Role != "assistant" {
+		return false
+	}
+	hasAgyStep := false
+	for _, p := range turn.Parts {
+		if _, ok := parseAgyPartStepIndex(p.ID); ok {
+			hasAgyStep = true
+		}
+		if p.Type == "reasoning" && strings.TrimSpace(p.Text) != "" {
+			return false
+		}
+	}
+	return hasAgyStep
+}
+
+func hydrateAgyTurnReasoningParts(turn *MessageTurn, rows []agyTranscriptRow) bool {
+	if turn == nil || turn.Info.Role != "assistant" || len(rows) == 0 {
+		return false
+	}
+	existing := make(map[string]bool, len(turn.Parts))
+	for _, p := range turn.Parts {
+		existing[p.ID] = true
+	}
+	changed := false
+	for _, r := range rows {
+		if r.Type != "PLANNER_RESPONSE" {
+			continue
+		}
+		think := strings.TrimSpace(r.Thinking)
+		if think == "" {
+			continue
+		}
+		rID := "prt_" + turn.Info.ID + "_reason_" + strconv.Itoa(r.StepIndex)
+		if existing[rID] {
+			continue
+		}
+		txtID := "prt_" + turn.Info.ID + "_text_" + strconv.Itoa(r.StepIndex)
+		toolID := "prt_" + turn.Info.ID + "_tool_" + strconv.Itoa(r.StepIndex+1)
+		subID := "prt_" + turn.Info.ID + "_subagent_" + strconv.Itoa(r.StepIndex+1)
+		anchorIdx := -1
+		for idx, p := range turn.Parts {
+			if p.ID == txtID || p.ID == toolID || p.ID == subID {
+				anchorIdx = idx
+				break
+			}
+		}
+		if anchorIdx < 0 {
+			continue
+		}
+		anchor := turn.Parts[anchorIdx]
+		startMs := turn.Info.Time.Created
+		if anchor.Time != nil && anchor.Time.Start > 0 {
+			startMs = anchor.Time.Start
+		} else if anchor.State != nil && anchor.State.Time != nil && anchor.State.Time.Start > 0 {
+			startMs = anchor.State.Time.Start
+		}
+		reasonPart := MessagePart{
+			ID:        rID,
+			SessionID: turn.Info.SessionID,
+			MessageID: turn.Info.ID,
+			Type:      "reasoning",
+			Text:      think,
+			Time:      &PartTime{Start: startMs, End: startMs},
+		}
+		turn.Parts = append(turn.Parts, MessagePart{})
+		copy(turn.Parts[anchorIdx+1:], turn.Parts[anchorIdx:])
+		turn.Parts[anchorIdx] = reasonPart
+		existing[rID] = true
+		changed = true
+	}
+	return changed
+}
+
 // hydrateAgyTranscriptTurnTokens repairs legacy Antigravity assistant turns
 // where Tokens.Total summed InputTokens+OutputTokens across every tool-loop
 // step instead of recording the final parent step's context window occupancy,
-// and clears stale historical result errors only when persisted transcript step
-// evidence confirms the turn's final response completed with no subsequent step.
+// backfills missing reasoning parts from transcript.jsonl, and clears stale
+// historical result errors only when persisted transcript step evidence
+// confirms the turn's final response completed with no subsequent step.
 func hydrateAgyTranscriptTurnTokens(externalID string, turns []MessageTurn) bool {
 	needsRepair := false
 	for i := range turns {
-		if _, ok := turnCandidateStaleAgyErrorStep(turns[i]); ok || turnNeedsAgyTokenHydration(turns[i]) {
+		if _, ok := turnCandidateStaleAgyErrorStep(turns[i]); ok || turnNeedsAgyTokenHydration(turns[i]) || turnNeedsAgyReasoningHydration(turns[i]) {
 			needsRepair = true
 			break
 		}
@@ -565,6 +660,9 @@ func hydrateAgyTranscriptTurnTokens(externalID string, turns []MessageTurn) bool
 	for i := range turns {
 		if turns[i].Info.Role != "assistant" {
 			continue
+		}
+		if hydrateAgyTurnReasoningParts(&turns[i], rows) {
+			changed = true
 		}
 		maxStep, _ := turnAgyStepInfo(turns[i].Parts)
 		if maxStep > 0 && maxStep < prevMaxStep {

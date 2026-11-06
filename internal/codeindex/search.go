@@ -136,10 +136,6 @@ func buildDocs(index *Index) *cachedIndex {
 	return c
 }
 
-func (s *Service) rank(directory, query string, limit int) (*cachedIndex, []Result) {
-	return s.rankWithPath(directory, query, "", limit)
-}
-
 func (s *Service) rankWithPath(directory, query, pathPrefix string, limit int) (*cachedIndex, []Result) {
 	c, err := s.ensure(directory)
 	if err != nil {

@@ -31,7 +31,7 @@ import {
   ToolCardExpandedBody, type ToolPart,
 } from "./tool-card-helpers";
 import {
-  extractTargetFiles, resolveLoadedContextFiles, resolveToolArgPills,
+  extractTargetFiles, resolveLoadedContextFiles, resolveReadLineRange, resolveToolArgPills,
   resolveToolFileDiagnostics, resolveToolFileDiff, resolveToolFileDiffs,
   resolveToolTodoItems,
 } from "./tool-card-state";
@@ -121,6 +121,7 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
   );
 
   const loadedFiles = createMemo(() => (isRead() ? resolveLoadedContextFiles(props.part) : []));
+  const readLineRange = createMemo(() => (isRead() ? resolveReadLineRange(props.part) : undefined));
   const toolArgPills = createMemo(() => resolveToolArgPills(props.part));
   const todoItems = createMemo(() => (isTodo() ? resolveToolTodoItems(props.part) : []));
   const childSessionID = createMemo<string | undefined>(() =>
@@ -322,33 +323,30 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
                         <TextShimmer text={t("toolCard.actionRead")} active={isRunning()} />
                       </span>
                       <FileIcon node={{ path: file(), type: "file" }} class="w-3.5 h-3.5 shrink-0 opacity-75 group-hover/tool:opacity-100 transition-opacity" />
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openFileInInspector(file());
-                        }}
-                        class={`font-mono text-[13px] hover:text-[var(--accent-primary)] hover:underline truncate cursor-pointer transition-colors ${
-                          isRunning()
-                            ? "text-[var(--text-secondary)]"
-                            : "text-[var(--text-muted)] group-hover/tool:text-[var(--text-secondary)]"
-                        }`}
-                        title={file()}
-                      >
-                        {getFilename(file())}
-                      </button>
-                      <Show when={getDirectory(file())}>
-                        <span class="hidden md:inline truncate font-mono text-[12px] text-[var(--text-faint)]">
-                          {getDirectory(file())}/
-                        </span>
-                      </Show>
-                      <Show when={shellIntent()?.lineRange}>
-                        {(range) => (
-                          <span class="font-mono text-[12px] text-[var(--text-faint)] shrink-0">
-                            :{range()}
-                          </span>
-                        )}
-                      </Show>
+                      <span class="inline-flex items-baseline min-w-0">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openFileInInspector(file());
+                          }}
+                          class={`font-mono text-[13px] hover:text-[var(--accent-primary)] hover:underline truncate cursor-pointer transition-colors ${
+                            isRunning()
+                              ? "text-[var(--text-secondary)]"
+                              : "text-[var(--text-muted)] group-hover/tool:text-[var(--text-secondary)]"
+                          }`}
+                          title={file()}
+                        >
+                          {getFilename(file())}
+                        </button>
+                        <Show when={shellIntent()?.lineRange}>
+                          {(range) => (
+                            <span class="font-mono text-[12px] text-[var(--text-faint)] shrink-0">
+                              :{range()}
+                            </span>
+                          )}
+                        </Show>
+                      </span>
                     </div>
                   )}
                 </Show>
@@ -413,24 +411,33 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
                       />
                     </span>
                     <FileIcon node={{ path: file(), type: "file" }} class="w-3.5 h-3.5 shrink-0 opacity-75 group-hover/tool:opacity-100 transition-opacity" />
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        isEdit()
-                          ? openChangedFileInInspector(fileDiff() ?? file())
-                          : openFileInInspector(file());
-                      }}
-                      class={`font-mono text-[13px] hover:text-[var(--accent-primary)] hover:underline truncate cursor-pointer transition-colors ${
-                        isRunning()
-                          ? "text-[var(--text-secondary)]"
-                          : "text-[var(--text-muted)] group-hover/tool:text-[var(--text-secondary)]"
-                      }`}
-                      title={file()}
-                    >
-                      {getFilename(file())}
-                    </button>
-                    <Show when={getDirectory(file())}>
+                    <span class="inline-flex items-baseline min-w-0">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          isEdit()
+                            ? openChangedFileInInspector(fileDiff() ?? file())
+                            : openFileInInspector(file());
+                        }}
+                        class={`font-mono text-[13px] hover:text-[var(--accent-primary)] hover:underline truncate cursor-pointer transition-colors ${
+                          isRunning()
+                            ? "text-[var(--text-secondary)]"
+                            : "text-[var(--text-muted)] group-hover/tool:text-[var(--text-secondary)]"
+                        }`}
+                        title={file()}
+                      >
+                        {getFilename(file())}
+                      </button>
+                      <Show when={readLineRange()}>
+                        {(range) => (
+                          <span class="font-mono text-[12px] text-[var(--text-faint)] shrink-0">
+                            :{range()}
+                          </span>
+                        )}
+                      </Show>
+                    </span>
+                    <Show when={!isRead() && getDirectory(file())}>
                       <span class="hidden md:inline truncate font-mono text-[12px] text-[var(--text-faint)]">
                         {getDirectory(file())}/
                       </span>

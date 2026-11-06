@@ -336,14 +336,49 @@ export function resolveLoadedContextFiles(part: ToolPart): string[] {
     .map((entry) => normalizeWorkspaceRelPath(entry));
 }
 
+function toPositiveInt(val: unknown): number | undefined {
+  if (typeof val === "number" && Number.isFinite(val)) {
+    const n = Math.trunc(val);
+    return n > 0 ? n : undefined;
+  }
+  if (typeof val === "string" && /^\d+$/.test(val.trim())) {
+    const n = Number.parseInt(val.trim(), 10);
+    return n > 0 ? n : undefined;
+  }
+  return undefined;
+}
+
+export function resolveReadLineRange(part: ToolPart): string | undefined {
+  const input = resolveToolInput(part);
+  const start = toPositiveInt(input.StartLine ?? input.start_line ?? input.startLine);
+  const end = toPositiveInt(input.EndLine ?? input.end_line ?? input.endLine);
+  if (start !== undefined && end !== undefined) {
+    return end > start ? `${start}-${end}` : `${start}`;
+  }
+  if (start !== undefined) return `${start}+`;
+  if (end !== undefined) return `1-${end}`;
+
+  const offset = toPositiveInt(input.offset);
+  const limit = toPositiveInt(input.limit);
+  if (offset !== undefined && limit !== undefined) {
+    const endLine = offset + limit - 1;
+    return endLine > offset ? `${offset}-${endLine}` : `${offset}`;
+  }
+  if (limit !== undefined) {
+    return limit > 1 ? `1-${limit}` : "1";
+  }
+  if (offset !== undefined && offset > 1) {
+    return `${offset}+`;
+  }
+  return undefined;
+}
+
 export function resolveToolArgPills(part: ToolPart): string[] {
   const input = resolveToolInput(part);
   const pills: string[] = [];
   if (typeof input.subagent_type === "string" && input.subagent_type) {
     pills.push(input.subagent_type);
   }
-  if (typeof input.offset === "number") pills.push(`offset=${input.offset}`);
-  if (typeof input.limit === "number") pills.push(`limit=${input.limit}`);
   if (typeof input.pattern === "string" && input.pattern && extractTargetFile(part)) {
     pills.push(`pattern=${input.pattern}`);
   }

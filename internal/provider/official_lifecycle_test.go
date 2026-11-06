@@ -36,7 +36,11 @@ func TestOfficialLateConnectCannotRestoreLoggedOutCredentials(t *testing.T) {
 		defer close(done)
 		svc.handleOfficialConnect(rec, httptest.NewRequest(http.MethodPost, "/", nil))
 	}()
-	<-started
+	select {
+	case <-started:
+	case <-done:
+		t.Fatalf("connect exited before reaching server: %d %s", rec.Code, rec.Body.String())
+	}
 	auth.InvalidateDeviceToken("old-token", server.URL)
 	close(resume)
 	<-done
@@ -70,7 +74,11 @@ func TestOfficialStale401DoesNotClearNewAccount(t *testing.T) {
 		defer close(done)
 		svc.handleOfficialModels(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 	}()
-	<-started
+	select {
+	case <-started:
+	case <-done:
+		t.Fatalf("models request exited before reaching server: %d %s", rec.Code, rec.Body.String())
+	}
 	auth.mu.Lock()
 	auth.token = "new"
 	auth.mu.Unlock()

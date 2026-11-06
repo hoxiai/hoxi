@@ -207,10 +207,6 @@ func (s *Service) ensure(directory string) (*cachedIndex, error) {
 	return s.ensureIndexContext(context.Background(), directory, false)
 }
 
-func (s *Service) ensureIndex(directory string, forceRebuild bool) (*cachedIndex, error) {
-	return s.ensureIndexContext(context.Background(), directory, forceRebuild)
-}
-
 func (s *Service) ensureIndexContext(ctx context.Context, directory string, forceRebuild bool) (*cachedIndex, error) {
 	for {
 		if ctx != nil && ctx.Err() != nil {

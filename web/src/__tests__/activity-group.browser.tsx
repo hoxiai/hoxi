@@ -573,13 +573,13 @@ async function testAutoCollapseOnlyAfterScrollingOffscreen() {
     assertTrue(
       Boolean(scroller.textContent?.includes("root@8.135.58.57 · sudo -u gopanel env")) &&
         Boolean(scroller.textContent?.includes("Let me inspect the theme decor service next:")) &&
-        !scroller.textContent?.includes("Internal monologue before ssh"),
-      "transitional text explanation and de-noised tools are visible while raw internal reasoning monologue is hidden"
+        Boolean(scroller.textContent?.includes("Internal monologue before ssh")),
+      "transitional text explanation, compact reasoning thought rows, and de-noised tools are visible"
     );
     assertEqual(
       scroller.querySelectorAll("[data-part-id]").length,
-      5,
-      "all 4 tool steps and 1 transitional text explanation render directly while hiding todowrite and raw reasoning"
+      7,
+      "all 4 tool steps, 2 compact reasoning headers, and 1 transitional text explanation render while hiding todowrite"
     );
 
     // Finish execution while still visible on screen: must NOT collapse or jump.

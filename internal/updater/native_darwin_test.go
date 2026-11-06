@@ -30,7 +30,7 @@ func TestNativeAdmissionLifecycle(t *testing.T) {
 	}
 	nativeCallbacks.Unlock()
 	t.Cleanup(func() { hoxiNativeRelease(0, 1) })
-	if hoxiNativeCanInstall(0, 0) != 1 || hoxiNativeCanInstall(0, 0) != 1 {
+	if hoxiNativeCanInstall(0, 0) != 1 || hoxiNativeCanInstall(0, 1) != 1 {
 		t.Fatal("selection and relaunch must each recheck admission")
 	}
 	var wg sync.WaitGroup

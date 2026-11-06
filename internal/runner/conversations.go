@@ -59,11 +59,7 @@ func (s *Service) handleConversationsRoot(w http.ResponseWriter, r *http.Request
 	}
 }
 
-// listConversations degrades to Hoxi's own sessions when OpenCode is down.
-func (s *Service) listConversations(ctx context.Context, projectID, directory string) []json.RawMessage {
-	return s.listConversationsWithSurface(ctx, projectID, directory, "")
-}
-
+// listConversationsWithSurface degrades to Hoxi's own sessions when OpenCode is down.
 func (s *Service) listConversationsWithSurface(ctx context.Context, projectID, directory, surfaceFilter string) []json.RawMessage {
 	type entry struct {
 		updated int64

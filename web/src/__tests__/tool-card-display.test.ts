@@ -19,6 +19,7 @@ import {
   resolveMergedTurnParts,
 } from "../components/timeline/context-activity-turns";
 import { summarizeStepTarget } from "../components/timeline/context-activity-summary";
+import { resolveReadLineRange, resolveToolArgPills } from "../components/timeline/tool-card-state";
 import type { MessagePart, ToolPart, ToolState } from "../services/sse-types";
 import { dictionaries, setLocale } from "../i18n";
 import { type MessageTurn, setWorkspace } from "../store/workspace-state";
@@ -205,6 +206,37 @@ describe("localized tool labels for CLI runtimes", () => {
     assertEqual(extractDescription(read), "");
     const real = part("read", { title: "Reading a.ts", input: { filePath: "a.ts" } });
     assertEqual(extractDescription(real), "Reading a.ts");
+  });
+
+  it("formats line ranges for native read tools and excludes raw offset/limit pills", () => {
+    const agyRead = part("read_file", {
+      input: {
+        Path: "/Users/hugh/code/hoxi/hoxi/web/src/components/timeline/ToolCard.tsx",
+        StartLine: "315",
+        EndLine: "415",
+      },
+    });
+    assertEqual(resolveReadLineRange(agyRead), "315-415");
+    assertEqual(summarizeStepTarget(agyRead), "ToolCard.tsx:315-415");
+
+    const openCodeRead = part("read", {
+      input: {
+        filePath: "web/src/components/timeline/ToolCard.tsx",
+        offset: 100,
+        limit: 50,
+      },
+    });
+    assertEqual(resolveReadLineRange(openCodeRead), "100-149");
+    assertEqual(summarizeStepTarget(openCodeRead), "ToolCard.tsx:100-149");
+    assertDeepEqual(resolveToolArgPills(openCodeRead), []);
+
+    const fullRead = part("read_file", {
+      input: {
+        Path: "/Users/hugh/code/hoxi/hoxi/web/src/components/timeline/ToolCard.tsx",
+      },
+    });
+    assertEqual(resolveReadLineRange(fullRead), undefined);
+    assertEqual(summarizeStepTarget(fullRead), "ToolCard.tsx");
   });
 
   it("summarizes noisy shell exploration and ssh commands into concise semantic intents", () => {

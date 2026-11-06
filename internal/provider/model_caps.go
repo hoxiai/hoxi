@@ -170,28 +170,6 @@ func inferModelCategory(modelID, explicitCategory, modality string) string {
 	return "chat"
 }
 
-// inferMediaGenerationModality returns "image", "video", or "audio" for dedicated
-// non-conversational media generation endpoints (e.g. dall-e-3, gpt-image-1, flux,
-// imagen, seedance, kling, veo, sora, wanx, elevenlabs) so they are never routed as
-// primary tool-calling chat models. Conversational multimodal models (gemini, gpt-4o,
-// claude) return "".
-func inferMediaGenerationModality(modelID string) string {
-	id := strings.ToLower(strings.TrimSpace(modelID))
-	if id == "" {
-		return ""
-	}
-	switch inferModelCategory(id, "", "") {
-	case "video":
-		return "video"
-	case "image":
-		return "image"
-	case "tts", "realtime":
-		return "audio"
-	default:
-		return ""
-	}
-}
-
 // isNonChatUtilityModel returns true only for non-conversational utility or pure
 // media-generation endpoints (embeddings, rerankers, speech/audio, moderation,
 // dedicated image/video generators). Conversational models default to supporting
