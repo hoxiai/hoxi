@@ -2,6 +2,9 @@
 
 export type SkillSource = "builtin" | "project" | "user" | "external";
 
+/** How the model sees a skill; decided by the backend for UI and model alike. */
+export type SkillExposure = "auto" | "on-demand" | "unavailable";
+
 export interface SkillDescriptor {
   key: string;
   name: string;
@@ -11,6 +14,9 @@ export interface SkillDescriptor {
   sourceLabel: string;
   canOpenLocation: boolean;
   contentDigest?: string;
+  exposure?: SkillExposure;
+  exposureReason?: string;
+  missingTools?: string[];
 }
 
 export interface SkillDetail extends SkillDescriptor {

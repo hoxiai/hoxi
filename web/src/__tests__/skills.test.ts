@@ -9,7 +9,9 @@ import {
   loadSkillMarketplace,
   loadSkillsCatalog,
   resolveTurnSkillStatus,
+  revalidateSkillForTargetDirectory,
   selectComposerSkill,
+  skillExposureReason,
   skillsStore,
   transferDraftComposerSkill,
 } from "../store/skills";
@@ -175,6 +177,52 @@ describe("skills capability", () => {
       claudeItems.some((item) => item.label === "/init" && item.source === "command"),
       "commands must remain visible for non-opencode runtimes"
     );
+  });
+
+  it("keeps on-demand skills selectable but never offers unavailable ones", async () => {
+    const base = { runtime: "opencode" as const, source: "user" as const, sourceLabel: "", canOpenLocation: true };
+    const skills: SkillDescriptor[] = [
+      { ...base, key: "skl_auto", name: "review-changes", exposure: "auto" },
+      { ...base, key: "skl_ondemand", name: "us-options-ops", exposure: "on-demand", exposureReason: "hoxi-managed" },
+      {
+        ...base,
+        key: "skl_missing",
+        name: "built-in-browser",
+        exposure: "unavailable",
+        exposureReason: "missing-tools",
+        missingTools: ["mcp__Claude_Browser__*"],
+      },
+    ];
+    const labels = buildSlashCommandSuggestions({ commands: [], skills, query: "", runtime: "opencode", isHidden: () => false }).map(
+      (item) => item.label
+    );
+    assertEqual(labels.join(","), "/review-changes,/us-options-ops");
+    assertTrue(skillExposureReason(skills[2]).includes("mcp__Claude_Browser__*"), "reason names the missing tools");
+
+    const original = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ runtime: "opencode", supported: true, directory: "/repo", skills }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })) as typeof fetch;
+    try {
+      const refused = await revalidateSkillForTargetDirectory({
+        sessionID: "ses_1",
+        directory: "/repo",
+        runtime: "opencode",
+        selection: { key: "skl_missing", name: "built-in-browser" },
+      });
+      assertTrue(!refused.ok && refused.reason.includes("mcp__Claude_Browser__*"), "unavailable selection is refused with its reason");
+      const accepted = await revalidateSkillForTargetDirectory({
+        sessionID: "ses_1",
+        directory: "/repo",
+        runtime: "opencode",
+        selection: { key: "skl_ondemand", name: "us-options-ops" },
+      });
+      assertTrue(accepted.ok, "on-demand skills stay selectable");
+    } finally {
+      globalThis.fetch = original;
+    }
   });
 
   it("keeps the full skill catalog visible in slash suggestions", () => {

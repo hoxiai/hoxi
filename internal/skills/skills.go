@@ -48,6 +48,10 @@ type SkillDescriptor struct {
 	SourceLabel     string `json:"sourceLabel"`
 	CanOpenLocation bool   `json:"canOpenLocation"`
 	ContentDigest   string `json:"contentDigest,omitempty"`
+	// Exposure is how the model sees the skill: auto, on-demand or unavailable.
+	Exposure       string   `json:"exposure"`
+	ExposureReason string   `json:"exposureReason,omitempty"`
+	MissingTools   []string `json:"missingTools,omitempty"`
 }
 
 type SkillDetail struct {
@@ -77,6 +81,9 @@ type RequestContext struct {
 	Directory    string
 	ProjectRoot  string
 	AllowedRoots []string
+	// Surface is "work" for Work workspaces, where Hoxi-managed workflow
+	// skills stay in the automatic catalog; anything else is a code project.
+	Surface string
 }
 
 type ContextResolver func(ctx context.Context, directory, sessionID, requestedRuntime string) (RequestContext, error)
@@ -278,6 +285,9 @@ func (s *Service) ResolveSelection(ctx context.Context, directory, sessionID str
 	}
 	for _, entry := range entries {
 		if entry.detail.Name == name && entry.detail.Key == key {
+			if entry.detail.Exposure == ExposureUnavailable {
+				return SkillDetail{}, fmt.Errorf("%w: %s", ErrUnsupported, unavailableMessage(entry.detail.SkillDescriptor))
+			}
 			return entry.detail, nil
 		}
 	}
@@ -318,7 +328,7 @@ func (s *Service) resolveContext(ctx context.Context, directory, sessionID, requ
 }
 
 func catalogCacheKey(rc RequestContext) string {
-	return rc.Runtime + "\x00" + rc.Directory + "\x00" + rc.SessionID
+	return rc.Runtime + "\x00" + rc.Directory + "\x00" + rc.SessionID + "\x00" + rc.Surface
 }
 
 func (s *Service) loadOpenCodeCatalog(ctx context.Context, rc RequestContext, forceRefresh bool) ([]cachedSkillEntry, error) {
@@ -337,6 +347,8 @@ func (s *Service) loadOpenCodeCatalog(ctx context.Context, rc RequestContext, fo
 		return nil, err
 	}
 
+	engineCfg := s.fetchEngineSkillConfig(ctx, rc.Directory)
+	hoxiDir := canonicalizeDir(DefaultUserDir())
 	entries := make([]cachedSkillEntry, 0, len(rawItems))
 	seenNames := make(map[string]bool, len(rawItems))
 	for _, item := range rawItems {
@@ -345,7 +357,12 @@ func (s *Service) loadOpenCodeCatalog(ctx context.Context, rc RequestContext, fo
 			continue
 		}
 		seenNames[name] = true
-		entries = append(entries, buildSkillEntry(rc, item))
+		entry := buildSkillEntry(rc, item)
+		decision := classifyExposure(engineCfg, hoxiDir, rc.Surface, name, entry.resolvedPath, item.Content)
+		entry.detail.Exposure = decision.exposure
+		entry.detail.ExposureReason = decision.reason
+		entry.detail.MissingTools = decision.missingTools
+		entries = append(entries, entry)
 	}
 
 	s.mu.Lock()

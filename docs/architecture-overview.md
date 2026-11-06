@@ -1,0 +1,55 @@
+# Hoxi 架构概览（现状、目录与规划）
+
+本文从根目录 `AGENTS.md` 移出，内容为模块现状、目录结构与未实现规划，不常驻 AI 会话上下文。以下情况先读本文：定位模块或目录归属、判断某能力是否已经实现、在注释或 UI 文案中描述现有能力。写代码必须遵守的约束仍以 `AGENTS.md` 为准；文档与代码冲突时以代码和测试为准并同步修正文档。
+
+## 一、现状
+
+### 1.1 桌面端
+
+- **宿主与状态栏**（`internal/app` + `internal/statusbar`）：Wails v2（`WKWebView` / `WebView2`），单实例锁、关窗隐藏驻留；WebView 经 AssetServer 进程内交网关，回环监听桥接端口（release `127.0.0.1:5410`、dev `127.0.0.1:5420`，占用回落随机端口）供 WS 与 CLI 使用。原生托盘显示 `Running` / `Attention`，待审批新增时回调一次（不含命令文本）
+- **OpenCode 运行时**（`internal/opencode`）：监管官方 `opencode serve`（随机密码 + Basic Auth），按 PID、启动时间与参数登记到 `~/.hoxi/reclaim.json`（`internal/reclaim`），仅回收已退出 Hoxi 的孤儿守护进程（不扫进程表）；Windows 经 `subproc.StartTied` 绑 Job Object，NSIS 按完整路径结束进程
+- **多运行时与统一审批**（`internal/runner`）：统一驱动 OpenCode、Claude Code、Antigravity（`agy`）、Gemini CLI（`gemini`）、Qoder、CodeBuddy 为统一事件流；原生 CLI 遇瞬态错误由 `turn_retry.go` 退避重试，OpenCode 推理截断或过渡动作断流由 `opencode_turn_recovery.go` 自动续跑。PreToolUse / BeforeTool Hook 接入 `approval_decision.go`（`~/.hoxi/approval-policy.json`），支持桌面专属 `trusted` 完全信任与 `unattended` 无人值守模式（隔离 worktree + Seatbelt 沙箱）
+- **前端工作区**（`web/`）：Vite + SolidJS + Tailwind 三栏布局；SSE 经 `requestAnimationFrame` 批处理；侧边栏将非归档子会话归组在根父会话下，主视图含嵌套时间线、`ThoughtBox`、`ToolCard`、`@pierre/diffs`、`@xterm/xterm`、内置浏览器检视器（`internal/browser`）及 Chrome Link 扩展（`extensions/chrome`，详见 [`BROWSER.md`](../BROWSER.md)）
+- **原生电脑控制**（`internal/computer`）：macOS 与 Windows 前台窗口读取与输入（`hoxi_computer`），按会话与工作树原生弹窗授权单个运行中应用（禁终端、密码管理器、系统设置），默认每次输入仅限本机「允许一次」（用户可在电脑控制面板为当前已授权应用开启连续输入免确认，无人值守模式始终拒绝输入），只截目标窗口（详见 [`COMPUTER.md`](../COMPUTER.md)）
+- **会话、接管与 Skills**：Git Worktree 隔离（`internal/worktree`，`?directory=` 作用域）、历史分页（`session-history.ts` 首屏取最新 200 条）、Steer / Stop、Revert / Fork、`/goal` 目标（`[[goal:complete]]` / `[[goal:blocked]]` 或 `goal_report`）；8 维记忆共享 `.opencode/lib/memory-compaction.js`，落盘 `<project>/.hoxi/memory/sessions/<session>.md`。`internal/handoff` 接管外部 CLI 会话；`internal/skills` + `internal/tools` + `internal/workapps` 提供本地/线上 Skill、免 Key 工具网桥（`/api/hoxi/tools/{discover,inspect,run}`）与 Work 应用状态
+- **远程协同通道**（不开放公网端口，复用同一远程路由白名单）：① **GoPanel 反向隧道**（`internal/tunnel` + `gateway/tunnel.go`），含 APNs 计数推送；② **局域网配对直连**（`internal/pairing` + `gateway/lan.go`，监听 `:5417`，仅限局域网，令牌存 `~/.hoxi/pairing.json`）；③ **Cloudflare Tunnel 与反向代理入口**（`internal/cloudflared` + `gateway/ingress.go`，监听 `127.0.0.1:5418`，仅认独立 `relayToken`，凭据存 `~/.hoxi/cloudflared.json`）
+- **提供商、中转与自动选模**（`internal/provider`）：① 回环 OpenAI 兼容中转（`relay.go` + `relay_keys.go`，`hk-*` 哈希存 `~/.hoxi/relay-keys.json`，永不入隧道）；② 官方账号直连（`official.go`，独立写入 `hoxi-official`，退出同步清理）；③ `hoxi-auto` 自动池与熔断（`auto_router.go` + `breaker.go` + `quota_reset.go`，存 `~/.hoxi/provider-breakers.json`），前端 `auto-models.ts` 会话粘性选模保 KV Cache，`auto-failover.ts` 遇限流/额度/鉴权/模型错误立即换候选，多轮会话遇瞬态网络/5xx 优先同模型重试 1 次保缓存后再切换；支持 MCP OAuth 2.1 PKCE（`mcp_oauth.go`）
+
+### 1.2 目录结构
+
+```text
+/
+├── main.go / cmd/hoxi/main.go        # Wails 桌面入口 / CLI & headless 入口（委托 internal/app）
+├── internal/
+│   ├── app/, cli/                    # [顶层] DesktopApp 生命周期与 Wails 绑定 / 终端 `hoxi` CLI
+│   ├── gateway/                      # [网关层] 进程内反向代理、Basic Auth、WS/SSE 桥接、隧道路由白名单
+│   ├── runner/                       # [业务层] 多运行时执行引擎、审批门控与回滚
+│   ├── opencode/ (+ ocapi/, ocstate/)# [业务层/底座层] OpenCode 监管与插件覆盖层 + 回环客户端与 SQLite 同步
+│   ├── provider/                     # [业务层] 提供商配置、llm.Client 实现、本机中转、官方直连、自动池与熔断
+│   ├── worktree/, workspace/         # [业务层] Git worktree 沙箱、Diff、快照 / 多工作区配置
+│   ├── browser/, computer/           # [业务层] Chrome 检视器、Chrome Link / 原生窗口读取与前台输入
+│   ├── handoff/, orchestration/      # [业务层] 跨 CLI 会话接管与桥接 / 多 Agent DAG Convoy 编排
+│   ├── codeindex/, recall/, forge/   # [业务层] Tree-sitter 与 trigram 索引 / 跨会话 BM25 召回 / GitHub & GitLab
+│   ├── skills/, tools/, workapps/    # [业务层] 本地与线上 Agent Skills / 免 Key 工具网桥 / Work 应用状态
+│   ├── tunnel/, pairing/, cloudflared/# [业务层] GoPanel 反向隧道 / 局域网扫码配对 / Cloudflare Tunnel 监管
+│   ├── auth/, attachment/, promptassist/, leaderboard/, sandbox/, updater/, telemetry/ # [业务层]
+│   └── hoxipaths/, llm/, agentcli/, agyhook/, claudeconfig/, diagnostics/, buildinfo/, notify/, osopen/, reclaim/, sqlitecli/, statusbar/, subproc/, textindex/, testutil/execstub/ # [底座层/测试辅助]
+├── web/src/{components,store,services,i18n,__tests__}/ # 按域 UI、响应式 Store（workspace.ts 扁平导出）、网络层、双语词条与单测
+├── web/scripts/                      # check-i18n.ts, check-lines.ts（800 行与分层门禁）, check-cycles.ts, run-tests.ts
+├── extensions/chrome/                # Chrome Link MV3 扩展（worker.js, protocol.js, popup）
+├── .opencode/{plugins,lib,skills}/   # 上游 OpenCode 配置根（只读）：hoxi-memory.js, hoxi-goal.js, 共享策略与 *.cases.json
+├── .hoxi/memory/                     # Hoxi 项目状态（git-ignored）：project.md 与 sessions/<session>.md
+└── docs/, scripts/                   # 架构护栏、隧道、更新与发版指南 / 一键发版与打包脚本
+```
+
+---
+
+## 二、规划（未实现）
+
+勿将以下内容当现有能力或在注释/UI 文案中宣称已支持：
+
+| 项目 | 说明 |
+| --- | --- |
+| 远程跨网 E2E 加密与盲目中继 | LAN 直连与 `:5417` 令牌监听**已实现**；跨网 E2E 未实现（[`docs/remote-access-e2e-contract.md`](remote-access-e2e-contract.md)） |
+| 隧道 WebSocket / 凭据入钥匙串 / Android 推送 | 远程 `/pty` 当前返回 501；隧道凭据当前为 `0600` 文件；Android 推送未实现 |
+| 跨重启任务账本 / 真机公网验收 | Hoxi 通道 `prompt_async` 与审批 `reply` 幂等键**已实现**；跨重启任务账本与公网真机验收未完成 |

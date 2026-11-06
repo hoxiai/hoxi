@@ -185,6 +185,28 @@ export function setComposerSkillNotice(
   setSkillsStore("noticeBySession", sessionKey(sessionID, directory), notice);
 }
 
+/** Translated explanation of a skill's exposure, or "" for plain auto skills. */
+export function skillExposureReason(item: SkillDescriptor): string {
+  switch (item.exposureReason) {
+    case "hoxi-managed":
+      return t("skills.exposureHoxiManaged");
+    case "client-synced":
+      return t("skills.exposureClientSynced");
+    case "missing-tools":
+      return t("skills.exposureMissingTools", { tools: (item.missingTools ?? []).join(", ") });
+    case "config-denied":
+      return t("skills.exposureConfigDenied");
+    case "config-pinned":
+      return t("skills.exposureConfigPinned");
+    default:
+      return "";
+  }
+}
+
+export function isSkillUnavailable(item: SkillDescriptor | undefined): boolean {
+  return item?.exposure === "unavailable";
+}
+
 export function recordSkillDescriptors(list: SkillDescriptor[]) {
   for (const item of list) {
     descriptorBySelectionKey.set(item.key, item);
@@ -481,6 +503,12 @@ export async function revalidateSkillForTargetDirectory(params: {
     recordSkillDescriptors(list);
 
     const exact = list.find((s) => s.key === selection.key && s.name === selection.name);
+    if (exact && isSkillUnavailable(exact)) {
+      return {
+        ok: false,
+        reason: t("skills.unavailableSelection", { name: exact.name, reason: skillExposureReason(exact) }),
+      };
+    }
     if (exact) {
       return { ok: true, selection: { key: exact.key, name: exact.name } };
     }
@@ -491,7 +519,8 @@ export async function revalidateSkillForTargetDirectory(params: {
       byName &&
       orig &&
       byName.source === orig.source &&
-      (!orig.contentDigest || byName.contentDigest === orig.contentDigest)
+      (!orig.contentDigest || byName.contentDigest === orig.contentDigest) &&
+      !isSkillUnavailable(byName)
     ) {
       return { ok: true, selection: { key: byName.key, name: byName.name } };
     }

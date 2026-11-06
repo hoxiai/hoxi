@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
+	"github.com/hoxiai/hoxi/internal/runner"
 	"github.com/hoxiai/hoxi/internal/skills"
 )
 
@@ -55,6 +56,31 @@ func (g *Gateway) isRegisteredWorkspaceOrSandbox(dir string, allowedRoots []stri
 	return "", "", false
 }
 
+// skillSurface reports "work" when dirs belong to a Work workspace (a saved
+// profile marked work, or the default Work directory); otherwise "code".
+func (g *Gateway) skillSurface(dirs ...string) string {
+	if g.workspaces != nil {
+		for _, ws := range g.workspaces.List() {
+			if ws.Surface != "work" {
+				continue
+			}
+			for _, f := range ws.Folders {
+				for _, d := range dirs {
+					if d != "" && sameDirectory(f.Path, d) {
+						return "work"
+					}
+				}
+			}
+		}
+	}
+	for _, d := range dirs {
+		if d != "" && runner.NormalizeSessionSurface("", d) == "work" {
+			return "work"
+		}
+	}
+	return "code"
+}
+
 func (g *Gateway) resolveSkillContext(ctx context.Context, directory, sessionID, requestedRuntime string) (skills.RequestContext, error) {
 	allowedRoots := g.allowedWorkspaceRoots()
 	sessionID = strings.TrimSpace(sessionID)
@@ -73,6 +99,7 @@ func (g *Gateway) resolveSkillContext(ctx context.Context, directory, sessionID,
 					Directory:    effDir,
 					ProjectRoot:  projDir,
 					AllowedRoots: allowedRoots,
+					Surface:      g.skillSurface(projDir, effDir),
 				}, nil
 			}
 		}
@@ -95,6 +122,7 @@ func (g *Gateway) resolveSkillContext(ctx context.Context, directory, sessionID,
 					Directory:    binding.Directory,
 					ProjectRoot:  proj,
 					AllowedRoots: allowedRoots,
+					Surface:      g.skillSurface(proj, binding.Directory),
 				}, nil
 			}
 		}
@@ -127,5 +155,6 @@ func (g *Gateway) resolveSkillContext(ctx context.Context, directory, sessionID,
 		Directory:    cDir,
 		ProjectRoot:  projRoot,
 		AllowedRoots: allowedRoots,
+		Surface:      g.skillSurface(projRoot, cDir),
 	}, nil
 }

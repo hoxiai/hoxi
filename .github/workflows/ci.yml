@@ -56,7 +56,7 @@ jobs:
         run: node --test scripts/release.test.mjs
 
       - name: Run browser, sandbox, computer and Chrome Link extension tests
-        run: node --test internal/opencode/browser_plugin_test.mjs internal/opencode/sandbox_plugin_test.mjs internal/opencode/computer_tool_test.mjs extensions/chrome/*.test.mjs
+        run: node --test internal/opencode/browser_plugin_test.mjs internal/opencode/skill_catalog_test.mjs internal/opencode/sandbox_plugin_test.mjs internal/opencode/computer_tool_test.mjs extensions/chrome/*.test.mjs
 
       - name: Build frontend production bundle
         run: npm --prefix web run build

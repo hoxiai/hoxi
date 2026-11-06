@@ -2,57 +2,19 @@
 
 `Hoxi` 是面向独立开发者的本地多 Agent 研发工作台（**macOS 与 Windows 桌面端**，Go + Wails + SolidJS），可与配套 **GoPanel 服务器面板**（`gopanel_v2`）及移动端远程协同（局域网直连、Cloudflare Tunnel 或 GoPanel 反向隧道）。
 
-本文分三段：**现状**（已实现）、**边界与约束**（写代码必须遵守）、**规划**（未实现，勿当现有能力引用）。远程通道以 [远程隧道契约](docs/gopanel-hoxi-remote-tunnel.md) 为准；文档与代码冲突时以代码和测试为准并同步修正文档。
+本文常驻 AI 会话上下文，只保留**写代码必须遵守的约束**与**验证入口**。模块现状、完整目录结构与规划明细见 [`docs/architecture-overview.md`](docs/architecture-overview.md)：定位模块归属、判断能力是否已实现、或在注释/UI 文案中描述现有能力前先读它。远程通道以 [远程隧道契约](docs/gopanel-hoxi-remote-tunnel.md) 为准；文档与代码冲突时以代码和测试为准并同步修正文档。
 
 ---
 
-## 一、现状
-
-### 1.1 桌面端
-
-- **宿主与状态栏**（`internal/app` + `internal/statusbar`）：Wails v2（`WKWebView` / `WebView2`），单实例锁、关窗隐藏驻留；WebView 经 AssetServer 进程内交网关，回环监听桥接端口（release `127.0.0.1:5410`、dev `127.0.0.1:5420`，占用回落随机端口）供 WS 与 CLI 使用。原生托盘显示 `Running` / `Attention`，待审批新增时回调一次（不含命令文本）
-- **OpenCode 运行时**（`internal/opencode`）：监管官方 `opencode serve`（随机密码 + Basic Auth），按 PID、启动时间与参数登记到 `~/.hoxi/reclaim.json`（`internal/reclaim`），仅回收已退出 Hoxi 的孤儿守护进程（不扫进程表）；Windows 经 `subproc.StartTied` 绑 Job Object，NSIS 按完整路径结束进程
-- **多运行时与统一审批**（`internal/runner`）：统一驱动 OpenCode、Claude Code、Antigravity（`agy`）、Gemini CLI（`gemini`）、Qoder、CodeBuddy 为统一事件流；原生 CLI 遇瞬态错误由 `turn_retry.go` 退避重试，OpenCode 推理截断或过渡动作断流由 `opencode_turn_recovery.go` 自动续跑。PreToolUse / BeforeTool Hook 接入 `approval_decision.go`（`~/.hoxi/approval-policy.json`），支持桌面专属 `trusted` 完全信任与 `unattended` 无人值守模式（隔离 worktree + Seatbelt 沙箱）
-- **前端工作区**（`web/`）：Vite + SolidJS + Tailwind 三栏布局；SSE 经 `requestAnimationFrame` 批处理；侧边栏将非归档子会话归组在根父会话下，主视图含嵌套时间线、`ThoughtBox`、`ToolCard`、`@pierre/diffs`、`@xterm/xterm`、内置浏览器检视器（`internal/browser`）及 Chrome Link 扩展（`extensions/chrome`，详见 [`BROWSER.md`](BROWSER.md)）
-- **原生电脑控制**（`internal/computer`）：macOS 与 Windows 前台窗口读取与输入（`hoxi_computer`），按会话与工作树原生弹窗授权单个运行中应用（禁终端、密码管理器、系统设置），每次输入仅限本机「允许一次」，只截目标窗口（详见 [`COMPUTER.md`](COMPUTER.md)）
-- **会话、接管与 Skills**：Git Worktree 隔离（`internal/worktree`，`?directory=` 作用域）、历史分页（`session-history.ts` 首屏取最新 200 条）、Steer / Stop、Revert / Fork、`/goal` 目标（`[[goal:complete]]` / `[[goal:blocked]]` 或 `goal_report`）；8 维记忆共享 `.opencode/lib/memory-compaction.js`，落盘 `<project>/.hoxi/memory/sessions/<session>.md`。`internal/handoff` 接管外部 CLI 会话；`internal/skills` + `internal/tools` + `internal/workapps` 提供本地/线上 Skill、免 Key 工具网桥（`/api/hoxi/tools/{discover,inspect,run}`）与 Work 应用状态
-- **远程协同通道**（不开放公网端口，复用同一远程路由白名单）：① **GoPanel 反向隧道**（`internal/tunnel` + `gateway/tunnel.go`），含 APNs 计数推送；② **局域网配对直连**（`internal/pairing` + `gateway/lan.go`，监听 `:5417`，仅限局域网，令牌存 `~/.hoxi/pairing.json`）；③ **Cloudflare Tunnel 与反向代理入口**（`internal/cloudflared` + `gateway/ingress.go`，监听 `127.0.0.1:5418`，仅认独立 `relayToken`，凭据存 `~/.hoxi/cloudflared.json`）
-- **提供商、中转与自动选模**（`internal/provider`）：① 回环 OpenAI 兼容中转（`relay.go` + `relay_keys.go`，`hk-*` 哈希存 `~/.hoxi/relay-keys.json`，永不入隧道）；② 官方账号直连（`official.go`，独立写入 `hoxi-official`，退出同步清理）；③ `hoxi-auto` 自动池与熔断（`auto_router.go` + `breaker.go` + `quota_reset.go`，存 `~/.hoxi/provider-breakers.json`），前端 `auto-models.ts` 会话粘性选模保 KV Cache，`auto-failover.ts` 遇限流/额度/鉴权/模型错误立即换候选，多轮会话遇瞬态网络/5xx 优先同模型重试 1 次保缓存后再切换；支持 MCP OAuth 2.1 PKCE（`mcp_oauth.go`）
-
-### 1.2 目录结构
-
-```text
-/
-├── main.go / cmd/hoxi/main.go        # Wails 桌面入口 / CLI & headless 入口（委托 internal/app）
-├── internal/
-│   ├── app/, cli/                    # [顶层] DesktopApp 生命周期与 Wails 绑定 / 终端 `hoxi` CLI
-│   ├── gateway/                      # [网关层] 进程内反向代理、Basic Auth、WS/SSE 桥接、隧道路由白名单
-│   ├── runner/                       # [业务层] 多运行时执行引擎、审批门控与回滚
-│   ├── opencode/ (+ ocapi/, ocstate/)# [业务层/底座层] OpenCode 监管与插件覆盖层 + 回环客户端与 SQLite 同步
-│   ├── provider/                     # [业务层] 提供商配置、llm.Client 实现、本机中转、官方直连、自动池与熔断
-│   ├── worktree/, workspace/         # [业务层] Git worktree 沙箱、Diff、快照 / 多工作区配置
-│   ├── browser/, computer/           # [业务层] Chrome 检视器、Chrome Link / 原生窗口读取与前台输入
-│   ├── handoff/, orchestration/      # [业务层] 跨 CLI 会话接管与桥接 / 多 Agent DAG Convoy 编排
-│   ├── codeindex/, recall/, forge/   # [业务层] Tree-sitter 与 trigram 索引 / 跨会话 BM25 召回 / GitHub & GitLab
-│   ├── skills/, tools/, workapps/    # [业务层] 本地与线上 Agent Skills / 免 Key 工具网桥 / Work 应用状态
-│   ├── tunnel/, pairing/, cloudflared/# [业务层] GoPanel 反向隧道 / 局域网扫码配对 / Cloudflare Tunnel 监管
-│   ├── auth/, attachment/, promptassist/, leaderboard/, sandbox/, updater/, telemetry/ # [业务层]
-│   └── hoxipaths/, llm/, agentcli/, agyhook/, claudeconfig/, diagnostics/, buildinfo/, notify/, osopen/, reclaim/, sqlitecli/, statusbar/, subproc/, textindex/, testutil/execstub/ # [底座层/测试辅助]
-├── web/src/{components,store,services,i18n,__tests__}/ # 按域 UI、响应式 Store（workspace.ts 扁平导出）、网络层、双语词条与单测
-├── web/scripts/                      # check-i18n.ts, check-lines.ts（800 行与分层门禁）, check-cycles.ts, run-tests.ts
-├── extensions/chrome/                # Chrome Link MV3 扩展（worker.js, protocol.js, popup）
-├── .opencode/{plugins,lib,skills}/   # 上游 OpenCode 配置根（只读）：hoxi-memory.js, hoxi-goal.js, 共享策略与 *.cases.json
-├── .hoxi/memory/                     # Hoxi 项目状态（git-ignored）：project.md 与 sessions/<session>.md
-└── docs/, scripts/                   # 架构护栏、隧道、更新与发版指南 / 一键发版与打包脚本
-```
-
-### 1.3 构建与验证命令
+## 一、构建、验证与分层速查
 
 - **Desktop Dev**: `wails dev`（本机 `:5400` 已启动时自动对接本地服务端）
 - **Build macOS / Windows**: `./build-desktop.sh`（或 `--release-only --dmg --no-install --arch amd64`） / `.\scripts\build-windows.ps1`（`-Arch arm64`）
 - **Run Headless**: `go run ./cmd/hoxi --no-desktop`
 - **Web Lint / Test / Build**: `npm --prefix web run lint && npm --prefix web test && npm --prefix web run build`
 - **AI One-Click Release**: `./scripts/ai-release.sh <version> "<release-notes>"`
+- **Go 分层归属**（完整目录树见 `docs/architecture-overview.md`）：顶层 `main.go`、`cmd/hoxi`、`internal/app`、`internal/cli`；网关层 `internal/gateway`；底座层 `internal/opencode/ocapi`、`internal/opencode/ocstate`、`hoxipaths`、`llm`、`agentcli`、`agyhook`、`claudeconfig`、`diagnostics`、`buildinfo`、`notify`、`osopen`、`reclaim`、`sqlitecli`、`statusbar`、`subproc`、`textindex`、`testutil/execstub`；其余 `internal/*` 为业务层
+- **配置根**：`.opencode/{plugins,lib,skills}/` 是本仓库自用的上游 OpenCode 配置根（只读）；`.hoxi/memory/` 为 git-ignored 项目状态
 
 ---
 
@@ -74,7 +36,7 @@
      - `store/` 负责响应式状态、领域计算（含会话父子解析与跨视图分组聚合）与持久化，**严禁**反向 `import` `components/`；子模块统一在 [`web/src/store/workspace.ts`](web/src/store/workspace.ts) 底部扁平重导出，禁二级 `export *`。
      - `components/` 按域归位（`layout` 仅放窗口骨架与导航栏，业务弹窗归入对应域目录）；**严禁在 `components/` 下新建领域聚合文件复制或改写 `store/` 已有的会话/状态计算逻辑**。
    - **Go 后端四层单向依赖 (`app/cli -> gateway -> 业务领域包 -> 基础底座包`)**：
-     - 业务领域包与底座包（见 `1.2`）**严禁反向 `import` `internal/gateway`、`internal/app` 或 `internal/cli`**。
+     - 业务领域包与底座包（见第一节分层速查）**严禁反向 `import` `internal/gateway`、`internal/app` 或 `internal/cli`**。
      - 各子包用明确 Receiver（`*Gateway`/`*Service`/`*Manager`），禁跨包伪装别名；内部 LLM 请求统一由 `gateway` 注入 [`llm.Client`](internal/llm/llm.go)，业务包**严禁直接 `import internal/provider`**。
 
 2. **OpenCode 上游零侵入**
@@ -142,18 +104,13 @@
 ### 2.4 专项文档
 
 - **AI 编码红线与自检清单** → [`docs/ai-coding-guardrails.md`](docs/ai-coding-guardrails.md)
+- **模块现状、完整目录结构与规划明细** → [`docs/architecture-overview.md`](docs/architecture-overview.md)
 - **架构蓝图、远程隧道与 E2E 契约** → [`DEVELOPMENT.md`](DEVELOPMENT.md)、[`docs/gopanel-hoxi-remote-tunnel.md`](docs/gopanel-hoxi-remote-tunnel.md)、[`docs/remote-access-e2e-contract.md`](docs/remote-access-e2e-contract.md)
 - **跨 CLI 接管、电脑控制、内置浏览器** → [`HANDOFF_AND_CLI_BRIDGE.md`](HANDOFF_AND_CLI_BRIDGE.md)、[`COMPUTER.md`](COMPUTER.md)、[`BROWSER.md`](BROWSER.md)
 - **多运行时、审批 Hook、Skills 与更新发版** → [`docs/handoff/2026-10-19-session-ownership.md`](docs/handoff/2026-10-19-session-ownership.md)、[`docs/antigravity-approval-hook.md`](docs/antigravity-approval-hook.md)、[`docs/claude-code-approval-hook.md`](docs/claude-code-approval-hook.md)、[`docs/skills-development.md`](docs/skills-development.md)、[`docs/auto-updates.md`](docs/auto-updates.md)、[`docs/releases.md`](docs/releases.md)
 
 ---
 
-## 三、规划（未实现）
+## 三、未实现能力
 
-勿将以下内容当现有能力或在注释/UI 文案中宣称已支持：
-
-| 项目 | 说明 |
-| --- | --- |
-| 远程跨网 E2E 加密与盲目中继 | LAN 直连与 `:5417` 令牌监听**已实现**；跨网 E2E 未实现（[`docs/remote-access-e2e-contract.md`](docs/remote-access-e2e-contract.md)） |
-| 隧道 WebSocket / 凭据入钥匙串 / Android 推送 | 远程 `/pty` 当前返回 501；隧道凭据当前为 `0600` 文件；Android 推送未实现 |
-| 跨重启任务账本 / 真机公网验收 | Hoxi 通道 `prompt_async` 与审批 `reply` 幂等键**已实现**；跨重启任务账本与公网真机验收未完成 |
+勿将以下能力当作现有能力，也勿在注释/UI 文案中宣称已支持（明细见 `docs/architecture-overview.md` 第二节）：跨网 E2E 加密与盲目中继（LAN 直连与 `:5417` 令牌监听已实现）、隧道 WebSocket（远程 `/pty` 当前返回 501）、隧道凭据入钥匙串（当前为 `0600` 文件）、Android 推送、跨重启任务账本与公网真机验收（`prompt_async` 与审批 `reply` 幂等键已实现）。

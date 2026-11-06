@@ -20,12 +20,14 @@ import {
   getComposerSkill,
   hiddenSkillNames,
   isSkillHidden,
+  isSkillUnavailable,
   loadSkillDetail,
   loadSkillsCatalog,
   openFileInInspector,
   selectComposerSkill,
   sessionRuntimeForID,
   setComposerSkillNotice,
+  skillExposureReason,
   skillsStore,
   toggleSkillHidden,
   workspace,
@@ -33,6 +35,7 @@ import {
 import { invalidateComposerSkillsAutocompleteCache } from "../timeline/composer-autocomplete";
 import MarkdownView from "../timeline/MarkdownView";
 import SkillsMarketplaceView from "./SkillsMarketplaceView";
+import SkillExposureBadge from "./SkillExposureBadge";
 
 const SOURCE_ORDER: SkillSource[] = ["project", "user", "builtin", "external"];
 
@@ -134,6 +137,11 @@ export default function SkillsInspectorView() {
     const current = selectedInComposer();
     if (current?.key === item.key) {
       selectComposerSkill(sid, null);
+    } else if (isSkillUnavailable(item)) {
+      setComposerSkillNotice(
+        sid,
+        t("skills.unavailableSelection", { name: item.name, reason: skillExposureReason(item) })
+      );
     } else {
       selectComposerSkill(sid, { key: item.key, name: item.name }, item);
       setComposerSkillNotice(sid, null);
@@ -335,6 +343,7 @@ export default function SkillsInspectorView() {
                                               >
                                                 {sourceLabel(item.source)}
                                               </span>
+                                              <SkillExposureBadge item={item} />
                                             </div>
                                             <Show when={item.description}>
                                               <p class="mt-1 line-clamp-2 text-[12px] leading-relaxed text-[var(--text-secondary)]">
@@ -444,7 +453,13 @@ export default function SkillsInspectorView() {
                                     >
                                       {sourceLabel(detail().source)}
                                     </span>
+                                    <SkillExposureBadge item={detail()} />
                                   </div>
+                                  <Show when={skillExposureReason(detail())}>
+                                    <p class="mt-1 text-[11px] leading-relaxed text-[var(--text-muted)]">
+                                      {skillExposureReason(detail())}
+                                    </p>
+                                  </Show>
                                   <Show when={detail().description}>
                                     <p class="mt-1 text-xs leading-relaxed text-[var(--text-secondary)]">
                                       {detail().description}

@@ -55,7 +55,7 @@ export function buildSlashCommandSuggestions(params: {
   const seenSkills = new Set<string>();
 
   for (const sk of params.skills) {
-    if (checkHidden(sk.key) || checkHidden(sk.name)) continue;
+    if (checkHidden(sk.key) || checkHidden(sk.name) || sk.exposure === "unavailable") continue;
     seenSkills.add(sk.name);
     if (
       !q ||
