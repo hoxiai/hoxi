@@ -256,17 +256,44 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 	s.mu.Lock()
 	ap := s.procs[sessionID]
 	s.mu.Unlock()
+	steeredTurn := false
+	if ap != nil && !ap.wasAborted() && !ap.hasPendingError() && RuntimeCapabilities(rec.Runtime, rec.Subagent).Steer {
+		steeredTurn = true
+		ap.markSteered()
+		s.abortActiveProcess(sessionID)
+	}
+	finishSteerAbort := func() {
+		if !steeredTurn {
+			return
+		}
+		if s.status != nil {
+			s.status.SetSessionBusy(sessionID, false)
+		}
+		s.broadcast(sessionID, SSEEvent{
+			Type: "session.status",
+			Properties: map[string]interface{}{
+				"sessionID": sessionID,
+				"status":    SessionStatus{Type: "idle"},
+			},
+		})
+	}
 	if ap != nil && (ap.wasAborted() || ap.hasPendingError()) {
 		select {
 		case <-ap.done:
 		case <-ctx.Done():
+			finishSteerAbort()
 			return http.StatusRequestTimeout, PromptReceipt{}, ctx.Err()
 		case <-time.After(5 * time.Second):
+		}
+		if latest, ok := s.store.Get(sessionID); ok {
+			rec.ExternalID = latest.ExternalID
+			rec.Turns = latest.Turns
 		}
 	}
 	s.mu.Lock()
 	if s.procs[sessionID] != nil {
 		s.mu.Unlock()
+		finishSteerAbort()
 		return http.StatusConflict, PromptReceipt{}, errors.New("session already has an active CLI process running")
 	}
 	s.seqSeed++
@@ -355,6 +382,7 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 		}
 	}
 	if err != nil {
+		finishSteerAbort()
 		return http.StatusInternalServerError, PromptReceipt{}, err
 	}
 	receipt := PromptReceipt{

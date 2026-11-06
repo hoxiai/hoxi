@@ -149,6 +149,8 @@ export interface ModelPricingItem {
   contextWindow: number;
   maxOutputTokens?: number;
   modalities?: string[];
+  category?: string;
+  isDefault?: boolean;
   reasoning?: boolean;
   isFree?: boolean;
   updatedAt?: string;
@@ -368,6 +370,11 @@ export interface OfficialChannelModel {
   id: string;
   name: string;
   vendor?: string;
+  category?: string;
+  modality?: string;
+  isChatModel?: boolean;
+  isDefault?: boolean;
+  defaultVoice?: string;
   billingMode?: string;
   inputPointsPerM: number;
   outputPointsPerM: number;
@@ -379,6 +386,8 @@ export interface OfficialChannelModelsResponse {
   gatewayAvailable: boolean;
   baseUrl: string;
   models: OfficialChannelModel[];
+  categories?: Record<string, string[]>;
+  defaults?: Record<string, string>;
   error?: string;
 }
 
@@ -388,6 +397,8 @@ export interface OfficialChannelConnectResponse {
   baseUrl: string;
   modelCount: number;
   models: OfficialChannelModel[];
+  categories?: Record<string, string[]>;
+  defaults?: Record<string, string>;
 }
 
 // officialChannelAPI resolves the models the signed-in Hoxi account may call on

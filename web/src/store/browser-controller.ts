@@ -412,7 +412,10 @@ export function createBrowserController() {
       } catch (err) {
         if (valid(connection)) setPollError(String(err));
       } finally {
-        if (valid(connection)) timer = setTimeout(poll, 1000);
+        if (valid(connection)) {
+          const active = running() || pairing() || chromeLinked() || busy();
+          timer = setTimeout(poll, active ? 1000 : 3500);
+        }
       }
     }
     // Polling must not subscribe this connection lifecycle to browser state.

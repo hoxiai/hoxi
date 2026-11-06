@@ -69,6 +69,21 @@ describe("session capabilities matrix", () => {
             costStats: true,
           },
         },
+        {
+          id: "ses_agy_1",
+          title: "Antigravity Task",
+          runtime: "antigravity",
+          time: { created: 1000, updated: 1000 },
+          capabilities: {
+            approval: true,
+            steer: true,
+            resume: true,
+            revert: true,
+            fork: true,
+            attachments: true,
+            costStats: true,
+          },
+        },
       ]);
 
       // OpenCode: approval & steer & attach are true
@@ -87,6 +102,20 @@ describe("session capabilities matrix", () => {
       assertEqual(canApproveSession("ses_codebuddy_1"), false, "codebuddy has no approval gate");
       assertEqual(canSteerSession("ses_codebuddy_1"), false, "codebuddy does not support steer");
       assertEqual(canAttachToSession("ses_codebuddy_1"), false, "codebuddy attachments unsupported");
+
+      // Antigravity: approval & mid-turn steer & attachments are true
+      assertEqual(canApproveSession("ses_agy_1"), true, "antigravity supports approval");
+      assertEqual(canSteerSession("ses_agy_1"), true, "antigravity supports steer");
+      assertEqual(
+        canSteerSession("ses_agy_1", { providerID: "antigravity", modelID: "gemini-3-pro" }),
+        true,
+        "antigravity model on antigravity session supports steer"
+      );
+      assertEqual(
+        canSteerSession("ses_agy_1", { providerID: "openai", modelID: "gpt-5" }),
+        false,
+        "opencode model target cannot steer running antigravity session"
+      );
 
       // Cross-runtime model target on an OpenCode session disables immediate steering
       assertEqual(

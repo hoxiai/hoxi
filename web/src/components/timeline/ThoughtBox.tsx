@@ -97,6 +97,7 @@ export function normalizeReasoningText(raw: string): string {
     .replace(/\[REDACTED\]/g, "")
     .replace(/<\/?think(?:ing)?>/gi, "")
     .replace(/<\/(?:t(?:h(?:i(?:n(?:k(?:i(?:n(?:g)?)?)?)?)?)?)?)?$/i, "")
+    .replace(/^\s*I['’]m thinking through how to approach this\.?[ \t]*\r?\n+(?=\S)/i, "")
     .replace(/([^\s*])\*\*[ \t]*\*\*(?=[^\s*])/g, "$1**\n\n**")
     .replace(/([^\s*])\*\*[ \t]*\*\*$/g, "$1**")
     .replace(/\r\n?/g, "\n")
@@ -248,10 +249,8 @@ export default function ThoughtBox(props: {
   const hasContent = createMemo(() => {
     const raw = props.part.text ?? "";
     if (!raw) return false;
-    return (
-      normalizeReasoningText(raw.slice(0, 512)).length > 0 ||
-      normalizeReasoningText(raw).length > 0
-    );
+    if (normalizeReasoningText(raw.slice(0, 512)).length > 0) return true;
+    return raw.length > 512 && normalizeReasoningText(raw).length > 0;
   });
 
   const partKey = () => (props.part.id || "").replace(/#thinking$/, "");
@@ -413,26 +412,21 @@ export default function ThoughtBox(props: {
             >
               <Icon name="brain" size="small" />
             </span>
-            <Show
-              when={!streaming() && headerTitle()}
-              fallback={
-                <>
-                  <span class={streaming() ? "shrink-0 text-[var(--accent-primary)] font-medium" : "shrink-0 text-[var(--text-muted)]"}>
-                    <TextShimmer
-                      text={streaming() ? t("timeline.thinking") : t("timeline.thought")}
-                      active={streaming()}
-                    />
-                  </span>
-                  <Show when={headerTitle()}>
-                    <span class="truncate text-[13px] font-normal text-[var(--text-muted)] max-w-[540px] inline-flex items-center gap-1 min-w-0">
-                      <span class="shrink-0">·</span>
-                      <TextReveal text={headerTitle()} truncate minSwapMs={LIVE_STATUS_SWAP_MS} />
-                    </span>
-                  </Show>
-                </>
+            <span
+              class={
+                streaming()
+                  ? "shrink-0 text-[var(--accent-primary)] font-medium"
+                  : "shrink-0 text-[var(--text-muted)] group-hover/trigger:text-[var(--text-secondary)] transition-colors"
               }
             >
-              <span class="truncate text-[13px] font-normal text-[var(--text-muted)] group-hover/trigger:text-[var(--text-secondary)] transition-colors min-w-0">
+              <TextShimmer
+                text={streaming() ? t("timeline.thinking") : t("timeline.thought")}
+                active={streaming()}
+              />
+            </span>
+            <Show when={headerTitle()}>
+              <span class="truncate text-[13px] font-normal text-[var(--text-muted)] group-hover/trigger:text-[var(--text-secondary)] transition-colors max-w-[540px] inline-flex items-center gap-1.5 min-w-0">
+                <span class="text-[var(--text-faint)] shrink-0">·</span>
                 <TextReveal text={headerTitle()} truncate minSwapMs={LIVE_STATUS_SWAP_MS} />
               </span>
             </Show>

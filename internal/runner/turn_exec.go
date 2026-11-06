@@ -133,7 +133,7 @@ func (s *Service) startTurnProcess(
 			s.syncSessionMemoryFile(rec.ID)
 			s.store.FlushSession(rec.ID)
 			s.releaseActiveProcess(rec.ID, ap)
-			if len(terminalEvts) > 0 {
+			if len(terminalEvts) > 0 && !ap.wasSteered() {
 				s.broadcastRouted(rec.ID, terminalEvts)
 			}
 			close(ap.done)
@@ -424,7 +424,7 @@ func (s *Service) abortActiveProcess(sessionID string) {
 	if ap != nil {
 		ap.Abort()
 	}
-	if s.status != nil {
+	if s.status != nil && (ap == nil || !ap.wasSteered()) {
 		s.status.SetSessionBusy(sessionID, false)
 	}
 }

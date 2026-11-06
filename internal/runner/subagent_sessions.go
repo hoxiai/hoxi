@@ -76,7 +76,10 @@ func (s *Service) busySessionIDs() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ids := make([]string, 0, len(s.procs)+len(s.childBusy))
-	for id := range s.procs {
+	for id, ap := range s.procs {
+		if ap == nil || (ap.wasAborted() && !ap.wasSteered()) {
+			continue
+		}
 		ids = append(ids, id)
 	}
 	for id := range s.childBusy {

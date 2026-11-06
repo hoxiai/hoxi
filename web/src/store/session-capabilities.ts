@@ -1,6 +1,10 @@
 // web/src/store/session-capabilities.ts
 import { workspace } from "./workspace-state";
-import { isRunnerSessionID, resolveRunnerRuntimeForProvider } from "../services/api";
+import {
+  inferRunnerRuntimeFromSessionID,
+  isRunnerSessionID,
+  resolveRunnerRuntimeForProvider,
+} from "../services/api";
 import { isSessionBusy } from "./session-query";
 
 export function canRevertSession(sessionID?: string | null): boolean {
@@ -23,16 +27,21 @@ export function canSteerSession(
   targetModel?: { providerID: string; modelID: string } | null
 ): boolean {
   if (!sessionID) return false;
+  const session = workspace.sessions.find((s) => s.id === sessionID);
+  const currentRuntime =
+    session?.runtime ||
+    inferRunnerRuntimeFromSessionID(sessionID) ||
+    (isRunnerSessionID(sessionID) ? "" : "opencode");
   if (targetModel?.providerID) {
     const targetRuntime = resolveRunnerRuntimeForProvider(
       targetModel.providerID,
       Boolean(workspace.hoxiProviders?.[targetModel.providerID])
     );
-    if (targetRuntime !== "opencode") return false;
+    if (currentRuntime && targetRuntime !== currentRuntime) return false;
+    if (targetRuntime !== "opencode" && targetRuntime !== "antigravity") return false;
   }
-  const session = workspace.sessions.find((s) => s.id === sessionID);
   if (session?.capabilities?.steer !== undefined) return session.capabilities.steer;
-  if (session?.runtime) return session.runtime === "opencode";
+  if (currentRuntime) return currentRuntime === "opencode" || currentRuntime === "antigravity";
   return !isRunnerSessionID(sessionID);
 }
 

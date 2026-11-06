@@ -574,9 +574,9 @@ func TestRuntimeCapabilitiesMatrix(t *testing.T) {
 		t.Fatalf("expected claude-code capabilities mismatch, got %+v", cldCaps)
 	}
 
-	// 4. Antigravity: approval supported, steer false
+	// 4. Antigravity: approval and mid-turn steer supported
 	agyCaps := RuntimeCapabilities(string(RuntimeAntigravity), false)
-	if !agyCaps.Approval || agyCaps.Steer || !agyCaps.Resume || !agyCaps.Revert || !agyCaps.Fork || !agyCaps.Attachments || !agyCaps.CostStats {
+	if !agyCaps.Approval || !agyCaps.Steer || !agyCaps.Resume || !agyCaps.Revert || !agyCaps.Fork || !agyCaps.Attachments || !agyCaps.CostStats {
 		t.Fatalf("expected antigravity capabilities mismatch, got %+v", agyCaps)
 	}
 
@@ -695,12 +695,8 @@ func TestPermissionReplyClientRequestIdIdempotency(t *testing.T) {
 	defer unsub()
 
 	body, _ := json.Marshal(map[string]interface{}{
-		"conversationId": "conv-1",
-		"stepIdx":        9,
-		"toolCall": map[string]interface{}{
-			"name": "mystery_tool_idemp",
-			"args": map[string]interface{}{"Target": "workspace"},
-		},
+		"conversationId": "conv-1", "stepIdx": 9,
+		"toolCall": map[string]interface{}{"name": "mystery_tool_idemp", "args": map[string]interface{}{"Target": "workspace"}},
 	})
 	result := f.asyncHook(t, body)
 	asked := waitForEvent(t, events, "permission.asked")
@@ -708,7 +704,6 @@ func TestPermissionReplyClientRequestIdIdempotency(t *testing.T) {
 	if id == "" {
 		t.Fatal("missing permission id")
 	}
-
 	postReply := func(payload map[string]string) int {
 		raw, _ := json.Marshal(payload)
 		resp, err := http.Post(f.srv.URL+"/api/hoxi/permission/"+id+"/reply", "application/json", bytes.NewReader(raw))
@@ -718,26 +713,75 @@ func TestPermissionReplyClientRequestIdIdempotency(t *testing.T) {
 		resp.Body.Close()
 		return resp.StatusCode
 	}
-
 	if code := postReply(map[string]string{"reply": "once", "clientRequestId": "perm-req-1"}); code != http.StatusOK {
 		t.Fatalf("first permission reply failed: %d", code)
 	}
 	if d := <-result; d.Decision != "auto_approve" {
 		t.Fatalf("expected auto_approve after once reply, got %q", d.Decision)
 	}
-
-	// Same clientRequestId + same decision retried after network blip -> 200 OK
 	if code := postReply(map[string]string{"reply": "once", "clientRequestId": "perm-req-1"}); code != http.StatusOK {
 		t.Fatalf("idempotent retry with same clientRequestId should return 200, got %d", code)
 	}
-
-	// Same clientRequestId with different decision -> 404 (not treated as idempotent match)
 	if code := postReply(map[string]string{"reply": "reject", "clientRequestId": "perm-req-1"}); code != http.StatusNotFound {
 		t.Fatalf("conflicting decision with same clientRequestId should return 404, got %d", code)
 	}
-
-	// Duplicate reply without clientRequestId -> 404
 	if code := postReply(map[string]string{"reply": "once"}); code != http.StatusNotFound {
 		t.Fatalf("duplicate reply without clientRequestId should return 404, got %d", code)
+	}
+}
+
+func TestAntigravitySteerInterruptsRunningTurn(t *testing.T) {
+	repoDir := initTestGitRepo(t)
+	svc := NewService(repoDir, worktree.NewManager(repoDir), statusbar.NewTracker(), filepath.Join(t.TempDir(), "runner-sessions.json"))
+	defer svc.CloseAll()
+	mux := http.NewServeMux()
+	svc.RegisterRoutes(mux)
+
+	binRoot := t.TempDir()
+	agyDir := filepath.Join(binRoot, "bin")
+	_ = os.MkdirAll(agyDir, 0o755)
+	argsFile := filepath.Join(t.TempDir(), "args.log")
+	t.Setenv("GEMINI_HOME", binRoot)
+	t.Setenv("PATH", agyDir)
+	t.Setenv("TEST_ARGS_FILE", argsFile)
+	execstub.Write(t, agyDir, "agy", `#!/bin/sh
+printf '%s\n' "$*" >> "$TEST_ARGS_FILE"
+cat >/dev/null
+printf '%s\n' '{"conversation_id":"conv-steer-1","event":"init","init":{"model":"claude-sonnet-4-6","permission_mode":"accept-edits"}}'
+case "$*" in
+  *--conversation\ conv-steer-1*) printf '%s\n' '{"conversation_id":"conv-steer-1","event":"result","result":{"conversation_id":"conv-steer-1","response":"STEERED","status":"DONE"}}' ;;
+  *) trap 'exit 130' INT TERM; sleep 10 ;;
+esac
+`)
+
+	createBody, _ := json.Marshal(map[string]string{"runtime": "antigravity", "title": "Steer Test", "modelID": "claude-sonnet-4-6", "directory": repoDir, "sandboxMode": "local"})
+	recCreate := httptest.NewRecorder()
+	mux.ServeHTTP(recCreate, httptest.NewRequest(http.MethodPost, "/api/hoxi/runner/sessions", bytes.NewReader(createBody)))
+	var created SessionInfo
+	_ = json.Unmarshal(recCreate.Body.Bytes(), &created)
+	ch, unsub := svc.Subscribe(created.ID)
+	defer unsub()
+
+	postPrompt := func(text string) int {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/hoxi/runner/sessions/"+created.ID+"/prompt_async", strings.NewReader(`{"text":"`+text+`"}`)))
+		return rec.Code
+	}
+	if code := postPrompt("first turn"); code != http.StatusOK {
+		t.Fatalf("first turn failed: %d", code)
+	}
+	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); {
+		if r, ok := svc.store.Get(created.ID); ok && r.ExternalID == "conv-steer-1" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if code := postPrompt("steer turn"); code != http.StatusOK {
+		t.Fatalf("steer turn failed: %d", code)
+	}
+	waitForEvent(t, ch, "session.idle")
+	argsRaw, _ := os.ReadFile(argsFile)
+	if !strings.Contains(string(argsRaw), "--conversation conv-steer-1") {
+		t.Fatalf("expected steered turn to resume --conversation conv-steer-1, got:\n%s", string(argsRaw))
 	}
 }

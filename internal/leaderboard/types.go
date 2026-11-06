@@ -86,6 +86,8 @@ type ModelPricingItem struct {
 	ContextWindow   int      `json:"contextWindow"`
 	MaxOutputTokens int      `json:"maxOutputTokens,omitempty"`
 	Modalities      []string `json:"modalities,omitempty"`
+	Category        string   `json:"category,omitempty"`
+	IsDefault       bool     `json:"isDefault,omitempty"`
 	Reasoning       bool     `json:"reasoning"`
 	IsFree          bool     `json:"isFree"`
 	UpdatedAt       string   `json:"updatedAt,omitempty"`

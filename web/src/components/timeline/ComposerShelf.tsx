@@ -76,16 +76,21 @@ export default function ComposerShelf() {
   });
 
   // Transient chip: tracks the live transcript only while the agent is
-  // working and clears once the turn settles.
+  // working and clears once the turn settles. Slice only the latest user cycle
+  // first so streaming deltas do not clone the entire session transcript.
   const changedFiles = createMemo(() => {
     const id = sessionID();
     if (!id || !isSessionBusy(id)) return [];
     const turns = workspace.messagesBySession[id] ?? [];
+    if (turns.length === 0) return [];
     const revert = workspace.sessions.find((s) => s.id === id)?.revert;
-    return collectSessionChangedFiles(
-      filterVisibleTurnsByRevert(turns, revert),
-      id
-    );
+    if (revert?.messageID) {
+      return collectSessionChangedFiles(
+        filterVisibleTurnsByRevert(turns, revert),
+        id
+      );
+    }
+    return collectSessionChangedFiles(turns, id);
   });
 
   const pendingPermissions = createMemo(() => {

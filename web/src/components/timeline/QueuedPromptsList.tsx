@@ -4,6 +4,7 @@ import { ArrowUp, Clock, Pencil, Sparkles, Trash2 } from "lucide-solid";
 import {
   canSteerSession,
   editQueuedPrompt,
+  isSessionBusy,
   openImagePreview,
   type QueuedPromptItem,
   removeQueuedPrompt,
@@ -95,10 +96,10 @@ export default function QueuedPromptsList(props: {
                   </span>
 
                   <ActionIconButton
-                    disabled={!canSteerSession(sid(), item.model)}
+                    disabled={isSessionBusy(sid()) && !canSteerSession(sid(), item.model)}
                     variant="accent"
                     label={
-                      !canSteerSession(sid(), item.model)
+                      isSessionBusy(sid()) && !canSteerSession(sid(), item.model)
                         ? t("timeline.runnerFeatureUnsupported")
                         : t("timeline.queueSendNow")
                     }

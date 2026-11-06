@@ -80,7 +80,17 @@ func RuntimeCapabilities(rt string, subagent bool) SessionCapabilities {
 			Attachments: true,
 			CostStats:   true,
 		}
-	case string(RuntimeAntigravity), string(RuntimeGeminiCLI):
+	case string(RuntimeAntigravity):
+		return SessionCapabilities{
+			Approval:    true,
+			Steer:       true,
+			Resume:      true,
+			Revert:      true,
+			Fork:        true,
+			Attachments: true,
+			CostStats:   true,
+		}
+	case string(RuntimeGeminiCLI):
 		return SessionCapabilities{
 			Approval:    true,
 			Steer:       false,

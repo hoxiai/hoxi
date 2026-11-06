@@ -120,7 +120,9 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
     !sessionsWithPendingPermission().has(props.part.sessionID)
   );
 
-  const loadedFiles = createMemo(() => (isRead() ? resolveLoadedContextFiles(props.part) : []));
+  const loadedFiles = createMemo(() =>
+    isRead() && everExpanded() ? resolveLoadedContextFiles(props.part) : []
+  );
   const readLineRange = createMemo(() => (isRead() ? resolveReadLineRange(props.part) : undefined));
   const toolArgPills = createMemo(() => resolveToolArgPills(props.part));
   const todoItems = createMemo(() => (isTodo() ? resolveToolTodoItems(props.part) : []));
@@ -161,7 +163,7 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
     );
   });
   const fileDiagnostics = createMemo(() =>
-    resolveToolFileDiagnostics(props.part, isEdit(), targetFile() || "")
+    everExpanded() ? resolveToolFileDiagnostics(props.part, isEdit(), targetFile() || "") : []
   );
 
   // Auto-scroll shell output while streaming
