@@ -13,6 +13,10 @@ import { StringDecoder } from "node:string_decoder";
 const executable = "/usr/bin/sandbox-exec";
 
 const utf8FatalDecoder = new TextDecoder("utf-8", { fatal: true });
+const origBufferToString = Buffer.prototype.toString;
+const origTextDecoderDecode = TextDecoder.prototype.decode;
+const origStringDecoderWrite = StringDecoder?.prototype?.write;
+const rawUTF8 = (buf) => origBufferToString.call(buf, "utf8");
 let gb18030Decoder;
 let gbReverseTable;
 const CP936_PUA_OVERRIDES = [
@@ -48,7 +52,7 @@ function getGB18030ReverseTable() {
       buf[offset++] = 0x0a;
     }
   }
-  const decoded = dec.decode(buf);
+  const decoded = origTextDecoderDecode.call(dec, buf);
   let strIdx = 0;
   for (let b1 = 0x81; b1 <= 0xfe; b1++) {
     for (let b2 = 0x40; b2 <= 0xfe; b2++) {
@@ -66,7 +70,7 @@ function getGB18030ReverseTable() {
 }
 
 function isValidUTF8Slice(buf) {
-  try { utf8FatalDecoder.decode(buf); return true; } catch { return false; }
+  try { origTextDecoderDecode.call(utf8FatalDecoder, buf); return true; } catch { return false; }
 }
 
 function isAllowedRecoveredChar(cp) {
@@ -238,7 +242,7 @@ function trimTrailingIncompleteUTF8End(buf) {
 function decodeWindowsOutputBuffer(buf, utf8Str) {
   if (!buf || buf.length === 0) return typeof utf8Str === "string" ? utf8Str : "";
   const raw = Buffer.isBuffer(buf) ? buf : Buffer.from(buf.buffer || buf, buf.byteOffset || 0, buf.byteLength ?? buf.length);
-  const str = typeof utf8Str === "string" ? utf8Str : raw.toString("utf8");
+  const str = typeof utf8Str === "string" ? utf8Str : rawUTF8(raw);
   if (raw.includes(0) || !str.includes("\uFFFD")) return str;
 
   const lead = countLeadingUTF8Continuation(raw);
@@ -246,7 +250,7 @@ function decodeWindowsOutputBuffer(buf, utf8Str) {
   if (lead >= end) return "";
   const interior = raw.subarray(lead, end);
   if (isValidUTF8Slice(interior)) {
-    return lead === 0 && end === raw.length ? str : interior.toString("utf8");
+    return lead === 0 && end === raw.length ? str : rawUTF8(interior);
   }
 
   const decoder = getGB18030Decoder();
@@ -262,10 +266,10 @@ function decodeWindowsOutputBuffer(buf, utf8Str) {
     let text = "";
     if (lineBytes.length > 0) {
       if (isValidUTF8Slice(lineBytes)) {
-        text = lineBytes.toString("utf8");
+        text = rawUTF8(lineBytes);
       } else {
-        const decoded = decoder.decode(lineBytes);
-        text = !decoded.includes("\uFFFD") ? decoded : lineBytes.toString("utf8");
+        const decoded = origTextDecoderDecode.call(decoder, lineBytes);
+        text = !decoded.includes("\uFFFD") ? decoded : rawUTF8(lineBytes);
       }
     }
     out.push(text + (hasCR ? "\r" : "") + (hasLF ? "\n" : ""));
@@ -276,10 +280,10 @@ function decodeWindowsOutputBuffer(buf, utf8Str) {
 
 const UTF8_SHELL_ENV = { PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8", LANG: "C.UTF-8", LC_CTYPE: "UTF-8", LESSCHARSET: "utf-8" };
 
-function ensureWindowsUTF8Runtime() {
-  if (process.platform !== "win32") return;
+function ensureWindowsUTF8Runtime(force = false) {
+  if (!force && process.platform !== "win32") return;
   for (const [k, v] of Object.entries(UTF8_SHELL_ENV)) if (!process.env[k]) process.env[k] = v;
-  if (!process.env.BASH_ENV) {
+  if (!force && !process.env.BASH_ENV) {
     try {
       const scriptPath = path.join(os.tmpdir(), "hoxi-bash-utf8.sh");
       const script =
@@ -292,10 +296,9 @@ function ensureWindowsUTF8Runtime() {
   }
   const patchSym = Symbol.for("hoxi.win32.bufferToStringPatched");
   if (!Buffer.prototype[patchSym]) {
-    const origToString = Buffer.prototype.toString;
-    Object.defineProperty(Buffer.prototype, patchSym, { value: true });
+    Object.defineProperty(Buffer.prototype, patchSym, { value: true, configurable: true });
     Buffer.prototype.toString = function hoxiToString(encoding, start, end) {
-      const str = origToString.apply(this, arguments);
+      const str = origBufferToString.apply(this, arguments);
       if (str.includes("\uFFFD") && (encoding === undefined || /^utf-?8$/i.test(encoding))) {
         return decodeWindowsOutputBuffer(start !== undefined || end !== undefined ? this.subarray(start, end) : this, str);
       }
@@ -303,27 +306,26 @@ function ensureWindowsUTF8Runtime() {
     };
   }
   if (!TextDecoder.prototype[patchSym]) {
-    const origDecode = TextDecoder.prototype.decode;
-    Object.defineProperty(TextDecoder.prototype, patchSym, { value: true });
+    Object.defineProperty(TextDecoder.prototype, patchSym, { value: true, configurable: true });
     TextDecoder.prototype.decode = function hoxiTextDecode(input, options) {
-      const str = origDecode.apply(this, arguments);
+      const str = origTextDecoderDecode.apply(this, arguments);
       if (str.includes("\uFFFD") && !this.fatal && /^utf-?8$/i.test(this.encoding) && input && !options?.stream) {
         return decodeWindowsOutputBuffer(input, str);
       }
       return str;
     };
   }
-  if (StringDecoder?.prototype && !StringDecoder.prototype[patchSym]) {
-    const origWrite = StringDecoder.prototype.write;
-    Object.defineProperty(StringDecoder.prototype, patchSym, { value: true });
+  if (StringDecoder?.prototype && origStringDecoderWrite && !StringDecoder.prototype[patchSym]) {
+    Object.defineProperty(StringDecoder.prototype, patchSym, { value: true, configurable: true });
     StringDecoder.prototype.write = function hoxiStringDecoderWrite(buf) {
-      const str = origWrite.apply(this, arguments);
+      const str = origStringDecoderWrite.apply(this, arguments);
       if (str.includes("\uFFFD") && (!this.encoding || /^utf-?8$/i.test(this.encoding)) && buf) {
         return decodeWindowsOutputBuffer(buf, str);
       }
       return str;
     };
   }
+  if (force) return;
   try {
     import("bun:ffi")
       .then(({ dlopen, FFIType }) => {
@@ -793,5 +795,6 @@ const HoxiSandboxPlugin = async () => {
 
 Object.defineProperty(HoxiSandboxPlugin, "_decodeWindowsOutputBuffer", { value: decodeWindowsOutputBuffer, enumerable: false });
 Object.defineProperty(HoxiSandboxPlugin, "_repairWindowsMojibake", { value: repairWindowsMojibake, enumerable: false });
+Object.defineProperty(HoxiSandboxPlugin, "_ensureWindowsUTF8Runtime", { value: ensureWindowsUTF8Runtime, enumerable: false });
 
 export default HoxiSandboxPlugin;

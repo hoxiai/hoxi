@@ -1,10 +1,10 @@
 // web/src/store/subagent-sessions.ts
 // Subagent (task tool) session tree: child-ID resolution, titles, liveness,
 // parent/root lookups, code-session partitioning and drawer expansion state.
-import { createSignal } from "solid-js";
+import { createSignal, untrack } from "solid-js";
 import { hoxiAPI } from "../services/api";
 import type { SessionInfo, ToolPart } from "../services/sse-types";
-import { lookupSubagentParent, subagentChildIDFromPart } from "./message-lookup";
+import { lookupSubagentChildren, lookupSubagentParent, subagentChildIDFromPart } from "./message-lookup";
 import { isSessionBusy } from "./session-query";
 import { indexedSession, resolveSessionSurface } from "./session-index";
 import { subagentDisplayTitle, type SubagentTitle } from "./session-title";
@@ -142,6 +142,9 @@ export function collectChildSubagentSessionIDs(parentSessionID: string): string[
   for (const s of workspace.sessions) {
     if (s.parentID === parentSessionID) childIDs.add(s.id);
   }
+  for (const cid of lookupSubagentChildren(parentSessionID)) {
+    childIDs.add(cid);
+  }
   for (const cid of childSubagentIDsFromTurns(workspace.messagesBySession[parentSessionID])) {
     childIDs.add(cid);
   }
@@ -264,6 +267,12 @@ export function groupSubagentsByRoot(
 
   for (const s of rawSessions) {
     if (!s?.id || s.time?.archived || resolveParentSessionID(s.id, combinedByID)) continue;
+    for (const childID of lookupSubagentChildren(s.id)) {
+      const child = combinedByID.get(childID);
+      if (child && !child.time?.archived) {
+        addChild(s.id, child);
+      }
+    }
     for (const childID of childSubagentIDsFromTurns(workspace.messagesBySession[s.id])) {
       const child = combinedByID.get(childID);
       if (child && !child.time?.archived) {

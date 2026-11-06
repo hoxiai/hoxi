@@ -10,6 +10,7 @@ import {
   writeStorageJSON,
 } from "./workspace-state";
 import {
+  bumpSessionSurfaceRevision,
   findWorkspaceProfileByDir,
   findWorkspaceProfileById,
   getRememberedCodeSurface,
@@ -304,6 +305,7 @@ export async function saveWorkspaceProfile(
         }
       })
     );
+    bumpSessionSurfaceRevision();
   }
 
   const activeRoot = normalizeFolderPath(workspace.rootDir);

@@ -301,21 +301,22 @@ describe("Cross-project sidebar views", () => {
         clearSessionPendingApprovals("ses_root");
         assertEqual(workspace.pendingPermissions.length, 0);
 
-        // Non-first sessionIndex mutations invalidate the folder lookup cache immediately.
+        // Middle-key sessionIndex mutations invalidate the folder lookup cache immediately.
         setWorkspace(
           "sessionIndex",
           reconcile({
             ses_1: { directory: "/code-first", surface: "code" as const, updated: 1 },
-            ses_2: { directory: "/dynamic-second", surface: "code" as const, updated: 1 },
+            ses_2: { directory: "/dynamic-middle", surface: "code" as const, updated: 1 },
+            ses_3: { directory: "/code-last", surface: "code" as const, updated: 1 },
           }),
         );
-        assertEqual(isWorkSurfacePath("/dynamic-second"), false);
+        assertEqual(isWorkSurfacePath("/dynamic-middle"), false);
         setWorkspace("sessionIndex", "ses_2", {
-          directory: "/dynamic-second",
+          directory: "/dynamic-middle",
           surface: "work",
           updated: 2,
         });
-        assertEqual(isWorkSurfacePath("/dynamic-second"), true);
+        assertEqual(isWorkSurfacePath("/dynamic-middle"), true);
       },
     );
   });

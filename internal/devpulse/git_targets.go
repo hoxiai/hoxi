@@ -72,6 +72,17 @@ func isGeneratedOrLockFile(relPath string) bool {
 	return false
 }
 
+func unquoteGitPath(raw string) string {
+	s := strings.TrimSpace(raw)
+	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
+		if u, err := strconv.Unquote(s); err == nil {
+			return u
+		}
+		return strings.Trim(s, "\"")
+	}
+	return s
+}
+
 func parseGitNumstatLine(rawLine string) (int, int, string, bool) {
 	line := strings.TrimSpace(rawLine)
 	if line == "" {
@@ -91,7 +102,7 @@ func parseGitNumstatLine(rawLine string) (int, int, string, bool) {
 		delStr = fields[1]
 		file = fields[len(fields)-1]
 	}
-	file = strings.Trim(file, "\"")
+	file = unquoteGitPath(file)
 	if file == "" || isGeneratedOrLockFile(file) {
 		return 0, 0, "", false
 	}
@@ -452,7 +463,7 @@ func (s *Service) collectGitUncommittedInto(workDir, repoRoot string, uncommitte
 	}
 
 	countUntrackedFile := func(rel string) {
-		rel = strings.Trim(strings.TrimSpace(rel), "\"")
+		rel = unquoteGitPath(rel)
 		if rel == "" || strings.HasSuffix(rel, "/") || isGeneratedOrLockFile(rel) {
 			return
 		}
@@ -486,19 +497,35 @@ func (s *Service) collectGitUncommittedInto(workDir, repoRoot string, uncommitte
 		}
 	}
 
-	if porcelain, err := s.source.RunGitRaw(workDir, "status", "--porcelain", "-b"); err == nil {
+	if porcelain, err := s.source.RunGitRaw(workDir, "status", "--porcelain", "-b", "-z"); err == nil {
 		var expandDirs []string
-		for _, rawLine := range strings.Split(porcelain, "\n") {
+		sep := "\n"
+		if strings.Contains(porcelain, "\x00") {
+			sep = "\x00"
+		}
+		entries := strings.Split(porcelain, sep)
+		for i := 0; i < len(entries); i++ {
+			rawLine := entries[i]
 			if strings.HasPrefix(rawLine, "## ") {
 				if br := s.source.ParseBranchFromPorcelainHeader(rawLine); br != "" {
 					branch = br
 				}
 				continue
 			}
+			if len(rawLine) < 4 {
+				continue
+			}
+			if sep == "\x00" {
+				x, y := rawLine[0], rawLine[1]
+				if (x == 'R' || x == 'C' || y == 'R' || y == 'C') && i+1 < len(entries) {
+					i++
+					continue
+				}
+			}
 			if !strings.HasPrefix(rawLine, "?? ") {
 				continue
 			}
-			rel := strings.Trim(strings.TrimSpace(rawLine[3:]), "\"")
+			rel := unquoteGitPath(rawLine[3:])
 			if isGeneratedOrLockFile(rel) {
 				continue
 			}

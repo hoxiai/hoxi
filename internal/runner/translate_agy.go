@@ -174,15 +174,31 @@ func (t *TurnTranslator) handleAgyAgentResponse(su *agyStepUpdate, now int64) []
 	}
 
 	// 1. Handle reasoning/thinking
-	thinkDelta := su.ThinkingDelta
-	if thinkDelta == "" && su.Thinking != "" {
-		thinkDelta = su.Thinking
-	}
-	if thinkDelta == "" && su.State == "DONE" && t.lookupThink != nil && t.externalID != "" {
-		thinkDelta = t.lookupThink(t.externalID, su.StepIndex)
-	}
 	rID := fmt.Sprintf("prt_%s_reason_%d", t.messageID, su.StepIndex)
 	txtID := fmt.Sprintf("prt_%s_text_%d", t.messageID, su.StepIndex)
+	existingThink := ""
+	if rPart, exists := t.partsByID[rID]; exists {
+		existingThink = rPart.Text
+	}
+	thinkDelta := su.ThinkingDelta
+	var replaceThink string
+	if thinkDelta == "" {
+		fullThink := su.Thinking
+		if fullThink == "" && su.State == "DONE" && t.lookupThink != nil && t.externalID != "" {
+			fullThink = t.lookupThink(t.externalID, su.StepIndex)
+		}
+		if suffix, ok := agyThinkingMissingSuffix(existingThink, fullThink); ok {
+			thinkDelta = suffix
+		} else if fullThink != "" && !strings.Contains(existingThink, strings.TrimSpace(fullThink)) {
+			replaceThink = fullThink
+		}
+	}
+	if replaceThink != "" {
+		if rPart, exists := t.partsByID[rID]; exists {
+			rPart.Text = replaceThink
+			evts = append(evts, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": clonePart(*rPart)}})
+		}
+	}
 	if thinkDelta != "" {
 		part, exists := t.partsByID[rID]
 		if !exists {
@@ -320,6 +336,31 @@ func (t *TurnTranslator) noteAgyStepUsage(key string, u agyUsage) bool {
 	}
 	t.msgInfo.Tokens = tokens
 	return true
+}
+
+func agyThinkingMissingSuffix(existing, full string) (string, bool) {
+	if strings.TrimSpace(full) == "" {
+		return "", true
+	}
+	if existing == "" {
+		return full, true
+	}
+	if existing == full || strings.TrimSpace(existing) == strings.TrimSpace(full) {
+		return "", true
+	}
+	if strings.HasPrefix(full, existing) {
+		return full[len(existing):], true
+	}
+	if trimLeft := strings.TrimLeft(existing, " \t\r\n"); trimLeft != "" && strings.HasPrefix(full, trimLeft) {
+		return full[len(trimLeft):], true
+	}
+	if trimBoth := strings.TrimSpace(existing); trimBoth != "" && strings.HasPrefix(full, trimBoth) {
+		return full[len(trimBoth):], true
+	}
+	if strings.HasPrefix(strings.TrimSpace(existing), strings.TrimSpace(full)) {
+		return "", true
+	}
+	return "", false
 }
 
 func (t *TurnTranslator) backfillAgyPrecedingThinking(toolStep int, endMs int64) []SSEEvent {

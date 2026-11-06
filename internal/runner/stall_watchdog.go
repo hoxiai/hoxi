@@ -323,7 +323,7 @@ func (s *Service) hasRunningToolSubprocess(ap *activeProcess) bool {
 		return false
 	}
 	var runningBashCalls []string
-	hasRunningTool := false
+	var runningCommands []string
 	for i := len(rec.Turns) - 1; i >= 0; i-- {
 		t := rec.Turns[i]
 		if t.Info.Role == "user" && !isInternalRecoveryMessageID(t.Info.ID) {
@@ -333,23 +333,26 @@ func (s *Service) hasRunningToolSubprocess(ap *activeProcess) bool {
 			if p.Type != "tool" || p.State == nil || p.State.Status != "running" {
 				continue
 			}
-			hasRunningTool = true
-			if p.Tool == "bash" && strings.TrimSpace(p.CallID) != "" {
-				runningBashCalls = append(runningBashCalls, strings.TrimSpace(p.CallID))
+			if bashToolNames[strings.ToLower(strings.TrimSpace(p.Tool))] {
+				if callID := strings.TrimSpace(p.CallID); callID != "" {
+					runningBashCalls = append(runningBashCalls, callID)
+				}
+				if p.State.Input != nil {
+					if cmd := firstString(p.State.Input["command"], p.State.Input["CommandLine"], p.State.Input["cmd"]); cmd != "" {
+						runningCommands = append(runningCommands, cmd)
+					}
+				}
 			}
 			if p.Tool == "task" && p.State.Metadata != nil {
-				if childID := firstString(p.State.Metadata["sessionId"]); childID != "" && s.isSessionBusy(childID) {
+				if childID := firstString(p.State.Metadata["sessionId"], p.State.Metadata["sessionID"]); childID != "" && s.isSessionBusy(childID) {
 					return true
 				}
 			}
 		}
 	}
-	if !hasRunningTool {
-		return false
-	}
-	if rootPID := s.runtimeRootPID(ap.sessionID); rootPID > 1 {
+	if rootPID := s.runtimeRootPID(ap.sessionID); rootPID > 1 && len(runningCommands) > 0 {
 		byPID, children := readProcessSnapshots()
-		return hasLiveChildToolProcess(rootPID, byPID, children)
+		return hasLiveChildToolProcess(rootPID, byPID, children, runningCommands...)
 	}
 	if rec.Runtime == "opencode" && s.openCode != nil && len(runningBashCalls) > 0 {
 		if u, err := url.Parse(strings.TrimSpace(s.openCode.BaseURL())); err == nil && u.Port() != "" {
@@ -365,8 +368,15 @@ func (s *Service) hasRunningToolSubprocess(ap *activeProcess) bool {
 	return false
 }
 
-func hasLiveChildToolProcess(rootPID int, byPID map[int]procSnapshot, children map[int][]int) bool {
-	if rootPID <= 1 || len(byPID) == 0 {
+func hasLiveChildToolProcess(rootPID int, byPID map[int]procSnapshot, children map[int][]int, commands ...string) bool {
+	if rootPID <= 1 || len(byPID) == 0 || len(commands) == 0 {
+		return false
+	}
+	var needles []string
+	for _, cmd := range commands {
+		needles = append(needles, commandMatchNeedles(cmd)...)
+	}
+	if len(needles) == 0 {
 		return false
 	}
 	parentPID := rootPID
@@ -377,7 +387,10 @@ func hasLiveChildToolProcess(rootPID int, byPID map[int]procSnapshot, children m
 		}
 	}
 	for _, c := range children[parentPID] {
-		if c > 1 && !isNonToolHelperArgs(byPID[c].args) {
+		if c <= 1 || isNonToolHelperArgs(byPID[c].args) {
+			continue
+		}
+		if subtreeMatchesNeedles(collectSubtreePIDs(c, children), byPID, needles) {
 			return true
 		}
 	}

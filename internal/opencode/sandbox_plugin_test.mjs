@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import { test } from "node:test";
 import HoxiSandboxPlugin from "./sandbox_plugin.mjs";
 
@@ -445,6 +446,17 @@ test("sandbox plugin", async (t) => {
     // 6. Valid UTF-8 buffers containing literal source strings like "涓€" or "娴嬭瘯" are never mutated during byte decoding
     const validSourceLiteral = Buffer.from('const sample = "涓€"; // 娴嬭瘯\n', "utf8");
     assert.equal(decode(validSourceLiteral, validSourceLiteral.toString("utf8")), 'const sample = "涓€"; // 娴嬭瘯\n');
+
+    // 7. Simulated Windows runtime monkey-patch must not recurse on unmappable bytes like 0xFF
+    const ensureWin = HoxiSandboxPlugin._ensureWindowsUTF8Runtime;
+    assert.equal(typeof ensureWin, "function");
+    ensureWin(true);
+    assert.equal(Buffer.from([0xff]).toString("utf8"), "\uFFFD");
+    assert.equal(new TextDecoder().decode(Uint8Array.of(0xff)), "\uFFFD");
+    assert.equal(new StringDecoder("utf8").write(Buffer.from([0xff])), "\uFFFD");
+    assert.equal(gbkBuf.toString("utf8"), "Windows IP 配置\r\n");
+    assert.equal(new TextDecoder().decode(gbkBuf), "Windows IP 配置\r\n");
+    assert.equal(new StringDecoder("utf8").write(gbkBuf), "Windows IP 配置\r\n");
   });
 
   await t.test("injects UTF-8 shell.env defaults and preserves raw tool outputs in tool.execute.after", async () => {

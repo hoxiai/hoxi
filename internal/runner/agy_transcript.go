@@ -561,19 +561,44 @@ func transcriptConfirmsAgyFinalStep(rows []agyTranscriptRow, prevMaxStep, doneSt
 }
 
 func turnNeedsAgyReasoningHydration(turn MessageTurn) bool {
-	if turn.Info.Role != "assistant" {
+	if turn.Info.Role != "assistant" || len(turn.Parts) == 0 {
 		return false
 	}
-	hasAgyStep := false
+	occupied := make(map[int]bool, len(turn.Parts))
+	hasReasoning := make(map[int]bool, len(turn.Parts))
+	var textSteps []int
+	var callSteps []int
 	for _, p := range turn.Parts {
-		if _, ok := parseAgyPartStepIndex(p.ID); ok {
-			hasAgyStep = true
+		step, ok := parseAgyPartStepIndex(p.ID)
+		if !ok {
+			continue
 		}
-		if p.Type == "reasoning" && strings.TrimSpace(p.Text) != "" {
-			return false
+		switch p.Type {
+		case "text":
+			textSteps = append(textSteps, step)
+		case "reasoning":
+			occupied[step] = true
+			if strings.TrimSpace(p.Text) != "" {
+				hasReasoning[step] = true
+			}
+		case "tool", "subagent":
+			occupied[step] = true
+			callSteps = append(callSteps, step)
+		default:
+			occupied[step] = true
 		}
 	}
-	return hasAgyStep
+	for _, step := range textSteps {
+		if !hasReasoning[step] {
+			return true
+		}
+	}
+	for _, step := range callSteps {
+		if step > 1 && !occupied[step-1] {
+			return true
+		}
+	}
+	return false
 }
 
 func hydrateAgyTurnReasoningParts(turn *MessageTurn, rows []agyTranscriptRow) bool {

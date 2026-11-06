@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"os/exec"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -220,5 +221,72 @@ func TestOpenCodeSubagentActivityKeepsParentAlive(t *testing.T) {
 	svc.releaseActiveProcess("ses_hoxi_parent", ap)
 	if snap := svc.status.Snapshot(); snap.Running != 0 || snap.PendingApprovals != 0 {
 		t.Fatalf("releaseActiveProcess left stale child status: %+v", snap)
+	}
+}
+
+func TestStallWatchdogAbortsDespiteIdleMCPChildProcess(t *testing.T) {
+	svc := newStallTestService(t)
+	now := time.Now()
+
+	// Start a parent shell that spawns an idle MCP-like child process ("sleep 30").
+	parentCmd := exec.Command("sh", "-c", "sleep 30")
+	if err := parentCmd.Start(); err != nil {
+		t.Skipf("unable to spawn sh for process tree test: %v", err)
+	}
+	t.Cleanup(func() {
+		if parentCmd.Process != nil {
+			_ = parentCmd.Process.Kill()
+			_, _ = parentCmd.Process.Wait()
+		}
+	})
+
+	byPID := map[int]procSnapshot{
+		100: {pid: 100, ppid: 1, pgid: 100, args: "/usr/local/bin/claude --output-format stream-json"},
+		101: {pid: 101, ppid: 100, pgid: 101, args: "node /opt/mcp-server/index.js --stdio"},
+		102: {pid: 102, ppid: 100, pgid: 102, args: "/bin/zsh -c cargo test --workspace"},
+	}
+	children := map[int][]int{
+		100: {101, 102},
+	}
+
+	// 1. An idle MCP child process (101) must NOT be treated as a running tool when no shell command
+	// is running or when the running command does not match the MCP server's arguments.
+	if hasLiveChildToolProcess(100, byPID, children) {
+		t.Fatal("hasLiveChildToolProcess matched an idle MCP child when no shell tool commands were running")
+	}
+	if hasLiveChildToolProcess(100, byPID, map[int][]int{100: {101}}, "cargo test --workspace") {
+		t.Fatal("hasLiveChildToolProcess matched an unrelated MCP child process")
+	}
+	if !hasLiveChildToolProcess(100, byPID, children, "cargo test --workspace") {
+		t.Fatal("hasLiveChildToolProcess failed to match an active shell tool subprocess")
+	}
+
+	// 2. When HOXI_RUNNER_STALL_ABORT is configured and a non-matching tool is stuck in "running",
+	// checkStall must abort the turn instead of being blocked by the idle child process.
+	ap := registerStallTestProcess(svc, "ses_mcp_stuck", now.Add(-45*time.Minute))
+	ap.cmd = parentCmd
+	if err := svc.store.Put(SessionRecord{
+		ID: "ses_mcp_stuck",
+		Turns: []MessageTurn{
+			{
+				Info: MessageInfo{ID: "msg_a_mcp", SessionID: "ses_mcp_stuck", Role: "assistant"},
+				Parts: []MessagePart{
+					{
+						ID:        "prt_tool_mcp",
+						SessionID: "ses_mcp_stuck",
+						MessageID: "msg_a_mcp",
+						Type:      "tool",
+						Tool:      "mcp_memory_query",
+						State:     &ToolState{Status: "running"},
+					},
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if svc.checkStall(ap, now) || !ap.wasAborted() {
+		t.Fatal("watchdog failed to abort a stalled turn when an idle child process was present")
 	}
 }

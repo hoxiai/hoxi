@@ -353,13 +353,15 @@ export async function loadSessionMessages(sessionID: string): Promise<void> {
       }
     }
   } catch (err) {
-    if (workspace.messagesBySession[sessionID] === undefined) {
+    if (!isSessionDeleted(sessionID) && workspace.messagesBySession[sessionID] === undefined) {
       setWorkspace("messagesBySession", sessionID, []);
     }
     throw err;
   } finally {
     finishRead();
-    setWorkspace("loadingMessagesBySession", sessionID, false);
+    if (!isSessionDeleted(sessionID)) {
+      setWorkspace("loadingMessagesBySession", sessionID, false);
+    }
   }
   if (isChildSession && !hasOwnWorktree && sessionID !== workspace.activeSessionID) {
     if (parentID && !isSessionDeleted(parentID)) scheduleRefreshSessionDiff(parentID);
@@ -431,7 +433,9 @@ export async function selectSession(sessionID: string): Promise<void> {
   } catch (err) {
     console.error("load session messages failed:", err);
   } finally {
-    setWorkspace("loadingMessagesBySession", sessionID, false);
+    if (!isSessionDeleted(sessionID)) {
+      setWorkspace("loadingMessagesBySession", sessionID, false);
+    }
   }
 }
 

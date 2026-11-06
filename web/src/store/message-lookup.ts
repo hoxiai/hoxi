@@ -427,13 +427,24 @@ export function subagentChildIDFromPart(part: MessagePart): string | undefined {
 // routing and several memos resolve parents per update, so a scan of every
 // loaded transcript there grows with history x running tasks.
 const subagentParentByChild = new Map<string, string>();
+const subagentChildrenByParent = new Map<string, Set<string>>();
 const [subagentLinkVersion, setSubagentLinkVersion] = createSignal(0);
 
 function indexSubagentLink(part: MessagePart): void {
   if (part.type !== "tool" || !isTaskLikeToolName(part.tool)) return;
   const child = subagentChildIDFromPart(part);
   if (!child || child === part.sessionID || subagentParentByChild.get(child) === part.sessionID) return;
+  const prevParent = subagentParentByChild.get(child);
+  if (prevParent && prevParent !== part.sessionID) {
+    subagentChildrenByParent.get(prevParent)?.delete(child);
+  }
   subagentParentByChild.set(child, part.sessionID);
+  let children = subagentChildrenByParent.get(part.sessionID);
+  if (!children) {
+    children = new Set<string>();
+    subagentChildrenByParent.set(part.sessionID, children);
+  }
+  children.add(child);
   setSubagentLinkVersion((v) => v + 1);
 }
 
@@ -443,14 +454,25 @@ export function lookupSubagentParent(childID: string): string | null {
   return subagentParentByChild.get(childID) ?? null;
 }
 
+/** Child subagent IDs of a parent session learned from task parts; reactive to new links. */
+export function lookupSubagentChildren(parentID: string): readonly string[] {
+  subagentLinkVersion();
+  const set = subagentChildrenByParent.get(parentID);
+  return set && set.size > 0 ? Array.from(set) : [];
+}
+
 export function forgetSubagentLinks(sessionIDs: string[]): void {
   const ids = new Set(sessionIDs);
   let changed = false;
   for (const [child, parent] of subagentParentByChild) {
     if (ids.has(child) || ids.has(parent)) {
       subagentParentByChild.delete(child);
+      subagentChildrenByParent.get(parent)?.delete(child);
       changed = true;
     }
+  }
+  for (const id of ids) {
+    if (subagentChildrenByParent.delete(id)) changed = true;
   }
   if (changed) setSubagentLinkVersion((v) => v + 1);
 }

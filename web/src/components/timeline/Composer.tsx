@@ -1,5 +1,5 @@
 // web/src/components/timeline/Composer.tsx
-import { batch, createComputed, createEffect, createMemo, createSignal, on, onCleanup, Show } from "solid-js";
+import { batch, createComputed, createEffect, createMemo, createSignal, lazy, on, onCleanup, Show, Suspense } from "solid-js";
 import {
   appSettings,
   bindComposerQueuedEditBridge,
@@ -37,8 +37,9 @@ import {
   ComposerBottomToolbar,
   ComposerEnhancePreview,
 } from "./composer-subcomponents";
-import CodeSearchModal from "../codeindex/CodeSearchModal";
-import ConvoyModal from "../orchestration/ConvoyModal";
+
+const CodeSearchModal = lazy(() => import("../codeindex/CodeSearchModal"));
+const ConvoyModal = lazy(() => import("../orchestration/ConvoyModal"));
 import { isWorkSurface } from "../layout/surface-extension";
 import {
   createComposerAutocomplete,
@@ -770,18 +771,24 @@ export default function Composer() {
           <p class="mt-2 px-1 text-xs text-[var(--text-faint)]">{t("timeline.selectFolderHint")}</p>
         </Show>
       </div>
-      <CodeSearchModal
-        open={codeSearchOpen()}
-        directory={sessionDirectory(sessionID()) || workspace.rootDir}
-        onClose={() => setCodeSearchOpen(false)}
-        onSelectCode={insertCodeReference}
-        onSelectSession={insertSessionReference}
-      />
-      <ConvoyModal
-        open={convoyOpen()}
-        directory={sessionDirectory(sessionID()) || workspace.rootDir}
-        onClose={() => setConvoyOpen(false)}
-      />
+      <Suspense>
+        <Show when={createMemo<boolean>((prev) => prev || codeSearchOpen(), false)()}>
+          <CodeSearchModal
+            open={codeSearchOpen()}
+            directory={sessionDirectory(sessionID()) || workspace.rootDir}
+            onClose={() => setCodeSearchOpen(false)}
+            onSelectCode={insertCodeReference}
+            onSelectSession={insertSessionReference}
+          />
+        </Show>
+        <Show when={createMemo<boolean>((prev) => prev || convoyOpen(), false)()}>
+          <ConvoyModal
+            open={convoyOpen()}
+            directory={sessionDirectory(sessionID()) || workspace.rootDir}
+            onClose={() => setConvoyOpen(false)}
+          />
+        </Show>
+      </Suspense>
     </div>
   );
 }

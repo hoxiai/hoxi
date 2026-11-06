@@ -1,18 +1,17 @@
 import { createEffect, createMemo, createSignal, lazy, onCleanup, onMount, Show, Suspense, untrack, type Accessor } from "solid-js";
 import CompactHeader from "./CompactHeader";
-import CommandPalette, { type CommandPaletteMode } from "./CommandPalette";
-import UpdateModal from "./UpdateModal";
+import type { CommandPaletteMode } from "./CommandPalette";
 import UpdateDrainNotice from "./UpdateDrainNotice";
 import UpdateWatcher from "./UpdateWatcher";
 import LeftNav from "./LeftNav";
 import MessageStream from "../timeline/MessageStream";
 import Composer from "../timeline/Composer";
 import ParticleLogo from "../timeline/ParticleLogo";
-import ImagePreviewOverlay from "../preview/ImagePreviewOverlay";
 import {
   activateSurfaceMode,
   appSettings,
   closeSettingsModal,
+  imageViewerOpen,
   isWorkSurfacePath,
   isUpdateModalOpen,
   leaderboardState,
@@ -38,6 +37,9 @@ import {
 import { isWorkSurface, surfaceExtension } from "./surface-extension";
 
 const InspectorPane = lazy(() => import("../inspector/InspectorPane"));
+const CommandPalette = lazy(() => import("./CommandPalette"));
+const UpdateModal = lazy(() => import("./UpdateModal"));
+const ImagePreviewOverlay = lazy(() => import("../preview/ImagePreviewOverlay"));
 const WorkspaceModal = lazy(() => import("./WorkspaceModal"));
 const ExternalHandoffModal = lazy(() => import("../handoff/ExternalHandoffModal"));
 const ModelLeaderboardModal = lazy(() => import("../models/ModelLeaderboardModal"));
@@ -55,11 +57,22 @@ interface ThreePaneShellProps {
   };
 }
 
+function useEverOpened(when: () => boolean): Accessor<boolean> {
+  return createMemo<boolean>((prev) => prev || Boolean(when()), false);
+}
+
 export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
   const [windowWidth, setWindowWidth] = createSignal(window.innerWidth);
   const [resizingSide, setResizingSide] = createSignal<"left" | "right" | null>(null);
-  const [inspectorEverOpened, setInspectorEverOpened] = createSignal(workspace.inspectorOpen);
   const [paletteMode, setPaletteMode] = createSignal<CommandPaletteMode | null>(null);
+  const inspectorEverOpened = useEverOpened(() => workspace.inspectorOpen);
+  const imageViewerEverOpened = useEverOpened(imageViewerOpen);
+  const paletteEverOpened = useEverOpened(() => paletteMode() !== null);
+  const updateModalEverOpened = useEverOpened(isUpdateModalOpen);
+  const workspaceModalEverOpened = useEverOpened(() => workspace.workspaceModalMode !== null);
+  const handoffModalEverOpened = useEverOpened(() => workspace.handoffModalOpen);
+  const leaderboardEverOpened = useEverOpened(() => leaderboardState.modalOpen);
+  const settingsEverOpened = useEverOpened(() => appSettings.modalOpen);
 
   const effectiveLeftWidth = () => (leftNavOpen() ? leftWidth() : 0);
   const rightPaneCeiling = () =>
@@ -83,12 +96,6 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
   createEffect(() => {
     if (resizingSide()) return;
     saveLayoutPrefs();
-  });
-
-  createEffect(() => {
-    if (workspace.inspectorOpen) {
-      setInspectorEverOpened(true);
-    }
   });
 
   const isNewConversation = createMemo(() => {
@@ -391,23 +398,29 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
         </div>
       </main>
 
-      <ImagePreviewOverlay />
-      <CommandPalette mode={paletteMode()} onClose={() => setPaletteMode(null)} />
       <UpdateWatcher />
-      <UpdateModal />
 
-      {/* Workspace, Session Handoff, Leaderboard Modals & Full-Screen Settings Control Center */}
+      {/* On-demand overlays, Workspace, Session Handoff, Leaderboard Modals & Full-Screen Settings Control Center */}
       <Suspense>
-        <Show when={workspace.workspaceModalMode !== null}>
+        <Show when={imageViewerEverOpened()}>
+          <ImagePreviewOverlay />
+        </Show>
+        <Show when={paletteEverOpened()}>
+          <CommandPalette mode={paletteMode()} onClose={() => setPaletteMode(null)} />
+        </Show>
+        <Show when={updateModalEverOpened()}>
+          <UpdateModal />
+        </Show>
+        <Show when={workspaceModalEverOpened()}>
           <WorkspaceModal />
         </Show>
-        <Show when={workspace.handoffModalOpen}>
+        <Show when={handoffModalEverOpened()}>
           <ExternalHandoffModal />
         </Show>
-        <Show when={leaderboardState.modalOpen}>
+        <Show when={leaderboardEverOpened()}>
           <ModelLeaderboardModal />
         </Show>
-        <Show when={appSettings.modalOpen}>
+        <Show when={settingsEverOpened()}>
           <SettingsModal />
         </Show>
       </Suspense>

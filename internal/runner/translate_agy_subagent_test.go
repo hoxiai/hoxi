@@ -496,3 +496,49 @@ func TestAgyTranscriptRunCommandSummaryHydration(t *testing.T) {
 		t.Fatalf("expected reasoning part inserted before tool part, got %+v", turns[0].Parts)
 	}
 }
+
+func TestAgyAgentResponseDoneDoesNotDuplicateStreamedThinking(t *testing.T) {
+	t.Parallel()
+	tr, _ := newAgyTestTranslator(func(string, int) string { return "" })
+	tr.lookupThink = func(_ string, step int) string {
+		switch step {
+		case 1:
+			return "Think once."
+		case 2:
+			return "Think twice."
+		default:
+			return ""
+		}
+	}
+	tr.FeedLine(`{"event":"init","conversation_id":"` + agyParentConv + `","init":{"model":"gemini-4-argon-high"}}`)
+
+	// Step 1: ACTIVE streams full thinking_delta, DONE has no thinking field (falls back to lookupThink).
+	tr.FeedLine(`{"event":"step_update","step_update":{"conversation_id":"` + agyParentConv + `","step_index":1,"state":"ACTIVE","step_type":"agent_response","thinking_delta":"Think once."}}`)
+	doneEvts := tr.FeedLine(`{"event":"step_update","step_update":{"conversation_id":"` + agyParentConv + `","step_index":1,"state":"DONE","step_type":"agent_response","text_delta":"Answer 1."}}`)
+	reason1 := tr.partsByID["prt_msg_turn_reason_1"]
+	if reason1 == nil || reason1.Text != "Think once." {
+		t.Fatalf("reason1.Text = %q, want %q", reason1.Text, "Think once.")
+	}
+	for _, e := range doneEvts {
+		if e.Type == "message.part.delta" && e.Properties["partID"] == "prt_msg_turn_reason_1" {
+			t.Fatalf("DONE must not emit duplicate reasoning delta when ACTIVE already streamed full thinking: %+v", e)
+		}
+	}
+
+	// Step 2: ACTIVE streams partial prefix, DONE completes via lookupThink and appends only missing suffix.
+	tr.FeedLine(`{"event":"step_update","step_update":{"conversation_id":"` + agyParentConv + `","step_index":2,"state":"ACTIVE","step_type":"agent_response","thinking_delta":"Think "}}`)
+	doneEvts2 := tr.FeedLine(`{"event":"step_update","step_update":{"conversation_id":"` + agyParentConv + `","step_index":2,"state":"DONE","step_type":"agent_response","text_delta":"Answer 2."}}`)
+	reason2 := tr.partsByID["prt_msg_turn_reason_2"]
+	if reason2 == nil || reason2.Text != "Think twice." {
+		t.Fatalf("reason2.Text = %q, want %q", reason2.Text, "Think twice.")
+	}
+	var suffixDelta string
+	for _, e := range doneEvts2 {
+		if e.Type == "message.part.delta" && e.Properties["partID"] == "prt_msg_turn_reason_2" {
+			suffixDelta, _ = e.Properties["delta"].(string)
+		}
+	}
+	if suffixDelta != "twice." {
+		t.Fatalf("suffixDelta = %q, want %q", suffixDelta, "twice.")
+	}
+}

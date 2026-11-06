@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -686,5 +687,53 @@ func TestStoreHydrationPreservesAgyErrorAfterTransitionalTextStep(t *testing.T) 
 	legacyLoaded, ok := s4.Get("ses_agy_legacy_step2_err")
 	if !ok || len(legacyLoaded.Turns) != 1 || legacyLoaded.Turns[0].Info.Error == nil || legacyLoaded.Turns[0].Info.Finish != "error" {
 		t.Fatalf("legacy turn with subsequent step 2 error in transcript must preserve error, got %+v", legacyLoaded.Turns)
+	}
+}
+
+func TestTurnNeedsAgyReasoningHydrationCoversTextAndToolAnchors(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("GEMINI_HOME", home)
+	const conv = "22222222-3333-4444-5555-666666666666"
+	logDir := agyTranscriptLogDir(filepath.Join(home, "antigravity-cli", "brain"), conv)
+	if err := os.MkdirAll(logDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	rows := strings.Join([]string{
+		`{"step_index":0,"type":"USER_INPUT","status":"DONE","content":"hello"}`,
+		`{"step_index":1,"type":"PLANNER_RESPONSE","status":"DONE","thinking":"Step 1 reasoning","tool_calls":[{"name":"run_command","args":{"CommandLine":"\"ls\""}}]}`,
+		`{"step_index":2,"type":"TOOL_RESPONSE","status":"DONE","content":"ok"}`,
+		`{"step_index":3,"type":"PLANNER_RESPONSE","status":"DONE","thinking":"Step 3 final reasoning","content":"Done."}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(logDir, "transcript.jsonl"), []byte(rows), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Case 1: Turn with only a text part at step 1 (step == 1) or step 3 after tool_2 (where step-1 == 2 is occupied).
+	turns := []MessageTurn{
+		{
+			Info: MessageInfo{
+				ID:        "msg_a_1",
+				SessionID: "ses_1",
+				Role:      "assistant",
+				Tokens:    &MessageTokens{Input: 100, Output: 20, Total: 120},
+			},
+			Parts: []MessagePart{
+				{ID: "prt_msg_a_1_reason_1", SessionID: "ses_1", MessageID: "msg_a_1", Type: "reasoning", Text: "Step 1 reasoning"},
+				{ID: "prt_msg_a_1_tool_2", SessionID: "ses_1", MessageID: "msg_a_1", Type: "tool", Tool: "bash", State: &ToolState{Status: "completed"}},
+				{ID: "prt_msg_a_1_text_3", SessionID: "ses_1", MessageID: "msg_a_1", Type: "text", Text: "Done."},
+			},
+		},
+	}
+	if !turnNeedsAgyReasoningHydration(turns[0]) {
+		t.Fatal("expected turnNeedsAgyReasoningHydration=true when text_3 is missing reason_3 even though step 2 is occupied by tool_2")
+	}
+	if !hydrateAgyTranscriptTurnTokens(conv, turns) {
+		t.Fatal("expected hydrateAgyTranscriptTurnTokens to backfill reason_3 before text_3")
+	}
+	if turnNeedsAgyReasoningHydration(turns[0]) {
+		t.Fatal("expected turnNeedsAgyReasoningHydration=false after reason_3 is hydrated")
+	}
+	if len(turns[0].Parts) != 4 || turns[0].Parts[2].ID != "prt_msg_a_1_reason_3" || turns[0].Parts[2].Text != "Step 3 final reasoning" {
+		t.Fatalf("expected reason_3 inserted before text_3, got %+v", turns[0].Parts)
 	}
 }

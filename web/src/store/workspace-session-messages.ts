@@ -104,6 +104,7 @@ export async function dispatchSessionPrompt(
   if (id && isSessionDeleted(id)) throw new Error(t("timeline.sessionUnavailable"));
   if (id && !workspace.aiBySession[id]) {
     await loadSessionMessages(id);
+    if (isSessionDeleted(id)) throw new Error(t("timeline.sessionUnavailable"));
   }
   const config = sessionAIConfig(id);
   const editingQueued = !options?.forceImmediate && id ? getEditingQueuedPrompt(id) : undefined;
@@ -181,8 +182,8 @@ export async function dispatchSessionPrompt(
 
   if (id && hasPendingSessionSandbox(id)) {
     await waitForSessionSandbox(id);
-    if (isSessionDeleted(id)) throw new Error(t("timeline.sessionUnavailable"));
   }
+  if (id && isSessionDeleted(id)) throw new Error(t("timeline.sessionUnavailable"));
 
   let effectiveSkill = options?.skillSelection ? { ...options.skillSelection } : undefined;
   const wasBusyBeforeSubmit = Boolean(id && isSessionBusy(id));
@@ -297,11 +298,13 @@ export async function dispatchSessionPrompt(
     id = await newIsolatedSession(isPlaceholderSessionTitle(fallbackTitle) ? undefined : fallbackTitle, {
       directory: requestedDir,
       onSessionCreated: (createdID) => {
+        if (isSessionDeleted(createdID)) return;
         transferDraftComposerSkill(createdID, requestedDir);
         stageOptimisticTurn(createdID);
       },
     });
   }
+  if (isSessionDeleted(id)) throw new Error(t("timeline.sessionUnavailable"));
   stageOptimisticTurn(id);
   initializeSessionAI(id, config);
   const targetDir = sessionDirectory(id) || requestedDir || undefined;
@@ -324,6 +327,7 @@ export async function dispatchSessionPrompt(
         runtime: finalRuntime,
         selection: effectiveSkill,
       });
+      if (isSessionDeleted(id)) throw new Error(t("timeline.sessionUnavailable"));
       if (!check.ok || !check.selection) {
         const msg = t("skills.sandboxSkillMissing", { name: effectiveSkill.name });
         setComposerSkillNotice(id, msg);
@@ -342,6 +346,7 @@ export async function dispatchSessionPrompt(
     }
     if (options?.beforeSend) {
       await options.beforeSend(id);
+      if (isSessionDeleted(id)) throw new Error(t("timeline.sessionUnavailable"));
     }
     const usedAutoPool = Boolean(isAuto && chosenModel && effectiveModel);
     if (effectiveModel) {
@@ -424,7 +429,7 @@ export async function dispatchSessionPrompt(
       }
     }, 900);
   } catch (err) {
-    if (takenQueuedEdit && id) restoreEditingQueuedPrompt(id, takenQueuedEdit);
+    if (takenQueuedEdit && id && !isSessionDeleted(id)) restoreEditingQueuedPrompt(id, takenQueuedEdit);
     // Restore the transcript and status together. A transient busy state with
     // no new user turn hides/remounts the previous footer and loses its error UI.
     batch(() => {
@@ -436,7 +441,7 @@ export async function dispatchSessionPrompt(
           if (optIdx >= 0) list.splice(optIdx, 1);
         })
       );
-      if (!wasBusyBeforeSubmit) {
+      if (!wasBusyBeforeSubmit && !isSessionDeleted(id)) {
         setWorkspace("statusBySession", id, { type: "idle" });
       }
     });

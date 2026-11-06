@@ -596,4 +596,36 @@ describe("session AI configuration", () => {
       assertDeepEqual(workspace.selectedModel, { providerID: "default-provider", modelID: "default-model" });
     });
   });
+
+  it("aborts dispatch if the session is deleted while awaiting history load without a pending sandbox", async () => {
+    await withAIFixture(async (a) => {
+      // Clear pre-seeded messages and AI config so dispatchSessionPrompt must await loadSessionMessages(a).
+      setWorkspace("messagesBySession", reconcile({}));
+      setWorkspace("aiBySession", reconcile({}));
+
+      let sendCalled = false;
+      hoxiAPI.sendPromptAsync = async () => {
+        sendCalled = true;
+      };
+      hoxiAPI.getMessages = async (sessionID) => {
+        if (sessionID === a) {
+          removeSessionFromStore(a);
+        }
+        return [];
+      };
+
+      let rejectedError: unknown = null;
+      try {
+        await submitSessionPrompt("should not be sent after delete", a);
+      } catch (err) {
+        rejectedError = err;
+      }
+
+      assertTrue(rejectedError !== null, "submitSessionPrompt must reject when session is deleted during history load");
+      assertEqual(sendCalled, false, "sendPromptAsync must not be called for a deleted session");
+      assertEqual(workspace.messagesBySession[a], undefined, "deleted session must not have optimistic messages recreated");
+      assertEqual(workspace.statusBySession[a], undefined, "deleted session must not have status recreated");
+      assertEqual(workspace.loadingMessagesBySession[a], undefined, "deleted session must not have loadingMessagesBySession recreated");
+    });
+  });
 });
