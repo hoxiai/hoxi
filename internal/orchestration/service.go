@@ -552,7 +552,6 @@ func (s *Service) run(ctx context.Context, id string, request PlanRequest, epoch
 			run.plan.UpdatedAt = task.StartedAt
 			running[task.ID] = true
 			launch = append(launch, index)
-			capacity--
 		}
 		finished := len(running) == 0 && len(launch) == 0
 		if finished {

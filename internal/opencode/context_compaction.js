@@ -8,9 +8,25 @@ export { EIGHT_DIM_COMPACTION_PROMPT, createFrozenProjectMemoryResolver };
 const VERIFICATION_CMD_RE =
   /\b(go\s+(?:test|vet|build|mod\s+(?:tidy|download))|npm\s+(?:--prefix\s+\S+\s+)?(?:test|install|ci|i|run\s+(?:test|lint|build|check\S*))|pnpm\s+(?:test|install|i|lint|build|check\S*)|yarn\s+(?:test|install|lint|build)|pip3?\s+install|flutter\s+(?:test|analyze|pub\s+get)|pytest|cargo\s+(?:test|check|clippy|fetch)|tsc\b|node\s+--test)\b/i;
 const FAILURE_OUTPUT_RE =
-  /(?:^|\s)(?:FAIL|--- FAIL:|FAIL\t|AssertionError|panic:|Error:|error TS\d+|ERR!|✖|✗|fatal:)/m;
+  /(?:^|\s)(?:FAIL\b|--- FAIL:|FAIL\t|AssertionError|panic:|Error:|error:|error\[[A-Za-z0-9_-]+\]:|error TS\d+|ERR!|✖|✗|fatal:|undefined:\s+\S|syntax error:|SyntaxError:|TypeError:|ReferenceError:|ImportError:|ModuleNotFoundError:|IndentationError:|NameError:|ValueError:|RuntimeError:|Traceback \(most recent call last\):|\bcannot\s+(?:use|find|load|refer|assign|convert|call|take|index|slice|range|open|resolve|import)\b|\b(?:not enough|too many) arguments\b|\b(?:redeclared in this block|imported and not used|declared (?:and|but) not used|no new variables on left side|no required module provides package|package \S+ is not in std)\b|\[(?:build|setup) failed\]|\b(?:BUILD FAILED|build failed|compilation failed|compile error|Command failed|ELIFECYCLE)\b|\b(?:exit status|exit code|exited with code)\s+[1-9]\d*\b|[A-Za-z0-9_./\\-]+\.(?:go|ts|tsx|js|jsx|mjs|cjs|rs|py|c|cc|cpp|h|hpp|java|kt|swift|rb|cs|vue|svelte):\d+:\d+:\s*\S)/m;
 const ANSI_ESCAPE_RE = /\x1b(?:\[[0-9;?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\))/g;
 const BARE_CR_RE = /\r(?!\n)/;
+
+function extractExitCode(part, state) {
+  const raw =
+    state?.metadata?.exit ??
+    state?.metadata?.exitCode ??
+    state?.exit ??
+    state?.exitCode ??
+    part?.metadata?.exit ??
+    part?.metadata?.exitCode;
+  if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+  if (typeof raw === "string" && raw.trim() !== "") {
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+}
 
 function stripTerminalControlNoise(text) {
   let out = text.replace(ANSI_ESCAPE_RE, "");
@@ -35,7 +51,11 @@ export function compactToolOutputForModel(part) {
   const out = stripTerminalControlNoise(rawOut);
   if (out.length <= 2400) return out !== rawOut ? out : null;
   const cmd = String(state.input?.command || "");
-  const hasFailure = FAILURE_OUTPUT_RE.test(out);
+  const exitCode = extractExitCode(part, state);
+  const hasFailure =
+    (exitCode !== undefined && exitCode !== 0) ||
+    Boolean(state.error) ||
+    FAILURE_OUTPUT_RE.test(out);
 
   // 1. Passing test/build/lint output > 2400 chars: keep head + tail summary.
   if (VERIFICATION_CMD_RE.test(cmd) && !hasFailure) {

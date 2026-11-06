@@ -375,6 +375,57 @@ func TestIsolatedPlanMergesPrerequisitesIntoDependents(t *testing.T) {
 	}
 }
 
+func TestIsolatedPlanUsesFullConfiguredConcurrency(t *testing.T) {
+	for _, concurrency := range []int{2, 3, 8} {
+		t.Run(fmt.Sprintf("concurrency_%d", concurrency), func(t *testing.T) {
+			fake := newFakeSessions(true)
+			unblock := fake.blockAll()
+			defer unblock()
+			svc := NewService(fake)
+
+			tasks := make([]TaskSpec, concurrency)
+			for i := 0; i < concurrency; i++ {
+				tasks[i] = TaskSpec{
+					ID:     fmt.Sprintf("task_%d", i+1),
+					Prompt: fmt.Sprintf("work %d", i+1),
+				}
+			}
+			plan, err := svc.Create(PlanRequest{
+				Directory:   t.TempDir(),
+				Concurrency: concurrency,
+				Tasks:       tasks,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			deadline := time.Now().Add(2 * time.Second)
+			for time.Now().Before(deadline) {
+				fake.mu.Lock()
+				running := fake.running
+				fake.mu.Unlock()
+				if running == concurrency {
+					break
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+
+			fake.mu.Lock()
+			running, peak := fake.running, fake.peak
+			fake.mu.Unlock()
+			if running != concurrency || peak != concurrency {
+				t.Fatalf("concurrency=%d: got running=%d peak=%d, want %d", concurrency, running, peak, concurrency)
+			}
+
+			unblock()
+			done := waitTerminal(t, svc, plan.ID)
+			if done.Status != StatusSucceeded {
+				t.Fatalf("plan status = %s, want succeeded", done.Status)
+			}
+		})
+	}
+}
+
 func TestSharedDirectoryPlanRunsOneTaskAtATime(t *testing.T) {
 	fake := newFakeSessions(false)
 	svc := NewService(fake)

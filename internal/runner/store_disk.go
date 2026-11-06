@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -126,27 +127,142 @@ func (s *Store) appendTurnEntries(id string, entries []turnLogEntry) error {
 	if err := os.MkdirAll(s.sessionDir(id), 0o700); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(filepath.Join(s.sessionDir(id), sessionTurnsFile), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	f, err := os.OpenFile(filepath.Join(s.sessionDir(id), sessionTurnsFile), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return err
 	}
-	if _, err := f.Write(buf.Bytes()); err != nil {
+	cleanEnd, prependNewline, err := prepareTurnsAppend(f)
+	if err != nil {
+		_ = f.Close()
+		return err
+	}
+	if _, err := f.Seek(cleanEnd, io.SeekStart); err != nil {
+		_ = f.Close()
+		return err
+	}
+	payload := buf.Bytes()
+	if prependNewline {
+		payload = append([]byte{'\n'}, payload...)
+	}
+	if _, err := f.Write(payload); err != nil {
+		_ = f.Truncate(cleanEnd)
 		_ = f.Close()
 		return err
 	}
 	return f.Close()
 }
 
+func findLastNewlineBefore(f *os.File, limit int64) (int64, error) {
+	const chunkSize = 64 * 1024
+	if limit <= 0 {
+		return -1, nil
+	}
+	buf := make([]byte, min(limit, int64(chunkSize)))
+	offset := limit
+	for offset > 0 {
+		readLen := min(offset, int64(len(buf)))
+		offset -= readLen
+		n, err := f.ReadAt(buf[:readLen], offset)
+		if err != nil && !errors.Is(err, io.EOF) {
+			return -1, err
+		}
+		if idx := bytes.LastIndexByte(buf[:n], '\n'); idx >= 0 {
+			return offset + int64(idx), nil
+		}
+	}
+	return -1, nil
+}
+
+func readTrailingTurnsLine(f *os.File, end int64) (lineStart int64, rawLine []byte, hasNewline bool, err error) {
+	const fastWindow = 4096
+	winLen := min(end, int64(fastWindow))
+	winStart := end - winLen
+	win := make([]byte, winLen)
+	n, err := f.ReadAt(win, winStart)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return 0, nil, false, err
+	}
+	win = win[:n]
+	if len(win) == 0 {
+		return end, nil, false, nil
+	}
+	hasNewline = win[len(win)-1] == '\n'
+	search := win
+	if hasNewline {
+		search = win[:len(win)-1]
+	}
+	if idx := bytes.LastIndexByte(search, '\n'); idx >= 0 {
+		return winStart + int64(idx) + 1, search[idx+1:], hasNewline, nil
+	}
+	if winStart == 0 {
+		return 0, search, hasNewline, nil
+	}
+	prevNL, err := findLastNewlineBefore(f, winStart)
+	if err != nil {
+		return 0, nil, false, err
+	}
+	lineStart = prevNL + 1
+	lineEnd := end
+	if hasNewline {
+		lineEnd = end - 1
+	}
+	rawLine = make([]byte, lineEnd-lineStart)
+	if _, err := f.ReadAt(rawLine, lineStart); err != nil && !errors.Is(err, io.EOF) {
+		return 0, nil, false, err
+	}
+	return lineStart, rawLine, hasNewline, nil
+}
+
+// prepareTurnsAppend strips any torn trailing line left by an interrupted write
+// so new JSONL entries are never concatenated onto a partial line.
+func prepareTurnsAppend(f *os.File) (cleanEnd int64, prependNewline bool, err error) {
+	info, err := f.Stat()
+	if err != nil {
+		return 0, false, err
+	}
+	size := info.Size()
+	end := size
+	for end > 0 {
+		lineStart, rawLine, hasNewline, err := readTrailingTurnsLine(f, end)
+		if err != nil {
+			return 0, false, err
+		}
+		trimmed := bytes.TrimSpace(rawLine)
+		var probe turnLogEntry
+		if len(trimmed) > 0 && json.Unmarshal(trimmed, &probe) == nil && (probe.Info != nil || probe.Part != nil) {
+			if end < size {
+				if err := f.Truncate(end); err != nil {
+					return 0, false, err
+				}
+			}
+			return end, !hasNewline, nil
+		}
+		end = lineStart
+	}
+	if size > 0 {
+		if err := f.Truncate(0); err != nil {
+			return 0, false, err
+		}
+	}
+	return 0, false, nil
+}
+
 // readTurns replays the log. A torn trailing line from a crash is skipped.
 func (s *Store) readTurns(id string) ([]MessageTurn, int) {
+	turns, lines, _ := s.readTurnsWithStatus(id)
+	return turns, lines
+}
+
+func (s *Store) readTurnsWithStatus(id string) ([]MessageTurn, int, bool) {
 	f, err := os.Open(filepath.Join(s.sessionDir(id), sessionTurnsFile))
 	if err != nil {
-		return nil, 0
+		return nil, 0, false
 	}
 	defer f.Close()
 	var turns []MessageTurn
 	var index transcriptIndex
 	lines := 0
+	corrupted := false
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 64*1024), 64*1024*1024)
 	for scanner.Scan() {
@@ -155,7 +271,8 @@ func (s *Store) readTurns(id string) ([]MessageTurn, int) {
 			continue
 		}
 		var e turnLogEntry
-		if json.Unmarshal(line, &e) != nil {
+		if json.Unmarshal(line, &e) != nil || (e.Info == nil && e.Part == nil) {
+			corrupted = true
 			continue
 		}
 		lines++
@@ -166,11 +283,14 @@ func (s *Store) readTurns(id string) ([]MessageTurn, int) {
 			index.upsertPart(turns, *e.Part)
 		}
 	}
+	if scanner.Err() != nil {
+		corrupted = true
+	}
 	for i := range turns {
 		turns[i].Parts = dedupeClaudeStreamParts(turns[i].Parts)
 		turns[i].Parts = pruneRunawayDuplicateToolParts(turns[i].Parts)
 	}
-	return turns, lines
+	return turns, lines, corrupted
 }
 
 func claudePartStem(id string) string {
@@ -281,10 +401,11 @@ func (s *Store) CompactIdleTurns() (compacted int, freedBytes int64) {
 		}
 		turns := ss.rec.Turns
 		lines := ss.logLines
+		corrupted := false
 		if !ss.turnsLoaded {
-			turns, lines = s.readTurns(id)
+			turns, lines, corrupted = s.readTurnsWithStatus(id)
 		}
-		if lines > countCanonicalTurnLines(turns) {
+		if corrupted || lines > countCanonicalTurnLines(turns) {
 			if newLines, err := s.rewriteTurns(id, turns); err == nil {
 				if ss.turnsLoaded {
 					ss.logLines = newLines

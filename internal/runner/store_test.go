@@ -122,9 +122,27 @@ func TestStoreSkipsTornTrailingLine(t *testing.T) {
 	}
 	_, _ = f.WriteString(`{"part":{"id":"prt_2","messageID":"msg_1","ty`)
 	_ = f.Close()
-	rec, ok := NewStore(dir).Get("ses_cld_1")
-	if !ok || len(rec.Turns[0].Parts) != 1 || rec.Turns[0].Parts[0].Text != "hello world" {
+
+	reopened := NewStore(dir)
+	rec, ok := reopened.Get("ses_cld_1")
+	if !ok || len(rec.Turns) != 1 || len(rec.Turns[0].Parts) != 1 || rec.Turns[0].Parts[0].Text != "hello world" {
 		t.Fatalf("torn line broke replay: %+v", rec.Turns)
+	}
+
+	// Appending a second turn after crash recovery must strip the torn tail so
+	// the new entry is not concatenated onto the broken fragment and lost on reload.
+	reopened.UpsertTurnInfo("ses_cld_1", MessageInfo{ID: "msg_2", SessionID: "ses_cld_1", Role: "user"})
+	reopened.UpsertTurnPart("ses_cld_1", MessagePart{ID: "prt_u2", SessionID: "ses_cld_1", MessageID: "msg_2", Type: "text", Text: "after crash"})
+	reopened.Flush()
+
+	inMem, ok := reopened.Get("ses_cld_1")
+	if !ok || len(inMem.Turns) != 2 {
+		t.Fatalf("in-memory turns after recovery append = %d, want 2", len(inMem.Turns))
+	}
+
+	reloaded, ok := NewStore(dir).Get("ses_cld_1")
+	if !ok || len(reloaded.Turns) != 2 || len(reloaded.Turns[1].Parts) != 1 || reloaded.Turns[1].Parts[0].Text != "after crash" {
+		t.Fatalf("new turn lost on reload after torn trailing line: %+v", reloaded.Turns)
 	}
 }
 

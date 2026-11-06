@@ -282,6 +282,55 @@ test("standalone browser plugin", async (t) => {
     const installMessages = [{ parts: [installPart] }];
     await hooks["experimental.chat.messages.transform"]({}, { messages: installMessages });
     assert.ok(installMessages[0].parts[0].state.output.includes("lines of passing check output omitted"));
+
+    // Compiler errors (e.g. `undefined: missingFunction`) in the middle of a log and non-zero exit codes must never be marked as passing or omitted
+    const compileFailLines = Array.from({ length: 80 }, (_, i) =>
+      i === 40
+        ? "internal/foo/bar.go:42:10: undefined: missingFunction"
+        : `ok  \tgithub.com/hoxiai/hoxi/pkg_${i}\t0.02s`
+    ).join("\n");
+    const compileFailPart = {
+      type: "tool",
+      tool: "bash",
+      state: {
+        status: "completed",
+        input: { command: "go test ./..." },
+        output: compileFailLines,
+      },
+    };
+    const nonZeroExitPart = {
+      type: "tool",
+      tool: "bash",
+      state: {
+        status: "completed",
+        input: { command: "go build ./..." },
+        metadata: { exit: 2 },
+        output: passingLines,
+      },
+    };
+    const oversizedCompileFailLines = Array.from({ length: 300 }, (_, i) =>
+      i === 150
+        ? "internal/foo/bar.go:42:10: undefined: missingFunction"
+        : `ok  \tgithub.com/hoxiai/hoxi/very_long_package_name_${i}\t0.02s`
+    ).join("\n");
+    const oversizedCompileFailPart = {
+      type: "tool",
+      tool: "bash",
+      state: {
+        status: "completed",
+        input: { command: "go test ./..." },
+        metadata: { exit: 2 },
+        output: oversizedCompileFailLines,
+      },
+    };
+    const failureCheckMessages = [{ parts: [compileFailPart, nonZeroExitPart, oversizedCompileFailPart] }];
+    await hooks["experimental.chat.messages.transform"]({}, { messages: failureCheckMessages });
+    assert.equal(failureCheckMessages[0].parts[0].state.output, compileFailLines);
+    assert.ok(!failureCheckMessages[0].parts[0].state.output.includes("passing check output omitted"));
+    assert.equal(failureCheckMessages[0].parts[1].state.output, passingLines);
+    assert.ok(!failureCheckMessages[0].parts[1].state.output.includes("passing check output omitted"));
+    assert.ok(failureCheckMessages[0].parts[2].state.output.includes("undefined: missingFunction"));
+    assert.ok(!failureCheckMessages[0].parts[2].state.output.includes("passing check output omitted"));
   });
 
   await t.test("system.transform deduplicates <project_memory> across plugins and redacts secrets", async () => {
