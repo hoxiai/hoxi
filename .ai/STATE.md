@@ -5,18 +5,19 @@
 - **Active Branch / Worktree**: `main`
 
 ## Last Completed
-- 修复 macOS 上「已做过任务的会话里发消息页面闪一下」：根因是时间线滚动容器的父级设了 `container-type: inline-size`，WebKit 分两段做样式/布局，中间那次布局缺少新插入节点，贴底的 `scrollTop` 被夹低一截再被拉回；Chrome/WebView2 不会，新会话不滚动所以也不会闪。
-- 改动：`web/src/components/timeline/MessageStream.tsx`（去掉外层 container-type）、`web/src/components/timeline/task-timeline.css`（容器声明移到 `.task-transcript-navigation` 浮层，`100cqw` 结果不变）、`web/src/__tests__/session-send-layout.browser.tsx`（断言滚动容器祖先不是尺寸容器）。
+- Antigravity split-brain 改为无损续接：agy 新建对话时常同时留下有历史的 `<id>.pb` 和 0 步骤的空壳 `<id>.db`，续接会读空壳而失忆。原处理是丢弃对话、重开并用文本回放历史（缓存全失效 + 上下文丢失）；现在若 sqlite3 能证明 `.db` 的 `steps` 为 0，就把 `.db/-wal/-shm` 改名为 `*.hoxi-empty-<ms>` 后继续 `--conversation` 原对话，否则仍走原重置流程。
+- 改动：新增 `internal/runner/agy_split_brain.go`（`quarantineEmptyAgySQLiteStore`）、`internal/runner/agy_split_brain_test.go`；`internal/runner/prompt_submit.go` 调用处 +4 行。
+- 同期结论（未改代码）：Antigravity 运行时思考只在每步结束后补显示，是 agy 1.4.12 stream-json 不输出思考所致；Hoxi 调 agy 整体缓存命中 94.9%，与直接用 agy 一致。
 
 ## Verification
-- `./verify.sh` 退出码 0；Chrome 浏览器测试 session-send-layout / send-scroll-anchor / session-send / session-page / activity-group 全过。
-- Playwright WebKit 探针：修复前发送时与首段输出时各 1 次错误夹取（554→470、945→888），修复后连续 3 次均为 0；上述前 4 组浏览器测试在 WebKit 下也全过。
-- 未在打包后的 Hoxi 桌面应用里人工复核。
-- 同期另一会话完成审批修复：`b31f63d9`（Monitor 走命令策略 + 3 个 trusted 误判）与随后的重复弹窗修复（「始终允许」前后端同规则、无人值守硬拒绝先于会话授权）；待核实 OpenCode「始终允许」是否按前缀通配。
+- `./verify.sh` 退出码 0；新测试含 WAL 模式真实 SQLite 空壳、非空库、非 SQLite 桩、缺 sqlite3 四种情形，及端到端续接用例；去掉修复后端到端用例失败（反向检查）。
+- 真实 agy 验证（隔离 `HOXI_HOME` 的 headless 实例）：第 1 轮自然产生 split-brain，第 2、3 轮均保持原 conversation、无历史回放、agy 正确复述首轮内容，第 2 轮缓存命中 6196/8514。
+- 未在打包后的桌面应用里复核；测试期间改写过 `~/.gemini/config/hooks.json`，已恢复为 `/Applications/Hoxi.app` 路径。
 
 ## Next Actions
-- 可选 UX 改进：发送后让新消息停在视口顶部（下方留跑道），替代全程贴底跟随，需产品确认。
-- 已知遗留：`tail-hold.ts` 的 `measure()` effect 在 spacer DOM 写入前读布局，会先算出约 40px 过冲再由 ResizeObserver 同帧修正（两种内核都有，触发 RO loop 警告）；`activity-group.browser.tsx` 的折叠条文字计时用例在 WebKit 下本来就失败。
+- 可选：VS Code Antigravity 插件常驻约 19 个 `agy --hub` 进程（每个 400–500MB），全部只读打开每个对话的 `.db`，疑似 split-brain 高发诱因，可关闭闲置窗口观察发生率。
+- 小优化（未做）：`cliSystemDelivered` 仅存内存，Hoxi 重启后续接会话会重复发送一次执行指引（一周约 24 次、约 1.4 万 token）。
+- 工作区另有未提交的 provider/web Gemini 协议适配改动（另一会话），与本次无关。
 
 ## [BLOCKED]
 - None

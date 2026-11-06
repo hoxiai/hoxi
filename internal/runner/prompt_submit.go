@@ -336,6 +336,10 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 		(rec.Runtime == string(RuntimeGeminiCLI) && ShouldGeminiCLIUseAgy(modelID))) &&
 		len(rec.Turns) > 0 &&
 		hasAgySplitBrainConversation(rec.ExternalID)
+	if resetAgySplitBrain && quarantineEmptyAgySQLiteStore(rec.ExternalID) {
+		// The history is intact in the Protobuf store: keep resuming it.
+		resetAgySplitBrain = false
+	}
 	_, _, _ = s.store.Update(sessionID, func(r *SessionRecord) {
 		r.ModelID = modelID
 		r.Mode = mode
