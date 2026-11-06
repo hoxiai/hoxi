@@ -2,6 +2,12 @@
 
 All notable releases of **Hoxi Desktop** are documented below. Full per-version release notes are archived under [`docs/release-notes/`](docs/release-notes/) and consumed directly by `.github/workflows/release.yml` and `scripts/ai-release.sh`.
 
+## [v0.6.17](docs/release-notes/v0.6.17.md) — 2026-11-06
+
+- **Steer & Approval**: Enable in-run steering for Antigravity with a rebuilt record after the steer abort; keep `always` grants the gate actually honors and refuse unattended before allowing; gate Claude Monitor as a command and fix trusted-mode misjudgments.
+- **Official Models**: Route official account models by category and carry category, modality and default flags through the platform API.
+- **Timeline & Stability**: Remove the follow-up send layout/scroll flash and the macOS transcript blink; simplify the thought header; backfill Antigravity reasoning; preserve the latest assistant turn and Path edits on handoff fallback; fix prompt dispatch, AGY thinking, stall watchdog, Windows UTF-8 and Git NUL path edge cases.
+
 ## [v0.6.16](docs/release-notes/v0.6.16.md) — 2026-11-05
 
 - **Dev Pulse**: Count commits on every local branch for a project root while a worktree stays scoped to its own branch; key file sets and the cache by repo root; dedupe uncommitted files and skip Hoxi snapshot commits on every target.
