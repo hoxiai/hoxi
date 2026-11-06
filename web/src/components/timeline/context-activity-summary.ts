@@ -53,13 +53,14 @@ export function summarizeStepTarget(part: ToolPart): string {
   if (isShellTool(part.tool)) {
     const desc = extractDescription(part);
     const cmd = extractCommand(part);
-    if (hasDistinctShellDescription(desc, cmd)) return desc;
     const intent = analyzeShellCommand(cmd);
-    if (intent.summary) {
-      return intent.kind === "command" ? `$ ${intent.summary}` : intent.summary;
+    if ((intent.kind === "read" || intent.kind === "search") && intent.summary) {
+      return intent.summary;
     }
+    if (hasDistinctShellDescription(desc, cmd)) return desc;
+    if (intent.summary) return intent.summary;
     if (desc) return desc;
-    return cmd ? `$ ${cmd}` : "";
+    return "";
   }
   const desc = extractDescription(part);
   if (desc) return desc;
@@ -484,11 +485,11 @@ function resolveStepActionName(part: ToolPart): string {
   if (isShellTool(part.tool)) {
     const desc = extractDescription(part);
     const cmd = extractCommand(part);
-    if (!hasDistinctShellDescription(desc, cmd)) {
-      const intent = analyzeShellCommand(cmd);
-      if (intent.kind === "read") return tI18n("toolCard.actionRead");
-      if (intent.kind === "search") return tI18n("toolCard.actionSearch");
-      if (intent.kind === "list") return tI18n("toolCard.actionList");
+    const intent = analyzeShellCommand(cmd);
+    if (intent.kind === "read") return tI18n("toolCard.actionRead");
+    if (intent.kind === "search") return tI18n("toolCard.actionSearch");
+    if (!hasDistinctShellDescription(desc, cmd) && intent.kind === "list") {
+      return tI18n("toolCard.actionList");
     }
   }
   return formatToolDisplayName(part.tool, part);

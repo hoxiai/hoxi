@@ -400,13 +400,158 @@ function parseSearchOrListIntent(compact: string): ShellCommandIntent | null {
   ) {
     return {
       kind: "command",
-      summary: compact,
+      summary: `git ${tokens[1]}`,
       compactCommand: compact,
       isReadOnlyExploration: true,
     };
   }
 
   return null;
+}
+
+const PKG_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun", "npx", "pnpx", "bunx"]);
+const PKG_VALUE_FLAGS = new Set(["--prefix", "-C", "--cwd", "--workspace", "-w", "--filter", "-F", "--config"]);
+const SUBCMD_CLIS = new Set([
+  "go", "git", "cargo", "docker", "kubectl", "helm", "terraform", "make", "cmake",
+  "gradle", "gradlew", "mvn", "dotnet", "poetry", "uv", "pip", "pip3", "brew",
+  "systemctl", "launchctl", "wails", "gh", "glab", "gcloud", "aws", "az", "rustup",
+  "flutter", "pod", "swift", "xcodebuild",
+]);
+const SUBCMD_VALUE_FLAGS = new Set(["-C", "-c", "--git-dir", "--work-tree", "-f", "--file", "-n", "--namespace", "--context"]);
+const INTERPRETERS = new Set([
+  "node", "python", "python3", "bash", "sh", "zsh", "ruby", "perl", "php",
+  "tsx", "ts-node", "deno", "pwsh", "powershell",
+]);
+const SHELL_WRAPPERS = new Set(["sudo", "env", "nohup", "time", "nice", "command", "exec", "stdbuf"]);
+
+function splitTopLevelShellSegments(line: string): string[] {
+  const segments: string[] = [];
+  let cur = "";
+  let quote: "'" | '"' | null = null;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (quote) {
+      cur += ch;
+      if (ch === quote) quote = null;
+      else if (ch === "\\" && quote === '"' && i + 1 < line.length) cur += line[++i];
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      quote = ch;
+      cur += ch;
+      continue;
+    }
+    if (ch === "\\" && i + 1 < line.length) {
+      cur += ch + line[++i];
+      continue;
+    }
+    if (ch === ";") {
+      if (cur.trim()) segments.push(cur.trim());
+      cur = "";
+      continue;
+    }
+    if ((ch === "&" && line[i + 1] === "&") || (ch === "|" && line[i + 1] === "|")) {
+      if (cur.trim()) segments.push(cur.trim());
+      cur = "";
+      i++;
+      continue;
+    }
+    if (ch === "|") {
+      if (cur.trim()) segments.push(cur.trim());
+      cur = "";
+      continue;
+    }
+    cur += ch;
+  }
+  if (cur.trim()) segments.push(cur.trim());
+  return segments;
+}
+
+function summarizeSingleSegmentStem(segment: string): string {
+  const tokens = tokenizeShellWords(segment);
+  let i = 0;
+  while (i < tokens.length) {
+    const tok = tokens[i];
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(tok)) {
+      i++;
+      continue;
+    }
+    if (SHELL_WRAPPERS.has(tok)) {
+      i++;
+      while (i < tokens.length && (tokens[i].startsWith("-") || /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i]))) {
+        i++;
+      }
+      continue;
+    }
+    if (tok === "timeout" && i + 2 < tokens.length) {
+      i += 2;
+      continue;
+    }
+    break;
+  }
+  if (i >= tokens.length) return "";
+  const rawBin = tokens[i++];
+  const binName = shortBasename(rawBin).replace(/\.(?:exe|cmd|bat)$/i, "");
+  const lower = binName.toLowerCase();
+  if (lower === "cd" || lower === "pushd" || lower === "popd" || lower === "true" || lower === ":") {
+    return "";
+  }
+
+  if (PKG_MANAGERS.has(lower)) {
+    const pos: string[] = [];
+    while (i < tokens.length && pos.length < 2) {
+      const tok = tokens[i++];
+      if (PKG_VALUE_FLAGS.has(tok)) {
+        i++;
+        continue;
+      }
+      if (tok.startsWith("-")) continue;
+      pos.push(tok);
+    }
+    if ((pos[0] === "run" || pos[0] === "exec") && pos[1]) return `${binName} ${pos[0]} ${pos[1]}`;
+    if (pos[0]) return `${binName} ${pos[0]}`;
+    return binName;
+  }
+
+  if (SUBCMD_CLIS.has(lower)) {
+    while (i < tokens.length) {
+      const tok = tokens[i++];
+      if (SUBCMD_VALUE_FLAGS.has(tok)) {
+        i++;
+        continue;
+      }
+      if (tok.startsWith("-")) continue;
+      if (lower === "make" && tok.includes("=")) continue;
+      return `${binName} ${tok}`;
+    }
+    return binName;
+  }
+
+  if (INTERPRETERS.has(lower)) {
+    while (i < tokens.length) {
+      const tok = tokens[i++];
+      if (tok === "-c" || tok === "-e" || tok === "-Command") return binName;
+      if (tok === "-m" && i < tokens.length) return `${binName} -m ${tokens[i]}`;
+      if (tok.startsWith("-")) continue;
+      return `${binName} ${shortBasename(tok)}`;
+    }
+    return binName;
+  }
+
+  return binName;
+}
+
+export function summarizeCommandStem(rawLine: string): string {
+  const segments = splitTopLevelShellSegments(rawLine);
+  const stems: string[] = [];
+  for (const seg of segments) {
+    const stem = summarizeSingleSegmentStem(seg);
+    if (!stem) continue;
+    if (stems[stems.length - 1] !== stem) stems.push(stem);
+  }
+  if (stems.length === 0) return rawLine;
+  if (stems.length <= 3) return stems.join(" · ");
+  return `${stems.slice(0, 3).join(" · ")} +${stems.length - 3}`;
 }
 
 export function analyzeShellCommand(rawCommand: string): ShellCommandIntent {
@@ -438,10 +583,11 @@ export function analyzeShellCommand(rawCommand: string): ShellCommandIntent {
     if (searchOrListIntent) return searchOrListIntent;
   }
 
+  const baseCmd = compact || firstLine;
   return {
     kind: "command",
-    summary: compact || firstLine,
-    compactCommand: compact || firstLine,
+    summary: summarizeCommandStem(baseCmd),
+    compactCommand: baseCmd,
     isReadOnlyExploration: false,
   };
 }

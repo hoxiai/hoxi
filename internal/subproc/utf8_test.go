@@ -102,14 +102,27 @@ func TestRepairUTF8Mojibake(t *testing.T) {
 	if got := RepairUTF8Mojibake(mojibake); got != original {
 		t.Fatalf("RepairUTF8Mojibake = %q, want %q", got, original)
 	}
-	if got := DecodeOutputBytes([]byte(mojibake)); got != original {
-		t.Fatalf("DecodeOutputBytes(mojibake) = %q, want %q", got, original)
+	// Valid UTF-8 process bytes must not be heuristically rewritten during byte-level decoding.
+	if got := DecodeOutputBytes([]byte(mojibake)); got != mojibake {
+		t.Fatalf("DecodeOutputBytes(valid UTF-8) = %q, want untouched %q", got, mojibake)
 	}
 	if got := RepairUTF8Mojibake("├──涓枃 / 涓€个寮€始"); got != "├──中文 / 一个开始" {
 		t.Fatalf("RepairUTF8Mojibake(mixed) = %q, want %q", got, "├──中文 / 一个开始")
 	}
+	if got := RepairUTF8Mojibake("output: \u00e4\u00b8\u00ad\u00e6\u2013\u2021"); got != "output: 中文" {
+		t.Fatalf("RepairUTF8Mojibake(latin1) = %q, want %q", got, "output: 中文")
+	}
+	for _, western := range []string{"réécrire", "créée", "ää", "réécrire créée ää"} {
+		if got := RepairUTF8Mojibake(western); got != western {
+			t.Fatalf("RepairUTF8Mojibake(%q) = %q, want untouched", western, got)
+		}
+	}
 	normal := "// 正常中文输出与错误提示: 文件不存在"
 	if got := RepairUTF8Mojibake(normal); got != normal {
 		t.Fatalf("RepairUTF8Mojibake(normal) = %q, want %q", got, normal)
+	}
+	longChinese := strings.Repeat("中", 3000)
+	if got := RepairUTF8Mojibake(longChinese); got != longChinese {
+		t.Fatalf("RepairUTF8Mojibake(3000x 中) modified input")
 	}
 }

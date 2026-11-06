@@ -136,11 +136,19 @@ export default function ContextActivityGroupView(props: {
     }
     setStepLimitSignal(next);
   };
+  const hideReasoningInList = createMemo(
+    () =>
+      stats().toolCount > 0 &&
+      appSettings.reasoningDisplay === "auto-collapse" &&
+      !props.defaultOpenReasoning
+  );
   const displayParts = createMemo(() => {
     const raw = props.parts;
     if (props.revealKey || raw.length === 0) return raw;
+    const hideReasoning = hideReasoningInList();
     const filtered = raw.filter((part) => {
       if (isTodoToolPart(part)) return false;
+      if (hideReasoning && part.type === "reasoning") return false;
       if (part.type === "reasoning" && !part.text?.trim() && part.time?.end != null) {
         return false;
       }
@@ -262,9 +270,17 @@ export default function ContextActivityGroupView(props: {
   const renderStepItem = (part: MessagePart) => {
     syncSeenGroupSteps();
     const id = part?.id || "";
-    const isAppendedLive = Boolean(id && !seenStepIDs.has(id) && isRunning());
+    const isFirstToolReplacingInitialStep =
+      part.type === "tool" &&
+      stats().toolCount <= 1 &&
+      props.parts.length >= 2 &&
+      props.parts[0]?.type !== "tool";
+    const isAppendedLive = Boolean(
+      id && !seenStepIDs.has(id) && isRunning() && !isFirstToolReplacingInitialStep
+    );
     const isInitialLiveSingle = Boolean(
-      !isAppendedLive && props.isLiveTail && displayParts().length === 1
+      (!isAppendedLive && props.isLiveTail && props.parts.length === 1) ||
+        isFirstToolReplacingInitialStep
     );
     if (id) seenStepIDs.add(id);
 
@@ -458,7 +474,8 @@ export default function ContextActivityGroupView(props: {
                         <span class="text-[var(--text-faint)] shrink-0">·</span>
                         <TextShimmer
                           text={
-                            (stepSummary().activeReasoning &&
+                            (hideReasoningInList() &&
+                              stepSummary().activeReasoning &&
                               liveReasoningTicker(
                                 stepSummary().activeReasoning!.text ?? "",
                                 true

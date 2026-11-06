@@ -104,10 +104,10 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
   );
   const toolIconName = createMemo(() => {
     const intent = shellIntent();
-    if (intent && !hasCustomShellDesc()) {
-      if (intent.kind === "read") return "glasses";
-      if (intent.kind === "search") return "magnifying-glass-menu";
-      if (intent.kind === "list") return "bullet-list";
+    if (intent) {
+      if (intent.kind === "read" && intent.targetFile) return "glasses";
+      if (intent.kind === "search" && intent.searchPattern) return "magnifying-glass-menu";
+      if (intent.kind === "list" && !hasCustomShellDesc()) return "bullet-list";
     }
     return kiloToolIconName(props.part.tool);
   });
@@ -275,10 +275,10 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
               when={!isShell()}
               fallback={
                 <Show
-                  when={!hasCustomShellDesc() && shellIntent()?.kind === "read" && shellIntent()?.targetFile}
+                  when={shellIntent()?.kind === "read" && shellIntent()?.targetFile}
                   fallback={
                     <Show
-                      when={!hasCustomShellDesc() && shellIntent()?.kind === "search" && shellIntent()?.searchPattern}
+                      when={shellIntent()?.kind === "search" && shellIntent()?.searchPattern}
                       fallback={
                         <div class="flex items-center gap-2 min-w-0 flex-1">
                           <span class="text-[13px] text-[var(--text-muted)] group-hover/tool:text-[var(--text-secondary)] transition-colors truncate">
@@ -293,13 +293,6 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
                               active={isRunning()}
                             />
                           </span>
-                          <Show when={hasCustomShellDesc() && (shellIntent()?.summary || shellCmd())}>
-                            <code class="hidden sm:inline-block truncate max-w-[380px] font-mono text-[12px] text-[var(--text-faint)]">
-                              {shellIntent()?.summary && shellIntent()?.kind !== "command"
-                                ? shellIntent()!.summary
-                                : `$ ${shellIntent()?.summary || shellCmd().split(/\r?\n/, 1)[0].trim()}`}
-                            </code>
-                          </Show>
                         </div>
                       }
                     >

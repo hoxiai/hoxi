@@ -428,3 +428,52 @@ func TestAgyRecoveredMidTurnToolErrorDoesNotPoisonStaleResultSuppression(t *test
 		}
 	}
 }
+
+func TestAgyTranscriptRunCommandSummaryHydration(t *testing.T) {
+	binRoot := t.TempDir()
+	t.Setenv("GEMINI_HOME", binRoot)
+
+	convID := "conv-cmd-summary-1"
+	logDir := agyTranscriptLogDir(filepath.Join(binRoot, "antigravity-cli", "brain"), convID)
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rows := strings.Join([]string{
+		`{"step_index":0,"type":"USER_INPUT","content":"Run checks"}`,
+		`{"step_index":1,"type":"PLANNER_RESPONSE","tool_calls":[{"name":"run_command","args":{"CommandLine":"\"go vet ./... && go build ./...\"","toolSummary":"\"Run Go vet and build\""}}]}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(logDir, "transcript.jsonl"), []byte(rows), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cursor := newAgyEditPayloadCursor(convID)
+	cmdArgs := cursor.lookupCommandSummary(2, map[string]interface{}{"CommandLine": "go vet ./... && go build ./..."})
+	if cmdArgs == nil || cmdArgs["toolSummary"] != "Run Go vet and build" {
+		t.Fatalf("expected lookupCommandSummary to recover toolSummary, got %+v", cmdArgs)
+	}
+
+	turns := []MessageTurn{
+		{
+			Info: MessageInfo{ID: "msg_a_1", SessionID: "ses_1", Role: "assistant"},
+			Parts: []MessagePart{
+				{
+					ID:     "prt_msg_a_1_tool_2",
+					Type:   "tool",
+					Tool:   "bash",
+					CallID: "call_1",
+					State: &ToolState{
+						Status: "completed",
+						Input:  map[string]interface{}{"CommandLine": "go vet ./... && go build ./...", "command": "go vet ./... && go build ./..."},
+					},
+				},
+			},
+		},
+	}
+	if !hydrateAgyTranscriptEditParts(convID, turns) {
+		t.Fatal("expected hydrateAgyTranscriptEditParts to report changes for bash part lacking toolSummary")
+	}
+	gotPart := turns[0].Parts[0]
+	if gotPart.State.Title != "Run Go vet and build" || gotPart.State.Input["toolSummary"] != "Run Go vet and build" {
+		t.Fatalf("expected hydrated bash part to have title and toolSummary, got title=%q input=%+v", gotPart.State.Title, gotPart.State.Input)
+	}
+}

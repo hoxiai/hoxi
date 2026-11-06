@@ -94,18 +94,17 @@ func TruncateUTF8Tail(b []byte, maxBytes int) []byte {
 }
 
 // DecodeOutputBytes converts process output bytes to a valid UTF-8 string.
-// Valid UTF-8 is returned directly (with CP936-decoded-UTF8 Mojibake repaired);
-// lines emitted in Windows legacy code pages (such as CP936/GBK/GB18030 on
-// Chinese Windows) are decoded to UTF-8.
+// Valid UTF-8 is returned directly; lines emitted in Windows legacy code pages
+// (such as CP936/GBK/GB18030 on Chinese Windows) are decoded to UTF-8.
 func DecodeOutputBytes(b []byte) string {
 	if len(b) == 0 {
 		return ""
 	}
 	if utf8.Valid(b) {
-		return RepairUTF8Mojibake(string(b))
+		return string(b)
 	}
 	if trimmed, ok := trimIncompleteUTF8Edges(b); ok && utf8.Valid(trimmed) {
-		return RepairUTF8Mojibake(string(trimmed))
+		return string(trimmed)
 	}
 	if bytes.IndexByte(b, 0) >= 0 {
 		return strings.ToValidUTF8(string(b), "\uFFFD")
@@ -127,13 +126,13 @@ func DecodeOutputBytes(b []byte) string {
 			rest = rest[idx+1:]
 		}
 		if utf8.Valid(line) {
-			sb.WriteString(RepairUTF8Mojibake(string(line)))
+			sb.WriteString(string(line))
 			isFirst = false
 			continue
 		}
 		if isFirst || isLast {
 			if trimmed, ok := trimIncompleteUTF8Edges(line); ok && utf8.Valid(trimmed) {
-				sb.WriteString(RepairUTF8Mojibake(string(trimmed)))
+				sb.WriteString(string(trimmed))
 				isFirst = false
 				continue
 			}
@@ -278,29 +277,207 @@ func ensureGBKReverseTable() *[65536]uint16 {
 	return &gbkReverseTable
 }
 
-func isAllowedRecoveredUTF8(s string) bool {
-	if s == "" || !utf8.ValidString(s) {
-		return false
-	}
-	cjk := 0
-	for _, r := range s {
-		allowed := r == 0x09 || r == 0x0a || r == 0x0d || (r >= 0x20 && r <= 0x7e) ||
-			r == 0x00b7 || r == 0x00d7 || r == 0x00f7 ||
-			(r >= 0x2010 && r <= 0x26ff) || (r >= 0x3000 && r <= 0x303f) ||
-			(r >= 0x4e00 && r <= 0x9fa5) || (r >= 0xff01 && r <= 0xff5e)
-		if !allowed {
-			return false
+func isAllowedRecoveredChar(r rune) bool {
+	return r == 0x09 || (r >= 0x20 && r <= 0x7e) ||
+		r == 0x00b7 || r == 0x00d7 || r == 0x00f7 ||
+		(r >= 0x2010 && r <= 0x26ff) || (r >= 0x3000 && r <= 0x303f) ||
+		(r >= 0x4e00 && r <= 0x9fa5) || (r >= 0xff01 && r <= 0xff5e)
+}
+
+func isCJKOrFullwidthRune(r rune) bool {
+	return (r >= 0x4e00 && r <= 0x9fa5) || (r >= 0x3000 && r <= 0x303f) || (r >= 0xff01 && r <= 0xff5e)
+}
+
+var win1252RuneToByte = map[rune]byte{
+	0x20ac: 0x80, 0x201a: 0x82, 0x0192: 0x83, 0x201e: 0x84, 0x2026: 0x85, 0x2020: 0x86, 0x2021: 0x87,
+	0x02c6: 0x88, 0x2030: 0x89, 0x0160: 0x8a, 0x2039: 0x8b, 0x0152: 0x8c, 0x017d: 0x8e, 0x2018: 0x91,
+	0x2019: 0x92, 0x201c: 0x93, 0x201d: 0x94, 0x2022: 0x95, 0x2013: 0x96, 0x2014: 0x97, 0x02dc: 0x98,
+	0x2122: 0x99, 0x0161: 0x9a, 0x203a: 0x9b, 0x0153: 0x9c, 0x017e: 0x9e, 0x0178: 0x9f,
+}
+
+func advanceUTF8DecodeState(raw []byte, startIdx int) (nextIdx int, text string, cjkCount int, invalid bool) {
+	idx := startIdx
+	n := len(raw)
+	var sb strings.Builder
+	for idx < n {
+		b0 := raw[idx]
+		var r rune
+		switch {
+		case b0 < 0x80:
+			r = rune(b0)
+			if !isAllowedRecoveredChar(r) {
+				return idx, "", 0, true
+			}
+			idx++
+		case b0 >= 0xc2 && b0 <= 0xdf:
+			if idx+1 >= n {
+				return idx, sb.String(), cjkCount, false
+			}
+			b1 := raw[idx+1]
+			if (b1 & 0xc0) != 0x80 {
+				return idx, "", 0, true
+			}
+			r = (rune(b0&0x1f) << 6) | rune(b1&0x3f)
+			if !isAllowedRecoveredChar(r) {
+				return idx, "", 0, true
+			}
+			idx += 2
+		case b0 >= 0xe0 && b0 <= 0xef:
+			if idx+1 < n {
+				b1 := raw[idx+1]
+				if (b1&0xc0) != 0x80 || (b0 == 0xe0 && b1 < 0xa0) || (b0 == 0xed && b1 >= 0xa0) {
+					return idx, "", 0, true
+				}
+			}
+			if idx+2 >= n {
+				return idx, sb.String(), cjkCount, false
+			}
+			b1, b2 := raw[idx+1], raw[idx+2]
+			if (b2 & 0xc0) != 0x80 {
+				return idx, "", 0, true
+			}
+			r = (rune(b0&0x0f) << 12) | (rune(b1&0x3f) << 6) | rune(b2&0x3f)
+			if !isAllowedRecoveredChar(r) {
+				return idx, "", 0, true
+			}
+			if isCJKOrFullwidthRune(r) {
+				cjkCount++
+			}
+			idx += 3
+		default:
+			return idx, "", 0, true
 		}
-		if (r >= 0x4e00 && r <= 0x9fa5) || (r >= 0x3000 && r <= 0x303f) || (r >= 0xff01 && r <= 0xff5e) {
-			cjk++
+		sb.WriteRune(r)
+	}
+	return idx, sb.String(), cjkCount, false
+}
+
+func tryRecoverLatin1OrCP1252Run(run []rune) (string, bool) {
+	if len(run) < 3 {
+		return "", false
+	}
+	raw := make([]byte, len(run))
+	hasLatin1 := false
+	for i, r := range run {
+		if r >= 0x80 && r <= 0xff {
+			raw[i] = byte(r)
+			if r >= 0xa0 {
+				hasLatin1 = true
+			}
+		} else if mapped, ok := win1252RuneToByte[r]; ok {
+			raw[i] = mapped
+		} else {
+			return "", false
 		}
 	}
-	return cjk > 0
+	if !hasLatin1 {
+		return "", false
+	}
+	nextIdx, text, cjkCount, invalid := advanceUTF8DecodeState(raw, 0)
+	if invalid || nextIdx != len(raw) || cjkCount == 0 {
+		return "", false
+	}
+	return text, true
+}
+
+func recoverGBKMojibakeSubrun(subrun []rune, table *[65536]uint16, trailingFault bool) (text string, consumedFault bool, changed bool) {
+	var sb strings.Builder
+	p := 0
+	n := len(subrun)
+	for p < n {
+		cp0 := subrun[p]
+		if cp0 == 0x20ac {
+			sb.WriteRune(cp0)
+			p++
+			continue
+		}
+		pair0 := table[cp0]
+		b10 := pair0 >> 8
+		b20 := pair0 & 0xff
+		if b10 < 0xe2 || b10 > 0xef || b20 < 0x80 || b20 > 0xbf {
+			sb.WriteRune(cp0)
+			p++
+			continue
+		}
+
+		var byteList []byte
+		decodedIdx := 0
+		decodedText := ""
+		decodedCJK := 0
+		hasHint := false
+		bestQ := -1
+		bestText := ""
+		bestConsumedFault := false
+		bytesSinceValid := 0
+
+		for q := p; q < n; q++ {
+			cp := subrun[q]
+			if cp == 0x20ac {
+				byteList = append(byteList, 0x80)
+				hasHint = true
+				bytesSinceValid++
+			} else {
+				pair := table[cp]
+				if pair == 0 || pair <= 0xff {
+					break
+				}
+				b1 := byte(pair >> 8)
+				b2 := byte(pair & 0xff)
+				byteList = append(byteList, b1, b2)
+				bytesSinceValid += 2
+				if (cp >= 0xe000 && cp <= 0xf8ff) || b1 <= 0xa0 || b2 <= 0xa0 || b1 >= 0xd8 {
+					hasHint = true
+				}
+			}
+
+			nextIdx, stepText, stepCJK, invalid := advanceUTF8DecodeState(byteList, decodedIdx)
+			if invalid {
+				break
+			}
+			decodedIdx = nextIdx
+			if stepText != "" {
+				decodedText += stepText
+			}
+			decodedCJK += stepCJK
+
+			if hasHint && decodedCJK > 0 {
+				if decodedIdx == len(byteList) {
+					bestQ = q + 1
+					bestText = decodedText
+					bestConsumedFault = false
+					bytesSinceValid = 0
+				} else if q+1 == n && trailingFault && len(byteList)-decodedIdx == 2 &&
+					byteList[decodedIdx] >= 0xe3 && byteList[decodedIdx] <= 0xef &&
+					byteList[decodedIdx+1] >= 0x80 && byteList[decodedIdx+1] <= 0xbf {
+					bestQ = q + 1
+					bestText = decodedText
+					bestConsumedFault = true
+					bytesSinceValid = 0
+				}
+			}
+			if bytesSinceValid >= 6 {
+				break
+			}
+		}
+
+		if bestQ > p {
+			sb.WriteString(bestText)
+			p = bestQ
+			changed = true
+			if bestConsumedFault {
+				consumedFault = true
+			}
+		} else {
+			sb.WriteRune(subrun[p])
+			p++
+		}
+	}
+	return sb.String(), consumedFault, changed
 }
 
 // RepairUTF8Mojibake recovers UTF-8 text that was mistakenly decoded as CP936/GBK
-// (e.g. "涓枃" -> "中文", "娴嬭瘯鎴愬姛" -> "测试成功", "涓€" -> "一") while leaving
-// normal Chinese, English, symbols and code untouched.
+// (e.g. "涓枃" -> "中文", "娴嬭瘯鎴愬姛" -> "测试成功", "涓€" -> "一") or Latin-1/CP1252
+// while leaving normal Chinese, Western text, symbols and code untouched in O(N) time.
 func RepairUTF8Mojibake(s string) string {
 	hasNonASCII := false
 	for i := 0; i < len(s); i++ {
@@ -312,46 +489,73 @@ func RepairUTF8Mojibake(s string) string {
 	if !hasNonASCII {
 		return s
 	}
-	table := ensureGBKReverseTable()
 	runes := []rune(s)
 	if len(runes) < 2 {
 		return s
 	}
+	table := ensureGBKReverseTable()
 	var sb strings.Builder
 	anyChanged := false
+	n := len(runes)
 	i := 0
-	for i < len(runes) {
-		if runes[i] < 0x80 || runes[i] >= 0x10000 || table[runes[i]] == 0 {
+	for i < n {
+		cp := runes[i]
+		if cp < 0x80 || cp == utf8.RuneError || cp >= 0x10000 {
 			if anyChanged {
-				sb.WriteRune(runes[i])
+				sb.WriteRune(cp)
 			}
 			i++
 			continue
 		}
 		j := i + 1
-		for j < len(runes) && runes[j] >= 0x80 && runes[j] < 0x10000 && table[runes[j]] != 0 {
+		for j < n && runes[j] >= 0x80 && runes[j] != utf8.RuneError && runes[j] < 0x10000 {
 			j++
 		}
-		if j-i < 2 {
-			if anyChanged {
-				sb.WriteRune(runes[i])
+		run := runes[i:j]
+		if latin, ok := tryRecoverLatin1OrCP1252Run(run); ok {
+			if !anyChanged {
+				sb.Grow(len(s))
+				sb.WriteString(string(runes[:i]))
+				anyChanged = true
 			}
+			sb.WriteString(latin)
 			i = j
 			continue
 		}
-		run := runes[i:j]
-		recovered, changed := tryRecoverGBKRun(run, table)
-		if changed && !anyChanged {
-			sb.Grow(len(s))
-			sb.WriteString(string(runes[:i]))
-			anyChanged = true
-		}
-		if anyChanged {
-			if changed {
-				sb.WriteString(recovered)
-			} else {
-				sb.WriteString(string(run))
+
+		k := 0
+		for k < len(run) {
+			rcp := run[k]
+			if rcp != 0x20ac && table[rcp] == 0 {
+				if anyChanged {
+					sb.WriteRune(rcp)
+				}
+				k++
+				continue
 			}
+			m := k + 1
+			for m < len(run) && (run[m] == 0x20ac || table[run[m]] != 0) {
+				m++
+			}
+			subrun := run[k:m]
+			trailingFault := m == len(run) && j < n && runes[j] == utf8.RuneError
+			recovered, consumedFault, subChanged := recoverGBKMojibakeSubrun(subrun, table, trailingFault)
+			if subChanged && !anyChanged {
+				sb.Grow(len(s))
+				sb.WriteString(string(runes[:i+k]))
+				anyChanged = true
+			}
+			if anyChanged {
+				if subChanged {
+					sb.WriteString(recovered)
+				} else {
+					sb.WriteString(string(subrun))
+				}
+			}
+			if consumedFault {
+				j++
+			}
+			k = m
 		}
 		i = j
 	}
@@ -359,61 +563,4 @@ func RepairUTF8Mojibake(s string) string {
 		return s
 	}
 	return sb.String()
-}
-
-func tryRecoverGBKRun(run []rune, table *[65536]uint16) (string, bool) {
-	raw := make([]byte, 0, len(run)*2)
-	offsets := make([]int, len(run)+1)
-	for idx, r := range run {
-		offsets[idx] = len(raw)
-		v := table[r]
-		if v <= 0xff {
-			raw = append(raw, byte(v))
-		} else {
-			raw = append(raw, byte(v>>8), byte(v))
-		}
-	}
-	offsets[len(run)] = len(raw)
-
-	var sb strings.Builder
-	pos := 0
-	changed := false
-	for pos < len(run) {
-		matchedEnd := -1
-		matchedStr := ""
-		for end := len(run); end >= pos+2; end-- {
-			bStart := offsets[pos]
-			bEnd := offsets[end]
-			if bEnd-bStart < 3 {
-				continue
-			}
-			slice := raw[bStart:bEnd]
-			if !utf8.Valid(slice) {
-				continue
-			}
-			candidate := string(slice)
-			if candidate != string(run[pos:end]) && isAllowedRecoveredUTF8(candidate) {
-				matchedEnd = end
-				matchedStr = candidate
-				break
-			}
-		}
-		if matchedEnd != -1 {
-			if !changed {
-				sb.WriteString(string(run[:pos]))
-				changed = true
-			}
-			sb.WriteString(matchedStr)
-			pos = matchedEnd
-		} else {
-			if changed {
-				sb.WriteRune(run[pos])
-			}
-			pos++
-		}
-	}
-	if !changed {
-		return "", false
-	}
-	return sb.String(), true
 }

@@ -20,6 +20,7 @@ import (
 	"github.com/hoxiai/hoxi/internal/cloudflared"
 	"github.com/hoxiai/hoxi/internal/codeindex"
 	"github.com/hoxiai/hoxi/internal/computer"
+	"github.com/hoxiai/hoxi/internal/devpulse"
 	"github.com/hoxiai/hoxi/internal/diagnostics"
 	"github.com/hoxiai/hoxi/internal/forge"
 	"github.com/hoxiai/hoxi/internal/handoff"
@@ -77,7 +78,8 @@ type Gateway struct {
 	securityGateState
 	updateGateState
 	engineGateState
-	pulseCache     devPulseCache
+	devPulse       *devpulse.Service
+	devPulseOnce   sync.Once
 	requestLog     requestLogCache
 	storageCleanMu sync.Mutex
 }

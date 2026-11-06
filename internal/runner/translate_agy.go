@@ -126,28 +126,27 @@ func (t *TurnTranslator) feedAgyLine(line string) []SSEEvent {
 		if _, ok := t.stepStartMs[su.StepIndex]; !ok {
 			t.stepStartMs[su.StepIndex] = now
 		}
+		t.agyFinalResponseDone = false
+		t.agyFinalResponseStep = 0
+		prefixEvts := t.markEarlierAgyTextPartsTransitional(su.StepIndex)
 
 		switch su.StepType {
 		case "agent_response":
-			return t.handleAgyAgentResponse(su, now)
+			return append(prefixEvts, t.handleAgyAgentResponse(su, now)...)
 		case "subagent":
-			t.agyFinalResponseDone = false
-			t.agyFinalResponseStep = 0
-			return t.handleAgySubagentStep(su, now)
+			return append(prefixEvts, t.handleAgySubagentStep(su, now)...)
 		case "tool":
-			t.agyFinalResponseDone = false
-			t.agyFinalResponseStep = 0
 			if isAgySubagentDispatch(su) {
-				return t.handleAgySubagentStep(su, now)
+				return append(prefixEvts, t.handleAgySubagentStep(su, now)...)
 			}
-			return t.handleAgyToolStep(su, now)
+			return append(prefixEvts, t.handleAgyToolStep(su, now)...)
 		case "system_message":
 			if su.State != "DONE" {
-				return nil
+				return prefixEvts
 			}
-			return t.handleAgySystemMessage(su, now)
+			return append(prefixEvts, t.handleAgySystemMessage(su, now)...)
 		}
-		return nil
+		return prefixEvts
 
 	case "result":
 		res := env.Result
@@ -266,7 +265,7 @@ func (t *TurnTranslator) handleAgyAgentResponse(su *agyStepUpdate, now int64) []
 				txtStart = part.Time.Start
 			}
 			part.Time = &PartTime{Start: txtStart, End: endMs}
-			if strings.TrimSpace(part.Text) != "" {
+			if strings.TrimSpace(part.Text) != "" && !isAgyTransitionalTextPart(*part) {
 				t.agyFinalResponseDone = true
 				t.agyFinalResponseStep = su.StepIndex
 			}
@@ -354,6 +353,11 @@ func (t *TurnTranslator) handleAgyToolStep(su *agyStepUpdate, now int64) []SSEEv
 			if name != "" {
 				rawName = name
 			}
+		}
+	} else if t.editPayloads != nil && strings.EqualFold(strings.TrimSpace(rawName), "run_command") &&
+		firstString(rawParams["toolSummary"], rawParams["toolAction"], rawParams["description"]) == "" {
+		if planned := t.editPayloads.lookupCommandSummary(su.StepIndex, rawParams); planned != nil {
+			rawParams = mergeAgyEditParams(rawParams, planned)
 		}
 	}
 	normTool, title, cleanInput := normalizeRunnerTool(rawName, rawParams)
@@ -482,6 +486,7 @@ func (t *TurnTranslator) handleAgyResult(res *agyResult) []SSEEvent {
 	}
 
 	if isErr {
+		evts = append(evts, t.markAllAgyTextPartsTransitional()...)
 		if strings.EqualFold(strings.TrimSpace(res.Error), "interrupted") {
 			t.msgInfo.Finish = "aborted"
 			evts = append(evts,
@@ -514,5 +519,43 @@ func (t *TurnTranslator) handleAgyResult(res *agyResult) []SSEEvent {
 		SSEEvent{Type: "session.status", Properties: map[string]interface{}{"sessionID": t.sessionID, "status": SessionStatus{Type: "idle"}}},
 		SSEEvent{Type: "session.idle", Properties: map[string]interface{}{"sessionID": t.sessionID}},
 	)
+	return evts
+}
+
+func (t *TurnTranslator) markEarlierAgyTextPartsTransitional(currentStep int) []SSEEvent {
+	if currentStep <= 0 {
+		return nil
+	}
+	var evts []SSEEvent
+	for _, id := range t.partOrder {
+		p := t.partsByID[id]
+		if p == nil || p.Type != "text" {
+			continue
+		}
+		step, ok := parseAgyPartStepIndex(p.ID)
+		if !ok || step >= currentStep {
+			continue
+		}
+		if markAgyTextPartTransitional(p) {
+			evts = append(evts, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": clonePart(*p)}})
+		}
+	}
+	return evts
+}
+
+func (t *TurnTranslator) markAllAgyTextPartsTransitional() []SSEEvent {
+	var evts []SSEEvent
+	for _, id := range t.partOrder {
+		p := t.partsByID[id]
+		if p == nil || p.Type != "text" {
+			continue
+		}
+		if _, ok := parseAgyPartStepIndex(p.ID); !ok {
+			continue
+		}
+		if markAgyTextPartTransitional(p) {
+			evts = append(evts, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": clonePart(*p)}})
+		}
+	}
 	return evts
 }

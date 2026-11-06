@@ -199,7 +199,9 @@ export function extractTargetFile(part: ToolPart): string | null {
 
 export function extractCommand(part: ToolPart): string {
   const input = resolveToolInput(part);
-  const command = String(input.command || input.cmd || input.script || "");
+  const command = String(
+    input.command || input.CommandLine || input.command_line || input.cmd || input.script || ""
+  );
   return isShellTool(part.tool) ? cleanShellDisplayText(command) : command;
 }
 

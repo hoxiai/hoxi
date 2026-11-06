@@ -16,6 +16,14 @@ import "../styles.css";
 
 const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+const waitFor = async (predicate: () => boolean, timeoutMs = 2000, message = "condition timed out") => {
+  const deadline = performance.now() + timeoutMs;
+  while (performance.now() < deadline) {
+    if (predicate()) return;
+    await wait(25);
+  }
+  assertTrue(predicate(), message);
+};
 
 let nextFixture = 0;
 function fixture(mode: "auto-collapse" | "expanded" | "collapsed", finalReasoning = false) {
@@ -543,7 +551,13 @@ async function testAutoCollapseOnlyAfterScrollingOffscreen() {
   );
 
   try {
-    await wait(100);
+    await waitFor(
+      () =>
+        Boolean(scroller.textContent?.includes("root@8.135.58.57 · sudo -u gopanel env")) &&
+        Boolean(scroller.textContent?.includes("Let me inspect the theme decor service next:")),
+      2000,
+      "transitional text explanation and de-noised tools should finish streaming reveal"
+    );
     const group = scroller.querySelector<HTMLElement>("[data-activity-group]")!;
     const header = group.querySelector<HTMLButtonElement>(":scope > button")!;
     assertEqual(header.getAttribute("aria-expanded"), "true", "live tool steps expand automatically in auto-collapse mode");
@@ -557,18 +571,15 @@ async function testAutoCollapseOnlyAfterScrollingOffscreen() {
       "expanded header must show group summary instead of duplicating the last running step"
     );
     assertTrue(
-      Boolean(scroller.textContent?.includes("root@8.135.58.57 · sudo -u gopanel env")),
-      "ssh step is de-noised and directly visible"
-    );
-    assertTrue(
-      Boolean(scroller.textContent?.includes("Internal monologue before ssh")) &&
-        Boolean(scroller.textContent?.includes("Let me inspect the theme decor service next:")),
-      "reasoning ThoughtBox and transitional text explanation remain visible in the expanded activity group"
+      Boolean(scroller.textContent?.includes("root@8.135.58.57 · sudo -u gopanel env")) &&
+        Boolean(scroller.textContent?.includes("Let me inspect the theme decor service next:")) &&
+        !scroller.textContent?.includes("Internal monologue before ssh"),
+      "transitional text explanation and de-noised tools are visible while raw internal reasoning monologue is hidden"
     );
     assertEqual(
       scroller.querySelectorAll("[data-part-id]").length,
-      7,
-      "all 4 tool steps, 2 reasoning thoughts, and 1 transitional text render in chronological order while hiding todowrite"
+      5,
+      "all 4 tool steps and 1 transitional text explanation render directly while hiding todowrite and raw reasoning"
     );
 
     // Finish execution while still visible on screen: must NOT collapse or jump.

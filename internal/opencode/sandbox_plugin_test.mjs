@@ -426,7 +426,7 @@ test("sandbox plugin", async (t) => {
     const splitUTF8 = fullUTF8.subarray(0, fullUTF8.length - 1);
     assert.equal(decode(splitUTF8, splitUTF8.toString("utf8")), "Hello世");
 
-    // 5. UTF-8 decoded as CP936/GBK Mojibake ("涓枃" -> "中文", "涓€" -> "一", "寮€" -> "开") is repaired
+    // 5. UTF-8 decoded as CP936/GBK Mojibake ("涓枃" -> "中文", "涓€" -> "一", "寮€" -> "开") is repaired in linear time
     const repair = HoxiSandboxPlugin._repairWindowsMojibake;
     assert.equal(typeof repair, "function");
     const cp936Mojibake = new TextDecoder("gb18030").decode(Buffer.from("// 中文注释: 测试成功\n", "utf8"));
@@ -434,9 +434,20 @@ test("sandbox plugin", async (t) => {
     assert.equal(repair(cp936Mojibake), "// 中文注释: 测试成功\n");
     assert.equal(repair("涓€个寮€始"), "一个开始");
     assert.equal(repair("正常中文输出"), "正常中文输出");
+    assert.equal(repair("réécrire créée ää"), "réécrire créée ää");
+
+    const repeatedChinese = "中".repeat(3000);
+    const startMs = performance.now();
+    assert.equal(repair(repeatedChinese), repeatedChinese);
+    const elapsedMs = performance.now() - startMs;
+    assert.ok(elapsedMs < 100, `expected linear-time repair (< 100ms), took ${elapsedMs.toFixed(2)}ms`);
+
+    // 6. Valid UTF-8 buffers containing literal source strings like "涓€" or "娴嬭瘯" are never mutated during byte decoding
+    const validSourceLiteral = Buffer.from('const sample = "涓€"; // 娴嬭瘯\n', "utf8");
+    assert.equal(decode(validSourceLiteral, validSourceLiteral.toString("utf8")), 'const sample = "涓€"; // 娴嬭瘯\n');
   });
 
-  await t.test("injects UTF-8 shell.env defaults and repairs Mojibake in tool.execute.after", async () => {
+  await t.test("injects UTF-8 shell.env defaults and preserves raw tool outputs in tool.execute.after", async () => {
     const hooks = await HoxiSandboxPlugin();
     const envOut = { env: {} };
     await hooks["shell.env"]({}, envOut);
@@ -444,14 +455,12 @@ test("sandbox plugin", async (t) => {
     assert.equal(envOut.env.PYTHONIOENCODING, "utf-8");
     assert.equal(envOut.env.LANG, "C.UTF-8");
 
-    const mojibakeLine = new TextDecoder("gb18030").decode(Buffer.from("// 中文注释\n", "utf8"));
-    const toolOut = {
-      output: mojibakeLine,
-      metadata: { output: mojibakeLine, stdout: "娴嬭瘯鎴愬姛" },
+    const readOut = {
+      output: 'const a = "涓€";\nconst b = "娴嬭瘯";\n',
+      metadata: { output: 'const a = "涓€";\nconst b = "娴嬭瘯";\n' },
     };
-    await hooks["tool.execute.after"]({ tool: "bash" }, toolOut);
-    assert.equal(toolOut.output, "// 中文注释\n");
-    assert.equal(toolOut.metadata.output, "// 中文注释\n");
-    assert.equal(toolOut.metadata.stdout, "测试成功");
+    await hooks["tool.execute.after"]({ tool: "read" }, readOut);
+    assert.equal(readOut.output, 'const a = "涓€";\nconst b = "娴嬭瘯";\n');
+    assert.equal(readOut.metadata.output, 'const a = "涓€";\nconst b = "娴嬭瘯";\n');
   });
 });

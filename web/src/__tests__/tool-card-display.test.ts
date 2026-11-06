@@ -18,6 +18,7 @@ import {
   isShortTransitionalText,
   resolveMergedTurnParts,
 } from "../components/timeline/context-activity-turns";
+import { summarizeStepTarget } from "../components/timeline/context-activity-summary";
 import type { MessagePart, ToolPart, ToolState } from "../services/sse-types";
 import { dictionaries, setLocale } from "../i18n";
 import { type MessageTurn, setWorkspace } from "../store/workspace-state";
@@ -235,6 +236,38 @@ describe("localized tool labels for CLI runtimes", () => {
     assertEqual(sshCmd.summary, "root@8.135.58.57 · sudo -u gopanel env");
     assertEqual(sshCmd.isReadOnlyExploration, false);
 
+    // Semantic read/search shell commands prioritize target file/search summary over generic toolSummary,
+    // while general shell commands use toolSummary when present.
+    const agyRead = part("run_command", {
+      input: {
+        CommandLine: "sed -n '340,420p' go-fast/app/service/theme_decor_bundle.go",
+        toolSummary: "Inspect theme decor bundle",
+      },
+    });
+    assertEqual(summarizeStepTarget(agyRead), "theme_decor_bundle.go:340-420");
+
+    const agyBuild = part("run_command", {
+      input: {
+        CommandLine: "npm --prefix web run lint && npm --prefix web test",
+        toolSummary: "Verify web lint and test",
+      },
+    });
+    assertEqual(summarizeStepTarget(agyBuild), "Verify web lint and test");
+
+    const rawChainNoDesc = part("bash", {
+      input: {
+        command: "/usr/local/go/bin/go vet ./... && /usr/local/go/bin/go build ./...",
+      },
+    });
+    assertEqual(summarizeStepTarget(rawChainNoDesc), "go vet · go build");
+
+    const npmChainNoDesc = part("bash", {
+      input: {
+        command: "npm --prefix web run lint && npm --prefix web test && npm --prefix web run build",
+      },
+    });
+    assertEqual(summarizeStepTarget(npmChainNoDesc), "npm run lint · npm test · npm run build");
+
     // Consecutive completed exploration steps fold into a single group while ssh/running steps stay top-level
     const completedShell = (id: string, command: string): ToolPart =>
       shellPart({
@@ -278,7 +311,7 @@ describe("localized tool labels for CLI runtimes", () => {
     }
   });
 
-  it("folds short transitional tool preambles into unified activity groups while preserving substantive replies", () => {
+  it("keeps assistant text explanations on the main timeline while folding contiguous work steps into activity groups", () => {
     assertTrue(isShortTransitionalText("Let me inspect the relevant files first:"));
     assertTrue(isShortTransitionalText("Let me check the configuration first."));
     assertEqual(isShortTransitionalText("### Root Cause\nHere is why it failed:"), false);
@@ -364,13 +397,18 @@ describe("localized tool labels for CLI runtimes", () => {
     assertEqual(repairWindowsMojibake("\u251c\u2500\u2500\u6d93\ue15f\u6783"), "\u251c\u2500\u2500\u4e2d\u6587");
     assertEqual(repairWindowsMojibake("\u6d93\u20ac\u4e2a\u5bee\u20ac\u59cb"), "\u4e00\u4e2a\u5f00\u59cb");
 
-    // UTF-8 decoded as Latin-1/CP1252 ("\u4e2d\u6587" -> "\u00e4\u00b8\u00ad\u00e6\u2013\u2021") and GBK decoded as Latin-1 ("\u914d\u7f6e" -> "\u00c5\u00e4\u00d6\u00c3")
+    // UTF-8 decoded as Latin-1/CP1252 ("\u4e2d\u6587" -> "\u00e4\u00b8\u00ad\u00e6\u2013\u2021") is repaired while valid Western Unicode stays untouched
     assertEqual(repairWindowsMojibake("output: \u00e4\u00b8\u00ad\u00e6\u2013\u2021"), "output: \u4e2d\u6587");
-    assertEqual(repairWindowsMojibake("Windows IP \u00c5\u00e4\u00d6\u00c3"), "Windows IP \u914d\u7f6e");
+    assertEqual(repairWindowsMojibake("r\u00e9\u00e9crire"), "r\u00e9\u00e9crire");
+    assertEqual(repairWindowsMojibake("cr\u00e9\u00e9e"), "cr\u00e9\u00e9e");
+    assertEqual(repairWindowsMojibake("\u00e4\u00e4"), "\u00e4\u00e4");
+    assertEqual(processCarriageReturns("r\u00e9\u00e9crire cr\u00e9\u00e9e \u00e4\u00e4"), "r\u00e9\u00e9crire cr\u00e9\u00e9e \u00e4\u00e4");
 
     // Normal Chinese text and code must remain untouched
     const normalChinese = "// \u6b63\u5e38\u4e2d\u6587\u8f93\u51fa\u4e0e\u9519\u8bef\u63d0\u793a: \u6587\u4ef6\u4e0d\u5b58\u5728";
     assertEqual(repairWindowsMojibake(normalChinese), normalChinese);
+    const repeatedChinese = "\u4e2d".repeat(3000);
+    assertEqual(repairWindowsMojibake(repeatedChinese), repeatedChinese);
 
     // Persisted tool card state with empty metadata.output falls back to state.output and repairs command + output
     const part = shellPart({

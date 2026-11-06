@@ -469,12 +469,36 @@ func TestStoreHydratesLegacyAgyMultiStepTurnContextTokensOnLoad(t *testing.T) {
 }
 
 func TestStoreHydrationClearsStaleAgyResultErrorOnCompletedTurn(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("GEMINI_HOME", home)
+	const conv = "74f0a507-fbff-464d-b33a-6dd193ff5f77"
+	logDir := agyTranscriptLogDir(filepath.Join(home, "antigravity-cli", "brain"), conv)
+	if err := os.MkdirAll(logDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	rows := []map[string]interface{}{
+		{"step_index": 0, "type": "USER_INPUT", "status": "DONE", "content": "fix stats"},
+		{"step_index": 197, "type": "PLANNER_RESPONSE", "status": "DONE", "content": "已修复并通过全部验证。"},
+	}
+	var buf bytes.Buffer
+	for _, r := range rows {
+		b, err := json.Marshal(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		buf.Write(b)
+		buf.WriteByte('\n')
+	}
+	if err := os.WriteFile(filepath.Join(logDir, "transcript.jsonl"), buf.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
 	storeDir := t.TempDir()
 	s1 := NewStore(storeDir)
 	rec := SessionRecord{
 		ID:         "ses_agy_stale_err_hydrate",
 		Runtime:    string(RuntimeAntigravity),
-		ExternalID: "74f0a507-fbff-464d-b33a-6dd193ff5f77",
+		ExternalID: conv,
 		ProjectDir: "/repo",
 		Turns: []MessageTurn{
 			{
@@ -521,5 +545,146 @@ func TestStoreHydrationClearsStaleAgyResultErrorOnCompletedTurn(t *testing.T) {
 	}
 	if loaded.Turns[1].Info.Error != nil || loaded.Turns[1].Info.Finish != "stop" {
 		t.Fatalf("expected stale RunnerError cleared on completed turn, got finish=%q err=%+v", loaded.Turns[1].Info.Finish, loaded.Turns[1].Info.Error)
+	}
+}
+
+func TestStoreHydrationPreservesAgyErrorAfterTransitionalTextStep(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("GEMINI_HOME", home)
+	const conv = "11111111-2222-3333-4444-555555555555"
+	logDir := agyTranscriptLogDir(filepath.Join(home, "antigravity-cli", "brain"), conv)
+	if err := os.MkdirAll(logDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// Step 1 finished in the transcript, then step 2 started on stdout and failed
+	// with a network error before producing any text or completing.
+	rows := []map[string]interface{}{
+		{"step_index": 0, "type": "USER_INPUT", "status": "DONE", "content": "inspect issue"},
+		{"step_index": 1, "type": "PLANNER_RESPONSE", "status": "DONE", "content": "Let me inspect the repository first."},
+	}
+	var buf bytes.Buffer
+	for _, r := range rows {
+		b, err := json.Marshal(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		buf.Write(b)
+		buf.WriteByte('\n')
+	}
+	if err := os.WriteFile(filepath.Join(logDir, "transcript.jsonl"), buf.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	tr := NewTurnTranslator("ses_agy_transitional_err", string(RuntimeAntigravity), "msg_a_1", "msg_u_1", "antigravity", "gemini", "build", conv)
+	lines := []string{
+		fmt.Sprintf(`{"conversation_id":"%s","event":"step_update","step_update":{"conversation_id":"%s","state":"ACTIVE","step_index":1,"step_type":"agent_response","text_delta":"Let me inspect the repository first."}}`, conv, conv),
+		fmt.Sprintf(`{"conversation_id":"%s","event":"step_update","step_update":{"conversation_id":"%s","state":"DONE","step_index":1,"step_type":"agent_response"}}`, conv, conv),
+		fmt.Sprintf(`{"conversation_id":"%s","event":"step_update","step_update":{"conversation_id":"%s","state":"ACTIVE","step_index":2,"step_type":"agent_response"}}`, conv, conv),
+		fmt.Sprintf(`{"conversation_id":"%s","event":"result","result":{"conversation_id":"%s","status":"ERROR","error":"API error (attempt 1): request failed: Post \"https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse\": EOF"}}`, conv, conv),
+	}
+
+	storeDir := t.TempDir()
+	s1 := NewStore(storeDir)
+	if err := s1.Put(SessionRecord{
+		ID:         "ses_agy_transitional_err",
+		Runtime:    string(RuntimeAntigravity),
+		ExternalID: conv,
+		ProjectDir: "/repo",
+		Turns: []MessageTurn{
+			{
+				Info:  MessageInfo{ID: "msg_u_1", SessionID: "ses_agy_transitional_err", Role: "user"},
+				Parts: []MessagePart{{ID: "prt_u_1", SessionID: "ses_agy_transitional_err", MessageID: "msg_u_1", Type: "text", Text: "inspect issue"}},
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	s1.UpsertTurnInfo("ses_agy_transitional_err", tr.msgInfo)
+	for _, line := range lines {
+		for _, evt := range tr.FeedLine(line) {
+			switch evt.Type {
+			case "message.updated":
+				if info, ok := evt.Properties["info"].(MessageInfo); ok {
+					s1.UpsertTurnInfo("ses_agy_transitional_err", info)
+				}
+			case "message.part.updated":
+				if part, ok := evt.Properties["part"].(MessagePart); ok {
+					s1.UpsertTurnPart("ses_agy_transitional_err", part)
+				}
+			case "message.part.delta":
+				msgID, _ := evt.Properties["messageID"].(string)
+				partID, _ := evt.Properties["partID"].(string)
+				delta, _ := evt.Properties["delta"].(string)
+				s1.AppendPartDelta("ses_agy_transitional_err", msgID, partID, delta)
+			}
+		}
+	}
+	s1.FlushSession("ses_agy_transitional_err")
+
+	if tr.msgInfo.Error == nil || tr.msgInfo.Finish != "error" {
+		t.Fatalf("live translator must record error when step 2 fails, got finish=%q err=%+v", tr.msgInfo.Finish, tr.msgInfo.Error)
+	}
+
+	s2 := NewStore(storeDir)
+	loaded, ok := s2.Get("ses_agy_transitional_err")
+	if !ok || len(loaded.Turns) != 2 {
+		t.Fatalf("unexpected loaded record: %+v", loaded)
+	}
+	if loaded.Turns[1].Info.Error == nil || loaded.Turns[1].Info.Finish != "error" {
+		t.Fatalf("reloaded turn must preserve real AGY error after transitional step 1 text, got finish=%q err=%+v", loaded.Turns[1].Info.Finish, loaded.Turns[1].Info.Error)
+	}
+
+	// Also verify a legacy stored turn (without agyTransitional metadata) is not
+	// cleared when the transcript shows step 1 had tool_calls or step 2 started.
+	rowsWithStep2 := append(rows, map[string]interface{}{
+		"step_index": 2, "type": "PLANNER_RESPONSE", "status": "ERROR", "content": "",
+	})
+	buf.Reset()
+	for _, r := range rowsWithStep2 {
+		b, err := json.Marshal(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		buf.Write(b)
+		buf.WriteByte('\n')
+	}
+	if err := os.WriteFile(filepath.Join(logDir, "transcript.jsonl"), buf.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s3 := NewStore(t.TempDir())
+	if err := s3.Put(SessionRecord{
+		ID:         "ses_agy_legacy_step2_err",
+		Runtime:    string(RuntimeAntigravity),
+		ExternalID: conv,
+		ProjectDir: "/repo",
+		Turns: []MessageTurn{
+			{
+				Info: MessageInfo{
+					ID:        "msg_a_legacy",
+					SessionID: "ses_agy_legacy_step2_err",
+					Role:      "assistant",
+					Finish:    "error",
+					Error:     newClassifiedMessageError("RunnerError", "API error (attempt 1): EOF", 0),
+				},
+				Parts: []MessagePart{
+					{
+						ID:        "prt_msg_a_legacy_text_1",
+						SessionID: "ses_agy_legacy_step2_err",
+						MessageID: "msg_a_legacy",
+						Type:      "text",
+						Text:      "Let me inspect the repository first.",
+						Time:      &PartTime{Start: 100, End: 200},
+					},
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s4 := NewStore(s3.dir)
+	legacyLoaded, ok := s4.Get("ses_agy_legacy_step2_err")
+	if !ok || len(legacyLoaded.Turns) != 1 || legacyLoaded.Turns[0].Info.Error == nil || legacyLoaded.Turns[0].Info.Finish != "error" {
+		t.Fatalf("legacy turn with subsequent step 2 error in transcript must preserve error, got %+v", legacyLoaded.Turns)
 	}
 }

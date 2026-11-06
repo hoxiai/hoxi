@@ -23,6 +23,7 @@ const agySubagentLogChunk = 1 << 20
 type agyTranscriptRow struct {
 	StepIndex       int           `json:"step_index"`
 	Type            string        `json:"type"`
+	Status          string        `json:"status"`
 	CreatedAt       string        `json:"created_at"`
 	Thinking        string        `json:"thinking"`
 	Content         string        `json:"content"`
@@ -416,13 +417,32 @@ func turnNeedsAgyTokenHydration(turn MessageTurn) bool {
 	return stepCount > 1 && tok.Total == sumAll
 }
 
-func loadAgyTranscriptStepUsage(conversationID string) []agyTranscriptRow {
+func markAgyTextPartTransitional(p *MessagePart) bool {
+	if p == nil || isAgyTransitionalTextPart(*p) {
+		return false
+	}
+	if p.Metadata == nil {
+		p.Metadata = make(map[string]interface{})
+	}
+	p.Metadata["agyTransitional"] = true
+	return true
+}
+
+func isAgyTransitionalTextPart(p MessagePart) bool {
+	if p.Metadata == nil {
+		return false
+	}
+	v, ok := p.Metadata["agyTransitional"].(bool)
+	return ok && v
+}
+
+func loadAgyTranscriptActiveRows(conversationID string) []agyTranscriptRow {
 	if !validStoreID(conversationID) {
 		return nil
 	}
 	for _, root := range agyBrainRoots() {
 		dir := agyTranscriptLogDir(root, conversationID)
-		for _, name := range []string{"transcript.jsonl", "transcript_full.jsonl"} {
+		for _, name := range []string{"transcript_full.jsonl", "transcript.jsonl"} {
 			f, err := os.Open(filepath.Join(dir, name))
 			if err != nil {
 				continue
@@ -437,12 +457,8 @@ func loadAgyTranscriptStepUsage(conversationID string) []agyTranscriptRow {
 				}
 				if row.StepIndex == 0 && row.Type == "USER_INPUT" {
 					rows = nil
-					continue
 				}
-				if row.Type == "PLANNER_RESPONSE" &&
-					(row.InputTokens > 0 || row.OutputTokens > 0 || row.ThinkingTokens > 0 || row.CacheReadTokens > 0) {
-					rows = append(rows, row)
-				}
+				rows = append(rows, row)
 			}
 			_ = f.Close()
 			if len(rows) > 0 {
@@ -453,67 +469,98 @@ func loadAgyTranscriptStepUsage(conversationID string) []agyTranscriptRow {
 	return nil
 }
 
-func turnHasStaleAgyResultError(turn MessageTurn) bool {
-	if turn.Info.Role != "assistant" || turn.Info.Error == nil {
-		return false
+func turnCandidateStaleAgyErrorStep(turn MessageTurn) (int, bool) {
+	if turn.Info.Role != "assistant" || turn.Info.Error == nil || turn.Info.Error.Data == nil {
+		return 0, false
 	}
 	errMsg := strings.TrimSpace(turn.Info.Error.Data.Message)
 	if strings.EqualFold(errMsg, "interrupted") || !isRetryableTurnError(errMsg) {
-		return false
+		return 0, false
 	}
 	maxStep := 0
 	maxDoneTextStep := 0
-	for _, p := range turn.Parts {
+	var maxDoneTextPart *MessagePart
+	for i := range turn.Parts {
+		p := &turn.Parts[i]
 		step, ok := parseAgyPartStepIndex(p.ID)
 		if ok && step > maxStep {
 			maxStep = step
 		}
-		if p.Type == "text" && ok && strings.TrimSpace(p.Text) != "" && p.Time != nil && p.Time.End > 0 && step > maxDoneTextStep {
+		if p.Type == "text" && ok && strings.TrimSpace(p.Text) != "" && p.Time != nil && p.Time.End > 0 && step >= maxDoneTextStep {
 			maxDoneTextStep = step
+			maxDoneTextPart = p
 		}
 	}
-	if maxDoneTextStep <= 0 || maxDoneTextStep < maxStep {
-		return false
+	if maxDoneTextStep <= 0 || maxDoneTextStep < maxStep || maxDoneTextPart == nil || isAgyTransitionalTextPart(*maxDoneTextPart) {
+		return 0, false
 	}
 	for _, p := range turn.Parts {
 		if p.Type == "tool" && p.State != nil {
 			switch p.State.Status {
 			case "pending", "running":
-				return false
+				return 0, false
 			case "error":
 				if step, ok := parseAgyPartStepIndex(p.ID); !ok || step >= maxDoneTextStep {
-					return false
+					return 0, false
 				}
 			}
 		}
 	}
-	return true
+	return maxDoneTextStep, true
+}
+
+func transcriptConfirmsAgyFinalStep(rows []agyTranscriptRow, prevMaxStep, doneStep int) bool {
+	if len(rows) == 0 || doneStep <= 0 || doneStep <= prevMaxStep {
+		return false
+	}
+	var matched *agyTranscriptRow
+	for i := range rows {
+		r := &rows[i]
+		if r.StepIndex <= prevMaxStep {
+			continue
+		}
+		if r.StepIndex > doneStep {
+			if r.Type == "USER_INPUT" {
+				break
+			}
+			// A subsequent planner/tool/system step started in this same turn,
+			// so doneStep was a transitional step rather than the final response.
+			return false
+		}
+		if r.StepIndex == doneStep {
+			if strings.EqualFold(r.Status, "ERROR") {
+				return false
+			}
+			matched = r
+		}
+	}
+	if matched == nil || matched.Type != "PLANNER_RESPONSE" || !strings.EqualFold(matched.Status, "DONE") {
+		return false
+	}
+	return strings.TrimSpace(matched.Content) != "" && len(matched.ToolCalls) == 0
 }
 
 // hydrateAgyTranscriptTurnTokens repairs legacy Antigravity assistant turns
 // where Tokens.Total summed InputTokens+OutputTokens across every tool-loop
 // step instead of recording the final parent step's context window occupancy,
-// and clears stale historical result errors on turns whose final response completed.
+// and clears stale historical result errors only when persisted transcript step
+// evidence confirms the turn's final response completed with no subsequent step.
 func hydrateAgyTranscriptTurnTokens(externalID string, turns []MessageTurn) bool {
-	changed := false
 	needsRepair := false
 	for i := range turns {
-		if turnHasStaleAgyResultError(turns[i]) {
-			turns[i].Info.Error = nil
-			turns[i].Info.Finish = "stop"
-			changed = true
-		}
-		if turnNeedsAgyTokenHydration(turns[i]) {
+		if _, ok := turnCandidateStaleAgyErrorStep(turns[i]); ok || turnNeedsAgyTokenHydration(turns[i]) {
 			needsRepair = true
+			break
 		}
 	}
 	if !needsRepair {
-		return changed
+		return false
 	}
-	rows := loadAgyTranscriptStepUsage(strings.TrimSpace(externalID))
+	rows := loadAgyTranscriptActiveRows(strings.TrimSpace(externalID))
 	if len(rows) == 0 {
-		return changed
+		return false
 	}
+	changed := false
 	prevMaxStep := 0
 	for i := range turns {
 		if turns[i].Info.Role != "assistant" {
@@ -523,16 +570,25 @@ func hydrateAgyTranscriptTurnTokens(externalID string, turns []MessageTurn) bool
 		if maxStep > 0 && maxStep < prevMaxStep {
 			prevMaxStep = 0
 		}
+		if doneStep, ok := turnCandidateStaleAgyErrorStep(turns[i]); ok && transcriptConfirmsAgyFinalStep(rows, prevMaxStep, doneStep) {
+			turns[i].Info.Error = nil
+			turns[i].Info.Finish = "stop"
+			changed = true
+		}
 		if turnNeedsAgyTokenHydration(turns[i]) {
 			var matched *agyTranscriptRow
-			if maxStep > 0 {
-				for j := range rows {
-					if rows[j].StepIndex > prevMaxStep && rows[j].StepIndex <= maxStep {
-						matched = &rows[j]
-					}
+			for j := range rows {
+				r := &rows[j]
+				if r.Type != "PLANNER_RESPONSE" || (r.InputTokens == 0 && r.OutputTokens == 0 && r.ThinkingTokens == 0 && r.CacheReadTokens == 0) {
+					continue
 				}
-			} else if i == len(turns)-1 {
-				matched = &rows[len(rows)-1]
+				if maxStep > 0 {
+					if r.StepIndex > prevMaxStep && r.StepIndex <= maxStep {
+						matched = r
+					}
+				} else if i == len(turns)-1 {
+					matched = r
+				}
 			}
 			if matched != nil {
 				u := agyUsage{

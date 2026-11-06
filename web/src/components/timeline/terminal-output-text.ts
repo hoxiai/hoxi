@@ -9,7 +9,6 @@ const ANSI_REGEX =
   // eslint-disable-next-line no-control-regex
   /[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:[;:][0-9]{0,4})*)?[0-9A-ORZcf-nqry=><~]/g;
 
-const utf8FatalDecoder = new TextDecoder("utf-8", { fatal: true });
 let gb18030Decoder: TextDecoder | null | undefined;
 let gbkEncodeMap: Uint16Array | null = null;
 
@@ -92,31 +91,75 @@ function isAllowedRecoveredChar(cp: number): boolean {
   return false;
 }
 
-function isPlausibleRecoveredUTF8(decoded: string): boolean {
-  if (!decoded) return false;
+function isCJKOrFullwidthChar(cp: number): boolean {
+  return (cp >= 0x4e00 && cp <= 0x9fa5) || (cp >= 0x3000 && cp <= 0x303f) || (cp >= 0xff01 && cp <= 0xff5e);
+}
+
+function advanceUTF8DecodeState(
+  bytes: ReadonlyArray<number> | Uint8Array,
+  startIdx: number
+): { nextIdx: number; text: string; cjkCount: number; invalid: boolean } {
+  let idx = startIdx;
+  const len = bytes.length;
+  let text = "";
   let cjkCount = 0;
-  for (let i = 0; i < decoded.length; i++) {
-    const cp = decoded.charCodeAt(i);
-    if (!isAllowedRecoveredChar(cp)) return false;
-    if ((cp >= 0x4e00 && cp <= 0x9fa5) || (cp >= 0x3000 && cp <= 0x303f) || (cp >= 0xff01 && cp <= 0xff5e)) {
-      cjkCount++;
+
+  while (idx < len) {
+    const b0 = bytes[idx];
+    let cp = 0;
+    if (b0 < 0x80) {
+      if (!isAllowedRecoveredChar(b0)) {
+        return { nextIdx: idx, text, cjkCount, invalid: true };
+      }
+      cp = b0;
+      idx += 1;
+    } else if (b0 >= 0xc2 && b0 <= 0xdf) {
+      if (idx + 1 >= len) break;
+      const b1 = bytes[idx + 1];
+      if ((b1 & 0xc0) !== 0x80) {
+        return { nextIdx: idx, text, cjkCount, invalid: true };
+      }
+      cp = ((b0 & 0x1f) << 6) | (b1 & 0x3f);
+      if (!isAllowedRecoveredChar(cp)) {
+        return { nextIdx: idx, text, cjkCount, invalid: true };
+      }
+      idx += 2;
+    } else if (b0 >= 0xe0 && b0 <= 0xef) {
+      if (idx + 1 < len) {
+        const b1 = bytes[idx + 1];
+        if ((b1 & 0xc0) !== 0x80 || (b0 === 0xe0 && b1 < 0xa0) || (b0 === 0xed && b1 >= 0xa0)) {
+          return { nextIdx: idx, text, cjkCount, invalid: true };
+        }
+      }
+      if (idx + 2 >= len) break;
+      const b1 = bytes[idx + 1];
+      const b2 = bytes[idx + 2];
+      if ((b2 & 0xc0) !== 0x80) {
+        return { nextIdx: idx, text, cjkCount, invalid: true };
+      }
+      cp = ((b0 & 0x0f) << 12) | ((b1 & 0x3f) << 6) | (b2 & 0x3f);
+      if (!isAllowedRecoveredChar(cp)) {
+        return { nextIdx: idx, text, cjkCount, invalid: true };
+      }
+      if (isCJKOrFullwidthChar(cp)) cjkCount++;
+      idx += 3;
+    } else {
+      return { nextIdx: idx, text, cjkCount, invalid: true };
     }
+    text += String.fromCharCode(cp);
   }
-  return cjkCount > 0;
+  return { nextIdx: idx, text, cjkCount, invalid: false };
 }
 
 function tryDecodeValidUTF8(bytes: Uint8Array): string | null {
-  if (bytes.length < 2) return null;
-  try {
-    const decoded = utf8FatalDecoder.decode(bytes);
-    return isPlausibleRecoveredUTF8(decoded) ? decoded : null;
-  } catch {
-    return null;
-  }
+  if (bytes.length < 3) return null;
+  const res = advanceUTF8DecodeState(bytes, 0);
+  if (res.invalid || res.nextIdx !== bytes.length || res.cjkCount === 0) return null;
+  return res.text;
 }
 
 function tryRecoverLatin1OrCP1252Run(run: string): string | null {
-  if (run.length < 2) return null;
+  if (run.length < 3) return null;
   const bytes = new Uint8Array(run.length);
   let hasLatin1Supplement = false;
   for (let i = 0; i < run.length; i++) {
@@ -131,16 +174,7 @@ function tryRecoverLatin1OrCP1252Run(run: string): string | null {
     }
   }
   if (!hasLatin1Supplement) return null;
-  const utf8 = tryDecodeValidUTF8(bytes);
-  if (utf8 !== null) return utf8;
-  const decoder = getGB18030Decoder();
-  if (decoder && bytes.length >= 2) {
-    const gbk = decoder.decode(bytes);
-    if (!gbk.includes("\uFFFD") && isPlausibleRecoveredUTF8(gbk)) {
-      return gbk;
-    }
-  }
-  return null;
+  return tryDecodeValidUTF8(bytes);
 }
 
 function recoverGBKMojibakeSubrun(
@@ -169,6 +203,9 @@ function recoverGBKMojibakeSubrun(
     }
 
     const byteList: number[] = [];
+    let decodedIdx = 0;
+    let decodedText = "";
+    let decodedCJK = 0;
     let hasHint = false;
     let bestQ = -1;
     let bestText = "";
@@ -193,29 +230,31 @@ function recoverGBKMojibakeSubrun(
         }
       }
 
-      if (hasHint && byteList.length >= 3) {
-        const candidate = tryDecodeValidUTF8(Uint8Array.from(byteList));
-        if (candidate !== null) {
+      const step = advanceUTF8DecodeState(byteList, decodedIdx);
+      if (step.invalid) break;
+      decodedIdx = step.nextIdx;
+      if (step.text) decodedText += step.text;
+      decodedCJK += step.cjkCount;
+
+      if (hasHint && decodedCJK > 0) {
+        if (decodedIdx === byteList.length) {
           bestQ = q + 1;
-          bestText = candidate;
+          bestText = decodedText;
           bestConsumedFault = false;
           bytesSinceValid = 0;
         } else if (
           q + 1 === len &&
           trailingFault &&
-          byteList.length >= 5 &&
-          byteList[byteList.length - 2] >= 0xe3 &&
-          byteList[byteList.length - 2] <= 0xef &&
-          byteList[byteList.length - 1] >= 0x80 &&
-          byteList[byteList.length - 1] <= 0xbf
+          byteList.length - decodedIdx === 2 &&
+          byteList[decodedIdx] >= 0xe3 &&
+          byteList[decodedIdx] <= 0xef &&
+          byteList[decodedIdx + 1] >= 0x80 &&
+          byteList[decodedIdx + 1] <= 0xbf
         ) {
-          const prefix = tryDecodeValidUTF8(Uint8Array.from(byteList.slice(0, -2)));
-          if (prefix !== null) {
-            bestQ = q + 1;
-            bestText = prefix;
-            bestConsumedFault = true;
-            bytesSinceValid = 0;
-          }
+          bestQ = q + 1;
+          bestText = decodedText;
+          bestConsumedFault = true;
+          bytesSinceValid = 0;
         }
       }
 

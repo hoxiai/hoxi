@@ -45,6 +45,7 @@ type agyEditPayloadCursor struct {
 	activePath     string
 	offset         int64
 	byStep         map[int]agyToolCall
+	cmdByStep      map[int]agyToolCall
 	assigned       map[int]agyToolCall
 	pending        []agyPendingEdit
 }
@@ -53,6 +54,7 @@ func newAgyEditPayloadCursor(conversationID string) *agyEditPayloadCursor {
 	return &agyEditPayloadCursor{
 		conversationID: strings.TrimSpace(conversationID),
 		byStep:         make(map[int]agyToolCall),
+		cmdByStep:      make(map[int]agyToolCall),
 		assigned:       make(map[int]agyToolCall),
 	}
 }
@@ -103,6 +105,33 @@ func (c *agyEditPayloadCursor) lookup(stepIndex int, rawParams map[string]interf
 		c.assigned[stepIndex] = call
 	}
 	return call.Name, call.Args
+}
+
+func (c *agyEditPayloadCursor) lookupCommandSummary(stepIndex int, rawParams map[string]interface{}) map[string]interface{} {
+	if c == nil || stepIndex <= 0 {
+		return nil
+	}
+	c.pull()
+	if call, ok := c.cmdByStep[stepIndex]; ok {
+		return call.Args
+	}
+	if c.hasTranscriptFile() {
+		time.Sleep(30 * time.Millisecond)
+		c.pull()
+		if call, ok := c.cmdByStep[stepIndex]; ok {
+			return call.Args
+		}
+	}
+	rawCmd := strings.TrimSpace(firstString(rawParams["CommandLine"], rawParams["command"], rawParams["cmd"]))
+	if rawCmd != "" {
+		for _, call := range c.cmdByStep {
+			plannedCmd := strings.TrimSpace(firstString(call.Args["CommandLine"], call.Args["command"], call.Args["cmd"]))
+			if plannedCmd == rawCmd {
+				return call.Args
+			}
+		}
+	}
+	return nil
 }
 
 func (c *agyEditPayloadCursor) removePendingByStep(execStep int) {
@@ -195,6 +224,7 @@ func (c *agyEditPayloadCursor) pull() {
 				c.pending = nil
 				if row.StepIndex == 0 {
 					clear(c.byStep)
+					clear(c.cmdByStep)
 					clear(c.assigned)
 				}
 				continue
@@ -205,6 +235,10 @@ func (c *agyEditPayloadCursor) pull() {
 					execStep := row.StepIndex + 1 + i
 					c.byStep[execStep] = call
 					c.pending = append(c.pending, agyPendingEdit{execStep: execStep, call: call})
+				} else if strings.EqualFold(call.Name, "run_command") {
+					call.Args = decodeAgyToolArgs(call.Args)
+					execStep := row.StepIndex + 1 + i
+					c.cmdByStep[execStep] = call
 				}
 			}
 		}
@@ -291,6 +325,15 @@ func preserveToolEditInput(next *MessagePart, prev MessagePart) {
 			next.Tool = prev.Tool
 		}
 	}
+	if next.Tool == "bash" && prev.Tool == "bash" {
+		if firstString(next.State.Input["toolSummary"], next.State.Input["toolAction"], next.State.Input["description"]) == "" &&
+			firstString(prev.State.Input["toolSummary"], prev.State.Input["toolAction"], prev.State.Input["description"]) != "" {
+			next.State.Input = mergeAgyEditParams(next.State.Input, prev.State.Input)
+		}
+		if next.State.Title == "" && prev.State.Title != "" {
+			next.State.Title = prev.State.Title
+		}
+	}
 }
 
 func parseAgyToolStepIndex(partID string) (int, bool) {
@@ -322,10 +365,16 @@ func partHasTruncatedOrQuotedEditPayload(input map[string]interface{}) bool {
 }
 
 func partNeedsAgyEditHydration(part MessagePart) bool {
-	if part.Type != "tool" || part.State == nil || (part.Tool != "edit" && part.Tool != "write") {
+	if part.Type != "tool" || part.State == nil {
 		return false
 	}
 	if _, ok := parseAgyToolStepIndex(part.ID); !ok {
+		return false
+	}
+	if part.Tool == "bash" {
+		return firstString(part.State.Input["toolSummary"], part.State.Input["toolAction"], part.State.Input["description"]) == ""
+	}
+	if part.Tool != "edit" && part.Tool != "write" {
 		return false
 	}
 	return agyParamsLackEditPayload(part.State.Input) || partHasTruncatedOrQuotedEditPayload(part.State.Input)
@@ -351,7 +400,7 @@ func loadAgyTranscriptEditsByStep(conversationID string) map[int]agyToolCall {
 					continue
 				}
 				for i, call := range row.ToolCalls {
-					if agyEditPayloadNames[call.Name] {
+					if agyEditPayloadNames[call.Name] || strings.EqualFold(call.Name, "run_command") {
 						call.Args = decodeAgyToolArgs(call.Args)
 						byStep[row.StepIndex+1+i] = call
 					}
@@ -367,7 +416,7 @@ func loadAgyTranscriptEditsByStep(conversationID string) map[int]agyToolCall {
 }
 
 // hydrateAgyTranscriptEditParts repairs persisted Antigravity tool parts whose
-// edit payload was omitted on DONE or truncated by compact transcript.jsonl.
+// edit payload or command summary was omitted on stdout or truncated by compact transcript.jsonl.
 func hydrateAgyTranscriptEditParts(externalID string, turns []MessageTurn) bool {
 	needsRepair := false
 	for i := range turns {
@@ -389,11 +438,28 @@ func hydrateAgyTranscriptEditParts(externalID string, turns []MessageTurn) bool 
 	for i := range turns {
 		for j := range turns[i].Parts {
 			part := &turns[i].Parts[j]
-			if part.Type != "tool" || part.State == nil || (part.Tool != "edit" && part.Tool != "write") {
+			if part.Type != "tool" || part.State == nil {
 				continue
 			}
 			stepIdx, ok := parseAgyToolStepIndex(part.ID)
 			if !ok {
+				continue
+			}
+			if part.Tool == "bash" {
+				if call, found := byStep[stepIdx]; found && strings.EqualFold(call.Name, "run_command") && partNeedsAgyEditHydration(*part) {
+					merged := mergeAgyEditParams(part.State.Input, call.Args)
+					_, title, cleanInput := normalizeRunnerTool(call.Name, merged)
+					if !reflect.DeepEqual(part.State.Input, cleanInput) || (part.State.Title == "" && title != "") {
+						part.State.Input = cleanInput
+						if part.State.Title == "" || part.State.Title == "run_command" {
+							part.State.Title = title
+						}
+						changed = true
+					}
+				}
+				continue
+			}
+			if part.Tool != "edit" && part.Tool != "write" {
 				continue
 			}
 			if call, found := byStep[stepIdx]; found && (partNeedsAgyEditHydration(*part) || agyPathsMatch(part.State.Input, call.Args)) {
