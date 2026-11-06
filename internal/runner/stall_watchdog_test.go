@@ -124,6 +124,11 @@ func TestStallWatchdogStopsLongSilence(t *testing.T) {
 }
 
 func TestStallPolicyFromEnv(t *testing.T) {
+	t.Setenv(envStallWarnAfter, "")
+	t.Setenv(envStallAbortAfter, "")
+	if p := stallPolicyFromEnv(); p.warnAfter != 15*time.Minute || p.abortAfter != 0 {
+		t.Fatalf("default policy = %+v, want warn=15m abort=0", p)
+	}
 	t.Setenv(envStallWarnAfter, "90s")
 	t.Setenv(envStallAbortAfter, "30s")
 	p := stallPolicyFromEnv()
@@ -133,6 +138,44 @@ func TestStallPolicyFromEnv(t *testing.T) {
 	t.Setenv(envStallAbortAfter, "0")
 	if p := stallPolicyFromEnv(); p.abortAfter != 0 {
 		t.Fatalf("abortAfter = %s, want disabled", p.abortAfter)
+	}
+}
+
+func TestStallWatchdogKeepsTurnWithRunningSubagentTask(t *testing.T) {
+	svc := newStallTestService(t)
+	now := time.Now()
+	ap := registerStallTestProcess(svc, "ses_subagent_work", now.Add(-45*time.Minute))
+	if err := svc.store.Put(SessionRecord{
+		ID: "ses_subagent_work",
+		Turns: []MessageTurn{
+			{
+				Info: MessageInfo{ID: "msg_a_1", SessionID: "ses_subagent_work", Role: "assistant"},
+				Parts: []MessagePart{
+					{
+						ID:        "prt_task_1",
+						SessionID: "ses_subagent_work",
+						MessageID: "msg_a_1",
+						Type:      "tool",
+						Tool:      "task",
+						State: &ToolState{
+							Status:   "running",
+							Metadata: map[string]interface{}{"sessionId": "ses_child_active"},
+						},
+					},
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	svc.setChildBusy("ses_child_active", true)
+	defer svc.setChildBusy("ses_child_active", false)
+
+	if !svc.checkStall(ap, now) || ap.wasAborted() {
+		t.Fatal("watchdog aborted a turn while its subagent task was still running")
+	}
+	if ap.stall.stalledSince.Load() == 0 {
+		t.Fatal("expected stall warning to be set while silent past warnAfter")
 	}
 }
 

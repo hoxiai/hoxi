@@ -4,7 +4,7 @@ Hoxi provides three browser modes in the right-hand Browser inspector and for th
 
 1. **Desktop Window (`window`, default)**: Opens a real, visible desktop Chrome window backed by a persistent profile at `~/.hoxi/browser-profile` (`hoxipaths.BrowserProfileDir()`). Sign-ins, cookies, and extensions persist across sessions and restarts, native file pickers/downloads and full Chrome DevTools work out of the box, and the inspector does not force viewport emulation or stream live JPEG frames unless you explicitly toggle **Show live preview**.
 2. **Daily Chrome (`chrome`, Chrome Link extension)**: Connects to tabs in your already-open daily Chrome via the unpacked `extensions/chrome` MV3 extension. After the first 2-minute pairing code handshake, a persistent `linkToken` is saved in `chrome.storage.local` and `~/.hoxi/browser-profile/.hoxi-extension-token`, allowing one-click reconnect without entering a new code. Supports opening/switching/closing secondary tabs and automatically follows newly opened child/popup tabs (`openerTabId`).
-3. **Headless Sandbox (`headless`, or `HOXI_BROWSER_HEADLESS=1`)**: Runs an isolated headless Chrome with a temporary profile that is deleted on close or after 30 minutes of inactivity, streaming a live CDP JPEG screencast into the inspector panel.
+3. **Headless Sandbox (`headless`, or `HOXI_BROWSER_HEADLESS=1`)**: Runs an isolated headless Chrome with a temporary profile that is deleted on close or after 60 minutes of inactivity, streaming a live CDP JPEG screencast into the inspector panel.
 
 ## Usage
 
@@ -157,7 +157,7 @@ disclose secrets.
   - **Downloads**: Tracked in `/api/hoxi/browser/workflows` (up to 32 items, 512 MiB per file) and managed through `POST /api/hoxi/browser/download-{save,open,reveal,cancel}` with temporary storage recorded in `~/.hoxi/reclaim.json`.
   - **Diagnostics**: Console errors/warnings, uncaught exceptions, and failed HTTP/network requests (up to 100 items per tab, URLs sanitized without query/credentials) are exposed at `GET|POST /api/hoxi/browser/diagnostics` (`POST` clears the buffer).
 - Desktop Window (`window`) mode persists cookies and sign-ins in `~/.hoxi/browser-profile`; Headless Sandbox (`headless`) profiles are temporary and deleted on close; Chrome Link preserves the user's daily Chrome profile.
-- An isolated browser left unused for 30 minutes is closed the same way as
+- An isolated browser left unused for 60 minutes while its session is idle is closed the same way as
   `close`: Chrome stops and its temporary profile is deleted, so open pages and
   sign-ins are lost. Use means any UI or agent `state`, `frame` or `action`
   request, plus an open `stream` connection (idle time starts again when the

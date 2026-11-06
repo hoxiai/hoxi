@@ -119,7 +119,7 @@ func TestIdleBrowserIsClosedAndExplained(t *testing.T) {
 	}
 	for _, agent := range []bool{false, true} {
 		state := decodeState(t, request(t, s, dir, "ses_idle", "state", "", agent))
-		if state["idleClosed"] != true || state["idleMinutes"] != float64(30) || len(state["tabs"].([]any)) != 0 {
+		if state["idleClosed"] != true || state["idleMinutes"] != float64(60) || len(state["tabs"].([]any)) != 0 {
 			t.Fatalf("agent=%v: idle closure not reported: %v", agent, state)
 		}
 	}
@@ -183,6 +183,19 @@ func TestIdleCloseKeepsManualStreamChromeLinkAndBusy(t *testing.T) {
 	<-sc.gate
 	if n := s.closeIdleScopes(); n != 1 {
 		t.Fatal("finished operation still kept the browser")
+	}
+
+	busySession := true
+	s.SetSessionBusyChecker(func(sid string) bool { return sid == "session_busy" && busySession })
+	busyKey := scopeKey{"/tmp", "session_busy"}
+	busyScope := fakeRunning(t, s, busyKey)
+	clock.Advance(2 * idleTimeout)
+	if n := s.closeIdleScopes(); n != 0 || busyScope.closed {
+		t.Fatal("closed a browser while its owning session was still busy")
+	}
+	busySession = false
+	if n := s.closeIdleScopes(); n != 1 || !busyScope.closed {
+		t.Fatal("idle browser kept after its session became idle")
 	}
 }
 

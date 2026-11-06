@@ -52,7 +52,7 @@ export const inspector = {
     diagnosticsEmpty: "No recorded errors",
     consoleError: "Console",
     failedRequest: "Request",
-    temporaryLoginHint: "Temporary browser · closing it or 30 minutes without use clears pages and sign-ins",
+    temporaryLoginHint: "Temporary browser · closing it or 60 minutes without use clears pages and sign-ins",
     persistentLoginHint: "Desktop Chrome window · sign-ins, cookies, and extensions persist across sessions",
     modeWindow: "Desktop window",
     modeChrome: "Daily Chrome",

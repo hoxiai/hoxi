@@ -97,6 +97,7 @@ type Service struct {
 	closeDone      chan struct{}
 	resolveSession func(sessionID, directory string) (string, error)
 	resolveProfile func(sessionID, directory string) string
+	isSessionBusy  func(sessionID string) bool
 	bridgeURL      string
 	ledger         *reclaim.Ledger
 	now            func() time.Time
@@ -121,6 +122,14 @@ func (s *Service) SetLedger(ledger *reclaim.Ledger) {
 func (s *Service) SetSessionResolver(resolve func(sessionID, directory string) (string, error)) {
 	s.mu.Lock()
 	s.resolveSession = resolve
+	s.mu.Unlock()
+}
+
+// SetSessionBusyChecker lets the host keep a session's browser alive while the
+// session itself is still executing a turn.
+func (s *Service) SetSessionBusyChecker(fn func(sessionID string) bool) {
+	s.mu.Lock()
+	s.isSessionBusy = fn
 	s.mu.Unlock()
 }
 

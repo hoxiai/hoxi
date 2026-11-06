@@ -53,7 +53,7 @@ export const inspector: InspectorI18n = {
     diagnosticsEmpty: "暂无错误记录",
     consoleError: "控制台",
     failedRequest: "请求",
-    temporaryLoginHint: "临时浏览器 · 关闭或闲置 30 分钟后，打开的网页和登录态会清除",
+    temporaryLoginHint: "临时浏览器 · 关闭或闲置 60 分钟后，打开的网页和登录态会清除",
     persistentLoginHint: "桌面 Chrome 窗口 · 登录态、Cookie 与扩展跨会话持久保留",
     modeWindow: "桌面窗口",
     modeChrome: "连接日常 Chrome",

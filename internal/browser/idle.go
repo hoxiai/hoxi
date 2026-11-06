@@ -5,7 +5,7 @@ import "time"
 // Each isolated Chrome costs close to 1 GB and sessions rarely close their
 // browser explicitly, so one that nobody has used for idleTimeout is stopped.
 const (
-	idleTimeout       = 30 * time.Minute
+	idleTimeout       = 60 * time.Minute
 	idleCheckInterval = time.Minute
 	// Only the inspector's explanation is lost when a notice is dropped.
 	maxIdleNotices = 64
@@ -44,6 +44,7 @@ func (s *Service) closeIdleScopes() int {
 		return 0
 	}
 	now := s.now()
+	isBusy := s.isSessionBusy
 	for key, sc := range s.scopes {
 		select {
 		case sc.gate <- struct{}{}:
@@ -51,7 +52,7 @@ func (s *Service) closeIdleScopes() int {
 			continue
 		}
 		if sc.closed || sc.browser == nil || sc.window || sc.manual || sc.extension != nil || sc.pairToken != "" ||
-			sc.stream != nil || now.Sub(sc.lastUsed) < idleTimeout {
+			sc.stream != nil || (isBusy != nil && isBusy(key.session)) || now.Sub(sc.lastUsed) < idleTimeout {
 			<-sc.gate
 			continue
 		}

@@ -2,6 +2,7 @@ package runner
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"slices"
 	"strings"
@@ -13,12 +14,13 @@ import (
 // The stall watchdog measures silence, not total runtime: a busy turn whose
 // CLI (or OpenCode session) has produced no output for warnAfter is flagged
 // as possibly stuck (status bar Attention + a `session.stall` event), and is
-// stopped after abortAfter. Long but chatty turns are never cut short, and
-// time spent waiting on the user's approval does not count as silence.
+// stopped after abortAfter (when enabled and no tool subprocess is still
+// running). Long but chatty turns are never cut short, and time spent waiting
+// on the user's approval does not count as silence.
 
 const (
-	defaultStallWarnAfter  = 5 * time.Minute
-	defaultStallAbortAfter = 30 * time.Minute
+	defaultStallWarnAfter  = 15 * time.Minute
+	defaultStallAbortAfter = 0
 
 	// Durations such as "90s" or "10m"; "0" disables warning / auto-stop.
 	envStallWarnAfter  = "HOXI_RUNNER_STALL_WARN"
@@ -300,7 +302,7 @@ func (s *Service) checkStall(ap *activeProcess, now time.Time) bool {
 	}
 	last := ap.stall.lastActivity.Load()
 	idle := now.Sub(time.UnixMilli(last))
-	if s.stall.abortAfter > 0 && idle >= s.stall.abortAfter {
+	if s.stall.abortAfter > 0 && idle >= s.stall.abortAfter && !s.hasRunningToolSubprocess(ap) {
 		s.abortStalled(ap, idle)
 		return false
 	}
@@ -308,6 +310,78 @@ func (s *Service) checkStall(ap *activeProcess, now time.Time) bool {
 		s.publishStall(ap)
 	}
 	return true
+}
+
+// hasRunningToolSubprocess reports whether the turn has an active tool call or
+// subagent whose underlying OS process or child session is still running.
+func (s *Service) hasRunningToolSubprocess(ap *activeProcess) bool {
+	if ap == nil || ap.sessionID == "" {
+		return false
+	}
+	rec, ok := s.store.Get(ap.sessionID)
+	if !ok || len(rec.Turns) == 0 {
+		return false
+	}
+	var runningBashCalls []string
+	hasRunningTool := false
+	for i := len(rec.Turns) - 1; i >= 0; i-- {
+		t := rec.Turns[i]
+		if t.Info.Role == "user" && !isInternalRecoveryMessageID(t.Info.ID) {
+			break
+		}
+		for _, p := range t.Parts {
+			if p.Type != "tool" || p.State == nil || p.State.Status != "running" {
+				continue
+			}
+			hasRunningTool = true
+			if p.Tool == "bash" && strings.TrimSpace(p.CallID) != "" {
+				runningBashCalls = append(runningBashCalls, strings.TrimSpace(p.CallID))
+			}
+			if p.Tool == "task" && p.State.Metadata != nil {
+				if childID := firstString(p.State.Metadata["sessionId"]); childID != "" && s.isSessionBusy(childID) {
+					return true
+				}
+			}
+		}
+	}
+	if !hasRunningTool {
+		return false
+	}
+	if rootPID := s.runtimeRootPID(ap.sessionID); rootPID > 1 {
+		byPID, children := readProcessSnapshots()
+		return hasLiveChildToolProcess(rootPID, byPID, children)
+	}
+	if rec.Runtime == "opencode" && s.openCode != nil && len(runningBashCalls) > 0 {
+		if u, err := url.Parse(strings.TrimSpace(s.openCode.BaseURL())); err == nil && u.Port() != "" {
+			byPID, children := readProcessSnapshots()
+			for _, callID := range runningBashCalls {
+				marker := openCodeStopMarker(rec.ExternalID, callID)
+				if findOpenCodeShellGroup(byPID, children, u.Port(), marker) > 1 {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func hasLiveChildToolProcess(rootPID int, byPID map[int]procSnapshot, children map[int][]int) bool {
+	if rootPID <= 1 || len(byPID) == 0 {
+		return false
+	}
+	parentPID := rootPID
+	if direct := children[parentPID]; len(direct) == 1 {
+		only := direct[0]
+		if isAgentRuntimeProcessArgs(byPID[only].args) {
+			parentPID = only
+		}
+	}
+	for _, c := range children[parentPID] {
+		if c > 1 && !isNonToolHelperArgs(byPID[c].args) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) awaitingUser(ap *activeProcess) bool {
