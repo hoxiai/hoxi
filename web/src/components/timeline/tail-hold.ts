@@ -1,5 +1,5 @@
 // web/src/components/timeline/tail-hold.ts
-import { type Accessor, createRenderEffect, createSignal, on, onCleanup } from "solid-js";
+import { type Accessor, createEffect, createRenderEffect, createSignal, on, onCleanup } from "solid-js";
 
 /**
  * Height bookkeeping for the hand-off from the waiting row ("Thinking…") to
@@ -77,6 +77,14 @@ export function createTailHeightHold(options: {
       } else if (prev[0]) {
         setSpacer(state.handOff());
       }
+    })
+  );
+
+  // Reconcile against the newly mounted output immediately after render effects
+  // finish (before microtasks or paint) so the hand-off spacer never overshoots.
+  createEffect(
+    on([options.waiting, options.sessionID, options.busy], () => {
+      measure();
     })
   );
 

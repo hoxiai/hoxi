@@ -1,14 +1,16 @@
 // web/src/components/timeline/Composer.tsx
-import { createComputed, createEffect, createMemo, createSignal, on, onCleanup, Show } from "solid-js";
+import { batch, createComputed, createEffect, createMemo, createSignal, on, onCleanup, Show } from "solid-js";
 import {
   appSettings,
   bindComposerQueuedEditBridge,
   cancelQueuedEditInComposer,
   defaultWorkspaceDir,
   drainNextQueuedPrompt,
+  expandContextMentions,
   forkFromMessage,
   getComposerSkill,
   getComposerSkillNotice,
+  hasAsyncContextMentions,
   isSessionBusy,
   isSessionDeleted,
   loadSkillDetail,
@@ -310,20 +312,18 @@ export default function Composer() {
     !switchingSandbox() &&
     !choosingFolder();
 
+  const formatPayloadWithReviews = (raw: string, comments: Array<{ id: string; file: string; line?: number; body: string }>): { prompt: string; reviewIDs: string[] } => {
+    const reviewIDs = comments.map((comment) => comment.id);
+    if (comments.length === 0) return { prompt: raw, reviewIDs };
+    const reviewLines = comments.map((c) => `- \`${c.line ? `${c.file}:${c.line}` : c.file}\`: ${c.body}`);
+    const header = `Please address the following inline code review comments:\n${reviewLines.join("\n")}`;
+    return { prompt: raw ? `${header}\n\n${raw}` : header, reviewIDs };
+  };
+
   const buildPayloadWithReviews = async (rawInput: string, sid: string | null): Promise<{ prompt: string; reviewIDs: string[] }> => {
     const comments = (sid ? workspace.reviewCommentsBySession[sid] ?? [] : []).map((comment) => ({ ...comment }));
     const raw = await resolveContextMentionsForSend(rawInput, sid);
-    const reviewIDs = comments.map((comment) => comment.id);
-    if (comments.length === 0) return { prompt: raw, reviewIDs };
-
-    const reviewLines = comments.map((c) => {
-      const loc = c.line ? `${c.file}:${c.line}` : c.file;
-      return `- \`${loc}\`: ${c.body}`;
-    });
-    const header =
-      "Please address the following inline code review comments:\n" +
-      reviewLines.join("\n");
-    return { prompt: raw ? `${header}\n\n${raw}` : header, reviewIDs };
+    return formatPayloadWithReviews(raw, comments);
   };
 
   const onSend = async () => {
@@ -366,8 +366,6 @@ export default function Composer() {
     if (textareaRef?.closest(".chat-composer-glass")?.contains(document.activeElement)) {
       textareaRef.focus({ preventScroll: true });
     }
-    setSending(true);
-    ac.reset();
     const stashedBeforeQueuedEdit = queuedEditBridge.popStashedBeforeSend(draftSessionID);
     let cleared = false;
     const clearComposerInput = (resolvedID?: string) => {
@@ -390,17 +388,28 @@ export default function Composer() {
         draftSync.clearCurrentDraft(targetSessionID, draftDirectory);
       }
     };
-    if (draftSessionID) {
-      clearComposerInput();
-    }
     try {
-      const payload = await buildPayloadWithReviews(withPastes, draftSessionID);
-      const id = await submitSessionPrompt(payload.prompt, draftSessionID, {
-        directory: draftDirectory,
-        attachments,
-        skillSelection: currentSkill,
-        onTurnStaged: clearComposerInput,
-      });
+      const needsAsync = hasAsyncContextMentions(withPastes);
+      if (needsAsync) {
+        batch(() => {
+          setSending(true);
+          ac.reset();
+          if (draftSessionID) clearComposerInput();
+        });
+      }
+      const comments = (draftSessionID ? workspace.reviewCommentsBySession[draftSessionID] ?? [] : []).map((c) => ({ ...c }));
+      const payload = needsAsync
+        ? await buildPayloadWithReviews(withPastes, draftSessionID)
+        : formatPayloadWithReviews(expandContextMentions(withPastes, draftSessionID), comments);
+      const sendOpts = { directory: draftDirectory, attachments, skillSelection: currentSkill, onTurnStaged: clearComposerInput };
+      const id = await (needsAsync
+        ? submitSessionPrompt(payload.prompt, draftSessionID, sendOpts)
+        : batch(() => {
+            setSending(true);
+            ac.reset();
+            if (draftSessionID) clearComposerInput();
+            return submitSessionPrompt(payload.prompt, draftSessionID, sendOpts);
+          }));
       clearComposerInput(id);
       for (const commentID of payload.reviewIDs) removeReviewComment(id, commentID);
     } catch (err) {

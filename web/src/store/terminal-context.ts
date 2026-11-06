@@ -462,6 +462,15 @@ export function inspectPromptContextMentions(
   return chips;
 }
 
+export function hasAsyncContextMentions(rawPrompt: string): boolean {
+  if (!rawPrompt || !rawPrompt.includes("@")) return false;
+  return (
+    /(?:^|[^a-zA-Z0-9_])@changes\b/.test(rawPrompt) ||
+    /@session:([a-zA-Z0-9_-]+)/.test(rawPrompt) ||
+    /@worktree:([a-zA-Z0-9_-]+)/.test(rawPrompt)
+  );
+}
+
 /**
  * Ensures any referenced `@changes`, `@session:<id>`, or `@worktree:<id>` data is fetched
  * before expanding context mentions on send.

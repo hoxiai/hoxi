@@ -1,4 +1,4 @@
-import { createEffect, createSignal, on, onCleanup, Show, untrack, type Accessor, type JSX } from "solid-js";
+import { createComputed, createSignal, on, onCleanup, Show, untrack, type Accessor, type JSX } from "solid-js";
 
 export type PresenceState = "enter" | "open" | "exit" | "closed";
 
@@ -34,12 +34,16 @@ export function createPresence(
     return raw ?? DEFAULT_EXIT_MS;
   };
 
-  createEffect(() => {
+  createComputed(() => {
     const open = when();
     clear();
 
     if (open) {
       setMounted(true);
+      if (typeof requestAnimationFrame !== "function") {
+        setState("open");
+        return;
+      }
       setState("enter");
       frame = requestAnimationFrame(() => {
         frame = requestAnimationFrame(() => {
@@ -100,7 +104,7 @@ export function createDeferredOpen(
     setVisual(true);
   };
 
-  createEffect(
+  createComputed(
     on(
       open,
       (next) => {

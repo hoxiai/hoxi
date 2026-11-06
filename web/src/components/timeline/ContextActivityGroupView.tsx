@@ -2,6 +2,7 @@
 import {
   createEffect,
   createMemo,
+  createRenderEffect,
   createSignal,
   For,
   on,
@@ -151,7 +152,7 @@ export default function ContextActivityGroupView(props: {
   const visibleSteps = createMemo(() => displayParts().slice(-stepLimit()));
 
   // Sync open state across virtualized/reused turns, new-task auto-collapse, or setting changes.
-  createEffect(() => {
+  createRenderEffect(() => {
     const key = groupKey();
     if (!key) return;
     const nextOpen = resolveOpen();

@@ -132,8 +132,12 @@ export function createSessionScrollController(options: {
       pending = { bottom: true, top: 0, offset: 0 };
       if (sessionID) rememberPosition(sessionID, pending);
       options.scroll.resume();
-      applyPending();
-      if (ready) scheduleRestore();
+      if (applyPending()) {
+        pending = undefined;
+        capture();
+      } else if (ready) {
+        scheduleRestore();
+      }
     },
     ready(turnIDs: string[], loading: boolean) {
       if (!sessionID) return;

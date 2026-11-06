@@ -2,6 +2,7 @@
 import {
   createEffect,
   createMemo,
+  createRenderEffect,
   createSignal,
   For,
   on,
@@ -257,6 +258,14 @@ export default function MessageStream(props: { hidden?: boolean }) {
 
   // A prompt the user just sent (or queued), or selecting an active-task session,
   // always brings the live tail back into view; automatic queue drains do not.
+  // Mark followTail before child render effects so any previous activity group
+  // folds in the same render pass before jumpToBottom() reads layout.
+  createRenderEffect(on(timelineFollowRequest, (request) => {
+    const sessionID = request?.sessionID;
+    if (!sessionID || sessionID !== workspace.activeSessionID) return;
+    scroll.resume();
+  }, { defer: true }));
+
   createEffect(on(timelineFollowRequest, (request) => {
     const sessionID = request?.sessionID;
     if (!sessionID || sessionID !== workspace.activeSessionID) return;

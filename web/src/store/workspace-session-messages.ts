@@ -16,11 +16,11 @@ import {
   noteTurnManualModelSelection,
   rememberTurnDispatch,
 } from "./auto-failover";
-import { newIsolatedSession, waitForSessionSandbox } from "./session-sandbox";
+import { hasPendingSessionSandbox, newIsolatedSession, waitForSessionSandbox } from "./session-sandbox";
 import { buildCombinedSystemPrompt } from "./settings";
 import { setWorkspace, workspace, type ReasoningEffort, type SelectedModel } from "./workspace-state";
 import { initializeSessionAI, parseModelString, sessionAIConfig } from "./session-ai";
-import { loadSessionMessages, replaceSession } from "./workspace-sessions";
+import { cancelPendingSessionMessageLoads, loadSessionMessages, replaceSession } from "./workspace-sessions";
 import { renameSessionTitle } from "./session-lifecycle";
 import { buildWorkspaceFoldersSystemPrompt, normalizeFolderPath, workspaceFoldersForDir } from "./workspace-folders";
 import { isSessionBusy, isSessionDeleted, requestTimelineFollow, sessionDirectory, sessionRuntimeForID, timelineFollowRequest } from "./session-query";
@@ -179,7 +179,7 @@ export async function dispatchSessionPrompt(
       .filter(Boolean)
       .join("\n\n") || undefined;
 
-  if (id) {
+  if (id && hasPendingSessionSandbox(id)) {
     await waitForSessionSandbox(id);
     if (isSessionDeleted(id)) throw new Error(t("timeline.sessionUnavailable"));
   }
@@ -227,6 +227,7 @@ export async function dispatchSessionPrompt(
       !hasPriorUserTurn ||
       isPlaceholderSessionTitle(currentSessionObj?.title);
     batch(() => {
+      cancelPendingSessionMessageLoads(sessionID);
       if (currentSessionObj && revertBoundary) {
         replaceSession({ ...currentSessionObj, revert: undefined });
       }

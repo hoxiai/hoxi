@@ -260,6 +260,11 @@ function idleTurnIDs(sessionID: string): Set<string> | undefined {
 
 const loadRequestRevisions = new Map<string, number>();
 
+export function cancelPendingSessionMessageLoads(sessionID: string): void {
+  if (!sessionID) return;
+  loadRequestRevisions.set(sessionID, (loadRequestRevisions.get(sessionID) ?? 0) + 1);
+}
+
 // Subagent transcripts stay whole: parent diff scoping and inline timelines scan them.
 function historyLimitFor(sessionID: string, full?: boolean): number | "all" {
   if (full || workspace.sessions.find((s) => s.id === sessionID)?.parentID) return "all";

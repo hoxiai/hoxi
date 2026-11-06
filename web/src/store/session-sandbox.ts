@@ -38,6 +38,10 @@ export function startNewThreadDraft(): void {
     newThreadRequest: workspace.newThreadRequest + 1 });
 }
 
+export function hasPendingSessionSandbox(sessionID: string): boolean {
+  return pendingSandboxChanges.has(sessionID);
+}
+
 export async function waitForSessionSandbox(sessionID: string): Promise<void> {
   await pendingSandboxChanges.get(sessionID);
 }

@@ -74,6 +74,16 @@ async function checkSend(busy: boolean, width: number, completedTools = 1, empty
     const button = Array.from(composer.querySelectorAll("button"))
       .find((item) => busy ? item.title === t("timeline.queueSend") : item.title.startsWith(`${t("timeline.send")} (`))!;
     button.focus(); button.click();
+    if (!busy && completedTools > 1) {
+      assertTrue(
+        !original.querySelector("[data-activity-group-body]"),
+        "completed activity group must fold synchronously in the same render pass as send"
+      );
+      assertTrue(
+        scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop < 2,
+        "scrollTop must be pinned to the post-collapse height synchronously on send"
+      );
+    }
     const samples: Array<{ top: number; height: number; distance: number }> = [];
     for (let i = 0; i < 22; i++) {
       if (!busy && i === 5) {

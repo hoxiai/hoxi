@@ -1,10 +1,17 @@
+import { batch, createEffect, createRenderEffect, createRoot, createSignal } from "solid-js";
 import { reconcile, unwrap } from "solid-js/store";
+import { isServer } from "solid-js/web";
+import { createPresence } from "../components/motion/Presence";
 import { createSessionScrollController } from "../components/timeline/session-scroll";
+import { createTailHeightHold, createTailHoldState } from "../components/timeline/tail-hold";
 import { createTimelineScroll } from "../components/timeline/timeline-scroll";
 import { hoxiAPI } from "../services/api";
 import {
+  dispatchSessionPrompt,
   hydratedSessionIDs,
+  isSessionBusy,
   isSessionTaskActive,
+  loadSessionMessages,
   selectSession,
   setWorkspace,
   timelineFollowRequest,
@@ -210,6 +217,7 @@ describe("Session reading restoration", () => {
       controller.followToBottom();
       assertEqual(el.scrollTop, 1600);
       assertEqual(scroll.isFollowing(), true);
+      assertEqual(controller.isRestoring(), false);
       flush();
 
       // Switching into a background-busy session D that has 1 partial SSE turn
@@ -303,6 +311,131 @@ describe("Session reading restoration", () => {
       setWorkspace(reconcile(saved));
       hoxiAPI.getMessages = origGetMessages;
       hoxiAPI.listPermissions = origGetPending;
+      hoxiAPI.getSessionDiff = origGetDiffs;
+    }
+  });
+
+  it("unmounts 0ms Presence bodies in the render phase and reconciles tailHold spacer before effects finish", () => {
+    const state = createTailHoldState();
+    assertEqual(state.measure(1000, 58, true), 0);
+    assertEqual(state.handOff(), 58);
+    // When the new reply (+70px) replaces the waiting row (-58px) for a natural height of 1012px,
+    // immediate post-render measurement clamps the 58px hand-off spacer down to 0px before paint.
+    assertEqual(state.measure(1012 + 58, 0, false), 0);
+
+    // When the new reply (+40px) is shorter than the waiting row (-58px) for a natural height of 982px,
+    // immediate post-render measurement clamps the spacer to the exact 18px difference.
+    assertEqual(state.measure(1000, 58, true), 0);
+    assertEqual(state.handOff(), 58);
+    assertEqual(state.measure(982 + 58, 0, false), 18);
+
+    // Node's SSR runtime intentionally does not rerun reactive computations after mount.
+    if (isServer) return;
+
+    let dispose = () => {};
+    try {
+      const [open, setOpen] = createSignal(true);
+      const [exitMs, setExitMs] = createSignal(180);
+      const [sessionID] = createSignal<string | null>("ses_tail_hold");
+      const [waiting, setWaiting] = createSignal(true);
+      const [busy] = createSignal(true);
+      let mountedWhenEffectRan = true;
+      let naturalHeight = 1000;
+      let rowHeight = 58;
+
+      const { presence, hold, listEl } = createRoot((d) => {
+        dispose = d;
+        const p = createPresence(open, exitMs);
+        createEffect(() => {
+          if (!open()) {
+            mountedWhenEffectRan = p.mounted();
+          }
+        });
+
+        const h = createTailHeightHold({ sessionID, waiting, busy });
+        const list = {
+          get offsetHeight() {
+            return naturalHeight + h.spacer();
+          },
+        } as unknown as HTMLElement;
+        const row = {
+          get offsetHeight() {
+            return rowHeight;
+          },
+        } as unknown as HTMLElement;
+        h.list(list);
+        h.row(row);
+        createRenderEffect(() => {
+          if (!waiting()) {
+            rowHeight = 0;
+            naturalHeight = 1012;
+          }
+        });
+        return { presence: p, hold: h, listEl: list };
+      });
+
+      batch(() => {
+        setExitMs(0);
+        setOpen(false);
+      });
+      assertEqual(presence.mounted(), false);
+      assertEqual(mountedWhenEffectRan, false);
+
+      setWaiting(false);
+      assertEqual(hold.spacer(), 0);
+      assertEqual(listEl.offsetHeight, 1012);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("stages follow-up turns synchronously and invalidates stale pre-send message loads", async () => {
+    const saved = structuredClone(unwrap(workspace));
+    const origGetMessages = hoxiAPI.getMessages;
+    const origSendPrompt = hoxiAPI.sendPromptAsync;
+    const origGetDiffs = hoxiAPI.getSessionDiff;
+    const origSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = (() => 0) as unknown as typeof setTimeout;
+    try {
+      let resolveStaleLoad!: (turns: MessageTurn[]) => void;
+      hoxiAPI.getMessages = () => new Promise((r) => { resolveStaleLoad = r; });
+      hoxiAPI.sendPromptAsync = async () => {};
+      hoxiAPI.getSessionDiff = async () => [];
+
+      const sid = "ses_followup_sync";
+      hydratedSessionIDs.add(sid);
+      setWorkspace("rootDir", "/proj");
+      setWorkspace("activeSessionID", sid);
+      setWorkspace("connected", true);
+      setWorkspace("providers", [{ id: "p", name: "P", models: { m: { id: "m" } } }]);
+      setWorkspace("sessions", [{ id: sid, title: "Followup", directory: "/proj", time: { created: 1, updated: 1 } }]);
+      setWorkspace("aiBySession", sid, { agent: "build", model: { providerID: "p", modelID: "m" }, effort: "" });
+      setWorkspace("statusBySession", sid, { type: "idle" });
+      setWorkspace("messagesBySession", sid, [
+        { info: { id: "m_1", sessionID: sid, role: "user", time: { created: 1 } }, parts: [] },
+      ]);
+
+      // Start an idle loadSessionMessages before sending the 2nd message.
+      const staleLoadPromise = loadSessionMessages(sid);
+      const sendPromise = dispatchSessionPrompt("Second message", sid);
+
+      // Optimistic turn and busy status must be staged synchronously before sendPromise awaits HTTP.
+      assertEqual(isSessionBusy(sid), true);
+      assertEqual(workspace.messagesBySession[sid]?.length, 2);
+
+      // Resolving the stale pre-send getMessages snapshot must not overwrite or prune the staged turn.
+      resolveStaleLoad([{ info: { id: "m_1", sessionID: sid, role: "user", time: { created: 1 } }, parts: [] }]);
+      await staleLoadPromise;
+      await sendPromise;
+      assertEqual(workspace.messagesBySession[sid]?.length, 2);
+    } finally {
+      globalThis.setTimeout = origSetTimeout;
+      hydratedSessionIDs.delete("ses_followup_sync");
+      setWorkspace("activeSessionID", saved.activeSessionID);
+      setWorkspace("aiBySession", reconcile(saved.aiBySession));
+      setWorkspace(reconcile(saved));
+      hoxiAPI.getMessages = origGetMessages;
+      hoxiAPI.sendPromptAsync = origSendPrompt;
       hoxiAPI.getSessionDiff = origGetDiffs;
     }
   });
