@@ -58,36 +58,39 @@ export function observeSpinner(root: Element) {
   })
 }
 
-export function Spinner(props: ComponentProps<"svg">) {
+export function Spinner(props: ComponentProps<"span">) {
   const [local, others] = splitProps(props, ["class", "classList", "ref"])
   return (
-    <svg
+    <span
       {...others}
       ref={(el) => {
         observeSpinner(el)
         if (typeof local.ref === "function") local.ref(el)
       }}
       data-component="spinner"
-      viewBox="0 0 19 19"
-      fill="none"
       classList={{
         ...local.classList,
         [local.class ?? ""]: !!local.class,
       }}
     >
+      {/* One outer <svg> per cell group: WebKit fades those on the compositor,
+          while fading paths inside a single SVG repaints the page every frame. */}
       <For each={squares}>
         {(square) => (
-          <path
-            d={square.d}
-            fill="currentColor"
+          <svg
+            data-slot="spinner-cell"
+            data-outer={square.outer}
+            viewBox="0 0 19 19"
+            fill="none"
             style={{
-              opacity: 0,
               animation: `${square.outer ? "pulse-opacity-dim" : "pulse-opacity"} ${square.duration}s ease-in-out infinite`,
               "animation-delay": `${square.delay}s`,
             }}
-          />
+          >
+            <path d={square.d} fill="currentColor" />
+          </svg>
         )}
       </For>
-    </svg>
+    </span>
   )
 }

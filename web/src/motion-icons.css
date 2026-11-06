@@ -46,8 +46,13 @@
   height: 16px;
 }
 
-/* Kilo 5x5 Grid Spinner */
+/* Kilo 5x5 Grid Spinner. Only transform and opacity on outer elements move:
+   WebKit runs those on the compositor, while animating paths or filters
+   inside one SVG restyles and repaints the whole page every frame. */
 [data-component="spinner"] {
+  position: relative;
+  display: block;
+  vertical-align: middle;
   color: inherit;
   flex-shrink: 0;
   width: 16px;
@@ -56,7 +61,29 @@
   animation: spinner-breathe 1800ms ease-in-out infinite;
 }
 
-[data-component="spinner"][data-paused] > * {
+/* Soft halo for the breathe peak, faded as its own layer. */
+[data-component="spinner"]::before {
+  content: "";
+  position: absolute;
+  inset: -12%;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, color-mix(in srgb, currentColor 16%, transparent), transparent);
+  opacity: 0;
+  pointer-events: none;
+  animation: spinner-glow 1800ms ease-in-out infinite;
+}
+
+[data-component="spinner"] > [data-slot="spinner-cell"] {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+}
+
+[data-component="spinner"][data-paused] > *,
+[data-component="spinner"][data-paused]::before {
   animation: none !important;
 }
 
@@ -85,18 +112,35 @@
 @keyframes spinner-breathe {
   0%, 100% {
     transform: scale(0.94);
-    filter: drop-shadow(0 0 0 transparent);
   }
   50% {
     transform: scale(1);
-    filter: drop-shadow(0 0 4px color-mix(in srgb, currentColor 42%, transparent));
+  }
+}
+
+@keyframes spinner-glow {
+  0%, 100% {
+    opacity: 0;
+  }
+  50% {
+    opacity: 1;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   [data-component="spinner"],
-  [data-component="spinner"] > * {
+  [data-component="spinner"] > *,
+  [data-component="spinner"]::before {
     animation: none !important;
+  }
+
+  /* Without motion, show the grid itself instead of leaving it blank. */
+  [data-component="spinner"] > [data-slot="spinner-cell"] {
+    opacity: 0.9;
+  }
+
+  [data-component="spinner"] > [data-slot="spinner-cell"][data-outer="true"] {
+    opacity: 0.3;
   }
 
   [data-component="execution-waiting"] * {
@@ -104,20 +148,23 @@
   }
 }
 
-/* Compact activity arc, matching the conversation logo's orbit. */
+/* Compact activity arc, matching the conversation logo's orbit. The whole
+   outer <svg> turns (the faint track is a full circle, so only the arc looks
+   like it moves): WebKit runs that on the compositor, while turning the inner
+   circle repaints the page every frame. */
 [data-component="arc-spinner"] {
   display: block;
   flex-shrink: 0;
   width: 14px;
   height: 14px;
+  transform-origin: 50% 50%;
 }
 
 [data-component="arc-spinner"] [data-slot="orbit"] {
-  transform-origin: 7px 7px;
   opacity: 0.8;
 }
 
-[data-component="arc-spinner"][data-active="true"] [data-slot="orbit"] {
+[data-component="arc-spinner"][data-active="true"] {
   animation: arc-spinner-orbit 2.6s linear infinite;
 }
 
@@ -125,7 +172,7 @@
   opacity: 0.2;
 }
 
-[data-component="arc-spinner"][data-paused] [data-slot="orbit"] {
+[data-component="arc-spinner"][data-paused] {
   animation-play-state: paused;
 }
 
@@ -134,7 +181,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  [data-component="arc-spinner"] [data-slot="orbit"] {
+  [data-component="arc-spinner"] {
     animation: none !important;
   }
 }
@@ -199,7 +246,9 @@
   animation-name: text-shimmer-sweep;
   animation-duration: var(--text-shimmer-duration);
   animation-iteration-count: infinite;
-  animation-timing-function: linear;
+  /* background-clip: text repaints on the main thread in WebKit; stepping the
+     sweep (~16 fps) keeps the look while skipping most of those repaints. */
+  animation-timing-function: steps(20);
   animation-fill-mode: both;
   animation-delay: calc(var(--text-shimmer-step) * var(--text-shimmer-index) * -1);
   will-change: background-position;
