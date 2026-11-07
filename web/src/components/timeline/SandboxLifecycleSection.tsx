@@ -7,6 +7,7 @@ import {
   GitBranch,
   LoaderCircle,
   Pencil,
+  Sparkles,
   Trash2,
 } from "lucide-solid";
 import {
@@ -14,8 +15,11 @@ import {
   appSettings,
   applyAndExitSessionWorktree,
   applySessionWorktree,
+  buildSandboxConflictResolutionPrompt,
   exitSessionWorktree,
+  isSandboxMergeConflictError,
   renameSessionBranch,
+  submitSessionPrompt,
   syncSessionWorktree,
   workspace,
 } from "../../store/workspace";
@@ -140,8 +144,35 @@ export default function SandboxLifecycleSection(props: {
         </div>
 
         <Show when={errorMsg()}>
-          <div class="mx-1 rounded-lg border border-[var(--danger-border)] bg-[var(--danger-surface)] px-2 py-1 text-[11px] text-[var(--danger-text)] break-words">
-            {errorMsg()}
+          <div class="mx-1 rounded-lg border border-[var(--danger-border)] bg-[var(--danger-surface)] px-2 py-1.5 text-[11px] text-[var(--danger-text)] break-words space-y-1.5">
+            <div>{errorMsg()}</div>
+            <Show when={isSandboxMergeConflictError(errorMsg()) && targetSessionID()}>
+              <button
+                type="button"
+                disabled={!!busyAction() || props.busy}
+                onClick={() => {
+                  const sid = targetSessionID();
+                  const err = errorMsg();
+                  if (!sid || !err) return;
+                  const sandboxBranch = activeWorktree()?.branch || `hoxi/${sid}`;
+                  setErrorMsg(null);
+                  props.onClose();
+                  void submitSessionPrompt(
+                    buildSandboxConflictResolutionPrompt({
+                      sessionID: sid,
+                      sandboxBranch,
+                      baseBranch: baseBranch(),
+                      errorDetail: err,
+                    }),
+                    sid
+                  );
+                }}
+                class="w-full inline-flex items-center justify-center gap-1 rounded-md border border-[var(--danger-border)] bg-[var(--bg-panel)] px-2 py-1 text-[11px] font-semibold text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+              >
+                <Sparkles size={11} class="text-[var(--accent-primary)]" />
+                <span>{t("timeline.sandboxResolveConflictWithAI")}</span>
+              </button>
+            </Show>
           </div>
         </Show>
         <Show when={notice()}>

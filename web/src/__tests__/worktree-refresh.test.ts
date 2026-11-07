@@ -1,8 +1,18 @@
 import { reconcile, unwrap } from "solid-js/store";
 import { hoxiAPI } from "../services/api";
 import { resolveSessionDiffForFile } from "../components/timeline/file-diff-lines";
-import { openChangedFileInInspector, setWorkspace, workspace } from "../store/workspace";
-import { assertEqual, describe, it } from "./test-harness";
+import {
+  buildConvoyConflictResolutionPrompt,
+  buildSandboxConflictResolutionPrompt,
+  buildWorktreeVerifyFailurePrompt,
+  isSandboxMergeConflictError,
+  openChangedFileInInspector,
+  resolveProjectMemoryDirectory,
+  setWorkspace,
+  workspace,
+  type ConvoyPlan,
+} from "../store/workspace";
+import { assertEqual, assertTrue, describe, it } from "./test-harness";
 import {
   cancelScheduledWorktreeStatus,
   scheduleRefreshWorktreeStatus,
@@ -69,6 +79,64 @@ describe("worktree refresh lifecycle", () => {
     } finally {
       setWorkspace(reconcile(saved));
     }
+  });
+
+  it("detects sandbox merge/rebase conflicts and builds structured resolution & verify self-heal prompts", () => {
+    assertEqual(isSandboxMergeConflictError("worktree merge conflict: git apply --3way failed"), true);
+    assertEqual(isSandboxMergeConflictError("CONFLICT (content): Merge conflict in pkg/a.go"), true);
+    assertEqual(isSandboxMergeConflictError("network timeout"), false);
+
+    const conflictPrompt = buildSandboxConflictResolutionPrompt({
+      sessionID: "ses_1",
+      sandboxBranch: "hoxi/ses_1",
+      baseBranch: "main",
+      errorDetail: "worktree merge conflict: CONFLICT (content): Merge conflict in pkg/a.go",
+    });
+    assertTrue(conflictPrompt.includes("hoxi/ses_1"));
+    assertTrue(conflictPrompt.includes("main"));
+    assertTrue(conflictPrompt.includes("<merge_conflict>"));
+
+    const verifyPrompt = buildWorktreeVerifyFailurePrompt({
+      kind: "test",
+      command: "go test ./...",
+      output: "FAIL github.com/hoxiai/hoxi/pkg",
+    });
+    assertTrue(verifyPrompt.includes("go test ./..."));
+    assertTrue(verifyPrompt.includes("<verify_output>"));
+
+    const plan: ConvoyPlan = {
+      id: "cvy_1",
+      title: "Parallel Subtasks",
+      directory: "/repo",
+      isolated: true,
+      concurrency: 2,
+      status: "succeeded",
+      createdAt: 1,
+      updatedAt: 2,
+      tasks: [
+        { id: "task-a", prompt: "Update a", status: "succeeded", sessionID: "ses_sub_a" },
+        { id: "task-b", prompt: "Update b", status: "succeeded", sessionID: "ses_sub_b" },
+      ],
+    };
+    const convoyPrompt = buildConvoyConflictResolutionPrompt(
+      plan,
+      "worktree merge conflict: CONFLICT in shared.go"
+    );
+    assertTrue(convoyPrompt.includes("task-a"));
+    assertTrue(convoyPrompt.includes("hoxi/ses_sub_a"));
+    assertTrue(convoyPrompt.includes("<convoy_merge_conflict>"));
+  });
+
+  it("resolves isolated worktree paths back to the project root for .hoxi/memory lookup", () => {
+    assertEqual(
+      resolveProjectMemoryDirectory("/Users/dev/project/.hoxi/worktrees/ses_123"),
+      "/Users/dev/project"
+    );
+    assertEqual(
+      resolveProjectMemoryDirectory("C:\\code\\project\\.hoxi\\worktrees\\ses_123\\sub"),
+      "C:/code/project"
+    );
+    assertEqual(resolveProjectMemoryDirectory("/Users/dev/project"), "/Users/dev/project");
   });
 });
 

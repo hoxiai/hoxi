@@ -2,6 +2,10 @@
 import { createSignal } from "solid-js";
 import { locale } from "../i18n";
 import { hoxiAPI, type CommitAndPushResponse } from "../services/api";
+import {
+  createPullRequest,
+  type CreateForgePullRequestResponse,
+} from "../services/forge";
 import type { MessagePart, SnapshotFileDiff } from "../services/sse-types";
 import { AUTO_PROVIDER_ID, isModelFree, resolveAutoModelTarget } from "./auto-models";
 import { resolveInternalLLMModel } from "./provider-catalog";
@@ -372,4 +376,33 @@ export async function revertWorktreeFileChanges(
   await hoxiAPI.revertWorktreeFile(sessionKey, file, directory || activeDirectory() || workspace.rootDir || undefined);
   await refreshWorktreeStatus(sessionID);
   if (sessionID) await loadSessionMessages(sessionID);
+}
+
+export async function createBranchPullRequest(input?: {
+  directory?: string;
+  sessionID?: string | null;
+  title?: string;
+  body?: string;
+  base?: string;
+  head?: string;
+  draft?: boolean;
+}): Promise<CreateForgePullRequestResponse> {
+  const target = worktreeTarget(input?.directory);
+  const directory = (input?.directory || target.directory || "").trim();
+  const wt = workspace.worktreeBySession[input?.sessionID || target.key];
+  const head = (input?.head || wt?.branch || "").trim();
+  const base = (input?.base || wt?.baseBranch || "").trim();
+  const title = (input?.title || wt?.headSubject || "").trim();
+  const body = (
+    input?.body ??
+    buildSessionConversationDigest(input?.sessionID ?? target.sessionID)
+  ).trim();
+  return createPullRequest({
+    directory,
+    ...(title ? { title } : {}),
+    ...(body ? { body } : {}),
+    ...(base ? { base } : {}),
+    ...(head ? { head } : {}),
+    ...(input?.draft ? { draft: true } : {}),
+  });
 }

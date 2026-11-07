@@ -6,6 +6,7 @@ import {
   activeWorkspaceFolders,
   appSettings,
   commitWorktreeChanges,
+  createBranchPullRequest,
   generateSmartCommitMessage,
   isSessionBusy,
   loadSessionMessagesOnly,
@@ -258,6 +259,19 @@ export default function PierreDiffViewer() {
     if ((wt?.aheadCount ?? 0) > 0 || !wt?.hasUpstream) {
       const pushedURL = await onPushWorktree();
       if (pushedURL) url = pushedURL;
+    }
+    try {
+      const created = await createBranchPullRequest({
+        directory: wt?.directory || activeDirectory(),
+        head: wt?.branch,
+        base: wt?.baseBranch,
+      });
+      if (created?.ok && (created.url || created.pullRequest?.url)) {
+        openRemoteCompareURL(created.url || created.pullRequest!.url);
+        return;
+      }
+    } catch {
+      /* fall back to compare URL when gh CLI is unavailable */
     }
     if (url) openRemoteCompareURL(url);
   };

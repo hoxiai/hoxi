@@ -79,6 +79,27 @@ export const fileAndPtyAPI = {
       }),
     });
   },
+  saveMemory(input: {
+    scope: "project" | "session";
+    sessionID?: string;
+    directory?: string;
+    content: string;
+  }): Promise<{ ok: boolean; scope: string; path: string; content: string }> {
+    return requestJSON(withDir("/api/hoxi/memory", input.directory), {
+      method: "PUT",
+      body: JSON.stringify(input),
+    });
+  },
+  promoteSessionMemory(input: {
+    sessionID?: string;
+    directory?: string;
+    content?: string;
+  }): Promise<{ ok: boolean; path: string; content: string; addedCount: number }> {
+    return requestJSON(withDir("/api/hoxi/memory/promote", input.directory), {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
 
   // Built-in PTY Terminal
   createPTY(directory?: string): Promise<{ id: string; title: string; cwd: string }> {

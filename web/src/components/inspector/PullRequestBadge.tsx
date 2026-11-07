@@ -24,6 +24,7 @@ export default function PullRequestBadge(props: {
 }) {
   const [pr, setPr] = createSignal<ForgePullRequest | null>(null);
   const [loaded, setLoaded] = createSignal(false);
+  const [creating, setCreating] = createSignal(false);
   let generation = 0;
 
   createEffect(() => {
@@ -55,14 +56,28 @@ export default function PullRequestBadge(props: {
     });
   });
 
-  const activate = () => {
+  const activate = async () => {
     const current = pr();
     if (current) {
       openExternalURL(current.url);
       return;
     }
     if (props.onCreate) {
-      void props.onCreate();
+      if (creating()) return;
+      setCreating(true);
+      try {
+        await props.onCreate();
+        const directory = (props.directory ?? "").trim();
+        const branch = (props.branch ?? "").trim();
+        if (directory) {
+          const response = await fetchPullRequest(directory, branch, true);
+          if (response.available && response.pullRequest) {
+            setPr(response.pullRequest);
+          }
+        }
+      } finally {
+        setCreating(false);
+      }
       return;
     }
     if (props.compareURL) openExternalURL(props.compareURL);
@@ -77,13 +92,17 @@ export default function PullRequestBadge(props: {
         <Show when={loaded() && props.canCreate && props.compareURL}>
           <button
             type="button"
-            disabled={props.disabled}
-            onClick={activate}
+            disabled={props.disabled || creating()}
+            onClick={() => void activate()}
             title={t("inspector.diffs.createPrTooltip")}
             class={`hoxi-press shrink-0 inline-flex items-center gap-1 rounded-md border border-[var(--accent-border)] bg-[var(--accent-surface)] text-[11px] font-medium text-[var(--accent-primary)] hover:opacity-90 disabled:opacity-40 cursor-pointer ${sizeClass()}`}
           >
             <GitPullRequestArrow size={10} />
-            <span>{t("inspector.diffs.createPrBtn")}</span>
+            <span>
+              {creating()
+                ? t("inspector.diffs.creatingPrBtn")
+                : t("inspector.diffs.createPrBtn")}
+            </span>
             <ExternalLink size={8} />
           </button>
         </Show>

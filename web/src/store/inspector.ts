@@ -188,3 +188,50 @@ export function removeReviewComment(sessionID: string, commentID: string) {
 export function clearReviewComments(sessionID: string) {
   setWorkspace("reviewCommentsBySession", sessionID, []);
 }
+
+/**
+ * Resolves the project root that owns `.hoxi/memory` even when `dir` is an
+ * isolated session worktree (`<root>/.hoxi/worktrees/<sessionID>`).
+ */
+export function resolveProjectMemoryDirectory(dir?: string | null): string | undefined {
+  const raw = (dir || workspace.rootDir || "").trim();
+  if (!raw) return workspace.rootDir || undefined;
+  const normalized = raw.replace(/\\/g, "/").replace(/\/+$/, "");
+  const marker = "/.hoxi/worktrees/";
+  const idx = normalized.lastIndexOf(marker);
+  if (idx > 0) {
+    const rest = normalized.slice(idx + marker.length);
+    if (rest.split("/")[0]) {
+      return normalized.slice(0, idx);
+    }
+  }
+  return raw;
+}
+
+export function saveMemoryBankContent(input: {
+  scope: "project" | "session";
+  sessionID?: string | null;
+  directory?: string;
+  content: string;
+}): Promise<{ ok: boolean; scope: string; path: string; content: string }> {
+  const dir = resolveProjectMemoryDirectory(input.directory);
+  return hoxiAPI.saveMemory({
+    scope: input.scope,
+    ...(input.sessionID ? { sessionID: input.sessionID } : {}),
+    ...(dir ? { directory: dir } : {}),
+    content: input.content,
+  });
+}
+
+export function promoteSessionMemoryToProject(input: {
+  sessionID?: string | null;
+  directory?: string;
+  content?: string;
+}): Promise<{ ok: boolean; path: string; content: string; addedCount: number }> {
+  const dir = resolveProjectMemoryDirectory(input.directory);
+  return hoxiAPI.promoteSessionMemory({
+    ...(input.sessionID ? { sessionID: input.sessionID } : {}),
+    ...(dir ? { directory: dir } : {}),
+    ...(input.content ? { content: input.content } : {}),
+  });
+}

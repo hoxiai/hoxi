@@ -1,12 +1,23 @@
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
-import { Brain, Code2, Eye, LoaderCircle, RefreshCw } from "lucide-solid";
+import { ArrowUpRight, Brain, Check, Code2, Edit3, Eye, LoaderCircle, Plus, RefreshCw, Save } from "lucide-solid";
 import { hoxiAPI } from "../../services/api";
-import { activeDirectory, workspace } from "../../store/workspace";
+import {
+  activeDirectory,
+  promoteSessionMemoryToProject,
+  resolveProjectMemoryDirectory,
+  saveMemoryBankContent,
+  workspace,
+} from "../../store/workspace";
 import { t, locale } from "../../i18n";
 import MarkdownView, { slugifyHeading } from "../timeline/MarkdownView";
 
 const PROJECT_MEMORY_FILE = ".hoxi/memory/project.md";
 const LEGACY_PROJECT_MEMORY_FILE = ".opencode/memory/project.md";
+const DEFAULT_PROJECT_MEMORY_TEMPLATE = `# Project Memory
+
+- Keep this file concise: it is injected into every coding turn in this repository.
+- Architecture boundaries & conventions:
+`;
 
 /** Memory moved from .opencode/memory to .hoxi/memory; keep reading both. */
 function sessionMemoryFiles(id: string): string[] {
@@ -24,9 +35,13 @@ function dimensions(text: string): string[] {
 export default function MemoryBankView() {
   const [scope, setScope] = createSignal<"session" | "project">("session");
   const [content, setContent] = createSignal("");
+  const [draft, setDraft] = createSignal("");
   const [loading, setLoading] = createSignal(false);
+  const [saving, setSaving] = createSignal(false);
+  const [promoting, setPromoting] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
-  const [viewMode, setViewMode] = createSignal<"preview" | "source">("preview");
+  const [notice, setNotice] = createSignal<string | null>(null);
+  const [viewMode, setViewMode] = createSignal<"preview" | "source" | "edit">("preview");
   let scrollRef: HTMLDivElement | undefined;
 
   const activeFile = createMemo(() =>
@@ -41,7 +56,9 @@ export default function MemoryBankView() {
     const gen = ++requestGen;
     setLoading(true);
     setError(null);
-    const dir = activeDirectory();
+    const rawDir = activeDirectory();
+    const projectDir = resolveProjectMemoryDirectory(rawDir);
+    const dirCandidates = projectDir && projectDir !== rawDir ? [projectDir, rawDir] : [rawDir];
     const sid = workspace.activeSessionID;
     const candidates: string[] =
       scope() === "session"
@@ -50,28 +67,86 @@ export default function MemoryBankView() {
           : []
         : [PROJECT_MEMORY_FILE, LEGACY_PROJECT_MEMORY_FILE];
     try {
-      for (const file of candidates) {
-        try {
-          const res = await hoxiAPI.readFileContent(file, dir, undefined, locale());
-          if (gen !== requestGen) return;
-          if (res?.content?.trim()) {
-            setContent(res.content);
-            return;
+      for (const dir of dirCandidates) {
+        for (const file of candidates) {
+          try {
+            const res = await hoxiAPI.readFileContent(file, dir, undefined, locale());
+            if (gen !== requestGen) return;
+            if (res?.content?.trim()) {
+              setContent(res.content);
+              setDraft(res.content);
+              if (viewMode() === "edit") setViewMode("preview");
+              return;
+            }
+          } catch (err) {
+            if (gen !== requestGen) return;
+            if (dir === dirCandidates[dirCandidates.length - 1] && file === candidates[candidates.length - 1]) {
+              console.error("read memory failed:", err);
+            }
+            // Try the next location: project root path, worktree path, legacy path.
           }
-        } catch (err) {
-          if (gen !== requestGen) return;
-          if (file === candidates[candidates.length - 1]) {
-            console.error("read memory failed:", err);
-          }
-          // Try the next location: current path, legacy path, then project memory.
         }
       }
       setContent("");
-      setError(t("inspector.memory.notFound"));
+      setDraft("");
+      setError(
+        scope() === "project" ? t("inspector.memory.notFound") : t("inspector.memory.empty")
+      );
     } finally {
       if (gen === requestGen) {
         setLoading(false);
       }
+    }
+  };
+
+  const handleStartEdit = (initialTemplate?: string) => {
+    const base = initialTemplate ?? content();
+    setDraft(base);
+    setError(null);
+    setNotice(null);
+    setViewMode("edit");
+  };
+
+  const handleSave = async () => {
+    if (saving()) return;
+    setSaving(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await saveMemoryBankContent({
+        scope: scope(),
+        content: draft(),
+        directory: activeDirectory(),
+        sessionID: workspace.activeSessionID,
+      });
+      setContent(draft());
+      setViewMode("preview");
+      setNotice(t("inspector.memory.savedNotice"));
+      setTimeout(() => setNotice(null), 3000);
+    } catch (err: any) {
+      setError(err?.message || String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handlePromote = async () => {
+    const sid = workspace.activeSessionID;
+    if (!sid || promoting()) return;
+    setPromoting(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await promoteSessionMemoryToProject({
+        sessionID: sid,
+        directory: activeDirectory(),
+      });
+      setNotice(t("inspector.memory.promotedNotice", { count: res.addedCount }));
+      setTimeout(() => setNotice(null), 3500);
+    } catch (err: any) {
+      setError(err?.message || String(err));
+    } finally {
+      setPromoting(false);
     }
   };
 
@@ -137,7 +212,24 @@ export default function MemoryBankView() {
           </div>
         </div>
         <div class="flex items-center gap-1.5 shrink-0">
-          <Show when={content() && !error()}>
+          <Show when={scope() === "session" && content() && !error() && workspace.activeSessionID}>
+            <button
+              type="button"
+              disabled={promoting()}
+              onClick={() => void handlePromote()}
+              title={t("inspector.memory.promoteToProjectTooltip")}
+              class="hoxi-press inline-flex items-center gap-1 rounded-md border border-[var(--accent-border)] bg-[var(--accent-surface)]/70 px-1.5 py-0.5 text-[11px] font-medium text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] disabled:opacity-45 cursor-pointer"
+            >
+              <Show
+                when={!promoting()}
+                fallback={<LoaderCircle size={11} class="animate-spin" />}
+              >
+                <ArrowUpRight size={11} />
+              </Show>
+              <span>{t("inspector.memory.promoteToProjectBtn")}</span>
+            </button>
+          </Show>
+          <Show when={(content() && !error()) || viewMode() === "edit"}>
             <div class="inline-flex items-center rounded-md bg-[var(--bg-inset)] p-0.5">
               <button
                 type="button"
@@ -165,6 +257,19 @@ export default function MemoryBankView() {
                 <Code2 size={11} />
                 <span>{t("inspector.files.sourceMode")}</span>
               </button>
+              <button
+                type="button"
+                onClick={() => handleStartEdit()}
+                class={`hoxi-press inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] cursor-pointer ${
+                  viewMode() === "edit"
+                    ? "bg-[var(--bg-panel)] text-[var(--text-primary)] font-medium shadow-2xs"
+                    : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                }`}
+                title={t("inspector.memory.editMode")}
+              >
+                <Edit3 size={11} />
+                <span>{t("inspector.memory.editMode")}</span>
+              </button>
             </div>
           </Show>
           <button
@@ -182,7 +287,14 @@ export default function MemoryBankView() {
         data-markdown-reader-root="true"
         class={`inspector-scroll flex-1 min-h-0 overflow-y-auto px-3 py-2 space-y-2.5 ${memoryEnterClass()}`}
       >
-        <Show when={dims().length > 0}>
+        <Show when={notice()}>
+          <div class="flex items-center gap-1.5 rounded-lg border border-[var(--ok)]/30 bg-[var(--ok-surface)] px-2.5 py-1.5 text-[11.5px] text-[var(--ok-text)]">
+            <Check size={12} class="shrink-0" />
+            <span>{notice()}</span>
+          </div>
+        </Show>
+
+        <Show when={dims().length > 0 && viewMode() !== "edit"}>
           <div class="flex flex-wrap gap-1">
             <For each={dims()}>
               {(d) => (
@@ -198,13 +310,63 @@ export default function MemoryBankView() {
           </div>
         </Show>
 
-        <Show when={error()}>
-          <div class="rounded-xl bg-[var(--bg-inset)]/60 px-3 py-6 text-center text-[12px] text-[var(--text-muted)]">
-            {error()}
+        <Show when={error() && viewMode() !== "edit"}>
+          <div class="rounded-xl bg-[var(--bg-inset)]/60 px-3 py-6 text-center text-[12px] text-[var(--text-muted)] space-y-2.5">
+            <div>{error()}</div>
+            <Show when={scope() === "project"}>
+              <div>
+                <button
+                  type="button"
+                  onClick={() => handleStartEdit(DEFAULT_PROJECT_MEMORY_TEMPLATE)}
+                  class="hoxi-press inline-flex items-center gap-1 rounded-lg bg-[var(--accent-primary)] px-3 py-1.5 text-[11.5px] font-medium text-[var(--accent-foreground)] hover:opacity-90 cursor-pointer"
+                >
+                  <Plus size={12} />
+                  <span>{t("inspector.memory.createProjectMemoryBtn")}</span>
+                </button>
+              </div>
+            </Show>
           </div>
         </Show>
 
-        <Show when={content() && !error()}>
+        <Show when={viewMode() === "edit"}>
+          <div class="flex flex-col gap-2">
+            <textarea
+              value={draft()}
+              onInput={(e) => setDraft(e.currentTarget.value)}
+              placeholder={t("inspector.memory.editorPlaceholder")}
+              rows={16}
+              class="w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)]/70 p-3 font-mono text-[12px] leading-relaxed text-[var(--text-primary)] outline-none focus:border-[var(--accent-border)] resize-y"
+            />
+            <div class="flex items-center justify-end gap-1.5">
+              <button
+                type="button"
+                disabled={saving()}
+                onClick={() => setViewMode("preview")}
+                class="hoxi-press rounded-lg border border-[var(--border-subtle)] px-2.5 py-1 text-[11.5px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] cursor-pointer"
+              >
+                {t("inspector.memory.cancelEdit")}
+              </button>
+              <button
+                type="button"
+                disabled={saving()}
+                onClick={() => void handleSave()}
+                class="hoxi-press inline-flex items-center gap-1 rounded-lg bg-[var(--accent-primary)] px-3 py-1 text-[11.5px] font-semibold text-[var(--accent-foreground)] hover:opacity-90 disabled:opacity-45 cursor-pointer"
+              >
+                <Show
+                  when={!saving()}
+                  fallback={<LoaderCircle size={12} class="animate-spin" />}
+                >
+                  <Save size={12} />
+                </Show>
+                <span>
+                  {saving() ? t("inspector.memory.saving") : t("inspector.memory.save")}
+                </span>
+              </button>
+            </div>
+          </div>
+        </Show>
+
+        <Show when={content() && !error() && viewMode() !== "edit"}>
           <Show
             when={viewMode() === "preview"}
             fallback={

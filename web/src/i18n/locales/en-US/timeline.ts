@@ -508,4 +508,7 @@ export const timeline = {
   sandboxMergeConfirmBtn: "Confirm Merge & Commit",
   sandboxMergeCompletedNotice: "Merged & committed to {branch}; sandbox closed",
   sandboxPatchCompletedNotice: "Applied changes to {branch}; sandbox closed",
+  sandboxResolveConflictWithAI: "Resolve Conflicts with AI",
+  convoyResolveConflictWithAI: "Resolve Conflicts with AI",
+  verifyFixWithAI: "Fix with AI",
 };

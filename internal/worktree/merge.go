@@ -48,7 +48,13 @@ func MergeWorkingState(dstDir string, srcDirs ...string) error {
 }
 
 func mergeOneWorkingState(srcDir, dstDir string) error {
-	patch, err := runGitRaw(srcDir, "diff", "--binary", "--full-index", "HEAD")
+	diffBase := "HEAD"
+	if dstHead, headErr := runGit(dstDir, "rev-parse", "--verify", "HEAD"); headErr == nil && strings.TrimSpace(dstHead) != "" {
+		if mb, mbErr := runGit(srcDir, "merge-base", "HEAD", strings.TrimSpace(dstHead)); mbErr == nil && strings.TrimSpace(mb) != "" {
+			diffBase = strings.TrimSpace(mb)
+		}
+	}
+	patch, err := runGitRaw(srcDir, "diff", "--binary", "--full-index", diffBase)
 	if err != nil {
 		return fmt.Errorf("read changes in %s: %w", srcDir, err)
 	}
@@ -195,8 +201,11 @@ func (m *worktreeManager) apply(sessionID, mode, message string) error {
 		if mergeMsg == "" {
 			mergeMsg = "Merge hoxi session " + sessionID
 		}
-		_, err := runGit(m.rootDir, "merge", "--no-ff", "-m", appendHoxiCoAuthorFor(meta.Directory, mergeMsg), meta.Branch)
-		return err
+		if _, err := runGit(m.rootDir, "merge", "--no-ff", "-m", appendHoxiCoAuthorFor(meta.Directory, mergeMsg), meta.Branch); err != nil {
+			_, _ = runGit(m.rootDir, "merge", "--abort")
+			return fmt.Errorf("%w: %v", ErrMergeConflict, err)
+		}
+		return nil
 	}
 
 	// Default mode: "patch" — applies changes cleanly onto main workspace without polluting commit history
@@ -212,6 +221,7 @@ func (m *worktreeManager) apply(sessionID, mode, message string) error {
 		return nil
 	}
 
+	before, snapErr := CreateSnapshot(m.rootDir)
 	ctx, cancel := context.WithTimeout(context.Background(), gitCommandTimeout)
 	defer cancel()
 	cmd := subproc.CommandContext(ctx, "git", "-C", m.rootDir, "apply", "--3way", "-")
@@ -219,7 +229,10 @@ func (m *worktreeManager) apply(sessionID, mode, message string) error {
 	cmd.Stdin = strings.NewReader(diffPatch)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("git apply --3way failed: %s", strings.TrimSpace(string(out)))
+		if snapErr == nil && before != "" {
+			_ = RestoreSnapshot(m.rootDir, before)
+		}
+		return fmt.Errorf("%w: git apply --3way failed: %s", ErrMergeConflict, strings.TrimSpace(string(out)))
 	}
 	return nil
 }

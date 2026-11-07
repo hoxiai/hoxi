@@ -12,12 +12,15 @@ import {
 import type { SnapshotFileDiff } from "../../services/sse-types";
 import {
   applyAndExitSessionWorktree,
+  buildSandboxConflictResolutionPrompt,
   dismissSandboxMergePrompt,
   generateSmartCommitMessage,
+  isSandboxMergeConflictError,
   isSessionBusy,
   refreshWorktreeStatus,
   sessionGoal,
   sessionDirectory,
+  submitSessionPrompt,
   syncSessionWorktree,
   synthesizeLocalCommitMessage,
   uncommittedSessionFiles,
@@ -368,8 +371,32 @@ export default function SandboxMergePromptCard(props: {
               </Show>
 
               <Show when={errorMsg()}>
-                <div class="mt-2 rounded-xl border border-[var(--danger-border)] bg-[var(--danger-surface)] px-3 py-1.5 text-[11.5px] text-[var(--danger-text)] break-words">
-                  {errorMsg()}
+                <div class="mt-2 flex items-center justify-between gap-2 flex-wrap rounded-xl border border-[var(--danger-border)] bg-[var(--danger-surface)] px-3 py-1.5 text-[11.5px] text-[var(--danger-text)] break-words">
+                  <span class="min-w-0 flex-1">{errorMsg()}</span>
+                  <Show when={isSandboxMergeConflictError(errorMsg())}>
+                    <button
+                      type="button"
+                      disabled={!!busyAction()}
+                      onClick={() => {
+                        const err = errorMsg();
+                        if (!err) return;
+                        setErrorMsg(null);
+                        void submitSessionPrompt(
+                          buildSandboxConflictResolutionPrompt({
+                            sessionID: props.sessionID,
+                            sandboxBranch: sandboxBranch(),
+                            baseBranch: baseBranch(),
+                            errorDetail: err,
+                          }),
+                          props.sessionID
+                        );
+                      }}
+                      class="shrink-0 inline-flex items-center gap-1 rounded-lg border border-[var(--danger-border)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11px] font-semibold text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+                    >
+                      <Sparkles size={11} class="text-[var(--accent-primary)]" />
+                      <span>{t("timeline.sandboxResolveConflictWithAI")}</span>
+                    </button>
+                  </Show>
                 </div>
               </Show>
 

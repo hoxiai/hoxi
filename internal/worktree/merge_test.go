@@ -119,3 +119,60 @@ func TestMergeWorkingStateRejectsDivergentNewFiles(t *testing.T) {
 		t.Fatalf("target file overwritten: %q", got)
 	}
 }
+
+func TestMergeWorkingStateIncludesCommittedSourceChanges(t *testing.T) {
+	t.Parallel()
+	dirs := newMergeFixture(t, "a", "b")
+	reviewTestWrite(t, filepath.Join(dirs["a"], "f.txt"), "a\nB-committed-in-a\nc\nd\ne\nf\ng\n")
+	reviewTestWrite(t, filepath.Join(dirs["a"], "committed.go"), "package main\n")
+	reviewTestGit(t, dirs["a"], "add", ".")
+	reviewTestGit(t, dirs["a"], "commit", "-q", "-m", "feat: subtask a commit")
+
+	if err := MergeWorkingState(dirs["b"], dirs["a"]); err != nil {
+		t.Fatalf("MergeWorkingState with committed source changes: %v", err)
+	}
+	if got := readMergeFile(t, filepath.Join(dirs["b"], "f.txt")); got != "a\nB-committed-in-a\nc\nd\ne\nf\ng\n" {
+		t.Fatalf("merged f.txt = %q", got)
+	}
+	if got := readMergeFile(t, filepath.Join(dirs["b"], "committed.go")); got != "package main\n" {
+		t.Fatalf("merged committed.go = %q", got)
+	}
+}
+
+func TestApplyAbortsCleanlyOnMergeOrPatchConflict(t *testing.T) {
+	t.Parallel()
+	dirs := newMergeFixture(t)
+	repo := dirs["repo"]
+	mgr := NewManager(repo)
+
+	meta, err := mgr.Create("ses_conflict")
+	if err != nil {
+		t.Fatalf("Create worktree: %v", err)
+	}
+	// Edit line 2 in the isolated worktree
+	reviewTestWrite(t, filepath.Join(meta.Directory, "f.txt"), "a\nB-sandbox\nc\nd\ne\nf\ng\n")
+	// Diverge line 2 on main in the primary repo and commit
+	reviewTestWrite(t, filepath.Join(repo, "f.txt"), "a\nB-main\nc\nd\ne\nf\ng\n")
+	reviewTestGit(t, repo, "add", "f.txt")
+	reviewTestGit(t, repo, "commit", "-q", "-m", "main edit")
+
+	if err := mgr.Apply("ses_conflict", "merge"); !errors.Is(err, ErrMergeConflict) {
+		t.Fatalf("expected ErrMergeConflict from merge mode, got %v", err)
+	}
+	if status := reviewTestGit(t, repo, "status", "--porcelain"); status != "" {
+		t.Fatalf("expected clean repo after aborted merge, got:\n%s", status)
+	}
+	if got := readMergeFile(t, filepath.Join(repo, "f.txt")); got != "a\nB-main\nc\nd\ne\nf\ng\n" {
+		t.Fatalf("repo file altered after failed merge: %q", got)
+	}
+
+	if err := mgr.Apply("ses_conflict", "patch"); !errors.Is(err, ErrMergeConflict) {
+		t.Fatalf("expected ErrMergeConflict from patch mode, got %v", err)
+	}
+	if status := reviewTestGit(t, repo, "status", "--porcelain"); status != "" {
+		t.Fatalf("expected clean repo after aborted patch apply, got:\n%s", status)
+	}
+	if got := readMergeFile(t, filepath.Join(repo, "f.txt")); got != "a\nB-main\nc\nd\ne\nf\ng\n" {
+		t.Fatalf("repo file altered after failed patch apply: %q", got)
+	}
+}

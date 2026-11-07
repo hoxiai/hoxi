@@ -39,12 +39,15 @@ func (s *Service) RegisterRoutes(mux *http.ServeMux) {
 }
 
 func (s *Service) handlePullRequest(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
+	switch r.Method {
+	case http.MethodGet:
+		response := s.Status(r.Context(), r.URL.Query().Get("directory"), r.URL.Query().Get("branch"))
+		writeJSON(w, http.StatusOK, response)
+	case http.MethodPost:
+		s.handleCreatePullRequest(w, r)
+	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
 	}
-	response := s.Status(r.Context(), r.URL.Query().Get("directory"), r.URL.Query().Get("branch"))
-	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Service) handlePullRequestDetail(w http.ResponseWriter, r *http.Request) {

@@ -56,6 +56,25 @@ export interface ForgePullRequestListResponse {
   pullRequests: Record<string, ForgePullRequest>;
 }
 
+export interface CreateForgePullRequestInput {
+  directory: string;
+  title?: string;
+  body?: string;
+  base?: string;
+  head?: string;
+  draft?: boolean;
+}
+
+export interface CreateForgePullRequestResponse {
+  ok: boolean;
+  available: boolean;
+  reason?: string;
+  error?: string;
+  url?: string;
+  branch?: string;
+  pullRequest?: ForgePullRequest;
+}
+
 interface CacheEntry {
   expiresAt: number;
   response: unknown;
@@ -158,4 +177,31 @@ export function fetchPullRequestDetail(
 
   inflight.set(key, request);
   return request;
+}
+
+export async function createPullRequest(
+  input: CreateForgePullRequestInput
+): Promise<CreateForgePullRequestResponse> {
+  const response = await requestJSON<CreateForgePullRequestResponse>("/api/hoxi/forge/pr", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  if (response?.ok && input.directory) {
+    const branch = (response.branch || input.head || "").trim();
+    const key = cacheKey(input.directory, branch);
+    cache.delete(key);
+    cache.delete(`detail:${key}`);
+    cache.delete(`list:${input.directory}`);
+    if (response.pullRequest) {
+      cache.set(key, {
+        expiresAt: Date.now() + CACHE_TTL_MS,
+        response: {
+          available: true,
+          branch,
+          pullRequest: response.pullRequest,
+        } satisfies ForgePullRequestResponse,
+      });
+    }
+  }
+  return response;
 }

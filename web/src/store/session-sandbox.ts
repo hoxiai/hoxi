@@ -354,3 +354,62 @@ export function startWorktreeVerify(input: {
 export function stopWorktreeVerifyRun(sessionKey: string, directory?: string): Promise<WorktreeVerifyState> {
   return hoxiAPI.stopWorktreeVerify(sessionKey, directory);
 }
+
+export function isSandboxMergeConflictError(errorMsg?: string | null): boolean {
+  const raw = (errorMsg || "").trim();
+  if (!raw) return false;
+  return /\b(merge conflict|conflicts?\b|CONFLICT|--3way|3-way|rebase onto .* had conflicts|Automatic merge failed)\b/i.test(
+    raw
+  );
+}
+
+export function buildSandboxConflictResolutionPrompt(input: {
+  sessionID: string;
+  sandboxBranch?: string;
+  baseBranch?: string;
+  errorDetail: string;
+}): string {
+  const base = (input.baseBranch || "main").trim() || "main";
+  const sandbox = (input.sandboxBranch || `hoxi/${input.sessionID}`).trim();
+  const detail = (input.errorDetail || "").trim().slice(0, 1200);
+  return [
+    `Merging or syncing this sandbox worktree branch (\`${sandbox}\`) with the base branch (\`${base}\`) failed due to a Git conflict:`,
+    "<merge_conflict>",
+    detail || "merge conflict",
+    "</merge_conflict>",
+    "",
+    `Please resolve the conflict inside this isolated worktree so it can merge cleanly into \`${base}\`:`,
+    `1. Inspect the divergence against \`refs/heads/${base}\` (for example \`git status\`, \`git log --oneline HEAD..refs/heads/${base}\`, and \`git diff refs/heads/${base}...HEAD\`).`,
+    `2. Merge or rebase \`refs/heads/${base}\` into the current branch (\`${sandbox}\`), preserving both the base branch changes and this session's intended changes without leaving any \`<<<<<<<\` conflict markers.`,
+    "3. Commit the resolved state in this worktree and run the relevant verification or unit tests.",
+  ].join("\n");
+}
+
+export function buildWorktreeVerifyFailurePrompt(input: {
+  kind: "setup" | "run" | "test";
+  command?: string;
+  output: string;
+  exitCode?: number;
+}): string {
+  const label =
+    input.kind === "setup"
+      ? "worktree setup script"
+      : input.kind === "test"
+        ? "test command"
+        : "run command";
+  const cmdPart = input.command?.trim() ? ` (\`${input.command.trim()}\`)` : "";
+  const codePart =
+    typeof input.exitCode === "number" && input.exitCode !== 0
+      ? ` with exit code ${input.exitCode}`
+      : "";
+  const tail = (input.output || "").trim().slice(-3500);
+  return [
+    `The ${label}${cmdPart} failed${codePart}.`,
+    "",
+    "<verify_output>",
+    tail || "(no output captured)",
+    "</verify_output>",
+    "",
+    "Please diagnose the root cause from the output above, fix the relevant code or configuration, and re-run verification to confirm it passes.",
+  ].join("\n");
+}

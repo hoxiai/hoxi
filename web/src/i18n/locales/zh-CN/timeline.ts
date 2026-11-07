@@ -499,4 +499,7 @@ export const timeline: TimelineI18n = {
   sandboxMergeConfirmBtn: "确认合并提交",
   sandboxMergeCompletedNotice: "已合并并提交到 {branch}，沙盒已退出",
   sandboxPatchCompletedNotice: "已应用改动到 {branch}，沙盒已退出",
+  sandboxResolveConflictWithAI: "让 AI 解决冲突",
+  convoyResolveConflictWithAI: "让 AI 解决合并冲突",
+  verifyFixWithAI: "让 AI 修复",
 };

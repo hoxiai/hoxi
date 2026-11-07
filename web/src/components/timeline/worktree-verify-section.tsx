@@ -9,17 +9,20 @@ import {
   Play,
   RefreshCw,
   Settings2,
+  Sparkles,
   Square,
   Terminal,
 } from "lucide-solid";
 import type { WorktreeVerifyState } from "../../services/api";
 import {
+  buildWorktreeVerifyFailurePrompt,
   fetchWorktreeVerifyState,
   openURLInInspector,
   retryWorktreeSetupScript,
   saveWorktreeVerifyCommands,
   startWorktreeVerify,
   stopWorktreeVerifyRun,
+  submitSessionPrompt,
 } from "../../store/workspace";
 import { t } from "../../i18n";
 import { processCarriageReturns } from "./tool-card-helpers";
@@ -197,15 +200,41 @@ export function WorktreeVerifySection(props: {
               </span>
             </span>
 
-            <button
-              type="button"
-              disabled={actionBusy() || state()?.setupStatus === "running"}
-              onClick={() => void handleRetrySetup()}
-              class="shrink-0 inline-flex items-center gap-1 rounded-md bg-[var(--bg-panel)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-50 cursor-pointer"
-            >
-              <RefreshCw size={10} />
-              <span>{t("timeline.worktreeSetupRetry")}</span>
-            </button>
+            <div class="flex items-center gap-1 shrink-0">
+              <Show when={state()?.setupStatus === "failed" && props.sessionID}>
+                <button
+                  type="button"
+                  disabled={actionBusy()}
+                  onClick={() => {
+                    const sid = props.sessionID;
+                    const st = state();
+                    if (!sid || !st) return;
+                    props.onCloseMenu();
+                    void submitSessionPrompt(
+                      buildWorktreeVerifyFailurePrompt({
+                        kind: "setup",
+                        command: ".hoxi/setup.sh",
+                        output: processCarriageReturns(st.setupOutput || st.setupError || ""),
+                      }),
+                      sid
+                    );
+                  }}
+                  class="inline-flex items-center gap-1 rounded-md bg-[var(--bg-panel)] px-1.5 py-0.5 text-[11px] font-semibold text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-50 cursor-pointer"
+                >
+                  <Sparkles size={10} class="text-[var(--accent-primary)]" />
+                  <span>{t("timeline.verifyFixWithAI")}</span>
+                </button>
+              </Show>
+              <button
+                type="button"
+                disabled={actionBusy() || state()?.setupStatus === "running"}
+                onClick={() => void handleRetrySetup()}
+                class="inline-flex items-center gap-1 rounded-md bg-[var(--bg-panel)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-50 cursor-pointer"
+              >
+                <RefreshCw size={10} />
+                <span>{t("timeline.worktreeSetupRetry")}</span>
+              </button>
+            </div>
           </div>
 
           <Show when={state()?.setupStatus === "failed" && (state()?.setupError || state()?.setupOutput)}>
@@ -384,17 +413,45 @@ export function WorktreeVerifySection(props: {
                 ? t("timeline.verifyTestBtn")
                 : t("timeline.verifyRunBtn")}
             </span>
-            <span
-              class={
-                state()?.runStatus === "failed"
-                  ? "text-rose-400"
-                  : state()?.runStatus === "succeeded"
-                    ? "text-emerald-400"
-                    : "text-amber-400"
-              }
-            >
-              {state()?.runStatus}
-            </span>
+            <div class="flex items-center gap-2">
+              <Show when={state()?.runStatus === "failed" && props.sessionID}>
+                <button
+                  type="button"
+                  disabled={actionBusy()}
+                  onClick={() => {
+                    const sid = props.sessionID;
+                    const st = state();
+                    if (!sid || !st) return;
+                    const kind = st.activeKind === "test" ? "test" : "run";
+                    const cmd = (kind === "test" ? st.testCommand : st.runCommand) || kind;
+                    props.onCloseMenu();
+                    void submitSessionPrompt(
+                      buildWorktreeVerifyFailurePrompt({
+                        kind,
+                        command: cmd,
+                        output: processCarriageReturns(st.output || ""),
+                      }),
+                      sid
+                    );
+                  }}
+                  class="inline-flex items-center gap-1 rounded-md border border-rose-500/40 bg-rose-500/15 px-1.5 py-0.5 font-sans text-[10.5px] font-semibold text-rose-200 hover:bg-rose-500/25 transition-colors cursor-pointer"
+                >
+                  <Sparkles size={10} />
+                  <span>{t("timeline.verifyFixWithAI")}</span>
+                </button>
+              </Show>
+              <span
+                class={
+                  state()?.runStatus === "failed"
+                    ? "text-rose-400"
+                    : state()?.runStatus === "succeeded"
+                      ? "text-emerald-400"
+                      : "text-amber-400"
+                }
+              >
+                {state()?.runStatus}
+              </span>
+            </div>
           </div>
           <pre class="max-h-28 overflow-y-auto font-mono text-[11px] leading-relaxed text-gray-200 whitespace-pre-wrap break-all selectable-text">
             {processCarriageReturns(state()?.output || "").trim().slice(-1500)}

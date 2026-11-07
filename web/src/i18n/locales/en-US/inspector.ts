@@ -197,6 +197,7 @@ export const inspector = {
     pushAheadBtn: "Push (↑{count})",
     pushingBtn: "Pushing…",
     createPrBtn: "Create PR",
+    creatingPrBtn: "Creating PR…",
     createPrTooltip: "Push branch (if needed) and open Pull / Merge Request on remote",
     reposSummary: "{total} Git repos · {dirty} with changes",
     cleanReposSummary: "Synced repositories ({count})",
@@ -218,6 +219,17 @@ export const inspector = {
     progress: "Progress",
     nextSteps: "Next Steps",
     save: "Save Memory",
+    editMode: "Edit",
+    cancelEdit: "Cancel",
+    saving: "Saving…",
+    savedNotice: "Memory saved",
+    createProjectMemoryBtn: "Create project.md",
+    promoteToProjectBtn: "Promote to Project",
+    promoteToProjectTooltip:
+      "Append key constraints and notes from this session into .hoxi/memory/project.md",
+    promotedNotice: "Promoted {count} rules to Project Memory",
+    editorPlaceholder:
+      "Write project rules, architecture boundaries, or session notes in Markdown…",
     notFound:
       "project.md not created yet — create .hoxi/memory/project.md for long-lived project rules (injected into every turn, keep it short)",
     reload: "Reload memory",

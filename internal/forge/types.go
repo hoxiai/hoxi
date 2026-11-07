@@ -61,3 +61,24 @@ type ListResponse struct {
 	Reason       string                 `json:"reason,omitempty"`
 	PullRequests map[string]PullRequest `json:"pullRequests"`
 }
+
+// CreateRequest is the payload for creating a pull request through `gh pr create`.
+type CreateRequest struct {
+	Directory string `json:"directory"`
+	Title     string `json:"title,omitempty"`
+	Body      string `json:"body,omitempty"`
+	Base      string `json:"base,omitempty"`
+	Head      string `json:"head,omitempty"`
+	Draft     bool   `json:"draft,omitempty"`
+}
+
+// CreateResponse reports the outcome of a pull request creation request.
+type CreateResponse struct {
+	OK          bool         `json:"ok"`
+	Available   bool         `json:"available"`
+	Reason      string       `json:"reason,omitempty"`
+	Error       string       `json:"error,omitempty"`
+	URL         string       `json:"url,omitempty"`
+	Branch      string       `json:"branch,omitempty"`
+	PullRequest *PullRequest `json:"pullRequest,omitempty"`
+}

@@ -19,6 +19,7 @@ import {
   Play,
   Plus,
   RotateCcw,
+  Sparkles,
   Square,
   Trash2,
   Workflow,
@@ -28,6 +29,7 @@ import { t } from "../../i18n";
 import {
   bindInlineConvoyPlan,
   buildConvoyCompletionSummaryPrompt,
+  buildConvoyConflictResolutionPrompt,
   cancelConvoyPlan,
   clearBoundInlineConvoyPlan,
   computeSubtaskPlanCardKey,
@@ -35,6 +37,7 @@ import {
   fetchConvoyPlan,
   getBoundInlineConvoyPlanID,
   isConvoyPlanTerminal,
+  isSandboxMergeConflictError,
   isSessionBusy,
   mergeConvoyPlan,
   parseSubtaskPlanBlock,
@@ -437,8 +440,25 @@ export default function InlineSubtaskPlanCard(props: {
         </div>
 
         <Show when={error()}>
-          <div class="border-b border-[var(--danger-border)] bg-[var(--danger-surface)]/60 px-3.5 py-1.5 text-[12px] text-[var(--danger-text)] break-words">
-            {error()}
+          <div class="flex items-center justify-between gap-2 flex-wrap border-b border-[var(--danger-border)] bg-[var(--danger-surface)]/60 px-3.5 py-1.5 text-[12px] text-[var(--danger-text)] break-words">
+            <span class="min-w-0 flex-1">{error()}</span>
+            <Show when={isSandboxMergeConflictError(error()) && plan() && sessionID()}>
+              <button
+                type="button"
+                onClick={() => {
+                  const p = plan();
+                  const sid = sessionID();
+                  const err = error();
+                  if (!p || !sid || !err) return;
+                  setError(null);
+                  void submitSessionPrompt(buildConvoyConflictResolutionPrompt(p, err), sid);
+                }}
+                class="shrink-0 inline-flex items-center gap-1 rounded-md border border-[var(--danger-border)] bg-[var(--bg-panel)] px-2 py-0.5 text-[11px] font-semibold text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+              >
+                <Sparkles size={11} class="text-[var(--accent-primary)]" />
+                <span>{t("timeline.convoyResolveConflictWithAI")}</span>
+              </button>
+            </Show>
           </div>
         </Show>
 

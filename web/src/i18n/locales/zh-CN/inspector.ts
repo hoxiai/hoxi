@@ -197,6 +197,7 @@ export const inspector: InspectorI18n = {
     pushAheadBtn: "推送 (↑{count})",
     pushingBtn: "推送中…",
     createPrBtn: "创建 PR",
+    creatingPrBtn: "正在创建 PR…",
     createPrTooltip: "推送当前分支（如需）并在远端仓库打开创建 PR / MR 页面",
     reposSummary: "共 {total} 个 Git 仓库 · {dirty} 个有改动",
     cleanReposSummary: "已同步仓库 ({count})",
@@ -218,6 +219,17 @@ export const inspector: InspectorI18n = {
     progress: "当前进度",
     nextSteps: "后续计划",
     save: "保存记忆",
+    editMode: "编辑",
+    cancelEdit: "取消",
+    saving: "保存中…",
+    savedNotice: "记忆已保存",
+    createProjectMemoryBtn: "创建 project.md",
+    promoteToProjectBtn: "晋升至项目记忆",
+    promoteToProjectTooltip:
+      "将本会话的关键约束与经验追加至 .hoxi/memory/project.md",
+    promotedNotice: "已晋升 {count} 条规则至项目记忆",
+    editorPlaceholder:
+      "使用 Markdown 编写项目长期约定、架构边界或会话笔记…",
     notFound:
       "project.md 尚未创建 — 可手动创建 .hoxi/memory/project.md 记录项目长期约定（每轮都会注入，请保持简短）",
     reload: "刷新记忆",

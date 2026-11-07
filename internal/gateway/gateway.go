@@ -523,6 +523,8 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 	g.mux.HandleFunc("/api/hoxi/clipboard/images", g.handleClipboardImages)
 	g.mux.HandleFunc("/api/hoxi/dev-pulse", g.handleDevPulse)
 	g.mux.HandleFunc("/api/hoxi/dev-pulse/history", g.handleDevPulseHistory)
+	g.mux.HandleFunc("/api/hoxi/memory", g.handleMemory)
+	g.mux.HandleFunc("/api/hoxi/memory/promote", g.handleMemoryPromote)
 	g.mux.HandleFunc("/api/hoxi/request-log", g.handleRequestLog)
 	g.mux.HandleFunc("/api/hoxi/request-log/content", g.handleRequestLogContent)
 	g.mux.Handle("/provider/", g.proxy)

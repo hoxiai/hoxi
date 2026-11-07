@@ -338,6 +338,32 @@ export function buildConvoyCompletionSummaryPrompt(plan: ConvoyPlan): string {
   return lines.join("\n");
 }
 
+export function buildConvoyConflictResolutionPrompt(
+  plan: ConvoyPlan,
+  errorDetail: string
+): string {
+  const lines: string[] = [
+    `Automatic 3-way merge for the completed subtask convoy "${plan.title || plan.id}" (${plan.id}) failed with a conflict:`,
+    "<convoy_merge_conflict>",
+    (errorDetail || "merge conflict").trim().slice(0, 1200),
+    "</convoy_merge_conflict>",
+    "",
+    "Subtask worktrees to integrate into this workspace:",
+  ];
+  for (const task of plan.tasks) {
+    if (task.status !== "succeeded" || !task.sessionID) continue;
+    const summary = task.summary?.trim() || task.prompt.trim().slice(0, 180);
+    lines.push(
+      `- **${task.id}** (session \`${task.sessionID}\`, branch \`hoxi/${task.sessionID}\`, worktree \`.hoxi/worktrees/${task.sessionID}\`): ${summary}`
+    );
+  }
+  lines.push(
+    "",
+    "Please inspect the diffs across those subtask worktrees/branches, semantically combine all of their changes into the current workspace without losing any subtask's work, and run the relevant tests to verify."
+  );
+  return lines.join("\n");
+}
+
 export async function spawnBackgroundSubtask(
   promptText: string,
   parentSessionID?: string | null,
