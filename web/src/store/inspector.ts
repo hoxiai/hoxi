@@ -89,7 +89,7 @@ export function openFileInInspector(filePath: string, line?: number | null, diff
 }
 
 function isRenderPreviewDefaultPath(cleanPath: string): boolean {
-  return /\.(?:md|mdx|markdown|svg)$/i.test(cleanPath.trim());
+  return /\.(?:md|mdx|markdown|svg|pdf|xlsx|xls|ods|csv|tsv|docx|doc|pptx|ppt|rtf)$/i.test(cleanPath.trim());
 }
 
 export function openChangedFileInInspector(diff: SnapshotFileDiff | string) {

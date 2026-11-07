@@ -16,7 +16,7 @@ import { resolveSessionDiffForFile } from "../timeline/file-diff-lines";
 import { t, locale } from "../../i18n";
 import FilePreviewPane from "./FilePreviewPane";
 import FileTreeNodes, { type FileTreeNode } from "./FileTreeNodes";
-import { baseName, isMarkdownPath, isSvgPath } from "./file-tree-helpers";
+import { baseName, isPreviewableDocumentPath } from "./file-tree-helpers";
 
 const MAX_CACHED_ROOT_DIRS = 24;
 const rootFileNodesCache = new Map<string, FileTreeNode[]>();
@@ -159,7 +159,7 @@ export default function FileTreeView() {
     setPreviewDiff(effectiveDiff);
     setHighlightedLine(lineTarget);
     setViewMode(
-      !lineTarget && (isMarkdownPath(path) || isSvgPath(path)) ? "preview" : "source"
+      !lineTarget && isPreviewableDocumentPath(path) ? "preview" : "source"
     );
     setLoadingPreview(true);
     setPreviewError(null);
@@ -180,8 +180,9 @@ export default function FileTreeView() {
       setPreviewContent(res?.content ?? "");
       if (
         !lineTarget &&
-        (isMarkdownPath(res?.resolvedPath || path, res?.mimeType) ||
-          isSvgPath(res?.resolvedPath || path, res?.mimeType))
+        (isPreviewableDocumentPath(res?.resolvedPath || path, res?.mimeType) ||
+          Boolean(res?.sheets?.length) ||
+          Boolean(res?.extractedText))
       ) {
         setViewMode("preview");
       }

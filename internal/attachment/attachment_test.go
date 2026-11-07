@@ -3,12 +3,16 @@ package attachment
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf16"
 	"unicode/utf8"
 )
 
@@ -191,3 +195,244 @@ func TestExtractPDFTextPureGo(t *testing.T) {
 		t.Fatalf("extractPDFTextPureGo = %q, want both lines", got)
 	}
 }
+
+func buildTestBIFF8OLE2XLS(sheetName string, sstStrings []string, cells []struct {
+	row, col uint16
+	sstIdx   int
+	numVal   *float64
+}) []byte {
+	var wb bytes.Buffer
+	writeRec := func(id uint16, payload []byte) {
+		var hdr [4]byte
+		binary.LittleEndian.PutUint16(hdr[0:2], id)
+		binary.LittleEndian.PutUint16(hdr[2:4], uint16(len(payload)))
+		wb.Write(hdr[:])
+		wb.Write(payload)
+	}
+
+	// Workbook Globals BOF (dt = 0x0005)
+	bofGlobals := make([]byte, 16)
+	binary.LittleEndian.PutUint16(bofGlobals[0:2], 0x0600)
+	binary.LittleEndian.PutUint16(bofGlobals[2:4], 0x0005)
+	writeRec(biffRecBOF, bofGlobals)
+
+	// BOUNDSHEET with UTF-16LE sheet name
+	sheetRunes := utf16.Encode([]rune(sheetName))
+	var bs bytes.Buffer
+	_ = binary.Write(&bs, binary.LittleEndian, uint32(0)) // bof pos placeholder
+	bs.WriteByte(0)                                       // visible
+	bs.WriteByte(0)                                       // worksheet
+	bs.WriteByte(byte(len(sheetRunes)))
+	bs.WriteByte(1) // UTF-16LE
+	for _, u := range sheetRunes {
+		_ = binary.Write(&bs, binary.LittleEndian, u)
+	}
+	writeRec(biffRecBoundSheet, bs.Bytes())
+
+	// SST record
+	var sstBuf bytes.Buffer
+	_ = binary.Write(&sstBuf, binary.LittleEndian, uint32(len(sstStrings)))
+	_ = binary.Write(&sstBuf, binary.LittleEndian, uint32(len(sstStrings)))
+	for _, s := range sstStrings {
+		u16 := utf16.Encode([]rune(s))
+		_ = binary.Write(&sstBuf, binary.LittleEndian, uint16(len(u16)))
+		sstBuf.WriteByte(1) // UTF-16LE
+		for _, ch := range u16 {
+			_ = binary.Write(&sstBuf, binary.LittleEndian, ch)
+		}
+	}
+	writeRec(biffRecSST, sstBuf.Bytes())
+	writeRec(biffRecEOF, nil)
+
+	// Worksheet BOF (dt = 0x0010)
+	bofSheet := make([]byte, 16)
+	binary.LittleEndian.PutUint16(bofSheet[0:2], 0x0600)
+	binary.LittleEndian.PutUint16(bofSheet[2:4], 0x0010)
+	writeRec(biffRecBOF, bofSheet)
+
+	for _, cell := range cells {
+		if cell.numVal != nil {
+			var b [14]byte
+			binary.LittleEndian.PutUint16(b[0:2], cell.row)
+			binary.LittleEndian.PutUint16(b[2:4], cell.col)
+			binary.LittleEndian.PutUint16(b[4:6], 0)
+			binary.LittleEndian.PutUint64(b[6:14], math.Float64bits(*cell.numVal))
+			writeRec(biffRecNumber, b[:])
+		} else {
+			var b [10]byte
+			binary.LittleEndian.PutUint16(b[0:2], cell.row)
+			binary.LittleEndian.PutUint16(b[2:4], cell.col)
+			binary.LittleEndian.PutUint16(b[4:6], 0)
+			binary.LittleEndian.PutUint32(b[6:10], uint32(cell.sstIdx))
+			writeRec(biffRecLabelSST, b[:])
+		}
+	}
+	writeRec(biffRecEOF, nil)
+
+	stream := wb.Bytes()
+	// Ensure stream >= 4096 bytes so it uses standard FAT sectors in this minimal OLE2 container
+	if len(stream) < 4096 {
+		padded := make([]byte, 4096)
+		copy(padded, stream)
+		stream = padded
+	}
+	numStreamSectors := (len(stream) + 511) / 512
+
+	// Sector layout:
+	// Sector 0: FAT
+	// Sector 1: Directory
+	// Sector 2..(2+numStreamSectors-1): Workbook stream
+	totalSectors := 2 + numStreamSectors
+	fileBytes := make([]byte, (1+totalSectors)*512)
+
+	// Header
+	copy(fileBytes[0:8], ole2Signature)
+	binary.LittleEndian.PutUint16(fileBytes[24:26], 0x003E)
+	binary.LittleEndian.PutUint16(fileBytes[26:28], 0x0003)
+	binary.LittleEndian.PutUint16(fileBytes[28:30], 0xFFFE)
+	binary.LittleEndian.PutUint16(fileBytes[30:32], 9) // 512-byte sectors
+	binary.LittleEndian.PutUint16(fileBytes[32:34], 6) // 64-byte mini sectors
+	binary.LittleEndian.PutUint32(fileBytes[44:48], 1) // 1 FAT sector
+	binary.LittleEndian.PutUint32(fileBytes[48:52], 1) // Dir starts at sector 1
+	binary.LittleEndian.PutUint32(fileBytes[56:60], 4096)
+	binary.LittleEndian.PutUint32(fileBytes[60:64], oleEndOfChain)
+	binary.LittleEndian.PutUint32(fileBytes[68:72], oleEndOfChain)
+	binary.LittleEndian.PutUint32(fileBytes[76:80], 0) // DIFAT[0] = sector 0
+	for i := 1; i < 109; i++ {
+		binary.LittleEndian.PutUint32(fileBytes[76+i*4:80+i*4], oleFreeSect)
+	}
+
+	// Sector 0: FAT (at file offset 512)
+	fat := fileBytes[512 : 1024]
+	for i := 0; i < 128; i++ {
+		binary.LittleEndian.PutUint32(fat[i*4:(i+1)*4], oleFreeSect)
+	}
+	binary.LittleEndian.PutUint32(fat[0:4], 0xFFFFFFFD)      // Sector 0: FATSECT
+	binary.LittleEndian.PutUint32(fat[4:8], oleEndOfChain)   // Sector 1: Directory
+	for s := 0; s < numStreamSectors; s++ {
+		secID := 2 + s
+		next := uint32(secID + 1)
+		if s == numStreamSectors-1 {
+			next = oleEndOfChain
+		}
+		binary.LittleEndian.PutUint32(fat[secID*4:(secID+1)*4], next)
+	}
+
+	// Sector 1: Directory (at file offset 1024)
+	dirSec := fileBytes[1024 : 1536]
+	writeDirEntry := func(off int, name string, objType byte, startSec uint32, size uint32) {
+		ent := dirSec[off : off+128]
+		u16 := utf16.Encode([]rune(name))
+		for i, ch := range u16 {
+			binary.LittleEndian.PutUint16(ent[i*2:i*2+2], ch)
+		}
+		binary.LittleEndian.PutUint16(ent[64:66], uint16((len(u16)+1)*2))
+		ent[66] = objType
+		binary.LittleEndian.PutUint32(ent[116:120], startSec)
+		binary.LittleEndian.PutUint32(ent[120:124], size)
+	}
+	writeDirEntry(0, "Root Entry", 5, oleEndOfChain, 0)
+	writeDirEntry(128, "Workbook", 2, 2, uint32(len(stream)))
+
+	// Sectors 2..: Stream data
+	copy(fileBytes[1536:], stream)
+	return fileBytes
+}
+
+func TestExtractXLSFormatsAndDocReadWrite(t *testing.T) {
+	store := NewStore(t.TempDir())
+
+	// 1. Legacy OLE2 + BIFF8 .xls extraction
+	val := 9527.5
+	xlsBytes := buildTestBIFF8OLE2XLS("Q4营收", []string{"渠道", "销售额", "直营店"}, []struct {
+		row, col uint16
+		sstIdx   int
+		numVal   *float64
+	}{
+		{row: 0, col: 0, sstIdx: 0},
+		{row: 0, col: 1, sstIdx: 1},
+		{row: 1, col: 0, sstIdx: 2},
+		{row: 1, col: 1, numVal: &val},
+	})
+	xlsMeta, err := store.Save(SaveRequest{
+		SessionID: "ses_xls",
+		Filename:  "q4_report.xls",
+		Data:      xlsBytes,
+	})
+	if err != nil {
+		t.Fatalf("save .xls failed: %v", err)
+	}
+	xlsText := store.ExtractText(xlsMeta.ID, 4000)
+	if !strings.Contains(xlsText, "### Sheet: Q4营收") || !strings.Contains(xlsText, "渠道\t销售额") || !strings.Contains(xlsText, "直营店\t9527.5") {
+		t.Fatalf("unexpected BIFF8 .xls extracted text:\n%s", xlsText)
+	}
+
+	// 2. HTML Table disguised as .xls (common ERP export)
+	htmlXLS := []byte(`<html><body><table><tr><th>订单号</th><th>状态</th></tr><tr><td>ORD-1001</td><td>已发货</td></tr></table></body></html>`)
+	htmlMeta, err := store.Save(SaveRequest{
+		SessionID: "ses_xls",
+		Filename:  "erp_export.xls",
+		Data:      htmlXLS,
+	})
+	if err != nil {
+		t.Fatalf("save html .xls failed: %v", err)
+	}
+	htmlText := store.ExtractText(htmlMeta.ID, 4000)
+	if !strings.Contains(htmlText, "订单号\t状态") || !strings.Contains(htmlText, "ORD-1001\t已发货") {
+		t.Fatalf("unexpected HTML .xls extracted text:\n%s", htmlText)
+	}
+
+	// 3. WriteXLSXFile + ApplySpreadsheetEdits roundtrip
+	tmpDir := t.TempDir()
+	xlsxPath := filepath.Join(tmpDir, "finance.xlsx")
+	if err := WriteXLSXFile(xlsxPath, []SpreadsheetSheet{
+		{
+			Name: "汇总",
+			Rows: [][]string{
+				{"月份", "收入", "支出"},
+				{"10月", "50000", "18000"},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("WriteXLSXFile failed: %v", err)
+	}
+	_, err = ApplySpreadsheetEdits(
+		xlsxPath,
+		xlsxPath,
+		"汇总",
+		map[string]string{"B2": "56000", "D1": "净利润", "D2": "=B2-C2"},
+		[][]string{{"11月", "62000", "20000", "=B3-C3"}},
+	)
+	if err != nil {
+		t.Fatalf("ApplySpreadsheetEdits failed: %v", err)
+	}
+	parsedSheets, err := ParseSpreadsheetFile(xlsxPath, 100)
+	if err != nil || len(parsedSheets) != 1 {
+		t.Fatalf("ParseSpreadsheetFile after edit failed: %v, sheets=%d", err, len(parsedSheets))
+	}
+	if len(parsedSheets[0].Rows) != 3 || parsedSheets[0].Rows[1][1] != "56000" || parsedSheets[0].Rows[2][0] != "11月" {
+		t.Fatalf("unexpected rows after edit: %+v", parsedSheets[0].Rows)
+	}
+
+	// 4. WriteDOCXFile + ExtractFileText roundtrip
+	docxPath := filepath.Join(tmpDir, "summary.docx")
+	mdContent := "# 季度复盘\n\n- 核心指标达成率 115%\n\n| 指标 | 数值 |\n| --- | --- |\n| GMV | 128万 |\n"
+	if err := WriteDOCXFile(docxPath, "2026 Q4 经营报告", mdContent); err != nil {
+		t.Fatalf("WriteDOCXFile failed: %v", err)
+	}
+	docxExtracted := ExtractFileText(docxPath, 4000)
+	if !strings.Contains(docxExtracted, "2026 Q4 经营报告") || !strings.Contains(docxExtracted, "GMV") || !strings.Contains(docxExtracted, "128万") {
+		t.Fatalf("unexpected docx extracted text:\n%s", docxExtracted)
+	}
+
+	// 5. WritePDFFile + ExtractFileText roundtrip
+	pdfPath := filepath.Join(tmpDir, "brief.pdf")
+	if err := WritePDFFile(pdfPath, "Executive Brief", "Quarterly target achieved Ahead of Schedule."); err != nil {
+		t.Fatalf("WritePDFFile failed: %v", err)
+	}
+	pdfExtracted := ExtractFileText(pdfPath, 4000)
+	if !strings.Contains(pdfExtracted, "Executive Brief") || !strings.Contains(pdfExtracted, "Quarterly target achieved") {
+		t.Fatalf("unexpected pdf extracted text:\n%s", pdfExtracted)
+	}
+}
+

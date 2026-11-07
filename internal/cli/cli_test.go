@@ -470,3 +470,82 @@ func TestCLICodeIndexSubcommand(t *testing.T) {
 		t.Fatalf("expected code-index inspect on .hoxi/cloudflared.json to fail, got out=%s", outBuf.String())
 	}
 }
+
+func TestDocCommandReadWriteAndProtectedPaths(t *testing.T) {
+	dir := t.TempDir()
+	var outBuf, errBuf bytes.Buffer
+
+	// 1. Create an .xlsx spreadsheet with write-xlsx
+	xlsxPath := filepath.Join(dir, "report.xlsx")
+	code := runDocCommand([]string{
+		"write-xlsx", xlsxPath,
+		"--sheet", "营收汇总",
+		"--rows-json", `[["月份","GMV","成本"],["10月","120000","45000"]]`,
+	}, dir, nil, &outBuf, &errBuf)
+	if code != 0 {
+		t.Fatalf("write-xlsx failed (code=%d): out=%s err=%s", code, outBuf.String(), errBuf.String())
+	}
+
+	// 2. Edit cells & append rows with set-cell
+	outBuf.Reset()
+	errBuf.Reset()
+	code = runDocCommand([]string{
+		"set-cell", xlsxPath,
+		"--sheet", "营收汇总",
+		"--append-json", `[["11月","158000","52000"]]`,
+		"D1=毛利", "D2==B2-C2", "D3==B3-C3",
+	}, dir, nil, &outBuf, &errBuf)
+	if code != 0 {
+		t.Fatalf("set-cell failed (code=%d): out=%s err=%s", code, outBuf.String(), errBuf.String())
+	}
+
+	// 3. Inspect and read as markdown table
+	outBuf.Reset()
+	errBuf.Reset()
+	code = runDocCommand([]string{"inspect", xlsxPath}, dir, nil, &outBuf, &errBuf)
+	if code != 0 || !strings.Contains(outBuf.String(), "营收汇总") {
+		t.Fatalf("doc inspect failed (code=%d): out=%s err=%s", code, outBuf.String(), errBuf.String())
+	}
+
+	outBuf.Reset()
+	errBuf.Reset()
+	code = runDocCommand([]string{"read", xlsxPath, "--format", "md"}, dir, nil, &outBuf, &errBuf)
+	if code != 0 || !strings.Contains(outBuf.String(), "| 11月 | 158000 | 52000 |") {
+		t.Fatalf("doc read md failed (code=%d): out=%s err=%s", code, outBuf.String(), errBuf.String())
+	}
+
+	// 4. Write and read .docx and .pdf inside .hoxi/attachments/ (exempt directory)
+	attDir := filepath.Join(dir, ".hoxi", "attachments")
+	if err := os.MkdirAll(attDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	docxPath := filepath.Join(attDir, "memo.docx")
+	outBuf.Reset()
+	errBuf.Reset()
+	code = runDocCommand([]string{"write-docx", docxPath, "--title", "周报纪要", "--text", "# 进展\n\n- 完成表格读写闭环"}, dir, nil, &outBuf, &errBuf)
+	if code != 0 {
+		t.Fatalf("write-docx in .hoxi/attachments failed (code=%d): %s", code, errBuf.String())
+	}
+	outBuf.Reset()
+	errBuf.Reset()
+	code = runDocCommand([]string{"read", docxPath}, dir, nil, &outBuf, &errBuf)
+	if code != 0 || !strings.Contains(outBuf.String(), "完成表格读写闭环") {
+		t.Fatalf("read docx failed (code=%d): out=%s err=%s", code, outBuf.String(), errBuf.String())
+	}
+
+	// 5. Refuses sensitive / protected paths (.env and .hoxi/cloudflared.json)
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("API_KEY=secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".hoxi", "cloudflared.json"), []byte(`{"token":"sec"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{".env", ".hoxi/cloudflared.json", ".git/config"} {
+		outBuf.Reset()
+		errBuf.Reset()
+		if c := runDocCommand([]string{"read", forbidden, "--dir", dir}, dir, nil, &outBuf, &errBuf); c == 0 {
+			t.Fatalf("expected hoxi doc read %q to fail, got code=0 out=%s", forbidden, outBuf.String())
+		}
+	}
+}
+

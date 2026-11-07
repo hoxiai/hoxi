@@ -588,6 +588,13 @@ export interface DevPulseHistoryResponse {
   timezone: string;
 }
 
+export interface SpreadsheetSheetPreview {
+  name: string;
+  rows: string[][];
+  totalRows?: number;
+  truncated?: boolean;
+}
+
 export interface FileContentResponse {
   type?: "text" | "binary";
   content: string;
@@ -597,6 +604,8 @@ export interface FileContentResponse {
   outsideWorkspace?: boolean;
   size?: number;
   isDirectory?: boolean;
+  sheets?: SpreadsheetSheetPreview[];
+  extractedText?: string;
 }
 
 export interface FileValidateResponse {

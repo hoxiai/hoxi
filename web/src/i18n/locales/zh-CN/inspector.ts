@@ -260,6 +260,13 @@ export const inspector: InspectorI18n = {
     openInDefaultApp: "用默认应用打开",
     binaryFileTitle: "二进制文件无法作为纯文本渲染",
     binaryFileDesc: "大小：{size} · 类型：{mimeType}",
+    sheetRowsCount: "{count} 行",
+    sheetFilterPlaceholder: "筛选当前工作表行…",
+    sheetNoMatchingRows: "没有匹配筛选条件的行",
+    sheetEmpty: "当前工作表暂无数据行",
+    sheetTruncatedNotice: "仅展示前 {shown} 行（共 {total} 行）",
+    copyTableMarkdown: "复制为 Markdown 表格",
+    copiedTableMarkdown: "已复制 Markdown 表格",
   },
   terminal: {
     connected: "终端已连接",

@@ -160,7 +160,7 @@ func TestSeedDefaultsInstallsStockTradingSkills(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, slug := range []string{"ashare-ops", "hk-warrant-ops", "us-options-ops"} {
+	for _, slug := range []string{"ashare-ops", "hk-warrant-ops", "us-options-ops", "office-docs"} {
 		target := filepath.Join(home, ".hoxi", "skills", slug, "SKILL.md")
 		data, err := os.ReadFile(target)
 		if err != nil {

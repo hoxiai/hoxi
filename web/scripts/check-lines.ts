@@ -165,6 +165,7 @@ const IGNORE_DIRS = new Set([
   ".hoxi",
   ".claude",
   "client",
+  "site",
   ".dart_tool",
   ".pub-cache",
   "node_modules",

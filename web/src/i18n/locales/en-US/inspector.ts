@@ -260,6 +260,13 @@ export const inspector = {
     openInDefaultApp: "Open in default app",
     binaryFileTitle: "Binary file cannot be rendered as text",
     binaryFileDesc: "Size: {size} · Type: {mimeType}",
+    sheetRowsCount: "{count} rows",
+    sheetFilterPlaceholder: "Filter rows in current sheet…",
+    sheetNoMatchingRows: "No rows match the current filter",
+    sheetEmpty: "This sheet has no data rows",
+    sheetTruncatedNotice: "Showing first {shown} of {total} rows",
+    copyTableMarkdown: "Copy as Markdown table",
+    copiedTableMarkdown: "Markdown table copied",
   },
   terminal: {
     connected: "Terminal connected",

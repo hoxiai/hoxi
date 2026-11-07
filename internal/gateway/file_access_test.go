@@ -6,9 +6,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/hoxiai/hoxi/internal/attachment"
 )
 
 // decodeSensitiveRequest builds an absolute path inside a synthetic credential
@@ -148,3 +151,68 @@ func jsonString(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
 }
+
+func TestFileContentSpreadsheetSheetsAndPDFExtract(t *testing.T) {
+	root := t.TempDir()
+	g := New(0, "test", root, nil, nil)
+	defer g.CloseBrowser()
+
+	xlsxPath := filepath.Join(root, "metrics.xlsx")
+	if err := attachment.WriteXLSXFile(xlsxPath, []attachment.SpreadsheetSheet{
+		{
+			Name: "ROAS分析",
+			Rows: [][]string{
+				{"渠道", "消耗", "GMV"},
+				{"Meta", "1200", "4800"},
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	q := "?" + url.Values{"path": {"metrics.xlsx"}, "directory": {root}}.Encode()
+	g.ServeHTTP(rec, localRequest(http.MethodGet, "/api/hoxi/file/content"+q, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET metrics.xlsx = %d: %s", rec.Code, rec.Body.String())
+	}
+	var xlsxResp struct {
+		MimeType      string                        `json:"mimeType"`
+		ExtractedText string                        `json:"extractedText"`
+		Sheets        []attachment.SpreadsheetSheet `json:"sheets"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &xlsxResp); err != nil {
+		t.Fatal(err)
+	}
+	if len(xlsxResp.Sheets) != 1 || xlsxResp.Sheets[0].Name != "ROAS分析" || len(xlsxResp.Sheets[0].Rows) != 2 {
+		t.Fatalf("unexpected sheets in /file/content response: %+v", xlsxResp.Sheets)
+	}
+	if !strings.Contains(xlsxResp.ExtractedText, "Meta\t1200\t4800") {
+		t.Fatalf("unexpected extractedText: %q", xlsxResp.ExtractedText)
+	}
+
+	pdfPath := filepath.Join(root, "contract.pdf")
+	pdfBytes := []byte("%PDF-1.4\n1 0 obj\n<< /Length 44 >>\nstream\nBT\n(Service Level Agreement) Tj\nET\nendstream\nendobj\n%%EOF\n")
+	if err := os.WriteFile(pdfPath, pdfBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	recPDF := httptest.NewRecorder()
+	qPDF := "?" + url.Values{"path": {"contract.pdf"}, "directory": {root}}.Encode()
+	g.ServeHTTP(recPDF, localRequest(http.MethodGet, "/api/hoxi/file/content"+qPDF, nil))
+	if recPDF.Code != http.StatusOK {
+		t.Fatalf("GET contract.pdf = %d: %s", recPDF.Code, recPDF.Body.String())
+	}
+	var pdfResp struct {
+		Type          string `json:"type"`
+		MimeType      string `json:"mimeType"`
+		Content       string `json:"content"`
+		ExtractedText string `json:"extractedText"`
+	}
+	if err := json.Unmarshal(recPDF.Body.Bytes(), &pdfResp); err != nil {
+		t.Fatal(err)
+	}
+	if pdfResp.MimeType != "application/pdf" || pdfResp.Content == "" || !strings.Contains(pdfResp.ExtractedText, "Service Level Agreement") {
+		t.Fatalf("unexpected pdf response: %+v", pdfResp)
+	}
+}
+

@@ -32,9 +32,13 @@ import {
   formatByteSize,
   isImagePreviewable,
   isMarkdownPath,
+  isOfficeDocumentPath,
+  isPdfPath,
+  isSpreadsheetPath,
   isSvgPath,
 } from "./file-tree-helpers";
 import MarkdownDocumentReader from "./MarkdownDocumentReader";
+import { PdfPreviewFrame, SpreadsheetPreviewView } from "./SpreadsheetPreviewView";
 
 export interface FilePreviewPaneProps {
   previewPath: string;
@@ -72,14 +76,42 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
   const isImageFile = createMemo(() =>
     Boolean(props.previewPath && isImagePreviewable(props.previewPath, props.previewMeta))
   );
+  const isPdfFile = createMemo(() => {
+    const p = props.previewMeta?.resolvedPath || props.previewPath || "";
+    return isPdfPath(p, props.previewMeta?.mimeType);
+  });
+  const isSpreadsheetFile = createMemo(() => {
+    const p = props.previewMeta?.resolvedPath || props.previewPath || "";
+    return (
+      Boolean(props.previewMeta?.sheets?.length) ||
+      isSpreadsheetPath(p, props.previewMeta?.mimeType)
+    );
+  });
+  const isOfficeDocFile = createMemo(() => {
+    const p = props.previewMeta?.resolvedPath || props.previewPath || "";
+    return isOfficeDocumentPath(p, props.previewMeta?.mimeType);
+  });
   const isMarkdownFile = createMemo(() => {
     const p = props.previewMeta?.resolvedPath || props.previewPath || "";
     return !isBinaryPreview() && isMarkdownPath(p, props.previewMeta?.mimeType);
   });
+  const effectiveSourceText = createMemo(() => {
+    if (!isBinaryPreview()) return props.previewContent;
+    return props.previewMeta?.extractedText || "";
+  });
   const canTogglePreview = createMemo(() => {
     const p = props.previewMeta?.resolvedPath || props.previewPath || "";
     const mime = props.previewMeta?.mimeType;
-    return !isBinaryPreview() && (isMarkdownPath(p, mime) || isSvgPath(p, mime));
+    if (!isBinaryPreview() && (isMarkdownPath(p, mime) || isSvgPath(p, mime))) {
+      return true;
+    }
+    if (Boolean(props.previewMeta?.sheets?.length) && Boolean(effectiveSourceText())) {
+      return true;
+    }
+    if (isPdfFile() && Boolean(props.previewContent) && Boolean(effectiveSourceText())) {
+      return true;
+    }
+    return false;
   });
   const markdownHeadings = createMemo(() =>
     isMarkdownFile() && props.previewContent
@@ -102,9 +134,10 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
     return "";
   });
 
-  const sourceLines = createMemo(() =>
-    isBinaryPreview() ? [] : props.previewContent.split("\n")
-  );
+  const sourceLines = createMemo(() => {
+    const text = effectiveSourceText();
+    return text ? text.split("\n") : [];
+  });
   const INITIAL_SOURCE_LINE_LIMIT = 600;
   const SOURCE_LINE_BATCH = 600;
   const [renderedLineLimit, setRenderedLineLimit] = createSignal(INITIAL_SOURCE_LINE_LIMIT);
@@ -133,7 +166,7 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
   };
 
   createEffect(() => {
-    const code = props.previewContent;
+    const code = effectiveSourceText();
     if (!code || isBinaryPreview()) {
       setHighlighted(undefined);
       return;
@@ -182,8 +215,8 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
   };
 
   const handleCopyContent = async () => {
-    const content = props.previewContent;
-    if (!content || isBinaryPreview()) return;
+    const content = effectiveSourceText();
+    if (!content) return;
     try {
       await navigator.clipboard.writeText(content);
       setCopiedContent(true);
@@ -342,7 +375,7 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
               <Check size={12} class="text-[var(--ok-text)]" />
             </Show>
           </button>
-          <Show when={!isBinaryPreview() && props.previewContent}>
+          <Show when={Boolean(effectiveSourceText())}>
             <button
               type="button"
               onClick={handleCopyContent}
@@ -439,134 +472,163 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
               imageDataUrl()
             }
             fallback={
-              /* 2. Non-image Binary File Card */
+              /* 2. Spreadsheet Interactive Table Preview (.xlsx / .xls / .ods / .csv / .tsv) */
               <Show
-                when={isBinaryPreview()}
+                when={
+                  props.viewMode === "preview" &&
+                  isSpreadsheetFile() &&
+                  (props.previewMeta?.sheets?.length ?? 0) > 0
+                }
                 fallback={
-                  /* 3. Markdown Rendered Document Preview */
+                  /* 3. Native PDF Preview */
                   <Show
-                    when={props.viewMode === "preview" && isMarkdownFile()}
+                    when={props.viewMode === "preview" && isPdfFile() && Boolean(props.previewContent)}
                     fallback={
-                      /* 4. Highlighted Code / Text Source View */
-                      <pre
-                        class="py-3 font-mono leading-relaxed text-[var(--text-primary)] whitespace-pre selectable-text"
-                        style={{ "font-size": "var(--app-code-text-size)" }}
-                      >
-                        <For each={visibleSourceLines()}>
-                          {(line, index) => {
-                            const lineNo = () => index() + 1;
-                            const isChanged = () => changedLines().has(lineNo());
-                            const isTarget = () => props.highlightedLine === lineNo();
-                            return (
-                              <div
-                                data-line={lineNo()}
-                                class={`flex min-h-[1.55em] px-3 ${
-                                  isChanged()
-                                    ? "bg-emerald-500/18 border-l-[3px] border-emerald-400"
-                                    : isTarget()
-                                      ? "bg-[var(--accent-surface)] border-l-[3px] border-[var(--accent-primary)]"
-                                      : "border-l-[3px] border-transparent"
-                                }`}
+                      /* 4. Non-previewable Binary File Card (when no extractedText or in binary fallback) */
+                      <Show
+                        when={isBinaryPreview() && !effectiveSourceText()}
+                        fallback={
+                          /* 5. Markdown or Extracted Office Document Reader */
+                          <Show
+                            when={
+                              props.viewMode === "preview" &&
+                              (isMarkdownFile() || (isOfficeDocFile() && Boolean(effectiveSourceText())))
+                            }
+                            fallback={
+                              /* 6. Highlighted Code / Extracted Text Source View */
+                              <pre
+                                class="py-3 font-mono leading-relaxed text-[var(--text-primary)] whitespace-pre selectable-text"
+                                style={{ "font-size": "var(--app-code-text-size)" }}
                               >
-                                <span
-                                  class={`mr-2 w-10 shrink-0 select-none text-right ${
-                                    isChanged()
-                                      ? "text-[var(--ok-text)] font-semibold"
-                                      : "text-[var(--text-faint)]"
-                                  }`}
-                                >
-                                  {lineNo()}
-                                </span>
-                                <span
-                                  class={`mr-2 w-3 shrink-0 select-none text-center font-bold ${
-                                    isChanged() ? "text-[var(--ok-text)]" : "text-transparent"
-                                  }`}
-                                >
-                                  +
-                                </span>
-                                <span class={isChanged() ? "text-[var(--text-primary)]" : ""}>
-                                  <Show
-                                    when={highlighted()?.tokens[index()]}
-                                    fallback={line || " "}
-                                  >
-                                    {(tokens) => (
-                                      <For each={tokens()}>
-                                        {(token) => (
-                                          <span
-                                            style={{
-                                              color: token.color,
-                                              "font-style":
-                                                (token.fontStyle ?? 0) & 1
-                                                  ? "italic"
-                                                  : undefined,
-                                              "font-weight":
-                                                (token.fontStyle ?? 0) & 2
-                                                  ? "bold"
-                                                  : undefined,
-                                              "text-decoration":
-                                                (token.fontStyle ?? 0) & 4
-                                                  ? "underline"
-                                                  : undefined,
-                                            }}
+                                <For each={visibleSourceLines()}>
+                                  {(line, index) => {
+                                    const lineNo = () => index() + 1;
+                                    const isChanged = () => changedLines().has(lineNo());
+                                    const isTarget = () => props.highlightedLine === lineNo();
+                                    return (
+                                      <div
+                                        data-line={lineNo()}
+                                        class={`flex min-h-[1.55em] px-3 ${
+                                          isChanged()
+                                            ? "bg-emerald-500/18 border-l-[3px] border-emerald-400"
+                                            : isTarget()
+                                              ? "bg-[var(--accent-surface)] border-l-[3px] border-[var(--accent-primary)]"
+                                              : "border-l-[3px] border-transparent"
+                                        }`}
+                                      >
+                                        <span
+                                          class={`mr-2 w-10 shrink-0 select-none text-right ${
+                                            isChanged()
+                                              ? "text-[var(--ok-text)] font-semibold"
+                                              : "text-[var(--text-faint)]"
+                                          }`}
+                                        >
+                                          {lineNo()}
+                                        </span>
+                                        <span
+                                          class={`mr-2 w-3 shrink-0 select-none text-center font-bold ${
+                                            isChanged() ? "text-[var(--ok-text)]" : "text-transparent"
+                                          }`}
+                                        >
+                                          +
+                                        </span>
+                                        <span class={isChanged() ? "text-[var(--text-primary)]" : ""}>
+                                          <Show
+                                            when={highlighted()?.tokens[index()]}
+                                            fallback={line || " "}
                                           >
-                                            {token.content}
-                                          </span>
-                                        )}
-                                      </For>
-                                    )}
-                                  </Show>
-                                </span>
-                              </div>
-                            );
-                          }}
-                        </For>
-                      </pre>
+                                            {(tokens) => (
+                                              <For each={tokens()}>
+                                                {(token) => (
+                                                  <span
+                                                    style={{
+                                                      color: token.color,
+                                                      "font-style":
+                                                        (token.fontStyle ?? 0) & 1
+                                                          ? "italic"
+                                                          : undefined,
+                                                      "font-weight":
+                                                        (token.fontStyle ?? 0) & 2
+                                                          ? "bold"
+                                                          : undefined,
+                                                      "text-decoration":
+                                                        (token.fontStyle ?? 0) & 4
+                                                          ? "underline"
+                                                          : undefined,
+                                                    }}
+                                                  >
+                                                    {token.content}
+                                                  </span>
+                                                )}
+                                              </For>
+                                            )}
+                                          </Show>
+                                        </span>
+                                      </div>
+                                    );
+                                  }}
+                                </For>
+                              </pre>
+                            }
+                          >
+                            <MarkdownDocumentReader
+                              content={effectiveSourceText()}
+                              baseFilePath={props.previewPath}
+                              headings={markdownHeadings()}
+                              outlineOpen={outlineOpen()}
+                              onToggleOutline={setOutlineOpen}
+                              scrollContainer={() => sourceContainer}
+                            />
+                          </Show>
+                        }
+                      >
+                        <div class="flex flex-col items-center justify-center py-12 px-4 text-center space-y-3">
+                          <FileIcon
+                            node={{ path: props.previewMeta?.resolvedPath || props.previewPath, type: "file" }}
+                            class="w-10 h-10 opacity-80"
+                          />
+                          <div class="text-[13px] font-medium text-[var(--text-primary)]">
+                            {t("inspector.files.binaryFileTitle")}
+                          </div>
+                          <div class="text-[11px] font-mono text-[var(--text-muted)]">
+                            {t("inspector.files.binaryFileDesc", {
+                              size: formatByteSize(props.previewMeta?.size),
+                              mimeType: props.previewMeta?.mimeType || "application/octet-stream",
+                            })}
+                          </div>
+                          <div class="flex items-center gap-2 pt-1">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenExternal("reveal")}
+                              class="inline-flex items-center gap-1.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3 py-1.5 text-[12px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+                            >
+                              <FolderOpen size={13} />
+                              <span>{t("inspector.files.revealInFinder")}</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleOpenExternal("open")}
+                              class="inline-flex items-center gap-1.5 rounded-md border border-[var(--accent-border)] bg-[var(--accent-surface)] px-3 py-1.5 text-[12px] font-medium text-[var(--accent-primary)] hover:opacity-90 cursor-pointer"
+                            >
+                              <ExternalLink size={13} />
+                              <span>{t("inspector.files.openInDefaultApp")}</span>
+                            </button>
+                          </div>
+                        </div>
+                      </Show>
                     }
                   >
-                    <MarkdownDocumentReader
-                      content={props.previewContent}
-                      baseFilePath={props.previewPath}
-                      headings={markdownHeadings()}
-                      outlineOpen={outlineOpen()}
-                      onToggleOutline={setOutlineOpen}
-                      scrollContainer={() => sourceContainer}
+                    <PdfPreviewFrame
+                      base64Content={props.previewContent}
+                      filePath={props.previewPath}
                     />
                   </Show>
                 }
               >
-                <div class="flex flex-col items-center justify-center py-12 px-4 text-center space-y-3">
-                  <FileIcon
-                    node={{ path: props.previewMeta?.resolvedPath || props.previewPath, type: "file" }}
-                    class="w-10 h-10 opacity-80"
-                  />
-                  <div class="text-[13px] font-medium text-[var(--text-primary)]">
-                    {t("inspector.files.binaryFileTitle")}
-                  </div>
-                  <div class="text-[11px] font-mono text-[var(--text-muted)]">
-                    {t("inspector.files.binaryFileDesc", {
-                      size: formatByteSize(props.previewMeta?.size),
-                      mimeType: props.previewMeta?.mimeType || "application/octet-stream",
-                    })}
-                  </div>
-                  <div class="flex items-center gap-2 pt-1">
-                    <button
-                      type="button"
-                      onClick={() => handleOpenExternal("reveal")}
-                      class="inline-flex items-center gap-1.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3 py-1.5 text-[12px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
-                    >
-                      <FolderOpen size={13} />
-                      <span>{t("inspector.files.revealInFinder")}</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleOpenExternal("open")}
-                      class="inline-flex items-center gap-1.5 rounded-md border border-[var(--accent-border)] bg-[var(--accent-surface)] px-3 py-1.5 text-[12px] font-medium text-[var(--accent-primary)] hover:opacity-90 cursor-pointer"
-                    >
-                      <ExternalLink size={13} />
-                      <span>{t("inspector.files.openInDefaultApp")}</span>
-                    </button>
-                  </div>
-                </div>
+                <SpreadsheetPreviewView
+                  sheets={props.previewMeta?.sheets ?? []}
+                  filePath={props.previewPath}
+                />
               </Show>
             }
           >
