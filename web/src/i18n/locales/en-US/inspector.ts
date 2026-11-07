@@ -198,7 +198,7 @@ export const inspector = {
     pushingBtn: "Pushing…",
     createPrBtn: "Create PR",
     creatingPrBtn: "Creating PR…",
-    createPrTooltip: "Push branch (if needed) and open Pull / Merge Request on remote",
+    createPrTooltip: "Push branch (if needed) and create Pull / Merge Request from commit summary",
     reposSummary: "{total} Git repos · {dirty} with changes",
     cleanReposSummary: "Synced repositories ({count})",
     repoCleanReadyToPush: "Working tree clean · ↑{count} ready to push",

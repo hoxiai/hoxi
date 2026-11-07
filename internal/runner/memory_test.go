@@ -2,9 +2,12 @@ package runner
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
 
 func TestRuntimeContextOmitsInlineBase64DataURLs(t *testing.T) {
@@ -524,5 +527,69 @@ func TestToolHeavyAssistantTurnRetainsLatestReplyAndPathEditsOnFallback(t *testi
 		if !strings.Contains(ctx, "Tool edit_file [completed]: "+path) {
 			t.Fatalf("expected prioritized mutating tool summary for %s to survive, got:\n%s", path, ctx)
 		}
+	}
+}
+
+func TestManualSessionMemorySurvivesAutomaticSync(t *testing.T) {
+	t.Parallel()
+	project := t.TempDir()
+	svc := &Service{store: NewStore(t.TempDir())}
+	sid := "ses_audit_manual_memory"
+	rec := SessionRecord{
+		ID:           sid,
+		Runtime:      "claude-code",
+		ProjectDir:   project,
+		WorktreePath: project,
+		Turns: []MessageTurn{
+			{
+				Info:  MessageInfo{ID: "msg_audit", SessionID: sid, Role: "user"},
+				Parts: []MessagePart{{ID: "prt_audit", MessageID: "msg_audit", SessionID: sid, Type: "text", Text: "Implement the feature"}},
+			},
+		},
+	}
+	if err := svc.store.Put(rec); err != nil {
+		t.Fatal(err)
+	}
+	svc.syncSessionMemoryFile(sid)
+
+	target := hoxipaths.ProjectSessionMemoryFile(project, sid)
+	edited := "# User-edited memory\n- MANUAL_RULE_MARKER_987\n"
+	if _, _, err := SaveMemoryDocument(project, "session", sid, edited); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate subsequent turn completion refreshing session memory.
+	rec.Turns = append(rec.Turns, MessageTurn{
+		Info:  MessageInfo{ID: "msg_audit_2", SessionID: sid, Role: "assistant"},
+		Parts: []MessagePart{{ID: "prt_audit_2", MessageID: "msg_audit_2", SessionID: sid, Type: "text", Text: "Completed first pass"}},
+	})
+	if err := svc.store.Put(rec); err != nil {
+		t.Fatal(err)
+	}
+	svc.syncSessionMemoryFile(sid)
+
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "MANUAL_RULE_MARKER_987") {
+		t.Fatalf("expected manual memory to survive automatic turn sync, got:\n%s", string(got))
+	}
+	if !strings.Contains(string(got), "Completed first pass") {
+		t.Fatalf("expected updated automatic turn summary alongside manual notes, got:\n%s", string(got))
+	}
+
+	// Also verify in-section manual additions inside the 8-dimension structure survive.
+	inSectionEdited := string(got) + "\n## 9. Manual Architecture Notes\n- KEEP_CUSTOM_SECTION_456\n"
+	if _, _, err := SaveMemoryDocument(project, "session", sid, inSectionEdited); err != nil {
+		t.Fatal(err)
+	}
+	svc.syncSessionMemoryFile(sid)
+	got2, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got2), "MANUAL_RULE_MARKER_987") || !strings.Contains(string(got2), "KEEP_CUSTOM_SECTION_456") {
+		t.Fatalf("expected both preamble and custom section to survive sync, got:\n%s", string(got2))
 	}
 }

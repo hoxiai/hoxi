@@ -35,10 +35,6 @@ const COMPONENT_SERVICE_READONLY_ALLOWLIST: Record<
     allowed: ["hoxiAPI.listFiles", "hoxiAPI.findFiles", "hoxiAPI.readFileContent"],
     reason: "Read-only workspace file tree browsing, search, and file preview content loading",
   },
-  "web/src/components/inspector/MemoryBankView.tsx": {
-    allowed: ["hoxiAPI.readFileContent"],
-    reason: "Read-only loading of .hoxi/memory markdown files (with legacy .opencode/memory fallback) in the Memory inspector",
-  },
   "web/src/components/inspector/PullRequestBadge.tsx": {
     allowed: ["fetchPullRequest"],
     reason: "Read-only GitHub/GitLab pull request status badge lookup",

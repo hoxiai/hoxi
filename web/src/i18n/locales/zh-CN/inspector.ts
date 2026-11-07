@@ -198,7 +198,7 @@ export const inspector: InspectorI18n = {
     pushingBtn: "推送中…",
     createPrBtn: "创建 PR",
     creatingPrBtn: "正在创建 PR…",
-    createPrTooltip: "推送当前分支（如需）并在远端仓库打开创建 PR / MR 页面",
+    createPrTooltip: "推送当前分支（如需）并基于提交摘要创建 PR / MR",
     reposSummary: "共 {total} 个 Git 仓库 · {dirty} 个有改动",
     cleanReposSummary: "已同步仓库 ({count})",
     repoCleanReadyToPush: "工作区干净 · ↑{count} 个提交待推送",

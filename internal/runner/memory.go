@@ -482,7 +482,11 @@ func (s *Service) syncSessionMemoryFile(sessionID string) {
 	if strings.TrimSpace(md) == "" {
 		return
 	}
-	_ = writeFileAtomic(filepath.Join(sessionsDir, rec.ID+".md"), []byte(md))
+	sessionFile := filepath.Join(sessionsDir, rec.ID+".md")
+	if existingBytes, err := os.ReadFile(sessionFile); err == nil && len(strings.TrimSpace(string(existingBytes))) > 0 {
+		md = MergeSessionMemoryMarkdown(string(existingBytes), md)
+	}
+	_ = writeFileAtomic(sessionFile, []byte(md))
 }
 
 func buildEightDimSessionMarkdown(rec SessionRecord) string {

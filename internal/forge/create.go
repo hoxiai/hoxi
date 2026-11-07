@@ -6,6 +6,9 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
+
+	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 func sanitizeGitRefArg(ref string) (string, bool) {
@@ -27,6 +30,29 @@ func extractCreatedPullRequestURL(output string) string {
 		}
 	}
 	return ""
+}
+
+func defaultPullRequestBodyFromCommits(ctx context.Context, dir, base, head, title string) string {
+	gitCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	var logArgs []string
+	if base != "" && head != "" {
+		logArgs = []string{"-C", dir, "log", "--no-merges", "--reverse", "--max-count=10", "--format=- %s", base + ".." + head}
+	} else {
+		logArgs = []string{"-C", dir, "log", "-1", "--format=%B", "HEAD"}
+	}
+	cmd := subproc.CommandContext(gitCtx, "git", logArgs...)
+	cmd.Dir = dir
+	cmd.Env = forgeEnv()
+	stdout := &limitedBuffer{max: 16 << 10}
+	cmd.Stdout = stdout
+	if err := cmd.Run(); err == nil {
+		if summary := strings.TrimSpace(string(stdout.Bytes())); summary != "" {
+			return summary
+		}
+	}
+	return strings.TrimSpace(title)
 }
 
 // Create creates a pull request via `gh pr create` and returns the resulting PR metadata.
@@ -55,6 +81,9 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) CreateResponse 
 	args := []string{"pr", "create"}
 	title := strings.TrimSpace(req.Title)
 	body := strings.TrimSpace(req.Body)
+	if body == "" {
+		body = defaultPullRequestBodyFromCommits(ctx, dir, base, head, title)
+	}
 	if title != "" {
 		args = append(args, "--title", title, "--body", body)
 	} else {

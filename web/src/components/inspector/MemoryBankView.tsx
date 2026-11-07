@@ -1,28 +1,27 @@
-import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import { ArrowUpRight, Brain, Check, Code2, Edit3, Eye, LoaderCircle, Plus, RefreshCw, Save } from "lucide-solid";
-import { hoxiAPI } from "../../services/api";
 import {
   activeDirectory,
+  clearMemoryBankDraft,
+  getMemoryBankDraft,
+  loadMemoryBankContent,
   promoteSessionMemoryToProject,
-  resolveProjectMemoryDirectory,
+  resolveMemoryBankTarget,
   saveMemoryBankContent,
+  sessionMemoryFiles,
+  setMemoryBankDraft,
   workspace,
+  type MemoryBankTarget,
 } from "../../store/workspace";
-import { t, locale } from "../../i18n";
+import { t } from "../../i18n";
 import MarkdownView, { slugifyHeading } from "../timeline/MarkdownView";
 
 const PROJECT_MEMORY_FILE = ".hoxi/memory/project.md";
-const LEGACY_PROJECT_MEMORY_FILE = ".opencode/memory/project.md";
 const DEFAULT_PROJECT_MEMORY_TEMPLATE = `# Project Memory
 
 - Keep this file concise: it is injected into every coding turn in this repository.
 - Architecture boundaries & conventions:
 `;
-
-/** Memory moved from .opencode/memory to .hoxi/memory; keep reading both. */
-function sessionMemoryFiles(id: string): string[] {
-  return [`.hoxi/memory/sessions/${id}.md`, `.opencode/memory/sessions/${id}.md`];
-}
 
 /** Parse the 8-dimension headings out of the memory markdown for a compact index. */
 function dimensions(text: string): string[] {
@@ -35,7 +34,9 @@ function dimensions(text: string): string[] {
 export default function MemoryBankView() {
   const [scope, setScope] = createSignal<"session" | "project">("session");
   const [content, setContent] = createSignal("");
-  const [draft, setDraft] = createSignal("");
+  const [loadedTargetKey, setLoadedTargetKey] = createSignal("");
+  const [editingTarget, setEditingTarget] = createSignal<MemoryBankTarget | null>(null);
+  const [draftValue, setDraftValue] = createSignal("");
   const [loading, setLoading] = createSignal(false);
   const [saving, setSaving] = createSignal(false);
   const [promoting, setPromoting] = createSignal(false);
@@ -43,6 +44,31 @@ export default function MemoryBankView() {
   const [notice, setNotice] = createSignal<string | null>(null);
   const [viewMode, setViewMode] = createSignal<"preview" | "source" | "edit">("preview");
   let scrollRef: HTMLDivElement | undefined;
+  let noticeTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const clearNoticeTimer = () => {
+    if (noticeTimer !== undefined) {
+      clearTimeout(noticeTimer);
+      noticeTimer = undefined;
+    }
+  };
+  onCleanup(() => {
+    clearNoticeTimer();
+    requestGen++;
+  });
+
+  const showNotice = (msg: string, ms: number) => {
+    clearNoticeTimer();
+    setNotice(msg);
+    noticeTimer = setTimeout(() => {
+      noticeTimer = undefined;
+      setNotice(null);
+    }, ms);
+  };
+
+  const currentTarget = createMemo(() =>
+    resolveMemoryBankTarget(scope(), activeDirectory(), workspace.activeSessionID)
+  );
 
   const activeFile = createMemo(() =>
     scope() === "session" && workspace.activeSessionID
@@ -54,43 +80,39 @@ export default function MemoryBankView() {
 
   const load = async () => {
     const gen = ++requestGen;
+    const target = currentTarget();
     setLoading(true);
     setError(null);
-    const rawDir = activeDirectory();
-    const projectDir = resolveProjectMemoryDirectory(rawDir);
-    const dirCandidates = projectDir && projectDir !== rawDir ? [projectDir, rawDir] : [rawDir];
-    const sid = workspace.activeSessionID;
-    const candidates: string[] =
-      scope() === "session"
-        ? sid
-          ? sessionMemoryFiles(sid)
-          : []
-        : [PROJECT_MEMORY_FILE, LEGACY_PROJECT_MEMORY_FILE];
+    if (loadedTargetKey() !== target.key) {
+      setContent("");
+      clearNoticeTimer();
+      setNotice(null);
+    }
+    const activeEdit = editingTarget();
+    if (activeEdit && activeEdit.key !== target.key) {
+      setEditingTarget(null);
+      setDraftValue("");
+      if (viewMode() === "edit") {
+        setViewMode("preview");
+      }
+    }
     try {
-      for (const dir of dirCandidates) {
-        for (const file of candidates) {
-          try {
-            const res = await hoxiAPI.readFileContent(file, dir, undefined, locale());
-            if (gen !== requestGen) return;
-            if (res?.content?.trim()) {
-              setContent(res.content);
-              setDraft(res.content);
-              if (viewMode() === "edit") setViewMode("preview");
-              return;
-            }
-          } catch (err) {
-            if (gen !== requestGen) return;
-            if (dir === dirCandidates[dirCandidates.length - 1] && file === candidates[candidates.length - 1]) {
-              console.error("read memory failed:", err);
-            }
-            // Try the next location: project root path, worktree path, legacy path.
-          }
-        }
+      const res = await loadMemoryBankContent({
+        scope: target.scope,
+        rawDirectory: activeDirectory(),
+        sessionID: target.sessionID || null,
+      });
+      if (gen !== requestGen || currentTarget().key !== target.key) return;
+      setLoadedTargetKey(target.key);
+      if (res.found && res.content.trim()) {
+        setContent(res.content);
+        if (viewMode() === "edit") setViewMode("preview");
+        setEditingTarget(null);
+        return;
       }
       setContent("");
-      setDraft("");
       setError(
-        scope() === "project" ? t("inspector.memory.notFound") : t("inspector.memory.empty")
+        target.scope === "project" ? t("inspector.memory.notFound") : t("inspector.memory.empty")
       );
     } finally {
       if (gen === requestGen) {
@@ -100,51 +122,106 @@ export default function MemoryBankView() {
   };
 
   const handleStartEdit = (initialTemplate?: string) => {
-    const base = initialTemplate ?? content();
-    setDraft(base);
+    const target = currentTarget();
+    if (loading()) return;
+    if (target.scope === "session" && !target.sessionID) return;
+    const savedDraft = getMemoryBankDraft(target.key);
+    const base = initialTemplate ?? savedDraft ?? content();
+    setEditingTarget(target);
+    setDraftValue(base);
+    setMemoryBankDraft(target.key, base);
     setError(null);
+    clearNoticeTimer();
     setNotice(null);
     setViewMode("edit");
   };
 
+  const handleUpdateDraft = (next: string) => {
+    const edit = editingTarget();
+    const active = currentTarget();
+    if (!edit || edit.key !== active.key) return;
+    setDraftValue(next);
+    setMemoryBankDraft(edit.key, next);
+  };
+
+  const handleCancelEdit = () => {
+    const edit = editingTarget();
+    if (edit) {
+      clearMemoryBankDraft(edit.key);
+    }
+    setEditingTarget(null);
+    setViewMode("preview");
+  };
+
+  const canSave = createMemo(() => {
+    const edit = editingTarget();
+    const active = currentTarget();
+    if (saving() || loading()) return false;
+    if (!edit || edit.key !== active.key) return false;
+    if (active.scope === "session" && !active.sessionID) return false;
+    return true;
+  });
+
   const handleSave = async () => {
-    if (saving()) return;
+    const edit = editingTarget();
+    const active = currentTarget();
+    if (!canSave() || !edit || edit.key !== active.key) return;
+    const saveGen = requestGen;
+    const bodyText = draftValue();
     setSaving(true);
     setError(null);
+    clearNoticeTimer();
     setNotice(null);
     try {
-      await saveMemoryBankContent({
-        scope: scope(),
-        content: draft(),
-        directory: activeDirectory(),
-        sessionID: workspace.activeSessionID,
+      const res = await saveMemoryBankContent({
+        scope: edit.scope,
+        content: bodyText,
+        directory: edit.directory,
+        sessionID: edit.sessionID || null,
       });
-      setContent(draft());
+      clearMemoryBankDraft(edit.key);
+      if (saveGen !== requestGen || currentTarget().key !== edit.key) return;
+      setContent(res.content ?? bodyText);
+      setLoadedTargetKey(edit.key);
+      setEditingTarget(null);
       setViewMode("preview");
-      setNotice(t("inspector.memory.savedNotice"));
-      setTimeout(() => setNotice(null), 3000);
+      showNotice(t("inspector.memory.savedNotice"), 3000);
     } catch (err: any) {
-      setError(err?.message || String(err));
+      if (saveGen === requestGen && currentTarget().key === edit.key) {
+        setError(err?.message || String(err));
+      }
     } finally {
       setSaving(false);
     }
   };
 
   const handlePromote = async () => {
-    const sid = workspace.activeSessionID;
-    if (!sid || promoting()) return;
+    const target = currentTarget();
+    if (
+      target.scope !== "session" ||
+      !target.sessionID ||
+      promoting() ||
+      loading() ||
+      loadedTargetKey() !== target.key
+    ) {
+      return;
+    }
+    const promoteGen = requestGen;
     setPromoting(true);
     setError(null);
+    clearNoticeTimer();
     setNotice(null);
     try {
       const res = await promoteSessionMemoryToProject({
-        sessionID: sid,
-        directory: activeDirectory(),
+        sessionID: target.sessionID,
+        directory: target.directory,
       });
-      setNotice(t("inspector.memory.promotedNotice", { count: res.addedCount }));
-      setTimeout(() => setNotice(null), 3500);
+      if (promoteGen !== requestGen || currentTarget().key !== target.key) return;
+      showNotice(t("inspector.memory.promotedNotice", { count: res.addedCount }), 3500);
     } catch (err: any) {
-      setError(err?.message || String(err));
+      if (promoteGen === requestGen && currentTarget().key === target.key) {
+        setError(err?.message || String(err));
+      }
     } finally {
       setPromoting(false);
     }
@@ -328,11 +405,11 @@ export default function MemoryBankView() {
           </div>
         </Show>
 
-        <Show when={viewMode() === "edit"}>
+        <Show when={viewMode() === "edit" && editingTarget()?.key === currentTarget().key}>
           <div class="flex flex-col gap-2">
             <textarea
-              value={draft()}
-              onInput={(e) => setDraft(e.currentTarget.value)}
+              value={draftValue()}
+              onInput={(e) => handleUpdateDraft(e.currentTarget.value)}
               placeholder={t("inspector.memory.editorPlaceholder")}
               rows={16}
               class="w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)]/70 p-3 font-mono text-[12px] leading-relaxed text-[var(--text-primary)] outline-none focus:border-[var(--accent-border)] resize-y"
@@ -341,14 +418,14 @@ export default function MemoryBankView() {
               <button
                 type="button"
                 disabled={saving()}
-                onClick={() => setViewMode("preview")}
+                onClick={handleCancelEdit}
                 class="hoxi-press rounded-lg border border-[var(--border-subtle)] px-2.5 py-1 text-[11.5px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] cursor-pointer"
               >
                 {t("inspector.memory.cancelEdit")}
               </button>
               <button
                 type="button"
-                disabled={saving()}
+                disabled={!canSave()}
                 onClick={() => void handleSave()}
                 class="hoxi-press inline-flex items-center gap-1 rounded-lg bg-[var(--accent-primary)] px-3 py-1 text-[11.5px] font-semibold text-[var(--accent-foreground)] hover:opacity-90 disabled:opacity-45 cursor-pointer"
               >

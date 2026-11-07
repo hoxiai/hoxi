@@ -311,7 +311,11 @@ func runtimeContext(rec SessionRecord) string {
 	if rec.Runtime == "opencode" && len(turns) > 0 {
 		handoffRec := rec
 		handoffRec.Turns = turns
-		if sessClean := dedupHandoffMemorySection6(stripVolatileMemoryHeader(buildEightDimSessionMarkdown(handoffRec))); sessClean != "" {
+		autoMem := buildEightDimSessionMarkdown(handoffRec)
+		if existingMem := readFirstNonEmptyFile(memoryCandidates(handoffRec, filepath.Join("sessions", handoffRec.ID+".md"))...); existingMem != "" {
+			autoMem = MergeSessionMemoryMarkdown(existingMem, autoMem)
+		}
+		if sessClean := dedupHandoffMemorySection6(stripVolatileMemoryHeader(autoMem)); sessClean != "" {
 			sessClean = truncateUTF8Bytes(sessClean, maxMemorySummaryByte)
 			memoryBlock = "<session_handoff_memory>\n" + sessClean + "\n</session_handoff_memory>\n\n"
 		}

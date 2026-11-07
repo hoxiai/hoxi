@@ -131,6 +131,7 @@ func forgeEnv() []string {
 		"NO_COLOR=1",
 		"TERM=dumb",
 		"GIT_TERMINAL_PROMPT=0",
+		"GCM_INTERACTIVE=never",
 	)
 }
 

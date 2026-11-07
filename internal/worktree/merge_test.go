@@ -176,3 +176,43 @@ func TestApplyAbortsCleanlyOnMergeOrPatchConflict(t *testing.T) {
 		t.Fatalf("repo file altered after failed patch apply: %q", got)
 	}
 }
+
+func TestPatchConflictPreservesLargeStagedAdditionAndExistingStaging(t *testing.T) {
+	t.Parallel()
+	dirs := newMergeFixture(t)
+	repo := dirs["repo"]
+	mgr := NewManager(repo)
+
+	meta, err := mgr.Create("ses_patch_large_staged")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reviewTestWrite(t, filepath.Join(meta.Directory, "f.txt"), "a\nB-sandbox\nc\nd\ne\nf\ng\n")
+	reviewTestWrite(t, filepath.Join(repo, "f.txt"), "a\nB-main\nc\nd\ne\nf\ng\n")
+	reviewTestGit(t, repo, "add", "f.txt")
+	reviewTestGit(t, repo, "commit", "-q", "-m", "main divergence")
+
+	large := filepath.Join(repo, "user-staged-large.bin")
+	largeContent := strings.Repeat("x", maxSnapshotUntrackedFileSize+1)
+	reviewTestWrite(t, large, largeContent)
+	reviewTestWrite(t, filepath.Join(repo, "user-staged.txt"), "user work\n")
+	reviewTestGit(t, repo, "add", "user-staged-large.bin", "user-staged.txt")
+
+	beforeIndex := reviewTestGit(t, repo, "diff", "--cached", "--name-only")
+	if err := mgr.Apply("ses_patch_large_staged", "patch"); !errors.Is(err, ErrMergeConflict) {
+		t.Fatalf("expected ErrMergeConflict, got %v", err)
+	}
+	info, err := os.Stat(large)
+	if err != nil {
+		t.Fatalf("large staged user file lost after failed patch apply: %v", err)
+	}
+	if info.Size() != int64(len(largeContent)) {
+		t.Fatalf("large staged user file size = %d, want %d", info.Size(), len(largeContent))
+	}
+	if got := readMergeFile(t, filepath.Join(repo, "user-staged.txt")); got != "user work\n" {
+		t.Fatalf("user-staged.txt content = %q", got)
+	}
+	if after := reviewTestGit(t, repo, "diff", "--cached", "--name-only"); after != beforeIndex {
+		t.Fatalf("user staged index lost after failed patch apply: before=%q after=%q", beforeIndex, after)
+	}
+}

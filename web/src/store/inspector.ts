@@ -189,6 +189,23 @@ export function clearReviewComments(sessionID: string) {
   setWorkspace("reviewCommentsBySession", sessionID, []);
 }
 
+const PROJECT_MEMORY_FILE = ".hoxi/memory/project.md";
+const LEGACY_PROJECT_MEMORY_FILE = ".opencode/memory/project.md";
+const MAX_MEMORY_DRAFTS = 32;
+const memoryDraftByTarget = new Map<string, string>();
+
+export interface MemoryBankTarget {
+  scope: "session" | "project";
+  directory: string;
+  sessionID: string;
+  key: string;
+}
+
+/** Memory moved from .opencode/memory to .hoxi/memory; keep reading both. */
+export function sessionMemoryFiles(id: string): string[] {
+  return [`.hoxi/memory/sessions/${id}.md`, `.opencode/memory/sessions/${id}.md`];
+}
+
 /**
  * Resolves the project root that owns `.hoxi/memory` even when `dir` is an
  * isolated session worktree (`<root>/.hoxi/worktrees/<sessionID>`).
@@ -208,17 +225,100 @@ export function resolveProjectMemoryDirectory(dir?: string | null): string | und
   return raw;
 }
 
+export function resolveMemoryBankTarget(
+  scope: "session" | "project",
+  rawDirectory?: string | null,
+  sessionID?: string | null
+): MemoryBankTarget {
+  const directory = (resolveProjectMemoryDirectory(rawDirectory) || "").trim();
+  const sid = scope === "session" ? (sessionID || "").trim() : "";
+  return {
+    scope,
+    directory,
+    sessionID: sid,
+    key: `${scope}:${directory}:${sid}`,
+  };
+}
+
+export function getMemoryBankDraft(targetKey: string): string | undefined {
+  if (!targetKey) return undefined;
+  return memoryDraftByTarget.get(targetKey);
+}
+
+export function setMemoryBankDraft(targetKey: string, content: string): void {
+  if (!targetKey) return;
+  if (memoryDraftByTarget.has(targetKey)) {
+    memoryDraftByTarget.delete(targetKey);
+  } else if (memoryDraftByTarget.size >= MAX_MEMORY_DRAFTS) {
+    const oldest = memoryDraftByTarget.keys().next().value;
+    if (oldest !== undefined) {
+      memoryDraftByTarget.delete(oldest);
+    }
+  }
+  memoryDraftByTarget.set(targetKey, content);
+}
+
+export function clearMemoryBankDraft(targetKey: string): void {
+  if (!targetKey) return;
+  memoryDraftByTarget.delete(targetKey);
+}
+
+export function resetMemoryBankDrafts(): void {
+  memoryDraftByTarget.clear();
+}
+
+export async function loadMemoryBankContent(input: {
+  scope: "session" | "project";
+  rawDirectory?: string | null;
+  sessionID?: string | null;
+}): Promise<{ target: MemoryBankTarget; content: string; found: boolean }> {
+  const rawDir = (input.rawDirectory || workspace.rootDir || "").trim();
+  const target = resolveMemoryBankTarget(input.scope, rawDir, input.sessionID);
+  const dirCandidates =
+    target.directory && target.directory !== rawDir
+      ? [target.directory, rawDir]
+      : [target.directory || rawDir];
+  const candidates: string[] =
+    target.scope === "session"
+      ? target.sessionID
+        ? sessionMemoryFiles(target.sessionID)
+        : []
+      : [PROJECT_MEMORY_FILE, LEGACY_PROJECT_MEMORY_FILE];
+
+  for (const dir of dirCandidates) {
+    for (const file of candidates) {
+      try {
+        const res = await hoxiAPI.readFileContent(file, dir, undefined, locale());
+        if (res?.content?.trim()) {
+          return { target, content: res.content, found: true };
+        }
+      } catch (err) {
+        if (
+          dir === dirCandidates[dirCandidates.length - 1] &&
+          file === candidates[candidates.length - 1]
+        ) {
+          console.error("read memory failed:", err);
+        }
+      }
+    }
+  }
+  return { target, content: "", found: false };
+}
+
 export function saveMemoryBankContent(input: {
   scope: "project" | "session";
   sessionID?: string | null;
   directory?: string;
   content: string;
 }): Promise<{ ok: boolean; scope: string; path: string; content: string }> {
-  const dir = resolveProjectMemoryDirectory(input.directory);
+  const target = resolveMemoryBankTarget(input.scope, input.directory, input.sessionID);
+  if (target.scope === "session" && !target.sessionID) {
+    return Promise.reject(new Error("valid sessionID is required for session memory"));
+  }
   return hoxiAPI.saveMemory({
-    scope: input.scope,
-    ...(input.sessionID ? { sessionID: input.sessionID } : {}),
-    ...(dir ? { directory: dir } : {}),
+    scope: target.scope,
+    ...(target.sessionID ? { sessionID: target.sessionID } : {}),
+    ...(target.directory ? { directory: target.directory } : {}),
     content: input.content,
   });
 }

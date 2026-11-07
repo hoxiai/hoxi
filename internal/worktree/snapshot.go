@@ -204,8 +204,8 @@ func RestoreSnapshot(dir, treeHash string) error {
 	}
 
 	var currentCandidates []string
-	if trackedOut, err := runGitRaw(repoRoot, "ls-files", "-c", "-z"); err == nil && trackedOut != "" {
-		currentCandidates = append(currentCandidates, strings.Split(trackedOut, "\x00")...)
+	if headFilesOut, err := runGitRaw(repoRoot, "ls-tree", "-r", "--name-only", "-z", "HEAD"); err == nil && headFilesOut != "" {
+		currentCandidates = append(currentCandidates, strings.Split(headFilesOut, "\x00")...)
 	}
 	currentCandidates = append(currentCandidates, collectSnapshotCandidatePaths(repoRoot)...)
 	for _, rel := range currentCandidates {
@@ -230,11 +230,39 @@ func RestoreSnapshot(dir, treeHash string) error {
 	if _, err := runGitWithIndex(repoRoot, tmpIndex, "checkout-index", "-a", "-f"); err != nil {
 		return fmt.Errorf("checkout snapshot files: %w", err)
 	}
-	if unmerged, _ := runGit(repoRoot, "ls-files", "-u"); strings.TrimSpace(unmerged) != "" {
-		_, _ = runGit(repoRoot, "read-tree", "HEAD")
+	if unmergedOut, _ := runGitRaw(repoRoot, "ls-files", "-u", "-z"); strings.TrimSpace(unmergedOut) != "" {
+		if unmergedPaths := extractUnmergedPaths(unmergedOut); len(unmergedPaths) > 0 {
+			resetArgs := append([]string{"reset", "-q", "HEAD", "--"}, unmergedPaths...)
+			if _, err := runGit(repoRoot, resetArgs...); err != nil {
+				_, _ = runGit(repoRoot, "read-tree", "HEAD")
+			}
+		} else {
+			_, _ = runGit(repoRoot, "read-tree", "HEAD")
+		}
 	}
 	globalRepoDiffCache.invalidate(repoRoot)
 	return nil
+}
+
+func extractUnmergedPaths(unmergedOut string) []string {
+	seen := make(map[string]struct{})
+	var paths []string
+	for _, rec := range strings.Split(unmergedOut, "\x00") {
+		tab := strings.IndexByte(rec, '\t')
+		if tab < 0 {
+			continue
+		}
+		rel := strings.TrimSpace(rec[tab+1:])
+		if rel == "" {
+			continue
+		}
+		if _, ok := seen[rel]; ok {
+			continue
+		}
+		seen[rel] = struct{}{}
+		paths = append(paths, rel)
+	}
+	return paths
 }
 
 // SnapshotChangedPaths returns the repo-relative slash paths that differ

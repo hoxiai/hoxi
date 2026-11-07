@@ -3,11 +3,18 @@ import { hoxiAPI } from "../services/api";
 import { resolveSessionDiffForFile } from "../components/timeline/file-diff-lines";
 import {
   buildConvoyConflictResolutionPrompt,
+  buildDefaultPullRequestBody,
   buildSandboxConflictResolutionPrompt,
   buildWorktreeVerifyFailurePrompt,
+  clearMemoryBankDraft,
+  createBranchPullRequest,
+  getMemoryBankDraft,
   isSandboxMergeConflictError,
   openChangedFileInInspector,
+  resetMemoryBankDrafts,
+  resolveMemoryBankTarget,
   resolveProjectMemoryDirectory,
+  setMemoryBankDraft,
   setWorkspace,
   workspace,
   type ConvoyPlan,
@@ -137,6 +144,118 @@ describe("worktree refresh lifecycle", () => {
       "C:/code/project"
     );
     assertEqual(resolveProjectMemoryDirectory("/Users/dev/project"), "/Users/dev/project");
+  });
+
+  it("never includes private chat messages in default PR creation body", async () => {
+    const saved = structuredClone(unwrap(workspace));
+    const originalFetch = globalThis.fetch;
+    let capturedBody = null as Record<string, unknown> | null;
+    try {
+      const sid = "ses_pr_privacy";
+      setWorkspace({
+        rootDir: "/audit-project",
+        activeSessionID: sid,
+        worktreeBySession: {
+          [sid]: {
+            sessionID: sid,
+            isolated: true,
+            directory: "/audit-project/.hoxi/worktrees/" + sid,
+            branch: "hoxi/" + sid,
+            baseBranch: "main",
+            headSubject: "feat(auth): support token rotation",
+            dirty: false,
+            changedFiles: 1,
+            createdAt: "2026-11-07T00:00:00Z",
+          },
+        },
+        diffsBySession: {
+          [sid]: [
+            {
+              file: "internal/auth/rotate.go",
+              patch: "@@ -1 +1,2 @@\n+func Rotate() {}\n",
+              additions: 1,
+              deletions: 0,
+              status: "modified",
+            },
+          ],
+        },
+        messagesBySession: {
+          [sid]: [
+            {
+              info: { id: "msg_priv", sessionID: sid, role: "user", time: { created: 1 } },
+              parts: [
+                {
+                  id: "prt_priv",
+                  messageID: "msg_priv",
+                  sessionID: sid,
+                  type: "text",
+                  text: "PRIVATE_AUDIT_CHAT_MARKER_123 do not publish this secret note",
+                },
+              ],
+            },
+          ],
+        },
+      });
+
+      const defaultBody = buildDefaultPullRequestBody({ sessionID: sid });
+      assertEqual(defaultBody.includes("PRIVATE_AUDIT_CHAT_MARKER_123"), false);
+      assertTrue(defaultBody.includes("feat(auth): support token rotation"));
+      assertTrue(defaultBody.includes("internal/auth/rotate.go"));
+
+      globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+        if (init?.method === "POST" && init.body) {
+          capturedBody = JSON.parse(String(init.body));
+        }
+        return new Response(
+          JSON.stringify({ ok: true, available: true, url: "https://example.invalid/pr/1" }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }) as typeof fetch;
+
+      await createBranchPullRequest({
+        directory: "/audit-project",
+        head: "hoxi/" + sid,
+        title: "Change title",
+      });
+      assertTrue(capturedBody !== null);
+      const sentBody = String(capturedBody?.body ?? "");
+      assertEqual(sentBody.includes("PRIVATE_AUDIT_CHAT_MARKER_123"), false);
+    } finally {
+      globalThis.fetch = originalFetch;
+      setWorkspace(reconcile(saved));
+    }
+  });
+
+  it("isolates memory bank drafts per scope, project root, and sessionID", () => {
+    resetMemoryBankDrafts();
+    try {
+      const targetA = resolveMemoryBankTarget(
+        "session",
+        "/Users/dev/project/.hoxi/worktrees/ses_a",
+        "ses_a"
+      );
+      const targetB = resolveMemoryBankTarget(
+        "session",
+        "/Users/dev/project/.hoxi/worktrees/ses_b",
+        "ses_b"
+      );
+      const targetProj = resolveMemoryBankTarget("project", "/Users/dev/project", "ses_a");
+
+      assertEqual(targetA.directory, "/Users/dev/project");
+      assertEqual(targetB.directory, "/Users/dev/project");
+      assertEqual(targetA.key !== targetB.key, true);
+      assertEqual(targetProj.sessionID, "");
+
+      setMemoryBankDraft(targetA.key, "# Draft A");
+      assertEqual(getMemoryBankDraft(targetA.key), "# Draft A");
+      assertEqual(getMemoryBankDraft(targetB.key), undefined);
+      assertEqual(getMemoryBankDraft(targetProj.key), undefined);
+
+      clearMemoryBankDraft(targetA.key);
+      assertEqual(getMemoryBankDraft(targetA.key), undefined);
+    } finally {
+      resetMemoryBankDrafts();
+    }
   });
 });
 

@@ -378,6 +378,33 @@ export async function revertWorktreeFileChanges(
   if (sessionID) await loadSessionMessages(sessionID);
 }
 
+/**
+ * Builds a non-private PR description strictly from commit subject and changed
+ * file paths (never includes raw user/assistant conversation transcripts).
+ */
+export function buildDefaultPullRequestBody(input?: {
+  directory?: string;
+  sessionID?: string | null;
+}): string {
+  const target = worktreeTarget(input?.directory);
+  const key = input?.sessionID || target.key;
+  const wt = workspace.worktreeBySession[key];
+  const diffs =
+    (input?.sessionID ? workspace.diffsBySession[input.sessionID] : undefined) ??
+    workspace.worktreeDiffsBySession[key] ??
+    [];
+  const sections: string[] = [];
+  const headSubject = (wt?.headSubject || "").trim();
+  if (headSubject) {
+    sections.push(`## Summary\n- ${headSubject}`);
+  }
+  const files = Array.from(new Set(diffs.map((d) => d.file).filter(Boolean))).slice(0, 12);
+  if (files.length > 0) {
+    sections.push(`## Changed Files\n${files.map((f) => `- \`${f}\``).join("\n")}`);
+  }
+  return sections.join("\n\n").trim();
+}
+
 export async function createBranchPullRequest(input?: {
   directory?: string;
   sessionID?: string | null;
@@ -395,7 +422,10 @@ export async function createBranchPullRequest(input?: {
   const title = (input?.title || wt?.headSubject || "").trim();
   const body = (
     input?.body ??
-    buildSessionConversationDigest(input?.sessionID ?? target.sessionID)
+    buildDefaultPullRequestBody({
+      directory: input?.directory,
+      sessionID: input?.sessionID,
+    })
   ).trim();
   return createPullRequest({
     directory,

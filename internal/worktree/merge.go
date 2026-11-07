@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +16,286 @@ import (
 // ErrMergeConflict marks a MergeWorkingState call that could not combine the
 // changes cleanly; the target directory is left as it was.
 var ErrMergeConflict = errors.New("merge conflict")
+
+type txFileEntry struct {
+	rel        string
+	existed    bool
+	isSymlink  bool
+	linkTarget string
+	backupPath string
+	mode       os.FileMode
+}
+
+type workingTreeTransaction struct {
+	repoRoot        string
+	tmpDir          string
+	indexPath       string
+	indexExisted    bool
+	indexMode       os.FileMode
+	indexBackupPath string
+	files           []txFileEntry
+}
+
+func resolveGitIndexFile(repoRoot string) (string, error) {
+	out, err := runGit(repoRoot, "rev-parse", "--git-path", "index")
+	if err != nil || strings.TrimSpace(out) == "" {
+		return "", fmt.Errorf("resolve git index path: %w", err)
+	}
+	idxPath := strings.TrimSpace(out)
+	if !filepath.IsAbs(idxPath) {
+		idxPath = filepath.Join(repoRoot, idxPath)
+	}
+	return filepath.Clean(idxPath), nil
+}
+
+func copyFileExact(src, dst string, mode os.FileMode) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	tmpDst := dst + ".hoxi-tx-tmp"
+	out, err := os.OpenFile(tmpDst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		_ = os.Remove(tmpDst)
+		return err
+	}
+	if err := out.Sync(); err != nil {
+		_ = out.Close()
+		_ = os.Remove(tmpDst)
+		return err
+	}
+	if err := out.Close(); err != nil {
+		_ = os.Remove(tmpDst)
+		return err
+	}
+	if err := os.Rename(tmpDst, dst); err != nil {
+		_ = os.Remove(tmpDst)
+		return err
+	}
+	return nil
+}
+
+func beginWorkingTreeTransaction(dir string, rawPaths []string) (*workingTreeTransaction, error) {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return nil, errors.New("directory is required")
+	}
+	topLevel, err := runGit(dir, "rev-parse", "--show-toplevel")
+	if err != nil || strings.TrimSpace(topLevel) == "" {
+		return nil, fmt.Errorf("not a git repository: %w", err)
+	}
+	repoRoot := filepath.Clean(strings.TrimSpace(topLevel))
+	indexPath, err := resolveGitIndexFile(repoRoot)
+	if err != nil {
+		return nil, err
+	}
+	tmpDir, err := os.MkdirTemp("", "hoxi-merge-tx-*")
+	if err != nil {
+		return nil, err
+	}
+	tx := &workingTreeTransaction{
+		repoRoot:  repoRoot,
+		tmpDir:    tmpDir,
+		indexPath: indexPath,
+	}
+	cleanupOnErr := func(retErr error) (*workingTreeTransaction, error) {
+		_ = os.RemoveAll(tmpDir)
+		return nil, retErr
+	}
+
+	if idxInfo, err := os.Lstat(indexPath); err == nil {
+		tx.indexExisted = true
+		tx.indexMode = idxInfo.Mode().Perm()
+		if tx.indexMode == 0 {
+			tx.indexMode = 0o600
+		}
+		tx.indexBackupPath = filepath.Join(tmpDir, "index.bak")
+		if err := copyFileExact(indexPath, tx.indexBackupPath, 0o600); err != nil {
+			return cleanupOnErr(fmt.Errorf("backup git index: %w", err))
+		}
+	} else if !os.IsNotExist(err) {
+		return cleanupOnErr(fmt.Errorf("stat git index: %w", err))
+	}
+
+	seen := make(map[string]struct{})
+	for i, raw := range rawPaths {
+		rel := normalizeSnapshotRepoRelPath(repoRoot, raw)
+		if rel == "" || strings.HasPrefix(rel, ".git/") || rel == ".git" ||
+			strings.HasPrefix(rel, ".hoxi/") || strings.HasPrefix(rel, ".opencode/") || isIgnoredUntrackedWorktreePath(rel) {
+			continue
+		}
+		if _, ok := seen[rel]; ok {
+			continue
+		}
+		seen[rel] = struct{}{}
+
+		absPath := filepath.Join(repoRoot, filepath.FromSlash(rel))
+		info, err := os.Lstat(absPath)
+		if os.IsNotExist(err) {
+			tx.files = append(tx.files, txFileEntry{rel: rel, existed: false})
+			continue
+		}
+		if err != nil {
+			return cleanupOnErr(fmt.Errorf("inspect %s before merge: %w", rel, err))
+		}
+		if info.IsDir() {
+			continue
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			linkTarget, linkErr := os.Readlink(absPath)
+			if linkErr != nil {
+				return cleanupOnErr(fmt.Errorf("read symlink %s before merge: %w", rel, linkErr))
+			}
+			tx.files = append(tx.files, txFileEntry{
+				rel:        rel,
+				existed:    true,
+				isSymlink:  true,
+				linkTarget: linkTarget,
+				mode:       info.Mode(),
+			})
+			continue
+		}
+		if !info.Mode().IsRegular() {
+			return cleanupOnErr(fmt.Errorf("unsupported file mode on %s", rel))
+		}
+		bakPath := filepath.Join(tmpDir, fmt.Sprintf("file-%d.bak", i))
+		perm := info.Mode().Perm()
+		if perm == 0 {
+			perm = 0o644
+		}
+		if err := copyFileExact(absPath, bakPath, 0o600); err != nil {
+			return cleanupOnErr(fmt.Errorf("backup %s before merge: %w", rel, err))
+		}
+		tx.files = append(tx.files, txFileEntry{
+			rel:        rel,
+			existed:    true,
+			backupPath: bakPath,
+			mode:       perm,
+		})
+	}
+	return tx, nil
+}
+
+func (tx *workingTreeTransaction) Close() {
+	if tx != nil && tx.tmpDir != "" {
+		_ = os.RemoveAll(tx.tmpDir)
+	}
+}
+
+func (tx *workingTreeTransaction) Rollback() error {
+	if tx == nil {
+		return nil
+	}
+	var errs []error
+	for _, entry := range tx.files {
+		absPath := filepath.Join(tx.repoRoot, filepath.FromSlash(entry.rel))
+		if !entry.existed {
+			if err := os.Remove(absPath); err != nil && !os.IsNotExist(err) {
+				errs = append(errs, fmt.Errorf("remove %s: %w", entry.rel, err))
+			}
+			pruneEmptyParents(tx.repoRoot, filepath.Dir(absPath))
+			continue
+		}
+		if entry.isSymlink {
+			if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
+				errs = append(errs, fmt.Errorf("mkdir %s: %w", entry.rel, err))
+				continue
+			}
+			_ = os.Remove(absPath)
+			if err := os.Symlink(entry.linkTarget, absPath); err != nil {
+				errs = append(errs, fmt.Errorf("restore symlink %s: %w", entry.rel, err))
+			}
+			continue
+		}
+		if err := copyFileExact(entry.backupPath, absPath, entry.mode); err != nil {
+			errs = append(errs, fmt.Errorf("restore %s: %w", entry.rel, err))
+		}
+	}
+
+	_ = os.Remove(tx.indexPath + ".lock")
+	if !tx.indexExisted {
+		if err := os.Remove(tx.indexPath); err != nil && !os.IsNotExist(err) {
+			errs = append(errs, fmt.Errorf("remove index: %w", err))
+		}
+	} else {
+		if err := copyFileExact(tx.indexBackupPath, tx.indexPath, tx.indexMode); err != nil {
+			errs = append(errs, fmt.Errorf("restore git index: %w", err))
+		}
+	}
+	globalRepoDiffCache.invalidate(tx.repoRoot)
+	return errors.Join(errs...)
+}
+
+func pruneEmptyParents(repoRoot, dir string) {
+	cleanRoot := filepath.Clean(repoRoot)
+	cur := filepath.Clean(dir)
+	for cur != cleanRoot && strings.HasPrefix(cur, cleanRoot+string(filepath.Separator)) {
+		if err := os.Remove(cur); err != nil {
+			return
+		}
+		cur = filepath.Dir(cur)
+	}
+}
+
+func extractPatchPaths(patch string) []string {
+	var paths []string
+	for _, line := range strings.Split(patch, "\n") {
+		switch {
+		case strings.HasPrefix(line, "+++ b/"):
+			paths = append(paths, strings.TrimSpace(strings.TrimPrefix(line, "+++ b/")))
+		case strings.HasPrefix(line, "--- a/"):
+			paths = append(paths, strings.TrimSpace(strings.TrimPrefix(line, "--- a/")))
+		case strings.HasPrefix(line, "rename from "):
+			paths = append(paths, strings.TrimSpace(strings.TrimPrefix(line, "rename from ")))
+		case strings.HasPrefix(line, "rename to "):
+			paths = append(paths, strings.TrimSpace(strings.TrimPrefix(line, "rename to ")))
+		case strings.HasPrefix(line, "copy from "):
+			paths = append(paths, strings.TrimSpace(strings.TrimPrefix(line, "copy from ")))
+		case strings.HasPrefix(line, "copy to "):
+			paths = append(paths, strings.TrimSpace(strings.TrimPrefix(line, "copy to ")))
+		}
+	}
+	return paths
+}
+
+func collectMergeWorkingStatePaths(dstDir string, srcDirs ...string) ([]string, error) {
+	var paths []string
+	dstHead, _ := runGit(dstDir, "rev-parse", "--verify", "HEAD")
+	dstHead = strings.TrimSpace(dstHead)
+	for _, src := range srcDirs {
+		src = strings.TrimSpace(src)
+		if src == "" || filepath.Clean(src) == filepath.Clean(dstDir) {
+			continue
+		}
+		diffBase := "HEAD"
+		if dstHead != "" {
+			if mb, err := runGit(src, "merge-base", "HEAD", dstHead); err == nil && strings.TrimSpace(mb) != "" {
+				diffBase = strings.TrimSpace(mb)
+			}
+		}
+		diffNames, err := runGitRaw(src, "diff", "--name-only", "--no-renames", "-z", diffBase)
+		if err != nil {
+			return nil, fmt.Errorf("read changes in %s: %w", src, err)
+		}
+		if diffNames != "" {
+			paths = append(paths, strings.Split(diffNames, "\x00")...)
+		}
+		srcRoot, err := runGit(src, "rev-parse", "--show-toplevel")
+		if err != nil {
+			return nil, err
+		}
+		paths = append(paths, collectBoundedUntrackedFiles(strings.TrimSpace(srcRoot), "", nil, maxDiffUntrackedFiles)...)
+	}
+	return paths, nil
+}
 
 // MergeWorkingState folds the uncommitted changes of each source worktree into
 // dstDir, in order. Sources and target must share history (sibling worktrees of
@@ -27,17 +308,22 @@ func MergeWorkingState(dstDir string, srcDirs ...string) error {
 	if dstDir == "" {
 		return errors.New("target directory is required")
 	}
-	before, err := CreateSnapshot(dstDir)
+	touchedPaths, err := collectMergeWorkingStatePaths(dstDir, srcDirs...)
 	if err != nil {
 		return err
 	}
+	tx, err := beginWorkingTreeTransaction(dstDir, touchedPaths)
+	if err != nil {
+		return err
+	}
+	defer tx.Close()
 	for _, src := range srcDirs {
 		src = strings.TrimSpace(src)
 		if src == "" || filepath.Clean(src) == filepath.Clean(dstDir) {
 			continue
 		}
 		if err := mergeOneWorkingState(src, dstDir); err != nil {
-			if restoreErr := RestoreSnapshot(dstDir, before); restoreErr != nil {
+			if restoreErr := tx.Rollback(); restoreErr != nil {
 				return fmt.Errorf("%w (restore failed: %v)", err, restoreErr)
 			}
 			return err
@@ -221,7 +507,17 @@ func (m *worktreeManager) apply(sessionID, mode, message string) error {
 		return nil
 	}
 
-	before, snapErr := CreateSnapshot(m.rootDir)
+	changedNames, err := runGitRaw(meta.Directory, "diff", "--name-only", "--no-renames", "-z", strings.TrimSpace(base)+"..HEAD")
+	if err != nil {
+		return fmt.Errorf("list worktree patch paths: %w", err)
+	}
+	touchedPaths := append(strings.Split(changedNames, "\x00"), extractPatchPaths(diffPatch)...)
+	tx, err := beginWorkingTreeTransaction(m.rootDir, touchedPaths)
+	if err != nil {
+		return fmt.Errorf("prepare patch rollback: %w", err)
+	}
+	defer tx.Close()
+
 	ctx, cancel := context.WithTimeout(context.Background(), gitCommandTimeout)
 	defer cancel()
 	cmd := subproc.CommandContext(ctx, "git", "-C", m.rootDir, "apply", "--3way", "-")
@@ -229,8 +525,8 @@ func (m *worktreeManager) apply(sessionID, mode, message string) error {
 	cmd.Stdin = strings.NewReader(diffPatch)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		if snapErr == nil && before != "" {
-			_ = RestoreSnapshot(m.rootDir, before)
+		if restoreErr := tx.Rollback(); restoreErr != nil {
+			return fmt.Errorf("%w: git apply --3way failed: %s (restore failed: %v)", ErrMergeConflict, strings.TrimSpace(string(out)), restoreErr)
 		}
 		return fmt.Errorf("%w: git apply --3way failed: %s", ErrMergeConflict, strings.TrimSpace(string(out)))
 	}
