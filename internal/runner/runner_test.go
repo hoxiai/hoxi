@@ -306,6 +306,15 @@ func TestBuildAgyArgsAndWorktreeValidation(t *testing.T) {
 	if !strings.Contains(strings.Join(opus55Args, " "), "--effort max") {
 		t.Fatalf("expected claude-opus-5-5 to pass vendor-supported --effort max, got: %v", opus55Args)
 	}
+	if got := clampOpenCodeEffortFallback("openai", "gpt-5-codex", "max"); got != "xhigh" {
+		t.Fatalf("expected openai gpt-5-codex max effort to clamp to xhigh, got %q", got)
+	}
+	if got := clampOpenCodeEffortFallback("anthropic", "claude-haiku-4-5", "high"); got != "" {
+		t.Fatalf("expected claude-haiku-4-5 effort to clamp to empty, got %q", got)
+	}
+	if !modelExplicitlyDisablesReasoning(map[string]interface{}{"reasoning": false}) {
+		t.Fatal("expected modelExplicitlyDisablesReasoning to detect reasoning=false")
+	}
 
 	// Worktree validation: must reject repo root and home dir, accept .hoxi/worktrees/<id>
 	repoRoot := t.TempDir()

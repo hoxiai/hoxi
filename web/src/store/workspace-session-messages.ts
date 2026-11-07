@@ -7,6 +7,7 @@ import { extractUserTurnSkillSelection, revalidateSkillForTargetDirectory, setCo
 import { recordPromptDispatched } from "./provider-telemetry";
 import { extractLocalFallbackTitle, isPlaceholderSessionTitle, summarizeAndRenameSession } from "./session-title";
 import { evaluatePromptModalityIntent, isAutoModel, isNonChatUtilityModelID, markAutoCandidateCooldown, modelSupportsImageInput, resolveAutoModelTarget } from "./auto-models";
+import { resolveEffectiveModelEffort } from "./provider-catalog";
 import { reportAutoCandidateOutcome } from "./auto-breaker";
 import {
   clearAutoFailoverPending,
@@ -173,7 +174,8 @@ export async function dispatchSessionPrompt(
   ) {
     throw new Error(t("timeline.modelDoesNotSupportImages", { model: effectiveModel.modelID }));
   }
-  const effort = options?.effort ?? config.effort ?? editingQueued?.item.effort;
+  const rawEffort = options?.effort ?? config.effort ?? editingQueued?.item.effort;
+  const effort = resolveEffectiveModelEffort(effectiveModel, rawEffort);
   const baseExplicitSystem = options?.system ?? editingQueued?.item.system;
   const explicitSystem =
     [baseExplicitSystem?.trim(), turnIntent.mediaRoutingDirective?.trim()]

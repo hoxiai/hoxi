@@ -45,6 +45,14 @@ func isLegacyClaudeBudgetModel(lowerMID string) bool {
 	return ok && (major < 4 || (major == 4 && minor < 6))
 }
 
+func isClaude46Model(lowerMID string) bool {
+	if idx := strings.Index(lowerMID, "claude"); idx >= 0 {
+		lowerMID = lowerMID[idx:]
+	}
+	major, minor, ok := parseModelVersion(lowerMID)
+	return ok && major == 4 && minor == 6
+}
+
 func isLegacyGeminiBudgetModel(lowerMID string) bool {
 	if idx := strings.Index(lowerMID, "gemini"); idx >= 0 {
 		lowerMID = lowerMID[idx:]
@@ -54,11 +62,15 @@ func isLegacyGeminiBudgetModel(lowerMID string) bool {
 }
 
 func defaultModelVariants(providerID, npm, modelID string) map[string]interface{} {
+	lowerMID := strings.ToLower(strings.TrimSpace(modelID))
 	lowerPID := strings.ToLower(strings.TrimSpace(providerID))
 	lowerNPM := strings.ToLower(strings.TrimSpace(npm))
-	lowerMID := strings.ToLower(strings.TrimSpace(modelID))
+	canonKey := canonicalModelID(lowerMID)
 
-	if strings.Contains(lowerNPM, "anthropic") || lowerPID == "anthropic" {
+	isAnthropic := strings.Contains(lowerNPM, "anthropic") || (lowerNPM == "" && lowerPID == "anthropic")
+	isGoogle := !isAnthropic && (strings.Contains(lowerNPM, "google") || strings.Contains(lowerNPM, "gemini") || (lowerNPM == "" && (lowerPID == "google" || lowerPID == "gemini")))
+
+	if isAnthropic {
 		if isLegacyClaudeBudgetModel(lowerMID) {
 			return map[string]interface{}{
 				"low":    map[string]interface{}{"thinking": map[string]interface{}{"type": "enabled", "budgetTokens": 4096}},
@@ -67,15 +79,24 @@ func defaultModelVariants(providerID, npm, modelID string) map[string]interface{
 				"max":    map[string]interface{}{"thinking": map[string]interface{}{"type": "enabled", "budgetTokens": 31999}},
 			}
 		}
+		if isClaude46Model(lowerMID) {
+			return map[string]interface{}{
+				"low":    map[string]interface{}{"thinking": map[string]interface{}{"type": "adaptive"}, "effort": "low"},
+				"medium": map[string]interface{}{"thinking": map[string]interface{}{"type": "adaptive"}, "effort": "medium"},
+				"high":   map[string]interface{}{"thinking": map[string]interface{}{"type": "adaptive"}, "effort": "high"},
+				"max":    map[string]interface{}{"thinking": map[string]interface{}{"type": "adaptive"}, "effort": "max"},
+			}
+		}
 		return map[string]interface{}{
 			"low":    map[string]interface{}{"thinking": map[string]interface{}{"type": "adaptive"}, "effort": "low"},
 			"medium": map[string]interface{}{"thinking": map[string]interface{}{"type": "adaptive"}, "effort": "medium"},
 			"high":   map[string]interface{}{"thinking": map[string]interface{}{"type": "adaptive"}, "effort": "high"},
+			"xhigh":  map[string]interface{}{"thinking": map[string]interface{}{"type": "adaptive"}, "effort": "xhigh"},
 			"max":    map[string]interface{}{"thinking": map[string]interface{}{"type": "adaptive"}, "effort": "max"},
 		}
 	}
 
-	if strings.Contains(lowerNPM, "google") || lowerPID == "google" || lowerPID == "gemini" {
+	if isGoogle {
 		if isLegacyGeminiBudgetModel(lowerMID) {
 			return map[string]interface{}{
 				"low":    map[string]interface{}{"thinkingConfig": map[string]interface{}{"includeThoughts": true, "thinkingBudget": 4096}},
@@ -88,6 +109,51 @@ func defaultModelVariants(providerID, npm, modelID string) map[string]interface{
 			"low":    map[string]interface{}{"thinkingConfig": map[string]interface{}{"includeThoughts": true, "thinkingLevel": "low"}},
 			"medium": map[string]interface{}{"thinkingConfig": map[string]interface{}{"includeThoughts": true, "thinkingLevel": "medium"}},
 			"high":   map[string]interface{}{"thinkingConfig": map[string]interface{}{"includeThoughts": true, "thinkingLevel": "high"}},
+			"max":    map[string]interface{}{"thinkingConfig": map[string]interface{}{"includeThoughts": true, "thinkingLevel": "high"}},
+		}
+	}
+
+	if strings.Contains(lowerMID, "oss-") {
+		return map[string]interface{}{
+			"medium": map[string]interface{}{"reasoningEffort": "medium"},
+		}
+	}
+
+	if hasToken(canonKey, "claude") || strings.Contains(lowerMID, "claude") {
+		if isLegacyClaudeBudgetModel(lowerMID) || isClaude46Model(lowerMID) {
+			return map[string]interface{}{
+				"low":    map[string]interface{}{"reasoningEffort": "low"},
+				"medium": map[string]interface{}{"reasoningEffort": "medium"},
+				"high":   map[string]interface{}{"reasoningEffort": "high"},
+				"max":    map[string]interface{}{"reasoningEffort": "max"},
+			}
+		}
+		return map[string]interface{}{
+			"low":    map[string]interface{}{"reasoningEffort": "low"},
+			"medium": map[string]interface{}{"reasoningEffort": "medium"},
+			"high":   map[string]interface{}{"reasoningEffort": "high"},
+			"xhigh":  map[string]interface{}{"reasoningEffort": "xhigh"},
+			"max":    map[string]interface{}{"reasoningEffort": "max"},
+		}
+	}
+
+	if hasToken(canonKey, "gpt") || hasToken(canonKey, "codex") || isOSeriesModel(canonKey) ||
+		strings.Contains(lowerMID, "gpt") || strings.Contains(lowerMID, "codex") ||
+		strings.Contains(lowerPID, "openai") || strings.Contains(lowerPID, "codex") {
+		return map[string]interface{}{
+			"low":    map[string]interface{}{"reasoningEffort": "low"},
+			"medium": map[string]interface{}{"reasoningEffort": "medium"},
+			"high":   map[string]interface{}{"reasoningEffort": "high"},
+			"xhigh":  map[string]interface{}{"reasoningEffort": "xhigh"},
+		}
+	}
+
+	if hasToken(canonKey, "gemini") || strings.Contains(lowerMID, "gemini") {
+		return map[string]interface{}{
+			"low":    map[string]interface{}{"reasoningEffort": "low"},
+			"medium": map[string]interface{}{"reasoningEffort": "medium"},
+			"high":   map[string]interface{}{"reasoningEffort": "high"},
+			"max":    map[string]interface{}{"reasoningEffort": "high"},
 		}
 	}
 

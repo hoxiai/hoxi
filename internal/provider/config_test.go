@@ -311,6 +311,30 @@ func TestDefaultModelVariantsVersionParsing(t *testing.T) {
 		}
 	}
 
+	if _, hasXHigh := defaultModelVariants("anthropic", "@ai-sdk/anthropic", "claude-opus-4-6")["xhigh"]; hasXHigh {
+		t.Fatal("expected claude-opus-4-6 to omit xhigh variant")
+	}
+	for _, mid := range []string{"claude-opus-4-7", "claude-sonnet-5", "opus"} {
+		v := defaultModelVariants("anthropic", "@ai-sdk/anthropic", mid)
+		xhigh, _ := v["xhigh"].(map[string]interface{})
+		if xhigh["effort"] != "xhigh" {
+			t.Fatalf("expected claude 4.7+ model %q to include xhigh variant, got %+v", mid, v)
+		}
+	}
+	for _, mid := range []string{"gpt-5-codex", "gpt-5.4", "o3", "o4-mini"} {
+		v := defaultModelVariants("openai", "@ai-sdk/openai", mid)
+		xhigh, _ := v["xhigh"].(map[string]interface{})
+		if xhigh["reasoningEffort"] != "xhigh" {
+			t.Fatalf("expected openai model %q to include xhigh reasoningEffort, got %+v", mid, v)
+		}
+	}
+	gem3 := defaultModelVariants("google", "@ai-sdk/google", "gemini-4-argon")
+	gemMax, _ := gem3["max"].(map[string]interface{})
+	gemMaxCfg, _ := gemMax["thinkingConfig"].(map[string]interface{})
+	if gemMaxCfg["thinkingLevel"] != "high" {
+		t.Fatalf("expected modern gemini max variant to map safely to thinkingLevel=high, got %+v", gemMax)
+	}
+
 	if !isLegacyGeminiBudgetModel("gemini-2.5-pro") || !isLegacyGeminiBudgetModel("gemini-1.5-flash") {
 		t.Fatal("expected gemini 1.x/2.x to use legacy thinkingBudget")
 	}

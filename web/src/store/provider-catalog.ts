@@ -2,7 +2,12 @@
 import { t } from "../i18n";
 import { formatCompactNumber } from "../i18n/format";
 import type { ProviderInfo } from "../services/api";
-import { AUTO_PROVIDER_ID, buildAutoVirtualProvider, isModelFree } from "./auto-models";
+import {
+  AUTO_PROVIDER_ID,
+  buildAutoVirtualProvider,
+  isModelFree,
+  isNonChatUtilityModelID,
+} from "./auto-models";
 import { leaderboardState } from "./leaderboard-state";
 import {
   buildModelLimitIndex,
@@ -166,11 +171,44 @@ export function inferModelEffortCapabilities(
     return { efforts: ["low", "medium", "high", "xhigh"], defaultEffort: "high" };
   }
 
+  if (p === "gemini-cli" && mInfo && (!Array.isArray(mInfo.efforts) || mInfo.efforts.length === 0)) {
+    return { efforts: [] };
+  }
+
   if (s.includes("gemini") || p.includes("google")) {
     return { efforts: ["low", "medium", "high", "max"], defaultEffort: "high" };
   }
 
   return { efforts: ["low", "medium", "high"], defaultEffort: "medium" };
+}
+
+export function resolveEffectiveModelEffort(
+  model: SelectedModel | null | undefined,
+  requested: ReasoningEffort | undefined
+): ReasoningEffort {
+  if (!requested) return "";
+  if (!model || !model.modelID) return requested;
+  const prov = workspace.providers.find((p) => p.id === model.providerID);
+  const mInfo = prov?.models?.[model.modelID];
+  const cfgModel = workspace.globalConfig?.provider?.[model.providerID]?.models?.[model.modelID];
+  const explicitReasoning =
+    mInfo?.capabilities?.reasoning ?? mInfo?.reasoning ?? cfgModel?.reasoning;
+  const rawReasoning =
+    explicitReasoning !== undefined
+      ? Boolean(explicitReasoning)
+      : !isNonChatUtilityModelID(model.modelID) &&
+        !/haiku|deepseek-flash|glm-.*flash|flash-lite/i.test(model.modelID);
+  const effortCaps = inferModelEffortCapabilities(
+    model.providerID,
+    model.modelID,
+    rawReasoning,
+    mInfo,
+    cfgModel
+  );
+  if (!rawReasoning && effortCaps.efforts.length === 0) {
+    return "";
+  }
+  return clampReasoningEffort(requested, effortCaps.efforts, effortCaps.defaultEffort);
 }
 
 export interface FlattenedModel {

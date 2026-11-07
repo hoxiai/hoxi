@@ -13,7 +13,7 @@ import { initialSessionAI, SESSION_AI_KEY, type SessionAIConfig } from "../store
 import {
   EFFORT_KEY, SELECTED_MODEL_KEY, selectModel, setReasoningEffort,
   setWorkspace, workspace, type MessageTurn,
-  inferModelEffortCapabilities, clampReasoningEffort,
+  inferModelEffortCapabilities, clampReasoningEffort, resolveEffectiveModelEffort,
 } from "../store/workspace";
 import { forkFromMessage, removeSessionFromStore, selectSession } from "../store/workspace";
 import { assertDeepEqual, assertEqual, assertTrue, describe, it } from "./test-harness";
@@ -546,6 +546,15 @@ describe("session AI configuration", () => {
     assertDeepEqual(gptOss.efforts, ["medium"]);
     assertEqual(gptOss.defaultEffort, "medium");
     assertEqual(clampReasoningEffort("max", gptOss.efforts), "medium");
+
+    assertEqual(
+      resolveEffectiveModelEffort({ providerID: "openai", modelID: "gpt-5-codex" }, "max"),
+      "xhigh"
+    );
+    assertEqual(
+      resolveEffectiveModelEffort({ providerID: "anthropic", modelID: "claude-haiku-4-5" }, "high"),
+      ""
+    );
   });
 
   it("synchronizes Antigravity effort-suffixed model slugs with reasoningEffort", async () => {

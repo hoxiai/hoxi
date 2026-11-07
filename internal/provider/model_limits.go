@@ -296,15 +296,9 @@ func knownModelTokenLimit(key string) (modelTokenLimit, bool) {
 
 func isOSeriesModel(key string) bool {
 	for _, part := range strings.Split(key, "-") {
-		for _, prefix := range []string{"o1", "o3", "o4"} {
-			if part == prefix {
+		if len(part) >= 2 && part[0] == 'o' && part[1] >= '1' && part[1] <= '9' {
+			if _, err := strconv.Atoi(part[1:]); err == nil {
 				return true
-			}
-			if strings.HasPrefix(part, prefix) && len(part) > len(prefix) {
-				tail := part[len(prefix):]
-				if _, err := strconv.Atoi(tail); err == nil {
-					return true
-				}
 			}
 		}
 	}

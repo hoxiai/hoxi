@@ -96,13 +96,36 @@ func (s *Service) resolveOpenCodeModel(ctx context.Context, directory, providerI
 	return providerID, modelID
 }
 
+func clampOpenCodeEffortFallback(providerID, modelID, effort string) string {
+	if providerID == "" && modelID == "" {
+		return effort
+	}
+	supported, def := agentcli.InferVendorEffortSpec(providerID, modelID, true)
+	if len(supported) == 0 {
+		return ""
+	}
+	return agentcli.ClampEffortToSupported(effort, supported, def)
+}
+
+func modelExplicitlyDisablesReasoning(mObj map[string]interface{}) bool {
+	if r, hasR := mObj["reasoning"].(bool); hasR && !r {
+		return true
+	}
+	if caps, ok := mObj["capabilities"].(map[string]interface{}); ok {
+		if r, hasR := caps["reasoning"].(bool); hasR && !r {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Service) resolveOpenCodeVariant(ctx context.Context, directory, providerID, modelID, effort string) string {
 	e := agentcli.NormalizeEffortName(effort)
 	if e == "" {
 		return ""
 	}
 	if !s.openCode.Available() || providerID == "" || modelID == "" {
-		return e
+		return clampOpenCodeEffortFallback(providerID, modelID, e)
 	}
 	qCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
@@ -113,7 +136,7 @@ func (s *Service) resolveOpenCodeVariant(ctx context.Context, directory, provide
 		} `json:"providers"`
 	}
 	if err := s.openCodeJSON(qCtx, http.MethodGet, "/config/providers", directory, nil, &resp); err != nil {
-		return e
+		return clampOpenCodeEffortFallback(providerID, modelID, e)
 	}
 	for _, p := range resp.Providers {
 		if p.ID != providerID {
@@ -121,11 +144,14 @@ func (s *Service) resolveOpenCodeVariant(ctx context.Context, directory, provide
 		}
 		mObj, ok := p.Models[modelID].(map[string]interface{})
 		if !ok {
-			return e
+			return clampOpenCodeEffortFallback(providerID, modelID, e)
 		}
 		vMap, hasVariants := mObj["variants"].(map[string]interface{})
 		if !hasVariants {
-			return e
+			if modelExplicitlyDisablesReasoning(mObj) {
+				return ""
+			}
+			return clampOpenCodeEffortFallback(providerID, modelID, e)
 		}
 		if len(vMap) == 0 {
 			return ""
@@ -137,9 +163,10 @@ func (s *Service) resolveOpenCodeVariant(ctx context.Context, directory, provide
 		for k := range vMap {
 			keys = append(keys, k)
 		}
-		return agentcli.ClampEffortToSupported(e, keys, "")
+		_, def := agentcli.InferVendorEffortSpec(providerID, modelID, true)
+		return agentcli.ClampEffortToSupported(e, keys, def)
 	}
-	return e
+	return clampOpenCodeEffortFallback(providerID, modelID, e)
 }
 
 func (s *Service) normalizeOpenCodePart(rec SessionRecord, part *MessagePart, fileURLByMsgAndName map[string]string) bool {

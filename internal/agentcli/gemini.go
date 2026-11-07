@@ -249,7 +249,11 @@ type geminiModelSpec struct {
 func inferGeminiModelSpec(slug string) geminiModelSpec {
 	lower := strings.ToLower(strings.TrimSpace(slug))
 	reasoning := !strings.Contains(lower, "lite")
-	efforts, defEffort := InferVendorEffortSpec(RuntimeGeminiCLI, lower, reasoning)
+	var efforts []string
+	var defEffort string
+	if reasoning && (!HasGeminiCLIDirectAuth() || ResolveStandaloneGeminiBinary() == "" || IsAgyOnlyGeminiModel(lower)) {
+		efforts, defEffort = InferVendorEffortSpec(RuntimeAntigravity, lower, true)
+	}
 	spec := geminiModelSpec{
 		name:          FormatGeminiModelName(slug),
 		contextLimit:  1000000,
