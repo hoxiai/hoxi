@@ -20,7 +20,8 @@
     "check:i18n": "node scripts/run-script.js scripts/check-i18n.ts",
     "check:lines": "node scripts/run-script.js scripts/check-lines.ts",
     "check:cycles": "node scripts/run-script.js scripts/check-cycles.ts",
-    "lint": "tsc --noEmit && npm run check:i18n && npm run check:lines && npm run check:cycles"
+    "lint": "tsc --noEmit && npm run check:i18n && npm run check:lines && npm run check:cycles",
+    "test:inspector-selectable": "node scripts/run-browser-test.mjs src/__tests__/inspector-selectable.browser.tsx"
   },
   "dependencies": {
     "@pierre/diffs": "^1.5.2",

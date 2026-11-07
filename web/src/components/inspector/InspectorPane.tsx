@@ -148,7 +148,7 @@ export default function InspectorPane() {
         </button>
       </div>
 
-      <div class="hoxi-tab-stack flex-1 min-h-0">
+      <div class="hoxi-tab-stack selectable-text flex-1 min-h-0">
         <Suspense>
           <Show when={visitedTabs().diffs}>
             <div class="hoxi-tab-panel" data-active={workspace.inspectorTab === "diffs" ? "true" : "false"} aria-hidden={workspace.inspectorTab !== "diffs"}>

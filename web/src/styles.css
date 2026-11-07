@@ -376,6 +376,7 @@ body {
 
 .selectable-text {
   user-select: text;
+  -webkit-user-select: text;
 }
 
 /* Kilo-style Floating Island Pane */

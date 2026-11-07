@@ -43,6 +43,15 @@ export function openRemoteCompareURL(url: string) {
   openExternalURL(url);
 }
 
+// The diff body renders inside an open shadow root. The app-wide
+// `user-select: none` on <body> is inherited through the host, which silently
+// blocks selecting code even when an ancestor uses `.selectable-text`. Re-enable
+// selection on the shadow host through the library's unsafe CSS hook so diff
+// content can be selected and copied (line numbers stay non-selectable).
+const SELECTABLE_LINE_CSS = `
+:host { user-select: text; -webkit-user-select: text; }
+`;
+
 const MAX_META_CACHE_ENTRIES = 48;
 const MAX_FULL_DIFF_CACHE_ENTRIES = 32;
 const LARGE_DIFF_LINE_THRESHOLD = 450;
@@ -219,6 +228,7 @@ export function FileDiffBlock(props: {
       disableFileHeader: true,
       overflow: "scroll",
       hunkSeparators: "simple",
+      unsafeCSS: SELECTABLE_LINE_CSS,
       ...(isLarge
         ? {
             lineDiffType: "none" as const,
