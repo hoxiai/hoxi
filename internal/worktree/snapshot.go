@@ -64,7 +64,10 @@ func collectSnapshotCandidatePaths(repoRoot string) []string {
 	var paths []string
 	var totalBytes int64
 	addCandidate := func(rel string) {
-		rel = strings.TrimPrefix(filepath.ToSlash(strings.TrimSpace(rel)), "./")
+		if strings.TrimSpace(rel) == "" {
+			return
+		}
+		rel = strings.TrimPrefix(filepath.ToSlash(rel), "./")
 		if rel == "" || strings.HasPrefix(rel, ".hoxi/") || strings.HasPrefix(rel, ".claude/") || strings.HasPrefix(rel, ".opencode/") || isIgnoredUntrackedWorktreePath(rel) {
 			return
 		}
@@ -149,7 +152,6 @@ func trackedPathsUnder(repoRoot, relDir string) []string {
 	var paths []string
 	collect := func(out string) {
 		for _, entry := range strings.Split(out, "\x00") {
-			entry = strings.TrimSpace(entry)
 			if entry == "" {
 				continue
 			}
@@ -252,7 +254,7 @@ func extractUnmergedPaths(unmergedOut string) []string {
 		if tab < 0 {
 			continue
 		}
-		rel := strings.TrimSpace(rec[tab+1:])
+		rel := strings.TrimRight(rec[tab+1:], "\r\n")
 		if rel == "" {
 			continue
 		}
@@ -292,7 +294,10 @@ func SnapshotChangedPaths(dir, fromTree, toTree string) ([]string, error) {
 	seen := make(map[string]struct{})
 	var paths []string
 	for _, entry := range strings.Split(out, "\x00") {
-		rel := strings.Trim(filepath.ToSlash(strings.TrimSpace(entry)), "/")
+		if entry == "" {
+			continue
+		}
+		rel := strings.Trim(filepath.ToSlash(entry), "/")
 		if rel == "" || strings.HasPrefix(rel, ".hoxi/") || strings.HasPrefix(rel, ".opencode/") || isIgnoredUntrackedWorktreePath(rel) {
 			continue
 		}
@@ -372,18 +377,17 @@ func RestoreSnapshotPaths(dir, treeHash string, paths []string) error {
 }
 
 func normalizeSnapshotRepoRelPath(repoRoot, raw string) string {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
+	if raw == "" || strings.TrimSpace(raw) == "" {
 		return ""
 	}
-	if filepath.IsAbs(trimmed) {
-		rel, err := filepath.Rel(repoRoot, filepath.Clean(trimmed))
+	if filepath.IsAbs(raw) {
+		rel, err := filepath.Rel(repoRoot, filepath.Clean(raw))
 		if err != nil || rel == "." || rel == ".." || strings.HasPrefix(filepath.ToSlash(rel), "../") {
 			return ""
 		}
 		return filepath.ToSlash(rel)
 	}
-	cleaned := filepath.ToSlash(filepath.Clean(trimmed))
+	cleaned := filepath.ToSlash(filepath.Clean(raw))
 	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") || strings.HasPrefix(cleaned, "/") {
 		return ""
 	}

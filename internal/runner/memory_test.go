@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -591,5 +592,122 @@ func TestManualSessionMemorySurvivesAutomaticSync(t *testing.T) {
 	}
 	if !strings.Contains(string(got2), "MANUAL_RULE_MARKER_987") || !strings.Contains(string(got2), "KEEP_CUSTOM_SECTION_456") {
 		t.Fatalf("expected both preamble and custom section to survive sync, got:\n%s", string(got2))
+	}
+}
+
+func TestManualCurrentWorkAndStandardSectionEditsSurviveAutomaticSync(t *testing.T) {
+	t.Parallel()
+	svc := &Service{store: NewStore(t.TempDir())}
+	project := t.TempDir()
+	sid := "ses_audit_edit"
+	rec := SessionRecord{
+		ID:           sid,
+		Runtime:      "claude-code",
+		ProjectDir:   project,
+		WorktreePath: project,
+		Turns: []MessageTurn{
+			{
+				Info:  MessageInfo{ID: "msg_a", SessionID: sid, Role: "user"},
+				Parts: []MessagePart{{ID: "prt_a", MessageID: "msg_a", SessionID: sid, Type: "text", Text: "Implement a feature"}},
+			},
+		},
+	}
+	if err := svc.store.Put(rec); err != nil {
+		t.Fatal(err)
+	}
+	svc.syncSessionMemoryFile(sid)
+
+	p := hoxipaths.ProjectSessionMemoryFile(project, sid)
+	raw, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	start := strings.Index(text, "## 8. Current Work")
+	if start < 0 {
+		t.Fatalf("missing section 8 in:\n%s", text)
+	}
+	edited := text[:start] + "## 8. Current Work\n- MANUAL_CURRENT_WORK_MARKER\n"
+	if _, _, err := SaveMemoryDocument(project, "session", sid, edited); err != nil {
+		t.Fatal(err)
+	}
+
+	svc.syncSessionMemoryFile(sid)
+	got, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "MANUAL_CURRENT_WORK_MARKER") {
+		t.Fatalf("expected manual Current Work edit to survive sync, got:\n%s", string(got))
+	}
+
+	// Ensure it also survives a subsequent turn where assistant summary updates.
+	rec.Turns = append(rec.Turns, MessageTurn{
+		Info:  MessageInfo{ID: "msg_b", SessionID: sid, Role: "assistant"},
+		Parts: []MessagePart{{ID: "prt_b", MessageID: "msg_b", SessionID: sid, Type: "text", Text: "Finished implementation"}},
+	})
+	if err := svc.store.Put(rec); err != nil {
+		t.Fatal(err)
+	}
+	svc.syncSessionMemoryFile(sid)
+	got2, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got2), "MANUAL_CURRENT_WORK_MARKER") {
+		t.Fatalf("expected manual Current Work edit to survive subsequent turn sync, got:\n%s", string(got2))
+	}
+}
+
+func TestMemorySymlinkCannotEscapeProject(t *testing.T) {
+	t.Parallel()
+	project := t.TempDir()
+	outside := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(project, ".hoxi"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(project, ".hoxi", "memory")); err != nil {
+		t.Skip(err)
+	}
+	target := filepath.Join(outside, "project.md")
+	if err := os.WriteFile(target, []byte("outside user file"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, saveErr := SaveMemoryDocument(project, "project", "", "overwritten")
+	if !errors.Is(saveErr, ErrInvalidMemoryPath) {
+		t.Fatalf("expected ErrInvalidMemoryPath for symlinked memory dir, got %v", saveErr)
+	}
+	got, err := os.ReadFile(target)
+	if err != nil || string(got) != "outside user file" {
+		t.Fatalf("outside file modified via symlink: content=%q err=%v", got, err)
+	}
+
+	_, _, _, promoteErr := PromoteSessionMemoryToProject(project, "ses_1", "- User Constraint: never escape project\n")
+	if !errors.Is(promoteErr, ErrInvalidMemoryPath) {
+		t.Fatalf("expected ErrInvalidMemoryPath on PromoteSessionMemoryToProject with symlinked memory dir, got %v", promoteErr)
+	}
+	gotAfterPromote, err := os.ReadFile(target)
+	if err != nil || string(gotAfterPromote) != "outside user file" {
+		t.Fatalf("outside file modified on promote via symlink: content=%q err=%v", gotAfterPromote, err)
+	}
+}
+
+func TestAutoMemoryRemainsBoundedWithoutManualEdits(t *testing.T) {
+	t.Parallel()
+	var merged string
+	const rounds = 1800
+	for i := 0; i < rounds; i++ {
+		var auto strings.Builder
+		auto.WriteString(autoSessionMemoryHeading + "\n\n## 1. Primary Request and Intent\n")
+		for j := max(0, i-47); j <= i; j++ {
+			fmt.Fprintf(&auto, "- User Constraint: must preserve auto rule %04d %s\n", j, strings.Repeat("x", 170))
+		}
+		auto.WriteString("\n## 8. Current Work\n- Addressing feature\n")
+		merged = MergeSessionMemoryMarkdown(merged, auto.String())
+	}
+	retained := strings.Count(merged, "- User Constraint:")
+	if retained > maxSessionConstraints || len(merged) > MaxMemoryDocumentBytes {
+		t.Fatalf("automatic memory grew unbounded: retained=%d (max %d), bytes=%d (max %d)", retained, maxSessionConstraints, len(merged), MaxMemoryDocumentBytes)
 	}
 }

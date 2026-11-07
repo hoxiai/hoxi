@@ -216,3 +216,51 @@ func TestPatchConflictPreservesLargeStagedAdditionAndExistingStaging(t *testing.
 		t.Fatalf("user staged index lost after failed patch apply: before=%q after=%q", beforeIndex, after)
 	}
 }
+
+func TestPatchConflictRollbackRestoresAllGitChangedPaths(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{".opencode/config.js", " spaced.txt", "trailing.txt "} {
+		name := name
+		t.Run(strings.TrimSpace(name), func(t *testing.T) {
+			t.Parallel()
+			dirs := newMergeFixture(t)
+			repo := dirs["repo"]
+			p := filepath.Join(repo, name)
+			reviewTestWrite(t, p, "user original config\n")
+			reviewTestGit(t, repo, "add", "--", name)
+			reviewTestGit(t, repo, "commit", "-q", "-m", "config base")
+
+			mgr := NewManager(repo)
+			meta, err := mgr.Create("ses_audit_tx")
+			if err != nil {
+				t.Fatal(err)
+			}
+			reviewTestWrite(t, filepath.Join(meta.Directory, "f.txt"), "a\nB-sandbox\nc\nd\ne\nf\ng\n")
+			if err := os.Remove(filepath.Join(meta.Directory, name)); err != nil {
+				t.Fatal(err)
+			}
+			reviewTestWrite(t, filepath.Join(repo, "f.txt"), "a\nB-main\nc\nd\ne\nf\ng\n")
+			reviewTestGit(t, repo, "add", "f.txt")
+			reviewTestGit(t, repo, "commit", "-q", "-m", "main divergence")
+
+			if err := mgr.Apply("ses_audit_tx", "patch"); !errors.Is(err, ErrMergeConflict) {
+				t.Fatalf("expected ErrMergeConflict, got %v", err)
+			}
+			got, err := os.ReadFile(p)
+			if err != nil || string(got) != "user original config\n" {
+				t.Fatalf("rollback lost %q: content=%q err=%v", name, got, err)
+			}
+		})
+	}
+}
+
+func TestBeginWorkingTreeTransactionRejectsEscapingOrDotGitPath(t *testing.T) {
+	t.Parallel()
+	dirs := newMergeFixture(t)
+	repo := dirs["repo"]
+	for _, bad := range []string{"../outside.txt", ".git/config", "sub/.git/hooks/pre-commit"} {
+		if _, err := beginWorkingTreeTransaction(repo, []string{"f.txt", bad}); err == nil {
+			t.Fatalf("expected beginWorkingTreeTransaction to reject %q", bad)
+		}
+	}
+}

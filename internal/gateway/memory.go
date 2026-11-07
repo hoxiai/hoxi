@@ -96,6 +96,10 @@ func (g *Gateway) handleMemory(w http.ResponseWriter, r *http.Request) {
 
 	targetFile, normalized, err := runner.SaveMemoryDocument(projectRoot, scope, sid, body.Content)
 	if err != nil {
+		if errors.Is(err, runner.ErrInvalidMemoryPath) {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -138,7 +142,7 @@ func (g *Gateway) handleMemoryPromote(w http.ResponseWriter, r *http.Request) {
 
 	projFile, updated, added, err := runner.PromoteSessionMemoryToProject(projectRoot, sid, body.Content)
 	if err != nil {
-		if errors.Is(err, runner.ErrNoPromotableRules) {
+		if errors.Is(err, runner.ErrNoPromotableRules) || errors.Is(err, runner.ErrInvalidMemoryPath) {
 			writeJSONError(w, http.StatusBadRequest, err.Error())
 			return
 		}

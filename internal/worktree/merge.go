@@ -1,6 +1,7 @@
 package worktree
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -22,7 +23,8 @@ type txFileEntry struct {
 	existed    bool
 	isSymlink  bool
 	linkTarget string
-	backupPath string
+	offset     int64
+	size       int64
 	mode       os.FileMode
 }
 
@@ -33,6 +35,7 @@ type workingTreeTransaction struct {
 	indexExisted    bool
 	indexMode       os.FileMode
 	indexBackupPath string
+	packPath        string
 	files           []txFileEntry
 }
 
@@ -48,12 +51,7 @@ func resolveGitIndexFile(repoRoot string) (string, error) {
 	return filepath.Clean(idxPath), nil
 }
 
-func copyFileExact(src, dst string, mode os.FileMode) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
+func writeReaderAtomic(r io.Reader, dst string, mode os.FileMode, syncFile bool) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
 	}
@@ -62,15 +60,17 @@ func copyFileExact(src, dst string, mode os.FileMode) error {
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(out, in); err != nil {
+	if _, err := io.Copy(out, r); err != nil {
 		_ = out.Close()
 		_ = os.Remove(tmpDst)
 		return err
 	}
-	if err := out.Sync(); err != nil {
-		_ = out.Close()
-		_ = os.Remove(tmpDst)
-		return err
+	if syncFile {
+		if err := out.Sync(); err != nil {
+			_ = out.Close()
+			_ = os.Remove(tmpDst)
+			return err
+		}
 	}
 	if err := out.Close(); err != nil {
 		_ = os.Remove(tmpDst)
@@ -81,6 +81,33 @@ func copyFileExact(src, dst string, mode os.FileMode) error {
 		return err
 	}
 	return nil
+}
+
+func copyFileExact(src, dst string, mode os.FileMode) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	return writeReaderAtomic(in, dst, mode, false)
+}
+
+func copyFileDurable(src, dst string, mode os.FileMode) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	return writeReaderAtomic(in, dst, mode, true)
+}
+
+func hasDotGitSegment(rel string) bool {
+	for _, seg := range strings.Split(filepath.ToSlash(rel), "/") {
+		if seg == ".git" {
+			return true
+		}
+	}
+	return false
 }
 
 func beginWorkingTreeTransaction(dir string, rawPaths []string) (*workingTreeTransaction, error) {
@@ -106,7 +133,14 @@ func beginWorkingTreeTransaction(dir string, rawPaths []string) (*workingTreeTra
 		tmpDir:    tmpDir,
 		indexPath: indexPath,
 	}
+	var packFile *os.File
+	var packWriter *bufio.Writer
+	var copyBuf []byte
+	var packOffset int64
 	cleanupOnErr := func(retErr error) (*workingTreeTransaction, error) {
+		if packFile != nil {
+			_ = packFile.Close()
+		}
 		_ = os.RemoveAll(tmpDir)
 		return nil, retErr
 	}
@@ -125,12 +159,14 @@ func beginWorkingTreeTransaction(dir string, rawPaths []string) (*workingTreeTra
 		return cleanupOnErr(fmt.Errorf("stat git index: %w", err))
 	}
 
-	seen := make(map[string]struct{})
-	for i, raw := range rawPaths {
-		rel := normalizeSnapshotRepoRelPath(repoRoot, raw)
-		if rel == "" || strings.HasPrefix(rel, ".git/") || rel == ".git" ||
-			strings.HasPrefix(rel, ".hoxi/") || strings.HasPrefix(rel, ".opencode/") || isIgnoredUntrackedWorktreePath(rel) {
+	seen := make(map[string]struct{}, len(rawPaths))
+	for _, raw := range rawPaths {
+		if raw == "" {
 			continue
+		}
+		rel := normalizeSnapshotRepoRelPath(repoRoot, raw)
+		if rel == "" || hasDotGitSegment(rel) {
+			return cleanupOnErr(fmt.Errorf("invalid or protected path in merge transaction: %q", raw))
 		}
 		if _, ok := seen[rel]; ok {
 			continue
@@ -166,20 +202,45 @@ func beginWorkingTreeTransaction(dir string, rawPaths []string) (*workingTreeTra
 		if !info.Mode().IsRegular() {
 			return cleanupOnErr(fmt.Errorf("unsupported file mode on %s", rel))
 		}
-		bakPath := filepath.Join(tmpDir, fmt.Sprintf("file-%d.bak", i))
+		if packFile == nil {
+			tx.packPath = filepath.Join(tmpDir, "backup.pack")
+			packFile, err = os.OpenFile(tx.packPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+			if err != nil {
+				return cleanupOnErr(fmt.Errorf("create backup pack: %w", err))
+			}
+			packWriter = bufio.NewWriterSize(packFile, 256*1024)
+			copyBuf = make([]byte, 32*1024)
+		}
+		in, openErr := os.Open(absPath)
+		if openErr != nil {
+			return cleanupOnErr(fmt.Errorf("open %s before merge: %w", rel, openErr))
+		}
+		written, copyErr := io.CopyBuffer(packWriter, in, copyBuf)
+		_ = in.Close()
+		if copyErr != nil {
+			return cleanupOnErr(fmt.Errorf("backup %s before merge: %w", rel, copyErr))
+		}
 		perm := info.Mode().Perm()
 		if perm == 0 {
 			perm = 0o644
 		}
-		if err := copyFileExact(absPath, bakPath, 0o600); err != nil {
-			return cleanupOnErr(fmt.Errorf("backup %s before merge: %w", rel, err))
-		}
 		tx.files = append(tx.files, txFileEntry{
-			rel:        rel,
-			existed:    true,
-			backupPath: bakPath,
-			mode:       perm,
+			rel:     rel,
+			existed: true,
+			offset:  packOffset,
+			size:    written,
+			mode:    perm,
 		})
+		packOffset += written
+	}
+	if packFile != nil {
+		if err := packWriter.Flush(); err != nil {
+			return cleanupOnErr(fmt.Errorf("flush backup pack: %w", err))
+		}
+		if err := packFile.Close(); err != nil {
+			packFile = nil
+			return cleanupOnErr(fmt.Errorf("close backup pack: %w", err))
+		}
 	}
 	return tx, nil
 }
@@ -195,6 +256,16 @@ func (tx *workingTreeTransaction) Rollback() error {
 		return nil
 	}
 	var errs []error
+	var packIn *os.File
+	if tx.packPath != "" {
+		f, err := os.Open(tx.packPath)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("open backup pack: %w", err))
+		} else {
+			packIn = f
+			defer packIn.Close()
+		}
+	}
 	for _, entry := range tx.files {
 		absPath := filepath.Join(tx.repoRoot, filepath.FromSlash(entry.rel))
 		if !entry.existed {
@@ -215,7 +286,12 @@ func (tx *workingTreeTransaction) Rollback() error {
 			}
 			continue
 		}
-		if err := copyFileExact(entry.backupPath, absPath, entry.mode); err != nil {
+		if packIn == nil {
+			errs = append(errs, fmt.Errorf("restore %s: backup pack unavailable", entry.rel))
+			continue
+		}
+		section := io.NewSectionReader(packIn, entry.offset, entry.size)
+		if err := writeReaderAtomic(section, absPath, entry.mode, false); err != nil {
 			errs = append(errs, fmt.Errorf("restore %s: %w", entry.rel, err))
 		}
 	}
@@ -226,7 +302,7 @@ func (tx *workingTreeTransaction) Rollback() error {
 			errs = append(errs, fmt.Errorf("remove index: %w", err))
 		}
 	} else {
-		if err := copyFileExact(tx.indexBackupPath, tx.indexPath, tx.indexMode); err != nil {
+		if err := copyFileDurable(tx.indexBackupPath, tx.indexPath, tx.indexMode); err != nil {
 			errs = append(errs, fmt.Errorf("restore git index: %w", err))
 		}
 	}
@@ -243,27 +319,6 @@ func pruneEmptyParents(repoRoot, dir string) {
 		}
 		cur = filepath.Dir(cur)
 	}
-}
-
-func extractPatchPaths(patch string) []string {
-	var paths []string
-	for _, line := range strings.Split(patch, "\n") {
-		switch {
-		case strings.HasPrefix(line, "+++ b/"):
-			paths = append(paths, strings.TrimSpace(strings.TrimPrefix(line, "+++ b/")))
-		case strings.HasPrefix(line, "--- a/"):
-			paths = append(paths, strings.TrimSpace(strings.TrimPrefix(line, "--- a/")))
-		case strings.HasPrefix(line, "rename from "):
-			paths = append(paths, strings.TrimSpace(strings.TrimPrefix(line, "rename from ")))
-		case strings.HasPrefix(line, "rename to "):
-			paths = append(paths, strings.TrimSpace(strings.TrimPrefix(line, "rename to ")))
-		case strings.HasPrefix(line, "copy from "):
-			paths = append(paths, strings.TrimSpace(strings.TrimPrefix(line, "copy from ")))
-		case strings.HasPrefix(line, "copy to "):
-			paths = append(paths, strings.TrimSpace(strings.TrimPrefix(line, "copy to ")))
-		}
-	}
-	return paths
 }
 
 func collectMergeWorkingStatePaths(dstDir string, srcDirs ...string) ([]string, error) {
@@ -499,7 +554,7 @@ func (m *worktreeManager) apply(sessionID, mode, message string) error {
 	if err != nil || strings.TrimSpace(base) == "" {
 		return fmt.Errorf("resolve apply base: %v", err)
 	}
-	diffPatch, err := runGitRaw(meta.Directory, "diff", "--binary", strings.TrimSpace(base)+"..HEAD")
+	diffPatch, err := runGitRaw(meta.Directory, "diff", "--binary", "--no-renames", strings.TrimSpace(base)+"..HEAD")
 	if err != nil {
 		return fmt.Errorf("generate worktree patch: %w", err)
 	}
@@ -511,7 +566,7 @@ func (m *worktreeManager) apply(sessionID, mode, message string) error {
 	if err != nil {
 		return fmt.Errorf("list worktree patch paths: %w", err)
 	}
-	touchedPaths := append(strings.Split(changedNames, "\x00"), extractPatchPaths(diffPatch)...)
+	touchedPaths := strings.Split(changedNames, "\x00")
 	tx, err := beginWorkingTreeTransaction(m.rootDir, touchedPaths)
 	if err != nil {
 		return fmt.Errorf("prepare patch rollback: %w", err)

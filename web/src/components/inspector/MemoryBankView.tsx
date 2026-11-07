@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, Show, untrack } from "solid-js";
 import { ArrowUpRight, Brain, Check, Code2, Edit3, Eye, LoaderCircle, Plus, RefreshCw, Save } from "lucide-solid";
 import {
   activeDirectory,
@@ -78,9 +78,9 @@ export default function MemoryBankView() {
 
   let requestGen = 0;
 
-  const load = async () => {
+  const load = async (target: MemoryBankTarget = currentTarget()) => {
     const gen = ++requestGen;
-    const target = currentTarget();
+    const rawDir = activeDirectory();
     setLoading(true);
     setError(null);
     if (loadedTargetKey() !== target.key) {
@@ -99,21 +99,27 @@ export default function MemoryBankView() {
     try {
       const res = await loadMemoryBankContent({
         scope: target.scope,
-        rawDirectory: activeDirectory(),
+        rawDirectory: rawDir,
         sessionID: target.sessionID || null,
       });
       if (gen !== requestGen || currentTarget().key !== target.key) return;
       setLoadedTargetKey(target.key);
+      const stillEditingSameTarget =
+        viewMode() === "edit" && editingTarget()?.key === target.key;
       if (res.found && res.content.trim()) {
         setContent(res.content);
-        if (viewMode() === "edit") setViewMode("preview");
-        setEditingTarget(null);
+        if (!stillEditingSameTarget) {
+          if (viewMode() === "edit") setViewMode("preview");
+          setEditingTarget(null);
+        }
         return;
       }
       setContent("");
-      setError(
-        target.scope === "project" ? t("inspector.memory.notFound") : t("inspector.memory.empty")
-      );
+      if (!stillEditingSameTarget) {
+        setError(
+          target.scope === "project" ? t("inspector.memory.notFound") : t("inspector.memory.empty")
+        );
+      }
     } finally {
       if (gen === requestGen) {
         setLoading(false);
@@ -229,11 +235,12 @@ export default function MemoryBankView() {
 
   createEffect(() => {
     if (!workspace.inspectorOpen || workspace.inspectorTab !== "memory") return;
-    const sid = workspace.activeSessionID;
+    const target = currentTarget();
+    const sid = target.scope === "session" ? target.sessionID : "";
     void (sid ? workspace.sessionFinishedAt[sid] : 0);
-    void activeDirectory();
-    void scope();
-    void load();
+    untrack(() => {
+      void load(target);
+    });
   });
 
   const dims = createMemo(() => dimensions(content()));

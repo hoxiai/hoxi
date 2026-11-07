@@ -460,11 +460,19 @@ func (s *Service) syncSessionMemoryFile(sessionID string) {
 	// plugin bundle into the user's project).
 	sessionsDir := filepath.Join(hoxipaths.ProjectMemoryDir(targetRoot), "sessions")
 	projFile := hoxipaths.ProjectMemoryFile(targetRoot)
+	sessionFile := filepath.Join(sessionsDir, rec.ID+".md")
+	baselineFile := sessionMemoryBaselineFile(targetRoot, rec.ID)
+	if !isMemoryPathWithinRoot(targetRoot, sessionFile) || !isMemoryPathWithinRoot(targetRoot, projFile) {
+		return
+	}
 
 	memoryWriteMu.Lock()
 	defer memoryWriteMu.Unlock()
 
 	if err := os.MkdirAll(sessionsDir, 0o755); err != nil {
+		return
+	}
+	if !isMemoryPathWithinRoot(targetRoot, sessionFile) || !isMemoryPathWithinRoot(targetRoot, projFile) {
 		return
 	}
 
@@ -473,18 +481,30 @@ func (s *Service) syncSessionMemoryFile(sessionID string) {
 	// memory is injected into every turn, so boilerplate would cost tokens
 	// without adding project knowledge.
 	if _, err := os.Stat(projFile); err != nil {
-		if raw, readErr := os.ReadFile(hoxipaths.LegacyProjectMemoryFile(targetRoot)); readErr == nil && len(strings.TrimSpace(string(raw))) > 0 {
-			_ = writeFileAtomic(projFile, raw)
+		legacyProj := hoxipaths.LegacyProjectMemoryFile(targetRoot)
+		if isMemoryPathWithinRoot(targetRoot, legacyProj) {
+			if raw, readErr := os.ReadFile(legacyProj); readErr == nil && len(strings.TrimSpace(string(raw))) > 0 {
+				_ = writeFileAtomic(projFile, raw)
+			}
 		}
 	}
 
-	md := buildEightDimSessionMarkdown(rec)
-	if strings.TrimSpace(md) == "" {
+	autoMD := buildEightDimSessionMarkdown(rec)
+	if strings.TrimSpace(autoMD) == "" {
 		return
 	}
-	sessionFile := filepath.Join(sessionsDir, rec.ID+".md")
+	var prevAutoBaseline string
+	if baselineFile != "" && isMemoryPathWithinRoot(targetRoot, baselineFile) {
+		if rawBase, baseErr := os.ReadFile(baselineFile); baseErr == nil {
+			prevAutoBaseline = string(rawBase)
+		}
+		if err := os.MkdirAll(filepath.Dir(baselineFile), 0o755); err == nil && isMemoryPathWithinRoot(targetRoot, baselineFile) {
+			_ = writeFileAtomic(baselineFile, []byte(autoMD))
+		}
+	}
+	md := autoMD
 	if existingBytes, err := os.ReadFile(sessionFile); err == nil && len(strings.TrimSpace(string(existingBytes))) > 0 {
-		md = MergeSessionMemoryMarkdown(string(existingBytes), md)
+		md = mergeSessionMemoryWithBaseline(string(existingBytes), prevAutoBaseline, autoMD)
 	}
 	_ = writeFileAtomic(sessionFile, []byte(md))
 }
