@@ -34,6 +34,12 @@ export {
   isSensitiveExternalPath,
 };
 
+// A .env-style secret file or an .envrc under any directory (`apay/.env`).
+// The unattended secret scan uses the same two; mirrors envFilePattern in
+// internal/runner/permission_policy.go.
+export const ENV_FILE_PATTERN = String.raw`(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.en(?:v(?:\.(?:local|prod(?:uction)?|dev(?:elopment)?|stag(?:e|ing)|test(?:ing)?|ci|preview|secret\w*|key\w*|private\w*|bak|backup)(?:\.local)?)?|\?|\*)(?:$|[\s;&|)'"*?])`;
+export const ENVRC_FILE_PATTERN = String.raw`(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.envrc(?:$|[\s;&|)'"*?])`;
+
 const DESTRUCTIVE_RE = new RegExp(
   [
     // Core destructive / privilege / disk / power commands
@@ -52,8 +58,8 @@ const DESTRUCTIVE_RE = new RegExp(
     String.raw`\.hoxi\/(?:models|auth|tunnel(?:-dev)?|cloudflared|pairing|relay-keys|approval-policy|hoxi)\.(?:json|db)`,
     String.raw`\.docker\/config\.json`,
     // .env / .env.* / .envrc files
-    String.raw`(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.en(?:v(?:\.(?:local|prod(?:uction)?|dev(?:elopment)?|stag(?:e|ing)|test(?:ing)?|ci|preview|secret\w*|key\w*|private\w*|bak|backup)(?:\.local)?)?|\?|\*)(?:$|[\s;&|)'"*?])`,
-    String.raw`(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.envrc(?:$|[\s;&|)'"*?])`,
+    ENV_FILE_PATTERN,
+    ENVRC_FILE_PATTERN,
     // Destructive find flags, curl/wget pipe-to-shell, publish, cloud/container teardown, and local Hoxi control APIs
     String.raw`\bfind\b[^\n;&|]*\s-(delete|exec\w*|ok\w*|fprint\w*|fls)\b`,
     String.raw`\b(curl|wget)\b[^\n|]*\|\s*(sh|bash|zsh)\b`,

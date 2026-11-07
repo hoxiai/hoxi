@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
@@ -263,9 +264,8 @@ func resolvePathSymlinks(p string) string {
 
 // secretReadRules are credential directories and files a sandboxed command
 // must not read. Paths are under the real home directory, never a hard-coded
-// username. Worktree .env files are denied at the worktree root and one level
-// of common subdirectories; Seatbelt has no glob for ".env but not
-// .env.example", so the example names are not listed and stay readable.
+// username. Worktree .env files are denied at any depth (worktreeEnvRules);
+// `.env.example` stays readable.
 func secretReadRules(workspace string) []PathRule {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
@@ -301,9 +301,17 @@ func secretReadRules(workspace string) []PathRule {
 	return rules
 }
 
+// worktreeEnvRules deny the workspace's .env files at any depth (`apay/.env`,
+// `plugins/app/one/.env.production`). The regex ends at the name, so
+// `.env.example` and files inside a directory named `.env` stay readable. A
+// workspace path that cannot sit in a profile regex falls back to the root
+// and the web/client/server subdirectories.
 func worktreeEnvRules(workspace string) []PathRule {
 	if strings.TrimSpace(workspace) == "" {
 		return nil
+	}
+	if !strings.ContainsAny(workspace, "\"\n\r\x00") {
+		return []PathRule{{Path: "^" + regexp.QuoteMeta(workspace) + `/(.*/)?\.env(\.(local|production|development))?$`, Kind: PathRegex}}
 	}
 	names := []string{".env", ".env.local", ".env.production", ".env.development"}
 	dirs := []string{workspace, filepath.Join(workspace, "web"), filepath.Join(workspace, "client"), filepath.Join(workspace, "server")}

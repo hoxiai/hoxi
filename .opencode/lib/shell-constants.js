@@ -2,6 +2,7 @@
 // $(...) substitutions. The rewritten text is only a judgment form. Mirrors
 // internal/runner/opaque_constants.go and opaque_expand.go.
 import { DATA_ARG_INTERPRETERS } from "./command-data-args.js";
+import { isSecretPath } from "./external-path-risk.js";
 import { containsFor, expandLiteralForLoops, forLoopRanges, isSafeCurlOutputTarget, isValueClassCurl, isValueClassWc } from "./shell-loops.js";
 
 export const CMD_SUBST_VAR = "__hoxi_cmdsub__";
@@ -9,6 +10,8 @@ export const MAX_SUBSHELL_DEPTH = 2;
 const SHELL_VAR_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const PIPESTATUS_SUBSCRIPT_RE = /^(?:pipestatus|PIPESTATUS)\[\d+\]$/;
 const GIT_AT_BRACE_RE = /^[A-Za-z0-9_]+$/;
+const FILTER_FLAG_PREFIX_RE = /^--(?:exclude-dir|exclude|include)=$/;
+const BRACE_FILTER_ITEM_RE = /^[A-Za-z0-9_.*-]+$/;
 const PARAM_SENSITIVE = new Set(["git", "find", "rm", "rmdir", "unlink", "curl", "wget", "cp", "mv"]);
 const LOOP_VAR_REBINDERS = new Set(["declare", "local", "typeset", "readonly", "mapfile", "readarray", "let", "unset", "export"]);
 const SHELL_KEYWORDS = new Set(["while", "until", "do", "done", "if", "then", "else", "elif", "fi", "!"]);
@@ -30,7 +33,21 @@ export function skipSafeBraceSpan(s, i) {
   const body = s.slice(i + 1, end);
   if (s[i - 1] === "$") return braceVarName(body) ? end : -1;
   if (s[i - 1] === "@" && GIT_AT_BRACE_RE.test(body)) return end;
-  return -1;
+  return isFilterFlagBraceList(s, i, end) ? end : -1;
+}
+
+// A literal brace list that is the whole value of a filter flag:
+// `--exclude-dir={node_modules,dist,.git}` repeats the flag per item. Items
+// naming a secret file are refused, as the expanded `--include=.env` would be.
+// Mirrors isFilterFlagBraceList in internal/runner/opaque_loops.go.
+function isFilterFlagBraceList(s, open, close) {
+  let start = open;
+  while (start > 0 && !isBoundary(s[start - 1])) start--;
+  if (!FILTER_FLAG_PREFIX_RE.test(s.slice(start, open))) return false;
+  if (close + 1 < s.length && !isBoundary(s[close + 1])) return false;
+  const items = s.slice(open + 1, close).split(",");
+  if (items.length < 2) return false;
+  return items.every((item) => BRACE_FILTER_ITEM_RE.test(item) && !item.toLowerCase().startsWith(".en") && !isSecretPath(item));
 }
 
 export const READ_ONLY_DATA_TOOLS = new Set(["rg", "grep", "egrep", "fgrep", "cat", "head", "tail", "wc", "ls", "stat",

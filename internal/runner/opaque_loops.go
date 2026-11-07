@@ -51,6 +51,8 @@ var (
 	shellVarNameRe        = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 	pipestatusSubscriptRe = regexp.MustCompile(`^(?:pipestatus|PIPESTATUS)\[\d+\]$`)
 	gitAtBraceRe          = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
+	filterFlagPrefixRe    = regexp.MustCompile(`^--(?:exclude-dir|exclude|include)=$`)
+	braceFilterItemRe     = regexp.MustCompile(`^[A-Za-z0-9_.*-]+$`)
 	extGlobRe             = regexp.MustCompile(`^\*\.[A-Za-z0-9]+$`)
 	gitExtPathspecRe      = regexp.MustCompile(`^[A-Za-z0-9_./-]*\*\.[A-Za-z0-9]+$`)
 	rgListFlagRe          = regexp.MustCompile(`^-[a-zA-Z]*l[a-zA-Z]*$`)
@@ -614,7 +616,38 @@ func skipSafeBraceSpan(s string, i int) (int, bool) {
 	if s[i-1] == '@' && gitAtBraceRe.MatchString(body) {
 		return i + 1 + end, true
 	}
+	if isFilterFlagBraceList(s, i, i+1+end) {
+		return i + 1 + end, true
+	}
 	return i, false
+}
+
+// isFilterFlagBraceList reports a literal brace list that is the whole value
+// of a filter flag: `--exclude-dir={node_modules,dist,.git}` is the same as
+// repeating the flag once per item. These flags only narrow what a tool reads.
+// An item that names a secret file is refused, as the expanded
+// `--include=.env` would be.
+func isFilterFlagBraceList(s string, open, close int) bool {
+	start := open
+	for start > 0 && !isWordBoundary(s[start-1]) {
+		start--
+	}
+	if !filterFlagPrefixRe.MatchString(s[start:open]) {
+		return false
+	}
+	if close+1 < len(s) && !isWordBoundary(s[close+1]) {
+		return false
+	}
+	items := strings.Split(s[open+1:close], ",")
+	if len(items) < 2 {
+		return false
+	}
+	for _, item := range items {
+		if !braceFilterItemRe.MatchString(item) || strings.HasPrefix(strings.ToLower(item), ".en") || isSecretFilePath(item) {
+			return false
+		}
+	}
+	return true
 }
 
 // wordExpansionNames lists `$name` / `${name}` in one unquoted word; any

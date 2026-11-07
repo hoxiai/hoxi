@@ -1007,5 +1007,77 @@
   {
     "command": "cat > scripts/x.sh <<'EOF'\necho hi\nEOF\nbash -n scripts/x.sh",
     "opaque": false
+  },
+  {
+    "command": "grep -rn --exclude-dir={node_modules,dist,.git} \"Notification\" admin/ scripts/",
+    "opaque": false
+  },
+  {
+    "command": "grep -rn --include={*.go,*.ts} TODO src",
+    "opaque": false
+  },
+  {
+    "command": "grep -rn --exclude={a.log,b.log} --exclude-dir={vendor,node_modules} x . | head -20",
+    "opaque": false
+  },
+  {
+    "command": "{rm,-rf,.}",
+    "opaque": true
+  },
+  {
+    "command": "cat {.e,}nv",
+    "opaque": true
+  },
+  {
+    "command": "grep -r KEY --include={.env,x} .",
+    "opaque": true
+  },
+  {
+    "command": "grep -r KEY --include={.envrc,x} .",
+    "opaque": true
+  },
+  {
+    "command": "grep -r KEY --include={.env.local,a.go} .",
+    "opaque": true
+  },
+  {
+    "command": "grep -r KEY --include={.npmrc,a.go} .",
+    "opaque": true
+  },
+  {
+    "command": "grep -r x --exclude-dir={a,b}c .",
+    "opaque": true
+  },
+  {
+    "command": "grep -r x --exclude-dir={../..,b} .",
+    "opaque": true
+  },
+  {
+    "command": "grep -r x --exclude-dir={a} .",
+    "opaque": true
+  },
+  {
+    "command": "grep -r x --exclude-dir={$(id),b} .",
+    "opaque": true
+  },
+  {
+    "command": "grep -r x --exclude-dir={a,{b,c}} .",
+    "opaque": true
+  },
+  {
+    "command": "grep -r x --file={a,b} .",
+    "opaque": true
+  },
+  {
+    "command": "grep -r x \"--exclude-dir=\"{a,b} .",
+    "opaque": true
+  },
+  {
+    "command": "grep -r x -e{a,b} .",
+    "opaque": true
+  },
+  {
+    "command": "grep -r x --exclude-dir={a,b} . ; {rm,-rf,.}",
+    "opaque": true
   }
 ]

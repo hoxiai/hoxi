@@ -23,6 +23,14 @@ import (
 //   - A leading standalone `cd <plain-token>` segment is dropped when the
 //     token resolves inside the session worktree.
 
+// envFilePattern and envrcFilePattern find a .env-style secret file or an
+// .envrc in a command, under any directory (`apay/.env`). The unattended
+// secret scan uses the same two, so no mode reads one the other refuses.
+const (
+	envFilePattern   = `(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*/)?\.en(?:v(?:\.(?:local|prod(?:uction)?|dev(?:elopment)?|stag(?:e|ing)|test(?:ing)?|ci|preview|secret\w*|key\w*|private\w*|bak|backup)(?:\.local)?)?|\?|\*)(?:$|[\s;&|)'"*?])`
+	envrcFilePattern = `(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*/)?\.envrc(?:$|[\s;&|)'"*?])`
+)
+
 var (
 	destructiveRe = regexp.MustCompile(`(?i)` + strings.Join([]string{
 		// Core destructive / privilege / disk / power commands
@@ -41,8 +49,8 @@ var (
 		`\.hoxi/(?:models|auth|tunnel(?:-dev)?|cloudflared|pairing|relay-keys|approval-policy|hoxi)\.(?:json|db)`,
 		`\.docker/config\.json`,
 		// .env / .env.* / .envrc files
-		`(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*/)?\.en(?:v(?:\.(?:local|prod(?:uction)?|dev(?:elopment)?|stag(?:e|ing)|test(?:ing)?|ci|preview|secret\w*|key\w*|private\w*|bak|backup)(?:\.local)?)?|\?|\*)(?:$|[\s;&|)'"*?])`,
-		`(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*/)?\.envrc(?:$|[\s;&|)'"*?])`,
+		envFilePattern,
+		envrcFilePattern,
 		// Destructive find flags, curl/wget pipe-to-shell, publish, cloud/container teardown, and local Hoxi control APIs
 		`\bfind\b[^\n;&|]*\s-(delete|exec\w*|ok\w*|fprint\w*|fls)\b`,
 		`\b(curl|wget)\b[^\n|]*\|\s*(sh|bash|zsh)\b`,
