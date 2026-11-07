@@ -396,6 +396,7 @@ func Run(distFS fs.FS) {
 	})
 	app.configureBrowserFiles(gw)
 	app.configureComputer(gw)
+	app.configureFileAccess(gw)
 	gw.SetDesktopFocusHandler(func(_, _ string) {
 		app.showWindow()
 	})

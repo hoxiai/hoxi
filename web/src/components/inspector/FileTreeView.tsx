@@ -13,7 +13,7 @@ import {
 } from "../../store/workspace";
 import { FolderIcon } from "../layout/left-nav-helpers";
 import { resolveSessionDiffForFile } from "../timeline/file-diff-lines";
-import { t } from "../../i18n";
+import { t, locale } from "../../i18n";
 import FilePreviewPane from "./FilePreviewPane";
 import FileTreeNodes, { type FileTreeNode } from "./FileTreeNodes";
 import { baseName, isMarkdownPath, isSvgPath } from "./file-tree-helpers";
@@ -167,7 +167,8 @@ export default function FileTreeView() {
       const res = await hoxiAPI.readFileContent(
         path,
         targetDirectory(),
-        workspace.activeSessionID || undefined
+        workspace.activeSessionID || undefined,
+        locale()
       );
       if (request !== previewRequest) return;
       if (res?.isDirectory) {
@@ -231,7 +232,8 @@ export default function FileTreeView() {
           .readFileContent(
             path,
             targetDirectory(),
-            workspace.activeSessionID || undefined
+            workspace.activeSessionID || undefined,
+            locale()
           )
           .then((res) => {
             if (request === previewRequest && res?.content !== undefined) {

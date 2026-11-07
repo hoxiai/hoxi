@@ -51,6 +51,7 @@
 - 白名单必须是**显式的"方法 + 路由"清单**，禁止前缀匹配。领域包新增的路由默认**不可**经隧道访问。
 - 以下能力永不经隧道开放：执行命令或写执行配置（`verify-run`、`verify-config`、Hook 安装）、`open`/启动程序、工作区外文件读写与列目录、账号 / 提供商 / 凭据 / 更新器 / 浏览器、OpenCode 原始透传。
 - 经隧道的文件读取必须限制在已注册工作区与会话 worktree 内。
+- **桌面端读取/打开敏感凭据路径必须每次弹原生确认**（`internal/gateway/file_access.go` + `internal/app/file_access.go`）：`GET /file/content` 与 `POST /api/hoxi/file/open`（在访达中显示、用默认应用打开）命中 `isSensitiveCredentialPath` 时，桌面端弹一次原生对话框，确认后仅本次放行；**永不记忆、永不写入「始终允许」、并发不叠加**，无对话框（headless）、超时、取消、报错一律拒绝。远程控制器永远直接 403，绝不触发桌面对话框（用例见 `internal/gateway/file_access_test.go`）。
 - 开放任何新路由必须同时：更新 [`docs/gopanel-hoxi-remote-tunnel.md`](gopanel-hoxi-remote-tunnel.md)、在 `TestTunnelRouteAllowlist` 增加允许用例**和**相邻的拒绝用例。
 - 牢记信任边界：手机侧确认卡片不能替代桌面审批门控；任何经隧道可达的接口都不得绕过 PreToolUse 审批。
 

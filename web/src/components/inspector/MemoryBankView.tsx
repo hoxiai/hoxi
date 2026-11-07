@@ -2,7 +2,7 @@ import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import { Brain, Code2, Eye, LoaderCircle, RefreshCw } from "lucide-solid";
 import { hoxiAPI } from "../../services/api";
 import { activeDirectory, workspace } from "../../store/workspace";
-import { t } from "../../i18n";
+import { t, locale } from "../../i18n";
 import MarkdownView, { slugifyHeading } from "../timeline/MarkdownView";
 
 const PROJECT_MEMORY_FILE = ".hoxi/memory/project.md";
@@ -52,7 +52,7 @@ export default function MemoryBankView() {
     try {
       for (const file of candidates) {
         try {
-          const res = await hoxiAPI.readFileContent(file, dir);
+          const res = await hoxiAPI.readFileContent(file, dir, undefined, locale());
           if (gen !== requestGen) return;
           if (res?.content?.trim()) {
             setContent(res.content);

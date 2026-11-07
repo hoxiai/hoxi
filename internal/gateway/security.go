@@ -22,6 +22,10 @@ type securityGateState struct {
 	confirmComputerApp func(context.Context, ComputerAppConfirmation) (bool, error)
 	computerLocale     string
 	computerConfirming atomic.Bool
+	// confirmFileAccess asks the desktop user before reading or opening a
+	// credential/protected path. Remote controllers never reach it.
+	confirmFileAccess    func(context.Context, FileAccessConfirmation) (bool, error)
+	fileAccessConfirming atomic.Bool
 }
 
 const (

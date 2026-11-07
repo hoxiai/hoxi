@@ -510,15 +510,26 @@ func (g *Gateway) handleFileContent(w http.ResponseWriter, r *http.Request) {
 	sessionID := strings.TrimSpace(r.URL.Query().Get("sessionID"))
 
 	cleanedPreview, _ := cleanRequestedFilePath(rawPath)
-	if cleanedPreview != "" && isSensitiveCredentialPath(cleanedPreview) {
+	// Remote controllers keep the hard 403 and are never offered a dialog.
+	if remote && cleanedPreview != "" && isSensitiveCredentialPath(cleanedPreview) {
 		writeJSONError(w, http.StatusForbidden, "access to sensitive credential file is forbidden")
 		return
 	}
 
 	targetPath, info, outsideWorkspace, err := g.resolveLocalFileTarget(rawPath, rawDir, sessionID, true)
+	sensitiveTarget := cleanedPreview != "" && isSensitiveCredentialPath(cleanedPreview)
 	if targetPath != "" && isSensitiveCredentialPath(targetPath) {
-		writeJSONError(w, http.StatusForbidden, "access to sensitive credential file is forbidden")
-		return
+		sensitiveTarget = true
+	}
+	if sensitiveTarget {
+		confirmPath := targetPath
+		if confirmPath == "" {
+			confirmPath = cleanedPreview
+		}
+		if !g.confirmSensitiveFileAccess(r, confirmPath, "read", fileAccessLocale(r)) {
+			writeJSONError(w, http.StatusForbidden, "access to sensitive credential file is forbidden")
+			return
+		}
 	}
 	// outsideWorkspace is judged against request-supplied directories too, so
 	// remote reads must also land inside a registered workspace or worktree.
@@ -739,6 +750,7 @@ func (g *Gateway) handleFileOpen(w http.ResponseWriter, r *http.Request) {
 		Directory string `json:"directory"`
 		SessionID string `json:"sessionID"`
 		Action    string `json:"action"` // "open" (default) or "reveal"
+		Locale    string `json:"locale"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&body); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid request body")
@@ -759,12 +771,17 @@ func (g *Gateway) handleFileOpen(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	action := strings.ToLower(strings.TrimSpace(body.Action))
+	if action != "reveal" {
+		action = "open"
+	}
 	if isSensitiveCredentialPath(targetPath) {
-		writeJSONError(w, http.StatusForbidden, "access to sensitive credential file is forbidden")
-		return
+		if !g.confirmSensitiveFileAccess(r, targetPath, action, body.Locale) {
+			writeJSONError(w, http.StatusForbidden, "access to sensitive credential file is forbidden")
+			return
+		}
 	}
 
-	action := strings.ToLower(strings.TrimSpace(body.Action))
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 

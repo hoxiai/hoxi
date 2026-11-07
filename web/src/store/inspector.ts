@@ -2,6 +2,7 @@
 // Inspector panel navigation (files / diffs / browser) and per-session review comments.
 import { hoxiAPI } from "../services/api";
 import { openExternalBrowserURL } from "../services/desktop-events";
+import { locale } from "../i18n";
 import type { SnapshotFileDiff } from "../services/sse-types";
 import { extractFileSuffix, getResolvedFilePath, normalizeCandidatePath } from "./file-links";
 import { setWorkspace, workspace, type ReviewCommentItem } from "./workspace-state";
@@ -161,6 +162,7 @@ export async function openExternalFile(
     directory: options?.directory,
     sessionID: options?.sessionID ?? (workspace.activeSessionID || undefined),
     action: options?.action,
+    locale: locale(),
   });
 }
 

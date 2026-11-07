@@ -44,8 +44,13 @@ export const fileAndPtyAPI = {
   findFiles(query: string, directory?: string): Promise<string[]> {
     return requestJSON(withDir(`/find/file?query=${encodeURIComponent(query)}&limit=15`, directory));
   },
-  readFileContent(filePath: string, directory?: string, sessionID?: string): Promise<FileContentResponse> {
-    const q = `path=${encodeURIComponent(filePath)}${sessionID ? `&sessionID=${encodeURIComponent(sessionID)}` : ""}`;
+  readFileContent(
+    filePath: string,
+    directory?: string,
+    sessionID?: string,
+    locale?: string
+  ): Promise<FileContentResponse> {
+    const q = `path=${encodeURIComponent(filePath)}${sessionID ? `&sessionID=${encodeURIComponent(sessionID)}` : ""}${locale ? `&locale=${encodeURIComponent(locale)}` : ""}`;
     return requestJSON(withDir(`/api/hoxi/file/content?${q}`, directory));
   },
   validateFiles(paths: string[], directory?: string, sessionID?: string): Promise<FileValidateResponse> {
@@ -61,7 +66,7 @@ export const fileAndPtyAPI = {
   },
   openExternalFile(
     filePath: string,
-    opts?: { directory?: string; sessionID?: string; action?: "open" | "reveal" }
+    opts?: { directory?: string; sessionID?: string; action?: "open" | "reveal"; locale?: string }
   ): Promise<{ ok: boolean; path: string; action: string }> {
     return requestJSON(withDir("/api/hoxi/file/open", opts?.directory), {
       method: "POST",
@@ -70,6 +75,7 @@ export const fileAndPtyAPI = {
         ...(opts?.directory ? { directory: opts.directory } : {}),
         ...(opts?.sessionID ? { sessionID: opts.sessionID } : {}),
         ...(opts?.action ? { action: opts.action } : {}),
+        ...(opts?.locale ? { locale: opts.locale } : {}),
       }),
     });
   },
