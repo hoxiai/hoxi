@@ -1,6 +1,9 @@
 // web/src/__tests__/auto-session-affinity.test.ts
 import {
   clearAutoPoolCooldowns,
+  emptyModelStats,
+  emptyStats,
+  filterNoCacheCandidates,
   markAutoCandidateCooldown,
   purgeSessionsFromStoreState,
   resetAutoPoolToDefault,
@@ -9,7 +12,7 @@ import {
   setWorkspace,
   workspace,
 } from "../store/workspace";
-import { assertDeepEqual, assertTrue, describe, it } from "./test-harness";
+import { assertDeepEqual, assertEqual, assertTrue, describe, it } from "./test-harness";
 
 async function seedTwoCandidateFreePool() {
   setWorkspace("providers", [
@@ -28,6 +31,17 @@ async function seedTwoCandidateFreePool() {
     ],
   });
   clearAutoPoolCooldowns("free");
+}
+
+// Model-level telemetry for candidate "m" of each provider: [turns, cacheHitTurns].
+function seedCacheTelemetry(byProvider: Record<string, [number, number]>) {
+  const next: Record<string, ReturnType<typeof emptyStats>> = {};
+  for (const [providerID, [turns, hits]] of Object.entries(byProvider)) {
+    const stats = emptyStats(providerID);
+    stats.models = { m: { ...emptyModelStats("m"), totalTurns: turns, successTurns: turns, cacheHitTurns: hits } };
+    next[providerID] = stats;
+  }
+  setWorkspace("providerTelemetry", next);
 }
 
 describe("auto pool session affinity", () => {
@@ -99,5 +113,45 @@ describe("auto pool session affinity", () => {
 
     purgeSessionsFromStoreState(workspace, ["ses_aff_purge"]);
     await resetAutoPoolToDefault("free");
+  });
+
+  it("moves a pinned session off a channel that never reports prompt-cache hits", async () => {
+    await seedTwoCandidateFreePool();
+    setWorkspace("providerTelemetry", {});
+
+    const a = resolveAutoModelTarget("free", { advance: true, sessionID: "ses_aff_nc_a" });
+    const b = resolveAutoModelTarget("free", { advance: true, sessionID: "ses_aff_nc_b" });
+    assertTrue(Boolean(a && b));
+    assertTrue(a!.providerID !== b!.providerID);
+
+    // alpha ran 30 turns without a single cache hit; beta hits the cache.
+    seedCacheTelemetry({ alpha: [30, 0], beta: [30, 27] });
+    for (const sid of ["ses_aff_nc_a", "ses_aff_nc_b", "ses_aff_nc_new"]) {
+      assertDeepEqual(resolveAutoModelTarget("free", { advance: true, sessionID: sid }), {
+        providerID: "beta",
+        modelID: "m",
+      });
+    }
+
+    setWorkspace("providerTelemetry", {});
+    purgeSessionsFromStoreState(workspace, ["ses_aff_nc_a", "ses_aff_nc_b", "ses_aff_nc_new"]);
+    await resetAutoPoolToDefault("free");
+  });
+
+  it("keeps unmeasured channels and never empties the pool", () => {
+    const cands = [
+      { providerID: "alpha", modelID: "m" },
+      { providerID: "beta", modelID: "m" },
+    ];
+    // Too few turns to judge: both stay.
+    seedCacheTelemetry({ alpha: [5, 0], beta: [30, 27] });
+    assertEqual(filterNoCacheCandidates(cands).length, 2);
+    // No model-level record: unknown, not "never".
+    setWorkspace("providerTelemetry", {});
+    assertEqual(filterNoCacheCandidates(cands).length, 2);
+    // Every channel lacks cache: keep them all rather than strand the pool.
+    seedCacheTelemetry({ alpha: [30, 0], beta: [40, 0] });
+    assertEqual(filterNoCacheCandidates(cands).length, 2);
+    setWorkspace("providerTelemetry", {});
   });
 });

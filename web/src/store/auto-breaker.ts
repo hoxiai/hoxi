@@ -122,6 +122,36 @@ export function filterSlowCandidates<T extends { providerID: string; modelID: st
   return kept.length > 0 ? kept : cands;
 }
 
+// Agent turns resend a growing prompt every step, so after this many turns a
+// channel that supports prompt caching has reported at least one hit.
+const NO_CACHE_MIN_TURNS = 20;
+
+/**
+ * True when local telemetry shows the model ran enough turns without ever
+ * reporting a prompt-cache hit (e.g. relays that return usage without
+ * `prompt_tokens_details`). Only model-level stats count: the provider-level
+ * aggregate mixes in its other models.
+ */
+export function candidateNeverReportsCache(providerID: string, modelID: string): boolean {
+  const m = workspace.providerTelemetry?.[providerID]?.models?.[modelID];
+  if (!m) return false;
+  // A record without the counter predates cache tracking: unknown, not "never".
+  return m.totalTurns >= NO_CACHE_MIN_TURNS && m.cacheHitTurns === 0;
+}
+
+/**
+ * Drops candidates that never report prompt-cache hits while a peer does, so a
+ * session is not pinned to a channel that re-bills its whole context on every
+ * step. Unmeasured candidates are kept and the result is never empty.
+ */
+export function filterNoCacheCandidates<T extends { providerID: string; modelID: string }>(
+  cands: T[]
+): T[] {
+  if (cands.length <= 1) return cands;
+  const kept = cands.filter((c) => !candidateNeverReportsCache(c.providerID, c.modelID));
+  return kept.length > 0 ? kept : cands;
+}
+
 export async function syncProviderBreakers(): Promise<void> {
   try {
     const res = await hoxiAPI.getProviderCandidates();

@@ -19,3 +19,4 @@
 - [插件 bundle 与并行会话] `internal/opencode/browser_plugin.mjs` 是 esbuild 产物，改 `internal/opencode/*.js` 或 `.opencode/lib/*.js` 后须按 BROWSER.md 命令重打包；重打包会把工作区里其他会话未提交的源码一起打进去，打包前先看 `git status`。
 - [隔离 headless 夹具] 用 `env -i HOME=<夹具> HOXI_HOME=<夹具>/.hoxi hoxi --no-desktop` 配本地 OpenAI 兼容假服务可截获真实模型请求；端口一律取随机空闲端口并从日志 `ready url=` 读网关地址，假服务端口被占时请求会静默挂起；要在夹具里出现 Antigravity 模型，用 `AGY_BIN` 指向只回放 `agy models` 输出的替身脚本，不要让夹具碰真实 `~/.gemini`。
 - [模型窗口双事实源] 运行器模型目录（Go `inferOfficialRunnerModelSpec`）下发的 `contextLimit` 优先于前端家族表 `inferOfficialModelPricingAndLimits`，改官方模型窗口必须两边同步，否则前端推断会被后端旧值覆盖成误报超限；排查 agy 上下文构成时，对话库 `gen_metadata` 里进行中那一行（完成后缩成 ~1KB）就是模型实际收到的完整请求。
+- [渠道缓存回报] 部分中转/官方上游的 usage 不带 `prompt_tokens_details`/`completion_tokens_details`（缓存与思考 token 同时为 0，但回复里有思考文本），`@ai-sdk/openai-compatible` 只认 `prompt_tokens_details.cached_tokens`；判断渠道能否命中缓存看 `~/.hoxi/provider-telemetry.json` 的模型级 `cacheHitTurns/totalTurns`，同时看缓存和思考两个计数为 0 才是"精简用量"渠道，别按会话总量下结论。

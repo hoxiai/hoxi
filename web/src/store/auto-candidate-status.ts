@@ -17,8 +17,9 @@ import { getAutoCandidateCooldown } from "./auto-models";
 // the pool's generational filter (`filterSlowCandidates`) will sidestep it while
 // a faster peer stays healthy, so the list must not paint it as plainly ready.
 // `breaker` carries the failure class and count so the badge can say why the
-// circuit opened.
-export type CandidatePoolState = "ready" | "breaker" | "cooldown" | "slow";
+// circuit opened. `nocache` means `filterNoCacheCandidates` skips it while a
+// peer reports prompt-cache hits.
+export type CandidatePoolState = "ready" | "breaker" | "cooldown" | "slow" | "nocache";
 
 export interface CandidatePoolStatus {
   state: CandidatePoolState;

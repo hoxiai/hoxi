@@ -394,6 +394,8 @@ export const models: ModelsI18n = {
   autoPoolReadyStatus: "就绪",
   autoPoolBreakerStatus: "熔断 {remain}",
   autoPoolSlowStatus: "偏慢",
+  autoPoolNoCacheStatus: "无缓存",
+  autoPoolNoCacheHint: "该渠道多轮对话从未回报缓存命中，每一步都按全量上下文计费；同池有能命中缓存的渠道时自动跳过",
   autoPoolFailStreak: "连续失败 {count} 次",
   autoPoolFailRateLimit: "限流",
   autoPoolFailQuota: "配额耗尽",

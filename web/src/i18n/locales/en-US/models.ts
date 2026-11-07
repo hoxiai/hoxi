@@ -397,6 +397,8 @@ export const models = {
   autoPoolReadyStatus: "Ready",
   autoPoolBreakerStatus: "Tripped {remain}",
   autoPoolSlowStatus: "Slow",
+  autoPoolNoCacheStatus: "No cache",
+  autoPoolNoCacheHint: "This channel has never reported a prompt-cache hit across many turns, so every step is billed for the full context. It is skipped while a peer in the pool reports cache hits.",
   autoPoolFailStreak: "failed {count}×",
   autoPoolFailRateLimit: "rate limited",
   autoPoolFailQuota: "quota exhausted",

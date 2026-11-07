@@ -23,6 +23,7 @@ import {
   deleteCustomAutoPool,
   extractFlattenedModels,
   fetchFreeTierGuides,
+  filterNoCacheCandidates,
   filterSlowCandidates,
   getAutoPoolDescription,
   getAutoPoolDisplayName,
@@ -110,6 +111,12 @@ function candidateStatusView(st: CandidatePoolStatus): {
         label: t("models.autoPoolSlowStatus"),
         cls: "bg-[var(--bg-hover)] text-[var(--text-muted)]",
         title: latencyNote(st.latencyMs),
+      };
+    case "nocache":
+      return {
+        label: t("models.autoPoolNoCacheStatus"),
+        cls: "bg-[var(--bg-hover)] text-[var(--text-muted)]",
+        title: t("models.autoPoolNoCacheHint"),
       };
     default:
       return {
@@ -199,6 +206,16 @@ export default function AutoModelPoolTab() {
     if (cands.length <= 1) return new Set<string>();
     const key = (c: { providerID: string; modelID: string }) => `${c.providerID}/${c.modelID}`;
     const kept = new Set(filterSlowCandidates(cands).map(key));
+    return new Set(cands.filter((c) => !kept.has(key(c))).map(key));
+  });
+
+  // Candidates skipped because they never report prompt-cache hits while a peer
+  // does; same helper as selection so the badge matches what actually runs.
+  const noCacheKeys = createMemo<Set<string>>(() => {
+    const cands = effectiveCandidates();
+    if (cands.length <= 1) return new Set<string>();
+    const key = (c: { providerID: string; modelID: string }) => `${c.providerID}/${c.modelID}`;
+    const kept = new Set(filterNoCacheCandidates(cands).map(key));
     return new Set(cands.filter((c) => !kept.has(key(c))).map(key));
   });
 
@@ -517,11 +534,12 @@ export default function AutoModelPoolTab() {
                   const meta = () => lookupModelMeta(cand.providerID, cand.modelID);
                   const status = (): CandidatePoolStatus => {
                     const st = getCandidatePoolStatus(cand.providerID, cand.modelID);
-                    if (
-                      st.state === "ready" &&
-                      slowKeys().has(`${cand.providerID}/${cand.modelID}`)
-                    ) {
+                    const k = `${cand.providerID}/${cand.modelID}`;
+                    if (st.state === "ready" && slowKeys().has(k)) {
                       return { ...st, state: "slow" };
+                    }
+                    if (st.state === "ready" && noCacheKeys().has(k)) {
+                      return { ...st, state: "nocache" };
                     }
                     return st;
                   };

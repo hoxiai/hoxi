@@ -12,7 +12,7 @@ import {
 } from "./workspace-state";
 import {
   candidateBreakerRemainingMs, candidateBreakerScore, clearCandidateBreaker,
-  filterSlowCandidates, isCandidateBreakerOpen,
+  filterNoCacheCandidates, filterSlowCandidates, isCandidateBreakerOpen,
 } from "./auto-breaker";
 import {
   AUTO_PROVIDER_ID,
@@ -376,8 +376,10 @@ export function resolveAutoModelTarget(
             getCandidateCooldownRemainingMs(b.providerID, b.modelID)
         );
   // Skip a candidate that is drastically slower than a healthy peer in every
-  // strategy, so a slow-but-working model stops absorbing the rotation.
-  const activePool = filterSlowCandidates(basePool);
+  // strategy, so a slow-but-working model stops absorbing the rotation, and one
+  // that never reports prompt-cache hits while a peer does (it would re-bill the
+  // whole context each step). Runs before the pin so such a pin is dropped.
+  const activePool = filterNoCacheCandidates(filterSlowCandidates(basePool));
 
   // Session affinity short-circuit: reuse the candidate already pinned to this
   // session when it survived the filters above.
