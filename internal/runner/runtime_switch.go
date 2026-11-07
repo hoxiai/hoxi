@@ -280,8 +280,12 @@ func runtimeContext(rec SessionRecord) string {
 		return ""
 	}
 	turns := rec.Turns
-	if rec.Runtime == "opencode" && rec.ContextTurnCount > 0 && rec.ContextTurnCount < len(turns) {
-		turns = turns[:rec.ContextTurnCount]
+	if rec.Runtime == "opencode" && rec.ContextTurnCount > 0 {
+		if rec.ContextTurnCount < len(turns) {
+			turns = turns[:rec.ContextTurnCount]
+		}
+		// OpenCode resends this frozen history every turn; keep it byte-stable.
+		turns = settledHandoffTurns(turns)
 	}
 
 	const (

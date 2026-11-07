@@ -583,15 +583,14 @@ func (s *Service) abandonOpenCodeInFlightParts(sessionID string, now int64) {
 	for i := range rec.Turns {
 		for j := range rec.Turns[i].Parts {
 			p := rec.Turns[i].Parts[j]
-			if p.Type == "tool" && p.Tool != "task" && p.State != nil &&
-				(p.State.Status == "pending" || p.State.Status == "running") {
+			if isInFlightToolPart(p) {
 				start := now
 				if p.State.Time != nil && p.State.Time.Start > 0 {
 					start = p.State.Time.Start
 				}
 				p.State.Status = "error"
 				if strings.TrimSpace(p.State.Error) == "" {
-					p.State.Error = "Interrupted before completion"
+					p.State.Error = interruptedToolError
 				}
 				p.State.Time = &PartTime{Start: start, End: now}
 				s.broadcast(sessionID, SSEEvent{

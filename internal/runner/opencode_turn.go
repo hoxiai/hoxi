@@ -325,9 +325,7 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 			payload["variant"] = effort
 		}
 		baseSystem := system
-		if contextText := runtimeContext(rec); contextText != "" {
-			system = strings.TrimSpace(baseSystem + "\n\n" + contextText)
-		}
+		system = openCodeTurnSystem(baseSystem, rec)
 		if system != "" {
 			payload["system"] = system
 		}
@@ -348,8 +346,9 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 					}
 				})
 				s.managedOpenCode.Store(info.ID, true)
-				if contextText := runtimeContext(rec); contextText != "" {
-					payload["system"] = strings.TrimSpace(baseSystem + "\n\n" + contextText)
+				// Recovery below must resend the same system prompt as this retry.
+				if system = openCodeTurnSystem(baseSystem, rec); system != "" {
+					payload["system"] = system
 				}
 				err = s.openCodeJSON(ctx, "POST", "/session/"+rec.ExternalID+"/message", rec.WorktreePath, payload, nil)
 			}
@@ -679,10 +678,8 @@ func (s *Service) steerOpenCodeTurn(ctx context.Context, rec SessionRecord, mode
 	if effort != "" {
 		payload["variant"] = effort
 	}
-	if contextText := runtimeContext(rec); contextText != "" {
-		system += "\n\n" + contextText
-	}
-	if system != "" {
+	// Build the system prompt exactly like startOpenCodeTurn so a steer keeps the prompt cache.
+	if system = openCodeTurnSystem(system, rec); system != "" {
 		payload["system"] = system
 	}
 	if ap != nil {

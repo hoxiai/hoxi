@@ -299,15 +299,14 @@ func (t *TurnTranslator) PrepareForResumeRetry(nowMs int64) []SSEEvent {
 			}
 			part.Time = &PartTime{Start: start, End: nowMs}
 			evts = append(evts, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": clonePart(*part)}})
-		} else if part.Type == "tool" && part.Tool != "task" && part.State != nil &&
-			(part.State.Status == "pending" || part.State.Status == "running") {
+		} else if isInFlightToolPart(*part) {
 			start := nowMs
 			if part.State.Time != nil && part.State.Time.Start > 0 {
 				start = part.State.Time.Start
 			}
 			part.State.Status = "error"
 			if strings.TrimSpace(part.State.Error) == "" {
-				part.State.Error = "Interrupted before completion"
+				part.State.Error = interruptedToolError
 			}
 			part.State.Time = &PartTime{Start: start, End: nowMs}
 			evts = append(evts, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": clonePart(*part)}})
