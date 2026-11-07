@@ -218,11 +218,33 @@ func summarizeHandoffToolPart(p MessagePart) string {
 	}
 	lowerTool := strings.ToLower(strings.TrimSpace(tool))
 	if lowerTool != "read" && lowerTool != "view_file" && lowerTool != "read_file" {
-		if out := strings.TrimSpace(p.State.Output); out != "" {
+		if out := stripHandoffToolOutputPreamble(p.State.Output); out != "" {
 			summary += " — " + redactMemorySecrets(singleLineExcerpt(out, 160))
 		}
 	}
 	return summary
+}
+
+// stripHandoffToolOutputPreamble removes Antigravity's timestamp and
+// truncation-file headers before excerpting tool output for handoff summaries,
+// so a new conversation is not pointed at a prior conversation's brain/ steps
+// directory and the 160-char excerpt captures the actual output preview.
+func stripHandoffToolOutputPreamble(out string) string {
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	i := 0
+	for i < len(lines) {
+		trimmed := strings.TrimSpace(lines[i])
+		if trimmed == "" ||
+			strings.HasPrefix(trimmed, "Created At:") ||
+			strings.HasPrefix(trimmed, "Completed At:") ||
+			strings.HasPrefix(trimmed, "The tool's output was truncated due to being too long.") ||
+			strings.HasPrefix(trimmed, "Here is a preview with the middle of the output truncated:") {
+			i++
+			continue
+		}
+		break
+	}
+	return strings.TrimSpace(strings.Join(lines[i:], "\n"))
 }
 
 type handoffToolCandidate struct {

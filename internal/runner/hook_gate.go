@@ -221,6 +221,12 @@ func (s *Service) decideHookCall(r *http.Request, cred hookCredential, p hookPay
 	args, _ := json.Marshal(p.ToolCall.Args)
 	callID := fmt.Sprintf("call_%s_%d", cred.messageID, p.StepIdx)
 	action := hookToolActionWithArgs(p.ToolCall.Name, p.ToolCall.Args)
+	activeConvID := firstNonEmptyStr(strings.TrimSpace(p.ConversationID), strings.TrimSpace(rec.ExternalID))
+	if (action == hookActionRead || action == hookActionEdit) && activeConvID != "" {
+		if reason := agyHookForeignBrainReason(rec.WorktreePath, activeConvID, p.ToolCall.Args); reason != "" {
+			return hookDecisionDeny, reason
+		}
+	}
 	if _, _, destructive, _ := s.inspectHookToolRisk(cred.sessionID, p.ToolCall.Name, p.ToolCall.Args); !destructive &&
 		action != hookActionCommand &&
 		s.gate.hasToolAlways(cred.sessionID, hookToolGrantKey(p.ToolCall.Name, p.ToolCall.Args)) {
@@ -232,8 +238,9 @@ func (s *Service) decideHookCall(r *http.Request, cred hookCredential, p hookPay
 
 	switch action {
 	case hookActionRead:
-		if isReadToolAllowedInWorktree(rec.WorktreePath, p.ToolCall.Name, p.ToolCall.Args) &&
-			!isSecretFilePath(resolveHookToolPath(rec.WorktreePath, p.ToolCall.Args)) {
+		if (isReadToolAllowedInWorktree(rec.WorktreePath, p.ToolCall.Name, p.ToolCall.Args) &&
+			!isSecretFilePath(resolveHookToolPath(rec.WorktreePath, p.ToolCall.Args))) ||
+			isReadToolAllowedInAgyOwnBrain(rec.WorktreePath, activeConvID, p.ToolCall.Name, p.ToolCall.Args) {
 			return hookDecisionApprove, ""
 		}
 		approved, reason := s.gateToolCall(r, cred, p.ToolCall.Name, p.ToolCall.Args, callID)

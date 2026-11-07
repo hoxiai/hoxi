@@ -543,9 +543,13 @@ func (t *TurnTranslator) handleAgyResult(res *agyResult) []SSEEvent {
 				names = append(names, da.Action)
 			}
 		}
-		// Hook-gated run_command / view_file calls never reach here; a soft-deny
-		// means the Hoxi approval hook was missing or the tool is not covered.
+		// Hook-gated run_command / view_file calls never reach here unless
+		// Antigravity's own built-in ~/.gemini path sandbox rejected the target
+		// after the hook approved it, or the Hoxi hook was missing.
 		notice := fmt.Sprintf("Action blocked by Antigravity headless permission policy (%s). Hoxi's approval hook did not handle it; check `~/.gemini/config/hooks.json` (entry `%s`).", strings.Join(names, ", "), agyHookName)
+		if geminiErr := t.lastAgyGeminiPathError(); geminiErr != "" {
+			notice = fmt.Sprintf("Action blocked by Antigravity's built-in ~/.gemini path policy (%s): %s", strings.Join(names, ", "), geminiErr)
+		}
 		txtID := fmt.Sprintf("prt_%s_text_denied", t.messageID)
 		part := MessagePart{
 			ID:        txtID,
@@ -633,4 +637,19 @@ func (t *TurnTranslator) markAllAgyTextPartsTransitional() []SSEEvent {
 		}
 	}
 	return evts
+}
+
+func (t *TurnTranslator) lastAgyGeminiPathError() string {
+	for i := len(t.partOrder) - 1; i >= 0; i-- {
+		p := t.partsByID[t.partOrder[i]]
+		if p == nil || p.Type != "tool" || p.State == nil || p.State.Status != "error" {
+			continue
+		}
+		errTxt := strings.TrimSpace(p.State.Error)
+		slash := strings.ToLower(strings.ReplaceAll(errTxt, "\\", "/"))
+		if strings.Contains(slash, "/.gemini/") {
+			return errTxt
+		}
+	}
+	return ""
 }

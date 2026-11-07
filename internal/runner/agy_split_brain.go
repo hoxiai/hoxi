@@ -21,15 +21,40 @@ import (
 
 const agyEmptyStoreSuffix = ".hoxi-empty-"
 
+func sqliteImmutableURI(dbPath string) string {
+	slash := filepath.ToSlash(dbPath)
+	escaped := strings.NewReplacer("%", "%25", "?", "%3f", "#", "%23").Replace(slash)
+	if len(escaped) >= 2 && escaped[1] == ':' {
+		return "file:///" + escaped + "?immutable=1"
+	}
+	return "file:" + escaped + "?immutable=1"
+}
+
 // countAgyStoreSteps is a variable so tests can simulate a missing sqlite3.
 var countAgyStoreSteps = func(dbPath string) (int, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	out, err := subproc.CommandContext(ctx, sqlitecli.Executable(), "-readonly", "-cmd", ".timeout 2000", dbPath, "SELECT count(*) FROM steps;").Output()
+	query := func(target string) (int, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		out, err := subproc.CommandContext(ctx, sqlitecli.Executable(), "-readonly", "-cmd", ".timeout 2000", target, "SELECT count(*) FROM steps;").Output()
+		if err != nil {
+			return 0, err
+		}
+		return strconv.Atoi(strings.TrimSpace(string(out)))
+	}
+	n, err := query(dbPath)
 	if err != nil {
+		// agy unlinks <id>.db-wal and <id>.db-shm on exit while leaving the
+		// database header in WAL mode (02 02). sqlite3 -readonly fails with
+		// SQLITE_CANTOPEN (14) when -shm is absent because a read-only handle
+		// cannot create the shared-memory index. When no -wal file exists on
+		// disk, there are no uncheckpointed frames, so immutable=1 safely
+		// inspects the checkpointed store without creating sidecars.
+		if _, walErr := os.Lstat(dbPath + "-wal"); os.IsNotExist(walErr) {
+			return query(sqliteImmutableURI(dbPath))
+		}
 		return 0, err
 	}
-	return strconv.Atoi(strings.TrimSpace(string(out)))
+	return n, nil
 }
 
 func nonEmptyRegularFile(path string) bool {

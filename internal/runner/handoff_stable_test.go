@@ -81,6 +81,30 @@ func TestSettledHandoffTurnsKeepsTaskAndFinishedTools(t *testing.T) {
 	}
 }
 
+func TestSummarizeHandoffToolPartStripsAgyTruncationPreamble(t *testing.T) {
+	t.Parallel()
+	part := MessagePart{
+		Type: "tool",
+		Tool: "bash",
+		State: &ToolState{
+			Status: "completed",
+			Input:  map[string]interface{}{"command": "go test ./..."},
+			Output: "Created At: 2026-11-07T20:00:00+08:00\n" +
+				"Completed At: 2026-11-07T20:00:02+08:00\n" +
+				"The tool's output was truncated due to being too long. You can find the full output in a file at file:///Users/dev/.gemini/antigravity-cli/brain/35805279-c561-4de7-a171-2a643f924c6a/.system_generated/steps/8/output.txt.\n\n" +
+				"Here is a preview with the middle of the output truncated:\n" +
+				"Command exited with code 0.\n\nCommand output:\nok  github.com/hoxiai/hoxi/internal/runner 0.42s",
+		},
+	}
+	summary := summarizeHandoffToolPart(part)
+	if strings.Contains(summary, "35805279-c561-4de7-a171-2a643f924c6a") || strings.Contains(summary, "truncated due to being too long") {
+		t.Fatalf("handoff summary leaked stale brain path or truncation header: %q", summary)
+	}
+	if !strings.Contains(summary, "Command exited with code 0.") {
+		t.Fatalf("expected actual output preview in summary, got: %q", summary)
+	}
+}
+
 // A steer must send the same system prompt bytes as the turn it joins, or the
 // provider's prompt cache misses for the whole conversation.
 func TestSteerOpenCodeTurnSendsSameSystemAsStart(t *testing.T) {

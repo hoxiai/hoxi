@@ -274,6 +274,103 @@ func hookOwnSessionRead(s *Service, sessionID, tool, filepathOut, rawPath string
 	return pathUnderOwnSession(filepathOut, ids) || pathUnderOwnSession(rawPath, ids)
 }
 
+// agyForeignBrainDir extracts the conversation ID when rawPath targets an
+// Antigravity brain/<id> directory that does not belong to activeConvID.
+// Antigravity's built-in file tools hard-deny cross-conversation brain paths in
+// headless mode even when PreToolUse returns auto_approve, aborting the turn.
+func agyForeignBrainDir(worktree, activeConvID, rawPath string) string {
+	activeConvID = strings.TrimSpace(activeConvID)
+	if activeConvID == "" {
+		return ""
+	}
+	resolved := resolveHookToolPath(worktree, map[string]interface{}{"path": rawPath})
+	if resolved == "" {
+		resolved = strings.TrimSpace(rawPath)
+	}
+	if resolved == "" {
+		return ""
+	}
+	if worktree != "" && pathWithin(worktree, resolved) {
+		return ""
+	}
+	for _, root := range agyBrainRoots() {
+		if !pathWithin(root, resolved) {
+			continue
+		}
+		realRoot, okRoot := resolvePathWithSymlinks(root, 0)
+		realTarget, okTarget := resolvePathWithSymlinks(resolved, 0)
+		if !okRoot || !okTarget {
+			continue
+		}
+		rel, err := filepath.Rel(realRoot, realTarget)
+		if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+			continue
+		}
+		id := strings.Split(filepath.ToSlash(rel), "/")[0]
+		if id != "" && id != "." && id != activeConvID {
+			return id
+		}
+	}
+	slash := filepath.ToSlash(filepath.Clean(resolved))
+	for _, marker := range []string{"/.gemini/antigravity-cli/brain/", "/.gemini/antigravity/brain/"} {
+		if idx := strings.Index(slash, marker); idx >= 0 {
+			rest := slash[idx+len(marker):]
+			id := strings.Split(rest, "/")[0]
+			if id != "" && id != "." && id != ".." && id != activeConvID {
+				return id
+			}
+		}
+	}
+	return ""
+}
+
+func agyHookForeignBrainReason(worktree, activeConvID string, args map[string]interface{}) string {
+	var candidates []string
+	if p := rawHookToolPath(args); p != "" {
+		candidates = append(candidates, p)
+	}
+	candidates = append(candidates, stringList(args["paths"])...)
+	for _, cand := range candidates {
+		if otherID := agyForeignBrainDir(worktree, activeConvID, cand); otherID != "" {
+			return "Antigravity only allows file tools to access the current conversation's own brain directory; " + otherID + " belongs to an earlier or different conversation"
+		}
+	}
+	return ""
+}
+
+func pathWithinAgyOwnBrain(activeConvID, target string) bool {
+	activeConvID = strings.TrimSpace(activeConvID)
+	if activeConvID == "" || strings.TrimSpace(target) == "" {
+		return false
+	}
+	for _, root := range agyBrainRoots() {
+		if pathWithin(filepath.Join(root, activeConvID), target) {
+			return true
+		}
+	}
+	return false
+}
+
+func isReadToolAllowedInAgyOwnBrain(worktree, activeConvID, tool string, args map[string]interface{}) bool {
+	if activeConvID == "" || hasEscapingSearchPattern(args) {
+		return false
+	}
+	if multi := stringList(args["paths"]); len(multi) > 0 {
+		for _, p := range multi {
+			resolved := resolveHookToolPath(worktree, map[string]interface{}{"path": p})
+			if resolved == "" || !pathWithinAgyOwnBrain(activeConvID, resolved) || isSecretFilePath(resolved) {
+				return false
+			}
+		}
+		return true
+	}
+	if !hookPathScopedReadTools[strings.ToLower(strings.TrimSpace(tool))] {
+		return false
+	}
+	path := resolveHookToolPath(worktree, args)
+	return path != "" && pathWithinAgyOwnBrain(activeConvID, path) && !isSecretFilePath(path)
+}
+
 func (s *Service) inspectHookToolRisk(sessionID, tool string, args map[string]interface{}) (filepathOut, worktree string, destructive, externalDir bool) {
 	return s.inspectHookToolRiskIn(sessionID, tool, "", args)
 }

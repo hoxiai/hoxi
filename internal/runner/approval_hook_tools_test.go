@@ -197,3 +197,67 @@ func TestOpenCodeAlwaysOnlyForCommandsTheGateWouldGrant(t *testing.T) {
 		}
 	}
 }
+
+func TestAgyHookDeniesForeignBrainPathsAndAllowsOwnBrain(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("GEMINI_HOME", filepath.Join(home, ".gemini"))
+	dir := t.TempDir()
+	svc := NewService(dir, nil, statusbar.NewTracker(), filepath.Join(t.TempDir(), "sessions.json"))
+	setTestApprovalPolicy(t, svc, ApprovalPolicy{Mode: ApprovalModeSmart})
+	if err := svc.store.Put(SessionRecord{ID: "ses_agy_brain", Runtime: "antigravity", ProjectDir: dir, WorktreePath: dir, ExternalID: "conv-1"}); err != nil {
+		t.Fatal(err)
+	}
+
+	ownBrainFile := filepath.Join(home, ".gemini", "antigravity-cli", "brain", "conv-1", ".system_generated", "logs", "transcript.jsonl")
+	foreignBrainFile := filepath.Join(home, ".gemini", "antigravity-cli", "brain", "conv-old-split", ".system_generated", "logs", "transcript_full.jsonl")
+	if err := os.MkdirAll(filepath.Dir(ownBrainFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(foreignBrainFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	callRead := func(path string) (string, string) {
+		var p hookPayload
+		p.ConversationID = "conv-1"
+		p.StepIdx = 3
+		p.WorkspacePaths = []string{dir}
+		p.ToolCall.Name = "read_file"
+		p.ToolCall.Args = map[string]interface{}{"Path": path}
+		return svc.decideHookCall(httptest.NewRequest(http.MethodPost, "/", nil), hookCredential{runtime: string(RuntimeAntigravity), sessionID: "ses_agy_brain", messageID: "msg_a_1"}, p)
+	}
+
+	for _, mode := range []string{ApprovalModeSmart, ApprovalModeManual} {
+		setTestApprovalPolicy(t, svc, ApprovalPolicy{Mode: mode})
+		if d, reason := callRead(ownBrainFile); d != "auto_approve" {
+			t.Fatalf("%s: expected own conversation brain read to be approved, got %q (%q)", mode, d, reason)
+		}
+		if d, reason := callRead(foreignBrainFile); d != "deny" || !strings.Contains(reason, "conv-old-split") {
+			t.Fatalf("%s: expected foreign conversation brain read to be denied by hook so agy does not abort the turn, got %q (%q)", mode, d, reason)
+		}
+	}
+}
+
+func TestAgyTranslatorDistinguishesGeminiPathDenialFromMissingHook(t *testing.T) {
+	t.Parallel()
+	tr := NewTurnTranslator("ses_agy_gempath", string(RuntimeAntigravity), "msg_a_gp", "msg_u_gp", "antigravity", "claude-sonnet-4-6", "build", "")
+	lines := []string{
+		`{"conversation_id":"c1","event":"step_update","step_update":{"conversation_id":"c1","duration_seconds":0,"state":"ERROR","step_index":2,"step_type":"tool","tool_info":{"error":{"message":"permission check failed for read_file \"/Users/dev/.gemini/antigravity-cli/brain/other/.system_generated/logs/transcript_full.jsonl\": user denied permission","type":"PermissionDenied"},"name":"read_file","output":"","parameters":{"Path":"/Users/dev/.gemini/antigravity-cli/brain/other/.system_generated/logs/transcript_full.jsonl"}},"tool_name":"read_file"}}`,
+		`{"conversation_id":"c1","event":"result","result":{"conversation_id":"c1","denied_actions":[{"action":"read_file","display_name":"ReadFile"}],"duration_seconds":1.2,"error":"","num_turns":1,"response":"","status":"DONE"}}`,
+	}
+	var evts []SSEEvent
+	for _, l := range lines {
+		evts = append(evts, tr.FeedLine(l)...)
+	}
+	var deniedText string
+	for _, evt := range evts {
+		if evt.Type == "message.part.updated" {
+			if p, ok := evt.Properties["part"].(MessagePart); ok && p.ID == "prt_msg_a_gp_text_denied" {
+				deniedText = p.Text
+			}
+		}
+	}
+	if !strings.Contains(deniedText, "built-in ~/.gemini path policy") || strings.Contains(deniedText, "Hoxi's approval hook did not handle it") {
+		t.Fatalf("unexpected denied notice: %q", deniedText)
+	}
+}

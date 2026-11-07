@@ -89,6 +89,46 @@ func TestQuarantineEmptyAgySQLiteStore(t *testing.T) {
 		}
 	})
 
+	t.Run("empty WAL store with unlinked sidecars is quarantined", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("GEMINI_HOME", home)
+		convDir := filepath.Join(home, "antigravity-cli", "conversations")
+		if err := os.MkdirAll(convDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		pbPath := filepath.Join(convDir, "conv-nowal.pb")
+		dbPath := filepath.Join(convDir, "conv-nowal.db")
+		writeAgyProtobufStore(t, pbPath)
+		writeAgySQLiteStore(t, sqlite, dbPath, 0)
+		// Simulate agy unlinking -wal and -shm on clean close while leaving
+		// the database header in WAL mode (02 02).
+		_ = os.Remove(dbPath + "-wal")
+		_ = os.Remove(dbPath + "-shm")
+
+		if !quarantineEmptyAgySQLiteStore("conv-nowal") {
+			t.Fatal("expected the empty WAL store without sidecars to be quarantined")
+		}
+		if hasAgySplitBrainConversation("conv-nowal") {
+			t.Fatal("expected conv-nowal to no longer be split")
+		}
+		if !nonEmptyRegularFile(pbPath) {
+			t.Fatal("expected the Protobuf store to remain")
+		}
+
+		// Non-empty WAL store without sidecars must NOT be quarantined.
+		writeAgyProtobufStore(t, filepath.Join(convDir, "conv-nowal-steps.pb"))
+		stepsDB := filepath.Join(convDir, "conv-nowal-steps.db")
+		writeAgySQLiteStore(t, sqlite, stepsDB, 2)
+		_ = os.Remove(stepsDB + "-wal")
+		_ = os.Remove(stepsDB + "-shm")
+		if quarantineEmptyAgySQLiteStore("conv-nowal-steps") {
+			t.Fatal("expected non-empty WAL store without sidecars to stay in place")
+		}
+		if !nonEmptyRegularFile(stepsDB) {
+			t.Fatal("expected conv-nowal-steps.db to stay in place")
+		}
+	})
+
 	t.Run("stores that cannot be proven empty stay in place", func(t *testing.T) {
 		home := t.TempDir()
 		t.Setenv("GEMINI_HOME", home)
