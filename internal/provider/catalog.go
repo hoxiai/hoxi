@@ -37,16 +37,19 @@ func (g *Service) handleModelCatalog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	hoxiMap := g.loadHoxiProvidersMap()
-	if providers, ok := g.engineModelCatalog(r.Context(), hoxiMap); ok {
+	importedMap := g.loadOpenCodeImportedProviderMap()
+	disabled := g.disabledProvidersSet()
+	if providers, ok := g.engineModelCatalog(r.Context(), hoxiMap, importedMap, disabled); ok {
 		writeJSON(w, http.StatusOK, modelCatalog{Source: "engine", Providers: providers})
 		return
 	}
-	writeJSON(w, http.StatusOK, modelCatalog{Source: "config", Providers: configModelCatalog(hoxiMap, g.loadOpenCodeImportedProviderMap())})
+	writeJSON(w, http.StatusOK, modelCatalog{Source: "config", Providers: configModelCatalog(hoxiMap, importedMap, disabled)})
 }
 
-// engineModelCatalog lists the engine's connected providers, narrowed to the
-// models selected in .hoxi/models.json like the /provider proxy.
-func (g *Service) engineModelCatalog(parent context.Context, hoxiMap map[string]interface{}) ([]modelCatalogProvider, bool) {
+// engineModelCatalog lists the engine's connected providers plus any locally
+// configured/imported providers in .hoxi/models.json or opencode.json, narrowed
+// to the models selected in .hoxi/models.json when applicable.
+func (g *Service) engineModelCatalog(parent context.Context, hoxiMap, importedMap map[string]interface{}, disabled map[string]bool) ([]modelCatalogProvider, bool) {
 	if !g.openCode.Available() {
 		return nil, false
 	}
@@ -67,15 +70,50 @@ func (g *Service) engineModelCatalog(parent context.Context, hoxiMap map[string]
 	}
 	connected := make(map[string]bool, len(payload.Connected))
 	for _, id := range payload.Connected {
-		connected[id] = true
+		connected[strings.TrimSpace(id)] = true
 	}
-	out := make([]modelCatalogProvider, 0, len(payload.Connected))
+	seen := make(map[string]bool, len(payload.Connected)+len(hoxiMap))
+	out := make([]modelCatalogProvider, 0, len(payload.Connected)+len(hoxiMap))
 	for _, p := range payload.All {
 		pid, _ := p["id"].(string)
-		if !connected[pid] {
+		pid = strings.TrimSpace(pid)
+		if pid == "" || pid == AutoProviderID || disabled[pid] {
 			continue
 		}
-		if prov, ok := catalogProvider(pid, p, hoxiSelectedModels(pid, hoxiMap)); ok {
+		hProv, inHoxi := hoxiMap[pid].(map[string]interface{})
+		iProv, inImported := importedMap[pid].(map[string]interface{})
+		if !connected[pid] && !inHoxi && !inImported {
+			continue
+		}
+		seen[pid] = true
+		var (
+			prov modelCatalogProvider
+			ok   bool
+		)
+		switch {
+		case inHoxi:
+			prov, ok = mergeCatalogProvider(pid, hProv, p, hoxiSelectedModels(pid, hoxiMap))
+		case inImported:
+			var keep map[string]interface{}
+			if !connected[pid] {
+				keep, _ = iProv["models"].(map[string]interface{})
+			}
+			prov, ok = mergeCatalogProvider(pid, iProv, p, keep)
+		default:
+			prov, ok = catalogProvider(pid, p, nil)
+		}
+		if ok {
+			out = append(out, prov)
+		}
+	}
+	for pid, v := range hoxiMap {
+		pid = strings.TrimSpace(pid)
+		if pid == "" || pid == AutoProviderID || disabled[pid] || seen[pid] {
+			continue
+		}
+		hProv, _ := v.(map[string]interface{})
+		if prov, ok := catalogProvider(pid, hProv, nil); ok {
+			seen[pid] = true
 			out = append(out, prov)
 		}
 	}
@@ -85,9 +123,13 @@ func (g *Service) engineModelCatalog(parent context.Context, hoxiMap map[string]
 
 // configModelCatalog is the fallback when the engine is not running: providers
 // from .hoxi/models.json, then OpenCode-imported ones it does not override.
-func configModelCatalog(hoxiMap, importedMap map[string]interface{}) []modelCatalogProvider {
+func configModelCatalog(hoxiMap, importedMap map[string]interface{}, disabled map[string]bool) []modelCatalogProvider {
 	out := make([]modelCatalogProvider, 0, len(hoxiMap)+len(importedMap))
 	add := func(pid string, v interface{}) {
+		pid = strings.TrimSpace(pid)
+		if pid == "" || pid == AutoProviderID || disabled[pid] {
+			return
+		}
 		p, _ := v.(map[string]interface{})
 		if prov, ok := catalogProvider(pid, p, nil); ok {
 			out = append(out, prov)
@@ -117,6 +159,50 @@ func hoxiSelectedModels(pid string, hoxiMap map[string]interface{}) map[string]i
 		return nil
 	}
 	return models
+}
+
+func mergeCatalogProvider(pid string, primary, fallback map[string]interface{}, keep map[string]interface{}) (modelCatalogProvider, bool) {
+	pid = strings.TrimSpace(pid)
+	if pid == "" || (primary == nil && fallback == nil) {
+		return modelCatalogProvider{}, false
+	}
+	primaryModels, _ := primary["models"].(map[string]interface{})
+	fallbackModels, _ := fallback["models"].(map[string]interface{})
+	prov := modelCatalogProvider{
+		ID:     pid,
+		Name:   catalogName(primary, catalogName(fallback, pid)),
+		Models: make([]modelCatalogModel, 0, len(primaryModels)+len(fallbackModels)),
+	}
+	seenModels := make(map[string]bool, len(primaryModels)+len(fallbackModels))
+	addModel := func(mid string) {
+		mid = strings.TrimSpace(mid)
+		if mid == "" || seenModels[mid] {
+			return
+		}
+		if keep != nil {
+			if _, ok := keep[mid]; !ok {
+				return
+			}
+		}
+		seenModels[mid] = true
+		mPrimary, _ := primaryModels[mid].(map[string]interface{})
+		mFallback, _ := fallbackModels[mid].(map[string]interface{})
+		prov.Models = append(prov.Models, modelCatalogModel{
+			ID:   mid,
+			Name: catalogName(mPrimary, catalogName(mFallback, mid)),
+		})
+	}
+	for mid := range primaryModels {
+		addModel(mid)
+	}
+	for mid := range fallbackModels {
+		addModel(mid)
+	}
+	if len(prov.Models) == 0 {
+		return modelCatalogProvider{}, false
+	}
+	sort.Slice(prov.Models, func(i, j int) bool { return prov.Models[i].ID < prov.Models[j].ID })
+	return prov, true
 }
 
 func catalogProvider(pid string, p map[string]interface{}, keep map[string]interface{}) (modelCatalogProvider, bool) {

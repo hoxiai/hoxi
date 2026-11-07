@@ -140,3 +140,80 @@ func TestModelCatalogFallsBackToSanitizedConfig(t *testing.T) {
 		t.Fatalf("unexpected imported entry: %+v", p)
 	}
 }
+
+func TestModelCatalogEngineIncludesLocallyImportedProvidersAndModels(t *testing.T) {
+	homeDir, workspaceDir := setupIsolatedEnv(t)
+	_ = os.MkdirAll(filepath.Join(workspaceDir, ".hoxi"), 0o755)
+	_ = os.WriteFile(filepath.Join(workspaceDir, ".hoxi", "models.json"), []byte(`{
+		"provider": {
+			"openai": {
+				"name": "OpenAI (Codex CLI)",
+				"options": {"apiKey": "sk-hoxi-key", "baseURL": "https://secret.example/v1"},
+				"models": {
+					"gpt-4o": {"name": "GPT-4o"},
+					"gpt-5.3-codex": {"name": "GPT-5.3 Codex"}
+				}
+			},
+			"grok-cli": {
+				"name": "Grok (Local CLI)",
+				"options": {"apiKey": "sk-hoxi-key"},
+				"models": {
+					"grok-code-fast-1": {"name": "Grok Code Fast 1"}
+				}
+			}
+		}
+	}`), 0o644)
+	ocDir := filepath.Join(homeDir, ".config", "opencode")
+	_ = os.MkdirAll(ocDir, 0o755)
+	_ = os.WriteFile(filepath.Join(ocDir, "opencode.json"), []byte(`{
+		"provider": {
+			"ollama": {
+				"name": "Ollama (Local)",
+				"options": {"baseURL": "http://127.0.0.1:11434/v1"},
+				"models": {
+					"qwen2.5-coder:32b": {"name": "Qwen 2.5 Coder 32B"}
+				}
+			}
+		}
+	}`), 0o644)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/provider" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, _ = w.Write([]byte(`{
+			"all": [
+				{"id": "openai", "name": "OpenAI", "key": "sk-engine-key",
+				 "models": {"gpt-4o": {"name": "GPT-4o"}, "gpt-3.5": {"name": "GPT-3.5"}}},
+				{"id": "ollama", "name": "Ollama", "models": {}},
+				{"id": "unconnected", "name": "Unconnected", "models": {"x": {"name": "X"}}}
+			],
+			"default": {},
+			"connected": ["openai"]
+		}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	svc := NewService(srv.Listener.Addr().(*net.TCPAddr).Port, "secret", workspaceDir, nil)
+	mux := http.NewServeMux()
+	svc.RegisterRoutes(mux)
+
+	rec := doMuxReq(t, mux, http.MethodGet, "/api/hoxi/provider/models", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET provider/models = %d %s", rec.Code, rec.Body.String())
+	}
+	got := assertCatalogSanitized(t, rec.Body.Bytes())
+	if got.Source != "engine" || len(got.Providers) != 3 {
+		t.Fatalf("unexpected engine catalog: %+v", got)
+	}
+	if p := got.Providers[0]; p.ID != "grok-cli" || p.Name != "Grok (Local CLI)" || len(p.Models) != 1 || p.Models[0].ID != "grok-code-fast-1" {
+		t.Fatalf("unexpected grok-cli entry: %+v", p)
+	}
+	if p := got.Providers[1]; p.ID != "ollama" || p.Name != "Ollama (Local)" || len(p.Models) != 1 || p.Models[0].ID != "qwen2.5-coder:32b" {
+		t.Fatalf("unexpected ollama entry: %+v", p)
+	}
+	if p := got.Providers[2]; p.ID != "openai" || p.Name != "OpenAI (Codex CLI)" || len(p.Models) != 2 || p.Models[0].ID != "gpt-4o" || p.Models[1].ID != "gpt-5.3-codex" {
+		t.Fatalf("unexpected openai entry: %+v", p)
+	}
+}
