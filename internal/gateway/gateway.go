@@ -260,10 +260,13 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 			host = host[:i]
 		}
 		host = strings.TrimSpace(strings.TrimRight(host, "/"))
-		if host == "" {
-			return ""
+		if host != "" {
+			return "https://" + host
 		}
-		return "https://" + host
+		if g.tunnel != nil {
+			return g.tunnel.RelayProxyURL()
+		}
+		return ""
 	})
 
 	g.registerRoutes(distFS)
@@ -450,6 +453,31 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 		}
 		if tok != "" {
 			resp["gatewayToken"] = tok
+		}
+		if g.pairing != nil {
+			if _, peers := g.pairing.LanEndpoints(); len(peers) > 0 {
+				resp["peers"] = peers
+			}
+			if relayURL := g.pairing.RelayURL(); relayURL != "" {
+				resp["relay"] = relayURL
+				resp["relayUrl"] = relayURL
+				if src := remoteSource(r); src == remoteSourceLAN || src == remoteSourceRelay {
+					if relayTok, err := g.pairing.RelayToken(); err == nil && relayTok != "" {
+						resp["relayToken"] = relayTok
+					}
+				}
+			}
+		}
+		if g.tunnel != nil {
+			if ts := g.tunnel.Status(); ts.Enabled && ts.ControllerURL != "" && ts.NodeID > 0 {
+				resp["nodeId"] = ts.NodeID
+				resp["controllerUrl"] = ts.ControllerURL
+				resp["tunnel"] = map[string]any{
+					"nodeId":        ts.NodeID,
+					"controllerUrl": ts.ControllerURL,
+					"relayUrl":      g.tunnel.RelayProxyURL(),
+				}
+			}
 		}
 		writeJSON(w, http.StatusOK, resp)
 	})

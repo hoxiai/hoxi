@@ -102,14 +102,18 @@ func (s *Service) Code() (Code, error) {
 		code.RelayToken = relayToken
 	}
 	host := strings.TrimSpace(s.lanHost())
-	if host == "" {
+	if host == "" && code.Relay == "" {
 		return code, nil
 	}
-	code.Host = host
-	code.URL = fmt.Sprintf("http://%s:%d", host, s.port)
+	if host != "" {
+		code.Host = host
+		code.URL = fmt.Sprintf("http://%s:%d", host, s.port)
+	} else {
+		code.URL = code.Relay
+	}
 	code.Available = true
 
-	if s.lanPeers != nil {
+	if host != "" && s.lanPeers != nil {
 		candidates := s.lanPeers()
 		if containsHost(candidates, host) {
 			seen := map[string]bool{host: true}
@@ -157,6 +161,36 @@ func (s *Service) relay() string {
 		return ""
 	}
 	return strings.TrimSpace(fn())
+}
+
+// RelayURL returns this desktop's configured off-LAN relay URL, or "".
+func (s *Service) RelayURL() string {
+	return s.relay()
+}
+
+// LanEndpoints returns the primary LAN URL and any secondary peer LAN URLs.
+func (s *Service) LanEndpoints() (string, []string) {
+	host := strings.TrimSpace(s.lanHost())
+	if host == "" {
+		return "", nil
+	}
+	primary := fmt.Sprintf("http://%s:%d", host, s.port)
+	var peers []string
+	if s.lanPeers != nil {
+		candidates := s.lanPeers()
+		if containsHost(candidates, host) {
+			seen := map[string]bool{host: true}
+			for _, peer := range candidates {
+				peer = strings.TrimSpace(peer)
+				if peer == "" || seen[peer] {
+					continue
+				}
+				seen[peer] = true
+				peers = append(peers, fmt.Sprintf("http://%s:%d", peer, s.port))
+			}
+		}
+	}
+	return primary, peers
 }
 
 // Token returns this desktop's stable LAN pairing token, creating and

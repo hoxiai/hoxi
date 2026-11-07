@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -60,6 +61,11 @@ type Options struct {
 	// default (2s, 10min) and are overridden in tests.
 	PollInterval time.Duration
 	PollTimeout  time.Duration
+
+	// DefaultRelayURL is the optional public relay controller URL used for
+	// zero-config outbound tunnel registration when no manual tunnel credential
+	// exists yet. Empty disables auto-registration (the default in tests).
+	DefaultRelayURL string
 }
 
 // Status is safe to return to the UI: it never includes the tunnel token.
@@ -81,6 +87,7 @@ type Manager struct {
 	cancel    context.CancelFunc
 	done      chan struct{}
 	status    Status
+	autoRelay bool
 	peer      *peer
 	pending   *pendingPair
 }
@@ -153,16 +160,58 @@ func (m *Manager) Configure(store *Store, targetPort int) {
 	m.mu.Unlock()
 }
 
+// SetDefaultRelayURL configures the default relay controller used for
+// zero-config outbound tunnel registration when no saved credential exists.
+func (m *Manager) SetDefaultRelayURL(controllerURL string) {
+	m.mu.Lock()
+	m.opts.DefaultRelayURL = strings.TrimSpace(controllerURL)
+	m.mu.Unlock()
+}
+
+func (m *Manager) defaultRelayURL() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return strings.TrimSpace(m.opts.DefaultRelayURL)
+}
+
+// RelayProxyURL returns the public Hoxi relay proxy endpoint when this desktop
+// has an enabled tunnel with a known controller URL and node ID.
+func (m *Manager) RelayProxyURL() string {
+	m.mu.Lock()
+	st := m.status
+	m.mu.Unlock()
+	if !st.Enabled || strings.TrimSpace(st.ControllerURL) == "" || st.NodeID == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s/api/tunnel/hoxi-nodes/%d/proxy", strings.TrimRight(strings.TrimSpace(st.ControllerURL), "/"), st.NodeID)
+}
+
+// RequiresPairingToken reports whether incoming tunnel requests must always
+// carry a valid Hoxi pairing/relay token (true for zero-config auto-relay
+// tunnels on a shared controller).
+func (m *Manager) RequiresPairingToken() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.autoRelay
+}
+
 func (m *Manager) store() *Store {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.opts.Store
 }
 
-// Start connects in the background when a paired credential exists.
+// Start connects in the background when a paired credential exists, or
+// auto-registers with DefaultRelayURL when configured and no credential exists.
 func (m *Manager) Start() {
 	cfg, err := m.store().Load()
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) && m.store().path != "" {
+			if defaultRelay := m.defaultRelayURL(); defaultRelay != "" {
+				m.startAutoRegister(defaultRelay)
+				return
+			}
+		}
 		m.restartMu.Lock()
 		defer m.restartMu.Unlock()
 		m.stopLocked()
@@ -235,12 +284,120 @@ func (m *Manager) restart(cfg Config) {
 	done := make(chan struct{})
 	m.mu.Lock()
 	m.cancel, m.done = cancel, done
+	m.autoRelay = cfg.AutoRelay
 	m.status = Status{Enabled: true, State: StateConnecting, ControllerURL: cfg.ControllerURL, NodeID: cfg.NodeID, Name: cfg.Name}
 	m.mu.Unlock()
 	go func() {
 		defer close(done)
 		m.run(ctx, cfg)
 	}()
+}
+
+func (m *Manager) startAutoRegister(controllerURL string) {
+	normalized, err := normalizeControllerURL(controllerURL)
+	if err != nil {
+		return
+	}
+	m.restartMu.Lock()
+	defer m.restartMu.Unlock()
+	m.stopLocked()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	m.mu.Lock()
+	m.cancel, m.done = cancel, done
+	m.autoRelay = true
+	m.status = Status{Enabled: true, State: StateConnecting, ControllerURL: normalized}
+	m.mu.Unlock()
+	go func() {
+		defer close(done)
+		m.autoRegisterAndRun(ctx, normalized)
+	}()
+}
+
+func (m *Manager) autoRegisterAndRun(ctx context.Context, controllerURL string) {
+	backoff := 2 * time.Second
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		cfg, err := m.autoRegisterOnce(ctx, controllerURL)
+		if err == nil {
+			_ = m.store().Save(cfg)
+			m.mu.Lock()
+			m.autoRelay = true
+			m.status = Status{Enabled: true, State: StateConnecting, ControllerURL: cfg.ControllerURL, NodeID: cfg.NodeID, Name: cfg.Name}
+			m.mu.Unlock()
+			m.run(ctx, cfg)
+			return
+		}
+		m.setStatus(Status{Enabled: false, State: StateDisabled})
+		timer := time.NewTimer(backoff)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+		backoff = min(backoff*2, 60*time.Second)
+	}
+}
+
+func (m *Manager) autoRegisterOnce(ctx context.Context, controllerURL string) (Config, error) {
+	hostname := m.opts.Hostname()
+	name := hostname
+	if name == "" {
+		name = "Hoxi Desktop"
+	}
+	payload, err := json.Marshal(map[string]string{
+		"name":     name,
+		"hostname": hostname,
+		"version":  m.opts.Version,
+	})
+	if err != nil {
+		return Config{}, err
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, controllerURL+"/api/tunnel/pair/auto", bytes.NewReader(payload))
+	if err != nil {
+		return Config{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := *m.opts.HTTPClient
+	client.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	response, err := client.Do(req)
+	if err != nil {
+		return Config{}, err
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	if err != nil {
+		return Config{}, err
+	}
+	var result struct {
+		Code int `json:"code"`
+		Data struct {
+			NodeID   uint   `json:"nodeId"`
+			ClientID string `json:"clientId"`
+			Token    string `json:"token"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return Config{}, err
+	}
+	if response.StatusCode != http.StatusOK || result.Code != 0 || result.Data.ClientID == "" || result.Data.Token == "" {
+		return Config{}, fmt.Errorf("auto relay registration rejected (HTTP %d)", response.StatusCode)
+	}
+	return Config{
+		ControllerURL: controllerURL,
+		NodeID:        result.Data.NodeID,
+		ClientID:      result.Data.ClientID,
+		Token:         result.Data.Token,
+		Name:          name,
+		AutoRelay:     true,
+	}, nil
 }
 
 func (m *Manager) run(ctx context.Context, cfg Config) {
@@ -290,6 +447,14 @@ func (m *Manager) connect(ctx context.Context, cfg Config) (bool, error) {
 			return false, fmt.Errorf("GoPanel rejected the tunnel (HTTP %d)", response.StatusCode)
 		}
 		return false, fmt.Errorf("connect GoPanel: %w", err)
+	}
+	if response != nil {
+		if rawNodeID := strings.TrimSpace(response.Header.Get("X-GoPanel-Tunnel-Node-Id")); rawNodeID != "" {
+			if parsed, parseErr := strconv.ParseUint(rawNodeID, 10, 64); parseErr == nil && parsed > 0 && cfg.NodeID != uint(parsed) {
+				cfg.NodeID = uint(parsed)
+				_ = m.store().Save(cfg)
+			}
+		}
 	}
 	p := newPeer(conn, m.opts.Handler)
 	defer func() {

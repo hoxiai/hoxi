@@ -340,3 +340,36 @@ func TestTunnelRejectsDanglingSymlinkOutsideWorkspace(t *testing.T) {
 		}
 	}
 }
+
+func TestTunnelRelayTokenAuthAndBootstrapRelay(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("HOXI_HOME", filepath.Join(home, ".hoxi"))
+	g := New(0, "test", t.TempDir(), nil, nil)
+	defer g.CloseBrowser()
+
+	relayToken, err := g.pairing.RelayToken()
+	if err != nil || len(relayToken) != 64 {
+		t.Fatalf("RelayToken() = %q, err = %v", relayToken, err)
+	}
+
+	// Token-authenticated tunnel request with wrong token must be rejected with 401.
+	badReq := localRequest(http.MethodGet, "/api/hoxi/bootstrap", nil)
+	badReq.Header.Set("X-Hoxi-Relay-Auth", "token")
+	badReq.Header.Set("X-Hoxi-Relay-Token", "wrong-token")
+	badRec := httptest.NewRecorder()
+	g.serveTunnelRequest(badRec, badReq)
+	if badRec.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong relay token status = %d, want 401", badRec.Code)
+	}
+
+	// Token-authenticated tunnel request with valid relayToken succeeds.
+	goodReq := localRequest(http.MethodGet, "/api/hoxi/bootstrap", nil)
+	goodReq.Header.Set("X-Hoxi-Relay-Auth", "token")
+	goodReq.Header.Set("X-Hoxi-Relay-Token", relayToken)
+	goodRec := httptest.NewRecorder()
+	g.serveTunnelRequest(goodRec, goodReq)
+	if goodRec.Code != http.StatusOK {
+		t.Fatalf("valid relay token status = %d, want 200", goodRec.Code)
+	}
+}

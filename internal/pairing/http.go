@@ -55,6 +55,25 @@ func (s *Service) AuthorizeRelay(r *http.Request) bool {
 	return s.authorizeWith(r, s.RelayToken)
 }
 
+// AuthorizeTokenValue reports whether raw (or a "Bearer <token>" value) matches
+// either this desktop's relay token or its LAN pairing token in constant time.
+func (s *Service) AuthorizeTokenValue(raw string) bool {
+	got := strings.TrimSpace(raw)
+	if strings.HasPrefix(got, "Bearer ") {
+		got = strings.TrimSpace(strings.TrimPrefix(got, "Bearer "))
+	}
+	if got == "" {
+		return false
+	}
+	if relayTok, err := s.RelayToken(); err == nil && relayTok != "" && subtle.ConstantTimeCompare([]byte(got), []byte(relayTok)) == 1 {
+		return true
+	}
+	if lanTok, err := s.Token(); err == nil && lanTok != "" && subtle.ConstantTimeCompare([]byte(got), []byte(lanTok)) == 1 {
+		return true
+	}
+	return false
+}
+
 func (s *Service) authorizeWith(r *http.Request, wantFn func() (string, error)) bool {
 	if r == nil {
 		return false

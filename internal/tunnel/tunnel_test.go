@@ -56,6 +56,11 @@ func newFakeController(t *testing.T) *fakeController {
 			"nodeId": 7, "clientId": testClientID, "token": testToken,
 		}})
 	})
+	mux.HandleFunc("/api/tunnel/pair/auto", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "msg": "Success", "data": map[string]any{
+			"nodeId": 9, "clientId": testClientID, "token": testToken,
+		}})
+	})
 	mux.HandleFunc("/api/tunnel/pair/request", func(w http.ResponseWriter, r *http.Request) {
 		fc.mu.Lock()
 		fc.requestHits++
@@ -661,5 +666,33 @@ func TestStartSurfacesCorruptConfigError(t *testing.T) {
 	raw, err := os.ReadFile(matches[0])
 	if err != nil || string(raw) != "{corrupt json" {
 		t.Fatalf("corrupt backup = %q (err=%v), want {corrupt json", string(raw), err)
+	}
+}
+
+func TestStartAutoRegistersWithDefaultRelayController(t *testing.T) {
+	fc := newFakeController(t)
+	configPath := filepath.Join(t.TempDir(), "tunnel.json")
+	m := NewManager(Options{
+		Handler:         http.NotFoundHandler(),
+		Version:         "test",
+		Hostname:        func() string { return "mac.local" },
+		DefaultRelayURL: fc.server.URL,
+	})
+	m.Configure(NewStore(configPath), 5410)
+	t.Cleanup(m.Stop)
+
+	m.Start()
+	conn := <-fc.conns
+	t.Cleanup(func() { _ = conn.Close() })
+
+	if !waitFor(t, 5*time.Second, func() bool { return m.Status().State == StateOnline }) {
+		t.Fatalf("state = %s, want online after auto-registration", m.Status().State)
+	}
+	if !m.RequiresPairingToken() {
+		t.Fatal("auto-registered tunnel must require pairing token on incoming tunnel requests")
+	}
+	wantProxy := fc.server.URL + "/api/tunnel/hoxi-nodes/9/proxy"
+	if got := m.RelayProxyURL(); got != wantProxy {
+		t.Fatalf("RelayProxyURL() = %q, want %q", got, wantProxy)
 	}
 }

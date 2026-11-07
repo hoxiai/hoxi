@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"flag"
 	"io"
 	"mime"
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
 	"path/filepath"
 	"strings"
@@ -283,7 +285,17 @@ func isRemoteRequest(r *http.Request) bool { return remoteSource(r) != "" }
 // gateway token is never attached to tunnel requests, so the token-guarded
 // raw OpenCode passthrough stays unreachable even if a route slipped through.
 func (g *Gateway) serveTunnelRequest(w http.ResponseWriter, r *http.Request) {
-	g.serveRemoteRequest(w, r, remoteSourceTunnel)
+	source := remoteSourceTunnel
+	if strings.TrimSpace(r.Header.Get("X-Hoxi-Relay-Auth")) != "" ||
+		strings.TrimSpace(r.Header.Get("X-Hoxi-Relay-Token")) != "" ||
+		(g.tunnel != nil && g.tunnel.RequiresPairingToken()) {
+		if g.pairing == nil || !g.pairing.AuthorizeTokenValue(r.Header.Get("X-Hoxi-Relay-Token")) {
+			writeJSONError(w, http.StatusUnauthorized, "invalid pairing token")
+			return
+		}
+		source = remoteSourceRelay
+	}
+	g.serveRemoteRequest(w, r, source)
 }
 
 // droppedRemoteHeader reports whether an incoming header must be stripped on
@@ -292,7 +304,7 @@ func (g *Gateway) serveTunnelRequest(w http.ResponseWriter, r *http.Request) {
 func droppedRemoteHeader(key string) bool {
 	lower := strings.ToLower(strings.TrimSpace(key))
 	switch lower {
-	case "origin", "referer", "cookie", "authorization", "x-auth", "x-hoxi-token":
+	case "origin", "referer", "cookie", "authorization", "x-auth", "x-hoxi-token", "x-hoxi-relay-token", "x-hoxi-relay-auth":
 		return true
 	}
 	return strings.HasPrefix(lower, "sec-") ||
@@ -493,11 +505,22 @@ func (g *Gateway) tunnelSearchRootAllowed(r *http.Request) bool {
 	return g.tunnelFilePathAllowed(baseDir, sessionID)
 }
 
+const defaultHoxiRelayControllerURL = "https://work.fastd.cn"
+
 // StartRemoteTunnel enables GoPanel pairing with the credential at configPath
 // and reconnects if this desktop is already paired. targetPort is the loopback
 // bridge port reported to GoPanel for display.
 func (g *Gateway) StartRemoteTunnel(configPath string, targetPort int) {
 	g.tunnel.Configure(tunnel.NewStore(configPath), targetPort)
+	if strings.TrimSpace(os.Getenv("HOXI_DISABLE_AUTO_RELAY")) != "1" {
+		relayController := strings.TrimSpace(os.Getenv("HOXI_DEFAULT_RELAY_URL"))
+		if relayController == "" && flag.Lookup("test.v") == nil {
+			relayController = defaultHoxiRelayControllerURL
+		}
+		if relayController != "" {
+			g.tunnel.SetDefaultRelayURL(relayController)
+		}
+	}
 	if g.status != nil {
 		// Pending approvals and agent questions become phone pushes via GoPanel.
 		// The notice holds ids only, never command text (see statusbar.ApprovalNotice).

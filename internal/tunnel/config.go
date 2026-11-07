@@ -24,6 +24,7 @@ type Config struct {
 	ClientID      string `json:"clientId"`
 	Token         string `json:"token"`
 	Name          string `json:"name"`
+	AutoRelay     bool   `json:"autoRelay,omitempty"`
 }
 
 func (c Config) valid() bool {
