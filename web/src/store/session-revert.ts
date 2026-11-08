@@ -7,10 +7,11 @@ import { t } from "../i18n";
 import { recordUserRevertAction } from "./provider-telemetry";
 import { initializeSessionAI, sessionAIConfig } from "./session-ai";
 import { isSessionBusy, sessionDirectory } from "./session-query";
+import { compareMessageIDOrder } from "./message-lookup";
 import { loadSessionMessages, replaceSession, selectSession } from "./workspace-sessions";
 import { setWorkspace, workspace } from "./workspace-state";
 import { appSettings } from "./settings";
-import { scheduleRefreshWorktreeStatus } from "./session-diffs";
+import { refreshSessionDiff, scheduleRefreshWorktreeStatus } from "./session-diffs";
 import { extractUserTurnSkillSelection } from "./skills";
 
 export interface PendingRevertRequest {
@@ -51,7 +52,7 @@ const MUTATING_TOOLS = new Set([
 function collectAffectedRevertFiles(sessionID: string, messageID: string, partID?: string): string[] {
   const turns = workspace.messagesBySession[sessionID] ?? [];
   const bIdx = turns.findIndex((m) => m.info.id === messageID);
-  const slice = bIdx >= 0 ? turns.slice(bIdx) : turns.filter((m) => m.info.id >= messageID);
+  const slice = bIdx >= 0 ? turns.slice(bIdx) : turns.filter((m) => compareMessageIDOrder(m.info, messageID) >= 0);
   const files = new Set<string>();
   slice.forEach((turn, idx) => {
     const start = idx === 0 && partID ? Math.max(0, turn.parts.findIndex((p) => p.id === partID)) : 0;
@@ -122,7 +123,11 @@ export async function revertToHere(
   }
 
   replaceSession(info);
-  void loadSessionMessages(sessionID).catch(() => {});
+  if (workspace.messagesBySession[sessionID] === undefined) {
+    void loadSessionMessages(sessionID).catch(() => {});
+  } else {
+    void refreshSessionDiff(sessionID).catch(() => {});
+  }
   scheduleRefreshWorktreeStatus(sessionID, 120);
 }
 

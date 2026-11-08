@@ -21,6 +21,7 @@ import { hasPendingSessionSandbox, newIsolatedSession, waitForSessionSandbox } f
 import { buildCombinedSystemPrompt } from "./settings";
 import { setWorkspace, workspace, type ReasoningEffort, type SelectedModel } from "./workspace-state";
 import { initializeSessionAI, parseModelString, sessionAIConfig } from "./session-ai";
+import { compareMessageIDOrder } from "./message-lookup";
 import { cancelPendingSessionMessageLoads, loadSessionMessages, replaceSession } from "./workspace-sessions";
 import { renameSessionTitle } from "./session-lifecycle";
 import { buildWorkspaceFoldersSystemPrompt, normalizeFolderPath, workspaceFoldersForDir } from "./workspace-folders";
@@ -241,7 +242,18 @@ export async function dispatchSessionPrompt(
           if (revertBoundary?.messageID) {
             const bIdx = list.findIndex((m) => m.info.id === revertBoundary.messageID);
             if (bIdx >= 0) {
-              list.splice(revertBoundary.partID ? bIdx + 1 : bIdx);
+              if (revertBoundary.partID) {
+                const pIdx = list[bIdx].parts.findIndex((p) => p.id === revertBoundary.partID);
+                if (pIdx >= 0) list[bIdx].parts.splice(pIdx);
+                list.splice(bIdx + 1);
+              } else {
+                list.splice(bIdx);
+              }
+            } else {
+              const afterIdx = list.findIndex(
+                (m) => !m.info.id.startsWith("optimistic_") && compareMessageIDOrder(m.info, revertBoundary.messageID) >= 0
+              );
+              if (afterIdx >= 0) list.splice(afterIdx);
             }
           }
           if (!wasBusyBeforeSubmit) {

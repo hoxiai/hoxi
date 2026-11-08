@@ -93,6 +93,12 @@ export function nextActiveSessionCandidate(
   return sortSessionsByActivity(candidates)[0];
 }
 
+function shouldSuppressStaleRevert(sessionID: string): boolean {
+  if (isSessionBusy(sessionID)) return true;
+  const turns = workspace.messagesBySession[sessionID];
+  return Boolean(turns && turns.some((t) => t.info.id.startsWith("optimistic_")));
+}
+
 export function syncSessionFieldsInPlace(target: SessionInfo, source: SessionInfo): void {
   if (target.title !== source.title) target.title = source.title;
   if (target.slug !== source.slug) target.slug = source.slug;
@@ -107,7 +113,8 @@ export function syncSessionFieldsInPlace(target: SessionInfo, source: SessionInf
   if (target.sandboxMode !== source.sandboxMode) target.sandboxMode = source.sandboxMode;
   if (target.branch !== source.branch) target.branch = source.branch;
   target.capabilities = source.capabilities;
-  target.revert = source.revert;
+  target.revert =
+    source.revert && shouldSuppressStaleRevert(target.id) ? undefined : source.revert;
   if (source.time) {
     if (!target.time) {
       target.time = { ...source.time };
@@ -153,7 +160,11 @@ export function reconcileSessionsInPlace(incomingList: SessionInfo[]): void {
           next.push(existing);
           if (state.sessions[targetIdx]?.id !== incoming.id) orderOrLengthChanged = true;
         } else {
-          next.push(incoming);
+          next.push(
+            incoming.revert && shouldSuppressStaleRevert(incoming.id)
+              ? { ...incoming, revert: undefined }
+              : incoming
+          );
           orderOrLengthChanged = true;
         }
       }
@@ -178,7 +189,11 @@ export function replaceSession(info: SessionInfo) {
   // after a workspace switch. Keep global metadata without adding a foreign row.
   if (!workspace.sessions.some((s) => s.id === info.id) &&
     !sessionBelongsToProject(info, workspace.rootDir, workspace.activeProjectID)) return;
-  const effectiveInfo = preserveSessionTitle(info);
+  const rawEffective = preserveSessionTitle(info);
+  const effectiveInfo =
+    rawEffective.revert && shouldSuppressStaleRevert(rawEffective.id)
+      ? { ...rawEffective, revert: undefined }
+      : rawEffective;
   setWorkspace(
     produce((state) => {
       const idx = state.sessions.findIndex((s) => s.id === effectiveInfo.id);

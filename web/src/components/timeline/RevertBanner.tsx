@@ -2,6 +2,7 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { GitFork, LoaderCircle, RotateCcw, Undo2 } from "lucide-solid";
 import {
+  compareMessageIDOrder,
   forkFromMessage,
   hasRevertedFiles,
   isSessionBusy,
@@ -50,7 +51,7 @@ export default function RevertBanner() {
       return Math.max(1, userCount);
     }
     const count = turns.filter(
-      (t) => t.info.role === "user" && t.info.id >= boundary
+      (t) => t.info.role === "user" && compareMessageIDOrder(t.info, boundary) >= 0
     ).length;
     return Math.max(1, count);
   });
@@ -93,7 +94,7 @@ export default function RevertBanner() {
       const nextUser =
         bIdx >= 0
           ? turns.slice(bIdx + 1).find((turn) => turn.info.role === "user")
-          : turns.find((turn) => turn.info.role === "user" && turn.info.id > boundary);
+          : turns.find((turn) => turn.info.role === "user" && compareMessageIDOrder(turn.info, boundary) > 0);
       if (nextUser) {
         await revertToHere(id, nextUser.info.id, undefined, { skipConfirm: true });
       } else {

@@ -168,17 +168,10 @@ func TestSessionRevertUnrevertAndFork(t *testing.T) {
 		t.Fatalf("unexpected OpenCode calls: %+v", calls)
 	}
 
-	// 3. CLI runtime revert: should clear ExternalID and mark ContextPending.
+	// 3. CLI runtime revert: should clear ExternalID, mark ContextPending, and broadcast cleared revert on next turn.
 	cliRec := SessionRecord{
-		ID:           "ses_cld_1",
-		Runtime:      "claude-code",
-		ExternalID:   "cld_ext_1",
-		ProjectDir:   repo,
-		WorktreePath: repo,
-		SandboxMode:  "local",
-		Title:        "CLI Revert",
-		Turns:        turns,
-		Snapshots:    map[string]string{"msg_u_2": snap2},
+		ID: "ses_cld_1", Runtime: "claude-code", ExternalID: "cld_ext_1", ProjectDir: repo,
+		WorktreePath: repo, SandboxMode: "local", Title: "CLI Revert", Turns: turns, Snapshots: map[string]string{"msg_u_2": snap2},
 	}
 	if err := svc.Store().Put(cliRec); err != nil {
 		t.Fatal(err)
@@ -192,6 +185,12 @@ func TestSessionRevertUnrevertAndFork(t *testing.T) {
 	cliAfter, _ := svc.Store().Get("ses_cld_1")
 	if cliAfter.ExternalID != "" || !cliAfter.ContextPending || cliAfter.ContextTurnCount != 2 || len(cliAfter.Turns) != 2 {
 		t.Fatalf("expected CLI handle reset + ContextPending with 2 turns, got %+v", cliAfter)
+	}
+	subCh, unsub := svc.Subscribe("ses_cld_1")
+	defer unsub()
+	svc.recordTurnSnapshot("ses_cld_1", "msg_u_3")
+	if evt := <-subCh; evt.Type != "session.updated" || evt.Properties["info"].(SessionInfo).Revert != nil {
+		t.Fatalf("expected session.updated clearing revert on new turn, got %+v", evt)
 	}
 
 	// 4. Fork from msg_u_2: should create a new session with the first 2 turns and ContextPending.

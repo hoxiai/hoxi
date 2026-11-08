@@ -167,13 +167,39 @@ export function orderSameStepReasoningPartsInPlace(parts: MessagePart[]): void {
   }
 }
 
+function parseRunnerMessageID(id: string): { time: number; seq: number; roleRank: number } | null {
+  const match = /^msg_([ua])_(\d+)_(\d+)$/.exec(id);
+  if (!match) return null;
+  return {
+    time: Number(match[2]),
+    seq: Number(match[3]),
+    roleRank: match[1] === "u" ? 0 : 1,
+  };
+}
+
+export function compareMessageIDOrder(info: MessageInfo, boundaryID: string): number {
+  if (info.id === boundaryID) return 0;
+  if (isOptimisticID(info.id)) return 1;
+  const a = parseRunnerMessageID(info.id);
+  const b = parseRunnerMessageID(boundaryID);
+  if (a && b) {
+    if (a.time !== b.time) return a.time - b.time;
+    if (a.seq !== b.seq) return a.seq - b.seq;
+    return a.roleRank - b.roleRank;
+  }
+  if (b && info.time?.created && info.time.created !== b.time) {
+    return info.time.created - b.time;
+  }
+  return info.id < boundaryID ? -1 : info.id > boundaryID ? 1 : 0;
+}
+
 // Runner user IDs (`msg_u_<ms>_<n>`) and OpenCode IDs (`msg_<hex>`) do not sort
 // against each other as strings ("msg_u" > "msg_1"), so order by creation time.
 function compareTurnOrder(a: MessageInfo, b: MessageInfo): number {
   const ta = a.time?.created ?? 0;
   const tb = b.time?.created ?? 0;
   if (ta && tb && ta !== tb) return ta - tb;
-  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  return compareMessageIDOrder(a, b.id);
 }
 
 function bubbleTurnIntoOrder(list: MessageTurn[], idx: number) {

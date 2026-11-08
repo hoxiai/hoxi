@@ -49,11 +49,17 @@ func (s *Service) recordTurnSnapshot(sessionID, messageID string) {
 		return
 	}
 	rec, ok := s.store.Meta(sessionID)
-	if !ok || strings.TrimSpace(rec.WorktreePath) == "" {
+	if !ok {
 		return
 	}
-	snap, err := worktree.CreateSnapshot(rec.WorktreePath)
-	_, _, _ = s.store.Update(sessionID, func(r *SessionRecord) {
+	var snap string
+	var err error
+	if strings.TrimSpace(rec.WorktreePath) != "" {
+		snap, err = worktree.CreateSnapshot(rec.WorktreePath)
+	}
+	hadRevert := false
+	updated, updatedOK, _ := s.store.Update(sessionID, func(r *SessionRecord) {
+		hadRevert = r.Revert != nil
 		r.Revert = nil
 		r.RevertedTurns = nil
 		r.RevertSnapshot = ""
@@ -66,6 +72,13 @@ func (s *Service) recordTurnSnapshot(sessionID, messageID string) {
 			r.Snapshots[messageID] = snap
 		}
 	})
+	if updatedOK && hadRevert {
+		info := updated.ToSessionInfo()
+		s.broadcast(sessionID, SSEEvent{
+			Type:       "session.updated",
+			Properties: map[string]interface{}{"info": info},
+		})
+	}
 }
 
 func (s *Service) handleSessionRevert(w http.ResponseWriter, r *http.Request, sessionID string) {

@@ -9,7 +9,7 @@ import {
   Show,
 } from "solid-js";
 import type { MessageInfo } from "../../services/sse-types";
-import type { MessageTurn } from "../../store/workspace";
+import { compareMessageIDOrder, type MessageTurn } from "../../store/workspace";
 import { Icon } from "../icons";
 import { t } from "../../i18n";
 import { isVisibleTextPart, isWorkPart } from "./context-activity-parts";
@@ -59,7 +59,7 @@ export function filterVisibleTurnsByRevert(
     const slicedParts = pIdx >= 0 ? boundaryTurn.parts.slice(0, pIdx) : boundaryTurn.parts;
     return [...rawTurns.slice(0, idx), { info: boundaryTurn.info, parts: slicedParts }];
   }
-  return rawTurns.filter((t) => t.info.id < revert.messageID);
+  return rawTurns.filter((t) => t.info.id.startsWith("optimistic_") || compareMessageIDOrder(t.info, revert.messageID) < 0);
 }
 
 /**
