@@ -271,3 +271,107 @@ printf '%s\n' '{"conversation_id":"conv-split-empty","event":"result","result":{
 		t.Fatal("expected the empty SQLite store to be moved aside")
 	}
 }
+
+func TestAgyBrainPathsExcludedFromHandoffAndMemory(t *testing.T) {
+	t.Parallel()
+	projDir := t.TempDir()
+	brainStep := "/Users/test/.gemini/antigravity-cli/brain/6d724c56-fbea-401b-ab4a-fd0de329e130/.system_generated/steps/41/output.txt"
+	brainTaskLog := "/Users/test/.gemini/antigravity-cli/brain/6d724c56-fbea-401b-ab4a-fd0de329e130/.system_generated/tasks/task-30.log"
+	rec := SessionRecord{
+		ID:             "ses_agy_brain_sanitize",
+		Runtime:        "antigravity",
+		ProjectDir:     projDir,
+		WorktreePath:   projDir,
+		ContextPending: true,
+		Turns: []MessageTurn{
+			{
+				Info:  MessageInfo{ID: "msg_u_1", Role: "user"},
+				Parts: []MessagePart{{ID: "prt_u_1", Type: "text", Text: "检查状态"}},
+			},
+			{
+				Info: MessageInfo{ID: "msg_a_1", Role: "assistant"},
+				Parts: []MessagePart{
+					{
+						ID:   "prt_a_1_tool_1",
+						Type: "tool",
+						Tool: "read",
+						State: &ToolState{
+							Status: "completed",
+							Input: map[string]interface{}{
+								"Path":      brainStep,
+								"filePath":  brainStep,
+								"StartLine": 140,
+								"EndLine":   350,
+							},
+						},
+					},
+					{
+						ID:   "prt_a_1_tool_2",
+						Type: "tool",
+						Tool: "command_status",
+						State: &ToolState{
+							Status: "completed",
+							Input:  map[string]interface{}{"TaskId": "task-30"},
+							Output: "Task: 6d724c56/task-30\nStatus: DONE\nLog: file://" + brainTaskLog + "\nAll checks passed.",
+						},
+					},
+					{
+						ID:   "prt_a_1_text_1",
+						Type: "text",
+						Text: "REAL_ASSISTANT_CONCLUSION",
+					},
+					{
+						ID:   "prt_a_1_text_denied",
+						Type: "text",
+						Text: "Action blocked by Antigravity headless permission policy (ReadFile).",
+					},
+				},
+			},
+		},
+	}
+
+	md := buildEightDimSessionMarkdown(rec)
+	if strings.Contains(md, "6d724c56-fbea-401b-ab4a-fd0de329e130") || strings.Contains(md, "Action blocked by Antigravity") {
+		t.Fatalf("expected session memory to exclude brain/<id> paths and _text_denied notice, got:\n%s", md)
+	}
+	if !strings.Contains(md, "REAL_ASSISTANT_CONCLUSION") {
+		t.Fatalf("expected session memory to preserve real assistant summary, got:\n%s", md)
+	}
+
+	// Simulate an already-contaminated session memory file on disk.
+	sessDir := filepath.Join(projDir, ".hoxi", "memory", "sessions")
+	if err := os.MkdirAll(sessDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	contaminated := strings.Replace(md, "- No explicit file paths recorded yet.", "- `"+brainStep+"` [L140-350]\n- `"+brainTaskLog+"`", 1)
+	if err := os.WriteFile(filepath.Join(sessDir, rec.ID+".md"), []byte(contaminated), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	combined := runtimeMemoryContext(rec) + runtimeContext(rec)
+	if strings.Contains(combined, brainStep) || strings.Contains(combined, brainTaskLog) || strings.Contains(combined, "Action blocked by Antigravity") {
+		t.Fatalf("expected handoff prompt to strip brain/<id> paths and _text_denied notice, got:\n%s", combined)
+	}
+	if !strings.Contains(combined, "All checks passed.") || !strings.Contains(combined, "REAL_ASSISTANT_CONCLUSION") {
+		t.Fatalf("expected handoff prompt to retain real tool output and assistant text, got:\n%s", combined)
+	}
+}
+
+func TestAgyResultDeniedActionsDetectsGeminiInputPath(t *testing.T) {
+	t.Parallel()
+	tr := NewTurnTranslator("ses_1", "antigravity", "msg_a_1", "msg_u_1", "antigravity", "gemini-4-argon-high", "build", "conv-1")
+	_ = tr.FeedLine(`{"conversation_id":"conv-1","event":"step_update","step_update":{"conversation_id":"conv-1","state":"ACTIVE","step_index":2,"step_type":"tool","tool_info":{"name":"read_file","parameters":{"Path":"/Users/test/.gemini/antigravity-cli/brain/other-conv/.system_generated/logs/transcript.jsonl"}}}}`)
+	evts := tr.FeedLine(`{"conversation_id":"conv-1","event":"result","result":{"conversation_id":"conv-1","status":"SUCCESS","denied_actions":[{"action":"read_file","display_name":"ReadFile"}]}}`)
+
+	var deniedText string
+	for _, evt := range evts {
+		if evt.Type == "message.part.updated" {
+			if part, ok := evt.Properties["part"].(MessagePart); ok && part.ID == "prt_msg_a_1_text_denied" {
+				deniedText = part.Text
+			}
+		}
+	}
+	if !strings.Contains(deniedText, "built-in ~/.gemini path policy") || !strings.Contains(deniedText, "other-conv") {
+		t.Fatalf("expected ~/.gemini path policy notice, got %q", deniedText)
+	}
+}

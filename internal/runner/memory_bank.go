@@ -467,6 +467,54 @@ func extractLatestSummaryLine(block string) string {
 	return ""
 }
 
+func isAgyBrainMemoryLine(trimmedLine string) bool {
+	lower := strings.ToLower(filepath.ToSlash(trimmedLine))
+	return strings.Contains(lower, "/.gemini/antigravity-cli/brain/") ||
+		strings.Contains(lower, "/.gemini/antigravity/brain/")
+}
+
+// sanitizeSessionMemoryMarkdown strips any persisted Antigravity per-conversation
+// brain/<id> file references from a session memory document before injecting it
+// into a handoff prompt, so a new conversation never mistakes a prior
+// conversation's brain/<id> directory for its own.
+func sanitizeSessionMemoryMarkdown(md string) string {
+	if md == "" || !isAgyBrainMemoryLine(md) {
+		return md
+	}
+	var out []string
+	inFilesSec := false
+	keptFiles := 0
+	flushEmptyFiles := func() {
+		if inFilesSec && keptFiles == 0 {
+			out = append(out, "- No explicit file paths recorded yet.")
+		}
+		inFilesSec = false
+	}
+	for _, line := range strings.Split(md, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "## ") {
+			flushEmptyFiles()
+			if trimmed == "## 3. Files and Code Sections" {
+				inFilesSec = true
+				keptFiles = 0
+			}
+			out = append(out, line)
+			continue
+		}
+		if inFilesSec && strings.HasPrefix(trimmed, "- ") {
+			if isAgyBrainMemoryLine(trimmed) {
+				continue
+			}
+			keptFiles++
+		} else if isAgyBrainMemoryLine(trimmed) && strings.HasPrefix(trimmed, "- `") {
+			continue
+		}
+		out = append(out, line)
+	}
+	flushEmptyFiles()
+	return strings.Join(out, "\n")
+}
+
 // MergeSessionMemoryMarkdown preserves manual user edits (custom preambles,
 // custom sections, and user-added lines within the 8-dimension sections) when
 // automatic turn compaction refreshes a session memory file.
@@ -550,7 +598,7 @@ func mergeSessionMemoryWithBaseline(existing, baselineAuto, autoMD string) strin
 			}
 			continue
 		}
-		if t == "" || autoLineSet[t] || isHeaderMetaLine(t) {
+		if t == "" || autoLineSet[t] || isHeaderMetaLine(t) || isAgyBrainMemoryLine(t) {
 			continue
 		}
 		if hasBaseline {

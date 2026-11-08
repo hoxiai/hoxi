@@ -222,7 +222,7 @@ func (s *Service) decideHookCall(r *http.Request, cred hookCredential, p hookPay
 	callID := fmt.Sprintf("call_%s_%d", cred.messageID, p.StepIdx)
 	action := hookToolActionWithArgs(p.ToolCall.Name, p.ToolCall.Args)
 	activeConvID := firstNonEmptyStr(strings.TrimSpace(p.ConversationID), strings.TrimSpace(rec.ExternalID))
-	if (action == hookActionRead || action == hookActionEdit) && activeConvID != "" {
+	if action == hookActionRead || action == hookActionEdit {
 		if reason := agyHookForeignBrainReason(rec.WorktreePath, activeConvID, p.ToolCall.Args); reason != "" {
 			return hookDecisionDeny, reason
 		}

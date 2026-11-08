@@ -642,13 +642,29 @@ func (t *TurnTranslator) markAllAgyTextPartsTransitional() []SSEEvent {
 func (t *TurnTranslator) lastAgyGeminiPathError() string {
 	for i := len(t.partOrder) - 1; i >= 0; i-- {
 		p := t.partsByID[t.partOrder[i]]
-		if p == nil || p.Type != "tool" || p.State == nil || p.State.Status != "error" {
+		if p == nil || p.Type != "tool" || p.State == nil {
 			continue
 		}
-		errTxt := strings.TrimSpace(p.State.Error)
-		slash := strings.ToLower(strings.ReplaceAll(errTxt, "\\", "/"))
-		if strings.Contains(slash, "/.gemini/") {
-			return errTxt
+		if p.State.Status == "error" {
+			errTxt := strings.TrimSpace(p.State.Error)
+			slash := strings.ToLower(strings.ReplaceAll(errTxt, "\\", "/"))
+			if strings.Contains(slash, "/.gemini/") {
+				return errTxt
+			}
+		}
+		if strings.TrimSpace(p.State.Output) == "" && strings.TrimSpace(p.State.Error) == "" {
+			target := strings.TrimSpace(firstString(
+				p.State.Input["filePath"],
+				p.State.Input["Path"],
+				p.State.Input["path"],
+				p.State.Input["TargetFile"],
+				p.State.Input["DirectoryPath"],
+				p.State.Input["SearchPath"],
+			))
+			slash := strings.ToLower(strings.ReplaceAll(target, "\\", "/"))
+			if strings.Contains(slash, "/.gemini/") {
+				return target
+			}
 		}
 	}
 	return ""

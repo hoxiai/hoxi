@@ -274,15 +274,33 @@ func hookOwnSessionRead(s *Service, sessionID, tool, filepathOut, rawPath string
 	return pathUnderOwnSession(filepathOut, ids) || pathUnderOwnSession(rawPath, ids)
 }
 
+// isAgyBrainPath reports whether rawPath points inside an Antigravity
+// per-conversation brain directory (~/.gemini/antigravity-cli/brain/<id> or
+// ~/.gemini/antigravity/brain/<id>).
+func isAgyBrainPath(rawPath string) bool {
+	trimmed := strings.TrimSpace(rawPath)
+	if trimmed == "" {
+		return false
+	}
+	if strings.HasPrefix(strings.ToLower(trimmed), "file://") {
+		trimmed = strings.TrimPrefix(strings.TrimPrefix(trimmed, "file://"), "localhost")
+	}
+	for _, root := range agyBrainRoots() {
+		if pathWithin(root, trimmed) {
+			return true
+		}
+	}
+	slash := strings.ToLower(filepath.ToSlash(filepath.Clean(trimmed)))
+	return strings.Contains(slash, "/.gemini/antigravity-cli/brain/") ||
+		strings.Contains(slash, "/.gemini/antigravity/brain/")
+}
+
 // agyForeignBrainDir extracts the conversation ID when rawPath targets an
 // Antigravity brain/<id> directory that does not belong to activeConvID.
 // Antigravity's built-in file tools hard-deny cross-conversation brain paths in
 // headless mode even when PreToolUse returns auto_approve, aborting the turn.
 func agyForeignBrainDir(worktree, activeConvID, rawPath string) string {
 	activeConvID = strings.TrimSpace(activeConvID)
-	if activeConvID == "" {
-		return ""
-	}
 	resolved := resolveHookToolPath(worktree, map[string]interface{}{"path": rawPath})
 	if resolved == "" {
 		resolved = strings.TrimSpace(rawPath)

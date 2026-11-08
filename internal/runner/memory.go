@@ -417,7 +417,7 @@ func runtimeMemoryContext(rec SessionRecord) string {
 	}
 
 	projClean := stripVolatileMemoryHeader(projMem)
-	sessClean := stripVolatileMemoryHeader(sessMem)
+	sessClean := sanitizeSessionMemoryMarkdown(stripVolatileMemoryHeader(sessMem))
 	if (rec.ContextPending || strings.TrimSpace(rec.ExternalID) == "") && len(rec.Turns) > 0 && sessClean != "" {
 		sessClean = dedupHandoffMemorySection6(sessClean)
 	}
@@ -540,7 +540,7 @@ func buildEightDimSessionMarkdown(rec SessionRecord) string {
 
 	addFile := func(raw string, mutated bool, qual string) {
 		p := strings.TrimSpace(raw)
-		if p == "" {
+		if p == "" || isAgyBrainPath(p) {
 			return
 		}
 		if qual != "" {
@@ -578,7 +578,7 @@ func buildEightDimSessionMarkdown(rec SessionRecord) string {
 					if len(clauses) == 0 && userConstraintRe.MatchString(txt) && len(userMessages) > 1 {
 						addConstraint(excerpt)
 					}
-				} else if role == "assistant" {
+				} else if role == "assistant" && !strings.HasSuffix(part.ID, "_text_denied") {
 					lastAssistant = redactMemorySecrets(singleLineExcerpt(txt, 320))
 				}
 			case "tool":

@@ -185,23 +185,21 @@ func summarizeHandoffToolPart(p MessagePart) string {
 	}
 	tool := firstNonEmptyStr(p.Tool, "tool")
 	status := firstNonEmptyStr(p.State.Status, "completed")
-	target := firstString(
-		p.State.Input["filePath"],
-		p.State.Input["file_path"],
-		p.State.Input["Path"],
-		p.State.Input["path"],
-		p.State.Input["file"],
-		p.State.Input["TargetFile"],
-		p.State.Input["target_file"],
-		p.State.Input["AbsolutePath"],
-		p.State.Input["symbol"],
-		p.State.Input["Symbol"],
-		p.State.Input["command"],
-		p.State.Input["CommandLine"],
-		p.State.Input["pattern"],
-		p.State.Input["query"],
-		p.State.Title,
+	fileTarget := firstString(
+		p.State.Input["filePath"], p.State.Input["file_path"],
+		p.State.Input["Path"], p.State.Input["path"],
+		p.State.Input["file"], p.State.Input["TargetFile"],
+		p.State.Input["target_file"], p.State.Input["AbsolutePath"],
 	)
+	if isAgyBrainPath(fileTarget) {
+		return ""
+	}
+	target := firstNonEmptyStr(fileTarget, firstString(
+		p.State.Input["symbol"], p.State.Input["Symbol"],
+		p.State.Input["command"], p.State.Input["CommandLine"],
+		p.State.Input["pattern"], p.State.Input["query"],
+		p.State.Title,
+	))
 	summary := fmt.Sprintf("Tool %s [%s]", tool, status)
 	if target != "" {
 		summary += ": " + singleLineExcerpt(target, 160)
@@ -225,26 +223,28 @@ func summarizeHandoffToolPart(p MessagePart) string {
 	return summary
 }
 
-// stripHandoffToolOutputPreamble removes Antigravity's timestamp and
-// truncation-file headers before excerpting tool output for handoff summaries,
-// so a new conversation is not pointed at a prior conversation's brain/ steps
-// directory and the 160-char excerpt captures the actual output preview.
+// stripHandoffToolOutputPreamble removes Antigravity's timestamp, truncation,
+// and task-log headers before excerpting tool output for handoff summaries, so
+// a new conversation is not pointed at a prior conversation's brain/ directory.
 func stripHandoffToolOutputPreamble(out string) string {
-	lines := strings.Split(strings.TrimSpace(out), "\n")
-	i := 0
-	for i < len(lines) {
-		trimmed := strings.TrimSpace(lines[i])
-		if trimmed == "" ||
+	var kept []string
+	inPreamble := true
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if inPreamble && (trimmed == "" ||
 			strings.HasPrefix(trimmed, "Created At:") ||
 			strings.HasPrefix(trimmed, "Completed At:") ||
 			strings.HasPrefix(trimmed, "The tool's output was truncated due to being too long.") ||
-			strings.HasPrefix(trimmed, "Here is a preview with the middle of the output truncated:") {
-			i++
+			strings.HasPrefix(trimmed, "Here is a preview with the middle of the output truncated:")) {
 			continue
 		}
-		break
+		inPreamble = false
+		if strings.HasPrefix(trimmed, "Log:") && isAgyBrainMemoryLine(trimmed) {
+			continue
+		}
+		kept = append(kept, line)
 	}
-	return strings.TrimSpace(strings.Join(lines[i:], "\n"))
+	return strings.TrimSpace(strings.Join(kept, "\n"))
 }
 
 type handoffToolCandidate struct {
@@ -341,7 +341,7 @@ func runtimeContext(rec SessionRecord) string {
 		if existingMem := readFirstNonEmptyFile(memoryCandidates(handoffRec, filepath.Join("sessions", handoffRec.ID+".md"))...); existingMem != "" {
 			autoMem = MergeSessionMemoryMarkdown(existingMem, autoMem)
 		}
-		if sessClean := dedupHandoffMemorySection6(stripVolatileMemoryHeader(autoMem)); sessClean != "" {
+		if sessClean := dedupHandoffMemorySection6(sanitizeSessionMemoryMarkdown(stripVolatileMemoryHeader(autoMem))); sessClean != "" {
 			sessClean = truncateUTF8Bytes(sessClean, maxMemorySummaryByte)
 			memoryBlock = "<session_handoff_memory>\n" + sessClean + "\n</session_handoff_memory>\n\n"
 		}
@@ -375,7 +375,7 @@ func runtimeContext(rec SessionRecord) string {
 			}
 			lastTextIdx := -1
 			for partIdx, p := range turn.Parts {
-				if p.Type == "text" && strings.TrimSpace(p.Text) != "" {
+				if p.Type == "text" && strings.TrimSpace(p.Text) != "" && !(role == "assistant" && strings.HasSuffix(p.ID, "_text_denied")) {
 					lastTextIdx = partIdx
 				}
 			}
@@ -389,7 +389,7 @@ func runtimeContext(rec SessionRecord) string {
 				switch p.Type {
 				case "text":
 					txt := strings.TrimSpace(p.Text)
-					if txt == "" {
+					if txt == "" || (role == "assistant" && strings.HasSuffix(p.ID, "_text_denied")) {
 						continue
 					}
 					if !isRecent {
