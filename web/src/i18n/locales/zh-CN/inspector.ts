@@ -267,6 +267,8 @@ export const inspector: InspectorI18n = {
     sheetTruncatedNotice: "仅展示前 {shown} 行（共 {total} 行）",
     copyTableMarkdown: "复制为 Markdown 表格",
     copiedTableMarkdown: "已复制 Markdown 表格",
+    sheetEditHint: "双击单元格可编辑",
+    sheetSavingCell: "保存中…",
   },
   terminal: {
     connected: "终端已连接",

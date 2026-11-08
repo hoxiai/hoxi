@@ -122,6 +122,7 @@ const GO_UNSAFE_FLAGS = new Set([
 ]);
 const GO_ENV_WRITE_FLAGS = new Set(["w", "u"]);
 const HOXI_CODE_INDEX_SUBCOMMANDS = new Set(["search", "inspect", "callers", "callees", "impact", "context", "explore", "refresh", "status"]);
+const HOXI_DOC_READ_SUBCOMMANDS = new Set(["inspect", "read"]);
 const TOOLCHAIN_BASES = new Set(["go", "npm", "pnpm", "yarn", "cargo", "pytest", "tsc", "npx", "node", "git", "hoxi"]);
 const SYSTEM_TOOL_DIRS = new Set([
   "/usr/local/go/bin", "/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin",
@@ -459,6 +460,9 @@ function isSafeWords(words) {
   if (cmd === "node") return args.length === 1 && args[0] === "-v";
   if (cmd === "kill") return isSafeKillProbeArgs(args);
   if (cmd === "hoxi") {
+    if (arg(0) === "doc") {
+      return HOXI_DOC_READ_SUBCOMMANDS.has(arg(1)) && args.length >= 3 && hoxiCodeIndexArgsSafe(args.slice(2));
+    }
     return (arg(0) === "code-index" || arg(0) === "codeindex") && HOXI_CODE_INDEX_SUBCOMMANDS.has(arg(1)) && hoxiCodeIndexArgsSafe(args.slice(2));
   }
   return false;

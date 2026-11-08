@@ -87,7 +87,7 @@ func (s *Service) prepareTurnAttachments(
 				extracted := s.attachments.ExtractText(meta.ID, 48000)
 				header := fmt.Sprintf(`<attached_file name=%q mime=%q`, meta.Filename, meta.Mime)
 				if localPath != "" {
-					header += fmt.Sprintf(` path=%q`, localPath)
+					header += fmt.Sprintf(` path=%q cli_hint="hoxi doc inspect|read|set-cell|write-xlsx|write-docx|write-pptx|write-pdf"`, localPath)
 				}
 				header += ">"
 				if extracted != "" {
@@ -240,4 +240,12 @@ func materializeTurnAttachments(worktreePath string, now int64, seq int64, parts
 		}
 	}
 	return saved
+}
+
+func (s *Service) MaterializeAttachmentToDir(id, targetDir string) (string, error) {
+	if s == nil || s.attachments == nil {
+		return "", fmt.Errorf("attachment store unavailable")
+	}
+	_, dst, err := s.attachments.MaterializeToDir(id, targetDir)
+	return dst, err
 }

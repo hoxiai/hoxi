@@ -7,12 +7,17 @@ import { excelColLabel } from "./file-tree-helpers";
 export interface SpreadsheetPreviewViewProps {
   sheets: SpreadsheetSheetPreview[];
   filePath: string;
+  canEdit?: boolean;
+  onSaveCell?: (sheetName: string, cellRef: string, value: string) => Promise<void>;
 }
 
 export function SpreadsheetPreviewView(props: SpreadsheetPreviewViewProps) {
   const [activeSheetIdx, setActiveSheetIdx] = createSignal(0);
   const [filterQuery, setFilterQuery] = createSignal("");
   const [copiedMd, setCopiedMd] = createSignal(false);
+  const [editingCell, setEditingCell] = createSignal<{ rowNumber: number; colIdx: number } | null>(null);
+  const [editingDraft, setEditingDraft] = createSignal("");
+  const [savingCell, setSavingCell] = createSignal(false);
   let copyTimer: ReturnType<typeof setTimeout> | undefined;
 
   onCleanup(() => {
@@ -23,6 +28,7 @@ export function SpreadsheetPreviewView(props: SpreadsheetPreviewViewProps) {
     void props.filePath;
     setActiveSheetIdx(0);
     setFilterQuery("");
+    setEditingCell(null);
   });
 
   const activeSheet = createMemo<SpreadsheetSheetPreview | undefined>(() => {
@@ -87,6 +93,23 @@ export function SpreadsheetPreviewView(props: SpreadsheetPreviewViewProps) {
     }
   };
 
+  const commitCellEdit = async (rowNumber: number, colIdx: number, originalVal: string) => {
+    const active = editingCell();
+    if (!active || active.rowNumber !== rowNumber || active.colIdx !== colIdx) return;
+    const nextVal = editingDraft();
+    setEditingCell(null);
+    if (!props.canEdit || !props.onSaveCell || nextVal === originalVal) return;
+    const sheet = activeSheet();
+    if (!sheet) return;
+    const ref = `${excelColLabel(colIdx)}${rowNumber}`;
+    setSavingCell(true);
+    try {
+      await props.onSaveCell(sheet.name, ref, nextVal);
+    } finally {
+      setSavingCell(false);
+    }
+  };
+
   return (
     <div class="flex flex-col h-full min-h-0 bg-[var(--bg-panel)]">
       {/* Sheet Tabs + Filter Bar */}
@@ -99,7 +122,10 @@ export function SpreadsheetPreviewView(props: SpreadsheetPreviewViewProps) {
               return (
                 <button
                   type="button"
-                  onClick={() => setActiveSheetIdx(idx())}
+                  onClick={() => {
+                    setActiveSheetIdx(idx());
+                    setEditingCell(null);
+                  }}
                   class={`hoxi-press inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] transition-colors cursor-pointer shrink-0 ${
                     isSelected()
                       ? "bg-[var(--bg-panel)] text-[var(--text-primary)] font-medium shadow-2xs"
@@ -118,6 +144,13 @@ export function SpreadsheetPreviewView(props: SpreadsheetPreviewViewProps) {
         </div>
 
         <div class="flex items-center gap-1.5 ml-auto">
+          <Show when={props.canEdit}>
+            <span class="text-[10.5px] font-mono text-[var(--text-faint)] px-1 hidden sm:inline">
+              {savingCell()
+                ? t("inspector.files.sheetSavingCell")
+                : t("inspector.files.sheetEditHint")}
+            </span>
+          </Show>
           <div class="flex items-center gap-1.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-0.5">
             <Search size={11} class="text-[var(--text-muted)] shrink-0" />
             <input
@@ -203,11 +236,46 @@ export function SpreadsheetPreviewView(props: SpreadsheetPreviewViewProps) {
                         {entry.rowNumber}
                       </td>
                       <For each={columnIndices()}>
-                        {(colIdx) => (
-                          <td class="max-w-[280px] truncate border-b border-r border-[var(--border-subtle)] px-2.5 py-1.5 font-mono text-[11.5px]">
-                            {entry.cells[colIdx] ?? ""}
-                          </td>
-                        )}
+                        {(colIdx) => {
+                          const cellValue = () => entry.cells[colIdx] ?? "";
+                          const isEditingThis = () => {
+                            const cur = editingCell();
+                            return Boolean(cur && cur.rowNumber === entry.rowNumber && cur.colIdx === colIdx);
+                          };
+                          return (
+                            <td
+                              onDblClick={() => {
+                                if (!props.canEdit || savingCell()) return;
+                                setEditingDraft(cellValue());
+                                setEditingCell({ rowNumber: entry.rowNumber, colIdx });
+                              }}
+                              class="max-w-[280px] truncate border-b border-r border-[var(--border-subtle)] px-2.5 py-1.5 font-mono text-[11.5px]"
+                            >
+                              <Show
+                                when={isEditingThis()}
+                                fallback={cellValue()}
+                              >
+                                <input
+                                  type="text"
+                                  value={editingDraft()}
+                                  ref={(el) => queueMicrotask(() => el.focus())}
+                                  onInput={(ev) => setEditingDraft(ev.currentTarget.value)}
+                                  onBlur={() => void commitCellEdit(entry.rowNumber, colIdx, cellValue())}
+                                  onKeyDown={(ev) => {
+                                    if (ev.key === "Enter") {
+                                      ev.preventDefault();
+                                      void commitCellEdit(entry.rowNumber, colIdx, cellValue());
+                                    } else if (ev.key === "Escape") {
+                                      ev.preventDefault();
+                                      setEditingCell(null);
+                                    }
+                                  }}
+                                  class="w-full min-w-[80px] rounded border border-[var(--accent-border)] bg-[var(--bg-panel)] px-1.5 py-0.5 font-mono text-[11.5px] text-[var(--text-primary)] outline-none"
+                                />
+                              </Show>
+                            </td>
+                          );
+                        }}
                       </For>
                     </tr>
                   );

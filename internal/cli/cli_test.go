@@ -533,6 +533,20 @@ func TestDocCommandReadWriteAndProtectedPaths(t *testing.T) {
 		t.Fatalf("read docx failed (code=%d): out=%s err=%s", code, outBuf.String(), errBuf.String())
 	}
 
+	pptxPath := filepath.Join(attDir, "deck.pptx")
+	outBuf.Reset()
+	errBuf.Reset()
+	code = runDocCommand([]string{"write-pptx", pptxPath, "--title", "季度汇报", "--text", "# 核心看点\n- 转化率提升 35%"}, dir, nil, &outBuf, &errBuf)
+	if code != 0 {
+		t.Fatalf("write-pptx in .hoxi/attachments failed (code=%d): %s", code, errBuf.String())
+	}
+	outBuf.Reset()
+	errBuf.Reset()
+	code = runDocCommand([]string{"read", pptxPath}, dir, nil, &outBuf, &errBuf)
+	if code != 0 || !strings.Contains(outBuf.String(), "转化率提升 35%") {
+		t.Fatalf("read pptx failed (code=%d): out=%s err=%s", code, outBuf.String(), errBuf.String())
+	}
+
 	// 5. Refuses sensitive / protected paths (.env and .hoxi/cloudflared.json)
 	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("API_KEY=secret\n"), 0o600); err != nil {
 		t.Fatal(err)

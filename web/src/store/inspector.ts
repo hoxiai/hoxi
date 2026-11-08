@@ -1,6 +1,6 @@
 // web/src/store/inspector.ts
 // Inspector panel navigation (files / diffs / browser) and per-session review comments.
-import { hoxiAPI } from "../services/api";
+import { hoxiAPI, type SpreadsheetSheetPreview } from "../services/api";
 import { openExternalBrowserURL } from "../services/desktop-events";
 import { locale } from "../i18n";
 import type { SnapshotFileDiff } from "../services/sse-types";
@@ -86,6 +86,26 @@ export function openFileInInspector(filePath: string, line?: number | null, diff
     inspectorTab: "files",
     inspectorOpen: true,
   });
+}
+
+export function openAttachmentInInspector(url: string, filename?: string): boolean {
+  const m = String(url || "").match(/\/api\/hoxi\/attachments\/(att_[A-Za-z0-9_-]+)(?:\/([^/?#]+))?/);
+  if (!m) return false;
+  const attID = m[1];
+  const fallbackName = m[2] && m[2] !== "content" ? decodeURIComponent(m[2]) : "attachment";
+  const cleanName = (filename || fallbackName).trim().replace(/[\\/]+/g, "_");
+  openFileInInspector(`.hoxi/attachments/${attID}_${cleanName}`, null, null);
+  return true;
+}
+
+export function updateInspectedSpreadsheetCells(input: {
+  path: string;
+  directory?: string;
+  sessionID?: string;
+  sheet?: string;
+  edits: Record<string, string>;
+}): Promise<{ ok: boolean; resolvedPath: string; sheets?: SpreadsheetSheetPreview[] }> {
+  return hoxiAPI.updateSpreadsheetCells(input);
 }
 
 function isRenderPreviewDefaultPath(cleanPath: string): boolean {

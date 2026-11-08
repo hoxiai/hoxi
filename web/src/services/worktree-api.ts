@@ -12,6 +12,7 @@ import type {
   LocalCLIStatusResponse,
   ProjectInfo,
   SaveWorkspaceInput,
+  SpreadsheetSheetPreview,
   WorkspaceProfile,
   WorktreeMeta,
   WorktreeStatus,
@@ -52,6 +53,18 @@ export const fileAndPtyAPI = {
   ): Promise<FileContentResponse> {
     const q = `path=${encodeURIComponent(filePath)}${sessionID ? `&sessionID=${encodeURIComponent(sessionID)}` : ""}${locale ? `&locale=${encodeURIComponent(locale)}` : ""}`;
     return requestJSON(withDir(`/api/hoxi/file/content?${q}`, directory));
+  },
+  updateSpreadsheetCells(input: {
+    path: string;
+    directory?: string;
+    sessionID?: string;
+    sheet?: string;
+    edits: Record<string, string>;
+  }): Promise<{ ok: boolean; resolvedPath: string; sheets?: SpreadsheetSheetPreview[] }> {
+    return requestJSON(withDir("/api/hoxi/file/spreadsheet-edit", input.directory), {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
   },
   validateFiles(paths: string[], directory?: string, sessionID?: string): Promise<FileValidateResponse> {
     const q = sessionID ? `?sessionID=${encodeURIComponent(sessionID)}` : "";

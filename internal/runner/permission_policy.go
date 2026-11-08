@@ -117,6 +117,7 @@ var (
 		"coverprofile", "cpuprofile", "memprofile", "blockprofile", "mutexprofile", "trace", "outputdir")
 	goEnvWriteFlags          = setOf("w", "u")
 	hoxiCodeIndexSubcommands = setOf("search", "inspect", "callers", "callees", "impact", "context", "explore", "refresh", "status")
+	hoxiDocReadSubcommands   = setOf("inspect", "read")
 )
 
 func setOf(items ...string) map[string]bool {
@@ -426,6 +427,11 @@ func isSafeWords(words []string) bool {
 	case cmd == "kill":
 		return isSafeKillProbeArgs(args)
 	case cmd == "hoxi":
+		if arg(0) == "doc" {
+			return hoxiDocReadSubcommands[arg(1)] &&
+				len(args) >= 3 &&
+				hoxiCodeIndexArgsSafe(args[2:])
+		}
 		return (arg(0) == "code-index" || arg(0) == "codeindex") &&
 			hoxiCodeIndexSubcommands[arg(1)] &&
 			hoxiCodeIndexArgsSafe(args[2:])

@@ -434,5 +434,16 @@ func TestExtractXLSFormatsAndDocReadWrite(t *testing.T) {
 	if !strings.Contains(pdfExtracted, "Executive Brief") || !strings.Contains(pdfExtracted, "Quarterly target achieved") {
 		t.Fatalf("unexpected pdf extracted text:\n%s", pdfExtracted)
 	}
+
+	// 6. WritePPTXFile + ExtractFileText roundtrip
+	pptxPath := filepath.Join(tmpDir, "roadmap.pptx")
+	slidesMD := "# 2027 战略目标\n- 营收增长 150%\n- 自动化覆盖率 90%\n---\n## Q1 关键里程碑\n- 发布多运行时工作台\n"
+	if err := WritePPTXFile(pptxPath, "年度战略规划", slidesMD); err != nil {
+		t.Fatalf("WritePPTXFile failed: %v", err)
+	}
+	pptxExtracted := ExtractFileText(pptxPath, 4000)
+	if !strings.Contains(pptxExtracted, "2027 战略目标") || !strings.Contains(pptxExtracted, "Q1 关键里程碑") || !strings.Contains(pptxExtracted, "发布多运行时工作台") {
+		t.Fatalf("unexpected pptx extracted text:\n%s", pptxExtracted)
+	}
 }
 

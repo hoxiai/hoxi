@@ -14,13 +14,14 @@ import {
   ListTree,
   LoaderCircle,
 } from "lucide-solid";
-import type { FileContentResponse } from "../../services/api";
+import type { FileContentResponse, SpreadsheetSheetPreview } from "../../services/api";
 import type { SnapshotFileDiff } from "../../services/sse-types";
 import {
   openDiffInInspector,
   openExternalFile,
   openImagePreview,
   setWorkspace,
+  updateInspectedSpreadsheetCells,
   workspace,
 } from "../../store/workspace";
 import { DiffChanges, FileIcon } from "../icons";
@@ -64,12 +65,19 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
   const [copiedPath, setCopiedPath] = createSignal(false);
   const [copiedContent, setCopiedContent] = createSignal(false);
   const [outlineOpen, setOutlineOpen] = createSignal(false);
+  const [editedSheets, setEditedSheets] = createSignal<SpreadsheetSheetPreview[] | null>(null);
   let sourceContainer: HTMLDivElement | undefined;
   let drillPhase = false;
   const drillEnterClass = createMemo(() => {
     void props.previewPath;
     drillPhase = !drillPhase;
     return drillPhase ? "hoxi-drill-enter-a" : "hoxi-drill-enter-b";
+  });
+
+  createEffect(() => {
+    void props.previewPath;
+    void props.previewMeta;
+    setEditedSheets(null);
   });
 
   const isBinaryPreview = createMemo(() => props.previewMeta?.type === "binary");
@@ -626,8 +634,26 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
                 }
               >
                 <SpreadsheetPreviewView
-                  sheets={props.previewMeta?.sheets ?? []}
+                  sheets={editedSheets() ?? props.previewMeta?.sheets ?? []}
                   filePath={props.previewPath}
+                  canEdit={
+                    !props.previewMeta?.outsideWorkspace &&
+                    /\.(?:xlsx|csv|tsv)$/i.test(props.previewMeta?.resolvedPath || props.previewPath || "")
+                  }
+                  onSaveCell={async (sheetName, cellRef, value) => {
+                    const target = props.previewMeta?.resolvedPath || props.previewPath;
+                    if (!target) return;
+                    const res = await updateInspectedSpreadsheetCells({
+                      path: target,
+                      directory: props.targetDirectory,
+                      sessionID: workspace.activeSessionID || undefined,
+                      sheet: sheetName,
+                      edits: { [cellRef]: value },
+                    });
+                    if (res?.sheets?.length) {
+                      setEditedSheets(res.sheets);
+                    }
+                  }}
                 />
               </Show>
             }

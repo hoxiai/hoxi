@@ -6,6 +6,7 @@ import {
   canForkSession,
   canRevertSession,
   forkFromMessage,
+  openAttachmentInInspector,
   openImagePreview,
   resolveTurnSkillStatus,
   revertToHere,
@@ -175,6 +176,12 @@ export function UserTurnItem(props: {
                           target="_blank"
                           rel="noreferrer"
                           download={fp.filename || "attachment"}
+                          onClick={(e) => {
+                            if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+                            if (openAttachmentInInspector(fp.url, fp.filename)) {
+                              e.preventDefault();
+                            }
+                          }}
                           class="inline-flex items-center gap-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1.5 text-[12px] text-[var(--text-primary)] hover:border-[var(--accent-border)] transition-colors max-w-[260px]"
                         >
                           <FileIcon

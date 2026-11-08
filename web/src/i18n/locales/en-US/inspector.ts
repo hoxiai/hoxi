@@ -267,6 +267,8 @@ export const inspector = {
     sheetTruncatedNotice: "Showing first {shown} of {total} rows",
     copyTableMarkdown: "Copy as Markdown table",
     copiedTableMarkdown: "Markdown table copied",
+    sheetEditHint: "Double-click cell to edit",
+    sheetSavingCell: "Saving…",
   },
   terminal: {
     connected: "Terminal connected",

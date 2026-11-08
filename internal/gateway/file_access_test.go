@@ -214,5 +214,45 @@ func TestFileContentSpreadsheetSheetsAndPDFExtract(t *testing.T) {
 	if pdfResp.MimeType != "application/pdf" || pdfResp.Content == "" || !strings.Contains(pdfResp.ExtractedText, "Service Level Agreement") {
 		t.Fatalf("unexpected pdf response: %+v", pdfResp)
 	}
+
+	// Inline spreadsheet cell edit (/api/hoxi/file/spreadsheet-edit)
+	editBody, _ := json.Marshal(map[string]any{
+		"path":      "metrics.xlsx",
+		"directory": root,
+		"sheet":     "ROAS分析",
+		"edits":     map[string]string{"C2": "6400"},
+	})
+	recEdit := httptest.NewRecorder()
+	g.ServeHTTP(recEdit, localRequest(http.MethodPost, "/api/hoxi/file/spreadsheet-edit", strings.NewReader(string(editBody))))
+	if recEdit.Code != http.StatusOK {
+		t.Fatalf("POST /api/hoxi/file/spreadsheet-edit = %d: %s", recEdit.Code, recEdit.Body.String())
+	}
+	var editResp struct {
+		OK     bool                          `json:"ok"`
+		Sheets []attachment.SpreadsheetSheet `json:"sheets"`
+	}
+	if err := json.Unmarshal(recEdit.Body.Bytes(), &editResp); err != nil {
+		t.Fatal(err)
+	}
+	if !editResp.OK || len(editResp.Sheets) != 1 || editResp.Sheets[0].Rows[1][2] != "6400" {
+		t.Fatalf("unexpected edited sheets: %+v", editResp.Sheets)
+	}
+
+	// Rejects remote spreadsheet edit and protected path edit
+	recRemote := httptest.NewRecorder()
+	g.serveTunnelRequest(recRemote, localRequest(http.MethodPost, "/api/hoxi/file/spreadsheet-edit", strings.NewReader(string(editBody))))
+	if recRemote.Code != http.StatusForbidden {
+		t.Fatalf("remote POST /api/hoxi/file/spreadsheet-edit = %d, want 403", recRemote.Code)
+	}
+	protectedBody, _ := json.Marshal(map[string]any{
+		"path":      ".hoxi/cloudflared.json",
+		"directory": root,
+		"edits":     map[string]string{"A1": "x"},
+	})
+	recProt := httptest.NewRecorder()
+	g.ServeHTTP(recProt, localRequest(http.MethodPost, "/api/hoxi/file/spreadsheet-edit", strings.NewReader(string(protectedBody))))
+	if recProt.Code != http.StatusForbidden {
+		t.Fatalf("protected POST /api/hoxi/file/spreadsheet-edit = %d, want 403", recProt.Code)
+	}
 }
 

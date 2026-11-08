@@ -31,6 +31,7 @@ export const HOXI_FALLBACK_GUIDANCE =
   "Use hoxi_code_index for token-efficient code navigation in the active worktree: " +
   "context (symbol source, callers, callees, blast radius and tests in one call) or search -> inspect the target lines -> " +
   "callers / callees / impact. Reviews and questions are read-only; edit, then refresh the index and verify, only when the task asks for changes. " +
+  "For Office and PDF documents (.xlsx, .xls, .ods, .csv, .tsv, .docx, .pptx, .pdf), prefer the built-in zero-dependency 'hoxi doc inspect|read|write-xlsx|set-cell|write-docx|write-pptx|write-pdf' CLI before installing third-party packages. " +
   "When the user asks to spawn/start a background subtask and continue chatting in the main thread, or to split work into parallel coding subtasks, " +
   "do NOT call the synchronous task tool (which blocks the turn); instead output a fenced hoxi-subtasks JSON block " +
   '(`{"title":"plan title","autoStart":true,"concurrency":3,"tasks":[{"id":"task-1","prompt":"self-contained instructions and verification","dependsOn":[]}]}`) ' +

@@ -628,6 +628,7 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 	g.mux.HandleFunc("/api/hoxi/file/list", g.handleFileList)
 	g.mux.HandleFunc("/api/hoxi/file/search", g.handleFileSearch)
 	g.mux.HandleFunc("/api/hoxi/file/open", g.handleFileOpen)
+	g.mux.HandleFunc("/api/hoxi/file/spreadsheet-edit", g.handleFileSpreadsheetEdit)
 	g.mux.Handle("/api/", http.StripPrefix("/api", g.proxy))
 
 	if distFS != nil {

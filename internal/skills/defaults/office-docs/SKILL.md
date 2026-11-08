@@ -54,11 +54,14 @@ hoxi doc write-xlsx "output/orders.xlsx" --sheet "订单明细" --from-csv "raw/
 hoxi doc set-cell "output/q4-budget.xlsx" --sheet "预算汇总" B2=1500 C2=1600 --append-json '[["软件订阅","300","300","=B4+C4"]]'
 ```
 
-### 3. 生成 Word 文档（`.docx`）与 PDF 文档（`.pdf`）
+### 3. 生成 Word 文档（`.docx`）、PPT 演示文稿（`.pptx`）与 PDF 文档（`.pdf`）
 
 ```bash
 # 从 Markdown 文件或文本生成带标题层级（# / ## / ###）、列表与边框表格的标准 .docx
 hoxi doc write-docx "output/weekly-report.docx" --title "Q4 运营复盘报告" --from "notes/summary.md"
+
+# 从 Markdown（按 # / ## 标题或 --- 分页）生成标准 16:9 .pptx 演示文稿
+hoxi doc write-pptx "output/roadmap.pptx" --title "2027 产品路线图" --from "notes/slides.md"
 
 # 直接从文本生成标准 .pdf（macOS 自动启用系统原生中英混排矢量渲染）
 hoxi doc write-pdf "output/brief.pdf" --title "Executive Summary" --from "notes/summary.md"

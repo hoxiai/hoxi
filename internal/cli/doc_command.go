@@ -169,10 +169,12 @@ func runDocCommand(args []string, cwd string, stdin io.Reader, stdout, stderr io
 		return runDocSetCell(targetPath, effOut, sheetName, appendJSON, posArgs, stdout, stderr)
 	case "write-docx":
 		return runDocWriteDOCX(targetPath, title, fromPath, textFlag, dir, stdin, stdout, stderr)
+	case "write-pptx":
+		return runDocWritePPTX(targetPath, title, fromPath, textFlag, dir, stdin, stdout, stderr)
 	case "write-pdf":
 		return runDocWritePDF(targetPath, title, fromPath, textFlag, dir, stdin, stdout, stderr)
 	default:
-		fmt.Fprintf(stderr, "Unknown doc action %q (supported: inspect, read, write-xlsx, set-cell, write-docx, write-pdf)\n", action)
+		fmt.Fprintf(stderr, "Unknown doc action %q (supported: inspect, read, write-xlsx, set-cell, write-docx, write-pptx, write-pdf)\n", action)
 		return 2
 	}
 }
@@ -576,6 +578,23 @@ func runDocWriteDOCX(targetPath, title, fromPath, inlineText, cwd string, stdin 
 	return 0
 }
 
+func runDocWritePPTX(targetPath, title, fromPath, inlineText, cwd string, stdin io.Reader, stdout, stderr io.Writer) int {
+	raw, err := readInputSource(fromPath, inlineText, cwd, stdin)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return 2
+	}
+	if err := attachment.WritePPTXFile(targetPath, title, string(raw)); err != nil {
+		fmt.Fprintf(stderr, "Error writing .pptx: %v\n", err)
+		return 1
+	}
+	_ = json.NewEncoder(stdout).Encode(map[string]any{
+		"ok":   true,
+		"path": targetPath,
+	})
+	return 0
+}
+
 func runDocWritePDF(targetPath, title, fromPath, inlineText, cwd string, stdin io.Reader, stdout, stderr io.Writer) int {
 	raw, err := readInputSource(fromPath, inlineText, cwd, stdin)
 	if err != nil {
@@ -604,6 +623,8 @@ func printDocHelp(w io.Writer) {
                                                               Update cells or append rows in an .xlsx/.xls/.csv file
   hoxi doc write-docx <out.docx> [--title <title>] (--from <md-file> | --text <markdown>)
                                                               Generate a Word (.docx) document from Markdown
+  hoxi doc write-pptx <out.pptx> [--title <title>] (--from <md-file> | --text <markdown>)
+                                                              Generate a PowerPoint (.pptx) presentation from Markdown
   hoxi doc write-pdf <out.pdf> [--title <title>] (--from <file> | --text <content>)
                                                               Generate a PDF document from text/Markdown
 `)

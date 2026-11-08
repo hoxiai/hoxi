@@ -3,6 +3,7 @@ package gateway
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"io"
 	"net/http"
 	"os"
@@ -130,6 +131,13 @@ func (g *Gateway) handleFileContent(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusForbidden, "path is outside the workspace")
 		return
 	}
+	if err != nil && os.IsNotExist(err) && !outsideWorkspace {
+		if matPath, matInfo, ok := g.tryMaterializePreviewAttachment(targetPath); ok {
+			targetPath = matPath
+			info = matInfo
+			err = nil
+		}
+	}
 	if err != nil {
 		if os.IsNotExist(err) {
 			writeJSONError(w, http.StatusNotFound, "file not found: "+rawPath)
@@ -218,4 +226,119 @@ func (g *Gateway) handleFileContent(w http.ResponseWriter, r *http.Request) {
 		resp["extractedText"] = extractedText
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (g *Gateway) tryMaterializePreviewAttachment(targetPath string) (string, os.FileInfo, bool) {
+	if g == nil || g.runner == nil || targetPath == "" {
+		return "", nil, false
+	}
+	attDir := filepath.Dir(targetPath)
+	dotHoxiDir := filepath.Dir(attDir)
+	if filepath.Base(attDir) != "attachments" || filepath.Base(dotHoxiDir) != ".hoxi" {
+		return "", nil, false
+	}
+	base := filepath.Base(targetPath)
+	if !strings.HasPrefix(base, "att_") {
+		return "", nil, false
+	}
+	attID := base
+	if idx := strings.IndexByte(base[4:], '_'); idx > 0 {
+		attID = base[:4+idx]
+	}
+	worktreeRoot := filepath.Dir(dotHoxiDir)
+	dst, err := g.runner.MaterializeAttachmentToDir(attID, worktreeRoot)
+	if err != nil || dst == "" {
+		return "", nil, false
+	}
+	info, err := os.Stat(dst)
+	if err != nil || info.IsDir() {
+		return "", nil, false
+	}
+	return dst, info, true
+}
+
+func isProtectedSpreadsheetWriteTarget(targetPath string) bool {
+	slash := strings.ToLower(filepath.ToSlash(filepath.Clean(targetPath)))
+	if idx := strings.LastIndex(slash, "/.hoxi/worktrees/"); idx >= 0 {
+		rest := slash[idx+len("/.hoxi/worktrees/"):]
+		if slashIdx := strings.IndexByte(rest, '/'); slashIdx >= 0 {
+			slash = rest[slashIdx+1:]
+		}
+	}
+	if strings.Contains(slash, "/.hoxi/attachments/") || strings.HasPrefix(slash, ".hoxi/attachments/") {
+		return false
+	}
+	for _, seg := range strings.Split(slash, "/") {
+		switch seg {
+		case ".git", ".opencode", ".claude", ".hoxi", ".agents":
+			return true
+		}
+	}
+	return false
+}
+
+func (g *Gateway) handleFileSpreadsheetEdit(w http.ResponseWriter, r *http.Request) {
+	if isRemoteRequest(r) {
+		writeJSONError(w, http.StatusForbidden, "route is not available for remote controllers")
+		return
+	}
+	if r.Method != http.MethodPost {
+		writeJSONError(w, http.StatusMethodNotAllowed, "POST required")
+		return
+	}
+	var body struct {
+		Path      string            `json:"path"`
+		Directory string            `json:"directory"`
+		SessionID string            `json:"sessionID"`
+		Sheet     string            `json:"sheet"`
+		Edits     map[string]string `json:"edits"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 256<<10)).Decode(&body); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	rawPath := strings.TrimSpace(body.Path)
+	if rawPath == "" || len(body.Edits) == 0 {
+		writeJSONError(w, http.StatusBadRequest, "path and edits are required")
+		return
+	}
+
+	targetPath, info, outsideWorkspace, err := g.resolveLocalFileTarget(rawPath, body.Directory, body.SessionID, false)
+	if err != nil && os.IsNotExist(err) && !outsideWorkspace {
+		if matPath, matInfo, ok := g.tryMaterializePreviewAttachment(targetPath); ok {
+			targetPath = matPath
+			info = matInfo
+			err = nil
+		}
+	}
+	if outsideWorkspace {
+		writeJSONError(w, http.StatusForbidden, "cannot edit spreadsheet outside the workspace")
+		return
+	}
+	if isSensitiveCredentialPath(targetPath) || isProtectedSpreadsheetWriteTarget(targetPath) {
+		writeJSONError(w, http.StatusForbidden, "access to protected or credential file is forbidden")
+		return
+	}
+	if err != nil || info == nil || info.IsDir() {
+		writeJSONError(w, http.StatusNotFound, "file not found: "+rawPath)
+		return
+	}
+
+	ext := strings.ToLower(filepath.Ext(targetPath))
+	if ext != ".xlsx" && ext != ".csv" && ext != ".tsv" {
+		writeJSONError(w, http.StatusBadRequest, "inline editing is supported for .xlsx, .csv, and .tsv files")
+		return
+	}
+
+	if _, err := attachment.ApplySpreadsheetEdits(targetPath, targetPath, body.Sheet, body.Edits, nil); err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	sheets, _ := attachment.ParseSpreadsheetFile(targetPath, 500)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":           true,
+		"resolvedPath": targetPath,
+		"sheets":       sheets,
+	})
 }
