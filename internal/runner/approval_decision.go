@@ -2,7 +2,6 @@ package runner
 
 import (
 	"encoding/json"
-	"net/url"
 	"regexp"
 	"strings"
 )
@@ -716,76 +715,4 @@ func ruleDecision(entry interface{}, targets []string, category string) (string,
 		}
 	}
 	return "", false
-}
-
-func globToRegexp(pattern string, loose bool) *regexp.Regexp {
-	var b strings.Builder
-	if loose {
-		b.WriteString("(?is)^")
-	} else {
-		b.WriteString("(?i)^")
-	}
-	for i := 0; i < len(pattern); i++ {
-		switch c := pattern[i]; c {
-		case '*':
-			if loose {
-				for i+1 < len(pattern) && pattern[i+1] == '*' {
-					i++
-				}
-				b.WriteString(".*")
-			} else if i+1 < len(pattern) && pattern[i+1] == '*' {
-				i++
-				b.WriteString(".*")
-			} else {
-				b.WriteString("[^/]*")
-			}
-		case '?':
-			b.WriteString(".")
-		default:
-			b.WriteString(regexp.QuoteMeta(string(c)))
-		}
-	}
-	b.WriteString("$")
-	re, err := regexp.Compile(b.String())
-	if err != nil {
-		return nil
-	}
-	return re
-}
-
-func matchesRulePattern(pattern, target, category string) bool {
-	p, t := strings.TrimSpace(pattern), strings.TrimSpace(target)
-	if p == "" || t == "" {
-		return false
-	}
-	if p == "*" || p == "**" || strings.EqualFold(p, t) {
-		return true
-	}
-	if re := globToRegexp(p, false); re != nil && re.MatchString(t) {
-		return true
-	}
-	loose := globToRegexp(p, true)
-	if loose != nil && loose.MatchString(t) {
-		return true
-	}
-	if category != permissionCategoryWebfetch {
-		return false
-	}
-	raw := t
-	if !strings.Contains(raw, "://") {
-		raw = "https://" + raw
-	}
-	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Hostname() == "" {
-		return false
-	}
-	host := strings.ToLower(parsed.Hostname())
-	lowerP := strings.ToLower(p)
-	if host == lowerP {
-		return true
-	}
-	if strings.HasPrefix(lowerP, "*.") && (host == lowerP[2:] || strings.HasSuffix(host, lowerP[1:])) {
-		return true
-	}
-	return loose != nil && (loose.MatchString(host) || loose.MatchString(parsed.Scheme+"://"+parsed.Host))
 }

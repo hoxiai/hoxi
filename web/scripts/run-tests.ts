@@ -45,6 +45,7 @@ import "../src/__tests__/markdown-performance.test";
 import "../src/__tests__/stream-reveal.test";
 import "../src/__tests__/image-viewer.test";
 import "../src/__tests__/composer-keyboard.test";
+import "../src/__tests__/notification-sound.test";
 import { runAllTests } from "../src/__tests__/test-harness";
 import "../src/__tests__/browser.test";
 import "../src/__tests__/browser-input.test";

@@ -507,6 +507,7 @@ export interface DesktopNotificationOptions {
 const NOTIFICATION_DEDUPE_MS = 8000;
 const recentNotifications = new Map<string, number>();
 let notificationAudioContext: AudioContext | null = null;
+let playingNotificationTones = 0;
 
 function notificationKindEnabled(kind: NotificationKind): boolean {
   if (kind === "complete") return appSettings.notifyOnComplete;
@@ -524,7 +525,9 @@ export function playNotificationSound(force = false) {
   try {
     notificationAudioContext ??= new AudioCtor();
     const ctx = notificationAudioContext;
-    if (ctx.state === "suspended") void ctx.resume();
+    // Always resume: it is a no-op while running and also undoes a suspend
+    // still in flight from the previous chime.
+    void ctx.resume().catch(() => undefined);
     const now = ctx.currentTime;
     const oscillator = ctx.createOscillator();
     const gain = ctx.createGain();
@@ -536,6 +539,17 @@ export function playNotificationSound(force = false) {
     gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.22);
     oscillator.connect(gain);
     gain.connect(ctx.destination);
+    // A running context keeps the output device open (and blocks idle sleep)
+    // for as long as the app runs, so suspend it once the last chime ends.
+    playingNotificationTones++;
+    oscillator.onended = () => {
+      oscillator.disconnect();
+      gain.disconnect();
+      playingNotificationTones = Math.max(0, playingNotificationTones - 1);
+      if (playingNotificationTones === 0 && ctx.state === "running") {
+        void ctx.suspend().catch(() => undefined);
+      }
+    };
     oscillator.start(now);
     oscillator.stop(now + 0.24);
   } catch {
