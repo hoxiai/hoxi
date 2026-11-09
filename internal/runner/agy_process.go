@@ -97,12 +97,16 @@ func inferOfficialRunnerModelSpec(slug string) (ctxLimit, outLimit int, inCost, 
 		default:
 			return 1000000, 65536, 1.25, 10.00, true, true
 		}
-	case strings.HasPrefix(lower, "gpt") || agentcli.IsOpenAIOSeriesModel(lower):
+	case strings.HasPrefix(lower, "gpt") || strings.Contains(lower, "codex") || agentcli.IsOpenAIOSeriesModel(lower):
 		switch {
 		case strings.Contains(lower, "nano"):
 			return 400000, 128000, 0.10, 0.40, true, reasoning
-		case strings.Contains(lower, "mini"):
+		case strings.Contains(lower, "mini") || strings.Contains(lower, "luna"):
 			return 400000, 128000, 0.25, 1.00, true, reasoning
+		case strings.Contains(lower, "astra") || familyMajorVersion(lower, "gpt") >= 6 || hasModelVersionRun(lower, "5", "6"):
+			return 1050000, 128000, 6.00, 24.00, true, true
+		case strings.Contains(lower, "sol") || hasModelVersionRun(lower, "5", "5"):
+			return 1000000, 128000, 3.00, 12.00, true, true
 		default:
 			return 400000, 128000, 2.00, 8.00, true, true
 		}
@@ -128,11 +132,19 @@ func claudeModelLimits(lower string) (ctxLimit, outLimit int) {
 // claudeMajorVersion reads the first number after the "claude" segment, so
 // claude-opus-5-5-high gives 5, claude-3-5-sonnet gives 3 and "opus" gives 0.
 func claudeMajorVersion(lower string) int {
-	parts := strings.FieldsFunc(lower, func(r rune) bool {
+	return familyMajorVersion(lower, "claude")
+}
+
+func modelKeyTokens(lower string) []string {
+	return strings.FieldsFunc(lower, func(r rune) bool {
 		return r == '-' || r == '_' || r == '.' || r == ' ' || r == '/'
 	})
+}
+
+func familyMajorVersion(lower, family string) int {
+	parts := modelKeyTokens(lower)
 	for i, part := range parts {
-		if part != "claude" {
+		if part != family {
 			continue
 		}
 		for _, next := range parts[i+1:] {
@@ -151,6 +163,16 @@ func claudeMajorVersion(lower string) int {
 		return 0
 	}
 	return 0
+}
+
+func hasModelVersionRun(lower, firstSeg, secondSeg string) bool {
+	parts := modelKeyTokens(lower)
+	for i := 0; i+1 < len(parts); i++ {
+		if parts[i] == firstSeg && parts[i+1] == secondSeg {
+			return true
+		}
+	}
+	return false
 }
 
 func buildAgyModelItems(slugs []string, displayBySlug map[string]string) []agentcli.ModelItem {

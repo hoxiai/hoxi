@@ -171,7 +171,13 @@ func SaveMemoryDocument(projectRoot, scope, sessionID, content string) (string, 
 		if baselineFile := sessionMemoryBaselineFile(projectRoot, sid); baselineFile != "" && isMemoryPathWithinRoot(projectRoot, baselineFile) {
 			if _, err := os.Stat(baselineFile); os.IsNotExist(err) {
 				if err := os.MkdirAll(filepath.Dir(baselineFile), 0o755); err == nil && isMemoryPathWithinRoot(projectRoot, baselineFile) {
-					_ = hoxipaths.WriteFileAtomic(baselineFile, []byte("# Hoxi Session Memory Baseline\n"), 0o600)
+					var seedBaseline []byte
+					if existingRaw, readErr := os.ReadFile(targetFile); readErr == nil && len(strings.TrimSpace(string(existingRaw))) > 0 {
+						seedBaseline = existingRaw
+					} else {
+						seedBaseline = []byte("# Hoxi Session Memory Baseline\n")
+					}
+					_ = hoxipaths.WriteFileAtomic(baselineFile, seedBaseline, 0o600)
 				}
 			}
 		}
@@ -249,6 +255,13 @@ func ExtractPromotableRulesFromSessionMemory(md string) []string {
 	return rules
 }
 
+func normalizeProjectRuleKey(line string) string {
+	clean := strings.TrimSpace(line)
+	clean = strings.TrimSpace(strings.TrimPrefix(clean, "-"))
+	clean = strings.TrimSpace(strings.TrimPrefix(clean, "User Constraint:"))
+	return clean
+}
+
 // PromoteSessionMemoryToProject extracts rules from session memory and appends
 // deduplicated entries to <projectRoot>/.hoxi/memory/project.md.
 func PromoteSessionMemoryToProject(projectRoot, sessionID, content string) (string, string, int, error) {
@@ -308,20 +321,32 @@ func PromoteSessionMemoryToProject(projectRoot, sessionID, content string) (stri
 		existing = "# Project Memory"
 	}
 
+	existingRuleSet := make(map[string]bool)
+	for _, rawLine := range strings.Split(existing, "\n") {
+		if key := normalizeProjectRuleKey(rawLine); key != "" {
+			existingRuleSet[key] = true
+		}
+	}
+
 	added := 0
 	var b strings.Builder
 	b.WriteString(existing)
 	b.WriteByte('\n')
 	for _, rule := range rules {
-		if strings.Contains(existing, rule) {
+		key := normalizeProjectRuleKey(rule)
+		if key == "" || existingRuleSet[key] {
 			continue
 		}
+		existingRuleSet[key] = true
 		b.WriteString("- ")
 		b.WriteString(rule)
 		b.WriteByte('\n')
 		added++
 	}
 	updated := b.String()
+	if len(updated) > MaxMemoryDocumentBytes {
+		return "", "", 0, errors.New("memory document exceeds maximum size")
+	}
 
 	if err := os.MkdirAll(filepath.Dir(projFile), 0o755); err != nil {
 		return "", "", 0, err
@@ -513,188 +538,4 @@ func sanitizeSessionMemoryMarkdown(md string) string {
 	}
 	flushEmptyFiles()
 	return strings.Join(out, "\n")
-}
-
-// MergeSessionMemoryMarkdown preserves manual user edits (custom preambles,
-// custom sections, and user-added lines within the 8-dimension sections) when
-// automatic turn compaction refreshes a session memory file.
-func MergeSessionMemoryMarkdown(existing, autoMD string) string {
-	return mergeSessionMemoryWithBaseline(existing, "", autoMD)
-}
-
-func mergeSessionMemoryWithBaseline(existing, baselineAuto, autoMD string) string {
-	existingNorm := strings.TrimSpace(normalizeMemoryLF(existing))
-	autoNorm := strings.TrimSpace(normalizeMemoryLF(autoMD))
-	if existingNorm == "" {
-		return autoMD
-	}
-	if autoNorm == "" {
-		return clampMemoryDocumentBytes(existingNorm, "") + "\n"
-	}
-	baselineNorm := strings.TrimSpace(normalizeMemoryLF(baselineAuto))
-	if baselineNorm != "" && stripVolatileMemoryHeader(existingNorm) == stripVolatileMemoryHeader(baselineNorm) {
-		return autoMD
-	}
-
-	idx := strings.Index(existingNorm, autoSessionMemoryHeading)
-	if idx < 0 {
-		return clampMemoryDocumentBytes(existingNorm, autoNorm)
-	}
-
-	preamble := strings.TrimSpace(existingNorm[:idx])
-	existingAuto := existingNorm[idx:]
-
-	autoLineSet := make(map[string]bool, 32)
-	collectTrimmedLineSet(autoNorm, autoLineSet)
-
-	var baselineLineSet map[string]bool
-	hasBaseline := baselineNorm != ""
-	if hasBaseline {
-		baselineLineSet = make(map[string]bool, 32)
-		collectTrimmedLineSet(baselineNorm, baselineLineSet)
-	}
-	existingLatestSummary := ""
-	if !hasBaseline {
-		existingLatestSummary = extractLatestSummaryLine(existingAuto)
-	}
-
-	var (
-		customHeaderLines    []string
-		customLinesByHeading map[string][]string
-		customSections       []markdownSection
-		curHeading           string
-		curIsEightDim        bool
-	)
-
-	for rest := existingAuto; rest != ""; {
-		line, tail, hasMore := strings.Cut(rest, "\n")
-		if hasMore {
-			rest = tail
-		} else {
-			rest = ""
-		}
-		t := strings.TrimSpace(line)
-		if strings.HasPrefix(t, "## ") {
-			curHeading = t
-			curIsEightDim = isEightDimHeading(t)
-			if !curIsEightDim {
-				customSections = append(customSections, markdownSection{heading: t})
-			}
-			continue
-		}
-		if curHeading == "" {
-			if t == "" || autoLineSet[t] || isHeaderMetaLine(t) || (hasBaseline && baselineLineSet[t]) {
-				continue
-			}
-			if len(customHeaderLines) < maxCustomLinesPerSection {
-				customHeaderLines = append(customHeaderLines, line)
-			}
-			continue
-		}
-		if !curIsEightDim {
-			sec := &customSections[len(customSections)-1]
-			if len(sec.lines) < maxCustomLinesPerSection {
-				sec.lines = append(sec.lines, line)
-			}
-			continue
-		}
-		if t == "" || autoLineSet[t] || isHeaderMetaLine(t) || isAgyBrainMemoryLine(t) {
-			continue
-		}
-		if hasBaseline {
-			if baselineLineSet[t] {
-				continue
-			}
-		} else if isVolatileAutoMemoryLine(curHeading, t, existingLatestSummary) {
-			continue
-		}
-		if customLinesByHeading == nil {
-			customLinesByHeading = make(map[string][]string, 4)
-		}
-		existingCustom := customLinesByHeading[curHeading]
-		if len(existingCustom) >= maxCustomLinesPerSection {
-			existingCustom = existingCustom[1:]
-		}
-		customLinesByHeading[curHeading] = append(existingCustom, line)
-	}
-
-	if preamble == "" && len(customHeaderLines) == 0 && len(customLinesByHeading) == 0 && len(customSections) == 0 {
-		return autoMD
-	}
-
-	autoHeader, autoSections := splitMarkdownSections(autoNorm)
-	var b strings.Builder
-	b.Grow(len(autoNorm) + len(preamble) + 256)
-	if preamble != "" {
-		b.WriteString(preamble)
-		b.WriteString("\n\n")
-	}
-	for _, line := range autoHeader {
-		b.WriteString(line)
-		b.WriteByte('\n')
-	}
-	for _, line := range customHeaderLines {
-		b.WriteString(line)
-		b.WriteByte('\n')
-	}
-	if len(customHeaderLines) > 0 {
-		b.WriteByte('\n')
-	}
-	for i, sec := range autoSections {
-		b.WriteString(sec.heading)
-		b.WriteByte('\n')
-		lines := sec.lines
-		for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
-			lines = lines[:len(lines)-1]
-		}
-		for _, line := range lines {
-			b.WriteString(line)
-			b.WriteByte('\n')
-		}
-		for _, extra := range customLinesByHeading[sec.heading] {
-			b.WriteString(extra)
-			b.WriteByte('\n')
-		}
-		if i < len(autoSections)-1 || len(customSections) > 0 {
-			b.WriteByte('\n')
-		}
-	}
-	for i, sec := range customSections {
-		b.WriteString(sec.heading)
-		b.WriteByte('\n')
-		lines := sec.lines
-		for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
-			lines = lines[:len(lines)-1]
-		}
-		for _, line := range lines {
-			b.WriteString(line)
-			b.WriteByte('\n')
-		}
-		if i < len(customSections)-1 {
-			b.WriteByte('\n')
-		}
-	}
-	merged := strings.TrimRight(b.String(), "\n") + "\n"
-	if len(merged) > MaxMemoryDocumentBytes {
-		return clampMemoryDocumentBytes(preamble, autoNorm)
-	}
-	return merged
-}
-
-func clampMemoryDocumentBytes(customBlock, autoNorm string) string {
-	if autoNorm == "" {
-		return truncateUTF8Bytes(customBlock, MaxMemoryDocumentBytes-1)
-	}
-	if customBlock == "" {
-		return truncateUTF8Bytes(autoNorm, MaxMemoryDocumentBytes-1) + "\n"
-	}
-	combined := customBlock + "\n\n" + autoNorm + "\n"
-	if len(combined) <= MaxMemoryDocumentBytes {
-		return combined
-	}
-	budgetForCustom := MaxMemoryDocumentBytes - len(autoNorm) - 4
-	if budgetForCustom <= 32 {
-		return truncateUTF8Bytes(autoNorm, MaxMemoryDocumentBytes-1) + "\n"
-	}
-	return truncateUTF8Bytes(customBlock, budgetForCustom) + "\n\n" + autoNorm + "\n"
 }

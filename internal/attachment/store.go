@@ -94,6 +94,83 @@ func isValidAttachmentID(id string) bool {
 	return true
 }
 
+// DetectFileMimeType returns the canonical MIME type for targetPath or data.
+func DetectFileMimeType(targetPath string, data []byte) string {
+	ext := strings.ToLower(filepath.Ext(targetPath))
+	switch ext {
+	case ".svg":
+		return "image/svg+xml"
+	case ".png":
+		return "image/png"
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".gif":
+		return "image/gif"
+	case ".webp":
+		return "image/webp"
+	case ".ico":
+		return "image/x-icon"
+	case ".bmp":
+		return "image/bmp"
+	case ".avif":
+		return "image/avif"
+	case ".md", ".mdx", ".markdown":
+		return "text/markdown"
+	case ".pdf":
+		return "application/pdf"
+	case ".xlsx":
+		return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+	case ".xls":
+		return "application/vnd.ms-excel"
+	case ".ods":
+		return "application/vnd.oasis.opendocument.spreadsheet"
+	case ".csv":
+		return "text/csv"
+	case ".tsv":
+		return "text/tab-separated-values"
+	case ".docx":
+		return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+	case ".doc":
+		return "application/msword"
+	case ".pptx":
+		return "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+	case ".ppt":
+		return "application/vnd.ms-powerpoint"
+	case ".rtf":
+		return "application/rtf"
+	}
+	if len(data) > 0 {
+		return http.DetectContentType(data)
+	}
+	return "application/octet-stream"
+}
+
+// IsBinaryImageMime reports whether mimeType is a non-SVG image type.
+func IsBinaryImageMime(mimeType string) bool {
+	m := strings.ToLower(strings.TrimSpace(mimeType))
+	return strings.HasPrefix(m, "image/") && !strings.HasPrefix(m, "image/svg")
+}
+
+// IsSpreadsheetExt reports whether ext is a supported spreadsheet extension.
+func IsSpreadsheetExt(ext string) bool {
+	switch strings.ToLower(strings.TrimSpace(ext)) {
+	case ".xlsx", ".xls", ".ods", ".csv", ".tsv":
+		return true
+	default:
+		return false
+	}
+}
+
+// IsExtractableDocExt reports whether ext is an extractable binary document extension.
+func IsExtractableDocExt(ext string) bool {
+	switch strings.ToLower(strings.TrimSpace(ext)) {
+	case ".pdf", ".docx", ".doc", ".pptx", ".ppt", ".rtf":
+		return true
+	default:
+		return false
+	}
+}
+
 func ClassifyFile(filename, mimeType string) (Kind, string, error) {
 	lowerMime := strings.ToLower(strings.TrimSpace(strings.Split(mimeType, ";")[0]))
 	ext := strings.ToLower(filepath.Ext(strings.TrimSpace(filename)))

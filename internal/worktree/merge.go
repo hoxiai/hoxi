@@ -52,12 +52,22 @@ func resolveGitIndexFile(repoRoot string) (string, error) {
 }
 
 func writeReaderAtomic(r io.Reader, dst string, mode os.FileMode, syncFile bool) error {
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+	dir := filepath.Dir(dst)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	tmpDst := dst + ".hoxi-tx-tmp"
-	out, err := os.OpenFile(tmpDst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
+	out, err := os.CreateTemp(dir, "."+filepath.Base(dst)+".hoxi-tx-*")
 	if err != nil {
+		return err
+	}
+	tmpDst := out.Name()
+	perm := mode.Perm()
+	if perm == 0 {
+		perm = 0o600
+	}
+	if err := out.Chmod(perm); err != nil {
+		_ = out.Close()
+		_ = os.Remove(tmpDst)
 		return err
 	}
 	if _, err := io.Copy(out, r); err != nil {
@@ -280,7 +290,7 @@ func (tx *workingTreeTransaction) Rollback() error {
 				errs = append(errs, fmt.Errorf("mkdir %s: %w", entry.rel, err))
 				continue
 			}
-			_ = os.Remove(absPath)
+			_ = os.RemoveAll(absPath)
 			if err := os.Symlink(entry.linkTarget, absPath); err != nil {
 				errs = append(errs, fmt.Errorf("restore symlink %s: %w", entry.rel, err))
 			}
@@ -289,6 +299,9 @@ func (tx *workingTreeTransaction) Rollback() error {
 		if packIn == nil {
 			errs = append(errs, fmt.Errorf("restore %s: backup pack unavailable", entry.rel))
 			continue
+		}
+		if info, statErr := os.Lstat(absPath); statErr == nil && info.IsDir() {
+			_ = os.RemoveAll(absPath)
 		}
 		section := io.NewSectionReader(packIn, entry.offset, entry.size)
 		if err := writeReaderAtomic(section, absPath, entry.mode, false); err != nil {

@@ -216,31 +216,13 @@ func SaveAttribution(path string, mode AttributionMode) error {
 			backupCorruptAttributionLocked(path, data)
 		}
 	}
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	f, err := os.CreateTemp(dir, ".git-attribution-*")
+	// Enabled mirrors the pre-mode toggle so an older Hoxi build reading this
+	// file sees the closest behaviour: never -> off, auto/always -> on.
+	raw, err := json.Marshal(AttributionState{Mode: mode, Enabled: mode != AttributionNever})
 	if err != nil {
 		return err
 	}
-	defer os.Remove(f.Name())
-	defer f.Close()
-	if err := f.Chmod(0o600); err != nil {
-		return err
-	}
-	// Enabled mirrors the pre-mode toggle so an older Hoxi build reading this
-	// file sees the closest behaviour: never -> off, auto/always -> on.
-	if err := json.NewEncoder(f).Encode(AttributionState{Mode: mode, Enabled: mode != AttributionNever}); err != nil {
-		return err
-	}
-	if err := f.Sync(); err != nil {
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(f.Name(), path); err != nil {
+	if err := hoxipaths.WriteFileAtomic(path, append(raw, '\n'), 0o600); err != nil {
 		return err
 	}
 	SetAttributionMode(mode)

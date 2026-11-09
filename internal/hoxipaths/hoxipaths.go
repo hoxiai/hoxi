@@ -132,6 +132,54 @@ func IsProtectedStateFile(baseName string) bool {
 	return false
 }
 
+// IsDeniedDocOrSpreadsheetPath reports whether p points to a credential file,
+// secret key, environment file, or protected internal directory (.git, .ssh,
+// .aws, .gnupg, .kube, .claude, .opencode, .agents, or .hoxi outside of
+// .hoxi/attachments/* and .hoxi/worktrees/<id>/*). Used as the single source
+// of truth across CLI document commands and Gateway spreadsheet/file writes.
+func IsDeniedDocOrSpreadsheetPath(p string) bool {
+	slash := filepath.ToSlash(filepath.Clean(p))
+	lowerSlash := strings.ToLower(slash)
+	base := strings.ToLower(filepath.Base(slash))
+
+	if base == ".env" || strings.HasPrefix(base, ".env.") || base == ".envrc" {
+		return true
+	}
+	if lowerSlash == ".vscode/settings.json" || strings.HasSuffix(lowerSlash, "/.vscode/settings.json") {
+		return true
+	}
+	for _, suffix := range []string{".pem", ".key", ".p12", ".pfx", ".keystore", ".tfstate", ".tfvars", ".tfvars.json"} {
+		if strings.HasSuffix(base, suffix) {
+			return true
+		}
+	}
+
+	segs := strings.Split(slash, "/")
+	for i := 0; i < len(segs); i++ {
+		seg := strings.ToLower(strings.TrimSpace(segs[i]))
+		if seg == "" {
+			continue
+		}
+		switch seg {
+		case ".git", ".ssh", ".aws", ".gnupg", ".kube", ".claude", ".opencode", ".agents":
+			return true
+		case ".hoxi":
+			// Allow .hoxi/attachments/* and .hoxi/worktrees/<id>/*
+			if i+1 < len(segs) {
+				next := strings.ToLower(strings.TrimSpace(segs[i+1]))
+				if next == "attachments" && i+2 < len(segs) {
+					continue
+				}
+				if next == "worktrees" && i+2 < len(segs) && strings.TrimSpace(segs[i+2]) != "" {
+					continue
+				}
+			}
+			return true
+		}
+	}
+	return false
+}
+
 // TunnelConfigPath returns the GoPanel tunnel credential file. Dev and release
 // builds pair separately so both can run without evicting each other's tunnel.
 func TunnelConfigPath(variant string) string {

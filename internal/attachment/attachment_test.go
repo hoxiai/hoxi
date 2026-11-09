@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -447,3 +448,119 @@ func TestExtractXLSFormatsAndDocReadWrite(t *testing.T) {
 	}
 }
 
+func TestApplySpreadsheetEditsPreservesCachedFormulasAndOver50kRows(t *testing.T) {
+	t.Parallel()
+	tmpDir := t.TempDir()
+
+	// 1. XLSX with cached formula value (<f>A1*2</f><v>20</v>) must keep its formula when A1 is edited.
+	xlsxPath := filepath.Join(tmpDir, "formulas.xlsx")
+	var xlsxBuf bytes.Buffer
+	zw := zip.NewWriter(&xlsxBuf)
+	writeZipEntry := func(name, content string) {
+		w, err := zw.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.Write([]byte(content)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeZipEntry("xl/workbook.xml", `<?xml version="1.0" encoding="UTF-8"?><workbook><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>`)
+	writeZipEntry("xl/worksheets/sheet1.xml", `<?xml version="1.0" encoding="UTF-8"?><worksheet><sheetData><row r="1"><c r="A1"><v>10</v></c><c r="B1"><f>A1*2</f><v>20</v></c></row></sheetData></worksheet>`)
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(xlsxPath, xlsxBuf.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	sheets, err := ApplySpreadsheetEdits(xlsxPath, xlsxPath, "Sheet1", map[string]string{"A1": "15"}, nil)
+	if err != nil {
+		t.Fatalf("ApplySpreadsheetEdits on formula workbook failed: %v", err)
+	}
+	if len(sheets) != 1 || len(sheets[0].Rows) != 1 || len(sheets[0].Rows[0]) < 2 {
+		t.Fatalf("unexpected sheets after edit: %+v", sheets)
+	}
+	if got := sheets[0].Rows[0][1]; got != "=A1*2" {
+		t.Fatalf("expected B1 formula '=A1*2' to be preserved in memory, got %q", got)
+	}
+	// Verify written XML still contains <f>A1*2</f>
+	zr, err := zip.OpenReader(xlsxPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer zr.Close()
+	foundFormula := false
+	for _, f := range zr.File {
+		if f.Name == "xl/worksheets/sheet1.xml" {
+			rc, err := f.Open()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var raw bytes.Buffer
+			_, _ = raw.ReadFrom(rc)
+			_ = rc.Close()
+			if strings.Contains(raw.String(), "<f>A1*2</f>") {
+				foundFormula = true
+			}
+		}
+	}
+	if !foundFormula {
+		t.Fatalf("expected written worksheet XML to preserve <f>A1*2</f>")
+	}
+
+	// 2. 50,001-row CSV must not lose row 50,001 when A1 is edited.
+	csvPath := filepath.Join(tmpDir, "large.csv")
+	var csvBuf bytes.Buffer
+	for i := 1; i <= 50001; i++ {
+		fmt.Fprintf(&csvBuf, "row_%d,val_%d\n", i, i)
+	}
+	if err := os.WriteFile(csvPath, csvBuf.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	csvSheets, err := ApplySpreadsheetEdits(csvPath, csvPath, "", map[string]string{"A1": "edited_header"}, nil)
+	if err != nil {
+		t.Fatalf("ApplySpreadsheetEdits on 50,001-row CSV failed: %v", err)
+	}
+	if len(csvSheets) != 1 || len(csvSheets[0].Rows) != 50001 {
+		t.Fatalf("expected all 50,001 rows preserved, got %d", len(csvSheets[0].Rows))
+	}
+	if got := csvSheets[0].Rows[0][0]; got != "edited_header" {
+		t.Fatalf("expected A1 = 'edited_header', got %q", got)
+	}
+	if got := csvSheets[0].Rows[50000][0]; got != "row_50001" {
+		t.Fatalf("expected last row 'row_50001' preserved, got %q", got)
+	}
+
+	// 3. Sparse XLSX with empty row 2 (rows 1 and 3 populated) returns RowNumbers [1, 3] in preview
+	// and editing A3 updates row 3 without shifting it into row 2.
+	sparsePath := filepath.Join(tmpDir, "sparse.xlsx")
+	if err := WriteXLSXFile(sparsePath, []SpreadsheetSheet{{
+		Name: "Sheet1",
+		Rows: [][]string{
+			{"Header"},
+			{},
+			{"Row3Val"},
+		},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	preview, err := ParseSpreadsheetFile(sparsePath, 100)
+	if err != nil || len(preview) != 1 {
+		t.Fatalf("ParseSpreadsheetFile on sparse.xlsx failed: %v", err)
+	}
+	if len(preview[0].Rows) != 2 || len(preview[0].RowNumbers) != 2 || preview[0].RowNumbers[0] != 1 || preview[0].RowNumbers[1] != 3 {
+		t.Fatalf("expected preview RowNumbers [1, 3], got rows=%+v rowNumbers=%+v", preview[0].Rows, preview[0].RowNumbers)
+	}
+	if _, err := ApplySpreadsheetEdits(sparsePath, sparsePath, "Sheet1", map[string]string{"A3": "UpdatedRow3"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	afterSparse, err := ParseSpreadsheetFile(sparsePath, 100)
+	if err != nil || len(afterSparse) != 1 {
+		t.Fatal(err)
+	}
+	if len(afterSparse[0].Rows) != 2 || afterSparse[0].Rows[1][0] != "UpdatedRow3" || afterSparse[0].RowNumbers[1] != 3 {
+		t.Fatalf("expected row 3 updated in place, got rows=%+v rowNumbers=%+v", afterSparse[0].Rows, afterSparse[0].RowNumbers)
+	}
+}

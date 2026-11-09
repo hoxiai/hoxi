@@ -12,80 +12,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/hoxiai/hoxi/internal/attachment"
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
-
-func detectFileMimeType(targetPath string, data []byte) string {
-	ext := strings.ToLower(filepath.Ext(targetPath))
-	switch ext {
-	case ".svg":
-		return "image/svg+xml"
-	case ".png":
-		return "image/png"
-	case ".jpg", ".jpeg":
-		return "image/jpeg"
-	case ".gif":
-		return "image/gif"
-	case ".webp":
-		return "image/webp"
-	case ".ico":
-		return "image/x-icon"
-	case ".bmp":
-		return "image/bmp"
-	case ".avif":
-		return "image/avif"
-	case ".md", ".mdx", ".markdown":
-		return "text/markdown"
-	case ".pdf":
-		return "application/pdf"
-	case ".xlsx":
-		return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-	case ".xls":
-		return "application/vnd.ms-excel"
-	case ".ods":
-		return "application/vnd.oasis.opendocument.spreadsheet"
-	case ".csv":
-		return "text/csv"
-	case ".tsv":
-		return "text/tab-separated-values"
-	case ".docx":
-		return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-	case ".doc":
-		return "application/msword"
-	case ".pptx":
-		return "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-	case ".ppt":
-		return "application/vnd.ms-powerpoint"
-	case ".rtf":
-		return "application/rtf"
-	}
-	if len(data) > 0 {
-		return http.DetectContentType(data)
-	}
-	return "application/octet-stream"
-}
-
-func isBinaryImageMime(mimeType string) bool {
-	m := strings.ToLower(strings.TrimSpace(mimeType))
-	return strings.HasPrefix(m, "image/") && !strings.HasPrefix(m, "image/svg")
-}
-
-func isSpreadsheetExt(ext string) bool {
-	switch strings.ToLower(ext) {
-	case ".xlsx", ".xls", ".ods", ".csv", ".tsv":
-		return true
-	default:
-		return false
-	}
-}
-
-func isExtractableDocExt(ext string) bool {
-	switch strings.ToLower(ext) {
-	case ".pdf", ".docx", ".doc", ".pptx", ".ppt", ".rtf":
-		return true
-	default:
-		return false
-	}
-}
 
 func (g *Gateway) handleFileContent(w http.ResponseWriter, r *http.Request) {
 	remote := isRemoteRequest(r)
@@ -176,22 +104,22 @@ func (g *Gateway) handleFileContent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ext := strings.ToLower(filepath.Ext(targetPath))
-	mimeType := detectFileMimeType(targetPath, data)
+	mimeType := attachment.DetectFileMimeType(targetPath, data)
 
 	var sheets []attachment.SpreadsheetSheet
 	var extractedText string
-	if isSpreadsheetExt(ext) {
+	if attachment.IsSpreadsheetExt(ext) {
 		if parsed, sErr := attachment.ParseSpreadsheetFile(targetPath, 500); sErr == nil && len(parsed) > 0 {
 			sheets = parsed
 			if ext != ".csv" && ext != ".tsv" {
 				extractedText = attachment.FormatSpreadsheetSheets(parsed)
 			}
 		}
-	} else if isExtractableDocExt(ext) {
+	} else if attachment.IsExtractableDocExt(ext) {
 		extractedText = attachment.ExtractFileText(targetPath, 64000)
 	}
 
-	if isBinaryImageMime(mimeType) || bytes.IndexByte(data, 0) >= 0 || !utf8.Valid(data) {
+	if attachment.IsBinaryImageMime(mimeType) || bytes.IndexByte(data, 0) >= 0 || !utf8.Valid(data) {
 		resp := map[string]any{
 			"type":             "binary",
 			"content":          base64.StdEncoding.EncodeToString(data),
@@ -258,23 +186,7 @@ func (g *Gateway) tryMaterializePreviewAttachment(targetPath string) (string, os
 }
 
 func isProtectedSpreadsheetWriteTarget(targetPath string) bool {
-	slash := strings.ToLower(filepath.ToSlash(filepath.Clean(targetPath)))
-	if idx := strings.LastIndex(slash, "/.hoxi/worktrees/"); idx >= 0 {
-		rest := slash[idx+len("/.hoxi/worktrees/"):]
-		if slashIdx := strings.IndexByte(rest, '/'); slashIdx >= 0 {
-			slash = rest[slashIdx+1:]
-		}
-	}
-	if strings.Contains(slash, "/.hoxi/attachments/") || strings.HasPrefix(slash, ".hoxi/attachments/") {
-		return false
-	}
-	for _, seg := range strings.Split(slash, "/") {
-		switch seg {
-		case ".git", ".opencode", ".claude", ".hoxi", ".agents":
-			return true
-		}
-	}
-	return false
+	return hoxipaths.IsDeniedDocOrSpreadsheetPath(targetPath)
 }
 
 func (g *Gateway) handleFileSpreadsheetEdit(w http.ResponseWriter, r *http.Request) {

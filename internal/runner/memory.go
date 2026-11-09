@@ -13,7 +13,10 @@ import (
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
 
-const maxSessionConstraints = 48
+const (
+	maxSessionConstraints = 48
+	maxSessionMemoryTodos = 32
+)
 
 var (
 	memoryWriteMu       sync.Mutex
@@ -484,7 +487,8 @@ func (s *Service) syncSessionMemoryFile(sessionID string) {
 		legacyProj := hoxipaths.LegacyProjectMemoryFile(targetRoot)
 		if isMemoryPathWithinRoot(targetRoot, legacyProj) {
 			if raw, readErr := os.ReadFile(legacyProj); readErr == nil && len(strings.TrimSpace(string(raw))) > 0 {
-				_ = writeFileAtomic(projFile, raw)
+				clampedProj := clampMemoryDocumentBytes("", strings.TrimSpace(normalizeMemoryLF(string(raw))))
+				_ = writeFileAtomic(projFile, []byte(clampedProj))
 			}
 		}
 	}
@@ -503,8 +507,11 @@ func (s *Service) syncSessionMemoryFile(sessionID string) {
 		}
 	}
 	md := autoMD
-	if existingBytes, err := os.ReadFile(sessionFile); err == nil && len(strings.TrimSpace(string(existingBytes))) > 0 {
+	if existingBytes, err := os.ReadFile(sessionFile); err == nil {
 		md = mergeSessionMemoryWithBaseline(string(existingBytes), prevAutoBaseline, autoMD)
+	}
+	if len(md) > MaxMemoryDocumentBytes {
+		md = clampMemoryDocumentBytes("", strings.TrimSpace(normalizeMemoryLF(md)))
 	}
 	_ = writeFileAtomic(sessionFile, []byte(md))
 }
@@ -539,7 +546,7 @@ func buildEightDimSessionMarkdown(rec SessionRecord) string {
 	}
 
 	addFile := func(raw string, mutated bool, qual string) {
-		p := strings.TrimSpace(raw)
+		p := singleLineExcerpt(strings.TrimSpace(raw), 240)
 		if p == "" || isAgyBrainPath(p) {
 			return
 		}
@@ -612,13 +619,17 @@ func buildEightDimSessionMarkdown(rec SessionRecord) string {
 							content, _ := m["content"].(string)
 							status, _ := m["status"].(string)
 							if strings.TrimSpace(content) != "" {
-								pendingTodos = append(pendingTodos, fmt.Sprintf("[%s] %s", firstNonEmptyStr(status, "pending"), redactMemorySecrets(strings.TrimSpace(content))))
+								tdEntry := fmt.Sprintf("[%s] %s", singleLineExcerpt(firstNonEmptyStr(status, "pending"), 32), redactMemorySecrets(singleLineExcerpt(content, 240)))
+								if len(pendingTodos) >= maxSessionMemoryTodos {
+									pendingTodos = pendingTodos[1:]
+								}
+								pendingTodos = append(pendingTodos, tdEntry)
 							}
 						}
 					}
 				}
 				if part.State.Status == "error" && strings.TrimSpace(part.State.Error) != "" && len(errorsObserved) < 8 {
-					errorsObserved = append(errorsObserved, fmt.Sprintf("%s: %s", part.Tool, redactMemorySecrets(singleLineExcerpt(part.State.Error, 180))))
+					errorsObserved = append(errorsObserved, fmt.Sprintf("%s: %s", singleLineExcerpt(part.Tool, 64), redactMemorySecrets(singleLineExcerpt(part.State.Error, 180))))
 				}
 			}
 		}
@@ -630,7 +641,7 @@ func buildEightDimSessionMarkdown(rec SessionRecord) string {
 
 	var b strings.Builder
 	b.WriteString("# Hoxi Session Memory (8-Dimension Compaction)\n")
-	b.WriteString(fmt.Sprintf("Session: `%s`\n", rec.ID))
+	b.WriteString(fmt.Sprintf("Session: `%s`\n", singleLineExcerpt(rec.ID, 128)))
 	b.WriteString(fmt.Sprintf("Updated: %s\n\n", time.Now().UTC().Format(time.RFC3339)))
 
 	b.WriteString("## 1. Primary Request and Intent\n")
@@ -640,7 +651,7 @@ func buildEightDimSessionMarkdown(rec SessionRecord) string {
 			b.WriteString("- Latest Request: " + userMessages[len(userMessages)-1] + "\n")
 		}
 	} else {
-		b.WriteString("- Active engineering session in " + firstNonEmptyStr(rec.Title, rec.ID) + "\n")
+		b.WriteString("- Active engineering session in " + singleLineExcerpt(firstNonEmptyStr(rec.Title, rec.ID), 240) + "\n")
 	}
 	for _, c := range userConstraints {
 		if len(userMessages) > 0 && (c == userMessages[0] || c == userMessages[len(userMessages)-1]) {
@@ -651,12 +662,12 @@ func buildEightDimSessionMarkdown(rec SessionRecord) string {
 	b.WriteByte('\n')
 
 	b.WriteString("## 2. Key Technical Concepts\n")
-	b.WriteString(fmt.Sprintf("- Runtime: `%s`\n", firstNonEmptyStr(rec.Runtime, "opencode")))
+	b.WriteString(fmt.Sprintf("- Runtime: `%s`\n", singleLineExcerpt(firstNonEmptyStr(rec.Runtime, "opencode"), 120)))
 	if rec.ModelID != "" {
-		b.WriteString(fmt.Sprintf("- Model: `%s`\n", rec.ModelID))
+		b.WriteString(fmt.Sprintf("- Model: `%s`\n", singleLineExcerpt(rec.ModelID, 160)))
 	}
 	if rec.Branch != "" {
-		b.WriteString(fmt.Sprintf("- Branch: `%s` (%s)\n", rec.Branch, firstNonEmptyStr(rec.SandboxMode, "local")))
+		b.WriteString(fmt.Sprintf("- Branch: `%s` (%s)\n", singleLineExcerpt(rec.Branch, 160), singleLineExcerpt(firstNonEmptyStr(rec.SandboxMode, "local"), 64)))
 	}
 	b.WriteByte('\n')
 
@@ -738,7 +749,11 @@ func buildEightDimSessionMarkdown(rec SessionRecord) string {
 	} else {
 		b.WriteString("- Ready for next instruction.\n")
 	}
-	return b.String()
+	out := b.String()
+	if len(out) > MaxMemoryDocumentBytes {
+		return clampMemoryDocumentBytes("", strings.TrimSpace(normalizeMemoryLF(out)))
+	}
+	return out
 }
 
 func singleLineExcerpt(s string, maxRunes int) string {

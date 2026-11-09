@@ -15,6 +15,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
@@ -48,29 +49,11 @@ type sessionCommitCheckpoint struct {
 }
 
 func writeSessionCheckpoint(path string, checkpoint sessionCommitCheckpoint) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return err
-	}
 	data, err := json.Marshal(checkpoint)
 	if err != nil {
 		return err
 	}
-	file, err := os.CreateTemp(filepath.Dir(path), ".checkpoint-")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(file.Name())
-	defer file.Close()
-	if _, err := file.Write(data); err != nil {
-		return err
-	}
-	if err := file.Sync(); err != nil {
-		return err
-	}
-	if err := file.Close(); err != nil {
-		return err
-	}
-	return os.Rename(file.Name(), path)
+	return hoxipaths.WriteFileAtomic(path, data, 0o600)
 }
 
 // sessionGit preserves blob bytes and keeps stderr out of merge-file output.

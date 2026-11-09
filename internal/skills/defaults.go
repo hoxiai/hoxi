@@ -194,40 +194,7 @@ func seedExternalSkillSubdir(srcSubdir, dstSubdir string, overwrite bool) {
 }
 
 func replaceSkillFile(target string, data []byte) error {
-	dir := filepath.Dir(target)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(dir, ".SKILL.md.tmp-*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	cleanup := func() {
-		_ = tmp.Close()
-		_ = os.Remove(tmpName)
-	}
-	if _, err := tmp.Write(data); err != nil {
-		cleanup()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		cleanup()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpName)
-		return err
-	}
-	if err := os.Chmod(tmpName, 0o644); err != nil {
-		_ = os.Remove(tmpName)
-		return err
-	}
-	if err := os.Rename(tmpName, target); err != nil {
-		_ = os.Remove(tmpName)
-		return err
-	}
-	return nil
+	return hoxipaths.WriteFileAtomic(target, data, 0o644)
 }
 
 // writeNewSkillFile writes atomically and fails instead of replacing an

@@ -32,7 +32,7 @@
 │   ├── codeindex/, recall/, forge/   # [业务层] Tree-sitter 与 trigram 索引 / 跨会话 BM25 召回 / GitHub & GitLab
 │   ├── skills/, tools/, workapps/    # [业务层] 本地与线上 Agent Skills / 免 Key 工具网桥 / Work 应用状态
 │   ├── tunnel/, pairing/, cloudflared/# [业务层] GoPanel 反向隧道 / 局域网扫码配对 / Cloudflare Tunnel 监管
-│   ├── auth/, attachment/, promptassist/, leaderboard/, sandbox/, updater/, telemetry/ # [业务层]
+│   ├── auth/, attachment/, devpulse/, promptassist/, leaderboard/, sandbox/, updater/, telemetry/ # [业务层]
 │   └── hoxipaths/, llm/, agentcli/, agyhook/, claudeconfig/, diagnostics/, buildinfo/, notify/, osopen/, reclaim/, sqlitecli/, statusbar/, subproc/, textindex/, testutil/execstub/ # [底座层/测试辅助]
 ├── web/src/{components,store,services,i18n,__tests__}/ # 按域 UI、响应式 Store（workspace.ts 扁平导出）、网络层、双语词条与单测
 ├── web/scripts/                      # check-i18n.ts, check-lines.ts（800 行与分层门禁）, check-cycles.ts, run-tests.ts

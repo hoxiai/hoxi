@@ -24,6 +24,12 @@ func TestInferOfficialRunnerModelSpecClaudeContextLimits(t *testing.T) {
 		{"claude-haiku-5-5", 200000, 64000, 0.80, 4.00},
 		{"sonnet", 200000, 64000, 3.00, 15.00},
 		{"haiku", 200000, 64000, 0.80, 4.00},
+		// GPT / Codex family parity with web/src/store/model-limits.ts.
+		{"gpt-5.6-astra", 1050000, 128000, 6.00, 24.00},
+		{"gpt-6-pro", 1050000, 128000, 6.00, 24.00},
+		{"gpt-5.5-sol", 1000000, 128000, 3.00, 12.00},
+		{"gpt-5.5-luna", 400000, 128000, 0.25, 1.00},
+		{"gpt-5-codex", 400000, 128000, 2.00, 8.00},
 	}
 	for _, tc := range cases {
 		ctx, out, inCost, outCost, _, _ := inferOfficialRunnerModelSpec(tc.slug)

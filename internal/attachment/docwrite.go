@@ -15,44 +15,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 func writeBytesAtomically(targetPath string, data []byte) error {
-	dir := filepath.Dir(targetPath)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(dir, ".hoxi-doc-*.tmp")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	cleanup := func() {
-		_ = tmp.Close()
-		_ = os.Remove(tmpPath)
-	}
-	if _, err := tmp.Write(data); err != nil {
-		cleanup()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		cleanup()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		return err
-	}
-	if err := os.Chmod(tmpPath, 0o644); err != nil {
-		_ = os.Remove(tmpPath)
-		return err
-	}
-	if err := os.Rename(tmpPath, targetPath); err != nil {
-		_ = os.Remove(tmpPath)
-		return err
-	}
-	return nil
+	return hoxipaths.WriteFileAtomic(targetPath, data, 0o644)
 }
 
 func xmlEscapeString(s string) string {
@@ -273,7 +241,7 @@ func ApplySpreadsheetEdits(
 	var sheets []SpreadsheetSheet
 	if inPath != "" {
 		if _, err := os.Stat(inPath); err == nil {
-			parsed, parseErr := ParseSpreadsheetFile(inPath, 50000)
+			parsed, parseErr := parseSpreadsheetFileForEdit(inPath)
 			if parseErr != nil {
 				return nil, parseErr
 			}

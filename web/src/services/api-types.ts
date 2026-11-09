@@ -591,6 +591,7 @@ export interface DevPulseHistoryResponse {
 export interface SpreadsheetSheetPreview {
   name: string;
   rows: string[][];
+  rowNumbers?: number[];
   totalRows?: number;
   truncated?: boolean;
 }
@@ -669,6 +670,3 @@ export interface OldSessionsDeleteResult {
   vacuumDeferred?: boolean;
   storage: SystemStorageStats;
 }
-
-
-

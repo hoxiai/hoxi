@@ -264,3 +264,43 @@ func TestBeginWorkingTreeTransactionRejectsEscapingOrDotGitPath(t *testing.T) {
 		}
 	}
 }
+
+func TestRollbackDoesNotOverwriteTxTmpFileOrFollowTxTmpSymlink(t *testing.T) {
+	t.Parallel()
+	dirs := newMergeFixture(t, "a", "b")
+	targetDir := dirs["b"]
+	outsideDir := t.TempDir()
+	outsideFile := filepath.Join(outsideDir, "outside-secret.txt")
+	reviewTestWrite(t, outsideFile, "outside-untouched\n")
+
+	// 1. Existing regular file named f.txt.hoxi-tx-tmp must not be deleted or overwritten on rollback.
+	txTmpRegular := filepath.Join(targetDir, "f.txt.hoxi-tx-tmp")
+	reviewTestWrite(t, txTmpRegular, "keep-tx-tmp-file\n")
+
+	reviewTestWrite(t, filepath.Join(dirs["a"], "f.txt"), "a\nB-from-a\nc\nd\ne\nf\ng\n")
+	reviewTestWrite(t, filepath.Join(targetDir, "f.txt"), "a\nB-from-b\nc\nd\ne\nf\ng\n")
+
+	if err := MergeWorkingState(targetDir, dirs["a"]); !errors.Is(err, ErrMergeConflict) {
+		t.Fatalf("expected ErrMergeConflict, got %v", err)
+	}
+	if got := readMergeFile(t, txTmpRegular); got != "keep-tx-tmp-file\n" {
+		t.Fatalf("f.txt.hoxi-tx-tmp modified or deleted: %q", got)
+	}
+
+	// 2. If f.txt.hoxi-tx-tmp is a symlink pointing outside the repo, rollback must not clobber the outside target.
+	if err := os.Remove(txTmpRegular); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outsideFile, txTmpRegular); err != nil {
+		t.Skip(err)
+	}
+	if err := MergeWorkingState(targetDir, dirs["a"]); !errors.Is(err, ErrMergeConflict) {
+		t.Fatalf("expected ErrMergeConflict, got %v", err)
+	}
+	if got := readMergeFile(t, outsideFile); got != "outside-untouched\n" {
+		t.Fatalf("outside target overwritten through .hoxi-tx-tmp symlink: %q", got)
+	}
+	if linkTarget, err := os.Readlink(txTmpRegular); err != nil || linkTarget != outsideFile {
+		t.Fatalf("expected symlink f.txt.hoxi-tx-tmp to remain intact, target=%q err=%v", linkTarget, err)
+	}
+}

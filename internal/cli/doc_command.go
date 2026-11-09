@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/hoxiai/hoxi/internal/attachment"
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
 
 func resolveSafeDocPath(rawPath, cwd string) (string, error) {
@@ -44,46 +45,7 @@ func resolveSafeDocPath(rawPath, cwd string) (string, error) {
 }
 
 func isDeniedDocPath(p string) bool {
-	slash := filepath.ToSlash(filepath.Clean(p))
-	lowerSlash := strings.ToLower(slash)
-	base := strings.ToLower(filepath.Base(slash))
-
-	if base == ".env" || strings.HasPrefix(base, ".env.") || base == ".envrc" {
-		return true
-	}
-	if lowerSlash == ".vscode/settings.json" || strings.HasSuffix(lowerSlash, "/.vscode/settings.json") {
-		return true
-	}
-	for _, suffix := range []string{".pem", ".key", ".p12", ".pfx", ".keystore", ".tfstate", ".tfvars", ".tfvars.json"} {
-		if strings.HasSuffix(base, suffix) {
-			return true
-		}
-	}
-
-	segs := strings.Split(slash, "/")
-	for i := 0; i < len(segs); i++ {
-		seg := strings.ToLower(strings.TrimSpace(segs[i]))
-		if seg == "" {
-			continue
-		}
-		switch seg {
-		case ".git", ".ssh", ".aws", ".gnupg", ".kube", ".claude", ".opencode", ".agents":
-			return true
-		case ".hoxi":
-			// Allow .hoxi/attachments/* and .hoxi/worktrees/<id>/*
-			if i+1 < len(segs) {
-				next := strings.ToLower(strings.TrimSpace(segs[i+1]))
-				if next == "attachments" && i+2 < len(segs) {
-					continue
-				}
-				if next == "worktrees" && i+2 < len(segs) && strings.TrimSpace(segs[i+2]) != "" {
-					continue
-				}
-			}
-			return true
-		}
-	}
-	return false
+	return hoxipaths.IsDeniedDocOrSpreadsheetPath(p)
 }
 
 func runDocCommand(args []string, cwd string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -239,7 +201,7 @@ func runDocInspect(targetPath string, maxRows int, stdout, stderr io.Writer) int
 		"size":     info.Size(),
 	}
 
-	if kind == attachment.KindSpreadsheet || ext == ".xlsx" || ext == ".xls" || ext == ".ods" || ext == ".csv" || ext == ".tsv" {
+	if kind == attachment.KindSpreadsheet || attachment.IsSpreadsheetExt(ext) {
 		sheets, sErr := attachment.ParseSpreadsheetFile(targetPath, maxRows)
 		if sErr != nil {
 			fmt.Fprintf(stderr, "Error parsing spreadsheet: %v\n", sErr)
@@ -292,7 +254,7 @@ func runDocRead(targetPath, sheetFilter, format string, maxRows, maxChars int, s
 		return 1
 	}
 	ext := strings.ToLower(filepath.Ext(targetPath))
-	isSheet := ext == ".xlsx" || ext == ".xls" || ext == ".ods" || ext == ".csv" || ext == ".tsv"
+	isSheet := attachment.IsSpreadsheetExt(ext)
 	fmtLower := strings.ToLower(strings.TrimSpace(format))
 
 	if isSheet {

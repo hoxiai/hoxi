@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
 
 // On-disk layout, one directory per conversation so that a long transcript
@@ -46,29 +48,7 @@ func (s *Store) sessionDir(id string) string {
 }
 
 func writeFileAtomic(path string, raw []byte) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	tmp := path + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err != nil {
-		return err
-	}
-	if _, err := f.Write(raw); err != nil {
-		_ = f.Close()
-		_ = os.Remove(tmp)
-		return err
-	}
-	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		_ = os.Remove(tmp)
-		return err
-	}
-	if err := f.Close(); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	return os.Rename(tmp, path)
+	return hoxipaths.WriteFileAtomic(path, raw, 0o600)
 }
 
 func (s *Store) writeMeta(rec SessionRecord) error {

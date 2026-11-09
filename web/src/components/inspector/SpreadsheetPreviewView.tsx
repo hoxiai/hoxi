@@ -59,7 +59,11 @@ export function SpreadsheetPreviewView(props: SpreadsheetPreviewViewProps) {
     const sheet = activeSheet();
     if (!sheet) return [];
     const q = filterQuery().trim().toLowerCase();
-    const indexed = sheet.rows.map((cells, idx) => ({ rowNumber: idx + 1, cells }));
+    const rowNums = sheet.rowNumbers;
+    const indexed = sheet.rows.map((cells, idx) => ({
+      rowNumber: rowNums && rowNums[idx] > 0 ? rowNums[idx] : idx + 1,
+      cells,
+    }));
     if (!q) return indexed;
     return indexed.filter(
       (entry, idx) =>

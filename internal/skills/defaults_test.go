@@ -63,6 +63,12 @@ func TestDefaultSkillMatchesRepoCopy(t *testing.T) {
 		if !bytes.Equal(embedded, repo) {
 			t.Fatalf("bundled default and .opencode/skills/%s/SKILL.md differ", slug)
 		}
+		sitePath := filepath.Join("..", "..", "site", "themes", "hoxi", "public", "skills", slug, "SKILL.md")
+		if siteCopy, err := os.ReadFile(sitePath); err == nil {
+			if !bytes.Equal(embedded, siteCopy) {
+				t.Fatalf("bundled default and site/themes/hoxi/public/skills/%s/SKILL.md differ", slug)
+			}
+		}
 	}
 }
 

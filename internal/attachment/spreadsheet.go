@@ -6,7 +6,6 @@ import (
 	"encoding/csv"
 	"encoding/xml"
 	"fmt"
-	"html"
 	"io"
 	"os"
 	"path/filepath"
@@ -24,10 +23,18 @@ var (
 
 // SpreadsheetSheet holds parsed tabular rows for a single worksheet.
 type SpreadsheetSheet struct {
-	Name      string     `json:"name"`
-	Rows      [][]string `json:"rows"`
-	TotalRows int        `json:"totalRows,omitempty"`
-	Truncated bool       `json:"truncated,omitempty"`
+	Name       string     `json:"name"`
+	Rows       [][]string `json:"rows"`
+	RowNumbers []int      `json:"rowNumbers,omitempty"`
+	TotalRows  int        `json:"totalRows,omitempty"`
+	Truncated  bool       `json:"truncated,omitempty"`
+}
+
+type spreadsheetParseOptions struct {
+	maxRows            int
+	preferFormulas     bool
+	preserveEmptyRows  bool
+	preserveExactCells bool
 }
 
 func excelColIndex(cellRef string) int {
@@ -49,6 +56,22 @@ func excelColIndex(cellRef string) int {
 		return -1
 	}
 	return col - 1
+}
+
+func excelRowIndex(cellRef string) int {
+	i := 0
+	for i < len(cellRef) && ((cellRef[i] >= 'A' && cellRef[i] <= 'Z') || (cellRef[i] >= 'a' && cellRef[i] <= 'z') || cellRef[i] == '$') {
+		i++
+	}
+	if i >= len(cellRef) {
+		return -1
+	}
+	numStr := strings.ReplaceAll(cellRef[i:], "$", "")
+	r, err := strconv.Atoi(numStr)
+	if err != nil || r <= 0 || r > 1048576 {
+		return -1
+	}
+	return r - 1
 }
 
 // ExcelColName converts a 0-based column index into an Excel column name (0 -> "A", 25 -> "Z", 26 -> "AA").
@@ -75,7 +98,7 @@ func ParseCellRef(ref string) (rowIdx, colIdx int, ok bool) {
 		return 0, 0, false
 	}
 	col := excelColIndex(s)
-	if col < 0 || col > 1024 {
+	if col < 0 || col > 16384 {
 		return 0, 0, false
 	}
 	i := 0
@@ -86,7 +109,7 @@ func ParseCellRef(ref string) (rowIdx, colIdx int, ok bool) {
 		return 0, 0, false
 	}
 	r, err := strconv.Atoi(s[i:])
-	if err != nil || r <= 0 || r > 100000 {
+	if err != nil || r <= 0 || r > 1048576 {
 		return 0, 0, false
 	}
 	return r - 1, col, true
@@ -99,7 +122,7 @@ func parseXLSXSharedStrings(f *zip.File) []string {
 	}
 	defer rc.Close()
 
-	dec := xml.NewDecoder(io.LimitReader(rc, 32*1024*1024))
+	dec := xml.NewDecoder(io.LimitReader(rc, 64*1024*1024))
 	var result []string
 	var inSI, inT bool
 	var cur strings.Builder
@@ -230,10 +253,10 @@ func resolveXLSXSheets(zr *zip.ReadCloser) []xlsxSheetEntry {
 	return entries
 }
 
-func parseXLSXWorksheetRows(f *zip.File, shared []string, maxRows int) ([][]string, int, bool) {
+func parseXLSXWorksheetRowsWithOpts(f *zip.File, shared []string, opts spreadsheetParseOptions) ([][]string, []int, int, bool) {
 	rc, err := f.Open()
 	if err != nil {
-		return nil, 0, false
+		return nil, nil, 0, false
 	}
 	defer rc.Close()
 
@@ -248,13 +271,16 @@ func parseXLSXWorksheetRows(f *zip.File, shared []string, maxRows int) ([][]stri
 		} `xml:"is"`
 	}
 	type xmlRow struct {
-		Cells []xmlCell `xml:"c"`
+		RowNum int       `xml:"r,attr"`
+		Cells  []xmlCell `xml:"c"`
 	}
 
-	dec := xml.NewDecoder(io.LimitReader(rc, 32*1024*1024))
+	dec := xml.NewDecoder(io.LimitReader(rc, 64*1024*1024))
 	var rows [][]string
+	var rowNums []int
 	totalRows := 0
 	truncated := false
+	seqRowIdx := 0
 
 	for {
 		tok, err := dec.Token()
@@ -269,23 +295,40 @@ func parseXLSXWorksheetRows(f *zip.File, shared []string, maxRows int) ([][]stri
 		if err := dec.DecodeElement(&row, &se); err != nil {
 			continue
 		}
-		if len(row.Cells) == 0 {
+		rowIdx := row.RowNum - 1
+		if rowIdx < 0 {
+			for _, c := range row.Cells {
+				if rFromCell := excelRowIndex(c.Ref); rFromCell >= 0 {
+					rowIdx = rFromCell
+					break
+				}
+			}
+		}
+		if rowIdx < 0 {
+			rowIdx = seqRowIdx
+		}
+		seqRowIdx = rowIdx + 1
+
+		if len(row.Cells) == 0 && !opts.preserveEmptyRows {
 			continue
 		}
 		var cols []string
 		hasNonEmpty := false
 		for i, c := range row.Cells {
 			colIdx := excelColIndex(c.Ref)
-			if colIdx < 0 || colIdx > 256 {
+			if colIdx < 0 || colIdx > 16384 {
 				colIdx = i
 			}
 			for len(cols) <= colIdx {
 				cols = append(cols, "")
 			}
-			val := strings.TrimSpace(c.Value)
+			val := c.Value
+			if !opts.preserveExactCells {
+				val = strings.TrimSpace(val)
+			}
 			switch c.Type {
 			case "s":
-				if idx, err := strconv.Atoi(val); err == nil && idx >= 0 && idx < len(shared) {
+				if idx, err := strconv.Atoi(strings.TrimSpace(c.Value)); err == nil && idx >= 0 && idx < len(shared) {
 					val = shared[idx]
 				}
 			case "inlineStr":
@@ -295,31 +338,65 @@ func parseXLSXWorksheetRows(f *zip.File, shared []string, maxRows int) ([][]stri
 					val = strings.Join(c.InlineIS.Runs, "")
 				}
 			case "b":
-				if val == "1" || strings.EqualFold(val, "true") {
+				trimmedVal := strings.TrimSpace(c.Value)
+				if trimmedVal == "1" || strings.EqualFold(trimmedVal, "true") {
 					val = "TRUE"
-				} else if val == "0" || strings.EqualFold(val, "false") {
+				} else if trimmedVal == "0" || strings.EqualFold(trimmedVal, "false") {
 					val = "FALSE"
 				}
 			}
-			if val == "" && strings.TrimSpace(c.Formula) != "" {
-				val = "=" + strings.TrimPrefix(strings.TrimSpace(c.Formula), "=")
+			formulaText := strings.TrimSpace(c.Formula)
+			if formulaText != "" && (opts.preferFormulas || strings.TrimSpace(val) == "") {
+				val = "=" + strings.TrimPrefix(formulaText, "=")
 			}
-			val = sanitizeCellText(val)
-			if val != "" {
+			if !opts.preserveExactCells {
+				val = sanitizeCellText(val)
+			}
+			if strings.TrimSpace(val) != "" {
 				hasNonEmpty = true
 			}
 			cols[colIdx] = val
 		}
+		if opts.preserveEmptyRows {
+			cols = trimTrailingEmptyCells(cols)
+			for len(rows) < rowIdx {
+				if opts.maxRows > 0 && len(rows) >= opts.maxRows {
+					truncated = true
+					break
+				}
+				rows = append(rows, nil)
+				rowNums = append(rowNums, len(rows))
+				totalRows++
+			}
+			totalRows++
+			if opts.maxRows <= 0 || len(rows) < opts.maxRows {
+				if rowIdx < len(rows) {
+					rows[rowIdx] = cols
+				} else {
+					rows = append(rows, cols)
+					rowNums = append(rowNums, rowIdx+1)
+				}
+			} else {
+				truncated = true
+			}
+			continue
+		}
 		if hasNonEmpty {
 			cols = trimTrailingEmptyCells(cols)
 			totalRows++
-			if maxRows <= 0 || len(rows) < maxRows {
+			if opts.maxRows <= 0 || len(rows) < opts.maxRows {
 				rows = append(rows, cols)
+				rowNums = append(rowNums, rowIdx+1)
 			} else {
 				truncated = true
 			}
 		}
 	}
+	return rows, rowNums, totalRows, truncated
+}
+
+func parseXLSXWorksheetRows(f *zip.File, shared []string, maxRows int) ([][]string, int, bool) {
+	rows, _, totalRows, truncated := parseXLSXWorksheetRowsWithOpts(f, shared, spreadsheetParseOptions{maxRows: maxRows})
 	return rows, totalRows, truncated
 }
 
@@ -334,7 +411,16 @@ func trimTrailingEmptyCells(cols []string) []string {
 	return cols
 }
 
-func parseXLSXFile(xlsxPath string, maxRows int) ([]SpreadsheetSheet, error) {
+func hasNonSequentialRowNumbers(rowNums []int) bool {
+	for i, rn := range rowNums {
+		if rn != i+1 {
+			return true
+		}
+	}
+	return false
+}
+
+func parseXLSXFileWithOpts(xlsxPath string, opts spreadsheetParseOptions) ([]SpreadsheetSheet, error) {
 	zr, err := zip.OpenReader(xlsxPath)
 	if err != nil {
 		return nil, err
@@ -352,128 +438,29 @@ func parseXLSXFile(xlsxPath string, maxRows int) ([]SpreadsheetSheet, error) {
 	entries := resolveXLSXSheets(zr)
 	sheets := make([]SpreadsheetSheet, 0, len(entries))
 	for _, entry := range entries {
-		rows, totalRows, truncated := parseXLSXWorksheetRows(entry.file, shared, maxRows)
-		if len(rows) == 0 {
+		rows, rowNums, totalRows, truncated := parseXLSXWorksheetRowsWithOpts(entry.file, shared, opts)
+		if len(rows) == 0 && !opts.preserveEmptyRows {
 			continue
 		}
-		sheets = append(sheets, SpreadsheetSheet{
+		sheet := SpreadsheetSheet{
 			Name:      entry.name,
 			Rows:      rows,
 			TotalRows: totalRows,
 			Truncated: truncated,
-		})
+		}
+		if !opts.preserveEmptyRows && hasNonSequentialRowNumbers(rowNums) {
+			sheet.RowNumbers = rowNums
+		}
+		sheets = append(sheets, sheet)
 	}
 	return sheets, nil
 }
 
-func parseODSFile(odsPath string, maxRows int) ([]SpreadsheetSheet, error) {
-	zr, err := zip.OpenReader(odsPath)
-	if err != nil {
-		return nil, err
-	}
-	defer zr.Close()
-
-	for _, f := range zr.File {
-		if strings.TrimPrefix(f.Name, "/") != "content.xml" {
-			continue
-		}
-		rc, err := f.Open()
-		if err != nil {
-			return nil, err
-		}
-		defer rc.Close()
-
-		dec := xml.NewDecoder(io.LimitReader(rc, 16*1024*1024))
-		var sheets []SpreadsheetSheet
-		var curSheet *SpreadsheetSheet
-		var rowCells []string
-		var cellText strings.Builder
-		cellRepeat := 1
-		inCell, inP := false, false
-
-		flushSheet := func() {
-			if curSheet != nil && len(curSheet.Rows) > 0 {
-				sheets = append(sheets, *curSheet)
-			}
-			curSheet = nil
-		}
-
-		for {
-			tok, err := dec.Token()
-			if err != nil {
-				break
-			}
-			switch se := tok.(type) {
-			case xml.StartElement:
-				switch se.Name.Local {
-				case "table":
-					flushSheet()
-					name := fmt.Sprintf("Sheet%d", len(sheets)+1)
-					for _, attr := range se.Attr {
-						if attr.Name.Local == "name" && attr.Value != "" {
-							name = attr.Value
-						}
-					}
-					curSheet = &SpreadsheetSheet{Name: name}
-				case "table-row":
-					rowCells = nil
-				case "table-cell":
-					inCell = true
-					cellText.Reset()
-					cellRepeat = 1
-					for _, attr := range se.Attr {
-						if attr.Name.Local == "number-columns-repeated" {
-							if n, err := strconv.Atoi(attr.Value); err == nil && n > 1 && n <= 64 {
-								cellRepeat = n
-							}
-						}
-					}
-				case "p":
-					if inCell {
-						inP = true
-					}
-				}
-			case xml.CharData:
-				if inCell && inP {
-					cellText.Write(se)
-				}
-			case xml.EndElement:
-				switch se.Name.Local {
-				case "p":
-					inP = false
-				case "table-cell":
-					if inCell {
-						val := sanitizeCellText(cellText.String())
-						for r := 0; r < cellRepeat; r++ {
-							rowCells = append(rowCells, val)
-						}
-						inCell = false
-					}
-				case "table-row":
-					if curSheet == nil {
-						curSheet = &SpreadsheetSheet{Name: "Sheet1"}
-					}
-					trimmed := trimTrailingEmptyCells(append([]string(nil), rowCells...))
-					if len(trimmed) > 0 {
-						curSheet.TotalRows++
-						if maxRows <= 0 || len(curSheet.Rows) < maxRows {
-							curSheet.Rows = append(curSheet.Rows, trimmed)
-						} else {
-							curSheet.Truncated = true
-						}
-					}
-				case "table":
-					flushSheet()
-				}
-			}
-		}
-		flushSheet()
-		return sheets, nil
-	}
-	return nil, os.ErrNotExist
+func parseXLSXFile(xlsxPath string, maxRows int) ([]SpreadsheetSheet, error) {
+	return parseXLSXFileWithOpts(xlsxPath, spreadsheetParseOptions{maxRows: maxRows})
 }
 
-func parseDelimitedBytes(raw []byte, comma rune, sheetName string, maxRows int) []SpreadsheetSheet {
+func parseDelimitedBytesWithOpts(raw []byte, comma rune, sheetName string, opts spreadsheetParseOptions) []SpreadsheetSheet {
 	raw = bytes.TrimPrefix(raw, []byte("\xEF\xBB\xBF"))
 	if comma == 0 {
 		firstLine := string(raw)
@@ -492,45 +479,102 @@ func parseDelimitedBytes(raw []byte, comma rune, sheetName string, maxRows int) 
 	r.LazyQuotes = true
 
 	var rows [][]string
+	var rowNums []int
 	totalRows := 0
 	truncated := false
+	rawRowNum := 0
 	for {
 		rec, err := r.Read()
 		if err != nil {
 			break
 		}
+		rawRowNum++
 		cleaned := make([]string, len(rec))
 		hasNonEmpty := false
 		for i, c := range rec {
-			v := sanitizeCellText(c)
-			if v != "" {
+			v := c
+			if !opts.preserveExactCells {
+				v = sanitizeCellText(c)
+			}
+			if strings.TrimSpace(v) != "" {
 				hasNonEmpty = true
 			}
 			cleaned[i] = v
 		}
-		if !hasNonEmpty {
+		if !hasNonEmpty && !opts.preserveEmptyRows {
 			continue
 		}
-		cleaned = trimTrailingEmptyCells(cleaned)
+		if !opts.preserveExactCells {
+			cleaned = trimTrailingEmptyCells(cleaned)
+		}
 		totalRows++
-		if maxRows <= 0 || len(rows) < maxRows {
+		if opts.maxRows <= 0 || len(rows) < opts.maxRows {
 			rows = append(rows, cleaned)
+			rowNums = append(rowNums, rawRowNum)
 		} else {
 			truncated = true
 		}
 	}
-	if len(rows) == 0 {
+	if len(rows) == 0 && !opts.preserveEmptyRows {
 		return nil
 	}
 	if sheetName == "" {
 		sheetName = "Sheet1"
 	}
-	return []SpreadsheetSheet{{
+	sheet := SpreadsheetSheet{
 		Name:      sheetName,
 		Rows:      rows,
 		TotalRows: totalRows,
 		Truncated: truncated,
-	}}
+	}
+	if !opts.preserveEmptyRows && hasNonSequentialRowNumbers(rowNums) {
+		sheet.RowNumbers = rowNums
+	}
+	return []SpreadsheetSheet{sheet}
+}
+
+func parseDelimitedBytes(raw []byte, comma rune, sheetName string, maxRows int) []SpreadsheetSheet {
+	return parseDelimitedBytesWithOpts(raw, comma, sheetName, spreadsheetParseOptions{maxRows: maxRows})
+}
+
+func parseSpreadsheetFileForEdit(path string) ([]SpreadsheetSheet, error) {
+	opts := spreadsheetParseOptions{
+		maxRows:            0, // unlimited
+		preferFormulas:     true,
+		preserveEmptyRows:  true,
+		preserveExactCells: true,
+	}
+	ext := strings.ToLower(filepath.Ext(path))
+	switch ext {
+	case ".xlsx":
+		sheets, err := parseXLSXFileWithOpts(path, opts)
+		if err == nil && len(sheets) > 0 {
+			return sheets, nil
+		}
+		return parseXLSFile(path, 0)
+	case ".xls":
+		return parseXLSFile(path, 0)
+	case ".ods":
+		return parseODSFileWithOpts(path, opts)
+	case ".csv", ".tsv":
+		f, err := os.Open(path)
+		if err != nil {
+			return nil, err
+		}
+		defer f.Close()
+		raw, err := io.ReadAll(io.LimitReader(f, 64*1024*1024))
+		if err != nil {
+			return nil, err
+		}
+		comma := ','
+		if ext == ".tsv" {
+			comma = '\t'
+		}
+		base := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+		return parseDelimitedBytesWithOpts(raw, comma, base, opts), nil
+	default:
+		return parseXLSXFileWithOpts(path, opts)
+	}
 }
 
 // ParseSpreadsheetFile parses .xlsx, .xls, .ods, .csv, or .tsv into structured sheets.
@@ -556,7 +600,7 @@ func ParseSpreadsheetFile(path string, maxRowsPerSheet int) ([]SpreadsheetSheet,
 			return nil, err
 		}
 		defer f.Close()
-		raw, err := io.ReadAll(io.LimitReader(f, 16*1024*1024))
+		raw, err := io.ReadAll(io.LimitReader(f, 64*1024*1024))
 		if err != nil {
 			return nil, err
 		}
@@ -619,143 +663,4 @@ func extractODSText(odsPath string) string {
 		return ""
 	}
 	return FormatSpreadsheetSheets(sheets)
-}
-
-func parseXMLSpreadsheet2003(data []byte, maxRows int) []SpreadsheetSheet {
-	dec := xml.NewDecoder(bytes.NewReader(data))
-	var sheets []SpreadsheetSheet
-	var curSheet *SpreadsheetSheet
-	var rowCells []string
-	var cellData strings.Builder
-	inCell, inData := false, false
-	nextColIdx := 0
-
-	flushSheet := func() {
-		if curSheet != nil && len(curSheet.Rows) > 0 {
-			sheets = append(sheets, *curSheet)
-		}
-		curSheet = nil
-	}
-
-	for {
-		tok, err := dec.Token()
-		if err != nil {
-			break
-		}
-		switch se := tok.(type) {
-		case xml.StartElement:
-			switch se.Name.Local {
-			case "Worksheet":
-				flushSheet()
-				name := fmt.Sprintf("Sheet%d", len(sheets)+1)
-				for _, attr := range se.Attr {
-					if attr.Name.Local == "Name" && attr.Value != "" {
-						name = attr.Value
-					}
-				}
-				curSheet = &SpreadsheetSheet{Name: name}
-			case "Row":
-				rowCells = nil
-				nextColIdx = 0
-			case "Cell":
-				inCell = true
-				cellData.Reset()
-				for _, attr := range se.Attr {
-					if attr.Name.Local == "Index" {
-						if idx, err := strconv.Atoi(attr.Value); err == nil && idx > 0 && idx <= 256 {
-							nextColIdx = idx - 1
-						}
-					}
-				}
-			case "Data":
-				if inCell {
-					inData = true
-				}
-			}
-		case xml.CharData:
-			if inCell && inData {
-				cellData.Write(se)
-			}
-		case xml.EndElement:
-			switch se.Name.Local {
-			case "Data":
-				inData = false
-			case "Cell":
-				if inCell {
-					for len(rowCells) <= nextColIdx {
-						rowCells = append(rowCells, "")
-					}
-					rowCells[nextColIdx] = sanitizeCellText(cellData.String())
-					nextColIdx++
-					inCell = false
-				}
-			case "Row":
-				if curSheet == nil {
-					curSheet = &SpreadsheetSheet{Name: "Sheet1"}
-				}
-				trimmed := trimTrailingEmptyCells(rowCells)
-				if len(trimmed) > 0 {
-					curSheet.TotalRows++
-					if maxRows <= 0 || len(curSheet.Rows) < maxRows {
-						curSheet.Rows = append(curSheet.Rows, trimmed)
-					} else {
-						curSheet.Truncated = true
-					}
-				}
-			case "Worksheet":
-				flushSheet()
-			}
-		}
-	}
-	flushSheet()
-	return sheets
-}
-
-func parseHTMLTableSpreadsheet(data []byte, defaultName string, maxRows int) []SpreadsheetSheet {
-	text := string(data)
-	rowMatches := htmlRowRe.FindAllStringSubmatch(text, -1)
-	if len(rowMatches) == 0 {
-		return nil
-	}
-	var rows [][]string
-	totalRows := 0
-	truncated := false
-	for _, rm := range rowMatches {
-		cellMatches := htmlCellRe.FindAllStringSubmatch(rm[1], -1)
-		if len(cellMatches) == 0 {
-			continue
-		}
-		var cols []string
-		hasVal := false
-		for _, cm := range cellMatches {
-			stripped := htmlTagStrip.ReplaceAllString(cm[1], " ")
-			val := sanitizeCellText(html.UnescapeString(stripped))
-			if val != "" {
-				hasVal = true
-			}
-			cols = append(cols, val)
-		}
-		if !hasVal {
-			continue
-		}
-		cols = trimTrailingEmptyCells(cols)
-		totalRows++
-		if maxRows <= 0 || len(rows) < maxRows {
-			rows = append(rows, cols)
-		} else {
-			truncated = true
-		}
-	}
-	if len(rows) == 0 {
-		return nil
-	}
-	if defaultName == "" {
-		defaultName = "Sheet1"
-	}
-	return []SpreadsheetSheet{{
-		Name:      defaultName,
-		Rows:      rows,
-		TotalRows: totalRows,
-		Truncated: truncated,
-	}}
 }

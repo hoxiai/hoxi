@@ -451,29 +451,5 @@ func frontmatterName(body []byte) string {
 // writeSkillFile replaces target atomically so an interrupted install cannot
 // leave a half-written SKILL.md that the engine would then load.
 func writeSkillFile(target string, data []byte) error {
-	dir := filepath.Dir(target)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(dir, ".SKILL.md.tmp-*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Chmod(tmpName, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmpName, target)
+	return hoxipaths.WriteFileAtomic(target, data, 0o644)
 }
