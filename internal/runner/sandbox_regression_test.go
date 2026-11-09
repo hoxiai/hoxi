@@ -90,11 +90,23 @@ func TestRunnerExitPersistenceFailurePreservesWorktree(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			// A directory at the atomic-write path fails even when tests run as root.
-			if err := os.Mkdir(filepath.Join(path, info.ID, sessionMetaFile+".tmp"), 0700); err != nil {
+			// A directory at the final destination forces the atomic rename to fail.
+			meta := filepath.Join(path, info.ID, sessionMetaFile)
+			backup := meta + ".audit-original"
+			if err := os.Rename(meta, backup); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := svc.changeSessionSandboxWithOptions(info.ID, "local", force, false); err == nil {
+			if err := os.Mkdir(meta, 0700); err != nil {
+				t.Fatal(err)
+			}
+			_, exitErr := svc.changeSessionSandboxWithOptions(info.ID, "local", force, false)
+			if err := os.Remove(meta); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Rename(backup, meta); err != nil {
+				t.Fatal(err)
+			}
+			if exitErr == nil {
 				t.Fatal("exit accepted a failed store save")
 			}
 			for _, store := range []*Store{svc.store, NewStore(path)} {

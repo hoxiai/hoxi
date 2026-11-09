@@ -258,6 +258,10 @@ func (s *Service) replyRunnerPermission(w http.ResponseWriter, r *http.Request, 
 		writeJSONError(w, http.StatusNotFound, "permission request not found")
 		return
 	}
+	if !s.matchesQuestionOrApprovalDirectory(pa.sid, firstString(pa.req["directory"]), r.URL.Query().Get("directory")) {
+		writeJSONError(w, http.StatusForbidden, "session directory does not match its sandbox")
+		return
+	}
 	if permissionName(pa.req) == "hoxi_computer" && (body.Reply == "always" || body.GrantClass || isRemoteApprovalSource(source)) {
 		writeJSONError(w, http.StatusForbidden, "computer input requires one-time approval on the desktop")
 		return

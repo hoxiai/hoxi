@@ -107,16 +107,12 @@ func mergeSessionMemoryWithBaseline(existing, baselineAuto, autoMD string) strin
 			if t == "" || autoLineSet[t] || isHeaderMetaLine(t) || (hasBaseline && baselineLineSet[t]) {
 				continue
 			}
-			if len(customHeaderLines) < maxCustomLinesPerSection {
-				customHeaderLines = append(customHeaderLines, line)
-			}
+			customHeaderLines = append(customHeaderLines, line)
 			continue
 		}
 		if !curIsEightDim {
 			sec := &customSections[len(customSections)-1]
-			if len(sec.lines) < maxCustomLinesPerSection {
-				sec.lines = append(sec.lines, line)
-			}
+			sec.lines = append(sec.lines, line)
 			continue
 		}
 		if t == "" || autoLineSet[t] || isHeaderMetaLine(t) || isAgyBrainMemoryLine(t) {
@@ -132,11 +128,7 @@ func mergeSessionMemoryWithBaseline(existing, baselineAuto, autoMD string) strin
 		if customLinesByHeading == nil {
 			customLinesByHeading = make(map[string][]string, 4)
 		}
-		existingCustom := customLinesByHeading[curHeading]
-		if len(existingCustom) >= maxCustomLinesPerSection {
-			existingCustom = existingCustom[1:]
-		}
-		customLinesByHeading[curHeading] = append(existingCustom, line)
+		customLinesByHeading[curHeading] = append(customLinesByHeading[curHeading], line)
 	}
 
 	userDeletedFromBaseline := false
@@ -242,7 +234,7 @@ func mergeSessionMemoryWithBaseline(existing, baselineAuto, autoMD string) strin
 	}
 	merged := strings.TrimRight(b.String(), "\n") + "\n"
 	if len(merged) > MaxMemoryDocumentBytes {
-		return clampMemoryDocumentBytes(preamble, autoNorm)
+		return truncateUTF8Bytes(merged, MaxMemoryDocumentBytes-1) + "\n"
 	}
 	return merged
 }

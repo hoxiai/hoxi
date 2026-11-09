@@ -13,7 +13,6 @@ import (
 
 const (
 	MaxMemoryDocumentBytes   = 256 << 10
-	maxCustomLinesPerSection = 64
 	autoSessionMemoryHeading = "# Hoxi Session Memory (8-Dimension Compaction)"
 )
 

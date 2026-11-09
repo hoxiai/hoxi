@@ -235,8 +235,9 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 	g.skills.SetMarketplace(skills.NewMarketplaceService("", nil))
 	runnerSvc.SetSkillResolver(func(ctx context.Context, directory, sessionID string, sel runner.SkillSelection) (runner.ResolvedSkill, error) {
 		detail, err := g.skills.ResolveSelection(ctx, directory, sessionID, skills.SkillSelection{
-			Key:  sel.Key,
-			Name: sel.Name,
+			Key:     sel.Key,
+			Name:    sel.Name,
+			Runtime: sel.Runtime,
 		})
 		if err != nil {
 			return runner.ResolvedSkill{}, err

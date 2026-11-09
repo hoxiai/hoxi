@@ -61,8 +61,9 @@ type SkillDetail struct {
 }
 
 type SkillSelection struct {
-	Key  string `json:"key"`
-	Name string `json:"name"`
+	Key     string `json:"key"`
+	Name    string `json:"name"`
+	Runtime string `json:"runtime,omitempty"`
 }
 
 type ListResponse struct {
@@ -275,7 +276,7 @@ func (s *Service) ResolveSelection(ctx context.Context, directory, sessionID str
 	if key == "" || name == "" || !strings.HasPrefix(key, "skl_") {
 		return SkillDetail{}, fmt.Errorf("%w: invalid skill selection", ErrBadRequest)
 	}
-	rc, err := s.resolveContext(ctx, directory, sessionID, "")
+	rc, err := s.resolveContext(ctx, directory, sessionID, sel.Runtime)
 	if err != nil {
 		return SkillDetail{}, err
 	}
@@ -289,6 +290,20 @@ func (s *Service) ResolveSelection(ctx context.Context, directory, sessionID str
 				return SkillDetail{}, fmt.Errorf("%w: %s", ErrUnsupported, unavailableMessage(entry.detail.SkillDescriptor))
 			}
 			return entry.detail, nil
+		}
+	}
+	if strings.TrimSpace(sel.Runtime) != "" {
+		if fallbackRC, fbErr := s.resolveContext(ctx, directory, sessionID, ""); fbErr == nil && fallbackRC.Runtime != rc.Runtime {
+			if fbEntries, fbLoadErr := s.loadOpenCodeCatalog(ctx, fallbackRC, false); fbLoadErr == nil {
+				for _, entry := range fbEntries {
+					if entry.detail.Name == name && entry.detail.Key == key {
+						if entry.detail.Exposure == ExposureUnavailable {
+							return SkillDetail{}, fmt.Errorf("%w: %s", ErrUnsupported, unavailableMessage(entry.detail.SkillDescriptor))
+						}
+						return entry.detail, nil
+					}
+				}
+			}
 		}
 	}
 	for _, entry := range entries {

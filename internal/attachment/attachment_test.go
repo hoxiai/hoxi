@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -562,5 +563,120 @@ func TestApplySpreadsheetEditsPreservesCachedFormulasAndOver50kRows(t *testing.T
 	}
 	if len(afterSparse[0].Rows) != 2 || afterSparse[0].Rows[1][0] != "UpdatedRow3" || afterSparse[0].RowNumbers[1] != 3 {
 		t.Fatalf("expected row 3 updated in place, got rows=%+v rowNumbers=%+v", afterSparse[0].Rows, afterSparse[0].RowNumbers)
+	}
+}
+
+func TestDeepXLSXEditPreservesUntouchedMergedCells(t *testing.T) {
+	t.Parallel()
+	file := filepath.Join(t.TempDir(), "merged.xlsx")
+	if err := WriteXLSXFile(file, []SpreadsheetSheet{
+		{Name: "Inputs", Rows: [][]string{{"1"}}},
+		{Name: "Report", Rows: [][]string{{"Title", ""}, {"Description", "text"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var fixture bytes.Buffer
+	zw := zip.NewWriter(&fixture)
+	original, err := zip.OpenReader(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := []byte(`<mergeCells count="1"><mergeCell ref="A1:B1"/></mergeCells>`)
+	for _, z := range original.File {
+		r, err := z.Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := io.ReadAll(r)
+		_ = r.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if z.Name == "xl/worksheets/sheet2.xml" {
+			data = bytes.Replace(data, []byte("</sheetData>"), append([]byte("</sheetData>"), marker...), 1)
+		}
+		out, err := zw.Create(z.Name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := out.Write(data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := original.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, fixture.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ApplySpreadsheetEdits(file, file, "Inputs", map[string]string{"A1": "2"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	edited, err := zip.OpenReader(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer edited.Close()
+	for _, z := range edited.File {
+		if z.Name == "xl/worksheets/sheet2.xml" {
+			r, err := z.Open()
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, err := io.ReadAll(r)
+			_ = r.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Contains(data, marker) {
+				t.Fatalf("editing Inputs!A1 removed Report!A1:B1 merged range: %s", data)
+			}
+			return
+		}
+	}
+	t.Fatal("Report sheet missing")
+}
+
+func TestDeepOversizeCSVEditDoesNotTruncate(t *testing.T) {
+	t.Parallel()
+	file := filepath.Join(t.TempDir(), "oversize.csv")
+	f, err := os.Create(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chunk := strings.Repeat(strings.Repeat("z", 1022)+",\n", 1024)
+	for i := 0; i < 64; i++ {
+		if _, err := f.WriteString(chunk); err != nil {
+			t.Fatal(err)
+		}
+	}
+	marker := "BEYOND_READ_LIMIT,42\n"
+	if _, err := f.WriteString(marker); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	_, editErr := ApplySpreadsheetEdits(file, file, "oversize", map[string]string{"A1": "edited"}, nil)
+	if editErr != nil {
+		t.Fatalf("ApplySpreadsheetEdits on oversize CSV returned error: %v", editErr)
+	}
+	f, err = os.Open(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if _, err := f.Seek(-int64(len(marker)), io.SeekEnd); err != nil {
+		t.Fatal(err)
+	}
+	tail, err := io.ReadAll(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(tail) != marker {
+		t.Fatalf("CSV tail beyond 64 MiB lost after edit; edit error=%v tail=%q", editErr, tail)
 	}
 }

@@ -166,6 +166,25 @@ func (s *Service) handleUnifiedQuestionRoutes(w http.ResponseWriter, r *http.Req
 	s.forwardOpenCodeQuestionAction(w, r, id, action)
 }
 
+func (s *Service) matchesQuestionOrApprovalDirectory(sid, fallbackDir, requestedDir string) bool {
+	normReq := normalizeComparePath(requestedDir)
+	if normReq == "" {
+		return true
+	}
+	if rec, ok := s.store.Meta(sid); ok {
+		if sessionMatchesDirectory(rec, normReq) {
+			return true
+		}
+	}
+	if wt := normalizeComparePath(s.sessionWorktree(sid)); wt != "" && wt == normReq {
+		return true
+	}
+	if fb := normalizeComparePath(fallbackDir); fb != "" && fb == normReq {
+		return true
+	}
+	return false
+}
+
 func (s *Service) replyRunnerQuestion(w http.ResponseWriter, r *http.Request, id string) {
 	var body struct {
 		Answers [][]string `json:"answers"`
@@ -179,6 +198,10 @@ func (s *Service) replyRunnerQuestion(w http.ResponseWriter, r *http.Request, id
 	s.gate.mu.Unlock()
 	if pq == nil {
 		writeJSONError(w, http.StatusNotFound, "QuestionNotFound")
+		return
+	}
+	if !s.matchesQuestionOrApprovalDirectory(pq.sid, firstString(pq.req["directory"]), r.URL.Query().Get("directory")) {
+		writeJSONError(w, http.StatusForbidden, "session directory does not match its sandbox")
 		return
 	}
 	select {
@@ -199,6 +222,10 @@ func (s *Service) rejectRunnerQuestion(w http.ResponseWriter, r *http.Request, i
 	s.gate.mu.Unlock()
 	if pq == nil {
 		writeJSONError(w, http.StatusNotFound, "QuestionNotFound")
+		return
+	}
+	if !s.matchesQuestionOrApprovalDirectory(pq.sid, firstString(pq.req["directory"]), r.URL.Query().Get("directory")) {
+		writeJSONError(w, http.StatusForbidden, "session directory does not match its sandbox")
 		return
 	}
 	select {

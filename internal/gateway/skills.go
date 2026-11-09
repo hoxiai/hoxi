@@ -93,6 +93,9 @@ func (g *Gateway) resolveSkillContext(ctx context.Context, directory, sessionID,
 				return skills.RequestContext{}, fmt.Errorf("%w: %s", skills.ErrForbidden, err.Error())
 			}
 			if found {
+				if reqRT := strings.TrimSpace(requestedRuntime); reqRT != "" && (reqRT == "opencode" || runner.IsValidRuntime(reqRT)) {
+					rt = reqRT
+				}
 				return skills.RequestContext{
 					SessionID:    sessionID,
 					Runtime:      rt,

@@ -8,9 +8,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"os"
-	"path/filepath"
 	"runtime"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -225,90 +223,6 @@ func WriteDelimitedFile(targetPath string, rows [][]string, comma rune) error {
 		return err
 	}
 	return writeBytesAtomically(targetPath, buf.Bytes())
-}
-
-// ApplySpreadsheetEdits reads an existing spreadsheet (or creates a new one),
-// applies cell edits (e.g. "B2": "1580.5") and/or appends rows to sheetName,
-// and writes the updated spreadsheet to outPath.
-func ApplySpreadsheetEdits(
-	inPath, outPath, sheetName string,
-	cellEdits map[string]string,
-	appendRows [][]string,
-) ([]SpreadsheetSheet, error) {
-	if outPath == "" {
-		outPath = inPath
-	}
-	var sheets []SpreadsheetSheet
-	if inPath != "" {
-		if _, err := os.Stat(inPath); err == nil {
-			parsed, parseErr := parseSpreadsheetFileForEdit(inPath)
-			if parseErr != nil {
-				return nil, parseErr
-			}
-			sheets = parsed
-		}
-	}
-	if len(sheets) == 0 {
-		name := strings.TrimSpace(sheetName)
-		if name == "" {
-			name = "Sheet1"
-		}
-		sheets = []SpreadsheetSheet{{Name: name}}
-	}
-
-	targetIdx := 0
-	if trimmed := strings.TrimSpace(sheetName); trimmed != "" {
-		found := -1
-		for i, s := range sheets {
-			if strings.EqualFold(s.Name, trimmed) {
-				found = i
-				break
-			}
-		}
-		if found >= 0 {
-			targetIdx = found
-		} else {
-			sheets = append(sheets, SpreadsheetSheet{Name: trimmed})
-			targetIdx = len(sheets) - 1
-		}
-	}
-
-	rows := sheets[targetIdx].Rows
-	if len(cellEdits) > 0 {
-		keys := make([]string, 0, len(cellEdits))
-		for k := range cellEdits {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		for _, ref := range keys {
-			rIdx, cIdx, ok := ParseCellRef(ref)
-			if !ok {
-				return nil, fmt.Errorf("invalid cell reference %q (expected A1-style like B2)", ref)
-			}
-			for len(rows) <= rIdx {
-				rows = append(rows, nil)
-			}
-			for len(rows[rIdx]) <= cIdx {
-				rows[rIdx] = append(rows[rIdx], "")
-			}
-			rows[rIdx][cIdx] = cellEdits[ref]
-		}
-	}
-	if len(appendRows) > 0 {
-		rows = append(rows, appendRows...)
-	}
-	sheets[targetIdx].Rows = rows
-	sheets[targetIdx].TotalRows = len(rows)
-
-	ext := strings.ToLower(filepath.Ext(outPath))
-	switch ext {
-	case ".csv":
-		return sheets, WriteDelimitedFile(outPath, sheets[targetIdx].Rows, ',')
-	case ".tsv":
-		return sheets, WriteDelimitedFile(outPath, sheets[targetIdx].Rows, '\t')
-	default:
-		return sheets, WriteXLSXFile(outPath, sheets)
-	}
 }
 
 // WriteDOCXFile creates a standards-compliant .docx Word document from Markdown or plain text.

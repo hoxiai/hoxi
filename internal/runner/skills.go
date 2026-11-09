@@ -13,8 +13,9 @@ import (
 )
 
 type SkillSelection struct {
-	Key  string `json:"key"`
-	Name string `json:"name"`
+	Key     string `json:"key"`
+	Name    string `json:"name"`
+	Runtime string `json:"-"`
 }
 
 // ResolvedSkill carries the verified selection plus its SKILL.md body for
@@ -105,7 +106,7 @@ func (s *Service) resolveSkillSelection(ctx context.Context, directory, sessionI
 	s.mu.Lock()
 	resolver := s.skillResolver
 	s.mu.Unlock()
-	clean := SkillSelection{Key: key, Name: name}
+	clean := SkillSelection{Key: key, Name: name, Runtime: runtime}
 	if resolver != nil {
 		return resolver(ctx, directory, sessionID, clean)
 	}

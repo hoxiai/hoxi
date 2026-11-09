@@ -301,3 +301,46 @@ func TestManualMemoryDeletionsAndInitialCapSurviveAutomaticSync(t *testing.T) {
 		t.Fatalf("expected shorter rule to be appended as its own bullet, got:\n%s", updatedProj)
 	}
 }
+
+func TestDeepManualCustomSectionRetainsAllLines(t *testing.T) {
+	t.Parallel()
+	project := t.TempDir()
+	sid := "ses_audit_long_section"
+	svc := &Service{store: NewStore(t.TempDir())}
+	rec := SessionRecord{
+		ID:           sid,
+		Runtime:      "claude-code",
+		ProjectDir:   project,
+		WorktreePath: project,
+		Turns: []MessageTurn{{
+			Info:  MessageInfo{ID: "msg_a", SessionID: sid, Role: "user"},
+			Parts: []MessagePart{{ID: "prt_a", MessageID: "msg_a", SessionID: sid, Type: "text", Text: "Audit custom section"}},
+		}},
+	}
+	if err := svc.store.Put(rec); err != nil {
+		t.Fatal(err)
+	}
+	svc.syncSessionMemoryFile(sid)
+	path := hoxipaths.ProjectSessionMemoryFile(project, sid)
+	prior, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc strings.Builder
+	doc.Write(prior)
+	doc.WriteString("\n## Project notes entered manually\n")
+	for i := 1; i <= 65; i++ {
+		fmt.Fprintf(&doc, "- manual-marker-%03d\n", i)
+	}
+	if _, _, err := SaveMemoryDocument(project, "session", sid, doc.String()); err != nil {
+		t.Fatal(err)
+	}
+	svc.syncSessionMemoryFile(sid)
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(string(got), "manual-marker-"); n != 65 {
+		t.Fatalf("saved %d-byte memory lost user lines on sync: retained %d/65", doc.Len(), n)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -185,5 +186,54 @@ func TestHookGateQuestionReject(t *testing.T) {
 	dec := <-result
 	if dec.Decision != hookDecisionDeny || dec.Reason != questionDismissedReason {
 		t.Fatalf("unexpected reject decision: %+v", dec)
+	}
+}
+
+func TestDeepQuestionCannotBeAnsweredFromOtherWorktree(t *testing.T) {
+	t.Parallel()
+	f := newGateFixture(t)
+	events, unsub := f.svc.Subscribe("ses_agy_gate")
+	defer unsub()
+	payload := []byte(`{"conversationId":"conv-1","stepIdx":5,"toolCall":{"name":"ask_question","args":{"questions":[{"question":"Continue?","options":["Yes","No"]}]}}}`)
+	result := asyncInMemoryHook(t, f, payload)
+	asked := waitForEvent(t, events, "question.asked")
+	id, _ := asked.Properties["id"].(string)
+	other := t.TempDir()
+	body := []byte(`{"answers":[["Yes"]]}`)
+	route := "/api/hoxi/question/" + id + "/reply?"
+	req := httptest.NewRequest(http.MethodPost, route+url.Values{"directory": {other}}.Encode(), bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	f.srv.Config.Handler.ServeHTTP(rec, req)
+	if rec.Code >= 200 && rec.Code < 300 {
+		dec := <-result
+		t.Fatalf("reply scoped to unrelated directory returned %d and settled pending question: %q", rec.Code, dec.Reason)
+	}
+	req = httptest.NewRequest(http.MethodPost, route+url.Values{"directory": {f.dir}}.Encode(), bytes.NewReader(body))
+	rec2 := httptest.NewRecorder()
+	f.srv.Config.Handler.ServeHTTP(rec2, req)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("valid reply failed: %d", rec2.Code)
+	}
+	<-result
+}
+
+func TestDeepRejectedPromptDoesNotChangeRuntime(t *testing.T) {
+	t.Parallel()
+	f := newGateFixture(t)
+	prior, ok := f.svc.store.Get("ses_agy_gate")
+	if !ok {
+		t.Fatal("missing seeded session")
+	}
+	payload := []byte(`{"text":"Audit rejected prompt","runtime":"opencode","skillSelection":{"key":"invalid-key","name":"test"}}`)
+	endpoint := "/api/hoxi/runner/sessions/ses_agy_gate/prompt_async?" + url.Values{"directory": {f.dir}}.Encode()
+	req := httptest.NewRequest(http.MethodPost, endpoint, bytes.NewReader(payload))
+	rec := httptest.NewRecorder()
+	f.srv.Config.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "invalid skillSelection") {
+		t.Fatalf("expected rejected skill request: %d %s", rec.Code, rec.Body.String())
+	}
+	got, ok := f.svc.store.Get("ses_agy_gate")
+	if !ok || got.Runtime != prior.Runtime || got.ExternalID != prior.ExternalID {
+		t.Fatalf("rejected prompt changed runtime/resume ID: before=%q/%q after=%q/%q", prior.Runtime, prior.ExternalID, got.Runtime, got.ExternalID)
 	}
 }

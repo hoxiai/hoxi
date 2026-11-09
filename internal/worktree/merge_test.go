@@ -304,3 +304,29 @@ func TestRollbackDoesNotOverwriteTxTmpFileOrFollowTxTmpSymlink(t *testing.T) {
 		t.Fatalf("expected symlink f.txt.hoxi-tx-tmp to remain intact, target=%q err=%v", linkTarget, err)
 	}
 }
+
+func TestDeepPatchPreservesIndexLockOwnedByAnotherGit(t *testing.T) {
+	t.Parallel()
+	dirs := newMergeFixture(t)
+	repo := dirs["repo"]
+	mgr := NewManager(repo)
+	meta, err := mgr.Create("ses_audit_index_lock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reviewTestWrite(t, filepath.Join(meta.Directory, "f.txt"), "a\nB-sandbox\nc\nd\ne\nf\ng\n")
+	index, err := resolveGitIndexFile(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock := index + ".lock"
+	reviewTestWrite(t, lock, "other git writer\n")
+	err = mgr.Apply("ses_audit_index_lock", "patch")
+	if err == nil {
+		t.Fatal("expected apply to fail while another git writer holds index.lock")
+	}
+	got, readErr := os.ReadFile(lock)
+	if readErr != nil || string(got) != "other git writer\n" {
+		t.Fatalf("git apply returned %v but deleted foreign index.lock: contents=%q read=%v", err, got, readErr)
+	}
+}

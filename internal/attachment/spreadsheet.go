@@ -562,9 +562,13 @@ func parseSpreadsheetFileForEdit(path string) ([]SpreadsheetSheet, error) {
 			return nil, err
 		}
 		defer f.Close()
-		raw, err := io.ReadAll(io.LimitReader(f, 64*1024*1024))
+		const maxEditReadBytes = 64 * 1024 * 1024
+		raw, err := io.ReadAll(io.LimitReader(f, maxEditReadBytes+1))
 		if err != nil {
 			return nil, err
+		}
+		if len(raw) > maxEditReadBytes {
+			return nil, fmt.Errorf("spreadsheet exceeds maximum in-memory edit size (%d MiB)", maxEditReadBytes/(1024*1024))
 		}
 		comma := ','
 		if ext == ".tsv" {

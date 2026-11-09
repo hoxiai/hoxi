@@ -155,6 +155,12 @@ func beginWorkingTreeTransaction(dir string, rawPaths []string) (*workingTreeTra
 		return nil, retErr
 	}
 
+	if _, lockErr := os.Lstat(indexPath + ".lock"); lockErr == nil {
+		return cleanupOnErr(fmt.Errorf("git index is locked by another process: %s.lock", indexPath))
+	} else if !os.IsNotExist(lockErr) {
+		return cleanupOnErr(fmt.Errorf("stat git index lock: %w", lockErr))
+	}
+
 	if idxInfo, err := os.Lstat(indexPath); err == nil {
 		tx.indexExisted = true
 		tx.indexMode = idxInfo.Mode().Perm()
@@ -309,14 +315,15 @@ func (tx *workingTreeTransaction) Rollback() error {
 		}
 	}
 
-	_ = os.Remove(tx.indexPath + ".lock")
-	if !tx.indexExisted {
-		if err := os.Remove(tx.indexPath); err != nil && !os.IsNotExist(err) {
-			errs = append(errs, fmt.Errorf("remove index: %w", err))
-		}
-	} else {
-		if err := copyFileDurable(tx.indexBackupPath, tx.indexPath, tx.indexMode); err != nil {
-			errs = append(errs, fmt.Errorf("restore git index: %w", err))
+	if _, lockErr := os.Lstat(tx.indexPath + ".lock"); os.IsNotExist(lockErr) {
+		if !tx.indexExisted {
+			if err := os.Remove(tx.indexPath); err != nil && !os.IsNotExist(err) {
+				errs = append(errs, fmt.Errorf("remove index: %w", err))
+			}
+		} else {
+			if err := copyFileDurable(tx.indexBackupPath, tx.indexPath, tx.indexMode); err != nil {
+				errs = append(errs, fmt.Errorf("restore git index: %w", err))
+			}
 		}
 	}
 	globalRepoDiffCache.invalidate(tx.repoRoot)

@@ -126,6 +126,7 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 
 	rec, ok := s.store.Get(sessionID)
 	unmanagedBusySteer := false
+	pendingAdopted := false
 	wantRuntime := resolveRequestedPromptRuntime(body, "opencode")
 	if !ok && (body.SkillSelection != nil || (wantRuntime != "" && wantRuntime != "opencode")) {
 		adopted, adoptErr := s.adoptOpenCodeSession(ctx, sessionID, directory)
@@ -148,14 +149,9 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 				return http.StatusConflict, PromptReceipt{}, adoptErr
 			}
 		} else {
-			if putErr := s.store.Put(adopted); putErr != nil {
-				return http.StatusInternalServerError, PromptReceipt{}, putErr
-			}
-			for _, id := range adopted.OpenCodeIDs {
-				s.managedOpenCode.Store(id, true)
-			}
 			rec = adopted
 			ok = true
+			pendingAdopted = true
 		}
 	}
 	if !ok {
@@ -193,6 +189,7 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 	if err := validateSessionDirectory(rec); err != nil {
 		return http.StatusBadRequest, PromptReceipt{}, err
 	}
+	runtimeSwitched := false
 	if targetRuntime := resolveRequestedPromptRuntime(body, rec.Runtime); targetRuntime != "" && targetRuntime != rec.Runtime && !unmanagedBusySteer {
 		s.mu.Lock()
 		ap := s.procs[sessionID]
@@ -201,25 +198,13 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 		if busy {
 			return http.StatusConflict, PromptReceipt{}, errors.New("cannot change runtime while the session is running")
 		}
+		runtimeSwitched = true
 		rec.Runtime = targetRuntime
 		rec.ExternalID = ""
 		rec.ContextPending = len(rec.Turns) > 0
 		rec.ContextTurnCount = len(rec.Turns)
 		if targetRuntime == "opencode" && IsValidRuntime(rec.ProviderID) {
 			rec.ProviderID = ""
-		}
-		_, _, _ = s.store.Update(sessionID, func(r *SessionRecord) {
-			r.Runtime = rec.Runtime
-			r.ExternalID = ""
-			r.ContextPending = rec.ContextPending
-			r.ContextTurnCount = rec.ContextTurnCount
-			if targetRuntime == "opencode" && IsValidRuntime(r.ProviderID) {
-				r.ProviderID = ""
-			}
-		})
-		if updated, ok := s.store.Get(sessionID); ok {
-			info := updated.ToSessionInfo()
-			s.broadcast(sessionID, SSEEvent{Type: "session.updated", Properties: map[string]interface{}{"info": info}})
 		}
 	}
 	callerSystem := strings.TrimSpace(body.System)
@@ -248,6 +233,14 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 			}
 			if modelID != "" && resolvedModel != "" {
 				modelID = resolvedModel
+			}
+			if pendingAdopted {
+				if putErr := s.store.Put(rec); putErr != nil {
+					return http.StatusInternalServerError, PromptReceipt{}, putErr
+				}
+				for _, id := range rec.OpenCodeIDs {
+					s.managedOpenCode.Store(id, true)
+				}
 			}
 			steerSeq, steerMsgID, err := s.steerOpenCodeTurn(ctx, rec, firstNonEmptyStr(body.Agent, rec.Mode, "build"), modelID, providerID, body.Variant, body.System, promptText, body.Parts, body.SkillSelection)
 			if err != nil {
@@ -298,6 +291,15 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 	if binPath == "" && rec.Runtime != "opencode" {
 		return http.StatusBadRequest, PromptReceipt{}, errors.New(missingMsg)
 	}
+	if rec.Runtime == "opencode" {
+		resolvedModel, checkErr := s.ensureOpenCodeModelAvailable(ctx, rec.WorktreePath, rec.ProviderID, modelID, true)
+		if checkErr != nil {
+			return http.StatusConflict, PromptReceipt{}, checkErr
+		}
+		if resolvedModel != "" && resolvedModel != modelID {
+			modelID = resolvedModel
+		}
+	}
 
 	s.mu.Lock()
 	ap := s.procs[sessionID]
@@ -332,7 +334,12 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 		case <-time.After(5 * time.Second):
 		}
 		if latest, ok := s.store.Get(sessionID); ok {
-			rec.ExternalID = latest.ExternalID
+			if !runtimeSwitched {
+				rec.ExternalID = latest.ExternalID
+			} else {
+				rec.ContextPending = len(latest.Turns) > 0
+				rec.ContextTurnCount = len(latest.Turns)
+			}
 			rec.Turns = latest.Turns
 		}
 	}
@@ -345,6 +352,16 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 	s.seqSeed++
 	seq := s.seqSeed
 	s.mu.Unlock()
+
+	if pendingAdopted {
+		if putErr := s.store.Put(rec); putErr != nil {
+			finishSteerAbort()
+			return http.StatusInternalServerError, PromptReceipt{}, putErr
+		}
+		for _, id := range rec.OpenCodeIDs {
+			s.managedOpenCode.Store(id, true)
+		}
+	}
 
 	now := time.Now().UnixMilli()
 	userMsgID := fmt.Sprintf("msg_u_%d_%d", now, seq)
@@ -392,6 +409,12 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 		resetAgySplitBrain = false
 	}
 	_, _, _ = s.store.Update(sessionID, func(r *SessionRecord) {
+		if runtimeSwitched {
+			r.Runtime = rec.Runtime
+			r.ExternalID = ""
+			r.ContextPending = len(r.Turns) > 0
+			r.ContextTurnCount = len(r.Turns)
+		}
 		r.ModelID = modelID
 		r.Mode = mode
 		r.ProviderID = rec.ProviderID
@@ -404,24 +427,14 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 	s.recordTurnSnapshot(sessionID, userMsgID)
 	if updated, ok := s.store.Get(sessionID); ok {
 		rec = updated
+		if runtimeSwitched {
+			info := updated.ToSessionInfo()
+			s.broadcast(sessionID, SSEEvent{Type: "session.updated", Properties: map[string]interface{}{"info": info}})
+		}
 	}
 
 	var err error
 	if rec.Runtime == "opencode" {
-		resolvedModel, checkErr := s.ensureOpenCodeModelAvailable(ctx, rec.WorktreePath, rec.ProviderID, modelID, true)
-		if checkErr != nil {
-			return http.StatusConflict, PromptReceipt{}, checkErr
-		}
-		if resolvedModel != "" && resolvedModel != modelID {
-			modelID = resolvedModel
-			userInfo.ModelID = resolvedModel
-			_, _, _ = s.store.Update(sessionID, func(r *SessionRecord) {
-				r.ModelID = resolvedModel
-			})
-			if updated, ok := s.store.Get(sessionID); ok {
-				rec = updated
-			}
-		}
 		err = s.startOpenCodeTurn(rec, mode, modelID, effort, body.System, userInfo, storedParts, deliveryParts)
 	} else {
 		input := runtimeMemoryContext(rec) + runtimeContext(rec)
