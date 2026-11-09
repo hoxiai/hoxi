@@ -254,6 +254,9 @@ func (s *Service) claimOpenCodePermission(item map[string]interface{}, sessionID
 		}
 	}
 	if s.policyApproves(judged, directory) {
+		if sandboxCoversOpacity(judged, s.ApprovalPolicy().Mode, directory) {
+			source = approvalSourceSandbox
+		}
 		s.autoReplyOpenCode(id, sessionID, directory, source, userFallback)
 		return true
 	}

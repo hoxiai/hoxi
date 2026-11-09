@@ -64,7 +64,7 @@ func TestIsTransitionalActionPreambleAndShouldRecoverOpenCodeTurn(t *testing.T) 
 		{
 			Info: MessageInfo{ID: "msg_a2", Role: "assistant", ParentID: "msg_u1", Finish: "stop"},
 			Parts: []MessagePart{
-				{ID: "prt_r2", MessageID: "msg_a2", Type: "reasoning", Text: "Let me first test the hypothesis: set bluex pin for store 1 and see if www.shoply.id renders."},
+				{ID: "prt_r2", MessageID: "msg_a2", Type: "reasoning", Text: "Let me first test the hypothesis: set bluex pin for store 1 and see if www.myshopark.com renders."},
 				{ID: "prt_t2", MessageID: "msg_a2", Type: "text", Text: "The migrated pins are all empty. v1.2.4 needs a non-empty release pin to load the release catalog; otherwise it falls back to a missing `themes/` source dir. Let me verify the available release keys and set pins."},
 			},
 		},
@@ -114,7 +114,7 @@ func TestIsTransitionalActionPreambleAndShouldRecoverOpenCodeTurn(t *testing.T) 
 			Info: MessageInfo{ID: "msg_a_done", Role: "assistant", ParentID: "msg_u1", Finish: "stop"},
 			Parts: []MessagePart{
 				{ID: "prt_r_done", MessageID: "msg_a_done", Type: "reasoning", Text: "Everything verified."},
-				{ID: "prt_t_done", MessageID: "msg_a_done", Type: "text", Text: "迁移与 258 张表行数核验已全部完成，www.shoply.id 返回 200。"},
+				{ID: "prt_t_done", MessageID: "msg_a_done", Type: "text", Text: "迁移与 258 张表行数核验已全部完成，myshopark.com 返回 200。"},
 			},
 		},
 	}
@@ -250,7 +250,7 @@ func TestStartOpenCodeTurnAutoRecoversFromMidTaskTransitionalStop(t *testing.T) 
 						Parts: []MessagePart{
 							{
 								ID: "prt_r2", SessionID: "ses_oc_midtask", MessageID: "msg_a2", Type: "reasoning",
-								Text: "Let me first test the hypothesis: set bluex pin for store 1 and see if www.shoply.id renders.",
+								Text: "Let me first test the hypothesis: set bluex pin for store 1 and see if myshopark.com renders.",
 							},
 							{
 								ID: "prt_t2", SessionID: "ses_oc_midtask", MessageID: "msg_a2", Type: "text",
@@ -271,7 +271,7 @@ func TestStartOpenCodeTurnAutoRecoversFromMidTaskTransitionalStop(t *testing.T) 
 							Finish: "stop", Time: MessageTime{Created: 106, Completed: 107},
 						},
 						Parts: []MessagePart{
-							{ID: "prt_t3", SessionID: "ses_oc_midtask", MessageID: "msg_a3", Type: "text", Text: "已设置所有 store 的 theme_release_pin，www.shoply.id 渲染 200，迁移全部完成。"},
+							{ID: "prt_t3", SessionID: "ses_oc_midtask", MessageID: "msg_a3", Type: "text", Text: "已设置所有 store 的 theme_release_pin，myshopark.com 渲染 200，迁移全部完成。"},
 						},
 					},
 				)

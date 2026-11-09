@@ -45,6 +45,9 @@ type NetworkMode string
 const (
 	NetworkAllow NetworkMode = "allow"
 	NetworkDeny  NetworkMode = "deny"
+	// NetworkLocal allows loopback and Unix sockets only. It is used by the
+	// on-demand profile and is not a session setting.
+	NetworkLocal NetworkMode = "local"
 )
 
 type NetworkProfile struct {
@@ -52,6 +55,9 @@ type NetworkProfile struct {
 	// DenySockets are Unix sockets a confined command may not connect to,
 	// even when outbound network access is allowed.
 	DenySockets []PathRule
+	// DenyLoopbackPorts are local TCP ports a confined command may not reach,
+	// such as Hoxi's and OpenCode's control APIs and local internet proxies.
+	DenyLoopbackPorts []int
 }
 
 type Profile struct {
@@ -378,16 +384,8 @@ func runtimeStateDirs() []string {
 		filepath.Join(home, ".qoder"),
 		filepath.Join(home, ".gemini"),
 		filepath.Join(home, ".antigravity"),
-		filepath.Join(home, ".cache"),
-		filepath.Join(home, ".npm"),
-		filepath.Join(home, "go", "pkg"),
-		filepath.Join(home, "Library", "Caches"),
 	}
-	for _, envKey := range []string{"GOCACHE", "GOMODCACHE", "npm_config_cache"} {
-		if v := strings.TrimSpace(os.Getenv(envKey)); v != "" && filepath.IsAbs(v) {
-			candidates = append(candidates, v)
-		}
-	}
+	candidates = append(candidates, buildCacheDirs()...)
 	var dirs []string
 	for _, dir := range candidates {
 		if strings.HasSuffix(dir, ".json") {

@@ -190,6 +190,7 @@ func (s *Service) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc(hookPreToolPath, s.handleHookPreTool)
 	mux.HandleFunc(claudeHookPreToolPath, s.handleClaudeHookPreTool)
 	mux.HandleFunc(geminiHookPreToolPath, s.handleGeminiHookPreTool)
+	mux.HandleFunc(sandboxRoutePath, s.handleSandboxRoute)
 	mux.HandleFunc("/api/hoxi/permission", s.handleUnifiedPermissionRoutes)
 	mux.HandleFunc("/api/hoxi/permission/", s.handleUnifiedPermissionRoutes)
 	mux.HandleFunc("/api/hoxi/question", s.handleUnifiedQuestionRoutes)

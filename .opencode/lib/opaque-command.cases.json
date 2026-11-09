@@ -1380,5 +1380,27 @@
   {
     "command": "git rev-parse v1^{x}",
     "opaque": true
+  },
+  {
+    "command": "sandbox-exec -p '(version 1)(allow default)' /bin/bash -c 'ls'",
+    "opaque": true,
+    "trustedOpaque": true,
+    "autoOpaque": true
+  },
+  {
+    "command": "/usr/bin/sandbox-exec -f /tmp/p.sb -- /bin/bash -c 'for f in $(ls); do wc -l \"$f\"; done'",
+    "opaque": true,
+    "trustedOpaque": true,
+    "autoOpaque": true
+  },
+  {
+    "command": "'/usr/bin/sandbox-exec' -f '/tmp/p.sb' -- /bin/sh -c 'git status'; touch outside",
+    "opaque": true,
+    "trustedOpaque": true,
+    "autoOpaque": true
+  },
+  {
+    "command": "'/usr/bin/sandbox-exec' -f '/tmp/p.sb' -- /bin/sh -c 'git status'",
+    "opaque": false
   }
 ]

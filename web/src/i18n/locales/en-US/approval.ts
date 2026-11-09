@@ -130,6 +130,7 @@ export const approval = {
   sourceGrant: "Session kind grant",
   sourcePolicy: "Approval mode",
   sourceOwnProcess: "Stops own session process",
+  sourceSandbox: "Ran in sandbox",
   decisionOnce: "Allow Once",
   decisionAlways: "Session Always",
   decisionReject: "Rejected",

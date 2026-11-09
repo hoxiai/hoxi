@@ -163,7 +163,8 @@ func approvalAutoApprovesIsolated(item map[string]interface{}, pol ApprovalPolic
 		return allow
 	}
 	// Auto lets read-only inline scripts through, full trust any (see isOpaqueShellCommandWith).
-	if isOpaquePermissionRequestWith(item, worktree, scriptTrustFor(pol.Mode)) {
+	// An opaque command under the on-demand sandbox is contained instead (sandbox_on_demand.go).
+	if isOpaquePermissionRequestWith(item, worktree, scriptTrustFor(pol.Mode)) && !sandboxCoversOpacity(item, pol.Mode, worktree) {
 		return false
 	}
 	if isDestructivePermissionRequest(item) &&
@@ -403,6 +404,7 @@ func sanitizeOpenCodePermissionItem(item map[string]interface{}) bool {
 	if item == nil {
 		return false
 	}
+	recordSandboxProof(item)
 	changed := false
 	for _, key := range []string{"patterns", "pattern", "always", "title"} {
 		if v, exists := item[key]; exists {

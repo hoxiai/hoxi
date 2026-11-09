@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
@@ -474,5 +475,103 @@ test("sandbox plugin", async (t) => {
     await hooks["tool.execute.after"]({ tool: "read" }, readOut);
     assert.equal(readOut.output, 'const a = "涓€";\nconst b = "娴嬭瘯";\n');
     assert.equal(readOut.metadata.output, 'const a = "涓€";\nconst b = "娴嬭瘯";\n');
+  });
+});
+
+// Hoxi's on-demand route, faked: it confines commands with a substitution
+// and leaves the rest alone, and records what the plugin asked.
+async function fakeRoute(t, profile) {
+  const asked = [];
+  const server = http.createServer((req, res) => {
+    let body = "";
+    req.on("data", (chunk) => { body += chunk; });
+    req.on("end", () => {
+      const parsed = JSON.parse(body);
+      asked.push({ path: req.url, ...parsed });
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ profile: parsed.command.includes("$(") ? profile : "" }));
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const previous = process.env.HOXI_GATEWAY_URL;
+  process.env.HOXI_GATEWAY_URL = `http://127.0.0.1:${server.address().port}/`;
+  t.after(() => {
+    server.close();
+    if (previous === undefined) delete process.env.HOXI_GATEWAY_URL;
+    else process.env.HOXI_GATEWAY_URL = previous;
+  });
+  return asked;
+}
+
+test("on-demand sandbox", async (t) => {
+  const previousRoot = process.env.HOXI_SANDBOX_ROOT;
+  process.env.HOXI_SANDBOX_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "hoxi-sandbox-empty-"));
+  t.after(() => {
+    if (previousRoot === undefined) delete process.env.HOXI_SANDBOX_ROOT;
+    else process.env.HOXI_SANDBOX_ROOT = previousRoot;
+  });
+  const profile = "/tmp/hoxi-on-demand-test.sb";
+  const asked = await fakeRoute(t, profile);
+  const hooks = await HoxiSandboxPlugin({ directory: "/work/app" });
+  const run = async (command, callID) => {
+    const output = { args: { command } };
+    await hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_od", callID }, output);
+    return output.args.command;
+  };
+
+  await t.test("wraps a command Hoxi confines and tells it where it runs", async () => {
+    const command = 'for f in $(ls); do wc -l "$f"; done';
+    const final = await run(command, "od1");
+    assert.ok(final.startsWith(`# hoxi-stop:ses_od:od1\n`));
+    assert.ok(final.includes(`'/usr/bin/sandbox-exec' -f '${profile}' -- /bin/sh -c `));
+    const last = asked.at(-1);
+    assert.deepEqual(last, { path: "/api/hoxi/runner/sandbox/route", sessionID: "ses_od", directory: "/work/app", command });
+  });
+
+  await t.test("leaves a command Hoxi does not confine as it is", async () => {
+    const final = await run("git status", "od2");
+    assert.ok(!final.includes("sandbox-exec"));
+    assert.ok(final.endsWith("\ngit status"));
+  });
+
+  await t.test("never asks for a command the model marked unsandboxed", async () => {
+    const before = asked.length;
+    const command = "# hoxi:unsandboxed\nfor h in $(cat hosts); do ssh $h uptime; done";
+    const final = await run(command, "od3");
+    assert.equal(asked.length, before);
+    assert.ok(!final.includes("sandbox-exec"));
+    assert.ok(final.endsWith(command));
+  });
+
+  await t.test("explains a sandbox denial only for wrapped calls", async () => {
+    const denied = { output: "touch: ../x: Operation not permitted\n" };
+    await hooks["tool.execute.after"]({ tool: "bash", callID: "od1" }, denied);
+    assert.ok(denied.output.includes("# hoxi:unsandboxed"));
+    const again = { output: "touch: ../x: Operation not permitted\n" };
+    await hooks["tool.execute.after"]({ tool: "bash", callID: "od1" }, again);
+    assert.ok(!again.output.includes("[Hoxi]"), "the note is added once per call");
+    const plain = { output: "touch: ../x: Operation not permitted\n" };
+    await hooks["tool.execute.after"]({ tool: "bash", callID: "od2" }, plain);
+    assert.ok(!plain.output.includes("[Hoxi]"));
+    await run('for f in $(ls src); do wc -l "$f"; done', "od4");
+    const fine = { output: "3 a.txt\n" };
+    await hooks["tool.execute.after"]({ tool: "bash", callID: "od4" }, fine);
+    assert.equal(fine.output, "3 a.txt\n");
+  });
+
+  await t.test("runs unwrapped when Hoxi cannot be reached", async () => {
+    process.env.HOXI_GATEWAY_URL = "http://127.0.0.1:1/";
+    const final = await run('for f in $(ls docs); do wc -l "$f"; done', "od5");
+    assert.ok(!final.includes("sandbox-exec"));
+  });
+
+  await t.test("a session sandbox takes precedence and needs no route", async () => {
+    const before = asked.length;
+    const { profilePath } = fixture("allow");
+    const sessionHooks = await HoxiSandboxPlugin({ directory: "/work/app" });
+    const output = { args: { command: 'for f in $(ls); do wc -l "$f"; done' } };
+    await sessionHooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_sandbox", callID: "od6" }, output);
+    assert.ok(output.args.command.includes(profilePath));
+    assert.equal(asked.length, before);
   });
 });

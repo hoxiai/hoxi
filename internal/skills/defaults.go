@@ -18,8 +18,8 @@ var defaultSkillFiles embed.FS
 
 // legacyBundledSkillSlugs lists retired bundled skill directories that were
 // renamed in a newer release and should be cleaned up if unmodified.
-// shoply-ops is the Work extension skill renamed to shopark-ops.
-var legacyBundledSkillSlugs = []string{"hoxi-tools", "shoply-ops"}
+// shopark-ops is the Work extension skill renamed to shopark-ops.
+var legacyBundledSkillSlugs = []string{"hoxi-tools", "shopark-ops"}
 
 var (
 	frontmatterAuthorRe  = regexp.MustCompile(`(?m)^\s*author:\s*["']?([^"'\r\n]+)["']?\s*$`)

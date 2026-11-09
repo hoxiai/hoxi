@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -50,6 +52,21 @@ func TestBrowserOverlay(t *testing.T) {
 	data, err := os.ReadFile(u.Path)
 	if err != nil || !bytes.Equal(data, browserPlugin) {
 		t.Fatalf("embedded asset mismatch: %v", err)
+	}
+	// The sandbox plugin imports these by relative path; they sit next to it
+	// and are not registered as plugins (the count above stays 4).
+	for _, name := range []string{"sandbox_route.mjs", "windows_utf8.mjs"} {
+		want, _ := sandboxPluginModules.ReadFile(name)
+		got, err := os.ReadFile(filepath.Join(filepath.Dir(u.Path), name))
+		if err != nil || len(want) == 0 || !bytes.Equal(got, want) {
+			t.Fatalf("sandbox plugin module %s was not written next to the plugin: %v", name, err)
+		}
+	}
+	if node, err := exec.LookPath("node"); err == nil {
+		script := "import(" + strconv.Quote(fileURL(filepath.Join(filepath.Dir(u.Path), "sandbox-plugin.mjs"))) + ").then(m => process.exit(typeof m.default === 'function' ? 0 : 1))"
+		if out, err := exec.Command(node, "--input-type=module", "-e", script).CombinedOutput(); err != nil {
+			t.Fatalf("the deployed sandbox plugin does not load: %v\n%s", err, out)
+		}
 	}
 	for path, mode := range map[string]os.FileMode{u.Path: 0600, filepath.Dir(u.Path): 0700} {
 		info, err := os.Stat(path)

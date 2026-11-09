@@ -210,6 +210,11 @@ func ProfileText(profile Profile) (string, error) {
 		network = "; sandbox network mode: deny\n" +
 			`(deny network-outbound (with message "Hoxi sandbox denied outbound network access"))` + "\n" +
 			"(allow network-inbound)"
+	case NetworkLocal:
+		network = "; sandbox network mode: local\n" +
+			`(deny network-outbound (with message "Hoxi sandbox allows only local network access"))` + "\n" +
+			`(allow network-outbound (remote ip "localhost:*"))` + "\n" +
+			"(allow network-outbound (remote unix-socket))\n(allow network-inbound)"
 	default:
 		return "", fmt.Errorf("unsupported sandbox network mode: %s", mode)
 	}
@@ -226,6 +231,18 @@ func ProfileText(profile Profile) (string, error) {
 		network += "\n; credential agent sockets stay unreachable\n" +
 			`(deny network-outbound (with message "Hoxi sandbox denied a credential agent socket") (require-any ` +
 			strings.Join(sockets, " ") + "))"
+	}
+	if len(profile.Network.DenyLoopbackPorts) > 0 {
+		var ports []string
+		for _, port := range profile.Network.DenyLoopbackPorts {
+			if port <= 0 || port > 65535 {
+				return "", fmt.Errorf("invalid sandbox loopback port: %d", port)
+			}
+			ports = append(ports, fmt.Sprintf(`(remote ip "localhost:%d")`, port))
+		}
+		network += "\n; Hoxi and OpenCode control ports and local proxies stay unreachable\n" +
+			`(deny network-outbound (with message "Hoxi sandbox denied a local control or proxy port") (require-any ` +
+			strings.Join(ports, " ") + "))"
 	}
 	return strings.Join([]string{
 		seatbeltBase,

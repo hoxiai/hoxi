@@ -32,7 +32,7 @@ type dataToken struct {
 // `echo ... > x; sh x`), so masking is skipped.
 var dataArgInterpreters = setOf("sh", "bash", "zsh", "dash", "ksh", "fish", "eval", "exec", "source", ".",
 	"xargs", "env", "sudo", "su", "doas", "nohup", "time", "command", "builtin", "ssh", "parallel",
-	"watch", "osascript")
+	"watch", "osascript", "sandbox-exec")
 
 // dataScriptInterpreters can execute text they are fed (awk system(), GNU
 // sed `e`, python/node stdin). They only block masking when echo/printf text

@@ -286,7 +286,7 @@ func trailingSentence(s string) string {
 			}
 		case '.', '!', '?', ';':
 			// Require whitespace after ASCII punctuation so version numbers,
-			// domains, and filenames (v1.2.4, www.shoply.id, package.json) do not split.
+			// domains, and filenames (v1.2.4, myshopark.com, package.json) do not split.
 			if i+width < len(s) && (s[i+width] == ' ' || s[i+width] == '\t') {
 				if rest := strings.TrimSpace(s[i+width:]); rest != "" {
 					lastCut = i + width

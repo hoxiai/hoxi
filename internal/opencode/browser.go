@@ -1,7 +1,7 @@
 package opencode
 
 import (
-	_ "embed"
+	"embed"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -18,6 +18,12 @@ var browserPlugin []byte
 
 //go:embed sandbox_plugin.mjs
 var sandboxPlugin []byte
+
+// sandboxPluginModules are imported by sandbox_plugin.mjs by relative path,
+// so they are written next to it under the same names. They are not plugins.
+//
+//go:embed sandbox_route.mjs windows_utf8.mjs
+var sandboxPluginModules embed.FS
 
 // PrepareBrowserPlugin creates a private, process-lifetime config overlay that
 // carries the browser plugin, Hoxi's built-in agent modes and this process's
@@ -70,6 +76,16 @@ func PrepareBrowserPlugin(baseURL, token string, ledger *reclaim.Ledger) (env []
 	sandboxPath := filepath.Join(dir, "sandbox-plugin.mjs")
 	if err = os.WriteFile(sandboxPath, sandboxPlugin, 0600); err != nil {
 		return nil, cleanup, fmt.Errorf("write sandbox plugin: %w", err)
+	}
+	for _, name := range []string{"sandbox_route.mjs", "windows_utf8.mjs"} {
+		data, readErr := sandboxPluginModules.ReadFile(name)
+		if readErr != nil {
+			err = readErr
+			return nil, cleanup, fmt.Errorf("read sandbox plugin module: %w", err)
+		}
+		if err = os.WriteFile(filepath.Join(dir, name), data, 0600); err != nil {
+			return nil, cleanup, fmt.Errorf("write sandbox plugin module: %w", err)
+		}
 	}
 	sandboxURL := fileURL(sandboxPath)
 	sandboxEntry, _ := json.Marshal(sandboxURL)

@@ -32,7 +32,7 @@ func TestCollectHQMatrixSummaryParsesDashboardAndOpsPulse(t *testing.T) {
 		"> **巡检时间**：`2026-11-08 14:05:00`\n\n" +
 		"## 1. 🌐 核心生产站点与 API 实时探活\n" +
 		"| ✅ **Hoxi 官网** | `https://hoxi.ai/` | `HTTP 200` | `0.12s` |\n" +
-		"| 🚨 **轻铺 AI 官网** | `https://qingpu.ai/` | `HTTP 502` | `1.02s` |\n"
+		"| 🚨 **轻铺AI 官网** | `https://qingpu.ai/` | `HTTP 502` | `1.02s` |\n"
 	if err := os.WriteFile(filepath.Join(ws, "OPS_PULSE.md"), []byte(ops), 0o644); err != nil {
 		t.Fatal(err)
 	}

@@ -13,7 +13,7 @@ const setOf = (...items) => new Set(items);
 // Run their arguments or input as shell commands: masking is skipped anywhere.
 export const DATA_ARG_INTERPRETERS = setOf("sh", "bash", "zsh", "dash", "ksh", "fish", "eval", "exec", "source", ".",
   "xargs", "env", "sudo", "su", "doas", "nohup", "time", "command", "builtin", "ssh", "parallel",
-  "watch", "osascript");
+  "watch", "osascript", "sandbox-exec");
 // Can execute text they are fed; only block masking when echo/printf text
 // reaches them through a pipe or a written file.
 const DATA_SCRIPT_INTERPRETERS = setOf("python", "python3", "node", "perl", "ruby", "php", "awk", "sed");

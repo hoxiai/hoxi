@@ -77,6 +77,8 @@ function sourceLabel(source: string): string {
       return t("approval.sourcePolicy");
     case "own_process":
       return t("approval.sourceOwnProcess");
+    case "sandbox":
+      return t("approval.sourceSandbox");
     case "grant":
       return t("approval.sourceGrant");
     default:
