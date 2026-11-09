@@ -113,6 +113,7 @@ func TestOpaqueCommandsMatchSharedFixture(t *testing.T) {
 		Worktree      string `json:"worktree"`
 		Opaque        bool   `json:"opaque"`
 		TrustedOpaque *bool  `json:"trustedOpaque"`
+		AutoOpaque    *bool  `json:"autoOpaque"`
 	}
 	if err := json.Unmarshal(raw, &cases); err != nil {
 		t.Fatalf("parse shared fixture: %v", err)
@@ -128,8 +129,15 @@ func TestOpaqueCommandsMatchSharedFixture(t *testing.T) {
 		if c.TrustedOpaque != nil {
 			want = *c.TrustedOpaque
 		}
-		if got := isOpaqueShellCommandWith(c.Command, c.Worktree, true); got != want {
+		if got := isOpaqueShellCommandWith(c.Command, c.Worktree, scriptTrustFull); got != want {
 			t.Errorf("trusted opaque(%q) = %v, want %v", c.Command, got, want)
+		}
+		want = c.Opaque
+		if c.AutoOpaque != nil {
+			want = *c.AutoOpaque
+		}
+		if got := isOpaqueShellCommandWith(c.Command, c.Worktree, scriptTrustReadOnly); got != want {
+			t.Errorf("auto opaque(%q) = %v, want %v", c.Command, got, want)
 		}
 	}
 }

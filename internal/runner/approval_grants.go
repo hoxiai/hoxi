@@ -47,7 +47,7 @@ func sessionGrantRefusal(command string) string {
 	switch {
 	case isDestructiveCommand(trimmed):
 		return sessionGrantRefusedDestructive
-	case isOpaqueShellCommandWith(trimmed, "", true):
+	case isOpaqueShellCommandWith(trimmed, "", scriptTrustFull):
 		return sessionGrantRefusedOpaque
 	}
 	return ""

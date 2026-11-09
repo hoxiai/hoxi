@@ -10,6 +10,8 @@ export const MAX_SUBSHELL_DEPTH = 2;
 const SHELL_VAR_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const PIPESTATUS_SUBSCRIPT_RE = /^(?:pipestatus|PIPESTATUS)\[\d+\]$/;
 const GIT_AT_BRACE_RE = /^[A-Za-z0-9_]+$/;
+const GIT_PEEL_BRACE_RE = /^(?:commit|tree|blob|tag|object)$/;
+const PATH_PREPEND_EXPORT_RE = /^export[ \t]+PATH=("?)([A-Za-z0-9_./:$~{}-]+)("?)$/;
 const FILTER_FLAG_PREFIX_RE = /^--(?:exclude-dir|exclude|include)=$/;
 const BRACE_FILTER_ITEM_RE = /^[A-Za-z0-9_.*-]+$/;
 const PARAM_SENSITIVE = new Set(["git", "find", "rm", "rmdir", "unlink", "curl", "wget", "cp", "mv"]);
@@ -33,6 +35,7 @@ export function skipSafeBraceSpan(s, i) {
   const body = s.slice(i + 1, end);
   if (s[i - 1] === "$") return braceVarName(body) ? end : -1;
   if (s[i - 1] === "@" && GIT_AT_BRACE_RE.test(body)) return end;
+  if (s[i - 1] === "^" && GIT_PEEL_BRACE_RE.test(body)) return end; // `v1^{commit}` peels a git ref
   return isFilterFlagBraceList(s, i, end) ? end : -1;
 }
 
@@ -431,6 +434,11 @@ function indexInside(i, ranges) {
   return ranges.some(([start, end]) => i >= start && i < end);
 }
 
+function isPathPrependExport(text) {
+  const m = PATH_PREPEND_EXPORT_RE.exec(text);
+  return Boolean(m) && m[1] === m[3] && !m[2].replaceAll("${PATH}", "").replaceAll("$PATH", "").includes("$");
+}
+
 function constBindings(command, segs) {
   const bound = new Map();
   const poisoned = new Set();
@@ -446,6 +454,7 @@ function constBindings(command, segs) {
   const usedBefore = new Set();
   for (const seg of segs) {
     const text = command.slice(seg.start, seg.end).trim();
+    if (isPathPrependExport(text)) continue; // PATH stays unbound (constBindings in opaque_constants.go)
     const insideLoop = indexInside(seg.start, loops) || indexInside(seg.start, subshells);
     const names = shellExpansionNames(text) || [];
     for (const name of names) if (!bound.has(name)) usedBefore.add(name);

@@ -51,6 +51,9 @@ type unattendedCtx struct {
 	credRef bool // references a credential-named variable
 	envDump bool // prints the whole environment
 	network bool // runs a tool that can send data off the machine
+	// codeJudge, when set, replaces the inline-code judge (auto mode's
+	// read-only check in inline_script_readonly.go).
+	codeJudge func(family, code string) string
 }
 
 // unattendedDynamicCategory classifies a command the static rules passed:
@@ -490,8 +493,11 @@ func pythonModuleCategory(seg *uSeg, mod uWord, rest []uWord, options []string, 
 // unattendedInterpreterCategory judges an interpreter. Inline code passes
 // only when it is literal and shows none of unattendedScriptCapabilityRe; a
 // program piped in or built from an expansion is refused.
-func unattendedInterpreterCategory(seg *uSeg, family string, args []uWord, _ *unattendedCtx) string {
+func unattendedInterpreterCategory(seg *uSeg, family string, args []uWord, ctx *unattendedCtx) string {
 	judge := func(code string) string {
+		if ctx != nil && ctx.codeJudge != nil {
+			return ctx.codeJudge(family, code)
+		}
 		if unattendedScriptCapabilityRe.MatchString(code) {
 			return unattendedCategoryDynamic
 		}

@@ -50,6 +50,7 @@ import {
   unwrapCommandPrefixes,
   wordExpansionNames,
 } from "./shell-constants.js";
+import { inlineScriptsReadOnly } from "./inline-script-readonly.js";
 import {
   SEQ_LOOP_PLACEHOLDER,
   gitReadOnlyLoopExpansions,
@@ -291,7 +292,15 @@ function hasInlineScriptFlag(base, args) {
   return false;
 }
 
+// options.allowInlineScripts is full trust's relaxation; options.readOnlyInlineScripts
+// is auto's: inline Python/Node code passes only when inlineScriptsReadOnly finds
+// it can just read and print (isOpaqueShellCommandWith in opaque_command.go).
 export function isOpaqueShellCommand(command, worktree = "", options = {}) {
+  if (options.readOnlyInlineScripts && !options.allowInlineScripts) {
+    if (!isOpaqueShellCommandDepth(command, worktree, {}, 0)) return false;
+    if (!inlineScriptsReadOnly(unwrapSandboxCommand(String(command ?? "")))) return true;
+    return isOpaqueShellCommandDepth(command, worktree, { inlineOnly: true }, 0);
+  }
   if (isOpaqueShellCommandDepth(command, worktree, options, 0)) return true;
   // Only a command the relaxation cleared is reined back, so full trust is
   // never stricter than auto (`bash -n x.sh` after writing x.sh stays clear).
@@ -319,7 +328,7 @@ function runsScriptNamedElsewhere(command) {
 function isOpaqueShellCommandDepth(command, worktree, options, depth) {
   const raw = String(command ?? "");
   if (depth > MAX_SUBSHELL_DEPTH || raw.includes(CMD_SUBST_VAR) || raw.includes(SEQ_LOOP_PLACEHOLDER)) return true;
-  const allowInlineScripts = Boolean(options.allowInlineScripts);
+  const trust = options.allowInlineScripts ? "full" : options.inlineOnly ? "readonly" : "none";
   const trimmed = unwrapSandboxCommand(command).trim();
   if (!trimmed) return true;
   let joined = joinLineContinuations(trimmed);
@@ -333,7 +342,7 @@ function isOpaqueShellCommandDepth(command, worktree, options, depth) {
   if (!spans) return true;
   if (spans.every(([start, end]) => !isOpaqueShellCommandDepth(joined.slice(start + 1, end), worktree, options, depth + 1))) {
     const erased = eraseSubshells(joined);
-    if (!opaqueShellCore(erased, worktree, allowInlineScripts, commandSubsAreValueClass(erased))) return false;
+    if (!opaqueShellCore(erased, worktree, trust, commandSubsAreValueClass(erased))) return false;
   }
   const expanded = concretizeLiterals(joined);
   if (expanded.status === "secret" || expanded.status === "reject") return true;
@@ -343,12 +352,12 @@ function isOpaqueShellCommandDepth(command, worktree, options, depth) {
       return true;
     }
     const erased = eraseSubshells(expanded.text);
-    return opaqueShellCore(erased, worktree, allowInlineScripts, commandSubsAreValueClass(erased));
+    return opaqueShellCore(erased, worktree, trust, commandSubsAreValueClass(erased));
   }
   return true;
 }
 
-function opaqueShellCore(command, worktree, allowInlineScripts, valueClass) {
+function opaqueShellCore(command, worktree, trust, valueClass) {
   command = String(command ?? "").trim();
   if (!command) return true;
   const unwrapped = extractProcessSubstitutions(command);
@@ -407,13 +416,13 @@ function opaqueShellCore(command, worktree, allowInlineScripts, valueClass) {
       DATA_ARG_INTERPRETERS.has(base) &&
       !(base === "xargs" && isSafeXargsSegment(args, i > 0 && pipedIn[i], prevSeg, { stripNullRedirects, normalizeAbsoluteTool, isSafeListingPipeline })) &&
       !(base === "ssh" && args.length === 1 && args[0] === "Q") &&
-      !isSafeShellScriptSegment(base, args, i > 0 && pipedIn[i], { stripNullRedirects, isSecretPath, isSensitiveExternalPath, isProtectedPath, allowFileScripts: allowInlineScripts })
+      !isSafeShellScriptSegment(base, args, i > 0 && pipedIn[i], { stripNullRedirects, isSecretPath, isSensitiveExternalPath, isProtectedPath, allowFileScripts: trust === "full" })
     ) {
       return true;
     }
     if (awkProgramExecutes(base, args)) return true;
     const family = inlineScriptTool(base);
-    if (family && !allowInlineScripts && (pipedIn[i] || hasInlineScriptFlag(family, args))) {
+    if (family && trust === "none" && (pipedIn[i] || hasInlineScriptFlag(family, args))) {
       return true;
     }
   }
@@ -439,7 +448,8 @@ export function isOpaquePermissionRequest(input, options) {
   if (!isBash) return false;
   if (candidates.length === 0) return true;
   const allowInlineScripts = Boolean(options?.allowInlineScripts);
-  return candidates.some((cmd) => isOpaqueShellCommand(cmd, worktree, { allowInlineScripts }));
+  const readOnlyInlineScripts = Boolean(options?.readOnlyInlineScripts);
+  return candidates.some((cmd) => isOpaqueShellCommand(cmd, worktree, { allowInlineScripts, readOnlyInlineScripts }));
 }
 
 /**
@@ -720,7 +730,7 @@ function expansionsAreBounded(seg, words, vars, valueClass = false) {
 }
 
 setLiteralJudge({
-  opaqueCore: (inner) => opaqueShellCore(inner, "", false, false),
+  opaqueCore: (inner) => opaqueShellCore(inner, "", "none", false),
   isSecret: (p) => isSecretPath(p) || isSensitiveExternalPath(p),
   isProtected: isProtectedShellReadPath,
   normalizeAbsoluteTool,

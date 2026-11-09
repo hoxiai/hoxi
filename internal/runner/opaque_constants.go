@@ -2,6 +2,7 @@ package runner
 
 import (
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -182,6 +183,19 @@ func concretizeLiterals(command string) (string, int) {
 	return rewritten, constApplied
 }
 
+var pathPrependExportRe = regexp.MustCompile(`^export[ \t]+PATH=("?)([A-Za-z0-9_./:$~{}-]+)("?)$`)
+
+// isPathPrependExport is isBenignPathExport that also accepts the value in
+// double quotes (`export PATH="/usr/local/go/bin:$PATH"`).
+func isPathPrependExport(text string) bool {
+	m := pathPrependExportRe.FindStringSubmatch(text)
+	if m == nil || m[1] != m[3] {
+		return false
+	}
+	rest := strings.ReplaceAll(strings.ReplaceAll(m[2], "${PATH}", ""), "$PATH", "")
+	return !strings.Contains(rest, "$")
+}
+
 func containsFor(s string) bool {
 	var quote byte
 	for i := 0; i < len(s); i++ {
@@ -310,6 +324,11 @@ func constBindings(command string, segs []constSeg) (map[string]constVal, map[st
 	usedBefore := map[string]bool{}
 	for _, seg := range segs {
 		text := strings.TrimSpace(seg.text(command))
+		if isPathPrependExport(text) {
+			// PATH stays unbound: its own judge clears the export, and binding
+			// or poisoning it would drop every other constant in the command.
+			continue
+		}
 		insideLoop := indexInside(seg.start, loops) || indexInside(seg.start, subshells)
 		names := expansionNamesOf(text)
 		for _, name := range names {
@@ -477,7 +496,7 @@ func parseConstValue(raw string) (constVal, bool) {
 	}
 	if strings.HasPrefix(raw, "$(") && strings.HasSuffix(raw, ")") && processSubstitutionEnd(raw, 2) == len(raw)-1 {
 		inner := raw[2 : len(raw)-1]
-		if !isValueClassSegment(inner) || opaqueShellCore(inner, "", false, false) {
+		if !isValueClassSegment(inner) || opaqueShellCore(inner, "", scriptTrustNone, false) {
 			return constVal{}, false
 		}
 		return constVal{valueSub: true, inner: inner}, true

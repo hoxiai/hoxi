@@ -51,6 +51,7 @@ var (
 	shellVarNameRe        = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 	pipestatusSubscriptRe = regexp.MustCompile(`^(?:pipestatus|PIPESTATUS)\[\d+\]$`)
 	gitAtBraceRe          = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
+	gitPeelBraceRe        = regexp.MustCompile(`^(?:commit|tree|blob|tag|object)$`)
 	filterFlagPrefixRe    = regexp.MustCompile(`^--(?:exclude-dir|exclude|include)=$`)
 	braceFilterItemRe     = regexp.MustCompile(`^[A-Za-z0-9_.*-]+$`)
 	extGlobRe             = regexp.MustCompile(`^\*\.[A-Za-z0-9]+$`)
@@ -614,6 +615,10 @@ func skipSafeBraceSpan(s string, i int) (int, bool) {
 		return i + 1 + end, ok
 	}
 	if s[i-1] == '@' && gitAtBraceRe.MatchString(body) {
+		return i + 1 + end, true
+	}
+	// `v1.2^{commit}` peels a git ref; a brace without a comma never expands.
+	if s[i-1] == '^' && gitPeelBraceRe.MatchString(body) {
 		return i + 1 + end, true
 	}
 	if isFilterFlagBraceList(s, i, i+1+end) {

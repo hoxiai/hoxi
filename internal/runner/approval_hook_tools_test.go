@@ -115,7 +115,7 @@ func TestSessionGrantSticksOnlyWhenTheGateKeepsIt(t *testing.T) {
 			t.Fatalf("%q answered %s decided %q", cmd, reply, d)
 		}
 	}
-	kept := "python3 -c 'print(1)'"
+	kept := "python3 -c 'import os; os.mkdir(0)'"
 	askAndAnswer(kept, "always")
 	if d := f.decide(t, f.payload("Bash", kept, "", "cc-uuid-1")); d != "allow|" {
 		t.Fatalf("granted command asked again: %q", d)
@@ -172,7 +172,7 @@ func TestOpenCodeAlwaysOnlyForCommandsTheGateWouldGrant(t *testing.T) {
 		{`bash -c "$X"`, "once"},
 		{"env | grep -i token", "once"},
 		{"rm -rf dist", "once"},
-		{"python3 -c 'print(1)'", "always"},
+		{"python3 -c 'import os; os.mkdir(0)'", "always"},
 	} {
 		id := "per_oc_always" + string(rune('a'+i))
 		event, _ := json.Marshal(map[string]interface{}{"type": "permission.asked", "properties": map[string]interface{}{

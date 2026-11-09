@@ -163,8 +163,8 @@ func approvalAutoApprovesIsolated(item map[string]interface{}, pol ApprovalPolic
 		allow, _ := unattendedDecision(item, worktree)
 		return allow
 	}
-	// Full trust also lets interpreter scripts through (see isOpaqueShellCommandWith).
-	if isOpaquePermissionRequestWith(item, worktree, pol.Mode == ApprovalModeTrusted || pol.Mode == ApprovalModeUnattended) {
+	// Auto lets read-only inline scripts through, full trust any (see isOpaqueShellCommandWith).
+	if isOpaquePermissionRequestWith(item, worktree, scriptTrustFor(pol.Mode)) {
 		return false
 	}
 	if isDestructivePermissionRequest(item) &&
@@ -583,7 +583,7 @@ func readTargets(item map[string]interface{}) []string {
 	return out
 }
 
-func isOpaquePermissionRequestWith(item map[string]interface{}, worktree string, allowInlineScripts bool) bool {
+func isOpaquePermissionRequestWith(item map[string]interface{}, worktree string, trust scriptTrust) bool {
 	req := parsePermissionRequest(item)
 	if req.permission == "external_directory" {
 		return false
@@ -598,7 +598,7 @@ func isOpaquePermissionRequestWith(item map[string]interface{}, worktree string,
 		return true
 	}
 	for _, cmd := range candidates {
-		if isOpaqueShellCommandWith(cmd, worktree, allowInlineScripts) {
+		if isOpaqueShellCommandWith(cmd, worktree, trust) {
 			return true
 		}
 	}

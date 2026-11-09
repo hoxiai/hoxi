@@ -23,7 +23,7 @@ const secretRe = new RegExp(/(?:^|[\s'"=(<>:,])(?:~|\$HOME|\$\{HOME\})\/(?:\.ssh
 const wrappedRe = /(?:bash|sh|zsh|eval|xargs)\b[^|&;\n]*\b(?:git\s+push|sudo|publish)\b/i;
 
 // Kept byte-identical with unattendedScriptCapabilityRe in Go.
-const SCRIPT_CAPABILITY_RE = /\b(?:subprocess|system|popen\w*|spawn\w*|exec\w*|fork\w*|pty|commands|shell_exec|passthru|proc_open|open3|ctypes|cffi|dlopen|eval|compile|importlib|getattr|vars|globals|pickle|marshal|environ|getenv|putenv|ENV|socket|urllib\d?|requests|httpx|aiohttp|http|https|smtplib|ftplib|telnetlib|paramiko|net|tls|dgram|undici|fetch|XMLHttpRequest|WebSocket|LWP|URI|ObjC|NSTask|Function)\b|__\w+__|child_process|worker_threads|process\s*\.\s*(?:env|binding|dlopen|mainModule)|sys\s*\.\s*modules|\brequire\s*\(\s*[^'"\s)]|\bimport\s*\(|Deno\s*\.\s*(?:run|Command|env)|Bun\s*\.\s*(?:spawn|env|\$)|Net::|HTTP::|IO::Socket|%x|\bqx\b|[Dd]o\s+[Ss]hell\s+[Ss]cript|`/;
+export const SCRIPT_CAPABILITY_RE = /\b(?:subprocess|system|popen\w*|spawn\w*|exec\w*|fork\w*|pty|commands|shell_exec|passthru|proc_open|open3|ctypes|cffi|dlopen|eval|compile|importlib|getattr|vars|globals|pickle|marshal|environ|getenv|putenv|ENV|socket|urllib\d?|requests|httpx|aiohttp|http|https|smtplib|ftplib|telnetlib|paramiko|net|tls|dgram|undici|fetch|XMLHttpRequest|WebSocket|LWP|URI|ObjC|NSTask|Function)\b|__\w+__|child_process|worker_threads|process\s*\.\s*(?:env|binding|dlopen|mainModule)|sys\s*\.\s*modules|\brequire\s*\(\s*[^'"\s)]|\bimport\s*\(|Deno\s*\.\s*(?:run|Command|env)|Bun\s*\.\s*(?:spawn|env|\$)|Net::|HTTP::|IO::Socket|%x|\bqx\b|[Dd]o\s+[Ss]hell\s+[Ss]cript|`/;
 const GIT_EXEC_CONFIG_RE = /^(?:alias\.|core\.(?:pager|editor|sshcommand|fsmonitor|hookspath|askpass)|sequence\.editor|diff\.external|credential\.|gpg\.|uploadpack\.|receivepack\.|[^=]*\.(?:command|cmd|textconv|process|program|helper|clean|smudge)=)/i;
 const ASSIGN_RE = /^[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?\+?=/;
 const MAX_DEPTH = 4;
@@ -90,7 +90,7 @@ function unattendedCommandCategory(command) {
   return "";
 }
 
-function scanUnattendedText(text) {
+export function scanUnattendedText(text) {
   if (publishRe.test(text) || wrappedRe.test(text)) return "publish";
   if (sudoRe.test(text)) return "privilege";
   if (egressRe.test(text)) return "egress";
@@ -103,6 +103,13 @@ export function unattendedDynamicCategory(command) {
   const cat = scriptCategory(String(command ?? ""), 0, ctx);
   if (cat) return cat;
   return (ctx.credRef || ctx.envDump) && ctx.network ? "egress" : "";
+}
+
+// Mirrors unattendedScriptCategory with a codeJudge in the Go context:
+// codeJudge(family, code) replaces the inline-code judge (auto mode's
+// read-only check in inline-script-readonly.js).
+export function unattendedScriptCategoryWith(command, codeJudge) {
+  return scriptCategory(String(command ?? ""), 0, { credRef: false, envDump: false, network: false, codeJudge });
 }
 
 function scriptCategory(text, depth, ctx) {
@@ -171,7 +178,7 @@ function argvWordsCategory(seg, words, depth, ctx) {
   if (base === "find") return findCategory(args, depth, ctx);
   if (base === "watch") return watchCategory(args, depth, ctx);
   const family = interpreterFamily(base);
-  if (family) return interpreterCategory(seg, family, args);
+  if (family) return interpreterCategory(seg, family, args, ctx);
   if (SENSITIVE_TOOLS.has(base)) return toolCategory(base, args, depth, ctx);
   return "";
 }
@@ -399,8 +406,9 @@ function pythonModuleCategory(seg, mod, rest, options, judge) {
   return "";
 }
 
-function interpreterCategory(seg, family, args) {
-  const judge = (code) => (SCRIPT_CAPABILITY_RE.test(code) ? "dynamic" : scanUnattendedText(code));
+function interpreterCategory(seg, family, args, ctx) {
+  const judge = (code) =>
+    ctx?.codeJudge ? ctx.codeJudge(family, code) : SCRIPT_CAPABILITY_RE.test(code) ? "dynamic" : scanUnattendedText(code);
   const options = [];
   let hasCode = false;
   for (let i = 0; i < args.length; i++) {

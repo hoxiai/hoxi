@@ -13,25 +13,35 @@ import (
 // must ask the user in every approval mode (including auto and trusted).
 // Mirrors isOpaqueShellCommand in .opencode/lib/opaque-command.js.
 func isOpaqueShellCommand(command, worktree string) bool {
-	return isOpaqueShellCommandWith(command, worktree, false)
+	return isOpaqueShellCommandWith(command, worktree, scriptTrustNone)
 }
 
-// isOpaqueShellCommandWith is isOpaqueShellCommand with full trust's
-// relaxation: allowInlineScripts lets interpreter scripts through (`python3 -
-// <<'EOF'`, `python3 -c`, `node -e`), matching `python3 script.py`, which was
-// never opaque, and lets a shell run a script file already on disk
-// (`bash build.sh`), matching `./build.sh`. Shell code (`sh -c`, `bash <<EOF`,
-// a pipe into a shell, `eval`, `xargs`), awk programs, heredocs whose body
-// still expands, attachments, and a script the same command also names (so it
-// may have just been written or downloaded) stay opaque.
-func isOpaqueShellCommandWith(command, worktree string, allowInlineScripts bool) bool {
-	if isOpaqueShellCommandDepth(command, worktree, allowInlineScripts, 0) {
+// isOpaqueShellCommandWith is isOpaqueShellCommand with an approval mode's
+// script relaxation. scriptTrustFull (full trust, unattended) lets
+// interpreter scripts through (`python3 - <<'EOF'`, `python3 -c`, `node -e`),
+// matching `python3 script.py`, which was never opaque, and lets a shell run a
+// script file already on disk (`bash build.sh`), matching `./build.sh`. Shell
+// code (`sh -c`, `bash <<EOF`, a pipe into a shell, `eval`, `xargs`), awk
+// programs, heredocs whose body still expands, attachments, and a script the
+// same command also names (so it may have just been written or downloaded)
+// stay opaque. scriptTrustReadOnly (auto) lets inline Python/Node code through
+// only when inlineScriptsReadOnly finds it can just read and print.
+func isOpaqueShellCommandWith(command, worktree string, trust scriptTrust) bool {
+	if trust == scriptTrustReadOnly {
+		if !isOpaqueShellCommandDepth(command, worktree, scriptTrustNone, 0) {
+			return false
+		}
+		if !inlineScriptsReadOnly(unwrapSandboxCommand(command)) {
+			return true
+		}
+	}
+	if isOpaqueShellCommandDepth(command, worktree, trust, 0) {
 		return true
 	}
 	// Only a command the relaxation cleared is reined back, so full trust is
 	// never stricter than auto (`bash -n x.sh` after writing x.sh stays clear).
-	return allowInlineScripts && runsScriptNamedElsewhere(unwrapSandboxCommand(command)) &&
-		isOpaqueShellCommandDepth(command, worktree, false, 0)
+	return trust == scriptTrustFull && runsScriptNamedElsewhere(unwrapSandboxCommand(command)) &&
+		isOpaqueShellCommandDepth(command, worktree, scriptTrustNone, 0)
 }
 
 // shellScriptRunRe finds `sh|bash|zsh [flags] <file>.sh` anywhere in a command,
@@ -55,7 +65,7 @@ func runsScriptNamedElsewhere(command string) bool {
 // When the command is still opaque, literal assignments and literal for-loops
 // are substituted and the expanded text is judged again. A secret substitution
 // stays opaque; the destructive scanner still sees that expanded text.
-func isOpaqueShellCommandDepth(command, worktree string, allowInlineScripts bool, depth int) bool {
+func isOpaqueShellCommandDepth(command, worktree string, trust scriptTrust, depth int) bool {
 	if depth > maxSubshellDepth {
 		return true
 	}
@@ -78,9 +88,9 @@ func isOpaqueShellCommandDepth(command, worktree string, allowInlineScripts bool
 	if _, ok := findSubshellSpans(command); !ok {
 		return true
 	}
-	if subshellsClear(command, worktree, allowInlineScripts, depth) {
+	if subshellsClear(command, worktree, trust, depth) {
 		erased := eraseSubshells(command)
-		if !opaqueShellCore(erased, worktree, allowInlineScripts, commandSubsAreValueClass(erased)) {
+		if !opaqueShellCore(erased, worktree, trust, commandSubsAreValueClass(erased)) {
 			return false
 		}
 	}
@@ -89,11 +99,11 @@ func isOpaqueShellCommandDepth(command, worktree string, allowInlineScripts bool
 	case constSecret, constReject:
 		return true
 	case constApplied:
-		if !subshellsClear(expanded, worktree, allowInlineScripts, depth) {
+		if !subshellsClear(expanded, worktree, trust, depth) {
 			return true
 		}
 		erased := eraseSubshells(expanded)
-		return opaqueShellCore(erased, worktree, allowInlineScripts, commandSubsAreValueClass(erased))
+		return opaqueShellCore(erased, worktree, trust, commandSubsAreValueClass(erased))
 	default:
 		return true
 	}
@@ -101,13 +111,13 @@ func isOpaqueShellCommandDepth(command, worktree string, allowInlineScripts bool
 
 // subshellsClear reports whether every outer (...) body is itself clear.
 // An unterminated group fails closed.
-func subshellsClear(command, worktree string, allowInlineScripts bool, depth int) bool {
+func subshellsClear(command, worktree string, trust scriptTrust, depth int) bool {
 	spans, ok := findSubshellSpans(command)
 	if !ok {
 		return false
 	}
 	for _, sp := range spans {
-		if isOpaqueShellCommandDepth(command[sp[0]+1:sp[1]], worktree, allowInlineScripts, depth+1) {
+		if isOpaqueShellCommandDepth(command[sp[0]+1:sp[1]], worktree, trust, depth+1) {
 			return false
 		}
 	}
@@ -117,7 +127,7 @@ func subshellsClear(command, worktree string, allowInlineScripts bool, depth int
 // opaqueShellCore is the segment judge. valueClass lets a value-class $(...)
 // result sit in a read-only tool argument (and in mkdir). It does not expand
 // assignments or subshells; the caller does that once.
-func opaqueShellCore(command, worktree string, allowInlineScripts, valueClass bool) bool {
+func opaqueShellCore(command, worktree string, trust scriptTrust, valueClass bool) bool {
 	command = strings.TrimSpace(command)
 	if command == "" {
 		return true
@@ -204,13 +214,13 @@ func opaqueShellCore(command, worktree string, allowInlineScripts, valueClass bo
 		if dataArgInterpreters[base] &&
 			!(base == "xargs" && isSafeXargsSegment(args, i > 0 && pipedIn[i], prevSeg)) &&
 			!(base == "ssh" && len(args) == 1 && args[0] == maskedDataArgument) &&
-			!isSafeShellScriptSegmentWith(base, args, i > 0 && pipedIn[i], allowInlineScripts) {
+			!isSafeShellScriptSegmentWith(base, args, i > 0 && pipedIn[i], trust == scriptTrustFull) {
 			return true
 		}
 		if awkProgramExecutes(base, args) {
 			return true
 		}
-		if family, ok := inlineScriptTool(base); ok && !allowInlineScripts && (pipedIn[i] || hasInlineScriptFlag(family, args)) {
+		if family, ok := inlineScriptTool(base); ok && trust == scriptTrustNone && (pipedIn[i] || hasInlineScriptFlag(family, args)) {
 			return true
 		}
 	}

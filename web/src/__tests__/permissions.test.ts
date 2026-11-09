@@ -427,12 +427,17 @@ describe("unattended shared fixture", () => {
 
 describe("opaque command shared fixture", () => {
   it("matches every Go/JS opaque-command case, including the rejection paths", () => {
-    for (const c of opaqueCases as Array<{ command: string; worktree?: string; opaque: boolean; trustedOpaque?: boolean }>) {
+    for (const c of opaqueCases as Array<{ command: string; worktree?: string; opaque: boolean; trustedOpaque?: boolean; autoOpaque?: boolean }>) {
       assertEqual(isOpaqueShellCommand(c.command, c.worktree ?? ""), c.opaque, c.command);
       assertEqual(
         isOpaqueShellCommand(c.command, c.worktree ?? "", { allowInlineScripts: true }),
         c.trustedOpaque ?? c.opaque,
         `trusted: ${c.command}`
+      );
+      assertEqual(
+        isOpaqueShellCommand(c.command, c.worktree ?? "", { readOnlyInlineScripts: true }),
+        c.autoOpaque ?? c.opaque,
+        `auto: ${c.command}`
       );
     }
   });

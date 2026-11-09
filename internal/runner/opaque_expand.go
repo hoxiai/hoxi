@@ -596,7 +596,7 @@ func commandSubsAreValueClass(s string) bool {
 				return false
 			}
 			inner := s[i+2 : end]
-			if !isValueClassSegment(inner) || opaqueShellCore(inner, "", false, false) {
+			if !isValueClassSegment(inner) || opaqueShellCore(inner, "", scriptTrustNone, false) {
 				return false
 			}
 			found = true

@@ -226,14 +226,22 @@ func TestOpaqueShellCommandsRequireApprovalInAutoAndTrusted(t *testing.T) {
 			}
 		}
 	}
-	// Inline interpreter scripts ask in auto mode; full trust lets them run,
-	// as it already did `python3 script.py`.
-	for _, command := range []string{`node -e 'console.log(1)'`, "python3 - <<'EOF'\nprint(1)\nEOF"} {
+	// Inline scripts that can write ask in auto mode; full trust lets them
+	// run, as it already did `python3 script.py`. Read-only ones run in both
+	// (inline_script_readonly.go).
+	for _, command := range []string{`node -e 'require("fs").writeFileSync("a", "b")'`, "python3 - <<'EOF'\nimport os\nos.mkdir('x')\nEOF"} {
 		if approvalAutoApproves(req("bash", command), ApprovalPolicy{Mode: ApprovalModeAuto}, nil, worktree) {
 			t.Errorf("inline script %q was auto-approved in auto mode", command)
 		}
 		if !approvalAutoApproves(req("bash", command), ApprovalPolicy{Mode: ApprovalModeTrusted}, nil, worktree) {
 			t.Errorf("inline script %q asked in trusted mode", command)
+		}
+	}
+	for _, command := range []string{`node -e 'console.log(1)'`, "python3 - <<'EOF'\nprint(1)\nEOF"} {
+		for _, mode := range []string{ApprovalModeAuto, ApprovalModeTrusted} {
+			if !approvalAutoApproves(req("bash", command), ApprovalPolicy{Mode: mode}, nil, worktree) {
+				t.Errorf("read-only inline script %q asked in %s mode", command, mode)
+			}
 		}
 	}
 }
@@ -274,13 +282,15 @@ func TestQoderAndCodeBuddyRunInBuildMode(t *testing.T) {
 // Interpreter checks must cover version-suffixed binaries and awk programs that
 // call system() or pipe to a command.
 func TestOpaqueInterpreterVariantsAsk(t *testing.T) {
-	if !approvalAutoApproves(req("bash", `python3.12 -c 'print(1)'`), ApprovalPolicy{Mode: ApprovalModeTrusted}, nil, "") {
-		t.Error("full trust lets version-suffixed inline interpreters run")
+	for _, mode := range []string{ApprovalModeAuto, ApprovalModeTrusted} {
+		if !approvalAutoApproves(req("bash", `python3.12 -c 'print(1)'`), ApprovalPolicy{Mode: mode}, nil, "") {
+			t.Errorf("%s mode should run a read-only version-suffixed inline interpreter", mode)
+		}
 	}
 	for _, mode := range []string{ApprovalModeAuto, ApprovalModeTrusted} {
 		commands := []string{`awk 'BEGIN {system("id")}'`, `awk 'BEGIN{print "id" | "sh"}'`}
 		if mode == ApprovalModeAuto {
-			commands = append(commands, `python3.12 -c 'print(1)'`)
+			commands = append(commands, `python3.12 -c 'import os; os.mkdir(0)'`, `node20 -e 'require("fs").rmSync("x")'`)
 		}
 		for _, command := range commands {
 			t.Run(mode+"/"+command, func(t *testing.T) {
