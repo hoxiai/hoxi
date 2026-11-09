@@ -143,4 +143,8 @@ export const header: HeaderI18n = {
   gatewaySavingsLabel: "相比官方节省",
   gatewayUptimeLabel: "在线率",
   gatewayLatencyLabel: "平均延迟",
+  pulseMatrixTitle: "HQ 全矩阵看板",
+  pulseMatrixSummary: "{total} 项目 · {sandboxes} 沙盒",
+  pulseMatrixBlocked: "{count} 阻塞 ({names})",
+  pulseMatrixAllClear: "0 阻塞 · 全部就绪",
 };

@@ -458,6 +458,7 @@ func (t *TurnTranslator) feedClaudeEvent(env *claudeRawEvent, now int64) []SSEEv
 				part.State.Status = "completed"
 				part.State.Output = outStr
 			}
+			normalizeQuestionToolResult(part.Tool, &part.State.Status, &part.State.Output, &part.State.Error)
 			part.State.Time = &PartTime{Start: startMs, End: now}
 			evts = append(evts, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": clonePart(*part)}})
 		}
@@ -603,8 +604,11 @@ func normalizeRunnerTool(rawName string, rawParams map[string]interface{}) (norm
 		// Qoder's task board tools are not TodoWrite; keep them distinct so the
 		// timeline still shows them as work steps.
 		normTool = lower
-	case "ask_question", "askuserquestion", "ask_user_question", "ask_user":
+	case "question", "ask_question", "askuserquestion", "ask_user_question", "ask_user":
 		normTool = "question"
+		if qs := normalizeRunnerQuestions(clean); len(qs) > 0 {
+			clean["questions"] = qs
+		}
 	default:
 		normTool = lower
 		if normTool == "" {

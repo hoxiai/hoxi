@@ -25,10 +25,12 @@ func TestTunnelRouteAllowlist(t *testing.T) {
 		{get, "/api/hoxi/sessions/ses_1"}, {get, "/api/hoxi/sessions/ses_1/message"},
 		{get, "/api/hoxi/sessions/ses_1/diff"},
 		{post, "/api/hoxi/sessions/ses_1/prompt"}, {post, "/api/hoxi/sessions/ses_1/prompt_async"},
+		{post, "/api/hoxi/sessions/ses_1/runtime"},
 		{post, "/api/hoxi/sessions/ses_1/abort"}, {post, "/api/hoxi/sessions/ses_1/stop-tool"},
 		{post, "/api/hoxi/sessions/ses_1/revert"}, {post, "/api/hoxi/sessions/ses_1/unrevert"},
 		{post, "/api/hoxi/sessions/ses_1/fork"},
 		{get, "/api/hoxi/event"}, {get, "/api/hoxi/permission"}, {post, "/api/hoxi/permission/per_1/reply"},
+		{get, "/api/hoxi/question"}, {post, "/api/hoxi/question/que_1/reply"}, {post, "/api/hoxi/question/que_1/reject"},
 		{get, "/api/hoxi/worktree/status"}, {get, "/api/hoxi/worktree/diff"}, {get, "/api/hoxi/worktree/branches"},
 		{get, "/api/hoxi/worktree/verify-status"}, {post, "/api/hoxi/worktree/commit"}, {post, "/api/hoxi/worktree/apply"},
 		{post, "/api/hoxi/attachments"}, {get, "/api/hoxi/attachments/att_1"}, {get, "/api/hoxi/attachments/att_1/content"},
@@ -85,7 +87,7 @@ func TestTunnelRouteAllowlist(t *testing.T) {
 		{post, "/api/hoxi/workspaces"}, {http.MethodPut, "/api/hoxi/workspaces/ws_1"},
 		{http.MethodDelete, "/api/hoxi/workspaces"}, {get, "/api/hoxi/workspaces/ws_1"}, {get, "/api/hoxi/projects/resolve"},
 		// Unknown sub-routes under allowed domains default to deny.
-		{post, "/api/hoxi/sessions/ses_1/runtime"}, {post, "/api/hoxi/sessions/ses_1/summarize"},
+		{post, "/api/hoxi/sessions/ses_1/summarize"},
 		{get, "/api/hoxi/sessions/ses_1/event"}, {get, "/api/hoxi/sessions/ses_1/message/extra"},
 		{get, "/api/hoxi/sessions/ses_1/unknown"}, {get, "/api/hoxi/skills/detail"}, {get, "/api/hoxi/attachments/a/b/c"},
 		// Installing a skill writes ~/.hoxi and changes agent capability.
@@ -94,6 +96,9 @@ func TestTunnelRouteAllowlist(t *testing.T) {
 		{get, "/api/hoxi/permission/grants"}, {http.MethodDelete, "/api/hoxi/permission/grants"},
 		{get, "/api/hoxi/permission/policy"}, {http.MethodPut, "/api/hoxi/permission/policy"},
 		{get, "/api/hoxi/permission/deferred"}, {post, "/api/hoxi/permission/deferred"},
+		{get, "/question"}, {post, "/question/que_1/reply"}, {post, "/question/que_1/reject"},
+		{get, "/api/hoxi/question/que_1"}, {get, "/api/hoxi/question/que_1/reply"}, {post, "/api/hoxi/question"},
+		{post, "/api/hoxi/question/que_1/unknown"},
 		// Commit attribution is a desktop preference, never remotely toggled.
 		{get, "/api/hoxi/git/attribution"}, {http.MethodPut, "/api/hoxi/git/attribution"},
 		{get, "/api/hoxi/sessions//message"}, {get, "/api/hoxi/sessions/"},

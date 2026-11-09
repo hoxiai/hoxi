@@ -163,6 +163,10 @@ func TestRelayModelsListHidesAnthropicAndUsesNamespacedIDs(t *testing.T) {
 		"npm":    "@ai-sdk/anthropic",
 		"models": map[string]interface{}{"claude-x": map[string]interface{}{"name": "Claude X"}},
 	}
+	providers["google-native"] = map[string]interface{}{
+		"npm":    "@ai-sdk/google",
+		"models": map[string]interface{}{"gemini-x": map[string]interface{}{"name": "Gemini X"}},
+	}
 	if err := svc.PersistHoxiConfigDoc(doc); err != nil {
 		t.Fatalf("persist: %v", err)
 	}
@@ -185,6 +189,9 @@ func TestRelayModelsListHidesAnthropicAndUsesNamespacedIDs(t *testing.T) {
 	}
 	if strings.Contains(body, "claude-x") {
 		t.Fatalf("anthropic-native providers must not be advertised: %s", body)
+	}
+	if strings.Contains(body, "gemini-x") {
+		t.Fatalf("google-native providers must not be advertised: %s", body)
 	}
 	if strings.Contains(body, "sk-upstream-secret") {
 		t.Fatalf("model list must not contain credentials: %s", body)

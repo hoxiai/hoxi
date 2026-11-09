@@ -301,7 +301,14 @@ export async function loadProviders(forceRefresh = false): Promise<void> {
         ...(existingProv || { id: pid, name: hProv.name || pid }),
         id: pid,
         name: hProv.name || existingProv?.name || pid,
-        npm: hProv.npm || existingProv?.npm || "@ai-sdk/openai-compatible",
+        npm:
+          hProv.npm ||
+          existingProv?.npm ||
+          (pid === "google" || pid === "gemini"
+            ? "@ai-sdk/google"
+            : pid === "anthropic"
+              ? "@ai-sdk/anthropic"
+              : "@ai-sdk/openai-compatible"),
         options: {
           ...(existingProv?.options || {}),
           ...(hProv.options || {}),

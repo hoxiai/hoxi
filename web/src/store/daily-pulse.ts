@@ -47,6 +47,7 @@ export interface DailyDevPulseStats {
   modelsUsed: DailyModelUsageItem[];
   /** Model ids the synced catalog cannot price at all; their cost is excluded. */
   unpricedModels: string[];
+  hqMatrix?: GitDailyPulseResponse["hqMatrix"];
 }
 
 export function getTodayDateKey(): string {
@@ -270,5 +271,6 @@ export function computeDailyDevPulseStats(): DailyDevPulseStats {
     toolSuccessRate,
     modelsUsed,
     unpricedModels: Array.from(unpricedModels),
+    hqMatrix: pulse.hqMatrix,
   };
 }

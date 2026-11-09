@@ -30,7 +30,15 @@ export const PROVIDER_VARIANTS = [
   { value: "@ai-sdk/openai-compatible", label: "OpenAI Compatible (/v1/chat/completions)" },
   { value: "@ai-sdk/openai", label: "OpenAI Responses (/v1/responses)" },
   { value: "@ai-sdk/anthropic", label: "Anthropic Messages (/v1/messages)" },
+  { value: "@ai-sdk/google", label: "Google Gemini (/v1beta/models)" },
 ] as const;
+
+export function defaultProviderNpm(providerID?: string | null): string {
+  const pid = (providerID || "").trim().toLowerCase();
+  if (pid === "google" || pid === "gemini") return "@ai-sdk/google";
+  if (pid === "anthropic") return "@ai-sdk/anthropic";
+  return "@ai-sdk/openai-compatible";
+}
 
 export interface CustomProviderFormState {
   providerID: string;
@@ -190,7 +198,7 @@ export function extractCustomProviderFormState(editID: string | null): CustomPro
   return {
     providerID: editID,
     displayName: cfgProv.name || runtimeProv?.name || editID,
-    npmPkg: cfgProv.npm || runtimeProv?.npm || "@ai-sdk/openai-compatible",
+    npmPkg: cfgProv.npm || runtimeProv?.npm || defaultProviderNpm(editID),
     baseURL: cfgProv?.options?.baseURL || runtimeProv?.options?.baseURL || "",
     apiKey,
     preserveExistingKey,

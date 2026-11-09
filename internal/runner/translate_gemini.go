@@ -290,6 +290,7 @@ func (t *TurnTranslator) feedGeminiLine(line string) []SSEEvent {
 			part.State.Status = "completed"
 			part.State.Output = outStr
 		}
+		normalizeQuestionToolResult(part.Tool, &part.State.Status, &part.State.Output, &part.State.Error)
 		part.State.Time = &PartTime{Start: startMs, End: now}
 		return []SSEEvent{{Type: "message.part.updated", Properties: map[string]interface{}{"part": clonePart(*part)}}}
 

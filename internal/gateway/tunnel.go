@@ -67,16 +67,20 @@ var tunnelRoutes = []tunnelRoute{
 	{http.MethodGet, "/api/hoxi/sessions/*/diff"},
 	{http.MethodPost, "/api/hoxi/sessions/*/prompt"},
 	{http.MethodPost, "/api/hoxi/sessions/*/prompt_async"},
+	{http.MethodPost, "/api/hoxi/sessions/*/runtime"},
 	{http.MethodPost, "/api/hoxi/sessions/*/abort"},
 	{http.MethodPost, "/api/hoxi/sessions/*/stop-tool"},
 	{http.MethodPost, "/api/hoxi/sessions/*/revert"},
 	{http.MethodPost, "/api/hoxi/sessions/*/unrevert"},
 	{http.MethodPost, "/api/hoxi/sessions/*/fork"},
 
-	// Event and approval planes.
+	// Event, approval and question planes.
 	{http.MethodGet, "/api/hoxi/event"},
 	{http.MethodGet, "/api/hoxi/permission"},
 	{http.MethodPost, "/api/hoxi/permission/*/reply"},
+	{http.MethodGet, "/api/hoxi/question"},
+	{http.MethodPost, "/api/hoxi/question/*/reply"},
+	{http.MethodPost, "/api/hoxi/question/*/reject"},
 
 	// Worktree review. commit is accepted only with push=false (see
 	// tunnelBodyAllowed); push, checkout, verify-*, setup-retry, prune and

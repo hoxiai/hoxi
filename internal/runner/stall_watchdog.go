@@ -408,6 +408,11 @@ func (s *Service) awaitingUser(ap *activeProcess) bool {
 			return true
 		}
 	}
+	for _, q := range s.gate.questions {
+		if q.sid == ap.sessionID {
+			return true
+		}
+	}
 	return false
 }
 

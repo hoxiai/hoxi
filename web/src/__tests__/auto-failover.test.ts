@@ -122,17 +122,10 @@ describe("auto-pool failover decision", () => {
 
 describe("auto-pool failover dispatch", () => {
   it("resends a slow 429 to the next candidate, benches the failed one and records a notice", async () => {
-    const origSend = hoxiAPI.sendPromptAsync;
-    const origGetMessages = hoxiAPI.getMessages;
-    const origReport = hoxiAPI.reportCandidateOutcome;
-    const origGet = hoxiAPI.getProviderCandidates;
-    const origSummarize = hoxiAPI.summarizeSessionTitle;
+    const orig = { send: hoxiAPI.sendPromptAsync, msgs: hoxiAPI.getMessages, diff: hoxiAPI.getSessionDiff, ren: hoxiAPI.renameSession, report: hoxiAPI.reportCandidateOutcome, get: hoxiAPI.getProviderCandidates, sum: hoxiAPI.summarizeSessionTitle };
     const sid = "ses_failover_429";
     try {
-      hoxiAPI.reportCandidateOutcome = async () => ({ ok: true });
-      hoxiAPI.getProviderCandidates = async () => ({ ok: true, breakers: {} });
-      hoxiAPI.getMessages = async () => [];
-      hoxiAPI.summarizeSessionTitle = async () => ({ ok: true, title: "Test" });
+      Object.assign(hoxiAPI, { reportCandidateOutcome: async () => ({ ok: true }), getProviderCandidates: async () => ({ ok: true, breakers: {} }), getMessages: async () => [], getSessionDiff: async () => [], renameSession: async () => ({ ok: true } as never), summarizeSessionTitle: async () => ({ ok: true, title: "Test" }) });
       const model = (id: string) => ({ id, name: id, capabilities: { toolcall: true } });
       setWorkspace("providers", [
         { id: "alpha", name: "Alpha", models: { m: model("m") } },
@@ -207,11 +200,7 @@ describe("auto-pool failover dispatch", () => {
         Date.now = realNow;
       }
     } finally {
-      hoxiAPI.sendPromptAsync = origSend;
-      hoxiAPI.getMessages = origGetMessages;
-      hoxiAPI.reportCandidateOutcome = origReport;
-      hoxiAPI.getProviderCandidates = origGet;
-      hoxiAPI.summarizeSessionTitle = origSummarize;
+      Object.assign(hoxiAPI, { sendPromptAsync: orig.send, getMessages: orig.msgs, getSessionDiff: orig.diff, renameSession: orig.ren, reportCandidateOutcome: orig.report, getProviderCandidates: orig.get, summarizeSessionTitle: orig.sum });
       setWorkspace("activeSessionID", null);
       setWorkspace("sessions", []);
       setWorkspace("aiBySession", reconcile({}));
@@ -224,17 +213,10 @@ describe("auto-pool failover dispatch", () => {
   });
 
   it("advances to the next candidate when sendPromptAsync rejects synchronously during failover", async () => {
-    const origSend = hoxiAPI.sendPromptAsync;
-    const origGetMessages = hoxiAPI.getMessages;
-    const origReport = hoxiAPI.reportCandidateOutcome;
-    const origGet = hoxiAPI.getProviderCandidates;
-    const origSummarize = hoxiAPI.summarizeSessionTitle;
+    const orig = { send: hoxiAPI.sendPromptAsync, msgs: hoxiAPI.getMessages, diff: hoxiAPI.getSessionDiff, ren: hoxiAPI.renameSession, report: hoxiAPI.reportCandidateOutcome, get: hoxiAPI.getProviderCandidates, sum: hoxiAPI.summarizeSessionTitle };
     const sid = "ses_failover_sync_reject";
     try {
-      hoxiAPI.reportCandidateOutcome = async () => ({ ok: true });
-      hoxiAPI.getProviderCandidates = async () => ({ ok: true, breakers: {} });
-      hoxiAPI.getMessages = async () => [];
-      hoxiAPI.summarizeSessionTitle = async () => ({ ok: true, title: "Test" });
+      Object.assign(hoxiAPI, { reportCandidateOutcome: async () => ({ ok: true }), getProviderCandidates: async () => ({ ok: true, breakers: {} }), getMessages: async () => [], getSessionDiff: async () => [], renameSession: async () => ({ ok: true } as never), summarizeSessionTitle: async () => ({ ok: true, title: "Test" }) });
       const model = (id: string) => ({ id, name: id, capabilities: { toolcall: true } });
       setWorkspace("providers", [
         { id: "alpha", name: "Alpha", models: { m: model("m") } },
@@ -302,11 +284,7 @@ describe("auto-pool failover dispatch", () => {
       assertDeepEqual(notice?.to, { providerID: "gamma", modelID: "m" });
     } finally {
       clearAutoFailoverPending(sid);
-      hoxiAPI.sendPromptAsync = origSend;
-      hoxiAPI.getMessages = origGetMessages;
-      hoxiAPI.reportCandidateOutcome = origReport;
-      hoxiAPI.getProviderCandidates = origGet;
-      hoxiAPI.summarizeSessionTitle = origSummarize;
+      Object.assign(hoxiAPI, { sendPromptAsync: orig.send, getMessages: orig.msgs, getSessionDiff: orig.diff, renameSession: orig.ren, reportCandidateOutcome: orig.report, getProviderCandidates: orig.get, summarizeSessionTitle: orig.sum });
       setWorkspace("activeSessionID", null);
       setWorkspace("sessions", []);
       setWorkspace("aiBySession", reconcile({}));
@@ -319,17 +297,10 @@ describe("auto-pool failover dispatch", () => {
   });
 
   it("does not retry non-auto single-model turns and retries single-candidate auto-pool turns up to 2 times on transient errors", async () => {
-    const origSend = hoxiAPI.sendPromptAsync;
-    const origGetMessages = hoxiAPI.getMessages;
-    const origGet = hoxiAPI.getProviderCandidates;
-    const origReport = hoxiAPI.reportCandidateOutcome;
-    const origSummarize = hoxiAPI.summarizeSessionTitle;
+    const orig = { send: hoxiAPI.sendPromptAsync, msgs: hoxiAPI.getMessages, diff: hoxiAPI.getSessionDiff, ren: hoxiAPI.renameSession, get: hoxiAPI.getProviderCandidates, report: hoxiAPI.reportCandidateOutcome, sum: hoxiAPI.summarizeSessionTitle };
     const sid = "ses_same_model_retry";
     try {
-      hoxiAPI.getMessages = async () => [];
-      hoxiAPI.getProviderCandidates = async () => ({ ok: true, breakers: {} });
-      hoxiAPI.reportCandidateOutcome = async () => ({ ok: true });
-      hoxiAPI.summarizeSessionTitle = async () => ({ ok: true, title: "Test" });
+      Object.assign(hoxiAPI, { getMessages: async () => [], getSessionDiff: async () => [], renameSession: async () => ({ ok: true } as never), getProviderCandidates: async () => ({ ok: true, breakers: {} }), reportCandidateOutcome: async () => ({ ok: true }), summarizeSessionTitle: async () => ({ ok: true, title: "Test" }) });
       const model = (id: string) => ({ id, name: id, capabilities: { toolcall: true } });
       setWorkspace("providers", [{ id: "openai", name: "OpenAI", models: { "gpt-5": model("gpt-5") } }]);
       setWorkspace("connectedProviders", ["openai"]);
@@ -444,11 +415,7 @@ describe("auto-pool failover dispatch", () => {
       assertEqual(attempted.length, countAfterSecondSend);
     } finally {
       clearAutoFailoverPending(sid);
-      hoxiAPI.sendPromptAsync = origSend;
-      hoxiAPI.getMessages = origGetMessages;
-      hoxiAPI.getProviderCandidates = origGet;
-      hoxiAPI.reportCandidateOutcome = origReport;
-      hoxiAPI.summarizeSessionTitle = origSummarize;
+      Object.assign(hoxiAPI, { sendPromptAsync: orig.send, getMessages: orig.msgs, getSessionDiff: orig.diff, renameSession: orig.ren, getProviderCandidates: orig.get, reportCandidateOutcome: orig.report, summarizeSessionTitle: orig.sum });
       setWorkspace("activeSessionID", null);
       setWorkspace("sessions", []);
       setWorkspace("aiBySession", reconcile({}));
@@ -461,17 +428,10 @@ describe("auto-pool failover dispatch", () => {
   });
 
   it("retries the warm sticky candidate once on transient network/5xx errors in a multi-turn session before switching pool candidates", async () => {
-    const origSend = hoxiAPI.sendPromptAsync;
-    const origGetMessages = hoxiAPI.getMessages;
-    const origReport = hoxiAPI.reportCandidateOutcome;
-    const origGet = hoxiAPI.getProviderCandidates;
-    const origSummarize = hoxiAPI.summarizeSessionTitle;
+    const orig = { send: hoxiAPI.sendPromptAsync, msgs: hoxiAPI.getMessages, diff: hoxiAPI.getSessionDiff, ren: hoxiAPI.renameSession, report: hoxiAPI.reportCandidateOutcome, get: hoxiAPI.getProviderCandidates, sum: hoxiAPI.summarizeSessionTitle };
     const sid = "ses_multiturn_cache_retry";
     try {
-      hoxiAPI.reportCandidateOutcome = async () => ({ ok: true });
-      hoxiAPI.getProviderCandidates = async () => ({ ok: true, breakers: {} });
-      hoxiAPI.getMessages = async () => [];
-      hoxiAPI.summarizeSessionTitle = async () => ({ ok: true, title: "Test" });
+      Object.assign(hoxiAPI, { reportCandidateOutcome: async () => ({ ok: true }), getProviderCandidates: async () => ({ ok: true, breakers: {} }), getMessages: async () => [], getSessionDiff: async () => [], renameSession: async () => ({ ok: true } as never), summarizeSessionTitle: async () => ({ ok: true, title: "Test" }) });
       const model = (id: string) => ({ id, name: id, capabilities: { toolcall: true } });
       setWorkspace("providers", [
         { id: "alpha", name: "Alpha", models: { m: model("m") } },
@@ -540,11 +500,7 @@ describe("auto-pool failover dispatch", () => {
       assertTrue(isCandidateCoolingDown("alpha", "m"));
     } finally {
       clearAutoFailoverPending(sid);
-      hoxiAPI.sendPromptAsync = origSend;
-      hoxiAPI.getMessages = origGetMessages;
-      hoxiAPI.reportCandidateOutcome = origReport;
-      hoxiAPI.getProviderCandidates = origGet;
-      hoxiAPI.summarizeSessionTitle = origSummarize;
+      Object.assign(hoxiAPI, { sendPromptAsync: orig.send, getMessages: orig.msgs, getSessionDiff: orig.diff, renameSession: orig.ren, reportCandidateOutcome: orig.report, getProviderCandidates: orig.get, summarizeSessionTitle: orig.sum });
       setWorkspace("activeSessionID", null);
       setWorkspace("sessions", []);
       setWorkspace("aiBySession", reconcile({}));
@@ -637,10 +593,14 @@ describe("auto-pool failover dispatch", () => {
     const sid = "ses_manual_switch_while_busy";
     const origSend = hoxiAPI.sendPromptAsync;
     const origGetMessages = hoxiAPI.getMessages;
+    const origGetSessionDiff = hoxiAPI.getSessionDiff;
+    const origRenameSession = hoxiAPI.renameSession;
     const origSummarize = hoxiAPI.summarizeSessionTitle;
 
     try {
       hoxiAPI.getMessages = async () => [];
+      hoxiAPI.getSessionDiff = async () => [];
+      hoxiAPI.renameSession = async () => ({ ok: true } as never);
       hoxiAPI.summarizeSessionTitle = async () => ({ ok: false, title: "" });
       setWorkspace("providers", [
         { id: "alpha", name: "Alpha", models: { m1: { id: "m1", name: "M1" } } },
@@ -695,6 +655,8 @@ describe("auto-pool failover dispatch", () => {
       clearTurnDispatchState(sid);
       hoxiAPI.sendPromptAsync = origSend;
       hoxiAPI.getMessages = origGetMessages;
+      hoxiAPI.getSessionDiff = origGetSessionDiff;
+      hoxiAPI.renameSession = origRenameSession;
       hoxiAPI.summarizeSessionTitle = origSummarize;
       setWorkspace("globalConfig", {});
       setWorkspace("activeSessionID", null);

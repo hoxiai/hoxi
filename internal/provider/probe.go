@@ -30,6 +30,8 @@ var defaultProviderBaseURLs = map[string]string{
 	"deepseek":    "https://api.deepseek.com/v1",
 	"openai":      "https://api.openai.com/v1",
 	"anthropic":   "https://api.anthropic.com/v1",
+	"google":      "https://generativelanguage.googleapis.com/v1beta",
+	"gemini":      "https://generativelanguage.googleapis.com/v1beta",
 	"openrouter":  "https://openrouter.ai/api/v1",
 	"xai":         "https://api.x.ai/v1",
 	"groq":        "https://api.groq.com/openai/v1",
@@ -99,6 +101,18 @@ func (g *Service) handleTestProviderModel(w http.ResponseWriter, r *http.Request
 				if _, exists := headers[hk]; !exists {
 					headers[hk] = hv
 				}
+			}
+		}
+		cfgURL, _, cfgNPM, cfgHeaders := g.resolveProviderConnection(pid, baseURL, npm)
+		if baseURL == "" && cfgURL != "" {
+			baseURL = cfgURL
+		}
+		if npm == "" && cfgNPM != "" {
+			npm = cfgNPM
+		}
+		for hk, hv := range cfgHeaders {
+			if _, exists := headers[hk]; !exists {
+				headers[hk] = hv
 			}
 		}
 	}

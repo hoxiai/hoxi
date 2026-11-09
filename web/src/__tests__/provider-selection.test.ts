@@ -8,7 +8,12 @@ import {
 } from "../store/provider-connections";
 import { setWorkspace, workspace } from "../store/workspace";
 import { desktopAuth, logoutDesktopAccount, setDesktopAuth } from "../store/auth-state";
-import { assertDeepEqual, describe, it } from "./test-harness";
+import {
+  defaultProviderNpm,
+  extractCustomProviderFormState,
+  PROVIDER_VARIANTS,
+} from "../components/models/custom-endpoint-helpers";
+import { assertDeepEqual, assertTrue, describe, it } from "./test-harness";
 
 const model = { providerID: "ollama", modelID: "local-model" };
 const providers: ProviderInfo[] = [
@@ -249,6 +254,30 @@ describe("local CLI model sync", () => {
       assertDeepEqual(authKeyPassed, "sk-key-1");
       assertDeepEqual(savedCfg?.options?.apiKey, "sk-key-1, sk-key-2");
       assertDeepEqual(workspace.selectedModel, { providerID: "win-custom", modelID: "win-m1" });
+    });
+  });
+
+  it("includes Google Gemini (@ai-sdk/google) in protocol variants and defaults google provider to @ai-sdk/google", async () => {
+    await withProviders(async () => {
+      assertTrue(PROVIDER_VARIANTS.some((v) => v.value === "@ai-sdk/google"));
+      assertDeepEqual(defaultProviderNpm("google"), "@ai-sdk/google");
+      assertDeepEqual(defaultProviderNpm("gemini"), "@ai-sdk/google");
+      assertDeepEqual(defaultProviderNpm("anthropic"), "@ai-sdk/anthropic");
+      assertDeepEqual(defaultProviderNpm("custom"), "@ai-sdk/openai-compatible");
+
+      let savedGoogleCfg = null as Record<string, any> | null;
+      hoxiAPI.setProviderAuth = async () => {};
+      hoxiAPI.saveHoxiProviderConfig = async (_pid, cfg) => {
+        savedGoogleCfg = cfg;
+        return { ok: true, hoxiProviders: { google: cfg }, configPath: "test" };
+      };
+      await connectProviderWithKey({
+        providerID: "google",
+        apiKey: "AIzaSyTest",
+        customModelID: "gemini-2.5-pro",
+      });
+      assertDeepEqual(savedGoogleCfg?.npm, "@ai-sdk/google");
+      assertDeepEqual(extractCustomProviderFormState("google").npmPkg, "@ai-sdk/google");
     });
   });
 });

@@ -64,7 +64,13 @@ export async function connectProviderWithKey(opts: {
       ...(opts.customName ? { name: opts.customName.trim() } : {}),
       ...(opts.customModelID
         ? {
-            npm: existingProvider.npm || "@ai-sdk/openai-compatible",
+            npm:
+              existingProvider.npm ||
+              (pid === "google" || pid === "gemini"
+                ? "@ai-sdk/google"
+                : pid === "anthropic"
+                  ? "@ai-sdk/anthropic"
+                  : "@ai-sdk/openai-compatible"),
             models: {
               ...(existingProvider.models || {}),
               [opts.customModelID.trim()]: {

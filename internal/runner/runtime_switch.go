@@ -84,7 +84,9 @@ func (s *Service) handleRuntimeSwitch(w http.ResponseWriter, r *http.Request, id
 			return
 		}
 	}
-	if directory := r.URL.Query().Get("directory"); directory != "" && normalizeComparePath(directory) != normalizeComparePath(rec.WorktreePath) {
+	if directory := strings.TrimSpace(r.URL.Query().Get("directory")); directory != "" &&
+		normalizeComparePath(directory) != normalizeComparePath(rec.WorktreePath) &&
+		normalizeComparePath(directory) != normalizeComparePath(rec.ProjectDir) {
 		writeJSONError(w, 409, "session directory does not match its binding")
 		return
 	}

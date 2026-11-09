@@ -128,7 +128,7 @@ func (s *Service) relayModelList() []relayModel {
 			if strings.TrimSpace(mid) == "" {
 				continue
 			}
-			if relayProviderIsAnthropicNative(pid, pObj) {
+			if relayProviderIsNonOpenAINative(pid, pObj) {
 				continue
 			}
 			id := pid + "/" + mid
@@ -163,11 +163,7 @@ func sortedKeys[V any](m map[string]V) []string {
 // no engine round-trip per candidate, so a large pool cannot stall a request.
 func (s *Service) relayCandidateCompatible(providerID string) bool {
 	pObj, ok := s.relayProviderConfig(providerID)
-	if !ok || relayProviderIsAnthropicNative(providerID, pObj) {
-		return false
-	}
-	npm, _ := pObj["npm"].(string)
-	if strings.Contains(strings.TrimSpace(npm), "anthropic") {
+	if !ok || relayProviderIsNonOpenAINative(providerID, pObj) {
 		return false
 	}
 	baseURL := strings.TrimSpace(defaultProviderBaseURLs[providerID])
@@ -180,11 +176,17 @@ func (s *Service) relayCandidateCompatible(providerID string) bool {
 }
 
 func relayProviderIsAnthropicNative(pid string, pObj map[string]any) bool {
-	if pid == "anthropic" {
-		return true
-	}
 	npm, _ := pObj["npm"].(string)
-	return strings.Contains(strings.TrimSpace(npm), "anthropic")
+	return isAnthropicProtocol(pid, npm)
+}
+
+func relayProviderIsGoogleNative(pid string, pObj map[string]any) bool {
+	npm, _ := pObj["npm"].(string)
+	return isGoogleProtocol(pid, npm)
+}
+
+func relayProviderIsNonOpenAINative(pid string, pObj map[string]any) bool {
+	return relayProviderIsAnthropicNative(pid, pObj) || relayProviderIsGoogleNative(pid, pObj)
 }
 
 // relayResolveModel maps a client-supplied model id onto a concrete provider
@@ -252,7 +254,7 @@ func (s *Service) relayResolveModel(raw string) (providerID, modelID string, err
 			continue
 		}
 		pObj, _ := merged[pid].(map[string]any)
-		if relayProviderHasModel(pObj, raw) && !relayProviderIsAnthropicNative(pid, pObj) {
+		if relayProviderHasModel(pObj, raw) && !relayProviderIsNonOpenAINative(pid, pObj) {
 			matches = append(matches, modelMatch{pid: pid, mid: raw})
 		}
 	}
@@ -315,6 +317,15 @@ func (s *Service) serveRelayChat(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	if relayProviderIsGoogleNative(providerID, pObj) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error": map[string]any{
+				"message": "provider " + providerID + " speaks the Google Gemini protocol; the local relay only forwards OpenAI-compatible providers",
+				"type":    "invalid_request_error",
+			},
+		})
+		return
+	}
 
 	baseURL, apiKey, npm, headers := s.resolveProviderConnection(providerID, "", "")
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
@@ -324,9 +335,15 @@ func (s *Service) serveRelayChat(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	if strings.Contains(strings.TrimSpace(npm), "anthropic") {
+	if isAnthropicProtocol(providerID, npm) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{
 			"error": map[string]any{"message": "provider " + providerID + " is configured with the Anthropic SDK; use an OpenAI-compatible endpoint", "type": "invalid_request_error"},
+		})
+		return
+	}
+	if isGoogleProtocol(providerID, npm) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error": map[string]any{"message": "provider " + providerID + " is configured with the Google Gemini SDK; use an OpenAI-compatible endpoint", "type": "invalid_request_error"},
 		})
 		return
 	}

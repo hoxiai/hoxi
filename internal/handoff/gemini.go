@@ -267,6 +267,12 @@ func unquoteAntigravityArg(v interface{}) interface{} {
 			return unq
 		}
 	}
+	if len(trimmed) >= 2 && ((trimmed[0] == '[' && trimmed[len(trimmed)-1] == ']') || (trimmed[0] == '{' && trimmed[len(trimmed)-1] == '}')) {
+		var parsed interface{}
+		if json.Unmarshal([]byte(trimmed), &parsed) == nil {
+			return parsed
+		}
+	}
 	return s
 }
 

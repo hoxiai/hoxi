@@ -142,4 +142,8 @@ export const header = {
   gatewaySavingsLabel: "Savings vs Official",
   gatewayUptimeLabel: "Uptime",
   gatewayLatencyLabel: "Avg Latency",
+  pulseMatrixTitle: "HQ Fleet Matrix",
+  pulseMatrixSummary: "{total} projects · {sandboxes} sandboxes",
+  pulseMatrixBlocked: "{count} blocked ({names})",
+  pulseMatrixAllClear: "0 blocked · all clear",
 };

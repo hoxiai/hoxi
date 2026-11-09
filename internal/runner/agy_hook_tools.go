@@ -20,6 +20,7 @@ const (
 	hookActionRead        = "read"
 	hookActionEdit        = "edit"
 	hookActionAsk         = "ask"
+	hookActionQuestion    = "question"
 	hookActionPassthrough = "passthrough"
 	hookActionUnknown     = "unknown"
 )
@@ -88,7 +89,6 @@ var (
 	hookPassthroughTools = map[string]bool{
 		"finish":        true,
 		"task_boundary": true,
-		"ask_question":  true,
 	}
 )
 
@@ -99,6 +99,9 @@ func hookToolAction(name string) string {
 	lower := strings.ToLower(strings.TrimSpace(name))
 	if lower == hookToolRunCommand {
 		return hookActionCommand
+	}
+	if isQuestionToolName(lower) {
+		return hookActionQuestion
 	}
 	if hookReadTools[lower] {
 		return hookActionRead

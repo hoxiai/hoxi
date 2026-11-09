@@ -112,6 +112,22 @@ func newMockLLMServer(t *testing.T) *httptest.Server {
 			}
 			_, _ = w.Write([]byte(`{"content":[{"text":"{\"score\": 91, \"pass\": true, \"summary\": \"Anthropic audit pass\", \"issues\": []}"}]}`))
 
+		case "/v1beta/models":
+			if r.Header.Get("x-goog-api-key") == "" {
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"error":{"message":"Missing x-goog-api-key"}}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"models":[{"name":"models/gemini-2.5-pro","displayName":"Gemini 2.5 Pro"},{"name":"models/gemini-2.5-flash","displayName":"Gemini 2.5 Flash"}]}`))
+
+		case "/v1beta/models/gemini-2.5-pro:generateContent":
+			if r.Header.Get("x-goog-api-key") == "" {
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"error":{"message":"Missing x-goog-api-key"}}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"thinking...","thought":true},{"text":"Gemini completion ok"}]}}]}`))
+
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -192,6 +208,23 @@ func TestLLMClientResolveAndComplete(t *testing.T) {
 	text, err = svc.Complete(ctx, target, llm.Request{Prompt: "Senior Code Auditor", Timeout: 5 * time.Second, Purpose: llm.PurposeInteractive})
 	if err != nil || !strings.Contains(text, "Anthropic audit pass") {
 		t.Fatalf("Anthropic completion = %q, %v", text, err)
+	}
+
+	// Seed google provider config so credentials and @ai-sdk/google protocol are used.
+	_ = doMuxReq(t, mux, http.MethodPost, "/api/hoxi/models-config", map[string]any{
+		"providerID": "google-custom",
+		"config": map[string]any{
+			"npm": "@ai-sdk/google",
+			"options": map[string]any{
+				"baseURL": llmSrv.URL + "/v1beta",
+				"apiKey":  "AIzaSyTestKey",
+			},
+		},
+	})
+	target = svc.Resolve("google-custom", "gemini-2.5-pro", "", "")
+	text, err = svc.Complete(ctx, target, llm.Request{Prompt: "Summarize the request", Timeout: 5 * time.Second})
+	if err != nil || text != "Gemini completion ok" {
+		t.Fatalf("Gemini completion = %q, %v", text, err)
 	}
 
 	invalid := svc.Resolve("observer", "model", "invalid://observer", "")
@@ -412,6 +445,26 @@ func TestFetchProbeAndTelemetryRoutes(t *testing.T) {
 	})
 	if !strings.Contains(rec.Body.String(), `"ok":true`) {
 		t.Fatalf("test-model Anthropic failed: %s", rec.Body.String())
+	}
+
+	rec = doMuxReq(t, mux, http.MethodPost, "/api/hoxi/provider/fetch-models", map[string]any{
+		"baseURL": llmSrv.URL,
+		"apiKey":  "AIzaSyTestKey",
+		"npm":     "@ai-sdk/google",
+	})
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"id":"gemini-2.5-pro"`) || !strings.Contains(rec.Body.String(), `"name":"Gemini 2.5 Pro"`) {
+		t.Fatalf("fetch-models Google Gemini failed: %d %s", rec.Code, rec.Body.String())
+	}
+
+	rec = doMuxReq(t, mux, http.MethodPost, "/api/hoxi/provider/test-model", map[string]any{
+		"providerID": "google-custom",
+		"baseURL":    llmSrv.URL,
+		"apiKey":     "AIzaSyTestKey",
+		"npm":        "@ai-sdk/google",
+		"modelID":    "models/gemini-2.5-pro",
+	})
+	if !strings.Contains(rec.Body.String(), `"ok":true`) {
+		t.Fatalf("test-model Google Gemini failed: %s", rec.Body.String())
 	}
 
 	rec = doMuxReq(t, mux, http.MethodPost, "/api/hoxi/provider/test-model", map[string]any{

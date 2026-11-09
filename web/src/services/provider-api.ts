@@ -52,6 +52,7 @@ export const providerAndAssistAPI = {
     baseURL: string;
     apiKey?: string;
     providerID?: string;
+    npm?: string;
     headers?: Record<string, string>;
     directory?: string;
   }): Promise<{ ok?: boolean; models?: Array<{ id: string; name: string }>; error?: string; auth?: boolean }> {

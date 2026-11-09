@@ -334,6 +334,21 @@ func preserveToolEditInput(next *MessagePart, prev MessagePart) {
 			next.State.Title = prev.State.Title
 		}
 	}
+	if next.Tool == "question" && prev.Tool == "question" {
+		if !hasQuestionsInput(next.State.Input) && hasQuestionsInput(prev.State.Input) {
+			next.State.Input = mergeAgyEditParams(next.State.Input, prev.State.Input)
+		}
+		if len(prev.State.Metadata) > 0 {
+			if next.State.Metadata == nil {
+				next.State.Metadata = make(map[string]interface{}, len(prev.State.Metadata))
+			}
+			for k, v := range prev.State.Metadata {
+				if _, exists := next.State.Metadata[k]; !exists {
+					next.State.Metadata[k] = v
+				}
+			}
+		}
+	}
 }
 
 func parseAgyToolStepIndex(partID string) (int, bool) {
@@ -374,6 +389,9 @@ func partNeedsAgyEditHydration(part MessagePart) bool {
 	if part.Tool == "bash" {
 		return firstString(part.State.Input["toolSummary"], part.State.Input["toolAction"], part.State.Input["description"]) == ""
 	}
+	if part.Tool == "question" {
+		return !hasQuestionsInput(part.State.Input)
+	}
 	if part.Tool != "edit" && part.Tool != "write" {
 		return false
 	}
@@ -400,7 +418,7 @@ func loadAgyTranscriptEditsByStep(conversationID string) map[int]agyToolCall {
 					continue
 				}
 				for i, call := range row.ToolCalls {
-					if agyEditPayloadNames[call.Name] || strings.EqualFold(call.Name, "run_command") {
+					if agyEditPayloadNames[call.Name] || strings.EqualFold(call.Name, "run_command") || isQuestionToolName(call.Name) {
 						call.Args = decodeAgyToolArgs(call.Args)
 						byStep[row.StepIndex+1+i] = call
 					}
@@ -452,6 +470,20 @@ func hydrateAgyTranscriptEditParts(externalID string, turns []MessageTurn) bool 
 					if !reflect.DeepEqual(part.State.Input, cleanInput) || (part.State.Title == "" && title != "") {
 						part.State.Input = cleanInput
 						if part.State.Title == "" || part.State.Title == "run_command" {
+							part.State.Title = title
+						}
+						changed = true
+					}
+				}
+				continue
+			}
+			if part.Tool == "question" {
+				if call, found := byStep[stepIdx]; found && isQuestionToolName(call.Name) && partNeedsAgyEditHydration(*part) {
+					merged := mergeAgyEditParams(part.State.Input, call.Args)
+					_, title, cleanInput := normalizeRunnerTool(call.Name, merged)
+					if !reflect.DeepEqual(part.State.Input, cleanInput) {
+						part.State.Input = cleanInput
+						if part.State.Title == "" && title != "" {
 							part.State.Title = title
 						}
 						changed = true

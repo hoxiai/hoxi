@@ -115,7 +115,8 @@ agy 发起 run_command
     - 只读类（`read_file` / `view_file` / `list_dir` / `find_by_name` / `grep_search` / `list_resources` / 浏览器读取等）→ 携带路径参数的读/列/搜工具当路径落在会话 worktree 内（含符号链接与悬空符号链接校验）且非 `.env` 等敏感凭据文件时直接 `auto_approve`；`.env` 等敏感文件在所有模式下推送 `permission:"tool"` 审批卡片；路径在 worktree 外或缺失时进入门控并按 `~/.hoxi/approval-policy.json` 策略决定。
     - 写/改类（`write_to_file` / `write_file` / `replace_file_content` / `multi_replace_file_content` / `sed_file` / `notebook_edit`）→ 相对路径按 worktree 解析；落在 worktree 内外的常规路径按 `~/.hoxi/approval-policy.json` 策略决定（`auto` / `smart` 放行，`manual` 询问）；命中控制执行的敏感路径（`.git/**`、`.agents/**`、`.opencode/**`、`.claude/**`、`.hoxi/**`、`.vscode/settings.json`、`.envrc`、`.ssh/**` 等）或未携带可识别路径参数时在所有模式下推送 `permission:"tool"` 审批卡片。
     - 网络外发与高风险工具（`read_url_content` / `search_web` / `call_mcp_tool` / `mcp` / `execute_browser_javascript` / `execute_url` / `unsandboxed` / `run_workflow`）→ 推送 `permission:"tool"` 审批卡片；`always` 只记住完全相同的工具 + 参数，不写 agy 全局配置。
-    - 控制类工具（`finish` / `task_boundary` / `ask_question`）→ 返回 `allow`，不阻塞轮次结束。
+    - 交互式提问工具（`ask_question`）→ 进入 `gateQuestion`（`internal/runner/question_gate.go`），推送 `question.asked` 并挂起等待用户在桌面或移动端选择/回答，回答后以 `deny` + 格式化答案回传给模型继续执行。
+    - 控制类工具（`finish` / `task_boundary`）→ 返回 `allow`，不阻塞轮次结束。
     - 未知工具 → 推送 `permission:"tool"` 审批卡片。无头模式会把需要权限的未知工具直接 soft-deny 并结束轮次，交给 Hoxi 审批才能让用户有机会放行。
   - 命令归一化：`permission_policy.go` 在单次解析后的命令段上校验并去掉位于会话 worktree 内的无引号简单 `cd <dir>` 首段（不重新拼接字符串解析），并把受信目录下的绝对工具链路径（如 `/usr/local/go/bin/go`、`/opt/homebrew/bin/npm`）按 basename 归一，避免 agent 常见写法被误判为 `ask`。
   - 原有的 `denied_actions` 提示保留作兜底（hook 没装上，或其它未覆盖工具需要权限时），文案改成引导用户检查 hook 安装状态。

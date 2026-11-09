@@ -192,6 +192,8 @@ func (s *Service) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc(geminiHookPreToolPath, s.handleGeminiHookPreTool)
 	mux.HandleFunc("/api/hoxi/permission", s.handleUnifiedPermissionRoutes)
 	mux.HandleFunc("/api/hoxi/permission/", s.handleUnifiedPermissionRoutes)
+	mux.HandleFunc("/api/hoxi/question", s.handleUnifiedQuestionRoutes)
+	mux.HandleFunc("/api/hoxi/question/", s.handleUnifiedQuestionRoutes)
 	mux.HandleFunc("/api/hoxi/runner/permission", s.handlePermissionRoutes)
 	mux.HandleFunc("/api/hoxi/runner/permission/", s.handlePermissionRoutes)
 	mux.HandleFunc("/api/hoxi/event", s.handleUnifiedSSE)
@@ -218,6 +220,7 @@ func (s *Service) Subscribe(sessionID string) (chan SSEEvent, func()) {
 func (s *Service) broadcast(sessionID string, evts ...SSEEvent) {
 	for _, evt := range evts {
 		s.decorateStoppedToolEvent(sessionID, &evt)
+		s.decorateQuestionToolEvent(sessionID, &evt)
 		s.noteRuntimeShellEvent(sessionID, evt)
 		if evt.Type == "session.error" {
 			if entry := sessionErrorDiagnostic(sessionID, evt.Properties["error"]); entry != nil {

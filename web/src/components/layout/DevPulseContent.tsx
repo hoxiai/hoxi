@@ -123,6 +123,39 @@ export default function DevPulseContent(props: { onNavigate: () => void }) {
         </div>
       </Show>
 
+      <Show when={stats().hqMatrix?.enabled}>
+        <div class="mt-2.5 pt-2.5 border-t border-[var(--border-subtle)]">
+          <div class="rounded-lg bg-[var(--bg-inset)]/60 px-2.5 py-2 flex items-center justify-between gap-2">
+            <div class="min-w-0">
+              <div class="text-[11px] text-[var(--text-muted)] truncate">
+                {t("header.pulseMatrixTitle")}
+              </div>
+              <div class="mt-0.5 font-mono text-[12px] font-medium text-[var(--text-primary)] truncate">
+                {t("header.pulseMatrixSummary", {
+                  total: stats().hqMatrix?.totalProjects ?? 0,
+                  sandboxes: stats().hqMatrix?.activeSandboxes ?? 0,
+                })}
+              </div>
+            </div>
+            <Show
+              when={(stats().hqMatrix?.blockedProjects ?? 0) > 0}
+              fallback={
+                <span class="shrink-0 rounded-full bg-emerald-500/15 px-2 py-0.5 font-mono text-[10px] font-medium text-emerald-500">
+                  {t("header.pulseMatrixAllClear")}
+                </span>
+              }
+            >
+              <span class="shrink-0 rounded-full bg-rose-500/15 px-2 py-0.5 font-mono text-[10px] font-medium text-rose-500">
+                {t("header.pulseMatrixBlocked", {
+                  count: stats().hqMatrix?.blockedProjects ?? 0,
+                  names: (stats().hqMatrix?.blockedNames ?? []).join(","),
+                })}
+              </span>
+            </Show>
+          </div>
+        </div>
+      </Show>
+
       <div class="mt-2 pt-2 border-t border-[var(--border-subtle)]">
         <button
           type="button"

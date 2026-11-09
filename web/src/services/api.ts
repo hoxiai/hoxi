@@ -513,13 +513,19 @@ export const hoxiAPI = {
   },
   // Interactive Question Dock (Kilo QuestionDock)
   listQuestions(directory?: string): Promise<QuestionRequest[]> {
-    return requestJSON(withDir("/question", directory));
+    return requestJSON(withDir("/api/hoxi/question", directory));
   },
   replyQuestion(requestID: string, answers: string[][], directory?: string): Promise<void> {
-    return requestJSON(withDir(`/question/${requestID}/reply`, directory), { method: "POST", body: JSON.stringify({ answers }) });
+    return requestJSON(withDir(`/api/hoxi/question/${encodeURIComponent(requestID)}/reply`, directory), {
+      method: "POST",
+      body: JSON.stringify({ answers }),
+    });
   },
   rejectQuestion(requestID: string, directory?: string): Promise<void> {
-    return requestJSON(withDir(`/question/${requestID}/reject`, directory), { method: "POST", body: JSON.stringify({}) });
+    return requestJSON(withDir(`/api/hoxi/question/${encodeURIComponent(requestID)}/reject`, directory), {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
   },
   // Agents / Modes & Commands
   listAgents(directory?: string): Promise<AgentInfo[]> {

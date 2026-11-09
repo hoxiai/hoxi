@@ -15,6 +15,7 @@ import (
 // submitted in process by RunPromptAndWait.
 type PromptRequest struct {
 	Text            string          `json:"text"`
+	Runtime         string          `json:"runtime,omitempty"`
 	Agent           string          `json:"agent"`
 	Variant         string          `json:"variant"`
 	System          string          `json:"system"`
@@ -22,6 +23,18 @@ type PromptRequest struct {
 	Parts           []MessagePart   `json:"parts"`
 	SkillSelection  *SkillSelection `json:"skillSelection,omitempty"`
 	ClientRequestID string          `json:"clientRequestId,omitempty"`
+}
+
+func resolveRequestedPromptRuntime(body PromptRequest, currentRuntime string) string {
+	if rt := strings.TrimSpace(body.Runtime); rt == "opencode" || IsValidRuntime(rt) {
+		return rt
+	}
+	if body.Model != nil {
+		if prov := strings.TrimSpace(body.Model.ProviderID); IsValidRuntime(prov) {
+			return prov
+		}
+	}
+	return currentRuntime
 }
 
 // Stable execution guidance shared by desktop, mobile, CLI and orchestration
@@ -113,7 +126,8 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 
 	rec, ok := s.store.Get(sessionID)
 	unmanagedBusySteer := false
-	if !ok && body.SkillSelection != nil {
+	wantRuntime := resolveRequestedPromptRuntime(body, "opencode")
+	if !ok && (body.SkillSelection != nil || (wantRuntime != "" && wantRuntime != "opencode")) {
 		adopted, adoptErr := s.adoptOpenCodeSession(ctx, sessionID, directory)
 		if adoptErr != nil {
 			if adoptErr.Error() == "cannot change runtime while the session is running" {
@@ -179,6 +193,35 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 	if err := validateSessionDirectory(rec); err != nil {
 		return http.StatusBadRequest, PromptReceipt{}, err
 	}
+	if targetRuntime := resolveRequestedPromptRuntime(body, rec.Runtime); targetRuntime != "" && targetRuntime != rec.Runtime && !unmanagedBusySteer {
+		s.mu.Lock()
+		ap := s.procs[sessionID]
+		busy := ap != nil && !ap.hasPendingError() && !ap.wasAborted()
+		s.mu.Unlock()
+		if busy {
+			return http.StatusConflict, PromptReceipt{}, errors.New("cannot change runtime while the session is running")
+		}
+		rec.Runtime = targetRuntime
+		rec.ExternalID = ""
+		rec.ContextPending = len(rec.Turns) > 0
+		rec.ContextTurnCount = len(rec.Turns)
+		if targetRuntime == "opencode" && IsValidRuntime(rec.ProviderID) {
+			rec.ProviderID = ""
+		}
+		_, _, _ = s.store.Update(sessionID, func(r *SessionRecord) {
+			r.Runtime = rec.Runtime
+			r.ExternalID = ""
+			r.ContextPending = rec.ContextPending
+			r.ContextTurnCount = rec.ContextTurnCount
+			if targetRuntime == "opencode" && IsValidRuntime(r.ProviderID) {
+				r.ProviderID = ""
+			}
+		})
+		if updated, ok := s.store.Get(sessionID); ok {
+			info := updated.ToSessionInfo()
+			s.broadcast(sessionID, SSEEvent{Type: "session.updated", Properties: map[string]interface{}{"info": info}})
+		}
+	}
 	callerSystem := strings.TrimSpace(body.System)
 	body.System = strings.TrimSpace(commandExecutionGuidance + "\n\n" + callerSystem)
 	var resolvedSkill ResolvedSkill
@@ -227,6 +270,8 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 		modelID = strings.TrimSpace(body.Model.ModelID)
 		if body.Model.ProviderID != "" {
 			rec.ProviderID = body.Model.ProviderID
+		} else if rec.Runtime == "opencode" && IsValidRuntime(rec.ProviderID) {
+			rec.ProviderID = ""
 		}
 	}
 	effort := strings.TrimSpace(body.Variant)
@@ -330,6 +375,11 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 		)
 	}
 
+	oldQoderBin, _ := agentcli.ResolveQoderBinaryForModel(rec.ModelID)
+	newQoderBin, _ := agentcli.ResolveQoderBinaryForModel(modelID)
+	resetQoderResume := rec.Runtime == string(RuntimeQoder) &&
+		strings.TrimSpace(rec.ExternalID) != "" &&
+		oldQoderBin != newQoderBin
 	resetGeminiResume := rec.Runtime == string(RuntimeGeminiCLI) &&
 		strings.TrimSpace(rec.ExternalID) != "" &&
 		ShouldGeminiCLIUseAgy(rec.ModelID) != ShouldGeminiCLIUseAgy(modelID)
@@ -345,7 +395,7 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 		r.ModelID = modelID
 		r.Mode = mode
 		r.ProviderID = rec.ProviderID
-		if resetGeminiResume || resetAgySplitBrain {
+		if resetGeminiResume || resetQoderResume || resetAgySplitBrain {
 			r.ExternalID = ""
 			r.ContextPending = len(r.Turns) > 0
 			r.ContextTurnCount = len(r.Turns)

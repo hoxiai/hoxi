@@ -2,13 +2,13 @@
 
 ## 1. 架构定位与事实源
 - **工程类型**：`go-wails`
-- **母体血缘**：独立自研工程（由 GoPanel 统一部署托管）
+- **母体血缘**：Hoxi 桌面与移动跨端多 Agent 工作台（官网主题 `site/themes/hoxi` 与 `site/{domains.env,dev.env}` 由 `../apay/scripts/workspace-sites.mjs` 自动软链挂载至 APay 宿主）
 - **权威文档入口**：详见项目根目录 `AGENTS.md`（唯一权威架构事实源，必读！）
 - **硬性交付门禁**：修改后必须运行 `./verify.sh` 且退出码为 0；上线统一走 `../.hq/ship.sh`。
 
 ## 2. 核心不可触碰红线
 - 严格遵循上级总工作区 `../CLAUDE.md` 与本项目 `AGENTS.md` 的边界约束。
-- 若本项目包含内嵌独立 Git 仓（如 `plugins/app/*`、`admin/`、`site/`），操作 Git 前必须用 `git -C <子目录> status` 核实归属。
+- 若本项目包含内嵌独立 Git 仓（如 `site/themes/hoxi`），操作 Git 前必须用 `git -C <子目录> status` 核实归属。
 
 ## Pitfalls
 <!-- Agent 在排障或开发中踩到的隐蔽陷阱，请以「一行一条、合并同类项」的格式追加在下方 -->

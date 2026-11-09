@@ -136,6 +136,7 @@ func (s *Service) startTurnProcess(
 			if len(terminalEvts) > 0 && !ap.wasSteered() {
 				s.broadcastRouted(rec.ID, terminalEvts)
 			}
+			s.clearSessionQuestionState(rec.ID)
 			close(ap.done)
 		}()
 

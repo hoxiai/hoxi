@@ -71,11 +71,14 @@ function toolCallID(request: QuestionRequest): string | undefined {
 export function rememberQuestionRequest(request: QuestionRequest): void {
   if (!request?.id) return;
   const callID = toolCallID(request);
+  const questions = Array.isArray(request.questions)
+    ? request.questions.map(normalizeQuestion)
+    : [];
   repliesByRequestID.set(request.id, {
     requestID: request.id,
     sessionID: request.sessionID,
     callID,
-    questions: request.questions ?? [],
+    questions,
     updatedAt: Date.now(),
   });
   if (callID) requestIDByCallID.set(callID, request.id);
@@ -330,16 +333,23 @@ function resolveAnswerList(
 
 function normalizeQuestion(raw: any): QuestionInfo {
   const options = Array.isArray(raw?.options)
-    ? raw.options.map((opt: any) => ({
-        label: String(opt?.label ?? ""),
-        description: String(opt?.description ?? ""),
-      }))
+    ? raw.options
+        .map((opt: any) =>
+          typeof opt === "string"
+            ? { label: opt.trim(), description: "" }
+            : {
+                label: String(opt?.label ?? opt?.value ?? opt?.title ?? "").trim(),
+                description: String(opt?.description ?? opt?.detail ?? "").trim(),
+              }
+        )
+        .filter((opt: { label: string }) => opt.label.length > 0)
     : [];
   return {
-    question: String(raw?.question ?? ""),
+    question: String(raw?.question ?? raw?.prompt ?? ""),
     header: String(raw?.header ?? ""),
     options,
-    multiple: Boolean(raw?.multiple),
+    multiple: Boolean(raw?.multiple ?? raw?.multiSelect ?? raw?.is_multi_select),
+    ...(raw?.custom === false ? { custom: false } : {}),
   };
 }
 

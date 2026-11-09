@@ -211,6 +211,8 @@ func normalizeExternalToolName(raw string) string {
 		return "grep"
 	case "glob", "list_dir", "list_files", "ls", "find", "find_by_name", "file_search", "search_file":
 		return "glob"
+	case "question", "ask_question", "askuserquestion", "ask_user_question", "ask_user":
+		return "question"
 	default:
 		if lower == "" {
 			return "bash"

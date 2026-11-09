@@ -165,6 +165,9 @@ func (s *Service) decideClaudeHookCall(r *http.Request, cred hookCredential, p c
 	if len(p.rawInput) > 0 {
 		_ = json.Unmarshal(p.rawInput, &argsMap)
 	}
+	if isQuestionToolName(lowerTool) {
+		return s.gateQuestion(r, cred, rec, p.ToolName, argsMap, p.ToolUseID)
+	}
 	baseDir := firstNonEmptyStr(strings.TrimSpace(p.Cwd), rec.WorktreePath)
 
 	switch {
@@ -217,19 +220,18 @@ func (s *Service) decideClaudeHookCall(r *http.Request, cred hookCredential, p c
 }
 
 var claudePassthroughTools = map[string]bool{
-	"todowrite":       true,
-	"todoread":        true,
-	"write_todos":     true, // Gemini CLI's todo list
-	"task":            true,
-	"agent":           true,
-	"exitplanmode":    true,
-	"enterplanmode":   true,
-	"askuserquestion": true,
-	"skill":           true,
-	"slashcommand":    true,
-	"toolsearch":      true,
-	"taskoutput":      true,
-	"taskstop":        true,
+	"todowrite":     true,
+	"todoread":      true,
+	"write_todos":   true, // Gemini CLI's todo list
+	"task":          true,
+	"agent":         true,
+	"exitplanmode":  true,
+	"enterplanmode": true,
+	"skill":         true,
+	"slashcommand":  true,
+	"toolsearch":    true,
+	"taskoutput":    true,
+	"taskstop":      true,
 }
 
 func isClaudePassthroughTool(lowerTool string) bool {

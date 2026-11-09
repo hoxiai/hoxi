@@ -75,6 +75,7 @@ type DailyPulseResponse struct {
 	DbToolCallsFailed    int              `json:"dbToolCallsFailed"`
 	DbLatestTurnTs       int64            `json:"dbLatestTurnTs"`
 	DbModels             []DailyModelStat `json:"dbModels"`
+	HQMatrix             *HQMatrixSummary `json:"hqMatrix,omitempty"`
 }
 
 // SourceKey fingerprints the underlying SQLite and runner stores so cached
@@ -204,6 +205,7 @@ func (s *Service) DailyPulse(dir, sessionID string, forced bool) DailyPulseRespo
 	if len(targets) > 0 {
 		s.CollectGitDailyStats(targets, startOfToday, &res)
 	}
+	res.HQMatrix = s.CollectHQMatrixSummary(targets)
 
 	s.mu.Lock()
 	if len(s.entries) >= maxDevPulseCacheEntries {

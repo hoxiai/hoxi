@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -270,6 +271,9 @@ func TestRejectSymlinkDirectory(t *testing.T) {
 // write to a temp directory, never to the user's real ~/.hoxi/logs.
 func TestInitializeKeepsTestBinariesOutOfRealLogs(t *testing.T) {
 	t.Setenv("HOXI_HOME", "")
+	if u, err := user.Current(); err == nil && strings.TrimSpace(u.HomeDir) != "" {
+		t.Setenv("HOME", u.HomeDir)
+	}
 	global.Lock()
 	previous := global.s
 	global.s = nil

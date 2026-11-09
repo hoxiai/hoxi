@@ -177,4 +177,31 @@ describe("question-answers resolveQuestionItems", () => {
       setWorkspace("pendingQuestions", []);
     }
   });
+
+  it("normalizes Antigravity ask_question string options and is_multi_select", () => {
+    clearQuestionRecords();
+    const agyQuestions = [
+      {
+        question: "How should we proceed?",
+        options: ["(Recommended) Full implementation", "Read-only audit"],
+        is_multi_select: true,
+      },
+    ];
+    const part = questionPart({
+      status: "completed",
+      input: { questions: agyQuestions },
+      output: "",
+      title: "ask_question",
+      metadata: { answers: [["(Recommended) Full implementation"]] },
+      time: { start: 1, end: 2 },
+    });
+    const items = resolveQuestionItems(part);
+    assertEqual(items.length, 1);
+    assertEqual(items[0].multiple, true);
+    assertEqual(items[0].options.length, 2);
+    assertEqual(items[0].options[0].label, "(Recommended) Full implementation");
+    assertEqual(items[0].options[0].selected, true);
+    assertEqual(items[0].options[1].label, "Read-only audit");
+    assertEqual(items[0].options[1].selected, false);
+  });
 });

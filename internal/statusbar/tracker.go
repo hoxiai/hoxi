@@ -194,6 +194,28 @@ func (t *Tracker) SetPendingApproval(requestID, sessionID string, pending bool) 
 	}
 }
 
+func (t *Tracker) SetPendingQuestion(requestID, sessionID string, pending bool) {
+	requestID = strings.TrimSpace(requestID)
+	if requestID == "" {
+		return
+	}
+	t.mu.Lock()
+	var announce func()
+	if pending {
+		announce = t.addPendingLocked("question", requestID, sessionID, "question")
+	} else {
+		t.removePendingLocked(requestID)
+	}
+	t.syncKeepAwakeLocked()
+	summary, pendingIDs, runningIDs, resolver := t.snapshotWithTargetsLocked()
+	t.mu.Unlock()
+	enrichSummary(&summary, pendingIDs, runningIDs, resolver)
+	Update(summary)
+	if announce != nil {
+		announce()
+	}
+}
+
 // SetProviderDegraded flags a provider with persistent internal LLM failures so
 // the tray shows Attention until the provider recovers.
 func (t *Tracker) SetProviderDegraded(providerID string, degraded bool) {

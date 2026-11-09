@@ -214,6 +214,9 @@ func (s *Service) decideGeminiHookCall(r *http.Request, cred hookCredential, p g
 		_ = json.Unmarshal(p.ToolInput, &argsMap)
 	}
 	lowerTool := strings.ToLower(strings.TrimSpace(p.ToolName))
+	if isQuestionToolName(lowerTool) {
+		return s.gateQuestion(r, cred, rec, p.ToolName, argsMap, callID)
+	}
 	baseDir := firstNonEmptyStr(strings.TrimSpace(p.Cwd), rec.WorktreePath)
 
 	if lowerTool == "run_shell_command" || lowerTool == "bash" || lowerTool == "shell" || lowerTool == "run_command" {

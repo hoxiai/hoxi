@@ -486,6 +486,7 @@ func (t *TurnTranslator) handleAgyToolStep(su *agyStepUpdate, now int64) []SSEEv
 			errMsg = "tool execution failed"
 		}
 	}
+	normalizeQuestionToolResult(normTool, &status, &output, &errMsg)
 
 	part.Tool = normTool
 	part.State = &ToolState{

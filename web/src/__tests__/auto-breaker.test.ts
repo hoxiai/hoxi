@@ -196,6 +196,8 @@ describe("shared candidate circuit breaker in auto-pool selection", () => {
   it("cools down and skips broken auto-pool candidates on synchronous sendPromptAsync 409 or engine-not-loaded error event", async () => {
     const origSend = hoxiAPI.sendPromptAsync;
     const origGetMessages = hoxiAPI.getMessages;
+    const origGetSessionDiff = hoxiAPI.getSessionDiff;
+    const origRenameSession = hoxiAPI.renameSession;
     const origReport = hoxiAPI.reportCandidateOutcome;
     const origGet = hoxiAPI.getProviderCandidates;
     const origSummarize = hoxiAPI.summarizeSessionTitle;
@@ -203,6 +205,8 @@ describe("shared candidate circuit breaker in auto-pool selection", () => {
       hoxiAPI.reportCandidateOutcome = async () => ({ ok: true });
       hoxiAPI.getProviderCandidates = async () => ({ ok: true, breakers: {} });
       hoxiAPI.getMessages = async () => [];
+      hoxiAPI.getSessionDiff = async () => [];
+      hoxiAPI.renameSession = async () => ({ ok: true } as any);
       hoxiAPI.summarizeSessionTitle = async () => ({ ok: true, title: "Test" });
 
       setWorkspace("providers", [
@@ -283,6 +287,8 @@ describe("shared candidate circuit breaker in auto-pool selection", () => {
     } finally {
       hoxiAPI.sendPromptAsync = origSend;
       hoxiAPI.getMessages = origGetMessages;
+      hoxiAPI.getSessionDiff = origGetSessionDiff;
+      hoxiAPI.renameSession = origRenameSession;
       hoxiAPI.reportCandidateOutcome = origReport;
       hoxiAPI.getProviderCandidates = origGet;
       hoxiAPI.summarizeSessionTitle = origSummarize;

@@ -35,6 +35,10 @@ func TestParseOpenAIModelsPayloadAndExtractAPIError(t *testing.T) {
 	if len(modelsAlt) != 1 || modelsAlt[0].ID != "deepseek-chat" {
 		t.Errorf("unexpected models from wrapper.Models: %+v", modelsAlt)
 	}
+	modelsGemini := parseOpenAIModelsPayload([]byte(`{"models":[{"name":"models/gemini-2.5-pro","displayName":"Gemini 2.5 Pro"},{"name":"models/gemini-2.5-flash"}]}`))
+	if len(modelsGemini) != 2 || modelsGemini[0].ID != "gemini-2.5-flash" || modelsGemini[0].Name != "gemini-2.5-flash" || modelsGemini[1].ID != "gemini-2.5-pro" || modelsGemini[1].Name != "Gemini 2.5 Pro" {
+		t.Errorf("unexpected Gemini models from /v1beta/models payload: %+v", modelsGemini)
+	}
 	modelsArr := parseOpenAIModelsPayload([]byte(`[{"id":"qwen-max"}]`))
 	if len(modelsArr) != 1 || modelsArr[0].ID != "qwen-max" {
 		t.Errorf("unexpected models from raw array: %+v", modelsArr)
@@ -65,6 +69,9 @@ func TestExtractLLMTextContent(t *testing.T) {
 	}
 	if got := extractLLMTextContent([]byte(`{"content":[{"text":"hello anthropic"}]}`)); got != "hello anthropic" {
 		t.Errorf("extractLLMTextContent Anthropic = %q", got)
+	}
+	if got := extractLLMTextContent([]byte(`{"candidates":[{"content":{"parts":[{"text":"internal thought","thought":true},{"text":"hello gemini"}]}}]}`)); got != "hello gemini" {
+		t.Errorf("extractLLMTextContent Gemini = %q", got)
 	}
 	if got := extractLLMTextContent([]byte(`plain text`)); got != "plain text" {
 		t.Errorf("extractLLMTextContent fallback = %q", got)

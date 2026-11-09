@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+
+	"github.com/hoxiai/hoxi/internal/runner"
 )
 
 const (
@@ -54,9 +56,24 @@ func scanSkillSelection(dec *json.Decoder) bool {
 		if err := dec.Decode(&value); err != nil {
 			return false
 		}
-		if key, _ := tok.(string); key == "skillSelection" {
+		switch key, _ := tok.(string); key {
+		case "skillSelection":
 			trimmed := bytes.TrimSpace(value)
-			return len(trimmed) > 0 && !bytes.Equal(trimmed, []byte("null"))
+			if len(trimmed) > 0 && !bytes.Equal(trimmed, []byte("null")) {
+				return true
+			}
+		case "runtime":
+			var rt string
+			if json.Unmarshal(value, &rt) == nil && runner.IsValidRuntime(strings.TrimSpace(rt)) {
+				return true
+			}
+		case "model":
+			var m struct {
+				ProviderID string `json:"providerID"`
+			}
+			if json.Unmarshal(value, &m) == nil && runner.IsValidRuntime(strings.TrimSpace(m.ProviderID)) {
+				return true
+			}
 		}
 	}
 	return false

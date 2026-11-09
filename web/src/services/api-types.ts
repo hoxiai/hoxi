@@ -504,6 +504,21 @@ export interface GitDailyPulseResponse {
     cacheWriteTokens?: number;
     cost: number;
   }>;
+  hqMatrix?: {
+    enabled: boolean;
+    rootDir?: string;
+    updatedAt?: string;
+    totalProjects: number;
+    idleProjects: number;
+    readyProjects: number;
+    activeProjects: number;
+    blockedProjects: number;
+    blockedNames?: string[];
+    activeSandboxes: number;
+    opsUpdatedAt?: string;
+    opsHealthyCount: number;
+    opsAnomalyCount: number;
+  };
 }
 
 export interface DevPulseHistoryModelStat {

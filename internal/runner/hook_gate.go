@@ -62,31 +62,37 @@ type pendingApproval struct {
 }
 
 type approvalGate struct {
-	mu           sync.Mutex
-	baseURL      string
-	autoInstall  bool
-	tokens       map[[32]byte]hookCredential
-	pending      map[string]*pendingApproval
-	byCallKey    map[string]*pendingApproval
-	dedupWaiters map[string]int
-	always       map[string]map[string]ApprovalGrant
-	toolAlways   map[string]map[string]ApprovalGrant
-	classGrants  map[string]map[string]ApprovalGrant // session -> recoverable class
-	openCodeAsks map[string]openCodeAsk              // OpenCode request ID -> request shown to the user
-	waitLimit    time.Duration
+	mu                sync.Mutex
+	baseURL           string
+	autoInstall       bool
+	tokens            map[[32]byte]hookCredential
+	pending           map[string]*pendingApproval
+	byCallKey         map[string]*pendingApproval
+	dedupWaiters      map[string]int
+	questions         map[string]*pendingQuestion
+	questionsByCallKey map[string]*pendingQuestion
+	resolvedQuestions map[string]resolvedQuestion
+	always            map[string]map[string]ApprovalGrant
+	toolAlways        map[string]map[string]ApprovalGrant
+	classGrants       map[string]map[string]ApprovalGrant // session -> recoverable class
+	openCodeAsks      map[string]openCodeAsk              // OpenCode request ID -> request shown to the user
+	waitLimit         time.Duration
 }
 
 func newApprovalGate() *approvalGate {
 	return &approvalGate{
-		tokens:       make(map[[32]byte]hookCredential),
-		pending:      make(map[string]*pendingApproval),
-		byCallKey:    make(map[string]*pendingApproval),
-		dedupWaiters: make(map[string]int),
-		always:       make(map[string]map[string]ApprovalGrant),
-		toolAlways:   make(map[string]map[string]ApprovalGrant),
-		classGrants:  make(map[string]map[string]ApprovalGrant),
-		openCodeAsks: make(map[string]openCodeAsk),
-		waitLimit:    agyhook.ClientTimeout - 5*time.Second,
+		tokens:            make(map[[32]byte]hookCredential),
+		pending:           make(map[string]*pendingApproval),
+		byCallKey:         make(map[string]*pendingApproval),
+		dedupWaiters:      make(map[string]int),
+		questions:         make(map[string]*pendingQuestion),
+		questionsByCallKey: make(map[string]*pendingQuestion),
+		resolvedQuestions: make(map[string]resolvedQuestion),
+		always:            make(map[string]map[string]ApprovalGrant),
+		toolAlways:        make(map[string]map[string]ApprovalGrant),
+		classGrants:       make(map[string]map[string]ApprovalGrant),
+		openCodeAsks:      make(map[string]openCodeAsk),
+		waitLimit:         agyhook.ClientTimeout - 5*time.Second,
 	}
 }
 
@@ -169,10 +175,22 @@ func (s *Service) cancelSessionApprovals(sessionID, reason string) {
 			targets = append(targets, p)
 		}
 	}
+	var qTargets []*pendingQuestion
+	for _, q := range s.gate.questions {
+		if q.sid == sessionID {
+			qTargets = append(qTargets, q)
+		}
+	}
 	s.gate.mu.Unlock()
 	for _, p := range targets {
 		select {
 		case p.reply <- approvalReply{Reply: "reject", Message: reason, Source: "system"}:
+		default:
+		}
+	}
+	for _, q := range qTargets {
+		select {
+		case q.reply <- questionReply{Rejected: true, Message: reason, Source: "system"}:
 		default:
 		}
 	}
@@ -229,6 +247,7 @@ func (s *Service) decideHookCall(r *http.Request, cred hookCredential, p hookPay
 	}
 	if _, _, destructive, _ := s.inspectHookToolRisk(cred.sessionID, p.ToolCall.Name, p.ToolCall.Args); !destructive &&
 		action != hookActionCommand &&
+		action != hookActionQuestion &&
 		s.gate.hasToolAlways(cred.sessionID, hookToolGrantKey(p.ToolCall.Name, p.ToolCall.Args)) {
 		return hookDecisionApprove, ""
 	}
@@ -237,6 +256,8 @@ func (s *Service) decideHookCall(r *http.Request, cred hookCredential, p hookPay
 	}
 
 	switch action {
+	case hookActionQuestion:
+		return s.gateQuestion(r, cred, rec, p.ToolCall.Name, p.ToolCall.Args, callID)
 	case hookActionRead:
 		if (isReadToolAllowedInWorktree(rec.WorktreePath, p.ToolCall.Name, p.ToolCall.Args) &&
 			!isSecretFilePath(resolveHookToolPath(rec.WorktreePath, p.ToolCall.Args))) ||
@@ -590,6 +611,12 @@ func (g *approvalGate) forgetSession(sessionID string) {
 	delete(g.always, sessionID)
 	delete(g.toolAlways, sessionID)
 	delete(g.classGrants, sessionID)
+	prefix := sessionID + "\x00"
+	for k := range g.resolvedQuestions {
+		if strings.HasPrefix(k, prefix) {
+			delete(g.resolvedQuestions, k)
+		}
+	}
 }
 
 func writeHookDecision(w http.ResponseWriter, decision, reason string) {

@@ -155,6 +155,7 @@ type fetchProviderModelsRequest struct {
 	BaseURL    string            `json:"baseURL"`
 	APIKey     string            `json:"apiKey,omitempty"`
 	ProviderID string            `json:"providerID,omitempty"`
+	NPM        string            `json:"npm,omitempty"`
 	Headers    map[string]string `json:"headers,omitempty"`
 }
 
@@ -187,6 +188,14 @@ func (g *Service) handleFetchProviderModels(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	pid := strings.TrimSpace(req.ProviderID)
+	npm := strings.TrimSpace(req.NPM)
+	if npm == "" && pid != "" {
+		_, _, npm, _ = g.resolveProviderConnection(pid, baseURL, "")
+	}
+	isAnthropic := isAnthropicProtocol(pid, npm)
+	isGoogle := !isAnthropic && isGoogleProtocol(pid, npm)
+
 	apiKey := strings.TrimSpace(req.APIKey)
 	if apiKey == "********" {
 		apiKey = ""
@@ -197,11 +206,21 @@ func (g *Service) handleFetchProviderModels(w http.ResponseWriter, r *http.Reque
 		apiKey = os.Getenv(envName)
 	}
 	// If editing an existing provider with untouched key, look up stored key
-	if apiKey == "" && strings.TrimSpace(req.ProviderID) != "" {
-		apiKey = g.resolveStoredProviderKey(strings.TrimSpace(req.ProviderID), baseURL)
+	if apiKey == "" && pid != "" {
+		apiKey = g.resolveStoredProviderKey(pid, baseURL)
 	}
 
-	modelsURL := strings.TrimRight(baseURL, "/") + "/models"
+	trimmedBase := strings.TrimRight(baseURL, "/")
+	var modelsURL string
+	if isGoogle {
+		modelsURL = googleModelsBaseURL(trimmedBase)
+	} else if isAnthropic && !strings.HasSuffix(trimmedBase, "/v1") && !strings.HasSuffix(trimmedBase, "/models") {
+		modelsURL = trimmedBase + "/v1/models"
+	} else if strings.HasSuffix(trimmedBase, "/models") {
+		modelsURL = trimmedBase
+	} else {
+		modelsURL = trimmedBase + "/models"
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
@@ -221,7 +240,14 @@ func (g *Service) handleFetchProviderModels(w http.ResponseWriter, r *http.Reque
 		}
 	}
 	if apiKey != "" {
-		outReq.Header.Set("Authorization", "Bearer "+apiKey)
+		if isAnthropic {
+			outReq.Header.Set("x-api-key", apiKey)
+			outReq.Header.Set("anthropic-version", "2023-06-01")
+		} else if isGoogle {
+			outReq.Header.Set("x-goog-api-key", apiKey)
+		} else {
+			outReq.Header.Set("Authorization", "Bearer "+apiKey)
+		}
 	}
 
 	client := &http.Client{
@@ -265,8 +291,9 @@ func (g *Service) handleFetchProviderModels(w http.ResponseWriter, r *http.Reque
 
 func parseOpenAIModelsPayload(raw []byte) []fetchedModelItem {
 	type rawModel struct {
-		ID   string `json:"id"`
-		Name string `json:"name"`
+		ID          string `json:"id"`
+		Name        string `json:"name"`
+		DisplayName string `json:"displayName"`
 	}
 	var wrapper struct {
 		Data   []rawModel `json:"data"`
@@ -289,6 +316,17 @@ func parseOpenAIModelsPayload(raw []byte) []fetchedModelItem {
 	result := make([]fetchedModelItem, 0, len(list))
 	for _, item := range list {
 		id := strings.TrimSpace(item.ID)
+		name := strings.TrimSpace(item.Name)
+		if id == "" && name != "" {
+			// Google Gemini /v1beta/models uses "name": "models/gemini-..." and "displayName": "Gemini ...".
+			id = strings.TrimPrefix(name, "models/")
+			name = strings.TrimSpace(item.DisplayName)
+		} else {
+			id = strings.TrimPrefix(id, "models/")
+			if name == "" || name == "models/"+id {
+				name = strings.TrimSpace(item.DisplayName)
+			}
+		}
 		if id == "" {
 			continue
 		}
@@ -296,7 +334,6 @@ func parseOpenAIModelsPayload(raw []byte) []fetchedModelItem {
 			continue
 		}
 		seen[id] = struct{}{}
-		name := strings.TrimSpace(item.Name)
 		if name == "" {
 			name = id
 		}
@@ -400,6 +437,13 @@ func (g *Service) resolveProviderConnection(providerID, hintBaseURL, hintNPM str
 	}
 	if npm == "" && liveNPM != "" {
 		npm = liveNPM
+	}
+	if npm == "" {
+		if isGoogleProtocol(providerID, "") {
+			npm = "@ai-sdk/google"
+		} else if isAnthropicProtocol(providerID, "") {
+			npm = "@ai-sdk/anthropic"
+		}
 	}
 	if g.isAuthorizedProviderBaseURL(providerID, baseURL, configuredBaseURL, liveURL) {
 		for hk, hv := range liveHeaders {

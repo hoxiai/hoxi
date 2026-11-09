@@ -174,8 +174,36 @@ func callSimpleLLM(parentCtx context.Context, req llmCompletionRequest) (text st
 	return "", resultErr
 }
 
+func isAnthropicProtocol(providerID, npm string) bool {
+	lowerNPM := strings.ToLower(strings.TrimSpace(npm))
+	if lowerNPM != "" {
+		return strings.Contains(lowerNPM, "anthropic")
+	}
+	return strings.EqualFold(strings.TrimSpace(providerID), "anthropic")
+}
+
+func isGoogleProtocol(providerID, npm string) bool {
+	lowerNPM := strings.ToLower(strings.TrimSpace(npm))
+	if lowerNPM != "" {
+		return strings.Contains(lowerNPM, "google") || strings.Contains(lowerNPM, "gemini")
+	}
+	lowerPID := strings.ToLower(strings.TrimSpace(providerID))
+	return lowerPID == "google" || lowerPID == "gemini"
+}
+
+func googleModelsBaseURL(trimmedBase string) string {
+	if strings.HasSuffix(trimmedBase, "/models") {
+		return trimmedBase
+	}
+	if strings.HasSuffix(trimmedBase, "/v1beta") || strings.HasSuffix(trimmedBase, "/v1") || strings.HasSuffix(trimmedBase, "/v1alpha") {
+		return trimmedBase + "/models"
+	}
+	return trimmedBase + "/v1beta/models"
+}
+
 func attemptSimpleLLM(parentCtx context.Context, req llmCompletionRequest, window time.Duration) llmAttemptResult {
-	isAnthropic := req.NPM == "@ai-sdk/anthropic" || req.ProviderID == "anthropic"
+	isAnthropic := isAnthropicProtocol(req.ProviderID, req.NPM)
+	isGoogle := !isAnthropic && isGoogleProtocol(req.ProviderID, req.NPM)
 	trimmedBase := strings.TrimRight(req.BaseURL, "/")
 	var targetURL string
 	var bodyMap map[string]any
@@ -197,6 +225,26 @@ func attemptSimpleLLM(parentCtx context.Context, req llmCompletionRequest, windo
 			"messages": []map[string]string{
 				{"role": "user", "content": req.Prompt},
 			},
+		}
+	} else if isGoogle {
+		cleanModel := strings.TrimPrefix(strings.TrimSpace(req.ModelID), "models/")
+		targetURL = googleModelsBaseURL(trimmedBase) + "/" + url.PathEscape(cleanModel) + ":generateContent"
+		genCfg := map[string]any{
+			"maxOutputTokens": maxTokens,
+		}
+		if req.Temperature > 0 {
+			genCfg["temperature"] = req.Temperature
+		}
+		bodyMap = map[string]any{
+			"contents": []map[string]any{
+				{
+					"role": "user",
+					"parts": []map[string]string{
+						{"text": req.Prompt},
+					},
+				},
+			},
+			"generationConfig": genCfg,
 		}
 	} else {
 		targetURL = trimmedBase + "/chat/completions"
@@ -241,6 +289,8 @@ func attemptSimpleLLM(parentCtx context.Context, req llmCompletionRequest, windo
 		if isAnthropic {
 			outReq.Header.Set("x-api-key", req.APIKey)
 			outReq.Header.Set("anthropic-version", "2023-06-01")
+		} else if isGoogle {
+			outReq.Header.Set("x-goog-api-key", req.APIKey)
 		} else {
 			outReq.Header.Set("Authorization", "Bearer "+req.APIKey)
 		}
@@ -291,6 +341,14 @@ func extractLLMTextContent(raw []byte) string {
 			Type string `json:"type"`
 			Text string `json:"text"`
 		} `json:"content"`
+		Candidates []struct {
+			Content struct {
+				Parts []struct {
+					Text    string `json:"text"`
+					Thought bool   `json:"thought"`
+				} `json:"parts"`
+			} `json:"content"`
+		} `json:"candidates"`
 	}
 	if json.Unmarshal(raw, &parsed) == nil {
 		if len(parsed.Choices) > 0 {
@@ -309,6 +367,22 @@ func extractLLMTextContent(raw []byte) string {
 				}
 			}
 			return ""
+		}
+		if len(parsed.Candidates) > 0 {
+			var fallback string
+			for _, part := range parsed.Candidates[0].Content.Parts {
+				t := strings.TrimSpace(part.Text)
+				if t == "" {
+					continue
+				}
+				if !part.Thought {
+					return t
+				}
+				if fallback == "" {
+					fallback = t
+				}
+			}
+			return fallback
 		}
 	}
 	trimmed := strings.TrimSpace(string(raw))
