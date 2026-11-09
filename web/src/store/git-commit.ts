@@ -38,7 +38,12 @@ const [commitModelSpecSignal, setCommitModelSpecSignal] = createSignal<string>(
  * - `"<providerID>/<modelID>"`: Use a specific designated model
  */
 export function commitModelSpec(): string {
-  return commitModelSpecSignal();
+  const sig = commitModelSpecSignal();
+  const saved = readStorageItem(COMMIT_MODEL_STORAGE_KEY);
+  if (typeof saved === "string" && saved.trim() !== "") {
+    return saved.trim();
+  }
+  return sig;
 }
 
 export function setCommitModelSpec(spec: string): void {
@@ -90,7 +95,7 @@ export function isMalformedLLMText(text?: string | null): boolean {
 }
 
 export function resolveEffectiveCommitModel(): SelectedModel | null {
-  const spec = commitModelSpecSignal();
+  const spec = commitModelSpec();
   if (spec === "none") return null;
 
   if (spec) {
@@ -271,6 +276,9 @@ export async function generateSmartCommitMessage(
   }
 
   const fallback = synthesizeLocalCommitMessage(activeID, diffs);
+  if (commitModelSpec() === "none") {
+    return fallback;
+  }
   // Commit-message synthesis runs through Hoxi's HTTP LLM client, so CLI
   // runtime models must never be selected here even though they are valid
   // conversation models for runner-dispatched agent commits below.

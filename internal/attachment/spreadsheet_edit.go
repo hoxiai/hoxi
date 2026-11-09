@@ -18,11 +18,7 @@ import (
 // ApplySpreadsheetEdits reads an existing spreadsheet (or creates a new one),
 // applies cell edits (e.g. "B2": "1580.5") and/or appends rows to sheetName,
 // and writes the updated spreadsheet to outPath.
-func ApplySpreadsheetEdits(
-	inPath, outPath, sheetName string,
-	cellEdits map[string]string,
-	appendRows [][]string,
-) ([]SpreadsheetSheet, error) {
+func ApplySpreadsheetEdits(inPath, outPath, sheetName string, cellEdits map[string]string, appendRows [][]string) ([]SpreadsheetSheet, error) {
 	if outPath == "" {
 		outPath = inPath
 	}
@@ -43,21 +39,21 @@ func ApplySpreadsheetEdits(
 	inExt := strings.ToLower(filepath.Ext(inPath))
 
 	if (outExt == ".csv" || outExt == ".tsv") && (inPath == "" || inExt == ".csv" || inExt == ".tsv") {
-		comma := ','
-		if outExt == ".tsv" {
-			comma = '\t'
+		inComma, outComma := ',', ','
+		if inExt == ".tsv" {
+			inComma = '\t'
 		}
-		return applyDelimitedFileEdits(inPath, outPath, sheetName, comma, parsedEdits, appendRows)
+		if outExt == ".tsv" {
+			outComma = '\t'
+		}
+		return applyDelimitedFileEdits(inPath, outPath, sheetName, inComma, outComma, parsedEdits, appendRows)
 	}
 
 	if outExt != ".csv" && outExt != ".tsv" && inPath != "" {
 		if _, err := os.Stat(inPath); err == nil {
 			sheets, handled, err := applyXLSXZipEdits(inPath, outPath, sheetName, parsedEdits, appendRows)
-			if err != nil {
-				return nil, err
-			}
-			if handled {
-				return sheets, nil
+			if err != nil || handled {
+				return sheets, err
 			}
 		}
 	}
@@ -98,19 +94,15 @@ func ApplySpreadsheetEdits(
 	}
 
 	rows := sheets[targetIdx].Rows
-	if len(parsedEdits) > 0 {
-		editRowIndices := sortedEditRowKeys(parsedEdits)
-		for _, rIdx := range editRowIndices {
-			for len(rows) <= rIdx {
-				rows = append(rows, nil)
+	for _, rIdx := range sortedEditRowKeys(parsedEdits) {
+		for len(rows) <= rIdx {
+			rows = append(rows, nil)
+		}
+		for cIdx, val := range parsedEdits[rIdx] {
+			for len(rows[rIdx]) <= cIdx {
+				rows[rIdx] = append(rows[rIdx], "")
 			}
-			colEdits := parsedEdits[rIdx]
-			for cIdx, val := range colEdits {
-				for len(rows[rIdx]) <= cIdx {
-					rows[rIdx] = append(rows[rIdx], "")
-				}
-				rows[rIdx][cIdx] = val
-			}
+			rows[rIdx][cIdx] = val
 		}
 	}
 	if len(appendRows) > 0 {
@@ -129,12 +121,7 @@ func ApplySpreadsheetEdits(
 	}
 }
 
-func applyDelimitedFileEdits(
-	inPath, outPath, sheetName string,
-	comma rune,
-	parsedEdits map[int]map[int]string,
-	appendRows [][]string,
-) ([]SpreadsheetSheet, error) {
+func applyDelimitedFileEdits(inPath, outPath, sheetName string, inComma, outComma rune, parsedEdits map[int]map[int]string, appendRows [][]string) ([]SpreadsheetSheet, error) {
 	var inFile *os.File
 	if inPath != "" {
 		f, err := os.Open(inPath)
@@ -163,8 +150,8 @@ func applyDelimitedFileEdits(
 
 	bw := bufio.NewWriterSize(tmpFile, 256*1024)
 	w := csv.NewWriter(bw)
-	if comma != 0 {
-		w.Comma = comma
+	if outComma != 0 {
+		w.Comma = outComma
 	}
 
 	maxEditRow := -1
@@ -206,7 +193,9 @@ func applyDelimitedFileEdits(
 			_, _ = br.Discard(3)
 		}
 		r := csv.NewReader(br)
-		r.Comma = comma
+		if inComma != 0 {
+			r.Comma = inComma
+		}
 		r.FieldsPerRecord = -1
 		r.LazyQuotes = true
 		for {
@@ -445,16 +434,17 @@ func readZipEntryBytesBounded(f *zip.File, limit int64) ([]byte, error) {
 }
 
 func appendXLSXSharedStringsXML(sstXML string, totalUnique int, added []string) string {
+	start, openEnd, closeStart, _, sstPrefix, selfClosing, ok := findXMLElementSpan(sstXML, "sst")
 	var extra strings.Builder
 	for _, s := range added {
-		fmt.Fprintf(&extra, `<si><t xml:space="preserve">%s</t></si>`, xmlEscapeString(s))
+		fmt.Fprintf(&extra, `<%ssi><%st xml:space="preserve">%s</%st></%ssi>`, sstPrefix, sstPrefix, xmlEscapeString(s), sstPrefix, sstPrefix)
 	}
-	if closeIdx := strings.LastIndex(sstXML, "</sst>"); closeIdx >= 0 {
-		return sstXML[:closeIdx] + extra.String() + sstXML[closeIdx:]
+	if ok && !selfClosing {
+		return sstXML[:closeStart] + extra.String() + sstXML[closeStart:]
 	}
-	if start, openEnd, _, _, selfClosing, ok := findXMLElementSpan(sstXML, "sst"); ok && selfClosing {
+	if ok && selfClosing {
 		openTag := strings.TrimSuffix(strings.TrimSpace(sstXML[start:openEnd]), "/>") + ">"
-		return sstXML[:start] + openTag + extra.String() + "</sst>" + sstXML[openEnd:]
+		return sstXML[:start] + openTag + extra.String() + "</" + sstPrefix + "sst>" + sstXML[openEnd:]
 	}
 	var fallback strings.Builder
 	fallback.WriteString(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`)
@@ -471,7 +461,7 @@ func patchXLSXWorksheetXML(
 	internString func(string) int,
 	hasSST bool,
 ) (string, bool) {
-	sdStart, sdOpenEnd, sdCloseStart, sdCloseEnd, sdSelfClosing, ok := findXMLElementSpan(xmlStr, "sheetData")
+	sdStart, sdOpenEnd, sdCloseStart, sdCloseEnd, nsPrefix, sdSelfClosing, ok := findXMLElementSpan(xmlStr, "sheetData")
 	if !ok {
 		return "", false
 	}
@@ -481,7 +471,7 @@ func patchXLSXWorksheetXML(
 		openTag := strings.TrimSuffix(strings.TrimSpace(xmlStr[sdStart:sdOpenEnd]), "/>") + ">"
 		prefix = xmlStr[:sdStart] + openTag
 		inner = ""
-		suffix = "</sheetData>" + xmlStr[sdCloseEnd:]
+		suffix = "</" + nsPrefix + "sheetData>" + xmlStr[sdCloseEnd:]
 	} else {
 		prefix = xmlStr[:sdOpenEnd]
 		inner = xmlStr[sdOpenEnd:sdCloseStart]
@@ -493,13 +483,19 @@ func patchXLSXWorksheetXML(
 	seqRowIdx := 0
 	maxRowIdx := -1
 	pos := 0
+	newRowPrefix := nsPrefix
+	seenRowPrefix := false
 	var out strings.Builder
 	out.Grow(len(inner) + 256)
 
 	for {
-		rStart, rOpenEnd, rCloseStart, rCloseEnd, rSelfClosing, found := nextXMLElement(inner, pos, "row")
+		rStart, rOpenEnd, rCloseStart, rCloseEnd, rowPrefix, rSelfClosing, found := nextXMLElement(inner, pos, "row")
 		if !found {
 			break
+		}
+		if !seenRowPrefix {
+			newRowPrefix = rowPrefix
+			seenRowPrefix = true
 		}
 		out.WriteString(inner[pos:rStart])
 
@@ -513,7 +509,7 @@ func patchXLSXWorksheetXML(
 
 		for editCursor < len(editRows) && editRows[editCursor] < rowIdx {
 			er := editRows[editCursor]
-			out.WriteString(buildNewXLSXRowXML(er, parsedEdits[er], internString, hasSST))
+			out.WriteString(buildNewXLSXRowXML(er, parsedEdits[er], newRowPrefix, internString, hasSST))
 			if er > maxRowIdx {
 				maxRowIdx = er
 			}
@@ -522,7 +518,7 @@ func patchXLSXWorksheetXML(
 
 		if editCursor < len(editRows) && editRows[editCursor] == rowIdx {
 			editCursor++
-			out.WriteString(patchXLSXRowElementXML(rowIdx, rowOpenTag, rowInner, rSelfClosing, parsedEdits[rowIdx], internString, hasSST))
+			out.WriteString(patchXLSXRowElementXML(rowIdx, rowOpenTag, rowInner, rowPrefix, rSelfClosing, parsedEdits[rowIdx], internString, hasSST))
 		} else {
 			out.WriteString(inner[rStart:rCloseEnd])
 		}
@@ -535,7 +531,7 @@ func patchXLSXWorksheetXML(
 
 	for editCursor < len(editRows) {
 		er := editRows[editCursor]
-		out.WriteString(buildNewXLSXRowXML(er, parsedEdits[er], internString, hasSST))
+		out.WriteString(buildNewXLSXRowXML(er, parsedEdits[er], newRowPrefix, internString, hasSST))
 		if er > maxRowIdx {
 			maxRowIdx = er
 		}
@@ -550,7 +546,7 @@ func patchXLSXWorksheetXML(
 				rowMap[cIdx] = v
 			}
 		}
-		out.WriteString(buildNewXLSXRowXML(maxRowIdx, rowMap, internString, hasSST))
+		out.WriteString(buildNewXLSXRowXML(maxRowIdx, rowMap, newRowPrefix, internString, hasSST))
 	}
 
 	return prefix + out.String() + suffix, true
@@ -563,7 +559,7 @@ type existingXLSXCell struct {
 
 func patchXLSXRowElementXML(
 	rowIdx int,
-	rowOpenTag, rowInner string,
+	rowOpenTag, rowInner, rowPrefix string,
 	rowSelfClosing bool,
 	colEdits map[int]string,
 	internString func(string) int,
@@ -575,12 +571,18 @@ func patchXLSXRowElementXML(
 		colSet[cIdx] = true
 	}
 
+	cellPrefix := rowPrefix
+	seenCellPrefix := false
 	seqColIdx := 0
 	pos := 0
 	for {
-		cStart, cOpenEnd, _, cCloseEnd, _, found := nextXMLElement(rowInner, pos, "c")
+		cStart, cOpenEnd, _, cCloseEnd, cPrefix, _, found := nextXMLElement(rowInner, pos, "c")
 		if !found {
 			break
+		}
+		if !seenCellPrefix {
+			cellPrefix = cPrefix
+			seenCellPrefix = true
 		}
 		cOpenTag := rowInner[cStart:cOpenEnd]
 		cRef := extractXMLAttr(cOpenTag, "r")
@@ -613,16 +615,16 @@ func patchXLSXRowElementXML(
 	for _, cIdx := range cols {
 		if newVal, edited := colEdits[cIdx]; edited {
 			style := existing[cIdx].style
-			b.WriteString(buildXLSXCellXML(rowIdx, cIdx, newVal, style, internString, hasSST))
+			b.WriteString(buildXLSXCellXML(rowIdx, cIdx, newVal, style, cellPrefix, internString, hasSST))
 		} else if prev, ok := existing[cIdx]; ok {
 			b.WriteString(prev.rawXML)
 		}
 	}
-	b.WriteString("</row>")
+	b.WriteString("</" + rowPrefix + "row>")
 	return b.String()
 }
 
-func buildNewXLSXRowXML(rowIdx int, colEdits map[int]string, internString func(string) int, hasSST bool) string {
+func buildNewXLSXRowXML(rowIdx int, colEdits map[int]string, nsPrefix string, internString func(string) int, hasSST bool) string {
 	cols := make([]int, 0, len(colEdits))
 	for cIdx := range colEdits {
 		cols = append(cols, cIdx)
@@ -630,15 +632,15 @@ func buildNewXLSXRowXML(rowIdx int, colEdits map[int]string, internString func(s
 	sort.Ints(cols)
 
 	var b strings.Builder
-	fmt.Fprintf(&b, `<row r="%d">`, rowIdx+1)
+	fmt.Fprintf(&b, `<%srow r="%d">`, nsPrefix, rowIdx+1)
 	for _, cIdx := range cols {
-		b.WriteString(buildXLSXCellXML(rowIdx, cIdx, colEdits[cIdx], "", internString, hasSST))
+		b.WriteString(buildXLSXCellXML(rowIdx, cIdx, colEdits[cIdx], "", nsPrefix, internString, hasSST))
 	}
-	b.WriteString(`</row>`)
+	fmt.Fprintf(&b, `</%srow>`, nsPrefix)
 	return b.String()
 }
 
-func buildXLSXCellXML(rowIdx, colIdx int, rawVal, style string, internString func(string) int, hasSST bool) string {
+func buildXLSXCellXML(rowIdx, colIdx int, rawVal, style, nsPrefix string, internString func(string) int, hasSST bool) string {
 	cellRef := fmt.Sprintf("%s%d", ExcelColName(colIdx), rowIdx+1)
 	styleAttr := ""
 	if style != "" {
@@ -647,28 +649,28 @@ func buildXLSXCellXML(rowIdx, colIdx int, rawVal, style string, internString fun
 	val := strings.TrimSpace(rawVal)
 	if val == "" {
 		if styleAttr != "" {
-			return fmt.Sprintf(`<c r="%s"%s/>`, cellRef, styleAttr)
+			return fmt.Sprintf(`<%sc r="%s"%s/>`, nsPrefix, cellRef, styleAttr)
 		}
 		return ""
 	}
 	if strings.HasPrefix(val, "=") && len(val) > 1 {
-		return fmt.Sprintf(`<c r="%s"%s><f>%s</f></c>`, cellRef, styleAttr, xmlEscapeString(val[1:]))
+		return fmt.Sprintf(`<%sc r="%s"%s><%sf>%s</%sf></%sc>`, nsPrefix, cellRef, styleAttr, nsPrefix, xmlEscapeString(val[1:]), nsPrefix, nsPrefix)
 	}
 	if isStrictNumber(val) {
-		return fmt.Sprintf(`<c r="%s"%s><v>%s</v></c>`, cellRef, styleAttr, xmlEscapeString(val))
+		return fmt.Sprintf(`<%sc r="%s"%s><%sv>%s</%sv></%sc>`, nsPrefix, cellRef, styleAttr, nsPrefix, xmlEscapeString(val), nsPrefix, nsPrefix)
 	}
 	if strings.EqualFold(val, "TRUE") || strings.EqualFold(val, "FALSE") {
 		bVal := "0"
 		if strings.EqualFold(val, "TRUE") {
 			bVal = "1"
 		}
-		return fmt.Sprintf(`<c r="%s"%s t="b"><v>%s</v></c>`, cellRef, styleAttr, bVal)
+		return fmt.Sprintf(`<%sc r="%s"%s t="b"><%sv>%s</%sv></%sc>`, nsPrefix, cellRef, styleAttr, nsPrefix, bVal, nsPrefix, nsPrefix)
 	}
 	if hasSST && internString != nil {
 		sIdx := internString(rawVal)
-		return fmt.Sprintf(`<c r="%s"%s t="s"><v>%d</v></c>`, cellRef, styleAttr, sIdx)
+		return fmt.Sprintf(`<%sc r="%s"%s t="s"><%sv>%d</%sv></%sc>`, nsPrefix, cellRef, styleAttr, nsPrefix, sIdx, nsPrefix, nsPrefix)
 	}
-	return fmt.Sprintf(`<c r="%s"%s t="inlineStr"><is><t xml:space="preserve">%s</t></is></c>`, cellRef, styleAttr, xmlEscapeString(rawVal))
+	return fmt.Sprintf(`<%sc r="%s"%s t="inlineStr"><%sis><%st xml:space="preserve">%s</%st></%sis></%sc>`, nsPrefix, cellRef, styleAttr, nsPrefix, nsPrefix, xmlEscapeString(rawVal), nsPrefix, nsPrefix, nsPrefix)
 }
 
 func resolveXLSXRowElementIndex(rowOpenTag, rowInner string, seqRowIdx int) int {
@@ -677,7 +679,7 @@ func resolveXLSXRowElementIndex(rowOpenTag, rowInner string, seqRowIdx int) int 
 			return rNum - 1
 		}
 	}
-	cStart, cOpenEnd, _, _, _, found := nextXMLElement(rowInner, 0, "c")
+	cStart, cOpenEnd, _, _, _, _, found := nextXMLElement(rowInner, 0, "c")
 	if found {
 		if rFromCell := excelRowIndex(extractXMLAttr(rowInner[cStart:cOpenEnd], "r")); rFromCell >= 0 {
 			return rFromCell
@@ -686,46 +688,72 @@ func resolveXLSXRowElementIndex(rowOpenTag, rowInner string, seqRowIdx int) int 
 	return seqRowIdx
 }
 
-func findXMLElementSpan(xmlStr, localName string) (start, openEnd, closeStart, closeEnd int, selfClosing, ok bool) {
+func findXMLElementSpan(xmlStr, localName string) (start, openEnd, closeStart, closeEnd int, nsPrefix string, selfClosing, ok bool) {
 	return nextXMLElement(xmlStr, 0, localName)
 }
 
-func nextXMLElement(s string, from int, localName string) (start, openEnd, closeStart, closeEnd int, selfClosing, ok bool) {
-	needle := "<" + localName
+func isXMLTagNameByte(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_' || b == '-' || b == '.' || b == ':'
+}
+
+func nextXMLElement(s string, from int, localName string) (start, openEnd, closeStart, closeEnd int, nsPrefix string, selfClosing, ok bool) {
 	for pos := from; pos < len(s); {
-		idx := strings.Index(s[pos:], needle)
-		if idx < 0 {
-			return 0, 0, 0, 0, false, false
+		ltRel := strings.IndexByte(s[pos:], '<')
+		if ltRel < 0 {
+			return 0, 0, 0, 0, "", false, false
 		}
-		start = pos + idx
-		afterName := start + len(needle)
-		if afterName >= len(s) {
-			return 0, 0, 0, 0, false, false
+		start = pos + ltRel
+		if start+1 >= len(s) {
+			return 0, 0, 0, 0, "", false, false
+		}
+		first := s[start+1]
+		if first == '/' || first == '!' || first == '?' {
+			pos = start + 2
+			continue
+		}
+		afterName := start + 1
+		for afterName < len(s) && isXMLTagNameByte(s[afterName]) {
+			afterName++
+		}
+		if afterName == start+1 || afterName >= len(s) {
+			pos = start + 1
+			continue
 		}
 		nextCh := s[afterName]
 		if nextCh != '>' && nextCh != '/' && nextCh != ' ' && nextCh != '\t' && nextCh != '\r' && nextCh != '\n' {
 			pos = afterName
 			continue
 		}
+		fullTag := s[start+1 : afterName]
+		local := fullTag
+		nsPrefix = ""
+		if colon := strings.IndexByte(fullTag, ':'); colon >= 0 {
+			nsPrefix = fullTag[:colon+1]
+			local = fullTag[colon+1:]
+		}
+		if local != localName {
+			pos = afterName
+			continue
+		}
 		gtRel := strings.IndexByte(s[afterName:], '>')
 		if gtRel < 0 {
-			return 0, 0, 0, 0, false, false
+			return 0, 0, 0, 0, "", false, false
 		}
 		openEnd = afterName + gtRel + 1
 		trimmedTag := strings.TrimSpace(s[start : openEnd-1])
 		if strings.HasSuffix(trimmedTag, "/") {
-			return start, openEnd, openEnd, openEnd, true, true
+			return start, openEnd, openEnd, openEnd, nsPrefix, true, true
 		}
-		closeTag := "</" + localName + ">"
+		closeTag := "</" + fullTag + ">"
 		closeRel := strings.Index(s[openEnd:], closeTag)
 		if closeRel < 0 {
-			return 0, 0, 0, 0, false, false
+			return 0, 0, 0, 0, "", false, false
 		}
 		closeStart = openEnd + closeRel
 		closeEnd = closeStart + len(closeTag)
-		return start, openEnd, closeStart, closeEnd, false, true
+		return start, openEnd, closeStart, closeEnd, nsPrefix, false, true
 	}
-	return 0, 0, 0, 0, false, false
+	return 0, 0, 0, 0, "", false, false
 }
 
 func extractXMLAttr(openTag, attrName string) string {

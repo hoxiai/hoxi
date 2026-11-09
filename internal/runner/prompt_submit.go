@@ -353,6 +353,7 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 	seq := s.seqSeed
 	s.mu.Unlock()
 
+	preMutationRec, hadPreMutationRec := s.store.Get(sessionID)
 	if pendingAdopted {
 		if putErr := s.store.Put(rec); putErr != nil {
 			finishSteerAbort()
@@ -427,10 +428,6 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 	s.recordTurnSnapshot(sessionID, userMsgID)
 	if updated, ok := s.store.Get(sessionID); ok {
 		rec = updated
-		if runtimeSwitched {
-			info := updated.ToSessionInfo()
-			s.broadcast(sessionID, SSEEvent{Type: "session.updated", Properties: map[string]interface{}{"info": info}})
-		}
 	}
 
 	var err error
@@ -450,8 +447,33 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 		}
 	}
 	if err != nil {
+		if current, ok := s.store.Get(sessionID); ok {
+			prevIDs := make(map[string]bool, len(preMutationRec.OpenCodeIDs))
+			for _, id := range preMutationRec.OpenCodeIDs {
+				prevIDs[id] = true
+			}
+			for _, id := range current.OpenCodeIDs {
+				if !prevIDs[id] {
+					s.managedOpenCode.Delete(id)
+				}
+			}
+		}
+		if hadPreMutationRec {
+			_ = s.store.Put(preMutationRec)
+		} else if pendingAdopted {
+			_ = s.store.Delete(sessionID)
+			for _, id := range rec.OpenCodeIDs {
+				s.managedOpenCode.Delete(id)
+			}
+		}
 		finishSteerAbort()
 		return http.StatusInternalServerError, PromptReceipt{}, err
+	}
+	if runtimeSwitched {
+		if updated, ok := s.store.Get(sessionID); ok {
+			info := updated.ToSessionInfo()
+			s.broadcast(sessionID, SSEEvent{Type: "session.updated", Properties: map[string]interface{}{"info": info}})
+		}
 	}
 	receipt := PromptReceipt{
 		OK:              true,

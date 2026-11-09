@@ -344,3 +344,56 @@ func TestDeepManualCustomSectionRetainsAllLines(t *testing.T) {
 		t.Fatalf("saved %d-byte memory lost user lines on sync: retained %d/65", doc.Len(), n)
 	}
 }
+
+func TestVerifyMemoryNearCapRetainsSavedManualTail(t *testing.T) {
+	t.Parallel()
+	project := t.TempDir()
+	sid := "ses_audit_near_cap"
+	svc := &Service{store: NewStore(t.TempDir())}
+	rec := SessionRecord{
+		ID:           sid,
+		Runtime:      "claude-code",
+		ProjectDir:   project,
+		WorktreePath: project,
+		Turns: []MessageTurn{{
+			Info:  MessageInfo{ID: "msg_1", SessionID: sid, Role: "user"},
+			Parts: []MessagePart{{ID: "prt_1", MessageID: "msg_1", SessionID: sid, Type: "text", Text: "Initial request"}},
+		}},
+	}
+	if err := svc.store.Put(rec); err != nil {
+		t.Fatal(err)
+	}
+	svc.syncSessionMemoryFile(sid)
+	path := hoxipaths.ProjectSessionMemoryFile(project, sid)
+	prior, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tailMarker := "- manual-tail-sentinel-keep-me\n"
+	var doc strings.Builder
+	doc.Write(prior)
+	doc.WriteString("\n## Manual Notes\n")
+	for doc.Len()+len(tailMarker)+128 < 262112 {
+		doc.WriteString("- filler-" + strings.Repeat("x", 80) + "\n")
+	}
+	doc.WriteString(tailMarker)
+	savedDoc := doc.String()
+	if _, _, err := SaveMemoryDocument(project, "session", sid, savedDoc); err != nil {
+		t.Fatal(err)
+	}
+	rec.Turns = append(rec.Turns, MessageTurn{
+		Info:  MessageInfo{ID: "msg_2", SessionID: sid, Role: "user"},
+		Parts: []MessagePart{{ID: "prt_2", MessageID: "msg_2", SessionID: sid, Type: "text", Text: "Follow-up request that expands automatic compaction summary sections"}},
+	})
+	if err := svc.store.Put(rec); err != nil {
+		t.Fatal(err)
+	}
+	svc.syncSessionMemoryFile(sid)
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), strings.TrimSpace(tailMarker)) {
+		t.Fatalf("manual note accepted at %d bytes was truncated after automatic refresh to %d bytes", len(savedDoc), len(got))
+	}
+}

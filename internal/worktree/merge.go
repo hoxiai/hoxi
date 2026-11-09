@@ -556,6 +556,14 @@ func (m *worktreeManager) apply(sessionID, mode, message string) error {
 	}()
 
 	if mode == "merge" {
+		if existingMergeHead, preErr := runGit(m.rootDir, "rev-parse", "--verify", "--quiet", "MERGE_HEAD"); preErr == nil && strings.TrimSpace(existingMergeHead) != "" {
+			return fmt.Errorf("%w: another merge is already in progress in %s (MERGE_HEAD=%s)", ErrMergeConflict, m.rootDir, strings.TrimSpace(existingMergeHead))
+		}
+		if idxPath, idxErr := resolveGitIndexFile(m.rootDir); idxErr == nil {
+			if _, lockErr := os.Lstat(idxPath + ".lock"); lockErr == nil {
+				return fmt.Errorf("%w: git index.lock already exists in %s", ErrMergeConflict, m.rootDir)
+			}
+		}
 		// Resolve attribution against the session worktree that produced the
 		// change, not the project repo the merge commit lands in.
 		mergeMsg := strings.TrimSpace(message)
@@ -563,7 +571,9 @@ func (m *worktreeManager) apply(sessionID, mode, message string) error {
 			mergeMsg = "Merge hoxi session " + sessionID
 		}
 		if _, err := runGit(m.rootDir, "merge", "--no-ff", "-m", appendHoxiCoAuthorFor(meta.Directory, mergeMsg), meta.Branch); err != nil {
-			_, _ = runGit(m.rootDir, "merge", "--abort")
+			if postMergeHead, postErr := runGit(m.rootDir, "rev-parse", "--verify", "--quiet", "MERGE_HEAD"); postErr == nil && strings.TrimSpace(postMergeHead) != "" {
+				_, _ = runGit(m.rootDir, "merge", "--abort")
+			}
 			return fmt.Errorf("%w: %v", ErrMergeConflict, err)
 		}
 		return nil

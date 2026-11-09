@@ -237,3 +237,59 @@ func TestDeepRejectedPromptDoesNotChangeRuntime(t *testing.T) {
 		t.Fatalf("rejected prompt changed runtime/resume ID: before=%q/%q after=%q/%q", prior.Runtime, prior.ExternalID, got.Runtime, got.ExternalID)
 	}
 }
+
+func TestVerifyEngineStartupFailurePreservesPreviousRuntime(t *testing.T) {
+	t.Parallel()
+	f := newGateFixture(t)
+	prior, ok := f.svc.store.Get("ses_agy_gate")
+	if !ok {
+		t.Fatal("missing seeded session")
+	}
+	payload := []byte(`{"text":"Audit startup failure","runtime":"opencode"}`)
+	endpoint := "/api/hoxi/runner/sessions/ses_agy_gate/prompt_async?" + url.Values{"directory": {f.dir}}.Encode()
+	req := httptest.NewRequest(http.MethodPost, endpoint, bytes.NewReader(payload))
+	rec := httptest.NewRecorder()
+	f.srv.Config.Handler.ServeHTTP(rec, req)
+	if rec.Code == http.StatusOK {
+		t.Fatalf("expected startup failure when OpenCode is unavailable, got 200")
+	}
+	got, ok := f.svc.store.Get("ses_agy_gate")
+	if !ok || got.Runtime != prior.Runtime || got.ExternalID != prior.ExternalID {
+		t.Fatalf("startup failure %s changed runtime/resume ID: before=%q/%q after=%q/%q", rec.Body.String(), prior.Runtime, prior.ExternalID, got.Runtime, got.ExternalID)
+	}
+}
+
+func TestReviewEventConnectFailureCleansCreatedEngineSession(t *testing.T) {
+	t.Parallel()
+	f := newGateFixture(t)
+	deletes := 0
+	ocSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/session":
+			writeJSON(w, http.StatusOK, map[string]interface{}{"id": "ses_oc_orphan"})
+		case r.Method == http.MethodDelete && r.URL.Path == "/session/ses_oc_orphan":
+			deletes++
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodGet && r.URL.Path == "/event":
+			writeJSONError(w, http.StatusServiceUnavailable, "event stream unavailable")
+		default:
+			writeJSON(w, http.StatusOK, map[string]interface{}{})
+		}
+	}))
+	t.Cleanup(ocSrv.Close)
+	f.svc.ConfigureOpenCode(ocSrv.URL, "")
+
+	payload := []byte(`{"text":"Audit event connect failure","runtime":"opencode"}`)
+	endpoint := "/api/hoxi/runner/sessions/ses_agy_gate/prompt_async?" + url.Values{"directory": {f.dir}}.Encode()
+	req := httptest.NewRequest(http.MethodPost, endpoint, bytes.NewReader(payload))
+	rec := httptest.NewRecorder()
+	f.srv.Config.Handler.ServeHTTP(rec, req)
+	if rec.Code == http.StatusOK {
+		t.Fatalf("expected startup failure when /event fails, got 200")
+	}
+	got, _ := f.svc.store.Get("ses_agy_gate")
+	_, managed := f.svc.managedOpenCode.Load("ses_oc_orphan")
+	if managed || deletes != 1 || len(got.OpenCodeIDs) != 0 {
+		t.Fatalf("startup rollback left created engine session: managed=%v deletes=%d restored OpenCodeIDs=%v", managed, deletes, got.OpenCodeIDs)
+	}
+}

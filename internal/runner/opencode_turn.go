@@ -240,6 +240,14 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 		})
 	}
 	effort = s.resolveOpenCodeVariant(setup, rec.WorktreePath, rec.ProviderID, modelID, effort)
+	createdSessionID := ""
+	cleanupCreatedSession := func() {
+		if createdSessionID == "" {
+			return
+		}
+		s.managedOpenCode.Delete(createdSessionID)
+		_ = s.openCodeJSON(setup, http.MethodDelete, "/session/"+url.PathEscape(createdSessionID), rec.WorktreePath, nil, nil)
+	}
 	if rec.ExternalID == "" {
 		var info SessionInfo
 		if err := s.openCodeJSON(setup, "POST", "/session", rec.WorktreePath, map[string]interface{}{"title": rec.Title, "metadata": map[string]string{"hoxiConversation": rec.ID}}, &info); err != nil {
@@ -249,6 +257,7 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 		if rec.ExternalID == "" {
 			return fmt.Errorf("OpenCode returned an empty session ID")
 		}
+		createdSessionID = info.ID
 		var err error
 		rec, _, err = s.store.Update(rec.ID, func(r *SessionRecord) {
 			r.ExternalID = info.ID
@@ -259,17 +268,20 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 			r.OpenCodeDirectories[info.ID] = rec.WorktreePath
 		})
 		if err != nil {
+			cleanupCreatedSession()
 			return err
 		}
 		s.managedOpenCode.Store(info.ID, true)
 	}
 	if err := syncOpenCodeCommandSandbox(rec); err != nil {
+		cleanupCreatedSession()
 		return err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	stream, err := s.openCodeRequest(ctx, "GET", "/event", rec.WorktreePath, nil)
 	if err != nil {
 		cancel()
+		cleanupCreatedSession()
 		return err
 	}
 	ap := &activeProcess{sessionID: rec.ID, runtime: "opencode", done: make(chan struct{}), idleCh: make(chan struct{}, 1)}

@@ -330,3 +330,32 @@ func TestDeepPatchPreservesIndexLockOwnedByAnotherGit(t *testing.T) {
 		t.Fatalf("git apply returned %v but deleted foreign index.lock: contents=%q read=%v", err, got, readErr)
 	}
 }
+
+func TestVerifyMergeRefusalPreservesUnrelatedInProgressMerge(t *testing.T) {
+	t.Parallel()
+	dirs := newMergeFixture(t, "a")
+	repo := dirs["repo"]
+	mgr := NewManager(repo)
+	meta, err := mgr.Create("ses_audit_merge_in_progress")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reviewTestWrite(t, filepath.Join(meta.Directory, "extra.txt"), "from-session\n")
+	reviewTestWrite(t, filepath.Join(dirs["a"], "f.txt"), "a\nB-from-a\nc\nd\ne\nf\ng\n")
+	reviewTestGit(t, dirs["a"], "commit", "-am", "branch a change")
+	reviewTestWrite(t, filepath.Join(repo, "f.txt"), "a\nB-from-main\nc\nd\ne\nf\ng\n")
+	reviewTestGit(t, repo, "commit", "-am", "main change")
+	branchA := reviewTestGit(t, dirs["a"], "rev-parse", "HEAD")
+	_, _ = runGit(repo, "merge", "--no-ff", branchA)
+	beforeHead, err := runGit(repo, "rev-parse", "MERGE_HEAD")
+	if err != nil {
+		t.Fatalf("expected pre-existing MERGE_HEAD: %v", err)
+	}
+	if err := mgr.Apply("ses_audit_merge_in_progress", "merge"); !errors.Is(err, ErrMergeConflict) {
+		t.Fatalf("expected ErrMergeConflict when another merge is in progress, got %v", err)
+	}
+	afterHead, afterErr := runGit(repo, "rev-parse", "MERGE_HEAD")
+	if afterErr != nil || strings.TrimSpace(afterHead) != strings.TrimSpace(beforeHead) {
+		t.Fatalf("Hoxi refusal aborted unrelated pre-existing merge: MERGE_HEAD before=%q after=%q err=%v", strings.TrimSpace(beforeHead), strings.TrimSpace(afterHead), afterErr)
+	}
+}

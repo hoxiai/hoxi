@@ -20,11 +20,16 @@ const READ_SQL_RE = /^\s*(?:select\b|pragma\s+(?:table_info|table_xinfo|index_li
 const FIELD_RE = /^[A-Za-z_][A-Za-z0-9_.]*$/;
 
 // Names file, database and process-state changes.
-const MUTATION_RE = /write|appendfile|unlink|rmdir|rmtree|rename|mkdir|mkdtemp|mkstemp|mkfifo|mknod|chmod|chown|chflags|symlink|hardlink|link_to|truncate|utime|copyfile|copytree|shutil|tempfile|shelve|\bdbm\b|tarfile|zipfile|\bgzip\b|\bbz2\b|\blzma\b|mmap|fcntl|logging|webbrowser|\bsignal\b|\bkill|setuid|setgid|chdir|chroot|umask|\bO_(?:WRONLY|RDWR|CREAT|TRUNC|APPEND|EXCL)\b|\brm(?:sync|dir)?\b|\bcp(?:sync)?\b|\blink(?:sync)?\b|\btouch\b|\bsave\w*\s*\(|\bto_(?:csv|excel|parquet|pickle|json|html|sql|feather|hdf|stata|latex|markdown|xml|clipboard)\b|tofile|\bdump\s*\(|\bcommit\s*\(|\bbackup\b|load_extension|\b(?:delete|drop|insert|update|alter|vacuum|attach|upsert)\b|\breplace\s+into\b|\.\s*run\s*\(|\bvm\b|runin\w*context|\bconstructor\b|createrequire|globalthis|\breflect\b|\bproxy\b|\bmodule\s*\.\s*_|\bfs\w*\s*\[|\brequire\s*\([^)]*\)\s*\[|(?:^|[^.\w])(?:copy|move)\s*\(/i;
+const MUTATION_RE = /write|appendfile|unlink|\bremove(?:dirs)?\b|rmdir|rmtree|rename|\brenames\b|mkdir|mkdtemp|mkstemp|mkfifo|mknod|chmod|chown|chflags|symlink|hardlink|link_to|truncate|utime|copyfile|copytree|shutil|tempfile|fileinput|shelve|\bdbm\b|tarfile|zipfile|\bgzip\b|\bbz2\b|\blzma\b|mmap|fcntl|logging|webbrowser|\bsignal\b|\bkill|setuid|setgid|chdir|chroot|umask|\bposix\b|\bnt\b|\bimportlib\b|\bO_(?:WRONLY|RDWR|CREAT|TRUNC|APPEND|EXCL)\b|\brm(?:sync|dir)?\b|\bcp(?:sync)?\b|\blink(?:sync)?\b|\btouch\b|\bsave\w*\s*\(|\bto_(?:csv|excel|parquet|pickle|json|html|sql|feather|hdf|stata|latex|markdown|xml|clipboard)\b|tofile|\bdump\s*\(|\bcommit\s*\(|\bbackup\b|load_extension|\b(?:delete|drop|insert|update|alter|vacuum|attach|upsert)\b|\breplace\s+into\b|\.\s*run\s*\(|\bvm\b|runin\w*context|\bconstructor\b|createrequire|globalthis|\breflect\b|\bproxy\b|\bmodule\s*\.\s*_|\bfs\w*\s*\[|\brequire\s*\([^)]*\)\s*\[|(?:^|[^.\w])(?:copy|move)\s*\(/i;
 // An open mode that writes, appends or creates.
 const WRITE_MODE_RE = /(?:^|[^\w])(?:'[rbtUs]*[wax+][rbtwaxUs+]*'|"[rbtUs]*[wax+][rbtwaxUs+]*")/;
-// Reaches the home directory, the user database or key material.
-const REACH_RE = /expanduser|expandvars|homedir|userinfo|\bhome\s*\(|getpass|keyring|keychain|\bpwd\b|getpw\w*|decrypt|decipher|aesgcm|fernet|private_?key|\bfrom\s+os\s+import\b|\bimport\s+os\s+as\b/i;
+// Reaches the home directory, the user database, key material or dynamic string construction.
+const REACH_RE = /expanduser|expandvars|homedir|userinfo|\bhome\s*\(|getpass|keyring|keychain|\bpwd\b|getpw\w*|decrypt|decipher|aesgcm|fernet|private_?key|\bfrom\s+(?:os|posix|nt)\s+import\b|\bimport\s+(?:os|posix|nt)\s+as\b/i;
+const DYNAMIC_STRING_RE = /\b(?:chr|ord|bytes|bytearray|memoryview|fromhex|b64decode|b64encode|unhexlify|hexlify|codecs|atob|btoa|fromCharCode|fromCodePoint|getattr|setattr|delattr|globals|locals|vars|__import__|__builtins__|__dict__|__subclasses__|__class__|__bases__|__mro__)\b|\bBuffer\s*\.\s*from\b|\\(?:x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|N\{|[0-7]{1,3})/;
+const FILE_CALL_RE = /\b(?:open|Path|PurePath|PosixPath|WindowsPath|readFileSync|readFile|realpathSync|realpath|statSync|lstatSync|readdirSync|accessSync|existsSync|createReadStream|scandir|listdir|lstat|readlink)\s*\(\s*/g;
+const SQLITE_MENTION_RE = /\bsqlite3?\b|\.\s*connect\s*\(|\bconnect\s*\(/i;
+const SQLITE_CONNECT_RE = /(?:\.\s*|\b)connect\s*\(\s*/g;
+const URI_READONLY_RE = /^\s*,\s*uri\s*=\s*True\s*,?\s*$/;
 const PATHLIB_RE = /\bpathlib\b|\bPath\b/;
 const REPLACE_RE = /\.\s*replace\s*\(/;
 const OS_ATTR_RE = /\bos\s*\.\s*([A-Za-z_]\w*)/g;
@@ -54,7 +59,8 @@ export function readOnlyScriptCategory(family, code) {
   if (SCRIPT_CAPABILITY_RE.test(masked)) return "dynamic";
   // Query text is masked only for the capability list; a write keyword inside it still counts.
   if (MUTATION_RE.test(idioms) || WRITE_MODE_RE.test(idioms)) return "writes";
-  if (REACH_RE.test(masked)) return "secret";
+  if (SQLITE_MENTION_RE.test(idioms) && !hasOnlyReadOnlySQLiteConnect(code)) return "writes";
+  if (REACH_RE.test(masked) || DYNAMIC_STRING_RE.test(code) || !hasOnlyLiteralFileCalls(code)) return "secret";
   if (PATHLIB_RE.test(masked) && REPLACE_RE.test(masked)) return "writes"; // Path.replace moves a file
   for (const m of masked.matchAll(OS_ATTR_RE)) {
     if (!OS_READ_ATTRS.has(m[1])) return "writes";
@@ -159,4 +165,53 @@ function inlineStringLiterals(code) {
     i = j;
   }
   return out;
+}
+
+function hasOnlyLiteralFileCalls(code) {
+  for (const m of code.matchAll(FILE_CALL_RE)) {
+    const after = code.slice(m.index + m[0].length);
+    const lit = leadingPyStringLiteral(after);
+    if (!lit || lit.isF) return false;
+    const tail = after.slice(lit.n).replace(/^[ \t\r\n]+/, "");
+    if (!tail || (tail[0] !== ")" && tail[0] !== ",")) return false;
+  }
+  return true;
+}
+
+function hasOnlyReadOnlySQLiteConnect(code) {
+  const matches = [...code.matchAll(SQLITE_CONNECT_RE)];
+  if (matches.length === 0) return false;
+  for (const m of matches) {
+    const after = code.slice(m.index + m[0].length);
+    const lit = leadingPyStringLiteral(after);
+    if (!lit || lit.isF) return false;
+    const rest = after.slice(lit.n);
+    const closeIdx = rest.indexOf(")");
+    if (closeIdx < 0) return false;
+    const extraArgs = rest.slice(0, closeIdx);
+    if (extraArgs.includes("(") || extraArgs.includes('"') || extraArgs.includes("'")) return false;
+    if (lit.body === ":memory:") {
+      if (extraArgs.trim() !== "") return false;
+      continue;
+    }
+    if (!lit.body.startsWith("file:") || !URI_READONLY_RE.test(extraArgs)) return false;
+    const withoutPrefix = lit.body.slice("file:".length);
+    const qIdx = withoutPrefix.indexOf("?");
+    if (qIdx < 0) return false;
+    const dbPath = withoutPrefix.slice(0, qIdx).trim();
+    const query = withoutPrefix.slice(qIdx + 1);
+    if (!dbPath || isSecretPath(dbPath) || isSensitiveExternalReadPath(dbPath) || isProtectedShellReadPath(dbPath) || KEY_FILE_RE.test(dbPath)) {
+      return false;
+    }
+    let hasModeRO = false;
+    for (const param of query.split("&")) {
+      if (param === "mode=ro") {
+        hasModeRO = true;
+      } else if (param.toLowerCase().startsWith("mode=")) {
+        return false;
+      }
+    }
+    if (!hasModeRO) return false;
+  }
+  return true;
 }

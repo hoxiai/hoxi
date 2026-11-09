@@ -155,24 +155,6 @@ func mergeSessionMemoryWithBaseline(existing, baselineAuto, autoMD string) strin
 	}
 
 	autoHeader, autoSections := splitMarkdownSections(autoNorm)
-	var b strings.Builder
-	b.Grow(len(autoNorm) + len(preamble) + 256)
-	if preamble != "" {
-		b.WriteString(preamble)
-		b.WriteString("\n\n")
-	}
-	for _, line := range autoHeader {
-		b.WriteString(line)
-		b.WriteByte('\n')
-	}
-	for _, line := range customHeaderLines {
-		b.WriteString(line)
-		b.WriteByte('\n')
-	}
-	if len(customHeaderLines) > 0 {
-		b.WriteByte('\n')
-	}
-
 	var keptAutoSections []markdownSection
 	for _, sec := range autoSections {
 		if hasBaseline && strings.Contains(baselineNorm, sec.heading) && !existingHeadingSet[sec.heading] {
@@ -198,6 +180,66 @@ func mergeSessionMemoryWithBaseline(existing, baselineAuto, autoMD string) strin
 		keptAutoSections = append(keptAutoSections, sec)
 	}
 
+	merged := renderMergedMemoryDoc(preamble, autoHeader, customHeaderLines, keptAutoSections, customLinesByHeading, customSections)
+	for len(merged) > MaxMemoryDocumentBytes {
+		shrank := false
+		for i := len(keptAutoSections) - 1; i >= 0; i-- {
+			sec := &keptAutoSections[i]
+			if len(sec.lines) > 0 {
+				sec.lines = sec.lines[:len(sec.lines)-1]
+				if len(sec.lines) == 0 && len(customLinesByHeading[sec.heading]) == 0 {
+					keptAutoSections = append(keptAutoSections[:i], keptAutoSections[i+1:]...)
+				}
+				shrank = true
+				break
+			}
+			if len(customLinesByHeading[sec.heading]) == 0 {
+				keptAutoSections = append(keptAutoSections[:i], keptAutoSections[i+1:]...)
+				shrank = true
+				break
+			}
+		}
+		if !shrank && len(autoHeader) > 1 {
+			autoHeader = autoHeader[:1]
+			shrank = true
+		}
+		if !shrank {
+			break
+		}
+		merged = renderMergedMemoryDoc(preamble, autoHeader, customHeaderLines, keptAutoSections, customLinesByHeading, customSections)
+	}
+	if len(merged) > MaxMemoryDocumentBytes {
+		if len(existingNorm)+1 <= MaxMemoryDocumentBytes {
+			return existingNorm + "\n"
+		}
+		return truncateUTF8Bytes(merged, MaxMemoryDocumentBytes-1) + "\n"
+	}
+	return merged
+}
+
+func renderMergedMemoryDoc(
+	preamble string,
+	autoHeader, customHeaderLines []string,
+	keptAutoSections []markdownSection,
+	customLinesByHeading map[string][]string,
+	customSections []markdownSection,
+) string {
+	var b strings.Builder
+	if preamble != "" {
+		b.WriteString(preamble)
+		b.WriteString("\n\n")
+	}
+	for _, line := range autoHeader {
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	for _, line := range customHeaderLines {
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	if len(customHeaderLines) > 0 {
+		b.WriteByte('\n')
+	}
 	for i, sec := range keptAutoSections {
 		b.WriteString(sec.heading)
 		b.WriteByte('\n')
@@ -232,11 +274,7 @@ func mergeSessionMemoryWithBaseline(existing, baselineAuto, autoMD string) strin
 			b.WriteByte('\n')
 		}
 	}
-	merged := strings.TrimRight(b.String(), "\n") + "\n"
-	if len(merged) > MaxMemoryDocumentBytes {
-		return truncateUTF8Bytes(merged, MaxMemoryDocumentBytes-1) + "\n"
-	}
-	return merged
+	return strings.TrimRight(b.String(), "\n") + "\n"
 }
 
 func clampMemoryDocumentBytes(customBlock, autoNorm string) string {
@@ -253,9 +291,16 @@ func clampMemoryDocumentBytes(customBlock, autoNorm string) string {
 	if len(combined) <= MaxMemoryDocumentBytes {
 		return combined
 	}
-	budgetForCustom := MaxMemoryDocumentBytes - len(autoNorm) - 4
-	if budgetForCustom <= 32 {
-		return truncateUTF8Bytes(autoNorm, MaxMemoryDocumentBytes-1) + "\n"
+	if len(customBlock)+1 >= MaxMemoryDocumentBytes {
+		return truncateUTF8Bytes(customBlock, MaxMemoryDocumentBytes-1) + "\n"
 	}
-	return truncateUTF8Bytes(customBlock, budgetForCustom) + "\n\n" + autoNorm + "\n"
+	budgetForAuto := MaxMemoryDocumentBytes - len(customBlock) - 3
+	if budgetForAuto <= 32 {
+		return customBlock + "\n"
+	}
+	trimmedAuto := strings.TrimSpace(truncateUTF8Bytes(autoNorm, budgetForAuto))
+	if trimmedAuto == "" {
+		return customBlock + "\n"
+	}
+	return customBlock + "\n\n" + trimmedAuto + "\n"
 }

@@ -14,11 +14,11 @@ func TestAutoModeRunsReadOnlyInlineScripts(t *testing.T) {
 	auto := ApprovalPolicy{Mode: ApprovalModeAuto}
 	allowed := []string{
 		`python3 -c 'import sqlite3
-conn = sqlite3.connect("engine/data/freegoto.db")
+conn = sqlite3.connect("file:engine/data/freegoto.db?mode=ro", uri=True)
 for r in conn.execute("SELECT id, ts, level, message FROM logs WHERE category != \"account\" ORDER BY id DESC LIMIT 30").fetchall():
     print(r)'`,
 		`python3 -c 'import sqlite3
-conn = sqlite3.connect("engine/data/freegoto.db")
+conn = sqlite3.connect("file:engine/data/freegoto.db?mode=ro", uri=True)
 for (t,) in conn.execute("SELECT name FROM sqlite_master WHERE type=\"table\"").fetchall():
     print(t, conn.execute(f"SELECT count(*) FROM {t}").fetchone()[0])'`,
 		`python3 -c 'import json; d = json.load(open("engine/data/debug/last-request.json")); print(list(d.keys()))'`,
@@ -35,13 +35,17 @@ for (t,) in conn.execute("SELECT name FROM sqlite_master WHERE type=\"table\"").
 	}
 	asked := []string{
 		`python3 -c 'import os; os.remove("x")'`,
+		`python3 -c 'import posix; posix.remove("fixture.txt")'`,
 		`python3 -c 'open("out.txt", "w").write("x")'`,
 		`python3 -c 'from pathlib import Path; Path("a").replace("b")'`,
+		`python3 -c 'import sqlite3; print(sqlite3.connect("new-fixture.db").execute("SELECT 1").fetchone())'`,
 		`python3 -c 'import sqlite3; c = sqlite3.connect("a.db"); c.execute("DELETE FROM t"); c.commit()'`,
 		`python3 -c 'import sqlite3; sqlite3.connect("a.db").execute(f"SELECT {x()}")'`,
 		`python3 -c 'import subprocess; subprocess.run(["ls"])'`,
 		`python3 -c 'import os; print(os.environ["HOME"])'`,
 		`python3 -c 'print(open(".env").read())'`,
+		`python3 -c 'print(open(chr(46)+"env").read())'`,
+		`python3 -c 'print(open("." + "env").read())'`,
 		`python3 -c 'print(open("apay/.env.local").read())'`,
 		`python3 -c 'print(open("engine/data/account.key").read())'`,
 		`python3 -c 'import os; print(open(os.path.expanduser("~/.ssh/id_rsa")).read())'`,
@@ -77,7 +81,7 @@ for (t,) in conn.execute("SELECT name FROM sqlite_master WHERE type=\"table\"").
 func TestClaudeHookAutoModeInlineScripts(t *testing.T) {
 	f := newClaudeGateFixture(t)
 	setTestApprovalPolicy(t, f.svc, ApprovalPolicy{Mode: ApprovalModeAuto})
-	read := `python3 -c 'import sqlite3; print(sqlite3.connect("a.db").execute("SELECT key FROM kv").fetchall())'`
+	read := `python3 -c 'import sqlite3; print(sqlite3.connect("file:a.db?mode=ro", uri=True).execute("SELECT key FROM kv").fetchall())'`
 	if d := f.decide(t, f.payload("Bash", read, "", "cc-uuid-1")); d != "allow|" {
 		t.Fatalf("auto mode, read-only script: %q", d)
 	}
@@ -91,5 +95,24 @@ func TestClaudeHookAutoModeInlineScripts(t *testing.T) {
 	}
 	if d := <-result; !strings.HasPrefix(d, "deny|") {
 		t.Fatalf("auto mode, deleting script after reject: %q", d)
+	}
+}
+
+func TestReviewAutoDoesNotAllowMutatingInlinePython(t *testing.T) {
+	auto := ApprovalPolicy{Mode: ApprovalModeAuto}
+	cases := []struct {
+		name string
+		cmd  string
+	}{
+		{"remove", `python3 -c 'import posix; posix.remove("fixture.txt")'`},
+		{"sqlite-create", `python3 -c 'import sqlite3; print(sqlite3.connect("new-fixture.db").execute("SELECT 1").fetchone())'`},
+		{"composed-secret", `python3 -c 'print(open(chr(46)+"env").read())'`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if approvalAutoApproves(bashRequest(tc.cmd), auto, nil, t.TempDir()) {
+				t.Fatalf("auto allowed %s", tc.cmd)
+			}
+		})
 	}
 }

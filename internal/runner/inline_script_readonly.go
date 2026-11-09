@@ -49,16 +49,21 @@ var (
 	inlineFieldRe     = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.]*$`)
 
 	// inlineMutationRe names file, database and process-state changes.
-	inlineMutationRe = regexp.MustCompile(`(?i)write|appendfile|unlink|rmdir|rmtree|rename|mkdir|mkdtemp|mkstemp|mkfifo|mknod|chmod|chown|chflags|symlink|hardlink|link_to|truncate|utime|copyfile|copytree|shutil|tempfile|shelve|\bdbm\b|tarfile|zipfile|\bgzip\b|\bbz2\b|\blzma\b|mmap|fcntl|logging|webbrowser|\bsignal\b|\bkill|setuid|setgid|chdir|chroot|umask|\bO_(?:WRONLY|RDWR|CREAT|TRUNC|APPEND|EXCL)\b|\brm(?:sync|dir)?\b|\bcp(?:sync)?\b|\blink(?:sync)?\b|\btouch\b|\bsave\w*\s*\(|\bto_(?:csv|excel|parquet|pickle|json|html|sql|feather|hdf|stata|latex|markdown|xml|clipboard)\b|tofile|\bdump\s*\(|\bcommit\s*\(|\bbackup\b|load_extension|\b(?:delete|drop|insert|update|alter|vacuum|attach|upsert)\b|\breplace\s+into\b|\.\s*run\s*\(|\bvm\b|runin\w*context|\bconstructor\b|createrequire|globalthis|\breflect\b|\bproxy\b|\bmodule\s*\.\s*_|\bfs\w*\s*\[|\brequire\s*\([^)]*\)\s*\[|(?:^|[^.\w])(?:copy|move)\s*\(`)
+	inlineMutationRe = regexp.MustCompile(`(?i)write|appendfile|unlink|\bremove(?:dirs)?\b|rmdir|rmtree|rename|\brenames\b|mkdir|mkdtemp|mkstemp|mkfifo|mknod|chmod|chown|chflags|symlink|hardlink|link_to|truncate|utime|copyfile|copytree|shutil|tempfile|fileinput|shelve|\bdbm\b|tarfile|zipfile|\bgzip\b|\bbz2\b|\blzma\b|mmap|fcntl|logging|webbrowser|\bsignal\b|\bkill|setuid|setgid|chdir|chroot|umask|\bposix\b|\bnt\b|\bimportlib\b|\bO_(?:WRONLY|RDWR|CREAT|TRUNC|APPEND|EXCL)\b|\brm(?:sync|dir)?\b|\bcp(?:sync)?\b|\blink(?:sync)?\b|\btouch\b|\bsave\w*\s*\(|\bto_(?:csv|excel|parquet|pickle|json|html|sql|feather|hdf|stata|latex|markdown|xml|clipboard)\b|tofile|\bdump\s*\(|\bcommit\s*\(|\bbackup\b|load_extension|\b(?:delete|drop|insert|update|alter|vacuum|attach|upsert)\b|\breplace\s+into\b|\.\s*run\s*\(|\bvm\b|runin\w*context|\bconstructor\b|createrequire|globalthis|\breflect\b|\bproxy\b|\bmodule\s*\.\s*_|\bfs\w*\s*\[|\brequire\s*\([^)]*\)\s*\[|(?:^|[^.\w])(?:copy|move)\s*\(`)
 	// inlineWriteModeRe is an open mode that writes, appends or creates.
 	inlineWriteModeRe = regexp.MustCompile(`(?:^|[^\w])(?:'[rbtUs]*[wax+][rbtwaxUs+]*'|"[rbtUs]*[wax+][rbtwaxUs+]*")`)
-	// inlineReachRe reaches the home directory, the user database or key material.
-	inlineReachRe = regexp.MustCompile(`(?i)expanduser|expandvars|homedir|userinfo|\bhome\s*\(|getpass|keyring|keychain|\bpwd\b|getpw\w*|decrypt|decipher|aesgcm|fernet|private_?key|\bfrom\s+os\s+import\b|\bimport\s+os\s+as\b`)
-	inlinePathlibRe = regexp.MustCompile(`\bpathlib\b|\bPath\b`)
-	inlineReplaceRe = regexp.MustCompile(`\.\s*replace\s*\(`)
-	inlineOSAttrRe  = regexp.MustCompile(`\bos\s*\.\s*([A-Za-z_]\w*)`)
-	inlineRequireRe = regexp.MustCompile(`\b(?:require|import)\s*\(\s*['"]([^'"]+)['"]|\bfrom\s+['"]([^'"]+)['"]`)
-	inlineKeyFileRe = regexp.MustCompile(`(?i)(?:\.(?:key|pem|p12|pfx|jks|keystore|ppk|asc|gpg)|(?:^|/)id_[a-z0-9]+)$`)
+	// inlineReachRe reaches the home directory, the user database, key material or dynamic string construction.
+	inlineReachRe         = regexp.MustCompile(`(?i)expanduser|expandvars|homedir|userinfo|\bhome\s*\(|getpass|keyring|keychain|\bpwd\b|getpw\w*|decrypt|decipher|aesgcm|fernet|private_?key|\bfrom\s+(?:os|posix|nt)\s+import\b|\bimport\s+(?:os|posix|nt)\s+as\b`)
+	inlineDynamicStringRe = regexp.MustCompile(`\b(?:chr|ord|bytes|bytearray|memoryview|fromhex|b64decode|b64encode|unhexlify|hexlify|codecs|atob|btoa|fromCharCode|fromCodePoint|getattr|setattr|delattr|globals|locals|vars|__import__|__builtins__|__dict__|__subclasses__|__class__|__bases__|__mro__)\b|\bBuffer\s*\.\s*from\b|\\(?:x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|N\{|[0-7]{1,3})`)
+	inlineFileCallRe      = regexp.MustCompile(`\b(?:open|Path|PurePath|PosixPath|WindowsPath|readFileSync|readFile|realpathSync|realpath|statSync|lstatSync|readdirSync|accessSync|existsSync|createReadStream|scandir|listdir|lstat|readlink)\s*\(\s*`)
+	inlineSQLiteMentionRe = regexp.MustCompile(`(?i)\bsqlite3?\b|\.\s*connect\s*\(|\bconnect\s*\(`)
+	inlineSQLiteConnectRe = regexp.MustCompile(`(?:\.\s*|\b)connect\s*\(\s*`)
+	inlineURIReadOnlyRe   = regexp.MustCompile(`^\s*,\s*uri\s*=\s*True\s*,?\s*$`)
+	inlinePathlibRe       = regexp.MustCompile(`\bpathlib\b|\bPath\b`)
+	inlineReplaceRe       = regexp.MustCompile(`\.\s*replace\s*\(`)
+	inlineOSAttrRe        = regexp.MustCompile(`\bos\s*\.\s*([A-Za-z_]\w*)`)
+	inlineRequireRe       = regexp.MustCompile(`\b(?:require|import)\s*\(\s*['"]([^'"]+)['"]|\bfrom\s+['"]([^'"]+)['"]`)
+	inlineKeyFileRe       = regexp.MustCompile(`(?i)(?:\.(?:key|pem|p12|pfx|jks|keystore|ppk|asc|gpg)|(?:^|/)id_[a-z0-9]+)$`)
 
 	inlineOSReadAttrs = setOf("path", "sep", "linesep", "name", "getcwd", "stat", "lstat", "listdir", "scandir", "walk",
 		"fspath", "fsencode", "fsdecode", "devnull", "curdir", "pardir", "extsep", "altsep", "pathsep", "cpu_count",
@@ -97,7 +102,10 @@ func readOnlyScriptCategory(family, code string) string {
 	if inlineMutationRe.MatchString(idioms) || inlineWriteModeRe.MatchString(idioms) {
 		return inlineCategoryWrites
 	}
-	if inlineReachRe.MatchString(masked) {
+	if inlineSQLiteMentionRe.MatchString(idioms) && !hasOnlyReadOnlySQLiteConnect(code) {
+		return inlineCategoryWrites
+	}
+	if inlineReachRe.MatchString(masked) || inlineDynamicStringRe.MatchString(code) || !hasOnlyLiteralFileCalls(code) {
 		return unattendedCategorySecret
 	}
 	if inlinePathlibRe.MatchString(masked) && inlineReplaceRe.MatchString(masked) {
@@ -236,4 +244,78 @@ func inlineStringLiterals(code string) []string {
 		i = j
 	}
 	return out
+}
+
+// hasOnlyLiteralFileCalls requires every file/path call (open, Path,
+// readFileSync, realpathSync, etc.) to take a single plain string literal as
+// its first argument, refusing runtime-constructed paths like open(chr(46)+"env").
+func hasOnlyLiteralFileCalls(code string) bool {
+	locs := inlineFileCallRe.FindAllStringIndex(code, -1)
+	for _, loc := range locs {
+		after := code[loc[1]:]
+		_, n, isF, ok := leadingPyStringLiteral(after)
+		if !ok || isF {
+			return false
+		}
+		tail := strings.TrimLeft(after[n:], " \t\r\n")
+		if len(tail) == 0 || (tail[0] != ')' && tail[0] != ',') {
+			return false
+		}
+	}
+	return true
+}
+
+// hasOnlyReadOnlySQLiteConnect requires every sqlite3 connect(...) call to use
+// ":memory:" or a "file:<path>?mode=ro" URI with uri=True so connecting never
+// creates a new database file on disk.
+func hasOnlyReadOnlySQLiteConnect(code string) bool {
+	locs := inlineSQLiteConnectRe.FindAllStringIndex(code, -1)
+	if len(locs) == 0 {
+		return false
+	}
+	for _, loc := range locs {
+		after := code[loc[1]:]
+		lit, n, isF, ok := leadingPyStringLiteral(after)
+		if !ok || isF {
+			return false
+		}
+		rest := after[n:]
+		closeIdx := strings.IndexByte(rest, ')')
+		if closeIdx < 0 {
+			return false
+		}
+		extraArgs := rest[:closeIdx]
+		if strings.ContainsAny(extraArgs, "(\"") {
+			return false
+		}
+		if lit == ":memory:" {
+			if strings.TrimSpace(extraArgs) != "" {
+				return false
+			}
+			continue
+		}
+		if !strings.HasPrefix(lit, "file:") || !inlineURIReadOnlyRe.MatchString(extraArgs) {
+			return false
+		}
+		parts := strings.SplitN(strings.TrimPrefix(lit, "file:"), "?", 2)
+		if len(parts) != 2 {
+			return false
+		}
+		dbPath := strings.TrimSpace(parts[0])
+		if dbPath == "" || isSecretFilePath(dbPath) || isSensitiveExternalReadPath(dbPath) || isProtectedShellReadPath(dbPath) || inlineKeyFileRe.MatchString(dbPath) {
+			return false
+		}
+		hasModeRO := false
+		for _, param := range strings.Split(parts[1], "&") {
+			if param == "mode=ro" {
+				hasModeRO = true
+			} else if strings.HasPrefix(strings.ToLower(param), "mode=") {
+				return false
+			}
+		}
+		if !hasModeRO {
+			return false
+		}
+	}
+	return true
 }

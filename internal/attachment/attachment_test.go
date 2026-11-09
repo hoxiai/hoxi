@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"math"
@@ -622,15 +623,9 @@ func TestDeepXLSXEditPreservesUntouchedMergedCells(t *testing.T) {
 	defer edited.Close()
 	for _, z := range edited.File {
 		if z.Name == "xl/worksheets/sheet2.xml" {
-			r, err := z.Open()
-			if err != nil {
-				t.Fatal(err)
-			}
-			data, err := io.ReadAll(r)
+			r, _ := z.Open()
+			data, _ := io.ReadAll(r)
 			_ = r.Close()
-			if err != nil {
-				t.Fatal(err)
-			}
 			if !bytes.Contains(data, marker) {
 				t.Fatalf("editing Inputs!A1 removed Report!A1:B1 merged range: %s", data)
 			}
@@ -649,34 +644,151 @@ func TestDeepOversizeCSVEditDoesNotTruncate(t *testing.T) {
 	}
 	chunk := strings.Repeat(strings.Repeat("z", 1022)+",\n", 1024)
 	for i := 0; i < 64; i++ {
-		if _, err := f.WriteString(chunk); err != nil {
-			t.Fatal(err)
-		}
+		_, _ = f.WriteString(chunk)
 	}
 	marker := "BEYOND_READ_LIMIT,42\n"
-	if _, err := f.WriteString(marker); err != nil {
-		t.Fatal(err)
+	_, _ = f.WriteString(marker)
+	_ = f.Close()
+	if _, err := ApplySpreadsheetEdits(file, file, "oversize", map[string]string{"A1": "edited"}, nil); err != nil {
+		t.Fatalf("ApplySpreadsheetEdits on oversize CSV returned error: %v", err)
 	}
-	if err := f.Close(); err != nil {
-		t.Fatal(err)
-	}
-	_, editErr := ApplySpreadsheetEdits(file, file, "oversize", map[string]string{"A1": "edited"}, nil)
-	if editErr != nil {
-		t.Fatalf("ApplySpreadsheetEdits on oversize CSV returned error: %v", editErr)
-	}
-	f, err = os.Open(file)
-	if err != nil {
-		t.Fatal(err)
-	}
+	f, _ = os.Open(file)
 	defer f.Close()
-	if _, err := f.Seek(-int64(len(marker)), io.SeekEnd); err != nil {
+	_, _ = f.Seek(-int64(len(marker)), io.SeekEnd)
+	tail, _ := io.ReadAll(f)
+	if string(tail) != marker {
+		t.Fatalf("CSV tail beyond 64 MiB lost after edit; tail=%q", tail)
+	}
+}
+
+func TestVerifyPrefixedXLSXPreservesUntouchedMergedCells(t *testing.T) {
+	t.Parallel()
+	file := filepath.Join(t.TempDir(), "prefixed.xlsx")
+	if err := WriteXLSXFile(file, []SpreadsheetSheet{
+		{Name: "Inputs", Rows: [][]string{{"1"}}},
+		{Name: "Report", Rows: [][]string{{"Title", ""}, {"A", "B"}}},
+	}); err != nil {
 		t.Fatal(err)
 	}
-	tail, err := io.ReadAll(f)
+	original, err := zip.OpenReader(file)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(tail) != marker {
-		t.Fatalf("CSV tail beyond 64 MiB lost after edit; edit error=%v tail=%q", editErr, tail)
+	var fixture bytes.Buffer
+	zw := zip.NewWriter(&fixture)
+	marker := []byte(`<x:mergeCells count="1"><x:mergeCell ref="A1:B1"/></x:mergeCells>`)
+	for _, z := range original.File {
+		r, _ := z.Open()
+		data, _ := io.ReadAll(r)
+		_ = r.Close()
+		if z.Name == "xl/worksheets/sheet1.xml" || z.Name == "xl/worksheets/sheet2.xml" {
+			data = bytes.ReplaceAll(data, []byte(`<worksheet xmlns="`), []byte(`<x:worksheet xmlns:x="`))
+			data = bytes.ReplaceAll(data, []byte(`</worksheet>`), []byte(`</x:worksheet>`))
+			for _, tag := range []string{"sheetData", "row", "c", "v", "f", "is", "t"} {
+				data = bytes.ReplaceAll(data, []byte("<"+tag+">"), []byte("<x:"+tag+">"))
+				data = bytes.ReplaceAll(data, []byte("<"+tag+" "), []byte("<x:"+tag+" "))
+				data = bytes.ReplaceAll(data, []byte("</"+tag+">"), []byte("</x:"+tag+">"))
+			}
+		}
+		if z.Name == "xl/worksheets/sheet2.xml" {
+			data = bytes.Replace(data, []byte("</x:sheetData>"), append([]byte("</x:sheetData>"), marker...), 1)
+		}
+		if z.Name == "xl/sharedStrings.xml" {
+			data = bytes.ReplaceAll(data, []byte(`<sst xmlns="`), []byte(`<x:sst xmlns:x="`))
+			data = bytes.ReplaceAll(data, []byte(`</sst>`), []byte(`</x:sst>`))
+			for _, tag := range []string{"si", "t"} {
+				data = bytes.ReplaceAll(data, []byte("<"+tag+">"), []byte("<x:"+tag+">"))
+				data = bytes.ReplaceAll(data, []byte("<"+tag+" "), []byte("<x:"+tag+" "))
+				data = bytes.ReplaceAll(data, []byte("</"+tag+">"), []byte("</x:"+tag+">"))
+			}
+		}
+		out, _ := zw.Create(z.Name)
+		_, _ = out.Write(data)
+	}
+	_ = original.Close()
+	_ = zw.Close()
+	if err := os.WriteFile(file, fixture.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sheets, err := ApplySpreadsheetEdits(file, file, "Inputs", map[string]string{"A1": "new-val"}, nil)
+	if err != nil || len(sheets) < 1 || sheets[0].Rows[0][0] != "new-val" {
+		t.Fatalf("unexpected Inputs!A1 after edit: err=%v sheets=%+v", err, sheets)
+	}
+	edited, err := zip.OpenReader(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer edited.Close()
+	for _, z := range edited.File {
+		if z.Name == "xl/worksheets/sheet2.xml" {
+			r, _ := z.Open()
+			data, _ := io.ReadAll(r)
+			_ = r.Close()
+			if !bytes.Contains(data, marker) {
+				t.Fatalf("editing Inputs!A1 removed Report!A1:B1 merged range: %s", data)
+			}
+			return
+		}
+	}
+	t.Fatal("Report sheet missing")
+}
+
+func TestVerifyDelimitedConversionUsesInputSeparator(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	inCSV, outTSV := filepath.Join(dir, "in.csv"), filepath.Join(dir, "out.tsv")
+	_ = os.WriteFile(inCSV, []byte("a,b\nx,y\n"), 0o600)
+	sheets, err := ApplySpreadsheetEdits(inCSV, outTSV, "", map[string]string{"B2": "edited"}, nil)
+	if err != nil || len(sheets) != 1 || len(sheets[0].Rows) != 2 || len(sheets[0].Rows[0]) != 2 || sheets[0].Rows[1][1] != "edited" {
+		t.Fatalf("CSV to TSV lost column boundaries: err=%v rows=%+v", err, sheets)
+	}
+}
+
+func TestReviewMixedXLSXNamespacePreservesWellFormedRows(t *testing.T) {
+	t.Parallel()
+	file := filepath.Join(t.TempDir(), "mixed.xlsx")
+	if err := WriteXLSXFile(file, []SpreadsheetSheet{{Name: "Sheet1", Rows: [][]string{{"1"}, {"2"}}}}); err != nil {
+		t.Fatal(err)
+	}
+	orig, _ := zip.OpenReader(file)
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	wsXML := `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><x:sheetData xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><row r="1"><c r="A1" s="1"><v>1</v></c></row><row r="2"><c r="A2"><v>2</v></c></row></x:sheetData></worksheet>`
+	for _, z := range orig.File {
+		if z.Name == "xl/sharedStrings.xml" {
+			continue
+		}
+		out, _ := zw.Create(z.Name)
+		if z.Name == "xl/worksheets/sheet1.xml" {
+			_, _ = out.Write([]byte(wsXML))
+			continue
+		}
+		r, _ := z.Open()
+		_, _ = io.Copy(out, r)
+		_ = r.Close()
+	}
+	_ = orig.Close()
+	_ = zw.Close()
+	_ = os.WriteFile(file, buf.Bytes(), 0o600)
+	sheets, editErr := ApplySpreadsheetEdits(file, file, "Sheet1", map[string]string{"A1": "3"}, nil)
+	if editErr != nil || len(sheets) != 1 || sheets[0].Rows[0][0] != "3" || sheets[0].Rows[1][0] != "2" {
+		t.Fatalf("unexpected edit result: err=%v sheets=%+v", editErr, sheets)
+	}
+	zr, _ := zip.OpenReader(file)
+	defer zr.Close()
+	for _, z := range zr.File {
+		if z.Name == "xl/worksheets/sheet1.xml" {
+			r, _ := z.Open()
+			data, _ := io.ReadAll(r)
+			_ = r.Close()
+			for dec := xml.NewDecoder(bytes.NewReader(data)); ; {
+				if _, err := dec.Token(); err != nil {
+					if err == io.EOF {
+						return
+					}
+					t.Fatalf("edit wrote malformed worksheet despite edit result %v: %v; %s", editErr, err, data)
+				}
+			}
+		}
 	}
 }

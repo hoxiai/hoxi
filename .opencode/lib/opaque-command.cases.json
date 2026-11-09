@@ -1092,22 +1092,40 @@
     "autoOpaque": false
   },
   {
-    "command": "python3 -c '\nimport sqlite3\nconn = sqlite3.connect(\"engine/data/app.db\")\nfor r in conn.execute(\"SELECT id, ts, model, status FROM requests WHERE status != \\\"ok\\\" ORDER BY id DESC LIMIT 25\").fetchall():\n    print(r)\n'",
+    "command": "python3 -c '\nimport sqlite3\nconn = sqlite3.connect(\"file:engine/data/app.db?mode=ro\", uri=True)\nfor r in conn.execute(\"SELECT id, ts, model, status FROM requests WHERE status != \\\"ok\\\" ORDER BY id DESC LIMIT 25\").fetchall():\n    print(r)\n'",
     "opaque": true,
     "trustedOpaque": false,
     "autoOpaque": false
   },
   {
-    "command": "python3 -c 'import sqlite3\nconn = sqlite3.connect(\"a.db\")\nfor (t,) in conn.execute(\"SELECT name FROM sqlite_master\").fetchall():\n    print(t, conn.execute(f\"SELECT count(*) FROM {t}\").fetchone()[0])'",
+    "command": "python3 -c 'import sqlite3\nconn = sqlite3.connect(\"file:a.db?mode=ro\", uri=True)\nfor (t,) in conn.execute(\"SELECT name FROM sqlite_master\").fetchall():\n    print(t, conn.execute(f\"SELECT count(*) FROM {t}\").fetchone()[0])'",
     "opaque": true,
     "trustedOpaque": false,
     "autoOpaque": false
   },
   {
-    "command": "python3 -c 'import sqlite3; print(sqlite3.connect(\"a.db\").execute(\"PRAGMA table_info(requests)\").fetchall())'",
+    "command": "python3 -c 'import sqlite3; print(sqlite3.connect(\"file:a.db?mode=ro\", uri=True).execute(\"PRAGMA table_info(requests)\").fetchall())'",
     "opaque": true,
     "trustedOpaque": false,
     "autoOpaque": false
+  },
+  {
+    "command": "python3 -c 'import posix; posix.remove(\"fixture.txt\")'",
+    "opaque": true,
+    "trustedOpaque": false,
+    "autoOpaque": true
+  },
+  {
+    "command": "python3 -c 'import sqlite3; print(sqlite3.connect(\"new-fixture.db\").execute(\"SELECT 1\").fetchone())'",
+    "opaque": true,
+    "trustedOpaque": false,
+    "autoOpaque": true
+  },
+  {
+    "command": "python3 -c 'print(open(chr(46)+\"env\").read())'",
+    "opaque": true,
+    "trustedOpaque": false,
+    "autoOpaque": true
   },
   {
     "command": "curl -s http://127.0.0.1:5800/api/settings | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get(\"name\"))'",
