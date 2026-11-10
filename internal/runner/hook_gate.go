@@ -62,37 +62,37 @@ type pendingApproval struct {
 }
 
 type approvalGate struct {
-	mu                sync.Mutex
-	baseURL           string
-	autoInstall       bool
-	tokens            map[[32]byte]hookCredential
-	pending           map[string]*pendingApproval
-	byCallKey         map[string]*pendingApproval
-	dedupWaiters      map[string]int
-	questions         map[string]*pendingQuestion
+	mu                 sync.Mutex
+	baseURL            string
+	autoInstall        bool
+	tokens             map[[32]byte]hookCredential
+	pending            map[string]*pendingApproval
+	byCallKey          map[string]*pendingApproval
+	dedupWaiters       map[string]int
+	questions          map[string]*pendingQuestion
 	questionsByCallKey map[string]*pendingQuestion
-	resolvedQuestions map[string]resolvedQuestion
-	always            map[string]map[string]ApprovalGrant
-	toolAlways        map[string]map[string]ApprovalGrant
-	classGrants       map[string]map[string]ApprovalGrant // session -> recoverable class
-	openCodeAsks      map[string]openCodeAsk              // OpenCode request ID -> request shown to the user
-	waitLimit         time.Duration
+	resolvedQuestions  map[string]resolvedQuestion
+	always             map[string]map[string]ApprovalGrant
+	toolAlways         map[string]map[string]ApprovalGrant
+	classGrants        map[string]map[string]ApprovalGrant // session -> recoverable class
+	openCodeAsks       map[string]openCodeAsk              // OpenCode request ID -> request shown to the user
+	waitLimit          time.Duration
 }
 
 func newApprovalGate() *approvalGate {
 	return &approvalGate{
-		tokens:            make(map[[32]byte]hookCredential),
-		pending:           make(map[string]*pendingApproval),
-		byCallKey:         make(map[string]*pendingApproval),
-		dedupWaiters:      make(map[string]int),
-		questions:         make(map[string]*pendingQuestion),
+		tokens:             make(map[[32]byte]hookCredential),
+		pending:            make(map[string]*pendingApproval),
+		byCallKey:          make(map[string]*pendingApproval),
+		dedupWaiters:       make(map[string]int),
+		questions:          make(map[string]*pendingQuestion),
 		questionsByCallKey: make(map[string]*pendingQuestion),
-		resolvedQuestions: make(map[string]resolvedQuestion),
-		always:            make(map[string]map[string]ApprovalGrant),
-		toolAlways:        make(map[string]map[string]ApprovalGrant),
-		classGrants:       make(map[string]map[string]ApprovalGrant),
-		openCodeAsks:      make(map[string]openCodeAsk),
-		waitLimit:         agyhook.ClientTimeout - 5*time.Second,
+		resolvedQuestions:  make(map[string]resolvedQuestion),
+		always:             make(map[string]map[string]ApprovalGrant),
+		toolAlways:         make(map[string]map[string]ApprovalGrant),
+		classGrants:        make(map[string]map[string]ApprovalGrant),
+		openCodeAsks:       make(map[string]openCodeAsk),
+		waitLimit:          agyhook.ClientTimeout - 5*time.Second,
 	}
 }
 

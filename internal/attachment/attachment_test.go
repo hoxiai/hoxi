@@ -306,12 +306,12 @@ func buildTestBIFF8OLE2XLS(sheetName string, sstStrings []string, cells []struct
 	}
 
 	// Sector 0: FAT (at file offset 512)
-	fat := fileBytes[512 : 1024]
+	fat := fileBytes[512:1024]
 	for i := 0; i < 128; i++ {
 		binary.LittleEndian.PutUint32(fat[i*4:(i+1)*4], oleFreeSect)
 	}
-	binary.LittleEndian.PutUint32(fat[0:4], 0xFFFFFFFD)      // Sector 0: FATSECT
-	binary.LittleEndian.PutUint32(fat[4:8], oleEndOfChain)   // Sector 1: Directory
+	binary.LittleEndian.PutUint32(fat[0:4], 0xFFFFFFFD)    // Sector 0: FATSECT
+	binary.LittleEndian.PutUint32(fat[4:8], oleEndOfChain) // Sector 1: Directory
 	for s := 0; s < numStreamSectors; s++ {
 		secID := 2 + s
 		next := uint32(secID + 1)
@@ -322,7 +322,7 @@ func buildTestBIFF8OLE2XLS(sheetName string, sstStrings []string, cells []struct
 	}
 
 	// Sector 1: Directory (at file offset 1024)
-	dirSec := fileBytes[1024 : 1536]
+	dirSec := fileBytes[1024:1536]
 	writeDirEntry := func(off int, name string, objType byte, startSec uint32, size uint32) {
 		ent := dirSec[off : off+128]
 		u16 := utf16.Encode([]rune(name))

@@ -13,7 +13,8 @@ const SANDBOX_DENIAL_RE = /Operation not permitted|Hoxi sandbox (?:denied|allows
 const SANDBOX_NOTE =
   "\n\n[Hoxi] This command ran in a sandbox because it could not be approved automatically as written. " +
   "In the sandbox it can only write inside the project, temp and cache directories, cannot change .git, " +
-  "cannot read .env or key files, and can only reach the local network. If it failed because of that, " +
+  "cannot read .env, key or agent sign-in files, and can only reach servers it starts itself " +
+  "(no internet, no local services that were already running, no sockets outside the project). If it failed because of that, " +
   `run it again with \`${UNSANDBOXED_MARKER}\` as its first line to ask the user to approve it outside the sandbox. ` +
   "Do not try to work around the sandbox in any other way.";
 

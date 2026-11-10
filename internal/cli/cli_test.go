@@ -562,4 +562,3 @@ func TestDocCommandReadWriteAndProtectedPaths(t *testing.T) {
 		}
 	}
 }
-

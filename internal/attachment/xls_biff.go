@@ -183,10 +183,10 @@ func extractOLE2WorkbookStream(data []byte) ([]byte, error) {
 	}
 
 	type oleDirEntry struct {
-		name      string
-		objType   byte
-		startSec  uint32
-		size      uint64
+		name     string
+		objType  byte
+		startSec uint32
+		size     uint64
 	}
 	var rootEntry *oleDirEntry
 	var wbEntry *oleDirEntry

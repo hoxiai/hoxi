@@ -514,11 +514,11 @@ func runDocSetCell(
 		return 1
 	}
 	_ = json.NewEncoder(stdout).Encode(map[string]any{
-		"ok":          true,
-		"path":        outPath,
+		"ok":           true,
+		"path":         outPath,
 		"updatedCells": len(edits),
 		"appendedRows": len(appendRows),
-		"sheets":      len(sheets),
+		"sheets":       len(sheets),
 	})
 	return 0
 }

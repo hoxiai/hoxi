@@ -213,8 +213,21 @@ func ProfileText(profile Profile) (string, error) {
 	case NetworkLocal:
 		network = "; sandbox network mode: local\n" +
 			`(deny network-outbound (with message "Hoxi sandbox allows only local network access"))` + "\n" +
-			`(allow network-outbound (remote ip "localhost:*"))` + "\n" +
-			"(allow network-outbound (remote unix-socket))\n(allow network-inbound)"
+			`(allow network-outbound (remote ip "localhost:*"))` + "\n"
+		if len(profile.Network.AllowUnixSockets) > 0 {
+			var roots []string
+			for _, rule := range profile.Network.AllowUnixSockets {
+				filter, err := pathFilter(rule)
+				if err != nil {
+					return "", err
+				}
+				roots = append(roots, filter)
+			}
+			// Other programs' sockets (agent and IDE bridges, the DNS
+			// resolver) stay unreachable.
+			network += "(allow network-outbound (require-all (remote unix-socket) (require-any " + strings.Join(roots, " ") + ")))\n"
+		}
+		network += "(allow network-inbound)"
 	default:
 		return "", fmt.Errorf("unsupported sandbox network mode: %s", mode)
 	}
@@ -232,16 +245,21 @@ func ProfileText(profile Profile) (string, error) {
 			`(deny network-outbound (with message "Hoxi sandbox denied a credential agent socket") (require-any ` +
 			strings.Join(sockets, " ") + "))"
 	}
-	if len(profile.Network.DenyLoopbackPorts) > 0 {
-		var ports []string
-		for _, port := range profile.Network.DenyLoopbackPorts {
+	var ports []string
+	for _, group := range []struct {
+		filter string
+		ports  []int
+	}{{"ip", profile.Network.DenyLoopbackPorts}, {"tcp", profile.Network.DenyLoopbackTCP}, {"udp", profile.Network.DenyLoopbackUDP}} {
+		for _, port := range group.ports {
 			if port <= 0 || port > 65535 {
 				return "", fmt.Errorf("invalid sandbox loopback port: %d", port)
 			}
-			ports = append(ports, fmt.Sprintf(`(remote ip "localhost:%d")`, port))
+			ports = append(ports, fmt.Sprintf(`(remote %s "localhost:%d")`, group.filter, port))
 		}
-		network += "\n; Hoxi and OpenCode control ports and local proxies stay unreachable\n" +
-			`(deny network-outbound (with message "Hoxi sandbox denied a local control or proxy port") (require-any ` +
+	}
+	if len(ports) > 0 {
+		network += "\n; control ports, local proxies and other ports already in use stay unreachable\n" +
+			`(deny network-outbound (with message "Hoxi sandbox denied a local port it did not open") (require-any ` +
 			strings.Join(ports, " ") + "))"
 	}
 	return strings.Join([]string{

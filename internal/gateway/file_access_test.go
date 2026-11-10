@@ -255,4 +255,3 @@ func TestFileContentSpreadsheetSheetsAndPDFExtract(t *testing.T) {
 		t.Fatalf("protected POST /api/hoxi/file/spreadsheet-edit = %d, want 403", recProt.Code)
 	}
 }
-

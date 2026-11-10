@@ -33,8 +33,8 @@ type openCodeBridgeState struct {
 // turn completion or session deletion.
 type turnLedgerState struct {
 	ledger             *taskLedgerStore
-	pendingResumes     syncMap[string, InflightTurnEntry]     // sessionID -> graceful-restart entry awaiting boot resume
-	resumingFlights    syncMap[string, *resumeFlight]         // sessionID -> active singleflight boot-resume coordinator
+	pendingResumes     syncMap[string, InflightTurnEntry] // sessionID -> graceful-restart entry awaiting boot resume
+	resumingFlights    syncMap[string, *resumeFlight]     // sessionID -> active singleflight boot-resume coordinator
 	userSkillByMsg     syncMap[string, userSkillOverride]
 	stoppedTools       syncMap[string, bool] // sessionID\x00(part|call):id -> bool
 	turnStats          syncMap[string, *turnCounts]

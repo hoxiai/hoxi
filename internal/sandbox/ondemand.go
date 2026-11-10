@@ -28,12 +28,13 @@ import (
 //     .git directory (history stays recoverable), Hoxi state, other agents'
 //     state directories, or the OpenCode plugin and package caches that later
 //     run outside the sandbox;
-//   - reads: everything except credential directories, .env files anywhere,
-//     and private key files;
-//   - network: loopback and Unix sockets only. SSH agents, the ports in
-//     denyPorts (Hoxi's and OpenCode's control APIs) and local proxies that
-//     lead to the internet stay unreachable, so nothing it reads can leave
-//     the machine.
+//   - reads: everything except credential directories, other agents' sign-in
+//     tokens, .env files anywhere, and private key files;
+//   - network: only servers the command starts itself. Every loopback port
+//     already in use when the profile is written (local proxies, other
+//     agents' and IDEs' servers, Hoxi's and OpenCode's control APIs, plus
+//     denyPorts) is denied, and Unix sockets are reachable only inside the
+//     workspace, so nothing it reads can leave the machine or the sandbox.
 func OnDemandProfile(workspace string, denyPorts []int) (Profile, error) {
 	workspace, err := canonicalDirectory(workspace)
 	if err != nil {
@@ -54,16 +55,29 @@ func OnDemandProfile(workspace string, denyPorts []int) (Profile, error) {
 	}
 	deny = append(deny, protectedStateRules()...)
 	deny = append(deny, laterExecutionCacheRules()...)
+	tcpInUse, udpInUse, err := ListeningLocalPorts()
+	if err != nil {
+		return Profile{}, fmt.Errorf("%w: %v", errNoPortSnapshot, err)
+	}
 	ports := append(append([]int(nil), denyPorts...), LocalProxyPorts()...)
+	denyRead := append(secretReadRules(workspace), anywhereSecretFileRules()...)
+	denyRead = append(denyRead, agentCredentialRules()...)
 	return Profile{
 		Filesystem: FilesystemProfile{
 			AllowWrite:         allow,
 			DenyWrite:          deny,
-			DenyRead:           append(secretReadRules(workspace), anywhereSecretFileRules()...),
+			DenyRead:           denyRead,
 			DenyNames:          []string{".git"},
 			TemporaryDirectory: "/private/tmp",
 		},
-		Network: NetworkProfile{Mode: NetworkLocal, DenySockets: credentialSocketRules(), DenyLoopbackPorts: uniquePorts(ports)},
+		Network: NetworkProfile{
+			Mode:              NetworkLocal,
+			AllowUnixSockets:  []PathRule{{Path: workspace, Kind: PathSubtree}},
+			DenySockets:       credentialSocketRules(),
+			DenyLoopbackPorts: uniquePorts(ports),
+			DenyLoopbackTCP:   tcpInUse,
+			DenyLoopbackUDP:   udpInUse,
+		},
 	}, nil
 }
 

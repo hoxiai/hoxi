@@ -55,9 +55,16 @@ type NetworkProfile struct {
 	// DenySockets are Unix sockets a confined command may not connect to,
 	// even when outbound network access is allowed.
 	DenySockets []PathRule
-	// DenyLoopbackPorts are local TCP ports a confined command may not reach,
-	// such as Hoxi's and OpenCode's control APIs and local internet proxies.
+	// DenyLoopbackPorts are local ports a confined command may not reach over
+	// any protocol, such as Hoxi's and OpenCode's control APIs and proxies.
 	DenyLoopbackPorts []int
+	// DenyLoopbackTCP and DenyLoopbackUDP deny one protocol only: the ports
+	// already in use when an on-demand profile is written.
+	DenyLoopbackTCP []int
+	DenyLoopbackUDP []int
+	// AllowUnixSockets are where NetworkLocal lets a command connect to Unix
+	// sockets; every other socket is denied. Other modes ignore it.
+	AllowUnixSockets []PathRule
 }
 
 type Profile struct {
