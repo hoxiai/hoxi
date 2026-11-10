@@ -12,7 +12,18 @@ import (
 	"time"
 )
 
+// requirePortSnapshot skips when the host has no netstat the profile can read.
+// Production only builds these profiles on macOS, where /usr/sbin/netstat
+// exists; Linux CI runners have none, so the snapshot correctly fails closed.
+func requirePortSnapshot(t *testing.T) {
+	t.Helper()
+	if _, _, err := ListeningLocalPorts(); err != nil {
+		t.Skipf("local port snapshot unavailable: %v", err)
+	}
+}
+
 func TestOnDemandProfileRefusesBroadWorkspaces(t *testing.T) {
+	requirePortSnapshot(t)
 	home := resolvePathSymlinks(t.TempDir())
 	t.Setenv("HOME", home)
 	for _, dir := range []string{
@@ -46,6 +57,7 @@ func TestOnDemandProfileRefusesBroadWorkspaces(t *testing.T) {
 }
 
 func TestOnDemandProfileTextIsLocalOnly(t *testing.T) {
+	requirePortSnapshot(t)
 	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:5488")
 	t.Setenv("ALL_PROXY", "socks5://localhost:5486")
 	t.Setenv("HTTP_PROXY", "http://proxy.example.com:8080")
@@ -246,6 +258,7 @@ func TestOnDemandProfileEnforced(t *testing.T) {
 }
 
 func TestOnDemandTrustedOnlyForUnchangedOwnProfile(t *testing.T) {
+	requirePortSnapshot(t)
 	m := NewManager(t.TempDir())
 	workspace := t.TempDir()
 	other := t.TempDir()

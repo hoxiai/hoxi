@@ -42,6 +42,12 @@ func newMergeFixture(t *testing.T, names ...string) map[string]string {
 		t.Fatal(err)
 	}
 	reviewTestGit(t, repo, "init", "-q", "-b", "main")
+	// Snapshot and merge helpers run git through the production path, which
+	// does not pass -c user.name. CI runners have no global identity, so pin a
+	// local identity in the fixture repo that every worktree inherits.
+	reviewTestGit(t, repo, "config", "user.name", "Test")
+	reviewTestGit(t, repo, "config", "user.email", "test@example.com")
+	reviewTestGit(t, repo, "config", "commit.gpgsign", "false")
 	reviewTestWrite(t, filepath.Join(repo, "f.txt"), "a\nb\nc\nd\ne\nf\ng\n")
 	reviewTestGit(t, repo, "add", ".")
 	reviewTestGit(t, repo, "commit", "-q", "-m", "base")
