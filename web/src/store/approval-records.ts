@@ -25,7 +25,17 @@ export function grantableClasses(req: Partial<PermissionRequest> & Record<string
   return Array.isArray(raw) ? raw.filter((c): c is string => typeof c === "string") : [];
 }
 
+const FILE_GRANT_PREFIX = "file:";
+
+/** A grant for one exact protected file (internal/runner/approval_file_grants.go). */
+export function isFileGrantClass(cls: string): boolean {
+  return cls.startsWith(FILE_GRANT_PREFIX) && cls.length > FILE_GRANT_PREFIX.length;
+}
+
 export function grantClassLabel(cls: string): string {
+  if (isFileGrantClass(cls)) {
+    return t("approval.grantClassFileEdit", { path: cls.slice(FILE_GRANT_PREFIX.length) });
+  }
   switch (cls) {
     case "temp-delete":
       return t("approval.grantClassTempDelete");

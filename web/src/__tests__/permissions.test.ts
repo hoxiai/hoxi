@@ -8,9 +8,11 @@ import { hoxiAPI, type ApprovalPolicy } from "../services/api";
 import type { PermissionRequest } from "../services/sse-types";
 import {
   approvalPolicy,
+  grantClassLabel,
   grantableClasses,
   handleIncomingPermissionRequest,
   isDestructivePermissionRequest,
+  isFileGrantClass,
   loadApprovalPolicy,
   markPermissionResolved,
   replyPermissionRequest,
@@ -386,6 +388,15 @@ describe("session kind grant", () => {
     assertDeepEqual(grantableClasses(destructive("per_g2")), []);
     assertDeepEqual(grantableClasses(destructive("per_g3", "dir-delete")), []);
     assertDeepEqual(grantableClasses(destructive("per_g4", ["dir-delete", 7])), ["dir-delete"]);
+  });
+
+  it("names a file grant by the file it covers", () => {
+    const path = "/Users/u/.agents/skills/ship/deploy.sh";
+    assertEqual(isFileGrantClass(`file:${path}`), true);
+    assertEqual(isFileGrantClass("file:"), false);
+    assertEqual(isFileGrantClass("dir-delete"), false);
+    const label = grantClassLabel(`file:${path}`);
+    assertEqual(label.includes(path) && !label.includes("file:"), true);
   });
 
   it("sends grantClass only together with a one-time approval", async () => {

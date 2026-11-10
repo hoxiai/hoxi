@@ -18,6 +18,7 @@ import {
   isDestructivePermissionRequest,
   grantableClasses,
   grantClassLabel,
+  isFileGrantClass,
   isPermissionGoneError,
   isRunnerPermissionID,
   markPermissionResolved,
@@ -89,6 +90,9 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
   const isDestructive = createMemo(() => isDestructivePermissionRequest(props.request));
   const isRunner = createMemo(() => isRunnerPermissionID(props.request.id));
   const sessionClasses = createMemo(() => grantableClasses(props.request));
+  const sessionClassLabel = createMemo(() =>
+    sessionClasses().every(isFileGrantClass) ? t("approval.allowSessionFile") : t("approval.allowSessionClass")
+  );
   // The gate keeps no session grant for an opaque command, so the card does
   // not offer one (sessionGrantRefusal mirrors internal/runner/approval_grants.go).
   const grantUnavailable = createMemo(
@@ -453,7 +457,7 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
                   >
                     <Zap size={12} />
                   </Show>
-                  {sessionClasses().length > 0 ? t("approval.allowSessionClass") : alwaysButtonLabel()}
+                  {sessionClasses().length > 0 ? sessionClassLabel() : alwaysButtonLabel()}
                 </button>
               </Show>
               <button

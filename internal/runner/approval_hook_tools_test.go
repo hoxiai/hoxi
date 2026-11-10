@@ -147,8 +147,9 @@ func TestUnattendedHardDenyOutranksSessionGrant(t *testing.T) {
 	}
 }
 
-// OpenCode remembers "always" itself, so Hoxi answers it once for a command
-// the gate would never grant for the session, and passes it through otherwise.
+// OpenCode would remember "always" for its whole instance, so it only ever
+// gets "once"; Hoxi keeps a session grant only for a command the gate would
+// grant for the session.
 func TestOpenCodeAlwaysOnlyForCommandsTheGateWouldGrant(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -168,16 +169,19 @@ func TestOpenCodeAlwaysOnlyForCommandsTheGateWouldGrant(t *testing.T) {
 	rec, _ := svc.store.Get("ses_oc_always")
 	events, unsub := svc.Subscribe("ses_oc_always")
 	defer unsub()
-	for i, c := range []struct{ command, want string }{
-		{`bash -c "$X"`, "once"},
-		{"env | grep -i token", "once"},
-		{"rm -rf dist", "once"},
-		{"python3 -c 'import os; os.mkdir(0)'", "always"},
+	for i, c := range []struct {
+		command string
+		grant   bool
+	}{
+		{`bash -c "$X"`, false},
+		{"env | grep -i token", false},
+		{"rm -rf dist", false},
+		{"python3 -c 'import os; os.mkdir(0)'", true},
 	} {
 		id := "per_oc_always" + string(rune('a'+i))
 		event, _ := json.Marshal(map[string]interface{}{"type": "permission.asked", "properties": map[string]interface{}{
 			"id": id, "sessionID": "oc-always", "permission": "bash", "patterns": []string{c.command},
-			"metadata": map[string]interface{}{"command": c.command},
+			"always": []string{c.command}, "metadata": map[string]interface{}{"command": c.command},
 		}})
 		svc.relayOpenCodeEvent(rec, event)
 		if asked := waitForEvent(t, events, "permission.asked"); asked.Properties["id"] != id {
@@ -192,8 +196,12 @@ func TestOpenCodeAlwaysOnlyForCommandsTheGateWouldGrant(t *testing.T) {
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("%q: reply status %d", c.command, resp.StatusCode)
 		}
-		if got := fake.reply(id); got != c.want {
-			t.Fatalf("%q: OpenCode got %q, want %q", c.command, got, c.want)
+		if got := fake.reply(id); got != "once" {
+			t.Fatalf("%q: OpenCode got %q, want once", c.command, got)
+		}
+		granted := svc.gate.openCodeAlwaysCovers("ses_oc_always", "bash", []string{c.command})
+		if granted != c.grant {
+			t.Fatalf("%q: session grant kept = %v, want %v", c.command, granted, c.grant)
 		}
 	}
 }

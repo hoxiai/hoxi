@@ -260,7 +260,7 @@ func (s *Service) claimOpenCodePermission(item map[string]interface{}, sessionID
 		s.autoReplyOpenCode(id, sessionID, directory, source, userFallback)
 		return true
 	}
-	if s.classGrantApproves(item, sessionID, directory) {
+	if s.classGrantApproves(item, sessionID, directory) || s.openCodeAlwaysApproves(item, sessionID) {
 		s.autoReplyOpenCode(id, sessionID, directory, grantSourceSession, userFallback)
 		return true
 	}

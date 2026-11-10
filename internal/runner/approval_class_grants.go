@@ -12,6 +12,8 @@ import (
 // A destructive request outside them (secret reads, sudo, force pushes,
 // process control, git reset/clean, wiping the session root, anything that
 // cannot be parsed) gets no grant and keeps asking once per request.
+// A protected-file edit gets the same button for that exact file instead
+// (approval_file_grants.go).
 // Grants live in memory for one session, are listed and revocable with the
 // other session grants, and every use is audited with source "grant".
 
@@ -45,6 +47,9 @@ func isShellPermissionItem(item map[string]interface{}) bool {
 // request needs within dir, or nil when any part of it falls outside the
 // grantable classes.
 func grantableRequestClasses(item map[string]interface{}, dir string) []string {
+	if editPermissions[permissionName(item)] {
+		return grantableEditFiles(item, dir)
+	}
 	if strings.TrimSpace(dir) == "" || !isShellPermissionItem(item) {
 		return nil
 	}
@@ -112,16 +117,19 @@ func (g *approvalGate) addClassGrants(sessionID string, classes []string, source
 	}
 	now := time.Now().UnixMilli()
 	for _, class := range classes {
-		if !sessionGrantableClasses[class] {
+		kind, tool, pattern := grantKindClass, "bash", class
+		if isFileGrantClass(class) {
+			kind, tool, pattern = grantKindFile, "edit", strings.TrimPrefix(class, fileGrantPrefix)
+		} else if !sessionGrantableClasses[class] {
 			continue
 		}
 		g.classGrants[sessionID][class] = ApprovalGrant{
-			ID:        makeGrantID(sessionID, grantKindClass, class),
+			ID:        makeGrantID(sessionID, kind, class),
 			SessionID: sessionID,
-			Kind:      grantKindClass,
-			Tool:      "bash",
+			Kind:      kind,
+			Tool:      tool,
 			Key:       class,
-			Pattern:   class,
+			Pattern:   pattern,
 			Scope:     "session_memory",
 			Source:    firstNonEmptyStr(source, "desktop"),
 			CreatedAt: now,

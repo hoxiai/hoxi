@@ -17,7 +17,7 @@ type ApprovalGrant struct {
 	SessionID    string `json:"sessionID"`
 	SessionTitle string `json:"sessionTitle,omitempty"`
 	Runtime      string `json:"runtime,omitempty"`
-	Kind         string `json:"kind"` // "bash" | "tool" | "doom_loop"
+	Kind         string `json:"kind"` // "bash" | "tool" | "doom_loop" | "class" | "file"
 	Tool         string `json:"tool"` // "bash" or tool name
 	// Key is the internal lookup key (the raw command or a tool+args hash).
 	// It is never serialized: it can contain credentials the redacted

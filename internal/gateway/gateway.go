@@ -408,6 +408,10 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if rawOpenCodePermissionReply(r) {
+		writeJSONError(w, http.StatusForbidden, "answer permissions through /api/hoxi/permission/{id}/reply")
+		return
+	}
 	if !g.guardUpstreamPassthrough(w, r) {
 		return
 	}

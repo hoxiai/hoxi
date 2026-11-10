@@ -569,7 +569,8 @@ export function isDestructivePermissionRequest(input) {
       ...(permission === "tool" ? [] : Array.isArray(input?.patterns) ? input.patterns : []),
       ...(permission === "tool" ? [] : [input?.pattern]),
       meta.filepath, meta.filePath, meta.path, meta.target,
-      ...(Array.isArray(meta.files) ? meta.files.map((f) => f?.filePath || f?.filepath || f?.file || f?.path || "") : []),
+      // apply_patch patterns name only the source of a move; movePath is where it lands.
+      ...(Array.isArray(meta.files) ? meta.files.flatMap((f) => [f?.filePath || f?.filepath || f?.file || f?.path || "", f?.movePath || ""]) : []),
       ...extractToolArgPaths(meta.args),
     ];
     if (sensitiveOutsideOwnSession(input, candidates, readOnlyTool)) return true;

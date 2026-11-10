@@ -100,6 +100,8 @@ export const approval: ApprovalI18n = {
   grantClassTempDelete: "删除临时目录中的文件",
   grantClassDirDelete: "删除本会话目录中的文件",
   grantClassGitDiscard: "丢弃本会话目录中的文件改动",
+  grantClassFileEdit: "修改 {path}",
+  allowSessionFile: "本会话内允许改此文件",
   grantKindClass: "此类操作",
   allowSessionCommand: "本会话允许此命令",
   allowSessionToolCall: "本会话允许此调用",

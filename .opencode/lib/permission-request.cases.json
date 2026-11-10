@@ -15,6 +15,8 @@
   { "name": "plain edit", "destructive": false, "request": { "permission": "edit", "patterns": ["src/App.tsx"] } },
   { "name": "git config edit", "destructive": true, "request": { "permission": "edit", "patterns": [".git/config"] } },
   { "name": "envrc edit", "destructive": true, "request": { "permission": "edit", "patterns": [".envrc"] } },
+  { "name": "patch moving a file into git hooks", "destructive": true, "request": { "permission": "edit", "patterns": ["src/run.sh"], "metadata": { "filepath": "/repo/src/run.sh", "files": [{ "filePath": "/repo/src/run.sh", "relativePath": ".git/hooks/pre-commit", "type": "move", "movePath": "/repo/.git/hooks/pre-commit" }] } } },
+  { "name": "patch moving a file within the project", "destructive": false, "request": { "permission": "edit", "patterns": ["src/a.ts"], "metadata": { "filepath": "/repo/src/a.ts", "files": [{ "filePath": "/repo/src/a.ts", "relativePath": "src/b.ts", "type": "move", "movePath": "/repo/src/b.ts" }] } } },
   { "name": "plugin write via metadata", "destructive": true, "request": { "permission": "write", "metadata": { "filepath": "/repo/.opencode/plugins/x.js" } } },
   { "name": "worktree file edit", "destructive": false, "request": { "permission": "edit", "patterns": ["/repo/.hoxi/worktrees/ses_1/src/shutdown.ts"] } },
   { "name": "runner write to claude settings", "destructive": true, "request": { "permission": "tool", "patterns": ["Write"], "metadata": { "tool": "Write", "args": "{\"file_path\":\"/repo/.claude/settings.json\"}" } } },

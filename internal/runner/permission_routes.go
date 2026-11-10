@@ -188,12 +188,20 @@ func (s *Service) handleUnifiedPermissionRoutes(w http.ResponseWriter, r *http.R
 			raw = cleaned
 		}
 	}
+	var alwaysSession, alwaysPerm string
+	var alwaysPatterns []string
 	if parsedReply.Reply == "always" && !parsedReply.GrantClass {
-		// OpenCode would remember a pattern for a command the gate never grants
-		// for the session (sessionGrantRefusal); this one runs once.
-		if shown, known := s.gate.openCodeAskFor(id); known && openCodeSessionGrantRefused(shown.item) {
-			raw = []byte(`{"reply":"once"}`)
-			auditReply = "once"
+		// OpenCode would keep the `always` patterns for its whole instance,
+		// ahead of its config (approval_opencode_always.go). It runs this
+		// request once; Hoxi keeps the patterns for this session, unless the
+		// request is one no session grant may cover.
+		raw = []byte(`{"reply":"once"}`)
+		auditReply = "once"
+		if shown, known := s.gate.openCodeAskFor(id); known && strings.TrimSpace(shown.sessionID) != "" {
+			if perm, patterns, ok := openCodeAlwaysGrant(shown.item); ok {
+				alwaysSession, alwaysPerm, alwaysPatterns = shown.sessionID, perm, patterns
+				auditReply = "always"
+			}
 		}
 	}
 	status, respRaw, err := s.replyOpenCodePermission(r.Context(), id, dir, raw)
@@ -214,6 +222,10 @@ func (s *Service) handleUnifiedPermissionRoutes(w http.ResponseWriter, r *http.R
 		}
 		if len(granted) > 0 {
 			s.gate.addClassGrants(ask.sessionID, granted, source)
+			go s.reconcilePendingApprovals()
+		}
+		if alwaysPerm != "" {
+			s.gate.addOpenCodeAlwaysGrants(alwaysSession, alwaysPerm, alwaysPatterns, source)
 			go s.reconcilePendingApprovals()
 		}
 		permSessionID := ask.sessionID

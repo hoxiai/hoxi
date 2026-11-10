@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"path"
 	"strconv"
 	"strings"
 	"sync"
@@ -143,6 +144,29 @@ func isUpstreamPassthroughPath(requestPath string) bool {
 		if p == prefix || strings.HasPrefix(p, prefix+"/") {
 			return true
 		}
+	}
+	return false
+}
+
+// rawOpenCodePermissionReply reports a request that would answer an OpenCode
+// permission past Hoxi: the approval floors, session grants and audit only
+// apply on /api/hoxi/permission/{id}/reply, and OpenCode keeps a raw "always"
+// for its whole instance, ahead of its config (runner
+// approval_opencode_always.go). Listing stays open.
+func rawOpenCodePermissionReply(r *http.Request) bool {
+	if r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions {
+		return false
+	}
+	p := strings.ToLower(r.URL.Path)
+	if strings.HasPrefix(p, "/api/") {
+		p = strings.TrimPrefix(p, "/api")
+	}
+	parts := strings.Split(strings.Trim(path.Clean("/"+p), "/"), "/")
+	switch {
+	case len(parts) >= 2 && parts[0] == "permission":
+		return true
+	case len(parts) >= 3 && parts[0] == "session" && parts[2] == "permissions":
+		return true
 	}
 	return false
 }

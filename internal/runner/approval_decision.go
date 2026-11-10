@@ -490,12 +490,16 @@ func toolArgPaths(raw interface{}) []string {
 	return out
 }
 
+// metadataFilePaths lists every file a multi-file edit (OpenCode apply_patch)
+// touches, including where a moved file lands: its patterns name only the
+// source, so a move into .git/hooks would otherwise look like a plain edit.
 func metadataFilePaths(meta map[string]interface{}) []string {
 	var out []string
 	if files, ok := meta["files"].([]interface{}); ok {
 		for _, f := range files {
 			if m, ok := f.(map[string]interface{}); ok {
 				out = append(out, stringList(firstString(m["filePath"], m["filepath"], m["file"], m["path"]))...)
+				out = append(out, stringList(m["movePath"])...)
 			}
 		}
 	}

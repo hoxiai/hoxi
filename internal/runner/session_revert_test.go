@@ -484,9 +484,8 @@ func TestUnifiedPermissionEndpointMergesAndRoutesReplies(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/permission":
-			// Asks in auto mode yet is grantable: "always" for a destructive or
-			// opaque command reaches OpenCode as "once"
-			// (TestOpenCodeAlwaysOnlyForCommandsTheGateWouldGrant).
+			// Asks in auto mode. "always" reaches OpenCode as "once"
+			// (TestOpenCodeAlwaysStaysInHoxiForOneSession).
 			_, _ = io.WriteString(w, `[{"id":"per_oc_1","sessionID":"ses_oc_backing","permission":"bash","patterns":["python3 -c 'import os; os.mkdir(0)'"]}]`)
 		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/permission/"):
 			repliedEngineID = strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/permission/"), "/reply")
@@ -560,7 +559,7 @@ func TestUnifiedPermissionEndpointMergesAndRoutesReplies(t *testing.T) {
 	req = httptest.NewRequest(http.MethodPost, "/api/hoxi/permission/per_oc_1/reply?directory="+repo, bytes.NewReader([]byte(`{"reply":"always"}`)))
 	w = httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
-	if w.Code != http.StatusOK || repliedEngineID != "per_oc_1" || !strings.Contains(repliedBody, `"always"`) {
+	if w.Code != http.StatusOK || repliedEngineID != "per_oc_1" || !strings.Contains(repliedBody, `"once"`) {
 		t.Fatalf("reply engine permission = %d id=%q body=%q", w.Code, repliedEngineID, repliedBody)
 	}
 }

@@ -59,6 +59,32 @@ export async function runBrowserTest(): Promise<string[]> {
       hint: false,
       ruleAllow: true,
     },
+    {
+      name: "OpenCode protected file edit",
+      req: {
+        id: "per_card_oc_skill",
+        sessionID: "ses_approval_card",
+        permission: "edit",
+        patterns: [".agents/skills/ship/deploy.sh"],
+        metadata: { filepath: "/repo/.agents/skills/ship/deploy.sh", hoxiGrantClasses: ["file:/repo/.agents/skills/ship/deploy.sh"] },
+        always: ["*"],
+      },
+      always: t("approval.allowSessionFile"),
+      hint: false,
+    },
+    {
+      name: "OpenCode protected file edit Go does not grant",
+      req: {
+        id: "per_card_oc_git",
+        sessionID: "ses_approval_card",
+        permission: "edit",
+        patterns: [".git/config"],
+        metadata: { filepath: "/repo/.git/config" },
+        always: ["*"],
+      },
+      always: null,
+      hint: false,
+    },
   ];
   for (const s of scenarios) {
     const el = document.createElement("div");
@@ -70,7 +96,12 @@ export async function runBrowserTest(): Promise<string[]> {
     await frame();
     const labels = buttonLabels(el);
     check(labels.some((l) => l.includes(t("approval.allowOnce"))), `${s.name}: allow once is missing`);
-    const offered = labels.some((l) => l.includes(t("approval.allowSessionCommand")) || l.includes(t("approval.allowAlways")));
+    const offered = labels.some(
+      (l) =>
+        l.includes(t("approval.allowSessionCommand")) ||
+        l.includes(t("approval.allowAlways")) ||
+        l.includes(t("approval.allowSessionFile"))
+    );
     if (s.always) {
       check(labels.some((l) => l.includes(s.always ?? "")), `${s.name}: expected "${s.always}" in ${JSON.stringify(labels)}`);
     } else {

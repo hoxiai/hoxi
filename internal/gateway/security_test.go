@@ -218,3 +218,54 @@ func TestUpstreamPassthroughTokenDefenseInDepth(t *testing.T) {
 		t.Fatalf("unified conversation facade blocked: %d %s", wFacade.Code, wFacade.Body.String())
 	}
 }
+
+// OpenCode permissions are answered only through Hoxi's own reply route, even
+// with the gateway token or from the native window: a raw reply skips the
+// approval floors, and a raw "always" stays in OpenCode for every session.
+func TestRawOpenCodePermissionRepliesAreRefused(t *testing.T) {
+	var forwarded []string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		forwarded = append(forwarded, r.Method+" "+r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `[]`)
+	}))
+	defer upstream.Close()
+	port := upstream.Listener.Addr().(*net.TCPAddr).Port
+	g := New(port, "raw-permission", t.TempDir(), nil, nil)
+	const token = "boot-token-raw-perm"
+	g.SetGatewayToken(token)
+
+	for _, target := range []string{
+		"/permission/per_1/reply",
+		"/api/permission/per_1/reply",
+		"/permission/per_1/reply/",
+		"/Permission/per_1/reply",
+		"/session/ses_1/permissions/per_1",
+		"/api/session/ses_1/permissions/per_1",
+	} {
+		for _, native := range []bool{false, true} {
+			r := localRequest(http.MethodPost, target, strings.NewReader(`{"reply":"always","response":"always"}`))
+			r.Header.Set(gatewayTokenHeader, token)
+			if native {
+				r.Host = "wails"
+			}
+			w := httptest.NewRecorder()
+			g.ServeHTTP(w, r)
+			if w.Code != http.StatusForbidden {
+				t.Fatalf("POST %s (native=%v): status=%d body=%s", target, native, w.Code, w.Body.String())
+			}
+		}
+	}
+	if len(forwarded) != 0 {
+		t.Fatalf("raw replies reached OpenCode: %v", forwarded)
+	}
+
+	// Listing pending permissions still passes through.
+	r := localRequest(http.MethodGet, "/permission", nil)
+	r.Header.Set(gatewayTokenHeader, token)
+	w := httptest.NewRecorder()
+	g.ServeHTTP(w, r)
+	if w.Code != http.StatusOK || len(forwarded) != 1 || forwarded[0] != "GET /permission" {
+		t.Fatalf("GET /permission: status=%d forwarded=%v", w.Code, forwarded)
+	}
+}

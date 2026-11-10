@@ -101,6 +101,8 @@ export const approval = {
   grantClassTempDelete: "deleting files in temp directories",
   grantClassDirDelete: "deleting files in this session's directory",
   grantClassGitDiscard: "discarding file changes in this session's directory",
+  grantClassFileEdit: "editing {path}",
+  allowSessionFile: "Allow This File (Session)",
   grantKindClass: "kind",
   allowSessionCommand: "Always Allow Command (Session)",
   allowSessionToolCall: "Always Allow Exact Call (Session)",
