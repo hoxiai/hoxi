@@ -32,6 +32,9 @@ type openCodeBridgeState struct {
 // turnLedgerState holds bounded per-session / per-turn ephemera cleaned up on
 // turn completion or session deletion.
 type turnLedgerState struct {
+	ledger             *taskLedgerStore
+	pendingResumes     syncMap[string, InflightTurnEntry]     // sessionID -> graceful-restart entry awaiting boot resume
+	resumingFlights    syncMap[string, *resumeFlight]         // sessionID -> active singleflight boot-resume coordinator
 	userSkillByMsg     syncMap[string, userSkillOverride]
 	stoppedTools       syncMap[string, bool] // sessionID\x00(part|call):id -> bool
 	turnStats          syncMap[string, *turnCounts]
@@ -122,6 +125,8 @@ func NewService(rootDir string, worktrees *worktree.Manager, status *statusbar.T
 		childBusy:   make(map[string]bool),
 		subs:        make(map[chan SSEEvent]string),
 	}
+	svc.ledger = newTaskLedgerStore(customStorePath)
+	svc.hydrateReceiptsFromLedger()
 	svc.openCodeReplySem = make(chan struct{}, maxConcurrentOpenCodeAutoReplies)
 	for _, info := range svc.store.List("") {
 		rec, _ := svc.store.Meta(info.ID)
@@ -137,6 +142,7 @@ func NewService(rootDir string, worktrees *worktree.Manager, status *statusbar.T
 			_ = svc.worktrees.ForDirectory(rec.ProjectDir).RestoreSession(rec.ID, rec.WorktreePath, rec.Branch, rec.BaseCommit)
 		}
 	}
+	svc.settleStartupLedger()
 	svc.worktrees.SetApplyGuard(svc.guardWorktreeApply)
 	return svc
 }
@@ -146,6 +152,18 @@ func (s *Service) Store() *Store {
 }
 
 func (s *Service) CloseAll() {
+	var flights []*resumeFlight
+	s.resumingFlights.Range(func(sid string, f *resumeFlight) bool {
+		s.pendingResumes.Delete(sid)
+		if f != nil {
+			f.aborted.Store(true)
+			if f.cancel != nil {
+				f.cancel()
+			}
+			flights = append(flights, f)
+		}
+		return true
+	})
 	s.mu.Lock()
 	active := make([]*activeProcess, 0, len(s.procs))
 	for _, p := range s.procs {
@@ -154,17 +172,27 @@ func (s *Service) CloseAll() {
 		}
 	}
 	s.mu.Unlock()
-	if len(active) == 0 {
+	if len(active) == 0 && len(flights) == 0 {
 		return
 	}
 	for _, p := range active {
 		p.Abort()
 	}
-	// OpenCode turns have no OS process for Abort to wait on. Let their
-	// teardown finish flushing the transcript before the host exits or removes
-	// the store, with a shared deadline so shutdown remains bounded.
+	// OpenCode turns and boot-resume flights have no OS process for Abort to
+	// wait on. Let their teardown finish before the host exits or removes the
+	// store, with a shared deadline so shutdown remains bounded.
 	timer := time.NewTimer(abortSettleTimeout)
 	defer timer.Stop()
+	for _, f := range flights {
+		if f.done == nil {
+			continue
+		}
+		select {
+		case <-f.done:
+		case <-timer.C:
+			return
+		}
+	}
 	for _, p := range active {
 		if p.done == nil {
 			continue
@@ -511,6 +539,7 @@ func (s *Service) handleSingleSession(w http.ResponseWriter, r *http.Request, se
 			return
 		}
 		if body.Time != nil && body.Time.Archived != nil && *body.Time.Archived > 0 {
+			s.clearInflightTurn(sessionID)
 			s.gate.forgetSession(sessionID)
 			s.abortActiveProcess(sessionID)
 			if updated.Runtime == "opencode" || len(updated.OpenCodeIDs) > 0 {

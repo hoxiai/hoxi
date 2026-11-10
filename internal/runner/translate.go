@@ -150,6 +150,13 @@ func (t *TurnTranslator) InitialEvents(userInfo MessageInfo, userParts []Message
 	return evts
 }
 
+func (t *TurnTranslator) ResumeEvents() []SSEEvent {
+	return []SSEEvent{
+		{Type: "session.status", Properties: map[string]interface{}{"sessionID": t.sessionID, "status": SessionStatus{Type: "busy"}}},
+		{Type: "message.updated", Properties: map[string]interface{}{"info": t.msgInfo}},
+	}
+}
+
 func (t *TurnTranslator) FeedLine(rawLine string) []SSEEvent {
 	line := strings.TrimSpace(rawLine)
 	if line == "" || !strings.HasPrefix(line, "{") {

@@ -67,6 +67,10 @@ var protectedStateFiles = []string{
 	// and which directories to delete; it must not be writable by agents.
 	"reclaim.json",
 	"reclaim.json.lock",
+	// The task ledger records in-flight turns and idempotency receipts across
+	// restarts; agents must not forge or overwrite resume entries.
+	"task-ledger.json",
+	"task-ledger.json.lock",
 }
 
 // Home returns ~/.hoxi (or $HOXI_HOME when set), or "" when the user home directory is unknown.
@@ -201,6 +205,12 @@ func PairingTokenPath() string {
 // process owns, so the next start can clean up after a crash.
 func ReclaimLedgerPath() string {
 	return Join("reclaim.json")
+}
+
+// TaskLedgerPath returns ~/.hoxi/task-ledger.json, the cross-restart ledger of
+// in-flight agent turns and idempotency receipts.
+func TaskLedgerPath() string {
+	return Join("task-ledger.json")
 }
 
 // BrowserProfileDir returns ~/.hoxi/browser-profile, the persistent Chrome user

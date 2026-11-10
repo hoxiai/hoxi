@@ -273,6 +273,7 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 		}
 		s.managedOpenCode.Store(info.ID, true)
 	}
+	s.updateInflightExternalID(rec.ID, rec.ExternalID)
 	if err := syncOpenCodeCommandSandbox(rec); err != nil {
 		cleanupCreatedSession()
 		return err
@@ -333,13 +334,18 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
 			s.rejectOpenCodeSessionPermissions(cleanupCtx, rec)
 			cleanupCancel()
+			if !ap.wasRestarting() {
+				s.clearInflightTurn(rec.ID)
+			}
 			s.abandonOpenCodeInFlightParts(rec.ID, time.Now().UnixMilli())
 			s.store.FlushSession(rec.ID)
 			s.releaseActiveProcess(rec.ID, ap)
-			if errEvt, ok := ap.takePendingError(); ok {
-				s.publishOpenCodeEvent(rec.ID, errEvt)
+			if !ap.wasRestarting() {
+				if errEvt, ok := ap.takePendingError(); ok {
+					s.publishOpenCodeEvent(rec.ID, errEvt)
+				}
+				s.broadcast(rec.ID, SSEEvent{Type: "session.status", Properties: map[string]interface{}{"sessionID": rec.ID, "status": SessionStatus{Type: "idle"}}})
 			}
-			s.broadcast(rec.ID, SSEEvent{Type: "session.status", Properties: map[string]interface{}{"sessionID": rec.ID, "status": SessionStatus{Type: "idle"}}})
 			close(ap.done)
 		}()
 		if len(docOnlyFileParts) > 0 {
@@ -385,6 +391,7 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 					}
 				})
 				s.managedOpenCode.Store(info.ID, true)
+				s.updateInflightExternalID(rec.ID, info.ID)
 				// Recovery below must resend the same system prompt as this retry.
 				if system = openCodeTurnSystem(baseSystem, rec); system != "" {
 					payload["system"] = system
@@ -405,7 +412,7 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 		if err != nil && ap.reasoningLoop.shouldSuppressAbortError(err.Error()) {
 			err = nil
 		}
-		if err == nil || ap.reasoningLoop.hasTriggered() || ap.stall.abortError() != nil {
+		if err == nil || ap.reasoningLoop.hasTriggered() || ap.stall.abortError() != nil || ap.wasRestarting() {
 			s.markContextDelivered(rec.ID)
 			s.reconcileOpenCodePostTurnMessages(rec, ap, user.ID, fileURLByMsgAndName)
 			if _, hasSkill := s.userSkillByMsg.Load(user.ID); hasSkill {
@@ -728,6 +735,7 @@ func (s *Service) steerOpenCodeTurn(ctx context.Context, rec SessionRecord, mode
 	if err := s.openCodeJSON(ctx, "POST", "/session/"+rec.ExternalID+"/prompt_async", rec.WorktreePath, payload, nil); err != nil {
 		return 0, "", err
 	}
+	s.updateInflightSteer(rec.ID, steerMsgID, mode, providerID, modelID, effort, text)
 	// Documents reach OpenCode inlined into the text, which the relay strips
 	// from the echoed message; show their file chips like a normal turn does.
 	deliveredFiles := make(map[string]bool)

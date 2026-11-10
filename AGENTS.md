@@ -113,4 +113,4 @@
 
 ## 三、未实现能力
 
-勿将以下能力当作现有能力，也勿在注释/UI 文案中宣称已支持（明细见 `docs/architecture-overview.md` 第二节）：跨网 E2E 加密与盲目中继（LAN 直连与 `:5417` 令牌监听已实现）、隧道 WebSocket（远程 `/pty` 当前返回 501）、隧道凭据入钥匙串（当前为 `0600` 文件）、Android 推送、跨重启任务账本与公网真机验收（`prompt_async` 与审批 `reply` 幂等键已实现）。
+勿将以下能力当作现有能力，也勿在注释/UI 文案中宣称已支持（明细见 `docs/architecture-overview.md` 第二节）：跨网 E2E 加密与盲目中继（LAN 直连与 `:5417` 令牌监听已实现）、隧道 WebSocket（远程 `/pty` 当前返回 501）、隧道凭据入钥匙串（当前为 `0600` 文件）、Android 推送、远程隧道公网真机验收（`prompt_async` 与审批 `reply` 跨重启幂等收据及 `~/.hoxi/task-ledger.json` 跨重启任务账本自动续跑已实现）。

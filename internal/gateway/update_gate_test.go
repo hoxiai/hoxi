@@ -320,3 +320,37 @@ func TestRejectedScopeCannotPoisonUpdateDirectories(t *testing.T) {
 		t.Fatal("rejected request blocked update")
 	}
 }
+
+func TestUpdateDrainingAdmitsInFlightRunnerHooks(t *testing.T) {
+	g := updateTestGateway(t, func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, `{}`) })
+	for _, hookPath := range []string{
+		"/api/hoxi/runner/hook/pretool",
+		"/api/hoxi/runner/claude-hook/pretool",
+		"/api/hoxi/runner/gemini-hook/pretool",
+		"/api/hoxi/runner/sandbox/route",
+		"/api/hoxi/sessions",
+	} {
+		g.mux.HandleFunc(hookPath, func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		})
+	}
+	g.status.SetSessionBusy("ses_busy", true)
+	if !g.BeginUpdateForced() || !g.UpdateDraining() {
+		t.Fatal("expected forced update to enter draining state")
+	}
+	if code := serveUpdateTest(g, http.MethodPost, "/api/hoxi/sessions"); code != http.StatusServiceUnavailable {
+		t.Fatalf("expected external session mutation blocked with 503 during drain, got %d", code)
+	}
+	for _, hookPath := range []string{
+		"/api/hoxi/runner/hook/pretool",
+		"/api/hoxi/runner/claude-hook/pretool",
+		"/api/hoxi/runner/gemini-hook/pretool",
+		"/api/hoxi/runner/sandbox/route",
+	} {
+		if code := serveUpdateTest(g, http.MethodPost, hookPath); code != http.StatusNoContent {
+			t.Fatalf("expected in-flight runner hook %s admitted during drain, got %d", hookPath, code)
+		}
+	}
+	g.PrepareForRestart(nil)
+	g.ResumeAfterRestart(nil)
+}

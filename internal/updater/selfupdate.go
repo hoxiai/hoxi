@@ -16,12 +16,35 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
 const maxUpdateArchiveBytes = 512 << 20 // 512 MiB
 
-var downloadStallTimeout = 45 * time.Second
+var (
+	downloadStallTimeout = 45 * time.Second
+	beforeRestartMu      sync.Mutex
+	beforeRestartHook    func()
+)
+
+// SetBeforeRestart registers an optional callback invoked right before a
+// self-update exits to relaunch, allowing active tasks to drain their current
+// tool step and persist restart checkpoints.
+func SetBeforeRestart(fn func()) {
+	beforeRestartMu.Lock()
+	beforeRestartHook = fn
+	beforeRestartMu.Unlock()
+}
+
+func runBeforeRestart() {
+	beforeRestartMu.Lock()
+	fn := beforeRestartHook
+	beforeRestartMu.Unlock()
+	if fn != nil {
+		fn()
+	}
+}
 
 func admitSelfUpdate(canInstall func(force bool) bool, confirmBusy func() bool) bool {
 	if canInstall == nil {

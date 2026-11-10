@@ -65,10 +65,10 @@ func confirmWindowsBusyUpdate() bool {
 		return false
 	}
 	title := "Hoxi is still running tasks"
-	body := "Updating will quit Hoxi and interrupt running agent tasks. Update now?"
+	body := "Hoxi will finish the current tool step, save task checkpoints, and resume them automatically after restarting. Update now?"
 	if isWindowsChineseLocale() {
 		title = "Hoxi 有任务正在运行"
-		body = "更新会退出 Hoxi 并中断正在运行的 Agent 任务。仍要现在更新吗？"
+		body = "Hoxi 将等待当前工具步落地并保存检查点，重启后自动断点续跑。现在更新并重启吗？"
 	}
 	titlePtr, err := windows.UTF16PtrFromString(title)
 	if err != nil {
@@ -232,6 +232,9 @@ func CheckNative() (installErr error) {
 		return errors.New("staged Hoxi.exe version verification failed")
 	}
 
+	setInstallPhase("restarting")
+	runBeforeRestart()
+
 	psBin, err := exec.LookPath("powershell.exe")
 	if err != nil {
 		psBin = "powershell.exe"
@@ -249,7 +252,6 @@ func CheckNative() (installErr error) {
 		return fmt.Errorf("launch update installer: %w", err)
 	}
 	_ = cmd.Process.Release()
-	setInstallPhase("restarting")
 	go func() {
 		time.Sleep(250 * time.Millisecond)
 		os.Exit(0)

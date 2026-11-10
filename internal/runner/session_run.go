@@ -40,6 +40,7 @@ func (s *Service) RunPromptAndWait(ctx context.Context, sessionID string, req Pr
 
 // AbortSession stops a conversation's running turn, if any.
 func (s *Service) AbortSession(sessionID string) {
+	s.clearInflightTurn(sessionID)
 	s.abortActiveProcess(sessionID)
 	s.broadcast(sessionID, SSEEvent{
 		Type:       "session.status",

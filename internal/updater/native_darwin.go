@@ -330,6 +330,9 @@ func checkDarwinDMGSelfUpdate() (installErr error) {
 		return err
 	}
 
+	setInstallPhase("restarting")
+	runBeforeRestart()
+
 	cmd := subproc.Command("/bin/sh", "-c", darwinSwapAndRestartSh)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.Env = append(os.Environ(),
@@ -344,7 +347,6 @@ func checkDarwinDMGSelfUpdate() (installErr error) {
 		return fmt.Errorf("launch update installer: %w", err)
 	}
 	_ = cmd.Process.Release()
-	setInstallPhase("restarting")
 	go func() {
 		time.Sleep(250 * time.Millisecond)
 		os.Exit(0)

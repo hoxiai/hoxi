@@ -21,11 +21,25 @@ type updateGateState struct {
 	updateDraining    bool
 	updateMutations   int
 	updateDirectories map[string]bool
+	restartOnce       sync.Once
+}
+
+func isInFlightRunnerHookPath(p string) bool {
+	switch p {
+	case "/api/hoxi/runner/hook/pretool",
+		"/api/hoxi/runner/claude-hook/pretool",
+		"/api/hoxi/runner/gemini-hook/pretool",
+		"/api/hoxi/runner/sandbox/route":
+		return true
+	default:
+		return false
+	}
 }
 
 func updateMutation(r *http.Request) bool {
 	return r.Method != http.MethodGet && r.Method != http.MethodOptions &&
-		r.URL.Path != "/api/hoxi/updater" && !strings.HasPrefix(r.URL.Path, "/api/hoxi/updater/")
+		r.URL.Path != "/api/hoxi/updater" && !strings.HasPrefix(r.URL.Path, "/api/hoxi/updater/") &&
+		!isInFlightRunnerHookPath(r.URL.Path)
 }
 
 func (g *Gateway) admitUpdateRequest(w http.ResponseWriter, r *http.Request) bool {
@@ -319,4 +333,35 @@ func (g *Gateway) UpdateDraining() bool {
 	g.updateMu.Lock()
 	defer g.updateMu.Unlock()
 	return g.updateDraining
+}
+
+// PrepareForRestart drains any fast in-flight tool step and checkpoints active
+// convoy plans and conversation turns so the next Hoxi launch resumes them.
+// Safe to invoke from both the self-updater and host shutdown.
+func (g *Gateway) PrepareForRestart(ctx context.Context) {
+	if g == nil {
+		return
+	}
+	g.restartOnce.Do(func() {
+		if g.orchestration != nil {
+			g.orchestration.PrepareForRestart()
+		}
+		if g.runner != nil {
+			g.runner.PrepareForRestart(ctx)
+		}
+	})
+}
+
+// ResumeAfterRestart resumes any conversation turns and convoy plans that were
+// checkpointed during a graceful update or restart.
+func (g *Gateway) ResumeAfterRestart(ctx context.Context) {
+	if g == nil {
+		return
+	}
+	if g.runner != nil {
+		g.runner.ResumeInterruptedTurns(ctx)
+	}
+	if g.orchestration != nil {
+		g.orchestration.ResumeAfterRestart(ctx)
+	}
 }

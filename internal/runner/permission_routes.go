@@ -36,12 +36,13 @@ func (s *Service) lookupPermissionReply(permissionID, clientRequestID, reply str
 	return entry.rawBody, true
 }
 
-func (s *Service) storePermissionReply(permissionID, clientRequestID, reply string, rawBody []byte) {
+func (s *Service) storePermissionReply(permissionID, sessionID, clientRequestID, reply string, rawBody []byte) {
 	clientRequestID = strings.TrimSpace(clientRequestID)
 	if clientRequestID == "" {
 		return
 	}
 	now := time.Now()
+	expiresAt := now.Add(idempotencyReceiptTTL)
 	s.permissionReplies.Range(func(k string, entry cachedPermissionReply) bool {
 		if now.After(entry.expiresAt) {
 			s.permissionReplies.Delete(k)
@@ -51,8 +52,11 @@ func (s *Service) storePermissionReply(permissionID, clientRequestID, reply stri
 	s.permissionReplies.Store(permissionID+"\x00"+clientRequestID, cachedPermissionReply{
 		reply:     reply,
 		rawBody:   append([]byte(nil), rawBody...),
-		expiresAt: now.Add(idempotencyReceiptTTL),
+		expiresAt: expiresAt,
 	})
+	if s.ledger != nil {
+		s.ledger.putPermissionReply(permissionID, sessionID, clientRequestID, reply, rawBody, expiresAt)
+	}
 }
 
 func (s *Service) handlePermissionRoutes(w http.ResponseWriter, r *http.Request) {
@@ -212,8 +216,14 @@ func (s *Service) handleUnifiedPermissionRoutes(w http.ResponseWriter, r *http.R
 			s.gate.addClassGrants(ask.sessionID, granted, source)
 			go s.reconcilePendingApprovals()
 		}
+		permSessionID := ask.sessionID
+		if permSessionID == "" {
+			if shown, ok := s.gate.openCodeAskFor(id); ok {
+				permSessionID = shown.sessionID
+			}
+		}
 		s.recordOpenCodeApprovalAudit(id, dir, auditReply, parsedReply.Message, source)
-		s.storePermissionReply(id, clientReqID, parsedReply.Reply, respRaw)
+		s.storePermissionReply(id, permSessionID, clientReqID, parsedReply.Reply, respRaw)
 		s.settleOpenCodePermission(id)
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -289,7 +299,7 @@ func (s *Service) replyRunnerPermission(w http.ResponseWriter, r *http.Request, 
 			s.gate.addClassGrants(pa.sid, granted, source)
 			go s.reconcilePendingApprovals()
 		}
-		s.storePermissionReply(id, clientReqID, body.Reply, []byte("true\n"))
+		s.storePermissionReply(id, pa.sid, clientReqID, body.Reply, []byte("true\n"))
 		writeJSON(w, http.StatusOK, true)
 	default:
 		writeJSONError(w, http.StatusConflict, "permission request already answered")
@@ -372,6 +382,9 @@ func (s *Service) openCodeEngineSessionMap() (map[string]string, map[string]stri
 func (s *Service) isSessionBusy(sessionID string) bool {
 	if sessionID == "" {
 		return false
+	}
+	if s.hasPendingOrActiveResume(sessionID) {
+		return true
 	}
 	s.mu.Lock()
 	ap := s.procs[sessionID]

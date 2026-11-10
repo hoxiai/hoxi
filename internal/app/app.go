@@ -83,6 +83,8 @@ type DesktopApp struct {
 	childStopped    bool
 	engineMu        sync.Mutex
 	runCtx          context.Context
+	daemonCancel    context.CancelFunc
+	sigCtx          context.Context
 	openCodePort    int
 	openCodePass    string
 	identity        AppIdentity
@@ -177,6 +179,8 @@ func Run(distFS fs.FS) {
 	gw.SetBrowserLedger(ledger)
 	go sweepReclaimLedger(ledger, logger)
 
+	daemonCtx, cancelDaemon := context.WithCancel(context.Background())
+	defer cancelDaemon()
 	app := &DesktopApp{
 		cfg:          cfg,
 		identity:     identity,
@@ -184,7 +188,9 @@ func Run(distFS fs.FS) {
 		gateway:      gw,
 		status:       statusTracker,
 		notifier:     notify.NewService(),
-		runCtx:       ctx,
+		runCtx:       daemonCtx,
+		daemonCancel: cancelDaemon,
+		sigCtx:       ctx,
 		openCodePort: port,
 		openCodePass: password,
 		ledger:       ledger,
@@ -321,11 +327,11 @@ func Run(distFS fs.FS) {
 	// Slow path: if opencode is missing on the user's machine, launch the UI window without crashing and
 	// auto-download official opencode into ~/.hoxi/bin in the background.
 	if localBin := opencode.FindBinary(cfg.OpenCode); localBin != "" {
-		child, startErr := app.startOpenCode(ctx, localBin, port, password)
+		child, startErr := app.startOpenCode(daemonCtx, localBin, port, password)
 		if startErr != nil {
 			logger.Warn("initial opencode start failed; will retry in background", "error", startErr)
 			statusTracker.SetAvailable(false)
-			go app.BootstrapOpenCodeAsync(ctx, port, password)
+			go app.BootstrapOpenCodeAsync(daemonCtx, port, password)
 		} else {
 			app.setChild(child)
 		}
@@ -335,7 +341,7 @@ func Run(distFS fs.FS) {
 			logger.Error("failed to resolve or install opencode", "error", dlErr)
 			os.Exit(1)
 		}
-		child, startErr := app.startOpenCode(ctx, binPath, port, password)
+		child, startErr := app.startOpenCode(daemonCtx, binPath, port, password)
 		if startErr != nil {
 			logger.Error("failed to start opencode daemon", "error", startErr)
 			os.Exit(1)
@@ -343,12 +349,23 @@ func Run(distFS fs.FS) {
 		app.setChild(child)
 	} else {
 		statusTracker.SetAvailable(false)
-		go app.BootstrapOpenCodeAsync(ctx, port, password)
+		go app.BootstrapOpenCodeAsync(daemonCtx, port, password)
 	}
+
+	updater.SetBeforeRestart(func() {
+		prepCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		gw.PrepareForRestart(prepCtx)
+	})
+	defer updater.SetBeforeRestart(nil)
+	gw.ResumeAfterRestart(ctx)
 
 	if cfg.NoDesktop {
 		logger.Info("hoxi headless server is ready", "url", "http://"+loopbackAddr, "opencodePort", port)
 		<-ctx.Done()
+		prepCtx, prepCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		gw.PrepareForRestart(prepCtx)
+		prepCancel()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		_ = wsServer.Shutdown(shutdownCtx)
@@ -498,6 +515,9 @@ func (a *DesktopApp) setChild(c *opencode.Daemon) {
 }
 
 func (a *DesktopApp) killChild() {
+	if a.daemonCancel != nil {
+		a.daemonCancel()
+	}
 	a.childMu.Lock()
 	a.childStopped = true
 	a.childGen++
@@ -546,6 +566,15 @@ func (a *DesktopApp) startup(ctx context.Context) {
 	reveal := a.revealOnStartup
 	a.revealOnStartup = false
 	a.contextMu.Unlock()
+	if a.sigCtx != nil {
+		go func(sigCtx, wailsCtx context.Context) {
+			select {
+			case <-sigCtx.Done():
+				wailsruntime.Quit(wailsCtx)
+			case <-wailsCtx.Done():
+			}
+		}(a.sigCtx, ctx)
+	}
 	statusbar.SetActionHandler(a.handleStatusBarMenuAction)
 	statusbar.Start(ctx)
 	statusbar.Update(a.status.Snapshot())
@@ -578,6 +607,11 @@ func (a *DesktopApp) startup(ctx context.Context) {
 func (a *DesktopApp) shutdown(_ context.Context) {
 	statusbar.SetActionHandler(nil)
 	statusbar.Stop()
+	if a.gateway != nil {
+		prepCtx, prepCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		a.gateway.PrepareForRestart(prepCtx)
+		prepCancel()
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if a.wsServer != nil {

@@ -52,4 +52,4 @@
 | --- | --- |
 | 远程跨网 E2E 加密与盲目中继 | LAN 直连与 `:5417` 令牌监听**已实现**；跨网 E2E 未实现（[`docs/remote-access-e2e-contract.md`](remote-access-e2e-contract.md)） |
 | 隧道 WebSocket / 凭据入钥匙串 / Android 推送 | 远程 `/pty` 当前返回 501；隧道凭据当前为 `0600` 文件；Android 推送未实现 |
-| 跨重启任务账本 / 真机公网验收 | Hoxi 通道 `prompt_async` 与审批 `reply` 幂等键**已实现**；跨重启任务账本与公网真机验收未完成 |
+| 远程隧道公网真机验收 | Hoxi 通道 `prompt_async` 与审批 `reply` 跨重启幂等收据、单步工具排空及 `~/.hoxi/task-ledger.json` 跨重启任务账本自动续跑**已实现**；公网真机验收未完成 |

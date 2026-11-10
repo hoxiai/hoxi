@@ -172,9 +172,8 @@ func NewService(sessions Sessions, options ...Option) *Service {
 	return s
 }
 
-// restore loads persisted plans. Plans that were mid-flight when Hoxi exited
-// can no longer resume their child processes, so they surface as failed tasks
-// that the user can retry explicitly.
+// restore loads persisted plans. Graceful restart checkpoints remain queued for
+// ResumeAfterRestart, while ungraceful crashes surface as failed tasks.
 func (s *Service) restore() {
 	if s.store == nil {
 		return
@@ -185,21 +184,7 @@ func (s *Service) restore() {
 	}
 	now := time.Now().UnixMilli()
 	for _, plan := range plans {
-		if !terminal(plan.Status) {
-			plan.Status = StatusFailed
-			plan.Error = interruptedError
-			for i := range plan.Tasks {
-				task := &plan.Tasks[i]
-				if task.Status == StatusRunning || task.Status == StatusQueued {
-					task.Status = StatusFailed
-					task.Error = interruptedError
-					task.EndedAt = now
-				}
-			}
-			plan.UpdatedAt = now
-			_ = s.store.SaveSeq(plan, 1)
-		}
-		s.plans[plan.ID] = &planRun{plan: plan, seq: 1}
+		s.plans[plan.ID] = s.restorePlan(plan, now)
 	}
 }
 
@@ -422,6 +407,7 @@ func (s *Service) Retry(id string) (Plan, error) {
 		}
 		task.Status = StatusQueued
 		task.SessionID = ""
+		task.PrerequisitesMerged = false
 		task.Summary = ""
 		task.Error = ""
 		task.StartedAt = 0
@@ -591,6 +577,8 @@ func (s *Service) executeTask(ctx context.Context, planID string, index int, spe
 		return
 	}
 	isolated := run.plan.Isolated
+	existingSessionID := strings.TrimSpace(run.plan.Tasks[index].SessionID)
+	alreadyMerged := run.plan.Tasks[index].PrerequisitesMerged
 	var prerequisites []string
 	for _, dep := range spec.DependsOn {
 		for _, task := range run.plan.Tasks {
@@ -607,50 +595,66 @@ func (s *Service) executeTask(ctx context.Context, planID string, index int, spe
 		// concurrently with this one.
 		release, ok := s.sharedLocks.acquire(ctx, request.Directory)
 		if !ok {
-			s.completeTask(planID, epoch, taskID, "", "", ctx.Err())
+			s.completeTask(planID, epoch, taskID, existingSessionID, "", ctx.Err())
 			return
 		}
 		defer release()
 	}
 
-	sessionID, err := s.sessions.Create(ctx, SessionRequest{
-		Directory:       request.Directory,
-		ParentSessionID: request.ParentSessionID,
-		Title:           fmt.Sprintf("Convoy · %s · %s", planID, taskID),
-		Mode:            request.Mode,
-		Provider:        request.Provider,
-		Model:           request.Model,
-		Isolated:        isolated,
-	})
-	if err != nil {
-		s.completeTask(planID, epoch, taskID, "", "", err)
-		return
-	}
-	s.mu.Lock()
-	var snap planSnapshot
-	if run := s.plans[planID]; run != nil && run.epoch == epoch {
-		run.plan.Tasks[index].SessionID = sessionID
-		run.plan.UpdatedAt = time.Now().UnixMilli()
-		snap = snapshotLocked(run)
-	} else {
+	sessionID := existingSessionID
+	isResume := sessionID != ""
+	if !isResume {
+		createdID, err := s.sessions.Create(ctx, SessionRequest{
+			Directory:       request.Directory,
+			ParentSessionID: request.ParentSessionID,
+			Title:           fmt.Sprintf("Convoy · %s · %s", planID, taskID),
+			Mode:            request.Mode,
+			Provider:        request.Provider,
+			Model:           request.Model,
+			Isolated:        isolated,
+		})
+		if err != nil {
+			s.completeTask(planID, epoch, taskID, "", "", err)
+			return
+		}
+		sessionID = createdID
+		s.mu.Lock()
+		var snap planSnapshot
+		if run := s.plans[planID]; run != nil && run.epoch == epoch {
+			run.plan.Tasks[index].SessionID = sessionID
+			run.plan.UpdatedAt = time.Now().UnixMilli()
+			snap = snapshotLocked(run)
+		} else {
+			s.mu.Unlock()
+			// A retry superseded this task while its session was starting.
+			s.sessions.Abort(sessionID)
+			return
+		}
 		s.mu.Unlock()
-		// A retry superseded this task while its session was starting.
-		s.sessions.Abort(sessionID)
-		return
+		_ = s.persist(snap)
 	}
-	s.mu.Unlock()
-	_ = s.persist(snap)
 	if ctx.Err() != nil {
 		s.completeTask(planID, epoch, taskID, sessionID, "", ctx.Err())
 		return
 	}
-	if isolated && len(prerequisites) > 0 {
+	if isolated && len(prerequisites) > 0 && !alreadyMerged {
 		if err := s.sessions.Merge(sessionID, prerequisites); err != nil {
 			s.completeTask(planID, epoch, taskID, sessionID, "", fmt.Errorf("could not combine prerequisite changes: %w", err))
 			return
 		}
+		s.mu.Lock()
+		var mergedSnap planSnapshot
+		if run := s.plans[planID]; run != nil && run.epoch == epoch {
+			run.plan.Tasks[index].PrerequisitesMerged = true
+			run.plan.UpdatedAt = time.Now().UnixMilli()
+			mergedSnap = snapshotLocked(run)
+		}
+		s.mu.Unlock()
+		if mergedSnap.plan.ID != "" {
+			_ = s.persist(mergedSnap)
+		}
 	}
-	summary, err := s.sessions.Run(ctx, sessionID, convoyPrompt(spec, isolated), request)
+	summary, err := s.resumeOrRunSession(ctx, sessionID, convoyPrompt(spec, isolated), request, isResume)
 	s.completeTask(planID, epoch, taskID, sessionID, clip(summary, 2000), err)
 }
 

@@ -765,6 +765,7 @@ func (s *Service) forgetOpenCodeMappings(id string, rec SessionRecord, ap *activ
 		for _, askID := range s.gate.forgetOpenCodeSessionAsks(seen) {
 			s.openCodeAutoReplies.Delete(askID)
 		}
+		s.forgetLedgerSessions(seen)
 	}
 	if len(prefixes) > 0 {
 		deletePrefixedKeys(&s.stoppedTools, prefixes)

@@ -34,33 +34,36 @@ type PlanRequest struct {
 }
 
 type TaskState struct {
-	ID        string   `json:"id"`
-	Prompt    string   `json:"prompt"`
-	DependsOn []string `json:"dependsOn,omitempty"`
-	Status    string   `json:"status"`
-	SessionID string   `json:"sessionID,omitempty"`
-	Summary   string   `json:"summary,omitempty"`
-	Error     string   `json:"error,omitempty"`
-	StartedAt int64    `json:"startedAt,omitempty"`
-	EndedAt   int64    `json:"endedAt,omitempty"`
+	ID                  string   `json:"id"`
+	Prompt              string   `json:"prompt"`
+	DependsOn           []string `json:"dependsOn,omitempty"`
+	Status              string   `json:"status"`
+	SessionID           string   `json:"sessionID,omitempty"`
+	PrerequisitesMerged bool     `json:"prerequisitesMerged,omitempty"`
+	Summary             string   `json:"summary,omitempty"`
+	Error               string   `json:"error,omitempty"`
+	StartedAt           int64    `json:"startedAt,omitempty"`
+	EndedAt             int64    `json:"endedAt,omitempty"`
 }
 
 type Plan struct {
-	ID              string      `json:"id"`
-	ParentSessionID string      `json:"parentSessionID,omitempty"`
-	Title           string      `json:"title"`
-	Directory       string      `json:"directory"`
-	Mode            string      `json:"mode,omitempty"`
-	Provider        string      `json:"provider,omitempty"`
-	Model           string      `json:"model,omitempty"`
-	Concurrency     int         `json:"concurrency"`
-	Isolated        bool        `json:"isolated"` // every task runs in its own git worktree
-	Status          string      `json:"status"`
-	Tasks           []TaskState `json:"tasks"`
-	CreatedAt       int64       `json:"createdAt"`
-	UpdatedAt       int64       `json:"updatedAt"`
-	MergedAt        int64       `json:"mergedAt,omitempty"`
-	Error           string      `json:"error,omitempty"`
+	ID                string      `json:"id"`
+	ParentSessionID   string      `json:"parentSessionID,omitempty"`
+	Title             string      `json:"title"`
+	Directory         string      `json:"directory"`
+	Mode              string      `json:"mode,omitempty"`
+	Provider          string      `json:"provider,omitempty"`
+	Model             string      `json:"model,omitempty"`
+	Concurrency       int         `json:"concurrency"`
+	Isolated          bool        `json:"isolated"` // every task runs in its own git worktree
+	Status            string      `json:"status"`
+	RestartPending    bool        `json:"restartPending,omitempty"`
+	RestartRecoveries int         `json:"restartRecoveries,omitempty"`
+	Tasks             []TaskState `json:"tasks"`
+	CreatedAt         int64       `json:"createdAt"`
+	UpdatedAt         int64       `json:"updatedAt"`
+	MergedAt          int64       `json:"mergedAt,omitempty"`
+	Error             string      `json:"error,omitempty"`
 }
 
 const (

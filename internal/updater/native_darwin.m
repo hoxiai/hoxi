@@ -52,9 +52,9 @@ static BOOL HoxiConfirmBusyUpdate(void) {
     alert.alertStyle = NSAlertStyleWarning;
     alert.messageText = HoxiLocalized(@"Hoxi 有任务正在运行", @"Hoxi is still running tasks");
     alert.informativeText = HoxiLocalized(
-        @"更新会退出 Hoxi 并中断正在运行的 Agent 任务。仍要现在更新吗？",
-        @"Updating will quit Hoxi and interrupt running agent tasks. Update now?");
-    [alert addButtonWithTitle:HoxiLocalized(@"仍然更新", @"Update Anyway")];
+        @"Hoxi 将等待当前工具步落地并保存检查点，重启后自动断点续跑。现在更新并重启吗？",
+        @"Hoxi will finish the current tool step, save task checkpoints, and resume them automatically after restarting. Update now?");
+    [alert addButtonWithTitle:HoxiLocalized(@"更新并自动续跑", @"Update & Resume")];
     [alert addButtonWithTitle:HoxiLocalized(@"取消", @"Cancel")];
     HOXI_TRACE("updater busy confirm shown");
     BOOL confirmed = [alert runModal] == NSAlertFirstButtonReturn;

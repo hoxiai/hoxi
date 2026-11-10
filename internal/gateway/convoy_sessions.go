@@ -71,6 +71,14 @@ func (c convoySessions) Create(ctx context.Context, req orchestration.SessionReq
 }
 
 func (c convoySessions) Run(ctx context.Context, sessionID, prompt string, req orchestration.PlanRequest) (string, error) {
+	return c.runner.RunPromptAndWait(ctx, sessionID, c.buildPromptRequest(prompt, req))
+}
+
+func (c convoySessions) Resume(ctx context.Context, sessionID, prompt string, req orchestration.PlanRequest) (string, error) {
+	return c.runner.ResumeOrRunPromptAndWait(ctx, sessionID, c.buildPromptRequest(prompt, req))
+}
+
+func (c convoySessions) buildPromptRequest(prompt string, req orchestration.PlanRequest) runner.PromptRequest {
 	turn := runner.PromptRequest{Text: prompt, Agent: strings.TrimSpace(req.Mode)}
 	provider := strings.TrimSpace(req.Provider)
 	model := strings.TrimSpace(req.Model)
@@ -87,7 +95,7 @@ func (c convoySessions) Run(ctx context.Context, sessionID, prompt string, req o
 	if provider != "" && provider != "hoxi-auto" && model != "" {
 		turn.Model = &runner.PromptModel{ProviderID: provider, ModelID: model}
 	}
-	return c.runner.RunPromptAndWait(ctx, sessionID, turn)
+	return turn
 }
 
 func sessionProjectRoot(rec runner.SessionRecord) string {

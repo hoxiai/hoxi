@@ -71,19 +71,31 @@ func (s *Service) setChildBusy(id string, busy bool) {
 	s.store.SetActive(id, busy)
 }
 
-// busySessionIDs lists sessions with a CLI process plus running subagents.
+// busySessionIDs lists sessions with a CLI process, queued boot resumes, plus running subagents.
 func (s *Service) busySessionIDs() []string {
+	pending := s.pendingResumeSessionIDs()
+	seen := make(map[string]bool, len(pending))
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	ids := make([]string, 0, len(s.procs)+len(s.childBusy))
+	ids := make([]string, 0, len(s.procs)+len(s.childBusy)+len(pending))
 	for id, ap := range s.procs {
 		if ap == nil || (ap.wasAborted() && !ap.wasSteered()) {
 			continue
 		}
+		seen[id] = true
 		ids = append(ids, id)
 	}
 	for id := range s.childBusy {
-		ids = append(ids, id)
+		if !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
+		}
+	}
+	s.mu.Unlock()
+	for _, id := range pending {
+		if !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
+		}
 	}
 	return ids
 }

@@ -28,6 +28,18 @@ func (s *Service) startTurnProcess(
 	deliveryParts []MessagePart,
 	asstMsgID string,
 ) error {
+	return s.startTurnProcessWithMode(rec, binPath, mode, modelID, effort, promptText, userInfo, storedParts, deliveryParts, asstMsgID, true)
+}
+
+func (s *Service) startTurnProcessWithMode(
+	rec SessionRecord,
+	binPath, mode, modelID, effort, promptText string,
+	userInfo MessageInfo,
+	storedParts []MessagePart,
+	deliveryParts []MessagePart,
+	asstMsgID string,
+	emitUserTurn bool,
+) error {
 	geminiUsesAgy := rec.Runtime == string(RuntimeGeminiCLI) &&
 		(ShouldGeminiCLIUseAgy(modelID) || isAgyBinary(binPath))
 	rawBinPath := binPath
@@ -112,7 +124,11 @@ func (s *Service) startTurnProcess(
 
 	tr := NewTurnTranslator(rec.ID, rec.Runtime, asstMsgID, userInfo.ID, rec.ProviderID, modelID, mode, rec.ExternalID)
 	tr.createChild = s.childSessionFactory(rec, modelID, mode)
-	s.broadcast(rec.ID, tr.InitialEvents(userInfo, storedParts)...)
+	if emitUserTurn {
+		s.broadcast(rec.ID, tr.InitialEvents(userInfo, storedParts)...)
+	} else {
+		s.broadcast(rec.ID, tr.ResumeEvents()...)
+	}
 
 	inputRuntime := rec.Runtime
 	if geminiUsesAgy {
@@ -130,10 +146,13 @@ func (s *Service) startTurnProcess(
 			}
 			revokeHook()
 			s.cancelSessionApprovals(rec.ID, "the CLI process exited")
+			if !ap.wasRestarting() {
+				s.clearInflightTurnForUserMsg(rec.ID, userInfo.ID)
+			}
 			s.syncSessionMemoryFile(rec.ID)
 			s.store.FlushSession(rec.ID)
 			s.releaseActiveProcess(rec.ID, ap)
-			if len(terminalEvts) > 0 && !ap.wasSteered() {
+			if len(terminalEvts) > 0 && !ap.wasSteered() && !ap.wasRestarting() {
 				s.broadcastRouted(rec.ID, terminalEvts)
 			}
 			s.clearSessionQuestionState(rec.ID)
@@ -202,6 +221,7 @@ func (s *Service) startTurnProcess(
 						_, _, _ = s.store.Update(rec.ID, func(sr *SessionRecord) {
 							sr.ExternalID = extID
 						})
+						s.updateInflightExternalID(rec.ID, extID)
 					}
 					var liveEvts []SSEEvent
 					for _, evt := range evts {

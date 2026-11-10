@@ -70,7 +70,11 @@ func TestHomeOverrideServerURLAndProtectedStateFiles(t *testing.T) {
 		t.Fatalf("ServerBaseURL() = %s, want https://mirror.hoxi.ai", got)
 	}
 
-	for _, name := range []string{"models.json", "auth.json", "auto-pools.json", "workspaces.json", "device-id", "telemetry.json", "relay-keys.json", "work-apps.json", "reclaim.json", "reclaim.json.lock"} {
+	if got, want := TaskLedgerPath(), filepath.Join(customHome, "task-ledger.json"); got != want {
+		t.Fatalf("TaskLedgerPath() = %s, want %s", got, want)
+	}
+
+	for _, name := range []string{"models.json", "auth.json", "auto-pools.json", "workspaces.json", "device-id", "telemetry.json", "relay-keys.json", "work-apps.json", "reclaim.json", "reclaim.json.lock", "task-ledger.json", "task-ledger.json.lock"} {
 		if !IsProtectedStateFile(name) {
 			t.Fatalf("expected %s to be protected state file", name)
 		}

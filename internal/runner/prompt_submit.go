@@ -89,6 +89,7 @@ func (s *Service) storePromptReceipt(sessionID, clientRequestID string, receipt 
 		return
 	}
 	now := time.Now()
+	expiresAt := now.Add(idempotencyReceiptTTL)
 	s.promptReceipts.Range(func(k string, entry cachedPromptReceipt) bool {
 		if now.After(entry.expiresAt) {
 			s.promptReceipts.Delete(k)
@@ -97,8 +98,11 @@ func (s *Service) storePromptReceipt(sessionID, clientRequestID string, receipt 
 	})
 	s.promptReceipts.Store(sessionID+"\x00"+clientRequestID, cachedPromptReceipt{
 		receipt:   receipt,
-		expiresAt: now.Add(idempotencyReceiptTTL),
+		expiresAt: expiresAt,
 	})
+	if s.ledger != nil {
+		s.ledger.putPromptReceipt(sessionID, clientRequestID, receipt, expiresAt)
+	}
 }
 
 // PromptModel selects the provider/model for one turn.
@@ -430,6 +434,23 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 		rec = updated
 	}
 
+	s.recordInflightTurn(InflightTurnEntry{
+		SessionID:       rec.ID,
+		Runtime:         rec.Runtime,
+		ExternalID:      rec.ExternalID,
+		UserMsgID:       userMsgID,
+		AsstMsgID:       asstMsgID,
+		Mode:            mode,
+		ProviderID:      rec.ProviderID,
+		ModelID:         modelID,
+		Effort:          effort,
+		CallerSystem:    callerSystem,
+		PromptText:      cliPrompt,
+		ClientRequestID: clientReqID,
+		StartedAt:       now,
+		UpdatedAt:       now,
+	})
+
 	var err error
 	if rec.Runtime == "opencode" {
 		err = s.startOpenCodeTurn(rec, mode, modelID, effort, body.System, userInfo, storedParts, deliveryParts)
@@ -447,6 +468,7 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 		}
 	}
 	if err != nil {
+		s.clearInflightTurn(sessionID)
 		if current, ok := s.store.Get(sessionID); ok {
 			prevIDs := make(map[string]bool, len(preMutationRec.OpenCodeIDs))
 			for _, id := range preMutationRec.OpenCodeIDs {

@@ -446,6 +446,7 @@ type activeProcess struct {
 	abortCh       chan struct{}
 	aborted       bool
 	steered       bool
+	restarting    bool
 	retrying      bool
 	idleCh        chan struct{}
 	cancel        func()
@@ -517,6 +518,18 @@ func (ap *activeProcess) wasSteered() bool {
 	ap.mu.Lock()
 	defer ap.mu.Unlock()
 	return ap.steered
+}
+
+func (ap *activeProcess) markRestarting() {
+	ap.mu.Lock()
+	ap.restarting = true
+	ap.mu.Unlock()
+}
+
+func (ap *activeProcess) wasRestarting() bool {
+	ap.mu.Lock()
+	defer ap.mu.Unlock()
+	return ap.restarting
 }
 
 func (ap *activeProcess) notifyIdle() {
