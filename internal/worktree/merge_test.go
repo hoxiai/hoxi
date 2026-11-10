@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -229,6 +230,10 @@ func TestPatchConflictRollbackRestoresAllGitChangedPaths(t *testing.T) {
 		name := name
 		t.Run(strings.TrimSpace(name), func(t *testing.T) {
 			t.Parallel()
+			if runtime.GOOS == "windows" && strings.HasSuffix(name, " ") {
+				// NTFS strips trailing spaces, so git cannot even stage the file.
+				t.Skip("Windows filesystems do not keep trailing spaces in names")
+			}
 			dirs := newMergeFixture(t)
 			repo := dirs["repo"]
 			p := filepath.Join(repo, name)
