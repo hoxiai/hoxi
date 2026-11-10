@@ -2,6 +2,15 @@
 
 All notable releases of **Hoxi Desktop** are documented below. Full per-version release notes are archived under [`docs/release-notes/`](docs/release-notes/) and consumed directly by `.github/workflows/release.yml` and `scripts/ai-release.sh`.
 
+## [v0.6.18](docs/release-notes/v0.6.18.md) — 2026-11-10
+
+- **Sandbox Hardening**: Deny every loopback TCP/UDP port already listening when an on-demand profile is written (refusing to confine when the snapshot fails), allow outbound Unix sockets only under the workspace, and deny other agents' sign-in tokens and IDE credential locks.
+- **Cross-Restart Resume**: Persist in-flight turns and idempotent `prompt_async`/approval receipts, drain the current tool step before a graceful restart, resume OpenCode turns with a byte-stable system prompt and native CLIs by `ExternalID`, and resume convoy DAGs without double-merging.
+- **Approval & Sandbox Fallback**: Fall back to an on-demand Seatbelt sandbox for opaque commands in auto mode; match literal approval rules without regex so thousands of always-allow rules stay fast.
+- **Attachments & Docs**: Native `.xls` parsing, inline spreadsheet cell editing, PDF/spreadsheet previews, lossless xlsx/csv edits, a `hoxi doc` CLI and clickable timeline previews.
+- **Runtime & Provider**: Resume split-brain Antigravity conversations, repair torn JSONL tails, keep the OpenCode system prompt byte-stable across steer/handoff, route official models by category, list Google/Anthropic models and align reasoning-effort variants.
+- **Tunnel, Skills & Perf**: Auto-register the default relay with token auth; expose skills by fit and slim the per-request context; confirm desktop access to sensitive credential files; move busy spinners to the WebKit compositor and release the chime's audio device.
+
 ## [v0.6.17](docs/release-notes/v0.6.17.md) — 2026-11-06
 
 - **Steer & Approval**: Enable in-run steering for Antigravity with a rebuilt record after the steer abort; keep `always` grants the gate actually honors and refuse unattended before allowing; gate Claude Monitor as a command and fix trusted-mode misjudgments.
