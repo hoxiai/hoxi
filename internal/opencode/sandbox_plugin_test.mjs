@@ -560,17 +560,56 @@ test("on-demand sandbox", async (t) => {
   });
 
   await t.test("runs unwrapped when Hoxi cannot be reached", async () => {
+    const savedURL = process.env.HOXI_GATEWAY_URL;
     process.env.HOXI_GATEWAY_URL = "http://127.0.0.1:1/";
-    const final = await run('for f in $(ls docs); do wc -l "$f"; done', "od5");
-    assert.ok(!final.includes("sandbox-exec"));
+    try {
+      const final = await run('for f in $(ls docs); do wc -l "$f"; done', "od5");
+      assert.ok(!final.includes("sandbox-exec"));
+    } finally {
+      process.env.HOXI_GATEWAY_URL = savedURL;
+    }
   });
 
-  await t.test("a session sandbox takes precedence and needs no route", async () => {
+  await t.test("a network-allow session sandbox tightens opaque commands to on-demand and falls back on unsandboxed", async () => {
+    const { workspace, profilePath } = fixture("allow");
+    const sessionHooks = await HoxiSandboxPlugin({ directory: workspace });
+
+    // Opaque command: tightened from session profilePath to on-demand profile so auto mode runs without asking.
+    const opaqueCmd = 'for f in $(ls); do wc -l "$f"; done';
+    const opaqueOut = { args: { command: opaqueCmd } };
+    await sessionHooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_sandbox", callID: "od6" }, opaqueOut);
+    assert.ok(opaqueOut.args.command.includes(`'/usr/bin/sandbox-exec' -f '${profile}' -- /bin/sh -c `));
+    assert.ok(!opaqueOut.args.command.includes(profilePath));
+    assert.deepEqual(asked.at(-1), {
+      path: "/api/hoxi/runner/sandbox/route",
+      sessionID: "ses_sandbox",
+      directory: workspace,
+      command: opaqueCmd,
+    });
+    const denied = { output: "curl: Operation not permitted\n" };
+    await sessionHooks["tool.execute.after"]({ tool: "bash", callID: "od6" }, denied);
+    assert.ok(denied.output.includes("# hoxi:unsandboxed"));
+
+    // Plain command: route offers nothing, session sandbox profilePath still confines it.
+    const plainOut = { args: { command: "git status" } };
+    await sessionHooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_sandbox", callID: "od7" }, plainOut);
+    assert.ok(plainOut.args.command.includes(profilePath));
+
+    // # hoxi:unsandboxed opts out of on-demand tightening (so Hoxi prompts) but NEVER escapes the session sandbox.
     const before = asked.length;
-    const { profilePath } = fixture("allow");
-    const sessionHooks = await HoxiSandboxPlugin({ directory: "/work/app" });
+    const retryOut = { args: { command: `# hoxi:unsandboxed\n${opaqueCmd}` } };
+    await sessionHooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_sandbox", callID: "od8" }, retryOut);
+    assert.equal(asked.length, before);
+    assert.ok(retryOut.args.command.includes(profilePath));
+    assert.ok(!retryOut.args.command.includes(profile));
+  });
+
+  await t.test("a network-deny session sandbox keeps its stricter profile without asking the route", async () => {
+    const before = asked.length;
+    const { workspace, profilePath } = fixture("deny");
+    const sessionHooks = await HoxiSandboxPlugin({ directory: workspace });
     const output = { args: { command: 'for f in $(ls); do wc -l "$f"; done' } };
-    await sessionHooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_sandbox", callID: "od6" }, output);
+    await sessionHooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_sandbox", callID: "od9" }, output);
     assert.ok(output.args.command.includes(profilePath));
     assert.equal(asked.length, before);
   });

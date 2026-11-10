@@ -54,6 +54,24 @@ func TestGrantableRequestClasses(t *testing.T) {
 	if grantableRequestClasses(req("doom_loop", "bash"), dir) != nil {
 		t.Error("only real shell requests can be granted")
 	}
+	// OpenCode splits commands into patterns; metadata.command preserves the
+	// literal assignment while smuggled extra destructive patterns still fail.
+	ocSplit := map[string]interface{}{
+		"permission": "bash",
+		"patterns":   []interface{}{`rm -f "$TMP"`},
+		"metadata":   map[string]interface{}{"command": `TMP=/tmp/hoxi-probe.log; rm -f "$TMP"`},
+	}
+	if got := grantableRequestClasses(ocSplit, dir); !reflect.DeepEqual(got, []string{recoverClassTempDelete}) {
+		t.Errorf("OpenCode split temp-delete classes = %v, want [%s]", got, recoverClassTempDelete)
+	}
+	ocSmuggled := map[string]interface{}{
+		"permission": "bash",
+		"patterns":   []interface{}{`rm -f "$TMP"`, `cat .env`},
+		"metadata":   map[string]interface{}{"command": `TMP=/tmp/hoxi-probe.log; rm -f "$TMP"`},
+	}
+	if got := grantableRequestClasses(ocSmuggled, dir); got != nil {
+		t.Errorf("extra destructive pattern outside metadata.command must refuse grant, got %v", got)
+	}
 }
 
 func (f *gateFixture) command(step int, command string) []byte {

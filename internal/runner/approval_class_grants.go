@@ -60,8 +60,8 @@ func grantableRequestClasses(item map[string]interface{}, dir string) []string {
 	if external, _ := meta["externalDirectory"].(bool); external {
 		return nil
 	}
-	candidates := commandCandidates(item)
-	if len(candidates) == 0 {
+	candidates, ok := recoverableCandidates(item, dir)
+	if !ok {
 		return nil
 	}
 	classes := map[string]bool{}

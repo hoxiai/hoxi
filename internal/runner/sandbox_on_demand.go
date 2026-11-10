@@ -144,16 +144,23 @@ func (s *Service) handleSandboxRoute(w http.ResponseWriter, r *http.Request) {
 }
 
 // onDemandSandboxProfile returns the profile to wrap command in, or "" when
-// the command should run as it is: the policy already allows it, it asks for
-// a reason other than opacity, or wrapping would not change the answer.
+// the command should run as it is: the policy or a session grant already
+// allows it, it asks for a reason other than opacity, or wrapping would not
+// change the answer.
 func (s *Service) onDemandSandboxProfile(sessionID, directory, command string) string {
 	mode := s.ApprovalPolicy().Mode
 	if (mode != ApprovalModeAuto && mode != ApprovalModeTrusted) || !sandbox.Available() ||
 		strings.TrimSpace(command) == "" || strings.TrimSpace(directory) == "" {
 		return ""
 	}
-	plain := openCodeBashItem(sessionID, command)
-	if s.policyApproves(plain, directory) || !isOpaquePermissionRequestWith(plain, directory, scriptTrustFor(mode)) {
+	plain, hoxiID, ok := s.openCodeRouteBashItem(sessionID, directory, command)
+	if !ok {
+		return ""
+	}
+	if s.policyApproves(plain, directory) ||
+		s.classGrantApproves(plain, hoxiID, directory) ||
+		s.openCodeAlwaysApproves(plain, hoxiID) ||
+		!isOpaquePermissionRequestWith(plain, directory, scriptTrustFor(mode)) {
 		return ""
 	}
 	if isDestructivePermissionRequest(plain) || !sandboxContainable(plain, directory) {
@@ -163,12 +170,33 @@ func (s *Service) onDemandSandboxProfile(sessionID, directory, command string) s
 	if err != nil {
 		return ""
 	}
-	wrapped := openCodeBashItem(sessionID, sandboxWrappedCommand(profile, command))
+	wrapped, _, _ := s.openCodeRouteBashItem(sessionID, directory, sandboxWrappedCommand(profile, command))
 	sanitizeOpenCodePermissionItem(wrapped)
 	if !s.policyApproves(wrapped, directory) {
 		return ""
 	}
 	return profile
+}
+
+// openCodeRouteBashItem builds a bash permission request matching what
+// relayOpenCodeEvent / claimOpenCodePermission judges: OpenCode's daemon
+// session ID (or subagent child ID) is resolved to Hoxi's session ID while
+// preserving externalID for own-session record checks. When a known session is
+// bound to a different directory, ok is false so its grants never apply there.
+func (s *Service) openCodeRouteBashItem(rawSessionID, directory, command string) (map[string]interface{}, string, bool) {
+	raw := strings.TrimSpace(rawSessionID)
+	hoxiID, sessionDir := s.resolveOpenCodePermissionTarget(raw, "", nil)
+	if sessionDir != "" && normalizeComparePath(sessionDir) != normalizeComparePath(directory) {
+		return nil, "", false
+	}
+	sid := firstNonEmptyStr(hoxiID, raw)
+	item := openCodeBashItem(sid, command)
+	if raw != "" && sid != raw {
+		if meta, _ := item["metadata"].(map[string]interface{}); meta != nil {
+			meta["externalID"] = raw
+		}
+	}
+	return item, sid, true
 }
 
 // openCodeBashItem is the permission request OpenCode sends for command.

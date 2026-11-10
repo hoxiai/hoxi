@@ -422,7 +422,19 @@ const HoxiSandboxPlugin = async (ctx) => {
         if (!command(value, input)) return;
         if (isBash) {
           if (clean.trim() === "") throw new Error("Hoxi sandbox requires a non-empty shell command");
-          final = `${quote(executable)} -f ${quote(value.profilePath)} -- /bin/sh -c ${quote(clean)}`;
+          // A session sandbox allows outbound network; Hoxi may still tighten
+          // an opaque command into the local-only on-demand profile instead of
+          // asking. A network-deny session keeps its stricter profile, and an
+          // # hoxi:unsandboxed retry falls back to value.profilePath and asks.
+          const tight =
+            value.network === "allow"
+              ? await onDemandProfile({ sessionID: input?.sessionID, directory: value.workspace, command: clean })
+              : undefined;
+          final = `${quote(executable)} -f ${quote(tight || value.profilePath)} -- /bin/sh -c ${quote(clean)}`;
+          if (tight) {
+            if (onDemandCalls.size > 512) onDemandCalls.clear();
+            if (typeof input?.callID === "string") onDemandCalls.add(input.callID);
+          }
         } else if (input.tool === "apply_patch") {
           const targets = patchTargets(args);
           if (targets.length === 0) throw new Error("Hoxi sandbox could not read the patch file paths");

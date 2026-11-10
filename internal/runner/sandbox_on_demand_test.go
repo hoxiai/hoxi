@@ -212,3 +212,72 @@ func TestSandboxRouteAnswersThePlugin(t *testing.T) {
 		t.Fatalf("GET status %d", resp.StatusCode)
 	}
 }
+
+// A session with CommandSandbox enabled uses a network-allow session profile
+// (<hash(sessionID)>.sb) for ordinary commands, which OnDemandTrusted refuses
+// for opaque ones. Tightening opaque commands to the on-demand profile lets
+// auto mode approve them, while a fallback to the session profile still asks,
+// and an explicit session "always" grant is not re-trapped in on-demand.
+func TestOnDemandSandboxTightensCommandSandboxSessionAndRespectsGrants(t *testing.T) {
+	svc, workspace := newOnDemandFixture(t, ApprovalModeAuto)
+	workspace, err := filepath.EvalSymlinks(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherDir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := SessionRecord{
+		ID:             "ses_hoxi_cmdsb",
+		Runtime:        "opencode",
+		ExternalID:     "oc_ext_cmdsb",
+		ProjectDir:     workspace,
+		WorktreePath:   workspace,
+		CommandSandbox: true,
+	}
+	otherRec := SessionRecord{
+		ID:             "ses_hoxi_other",
+		Runtime:        "opencode",
+		ExternalID:     "oc_ext_other",
+		ProjectDir:     otherDir,
+		WorktreePath:   otherDir,
+		CommandSandbox: true,
+	}
+	for _, r := range []SessionRecord{rec, otherRec} {
+		if err := svc.store.Put(r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	snap, err := sandbox.NewManager(t.TempDir()).Set(rec.ExternalID, workspace, true, sandbox.NetworkAllow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opaqueCmd := `bash build.sh`
+	// Session profile alone allows outbound network, so it must NOT cover opacity.
+	if approvalAutoApproves(wrappedRequest(snap.ProfilePath, opaqueCmd), ApprovalPolicy{Mode: ApprovalModeAuto}, nil, workspace) {
+		t.Fatal("session network-allow profile must not auto-approve opaque commands")
+	}
+	// Route offers the tighter on-demand profile for the ExternalID, which auto mode approves.
+	tight := svc.onDemandSandboxProfile(rec.ExternalID, workspace, opaqueCmd)
+	if tight == "" || tight == snap.ProfilePath {
+		t.Fatalf("expected distinct on-demand profile, got %q (session %q)", tight, snap.ProfilePath)
+	}
+	if !approvalAutoApproves(wrappedRequest(tight, opaqueCmd), ApprovalPolicy{Mode: ApprovalModeAuto}, nil, workspace) {
+		t.Fatal("tightened on-demand profile should auto-approve opaque command")
+	}
+
+	// Once the user grants "bash *" for this Hoxi session (e.g. after # hoxi:unsandboxed),
+	// the route stops wrapping it in the no-network on-demand profile for this session only.
+	svc.gate.addOpenCodeAlwaysGrants(rec.ID, "bash", []string{"bash *"}, "desktop")
+	if got := svc.onDemandSandboxProfile(rec.ExternalID, workspace, opaqueCmd); got != "" {
+		t.Fatalf("session-granted command should not be wrapped in on-demand sandbox, got %q", got)
+	}
+	if got := svc.onDemandSandboxProfile(otherRec.ExternalID, otherDir, opaqueCmd); got == "" {
+		t.Fatal("another session without the grant must still get the on-demand profile")
+	}
+	// Spoofing rec.ExternalID against another directory must never apply rec's grants or offer a profile.
+	if got := svc.onDemandSandboxProfile(rec.ExternalID, otherDir, opaqueCmd); got != "" {
+		t.Fatalf("mismatched directory for known session must fail closed, got %q", got)
+	}
+}

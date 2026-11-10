@@ -1,5 +1,6 @@
 // Hoxi on-demand sandbox for the OpenCode sandbox plugin. Before a bash
-// command runs in a session without a full command sandbox, the plugin asks
+// command runs (either without a session sandbox, or inside a network-allow
+// session sandbox that can be tightened), the plugin asks
 // Hoxi whether to wrap it. Hoxi answers with a Seatbelt profile only for a
 // command it would otherwise ask the user about just because it cannot read
 // it; that command then runs confined instead of waiting for approval
