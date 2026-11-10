@@ -527,6 +527,7 @@ func detectCodexCLIStatus(g *Service, hoxiMap map[string]interface{}) LocalCLISt
 		SessionCount:  stats.SessionCount,
 		AuthMode:      authMode,
 		ProviderID:    "openai",
+		Quota:         collectCodexQuotaSnapshot(cDir, time.Now()),
 	}
 }
 

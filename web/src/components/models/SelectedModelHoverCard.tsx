@@ -1,15 +1,18 @@
 // web/src/components/models/SelectedModelHoverCard.tsx
-import { Show } from "solid-js";
+import { onMount, Show } from "solid-js";
 import { ChevronRight, Image, Sparkles, Wrench } from "lucide-solid";
 import {
   AUTO_PROVIDER_ID,
+  ensureLocalCLIStatusLoaded,
   getEffectivePoolCandidates,
+  getLocalCLIStatusForProvider,
   isCandidateCoolingDown,
   peekAutoModelTarget,
   workspace,
 } from "../../store/workspace";
 import { ProviderIcon } from "../icons";
 import { t } from "../../i18n";
+import { LocalCliQuotaBadges } from "./LocalCliQuotaBadges";
 import { ProviderHealthBadge } from "./ProviderQualityCard";
 import {
   formatPricePerMillion,
@@ -26,6 +29,10 @@ export function SelectedModelHoverCard(props: {
   onHoverEnd?: () => void;
 }) {
   const srcInfo = () => getModelSourceInfo(props.model);
+  const cliTool = () => getLocalCLIStatusForProvider(props.model.providerID);
+  onMount(() => {
+    void ensureLocalCLIStatusLoaded();
+  });
   const ctxText = () => formatTokenLimit(props.model.contextLimit);
   const outText = () => formatTokenLimit(props.model.outputLimit);
   const inPrice = () => formatPricePerMillion(props.model.inputCost, props.model.priceCurrency);
@@ -165,6 +172,13 @@ export function SelectedModelHoverCard(props: {
             </span>
           </div>
         </Show>
+
+        <LocalCliQuotaBadges
+          quota={cliTool()?.quota}
+          providerID={props.model.providerID}
+          modelID={props.model.modelID}
+          detailed
+        />
 
         <div class="flex items-center justify-between gap-2 pt-1.5 border-t border-[var(--border-subtle)] text-[11px] text-[var(--text-muted)]">
           <div class="flex items-center gap-2 flex-wrap">

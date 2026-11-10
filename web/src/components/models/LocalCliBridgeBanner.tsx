@@ -2,8 +2,14 @@
 import { createSignal, For, onMount, Show } from "solid-js";
 import { ArrowRightLeft, Check, RefreshCw, Sparkles, Terminal } from "lucide-solid";
 import { hoxiAPI, type LocalCLIStatusItem } from "../../services/api";
-import { closeSettingsModal, openHandoffModal, syncLocalCLIModel } from "../../store/workspace";
+import {
+  closeSettingsModal,
+  openHandoffModal,
+  setLocalCLIStatusItems,
+  syncLocalCLIModel,
+} from "../../store/workspace";
 import { t } from "../../i18n";
+import { LocalCliQuotaBadges } from "./LocalCliQuotaBadges";
 
 export default function LocalCliBridgeBanner() {
   const [tools, setTools] = createSignal<LocalCLIStatusItem[]>([]);
@@ -14,7 +20,9 @@ export default function LocalCliBridgeBanner() {
   const load = async () => {
     try {
       const res = await hoxiAPI.getLocalCLIStatus();
-      setTools((res.tools || []).filter((item) => item.installed));
+      const all = res.tools || [];
+      setLocalCLIStatusItems(all);
+      setTools(all.filter((item) => item.installed));
     } catch {
       /* ignore */
     } finally {
@@ -109,13 +117,14 @@ export default function LocalCliBridgeBanner() {
           <For each={tools()}>
             {(tool) => (
               <div class="flex items-center justify-between gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3 py-2">
-                <div class="min-w-0">
+                <div class="min-w-0 space-y-1">
                   <div class="text-[12px] font-semibold text-[var(--text-primary)] truncate">
                     {tool.name}
                   </div>
                   <div class="text-[11px] font-mono text-[var(--text-muted)]">
                     {t("leftNav.handoffCliSessionsBadge", { count: tool.sessionCount })}
                   </div>
+                  <LocalCliQuotaBadges quota={tool.quota} providerID={tool.providerID} />
                 </div>
 
                 <Show

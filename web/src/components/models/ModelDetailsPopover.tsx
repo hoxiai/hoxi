@@ -3,12 +3,15 @@ import { Portal } from "solid-js/web";
 import { Image, Pencil, Sparkles, Wrench, X } from "lucide-solid";
 import { t } from "../../i18n";
 import {
+  ensureLocalCLIStatusLoaded,
   formatPricePerMillion,
   formatTokenLimit,
+  getLocalCLIStatusForProvider,
   getModelSourceInfo,
   type FlattenedModel,
 } from "../../store/workspace";
 import { ProviderIcon } from "../icons";
+import { LocalCliQuotaBadges } from "./LocalCliQuotaBadges";
 import { ProviderHealthBadge } from "./ProviderHealthBadge";
 
 export function ModelDetailsPopover(props: {
@@ -20,6 +23,7 @@ export function ModelDetailsPopover(props: {
   let panel!: HTMLDivElement;
   const [position, setPosition] = createSignal({ left: 12, top: 12 });
   const source = () => getModelSourceInfo(props.model);
+  const cliTool = () => getLocalCLIStatusForProvider(props.model.providerID);
   const context = () => formatTokenLimit(props.model.contextLimit);
   const output = () => formatTokenLimit(props.model.outputLimit);
   const inputPrice = () => formatPricePerMillion(props.model.inputCost, props.model.priceCurrency);
@@ -47,6 +51,7 @@ export function ModelDetailsPopover(props: {
   }
 
   onMount(() => {
+    void ensureLocalCLIStatusLoaded();
     updatePosition();
     panel.focus({ preventScroll: true });
 
@@ -227,6 +232,12 @@ export function ModelDetailsPopover(props: {
               {t(props.model.connected ? "models.connected" : "models.needsApiKey")}
             </div>
             <ProviderHealthBadge providerID={props.model.providerID} modelID={props.model.modelID} compact={false} />
+            <LocalCliQuotaBadges
+              quota={cliTool()?.quota}
+              providerID={props.model.providerID}
+              modelID={props.model.modelID}
+              detailed
+            />
           </div>
         </section>
 

@@ -14,6 +14,7 @@ import {
   type FreeTierGuideItem,
 } from "./auto-models";
 import { isImportedOpenCodeProvider } from "./provider-catalog";
+import { setLocalCLIStatusItems } from "./handoff";
 import { parseModelString } from "./session-ai";
 import {
   loadAgents,
@@ -270,6 +271,7 @@ export async function syncLocalCLIModel(tool: LocalCLIStatusItem) {
   }
   await loadProviders(true);
   const status = await hoxiAPI.getLocalCLIStatus();
+  setLocalCLIStatusItems(status.tools || []);
   const current = status.tools.find((item) => item.id === tool.id);
   const modelID = current?.defaultModel || workspace.defaultModels[providerID] || current?.models?.[0];
   if (!modelID || !workspace.providers.some((p) => p.id === providerID && p.models?.[modelID])) {

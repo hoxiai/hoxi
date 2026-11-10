@@ -452,4 +452,11 @@ export const models = {
   officialAddToPool: "Add to pool",
   officialInPool: "In pool",
   officialOpenTab: "Manage official models",
+  cliQuotaTitle: "Subscription & Quota",
+  cliQuotaWindow5h: "5h left {percent}%",
+  cliQuotaWindowWeekly: "Weekly left {percent}%",
+  cliQuotaWindowResetsAt: "Resets {time}",
+  cliQuotaWeeklyUsage: "7d usage: {tokens} tokens · {turns} turns",
+  cliQuotaWeeklyTurnsOnly: "7d usage: {turns} turns",
+  cliQuotaCooldownActive: "Quota cooling · resets {time}",
 };

@@ -553,8 +553,87 @@ func isRealGoogleAPIKey(k string) bool {
 	return true
 }
 
+func scanAntigravityTranscriptTokens(brainDir string, fallbackMs, cutoff7dMs int64) (tokens int64, turns int) {
+	if brainDir == "" {
+		return 0, 0
+	}
+	logDir := filepath.Join(brainDir, ".system_generated", "logs")
+	f, err := os.Open(filepath.Join(logDir, "transcript_full.jsonl"))
+	if err != nil {
+		f, err = os.Open(filepath.Join(logDir, "transcript.jsonl"))
+	}
+	if err != nil {
+		return 0, 0
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
+	for scanner.Scan() {
+		line := bytes.TrimSpace(scanner.Bytes())
+		if len(line) == 0 {
+			continue
+		}
+		var step map[string]interface{}
+		if json.Unmarshal(line, &step) != nil {
+			continue
+		}
+		if asString(step["type"]) != "PLANNER_RESPONSE" {
+			continue
+		}
+		tsMs := parseAntigravityTimeMs(asString(step["created_at"]))
+		if tsMs <= 0 {
+			tsMs = fallbackMs
+		}
+		if tsMs < cutoff7dMs {
+			continue
+		}
+		turns++
+		u := geminiStepUsage(step)
+		tokens += u.stepTokens()
+	}
+	return tokens, turns
+}
+
+func collectGeminiQuotaSnapshot(sessions []ExternalSessionSummary, now time.Time) *LocalCLIQuotaSnapshot {
+	cutoff7dMs := now.Add(-7 * 24 * time.Hour).UnixMilli()
+	var weeklyTokens int64
+	var weeklyTurns int
+	var latestUpdatedMs int64
+	inspected := 0
+
+	for _, s := range sessions {
+		if s.UpdatedAt < cutoff7dMs {
+			continue
+		}
+		if s.UpdatedAt > latestUpdatedMs {
+			latestUpdatedMs = s.UpdatedAt
+		}
+		if inspected < 12 {
+			inspected++
+			tks, trns := scanAntigravityTranscriptTokens(findAntigravityBrainDir(s.ID), s.UpdatedAt, cutoff7dMs)
+			weeklyTokens += tks
+			if trns > 0 {
+				weeklyTurns += trns
+			} else if s.TurnCount > 0 {
+				weeklyTurns += s.TurnCount
+			}
+		} else if s.TurnCount > 0 {
+			weeklyTurns += s.TurnCount
+		}
+	}
+	if weeklyTokens == 0 && weeklyTurns == 0 {
+		return nil
+	}
+	return &LocalCLIQuotaSnapshot{
+		WeeklyTokens: weeklyTokens,
+		WeeklyTurns:  weeklyTurns,
+		UpdatedAt:    latestUpdatedMs,
+	}
+}
+
 func detectGeminiCLIStatus(g *Service, hoxiMap map[string]interface{}) LocalCLIStatusItem {
-	_, stats := scanGeminiAntigravitySessions("", "")
+	sessions, stats := scanGeminiAntigravitySessions("", "")
 	apiKey, defaultModel, models := readGeminiLocalKeyAndModels()
 	agyBin := resolveAgyBinary()
 	geminiBin := agentcli.ResolveGeminiBinary()
@@ -589,6 +668,7 @@ func detectGeminiCLIStatus(g *Service, hoxiMap map[string]interface{}) LocalCLIS
 		SessionCount:  stats.SessionCount,
 		AuthMode:      authMode,
 		ProviderID:    providerID,
+		Quota:         collectGeminiQuotaSnapshot(sessions, time.Now()),
 	}
 }
 

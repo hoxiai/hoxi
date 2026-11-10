@@ -5,6 +5,12 @@
 // source as a hardcoded UI string, and test assertions are no exception.
 import { dictionaries, setLocale } from "../i18n";
 import { formatCompactNumber, formatExactNumber, formatUsd } from "../i18n/format";
+import {
+  formatCompactTokenCount,
+  formatQuotaResetTime,
+  getLocalCLIStatusForProvider,
+  setLocalCLIStatusItems,
+} from "../store/workspace";
 import { assertEqual, describe, it } from "./test-harness";
 
 function unit(locale: "zh-CN" | "en-US", key: "unitK" | "unitM" | "unitB" | "unitT" | "unitWan" | "unitYi" | "unitWanYi"): string {
@@ -78,5 +84,57 @@ describe("locale-aware compact units", () => {
     assertEqual(formatUsd(0.0004), "<$0.001");
     assertEqual(formatUsd(12.345), "$12.35");
     assertEqual(formatUsd(1234.5), "$1235");
+  });
+
+  it("formats local CLI quota tokens, reset countdowns, and provider status lookup", () => {
+    assertEqual(formatCompactTokenCount(850), "850");
+    assertEqual(formatCompactTokenCount(14_500), "14.5K");
+    assertEqual(formatCompactTokenCount(245_000), "245K");
+    assertEqual(formatCompactTokenCount(3_400_000), "3.4M");
+
+    const nowMs = 1_762_800_000_000;
+    assertEqual(formatQuotaResetTime(nowMs - 1000, nowMs), "");
+    assertEqual(formatQuotaResetTime(nowMs + 45 * 60_000, nowMs), "45m");
+    assertEqual(formatQuotaResetTime(nowMs + (3 * 60 + 20) * 60_000, nowMs), "3h 20m");
+    const farTs = nowMs + (2 * 24 + 5) * 3_600_000;
+    const farDate = new Date(farTs);
+    const expectedFar = `${String(farDate.getMonth() + 1).padStart(2, "0")}-${String(farDate.getDate()).padStart(2, "0")} ${String(farDate.getHours()).padStart(2, "0")}:${String(farDate.getMinutes()).padStart(2, "0")}`;
+    assertEqual(formatQuotaResetTime(farTs, nowMs), expectedFar);
+
+    setLocalCLIStatusItems([
+      {
+        id: "codex",
+        name: "OpenAI Codex CLI",
+        installed: true,
+        authenticated: true,
+        connected: true,
+        sessionCount: 3,
+        providerID: "openai",
+        quota: {
+          planType: "pro",
+          primary: {
+            windowMinutes: 300,
+            usedPercent: 18,
+            remainingPercent: 82,
+            resetsAt: nowMs + 3_600_000,
+          },
+          secondary: {
+            windowMinutes: 10080,
+            usedPercent: 40,
+            remainingPercent: 60,
+            resetsAt: nowMs + 86_400_000,
+          },
+          weeklyTokens: 120_000,
+          weeklyTurns: 15,
+        },
+      },
+    ]);
+
+    const codexStatus = getLocalCLIStatusForProvider("openai");
+    assertEqual(codexStatus?.quota?.planType, "pro");
+    assertEqual(codexStatus?.quota?.primary?.remainingPercent, 82);
+    assertEqual(codexStatus?.quota?.secondary?.remainingPercent, 60);
+    assertEqual(getLocalCLIStatusForProvider("gemini-antigravity"), undefined);
+    setLocalCLIStatusItems([]);
   });
 });

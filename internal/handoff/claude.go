@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/hoxiai/hoxi/internal/claudeconfig"
 )
@@ -564,8 +565,125 @@ func readClaudeSettingsEnv() (baseURL, apiKey, defaultModel string, models []str
 	return baseURL, apiKey, defaultModel, models
 }
 
+func readClaudeSubscriptionPlan(cDir string) string {
+	if cDir == "" {
+		return ""
+	}
+	if raw, err := os.ReadFile(filepath.Join(cDir, ".credentials.json")); err == nil {
+		var doc map[string]interface{}
+		if json.Unmarshal(raw, &doc) == nil {
+			if oauth, ok := doc["claudeAiOauth"].(map[string]interface{}); ok {
+				if sub := strings.TrimSpace(asString(oauth["subscriptionType"])); sub != "" {
+					return strings.ToLower(sub)
+				}
+				if tier := strings.TrimSpace(asString(oauth["rateLimitTier"])); tier != "" {
+					return strings.ToLower(tier)
+				}
+			}
+		}
+	}
+	if raw, err := os.ReadFile(filepath.Join(filepath.Dir(cDir), ".claude.json")); err == nil {
+		var doc map[string]interface{}
+		if json.Unmarshal(raw, &doc) == nil {
+			if acct, ok := doc["oauthAccount"].(map[string]interface{}); ok {
+				if sub := strings.TrimSpace(asString(acct["subscriptionType"])); sub != "" {
+					return strings.ToLower(sub)
+				}
+				if bill := strings.TrimSpace(asString(acct["billingType"])); bill != "" {
+					return strings.ToLower(bill)
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func scanClaudeSessionWeeklyTokens(filePath string, fallbackMs, cutoff7dMs int64) (tokens int64, turns int) {
+	if filePath == "" {
+		return 0, 0
+	}
+	f, err := os.Open(filePath)
+	if err != nil {
+		return 0, 0
+	}
+	defer f.Close()
+
+	seenMsg := map[string]bool{}
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var item map[string]interface{}
+		if json.Unmarshal([]byte(line), &item) != nil {
+			continue
+		}
+		if asString(item["type"]) != "assistant" {
+			continue
+		}
+		ts := parseTimeMs(asString(item["timestamp"]))
+		if ts <= 0 {
+			ts = fallbackMs
+		}
+		if ts < cutoff7dMs {
+			continue
+		}
+		msg, _ := item["message"].(map[string]interface{})
+		if msg == nil {
+			continue
+		}
+		msgID := strings.TrimSpace(asString(msg["id"]))
+		if msgID != "" {
+			if seenMsg[msgID] {
+				continue
+			}
+			seenMsg[msgID] = true
+		}
+		turns++
+		u := parseTurnUsage(msg["usage"])
+		tokens += u.stepTokens()
+	}
+	return tokens, turns
+}
+
+func collectClaudeQuotaSnapshot(cDir string, sessions []ExternalSessionSummary, now time.Time) *LocalCLIQuotaSnapshot {
+	planType := readClaudeSubscriptionPlan(cDir)
+	cutoff7dMs := now.Add(-7 * 24 * time.Hour).UnixMilli()
+	var weeklyTokens int64
+	var weeklyTurns int
+	var latestUpdatedMs int64
+	inspected := 0
+
+	for _, s := range sessions {
+		if s.UpdatedAt < cutoff7dMs {
+			continue
+		}
+		if s.UpdatedAt > latestUpdatedMs {
+			latestUpdatedMs = s.UpdatedAt
+		}
+		if inspected >= 12 {
+			continue
+		}
+		inspected++
+		tks, trns := scanClaudeSessionWeeklyTokens(findClaudeSessionFile(s.ID), s.UpdatedAt, cutoff7dMs)
+		weeklyTokens += tks
+		weeklyTurns += trns
+	}
+	if planType == "" && weeklyTokens == 0 && weeklyTurns == 0 {
+		return nil
+	}
+	return &LocalCLIQuotaSnapshot{
+		PlanType:     planType,
+		WeeklyTokens: weeklyTokens,
+		WeeklyTurns:  weeklyTurns,
+		UpdatedAt:    latestUpdatedMs,
+	}
+}
+
 func detectClaudeCLIStatus(g *Service, hoxiMap map[string]interface{}) LocalCLIStatusItem {
-	_, stats := scanClaudeSessions("", "")
+	sessions, stats := scanClaudeSessions("", "")
 	_, apiKey, defaultModel, models := readClaudeSettingsEnv()
 	claudeBin := resolveClaudeBinary()
 	_, connected := hoxiMap["claude-code"]
@@ -586,6 +704,7 @@ func detectClaudeCLIStatus(g *Service, hoxiMap map[string]interface{}) LocalCLIS
 		SessionCount:  stats.SessionCount,
 		AuthMode:      authMode,
 		ProviderID:    "claude-code",
+		Quota:         collectClaudeQuotaSnapshot(claudeHomeDir(), sessions, time.Now()),
 	}
 }
 

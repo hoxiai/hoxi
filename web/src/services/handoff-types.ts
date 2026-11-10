@@ -89,6 +89,22 @@ export interface HandoffImportResponse {
   error?: string;
 }
 
+export interface LocalCLIQuotaWindow {
+  windowMinutes?: number;
+  usedPercent?: number;
+  remainingPercent?: number;
+  resetsAt?: number;
+}
+
+export interface LocalCLIQuotaSnapshot {
+  planType?: string;
+  primary?: LocalCLIQuotaWindow;
+  secondary?: LocalCLIQuotaWindow;
+  weeklyTokens?: number;
+  weeklyTurns?: number;
+  updatedAt?: number;
+}
+
 export interface LocalCLIStatusItem {
   id: ExternalToolID;
   name: string;
@@ -101,6 +117,7 @@ export interface LocalCLIStatusItem {
   sessionCount: number;
   authMode?: string;
   providerID: string;
+  quota?: LocalCLIQuotaSnapshot;
 }
 
 export interface LocalCLIStatusResponse {

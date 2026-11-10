@@ -166,18 +166,35 @@ type HandoffImportResponse struct {
 	Error              string                 `json:"error,omitempty"`
 }
 
+type LocalCLIQuotaWindow struct {
+	WindowMinutes    int      `json:"windowMinutes,omitempty"`
+	UsedPercent      *float64 `json:"usedPercent,omitempty"`
+	RemainingPercent *float64 `json:"remainingPercent,omitempty"`
+	ResetsAt         int64    `json:"resetsAt,omitempty"`
+}
+
+type LocalCLIQuotaSnapshot struct {
+	PlanType     string               `json:"planType,omitempty"`
+	Primary      *LocalCLIQuotaWindow `json:"primary,omitempty"`
+	Secondary    *LocalCLIQuotaWindow `json:"secondary,omitempty"`
+	WeeklyTokens int64                `json:"weeklyTokens,omitempty"`
+	WeeklyTurns  int                  `json:"weeklyTurns,omitempty"`
+	UpdatedAt    int64                `json:"updatedAt,omitempty"`
+}
+
 type LocalCLIStatusItem struct {
-	ID            ExternalToolID `json:"id"`
-	Name          string         `json:"name"`
-	Installed     bool           `json:"installed"`
-	Authenticated bool           `json:"authenticated"`
-	Connected     bool           `json:"connected"`
-	Version       string         `json:"version,omitempty"`
-	DefaultModel  string         `json:"defaultModel,omitempty"`
-	Models        []string       `json:"models,omitempty"`
-	SessionCount  int            `json:"sessionCount"`
-	AuthMode      string         `json:"authMode,omitempty"`
-	ProviderID    string         `json:"providerID"`
+	ID            ExternalToolID         `json:"id"`
+	Name          string                 `json:"name"`
+	Installed     bool                   `json:"installed"`
+	Authenticated bool                   `json:"authenticated"`
+	Connected     bool                   `json:"connected"`
+	Version       string                 `json:"version,omitempty"`
+	DefaultModel  string                 `json:"defaultModel,omitempty"`
+	Models        []string               `json:"models,omitempty"`
+	SessionCount  int                    `json:"sessionCount"`
+	AuthMode      string                 `json:"authMode,omitempty"`
+	ProviderID    string                 `json:"providerID"`
+	Quota         *LocalCLIQuotaSnapshot `json:"quota,omitempty"`
 }
 
 type LocalCLIStatusResponse struct {

@@ -449,4 +449,11 @@ export const models: ModelsI18n = {
   officialAddToPool: "加入自动池",
   officialInPool: "已在池中",
   officialOpenTab: "管理官方模型",
+  cliQuotaTitle: "订阅与配额",
+  cliQuotaWindow5h: "5h 剩余 {percent}%",
+  cliQuotaWindowWeekly: "周剩余 {percent}%",
+  cliQuotaWindowResetsAt: "{time} 重置",
+  cliQuotaWeeklyUsage: "近 7 天消耗：{tokens} tokens · {turns} 轮",
+  cliQuotaWeeklyTurnsOnly: "近 7 天：{turns} 轮",
+  cliQuotaCooldownActive: "配额冷却中 · {time} 恢复",
 };
