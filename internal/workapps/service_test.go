@@ -50,7 +50,12 @@ func TestFetchAndConcurrentSavePreserveUpdates(t *testing.T) {
 		done <- res
 	}()
 
-	<-entered
+	select {
+	case <-entered:
+	case <-done:
+		close(release)
+		t.Fatalf("FetchApps exited before reaching test server")
+	}
 	// Concurrent user save while FetchApps is in-flight over HTTP.
 	if err := svc.SaveState(map[string]any{
 		"installedIds": []string{"shopify", "custom-1"},

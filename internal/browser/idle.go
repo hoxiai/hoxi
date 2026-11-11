@@ -99,5 +99,6 @@ func (s *Service) idleState(key scopeKey) State {
 	if closed {
 		state.IdleClosed, state.IdleMinutes = true, int(idleTimeout/time.Minute)
 	}
+	s.applyStoreMetadata(key.session, key.directory, &state)
 	return state
 }

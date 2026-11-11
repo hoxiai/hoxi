@@ -68,6 +68,7 @@ type Service struct {
 	imageClient     llm.ImageClient
 	audioClient     llm.AudioClient
 	skillResolver   func(ctx context.Context, directory, sessionID string, sel SkillSelection) (ResolvedSkill, error)
+	sessionContext  func(sessionID, directory string) string
 	projectResolver ProjectResolver
 	permissionRules func() map[string]interface{}
 	onPolicySaved   func()
@@ -78,6 +79,30 @@ type Service struct {
 	sessionDiffState
 	prewarmState
 	turnLedgerState
+}
+
+// SetSessionContextResolver injects optional per-session operational context
+// (such as a bound Work store's credential-scrubbed profile) into turn prompts.
+func (s *Service) SetSessionContextResolver(fn func(sessionID, directory string) string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.sessionContext = fn
+	s.mu.Unlock()
+}
+
+func (s *Service) resolveSessionContextBlock(sessionID, directory string) string {
+	if s == nil {
+		return ""
+	}
+	s.mu.Lock()
+	fn := s.sessionContext
+	s.mu.Unlock()
+	if fn == nil {
+		return ""
+	}
+	return strings.TrimSpace(fn(sessionID, directory))
 }
 
 // SetSummaryNotifier receives the end-of-turn count line. The body contains

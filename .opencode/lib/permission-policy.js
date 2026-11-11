@@ -55,7 +55,7 @@ const DESTRUCTIVE_RE = new RegExp(
     String.raw`(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.(?:ssh|aws|gnupg|kube)\/`,
     String.raw`(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.(?:netrc|npmrc|git-credentials|credentials\.json)(?:$|[\s;&|)'"*?])`,
     String.raw`\.claude\/\.credentials\.json`,
-    String.raw`\.hoxi\/(?:models|auth|tunnel(?:-dev)?|cloudflared|pairing|relay-keys|approval-policy|hoxi)\.(?:json|db)`,
+    String.raw`\.hoxi\/(?:models|auth|tunnel(?:-dev)?|cloudflared|pairing|relay-keys|work-apps|approval-policy|hoxi)\.(?:json|db)`,
     String.raw`\.docker\/config\.json`,
     // .env / .env.* / .envrc files
     ENV_FILE_PATTERN,
@@ -123,6 +123,7 @@ const GO_UNSAFE_FLAGS = new Set([
 const GO_ENV_WRITE_FLAGS = new Set(["w", "u"]);
 const HOXI_CODE_INDEX_SUBCOMMANDS = new Set(["search", "inspect", "callers", "callees", "impact", "context", "explore", "refresh", "status"]);
 const HOXI_DOC_READ_SUBCOMMANDS = new Set(["inspect", "read"]);
+const HOXI_ECOM_READ_SUBCOMMANDS = new Set(["profit", "listing-check", "ads-audit", "help"]);
 const TOOLCHAIN_BASES = new Set(["go", "npm", "pnpm", "yarn", "cargo", "pytest", "tsc", "npx", "node", "git", "hoxi"]);
 const SYSTEM_TOOL_DIRS = new Set([
   "/usr/local/go/bin", "/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin",
@@ -463,9 +464,22 @@ function isSafeWords(words) {
     if (arg(0) === "doc") {
       return HOXI_DOC_READ_SUBCOMMANDS.has(arg(1)) && args.length >= 3 && hoxiCodeIndexArgsSafe(args.slice(2));
     }
+    if (arg(0) === "ecom") {
+      return args.length >= 2 && HOXI_ECOM_READ_SUBCOMMANDS.has(arg(1)) && hoxiEcomArgsSafe(args.slice(2));
+    }
     return (arg(0) === "code-index" || arg(0) === "codeindex") && HOXI_CODE_INDEX_SUBCOMMANDS.has(arg(1)) && hoxiCodeIndexArgsSafe(args.slice(2));
   }
   return false;
+}
+
+function hoxiEcomArgsSafe(args) {
+  for (let i = 0; i < args.length; i++) {
+    const a = String(args[i] || "").trim();
+    if (a === "-o" || a === "--out" || a === "-out" || a.startsWith("-o=") || a.startsWith("--out=") || a.startsWith("-out=")) {
+      return false;
+    }
+  }
+  return hoxiCodeIndexArgsSafe(args);
 }
 
 function hoxiCodeIndexArgsSafe(args) {

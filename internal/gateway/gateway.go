@@ -188,6 +188,9 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 	// A deleted conversation's own Chrome profile (often 100-200 MB), computer grant, and sandbox state go too.
 	runnerSvc.SetSessionDeletedHook(func(sessionID string) {
 		g.browser.ForgetSession(sessionID)
+		if g.workApps != nil {
+			g.workApps.ForgetSession(sessionID)
+		}
 		if g.computer != nil {
 			g.computer.ForgetSession(sessionID)
 		}
@@ -202,25 +205,7 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 			_, _ = g.codeIndex.WarmVectorsContext(ctx, dir, 96)
 		})
 	}
-	if g.workApps != nil {
-		g.browser.SetProfileResolver(func(sessionID, _ string) string {
-			cur := strings.TrimSpace(sessionID)
-			for depth := 0; cur != "" && depth < 8; depth++ {
-				if key := g.workApps.ResolveBrowserProfileKey(cur); key != "" {
-					return key
-				}
-				if runnerSvc == nil || runnerSvc.Store() == nil {
-					break
-				}
-				rec, ok := runnerSvc.Store().Meta(cur)
-				if !ok || strings.TrimSpace(rec.ParentID) == "" || rec.ParentID == cur {
-					break
-				}
-				cur = strings.TrimSpace(rec.ParentID)
-			}
-			return "default"
-		})
-	}
+	g.wireWorkResolvers()
 	if profileDir := hoxipaths.BrowserProfileDir(); profileDir != "" {
 		g.browser.SetProfileRoot(profileDir)
 		g.browser.SetDefaultWindowMode(true)
@@ -602,9 +587,7 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 		g.mux.Handle("/api/hoxi/auth", authHandler)
 		g.mux.Handle("/api/hoxi/auth/", authHandler)
 	}
-	if g.workApps != nil {
-		g.mux.Handle("/api/hoxi/work/apps", workapps.NewHTTPHandler(g.workApps))
-	}
+	g.registerWorkRoutes()
 	if g.tools != nil {
 		g.mux.Handle("/api/hoxi/tools/", tools.NewHTTPHandler(g.tools))
 	}

@@ -81,6 +81,9 @@ type scope struct {
 	pointerHold       time.Duration
 	workflows         *workflowTracker
 	transferLedgerID  string
+	env               StoreEnvConfig
+	envFingerprint    string
+	proxyBridge       *loopbackProxyBridge
 }
 
 type Service struct {
@@ -95,9 +98,11 @@ type Service struct {
 	uiOrigins      map[string]bool
 	closed         bool
 	closeDone      chan struct{}
-	resolveSession func(sessionID, directory string) (string, error)
-	resolveProfile func(sessionID, directory string) string
-	isSessionBusy  func(sessionID string) bool
+	resolveSession            func(sessionID, directory string) (string, error)
+	resolveProfile            func(sessionID, directory string) string
+	resolveEnv                func(sessionID, directory string) (StoreEnvConfig, error)
+	allowLoopbackProxyTargets bool
+	isSessionBusy             func(sessionID string) bool
 	bridgeURL      string
 	ledger         *reclaim.Ledger
 	now            func() time.Time
@@ -391,6 +396,31 @@ func (sc *scope) start(ctx context.Context) error {
 	if sc.browser != nil && sc.browser.Err() != nil {
 		sc.resetBrowser()
 	}
+	var desiredEnv StoreEnvConfig
+	if sc.service != nil {
+		var envErr error
+		desiredEnv, envErr = sc.service.resolveScopeEnv(sc)
+		if envErr != nil {
+			if sc.browser != nil && !sc.manual {
+				sc.resetBrowser()
+			}
+			return envErr
+		}
+	}
+	upstreamURL, envErr := desiredEnv.validate()
+	if envErr != nil {
+		if sc.browser != nil && !sc.manual {
+			sc.resetBrowser()
+		}
+		return envErr
+	}
+	fp := desiredEnv.fingerprint()
+	if sc.browser != nil && sc.envFingerprint != fp {
+		if sc.manual {
+			return errors.New("store isolation settings changed while manual control is active; close browser first")
+		}
+		sc.resetBrowser()
+	}
 	if sc.browser != nil && sc.window && sc.service != nil {
 		if desired := sc.service.desiredProfileRoot(sc); desired != "" && sc.profileRootUsed != "" && desired != sc.profileRootUsed {
 			sc.resetBrowser()
@@ -399,6 +429,16 @@ func (sc *scope) start(ctx context.Context) error {
 	if sc.browser != nil {
 		return nil
 	}
+	if upstreamURL != nil {
+		allowLoopback := sc.service != nil && sc.service.allowLoopbackProxyTargets
+		bridge, err := startLoopbackProxyBridge(ctx, upstreamURL, allowLoopback)
+		if err != nil {
+			return err
+		}
+		sc.proxyBridge = bridge
+	}
+	sc.env = desiredEnv
+	sc.envFingerprint = fp
 	var (
 		profile  string
 		ledgerID string
@@ -407,6 +447,7 @@ func (sc *scope) start(ctx context.Context) error {
 	if sc.window && sc.service != nil {
 		profile, err = sc.service.acquirePersistentProfile(sc)
 		if err != nil {
+			sc.resetBrowser()
 			return err
 		}
 		if profile != "" {
@@ -416,6 +457,7 @@ func (sc *scope) start(ctx context.Context) error {
 	if profile == "" {
 		profile, ledgerID, err = sc.ledger.MkdirTemp("browser-profile", "hoxi-browser-profile-")
 		if err != nil {
+			sc.resetBrowser()
 			return err
 		}
 		sc.persistentProfile = false
@@ -428,11 +470,11 @@ func (sc *scope) start(ctx context.Context) error {
 	sc.browserCancel = browserCancel
 	done := make(chan error, 1)
 	go func() {
-		if sc.window {
-			done <- chromedp.Run(browser)
-		} else {
-			done <- chromedp.Run(browser, sc.viewport().action(), page.SetInterceptFileChooserDialog(true))
+		initActions := sc.emulationActions()
+		if !sc.window {
+			initActions = append([]chromedp.Action{sc.viewport().action(), page.SetInterceptFileChooserDialog(true)}, initActions...)
 		}
+		done <- chromedp.Run(browser, initActions...)
 	}()
 	select {
 	case err = <-done:

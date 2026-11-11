@@ -161,6 +161,16 @@ func (sc *scope) state(ctx context.Context) (State, error) {
 	if sc.window {
 		state.Mode = "window"
 	}
+	state.StoreID = sc.env.StoreID
+	if sc.env.RedactedProxy != "" {
+		state.StoreProxy = sc.env.RedactedProxy
+	} else if sc.proxyBridge != nil && sc.proxyBridge.redacted != "" {
+		state.StoreProxy = sc.proxyBridge.redacted
+	} else if u, parseErr := parseAndValidateUpstreamProxy(sc.env.ProxyURL); parseErr == nil {
+		state.StoreProxy = redactUpstreamProxy(u)
+	}
+	state.StoreTimezone = sc.env.Timezone
+	state.StoreLocale = sc.env.Locale
 	live := make(map[string]bool)
 	for _, info := range infos {
 		if info.Type == "page" {
@@ -212,11 +222,11 @@ func (sc *scope) withTab(ctx context.Context, tasks ...chromedp.Action) error {
 		// Keep it alive across requests, just like the initial browser target.
 		done := make(chan error, 1)
 		go func() {
-			if sc.window {
-				done <- chromedp.Run(tab)
-			} else {
-				done <- chromedp.Run(tab, sc.viewport().action(), page.SetInterceptFileChooserDialog(true))
+			initActions := sc.emulationActions()
+			if !sc.window {
+				initActions = append([]chromedp.Action{sc.viewport().action(), page.SetInterceptFileChooserDialog(true)}, initActions...)
 			}
+			done <- chromedp.Run(tab, initActions...)
 		}()
 		select {
 		case err := <-done:

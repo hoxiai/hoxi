@@ -118,9 +118,10 @@ func (g *Gateway) routeConversation(w http.ResponseWriter, r *http.Request) bool
 	if action != "" {
 		suffix = "/" + action
 	}
-	// Runtime switches, tool-stop actions, skill-selected prompts, and image-model prompts always go to the runner.
+	// Runtime switches, tool-stop actions, bound Work store sessions, skill-selected prompts, and image-model prompts always go to the runner.
 	if action != "runtime" && action != "stop-tool" && !g.runner.OwnsSession(id) {
-		needsRunner := (action == "prompt" || action == "prompt_async") && requestNeedsRunner(r, g.runner.IsImageModel)
+		hasStoreCtx := g.workApps != nil && g.workApps.FormatSessionStoreContext(id) != ""
+		needsRunner := (action == "prompt" || action == "prompt_async") && (hasStoreCtx || requestNeedsRunner(r, g.runner.IsImageModel))
 		if !needsRunner {
 			if r.Method == http.MethodDelete && action == "" {
 				g.runner.DeleteSessionAttachments(id)

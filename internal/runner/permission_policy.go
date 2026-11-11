@@ -46,7 +46,7 @@ var (
 		`(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*/)?\.(?:ssh|aws|gnupg|kube)/`,
 		`(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*/)?\.(?:netrc|npmrc|git-credentials|credentials\.json)(?:$|[\s;&|)'"*?])`,
 		`\.claude/\.credentials\.json`,
-		`\.hoxi/(?:models|auth|tunnel(?:-dev)?|cloudflared|pairing|relay-keys|approval-policy|hoxi)\.(?:json|db)`,
+		`\.hoxi/(?:models|auth|tunnel(?:-dev)?|cloudflared|pairing|relay-keys|work-apps|approval-policy|hoxi)\.(?:json|db)`,
 		`\.docker/config\.json`,
 		// .env / .env.* / .envrc files
 		envFilePattern,
@@ -118,6 +118,7 @@ var (
 	goEnvWriteFlags          = setOf("w", "u")
 	hoxiCodeIndexSubcommands = setOf("search", "inspect", "callers", "callees", "impact", "context", "explore", "refresh", "status")
 	hoxiDocReadSubcommands   = setOf("inspect", "read")
+	hoxiEcomReadSubcommands  = setOf("profit", "listing-check", "ads-audit", "help")
 )
 
 func setOf(items ...string) map[string]bool {
@@ -432,6 +433,11 @@ func isSafeWords(words []string) bool {
 				len(args) >= 3 &&
 				hoxiCodeIndexArgsSafe(args[2:])
 		}
+		if arg(0) == "ecom" {
+			return len(args) >= 2 &&
+				hoxiEcomReadSubcommands[arg(1)] &&
+				hoxiEcomArgsSafe(args[2:])
+		}
 		return (arg(0) == "code-index" || arg(0) == "codeindex") &&
 			hoxiCodeIndexSubcommands[arg(1)] &&
 			hoxiCodeIndexArgsSafe(args[2:])
@@ -458,6 +464,17 @@ func isSafeKillProbeArgs(args []string) bool {
 		}
 	}
 	return true
+}
+
+func hoxiEcomArgsSafe(args []string) bool {
+	for _, raw := range args {
+		a := strings.TrimSpace(raw)
+		if a == "-o" || a == "--out" || a == "-out" ||
+			strings.HasPrefix(a, "-o=") || strings.HasPrefix(a, "--out=") || strings.HasPrefix(a, "-out=") {
+			return false
+		}
+	}
+	return hoxiCodeIndexArgsSafe(args)
 }
 
 func hoxiCodeIndexArgsSafe(args []string) bool {

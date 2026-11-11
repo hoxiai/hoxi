@@ -70,5 +70,8 @@
   {"name": "manage_task double-quoted status is routine read", "destructive": false, "request": {"permission": "tool", "patterns": ["manage_task"], "metadata": {"tool": "manage_task", "args": "{\"Action\":\"\\\"status\\\"\",\"TaskId\":\"\\\"conv/task-1\\\"\"}"}}},
   {"name": "manage_subagents list is routine read", "destructive": false, "request": {"permission": "tool", "patterns": ["manage_subagents"], "metadata": {"tool": "manage_subagents", "args": "{\"Action\":\"list\"}"}}},
   {"name": "bash request with manage_task metadata is not treated as read", "destructive": true, "request": {"permission": "bash", "patterns": ["rm -rf build"], "metadata": {"tool": "manage_task", "action": "status", "command": "rm -rf build"}}},
-  {"name": "subshell dotenv read requires approval", "destructive": true, "request": {"permission": "bash", "patterns": ["(cd pkg && cat .env)"]}}
+  {"name": "subshell dotenv read requires approval", "destructive": true, "request": {"permission": "bash", "patterns": ["(cd pkg && cat .env)"]}},
+  {"name": "hoxi ecom profit is routine read", "destructive": false, "request": {"permission": "bash", "patterns": ["hoxi ecom profit --platform amazon --price 39.99 --cost-cny 36"]}},
+  {"name": "hoxi ecom ads-audit on dotenv is destructive", "destructive": true, "request": {"permission": "bash", "patterns": ["hoxi ecom ads-audit --file .env"]}},
+  {"name": "hoxi work-apps.json read via bash is destructive", "destructive": true, "request": {"permission": "bash", "patterns": ["cat ~/.hoxi/work-apps.json"]}}
 ]

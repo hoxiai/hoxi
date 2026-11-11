@@ -96,5 +96,7 @@
   {"command": "bash scripts/test.sh --verbose", "expect": "allow"},
   {"command": "python3 <<'EOF'\nimport json\nprint(json.dumps({\"a\": 1}))\nEOF", "expect": "allow"},
   {"command": "python3 -m http.server 8000", "expect": "allow"},
-  {"command": "git log --oneline --grep push | head", "expect": "allow"}
+  {"command": "git log --oneline --grep push | head", "expect": "allow"},
+  {"command": "cat ~/.hoxi/work-apps.json", "expect": "deny", "category": "secret"},
+  {"command": "hoxi ecom profit --platform amazon --price 29.99 --cost 5.5", "expect": "allow"}
 ]

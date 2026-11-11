@@ -62,8 +62,12 @@ type State struct {
 	Manual     bool        `json:"manual"`
 	// Set on a scope that no longer exists because its Chrome went unused
 	// for IdleMinutes, until a new scope is created for the same key.
-	IdleClosed  bool `json:"idleClosed,omitempty"`
-	IdleMinutes int  `json:"idleMinutes,omitempty"`
+	IdleClosed    bool   `json:"idleClosed,omitempty"`
+	IdleMinutes   int    `json:"idleMinutes,omitempty"`
+	StoreID       string `json:"storeId,omitempty"`
+	StoreProxy    string `json:"storeProxy,omitempty"`
+	StoreTimezone string `json:"storeTimezone,omitempty"`
+	StoreLocale   string `json:"storeLocale,omitempty"`
 }
 
 func emptyState() State { return State{Tabs: []Tab{}} }
@@ -256,6 +260,7 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		if s.defaultModeWindow() {
 			state.Mode = "window"
 		}
+		s.applyStoreMetadata(key.session, key.directory, &state)
 		writeJSON(w, 200, state)
 		return
 	}
@@ -338,8 +343,25 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		if sc.window {
 			state.Mode = "window"
 		}
+		s.applyStoreMetadata(sc.sessionID, sc.directory, &state)
 		if sc.pairToken != "" {
-			writeJSON(w, 200, map[string]any{"tabs": []Tab{}, "tabID": "", "url": "", "title": "", "manual": sc.manual, "pairing": true})
+			resp := map[string]any{"tabs": []Tab{}, "tabID": "", "url": "", "title": "", "manual": sc.manual, "pairing": true}
+			if state.Mode != "" {
+				resp["mode"] = state.Mode
+			}
+			if state.StoreID != "" {
+				resp["storeId"] = state.StoreID
+			}
+			if state.StoreProxy != "" {
+				resp["storeProxy"] = state.StoreProxy
+			}
+			if state.StoreTimezone != "" {
+				resp["storeTimezone"] = state.StoreTimezone
+			}
+			if state.StoreLocale != "" {
+				resp["storeLocale"] = state.StoreLocale
+			}
+			writeJSON(w, 200, resp)
 			return
 		}
 		writeJSON(w, 200, state)
@@ -406,6 +428,7 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 			if sc.window {
 				fallback.Mode = "window"
 			}
+			s.applyStoreMetadata(sc.sessionID, sc.directory, &fallback)
 			writeJSON(w, 200, fallback)
 			return
 		}
@@ -418,6 +441,18 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if state.Navigation != nil {
 		result["navigation"] = state.Navigation
+	}
+	if state.StoreID != "" {
+		result["storeId"] = state.StoreID
+	}
+	if state.StoreProxy != "" {
+		result["storeProxy"] = state.StoreProxy
+	}
+	if state.StoreTimezone != "" {
+		result["storeTimezone"] = state.StoreTimezone
+	}
+	if state.StoreLocale != "" {
+		result["storeLocale"] = state.StoreLocale
 	}
 	for k, v := range extra {
 		if b, ok := v.([]byte); ok {

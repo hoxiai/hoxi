@@ -101,6 +101,11 @@ func TestTunnelRouteAllowlist(t *testing.T) {
 		{post, "/api/hoxi/question/que_1/unknown"},
 		// Commit attribution is a desktop preference, never remotely toggled.
 		{get, "/api/hoxi/git/attribution"}, {http.MethodPut, "/api/hoxi/git/attribution"},
+		// Work store profiles, proxy credentials/probes, and deterministic ecom endpoints stay desktop-only.
+		{get, "/api/hoxi/work/apps"}, {http.MethodPut, "/api/hoxi/work/apps"}, {post, "/api/hoxi/work/apps"},
+		{get, "/api/hoxi/work/stores"}, {post, "/api/hoxi/work/proxy-check"},
+		{post, "/api/hoxi/work/ecom/profit"}, {post, "/api/hoxi/work/ecom/ads-audit"},
+		{post, "/api/hoxi/work/ecom/listing-check"}, {post, "/api/hoxi/work/ecom/shopify-csv"},
 		{get, "/api/hoxi/sessions//message"}, {get, "/api/hoxi/sessions/"},
 		// Methods are part of the allow-list.
 		{http.MethodPatch, "/api/hoxi/sessions/ses_1"}, {http.MethodDelete, "/api/hoxi/sessions/ses_1"},

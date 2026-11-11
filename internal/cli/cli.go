@@ -42,6 +42,7 @@ var knownSubcommands = map[string]bool{
 	"code-index":  true,
 	"codeindex":   true,
 	"doc":         true,
+	"ecom":        true,
 	"image":       true,
 	"sessions":    true,
 	"status":      true,
@@ -170,6 +171,8 @@ func Run(
 			return runCodeIndexCommand(args[2:], cwd, stdout, stderr)
 		case "doc":
 			return runDocCommand(args[2:], cwd, stdin, stdout, stderr)
+		case "ecom":
+			return runEcomCommand(args[2:], cwd, stdout, stderr)
 		case "image":
 			return runImageCommand(ctx, args[2:], cwd, defaultBridgeAddr, bootHeadless, stdout, stderr)
 		case "handoff":
@@ -286,6 +289,7 @@ Usage:
   hoxi worktree [list|diff|apply]     Manage isolated Git worktree sandboxes
   hoxi code-index <action> [flags]    Navigate code via worktree index (context|search|inspect|callers|callees|impact|refresh)
   hoxi doc <action> [flags]           Read, inspect, create or edit PDF/Excel/Word/CSV documents (inspect|read|write-xlsx|set-cell|write-docx|write-pdf)
+  hoxi ecom <action> [flags]          Deterministic e-commerce profit, ad report audit, compliance & Shopify CSV (profit|ads-audit|listing-check|shopify-csv)
   hoxi image <generate|models>        Generate or edit images via configured image models
   hoxi tui                            Launch native OpenCode TUI with Hoxi plugins
   hoxi serve                          Run headless Hoxi daemon for mobile/remote control

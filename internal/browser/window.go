@@ -106,6 +106,19 @@ func (sc *scope) allocatorOptions(profile string) []chromedp.ExecAllocatorOption
 		chromedp.Flag("disable-back-forward-cache", true),
 		chromedp.Flag("disk-cache-size", strconv.Itoa(diskCacheBytes)),
 	)
+	if sc.proxyBridge != nil && sc.proxyBridge.Addr() != "" {
+		opts = append(opts,
+			chromedp.Flag("proxy-server", "http://"+sc.proxyBridge.Addr()),
+			chromedp.Flag("force-webrtc-ip-handling-policy", "disable_non_proxied_udp"),
+			chromedp.Flag("webrtc-ip-handling-policy", "disable_non_proxied_udp"),
+		)
+	}
+	if loc := strings.TrimSpace(sc.env.Locale); loc != "" {
+		opts = append(opts, chromedp.Flag("lang", loc))
+	}
+	if tz := strings.TrimSpace(sc.env.Timezone); tz != "" {
+		opts = append(opts, chromedp.Env("TZ="+tz))
+	}
 	if execPath := resolveBrowserExecPath(); execPath != "" {
 		opts = append(opts, chromedp.ExecPath(execPath))
 	}
@@ -253,6 +266,12 @@ func (sc *scope) resetBrowser() {
 	sc.browser = nil
 	sc.tabID = ""
 	sc.profileRootUsed = ""
+	if sc.proxyBridge != nil {
+		sc.proxyBridge.Close()
+		sc.proxyBridge = nil
+	}
+	sc.env = StoreEnvConfig{}
+	sc.envFingerprint = ""
 	if sc.persistentProfile {
 		sc.ledger.Forget(sc.ledgerID)
 		sc.ledgerID = ""

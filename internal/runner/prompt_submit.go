@@ -52,6 +52,7 @@ Use the tool's bounded output when available. If a full log is needed, save it t
 Set a suitable tool timeout and test timeout. If a check stays silent, inspect its current stage and existing log before retrying; do not start duplicate checks or repeatedly wait without reporting progress. Reuse build caches unless a clean build is required.
 When navigating code, follow: locate symbol/file or fetch a full surgical package in one step (prefer hoxi_code_index tool or 'hoxi code-index context|search|inspect|callers|callees|impact|refresh') -> inspect the target function and minimal surrounding lines instead of whole files -> check callers, callees, blast radius (impact) and related tests. Edit and then run targeted verification only when the task asks for changes.
 When the user asks to generate or edit visual/image assets (icons, banners, illustrations, mockups, or photo edits), prefer calling the hoxi_image tool (or 'hoxi image generate "<prompt>" --out <workspace-relative-path>' in CLI sessions) so Hoxi invokes the user's configured image generation model directly.
+For cross-border e-commerce unit economics, 1688 volumetric landed cost, Search Term ad report audits, Amazon 249B/policy listing checks, TikTok script timing, or Shopify variant CSVs, prefer 'hoxi ecom profit|ads-audit|listing-check|shopify-csv' over mental estimation.
 Reviews, audits and questions are read-only: report findings and do not edit, commit, push or publish unless the user asks for a fix or that action. Within the work the user asked for, keep going without asking whether to continue; stop to ask only for a real blocker, a choice the user must make, or an action that needs approval.
 When the user asks to spawn/start a background subtask and continue chatting in the main thread (e.g. "开一个子任务…然后继续对话" / "background subtask"), or to split work into parallel coding subtasks: do NOT call the built-in synchronous task/subagent tool (which blocks the current turn until the subagent finishes). Instead, output a fenced hoxi-subtasks JSON block and end your turn immediately so Hoxi runs the subtask(s) asynchronously in isolated background sessions while the main conversation stays responsive: {"title":"plan title","autoStart":true,"concurrency":3,"tasks":[{"id":"task-1","prompt":"self-contained instructions and verification","dependsOn":[]}]} (use "autoStart":true when the user wants the subtask(s) started right away, or "autoStart":false when proposing a multi-task plan for review first).`
 
@@ -141,7 +142,8 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 	pendingAdopted := false
 	wantRuntime := resolveRequestedPromptRuntime(body, "opencode")
 	reqImageTurn := body.Model != nil && s.IsImageModel(body.Model.ProviderID, body.Model.ModelID)
-	if !ok && (body.SkillSelection != nil || reqImageTurn || (wantRuntime != "" && wantRuntime != "opencode")) {
+	hasStoreCtx := s.resolveSessionContextBlock(sessionID, directory) != ""
+	if !ok && (body.SkillSelection != nil || reqImageTurn || hasStoreCtx || (wantRuntime != "" && wantRuntime != "opencode")) {
 		adopted, adoptErr := s.adoptOpenCodeSession(ctx, sessionID, directory)
 		if adoptErr != nil {
 			if adoptErr.Error() == "cannot change runtime while the session is running" {
@@ -239,6 +241,13 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 		}
 	}
 	callerSystem := strings.TrimSpace(body.System)
+	if storeCtx := s.resolveSessionContextBlock(rec.ID, rec.WorktreePath); storeCtx != "" && !strings.Contains(callerSystem, "<hoxi_work_store_profile>") {
+		if callerSystem == "" {
+			callerSystem = storeCtx
+		} else {
+			callerSystem = storeCtx + "\n\n" + callerSystem
+		}
+	}
 	body.System = strings.TrimSpace(commandExecutionGuidance + "\n\n" + callerSystem)
 	var resolvedSkill ResolvedSkill
 	if body.SkillSelection != nil {
