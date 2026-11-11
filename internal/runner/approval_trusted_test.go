@@ -363,3 +363,41 @@ func TestTrustedRunsScriptFilesAndRelativeSiblingCD(t *testing.T) {
 		t.Error("cd into .hoxi/worktrees must stay opaque")
 	}
 }
+
+func TestAutoControllableCombinedHeredocInlineScriptAndScopedCD(t *testing.T) {
+	local := t.TempDir()
+	for _, sub := range []string{"scripts", ".git"} {
+		if err := os.MkdirAll(filepath.Join(local, sub), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	auto := ApprovalPolicy{Mode: ApprovalModeAuto}
+
+	for _, cmd := range []string{
+		"cat <<'EOF' > /tmp/hoxi-commit-msg.txt\nfeat(runner): avoid rm -f /tmp prompt and .env false alarm\nEOF\ngit commit -F /tmp/hoxi-commit-msg.txt && rm -f /tmp/hoxi-commit-msg.txt && git status -s",
+		"cat <<'EOF' > /tmp/pr-body.md\nFixes sudo / chmod / shutdown false positives\nEOF\ngh pr create --title \"fix\" --body-file /tmp/pr-body.md &&\\\n  rm -f /tmp/pr-body.md",
+		"# cleanup temporary probe output\nrm -f /tmp/hoxi-probe.json && git status -s",
+		"python3 -c 'import json; print(json.load(open(\"/tmp/probe.json\"))[\"ok\"])' && rm -f /tmp/probe.json",
+		"cd scripts && chmod +x gen.sh",
+		"git status -s && cd scripts && chmod 755 gen.sh",
+	} {
+		if !approvalAutoApproves(req("bash", cmd), auto, nil, local) {
+			t.Errorf("auto mode should allow controllable composite command %q", cmd)
+		}
+	}
+
+	for _, cmd := range []string{
+		"cat <<'EOF' > /tmp/run.py\nimport os; print(open('.env').read())\nEOF\npython3 /tmp/run.py && rm -f /tmp/run.py",
+		"cat <<'EOF' > /tmp/run.sh\nrm -rf ~\nEOF\nrm -f /tmp/other.txt",
+		"python3 -c 'import os; os.remove(\"scripts/gen.sh\")' && rm -f /tmp/probe.json",
+		"cd .git && chmod +x config",
+		"cd scripts && chmod +x ../.git/config",
+		"cd scripts && chmod +x .env",
+		"cd scripts && rm -f gen.sh",
+		"cd ../outside && chmod +x gen.sh",
+	} {
+		if approvalAutoApproves(req("bash", cmd), auto, nil, local) {
+			t.Errorf("auto mode must keep asking for %q", cmd)
+		}
+	}
+}

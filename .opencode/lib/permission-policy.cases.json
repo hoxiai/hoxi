@@ -800,5 +800,12 @@
   { "command": "gh pr create --title \"fix: rm -f /tmp\" --body \"Fixes .env and git reset --hard false alarm\"", "decision": "ask", "destructive": false },
   { "command": "gh release create v1.0.0 --notes=\"Includes chmod and truncate fixes\"", "decision": "ask", "destructive": false },
   { "command": "gh pr create --title \"x\" --body-file .env", "decision": "ask", "destructive": true },
-  { "command": "gh pr create --title \"x\" --body \"$(cat .env)\"", "decision": "ask", "destructive": true }
+  { "command": "gh pr create --title \"x\" --body \"$(cat .env)\"", "decision": "ask", "destructive": true },
+  { "command": "git notes add -m \"fix: rm -rf and .env false positive\"", "decision": "ask", "destructive": false },
+  { "command": "go test -run 'rm|sudo|shutdown' ./internal/runner", "decision": "allow", "destructive": false },
+  { "command": "go test -run='dd|truncate' -bench='chmod' ./internal/runner", "decision": "allow", "destructive": false },
+  { "command": "go test -exec 'rm -rf /' ./internal/runner", "decision": "ask", "destructive": true },
+  { "command": "pytest -k \"rm or sudo or shutdown\"", "decision": "allow", "destructive": false },
+  { "command": "vitest run -t \"rm -f /tmp and .env\"", "decision": "ask", "destructive": false },
+  { "command": "npx vitest run --testNamePattern=\"sudo chmod\"", "decision": "ask", "destructive": false }
 ]

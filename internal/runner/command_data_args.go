@@ -393,6 +393,18 @@ func dataArgumentReplacements(seg []dataToken) []dataReplacement {
 		return gitDataArguments(seg)
 	case "gh":
 		return ghDataArguments(seg)
+	case "go":
+		if len(seg) >= 2 && seg[1].value == "test" {
+			return flagValueReplacements(seg, 2, setOf("-run", "--run", "-bench", "--bench", "-skip", "--skip"), false)
+		}
+	case "pytest":
+		return flagValueReplacements(seg, 1, setOf("-k"), false)
+	case "vitest":
+		return flagValueReplacements(seg, 1, setOf("-t", "--testNamePattern"), false)
+	case "npx":
+		if len(seg) >= 2 && seg[1].value == "vitest" {
+			return flagValueReplacements(seg, 2, setOf("-t", "--testNamePattern"), false)
+		}
 	case "rg":
 		idxs = searchPatternArguments(seg, rgValueFlags)
 	case "grep", "egrep", "fgrep":
@@ -443,7 +455,7 @@ func gitDataArguments(seg []dataToken) []dataReplacement {
 	}
 	sub := seg[i].value
 	switch sub {
-	case "commit", "tag", "merge", "stash":
+	case "commit", "tag", "merge", "stash", "notes":
 		return flagValueReplacements(seg, i+1, setOf("-m", "--message"), sub == "commit")
 	case "log", "shortlog":
 		return flagValueReplacements(seg, i+1, setOf("--grep", "-S", "-G"), false)

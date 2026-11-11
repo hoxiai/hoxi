@@ -3,7 +3,7 @@
 // internal/runner/opaque_constants.go and opaque_expand.go.
 import { DATA_ARG_INTERPRETERS } from "./command-data-args.js";
 import { isSecretPath } from "./external-path-risk.js";
-import { containsFor, expandLiteralForLoops, forLoopRanges, isSafeCurlOutputTarget, isValueClassCurl, isValueClassWc } from "./shell-loops.js";
+import { containsFor, expandLiteralForLoops, forLoopRanges, isSafeCurlOutputTarget, isValueClassCurl, isValueClassSystem, isValueClassWc } from "./shell-loops.js";
 
 export const CMD_SUBST_VAR = "__hoxi_cmdsub__";
 export const MAX_SUBSHELL_DEPTH = 2;
@@ -703,7 +703,7 @@ export function isValueClassSegment(seg) {
   const first = judge.normalizeAbsoluteTool ? judge.normalizeAbsoluteTool(words[0]) : words[0];
   const base = baseName(first);
   const args = words.slice(1);
-  if (["pwd", "date", "which", "dirname", "basename"].includes(base)) return true;
+  if (["pwd", "date", "which", "dirname", "basename"].includes(base) || isValueClassSystem(base, args)) return true;
   if (base === "cat") {
     return args.length > 0 && args.every((a) => !a.startsWith("-") && a !== "/dev/null" && isSafeCurlOutputTarget(a, pathSecret));
   }
@@ -739,6 +739,7 @@ export function isValueClassSegment(seg) {
   }
   if (base === "git") {
     if (args.length === 0 || args[0].startsWith("-")) return false;
+    if (args.length === 2 && args[0] === "branch" && args[1] === "--show-current") return true;
     return ["rev-parse", "write-tree", "merge-base", "symbolic-ref", "describe", "hash-object"].includes(args[0]);
   }
   return false;

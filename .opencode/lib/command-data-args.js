@@ -260,7 +260,7 @@ function gitDataArguments(seg) {
   }
   if (i >= seg.length) return [];
   const sub = seg[i].value;
-  if (["commit", "tag", "merge", "stash"].includes(sub)) {
+  if (["commit", "tag", "merge", "stash", "notes"].includes(sub)) {
     return flagValueReplacements(seg, i + 1, setOf("-m", "--message"), sub === "commit");
   }
   if (sub === "log" || sub === "shortlog") {
@@ -333,6 +333,18 @@ function dataArgumentReplacements(seg) {
       return gitDataArguments(seg);
     case "gh":
       return ghDataArguments(seg);
+    case "go":
+      return seg.length >= 2 && seg[1].value === "test"
+        ? flagValueReplacements(seg, 2, setOf("-run", "--run", "-bench", "--bench", "-skip", "--skip"), false)
+        : [];
+    case "pytest":
+      return flagValueReplacements(seg, 1, setOf("-k"), false);
+    case "vitest":
+      return flagValueReplacements(seg, 1, setOf("-t", "--testNamePattern"), false);
+    case "npx":
+      return seg.length >= 2 && seg[1].value === "vitest"
+        ? flagValueReplacements(seg, 2, setOf("-t", "--testNamePattern"), false)
+        : [];
     case "rg":
       idxs = searchPatternArguments(seg, RG_VALUE_FLAGS);
       break;

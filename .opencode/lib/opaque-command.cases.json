@@ -1528,5 +1528,33 @@
   {
     "command": "cd / && chmod 000 /tmp/probe.sh",
     "opaque": true
+  },
+  {
+    "command": "OS=$(uname -s) && MACH=$(uname -m) && mkdir -p \"/tmp/build-$(uname -s)-$(uname -m)\" && echo \"$OS-$MACH\"",
+    "opaque": false
+  },
+  {
+    "command": "BR=$(git branch --show-current) && echo \"branch=$BR\"",
+    "opaque": false
+  },
+  {
+    "command": "UID_NOW=$(id -u) && ARCH=$(arch) && WHO=$(whoami) && printf '%s:%s:%s\\n' \"$UID_NOW\" \"$ARCH\" \"$WHO\"",
+    "opaque": false
+  },
+  {
+    "command": "HOST=$(hostname -s) && CORES=$(nproc) && echo \"$HOST:$CORES\"",
+    "opaque": false
+  },
+  {
+    "command": "UID_NOW=$(id) && echo \"$UID_NOW\"",
+    "opaque": true
+  },
+  {
+    "command": "OS=$(uname --bogus) && echo \"$OS\"",
+    "opaque": true
+  },
+  {
+    "command": "BR=$(git branch -D main) && echo \"$BR\"",
+    "opaque": true
   }
 ]

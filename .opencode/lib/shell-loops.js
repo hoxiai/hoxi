@@ -16,6 +16,8 @@ const CURL_WRITE_OUT_RE = /^[A-Za-z0-9_.:;,/ \-%{}()\\\n\r\t]+$/;
 const POSITIVE_INT_RE = /^[1-9]\d*$/;
 const XARGS_REPL_RE = /^(?:\{\}|%|[A-Za-z_][A-Za-z0-9_]*)$/;
 const XARGS_ATTACHED_FLAG_RE = /^-(?:[nLPs][1-9]\d*|I(?:\{\}|%|[A-Za-z_][A-Za-z0-9_]*)|-max-(?:args|lines|procs)=[1-9]\d*)$/;
+const UNAME_VALUE_FLAG_RE = /^-(?:[smranpv]+|-(?:all|kernel-name|kernel-release|kernel-version|machine|nodename|processor|operating-system))$/;
+const ID_VALUE_FLAG_RE = /^-[ugn]+$/;
 
 export const SEQ_LOOP_PLACEHOLDER = "__hoxi_seq__";
 const isBoundary = (c) => " \t\r\n;&|()<>".includes(c);
@@ -266,6 +268,14 @@ export function isReadOnlySedArgs(rawArgs, stripNullRedirects) {
   }
   if (i >= args.length) return false;
   return args.slice(i).every((a) => !a.startsWith("-"));
+}
+
+export function isValueClassSystem(base, args) {
+  if (base === "arch" || base === "nproc" || base === "whoami") return args.length === 0;
+  if (base === "hostname") return args.length === 0 || (args.length === 1 && (args[0] === "-s" || args[0] === "-f"));
+  if (base === "uname") return args.every((a) => UNAME_VALUE_FLAG_RE.test(a));
+  if (base === "id") return args.length === 1 && ID_VALUE_FLAG_RE.test(args[0]);
+  return false;
 }
 
 export function isValueClassWc(args, isSecretOrProtected) {

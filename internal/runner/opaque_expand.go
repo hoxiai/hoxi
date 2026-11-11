@@ -23,6 +23,8 @@ var (
 	positiveIntRe       = regexp.MustCompile(`^[1-9]\d*$`)
 	xargsReplRe         = regexp.MustCompile(`^(?:\{\}|%|[A-Za-z_][A-Za-z0-9_]*)$`)
 	xargsAttachedFlagRe = regexp.MustCompile(`^-(?:[nLPs][1-9]\d*|I(?:\{\}|%|[A-Za-z_][A-Za-z0-9_]*)|-max-(?:args|lines|procs)=[1-9]\d*)$`)
+	unameValueFlagRe    = regexp.MustCompile(`^-(?:[smranpv]+|-(?:all|kernel-name|kernel-release|kernel-version|machine|nodename|processor|operating-system))$`)
+	idValueFlagRe       = regexp.MustCompile(`^-[ugn]+$`)
 )
 
 func normalizeNumericForHeaders(s string) string {
@@ -279,6 +281,19 @@ func isValueClassSegment(seg string) bool {
 	switch base {
 	case "pwd", "date", "which", "dirname", "basename":
 		return true
+	case "arch", "nproc", "whoami":
+		return len(args) == 0
+	case "hostname":
+		return len(args) == 0 || (len(args) == 1 && (args[0] == "-s" || args[0] == "-f"))
+	case "uname":
+		for _, a := range args {
+			if !unameValueFlagRe.MatchString(a) {
+				return false
+			}
+		}
+		return true
+	case "id":
+		return len(args) == 1 && idValueFlagRe.MatchString(args[0])
 	case "cat":
 		if len(args) == 0 {
 			return false
@@ -354,6 +369,9 @@ func isValueClassSegment(seg string) bool {
 	case "git":
 		if len(args) == 0 || strings.HasPrefix(args[0], "-") {
 			return false
+		}
+		if len(args) == 2 && args[0] == "branch" && args[1] == "--show-current" {
+			return true
 		}
 		switch args[0] {
 		case "rev-parse", "write-tree", "merge-base", "symbolic-ref", "describe", "hash-object":
