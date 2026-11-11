@@ -67,6 +67,7 @@ type mcpOAuthSession struct {
 	codeVerifier      string
 	redirectURI       string
 	siteOrigin        string
+	tokenEndpoint     string
 	providerID        string
 	providerName      string
 	hintBaseURL       string
@@ -127,6 +128,7 @@ func (g *Service) handleProviderMCPOAuthStart(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	authEndpoint, tokenEndpoint := g.discoverMCPOAuthEndpoints(r.Context(), siteOrigin)
 	redirectURI := siteOrigin + "/user/mcp-authorize"
 	query := url.Values{}
 	query.Set("response_type", "code")
@@ -138,13 +140,18 @@ func (g *Service) handleProviderMCPOAuthStart(w http.ResponseWriter, r *http.Req
 	query.Set("state", state)
 	query.Set("scope", mcpOAuthScopes)
 
-	authURL := siteOrigin + "/api/oauth/authorize?" + query.Encode()
+	sep := "?"
+	if strings.Contains(authEndpoint, "?") {
+		sep = "&"
+	}
+	authURL := authEndpoint + sep + query.Encode()
 
 	sess := &mcpOAuthSession{
 		state:             state,
 		codeVerifier:      codeVerifier,
 		redirectURI:       redirectURI,
 		siteOrigin:        siteOrigin,
+		tokenEndpoint:     tokenEndpoint,
 		providerID:        providerID,
 		providerName:      providerName,
 		hintBaseURL:       strings.TrimSpace(req.BaseURL),
@@ -267,8 +274,48 @@ func (g *Service) runMCPOAuthPollLoop(sess *mcpOAuthSession) {
 	sess.mu.Unlock()
 }
 
+func (g *Service) discoverMCPOAuthEndpoints(ctx context.Context, siteOrigin string) (string, string) {
+	defaultAuth := siteOrigin + "/api/oauth/authorize"
+	defaultToken := siteOrigin + "/api/oauth/token"
+	probeURL := siteOrigin + "/.well-known/oauth-authorization-server"
+	probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, probeURL, nil)
+	if err != nil {
+		return defaultAuth, defaultToken
+	}
+	req.Header.Set("Accept", "application/json")
+	resp, err := g.mcpOAuthHTTPClient(probeURL, 2*time.Second).Do(req)
+	if err != nil {
+		return defaultAuth, defaultToken
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return defaultAuth, defaultToken
+	}
+	var meta struct {
+		AuthorizationEndpoint string `json:"authorization_endpoint"`
+		TokenEndpoint         string `json:"token_endpoint"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 64*1024)).Decode(&meta); err != nil {
+		return defaultAuth, defaultToken
+	}
+	authEP := strings.TrimSpace(meta.AuthorizationEndpoint)
+	tokenEP := strings.TrimSpace(meta.TokenEndpoint)
+	if authEP == "" {
+		authEP = defaultAuth
+	}
+	if tokenEP == "" {
+		tokenEP = defaultToken
+	}
+	return authEP, tokenEP
+}
+
 func (g *Service) stepMCPOAuthSession(ctx context.Context, sess *mcpOAuthSession) bool {
-	tokenURL := sess.siteOrigin + "/api/oauth/token"
+	tokenURL := strings.TrimSpace(sess.tokenEndpoint)
+	if tokenURL == "" {
+		tokenURL = sess.siteOrigin + "/api/oauth/token"
+	}
 	bodyBytes, _ := json.Marshal(map[string]string{
 		"grant_type":    "authorization_code",
 		"code_verifier": sess.codeVerifier,
