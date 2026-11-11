@@ -1,12 +1,12 @@
 package browser
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
 	"image/jpeg"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -111,11 +111,8 @@ func (st *screencast) pump() {
 }
 
 func (st *screencast) decodeDimensions(data string) (int, int) {
-	image, err := base64.StdEncoding.DecodeString(data)
-	if err != nil {
-		return 0, 0
-	}
-	config, err := jpeg.DecodeConfig(bytes.NewReader(image))
+	dec := base64.NewDecoder(base64.StdEncoding, strings.NewReader(data))
+	config, err := jpeg.DecodeConfig(dec)
 	if err != nil {
 		return 0, 0
 	}

@@ -5,6 +5,7 @@ import {
   highlightCodeSync,
   stabilizeHighlightedLines,
 } from "../components/timeline/syntax-highlight";
+import { streamingHighlightDelayMs } from "../components/timeline/CodeBlockCard";
 import { isSameTextRevealStream } from "../components/icons/TextShimmer";
 import {
   createIncrementalMarkdownParser,
@@ -241,5 +242,13 @@ describe("Chat code syntax highlighting", () => {
     assertTrue(isSameTextRevealStream(beforeTruncation, afterWordTruncation));
     assertTrue(isSameTextRevealStream(afterWordTruncation, continuedEllipsis));
     assertTrue(!isSameTextRevealStream("Analyzing regex backtracking", "Running regression tests"));
+  });
+
+  it("scales streaming Shiki throttle smoothly by code length without delaying short snippets", () => {
+    assertEqual(streamingHighlightDelayMs(0), 80);
+    assertEqual(streamingHighlightDelayMs(1999), 80);
+    assertEqual(streamingHighlightDelayMs(2000), 160);
+    assertEqual(streamingHighlightDelayMs(7999), 160);
+    assertEqual(streamingHighlightDelayMs(8000), 260);
   });
 });

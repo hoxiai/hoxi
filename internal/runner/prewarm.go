@@ -11,20 +11,16 @@ import (
 )
 
 const (
-	// projectPrewarmInterval is the steady-state cadence. The OpenCode daemon
-	// keeps a directory's instance warm for several minutes, so re-touching
-	// every root well inside that window keeps workspace expands instant.
-	projectPrewarmInterval = 60 * time.Second
 	// projectPrewarmRetry is used while the daemon is still coming up (or was
-	// restarted), so the first expand after launch is not left cold.
+	// restarted), so the active workspace root is warmed as soon as OpenCode listens.
 	projectPrewarmRetry = 3 * time.Second
 	// projectPrewarmTimeout bounds a single directory's warm request.
 	projectPrewarmTimeout = 5 * time.Second
 	// indexPrewarmTimeout bounds a single directory's background index warm call.
 	indexPrewarmTimeout = 15 * time.Second
-	// maxPrewarmIndexRoots caps automatic startup index prewarming to match the
-	// in-memory code-index LRU capacity so idle projects do not thrash cache or disk.
-	maxPrewarmIndexRoots = 8
+	// maxPrewarmIndexRoots limits automatic startup index prewarming to the
+	// active primary workspace root; other projects warm lazily on demand.
+	maxPrewarmIndexRoots = 1
 )
 
 // prewarmState tracks workspace directory prewarming hooks and warmed roots.
@@ -131,18 +127,43 @@ func (s *Service) warmDirectoryAsync(directory string) {
 	go s.runDirectoryWarmerOnce(ctx, dir, false)
 }
 
-// StartProjectPrewarm keeps the OpenCode daemon's per-directory caches warm
-// and schedules a decoupled one-shot index prewarm for active project roots.
-//
-// The daemon lazily boots an instance per directory (about half a second even
-// for an empty directory), and the unified /api/hoxi/sessions listing always
-// asks it for un-adopted sessions — so without warming, the first expand of a
-// workspace stalls on that cold start. Warming every known project root in the
-// background moves the cost off the interactive path.
-//
-// The host calls this once with its lifetime context; the loop stops when the
-// context is cancelled and is a no-op until both the engine client and a
-// project enumerator are wired.
+// candidatePrewarmRoots returns existing project directories ordered with the
+// active primary workspace root first so startup prewarming targets only what
+// the user actually has open.
+func (s *Service) candidatePrewarmRoots() []string {
+	if s == nil {
+		return nil
+	}
+	seen := make(map[string]bool)
+	var out []string
+	add := func(raw string) {
+		dir := strings.TrimSpace(raw)
+		if dir == "" {
+			return
+		}
+		clean := filepath.Clean(dir)
+		if clean == "" || clean == "." || seen[clean] {
+			return
+		}
+		if info, err := os.Stat(clean); err != nil || !info.IsDir() {
+			return
+		}
+		seen[clean] = true
+		out = append(out, clean)
+	}
+	add(s.rootDir)
+	if enumerator, ok := s.projectResolver.(projectEnumerator); ok {
+		for _, root := range enumerator.AllProjectRoots() {
+			add(root)
+		}
+	}
+	return out
+}
+
+// StartProjectPrewarm performs a one-shot startup warm of the active project
+// root (both OpenCode daemon instance and local lexical code index) without
+// polling idle historical workspaces in a permanent keep-alive loop. Other
+// workspaces warm lazily on demand when opened.
 func (s *Service) StartProjectPrewarm(ctx context.Context) {
 	if ctx == nil {
 		return
@@ -164,20 +185,9 @@ func (s *Service) prewarmIndexRoots(ctx context.Context) {
 	if warmer == nil {
 		return
 	}
-	enumerator, ok := s.projectResolver.(projectEnumerator)
-	if !ok {
-		return
-	}
-	for _, root := range enumerator.AllProjectRoots() {
+	for _, dir := range s.candidatePrewarmRoots() {
 		if ctx.Err() != nil {
 			return
-		}
-		dir := strings.TrimSpace(root)
-		if dir == "" {
-			continue
-		}
-		if info, err := os.Stat(dir); err != nil || !info.IsDir() {
-			continue
 		}
 		s.runDirectoryWarmerOnce(ctx, dir, true)
 	}
@@ -192,16 +202,17 @@ func (s *Service) prewarmLoop(ctx context.Context) {
 		case <-time.After(delay):
 		}
 		if s.prewarmProjectRoots(ctx) {
-			delay = projectPrewarmInterval
-		} else {
-			delay = projectPrewarmRetry
+			// Stop once the active project root is warmed so idle historical
+			// OpenCode instances can sleep and release memory naturally.
+			return
 		}
+		delay = projectPrewarmRetry
 	}
 }
 
-// prewarmProjectRoots touches the engine for every project folder. It reports
-// whether the engine answered (or there was nothing to do), which lets the loop
-// settle into its steady cadence instead of retrying while the daemon is down.
+// prewarmProjectRoots touches the OpenCode engine once for the primary active
+// workspace root. It returns true once the engine answers (or when there is no
+// valid root to warm), and false while the daemon is still booting.
 func (s *Service) prewarmProjectRoots(ctx context.Context) bool {
 	if ctx.Err() != nil {
 		return true
@@ -209,29 +220,13 @@ func (s *Service) prewarmProjectRoots(ctx context.Context) bool {
 	if s.openCode == nil {
 		return true
 	}
-	enumerator, ok := s.projectResolver.(projectEnumerator)
-	if !ok {
+	roots := s.candidatePrewarmRoots()
+	if len(roots) == 0 {
 		return true
 	}
-	answered, attempted := false, false
-	for _, root := range enumerator.AllProjectRoots() {
-		dir := strings.TrimSpace(root)
-		if dir == "" {
-			continue
-		}
-		if info, err := os.Stat(dir); err != nil || !info.IsDir() {
-			continue
-		}
-		attempted = true
-		warmCtx, cancel := context.WithTimeout(ctx, projectPrewarmTimeout)
-		_, _, err := s.openCodeRaw(warmCtx, http.MethodGet, "/session", directoryQuery(dir, url.Values{"limit": {"200"}}), nil)
-		cancel()
-		if err == nil {
-			answered = true
-		}
-		if ctx.Err() != nil {
-			break
-		}
-	}
-	return answered || !attempted
+	dir := roots[0]
+	warmCtx, cancel := context.WithTimeout(ctx, projectPrewarmTimeout)
+	_, _, err := s.openCodeRaw(warmCtx, http.MethodGet, "/session", directoryQuery(dir, url.Values{"limit": {"50"}}), nil)
+	cancel()
+	return err == nil
 }

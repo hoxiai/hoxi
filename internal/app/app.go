@@ -433,7 +433,7 @@ func Run(distFS fs.FS) {
 		MinHeight:                560,
 		HideWindowOnClose:        runtime.GOOS == "darwin" || runtime.GOOS == "windows",
 		EnableDefaultContextMenu: true,
-		BackgroundColour:         options.NewRGBA(0, 0, 0, 0),
+		BackgroundColour:         options.NewRGBA(244, 247, 251, 255),
 		AssetServer: &assetserver.Options{
 			Assets:     distFS,
 			Handler:    gw,
@@ -442,8 +442,8 @@ func Run(distFS fs.FS) {
 		Mac: &mac.Options{
 			OnUrlOpen:            app.onURLOpen,
 			TitleBar:             mac.TitleBarHiddenInset(),
-			WebviewIsTransparent: true,
-			WindowIsTranslucent:  true,
+			WebviewIsTransparent: false,
+			WindowIsTranslucent:  false,
 			About: &mac.AboutInfo{
 				Title:   identity.Title,
 				Message: "Native command center for parallel AI engineering.\nMany agents. One workspace.\nhttps://hoxi.ai",

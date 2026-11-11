@@ -201,8 +201,9 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 	if g.codeIndex != nil {
 		g.codeIndex.SetEmbedder(providers)
 		runnerSvc.SetDirectoryWarmerContext(func(ctx context.Context, dir string) {
+			// Warm only the local lexical/AST index at startup; semantic vectors
+			// hydrate and embed lazily on demand when semantic search runs.
 			_, _ = g.codeIndex.StatusContext(ctx, dir)
-			_, _ = g.codeIndex.WarmVectorsContext(ctx, dir, 96)
 		})
 	}
 	g.wireWorkResolvers()

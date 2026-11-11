@@ -19,10 +19,10 @@ func (r projectRootsResolver) EnsureProjectForDirectory(string) (string, error) 
 func (r projectRootsResolver) ProjectRoots(string) []string { return r.roots }
 func (r projectRootsResolver) AllProjectRoots() []string    { return r.roots }
 
-func TestStartProjectPrewarmWarmsEveryProjectRoot(t *testing.T) {
+func TestStartProjectPrewarmWarmsActiveRootWithoutPollingIdleProjects(t *testing.T) {
 	t.Parallel()
-	rootA := t.TempDir()
-	rootB := t.TempDir()
+	activeRoot := t.TempDir()
+	idleRoot := t.TempDir()
 
 	var mu sync.Mutex
 	hits := map[string]int{}
@@ -40,9 +40,9 @@ func TestStartProjectPrewarmWarmsEveryProjectRoot(t *testing.T) {
 	}))
 	defer engine.Close()
 
-	svc := NewService(t.TempDir(), nil, nil, t.TempDir())
+	svc := NewService(activeRoot, nil, nil, t.TempDir())
 	svc.ConfigureOpenCode(engine.URL, "pw")
-	svc.SetProjectResolver(projectRootsResolver{roots: []string{rootA, rootB}})
+	svc.SetProjectResolver(projectRootsResolver{roots: []string{idleRoot, activeRoot}})
 	svc.SetDirectoryWarmer(func(dir string) {
 		mu.Lock()
 		warmed[dir]++
@@ -56,17 +56,34 @@ func TestStartProjectPrewarmWarmsEveryProjectRoot(t *testing.T) {
 	deadline := time.Now().Add(3 * time.Second)
 	for {
 		mu.Lock()
-		done := hits[rootA] > 0 && hits[rootB] > 0 && warmed[rootA] > 0 && warmed[rootB] > 0
-		snapshot := map[string]int{}
-		for k, v := range hits {
-			snapshot[k] = v
-		}
+		done := hits[activeRoot] > 0 && warmed[activeRoot] > 0
 		mu.Unlock()
 		if done {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("prewarm did not reach every root: %v", snapshot)
+			t.Fatalf("prewarm did not warm active root %s", activeRoot)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	mu.Lock()
+	if hits[idleRoot] != 0 || warmed[idleRoot] != 0 {
+		mu.Unlock()
+		t.Fatalf("expected idle historical root %s not to be eagerly prewarmed: hits=%v warmed=%v", idleRoot, hits, warmed)
+	}
+	mu.Unlock()
+
+	// Explicit on-demand warm still works for non-startup directories.
+	svc.warmDirectoryAsync(idleRoot)
+	for {
+		mu.Lock()
+		ok := warmed[idleRoot] == 1
+		mu.Unlock()
+		if ok {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected on-demand warmDirectoryAsync to warm %s", idleRoot)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -86,13 +103,13 @@ func TestPrewarmProjectRootsSkipsMissingDirectories(t *testing.T) {
 	}))
 	defer engine.Close()
 
-	svc := NewService(t.TempDir(), nil, nil, t.TempDir())
-	svc.ConfigureOpenCode(engine.URL, "pw")
 	missing := filepath.Join(t.TempDir(), "gone")
+	svc := NewService(missing, nil, nil, t.TempDir())
+	svc.ConfigureOpenCode(engine.URL, "pw")
 	svc.SetProjectResolver(projectRootsResolver{roots: []string{"", missing}})
 
 	if !svc.prewarmProjectRoots(context.Background()) {
-		t.Fatal("expected steady cadence when there is nothing to warm")
+		t.Fatal("expected completion when there is no existing root to warm")
 	}
 	mu.Lock()
 	defer mu.Unlock()
@@ -114,6 +131,7 @@ func TestPrewarmProjectRootsRequestsRetryWhenEngineDown(t *testing.T) {
 
 func TestIndexPrewarmDecoupledFromEngineKeepAliveAndCapped(t *testing.T) {
 	t.Parallel()
+	activeRoot := t.TempDir()
 	roots := make([]string, maxPrewarmIndexRoots+4)
 	for i := range roots {
 		roots[i] = t.TempDir()
@@ -123,7 +141,7 @@ func TestIndexPrewarmDecoupledFromEngineKeepAliveAndCapped(t *testing.T) {
 	warmed := map[string]int{}
 	hasDeadline := false
 
-	svc := NewService(t.TempDir(), nil, nil, t.TempDir())
+	svc := NewService(activeRoot, nil, nil, t.TempDir())
 	svc.ConfigureOpenCode("http://127.0.0.1:1", "pw")
 	svc.SetProjectResolver(projectRootsResolver{roots: roots})
 	svc.SetDirectoryWarmerContext(func(ctx context.Context, dir string) {
@@ -137,7 +155,6 @@ func TestIndexPrewarmDecoupledFromEngineKeepAliveAndCapped(t *testing.T) {
 
 	ctx := context.Background()
 	svc.prewarmIndexRoots(ctx)
-	// Repeated engine keep-alive ticks and second index prewarm passes must not re-index idle roots.
 	_ = svc.prewarmProjectRoots(ctx)
 	_ = svc.prewarmProjectRoots(ctx)
 	svc.prewarmIndexRoots(ctx)
@@ -147,12 +164,7 @@ func TestIndexPrewarmDecoupledFromEngineKeepAliveAndCapped(t *testing.T) {
 	if !hasDeadline {
 		t.Fatal("expected directory warmer context to carry a timeout deadline")
 	}
-	if len(warmed) != maxPrewarmIndexRoots {
-		t.Fatalf("expected index prewarm capped at %d roots, got %d", maxPrewarmIndexRoots, len(warmed))
-	}
-	for dir, count := range warmed {
-		if count != 1 {
-			t.Fatalf("expected root %s to be index-warmed once, got %d", dir, count)
-		}
+	if len(warmed) != maxPrewarmIndexRoots || warmed[activeRoot] != 1 {
+		t.Fatalf("expected index prewarm capped at %d active root, got %v", maxPrewarmIndexRoots, warmed)
 	}
 }

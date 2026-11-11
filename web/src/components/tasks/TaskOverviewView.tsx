@@ -188,7 +188,7 @@ export default function TaskOverviewView() {
     onCleanup(startTaskOverviewPolling(dir, sessionIDs));
   });
 
-  const groups = createMemo(() => buildTaskOverview(taskOverviewPlans()));
+  const groups = createMemo(() => (visible() ? buildTaskOverview(taskOverviewPlans()) : []));
   const total = createMemo(() => groups().reduce((sum, group) => sum + group.nodes.length, 0));
 
   return (

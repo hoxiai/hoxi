@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"image"
 	"image/jpeg"
 	"net/http"
 	"net/http/httptest"
@@ -33,6 +34,21 @@ func TestStreamCallbackBounds(t *testing.T) {
 			t.Fatal("unbounded CDP event accepted")
 		}
 		cancel()
+	}
+
+	// Streaming base64 header decode reads exact JPEG dimensions without full buffer decode.
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 320, 180)), &jpeg.Options{Quality: 92}); err != nil {
+		t.Fatal(err)
+	}
+	st := &screencast{frame: streamFrame{Width: 320, Height: 180}}
+	encoded := base64.StdEncoding.EncodeToString(buf.Bytes())
+	w, h := st.decodeDimensions(encoded)
+	if w != 320 || h != 180 || !st.coversViewport(encoded) {
+		t.Fatalf("decodeDimensions = %dx%d, want 320x180", w, h)
+	}
+	if w, h := st.decodeDimensions("not-base64!"); w != 0 || h != 0 {
+		t.Fatalf("expected 0x0 on invalid base64, got %dx%d", w, h)
 	}
 }
 

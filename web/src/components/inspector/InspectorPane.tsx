@@ -152,13 +152,13 @@ export default function InspectorPane() {
 
       <div class="hoxi-tab-stack selectable-text flex-1 min-h-0">
         <Suspense>
-          <Show when={visitedTabs().diffs}>
-            <div class="hoxi-tab-panel" data-active={workspace.inspectorTab === "diffs" ? "true" : "false"} aria-hidden={workspace.inspectorTab !== "diffs"}>
+          <Show when={workspace.inspectorOpen && workspace.inspectorTab === "diffs"}>
+            <div class="hoxi-tab-panel" data-active="true">
               <PierreDiffViewer />
             </div>
           </Show>
-          <Show when={visitedTabs().memory}>
-            <div class="hoxi-tab-panel" data-active={workspace.inspectorTab === "memory" ? "true" : "false"} aria-hidden={workspace.inspectorTab !== "memory"}>
+          <Show when={workspace.inspectorOpen && workspace.inspectorTab === "memory"}>
+            <div class="hoxi-tab-panel" data-active="true">
               <MemoryBankView />
             </div>
           </Show>
@@ -167,8 +167,8 @@ export default function InspectorPane() {
               <FileTreeView />
             </div>
           </Show>
-          <Show when={visitedTabs().skills}>
-            <div class="hoxi-tab-panel" data-active={workspace.inspectorTab === "skills" ? "true" : "false"} aria-hidden={workspace.inspectorTab !== "skills"}>
+          <Show when={workspace.inspectorOpen && workspace.inspectorTab === "skills"}>
+            <div class="hoxi-tab-panel" data-active="true">
               <SkillsInspectorView />
             </div>
           </Show>
@@ -177,16 +177,18 @@ export default function InspectorPane() {
               <WebGLTerminal />
             </div>
           </Show>
-          <Show when={visitedTabs().browser}>
-            <div class="hoxi-tab-panel" data-active={workspace.inspectorTab === "browser" ? "true" : "false"} aria-hidden={workspace.inspectorTab !== "browser"}>
+          <Show when={workspace.inspectorOpen && workspace.inspectorTab === "browser"}>
+            <div class="hoxi-tab-panel" data-active="true">
               <BrowserInspector />
             </div>
           </Show>
-          <Show when={visitedTabs().computer}>
-            <div class="hoxi-tab-panel" data-active={workspace.inspectorTab === "computer" ? "true" : "false"} aria-hidden={workspace.inspectorTab !== "computer"}><ComputerInspector /></div>
+          <Show when={workspace.inspectorOpen && workspace.inspectorTab === "computer"}>
+            <div class="hoxi-tab-panel" data-active="true">
+              <ComputerInspector />
+            </div>
           </Show>
-          <Show when={visitedTabs().tasks}>
-            <div class="hoxi-tab-panel" data-active={workspace.inspectorTab === "tasks" ? "true" : "false"} aria-hidden={workspace.inspectorTab !== "tasks"}>
+          <Show when={workspace.inspectorOpen && workspace.inspectorTab === "tasks"}>
+            <div class="hoxi-tab-panel" data-active="true">
               <TaskOverviewView />
             </div>
           </Show>

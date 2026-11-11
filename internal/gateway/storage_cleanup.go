@@ -21,6 +21,9 @@ const (
 	// is worth a rewrite (ocstate.VacuumWorthwhile), not merely because the
 	// database is large.
 	autoCleanDBThresholdBytes = 512 << 20
+	// initialStorageMaintenanceDelay defers post-boot disk and SQLite cleanup
+	// well past startup and the user's initial prompt.
+	initialStorageMaintenanceDelay = 10 * time.Minute
 	// autoCleanLogMaxAge is the retention window for background log/tool-output pruning.
 	autoCleanLogMaxAge = 7 * 24 * time.Hour
 	// busyCleanProtectionWindow protects recently written logs/packs while a session is active.
@@ -77,7 +80,7 @@ func (g *Gateway) handleSystemStorageClean(w http.ResponseWriter, r *http.Reques
 // SQLite event logs until ctx is cancelled.
 func (g *Gateway) StartStorageMaintenance(ctx context.Context) {
 	go func() {
-		timer := time.NewTimer(20 * time.Second)
+		timer := time.NewTimer(initialStorageMaintenanceDelay)
 		defer timer.Stop()
 		select {
 		case <-ctx.Done():
@@ -108,8 +111,14 @@ func (g *Gateway) runBackgroundStorageMaintenance(ctx context.Context) {
 
 	_, _ = opencode.PruneEngineLogDirs(autoCleanLogMaxAge)
 	_, _ = worktree.PruneTempPacks(g.knownWorkspaceDirs(), time.Hour)
+	if g.isAnySessionBusy() {
+		return
+	}
 	if g.runner != nil && g.runner.Store() != nil {
 		_, _, _ = g.runner.Store().CleanStorage(time.Hour)
+	}
+	if g.isAnySessionBusy() {
+		return
 	}
 	if dbPath := hoxipaths.DBPath(); dbPath != "" {
 		_ = ocstate.PruneOversizedMessageDiffs(ctx, dbPath)

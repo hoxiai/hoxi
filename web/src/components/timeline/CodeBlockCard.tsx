@@ -24,6 +24,12 @@ function detectCodeKind(lang: string): "plain" | "shell" | "diff" {
   return "plain";
 }
 
+export function streamingHighlightDelayMs(codeLength: number): number {
+  if (codeLength >= 8000) return 260;
+  if (codeLength >= 2000) return 160;
+  return 80;
+}
+
 export default function CodeBlockCard(props: {
   lang: string;
   code: string;
@@ -124,8 +130,10 @@ export default function CodeBlockCard(props: {
       }
       return;
     }
-    // Throttle rather than debounce so continuous streaming still gets highlighted.
+    // Throttle rather than debounce so continuous streaming still gets highlighted,
+    // scaling the interval smoothly as the code block grows to avoid main-thread jank.
     if (highlightTimer !== undefined) return;
+    const delayMs = streamingHighlightDelayMs(latest.code.length);
     highlightTimer = setTimeout(async () => {
       highlightTimer = undefined;
       const snapshot = latest;
@@ -153,7 +161,7 @@ export default function CodeBlockCard(props: {
           }
         }
       }
-    }, 80);
+    }, delayMs);
   });
 
   onCleanup(() => {
