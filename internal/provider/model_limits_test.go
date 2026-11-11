@@ -40,15 +40,20 @@ func TestKnownModelTokenLimitFamilies(t *testing.T) {
 		{"claude-sonnet-4-6", 200_000},
 		{"claude-sonnet-4-5-20250929-thinking", 200_000},
 		{"claude-haiku-4-5", 200_000},
+		{"claude-haiku-5-5", 1_000_000},
 		{"gpt-6.1-sol", 1_050_000},
+		{"gpt-6.1-terra", 1_050_000},
+		{"gpt-6-luna", 1_050_000},
 		{"gpt-6-astra", 1_050_000},
 		{"gpt-5.6", 1_050_000},
 		{"gpt-5.5", 1_000_000},
 		{"gpt-4.6", 400_000},
 		{"gemini-3.7-flash", 1_048_576},
+		{"gemini-4-carbon", 1_048_576},
 		{"glm-5.3-flash-solo", 1_000_000},
 		{"glm-4.6", 200_000},
 		{"kimi-k3", 1_048_576},
+		{"kimi-k2.5", 262_144},
 		{"kimi-k2", 131_072},
 		{"mimo-v2.6-pro-solo", 1_048_576},
 		{"step-5-preview-solo", 1_000_000},
@@ -242,5 +247,79 @@ func TestEnsureModelTokenLimitUsesDisplayNameForOpaqueIDs(t *testing.T) {
 	limit, _ = opaque["limit"].(map[string]interface{})
 	if positiveNumber(limit["context"]) != 1_000_000 {
 		t.Fatalf("limit not filled from display name: %+v", opaque)
+	}
+}
+
+func TestFrontier2026ParameterSanitizationAndProtocolNormalization(t *testing.T) {
+	// 1. GPT-6 Astra uses max_completion_tokens (>= 64 floor) and strips forbidden temperature.
+	body := buildOpenAIChatCompletionBody(llmCompletionRequest{
+		ModelID:         "gpt-6-astra",
+		Prompt:          "hi",
+		MaxTokens:       16,
+		Temperature:     0.7,
+		ReasoningEffort: "medium",
+	}, 16)
+	if _, hasLegacy := body["max_tokens"]; hasLegacy {
+		t.Fatalf("gpt-6-astra must not send max_tokens: %+v", body)
+	}
+	if body["max_completion_tokens"] != 64 {
+		t.Fatalf("expected max_completion_tokens=64 floor, got %v", body["max_completion_tokens"])
+	}
+	if _, hasTemp := body["temperature"]; hasTemp {
+		t.Fatalf("gpt-6-astra must strip temperature: %+v", body)
+	}
+
+	// 2. Claude 5.5 sampling restriction detection.
+	if !isClaudeSamplingForbiddenModel("claude-sonnet-5-5") || !isClaudeSamplingForbiddenModel("claude-haiku-5-5") {
+		t.Fatal("expected Claude 5.5 models to forbid custom sampling parameters")
+	}
+	if isClaudeSamplingForbiddenModel("claude-sonnet-4-6") {
+		t.Fatal("Claude 4.6 should still allow temperature when non-adaptive")
+	}
+
+	// 3. Official OpenAI provider carrying GPT-6 upgrades to @ai-sdk/openai + max effort, Speciale disables tool_call.
+	doc := map[string]interface{}{
+		"provider": map[string]interface{}{
+			"openai": map[string]interface{}{
+				"models": map[string]interface{}{
+					"gpt-6-astra": map[string]interface{}{"name": "GPT-6 Astra"},
+					"gpt-6-pro":   map[string]interface{}{"name": "GPT-6 Pro"},
+				},
+			},
+			"deepseek": map[string]interface{}{
+				"npm": "@ai-sdk/openai-compatible",
+				"models": map[string]interface{}{
+					"deepseek-v3.2-speciale": map[string]interface{}{"name": "DeepSeek Speciale"},
+					"qwen3.5-plus":           map[string]interface{}{"name": "Qwen 3.5 Plus"},
+				},
+			},
+		},
+	}
+	normalizeDocModelVariants(doc)
+	oaiProv := doc["provider"].(map[string]interface{})["openai"].(map[string]interface{})
+	if oaiProv["npm"] != "@ai-sdk/openai" {
+		t.Fatalf("expected openai provider with gpt-6-astra to upgrade to @ai-sdk/openai, got %v", oaiProv["npm"])
+	}
+	astraObj := oaiProv["models"].(map[string]interface{})["gpt-6-astra"].(map[string]interface{})
+	astraVars := astraObj["variants"].(map[string]interface{})
+	if _, hasMax := astraVars["max"]; !hasMax {
+		t.Fatalf("expected gpt-6-astra variants to include max, got %+v", astraVars)
+	}
+	if !hasModalityEntry(astraObj, "input", "pdf") {
+		t.Fatalf("expected gpt-6-astra to advertise native pdf input: %+v", astraObj["modalities"])
+	}
+	proVars := oaiProv["models"].(map[string]interface{})["gpt-6-pro"].(map[string]interface{})["variants"].(map[string]interface{})
+	if len(proVars) != 1 || proVars["high"] == nil {
+		t.Fatalf("expected gpt-6-pro to expose only high effort, got %+v", proVars)
+	}
+
+	dsModels := doc["provider"].(map[string]interface{})["deepseek"].(map[string]interface{})["models"].(map[string]interface{})
+	specObj := dsModels["deepseek-v3.2-speciale"].(map[string]interface{})
+	if specObj["tool_call"] != false {
+		t.Fatalf("expected deepseek-v3.2-speciale tool_call=false, got %v", specObj["tool_call"])
+	}
+	qwenObj := dsModels["qwen3.5-plus"].(map[string]interface{})
+	if !hasModalityEntry(qwenObj, "input", "video") {
+		t.Fatalf("expected qwen3.5-plus to advertise native video input: %+v", qwenObj["modalities"])
 	}
 }

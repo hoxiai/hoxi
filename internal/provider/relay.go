@@ -347,10 +347,24 @@ func (s *Service) serveRelayChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Rewrite only the model field: tools, tool_choice, images and every other
-	// OpenAI extension pass through untouched, which is what local coding
-	// clients depend on.
+	// Rewrite the model field and sanitize legacy parameters that official OpenAI
+	// GPT-5/6 endpoints reject on /chat/completions while passing tools untouched.
 	payload["model"] = modelID
+	if isOfficialOpenAIHost(baseURL) && isOpenAIModernReasoningModel(modelID) {
+		if mt, hasLegacy := payload["max_tokens"]; hasLegacy {
+			if _, hasModern := payload["max_completion_tokens"]; !hasModern {
+				payload["max_completion_tokens"] = mt
+			}
+			delete(payload, "max_tokens")
+		}
+		effStr, _ := payload["reasoning_effort"].(string)
+		if isOpenAITemperatureForbidden(modelID, effStr) {
+			delete(payload, "temperature")
+			delete(payload, "top_p")
+			delete(payload, "logprobs")
+			delete(payload, "top_logprobs")
+		}
+	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		writeJSONError(w, http.StatusBadRequest, "could not encode request body")

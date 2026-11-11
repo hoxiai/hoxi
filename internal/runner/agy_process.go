@@ -89,18 +89,24 @@ func inferOfficialRunnerModelSpec(slug string) (ctxLimit, outLimit int, inCost, 
 			return ctxLimit, outLimit, 3.00, 15.00, true, true
 		}
 	case strings.HasPrefix(lower, "gemini"):
+		gemOut := 65536
+		if familyMajorVersion(lower, "gemini") >= 4 || strings.Contains(lower, "argon") || strings.Contains(lower, "carbon") {
+			gemOut = 131072
+		}
 		switch {
 		case strings.Contains(lower, "lite"):
-			return 1000000, 65536, 0.10, 0.40, true, reasoning
+			return 1000000, gemOut, 0.10, 0.40, true, reasoning
 		case strings.Contains(lower, "flash"):
-			return 1000000, 65536, 0.35, 1.40, true, reasoning
+			return 1000000, gemOut, 0.35, 1.40, true, reasoning
 		default:
-			return 1000000, 65536, 1.25, 10.00, true, true
+			return 1000000, gemOut, 1.25, 10.00, true, true
 		}
 	case strings.HasPrefix(lower, "gpt") || strings.Contains(lower, "codex") || agentcli.IsOpenAIOSeriesModel(lower):
 		switch {
 		case strings.Contains(lower, "nano"):
 			return 400000, 128000, 0.10, 0.40, true, reasoning
+		case familyMajorVersion(lower, "gpt") >= 6 && strings.Contains(lower, "luna"):
+			return 1050000, 128000, 0.25, 1.00, true, reasoning
 		case strings.Contains(lower, "mini") || strings.Contains(lower, "luna"):
 			return 400000, 128000, 0.25, 1.00, true, reasoning
 		case strings.Contains(lower, "astra") || familyMajorVersion(lower, "gpt") >= 6 || hasModelVersionRun(lower, "5", "6"):
@@ -115,15 +121,14 @@ func inferOfficialRunnerModelSpec(slug string) (ctxLimit, outLimit int, inCost, 
 }
 
 // claudeModelLimits matches the web family table (store/model-limits.ts):
-// Opus, Sonnet and Fable from major version 5 run a 1M window with 128K output;
+// Claude 5+ models (Opus, Sonnet, Haiku, Fable) run a 1M window with 128K output;
 // older or unversioned ids keep 200K unless the id carries Claude Code's [1m] tag.
 func claudeModelLimits(lower string) (ctxLimit, outLimit int) {
 	ctxLimit, outLimit = 200000, 64000
 	if strings.Contains(lower, "[1m]") {
 		ctxLimit = 1000000
 	}
-	flagship := strings.Contains(lower, "opus") || strings.Contains(lower, "sonnet") || strings.Contains(lower, "fable")
-	if flagship && claudeMajorVersion(lower) >= 5 {
+	if claudeMajorVersion(lower) >= 5 {
 		ctxLimit, outLimit = 1000000, 128000
 	}
 	return ctxLimit, outLimit

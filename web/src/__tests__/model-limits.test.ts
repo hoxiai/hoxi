@@ -194,6 +194,10 @@ describe("Vendor-prefixed and channel model ids", () => {
       assertEqual(contextLimitForSelection("openai", "o3-mini"), 400_000);
       assertEqual(contextLimitForSelection("openai", "gpt-5-6-terra"), 1_050_000);
       assertEqual(contextLimitForSelection("openai", "gpt-6.1-sol"), 1_050_000);
+      assertEqual(contextLimitForSelection("openai", "gpt-6-luna"), 1_050_000);
+      assertEqual(contextLimitForSelection("anthropic", "claude-haiku-5-5"), 1_000_000);
+      assertEqual(contextLimitForSelection("moonshot", "kimi-k2.5"), 262_144);
+      assertEqual(contextLimitForSelection("moonshot", "kimi-k2"), 131_072);
     });
   });
 });

@@ -61,13 +61,15 @@ export function guessFetchedModelDraft(rm: { id: string; name: string }): Custom
   const isClaudePdf =
     lower.includes("claude-3-5") ||
     lower.includes("claude-3-7") ||
-    lower.includes("claude-sonnet-4") ||
-    lower.includes("claude-opus-4") ||
-    lower.includes("claude-haiku-4") ||
-    lower.includes("claude-4");
-  const isOpenAIPdf = /^(gpt-4o|chatgpt-4o|gpt-4\.1|gpt-5|o3|o4)/i.test(lower);
+    /claude-(?:sonnet-|opus-|haiku-|fable-)?[4-9]/.test(lower);
+  const isOpenAIPdf = /^(gpt-4o|chatgpt-4o|gpt-4\.1|gpt-[5-9]|o3|o4)/i.test(lower);
   const supportsMedia =
-    isGemini || lower.includes("omni") || lower.includes("qwen2.5-vl") || lower.includes("qwen3-vl");
+    isGemini ||
+    lower.includes("omni") ||
+    lower.includes("qwen2.5-vl") ||
+    lower.includes("qwen3-vl") ||
+    /qwen-?3\.[5-9]|qwen-?[4-9]/.test(lower);
+  const isToollessVariant = /-speciale\b/i.test(lower);
 
   return {
     id: cleanID,
@@ -75,7 +77,7 @@ export function guessFetchedModelDraft(rm: { id: string; name: string }): Custom
     category: "chat",
     reasoning: !isNonThinkingGeminiModelID(cleanID),
     image: true,
-    toolCall: true,
+    toolCall: !isToollessVariant,
     pdf: isGemini || isClaudePdf || isOpenAIPdf,
     media: supportsMedia,
   };

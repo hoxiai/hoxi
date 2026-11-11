@@ -59,14 +59,26 @@ func inferRichChatInputModalities(proto, modelID string, allowImage bool) []stri
 		return out
 	}
 
-	// OpenAI GPT-4o / GPT-4.1 / GPT-5 / o3 / o4 models natively accept PDF files.
+	// OpenAI GPT-4o / GPT-4.1 / GPT-5+ / GPT-6+ / o3 / o4 models natively accept PDF files.
 	if strings.Contains(lower, "gpt-4o") ||
 		strings.Contains(lower, "gpt-4.1") ||
 		strings.Contains(lower, "gpt-4-1") ||
-		strings.Contains(lower, "gpt-5") ||
+		(hasToken(canon, "gpt") && versionAfter(canon, "gpt") >= 5) ||
 		strings.HasPrefix(canon, "o3") ||
 		strings.HasPrefix(canon, "o4") {
 		add("image", "pdf")
+		return out
+	}
+
+	// Native multimodal Qwen 3.5+ / Qwen 4+ models accept image and video inputs.
+	if (hasToken(canon, "qwen") && (versionAfter(canon, "qwen") >= 4 ||
+		hasSegmentRun(canon, "3", "5") ||
+		hasSegmentRun(canon, "3", "6") ||
+		hasSegmentRun(canon, "3", "8"))) ||
+		strings.HasPrefix(canon, "qwen3-5") ||
+		strings.HasPrefix(canon, "qwen3-6") ||
+		strings.HasPrefix(canon, "qwen3-8") {
+		add("image", "video")
 		return out
 	}
 

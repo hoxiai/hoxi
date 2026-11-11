@@ -101,6 +101,39 @@ func IsOpenAIOSeriesModel(lowerMID string) bool {
 	return i == len(lowerMID) || lowerMID[i] == '-' || lowerMID[i] == '.' || lowerMID[i] == '_'
 }
 
+func majorAfterFamily(slug, family string) int {
+	tokens := strings.FieldsFunc(slug, func(r rune) bool {
+		return r == '-' || r == '_' || r == '.' || r == '/' || r == ':' || r == ' '
+	})
+	for i, tok := range tokens {
+		target := tok
+		if strings.HasPrefix(tok, family) && len(tok) > len(family) {
+			target = tok[len(family):]
+			n := 0
+			for j := 0; j < len(target) && target[j] >= '0' && target[j] <= '9'; j++ {
+				n = n*10 + int(target[j]-'0')
+			}
+			if n > 0 {
+				return n
+			}
+		}
+		if tok != family {
+			continue
+		}
+		for _, next := range tokens[i+1:] {
+			n, digits := 0, 0
+			for j := 0; j < len(next) && next[j] >= '0' && next[j] <= '9'; j++ {
+				n = n*10 + int(next[j]-'0')
+				digits++
+			}
+			if digits > 0 {
+				return n
+			}
+		}
+	}
+	return 0
+}
+
 // InferVendorEffortSpec returns vendor-level reasoning effort tiers and default effort
 // by vendor/protocol family without hardcoding specific model version numbers.
 func InferVendorEffortSpec(runtimeOrVendor, modelID string, reasoning bool) (efforts []string, defaultEffort string) {
@@ -113,6 +146,9 @@ func InferVendorEffortSpec(runtimeOrVendor, modelID string, reasoning bool) (eff
 	switch {
 	case strings.Contains(m, "claude") || rv == RuntimeClaudeCode || strings.Contains(rv, "anthropic"):
 		if strings.Contains(m, "haiku") {
+			if majorAfterFamily(m, "claude") >= 5 || majorAfterFamily(m, "haiku") >= 5 {
+				return []string{"low", "medium", "high", "max"}, "medium"
+			}
 			return nil, ""
 		}
 		return []string{"low", "medium", "high", "xhigh", "max"}, "high"
@@ -128,6 +164,12 @@ func InferVendorEffortSpec(runtimeOrVendor, modelID string, reasoning bool) (eff
 		strings.Contains(rv, "openai") || strings.Contains(rv, "codex"):
 		if strings.Contains(m, "oss-") {
 			return []string{"medium"}, "medium"
+		}
+		if strings.HasSuffix(m, "-pro") && majorAfterFamily(m, "gpt") >= 5 {
+			return []string{"high"}, "high"
+		}
+		if majorAfterFamily(m, "gpt") >= 6 {
+			return []string{"low", "medium", "high", "xhigh", "max"}, "high"
 		}
 		return []string{"low", "medium", "high", "xhigh"}, "high"
 

@@ -155,12 +155,16 @@ export function computeSmartDefaultCandidates(poolID: string): AutoPoolCandidate
       }
 
       if (
-        /opus|fable|sonnet|gpt-(?!.*(mini|nano|luna))|\/o\d+(-|\b)|gemini.*(pro|ultra|argon)|deepseek-(r\d+|reasoner|.*pro)|qwen.*max|qwq/i.test(
+        /opus|fable|sonnet|gpt-(?!.*(mini|nano|luna))|\/o\d+(-|\b)|gemini.*(pro|ultra|argon|carbon)|deepseek-(r\d+|reasoner|.*pro)|qwen.*max|qwq/i.test(
           lowerKey
         )
       ) {
         let s = 70;
-        if (/opus|fable|gpt-(?!.*(mini|nano|luna))|gemini.*(pro|ultra|argon)|sonnet/i.test(lowerKey))
+        if (
+          /opus|fable|gpt-(?!.*(mini|nano|luna))|gemini.*(pro|ultra|argon|carbon)|sonnet/i.test(
+            lowerKey
+          )
+        )
           s += 35;
         if (!free) s += 15;
         frontierList.push({ cand, score: s });
@@ -490,15 +494,12 @@ export function modelSupportsModalityInput(
     if (
       lowerMod.includes("claude-3-5") ||
       lowerMod.includes("claude-3-7") ||
-      lowerMod.includes("claude-sonnet-4") ||
-      lowerMod.includes("claude-opus-4") ||
-      lowerMod.includes("claude-haiku-4") ||
-      lowerMod.includes("claude-4") ||
+      /claude-(?:sonnet-|opus-|haiku-|fable-)?[4-9]/.test(lowerMod) ||
       prov?.npm === "@ai-sdk/anthropic"
     ) {
       return true;
     }
-    return /^(gpt-4o|chatgpt-4o|gpt-4\.1|gpt-5|o3|o4)/i.test(lowerMod);
+    return /^(gpt-4o|chatgpt-4o|gpt-4\.1|gpt-[5-9]|o3|o4)/i.test(lowerMod);
   }
   if (modality === "audio") {
     return isGemini || lowerMod.includes("omni") || lowerMod.includes("audio");
@@ -508,7 +509,8 @@ export function modelSupportsModalityInput(
       isGemini ||
       lowerMod.includes("omni") ||
       lowerMod.includes("qwen2.5-vl") ||
-      lowerMod.includes("qwen3-vl")
+      lowerMod.includes("qwen3-vl") ||
+      /qwen-?3\.[5-9]|qwen-?[4-9]/.test(lowerMod)
     );
   }
   return false;

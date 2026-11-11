@@ -284,15 +284,68 @@ func redactSecretInText(text, secret string) string {
 	return out
 }
 
+// isOpenAIModernReasoningModel reports whether modelID belongs to GPT-5+, GPT-6+,
+// Codex, or the o-series, where OpenAI /chat/completions requires
+// max_completion_tokens instead of max_tokens and restricts temperature.
+func isOpenAIModernReasoningModel(modelID string) bool {
+	canon := canonicalModelID(modelID)
+	if canon == "" {
+		return false
+	}
+	if isOSeriesModel(canon) || hasToken(canon, "codex") {
+		return true
+	}
+	return hasToken(canon, "gpt") && versionAfter(canon, "gpt") >= 5
+}
+
+// isOpenAITemperatureForbidden reports whether sending custom temperature/top_p
+// triggers HTTP 400 on GPT-5/6/o-series models.
+func isOpenAITemperatureForbidden(modelID, effort string) bool {
+	if !isOpenAIModernReasoningModel(modelID) {
+		return false
+	}
+	canon := canonicalModelID(modelID)
+	if isOSeriesModel(canon) || hasToken(canon, "codex") || hasToken(canon, "astra") || hasSegmentRun(canon, "6", "1", "sol") {
+		return true
+	}
+	eff := strings.ToLower(strings.TrimSpace(effort))
+	return eff != "" && eff != "none"
+}
+
+// isClaudeSamplingForbiddenModel reports whether modelID is a Claude 5+ model
+// where Anthropic rejects temperature, top_p, and top_k with HTTP 400.
+func isClaudeSamplingForbiddenModel(modelID string) bool {
+	canon := canonicalModelID(modelID)
+	return hasToken(canon, "claude") && versionAfter(canon, "claude") >= 5
+}
+
+func isOfficialOpenAIHost(rawURL string) bool {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	return host == "api.openai.com" || strings.HasSuffix(host, ".openai.azure.com")
+}
+
 func buildOpenAIChatCompletionBody(req llmCompletionRequest, maxTokens int) map[string]any {
+	modernReasoning := isOpenAIModernReasoningModel(req.ModelID)
+	tokLimit := maxTokens
+	if modernReasoning && tokLimit < 64 {
+		tokLimit = 64
+	}
 	bodyMap := map[string]any{
-		"model":      req.ModelID,
-		"max_tokens": maxTokens,
+		"model": req.ModelID,
 		"messages": []map[string]string{
 			{"role": "user", "content": req.Prompt},
 		},
 	}
-	if req.Temperature > 0 {
+	if modernReasoning {
+		bodyMap["max_completion_tokens"] = tokLimit
+	} else {
+		bodyMap["max_tokens"] = tokLimit
+	}
+	if req.Temperature > 0 && !isOpenAITemperatureForbidden(req.ModelID, req.ReasoningEffort) {
 		bodyMap["temperature"] = req.Temperature
 	}
 	if eff := strings.TrimSpace(req.ReasoningEffort); eff != "" {
@@ -302,7 +355,7 @@ func buildOpenAIChatCompletionBody(req llmCompletionRequest, maxTokens int) map[
 }
 
 func buildOpenAIResponsesBody(req llmCompletionRequest, maxTokens int) map[string]any {
-	// OpenAI /v1/responses enforces max_output_tokens >= 16 on GPT-5 / o-series models.
+	// OpenAI /v1/responses enforces max_output_tokens >= 16 on GPT-5/6 and o-series models.
 	respMax := maxTokens
 	if respMax < 32 {
 		respMax = 32
@@ -313,7 +366,7 @@ func buildOpenAIResponsesBody(req llmCompletionRequest, maxTokens int) map[strin
 		"max_output_tokens": respMax,
 		"store":             false,
 	}
-	if req.Temperature > 0 {
+	if req.Temperature > 0 && !isOpenAITemperatureForbidden(req.ModelID, req.ReasoningEffort) {
 		bodyMap["temperature"] = req.Temperature
 	}
 	if eff := strings.TrimSpace(req.ReasoningEffort); eff != "" {
@@ -466,8 +519,8 @@ func attemptSimpleLLM(parentCtx context.Context, req llmCompletionRequest, windo
 			resp, respBytes = retryResp, retryBytes
 		}
 	}
-	// Dual-direction fallback between /v1/responses and /v1/chat/completions for
-	// OpenAI gateways where only one of the two routes is exposed for the model.
+	// Dual-direction fallback between /v1/responses and /v1/chat/completions, plus
+	// legacy proxy fallback if a third-party gateway rejects max_completion_tokens or temperature.
 	if !isAnthropic && !isGoogle && resp.StatusCode >= 400 && resp.StatusCode < 500 {
 		lowerBody := strings.ToLower(string(respBytes))
 		if isResponses && (resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed) &&
@@ -477,6 +530,19 @@ func attemptSimpleLLM(parentCtx context.Context, req llmCompletionRequest, windo
 			}
 		} else if !isResponses && (resp.StatusCode == http.StatusNotFound || strings.Contains(lowerBody, "/responses")) {
 			if retryResp, retryBytes, retryErr := doOnce(trimmedBase+"/responses", buildOpenAIResponsesBody(req, maxTokens), false); retryErr == nil && retryResp != nil && retryResp.StatusCode < 400 {
+				resp, respBytes = retryResp, retryBytes
+			}
+		} else if !isResponses && resp.StatusCode == http.StatusBadRequest && (strings.Contains(lowerBody, "max_completion_tokens") || strings.Contains(lowerBody, "temperature")) {
+			compatBody := map[string]any{
+				"model":      req.ModelID,
+				"max_tokens": maxTokens,
+				"messages":   []map[string]string{{"role": "user", "content": req.Prompt}},
+			}
+			if strings.Contains(lowerBody, "max_tokens") {
+				delete(compatBody, "max_tokens")
+				compatBody["max_completion_tokens"] = maxTokens
+			}
+			if retryResp, retryBytes, retryErr := doOnce(targetURL, compatBody, false); retryErr == nil && retryResp != nil && retryResp.StatusCode < 400 {
 				resp, respBytes = retryResp, retryBytes
 			}
 		}

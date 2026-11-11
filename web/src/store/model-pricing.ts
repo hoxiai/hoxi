@@ -100,6 +100,7 @@ const BUDGET_TOKENS = [
   "lite",
   "mini",
   "nano",
+  "luna",
   "free",
   "turbo",
   "air",
@@ -117,7 +118,9 @@ const FRONTIER_TOKENS = [
   "ultra",
   "reasoner",
   "sol",
+  "terra",
   "argon",
+  "carbon",
 ];
 
 /** Vendor/family tokens that justify estimating an otherwise unknown id. */

@@ -124,31 +124,35 @@ export function inferOfficialModelPricingAndLimits(
 
   if (hasToken(s, "claude")) {
     const major = familyVersion(s, "claude");
-    if (hasAnyToken(s, "opus", "sonnet", "fable") && major >= 5) {
-      return { inputCost: 5.0, outputCost: 25.0, contextLimit: 1_000_000, outputLimit: 128_000 };
-    }
+    const ctx = major >= 5 ? 1_000_000 : 200_000;
+    const out = major >= 5 ? 128_000 : 64_000;
     if (hasAnyToken(s, "opus", "fable")) {
-      return { inputCost: 5.0, outputCost: 25.0, contextLimit: 200_000, outputLimit: 64_000 };
+      return { inputCost: 5.0, outputCost: 25.0, contextLimit: ctx, outputLimit: out };
     }
     if (hasToken(s, "haiku")) {
-      return { inputCost: 0.8, outputCost: 4.0, contextLimit: 200_000, outputLimit: 64_000 };
+      return { inputCost: 0.8, outputCost: 4.0, contextLimit: ctx, outputLimit: out };
     }
-    return { inputCost: 3.0, outputCost: 15.0, contextLimit: 200_000, outputLimit: 64_000 };
+    return { inputCost: 3.0, outputCost: 15.0, contextLimit: ctx, outputLimit: out };
   }
 
   if (hasToken(s, "gemini")) {
+    const gemOut =
+      familyVersion(s, "gemini") >= 4 || hasAnyToken(s, "argon", "carbon") ? 131_072 : 65_536;
     if (hasToken(s, "lite")) {
-      return { inputCost: 0.1, outputCost: 0.4, contextLimit: 1_000_000, outputLimit: 65_536 };
+      return { inputCost: 0.1, outputCost: 0.4, contextLimit: 1_000_000, outputLimit: gemOut };
     }
     if (hasToken(s, "flash")) {
-      return { inputCost: 0.35, outputCost: 1.4, contextLimit: 1_000_000, outputLimit: 65_536 };
+      return { inputCost: 0.35, outputCost: 1.4, contextLimit: 1_000_000, outputLimit: gemOut };
     }
-    return { inputCost: 1.25, outputCost: 10.0, contextLimit: 1_000_000, outputLimit: 65_536 };
+    return { inputCost: 1.25, outputCost: 10.0, contextLimit: 1_000_000, outputLimit: gemOut };
   }
 
   if (hasToken(s, "gpt") || hasToken(s, "codex") || isOSeriesKey(s)) {
     if (hasToken(s, "nano")) {
       return { inputCost: 0.1, outputCost: 0.4, contextLimit: 400_000, outputLimit: 128_000 };
+    }
+    if (familyVersion(s, "gpt") >= 6 && hasToken(s, "luna")) {
+      return { inputCost: 0.25, outputCost: 1.0, contextLimit: 1_050_000, outputLimit: 128_000 };
     }
     if (hasAnyToken(s, "mini", "luna")) {
       return { inputCost: 0.25, outputCost: 1.0, contextLimit: 400_000, outputLimit: 128_000 };
@@ -199,6 +203,9 @@ export function inferOfficialModelPricingAndLimits(
   }
 
   if (hasAnyToken(s, "kimi", "moonshot")) {
+    if (hasVersionRun(s, "k2-5") || hasVersionRun(s, "k2-6")) {
+      return { inputCost: 0.8, outputCost: 3.2, contextLimit: 262_144, outputLimit: 98_304 };
+    }
     if (hasToken(s, "k2")) {
       return { inputCost: 0.8, outputCost: 3.2, contextLimit: 131_072, outputLimit: 98_304 };
     }

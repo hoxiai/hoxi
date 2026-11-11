@@ -456,7 +456,7 @@ func (s *Service) callRelayAnthropicChat(
 	if len(sysTexts) > 0 {
 		aBody["system"] = strings.Join(sysTexts, "\n\n")
 	}
-	if temp, ok := payload["temperature"].(float64); ok {
+	if temp, ok := payload["temperature"].(float64); ok && !isClaudeSamplingForbiddenModel(modelID) {
 		aBody["temperature"] = temp
 	}
 

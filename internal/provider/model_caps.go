@@ -178,6 +178,20 @@ func defaultModelVariants(providerID, npm, modelID string) map[string]interface{
 	if hasToken(canonKey, "gpt") || hasToken(canonKey, "codex") || isOSeriesModel(canonKey) ||
 		strings.Contains(lowerMID, "gpt") || strings.Contains(lowerMID, "codex") ||
 		strings.Contains(lowerPID, "openai") || strings.Contains(lowerPID, "codex") {
+		if strings.HasSuffix(canonKey, "-pro") && versionAfter(canonKey, "gpt") >= 5 {
+			return map[string]interface{}{
+				"high": map[string]interface{}{"reasoningEffort": "high"},
+			}
+		}
+		if versionAfter(canonKey, "gpt") >= 6 {
+			return map[string]interface{}{
+				"low":    map[string]interface{}{"reasoningEffort": "low"},
+				"medium": map[string]interface{}{"reasoningEffort": "medium"},
+				"high":   map[string]interface{}{"reasoningEffort": "high"},
+				"xhigh":  map[string]interface{}{"reasoningEffort": "xhigh"},
+				"max":    map[string]interface{}{"reasoningEffort": "max"},
+			}
+		}
 		return map[string]interface{}{
 			"low":    map[string]interface{}{"reasoningEffort": "low"},
 			"medium": map[string]interface{}{"reasoningEffort": "medium"},
@@ -425,6 +439,21 @@ func normalizeGoogleBaseURL(rawBaseURL string) string {
 	return strings.TrimRight(u.String(), "/")
 }
 
+func providerRequiresOpenAIResponsesSDK(providerID, baseURL string, pObj map[string]interface{}) bool {
+	pid := strings.ToLower(strings.TrimSpace(providerID))
+	if pid != "openai" && !isOfficialOpenAIHost(baseURL) {
+		return false
+	}
+	mMap, _ := pObj["models"].(map[string]interface{})
+	for mid := range mMap {
+		canon := canonicalModelID(mid)
+		if hasToken(canon, "codex") || (hasToken(canon, "gpt") && versionAfter(canon, "gpt") >= 6) {
+			return true
+		}
+	}
+	return false
+}
+
 func normalizeProviderProtocolAndBaseURL(providerID string, pObj map[string]interface{}) string {
 	npm, _ := pObj["npm"].(string)
 	opts, _ := pObj["options"].(map[string]interface{})
@@ -442,6 +471,11 @@ func normalizeProviderProtocolAndBaseURL(providerID string, pObj map[string]inte
 		// e.g. https://generativelanguage.googleapis.com/v1beta/openai
 		npm = "@ai-sdk/openai-compatible"
 		pObj["npm"] = npm
+	} else if proto == "openai" && (strings.TrimSpace(npm) == "" || strings.EqualFold(strings.TrimSpace(npm), "@ai-sdk/openai-compatible")) {
+		if providerRequiresOpenAIResponsesSDK(providerID, baseURL, pObj) {
+			npm = "@ai-sdk/openai"
+			pObj["npm"] = npm
+		}
 	}
 	return npm
 }
@@ -556,6 +590,11 @@ func normalizeDocModelVariants(doc map[string]interface{}) {
 			}
 			if isChat {
 				applyRichChatModelDefaults(proto, mid, mObj, attachBool || hasImageInputModality(mObj))
+				if strings.Contains(strings.ToLower(mid), "-speciale") {
+					if _, hasTC := mObj["tool_call"]; !hasTC {
+						mObj["tool_call"] = false
+					}
+				}
 			}
 
 			if isNonThinkingGeminiChatModel(mid) {

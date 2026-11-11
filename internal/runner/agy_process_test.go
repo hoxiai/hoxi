@@ -18,18 +18,21 @@ func TestInferOfficialRunnerModelSpecClaudeContextLimits(t *testing.T) {
 		{"claude-opus-5-5", 1000000, 128000, 5.00, 25.00},
 		{"claude-fable-5-1[1m]", 1000000, 128000, 5.00, 25.00},
 		{"claude-sonnet-4-5[1m]", 1000000, 64000, 3.00, 15.00},
-		// Older or unversioned ids keep the 200K window.
+		// Claude 5.x (including Haiku 5.5) runs a 1M / 128K window; older or unversioned ids keep 200K.
 		{"claude-opus-4-7", 200000, 64000, 5.00, 25.00},
 		{"claude-3-5-sonnet", 200000, 64000, 3.00, 15.00},
-		{"claude-haiku-5-5", 200000, 64000, 0.80, 4.00},
+		{"claude-haiku-4-5", 200000, 64000, 0.80, 4.00},
+		{"claude-haiku-5-5", 1000000, 128000, 0.80, 4.00},
 		{"sonnet", 200000, 64000, 3.00, 15.00},
 		{"haiku", 200000, 64000, 0.80, 4.00},
-		// GPT / Codex family parity with web/src/store/model-limits.ts.
+		// GPT / Codex / Gemini 4 family parity with web/src/store/model-limits.ts.
 		{"gpt-5.6-astra", 1050000, 128000, 6.00, 24.00},
 		{"gpt-6-pro", 1050000, 128000, 6.00, 24.00},
+		{"gpt-6-luna", 1050000, 128000, 0.25, 1.00},
 		{"gpt-5.5-sol", 1000000, 128000, 3.00, 12.00},
 		{"gpt-5.5-luna", 400000, 128000, 0.25, 1.00},
 		{"gpt-5-codex", 400000, 128000, 2.00, 8.00},
+		{"gemini-4-carbon", 1000000, 131072, 1.25, 10.00},
 	}
 	for _, tc := range cases {
 		ctx, out, inCost, outCost, _, _ := inferOfficialRunnerModelSpec(tc.slug)

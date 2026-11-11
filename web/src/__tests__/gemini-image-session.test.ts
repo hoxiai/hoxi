@@ -408,6 +408,20 @@ describe("Gemini custom endpoint & session image generation support", () => {
       assertEqual(gemModel?.pdf, true);
       assertEqual(gemModel?.media, true);
       assertEqual(asrModel?.category, "audio");
+
+      assertEqual(modelSupportsModalityInput("openai", "gpt-6-astra", "pdf"), true);
+      assertEqual(modelSupportsModalityInput("anthropic", "claude-haiku-5-5", "pdf"), true);
+      assertEqual(modelSupportsModalityInput("alibaba", "qwen3.5-plus", "video"), true);
+      const specialeDraft = guessFetchedModelDraft({
+        id: "deepseek-v3.2-speciale",
+        name: "DeepSeek V3.2 Speciale",
+      });
+      assertEqual(specialeDraft.toolCall, false);
+      const gpt6Draft = guessFetchedModelDraft({
+        id: "gpt-6-astra",
+        name: "GPT-6 Astra",
+      });
+      assertEqual(gpt6Draft.pdf, true);
     } finally {
       (hoxiAPI as any).saveAutoPoolConfig = origSavePool;
     }

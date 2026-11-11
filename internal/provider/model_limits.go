@@ -217,14 +217,15 @@ func knownModelTokenLimit(key string) (modelTokenLimit, bool) {
 
 	switch {
 	case hasToken(key, "claude"):
-		if hasAnyToken(key, "opus", "sonnet", "fable") {
-			if versionAfter(key, "claude") >= 5 {
-				return modelTokenLimit{Context: 1_000_000, Output: 128_000}, true
-			}
+		if versionAfter(key, "claude") >= 5 || versionAfter(key, "haiku") >= 5 || versionAfter(key, "sonnet") >= 5 || versionAfter(key, "opus") >= 5 {
+			return modelTokenLimit{Context: 1_000_000, Output: 128_000}, true
 		}
 		return modelTokenLimit{Context: 200_000, Output: 64_000}, true
 
 	case hasToken(key, "gemini"):
+		if versionAfter(key, "gemini") >= 4 || hasAnyToken(key, "argon", "carbon") {
+			return modelTokenLimit{Context: 1_048_576, Output: 131_072}, true
+		}
 		return modelTokenLimit{Context: 1_048_576, Output: 65_536}, true
 
 	case hasToken(key, "gpt") || hasToken(key, "codex") || isOSeriesModel(key):
@@ -256,6 +257,9 @@ func knownModelTokenLimit(key string) (modelTokenLimit, bool) {
 		return modelTokenLimit{Context: 1_000_000, Output: 131_072}, true
 
 	case hasAnyToken(key, "kimi", "moonshot"):
+		if hasSegmentRun(key, "k2", "5") || hasSegmentRun(key, "k2", "6") {
+			return modelTokenLimit{Context: 262_144, Output: 98_304}, true
+		}
 		if hasToken(key, "k2") {
 			return modelTokenLimit{Context: 131_072, Output: 98_304}, true
 		}
