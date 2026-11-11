@@ -55,10 +55,12 @@ type FileRecord struct {
 }
 
 type Index struct {
-	Version   int                    `json:"version"`
-	Directory string                 `json:"directory"`
-	BuiltAt   int64                  `json:"builtAt"`
-	Files     map[string]*FileRecord `json:"files"`
+	Version     int                    `json:"version"`
+	Directory   string                 `json:"directory"`
+	BuiltAt     int64                  `json:"builtAt"`
+	Files       map[string]*FileRecord `json:"files"`
+	VectorModel string                 `json:"vectorModel,omitempty"`
+	Vectors     map[string][]float32   `json:"vectors,omitempty"`
 }
 
 // Ported from Kilo Code packages/kilo-indexing/src/file/ignore.ts.
@@ -477,6 +479,21 @@ func (s *Service) build(ctx context.Context, directory string, previous *Index) 
 	}
 	if !changed && len(index.Files) != len(previous.Files) {
 		changed = true
+	}
+	if previous != nil && len(previous.Vectors) > 0 {
+		index.VectorModel = previous.VectorModel
+		kept := make(map[string][]float32, len(previous.Vectors))
+		for _, rec := range index.Files {
+			for i := range rec.Chunks {
+				key := semanticHashKey("c", formatChunkEmbeddingInput(&rec.Chunks[i]))
+				if vec, ok := previous.Vectors[key]; ok && len(vec) > 0 {
+					kept[key] = vec
+				}
+			}
+		}
+		if len(kept) > 0 {
+			index.Vectors = kept
+		}
 	}
 	return index, changed, nil
 }

@@ -115,6 +115,9 @@ func (s *Service) ClearCache() int64 {
 	s.mu.Lock()
 	s.cache = make(map[string]*cachedIndex)
 	s.mu.Unlock()
+	if s.semCache != nil {
+		s.semCache.reset()
+	}
 	entries, err := os.ReadDir(s.root)
 	if err != nil {
 		return 0

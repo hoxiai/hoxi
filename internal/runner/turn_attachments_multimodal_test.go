@@ -1,11 +1,29 @@
 package runner
 
 import (
+	"context"
 	"strings"
 	"testing"
 
 	"github.com/hoxiai/hoxi/internal/attachment"
+	"github.com/hoxiai/hoxi/internal/llm"
 )
+
+type stubTurnAudioClient struct {
+	calls      int
+	transcript string
+}
+
+func (s *stubTurnAudioClient) HasAudioTranscriber() bool { return true }
+
+func (s *stubTurnAudioClient) TranscribeAudio(_ context.Context, _ llm.AudioTranscribeRequest) (llm.AudioTranscribeResponse, error) {
+	s.calls++
+	return llm.AudioTranscribeResponse{
+		ProviderID: "whisper-local",
+		ModelID:    "whisper-large-v3",
+		Text:       s.transcript,
+	}, nil
+}
 
 func TestNativeMultimodalAttachmentPassthroughVsOCRFallback(t *testing.T) {
 	attDir := t.TempDir()
@@ -91,5 +109,24 @@ func TestNativeMultimodalAttachmentPassthroughVsOCRFallback(t *testing.T) {
 		if dp.Type == "file" {
 			t.Fatalf("expected text-only deepseek-chat to use text/path fallback instead of binary file part: %+v", dp)
 		}
+	}
+
+	// 4. With an AudioClient wired, uploading an audio attachment to a non-audio model
+	// automatically transcribes the audio and injects [Audio Transcript] into text context.
+	asrStub := &stubTurnAudioClient{transcript: "Action item: ship multi-protocol relay today."}
+	svc.SetAudioClient(asrStub)
+	_, dsAudioDelivery, _ := svc.prepareTurnAttachmentsForModel(
+		rec, "deepseek", "deepseek-chat", false, 1003, 4, "msg_u_4", "Summarize meeting",
+		[]MessagePart{{Type: "file", Filename: audioMeta.Filename, Mime: audioMeta.Mime, URL: audioMeta.URL}},
+	)
+	if asrStub.calls != 1 {
+		t.Fatalf("expected 1 automatic TranscribeAudio call for non-audio model, got %d", asrStub.calls)
+	}
+	joinedText := ""
+	for _, dp := range dsAudioDelivery {
+		joinedText += dp.Text + "\n"
+	}
+	if !strings.Contains(joinedText, "[Audio Transcript]") || !strings.Contains(joinedText, asrStub.transcript) {
+		t.Fatalf("expected [Audio Transcript] injected into prompt delivery parts, got %q", joinedText)
 	}
 }

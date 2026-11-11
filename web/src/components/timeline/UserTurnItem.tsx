@@ -16,6 +16,9 @@ import { FileIcon, Icon } from "../icons";
 import {
   ActionIconButton,
   formatMessageTime,
+  isAudioFilePart,
+  isVideoFilePart,
+  MediaAttachmentPlayer,
   UserTextPartView,
 } from "./message-stream-parts";
 import { t } from "../../i18n";
@@ -161,6 +164,7 @@ export function UserTurnItem(props: {
                     (fp.mime || "").includes("spreadsheet") ||
                     (fp.mime || "").includes("excel") ||
                     (fp.mime || "").includes("csv");
+                  const isMedia = !isImg && (isAudioFilePart(fp) || isVideoFilePart(fp));
                   const badgeColor = isSheet
                     ? "text-emerald-500"
                     : extLabel === "PDF"
@@ -170,34 +174,41 @@ export function UserTurnItem(props: {
                     <Show
                       when={isImg}
                       fallback={
-                        <a
-                          data-part-id={fp.id}
-                          href={fp.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          download={fp.filename || "attachment"}
-                          onClick={(e) => {
-                            if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-                            if (openAttachmentInInspector(fp.url, fp.filename)) {
-                              e.preventDefault();
-                            }
-                          }}
-                          class="inline-flex items-center gap-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1.5 text-[12px] text-[var(--text-primary)] hover:border-[var(--accent-border)] transition-colors max-w-[260px]"
+                        <Show
+                          when={isMedia}
+                          fallback={
+                            <a
+                              data-part-id={fp.id}
+                              href={fp.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              download={fp.filename || "attachment"}
+                              onClick={(e) => {
+                                if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+                                if (openAttachmentInInspector(fp.url, fp.filename)) {
+                                  e.preventDefault();
+                                }
+                              }}
+                              class="inline-flex items-center gap-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1.5 text-[12px] text-[var(--text-primary)] hover:border-[var(--accent-border)] transition-colors max-w-[260px]"
+                            >
+                              <FileIcon
+                                node={{
+                                  path: fp.filename || "file.txt",
+                                  type: "file",
+                                }}
+                                class="h-4 w-4 shrink-0"
+                              />
+                              <span class="truncate font-mono text-[12px]">
+                                {fp.filename || "attachment"}
+                              </span>
+                              <span class={`ml-auto shrink-0 rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[11px] font-semibold ${badgeColor}`}>
+                                {extLabel}
+                              </span>
+                            </a>
+                          }
                         >
-                          <FileIcon
-                            node={{
-                              path: fp.filename || "file.txt",
-                              type: "file",
-                            }}
-                            class="h-4 w-4 shrink-0"
-                          />
-                          <span class="truncate font-mono text-[12px]">
-                            {fp.filename || "attachment"}
-                          </span>
-                          <span class={`ml-auto shrink-0 rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[11px] font-semibold ${badgeColor}`}>
-                            {extLabel}
-                          </span>
-                        </a>
+                          <MediaAttachmentPlayer part={fp} compact />
+                        </Show>
                       }
                     >
                       <button

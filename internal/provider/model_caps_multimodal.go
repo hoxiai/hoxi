@@ -77,6 +77,19 @@ func inferRichChatInputModalities(proto, modelID string, allowImage bool) []stri
 	return out
 }
 
+func explicitModalityOverride(mObj map[string]interface{}, modality string) (bool, bool) {
+	caps, ok := mObj["capabilities"].(map[string]interface{})
+	if !ok {
+		return false, false
+	}
+	inMap, ok := caps["input"].(map[string]interface{})
+	if !ok {
+		return false, false
+	}
+	val, has := inMap[modality].(bool)
+	return val, has
+}
+
 func applyRichChatModelDefaults(proto, modelID string, mObj map[string]interface{}, allowImage bool) {
 	if mObj == nil {
 		return
@@ -95,10 +108,16 @@ func applyRichChatModelDefaults(proto, modelID string, mObj map[string]interface
 	var merged []string
 	addExisting := func(s string) {
 		s = strings.ToLower(strings.TrimSpace(s))
-		if s != "" && !existing[s] {
-			existing[s] = true
-			merged = append(merged, s)
+		if s == "" || existing[s] {
+			return
 		}
+		if s != "text" {
+			if enabled, hasOverride := explicitModalityOverride(mObj, s); hasOverride && !enabled {
+				return
+			}
+		}
+		existing[s] = true
+		merged = append(merged, s)
 	}
 	switch cur := modMap["input"].(type) {
 	case []interface{}:
@@ -114,6 +133,11 @@ func applyRichChatModelDefaults(proto, modelID string, mObj map[string]interface
 	}
 	for _, m := range inferRichChatInputModalities(proto, modelID, allowImage) {
 		addExisting(m)
+	}
+	for _, extra := range []string{"image", "pdf", "audio", "video"} {
+		if enabled, hasOverride := explicitModalityOverride(mObj, extra); hasOverride && enabled {
+			addExisting(extra)
+		}
 	}
 	if len(merged) > 0 {
 		modMap["input"] = merged

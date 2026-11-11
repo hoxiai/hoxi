@@ -11,7 +11,17 @@ import (
 	"time"
 
 	"github.com/hoxiai/hoxi/internal/attachment"
+	"github.com/hoxiai/hoxi/internal/llm"
 )
+
+// SetAudioClient wires the provider-backed audio transcriber into the runner so
+// uploaded audio attachments can be automatically transcribed into text when
+// the active chat/coding model or CLI runtime does not accept native audio input.
+func (s *Service) SetAudioClient(c llm.AudioClient) {
+	if s != nil {
+		s.audioClient = c
+	}
+}
 
 func inferNativeModalityByModelID(providerID, modelID, modality string) bool {
 	lowerMod := strings.ToLower(strings.TrimSpace(modelID))
@@ -222,11 +232,38 @@ func (s *Service) prepareTurnAttachmentsForModel(
 				if meta.Kind == attachment.KindVideo {
 					label = "Video"
 				}
+				var transcript string
+				var transcribedBy string
+				if meta.Kind == attachment.KindAudio && s.audioClient != nil && s.audioClient.HasAudioTranscriber() {
+					if _, rawAudio, rErr := s.attachments.ReadBytes(meta.ID); rErr == nil && len(rawAudio) > 0 {
+						tCtx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+						tRes, tErr := s.audioClient.TranscribeAudio(tCtx, llm.AudioTranscribeRequest{
+							Filename: meta.Filename,
+							Mime:     meta.Mime,
+							Data:     rawAudio,
+						})
+						cancel()
+						if tErr == nil && strings.TrimSpace(tRes.Text) != "" {
+							transcript = strings.TrimSpace(tRes.Text)
+							transcribedBy = strings.Trim(tRes.ProviderID+"/"+tRes.ModelID, "/")
+						}
+					}
+				}
 				if localPath != "" {
 					cliMediaNotes = append(cliMediaNotes, fmt.Sprintf("[Attached %s: %s]", label, localPath))
-					docBlocks = append(docBlocks, fmt.Sprintf(`<attached_file name=%q mime=%q path=%q></attached_file>`, meta.Filename, meta.Mime, localPath))
+				}
+				header := fmt.Sprintf(`<attached_file name=%q mime=%q`, meta.Filename, meta.Mime)
+				if localPath != "" {
+					header += fmt.Sprintf(` path=%q`, localPath)
+				}
+				if transcribedBy != "" {
+					header += fmt.Sprintf(` transcribed_by=%q`, transcribedBy)
+				}
+				header += ">"
+				if transcript != "" {
+					docBlocks = append(docBlocks, header+"\n[Audio Transcript]\n"+transcript+"\n</attached_file>")
 				} else {
-					docBlocks = append(docBlocks, fmt.Sprintf(`<attached_file name=%q mime=%q></attached_file>`, meta.Filename, meta.Mime))
+					docBlocks = append(docBlocks, header+"</attached_file>")
 				}
 			} else {
 				extracted := s.attachments.ExtractText(meta.ID, 48000)

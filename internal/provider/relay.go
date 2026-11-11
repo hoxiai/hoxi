@@ -34,17 +34,23 @@ type relayModel struct {
 // relay plane. It is checked before the browser origin guard because desktop
 // clients (VS Code extensions, Electron apps, curl) send no usable Origin.
 func IsRelayPath(path string) bool {
-	return path == relayChatPath || path == relayModelsPath
+	switch path {
+	case relayChatPath, relayModelsPath, relayResponsesPath, relayEmbeddingsPath, relayImagesGenPath, relayAudioTransPath:
+		return true
+	default:
+		return false
+	}
 }
 
-// ServeRelay handles /v1/models and /v1/chat/completions. Authentication is a
-// hk-* relay key; the gateway token is deliberately not accepted here.
+// ServeRelay handles /v1/models, /v1/chat/completions, /v1/responses,
+// /v1/embeddings, /v1/images/generations, and /v1/audio/transcriptions.
+// Authentication is a hk-* relay key; the gateway token is not accepted here.
 func (s *Service) ServeRelay(w http.ResponseWriter, r *http.Request) {
 	// Relay keys travel in the Authorization header, never in cookies, so a
 	// wildcard origin cannot leak a session. Browser-based AI clients (Open
 	// WebUI, chat UIs) need this preflight to work at all.
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Api-Key")
+	w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Api-Key, X-Session-ID, X-Conversation-ID, Openai-Conversation-Id")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 	w.Header().Set("Access-Control-Max-Age", "600")
 	if r.Method == http.MethodOptions {
@@ -67,6 +73,14 @@ func (s *Service) ServeRelay(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.serveRelayChat(w, r)
+	case relayResponsesPath:
+		s.serveRelayResponses(w, r)
+	case relayEmbeddingsPath:
+		s.serveRelayEmbeddings(w, r)
+	case relayImagesGenPath:
+		s.serveRelayImages(w, r)
+	case relayAudioTransPath:
+		s.serveRelayAudioTranscription(w, r)
 	default:
 		writeJSONError(w, http.StatusNotFound, "unknown relay endpoint")
 	}
@@ -124,11 +138,11 @@ func (s *Service) relayModelList() []relayModel {
 		}
 		pObj, _ := merged[pid].(map[string]any)
 		models, _ := pObj["models"].(map[string]any)
+		if !isHTTPEndpoint(relayProviderBaseURL(pid, pObj)) {
+			continue
+		}
 		for _, mid := range sortedKeys(models) {
 			if strings.TrimSpace(mid) == "" {
-				continue
-			}
-			if relayProviderIsNonOpenAINative(pid, pObj) {
 				continue
 			}
 			id := pid + "/" + mid
@@ -163,16 +177,10 @@ func sortedKeys[V any](m map[string]V) []string {
 // no engine round-trip per candidate, so a large pool cannot stall a request.
 func (s *Service) relayCandidateCompatible(providerID string) bool {
 	pObj, ok := s.relayProviderConfig(providerID)
-	if !ok || relayProviderIsNonOpenAINative(providerID, pObj) {
+	if !ok {
 		return false
 	}
-	baseURL := strings.TrimSpace(defaultProviderBaseURLs[providerID])
-	if opts, ok := pObj["options"].(map[string]any); ok {
-		if u, ok := opts["baseURL"].(string); ok && strings.TrimSpace(u) != "" {
-			baseURL = strings.TrimSpace(u)
-		}
-	}
-	return isHTTPEndpoint(baseURL)
+	return isHTTPEndpoint(relayProviderBaseURL(providerID, pObj))
 }
 
 func relayProviderBaseURL(pid string, pObj map[string]any) string {
@@ -204,6 +212,10 @@ func relayProviderIsNonOpenAINative(pid string, pObj map[string]any) bool {
 // one configured provider exposes it, so a typo never silently calls the wrong
 // vendor.
 func (s *Service) relayResolveModel(raw string) (providerID, modelID string, err error) {
+	return s.relayResolveModelWithSession(raw, "")
+}
+
+func (s *Service) relayResolveModelWithSession(raw, sessionKey string) (providerID, modelID string, err error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return "", "", errors.New("model is required")
@@ -213,9 +225,11 @@ func (s *Service) relayResolveModel(raw string) (providerID, modelID string, err
 		if poolID == raw || poolID == "" {
 			poolID = "free"
 		}
-		// The auto pool may contain Anthropic-native or CLI-only entries that
-		// this OpenAI-compatible plane cannot serve. Rotate past them instead of
-		// failing the whole request on the first unlucky pick.
+		if pid, mid, ok := s.lookupRelayStickyTarget(poolID, sessionKey); ok {
+			return pid, mid, nil
+		}
+		// Skip CLI-only entries without HTTP endpoints so auto pools cleanly
+		// resolve to OpenAI, Gemini, or Anthropic HTTP-backed models.
 		exclude := map[string]bool{}
 		for attempt := 0; attempt < relayAutoAttempts; attempt++ {
 			pid, mid := s.selectAutoCandidate(poolID, exclude)
@@ -223,11 +237,12 @@ func (s *Service) relayResolveModel(raw string) (providerID, modelID string, err
 				break
 			}
 			if s.relayCandidateCompatible(pid) {
+				rememberRelayStickyTarget(poolID, sessionKey, pid, mid)
 				return pid, mid, nil
 			}
 			exclude[breakerKey(pid, mid)] = true
 		}
-		return "", "", errors.New("no OpenAI-compatible model is available in the auto pool " + strings.TrimSpace(poolID))
+		return "", "", errors.New("no HTTP-compatible model is available in the auto pool " + strings.TrimSpace(poolID))
 	}
 
 	merged := s.loadOpenCodeImportedProviderMap()
@@ -263,7 +278,7 @@ func (s *Service) relayResolveModel(raw string) (providerID, modelID string, err
 			continue
 		}
 		pObj, _ := merged[pid].(map[string]any)
-		if relayProviderHasModel(pObj, raw) && !relayProviderIsNonOpenAINative(pid, pObj) {
+		if relayProviderHasModel(pObj, raw) && isHTTPEndpoint(relayProviderBaseURL(pid, pObj)) {
 			matches = append(matches, modelMatch{pid: pid, mid: raw})
 		}
 	}
@@ -309,29 +324,11 @@ func (s *Service) serveRelayChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	requested, _ := payload["model"].(string)
-	providerID, modelID, err := s.relayResolveModel(requested)
+	sessionKey := deriveRelaySessionKey(r, payload)
+	providerID, modelID, err := s.relayResolveModelWithSession(requested, sessionKey)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{
 			"error": map[string]any{"message": err.Error(), "type": "invalid_request_error"},
-		})
-		return
-	}
-	pObj, _ := s.relayProviderConfig(providerID)
-	if relayProviderIsAnthropicNative(providerID, pObj) {
-		writeJSON(w, http.StatusBadRequest, map[string]any{
-			"error": map[string]any{
-				"message": "provider " + providerID + " speaks the Anthropic protocol; the local relay only forwards OpenAI-compatible providers",
-				"type":    "invalid_request_error",
-			},
-		})
-		return
-	}
-	if relayProviderIsGoogleNative(providerID, pObj) {
-		writeJSON(w, http.StatusBadRequest, map[string]any{
-			"error": map[string]any{
-				"message": "provider " + providerID + " speaks the Google Gemini protocol; the local relay only forwards OpenAI-compatible providers",
-				"type":    "invalid_request_error",
-			},
 		})
 		return
 	}
@@ -345,16 +342,8 @@ func (s *Service) serveRelayChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resolvedProto := effectiveProviderProtocol(providerID, npm, baseURL)
-	if resolvedProto == "anthropic" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{
-			"error": map[string]any{"message": "provider " + providerID + " is configured with the Anthropic SDK; use an OpenAI-compatible endpoint", "type": "invalid_request_error"},
-		})
-		return
-	}
-	if resolvedProto == "google" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{
-			"error": map[string]any{"message": "provider " + providerID + " is configured with the Google Gemini SDK; use an OpenAI-compatible endpoint", "type": "invalid_request_error"},
-		})
+	if resolvedProto == "anthropic" || resolvedProto == "google" {
+		s.serveTranslatedRelayChat(w, r, providerID, modelID, baseURL, apiKey, headers, resolvedProto, payload)
 		return
 	}
 

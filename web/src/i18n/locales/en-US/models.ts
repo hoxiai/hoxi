@@ -459,4 +459,12 @@ export const models = {
   cliQuotaWeeklyUsage: "7d usage: {tokens} tokens · {turns} turns",
   cliQuotaWeeklyTurnsOnly: "7d usage: {turns} turns",
   cliQuotaCooldownActive: "Quota cooling · resets {time}",
+  pdfCap: "PDF",
+  mediaCap: "Audio/Video",
+  categoryChat: "Chat / Code",
+  categoryImageGen: "Image Gen",
+  categoryAudioAsr: "Voice / ASR",
+  categoryEmbedding: "Embedding",
+  subagentsBindEconomyBtn: "Bind Economy Model to Read-Only ({model})",
+  subagentsBindEconomyDone: "Bound {model} to read-only exploration subagents",
 };

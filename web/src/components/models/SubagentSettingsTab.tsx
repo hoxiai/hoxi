@@ -13,6 +13,7 @@ import {
   Users,
 } from "lucide-solid";
 import {
+  applyEconomyModelToReadOnlySubagents,
   createSubagent,
   deleteSubagent,
   effectiveAllowedSubagents,
@@ -21,6 +22,7 @@ import {
   legacySubagentModel,
   loadAgents,
   migrateLegacySubagentModel,
+  recommendEconomySubagentModel,
   refreshSubagentCatalog,
   readDelegationPolicy,
   readGlobalTaskPolicy,
@@ -425,13 +427,36 @@ export default function SubagentSettingsTab() {
         </div>
 
         <div class="border-t border-[var(--border-subtle)] pt-5 space-y-3">
-          <div>
-            <h4 class="text-[13px] font-semibold text-[var(--text-primary)]">
-              {t("models.subagentsRosterTitle")}
-            </h4>
-            <p class="text-[12px] text-[var(--text-muted)]">
-              {t("models.subagentsRosterDesc")}
-            </p>
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h4 class="text-[13px] font-semibold text-[var(--text-primary)]">
+                {t("models.subagentsRosterTitle")}
+              </h4>
+              <p class="text-[12px] text-[var(--text-muted)]">
+                {t("models.subagentsRosterDesc")}
+              </p>
+            </div>
+            <Show when={recommendEconomySubagentModel()}>
+              {(recModel) => (
+                <div class="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    disabled={savingId() === "economy"}
+                    onClick={() => {
+                      setSavingId("economy");
+                      void applyEconomyModelToReadOnlySubagents()
+                        .then((applied) => markSaved("economy", Boolean(applied)))
+                        .catch(() => markSaved("economy", false))
+                        .finally(() => setSavingId(null));
+                    }}
+                    class="inline-flex items-center gap-1.5 rounded-xl border border-[var(--accent-border)] bg-[var(--accent-surface)] px-3 py-1.5 text-[11px] font-medium text-[var(--accent-primary)] hover:opacity-90 disabled:opacity-50 cursor-pointer"
+                  >
+                    <span>{t("models.subagentsBindEconomyBtn", { model: recModel() })}</span>
+                  </button>
+                  {saveIcon("economy")}
+                </div>
+              )}
+            </Show>
           </div>
 
           <Show

@@ -3,14 +3,17 @@ import { createSignal, Index, Show, type Accessor, type Setter } from "solid-js"
 import {
   AlertCircle,
   Check,
+  FileText,
+  Film,
   Image,
   LoaderCircle,
   Play,
   Plus,
   Sparkles,
   Trash2,
+  Wrench,
 } from "lucide-solid";
-import type { CustomProviderModelDraft } from "../../store/workspace";
+import type { CustomModelCategory, CustomProviderModelDraft } from "../../store/workspace";
 import { t } from "../../i18n";
 import { AddCustomModelModal } from "./AddCustomModelModal";
 import { FetchedModelsModal } from "./FetchedModelsModal";
@@ -57,7 +60,6 @@ export default function CustomProviderModelSection(props: CustomProviderModelSec
         onProbeModel={props.onProbeModel}
       />
 
-      {/* Models List Section */}
       <div class="space-y-2">
         <div class="flex items-center justify-between">
           <label class="text-[12px] font-semibold text-[var(--text-primary)]">
@@ -115,13 +117,15 @@ export default function CustomProviderModelSection(props: CustomProviderModelSec
             </div>
           }
         >
-          <div class="space-y-1.5 max-h-[320px] overflow-y-auto pr-1">
+          <div class="space-y-1.5 max-h-[340px] overflow-y-auto pr-1">
             <Index each={props.models()}>
               {(row, idx) => {
                 const probe = () =>
                   props.modelProbes ? props.modelProbes()[row().id.trim()] : undefined;
+                const cat = () => row().category || "chat";
+                const isChat = () => cat() === "chat";
                 return (
-                  <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/50 px-2.5 py-1.5 space-y-1">
+                  <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/50 px-2.5 py-1.5 space-y-1.5">
                     <div class="flex items-center gap-2">
                       <input
                         type="text"
@@ -150,37 +154,28 @@ export default function CustomProviderModelSection(props: CustomProviderModelSec
                         placeholder={t("models.modelName")}
                         value={row().name}
                         onInput={(e) => updateModelRow(idx, { name: e.currentTarget.value })}
-                        class="w-[145px] shrink-0 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[12px] text-[var(--text-primary)] disabled:opacity-60 outline-none focus:border-[var(--accent-primary)] selectable-text"
+                        class="w-[140px] shrink-0 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[12px] text-[var(--text-primary)] disabled:opacity-60 outline-none focus:border-[var(--accent-primary)] selectable-text"
                       />
-                      <button
-                        type="button"
+                      <select
                         disabled={props.readOnly?.()}
-                        onClick={() => updateModelRow(idx, { reasoning: !row().reasoning })}
-                        class={`shrink-0 inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-medium transition-colors cursor-pointer disabled:opacity-60 ${
-                          row().reasoning
-                            ? "border-[var(--accent-border)] bg-[var(--accent-surface)] text-[var(--accent-primary)]"
-                            : "border-[var(--border-subtle)] bg-[var(--bg-panel)] text-[var(--text-faint)]"
-                        }`}
-                        title={t("models.supportsReasoning")}
+                        value={cat()}
+                        onChange={(e) => {
+                          const nextCat = e.currentTarget.value as CustomModelCategory;
+                          updateModelRow(idx, {
+                            category: nextCat,
+                            ...(nextCat !== "chat"
+                              ? { reasoning: false, toolCall: false, pdf: false, media: false }
+                              : { toolCall: row().toolCall ?? true }),
+                          });
+                        }}
+                        class="shrink-0 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-1 text-[11px] font-medium text-[var(--text-secondary)] outline-none cursor-pointer disabled:opacity-60"
                       >
-                        <Sparkles size={11} />
-                        {t("models.reasoningCap")}
-                      </button>
-                      <button
-                        type="button"
-                        disabled={props.readOnly?.()}
-                        onClick={() => updateModelRow(idx, { image: !row().image })}
-                        class={`shrink-0 inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-medium transition-colors cursor-pointer disabled:opacity-60 ${
-                          row().image
-                            ? "border-[var(--accent-border)] bg-[var(--accent-surface)] text-[var(--accent-primary)]"
-                            : "border-[var(--border-subtle)] bg-[var(--bg-panel)] text-[var(--text-faint)]"
-                        }`}
-                      >
-                        <Image size={11} />
-                        {t("models.imageCap")}
-                      </button>
+                        <option value="chat">{t("models.categoryChat")}</option>
+                        <option value="image">{t("models.categoryImageGen")}</option>
+                        <option value="audio">{t("models.categoryAudioAsr")}</option>
+                        <option value="embedding">{t("models.categoryEmbedding")}</option>
+                      </select>
 
-                      {/* Per-Model Test Button & Status Badge */}
                       <button
                         type="button"
                         disabled={!row().id.trim() || probe()?.status === "testing"}
@@ -223,6 +218,83 @@ export default function CustomProviderModelSection(props: CustomProviderModelSec
                       </Show>
                     </div>
 
+                    <div class="flex flex-wrap items-center gap-1.5 pl-0.5">
+                      <Show when={isChat()}>
+                        <button
+                          type="button"
+                          disabled={props.readOnly?.()}
+                          onClick={() => updateModelRow(idx, { reasoning: !row().reasoning })}
+                          class={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] font-medium transition-colors cursor-pointer disabled:opacity-60 ${
+                            row().reasoning
+                              ? "border-[var(--accent-border)] bg-[var(--accent-surface)] text-[var(--accent-primary)]"
+                              : "border-[var(--border-subtle)] bg-[var(--bg-panel)] text-[var(--text-faint)]"
+                          }`}
+                          title={t("models.supportsReasoning")}
+                        >
+                          <Sparkles size={10} />
+                          {t("models.reasoningCap")}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={props.readOnly?.()}
+                          onClick={() => updateModelRow(idx, { toolCall: row().toolCall === false })}
+                          class={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] font-medium transition-colors cursor-pointer disabled:opacity-60 ${
+                            row().toolCall !== false
+                              ? "border-[var(--accent-border)] bg-[var(--accent-surface)] text-[var(--accent-primary)]"
+                              : "border-[var(--border-subtle)] bg-[var(--bg-panel)] text-[var(--text-faint)]"
+                          }`}
+                        >
+                          <Wrench size={10} />
+                          {t("models.toolsCap")}
+                        </button>
+                      </Show>
+
+                      <Show when={isChat() || cat() === "image"}>
+                        <button
+                          type="button"
+                          disabled={props.readOnly?.()}
+                          onClick={() => updateModelRow(idx, { image: !row().image })}
+                          class={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] font-medium transition-colors cursor-pointer disabled:opacity-60 ${
+                            row().image
+                              ? "border-[var(--accent-border)] bg-[var(--accent-surface)] text-[var(--accent-primary)]"
+                              : "border-[var(--border-subtle)] bg-[var(--bg-panel)] text-[var(--text-faint)]"
+                          }`}
+                        >
+                          <Image size={10} />
+                          {t("models.imageCap")}
+                        </button>
+                      </Show>
+
+                      <Show when={isChat()}>
+                        <button
+                          type="button"
+                          disabled={props.readOnly?.()}
+                          onClick={() => updateModelRow(idx, { pdf: !row().pdf })}
+                          class={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] font-medium transition-colors cursor-pointer disabled:opacity-60 ${
+                            row().pdf
+                              ? "border-[var(--accent-border)] bg-[var(--accent-surface)] text-[var(--accent-primary)]"
+                              : "border-[var(--border-subtle)] bg-[var(--bg-panel)] text-[var(--text-faint)]"
+                          }`}
+                        >
+                          <FileText size={10} />
+                          {t("models.pdfCap")}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={props.readOnly?.()}
+                          onClick={() => updateModelRow(idx, { media: !row().media })}
+                          class={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] font-medium transition-colors cursor-pointer disabled:opacity-60 ${
+                            row().media
+                              ? "border-[var(--accent-border)] bg-[var(--accent-surface)] text-[var(--accent-primary)]"
+                              : "border-[var(--border-subtle)] bg-[var(--bg-panel)] text-[var(--text-faint)]"
+                          }`}
+                        >
+                          <Film size={10} />
+                          {t("models.mediaCap")}
+                        </button>
+                      </Show>
+                    </div>
+
                     <Show when={probe()?.status === "error" && probe()?.error}>
                       <div class="text-[11px] text-[var(--danger-text)] font-mono px-1 truncate">
                         {probe()!.error}
@@ -244,7 +316,6 @@ export default function CustomProviderModelSection(props: CustomProviderModelSec
         onProbeModel={props.onProbeModel}
       />
 
-      {/* Custom HTTP Headers */}
       <Show when={!props.readOnly?.() || props.headers().length > 0}>
         <div class="space-y-1.5">
           <div class="flex items-center justify-between">

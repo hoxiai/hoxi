@@ -8,6 +8,7 @@ import { createSignal } from "solid-js";
 import type { SkillSelection } from "../services/api";
 import { reportAutoCandidateOutcome } from "./auto-breaker";
 import {
+  detectRequiredAttachmentModalities,
   getEffectivePoolCandidates,
   isAutoModel,
   markAutoCandidateCooldown,
@@ -419,13 +420,12 @@ export function canSwitchPoolCandidate(
 ): boolean {
   if (!autoState.poolID) return false;
   if (autoState.triedKeys.size >= maxAutoFailoverAttempts(autoState.poolID)) return false;
-  const retryHasImage = (autoState.attachments ?? []).some(
-    (a) => (a.mime || "").toLowerCase().startsWith("image/") || /^data:image\//i.test(a.url || "")
-  );
+  const requiredModalities = detectRequiredAttachmentModalities(autoState.attachments);
   const resolved = resolveAutoModelTarget(autoState.poolID, {
     advance: true,
     excludeKeys: autoState.triedKeys,
-    requireImage: retryHasImage,
+    requireImage: requiredModalities.includes("image"),
+    requiredModalities,
     sessionID,
   });
   return Boolean(
@@ -496,15 +496,14 @@ export function selectNextDispatchTarget(
       autoState.effort = autoState.manualEffort || undefined;
       autoState.manualEffort = undefined;
     }
-    const retryHasImage = (autoState.attachments ?? []).some(
-      (a) => (a.mime || "").toLowerCase().startsWith("image/") || /^data:image\//i.test(a.url || "")
-    );
+    const requiredModalities = detectRequiredAttachmentModalities(autoState.attachments);
     const nextPoolID = isAutoModel(manual) ? manual.modelID : "";
     const resolvedManual = nextPoolID
       ? resolveAutoModelTarget(nextPoolID, {
           advance: true,
           excludeKeys: autoState.triedKeys,
-          requireImage: retryHasImage,
+          requireImage: requiredModalities.includes("image"),
+          requiredModalities,
           sessionID,
         })
       : manual;
@@ -555,13 +554,12 @@ export function selectNextDispatchTarget(
     !preferSameModelForCache &&
     autoState.triedKeys.size < maxAutoFailoverAttempts(autoState.poolID)
   ) {
-    const retryHasImage = (autoState.attachments ?? []).some(
-      (a) => (a.mime || "").toLowerCase().startsWith("image/") || /^data:image\//i.test(a.url || "")
-    );
+    const requiredModalities = detectRequiredAttachmentModalities(autoState.attachments);
     const resolved = resolveAutoModelTarget(autoState.poolID, {
       advance: true,
       excludeKeys: autoState.triedKeys,
-      requireImage: retryHasImage,
+      requireImage: requiredModalities.includes("image"),
+      requiredModalities,
       sessionID,
     });
     if (resolved && `${resolved.providerID}/${resolved.modelID}` !== `${failed.providerID}/${failed.modelID}`) {

@@ -13,17 +13,21 @@ import { Presence } from "../motion/Presence";
 import {
   AlertCircle,
   Check,
+  FileText,
+  Film,
   Image,
   LoaderCircle,
   Plus,
   Search,
   Sparkles,
+  Wrench,
   X,
 } from "lucide-solid";
 import {
   extractFlattenedModels,
   rankModelSearch,
   workspace,
+  type CustomModelCategory,
   type CustomProviderModelDraft,
   type FlattenedModel,
 } from "../../store/workspace";
@@ -50,8 +54,12 @@ export function AddCustomModelModal(props: {
   const [manualOpen, setManualOpen] = createSignal(false);
   const [draftId, setDraftId] = createSignal("");
   const [draftName, setDraftName] = createSignal("");
+  const [draftCategory, setDraftCategory] = createSignal<CustomModelCategory>("chat");
   const [draftReasoning, setDraftReasoning] = createSignal(false);
   const [draftImage, setDraftImage] = createSignal(false);
+  const [draftTools, setDraftTools] = createSignal(true);
+  const [draftPdf, setDraftPdf] = createSignal(false);
+  const [draftMedia, setDraftMedia] = createSignal(false);
   const [manualCaps, setManualCaps] = createSignal(false);
   const [manualError, setManualError] = createSignal<string | null>(null);
 
@@ -65,8 +73,12 @@ export function AddCustomModelModal(props: {
     setManualOpen(false);
     setDraftId("");
     setDraftName("");
+    setDraftCategory("chat");
     setDraftReasoning(false);
     setDraftImage(false);
+    setDraftTools(true);
+    setDraftPdf(false);
+    setDraftMedia(false);
     setManualCaps(false);
     setManualError(null);
   });
@@ -179,19 +191,28 @@ export function AddCustomModelModal(props: {
     const cleanId = normalizeManualModelId(draftId());
     if (!cleanId) return;
     const cleanName = draftName().trim() || cleanId;
+    const cat = draftCategory();
     props.setModels((prev) => [
       ...prev.filter((m) => m.id.trim().length > 0 && m.id.trim() !== cleanId),
       {
         id: cleanId,
         name: cleanName,
-        reasoning: draftReasoning(),
-        image: draftImage(),
+        category: cat,
+        reasoning: cat === "chat" ? draftReasoning() : false,
+        image: cat === "chat" || cat === "image" ? draftImage() : false,
+        toolCall: cat === "chat" ? draftTools() : false,
+        pdf: cat === "chat" ? draftPdf() : false,
+        media: cat === "chat" ? draftMedia() : false,
       },
     ]);
     setDraftId("");
     setDraftName("");
+    setDraftCategory("chat");
     setDraftReasoning(false);
     setDraftImage(false);
+    setDraftTools(true);
+    setDraftPdf(false);
+    setDraftMedia(false);
     setManualCaps(false);
     setManualError(null);
   };
@@ -470,8 +491,12 @@ export function AddCustomModelModal(props: {
                       setManualError(null);
                       if (!manualCaps()) {
                         const guessed = guessFetchedModelDraft({ id: val, name: val });
+                        setDraftCategory(guessed.category || "chat");
                         setDraftReasoning(guessed.reasoning);
                         setDraftImage(guessed.image);
+                        setDraftTools(guessed.toolCall !== false);
+                        setDraftPdf(Boolean(guessed.pdf));
+                        setDraftMedia(Boolean(guessed.media));
                       }
                     }}
                     onKeyDown={(e) => {
@@ -505,39 +530,96 @@ export function AddCustomModelModal(props: {
                 </div>
               </div>
 
-              <div class="flex items-center gap-2">
-                <button
-                  type="button"
+              <div class="flex flex-wrap items-center gap-1.5">
+                <select
                   disabled={verifying()}
-                  onClick={() => {
+                  value={draftCategory()}
+                  onChange={(e) => {
                     setManualCaps(true);
-                    setDraftReasoning((v) => !v);
+                    setDraftCategory(e.currentTarget.value as CustomModelCategory);
                   }}
-                  class={`flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl border px-3 py-1.5 text-[12px] font-medium transition-colors cursor-pointer disabled:opacity-50 ${
-                    draftReasoning()
-                      ? "border-[var(--accent-border)] bg-[var(--accent-surface)] text-[var(--accent-primary)]"
-                      : "border-[var(--border-subtle)] bg-[var(--bg-elevated)] text-[var(--text-muted)]"
-                  }`}
+                  class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-2.5 py-1.5 text-[12px] font-medium text-[var(--text-secondary)] outline-none cursor-pointer disabled:opacity-50"
                 >
-                  <Sparkles size={13} />
-                  <span>{t("models.supportsReasoning")}</span>
-                </button>
-                <button
-                  type="button"
-                  disabled={verifying()}
-                  onClick={() => {
-                    setManualCaps(true);
-                    setDraftImage((v) => !v);
-                  }}
-                  class={`flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl border px-3 py-1.5 text-[12px] font-medium transition-colors cursor-pointer disabled:opacity-50 ${
-                    draftImage()
-                      ? "border-[var(--accent-border)] bg-[var(--accent-surface)] text-[var(--accent-primary)]"
-                      : "border-[var(--border-subtle)] bg-[var(--bg-elevated)] text-[var(--text-muted)]"
-                  }`}
-                >
-                  <Image size={13} />
-                  <span>{t("models.imageCap")}</span>
-                </button>
+                  <option value="chat">{t("models.categoryChat")}</option>
+                  <option value="image">{t("models.categoryImageGen")}</option>
+                  <option value="audio">{t("models.categoryAudioAsr")}</option>
+                  <option value="embedding">{t("models.categoryEmbedding")}</option>
+                </select>
+
+                <Show when={draftCategory() === "chat"}>
+                  <button
+                    type="button"
+                    disabled={verifying()}
+                    onClick={() => { setManualCaps(true); setDraftReasoning((v) => !v); }}
+                    class={`inline-flex items-center gap-1 rounded-xl border px-2.5 py-1.5 text-[12px] font-medium transition-colors cursor-pointer disabled:opacity-50 ${
+                      draftReasoning()
+                        ? "border-[var(--accent-border)] bg-[var(--accent-surface)] text-[var(--accent-primary)]"
+                        : "border-[var(--border-subtle)] bg-[var(--bg-elevated)] text-[var(--text-muted)]"
+                    }`}
+                  >
+                    <Sparkles size={12} />
+                    <span>{t("models.reasoningCap")}</span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={verifying()}
+                    onClick={() => { setManualCaps(true); setDraftTools((v) => !v); }}
+                    class={`inline-flex items-center gap-1 rounded-xl border px-2.5 py-1.5 text-[12px] font-medium transition-colors cursor-pointer disabled:opacity-50 ${
+                      draftTools()
+                        ? "border-[var(--accent-border)] bg-[var(--accent-surface)] text-[var(--accent-primary)]"
+                        : "border-[var(--border-subtle)] bg-[var(--bg-elevated)] text-[var(--text-muted)]"
+                    }`}
+                  >
+                    <Wrench size={12} />
+                    <span>{t("models.toolsCap")}</span>
+                  </button>
+                </Show>
+
+                <Show when={draftCategory() === "chat" || draftCategory() === "image"}>
+                  <button
+                    type="button"
+                    disabled={verifying()}
+                    onClick={() => { setManualCaps(true); setDraftImage((v) => !v); }}
+                    class={`inline-flex items-center gap-1 rounded-xl border px-2.5 py-1.5 text-[12px] font-medium transition-colors cursor-pointer disabled:opacity-50 ${
+                      draftImage()
+                        ? "border-[var(--accent-border)] bg-[var(--accent-surface)] text-[var(--accent-primary)]"
+                        : "border-[var(--border-subtle)] bg-[var(--bg-elevated)] text-[var(--text-muted)]"
+                    }`}
+                  >
+                    <Image size={12} />
+                    <span>{t("models.imageCap")}</span>
+                  </button>
+                </Show>
+
+                <Show when={draftCategory() === "chat"}>
+                  <button
+                    type="button"
+                    disabled={verifying()}
+                    onClick={() => { setManualCaps(true); setDraftPdf((v) => !v); }}
+                    class={`inline-flex items-center gap-1 rounded-xl border px-2.5 py-1.5 text-[12px] font-medium transition-colors cursor-pointer disabled:opacity-50 ${
+                      draftPdf()
+                        ? "border-[var(--accent-border)] bg-[var(--accent-surface)] text-[var(--accent-primary)]"
+                        : "border-[var(--border-subtle)] bg-[var(--bg-elevated)] text-[var(--text-muted)]"
+                    }`}
+                  >
+                    <FileText size={12} />
+                    <span>{t("models.pdfCap")}</span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={verifying()}
+                    onClick={() => { setManualCaps(true); setDraftMedia((v) => !v); }}
+                    class={`inline-flex items-center gap-1 rounded-xl border px-2.5 py-1.5 text-[12px] font-medium transition-colors cursor-pointer disabled:opacity-50 ${
+                      draftMedia()
+                        ? "border-[var(--accent-border)] bg-[var(--accent-surface)] text-[var(--accent-primary)]"
+                        : "border-[var(--border-subtle)] bg-[var(--bg-elevated)] text-[var(--text-muted)]"
+                    }`}
+                  >
+                    <Film size={12} />
+                    <span>{t("models.mediaCap")}</span>
+                  </button>
+                </Show>
+                <div class="flex-1" />
                 <button
                   type="button"
                   disabled={!draftId().trim() || verifying()}

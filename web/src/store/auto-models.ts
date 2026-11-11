@@ -24,11 +24,14 @@ import {
   inferDedicatedMediaModality,
   inferProviderNpmFromEndpoint,
   isImageGenerationModel,
+  detectRequiredAttachmentModalities,
   isModelFree,
   isNonChatUtilityModelID,
   isNonThinkingGeminiModelID,
   modelSupportsImageInput,
+  modelSupportsModalityInput,
   supportsMultimodalImageEditModelID,
+  type AttachmentModality,
   type AutoCandidateCooldown,
   type AutoModelPoolConfig,
   type AutoPoolCandidate,
@@ -44,6 +47,7 @@ export {
   AUTO_PROVIDER_ID,
   PRESET_AUTO_POOL_IDS,
   computeSmartDefaultCandidates,
+  detectRequiredAttachmentModalities,
   evaluatePromptModalityIntent,
   fetchFreeTierGuides,
   getFreeTierGuideItems,
@@ -54,7 +58,9 @@ export {
   isNonChatUtilityModelID,
   isNonThinkingGeminiModelID,
   modelSupportsImageInput,
+  modelSupportsModalityInput,
   supportsMultimodalImageEditModelID,
+  type AttachmentModality,
   type AutoCandidateCooldown,
   type AutoModelPoolConfig,
   type AutoPoolCandidate,
@@ -348,6 +354,7 @@ export function resolveAutoModelTarget(
     advance?: boolean;
     excludeKeys?: Set<string>;
     requireImage?: boolean;
+    requiredModalities?: AttachmentModality[];
     /** Pin the resolved candidate to this session across turns (cache warmth). */
     sessionID?: string;
   }
@@ -366,10 +373,27 @@ export function resolveAutoModelTarget(
   let allCands = getEffectivePoolCandidates(poolID).filter(
     (c) => !opts?.excludeKeys?.has(`${c.providerID}/${c.modelID}`)
   );
-  if (opts?.requireImage) {
-    const imgCands = allCands.filter((c) => modelSupportsImageInput(c.providerID, c.modelID));
-    if (imgCands.length > 0) {
-      allCands = imgCands;
+  const reqMods = new Set<AttachmentModality>(opts?.requiredModalities || []);
+  if (opts?.requireImage) reqMods.add("image");
+  if (reqMods.size > 0 && allCands.length > 0) {
+    const modList = [...reqMods];
+    const fullMatch = allCands.filter((c) =>
+      modList.every((m) => modelSupportsModalityInput(c.providerID, c.modelID, m))
+    );
+    if (fullMatch.length > 0) {
+      allCands = fullMatch;
+    } else {
+      let bestCount = 0;
+      const scored = allCands.map((c) => {
+        const count = modList.filter((m) =>
+          modelSupportsModalityInput(c.providerID, c.modelID, m)
+        ).length;
+        if (count > bestCount) bestCount = count;
+        return { c, count };
+      });
+      if (bestCount > 0) {
+        allCands = scored.filter((item) => item.count === bestCount).map((item) => item.c);
+      }
     }
   }
   if (allCands.length === 0) return null;

@@ -16,11 +16,12 @@ import (
 )
 
 const (
-	maxSemanticCachedVectors = 2048
-	maxSemanticBatchChunks   = 24
-	maxSemanticRecallPool    = 48
-	semanticTimeout          = 2500 * time.Millisecond
-	minSemanticRecallCosine  = 0.28
+	maxSemanticCachedVectors     = 8192
+	maxPersistedWorkspaceVectors = 8192
+	maxSemanticBatchChunks       = 24
+	maxSemanticRecallPool        = 48
+	semanticTimeout              = 2500 * time.Millisecond
+	minSemanticRecallCosine      = 0.28
 )
 
 type semanticCache struct {
@@ -33,6 +34,16 @@ func newSemanticCache() *semanticCache {
 	return &semanticCache{
 		vectors: make(map[string][]float32),
 	}
+}
+
+func (sc *semanticCache) reset() {
+	if sc == nil {
+		return
+	}
+	sc.mu.Lock()
+	sc.order = nil
+	sc.vectors = make(map[string][]float32)
+	sc.mu.Unlock()
 }
 
 func (sc *semanticCache) get(key string) ([]float32, bool) {
@@ -115,15 +126,171 @@ func shouldApplySemanticRerank(query string, lexicalCount int) bool {
 	return strings.Contains(trimmed, " ")
 }
 
-func (s *Service) embedDocsAndQuery(query string, chunks []*Chunk) ([]float32, [][]float32, bool) {
-	embedder := s.getEmbedder()
-	if embedder == nil || !embedder.HasEmbeddingModel() || len(chunks) == 0 {
-		return nil, nil, false
+func (s *Service) hydrateCachedVectors(c *cachedIndex) map[string][]float32 {
+	if c == nil || c.index == nil {
+		return nil
 	}
-	if s.semCache == nil {
+	s.mu.Lock()
+	if len(c.index.Vectors) == 0 {
+		s.mu.Unlock()
+		return nil
+	}
+	snap := make(map[string][]float32, len(c.index.Vectors))
+	for k, v := range c.index.Vectors {
+		if len(v) > 0 {
+			snap[k] = v
+		}
+	}
+	s.mu.Unlock()
+	if s.semCache != nil {
+		for k, v := range snap {
+			s.semCache.put(k, v)
+		}
+	}
+	return snap
+}
+
+func (s *Service) persistChunkVectors(c *cachedIndex, modelNS string, added map[string][]float32) {
+	if c == nil || c.index == nil || len(added) == 0 {
+		return
+	}
+	s.mu.Lock()
+	if modelNS != "" && c.index.VectorModel != "" && c.index.VectorModel != modelNS {
+		c.index.Vectors = make(map[string][]float32, len(added))
+	}
+	if modelNS != "" {
+		c.index.VectorModel = modelNS
+	}
+	if c.index.Vectors == nil {
+		c.index.Vectors = make(map[string][]float32, len(added))
+	}
+	changed := false
+	for k, vec := range added {
+		if len(vec) == 0 {
+			continue
+		}
+		if _, exists := c.index.Vectors[k]; !exists {
+			if len(c.index.Vectors) >= maxPersistedWorkspaceVectors {
+				continue
+			}
+			changed = true
+		}
+		c.index.Vectors[k] = vec
+	}
+	var snapshot Index
+	if changed {
+		snapshot = *c.index
+		copiedVecs := make(map[string][]float32, len(c.index.Vectors))
+		for k, v := range c.index.Vectors {
+			copiedVecs[k] = v
+		}
+		snapshot.Vectors = copiedVecs
+	}
+	s.mu.Unlock()
+
+	if changed {
+		_ = s.save(&snapshot)
+	}
+}
+
+// WarmVectorsContext incrementally embeds unindexed workspace chunks under ctx
+// and persists their vectors atomically into the workspace index file.
+func (s *Service) WarmVectorsContext(ctx context.Context, directory string, maxChunks int) (int, error) {
+	embedder := s.getEmbedder()
+	if embedder == nil || !embedder.HasEmbeddingModel() {
+		return 0, nil
+	}
+	directory, err := canonicalDir(directory)
+	if err != nil {
+		return 0, err
+	}
+	c, err := s.ensureIndexContext(ctx, directory, false)
+	if err != nil || c == nil {
+		return 0, err
+	}
+	if maxChunks <= 0 {
+		maxChunks = 64
+	}
+	persisted := s.hydrateCachedVectors(c)
+	candidates := selectSemanticCandidateDocs(c, "", nil, len(c.docs))
+	var batchTexts []string
+	var batchKeys []string
+	seenKey := make(map[string]bool)
+	warmed := 0
+
+	flushBatch := func() error {
+		if len(batchTexts) == 0 {
+			return nil
+		}
+		callCtx := ctx
+		var cancel context.CancelFunc
+		if callCtx == nil {
+			callCtx, cancel = context.WithTimeout(context.Background(), semanticTimeout*2)
+			defer cancel()
+		}
+		resp, embErr := embedder.EmbedTexts(callCtx, llm.EmbeddingRequest{Inputs: batchTexts})
+		if embErr != nil || len(resp.Vectors) != len(batchTexts) {
+			return embErr
+		}
+		added := make(map[string][]float32, len(batchKeys))
+		for i, k := range batchKeys {
+			vec := resp.Vectors[i]
+			if s.semCache != nil {
+				s.semCache.put(k, vec)
+			}
+			added[k] = vec
+		}
+		s.persistChunkVectors(c, resp.ProviderID+"/"+resp.ModelID, added)
+		warmed += len(added)
+		batchTexts = batchTexts[:0]
+		batchKeys = batchKeys[:0]
+		return nil
+	}
+
+	for _, docIdx := range candidates {
+		if ctx != nil && ctx.Err() != nil {
+			break
+		}
+		if warmed+len(batchTexts) >= maxChunks {
+			break
+		}
+		text := formatChunkEmbeddingInput(c.docs[docIdx].chunk)
+		key := semanticHashKey("c", text)
+		if seenKey[key] {
+			continue
+		}
+		if persisted != nil {
+			if _, ok := persisted[key]; ok {
+				continue
+			}
+		}
+		if s.semCache != nil {
+			if _, ok := s.semCache.get(key); ok {
+				continue
+			}
+		}
+		seenKey[key] = true
+		batchTexts = append(batchTexts, text)
+		batchKeys = append(batchKeys, key)
+		if len(batchTexts) >= maxSemanticBatchChunks {
+			if err := flushBatch(); err != nil {
+				return warmed, err
+			}
+		}
+	}
+	if err := flushBatch(); err != nil {
+		return warmed, err
+	}
+	return warmed, nil
+}
+
+func (s *Service) embedDocsAndQuery(c *cachedIndex, query string, chunks []*Chunk) ([]float32, [][]float32, bool) {
+	embedder := s.getEmbedder()
+	if embedder == nil || !embedder.HasEmbeddingModel() || s.semCache == nil {
 		return nil, nil, false
 	}
 
+	persisted := s.hydrateCachedVectors(c)
 	qKey := semanticHashKey("q", strings.TrimSpace(query))
 	var missingInputs []string
 	var missingKeys []string
@@ -139,6 +306,12 @@ func (s *Service) embedDocsAndQuery(query string, chunks []*Chunk) ([]float32, [
 	for i, ch := range chunks {
 		text := formatChunkEmbeddingInput(ch)
 		cKey := semanticHashKey("c", text)
+		if persisted != nil {
+			if vec, ok := persisted[cKey]; ok && len(vec) > 0 {
+				chunkVecs[i] = vec
+				continue
+			}
+		}
 		if vec, ok := s.semCache.get(cKey); ok {
 			chunkVecs[i] = vec
 			continue
@@ -158,16 +331,21 @@ func (s *Service) embedDocsAndQuery(query string, chunks []*Chunk) ([]float32, [
 			return nil, nil, false
 		}
 		ns := resp.ProviderID + "/" + resp.ModelID
-		_ = ns
+		addedChunks := make(map[string][]float32, len(missingKeys))
 		for idx, key := range missingKeys {
 			vec := resp.Vectors[idx]
 			s.semCache.put(key, vec)
 			if key == qKey {
 				qVec = vec
+				continue
 			}
+			addedChunks[key] = vec
 			for _, targetIdx := range missingIdxMap[key] {
 				chunkVecs[targetIdx] = vec
 			}
+		}
+		if len(addedChunks) > 0 {
+			s.persistChunkVectors(c, ns, addedChunks)
 		}
 	}
 	if len(qVec) == 0 {
@@ -186,7 +364,7 @@ func selectSemanticCandidateDocs(c *cachedIndex, normPrefix string, exclude map[
 	}
 	pool := make([]candidate, 0, len(c.docs))
 	for i, doc := range c.docs {
-		if exclude[i] {
+		if exclude != nil && exclude[i] {
 			continue
 		}
 		if normPrefix != "" && !strings.HasPrefix(strings.ToLower(doc.chunk.Path), normPrefix) {
@@ -238,6 +416,7 @@ func (s *Service) applySemanticHybridSearch(
 		return matches
 	}
 
+	persisted := s.hydrateCachedVectors(c)
 	topN := len(matches)
 	if topN > maxSemanticBatchChunks {
 		topN = maxSemanticBatchChunks
@@ -255,11 +434,32 @@ func (s *Service) applySemanticHybridSearch(
 		if budget > maxSemanticBatchChunks {
 			budget = maxSemanticBatchChunks
 		}
-		extra := selectSemanticCandidateDocs(c, normPrefix, seen, budget)
-		evalIdxs = append(evalIdxs, extra...)
-	}
-	if len(evalIdxs) == 0 {
-		return matches
+		alreadyCached := make(map[int]bool, len(seen))
+		for k, v := range seen {
+			alreadyCached[k] = v
+		}
+		for docIdx, doc := range c.docs {
+			if alreadyCached[docIdx] {
+				continue
+			}
+			key := semanticHashKey("c", formatChunkEmbeddingInput(doc.chunk))
+			if persisted != nil {
+				if _, ok := persisted[key]; ok {
+					alreadyCached[docIdx] = true
+					continue
+				}
+			}
+			if s.semCache != nil {
+				if _, ok := s.semCache.get(key); ok {
+					alreadyCached[docIdx] = true
+				}
+			}
+		}
+		extra := selectSemanticCandidateDocs(c, normPrefix, alreadyCached, budget)
+		for _, idx := range extra {
+			seen[idx] = true
+			evalIdxs = append(evalIdxs, idx)
+		}
 	}
 
 	chunks := make([]*Chunk, len(evalIdxs))
@@ -267,19 +467,41 @@ func (s *Service) applySemanticHybridSearch(
 		chunks[i] = c.docs[docIdx].chunk
 	}
 
-	qVec, chunkVecs, ok := s.embedDocsAndQuery(query, chunks)
+	qVec, chunkVecs, ok := s.embedDocsAndQuery(c, query, chunks)
 	if !ok {
 		return matches
 	}
 
-	simByDoc := make(map[int]float64, len(evalIdxs))
+	simByDoc := make(map[int]float64, len(evalIdxs)+len(persisted))
 	for i, docIdx := range evalIdxs {
 		if len(chunkVecs[i]) > 0 {
 			simByDoc[docIdx] = cosineSimilarity(qVec, chunkVecs[i])
 		}
 	}
 
-	updated := make([]scoredDocMatch, 0, len(matches)+len(evalIdxs))
+	// Score ALL remaining workspace chunks that already have cached/persisted vectors
+	// so semantic recall covers the entire indexed repository at zero extra API cost.
+	for docIdx, doc := range c.docs {
+		if _, done := simByDoc[docIdx]; done {
+			continue
+		}
+		if normPrefix != "" && !strings.HasPrefix(strings.ToLower(doc.chunk.Path), normPrefix) {
+			continue
+		}
+		key := semanticHashKey("c", formatChunkEmbeddingInput(doc.chunk))
+		var vec []float32
+		if persisted != nil {
+			vec = persisted[key]
+		}
+		if len(vec) == 0 && s.semCache != nil {
+			vec, _ = s.semCache.get(key)
+		}
+		if len(vec) > 0 {
+			simByDoc[docIdx] = cosineSimilarity(qVec, vec)
+		}
+	}
+
+	updated := make([]scoredDocMatch, 0, len(matches)+len(simByDoc))
 	existing := make(map[int]bool, len(matches))
 	for _, m := range matches {
 		existing[m.docIdx] = true
@@ -290,12 +512,8 @@ func (s *Service) applySemanticHybridSearch(
 		updated = append(updated, m)
 	}
 
-	for _, docIdx := range evalIdxs {
-		if existing[docIdx] {
-			continue
-		}
-		sim := simByDoc[docIdx]
-		if sim < minSemanticRecallCosine {
+	for docIdx, sim := range simByDoc {
+		if existing[docIdx] || sim < minSemanticRecallCosine {
 			continue
 		}
 		doc := c.docs[docIdx]

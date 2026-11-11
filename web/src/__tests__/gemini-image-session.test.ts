@@ -4,11 +4,14 @@ import {
   AUTO_PROVIDER_ID,
   candidateNeverReportsCache,
   computeSmartDefaultCandidates,
+  detectRequiredAttachmentModalities,
   dispatchSessionPrompt,
   inferDedicatedMediaModality,
   isImageGenerationModel,
   modelSupportsImageInput,
+  modelSupportsModalityInput,
   recommendEconomySubagentModel,
+  resolveAutoModelTarget,
   saveAutoPool,
   setSelectedImageAspectRatio,
   setSelectedImageSize,
@@ -16,6 +19,7 @@ import {
   type MessageTurn,
 } from "../store/workspace";
 import {
+  extractCustomProviderFormState,
   guessFetchedModelDraft,
   inferProviderNpmFromEndpoint,
 } from "../components/models/custom-endpoint-helpers";
@@ -312,5 +316,100 @@ describe("Gemini custom endpoint & session image generation support", () => {
     assertEqual(grouped.length, 1);
     assertEqual(grouped[0]?.kind, "single");
     assertTrue(hasLiveTailRenderedOutput([turns[1]!]));
+  });
+
+  it("routes audio/video/pdf attachments to multimodal candidates in Auto pools and round-trips granular custom model capabilities", async () => {
+    const origSavePool = hoxiAPI.saveAutoPoolConfig;
+    (hoxiAPI as any).saveAutoPoolConfig = async () => ({ ok: true, autoPools: {} });
+    try {
+      const reqMods = detectRequiredAttachmentModalities([
+        { mime: "application/pdf", filename: "arch.pdf" },
+        { mime: "video/mp4", filename: "demo.mp4" },
+      ]);
+      assertDeepEqual(reqMods, ["pdf", "video"]);
+
+      setWorkspace("providers", [
+        {
+          id: "deepseek",
+          name: "DeepSeek",
+          models: {
+            "deepseek-chat": {
+              id: "deepseek-chat",
+              name: "DeepSeek V3",
+              capabilities: { toolcall: true, input: { text: true, image: false, pdf: false, audio: false, video: false } },
+            },
+          },
+        },
+        {
+          id: "custom-gemini",
+          name: "Custom Gemini",
+          models: {
+            "gemini-2.5-pro": {
+              id: "gemini-2.5-pro",
+              name: "Gemini 2.5 Pro",
+              capabilities: {
+                toolcall: true,
+                reasoning: true,
+                input: { text: true, image: true, pdf: true, audio: true, video: true },
+              },
+            },
+          },
+        },
+      ]);
+      setWorkspace("connectedProviders", ["deepseek", "custom-gemini"]);
+
+      await saveAutoPool("daily", {
+        id: "daily",
+        preset: true,
+        strategy: "priority",
+        customized: true,
+        candidates: [
+          { providerID: "deepseek", modelID: "deepseek-chat" },
+          { providerID: "custom-gemini", modelID: "gemini-2.5-pro" },
+        ],
+      });
+
+      assertEqual(modelSupportsModalityInput("deepseek", "deepseek-chat", "video"), false);
+      assertEqual(modelSupportsModalityInput("custom-gemini", "gemini-2.5-pro", "video"), true);
+
+      // Plain text picks top priority deepseek-chat; video attachment automatically routes to gemini-2.5-pro.
+      const textPick = resolveAutoModelTarget("daily");
+      assertDeepEqual(textPick, { providerID: "deepseek", modelID: "deepseek-chat" });
+
+      const videoPick = resolveAutoModelTarget("daily", { requiredModalities: reqMods });
+      assertDeepEqual(videoPick, { providerID: "custom-gemini", modelID: "gemini-2.5-pro" });
+
+      // Granular custom provider form extraction preserves category, toolCall, pdf, and media flags.
+      setWorkspace("hoxiProviders", {
+        "my-gw": {
+          name: "My Gateway",
+          npm: "@ai-sdk/google",
+          models: {
+            "gemini-2.5-pro": {
+              name: "Gemini 2.5 Pro",
+              capabilities: {
+                reasoning: true,
+                toolcall: true,
+                input: { image: true, pdf: true, audio: true, video: true },
+              },
+            },
+            "whisper-large-v3": {
+              name: "Whisper v3",
+              modalities: { input: ["audio"], output: ["text"] },
+            },
+          },
+        },
+      } as any);
+      const extracted = extractCustomProviderFormState("my-gw");
+      const gemModel = extracted.models.find((m) => m.id === "gemini-2.5-pro");
+      const asrModel = extracted.models.find((m) => m.id === "whisper-large-v3");
+      assertEqual(gemModel?.category, "chat");
+      assertEqual(gemModel?.toolCall, true);
+      assertEqual(gemModel?.pdf, true);
+      assertEqual(gemModel?.media, true);
+      assertEqual(asrModel?.category, "audio");
+    } finally {
+      (hoxiAPI as any).saveAutoPoolConfig = origSavePool;
+    }
   });
 });

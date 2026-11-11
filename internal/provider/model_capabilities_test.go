@@ -367,3 +367,139 @@ func TestImageAspectSizeAudioASRAndEmbeddings(t *testing.T) {
 		t.Fatalf("unexpected Gemini batch embeddings: %+v err=%v", embGem, err)
 	}
 }
+
+func TestRelayMultiProtocolTranslationEndpointsAndExplicitCaps(t *testing.T) {
+	rawModel := map[string]any{
+		"capabilities": map[string]any{
+			"input": map[string]any{"pdf": false, "audio": true},
+		},
+	}
+	if v, ok := explicitModalityOverride(rawModel, "pdf"); !ok || v {
+		t.Fatalf("expected explicit pdf=false override, got ok=%v v=%v", ok, v)
+	}
+	if v, ok := explicitModalityOverride(rawModel, "audio"); !ok || !v {
+		t.Fatalf("expected explicit audio=true override, got ok=%v v=%v", ok, v)
+	}
+
+	b64PNG := base64.StdEncoding.EncodeToString(tinyTestPNG)
+	baseOrigin := newMemPipeServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1beta/models/gemini-2.5-flash:generateContent":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"candidates": []map[string]any{{
+					"content": map[string]any{
+						"parts": []map[string]any{{"text": "gemini-translated-reply"}},
+					},
+				}},
+				"usageMetadata": map[string]int{"promptTokenCount": 9, "candidatesTokenCount": 4},
+			})
+		case "/v1/messages":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"content": []map[string]any{{"type": "text", "text": "claude-translated-reply"}},
+				"usage":   map[string]int{"input_tokens": 11, "output_tokens": 5},
+			})
+		case "/v1/embeddings":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": []map[string]any{{"index": 0, "embedding": []float64{3, 4}}},
+			})
+		case "/v1beta/models/gemini-2.5-flash-image:generateContent":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"candidates": []map[string]any{{
+					"content": map[string]any{
+						"parts": []map[string]any{
+							{"inlineData": map[string]any{"mimeType": "image/png", "data": b64PNG}},
+						},
+					},
+				}},
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+
+	rootDir := t.TempDir()
+	t.Setenv("HOME", rootDir)
+	t.Setenv("HOXI_HOME", rootDir)
+	svc := NewService(0, "", rootDir, nil)
+	_ = svc.PersistHoxiConfigDoc(map[string]interface{}{
+		"provider": map[string]interface{}{
+			"gem-relay": map[string]interface{}{
+				"npm":     "@ai-sdk/google",
+				"options": map[string]interface{}{"baseURL": baseOrigin + "/v1beta"},
+				"models": map[string]interface{}{
+					"gemini-2.5-flash":       map[string]interface{}{"name": "Gemini 2.5 Flash", "free": true},
+					"gemini-2.5-flash-image": map[string]interface{}{"name": "Gemini Image"},
+				},
+			},
+			"claude-relay": map[string]interface{}{
+				"npm":     "@ai-sdk/anthropic",
+				"options": map[string]interface{}{"baseURL": baseOrigin + "/v1"},
+				"models": map[string]interface{}{
+					"claude-sonnet-4-5": map[string]interface{}{"name": "Claude Sonnet", "free": true},
+				},
+			},
+			"emb-relay": map[string]interface{}{
+				"npm":     "@ai-sdk/openai-compatible",
+				"options": map[string]interface{}{"baseURL": baseOrigin + "/v1"},
+				"models": map[string]interface{}{
+					"text-embedding-3-small": map[string]interface{}{"name": "Embed Small"},
+				},
+			},
+		},
+	})
+
+	_, relayTok, err := svc.CreateRelayKey("multi-proto")
+	if err != nil {
+		t.Fatalf("CreateRelayKey failed: %v", err)
+	}
+
+	callRelay := func(path, body, sessionID string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, path, bytes.NewBufferString(body))
+		req.Header.Set("Authorization", "Bearer "+relayTok)
+		req.Header.Set("Content-Type", "application/json")
+		if sessionID != "" {
+			req.Header.Set("X-Session-ID", sessionID)
+		}
+		rec := httptest.NewRecorder()
+		svc.ServeRelay(rec, req)
+		return rec
+	}
+
+	// 1. OpenAI /v1/chat/completions -> Google Gemini native :generateContent (SSE stream)
+	recGem := callRelay("/v1/chat/completions", `{"model":"gem-relay/gemini-2.5-flash","stream":true,"messages":[{"role":"user","content":"hi"}]}`, "")
+	if recGem.Code != http.StatusOK || !bytes.Contains(recGem.Body.Bytes(), []byte("gemini-translated-reply")) || !bytes.Contains(recGem.Body.Bytes(), []byte("[DONE]")) {
+		t.Fatalf("expected Gemini SSE translation, status=%d body=%s", recGem.Code, recGem.Body.String())
+	}
+
+	// 2. OpenAI /v1/chat/completions -> Anthropic native /v1/messages (JSON)
+	recClaude := callRelay("/v1/chat/completions", `{"model":"claude-relay/claude-sonnet-4-5","messages":[{"role":"system","content":"be concise"},{"role":"user","content":"hi"}]}`, "")
+	if recClaude.Code != http.StatusOK || !bytes.Contains(recClaude.Body.Bytes(), []byte("claude-translated-reply")) {
+		t.Fatalf("expected Claude JSON translation, status=%d body=%s", recClaude.Code, recClaude.Body.String())
+	}
+
+	// 3. /v1/responses -> translated Google Gemini response
+	recResp := callRelay("/v1/responses", `{"model":"gem-relay/gemini-2.5-flash","input":"hello responses"}`, "")
+	if recResp.Code != http.StatusOK || !bytes.Contains(recResp.Body.Bytes(), []byte("gemini-translated-reply")) {
+		t.Fatalf("expected /v1/responses translation, status=%d body=%s", recResp.Code, recResp.Body.String())
+	}
+
+	// 4. /v1/embeddings & /v1/images/generations on local relay
+	recEmb := callRelay("/v1/embeddings", `{"model":"emb-relay/text-embedding-3-small","input":"hello vector"}`, "")
+	if recEmb.Code != http.StatusOK || !bytes.Contains(recEmb.Body.Bytes(), []byte(`"embedding"`)) {
+		t.Fatalf("expected /v1/embeddings 200, status=%d body=%s", recEmb.Code, recEmb.Body.String())
+	}
+	recImg := callRelay("/v1/images/generations", `{"model":"gem-relay/gemini-2.5-flash-image","prompt":"tiny icon","size":"1792x1024"}`, "")
+	if recImg.Code != http.StatusOK || !bytes.Contains(recImg.Body.Bytes(), []byte(`"b64_json"`)) {
+		t.Fatalf("expected /v1/images/generations 200, status=%d body=%s", recImg.Code, recImg.Body.String())
+	}
+
+	// 5. Sticky session routing for hoxi-auto
+	pid1, mid1, err := svc.relayResolveModelWithSession("hoxi-auto", "h:sess-sticky-42")
+	if err != nil {
+		t.Fatalf("first sticky auto resolve failed: %v", err)
+	}
+	pid2, mid2, err := svc.relayResolveModelWithSession("hoxi-auto", "h:sess-sticky-42")
+	if err != nil || pid1 != pid2 || mid1 != mid2 {
+		t.Fatalf("expected sticky hoxi-auto target %s/%s, got %s/%s err=%v", pid1, mid1, pid2, mid2, err)
+	}
+}

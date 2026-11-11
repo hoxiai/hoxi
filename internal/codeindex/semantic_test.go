@@ -89,4 +89,33 @@ func RenderInvoicePDF(orderID string) string {
 	if emb.calls != callsAfterFirst {
 		t.Fatalf("expected semantic vector cache hit without extra EmbedTexts call, calls %d -> %d", callsAfterFirst, emb.calls)
 	}
+
+	// Simulate a cold process restart against the same indexRoot: persisted chunk vectors
+	// must be hydrated from disk so only the new query string (1 input) is embedded.
+	restartedSvc := NewService(svc.Root())
+	restartedEmb := &stubSemanticEmbedderWithInputCount{}
+	restartedSvc.SetEmbedder(restartedEmb)
+
+	warmed, err := restartedSvc.WarmVectorsContext(context.Background(), wsDir, 32)
+	if err != nil || warmed != 0 || restartedEmb.totalInputs != 0 {
+		t.Fatalf("expected 0 chunks warmed after restart (all persisted), got warmed=%d inputs=%d err=%v", warmed, restartedEmb.totalInputs, err)
+	}
+
+	restartedRes, err := restartedSvc.Search(wsDir, "用户登录鉴权令牌校验", 5)
+	if err != nil || len(restartedRes.Results) == 0 || restartedRes.Results[0].Path != "auth.go" {
+		t.Fatalf("expected restarted service to recall auth.go from persisted vectors, got %+v err=%v", restartedRes.Results, err)
+	}
+	if restartedEmb.totalInputs != 1 {
+		t.Fatalf("expected restarted search to embed only 1 query input (0 chunks), got %d inputs", restartedEmb.totalInputs)
+	}
+}
+
+type stubSemanticEmbedderWithInputCount struct {
+	stubSemanticEmbedder
+	totalInputs int
+}
+
+func (s *stubSemanticEmbedderWithInputCount) EmbedTexts(ctx context.Context, req llm.EmbeddingRequest) (llm.EmbeddingResponse, error) {
+	s.totalInputs += len(req.Inputs)
+	return s.stubSemanticEmbedder.EmbedTexts(ctx, req)
 }

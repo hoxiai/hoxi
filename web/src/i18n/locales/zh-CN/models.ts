@@ -456,4 +456,12 @@ export const models: ModelsI18n = {
   cliQuotaWeeklyUsage: "近 7 天消耗：{tokens} tokens · {turns} 轮",
   cliQuotaWeeklyTurnsOnly: "近 7 天：{turns} 轮",
   cliQuotaCooldownActive: "配额冷却中 · {time} 恢复",
+  pdfCap: "PDF",
+  mediaCap: "音视频",
+  categoryChat: "对话/编程",
+  categoryImageGen: "生图专用",
+  categoryAudioAsr: "语音/ASR",
+  categoryEmbedding: "向量嵌入",
+  subagentsBindEconomyBtn: "一键为只读子代理绑定轻量模型 ({model})",
+  subagentsBindEconomyDone: "已为只读探索子代理绑定 {model}",
 };

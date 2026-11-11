@@ -32,11 +32,17 @@ import {
 } from "./workspace-providers";
 import { workspace } from "./workspace-state";
 
+export type CustomModelCategory = "chat" | "image" | "audio" | "embedding";
+
 export interface CustomProviderModelDraft {
   id: string;
   name: string;
   reasoning: boolean;
   image: boolean;
+  toolCall?: boolean;
+  pdf?: boolean;
+  media?: boolean;
+  category?: CustomModelCategory;
   free?: boolean;
 }
 
@@ -140,13 +146,46 @@ export async function saveCustomProvider(input: SaveCustomProviderInput): Promis
     const mid = normalizeModelIDForProtocol(m.id, effectiveNpm);
     if (!mid) continue;
     if (!firstModelID) firstModelID = mid;
-    const isImgGen = inferDedicatedMediaModality(mid) === "image";
+    const inferredCat: CustomModelCategory =
+      m.category ||
+      (inferDedicatedMediaModality(mid) === "image"
+        ? "image"
+        : /(whisper|sensevoice|paraformer|transcribe|tts|speech)/i.test(mid)
+        ? "audio"
+        : /(embedding|embed|bge-)/i.test(mid)
+        ? "embedding"
+        : "chat");
+    const isImgGen = inferredCat === "image";
+    const isUtility = inferredCat !== "chat";
+    const allowTools = isUtility ? false : m.toolCall !== false;
+    const allowReasoning = isUtility ? false : Boolean(m.reasoning);
+    const allowImg = Boolean(m.image);
+    const allowPdf = !isUtility && Boolean(m.pdf);
+    const allowMedia = !isUtility && Boolean(m.media);
+    const inputMods = ["text"];
+    if (allowImg) inputMods.push("image");
+    if (allowPdf) inputMods.push("pdf");
+    if (allowMedia) inputMods.push("audio", "video");
     nextModels[mid] = {
       name: (m.name || mid).trim(),
-      attachment: Boolean(m.image),
-      reasoning: Boolean(m.reasoning),
+      category: inferredCat,
+      tool_call: allowTools,
+      attachment: Boolean(allowImg || allowPdf || allowMedia),
+      reasoning: allowReasoning,
+      capabilities: {
+        toolcall: allowTools,
+        reasoning: allowReasoning,
+        attachment: Boolean(allowImg || allowPdf || allowMedia),
+        input: {
+          text: true,
+          image: allowImg,
+          pdf: allowPdf,
+          audio: allowMedia,
+          video: allowMedia,
+        },
+      },
       modalities: {
-        input: m.image ? ["text", "image"] : ["text"],
+        input: inputMods,
         output: isImgGen ? ["text", "image"] : ["text"],
       },
     };

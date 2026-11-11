@@ -199,6 +199,7 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 		g.codeIndex.SetEmbedder(providers)
 		runnerSvc.SetDirectoryWarmerContext(func(ctx context.Context, dir string) {
 			_, _ = g.codeIndex.StatusContext(ctx, dir)
+			_, _ = g.codeIndex.WarmVectorsContext(ctx, dir, 96)
 		})
 	}
 	if g.workApps != nil {
@@ -235,6 +236,7 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 	g.skills = skills.NewService(targetURL.String(), password, g.resolveSkillContext)
 	g.skills.SetMarketplace(skills.NewMarketplaceService("", nil))
 	runnerSvc.SetImageClient(providers)
+	runnerSvc.SetAudioClient(providers)
 	runnerSvc.SetSkillResolver(func(ctx context.Context, directory, sessionID string, sel runner.SkillSelection) (runner.ResolvedSkill, error) {
 		detail, err := g.skills.ResolveSelection(ctx, directory, sessionID, skills.SkillSelection{
 			Key:     sel.Key,

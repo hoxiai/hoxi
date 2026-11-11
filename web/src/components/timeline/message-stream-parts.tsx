@@ -204,6 +204,91 @@ export function PartView(props: {
   );
 }
 
+export function isAudioFilePart(fp: { mime?: string; url?: string; filename?: string }): boolean {
+  const m = (fp.mime || "").toLowerCase();
+  return (
+    m.startsWith("audio/") ||
+    /^data:audio\//i.test(fp.url || "") ||
+    /\.(mp3|wav|m4a|aac|ogg|oga|opus|flac)$/i.test(fp.filename || "")
+  );
+}
+
+export function isVideoFilePart(fp: { mime?: string; url?: string; filename?: string }): boolean {
+  const m = (fp.mime || "").toLowerCase();
+  return (
+    m.startsWith("video/") ||
+    /^data:video\//i.test(fp.url || "") ||
+    /\.(mp4|mov|webm|mkv|avi)$/i.test(fp.filename || "")
+  );
+}
+
+export function MediaAttachmentPlayer(props: {
+  part: Extract<MessagePart, { type: "file" }>;
+  compact?: boolean;
+}) {
+  const audio = createMemo(() => isAudioFilePart(props.part));
+  const video = createMemo(() => !audio() && isVideoFilePart(props.part));
+
+  return (
+    <Switch>
+      <Match when={audio()}>
+        <div
+          data-part-id={props.part.id}
+          class={`my-1 flex flex-col gap-1.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3 py-2 ${
+            props.compact ? "w-[260px] max-w-full" : "w-[320px] max-w-full"
+          }`}
+        >
+          <div class="flex items-center justify-between gap-2 text-[11px]">
+            <span class="truncate font-mono text-[var(--text-secondary)]">
+              {props.part.filename || "audio"}
+            </span>
+            <a
+              href={props.part.url}
+              download={props.part.filename || "audio"}
+              class="shrink-0 text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+              title={props.part.filename || "audio"}
+            >
+              <Icon name="download" size="small" />
+            </a>
+          </div>
+          <audio controls preload="metadata" src={props.part.url} class="h-8 w-full" />
+        </div>
+      </Match>
+      <Match when={video()}>
+        <div
+          data-part-id={props.part.id}
+          class={`my-1 overflow-hidden rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] ${
+            props.compact ? "max-w-[280px]" : "max-w-[460px]"
+          }`}
+        >
+          <video
+            controls
+            preload="metadata"
+            playsinline
+            src={props.part.url}
+            class={`block w-full bg-black/85 object-contain ${
+              props.compact ? "max-h-48" : "max-h-[340px]"
+            }`}
+          />
+          <div class="flex items-center justify-between gap-2 px-2.5 py-1.5 text-[11px]">
+            <span class="truncate font-mono text-[var(--text-secondary)]">
+              {props.part.filename || "video"}
+            </span>
+            <a
+              href={props.part.url}
+              download={props.part.filename || "video"}
+              class="shrink-0 text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+              title={props.part.filename || "video"}
+            >
+              <Icon name="download" size="small" />
+            </a>
+          </div>
+        </div>
+      </Match>
+    </Switch>
+  );
+}
+
 function AssistantFilePartView(props: { part: Extract<MessagePart, { type: "file" }> }) {
   const isImg = createMemo(() => {
     const fp = props.part;
@@ -213,27 +298,37 @@ function AssistantFilePartView(props: { part: Extract<MessagePart, { type: "file
       /\.(png|jpe?g|webp|gif|bmp|tiff?|svg|heic|heif|avif)$/i.test(fp.filename || "")
     );
   });
+  const isMedia = createMemo(
+    () => !isImg() && (isAudioFilePart(props.part) || isVideoFilePart(props.part))
+  );
 
   return (
     <Show
       when={isImg()}
       fallback={
-        <a
-          href={props.part.url}
-          target="_blank"
-          rel="noreferrer"
-          download={props.part.filename || "attachment"}
-          onClick={(e) => {
-            if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-            if (openAttachmentInInspector(props.part.url, props.part.filename)) {
-              e.preventDefault();
-            }
-          }}
-          class="my-1 inline-flex max-w-[320px] items-center gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3 py-2 text-[12px] text-[var(--text-primary)] hover:border-[var(--accent-border)] transition-colors"
+        <Show
+          when={isMedia()}
+          fallback={
+            <a
+              href={props.part.url}
+              target="_blank"
+              rel="noreferrer"
+              download={props.part.filename || "attachment"}
+              onClick={(e) => {
+                if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+                if (openAttachmentInInspector(props.part.url, props.part.filename)) {
+                  e.preventDefault();
+                }
+              }}
+              class="my-1 inline-flex max-w-[320px] items-center gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3 py-2 text-[12px] text-[var(--text-primary)] hover:border-[var(--accent-border)] transition-colors"
+            >
+              <FileIcon node={{ path: props.part.filename || "file.bin", type: "file" }} class="h-4 w-4 shrink-0" />
+              <span class="truncate font-mono">{props.part.filename || "attachment"}</span>
+            </a>
+          }
         >
-          <FileIcon node={{ path: props.part.filename || "file.bin", type: "file" }} class="h-4 w-4 shrink-0" />
-          <span class="truncate font-mono">{props.part.filename || "attachment"}</span>
-        </a>
+          <MediaAttachmentPlayer part={props.part} />
+        </Show>
       }
     >
       <div class="group/genimg relative my-1.5 inline-block max-w-full sm:max-w-[520px]">

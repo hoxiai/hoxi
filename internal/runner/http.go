@@ -66,6 +66,7 @@ type Service struct {
 	subs            map[chan SSEEvent]string
 	seqSeed         int64
 	imageClient     llm.ImageClient
+	audioClient     llm.AudioClient
 	skillResolver   func(ctx context.Context, directory, sessionID string, sel SkillSelection) (ResolvedSkill, error)
 	projectResolver ProjectResolver
 	permissionRules func() map[string]interface{}

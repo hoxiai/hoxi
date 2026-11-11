@@ -55,6 +55,7 @@ export {
 
 export const MAX_ATTACHMENTS = 6;
 export const MAX_ATTACHMENT_BYTES = 15 * 1024 * 1024;
+export const MAX_IMAGE_DIMENSION_PX = 2048;
 
 const DIRECT_IMAGE_MIMES = new Set([
   "image/png",
@@ -203,33 +204,63 @@ function convertDataUrlToPngIfNeeded(
   mime: string,
   filename: string
 ): Promise<{ dataUrl: string; mime: string; filename: string }> {
-  if (DIRECT_IMAGE_MIMES.has(mime)) {
+  if (mime === "image/gif" || mime === "image/svg+xml") {
+    return Promise.resolve({ dataUrl, mime, filename });
+  }
+  const needsFormatConvert = !DIRECT_IMAGE_MIMES.has(mime);
+  if (!needsFormatConvert && dataUrl.length < 1_600_000) {
     return Promise.resolve({ dataUrl, mime, filename });
   }
   if (typeof document === "undefined" || typeof Image === "undefined") {
-    return Promise.resolve({ dataUrl, mime: "image/png", filename });
+    return Promise.resolve({
+      dataUrl,
+      mime: needsFormatConvert ? "image/png" : mime,
+      filename,
+    });
   }
   return new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
       try {
+        const rawW = img.naturalWidth || img.width || 1;
+        const rawH = img.naturalHeight || img.height || 1;
+        const longest = Math.max(rawW, rawH);
+        if (!needsFormatConvert && longest <= MAX_IMAGE_DIMENSION_PX) {
+          resolve({ dataUrl, mime, filename });
+          return;
+        }
+        const scale = longest > MAX_IMAGE_DIMENSION_PX ? MAX_IMAGE_DIMENSION_PX / longest : 1;
+        const targetW = Math.max(1, Math.round(rawW * scale));
+        const targetH = Math.max(1, Math.round(rawH * scale));
         const canvas = document.createElement("canvas");
-        canvas.width = img.naturalWidth || img.width || 1;
-        canvas.height = img.naturalHeight || img.height || 1;
+        canvas.width = targetW;
+        canvas.height = targetH;
         const ctx = canvas.getContext("2d");
         if (ctx) {
-          ctx.drawImage(img, 0, 0);
-          const pngUrl = canvas.toDataURL("image/png");
-          const pngName = filename.replace(/\.[^.]+$/, "") + ".png";
-          resolve({ dataUrl: pngUrl, mime: "image/png", filename: pngName });
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = "high";
+          ctx.drawImage(img, 0, 0, targetW, targetH);
+          const outMime =
+            !needsFormatConvert && (mime === "image/jpeg" || mime === "image/webp")
+              ? mime
+              : "image/png";
+          const outUrl =
+            outMime === "image/png"
+              ? canvas.toDataURL("image/png")
+              : canvas.toDataURL(outMime, 0.88);
+          const outName = needsFormatConvert
+            ? filename.replace(/\.[^.]+$/, "") + ".png"
+            : filename;
+          resolve({ dataUrl: outUrl, mime: outMime, filename: outName });
           return;
         }
       } catch {
         /* fallback to original dataUrl */
       }
-      resolve({ dataUrl, mime: "image/png", filename });
+      resolve({ dataUrl, mime: needsFormatConvert ? "image/png" : mime, filename });
     };
-    img.onerror = () => resolve({ dataUrl, mime: "image/png", filename });
+    img.onerror = () =>
+      resolve({ dataUrl, mime: needsFormatConvert ? "image/png" : mime, filename });
     img.src = dataUrl;
   });
 }

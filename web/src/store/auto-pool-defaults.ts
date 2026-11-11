@@ -411,6 +411,8 @@ export function evaluatePromptModalityIntent(
   };
 }
 
+export type AttachmentModality = "image" | "pdf" | "audio" | "video";
+
 export function modelSupportsImageInput(providerID: string, modelID: string): boolean {
   if (!providerID || !modelID) return true;
   const hoxiModel = workspace.hoxiProviders?.[providerID]?.models?.[modelID];
@@ -447,4 +449,105 @@ export function modelSupportsImageInput(providerID: string, modelID: string): bo
     return false;
   }
   return true;
+}
+
+export function modelSupportsModalityInput(
+  providerID: string,
+  modelID: string,
+  modality: AttachmentModality
+): boolean {
+  if (modality === "image") return modelSupportsImageInput(providerID, modelID);
+  if (!providerID || !modelID) return false;
+  if (isNonChatUtilityModelID(modelID) || isImageGenerationModel(providerID, modelID)) {
+    return false;
+  }
+  const hoxiModel = workspace.hoxiProviders?.[providerID]?.models?.[modelID];
+  if (hoxiModel && typeof hoxiModel === "object") {
+    if (hoxiModel.capabilities?.input?.[modality] === true) return true;
+    if (Array.isArray(hoxiModel.modalities?.input)) {
+      return hoxiModel.modalities.input.includes(modality);
+    }
+    if (hoxiModel.capabilities?.input?.[modality] === false) return false;
+  }
+  const prov = workspace.providers.find((p) => p.id === providerID);
+  const mInfo = prov?.models?.[modelID];
+  if (mInfo && typeof mInfo === "object") {
+    if (mInfo.capabilities?.input?.[modality] === true) return true;
+    if (Array.isArray(mInfo.modalities?.input)) {
+      return mInfo.modalities.input.includes(modality);
+    }
+    if (mInfo.capabilities?.input?.[modality] === false) return false;
+  }
+  const lowerMod = modelID.toLowerCase();
+  const lowerProv = providerID.toLowerCase();
+  const isGemini =
+    lowerMod.includes("gemini") ||
+    lowerProv.includes("google") ||
+    lowerProv.includes("gemini") ||
+    prov?.npm === "@ai-sdk/google";
+  if (modality === "pdf") {
+    if (isGemini) return true;
+    if (
+      lowerMod.includes("claude-3-5") ||
+      lowerMod.includes("claude-3-7") ||
+      lowerMod.includes("claude-sonnet-4") ||
+      lowerMod.includes("claude-opus-4") ||
+      lowerMod.includes("claude-haiku-4") ||
+      lowerMod.includes("claude-4") ||
+      prov?.npm === "@ai-sdk/anthropic"
+    ) {
+      return true;
+    }
+    return /^(gpt-4o|chatgpt-4o|gpt-4\.1|gpt-5|o3|o4)/i.test(lowerMod);
+  }
+  if (modality === "audio") {
+    return isGemini || lowerMod.includes("omni") || lowerMod.includes("audio");
+  }
+  if (modality === "video") {
+    return (
+      isGemini ||
+      lowerMod.includes("omni") ||
+      lowerMod.includes("qwen2.5-vl") ||
+      lowerMod.includes("qwen3-vl")
+    );
+  }
+  return false;
+}
+
+export function detectRequiredAttachmentModalities(
+  attachments?: Array<{ mime?: string; filename?: string; url?: string }>
+): AttachmentModality[] {
+  if (!Array.isArray(attachments) || attachments.length === 0) return [];
+  const found = new Set<AttachmentModality>();
+  for (const att of attachments) {
+    const mime = (att?.mime || "").toLowerCase().trim();
+    const url = (att?.url || "").toLowerCase().trim();
+    const name = (att?.filename || "").toLowerCase().trim();
+    if (
+      mime.startsWith("image/") ||
+      url.startsWith("data:image/") ||
+      /\.(png|jpe?g|webp|gif|bmp|tiff?|svg|heic|heif|avif)$/.test(name)
+    ) {
+      found.add("image");
+    } else if (
+      mime === "application/pdf" ||
+      url.startsWith("data:application/pdf") ||
+      name.endsWith(".pdf")
+    ) {
+      found.add("pdf");
+    } else if (
+      mime.startsWith("audio/") ||
+      url.startsWith("data:audio/") ||
+      /\.(mp3|wav|m4a|aac|ogg|oga|opus|flac)$/.test(name)
+    ) {
+      found.add("audio");
+    } else if (
+      mime.startsWith("video/") ||
+      url.startsWith("data:video/") ||
+      /\.(mp4|mov|webm|mkv|avi)$/.test(name)
+    ) {
+      found.add("video");
+    }
+  }
+  return [...found];
 }

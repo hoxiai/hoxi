@@ -6,7 +6,7 @@ import type { MessagePart } from "../services/sse-types";
 import { extractUserTurnSkillSelection, revalidateSkillForTargetDirectory, setComposerSkillNotice, transferDraftComposerSkill } from "./skills";
 import { recordPromptDispatched } from "./provider-telemetry";
 import { extractLocalFallbackTitle, isPlaceholderSessionTitle, summarizeAndRenameSession } from "./session-title";
-import { evaluatePromptModalityIntent, isAutoModel, isImageGenerationModel, isNonChatUtilityModelID, markAutoCandidateCooldown, modelSupportsImageInput, resolveAutoModelTarget } from "./auto-models";
+import { detectRequiredAttachmentModalities, evaluatePromptModalityIntent, isAutoModel, isImageGenerationModel, isNonChatUtilityModelID, markAutoCandidateCooldown, modelSupportsImageInput, resolveAutoModelTarget } from "./auto-models";
 import { resolveEffectiveModelEffort } from "./provider-catalog";
 import { reportAutoCandidateOutcome } from "./auto-breaker";
 import {
@@ -119,9 +119,8 @@ export async function dispatchSessionPrompt(
       ? parseModelString(agentDedicatedModelKey)
       : null;
   const attachments = options?.attachments ?? [];
-  const hasImageAttachment = attachments.some(
-    (a) => (a.mime || "").toLowerCase().startsWith("image/") || /^data:image\//i.test(a.url || "")
-  );
+  const requiredModalities = detectRequiredAttachmentModalities(attachments);
+  const hasImageAttachment = requiredModalities.includes("image");
   const turnIntent = evaluatePromptModalityIntent(promptText, {
     hasImageAttachment,
     skillName: options?.skillSelection?.name || editingQueued?.item.skillSelection?.name,
@@ -134,6 +133,7 @@ export async function dispatchSessionPrompt(
       ? resolveAutoModelTarget(chosenModel, {
           advance: true,
           requireImage: requireVisionBrain,
+          requiredModalities,
           sessionID: id ?? undefined,
         })
       : null;
@@ -162,6 +162,7 @@ export async function dispatchSessionPrompt(
     const fallbackBrain = resolveAutoModelTarget(turnIntent.recommendedPoolID, {
       advance: false,
       requireImage: requireVisionBrain,
+      requiredModalities,
       sessionID: id ?? undefined,
     });
     if (fallbackBrain) {
