@@ -22,7 +22,7 @@ var (
 	trustedGlobReplacer = strings.NewReplacer("*", "x", "?", "x")
 	rmFlagRe            = regexp.MustCompile(`^(?:-[rRfdvi]+|--(?:recursive|force|dir|verbose))$`)
 	chmodFlagRe         = regexp.MustCompile(`^(?:-[Rvf]+|--(?:recursive|verbose|silent|quiet))$`)
-	chmodModeRe         = regexp.MustCompile(`^(?:[0-7]{3,4}|[ugoa]*[-+=][rwxX]+)$`)
+	chmodModeRe         = regexp.MustCompile(`^(?:0?[4-7][0-7]{2}|(?:[ugoa]*[+=][rwxX]+|[ugoa]*-[wxX]+)(?:,(?:[ugoa]*[+=][rwxX]+|[ugoa]*-[wxX]+))*)$`)
 	gitRefRe            = regexp.MustCompile(`^[A-Za-z0-9_./~^-]+$`)
 	gitCleanFlagRe      = regexp.MustCompile(`^(?:-[fdxXnqi]+|--(?:force|dry-run|quiet))$`)
 	gitRestoreFlagRe    = regexp.MustCompile(`^(?:-[WSq]+|--(?:staged|worktree|quiet|source=[A-Za-z0-9_./~^-]+))$`)
@@ -35,12 +35,24 @@ func isIsolatedWorktree(dir string) bool {
 	return strings.Contains(slash, "/.hoxi/worktrees/")
 }
 
-// trustedRecoverableRequest reports whether a destructive shell request only
-// affects the isolated worktree in a recoverable way.
-func trustedRecoverableRequest(item map[string]interface{}, worktree string) bool {
+// modeAllowsControllableRequest reports whether mode lets item run without a
+// destructive confirmation prompt. Trusted and unattended modes accept all
+// recoverable worktree classes; auto mode accepts only throwaway temp-entry
+// cleanup and non-recursive, non-special-bit chmod on non-protected workspace
+// or temp files.
+func modeAllowsControllableRequest(mode string, item map[string]interface{}, worktree string) bool {
+	switch mode {
+	case ApprovalModeTrusted, ApprovalModeUnattended:
+		return trustedRecoverableRequest(item, worktree)
+	case ApprovalModeAuto:
+		return autoControllableRequest(item, worktree)
+	default:
+		return false
+	}
+}
+
+func isControllableShellItem(item map[string]interface{}) bool {
 	meta := itemMetadata(item)
-	// Only real shell requests; a doom-loop or other request that merely
-	// names a shell tool is never relaxed.
 	perm := permissionName(item)
 	if perm != "bash" && !(perm == "tool" && bashToolNames[strings.ToLower(firstString(meta["tool"]))]) {
 		return false
@@ -49,6 +61,15 @@ func trustedRecoverableRequest(item map[string]interface{}, worktree string) boo
 		return false
 	}
 	if external, _ := meta["externalDirectory"].(bool); external {
+		return false
+	}
+	return true
+}
+
+// trustedRecoverableRequest reports whether a destructive shell request only
+// affects the isolated worktree in a recoverable way.
+func trustedRecoverableRequest(item map[string]interface{}, worktree string) bool {
+	if !isControllableShellItem(item) {
 		return false
 	}
 	worktree = recoverableWorktree(worktree)
@@ -64,6 +85,27 @@ func trustedRecoverableRequest(item map[string]interface{}, worktree string) boo
 	return true
 }
 
+// autoControllableRequest reports whether a destructive-flagged shell request
+// only cleans up concrete throwaway temp entries or sets ordinary permissions
+// on concrete non-protected files.
+func autoControllableRequest(item map[string]interface{}, dir string) bool {
+	if !isControllableShellItem(item) {
+		return false
+	}
+	candidates, ok := controllableCandidates(item, func(piece string) bool {
+		return isAutoControllableCommand(piece, dir)
+	})
+	if !ok {
+		return false
+	}
+	for _, cmd := range candidates {
+		if !isAutoControllableCommand(cmd, dir) {
+			return false
+		}
+	}
+	return true
+}
+
 // recoverableCandidates returns the shell commands to judge for recoverable
 // destructive checks within dir. OpenCode also lists its own split of the
 // command, plus the sandbox stop-marker traps, in patterns; a fragment judged
@@ -71,6 +113,12 @@ func trustedRecoverableRequest(item map[string]interface{}, worktree string) boo
 // whole command is judged while still checking any extra destructive piece not
 // contained in whole.
 func recoverableCandidates(item map[string]interface{}, dir string) ([]string, bool) {
+	return controllableCandidates(item, func(piece string) bool {
+		return isRecoverableWorktreeCommand(piece, dir)
+	})
+}
+
+func controllableCandidates(item map[string]interface{}, checkPiece func(string) bool) ([]string, bool) {
 	candidates := commandCandidates(item)
 	meta := itemMetadata(item)
 	if cmd := strings.TrimSpace(firstString(meta["command"])); cmd != "" {
@@ -81,7 +129,7 @@ func recoverableCandidates(item map[string]interface{}, dir string) ([]string, b
 				continue
 			}
 			if isDestructivePermissionRequest(map[string]interface{}{"permission": "bash", "patterns": []interface{}{piece}}) &&
-				!isRecoverableWorktreeCommand(piece, dir) {
+				!checkPiece(piece) {
 				return nil, false
 			}
 		}
@@ -102,6 +150,35 @@ func recoverableWorktree(worktree string) string {
 	return worktree
 }
 
+func safeChmodDir(dir string) string {
+	dir = strings.TrimSpace(dir)
+	if dir == "" || !filepath.IsAbs(dir) {
+		return ""
+	}
+	cleaned := filepath.Clean(dir)
+	slash := filepath.ToSlash(cleaned)
+	if slash == "/" || filepath.Dir(cleaned) == cleaned || isSensitiveExternalPath(cleaned) || isSecretFilePath(cleaned) {
+		return ""
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" && samePath(cleaned, home) {
+		return ""
+	}
+	return cleaned
+}
+
+func isAutoControllableCommand(command, dir string) bool {
+	classes := map[string]bool{}
+	if !recoverableCommandClasses(command, safeChmodDir(dir), classes) {
+		return false
+	}
+	for class := range classes {
+		if class != recoverClassTempDelete && class != recoverClassSafeChmod {
+			return false
+		}
+	}
+	return true
+}
+
 // Recoverable work comes in classes. Full trust mode accepts every class;
 // a session grant ("此类都允许") only ever covers the grantable ones.
 const (
@@ -111,7 +188,8 @@ const (
 	recoverClassGitDiscard = "git-discard" // git checkout -- / checkout . / restore / clean
 	recoverClassGitReset   = "git-reset"   // git reset --hard moves the branch
 	recoverClassGitClean   = "git-clean"   // git clean deletes untracked (and with -x ignored) files
-	recoverClassChmod      = "chmod"
+	recoverClassChmod      = "chmod"       // recursive or globbed chmod in isolated worktree
+	recoverClassSafeChmod  = "chmod-safe"  // non-recursive safe chmod on concrete workspace/temp files
 )
 
 var sessionGrantableClasses = setOf(recoverClassTempDelete, recoverClassDirDelete, recoverClassGitDiscard)
@@ -250,15 +328,37 @@ func isRecoverableSegment(words []string, worktree string, classes map[string]bo
 	case "rm", "rmdir", "unlink":
 		return flaggedWorktreePaths(args, rmFlagRe, worktree, classes)
 	case "chmod":
+		recursive := false
 		i := 0
 		for i < len(args) && chmodFlagRe.MatchString(args[i]) {
+			if strings.Contains(args[i], "R") || args[i] == "--recursive" {
+				recursive = true
+			}
 			i++
 		}
 		if i >= len(args) || !chmodModeRe.MatchString(args[i]) {
 			return false
 		}
-		classes[recoverClassChmod] = true
-		return allWorktreePaths(args[i+1:], worktree, map[string]bool{})
+		targets := args[i+1:]
+		pathClasses := map[string]bool{}
+		if !allWorktreePaths(targets, worktree, pathClasses) {
+			return false
+		}
+		hasDirGlob := false
+		if pathClasses[recoverClassDirDelete] {
+			for _, t := range targets {
+				if strings.ContainsAny(t, "*?") {
+					hasDirGlob = true
+					break
+				}
+			}
+		}
+		if recursive || pathClasses[recoverClassDirWipe] || hasDirGlob {
+			classes[recoverClassChmod] = true
+		} else {
+			classes[recoverClassSafeChmod] = true
+		}
+		return true
 	case "git":
 		return worktree != "" && isRecoverableGitSegment(args, worktree, classes)
 	}

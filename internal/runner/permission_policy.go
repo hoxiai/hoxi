@@ -33,8 +33,8 @@ const (
 
 var (
 	destructiveRe = regexp.MustCompile(`(?i)` + strings.Join([]string{
-		// Core destructive / privilege / disk / power commands
-		`\b(rm|rmdir|unlink|shred|truncate|srm|sudo|chmod|chown|mkfs|dd|diskutil|killall|reboot|shutdown)\b`,
+		// Core destructive / privilege / disk / power commands (anchored to command/word boundaries, not mid-path dirs, hyphens, or source extensions)
+		`(?:^|[\s;&|()<>\x60'"=:/{},$])(?:mkfs(?:\.[a-z0-9]+)?|(?:rm|rmdir|unlink|shred|truncate|srm|sudo|chmod|chown|dd|diskutil|killall|reboot|shutdown)(?:\.(?:exe|cmd|bat))?)(?:$|[\s;&|()<>\x60'"\\{},$])`,
 		// kill (excluding pure `kill -0 <pid>` liveness probes) and pkill
 		`\bkill\s+(?:(?:(?:-0\s+)*(?:-(?:[1-9a-mo-rt-z][a-z0-9]*|[sn][a-z0-9]+|0[a-z0-9]+|-)\s+|-[sn]\s+(?:[1-9a-z][a-z0-9]*|0[a-z0-9]+)\s+))+[-?\d%]|(?:-[1-9]\d*|[1-9?%]|0(?:\s|$)))`,
 		`\bpkill\b`,
@@ -70,12 +70,16 @@ var (
 		`worktree\s+(?:remove|prune)\b`,
 		`push\b[^\n;&|]*(?:\s--f(?:o(?:r\S*)?)?(?:[=\s]|$)|\s--d(?:e(?:l\S*)?)?(?:[=\s]|$)|\s--mi\S*|\s--pru\S*|\s-[a-zA-Z]*[fd][a-zA-Z]*(?:\s|$)|\s\+\S|\s:\S)`,
 		`reset\b[^\n;&|]*\s--h(?:a\S*)?(?:[=\s]|$)`,
-		`clean\b[^\n;&|]*\s-[a-zA-Z]*f`,
 		`checkout\b[^\n;&|]*(?:\s--(?:\s|$)|\s-[a-zA-Z]*f[a-zA-Z]*(?:\s|$)|\s\.(?:[;&|]|\s|/|$))`,
-		`restore\b`,
 		`stash\s+(?:drop|clear)\b`,
 		`switch\b[^\n;&|]*(?:\s-[a-zA-Z]*f[a-zA-Z]*(?:\s|$)|\s--f(?:o(?:r\S*)?)?(?:[=\s]|$)|\s--di(?:s(?:c\S*)?)?(?:[=\s]|$))`,
 	}, "|") + `)`)
+
+	destructiveGitCleanRestoreRe = regexp.MustCompile(`\bgit\b[^\n;&|()]*?\b(?:clean\b[^\n;&|()]*\s-[a-zA-Z]*f[^\n;&|()]*|restore\b[^\n;&|()]*)`)
+	safeGitRestoreStagedRe       = regexp.MustCompile(`^git(?:\s+(?:-C\s+[^\s<>$` + "`" + `]+|--no-pager|--bare|--git-dir=[^\s<>$` + "`" + `]+|--work-tree=[^\s<>$` + "`" + `]+))*\s+restore((?:\s+(?:-[Sq]+|--staged|--quiet))+)(?:\s+--)?(?:\s+[^\s<>$` + "`" + `-][^\s<>$` + "`" + `]*)+(?:\s+(?:2?>\s*/dev/null|2>&1))*\s*$`)
+	safeGitRestoreHasStagedRe    = regexp.MustCompile(`(?:\s-[qS]*S[qS]*|\s--staged)(?:\s|$)`)
+	safeGitCleanDryRunRe         = regexp.MustCompile(`^git(?:\s+(?:-C\s+[^\s<>$` + "`" + `]+|--no-pager))*\s+clean((?:\s+(?:-[fdxXnq]+|--force|--dry-run|--quiet))+)(?:\s+--)?(?:\s+[^\s<>$` + "`" + `-][^\s<>$` + "`" + `]*)*(?:\s+(?:2?>\s*/dev/null|2>&1))*\s*$`)
+	safeGitCleanHasDryRunRe      = regexp.MustCompile(`(?:\s-[fdxXnq]*n[fdxXnq]*|\s--dry-run)(?:\s|$)`)
 
 	deobfuscator = strings.NewReplacer(`\`, "", `'`, "", `"`, "", `[`, "", `]`, "")
 
@@ -136,8 +140,27 @@ func isDestructiveCommand(command string) bool {
 	return matchesDestructive(blob) || matchesDestructive(deobfuscator.Replace(blob))
 }
 
+func isSafeGitCleanOrRestoreMatch(m string) bool {
+	if sub := safeGitRestoreStagedRe.FindStringSubmatch(m); sub != nil {
+		return safeGitRestoreHasStagedRe.MatchString(sub[1])
+	}
+	if sub := safeGitCleanDryRunRe.FindStringSubmatch(m); sub != nil {
+		return safeGitCleanHasDryRunRe.MatchString(sub[1])
+	}
+	return false
+}
+
+func hasDestructiveGitCleanOrRestore(blob string) bool {
+	for _, m := range destructiveGitCleanRestoreRe.FindAllString(blob, -1) {
+		if !isSafeGitCleanOrRestoreMatch(m) {
+			return true
+		}
+	}
+	return false
+}
+
 func matchesDestructive(blob string) bool {
-	return destructiveRe.MatchString(blob) || destructiveGitRe.MatchString(blob)
+	return destructiveRe.MatchString(blob) || destructiveGitRe.MatchString(blob) || hasDestructiveGitCleanOrRestore(blob)
 }
 
 // decideCommandPermission mirrors decidePermission({permission:"bash", patterns:[command]}).

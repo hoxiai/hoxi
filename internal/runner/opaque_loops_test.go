@@ -82,10 +82,14 @@ func TestLiteralNarrowing(t *testing.T) {
 		t.Error("substituted git push was allowed")
 	}
 	auto := ApprovalPolicy{Mode: ApprovalModeAuto}
+	smart := ApprovalPolicy{Mode: ApprovalModeSmart}
 	trusted := ApprovalPolicy{Mode: ApprovalModeTrusted}
 	temp := "D=\"/var/folders/ab/T/opencode\"\nrm -rf \"$D/stage\"\npython3 \"$D/stage.py\""
-	if approvalAutoApproves(req("bash", temp), auto, nil, "") {
-		t.Error("auto approved a substituted temp rm")
+	if !approvalAutoApproves(req("bash", temp), auto, nil, "") {
+		t.Error("auto asked for a substituted temp rm")
+	}
+	if approvalAutoApproves(req("bash", temp), smart, nil, "") {
+		t.Error("smart approved a substituted temp rm")
 	}
 	if !approvalAutoApproves(req("bash", temp), trusted, nil, "") {
 		t.Error("trusted asked for a substituted temp rm")

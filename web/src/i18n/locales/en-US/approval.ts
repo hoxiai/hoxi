@@ -33,7 +33,7 @@ export const approval = {
   modeAutoShort: "Auto",
   modeAutoBadge: "Default",
   modeAutoDesc:
-    "Auto-approves edits and normal commands; destructive commands always ask",
+    "Auto-approves edits, normal commands and temp-file cleanup; destructive commands always ask",
   modeSmartLabel: "Smart Ask",
   modeSmartShort: "Smart",
   modeSmartDesc:
@@ -46,7 +46,7 @@ export const approval = {
   modeTrustedShort: "Trusted",
   modeTrustedBadge: "High risk",
   modeTrustedDesc:
-    "Auto mode plus recoverable deletes and Git discards inside an isolated worktree, and temp-directory cleanup; secret reads, sensitive paths outside the worktree, sudo, force pushes, publishing, killing processes and loop detection still ask",
+    "Auto mode plus recoverable deletes and Git discards inside an isolated worktree; secret reads, sensitive paths outside the worktree, sudo, force pushes, publishing, killing processes and loop detection still ask",
   modeUnattendedLabel: "Unattended",
   modeUnattendedShort: "Unattended",
   modeUnattendedBadge: "High risk",

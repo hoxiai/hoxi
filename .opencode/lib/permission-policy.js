@@ -42,8 +42,8 @@ export const ENVRC_FILE_PATTERN = String.raw`(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?
 
 const DESTRUCTIVE_RE = new RegExp(
   [
-    // Core destructive / privilege / disk / power commands
-    String.raw`\b(rm|rmdir|unlink|shred|truncate|srm|sudo|chmod|chown|mkfs|dd|diskutil|killall|reboot|shutdown)\b`,
+    // Core destructive / privilege / disk / power commands (anchored to command/word boundaries, not mid-path dirs, hyphens, or source extensions)
+    String.raw`(?:^|[\s;&|()<>\x60'"=:\/{},$])(?:mkfs(?:\.[a-z0-9]+)?|(?:rm|rmdir|unlink|shred|truncate|srm|sudo|chmod|chown|dd|diskutil|killall|reboot|shutdown)(?:\.(?:exe|cmd|bat))?)(?:$|[\s;&|()<>\x60'"\\{},$])`,
     // kill (excluding pure `kill -0 <pid>` liveness probes) and pkill
     String.raw`\bkill\s+(?:(?:(?:-0\s+)*(?:-(?:[1-9a-mo-rt-z][a-z0-9]*|[sn][a-z0-9]+|0[a-z0-9]+|-)\s+|-[sn]\s+(?:[1-9a-z][a-z0-9]*|0[a-z0-9]+)\s+))+[-?\d%]|(?:-[1-9]\d*|[1-9?%]|0(?:\s|$)))`,
     String.raw`\bpkill\b`,
@@ -81,14 +81,18 @@ const DESTRUCTIVE_GIT_RE = new RegExp(
       String.raw`worktree\s+(?:remove|prune)\b`,
       String.raw`push\b[^\n;&|]*(?:\s--f(?:o(?:r\S*)?)?(?:[=\s]|$)|\s--d(?:e(?:l\S*)?)?(?:[=\s]|$)|\s--mi\S*|\s--pru\S*|\s-[a-zA-Z]*[fd][a-zA-Z]*(?:\s|$)|\s\+\S|\s:\S)`,
       String.raw`reset\b[^\n;&|]*\s--h(?:a\S*)?(?:[=\s]|$)`,
-      String.raw`clean\b[^\n;&|]*\s-[a-zA-Z]*f`,
       String.raw`checkout\b[^\n;&|]*(?:\s--(?:\s|$)|\s-[a-zA-Z]*f[a-zA-Z]*(?:\s|$)|\s\.(?:[;&|]|\s|\/|$))`,
-      String.raw`restore\b`,
       String.raw`stash\s+(?:drop|clear)\b`,
       String.raw`switch\b[^\n;&|]*(?:\s-[a-zA-Z]*f[a-zA-Z]*(?:\s|$)|\s--f(?:o(?:r\S*)?)?(?:[=\s]|$)|\s--di(?:s(?:c\S*)?)?(?:[=\s]|$))`,
     ].join("|") +
     String.raw`)`,
 );
+
+const DESTRUCTIVE_GIT_CLEAN_RESTORE_RE = /\bgit\b[^\n;&|()]*?\b(?:clean\b[^\n;&|()]*\s-[a-zA-Z]*f[^\n;&|()]*|restore\b[^\n;&|()]*)/g;
+const SAFE_GIT_RESTORE_STAGED_RE = /^git(?:\s+(?:-C\s+[^\s<>$`]+|--no-pager|--bare|--git-dir=[^\s<>$`]+|--work-tree=[^\s<>$`]+))*\s+restore((?:\s+(?:-[Sq]+|--staged|--quiet))+)(?:\s+--)?(?:\s+[^\s<>$`-][^\s<>$`]*)+(?:\s+(?:2?>\s*\/dev\/null|2>&1))*\s*$/;
+const SAFE_GIT_RESTORE_HAS_STAGED_RE = /(?:\s-[qS]*S[qS]*|\s--staged)(?:\s|$)/;
+const SAFE_GIT_CLEAN_DRY_RUN_RE = /^git(?:\s+(?:-C\s+[^\s<>$`]+|--no-pager))*\s+clean((?:\s+(?:-[fdxXnq]+|--force|--dry-run|--quiet))+)(?:\s+--)?(?:\s+[^\s<>$`-][^\s<>$`]*)*(?:\s+(?:2?>\s*\/dev\/null|2>&1))*\s*$/;
+const SAFE_GIT_CLEAN_HAS_DRY_RUN_RE = /(?:\s-[fdxXnq]*n[fdxXnq]*|\s--dry-run)(?:\s|$)/;
 
 const TRAILING_PAREN_RE = /\)\s*$/;
 export const DOLLAR_EXPAND_RE = /[A-Za-z0-9_{('"@*#?!$-]/;
@@ -530,8 +534,23 @@ function isSafeCommand(command, worktree) {
   return segments.length > 0 && segments.every(isSafeSegment);
 }
 
+function isSafeGitCleanOrRestoreMatch(m) {
+  const restoreSub = SAFE_GIT_RESTORE_STAGED_RE.exec(m);
+  if (restoreSub) return SAFE_GIT_RESTORE_HAS_STAGED_RE.test(restoreSub[1]);
+  const cleanSub = SAFE_GIT_CLEAN_DRY_RUN_RE.exec(m);
+  if (cleanSub) return SAFE_GIT_CLEAN_HAS_DRY_RUN_RE.test(cleanSub[1]);
+  return false;
+}
+
+function hasDestructiveGitCleanOrRestore(blob) {
+  for (const [m] of blob.matchAll(DESTRUCTIVE_GIT_CLEAN_RESTORE_RE)) {
+    if (!isSafeGitCleanOrRestoreMatch(m)) return true;
+  }
+  return false;
+}
+
 function matchesDestructive(blob) {
-  return DESTRUCTIVE_RE.test(blob) || DESTRUCTIVE_GIT_RE.test(blob);
+  return DESTRUCTIVE_RE.test(blob) || DESTRUCTIVE_GIT_RE.test(blob) || hasDestructiveGitCleanOrRestore(blob);
 }
 
 function hoxiToolsAction(input) {

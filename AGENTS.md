@@ -57,8 +57,8 @@
 
 6. **安全门控、网络外发、子进程消毒与原子持久化**
    - **破坏性操作与审批门控底线**（完整 AST/Shell 展开、不透明命令、无人值守与本会话进程归属细则必读 [`docs/ai-coding-guardrails.md`](docs/ai-coding-guardrails.md) 第 1、5 节）：
-     - 含破坏性指令（`rm`, `sudo`, `chmod`, `chown`, `diskutil`, `mkfs`, `git push --force`, `git reset --hard`）与敏感文件读取（`.env` 等）默认须人工确认；字面量数据参数先经 `maskCommandDataArguments`（`command_data_args.go` / `command-data-args.js`）遮蔽，语义不明时不替换。
-     - **完全信任（`trusted`，`approval_trusted.go`，仅桌面端）**：仅额外放行隔离 worktree（`.hoxi/worktrees/`）内非受保护路径删除与 `git reset --hard`/`checkout --`/`restore`/`clean`，及临时目录（`/tmp`、`$TMPDIR`、macOS `/var/folders/<id>/T/<子路径>`）下具体条目。
+     - 含破坏性指令（`rm`, `sudo`, `chmod`, `chown`, `diskutil`, `mkfs`, `git push --force`, `git reset --hard`）与敏感文件读取（`.env` 等）默认须人工确认；字面量数据参数先经 `maskCommandDataArguments`（`command_data_args.go` / `command-data-args.js`）遮蔽，语义不明时不替换。`auto` 模式额外放行临时目录（`/tmp`、`/private/tmp`、`os.TempDir()`、macOS `/var/folders/<id>/T/<子路径>`）下具名条目的删除，以及对工作目录/临时目录内非受保护具体文件的非递归常规 `chmod`（禁 setuid/setgid/sticky 与 `000`）；只操作暂存区的 `git restore --staged`/`-S`（不含 `-W`/`--worktree`/`--source`）与只读预览 `git clean -n`/`--dry-run` 不计入破坏性指令。
+     - **完全信任（`trusted`，`approval_trusted.go`，仅桌面端）**：在 `auto` 基础上额外放行隔离 worktree（`.hoxi/worktrees/`）内非受保护路径删除、递归/通配 `chmod` 与 `git reset --hard`/`checkout --`/`restore`/`clean`。
      - **无人值守（`unattended`，`approval_unattended.go`，仅桌面端）**：要求隔离 worktree + 命令沙箱且运行时受 Seatbelt 包裹；硬拒绝读密钥、任何 `git push` 与发布、提权、凭据外发及动态代码（`dynamic` 类，共用 `.opencode/lib/unattended.cases.json`），拒绝项记入 `/api/hoxi/permission/deferred`（不入隧道）。
      - **结束本会话进程（`owned_process.go` + `process_control.go`）**：除手动模式外，顶层字面量 `pkill`/`kill` 仅在核实所有目标均属本会话进程组时放行（审计来源 `own_process`），任一目标不属本会话或含动态参数一律询问。
      - **任何模式（含完全信任）必问硬底线**：读密钥与凭据、工作树外敏感路径、受保护路径（`.git`、`.opencode`、`.claude`、`.hoxi`、`.agents`、`.envrc`、`.vscode/settings.json`；`.hoxi/attachments/` 读写豁免，`.hoxi/skills/` 与 `.agents/skills/` 仅读与执行既有脚本豁免，读本会话 `~/.hoxi/sessions/<id>/` 豁免）、`sudo`、`git push --force`/删远端分支、共享 git 状态、发布命令、非本会话 `kill`/`pkill`/`killall`、磁盘系统命令、管道执行、`unsandboxed` 工具与无法按 `opaque_command.go` / `opaque-command.js` 归约的不透明命令（共用 `.opencode/lib/opaque-command.cases.json`）。

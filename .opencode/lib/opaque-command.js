@@ -70,7 +70,7 @@ const BENIGN_PATH_EXPORT_RE = /^export[ \t]+PATH=[A-Za-z0-9_./:$~{}-]+$/;
 const ENV_VAR_ASSIGNMENT_WORD_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
 const RM_FLAG_RE = /^(?:-[rRfdvi]+|--(?:recursive|force|dir|verbose))$/;
 const CHMOD_FLAG_RE = /^(?:-[Rvf]+|--(?:recursive|verbose|silent|quiet))$/;
-const CHMOD_MODE_RE = /^(?:[0-7]{3,4}|[ugoa]*[-+=][rwxX]+)$/;
+const CHMOD_MODE_RE = /^(?:0?[4-7][0-7]{2}|(?:[ugoa]*[+=][rwxX]+|[ugoa]*-[wxX]+)(?:,(?:[ugoa]*[+=][rwxX]+|[ugoa]*-[wxX]+))*)$/;
 const INLINE_SCRIPT_FLAGS = new Set(["-c", "-e", "--eval", "-p", "--print", "-"]);
 const INTERP_VALUE_FLAGS = new Set(["-m", "-W", "-X", "-r", "--require", "--import", "-I", "-C"]);
 

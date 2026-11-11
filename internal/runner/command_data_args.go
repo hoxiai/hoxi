@@ -238,13 +238,10 @@ func maskCommandDataArguments(command string) string {
 			echoInPipe = true
 		}
 	}
-	var masked []dataToken
+	var masked []dataReplacement
 	for _, seg := range segments {
-		for _, i := range dataArgumentIndexes(seg) {
-			// A redirect target is a path, never data.
-			if seg[i].literal && !strings.ContainsAny(seg[i-1].value, "<>") {
-				masked = append(masked, seg[i])
-			}
+		for _, rep := range dataArgumentReplacements(seg) {
+			masked = append(masked, rep)
 		}
 	}
 	if len(masked) == 0 {
@@ -252,10 +249,10 @@ func maskCommandDataArguments(command string) string {
 	}
 	var b strings.Builder
 	last := 0
-	for _, tok := range masked {
-		b.WriteString(command[last:tok.start])
-		b.WriteString(maskedDataArgument)
-		last = tok.end
+	for _, rep := range masked {
+		b.WriteString(command[last:rep.start])
+		b.WriteString(rep.text)
+		last = rep.end
 	}
 	b.WriteString(command[last:])
 	return b.String()
@@ -369,28 +366,71 @@ func isEchoSegment(seg []dataToken) bool {
 	return name == "echo" || name == "printf"
 }
 
-// dataArgumentIndexes returns the word indexes of seg that only carry data.
-func dataArgumentIndexes(seg []dataToken) []int {
-	switch filepath.Base(seg[0].value) {
-	case "echo", "printf":
-		out := make([]int, 0, len(seg)-1)
-		for i := 1; i < len(seg) && !strings.ContainsAny(seg[i].value, "<>"); i++ {
-			if !echoOptionRe.MatchString(seg[i].value) {
-				out = append(out, i)
-			}
-		}
-		return out
-	case "git":
-		return gitDataArguments(seg)
-	case "rg":
-		return searchPatternArguments(seg, rgValueFlags)
-	case "grep", "egrep", "fgrep":
-		return searchPatternArguments(seg, grepValueFlags)
-	}
-	return nil
+type dataReplacement struct {
+	start int
+	end   int
+	text  string
 }
 
-func gitDataArguments(seg []dataToken) []int {
+func appendWholeWordMask(out []dataReplacement, seg []dataToken, idx int) []dataReplacement {
+	if idx > 0 && idx < len(seg) && seg[idx].literal && !strings.ContainsAny(seg[idx-1].value, "<>") {
+		out = append(out, dataReplacement{start: seg[idx].start, end: seg[idx].end, text: maskedDataArgument})
+	}
+	return out
+}
+
+// dataArgumentReplacements returns the literal data spans of seg to mask.
+func dataArgumentReplacements(seg []dataToken) []dataReplacement {
+	var idxs []int
+	switch filepath.Base(seg[0].value) {
+	case "echo", "printf":
+		for i := 1; i < len(seg) && !strings.ContainsAny(seg[i].value, "<>"); i++ {
+			if !echoOptionRe.MatchString(seg[i].value) {
+				idxs = append(idxs, i)
+			}
+		}
+	case "git":
+		return gitDataArguments(seg)
+	case "gh":
+		return ghDataArguments(seg)
+	case "rg":
+		idxs = searchPatternArguments(seg, rgValueFlags)
+	case "grep", "egrep", "fgrep":
+		idxs = searchPatternArguments(seg, grepValueFlags)
+	}
+	var out []dataReplacement
+	for _, i := range idxs {
+		out = appendWholeWordMask(out, seg, i)
+	}
+	return out
+}
+
+func flagValueReplacements(seg []dataToken, startIdx int, valueFlags map[string]bool, allowCommitShortM bool) []dataReplacement {
+	var out []dataReplacement
+	for j := startIdx; j < len(seg); j++ {
+		v := seg[j].value
+		if eq := strings.IndexByte(v, '='); eq > 0 && valueFlags[v[:eq]] {
+			if len(v) > eq+1 && seg[j].literal && !strings.ContainsAny(seg[j-1].value, "<>") {
+				out = append(out, dataReplacement{start: seg[j].start, end: seg[j].end, text: v[:eq] + "=" + maskedDataArgument})
+			}
+			continue
+		}
+		if allowCommitShortM && strings.HasPrefix(v, "-m") && len(v) > 2 && !strings.HasPrefix(v, "--") {
+			if seg[j].literal && !strings.ContainsAny(seg[j-1].value, "<>") {
+				out = append(out, dataReplacement{start: seg[j].start, end: seg[j].end, text: "-m " + maskedDataArgument})
+			}
+			continue
+		}
+		short := allowCommitShortM && len(v) > 2 && v[0] == '-' && v[1] != '-' && strings.HasSuffix(v, "m")
+		if (valueFlags[v] || short) && j+1 < len(seg) {
+			out = appendWholeWordMask(out, seg, j+1)
+			j++
+		}
+	}
+	return out
+}
+
+func gitDataArguments(seg []dataToken) []dataReplacement {
 	i := 1
 	for i < len(seg) && strings.HasPrefix(seg[i].value, "-") {
 		if gitGlobalValueFlags[seg[i].value] {
@@ -402,28 +442,37 @@ func gitDataArguments(seg []dataToken) []int {
 		return nil
 	}
 	sub := seg[i].value
-	var valueFlags map[string]bool
 	switch sub {
 	case "commit", "tag", "merge", "stash":
-		valueFlags = setOf("-m", "--message")
+		return flagValueReplacements(seg, i+1, setOf("-m", "--message"), sub == "commit")
 	case "log", "shortlog":
-		valueFlags = setOf("--grep", "-S", "-G")
-	default:
+		return flagValueReplacements(seg, i+1, setOf("--grep", "-S", "-G"), false)
+	}
+	return nil
+}
+
+func ghDataArguments(seg []dataToken) []dataReplacement {
+	i := 1
+	for i < len(seg) && strings.HasPrefix(seg[i].value, "-") {
+		if seg[i].value == "-R" || seg[i].value == "--repo" {
+			i += 2
+			continue
+		}
+		if strings.HasPrefix(seg[i].value, "--repo=") {
+			i++
+			continue
+		}
 		return nil
 	}
-	var out []int
-	for j := i + 1; j < len(seg); j++ {
-		v := seg[j].value
-		if eq := strings.IndexByte(v, '='); eq > 0 && valueFlags[v[:eq]] {
-			continue // `--message=text` keeps its flag; only whole words are masked
-		}
-		short := sub == "commit" && len(v) > 2 && v[0] == '-' && v[1] != '-' && strings.HasSuffix(v, "m")
-		if (valueFlags[v] || short) && j+1 < len(seg) {
-			out = append(out, j+1)
-			j++
-		}
+	if i+1 >= len(seg) {
+		return nil
 	}
-	return out
+	entity, action := seg[i].value, seg[i+1].value
+	if (entity != "pr" && entity != "issue" && entity != "release") ||
+		(action != "create" && action != "edit" && action != "comment" && action != "close" && action != "reopen") {
+		return nil
+	}
+	return flagValueReplacements(seg, i+2, setOf("-t", "--title", "-b", "--body", "-n", "--notes"), false)
 }
 
 func searchPatternArguments(seg []dataToken, valueFlags map[string]bool) []int {

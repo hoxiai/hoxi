@@ -167,8 +167,7 @@ func approvalAutoApprovesIsolated(item map[string]interface{}, pol ApprovalPolic
 	if isOpaquePermissionRequestWith(item, worktree, scriptTrustFor(pol.Mode)) && !sandboxCoversOpacity(item, pol.Mode, worktree) {
 		return false
 	}
-	if isDestructivePermissionRequest(item) &&
-		!((pol.Mode == ApprovalModeTrusted || pol.Mode == ApprovalModeUnattended) && trustedRecoverableRequest(item, worktree)) {
+	if isDestructivePermissionRequest(item) && !modeAllowsControllableRequest(pol.Mode, item, worktree) {
 		return false
 	}
 	if readPermissions[req.permission] {

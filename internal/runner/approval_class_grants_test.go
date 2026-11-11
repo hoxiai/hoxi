@@ -142,12 +142,16 @@ func TestSessionClassGrantCoversLaterRequestsOfTheSameKind(t *testing.T) {
 		t.Fatal("grant-covered command must be audited with source grant")
 	}
 
-	// A different kind still asks, and the hard floor cannot be granted.
-	res = f.asyncHook(t, f.command(3, "rm -f /tmp/hoxi-grant-probe.log"))
-	tempID, _ := waitForEvent(t, events, "permission.asked").Properties["id"].(string)
-	f.reply(t, tempID, "reject", "different kind")
+	// A different grantable kind (git-discard) still asks in auto mode, while
+	// temp-delete runs directly under auto mode and the hard floor cannot be granted.
+	if d := f.callHook(t, f.command(3, "rm -f /tmp/hoxi-grant-probe.log")); d.Decision != "auto_approve" {
+		t.Fatalf("temp delete in auto mode: %q", d.Decision)
+	}
+	res = f.asyncHook(t, f.command(4, "git checkout -- src/a.go"))
+	discardID, _ := waitForEvent(t, events, "permission.asked").Properties["id"].(string)
+	f.reply(t, discardID, "reject", "different kind")
 	<-res
-	res = f.asyncHook(t, f.command(4, "sudo rm -rf build"))
+	res = f.asyncHook(t, f.command(5, "sudo rm -rf build"))
 	sudo := waitForEvent(t, events, "permission.asked")
 	if meta, _ := sudo.Properties["metadata"].(map[string]interface{}); meta[grantClassesMetaKey] != nil {
 		t.Fatalf("sudo must not offer a grant: %#v", meta)
@@ -172,7 +176,7 @@ func TestSessionClassGrantCoversLaterRequestsOfTheSameKind(t *testing.T) {
 	if n := f.svc.revokeApprovalGrants(grantID, "", false); n != 1 {
 		t.Fatalf("revoked %d grants", n)
 	}
-	res = f.asyncHook(t, f.command(5, "rm -rf dist"))
+	res = f.asyncHook(t, f.command(6, "rm -rf dist"))
 	againID, _ := waitForEvent(t, events, "permission.asked").Properties["id"].(string)
 	f.reply(t, againID, "reject", "revoked")
 	if d := <-res; d.Decision != "deny" {

@@ -42,6 +42,10 @@ const DEV_NULL_WORD_RE = /^(?:\d*|&)>>?\/dev\/null$/;
 const DUP_STREAM_WORD_RE = /^\d*>&[12]$/;
 const SHELL_KEYWORDS = new Set(["while", "until", "do", "done", "if", "then", "else", "elif", "fi", "!"]);
 const BENIGN_TEMP_CONSUMERS = new Set(["scp", "ls", "wc", "head", "tail", "stat", "file", "md5", "shasum", "sha256sum", "rm", "echo", "printf", "grep", "rg", "sed"]);
+const BENIGN_GIT_TEMP_SUBCOMMANDS = new Set(["commit", "tag", "merge", "notes", "status", "diff", "log", "show", "add", "rev-parse"]);
+const BENIGN_GH_TEMP_ENTITIES = new Set(["pr", "issue", "release"]);
+const BENIGN_GH_TEMP_ACTIONS = new Set(["create", "edit", "comment", "close", "reopen", "view", "status"]);
+const GIT_OUTPUT_OPT_RE = /^--(o(u[^=]*)?|ex(t[^=]*)?)(=|$)/;
 const SSH_BLOCKED_KEY_BASENAMES = new Set(["authorized_keys", "known_hosts", "config", "environment", "rc", ".ssh"]);
 const isBoundary = (c) => " \t\r\n;&|()<>".includes(c);
 const baseName = (w) => (w.includes("/") ? w.slice(w.lastIndexOf("/") + 1) : w);
@@ -344,7 +348,48 @@ function isBenignTempConsumerSegment(seg) {
   const base = baseName(normalizeAbsoluteTool(clean[0]));
   if (base === "scp") return false;
   if (base === "sed") return isReadOnlySedArgs(clean.slice(1), stripNullRedirects);
+  if (base === "git") return isBenignGitTempConsumer(clean.slice(1));
+  if (base === "gh") return isBenignGHTempConsumer(clean.slice(1));
   return BENIGN_TEMP_CONSUMERS.has(base);
+}
+
+function isBenignGitTempConsumer(args) {
+  let i = 0;
+  while (i < args.length && args[i].startsWith("-")) {
+    const a = args[i];
+    if (a === "-C" || a === "--git-dir" || a === "--work-tree" || a === "--namespace") {
+      if (i + 1 >= args.length) return false;
+      i += 2;
+      continue;
+    }
+    if (
+      a === "--no-pager" || a === "-P" || a === "--bare" ||
+      a.startsWith("--git-dir=") || a.startsWith("--work-tree=") || a.startsWith("--namespace=")
+    ) {
+      i++;
+      continue;
+    }
+    return false;
+  }
+  if (i >= args.length || !BENIGN_GIT_TEMP_SUBCOMMANDS.has(args[i])) return false;
+  return !args.slice(i + 1).some((a) => GIT_OUTPUT_OPT_RE.test(a));
+}
+
+function isBenignGHTempConsumer(args) {
+  let i = 0;
+  while (i < args.length && args[i].startsWith("-")) {
+    if (args[i] === "-R" || args[i] === "--repo") {
+      if (i + 1 >= args.length) return false;
+      i += 2;
+      continue;
+    }
+    if (args[i].startsWith("--repo=")) {
+      i++;
+      continue;
+    }
+    return false;
+  }
+  return i + 1 < args.length && BENIGN_GH_TEMP_ENTITIES.has(args[i]) && BENIGN_GH_TEMP_ACTIONS.has(args[i + 1]);
 }
 
 function hasBasicDollarExpansion(s) {

@@ -33,7 +33,7 @@ export const approval: ApprovalI18n = {
   modeAutoShort: "自动确认",
   modeAutoBadge: "推荐",
   modeAutoDesc:
-    "自动放行编辑与普通命令；破坏性命令始终确认",
+    "自动放行编辑、普通命令与临时文件清理；破坏性命令始终确认",
   modeSmartLabel: "智能确认",
   modeSmartShort: "智能确认",
   modeSmartDesc:
@@ -46,7 +46,7 @@ export const approval: ApprovalI18n = {
   modeTrustedShort: "完全信任",
   modeTrustedBadge: "高风险",
   modeTrustedDesc:
-    "在自动确认基础上，放行隔离工作树内可回滚的删除与 Git 丢弃操作，以及临时目录清理；读取密钥、工作树外敏感路径、sudo、强制推送、发布、结束进程和死循环仍需确认",
+    "在自动确认基础上，额外放行隔离工作树内可回滚的删除与 Git 丢弃操作；读取密钥、工作树外敏感路径、sudo、强制推送、发布、结束进程和死循环仍需确认",
   modeUnattendedLabel: "无人值守",
   modeUnattendedShort: "无人值守",
   modeUnattendedBadge: "高风险",

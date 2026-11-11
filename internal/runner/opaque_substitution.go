@@ -15,8 +15,11 @@ var (
 	sshDurationRe             = regexp.MustCompile(`^\d+[smhd]?$`)
 	gitCommitHeredocPrefixRe  = regexp.MustCompile(`(?s)\bgit\s+commit\b.*-m\s*"?\$\(\s*cat\s*$`)
 
-	benignTempFileConsumers = setOf("scp", "ls", "wc", "head", "tail", "stat", "file", "md5", "shasum", "sha256sum", "rm", "echo", "printf", "grep", "rg", "sed")
-	sshBlockedKeyBasenames  = setOf("authorized_keys", "known_hosts", "config", "environment", "rc", ".ssh")
+	benignTempFileConsumers  = setOf("scp", "ls", "wc", "head", "tail", "stat", "file", "md5", "shasum", "sha256sum", "rm", "echo", "printf", "grep", "rg", "sed")
+	benignGitTempSubcommands = setOf("commit", "tag", "merge", "notes", "status", "diff", "log", "show", "add", "rev-parse")
+	benignGHTempEntities     = setOf("pr", "issue", "release")
+	benignGHTempActions      = setOf("create", "edit", "comment", "close", "reopen", "view", "status")
+	sshBlockedKeyBasenames   = setOf("authorized_keys", "known_hosts", "config", "environment", "rc", ".ssh")
 )
 
 // extractProcessSubstitutions rewrites each `<(cmd)` into a placeholder
@@ -270,7 +273,61 @@ func isBenignTempConsumerSegment(seg string) bool {
 	if base == "sed" {
 		return isReadOnlySedArgs(clean[1:])
 	}
+	if base == "git" {
+		return isBenignGitTempConsumer(clean[1:])
+	}
+	if base == "gh" {
+		return isBenignGHTempConsumer(clean[1:])
+	}
 	return benignTempFileConsumers[base]
+}
+
+func isBenignGitTempConsumer(args []string) bool {
+	i := 0
+	for i < len(args) && strings.HasPrefix(args[i], "-") {
+		a := args[i]
+		if a == "-C" || a == "--git-dir" || a == "--work-tree" || a == "--namespace" {
+			if i+1 >= len(args) {
+				return false
+			}
+			i += 2
+			continue
+		}
+		if a == "--no-pager" || a == "-P" || a == "--bare" ||
+			strings.HasPrefix(a, "--git-dir=") || strings.HasPrefix(a, "--work-tree=") || strings.HasPrefix(a, "--namespace=") {
+			i++
+			continue
+		}
+		return false
+	}
+	if i >= len(args) || !benignGitTempSubcommands[args[i]] {
+		return false
+	}
+	for _, a := range args[i+1:] {
+		if gitOutputRe.MatchString(a) {
+			return false
+		}
+	}
+	return true
+}
+
+func isBenignGHTempConsumer(args []string) bool {
+	i := 0
+	for i < len(args) && strings.HasPrefix(args[i], "-") {
+		if args[i] == "-R" || args[i] == "--repo" {
+			if i+1 >= len(args) {
+				return false
+			}
+			i += 2
+			continue
+		}
+		if strings.HasPrefix(args[i], "--repo=") {
+			i++
+			continue
+		}
+		return false
+	}
+	return i+1 < len(args) && benignGHTempEntities[args[i]] && benignGHTempActions[args[i+1]]
 }
 
 func tempCatRedirectTarget(seg string) string {

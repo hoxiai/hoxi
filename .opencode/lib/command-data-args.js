@@ -220,6 +220,38 @@ function tokenize(s) {
   return parenDepth === 0 ? tokens : null;
 }
 
+function appendWholeWordMask(out, seg, idx) {
+  if (idx > 0 && idx < seg.length && seg[idx].literal && !/[<>]/.test(seg[idx - 1].value)) {
+    out.push({ start: seg[idx].start, end: seg[idx].end, text: MASKED_DATA_ARGUMENT });
+  }
+}
+
+function flagValueReplacements(seg, startIdx, valueFlags, allowCommitShortM) {
+  const out = [];
+  for (let j = startIdx; j < seg.length; j++) {
+    const v = seg[j].value;
+    const eq = v.indexOf("=");
+    if (eq > 0 && valueFlags.has(v.slice(0, eq))) {
+      if (v.length > eq + 1 && seg[j].literal && !/[<>]/.test(seg[j - 1].value)) {
+        out.push({ start: seg[j].start, end: seg[j].end, text: `${v.slice(0, eq)}=${MASKED_DATA_ARGUMENT}` });
+      }
+      continue;
+    }
+    if (allowCommitShortM && v.startsWith("-m") && v.length > 2 && !v.startsWith("--")) {
+      if (seg[j].literal && !/[<>]/.test(seg[j - 1].value)) {
+        out.push({ start: seg[j].start, end: seg[j].end, text: `-m ${MASKED_DATA_ARGUMENT}` });
+      }
+      continue;
+    }
+    const short = allowCommitShortM && v.length > 2 && v[0] === "-" && v[1] !== "-" && v.endsWith("m");
+    if ((valueFlags.has(v) || short) && j + 1 < seg.length) {
+      appendWholeWordMask(out, seg, j + 1);
+      j++;
+    }
+  }
+  return out;
+}
+
 function gitDataArguments(seg) {
   let i = 1;
   while (i < seg.length && seg[i].value.startsWith("-")) {
@@ -228,22 +260,35 @@ function gitDataArguments(seg) {
   }
   if (i >= seg.length) return [];
   const sub = seg[i].value;
-  let valueFlags;
-  if (["commit", "tag", "merge", "stash"].includes(sub)) valueFlags = setOf("-m", "--message");
-  else if (sub === "log" || sub === "shortlog") valueFlags = setOf("--grep", "-S", "-G");
-  else return [];
-  const out = [];
-  for (let j = i + 1; j < seg.length; j++) {
-    const v = seg[j].value;
-    const eq = v.indexOf("=");
-    if (eq > 0 && valueFlags.has(v.slice(0, eq))) continue;
-    const short = sub === "commit" && v.length > 2 && v[0] === "-" && v[1] !== "-" && v.endsWith("m");
-    if ((valueFlags.has(v) || short) && j + 1 < seg.length) {
-      out.push(j + 1);
-      j++;
-    }
+  if (["commit", "tag", "merge", "stash"].includes(sub)) {
+    return flagValueReplacements(seg, i + 1, setOf("-m", "--message"), sub === "commit");
   }
-  return out;
+  if (sub === "log" || sub === "shortlog") {
+    return flagValueReplacements(seg, i + 1, setOf("--grep", "-S", "-G"), false);
+  }
+  return [];
+}
+
+function ghDataArguments(seg) {
+  let i = 1;
+  while (i < seg.length && seg[i].value.startsWith("-")) {
+    if (seg[i].value === "-R" || seg[i].value === "--repo") {
+      i += 2;
+      continue;
+    }
+    if (seg[i].value.startsWith("--repo=")) {
+      i++;
+      continue;
+    }
+    return [];
+  }
+  if (i + 1 >= seg.length) return [];
+  const entity = seg[i].value;
+  const action = seg[i + 1].value;
+  if (!["pr", "issue", "release"].includes(entity) || !["create", "edit", "comment", "close", "reopen"].includes(action)) {
+    return [];
+  }
+  return flagValueReplacements(seg, i + 2, setOf("-t", "--title", "-b", "--body", "-n", "--notes"), false);
 }
 
 function searchPatternArguments(seg, valueFlags) {
@@ -275,27 +320,33 @@ function searchPatternArguments(seg, valueFlags) {
   return positional > 0 ? [positional] : [];
 }
 
-function dataArgumentIndexes(seg) {
+function dataArgumentReplacements(seg) {
+  let idxs = [];
   switch (baseName(seg[0].value)) {
     case "echo":
-    case "printf": {
-      const out = [];
+    case "printf":
       for (let i = 1; i < seg.length && !/[<>]/.test(seg[i].value); i++) {
-        if (!ECHO_OPTION_RE.test(seg[i].value)) out.push(i);
+        if (!ECHO_OPTION_RE.test(seg[i].value)) idxs.push(i);
       }
-      return out;
-    }
+      break;
     case "git":
       return gitDataArguments(seg);
+    case "gh":
+      return ghDataArguments(seg);
     case "rg":
-      return searchPatternArguments(seg, RG_VALUE_FLAGS);
+      idxs = searchPatternArguments(seg, RG_VALUE_FLAGS);
+      break;
     case "grep":
     case "egrep":
     case "fgrep":
-      return searchPatternArguments(seg, GREP_VALUE_FLAGS);
+      idxs = searchPatternArguments(seg, GREP_VALUE_FLAGS);
+      break;
     default:
       return [];
   }
+  const out = [];
+  for (const i of idxs) appendWholeWordMask(out, seg, i);
+  return out;
 }
 
 export function maskCommandDataArguments(command) {
@@ -343,17 +394,16 @@ export function maskCommandDataArguments(command) {
   }
   const masked = [];
   for (const seg of segments) {
-    for (const i of dataArgumentIndexes(seg)) {
-      // A redirect target is a path, never data.
-      if (seg[i].literal && !/[<>]/.test(seg[i - 1].value)) masked.push(seg[i]);
+    for (const rep of dataArgumentReplacements(seg)) {
+      masked.push(rep);
     }
   }
   if (masked.length === 0) return s;
   let out = "";
   let last = 0;
-  for (const tok of masked) {
-    out += s.slice(last, tok.start) + MASKED_DATA_ARGUMENT;
-    last = tok.end;
+  for (const rep of masked) {
+    out += s.slice(last, rep.start) + rep.text;
+    last = rep.end;
   }
   return out + s.slice(last);
 }

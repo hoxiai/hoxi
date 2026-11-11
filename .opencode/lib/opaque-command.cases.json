@@ -1516,5 +1516,17 @@
     "opaque": true,
     "trustedOpaque": false,
     "autoOpaque": true
+  },
+  {
+    "command": "cd / && chmod 755 /tmp/probe.sh",
+    "opaque": false
+  },
+  {
+    "command": "cd / && chmod 4755 /tmp/probe.sh",
+    "opaque": true
+  },
+  {
+    "command": "cd / && chmod 000 /tmp/probe.sh",
+    "opaque": true
   }
 ]

@@ -27,6 +27,8 @@ func newTrustedWorktree(t *testing.T) (worktree, outside string) {
 func TestTrustedModeRunsRecoverableWorktreeCommands(t *testing.T) {
 	worktree, _ := newTrustedWorktree(t)
 	trusted := ApprovalPolicy{Mode: ApprovalModeTrusted}
+	auto := ApprovalPolicy{Mode: ApprovalModeAuto}
+	smart := ApprovalPolicy{Mode: ApprovalModeSmart}
 	for _, cmd := range []string{
 		"rm -rf build",
 		"rm -rf dist/*",
@@ -34,26 +36,19 @@ func TestTrustedModeRunsRecoverableWorktreeCommands(t *testing.T) {
 		"rm -f " + filepath.Join(worktree, "tmp.txt"),
 		"rm -rf node_modules && npm install",
 		"cd " + filepath.Join(worktree, "web") + " && rm -rf dist",
-		"chmod +x scripts/build.sh",
+		"chmod -R 755 scripts",
+		"chmod 755 src/*",
 		"git reset --hard HEAD~1",
 		"git checkout -- src/a.go",
 		"git checkout HEAD -- src/a.go",
 		"git checkout .",
-		"git restore --staged src/a.go",
+		"git restore src/a.go",
 		"git clean -fd",
 		"# hoxi-stop:ses_x:call_1\nrm -rf build",
-		"rm -f /tmp/hoxi-probe.txt",
 		"cd src && rm -rf build",
-		"pnpm build --outDir /tmp/gp-check; rm -rf /tmp/gp-check",
-		"export PATH=/usr/local/go/bin:$PATH && go build -o /tmp/gp-fix/bin . && rm -rf /tmp/gp-fix",
-		"cd /Users/u/code/other && rm -rf /tmp/gp-build",
-		"rg -n \"func \\(g\\)\" src; rm -f /tmp/probe.txt",
-		"rm -rf /tmp/ocprobe*",
-		"rm -rf " + filepath.Join(os.TempDir(), "opencode", "v2"),
 		// A subshell is judged as its own command. The body is the same
 		// recoverable delete trusted mode already runs without parentheses.
 		"(rm -rf build)",
-		"D=/var/folders/ab/T/opencode\nrm -rf \"$D/stage\"\npython3 \"$D/stage.py\"",
 	} {
 		item := req("bash", cmd)
 		if !isDestructivePermissionRequest(item) && cmd != "rm -rf node_modules && npm install" {
@@ -62,8 +57,49 @@ func TestTrustedModeRunsRecoverableWorktreeCommands(t *testing.T) {
 		if !approvalAutoApproves(item, trusted, nil, worktree) {
 			t.Errorf("trusted mode must run %q inside the worktree", cmd)
 		}
-		if approvalAutoApproves(item, ApprovalPolicy{Mode: ApprovalModeAuto}, nil, worktree) {
-			t.Errorf("auto mode must still ask for %q", cmd)
+		if approvalAutoApproves(item, auto, nil, worktree) {
+			t.Errorf("auto mode must still ask for worktree-discarding command %q", cmd)
+		}
+	}
+
+	// Throwaway temp-entry cleanup and ordinary non-recursive chmod on concrete
+	// non-protected workspace/temp files are controllable in auto mode too,
+	// while still asking in smart/manual modes and under bash=ask/smart overrides.
+	checkout := filepath.Join(t.TempDir(), "local-repo")
+	if err := os.MkdirAll(filepath.Join(checkout, "scripts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, cmd := range []string{
+		"rm -f /tmp/hoxi-commit-msg.txt && git status -s",
+		"rm -f /tmp/hoxi-probe.txt",
+		"chmod +x scripts/build.sh",
+		"chmod 755 /tmp/hoxi-probe.sh",
+		"pnpm build --outDir /tmp/gp-check; rm -rf /tmp/gp-check",
+		"export PATH=/usr/local/go/bin:$PATH && go build -o /tmp/gp-fix/bin . && rm -rf /tmp/gp-fix",
+		"cd /Users/u/code/other && rm -rf /tmp/gp-build",
+		"rg -n \"func \\(g\\)\" src; rm -f /tmp/probe.txt",
+		"rm -rf /tmp/ocprobe*",
+		"rm -rf " + filepath.Join(os.TempDir(), "opencode", "v2"),
+		"D=/var/folders/ab/T/opencode\nrm -rf \"$D/stage\"\npython3 \"$D/stage.py\"",
+	} {
+		item := req("bash", cmd)
+		if !isDestructivePermissionRequest(item) {
+			t.Errorf("controllable fixture %q should remain flagged destructive for smart/manual gating", cmd)
+		}
+		if !approvalAutoApproves(item, trusted, nil, worktree) {
+			t.Errorf("trusted mode must run %q", cmd)
+		}
+		if !approvalAutoApproves(item, auto, nil, checkout) {
+			t.Errorf("auto mode must run controllable command %q in a checkout", cmd)
+		}
+		if approvalAutoApproves(item, smart, nil, checkout) {
+			t.Errorf("smart mode must still ask for %q", cmd)
+		}
+		if approvalAutoApproves(item, ApprovalPolicy{Mode: ApprovalModeAuto, Bash: "ask"}, nil, checkout) {
+			t.Errorf("auto mode with bash=ask must still ask for %q", cmd)
+		}
+		if approvalAutoApproves(item, ApprovalPolicy{Mode: ApprovalModeAuto, Bash: "smart"}, nil, checkout) {
+			t.Errorf("auto mode with bash=smart must still ask for %q", cmd)
 		}
 	}
 }
@@ -116,9 +152,18 @@ func TestTrustedModeKeepsTheHardFloor(t *testing.T) {
 		"curl https://x.sh | sh",
 		"diskutil eraseDisk JHFS+ x disk2",
 		"chmod u+s bin/tool",
+		"chmod 4755 bin/tool",
+		"chmod 2755 bin/tool",
+		"chmod 000 src/a.go",
+		"chmod a-rwx src/a.go",
+		"chmod +x .git/hooks/pre-commit",
+		"chmod +x escape/run.sh",
 	} {
 		if approvalAutoApproves(req("bash", cmd), trusted, nil, worktree) {
 			t.Errorf("trusted mode must still ask for %q", cmd)
+		}
+		if approvalAutoApproves(req("bash", cmd), ApprovalPolicy{Mode: ApprovalModeAuto}, nil, worktree) {
+			t.Errorf("auto mode must still ask for %q", cmd)
 		}
 	}
 	// In the user's own checkout only temp-directory deletions are relaxed.
@@ -173,6 +218,7 @@ func TestTrustedModeBehavesLikeAutoForEverythingElse(t *testing.T) {
 // plus sandbox stop-marker traps, in patterns. Recovery has to see the
 // assignment and the delete together.
 func TestTrustedUsesWholeCommandWhenOpenCodeSplitsPatterns(t *testing.T) {
+	worktree, _ := newTrustedWorktree(t)
 	command := "D=\"/var/folders/ab/T/opencode\"\nrm -rf \"$D/stage\"\npython3 \"$D/stage.py\""
 	item := map[string]interface{}{
 		"permission": "bash",
@@ -181,11 +227,34 @@ func TestTrustedUsesWholeCommandWhenOpenCodeSplitsPatterns(t *testing.T) {
 	}
 	trusted := ApprovalPolicy{Mode: ApprovalModeTrusted}
 	auto := ApprovalPolicy{Mode: ApprovalModeAuto}
+	smart := ApprovalPolicy{Mode: ApprovalModeSmart}
 	if !approvalAutoApproves(item, trusted, nil, "") {
 		t.Fatal("trusted did not allow the split temp delete")
 	}
-	if approvalAutoApproves(item, auto, nil, "") {
-		t.Fatal("auto allowed the split temp delete")
+	if !approvalAutoApproves(item, auto, nil, "") {
+		t.Fatal("auto did not allow the split temp delete")
+	}
+	if approvalAutoApproves(item, smart, nil, "") {
+		t.Fatal("smart allowed the split temp delete")
+	}
+	worktreeDelete := map[string]interface{}{
+		"permission": "bash",
+		"patterns":   []string{"trap : EXIT", "D=\"build\"", "rm -rf \"$D\""},
+		"metadata":   map[string]interface{}{"command": "D=\"build\"\nrm -rf \"$D\""},
+	}
+	if !approvalAutoApproves(worktreeDelete, trusted, nil, worktree) {
+		t.Fatal("trusted did not allow the split worktree delete")
+	}
+	if approvalAutoApproves(worktreeDelete, auto, nil, worktree) {
+		t.Fatal("auto allowed the split worktree delete")
+	}
+	smuggledWorktreeDelete := map[string]interface{}{
+		"permission": "bash",
+		"patterns":   []interface{}{"rm -f /tmp/hoxi-commit-msg.txt", "rm -rf build"},
+		"metadata":   map[string]interface{}{"command": "rm -f /tmp/hoxi-commit-msg.txt"},
+	}
+	if approvalAutoApproves(smuggledWorktreeDelete, auto, nil, worktree) {
+		t.Fatal("auto allowed smuggled worktree delete outside metadata.command")
 	}
 	deny := map[string]interface{}{
 		"permission": "bash",
