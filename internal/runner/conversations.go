@@ -378,25 +378,33 @@ func (s *Service) CreateConversation(ctx context.Context, body CreateSessionRequ
 	}
 	var engineInfo SessionInfo
 	if err := s.openCodeJSON(ctx, http.MethodPost, "/session", rec.WorktreePath, payload, &engineInfo); err != nil || strings.TrimSpace(engineInfo.ID) == "" {
-		if rec.SandboxMode == "worktree" {
-			_ = s.worktrees.ForDirectory(rec.ProjectDir).RemoveWithOptions(rec.ID, true, false)
+		if !s.IsImageModel(rec.ProviderID, rec.ModelID) {
+			if rec.SandboxMode == "worktree" {
+				_ = s.worktrees.ForDirectory(rec.ProjectDir).RemoveWithOptions(rec.ID, true, false)
+			}
+			if err == nil {
+				err = fmt.Errorf("OpenCode returned an empty session ID")
+			}
+			return SessionInfo{}, http.StatusBadGateway, fmt.Errorf("opencode service unavailable: %w", err)
 		}
-		if err == nil {
-			err = fmt.Errorf("OpenCode returned an empty session ID")
+		if rec.Title == "" {
+			rec.Title = "New Session"
 		}
-		return SessionInfo{}, http.StatusBadGateway, fmt.Errorf("opencode service unavailable: %w", err)
-	}
-	rec.ExternalID = strings.TrimSpace(engineInfo.ID)
-	rec.OpenCodeIDs = []string{rec.ExternalID}
-	rec.OpenCodeDirectories = map[string]string{rec.ExternalID: rec.WorktreePath}
-	if rec.Title == "" {
-		rec.Title = firstNonEmptyStr(strings.TrimSpace(engineInfo.Title), "New Session")
+	} else {
+		rec.ExternalID = strings.TrimSpace(engineInfo.ID)
+		rec.OpenCodeIDs = []string{rec.ExternalID}
+		rec.OpenCodeDirectories = map[string]string{rec.ExternalID: rec.WorktreePath}
+		if rec.Title == "" {
+			rec.Title = firstNonEmptyStr(strings.TrimSpace(engineInfo.Title), "New Session")
+		}
 	}
 	if err := s.store.Put(rec); err != nil {
 		return SessionInfo{}, http.StatusInternalServerError, err
 	}
-	_ = syncOpenCodeCommandSandbox(rec)
-	s.managedOpenCode.Store(rec.ExternalID, true)
+	if rec.ExternalID != "" {
+		_ = syncOpenCodeCommandSandbox(rec)
+		s.managedOpenCode.Store(rec.ExternalID, true)
+	}
 	info := rec.ToSessionInfo()
 	s.broadcast(sessionID, SSEEvent{
 		Type:       "session.created",

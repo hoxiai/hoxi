@@ -136,18 +136,24 @@ func buildDocs(index *Index) *cachedIndex {
 	return c
 }
 
+type scoredDocMatch struct {
+	docIdx int
+	result Result
+	score  float64
+}
+
 func (s *Service) rankWithPath(directory, query, pathPrefix string, limit int) (*cachedIndex, []Result) {
 	c, err := s.ensure(directory)
 	if err != nil {
 		return nil, nil
 	}
-	queryTokens := textindex.Tokenize(query)
-	if len(queryTokens) == 0 || len(c.docs) == 0 {
+	if strings.TrimSpace(query) == "" || len(c.docs) == 0 {
 		return c, []Result{}
 	}
 	if limit <= 0 || limit > 50 {
 		limit = 12
 	}
+	queryTokens := textindex.Tokenize(query)
 	lowerQuery := strings.ToLower(strings.TrimSpace(query))
 	normPrefix := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(strings.ReplaceAll(pathPrefix, "\\", "/")), "./"))
 
@@ -168,16 +174,8 @@ func (s *Service) rankWithPath(directory, query, pathPrefix string, limit int) (
 			docScores[docIdx] += idf * (float64(tf) * (textindex.K1 + 1)) / (float64(tf) + textindex.K1*norm)
 		}
 	}
-	if len(docScores) == 0 {
-		return c, []Result{}
-	}
 
-	type scored struct {
-		docIdx int
-		result Result
-		score  float64
-	}
-	matches := make([]scored, 0, len(docScores))
+	matches := make([]scoredDocMatch, 0, len(docScores))
 	for docIdx, score := range docScores {
 		if score <= 0 {
 			continue
@@ -207,7 +205,7 @@ func (s *Service) rankWithPath(directory, query, pathPrefix string, limit int) (
 		if len(lowerQuery) > 3 && strings.Contains(lowerText, lowerQuery) {
 			score += 2.5
 		}
-		matches = append(matches, scored{
+		matches = append(matches, scoredDocMatch{
 			docIdx: docIdx,
 			result: Result{
 				Path:      doc.chunk.Path,
@@ -226,6 +224,7 @@ func (s *Service) rankWithPath(directory, query, pathPrefix string, limit int) (
 		}
 		return matches[i].docIdx < matches[j].docIdx
 	})
+	matches = s.applySemanticHybridSearch(c, query, normPrefix, matches, limit)
 	if len(matches) > limit {
 		matches = matches[:limit]
 	}

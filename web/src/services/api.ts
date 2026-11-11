@@ -49,6 +49,7 @@ import {
   resolveRunnerRuntimeForProvider,
   runnerAPI,
 } from "./runner-api";
+import { mediaAPI } from "./media-api";
 import { fileAndPtyAPI, worktreeAndWorkspaceAPI } from "./worktree-api";
 
 export * from "./api-types";
@@ -173,7 +174,7 @@ export const hoxiAPI = {
     filename: string;
     mime: string;
     size: number;
-    kind: "image" | "pdf" | "spreadsheet" | "document" | "text";
+    kind: "image" | "pdf" | "audio" | "video" | "spreadsheet" | "document" | "text";
     url: string;
     textPreview?: string;
   }> {
@@ -365,6 +366,7 @@ export const hoxiAPI = {
       attachments?: PromptAttachment[];
       runtime?: SessionRuntime;
       skillSelection?: import("./skills-types").SkillSelection;
+      imageOptions?: import("./api-types").PromptImageOptions;
     }
   ): Promise<void> {
     if (options?.runtime) await prepareRuntime(sessionID, options.runtime, options.model, options.directory);
@@ -380,6 +382,7 @@ export const hoxiAPI = {
       body: JSON.stringify({
         agent: options?.agent || "build",
         ...(options?.model ? { model: options.model } : {}),
+        ...(options?.imageOptions ? { imageOptions: options.imageOptions } : {}),
         ...(options?.variant ? { variant: options.variant } : {}),
         ...(options?.system ? { system: options.system } : {}),
         ...(options?.skillSelection ? { skillSelection: options.skillSelection } : {}),
@@ -538,6 +541,7 @@ export const hoxiAPI = {
     return requestJSON(withDir("/lsp", directory));
   },
 
+  ...mediaAPI,
   ...providerAndAssistAPI,
   ...fileAndPtyAPI,
   ...worktreeAndWorkspaceAPI,

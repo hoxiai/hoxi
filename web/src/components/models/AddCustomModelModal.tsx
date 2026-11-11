@@ -172,8 +172,11 @@ export function AddCustomModelModal(props: {
     });
   };
 
+  const normalizeManualModelId = (raw: string) =>
+    raw.trim().replace(/^models\/(?=gemini|imagen|gemma|veo|embedding|text-embedding)/i, "");
+
   const commitManualModel = () => {
-    const cleanId = draftId().trim();
+    const cleanId = normalizeManualModelId(draftId());
     if (!cleanId) return;
     const cleanName = draftName().trim() || cleanId;
     props.setModels((prev) => [
@@ -194,7 +197,7 @@ export function AddCustomModelModal(props: {
   };
 
   const handleVerifyManual = async () => {
-    const cleanId = draftId().trim();
+    const cleanId = normalizeManualModelId(draftId());
     if (!cleanId || verifying()) return;
     if (props.models().some((m) => m.id.trim() === cleanId)) {
       setManualError(t("models.modelAlreadyExists", { id: cleanId }));

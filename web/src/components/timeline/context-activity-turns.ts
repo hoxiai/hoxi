@@ -4,6 +4,8 @@ import { isSessionBusy, type MessageTurn } from "../../store/workspace";
 import {
   expandInlineThinkingParts,
   extractVisibleAssistantText,
+  isRenderableAssistantPart,
+  isVisibleFilePart,
   isVisibleTextPart,
   isWorkPart,
 } from "./context-activity-parts";
@@ -58,6 +60,9 @@ export function groupAssistantParts(parts: MessagePart[]): TurnRenderItem[] {
         buffer.push(part);
         continue;
       }
+      flushBuffer();
+      items.push({ kind: "single", part });
+    } else if (isVisibleFilePart(part)) {
       flushBuffer();
       items.push({ kind: "single", part });
     }
@@ -146,7 +151,7 @@ export function stabilizeMergedTurnResolution(
   return next;
 }
 
-const isRenderablePart = (part: MessagePart) => isWorkPart(part) || isVisibleTextPart(part);
+const isRenderablePart = isRenderableAssistantPart;
 
 function hasToolAfterInCycle(
   allTurns: MessageTurn[],
@@ -172,6 +177,7 @@ export function findFirstSubstantiveTextIndex(
 ): number {
   for (let idx = 0; idx < expandedParts.length; idx++) {
     const part = expandedParts[idx];
+    if (isVisibleFilePart(part)) return idx;
     if (!isVisibleTextPart(part)) continue;
     if (
       part.type === "text" &&
@@ -219,7 +225,7 @@ export function isCompletedStandaloneReasoningTurn(
     isLatestTurn || allTurns[index + 1]?.info.role !== "assistant";
   if (!isEnd) return false;
   const parts = expandInlineThinkingParts(turn.parts);
-  if (parts.some(isVisibleTextPart) || parts.some((p) => p.type === "tool")) {
+  if (parts.some(isVisibleTextPart) || parts.some(isVisibleFilePart) || parts.some((p) => p.type === "tool")) {
     return false;
   }
   return parts.some((p) => p.type === "reasoning" && Boolean(p.text?.trim()));
@@ -297,7 +303,7 @@ export function resolveMergedTurnParts(
       const nextParts = expandInlineThinkingParts(next.parts);
       const nextTextIdx = findFirstSubstantiveTextIndex(allTurns, i, nextParts);
       const lead = (nextTextIdx < 0 ? nextParts : nextParts.slice(0, nextTextIdx)).filter(
-        (p) => isWorkPart(p) || isVisibleTextPart(p)
+        isRenderableAssistantPart
       );
       if (lead.length > 0) {
         carriedWork.push(...lead);
@@ -359,7 +365,7 @@ export function hasLiveTailWorkGroup(
     if (turn.info.role !== "assistant" || turn.info.error) return false;
     for (let p = turn.parts.length - 1; p >= 0; p--) {
       const part = turn.parts[p];
-      if (isVisibleTextPart(part)) return false;
+      if (isVisibleTextPart(part) || isVisibleFilePart(part)) return false;
       if (isWorkPart(part)) return true;
     }
   }
@@ -383,8 +389,7 @@ export function hasLiveTailRenderedOutput(
   for (let i = runStart; i < cycleTurns.length; i++) {
     const parts = cycleTurns[i].parts;
     for (let p = 0; p < parts.length; p++) {
-      const part = parts[p];
-      if (isWorkPart(part) || isVisibleTextPart(part)) return true;
+      if (isRenderableAssistantPart(parts[p])) return true;
     }
   }
   return false;

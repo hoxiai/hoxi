@@ -12,7 +12,14 @@ import {
   workspace,
 } from "../../store/workspace";
 
-export type AttachmentKind = "image" | "pdf" | "spreadsheet" | "document" | "text";
+export type AttachmentKind =
+  | "image"
+  | "pdf"
+  | "audio"
+  | "video"
+  | "spreadsheet"
+  | "document"
+  | "text";
 
 export interface ImageItem {
   id: string;

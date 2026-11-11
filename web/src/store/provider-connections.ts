@@ -10,7 +10,11 @@ import {
 import type { ProviderMcpOAuthPollResponse } from "../services/platform-api";
 import { disposeOpenCodeInstance, patchGlobalConfig } from "./global-config";
 import {
+  inferDedicatedMediaModality,
+  inferProviderNpmFromEndpoint,
   isNonChatUtilityModelID,
+  isNonThinkingGeminiModelID,
+  supportsMultimodalImageEditModelID,
   type FreeTierGuideItem,
 } from "./auto-models";
 import { isImportedOpenCodeProvider } from "./provider-catalog";
@@ -47,6 +51,15 @@ export interface SaveCustomProviderInput {
   models: CustomProviderModelDraft[];
 }
 
+function normalizeModelIDForProtocol(rawID: string, npm: string): string {
+  const trimmed = rawID.trim();
+  if (!trimmed) return "";
+  if (npm.toLowerCase().includes("google") || npm.toLowerCase().includes("gemini")) {
+    return trimmed.replace(/^models\//i, "").trim();
+  }
+  return trimmed;
+}
+
 export async function connectProviderWithKey(opts: {
   providerID: string;
   apiKey: string;
@@ -58,33 +71,41 @@ export async function connectProviderWithKey(opts: {
   const key = opts.apiKey.trim();
   if (key) await hoxiAPI.setProviderAuth(pid, key);
 
-  if (opts.baseURL?.trim() || opts.customModelID?.trim()) {
-    const existingProvider = workspace.hoxiProviders?.[pid] ?? {};
+  const existingProvider = workspace.hoxiProviders?.[pid] ?? {};
+  const resolvedNpm =
+    inferProviderNpmFromEndpoint(pid, opts.baseURL || existingProvider?.options?.baseURL) ||
+    existingProvider.npm ||
+    "@ai-sdk/openai-compatible";
+  const normalizedCustomModelID = opts.customModelID
+    ? normalizeModelIDForProtocol(opts.customModelID, resolvedNpm)
+    : "";
+
+  if (opts.baseURL?.trim() || normalizedCustomModelID) {
     const updatedProvider: Record<string, any> = {
       ...existingProvider,
       ...(opts.customName ? { name: opts.customName.trim() } : {}),
-      ...(opts.customModelID
+      ...(normalizedCustomModelID
         ? {
-            npm:
-              existingProvider.npm ||
-              (pid === "google" || pid === "gemini"
-                ? "@ai-sdk/google"
-                : pid === "anthropic"
-                  ? "@ai-sdk/anthropic"
-                  : "@ai-sdk/openai-compatible"),
+            npm: resolvedNpm,
             models: {
               ...(existingProvider.models || {}),
-              [opts.customModelID.trim()]: {
-                name: opts.customModelID.trim(),
-                attachment: !isNonChatUtilityModelID(opts.customModelID),
-                reasoning: !isNonChatUtilityModelID(opts.customModelID),
-                modalities: {
-                  input: !isNonChatUtilityModelID(opts.customModelID)
-                    ? ["text", "image"]
-                    : ["text"],
-                  output: ["text"],
-                },
-              },
+              [normalizedCustomModelID]: (() => {
+                const mid = normalizedCustomModelID;
+                const isImgGen = inferDedicatedMediaModality(mid) === "image";
+                const allowImgIn = isImgGen
+                  ? supportsMultimodalImageEditModelID(mid)
+                  : !isNonChatUtilityModelID(mid);
+                return {
+                  name: mid,
+                  attachment: allowImgIn,
+                  reasoning:
+                    !isImgGen && !isNonChatUtilityModelID(mid) && !isNonThinkingGeminiModelID(mid),
+                  modalities: {
+                    input: allowImgIn ? ["text", "image"] : ["text"],
+                    output: isImgGen ? ["text", "image"] : ["text"],
+                  },
+                };
+              })(),
             },
           }
         : {}),
@@ -99,8 +120,8 @@ export async function connectProviderWithKey(opts: {
 
   await loadProviders();
 
-  if (opts.customModelID?.trim()) {
-    selectProviderModelPreservingBusySession({ providerID: pid, modelID: opts.customModelID.trim() });
+  if (normalizedCustomModelID) {
+    selectProviderModelPreservingBusySession({ providerID: pid, modelID: normalizedCustomModelID });
   } else if (!workspace.selectedModel) {
     const prov = workspace.providers.find((p) => p.id === pid);
     const defModel = workspace.defaultModels[pid] || Object.keys(prov?.models || {})[0];
@@ -111,16 +132,23 @@ export async function connectProviderWithKey(opts: {
 export async function saveCustomProvider(input: SaveCustomProviderInput): Promise<void> {
   const pid = input.providerID.trim();
   const previous = workspace.hoxiProviders?.[pid] ?? workspace.globalConfig?.provider?.[pid] ?? {};
+  const effectiveNpm = input.npm || inferProviderNpmFromEndpoint(pid, input.baseURL) || "@ai-sdk/openai-compatible";
 
   const nextModels: Record<string, any> = {};
+  let firstModelID: string | undefined;
   for (const m of input.models) {
-    const mid = m.id.trim();
+    const mid = normalizeModelIDForProtocol(m.id, effectiveNpm);
     if (!mid) continue;
+    if (!firstModelID) firstModelID = mid;
+    const isImgGen = inferDedicatedMediaModality(mid) === "image";
     nextModels[mid] = {
       name: (m.name || mid).trim(),
       attachment: Boolean(m.image),
       reasoning: Boolean(m.reasoning),
-      modalities: { input: m.image ? ["text", "image"] : ["text"], output: ["text"] },
+      modalities: {
+        input: m.image ? ["text", "image"] : ["text"],
+        output: isImgGen ? ["text", "image"] : ["text"],
+      },
     };
   }
 
@@ -155,13 +183,12 @@ export async function saveCustomProvider(input: SaveCustomProviderInput): Promis
 
   await hoxiAPI.saveHoxiProviderConfig(pid, {
     name: input.name.trim() || pid,
-    npm: input.npm || "@ai-sdk/openai-compatible",
+    npm: effectiveNpm,
     options: nextOptions,
     models: nextModels,
   });
   await loadProviders();
 
-  const firstModelID = input.models[0]?.id?.trim();
   const cur = workspace.selectedModel;
   if (firstModelID) {
     if (!cur || cur.providerID === pid) {

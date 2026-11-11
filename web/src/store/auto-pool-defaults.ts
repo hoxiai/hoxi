@@ -127,6 +127,7 @@ export function computeSmartDefaultCandidates(poolID: string): AutoPoolCandidate
     const isConn = connSet.has(p.id) || Boolean(cfgProviders[p.id]);
     for (const [mID, mInfo] of Object.entries(p.models || {})) {
       if (!mInfo || typeof mInfo !== "object") continue;
+      if (isNonChatUtilityModelID(mID) || isImageGenerationModel(p.id, mID)) continue;
       const free = isModelFree(p.id, mID, mInfo);
       if (!isConn && !(p.id === "opencode" && free)) continue;
       const toolcall = mInfo.capabilities?.toolcall ?? mInfo.tool_call ?? true;
@@ -185,8 +186,12 @@ export function computeSmartDefaultCandidates(poolID: string): AutoPoolCandidate
   return res.length > 0 ? res : pickSorted(freeList, 8);
 }
 
+const GEMINI_IMAGE_GEN_MODEL_RE =
+  /nano-banana|gemini[\w./-]*(?:-image|_image|\/image|image-generation|image-preview)/i;
 const MEDIA_IMAGE_GEN_MODEL_RE =
-  /dall-e|gpt-image|imagen|flux-|flux\.|flux\/|midjourney|stable-diffusion|sdxl|ideogram|recraft/i;
+  /dall-e|gpt-image|chatgpt-image|gpt-4o-image|imagen|flux-|flux\.|flux\/|midjourney|stable-diffusion|sdxl|ideogram|recraft|cogview|seedream|kolors|hunyuan-image|qwen-image|wanx-v1/i;
+const MULTIMODAL_IMAGE_EDIT_MODEL_RE =
+  /nano-banana|gemini[\w./-]*(?:-image|_image|\/image|image-generation|image-preview)|gpt-image|chatgpt-image|gpt-4o-image|flux-kontext|seedream|qwen-image-edit/i;
 const MEDIA_VIDEO_GEN_MODEL_RE =
   /seedance|kling|veo-|veo2|veo3|sora|wanx|wan2|cogvideo|hailuo|luma-|runway/i;
 const MEDIA_AUDIO_GEN_MODEL_RE =
@@ -199,10 +204,44 @@ export type DedicatedMediaModality = "image" | "video" | "audio" | null;
 export function inferDedicatedMediaModality(modelID?: string | null): DedicatedMediaModality {
   if (!modelID) return null;
   const trimmed = modelID.trim();
+  if (GEMINI_IMAGE_GEN_MODEL_RE.test(trimmed) || MEDIA_IMAGE_GEN_MODEL_RE.test(trimmed)) {
+    return "image";
+  }
   if (MEDIA_VIDEO_GEN_MODEL_RE.test(trimmed)) return "video";
-  if (MEDIA_IMAGE_GEN_MODEL_RE.test(trimmed)) return "image";
   if (MEDIA_AUDIO_GEN_MODEL_RE.test(trimmed)) return "audio";
   return null;
+}
+
+export function supportsMultimodalImageEditModelID(modelID?: string | null): boolean {
+  if (!modelID) return false;
+  return MULTIMODAL_IMAGE_EDIT_MODEL_RE.test(modelID.trim());
+}
+
+export function isImageGenerationModel(
+  providerID?: string | null,
+  modelID?: string | null
+): boolean {
+  const mid = (modelID || "").trim();
+  if (!mid) return false;
+  if (inferDedicatedMediaModality(mid) === "image") return true;
+  const pid = (providerID || "").trim();
+  if (!pid) return false;
+  const hoxiModel = workspace.hoxiProviders?.[pid]?.models?.[mid];
+  if (hoxiModel && typeof hoxiModel === "object") {
+    if (hoxiModel.category === "image") return true;
+    if (Array.isArray(hoxiModel.modalities?.output) && hoxiModel.modalities.output.includes("image")) {
+      return true;
+    }
+  }
+  const prov = workspace.providers.find((p) => p.id === pid);
+  const mInfo = prov?.models?.[mid] as Record<string, any> | undefined;
+  if (mInfo && typeof mInfo === "object") {
+    if (mInfo.category === "image") return true;
+    if (Array.isArray(mInfo.modalities?.output) && mInfo.modalities.output.includes("image")) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export function isNonChatUtilityModelID(modelID?: string | null): boolean {
@@ -211,6 +250,62 @@ export function isNonChatUtilityModelID(modelID?: string | null): boolean {
   if (!trimmed) return false;
   if (inferDedicatedMediaModality(trimmed) !== null) return true;
   return NON_CHAT_UTILITY_MODEL_RE.test(trimmed);
+}
+
+/**
+ * Reports whether modelID is a Gemini 1.x or non-thinking Gemini 2.0 chat model
+ * (e.g. gemini-1.5-pro, gemini-2.0-flash, gemini-2.0-flash-lite) that rejects
+ * Google thinkingConfig payloads with HTTP 400.
+ */
+export function isNonThinkingGeminiModelID(modelID?: string | null): boolean {
+  if (!modelID) return false;
+  const clean = modelID.trim().replace(/^models\//i, "").toLowerCase();
+  if (!clean.includes("gemini") || clean.includes("thinking")) return false;
+  const sub = clean.slice(clean.indexOf("gemini"));
+  const m = /^gemini[-_./: ]*(\d{1,2})(?:[-_./: ]+(\d{1,2}))?/.exec(sub);
+  if (!m) return false;
+  const major = Number(m[1]);
+  const minor = m[2] !== undefined ? Number(m[2]) : 0;
+  return major === 1 || (major === 2 && minor < 5);
+}
+
+export function inferProviderNpmFromEndpoint(
+  providerID?: string | null,
+  baseURL?: string | null
+): string | null {
+  const rawURL = (baseURL || "").trim();
+  if (rawURL) {
+    try {
+      const parsed = new URL(rawURL);
+      const host = parsed.hostname.toLowerCase();
+      const path = parsed.pathname.replace(/\/+$/, "").toLowerCase();
+      if (path.endsWith("/openai") || path.endsWith("/openai/v1") || path.includes("/openai/")) {
+        return "@ai-sdk/openai-compatible";
+      }
+      if (
+        host === "generativelanguage.googleapis.com" ||
+        path.endsWith("/v1beta") ||
+        path.endsWith("/v1alpha") ||
+        path.endsWith("/v1beta/models") ||
+        path.endsWith("/v1alpha/models")
+      ) {
+        return "@ai-sdk/google";
+      }
+      if (host === "api.anthropic.com") {
+        return "@ai-sdk/anthropic";
+      }
+    } catch {
+      /* ignore partial URL while typing */
+    }
+  }
+  const pid = (providerID || "").trim().toLowerCase();
+  if (pid === "google" || pid === "gemini" || pid.startsWith("gemini-") || pid.startsWith("google-")) {
+    return "@ai-sdk/google";
+  }
+  if (pid === "anthropic" || pid.startsWith("anthropic-")) {
+    return "@ai-sdk/anthropic";
+  }
+  return null;
 }
 
 export type PromptIntentKind =
@@ -318,30 +413,37 @@ export function evaluatePromptModalityIntent(
 
 export function modelSupportsImageInput(providerID: string, modelID: string): boolean {
   if (!providerID || !modelID) return true;
-  if (isNonChatUtilityModelID(modelID)) {
-    return false;
-  }
   const hoxiModel = workspace.hoxiProviders?.[providerID]?.models?.[modelID];
   if (hoxiModel && typeof hoxiModel === "object") {
+    if (hoxiModel.attachment === true) return true;
+    if (Array.isArray(hoxiModel.modalities?.input) && hoxiModel.modalities.input.includes("image")) {
+      return true;
+    }
     if (hoxiModel.attachment === false) return false;
-    if (
-      Array.isArray(hoxiModel.modalities?.input) &&
-      !hoxiModel.modalities.input.includes("image") &&
-      hoxiModel.attachment !== true
-    ) {
+    if (Array.isArray(hoxiModel.modalities?.input) && !hoxiModel.modalities.input.includes("image")) {
       return false;
     }
-    return true;
   }
   const prov = workspace.providers.find((p) => p.id === providerID);
   const mInfo = prov?.models?.[modelID];
-  if (!mInfo || typeof mInfo !== "object") return true;
-  if (mInfo.attachment === false) return false;
-  if (
-    mInfo.capabilities?.input?.image === false &&
-    Array.isArray(mInfo.modalities?.input) &&
-    !mInfo.modalities.input.includes("image")
-  ) {
+  if (mInfo && typeof mInfo === "object") {
+    if (mInfo.attachment === true || mInfo.capabilities?.input?.image === true) return true;
+    if (Array.isArray(mInfo.modalities?.input) && mInfo.modalities.input.includes("image")) {
+      return true;
+    }
+    if (mInfo.attachment === false) return false;
+    if (
+      mInfo.capabilities?.input?.image === false &&
+      Array.isArray(mInfo.modalities?.input) &&
+      !mInfo.modalities.input.includes("image")
+    ) {
+      return false;
+    }
+  }
+  if (isImageGenerationModel(providerID, modelID)) {
+    return supportsMultimodalImageEditModelID(modelID);
+  }
+  if (isNonChatUtilityModelID(modelID)) {
     return false;
   }
   return true;

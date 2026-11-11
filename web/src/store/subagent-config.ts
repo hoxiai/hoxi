@@ -311,3 +311,69 @@ export async function migrateLegacySubagentModel(): Promise<void> {
   if (!legacy) return;
   await patchGlobalConfig({ subagent_model: null, agent: { general: { model: legacy } } });
 }
+
+const ECONOMY_FAMILIES = new Set(["gemini-flash", "gpt-nano", "claude-haiku"]);
+const ECONOMY_ID_RE = /(flash|mini|nano|haiku)/i;
+const EXCLUDE_SUBAGENT_MODEL_RE = /(image|imagen|dall-e|flux|embed|whisper|tts|rerank|moderation|veo|sora)/i;
+
+/**
+ * Recommends a fast, low-cost tool-calling model (`providerID/modelID`) for
+ * read-only exploration subagents (`explore`, `scout`), preferring the active
+ * model's own provider when available.
+ */
+export function recommendEconomySubagentModel(
+  preferredProviderID = workspace.selectedModel?.providerID
+): string | null {
+  const connected = new Set(workspace.connectedProviders || []);
+  const orderedProviders = [...workspace.providers].sort((a, b) => {
+    const aPref = a.id === preferredProviderID ? 1 : 0;
+    const bPref = b.id === preferredProviderID ? 1 : 0;
+    if (aPref !== bPref) return bPref - aPref;
+    return a.id.localeCompare(b.id);
+  });
+
+  for (const prov of orderedProviders) {
+    if (prov.id === "hoxi-official") continue;
+    if (connected.size > 0 && !connected.has(prov.id) && prov.source !== "config" && prov.source !== "custom") {
+      continue;
+    }
+    const candidates = Object.values(prov.models || {}).filter((m) => {
+      if (!m?.id || EXCLUDE_SUBAGENT_MODEL_RE.test(m.id)) return false;
+      if (m.tool_call === false || m.capabilities?.toolcall === false) return false;
+      const outMods = m.modalities?.output || [];
+      if (outMods.length > 0 && !outMods.includes("text")) return false;
+      return ECONOMY_FAMILIES.has(m.family || "") || ECONOMY_ID_RE.test(m.id);
+    });
+    if (candidates.length === 0) continue;
+    candidates.sort((a, b) => {
+      const aLite = /lite|nano/i.test(a.id) ? 1 : 0;
+      const bLite = /lite|nano/i.test(b.id) ? 1 : 0;
+      if (aLite !== bLite) return aLite - bLite;
+      return a.id.localeCompare(b.id);
+    });
+    return `${prov.id}/${candidates[0].id}`;
+  }
+  return null;
+}
+
+/**
+ * Assigns the recommended economy model to built-in read-only subagents (`explore`, `scout`)
+ * that do not already have an explicit model override.
+ */
+export async function applyEconomyModelToReadOnlySubagents(): Promise<string | null> {
+  const recommended = recommendEconomySubagentModel();
+  if (!recommended) return null;
+  const current = agentMap(workspace.globalConfig);
+  const patch: Record<string, unknown> = {};
+  for (const id of ["explore", "scout"] as const) {
+    const existing = current[id];
+    if (existing && typeof existing === "object" && typeof existing.model === "string" && existing.model.trim()) {
+      continue;
+    }
+    patch[id] = { model: recommended, permission: { edit: "deny" } };
+  }
+  if (Object.keys(patch).length > 0) {
+    await patchGlobalConfig({ agent: patch });
+  }
+  return recommended;
+}

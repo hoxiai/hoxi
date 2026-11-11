@@ -1,6 +1,9 @@
 package provider
 
-import "strings"
+import (
+	"net/url"
+	"strings"
+)
 
 // parseModelVersion extracts the first (major, minor) version pair from a lowercased model ID.
 // Only pure 1-2 digit segments are treated as version numbers, ignoring dates (e.g. 20250514)
@@ -54,11 +57,42 @@ func isClaude46Model(lowerMID string) bool {
 }
 
 func isLegacyGeminiBudgetModel(lowerMID string) bool {
+	if strings.Contains(lowerMID, "gemini-flash-latest") ||
+		strings.Contains(lowerMID, "gemini-pro-latest") ||
+		strings.Contains(lowerMID, "gemini-flash-lite-latest") {
+		return true
+	}
 	if idx := strings.Index(lowerMID, "gemini"); idx >= 0 {
 		lowerMID = lowerMID[idx:]
 	}
 	major, _, ok := parseModelVersion(lowerMID)
 	return ok && major < 3
+}
+
+// isNonThinkingGeminiChatModel reports whether modelID is a Gemini 1.x or
+// non-thinking Gemini 2.0 chat model (e.g. gemini-1.5-pro, gemini-2.0-flash,
+// gemini-2.0-flash-lite) that rejects thinkingConfig with HTTP 400.
+func isNonThinkingGeminiChatModel(modelID string) bool {
+	lowerMID := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(modelID)), "models/")
+	if !strings.Contains(lowerMID, "gemini") || strings.Contains(lowerMID, "thinking") {
+		return false
+	}
+	if idx := strings.Index(lowerMID, "gemini"); idx >= 0 {
+		lowerMID = lowerMID[idx:]
+	}
+	major, minor, ok := parseModelVersion(lowerMID)
+	return ok && (major == 1 || (major == 2 && minor < 5))
+}
+
+func isGemini30ProModel(lowerMID string) bool {
+	if idx := strings.Index(lowerMID, "gemini"); idx >= 0 {
+		lowerMID = lowerMID[idx:]
+	}
+	if !strings.Contains(lowerMID, "pro") || strings.Contains(lowerMID, "flash") {
+		return false
+	}
+	major, minor, ok := parseModelVersion(lowerMID)
+	return ok && major == 3 && minor == 0
 }
 
 func defaultModelVariants(providerID, npm, modelID string) map[string]interface{} {
@@ -105,9 +139,13 @@ func defaultModelVariants(providerID, npm, modelID string) map[string]interface{
 				"max":    map[string]interface{}{"thinkingConfig": map[string]interface{}{"includeThoughts": true, "thinkingBudget": 24576}},
 			}
 		}
+		mediumLevel := "medium"
+		if isGemini30ProModel(lowerMID) {
+			mediumLevel = "high"
+		}
 		return map[string]interface{}{
 			"low":    map[string]interface{}{"thinkingConfig": map[string]interface{}{"includeThoughts": true, "thinkingLevel": "low"}},
-			"medium": map[string]interface{}{"thinkingConfig": map[string]interface{}{"includeThoughts": true, "thinkingLevel": "medium"}},
+			"medium": map[string]interface{}{"thinkingConfig": map[string]interface{}{"includeThoughts": true, "thinkingLevel": mediumLevel}},
 			"high":   map[string]interface{}{"thinkingConfig": map[string]interface{}{"includeThoughts": true, "thinkingLevel": "high"}},
 			"max":    map[string]interface{}{"thinkingConfig": map[string]interface{}{"includeThoughts": true, "thinkingLevel": "high"}},
 		}
@@ -164,6 +202,51 @@ func defaultModelVariants(providerID, npm, modelID string) map[string]interface{
 	}
 }
 
+// isGeminiImageModelID detects conversational Gemini / Nano-Banana image
+// generation models (e.g. gemini-2.5-flash-image, gemini-3-pro-image-preview,
+// gemini-2.0-flash-preview-image-generation) without matching standard Gemini
+// text/vision chat models like gemini-2.5-pro or gemini-2.5-flash.
+func isGeminiImageModelID(lowerMID string) bool {
+	id := strings.ToLower(strings.TrimSpace(lowerMID))
+	if strings.Contains(id, "nano-banana") {
+		return true
+	}
+	if !strings.Contains(id, "gemini") {
+		return false
+	}
+	return strings.Contains(id, "-image") ||
+		strings.Contains(id, "_image") ||
+		strings.Contains(id, "image-generation") ||
+		strings.Contains(id, "image-preview") ||
+		strings.HasSuffix(id, "/image")
+}
+
+// isConversationalImageModelID reports whether an image generation model uses
+// multimodal chat/generateContent turns rather than pure /images/generations.
+func isConversationalImageModelID(modelID string) bool {
+	id := strings.ToLower(strings.TrimSpace(modelID))
+	return isGeminiImageModelID(id) ||
+		strings.Contains(id, "gpt-4o-image") ||
+		strings.Contains(id, "chatgpt-image")
+}
+
+// supportsMultimodalImageEditInput reports whether an image generation model
+// accepts reference images alongside a prompt for image-to-image / editing.
+func supportsMultimodalImageEditInput(modelID string) bool {
+	id := strings.ToLower(strings.TrimSpace(modelID))
+	return isConversationalImageModelID(id) ||
+		strings.Contains(id, "gpt-image") ||
+		strings.Contains(id, "flux-kontext") ||
+		strings.Contains(id, "seedream") ||
+		strings.Contains(id, "qwen-image-edit")
+}
+
+// IsImageGenerationModel reports whether modelID (or explicit metadata) is a
+// dedicated image generation / image-editing model.
+func IsImageGenerationModel(modelID, explicitCategory, modality string) bool {
+	return inferModelCategory(modelID, explicitCategory, modality) == "image"
+}
+
 // normalizeModelCategory normalizes an explicit model category from hoxi.ai or AINode.
 // Supported categories: chat | coding | tts | realtime | asr | image | video | embedding.
 func normalizeModelCategory(raw string) string {
@@ -210,17 +293,22 @@ func inferModelCategory(modelID, explicitCategory, modality string) string {
 	if mod == "video" {
 		return "video"
 	}
+	if mod == "image" || isGeminiImageModelID(id) {
+		return "image"
+	}
+	for _, tok := range []string{
+		"dall-e", "gpt-image", "chatgpt-image", "gpt-4o-image", "imagen",
+		"flux-", "flux.", "flux/", "midjourney", "stable-diffusion", "sdxl",
+		"ideogram", "recraft", "cogview", "seedream", "kolors",
+		"hunyuan-image", "qwen-image", "wanx-v1",
+	} {
+		if strings.Contains(id, tok) {
+			return "image"
+		}
+	}
 	for _, tok := range []string{"seedance", "kling", "veo-", "veo2", "veo3", "sora", "wanx", "wan2", "cogvideo", "hailuo", "luma-", "runway", "vidu"} {
 		if strings.Contains(id, tok) {
 			return "video"
-		}
-	}
-	if mod == "image" {
-		return "image"
-	}
-	for _, tok := range []string{"dall-e", "gpt-image", "imagen", "flux-", "flux.", "flux/", "midjourney", "stable-diffusion", "sdxl", "ideogram", "recraft", "cogview"} {
-		if strings.Contains(id, tok) {
-			return "image"
 		}
 	}
 	for _, tok := range []string{"embedding", "embed", "rerank", "bge-", "moderation"} {
@@ -248,26 +336,34 @@ func isNonChatUtilityModel(modelID string) bool {
 	return !isConversationalCategory(inferModelCategory(id, "", ""))
 }
 
-func hasImageInputModality(mObj map[string]interface{}) bool {
+func hasModalityEntry(mObj map[string]interface{}, dir, target string) bool {
 	modMap, ok := mObj["modalities"].(map[string]interface{})
 	if !ok {
 		return false
 	}
-	switch inp := modMap["input"].(type) {
+	switch list := modMap[dir].(type) {
 	case []interface{}:
-		for _, v := range inp {
-			if s, _ := v.(string); strings.EqualFold(strings.TrimSpace(s), "image") {
+		for _, v := range list {
+			if s, _ := v.(string); strings.EqualFold(strings.TrimSpace(s), target) {
 				return true
 			}
 		}
 	case []string:
-		for _, s := range inp {
-			if strings.EqualFold(strings.TrimSpace(s), "image") {
+		for _, s := range list {
+			if strings.EqualFold(strings.TrimSpace(s), target) {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+func hasImageInputModality(mObj map[string]interface{}) bool {
+	return hasModalityEntry(mObj, "input", "image")
+}
+
+func hasImageOutputModality(mObj map[string]interface{}) bool {
+	return hasModalityEntry(mObj, "output", "image")
 }
 
 func ensureImageInputModality(mObj map[string]interface{}) {
@@ -284,6 +380,110 @@ func ensureImageInputModality(mObj map[string]interface{}) {
 	mObj["modalities"] = modMap
 }
 
+func ensureImageOutputModality(mObj map[string]interface{}, allowImageInput bool) {
+	modMap, _ := mObj["modalities"].(map[string]interface{})
+	if modMap == nil {
+		modMap = map[string]interface{}{}
+	}
+	if allowImageInput {
+		modMap["input"] = []string{"text", "image"}
+	} else if _, hasIn := modMap["input"]; !hasIn {
+		modMap["input"] = []string{"text"}
+	}
+	if !hasImageOutputModality(mObj) {
+		modMap["output"] = []string{"text", "image"}
+	}
+	mObj["modalities"] = modMap
+}
+
+// normalizeGoogleBaseURL ensures @ai-sdk/google baseURL ends with an API version
+// segment (default /v1beta) and does not keep a trailing /models suffix that
+// would cause @ai-sdk/google to request /v1beta/models/models/...
+func normalizeGoogleBaseURL(rawBaseURL string) string {
+	trimmed := strings.TrimRight(strings.TrimSpace(rawBaseURL), "/")
+	if trimmed == "" {
+		return ""
+	}
+	u, err := url.Parse(trimmed)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return trimmed
+	}
+	cleanPath := strings.TrimRight(u.Path, "/")
+	if strings.HasSuffix(strings.ToLower(cleanPath), "/models") {
+		cleanPath = strings.TrimRight(cleanPath[:len(cleanPath)-len("/models")], "/")
+	}
+	lowerPath := strings.ToLower(cleanPath)
+	if cleanPath == "" {
+		cleanPath = "/v1beta"
+	} else if !strings.HasSuffix(lowerPath, "/v1beta") &&
+		!strings.HasSuffix(lowerPath, "/v1alpha") &&
+		!strings.HasSuffix(lowerPath, "/v1") {
+		cleanPath = cleanPath + "/v1beta"
+	}
+	u.Path = cleanPath
+	u.RawPath = ""
+	return strings.TrimRight(u.String(), "/")
+}
+
+func normalizeProviderProtocolAndBaseURL(providerID string, pObj map[string]interface{}) string {
+	npm, _ := pObj["npm"].(string)
+	opts, _ := pObj["options"].(map[string]interface{})
+	baseURL, _ := opts["baseURL"].(string)
+	proto := effectiveProviderProtocol(providerID, npm, baseURL)
+	if proto == "google" {
+		if strings.TrimSpace(npm) == "" || strings.EqualFold(strings.TrimSpace(npm), "@ai-sdk/openai-compatible") {
+			npm = "@ai-sdk/google"
+			pObj["npm"] = npm
+		}
+		if opts != nil && strings.TrimSpace(baseURL) != "" {
+			opts["baseURL"] = normalizeGoogleBaseURL(baseURL)
+		}
+	} else if proto == "openai" && strings.Contains(strings.ToLower(npm), "google") {
+		// e.g. https://generativelanguage.googleapis.com/v1beta/openai
+		npm = "@ai-sdk/openai-compatible"
+		pObj["npm"] = npm
+	}
+	return npm
+}
+
+func hasAutoInjectedThinkingVariants(vMap map[string]interface{}) bool {
+	if len(vMap) == 0 {
+		return false
+	}
+	for _, entry := range vMap {
+		em, ok := entry.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if _, hasTC := em["thinkingConfig"]; hasTC {
+			return true
+		}
+		if _, hasRE := em["reasoningEffort"]; hasRE {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeGoogleModelMapKeys(mMap map[string]interface{}) {
+	var prefixedKeys []string
+	for mid := range mMap {
+		if strings.HasPrefix(mid, "models/") && len(strings.TrimPrefix(mid, "models/")) > 0 {
+			prefixedKeys = append(prefixedKeys, mid)
+		}
+	}
+	for _, oldKey := range prefixedKeys {
+		cleanKey := strings.TrimSpace(strings.TrimPrefix(oldKey, "models/"))
+		if cleanKey == "" {
+			continue
+		}
+		if _, exists := mMap[cleanKey]; !exists {
+			mMap[cleanKey] = mMap[oldKey]
+		}
+		delete(mMap, oldKey)
+	}
+}
+
 func normalizeDocModelVariants(doc map[string]interface{}) {
 	provMap, ok := doc["provider"].(map[string]interface{})
 	if !ok {
@@ -294,26 +494,54 @@ func normalizeDocModelVariants(doc map[string]interface{}) {
 		if !ok {
 			continue
 		}
-		npm, _ := pObj["npm"].(string)
+		npm := normalizeProviderProtocolAndBaseURL(pid, pObj)
+		opts, _ := pObj["options"].(map[string]interface{})
+		baseURL, _ := opts["baseURL"].(string)
+		proto := effectiveProviderProtocol(pid, npm, baseURL)
 		mMap, ok := pObj["models"].(map[string]interface{})
 		if !ok {
 			continue
+		}
+		if proto == "google" {
+			normalizeGoogleModelMapKeys(mMap)
 		}
 		for mid, mVal := range mMap {
 			mObj, ok := mVal.(map[string]interface{})
 			if !ok {
 				continue
 			}
-			isChat := !isNonChatUtilityModel(mid)
+			explicitCat, _ := mObj["category"].(string)
+			cat := inferModelCategory(mid, explicitCat, "")
+			isImageGen := cat == "image" || hasImageOutputModality(mObj)
+			isChat := !isImageGen && isConversationalCategory(cat)
 			if isChat {
 				ensureModelTokenLimit(mObj, mid)
 			}
+
 			_, hasExplicitAttachment := mObj["attachment"]
 			attachBool, _ := mObj["attachment"].(bool)
 			if !attachBool {
 				if caps, ok := mObj["capabilities"].(map[string]interface{}); ok {
 					attachBool, _ = caps["attachment"].(bool)
 				}
+			}
+
+			if isImageGen {
+				if !hasExplicitAttachment {
+					attachBool = hasImageInputModality(mObj) || supportsMultimodalImageEditInput(mid)
+					mObj["attachment"] = attachBool
+				}
+				ensureImageOutputModality(mObj, attachBool || hasImageInputModality(mObj))
+				// Clean up legacy auto-injected thinking variants on image models
+				// that reject thinkingConfig / reasoning_effort with HTTP 400.
+				isReasoning, _ := mObj["reasoning"].(bool)
+				if vMap, hasV := mObj["variants"].(map[string]interface{}); hasV && hasAutoInjectedThinkingVariants(vMap) {
+					delete(mObj, "variants")
+					if isReasoning {
+						mObj["reasoning"] = false
+					}
+				}
+				continue
 			}
 
 			if !hasExplicitAttachment {
@@ -325,6 +553,22 @@ func normalizeDocModelVariants(doc map[string]interface{}) {
 			if attachBool || hasImageInputModality(mObj) {
 				mObj["attachment"] = true
 				ensureImageInputModality(mObj)
+			}
+			if isChat {
+				applyRichChatModelDefaults(proto, mid, mObj, attachBool || hasImageInputModality(mObj))
+			}
+
+			if isNonThinkingGeminiChatModel(mid) {
+				// Non-thinking Gemini 1.x / 2.0 chat models reject thinkingConfig
+				// with HTTP 400; OpenCode injects thinkingConfig whenever
+				// capabilities.reasoning is true on @ai-sdk/google.
+				if vMap, hasV := mObj["variants"].(map[string]interface{}); hasV && hasAutoInjectedThinkingVariants(vMap) {
+					delete(mObj, "variants")
+					mObj["reasoning"] = false
+				} else if proto == "google" {
+					mObj["reasoning"] = false
+				}
+				continue
 			}
 
 			isReasoning, hasExplicitReasoning := mObj["reasoning"].(bool)

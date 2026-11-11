@@ -82,6 +82,7 @@ export * from "./relay";
 export * from "./deep-link";
 export * from "./subagent-config";
 export * from "./image-viewer";
+export * from "./media-options";
 
 
 

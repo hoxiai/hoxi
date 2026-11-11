@@ -12,7 +12,7 @@ import type { MessageInfo } from "../../services/sse-types";
 import { compareMessageIDOrder, type MessageTurn } from "../../store/workspace";
 import { Icon } from "../icons";
 import { t } from "../../i18n";
-import { isVisibleTextPart, isWorkPart } from "./context-activity-parts";
+import { isRenderableAssistantPart, isVisibleFilePart, isVisibleTextPart } from "./context-activity-parts";
 import {
   hasSubstantiveTurnText,
   type MergedTurnResolution,
@@ -117,7 +117,7 @@ export function computeTurnWindowSlice(
     for (let index = start - 1; index > previous; index--) {
       const prior = turns[index];
       if (prior.info.error) break;
-      if (prior.parts.some(isWorkPart) || prior.parts.some(isVisibleTextPart)) anchorIndex = index;
+      if (prior.parts.some(isRenderableAssistantPart)) anchorIndex = index;
       if (hasSubstantiveTurnText(turns, index)) break;
     }
   }
@@ -174,7 +174,7 @@ export function nextVisualWindowLimit(
       Boolean(turn.info.error) ||
       hasSubstantiveTurnText(turns, index) ||
       ((index === 0 || turns[index - 1]?.info.role !== "assistant") &&
-        (turn.parts.some(isWorkPart) || turn.parts.some(isVisibleTextPart)));
+        turn.parts.some(isRenderableAssistantPart));
     if (isVisual) {
       visualCount++;
       if (visualCount >= Math.max(1, chunk)) break;
@@ -242,7 +242,7 @@ export function hasUnmountedVisualTurns(
     const turn = turns[index];
     if (!turn) continue;
     if (turn.info.role === "user" || turn.info.error) return true;
-    if (turn.parts.some(isWorkPart) || turn.parts.some(isVisibleTextPart)) return true;
+    if (turn.parts.some(isRenderableAssistantPart)) return true;
   }
   return false;
 }
@@ -710,8 +710,7 @@ export function AssistantTurnItem(props: {
       merged().isCycleEnd &&
       Boolean(props.turn.info.time?.completed) &&
       !props.turn.info.error &&
-      !merged().effectiveParts.some(isVisibleTextPart) &&
-      !merged().effectiveParts.some((p) => p.type === "tool")
+      !merged().effectiveParts.some((p) => isVisibleTextPart(p) || isVisibleFilePart(p) || p.type === "tool")
   );
 
   // An empty historical cycle end can own the whole task summary. Keep it

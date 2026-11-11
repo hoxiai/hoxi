@@ -104,18 +104,19 @@ export default function MarkdownImage(props: { src: string; alt: string; title?:
 
   const rawSrc = () => (props.src || "").trim();
   const isRemote = () => /^https?:\/\//i.test(rawSrc());
+  const isGatewayAttachment = () => /^\/api\/hoxi\/attachments\//i.test(rawSrc());
   const isDataImage = () => /^data:image\/(?:png|jpe?g|gif|webp|avif);base64,/i.test(rawSrc());
+  const isDirectImage = () => isRemote() || isGatewayAttachment() || isDataImage();
   const isLocal = () =>
-    !isRemote() &&
-    !isDataImage() &&
+    !isDirectImage() &&
     (!/^[a-z][a-z0-9+.-]*:/i.test(rawSrc()) || /^[a-zA-Z]:[\\/]/.test(rawSrc()));
   const rawLocalPath = () => (isLocal() ? stripFileLineSuffix(rawSrc()) : "");
   const localPath = () => resolveMarkdownRelativePath(rawLocalPath(), baseFilePath());
-  const canOpen = () => Boolean(localPath()) || isRemote() || isDataImage();
-  const displaySrc = () => (isRemote() || isDataImage() ? rawSrc() : resolved());
+  const canOpen = () => Boolean(localPath()) || isDirectImage();
+  const displaySrc = () => (isDirectImage() ? rawSrc() : resolved());
 
   createEffect(() => {
-    if (isRemote() || isDataImage()) {
+    if (isDirectImage()) {
       setResolved(rawSrc());
       setFailed(false);
       setLoading(false);
@@ -184,8 +185,8 @@ export default function MarkdownImage(props: { src: string; alt: string; title?:
       });
       return;
     }
-    if (!isRemote() && !isDataImage()) return;
-    if (isDataImage()) {
+    if (!isDirectImage()) return;
+    if (isDataImage() || isGatewayAttachment()) {
       openImagePreview({ src: rawSrc(), alt: props.alt || "" });
       return;
     }

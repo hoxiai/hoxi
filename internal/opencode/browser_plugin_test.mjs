@@ -401,4 +401,52 @@ test("standalone browser plugin", async (t) => {
     });
     assert.equal(runRes.title, "HoxiTools: run (apify)");
   });
+
+  await t.test("hoxi_image generates images, attaches files, gates outputPath edits and blocks protected paths", async () => {
+    const execImg = hooks.tool.hoxi_image.execute;
+    requests = [];
+    asks = [];
+    const tinyImgUrl = ["data:image/png", "base64,iVBORw0KGgo="].join(";");
+    globalThis.fetch = async (url, options) => {
+      requests.push({ url, options });
+      return Response.json({
+        ok: true,
+        providerID: "custom-gemini",
+        modelID: "gemini-2.5-flash-image",
+        text: "Generated banner",
+        images: [
+          {
+            filename: "banner.png",
+            mime: "image/png",
+            path: "public/banner.png",
+            url: tinyImgUrl,
+          },
+        ],
+      });
+    };
+
+    const res1 = await execImg({ prompt: "minimalist logo", aspectRatio: "16:9", imageSize: "2K" }, context);
+    assert.equal(asks.length, 0);
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].url.pathname, "/api/hoxi/media/image");
+    assert.equal(JSON.parse(requests[0].options.body).aspectRatio, "16:9");
+    assert.equal(JSON.parse(requests[0].options.body).imageSize, "2K");
+    assert.equal(res1.attachments.length, 1);
+    assert.equal(res1.attachments[0].filename, "banner.png");
+
+    asks = [];
+    await execImg({ prompt: "hero banner", outputPath: "public/banner.png" }, context);
+    assert.equal(asks.length, 1);
+    assert.equal(asks[0].permission, "edit");
+    assert.deepEqual(asks[0].patterns, ["public/banner.png"]);
+
+    for (const badPath of [".env", ".git/hooks/pre-commit", "../escape.png", "/etc/hosts"]) {
+      requests = [];
+      await assert.rejects(
+        execImg({ prompt: "bad target", outputPath: badPath }, context),
+        /protected|traversal|relative|inside/i,
+      );
+      assert.equal(requests.length, 0);
+    }
+  });
 });

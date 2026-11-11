@@ -22,6 +22,35 @@ export interface PromptAttachment {
   url: string;
 }
 
+export interface PromptImageOptions {
+  aspectRatio?: string;
+  imageSize?: string;
+  count?: number;
+}
+
+export interface MediaImageModelOption {
+  providerID: string;
+  modelID: string;
+  name?: string;
+  protocol?: string;
+}
+
+export interface MediaCapabilitiesResponse {
+  ok: boolean;
+  hasImageModel: boolean;
+  hasAudioTranscriber: boolean;
+  hasEmbeddingModel: boolean;
+  imageModels?: MediaImageModelOption[];
+}
+
+export interface MediaTranscribeResponse {
+  ok: boolean;
+  text?: string;
+  providerID?: string;
+  modelID?: string;
+  error?: string;
+}
+
 export interface WorktreeRepoStatus {
   repo: string;
   name: string;
@@ -390,6 +419,7 @@ export interface ModelTelemetryStats {
   hallucinationFlags: number;
   revertCount: number;
   cacheHitTurns: number;
+  cacheEligibleTurns?: number;
   reasoningTurns?: number;
   ttftSamplesMs?: number[];
   tpsSamples?: number[];
@@ -410,6 +440,7 @@ export interface ProviderTelemetryStats {
   hallucinationFlags: number;
   revertCount: number;
   cacheHitTurns: number;
+  cacheEligibleTurns?: number;
   reasoningTurns?: number;
   ttftSamplesMs?: number[];
   tpsSamples?: number[];

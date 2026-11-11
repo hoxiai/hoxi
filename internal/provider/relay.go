@@ -175,14 +175,23 @@ func (s *Service) relayCandidateCompatible(providerID string) bool {
 	return isHTTPEndpoint(baseURL)
 }
 
+func relayProviderBaseURL(pid string, pObj map[string]any) string {
+	if opts, ok := pObj["options"].(map[string]any); ok {
+		if u, ok := opts["baseURL"].(string); ok && strings.TrimSpace(u) != "" {
+			return strings.TrimSpace(u)
+		}
+	}
+	return strings.TrimSpace(defaultProviderBaseURLs[pid])
+}
+
 func relayProviderIsAnthropicNative(pid string, pObj map[string]any) bool {
 	npm, _ := pObj["npm"].(string)
-	return isAnthropicProtocol(pid, npm)
+	return effectiveProviderProtocol(pid, npm, relayProviderBaseURL(pid, pObj)) == "anthropic"
 }
 
 func relayProviderIsGoogleNative(pid string, pObj map[string]any) bool {
 	npm, _ := pObj["npm"].(string)
-	return isGoogleProtocol(pid, npm)
+	return effectiveProviderProtocol(pid, npm, relayProviderBaseURL(pid, pObj)) == "google"
 }
 
 func relayProviderIsNonOpenAINative(pid string, pObj map[string]any) bool {
@@ -335,13 +344,14 @@ func (s *Service) serveRelayChat(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	if isAnthropicProtocol(providerID, npm) {
+	resolvedProto := effectiveProviderProtocol(providerID, npm, baseURL)
+	if resolvedProto == "anthropic" {
 		writeJSON(w, http.StatusBadRequest, map[string]any{
 			"error": map[string]any{"message": "provider " + providerID + " is configured with the Anthropic SDK; use an OpenAI-compatible endpoint", "type": "invalid_request_error"},
 		})
 		return
 	}
-	if isGoogleProtocol(providerID, npm) {
+	if resolvedProto == "google" {
 		writeJSON(w, http.StatusBadRequest, map[string]any{
 			"error": map[string]any{"message": "provider " + providerID + " is configured with the Google Gemini SDK; use an OpenAI-compatible endpoint", "type": "invalid_request_error"},
 		})

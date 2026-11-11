@@ -521,7 +521,11 @@ export function recordAssistantTurnUpdated(info: MessageInfo) {
       outTokens > 3 && durationMs > 250
         ? Math.round((outTokens / (durationMs / 1000)) * 10) / 10
         : 0;
-    const hasCacheHit = (info.tokens?.cache?.read ?? 0) > 0;
+    const cacheRead = info.tokens?.cache?.read ?? 0;
+    const cacheWrite = info.tokens?.cache?.write ?? 0;
+    const totalInput = (info.tokens?.input ?? 0) + cacheRead + cacheWrite;
+    const hasCacheHit = cacheRead > 0;
+    const isCacheEligible = hasCacheHit || totalInput >= 2048;
     const hasReasoning = (info.tokens?.reasoning ?? 0) > 0;
 
     setWorkspace(
@@ -533,6 +537,7 @@ export function recordAssistantTurnUpdated(info: MessageInfo) {
           rec.tpsSamples = pushSample(rec.tpsSamples, tps);
         }
         if (hasCacheHit) rec.cacheHitTurns += 1;
+        if (isCacheEligible) rec.cacheEligibleTurns = (rec.cacheEligibleTurns || 0) + 1;
         if (hasReasoning) rec.reasoningTurns = (rec.reasoningTurns || 0) + 1;
         const m = ensureModelStats(rec, mid);
         if (m) {
@@ -542,6 +547,7 @@ export function recordAssistantTurnUpdated(info: MessageInfo) {
             m.tpsSamples = pushSample(m.tpsSamples, tps);
           }
           if (hasCacheHit) m.cacheHitTurns += 1;
+          if (isCacheEligible) m.cacheEligibleTurns = (m.cacheEligibleTurns || 0) + 1;
           if (hasReasoning) m.reasoningTurns = (m.reasoningTurns || 0) + 1;
           m.updatedAt = Date.now();
         }

@@ -137,20 +137,32 @@ func (g *Service) handleTestProviderModel(w http.ResponseWriter, r *http.Request
 	}
 
 	start := time.Now()
-	_, err := callSimpleLLM(r.Context(), llmCompletionRequest{
-		ProviderID: pid,
-		ModelID:    modelID,
-		BaseURL:    baseURL,
-		APIKey:     apiKey,
-		NPM:        npm,
-		Headers:    headers,
-		Prompt:     "hi",
-		MaxTokens:  1,
-		Timeout:    15 * time.Second,
-		Transport:  providerTransport,
-		Stats:      g.stats,
-		Breaker:    g.breaker,
-	})
+	var err error
+	if g.IsImageModel(pid, modelID) || IsImageGenerationModel(modelID, "", "") {
+		err = g.probeImageModel(r.Context(), imageGenConn{
+			ProviderID: pid,
+			ModelID:    modelID,
+			BaseURL:    baseURL,
+			APIKey:     apiKey,
+			NPM:        npm,
+			Headers:    headers,
+		})
+	} else {
+		_, err = callSimpleLLM(r.Context(), llmCompletionRequest{
+			ProviderID: pid,
+			ModelID:    modelID,
+			BaseURL:    baseURL,
+			APIKey:     apiKey,
+			NPM:        npm,
+			Headers:    headers,
+			Prompt:     "hi",
+			MaxTokens:  1,
+			Timeout:    15 * time.Second,
+			Transport:  providerTransport,
+			Stats:      g.stats,
+			Breaker:    g.breaker,
+		})
+	}
 	latency := time.Since(start).Milliseconds()
 	if err != nil {
 		errMsg := err.Error()

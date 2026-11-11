@@ -690,7 +690,7 @@ func (s *Service) steerOpenCodeTurn(ctx context.Context, rec SessionRecord, mode
 			fileParts = append(fileParts, p)
 		}
 	}
-	storedParts, deliveryParts, _ := s.prepareTurnAttachments(rec, now, seq, steerMsgID, text, fileParts)
+	storedParts, deliveryParts, _ := s.prepareTurnAttachmentsForModel(rec, providerID, modelID, false, now, seq, steerMsgID, text, fileParts)
 	if skillSelection != nil {
 		s.recordUserSkillOverride(steerMsgID, text, skillSelection)
 		storedParts, deliveryParts = applySkillSelectionToTurnParts(

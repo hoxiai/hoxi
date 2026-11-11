@@ -6,7 +6,7 @@ import type { MessagePart } from "../services/sse-types";
 import { extractUserTurnSkillSelection, revalidateSkillForTargetDirectory, setComposerSkillNotice, transferDraftComposerSkill } from "./skills";
 import { recordPromptDispatched } from "./provider-telemetry";
 import { extractLocalFallbackTitle, isPlaceholderSessionTitle, summarizeAndRenameSession } from "./session-title";
-import { evaluatePromptModalityIntent, isAutoModel, isNonChatUtilityModelID, markAutoCandidateCooldown, modelSupportsImageInput, resolveAutoModelTarget } from "./auto-models";
+import { evaluatePromptModalityIntent, isAutoModel, isImageGenerationModel, isNonChatUtilityModelID, markAutoCandidateCooldown, modelSupportsImageInput, resolveAutoModelTarget } from "./auto-models";
 import { resolveEffectiveModelEffort } from "./provider-catalog";
 import { reportAutoCandidateOutcome } from "./auto-breaker";
 import {
@@ -24,6 +24,7 @@ import { initializeSessionAI, parseModelString, sessionAIConfig } from "./sessio
 import { compareMessageIDOrder } from "./message-lookup";
 import { cancelPendingSessionMessageLoads, loadSessionMessages, replaceSession } from "./workspace-sessions";
 import { renameSessionTitle } from "./session-lifecycle";
+import { currentPromptImageOptions } from "./media-options";
 import { buildWorkspaceFoldersSystemPrompt, normalizeFolderPath, workspaceFoldersForDir } from "./workspace-folders";
 import { isSessionBusy, isSessionDeleted, requestTimelineFollow, sessionDirectory, sessionRuntimeForID, timelineFollowRequest } from "./session-query";
 import { beginQueueDrain, commitEditingQueuedPromptToQueue, endQueueDrain, enqueueSessionPrompt, getEditingQueuedPrompt, isQueuedPromptDrainBlocked, markQueuedTurnShown, markSessionPromptDispatched, removeQueuedPrompt, restoreEditingQueuedPrompt, restoreQueuedPromptAt, takeEditingQueuedPrompt } from "./prompt-queue";
@@ -86,6 +87,7 @@ export async function dispatchSessionPrompt(
     directory?: string;
     attachments?: Array<{ type: "file"; mime: string; filename?: string; url: string }>;
     skillSelection?: import("../services/api").SkillSelection;
+    imageOptions?: import("../services/api").PromptImageOptions;
     /**
      * Extra system instructions for this turn only. They reach the model as a
      * system prefix and never appear in the timeline as a user message.
@@ -140,11 +142,18 @@ export async function dispatchSessionPrompt(
     : chosenModel
     ? { ...chosenModel }
     : undefined;
-  // Guardrail: if the user selected a dedicated image/video/audio endpoint or a text-only
-  // model for a visual/media turn, reroute the session brain to a Vision + Tool-Calling model
-  // when one is available in the auto pool so the session orchestrator never 400s.
+  const explicitlySelectedImageModel =
+    !isAuto &&
+    Boolean(
+      effectiveModel &&
+        isImageGenerationModel(effectiveModel.providerID, effectiveModel.modelID)
+    );
+  // Guardrail: if the user selected a non-image utility endpoint (e.g. embedding/tts/video) or
+  // auto-pool resolved a text-only model for a visual turn, reroute to a Vision + Tool-Calling
+  // model. Never hijack an explicitly selected image generation model in chat.
   if (
     effectiveModel &&
+    !explicitlySelectedImageModel &&
     (isNonChatUtilityModelID(effectiveModel.modelID) ||
       (requireVisionBrain &&
         !hasImageAttachment &&
@@ -176,12 +185,15 @@ export async function dispatchSessionPrompt(
     throw new Error(t("timeline.modelDoesNotSupportImages", { model: effectiveModel.modelID }));
   }
   const rawEffort = options?.effort ?? config.effort ?? editingQueued?.item.effort;
-  const effort = resolveEffectiveModelEffort(effectiveModel, rawEffort);
+  const effort = explicitlySelectedImageModel
+    ? undefined
+    : resolveEffectiveModelEffort(effectiveModel, rawEffort);
   const baseExplicitSystem = options?.system ?? editingQueued?.item.system;
-  const explicitSystem =
-    [baseExplicitSystem?.trim(), turnIntent.mediaRoutingDirective?.trim()]
-      .filter(Boolean)
-      .join("\n\n") || undefined;
+  const explicitSystem = explicitlySelectedImageModel
+    ? baseExplicitSystem?.trim() || undefined
+    : [baseExplicitSystem?.trim(), turnIntent.mediaRoutingDirective?.trim()]
+        .filter(Boolean)
+        .join("\n\n") || undefined;
 
   if (id && hasPendingSessionSandbox(id)) {
     await waitForSessionSandbox(id);
@@ -383,9 +395,13 @@ export async function dispatchSessionPrompt(
     }
     markSessionPromptDispatched(id);
     try {
+      const effectiveImageOptions =
+        options?.imageOptions ??
+        (explicitlySelectedImageModel ? currentPromptImageOptions() : undefined);
       await hoxiAPI.sendPromptAsync(id, promptText, {
         agent: effectiveAgent,
         model: effectiveModel,
+        ...(effectiveImageOptions ? { imageOptions: effectiveImageOptions } : {}),
         variant: effort || undefined,
         directory: targetDir,
         system,
@@ -412,7 +428,7 @@ export async function dispatchSessionPrompt(
     if (!hasRecentSessionInterrupt(id)) {
       markSessionPromptDispatched(id);
     }
-    if (shouldSummarizeTitle) {
+    if (shouldSummarizeTitle && !explicitlySelectedImageModel) {
       void summarizeAndRenameSession(
         id,
         promptText || (effectiveSkill ? `/${effectiveSkill.name}` : t("timeline.imagePromptSessionTitle")),

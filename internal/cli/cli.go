@@ -42,6 +42,7 @@ var knownSubcommands = map[string]bool{
 	"code-index":  true,
 	"codeindex":   true,
 	"doc":         true,
+	"image":       true,
 	"sessions":    true,
 	"status":      true,
 	"install-cli": true,
@@ -169,6 +170,8 @@ func Run(
 			return runCodeIndexCommand(args[2:], cwd, stdout, stderr)
 		case "doc":
 			return runDocCommand(args[2:], cwd, stdin, stdout, stderr)
+		case "image":
+			return runImageCommand(ctx, args[2:], cwd, defaultBridgeAddr, bootHeadless, stdout, stderr)
 		case "handoff":
 			return runHandoffCommand(ctx, args[2:], cwd, defaultBridgeAddr, bootHeadless, stdout, stderr)
 		case "status":
@@ -283,6 +286,7 @@ Usage:
   hoxi worktree [list|diff|apply]     Manage isolated Git worktree sandboxes
   hoxi code-index <action> [flags]    Navigate code via worktree index (context|search|inspect|callers|callees|impact|refresh)
   hoxi doc <action> [flags]           Read, inspect, create or edit PDF/Excel/Word/CSV documents (inspect|read|write-xlsx|set-cell|write-docx|write-pdf)
+  hoxi image <generate|models>        Generate or edit images via configured image models
   hoxi tui                            Launch native OpenCode TUI with Hoxi plugins
   hoxi serve                          Run headless Hoxi daemon for mobile/remote control
   hoxi install-cli                    Install 'hoxi' command into /usr/local/bin or ~/.local/bin

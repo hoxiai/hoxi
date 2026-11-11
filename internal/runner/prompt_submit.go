@@ -13,16 +13,23 @@ import (
 
 // PromptRequest is one user turn: the JSON body of POST .../prompt, also
 // submitted in process by RunPromptAndWait.
+type PromptImageOptions struct {
+	AspectRatio string `json:"aspectRatio,omitempty"`
+	ImageSize   string `json:"imageSize,omitempty"`
+	Count       int    `json:"count,omitempty"`
+}
+
 type PromptRequest struct {
-	Text            string          `json:"text"`
-	Runtime         string          `json:"runtime,omitempty"`
-	Agent           string          `json:"agent"`
-	Variant         string          `json:"variant"`
-	System          string          `json:"system"`
-	Model           *PromptModel    `json:"model"`
-	Parts           []MessagePart   `json:"parts"`
-	SkillSelection  *SkillSelection `json:"skillSelection,omitempty"`
-	ClientRequestID string          `json:"clientRequestId,omitempty"`
+	Text            string              `json:"text"`
+	Runtime         string              `json:"runtime,omitempty"`
+	Agent           string              `json:"agent"`
+	Variant         string              `json:"variant"`
+	System          string              `json:"system"`
+	Model           *PromptModel        `json:"model"`
+	ImageOptions    *PromptImageOptions `json:"imageOptions,omitempty"`
+	Parts           []MessagePart       `json:"parts"`
+	SkillSelection  *SkillSelection     `json:"skillSelection,omitempty"`
+	ClientRequestID string              `json:"clientRequestId,omitempty"`
 }
 
 func resolveRequestedPromptRuntime(body PromptRequest, currentRuntime string) string {
@@ -44,6 +51,7 @@ Keep build, test and workspace-check progress visible. Unless the user explicitl
 Use the tool's bounded output when available. If a full log is needed, save it to a unique temporary file and inspect bounded excerpts while the command runs. Preserve and check the original command's exit status; a successful tail/grep does not prove the check passed.
 Set a suitable tool timeout and test timeout. If a check stays silent, inspect its current stage and existing log before retrying; do not start duplicate checks or repeatedly wait without reporting progress. Reuse build caches unless a clean build is required.
 When navigating code, follow: locate symbol/file or fetch a full surgical package in one step (prefer hoxi_code_index tool or 'hoxi code-index context|search|inspect|callers|callees|impact|refresh') -> inspect the target function and minimal surrounding lines instead of whole files -> check callers, callees, blast radius (impact) and related tests. Edit and then run targeted verification only when the task asks for changes.
+When the user asks to generate or edit visual/image assets (icons, banners, illustrations, mockups, or photo edits), prefer calling the hoxi_image tool (or 'hoxi image generate "<prompt>" --out <workspace-relative-path>' in CLI sessions) so Hoxi invokes the user's configured image generation model directly.
 Reviews, audits and questions are read-only: report findings and do not edit, commit, push or publish unless the user asks for a fix or that action. Within the work the user asked for, keep going without asking whether to continue; stop to ask only for a real blocker, a choice the user must make, or an action that needs approval.
 When the user asks to spawn/start a background subtask and continue chatting in the main thread (e.g. "开一个子任务…然后继续对话" / "background subtask"), or to split work into parallel coding subtasks: do NOT call the built-in synchronous task/subagent tool (which blocks the current turn until the subagent finishes). Instead, output a fenced hoxi-subtasks JSON block and end your turn immediately so Hoxi runs the subtask(s) asynchronously in isolated background sessions while the main conversation stays responsive: {"title":"plan title","autoStart":true,"concurrency":3,"tasks":[{"id":"task-1","prompt":"self-contained instructions and verification","dependsOn":[]}]} (use "autoStart":true when the user wants the subtask(s) started right away, or "autoStart":false when proposing a multi-task plan for review first).`
 
@@ -132,7 +140,8 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 	unmanagedBusySteer := false
 	pendingAdopted := false
 	wantRuntime := resolveRequestedPromptRuntime(body, "opencode")
-	if !ok && (body.SkillSelection != nil || (wantRuntime != "" && wantRuntime != "opencode")) {
+	reqImageTurn := body.Model != nil && s.IsImageModel(body.Model.ProviderID, body.Model.ModelID)
+	if !ok && (body.SkillSelection != nil || reqImageTurn || (wantRuntime != "" && wantRuntime != "opencode")) {
 		adopted, adoptErr := s.adoptOpenCodeSession(ctx, sessionID, directory)
 		if adoptErr != nil {
 			if adoptErr.Error() == "cannot change runtime while the session is running" {
@@ -149,6 +158,24 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 				}
 				ok = true
 				unmanagedBusySteer = true
+			} else if reqImageTurn {
+				dir := s.resolveUnmanagedSessionDir(sessionID, directory)
+				projectID, _ := s.ensureProjectID(dir)
+				nowMs := time.Now().UnixMilli()
+				rec = SessionRecord{
+					ID:           sessionID,
+					ProjectID:    projectID,
+					Runtime:      "opencode",
+					ProjectDir:   dir,
+					WorktreePath: dir,
+					SandboxMode:  "local",
+					Title:        "New Session",
+					CreatedAt:    nowMs,
+					UpdatedAt:    nowMs,
+					Turns:        []MessageTurn{},
+				}
+				ok = true
+				pendingAdopted = true
 			} else {
 				return http.StatusConflict, PromptReceipt{}, adoptErr
 			}
@@ -221,10 +248,18 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 		}
 		resolvedSkill = resolved
 	}
-	if rec.Runtime == "opencode" {
+	candidateModelID, candidateProviderID := rec.ModelID, rec.ProviderID
+	if body.Model != nil && strings.TrimSpace(body.Model.ModelID) != "" {
+		candidateModelID = strings.TrimSpace(body.Model.ModelID)
+		if strings.TrimSpace(body.Model.ProviderID) != "" {
+			candidateProviderID = strings.TrimSpace(body.Model.ProviderID)
+		}
+	}
+	isImageTurn := s.IsImageModel(candidateProviderID, candidateModelID)
+	if rec.Runtime == "opencode" && !isImageTurn {
 		s.mu.Lock()
 		ap := s.procs[sessionID]
-		busy := unmanagedBusySteer || (ap != nil && !ap.hasPendingError() && !ap.wasAborted())
+		busy := unmanagedBusySteer || (ap != nil && ap.runtime == "opencode" && !ap.hasPendingError() && !ap.wasAborted())
 		s.mu.Unlock()
 		if busy {
 			modelID, providerID := rec.ModelID, rec.ProviderID
@@ -295,7 +330,8 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 	if binPath == "" && rec.Runtime != "opencode" {
 		return http.StatusBadRequest, PromptReceipt{}, errors.New(missingMsg)
 	}
-	if rec.Runtime == "opencode" {
+	isImageTurn = s.IsImageModel(rec.ProviderID, modelID)
+	if rec.Runtime == "opencode" && !isImageTurn {
 		resolvedModel, checkErr := s.ensureOpenCodeModelAvailable(ctx, rec.WorktreePath, rec.ProviderID, modelID, true)
 		if checkErr != nil {
 			return http.StatusConflict, PromptReceipt{}, checkErr
@@ -380,7 +416,7 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 		ModelID:    modelID,
 		ProviderID: rec.ProviderID,
 	}
-	storedParts, deliveryParts, cliPrompt := s.prepareTurnAttachments(rec, now, seq, userMsgID, promptText, fileParts)
+	storedParts, deliveryParts, cliPrompt := s.prepareTurnAttachmentsForModel(rec, rec.ProviderID, modelID, isImageTurn, now, seq, userMsgID, promptText, fileParts)
 	if body.SkillSelection != nil {
 		s.recordUserSkillOverride(userMsgID, promptText, body.SkillSelection)
 		storedParts, deliveryParts = applySkillSelectionToTurnParts(
@@ -452,7 +488,9 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 	})
 
 	var err error
-	if rec.Runtime == "opencode" {
+	if isImageTurn {
+		err = s.startImageGenerationTurn(rec, mode, modelID, userInfo, storedParts, deliveryParts, asstMsgID, promptText, body.ImageOptions)
+	} else if rec.Runtime == "opencode" {
 		err = s.startOpenCodeTurn(rec, mode, modelID, effort, body.System, userInfo, storedParts, deliveryParts)
 	} else {
 		input := runtimeMemoryContext(rec) + runtimeContext(rec)

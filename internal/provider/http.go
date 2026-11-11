@@ -174,24 +174,57 @@ func callSimpleLLM(parentCtx context.Context, req llmCompletionRequest) (text st
 	return "", resultErr
 }
 
-func isAnthropicProtocol(providerID, npm string) bool {
+// effectiveProviderProtocol resolves "anthropic", "google", or "openai" by
+// inspecting unambiguous BaseURL shapes first (e.g. /v1beta/openai vs
+// generativelanguage.googleapis.com / /v1beta), then npm, then providerID.
+func effectiveProviderProtocol(providerID, npm, baseURL string) string {
+	trimmedURL := strings.TrimSpace(baseURL)
+	if trimmedURL != "" {
+		if u, err := url.Parse(trimmedURL); err == nil {
+			host := strings.ToLower(u.Hostname())
+			p := strings.TrimRight(strings.ToLower(u.Path), "/")
+			if strings.HasSuffix(p, "/openai") || strings.HasSuffix(p, "/openai/v1") || strings.Contains(p, "/openai/") {
+				return "openai"
+			}
+			if host == "generativelanguage.googleapis.com" {
+				return "google"
+			}
+			if strings.HasSuffix(p, "/v1beta") || strings.HasSuffix(p, "/v1alpha") ||
+				strings.HasSuffix(p, "/v1beta/models") || strings.HasSuffix(p, "/v1alpha/models") {
+				return "google"
+			}
+		}
+	}
 	lowerNPM := strings.ToLower(strings.TrimSpace(npm))
 	if lowerNPM != "" {
-		return strings.Contains(lowerNPM, "anthropic")
+		if strings.Contains(lowerNPM, "anthropic") {
+			return "anthropic"
+		}
+		if strings.Contains(lowerNPM, "google") || strings.Contains(lowerNPM, "gemini") {
+			return "google"
+		}
+		return "openai"
 	}
-	return strings.EqualFold(strings.TrimSpace(providerID), "anthropic")
+	lowerPID := strings.ToLower(strings.TrimSpace(providerID))
+	if lowerPID == "anthropic" {
+		return "anthropic"
+	}
+	if lowerPID == "google" || lowerPID == "gemini" {
+		return "google"
+	}
+	return "openai"
+}
+
+func isAnthropicProtocol(providerID, npm string) bool {
+	return effectiveProviderProtocol(providerID, npm, "") == "anthropic"
 }
 
 func isGoogleProtocol(providerID, npm string) bool {
-	lowerNPM := strings.ToLower(strings.TrimSpace(npm))
-	if lowerNPM != "" {
-		return strings.Contains(lowerNPM, "google") || strings.Contains(lowerNPM, "gemini")
-	}
-	lowerPID := strings.ToLower(strings.TrimSpace(providerID))
-	return lowerPID == "google" || lowerPID == "gemini"
+	return effectiveProviderProtocol(providerID, npm, "") == "google"
 }
 
 func googleModelsBaseURL(trimmedBase string) string {
+	trimmedBase = strings.TrimRight(strings.TrimSpace(trimmedBase), "/")
 	if strings.HasSuffix(trimmedBase, "/models") {
 		return trimmedBase
 	}
@@ -201,9 +234,99 @@ func googleModelsBaseURL(trimmedBase string) string {
 	return trimmedBase + "/v1beta/models"
 }
 
+func isOfficialGoogleHost(rawURL string) bool {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	return host == "generativelanguage.googleapis.com" || strings.HasSuffix(host, ".googleapis.com")
+}
+
+func isOpenAIResponsesProtocol(npm, baseURL string) bool {
+	if strings.EqualFold(strings.TrimSpace(npm), "@ai-sdk/openai") {
+		return true
+	}
+	trimmed := strings.TrimRight(strings.ToLower(strings.TrimSpace(baseURL)), "/")
+	return strings.HasSuffix(trimmed, "/responses")
+}
+
+// shouldSendBearerOnGoogleRetry avoids attaching Authorization: Bearer AIza...
+// when retrying custom Gemini reverse proxies that transparently forward
+// headers to Google's upstream (which rejects Bearer AIza... as a bad OAuth2 token).
+func shouldSendBearerOnGoogleRetry(apiKey string) bool {
+	k := strings.TrimSpace(apiKey)
+	return k != "" && !strings.HasPrefix(k, "AIza")
+}
+
+func appendGoogleQueryKey(rawURL, apiKey string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil || strings.TrimSpace(apiKey) == "" {
+		return rawURL
+	}
+	q := u.Query()
+	if q.Get("key") == "" {
+		q.Set("key", apiKey)
+		u.RawQuery = q.Encode()
+	}
+	return u.String()
+}
+
+func redactSecretInText(text, secret string) string {
+	secret = strings.TrimSpace(secret)
+	if secret == "" || len(secret) < 4 {
+		return text
+	}
+	out := strings.ReplaceAll(text, secret, "***")
+	if enc := url.QueryEscape(secret); enc != "" && enc != secret {
+		out = strings.ReplaceAll(out, enc, "***")
+	}
+	return out
+}
+
+func buildOpenAIChatCompletionBody(req llmCompletionRequest, maxTokens int) map[string]any {
+	bodyMap := map[string]any{
+		"model":      req.ModelID,
+		"max_tokens": maxTokens,
+		"messages": []map[string]string{
+			{"role": "user", "content": req.Prompt},
+		},
+	}
+	if req.Temperature > 0 {
+		bodyMap["temperature"] = req.Temperature
+	}
+	if eff := strings.TrimSpace(req.ReasoningEffort); eff != "" {
+		bodyMap["reasoning_effort"] = eff
+	}
+	return bodyMap
+}
+
+func buildOpenAIResponsesBody(req llmCompletionRequest, maxTokens int) map[string]any {
+	// OpenAI /v1/responses enforces max_output_tokens >= 16 on GPT-5 / o-series models.
+	respMax := maxTokens
+	if respMax < 32 {
+		respMax = 32
+	}
+	bodyMap := map[string]any{
+		"model":             req.ModelID,
+		"input":             req.Prompt,
+		"max_output_tokens": respMax,
+		"store":             false,
+	}
+	if req.Temperature > 0 {
+		bodyMap["temperature"] = req.Temperature
+	}
+	if eff := strings.TrimSpace(req.ReasoningEffort); eff != "" {
+		bodyMap["reasoning"] = map[string]string{"effort": eff}
+	}
+	return bodyMap
+}
+
 func attemptSimpleLLM(parentCtx context.Context, req llmCompletionRequest, window time.Duration) llmAttemptResult {
-	isAnthropic := isAnthropicProtocol(req.ProviderID, req.NPM)
-	isGoogle := !isAnthropic && isGoogleProtocol(req.ProviderID, req.NPM)
+	proto := effectiveProviderProtocol(req.ProviderID, req.NPM, req.BaseURL)
+	isAnthropic := proto == "anthropic"
+	isGoogle := proto == "google"
+	isResponses := !isAnthropic && !isGoogle && isOpenAIResponsesProtocol(req.NPM, req.BaseURL)
 	trimmedBase := strings.TrimRight(req.BaseURL, "/")
 	var targetURL string
 	var bodyMap map[string]any
@@ -229,8 +352,14 @@ func attemptSimpleLLM(parentCtx context.Context, req llmCompletionRequest, windo
 	} else if isGoogle {
 		cleanModel := strings.TrimPrefix(strings.TrimSpace(req.ModelID), "models/")
 		targetURL = googleModelsBaseURL(trimmedBase) + "/" + url.PathEscape(cleanModel) + ":generateContent"
+		// Gemini 2.5 Pro / Gemini 3 thinking models count internal thought tokens
+		// toward maxOutputTokens and reject tiny values like maxOutputTokens=1 with HTTP 400.
+		googleMaxTokens := maxTokens
+		if googleMaxTokens < 256 {
+			googleMaxTokens = 256
+		}
 		genCfg := map[string]any{
-			"maxOutputTokens": maxTokens,
+			"maxOutputTokens": googleMaxTokens,
 		}
 		if req.Temperature > 0 {
 			genCfg["temperature"] = req.Temperature
@@ -246,21 +375,16 @@ func attemptSimpleLLM(parentCtx context.Context, req llmCompletionRequest, windo
 			},
 			"generationConfig": genCfg,
 		}
+	} else if isResponses {
+		if strings.HasSuffix(strings.ToLower(trimmedBase), "/responses") {
+			targetURL = trimmedBase
+		} else {
+			targetURL = trimmedBase + "/responses"
+		}
+		bodyMap = buildOpenAIResponsesBody(req, maxTokens)
 	} else {
 		targetURL = trimmedBase + "/chat/completions"
-		bodyMap = map[string]any{
-			"model":      req.ModelID,
-			"max_tokens": maxTokens,
-			"messages": []map[string]string{
-				{"role": "user", "content": req.Prompt},
-			},
-		}
-		if req.Temperature > 0 {
-			bodyMap["temperature"] = req.Temperature
-		}
-		if eff := strings.TrimSpace(req.ReasoningEffort); eff != "" {
-			bodyMap["reasoning_effort"] = eff
-		}
+		bodyMap = buildOpenAIChatCompletionBody(req, maxTokens)
 	}
 
 	timeout := window
@@ -268,60 +392,100 @@ func attemptSimpleLLM(parentCtx context.Context, req llmCompletionRequest, windo
 		timeout = 15 * time.Second
 	}
 
-	payloadBytes, _ := json.Marshal(bodyMap)
-	ctx, cancel := context.WithTimeout(parentCtx, timeout)
-	defer cancel()
+	doOnce := func(reqURL string, reqBody map[string]any, includeBearerWithQueryKey bool) (*http.Response, []byte, error) {
+		payloadBytes, _ := json.Marshal(reqBody)
+		ctx, cancel := context.WithTimeout(parentCtx, timeout)
+		defer cancel()
 
-	outReq, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, strings.NewReader(string(payloadBytes)))
+		outReq, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, strings.NewReader(string(payloadBytes)))
+		if err != nil {
+			return nil, nil, err
+		}
+		outReq.Header.Set("Accept", "application/json")
+		outReq.Header.Set("Content-Type", "application/json")
+		hasCustomAuth := false
+		for k, v := range req.Headers {
+			k = strings.TrimSpace(k)
+			v = strings.TrimSpace(v)
+			if k != "" && v != "" {
+				if strings.EqualFold(k, "Authorization") || strings.EqualFold(k, "x-goog-api-key") || strings.EqualFold(k, "x-api-key") {
+					hasCustomAuth = true
+				}
+				outReq.Header.Set(k, v)
+			}
+		}
+		if req.APIKey != "" && !hasCustomAuth {
+			if isAnthropic {
+				outReq.Header.Set("x-api-key", req.APIKey)
+				outReq.Header.Set("anthropic-version", "2023-06-01")
+			} else if isGoogle {
+				outReq.Header.Set("x-goog-api-key", req.APIKey)
+				if includeBearerWithQueryKey {
+					outReq.Header.Set("Authorization", "Bearer "+req.APIKey)
+				}
+			} else {
+				outReq.Header.Set("Authorization", "Bearer "+req.APIKey)
+			}
+		}
+
+		transport := req.Transport
+		if transport == nil {
+			transport = providerTransport
+		}
+		if isLoopbackURL(reqURL) {
+			transport = localTransport
+		}
+		client := &http.Client{
+			Timeout:   timeout,
+			Transport: transport,
+		}
+		resp, err := client.Do(outReq)
+		if err != nil {
+			return nil, nil, err
+		}
+		defer resp.Body.Close()
+		respBytes, readErr := io.ReadAll(io.LimitReader(resp.Body, 512*1024))
+		if readErr != nil {
+			return resp, nil, readErr
+		}
+		return resp, respBytes, nil
+	}
+
+	resp, respBytes, err := doOnce(targetURL, bodyMap, false)
 	if err != nil {
+		if resp != nil {
+			return llmAttemptResult{status: resp.StatusCode, readFailed: true, err: fmt.Errorf("read provider response: %w", err)}
+		}
 		return llmAttemptResult{err: err}
 	}
-	outReq.Header.Set("Accept", "application/json")
-	outReq.Header.Set("Content-Type", "application/json")
-	for k, v := range req.Headers {
-		k = strings.TrimSpace(k)
-		v = strings.TrimSpace(v)
-		if k != "" && v != "" {
-			outReq.Header.Set(k, v)
+	// Third-party Gemini relays (OneAPI/NewAPI/custom gateways) sometimes require
+	// ?key= or Authorization: Bearer instead of x-goog-api-key.
+	if isGoogle && req.APIKey != "" && !isOfficialGoogleHost(targetURL) &&
+		(resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) {
+		if retryResp, retryBytes, retryErr := doOnce(appendGoogleQueryKey(targetURL, req.APIKey), bodyMap, shouldSendBearerOnGoogleRetry(req.APIKey)); retryErr == nil && retryResp != nil {
+			resp, respBytes = retryResp, retryBytes
 		}
 	}
-	if req.APIKey != "" {
-		if isAnthropic {
-			outReq.Header.Set("x-api-key", req.APIKey)
-			outReq.Header.Set("anthropic-version", "2023-06-01")
-		} else if isGoogle {
-			outReq.Header.Set("x-goog-api-key", req.APIKey)
-		} else {
-			outReq.Header.Set("Authorization", "Bearer "+req.APIKey)
+	// Dual-direction fallback between /v1/responses and /v1/chat/completions for
+	// OpenAI gateways where only one of the two routes is exposed for the model.
+	if !isAnthropic && !isGoogle && resp.StatusCode >= 400 && resp.StatusCode < 500 {
+		lowerBody := strings.ToLower(string(respBytes))
+		if isResponses && (resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed) &&
+			!strings.HasSuffix(strings.ToLower(trimmedBase), "/responses") {
+			if retryResp, retryBytes, retryErr := doOnce(trimmedBase+"/chat/completions", buildOpenAIChatCompletionBody(req, maxTokens), false); retryErr == nil && retryResp != nil && retryResp.StatusCode < 400 {
+				resp, respBytes = retryResp, retryBytes
+			}
+		} else if !isResponses && (resp.StatusCode == http.StatusNotFound || strings.Contains(lowerBody, "/responses")) {
+			if retryResp, retryBytes, retryErr := doOnce(trimmedBase+"/responses", buildOpenAIResponsesBody(req, maxTokens), false); retryErr == nil && retryResp != nil && retryResp.StatusCode < 400 {
+				resp, respBytes = retryResp, retryBytes
+			}
 		}
 	}
 
-	transport := req.Transport
-	if transport == nil {
-		transport = providerTransport
-	}
-	if isLoopbackURL(targetURL) {
-		transport = localTransport
-	}
-
-	client := &http.Client{
-		Timeout:   timeout,
-		Transport: transport,
-	}
-
-	resp, err := client.Do(outReq)
-	if err != nil {
-		return llmAttemptResult{err: err}
-	}
-	defer resp.Body.Close()
-
-	respBytes, err := io.ReadAll(io.LimitReader(resp.Body, 512*1024))
-	if err != nil {
-		return llmAttemptResult{status: resp.StatusCode, readFailed: true, err: fmt.Errorf("read provider response: %w", err)}
-	}
 	res := llmAttemptResult{status: resp.StatusCode, retryAfter: parseRetryAfter(resp.Header.Get("Retry-After"), time.Now())}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		res.err = fmt.Errorf("%s", extractAPIErrorMessage(resp.StatusCode, respBytes))
+		errText := redactSecretInText(extractAPIErrorMessage(resp.StatusCode, respBytes), req.APIKey)
+		res.err = fmt.Errorf("%s", errText)
 		res.quotaExhausted = isQuotaExhausted(respBytes)
 		return res
 	}
@@ -331,6 +495,15 @@ func attemptSimpleLLM(parentCtx context.Context, req llmCompletionRequest, windo
 
 func extractLLMTextContent(raw []byte) string {
 	var parsed struct {
+		OutputText string `json:"output_text"`
+		Output     []struct {
+			Type    string `json:"type"`
+			Text    string `json:"text"`
+			Content []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"output"`
 		Choices []struct {
 			Message struct {
 				Content string `json:"content"`
@@ -344,13 +517,32 @@ func extractLLMTextContent(raw []byte) string {
 		Candidates []struct {
 			Content struct {
 				Parts []struct {
-					Text    string `json:"text"`
-					Thought bool   `json:"thought"`
+					Text       string `json:"text"`
+					Thought    bool   `json:"thought"`
+					InlineData *struct {
+						Data string `json:"data"`
+					} `json:"inlineData"`
 				} `json:"parts"`
 			} `json:"content"`
 		} `json:"candidates"`
 	}
 	if json.Unmarshal(raw, &parsed) == nil {
+		if t := strings.TrimSpace(parsed.OutputText); t != "" {
+			return t
+		}
+		if len(parsed.Output) > 0 {
+			for _, item := range parsed.Output {
+				for _, block := range item.Content {
+					if (block.Type == "" || block.Type == "output_text" || block.Type == "text") && strings.TrimSpace(block.Text) != "" {
+						return strings.TrimSpace(block.Text)
+					}
+				}
+				if (item.Type == "message" || item.Type == "output_text" || item.Type == "text") && strings.TrimSpace(item.Text) != "" {
+					return strings.TrimSpace(item.Text)
+				}
+			}
+			return ""
+		}
 		if len(parsed.Choices) > 0 {
 			if c := strings.TrimSpace(parsed.Choices[0].Message.Content); c != "" {
 				return c
@@ -370,7 +562,11 @@ func extractLLMTextContent(raw []byte) string {
 		}
 		if len(parsed.Candidates) > 0 {
 			var fallback string
+			hasInlineImage := false
 			for _, part := range parsed.Candidates[0].Content.Parts {
+				if part.InlineData != nil && strings.TrimSpace(part.InlineData.Data) != "" {
+					hasInlineImage = true
+				}
 				t := strings.TrimSpace(part.Text)
 				if t == "" {
 					continue
@@ -382,7 +578,13 @@ func extractLLMTextContent(raw []byte) string {
 					fallback = t
 				}
 			}
-			return fallback
+			if fallback != "" {
+				return fallback
+			}
+			if hasInlineImage {
+				return "[image]"
+			}
+			return ""
 		}
 	}
 	trimmed := strings.TrimSpace(string(raw))

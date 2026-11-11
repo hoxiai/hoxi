@@ -9,6 +9,7 @@ import { syncOfficialModelPricing } from "./leaderboard-state";
 import {
   AUTO_PROVIDER_ID,
   buildAutoVirtualProvider,
+  inferProviderNpmFromEndpoint,
   syncAutoPoolsFromServer,
 } from "./auto-models";
 import { splitAgyModelEffortSuffix } from "./provider-catalog";
@@ -304,11 +305,8 @@ export async function loadProviders(forceRefresh = false): Promise<void> {
         npm:
           hProv.npm ||
           existingProv?.npm ||
-          (pid === "google" || pid === "gemini"
-            ? "@ai-sdk/google"
-            : pid === "anthropic"
-              ? "@ai-sdk/anthropic"
-              : "@ai-sdk/openai-compatible"),
+          inferProviderNpmFromEndpoint(pid, hProv?.options?.baseURL || existingProv?.options?.baseURL) ||
+          "@ai-sdk/openai-compatible",
         options: {
           ...(existingProv?.options || {}),
           ...(hProv.options || {}),

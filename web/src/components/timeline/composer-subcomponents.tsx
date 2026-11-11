@@ -26,6 +26,7 @@ import ContextProgressPill from "./ContextProgressPill";
 import ApprovalModePill from "./ApprovalModePill";
 import ModeSwitcher from "./ModeSwitcher";
 import ComposerToolsPopover from "./ComposerToolsPopover";
+import { ComposerImageOptionsBar, ComposerVoiceInputButton } from "./ComposerMediaControls";
 import { isWorkSurface, surfaceExtension } from "../layout/surface-extension";
 import {
   classifyAttachmentKind,
@@ -145,9 +146,10 @@ export function ComposerAttachmentChips(props: {
   };
 
   const extBadge = (filename: string, mime: string) => {
-    if ((mime || "").toLowerCase() === "application/pdf" || /\.pdf$/i.test(filename)) {
-      return "PDF";
-    }
+    const lower = (mime || "").toLowerCase();
+    if (lower === "application/pdf" || /\.pdf$/i.test(filename)) return "PDF";
+    if (lower.startsWith("audio/")) return (filename.split(".").pop() || "AUD").toUpperCase().slice(0, 4);
+    if (lower.startsWith("video/")) return (filename.split(".").pop() || "VID").toUpperCase().slice(0, 4);
     const ext = (filename.split(".").pop() || "TXT").toUpperCase();
     return ext.slice(0, 4);
   };
@@ -161,6 +163,12 @@ export function ComposerAttachmentChips(props: {
       (mime || "").includes("csv")
     ) {
       return "text-emerald-500";
+    }
+    if (kind === "audio" || (mime || "").toLowerCase().startsWith("audio/")) {
+      return "text-amber-500";
+    }
+    if (kind === "video" || (mime || "").toLowerCase().startsWith("video/")) {
+      return "text-purple-500";
     }
     if (
       kind === "pdf" ||
@@ -520,6 +528,8 @@ export function ComposerBottomToolbar(props: {
   onSend: () => void;
   onSpawnSubtask: () => void;
   onStop: () => void;
+  onInsertDictation?: (text: string) => void;
+  onMediaNotice?: (message: string) => void;
 }) {
   return (
     <div class="composer-toolbar mt-2 flex flex-col items-stretch justify-between gap-2">
@@ -541,6 +551,7 @@ export function ComposerBottomToolbar(props: {
 
         <ModeSwitcher />
         <ModelSelector openRequest={props.modelPickerRequest} />
+        <ComposerImageOptionsBar sessionID={props.sessionID} />
 
         <Show when={!(isWorkSurface() && surfaceExtension.hideCodeComposerControls)}>
           <Show
@@ -575,6 +586,11 @@ export function ComposerBottomToolbar(props: {
       <div class="flex items-center gap-1.5 self-end">
         <ContextProgressPill />
         <ApprovalModePill runtime={props.runtime} sandboxMode={props.sandboxMode} />
+        <ComposerVoiceInputButton
+          disabled={props.sending}
+          onInsertText={props.onInsertDictation}
+          onNotice={props.onMediaNotice}
+        />
 
         <ComposerSendButtons
           busy={props.busy}

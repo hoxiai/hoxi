@@ -135,7 +135,10 @@ const NO_CACHE_MIN_TURNS = 20;
 export function candidateNeverReportsCache(providerID: string, modelID: string): boolean {
   const m = workspace.providerTelemetry?.[providerID]?.models?.[modelID];
   if (!m) return false;
-  // A record without the counter predates cache tracking: unknown, not "never".
+  if (typeof m.cacheEligibleTurns === "number") {
+    return m.cacheEligibleTurns >= NO_CACHE_MIN_TURNS && m.cacheHitTurns === 0;
+  }
+  // Legacy records predating cacheEligibleTurns fall back to totalTurns.
   return m.totalTurns >= NO_CACHE_MIN_TURNS && m.cacheHitTurns === 0;
 }
 

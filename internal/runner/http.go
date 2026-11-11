@@ -13,6 +13,7 @@ import (
 	"github.com/hoxiai/hoxi/internal/agentcli"
 	"github.com/hoxiai/hoxi/internal/attachment"
 	"github.com/hoxiai/hoxi/internal/diagnostics"
+	"github.com/hoxiai/hoxi/internal/llm"
 	"github.com/hoxiai/hoxi/internal/opencode/ocapi"
 	"github.com/hoxiai/hoxi/internal/statusbar"
 	"github.com/hoxiai/hoxi/internal/worktree"
@@ -64,6 +65,7 @@ type Service struct {
 	childBusy       map[string]bool
 	subs            map[chan SSEEvent]string
 	seqSeed         int64
+	imageClient     llm.ImageClient
 	skillResolver   func(ctx context.Context, directory, sessionID string, sel SkillSelection) (ResolvedSkill, error)
 	projectResolver ProjectResolver
 	permissionRules func() map[string]interface{}
@@ -149,6 +151,13 @@ func NewService(rootDir string, worktrees *worktree.Manager, status *statusbar.T
 
 func (s *Service) Store() *Store {
 	return s.store
+}
+
+func (s *Service) Attachments() *attachment.Store {
+	if s == nil {
+		return nil
+	}
+	return s.attachments
 }
 
 func (s *Service) CloseAll() {

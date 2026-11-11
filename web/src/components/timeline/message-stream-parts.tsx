@@ -19,8 +19,8 @@ import ContextActivityGroupComponent, {
   type TurnRenderItem,
 } from "./ContextActivityGroupView";
 import type { MessageInfo, MessagePart } from "../../services/sse-types";
-import { workspace } from "../../store/workspace";
-import { Icon } from "../icons";
+import { openAttachmentInInspector, openImagePreview, workspace } from "../../store/workspace";
+import { FileIcon, Icon } from "../icons";
 import { t } from "../../i18n";
 import { AssistantErrorCard, SessionRetryCard } from "./assistant-error-card";
 import {
@@ -181,6 +181,9 @@ export function PartView(props: {
             <Match when={part.type === "tool"}>
               <ToolCard part={part as Extract<MessagePart, { type: "tool" }>} />
             </Match>
+            <Match when={part.type === "file"}>
+              <AssistantFilePartView part={part as Extract<MessagePart, { type: "file" }>} />
+            </Match>
             <Match when={part.type === "text"}>
               <div class={props.inActivityGroup ? "py-1 text-[13px] text-[var(--text-secondary)]" : undefined}>
                 <MarkdownView
@@ -198,6 +201,72 @@ export function PartView(props: {
         )}
       </For>
     </div>
+  );
+}
+
+function AssistantFilePartView(props: { part: Extract<MessagePart, { type: "file" }> }) {
+  const isImg = createMemo(() => {
+    const fp = props.part;
+    return (
+      (fp.mime || "").toLowerCase().startsWith("image/") ||
+      /^data:image\//i.test(fp.url || "") ||
+      /\.(png|jpe?g|webp|gif|bmp|tiff?|svg|heic|heif|avif)$/i.test(fp.filename || "")
+    );
+  });
+
+  return (
+    <Show
+      when={isImg()}
+      fallback={
+        <a
+          href={props.part.url}
+          target="_blank"
+          rel="noreferrer"
+          download={props.part.filename || "attachment"}
+          onClick={(e) => {
+            if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+            if (openAttachmentInInspector(props.part.url, props.part.filename)) {
+              e.preventDefault();
+            }
+          }}
+          class="my-1 inline-flex max-w-[320px] items-center gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3 py-2 text-[12px] text-[var(--text-primary)] hover:border-[var(--accent-border)] transition-colors"
+        >
+          <FileIcon node={{ path: props.part.filename || "file.bin", type: "file" }} class="h-4 w-4 shrink-0" />
+          <span class="truncate font-mono">{props.part.filename || "attachment"}</span>
+        </a>
+      }
+    >
+      <div class="group/genimg relative my-1.5 inline-block max-w-full sm:max-w-[520px]">
+        <button
+          type="button"
+          onClick={() =>
+            openImagePreview({
+              src: props.part.url,
+              alt: props.part.filename || "generated-image",
+            })
+          }
+          title={t("timeline.previewImageTooltip")}
+          class="block max-w-full overflow-hidden rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] cursor-zoom-in transition-colors hover:border-[var(--accent-border)]"
+        >
+          <img
+            src={props.part.url}
+            alt={props.part.filename || "generated-image"}
+            loading="lazy"
+            decoding="async"
+            class="block max-h-[420px] max-w-full object-contain"
+          />
+        </button>
+        <a
+          href={props.part.url}
+          download={props.part.filename || "generated.png"}
+          onClick={(e) => e.stopPropagation()}
+          title={t("timeline.downloadImage")}
+          class="absolute right-2 bottom-2 inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)]/90 px-2 py-1 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent-border)] opacity-0 group-hover/genimg:opacity-100 transition-opacity backdrop-blur-sm"
+        >
+          <Icon name="download" size="small" />
+        </a>
+      </div>
+    </Show>
   );
 }
 

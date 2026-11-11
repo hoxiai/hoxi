@@ -28,6 +28,10 @@ func isInternalConversationRoute(r *http.Request) bool {
 }
 
 func requestHasSkillSelection(r *http.Request) bool {
+	return requestNeedsRunner(r, nil)
+}
+
+func requestNeedsRunner(r *http.Request, isImageModel func(providerID, modelID string) bool) bool {
 	if r == nil || r.Body == nil || r.Method != http.MethodPost {
 		return false
 	}
@@ -35,7 +39,7 @@ func requestHasSkillSelection(r *http.Request) bool {
 	// image attachments travel inline, so prompts are often several MB.
 	body := r.Body
 	var consumed bytes.Buffer
-	found := scanSkillSelection(json.NewDecoder(io.TeeReader(io.LimitReader(body, maxSkillSelectionScanBytes), &consumed)))
+	found := scanRunnerPromptHints(json.NewDecoder(io.TeeReader(io.LimitReader(body, maxSkillSelectionScanBytes), &consumed)), isImageModel)
 	r.Body = struct {
 		io.Reader
 		io.Closer
@@ -44,6 +48,10 @@ func requestHasSkillSelection(r *http.Request) bool {
 }
 
 func scanSkillSelection(dec *json.Decoder) bool {
+	return scanRunnerPromptHints(dec, nil)
+}
+
+func scanRunnerPromptHints(dec *json.Decoder, isImageModel func(providerID, modelID string) bool) bool {
 	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
 		return false
 	}
@@ -70,9 +78,17 @@ func scanSkillSelection(dec *json.Decoder) bool {
 		case "model":
 			var m struct {
 				ProviderID string `json:"providerID"`
+				ModelID    string `json:"modelID"`
 			}
-			if json.Unmarshal(value, &m) == nil && runner.IsValidRuntime(strings.TrimSpace(m.ProviderID)) {
-				return true
+			if json.Unmarshal(value, &m) == nil {
+				pid := strings.TrimSpace(m.ProviderID)
+				mid := strings.TrimSpace(m.ModelID)
+				if runner.IsValidRuntime(pid) {
+					return true
+				}
+				if isImageModel != nil && isImageModel(pid, mid) {
+					return true
+				}
 			}
 		}
 	}
@@ -102,10 +118,10 @@ func (g *Gateway) routeConversation(w http.ResponseWriter, r *http.Request) bool
 	if action != "" {
 		suffix = "/" + action
 	}
-	// Runtime switches, tool-stop actions, and skill-selected prompts always go to the runner.
+	// Runtime switches, tool-stop actions, skill-selected prompts, and image-model prompts always go to the runner.
 	if action != "runtime" && action != "stop-tool" && !g.runner.OwnsSession(id) {
-		hasSkill := (action == "prompt" || action == "prompt_async") && requestHasSkillSelection(r)
-		if !hasSkill {
+		needsRunner := (action == "prompt" || action == "prompt_async") && requestNeedsRunner(r, g.runner.IsImageModel)
+		if !needsRunner {
 			if r.Method == http.MethodDelete && action == "" {
 				g.runner.DeleteSessionAttachments(id)
 			}

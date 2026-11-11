@@ -18,6 +18,7 @@ import CustomProviderModelSection from "./CustomProviderModelSection";
 import ProviderQualityCard from "./ProviderQualityCard";
 import {
   extractCustomProviderFormState,
+  inferProviderNpmFromEndpoint,
   listExistingCustomProviders,
   PROVIDER_VARIANTS,
   type ModelProbeResult,
@@ -27,6 +28,7 @@ export default function CustomEndpointTab() {
   const [providerID, setProviderID] = createSignal("");
   const [displayName, setDisplayName] = createSignal("");
   const [npmPkg, setNpmPkg] = createSignal<string>("@ai-sdk/openai-compatible");
+  const [manualNpmOverride, setManualNpmOverride] = createSignal(false);
   const [baseURL, setBaseURL] = createSignal("");
   const [apiKey, setApiKey] = createSignal("");
   const [showApiKey, setShowApiKey] = createSignal(false);
@@ -49,10 +51,17 @@ export default function CustomEndpointTab() {
     Boolean(workspace.editingProviderID && isImportedOpenCodeProvider(workspace.editingProviderID))
   );
 
+  const maybeAutoInferNpm = (nextPid: string, nextUrl: string) => {
+    if (isEditing() || manualNpmOverride()) return;
+    const inferred = inferProviderNpmFromEndpoint(nextPid, nextUrl);
+    if (inferred) setNpmPkg(inferred);
+  };
+
   const loadProviderIntoForm = (editID: string | null) => {
     setFeedback(null);
     setFetchedModels([]);
     setModelProbes({});
+    setManualNpmOverride(Boolean(editID));
 
     const next = extractCustomProviderFormState(editID);
     setProviderID(next.providerID);
@@ -328,7 +337,11 @@ export default function CustomEndpointTab() {
               spellcheck={false}
               placeholder={t("models.providerIdPlaceholder")}
               value={providerID()}
-              onInput={(e) => setProviderID(e.currentTarget.value)}
+              onInput={(e) => {
+                const val = e.currentTarget.value;
+                setProviderID(val);
+                maybeAutoInferNpm(val, baseURL());
+              }}
               class="w-full rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-3 py-2 font-mono text-[13px] text-[var(--text-primary)] disabled:opacity-60 outline-none focus:border-[var(--accent-primary)] selectable-text"
             />
           </div>
@@ -352,7 +365,10 @@ export default function CustomEndpointTab() {
             <select
               disabled={isReadOnlyImported()}
               value={npmPkg()}
-              onChange={(e) => setNpmPkg(e.currentTarget.value)}
+              onChange={(e) => {
+                setManualNpmOverride(true);
+                setNpmPkg(e.currentTarget.value);
+              }}
               class="w-full rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-2.5 py-2 text-[12px] text-[var(--text-primary)] disabled:opacity-60 outline-none focus:border-[var(--accent-primary)]"
             >
               <For each={PROVIDER_VARIANTS}>
@@ -382,7 +398,11 @@ export default function CustomEndpointTab() {
                   : "https://api.hoxi.ai/v1"
               }
               value={baseURL()}
-              onInput={(e) => setBaseURL(e.currentTarget.value)}
+              onInput={(e) => {
+                const val = e.currentTarget.value;
+                setBaseURL(val);
+                maybeAutoInferNpm(providerID(), val);
+              }}
               class="w-full rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-3 py-2 font-mono text-[12px] text-[var(--text-primary)] disabled:opacity-60 outline-none focus:border-[var(--accent-primary)] selectable-text"
             />
           </div>

@@ -139,6 +139,9 @@ func DetectFileMimeType(targetPath string, data []byte) string {
 	case ".rtf":
 		return "application/rtf"
 	}
+	if mediaMime := detectMediaExtMime(ext); mediaMime != "" {
+		return mediaMime
+	}
 	if len(data) > 0 {
 		return http.DetectContentType(data)
 	}
@@ -183,6 +186,11 @@ func ClassifyFile(filename, mimeType string) (Kind, string, error) {
 		return KindImage, lowerMime, nil
 	case "application/pdf":
 		return KindPDF, "application/pdf", nil
+	}
+	if mKind, mMime, ok := classifyMediaAttachment(lowerMime, ext); ok {
+		return mKind, mMime, nil
+	}
+	switch lowerMime {
 	case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
 		return KindSpreadsheet, lowerMime, nil
 	case "application/vnd.ms-excel", "application/excel", "application/x-excel", "application/x-msexcel":
@@ -269,7 +277,7 @@ func ClassifyFile(filename, mimeType string) (Kind, string, error) {
 		return KindText, lowerMime, nil
 	}
 
-	return "", "", fmt.Errorf("unsupported attachment type %q (%s); supported types: images, PDF, spreadsheets (Excel/CSV/TSV), documents (Word/RTF), and text/code files", filename, mimeType)
+	return "", "", fmt.Errorf("unsupported attachment type %q (%s); supported types: images, PDF, audio, video, spreadsheets (Excel/CSV/TSV), documents (Word/RTF), and text/code files", filename, mimeType)
 }
 
 func SanitizeFilename(name, mimeType string) string {
@@ -317,7 +325,9 @@ func SanitizeFilename(name, mimeType string) string {
 		case "text/markdown":
 			cleaned += ".md"
 		default:
-			if strings.HasPrefix(mimeType, "text/") {
+			if mediaExt := mediaDefaultExtForMime(mimeType); mediaExt != "" {
+				cleaned += mediaExt
+			} else if strings.HasPrefix(mimeType, "text/") {
 				cleaned += ".txt"
 			} else {
 				cleaned += ".png"

@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -193,8 +192,9 @@ func (g *Service) handleFetchProviderModels(w http.ResponseWriter, r *http.Reque
 	if npm == "" && pid != "" {
 		_, _, npm, _ = g.resolveProviderConnection(pid, baseURL, "")
 	}
-	isAnthropic := isAnthropicProtocol(pid, npm)
-	isGoogle := !isAnthropic && isGoogleProtocol(pid, npm)
+	proto := effectiveProviderProtocol(pid, npm, baseURL)
+	isAnthropic := proto == "anthropic"
+	isGoogle := proto == "google"
 
 	apiKey := strings.TrimSpace(req.APIKey)
 	if apiKey == "********" {
@@ -221,63 +221,72 @@ func (g *Service) handleFetchProviderModels(w http.ResponseWriter, r *http.Reque
 	} else {
 		modelsURL = trimmedBase + "/models"
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
-	defer cancel()
 
-	outReq, err := http.NewRequestWithContext(ctx, http.MethodGet, modelsURL, nil)
+	doFetch := func(reqURL string, includeBearerWithQueryKey bool) (*http.Response, []byte, error) {
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		defer cancel()
+
+		outReq, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+		if err != nil {
+			return nil, nil, err
+		}
+		outReq.Header.Set("Accept", "application/json")
+		outReq.Header.Set("Content-Type", "application/json")
+		hasCustomAuth := false
+		for k, v := range req.Headers {
+			k = strings.TrimSpace(k)
+			v = strings.TrimSpace(v)
+			if k != "" && v != "" {
+				if strings.EqualFold(k, "Authorization") || strings.EqualFold(k, "x-goog-api-key") || strings.EqualFold(k, "x-api-key") {
+					hasCustomAuth = true
+				}
+				outReq.Header.Set(k, v)
+			}
+		}
+		if apiKey != "" && !hasCustomAuth {
+			if isAnthropic {
+				outReq.Header.Set("x-api-key", apiKey)
+				outReq.Header.Set("anthropic-version", "2023-06-01")
+			} else if isGoogle {
+				outReq.Header.Set("x-goog-api-key", apiKey)
+				if includeBearerWithQueryKey {
+					outReq.Header.Set("Authorization", "Bearer "+apiKey)
+				}
+			} else {
+				outReq.Header.Set("Authorization", "Bearer "+apiKey)
+			}
+		}
+		client := &http.Client{
+			Timeout:   15 * time.Second,
+			Transport: providerTransport,
+		}
+		if isLoopbackURL(reqURL) {
+			client.Transport = localTransport
+		}
+		resp, err := client.Do(outReq)
+		if err != nil {
+			return nil, nil, err
+		}
+		defer resp.Body.Close()
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4*1024*1024))
+		return resp, bodyBytes, nil
+	}
+
+	resp, bodyBytes, err := doFetch(modelsURL, false)
 	if err != nil {
-		writeJSON(w, http.StatusOK, fetchProviderModelsResponse{Error: err.Error()})
+		writeJSON(w, http.StatusOK, fetchProviderModelsResponse{Error: redactSecretInText(err.Error(), apiKey)})
 		return
 	}
-
-	outReq.Header.Set("Accept", "application/json")
-	outReq.Header.Set("Content-Type", "application/json")
-	for k, v := range req.Headers {
-		k = strings.TrimSpace(k)
-		v = strings.TrimSpace(v)
-		if k != "" && v != "" {
-			outReq.Header.Set(k, v)
-		}
-	}
-	if apiKey != "" {
-		if isAnthropic {
-			outReq.Header.Set("x-api-key", apiKey)
-			outReq.Header.Set("anthropic-version", "2023-06-01")
-		} else if isGoogle {
-			outReq.Header.Set("x-goog-api-key", apiKey)
-		} else {
-			outReq.Header.Set("Authorization", "Bearer "+apiKey)
+	if isGoogle && apiKey != "" && !isOfficialGoogleHost(modelsURL) &&
+		(resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) {
+		if retryResp, retryBytes, retryErr := doFetch(appendGoogleQueryKey(modelsURL, apiKey), shouldSendBearerOnGoogleRetry(apiKey)); retryErr == nil && retryResp != nil {
+			resp, bodyBytes = retryResp, retryBytes
 		}
 	}
 
-	client := &http.Client{
-		Timeout:   15 * time.Second,
-		Transport: providerTransport,
-	}
-
-	// For loopback addresses, bypass proxy to avoid 502 from local proxy tools
-	if isLoopbackURL(modelsURL) {
-		client.Transport = localTransport
-	}
-
-	resp, err := client.Do(outReq)
-	if err != nil {
-		writeJSON(w, http.StatusOK, fetchProviderModelsResponse{Error: err.Error()})
-		return
-	}
-	defer resp.Body.Close()
-
-	bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4*1024*1024))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		snippet := strings.TrimSpace(string(bodyBytes))
-		if len(snippet) > 200 {
-			snippet = snippet[:200]
-		}
+		msg := redactSecretInText(extractAPIErrorMessage(resp.StatusCode, bodyBytes), apiKey)
 		isAuth := resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden
-		msg := "HTTP " + strconv.Itoa(resp.StatusCode)
-		if snippet != "" {
-			msg += ": " + snippet
-		}
 		writeJSON(w, http.StatusOK, fetchProviderModelsResponse{
 			Error: msg,
 			Auth:  isAuth,
@@ -439,9 +448,10 @@ func (g *Service) resolveProviderConnection(providerID, hintBaseURL, hintNPM str
 		npm = liveNPM
 	}
 	if npm == "" {
-		if isGoogleProtocol(providerID, "") {
+		switch effectiveProviderProtocol(providerID, "", baseURL) {
+		case "google":
 			npm = "@ai-sdk/google"
-		} else if isAnthropicProtocol(providerID, "") {
+		case "anthropic":
 			npm = "@ai-sdk/anthropic"
 		}
 	}

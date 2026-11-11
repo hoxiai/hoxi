@@ -64,6 +64,8 @@ const DIRECT_IMAGE_MIMES = new Set([
 ]);
 
 const IMAGE_FILENAME_RE = /\.(png|jpe?g|webp|gif|bmp|tiff?|svg|heic|heif|avif)$/i;
+const AUDIO_FILENAME_RE = /\.(mp3|wav|m4a|aac|ogg|oga|opus|flac)$/i;
+const VIDEO_FILENAME_RE = /\.(mp4|mov|webm|mkv|avi)$/i;
 const SPREADSHEET_FILENAME_RE = /\.(xlsx|xls|ods|csv|tsv)$/i;
 const DOCUMENT_FILENAME_RE = /\.(docx|doc|pptx|ppt|rtf)$/i;
 const TEXT_FILENAME_RE =
@@ -77,6 +79,12 @@ export function classifyAttachmentKind(filename: string, mime: string): Attachme
   }
   if (lowerMime === "application/pdf" || /\.pdf$/i.test(name)) {
     return "pdf";
+  }
+  if (lowerMime.startsWith("audio/") || AUDIO_FILENAME_RE.test(name)) {
+    return "audio";
+  }
+  if (lowerMime.startsWith("video/") || VIDEO_FILENAME_RE.test(name)) {
+    return "video";
   }
   if (
     lowerMime === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
@@ -121,6 +129,24 @@ function normalizeAttachmentMime(mime: string, filename: string, kind: Attachmen
   const lower = (mime || "").toLowerCase().trim().split(";")[0];
   const ext = (filename.split(".").pop() || "").toLowerCase();
   if (kind === "pdf") return "application/pdf";
+  if (kind === "audio") {
+    if (lower.startsWith("audio/")) return lower;
+    if (ext === "mp3") return "audio/mpeg";
+    if (ext === "wav") return "audio/wav";
+    if (ext === "m4a") return "audio/mp4";
+    if (ext === "aac") return "audio/aac";
+    if (ext === "flac") return "audio/flac";
+    if (ext === "ogg" || ext === "oga" || ext === "opus") return "audio/ogg";
+    return "audio/webm";
+  }
+  if (kind === "video") {
+    if (lower.startsWith("video/")) return lower;
+    if (ext === "mov") return "video/quicktime";
+    if (ext === "webm") return "video/webm";
+    if (ext === "mkv") return "video/x-matroska";
+    if (ext === "avi") return "video/x-msvideo";
+    return "video/mp4";
+  }
   if (kind === "spreadsheet") {
     if (ext === "xlsx") {
       return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";

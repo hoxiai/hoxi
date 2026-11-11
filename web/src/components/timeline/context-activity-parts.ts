@@ -226,6 +226,12 @@ export function isVisibleTextPart(
   return part.type === "text" && NON_WHITESPACE_RE.test(extractVisibleAssistantText(part.text));
 }
 
+export function isVisibleFilePart(
+  part: MessagePart
+): part is Extract<MessagePart, { type: "file" }> {
+  return part.type === "file" && Boolean(part.url?.trim());
+}
+
 export function isContextToolPart(
   part: MessagePart
 ): part is Extract<MessagePart, { type: "tool" }> {
@@ -255,6 +261,10 @@ export function isWorkPart(part: MessagePart): boolean {
     );
   }
   return part.type === "tool";
+}
+
+export function isRenderableAssistantPart(part: MessagePart): boolean {
+  return isWorkPart(part) || isVisibleTextPart(part) || isVisibleFilePart(part);
 }
 
 export const isExplorationPart = isWorkPart;

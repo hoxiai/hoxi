@@ -1,13 +1,18 @@
-// web/src/components/models/custom-endpoint-helpers.ts
 import {
+  inferDedicatedMediaModality,
+  inferProviderNpmFromEndpoint,
   isCustomOrConfiguredProvider,
   isHoxiCustomProvider,
   isImportedOpenCodeProvider,
   isNonChatUtilityModelID,
+  isNonThinkingGeminiModelID,
   MASKED_SECRET,
+  supportsMultimodalImageEditModelID,
   workspace,
   type CustomProviderModelDraft,
 } from "../../store/workspace";
+
+export { inferProviderNpmFromEndpoint };
 
 export interface ModelProbeResult {
   status: "testing" | "ok" | "error";
@@ -17,11 +22,20 @@ export interface ModelProbeResult {
 
 /** Default capability guess for a model fetched from a provider's model list. */
 export function guessFetchedModelDraft(rm: { id: string; name: string }): CustomProviderModelDraft {
-  const isNonChat = isNonChatUtilityModelID(rm.id);
+  const cleanID = rm.id.trim().replace(/^models\/(?=gemini|imagen|gemma|veo|embedding|text-embedding)/i, "");
+  if (inferDedicatedMediaModality(cleanID) === "image") {
+    return {
+      id: cleanID,
+      name: rm.name || cleanID,
+      reasoning: false,
+      image: supportsMultimodalImageEditModelID(cleanID),
+    };
+  }
+  const isNonChat = isNonChatUtilityModelID(cleanID);
   return {
-    id: rm.id,
-    name: rm.name || rm.id,
-    reasoning: !isNonChat,
+    id: cleanID,
+    name: rm.name || cleanID,
+    reasoning: !isNonChat && !isNonThinkingGeminiModelID(cleanID),
     image: !isNonChat,
   };
 }
@@ -35,8 +49,10 @@ export const PROVIDER_VARIANTS = [
 
 export function defaultProviderNpm(providerID?: string | null): string {
   const pid = (providerID || "").trim().toLowerCase();
-  if (pid === "google" || pid === "gemini") return "@ai-sdk/google";
-  if (pid === "anthropic") return "@ai-sdk/anthropic";
+  if (pid === "google" || pid === "gemini" || pid.startsWith("gemini-") || pid.startsWith("google-")) {
+    return "@ai-sdk/google";
+  }
+  if (pid === "anthropic" || pid.startsWith("anthropic-")) return "@ai-sdk/anthropic";
   return "@ai-sdk/openai-compatible";
 }
 

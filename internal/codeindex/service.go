@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
+	"github.com/hoxiai/hoxi/internal/llm"
 )
 
 type indexFlight struct {
@@ -33,6 +34,8 @@ type Service struct {
 	clock    uint64
 	cache    map[string]*cachedIndex
 	inflight map[string]*indexFlight
+	embedder llm.EmbeddingClient
+	semCache *semanticCache
 }
 
 type StatusInfo struct {
@@ -49,11 +52,30 @@ func NewService(root string) *Service {
 		root = DefaultRoot()
 	}
 	return &Service{
-		root:  root,
-		cfg:   DefaultConfig(),
-		now:   func() int64 { return time.Now().UnixMilli() },
-		cache: make(map[string]*cachedIndex),
+		root:     root,
+		cfg:      DefaultConfig(),
+		now:      func() int64 { return time.Now().UnixMilli() },
+		cache:    make(map[string]*cachedIndex),
+		semCache: newSemanticCache(),
 	}
+}
+
+func (s *Service) SetEmbedder(embedder llm.EmbeddingClient) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.embedder = embedder
+	s.mu.Unlock()
+}
+
+func (s *Service) getEmbedder() llm.EmbeddingClient {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.embedder
 }
 
 func DefaultRoot() string {

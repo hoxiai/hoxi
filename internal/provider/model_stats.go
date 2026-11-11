@@ -42,6 +42,7 @@ type modelTelemetryStats struct {
 	HallucinationFlags int       `json:"hallucinationFlags"`
 	RevertCount        int       `json:"revertCount"`
 	CacheHitTurns      int       `json:"cacheHitTurns"`
+	CacheEligibleTurns int       `json:"cacheEligibleTurns,omitempty"`
 	ReasoningTurns     int       `json:"reasoningTurns"`
 	TtftSamplesMs      []int64   `json:"ttftSamplesMs,omitempty"`
 	TpsSamples         []float64 `json:"tpsSamples,omitempty"`
@@ -62,6 +63,7 @@ type providerTelemetryStats struct {
 	HallucinationFlags int                             `json:"hallucinationFlags"`
 	RevertCount        int                             `json:"revertCount"`
 	CacheHitTurns      int                             `json:"cacheHitTurns"`
+	CacheEligibleTurns int                             `json:"cacheEligibleTurns,omitempty"`
 	ReasoningTurns     int                             `json:"reasoningTurns"`
 	TtftSamplesMs      []int64                         `json:"ttftSamplesMs,omitempty"`
 	TpsSamples         []float64                       `json:"tpsSamples,omitempty"`
