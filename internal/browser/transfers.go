@@ -46,6 +46,8 @@ func (s *Service) serveTransfer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+	stopSvc := context.AfterFunc(s.ctx, cancel)
+	defer stopSvc()
 	defer cancel()
 	sc, err := s.acquire(ctx, key, false)
 	if err != nil || sc == nil {

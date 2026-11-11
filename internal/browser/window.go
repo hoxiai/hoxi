@@ -2,7 +2,9 @@ package browser
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -15,6 +17,16 @@ import (
 
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
 	"github.com/hoxiai/hoxi/internal/subproc"
+)
+
+const browserGracefulCloseTimeout = 3 * time.Second
+
+type singletonState int
+
+const (
+	singletonUnlocked singletonState = iota
+	singletonStale
+	singletonActive
 )
 
 // SetProfileRoot configures the base directory for persistent desktop Chrome
@@ -187,13 +199,19 @@ func (s *Service) acquirePersistentProfile(sc *scope) (string, error) {
 		}
 	}
 	profile := root
+	if !busyPrimary && isProfileLocked(root) {
+		// Another live process (such as a sibling Hoxi build variant or an external
+		// Chrome instance) holds the primary profile lock; isolate into -sessions
+		// instead of deleting its SingletonLock and corrupting the shared profile.
+		busyPrimary = true
+	}
 	if busyPrimary {
 		session := sc.sessionID
 		if session == "" {
 			session = "default"
 		}
 		profile = filepath.Join(root+"-sessions", session)
-		for suffix := 2; usedFallback[profile]; suffix++ {
+		for suffix := 2; usedFallback[profile] || isProfileLocked(profile); suffix++ {
 			profile = filepath.Join(root+"-sessions", fmt.Sprintf("%s-%d", session, suffix))
 		}
 	}
@@ -223,12 +241,99 @@ func sanitizeProfileSubKey(raw string) string {
 	return raw
 }
 
-// cleanStaleSingletonLocks removes leftover Chromium Singleton* lock files
-// before starting a fresh Chrome process on profile.
-func cleanStaleSingletonLocks(profile string) {
-	for _, name := range []string{"SingletonLock", "SingletonCookie", "SingletonSocket"} {
-		_ = os.Remove(filepath.Join(profile, name))
+func sameLocalHostname(lockHost, currentHost string) bool {
+	lockHost = strings.TrimSpace(lockHost)
+	currentHost = strings.TrimSpace(currentHost)
+	if lockHost == "" || currentHost == "" {
+		return false
 	}
+	if strings.EqualFold(lockHost, currentHost) {
+		return true
+	}
+	short := func(h string) (string, bool) {
+		base, rest, ok := strings.Cut(h, ".")
+		if !ok {
+			return h, true
+		}
+		if strings.EqualFold(rest, "local") || strings.EqualFold(rest, "lan") || strings.EqualFold(rest, "home.arpa") {
+			return base, true
+		}
+		return "", false
+	}
+	lb, lok := short(lockHost)
+	cb, cok := short(currentHost)
+	return lok && cok && lb != "" && strings.EqualFold(lb, cb)
+}
+
+func singletonLockCheck(profile, currentHost string, pidAlive func(int) bool) singletonState {
+	if isOSProfileLockHeld(profile) {
+		return singletonActive
+	}
+	lockPath := filepath.Join(profile, "SingletonLock")
+	info, err := os.Lstat(lockPath)
+	if errors.Is(err, fs.ErrNotExist) {
+		return singletonUnlocked
+	}
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		return singletonActive
+	}
+	target, err := os.Readlink(lockPath)
+	if err != nil {
+		return singletonActive
+	}
+	idx := strings.LastIndexByte(target, '-')
+	if idx <= 0 || idx >= len(target)-1 {
+		return singletonActive
+	}
+	pid, err := strconv.Atoi(target[idx+1:])
+	if err != nil || pid <= 0 {
+		return singletonActive
+	}
+	if !sameLocalHostname(target[:idx], currentHost) {
+		return singletonActive
+	}
+	if pidAlive == nil || pidAlive(pid) {
+		return singletonActive
+	}
+	return singletonStale
+}
+
+func singletonLockState(profile string) singletonState {
+	host, _ := os.Hostname()
+	return singletonLockCheck(profile, host, isLocalPIDAlive)
+}
+
+func isProfileLocked(profile string) bool {
+	return singletonLockState(profile) == singletonActive
+}
+
+// cleanStaleSingletonLocks removes leftover Chromium Singleton* lock files
+// only when the lock holder on this machine has exited; an active lock is
+// never deleted.
+func cleanStaleSingletonLocks(profile string) {
+	switch singletonLockState(profile) {
+	case singletonActive:
+		return
+	case singletonStale:
+		_ = os.Remove(filepath.Join(profile, "SingletonLock"))
+		fallthrough
+	case singletonUnlocked:
+		_ = os.Remove(filepath.Join(profile, "SingletonCookie"))
+		_ = os.Remove(filepath.Join(profile, "SingletonSocket"))
+	}
+}
+
+func (sc *scope) closeBrowserGracefully() {
+	if sc.browser == nil || sc.browser.Err() != nil {
+		return
+	}
+	c := chromedp.FromContext(sc.browser)
+	if c == nil || c.Browser == nil {
+		return
+	}
+	graceCtx, cancel := context.WithTimeout(sc.browser, browserGracefulCloseTimeout)
+	defer cancel()
+	_ = chromedp.Cancel(graceCtx)
 }
 
 // resetBrowser tears down a scope's Chrome process while keeping the scope's
@@ -246,6 +351,7 @@ func (sc *scope) resetBrowser() {
 		n.stop()
 	}
 	clear(sc.navigations)
+	sc.closeBrowserGracefully()
 	for _, cancel := range sc.tabCancels {
 		cancel()
 	}
@@ -254,8 +360,11 @@ func (sc *scope) resetBrowser() {
 		sc.browserCancel = nil
 	}
 	clear(sc.tabs)
+	sc.tabMu.Lock()
 	clear(sc.sessionTabs)
 	clear(sc.tabOwners)
+	sc.workflowTabID = ""
+	sc.tabMu.Unlock()
 	clear(sc.tabCancels)
 	clear(sc.viewports)
 	clear(sc.diagnostics)

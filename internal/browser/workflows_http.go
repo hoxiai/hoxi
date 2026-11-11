@@ -36,14 +36,10 @@ func (s *Service) serveWorkflows(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	sc := s.scopes[key]
-	if sc != nil && tab == "" {
-		if callerSession != "" && sc.sessionTabs != nil && sc.sessionTabs[callerSession] != "" {
-			tab = sc.sessionTabs[callerSession]
-		} else {
-			tab = sc.tabID
-		}
-	}
 	s.mu.Unlock()
+	if sc != nil && tab == "" {
+		tab = sc.workflowTab(callerSession)
+	}
 	if sc == nil || sc.workflows == nil {
 		if r.Method == "GET" {
 			writeJSON(w, 200, WorkflowState{Downloads: []Download{}})

@@ -128,6 +128,8 @@ func (s *Service) serveDiagnostics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	stopSvc := context.AfterFunc(s.ctx, cancel)
+	defer stopSvc()
 	defer cancel()
 	sc, err := s.acquire(ctx, key, false)
 	if err != nil {

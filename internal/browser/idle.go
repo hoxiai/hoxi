@@ -166,7 +166,7 @@ func (s *Service) closeIdleScopes() int {
 			continue
 		}
 		if sc.closed || sc.browser == nil || sc.manual || sc.extension != nil || sc.pairToken != "" ||
-			sc.stream != nil || (isBusy != nil && isBusy(key.session)) || now.Sub(sc.lastUsed) < timeout {
+			sc.stream != nil || sc.hasBusySession(key.session, isBusy) || now.Sub(sc.lastUsed) < timeout {
 			<-sc.gate
 			continue
 		}

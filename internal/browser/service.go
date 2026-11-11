@@ -53,8 +53,10 @@ type scope struct {
 	allocatorCancel   context.CancelFunc
 	browser           context.Context
 	tabs              map[string]context.Context
+	tabMu             sync.Mutex
 	sessionTabs       map[string]string
 	tabOwners         map[string]string
+	workflowTabID     string
 	navigations       map[string]*navigationTracker
 	tabCancels        map[string]context.CancelFunc
 	browserCancel     context.CancelFunc
@@ -395,7 +397,7 @@ func (s *Service) evictIdleScopeLocked() bool {
 			continue
 		}
 		if sc.closed || sc.manual || sc.extension != nil || (sc.pairToken != "" && now.Before(sc.pairExpires)) ||
-			sc.stream != nil || (isBusy != nil && isBusy(key.session)) || now.Sub(sc.lastUsed) < s.idleTimeout {
+			sc.stream != nil || sc.hasBusySession(key.session, isBusy) || now.Sub(sc.lastUsed) < s.idleTimeout {
 			<-sc.gate
 			continue
 		}
@@ -492,7 +494,7 @@ func (sc *scope) start(ctx context.Context) error {
 	}
 	sc.profile, sc.ledgerID = profile, ledgerID
 	opts := sc.allocatorOptions(profile)
-	alloc, cancel := chromedp.NewExecAllocator(sc.ctx, opts...)
+	alloc, cancel := chromedp.NewExecAllocator(context.Background(), opts...)
 	sc.allocatorCancel = cancel
 	browser, browserCancel := chromedp.NewContext(alloc)
 	sc.browserCancel = browserCancel
@@ -510,6 +512,10 @@ func (sc *scope) start(ctx context.Context) error {
 		sc.resetBrowser()
 		<-done
 		return ctx.Err()
+	case <-sc.ctx.Done():
+		sc.resetBrowser()
+		<-done
+		return sc.ctx.Err()
 	}
 	if err != nil {
 		sc.resetBrowser()
@@ -525,14 +531,82 @@ func (sc *scope) start(ctx context.Context) error {
 	sc.browser = browser
 	if !sc.window {
 		if err := sc.setupWorkflows(browser); err != nil {
+			sc.resetBrowser()
 			return err
 		}
 	}
-	sc.tabID = string(chromedp.FromContext(browser).Target.TargetID)
+	sc.setTabID(string(chromedp.FromContext(browser).Target.TargetID))
 	sc.tabs[sc.tabID] = browser
 	sc.trackNavigation(browser, sc.tabID)
 	sc.viewports[sc.tabID] = sc.viewport()
 	return nil
+}
+
+func (sc *scope) setTabID(id string) {
+	sc.tabID = id
+	sc.tabMu.Lock()
+	sc.workflowTabID = id
+	sc.tabMu.Unlock()
+}
+
+func (sc *scope) workflowTab(callerSession string) string {
+	sc.tabMu.Lock()
+	defer sc.tabMu.Unlock()
+	if callerSession != "" && sc.sessionTabs != nil && sc.sessionTabs[callerSession] != "" {
+		return sc.sessionTabs[callerSession]
+	}
+	return sc.workflowTabID
+}
+
+func (sc *scope) forgetCallerSession(sessionID string) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return
+	}
+	sc.tabMu.Lock()
+	delete(sc.sessionTabs, sessionID)
+	for tabID, owner := range sc.tabOwners {
+		if owner == sessionID {
+			delete(sc.tabOwners, tabID)
+		}
+	}
+	sc.tabMu.Unlock()
+}
+
+func (sc *scope) hasBusySession(keySession string, isBusy func(string) bool) bool {
+	if isBusy == nil {
+		return false
+	}
+	if keySession != "" && isBusy(keySession) {
+		return true
+	}
+	if sc.sessionID != "" && sc.sessionID != keySession && isBusy(sc.sessionID) {
+		return true
+	}
+	sc.tabMu.Lock()
+	sessions := make([]string, 0, len(sc.sessionTabs)+len(sc.tabOwners))
+	for sid := range sc.sessionTabs {
+		if sid != "" && sid != keySession && sid != sc.sessionID {
+			sessions = append(sessions, sid)
+		}
+	}
+	for _, owner := range sc.tabOwners {
+		if owner != "" && owner != keySession && owner != sc.sessionID {
+			sessions = append(sessions, owner)
+		}
+	}
+	sc.tabMu.Unlock()
+	seen := make(map[string]struct{}, len(sessions))
+	for _, sid := range sessions {
+		if _, dup := seen[sid]; dup {
+			continue
+		}
+		seen[sid] = struct{}{}
+		if isBusy(sid) {
+			return true
+		}
+	}
+	return false
 }
 
 func resolveBrowserExecPath() string {

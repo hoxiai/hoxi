@@ -149,6 +149,8 @@ func (s *Service) serveStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	setup, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	stopSvc := context.AfterFunc(s.ctx, cancel)
+	defer stopSvc()
 	defer cancel()
 	sc, err := s.acquire(setup, key, false)
 	if err != nil {

@@ -192,10 +192,11 @@ func (sc *scope) state(ctx context.Context) (State, error) {
 	}
 	if !found {
 		sc.stopStream()
-		sc.tabID = ""
+		nextTab := ""
 		if len(state.Tabs) > 0 {
-			sc.tabID = state.Tabs[0].ID
+			nextTab = state.Tabs[0].ID
 		}
+		sc.setTabID(nextTab)
 	}
 	state.TabID = sc.tabID
 	if n := sc.navigations[sc.tabID]; n != nil {
@@ -305,6 +306,8 @@ func (sc *scope) tabOwnedByOtherSession(tabID, callerSession string) bool {
 	if tabID == "" {
 		return false
 	}
+	sc.tabMu.Lock()
+	defer sc.tabMu.Unlock()
 	if owner := sc.tabOwners[tabID]; owner != "" && owner != callerSession {
 		return true
 	}
@@ -321,6 +324,8 @@ func (sc *scope) bindCallerTab(callerSession, tabID string) {
 	if callerSession == "" || tabID == "" {
 		return
 	}
+	sc.tabMu.Lock()
+	defer sc.tabMu.Unlock()
 	if sc.sessionTabs == nil {
 		sc.sessionTabs = make(map[string]string)
 	}
@@ -342,12 +347,13 @@ func (sc *scope) prepareCallerTab(ctx context.Context, callerSession string, a A
 	if callerSession == "" || sc.browser == nil {
 		return a
 	}
-	if sc.sessionTabs == nil {
-		sc.sessionTabs = make(map[string]string)
-	}
 	state, err := sc.state(ctx)
 	if err != nil || len(state.Tabs) == 0 {
 		return a
+	}
+	sc.tabMu.Lock()
+	if sc.sessionTabs == nil {
+		sc.sessionTabs = make(map[string]string)
 	}
 	boundTab := sc.sessionTabs[callerSession]
 	if boundTab != "" {
@@ -372,10 +378,11 @@ func (sc *scope) prepareCallerTab(ctx context.Context, callerSession string, a A
 			}
 		}
 	}
+	sc.tabMu.Unlock()
 	if boundTab != "" {
 		if a.Action != "tab_select" && sc.tabID != boundTab {
 			sc.stopStream()
-			sc.tabID = boundTab
+			sc.setTabID(boundTab)
 			_ = sc.withTab(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
 				return target.ActivateTarget(target.ID(boundTab)).Do(ctx)
 			}))
@@ -389,7 +396,7 @@ func (sc *scope) prepareCallerTab(ctx context.Context, callerSession string, a A
 		(strings.TrimSpace(state.Tabs[0].URL) == "" || strings.TrimSpace(state.Tabs[0].URL) == "about:blank") &&
 		!sc.tabOwnedByOtherSession(state.Tabs[0].ID, callerSession)
 	if onlyBlank {
-		sc.tabID = state.Tabs[0].ID
+		sc.setTabID(state.Tabs[0].ID)
 		sc.bindCallerTab(callerSession, sc.tabID)
 		return a
 	}
@@ -500,7 +507,7 @@ func (sc *scope) perform(ctx context.Context, a Action) (map[string]any, error) 
 		id, err := target.CreateTarget("about:blank").Do(cdp.WithExecutor(ctx, chromedp.FromContext(sc.browser).Browser))
 		if err == nil {
 			sc.stopStream()
-			sc.tabID = string(id)
+			sc.setTabID(string(id))
 			activate := chromedp.ActionFunc(func(ctx context.Context) error {
 				return target.ActivateTarget(id).Do(ctx)
 			})
@@ -536,7 +543,7 @@ func (sc *scope) perform(ctx context.Context, a Action) (map[string]any, error) 
 			if sc.tabID != a.TabID {
 				sc.stopStream()
 			}
-			sc.tabID = a.TabID
+			sc.setTabID(a.TabID)
 			return nil, sc.withTab(ctx, chromedp.ActionFunc(func(ctx context.Context) error { return target.ActivateTarget(target.ID(a.TabID)).Do(ctx) }))
 		}
 		executor := cdp.WithExecutor(ctx, chromedp.FromContext(sc.browser).Browser)
@@ -547,7 +554,7 @@ func (sc *scope) perform(ctx context.Context, a Action) (map[string]any, error) 
 			if err != nil {
 				return nil, err
 			}
-			sc.tabID = string(id)
+			sc.setTabID(string(id))
 		}
 		err = target.CloseTarget(target.ID(a.TabID)).Do(executor)
 		if err == nil {
@@ -597,12 +604,14 @@ func (sc *scope) releaseTab(id string) {
 		delete(sc.tabCancels, id)
 	}
 	delete(sc.tabs, id)
+	sc.tabMu.Lock()
 	delete(sc.tabOwners, id)
 	for k, tabID := range sc.sessionTabs {
 		if tabID == id {
 			delete(sc.sessionTabs, k)
 		}
 	}
+	sc.tabMu.Unlock()
 	delete(sc.viewports, id)
 	delete(sc.diagnostics, id)
 	if sc.workflows != nil {

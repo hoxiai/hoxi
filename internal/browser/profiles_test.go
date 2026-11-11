@@ -1,8 +1,12 @@
 package browser
 
 import (
+	"context"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -138,5 +142,163 @@ func TestProfileHelpersWithoutRoot(t *testing.T) {
 	}
 	if freed, skipped := s.ClearProfileCaches(); freed != 0 || skipped != 0 {
 		t.Fatalf("freed=%d skipped=%d", freed, skipped)
+	}
+}
+
+func TestSingletonLockLivenessAndIsolation(t *testing.T) {
+	dir := t.TempDir()
+	if got := singletonLockCheck(dir, "devbox.local", func(int) bool { return true }); got != singletonUnlocked {
+		t.Fatalf("unlocked dir state = %v, want singletonUnlocked", got)
+	}
+
+	regularLock := filepath.Join(t.TempDir(), "regular")
+	writeProfileFile(t, filepath.Join(regularLock, "SingletonLock"), 4)
+	if got := singletonLockCheck(regularLock, "devbox.local", func(int) bool { return false }); got != singletonActive {
+		t.Fatalf("non-symlink SingletonLock must fail closed as active, got %v", got)
+	}
+
+	if runtime.GOOS == "windows" {
+		return
+	}
+
+	for _, tc := range []struct {
+		name        string
+		target      string
+		currentHost string
+		alive       bool
+		want        singletonState
+	}{
+		{"dead local exact host", "devbox.local-4321", "devbox.local", false, singletonStale},
+		{"dead local hyphenated host", "my-macbook-pro.local-4321", "my-macbook-pro.local", false, singletonStale},
+		{"dead local mDNS suffix shift", "devbox.lan-4321", "devbox.local", false, singletonStale},
+		{"dead local short vs .local", "devbox-4321", "devbox.local", false, singletonStale},
+		{"live local process", "devbox.local-4321", "devbox.local", true, singletonActive},
+		{"foreign hostname", "otherhost.local-4321", "devbox.local", false, singletonActive},
+		{"distinct corporate domains", "node1.prod.example.com-4321", "node1.stage.example.com-4321", false, singletonActive},
+		{"malformed no hyphen", "devbox", "devbox", false, singletonActive},
+		{"malformed non-numeric pid", "devbox-abc", "devbox", false, singletonActive},
+		{"malformed non-positive pid", "devbox-0", "devbox", false, singletonActive},
+	} {
+		prof := filepath.Join(t.TempDir(), "prof")
+		if err := os.MkdirAll(prof, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(tc.target, filepath.Join(prof, "SingletonLock")); err != nil {
+			t.Fatal(err)
+		}
+		got := singletonLockCheck(prof, tc.currentHost, func(int) bool { return tc.alive })
+		if got != tc.want {
+			t.Fatalf("%s: singletonLockCheck(%q, %q, alive=%v) = %v, want %v", tc.name, tc.target, tc.currentHost, tc.alive, got, tc.want)
+		}
+	}
+
+	host, err := os.Hostname()
+	if err != nil || host == "" {
+		t.Skip("hostname unavailable")
+	}
+
+	// Live external lock on primary root must never be deleted and must isolate to -sessions.
+	s, root := newProfileService(t)
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	liveTarget := fmt.Sprintf("%s-%d", host, os.Getpid())
+	if err := os.Symlink(liveTarget, filepath.Join(root, "SingletonLock")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("cookie", filepath.Join(root, "SingletonCookie")); err != nil {
+		t.Fatal(err)
+	}
+	cleanStaleSingletonLocks(root)
+	if !exists(filepath.Join(root, "SingletonLock")) || !exists(filepath.Join(root, "SingletonCookie")) {
+		t.Fatal("cleanStaleSingletonLocks deleted a live process's SingletonLock")
+	}
+
+	sc1 := &scope{service: s, sessionID: "workstore_default", directory: t.TempDir(), window: true}
+	got1, err := s.acquirePersistentProfile(sc1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantFallback1 := filepath.Join(root+"-sessions", "workstore_default")
+	if got1 != wantFallback1 {
+		t.Fatalf("acquirePersistentProfile with live root lock = %q, want %q", got1, wantFallback1)
+	}
+	if !exists(filepath.Join(root, "SingletonLock")) {
+		t.Fatal("acquirePersistentProfile deleted live root SingletonLock")
+	}
+
+	// If the first fallback profile is also locked by another live process, advance to -2.
+	if err := os.Symlink(liveTarget, filepath.Join(wantFallback1, "SingletonLock")); err != nil {
+		t.Fatal(err)
+	}
+	sc2 := &scope{service: s, sessionID: "workstore_default", directory: t.TempDir(), window: true}
+	got2, err := s.acquirePersistentProfile(sc2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantFallback2 := filepath.Join(root+"-sessions", "workstore_default-2")
+	if got2 != wantFallback2 {
+		t.Fatalf("acquirePersistentProfile with live fallback lock = %q, want %q", got2, wantFallback2)
+	}
+	if !exists(filepath.Join(wantFallback1, "SingletonLock")) {
+		t.Fatal("acquirePersistentProfile deleted live fallback SingletonLock")
+	}
+
+	// Stale lock from an exited local process is cleaned up and primary root is reused.
+	sStale, staleRoot := newProfileService(t)
+	if err := os.MkdirAll(staleRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	shortCmd := exec.Command("true")
+	if err := shortCmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+	deadPID := shortCmd.Process.Pid
+	if !isLocalPIDAlive(deadPID) {
+		if err := os.Symlink(fmt.Sprintf("%s-%d", host, deadPID), filepath.Join(staleRoot, "SingletonLock")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink("stale-cookie", filepath.Join(staleRoot, "SingletonCookie")); err != nil {
+			t.Fatal(err)
+		}
+		scStale := &scope{service: sStale, sessionID: "workstore_default", directory: t.TempDir(), window: true}
+		gotStale, err := sStale.acquirePersistentProfile(scStale)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if gotStale != staleRoot {
+			t.Fatalf("expected stale root %q to be reclaimed, got %q", staleRoot, gotStale)
+		}
+		if exists(filepath.Join(staleRoot, "SingletonLock")) || exists(filepath.Join(staleRoot, "SingletonCookie")) {
+			t.Fatal("expected stale SingletonLock and SingletonCookie to be removed")
+		}
+	}
+}
+
+func TestForgetSessionCleansSharedWindowCallerBindings(t *testing.T) {
+	s, _ := newProfileService(t)
+	s.SetDefaultWindowMode(true)
+	key := scopeKey{t.TempDir(), "workstore_default"}
+	sc, err := s.acquire(context.Background(), key, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sc.browser = context.Background()
+	sc.bindCallerTab("ses_deleted", "tab_1")
+	sc.bindCallerTab("ses_kept", "tab_2")
+	<-sc.gate
+
+	s.ForgetSession("ses_deleted")
+	if liveScope(s, key) != sc || sc.closed {
+		t.Fatal("ForgetSession closed shared workstore_default scope")
+	}
+	if sc.workflowTab("ses_deleted") != "" {
+		t.Fatalf("expected ses_deleted tab binding cleared, got %q", sc.workflowTab("ses_deleted"))
+	}
+	if sc.workflowTab("ses_kept") != "tab_2" {
+		t.Fatalf("expected ses_kept tab binding preserved, got %q", sc.workflowTab("ses_kept"))
+	}
+	if sc.tabOwnedByOtherSession("tab_1", "ses_new") {
+		t.Fatal("expected tab_1 ownership released after ses_deleted was forgotten")
 	}
 }

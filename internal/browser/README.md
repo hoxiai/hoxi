@@ -13,7 +13,7 @@ For full user-facing behavior, mode semantics, and plugin build instructions, se
 
 ## HTTP & WebSocket Endpoints
 
-All UI/agent endpoints under `/api/hoxi/browser/` (except `/api/hoxi/browser/extension`) require query parameters `directory` (canonicalized existing directory) and `sessionID` (1–128 alphanumeric/`_`/`.`/`-`). Up to 8 scopes coexist; unused scopes are reaped after 60 minutes of inactivity when their session is idle (`idleClosed: true`).
+All UI/agent endpoints under `/api/hoxi/browser/` (except `/api/hoxi/browser/extension`) require query parameters `directory` (canonicalized existing directory) and `sessionID` (1–128 alphanumeric/`_`/`.`/`-`). Up to 8 scopes coexist; unused scopes are reaped after 30 minutes of inactivity by default (configurable via browser settings) when their owning sessions are idle (`idleClosed: true`).
 
 | Route | Method | Audience | Description |
 | :--- | :--- | :--- | :--- |

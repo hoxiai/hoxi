@@ -110,15 +110,20 @@ func (s *Service) ForgetSession(sessionID string) int64 {
 		s.mu.Unlock()
 		return 0
 	}
-	var victims []*scope
+	var victims, shared []*scope
 	for key, sc := range s.scopes {
 		if key.session == sessionID {
 			victims = append(victims, sc)
 			delete(s.scopes, key)
 			delete(s.idleClosed, key)
+		} else if sc != nil {
+			shared = append(shared, sc)
 		}
 	}
 	s.mu.Unlock()
+	for _, sc := range shared {
+		sc.forgetCallerSession(sessionID)
+	}
 	// Wait for any in-flight operation, then stop Chrome before its profile
 	// directory disappears underneath it.
 	for _, sc := range victims {
@@ -215,6 +220,9 @@ func (s *Service) profileInUse(profile string) bool {
 		}
 	}
 	s.mu.Unlock()
+	if isOSProfileLockHeld(profile) {
+		return true
+	}
 	_, err := os.Lstat(filepath.Join(profile, "SingletonLock"))
 	return err == nil
 }

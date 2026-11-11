@@ -225,6 +225,8 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	stopSvc := context.AfterFunc(s.ctx, cancel)
+	defer stopSvc()
 	defer cancel()
 	// Pointer input only reaches a page the inspector already shows; it never
 	// reserves a scope or starts Chrome (for example right after an idle close).

@@ -433,3 +433,82 @@ func TestChromeIdleCloseStopsProcessAndRemovesProfile(t *testing.T) {
 		t.Fatal("browser did not restart cleanly", restarted)
 	}
 }
+
+func TestUnifiedWindowScopeKeptWhileBoundCodingSessionBusy(t *testing.T) {
+	t.Setenv("HOXI_BROWSER_IDLE_MINUTES", "")
+	clock := newFakeClock()
+	s := newService(clock.Now, time.Hour)
+	defer s.Close()
+	s.SetDefaultWindowMode(true)
+	s.SetProfileResolver(func(_, _ string) string { return "default" })
+
+	codingBusy := true
+	s.SetSessionBusyChecker(func(sid string) bool {
+		return sid == "ses_coding_busy" && codingBusy
+	})
+
+	dir := t.TempDir()
+	sharedKey := canonicalKey(t, dir, "workstore_default")
+	shared := fakeRunning(t, s, sharedKey)
+	withGate(shared, func(sc *scope) {
+		sc.window = true
+		sc.bindCallerTab("ses_coding_busy", "tab_1")
+	})
+
+	// Advance past idleTimeout while ses_coding_busy is still executing a turn.
+	clock.Advance(2 * DefaultIdleTimeout)
+	if n := s.closeIdleScopes(); n != 0 || shared.closed || liveScope(s, sharedKey) != shared {
+		t.Fatalf("closed unified window scope while bound coding session was busy: n=%d closed=%v", n, shared.closed)
+	}
+
+	// Fill remaining slots with fresh active scopes and verify evictIdleScopeLocked
+	// also protects the unified scope while ses_coding_busy is busy.
+	for i := 1; i < maxScopes; i++ {
+		filler := fakeRunning(t, s, scopeKey{"/tmp", "active_" + string(rune('a'+i))})
+		withGate(filler, func(sc *scope) { sc.lastUsed = clock.Now() })
+	}
+	if _, err := s.acquire(context.Background(), scopeKey{"/tmp", "overflow_while_busy"}, true); err == nil {
+		t.Fatal("evictIdleScopeLocked evicted unified scope while bound coding session was busy")
+	}
+
+	// Once ses_coding_busy finishes its turn, the expired unified scope can be closed on idle.
+	codingBusy = false
+	if n := s.closeIdleScopes(); n != 1 || !shared.closed || liveScope(s, sharedKey) != nil {
+		t.Fatalf("expected unified scope to close once bound coding session became idle: n=%d closed=%v", n, shared.closed)
+	}
+}
+
+func TestChromeGracefulShutdownLeavesCleanExit(t *testing.T) {
+	if os.Getenv("HOXI_BROWSER_TEST") != "1" {
+		t.Skip("set HOXI_BROWSER_TEST=1 for Chrome integration")
+	}
+	s := newService(time.Now, time.Hour)
+	s.SetAgentToken("secret")
+	dir := t.TempDir()
+	key := canonicalKey(t, dir, "ses_graceful")
+	decodeState(t, request(t, s, dir, "ses_graceful", "action", `{"action":"navigate","url":"about:blank"}`, true))
+	sc := liveScope(s, key)
+	var pid int
+	var usedProfile string
+	withGate(sc, func(sc *scope) {
+		pid = chromedp.FromContext(sc.browser).Browser.Process().Pid
+		usedProfile = sc.profile
+		// Preserve directory across Close so we can inspect SingletonLock & Preferences.
+		sc.persistentProfile = true
+	})
+	defer os.RemoveAll(usedProfile)
+
+	s.Close()
+	if testProcessAlive(pid) {
+		t.Fatal("Chrome process still alive after Service.Close()")
+	}
+	waitNoProfileProcesses(t, usedProfile)
+	if _, err := os.Lstat(filepath.Join(usedProfile, "SingletonLock")); !os.IsNotExist(err) {
+		t.Fatalf("SingletonLock remained after graceful Close (Chrome was likely SIGKILLed): %v", err)
+	}
+	if raw, err := os.ReadFile(filepath.Join(usedProfile, "Default", "Preferences")); err == nil {
+		if strings.Contains(string(raw), `"exit_type":"Crashed"`) {
+			t.Fatalf("Chrome Preferences recorded unclean crash exit: %s", raw)
+		}
+	}
+}
