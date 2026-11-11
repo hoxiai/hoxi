@@ -11,6 +11,7 @@ import { setWorkspace, workspace } from "./workspace-state";
 import type { MessageTurn } from "./workspace-state";
 import { invalidateSessionDiffReads } from "./session-diffs";
 import { forgetSessionHistory } from "./session-history";
+import { forgetSessionTaskOverview } from "./task-overview";
 
 export const MAX_RESIDENT_TRANSCRIPTS = 12;
 export const MAX_RESIDENT_TRANSCRIPT_BYTES = 32 * 1024 * 1024;
@@ -131,6 +132,7 @@ export function trimSessionTranscripts(
   if (evicted.length) {
     forgetSessionToolOutputs(evicted);
     forgetSubagentLinks(evicted);
+    forgetSessionTaskOverview(evicted);
     setWorkspace(produce((state) => {
       for (const id of evicted) {
         invalidateSessionDiffReads(id);

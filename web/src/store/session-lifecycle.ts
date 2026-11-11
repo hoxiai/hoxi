@@ -38,6 +38,7 @@ import {
   selectSession,
 } from "./workspace-sessions";
 import { forgetSessionTaskControl } from "./session-task-control";
+import { forgetSessionTaskOverview } from "./task-overview";
 
 function persistArchivedSessionIDs(ids: string[]) {
   writeStorageJSON(ARCHIVED_SESSIONS_KEY, ids);
@@ -180,6 +181,7 @@ export function removeSessionsFromStore(sessionIDs: string[]): SessionInfo | und
   }
   forgetSessionTitles(allIDs);
   evictCachedSessionTurns(allIDs);
+  forgetSessionTaskOverview(allIDs);
   const nextCandidate = nextActiveSessionCandidate(allSet);
   if (workspace.archivedSessionIDs.some((id) => allSet.has(id))) {
     const nextArchived = workspace.archivedSessionIDs.filter((id) => !allSet.has(id));

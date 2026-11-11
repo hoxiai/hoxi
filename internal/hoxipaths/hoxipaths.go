@@ -62,6 +62,7 @@ var protectedStateFiles = []string{
 	"approval-policy.json",
 	"relay-keys.json",
 	"git-attribution.json",
+	"browser-settings.json",
 	"work-apps.json",
 	// The reclaim ledger tells the next Hoxi start which processes to signal
 	// and which directories to delete; it must not be writable by agents.
@@ -218,6 +219,12 @@ func TaskLedgerPath() string {
 // cookies and extensions survive across sessions and restarts.
 func BrowserProfileDir() string {
 	return Join("browser-profile")
+}
+
+// BrowserSettingsPath returns ~/.hoxi/browser-settings.json, storing user-configured
+// built-in Chrome lifecycle preferences such as the idle auto-close timeout.
+func BrowserSettingsPath() string {
+	return Join("browser-settings.json")
 }
 
 // CloudflaredConfigPath returns ~/.hoxi/cloudflared.json, the Cloudflare Tunnel

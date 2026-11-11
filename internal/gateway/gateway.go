@@ -206,6 +206,7 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 		})
 	}
 	g.wireWorkResolvers()
+	g.loadBrowserSettings()
 	if profileDir := hoxipaths.BrowserProfileDir(); profileDir != "" {
 		g.browser.SetProfileRoot(profileDir)
 		g.browser.SetDefaultWindowMode(true)
@@ -443,6 +444,7 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 			"rootDir":             g.rootDir,
 			"defaultWorkspaceDir": hoxipaths.EnsureDefaultWorkspaceDir(),
 			"wsBaseURL":           g.wsBaseURL,
+			"browserIdleMinutes":  g.browserIdleMinutes(),
 			"status":              st,
 		}
 		if tok != "" {
@@ -541,6 +543,7 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 	g.mux.HandleFunc("/api/hoxi/system/storage/old-sessions/delete", g.handleOldSessionsDelete)
 	g.mux.HandleFunc("/api/hoxi/engine/install", g.handleEngineInstall)
 	g.mux.HandleFunc("/api/hoxi/keep-awake", g.handleKeepAwake)
+	g.mux.HandleFunc("/api/hoxi/browser/settings", g.handleBrowserSettings)
 	g.mux.HandleFunc("/api/hoxi/sandbox/session", g.handleSandboxSession)
 	g.mux.HandleFunc("/api/hoxi/clipboard/images", g.handleClipboardImages)
 	g.mux.HandleFunc("/api/hoxi/dev-pulse", g.handleDevPulse)

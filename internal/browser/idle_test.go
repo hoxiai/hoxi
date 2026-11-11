@@ -87,9 +87,13 @@ func decodeState(t *testing.T, w *httptest.ResponseRecorder) map[string]any {
 }
 
 func TestIdleBrowserIsClosedAndExplained(t *testing.T) {
+	t.Setenv("HOXI_BROWSER_IDLE_MINUTES", "")
 	clock := newFakeClock()
 	s := newService(clock.Now, time.Hour)
 	defer s.Close()
+	if got := s.IdleMinutes(); got != 30 {
+		t.Fatalf("default IdleMinutes() = %d, want 30", got)
+	}
 	s.SetAgentToken("secret")
 	dir := t.TempDir()
 	key := canonicalKey(t, dir, "ses_idle")
@@ -100,7 +104,7 @@ func TestIdleBrowserIsClosedAndExplained(t *testing.T) {
 	}
 	// The inspector's poll and an agent's request both count as use.
 	for _, agent := range []bool{false, true} {
-		clock.Advance(idleTimeout - time.Minute)
+		clock.Advance(DefaultIdleTimeout - time.Minute)
 		decodeState(t, request(t, s, dir, "ses_idle", "state", "", agent))
 		withGate(sc, func(sc *scope) {
 			if !sc.lastUsed.Equal(clock.Now()) {
@@ -109,9 +113,9 @@ func TestIdleBrowserIsClosedAndExplained(t *testing.T) {
 		})
 	}
 	withGate(sc, func(sc *scope) { sc.browser = context.Background() })
-	clock.Advance(idleTimeout - time.Second)
+	clock.Advance(DefaultIdleTimeout - time.Second)
 	if n := s.closeIdleScopes(); n != 0 || liveScope(s, key) != sc {
-		t.Fatalf("closed a browser used %v ago", idleTimeout-time.Second)
+		t.Fatalf("closed a browser used %v ago", DefaultIdleTimeout-time.Second)
 	}
 	clock.Advance(time.Second)
 	if n := s.closeIdleScopes(); n != 1 || liveScope(s, key) != nil || !sc.closed {
@@ -119,7 +123,7 @@ func TestIdleBrowserIsClosedAndExplained(t *testing.T) {
 	}
 	for _, agent := range []bool{false, true} {
 		state := decodeState(t, request(t, s, dir, "ses_idle", "state", "", agent))
-		if state["idleClosed"] != true || state["idleMinutes"] != float64(60) || len(state["tabs"].([]any)) != 0 {
+		if state["idleClosed"] != true || state["idleMinutes"] != float64(30) || len(state["tabs"].([]any)) != 0 {
 			t.Fatalf("agent=%v: idle closure not reported: %v", agent, state)
 		}
 	}
@@ -137,7 +141,82 @@ func TestIdleBrowserIsClosedAndExplained(t *testing.T) {
 	}
 }
 
+func TestConfigurableIdleTimeoutAndPersistence(t *testing.T) {
+	t.Setenv("HOXI_BROWSER_IDLE_MINUTES", "")
+	clock := newFakeClock()
+	s := newService(clock.Now, time.Hour)
+	defer s.Close()
+
+	// Reject out-of-range values without mutating current timeout.
+	for _, bad := range []int{-1, -30, MaxIdleMinutes + 1} {
+		if err := s.SetIdleMinutes(bad); err == nil {
+			t.Fatalf("expected error for invalid idleMinutes=%d", bad)
+		}
+	}
+	if got := s.IdleMinutes(); got != 30 {
+		t.Fatalf("IdleMinutes() mutated after invalid input: %d", got)
+	}
+
+	// Custom 10-minute idle timeout closes at 10m and records 10m on the notice.
+	if err := s.SetIdleMinutes(10); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	key := canonicalKey(t, dir, "ses_10m")
+	sc := fakeRunning(t, s, key)
+	clock.Advance(9 * time.Minute)
+	if n := s.closeIdleScopes(); n != 0 || sc.closed {
+		t.Fatalf("closed early at 9m (configured 10m): %d", n)
+	}
+	clock.Advance(time.Minute)
+	if n := s.closeIdleScopes(); n != 1 || !sc.closed {
+		t.Fatalf("did not close at 10m: %d", n)
+	}
+
+	// Changing timeout afterward must not rewrite already-recorded closure minutes.
+	if err := s.SetIdleMinutes(0); err != nil {
+		t.Fatal(err)
+	}
+	state := decodeState(t, request(t, s, dir, "ses_10m", "state", "", false))
+	if state["idleClosed"] != true || state["idleMinutes"] != float64(10) {
+		t.Fatalf("expected recorded idleMinutes=10, got %v", state)
+	}
+
+	// 0 disables automatic idle shutdown completely.
+	neverKey := canonicalKey(t, dir, "ses_never")
+	neverScope := fakeRunning(t, s, neverKey)
+	clock.Advance(24 * time.Hour)
+	if n := s.closeIdleScopes(); n != 0 || neverScope.closed {
+		t.Fatalf("idle auto-close ran while disabled (idleMinutes=0): %d", n)
+	}
+
+	// Persistence round-trip & corrupt/missing fallback.
+	cfgPath := filepath.Join(t.TempDir(), "browser-settings.json")
+	if got := LoadSettings(cfgPath); got.IdleMinutes != 30 {
+		t.Fatalf("missing file LoadSettings = %+v, want 30", got)
+	}
+	if err := SaveSettings(cfgPath, 15); err != nil {
+		t.Fatal(err)
+	}
+	if got := LoadSettings(cfgPath); got.IdleMinutes != 15 {
+		t.Fatalf("saved LoadSettings = %+v, want 15", got)
+	}
+	if err := SaveSettings(cfgPath, 0); err != nil {
+		t.Fatal(err)
+	}
+	if got := LoadSettings(cfgPath); got.IdleMinutes != 0 {
+		t.Fatalf("saved 0 LoadSettings = %+v, want 0", got)
+	}
+	if err := os.WriteFile(cfgPath, []byte(`{"idleMinutes":99999}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := LoadSettings(cfgPath); got.IdleMinutes != 30 {
+		t.Fatalf("out-of-range file LoadSettings = %+v, want fallback 30", got)
+	}
+}
+
 func TestIdleCloseKeepsManualStreamChromeLinkAndBusy(t *testing.T) {
+	t.Setenv("HOXI_BROWSER_IDLE_MINUTES", "")
 	clock := newFakeClock()
 	s := newService(clock.Now, time.Hour)
 	defer s.Close()
@@ -160,7 +239,7 @@ func TestIdleCloseKeepsManualStreamChromeLinkAndBusy(t *testing.T) {
 		key := scopeKey{"/tmp", strings.ReplaceAll(tc.name, " ", "_")}
 		sc := fakeRunning(t, s, key)
 		withGate(sc, tc.keep)
-		clock.Advance(2 * idleTimeout)
+		clock.Advance(2 * DefaultIdleTimeout)
 		if n := s.closeIdleScopes(); n != 0 || liveScope(s, key) != sc || sc.closed {
 			t.Fatalf("%s: idle close stopped the browser", tc.name)
 		}
@@ -173,7 +252,7 @@ func TestIdleCloseKeepsManualStreamChromeLinkAndBusy(t *testing.T) {
 
 	key := scopeKey{"/tmp", "busy"}
 	sc := fakeRunning(t, s, key)
-	clock.Advance(2 * idleTimeout)
+	clock.Advance(2 * DefaultIdleTimeout)
 	if _, err := s.acquire(context.Background(), key, false); err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +268,7 @@ func TestIdleCloseKeepsManualStreamChromeLinkAndBusy(t *testing.T) {
 	s.SetSessionBusyChecker(func(sid string) bool { return sid == "session_busy" && busySession })
 	busyKey := scopeKey{"/tmp", "session_busy"}
 	busyScope := fakeRunning(t, s, busyKey)
-	clock.Advance(2 * idleTimeout)
+	clock.Advance(2 * DefaultIdleTimeout)
 	if n := s.closeIdleScopes(); n != 0 || busyScope.closed {
 		t.Fatal("closed a browser while its owning session was still busy")
 	}
@@ -197,9 +276,36 @@ func TestIdleCloseKeepsManualStreamChromeLinkAndBusy(t *testing.T) {
 	if n := s.closeIdleScopes(); n != 1 || !busyScope.closed {
 		t.Fatal("idle browser kept after its session became idle")
 	}
+
+	// Window-mode scopes (default on desktop) must also close on idle while keeping persistent profile files.
+	profileRoot := filepath.Join(t.TempDir(), "win-profile")
+	s.SetProfileRoot(profileRoot)
+	s.SetDefaultWindowMode(true)
+	winKey := scopeKey{"/tmp", "window_idle"}
+	winScope := fakeRunning(t, s, winKey)
+	withGate(winScope, func(sc *scope) {
+		sc.window = true
+		sc.persistentProfile = true
+		sc.profile = profileRoot
+	})
+	if err := os.MkdirAll(profileRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cookieMarker := filepath.Join(profileRoot, "Cookies")
+	if err := os.WriteFile(cookieMarker, []byte("session-cookie"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	clock.Advance(DefaultIdleTimeout)
+	if n := s.closeIdleScopes(); n != 1 || !winScope.closed {
+		t.Fatalf("expected idle window-mode browser to close, got %d", n)
+	}
+	if _, err := os.Stat(cookieMarker); err != nil {
+		t.Fatalf("persistent profile deleted on idle window close: %v", err)
+	}
 }
 
 func TestIdleCloseKeepsRealChromeLinkPairing(t *testing.T) {
+	t.Setenv("HOXI_BROWSER_IDLE_MINUTES", "")
 	clock := newFakeClock()
 	s := newService(clock.Now, time.Hour)
 	defer s.Close()
@@ -208,7 +314,7 @@ func TestIdleCloseKeepsRealChromeLinkPairing(t *testing.T) {
 	if w := request(t, s, dir, "ses_link", "action", `{"action":"pair"}`, false); w.Code != 200 {
 		t.Fatal(w.Code, w.Body.String())
 	}
-	clock.Advance(2 * idleTimeout)
+	clock.Advance(2 * DefaultIdleTimeout)
 	s.closeIdleScopes()
 	if state := decodeState(t, request(t, s, dir, "ses_link", "state", "", false)); state["pairing"] != true || state["idleClosed"] != nil {
 		t.Fatal("pairing scope lost to idle close", state)
@@ -222,7 +328,7 @@ func TestIdleNoticesAreBounded(t *testing.T) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for i := 0; i <= maxIdleNotices; i++ {
-		s.noteIdleClosedLocked(scopeKey{"/tmp", string(rune('A' + i))}, start.Add(time.Duration(i)*time.Second))
+		s.noteIdleClosedLocked(scopeKey{"/tmp", string(rune('A' + i))}, start.Add(time.Duration(i)*time.Second), DefaultIdleMinutes)
 	}
 	if len(s.idleClosed) != maxIdleNotices {
 		t.Fatal(len(s.idleClosed))
@@ -232,18 +338,19 @@ func TestIdleNoticesAreBounded(t *testing.T) {
 	}
 	// The notice just written is never the one dropped, even with the oldest time.
 	newest := scopeKey{"/tmp", "newest"}
-	s.noteIdleClosedLocked(newest, start.Add(-time.Hour))
+	s.noteIdleClosedLocked(newest, start.Add(-time.Hour), DefaultIdleMinutes)
 	if _, ok := s.idleClosed[newest]; !ok || len(s.idleClosed) != maxIdleNotices {
 		t.Fatal("newest notice dropped")
 	}
 }
 
 func TestIdleReaperRunsInBackgroundAndStopsOnClose(t *testing.T) {
+	t.Setenv("HOXI_BROWSER_IDLE_MINUTES", "")
 	clock := newFakeClock()
 	s := newService(clock.Now, 5*time.Millisecond)
 	key := scopeKey{"/tmp", "background"}
 	sc := fakeRunning(t, s, key)
-	clock.Advance(idleTimeout)
+	clock.Advance(DefaultIdleTimeout)
 	for deadline := time.Now().Add(5 * time.Second); liveScope(s, key) != nil; time.Sleep(5 * time.Millisecond) {
 		if time.Now().After(deadline) {
 			t.Fatal("background check never closed the idle browser")
@@ -264,6 +371,7 @@ func TestChromeIdleCloseStopsProcessAndRemovesProfile(t *testing.T) {
 	if os.Getenv("HOXI_BROWSER_TEST") != "1" {
 		t.Skip("set HOXI_BROWSER_TEST=1 for Chrome integration")
 	}
+	t.Setenv("HOXI_BROWSER_IDLE_MINUTES", "")
 	clock := newFakeClock()
 	s := newService(clock.Now, time.Hour)
 	defer s.Close()
@@ -287,7 +395,7 @@ func TestChromeIdleCloseStopsProcessAndRemovesProfile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	clock.Advance(2 * idleTimeout)
+	clock.Advance(2 * DefaultIdleTimeout)
 	if n := s.closeIdleScopes(); n != 0 || sc.closed {
 		t.Fatal("closed a browser with an open stream")
 	}
@@ -306,7 +414,7 @@ func TestChromeIdleCloseStopsProcessAndRemovesProfile(t *testing.T) {
 	if n := s.closeIdleScopes(); n != 0 {
 		t.Fatal("stream end did not count as use")
 	}
-	clock.Advance(idleTimeout)
+	clock.Advance(DefaultIdleTimeout)
 	if n := s.closeIdleScopes(); n != 1 {
 		t.Fatal("idle Chrome kept")
 	}

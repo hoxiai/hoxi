@@ -60,6 +60,7 @@ import {
   setWorkspace,
   surfaceOnboardingOpen,
   syncActiveProjectID,
+  syncBrowserIdleMinutesFromBackend,
   syncPendingPermissions,
   syncPendingQuestions,
   syncSessionStatuses,
@@ -99,7 +100,6 @@ export default function App() {
       if (isOnline) retryEventStream?.();
     });
     const watchdogTimer = setInterval(() => {
-      trimSessionTranscripts();
       // Managed sessions converge through the stream's global status snapshot,
       // so status polling is only needed for unadopted OpenCode sessions.
       const hasUnmanagedBusy = Object.entries(workspace.statusBySession).some(
@@ -109,6 +109,9 @@ export default function App() {
       const hasBusySession = Object.values(workspace.statusBySession).some(
         (s) => s?.type === "busy" || s?.type === "retry"
       );
+      if (hasBusySession || Object.keys(workspace.messagesBySession).length > 12) {
+        trimSessionTranscripts();
+      }
       if (hasUnmanagedBusy) {
         void syncSessionStatuses();
       }
@@ -131,6 +134,9 @@ export default function App() {
     void (async () => {
       try {
         const boot = await hoxiAPI.getBootstrap();
+        if (typeof boot?.browserIdleMinutes === "number") {
+          syncBrowserIdleMinutesFromBackend(boot.browserIdleMinutes);
+        }
         if (surfaceOnboarding) {
           await surfaceOnboarding;
         } else if (surfaceExtension.enabled && !hasStoredSurfaceMode() && surfaceExtension.defaultMode) {
@@ -325,6 +331,7 @@ export default function App() {
                 ) {
                   setWorkspace("unreadCompletedBySession", sid, true);
                 }
+                trimSessionTranscripts();
                 void drainNextQueuedPrompt(sid);
                 if (wasBusy && !parentID) void advanceSessionGoal(sid);
                 if (wasBusy) refreshDesktopMemberAfterTurn(sid);

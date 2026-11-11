@@ -52,7 +52,8 @@ export const inspector = {
     diagnosticsEmpty: "No recorded errors",
     consoleError: "Console",
     failedRequest: "Request",
-    temporaryLoginHint: "Temporary browser · closing it or 60 minutes without use clears pages and sign-ins",
+    temporaryLoginHint: "Temporary browser · closing it or {minutes} minutes without use clears pages and sign-ins",
+    temporaryLoginHintNever: "Temporary browser · closing it clears pages and sign-ins (idle auto-close disabled)",
     persistentLoginHint: "Desktop Chrome window · sign-ins, cookies, and extensions persist across sessions",
     modeWindow: "Desktop window",
     modeChrome: "Daily Chrome",
@@ -116,6 +117,7 @@ export const inspector = {
     error: "Browser error: {error}", working: "Updating browser...", waiting: "Waiting for browser frame...",
     empty: "Or enter a URL above and press Enter to open it.",
     idleClosed: "The browser was closed after {minutes} minutes without use to free memory; open pages and sign-ins were not kept",
+    idleClosedWindow: "Desktop Chrome window closed after {minutes} minutes without use to free memory; sign-ins and cookies are kept",
     viewport: "Live browser viewport", keyboard: "Browser keyboard input",
   },
   diffs: {

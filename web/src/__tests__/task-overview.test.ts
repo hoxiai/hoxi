@@ -1,6 +1,11 @@
 // web/src/__tests__/task-overview.test.ts
 import type { MessagePart, SessionInfo } from "../services/sse-types";
-import { buildTaskOverview } from "../store/task-overview";
+import {
+  buildTaskOverview,
+  forgetSessionTaskOverview,
+  isTaskNodeExpanded,
+  toggleTaskNodeExpanded,
+} from "../store/task-overview";
 import {
   bindInlineConvoyPlan,
   buildConvoyCompletionSummaryPrompt,
@@ -277,5 +282,13 @@ describe("unified task overview", () => {
     assertEqual(getBoundInlineConvoyPlanID("card_key_1"), "plan_123");
     clearBoundInlineConvoyPlan("card_key_1");
     assertEqual(getBoundInlineConvoyPlanID("card_key_1"), undefined);
+
+    toggleTaskNodeExpanded("todo:ses_cleanup:prt_1:0", 1);
+    toggleTaskNodeExpanded("subagent:ses_cleanup", 1);
+    assertEqual(isTaskNodeExpanded("todo:ses_cleanup:prt_1:0", 1), true);
+    assertEqual(isTaskNodeExpanded("subagent:ses_cleanup", 1), true);
+    forgetSessionTaskOverview(["ses_cleanup"]);
+    assertEqual(isTaskNodeExpanded("todo:ses_cleanup:prt_1:0", 1), false);
+    assertEqual(isTaskNodeExpanded("subagent:ses_cleanup", 1), false);
   });
 });

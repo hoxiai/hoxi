@@ -48,6 +48,7 @@ export type ReasoningDisplayMode = "auto-collapse" | "expanded" | "collapsed";
 export type DiffLayoutMode = "unified" | "split";
 export type WorktreeApplyStrategy = "patch" | "merge";
 export type LinkOpenTarget = "external" | "inspector";
+export const BROWSER_IDLE_MINUTE_PRESETS = [5, 10, 15, 30, 60, 120, 0] as const;
 
 export interface AppSettingsState {
   modalOpen: boolean;
@@ -83,6 +84,7 @@ export interface AppSettingsState {
   notifyOnAttention: boolean;
   notifyOnStall: boolean;
   keepAwakeWhileRunning: boolean;
+  browserIdleMinutes: number;
   linkOpenTarget: LinkOpenTarget;
 }
 
@@ -125,6 +127,7 @@ const DEFAULT_SETTINGS: PersistedSettings = {
   notifyOnAttention: true,
   notifyOnStall: true,
   keepAwakeWhileRunning: true,
+  browserIdleMinutes: 30,
   linkOpenTarget: "external",
 };
 
@@ -265,6 +268,12 @@ export function loadInitialSettings(): PersistedSettings {
         typeof parsed.keepAwakeWhileRunning === "boolean"
           ? parsed.keepAwakeWhileRunning
           : DEFAULT_SETTINGS.keepAwakeWhileRunning,
+      browserIdleMinutes:
+        Number.isInteger(parsed.browserIdleMinutes) &&
+        parsed.browserIdleMinutes >= 0 &&
+        parsed.browserIdleMinutes <= 1440
+          ? parsed.browserIdleMinutes
+          : DEFAULT_SETTINGS.browserIdleMinutes,
       linkOpenTarget:
         parsed.linkOpenTarget === "external" || parsed.linkOpenTarget === "inspector"
           ? parsed.linkOpenTarget
@@ -313,6 +322,7 @@ function persistAppSettings() {
     notifyOnAttention: appSettings.notifyOnAttention,
     notifyOnStall: appSettings.notifyOnStall,
     keepAwakeWhileRunning: appSettings.keepAwakeWhileRunning,
+    browserIdleMinutes: appSettings.browserIdleMinutes,
     linkOpenTarget: appSettings.linkOpenTarget,
   };
   writeStorageJSON(APP_SETTINGS_KEY, payload);
@@ -451,6 +461,9 @@ export function updateAppSetting<K extends keyof PersistedSettings>(
   if (key === "keepAwakeWhileRunning") {
     void hoxiAPI.setKeepAwake(Boolean(value)).catch(() => {});
   }
+  if (key === "browserIdleMinutes" && typeof value === "number") {
+    void hoxiAPI.setBrowserIdleMinutes(value).catch(() => {});
+  }
 }
 
 export function setSessionSandboxMode(mode: "local" | "worktree") {
@@ -472,11 +485,26 @@ export function syncKeepAwakeFromBackend(enabled: boolean) {
   }
 }
 
-/** Reads gateway/runtime info and adopts the backend's keep-awake state. */
+export function syncBrowserIdleMinutesFromBackend(minutes: number) {
+  if (
+    Number.isInteger(minutes) &&
+    minutes >= 0 &&
+    minutes <= 1440 &&
+    appSettings.browserIdleMinutes !== minutes
+  ) {
+    setAppSettings("browserIdleMinutes", minutes);
+    persistAppSettings();
+  }
+}
+
+/** Reads gateway/runtime info and adopts the backend's keep-awake and browser idle states. */
 export async function fetchSystemRuntimeInfo(): Promise<SystemRuntimeInfo> {
   const info = await hoxiAPI.getSystemInfo();
   if (typeof info?.status?.keepAwakeEnabled === "boolean") {
     syncKeepAwakeFromBackend(info.status.keepAwakeEnabled);
+  }
+  if (typeof info?.browserIdleMinutes === "number") {
+    syncBrowserIdleMinutesFromBackend(info.browserIdleMinutes);
   }
   return info;
 }
@@ -495,6 +523,7 @@ export function resetAllAppSettings() {
   });
   persistAppSettings();
   syncSettingsSideEffects();
+  void hoxiAPI.setBrowserIdleMinutes(DEFAULT_SETTINGS.browserIdleMinutes).catch(() => {});
 }
 
 export type NotificationKind = "complete" | "attention" | "stall";

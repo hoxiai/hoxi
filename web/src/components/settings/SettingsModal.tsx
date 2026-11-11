@@ -229,8 +229,11 @@ export default function SettingsModal() {
             t("settings.sectionUpdaterTitle"),
             t("settings.sectionRuntimeTitle"),
             t("settings.sectionMaintenanceTitle"),
+            t("settings.browserIdleTimeoutLabel"),
             t("diagnostics.errorLogTitle"),
             "OpenCode",
+            "Chrome",
+            "Browser",
           ],
         },
         {

@@ -341,6 +341,7 @@ export default function PierreDiffViewer() {
           directory={activeWt()?.directory || activeDirectory()}
           branch={activeWt()?.branch}
           compareURL={compareURL()}
+          active={workspace.inspectorOpen && workspace.inspectorTab === "diffs"}
           canCreate={
             Boolean(compareURL()) &&
             ((activeWt()?.aheadCount ?? 0) > 0 ||
@@ -354,6 +355,7 @@ export default function PierreDiffViewer() {
           directory={activeWt()?.directory || activeDirectory()}
           branch={activeWt()?.branch}
           sessionID={workspace.activeSessionID || undefined}
+          active={workspace.inspectorOpen && workspace.inspectorTab === "diffs"}
           disabled={pushing() || committing()}
         />
         <Show when={diffs().length > 0}>
@@ -495,6 +497,7 @@ export default function PierreDiffViewer() {
                 directory={activeWt()?.directory || activeDirectory()}
                 branch={activeWt()?.branch}
                 compareURL={compareURL()}
+                active={workspace.inspectorOpen && workspace.inspectorTab === "diffs"}
                 canCreate={Boolean(compareURL())}
                 disabled={pushing()}
                 onCreate={onOpenCreatePR}

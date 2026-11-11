@@ -41,6 +41,7 @@ type systemRuntimeInfoResponse struct {
 	SystemUsername      string            `json:"systemUsername"`
 	GitUserName         string            `json:"gitUserName"`
 	GitUserEmail        string            `json:"gitUserEmail"`
+	BrowserIdleMinutes  int               `json:"browserIdleMinutes"`
 	Status              statusbar.Summary `json:"status"`
 	GoMemory            goMemoryStats     `json:"goMemory"`
 }
@@ -114,6 +115,7 @@ func (g *Gateway) handleSystemRuntimeInfo(w http.ResponseWriter, r *http.Request
 		SystemUsername:      sysUser,
 		GitUserName:         gitName,
 		GitUserEmail:        gitEmail,
+		BrowserIdleMinutes:  g.browserIdleMinutes(),
 		Status:              st,
 		GoMemory:            readGoMemoryStats(),
 	})

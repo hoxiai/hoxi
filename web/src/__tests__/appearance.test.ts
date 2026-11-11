@@ -1,7 +1,8 @@
 import { reconcile, unwrap } from "solid-js/store";
+import { hoxiAPI } from "../services/api";
 import {
   APP_SETTINGS_KEY, appSettings, loadInitialSettings, openSettingsModal, resetAllAppSettings, setAppSettings,
-  syncSettingsSideEffects, updateAppSetting,
+  syncBrowserIdleMinutesFromBackend, syncSettingsSideEffects, updateAppSetting,
 } from "../store/settings";
 import { setWorkspace, workspace } from "../store/workspace";
 import { assertEqual, describe, it } from "./test-harness";
@@ -100,5 +101,43 @@ describe("appearance preferences", () => {
       openSettingsModal("remote");
       assertEqual(appSettings.activeTab, "remote");
     });
+  });
+
+  it("defaults Chrome idle timeout to 30 minutes and syncs valid overrides with backend", () => {
+    const origSetIdle = hoxiAPI.setBrowserIdleMinutes;
+    const sentMinutes: number[] = [];
+    hoxiAPI.setBrowserIdleMinutes = async (mins: number) => {
+      sentMinutes.push(mins);
+      return { idleMinutes: mins };
+    };
+    try {
+      withAppearanceFixture((_root, saved) => {
+        assertEqual(loadInitialSettings().browserIdleMinutes, 30);
+
+        saved.set(APP_SETTINGS_KEY, JSON.stringify({ browserIdleMinutes: 0 }));
+        assertEqual(loadInitialSettings().browserIdleMinutes, 0);
+
+        saved.set(APP_SETTINGS_KEY, JSON.stringify({ browserIdleMinutes: -5 }));
+        assertEqual(loadInitialSettings().browserIdleMinutes, 30);
+
+        saved.set(APP_SETTINGS_KEY, JSON.stringify({ browserIdleMinutes: 2000 }));
+        assertEqual(loadInitialSettings().browserIdleMinutes, 30);
+
+        updateAppSetting("browserIdleMinutes", 15);
+        assertEqual(appSettings.browserIdleMinutes, 15);
+        assertEqual(JSON.parse(saved.get(APP_SETTINGS_KEY)!).browserIdleMinutes, 15);
+        assertEqual(sentMinutes[sentMinutes.length - 1], 15);
+
+        syncBrowserIdleMinutesFromBackend(60);
+        assertEqual(appSettings.browserIdleMinutes, 60);
+        assertEqual(JSON.parse(saved.get(APP_SETTINGS_KEY)!).browserIdleMinutes, 60);
+
+        resetAllAppSettings();
+        assertEqual(appSettings.browserIdleMinutes, 30);
+        assertEqual(sentMinutes[sentMinutes.length - 1], 30);
+      });
+    } finally {
+      hoxiAPI.setBrowserIdleMinutes = origSetIdle;
+    }
   });
 });

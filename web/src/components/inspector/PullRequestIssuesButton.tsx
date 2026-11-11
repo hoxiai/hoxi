@@ -72,6 +72,7 @@ export default function PullRequestIssuesButton(props: {
   branch?: string;
   sessionID?: string;
   disabled?: boolean;
+  active?: boolean;
 }) {
   const [pr, setPr] = createSignal<ForgePullRequest | null>(null);
   const [sending, setSending] = createSignal(false);
@@ -79,9 +80,11 @@ export default function PullRequestIssuesButton(props: {
   let generation = 0;
 
   createEffect(() => {
+    const isActive = props.active !== false;
     const directory = (props.directory ?? "").trim();
     const branch = (props.branch ?? "").trim();
     const current = ++generation;
+    if (!isActive) return;
     setPr(null);
     setSent(false);
     if (!directory) return;

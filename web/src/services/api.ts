@@ -153,6 +153,17 @@ export const hoxiAPI = {
     });
   },
 
+  getBrowserSettings(): Promise<import("./api-types").BrowserSettingsResponse> {
+    return requestJSON("/api/hoxi/browser/settings");
+  },
+
+  setBrowserIdleMinutes(idleMinutes: number): Promise<import("./api-types").BrowserSettingsResponse> {
+    return requestJSON("/api/hoxi/browser/settings", {
+      method: "PUT",
+      body: JSON.stringify({ idleMinutes }),
+    });
+  },
+
   async readClipboardImages(opts?: {
     filesOnly?: boolean;
   }): Promise<Array<{ filename: string; mime: string; dataUrl: string }>> {

@@ -127,6 +127,10 @@ export interface KeepAwakeStatusResponse {
   supported: boolean;
 }
 
+export interface BrowserSettingsResponse {
+  idleMinutes: number;
+}
+
 export interface CommitAndPushResponse {
   ok: boolean;
   commit?: string;
@@ -238,6 +242,7 @@ export interface BootstrapInfo {
   rootDir: string;
   defaultWorkspaceDir?: string;
   wsBaseURL: string;
+  browserIdleMinutes?: number;
   gatewayToken?: string;
   status: {
     attention: number;
@@ -266,6 +271,7 @@ export interface SystemRuntimeInfo {
   systemUsername?: string;
   gitUserName?: string;
   gitUserEmail?: string;
+  browserIdleMinutes?: number;
   status: {
     attention: number;
     running: number;

@@ -53,7 +53,8 @@ export const inspector: InspectorI18n = {
     diagnosticsEmpty: "暂无错误记录",
     consoleError: "控制台",
     failedRequest: "请求",
-    temporaryLoginHint: "临时浏览器 · 关闭或闲置 60 分钟后，打开的网页和登录态会清除",
+    temporaryLoginHint: "临时浏览器 · 关闭或闲置 {minutes} 分钟后，打开的网页和登录态会清除",
+    temporaryLoginHintNever: "临时浏览器 · 关闭后打开的网页和登录态会清除（闲置自动关闭已停用）",
     persistentLoginHint: "桌面 Chrome 窗口 · 登录态、Cookie 与扩展跨会话持久保留",
     modeWindow: "桌面窗口",
     modeChrome: "连接日常 Chrome",
@@ -117,6 +118,7 @@ export const inspector: InspectorI18n = {
     error: "浏览器错误：{error}", working: "正在更新浏览器…", waiting: "正在等待画面…",
     empty: "也可以在上方输入网址，按回车打开",
     idleClosed: "浏览器闲置 {minutes} 分钟后已自动关闭以释放内存，之前打开的页面和登录状态未保留",
+    idleClosedWindow: "桌面 Chrome 窗口闲置 {minutes} 分钟后已自动关闭以释放内存，登录状态和 Cookie 已保留",
     viewport: "浏览器实时画面", keyboard: "浏览器键盘输入",
   },
   diffs: {

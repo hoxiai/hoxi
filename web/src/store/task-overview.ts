@@ -281,14 +281,45 @@ export function startTaskOverviewPolling(directory: string, sessionIDs: readonly
   return () => clearInterval(timer);
 }
 
-// Row expansion is keyed by node ID so rebuilding nodes on every stream flush
-// never resets what the user expanded or collapsed.
-const [taskNodeExpansion, setTaskNodeExpansion] = createStore<Record<string, boolean>>({});
+// Row expansion is keyed by node ID in a bounded LRU store so rebuilding nodes
+// on every stream flush never resets expanded rows and deleted/evicted sessions
+// never accumulate unbounded state.
+const MAX_TASK_NODE_EXPANSIONS = 512;
+const taskNodeExpansionOrder: string[] = [];
+const [taskNodeExpansion, setTaskNodeExpansion] = createStore<Record<string, boolean | undefined>>({});
 
 export function isTaskNodeExpanded(nodeID: string, depth: number): boolean {
   return taskNodeExpansion[nodeID] ?? depth === 0;
 }
 
 export function toggleTaskNodeExpanded(nodeID: string, depth: number): void {
-  setTaskNodeExpansion(nodeID, !isTaskNodeExpanded(nodeID, depth));
+  const next = !isTaskNodeExpanded(nodeID, depth);
+  const existingIdx = taskNodeExpansionOrder.indexOf(nodeID);
+  if (existingIdx >= 0) taskNodeExpansionOrder.splice(existingIdx, 1);
+  taskNodeExpansionOrder.push(nodeID);
+  setTaskNodeExpansion(nodeID, next);
+  while (taskNodeExpansionOrder.length > MAX_TASK_NODE_EXPANSIONS) {
+    const oldest = taskNodeExpansionOrder.shift();
+    if (oldest !== undefined) setTaskNodeExpansion(oldest, undefined);
+  }
+}
+
+export function forgetSessionTaskOverview(sessionIDs: readonly string[]): void {
+  if (sessionIDs.length === 0 || taskNodeExpansionOrder.length === 0) return;
+  const targets = new Set(sessionIDs);
+  for (let i = taskNodeExpansionOrder.length - 1; i >= 0; i--) {
+    const key = taskNodeExpansionOrder[i];
+    if (key.startsWith("todo:")) {
+      const rest = key.slice(5);
+      const sep = rest.indexOf(":");
+      const sid = sep >= 0 ? rest.slice(0, sep) : rest;
+      if (targets.has(sid)) {
+        taskNodeExpansionOrder.splice(i, 1);
+        setTaskNodeExpansion(key, undefined);
+      }
+    } else if (key.startsWith("subagent:") && targets.has(key.slice(9))) {
+      taskNodeExpansionOrder.splice(i, 1);
+      setTaskNodeExpansion(key, undefined);
+    }
+  }
 }

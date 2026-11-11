@@ -20,6 +20,7 @@ export default function PullRequestBadge(props: {
   canCreate?: boolean;
   disabled?: boolean;
   compact?: boolean;
+  active?: boolean;
   onCreate?: () => void | Promise<void>;
 }) {
   const [pr, setPr] = createSignal<ForgePullRequest | null>(null);
@@ -28,15 +29,18 @@ export default function PullRequestBadge(props: {
   let generation = 0;
 
   createEffect(() => {
+    const isActive = props.active !== false;
     const directory = (props.directory ?? "").trim();
     const branch = (props.branch ?? "").trim();
     const current = ++generation;
+    if (!isActive) return;
     setPr(null);
     setLoaded(false);
     if (!directory) return;
 
     let disposed = false;
     const load = async (force: boolean) => {
+      if (typeof document !== "undefined" && document.hidden && force) return;
       try {
         const response = await fetchPullRequest(directory, branch, force);
         if (disposed || current !== generation) return;

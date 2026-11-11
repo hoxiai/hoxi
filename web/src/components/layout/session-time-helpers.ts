@@ -8,7 +8,33 @@ export function useNowTicker(intervalMs = 30000): () => number {
   if (sharedNowSignal) return sharedNowSignal;
   const [now, setNow] = createSignal(Date.now());
   if (typeof window !== "undefined") {
-    setInterval(() => setNow(Date.now()), intervalMs);
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const start = () => {
+      if (timer !== null) return;
+      timer = setInterval(() => {
+        if (typeof document !== "undefined" && document.hidden) return;
+        setNow(Date.now());
+      }, intervalMs);
+    };
+    const stop = () => {
+      if (timer !== null) {
+        clearInterval(timer);
+        timer = null;
+      }
+    };
+    if (typeof document === "undefined" || !document.hidden) {
+      start();
+    }
+    if (typeof document !== "undefined" && typeof document.addEventListener === "function") {
+      document.addEventListener("visibilitychange", () => {
+        if (document.hidden) {
+          stop();
+        } else {
+          setNow(Date.now());
+          start();
+        }
+      });
+    }
   }
   sharedNowSignal = now;
   return now;

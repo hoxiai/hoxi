@@ -1,6 +1,6 @@
 import { Show } from "solid-js";
 import { AppWindow, CircleHelp, Copy, Check, Eye, EyeOff, Hand, Sparkles } from "lucide-solid";
-import type { createBrowserController } from "../../store/workspace";
+import { appSettings, type createBrowserController } from "../../store/workspace";
 import { t } from "../../i18n";
 
 interface Props {
@@ -17,6 +17,11 @@ export default function BrowserWindowCard(props: Props) {
         : "text-[var(--text-muted)] hover:text-[var(--text-primary)] border border-transparent"
     }`;
 
+  const headlessHint = () =>
+    appSettings.browserIdleMinutes > 0
+      ? t("inspector.browser.temporaryLoginHint", { minutes: appSettings.browserIdleMinutes })
+      : t("inspector.browser.temporaryLoginHintNever");
+
   const currentModeTip = () => {
     if (b().chromeLinked() || b().pairing()) {
       const status = state()?.connected === false
@@ -27,7 +32,7 @@ export default function BrowserWindowCard(props: Props) {
     if (b().windowMode()) {
       return `${t("inspector.browser.persistentLoginHint")} · ${t("inspector.browser.windowModeHint")}`;
     }
-    return t("inspector.browser.temporaryLoginHint");
+    return headlessHint();
   };
 
   return (
@@ -59,7 +64,7 @@ export default function BrowserWindowCard(props: Props) {
             class={modeBtn(b().headlessMode() && !b().pairing())}
             disabled={b().busy()}
             aria-pressed={b().headlessMode() && !b().pairing()}
-            title={t("inspector.browser.temporaryLoginHint")}
+            title={headlessHint()}
             onClick={() => b().switchMode(false)}
           >
             {t("inspector.browser.modeHeadless")}
@@ -84,7 +89,7 @@ export default function BrowserWindowCard(props: Props) {
               <p class="mt-1 text-[var(--text-muted)]">{t("inspector.browser.windowModeHint")}</p>
             </Show>
             <Show when={b().headlessMode() && !b().pairing()}>
-              <p>{t("inspector.browser.temporaryLoginHint")}</p>
+              <p>{headlessHint()}</p>
             </Show>
             <Show when={b().chromeLinked() || b().pairing()}>
               <p class="font-medium text-[var(--text-primary)]">

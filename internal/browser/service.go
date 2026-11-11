@@ -87,17 +87,17 @@ type scope struct {
 }
 
 type Service struct {
-	mu             sync.Mutex
-	ctx            context.Context
-	cancel         context.CancelFunc
-	scopes         map[scopeKey]*scope
-	token          string
-	linkToken      string
-	profileRoot    string
-	defaultWindow  bool
-	uiOrigins      map[string]bool
-	closed         bool
-	closeDone      chan struct{}
+	mu                        sync.Mutex
+	ctx                       context.Context
+	cancel                    context.CancelFunc
+	scopes                    map[scopeKey]*scope
+	token                     string
+	linkToken                 string
+	profileRoot               string
+	defaultWindow             bool
+	uiOrigins                 map[string]bool
+	closed                    bool
+	closeDone                 chan struct{}
 	resolveSession            func(sessionID, directory string) (string, error)
 	resolveProfile            func(sessionID, directory string) string
 	resolveEnv                func(sessionID, directory string) (StoreEnvConfig, error)
@@ -106,7 +106,8 @@ type Service struct {
 	bridgeURL      string
 	ledger         *reclaim.Ledger
 	now            func() time.Time
-	idleClosed     map[scopeKey]time.Time
+	idleTimeout    time.Duration
+	idleClosed     map[scopeKey]idleNotice
 	reaperDone     chan struct{}
 	// How long a held UI mouse button survives without pointer input.
 	pointerHold    time.Duration
@@ -172,7 +173,8 @@ func newService(now func() time.Time, interval time.Duration) *Service {
 		uiOrigins:   make(map[string]bool),
 		closeDone:   make(chan struct{}),
 		now:         now,
-		idleClosed:  make(map[scopeKey]time.Time),
+		idleTimeout: defaultIdleTimeoutFromEnv(),
+		idleClosed:  make(map[scopeKey]idleNotice),
 		reaperDone:  make(chan struct{}),
 		pointerHold: defaultPointerHold,
 	}
@@ -360,19 +362,45 @@ func (s *Service) acquire(ctx context.Context, key scopeKey, create bool) (*scop
 	}
 }
 
-// evictIdleScopeLocked frees one slot held only by a saved viewport. UI resizes
-// create scopes lazily, so they must not starve sessions that start Chrome.
-// Scopes with Chrome, manual control, or in-flight work are never evicted.
+// evictIdleScopeLocked frees one slot held only by a saved viewport, or an
+// already-expired browser whose idleTimeout elapsed before the periodic reaper
+// ran. Active Chrome scopes within idleTimeout, manual control, or in-flight
+// work are never evicted.
 func (s *Service) evictIdleScopeLocked() bool {
+	now := s.now()
+	isBusy := s.isSessionBusy
 	for key, sc := range s.scopes {
 		select {
 		case sc.gate <- struct{}{}:
 		default:
 			continue
 		}
-		if sc.browser != nil || sc.extension != nil || (sc.pairToken != "" && time.Now().Before(sc.pairExpires)) || sc.manual || sc.closed {
+		if sc.browser != nil || sc.extension != nil || (sc.pairToken != "" && now.Before(sc.pairExpires)) || sc.manual || sc.closed {
 			<-sc.gate
 			continue
+		}
+		delete(s.scopes, key)
+		sc.dispose()
+		<-sc.gate
+		return true
+	}
+	if s.idleTimeout <= 0 {
+		return false
+	}
+	minutes := int(s.idleTimeout / time.Minute)
+	for key, sc := range s.scopes {
+		select {
+		case sc.gate <- struct{}{}:
+		default:
+			continue
+		}
+		if sc.closed || sc.manual || sc.extension != nil || (sc.pairToken != "" && now.Before(sc.pairExpires)) ||
+			sc.stream != nil || (isBusy != nil && isBusy(key.session)) || now.Sub(sc.lastUsed) < s.idleTimeout {
+			<-sc.gate
+			continue
+		}
+		if sc.browser != nil {
+			s.noteIdleClosedLocked(key, now, minutes)
 		}
 		delete(s.scopes, key)
 		sc.dispose()

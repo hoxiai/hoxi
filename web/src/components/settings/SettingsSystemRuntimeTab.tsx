@@ -1,9 +1,10 @@
 // web/src/components/settings/SettingsSystemRuntimeTab.tsx
-import { createSignal, onMount, Show } from "solid-js";
+import { createSignal, For, onMount, Show } from "solid-js";
 import { Activity, ArrowUpCircle, CheckCircle2, ChevronRight, Download, ExternalLink, KeyRound, RefreshCw, RotateCcw, ShieldCheck } from "lucide-solid";
 import type { SystemRuntimeInfo } from "../../services/api";
 import {
   appSettings,
+  BROWSER_IDLE_MINUTE_PRESETS,
   checkDesktopUpdate,
   desktopUpdateButtonLabel,
   desktopUpdateDetailLabel,
@@ -425,6 +426,40 @@ export function SystemRuntimeSettingsTab() {
               setTimeout(() => void fetchInfo(), 150);
             }}
           />
+        </SettingRow>
+
+        <SettingRow
+          label={t("settings.browserIdleTimeoutLabel")}
+          tip={t("settings.browserIdleTimeoutDesc")}
+        >
+          <select
+            aria-label={t("settings.browserIdleTimeoutLabel")}
+            value={String(appSettings.browserIdleMinutes)}
+            onChange={(e) => {
+              const next = Number(e.currentTarget.value);
+              if (Number.isInteger(next) && next >= 0 && next <= 1440) {
+                updateAppSetting("browserIdleMinutes", next);
+              }
+            }}
+            class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3 py-1.5 text-[13px] font-medium text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)] cursor-pointer"
+          >
+            <Show when={!(BROWSER_IDLE_MINUTE_PRESETS as readonly number[]).includes(appSettings.browserIdleMinutes)}>
+              <option value={String(appSettings.browserIdleMinutes)}>
+                {t("settings.browserIdleMinutesOption", { minutes: appSettings.browserIdleMinutes })}
+              </option>
+            </Show>
+            <For each={BROWSER_IDLE_MINUTE_PRESETS}>
+              {(mins) => (
+                <option value={String(mins)}>
+                  {mins === 0
+                    ? t("settings.browserIdleNeverOption")
+                    : mins === 30
+                      ? t("settings.browserIdleDefaultOption", { minutes: mins })
+                      : t("settings.browserIdleMinutesOption", { minutes: mins })}
+                </option>
+              )}
+            </For>
+          </select>
         </SettingRow>
 
         <details class="group/rtpaths">
