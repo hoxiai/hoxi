@@ -108,26 +108,28 @@ export default function InspectorPane() {
 
   return (
     <aside class="h-full w-full flex flex-col bg-transparent">
-      <div class="shrink-0 flex items-center gap-1 px-2.5 pt-2 pb-1 overflow-x-auto no-scrollbar">
-        <For each={tabs()}>
-          {(tab) => (
-            <button
-              type="button"
-              class={`hoxi-press relative shrink-0 whitespace-nowrap rounded-lg px-2.5 py-1 text-xs font-medium cursor-pointer ${
-                workspace.inspectorTab === tab.id
-                  ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
-                  : "text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
-              }`}
-              onClick={() => setWorkspace("inspectorTab", tab.id)}
-            >
-              {tabLabel(tab.id)}
-            </button>
-          )}
-        </For>
+      <div class="shrink-0 flex items-center gap-1 px-2.5 pt-2 pb-1">
+        <div class="flex flex-1 min-w-0 items-center gap-1 overflow-x-auto no-scrollbar">
+          <For each={tabs()}>
+            {(tab) => (
+              <button
+                type="button"
+                class={`hoxi-press relative shrink-0 whitespace-nowrap rounded-lg px-2.5 py-1 text-xs font-medium cursor-pointer ${
+                  workspace.inspectorTab === tab.id
+                    ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
+                    : "text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
+                }`}
+                onClick={() => setWorkspace("inspectorTab", tab.id)}
+              >
+                {tabLabel(tab.id)}
+              </button>
+            )}
+          </For>
+        </div>
 
         <button
           type="button"
-          class={`hoxi-press ml-auto shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-lg cursor-pointer ${
+          class={`hoxi-press shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-lg cursor-pointer ${
             workspace.inspectorMaximized
               ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
               : "text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"

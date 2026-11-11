@@ -96,6 +96,10 @@ function hasOpaqueShellSyntax(s) {
     const next = i + 1 < s.length ? s[i + 1] : "";
     if (quote === "'") {
       if (c === "'") {
+        if (s.startsWith("\\''", i + 1)) {
+          i += 3;
+          continue;
+        }
         quote = "";
         if (next && !isWordBoundary(next) && !isQuotedDirGlobSuffix(s, openIdx, i)) return true;
       }
@@ -152,6 +156,8 @@ function hasDollarExpansion(s) {
       } else if (c === "$" && next && next !== '"' && DOLLAR_EXPAND_RE.test(next)) {
         return true;
       }
+    } else if (c === "\\" && i + 1 < s.length) {
+      i++;
     } else if (c === "'" || c === '"') {
       quote = c;
     } else if (c === "$" && next && DOLLAR_EXPAND_RE.test(next)) {

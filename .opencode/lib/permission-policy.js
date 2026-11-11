@@ -210,6 +210,10 @@ export function hasUnsafeShellSyntax(command) {
     const next = i + 1 < s.length ? s[i + 1] : "";
     if (quote === "'") {
       if (c === "'") {
+        if (s.startsWith("\\''", i + 1)) {
+          i += 3;
+          continue;
+        }
         quote = "";
         if (next && !isWordBoundary(next)) return true;
       }
@@ -243,6 +247,11 @@ export function shellWords(s) {
   for (let i = 0; i < s.length; i++) {
     const c = s[i];
     if (quote) {
+      if (quote === "'" && c === "'" && s.startsWith("\\''", i + 1)) {
+        cur += "'";
+        i += 3;
+        continue;
+      }
       if (c === quote) {
         quote = "";
       } else {

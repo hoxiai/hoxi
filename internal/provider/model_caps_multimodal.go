@@ -152,10 +152,10 @@ func applyRichChatModelDefaults(proto, modelID string, mObj map[string]interface
 		}
 	}
 	if len(merged) > 0 {
-		modMap["input"] = merged
+		modMap["input"] = stringsToInterfaces(merged)
 	}
 	if _, hasOut := modMap["output"]; !hasOut {
-		modMap["output"] = []string{"text"}
+		modMap["output"] = stringsToInterfaces([]string{"text"})
 	}
 	mObj["modalities"] = modMap
 }

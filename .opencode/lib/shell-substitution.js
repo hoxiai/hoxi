@@ -3,7 +3,7 @@
 // stripLiteralHeredocs in internal/runner/opaque_command.go: `<(cmd)` becomes
 // a placeholder argument and `$(cmd)` the $__hoxi_cmdsub__ variable, and cmd
 // is appended as its own line, so it is judged like any other command.
-import { maskCommandDataArguments, unwrapLiteralShellSegment } from "./command-data-args.js";
+import { maskCommandDataArguments, rewriteReadOnlyInlineSegment, unwrapLiteralShellSegment } from "./command-data-args.js";
 import {
   CD_SEGMENT_RE,
   DOLLAR_EXPAND_RE,
@@ -17,8 +17,14 @@ import {
   stripNullRedirects,
   unwrapSandboxCommand,
 } from "./permission-policy.js";
+import { inlineScriptTool } from "./script-interpreter.js";
 import { concretizeLiterals, eraseSubshells, findSubshellSpans, unwrapCommandPrefixes } from "./shell-constants.js";
 import { isReadOnlySedArgs, isSafeCurlOutputTarget, normalizeHomePrefixPath } from "./shell-loops.js";
+
+let inlineReadOnlyJudge = null;
+export function setInlineReadOnlyJudge(fn) {
+  inlineReadOnlyJudge = fn;
+}
 
 const PROCESS_SUBSTITUTION_PLACEHOLDER = "/dev/fd/63";
 export const CMD_SUBST_VAR = "__hoxi_cmdsub__";
@@ -122,15 +128,15 @@ export function destructiveScanForms(cmd) {
     }
   }
   if (!scanBase.includes("<<") || hadBenignHeredoc) {
-    scanBase = maskRemoteSSHAndSCP(scanBase);
-    prepared = maskRemoteSSHAndSCP(prepared);
+    scanBase = maskReadOnlyInlineScripts(maskRemoteSSHAndSCP(scanBase));
+    prepared = maskReadOnlyInlineScripts(maskRemoteSSHAndSCP(prepared));
   }
   const unpacked = extractProcessSubstitutions(scanBase);
   const forms = [maskCommandDataArguments(unpacked !== scanBase ? unpacked : scanBase)];
   if (findSubshellSpans(prepared)) prepared = eraseSubshells(prepared);
   const expanded = concretizeLiterals(prepared);
   if (expanded.status === "applied" || expanded.status === "secret") {
-    const maskedExp = maskRemoteSSHAndSCP(expanded.text);
+    const maskedExp = maskReadOnlyInlineScripts(maskRemoteSSHAndSCP(expanded.text));
     const again = extractProcessSubstitutions(maskedExp);
     forms.push(maskCommandDataArguments(again !== maskedExp ? again : maskedExp));
   }
@@ -400,6 +406,13 @@ function maskRemoteSSHAndSCP(s) {
     const rewritten = rewriteSafeRemoteSCPSegment(seg);
     return rewritten || seg;
   });
+}
+
+function maskReadOnlyInlineScripts(s) {
+  if (!inlineReadOnlyJudge) return s;
+  return mapTopLevelSegments(s, (seg) =>
+    rewriteReadOnlyInlineSegment(seg, inlineReadOnlyJudge, inlineScriptTool, normalizeAbsoluteTool),
+  );
 }
 
 function mapTopLevelSegments(s, fn) {

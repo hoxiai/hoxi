@@ -16,6 +16,10 @@ func hasOpaqueShellSyntax(s string) bool {
 		}
 		if quote == '\'' {
 			if c == '\'' {
+				if i+3 < len(s) && s[i+1:i+4] == `\''` {
+					i += 3
+					continue
+				}
 				quote = 0
 				if next != 0 && !isWordBoundary(next) && !isQuotedDirGlobSuffix(s, openIdx, i) {
 					return true
@@ -93,6 +97,10 @@ func hasDollarExpansion(s string) bool {
 				return true
 			}
 		default:
+			if c == '\\' && i+1 < len(s) {
+				i++
+				continue
+			}
 			if c == '\'' || c == '"' {
 				quote = c
 			} else if c == '$' && next != 0 && dollarExpandRe.MatchString(string(next)) {

@@ -314,6 +314,10 @@ func tokenizeDataCommand(s string) ([]dataToken, bool) {
 				}
 				value.WriteString(s[i+1 : i+1+end])
 				i += end + 2
+				if strings.HasPrefix(s[i:], `\''`) {
+					value.WriteByte('\'')
+					i += 2
+				}
 				continue
 			case '"':
 				j := i + 1
@@ -339,7 +343,14 @@ func tokenizeDataCommand(s string) ([]dataToken, bool) {
 				}
 				i = j + 1
 				continue
-			case '\\', '$', '*', '?', '[', '<', '>', '~', '{', '}', '!':
+			case '\\':
+				literal = false
+				if i+1 < len(s) {
+					value.WriteByte(s[i+1])
+					i += 2
+					continue
+				}
+			case '$', '*', '?', '[', '<', '>', '~', '{', '}', '!':
 				literal = false
 			}
 			value.WriteByte(c)

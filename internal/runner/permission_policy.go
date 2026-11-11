@@ -190,6 +190,10 @@ func hasUnsafeShellSyntax(s string) bool {
 		}
 		if quote == '\'' {
 			if c == '\'' {
+				if i+3 < len(s) && s[i+1:i+4] == `\''` {
+					i += 3
+					continue
+				}
 				quote = 0
 				if next != 0 && !isWordBoundary(next) {
 					return true
@@ -239,6 +243,11 @@ func shellWords(s string) []string {
 	for i := 0; i < len(s); i++ {
 		c := s[i]
 		if quote != 0 {
+			if quote == '\'' && c == '\'' && i+3 < len(s) && s[i+1:i+4] == `\''` {
+				cur.WriteByte('\'')
+				i += 3
+				continue
+			}
 			if c == quote {
 				quote = 0
 			} else {

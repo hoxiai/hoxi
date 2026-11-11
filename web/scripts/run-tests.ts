@@ -79,6 +79,7 @@ import "../src/__tests__/updater-state.test";
 import "../src/__tests__/auth-state.test";
 import "../src/__tests__/official-channel.test";
 import "../src/__tests__/surface-onboarding.test";
+import "../src/__tests__/layout.test";
 import "../src/__tests__/gemini-image-session.test";
 
 console.log("[test] Running Hoxi frontend unit tests...");

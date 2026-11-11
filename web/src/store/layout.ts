@@ -9,8 +9,12 @@ export type SurfaceMode = "code" | "work";
 
 export const LEFT_PANE_MIN = 220;
 export const LEFT_PANE_MAX = 360;
-export const RIGHT_PANE_MIN = 340;
-export const RIGHT_PANE_MAX = 640;
+export const RIGHT_PANE_MIN = 260;
+export const RIGHT_PANE_MAX = 2400;
+export const DEFAULT_LEFT_WIDTH = 268;
+export const DEFAULT_RIGHT_WIDTH = 420;
+export const PANE_GUTTERS = 24;
+export const CENTER_PANE_MIN = 380;
 
 export interface LayoutPrefs {
   leftNavOpen: boolean;
@@ -20,12 +24,31 @@ export interface LayoutPrefs {
 
 const DEFAULT_LAYOUT: LayoutPrefs = {
   leftNavOpen: true,
-  leftWidth: 268,
-  rightWidth: 420,
+  leftWidth: DEFAULT_LEFT_WIDTH,
+  rightWidth: DEFAULT_RIGHT_WIDTH,
 };
 
 function clampWidth(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+export function computeRightPaneCeiling(viewportWidth: number, leftPaneWidth: number): number {
+  return Math.max(
+    RIGHT_PANE_MIN,
+    Math.min(RIGHT_PANE_MAX, viewportWidth - PANE_GUTTERS - leftPaneWidth - CENTER_PANE_MIN)
+  );
+}
+
+export function clampRightPaneWidth(
+  desiredWidth: number,
+  viewportWidth: number,
+  leftPaneWidth: number
+): number {
+  return clampWidth(desiredWidth, RIGHT_PANE_MIN, computeRightPaneCeiling(viewportWidth, leftPaneWidth));
+}
+
+export function canFitRightPane(viewportWidth: number, leftPaneWidth: number): boolean {
+  return viewportWidth - PANE_GUTTERS - leftPaneWidth - RIGHT_PANE_MIN >= CENTER_PANE_MIN;
 }
 
 function initialLayout(): LayoutPrefs {

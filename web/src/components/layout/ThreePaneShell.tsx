@@ -10,7 +10,11 @@ import ParticleLogo from "../timeline/ParticleLogo";
 import {
   activateSurfaceMode,
   appSettings,
+  canFitRightPane,
+  clampRightPaneWidth,
   closeSettingsModal,
+  DEFAULT_LEFT_WIDTH,
+  DEFAULT_RIGHT_WIDTH,
   imageViewerOpen,
   isWorkSurfacePath,
   isUpdateModalOpen,
@@ -22,8 +26,6 @@ import {
   openSessionDeepLink,
   openSettingsModal,
   parseSessionHashLink,
-  RIGHT_PANE_MAX,
-  RIGHT_PANE_MIN,
   rightWidth,
   saveLayoutPrefs,
   selectSession,
@@ -44,9 +46,6 @@ const WorkspaceModal = lazy(() => import("./WorkspaceModal"));
 const ExternalHandoffModal = lazy(() => import("../handoff/ExternalHandoffModal"));
 const ModelLeaderboardModal = lazy(() => import("../models/ModelLeaderboardModal"));
 const SettingsModal = lazy(() => import("../settings/SettingsModal"));
-
-const PANE_GUTTERS = 20;
-const CENTER_PANE_MIN = 560;
 
 interface ThreePaneShellProps {
   network?: {
@@ -75,16 +74,10 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
   const settingsEverOpened = useEverOpened(() => appSettings.modalOpen);
 
   const effectiveLeftWidth = () => (leftNavOpen() ? leftWidth() : 0);
-  const rightPaneCeiling = () =>
-    Math.max(
-      RIGHT_PANE_MIN,
-      windowWidth() - PANE_GUTTERS - effectiveLeftWidth() - CENTER_PANE_MIN
-    );
   const inspectorWidth = createMemo(() =>
-    Math.min(rightWidth(), RIGHT_PANE_MAX, rightPaneCeiling())
+    clampRightPaneWidth(rightWidth(), windowWidth(), effectiveLeftWidth())
   );
-  const inspectorFits = () =>
-    windowWidth() - PANE_GUTTERS - effectiveLeftWidth() - RIGHT_PANE_MIN >= CENTER_PANE_MIN;
+  const inspectorFits = () => canFitRightPane(windowWidth(), effectiveLeftWidth());
 
   createEffect(() => {
     if (inspectorFits()) return;
@@ -173,6 +166,7 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
       if (sessionID) void selectSession(sessionID);
     };
     const onWindowResize = () => setWindowWidth(window.innerWidth);
+    onWindowResize();
     // Deep-link navigation (pending lifecycle, workspace switching, desktop
     // intents) lives in the store; the shell only feeds it hash changes.
     const focusFromLocationHash = () => openSessionDeepLink(parseSessionHashLink(window.location.hash));
@@ -192,24 +186,41 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
   });
 
   const startResize = (side: "left" | "right", ev: PointerEvent) => {
+    if (ev.button !== 0) return;
     ev.preventDefault();
     activeResizeCleanup?.();
+    setWindowWidth(window.innerWidth);
     setResizingSide(side);
+    const handle = ev.currentTarget as HTMLElement | null;
+    const pointerId = ev.pointerId;
+    if (handle?.setPointerCapture) {
+      try {
+        handle.setPointerCapture(pointerId);
+      } catch {
+        /* synthetic or already-released pointer */
+      }
+    }
+    const prevBodyCursor = document.body.style.cursor;
+    document.body.style.cursor = "col-resize";
     const startX = ev.clientX;
     const startWidth = side === "left" ? leftWidth() : inspectorWidth();
     let rafId = 0;
     let pendingX = startX;
 
-    const flushResize = () => {
-      rafId = 0;
-      const delta = pendingX - startX;
+    const applyDelta = (clientX: number) => {
+      const delta = clientX - startX;
       if (side === "left") {
-        setLeftWidth(Math.min(LEFT_PANE_MAX, Math.max(LEFT_PANE_MIN, startWidth + delta)));
+        setLeftWidth(Math.min(LEFT_PANE_MAX, Math.max(LEFT_PANE_MIN, Math.round(startWidth + delta))));
       } else {
         setRightWidth(
-          Math.min(RIGHT_PANE_MAX, rightPaneCeiling(), Math.max(RIGHT_PANE_MIN, startWidth - delta))
+          clampRightPaneWidth(Math.round(startWidth - delta), windowWidth(), effectiveLeftWidth())
         );
       }
+    };
+
+    const flushResize = () => {
+      rafId = 0;
+      applyDelta(pendingX);
     };
 
     const onMove = (e: PointerEvent) => {
@@ -218,11 +229,20 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
         rafId = requestAnimationFrame(flushResize);
       }
     };
-    const onUp = () => {
+    const onUp = (e?: PointerEvent) => {
       if (rafId) {
         cancelAnimationFrame(rafId);
         rafId = 0;
+        applyDelta(e && Number.isFinite(e.clientX) ? e.clientX : pendingX);
       }
+      if (handle?.hasPointerCapture?.(pointerId)) {
+        try {
+          handle.releasePointerCapture(pointerId);
+        } catch {
+          /* ignore */
+        }
+      }
+      document.body.style.cursor = prevBodyCursor;
       setResizingSide(null);
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
@@ -285,19 +305,32 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
 
         {/* Left Resize Handle / Collapsed Left Spacer */}
         <div
-          class={`shrink-0 rounded-full my-2 transition-[width,background-color,opacity] duration-[var(--motion-move)] ${
+          role="separator"
+          aria-orientation="vertical"
+          style={{ "--wails-draggable": "no-drag" } as any}
+          class={`group/resize relative z-20 shrink-0 my-2 select-none touch-none transition-[width,opacity] duration-[var(--motion-move)] ${
             leftNavOpen()
-              ? "w-1.5 cursor-col-resize hover:bg-[var(--accent-border)] opacity-100"
+              ? "w-2 cursor-col-resize opacity-100"
               : "w-2 pointer-events-none opacity-0"
           }`}
+          onDblClick={() => leftNavOpen() && setLeftWidth(DEFAULT_LEFT_WIDTH)}
           onPointerDown={(ev) => leftNavOpen() && startResize("left", ev)}
-        />
+        >
+          <div class="absolute inset-y-0 -left-0.5 -right-1.5" />
+          <div
+            class={`mx-auto h-full w-1 rounded-full transition-colors ${
+              resizingSide() === "left"
+                ? "bg-[var(--accent-primary)]"
+                : "bg-transparent group-hover/resize:bg-[var(--accent-border)]"
+            }`}
+          />
+        </div>
 
         {/* Center Chat Island (Kilo-style rounded pane-island) */}
         <section
           class={`pane-island relative flex-1 min-w-0 flex flex-col h-full overflow-hidden ${
             workspace.inspectorOpen && workspace.inspectorMaximized ? "hidden" : ""
-          }`}
+          } ${resizingSide() ? "pointer-events-none select-none" : ""}`}
         >
           <div
             aria-hidden={isNewConversation()}
@@ -349,17 +382,34 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
 
         {/* Right Inspector Resize Handle */}
         <div
-          class={`shrink-0 rounded-full my-2 transition-[width,background-color,opacity] duration-[var(--motion-move)] ${
+          role="separator"
+          aria-orientation="vertical"
+          style={{ "--wails-draggable": "no-drag" } as any}
+          class={`group/resize relative z-20 shrink-0 my-2 select-none touch-none transition-[width,opacity] duration-[var(--motion-move)] ${
             workspace.inspectorOpen && !workspace.inspectorMaximized
-              ? "w-1.5 cursor-col-resize hover:bg-[var(--accent-border)] opacity-100"
+              ? "w-2 cursor-col-resize opacity-100"
               : "w-0 pointer-events-none opacity-0"
           }`}
+          onDblClick={() =>
+            workspace.inspectorOpen &&
+            !workspace.inspectorMaximized &&
+            setRightWidth(DEFAULT_RIGHT_WIDTH)
+          }
           onPointerDown={(ev) =>
             workspace.inspectorOpen &&
             !workspace.inspectorMaximized &&
             startResize("right", ev)
           }
-        />
+        >
+          <div class="absolute inset-y-0 -left-0.5 -right-1.5" />
+          <div
+            class={`mx-auto h-full w-1 rounded-full transition-colors ${
+              resizingSide() === "right"
+                ? "bg-[var(--accent-primary)]"
+                : "bg-transparent group-hover/resize:bg-[var(--accent-border)]"
+            }`}
+          />
+        </div>
 
         {/* Right Inspector Island (smooth width + opacity transition, inner fixed width prevents child layout thrash) */}
         <div
@@ -374,7 +424,7 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
               : workspace.inspectorMaximized
                 ? "flex-1 min-w-0 opacity-100 translate-x-0"
                 : "shrink-0 opacity-100 translate-x-0"
-          }`}
+          } ${resizingSide() ? "pointer-events-none select-none" : ""}`}
           style={
             !workspace.inspectorOpen
               ? { width: "0px" }

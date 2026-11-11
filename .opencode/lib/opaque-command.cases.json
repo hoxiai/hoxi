@@ -1402,5 +1402,119 @@
   {
     "command": "'/usr/bin/sandbox-exec' -f '/tmp/p.sb' -- /bin/sh -c 'git status'",
     "opaque": false
+  },
+  {
+    "command": "grep -rn 'don'\\''t' src",
+    "opaque": false
+  },
+  {
+    "command": "grep 'foo'\\'; rm -rf /",
+    "opaque": true
+  },
+  {
+    "command": "echo 'a'\\'''$OPENAI_API_KEY'",
+    "opaque": true
+  },
+  {
+    "command": "node -e 'const fs = require(\"fs\"); const s = fs.readFileSync(\"/tmp/bundle.js\", \"utf8\"); const r1 = /[\"\\x27]([^\"\\x27]*productset[^\"\\x27]*)[\"\\x27]/gi; let m; while ((m = r1.exec(s)) !== null) { console.log(m[1]); } console.log((s.match(/[\\u4e00-\\u9fa5]{2,10}/g) || []).slice(0, 10), (s.match(/import\\([\"\\x27]/g) || []).length);'",
+    "opaque": true,
+    "trustedOpaque": false,
+    "autoOpaque": false
+  },
+  {
+    "command": "node -e 'const fs = require(\"fs\"); for (const f of [\"productset\", \"canvas\"]) { const p = `/tmp/rrwkj_${f}.js`; const s = fs.readFileSync(p, \"utf8\"); console.log(f, s.length); }'",
+    "opaque": true,
+    "trustedOpaque": false,
+    "autoOpaque": false
+  },
+  {
+    "command": "node -e 'const path = require(\"path\"), fs = require(\"fs\"); const files = [\"a.js\", \"b.js\"]; files.forEach((f) => console.log(fs.readFileSync(path.join(\"/tmp\", f), \"utf8\").slice(0, 20)));'",
+    "opaque": true,
+    "trustedOpaque": false,
+    "autoOpaque": false
+  },
+  {
+    "command": "node -e 'const fs = require(\"fs\"); // don\\x27t confuse comments\nconst s = fs.readFileSync(\"README.md\", \"utf8\"); console.log(process.argv.slice(2), __dirname, s.indexOf(\"truncate rm dd http fetch update delete overwrite\"));'",
+    "opaque": true,
+    "trustedOpaque": false,
+    "autoOpaque": false
+  },
+  {
+    "command": "python3 -c '# it'\\''s a read-only check\nimport json\nfor f in [\"a.json\", \"b.json\"]:\n    d = json.load(open(f\"data/{f}\", \"r\", encoding=\"utf-8\"))\n    print(d.get(\"a\"))'",
+    "opaque": true,
+    "trustedOpaque": false,
+    "autoOpaque": false
+  },
+  {
+    "command": "python3 -c 'print(open(\"\\x2e\\x65\\x6e\\x76\").read())'",
+    "opaque": true,
+    "trustedOpaque": false,
+    "autoOpaque": true
+  },
+  {
+    "command": "python3 -c 'print(open(\"\\056env\").read())'",
+    "opaque": true,
+    "trustedOpaque": false,
+    "autoOpaque": true
+  },
+  {
+    "command": "node -e 'const fs = require(\"fs\"); console.log(fs.readFileSync(\"\\u002eenv\", \"utf8\"))'",
+    "opaque": true,
+    "trustedOpaque": false,
+    "autoOpaque": true
+  },
+  {
+    "command": "python3 -c 'from pathlib import Path; Path(\"a.txt\").open(\"w\")'",
+    "opaque": true,
+    "trustedOpaque": false,
+    "autoOpaque": true
+  },
+  {
+    "command": "python3 -c 'from pathlib import Path; print((Path(\"src\") / (\".\" + \"env\")).read_text())'",
+    "opaque": true,
+    "trustedOpaque": false,
+    "autoOpaque": true
+  },
+  {
+    "command": "node -e 'const fs = require(\"fs\"); for (const f of [\"ok\", \"../.env\"]) { console.log(fs.readFileSync(\"/tmp/\" + f, \"utf8\")); }'",
+    "opaque": true,
+    "trustedOpaque": false,
+    "autoOpaque": true
+  },
+  {
+    "command": "node -e 'const fs = require(\"fs\"); let p = \"/tmp/ok.js\"; p = \".env\"; console.log(fs.readFileSync(p, \"utf8\"))'",
+    "opaque": true,
+    "trustedOpaque": false,
+    "autoOpaque": true
+  },
+  {
+    "command": "node -e 'const f = require(\"fs\"); f[\"rmSync\"](\"dist\")'",
+    "opaque": true,
+    "trustedOpaque": false,
+    "autoOpaque": true
+  },
+  {
+    "command": "node -e 'require(\"child_\" + \"process\").execSync(\"ls\")'",
+    "opaque": true,
+    "trustedOpaque": false,
+    "autoOpaque": true
+  },
+  {
+    "command": "node -e 'const p = process; console.log(p.env)'",
+    "opaque": true,
+    "trustedOpaque": false,
+    "autoOpaque": true
+  },
+  {
+    "command": "node -e 'require(\"fs\").rm\\u0053ync(\"dist\")'",
+    "opaque": true,
+    "trustedOpaque": false,
+    "autoOpaque": true
+  },
+  {
+    "command": "python3 -c 'print([open][0](\".env\").read())'",
+    "opaque": true,
+    "trustedOpaque": false,
+    "autoOpaque": true
   }
 ]

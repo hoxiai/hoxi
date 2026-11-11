@@ -129,8 +129,8 @@ func destructiveScanForms(cmd string) []string {
 		}
 	}
 	if !strings.Contains(baseCmd, "<<") || hadBenignHeredoc {
-		baseCmd = maskRemoteSSHAndSCP(baseCmd)
-		prepared = maskRemoteSSHAndSCP(prepared)
+		baseCmd = maskReadOnlyInlineScripts(maskRemoteSSHAndSCP(baseCmd))
+		prepared = maskReadOnlyInlineScripts(maskRemoteSSHAndSCP(prepared))
 	}
 	var forms []string
 	if unpacked := extractProcessSubstitutions(baseCmd); unpacked != baseCmd {
@@ -142,7 +142,7 @@ func destructiveScanForms(cmd string) []string {
 		prepared = eraseSubshells(prepared)
 	}
 	if expanded, status := concretizeLiterals(prepared); status == constApplied || status == constSecret {
-		maskedExp := maskRemoteSSHAndSCP(expanded)
+		maskedExp := maskReadOnlyInlineScripts(maskRemoteSSHAndSCP(expanded))
 		if unpacked := extractProcessSubstitutions(maskedExp); unpacked != maskedExp {
 			forms = append(forms, maskCommandDataArguments(unpacked))
 		} else {

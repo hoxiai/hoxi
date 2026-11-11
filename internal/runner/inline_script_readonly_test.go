@@ -27,6 +27,16 @@ for (t,) in conn.execute("SELECT name FROM sqlite_master WHERE type=\"table\"").
 		"cd /work/freetogo && python3 - <<'PY'\nimport re\ns = open('README.md').read()\nprint(len(re.findall(r'##', s)))\nPY",
 		`export PATH="/usr/local/go/bin:$PATH"; ./build-desktop.sh --release-only > /tmp/b.log 2>&1; rc=$?; echo "EXIT_STATUS=$rc"; tail -6 /tmp/b.log`,
 		`git rev-parse --short v1.2.9^{commit}`,
+		`grep -rn 'don'\''t' src`,
+		`node -e 'const fs = require("fs"); const s = fs.readFileSync("/tmp/bundle.js", "utf8"); const r1 = /["\x27]([^"\x27]*productset[^"\x27]*)["\x27]/gi; let m; while ((m = r1.exec(s)) !== null) { console.log(m[1]); } console.log((s.match(/[\u4e00-\u9fa5]{2,10}/g) || []).slice(0, 10), (s.match(/import\(["\x27]/g) || []).length);'`,
+		`node -e 'const fs = require("fs"); for (const f of ["productset", "canvas"]) { const p = ` + "`/tmp/rrwkj_${f}.js`" + `; const s = fs.readFileSync(p, "utf8"); console.log(f, s.length); }'`,
+		`node -e 'const path = require("path"), fs = require("fs"); const files = ["a.js", "b.js"]; files.forEach((f) => console.log(fs.readFileSync(path.join("/tmp", f), "utf8").slice(0, 20)));'`,
+		`node -e 'const fs = require("fs"); const s = fs.readFileSync("/tmp/a.js", "utf8"); console.log(process.argv.slice(2), __dirname, s.indexOf("rm -rf"), s.indexOf("truncate"), s.indexOf("dd"), s.indexOf("http fetch update delete overwrite"));'`,
+		`python3 -c '# it'\''s read-only
+import json
+for f in ["a.json", "b.json"]:
+    d = json.load(open(f"data/{f}", "r", encoding="utf-8"))
+    print(d.get("a"))'`,
 	}
 	for _, cmd := range allowed {
 		if !approvalAutoApproves(bashRequest(cmd), auto, nil, worktree) {
@@ -57,6 +67,20 @@ for (t,) in conn.execute("SELECT name FROM sqlite_master WHERE type=\"table\"").
 		`perl -e 'print 1'`,
 		`python3 -c 'print(1)' && bash run.sh`,
 		`export PATH="/tmp/x:$PATH"; F=.env; cat "$F"`,
+		`python3 -c 'print(open("\x2e\x65\x6e\x76").read())'`,
+		`python3 -c 'print(open("\056env").read())'`,
+		`node -e 'const fs = require("fs"); console.log(fs.readFileSync("\u002eenv", "utf8"))'`,
+		`python3 -c 'from pathlib import Path; Path("a.txt").open("w")'`,
+		`python3 -c 'from pathlib import Path; print((Path("src") / ("." + "env")).read_text())'`,
+		`node -e 'const fs = require("fs"); for (const f of ["ok", "../.env"]) { console.log(fs.readFileSync("/tmp/" + f, "utf8")); }'`,
+		`node -e 'const fs = require("fs"); let p = "/tmp/ok.js"; p = ".env"; console.log(fs.readFileSync(p, "utf8"))'`,
+		`node -e 'const f = require("fs"); f["rmSync"]("dist")'`,
+		`node -e 'require("child_" + "process").execSync("ls")'`,
+		`node -e 'const p = process; console.log(p.env)'`,
+		`node -e 'require("fs").rm\u0053ync("dist")'`,
+		`rm -rf dist && node -e 'console.log(1)'`,
+		`grep 'foo'\'; rm -rf /`,
+		`echo 'a'\'''$OPENAI_API_KEY'`,
 	}
 	for _, cmd := range asked {
 		if approvalAutoApproves(bashRequest(cmd), auto, nil, worktree) {

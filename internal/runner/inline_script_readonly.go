@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -9,15 +10,16 @@ import (
 // used to ask for every `python3 -c` / `node -e`, even one that only loads a
 // JSON file or queries a local SQLite table and prints. Auto mode now judges
 // inline Python and Node code by what the code shows it can do. Code that
-// only computes, reads files it names and prints runs like a script file.
+// only computes, reads non-secret files and prints runs like a script file.
 // Code that could write, delete or move files, change a database, start a
 // process, open the network, read the environment, reach the home directory,
 // load code dynamically, decrypt key material or name a secret path still
 // asks. Perl, Ruby and PHP keep asking. This guards a cooperative agent
 // against side effects it did not mean; it is not a sandbox, since an agent
 // can already write a file and run it. The destructive scan still runs over
-// the whole command afterwards. Mirrors .opencode/lib/inline-script-readonly.js;
-// `autoOpaque` in .opencode/lib/opaque-command.cases.json keeps them aligned.
+// the whole command afterwards (masking only verified read-only inline script
+// bodies). Mirrors .opencode/lib/inline-script-readonly.js; `autoOpaque` in
+// .opencode/lib/opaque-command.cases.json keeps them aligned.
 
 // scriptTrust says which interpreter scripts the opacity judge lets through.
 type scriptTrust uint8
@@ -41,29 +43,29 @@ func scriptTrustFor(mode string) scriptTrust {
 }
 
 var (
-	inlineStdWriteRe  = regexp.MustCompile(`\b(?:sys|process)\s*\.\s*(?:stdout|stderr)\s*\.\s*write\b`)
-	inlineReCompileRe = regexp.MustCompile(`\bre\s*\.\s*compile\s*\(`)
-	inlineMainGuardRe = regexp.MustCompile(`__(?:name|main)__`)
-	inlineSQLExecRe   = regexp.MustCompile(`\.\s*execute\s*\(\s*`)
-	inlineReadSQLRe   = regexp.MustCompile(`(?i)^\s*(?:select\b|pragma\s+(?:table_info|table_xinfo|index_list|index_info|index_xinfo|foreign_key_list|table_list|database_list)\b)`)
-	inlineFieldRe     = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.]*$`)
+	inlineStdWriteRe      = regexp.MustCompile(`\b(?:sys|process)\s*\.\s*(?:stdout|stderr)\s*\.\s*write\b`)
+	inlineSafeProcessRe   = regexp.MustCompile(`\bprocess\s*\.\s*(?:argv|cwd|version|versions|platform|arch|pid|ppid|hrtime|memoryUsage|cpuUsage|uptime|stdin)\b`)
+	inlineUnsafeProcessRe = regexp.MustCompile(`\bprocess\b`)
+	inlineReCompileRe     = regexp.MustCompile(`\bre\s*\.\s*compile\s*\(`)
+	inlineMainGuardRe     = regexp.MustCompile(`\b__(?:name|main|dirname|filename)__\b`)
+	inlineSQLExecRe       = regexp.MustCompile(`\.\s*execute\s*\(\s*`)
+	inlineReadSQLRe       = regexp.MustCompile(`(?i)^\s*(?:select\b|pragma\s+(?:table_info|table_xinfo|index_list|index_info|index_xinfo|foreign_key_list|table_list|database_list)\b)`)
+	inlineSQLWriteRe      = regexp.MustCompile(`(?i)\b(?:delete|drop|insert|update|alter|vacuum|attach|upsert|create|replace|reindex|pragma\s+\w+\s*=)\b`)
+	inlineFieldRe         = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.]*$`)
 
-	// inlineMutationRe names file, database and process-state changes.
-	inlineMutationRe = regexp.MustCompile(`(?i)write|appendfile|unlink|\bremove(?:dirs)?\b|rmdir|rmtree|rename|\brenames\b|mkdir|mkdtemp|mkstemp|mkfifo|mknod|chmod|chown|chflags|symlink|hardlink|link_to|truncate|utime|copyfile|copytree|shutil|tempfile|fileinput|shelve|\bdbm\b|tarfile|zipfile|\bgzip\b|\bbz2\b|\blzma\b|mmap|fcntl|logging|webbrowser|\bsignal\b|\bkill|setuid|setgid|chdir|chroot|umask|\bposix\b|\bnt\b|\bimportlib\b|\bO_(?:WRONLY|RDWR|CREAT|TRUNC|APPEND|EXCL)\b|\brm(?:sync|dir)?\b|\bcp(?:sync)?\b|\blink(?:sync)?\b|\btouch\b|\bsave\w*\s*\(|\bto_(?:csv|excel|parquet|pickle|json|html|sql|feather|hdf|stata|latex|markdown|xml|clipboard)\b|tofile|\bdump\s*\(|\bcommit\s*\(|\bbackup\b|load_extension|\b(?:delete|drop|insert|update|alter|vacuum|attach|upsert)\b|\breplace\s+into\b|\.\s*run\s*\(|\bvm\b|runin\w*context|\bconstructor\b|createrequire|globalthis|\breflect\b|\bproxy\b|\bmodule\s*\.\s*_|\bfs\w*\s*\[|\brequire\s*\([^)]*\)\s*\[|(?:^|[^.\w])(?:copy|move)\s*\(`)
-	// inlineWriteModeRe is an open mode that writes, appends or creates.
-	inlineWriteModeRe = regexp.MustCompile(`(?:^|[^\w])(?:'[rbtUs]*[wax+][rbtwaxUs+]*'|"[rbtUs]*[wax+][rbtwaxUs+]*")`)
-	// inlineReachRe reaches the home directory, the user database, key material or dynamic string construction.
-	inlineReachRe         = regexp.MustCompile(`(?i)expanduser|expandvars|homedir|userinfo|\bhome\s*\(|getpass|keyring|keychain|\bpwd\b|getpw\w*|decrypt|decipher|aesgcm|fernet|private_?key|\bfrom\s+(?:os|posix|nt)\s+import\b|\bimport\s+(?:os|posix|nt)\s+as\b`)
-	inlineDynamicStringRe = regexp.MustCompile(`\b(?:chr|ord|bytes|bytearray|memoryview|fromhex|b64decode|b64encode|unhexlify|hexlify|codecs|atob|btoa|fromCharCode|fromCodePoint|getattr|setattr|delattr|globals|locals|vars|__import__|__builtins__|__dict__|__subclasses__|__class__|__bases__|__mro__)\b|\bBuffer\s*\.\s*from\b|\\(?:x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|N\{|[0-7]{1,3})`)
-	inlineFileCallRe      = regexp.MustCompile(`\b(?:open|Path|PurePath|PosixPath|WindowsPath|readFileSync|readFile|realpathSync|realpath|statSync|lstatSync|readdirSync|accessSync|existsSync|createReadStream|scandir|listdir|lstat|readlink)\s*\(\s*`)
+	// inlineMutationRe names file, database and process-state changes on masked code.
+	inlineMutationRe = regexp.MustCompile(`(?i)\b(?:create)?write\w*\b|\bappendfile(?:sync)?\b|\bunlink(?:sync)?\b|\bremove(?:dirs)?\b|\brmdir(?:sync)?\b|\brmtree\b|\brename(?:s|sync)?\b|\bmkdir(?:sync|p)?\b|\bmkdtemp(?:sync)?\b|\bmkstemp\b|\bmkfifo\b|\bmknod\b|\bf?chmod(?:sync)?\b|\blchmod(?:sync)?\b|\bf?chown(?:sync)?\b|\blchown(?:sync)?\b|\bchflags\b|\bsymlink(?:sync)?\b|\bhardlink\b|\blink_to\b|\bf?truncate(?:sync)?\b|\bf?utimes?(?:sync)?\b|\blutimes(?:sync)?\b|\bcopyfile(?:sync)?\b|\bcopytree\b|\bshutil\b|\btempfile\b|\bfileinput\b|\bshelve\b|\bdbm\b|\btarfile\b|\bzipfile\b|\bgzip\b|\bbz2\b|\blzma\b|\bmmap\b|\bfcntl\b|\blogging\b|\bwebbrowser\b|\bsignal\b|\bkill\w*\b|\bsetuid\b|\bsetgid\b|\bchdir\b|\bchroot\b|\bumask\b|\bposix\b|\bnt\b|\bimportlib\b|\bO_(?:WRONLY|RDWR|CREAT|TRUNC|APPEND|EXCL)\b|\brm(?:sync|dir)?\b|\bcp(?:sync)?\b|\blink(?:sync)?\b|\btouch\b|\bsave\w*\s*\(|\bto_(?:csv|excel|parquet|pickle|json|html|sql|feather|hdf|stata|latex|markdown|xml|clipboard)\b|\btofile\b|\bdump\s*\(|\bcommit\s*\(|\bbackup\b|\bload_extension\b|\b(?:drop|insert|alter|vacuum|attach|upsert)\b|\breplace\s+into\b|\.\s*run\s*\(|\bvm\b|\brunin\w*context\b|\bconstructor\b|\bcreaterequire\b|\bglobalthis\b|\breflect\b|\bproxy\b|\bmodule\s*\.\s*_|\bfs\w*\s*\[|\brequire\s*\([^)]*\)\s*\[|\]\s*\(|[{,]\s*\[[^[\]]*\]\s*:|(?:^|[^.\w])(?:copy|move)\s*\(`)
+	// inlineReachRe reaches the home directory, user database, key material or aliased os imports.
+	inlineReachRe         = regexp.MustCompile(`(?i)\b(?:expanduser|expandvars|homedir|userinfo|getpass|keyring|keychain|pwd|decrypt|decipher|aesgcm|fernet|private_?key)\b|\bgetpw\w*|\bhome\s*\(|\bfrom\s+(?:os|posix|nt)\s+import\b|\bimport\s+(?:os|posix|nt)\s+as\b`)
+	inlineDynamicStringRe = regexp.MustCompile(`\b(?:chr|ord|bytes|bytearray|memoryview|fromhex|b64decode|b64encode|unhexlify|hexlify|codecs|atob|btoa|fromCharCode|fromCodePoint|getattr|setattr|delattr|globals|locals|vars|__import__|__builtins__|__dict__|__subclasses__|__class__|__bases__|__mro__|unescape|decodeURI|decodeURIComponent|TextDecoder)\b|\bBuffer\s*\.\s*(?:from|alloc\w*)\b|\bString\s*\.\s*raw\s*\(|\\(?:x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|u\{|U[0-9a-fA-F]{8}|N\{|[0-7]{1,3})`)
 	inlineSQLiteMentionRe = regexp.MustCompile(`(?i)\bsqlite3?\b|\.\s*connect\s*\(|\bconnect\s*\(`)
 	inlineSQLiteConnectRe = regexp.MustCompile(`(?:\.\s*|\b)connect\s*\(\s*`)
 	inlineURIReadOnlyRe   = regexp.MustCompile(`^\s*,\s*uri\s*=\s*True\s*,?\s*$`)
 	inlinePathlibRe       = regexp.MustCompile(`\bpathlib\b|\bPath\b`)
 	inlineReplaceRe       = regexp.MustCompile(`\.\s*replace\s*\(`)
 	inlineOSAttrRe        = regexp.MustCompile(`\bos\s*\.\s*([A-Za-z_]\w*)`)
-	inlineRequireRe       = regexp.MustCompile(`\b(?:require|import)\s*\(\s*['"]([^'"]+)['"]|\bfrom\s+['"]([^'"]+)['"]`)
-	inlineKeyFileRe       = regexp.MustCompile(`(?i)(?:\.(?:key|pem|p12|pfx|jks|keystore|ppk|asc|gpg)|(?:^|/)id_[a-z0-9]+)$`)
+	inlineKeyFileRe       = regexp.MustCompile(`(?i)(?:\.(?:key|pem|p12|pfx|jks|keystore|ppk|asc|gpg)|(?:^|/)id_[a-z0-9_.-]+)$`)
+	inlineLitKeyFileRe    = regexp.MustCompile(`(?i)(?:\.(?:key|pem|p12|pfx|jks|keystore|ppk|asc|gpg)|(?:^|/)id_(?:rsa|dsa|ecdsa|ed25519)[a-z0-9_.-]*)$`)
 
 	inlineOSReadAttrs = setOf("path", "sep", "linesep", "name", "getcwd", "stat", "lstat", "listdir", "scandir", "walk",
 		"fspath", "fsencode", "fsdecode", "devnull", "curdir", "pardir", "extsep", "altsep", "pathsep", "cpu_count",
@@ -71,14 +73,14 @@ var (
 		"platform", "arch", "EOL", "cpus", "totalmem", "freemem", "hostname", "type", "release", "uptime", "endianness",
 		"tmpdir", "loadavg", "version", "machine", "availableParallelism")
 	inlineBlockedNodeModules = setOf("child_process", "http", "https", "http2", "net", "tls", "dgram", "dns", "cluster",
-		"worker_threads", "vm", "inspector", "repl", "v8", "wasi", "module", "process", "async_hooks", "trace_events")
+		"worker_threads", "vm", "inspector", "repl", "v8", "wasi", "module", "process", "async_hooks", "trace_events", "sqlite")
+	inlineSafePyFlags   = setOf("-u", "-B", "-E", "-s", "-S", "-O", "-OO", "-q", "-I")
+	inlineSafeNodeFlags = setOf("--no-warnings", "--input-type=module", "--input-type=commonjs")
+	inlineCodeFlags     = setOf("-c", "-e", "--eval", "-p", "--print")
 )
 
 // inlineScriptsReadOnly reports whether every inline interpreter script in
-// command is Python or Node code that only reads and prints. It reuses the
-// unattended parser, so `-c`/`-e` code and quoted heredoc bodies are judged
-// exactly as the shell passes them, and code piped in or built from an
-// expansion is refused.
+// command is Python or Node code that only reads and prints.
 func inlineScriptsReadOnly(command string) bool {
 	ctx := &unattendedCtx{codeJudge: readOnlyScriptCategory}
 	return unattendedScriptCategory(command, 0, ctx) == ""
@@ -89,23 +91,35 @@ func readOnlyScriptCategory(family, code string) string {
 	if family != "python" && family != "python3" && family != "node" {
 		return unattendedCategoryDynamic
 	}
-	if cat := scanUnattendedText(code); cat != "" {
-		return cat
-	}
-	idioms := maskPrintIdioms(code)
-	masked, ok := maskReadOnlySQL(idioms)
-	if !ok || unattendedScriptCapabilityRe.MatchString(masked) {
+	isJS := family == "node"
+	rawToks, _, rawLits, ok := lexInlineScript(family, code)
+	if !ok {
 		return unattendedCategoryDynamic
 	}
-	// Query text is masked only for the capability list; a write keyword
-	// inside it still counts.
-	if inlineMutationRe.MatchString(idioms) || inlineWriteModeRe.MatchString(idioms) {
+	sqlCode := maskReadOnlySQL(code)
+	_, codeMask, _, ok := lexInlineScript(family, sqlCode)
+	if !ok {
+		return unattendedCategoryDynamic
+	}
+	pathVars, regexVars := collectInlinePathVars(family, code, rawToks)
+	masked := maskPrintIdioms(rewriteRegexExecCalls(isJS, regexVars, codeMask))
+	if cat := scanUnattendedText(masked); cat != "" {
+		return cat
+	}
+	if unattendedScriptCapabilityRe.MatchString(masked) || (isJS && inlineUnsafeProcessRe.MatchString(masked)) {
+		return unattendedCategoryDynamic
+	}
+	filesOK, openModesOK, requiresOK := validateInlineCalls(rawToks, pathVars)
+	if !requiresOK {
+		return unattendedCategoryDynamic
+	}
+	if !openModesOK || inlineMutationRe.MatchString(masked) {
 		return inlineCategoryWrites
 	}
-	if inlineSQLiteMentionRe.MatchString(idioms) && !hasOnlyReadOnlySQLiteConnect(code) {
+	if inlineSQLiteMentionRe.MatchString(masked) && !hasOnlyReadOnlySQLiteConnect(code) {
 		return inlineCategoryWrites
 	}
-	if inlineReachRe.MatchString(masked) || inlineDynamicStringRe.MatchString(code) || !hasOnlyLiteralFileCalls(code) {
+	if inlineReachRe.MatchString(masked) || inlineDynamicStringRe.MatchString(masked) || !filesOK {
 		return unattendedCategorySecret
 	}
 	if inlinePathlibRe.MatchString(masked) && inlineReplaceRe.MatchString(masked) {
@@ -116,59 +130,68 @@ func readOnlyScriptCategory(family, code string) string {
 			return inlineCategoryWrites
 		}
 	}
-	for _, m := range inlineRequireRe.FindAllStringSubmatch(masked, -1) {
-		mod := strings.TrimPrefix(m[1]+m[2], "node:")
-		if inlineBlockedNodeModules[strings.SplitN(mod, "/", 2)[0]] {
-			return unattendedCategoryDynamic
-		}
-	}
-	for _, lit := range inlineStringLiterals(code) {
-		lit = strings.TrimSpace(lit)
-		if isSecretFilePath(lit) || isSensitiveExternalReadPath(lit) || isProtectedShellReadPath(lit) || inlineKeyFileRe.MatchString(lit) {
+	for _, lit := range rawLits {
+		if isDisallowedInlineLiteral(lit) {
 			return unattendedCategorySecret
 		}
 	}
 	return ""
 }
 
-// maskPrintIdioms rewrites idioms the capability and write lists would flag
-// although they only print or match: stdout/stderr writes, re.compile, the
-// main guard, and JS template literals (their `${…}` code stays visible).
-func maskPrintIdioms(code string) string {
-	code = inlineStdWriteRe.ReplaceAllString(code, "print")
-	code = inlineReCompileRe.ReplaceAllString(code, "re.pattern(")
-	code = inlineMainGuardRe.ReplaceAllString(code, "MAIN")
-	return strings.ReplaceAll(code, "`", `"`)
+func maskPrintIdioms(codeMask string) string {
+	codeMask = inlineStdWriteRe.ReplaceAllString(codeMask, "print")
+	codeMask = inlineSafeProcessRe.ReplaceAllString(codeMask, "proc_ro")
+	codeMask = inlineReCompileRe.ReplaceAllString(codeMask, "re.pattern(")
+	return inlineMainGuardRe.ReplaceAllString(codeMask, "MAIN")
 }
 
-// maskReadOnlySQL rewrites `.execute("SELECT …")` and read-only PRAGMAs so
-// the capability list does not read them as exec. An f-string query passes
-// only when its fields are plain names. A literal that cannot be parsed
-// keeps `execute` visible.
-func maskReadOnlySQL(code string) (string, bool) {
+// maskReadOnlySQL rewrites `.execute("SELECT …")` and read-only PRAGMAs (with
+// no multi-statement `;` or SQL write keywords) to `.query("sql")` so the
+// capability list does not read them as exec.
+func maskReadOnlySQL(code string) string {
 	var b strings.Builder
 	rest := code
 	for {
 		loc := inlineSQLExecRe.FindStringIndex(rest)
 		if loc == nil {
 			b.WriteString(rest)
-			return b.String(), true
+			return b.String()
 		}
 		b.WriteString(rest[:loc[0]])
 		after := rest[loc[1]:]
 		lit, n, isF, ok := leadingPyStringLiteral(after)
-		if !ok || !inlineReadSQLRe.MatchString(lit) || (isF && !plainFStringFields(lit)) {
-			b.WriteString(rest[loc[0]:loc[1]]) // the capability list still sees execute
+		decoded, decOK := decodeInlineEscapes(false, lit, false)
+		if !ok || !decOK || strings.Contains(decoded, ";") || !inlineReadSQLRe.MatchString(decoded) ||
+			inlineSQLWriteRe.MatchString(decoded) || (isF && !plainFStringFields(lit)) {
+			b.WriteString(rest[loc[0]:loc[1]])
 			rest = after
 			continue
 		}
-		b.WriteString(`.query(""`)
+		if isF {
+			b.WriteString(`.query(f"` + extractFStringRefsOnly(lit) + `"`)
+		} else {
+			b.WriteString(`.query("sql"`)
+		}
 		rest = after[n:]
 	}
 }
 
-// leadingPyStringLiteral parses a Python string literal at the start of s and
-// returns its body, its length, and whether it is an f-string.
+func extractFStringRefsOnly(body string) string {
+	var b strings.Builder
+	for i := 0; i < len(body); i++ {
+		if body[i] == '{' && (i+1 >= len(body) || body[i+1] != '{') {
+			end := strings.IndexByte(body[i:], '}')
+			if end > 0 {
+				b.WriteString(body[i : i+end+1])
+				i += end
+			}
+		} else if body[i] == '{' || body[i] == '}' {
+			i++
+		}
+	}
+	return b.String()
+}
+
 func leadingPyStringLiteral(s string) (body string, n int, isF bool, ok bool) {
 	i := 0
 	for i < len(s) && i < 2 && strings.IndexByte("rRbBuUfF", s[i]) >= 0 {
@@ -197,8 +220,6 @@ func leadingPyStringLiteral(s string) (body string, n int, isF bool, ok bool) {
 	return "", 0, false, false
 }
 
-// plainFStringFields reports whether every `{…}` field of an f-string body is
-// a plain name or attribute path, so no code hides in the query text.
 func plainFStringFields(body string) bool {
 	for i := 0; i < len(body); i++ {
 		switch body[i] {
@@ -223,51 +244,249 @@ func plainFStringFields(body string) bool {
 	return true
 }
 
-// inlineStringLiterals returns the bodies of the quoted strings in code, for
-// the secret path check. An unterminated quote returns what was read so far.
-func inlineStringLiterals(code string) []string {
-	var out []string
-	for i := 0; i < len(code); i++ {
-		c := code[i]
-		if c != '"' && c != '\'' && c != '`' {
+func isImportBindingPos(toks []inlineTok, idx int) bool {
+	for k := idx - 1; k >= 0; k-- {
+		if toks[k].kind == "id" && toks[k].val == "import" {
+			return true
+		}
+		if toks[k].kind == "id" || (toks[k].kind == "op" && toks[k].val == ",") {
 			continue
 		}
-		var b strings.Builder
-		j := i + 1
-		for ; j < len(code) && code[j] != c; j++ {
-			if code[j] == '\\' && j+1 < len(code) {
-				j++
-			}
-			b.WriteByte(code[j])
-		}
-		out = append(out, b.String())
-		i = j
+		return false
 	}
-	return out
+	return false
 }
 
-// hasOnlyLiteralFileCalls requires every file/path call (open, Path,
-// readFileSync, realpathSync, etc.) to take a single plain string literal as
-// its first argument, refusing runtime-constructed paths like open(chr(46)+"env").
-func hasOnlyLiteralFileCalls(code string) bool {
-	locs := inlineFileCallRe.FindAllStringIndex(code, -1)
-	for _, loc := range locs {
-		after := code[loc[1]:]
-		_, n, isF, ok := leadingPyStringLiteral(after)
-		if !ok || isF {
+func validateInlineCalls(toks []inlineTok, vars map[string][]string) (filesOK, openModesOK, requiresOK bool) {
+	filesOK, openModesOK, requiresOK = true, true, true
+	for i := 0; i < len(toks); i++ {
+		t := toks[i]
+		if t.kind == "tpl" {
+			for _, sub := range t.exprs {
+				fOK, oOK, rOK := validateInlineCalls(sub, vars)
+				if !fOK {
+					filesOK = false
+				}
+				if !oOK {
+					openModesOK = false
+				}
+				if !rOK {
+					requiresOK = false
+				}
+			}
+			continue
+		}
+		if t.kind != "id" {
+			continue
+		}
+		isProp := i > 0 && toks[i-1].kind == "op" && toks[i-1].val == "."
+		if t.val == "from" && !isProp && i+1 < len(toks) && toks[i+1].kind == "str" {
+			mod := strings.TrimPrefix(toks[i+1].val, "node:")
+			if inlineBlockedNodeModules[strings.SplitN(mod, "/", 2)[0]] {
+				requiresOK = false
+			}
+		}
+		if t.val == "require" && !isProp {
+			if i+1 >= len(toks) || toks[i+1].kind != "op" || toks[i+1].val != "(" {
+				requiresOK = false
+				continue
+			}
+			closeIdx := matchingCloseParen(toks, i+1)
+			if closeIdx >= len(toks) || closeIdx != i+3 || toks[i+2].kind != "str" {
+				requiresOK = false
+				continue
+			}
+			mod := strings.TrimPrefix(toks[i+2].val, "node:")
+			if inlineBlockedNodeModules[strings.SplitN(mod, "/", 2)[0]] {
+				requiresOK = false
+			}
+		}
+		if t.val == "open" || t.val == "openSync" {
+			if i+1 >= len(toks) || toks[i+1].kind != "op" || toks[i+1].val != "(" {
+				openModesOK = false
+				continue
+			}
+			closeIdx := matchingCloseParen(toks, i+1)
+			if closeIdx >= len(toks) {
+				openModesOK = false
+				continue
+			}
+			args, ok := splitCallArgs(toks[i+2 : closeIdx])
+			if !ok || !checkOpenCallArgs(toks, i, args) {
+				openModesOK = false
+			}
+		}
+		if inlineFileCalls[t.val] {
+			if isImportBindingPos(toks, i) {
+				continue
+			}
+			if i+1 >= len(toks) || toks[i+1].kind != "op" || toks[i+1].val != "(" {
+				filesOK = false
+				continue
+			}
+			if t.val == "open" && !isPathFirstOpenCall(toks, i) {
+				continue
+			}
+			closeIdx := matchingCloseParen(toks, i+1)
+			if closeIdx >= len(toks) {
+				filesOK = false
+				continue
+			}
+			args, ok := splitCallArgs(toks[i+2 : closeIdx])
+			if !ok || !checkFileCallPaths(t.val, args, vars) {
+				filesOK = false
+			}
+		}
+	}
+	return filesOK, openModesOK, requiresOK
+}
+
+func isPathFirstOpenCall(toks []inlineTok, idx int) bool {
+	if idx == 0 || toks[idx-1].kind != "op" || toks[idx-1].val != "." || toks[idx].val == "openSync" {
+		return true
+	}
+	if idx >= 2 && toks[idx-2].kind == "id" {
+		switch toks[idx-2].val {
+		case "io", "fs", "promises", "fsPromises":
+			return true
+		}
+	}
+	return false
+}
+
+func isKeywordArg(arg []inlineTok) (string, []inlineTok, bool) {
+	if len(arg) >= 3 && arg[0].kind == "id" && arg[1].kind == "op" && arg[1].val == "=" {
+		return arg[0].val, arg[2:], true
+	}
+	return "", nil, false
+}
+
+func checkOpenCallArgs(toks []inlineTok, idx int, args [][]inlineTok) bool {
+	pathFirst := isPathFirstOpenCall(toks, idx)
+	posIdx := 0
+	for _, arg := range args {
+		if kw, val, ok := isKeywordArg(arg); ok {
+			if kw == "mode" || kw == "flags" {
+				if len(val) != 1 || val[0].kind != "str" || !inlineReadModes[val[0].val] {
+					return false
+				}
+				continue
+			}
+			if !inlineOpenKwSafe[kw] {
+				return false
+			}
+			if len(val) == 2 && kw == "buffering" && val[0].kind == "op" && val[0].val == "-" && val[1].kind == "num" {
+				continue
+			}
+			if len(val) != 1 || (val[0].kind != "str" && val[0].kind != "num" && !(val[0].kind == "id" && val[0].val == "None")) {
+				return false
+			}
+			continue
+		}
+		if pathFirst && posIdx == 0 {
+			posIdx++
+			continue
+		}
+		modePos := 0
+		if pathFirst {
+			modePos = 1
+		}
+		if posIdx == modePos {
+			if len(arg) != 1 || arg[0].kind != "str" || !inlineReadModes[arg[0].val] {
+				return false
+			}
+			posIdx++
+			continue
+		}
+		return false
+	}
+	return !pathFirst || posIdx >= 1
+}
+
+func checkFileCallPaths(fnName string, args [][]inlineTok, vars map[string][]string) bool {
+	var posArgs [][]inlineTok
+	for _, arg := range args {
+		if _, _, ok := isKeywordArg(arg); !ok {
+			posArgs = append(posArgs, arg)
+		}
+	}
+	if len(posArgs) == 0 {
+		return inlineZeroArgPathCalls[fnName]
+	}
+	if (fnName == "readFileSync" || fnName == "readFile") && len(posArgs[0]) == 1 && posArgs[0][0].kind == "num" && posArgs[0][0].val == "0" {
+		return true
+	}
+	multiSeg := fnName == "Path" || fnName == "PurePath" || fnName == "PosixPath" || fnName == "WindowsPath" || fnName == "joinpath"
+	if !multiSeg {
+		posArgs = posArgs[:1]
+	}
+	var joined []string
+	for idx, arg := range posArgs {
+		vals, ok := resolveInlinePathTokens(arg, vars, 0)
+		if !ok || len(vals) == 0 {
 			return false
 		}
-		tail := strings.TrimLeft(after[n:], " \t\r\n")
-		if len(tail) == 0 || (tail[0] != ')' && tail[0] != ',') {
-			return false
+		for _, v := range vals {
+			if isDisallowedFileCallTarget(v) {
+				return false
+			}
+		}
+		if idx == 0 {
+			joined = append([]string(nil), vals...)
+		} else {
+			joined, ok = cartesianConcat(joined, vals, true)
+			if !ok {
+				return false
+			}
+		}
+	}
+	if multiSeg && len(posArgs) > 1 {
+		for _, v := range joined {
+			if isDisallowedFileCallTarget(v) {
+				return false
+			}
 		}
 	}
 	return true
 }
 
-// hasOnlyReadOnlySQLiteConnect requires every sqlite3 connect(...) call to use
-// ":memory:" or a "file:<path>?mode=ro" URI with uri=True so connecting never
-// creates a new database file on disk.
+func isDisallowedFileCallTarget(raw string) bool {
+	if strings.ContainsRune(raw, 0) {
+		return true
+	}
+	p := strings.TrimSpace(raw)
+	if p == "" {
+		return true
+	}
+	for _, cand := range []string{p, cleanInlinePosixPath(p)} {
+		if cand == "" {
+			continue
+		}
+		if isSecretFilePath(cand) || isSensitiveExternalReadPath(cand) || isProtectedShellReadPath(cand) ||
+			inlineKeyFileRe.MatchString(cand) || unattendedSecretRe.MatchString(cand) {
+			return true
+		}
+	}
+	return false
+}
+
+func isDisallowedInlineLiteral(raw string) bool {
+	p := strings.TrimSpace(raw)
+	if p == "" {
+		return false
+	}
+	for _, cand := range []string{p, cleanInlinePosixPath(p)} {
+		if cand == "" {
+			continue
+		}
+		if isSecretFilePath(cand) || isSensitiveExternalReadPath(cand) || isProtectedShellReadPath(cand) ||
+			inlineLitKeyFileRe.MatchString(cand) || unattendedSecretRe.MatchString(cand) {
+			return true
+		}
+	}
+	return false
+}
+
 func hasOnlyReadOnlySQLiteConnect(code string) bool {
 	locs := inlineSQLiteConnectRe.FindAllStringIndex(code, -1)
 	if len(locs) == 0 {
@@ -275,8 +494,9 @@ func hasOnlyReadOnlySQLiteConnect(code string) bool {
 	}
 	for _, loc := range locs {
 		after := code[loc[1]:]
-		lit, n, isF, ok := leadingPyStringLiteral(after)
-		if !ok || isF {
+		rawLit, n, isF, ok := leadingPyStringLiteral(after)
+		lit, decOK := decodeInlineEscapes(false, rawLit, false)
+		if !ok || !decOK || isF {
 			return false
 		}
 		rest := after[n:]
@@ -285,7 +505,7 @@ func hasOnlyReadOnlySQLiteConnect(code string) bool {
 			return false
 		}
 		extraArgs := rest[:closeIdx]
-		if strings.ContainsAny(extraArgs, "(\"") {
+		if strings.ContainsAny(extraArgs, "(\"'") {
 			return false
 		}
 		if lit == ":memory:" {
@@ -302,7 +522,7 @@ func hasOnlyReadOnlySQLiteConnect(code string) bool {
 			return false
 		}
 		dbPath := strings.TrimSpace(parts[0])
-		if dbPath == "" || isSecretFilePath(dbPath) || isSensitiveExternalReadPath(dbPath) || isProtectedShellReadPath(dbPath) || inlineKeyFileRe.MatchString(dbPath) {
+		if isDisallowedFileCallTarget(dbPath) {
 			return false
 		}
 		hasModeRO := false
@@ -318,4 +538,102 @@ func hasOnlyReadOnlySQLiteConnect(code string) bool {
 		}
 	}
 	return true
+}
+
+// maskReadOnlyInlineScripts replaces the literal `-c`/`-e` code argument of a
+// top-level Python or Node segment with Q when readOnlyScriptCategory proves
+// the script only reads and prints, keeping other segments untouched.
+func maskReadOnlyInlineScripts(s string) string {
+	return mapTopLevelSegments(s, rewriteReadOnlyInlineSegment)
+}
+
+func rewriteReadOnlyInlineSegment(seg string) string {
+	spans := scanShellWordSpans(seg)
+	if len(spans) < 3 {
+		return seg
+	}
+	idx := 0
+	for idx < len(spans) && shellKeywords[spans[idx].word] {
+		idx++
+	}
+	for idx < len(spans) && envVarAssignmentWordRe.MatchString(spans[idx].word) && !strings.ContainsAny(seg[spans[idx].start:spans[idx].end], "$`<>") {
+		idx++
+	}
+	if idx < len(spans) {
+		head := filepath.Base(normalizeAbsoluteTool(spans[idx].word))
+		if head == "nohup" || head == "time" || head == "command" {
+			idx++
+			for idx < len(spans) && strings.HasPrefix(spans[idx].word, "-") {
+				if head == "command" && (spans[idx].word == "-v" || spans[idx].word == "-V") {
+					return seg
+				}
+				if spans[idx].word == "--" {
+					idx++
+					break
+				}
+				idx++
+			}
+		}
+	}
+	if idx >= len(spans) {
+		return seg
+	}
+	family, ok := inlineScriptTool(filepath.Base(normalizeAbsoluteTool(spans[idx].word)))
+	if !ok || (family != "python" && family != "python3" && family != "node") {
+		return seg
+	}
+	idx++
+	for idx < len(spans) {
+		w := spans[idx].word
+		if inlineCodeFlags[w] {
+			break
+		}
+		if (family == "node" && inlineSafeNodeFlags[w]) || (family != "node" && inlineSafePyFlags[w]) {
+			idx++
+			continue
+		}
+		return seg
+	}
+	if idx+1 >= len(spans) {
+		return seg
+	}
+	codeSpan := spans[idx+1]
+	for k := idx + 2; k < len(spans); k++ {
+		w := spans[k].word
+		if devNullWordRe.MatchString(w) || dupStreamWordRe.MatchString(w) {
+			continue
+		}
+		if redirectWordRe.MatchString(w) && k+1 < len(spans) && spans[k+1].word == "/dev/null" {
+			k++
+			continue
+		}
+		return seg
+	}
+	code, ok := unquoteStrictInlineCodeArg(seg[codeSpan.start:codeSpan.end])
+	if !ok || readOnlyScriptCategory(family, code) != "" {
+		return seg
+	}
+	return seg[:codeSpan.start] + maskedDataArgument + seg[codeSpan.end:]
+}
+
+func unquoteStrictInlineCodeArg(raw string) (string, bool) {
+	if len(raw) < 2 {
+		return "", false
+	}
+	if raw[0] == '"' && raw[len(raw)-1] == '"' {
+		inner := raw[1 : len(raw)-1]
+		for i := 0; i < len(inner); i++ {
+			if inner[i] == '\\' && i+1 < len(inner) {
+				i++
+				continue
+			}
+			if inner[i] == '"' || inner[i] == '`' {
+				return "", false
+			}
+			if inner[i] == '$' && i+1 < len(inner) && isDoubleQuoteDollarExpansion(inner[i+1]) {
+				return "", false
+			}
+		}
+	}
+	return unquoteLiteralShellScriptArg(raw)
 }
