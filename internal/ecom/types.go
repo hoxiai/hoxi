@@ -1,5 +1,7 @@
 package ecom
 
+import "encoding/json"
+
 // StoreDefaults carries store-level unit economics and compliance baselines
 // inherited automatically when a CLI command or HTTP request specifies storeId.
 type StoreDefaults struct {
@@ -215,6 +217,7 @@ type AdsAuditResult struct {
 type ListingCheckRequest struct {
 	StoreID         string   `json:"storeId,omitempty"`
 	Platform        string   `json:"platform"`
+	SourcePlatform  string   `json:"sourcePlatform,omitempty"`
 	BrandName       string   `json:"brandName,omitempty"`
 	Title           string   `json:"title,omitempty"`
 	Bullets         []string `json:"bullets,omitempty"`
@@ -225,6 +228,21 @@ type ListingCheckRequest struct {
 	MetaDescription string   `json:"metaDescription,omitempty"`
 	Handle          string   `json:"handle,omitempty"`
 	ForbiddenTerms  []string `json:"forbiddenTerms,omitempty"`
+
+	// Optional 1688 7-star seller quality & cross-border readiness fields
+	// (compatible with scraped products/<offer-id>/source-1688.json).
+	ImageCount         int                `json:"imageCount,omitempty"`
+	Images             []string           `json:"images,omitempty"`
+	HasWhiteBgImage    *bool              `json:"hasWhiteBgImage,omitempty"`
+	HasVideo           *bool              `json:"hasVideo,omitempty"`
+	AttributeCount     int                `json:"attributeCount,omitempty"`
+	Attributes         json.RawMessage    `json:"attributes,omitempty"`
+	PriceBrackets      []WholesaleBracket `json:"priceBrackets,omitempty"`
+	WeightKg           float64            `json:"weightKg,omitempty"`
+	LengthCm           float64            `json:"lengthCm,omitempty"`
+	WidthCm            float64            `json:"widthCm,omitempty"`
+	HeightCm           float64            `json:"heightCm,omitempty"`
+	CheckSellerQuality bool               `json:"checkSellerQuality,omitempty"`
 }
 
 // ListingIssue represents a single compliance, SEO, or pacing finding.

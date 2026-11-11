@@ -311,3 +311,76 @@ func TestShopifyCSVGenerateValidateAndHTTPSecurityRefusals(t *testing.T) {
 		t.Fatalf("expected 200 with inherited amazon store defaults, got %d: %s", profRec.Code, profRec.Body.String())
 	}
 }
+
+func TestCheckListing1688SellerSevenStarAudit(t *testing.T) {
+	fBool := false
+	tBool := true
+
+	// 1. Scraped source-1688.json with 7-star quality gaps & inverted MOQ brackets.
+	weakJSON := `{
+		"sourcePlatform": "1688",
+		"title": "加厚厨房硅胶餐垫耐高温硅胶锅垫防滑硅胶杯垫家用隔热垫",
+		"images": ["https://cbu01.alicdn.com/img/ibank/1.jpg", "https://cbu01.alicdn.com/img/ibank/2.jpg", "https://cbu01.alicdn.com/img/ibank/3.jpg"],
+		"hasWhiteBgImage": false,
+		"hasVideo": false,
+		"attributes": [{"name":"材质","value":"硅胶"},{"name":"风格","value":"现代简约"}],
+		"priceBrackets": [{"minQty": 2, "unitCostCNY": 15.0}, {"minQty": 100, "unitCostCNY": 16.5}],
+		"weightKg": 0.35,
+		"checkSellerQuality": true
+	}`
+	var weakReq ListingCheckRequest
+	if err := json.Unmarshal([]byte(weakJSON), &weakReq); err != nil {
+		t.Fatalf("unmarshal scraped 1688 json: %v", err)
+	}
+	weakRes, err := CheckListing(weakReq, nil)
+	if err != nil {
+		t.Fatalf("CheckListing 1688 weak failed: %v", err)
+	}
+	if weakRes.Passed {
+		t.Fatalf("expected inverted wholesale brackets to fail CheckListing, got %#v", weakRes)
+	}
+	codes := make(map[string]bool, len(weakRes.Issues))
+	for _, iss := range weakRes.Issues {
+		codes[iss.Code] = true
+	}
+	for _, want := range []string{
+		"ALIBABA_1688_MISSING_B2B_INTENT",
+		"ALIBABA_1688_KEYWORD_STUFFING",
+		"ALIBABA_1688_IMAGE_COUNT_LOW",
+		"ALIBABA_1688_WHITE_BG_MISSING",
+		"ALIBABA_1688_VIDEO_MISSING",
+		"ALIBABA_1688_ATTRIBUTES_SPARSE",
+		"ALIBABA_1688_INVALID_PRICE_TIERS",
+		"ALIBABA_1688_PACKAGING_INCOMPLETE",
+	} {
+		if !codes[want] {
+			t.Fatalf("expected issue code %s in 1688 7-star audit, got %#v", want, weakRes.Issues)
+		}
+	}
+
+	// Ensure explicit bool pointer helper works too.
+	_ = fBool
+
+	// 2. Clean 7-star 1688 listing ready for domestic B2B + Qingpu cross-border sync.
+	cleanAttrs := json.RawMessage(`[{"name":"材质","value":"食品级硅胶"},{"name":"尺寸","value":"40x30cm"},{"name":"克重","value":"280g"},{"name":"耐温","value":"-40~230℃"},{"name":"产地","value":"广东阳江"},{"name":"装箱数","value":"60片/箱"},{"name":"支持定制","value":"是"},{"name":"货号","value":"SP-MAT-01"}]`)
+	cleanRes, err := CheckListing(ListingCheckRequest{
+		Platform:           "1688",
+		Title:              "源头厂家跨境专供食品级硅胶隔热餐垫厨房防滑沥水垫一件代发批发",
+		ImageCount:         5,
+		HasWhiteBgImage:    &tBool,
+		HasVideo:           &tBool,
+		Attributes:         cleanAttrs,
+		PriceBrackets:      []WholesaleBracket{{MinQty: 2, UnitCostCNY: 16.8}, {MinQty: 50, UnitCostCNY: 14.5}, {MinQty: 300, UnitCostCNY: 12.9}},
+		WeightKg:           0.28,
+		LengthCm:           41,
+		WidthCm:            31,
+		HeightCm:           1.5,
+		CheckSellerQuality: true,
+	}, nil)
+	if err != nil {
+		t.Fatalf("CheckListing 1688 clean failed: %v", err)
+	}
+	if !cleanRes.Passed || cleanRes.Score != 100 || len(cleanRes.Issues) != 0 {
+		t.Fatalf("expected clean 7-star 1688 listing to pass with score 100, got %#v", cleanRes)
+	}
+}

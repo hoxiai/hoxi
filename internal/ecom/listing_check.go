@@ -1,6 +1,7 @@
 package ecom
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -41,11 +42,17 @@ var (
 	cnAdLawSuperlatives = []string{
 		"国家级", "最高级", "最佳", "第一", "唯一", "顶级", "极品", "绝对", "销量冠军", "全网最低", "史无前例", "100%有效",
 	}
+	b2b1688IntentTerms = []string{
+		"批发", "代发", "源头", "厂家", "工厂", "定制", "跨境", "现货", "专供", "外贸", "贴牌", "oem", "odm",
+	}
 )
 
 // CheckListing runs deterministic byte-count, compliance, SEO, and video-script
 // pacing checks for Amazon, TikTok Shop, Shopify, and 1688 listings.
 func CheckListing(req ListingCheckRequest, defaults *StoreDefaults) (ListingCheckResult, error) {
+	if strings.TrimSpace(req.Platform) == "" && strings.TrimSpace(req.SourcePlatform) != "" {
+		req.Platform = req.SourcePlatform
+	}
 	if defaults != nil {
 		if strings.TrimSpace(req.Platform) == "" {
 			req.Platform = defaults.Platform
@@ -204,17 +211,7 @@ func CheckListing(req ListingCheckRequest, defaults *StoreDefaults) (ListingChec
 		}
 
 	case "1688":
-		if title != "" {
-			unitWeight := cjkWeightedUnits(title)
-			if unitWeight > 60 {
-				addIssue("error", "ALIBABA_1688_TITLE_OVERFLOW", "title", fmt.Sprintf("1688 title exceeds 60-byte/30-Chinese-char ceiling (weighted length=%d).", unitWeight), "", "Trim to <= 30 Chinese chars (60 weighted units).")
-			} else if unitWeight < 36 {
-				addIssue("warning", "ALIBABA_1688_TITLE_SHORT", "title", fmt.Sprintf("1688 title uses %d/60 weighted units; B2B wholesale search slots are underutilized.", unitWeight), "", "Include 源头厂家/一件代发/跨境专供 + core material + product word.")
-			}
-		}
-		checkPhraseList(lowerCorpus, cnAdLawSuperlatives, func(hit string) {
-			addIssue("error", "CN_AD_LAW_SUPERLATIVE", "corpus", "China Advertising Law (广告法) prohibits absolute superlative claims.", hit, "Replace with objective specifications or verified test metrics.")
-		})
+		audit1688Listing(req, title, lowerCorpus, addIssue)
 	}
 
 	// Custom store-level forbidden terms (e.g. competitor trademarks or brand blacklist).
@@ -379,4 +376,154 @@ func cjkWeightedUnits(s string) int {
 		}
 	}
 	return units
+}
+
+func audit1688Listing(req ListingCheckRequest, title, lowerCorpus string, addIssue func(sev, code, field, msg, matched, suggestion string)) {
+	if title == "" {
+		addIssue("error", "ALIBABA_1688_EMPTY_TITLE", "title", "1688 product title is required.", "", "Compose a 24–30 Chinese char title: 源头厂家/跨境专供 + 材质规格 + 核心品类词 + 一件代发/批发.")
+	} else {
+		unitWeight := cjkWeightedUnits(title)
+		if unitWeight > 60 {
+			addIssue("error", "ALIBABA_1688_TITLE_OVERFLOW", "title", fmt.Sprintf("1688 title exceeds 60-byte/30-Chinese-char ceiling (weighted length=%d).", unitWeight), "", "Trim to <= 30 Chinese chars (60 weighted units).")
+		} else if unitWeight < 36 {
+			addIssue("warning", "ALIBABA_1688_TITLE_SHORT", "title", fmt.Sprintf("1688 title uses %d/60 weighted units; B2B wholesale search slots are underutilized.", unitWeight), "", "Include 源头厂家/一件代发/跨境专供 + core material + product word.")
+		}
+		lowerTitle := strings.ToLower(title)
+		hasB2BIntent := false
+		for _, kw := range b2b1688IntentTerms {
+			if containsPhraseBoundary(lowerTitle, kw) {
+				hasB2BIntent = true
+				break
+			}
+		}
+		if !hasB2BIntent {
+			addIssue("warning", "ALIBABA_1688_MISSING_B2B_INTENT", "title", "1688 title lacks B2B wholesale or cross-border supply intent keywords.", "", "Add B2B buyer intent words such as 源头厂家, 一件代发, 跨境专供, 定制, or 批发.")
+		}
+		if stuffed := repeated1688TitlePhrase(title); stuffed != "" {
+			addIssue("warning", "ALIBABA_1688_KEYWORD_STUFFING", "title", fmt.Sprintf("1688 title repeats %q >=3 times, risking search demotion for keyword stuffing.", stuffed), stuffed, "Replace duplicate words with distinct material, scenario, or specification modifiers.")
+		}
+	}
+
+	checkPhraseList(lowerCorpus, cnAdLawSuperlatives, func(hit string) {
+		addIssue("error", "CN_AD_LAW_SUPERLATIVE", "corpus", "China Advertising Law (广告法) prohibits absolute superlative claims.", hit, "Replace with objective specifications or verified test metrics.")
+	})
+
+	imgCount := req.ImageCount
+	if imgCount == 0 && len(req.Images) > 0 {
+		imgCount = len(req.Images)
+	}
+	if imgCount > 0 || req.CheckSellerQuality {
+		if imgCount < 5 {
+			addIssue("warning", "ALIBABA_1688_IMAGE_COUNT_LOW", "images", fmt.Sprintf("1688 main gallery has %d image(s); 7-star quality requires >= 5 800x800+ images.", imgCount), "", "Supply >= 5 main images (selling-point hero, scenario, detail, spec/dimension card, and pure-white-bg slot #5 via qingpu-mcp generate_ecommerce_image).")
+		}
+	}
+	if req.HasWhiteBgImage != nil {
+		if !*req.HasWhiteBgImage {
+			addIssue("warning", "ALIBABA_1688_WHITE_BG_MISSING", "hasWhiteBgImage", "Missing clean pure-white background product image (1688 5th gallery slot / cross-border channel pool requirement).", "", "Run qingpu-mcp edit_product_image(mode=\"image-bg-remove\") or generate_ecommerce_image(imageType=\"white-bg\") to produce a clean white-background asset.")
+		}
+	} else if req.CheckSellerQuality {
+		addIssue("warning", "ALIBABA_1688_WHITE_BG_UNVERIFIED", "hasWhiteBgImage", "5th pure-white background image status was not verified.", "", "Verify slot #5 is a pure-white logo-free product image (--white-bg true/false).")
+	}
+	if req.HasVideo != nil && !*req.HasVideo {
+		addIssue("warning", "ALIBABA_1688_VIDEO_MISSING", "hasVideo", "Main gallery video is missing, lowering 1688 7-star conversion weight.", "", "Upload a 9–30s 1:1 or 3:4 factory/product demonstration video.")
+	}
+
+	attrCount := req.AttributeCount
+	if attrCount == 0 && len(req.Attributes) > 0 {
+		attrCount = countJSONAttributes(req.Attributes)
+	}
+	if (attrCount > 0 && attrCount < 8) || (req.CheckSellerQuality && attrCount < 8) {
+		addIssue("warning", "ALIBABA_1688_ATTRIBUTES_SPARSE", "attributeCount", fmt.Sprintf("Only %d structured product attribute(s) filled; 1688 filter traffic & Ozon/WB mapping expect >= 8.", attrCount), "", "Complete material, dimensions, net weight, packing quantity, origin, model, and customization attributes.")
+	}
+
+	if len(req.PriceBrackets) > 0 {
+		for i, b := range req.PriceBrackets {
+			if b.MinQty <= 0 || b.UnitCostCNY <= 0 {
+				addIssue("error", "ALIBABA_1688_INVALID_PRICE_TIERS", "priceBrackets", fmt.Sprintf("Wholesale bracket #%d has non-positive minQty (%d) or unitCostCNY (%.2f).", i+1, b.MinQty, b.UnitCostCNY), "", "Ensure every MOQ tier has minQty > 0 and unitCostCNY > 0.")
+				break
+			}
+			if i > 0 {
+				prev := req.PriceBrackets[i-1]
+				if b.MinQty <= prev.MinQty || b.UnitCostCNY > prev.UnitCostCNY {
+					addIssue("error", "ALIBABA_1688_INVALID_PRICE_TIERS", "priceBrackets", fmt.Sprintf("Wholesale brackets must have strictly increasing minQty and non-increasing unit price (got %d@¥%.2f -> %d@¥%.2f).", prev.MinQty, prev.UnitCostCNY, b.MinQty, b.UnitCostCNY), "", "Order brackets ascending by MOQ with progressively lower unit prices (e.g. 2:19.8,50:17.5,200:15.8).")
+					break
+				}
+			}
+		}
+		if len(req.PriceBrackets) < 2 {
+			addIssue("warning", "ALIBABA_1688_SINGLE_PRICE_TIER", "priceBrackets", "Only 1 wholesale price tier configured; multi-tier MOQ pricing improves B2B inquiry & dropship conversion.", "", "Configure 2–3 MOQ tiers (dropship/sample -> small wholesale -> carton volume).")
+		}
+	} else if req.CheckSellerQuality {
+		addIssue("warning", "ALIBABA_1688_SINGLE_PRICE_TIER", "priceBrackets", "Wholesale MOQ price brackets are missing.", "", "Provide --brackets minQty:cny,... (2–3 MOQ tiers recommended).")
+	}
+
+	hasAnyPack := req.WeightKg > 0 || req.LengthCm > 0 || req.WidthCm > 0 || req.HeightCm > 0
+	hasFullPack := req.WeightKg > 0 && req.LengthCm > 0 && req.WidthCm > 0 && req.HeightCm > 0
+	if (hasAnyPack && !hasFullPack) || (req.CheckSellerQuality && !hasFullPack) {
+		addIssue("warning", "ALIBABA_1688_PACKAGING_INCOMPLETE", "packaging", "Cross-border unit weight (weightKg) or package dimensions (LxWxH cm) are incomplete.", "", "Fill accurate unit weight and LxWxH cm for 1688 cross-border pool & Ozon/WB/Amazon volumetric freight.")
+	}
+}
+
+func repeated1688TitlePhrase(title string) string {
+	var (
+		hanRunes      []rune
+		firstRepeated string
+		counts        = make(map[string]int)
+	)
+	flushHan := func() {
+		if firstRepeated != "" {
+			hanRunes = hanRunes[:0]
+			return
+		}
+		// Non-overlapping greedy scan per bigram avoids counting "AAA" as 2x "AA".
+		seenPos := make(map[string]int)
+		for i := 0; i+1 < len(hanRunes); i++ {
+			bg := string(hanRunes[i : i+2])
+			if prev, ok := seenPos[bg]; ok && i < prev+2 {
+				continue
+			}
+			seenPos[bg] = i
+			counts[bg]++
+			if counts[bg] >= 3 {
+				firstRepeated = bg
+				break
+			}
+		}
+		hanRunes = hanRunes[:0]
+	}
+	for _, r := range title {
+		if unicode.Is(unicode.Han, r) {
+			hanRunes = append(hanRunes, r)
+		} else {
+			flushHan()
+		}
+	}
+	flushHan()
+	if firstRepeated != "" {
+		return firstRepeated
+	}
+	wordCounts := make(map[string]int)
+	for _, tok := range strings.FieldsFunc(strings.ToLower(title), func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9')
+	}) {
+		if len(tok) >= 3 {
+			wordCounts[tok]++
+			if wordCounts[tok] >= 3 {
+				return tok
+			}
+		}
+	}
+	return ""
+}
+
+func countJSONAttributes(raw json.RawMessage) int {
+	var arr []any
+	if err := json.Unmarshal(raw, &arr); err == nil {
+		return len(arr)
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(raw, &obj); err == nil {
+		return len(obj)
+	}
+	return 0
 }

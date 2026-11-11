@@ -24,7 +24,7 @@ import (
 const (
 	mcpOAuthClientID   = "hoxi-desktop"
 	mcpOAuthClientName = "Hoxi"
-	mcpOAuthScopes     = "mcp:tools mcp:profile:read mcp:theme:read"
+	mcpOAuthScopes     = "mcp:tools mcp:profile:read mcp:theme:read mcp:theme:plan"
 	mcpOAuthSessionTTL = 5 * time.Minute
 )
 

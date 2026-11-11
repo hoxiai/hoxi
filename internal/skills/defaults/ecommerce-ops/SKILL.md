@@ -4,7 +4,7 @@ description: Cross-border e-commerce operations workflow for Amazon, TikTok Shop
 compatibility: Built-in Hoxi CLI (`hoxi ecom` + `hoxi doc` + `hoxi image`) + Store-Isolated `hoxi_browser`
 metadata:
   author: "Hoxi"
-  version: "1.0.0"
+  version: "1.1.0"
 ---
 
 # 跨境电商全链路运营技能 (`ecommerce-ops`)
@@ -119,6 +119,12 @@ hoxi ecom listing-check \
 
 # 1688 跨境选品/批发标题 60 字节利用率与《广告法》极限词扫描
 hoxi ecom listing-check --platform 1688 --title "源头厂家跨境专供硅胶防滑厨房隔热垫一件代发定制批发"
+
+# 1688 店铺商品 7 星质量全量体检（支持直接读取抓取落盘的 source-1688.json，校验第 5 张白底图、主图数、属性完整度、阶梯价与跨境体积重）
+hoxi ecom listing-check \
+  --platform 1688 \
+  --seller-7star \
+  --from-json "products/881234567890/source-1688.json"
 ```
 
 ### 4. Shopify 多变体导入表构建与校验（`hoxi ecom shopify-csv`）
@@ -148,3 +154,5 @@ hoxi ecom shopify-csv --in "output/shopify-import.csv"
    - 提炼竞品差评痛点撰写五点描述 / TikTok 脚本 → 必须运行 `hoxi ecom listing-check` 验证 `passed: true` 且采用返回的 `trimmedSearchTerms`（确保严格 `<= 249` UTF-8 字节、无重复词、无 EPA/FDA/导流违禁词） → 需要主图/场景图时调用 `hoxi image generate`。
 3. **周度广告优化复盘**：
    - 读取用户上传的广告搜索词报表 → 运行 `hoxi ecom ads-audit --out output/weekly-ads-plan.xlsx` → 输出「本周止血否词清单 + 降竞价清单（附精确目标出价） + 自动转精准拓词清单」。
+4. **1688 店铺抓品体检 → 轻铺 AI MCP（`qingpu-mcp`）修图生图 → 多渠道上品**：
+   - 通过绑定独立环境的 `hoxi_browser` 抓取 1688 店铺商品（标题、`alicdn.com` 原图、属性、SKU、阶梯价与包装尺寸克重）落盘至 `products/<offer-id>/source-1688.json` → 运行 `hoxi ecom listing-check --platform 1688 --seller-7star --from-json ...` 诊断 7 星质量短板 → 调用已授权 `qingpu-mcp` 的 `sync_source_product`、`edit_product_image`（`image-bg-remove` 抠纯白底 / `image-enhancer` 超清 / `image-to-image` 改图）与 `generate_ecommerce_image`（覆盖 `1688`、`ozon`、`wb`、`amazon`、`tiktok`、`shopee`、`aliexpress`、`temu`、`taobao`）并通过 `get_task_result` 拉回 COS 成图 → 目标为 `ozon` / `wb` 时直接走 `enqueue_pipeline` → `resolve_elicitation` → `refresh_and_submit_draft` 提交渠道草稿，其他渠道结合 `hoxi ecom` 与 `hoxi_browser` 预填后台草稿并经人工确认后发布。

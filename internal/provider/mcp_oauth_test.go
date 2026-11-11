@@ -178,6 +178,10 @@ func TestProviderMCPOAuthPKCEAndProvisioning(t *testing.T) {
 	if parsedAuthURL.Query().Get("code_challenge_method") != "S256" {
 		t.Fatalf("expected S256 challenge method, got %q", parsedAuthURL.Query().Get("code_challenge_method"))
 	}
+	scopeParam := parsedAuthURL.Query().Get("scope")
+	if !strings.Contains(scopeParam, "mcp:tools") || !strings.Contains(scopeParam, "mcp:theme:plan") {
+		t.Fatalf("expected OAuth scope to include mcp:tools and mcp:theme:plan, got %q", scopeParam)
+	}
 	if redirectURI != server.URL+"/user/mcp-authorize" {
 		t.Fatalf("unexpected redirect_uri: %q", redirectURI)
 	}

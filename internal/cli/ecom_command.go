@@ -147,30 +147,20 @@ func runEcomProfit(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if dims != "" {
-		parts := strings.FieldsFunc(strings.ToLower(dims), func(r rune) bool { return r == 'x' || r == '*' || r == ',' })
-		if len(parts) != 3 {
-			fmt.Fprintln(stderr, "Error: --dims-cm must be formatted as LxWxH (e.g. 30x20x10)")
+		l, w, h, dErr := parseDimsCmFlag(dims)
+		if dErr != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", dErr)
 			return 2
 		}
-		req.LengthCm, _ = strconv.ParseFloat(strings.TrimSpace(parts[0]), 64)
-		req.WidthCm, _ = strconv.ParseFloat(strings.TrimSpace(parts[1]), 64)
-		req.HeightCm, _ = strconv.ParseFloat(strings.TrimSpace(parts[2]), 64)
+		req.LengthCm, req.WidthCm, req.HeightCm = l, w, h
 	}
 	if brackets != "" {
-		for _, seg := range strings.Split(brackets, ",") {
-			kv := strings.SplitN(strings.TrimSpace(seg), ":", 2)
-			if len(kv) != 2 {
-				fmt.Fprintf(stderr, "Error: invalid --brackets entry %q (expected minQty:unitCostCNY)\n", seg)
-				return 2
-			}
-			q, qErr := strconv.Atoi(strings.TrimSpace(kv[0]))
-			c, cErr := strconv.ParseFloat(strings.TrimSpace(kv[1]), 64)
-			if qErr != nil || cErr != nil || q <= 0 || c <= 0 {
-				fmt.Fprintf(stderr, "Error: invalid --brackets entry %q\n", seg)
-				return 2
-			}
-			req.PriceBrackets = append(req.PriceBrackets, ecom.WholesaleBracket{MinQty: q, UnitCostCNY: c})
+		parsedBrackets, bErr := parseWholesaleBracketsFlag(brackets)
+		if bErr != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", bErr)
+			return 2
 		}
+		req.PriceBrackets = parsedBrackets
 	}
 	res, err := ecom.CalculateProfit(req, loadCLIStoreDefaults(req.StoreID))
 	if err != nil {
@@ -234,29 +224,42 @@ func runEcomListingCheck(args []string, cwd string, stdout, stderr io.Writer) in
 	fs := flag.NewFlagSet("hoxi ecom listing-check", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	var (
-		req       ecom.ListingCheckRequest
+		cliReq    ecom.ListingCheckRequest
 		bullets   stringListFlag
 		forbidden string
 		fromJSON  string
+		whiteBg   string
+		hasVideo  string
+		brackets  string
+		dims      string
 		strict    bool
 	)
-	fs.StringVar(&req.StoreID, "store", "", "bound store ID")
-	fs.StringVar(&req.Platform, "platform", "", "platform: amazon | tiktok-shop | shopify | 1688")
-	fs.StringVar(&req.BrandName, "brand", "", "brand name")
-	fs.StringVar(&req.Title, "title", "", "product listing title")
+	fs.StringVar(&cliReq.StoreID, "store", "", "bound store ID")
+	fs.StringVar(&cliReq.Platform, "platform", "", "platform: amazon | tiktok-shop | shopify | 1688")
+	fs.StringVar(&cliReq.BrandName, "brand", "", "brand name")
+	fs.StringVar(&cliReq.Title, "title", "", "product listing title")
 	fs.Var(&bullets, "bullet", "bullet point (repeatable)")
-	fs.StringVar(&req.Description, "description", "", "product description")
-	fs.StringVar(&req.SearchTerms, "search-terms", "", "Amazon backend Search Terms (checked against 249 UTF-8 byte cap)")
-	fs.StringVar(&req.VideoScript, "script", "", "TikTok Shop short-video spoken script")
-	fs.StringVar(&req.MetaTitle, "meta-title", "", "Shopify SEO title")
-	fs.StringVar(&req.MetaDescription, "meta-description", "", "Shopify SEO meta description")
-	fs.StringVar(&req.Handle, "handle", "", "Shopify URL handle")
+	fs.StringVar(&cliReq.Description, "description", "", "product description")
+	fs.StringVar(&cliReq.SearchTerms, "search-terms", "", "Amazon backend Search Terms (checked against 249 UTF-8 byte cap)")
+	fs.StringVar(&cliReq.VideoScript, "script", "", "TikTok Shop short-video spoken script")
+	fs.StringVar(&cliReq.MetaTitle, "meta-title", "", "Shopify SEO title")
+	fs.StringVar(&cliReq.MetaDescription, "meta-description", "", "Shopify SEO meta description")
+	fs.StringVar(&cliReq.Handle, "handle", "", "Shopify URL handle")
 	fs.StringVar(&forbidden, "forbidden", "", "comma-separated forbidden words")
-	fs.StringVar(&fromJSON, "from-json", "", "optional JSON file containing ListingCheckRequest")
+	fs.IntVar(&cliReq.ImageCount, "images", 0, "1688 main gallery image count")
+	fs.StringVar(&whiteBg, "white-bg", "", "1688 5th pure-white-bg image present: true | false")
+	fs.StringVar(&hasVideo, "has-video", "", "1688 main gallery video present: true | false")
+	fs.IntVar(&cliReq.AttributeCount, "attr-count", 0, "1688 filled product attribute count")
+	fs.StringVar(&brackets, "brackets", "", "1688 wholesale brackets 'minQty:cny,...'")
+	fs.Float64Var(&cliReq.WeightKg, "weight-kg", 0, "1688 cross-border unit weight in kg")
+	fs.StringVar(&dims, "dims-cm", "", "1688 cross-border package dimensions LxWxH in cm")
+	fs.BoolVar(&cliReq.CheckSellerQuality, "seller-7star", false, "run full 1688 7-star seller quality & cross-border readiness audit")
+	fs.StringVar(&fromJSON, "from-json", "", "optional JSON file containing ListingCheckRequest or scraped source-1688.json")
 	fs.BoolVar(&strict, "strict", false, "exit 1 when compliance errors are detected")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+	var req ecom.ListingCheckRequest
 	if strings.TrimSpace(fromJSON) != "" {
 		safeJSON, err := resolveSafeDocPath(fromJSON, cwd)
 		if err != nil {
@@ -268,10 +271,86 @@ func runEcomListingCheck(args []string, cwd string, stdout, stderr io.Writer) in
 			fmt.Fprintf(stderr, "Error reading --from-json: %v\n", err)
 			return 1
 		}
-		if err := json.Unmarshal(raw, &req); err != nil {
+		if err := unmarshalListingCheckJSON(raw, &req); err != nil {
 			fmt.Fprintf(stderr, "Error parsing --from-json: %v\n", err)
 			return 1
 		}
+	}
+	setFlags := make(map[string]bool)
+	fs.Visit(func(f *flag.Flag) { setFlags[f.Name] = true })
+	if setFlags["store"] {
+		req.StoreID = cliReq.StoreID
+	}
+	if setFlags["platform"] {
+		req.Platform = cliReq.Platform
+	}
+	if setFlags["brand"] {
+		req.BrandName = cliReq.BrandName
+	}
+	if setFlags["title"] {
+		req.Title = cliReq.Title
+	}
+	if setFlags["description"] {
+		req.Description = cliReq.Description
+	}
+	if setFlags["search-terms"] {
+		req.SearchTerms = cliReq.SearchTerms
+	}
+	if setFlags["script"] {
+		req.VideoScript = cliReq.VideoScript
+	}
+	if setFlags["meta-title"] {
+		req.MetaTitle = cliReq.MetaTitle
+	}
+	if setFlags["meta-description"] {
+		req.MetaDescription = cliReq.MetaDescription
+	}
+	if setFlags["handle"] {
+		req.Handle = cliReq.Handle
+	}
+	if setFlags["images"] {
+		req.ImageCount = cliReq.ImageCount
+	}
+	if setFlags["attr-count"] {
+		req.AttributeCount = cliReq.AttributeCount
+	}
+	if setFlags["weight-kg"] {
+		req.WeightKg = cliReq.WeightKg
+	}
+	if setFlags["seller-7star"] {
+		req.CheckSellerQuality = cliReq.CheckSellerQuality
+	}
+	if whiteBg != "" {
+		b, bErr := parseOptionalBoolFlag("--white-bg", whiteBg)
+		if bErr != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", bErr)
+			return 2
+		}
+		req.HasWhiteBgImage = b
+	}
+	if hasVideo != "" {
+		b, bErr := parseOptionalBoolFlag("--has-video", hasVideo)
+		if bErr != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", bErr)
+			return 2
+		}
+		req.HasVideo = b
+	}
+	if dims != "" {
+		l, w, h, dErr := parseDimsCmFlag(dims)
+		if dErr != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", dErr)
+			return 2
+		}
+		req.LengthCm, req.WidthCm, req.HeightCm = l, w, h
+	}
+	if brackets != "" {
+		parsedBrackets, bErr := parseWholesaleBracketsFlag(brackets)
+		if bErr != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", bErr)
+			return 2
+		}
+		req.PriceBrackets = parsedBrackets
 	}
 	if len(bullets) > 0 {
 		req.Bullets = append(req.Bullets, bullets...)
@@ -396,6 +475,138 @@ func runEcomShopifyCSV(args []string, cwd string, stdout, stderr io.Writer) int 
 	return 0
 }
 
+func parseDimsCmFlag(dims string) (float64, float64, float64, error) {
+	parts := strings.FieldsFunc(strings.ToLower(dims), func(r rune) bool { return r == 'x' || r == '*' || r == ',' })
+	if len(parts) != 3 {
+		return 0, 0, 0, fmt.Errorf("--dims-cm must be formatted as LxWxH (e.g. 30x20x10)")
+	}
+	l, lErr := strconv.ParseFloat(strings.TrimSpace(parts[0]), 64)
+	w, wErr := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64)
+	h, hErr := strconv.ParseFloat(strings.TrimSpace(parts[2]), 64)
+	if lErr != nil || wErr != nil || hErr != nil || l <= 0 || w <= 0 || h <= 0 {
+		return 0, 0, 0, fmt.Errorf("invalid --dims-cm %q (expected positive LxWxH numbers in cm)", dims)
+	}
+	return l, w, h, nil
+}
+
+func parseWholesaleBracketsFlag(raw string) ([]ecom.WholesaleBracket, error) {
+	var out []ecom.WholesaleBracket
+	for _, seg := range strings.Split(raw, ",") {
+		kv := strings.SplitN(strings.TrimSpace(seg), ":", 2)
+		if len(kv) != 2 {
+			return nil, fmt.Errorf("invalid --brackets entry %q (expected minQty:unitCostCNY)", seg)
+		}
+		q, qErr := strconv.Atoi(strings.TrimSpace(kv[0]))
+		c, cErr := strconv.ParseFloat(strings.TrimSpace(kv[1]), 64)
+		if qErr != nil || cErr != nil || q <= 0 || c <= 0 {
+			return nil, fmt.Errorf("invalid --brackets entry %q", seg)
+		}
+		out = append(out, ecom.WholesaleBracket{MinQty: q, UnitCostCNY: c})
+	}
+	return out, nil
+}
+
+func parseOptionalBoolFlag(flagName, raw string) (*bool, error) {
+	b, err := strconv.ParseBool(strings.TrimSpace(raw))
+	if err != nil {
+		return nil, fmt.Errorf("invalid %s value %q (expected true or false)", flagName, raw)
+	}
+	return &b, nil
+}
+
+type workProductJSONFallback struct {
+	TitleCn    string   `json:"titleCn"`
+	WeightG    float64  `json:"weightG"`
+	DimsCm     string   `json:"dimsCm"`
+	StepPrices []struct {
+		MOQ      int     `json:"moq"`
+		PriceRmb float64 `json:"priceRmb"`
+	} `json:"stepPrices"`
+	Source1688 *struct {
+		TitleCn           string          `json:"titleCn"`
+		Images            []string        `json:"images"`
+		Attributes        json.RawMessage `json:"attributes"`
+		ActualWeightG     float64         `json:"actualWeightG"`
+		ChargeableWeightG float64         `json:"chargeableWeightG"`
+		DimsCm            string          `json:"dimsCm"`
+		DimensionsCm      *struct {
+			LengthCm float64 `json:"lengthCm"`
+			WidthCm  float64 `json:"widthCm"`
+			HeightCm float64 `json:"heightCm"`
+		} `json:"dimensionsCm"`
+		StepPrices []struct {
+			MOQ      int     `json:"moq"`
+			PriceRmb float64 `json:"priceRmb"`
+		} `json:"stepPrices"`
+	} `json:"source1688"`
+}
+
+func unmarshalListingCheckJSON(raw []byte, req *ecom.ListingCheckRequest) error {
+	if err := json.Unmarshal(raw, req); err != nil {
+		return err
+	}
+	var fb workProductJSONFallback
+	if err := json.Unmarshal(raw, &fb); err != nil {
+		return err
+	}
+	if strings.TrimSpace(req.Platform) == "" && strings.TrimSpace(req.SourcePlatform) == "" && fb.Source1688 != nil {
+		req.SourcePlatform = "1688"
+	}
+	if strings.TrimSpace(req.Title) == "" {
+		if fb.TitleCn != "" {
+			req.Title = fb.TitleCn
+		} else if fb.Source1688 != nil && fb.Source1688.TitleCn != "" {
+			req.Title = fb.Source1688.TitleCn
+		}
+	}
+	if len(req.Images) == 0 && fb.Source1688 != nil && len(fb.Source1688.Images) > 0 {
+		req.Images = fb.Source1688.Images
+	}
+	if len(req.Attributes) == 0 && fb.Source1688 != nil && len(fb.Source1688.Attributes) > 0 {
+		req.Attributes = fb.Source1688.Attributes
+	}
+	if len(req.PriceBrackets) == 0 {
+		steps := fb.StepPrices
+		if len(steps) == 0 && fb.Source1688 != nil {
+			steps = fb.Source1688.StepPrices
+		}
+		for _, sp := range steps {
+			if sp.MOQ > 0 && sp.PriceRmb > 0 {
+				req.PriceBrackets = append(req.PriceBrackets, ecom.WholesaleBracket{MinQty: sp.MOQ, UnitCostCNY: sp.PriceRmb})
+			}
+		}
+	}
+	if req.WeightKg <= 0 {
+		if fb.WeightG > 0 {
+			req.WeightKg = fb.WeightG / 1000
+		} else if fb.Source1688 != nil && fb.Source1688.ActualWeightG > 0 {
+			req.WeightKg = fb.Source1688.ActualWeightG / 1000
+		} else if fb.Source1688 != nil && fb.Source1688.ChargeableWeightG > 0 {
+			req.WeightKg = fb.Source1688.ChargeableWeightG / 1000
+		}
+	}
+	if req.LengthCm <= 0 && req.WidthCm <= 0 && req.HeightCm <= 0 {
+		if fb.Source1688 != nil && fb.Source1688.DimensionsCm != nil {
+			req.LengthCm = fb.Source1688.DimensionsCm.LengthCm
+			req.WidthCm = fb.Source1688.DimensionsCm.WidthCm
+			req.HeightCm = fb.Source1688.DimensionsCm.HeightCm
+		} else {
+			dimsStr := strings.TrimSpace(fb.DimsCm)
+			if dimsStr == "" && fb.Source1688 != nil {
+				dimsStr = strings.TrimSpace(fb.Source1688.DimsCm)
+			}
+			if dimsStr != "" {
+				l, w, h, err := parseDimsCmFlag(dimsStr)
+				if err != nil {
+					return err
+				}
+				req.LengthCm, req.WidthCm, req.HeightCm = l, w, h
+			}
+		}
+	}
+	return nil
+}
+
 func writeCLIJSON(w io.Writer, v any) {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
@@ -408,7 +619,7 @@ func printEcomHelp(w io.Writer) {
 Usage:
   hoxi ecom profit [flags]          Exact unit-economics, FBA tier, 1688 volumetric landed cost & ROAS matrix
   hoxi ecom ads-audit [flags]       Diagnose Amazon/TikTok/Google Search Term reports & export negative/bid .xlsx
-  hoxi ecom listing-check [flags]   Check Amazon 249B UTF-8 search terms, EPA/FDA triggers, TikTok 3s hook & 1688 Ad Law
+  hoxi ecom listing-check [flags]   Check Amazon 249B UTF-8 search terms, EPA/FDA triggers, TikTok 3s hook & 1688 7-star quality
   hoxi ecom shopify-csv [flags]     Generate or validate multi-variant Shopify product import CSVs
 
 Examples:
@@ -417,6 +628,7 @@ Examples:
   hoxi ecom profit --platform 1688 --brackets 100:22,500:19.5,1000:18 --weight-kg 0.6 --ship-rate-kg 12 --fx 7.2
   hoxi ecom ads-audit --file ./SearchTermReport.xlsx --target-acos 25 --out ./ads-action-plan.xlsx
   hoxi ecom listing-check --platform amazon --brand ComfyNest --title "ComfyNest Ergonomic Seat Cushion..." --search-terms "..."
+  hoxi ecom listing-check --platform 1688 --seller-7star --from-json ./products/881234/source-1688.json
   hoxi ecom shopify-csv --title "Merino Hoodie" --option1 Size --variants "M:HD-M:68:50,L:HD-L:68:35" --psych-99 --out ./shopify.csv
 `)
 }
