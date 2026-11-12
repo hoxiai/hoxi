@@ -300,7 +300,15 @@ func (s *Service) openAIImagesGenerate(
 		"prompt": prompt,
 		"n":      count,
 	}
-	if opts.aspectRatio != "" {
+	if strings.Contains(trimmedBase, "/api/hoxi/bridge/grok-cli") || strings.Contains(strings.ToLower(conn.ModelID), "grok-imagine") {
+		if strings.Contains(trimmedBase, "/api/hoxi/bridge/grok-cli") {
+			payload["stream"] = true
+		}
+		payload["response_format"] = "b64_json"
+		if ar := normalizeAspectRatio(opts.aspectRatio); ar != "" {
+			payload["aspect_ratio"] = ar
+		}
+	} else if opts.aspectRatio != "" {
 		payload["size"] = openAIImageSizeForAspectRatio(conn.ModelID, opts.aspectRatio)
 	}
 	status, body, err := s.doJSONImageRequest(ctx, conn, false, targetURL, payload, timeout)

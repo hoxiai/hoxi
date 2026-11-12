@@ -78,21 +78,26 @@ func ConnectOrSpawn(
 	rootDir string,
 	bootHeadless HeadlessBootFunc,
 ) (*Client, func(), error) {
-	candidates := []string{}
-	if strings.TrimSpace(preferredAddr) != "" {
-		candidates = append(candidates, strings.TrimSpace(preferredAddr))
-	}
-	for _, fallback := range []string{hoxipaths.DefaultReleaseBridgeAddr, hoxipaths.DefaultDevBridgeAddr} {
-		if fallback != strings.TrimSpace(preferredAddr) {
-			candidates = append(candidates, fallback)
+	trimmedPref := strings.TrimSpace(preferredAddr)
+	if !strings.EqualFold(trimmedPref, "headless") {
+		candidates := []string{}
+		if trimmedPref != "" {
+			candidates = append(candidates, trimmedPref)
 		}
-	}
+		if trimmedPref == "" || trimmedPref == hoxipaths.DefaultReleaseBridgeAddr || trimmedPref == hoxipaths.DefaultDevBridgeAddr {
+			for _, fallback := range []string{hoxipaths.DefaultReleaseBridgeAddr, hoxipaths.DefaultDevBridgeAddr} {
+				if fallback != trimmedPref {
+					candidates = append(candidates, fallback)
+				}
+			}
+		}
 
-	for _, addr := range candidates {
-		c := NewClient(addr, true)
-		if c.Healthy(ctx) {
-			c.ensureGatewayToken(ctx)
-			return c, func() {}, nil
+		for _, addr := range candidates {
+			c := NewClient(addr, true)
+			if c.Healthy(ctx) {
+				c.ensureGatewayToken(ctx)
+				return c, func() {}, nil
+			}
 		}
 	}
 

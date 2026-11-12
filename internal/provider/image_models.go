@@ -76,41 +76,55 @@ func (s *Service) ListImageModels() []llm.ImageModelOption {
 		if !ok {
 			continue
 		}
-		mMap, ok := pObj["models"].(map[string]interface{})
-		if !ok {
-			continue
+		for _, mapKey := range []string{"models", "mediaModels"} {
+			mMap, ok := pObj[mapKey].(map[string]interface{})
+			if !ok {
+				continue
+			}
+			for _, mid := range sortedKeys(mMap) {
+				mObj, _ := mMap[mid].(map[string]interface{})
+				cat := ""
+				name := mid
+				supportsIn := supportsMultimodalImageEditInput(mid)
+				if mObj != nil {
+					cat, _ = mObj["category"].(string)
+					if n, _ := mObj["name"].(string); strings.TrimSpace(n) != "" {
+						name = strings.TrimSpace(n)
+					}
+					if hasImageInputModality(mObj) {
+						supportsIn = true
+					}
+				}
+				isImg := IsImageGenerationModel(mid, cat, "") || (mObj != nil && hasImageOutputModality(mObj))
+				if !isImg {
+					continue
+				}
+				key := pid + "/" + mid
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+				found = append(found, scoredOpt{
+					opt: llm.ImageModelOption{
+						ProviderID: pid,
+						ModelID:    mid,
+						Name:       name,
+						SupportsIn: supportsIn,
+					},
+					score: scoreImageModelPreference(mid),
+				})
+			}
 		}
-		for _, mid := range sortedKeys(mMap) {
-			mObj, _ := mMap[mid].(map[string]interface{})
-			cat := ""
-			name := mid
-			supportsIn := supportsMultimodalImageEditInput(mid)
-			if mObj != nil {
-				cat, _ = mObj["category"].(string)
-				if n, _ := mObj["name"].(string); strings.TrimSpace(n) != "" {
-					name = strings.TrimSpace(n)
-				}
-				if hasImageInputModality(mObj) {
-					supportsIn = true
-				}
-			}
-			isImg := IsImageGenerationModel(mid, cat, "") || (mObj != nil && hasImageOutputModality(mObj))
-			if !isImg {
-				continue
-			}
-			key := pid + "/" + mid
-			if seen[key] {
-				continue
-			}
-			seen[key] = true
+		if pid == "grok-cli" && !seen["grok-cli/grok-imagine-image"] {
+			seen["grok-cli/grok-imagine-image"] = true
 			found = append(found, scoredOpt{
 				opt: llm.ImageModelOption{
-					ProviderID: pid,
-					ModelID:    mid,
-					Name:       name,
-					SupportsIn: supportsIn,
+					ProviderID: "grok-cli",
+					ModelID:    "grok-imagine-image",
+					Name:       "Grok Imagine Image (Grok CLI)",
+					SupportsIn: false,
 				},
-				score: scoreImageModelPreference(mid),
+				score: scoreImageModelPreference("grok-imagine-image"),
 			})
 		}
 	}

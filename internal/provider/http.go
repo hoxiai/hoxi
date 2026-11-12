@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -52,6 +53,9 @@ const localBridgePathPrefix = "/api/hoxi/bridge/"
 // processes and keeps only a neutral address; another process's port may
 // belong to a gateway that has already exited.
 func (s *Service) localizeBridgeURL(raw string) string {
+	if strings.TrimSpace(os.Getenv("HOXI_KEEP_BRIDGE_PORT")) == "1" {
+		return raw
+	}
 	trimmed := strings.TrimSpace(raw)
 	if !isLoopbackURL(trimmed) {
 		return raw

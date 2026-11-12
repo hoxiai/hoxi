@@ -566,7 +566,8 @@ func (g *Service) handleGrokCLIBridge(w http.ResponseWriter, r *http.Request) {
 	}
 
 	modelName := creds.DefaultModel
-	callerWantsStream := true
+	isChatCompletions := strings.HasSuffix(subPath, "/chat/completions")
+	callerWantsStream := !isChatCompletions
 
 	if len(rawBody) > 0 {
 		var payload map[string]interface{}
@@ -574,13 +575,30 @@ func (g *Service) handleGrokCLIBridge(w http.ResponseWriter, r *http.Request) {
 			if m, ok := payload["model"].(string); ok && strings.TrimSpace(m) != "" {
 				modelName = strings.TrimSpace(m)
 			}
-			if st, ok := payload["stream"].(bool); ok {
-				callerWantsStream = st
-			} else {
-				callerWantsStream = false
+			if isChatCompletions {
+				if st, ok := payload["stream"].(bool); ok {
+					callerWantsStream = st
+				} else {
+					callerWantsStream = false
+				}
+				// Grok CLI proxy requires stream: true on chat completions
+				payload["stream"] = true
+			} else if strings.HasSuffix(subPath, "/images/generations") {
+				if sz, ok := payload["size"].(string); ok {
+					if _, hasAR := payload["aspect_ratio"]; !hasAR {
+						switch strings.TrimSpace(sz) {
+						case "1536x1024", "1792x1024":
+							payload["aspect_ratio"] = "16:9"
+						case "1024x1536", "1024x1792":
+							payload["aspect_ratio"] = "3:4"
+						}
+					}
+					delete(payload, "size")
+				}
+				if _, hasFmt := payload["response_format"]; !hasFmt {
+					payload["response_format"] = "b64_json"
+				}
 			}
-			// Grok CLI proxy requires stream: true
-			payload["stream"] = true
 			if rewritten, err := json.Marshal(payload); err == nil {
 				rawBody = rewritten
 			}
@@ -631,7 +649,7 @@ func (g *Service) handleGrokCLIBridge(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 || callerWantsStream {
+	if !isChatCompletions || resp.StatusCode < 200 || resp.StatusCode >= 300 || callerWantsStream {
 		for k, vals := range resp.Header {
 			for _, v := range vals {
 				w.Header().Add(k, v)

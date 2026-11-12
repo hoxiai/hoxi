@@ -25,6 +25,41 @@ func (s *cliStringSlice) Set(val string) error {
 	return nil
 }
 
+func reorderImageFlagsFirst(args []string) []string {
+	valueFlags := map[string]bool{
+		"-m": true, "--model": true,
+		"--provider": true,
+		"--aspect": true,
+		"--size": true,
+		"--count": true,
+		"-o": true, "--out": true,
+		"--in": true,
+		"--dir": true,
+		"--address": true,
+		"--session": true,
+		"-p": true, "--prompt": true,
+	}
+	var flags []string
+	var pos []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" {
+			pos = append(pos, args[i+1:]...)
+			break
+		}
+		if strings.HasPrefix(a, "-") {
+			flags = append(flags, a)
+			if !strings.Contains(a, "=") && valueFlags[a] && i+1 < len(args) {
+				i++
+				flags = append(flags, args[i])
+			}
+		} else {
+			pos = append(pos, a)
+		}
+	}
+	return append(flags, pos...)
+}
+
 func runImageCommand(
 	ctx context.Context,
 	args []string,
@@ -81,7 +116,7 @@ func runImageCommand(
 	fs.BoolVar(&showHelp, "help", false, "show help")
 	fs.BoolVar(&showHelp, "h", false, "show help")
 
-	if err := fs.Parse(rest); err != nil {
+	if err := fs.Parse(reorderImageFlagsFirst(rest)); err != nil {
 		return 2
 	}
 	if showHelp {
