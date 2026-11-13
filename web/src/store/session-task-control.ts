@@ -166,6 +166,7 @@ export async function rerouteRetryingTurnToModel(
   setWorkspace("statusBySession", sessionID, { type: "busy" });
   try {
     await hoxiAPI.sendPromptAsync(sessionID, nextState.promptText, {
+      continueTask: true,
       agent: nextState.agent,
       model: effectiveModel,
       variant: nextState.effort || undefined,
@@ -360,6 +361,7 @@ export async function handleSessionErrorEvent(
     setWorkspace("statusBySession", sessionID, { type: "busy" });
     try {
       await hoxiAPI.sendPromptAsync(sessionID, autoState.promptText, {
+        continueTask: true,
         agent: autoState.agent,
         model: nextStep.target,
         variant: autoState.effort || undefined,

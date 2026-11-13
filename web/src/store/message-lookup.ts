@@ -195,7 +195,7 @@ export function compareMessageIDOrder(info: MessageInfo, boundaryID: string): nu
 
 // Runner user IDs (`msg_u_<ms>_<n>`) and OpenCode IDs (`msg_<hex>`) do not sort
 // against each other as strings ("msg_u" > "msg_1"), so order by creation time.
-function compareTurnOrder(a: MessageInfo, b: MessageInfo): number {
+export function compareTurnOrder(a: MessageInfo, b: MessageInfo): number {
   const ta = a.time?.created ?? 0;
   const tb = b.time?.created ?? 0;
   if (ta && tb && ta !== tb) return ta - tb;
@@ -750,4 +750,3 @@ export function mergeServerTurnsInto(
   invalidateIndex(list);
   return older.length;
 }
-

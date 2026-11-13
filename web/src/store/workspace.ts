@@ -66,6 +66,7 @@ export * from "./session-history";
 export * from "./orchestration";
 export * from "./task-progress";
 export * from "./task-overview";
+export * from "./task-history";
 export * from "./command-sandbox";
 export * from "./code-index";
 export * from "./browser";

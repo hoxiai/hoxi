@@ -11,6 +11,7 @@ import "../src/__tests__/runner-permission.test";
 import "../src/__tests__/memory.test";
 import "../src/__tests__/merge-turns.test";
 import "../src/__tests__/history-paging.test";
+import "../src/__tests__/task-history.test";
 import "../src/__tests__/context-mention-loading.test";
 import "../src/__tests__/task-progress.test";
 import "../src/__tests__/changed-files-scratch.test";

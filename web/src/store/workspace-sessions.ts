@@ -11,6 +11,7 @@ import {
 } from "./message-lookup";
 import { forgetPendingSessionAI, restoreSessionAI } from "./session-ai";
 import { clearSessionGoal } from "./session-goal-state";
+import { forgetSessionTaskHistory } from "./task-history";
 import {
   forgetSessionHistory,
   noteSessionHistoryTail,
@@ -577,6 +578,7 @@ export function purgeSessionsFromStoreState(
     forgetRunnerSession(id);
     forgetSessionDiffState(id);
     forgetSessionHistory(id);
+    forgetSessionTaskHistory(id);
     hydratedSessionIDs.delete(id);
     loadRequestRevisions.delete(id);
     sessionMessageLoads.delete(id);

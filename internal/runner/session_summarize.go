@@ -82,8 +82,13 @@ func (s *Service) handleSessionSummarize(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	normalized := make([]MessageTurn, 0, len(turns))
+	continuations := make(map[string]bool)
+	for _, turn := range rec.Turns {
+		continuations[turn.Info.ID] = turn.Info.ContinueTask
+	}
 	for _, turn := range turns {
 		turn.Info.SessionID = rec.ID
+		turn.Info.ContinueTask = turn.Info.ContinueTask || continuations[turn.Info.ID]
 		parts := make([]MessagePart, 0, len(turn.Parts))
 		for _, part := range turn.Parts {
 			part.SessionID = rec.ID

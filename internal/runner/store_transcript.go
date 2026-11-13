@@ -48,6 +48,8 @@ func (idx *transcriptIndex) upsertInfo(turns *[]MessageTurn, info MessageInfo) b
 		idx.rebuild(*turns)
 	}
 	if i, ok := idx.messages[info.ID]; ok {
+		// OpenCode does not echo Hoxi's task-boundary metadata on updates.
+		info.ContinueTask = info.ContinueTask || (*turns)[i].Info.ContinueTask
 		(*turns)[i].Info = info
 		return false
 	}

@@ -30,6 +30,7 @@ type PromptRequest struct {
 	Parts           []MessagePart       `json:"parts"`
 	SkillSelection  *SkillSelection     `json:"skillSelection,omitempty"`
 	ClientRequestID string              `json:"clientRequestId,omitempty"`
+	ContinueTask    bool                `json:"continueTask,omitempty"`
 }
 
 func resolveRequestedPromptRuntime(body PromptRequest, currentRuntime string) string {
@@ -417,13 +418,14 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 	userMsgID := fmt.Sprintf("msg_u_%d_%d", now, seq)
 	asstMsgID := fmt.Sprintf("msg_a_%d_%d", now+1, seq)
 	userInfo := MessageInfo{
-		ID:         userMsgID,
-		SessionID:  sessionID,
-		Role:       "user",
-		Time:       MessageTime{Created: now},
-		Agent:      mode,
-		ModelID:    modelID,
-		ProviderID: rec.ProviderID,
+		ID:           userMsgID,
+		SessionID:    sessionID,
+		Role:         "user",
+		Time:         MessageTime{Created: now},
+		Agent:        mode,
+		ModelID:      modelID,
+		ProviderID:   rec.ProviderID,
+		ContinueTask: body.ContinueTask,
 	}
 	storedParts, deliveryParts, cliPrompt := s.prepareTurnAttachmentsForModel(rec, rec.ProviderID, modelID, isImageTurn, now, seq, userMsgID, promptText, fileParts)
 	if body.SkillSelection != nil {

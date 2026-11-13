@@ -13,9 +13,8 @@ import {
 } from "solid-js";
 import { Check, Circle, ListTodo, Minus, Pause, X } from "lucide-solid";
 import { t } from "../../i18n";
-import { isSessionBusy, workspace } from "../../store/workspace";
+import { collectCurrentTaskTurns, isSessionBusy, workspace } from "../../store/workspace";
 import {
-  collectTaskCycleTurns,
   findLatestTodoPart,
   normalizeTodoItems,
   type NormalizedTodoItem,
@@ -36,7 +35,7 @@ export default function TaskProgressCard() {
   let fadeTimer: ReturnType<typeof setTimeout> | undefined;
 
   const sessionID = () => workspace.activeSessionID;
-  const cycleTurns = createMemo(() => collectTaskCycleTurns(sessionID()));
+  const cycleTurns = createMemo(() => collectCurrentTaskTurns(sessionID()));
   const cycleID = createMemo(() => `${sessionID() ?? ""}:${cycleTurns()[0]?.info.id ?? ""}`);
   const isAlive = createMemo(() =>
     isSessionBusy(sessionID()) || hasActiveSubagentInCycle(cycleTurns(), sessionID())

@@ -24,15 +24,17 @@ export function collectTaskCycleTurns(sessionID: string | null): MessageTurn[] {
   const turns = workspace.messagesBySession[sessionID] ?? [];
   if (turns.length === 0) return [];
 
-  let lastUserIdx = -1;
+  return turns.slice(Math.max(0, findTaskCycleStart(turns)));
+}
+
+/** Explicit continuations stay in the task that owns the original user prompt. */
+export function findTaskCycleStart(turns: readonly MessageTurn[]): number {
   for (let i = turns.length - 1; i >= 0; i--) {
-    if (turns[i].info.role === "user") {
-      lastUserIdx = i;
-      break;
+    if (turns[i].info.role === "user" && !turns[i].info.continueTask) {
+      return i;
     }
   }
-
-  return turns.slice(Math.max(0, lastUserIdx));
+  return -1;
 }
 
 /** Finds the latest `todowrite` tool call strictly within the current task cycle turns. */

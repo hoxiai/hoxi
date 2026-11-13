@@ -211,19 +211,20 @@ type MessageError struct {
 }
 
 type MessageInfo struct {
-	ID         string         `json:"id"`
-	SessionID  string         `json:"sessionID"`
-	Role       string         `json:"role"`
-	ParentID   string         `json:"parentID,omitempty"`
-	Time       MessageTime    `json:"time"`
-	ModelID    string         `json:"modelID,omitempty"`
-	ProviderID string         `json:"providerID,omitempty"`
-	Mode       string         `json:"mode,omitempty"`
-	Agent      string         `json:"agent,omitempty"`
-	Cost       float64        `json:"cost,omitempty"`
-	Tokens     *MessageTokens `json:"tokens,omitempty"`
-	Finish     string         `json:"finish,omitempty"`
-	Error      *MessageError  `json:"error,omitempty"`
+	ID           string         `json:"id"`
+	SessionID    string         `json:"sessionID"`
+	Role         string         `json:"role"`
+	ParentID     string         `json:"parentID,omitempty"`
+	Time         MessageTime    `json:"time"`
+	ModelID      string         `json:"modelID,omitempty"`
+	ProviderID   string         `json:"providerID,omitempty"`
+	Mode         string         `json:"mode,omitempty"`
+	Agent        string         `json:"agent,omitempty"`
+	ContinueTask bool           `json:"continueTask,omitempty"`
+	Cost         float64        `json:"cost,omitempty"`
+	Tokens       *MessageTokens `json:"tokens,omitempty"`
+	Finish       string         `json:"finish,omitempty"`
+	Error        *MessageError  `json:"error,omitempty"`
 }
 
 type PartTime struct {

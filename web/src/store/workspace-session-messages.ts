@@ -63,7 +63,7 @@ export async function resumePausedSession(
   const prompt = note
     ? `${t("timeline.resumePromptPrefix")}\n\n${note}`
     : t("timeline.resumeDefaultPrompt");
-  await dispatchSessionPrompt(prompt, id, { forceImmediate: true });
+  await dispatchSessionPrompt(prompt, id, { forceImmediate: true, continueTask: true });
 }
 
 export { timelineFollowRequest };
@@ -94,6 +94,7 @@ export async function dispatchSessionPrompt(
      */
     system?: string;
     forceImmediate?: boolean;
+    continueTask?: boolean;
     /** false for automatic dispatches that must not move the reader's scroll position. */
     followTimeline?: boolean;
     /** The prompt was on screen as a queued bubble; its turn replaces it without a fade-in. */
@@ -305,6 +306,7 @@ export async function dispatchSessionPrompt(
               agent: effectiveAgent,
               modelID: effectiveModel?.modelID,
               providerID: effectiveModel?.providerID,
+              ...(options?.continueTask || wasBusyBeforeSubmit ? { continueTask: true } : {}),
             },
             parts: optimisticParts,
           });
@@ -409,6 +411,7 @@ export async function dispatchSessionPrompt(
         attachments,
         skillSelection: effectiveSkill,
         runtime: resolveRunnerRuntimeForProvider(effectiveModel?.providerID, Boolean(workspace.hoxiProviders?.[effectiveModel?.providerID || ""])),
+        continueTask: options?.continueTask || wasBusyBeforeSubmit,
       });
     } catch (sendErr) {
       if (usedAutoPool && effectiveModel) {
@@ -555,6 +558,7 @@ export async function retryLastUserPrompt(sessionID?: string | null): Promise<vo
         await dispatchSessionPrompt(text, id, {
           attachments,
           skillSelection,
+          continueTask: true,
           ...(wasRetrying ? { forceImmediate: true } : {}),
         });
       }
@@ -664,6 +668,7 @@ export async function resumeSubagentTask(params: {
   });
   await dispatchSessionPrompt(prompt, parentSessionID, {
     forceImmediate: true,
+    continueTask: true,
   });
 }
 
@@ -692,5 +697,6 @@ export async function resumeAllInterruptedSubagents(
   );
   await dispatchSessionPrompt(lines.join("\n\n"), parentSessionID, {
     forceImmediate: true,
+    continueTask: true,
   });
 }

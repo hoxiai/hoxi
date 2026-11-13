@@ -1,5 +1,5 @@
 // web/src/components/timeline/ComposerShelf.tsx
-import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, on, onCleanup, Show } from "solid-js";
 import {
   ChevronDown,
   ChevronUp,
@@ -14,11 +14,16 @@ import {
 import {
   buildConvoyCompletionSummaryPrompt,
   clearReviewComments,
+  collectCurrentTaskTurns,
+  currentTaskHistoryScope,
   dismissSessionSpawnedConvoyPlan,
   fetchConvoyPlan,
+  forgetSessionTaskHistory,
   getSessionSpawnedConvoyPlans,
   isConvoyPlanTerminal,
   isSessionBusy,
+  hasOlderSessionHistory,
+  loadCurrentTaskHistory,
   mergeConvoyPlan,
   openFileInInspector,
   recordSessionConvoyPlan,
@@ -36,7 +41,7 @@ import ChangedFilesSummary from "./ChangedFilesSummary";
 import PlanFollowupBar from "./PlanFollowupBar";
 import RevertBanner from "./RevertBanner";
 import TaskProgressCard from "./TaskProgressCard";
-import { collectSessionChangedFiles } from "./tool-card-state";
+import { collectCycleChangedFiles } from "./tool-card-state";
 import { filterVisibleTurnsByRevert } from "./turn-window";
 import { t } from "../../i18n";
 
@@ -75,22 +80,33 @@ export default function ComposerShelf() {
     });
   });
 
-  // Transient chip: tracks the live transcript only while the agent is
-  // working and clears once the turn settles. Slice only the latest user cycle
-  // first so streaming deltas do not clone the entire session transcript.
+  // The task's older edits are loaded separately from the paged chat transcript.
+  const taskHistoryKey = createMemo(() => {
+    const id = sessionID();
+    return JSON.stringify([id, Boolean(id && isSessionBusy(id)), workspace.connected,
+      id ? currentTaskHistoryScope(id) : "", hasOlderSessionHistory(id)]);
+  });
+  createEffect(on(taskHistoryKey, () => {
+    const id = sessionID();
+    if (!id || !isSessionBusy(id)) return;
+    void loadCurrentTaskHistory(id).catch((err) => console.error("load task history failed:", err));
+    onCleanup(() => forgetSessionTaskHistory(id));
+  }));
+
+  // The chip remains transient, but its data is not limited to the newest page.
   const changedFiles = createMemo(() => {
     const id = sessionID();
     if (!id || !isSessionBusy(id)) return [];
-    const turns = workspace.messagesBySession[id] ?? [];
+    const turns = collectCurrentTaskTurns(id);
     if (turns.length === 0) return [];
     const revert = workspace.sessions.find((s) => s.id === id)?.revert;
     if (revert?.messageID) {
-      return collectSessionChangedFiles(
+      return collectCycleChangedFiles(
         filterVisibleTurnsByRevert(turns, revert),
         id
       );
     }
-    return collectSessionChangedFiles(turns, id);
+    return collectCycleChangedFiles(turns, id);
   });
 
   const pendingPermissions = createMemo(() => {

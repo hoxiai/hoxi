@@ -11,6 +11,7 @@ import { setWorkspace, workspace } from "./workspace-state";
 import type { MessageTurn } from "./workspace-state";
 import { invalidateSessionDiffReads } from "./session-diffs";
 import { forgetSessionHistory } from "./session-history";
+import { forgetSessionTaskHistory } from "./task-history";
 import { forgetSessionTaskOverview } from "./task-overview";
 import { forgetSessionMarkdownImages } from "./markdown-images";
 
@@ -143,6 +144,7 @@ export function trimSessionTranscripts(
         delete state.worktreeDiffsBySession[id];
         hydratedSessionIDs.delete(id);
         forgetSessionHistory(id);
+        forgetSessionTaskHistory(id);
         lastUsed.delete(id);
       }
     }));

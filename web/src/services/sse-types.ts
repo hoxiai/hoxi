@@ -79,6 +79,8 @@ export interface MessageInfo {
   modelID?: string;
   providerID?: string;
   agent?: string;
+  /** This user message resumes or steers the existing task. */
+  continueTask?: boolean;
   mode?: string;
   cost?: number;
   tokens?: MessageTokens;

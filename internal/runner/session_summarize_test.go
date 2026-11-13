@@ -52,7 +52,7 @@ func TestSessionSummarizeForwardsToOpenCodeAndRefreshesTurns(t *testing.T) {
 	rec := SessionRecord{
 		ID: "ses_hoxi_test", Runtime: "opencode", ExternalID: "ses_upstream",
 		ProjectDir: root, WorktreePath: root, ProviderID: "old-provider", ModelID: "old-model",
-		Turns: []MessageTurn{{Info: MessageInfo{ID: "msg_old", SessionID: "ses_hoxi_test", Role: "user"}}},
+		Turns: []MessageTurn{{Info: MessageInfo{ID: "msg_old", SessionID: "ses_hoxi_test", Role: "user", ContinueTask: true}}},
 	}
 	if err := svc.store.Put(rec); err != nil {
 		t.Fatal(err)
@@ -70,6 +70,9 @@ func TestSessionSummarizeForwardsToOpenCodeAndRefreshesTurns(t *testing.T) {
 	updated, _ := svc.store.Get(rec.ID)
 	if len(updated.Turns) != 2 || updated.Turns[1].Info.ID != "msg_summary" || updated.Turns[1].Info.SessionID != rec.ID {
 		t.Fatalf("turns not refreshed: %+v", updated.Turns)
+	}
+	if !updated.Turns[0].Info.ContinueTask {
+		t.Fatal("summarize dropped the task continuation boundary")
 	}
 }
 

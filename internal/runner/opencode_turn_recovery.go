@@ -532,6 +532,7 @@ func (s *Service) reconcileOpenCodePostTurnMessages(rec SessionRecord, ap *activ
 		sanitizeRunawayTriggeredInfo(&turn.Info, ap)
 		sanitizeAbortedTurnErrorInfo(&turn.Info, ap)
 		turn.Info.SessionID = rec.ID
+		turn.Info.ContinueTask = turn.Info.ContinueTask || existingInfoByID[turn.Info.ID].ContinueTask
 		if prevInfo, exists := existingInfoByID[turn.Info.ID]; !exists || !equalMessageInfo(prevInfo, turn.Info) {
 			s.broadcast(rec.ID, SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": turn.Info}})
 		}

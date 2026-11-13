@@ -2,6 +2,7 @@
 import type { MessagePart, SnapshotFileDiff } from "../../services/sse-types";
 import {
   ensureChildSubagentSessionLoaded,
+  findTaskCycleStart,
   extractChildSubagentSessionId,
   type MessageTurn,
   normalizeFolderPath,
@@ -713,13 +714,7 @@ export function collectSessionChangedFiles(
   sessionID: string
 ): SnapshotFileDiff[] {
   if (!sessionID || visibleTurns.length === 0) return [];
-  let lastUserIdx = -1;
-  for (let i = visibleTurns.length - 1; i >= 0; i--) {
-    if (visibleTurns[i].info.role === "user") {
-      lastUserIdx = i;
-      break;
-    }
-  }
+  const lastUserIdx = findTaskCycleStart(visibleTurns);
   const cycleTurns =
     lastUserIdx >= 0 ? visibleTurns.slice(lastUserIdx + 1) : visibleTurns;
   if (cycleTurns.length === 0) return [];
@@ -749,4 +744,3 @@ export function deriveMarkdownDownloadFilename(
   const stem = isGeneric ? "hoxi-note" : rawStem;
   return `${stem}-${dateStr}.md`;
 }
-

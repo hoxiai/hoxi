@@ -378,6 +378,7 @@ export const hoxiAPI = {
       runtime?: SessionRuntime;
       skillSelection?: import("./skills-types").SkillSelection;
       imageOptions?: import("./api-types").PromptImageOptions;
+      continueTask?: boolean;
     }
   ): Promise<void> {
     if (options?.runtime) await prepareRuntime(sessionID, options.runtime, options.model, options.directory);
@@ -397,6 +398,7 @@ export const hoxiAPI = {
         ...(options?.variant ? { variant: options.variant } : {}),
         ...(options?.system ? { system: options.system } : {}),
         ...(options?.skillSelection ? { skillSelection: options.skillSelection } : {}),
+        ...(options?.continueTask ? { continueTask: true } : {}),
         parts,
       }),
     });
