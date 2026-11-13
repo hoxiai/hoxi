@@ -330,6 +330,11 @@ func (s *Service) persistEventToStore(sessionID string, evt SSEEvent) {
 		s.store.FlushSession(sessionID)
 		s.store.SetActive(sessionID, false)
 		s.doomLoop.resetTurn(sessionID)
+		// Subagent hook calls keep their repeat counters under the child.
+		childIDs, _ := s.store.ChildSessionIDs(sessionID)
+		for _, id := range childIDs {
+			s.doomLoop.resetTurn(id)
+		}
 		s.finishTurnSummary(sessionID, evt.Type)
 	}
 }

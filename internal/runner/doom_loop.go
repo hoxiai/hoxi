@@ -291,7 +291,13 @@ func toolCallFingerprint(tool string, input json.RawMessage) string {
 // gateDoomLoop asks the user before a repeated call runs. It reports whether
 // the call may proceed to the normal policy, and the reason when it may not.
 func (s *Service) gateDoomLoop(r *http.Request, cred hookCredential, tool string, input json.RawMessage, callID string) (bool, string) {
-	if !s.doomLoop.observe(cred.sessionID, cred.messageID, tool, input) {
+	return s.gateDoomLoopKeyed(r, cred, cred.sessionID, tool, input, callID)
+}
+
+// gateDoomLoopKeyed tracks repeats under guardKey (a subagent's child session
+// when the call came from one) while asking the user in cred's session.
+func (s *Service) gateDoomLoopKeyed(r *http.Request, cred hookCredential, guardKey, tool string, input json.RawMessage, callID string) (bool, string) {
+	if !s.doomLoop.observe(guardKey, cred.messageID, tool, input) {
 		return true, ""
 	}
 	var shown interface{}
@@ -314,12 +320,12 @@ func (s *Service) gateDoomLoop(r *http.Request, cred hookCredential, tool string
 	reason := "Hoxi stopped a repeated tool call: " + tool + " was called " +
 		"several times in a row with identical input. Try a different approach."
 	if s.ApprovalPolicy().Mode == ApprovalModeUnattended {
-		s.doomLoop.settle(cred.sessionID, tool, false)
+		s.doomLoop.settle(guardKey, tool, false)
 		s.recordUnattendedDeny(cred, req, unattendedCategoryTool)
 		return false, reason
 	}
 	answer := s.awaitReply(r, cred, id, req)
-	s.doomLoop.settle(cred.sessionID, tool, answer.Reply == "always")
+	s.doomLoop.settle(guardKey, tool, answer.Reply == "always")
 	if answer.Reply == "once" || answer.Reply == "always" {
 		return true, ""
 	}

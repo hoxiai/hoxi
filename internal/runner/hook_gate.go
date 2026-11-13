@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -77,6 +76,7 @@ type approvalGate struct {
 	classGrants        map[string]map[string]ApprovalGrant // session -> recoverable class
 	openCodeAsks       map[string]openCodeAsk              // OpenCode request ID -> request shown to the user
 	waitLimit          time.Duration
+	subagentWait       time.Duration // see agySubagentHookWait
 }
 
 func newApprovalGate() *approvalGate {
@@ -93,6 +93,7 @@ func newApprovalGate() *approvalGate {
 		classGrants:        make(map[string]map[string]ApprovalGrant),
 		openCodeAsks:       make(map[string]openCodeAsk),
 		waitLimit:          agyhook.ClientTimeout - 5*time.Second,
+		subagentWait:       agySubagentHookWait,
 	}
 }
 
@@ -233,13 +234,14 @@ func (s *Service) decideHookCall(r *http.Request, cred hookCredential, p hookPay
 	if !ok {
 		return hookDecisionDeny, "Hoxi session no longer exists"
 	}
-	if p.ConversationID != "" && rec.ExternalID != "" && p.ConversationID != rec.ExternalID {
+	origin, ok := s.resolveAgyHookOrigin(r, rec, p.ConversationID)
+	if !ok {
 		return hookDecisionDeny, "Antigravity conversation does not belong to this Hoxi session"
 	}
 	args, _ := json.Marshal(p.ToolCall.Args)
-	callID := fmt.Sprintf("call_%s_%d", cred.messageID, p.StepIdx)
+	callID := origin.callID(cred.messageID, p.StepIdx)
 	action := hookToolActionWithArgs(p.ToolCall.Name, p.ToolCall.Args)
-	activeConvID := firstNonEmptyStr(strings.TrimSpace(p.ConversationID), strings.TrimSpace(rec.ExternalID))
+	activeConvID := origin.convID
 	if action == hookActionRead || action == hookActionEdit {
 		if reason := agyHookForeignBrainReason(rec.WorktreePath, activeConvID, p.ToolCall.Args); reason != "" {
 			return hookDecisionDeny, reason
@@ -251,7 +253,7 @@ func (s *Service) decideHookCall(r *http.Request, cred hookCredential, p hookPay
 		s.gate.hasToolAlways(cred.sessionID, hookToolGrantKey(p.ToolCall.Name, p.ToolCall.Args)) {
 		return hookDecisionApprove, ""
 	}
-	if ok, reason := s.gateDoomLoop(r, cred, p.ToolCall.Name, args, callID); !ok {
+	if ok, reason := s.gateDoomLoopKeyed(r, cred, origin.guardKey(cred.sessionID), p.ToolCall.Name, args, callID); !ok {
 		return hookDecisionDeny, reason
 	}
 

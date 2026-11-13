@@ -560,6 +560,23 @@ func (s *Store) ChildSessionIDs(parentID string) ([]string, int64) {
 	return ids, stamp
 }
 
+// SubagentChildByExternalID returns the subagent child session of parentID
+// bound to the runtime conversation externalID.
+func (s *Store) SubagentChildByExternalID(parentID, externalID string) (string, bool) {
+	parentID, externalID = strings.TrimSpace(parentID), strings.TrimSpace(externalID)
+	if parentID == "" || externalID == "" {
+		return "", false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for id, ss := range s.records {
+		if ss.meta.Subagent && ss.meta.ParentID == parentID && ss.meta.ExternalID == externalID {
+			return id, true
+		}
+	}
+	return "", false
+}
+
 func equalMessageInfo(a, b MessageInfo) bool { return reflect.DeepEqual(a, b) }
 func equalMessagePart(a, b MessagePart) bool { return reflect.DeepEqual(a, b) }
 
