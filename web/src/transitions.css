@@ -6,6 +6,8 @@
  *   - exit:  accelerating and shorter (var(--ease-exit))
  *   - press: fast down, springy release
  *   - only opacity / transform / scale animate; layout properties stay instant.
+ *   - entrances fill only their delay, then release animation/transform state so
+ *     WebKit can demote completed views and rows from composited backing stores.
  */
 
 /* ============================================================================
@@ -31,7 +33,7 @@
   animation-name: hoxi-enter;
   animation-duration: 220ms;
   animation-timing-function: var(--ease-spring);
-  animation-fill-mode: both;
+  animation-fill-mode: backwards;
   --tw-enter-opacity: 0;
   --tw-enter-scale: 1;
   --tw-enter-translate-x: 0;
@@ -127,12 +129,12 @@ dialog[open] {
 }
 
 dialog[open] {
-  animation: hoxi-modal-in var(--motion-enter) var(--ease-spring) both;
+  animation: hoxi-modal-in var(--motion-enter) var(--ease-spring) backwards;
 }
 
 dialog[open]::backdrop {
   background: var(--overlay-backdrop);
-  animation: hoxi-backdrop-in var(--motion-enter) var(--ease-enter) both;
+  animation: hoxi-backdrop-in var(--motion-enter) var(--ease-enter) backwards;
 }
 
 .hoxi-popover {
@@ -210,25 +212,25 @@ dialog[open]::backdrop {
 }
 
 .hoxi-view-enter {
-  animation: hoxi-view-in var(--motion-enter) var(--ease-spring) both;
+  animation: hoxi-view-in var(--motion-enter) var(--ease-spring) backwards;
 }
 
 .hoxi-view-enter-a,
 .hoxi-view-enter-b {
-  animation: hoxi-view-in var(--motion-enter) var(--ease-spring) both;
+  animation: hoxi-view-in var(--motion-enter) var(--ease-spring) backwards;
 }
 
 .hoxi-drill-enter {
-  animation: hoxi-drill-in var(--motion-move) var(--ease-spring) both;
+  animation: hoxi-drill-in var(--motion-move) var(--ease-spring) backwards;
 }
 
 .hoxi-drill-enter-a,
 .hoxi-drill-enter-b {
-  animation: hoxi-drill-in var(--motion-move) var(--ease-spring) both;
+  animation: hoxi-drill-in var(--motion-move) var(--ease-spring) backwards;
 }
 
 .hoxi-fade-enter {
-  animation: hoxi-fade-in var(--motion-move) var(--ease-enter) both;
+  animation: hoxi-fade-in var(--motion-move) var(--ease-enter) backwards;
 }
 
 /* Inspector tab crossfade: panels stay mounted, only the active one is visible. */
@@ -275,7 +277,7 @@ dialog[open]::backdrop {
 }
 
 .hoxi-item-enter {
-  animation: hoxi-item-in 180ms var(--ease-spring) both;
+  animation: hoxi-item-in 180ms var(--ease-spring) backwards;
   animation-delay: calc(var(--hoxi-order, 0) * 18ms);
 }
 
@@ -291,7 +293,7 @@ dialog[open]::backdrop {
 }
 
 .hoxi-item-pop {
-  animation: hoxi-item-pop 150ms var(--ease-enter) both;
+  animation: hoxi-item-pop 150ms var(--ease-enter) backwards;
 }
 
 @keyframes hoxi-step-in {
@@ -306,7 +308,7 @@ dialog[open]::backdrop {
 }
 
 .hoxi-step-enter {
-  animation: hoxi-step-in 210ms var(--ease-spring) both;
+  animation: hoxi-step-in 210ms var(--ease-spring) backwards;
 }
 
 .hoxi-step-grid {
