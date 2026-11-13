@@ -16,21 +16,25 @@ var (
 	// ErrInvalidStoreConfig marks client-supplied store validation errors (HTTP 400).
 	ErrInvalidStoreConfig = errors.New("invalid store configuration")
 
-	localeTagRe = regexp.MustCompile(`^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,2}$`)
-	ianaTZRe    = regexp.MustCompile(`^(?:UTC|GMT|[A-Za-z]+(?:_[A-Za-z0-9+-]+)*(?:/[A-Za-z0-9_+-]+){1,2})$`)
+	localeTagRe            = regexp.MustCompile(`^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,2}$`)
+	ianaTZRe               = regexp.MustCompile(`^(?:UTC|GMT|[A-Za-z]+(?:_[A-Za-z0-9+-]+)*(?:/[A-Za-z0-9_+-]+){1,2})$`)
+	alibabaCredentialEnvRe = regexp.MustCompile(`^[A-Z][A-Z0-9_]{0,63}$`)
 )
 
 // StoreProfile represents the structured operational, anti-association network,
 // unit-economics, and brand compliance profile of a bound Work store.
 type StoreProfile struct {
-	ID                string   `json:"id"`
-	AppID             string   `json:"appId,omitempty"`
-	Name              string   `json:"name,omitempty"`
-	Platform          string   `json:"platform,omitempty"`
-	Marketplace       string   `json:"marketplace,omitempty"`
-	Currency          string   `json:"currency,omitempty"`
-	SellerDomain      string   `json:"sellerDomain,omitempty"`
-	BrowserProfileKey string   `json:"browserProfileKey,omitempty"`
+	ID                string `json:"id"`
+	AppID             string `json:"appId,omitempty"`
+	Name              string `json:"name,omitempty"`
+	Platform          string `json:"platform,omitempty"`
+	Marketplace       string `json:"marketplace,omitempty"`
+	Currency          string `json:"currency,omitempty"`
+	SellerDomain      string `json:"sellerDomain,omitempty"`
+	BrowserProfileKey string `json:"browserProfileKey,omitempty"`
+	// Environment references only; platform credentials never enter Work state or prompts.
+	Alibaba1688CredentialEnv string `json:"alibaba1688CredentialEnv,omitempty"`
+	Alibaba1688SellerLoginID string `json:"alibaba1688SellerLoginId,omitempty"`
 
 	// Anti-association browser network & fingerprint settings.
 	ProxyURL      string `json:"proxyURL,omitempty"`
@@ -222,6 +226,17 @@ func ValidateStatePatch(patch map[string]any) error {
 }
 
 func validateStoreMap(m map[string]any) error {
+	for _, key := range []string{"alibaba1688CredentialEnv", "alibaba1688SellerLoginId"} {
+		if raw, exists := m[key]; exists {
+			value, ok := raw.(string)
+			if !ok || value != strings.TrimSpace(value) || len(value) > 128 || strings.ContainsAny(value, "\r\n\t") {
+				return fmt.Errorf("invalid %s", key)
+			}
+			if key == "alibaba1688CredentialEnv" && value != "" && !alibabaCredentialEnvRe.MatchString(value) {
+				return fmt.Errorf("%s must be an uppercase environment-variable prefix", key)
+			}
+		}
+	}
 	if id := strings.TrimSpace(stringField(m, "id")); id != "" && !isSafeStoreProfileKey(id) {
 		return fmt.Errorf("invalid store id %q", id)
 	}
@@ -261,30 +276,32 @@ func parseStoreProfile(appID string, raw map[string]any, extra map[string]any) S
 	}
 	rawProxy := strings.TrimSpace(stringField(merged, "proxyURL", "proxyUrl", "proxy"))
 	prof := StoreProfile{
-		ID:                 id,
-		AppID:              strings.TrimSpace(appID),
-		Name:               clippedText(stringField(merged, "name", "title", "storeName"), 120),
-		Platform:           clippedText(platform, 48),
-		Marketplace:        strings.ToUpper(clippedText(stringField(merged, "marketplace", "region", "site", "country"), 24)),
-		Currency:           strings.ToUpper(clippedText(stringField(merged, "currency"), 12)),
-		SellerDomain:       clippedText(stringField(merged, "sellerDomain", "domain"), 120),
-		BrowserProfileKey:  strings.TrimSpace(stringField(merged, "browserProfileKey")),
-		ProxyURL:           rawProxy,
-		RedactedProxy:      RedactProxyURL(rawProxy),
-		ProxyRequired:      boolField(merged, "proxyRequired"),
-		Timezone:           strings.TrimSpace(stringField(merged, "timezone", "timeZone")),
-		Locale:             strings.TrimSpace(stringField(merged, "locale", "language")),
-		BrandName:          clippedText(stringField(merged, "brandName", "brand"), 80),
-		ReferralFeePct:     clampedFloat(merged, 0, 100, "referralFeePct", "commissionPct", "platformFeePct"),
-		TargetNetMarginPct: clampedFloat(merged, -100, 100, "targetNetMarginPct", "targetMarginPct"),
-		ShippingRatePerKg:  clampedFloat(merged, 0, 100000, "shippingRatePerKg", "firstLegRatePerKg"),
-		ShippingCurrency:   strings.ToUpper(clippedText(stringField(merged, "shippingCurrency"), 12)),
-		FXRate:             clampedFloat(merged, 0, 100000, "fxRate", "exchangeRate"),
-		ReturnRatePct:      clampedFloat(merged, 0, 100, "returnRatePct", "refundRatePct"),
-		TargetACOSPct:      clampedFloat(merged, 0, 200, "targetACOSPct", "targetAcosPct"),
-		TargetROAS:         clampedFloat(merged, 0, 1000, "targetROAS", "targetRoas"),
-		ForbiddenTerms:     stringSliceField(merged, 64, 80, "forbiddenTerms", "blockedKeywords", "prohibitedWords"),
-		Notes:              clippedText(stringField(merged, "notes", "positioning"), 600),
+		ID:                       id,
+		AppID:                    strings.TrimSpace(appID),
+		Name:                     clippedText(stringField(merged, "name", "title", "storeName"), 120),
+		Platform:                 clippedText(platform, 48),
+		Marketplace:              strings.ToUpper(clippedText(stringField(merged, "marketplace", "region", "site", "country"), 24)),
+		Currency:                 strings.ToUpper(clippedText(stringField(merged, "currency"), 12)),
+		SellerDomain:             clippedText(stringField(merged, "sellerDomain", "domain"), 120),
+		BrowserProfileKey:        strings.TrimSpace(stringField(merged, "browserProfileKey")),
+		Alibaba1688CredentialEnv: stringField(merged, "alibaba1688CredentialEnv"),
+		Alibaba1688SellerLoginID: stringField(merged, "alibaba1688SellerLoginId"),
+		ProxyURL:                 rawProxy,
+		RedactedProxy:            RedactProxyURL(rawProxy),
+		ProxyRequired:            boolField(merged, "proxyRequired"),
+		Timezone:                 strings.TrimSpace(stringField(merged, "timezone", "timeZone")),
+		Locale:                   strings.TrimSpace(stringField(merged, "locale", "language")),
+		BrandName:                clippedText(stringField(merged, "brandName", "brand"), 80),
+		ReferralFeePct:           clampedFloat(merged, 0, 100, "referralFeePct", "commissionPct", "platformFeePct"),
+		TargetNetMarginPct:       clampedFloat(merged, -100, 100, "targetNetMarginPct", "targetMarginPct"),
+		ShippingRatePerKg:        clampedFloat(merged, 0, 100000, "shippingRatePerKg", "firstLegRatePerKg"),
+		ShippingCurrency:         strings.ToUpper(clippedText(stringField(merged, "shippingCurrency"), 12)),
+		FXRate:                   clampedFloat(merged, 0, 100000, "fxRate", "exchangeRate"),
+		ReturnRatePct:            clampedFloat(merged, 0, 100, "returnRatePct", "refundRatePct"),
+		TargetACOSPct:            clampedFloat(merged, 0, 200, "targetACOSPct", "targetAcosPct"),
+		TargetROAS:               clampedFloat(merged, 0, 1000, "targetROAS", "targetRoas"),
+		ForbiddenTerms:           stringSliceField(merged, 64, 80, "forbiddenTerms", "blockedKeywords", "prohibitedWords"),
+		Notes:                    clippedText(stringField(merged, "notes", "positioning"), 600),
 	}
 	return prof
 }
@@ -385,6 +402,9 @@ func (p *StoreProfile) FormatPromptBlock() string {
 		b.WriteString("Store Notes: " + p.Notes + "\n")
 	}
 	b.WriteString(fmt.Sprintf("Deterministic E-Commerce Engine: Prefer 'hoxi ecom profit|ads-audit|listing-check|shopify-csv --store %s' over mental math.\n", p.ID))
+	if p.Platform == "1688" {
+		b.WriteString("Store Product Management: Hoxi Work exposes standard MCP tools (work_products_sync, work_products_list, work_draft_create, work_draft_publish, work_publish_verify) through the local /api/hoxi/work/mcp endpoint and 'hoxi work-mcp' stdio bridge. Connections require this store ID, the current managed session ID and its directory. Editable fields are subject, description and images; other platform fields are preserved for analysis. Publication requires a desktop approval and readback receipt.\n")
+	}
 	b.WriteString("</hoxi_work_store_profile>")
 	return b.String()
 }

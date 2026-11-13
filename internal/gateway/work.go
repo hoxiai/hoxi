@@ -161,6 +161,7 @@ func (g *Gateway) registerWorkRoutes() {
 		g.mux.Handle("/api/hoxi/work/stores", wh)
 		g.mux.Handle("/api/hoxi/work/proxy-check", wh)
 	}
+	g.registerWorkMCPRoutes()
 	eh := desktopOnlyWorkHandler(ecom.NewHTTPHandler(workStoreLookup{svc: g.workApps}, gatewaySpreadsheetIO{}))
 	g.mux.Handle("/api/hoxi/work/ecom/", eh)
 }

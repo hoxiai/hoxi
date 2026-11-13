@@ -39,6 +39,7 @@ var knownSubcommands = map[string]bool{
 	"models":      true,
 	"handoff":     true,
 	"worktree":    true,
+	"work-mcp":    true,
 	"code-index":  true,
 	"codeindex":   true,
 	"doc":         true,
@@ -167,6 +168,8 @@ func Run(
 			return runSessionsCommand(ctx, args[2:], cwd, defaultBridgeAddr, bootHeadless, stdout, stderr)
 		case "worktree":
 			return runWorktreeCommand(ctx, args[2:], cwd, defaultBridgeAddr, bootHeadless, stdout, stderr)
+		case "work-mcp":
+			return runWorkMCPCommand(ctx, args[2:], cwd, defaultBridgeAddr, stdin, stdout, stderr)
 		case "code-index", "codeindex":
 			return runCodeIndexCommand(args[2:], cwd, stdout, stderr)
 		case "doc":
@@ -291,6 +294,8 @@ Usage:
   hoxi doc <action> [flags]           Read, inspect, create or edit PDF/Excel/Word/CSV documents (inspect|read|write-xlsx|set-cell|write-docx|write-pdf)
   hoxi ecom <action> [flags]          Deterministic e-commerce profit, ad report audit, compliance & Shopify CSV (profit|ads-audit|listing-check|shopify-csv)
   hoxi image <generate|models>        Generate or edit images via configured image models
+  hoxi work-mcp --session ID --store ID --dir PATH
+                                     Serve the bound Work store over standard MCP stdio
   hoxi tui                            Launch native OpenCode TUI with Hoxi plugins
   hoxi serve                          Run headless Hoxi daemon for mobile/remote control
   hoxi install-cli                    Install 'hoxi' command into /usr/local/bin or ~/.local/bin

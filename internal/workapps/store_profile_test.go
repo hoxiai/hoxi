@@ -65,6 +65,28 @@ func TestValidateProxyTimezoneLocale(t *testing.T) {
 	}
 }
 
+func TestAlibabaStoreCredentialReferencesAreValidatedAndParsed(t *testing.T) {
+	for _, invalid := range []map[string]any{
+		{"alibaba1688CredentialEnv": "FACTORY_A_ACCESS_TOKEN=secret"},
+		{"alibaba1688CredentialEnv": 123},
+		{"alibaba1688SellerLoginId": "factory\nother"},
+		{"alibaba1688SellerLoginId": nil},
+	} {
+		if err := validateStoreMap(invalid); err == nil {
+			t.Fatal("invalid seller configuration accepted", invalid)
+		}
+	}
+	profile := parseStoreProfile("1688", map[string]any{"id": "store-a"}, map[string]any{
+		"alibaba1688CredentialEnv": "FACTORY_A", "alibaba1688SellerLoginId": "factory-a",
+	})
+	if profile.Alibaba1688CredentialEnv != "FACTORY_A" || profile.Alibaba1688SellerLoginID != "factory-a" {
+		t.Fatal("seller configuration not preserved", profile)
+	}
+	if !strings.Contains(profile.FormatPromptBlock(), "work_products_sync") || strings.Contains(profile.FormatPromptBlock(), "FACTORY_A") {
+		t.Fatal("prompt is missing the MCP workflow or exposes credential configuration")
+	}
+}
+
 func TestStoreIsolationRedactionAndPromptContext(t *testing.T) {
 	store := NewStore(filepath.Join(t.TempDir(), "work-apps.json"))
 	svc := NewService(nil, store)

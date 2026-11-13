@@ -40,6 +40,7 @@ import (
 	"github.com/hoxiai/hoxi/internal/tunnel"
 	"github.com/hoxiai/hoxi/internal/updater"
 	"github.com/hoxiai/hoxi/internal/workapps"
+	"github.com/hoxiai/hoxi/internal/workcatalog"
 	"github.com/hoxiai/hoxi/internal/workspace"
 	"github.com/hoxiai/hoxi/internal/worktree"
 )
@@ -62,6 +63,7 @@ type Gateway struct {
 	computer      *computer.Service
 	auth          *auth.Service
 	workApps      *workapps.Service
+	workCatalog   *workcatalog.Service
 	tools         *tools.Service
 	updater       *updater.Checker
 	leaderboard   *leaderboard.Service
@@ -176,6 +178,7 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 		computer:     computer.New(),
 		auth:         authSvc,
 		workApps:     workapps.NewService(authSvc, nil),
+		workCatalog:  workcatalog.NewService(nil),
 		tools:        tools.NewService(authSvc),
 		updater:      updaterSvc,
 		leaderboard:  leaderboardSvc,

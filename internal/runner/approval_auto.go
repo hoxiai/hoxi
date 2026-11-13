@@ -493,6 +493,9 @@ func (s *Service) reconcilePendingApprovals() {
 	s.gate.mu.Unlock()
 	unattended := s.ApprovalPolicy().Mode == ApprovalModeUnattended
 	for _, pa := range pending {
+		if permissionName(pa.req) == "hoxi_work_publish" {
+			continue
+		}
 		dir, isolated := s.sessionIsolated(pa.sid)
 		if unattended && !isQuestionRequest(pa.req) {
 			if allow, category := unattendedDecision(pa.req, dir); !allow && category != "" {
