@@ -63,9 +63,27 @@ func (s *Store) MarshalTurnsPage(sessionID string, page historyPage) ([]byte, bo
 	if ss == nil {
 		return nil, false
 	}
-	defer s.finishSession(ss)
-	s.ensureTurnsLocked(ss)
-	turns := dedupeToolOutputs(sliceHistoryPage(ss.rec.Turns, page))
+	var turns []MessageTurn
+	if page.limit > 0 && !ss.turnsLoaded {
+		var err error
+		ss.diskMu.Lock()
+		s.applyPersistResultLocked(ss)
+		turns, err = s.readIndexedHistoryPage(sessionID, page)
+		ss.diskMu.Unlock()
+		if err != nil {
+			// Index/cache failures retain the legacy recovery path.
+			s.ensureTurnsLocked(ss)
+			turns = cloneTurns(sliceHistoryPage(ss.rec.Turns, page))
+		} else {
+			hydrateAgyTranscriptEditParts(ss.rec.ExternalID, turns)
+			hydrateAgyTranscriptTurnTokens(ss.rec.ExternalID, turns)
+		}
+	} else {
+		s.ensureTurnsLocked(ss)
+		turns = cloneTurns(sliceHistoryPage(ss.rec.Turns, page))
+	}
+	s.finishSession(ss)
+	turns = dedupeToolOutputs(turns)
 	if turns == nil {
 		turns = []MessageTurn{}
 	}

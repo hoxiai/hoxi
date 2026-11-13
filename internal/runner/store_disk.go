@@ -64,40 +64,57 @@ func (s *Store) writeMeta(rec SessionRecord) error {
 }
 
 func encodeTurns(turns []MessageTurn) ([]byte, int, error) {
+	raw, lines, _, err := encodeTurnsIndexed(turns)
+	return raw, lines, err
+}
+
+func encodeTurnsIndexed(turns []MessageTurn) ([]byte, int, *historyLogIndex, error) {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
+	idx := &historyLogIndex{Version: 1, EditsComplete: true}
 	lines := 0
 	for i := range turns {
 		info := turns[i].Info
+		idx.noteEntry(turnLogEntry{Info: &info}, int64(buf.Len()))
 		if err := enc.Encode(turnLogEntry{Info: &info}); err != nil {
-			return nil, 0, err
+			return nil, 0, nil, err
 		}
 		lines++
 		for j := range turns[i].Parts {
 			part := turns[i].Parts[j]
+			idx.noteEntry(turnLogEntry{Part: &part}, int64(buf.Len()))
 			if err := enc.Encode(turnLogEntry{Part: &part}); err != nil {
-				return nil, 0, err
+				return nil, 0, nil, err
 			}
 			lines++
 		}
 	}
-	return buf.Bytes(), lines, nil
+	return buf.Bytes(), lines, idx, nil
 }
 
 // rewriteTurns replaces the log with one entry per message info and part.
 func (s *Store) rewriteTurns(id string, turns []MessageTurn) (int, error) {
-	raw, lines, err := encodeTurns(turns)
+	raw, lines, idx, err := encodeTurnsIndexed(turns)
 	if err != nil {
 		return 0, err
 	}
-	return lines, writeFileAtomic(filepath.Join(s.sessionDir(id), sessionTurnsFile), raw)
+	if err := writeFileAtomic(filepath.Join(s.sessionDir(id), sessionTurnsFile), raw); err != nil {
+		return 0, err
+	}
+	if info, err := os.Stat(filepath.Join(s.sessionDir(id), sessionTurnsFile)); err == nil {
+		recordPersistenceError(s.saveHistoryIndex(id, idx, info))
+	} else {
+		recordPersistenceError(err)
+	}
+	return lines, nil
 }
 
-func (s *Store) appendTurnEntries(id string, entries []turnLogEntry) error {
+func (s *Store) appendTurnEntries(ss *storedSession, entries []turnLogEntry) error {
 	if len(entries) == 0 {
 		return nil
 	}
 	var buf bytes.Buffer
+	id := ss.rec.ID
 	enc := json.NewEncoder(&buf)
 	for _, e := range entries {
 		if err := enc.Encode(e); err != nil {
@@ -111,7 +128,15 @@ func (s *Store) appendTurnEntries(id string, entries []turnLogEntry) error {
 	if err != nil {
 		return err
 	}
-	cleanEnd, prependNewline, err := prepareTurnsAppend(f)
+	info, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return err
+	}
+	cleanEnd, prependNewline := info.Size(), false
+	if previous := ss.appendLog; previous == nil || !os.SameFile(previous, info) || previous.Size() != info.Size() || !previous.ModTime().Equal(info.ModTime()) {
+		cleanEnd, prependNewline, err = prepareTurnsAppend(f)
+	}
 	if err != nil {
 		_ = f.Close()
 		return err
@@ -129,6 +154,8 @@ func (s *Store) appendTurnEntries(id string, entries []turnLogEntry) error {
 		_ = f.Close()
 		return err
 	}
+	ss.appendLog, _ = f.Stat()
+	ss.needsSync = true
 	return f.Close()
 }
 
@@ -386,6 +413,7 @@ func (s *Store) CompactIdleTurns() (compacted int, freedBytes int64) {
 			turns, lines, corrupted = s.readTurnsWithStatus(id)
 		}
 		if corrupted || lines > countCanonicalTurnLines(turns) {
+			ss.diskMu.Lock()
 			if newLines, err := s.rewriteTurns(id, turns); err == nil {
 				if ss.turnsLoaded {
 					ss.logLines = newLines
@@ -395,6 +423,7 @@ func (s *Store) CompactIdleTurns() (compacted int, freedBytes int64) {
 					freedBytes += beforeInfo.Size() - afterInfo.Size()
 				}
 			}
+			ss.diskMu.Unlock()
 		}
 		ss.mu.Unlock()
 	}

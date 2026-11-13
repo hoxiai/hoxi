@@ -187,6 +187,9 @@ func (s *Service) Attachments() *attachment.Store {
 }
 
 func (s *Service) CloseAll() {
+	if s.store != nil {
+		defer s.store.Flush()
+	}
 	var flights []*resumeFlight
 	s.resumingFlights.Range(func(sid string, f *resumeFlight) bool {
 		s.pendingResumes.Delete(sid)
@@ -309,11 +312,11 @@ func (s *Service) persistEventToStore(sessionID string, evt SSEEvent) {
 	switch evt.Type {
 	case "message.updated":
 		if info, ok := evt.Properties["info"].(MessageInfo); ok {
-			s.store.UpsertTurnInfo(sessionID, info)
+			s.store.upsertTurnInfo(sessionID, info, true)
 		}
 	case "message.part.updated":
 		if part, ok := evt.Properties["part"].(MessagePart); ok {
-			s.store.UpsertTurnPart(sessionID, part)
+			s.store.upsertTurnPart(sessionID, part, true)
 		}
 	case "message.part.delta":
 		msgID, _ := evt.Properties["messageID"].(string)
@@ -324,11 +327,19 @@ func (s *Service) persistEventToStore(sessionID string, evt SSEEvent) {
 		}
 	case "session.status":
 		if status, ok := evt.Properties["status"].(SessionStatus); ok {
-			s.store.SetActive(sessionID, status.Type == "busy" || status.Type == "retry")
+			active := status.Type == "busy" || status.Type == "retry"
+			if !active {
+				s.store.FlushSession(sessionID)
+			}
+			s.store.SetActive(sessionID, active)
+			if !active {
+				s.store.scheduleIdleMaintenance(sessionID)
+			}
 		}
 	case "session.idle", "session.error":
 		s.store.FlushSession(sessionID)
 		s.store.SetActive(sessionID, false)
+		s.store.scheduleIdleMaintenance(sessionID)
 		s.doomLoop.resetTurn(sessionID)
 		// Subagent hook calls keep their repeat counters under the child.
 		childIDs, _ := s.store.ChildSessionIDs(sessionID)

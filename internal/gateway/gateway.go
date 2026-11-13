@@ -302,6 +302,9 @@ func (g *Gateway) CloseBrowser() {
 	}
 	if g.runner != nil {
 		g.runner.CloseAll()
+		if store := g.runner.Store(); store != nil {
+			store.ClosePersistence()
+		}
 	}
 	if g.handoff != nil {
 		g.handoff.StopCredentialSync()

@@ -16,7 +16,7 @@ var (
 )
 
 type editedFilesEntry struct {
-	stamp int64
+	stamp uint64
 	files map[string]struct{}
 }
 
@@ -103,13 +103,10 @@ func (s *Service) sessionEditedFileSet(sessionID string) map[string]struct{} {
 	if !ok {
 		return nil
 	}
-	childIDs, stamp := s.store.ChildSessionIDs(sessionID)
-	if stamp != 0 {
-		if entry, hit := s.editedFiles.Load(sessionID); hit {
-			if entry.stamp == stamp {
-				return entry.files
-			}
-		}
+	childIDs, _ := s.store.ChildSessionIDs(sessionID)
+	stamp := s.store.editMutations.Load()
+	if entry, hit := s.editedFiles.Load(sessionID); hit && entry.stamp == stamp {
+		return entry.files
 	}
 
 	edited := make(map[string]struct{})
@@ -150,12 +147,15 @@ func (s *Service) sessionEditedFileSet(sessionID string) map[string]struct{} {
 		}
 		visited[sid] = true
 		var subChildren []string
-		if s.store.VisitTurns(sid, func(rec SessionRecord) {
+		if snapshot, ok := s.store.sessionEditsSnapshot(sid); ok {
+			rec := snapshot.record
 			if sid != sessionID && !rec.Subagent && normalizeComparePath(rec.WorktreePath) != normalizeComparePath(rootRec.WorktreePath) {
 				return
 			}
-			walkTurns(rec.Turns, rec.ProjectDir, rec.WorktreePath, &subChildren)
-		}) {
+			for _, path := range snapshot.paths {
+				edited[path] = struct{}{}
+			}
+			subChildren = append(subChildren, snapshot.children...)
 			for _, cid := range subChildren {
 				walkSession(cid)
 			}
@@ -178,8 +178,8 @@ func (s *Service) sessionEditedFileSet(sessionID string) map[string]struct{} {
 		walkSession(cid)
 	}
 	if !hasExternalChild {
-		_, postStamp := s.store.ChildSessionIDs(sessionID)
-		if postStamp != 0 {
+		postStamp := s.store.editMutations.Load()
+		if postStamp == stamp {
 			s.editedFiles.Store(sessionID, editedFilesEntry{stamp: postStamp, files: edited})
 		}
 	}

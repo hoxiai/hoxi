@@ -48,6 +48,9 @@ func (s *Store) publishSessionLocked(ss *storedSession) {
 }
 
 func (s *Store) publishSessionAccountingLocked(ss *storedSession, refreshMeta bool) {
+	if ss.turnsLoaded {
+		ss.liveLines = len(ss.index.messages) + len(ss.index.parts)
+	}
 	var meta SessionRecord
 	if refreshMeta || ss.meta.ID == "" {
 		meta = metadataOnly(ss.rec)
@@ -176,6 +179,7 @@ func (s *Store) trimCache() {
 		ss.turnsLoaded, ss.bodyBytes = false, 0
 		ss.deltas = nil
 		ss.index = transcriptIndex{}
+		ss.edits = nil
 		s.publishSessionLocked(ss)
 		ss.mu.Unlock()
 	}

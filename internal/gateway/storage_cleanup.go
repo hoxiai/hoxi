@@ -79,6 +79,9 @@ func (g *Gateway) handleSystemStorageClean(w http.ResponseWriter, r *http.Reques
 // logs, stale git pack tempfiles, redundant session JSONL lines, and oversized
 // SQLite event logs until ctx is cancelled.
 func (g *Gateway) StartStorageMaintenance(ctx context.Context) {
+	if g.runner != nil && g.runner.Store() != nil {
+		g.runner.Store().StartPersistence(ctx)
+	}
 	go func() {
 		timer := time.NewTimer(initialStorageMaintenanceDelay)
 		defer timer.Stop()

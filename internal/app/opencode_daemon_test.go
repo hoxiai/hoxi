@@ -41,6 +41,9 @@ func TestMain(m *testing.M) {
 	// backoffs would only make the suite sleep.
 	respawnDelay = 20 * time.Millisecond
 	engineProbeTimeout = 500 * time.Millisecond
+	// Match Run's bootstrap order before lifecycle fixtures start background HTTP
+	// requests; mutating an in-use DefaultTransport races with the launch beacon.
+	ensureLoopbackBypassesDefaultProxy()
 	code := m.Run()
 	_ = os.RemoveAll(home)
 	os.Exit(code)

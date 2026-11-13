@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -36,7 +37,12 @@ type Store struct {
 	summarySessions    int
 	// mutations counts transcript and metadata writes (not cache loads), so
 	// readers can tell whether derived views are still current.
-	mutations atomic.Uint64
+	mutations     atomic.Uint64
+	editMutations atomic.Uint64
+	persistSlots  chan struct{}
+	persistCtx    context.Context
+	persistCancel context.CancelFunc
+	persistDone   chan struct{}
 	// canonicalProject maps a stored project ID to its live project (see
 	// ProjectResolver); nil treats every ID as live. Protected by mu.
 	canonicalProject func(projectID string) (string, bool)
@@ -44,6 +50,7 @@ type Store struct {
 
 type storedSession struct {
 	mu               sync.Mutex
+	diskMu           sync.Mutex
 	rec              SessionRecord
 	meta             SessionRecord        // protected by Store.mu; no transcript references
 	cache            transcriptCacheEntry // protected by Store.mu
@@ -53,6 +60,7 @@ type storedSession struct {
 	hasRevertedTurns bool
 	active           bool
 	logLines         int
+	liveLines        int
 	rev              int64
 	metaDirty        bool
 	dirty            map[partKey]struct{}
@@ -60,6 +68,13 @@ type storedSession struct {
 	pending          []turnLogEntry
 	index            transcriptIndex
 	bodyBytes        int64
+	edits            *transcriptEdits
+	dirtyInfos       map[string]struct{}
+	persistJob       *persistJob
+	persistRequested bool
+	persistResult    *persistResult
+	appendLog        os.FileInfo // diskMu; last validated append end
+	needsSync        bool        // diskMu; an append since the last durable barrier
 }
 
 type partKey struct{ messageID, partID string }
@@ -87,6 +102,7 @@ func NewStore(customDir string) *Store {
 		cacheMaxSessions:   12,
 		cacheMaxBytes:      32 << 20,
 		summaryMaxSessions: 64,
+		persistSlots:       make(chan struct{}, 4),
 	}
 	s.loadAllMeta()
 	if legacy != "" {
@@ -134,9 +150,15 @@ func (s *Store) ensureTurnsLocked(ss *storedSession) {
 	editsHydrated := hydrateAgyTranscriptEditParts(ss.rec.ExternalID, ss.rec.Turns)
 	tokensHydrated := hydrateAgyTranscriptTurnTokens(ss.rec.ExternalID, ss.rec.Turns)
 	if editsHydrated || tokensHydrated {
+		if editsHydrated {
+			s.editMutations.Add(1)
+		}
+		ss.diskMu.Lock()
+		s.applyPersistResultLocked(ss)
 		if n, err := s.rewriteTurns(ss.rec.ID, ss.rec.Turns); err == nil {
 			ss.logLines = n
 		}
+		ss.diskMu.Unlock()
 	}
 	if ss.hasRevertedTurns {
 		raw, err := os.ReadFile(filepath.Join(s.sessionDir(ss.rec.ID), sessionMetaFile))
@@ -156,6 +178,9 @@ func (s *Store) ensureTurnsLocked(ss *storedSession) {
 }
 
 func (s *Store) commitLocked(next SessionRecord, ss *storedSession) error {
+	ss.diskMu.Lock()
+	defer ss.diskMu.Unlock()
+	s.applyPersistResultLocked(ss)
 	if !validStoreID(next.ID) {
 		return errInvalidSessionID
 	}
@@ -168,8 +193,8 @@ func (s *Store) commitLocked(next SessionRecord, ss *storedSession) error {
 		}
 		lines = n
 	} else {
-		entries := append(append([]turnLogEntry{}, ss.pending...), dirtyEntriesLocked(ss)...)
-		if err := s.appendTurnEntries(next.ID, entries); err != nil {
+		entries := pendingEntriesLocked(ss)
+		if err := s.appendTurnEntries(ss, entries); err != nil {
 			return err
 		}
 		lines += len(entries)
@@ -181,13 +206,17 @@ func (s *Store) commitLocked(next SessionRecord, ss *storedSession) error {
 		return err
 	}
 	ss.rec, ss.turnsLoaded, ss.logLines = next, true, lines
+	ss.edits = nil
 	ss.summaryTurns = nil
 	ss.metaDirty, ss.dirty, ss.deltas, ss.pending = false, nil, nil, nil
+	ss.dirtyInfos = nil
+	s.cancelPersistLocked(ss)
 	ss.hasRevertedTurns = len(next.RevertedTurns) > 0
 	ss.index.rebuild(next.Turns)
 	ss.bodyBytes = estimateTurnsBytes(next.Turns) + estimateTurnsBytes(next.RevertedTurns)
 	ss.rev++
 	s.mutations.Add(1)
+	s.editMutations.Add(1)
 	return nil
 }
 
@@ -426,6 +455,10 @@ func (s *Store) Delete(sessionID string) error {
 		return nil
 	}
 	defer ss.mu.Unlock()
+	s.cancelPersistLocked(ss)
+	ss.diskMu.Lock()
+	defer ss.diskMu.Unlock()
+	s.applyPersistResultLocked(ss)
 	// Keep the record registered until removal completes so a concurrent Put
 	// of the same ID cannot have its files removed by this deletion.
 	if err := os.RemoveAll(s.sessionDir(ss.rec.ID)); err != nil {
@@ -444,6 +477,7 @@ func (s *Store) Delete(sessionID string) error {
 	delete(s.records, ss.rec.ID)
 	s.mu.Unlock()
 	s.mutations.Add(1)
+	s.editMutations.Add(1)
 	return nil
 }
 

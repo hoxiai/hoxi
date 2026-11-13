@@ -101,6 +101,10 @@ func (idx *transcriptIndex) upsertPart(turns []MessageTurn, part MessagePart) bo
 }
 
 func (s *Store) UpsertTurnInfo(sessionID string, info MessageInfo) {
+	s.upsertTurnInfo(sessionID, info, false)
+}
+
+func (s *Store) upsertTurnInfo(sessionID string, info MessageInfo, async bool) {
 	ss := s.lockSession(sessionID, false)
 	if ss == nil {
 		return
@@ -113,10 +117,23 @@ func (s *Store) UpsertTurnInfo(sessionID string, info MessageInfo) {
 	}
 	ss.rev++
 	s.mutations.Add(1)
-	s.appendLocked(ss, true, turnLogEntry{Info: &copied})
+	if async && s.asyncPersistenceEnabled() {
+		if ss.dirtyInfos == nil {
+			ss.dirtyInfos = make(map[string]struct{})
+		}
+		ss.dirtyInfos[info.ID] = struct{}{}
+		ss.rec.UpdatedAt, ss.metaDirty = time.Now().UnixMilli(), true
+		s.schedulePersistLocked(ss)
+	} else {
+		s.appendLocked(ss, true, turnLogEntry{Info: &copied})
+	}
 }
 
 func (s *Store) UpsertTurnPart(sessionID string, part MessagePart) {
+	s.upsertTurnPart(sessionID, part, false)
+}
+
+func (s *Store) upsertTurnPart(sessionID string, part MessagePart, async bool) {
 	ss := s.lockSession(sessionID, false)
 	if ss == nil {
 		return
@@ -126,6 +143,7 @@ func (s *Store) UpsertTurnPart(sessionID string, part MessagePart) {
 	copied := clonePart(part)
 	previousBytes := int64(0)
 	key := partKey{part.MessageID, part.ID}
+	previousEditRelevant := editRelevantPart(ss.index.part(ss.rec.Turns, key))
 	delete(ss.deltas, key)
 	if previous := ss.index.part(ss.rec.Turns, key); previous != nil {
 		previousBytes = estimatePartBytes(*previous)
@@ -134,10 +152,26 @@ func (s *Store) UpsertTurnPart(sessionID string, part MessagePart) {
 	if !ss.index.upsertPart(ss.rec.Turns, copied) {
 		return
 	}
+	if ss.edits != nil {
+		if ss.edits.apply(ss.rec, copied) {
+			s.editMutations.Add(1)
+		}
+	} else if previousEditRelevant || editRelevantPart(&copied) {
+		s.editMutations.Add(1)
+	}
 	ss.bodyBytes += estimatePartBytes(copied) - previousBytes
 	ss.rev++
 	s.mutations.Add(1)
-	s.appendLocked(ss, true, turnLogEntry{Part: &copied})
+	if async && s.asyncPersistenceEnabled() {
+		if ss.dirty == nil {
+			ss.dirty = make(map[partKey]struct{})
+		}
+		ss.dirty[key] = struct{}{}
+		ss.rec.UpdatedAt, ss.metaDirty = time.Now().UnixMilli(), true
+		s.schedulePersistLocked(ss)
+	} else {
+		s.appendLocked(ss, true, turnLogEntry{Part: &copied})
+	}
 }
 
 func compactPartDeltaBuildersLocked(ss *storedSession) {
@@ -208,8 +242,12 @@ func (s *Store) Flush() {
 }
 
 func (s *Store) flushSessionLocked(ss *storedSession) bool {
-	if len(ss.dirty) > 0 || len(ss.pending) > 0 {
-		s.appendLocked(ss, false)
+	s.cancelPersistLocked(ss)
+	ss.diskMu.Lock()
+	defer ss.diskMu.Unlock()
+	s.applyPersistResultLocked(ss)
+	if len(ss.dirty) > 0 || len(ss.dirtyInfos) > 0 || len(ss.pending) > 0 {
+		s.appendDiskLocked(ss, false, false)
 	}
 	if !ss.active {
 		compactPartDeltaBuildersLocked(ss)
@@ -217,21 +255,33 @@ func (s *Store) flushSessionLocked(ss *storedSession) bool {
 	if ss.metaDirty && s.writeMeta(ss.rec) == nil {
 		ss.metaDirty = false
 	}
-	return len(ss.dirty) == 0 && len(ss.pending) == 0 && !ss.metaDirty
+	if err := s.syncTurnLogLocked(ss); err != nil {
+		recordPersistenceError(err)
+		return false
+	}
+	return len(ss.dirty) == 0 && len(ss.dirtyInfos) == 0 && len(ss.pending) == 0 && !ss.metaDirty
 }
 
 func (s *Store) appendLocked(ss *storedSession, touch bool, extra ...turnLogEntry) {
-	entries := append(append(append([]turnLogEntry{}, ss.pending...), dirtyEntriesLocked(ss)...), extra...)
+	ss.diskMu.Lock()
+	defer ss.diskMu.Unlock()
+	s.applyPersistResultLocked(ss)
+	s.appendDiskLocked(ss, touch, true, extra...)
+}
+
+func (s *Store) appendDiskLocked(ss *storedSession, touch, compact bool, extra ...turnLogEntry) {
+	entries := append(pendingEntriesLocked(ss), extra...)
 	if touch {
 		ss.rec.UpdatedAt, ss.metaDirty = time.Now().UnixMilli(), true
 	}
-	if err := s.appendTurnEntries(ss.rec.ID, entries); err != nil {
+	if err := s.appendTurnEntries(ss, entries); err != nil {
 		ss.pending = retainLatestEntries(ss.pending, extra)
 		return
 	}
 	ss.logLines += len(entries)
 	ss.dirty, ss.pending = nil, nil
-	if live := len(ss.index.messages) + len(ss.index.parts); ss.logLines > 2*live+64 {
+	ss.dirtyInfos = nil
+	if live := len(ss.index.messages) + len(ss.index.parts); compact && ss.logLines > 2*live+64 {
 		if n, err := s.rewriteTurns(ss.rec.ID, ss.rec.Turns); err == nil {
 			ss.logLines = n
 		}
