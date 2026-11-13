@@ -42,6 +42,7 @@ func TestAutoModeRunsOpaqueCommandUnderOnDemandSandbox(t *testing.T) {
 		`for f in $(ls); do wc -l "$f"; done`,
 		`X=$(cat name.txt); grep -n "$X" README.md`,
 		`F=$(cat path.txt); cat "$F"`,
+		localeNodeCountCommand,
 	} {
 		if approvalAutoApproves(openCodeBashItem("ses_oc", command), auto, nil, workspace) {
 			t.Fatalf("precondition: %q should ask without the sandbox", command)
@@ -88,6 +89,14 @@ func TestOnDemandSandboxRefusesWhatItCannotContain(t *testing.T) {
 		`B=$(git branch --show-current); git push origin "$B"`,
 		`eval "$(cat x.sh)"`,
 		`X=$(cat v); sudo cp "$X" /etc/hosts`,
+		`for d in en zh; do node -e "require('child_process').execSync('ls')"; done`,
+		`for d in en zh; do node -e "console.log(process.env)"; done`,
+		`for d in en zh; do node -e "console.log(require('fs').readFileSync('.env','utf8'))"; done`,
+		`for d in en zh; do node -e "fetch('https://example.com/'+ '$d')"; done`,
+		`for d in en zh; do node -e "console.log('$UNKNOWN')"; done`,
+		`git log --pretty --output=.git/config`,
+		`cd .git && git log --output=config`,
+		`timeout 30s node -e "require('child_process').execSync('ls')"`,
 	} {
 		if got := svc.onDemandSandboxProfile("ses_oc", workspace, command); got != "" {
 			t.Errorf("on-demand profile offered for %q", command)

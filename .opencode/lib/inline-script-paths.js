@@ -42,7 +42,7 @@ function isArrowParamParen(toks, openIdx) {
   return closeIdx + 1 < toks.length && toks[closeIdx + 1].kind === "op" && toks[closeIdx + 1].val === "=>";
 }
 
-function countInlineWritesAndParams(isJS, toks, writes, params) {
+export function countInlineWritesAndParams(isJS, toks, writes, params) {
   let parenDepth = 0;
   for (let i = 0; i < toks.length; i++) {
     const t = toks[i];
@@ -290,6 +290,35 @@ export function collectInlinePathVars(family, code, toks) {
     }
   }
   return { pathVars: vars, regexVars };
+}
+
+// Token-only normalization of single-write standard path module aliases.
+export function normalizeInlinePathAliases(code, toks) {
+  const writes = new Map(), params = new Map(), aliases = new Map();
+  countInlineWritesAndParams(true, toks, writes, params);
+  for (let i = 0; i < toks.length; i++) {
+    if (toks[i].kind !== "id" || !["const", "let"].includes(toks[i].val)) continue;
+    for (let j = i + 1; j + 2 < toks.length && toks[j].kind === "id" && toks[j + 1].val === "=";) {
+      const end = statementExprEnd(code, toks, j + 2);
+      const rhs = toks.slice(j + 2, end);
+      if (writes.get(toks[j].val) === 1 && !params.has(toks[j].val) && rhs.length === 4 &&
+        rhs[0].kind === "id" && rhs[0].val === "require" && rhs[1].val === "(" &&
+        rhs[2].kind === "str" && ["path", "node:path"].includes(rhs[2].val) && rhs[3].val === ")") {
+        aliases.set(toks[j].val, { decl: j, end });
+      }
+      if (end >= toks.length || toks[end].val !== ",") break;
+      j = end + 1;
+    }
+  }
+  const templateUses = (t, name) => (t.exprs || []).some((expr) => expr.some((sub) =>
+    (sub.kind === "id" && sub.val === name) || templateUses(sub, name)));
+  for (const [name, binding] of aliases) {
+    if (toks.some((t, i) => templateUses(t, name) || (t.kind === "id" && t.val === name && i !== binding.decl &&
+      (i <= binding.end || toks[i - 1]?.val === "." || toks[i + 1]?.val !== "." ||
+        toks[i + 2]?.val !== "join" || toks[i + 3]?.val !== "(")))) aliases.delete(name);
+  }
+  return toks.map((t, i) => aliases.has(t.val) && i > aliases.get(t.val).end && t.kind === "id" &&
+    toks[i + 1]?.val === "." && toks[i + 2]?.val === "join" && toks[i + 3]?.val === "(" ? { ...t, val: "path" } : t);
 }
 
 function splitTopLevelPlus(expr) {

@@ -315,6 +315,15 @@ func advanceScopedCD(seg, cwd, worktree string) (string, bool) {
 func unwrapCommandPrefixes(words []string) (cmd []string, lookupOnly, ok bool) {
 	for len(words) > 0 {
 		switch filepath.Base(normalizeAbsoluteTool(words[0])) {
+		case "timeout", "gtimeout":
+			if len(words) == 2 && (words[1] == "--help" || words[1] == "--version") {
+				return words, true, true
+			}
+			end, ok := timeoutPrefixLength(words)
+			if !ok {
+				return words, false, false
+			}
+			words = words[end:]
 		case "nohup", "time", "exec":
 			if len(words) == 1 {
 				return words, false, true
@@ -352,6 +361,43 @@ func unwrapCommandPrefixes(words []string) (cmd []string, lookupOnly, ok bool) {
 		}
 	}
 	return words, false, true
+}
+
+var timeoutDurationRe = regexp.MustCompile(`^(?:\d+(?:\.\d*)?|\.\d+)[smhd]?$`)
+var timeoutSignalRe = regexp.MustCompile(`^(?:[A-Za-z][A-Za-z0-9]*|\d+)$`)
+
+func timeoutPrefixLength(words []string) (int, bool) {
+	i := 1
+	for ; i < len(words) && strings.HasPrefix(words[i], "-"); i++ {
+		flag := words[i]
+		if flag == "--" {
+			i++
+			break
+		}
+		if flag == "--foreground" || flag == "--preserve-status" || flag == "--verbose" || flag == "-v" {
+			continue
+		}
+		value, signal := "", false
+		switch flag {
+		case "-s", "--signal", "-k", "--kill-after":
+			signal = flag == "-s" || flag == "--signal"
+			i++
+			if i < len(words) {
+				value = words[i]
+			}
+		default:
+			for _, prefix := range []string{"--signal=", "--kill-after=", "-s", "-k"} {
+				if strings.HasPrefix(flag, prefix) {
+					value, signal = strings.TrimPrefix(flag, prefix), prefix == "-s" || prefix == "--signal="
+					break
+				}
+			}
+		}
+		if (signal && !timeoutSignalRe.MatchString(value)) || (!signal && !timeoutDurationRe.MatchString(value)) {
+			return 0, false
+		}
+	}
+	return i + 1, i+1 < len(words) && timeoutDurationRe.MatchString(words[i])
 }
 
 // joinLineContinuations folds `\` + newline into a space, as the shell does,

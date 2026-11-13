@@ -74,7 +74,7 @@ export function expandLiteralForLoops(s, bound, deps) {
   const out = scanForLoops(s, (start, end, header, body, items) => {
     if (items.length === 0 || items.length > MAX_LITERAL_LOOP_ITEMS || !literalForItems(items, deps.itemBlocked)) return null;
     const name = deps.forLoopVar(header);
-    if (!name || bound.has(name)) return null;
+    if (!name || bound.has(name) || !literalLoopBindingStable(deps.bodyWords(body), name)) return null;
     const copies = [];
     for (const item of items) {
       const one = deps.substituteVars(body, new Map([[name, { valueSub: false, text: item, secret: false, inner: "" }]]));
@@ -85,6 +85,22 @@ export function expandLiteralForLoops(s, bound, deps) {
     return copies.join("\n");
   });
   return { text: out, changed };
+}
+
+function literalLoopBindingStable(segments, name) {
+  const rebinders = new Set(["read", "declare", "local", "typeset", "readonly", "mapfile", "readarray", "let", "unset", "export"]);
+  for (let words of segments) {
+    if (words[0]?.startsWith(name + "[")) return false;
+    while (words.length && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0]) || words[0].startsWith(name + "+="))) {
+      if (words[0].startsWith(name + "=") || words[0].startsWith(name + "+=")) return false;
+      words = words.slice(1);
+    }
+    if (!words.length) continue;
+    const base = words[0].slice(words[0].lastIndexOf("/") + 1);
+    if (rebinders.has(base) || (base === "for" && words[1] === name)) return false;
+    if (base === "printf" && words.slice(1).includes("-v")) return false;
+  }
+  return true;
 }
 
 function literalForItems(items, itemBlocked) {
@@ -119,7 +135,7 @@ function scanForLoops(s, visit, onSpan) {
         quote = "'";
         continue;
       }
-      if (!wordAt(s, i, "for")) continue;
+      if (quote || !wordAt(s, i, "for")) continue;
       const header = parseForHeader(s, i);
       if (!header) continue;
       const done = findLoopDone(s, header.bodyStart);
@@ -201,6 +217,7 @@ function findLoopDone(s, i) {
       quote = "'";
       continue;
     }
+    if (quote) continue;
     if (wordAt(s, j, "for")) {
       depth++;
       j += "for".length - 1;

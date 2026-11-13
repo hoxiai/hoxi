@@ -74,6 +74,23 @@ func unattendedScriptCategory(text string, depth int, ctx *unattendedCtx) string
 	if depth > unattendedMaxDepth {
 		return unattendedCategoryDynamic
 	}
+	// Preserve credential references before literal propagation can remove them.
+	if names, ok := shellExpansionNames(text); ok {
+		for _, name := range names {
+			ctx.credRef = ctx.credRef || isCredentialEnvName(name)
+		}
+	}
+	// Reuse bounded literal assignments/loops before parsing inline argv.
+	// Execution always keeps the original command.
+	{
+		expanded, status := concretizeLiterals(text)
+		switch status {
+		case constSecret:
+			return unattendedCategorySecret
+		case constApplied:
+			text = expanded
+		}
+	}
 	if depth > 0 {
 		if cat := unattendedCommandCategory(text); cat != "" {
 			return cat
@@ -412,7 +429,7 @@ func unattendedInlineFlag(family, arg string) bool {
 	case "python", "python3":
 		return arg == "-c"
 	case "node", "bun":
-		return arg == "-e" || arg == "--eval" || arg == "-p" || arg == "--print"
+		return arg == "-e" || arg == "--eval" || arg == "-p" || arg == "--print" || arg == "-pe" || arg == "-ep"
 	case "deno":
 		return arg == "eval"
 	case "perl", "ruby":
@@ -543,6 +560,13 @@ func unattendedInterpreterCategory(seg *uSeg, family string, args []uWord, ctx *
 			}
 			return pythonModuleCategory(seg, args[i+1], args[i+2:], options, judge)
 		}
+		if _, code, attached := attachedInlineCode(family, t); attached {
+			if cat := judge(code); cat != "" {
+				return cat
+			}
+			hasCode = true
+			continue
+		}
 		if unattendedInlineFlag(family, t) {
 			if i+1 >= len(args) {
 				return ""
@@ -567,6 +591,9 @@ func unattendedInterpreterCategory(seg *uSeg, family string, args []uWord, ctx *
 			break
 		}
 		if strings.HasPrefix(t, "-") {
+			if ctx != nil && ctx.codeJudge != nil && family == "node" && !inlineSafeNodeFlags[t] {
+				return unattendedCategoryDynamic
+			}
 			options = append(options, t)
 			if interpValueFlags[t] {
 				if i+1 < len(args) {

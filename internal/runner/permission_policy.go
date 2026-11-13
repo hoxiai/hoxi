@@ -160,7 +160,7 @@ func hasDestructiveGitCleanOrRestore(blob string) bool {
 }
 
 func matchesDestructive(blob string) bool {
-	return destructiveRe.MatchString(blob) || destructiveGitRe.MatchString(blob) || hasDestructiveGitCleanOrRestore(blob)
+	return destructiveRe.MatchString(blob) || destructiveGitRe.MatchString(blob) || hasDestructiveGitCleanOrRestore(blob) || hasProtectedGitOutput(blob)
 }
 
 // decideCommandPermission mirrors decidePermission({permission:"bash", patterns:[command]}).
@@ -456,7 +456,7 @@ func isSafeWords(words []string) bool {
 	case cmd == "npx":
 		return arg(0) == "tsc" && toolArgsSafe("tsc", args[1:])
 	case cmd == "node":
-		return len(args) == 1 && args[0] == "-v"
+		return len(args) == 1 && (args[0] == "-v" || args[0] == "--version" || args[0] == "-h" || args[0] == "--help")
 	case cmd == "kill":
 		return isSafeKillProbeArgs(args)
 	case cmd == "hoxi":

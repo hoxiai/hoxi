@@ -47,7 +47,7 @@ func expandLiteralForLoops(s string, bindings map[string]constVal) (string, bool
 			return "", false
 		}
 		name := forNameAt(header)
-		if name == "" {
+		if name == "" || !literalLoopBindingStable(body, name) {
 			return "", false
 		}
 		if _, shadowed := bindings[name]; shadowed {
@@ -123,7 +123,7 @@ func scanForLoops(s string, visit func(start, end int, header, body string, item
 				quote = '\''
 				continue
 			}
-			if !wordAt(s, i, "for") {
+			if quote != 0 || !wordAt(s, i, "for") {
 				continue
 			}
 			items, bodyStart, ok := parseForHeader(s, i)
@@ -204,6 +204,9 @@ func findLoopDone(s string, i int) (bodyEnd, doneEnd int, ok bool) {
 		}
 		if c == '\'' && quote == 0 {
 			quote = '\''
+			continue
+		}
+		if quote != 0 {
 			continue
 		}
 		if wordAt(s, j, "for") {

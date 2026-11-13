@@ -6,6 +6,9 @@
 // command untouched. .opencode/lib/permission-policy.cases.json keeps both
 // ports aligned.
 
+import { attachedInlineCode, inlineScriptTrailingArgsSafe } from "./inline-script-arguments.js";
+import { timeoutPrefixLength, unwrapCommandPrefixes } from "./command-wrappers.js";
+
 const MASKED_DATA_ARGUMENT = "Q";
 
 const setOf = (...items) => new Set(items);
@@ -106,24 +109,9 @@ function stripDataSegmentEnv(seg) {
       if (i >= seg.length || !seg[i].literal) return seg;
       seg = seg.slice(i);
     } else if (head === "timeout" || head === "gtimeout") {
-      let i = 1;
-      while (i < seg.length && seg[i].value.startsWith("-")) {
-        const v = seg[i].value;
-        if (!seg[i].literal) return seg;
-        if (v === "--") {
-          i++;
-          break;
-        }
-        if (["-s", "--signal", "-k", "--kill-after"].includes(v)) {
-          if (i + 1 >= seg.length || !seg[i + 1].literal) return seg;
-          i++;
-        }
-        i++;
-      }
-      if (i >= seg.length || !seg[i].literal) return seg;
-      i++;
-      if (i >= seg.length || !seg[i].literal) return seg;
-      seg = seg.slice(i);
+      const end = timeoutPrefixLength(seg.map((t) => t.value));
+      if (end === null) return seg;
+      seg = seg.slice(end);
     } else {
       return seg;
     }
@@ -264,9 +252,22 @@ function gitDataArguments(seg) {
     return flagValueReplacements(seg, i + 1, setOf("-m", "--message"), sub === "commit");
   }
   if (sub === "log" || sub === "shortlog") {
-    return flagValueReplacements(seg, i + 1, setOf("--grep", "-S", "-G"), false);
+    return [...flagValueReplacements(seg, i + 1, setOf("--grep", "-S", "-G"), false), ...gitFormatArguments(seg, i + 1)];
   }
+  if (sub === "show" || sub === "diff") return gitFormatArguments(seg, i + 1);
   return [];
+}
+
+function gitFormatArguments(seg, start) {
+  const out = [];
+  for (let i = start; i < seg.length && seg[i].value !== "--"; i++) {
+    const eq = seg[i].value.indexOf("="), flag = seg[i].value.slice(0, eq);
+    if (eq < 0 && seg[i].value.length >= 3 && "--output".startsWith(seg[i].value)) { i++; continue; }
+    if (eq >= 0 && ["--format", "--pretty"].includes(flag) && seg[i].literal) {
+      out.push({ start: seg[i].start, end: seg[i].end, text: flag + "=" + MASKED_DATA_ARGUMENT });
+    }
+  }
+  return out;
 }
 
 function ghDataArguments(seg) {
@@ -411,9 +412,11 @@ export function maskCommandDataArguments(command) {
     }
   }
   if (masked.length === 0) return s;
+  masked.sort((a, b) => a.start - b.start);
   let out = "";
   let last = 0;
   for (const rep of masked) {
+    if (rep.start < last || rep.end > s.length) return s;
     out += s.slice(last, rep.start) + rep.text;
     last = rep.end;
   }
@@ -578,8 +581,7 @@ function unquoteLiteralShellScriptArg(raw) {
 
 const INLINE_SHELL_KW = setOf("while", "until", "do", "done", "if", "then", "else", "elif", "fi", "!");
 const SAFE_PY_FLAGS = setOf("-u", "-B", "-E", "-s", "-S", "-O", "-OO", "-q", "-I");
-const SAFE_NODE_FLAGS = setOf("--no-warnings", "--input-type=module", "--input-type=commonjs");
-const INLINE_CODE_FLAGS = setOf("-c", "-e", "--eval", "-p", "--print");
+const SAFE_NODE_FLAGS = setOf("--no-warnings", "--input-type=module", "--input-type=commonjs", "-c", "--check");
 
 function unquoteStrictInlineCodeArg(raw) {
   if (!raw || raw.length < 2) return null;
@@ -606,50 +608,42 @@ function unquoteStrictInlineCodeArg(raw) {
 export function rewriteReadOnlyInlineSegment(seg, judge, inlineScriptTool, normalizeAbsoluteTool) {
   if (!judge) return seg;
   const spans = scanShellWordSpans(seg);
-  if (!spans || spans.length < 3) return seg;
+  if (!spans || spans.length < 2) return seg;
   let idx = 0;
   while (idx < spans.length && INLINE_SHELL_KW.has(spans[idx].word)) idx++;
   while (idx < spans.length && DATA_ENV_ASSIGN_RE.test(spans[idx].word) && !/[$`<>]/.test(seg.slice(spans[idx].start, spans[idx].end))) {
     idx++;
   }
-  if (idx < spans.length) {
-    const head = baseName(normalizeAbsoluteTool ? normalizeAbsoluteTool(spans[idx].word) : spans[idx].word);
-    if (head === "nohup" || head === "time" || head === "command") {
-      idx++;
-      while (idx < spans.length && spans[idx].word.startsWith("-")) {
-        if (head === "command" && (spans[idx].word === "-v" || spans[idx].word === "-V")) return seg;
-        if (spans[idx].word === "--") {
-          idx++;
-          break;
-        }
-        idx++;
-      }
-    }
-  }
+  const words = spans.slice(idx).map((s) => s.word);
+  const parsed = unwrapCommandPrefixes(words, normalizeAbsoluteTool || ((s) => s));
+  if (!parsed || parsed.lookupOnly) return seg;
+  idx += words.length - parsed.words.length;
   if (idx >= spans.length) return seg;
   const family = inlineScriptTool(baseName(normalizeAbsoluteTool ? normalizeAbsoluteTool(spans[idx].word) : spans[idx].word));
   if (family !== "python" && family !== "python3" && family !== "node") return seg;
   idx++;
+  let codeSpan;
   while (idx < spans.length) {
     const w = spans[idx].word;
-    if (INLINE_CODE_FLAGS.has(w)) break;
+    const attached = attachedInlineCode(family, w);
+    if (attached) {
+      codeSpan = { ...spans[idx] };
+      if (!seg.slice(codeSpan.start, codeSpan.end).startsWith(attached.prefix)) return seg;
+      codeSpan.start += attached.prefix.length;
+      idx++;
+      break;
+    }
+    if (((family === "node" && ["-e", "--eval", "-p", "--print", "-pe", "-ep"].includes(w)) ||
+      (family !== "node" && w === "-c")) && idx + 1 < spans.length) {
+      codeSpan = spans[idx + 1]; idx += 2; break;
+    }
     if ((family === "node" && SAFE_NODE_FLAGS.has(w)) || (family !== "node" && SAFE_PY_FLAGS.has(w))) {
       idx++;
       continue;
     }
     return seg;
   }
-  if (idx + 1 >= spans.length) return seg;
-  const codeSpan = spans[idx + 1];
-  for (let k = idx + 2; k < spans.length; k++) {
-    const w = spans[k].word;
-    if (DEV_NULL_WORD_RE.test(w) || DUP_STREAM_WORD_RE.test(w)) continue;
-    if (REDIRECT_WORD_RE.test(w) && k + 1 < spans.length && spans[k + 1].word === "/dev/null") {
-      k++;
-      continue;
-    }
-    return seg;
-  }
+  if (!codeSpan || !inlineScriptTrailingArgsSafe(seg, family, spans, idx, SAFE_NODE_FLAGS)) return seg;
   const code = unquoteStrictInlineCodeArg(seg.slice(codeSpan.start, codeSpan.end));
   if (code === null || judge(family, code) !== "") return seg;
   return seg.slice(0, codeSpan.start) + MASKED_DATA_ARGUMENT + seg.slice(codeSpan.end);

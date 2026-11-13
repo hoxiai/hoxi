@@ -7,6 +7,7 @@
 import { isSafeKillProbeArgs } from "./script-interpreter.js";
 import { setLiteralJudge } from "./shell-constants.js";
 import { destructiveScanForms } from "./shell-substitution.js";
+import { hasProtectedGitOutput } from "./git-output.js";
 import {
   EDIT_PERMISSIONS,
   OWN_SESSION_EDIT_TOOLS,
@@ -471,7 +472,7 @@ function isSafeWords(words) {
   if (cmd === "npx") {
     return arg(0) === "tsc" && toolArgsSafe("tsc", args.slice(1));
   }
-  if (cmd === "node") return args.length === 1 && args[0] === "-v";
+  if (cmd === "node") return args.length === 1 && ["-v", "--version", "-h", "--help"].includes(args[0]);
   if (cmd === "kill") return isSafeKillProbeArgs(args);
   if (cmd === "hoxi") {
     if (arg(0) === "doc") {
@@ -550,7 +551,7 @@ function hasDestructiveGitCleanOrRestore(blob) {
 }
 
 function matchesDestructive(blob) {
-  return DESTRUCTIVE_RE.test(blob) || DESTRUCTIVE_GIT_RE.test(blob) || hasDestructiveGitCleanOrRestore(blob);
+  return DESTRUCTIVE_RE.test(blob) || DESTRUCTIVE_GIT_RE.test(blob) || hasDestructiveGitCleanOrRestore(blob) || hasProtectedGitOutput(blob, splitCommandChain, shellWords);
 }
 
 function hoxiToolsAction(input) {

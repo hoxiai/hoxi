@@ -126,6 +126,9 @@ func hasInlineScriptFlag(base string, args []string) bool {
 	}
 	for i := 0; i < len(args); i++ {
 		a := args[i]
+		if _, _, attached := attachedInlineCode(base, a); attached || unattendedInlineFlag(base, a) {
+			return true
+		}
 		if a == "--" {
 			return false
 		}

@@ -249,6 +249,9 @@ func recoverableCommandClassesAt(command, worktree string, classes map[string]bo
 	} else if status == constSecret {
 		return false
 	}
+	if hasProtectedGitOutput(command) {
+		return false
+	}
 	// A `# hoxi-stop:` marker line is a comment segment and passes as non-destructive.
 	if hasShellGrouping(command) || isOpaqueShellCommandWith(command, worktree, trust) {
 		return false

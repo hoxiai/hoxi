@@ -84,6 +84,39 @@ func stripShellKeywords(words []string) []string {
 	return words
 }
 
+// A literal loop value is usable only while the body cannot rebind it. In
+// particular, substituting the outer value into an inline script after `d=…`
+// or an inner `for d` would judge different code from what the shell executes.
+func literalLoopBindingStable(body, name string) bool {
+	for _, seg := range splitConstSegments(body) {
+		words := stripShellKeywords(shellWords(seg.text(body)))
+		if len(words) > 0 && strings.HasPrefix(words[0], name+"[") {
+			return false
+		}
+		for len(words) > 0 && (envVarAssignmentWordRe.MatchString(words[0]) || strings.HasPrefix(words[0], name+"+=")) {
+			if strings.HasPrefix(words[0], name+"=") || strings.HasPrefix(words[0], name+"+=") {
+				return false
+			}
+			words = words[1:]
+		}
+		if len(words) == 0 {
+			continue
+		}
+		base := filepath.Base(words[0])
+		if base == "read" || loopVarRebinders[base] || (base == "for" && len(words) > 1 && words[1] == name) {
+			return false
+		}
+		if base == "printf" {
+			for _, arg := range words[1:] {
+				if arg == "-v" {
+					return false
+				}
+			}
+		}
+	}
+	return true
+}
+
 // loopBindings returns, for every variable the command binds, whether all of
 // its bindings are trustworthy loop bindings.
 func loopBindings(segments []string, pipedIn []bool, valueClass bool) map[string]bool {

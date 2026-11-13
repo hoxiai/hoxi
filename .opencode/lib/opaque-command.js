@@ -6,6 +6,7 @@
 // hidden or secret file) and it only feeds read-only tools. The shared
 // .opencode/lib/opaque-command.cases.json keeps both ports aligned.
 import { DATA_ARG_INTERPRETERS } from "./command-data-args.js";
+import { attachedInlineCode } from "./inline-script-arguments.js";
 import {
   CD_SEGMENT_RE,
   DOLLAR_EXPAND_RE,
@@ -286,6 +287,7 @@ function hasInlineScriptFlag(base, args) {
   if (args.length === 0) return true;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
+    if (attachedInlineCode(base, a) || (base === "node" && ["-pe", "-ep"].includes(a))) return true;
     if (a === "--") return false;
     if (a === "-" || INLINE_SCRIPT_FLAGS.has(a) || a.startsWith("-c") || a.startsWith("-e") || a.startsWith("--eval=") || a.startsWith("--print=")) {
       return true;

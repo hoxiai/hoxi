@@ -15,11 +15,13 @@ import {
   cartesianConcat,
   collectInlinePathVars,
   matchingCloseParen,
+  normalizeInlinePathAliases,
   resolveInlinePathTokens,
   rewriteRegexExecCalls,
   splitCallArgs,
 } from "./inline-script-paths.js";
 import { setInlineReadOnlyJudge } from "./shell-substitution.js";
+import { maskInlineDataFields } from "./inline-script-fields.js";
 import { SCRIPT_CAPABILITY_RE, scanUnattendedText, unattendedScriptCategoryWith } from "./unattended-policy.js";
 
 const STD_WRITE_RE = /\b(?:sys|process)\s*\.\s*(?:stdout|stderr)\s*\.\s*write\b/g;
@@ -64,7 +66,8 @@ export function readOnlyScriptCategory(family, code) {
   const isJS = family === "node";
   const rawLex = lexInlineScript(family, code);
   if (!rawLex) return "dynamic";
-  const sqlLex = lexInlineScript(family, maskReadOnlySQL(code));
+  if (isJS) rawLex.toks = normalizeInlinePathAliases(code, rawLex.toks);
+  const sqlLex = lexInlineScript(family, maskReadOnlySQL(isJS ? maskInlineDataFields(code, rawLex.toks) : code));
   if (!sqlLex) return "dynamic";
   const { pathVars, regexVars } = collectInlinePathVars(family, code, rawLex.toks);
   const masked = maskPrintIdioms(rewriteRegexExecCalls(isJS, regexVars, sqlLex.mask));

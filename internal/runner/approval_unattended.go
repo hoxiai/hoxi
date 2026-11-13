@@ -203,6 +203,9 @@ var (
 func unattendedCommandCategory(command string) string {
 	command = unwrapSandboxCommand(command)
 	for _, form := range destructiveScanForms(command) {
+		if hasProtectedGitOutput(form) {
+			return unattendedCategorySecret
+		}
 		if cat := scanUnattendedText(form); cat != "" {
 			return cat
 		}

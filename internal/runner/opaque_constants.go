@@ -344,10 +344,12 @@ func constBindings(command string, segs []constSeg) (map[string]constVal, map[st
 				poison(name)
 			}
 		}
-		for _, name := range rebindNames(text) {
-			poison(name)
-		}
 		name, raw, pure := pureAssignment(text)
+		for _, rebound := range rebindNames(text) {
+			if !pure || rebound != name {
+				poison(rebound)
+			}
+		}
 		if name == "" {
 			continue
 		}
@@ -614,6 +616,12 @@ func substituteVars(s string, vars map[string]constVal) (string, bool) {
 	fail := false
 	writeRaw := func(v string) {
 		if atWordStart && commandWord {
+			fail = true
+		}
+		// Expansion values are data to the real shell: inserting a quote or
+		// separator must not turn that data into new judgment-time shell syntax.
+		if (quote == '"' && strings.ContainsAny(v, "\"\\`")) ||
+			(quote == 0 && strings.ContainsAny(v, " \t\r\n'\"\\`;&|()<>")) {
 			fail = true
 		}
 		b.WriteString(v)

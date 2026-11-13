@@ -14,7 +14,10 @@ import { parseUnattendedScript, INDIRECT_EXPANSION } from "./unattended-shell.js
 import { inlineScriptTool } from "./script-interpreter.js";
 import { destructiveScanForms } from "./shell-substitution.js";
 import { isOpaqueShellCommand } from "./opaque-command.js";
-import { ENV_FILE_PATTERN, ENVRC_FILE_PATTERN, unwrapSandboxCommand } from "./permission-policy.js";
+import { ENV_FILE_PATTERN, ENVRC_FILE_PATTERN, unwrapSandboxCommand, splitCommandChain, shellWords } from "./permission-policy.js";
+import { hasProtectedGitOutput } from "./git-output.js";
+import { concretizeLiterals, shellExpansionNames } from "./shell-constants.js";
+import { attachedInlineCode } from "./inline-script-arguments.js";
 
 const publishRe = /(?:^|[;&|(\n]|&&|\|\|)\s*(?:nohup\s+|time\s+|exec\s+|command\s+|env(?:\s+[A-Za-z_][A-Za-z0-9_]*=\S*)*\s+)*(?:git(?:\s+-C\s+\S+|\s+-c\s+\S+|\s+--git-dir=\S+|\s+--work-tree=\S+)*\s+push|gh\s+(?:release\s+create|pr\s+merge)|(?:npm|pnpm|yarn|bun)\s+(?:-r\s+|--recursive\s+)?publish|cargo\s+publish|twine\s+upload|gem\s+push|docker\s+push|terraform\s+(?:apply|destroy)|kubectl\s+(?:apply|delete)|helm\s+(?:install|upgrade)|(?:\.\/)?scripts\/ai-release\.sh)\b/i;
 const sudoRe = /(?:^|[;&|(\n]|&&|\|\|)\s*(?:nohup\s+|time\s+|exec\s+|command\s+|env(?:\s+[A-Za-z_][A-Za-z0-9_]*=\S*)*\s+)*(?:sudo|su|doas)\b/i;
@@ -84,6 +87,7 @@ export function unattendedCommandDecision(command) {
 function unattendedCommandCategory(command) {
   const cmd = unwrapSandboxCommand(String(command ?? ""));
   for (const form of destructiveScanForms(cmd)) {
+    if (hasProtectedGitOutput(form, splitCommandChain, shellWords)) return "secret";
     const cat = scanUnattendedText(form);
     if (cat) return cat;
   }
@@ -114,6 +118,14 @@ export function unattendedScriptCategoryWith(command, codeJudge) {
 
 function scriptCategory(text, depth, ctx) {
   if (depth > MAX_DEPTH) return "dynamic";
+  // Keep credential references even when literal propagation removes them.
+  if ((shellExpansionNames(text) || []).some(isCredentialEnvName)) ctx.credRef = true;
+  // Match Go's bounded literal assignment/loop judgment before inline argv.
+  {
+    const expanded = concretizeLiterals(text);
+    if (expanded.status === "secret") return "secret";
+    if (expanded.status === "applied") text = expanded.text;
+  }
   if (depth > 0) {
     const cat = unattendedCommandCategory(text);
     if (cat) return cat;
@@ -360,7 +372,7 @@ function interpreterFamily(base) {
 function inlineFlag(family, arg) {
   switch (family) {
     case "python": case "python3": return arg === "-c";
-    case "node": case "bun": return ["-e", "--eval", "-p", "--print"].includes(arg);
+    case "node": case "bun": return ["-e", "--eval", "-p", "--print", "-pe", "-ep"].includes(arg);
     case "deno": return arg === "eval";
     case "perl": case "ruby": return arg.startsWith("-") && !arg.startsWith("--") && /[eE]/.test(arg.slice(1));
     case "php": return arg === "-r";
@@ -433,6 +445,13 @@ function interpreterCategory(seg, family, args, ctx) {
       if (i + 1 >= args.length) return "";
       return pythonModuleCategory(seg, args[i + 1], args.slice(i + 2), options, judge);
     }
+    const attached = attachedInlineCode(family, t);
+    if (attached) {
+      const cat = judge(attached.code);
+      if (cat) return cat;
+      hasCode = true;
+      continue;
+    }
     if (inlineFlag(family, t)) {
       if (i + 1 >= args.length) return "";
       const code = args[i + 1];
@@ -446,6 +465,7 @@ function interpreterCategory(seg, family, args, ctx) {
     }
     if (t === "-" || isStdinPath(t)) break;
     if (t.startsWith("-")) {
+      if (ctx?.codeJudge && family === "node" && !["--no-warnings", "--input-type=module", "--input-type=commonjs", "-c", "--check"].includes(t)) return "dynamic";
       options.push(t);
       if (INTERP_VALUE_FLAGS.has(t)) {
         if (i + 1 < args.length) options.push(args[i + 1].text);

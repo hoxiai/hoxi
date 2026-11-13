@@ -75,7 +75,7 @@ var (
 	inlineBlockedNodeModules = setOf("child_process", "http", "https", "http2", "net", "tls", "dgram", "dns", "cluster",
 		"worker_threads", "vm", "inspector", "repl", "v8", "wasi", "module", "process", "async_hooks", "trace_events", "sqlite")
 	inlineSafePyFlags   = setOf("-u", "-B", "-E", "-s", "-S", "-O", "-OO", "-q", "-I")
-	inlineSafeNodeFlags = setOf("--no-warnings", "--input-type=module", "--input-type=commonjs")
+	inlineSafeNodeFlags = setOf("--no-warnings", "--input-type=module", "--input-type=commonjs", "-c", "--check")
 	inlineCodeFlags     = setOf("-c", "-e", "--eval", "-p", "--print")
 )
 
@@ -96,7 +96,14 @@ func readOnlyScriptCategory(family, code string) string {
 	if !ok {
 		return unattendedCategoryDynamic
 	}
-	sqlCode := maskReadOnlySQL(code)
+	if isJS {
+		rawToks = normalizeInlinePathAliases(code, rawToks)
+	}
+	capabilityCode := code
+	if isJS {
+		capabilityCode = maskInlineDataFields(code, rawToks)
+	}
+	sqlCode := maskReadOnlySQL(capabilityCode)
 	_, codeMask, _, ok := lexInlineScript(family, sqlCode)
 	if !ok {
 		return unattendedCategoryDynamic
@@ -549,7 +556,7 @@ func maskReadOnlyInlineScripts(s string) string {
 
 func rewriteReadOnlyInlineSegment(seg string) string {
 	spans := scanShellWordSpans(seg)
-	if len(spans) < 3 {
+	if len(spans) < 2 {
 		return seg
 	}
 	idx := 0
@@ -559,22 +566,15 @@ func rewriteReadOnlyInlineSegment(seg string) string {
 	for idx < len(spans) && envVarAssignmentWordRe.MatchString(spans[idx].word) && !strings.ContainsAny(seg[spans[idx].start:spans[idx].end], "$`<>") {
 		idx++
 	}
-	if idx < len(spans) {
-		head := filepath.Base(normalizeAbsoluteTool(spans[idx].word))
-		if head == "nohup" || head == "time" || head == "command" {
-			idx++
-			for idx < len(spans) && strings.HasPrefix(spans[idx].word, "-") {
-				if head == "command" && (spans[idx].word == "-v" || spans[idx].word == "-V") {
-					return seg
-				}
-				if spans[idx].word == "--" {
-					idx++
-					break
-				}
-				idx++
-			}
-		}
+	words := make([]string, 0, len(spans)-idx)
+	for _, span := range spans[idx:] {
+		words = append(words, span.word)
 	}
+	cmd, lookup, ok := unwrapCommandPrefixes(words)
+	if !ok || lookup {
+		return seg
+	}
+	idx += len(words) - len(cmd)
 	if idx >= len(spans) {
 		return seg
 	}
@@ -583,9 +583,21 @@ func rewriteReadOnlyInlineSegment(seg string) string {
 		return seg
 	}
 	idx++
+	codeSpan := shellWordSpan{}
 	for idx < len(spans) {
 		w := spans[idx].word
-		if inlineCodeFlags[w] {
+		if prefix, _, attached := attachedInlineCode(family, w); attached {
+			codeSpan = spans[idx]
+			if !strings.HasPrefix(seg[codeSpan.start:codeSpan.end], prefix) {
+				return seg
+			}
+			codeSpan.start += len(prefix)
+			idx++
+			break
+		}
+		if unattendedInlineFlag(family, w) && idx+1 < len(spans) {
+			codeSpan = spans[idx+1]
+			idx += 2
 			break
 		}
 		if (family == "node" && inlineSafeNodeFlags[w]) || (family != "node" && inlineSafePyFlags[w]) {
@@ -594,19 +606,7 @@ func rewriteReadOnlyInlineSegment(seg string) string {
 		}
 		return seg
 	}
-	if idx+1 >= len(spans) {
-		return seg
-	}
-	codeSpan := spans[idx+1]
-	for k := idx + 2; k < len(spans); k++ {
-		w := spans[k].word
-		if devNullWordRe.MatchString(w) || dupStreamWordRe.MatchString(w) {
-			continue
-		}
-		if redirectWordRe.MatchString(w) && k+1 < len(spans) && spans[k+1].word == "/dev/null" {
-			k++
-			continue
-		}
+	if codeSpan.end == 0 || !inlineScriptTrailingArgsSafe(seg, family, spans, idx) {
 		return seg
 	}
 	code, ok := unquoteStrictInlineCodeArg(seg[codeSpan.start:codeSpan.end])

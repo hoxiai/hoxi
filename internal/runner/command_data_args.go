@@ -3,6 +3,7 @@ package runner
 import (
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -68,6 +69,16 @@ func stripDataSegmentEnv(seg []dataToken) []dataToken {
 			return seg
 		}
 		switch filepath.Base(seg[0].value) {
+		case "timeout", "gtimeout":
+			words := make([]string, len(seg))
+			for i, token := range seg {
+				words[i] = token.value
+			}
+			end, ok := timeoutPrefixLength(words)
+			if !ok {
+				return seg
+			}
+			seg = seg[end:]
 		case "do", "then", "else", "elif", "{", "!":
 			seg = seg[1:]
 		case "nohup", "time":
@@ -126,33 +137,6 @@ func stripDataSegmentEnv(seg []dataToken) []dataToken {
 				}
 				break
 			}
-			if i >= len(seg) || !seg[i].literal {
-				return seg
-			}
-			seg = seg[i:]
-		case "timeout", "gtimeout":
-			i := 1
-			for i < len(seg) && strings.HasPrefix(seg[i].value, "-") {
-				v := seg[i].value
-				if !seg[i].literal {
-					return seg
-				}
-				if v == "--" {
-					i++
-					break
-				}
-				if v == "-s" || v == "--signal" || v == "-k" || v == "--kill-after" {
-					if i+1 >= len(seg) || !seg[i+1].literal {
-						return seg
-					}
-					i++
-				}
-				i++
-			}
-			if i >= len(seg) || !seg[i].literal {
-				return seg
-			}
-			i++ // duration positional arg
 			if i >= len(seg) || !seg[i].literal {
 				return seg
 			}
@@ -247,9 +231,13 @@ func maskCommandDataArguments(command string) string {
 	if len(masked) == 0 {
 		return command
 	}
+	sort.Slice(masked, func(i, j int) bool { return masked[i].start < masked[j].start })
 	var b strings.Builder
 	last := 0
 	for _, rep := range masked {
+		if rep.start < last || rep.end > len(command) {
+			return command
+		}
 		b.WriteString(command[last:rep.start])
 		b.WriteString(rep.text)
 		last = rep.end
@@ -458,9 +446,28 @@ func gitDataArguments(seg []dataToken) []dataReplacement {
 	case "commit", "tag", "merge", "stash", "notes":
 		return flagValueReplacements(seg, i+1, setOf("-m", "--message"), sub == "commit")
 	case "log", "shortlog":
-		return flagValueReplacements(seg, i+1, setOf("--grep", "-S", "-G"), false)
+		return append(flagValueReplacements(seg, i+1, setOf("--grep", "-S", "-G"), false), gitFormatArguments(seg, i+1)...)
+	case "show", "diff":
+		return gitFormatArguments(seg, i+1)
 	}
 	return nil
+}
+
+// Pretty-format flags have optional values: only `--pretty=...` is data.
+// A bare --pretty must never consume/mask the following --output option.
+func gitFormatArguments(seg []dataToken, start int) []dataReplacement {
+	var out []dataReplacement
+	for i := start; i < len(seg) && seg[i].value != "--"; i++ {
+		flag, _, attached := strings.Cut(seg[i].value, "=")
+		if !attached && len(flag) >= 3 && strings.HasPrefix("--output", flag) {
+			i++ // the following word is a destination, even if it looks like a flag
+			continue
+		}
+		if attached && (flag == "--format" || flag == "--pretty") && seg[i].literal {
+			out = append(out, dataReplacement{start: seg[i].start, end: seg[i].end, text: flag + "=" + maskedDataArgument})
+		}
+	}
+	return out
 }
 
 func ghDataArguments(seg []dataToken) []dataReplacement {

@@ -300,6 +300,63 @@ func collectInlinePathVars(family, code string, toks []inlineTok) (map[string][]
 	return vars, regexVars
 }
 
+// normalizeInlinePathAliases recognizes single-write `const p = require('path')`
+// (including comma declarations). Only the path-expression tokens change, never
+// the code being scanned for capabilities or executed. Unknown/rebound aliases
+// remain unresolved. Mirrors normalizeInlinePathAliases in inline-script-paths.js.
+func normalizeInlinePathAliases(code string, toks []inlineTok) []inlineTok {
+	writes, params := map[string]int{}, map[string]int{}
+	countInlineWritesAndParams(true, toks, writes, params)
+	aliases := map[string][2]int{}
+	for i, t := range toks {
+		if t.kind != "id" || (t.val != "const" && t.val != "let") {
+			continue
+		}
+		for j := i + 1; j+2 < len(toks) && toks[j].kind == "id" && toks[j+1].val == "="; {
+			end := statementExprEnd(code, toks, j+2)
+			rhs := toks[j+2 : end]
+			if writes[toks[j].val] == 1 && params[toks[j].val] == 0 && len(rhs) == 4 &&
+				rhs[0].kind == "id" && rhs[0].val == "require" && rhs[1].val == "(" &&
+				rhs[2].kind == "str" && (rhs[2].val == "path" || rhs[2].val == "node:path") && rhs[3].val == ")" {
+				aliases[toks[j].val] = [2]int{j, end}
+			}
+			if end >= len(toks) || toks[end].val != "," {
+				break
+			}
+			j = end + 1
+		}
+	}
+	for name, binding := range aliases {
+		for i, t := range toks {
+			if inlineTemplateUses(t, name) || (t.kind == "id" && t.val == name && i != binding[0] &&
+				(i <= binding[1] || (i > 0 && toks[i-1].val == ".") || i+3 >= len(toks) ||
+					toks[i+1].val != "." || toks[i+2].val != "join" || toks[i+3].val != "(")) {
+				delete(aliases, name)
+				break
+			}
+		}
+	}
+	out := append([]inlineTok(nil), toks...)
+	for i := 0; i+3 < len(out); i++ {
+		if binding, ok := aliases[out[i].val]; ok && i > binding[1] && out[i].kind == "id" &&
+			out[i+1].val == "." && out[i+2].val == "join" && out[i+3].val == "(" {
+			out[i].val = "path"
+		}
+	}
+	return out
+}
+
+func inlineTemplateUses(t inlineTok, name string) bool {
+	for _, expr := range t.exprs {
+		for _, sub := range expr {
+			if (sub.kind == "id" && sub.val == name) || inlineTemplateUses(sub, name) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func findMatchingOpenBracket(toks []inlineTok, closeIdx int) int {
 	depth := 0
 	for i := closeIdx; i >= 0; i-- {
@@ -563,4 +620,3 @@ func rewriteRegexExecCalls(isJS bool, regexVars map[string]bool, codeMask string
 }
 
 var inlineLiteralRegexExecRe = regexp.MustCompile(`/_/\s*\.\s*exec\s*\(`)
-

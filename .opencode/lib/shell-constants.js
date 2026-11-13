@@ -3,6 +3,7 @@
 // internal/runner/opaque_constants.go and opaque_expand.go.
 import { DATA_ARG_INTERPRETERS } from "./command-data-args.js";
 import { isSecretPath } from "./external-path-risk.js";
+import { unwrapCommandPrefixes as unwrapPrefixes } from "./command-wrappers.js";
 import { containsFor, expandLiteralForLoops, forLoopRanges, isSafeCurlOutputTarget, isValueClassCurl, isValueClassSystem, isValueClassWc } from "./shell-loops.js";
 
 export const CMD_SUBST_VAR = "__hoxi_cmdsub__";
@@ -460,8 +461,8 @@ function constBindings(command, segs) {
     for (const name of names) if (!bound.has(name)) usedBefore.add(name);
     const loopName = forLoopVar(text);
     if (loopName && (bound.has(loopName) || poisoned.has(loopName))) poison(loopName);
-    for (const name of rebindNames(text)) poison(name);
     const assign = pureAssignment(text);
+    for (const name of rebindNames(text)) if (!assign || name !== assign.name) poison(name);
     if (!assign) continue;
     if (insideLoop) {
       if (bound.has(assign.name)) poison(assign.name);
@@ -537,6 +538,8 @@ export function substituteVars(s, vars) {
   let fail = false;
   const writeRaw = (v) => {
     if (atWordStart && commandWord) fail = true;
+    // Never turn expansion data into new shell syntax in judgment text.
+    if ((quote === '"' && /["\\`]/.test(v)) || (!quote && /[\s'"\\`;&|()<>]/.test(v))) fail = true;
     out += v;
     atWordStart = false;
   };
@@ -646,6 +649,7 @@ export function concretizeLiterals(command) {
     substituteVars,
     forLoopVar,
     itemBlocked: (item) => pathSecret(item) || judge.isProtected(item),
+    bodyWords: (body) => splitConstSegments(body).map((seg) => stripShellKeywords(shellWordsOf(body.slice(seg.start, seg.end)))),
   });
   rewritten = expanded.text;
   const substituted = substituteVars(rewritten, bound);
@@ -660,35 +664,7 @@ export function concretizeLiterals(command) {
 // env NAME=value); `command -v x` is a lookup. A bare `env` prints every
 // environment variable, secrets included, so it returns null (opaque).
 export function unwrapCommandPrefixes(words, normalizeTool = judge.normalizeAbsoluteTool) {
-  while (words.length > 0) {
-    const first = normalizeTool ? normalizeTool(words[0]) : words[0];
-    const base = baseName(first);
-    if (base === "nohup" || base === "time" || base === "exec") {
-      if (words.length === 1) return { words, lookupOnly: false };
-      words = words.slice(1);
-    } else if (base === "command") {
-      if (words.length >= 2 && (words[1] === "-v" || words[1] === "-V")) return { words, lookupOnly: true };
-      if (words.length === 1) return { words, lookupOnly: false };
-      words = words.slice(1);
-    } else if (base === "env") {
-      let k = 1;
-      while (k < words.length) {
-        const w = words[k];
-        if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(w) || w === "-i" || w === "-" || w === "--ignore-environment" || /^--unset=[A-Za-z_][A-Za-z0-9_]*$/.test(w)) {
-          k++;
-        } else if (w === "-u" && k + 1 < words.length && /^[A-Za-z_][A-Za-z0-9_]*$/.test(words[k + 1])) {
-          k += 2;
-        } else {
-          break;
-        }
-      }
-      if (k === 1 || k >= words.length) return null;
-      words = words.slice(k);
-    } else {
-      return { words, lookupOnly: false };
-    }
-  }
-  return { words, lookupOnly: false };
+  return unwrapPrefixes(words, normalizeTool || ((s) => s));
 }
 
 export function isValueClassSegment(seg) {
