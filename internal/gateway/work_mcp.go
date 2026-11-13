@@ -42,18 +42,16 @@ func (g *Gateway) resolveWorkMCP(r *http.Request) (workcatalog.Connection, error
 	if boundID != storeID {
 		return workcatalog.Connection{}, errors.New("requested store does not match the session's bound store")
 	}
-	profile, ok := g.workApps.GetStore(storeID)
-	if !ok || profile.Platform != "1688" || profile.Alibaba1688SellerLoginID == "" {
-		return workcatalog.Connection{}, errors.New("configure the bound 1688 store and its alibaba1688SellerLoginId first")
+	target, err := g.workCatalogTarget(r)
+	if err != nil {
+		return workcatalog.Connection{}, err
+	}
+	if !target.Capabilities.Supported || target.Scope.SellerLoginID == "unconfigured" {
+		return workcatalog.Connection{}, errors.New("configure the bound store's seller identity first")
 	}
 	return workcatalog.Connection{
-		Scope: workcatalog.Scope{StoreID: storeID, SellerLoginID: profile.Alibaba1688SellerLoginID},
-		Platform: func() (workcatalog.Platform, error) {
-			if profile.ProxyRequired && profile.ProxyURL == "" {
-				return nil, errors.New("the store requires a configured proxy")
-			}
-			return workcatalog.NewAlibaba1688FromEnv(profile.Alibaba1688CredentialEnv, profile.ProxyURL)
-		},
+		Scope:    target.Scope,
+		Platform: target.Platform,
 		Authorize: func(ctx context.Context, draft workcatalog.Draft) error {
 			// Recheck after waiting for approval as well: store bindings and session
 			// lifetime can change while the user reviews the diff.
@@ -75,4 +73,9 @@ func (g *Gateway) registerWorkMCPRoutes() {
 		return
 	}
 	g.mux.Handle("/api/hoxi/work/mcp", desktopOnlyWorkHandler(workcatalog.NewMCPHandler(g.workCatalog, g.resolveWorkMCP)))
+	handler := workcatalog.NewHTTPHandler(g.workCatalog, g.resolveWorkCatalogUI, func(r *http.Request) (workcatalog.Authorize, error) {
+		connection, err := g.resolveWorkMCP(r)
+		return connection.Authorize, err
+	})
+	g.mux.Handle("/api/hoxi/work/catalog/", desktopOnlyWorkHandler(handler))
 }

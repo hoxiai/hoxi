@@ -29,7 +29,7 @@ func TestStandardMCPHandshakeToolsResourcesAndPublication(t *testing.T) {
 	}
 	defer client.Close()
 	tools, err := client.ListTools(ctx, nil)
-	if err != nil || len(tools.Tools) != 10 {
+	if err != nil || len(tools.Tools) != 12 {
 		t.Fatal(tools, err)
 	}
 	for _, tool := range tools.Tools {
@@ -76,6 +76,19 @@ func TestStandardMCPHandshakeToolsResourcesAndPublication(t *testing.T) {
 	published := call("work_draft_publish", map[string]any{"draftId": d.ID, "revision": d.Revision})
 	if published.IsError || f.writes != 1 {
 		t.Fatal(published, f.writes)
+	}
+	intake := call("work_product_intake_draft", map[string]any{"subject": "New wholesale item", "description": "", "images": []string{}, "categoryId": ""})
+	if intake.IsError {
+		t.Fatal("MCP intake draft failed", intake)
+	}
+	intakeJSON, _ := json.Marshal(intake.StructuredContent)
+	var newDraft Draft
+	if err := json.Unmarshal(intakeJSON, &newDraft); err != nil || newDraft.Kind != "create" || newDraft.ProductID != "" {
+		t.Fatal(newDraft, err)
+	}
+	rejected := call("work_draft_publish", map[string]any{"draftId": newDraft.ID, "revision": newDraft.Revision})
+	if !rejected.IsError || f.writes != 1 {
+		t.Fatal("MCP new-product draft used the update API", rejected)
 	}
 	prompts, err := client.ListPrompts(ctx, nil)
 	if err != nil || len(prompts.Prompts) != 1 {

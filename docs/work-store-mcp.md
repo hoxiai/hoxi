@@ -13,13 +13,30 @@
 - 标题 `subject`、详情 `description`、主图 `images` 通过 `alibaba.product.incrementModify` 回写；只提交修改字段，图片参数保留已有水印设置
 - SKU、价格、库存、类目、属性等字段当前用于读取与分析，不在可写 schema 中
 - 商品列表 API 官方注明无法查询“简易商品”；实际可读范围和可写权限以商家授权及应用订购的解决方案为准
-- 当前没有接入订单、客户、经营报表、图片上传、SKU/价格/库存修改或新建商品接口，也没有新增 Work 商品管理可视化页面
+- Work 商品管理主视图可配置本机接口授权、浏览/搜索/筛选/分页商品、查看详情、创建修改草稿、发布并检查收据，支持从选品库或 JSON 商品包导入本地上新草稿
+- 当前没有接入订单、客户、经营报表、图片上传、SKU/价格/库存修改或远端新建商品接口；新建与修改草稿通过 `kind: create | update` 明确区分
 
 已用 SDK 客户端、协议桥接及模拟平台验证协议与业务流程；真实店铺同步/发布需要商家授权后验收。
 
+## 图形界面入口
+
+启动含 `hoxi-work` 扩展的桌面端，选择应用和店铺，点击左侧「商品管理」：
+
+1. 点击「接口授权」，填写 1688 卖家登录名、AppKey、AppSecret 和卖家 AccessToken，保存后可验证读取权限
+2. 点击「同步商品」，由桌面后台连续拉取页面；关闭商品页面不会中止同步，可显式停止或在中断后续传
+3. 在「店铺商品」中按标题、商品 ID、SKU 或平台状态搜索筛选；列表显示缩略图、价格、库存、SKU 数量及未发布修改标记，未知库存不会显示为零
+4. 查看详情后创建修改草稿，审阅字段差异；发布时选择或创建绑定当前店铺的任务，直接在商品界面使用统一桌面审批卡「允许一次」，随后检查回读收据
+5. 「上新商品」及「选品库」导入会创建本地上新草稿；当前适配器的 `publishNew=false`，不会将其当作已有商品的增量修改提交
+
+界面使用 `/api/hoxi/work/catalog/*` 的受信任桌面 HTTP 门面，与 MCP 工具调用同一领域服务。浏览和本地草稿属于店铺作用域，不要求事先创建聊天；线上发布仍需当前店铺的受管会话和精确目录。界面接口要求本机网关 Bearer Token、`X-Hoxi-Work-UI: true` 及已认可的桌面 Origin/同源上下文；不进入任何远程白名单。
+
+本机授权文件按店铺隔离，使用 OS 文件锁、同目录原子写入及 `0600` 权限保存；界面仅收到授权状态、卖家名和公开 AppKey，不返回 AppSecret/AccessToken，也不把它们写入前端持久化或会话内容。更换凭据会清除之前的读取验证状态，读取验证不代表获得远端商品创建或修改权限。
+
+后台同步任务保存任务状态与每页游标，同店铺由跨进程租约防止重复执行，进程退出后显示中断并允许恢复；产品和草稿详情传到 JavaScript 时，超过安全整数范围的数值标识转为字符串，磁盘原始快照保持原值。
+
 ## 本地店铺配置
 
-通过现有 Work 配置接口 `PUT /api/hoxi/work/apps`，在对应 `storesByApp["1688"]` 店铺对象或 `storeConfigs[storeId]` 增加以下非秘密字段：
+推荐使用上面的界面配置。本节保留已有环境变量接入方式：通过现有 Work 配置接口 `PUT /api/hoxi/work/apps`，在对应 `storesByApp["1688"]` 店铺对象或 `storeConfigs[storeId]` 增加以下非秘密字段：
 
 ```json
 {
@@ -83,7 +100,9 @@ Authorization: Bearer <本机当前启动的 gatewayToken>
 | `work_store_status` | 店铺身份、授权配置就绪状态、外发目的地、商品计数、同步状态与可编辑字段 |
 | `work_products_sync` | `restart?`、`since?`（RFC3339）、`maxPages?`（默认 1，最大 10）；重复调用到 `completed` |
 | `work_products_list` | 本地快照分页，`offset?`、`limit?`（默认 20，最大 100） |
+| `work_products_query` | 整店搜索标题/商品 ID/SKU、平台状态和待发布标记；返回轻量摘要与快照令牌 |
 | `work_product_get` | 按 `productId` 读取完整本地商品 |
+| `work_product_intake_draft` | 创建本地上新草稿；不生成虚构平台商品 ID，不执行远端创建 |
 | `work_draft_create` | `productId` + `changes: {subject?, description?, images?}`；保存原始快照、差异和不可变 `revision` |
 | `work_drafts_list` | 分页读取草稿及发布结果摘要 |
 | `work_draft_get` | 按 `draftId` 查看原始值、改后值、revision 和收据 |

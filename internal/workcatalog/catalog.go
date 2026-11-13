@@ -9,11 +9,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/url"
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -40,15 +40,17 @@ type Change struct {
 }
 
 type Draft struct {
-	ID        string    `json:"id"`
-	ProductID string    `json:"productId"`
-	Revision  string    `json:"revision"`
-	Base      Product   `json:"base"`
-	Patch     Patch     `json:"patch"`
-	Changes   []Change  `json:"changes"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"createdAt"`
-	Receipt   *Receipt  `json:"receipt,omitempty"`
+	ID         string           `json:"id"`
+	Kind       string           `json:"kind,omitempty"`
+	ProductID  string           `json:"productId"`
+	Revision   string           `json:"revision"`
+	Base       Product          `json:"base"`
+	Patch      Patch            `json:"patch"`
+	Changes    []Change         `json:"changes"`
+	Status     string           `json:"status"`
+	CreatedAt  time.Time        `json:"createdAt"`
+	Receipt    *Receipt         `json:"receipt,omitempty"`
+	NewProduct *NewProductInput `json:"newProduct,omitempty"`
 }
 
 type Receipt struct {
@@ -78,13 +80,18 @@ type Scope struct {
 // Authorize must use Hoxi's desktop permission plane, never a model-supplied bool.
 type Authorize func(context.Context, Draft) error
 
-type Service struct{ store *Store }
+type Service struct {
+	store  *Store
+	jobsMu sync.Mutex
+	jobs   map[string]*syncWorker
+	closed bool
+}
 
 func NewService(store *Store) *Service {
 	if store == nil {
 		store = NewStore("")
 	}
-	return &Service{store: store}
+	return &Service{store: store, jobs: map[string]*syncWorker{}}
 }
 
 func (s *Service) CreateDraft(ctx context.Context, scope Scope, productID string, patch Patch) (Draft, error) {
@@ -104,7 +111,11 @@ func (s *Service) CreateDraft(ctx context.Context, scope Scope, productID string
 		if len(changes) == 0 {
 			return errors.New("draft has no changes")
 		}
-		draft = Draft{ID: newID("drf_"), ProductID: productID, Base: base, Patch: patch,
+		id, err := newID("drf_")
+		if err != nil {
+			return err
+		}
+		draft = Draft{ID: id, Kind: "update", ProductID: productID, Base: base, Patch: patch,
 			Changes: changes, Status: "draft", CreatedAt: time.Now().UTC()}
 		raw, err := json.Marshal(draft)
 		if err != nil {
@@ -284,14 +295,10 @@ func equalField(field string, a, b any) bool {
 	return equalValue(normalize(a), normalize(b))
 }
 
-func newID(prefix string) string {
-	return prefix + strings.ReplaceAll(fmt.Sprint(time.Now().UnixNano()), "-", "") + hex.EncodeToString(randomBytes())
-}
-
-func randomBytes() []byte {
-	var b [8]byte
+func newID(prefix string) (string, error) {
+	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
-		panic(err)
+		return "", errors.New("cannot allocate a catalog record ID")
 	}
-	return b[:]
+	return prefix + hex.EncodeToString(b[:]), nil
 }

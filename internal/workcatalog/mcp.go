@@ -102,6 +102,16 @@ func NewMCPServer(s *Service, conn Connection) *mcp.Server {
 			out, err := s.GetProduct(ctx, conn.Scope, in.ProductID)
 			return nil, out, err
 		})
+	mcp.AddTool(server, tool("work_products_query", "Search the whole local snapshot by title, product ID or SKU; returns lightweight summaries and a snapshot token", true, false, false),
+		func(ctx context.Context, _ *mcp.CallToolRequest, in Query) (*mcp.CallToolResult, QueryResult, error) {
+			out, err := s.QueryProducts(ctx, conn.Scope, in)
+			return nil, out, err
+		})
+	mcp.AddTool(server, tool("work_product_intake_draft", "Create a local new-product draft; platform new-product publication is not yet supported", false, false, false),
+		func(ctx context.Context, _ *mcp.CallToolRequest, in NewProductInput) (*mcp.CallToolResult, Draft, error) {
+			out, err := s.IntakeDraft(ctx, conn.Scope, in)
+			return nil, out, err
+		})
 	type createInput struct {
 		ProductID string `json:"productId"`
 		Changes   Patch  `json:"changes"`

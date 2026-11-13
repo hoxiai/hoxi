@@ -27,6 +27,7 @@ type state struct {
 	Drafts        map[string]Draft   `json:"drafts"`
 	Sync          *syncRun           `json:"sync,omitempty"`
 	LastSync      *SyncResult        `json:"lastSync,omitempty"`
+	SyncJob       *SyncJob           `json:"syncJob,omitempty"`
 }
 
 // Store uses OS file locks across desktop/dev processes, and atomic replacement

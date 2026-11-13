@@ -293,6 +293,9 @@ func (g *Gateway) HandleAuthCallback(ctx context.Context, rawURL string) error {
 }
 
 func (g *Gateway) CloseBrowser() {
+	if g.workCatalog != nil {
+		g.workCatalog.Close()
+	}
 	g.browser.Close()
 	if g.computer != nil {
 		g.computer.Stop()
@@ -396,7 +399,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Add("Vary", "Origin")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Hoxi-Browser, X-Hoxi-Computer, X-Hoxi-Directory, X-Hoxi-Token")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Hoxi-Browser, X-Hoxi-Computer, X-Hoxi-Directory, X-Hoxi-Token, X-Hoxi-Work-UI, MCP-Protocol-Version")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return

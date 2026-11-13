@@ -57,7 +57,7 @@ func TestWorkMCPStdioBridgeUsesStandardProtocolAndLocalAuthentication(t *testing
 		t.Fatal(err)
 	}
 	tools, err := client.ListTools(ctx, nil)
-	if err != nil || len(tools.Tools) != 10 {
+	if err != nil || len(tools.Tools) != 12 {
 		t.Fatal(tools, err)
 	}
 	result, err := client.CallTool(ctx, &mcp.CallToolParams{Name: "work_store_status", Arguments: map[string]any{}})

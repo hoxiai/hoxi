@@ -20,6 +20,7 @@ import { pairing } from "./pairing";
 import { cloudflared } from "./cloudflared";
 import { relay } from "./relay";
 import { tasks } from "./tasks";
+import { workCatalog } from "./workCatalog";
 
 export const enUS = {
   common,
@@ -43,6 +44,7 @@ export const enUS = {
   cloudflared,
   relay,
   tasks,
+  workCatalog,
 };
 
 export default enUS;

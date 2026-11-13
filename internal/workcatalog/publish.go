@@ -14,6 +14,9 @@ func (s *Service) Publish(ctx context.Context, scope Scope, api Platform, id, re
 	if revision == "" || d.Revision != revision {
 		return Receipt{}, errors.New("draft revision mismatch; read the diff again")
 	}
+	if d.Kind == "create" {
+		return Receipt{}, errors.New("new-product publication is not supported by the configured platform adapter")
+	}
 	if d.Status == "published" && d.Receipt != nil {
 		return *d.Receipt, nil
 	}

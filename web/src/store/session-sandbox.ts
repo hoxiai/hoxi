@@ -106,6 +106,7 @@ export async function newIsolatedSession(
     isolated?: boolean;
     directory?: string;
     onSessionCreated?: (sessionID: string) => void;
+    shouldActivate?: () => boolean;
   }
 ): Promise<string> {
   const directory = normalizeFolderPath(options?.directory) || workspace.rootDir;
@@ -178,7 +179,7 @@ export async function newIsolatedSession(
   try {
     batch(() => {
       const inActiveWorkspace =
-        normalizeFolderPath(workspace.rootDir) === normalizeFolderPath(directory);
+        normalizeFolderPath(workspace.rootDir) === normalizeFolderPath(directory) && (options?.shouldActivate?.() ?? true);
       if (inActiveWorkspace) {
         setWorkspace("messagesBySession", session.id, []);
         setWorkspace("diffsBySession", session.id, []);

@@ -21,6 +21,7 @@ import { pairing } from "./pairing";
 import { cloudflared } from "./cloudflared";
 import { relay } from "./relay";
 import { tasks } from "./tasks";
+import { workCatalog } from "./workCatalog";
 
 export const zhCN: I18nDictionary = {
   common,
@@ -44,6 +45,7 @@ export const zhCN: I18nDictionary = {
   cloudflared,
   relay,
   tasks,
+  workCatalog,
 };
 
 export default zhCN;

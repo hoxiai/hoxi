@@ -332,6 +332,7 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
             workspace.inspectorOpen && workspace.inspectorMaximized ? "hidden" : ""
           } ${resizingSide() ? "pointer-events-none select-none" : ""}`}
         >
+          <Show when={!(isWorkSurface() && surfaceExtension.isMainViewActive?.() && surfaceExtension.renderMainView)} fallback={surfaceExtension.renderMainView?.()}>
           <div
             aria-hidden={isNewConversation()}
             class={`flex min-h-0 flex-col overflow-hidden ${
@@ -378,6 +379,7 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
               "flex-grow": isNewConversation() ? 0.64 : 0,
             }}
           />
+          </Show>
         </section>
 
         {/* Right Inspector Resize Handle */}

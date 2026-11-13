@@ -32,9 +32,18 @@ type SyncResult struct {
 	FinishedAt time.Time `json:"finishedAt,omitempty"`
 }
 
+type syncJobContextKey struct{}
+
 // Sync stages full pages without changing the visible snapshot. Only a complete
 // traversal swaps it in. A failed request resumes from its last persisted page.
 func (s *Service) Sync(ctx context.Context, scope Scope, api Platform, in SyncInput) (SyncResult, error) {
+	if ctx.Value(syncJobContextKey{}) != true {
+		unlock, err := s.store.lock(ctx, scope, ".job.lock")
+		if err != nil {
+			return SyncResult{}, err
+		}
+		defer unlock()
+	}
 	if in.MaxPages == 0 {
 		in.MaxPages = 1
 	}
@@ -61,7 +70,11 @@ func (s *Service) Sync(ctx context.Context, scope Scope, api Platform, in SyncIn
 			}
 			return nil
 		}
-		st.Sync = &syncRun{ID: newID("syn_"), NextPage: 1, Since: since, Until: time.Now().UTC(), Products: map[string]Product{}}
+		id, err := newID("syn_")
+		if err != nil {
+			return err
+		}
+		st.Sync = &syncRun{ID: id, NextPage: 1, Since: since, Until: time.Now().UTC(), Products: map[string]Product{}}
 		return nil
 	}); err != nil {
 		return SyncResult{}, err

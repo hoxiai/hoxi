@@ -54,8 +54,12 @@ func NewAlibaba1688FromEnv(prefix, proxyURL string) (*Alibaba1688, error) {
 	key := os.Getenv(prefix + "_APP_KEY")
 	secret := os.Getenv(prefix + "_APP_SECRET")
 	token := os.Getenv(prefix + "_ACCESS_TOKEN")
-	if !productIDPattern.MatchString(key) || secret == "" || token == "" {
-		return nil, errors.New("1688 authorization is missing; configure the store's APP_KEY, APP_SECRET and ACCESS_TOKEN environment variables")
+	return NewAlibaba1688(Credentials{AppKey: key, AppSecret: secret, AccessToken: token}, proxyURL)
+}
+
+func NewAlibaba1688(credentials Credentials, proxyURL string) (*Alibaba1688, error) {
+	if !productIDPattern.MatchString(credentials.AppKey) || credentials.AppSecret == "" || credentials.AccessToken == "" {
+		return nil, errors.New("1688 authorization is missing; configure APP_KEY, APP_SECRET and ACCESS_TOKEN")
 	}
 	var proxy *url.URL
 	if proxyURL != "" {
@@ -66,7 +70,7 @@ func NewAlibaba1688FromEnv(prefix, proxyURL string) (*Alibaba1688, error) {
 			return nil, errors.New("invalid configured store proxy")
 		}
 	}
-	return &Alibaba1688{appKey: key, appSecret: secret, accessToken: token, client: alibabaHTTP,
+	return &Alibaba1688{appKey: credentials.AppKey, appSecret: credentials.AppSecret, accessToken: credentials.AccessToken, client: alibabaHTTP,
 		endpoint: "https://gw.open.1688.com/openapi/", proxy: proxy}, nil
 }
 

@@ -73,6 +73,23 @@ async function withDraftFixture(run: (calls: string[]) => void | Promise<void>) 
 }
 
 describe("new thread drafts", () => {
+  it("keeps a late publication-task creation from activating a store that is no longer current", async () => {
+    await withDraftFixture(async () => {
+      setAppSettings("approvalMode", "auto");
+      setWorkspace("defaultAI", "model", null);
+      let isCurrentStore = true;
+      let boundSession = "";
+      hoxiAPI.createSession = async () => {
+        isCurrentStore = false;
+        return { id: "ses_catalog_background", title: "Publication", directory: "/new-thread-test", time: { created: 2, updated: 2 } };
+      };
+      await newIsolatedSession("Publication", { isolated: false, directory: "/new-thread-test",
+        shouldActivate: () => isCurrentStore, onSessionCreated: (id) => { boundSession = id; } });
+      assertEqual(boundSession, "ses_catalog_background");
+      assertEqual(workspace.activeSessionID, "ses_existing");
+    });
+  });
+
   it("rejects session creation without a project before calling any API", async () => {
     await withDraftFixture(async (calls) => {
       setWorkspace("rootDir", "");
