@@ -479,7 +479,7 @@ export function unwrapLiteralShellSegment(seg, normalizeAbsoluteTool) {
   return inner && inner.trim() ? inner : "";
 }
 
-function scanShellWordSpans(s) {
+export function scanShellWordSpans(s) {
   const out = [];
   let i = 0;
   while (i < s.length) {
@@ -531,7 +531,7 @@ function scanShellWordSpans(s) {
   return out;
 }
 
-function unquoteLiteralShellScriptArg(raw) {
+export function unquoteLiteralShellScriptArg(raw) {
   if (!raw || raw.length < 2) return "";
   if (raw[0] === "'" && raw[raw.length - 1] === "'") {
     let out = "";

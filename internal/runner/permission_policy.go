@@ -321,19 +321,17 @@ func stripCDNullRedirects(s string) string {
 	return s
 }
 
-// isWorktreeCD reports whether a segment is exactly `cd <plain-token>` whose
-// target stays inside the worktree. Tokens with quotes, escapes, globs, `~`,
-// `$` or a leading `-` (`cd -`, `cd -P`) never match cdSegmentRe.
+// isWorktreeCD accepts one literal (optionally quoted) path within the worktree.
+// The resolved target must also stay outside sensitive/protected directories.
 func isWorktreeCD(segment, worktree string) bool {
 	worktree = strings.TrimSpace(worktree)
 	if worktree == "" || !isAbsOrRootedPath(worktree) {
 		return false
 	}
-	m := cdSegmentRe.FindStringSubmatch(stripCDNullRedirects(strings.TrimSpace(segment)))
-	if m == nil {
+	target, ok := literalCDTarget(segment)
+	if !ok {
 		return false
 	}
-	target := m[1]
 	if !isAbsOrRootedPath(target) {
 		target = filepath.Join(worktree, target)
 	}
@@ -345,7 +343,7 @@ func isWorktreeCD(segment, worktree string) bool {
 		return false
 	}
 	// The Go gate additionally resolves symlinks; the JS port is lexical only.
-	return pathWithin(base, target)
+	return isSafeExternalCDTarget(target) && pathWithin(base, target)
 }
 
 // toolchainBases are absolute binaries whose basename the shared policy

@@ -4,7 +4,7 @@
 import { DATA_ARG_INTERPRETERS } from "./command-data-args.js";
 import { isSecretPath } from "./external-path-risk.js";
 import { unwrapCommandPrefixes as unwrapPrefixes } from "./command-wrappers.js";
-import { containsFor, expandLiteralForLoops, forLoopRanges, isSafeCurlOutputTarget, isValueClassCurl, isValueClassSystem, isValueClassWc } from "./shell-loops.js";
+import { containsFor, expandLiteralForLoops, forLoopRanges, isSafeCurlOutputTarget, isValueClassCurl, isValueClassSystem, isValueClassWc, normalizeNumericForHeaders } from "./shell-loops.js";
 
 export const CMD_SUBST_VAR = "__hoxi_cmdsub__";
 export const MAX_SUBSHELL_DEPTH = 2;
@@ -641,6 +641,8 @@ function replaceValueSubAssignments(command, segs, bound) {
 export function concretizeLiterals(command) {
   command = String(command ?? "").trim();
   if (!command || (!command.includes("=") && !containsFor(command))) return { text: command, status: "noop" };
+  const original = command;
+  command = normalizeNumericForHeaders(command);
   const segs = splitConstSegments(command);
   const { bound, poisoned } = constBindings(command, segs);
   if (poisoned.size > 0 && expansionsHit(command, poisoned)) return { text: command, status: "reject" };
@@ -655,7 +657,7 @@ export function concretizeLiterals(command) {
   const substituted = substituteVars(rewritten, bound);
   if (substituted === null) return { text: command, status: "reject" };
   rewritten = substituted;
-  if (rewritten === command && !expanded.changed) return { text: command, status: "noop" };
+  if (rewritten === original && !expanded.changed) return { text: command, status: "noop" };
   if (constResultIsSecret(rewritten, bound)) return { text: rewritten, status: "secret" };
   return { text: rewritten, status: "applied" };
 }

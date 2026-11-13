@@ -7,8 +7,8 @@
 // .opencode/lib/opaque-command.cases.json keeps both ports aligned.
 import { DATA_ARG_INTERPRETERS } from "./command-data-args.js";
 import { attachedInlineCode } from "./inline-script-arguments.js";
+import { literalCDTarget } from "./shell-paths.js";
 import {
-  CD_SEGMENT_RE,
   DOLLAR_EXPAND_RE,
   commandCandidates,
   isDestructivePermissionRequest,
@@ -17,7 +17,6 @@ import {
   isSecretPath,
   isSensitiveExternalPath,
   isWordBoundary,
-  isWorktreeCD,
   normalizeAbsoluteTool,
   shellWords,
   splitCommandChainWithPipes,
@@ -63,7 +62,6 @@ import {
   isSafeShellScriptSegment,
   isSafeXargsSegment,
   isStdinOnlyHeadTail,
-  normalizeHomePrefixPath,
   normalizeNumericForHeaders,
 } from "./shell-loops.js";
 
@@ -195,20 +193,8 @@ function isSafeExternalCDTarget(resolved) {
 
 function advanceScopedCD(seg, cwd, worktree) {
   if (!cwd) return ["", false];
-  let trimmed = stripCDNullRedirects(String(seg || "").trim());
-  if (trimmed.startsWith("cd ") || trimmed.startsWith("cd\t")) {
-    let arg = trimmed.slice(2).trim();
-    if (arg.length >= 2 && ((arg.startsWith('"') && arg.endsWith('"')) || (arg.startsWith("'") && arg.endsWith("'")))) {
-      arg = arg.slice(1, -1);
-    }
-    const homeNorm = normalizeHomePrefixPath(arg);
-    if (homeNorm) arg = homeNorm;
-    trimmed = "cd " + arg;
-  }
-  const m = CD_SEGMENT_RE.exec(trimmed);
-  if (!m) return ["", false];
-  const target = m[1];
-  if (target.startsWith("~") || target.startsWith("-")) return ["", false];
+  const target = literalCDTarget(stripCDNullRedirects(String(seg || "").trim()));
+  if (target === null) return ["", false];
   if (target.startsWith("/")) {
     if (target.split("/").includes("..")) return ["", false];
     const rel = cleanRelPosixPath(target);
@@ -224,7 +210,7 @@ function advanceScopedCD(seg, cwd, worktree) {
       const base = "/" + cleanRelPosixPath(wt);
       const inside = resolved === base || resolved.startsWith(base + "/");
       if (inside && (cwd === base || cwd.startsWith(base + "/"))) {
-        if (!isWorktreeCD(`cd ${resolved}`, wt)) return ["", false];
+        if (!isSafeExternalCDTarget(resolved)) return ["", false];
         return [resolved, true];
       }
       // A relative `cd ../sibling` that leaves the worktree is judged like
@@ -370,14 +356,8 @@ function opaqueShellCore(command, worktree, trust, valueClass) {
   if (!command) return true;
   const unwrapped = extractProcessSubstitutions(command);
   if (hasOpaqueShellSyntax(unwrapped)) return true;
-  let { segments, pipedIn } = splitCommandChainWithPipes(unwrapped);
+  const { segments, pipedIn } = splitCommandChainWithPipes(unwrapped);
   let cwd = String(worktree || "").trim() || ".";
-  if (segments.length > 1 && !pipedIn[0] && isWorktreeCD(segments[0], worktree)) {
-    const [nextCWD, ok] = advanceScopedCD(segments[0], cwd, worktree);
-    if (ok) cwd = nextCWD;
-    segments = segments.slice(1);
-    pipedIn = pipedIn.slice(1);
-  }
   if (segments.length === 0) return true;
   let outsideCWD = false;
   let hasExec = false;

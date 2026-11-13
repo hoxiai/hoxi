@@ -2,10 +2,13 @@
 // substitution, secret or protected path) is unrolled up to 64 items and each
 // copy is judged as its own command. Over the cap the loop is left untouched.
 // Mirrors expandLiteralForLoops in internal/runner/opaque_expand.go.
+import { normalizeNumericLoops } from "./numeric-loops.js";
+
 const MAX_LITERAL_LOOP_ITEMS = 64;
+const MAX_LITERAL_LOOP_BYTES = 256 * 1024;
+const byteLength = (s) => new TextEncoder().encode(s).length;
 const SHELL_VAR_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const EXT_GLOB_RE = /^\*\.[A-Za-z0-9]+$/;
-const NUMERIC_FOR_HEADER_RE = /(^|[;&|()\n\r\t ])(for[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]+in[ \t]+)(?:\$\(seq(?:[ \t]+\d+){1,3}\)|\{\d+\.\.\d+(?:\.\.\d+)?\})([ \t]*(?:;|\r?\n))/gm;
 const URL_QUERY_ITEM_RE = /^(?:https?:\/\/[A-Za-z0-9_./:@%+=~?&,-]+|\/[A-Za-z0-9_./%+-]*\?[A-Za-z0-9_=&.%+-]+)$/;
 const SED_READ_ONLY_SCRIPT_RE = /^\s*\d+(?:\s*,\s*(?:\d+|\+\d+))?\s*[pq](?:\s*[;\n]\s*\d+(?:\s*,\s*(?:\d+|\+\d+))?\s*[pq])*\s*$/;
 const HEAD_TAIL_COUNT_RE = /^[+-]?\d+$/;
@@ -23,7 +26,7 @@ export const SEQ_LOOP_PLACEHOLDER = "__hoxi_seq__";
 const isBoundary = (c) => " \t\r\n;&|()<>".includes(c);
 
 export function normalizeNumericForHeaders(s) {
-  return String(s ?? "").replace(NUMERIC_FOR_HEADER_RE, `$1$2${SEQ_LOOP_PLACEHOLDER}$3`);
+  return normalizeNumericLoops(String(s ?? ""), findLoopDone);
 }
 
 function wordAt(s, i, word) {
@@ -70,9 +73,9 @@ export function containsFor(s) {
 // deps.substituteVars, deps.forLoopVar and deps.itemBlocked come from
 // shell-constants so this file does not import it.
 export function expandLiteralForLoops(s, bound, deps) {
-  let changed = false;
   const out = scanForLoops(s, (start, end, header, body, items) => {
     if (items.length === 0 || items.length > MAX_LITERAL_LOOP_ITEMS || !literalForItems(items, deps.itemBlocked)) return null;
+    if (items.length * (byteLength(body) + 1) > MAX_LITERAL_LOOP_BYTES) return null;
     const name = deps.forLoopVar(header);
     if (!name || bound.has(name) || !literalLoopBindingStable(deps.bodyWords(body), name)) return null;
     const copies = [];
@@ -81,10 +84,9 @@ export function expandLiteralForLoops(s, bound, deps) {
       if (one === null) return null;
       copies.push(one.trim());
     }
-    changed = true;
     return copies.join("\n");
   });
-  return { text: out, changed };
+  return { text: out, changed: out !== s };
 }
 
 function literalLoopBindingStable(segments, name) {
@@ -142,7 +144,7 @@ function scanForLoops(s, visit, onSpan) {
       if (!done) continue;
       if (onSpan) onSpan(i, done.doneEnd);
       const repl = visit(i, done.doneEnd, s.slice(i, done.doneEnd), s.slice(header.bodyStart, done.bodyEnd), header.items);
-      if (repl !== null) {
+      if (repl !== null && byteLength(s) - byteLength(s.slice(i, done.doneEnd)) + byteLength(repl) <= MAX_LITERAL_LOOP_BYTES) {
         s = s.slice(0, i) + repl + s.slice(done.doneEnd);
         rewrote = true;
         break;

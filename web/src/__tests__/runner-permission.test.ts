@@ -138,11 +138,12 @@ describe("Antigravity runner permission routing", () => {
 
 // internal/runner/permission_policy_test.go runs the same fixture against the Go port.
 describe("permission policy shared fixture", () => {
+  const cases: Array<{ command: string; decision: string; destructive: boolean; sessionGrant?: boolean; worktree?: string }> = policyCases;
   it("matches every Go/JS parity case", () => {
     assertTrue(policyCases.length >= 20, "fixture unexpectedly small");
-    for (const c of policyCases as Array<{ command: string; decision: string; destructive: boolean; sessionGrant?: boolean }>) {
+    for (const c of cases) {
       const input = { permission: "bash", patterns: c.command ? [c.command] : [] };
-      assertEqual(decidePermission(input), c.decision, c.command);
+      assertEqual(decidePermission(input, { worktree: c.worktree }), c.decision, c.command);
       assertEqual(isDestructivePermissionRequest(input), c.destructive, c.command);
       if (c.sessionGrant !== undefined) {
         // A runner request carries the whole command in metadata.command.
@@ -156,10 +157,10 @@ describe("permission policy shared fixture", () => {
     const quote = (v: string) => `'${v.replaceAll("'", `'\\''`)}'`;
     const wrap = (c: string) =>
       `${quote("/usr/bin/sandbox-exec")} -f ${quote("/tmp/p.sb")} -- /bin/sh -c ${quote(c)}`;
-    for (const c of policyCases) {
+    for (const c of cases) {
       if (!c.command) continue;
       const input = { permission: "bash", patterns: [wrap(c.command)] };
-      assertEqual(decidePermission(input), c.decision, `sandboxed ${c.command}`);
+      assertEqual(decidePermission(input, { worktree: c.worktree }), c.decision, `sandboxed ${c.command}`);
       assertEqual(isDestructivePermissionRequest(input), c.destructive, `sandboxed ${c.command}`);
     }
   });

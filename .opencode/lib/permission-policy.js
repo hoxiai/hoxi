@@ -8,6 +8,7 @@ import { isSafeKillProbeArgs } from "./script-interpreter.js";
 import { setLiteralJudge } from "./shell-constants.js";
 import { destructiveScanForms } from "./shell-substitution.js";
 import { hasProtectedGitOutput } from "./git-output.js";
+import { literalCDTarget } from "./shell-paths.js";
 import {
   EDIT_PERMISSIONS,
   OWN_SESSION_EDIT_TOOLS,
@@ -304,12 +305,12 @@ function cleanPosixPath(p) {
 export function isWorktreeCD(segment, worktree) {
   const wt = String(worktree || "").trim();
   if (!wt.startsWith("/")) return false;
-  const m = CD_SEGMENT_RE.exec(stripCDNullRedirects(String(segment || "").trim()));
-  if (!m) return false;
-  const raw = m[1];
+  const raw = literalCDTarget(stripCDNullRedirects(String(segment || "").trim()));
+  if (raw === null) return false;
   const target = cleanPosixPath(raw.startsWith("/") ? raw : `${wt}/${raw}`);
   const base = cleanPosixPath(wt);
-  return target === base || target.startsWith(base === "/" ? "/" : `${base}/`);
+  return !isSensitiveExternalPath(target) && !isSecretPath(target) && !isProtectedShellReadPath(target) &&
+    (target === base || target.startsWith(base === "/" ? "/" : `${base}/`));
 }
 
 export function normalizeAbsoluteTool(word) {

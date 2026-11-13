@@ -10,6 +10,7 @@ import (
 
 type policyCase struct {
 	Command     string `json:"command"`
+	Worktree    string `json:"worktree"`
 	Decision    string `json:"decision"`
 	Destructive bool   `json:"destructive"`
 	// SessionGrant, when set, is whether an exact-command "always" is kept.
@@ -32,7 +33,7 @@ func TestPermissionPolicyMatchesSharedFixture(t *testing.T) {
 		t.Fatalf("fixture unexpectedly small: %d cases", len(cases))
 	}
 	for _, c := range cases {
-		if got := decideCommandPermission(c.Command); got != c.Decision {
+		if got := decideCommandPermissionIn(c.Command, c.Worktree); got != c.Decision {
 			t.Errorf("decide(%q) = %q, want %q", c.Command, got, c.Decision)
 		}
 		if got := isDestructiveCommand(c.Command); got != c.Destructive {

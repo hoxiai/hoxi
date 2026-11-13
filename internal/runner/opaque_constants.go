@@ -14,6 +14,7 @@ import (
 
 const (
 	maxLiteralLoopItems = 64
+	maxLiteralLoopBytes = 256 * 1024
 	maxSubshellDepth    = 2
 )
 
@@ -160,6 +161,8 @@ func concretizeLiterals(command string) (string, int) {
 	if command == "" || (!strings.Contains(command, "=") && !containsFor(command)) {
 		return command, constNoop
 	}
+	original := command
+	command = normalizeNumericForHeaders(command)
 	segs := splitConstSegments(command)
 	bindings, poisoned := constBindings(command, segs)
 	if len(poisoned) > 0 && expansionsHit(command, poisoned) {
@@ -174,7 +177,7 @@ func concretizeLiterals(command string) (string, int) {
 		return command, constReject
 	}
 	rewritten = substituted
-	if rewritten == command && !expanded {
+	if rewritten == original && !expanded {
 		return command, constNoop
 	}
 	if constResultIsSecret(rewritten, bindings) {

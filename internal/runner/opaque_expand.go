@@ -14,7 +14,6 @@ import (
 const seqLoopPlaceholder = "__hoxi_seq__"
 
 var (
-	numericForHeaderRe  = regexp.MustCompile(`(?m)(^|[;&|()\n\r\t ])(for[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]+in[ \t]+)(?:\$\(seq(?:[ \t]+\d+){1,3}\)|\{\d+\.\.\d+(?:\.\.\d+)?\})([ \t]*(?:;|\r?\n))`)
 	urlQueryItemRe      = regexp.MustCompile(`^(?:https?://[A-Za-z0-9_./:@%+=~?&,-]+|/[A-Za-z0-9_./%+-]*\?[A-Za-z0-9_=&.%+-]+)$`)
 	wcCountFlagRe       = regexp.MustCompile(`^(?:-[lcmwL]+|--(?:lines|bytes|chars|words|max-line-length))$`)
 	grepCountFlagRe     = regexp.MustCompile(`^-[a-zA-Z]*c[a-zA-Z]*$`)
@@ -27,10 +26,6 @@ var (
 	idValueFlagRe       = regexp.MustCompile(`^-[ugn]+$`)
 )
 
-func normalizeNumericForHeaders(s string) string {
-	return numericForHeaderRe.ReplaceAllString(s, "${1}${2}"+seqLoopPlaceholder+"${3}")
-}
-
 func forLoopRanges(s string) [][2]int {
 	var ranges [][2]int
 	scanForLoops(s, func(start, end int, header, body string, items []string) (string, bool) {
@@ -41,9 +36,11 @@ func forLoopRanges(s string) [][2]int {
 }
 
 func expandLiteralForLoops(s string, bindings map[string]constVal) (string, bool) {
-	changed := false
 	out := scanForLoops(s, func(start, end int, header, body string, items []string) (string, bool) {
 		if len(items) == 0 || len(items) > maxLiteralLoopItems || !literalForItems(items) {
+			return "", false
+		}
+		if len(items)*(len(body)+1) > maxLiteralLoopBytes {
 			return "", false
 		}
 		name := forNameAt(header)
@@ -61,10 +58,9 @@ func expandLiteralForLoops(s string, bindings map[string]constVal) (string, bool
 			}
 			copies = append(copies, strings.TrimSpace(one))
 		}
-		changed = true
 		return strings.Join(copies, "\n"), true
 	})
-	return out, changed
+	return out, out != s
 }
 
 func forNameAt(header string) string {
@@ -134,7 +130,7 @@ func scanForLoops(s string, visit func(start, end int, header, body string, item
 			if !ok {
 				continue
 			}
-			if repl, ok := visit(i, doneEnd, s[i:doneEnd], s[bodyStart:bodyEnd], items); ok {
+			if repl, ok := visit(i, doneEnd, s[i:doneEnd], s[bodyStart:bodyEnd], items); ok && len(s)-(doneEnd-i)+len(repl) <= maxLiteralLoopBytes {
 				s = s[:i] + repl + s[doneEnd:]
 				rewrote = true
 				break

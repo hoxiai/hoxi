@@ -141,13 +141,6 @@ func opaqueShellCore(command, worktree string, trust scriptTrust, valueClass boo
 	if cwd == "" {
 		cwd = "."
 	}
-	if len(segments) > 1 && !pipedIn[0] && isWorktreeCD(segments[0], worktree) {
-		if nextCWD, ok := advanceScopedCD(segments[0], cwd, worktree); ok {
-			cwd = nextCWD
-		}
-		segments = segments[1:]
-		pipedIn = pipedIn[1:]
-	}
 	if len(segments) == 0 {
 		return true
 	}
@@ -247,23 +240,8 @@ func advanceScopedCD(seg, cwd, worktree string) (string, bool) {
 	if cwd == "" {
 		return "", false
 	}
-	trimmed := stripCDNullRedirects(strings.TrimSpace(seg))
-	if strings.HasPrefix(trimmed, "cd ") || strings.HasPrefix(trimmed, "cd\t") {
-		arg := strings.TrimSpace(trimmed[2:])
-		if len(arg) >= 2 && ((arg[0] == '"' && arg[len(arg)-1] == '"') || (arg[0] == '\'' && arg[len(arg)-1] == '\'')) {
-			arg = arg[1 : len(arg)-1]
-		}
-		if synth, ok := normalizeHomePrefixPath(arg); ok {
-			arg = synth
-		}
-		trimmed = "cd " + arg
-	}
-	m := cdSegmentRe.FindStringSubmatch(trimmed)
-	if m == nil {
-		return "", false
-	}
-	target := m[1]
-	if strings.HasPrefix(target, "~") || strings.HasPrefix(target, "-") {
+	target, ok := literalCDTarget(seg)
+	if !ok {
 		return "", false
 	}
 	if isAbsOrRootedPath(target) {
@@ -288,7 +266,7 @@ func advanceScopedCD(seg, cwd, worktree string) (string, bool) {
 			slashResolved := filepath.ToSlash(resolved)
 			inside := slashResolved == slashBase || strings.HasPrefix(slashResolved, slashBase+"/")
 			if inside && (slashCWD == slashBase || strings.HasPrefix(slashCWD, slashBase+"/")) {
-				if !pathWithin(base, resolved) {
+				if !isSafeExternalCDTarget(resolved) || !pathWithin(base, resolved) {
 					return "", false
 				}
 				return resolved, true

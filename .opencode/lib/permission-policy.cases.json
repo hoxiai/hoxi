@@ -1,4 +1,12 @@
 [
+  { "command": "cd \"src locale\" && git status", "worktree": "/repo/project space", "decision": "allow", "destructive": false },
+  { "command": "cd '/repo/project space/src locale' && git diff", "worktree": "/repo/project space", "decision": "allow", "destructive": false },
+  { "command": "cd \"src locale\" 2>/dev/null && git status", "worktree": "/repo/project space", "decision": "allow", "destructive": false },
+  { "command": "cd \"src locale\" && git log --output=../.git/config", "worktree": "/repo/project space", "decision": "ask", "destructive": true },
+  { "command": "cd \"src locale\"more && git status", "worktree": "/repo/project space", "decision": "ask", "destructive": false },
+  { "command": "cd \"../sibling folder\" && git status", "worktree": "/repo/project space", "decision": "ask", "destructive": false },
+  { "command": "for i in {1..3}; do node -e \"console.log($i)\"; done", "decision": "ask", "destructive": false },
+  { "command": "for i in $(seq 1 40); do rm \"file_$i\"; done", "decision": "ask", "destructive": true },
   { "command": "git log --output '--format=../.git/config'", "decision": "ask", "destructive": true, "sessionGrant": false },
   { "command": "git log --format='shutdown %h' --grep='rm -rf' -5", "decision": "allow", "destructive": false },
   { "command": "git log --format='shutdown %h %s' -5", "decision": "allow", "destructive": false },
