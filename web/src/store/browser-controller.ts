@@ -341,6 +341,7 @@ export function createBrowserController() {
       let raf = 0;
       let finish: (() => void) | undefined;
       let receivedFrame = false;
+      let pendingFrameURL: string | undefined;
       setStreamPhase(untrack(frame) ? "reconnecting" : "connecting");
       const frameTimer = setTimeout(() => {
         if (!disposed && valid(connection) && !receivedFrame) setStreamPhase("delayed");
@@ -348,10 +349,15 @@ export function createBrowserController() {
       const stop = connectBrowserStream(connection.scope, base, async next => {
         if (disposed || !valid(connection) || epoch !== connection.tabEpoch || next.tabID !== state()?.tabID) return;
         const src = await decodeBrowserFrame(next);
-        if (disposed || !valid(connection) || epoch !== connection.tabEpoch || next.tabID !== state()?.tabID) return;
+        if (disposed || !valid(connection) || epoch !== connection.tabEpoch || next.tabID !== state()?.tabID) {
+          URL.revokeObjectURL(src);
+          return;
+        }
         await new Promise<void>(resolve => {
+          pendingFrameURL = src;
           finish = resolve;
           raf = requestAnimationFrame(() => {
+            pendingFrameURL = undefined;
             finish = undefined;
             if (!disposed && valid(connection) && epoch === connection.tabEpoch && next.tabID === state()?.tabID) {
               frameSize = { width: next.width, height: next.height };
@@ -360,14 +366,18 @@ export function createBrowserController() {
               receivedFrame = true;
               clearTimeout(frameTimer);
               setStreamPhase("live");
-            }
+            } else URL.revokeObjectURL(src);
             resolve();
           });
         });
       }, () => { if (!disposed && valid(connection)) setStreamPhase("reconnecting"); }, status => {
         if (!disposed && valid(connection) && status === "reconnecting") setStreamPhase("reconnecting");
       });
-      onCleanup(() => { disposed = true; clearTimeout(frameTimer); stop(); cancelAnimationFrame(raf); finish?.(); });
+      onCleanup(() => {
+        disposed = true; clearTimeout(frameTimer); stop(); cancelAnimationFrame(raf);
+        if (pendingFrameURL) URL.revokeObjectURL(pendingFrameURL);
+        finish?.();
+      });
     });
     createEffect(() => {
       const size = viewport();

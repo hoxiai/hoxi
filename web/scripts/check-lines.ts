@@ -76,10 +76,6 @@ const COMPONENT_SERVICE_READONLY_ALLOWLIST: Record<
     reason:
       "Read-only native folder picker dialog and stateless prompt enhancement returning text for composer input",
   },
-  "web/src/components/timeline/MarkdownImage.tsx": {
-    allowed: ["hoxiAPI.readFileContent"],
-    reason: "Read-only workspace image file loader for rendering relative markdown images",
-  },
   "web/src/components/timeline/composer-autocomplete.ts": {
     allowed: [
       "hoxiAPI.listCommands",

@@ -41,10 +41,10 @@ import {
   AssistantTurnItem,
   countUserMessages,
   createTurnWindow,
-  EarlierTurnsBanner,
   filterVisibleTurnsByRevert,
   TOP_SCROLL_THRESHOLD_PX,
 } from "./turn-window";
+import { EarlierTurnsBanner } from "./EarlierTurnsBanner";
 import { UserTurnItem } from "./UserTurnItem";
 import TaskTimelineBar from "./TaskTimelineBar";
 import { SubagentSessionBanner } from "./AgentStackPill";
@@ -109,6 +109,7 @@ export default function MessageStream(props: { hidden?: boolean }) {
   );
 
   const turnWindow = createTurnWindow(renderedSessionID, turns, {
+    isFollowing: scroll.isFollowing,
     hasOlder: () => hasOlderSessionHistory(renderedSessionID()),
     loadOlder: (around) => {
       const id = renderedSessionID();
@@ -317,6 +318,7 @@ export default function MessageStream(props: { hidden?: boolean }) {
     transcriptControls.onScroll(scroller.scrollTop);
     if (sessionScroll.isRestoring()) return;
     const paused = scroll.onScroll();
+    if (!paused && turnWindow.recycleTail(scroller)) scroll.jumpToBottom();
     if (paused || scroller.scrollTop <= TOP_SCROLL_THRESHOLD_PX) {
       turnWindow.handleTopScroll(scroller);
     }

@@ -178,11 +178,19 @@ export function observeBrowserVisibility(changed: (visible: boolean) => void): (
 }
 
 export async function decodeBrowserFrame(frame: BrowserFrame): Promise<string> {
-  const src = `data:image/jpeg;base64,${frame.image}`;
+  const decoded = atob(frame.image);
+  const bytes = new Uint8Array(decoded.length);
+  for (let i = 0; i < decoded.length; i++) bytes[i] = decoded.charCodeAt(i);
+  const src = URL.createObjectURL(new Blob([bytes], { type: "image/jpeg" }));
   const image = new Image();
   image.src = src;
-  await image.decode();
-  return src;
+  try {
+    await image.decode();
+    return src;
+  } catch (error) {
+    URL.revokeObjectURL(src);
+    throw error;
+  }
 }
 
 // Bounds belong to the image itself, not its letterboxed container. With

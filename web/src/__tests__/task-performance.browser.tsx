@@ -1,9 +1,13 @@
-import { createSignal } from "solid-js";
+import { createSignal, For } from "solid-js";
 import { render } from "solid-js/web";
 import { produce } from "solid-js/store";
 import ContextActivityGroupView from "../components/timeline/ContextActivityGroupView";
 import ContextProgressPill from "../components/timeline/ContextProgressPill";
 import MarkdownView from "../components/timeline/MarkdownView";
+import MarkdownImage from "../components/timeline/MarkdownImage";
+import { createTurnWindow, MAX_AUTO_EXPANDED_TURNS } from "../components/timeline/turn-window";
+import type { MessageTurn } from "../store/workspace-state";
+import { forgetSessionMarkdownImages } from "../store/markdown-images";
 import { parseInline } from "../components/timeline/markdown/inline";
 import { advanceStreamingSlice } from "../components/timeline/markdown/stream";
 import { hoxiAPI } from "../services/api";
@@ -239,6 +243,73 @@ async function testChildSessionLookupCoalescing(): Promise<string> {
   }
 }
 
+function testFollowedWindowRecycling(): string {
+  const host = document.createElement("div");
+  host.style.cssText = "height:120px;overflow:auto";
+  document.body.append(host);
+  const makeTurn = (i: number): MessageTurn => ({ info: {
+    id: `window_${i}`, sessionID: "window", role: i % 2 ? "assistant" : "user", time: { created: i },
+  }, parts: [] });
+  const [turns, setTurns] = createSignal([makeTurn(0)]);
+  const [following, setFollowing] = createSignal(true);
+  let window!: ReturnType<typeof createTurnWindow>;
+  const dispose = render(() => {
+    window = createTurnWindow(() => "window", turns, {
+      isFollowing: following, hasOlder: () => false,
+      loadOlder: async () => 0, loadAll: async () => {},
+    });
+    return <For each={window.visibleTurns()}>{(turn) => <div data-window-turn data-turn-id={turn.info.id} style={{ height: "20px" }}>{turn.info.id}</div>}</For>;
+  }, host);
+  try {
+    for (let i = 1; i <= 1000; i++) setTurns((list) => [...list, makeTurn(i)]);
+    const mounted = host.querySelectorAll("[data-window-turn]").length;
+    assertTrue(mounted <= MAX_AUTO_EXPANDED_TURNS + 1, `followed window mounted ${mounted} turns`);
+    setFollowing(false);
+    window.ensureTurnVisible("window_0");
+    host.scrollTop = 0;
+    assertEqual(window.recycleTail(host), false, "reading older history must not recycle DOM");
+    assertTrue(host.querySelectorAll("[data-window-turn]").length > 900);
+    for (const row of host.querySelectorAll<HTMLElement>("[data-window-turn]")) row.style.height = "1px";
+    host.scrollTop = host.scrollHeight;
+    assertEqual(window.recycleTail(host), false, "folded tail must keep enough visual runway to fill the viewport");
+    for (const row of host.querySelectorAll<HTMLElement>("[data-window-turn]")) row.style.height = "20px";
+    host.scrollTop = host.scrollHeight;
+    setFollowing(true);
+    assertEqual(window.recycleTail(host), true);
+    assertTrue(host.querySelectorAll("[data-window-turn]").length <= MAX_AUTO_EXPANDED_TURNS + 1);
+    return `1000 streamed turns retain only ${mounted} mounted rows; reading history stays intact and returning to tail recycles it`;
+  } finally { dispose(); host.remove(); }
+}
+
+async function testOffscreenImageLoading(): Promise<string> {
+  const original = hoxiAPI.readFileContent;
+  const sid = "ses_lazy_image_perf";
+  let calls = 0;
+  setWorkspace({ rootDir: "/probe", activeSessionID: sid });
+  hoxiAPI.readFileContent = async (_path, directory, sessionID) => {
+    calls++;
+    assertEqual(directory, "/probe");
+    assertEqual(sessionID, sid);
+    return { type: "binary", encoding: "base64", mimeType: "image/png", content: "iVBORw0KGgo=", size: 8 };
+  };
+  const host = document.createElement("div");
+  host.style.marginTop = "4000px";
+  document.body.append(host);
+  const dispose = render(() => <MarkdownImage src="lazy.png" alt="fixture" />, host);
+  try {
+    await wait(100);
+    assertEqual(calls, 0, "offscreen local image must not fetch the full file");
+    host.scrollIntoView();
+    for (let i = 0; i < 50 && calls === 0; i++) await wait(10);
+    assertEqual(calls, 1, "visible local image must load once");
+    return "offscreen local images issue zero file reads until near the viewport";
+  } finally {
+    dispose(); host.remove(); hoxiAPI.readFileContent = original;
+    forgetSessionMarkdownImages([sid]);
+    window.scrollTo(0, 0);
+  }
+}
+
 export async function runBrowserTest(): Promise<string[]> {
   await testClosedContextStats();
   return [
@@ -248,5 +319,7 @@ export async function runBrowserTest(): Promise<string[]> {
     testPartAppendAndTrimBudget(),
     testCollapsedActivityGroupAppend(),
     await testChildSessionLookupCoalescing(),
+    testFollowedWindowRecycling(),
+    await testOffscreenImageLoading(),
   ];
 }

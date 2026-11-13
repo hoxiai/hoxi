@@ -333,14 +333,7 @@ func (m *worktreeManager) resolveSessionMeta(sessionID string) worktreeMeta {
 }
 
 func parsePatchHeaderFile(chunk string) string {
-	firstLine := chunk
-	if nl := strings.IndexByte(chunk, '\n'); nl >= 0 {
-		firstLine = chunk[:nl]
-	}
-	if idx := strings.Index(firstLine, " b/"); idx >= 0 {
-		return filepath.ToSlash(strings.TrimSpace(firstLine[idx+3:]))
-	}
-	return ""
+	return patchHeaderFile(chunk)
 }
 
 func diffSingleRepo(repo gitRepoTarget, diffTarget string, nestedPrefixes map[string]struct{}) []worktreeFileDiff {
@@ -386,13 +379,10 @@ func computeDiffSingleRepo(repo gitRepoTarget, diffTarget, fingerprint, porcelai
 
 	var patches []string
 	patchByFile := make(map[string]string)
-	if strings.TrimSpace(numstat) != "" {
-		var patchesRaw string
-		if useCached {
-			patchesRaw, _ = runGitRaw(repo.Dir, "diff", "--cached", "--no-renames", "--no-ext-diff", "--no-textconv", "--no-color", "-U3")
-		} else {
-			patchesRaw, _ = runGitRaw(repo.Dir, "diff", "--no-renames", "--no-ext-diff", "--no-textconv", "--no-color", "-U3", diffTarget)
-		}
+	inlineFiles, deferredFiles := planTrackedPatches(repo.Dir, numstat)
+	deferredStatuses := deferredTrackedStatuses(repo.Dir, diffTarget, useCached, deferredFiles)
+	if len(inlineFiles) > 0 {
+		patchesRaw, _ := runGitRaw(repo.Dir, trackedPatchArgs(diffTarget, useCached, inlineFiles, false)...)
 		patches = strings.Split("\n"+patchesRaw, "\ndiff --git ")
 		if len(patches) > 0 {
 			patches = patches[1:]
@@ -408,7 +398,7 @@ func computeDiffSingleRepo(repo gitRepoTarget, diffTarget, fingerprint, porcelai
 	seen := make(map[string]struct{})
 	totalInlinePatchBytes := 0
 
-	for i, line := range strings.Split(strings.TrimSuffix(numstat, "\x00"), "\x00") {
+	for _, line := range strings.Split(strings.TrimSuffix(numstat, "\x00"), "\x00") {
 		if len(results) >= maxTotalDiffFiles {
 			break
 		}
@@ -427,9 +417,6 @@ func computeDiffSingleRepo(repo gitRepoTarget, diffTarget, fingerprint, porcelai
 		add, _ := strconv.Atoi(fields[0])
 		del, _ := strconv.Atoi(fields[1])
 		patch := patchByFile[file]
-		if patch == "" && i < len(patches) {
-			patch = "diff --git " + patches[i]
-		}
 		if !repo.External && strings.Contains(patch, "\nSubproject commit ") && isWithinNestedRepo(file, nestedPrefixes) {
 			continue
 		}
@@ -439,13 +426,16 @@ func computeDiffSingleRepo(repo gitRepoTarget, diffTarget, fingerprint, porcelai
 			patch = prefixPatchFilePaths(patch, file, relFile)
 		}
 		st := "modified"
-		if strings.Contains(patch, "\nnew file mode ") {
+		if deferredStatus, deferred := deferredStatuses[file]; deferred {
+			st = deferredStatus
+		} else if strings.Contains(patch, "\nnew file mode ") {
 			st = "added"
 		} else if strings.Contains(patch, "\ndeleted file mode ") {
 			st = "deleted"
 		}
 		generated := classifyGeneratedFile(relFile)
-		large := len(patch) > maxSingleFilePatchBytes ||
+		_, deferred := deferredStatuses[file]
+		large := deferred || len(patch) > maxSingleFilePatchBytes ||
 			(generated && (len(patch) > maxGeneratedInlinePatchLen || add+del > 300)) ||
 			(len(patch) > 0 && totalInlinePatchBytes+len(patch) > maxTotalInlinePatchBytes)
 		if large {
@@ -738,13 +728,9 @@ func (m *worktreeManager) DiffForFiles(sessionID string, edited map[string]struc
 			if cleaned == "" || cleaned == "." || strings.HasPrefix(cleaned, "..") {
 				continue
 			}
-			if idx, exists := indexByFile[cleaned]; exists {
-				if results[idx].Patch != "" || !results[idx].Large || results[idx].GeneratedLike {
-					continue
-				}
-				if detail, err := m.DiffFile(sessionID, cleaned); err == nil && detail.Patch != "" {
-					results[idx] = detail
-				}
+			if _, exists := indexByFile[cleaned]; exists {
+				// Large tracked files stay summarized; the explicit single-file route
+				// materializes their patch when the user opens the detail view.
 				continue
 			}
 			if detail, err := m.DiffFile(sessionID, cleaned); err == nil && detail.File != "" {

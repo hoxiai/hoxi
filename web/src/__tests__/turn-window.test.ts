@@ -217,6 +217,18 @@ describe("TurnWindow earlier-message batch sizing", () => {
 });
 
 describe("TurnWindow limit resolution & session-switching lifecycle", () => {
+  it("bounds a continuously followed conversation across 1000 user/assistant turns", () => {
+    const list = [mockTurn("u0", "user")];
+    const state = { limit: INITIAL_VISIBLE_TURNS, seen: 1, lastTailID: "u0" };
+    for (let i = 1; i <= 1000; i++) {
+      list.push(mockTurn(`live_${i}`, i % 2 ? "assistant" : "user"));
+      resolveNextWindowLimit({ currentSession: "live", lastActiveSessionID: "live", state,
+        total: list.length, tailID: list.at(-1)!.info.id, list, followingTail: true });
+    }
+    assertEqual(state.limit, MAX_AUTO_EXPANDED_TURNS);
+    assertTrue(computeTurnWindowSlice(list, state.limit).visibleTurns.length <= MAX_AUTO_EXPANDED_TURNS + TURN_BATCH_SIZE + 2);
+    assertEqual(computeTurnWindowSlice(list, state.limit).visibleTurns.at(-1)?.info.id, "live_1000");
+  });
   it("resets limit to INITIAL_VISIBLE_TURNS when switching between sessions", () => {
     const listA: MessageTurn[] = Array.from({ length: 60 }, (_, i) => mockTurn(`a_${i}`));
     const listB: MessageTurn[] = Array.from({ length: 60 }, (_, i) => mockTurn(`b_${i}`));

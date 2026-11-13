@@ -1,4 +1,4 @@
-import { createEffect, createSignal, onCleanup, Show } from "solid-js";
+import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js";
 import {
   activeDirectory,
   appSettings,
@@ -8,99 +8,33 @@ import {
   openURLInInspector,
   workspace,
 } from "../../store/workspace";
-import { hoxiAPI } from "../../services/api";
+import { getCachedMarkdownImage, loadMarkdownImage } from "../../store/markdown-images";
 import { t } from "../../i18n";
 import { Icon } from "../icons";
 import { resolveMarkdownRelativePath, stripFileLineSuffix } from "./markdown-parser";
 import { useMarkdownBaseFilePath } from "./stream-reveal";
 
-const MAX_LOCAL_IMAGE_CACHE = 40;
-const MAX_CONCURRENT_LOCAL_IMAGES = 2;
-const LOCAL_IMAGE_CACHE = new Map<string, string>();
-const LOCAL_IMAGE_INFLIGHT = new Map<string, Promise<string | null>>();
-const LOCAL_IMAGE_QUEUE: Array<() => void> = [];
-let activeLocalImageLoads = 0;
-
-function runLocalImageTask<T>(task: () => Promise<T>): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const run = () => {
-      activeLocalImageLoads++;
-      Promise.resolve()
-        .then(task)
-        .then(resolve, reject)
-        .finally(() => {
-          activeLocalImageLoads--;
-          LOCAL_IMAGE_QUEUE.shift()?.();
-        });
-    };
-    if (activeLocalImageLoads < MAX_CONCURRENT_LOCAL_IMAGES) {
-      run();
-    } else {
-      LOCAL_IMAGE_QUEUE.push(run);
-    }
-  });
-}
-
-function localImageKey(path: string, directory: string, sessionID?: string): string {
-  return `${directory}\0${sessionID ?? ""}\0${path}`;
-}
-
-function cachedLocalImage(path: string, directory: string, sessionID?: string): string | undefined {
-  const key = localImageKey(path, directory, sessionID);
-  const hit = LOCAL_IMAGE_CACHE.get(key);
-  if (!hit) return undefined;
-  LOCAL_IMAGE_CACHE.delete(key);
-  LOCAL_IMAGE_CACHE.set(key, hit);
-  return hit;
-}
-
-function storeLocalImage(path: string, directory: string, sessionID: string | undefined, dataUrl: string) {
-  const key = localImageKey(path, directory, sessionID);
-  LOCAL_IMAGE_CACHE.delete(key);
-  LOCAL_IMAGE_CACHE.set(key, dataUrl);
-  if (LOCAL_IMAGE_CACHE.size > MAX_LOCAL_IMAGE_CACHE) {
-    const oldest = LOCAL_IMAGE_CACHE.keys().next().value;
-    if (oldest !== undefined) LOCAL_IMAGE_CACHE.delete(oldest);
-  }
-}
-
-function loadLocalImage(
-  path: string,
-  directory: string,
-  sessionID?: string
-): Promise<string | null> {
-  const key = localImageKey(path, directory, sessionID);
-  const cached = cachedLocalImage(path, directory, sessionID);
-  if (cached) return Promise.resolve(cached);
-  const pending = LOCAL_IMAGE_INFLIGHT.get(key);
-  if (pending) return pending;
-
-  const request = runLocalImageTask(() =>
-    hoxiAPI
-      .readFileContent(path, directory || undefined, sessionID)
-      .then((res) => {
-        if (res.type !== "binary" || res.encoding !== "base64") return null;
-        if (typeof res.size === "number" && res.size > 8 * 1024 * 1024) return null;
-        const mime = (res.mimeType || "").toLowerCase();
-        if (!mime.startsWith("image/") || mime.startsWith("image/svg")) return null;
-        const dataUrl = `data:${mime};base64,${res.content}`;
-        storeLocalImage(path, directory, sessionID, dataUrl);
-        return dataUrl;
-      })
-      .catch(() => null)
-  ).finally(() => {
-    LOCAL_IMAGE_INFLIGHT.delete(key);
-  });
-
-  LOCAL_IMAGE_INFLIGHT.set(key, request);
-  return request;
-}
-
 export default function MarkdownImage(props: { src: string; alt: string; title?: string }) {
+  let host!: HTMLSpanElement;
+  const [nearViewport, setNearViewport] = createSignal(false);
   const [resolved, setResolved] = createSignal("");
   const [failed, setFailed] = createSignal(false);
   const [loading, setLoading] = createSignal(false);
   const baseFilePath = useMarkdownBaseFilePath();
+
+  onMount(() => {
+    if (typeof IntersectionObserver === "undefined") {
+      setNearViewport(true);
+      return;
+    }
+    const observer = new IntersectionObserver((entries) => {
+      if (!entries.some((entry) => entry.isIntersecting)) return;
+      setNearViewport(true);
+      observer.disconnect();
+    }, { rootMargin: "600px" });
+    observer.observe(host);
+    onCleanup(() => observer.disconnect());
+  });
 
   const rawSrc = () => (props.src || "").trim();
   const isRemote = () => /^https?:\/\//i.test(rawSrc());
@@ -140,11 +74,18 @@ export default function MarkdownImage(props: { src: string; alt: string; title?:
       return;
     }
 
-    const cached = cachedLocalImage(path, directory, sessionID);
+    const cached = getCachedMarkdownImage(path, directory, sessionID);
     if (cached) {
       setResolved(cached);
       setLoading(false);
       setFailed(false);
+      return;
+    }
+
+    setResolved("");
+    setFailed(false);
+    if (!nearViewport()) {
+      setLoading(true);
       return;
     }
 
@@ -155,10 +96,10 @@ export default function MarkdownImage(props: { src: string; alt: string; title?:
 
     setLoading(true);
     setFailed(false);
-    void loadLocalImage(path, directory, sessionID)
+    void loadMarkdownImage(path, directory, sessionID)
       .then((url) => {
-        if (url || !fallbackPath || fallbackPath === path) return url;
-        return loadLocalImage(fallbackPath, directory, sessionID);
+        if (cancelled || url || !fallbackPath || fallbackPath === path) return url;
+        return loadMarkdownImage(fallbackPath, directory, sessionID);
       })
       .then((url) => {
         if (cancelled) return;
@@ -216,6 +157,7 @@ export default function MarkdownImage(props: { src: string; alt: string; title?:
   };
 
   return (
+    <span ref={host} class="block min-h-8">
     <Show
       when={!failed() && displaySrc()}
       fallback={
@@ -252,5 +194,6 @@ export default function MarkdownImage(props: { src: string; alt: string; title?:
         />
       </button>
     </Show>
+    </span>
   );
 }

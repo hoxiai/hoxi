@@ -10,8 +10,6 @@ import {
 } from "solid-js";
 import type { MessageInfo } from "../../services/sse-types";
 import { compareMessageIDOrder, type MessageTurn } from "../../store/workspace";
-import { Icon } from "../icons";
-import { t } from "../../i18n";
 import { isRenderableAssistantPart, isVisibleFilePart, isVisibleTextPart } from "./context-activity-parts";
 import {
   hasSubstantiveTurnText,
@@ -73,6 +71,7 @@ export interface TurnWindowHistory {
   loadOlder: (around: (apply: () => number) => number) => Promise<number>;
   loadAll: () => Promise<void>;
   onTopPrepend?: (delta: number) => void;
+  isFollowing?: Accessor<boolean>;
 }
 
 export interface TurnWindowController {
@@ -87,6 +86,7 @@ export interface TurnWindowController {
   ensureTurnVisible: (messageID: string) => void;
   handleTopScroll: (scroller: HTMLElement) => void;
   ensureTopRunway: (scroller: HTMLElement | undefined, followingBottom: boolean) => void;
+  recycleTail: (scroller: HTMLElement) => boolean;
 }
 
 export function computeTurnWindowSlice(
@@ -254,6 +254,7 @@ export function resolveNextWindowLimit(params: {
   total: number;
   tailID: string;
   list: MessageTurn[];
+  followingTail?: boolean;
 }): number {
   if (params.currentSession !== params.lastActiveSessionID) {
     params.state.limit = INITIAL_VISIBLE_TURNS;
@@ -276,7 +277,9 @@ export function resolveNextWindowLimit(params: {
         const hasNewUserTurn =
           promotedOptimistic ||
           params.list.slice(prevTailIdx + 1, params.total).some((t) => t.info.role === "user");
-        if (hasNewUserTurn) {
+        if (params.followingTail) {
+          params.state.limit = Math.min(params.state.limit + appendedAtTail, MAX_AUTO_EXPANDED_TURNS);
+        } else if (hasNewUserTurn) {
           params.state.limit += appendedAtTail;
         } else if (params.state.limit < MAX_AUTO_EXPANDED_TURNS) {
           params.state.limit = Math.min(params.state.limit + appendedAtTail, MAX_AUTO_EXPANDED_TURNS);
@@ -299,9 +302,9 @@ export function createTurnWindow(
   turns: Accessor<MessageTurn[]>,
   history?: TurnWindowHistory
 ): TurnWindowController {
-  // Per-session window size. Turns appended while a session is open widen the
-  // window instead of sliding it: unmounting the oldest turn on every new step
-  // shifted everything above the reader and re-anchored activity groups.
+  // Widen while reading older history to preserve the reader's anchor. Only a
+  // followed live tail slides its bounded window; returning to the bottom can
+  // release an explicitly expanded history window as well.
   const windows = new Map<string, { limit: number; seen: number; lastTailID: string }>();
   const [revision, setRevision] = createSignal(0);
   let prependingLock = false;
@@ -339,6 +342,7 @@ export function createTurnWindow(
       total,
       tailID,
       list,
+      followingTail: history?.isFollowing?.(),
     });
     if (currentSession !== lastActiveSessionID) {
       lastActiveSessionID = currentSession;
@@ -565,6 +569,23 @@ export function createTurnWindow(
     }
   };
 
+  const recycleTail = (scroller: HTMLElement): boolean => {
+    if (prependingLock || fetchingOlder || scroller.clientHeight <= 0 ||
+        scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight > 4 ||
+        visibleLimit() <= MAX_AUTO_EXPANDED_TURNS) return false;
+    const retainedIDs = new Set(computeTurnWindowSlice(turns(), MAX_AUTO_EXPANDED_TURNS)
+      .visibleTurns.map((turn) => turn.info.id));
+    let retainedHeight = 0;
+    for (const row of scroller.querySelectorAll<HTMLElement>("[data-turn-id]")) {
+      if (retainedIDs.has(row.dataset.turnId ?? "")) retainedHeight += row.getBoundingClientRect().height;
+    }
+    // Folded work can occupy almost no height. Keep enough older visual rows
+    // to fill the viewport, or ensureTopRunway would immediately mount them again.
+    if (retainedHeight < scroller.clientHeight + Math.max(320, scroller.clientHeight * 0.6)) return false;
+    setVisibleLimit(MAX_AUTO_EXPANDED_TURNS);
+    return true;
+  };
+
   return {
     visibleTurns,
     hiddenCount,
@@ -577,58 +598,8 @@ export function createTurnWindow(
     ensureTurnVisible,
     handleTopScroll,
     ensureTopRunway,
+    recycleTail,
   };
-}
-
-export function EarlierTurnsBanner(props: {
-  hiddenMessageCount: number;
-  totalCount: number;
-  /** The server still has turns older than the loaded ones. */
-  hasOlderHistory?: boolean;
-  onLoadBatch: () => void;
-  onLoadAll: () => void;
-}) {
-  const nextBatchCount = () => Math.min(props.hiddenMessageCount, TURN_BATCH_SIZE);
-
-  return (
-    <Show when={props.hiddenMessageCount > 0 || props.hasOlderHistory}>
-      <div class="mb-5 flex flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-[var(--border-subtle)] bg-[var(--bg-inset)]/50 px-4 py-2.5 text-center select-none">
-        <div class="text-[12px] text-[var(--text-faint)]">
-          {props.hiddenMessageCount > 0
-            ? t("timeline.hiddenTurnsHint", { count: props.hiddenMessageCount })
-            : t("timeline.olderHistoryHint")}
-        </div>
-        <div class="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={props.onLoadBatch}
-            class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] hover:bg-[var(--bg-hover)] hover:border-[var(--border-strong)] px-3 py-1 text-[12px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
-          >
-            <Icon name="arrow-up" size="small" class="text-[var(--accent-primary)]" />
-            <span>
-              {nextBatchCount() > 0
-                ? t("timeline.loadEarlierTurns", { count: nextBatchCount() })
-                : t("timeline.loadOlderHistory")}
-            </span>
-          </button>
-
-          <Show when={props.hiddenMessageCount > TURN_BATCH_SIZE || props.hasOlderHistory}>
-            <button
-              type="button"
-              onClick={props.onLoadAll}
-              class="inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[12px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
-            >
-              <span>
-                {props.hasOlderHistory
-                  ? t("timeline.loadFullHistory")
-                  : t("timeline.loadAllEarlierTurns", { total: props.totalCount })}
-              </span>
-            </button>
-          </Show>
-        </div>
-      </div>
-    </Show>
-  );
 }
 
 /**

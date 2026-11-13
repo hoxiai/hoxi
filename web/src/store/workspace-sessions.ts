@@ -3,6 +3,7 @@ import { produce } from "solid-js/store";
 import type { SessionInfo } from "../services/sse-types";
 import { hoxiAPI } from "../services/api";
 import { forgetRunnerSession, registerRunnerSessions } from "../services/runner-api";
+import { forgetSessionMarkdownImages } from "./markdown-images";
 import {
   forgetSessionToolOutputs,
   forgetSubagentLinks,
@@ -560,6 +561,7 @@ export function purgeSessionsFromStoreState(
   allIDs: string[]
 ) {
   const idSet = new Set(allIDs);
+  forgetSessionMarkdownImages(allIDs);
   forgetSubagentLinks(allIDs);
   forgetSessionToolOutputs(allIDs);
   forgetPromptQueueState(allIDs);
