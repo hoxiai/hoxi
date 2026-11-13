@@ -71,6 +71,18 @@ function belongsToActiveSession(sessionID: string): boolean {
   return false;
 }
 
+function shouldRefreshWorktreeForPart(part: MessagePart): boolean {
+  if (part.type !== "tool" ||
+      (part.state.status !== "completed" && part.state.status !== "error") ||
+      !isMutatingTool(part.tool) || !belongsToActiveSession(part.sessionID)) {
+    return false;
+  }
+  const turns = workspace.messagesBySession[part.sessionID];
+  const parts = turns?.[findMessageIndex(turns, part.messageID)]?.parts;
+  const previous = parts?.[findPartIndex(parts, part.id)];
+  return previous?.type !== "tool" || previous.state.status !== part.state.status;
+}
+
 function mutateUpsertInfo(state: typeof workspace, info: MessageInfo) {
   touchSessionTranscript(info.sessionID);
   const list = (state.messagesBySession[info.sessionID] ||= []);
@@ -107,15 +119,7 @@ export function upsertMessagePart(part: MessagePart) {
       part.state.status === "completed" || part.state.status === "error"
     );
   }
-  if (
-    part.type === "tool" &&
-    (part.state.status === "pending" ||
-      part.state.status === "running" ||
-      part.state.status === "completed") &&
-    workspace.activeSessionID &&
-    isMutatingTool(part.tool) &&
-    belongsToActiveSession(part.sessionID)
-  ) {
+  if (workspace.activeSessionID && shouldRefreshWorktreeForPart(part)) {
     scheduleRefreshWorktreeStatus(workspace.activeSessionID, 250);
   }
   setWorkspace(produce((state) => mutateUpsertPart(state, part)));
@@ -190,14 +194,7 @@ export function applyStreamFrameBatch(batch: StreamFrameBatch) {
         part.state.status === "completed" || part.state.status === "error"
       );
     }
-    if (
-      part.type === "tool" &&
-      (part.state.status === "pending" ||
-        part.state.status === "running" ||
-        part.state.status === "completed") &&
-      isMutatingTool(part.tool) &&
-      belongsToActiveSession(part.sessionID)
-    ) {
+    if (!shouldRefreshActiveWorktree && shouldRefreshWorktreeForPart(part)) {
       shouldRefreshActiveWorktree = true;
     }
   }

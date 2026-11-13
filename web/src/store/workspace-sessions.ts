@@ -274,9 +274,16 @@ function idleTurnIDs(sessionID: string): Set<string> | undefined {
 }
 
 const loadRequestRevisions = new Map<string, number>();
+const settledSessionLoads = new Map<string, {
+  directory: string | undefined;
+  tailID: string | undefined;
+  completedAt: number | undefined;
+  promise: Promise<void>;
+}>();
 
 export function cancelPendingSessionMessageLoads(sessionID: string): void {
   if (!sessionID) return;
+  settledSessionLoads.delete(sessionID);
   loadRequestRevisions.set(sessionID, (loadRequestRevisions.get(sessionID) ?? 0) + 1);
 }
 
@@ -384,6 +391,27 @@ export async function loadSessionMessages(sessionID: string): Promise<void> {
   }
   if (!isCurrent()) return;
   await refreshSessionDiff(sessionID);
+}
+
+/** Both terminal SSE events may request the same settled transcript. */
+export function refreshSettledSessionMessages(sessionID: string): Promise<void> {
+  const directory = sessionDirectory(sessionID);
+  const tail = workspace.messagesBySession[sessionID]?.at(-1)?.info;
+  const pending = settledSessionLoads.get(sessionID);
+  if (pending && pending.directory === directory &&
+      pending.tailID === tail?.id && pending.completedAt === tail?.time.completed) {
+    return pending.promise;
+  }
+  const read = {
+    directory,
+    tailID: tail?.id,
+    completedAt: tail?.time.completed,
+    promise: loadSessionMessages(sessionID).finally(() => {
+      if (settledSessionLoads.get(sessionID) === read) settledSessionLoads.delete(sessionID);
+    }),
+  };
+  settledSessionLoads.set(sessionID, read);
+  return read.promise;
 }
 
 export async function selectSession(sessionID: string): Promise<void> {
@@ -537,6 +565,7 @@ export function purgeSessionsFromStoreState(
   forgetPromptQueueState(allIDs);
   let surfaceRemoved = false;
   for (const id of allIDs) {
+    settledSessionLoads.delete(id);
     clearTurnDispatchState(id);
     clearAutoFailoverPending(id);
     clearSessionAutoTarget(id);

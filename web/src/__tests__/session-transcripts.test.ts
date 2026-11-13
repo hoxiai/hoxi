@@ -3,7 +3,9 @@ import { setWorkspace, workspace, type MessageTurn } from "../store/workspace";
 import {
   beginSessionTranscriptRead,
   estimateTranscriptBytes,
+  evictCachedSessionTurns,
   hydratedSessionIDs,
+  persistCachedSessionTurns,
   touchSessionTranscript,
   trimSessionTranscripts,
 } from "../store/session-transcripts";
@@ -12,8 +14,9 @@ import {
   normalizeMessagePartInPlace,
 } from "../store/message-lookup";
 import { hoxiAPI } from "../services/api";
+import { cancelScheduledWorktreeStatus } from "../store/session-diffs";
 import { assertEqual, assertTrue, describe, it } from "./test-harness";
-import { resyncResidentTranscripts } from "../store/workspace-sessions";
+import { refreshSettledSessionMessages, resyncResidentTranscripts } from "../store/workspace-sessions";
 
 function turn(id: string, chars = 20): MessageTurn {
   return { info: { id: `msg_${id}`, sessionID: id, role: "assistant", time: { created: 1 } },
@@ -31,6 +34,74 @@ function fixture(run: () => void): void {
 }
 
 describe("Resident session transcript budget", () => {
+  it("shares the pending history read for both completion events of the same turn", async () => {
+    const saved = structuredClone(unwrap(workspace));
+    const originalAPI = { ...hoxiAPI };
+    const sid = "ses_settled_refresh";
+    const initial = turn(sid);
+    initial.info.time.completed = 10;
+    let calls = 0;
+    let release!: (turns: MessageTurn[]) => void;
+    hoxiAPI.getMessages = () => {
+      calls++;
+      return new Promise((resolve) => { release = resolve; });
+    };
+    hoxiAPI.getSessionDiff = async () => [];
+    try {
+      setWorkspace("messagesBySession", sid, [initial]);
+      const first = refreshSettledSessionMessages(sid);
+      const second = refreshSettledSessionMessages(sid);
+      assertEqual(first, second);
+      assertEqual(calls, 1);
+      release([initial]);
+      await first;
+      const next = refreshSettledSessionMessages(sid);
+      assertEqual(calls, 2);
+      release([initial]);
+      await next;
+    } finally {
+      release?.([initial]);
+      cancelScheduledWorktreeStatus(sid);
+      hydratedSessionIDs.delete(sid);
+      evictCachedSessionTurns([sid]);
+      Object.assign(hoxiAPI, originalAPI);
+      setWorkspace(reconcile(saved));
+    }
+  });
+
+  it("keeps usable recent snapshots when one session exceeds the storage budget", async () => {
+    const storageDescriptor = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+    let raw = "";
+    Object.defineProperty(globalThis, "localStorage", { configurable: true, value: {
+      getItem: () => null,
+      setItem: (_key: string, value: string) => { raw = value; },
+    } });
+    const recent = 'ses_cached_"recent';
+    const huge = "ses_cached_huge";
+    const oversized = turn(huge);
+    oversized.parts = [{
+      id: "prt_oversized", sessionID: huge, messageID: oversized.info.id, type: "tool",
+      callID: "write", tool: "write", state: {
+        status: "completed", input: { content: "x".repeat(600_000) }, output: "ok", metadata: {},
+        time: { start: 1, end: 2 }, title: "Write",
+      },
+    }];
+    try {
+      persistCachedSessionTurns(recent, [turn(recent)]);
+      persistCachedSessionTurns(huge, [oversized]);
+      await new Promise((resolve) => setTimeout(resolve, 375));
+      assertTrue(raw.length <= 600_000);
+      const stored = JSON.parse(raw);
+      assertTrue(stored.order.includes(recent));
+      assertEqual(stored.entries[recent][0].info.sessionID, recent);
+      assertEqual(stored.entries[huge], undefined);
+    } finally {
+      evictCachedSessionTurns([recent, huge]);
+      if (storageDescriptor) Object.defineProperty(globalThis, "localStorage", storageDescriptor);
+      else Reflect.deleteProperty(globalThis, "localStorage");
+    }
+  });
+
   it("recovers busy transcripts after overflow with bounded, directory-scoped snapshot reads", async () => {
     const saved = structuredClone(unwrap(workspace));
     const getMessages = hoxiAPI.getMessages;

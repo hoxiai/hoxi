@@ -89,7 +89,14 @@ export async function refreshSessionDiff(
 const worktreeRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 const worktreeRevisions = new Map<string, number>();
-const inFlightWorktreeDirByKey = new Map<string, string>();
+const inFlightWorktreeStatusByKey = new Map<string, {
+  directory: string;
+  done: Promise<void>;
+}>();
+
+function worktreeStatusDirectory(key: string): string | undefined {
+  return key === "__root__" ? workspace.rootDir || undefined : sessionDirectory(key);
+}
 
 export function isWorktreeStatusLoadedOrInFlight(
   sessionID: string | null | undefined,
@@ -98,14 +105,14 @@ export function isWorktreeStatusLoadedOrInFlight(
   const key = sessionID || "__root__";
   const normDir = normalizeFolderPath(directory);
   if (!normDir) return false;
-  if (inFlightWorktreeDirByKey.get(key) === normDir) return true;
+  if (inFlightWorktreeStatusByKey.get(key)?.directory === normDir) return true;
   return normalizeFolderPath(workspace.worktreeBySession[key]?.directory) === normDir;
 }
 
 export function invalidateSessionDiffReads(id: string): void {
   diffRevisions.set(id, (diffRevisions.get(id) ?? 0) + 1);
   worktreeRevisions.set(id, (worktreeRevisions.get(id) ?? 0) + 1);
-  inFlightWorktreeDirByKey.delete(id);
+  inFlightWorktreeStatusByKey.delete(id);
   cancelScheduledWorktreeStatus(id);
   clearTimeout(diffRefreshTimers.get(id));
   diffRefreshTimers.delete(id);
@@ -129,25 +136,45 @@ export function scheduleRefreshWorktreeStatus(
   delayMs = 900
 ): void {
   const key = sessionID || "__root__";
+  const directory = worktreeStatusDirectory(key);
+  const normalizedDirectory = normalizeFolderPath(directory);
   cancelScheduledWorktreeStatus(key);
-  const timer = setTimeout(() => {
-    worktreeRefreshTimers.delete(key);
-    void refreshWorktreeStatus(key);
+  const timer = setTimeout(async () => {
+    // Keep the latest automatic refresh queued while a status/diff read is active.
+    while (worktreeRefreshTimers.get(key) === timer) {
+      const inFlight = inFlightWorktreeStatusByKey.get(key);
+      if (inFlight && inFlight.directory === normalizedDirectory) {
+        await inFlight.done;
+        continue;
+      }
+      worktreeRefreshTimers.delete(key);
+      if (!isSessionDeleted(key) && worktreeStatusDirectory(key) === directory) {
+        void refreshWorktreeStatus(key);
+      }
+      return;
+    }
   }, delayMs);
   worktreeRefreshTimers.set(key, timer);
 }
 
-export async function refreshWorktreeStatus(sessionID?: string | null): Promise<void> {
+export function refreshWorktreeStatus(sessionID?: string | null): Promise<void> {
   const key = sessionID || "__root__";
-  const dirArg = key === "__root__" ? workspace.rootDir || undefined : sessionDirectory(key);
-  const normDirArg = normalizeFolderPath(dirArg);
+  const dirArg = worktreeStatusDirectory(key);
+  const flight = {
+    directory: normalizeFolderPath(dirArg),
+    done: readWorktreeStatus(key, dirArg).finally(() => {
+      if (inFlightWorktreeStatusByKey.get(key) === flight) inFlightWorktreeStatusByKey.delete(key);
+    }),
+  };
+  inFlightWorktreeStatusByKey.set(key, flight);
+  return flight.done;
+}
+
+async function readWorktreeStatus(key: string, dirArg: string | undefined): Promise<void> {
   const revision = (worktreeRevisions.get(key) ?? 0) + 1;
   worktreeRevisions.set(key, revision);
-  if (normDirArg) {
-    inFlightWorktreeDirByKey.set(key, normDirArg);
-  }
-  const isCurrentScope = () => worktreeRevisions.get(key) === revision && !isSessionDeleted(key) && dirArg ===
-    (key === "__root__" ? workspace.rootDir || undefined : sessionDirectory(key));
+  const isCurrentScope = () => worktreeRevisions.get(key) === revision &&
+    !isSessionDeleted(key) && dirArg === worktreeStatusDirectory(key);
   try {
     const extraDirs = workspace.worktreeBySession[key]?.isolated ? [] : secondaryWorkspaceDirs(dirArg);
     const st = extraDirs.length > 0
@@ -215,10 +242,6 @@ export async function refreshWorktreeStatus(sessionID?: string | null): Promise<
     }
   } catch (err) {
     console.error("refresh worktree status failed:", err);
-  } finally {
-    if (worktreeRevisions.get(key) === revision) {
-      inFlightWorktreeDirByKey.delete(key);
-    }
   }
 }
 

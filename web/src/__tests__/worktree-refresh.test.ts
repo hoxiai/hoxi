@@ -1,5 +1,6 @@
 import { reconcile, unwrap } from "solid-js/store";
-import { hoxiAPI } from "../services/api";
+import { hoxiAPI, type WorktreeStatus } from "../services/api";
+import type { ToolPart } from "../services/sse-types";
 import { resolveSessionDiffForFile } from "../components/timeline/file-diff-lines";
 import {
   buildConvoyConflictResolutionPrompt,
@@ -22,8 +23,10 @@ import {
 import { assertEqual, assertTrue, describe, it } from "./test-harness";
 import {
   cancelScheduledWorktreeStatus,
+  refreshWorktreeStatus,
   scheduleRefreshWorktreeStatus,
 } from "../store/session-diffs";
+import { applyStreamFrameBatch } from "../store/session-stream";
 
 describe("worktree refresh lifecycle", () => {
   it("does not request status after the scheduled refresh is cancelled", async () => {
@@ -38,6 +41,75 @@ describe("worktree refresh lifecycle", () => {
     } finally {
       cancelScheduledWorktreeStatus("ses_cancelled_refresh");
       hoxiAPI.getWorktreeStatus = original;
+    }
+  });
+
+  it("coalesces automatic refreshes while the previous worktree read is pending", async () => {
+    const saved = structuredClone(unwrap(workspace));
+    const original = hoxiAPI.getWorktreeStatus;
+    const sid = "ses_coalesced_worktree_refresh";
+    const status: WorktreeStatus = {
+      sessionID: sid, directory: "/repo", isolated: false, dirty: false,
+      changedFiles: 0, uncommittedLines: 0, additions: 0, deletions: 0,
+    };
+    let release!: (status: WorktreeStatus) => void;
+    const firstResponse = new Promise<WorktreeStatus>((resolve) => { release = resolve; });
+    let calls = 0;
+    hoxiAPI.getWorktreeStatus = () => ++calls === 1 ? firstResponse : Promise.resolve(status);
+    const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+    try {
+      setWorkspace({ rootDir: "/repo", activeSessionID: null });
+      const first = refreshWorktreeStatus(sid);
+      scheduleRefreshWorktreeStatus(sid, 0);
+      await tick();
+      scheduleRefreshWorktreeStatus(sid, 0);
+      await tick();
+      assertEqual(calls, 1);
+      release(status);
+      await first;
+      await tick();
+      assertEqual(calls, 2);
+    } finally {
+      cancelScheduledWorktreeStatus(sid);
+      release(status);
+      hoxiAPI.getWorktreeStatus = original;
+      setWorkspace(reconcile(saved));
+    }
+  });
+
+  it("refreshes Git once when an editing tool settles, even if it fails after making changes", async () => {
+    const saved = structuredClone(unwrap(workspace));
+    const originalStatus = hoxiAPI.getWorktreeStatus;
+    const originalDiff = hoxiAPI.getSessionDiff;
+    const sid = "ses_tool_worktree_refresh";
+    const part = { id: "prt_edit", sessionID: sid, messageID: "msg_edit", type: "tool", callID: "edit", tool: "bash" } as const;
+    const apply = (state: ToolPart["state"]) => applyStreamFrameBatch({ infos: [], parts: [{ ...part, state }], deltas: [] });
+    const waitForRefresh = () => new Promise<void>((resolve) => setTimeout(resolve, 275));
+    let calls = 0;
+    hoxiAPI.getWorktreeStatus = async () => {
+      calls++;
+      return { sessionID: sid, directory: "/repo", isolated: false, dirty: false,
+        changedFiles: 0, uncommittedLines: 0, additions: 0, deletions: 0 };
+    };
+    hoxiAPI.getSessionDiff = async () => [];
+    try {
+      setWorkspace({ rootDir: "/repo", activeSessionID: sid });
+      apply({ status: "pending", input: {}, raw: "" });
+      await waitForRefresh();
+      apply({ status: "running", input: {}, time: { start: 1 } });
+      await waitForRefresh();
+      assertEqual(calls, 0);
+      const failed = { status: "error", input: {}, error: "failed", time: { start: 1, end: 2 } } as const;
+      apply(failed);
+      await waitForRefresh();
+      apply({ ...failed, error: "additional details" });
+      await waitForRefresh();
+      assertEqual(calls, 1);
+    } finally {
+      cancelScheduledWorktreeStatus(sid);
+      hoxiAPI.getWorktreeStatus = originalStatus;
+      hoxiAPI.getSessionDiff = originalDiff;
+      setWorkspace(reconcile(saved));
     }
   });
 

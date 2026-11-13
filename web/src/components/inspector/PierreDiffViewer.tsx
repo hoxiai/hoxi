@@ -13,6 +13,7 @@ import {
   pushWorktreeChanges,
   refreshWorktreeStatus,
   restoreSessionWorktree,
+  scheduleRefreshWorktreeStatus,
   setWorkspace,
   syncSessionWorktree,
   updateAppSetting,
@@ -177,7 +178,7 @@ export default function PierreDiffViewer() {
     if (!isOpen || !isDiffsTab || (!root && !id)) return;
     const key = id || "__root__";
     if (!workspace.worktreeBySession[key] || !workspace.worktreeDiffsBySession[key]) {
-      void refreshWorktreeStatus(id);
+      scheduleRefreshWorktreeStatus(id, 0);
     }
     let cleanStreak = 0;
     const timer = setInterval(() => {
@@ -190,7 +191,7 @@ export default function PierreDiffViewer() {
       } else {
         cleanStreak = 0;
       }
-      void refreshWorktreeStatus(id);
+      scheduleRefreshWorktreeStatus(id, 0);
     }, 5000);
     onCleanup(() => clearInterval(timer));
   }));

@@ -40,10 +40,10 @@ import {
   refreshAuthStatus,
   syncProviderBreakers,
   loadSavedWorkspaces,
-  loadSessionMessages,
   loadSessionMessagesOnly,
   normalizeFolderPath,
   recordSessionRetry,
+  refreshSettledSessionMessages,
   rememberQuestionReject,
   rememberQuestionReply,
   rememberQuestionRequest,
@@ -319,7 +319,7 @@ export default function App() {
                   void loadSessionMessagesOnly(parentID);
                   scheduleRefreshWorktreeStatus(parentID, 600);
                 } else if (wasBusy) {
-                  void loadSessionMessages(sid)
+                  void refreshSettledSessionMessages(sid)
                     .then(() => refreshDesktopMemberAfterTurn(sid))
                     .catch(console.error);
                 }
@@ -375,11 +375,11 @@ export default function App() {
                   setWorkspace("unreadCompletedBySession", sid, true);
                 }
                 triggerDesktopNotification("Hoxi", t("timeline.turnCompleted"), { sessionID: sid, kind: "complete" });
-                void loadSessionMessages(sid).then(() => {
+                void refreshSettledSessionMessages(sid).then(() => {
                   refreshDesktopMemberAfterTurn(sid);
                   void drainNextQueuedPrompt(sid);
                   void advanceSessionGoal(sid);
-                });
+                }).catch(console.error);
               }
               break;
             }

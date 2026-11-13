@@ -187,25 +187,38 @@ function loadSessionTurnsBundle(): CachedSessionTurnsBundle {
 }
 
 function serializeSessionTurnsBundle(bundle: CachedSessionTurnsBundle): string {
-  let raw = JSON.stringify(bundle);
-  while (raw.length > MAX_SNAPSHOT_BUNDLE_CHARS && bundle.order.length > 1) {
-    const oldest = bundle.order.shift();
-    if (oldest) delete bundle.entries[oldest];
-    raw = JSON.stringify(bundle);
+  // Size each candidate once, then assemble the saved bundle from the newest
+  // entries that fit. A single oversized session can be hydrated from the server.
+  const emptyBundleLength = '{"order":[],"entries":{}}'.length;
+  const order: string[] = [];
+  const entries: Record<string, MessageTurn[]> = {};
+  const serializedEntries: string[] = [];
+  let length = emptyBundleLength;
+  for (let i = bundle.order.length - 1; i >= 0; i--) {
+    const id = bundle.order[i];
+    const turns = bundle.entries[id];
+    if (!turns) continue;
+    const key = JSON.stringify(id);
+    const value = JSON.stringify(turns);
+    const entryLength = key.length * 2 + value.length + 1;
+    if (entryLength + emptyBundleLength > MAX_SNAPSHOT_BUNDLE_CHARS) continue;
+    const nextLength = length + entryLength + (order.length > 0 ? 2 : 0);
+    if (nextLength > MAX_SNAPSHOT_BUNDLE_CHARS) break;
+    length = nextLength;
+    order.push(id);
+    entries[id] = turns;
+    serializedEntries.push(`${key}:${value}`);
   }
-  return raw;
+  bundle.order = order.reverse();
+  bundle.entries = entries;
+  return `{"order":${JSON.stringify(bundle.order)},"entries":{${serializedEntries.reverse().join(",")}}}`;
 }
 
 function flushSessionTurnsBundleToStorage(): void {
   saveSessionTurnsTimer = null;
-  let bundle = cachedSessionTurnsBundle;
+  const bundle = cachedSessionTurnsBundle;
   if (!bundle || typeof localStorage === "undefined") return;
-  let raw = serializeSessionTurnsBundle(bundle);
-  if (raw.length > MAX_SNAPSHOT_BUNDLE_CHARS) {
-    bundle = { order: [], entries: {} };
-    cachedSessionTurnsBundle = bundle;
-    raw = JSON.stringify(bundle);
-  }
+  const raw = serializeSessionTurnsBundle(bundle);
   if (raw === lastFlushedSessionTurnsJSON) return;
   try {
     localStorage.setItem(SESSION_TURNS_CACHE_KEY, raw);
