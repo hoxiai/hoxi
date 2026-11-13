@@ -1,10 +1,8 @@
 // web/src/components/timeline/TranscriptSearchBar.tsx
 import {
-  createDeferred,
   createEffect,
   createMemo,
   createSignal,
-  mapArray,
   on,
   onCleanup,
   onMount,
@@ -12,123 +10,9 @@ import {
 } from "solid-js";
 import { ChevronDown, ChevronUp, Search, SlidersHorizontal, X } from "lucide-solid";
 import type { MessageTurn } from "../../store/workspace";
+import { createTranscriptSearch } from "../../store/workspace";
+import { clearTranscriptSearchHighlights, highlightTranscriptSearch } from "./transcript-search-highlights";
 import { t } from "../../i18n";
-
-const MAX_HIGHLIGHT_RANGES = 300;
-
-function applyTranscriptSearchHighlights(
-  regex: RegExp | null,
-  activeTurnID: string | null,
-  activePartID?: string
-) {
-  const cssObj = (
-    globalThis as { CSS?: { highlights?: Map<string, unknown> } }
-  ).CSS;
-  const HighlightCtor = (
-    globalThis as { Highlight?: new (...ranges: AbstractRange[]) => unknown }
-  ).Highlight;
-  if (!cssObj?.highlights || !HighlightCtor || typeof document === "undefined") {
-    return;
-  }
-
-  if (!regex) {
-    cssObj.highlights.delete("transcript-search-match");
-    cssObj.highlights.delete("transcript-search-active");
-    return;
-  }
-
-  const root = document.querySelector(".timeline-result-scroll");
-  if (!root) return;
-
-  const esc = (s: string) =>
-    typeof CSS !== "undefined" && typeof CSS.escape === "function"
-      ? CSS.escape(s)
-      : s.replace(/["\\]/g, "\\$&");
-
-  const activePartEl = activePartID
-    ? root.querySelector(`[data-part-id="${esc(activePartID)}"]`)
-    : null;
-  const activeTurnEl = activeTurnID
-    ? root.querySelector(`[data-turn-id="${esc(activeTurnID)}"]`)
-    : null;
-
-  const allRanges: Range[] = [];
-  const activeRanges: Range[] = [];
-
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-  let node = walker.nextNode() as Text | null;
-  while (node && allRanges.length + activeRanges.length < MAX_HIGHLIGHT_RANGES) {
-    const val = node.nodeValue;
-    if (val && val.trim().length > 0) {
-      regex.lastIndex = 0;
-      let m: RegExpExecArray | null;
-      while ((m = regex.exec(val)) !== null) {
-        if (m[0].length === 0) {
-          regex.lastIndex++;
-          continue;
-        }
-        const range = document.createRange();
-        range.setStart(node, m.index);
-        range.setEnd(node, m.index + m[0].length);
-        const isActive =
-          (activePartEl && activePartEl.contains(node)) ||
-          (activeTurnEl && activeTurnEl.contains(node));
-        if (isActive) {
-          activeRanges.push(range);
-        } else {
-          allRanges.push(range);
-        }
-        if (allRanges.length + activeRanges.length >= MAX_HIGHLIGHT_RANGES) {
-          break;
-        }
-      }
-    }
-    node = walker.nextNode() as Text | null;
-  }
-
-  if (allRanges.length > 0) {
-    cssObj.highlights.set("transcript-search-match", new HighlightCtor(...allRanges));
-  } else {
-    cssObj.highlights.delete("transcript-search-match");
-  }
-
-  if (activeRanges.length > 0) {
-    cssObj.highlights.set("transcript-search-active", new HighlightCtor(...activeRanges));
-  } else {
-    cssObj.highlights.delete("transcript-search-active");
-  }
-}
-
-function turnSearchableText(turn: MessageTurn): string {
-  const chunks: string[] = [];
-  for (const part of turn.parts) {
-    if (part.type === "text" || part.type === "reasoning") {
-      if (part.text) chunks.push(part.text);
-    } else if (part.type === "tool") {
-      chunks.push(part.tool || "");
-      if (part.state.input) chunks.push(JSON.stringify(part.state.input));
-      if (part.state.status === "completed" && part.state.output) {
-        chunks.push(part.state.output);
-      }
-      if (part.state.status === "error" && part.state.error) {
-        chunks.push(part.state.error);
-      }
-    }
-  }
-  return chunks.join("\n");
-}
-
-export function firstMatchingPartID(turn: MessageTurn, regex: RegExp): string | undefined {
-  for (const part of turn.parts) {
-    regex.lastIndex = 0;
-    if (regex.test(turnSearchableText({ info: turn.info, parts: [part] }))) return part.id;
-  }
-  return undefined;
-}
-
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
 
 /**
  * Ported from kilocode TranscriptSearch.tsx:
@@ -137,6 +21,7 @@ function escapeRegExp(s: string): string {
  */
 export default function TranscriptSearchBar(props: {
   open: boolean;
+  sessionID?: string | null;
   turns: MessageTurn[];
   onClose: () => void;
   onActiveTurnChange: (messageID: string | null, partID?: string) => void;
@@ -146,11 +31,15 @@ export default function TranscriptSearchBar(props: {
   const [wholeWord, setWholeWord] = createSignal(false);
   const [useRegex, setUseRegex] = createSignal(false);
   const [currentIndex, setCurrentIndex] = createSignal(0);
-  const deferredQuery = createDeferred(query, { timeoutMs: 150 });
-  const searchableTurns = mapArray(
-    () => props.open && query().trim() ? props.turns : [],
-    (turn) => ({ id: () => turn.info.id, turn, text: createMemo(() => turnSearchableText(turn)) })
-  );
+  const [highlightRevision, setHighlightRevision] = createSignal(0);
+  const options = createMemo(() => ({ query: query(), matchCase: matchCase(), wholeWord: wholeWord(), useRegex: useRegex() }));
+  const search = createTranscriptSearch({ enabled: () => props.open, sessionID: () => props.sessionID,
+    turns: () => props.turns, options });
+  const searchResult = createMemo(() => ({
+    matchedTurnIDs: search.state().matches.map((match) => match.messageID),
+    partIDs: Object.fromEntries(search.state().matches.map((match) => [match.messageID, match.partID])),
+    invalidRegex: search.state().status === "invalid",
+  }));
 
   let inputRef: HTMLInputElement | undefined;
 
@@ -159,48 +48,12 @@ export default function TranscriptSearchBar(props: {
       queueMicrotask(() => inputRef?.focus());
     } else {
       props.onActiveTurnChange(null);
-      applyTranscriptSearchHighlights(null, null);
+      clearTranscriptSearchHighlights();
     }
   });
 
   onCleanup(() => {
-    applyTranscriptSearchHighlights(null, null);
-  });
-
-  const searchResult = createMemo<{
-    matchedTurnIDs: string[];
-    invalidRegex: boolean;
-    partIDs?: Record<string, string | undefined>;
-    regex: RegExp | null;
-  }>(() => {
-    if (!props.open) return { matchedTurnIDs: [], invalidRegex: false, regex: null };
-    const q = deferredQuery().trim();
-    if (!q) return { matchedTurnIDs: [], invalidRegex: false, regex: null };
-
-    let pattern = useRegex() ? q : escapeRegExp(q);
-    if (wholeWord()) {
-      pattern = `\\b(?:${pattern})\\b`;
-    }
-    const flags = matchCase() ? "g" : "gi";
-
-    let regex: RegExp;
-    try {
-      regex = new RegExp(pattern, flags);
-    } catch {
-      return { matchedTurnIDs: [], invalidRegex: true, regex: null };
-    }
-
-    const matched: string[] = [];
-    const partIDs: Record<string, string | undefined> = {};
-    for (const turn of searchableTurns()) {
-      const text = turn.text();
-      regex.lastIndex = 0;
-      if (regex.test(text)) {
-        matched.push(turn.id());
-        partIDs[turn.id()] = firstMatchingPartID(turn.turn, regex);
-      }
-    }
-    return { matchedTurnIDs: matched, invalidRegex: false, partIDs, regex };
+    clearTranscriptSearchHighlights();
   });
 
   const activeTurnID = createMemo(() => {
@@ -218,25 +71,35 @@ export default function TranscriptSearchBar(props: {
     if (clamped !== currentIndex()) setCurrentIndex(clamped);
   });
 
-  const notifyMatch = (id: string | null) => props.onActiveTurnChange(id, id ? searchResult().partIDs?.[id] : undefined);
+  let navigation = 0;
+  const notifyMatch = async (id: string | null) => {
+    const version = ++navigation;
+    const partID = id ? searchResult().partIDs[id] : undefined;
+    if (!id) { props.onActiveTurnChange(null); return; }
+    try {
+      if (await search.reveal({ messageID: id, partID }) && version === navigation && props.open) {
+        props.onActiveTurnChange(id, partID);
+        setHighlightRevision((value) => value+1);
+      }
+    } catch { /* A failed history page must not navigate to a stale target. */ }
+  };
   const activePartID = createMemo(() => {
     const id = activeTurnID();
     return id ? searchResult().partIDs?.[id] : undefined;
   });
-  createEffect(on([activeTurnID, activePartID], ([id, partID]) => props.onActiveTurnChange(id, partID)));
+  createEffect(on([activeTurnID, activePartID], ([id]) => { void notifyMatch(id); }));
+  onCleanup(() => { navigation++; });
 
   createEffect(() => {
-    const rx = searchResult().regex;
+    highlightRevision();
+    const rx = search.pattern();
     const tID = activeTurnID();
     const pID = activePartID();
     if (!props.open || !rx) {
-      applyTranscriptSearchHighlights(null, null);
+      clearTranscriptSearchHighlights();
       return;
     }
-    const frame = requestAnimationFrame(() => {
-      applyTranscriptSearchHighlights(rx, tID, pID);
-    });
-    onCleanup(() => cancelAnimationFrame(frame));
+    onCleanup(highlightTranscriptSearch(rx, tID, pID));
   });
 
   const goNext = () => {
@@ -351,7 +214,10 @@ export default function TranscriptSearchBar(props: {
         >
           <Show when={query().trim().length > 0}>
             <span class="shrink-0 font-mono text-[11px] text-[var(--text-muted)] tabular-nums">
-              {searchResult().matchedTurnIDs.length > 0
+              {search.state().status === "searching" ? t("timeline.searchSearching")
+                : search.state().status === "timeout" ? t("timeline.searchTimeout")
+                : search.state().status === "error" ? t("timeline.searchUnavailable")
+                : searchResult().matchedTurnIDs.length > 0
                 ? `${currentIndex() + 1} / ${searchResult().matchedTurnIDs.length}`
                 : t("timeline.noResults")}
             </span>

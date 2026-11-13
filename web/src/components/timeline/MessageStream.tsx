@@ -124,12 +124,6 @@ export default function MessageStream(props: { hidden?: boolean }) {
       transcriptControls.noteTopPrepend(delta);
     },
   });
-  // Transcript search must cover turns that are not paged in yet.
-  createEffect(() => {
-    const id = renderedSessionID();
-    if (!searchOpen() || !id) return;
-    untrack(() => void ensureFullSessionHistory(id).catch(() => {}));
-  });
   const readingPosition = createReadingPositionTracker({
     scroller: () => scroller,
     content: () => content,

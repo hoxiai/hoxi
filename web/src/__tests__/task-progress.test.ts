@@ -26,7 +26,7 @@ import {
 import type { MessagePart, ToolPart } from "../services/sse-types";
 import { filterLocalSessionDiffsByTurns } from "../store/session-diffs";
 import { type MessageTurn, setWorkspace } from "../store/workspace";
-import { firstMatchingPartID } from "../components/timeline/TranscriptSearchBar";
+import { firstMatchingPartID } from "../store/transcript-search-engine";
 import { formatElapsedSeconds } from "../components/timeline/duration-label";
 import {
   parseInline,

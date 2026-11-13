@@ -421,7 +421,7 @@ func (s *Store) updateWithoutActivity(sessionID string, fn func(*SessionRecord))
 // SetProjectID assigns attribution without touching activity timestamps.
 // Startup backfill must not reorder the sidebar or reset history collapsing.
 func (s *Store) SetProjectID(sessionID, projectID string) error {
-	_, _, err := s.updateWithoutActivity(sessionID, func(r *SessionRecord) {
+	_, _, err := s.updateMetadata(sessionID, false, func(r *SessionMetadata) {
 		r.ProjectID = projectID
 	})
 	return err

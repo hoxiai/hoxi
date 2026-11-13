@@ -384,7 +384,7 @@ export default function TaskTimelineBar(props: {
       <nav onKeyDown={onRailKeyDown} class="task-transcript-navigation" aria-label={t("timeline.timelineLabel")}>
         <div ref={actions} class="task-activity-actions"
           classList={{ "is-visible": props.controlsVisible || navOpen() || props.searchOpen }}>
-          <TranscriptSearchBar open={props.searchOpen} turns={props.turns}
+          <TranscriptSearchBar open={props.searchOpen} turns={props.turns} sessionID={props.sessionID}
             onClose={props.onCloseSearch} onActiveTurnChange={props.onSearchMatch} />
           <button type="button" onClick={() => { setNavOpen(false); props.onToggleSearch(); }}
             class="task-activity-icon" classList={{ "is-active": props.searchOpen }}

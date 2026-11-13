@@ -592,7 +592,7 @@ func (s *Service) AllowOpenCodeSSELine(line string) bool {
 }
 
 func (s *Service) markContextDelivered(id string) {
-	_, _, _ = s.store.Update(id, func(r *SessionRecord) { r.ContextPending = false; r.UpdatedAt = time.Now().UnixMilli() })
+	_, _, _ = s.store.UpdateMetadata(id, func(r *SessionMetadata) { r.ContextPending = false })
 }
 
 // DeleteConversation removes a conversation exactly like the session DELETE

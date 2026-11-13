@@ -218,7 +218,7 @@ func (s *Service) startTurnProcessWithMode(
 					}
 					if extID := tr.ExternalID(); extID != "" && extID != rec.ExternalID {
 						rec.ExternalID = extID
-						_, _, _ = s.store.Update(rec.ID, func(sr *SessionRecord) {
+						_, _, _ = s.store.UpdateMetadata(rec.ID, func(sr *SessionMetadata) {
 							sr.ExternalID = extID
 						})
 						s.updateInflightExternalID(rec.ID, extID)
@@ -295,7 +295,7 @@ func (s *Service) startTurnProcessWithMode(
 				if !hasTools {
 					resetEvts := tr.ResetUncommittedTurnForRetry(initialExternalID)
 					rec.ExternalID = initialExternalID
-					_, _, _ = s.store.Update(rec.ID, func(sr *SessionRecord) {
+					_, _, _ = s.store.UpdateMetadata(rec.ID, func(sr *SessionMetadata) {
 						sr.ExternalID = initialExternalID
 					})
 					if len(resetEvts) > 0 {
@@ -306,7 +306,7 @@ func (s *Service) startTurnProcessWithMode(
 				} else {
 					settleEvts := tr.PrepareForResumeRetry(time.Now().UnixMilli())
 					rec.ExternalID = resumeExtID
-					_, _, _ = s.store.Update(rec.ID, func(sr *SessionRecord) {
+					_, _, _ = s.store.UpdateMetadata(rec.ID, func(sr *SessionMetadata) {
 						sr.ExternalID = resumeExtID
 					})
 					if len(settleEvts) > 0 {
@@ -329,7 +329,7 @@ func (s *Service) startTurnProcessWithMode(
 				canRetryWithoutResume = false
 				heldFailedResultLine = ""
 				rec.ExternalID = ""
-				_, _, _ = s.store.Update(rec.ID, func(sr *SessionRecord) {
+				_, _, _ = s.store.UpdateMetadata(rec.ID, func(sr *SessionMetadata) {
 					sr.ExternalID = ""
 				})
 				tr.ResetForFreshRetry()

@@ -353,7 +353,8 @@ export const hoxiAPI = {
     sessionID: string,
     directory?: string,
     limit: number | "all" = 100,
-    before?: string
+    before?: string,
+    signal?: AbortSignal
   ): Promise<Array<{ info: MessageInfo; parts: MessagePart[] }>> {
     const query = new URLSearchParams();
     if (limit !== "all") {
@@ -361,7 +362,7 @@ export const hoxiAPI = {
     }
     if (before) query.set("before", before);
     const qs = query.toString();
-    return requestJSON(withDir(`${sessionPath(sessionID)}/message${qs ? `?${qs}` : ""}`, directory));
+    return requestJSON(withDir(`${sessionPath(sessionID)}/message${qs ? `?${qs}` : ""}`, directory), { signal });
   },
 
   // Prompting & Live Mid-Stream Steering

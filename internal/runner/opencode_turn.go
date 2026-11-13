@@ -234,7 +234,7 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 	if resolvedProvider != "" && resolvedProvider != rec.ProviderID || resolvedModel != "" && resolvedModel != modelID {
 		rec.ProviderID = firstNonEmptyStr(resolvedProvider, rec.ProviderID)
 		modelID = firstNonEmptyStr(resolvedModel, modelID)
-		_, _, _ = s.store.Update(rec.ID, func(r *SessionRecord) {
+		_, _, _ = s.store.UpdateMetadata(rec.ID, func(r *SessionMetadata) {
 			r.ProviderID = rec.ProviderID
 			r.ModelID = modelID
 		})

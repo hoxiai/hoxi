@@ -573,7 +573,7 @@ func (s *Service) handleSingleSession(w http.ResponseWriter, r *http.Request, se
 			writeJSON(w, http.StatusOK, info)
 			return
 		}
-		updated, ok, err := s.store.Update(sessionID, func(rec *SessionRecord) {
+		updated, ok, err := s.store.UpdateMetadata(sessionID, func(rec *SessionMetadata) {
 			if strings.TrimSpace(body.Title) != "" {
 				rec.Title = strings.TrimSpace(body.Title)
 			}
