@@ -2,6 +2,16 @@ import type { ThemedToken } from "shiki";
 
 export type HighlightedCode = { code: string; tokens: ThemedToken[][] };
 
+export type HighlightWorkerRequest = {
+  type: "highlight"; clientID: number; requestID: number;
+  code: string; language: string; theme: "dark" | "light";
+} | { type: "cancel"; clientID: number };
+export interface HighlightWorkerResponse {
+  clientID: number;
+  requestID: number;
+  result?: HighlightedCode;
+}
+
 function isSameThemedToken(a: ThemedToken, b: ThemedToken): boolean {
   return (
     a === b ||
@@ -373,7 +383,7 @@ export function fileLanguage(path: string): string {
   return aliases[extension] ?? extension;
 }
 
-function isWithinHighlightLimits(code: string, lang: string): boolean {
+export function isWithinHighlightLimits(code: string, lang: string): boolean {
   if (!code || code.length > 50_000 || ["", "text", "txt", "plaintext", "plain"].includes(lang)) {
     return false;
   }

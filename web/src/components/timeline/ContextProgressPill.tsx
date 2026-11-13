@@ -6,6 +6,7 @@ import type { MessagePart } from "../../services/sse-types";
 import {
   canCompactSession,
   compactSessionContext,
+  createContextContributors,
   contextLimitForSelection,
   isAutoModel,
   isSessionBusy,
@@ -17,35 +18,6 @@ import { formatCompactNumber } from "../../i18n/format";
 
 function formatTokenValue(n: number): string {
   return n > 0 ? formatCompactNumber(n, { maxDecimals: 1 }) : "—";
-}
-
-/** Rough token estimate from a part's text; the model's per-turn totals stay authoritative. */
-function estimatePartTokens(part: MessagePart): number {
-  let chars = 0;
-  switch (part.type) {
-    case "text":
-    case "reasoning":
-      chars = part.text?.length ?? 0;
-      break;
-    case "tool": {
-      const st = part.state;
-      try {
-        chars = JSON.stringify(st.input ?? {}).length;
-      } catch {
-        // unserializable input: keep the estimate at zero
-      }
-      if (st.status === "completed") chars += (st.output ?? "").length;
-      if (st.status === "error") chars += (st.error ?? "").length;
-      break;
-    }
-    case "file":
-      chars = (part.filename?.length ?? 0) + (part.url?.length ?? 0);
-      break;
-    case "patch":
-      chars = (part.files ?? []).join(",").length;
-      break;
-  }
-  return Math.ceil(chars / 4);
 }
 
 function contributorLabel(part: MessagePart, role: "user" | "assistant"): string {
@@ -177,22 +149,13 @@ export default function ContextProgressPill() {
   // A session's biggest single parts, so a token spike can be traced to one item.
   // Local estimate only: the engine's own system prompt and tool schemas are not
   // visible here, so this is a hint, not an authoritative breakdown.
-  const topContributors = createMemo(() => {
-    if (!open()) return [];
+  const contributors = createContextContributors(() => {
     const id = workspace.activeSessionID;
-    if (!id) return [];
-    const turns = workspace.messagesBySession[id] ?? [];
-    const items: Array<{ key: string; label: string; tokens: number }> = [];
-    for (const turn of turns) {
-      for (const part of turn.parts) {
-        const tokens = estimatePartTokens(part);
-        if (tokens <= 0) continue;
-        items.push({ key: part.id, label: contributorLabel(part, turn.info.role), tokens });
-      }
-    }
-    items.sort((a, b) => b.tokens - a.tokens);
-    return items.slice(0, 3);
-  });
+    return id ? workspace.messagesBySession[id] ?? [] : [];
+  }, open);
+  const topContributors = createMemo(() => contributors().map((item) => ({
+    key: item.key, label: contributorLabel(item.part, item.role), tokens: item.tokens,
+  })));
 
   const onCompact = async () => {
     const id = workspace.activeSessionID;

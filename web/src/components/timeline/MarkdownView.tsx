@@ -1,6 +1,6 @@
 import { createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js";
 import { createIncrementalMarkdownParser } from "./markdown-parser";
-import { createStreamPacer, holdIncompleteTableRows, initialRevealSlice, REVEAL_REPLAY_MAX_CHARS } from "./markdown/reveal";
+import { createStreamPacer, holdIncompleteTableRows, initialRevealSlice, REVEAL_REPLAY_MAX_CHARS, streamRenderIntervalMs } from "./markdown/reveal";
 import {
   prefersReducedMotion,
   StreamRevealContext,
@@ -67,6 +67,7 @@ export default function MarkdownView(props: {
   const [displayed, setDisplayed] = createSignal(mounted);
   const [revealActive, setRevealActive] = createSignal(replay);
   let rafId: number | undefined;
+  let lastPublishedAt = clock();
 
   const cancelFrame = () => {
     if (rafId !== undefined && typeof cancelAnimationFrame === "function") {
@@ -81,6 +82,7 @@ export default function MarkdownView(props: {
     pacer.reset(full, clock());
     setRevealActive(streaming && canAnimate && !isDocumentHidden() && !prefersReducedMotion());
     setDisplayed(full);
+    lastPublishedAt = clock();
   };
 
   const frame = (ts: number) => {
@@ -91,7 +93,8 @@ export default function MarkdownView(props: {
     }
     const prev = pacer.shown;
     const next = pacer.step(ts);
-    if (next !== prev) {
+    if (next !== prev && (ts-lastPublishedAt >= streamRenderIntervalMs(pacer.target.length) || !pacer.pending)) {
+      lastPublishedAt = ts;
       setRevealActive(true);
       setDisplayed(pacer.target.slice(0, next));
     }

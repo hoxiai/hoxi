@@ -1,5 +1,5 @@
 // Runs a real Solid DOM regression in an isolated headless Chrome profile.
-import { createServer } from "vite";
+import { build, createServer, preview } from "vite";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
@@ -18,7 +18,9 @@ const chromePath = process.env.CHROME_BIN || [
 if (!chromePath) throw new Error("Chrome is required; set CHROME_BIN to its executable");
 process.env.HOXI_DISABLE_WORK_EXT = "1";
 const profile = await mkdtemp(path.join(tmpdir(), "hoxi-browser-test-"));
-const server = await createServer({
+const production = process.argv.includes("--production");
+const output = production ? await mkdtemp(path.join(tmpdir(), "hoxi-browser-build-")) : undefined;
+const config = {
   configFile: path.join(webRoot, "vite.config.ts"), root: webRoot,
   server: { host: "127.0.0.1", port: 0, open: false },
   plugins: [{
@@ -35,13 +37,34 @@ const server = await createServer({
         res.end(await vite.transformIndexHtml("/__browser_test", html));
       });
     },
+    configurePreviewServer(vite) {
+      vite.middlewares.use("/__browser_test", (_req, res) => {
+        res.setHeader("Content-Type", "text/html");
+        res.end(`<html><body><script type="module">
+          import { runBrowserTest } from "/browser-test.js";
+          window.browserTestResult = await runBrowserTest().then(
+            results => ({ results }), error => ({ error: error.stack || String(error) })
+          );
+        </script></body></html>`);
+      });
+    },
   }],
-});
+};
+let server;
 let chrome;
 let socket;
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 try {
-  await server.listen();
+  if (production) {
+    await build({ ...config, logLevel: "warn", build: {
+      outDir: output, emptyOutDir: true,
+      lib: { entry: path.resolve(webRoot, entry), formats: ["es"], fileName: () => "browser-test.js" },
+    } });
+    server = await preview({ ...config, build: { outDir: output }, preview: { host: "127.0.0.1", port: 0, open: false } });
+  } else {
+    server = await createServer(config);
+    await server.listen();
+  }
   const address = server.httpServer.address();
   chrome = spawn(chromePath, [
     "--headless=new", "--no-first-run", "--no-default-browser-check", "--disable-background-networking",
@@ -92,6 +115,8 @@ try {
     chrome.kill();
     await Promise.race([exited, delay(2000)]);
   }
-  await server.close();
+  if (production && server) await new Promise((resolve) => server.httpServer.close(resolve));
+  else await server?.close();
   await rm(profile, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  if (output) await rm(output, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
 }

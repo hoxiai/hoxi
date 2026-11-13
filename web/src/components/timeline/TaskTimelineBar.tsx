@@ -1,8 +1,9 @@
 // web/src/components/timeline/TaskTimelineBar.tsx
-import { createEffect, createMemo, createSignal, For, Index, on, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, Index, mapArray, on, onCleanup, onMount, Show } from "solid-js";
 import { ListTree, Search } from "lucide-solid";
 import type { MessagePart, ToolPart } from "../../services/sse-types";
 import type { MessageTurn } from "../../store/workspace";
+import { buildTimelineActivity, createTimelineActivity, type TimelineActivityKind, type TimelineActivitySegment } from "../../store/workspace";
 import "./task-timeline.css";
 import TranscriptSearchBar from "./TranscriptSearchBar";
 import { expandInlineThinkingParts } from "./context-activity-parts";
@@ -13,7 +14,7 @@ import { formatElapsedSeconds } from "./duration-label";
 export interface ActivityBarSegment {
   id: string;
   messageID: string;
-  kind: "reasoning" | "explore" | "edit" | "shell" | "task" | "text" | "error";
+  kind: TimelineActivityKind;
   color: string;
   label: string;
   heightPct: number;
@@ -54,16 +55,6 @@ export function resolveSegmentDuration(
   return undefined;
 }
 
-const KIND_PRIORITY: ActivityBarSegment["kind"][] = [
-  "error",
-  "task",
-  "edit",
-  "shell",
-  "explore",
-  "reasoning",
-  "text",
-];
-
 const KIND_COLOR: Record<ActivityBarSegment["kind"], string> = {
   error: "var(--status-danger)",
   task: "#38bdf8",
@@ -74,110 +65,22 @@ const KIND_COLOR: Record<ActivityBarSegment["kind"], string> = {
   text: "var(--text-muted)",
 };
 
-function resolvePartTime(part: MessagePart): { start: number; end?: number } | undefined {
-  if (part.type === "reasoning") return part.time;
-  if (part.type === "tool" && part.state.status !== "pending") return part.state.time;
-  return undefined;
-}
+const projectActivityPart = (part: MessagePart) => expandInlineThinkingParts([part]);
 
-function isLivePart(part: MessagePart): boolean {
-  if (part.type === "reasoning") return Boolean(part.time && !part.time.end);
-  if (part.type === "tool") {
-    return part.state.status === "pending" || part.state.status === "running";
-  }
-  return false;
-}
-
-function summarizeUserTurn(turn: MessageTurn): string {
-  const text = turn.parts
-    .filter((part): part is Extract<MessagePart, { type: "text" }> => part.type === "text")
-    .map((part) => part.text)
-    .join(" ")
-    .replace(/\s+/g, " ")
-    .trim();
-  return text.length > 72 ? `${text.slice(0, 72)}…` : text;
-}
-
-/**
- * One rail node per user prompt / task, not per reasoning or tool part. Every
- * assistant turn after a user message belongs to that prompt's node, so a task
- * that emits dozens of parts still occupies a single entry in the trajectory.
- */
-export function buildTurnSegments(turns: MessageTurn[]): ActivityBarSegment[] {
-  const segments: ActivityBarSegment[] = [];
-  let group: MessageTurn[] = [];
-
-  const flush = () => {
-    if (group.length === 0) return;
-    const turnsInGroup = group;
-    group = [];
-    const userTurn = turnsInGroup.find((turn) => turn.info.role === "user");
-    const anchorTurn = userTurn ?? turnsInGroup[0];
-    const parts: MessagePart[] = [];
-    for (const turn of turnsInGroup) {
-      if (turn.info.role === "assistant") parts.push(...expandInlineThinkingParts(turn.parts));
-    }
-    const firstPartByKind = new Map<ActivityBarSegment["kind"], MessagePart>();
-    let stepCount = 0;
-    const starts: number[] = [];
-    const ends: number[] = [];
-    const running = parts.some(isLivePart);
-    for (const part of parts) {
-      const kind = classifyPartKind(part, !running);
-      if (kind) {
-        stepCount++;
-        if (!firstPartByKind.has(kind)) firstPartByKind.set(kind, part);
-      }
-      const time = resolvePartTime(part);
-      if (!time) continue;
-      starts.push(time.start);
-      if (time.end !== undefined) ends.push(time.end);
-    }
-    starts.push(anchorTurn.info.time.created);
-    if (!running) {
-      for (const turn of turnsInGroup) {
-        const completed = turn.info.time.completed;
-        if (completed !== undefined) ends.push(completed);
-      }
-    }
-    const start = Math.min(...starts);
-    const end = running || ends.length === 0 ? undefined : Math.max(...ends);
-    const index = segments.length + 1;
-    const preview = userTurn ? summarizeUserTurn(userTurn) : "";
-    const primaryKind = KIND_PRIORITY.find((kind) => firstPartByKind.has(kind)) ?? "text";
-    const primaryPart = firstPartByKind.get(primaryKind);
-    const isGroupCompleted =
-      !running &&
-      turnsInGroup.every((turn) => turn.info.role === "user" || Boolean(turn.info.time.completed));
-    const primaryLabel =
-      !preview && primaryPart
-        ? classifyPart(primaryPart, isGroupCompleted)?.label
-        : undefined;
-    segments.push({
-      id: anchorTurn.info.id,
-      messageID: anchorTurn.info.id,
-      messageIDs: turnsInGroup.map((turn) => turn.info.id),
-      kind: primaryKind,
-      color: firstPartByKind.has(primaryKind) ? KIND_COLOR[primaryKind] : "var(--text-muted)",
-      label: preview ? `#${index} ${preview}` : `#${index} ${primaryLabel ?? t("timeline.activityResponse")}`,
-      heightPct: Math.min(100, Math.max(20, stepCount * 10)),
-      stepCount,
-      running,
-      time: { start, ...(end !== undefined ? { end } : {}) },
-      duration: end !== undefined ? Math.max(0, end - start) : undefined,
-    });
+function presentActivity(segment: TimelineActivitySegment, index: number): ActivityBarSegment {
+  const primaryLabel = !segment.preview && segment.primaryPart
+    ? classifyPart(segment.primaryPart, segment.completed)?.label : undefined;
+  return {
+    id: segment.id, messageID: segment.messageID, messageIDs: segment.messageIDs,
+    kind: segment.kind, color: segment.primaryPart ? KIND_COLOR[segment.kind] : "var(--text-muted)",
+    label: segment.preview ? `#${index} ${segment.preview}` : `#${index} ${primaryLabel ?? t("timeline.activityResponse")}`,
+    heightPct: segment.heightPct, stepCount: segment.stepCount, running: segment.running,
+    time: segment.time, duration: segment.duration,
   };
+}
 
-  for (const turn of turns) {
-    if (turn.info.role === "user") {
-      flush();
-      group = [turn];
-    } else {
-      group.push(turn);
-    }
-  }
-  flush();
-  return segments;
+export function buildTurnSegments(turns: MessageTurn[]): ActivityBarSegment[] {
+  return buildTimelineActivity(turns, projectActivityPart).map((segment, index) => presentActivity(segment, index+1));
 }
 
 function isSameStringList(a: string[] | undefined, b: string[] | undefined): boolean {
@@ -225,33 +128,6 @@ export function stabilizeTurnSegments(
     }
   }
   return allSame ? prev : next;
-}
-
-function classifyPartKind(
-  part: MessagePart,
-  isTurnCompleted: boolean
-): ActivityBarSegment["kind"] | null {
-  if (part.type === "reasoning") {
-    if (!isTurnCompleted && !part.time?.end) return "reasoning";
-    return part.text ? "reasoning" : null;
-  }
-  if (part.type === "text") {
-    if (!isTurnCompleted) return "text";
-    return part.text ? "text" : null;
-  }
-  if (part.type === "tool") {
-    const tp = part as ToolPart;
-    const name = (tp.tool || "").toLowerCase();
-    if (name === "todowrite" || name === "todoread") return null;
-    if (tp.state.status === "error") return "error";
-    if (name === "edit" || name === "write" || name === "patch" || name === "multiedit" || name === "apply_patch") {
-      return "edit";
-    }
-    if (name === "bash" || name === "shell") return "shell";
-    if (name === "task") return "task";
-    return "explore";
-  }
-  return null;
 }
 
 function classifyPart(
@@ -389,10 +265,12 @@ export default function TaskTimelineBar(props: {
     }
   };
   const [now, setNow] = createSignal(Date.now());
-  const segments = createMemo<ActivityBarSegment[]>(
-    (prev) => stabilizeTurnSegments(prev, buildTurnSegments(props.turns)),
-    []
-  );
+  const activity = createTimelineActivity(() => props.turns, projectActivityPart);
+  const presented = mapArray(activity, (segment, index) => createMemo<ActivityBarSegment>((previous) => {
+    const next = presentActivity(segment, index()+1);
+    return isSameActivitySegment(previous, next) ? previous! : next;
+  }));
+  const segments = createMemo(() => presented().map((segment) => segment()));
   const hasRunningSegment = createMemo(() => segments().some((seg) => seg.running));
   createEffect(() => {
     if (!hasRunningSegment()) return;

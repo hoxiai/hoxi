@@ -20,6 +20,13 @@ export const REVEAL_BLOCK_MS = 240;
  */
 export const REVEAL_REPLAY_MAX_CHARS = 180;
 
+/** Bound parsing/layout frequency for long live output while short replies stay frame-paced. */
+export function streamRenderIntervalMs(length: number): number {
+  if (length >= 64_000) return 64;
+  if (length >= 8_000) return 32;
+  return 0;
+}
+
 const DEFAULT_INTERVAL_MS = 96;
 const MIN_INTERVAL_MS = 16;
 // Gaps longer than this represent a pause (tool call, slow first token) rather

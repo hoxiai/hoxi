@@ -1,12 +1,11 @@
-import { createEffect, createMemo, createSignal, Index, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, Index, on, onCleanup, Show } from "solid-js";
 import { t } from "../../i18n";
 import {
   getCachedHighlight,
-  highlightCode,
-  highlightCodeSync,
   type HighlightedCode,
   stabilizeHighlightedLines,
 } from "./syntax-highlight";
+import { createSyntaxHighlightClient } from "./syntax-highlight-client";
 import { codeWrapEnabled, toggleCodeWrap, workspace } from "../../store/workspace";
 import { Icon } from "../icons";
 import { ActionIconButton } from "./tool-card-helpers";
@@ -47,9 +46,10 @@ export default function CodeBlockCard(props: {
   >(lastState);
   let copyTimer: ReturnType<typeof setTimeout> | undefined;
   let highlightTimer: ReturnType<typeof setTimeout> | undefined;
+  const highlightClient = createSyntaxHighlightClient();
+  let inFlight = false;
   let revision = 0;
   let disposed = false;
-  let lastCachedCode = initialCached?.code ?? "";
   let latest = { code: "", lang: "", theme: "dark" as "dark" | "light" };
 
   const applyHighlight = (
@@ -85,23 +85,7 @@ export default function CodeBlockCard(props: {
       asyncRes.theme === theme
     ) {
       lastState = asyncRes;
-      lastCachedCode = asyncRes.code;
       return asyncRes;
-    }
-    const sync = highlightCodeSync(
-      props.code,
-      props.lang,
-      theme,
-      lastCachedCode || undefined
-    );
-    if (sync) {
-      lastCachedCode = sync.code;
-      const tokens =
-        lastState && lastState.lang === props.lang && lastState.theme === theme
-          ? stabilizeHighlightedLines(lastState.tokens, sync.tokens)
-          : sync.tokens;
-      lastState = { code: sync.code, tokens, lang: props.lang, theme };
-      return lastState;
     }
     if (
       lastState &&
@@ -114,7 +98,7 @@ export default function CodeBlockCard(props: {
     return undefined;
   });
 
-  createEffect(() => {
+  createEffect(on(() => [props.code, props.lang, workspace.theme] as const, () => {
     const theme = workspace.theme === "dark" ? "dark" : "light";
     latest = {
       code: props.code,
@@ -130,44 +114,34 @@ export default function CodeBlockCard(props: {
       }
       return;
     }
-    // Throttle rather than debounce so continuous streaming still gets highlighted,
-    // scaling the interval smoothly as the code block grows to avoid main-thread jank.
-    if (highlightTimer !== undefined) return;
-    const delayMs = streamingHighlightDelayMs(latest.code.length);
-    highlightTimer = setTimeout(async () => {
-      highlightTimer = undefined;
-      const snapshot = latest;
-      const request = revision;
-      const result = await highlightCode(
-        snapshot.code,
-        snapshot.lang,
-        snapshot.theme,
-        lastCachedCode || undefined
-      );
-      if (result) lastCachedCode = result.code;
-      if (!disposed) {
-        if (request === revision) {
-          applyHighlight(result, snapshot.lang, snapshot.theme);
-        } else {
-          const caughtUp = highlightCodeSync(
-            latest.code,
-            latest.lang,
-            latest.theme,
-            lastCachedCode || undefined
-          );
-          if (caughtUp) {
-            lastCachedCode = caughtUp.code;
-            applyHighlight(caughtUp, latest.lang, latest.theme);
-          }
-        }
-      }
-    }, delayMs);
-  });
+    // One in-flight job per card. Unhighlighted suffix text remains visible.
+    scheduleHighlight();
+  }));
+
+  function scheduleHighlight() {
+    if (disposed || highlightTimer !== undefined || inFlight) return;
+    highlightTimer = setTimeout(runHighlight, streamingHighlightDelayMs(latest.code.length));
+  }
+
+  async function runHighlight() {
+    highlightTimer = undefined;
+    const snapshot = latest;
+    const request = revision;
+    inFlight = true;
+    const result = await highlightClient.highlight(snapshot.code, snapshot.lang, snapshot.theme);
+    inFlight = false;
+    if (disposed) return;
+    if (result && snapshot.lang === latest.lang && snapshot.theme === latest.theme && latest.code.startsWith(result.code)) {
+      applyHighlight(result, snapshot.lang, snapshot.theme);
+    } else if (request === revision) applyHighlight(undefined, snapshot.lang, snapshot.theme);
+    if (request !== revision) scheduleHighlight();
+  }
 
   onCleanup(() => {
     disposed = true;
     clearTimeout(highlightTimer);
     clearTimeout(copyTimer);
+    highlightClient.dispose();
   });
 
   const onCopy = async () => {

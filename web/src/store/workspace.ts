@@ -62,6 +62,8 @@ export * from "./terminal-context";
 export * from "./telemetry";
 export * from "./session-capabilities";
 export * from "./session-transcripts";
+export * from "./context-contributors";
+export * from "./timeline-activity";
 export * from "./session-history";
 export * from "./orchestration";
 export * from "./task-progress";

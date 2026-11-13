@@ -52,12 +52,12 @@ async function testClosedContextStats() {
     trigger.click();
     assertEqual(serializations, 200, "opening stats must calculate the current contributors");
     append();
-    assertEqual(serializations, 400, "open stats must still react to live text");
+    assertEqual(serializations, 200, "open stats must reuse unchanged historical inputs during live text");
     trigger.click();
     for (let i = 0; i < 10; i++) append();
-    assertEqual(serializations, 400, "closing must unsubscribe from transcript content");
+    assertEqual(serializations, 200, "closing must unsubscribe from transcript content");
     trigger.click();
-    assertEqual(serializations, 600, "reopening must calculate the latest transcript");
+    assertEqual(serializations, 400, "reopening must calculate the latest transcript");
   } finally { dispose(); host.remove(); }
 }
 
