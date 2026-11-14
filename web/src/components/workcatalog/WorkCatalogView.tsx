@@ -1,5 +1,6 @@
 import {
   createEffect,
+  createSignal,
   For,
   onCleanup,
   Show,
@@ -72,7 +73,32 @@ export default function WorkCatalogView(props: {
     untrack(() => activateWorkCatalogScope(scope));
     if (scope) onCleanup(untrack(observeWorkCatalog));
   });
+  const [selectedIds, setSelectedIds] = createSignal<string[]>([]);
+  createEffect(() => {
+    props.storeId;
+    setSelectedIds([]);
+  });
   createEffect(() => setCatalogPublishContext(props.publishContext || null));
+  const missingDetailIdsOnPage = () =>
+    (workCatalogState.page?.items || [])
+      .filter((it) => !it.hasDetail)
+      .map((it) => it.id)
+      .slice(0, 8);
+  const batchTargetIds = () =>
+    selectedIds().length > 0 ? selectedIds() : missingDetailIdsOnPage();
+  const toggleSelectOne = (id: string, checked: boolean) => {
+    setSelectedIds((prev) =>
+      checked
+        ? prev.includes(id)
+          ? prev
+          : [...prev, id]
+        : prev.filter((item) => item !== id),
+    );
+  };
+  const toggleSelectPage = (checked: boolean) => {
+    const pageIds = (workCatalogState.page?.items || []).map((it) => it.id);
+    setSelectedIds(checked ? pageIds : []);
+  };
   const tabs = (): { id: CatalogTab; label: string }[] => [
     { id: "products", label: t("workCatalog.products") },
     { id: "drafts", label: t("workCatalog.drafts") },
@@ -399,6 +425,44 @@ export default function WorkCatalogView(props: {
                     />
                     {t("workCatalog.onlyDrafts")}
                   </label>
+                  <Show when={props.browserController?.enrichBatchProducts}>
+                    <Show
+                      when={props.browserController?.batchRunning?.()}
+                      fallback={
+                        <Show when={batchTargetIds().length > 0}>
+                          <button
+                            type="button"
+                            class={button}
+                            disabled={props.browserController?.busy()}
+                            onClick={() => {
+                              const targets = [...batchTargetIds()];
+                              void props.browserController
+                                ?.enrichBatchProducts?.(targets)
+                                .then(() => setSelectedIds([]));
+                            }}
+                          >
+                            {selectedIds().length > 0
+                              ? t("workCatalog.batchEnrichSelected", {
+                                  count: selectedIds().length,
+                                })
+                              : t("workCatalog.batchEnrichPage", {
+                                  count: batchTargetIds().length,
+                                })}
+                          </button>
+                        </Show>
+                      }
+                    >
+                      <button
+                        type="button"
+                        class={button}
+                        onClick={() =>
+                          props.browserController?.cancelBatchEnrich?.()
+                        }
+                      >
+                        {t("workCatalog.stopBatchEnrich")}
+                      </button>
+                    </Show>
+                  </Show>
                 </div>
                 <Show
                   when={workCatalogState.page?.items.length}
@@ -418,6 +482,22 @@ export default function WorkCatalogView(props: {
                   <table class="w-full text-left text-xs">
                     <thead class="text-[var(--text-muted)]">
                       <tr>
+                        <Show when={props.browserController?.enrichBatchProducts}>
+                          <th class="w-7 pb-3 pr-2">
+                            <input
+                              type="checkbox"
+                              checked={
+                                Boolean(workCatalogState.page?.items.length) &&
+                                (workCatalogState.page?.items || []).every(
+                                  (it) => selectedIds().includes(it.id),
+                                )
+                              }
+                              onChange={(event) =>
+                                toggleSelectPage(event.currentTarget.checked)
+                              }
+                            />
+                          </th>
+                        </Show>
                         <th class="pb-3 font-medium">
                           {t("workCatalog.product")}
                         </th>
@@ -443,6 +523,20 @@ export default function WorkCatalogView(props: {
                       <For each={workCatalogState.page?.items}>
                         {(product) => (
                           <tr class="border-t border-[var(--border-subtle)] hover:bg-[var(--bg-hover)]">
+                            <Show when={props.browserController?.enrichBatchProducts}>
+                              <td class="py-3 pr-2 align-top">
+                                <input
+                                  type="checkbox"
+                                  checked={selectedIds().includes(product.id)}
+                                  onChange={(event) =>
+                                    toggleSelectOne(
+                                      product.id,
+                                      event.currentTarget.checked,
+                                    )
+                                  }
+                                />
+                              </td>
+                            </Show>
                             <td class="max-w-[260px] py-3 pr-3">
                               <Show when={product.thumbnail}>
                                 <img
@@ -461,8 +555,18 @@ export default function WorkCatalogView(props: {
                               >
                                 {product.title || product.id}
                               </button>
-                              <p class="mt-1 font-mono text-[10px] text-[var(--text-faint)]">
-                                {product.id}
+                              <p class="mt-1 flex items-center gap-1.5 font-mono text-[10px] text-[var(--text-faint)]">
+                                <span>{product.id}</span>
+                                <Show when={props.browserController}>
+                                  <span
+                                    class={`font-sans ${product.hasDetail ? "text-emerald-600" : "text-[var(--text-muted)]"}`}
+                                  >
+                                    ·{" "}
+                                    {product.hasDetail
+                                      ? t("workCatalog.detailReadyBadge")
+                                      : t("workCatalog.detailSummaryBadge")}
+                                  </span>
+                                </Show>
                               </p>
                             </td>
                             <td class="py-3 pr-2">

@@ -31,6 +31,7 @@ type ProductSummary struct {
 	Currency  string    `json:"currency"`
 	Stock     any       `json:"stock"`
 	SKUCount  int       `json:"skuCount"`
+	HasDetail bool      `json:"hasDetail"`
 	HasDraft  bool      `json:"hasDraft"`
 	SyncedAt  time.Time `json:"syncedAt"`
 }
@@ -119,7 +120,8 @@ func (s *Service) QueryProducts(ctx context.Context, scope Scope, query Query) (
 				continue
 			}
 		}
-		summary := ProductSummary{ID: id, Title: title, Status: status, HasDraft: hasDraft[id], SyncedAt: p.SyncedAt, Prices: []any{}, Currency: "CNY"}
+		desc, _ := p.Data["description"].(string)
+		summary := ProductSummary{ID: id, Title: title, Status: status, HasDetail: strings.TrimSpace(desc) != "", HasDraft: hasDraft[id], SyncedAt: p.SyncedAt, Prices: []any{}, Currency: "CNY"}
 		summary.Category, _ = p.Data["categoryName"].(string)
 		if sale, ok := p.Data["saleInfo"].(map[string]any); ok {
 			summary.Stock = sale["amountOnSale"]

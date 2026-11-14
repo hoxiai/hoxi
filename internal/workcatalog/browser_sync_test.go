@@ -108,7 +108,7 @@ func TestBrowserSyncBindsSellerMergesDetailsAndUpgradesToOpenAPISeamlessly(t *te
 		t.Fatalf("CreateDraft on browser-synced product failed: %v", err)
 	}
 	queried, err := svc.QueryProducts(ctx, browserTarget.Scope, Query{Query: "SKU-501", HasDraft: true})
-	if err != nil || queried.Total != 1 || !strings.HasSuffix(queried.Items[0].Thumbnail, "/img/ibank/item501a.jpg") {
+	if err != nil || queried.Total != 1 || !queried.Items[0].HasDetail || !strings.HasSuffix(queried.Items[0].Thumbnail, "/img/ibank/item501a.jpg") {
 		t.Fatalf("QueryProducts failed on browser-synced snapshot: %+v (%v)", queried, err)
 	}
 

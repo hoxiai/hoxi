@@ -70,12 +70,15 @@ export interface CatalogBrowserLiveState {
 }
 export interface CatalogBrowserSyncController {
   busy: () => boolean;
+  batchRunning?: () => boolean;
   progressMessage: () => string;
   browserState: () => CatalogBrowserLiveState | null;
   openSellerBackend: () => Promise<void>;
   detectSellerLoginId: () => Promise<string | null>;
   syncStoreList: () => Promise<void>;
   enrichProductDetail: (productId: string) => Promise<void>;
+  enrichBatchProducts?: (productIds: string[]) => Promise<void>;
+  cancelBatchEnrich?: () => void;
   openDraftInSellerEditor: (draft: CatalogDraft) => Promise<void>;
 }
 export interface CatalogJob {
@@ -115,6 +118,7 @@ export interface CatalogProductSummary {
   currency: string;
   stock: unknown;
   skuCount: number;
+  hasDetail?: boolean;
   hasDraft: boolean;
   syncedAt: string;
 }
