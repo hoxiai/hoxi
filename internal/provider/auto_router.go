@@ -359,6 +359,9 @@ func isNonChatUtilityCandidate(modelID string, mObj map[string]interface{}) bool
 }
 
 func isFreeCandidateModel(providerID, modelID string, mObj map[string]interface{}) bool {
+	if free, ok := mObj["free"].(bool); ok && !free {
+		return false
+	}
 	lowerID := strings.ToLower(strings.TrimSpace(modelID))
 	if strings.HasSuffix(lowerID, ":free") || strings.HasSuffix(lowerID, "-free") {
 		return true
@@ -369,6 +372,11 @@ func isFreeCandidateModel(providerID, modelID string, mObj map[string]interface{
 		}
 		if mult, ok := mObj["multiplier"].(string); ok && strings.TrimSpace(mult) == "0x" {
 			return true
+		}
+		// Imported CLI/subscription prices may be zero placeholders. Only the
+		// built-in OpenCode catalogs can imply free usage from costs alone.
+		if providerID != "opencode" && providerID != "opencode-go" {
+			return false
 		}
 		if cost, ok := mObj["cost"].(map[string]interface{}); ok {
 			inVal, hasIn := cost["input"]

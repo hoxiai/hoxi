@@ -116,7 +116,13 @@ export function inferModelEffortCapabilities(
     };
   }
 
-  const agySplit = splitAgyModelEffortSuffix(modelID);
+  // Auto pools retain the user's preference; dispatch clamps it to the
+  // concrete candidate's capabilities after routing.
+  if (providerID === AUTO_PROVIDER_ID) {
+    return { efforts: [...CANONICAL_EFFORTS], defaultEffort: "high" };
+  }
+
+  const agySplit = providerID === "antigravity" ? splitAgyModelEffortSuffix(modelID) : null;
   if (agySplit) {
     const lowerBase = agySplit.base.toLowerCase();
     if (lowerBase.includes("oss-")) {
@@ -125,10 +131,10 @@ export function inferModelEffortCapabilities(
     return { efforts: ["low", "medium", "high"], defaultEffort: agySplit.effort };
   }
 
-  const variantKeys = normalizeEffortList([
-    ...Object.keys(mInfo?.variants || {}),
-    ...Object.keys(cfgModel?.variants || {}),
-  ]);
+  const variants = { ...(mInfo?.variants || {}), ...(cfgModel?.variants || {}) };
+  const variantKeys = normalizeEffortList(
+    Object.keys(variants).filter((key) => variants[key]?.disabled !== true)
+  );
   if (variantKeys.length > 0) {
     return {
       efforts: variantKeys,
@@ -167,6 +173,10 @@ export function inferModelEffortCapabilities(
   ) {
     if (s.includes("oss-")) {
       return { efforts: ["medium"], defaultEffort: "medium" };
+    }
+    const gptVersion = s.match(/(?:^|[/-])gpt-(\d+)(?:[.\-/]|$)/);
+    if (gptVersion && Number(gptVersion[1]) >= 6) {
+      return { efforts: [...CANONICAL_EFFORTS], defaultEffort: "high" };
     }
     return { efforts: ["low", "medium", "high", "xhigh"], defaultEffort: "high" };
   }
@@ -456,7 +466,7 @@ export function extractFlattenedModels(
         inCost = 0;
         outCost = 0;
         priceCurrency = hoxiSpec?.currency || "USD";
-      } else if (cfgModel?.cost?.input !== undefined || cfgModel?.cost?.output !== undefined) {
+      } else if (cfgModel?.cost?.input > 0 || cfgModel?.cost?.output > 0) {
         inCost = cfgModel?.cost?.input;
         outCost = cfgModel?.cost?.output;
         priceCurrency = cfgModel?.cost?.currency || "USD";
@@ -465,8 +475,11 @@ export function extractFlattenedModels(
         outCost = hoxiSpec.outputCost;
         priceCurrency = hoxiSpec.currency || "USD";
       } else {
-        inCost = mInfo.cost?.input ?? catSpec?.inputCost ?? prefixSpec.inputCost;
-        outCost = mInfo.cost?.output ?? catSpec?.outputCost ?? prefixSpec.outputCost;
+        // Imported subscriptions often report zero as an unknown price, not
+        // free usage. Use known catalog pricing rather than displaying $0.
+        const cost = (mInfo.cost?.input ?? 0) > 0 || (mInfo.cost?.output ?? 0) > 0 ? mInfo.cost : undefined;
+        inCost = cost?.input ?? catSpec?.inputCost ?? prefixSpec.inputCost;
+        outCost = cost?.output ?? catSpec?.outputCost ?? prefixSpec.outputCost;
         // Engine-provided costs carry no currency field and are USD by
         // convention; keep the picker aligned with dev-pulse accounting.
         priceCurrency = "USD";

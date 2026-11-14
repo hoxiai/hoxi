@@ -144,6 +144,30 @@ func TestFreePoolNeverSelectsPaidFallback(t *testing.T) {
 	}
 }
 
+func TestFreeCandidateRequiresExplicitPricingEvidence(t *testing.T) {
+	cases := []struct {
+		name, provider, model string
+		info                  map[string]interface{}
+		want                  bool
+	}{
+		{"imported zero placeholder", "codex", "gpt-5-codex", map[string]interface{}{"cost": map[string]interface{}{"input": 0.0, "output": 0.0}}, false},
+		{"imported unknown price", "claude-code", "claude-sonnet", nil, false},
+		{"explicit free", "custom", "model", map[string]interface{}{"free": true}, true},
+		{"explicit multiplier", "custom", "model", map[string]interface{}{"multiplier": "0x"}, true},
+		{"free model suffix", "openrouter", "qwen:free", nil, true},
+		{"built-in zero price", "opencode", "model", map[string]interface{}{"cost": map[string]interface{}{"input": 0.0, "output": 0.0}}, true},
+		{"built-in without price", "opencode", "model", map[string]interface{}{}, true},
+		{"explicit paid overrides hints", "custom", "model:free", map[string]interface{}{"free": false, "multiplier": "0x"}, false},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isFreeCandidateModel(tt.provider, tt.model, tt.info); got != tt.want {
+				t.Fatalf("isFreeCandidateModel(%q, %q) = %v, want %v", tt.provider, tt.model, got, tt.want)
+			}
+		})
+	}
+}
+
 type barrierReader struct {
 	reader  io.Reader
 	entered chan<- struct{}

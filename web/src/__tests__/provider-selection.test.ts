@@ -7,6 +7,7 @@ import {
   syncLocalCLIModel,
 } from "../store/provider-connections";
 import { setWorkspace, workspace } from "../store/workspace";
+import { extractFlattenedModels, resolveEffectiveModelEffort } from "../store/provider-catalog";
 import { desktopAuth, logoutDesktopAccount, setDesktopAuth } from "../store/auth-state";
 import {
   defaultProviderNpm,
@@ -43,6 +44,37 @@ async function withProviders(run: () => Promise<void>) {
 }
 
 describe("BYOK provider selection", () => {
+  it("preserves runtime xhigh/max tiers when a saved Codex config only contains legacy tiers", async () => {
+    await withProviders(async () => {
+      const modelID = "gpt-6.1-sol";
+      const variants = Object.fromEntries(["low", "medium", "high", "xhigh", "max"].map(
+        (effort) => [effort, { reasoningEffort: effort }]
+      ));
+      const configuredVariants = {
+        low: { reasoningEffort: "low" }, medium: { reasoningEffort: "medium" },
+        high: { reasoningEffort: "high", reasoningSummary: "detailed" },
+      };
+      hoxiAPI.listProviders = async () => ({
+        all: [{ id: "openai", name: "Codex", models: {
+          [modelID]: { id: modelID, reasoning: true, variants },
+        } }], connected: ["openai"], default: {},
+      });
+      hoxiAPI.getHoxiModelsConfig = async () => ({
+        hoxiProviders: { openai: { models: {
+          [modelID]: { reasoning: true, variants: configuredVariants },
+        } } }, openCodeProviders: [], configPath: "test",
+      });
+      await loadProviders(true);
+      const merged = workspace.providers.find((p) => p.id === "openai")!.models[modelID];
+      assertDeepEqual(merged.variants?.high, configuredVariants.high);
+      const catalog = extractFlattenedModels(workspace.providers, new Set(["openai"]), workspace.globalConfig);
+      assertDeepEqual(catalog[0].efforts, ["low", "medium", "high", "xhigh", "max"]);
+      for (const effort of ["xhigh", "max"] as const) {
+        assertDeepEqual(resolveEffectiveModelEffort({ providerID: "openai", modelID }, effort), effort);
+      }
+    });
+  });
+
   it("does not automatically select free OpenCode or an unconnected catalog model", async () => {
     await withProviders(async () => {
       await loadProviders();

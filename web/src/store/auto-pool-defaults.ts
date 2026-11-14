@@ -96,8 +96,12 @@ export function isModelFree(
   modelID: string,
   mInfo?: Record<string, any> | null
 ): boolean {
+  if (mInfo?.free === false) return false;
   if (mInfo?.free === true || mInfo?.multiplier === "0x") return true;
   if (modelID.endsWith("-free") || modelID.endsWith(":free")) return true;
+  // Zero costs from imported CLI/subscription models are placeholders, not
+  // evidence of a free tier. Only built-in OpenCode catalogs use this fallback.
+  if (providerID !== "opencode" && providerID !== "opencode-go") return false;
   if (
     mInfo?.cost &&
     mInfo.cost.input === 0 &&
@@ -105,7 +109,6 @@ export function isModelFree(
   ) {
     return true;
   }
-  if (providerID !== "opencode" && providerID !== "opencode-go") return false;
   return !mInfo?.cost;
 }
 
@@ -179,8 +182,7 @@ export function computeSmartDefaultCandidates(poolID: string): AutoPoolCandidate
       .map((x) => x.cand);
 
   if (poolID === "free") {
-    const res = pickSorted(freeList, 14);
-    return res.length > 0 ? res : pickSorted(dailyList, 6);
+    return pickSorted(freeList, 14);
   }
   if (poolID === "frontier") {
     const res = pickSorted(frontierList, 10);

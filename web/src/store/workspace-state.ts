@@ -362,7 +362,7 @@ function initialEffort(): ReasoningEffort {
   const saved = readStorageItem(EFFORT_KEY);
   return saved !== null && (VALID_REASONING_EFFORTS as readonly string[]).includes(saved)
     ? (saved as ReasoningEffort)
-    : "";
+    : "high";
 }
 
 export function isValidStoredProjectPath(p: unknown): p is string {

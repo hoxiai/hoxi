@@ -339,7 +339,9 @@ export async function loadProviders(forceRefresh = false): Promise<void> {
           free: typeof mCfg.free === "boolean" ? mCfg.free : rtModel?.free,
           attachment: hasImgModality,
           reasoning: Boolean(mCfg.reasoning ?? rtModel?.reasoning),
-          variants: mCfg.variants || rtModel?.variants,
+          // Saved configs may only contain legacy low/medium/high defaults.
+          // Preserve newer runtime tiers while retaining per-tier overrides.
+          variants: { ...(rtModel?.variants || {}), ...(mCfg.variants || {}) },
           modalities: mCfg.modalities || rtModel?.modalities,
           capabilities: {
             ...(rtModel?.capabilities || {}),

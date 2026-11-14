@@ -5,6 +5,7 @@ import "../src/__tests__/sse-reconnect.test";
 import "../src/__tests__/provider-health.test";
 import "../src/__tests__/tool-card-display.test";
 import "../src/__tests__/provider-selection.test";
+import "../src/__tests__/provider-catalog.test";
 import "../src/__tests__/runtime-switch.test";
 import "../src/__tests__/permissions.test";
 import "../src/__tests__/runner-permission.test";

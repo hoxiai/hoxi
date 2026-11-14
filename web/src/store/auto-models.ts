@@ -510,8 +510,8 @@ export function buildAutoVirtualProvider(): ProviderInfo {
       id,
       name: getAutoPoolDisplayName(id),
       reasoning: true,
-      efforts: ["low", "medium", "high"],
-      defaultEffort: "medium",
+      efforts: ["low", "medium", "high", "xhigh", "max"],
+      defaultEffort: "high",
       multiplier: isFree ? "0x" : "Auto",
       cost: isFree ? { input: 0, output: 0, currency: "USD" } : undefined,
       capabilities: {
