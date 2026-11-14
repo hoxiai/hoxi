@@ -3,6 +3,7 @@ import { t } from "../i18n";
 import {
   hoxiAPI,
   runnerAPI,
+  type AgentInfo,
   type ProviderInfo,
 } from "../services/api";
 import { syncOfficialModelPricing } from "./leaderboard-state";
@@ -20,6 +21,7 @@ import {
   applyManualModelSwitchToSession,
 } from "./workspace-session-messages";
 import { desktopAuth, desktopAuthGeneration } from "./auth-state";
+import { normalizeFolderPath } from "./workspace-folders";
 import {
   DEFAULT_AGENTS,
   EFFORT_KEY,
@@ -54,20 +56,72 @@ export const POPULAR_PROVIDER_IDS = [
   "ollama",
 ] as const;
 
-export async function loadAgents(directory?: string): Promise<void> {
+const AGENTS_CACHE_TTL_MS = 60_000;
+const AGENTS_CACHE_MAX_DIRS = 32;
+const agentsCacheByDir = new Map<
+  string,
+  { agents: AgentInfo[]; fetchedAt: number; fetcher: typeof hoxiAPI.listAgents }
+>();
+const agentsInflightByDir = new Map<string, Promise<AgentInfo[]>>();
+let loadAgentsGeneration = 0;
+
+export async function loadAgents(
+  directory?: string,
+  options?: { preferCache?: boolean }
+): Promise<void> {
+  const effectiveDir = normalizeFolderPath(directory || workspace.rootDir) || undefined;
+  const cacheKey = effectiveDir || "__default__";
+  const fetcher = hoxiAPI.listAgents;
+  const cached = agentsCacheByDir.get(cacheKey);
+
+  if (options?.preferCache && cached && cached.fetcher === fetcher) {
+    if (!effectiveDir || normalizeFolderPath(workspace.rootDir) === effectiveDir) {
+      setWorkspace("agents", cached.agents);
+    }
+    if (Date.now() - cached.fetchedAt <= AGENTS_CACHE_TTL_MS) {
+      return;
+    }
+  }
+
+  const gen = ++loadAgentsGeneration;
+  const isCurrentTarget = () =>
+    gen === loadAgentsGeneration ||
+    Boolean(effectiveDir && normalizeFolderPath(workspace.rootDir) === effectiveDir);
+
   try {
-    const list = await hoxiAPI.listAgents(directory || workspace.rootDir || undefined);
+    let pending = agentsInflightByDir.get(cacheKey);
+    if (!pending || !options?.preferCache) {
+      pending = fetcher.call(hoxiAPI, effectiveDir).finally(() => {
+        if (agentsInflightByDir.get(cacheKey) === pending) {
+          agentsInflightByDir.delete(cacheKey);
+        }
+      });
+      agentsInflightByDir.set(cacheKey, pending);
+    }
+    const list = await pending;
+    let resolved: AgentInfo[] = DEFAULT_AGENTS;
     if (Array.isArray(list) && list.length > 0) {
       const primaries = list.filter((a) => (a.mode === "primary" || !a.mode) && !a.hidden);
       if (primaries.length > 0) {
-        setWorkspace("agents", primaries);
-        return;
+        resolved = primaries;
       }
+    }
+    agentsCacheByDir.delete(cacheKey);
+    agentsCacheByDir.set(cacheKey, { agents: resolved, fetchedAt: Date.now(), fetcher });
+    while (agentsCacheByDir.size > AGENTS_CACHE_MAX_DIRS) {
+      const oldest = agentsCacheByDir.keys().next().value;
+      if (oldest === undefined) break;
+      agentsCacheByDir.delete(oldest);
+    }
+    if (isCurrentTarget()) {
+      setWorkspace("agents", resolved);
     }
   } catch (err) {
     console.error("load agents error:", err);
+    if (isCurrentTarget()) {
+      setWorkspace("agents", DEFAULT_AGENTS);
+    }
   }
-  setWorkspace("agents", DEFAULT_AGENTS);
 }
 
 export function pushRecentModel(model: SelectedModel) {
@@ -447,4 +501,3 @@ export async function loadProviders(forceRefresh = false): Promise<void> {
 }
 
 export const refreshProviders = loadProviders;
-

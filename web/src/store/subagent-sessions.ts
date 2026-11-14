@@ -235,13 +235,20 @@ export function resolveRootSessionID(
  */
 export function groupSubagentsByRoot(
   rawSessions: readonly SessionInfo[],
+  precomputedByID?: ReadonlyMap<string, SessionInfo>,
 ): Map<string, SessionInfo[]> {
-  const combinedByID = new Map<string, SessionInfo>();
-  for (const s of workspace.sessions) {
-    if (s?.id) combinedByID.set(s.id, s);
-  }
-  for (const s of rawSessions) {
-    if (s?.id) combinedByID.set(s.id, s);
+  let combinedByID: ReadonlyMap<string, SessionInfo>;
+  if (precomputedByID) {
+    combinedByID = precomputedByID;
+  } else {
+    const built = new Map<string, SessionInfo>();
+    for (const s of workspace.sessions) {
+      if (s?.id) built.set(s.id, s);
+    }
+    for (const s of rawSessions) {
+      if (s?.id) built.set(s.id, s);
+    }
+    combinedByID = built;
   }
 
   const grouped = new Map<string, Map<string, SessionInfo>>();
@@ -314,7 +321,7 @@ export function partitionCodeSessions(
     if (s?.id) byID.set(s.id, s);
   }
   const roots = codeSessions.filter((s) => !resolveParentSessionID(s.id, byID));
-  const subagentsByRoot = groupSubagentsByRoot(codeSessions);
+  const subagentsByRoot = groupSubagentsByRoot(codeSessions, byID);
   return { codeSessions, roots, subagentsByRoot };
 }
 

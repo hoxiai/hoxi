@@ -91,6 +91,7 @@ const worktreeRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const worktreeRevisions = new Map<string, number>();
 const inFlightWorktreeStatusByKey = new Map<string, {
   directory: string;
+  statusOnly: boolean;
   done: Promise<void>;
 }>();
 
@@ -157,12 +158,17 @@ export function scheduleRefreshWorktreeStatus(
   worktreeRefreshTimers.set(key, timer);
 }
 
-export function refreshWorktreeStatus(sessionID?: string | null): Promise<void> {
+export function refreshWorktreeStatus(
+  sessionID?: string | null,
+  options?: { statusOnly?: boolean }
+): Promise<void> {
   const key = sessionID || "__root__";
   const dirArg = worktreeStatusDirectory(key);
+  const statusOnly = Boolean(options?.statusOnly);
   const flight = {
     directory: normalizeFolderPath(dirArg),
-    done: readWorktreeStatus(key, dirArg).finally(() => {
+    statusOnly,
+    done: readWorktreeStatus(key, dirArg, statusOnly).finally(() => {
       if (inFlightWorktreeStatusByKey.get(key) === flight) inFlightWorktreeStatusByKey.delete(key);
     }),
   };
@@ -170,7 +176,11 @@ export function refreshWorktreeStatus(sessionID?: string | null): Promise<void> 
   return flight.done;
 }
 
-async function readWorktreeStatus(key: string, dirArg: string | undefined): Promise<void> {
+async function readWorktreeStatus(
+  key: string,
+  dirArg: string | undefined,
+  statusOnly = false
+): Promise<void> {
   const revision = (worktreeRevisions.get(key) ?? 0) + 1;
   worktreeRevisions.set(key, revision);
   const isCurrentScope = () => worktreeRevisions.get(key) === revision &&
@@ -220,6 +230,20 @@ async function readWorktreeStatus(key: string, dirArg: string | undefined): Prom
     );
     setWorktreeMetaIfChanged(key, nextMeta);
     if (key === "__root__" || key === workspace.activeSessionID) {
+      if (statusOnly) {
+        if (!st.dirty) {
+          setDiffListIfChanged("worktreeDiffsBySession", key, []);
+          if (key === "__root__") {
+            setDiffListIfChanged("diffsBySession", key, []);
+          }
+        } else if (!statusSignatureUnchanged) {
+          setWorkspace("worktreeDiffsBySession", key, undefined!);
+          if (key === "__root__") {
+            setWorkspace("diffsBySession", key, undefined!);
+          }
+        }
+        return;
+      }
       const cachedWorktreeDiffs = workspace.worktreeDiffsBySession[key];
       const canReuseWorktreeDiffs =
         statusSignatureUnchanged &&

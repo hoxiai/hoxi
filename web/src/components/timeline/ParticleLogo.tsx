@@ -60,10 +60,7 @@ function resolveWordmarkGrid(): CachedWordmarkGrid | null {
   const metrics = ink.measureText("Hoxi");
   ink.fillText("Hoxi", WIDTH / 2, (HEIGHT + metrics.actualBoundingBoxAscent - metrics.actualBoundingBoxDescent) / 2);
   const pixels = ink.getImageData(0, 0, WIDTH, HEIGHT).data;
-  let points: { x: number; y: number }[] = [];
-  let gridStep = 5;
-  // Keep whole grid cells; thinning individual points leaves uneven holes.
-  for (let step = 3; step <= 9; step += 0.125) {
+  const sampleGrid = (step: number): { x: number; y: number }[] => {
     const candidate: { x: number; y: number }[] = [];
     const columns = Math.floor(WIDTH / step);
     const rows = Math.floor(HEIGHT / step);
@@ -71,21 +68,48 @@ function resolveWordmarkGrid(): CachedWordmarkGrid | null {
     const offsetY = (HEIGHT - rows * step) / 2;
     for (let row = 0; row < rows; row++) {
       const y = offsetY + row * step;
+      const rowOffset = Math.round(y) * WIDTH;
       for (let column = 0; column < columns; column++) {
         const x = offsetX + column * step;
-        if (pixels[(Math.round(y) * WIDTH + Math.round(x)) * 4 + 3] > 100) {
+        if (pixels[(rowOffset + Math.round(x)) * 4 + 3] > 100) {
           candidate.push({ x, y });
         }
       }
     }
-    if (candidate.length && Math.abs(candidate.length - COUNT) < Math.abs(points.length - COUNT)) {
+    return candidate;
+  };
+  let points: { x: number; y: number }[] = [];
+  let gridStep = 5;
+  // Keep whole grid cells; point count decreases monotonically with step, so
+  // binary-search the 0.125-step lattice instead of scanning all 49 steps.
+  let lo = 0;
+  let hi = 48;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const step = 3 + mid * 0.125;
+    const candidate = sampleGrid(step);
+    if (
+      candidate.length &&
+      (!points.length || Math.abs(candidate.length - COUNT) < Math.abs(points.length - COUNT))
+    ) {
       points = candidate;
       gridStep = step;
     }
+    if (candidate.length > COUNT) {
+      lo = mid + 1;
+    } else if (candidate.length < COUNT) {
+      hi = mid - 1;
+    } else {
+      break;
+    }
   }
   if (!points.length) return null;
-  const minX = Math.min(...points.map((point) => point.x));
-  const maxX = Math.max(...points.map((point) => point.x));
+  let minX = Infinity;
+  let maxX = -Infinity;
+  for (const point of points) {
+    if (point.x < minX) minX = point.x;
+    if (point.x > maxX) maxX = point.x;
+  }
   cachedWordmarkGrid = { points, gridStep, minX, maxX };
   return cachedWordmarkGrid;
 }

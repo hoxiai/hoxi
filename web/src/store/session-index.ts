@@ -3,7 +3,12 @@
 // project, but status and approval reconciliation must still know where a
 // session lives; this index survives project switches and transcript eviction.
 import type { SessionInfo } from "../services/sse-types";
-import { setWorkspace, workspace, type SessionIndexEntry } from "./workspace-state";
+import {
+  setSessionIndexQuiet,
+  setWorkspace,
+  workspace,
+  type SessionIndexEntry,
+} from "./workspace-state";
 import {
   bumpSessionSurfaceRevision,
   findWorkspaceProfileByDir,
@@ -48,9 +53,11 @@ export function indexSession(info: SessionInfo | undefined | null): void {
       (entry.surface || prev?.surface) &&
         stripWorktreePath(prev?.directory) !== stripWorktreePath(entry.directory)
     );
-  setWorkspace("sessionIndex", info.id, entry);
   if (surfaceChanged) {
+    setWorkspace("sessionIndex", info.id, entry);
     bumpSessionSurfaceRevision();
+  } else {
+    setSessionIndexQuiet(info.id, entry);
   }
   if (entry.surface === "work" && entry.directory) {
     const owner = findWorkspaceProfileByDir(entry.directory);

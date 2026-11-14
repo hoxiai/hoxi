@@ -499,10 +499,9 @@ func (s *Store) ListProject(projectID, directory string) []SessionInfo {
 	return out
 }
 
-func (s *Store) listProjectRecords(projectID, directory string) []SessionRecord {
-	projectID = strings.TrimSpace(projectID)
-	normFilter := normalizeComparePath(directory)
+func (s *Store) snapshotMetas() ([]SessionRecord, func(string) (string, bool)) {
 	s.mu.RLock()
+	defer s.mu.RUnlock()
 	canonical := s.canonicalProject
 	metas := make([]SessionRecord, 0, len(s.records))
 	for _, ss := range s.records {
@@ -510,7 +509,20 @@ func (s *Store) listProjectRecords(projectID, directory string) []SessionRecord 
 			metas = append(metas, ss.meta)
 		}
 	}
-	s.mu.RUnlock()
+	return metas, canonical
+}
+
+func (s *Store) eachMeta(fn func(SessionRecord)) {
+	metas, _ := s.snapshotMetas()
+	for _, rec := range metas {
+		fn(rec)
+	}
+}
+
+func (s *Store) listProjectRecords(projectID, directory string) []SessionRecord {
+	projectID = strings.TrimSpace(projectID)
+	normFilter := normalizeComparePath(directory)
+	metas, canonical := s.snapshotMetas()
 	type resolvedOwner struct {
 		id   string
 		live bool

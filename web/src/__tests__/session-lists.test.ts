@@ -1,8 +1,16 @@
-import { createRoot } from "solid-js";
+import { createMemo, createRoot } from "solid-js";
 import { reconcile, unwrap } from "solid-js/store";
 import { hoxiAPI } from "../services/api";
+import { fetchPullRequests } from "../services/forge";
 import type { SessionInfo } from "../services/sse-types";
-import { bootstrapProjectSessions, createProjectSessionLists, setWorkspace, workspace } from "../store/workspace";
+import {
+  bootstrapProjectSessions,
+  createProjectSessionLists,
+  partitionCodeSessions,
+  refreshWorktreeStatus,
+  setWorkspace,
+  workspace,
+} from "../store/workspace";
 import { assertDeepEqual, assertEqual, assertTrue, describe, it } from "./test-harness";
 
 function session(id: string, directory: string, extra?: Partial<SessionInfo>): SessionInfo {
@@ -130,5 +138,107 @@ describe("sidebar project session lists", () => {
       // Let the selection's debounced diff/status refreshes hit the stubs.
       await new Promise((r) => setTimeout(r, 250));
     });
+  });
+
+  it("does not recompute inactive project's partitionCodeSessions when active workspace.sessions changes", async () => {
+    await withListsFixture(async () => {
+      const cachedProjectA = [
+        session("ses_a_root", "/repo-a"),
+        session("ses_a_child", "/repo-a", { parentID: "ses_a_root" }),
+      ];
+      setWorkspace({ rootDir: "/repo-b", sessions: [session("ses_b1", "/repo-b")] });
+      let runs = 0;
+      createRoot((dispose) => {
+        const partitioned = createMemo(() => {
+          runs += 1;
+          return partitionCodeSessions(cachedProjectA);
+        });
+        assertEqual(partitioned().roots.length, 1);
+        assertEqual(runs, 1);
+        setWorkspace("sessions", [session("ses_b1", "/repo-b"), session("ses_b2", "/repo-b")]);
+        assertEqual(partitioned().roots.length, 1);
+        assertEqual(runs, 1, "inactive project partition memo must not subscribe to workspace.sessions");
+        dispose();
+      });
+    });
+  });
+
+  it("skips full worktree diff fetch on project bootstrap when diffs inspector is closed", async () => {
+    await withListsFixture(async () => {
+      let diffCalls = 0;
+      hoxiAPI.listSessions = async () => [];
+      hoxiAPI.getWorktreeStatus = async () => ({
+        sessionID: "__root__",
+        directory: "/repo-dirty",
+        branch: "main",
+        isolated: false,
+        dirty: true,
+        changedFiles: 4,
+        uncommittedLines: 4,
+        additions: 3,
+        deletions: 1,
+      });
+      hoxiAPI.getWorktreeDiff = async () => {
+        diffCalls += 1;
+        return [{ file: "a.ts", status: "modified", additions: 3, deletions: 1, before: "", after: "" }];
+      };
+      setWorkspace({
+        rootDir: "/repo-dirty",
+        inspectorOpen: false,
+        inspectorTab: "files",
+        worktreeBySession: {},
+        worktreeDiffsBySession: {},
+      });
+      await bootstrapProjectSessions("/repo-dirty", false);
+      assertEqual(diffCalls, 0, "closed diffs inspector must skip getWorktreeDiff during project switch");
+      assertEqual(workspace.worktreeBySession.__root__?.changedFiles, 4);
+
+      await refreshWorktreeStatus("__root__");
+      assertEqual(diffCalls, 1, "explicit full refresh loads diffs when needed");
+      assertEqual(workspace.worktreeDiffsBySession.__root__?.length, 1);
+    });
+  });
+
+  it("shares a single pull-request list request across worktree directories of the same repo", async () => {
+    const originalFetch = globalThis.fetch;
+    const requestedURLs: string[] = [];
+    const repoPath = `/Users/test/repo-perf-${Date.now()}`;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      requestedURLs.push(String(input));
+      return new Response(
+        JSON.stringify({
+          available: true,
+          pullRequests: {
+            "hoxi/ses_1": {
+              number: 21,
+              url: "https://github.com/hoxiai/hoxi/pull/21",
+              title: "perf",
+              state: "OPEN",
+              isDraft: false,
+              additions: 5,
+              deletions: 2,
+              changedFiles: 1,
+              baseRefName: "main",
+              headRefName: "hoxi/ses_1",
+              checks: [],
+            },
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }) as typeof fetch;
+    try {
+      const [pr1, pr2] = await Promise.all([
+        fetchPullRequests(`${repoPath}/.hoxi/worktrees/ses_1`),
+        fetchPullRequests(`${repoPath}/.hoxi/worktrees/ses_2`),
+      ]);
+      assertEqual(requestedURLs.length, 1);
+      assertTrue(requestedURLs[0].includes(encodeURIComponent(repoPath)));
+      assertTrue(!requestedURLs[0].includes(".hoxi"));
+      assertEqual(pr1.pullRequests["hoxi/ses_1"]?.number, 21);
+      assertEqual(pr2.pullRequests["hoxi/ses_1"]?.number, 21);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });

@@ -209,11 +209,25 @@ function resolveQuestionDirectory(req: QuestionRequest): string | undefined {
   return normalizeFolderPath(workspace.rootDir) || undefined;
 }
 
+const inFlightQuestionsByScope = new Map<string, Promise<QuestionRequest[]>>();
+
+function fetchQuestionsSingleflight(scope: string): Promise<QuestionRequest[]> {
+  const existing = inFlightQuestionsByScope.get(scope);
+  if (existing) return existing;
+  const req = hoxiAPI.listQuestions(scope).finally(() => {
+    if (inFlightQuestionsByScope.get(scope) === req) {
+      inFlightQuestionsByScope.delete(scope);
+    }
+  });
+  inFlightQuestionsByScope.set(scope, req);
+  return req;
+}
+
 export async function syncPendingQuestions(directory?: string): Promise<void> {
   const scopes = permissionSyncScopes(directory);
   try {
     const results = await Promise.allSettled(
-      scopes.map((scope) => hoxiAPI.listQuestions(scope))
+      scopes.map((scope) => fetchQuestionsSingleflight(scope))
     );
     const merged = new Map<string, QuestionRequest>();
     const answeredScopes = new Set<string>();

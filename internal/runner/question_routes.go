@@ -124,16 +124,19 @@ func (s *Service) listUnifiedQuestions(ctx context.Context, directory string) []
 	var questions []map[string]interface{}
 	qCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	for _, dir := range s.openCodeCandidateDirs(directory) {
-		qStatus, qRaw, qErr := s.openCodeRaw(qCtx, http.MethodGet, "/question", directoryQuery(dir, nil), nil)
-		var batch []map[string]interface{}
-		if qErr == nil && qStatus == http.StatusOK && json.Unmarshal(qRaw, &batch) == nil {
-			for _, item := range batch {
-				if dir != "" && firstString(item["directory"]) == "" {
-					item["directory"] = dir
-				}
-				questions = append(questions, item)
+	plan := s.openCodePollCandidateDirs(directory, &s.cleanIdleQuestionDirs)
+	batches, okList := s.fetchOpenCodeListByDirs(qCtx, "/question", plan.dirs)
+	for i, dir := range plan.dirs {
+		if !okList[i] {
+			continue
+		}
+		batch := batches[i]
+		s.recordOpenCodeDirPollOutcome(&s.cleanIdleQuestionDirs, plan, dir, len(batch) == 0)
+		for _, item := range batch {
+			if dir != "" && firstString(item["directory"]) == "" {
+				item["directory"] = dir
 			}
+			questions = append(questions, item)
 		}
 	}
 	return s.filterAndMergeQuestions(questions, directory)

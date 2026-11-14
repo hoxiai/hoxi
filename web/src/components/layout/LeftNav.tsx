@@ -1,5 +1,5 @@
 // web/src/components/layout/LeftNav.tsx
-import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
+import { batch, createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import { Presence } from "../motion/Presence";
 import { Activity, ArrowRightLeft, Bell, Check, Clock, Folder, FolderPlus, Layers, Plus, RefreshCw, Search } from "lucide-solid";
 import {
@@ -7,6 +7,7 @@ import {
   createProjectSessionLists,
   discardSession,
   focusFirstAttentionSession,
+  getCachedProjectSessions,
   getInitialCodeProjectDir,
   healTransientSidebarProjectMode,
   isDefaultWorkspacePath,
@@ -27,6 +28,7 @@ import {
   unarchiveSession,
   workspace,
 } from "../../store/workspace";
+import type { SessionInfo } from "../../services/sse-types";
 import { Icon, Spinner } from "../icons";
 import { buildAllProjects, collectPendingApprovalRoots, collectPendingSessionIDs, findProjectDropTarget, resolveActiveRootSessionID, sameStringSet, type ProjectNavEntry } from "./left-nav-helpers";
 import MultiProjectTreeItem from "./MultiProjectItem";
@@ -38,6 +40,7 @@ import { matchesProjectSessionSearch } from "./session-search";
 import { isWorkSurface, surfaceExtension } from "./surface-extension";
 
 const SYNC_MIN_SPIN_MS = 600;
+const EMPTY_SESSIONS: SessionInfo[] = [];
 
 export default function LeftNav() {
   const [filterQuery, setFilterQuery] = createSignal("");
@@ -233,10 +236,19 @@ export default function LeftNav() {
     const next = new Set(expandedProjects());
     if (!isRoot && !(clickedChevron && next.has(clean))) {
       next.add(clean);
-      setExpandedProjects(next);
-      const cached = projectSessions()[clean] || projectSessions()[path];
-      startNewThreadDraft();
-      await switchWorkspace(clean, { selectInitial: false, cachedSessions: cached });
+      const cached =
+        projectSessions()[clean] ?? projectSessions()[path] ?? getCachedProjectSessions(clean);
+      let switchPromise: Promise<void> | undefined;
+      batch(() => {
+        setExpandedProjects(next);
+        startNewThreadDraft();
+        switchPromise = switchWorkspace(clean, {
+          selectInitial: false,
+          cachedSessions: cached,
+          fastSurfaceSwitch: cached !== undefined,
+        });
+      });
+      await switchPromise;
       return;
     }
     if (next.has(clean)) {
@@ -314,12 +326,23 @@ export default function LeftNav() {
     const normPath = normalizeFolderPath(path);
     setCreatingForPath(path);
     try {
-      setExpandedProjects((prev) => (prev.has(normPath) ? prev : new Set([...prev, normPath])));
-      startNewThreadDraft();
-      if (normPath && normPath !== normalizeFolderPath(workspace.rootDir)) {
-        const cached = projectSessions()[normPath] || projectSessions()[path];
-        await switchWorkspace(normPath, { selectInitial: false, cachedSessions: cached });
-      }
+      const switching = Boolean(normPath && normPath !== normalizeFolderPath(workspace.rootDir));
+      const cached = switching
+        ? projectSessions()[normPath] ?? projectSessions()[path] ?? getCachedProjectSessions(normPath)
+        : undefined;
+      let switchPromise: Promise<void> | undefined;
+      batch(() => {
+        setExpandedProjects((prev) => (prev.has(normPath) ? prev : new Set([...prev, normPath])));
+        startNewThreadDraft();
+        if (switching) {
+          switchPromise = switchWorkspace(normPath, {
+            selectInitial: false,
+            cachedSessions: cached,
+            fastSurfaceSwitch: cached !== undefined,
+          });
+        }
+      });
+      if (switchPromise) await switchPromise;
     } catch (err) {
       console.error("Failed to create thread in project:", err);
     } finally {
@@ -330,11 +353,13 @@ export default function LeftNav() {
   const onSelectSessionInProject = async (path: string, sessionID: string) => {
     const normPath = normalizeFolderPath(path);
     if (normPath && normPath !== normalizeFolderPath(workspace.rootDir)) {
-      const cached = projectSessions()[normPath] || projectSessions()[path];
+      const cached =
+        projectSessions()[normPath] ?? projectSessions()[path] ?? getCachedProjectSessions(normPath);
       await switchWorkspace(normPath, {
         selectInitial: false,
         targetSessionID: sessionID,
         cachedSessions: cached,
+        fastSurfaceSwitch: cached !== undefined,
       });
       return;
     }
@@ -601,7 +626,9 @@ export default function LeftNav() {
               const proj = () => projectByPath().get(projPath)!;
               const normPath = normalizeFolderPath(projPath);
               const isRootProj = () => normPath === normalizeFolderPath(workspace.rootDir);
-              const cached = () => projectSessions()[normPath] || projectSessions()[projPath] || [];
+              const cached = createMemo(
+                () => projectSessions()[normPath] ?? projectSessions()[projPath] ?? EMPTY_SESSIONS
+              );
               return (
                 <MultiProjectTreeItem
                   proj={proj()}

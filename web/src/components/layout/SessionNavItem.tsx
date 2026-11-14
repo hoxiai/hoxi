@@ -11,6 +11,7 @@ import {
   setSubagentDrawerExpanded,
   setWorkspace,
   shouldAutoExpandSubagents,
+  stripWorktreePath,
   workspace,
 } from "../../store/workspace";
 import { stopSessionTask } from "../../store/workspace-session-messages";
@@ -75,9 +76,10 @@ export function SessionNavItem(props: SessionNavItemProps) {
   const wt = () => workspace.worktreeBySession[props.session.id];
   const [pullRequest, setPullRequest] = createSignal<ForgePullRequest | null>(null);
   let pullRequestGeneration = 0;
-  const pullRequestDirectory = createMemo(
-    () => wt()?.directory || sessionDirectory(props.session.id) || workspace.rootDir
-  );
+  const pullRequestDirectory = createMemo(() => {
+    const raw = wt()?.directory || sessionDirectory(props.session.id) || workspace.rootDir;
+    return stripWorktreePath(raw) || raw;
+  });
   const pullRequestBranch = createMemo(() => wt()?.branch || props.session.branch || "");
 
   createEffect(() => {

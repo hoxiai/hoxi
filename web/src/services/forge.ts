@@ -88,6 +88,12 @@ function cacheKey(directory: string, branch: string): string {
   return `${directory}\n${branch}`;
 }
 
+function canonicalRepoDirectory(directory: string): string {
+  const normalized = (directory || "").trim().replace(/\\/g, "/");
+  const idx = normalized.indexOf("/.hoxi/worktrees/");
+  return idx > 0 ? normalized.slice(0, idx) : directory.trim();
+}
+
 export function fetchPullRequest(
   directory: string,
   branch: string,
@@ -123,7 +129,8 @@ export function fetchPullRequests(
   directory: string,
   force = false
 ): Promise<ForgePullRequestListResponse> {
-  const key = `list:${directory}`;
+  const repoDir = canonicalRepoDirectory(directory);
+  const key = `list:${repoDir}`;
   const now = Date.now();
   if (!force) {
     const cached = cache.get(key);
@@ -134,7 +141,7 @@ export function fetchPullRequests(
     if (pending) return pending as Promise<ForgePullRequestListResponse>;
   }
 
-  const params = new URLSearchParams({ directory });
+  const params = new URLSearchParams({ directory: repoDir });
   const request = requestJSON<ForgePullRequestListResponse>(`/api/hoxi/forge/prs?${params.toString()}`)
     .then((response) => {
       cache.set(key, { expiresAt: Date.now() + CACHE_TTL_MS, response });
@@ -192,6 +199,7 @@ export async function createPullRequest(
     cache.delete(key);
     cache.delete(`detail:${key}`);
     cache.delete(`list:${input.directory}`);
+    cache.delete(`list:${canonicalRepoDirectory(input.directory)}`);
     if (response.pullRequest) {
       cache.set(key, {
         expiresAt: Date.now() + CACHE_TTL_MS,

@@ -8,6 +8,7 @@ import type { SessionInfo } from "../services/sse-types";
 import { defaultWorkspaceDir } from "./layout";
 import {
   DISMISSED_PROJECTS_KEY,
+  getSessionIndexMutationVersion,
   PROJECT_ORDER_KEY,
   readStorageJSON,
   RECENT_PROJECTS_KEY,
@@ -186,18 +187,12 @@ interface SavedProfileSnap {
   folders: Array<{ path: string; isPrimary: boolean | undefined; missing: boolean | undefined }>;
 }
 
-interface SessionEntrySnap {
-  ref: SessionIndexEntry;
-  directory: string | undefined;
-  surface: SessionIndexEntry["surface"];
-}
-
 let cachedLookup: FolderLookup | null = null;
 let cachedDefDir = "";
 let cachedWorkDirs: string[] | null = null;
 let cachedSessRev = -1;
+let cachedSessMutVer = -1;
 let cachedRawSessionIndex: Record<string, SessionIndexEntry> | null = null;
-let cachedSessionEntries = new Map<string, SessionEntrySnap>();
 let cachedSessionSurfaceByDir = new Map<string, "work" | "code">();
 let cachedSavedSnaps: SavedProfileSnap[] = [];
 let cachedDismissedItems: string[] = [];
@@ -271,30 +266,6 @@ function trackFolderLookupSources(): void {
   for (let i = 0; i < dismissed.length; i++) void dismissed[i];
 }
 
-function sessionIndexMatchesCache(
-  rawSessionIndex: Record<string, SessionIndexEntry>,
-  sessRev: number
-): boolean {
-  if (sessRev !== cachedSessRev || rawSessionIndex !== cachedRawSessionIndex) {
-    return false;
-  }
-  let count = 0;
-  for (const id in rawSessionIndex) {
-    count++;
-    const entry = rawSessionIndex[id];
-    const snap = cachedSessionEntries.get(id);
-    if (
-      !snap ||
-      snap.ref !== entry ||
-      snap.directory !== entry?.directory ||
-      snap.surface !== entry?.surface
-    ) {
-      return false;
-    }
-  }
-  return count === cachedSessionEntries.size;
-}
-
 function savedProfileMatchesSnap(w: WorkspaceProfile | undefined, snap: SavedProfileSnap | undefined): boolean {
   return Boolean(
     w &&
@@ -314,26 +285,23 @@ function getFolderLookup(): FolderLookup {
   const defDir = normalizeFolderPath(defaultWorkspaceDir());
   const wDirs = workWorkspaceDirs();
   const sessRev = sessionSurfaceRevision();
+  const sessMutVer = getSessionIndexMutationVersion();
   trackFolderLookupSources();
 
   const rawSaved = unwrap(workspace.savedWorkspaces) || [];
   const rawDismissed = unwrap(workspace.dismissedProjects) || [];
   const rawSessionIndex = unwrap(workspace.sessionIndex) || {};
 
-  const sessionIndexSame = sessionIndexMatchesCache(rawSessionIndex, sessRev);
+  const sessionIndexSame =
+    sessRev === cachedSessRev &&
+    sessMutVer === cachedSessMutVer &&
+    rawSessionIndex === cachedRawSessionIndex;
 
   if (!sessionIndexSame) {
     const nextSessionSurface = new Map<string, "work" | "code">();
-    const nextSessionEntries = new Map<string, SessionEntrySnap>();
     for (const id in rawSessionIndex) {
       const entry = rawSessionIndex[id];
-      if (!entry) continue;
-      nextSessionEntries.set(id, {
-        ref: entry,
-        directory: entry.directory,
-        surface: entry.surface,
-      });
-      if (!entry.directory || (entry.surface !== "work" && entry.surface !== "code")) continue;
+      if (!entry || !entry.directory || (entry.surface !== "work" && entry.surface !== "code")) continue;
       const dir = stripWorktreePath(entry.directory);
       if (!dir) continue;
       if (entry.surface === "code") {
@@ -343,8 +311,8 @@ function getFolderLookup(): FolderLookup {
       }
     }
     cachedSessionSurfaceByDir = nextSessionSurface;
-    cachedSessionEntries = nextSessionEntries;
     cachedSessRev = sessRev;
+    cachedSessMutVer = sessMutVer;
     cachedRawSessionIndex = rawSessionIndex;
   }
 

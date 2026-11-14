@@ -9,21 +9,38 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 const (
-	defaultTimeout = 20 * time.Second
-	maxOutputBytes = 1 << 20
-	prJSONFields   = "number,url,title,state,isDraft,reviewDecision,mergeStateStatus,mergeable,additions,deletions,changedFiles,baseRefName,headRefName,statusCheckRollup"
+	defaultTimeout      = 20 * time.Second
+	defaultListCacheTTL = 15 * time.Second
+	maxListCacheEntries = 64
+	maxOutputBytes      = 1 << 20
+	prJSONFields        = "number,url,title,state,isDraft,reviewDecision,mergeStateStatus,mergeable,additions,deletions,changedFiles,baseRefName,headRefName,statusCheckRollup"
 )
+
+type cachedPullRequestList struct {
+	resp      ListResponse
+	expiresAt time.Time
+}
+
+type pullRequestListFlight struct {
+	done chan struct{}
+	resp ListResponse
+}
 
 // Service reads pull request status through the GitHub CLI.
 type Service struct {
-	ghPath  string
-	timeout time.Duration
+	ghPath       string
+	timeout      time.Duration
+	listTTL      time.Duration
+	listMu       sync.Mutex
+	listCache    map[string]cachedPullRequestList
+	listInflight map[string]*pullRequestListFlight
 }
 
 // NewService returns a forge service that shells out to `gh`.
@@ -171,4 +188,21 @@ func resolveDirectory(raw string) (string, string) {
 		return "", "invalid_directory"
 	}
 	return abs, ""
+}
+
+// canonicalRepoDir maps an isolated Hoxi worktree path (<repo>/.hoxi/worktrees/<id>)
+// back to its parent repository root when that root exists on disk, so all
+// worktrees of the same repository share one PR list cache entry and subprocess.
+func canonicalRepoDir(absDir string) string {
+	slashed := filepath.ToSlash(filepath.Clean(absDir))
+	const marker = "/.hoxi/worktrees/"
+	idx := strings.Index(slashed, marker)
+	if idx <= 0 {
+		return absDir
+	}
+	parent := filepath.FromSlash(slashed[:idx])
+	if info, err := os.Stat(parent); err == nil && info.IsDir() {
+		return parent
+	}
+	return absDir
 }

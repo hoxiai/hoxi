@@ -747,6 +747,7 @@ func (s *Service) forgetOpenCodeMappings(id string, rec SessionRecord, ap *activ
 	}
 	dropTurnMappings(rec.Turns)
 	dropTurnMappings(rec.RevertedTurns)
+	s.forgetCleanIdleOpenCodeDirs(rec)
 	drop(id)
 	drop(rec.ExternalID)
 	for _, ocID := range rec.OpenCodeIDs {

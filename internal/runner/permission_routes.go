@@ -322,79 +322,6 @@ func (s *Service) replyRunnerPermission(w http.ResponseWriter, r *http.Request, 
 	}
 }
 
-func (s *Service) openCodeEngineSessionMap() (map[string]string, map[string]string, map[string]bool) {
-	engineToHoxi := make(map[string]string)
-	sessionDirByID := make(map[string]string)
-	archivedHoxi := make(map[string]bool)
-	for _, info := range s.store.List("") {
-		rec, ok := s.store.Meta(info.ID)
-		if !ok {
-			continue
-		}
-		if rec.ArchivedAt > 0 {
-			archivedHoxi[rec.ID] = true
-		}
-		recDir := firstNonEmptyStr(strings.TrimSpace(rec.WorktreePath), strings.TrimSpace(rec.ProjectDir))
-		if recDir != "" {
-			sessionDirByID[rec.ID] = recDir
-		}
-		if rec.ExternalID != "" {
-			engineToHoxi[rec.ExternalID] = rec.ID
-			if recDir != "" {
-				sessionDirByID[rec.ExternalID] = recDir
-			}
-		}
-		for _, ocID := range rec.OpenCodeIDs {
-			if ocID != "" {
-				engineToHoxi[ocID] = rec.ID
-				if ocDir := strings.TrimSpace(rec.OpenCodeDirectories[ocID]); ocDir != "" {
-					sessionDirByID[ocID] = ocDir
-				} else if recDir != "" {
-					sessionDirByID[ocID] = recDir
-				}
-			}
-		}
-		for _, childID := range rec.OpenCodeChildIDs {
-			if childID != "" {
-				engineToHoxi[childID] = rec.ID
-				if recDir != "" {
-					sessionDirByID[childID] = recDir
-				}
-			}
-		}
-	}
-	s.openCodeChildParent.Range(func(childID, parentID string) bool {
-		if childID == "" || parentID == "" {
-			return true
-		}
-		if _, ok := s.store.Meta(parentID); !ok {
-			return true
-		}
-		engineToHoxi[childID] = parentID
-		if hoxiDir := sessionDirByID[parentID]; hoxiDir != "" {
-			sessionDirByID[childID] = hoxiDir
-		}
-		return true
-	})
-	s.mu.Lock()
-	for hoxiID, ap := range s.procs {
-		if ap == nil {
-			continue
-		}
-		ap.openCodeChildren.Range(func(childID string, _ bool) bool {
-			if childID != "" {
-				engineToHoxi[childID] = hoxiID
-				if hoxiDir := sessionDirByID[hoxiID]; hoxiDir != "" {
-					sessionDirByID[childID] = hoxiDir
-				}
-			}
-			return true
-		})
-	}
-	s.mu.Unlock()
-	return engineToHoxi, sessionDirByID, archivedHoxi
-}
-
 func (s *Service) isSessionBusy(sessionID string) bool {
 	if sessionID == "" {
 		return false
@@ -497,63 +424,69 @@ func (s *Service) rejectStaleOpenCodeQuestion(qid, dir string) {
 }
 
 func (s *Service) listUnifiedPermissions(ctx context.Context, directory string) []map[string]interface{} {
+	if s.openCode == nil {
+		return s.listPendingApprovals(directory)
+	}
 	engineToHoxi, sessionDirByID, archivedHoxi := s.openCodeEngineSessionMap()
 	out := make([]map[string]interface{}, 0)
 	seenIDs := make(map[string]bool)
-	for _, dir := range s.openCodeCandidateDirs(directory) {
-		status, raw, err := s.openCodeRaw(ctx, http.MethodGet, "/permission", directoryQuery(dir, nil), nil)
-		var enginePerms []map[string]interface{}
-		if err == nil && status == http.StatusOK && json.Unmarshal(raw, &enginePerms) == nil {
-			for _, item := range enginePerms {
-				pid, _ := item["id"].(string)
-				if pid != "" {
-					if seenIDs[pid] {
-						continue
-					}
-					seenIDs[pid] = true
-				}
-				rawSid, _ := item["sessionID"].(string)
-				hoxiID := engineToHoxi[rawSid]
-				isChild := rawSid != "" && hoxiID != "" && rawSid != hoxiID && s.isManagedOpenCodeChild(rawSid)
-				if hoxiID != "" {
-					item["sessionID"] = hoxiID
-				}
-				if isChild {
-					item["subagentSessionID"] = rawSid
-				}
-				sessionID, _ := item["sessionID"].(string)
-				meta, _ := item["metadata"].(map[string]interface{})
-				itemDir := firstNonEmptyStr(
-					sessionDirByID[rawSid],
-					sessionDirByID[sessionID],
-					firstString(meta["directory"], meta["cwd"]),
-					dir,
-				)
-				if s.isOrphanedOpenCodeSession(rawSid, hoxiID, archivedHoxi) {
-					go s.rejectStaleOpenCodePermission(pid, itemDir)
+	plan := s.openCodePollCandidateDirs(directory, &s.cleanIdlePermDirs)
+	batches, okList := s.fetchOpenCodeListByDirs(ctx, "/permission", plan.dirs)
+	for i, dir := range plan.dirs {
+		if !okList[i] {
+			continue
+		}
+		enginePerms := batches[i]
+		s.recordOpenCodeDirPollOutcome(&s.cleanIdlePermDirs, plan, dir, len(enginePerms) == 0)
+		for _, item := range enginePerms {
+			pid, _ := item["id"].(string)
+			if pid != "" {
+				if seenIDs[pid] {
 					continue
 				}
-				if itemDir != "" || isChild {
-					if meta == nil {
-						meta = make(map[string]interface{})
-						item["metadata"] = meta
-					}
-					if itemDir != "" && firstString(meta["directory"]) == "" {
-						meta["directory"] = itemDir
-					}
-					if isChild && firstString(meta["subagentSessionID"]) == "" {
-						meta["subagentSessionID"] = rawSid
-					}
-				}
-				sanitizeOpenCodePermissionItem(item)
-				if s.audit != nil {
-					s.audit.rememberOpenCodePerm(item, itemDir)
-				}
-				if s.claimOpenCodePermission(item, sessionID, itemDir, nil) {
-					continue
-				}
-				out = append(out, item)
+				seenIDs[pid] = true
 			}
+			rawSid, _ := item["sessionID"].(string)
+			hoxiID := engineToHoxi[rawSid]
+			isChild := rawSid != "" && hoxiID != "" && rawSid != hoxiID && s.isManagedOpenCodeChild(rawSid)
+			if hoxiID != "" {
+				item["sessionID"] = hoxiID
+			}
+			if isChild {
+				item["subagentSessionID"] = rawSid
+			}
+			sessionID, _ := item["sessionID"].(string)
+			meta, _ := item["metadata"].(map[string]interface{})
+			itemDir := firstNonEmptyStr(
+				sessionDirByID[rawSid],
+				sessionDirByID[sessionID],
+				firstString(meta["directory"], meta["cwd"]),
+				dir,
+			)
+			if s.isOrphanedOpenCodeSession(rawSid, hoxiID, archivedHoxi) {
+				go s.rejectStaleOpenCodePermission(pid, itemDir)
+				continue
+			}
+			if itemDir != "" || isChild {
+				if meta == nil {
+					meta = make(map[string]interface{})
+					item["metadata"] = meta
+				}
+				if itemDir != "" && firstString(meta["directory"]) == "" {
+					meta["directory"] = itemDir
+				}
+				if isChild && firstString(meta["subagentSessionID"]) == "" {
+					meta["subagentSessionID"] = rawSid
+				}
+			}
+			sanitizeOpenCodePermissionItem(item)
+			if s.audit != nil {
+				s.audit.rememberOpenCodePerm(item, itemDir)
+			}
+			if s.claimOpenCodePermission(item, sessionID, itemDir, nil) {
+				continue
+			}
+			out = append(out, item)
 		}
 	}
 	out = append(out, s.listPendingApprovals(directory)...)

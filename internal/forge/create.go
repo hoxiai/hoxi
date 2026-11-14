@@ -106,6 +106,7 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) CreateResponse 
 	if result.err != nil {
 		stderrStr := strings.TrimSpace(string(result.stderr))
 		if strings.Contains(strings.ToLower(stderrStr), "already exists") {
+			s.invalidateListCache(dir)
 			if status := s.Status(ctx, dir, head); status.Available && status.PullRequest != nil {
 				return CreateResponse{
 					OK:          true,
@@ -137,6 +138,7 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) CreateResponse 
 		}
 	}
 
+	s.invalidateListCache(dir)
 	createdURL := extractCreatedPullRequestURL(string(result.stdout))
 	status := s.Status(ctx, dir, head)
 	var pr *PullRequest

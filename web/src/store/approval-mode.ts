@@ -421,11 +421,25 @@ export function isDirectoryInScopes(dir: string | undefined, scopes: Set<string>
   return false;
 }
 
+const inFlightPermissionsByScope = new Map<string, Promise<PermissionRequest[]>>();
+
+function fetchPermissionsSingleflight(scope: string): Promise<PermissionRequest[]> {
+  const existing = inFlightPermissionsByScope.get(scope);
+  if (existing) return existing;
+  const req = hoxiAPI.listPermissions(scope).finally(() => {
+    if (inFlightPermissionsByScope.get(scope) === req) {
+      inFlightPermissionsByScope.delete(scope);
+    }
+  });
+  inFlightPermissionsByScope.set(scope, req);
+  return req;
+}
+
 export async function syncPendingPermissions(directory?: string): Promise<void> {
   const scopes = permissionSyncScopes(directory);
   try {
     const results = await Promise.allSettled(
-      scopes.map((scope) => hoxiAPI.listPermissions(scope))
+      scopes.map((scope) => fetchPermissionsSingleflight(scope))
     );
     const merged = new Map<string, PermissionRequest>();
     const answeredScopes = new Set<string>();

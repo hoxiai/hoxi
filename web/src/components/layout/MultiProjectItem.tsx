@@ -231,8 +231,13 @@ export default function MultiProjectTreeItem(props: {
   const archivedSessions = createMemo(() =>
     allFilteredSessions().filter((s) => isSessionArchived(s))
   );
-  const history = useSessionHistory(activeSessions, () => props.proj.path,
-    () => props.pendingSessions, () => props.filterQuery);
+  const history = useSessionHistory(
+    activeSessions,
+    () => props.proj.path,
+    () => props.pendingSessions,
+    () => props.filterQuery,
+    subagentsByRoot
+  );
 
   return (
     <div data-project-item={props.proj.path} class="relative">

@@ -327,7 +327,8 @@ export async function bootstrapProjectSessions(
     );
   }
   if (surfaceMode() !== "work" && !isWorkSurfacePath(cleaned)) {
-    void refreshWorktreeStatus("__root__");
+    const diffsInspectorVisible = workspace.inspectorOpen && workspace.inspectorTab === "diffs";
+    void refreshWorktreeStatus("__root__", { statusOnly: !diffsInspectorVisible });
   }
   void syncSessionStatuses(cleaned);
   void syncPendingPermissions(cleaned);
@@ -417,7 +418,8 @@ export async function switchWorkspace(
     inspectedDiffFile: null,
     activeSessionID: targetSessionID,
     activeProjectID: knownProjectID,
-    bootstrappingSessions: !warmSurfaceSwitch && willSelectSession && hydratedSessions.length === 0,
+    bootstrappingSessions:
+      !warmSurfaceSwitch && (!hasCachedSessions || (willSelectSession && hydratedSessions.length === 0)),
   });
 
   if (warmSurfaceSwitch) {
@@ -434,7 +436,10 @@ export async function switchWorkspace(
         if (normalizeFolderPath(workspace.rootDir) !== cleaned) return;
         void syncActiveProjectID(cleaned);
         void bootstrapProjectSessions(cleaned, selectInitial, knownProjectID, opts.preferredSessionID);
+        void loadAgents(cleaned, { preferCache: true });
       }, 120);
+    } else {
+      void loadAgents(cleaned, { preferCache: true });
     }
     return;
   }
@@ -458,7 +463,7 @@ export async function switchWorkspace(
   if (workspace.providers.length === 0) void loadProviders();
   if (workspace.projects.length === 0) void loadProjects();
   if (workspace.savedWorkspaces.length === 0) void loadSavedWorkspaces();
-  void loadAgents(cleaned);
+  void loadAgents(cleaned, { preferCache: true });
 }
 
 export function setSidebarProjectMode(mode: SidebarProjectMode) {

@@ -3,7 +3,7 @@
 // initial values it is created from. Domain modules import state from here (never
 // from the ./workspace barrel), so this file must stay free of runtime imports
 // from other store modules.
-import { createStore } from "solid-js/store";
+import { createStore, type SetStoreFunction } from "solid-js/store";
 import type {
   MessageInfo,
   MessagePart,
@@ -408,7 +408,13 @@ function initialSessionSandboxMode(): "local" | "worktree" {
   return "local";
 }
 
-export const [workspace, setWorkspace] = createStore<WorkspaceState>({
+let sessionIndexMutationVersion = 0;
+
+export function getSessionIndexMutationVersion(): number {
+  return sessionIndexMutationVersion;
+}
+
+const [workspace, rawSetWorkspace] = createStore<WorkspaceState>({
   appVersion: "",
   connected: false,
   rootDir: "",
@@ -486,3 +492,22 @@ export const [workspace, setWorkspace] = createStore<WorkspaceState>({
   queuedPromptsBySession: {},
   composerDraftEditBySession: {},
 });
+
+export { workspace };
+
+export const setWorkspace: SetStoreFunction<WorkspaceState> = ((...args: unknown[]) => {
+  const first = args[0];
+  if (
+    first === "sessionIndex" ||
+    typeof first === "function" ||
+    (typeof first === "object" && first !== null && "sessionIndex" in first)
+  ) {
+    sessionIndexMutationVersion++;
+  }
+  return (rawSetWorkspace as (...a: unknown[]) => unknown)(...args);
+}) as SetStoreFunction<WorkspaceState>;
+
+/** Updates a sessionIndex entry whose surface/directory bucket did not change. */
+export function setSessionIndexQuiet(id: string, entry: SessionIndexEntry): void {
+  rawSetWorkspace("sessionIndex", id, entry);
+}

@@ -26,6 +26,8 @@ type openCodeBridgeState struct {
 	managedOpenCode        syncMap[string, bool]
 	openCodeChildParent    syncMap[string, string] // openCode child session ID -> hoxi session ID
 	openCodeAutoReplies    syncMap[string, any]    // request ID -> openCodeAutoReply* state or openCodeSettledMark
+	cleanIdlePermDirs      syncMap[string, int64]  // normalized worktree dir -> max UpdatedAt stamp when verified empty & idle
+	cleanIdleQuestionDirs  syncMap[string, int64]  // normalized worktree dir -> max UpdatedAt stamp when verified empty & idle
 	openCodeReplySem       chan struct{}
 	openCodeTimeoutRetries []time.Duration
 }

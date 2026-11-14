@@ -1,4 +1,4 @@
-import { createEffect, createSignal, on, onCleanup, Show } from "solid-js";
+import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import { LoaderCircle, RefreshCw } from "lucide-solid";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -97,7 +97,7 @@ export default function WebGLTerminal() {
     }
   });
 
-  const boot = (directory: string | undefined) => {
+  const boot = (directory: string | undefined): (() => void) => {
     setStatus("connecting");
     setErrorKey("error");
     container.innerHTML = "";
@@ -105,7 +105,7 @@ export default function WebGLTerminal() {
     if (!directory) {
       setStatus("error");
       setErrorKey("disconnected");
-      return;
+      return () => {};
     }
 
     const term = new Terminal({
@@ -180,14 +180,41 @@ export default function WebGLTerminal() {
       },
     });
     activeConnection = connection;
-    onCleanup(connection.dispose);
     resizeObserver.observe(container);
+    return connection.dispose;
   };
 
-  createEffect(on(
-    () => [activeDirectory(), retry()] as const,
-    ([directory]) => boot(directory),
-  ));
+  let mountedCleanup: (() => void) | null = null;
+  let mountedDirectory: string | undefined;
+  let mountedRetry = -1;
+
+  const teardown = () => {
+    if (mountedCleanup) {
+      const fn = mountedCleanup;
+      mountedCleanup = null;
+      fn();
+    }
+    mountedDirectory = undefined;
+  };
+  onCleanup(teardown);
+
+  createEffect(() => {
+    const directory = activeDirectory();
+    const currentRetry = retry();
+    const visible = workspace.inspectorOpen && workspace.inspectorTab === "terminal";
+
+    if (mountedCleanup && (directory !== mountedDirectory || currentRetry !== mountedRetry)) {
+      teardown();
+    }
+    if (!visible) {
+      return;
+    }
+    if (!mountedCleanup || directory !== mountedDirectory || currentRetry !== mountedRetry) {
+      mountedDirectory = directory;
+      mountedRetry = currentRetry;
+      mountedCleanup = boot(directory);
+    }
+  });
 
   return (
     <div class="flex flex-col h-full">

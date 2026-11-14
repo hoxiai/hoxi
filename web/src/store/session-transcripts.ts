@@ -170,6 +170,15 @@ interface CachedSessionTurnsBundle {
 let cachedSessionTurnsBundle: CachedSessionTurnsBundle | null = null;
 let saveSessionTurnsTimer: ReturnType<typeof setTimeout> | null = null;
 let lastFlushedSessionTurnsJSON = "";
+const serializedTurnsMemo = new WeakMap<MessageTurn[], string>();
+
+function stringifyCachedTurns(turns: MessageTurn[]): string {
+  const cached = serializedTurnsMemo.get(turns);
+  if (cached !== undefined) return cached;
+  const raw = JSON.stringify(turns);
+  serializedTurnsMemo.set(turns, raw);
+  return raw;
+}
 
 function loadSessionTurnsBundle(): CachedSessionTurnsBundle {
   if (cachedSessionTurnsBundle) return cachedSessionTurnsBundle;
@@ -203,7 +212,7 @@ function serializeSessionTurnsBundle(bundle: CachedSessionTurnsBundle): string {
     const turns = bundle.entries[id];
     if (!turns) continue;
     const key = JSON.stringify(id);
-    const value = JSON.stringify(turns);
+    const value = stringifyCachedTurns(turns);
     const entryLength = key.length * 2 + value.length + 1;
     if (entryLength + emptyBundleLength > MAX_SNAPSHOT_BUNDLE_CHARS) continue;
     const nextLength = length + entryLength + (order.length > 0 ? 2 : 0);

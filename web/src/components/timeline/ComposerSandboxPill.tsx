@@ -97,7 +97,8 @@ export function ComposerSandboxPill(props: {
       if (turns.length > 0) return collectCycleChangedFiles(turns, id).length;
       return 0;
     }
-    return (workspace.diffsBySession["__root__"] ?? []).length;
+    const rootDiffs = workspace.diffsBySession["__root__"];
+    return rootDiffs ? rootDiffs.length : (activeWorktree()?.changedFiles ?? 0);
   });
 
   return (

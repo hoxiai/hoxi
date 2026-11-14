@@ -1,10 +1,11 @@
 // web/src/components/layout/SingleProjectNavView.tsx
-import { createEffect, createMemo, createSelector, createSignal, For, onCleanup, Show } from "solid-js";
+import { batch, createEffect, createMemo, createSelector, createSignal, For, onCleanup, Show } from "solid-js";
 import { Portal } from "solid-js/web";
 import { Presence } from "../motion/Presence";
 import { Plus, Pencil, Layers } from "lucide-solid";
 import {
   activeWorkspaceFolders,
+  getCachedProjectSessions,
   isSessionArchived,
   newIsolatedSession,
   normalizeFolderPath,
@@ -100,16 +101,32 @@ export default function SingleProjectNavView(props: {
 
   const history = useSessionHistory(
     () => filteredSessions().filter((s) => !isSessionArchived(s)),
-    () => workspace.rootDir, () => props.pendingSessions, () => props.filterQuery);
+    () => workspace.rootDir,
+    () => props.pendingSessions,
+    () => props.filterQuery,
+    subagentsByRoot
+  );
 
   const archivedSessions = createMemo(() => filteredSessions().filter((s) => isSessionArchived(s)));
 
   const onSelectProjectSingle = async (path: string) => {
-    setProjectMenuOpen(false);
-    if (normalizeFolderPath(path) !== normalizeFolderPath(workspace.rootDir)) {
-      const wasNewThreadDraft = workspace.activeSessionID === null;
-      await switchWorkspace(path, { selectInitial: !wasNewThreadDraft });
+    const clean = normalizeFolderPath(path);
+    if (!clean || clean === normalizeFolderPath(workspace.rootDir)) {
+      setProjectMenuOpen(false);
+      return;
     }
+    const wasNewThreadDraft = workspace.activeSessionID === null;
+    const cached = getCachedProjectSessions(clean);
+    let switchPromise: Promise<void> | undefined;
+    batch(() => {
+      setProjectMenuOpen(false);
+      switchPromise = switchWorkspace(clean, {
+        selectInitial: !wasNewThreadDraft,
+        cachedSessions: cached,
+        fastSurfaceSwitch: cached !== undefined,
+      });
+    });
+    await switchPromise;
   };
 
   const inspectFolder = (folderPath: string) => {

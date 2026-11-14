@@ -297,6 +297,7 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 	s.mu.Lock()
 	s.procs[rec.ID] = ap
 	s.mu.Unlock()
+	s.forgetCleanIdleOpenCodeDirs(rec)
 	if s.status != nil {
 		s.status.SetSessionBusy(rec.ID, true)
 	}

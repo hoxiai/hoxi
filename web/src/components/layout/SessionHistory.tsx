@@ -20,25 +20,33 @@ const [expandedPaths, setExpandedPaths] = createSignal(new Set<string>());
 export const sameSessionArray = (a: SessionInfo[], b: SessionInfo[]) =>
   a.length === b.length && a.every((s, i) => s === b[i]);
 
+const EMPTY_SUBAGENT_MAP: ReadonlyMap<string, SessionInfo[]> = new Map();
+
 export function useSessionHistory(
   sessions: Accessor<SessionInfo[]>,
   path: Accessor<string>,
   pending: Accessor<Set<string>>,
   query: Accessor<string>,
+  subagentsByRoot?: Accessor<ReadonlyMap<string, SessionInfo[]>>,
 ) {
   const now = useNowTicker();
   const expanded = () => expandedPaths().has(path());
+  const isActiveProject = createMemo(
+    () => normalizeFolderPath(path()) === normalizeFolderPath(workspace.rootDir)
+  );
   const partition = createMemo(() => {
     const raw = sessions();
     if (raw.length === 0) return { visible: [] as SessionInfo[], older: [] as SessionInfo[] };
     const sorted = [...raw].sort((a, b) => compareSessionRunning(a, b, workspace.statusBySession));
     const protectActive = !expanded();
     const pendingSet = pending();
-    const isActiveProject = normalizeFolderPath(path()) === normalizeFolderPath(workspace.rootDir);
-    const activeID = isActiveProject ? workspace.activeSessionID : null;
-    const childrenByParent = isActiveProject
-      ? groupSubagentsByRoot(workspace.sessions)
-      : new Map<string, SessionInfo[]>();
+    const activeProj = isActiveProject();
+    const activeID = activeProj ? workspace.activeSessionID : null;
+    const childrenByParent = subagentsByRoot
+      ? subagentsByRoot()
+      : activeProj
+        ? groupSubagentsByRoot(workspace.sessions)
+        : EMPTY_SUBAGENT_MAP;
     return partitionSessionHistory(sorted, {
       enabled: appSettings.sidebarAutoCollapse && !query().trim(),
       minimum: appSettings.sidebarMinSessions,
