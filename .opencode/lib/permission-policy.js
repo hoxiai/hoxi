@@ -20,6 +20,7 @@ import {
   isClaudeSkillReadRequest,
   hasUnsafeClaudeSkillShellAccess,
   hasNonCanonicalClaudeSkillPath,
+  isAttributionPreferenceReadRequest,
   isProtectedPath,
   isProtectedShellReadPath,
   isReadOnlyTaskStatusRequest,
@@ -593,7 +594,7 @@ export function isDestructivePermissionRequest(input) {
     // Only credential/execution-controlling targets keep asking. A read of this
     // session's own runner record is not one of them.
     const targets = externalDirectoryTargets(input);
-    return targets.length === 0 || targets.some((t) => isSensitiveExternalPath(t) && !isOwnSessionRecordRead(input, t) && !isClaudeSkillReadRequest(input, t));
+    return targets.length === 0 || targets.some((t) => isSensitiveExternalPath(t) && !isOwnSessionRecordRead(input, t) && !isClaudeSkillReadRequest(input, t) && !isAttributionPreferenceReadRequest(input, t));
   }
   if (input?.metadata?.destructive === true) return true;
   const toolName = String(input?.metadata?.tool || input?.patterns?.[0] || "").trim().toLowerCase();
@@ -601,14 +602,14 @@ export function isDestructivePermissionRequest(input) {
   if (input?.metadata?.externalDirectory === true) {
     const targets = externalDirectoryTargets(input);
     const isSens = readOnlyTool ? isSensitiveExternalReadPath : isSensitiveExternalPath;
-    if (targets.length === 0 || targets.some((t) => isSens(t) && !isOwnSessionRecordRead(input, t) && !isClaudeSkillReadRequest(input, t))) return true;
+    if (targets.length === 0 || targets.some((t) => isSens(t) && !isOwnSessionRecordRead(input, t) && !isClaudeSkillReadRequest(input, t) && !isAttributionPreferenceReadRequest(input, t))) return true;
   }
   if (READ_PERMISSIONS.has(permission)) {
     // Search patterns are not paths; only a file read can expose a secret.
     if (permission !== "read") return false;
     const meta = input?.metadata || {};
     const readPaths = [...(Array.isArray(input?.patterns) ? input.patterns : []), input?.pattern, meta.filepath, meta.filePath, meta.path];
-    return readPaths.some((p) => isSecretPath(p) && !isOwnSessionRecordRead(input, p));
+    return readPaths.some((p) => isSecretPath(p) && !isOwnSessionRecordRead(input, p) && !isAttributionPreferenceReadRequest(input, p));
   }
   if (EDIT_PERMISSIONS.has(permission) || permission === "tool") {
     if (toolName === "unsandboxed") return true;

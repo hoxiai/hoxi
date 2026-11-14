@@ -90,12 +90,17 @@ describe("permission command chains", () => {
   });
 
   it("matches shared permission-request.cases.json fixture", () => {
-    for (const c of requestCases) {
-      assertEqual(
-        isDestructivePermissionRequest(c.request as Record<string, unknown>),
-        c.destructive,
-        c.name
-      );
+    const env = (globalThis as any).process.env as Record<string, string | undefined>;
+    const cases: Array<{ name: string; request: unknown; destructive: boolean; hoxiHome?: string }> = requestCases;
+    for (const c of cases) {
+      const previous = env.HOXI_HOME;
+      try {
+        if (c.hoxiHome) env.HOXI_HOME = c.hoxiHome;
+        assertEqual(isDestructivePermissionRequest(c.request as Record<string, unknown>), c.destructive, c.name);
+      } finally {
+        if (previous === undefined) delete env.HOXI_HOME;
+        else env.HOXI_HOME = previous;
+      }
     }
   });
 

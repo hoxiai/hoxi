@@ -1,7 +1,6 @@
 package runner
 
 import (
-	"encoding/json"
 	"path/filepath"
 	"strings"
 )
@@ -144,51 +143,7 @@ func claudeSkillPathHasAmbiguousInput(raw string) bool {
 // Inspect original path values before generic permission helpers trim them.
 // A trailing-space filename can name a different symlink on the filesystem.
 func hasNonCanonicalClaudeSkillPath(item map[string]interface{}) bool {
-	meta := itemMetadata(item)
-	var check func(interface{}) bool
-	check = func(value interface{}) bool {
-		switch v := value.(type) {
-		case string:
-			return claudeSkillPathHasAmbiguousInput(v)
-		case []string:
-			for _, p := range v {
-				if check(p) {
-					return true
-				}
-			}
-		case []interface{}:
-			for _, p := range v {
-				if check(p) {
-					return true
-				}
-			}
-		case map[string]interface{}:
-			for _, key := range append([]string{"movePath"}, toolArgPathKeys...) {
-				if check(v[key]) {
-					return true
-				}
-			}
-		}
-		return false
-	}
-	if perm := permissionName(item); perm == "read" || perm == "external_directory" {
-		if check(item["patterns"]) || check(item["pattern"]) || check(item["always"]) {
-			return true
-		}
-	}
-	for _, key := range []string{"filepath", "filePath", "path", "target", "parentDir", "dir", "directories", "files"} {
-		if check(meta[key]) {
-			return true
-		}
-	}
-	args := meta["args"]
-	if raw, ok := args.(string); ok {
-		var parsed map[string]interface{}
-		if json.Unmarshal([]byte(raw), &parsed) == nil {
-			args = parsed
-		}
-	}
-	return check(args)
+	return hasAmbiguousPermissionPathInput(item, claudeSkillPathHasAmbiguousInput)
 }
 
 // external_directory alone grants a range, not a write or execution. Requests

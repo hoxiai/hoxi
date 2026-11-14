@@ -32,7 +32,7 @@ func externalDirectoryTargetsAreRoutine(item map[string]interface{}) bool {
 		if readOnly {
 			sensitive = isSensitiveExternalReadPath(target)
 		}
-		if sensitive && isClaudeSkillReadRequest(item, target) {
+		if sensitive && (isClaudeSkillReadRequest(item, target) || isAttributionPreferenceReadRequest(item, target)) {
 			sensitive = false
 		}
 		if sensitive && !isOwnSessionRecordRead(item, target) {
@@ -260,6 +260,9 @@ func isSensitiveExternalReadPath(rawPath string) bool {
 }
 
 func isSensitiveExternalPathWith(rawPath string, checkProtected bool) bool {
+	if isAttributionPreferenceTarget(rawPath) {
+		return true
+	}
 	if !checkProtected && isClaudeSkillReadPath(rawPath, false) {
 		return false
 	}
@@ -313,6 +316,9 @@ func isSensitiveExternalPathWith(rawPath string, checkProtected bool) bool {
 // stays routine while `.env` asks in every mode, matching OpenCode's own
 // read defaults (`*.env`, `*.env.*` ask; `*.env.example` allowed).
 func isSecretFilePath(p string) bool {
+	if isAttributionPreferenceTarget(p) {
+		return true // only a verified read request may exempt this state file
+	}
 	if isClaudeSkillReadPath(p, false) {
 		return false
 	}

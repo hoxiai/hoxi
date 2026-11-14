@@ -65,6 +65,8 @@
    - **本地网关与外发边界**：网关仅监听 `127.0.0.1`，反向代理 `Transport` 配 `Proxy: nil` 与 `FlushInterval: -1` 并长生命周期复用，外部响应与进程输出用 `io.LimitReader` 限流。AI 请求直连用户服务商（回环中转 `relay.go` 同样直发且不入隧道）；辅助外发（遥测、更新、登录、榜单）严禁含提示词、代码、Diff 或会话内容；后台 LLM 调用须在 UI 标明目的地。
    - **子进程消毒与原子落盘**：子进程一律用 [`internal/subproc`](internal/subproc/subproc.go) 创建（Windows `CREATE_NO_WINDOW`，修改而非替换 `SysProcAttr`）；外部 `git`/CLI 绑超时并设 `GIT_TERMINAL_PROMPT=0`、`GCM_INTERACTIVE=never`，剥离 `GIT_ASKPASS`/`SSH_ASKPASS`/`GIT_EDITOR`；读外部 SQLite 只读 + `_busy_timeout`。`~/.hoxi/` 与 `.hoxi/` 状态文件须「加锁 + 同目录临时文件 + fsync + `os.Rename`」；日志自动脱敏 `Authorization`、`Bearer`、`x-api-key`、`OPENCODE_SERVER_PASSWORD`。
 
+   - **署名偏好只读例外**：仅实际 `hoxipaths.Home()` 下精确的 `git-attribution.json` 文件可由已知只读工具读取；校验原始路径与真实根/文件，拒绝目录、通配、歧义路径、凭据软链与伪造配置根。编辑和写入仍须审批，不豁免其他 Hoxi 状态文件
+
 7. **多语言包模块化与自动类型推导**
    - UI 文案统一走 `web/src/i18n` 的 `t("domain.key", params)`，禁内联硬编码；词条存于 `web/src/i18n/locales/{en-US,zh-CN}/<domain>.ts`（`types.ts` 自动推导类型），双语键名与 `{param}` 占位符须 100% 对齐，且 **`zh-CN` 词条结尾严禁加中文句号「。」**（`npm --prefix web run check:i18n`）。
 

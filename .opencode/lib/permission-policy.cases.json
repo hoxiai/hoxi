@@ -1,4 +1,6 @@
 [
+  { "command": "git log --output=/hoxi-policy-fixture/.hoxi/git-attribution.json", "decision": "ask", "destructive": true },
+  { "command": "rm /hoxi-policy-fixture/.hoxi/git-attribution.json", "decision": "ask", "destructive": true },
   { "command": "/tmp/cat /Users/u/.claude/skills/demo/references/guide.md", "decision": "ask", "destructive": true },
   { "command": "/Users/u/.claude/skills/demo/scripts/run.sh", "decision": "ask", "destructive": true },
   { "command": "node /Users/u/.claude/skills/demo/scripts/run.js", "decision": "ask", "destructive": true },

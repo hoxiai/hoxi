@@ -421,11 +421,22 @@ func (s *Service) inspectHookToolRiskIn(sessionID, tool, cwd string, args map[st
 		destructive = true
 	}
 	isReadTool := (hookToolActionWithArgs(lowerTool, args) == hookActionRead || readToolNames[lowerTool]) && !hookEditTools[lowerTool] && !editToolNames[lowerTool]
+	read := map[string]interface{}{"permission": "tool", "metadata": map[string]interface{}{"tool": lowerTool, "args": args}}
+	preferenceRead := isReadTool && isAttributionPreferenceReadRequest(read, rawPath)
+	if preferenceRead {
+		// Keep the verified configured spelling for the downstream request. The
+		// resolved path can differ through a legitimate parent alias (/var on
+		// macOS), but the raw args and real root/file were already checked.
+		filepathOut = rawPath
+	}
 	isRiskyPath := func(p string) bool {
 		if p == "" {
 			return false
 		}
 		if isReadTool {
+			if preferenceRead && (preferencePathEqual(p, rawPath) || preferencePathEqual(p, resolved)) {
+				return false
+			}
 			return isSensitiveExternalReadPath(p) || isSecretFilePath(p)
 		}
 		return isProtectedRelPath(p) || isSensitiveExternalPath(p) || isSecretFilePath(p)

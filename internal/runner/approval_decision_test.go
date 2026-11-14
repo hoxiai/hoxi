@@ -14,7 +14,6 @@ import (
 )
 
 func TestDestructiveRequestsMatchSharedFixture(t *testing.T) {
-	t.Parallel()
 	raw, err := os.ReadFile(filepath.Join("..", "..", ".opencode", "lib", "permission-request.cases.json"))
 	if err != nil {
 		t.Fatalf("read shared fixture: %v", err)
@@ -23,6 +22,7 @@ func TestDestructiveRequestsMatchSharedFixture(t *testing.T) {
 		Name        string                 `json:"name"`
 		Request     map[string]interface{} `json:"request"`
 		Destructive bool                   `json:"destructive"`
+		HoxiHome    string                 `json:"hoxiHome"`
 	}
 	if err := json.Unmarshal(raw, &cases); err != nil {
 		t.Fatalf("parse shared fixture: %v", err)
@@ -31,9 +31,14 @@ func TestDestructiveRequestsMatchSharedFixture(t *testing.T) {
 		t.Fatalf("fixture unexpectedly small: %d cases", len(cases))
 	}
 	for _, c := range cases {
-		if got := isDestructivePermissionRequest(c.Request); got != c.Destructive {
-			t.Errorf("%s: destructive = %v, want %v", c.Name, got, c.Destructive)
-		}
+		t.Run(c.Name, func(t *testing.T) {
+			if c.HoxiHome != "" {
+				t.Setenv("HOXI_HOME", c.HoxiHome)
+			}
+			if got := isDestructivePermissionRequest(c.Request); got != c.Destructive {
+				t.Errorf("destructive = %v, want %v", got, c.Destructive)
+			}
+		})
 	}
 }
 

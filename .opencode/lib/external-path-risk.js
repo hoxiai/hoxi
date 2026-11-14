@@ -115,8 +115,12 @@ export function claudeSkillPathHasAmbiguousInput(raw) {
 }
 
 export function hasNonCanonicalClaudeSkillPath(input) {
+  return hasAmbiguousPermissionPathInput(input, claudeSkillPathHasAmbiguousInput);
+}
+
+export function hasAmbiguousPermissionPathInput(input, invalidPath) {
   const check = (v) => {
-    if (typeof v === "string") return claudeSkillPathHasAmbiguousInput(v);
+    if (typeof v === "string") return invalidPath(v);
     if (Array.isArray(v)) return v.some(check);
     if (v && typeof v === "object") return ["movePath", ...TOOL_ARG_PATH_KEYS].some((key) => check(v[key]));
     return false;
@@ -129,10 +133,54 @@ export function hasNonCanonicalClaudeSkillPath(input) {
   return check(args);
 }
 
+// Node-side explanation can use its trusted process environment, never request
+// metadata. Without it (e.g. a browser) stay conservative. Go is authoritative
+// and additionally verifies the real root and target, including symlinks.
+export function isAttributionPreferenceTarget(raw) {
+  const env = globalThis.process?.env;
+  const userHome = env?.HOME?.trim() || env?.USERPROFILE?.trim();
+  if (!env || (!env.HOXI_HOME?.trim() && !userHome)) return false;
+  const home = env.HOXI_HOME?.trim() || userHome.replace(/[\\/]+$/, "") + "/.hoxi";
+  const root = home.replaceAll("\\", "/").replace(/\/+$/, "");
+  if ((!root.startsWith("/") && !/^[a-z]:\//i.test(root)) || typeof raw !== "string") return false;
+  const actual = raw.trim().replaceAll("\\", "/");
+  const expected = root + "/git-attribution.json";
+  return env?.OS === "Windows_NT" ? actual.toLowerCase() === expected.toLowerCase() : actual === expected;
+}
+
+export function isAttributionPreferenceReadPath(raw) {
+  if (!isAttributionPreferenceTarget(raw) || raw !== raw.trim() || /[\0\r\n\t$`*?\[\]{}]/.test(raw)) return false;
+  if (raw.includes("\\") && !/^[a-z]:[\\/]/i.test(raw) && !raw.startsWith("\\\\")) return false;
+  const slash = raw.replaceAll("\\", "/");
+  if (!slash.startsWith("/") && !/^[a-z]:\//i.test(slash)) return false;
+  const parts = slash.split("/");
+  if (parts.includes(".") || parts.includes("..")) return false;
+  const root = parts.slice(0, -1).join("/").toLowerCase();
+  if (parts.slice(0, -1).some((p) => p.toLowerCase() !== ".hoxi" && PROTECTED_PATH_SEGMENTS.has(p.toLowerCase()))) return false;
+  const rootSlash = "/" + root.replace(/^\/+/, "") + "/";
+  return !SENSITIVE_PATH_PREFIXES.some((p) => rootSlash.startsWith(p)) &&
+    !SENSITIVE_PATH_FRAGMENTS.some((p) => p !== "/.hoxi/" && rootSlash.includes(p));
+}
+
+export function isAttributionPreferenceReadRequest(input, target) {
+  if (!isAttributionPreferenceReadPath(target) || hasAmbiguousPermissionPathInput(input, (p) =>
+    p !== "" && !isAttributionPreferenceReadPath(p))) return false;
+  const meta = input?.metadata || {}, perm = String(input?.permission || input?.type || "").toLowerCase();
+  let tool = [meta.tool, input?.tool?.name].find((v) => typeof v === "string" && v.trim()) || "";
+  if (!tool && perm === "tool") tool = input?.patterns?.[0] || "";
+  tool = String(tool).trim().toLowerCase();
+  if (meta.destructive === true || typeof meta.command === "string" || typeof meta.cmd === "string" || Array.isArray(meta.commands) ||
+    OWN_SESSION_EDIT_TOOLS.has(perm) || OWN_SESSION_EDIT_TOOLS.has(tool)) return false;
+  const readTool = READ_PERMISSIONS.has(tool) || OWN_SESSION_READ_TOOLS.has(tool);
+  if (tool && !readTool) return false;
+  return perm === "external_directory" ? readTool : READ_PERMISSIONS.has(perm) || (perm === "tool" && readTool);
+}
+
 // Reading these can expose credentials; mirrors isSecretFilePath in
 // internal/runner/external_path_risk.go and OpenCode's own `*.env` read rule.
 export function isSecretPath(rawPath) {
   if (typeof rawPath !== "string") return false;
+  if (isAttributionPreferenceTarget(rawPath)) return true;
   const rawSlash = rawPath.trim().replaceAll("\\", "/").toLowerCase().replace(/\/+$/, "");
   const slash = stripWorktreePrefix(rawSlash).replace(/\/+$/, "");
   if (!slash) return false;
@@ -170,6 +218,7 @@ export function isSensitiveExternalReadPath(rawPath) {
 
 function isSensitiveExternalPathWith(rawPath, checkProtected) {
   if (typeof rawPath !== "string") return false;
+  if (isAttributionPreferenceTarget(rawPath)) return true;
   if (!checkProtected && isClaudeSkillReadPath(rawPath)) return false;
   const trimmed = rawPath.trim();
   if (!trimmed) return false;
@@ -352,5 +401,5 @@ function sessionPathMatches(raw, ids) {
 
 export function sensitiveOutsideOwnSession(input, paths, readOnly = false) {
   const isRisky = readOnly ? (p) => isSecretPath(p) || isSensitiveExternalReadPath(p) : (p) => isProtectedPath(p) || isSensitiveExternalPath(p);
-  return paths.some((p) => isRisky(p) && !isOwnSessionRecordRead(input, p));
+  return paths.some((p) => isRisky(p) && !isOwnSessionRecordRead(input, p) && !isAttributionPreferenceReadRequest(input, p));
 }
