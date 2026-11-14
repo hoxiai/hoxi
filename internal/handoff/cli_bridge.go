@@ -19,8 +19,8 @@ func parseAgyModelsOutput(raw string) (slugs []string, displayBySlug map[string]
 	return agentcli.ParseAgyModelsOutput(raw)
 }
 
-func discoverAntigravityCLIModels() (slugs []string, displayBySlug map[string]string, slugByDisplayLower map[string]string) {
-	return agentcli.DiscoverAgyCLIModels(false)
+func discoverAntigravityCLIModels(forceRefresh bool) (slugs []string, displayBySlug map[string]string, slugByDisplayLower map[string]string) {
+	return agentcli.DiscoverAgyCLIModels(forceRefresh)
 }
 
 func normalizeAntigravityModelID(raw string) string {

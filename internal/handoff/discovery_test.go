@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/hoxiai/hoxi/internal/provider"
+	"github.com/hoxiai/hoxi/internal/testutil/execstub"
 )
 
 func TestDiscoveryPreservesStatsOrderAndFreshness(t *testing.T) {
@@ -122,5 +123,60 @@ func TestLocalCLIOAuthOnlyImportAndConnectedState(t *testing.T) {
 	}
 	if !codexResp.OK || len(codexResp.Models) == 0 {
 		t.Fatalf("expected OAuth-only import for codex to succeed, got %+v", codexResp)
+	}
+}
+
+func TestGeminiCLIImportRefreshesStaleAgyModelsCache(t *testing.T) {
+	workspaceDir := t.TempDir()
+	homeDir := setupSyntheticCLIHome(t, workspaceDir)
+	port, _, closeSrv := setupMockOpenCodeServerAndDB(t)
+	defer closeSrv()
+
+	agyCliBinDir := filepath.Join(homeDir, ".gemini", "antigravity-cli", "bin")
+	if err := os.MkdirAll(agyCliBinDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	modelsOutFile := filepath.Join(t.TempDir(), "agy_models.txt")
+	if err := os.WriteFile(modelsOutFile, []byte("gemini-4-argon-high   Gemini 4 Argon (High)\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TEST_AGY_MODELS_FILE", modelsOutFile)
+	execstub.Write(t, agyCliBinDir, "agy", "cat \"$TEST_AGY_MODELS_FILE\"\n")
+
+	provSvc := provider.NewService(port, "testpass", workspaceDir, nil)
+	svc := NewService(port, "testpass", workspaceDir, provSvc)
+	mux := http.NewServeMux()
+	svc.RegisterRoutes(mux)
+
+	// Warm the 10-minute cache with the older model list via status check.
+	recStatus := httptest.NewRecorder()
+	mux.ServeHTTP(recStatus, httptest.NewRequest(http.MethodGet, "/api/hoxi/local-cli/status", nil))
+	if recStatus.Code != http.StatusOK {
+		t.Fatalf("status HTTP %d", recStatus.Code)
+	}
+
+	// Simulate `agy update` adding gemini-4-carbon while Hoxi is still running.
+	if err := os.WriteFile(modelsOutFile, []byte("gemini-4-carbon-high  Gemini 4 Carbon (High)\ngemini-4-argon-high   Gemini 4 Argon (High)\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	bGem, _ := json.Marshal(LocalCLIImportRequest{ToolID: ExternalToolGemini})
+	recImp := httptest.NewRecorder()
+	mux.ServeHTTP(recImp, httptest.NewRequest(http.MethodPost, "/api/hoxi/local-cli/import", bytes.NewReader(bGem)))
+	var impResp LocalCLIImportResponse
+	if err := json.Unmarshal(recImp.Body.Bytes(), &impResp); err != nil {
+		t.Fatalf("unmarshal gemini import: %v", err)
+	}
+	if !impResp.OK {
+		t.Fatalf("expected gemini import OK, got %+v", impResp)
+	}
+	var sawCarbon bool
+	for _, m := range impResp.Models {
+		if m == "gemini-4-carbon-high" {
+			sawCarbon = true
+		}
+	}
+	if !sawCarbon {
+		t.Fatalf("expected import to force-refresh agy models and include gemini-4-carbon-high, got %v", impResp.Models)
 	}
 }

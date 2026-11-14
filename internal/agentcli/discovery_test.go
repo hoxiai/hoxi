@@ -125,9 +125,46 @@ func TestGeminiCLIModelDiscovery(t *testing.T) {
 	if HasGeminiCLIDirectAuth() {
 		t.Fatal("expected HasGeminiCLIDirectAuth() == false for oauth-personal without API key")
 	}
-	if !IsAgyOnlyGeminiModel("gemini-4-argon") || !IsAgyOnlyGeminiModel("gemini-3.8-flash") || IsAgyOnlyGeminiModel("gemini-2.5-pro") {
+	if !IsAgyOnlyGeminiModel("gemini-4-carbon") || !IsAgyOnlyGeminiModel("gemini-4-argon") || !IsAgyOnlyGeminiModel("gemini-3.8-flash") || IsAgyOnlyGeminiModel("gemini-2.5-pro") {
 		t.Fatal("unexpected IsAgyOnlyGeminiModel classification")
 	}
+	var sawCarbon bool
+	for _, it := range models {
+		if it.ID == "gemini-4-carbon" && it.Name == "Gemini 4 Carbon" && it.OutputLimit == 131072 {
+			sawCarbon = true
+		}
+	}
+	if !sawCarbon {
+		t.Fatalf("expected gemini-4-carbon with 131072 output limit in Gemini CLI catalog, got %+v", models)
+	}
+
+	// Verify standalone ~/.gemini/antigravity-cli/bin/agy resolution and dynamic Gemini model refresh.
+	agyCliBinDir := filepath.Join(tmpDir, "antigravity-cli", "bin")
+	if err := os.MkdirAll(agyCliBinDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	agyCliBin := execstub.Write(t, agyCliBinDir, "agy", "printf 'gemini-4-carbon-low   Gemini 4 Carbon (Low)\\ngemini-4-carbon-high  Gemini 4 Carbon (High)\\ngemini-4-diamond-high Gemini 4 Diamond (High)\\nclaude-opus-5-5-high  Claude Opus 5.5 (High)\\n'\n")
+	execstub.Write(t, binDir, "agy", "exit 1\n")
+	if gotAgy := ResolveAgyBinary(); gotAgy != agyCliBin {
+		t.Fatalf("expected ResolveAgyBinary to prefer antigravity-cli/bin/agy (%q), got %q", agyCliBin, gotAgy)
+	}
+	refreshed := DiscoverGeminiModelsWithRefresh(true)
+	var sawDiamond, sawClaudeInGem, sawRawSuffix bool
+	for _, it := range refreshed {
+		if it.ID == "gemini-4-diamond" && it.OutputLimit == 131072 {
+			sawDiamond = true
+		}
+		if strings.HasPrefix(it.ID, "claude-") {
+			sawClaudeInGem = true
+		}
+		if it.ID == "gemini-4-diamond-high" || it.ID == "gemini-4-carbon-high" {
+			sawRawSuffix = true
+		}
+	}
+	if !sawDiamond || sawClaudeInGem || sawRawSuffix {
+		t.Fatalf("expected dynamic agy gemini base slug without non-gemini or raw effort suffixes, got %+v", refreshed)
+	}
+
 	t.Setenv("GEMINI_API_KEY", "AIzaSyTestKey123456")
 	if !HasGeminiCLIDirectAuth() {
 		t.Fatal("expected HasGeminiCLIDirectAuth() == true when GEMINI_API_KEY is set")
@@ -157,6 +194,9 @@ func TestWithUserBinPathPrependsMissingDirs(t *testing.T) {
 	}
 	if !strings.Contains(path, filepath.Join(".hoxi", "bin")) {
 		t.Fatalf("expected ~/.hoxi/bin in prepended PATH so native CLIs can invoke hoxi code-index, got %q", path)
+	}
+	if !strings.Contains(path, filepath.Join(".gemini", "antigravity-cli", "bin")) {
+		t.Fatalf("expected ~/.gemini/antigravity-cli/bin in prepended PATH, got %q", path)
 	}
 }
 

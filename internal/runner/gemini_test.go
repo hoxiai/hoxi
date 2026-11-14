@@ -232,6 +232,12 @@ func TestGeminiCLIAgyFallbackAndTranslation(t *testing.T) {
 	if gotModel, gotEff := ResolveGeminiAgyModelAndEffort("gemini-4-argon", "high"); gotModel != "gemini-4-argon" || gotEff != "high" {
 		t.Fatalf("ResolveGeminiAgyModelAndEffort(gemini-4-argon, high) = (%q, %q), want (gemini-4-argon, high)", gotModel, gotEff)
 	}
+	if gotModel, gotEff := ResolveGeminiAgyModelAndEffort("gemini-4-carbon", "high"); gotModel != "gemini-4-carbon" || gotEff != "high" {
+		t.Fatalf("ResolveGeminiAgyModelAndEffort(gemini-4-carbon, high) = (%q, %q), want (gemini-4-carbon, high)", gotModel, gotEff)
+	}
+	if gotModel, gotEff := ResolveGeminiAgyModelAndEffort("gemini-4-carbon-low", "high"); gotModel != "gemini-4-carbon-high" || gotEff != "high" {
+		t.Fatalf("ResolveGeminiAgyModelAndEffort(gemini-4-carbon-low, high) = (%q, %q), want (gemini-4-carbon-high, high)", gotModel, gotEff)
+	}
 
 	tr := NewTurnTranslator("ses_gem_agy", string(RuntimeGeminiCLI), "msg_a_2", "msg_u_2", "gemini-cli", "auto", "build", "")
 	lines := []string{

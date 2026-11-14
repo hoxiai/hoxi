@@ -48,7 +48,10 @@ func ResolveGeminiBinary() string {
 		return ""
 	}
 	if gRoot := GeminiHomeDir(); gRoot != "" && os.Getenv("GEMINI_HOME") != "" {
-		return FirstExecutableFile(filepath.Join(gRoot, "bin", "agy"))
+		return FirstExecutableFile(
+			filepath.Join(gRoot, "antigravity-cli", "bin", "agy"),
+			filepath.Join(gRoot, "bin", "agy"),
+		)
 	}
 	return ResolveAgyBinary()
 }
@@ -142,13 +145,14 @@ func IsAgyOnlyGeminiModel(modelID string) bool {
 		return false
 	}
 	if strings.Contains(lower, "argon") ||
-		strings.HasPrefix(lower, "gemini-4-") ||
+		strings.Contains(lower, "carbon") ||
+		majorAfterFamily(lower, "gemini") >= 4 ||
 		strings.HasPrefix(lower, "gemini-3.8-") ||
 		strings.HasPrefix(lower, "claude-") ||
 		strings.HasPrefix(lower, "gpt-oss-") {
 		return true
 	}
-	for _, suf := range []string{"-low", "-medium", "-high", "-xhigh", "-max"} {
+	for _, suf := range []string{"-low", "-medium", "-high", "-xhigh", "-max", "-thinking"} {
 		if strings.HasSuffix(lower, suf) {
 			return true
 		}
@@ -159,13 +163,14 @@ func IsAgyOnlyGeminiModel(modelID string) bool {
 func defaultGeminiModelSlugs() []string {
 	return []string{
 		"auto",
+		"gemini-4-carbon",
+		"gemini-4-argon",
+		"gemini-3.8-flash",
+		"gemini-3-pro-preview",
+		"gemini-3-flash-preview",
 		"gemini-2.5-pro",
 		"gemini-2.5-flash",
 		"gemini-2.5-flash-lite",
-		"gemini-3-pro-preview",
-		"gemini-3-flash-preview",
-		"gemini-4-argon",
-		"gemini-3.8-flash",
 	}
 }
 
@@ -210,6 +215,8 @@ func FormatGeminiModelName(slug string) string {
 		return "Gemini 3 Pro Preview"
 	case "gemini-3-flash-preview":
 		return "Gemini 3 Flash Preview"
+	case "gemini-4-carbon":
+		return "Gemini 4 Carbon"
 	case "gemini-4-argon":
 		return "Gemini 4 Argon"
 	case "gemini-3.8-flash":
@@ -254,10 +261,14 @@ func inferGeminiModelSpec(slug string) geminiModelSpec {
 	if reasoning && (!HasGeminiCLIDirectAuth() || ResolveStandaloneGeminiBinary() == "" || IsAgyOnlyGeminiModel(lower)) {
 		efforts, defEffort = InferVendorEffortSpec(RuntimeAntigravity, lower, true)
 	}
+	outLimit := 65536
+	if majorAfterFamily(lower, "gemini") >= 4 || strings.Contains(lower, "argon") || strings.Contains(lower, "carbon") {
+		outLimit = 131072
+	}
 	spec := geminiModelSpec{
 		name:          FormatGeminiModelName(slug),
 		contextLimit:  1000000,
-		outputLimit:   65536,
+		outputLimit:   outLimit,
 		image:         true,
 		reasoning:     reasoning,
 		efforts:       efforts,
@@ -270,23 +281,34 @@ func inferGeminiModelSpec(slug string) geminiModelSpec {
 	case strings.Contains(lower, "flash-lite") || strings.Contains(lower, "lite"):
 		spec.inputCost = 0.10
 		spec.outputCost = 0.40
-	case strings.Contains(lower, "4-argon") || strings.Contains(lower, "argon"):
-		spec.inputCost = 2.00
-		spec.outputCost = 12.00
-	case strings.Contains(lower, "3-pro"):
-		spec.inputCost = 2.00
-		spec.outputCost = 12.00
 	case strings.Contains(lower, "3.8-flash") || strings.Contains(lower, "3-flash"):
 		spec.inputCost = 0.50
 		spec.outputCost = 3.00
 	case strings.Contains(lower, "flash"):
 		spec.inputCost = 0.30
 		spec.outputCost = 2.50
+	case strings.Contains(lower, "argon") || strings.Contains(lower, "carbon") || majorAfterFamily(lower, "gemini") >= 4:
+		spec.inputCost = 2.00
+		spec.outputCost = 12.00
+	case strings.Contains(lower, "3-pro"):
+		spec.inputCost = 2.00
+		spec.outputCost = 12.00
 	default:
 		spec.inputCost = 1.25
 		spec.outputCost = 10.00
 	}
 	return spec
+}
+
+func stripAgyGeminiVariantSuffix(slug string) string {
+	trimmed := strings.TrimSpace(slug)
+	lower := strings.ToLower(trimmed)
+	for _, suf := range []string{"-xhigh", "-medium", "-high", "-low", "-max", "-thinking"} {
+		if strings.HasSuffix(lower, suf) && len(trimmed) > len(suf) {
+			return trimmed[:len(trimmed)-len(suf)]
+		}
+	}
+	return trimmed
 }
 
 // DiscoverGeminiModels returns the models exposed by the local `gemini` CLI.
@@ -295,7 +317,7 @@ func DiscoverGeminiModels() []ModelItem {
 }
 
 // DiscoverGeminiModelsWithRefresh returns the models exposed by the local `gemini` CLI.
-func DiscoverGeminiModelsWithRefresh(_ bool) []ModelItem {
+func DiscoverGeminiModelsWithRefresh(forceRefresh bool) []ModelItem {
 	if ResolveGeminiBinary() == "" {
 		return nil
 	}
@@ -312,6 +334,15 @@ func DiscoverGeminiModelsWithRefresh(_ bool) []ModelItem {
 	addSlug("auto")
 	if custom := readGeminiSettingsModel(); custom != "" {
 		addSlug(custom)
+	}
+	if strings.TrimSpace(os.Getenv("GEMINI_BIN")) == "" {
+		if agySlugs, _, _ := DiscoverAgyCLIModels(forceRefresh); len(agySlugs) > 0 {
+			for _, s := range agySlugs {
+				if strings.HasPrefix(strings.ToLower(strings.TrimSpace(s)), "gemini-") {
+					addSlug(stripAgyGeminiVariantSuffix(s))
+				}
+			}
+		}
 	}
 	for _, s := range defaultGeminiModelSlugs() {
 		addSlug(s)

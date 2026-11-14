@@ -59,6 +59,8 @@ func CommonUserBinDirs() []string {
 	if home, _ := os.UserHomeDir(); home != "" {
 		dirs = append(dirs,
 			filepath.Join(home, ".hoxi", "bin"),
+			filepath.Join(home, ".gemini", "antigravity-cli", "bin"),
+			filepath.Join(home, ".gemini", "bin"),
 			filepath.Join(home, ".opencode", "bin"),
 			filepath.Join(home, ".bun", "bin"),
 			filepath.Join(home, ".local", "bin"),
@@ -189,9 +191,16 @@ func ResolveAgyBinary() string {
 	if env := strings.TrimSpace(os.Getenv("AGY_BIN")); env != "" {
 		return FirstExecutableFile(env)
 	}
+	if antHome := strings.TrimSpace(os.Getenv("ANTIGRAVITY_HOME")); antHome != "" {
+		if p := FirstExecutableFile(filepath.Join(filepath.Clean(antHome), "bin", "agy")); p != "" {
+			return p
+		}
+	}
 	if gRoot := GeminiHomeDir(); gRoot != "" {
-		candidate := filepath.Join(gRoot, "bin", "agy")
-		if p := FirstExecutableFile(candidate); p != "" {
+		if p := FirstExecutableFile(
+			filepath.Join(gRoot, "antigravity-cli", "bin", "agy"),
+			filepath.Join(gRoot, "bin", "agy"),
+		); p != "" {
 			return p
 		}
 		if os.Getenv("GEMINI_HOME") != "" || os.Getenv("ANTIGRAVITY_HOME") != "" {
@@ -204,13 +213,16 @@ func ResolveAgyBinary() string {
 	var candidates []string
 	if home, _ := os.UserHomeDir(); home != "" {
 		candidates = append(candidates,
+			filepath.Join(home, ".gemini", "antigravity-cli", "bin", "agy"),
 			filepath.Join(home, ".local", "bin", "agy"),
 			filepath.Join(home, ".gemini", "bin", "agy"),
 		)
 		if runtime.GOOS == "darwin" {
 			candidates = append(candidates,
-				filepath.Join(home, "Applications", "Gemini.app", "Contents", "Helpers", "agy"),
 				filepath.Join(home, "Applications", "Antigravity.app", "Contents", "Helpers", "agy"),
+				filepath.Join(home, "Applications", "Antigravity.app", "Contents", "Resources", "app", "bin", "agy"),
+				filepath.Join(home, "Applications", "Antigravity.app", "Contents", "Resources", "bin", "agy"),
+				filepath.Join(home, "Applications", "Gemini.app", "Contents", "Helpers", "agy"),
 			)
 		}
 	}
@@ -219,8 +231,10 @@ func ResolveAgyBinary() string {
 	}
 	if runtime.GOOS == "darwin" {
 		candidates = append(candidates,
-			"/Applications/Gemini.app/Contents/Helpers/agy",
 			"/Applications/Antigravity.app/Contents/Helpers/agy",
+			"/Applications/Antigravity.app/Contents/Resources/app/bin/agy",
+			"/Applications/Antigravity.app/Contents/Resources/bin/agy",
+			"/Applications/Gemini.app/Contents/Helpers/agy",
 		)
 	}
 	return FirstExecutableFile(candidates...)
@@ -293,6 +307,7 @@ func DiscoverAgyCLIModels(forceRefresh bool) (slugs []string, displayBySlug map[
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
 	defer cancel()
 	cmd := subproc.CommandContext(ctx, agyBin, "models")
+	cmd.Env = WithUserBinPath(os.Environ())
 	cmd.WaitDelay = time.Second
 	out, err := cmd.Output()
 	if err != nil && len(bytes.TrimSpace(out)) == 0 {

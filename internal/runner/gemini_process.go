@@ -23,7 +23,7 @@ func DiscoverGeminiModelsWithRefresh(forceRefresh bool) []agentcli.ModelItem {
 // execute via the Antigravity (`agy`) CLI instead of standalone `gemini`.
 // Google retired personal Google OAuth (`free-tier` / "Gemini Code Assist for
 // individuals") in `@google/gemini-cli` (`IneligibleTierError: UNSUPPORTED_CLIENT`)
-// and moved Gemini 4 Argon / 3.8 Flash and personal OAuth accounts to `agy`.
+// and moved Gemini 4 Carbon / Argon / 3.8 Flash and personal OAuth accounts to `agy`.
 func ShouldGeminiCLIUseAgy(modelID string) bool {
 	if strings.TrimSpace(os.Getenv("GEMINI_BIN")) != "" {
 		return false
@@ -84,10 +84,10 @@ func ResolveGeminiAgyModelAndEffort(modelID, effort string) (string, string) {
 	case lower == "" || lower == "auto":
 		m = ""
 	case strings.Contains(lower, "flash"):
-		if !strings.HasPrefix(lower, "gemini-3.8-") {
+		if !agentcli.IsAgyOnlyGeminiModel(lower) {
 			m = "gemini-3.8-flash"
 		}
-	case strings.HasPrefix(lower, "gemini-") && !strings.Contains(lower, "argon") && !strings.HasPrefix(lower, "gemini-4-"):
+	case strings.HasPrefix(lower, "gemini-") && !agentcli.IsAgyOnlyGeminiModel(lower):
 		m = "gemini-4-argon"
 	}
 	return ResolveAgyModelAndEffort(m, effort)

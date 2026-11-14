@@ -492,6 +492,11 @@ func loadGeminiAntigravitySessionDetail(sessionID, hintCWD, activeRoot string) (
 }
 
 func readGeminiLocalKeyAndModels() (apiKey, defaultModel string, models []string) {
+	apiKey, defaultModel, models, _ = readGeminiLocalKeyAndModelsWithRefresh(false)
+	return apiKey, defaultModel, models
+}
+
+func readGeminiLocalKeyAndModelsWithRefresh(forceRefresh bool) (apiKey, defaultModel string, models []string, displayBySlug map[string]string) {
 	apiKey = firstNonEmpty(
 		strings.TrimSpace(os.Getenv("GEMINI_API_KEY")),
 		strings.TrimSpace(os.Getenv("GOOGLE_GENERATIVE_AI_API_KEY")),
@@ -503,13 +508,20 @@ func readGeminiLocalKeyAndModels() (apiKey, defaultModel string, models []string
 		if raw, err := os.ReadFile(filepath.Join(gRoot, "settings.json")); err == nil {
 			var doc map[string]interface{}
 			if json.Unmarshal(raw, &doc) == nil {
-				if m := strings.TrimSpace(asString(doc["model"])); m != "" && !strings.ContainsAny(m, " ()") {
+				m := strings.TrimSpace(asString(doc["model"]))
+				if m == "" {
+					if mObj, ok := doc["model"].(map[string]interface{}); ok {
+						m = strings.TrimSpace(asString(mObj["name"]))
+					}
+				}
+				if m != "" && !strings.ContainsAny(m, " ()") {
 					settingsModel = m
 				}
 				if envMap, ok := doc["env"].(map[string]interface{}); ok && apiKey == "" {
 					apiKey = firstNonEmpty(
 						asString(envMap["GEMINI_API_KEY"]),
 						asString(envMap["GOOGLE_GENERATIVE_AI_API_KEY"]),
+						asString(envMap["GOOGLE_API_KEY"]),
 					)
 				}
 			}
@@ -518,7 +530,8 @@ func readGeminiLocalKeyAndModels() (apiKey, defaultModel string, models []string
 	if strings.HasPrefix(apiKey, "ya29.") || apiKey == "antigravity-local-oauth" || apiKey == "hoxi-local-antigravity-bridge" {
 		apiKey = ""
 	}
-	if cliSlugs, _, _ := discoverAntigravityCLIModels(); len(cliSlugs) > 0 {
+	if cliSlugs, dMap, _ := discoverAntigravityCLIModels(forceRefresh); len(cliSlugs) > 0 {
+		displayBySlug = dMap
 		for _, slug := range cliSlugs {
 			if !strings.ContainsAny(slug, " ()") {
 				models = appendUniqueString(models, slug)
@@ -542,7 +555,7 @@ func readGeminiLocalKeyAndModels() (apiKey, defaultModel string, models []string
 	if defaultModel == "" && len(models) > 0 {
 		defaultModel = models[0]
 	}
-	return apiKey, defaultModel, models
+	return apiKey, defaultModel, models, displayBySlug
 }
 
 func isRealGoogleAPIKey(k string) bool {
@@ -693,7 +706,7 @@ func (g *Service) removeStaleProviderBridge(providerID, bridgePathFragment strin
 }
 
 func (g *Service) importGeminiCLIProvider() LocalCLIImportResponse {
-	apiKey, _, models := readGeminiLocalKeyAndModels()
+	apiKey, _, models, displayBySlug := readGeminiLocalKeyAndModelsWithRefresh(true)
 	if !isRealGoogleAPIKey(apiKey) {
 		stored := g.resolveStoredProviderKey("google", "")
 		if isRealGoogleAPIKey(stored) {
@@ -711,7 +724,6 @@ func (g *Service) importGeminiCLIProvider() LocalCLIImportResponse {
 		}
 	}
 	g.sendEngineAuth("google", map[string]interface{}{"type": "api", "key": apiKey}, 5*time.Second)
-	_, displayBySlug, _ := discoverAntigravityCLIModels()
 	modelsMap := map[string]interface{}{}
 	var cleanModels []string
 	for _, m := range models {
