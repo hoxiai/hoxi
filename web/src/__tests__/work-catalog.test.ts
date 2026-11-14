@@ -338,4 +338,104 @@ describe("Work product catalog isolation", () => {
       );
       assertEqual(extracted?.items[0]?.id, "502");
     }));
+
+  it("blocks cross-store browser sync, extract and authorization writes across store switches", async () =>
+    fixture(async () => {
+      const syncedStores: string[] = [];
+      let statusRefreshCalls = 0;
+
+      const inflightSync = deferred<{
+        authorization: CatalogStatus["authorization"];
+        sync: {
+          id: string;
+          status: string;
+          fetched: number;
+          total: number;
+          startedAt: string;
+          finishedAt: string;
+        };
+        productCount: number;
+      }>();
+      const inflightExtract = deferred<{
+        running: boolean;
+        tabCount: number;
+        hasCaptcha: boolean;
+        hasNextPage: boolean;
+        items: { id: string; data: Record<string, unknown> }[];
+      }>();
+
+      workCatalogAPI.status = async (id) => {
+        statusRefreshCalls++;
+        return status(id);
+      };
+      workCatalogAPI.syncBrowser = async (storeId) => {
+        syncedStores.push(storeId);
+        return inflightSync.promise;
+      };
+      workCatalogAPI.extractBrowser = async () => inflightExtract.promise;
+
+      // Immediate rejection when expectedStoreId mismatches active scope or is blank.
+      assertEqual(
+        await syncCatalogBrowserProducts(
+          { sellerLoginId: "factory-a", products: [{ id: "1", data: {} }] },
+          "store-b",
+        ),
+        null,
+      );
+      assertEqual(
+        await syncCatalogBrowserProducts(
+          { sellerLoginId: "factory-a", products: [{ id: "1", data: {} }] },
+          "",
+        ),
+        null,
+      );
+      assertEqual(
+        await configureCatalogBrowserAuthorization("factory-a", false, "store-b"),
+        false,
+      );
+      assertEqual(syncedStores.length, 0);
+
+      // Mid-flight store switch discards Store A's pending responses without touching Store B.
+      const pendingSync = syncCatalogBrowserProducts(
+        { sellerLoginId: "factory-a", products: [{ id: "1", data: {} }] },
+        "store-a",
+      );
+      const pendingExtract = extractCatalogBrowserPage(
+        { sessionID: "workstore_store-a", operation: "extract" },
+        "store-a",
+      );
+      assertEqual(syncedStores.join(","), "store-a");
+
+      activateWorkCatalogScope({
+        storeId: "store-b",
+        storeName: "B",
+        platform: "1688",
+      });
+      const beforeResolveRefreshes = statusRefreshCalls;
+
+      inflightSync.resolve({
+        authorization: status("store-a").authorization,
+        sync: {
+          id: "bsyn_stale",
+          status: "completed",
+          fetched: 1,
+          total: 1,
+          startedAt: "2026-11-14T00:00:00Z",
+          finishedAt: "2026-11-14T00:00:00Z",
+        },
+        productCount: 1,
+      });
+      inflightExtract.resolve({
+        running: true,
+        tabCount: 1,
+        hasCaptcha: false,
+        hasNextPage: false,
+        items: [{ id: "1", data: { subject: "From A" } }],
+      });
+
+      assertEqual(await pendingSync, null);
+      assertEqual(await pendingExtract, null);
+      assertEqual(statusRefreshCalls, beforeResolveRefreshes);
+      assertEqual(workCatalogState.scope?.storeId, "store-b");
+    }));
 });

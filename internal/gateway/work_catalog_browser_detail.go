@@ -5,6 +5,10 @@ const catalog1688ExtractDetailPart = `
   const detailMatch = href.match(/\/offer\/([1-9][0-9]{4,18})\.html/i);
   if (detailMatch) {
     const id = detailMatch[1];
+    const modelOfferId = clean(tempModel?.offerId || tempModel?.id || globalData?.offerId || "");
+    if (modelOfferId && /^[1-9][0-9]{4,18}$/.test(modelOfferId) && modelOfferId !== id) {
+      return JSON.stringify({ hasCaptcha: false, sellerId: detectedSeller, items: [], hasNextPage: false, pageUrl: href });
+    }
     try {
       window.scrollTo(0, Math.min(2000, (document.body?.scrollHeight || 1400) * 0.55));
     } catch {}

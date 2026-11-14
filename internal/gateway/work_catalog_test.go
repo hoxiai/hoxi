@@ -23,7 +23,7 @@ func TestWorkCatalogDesktopUIQueriesWithoutChatAndRejectsUntrustedCallers(t *tes
 	t.Cleanup(g.workCatalog.Close)
 	g.SetGatewayToken("catalog-local-token")
 	g.uiOrigins = map[string]bool{
-		"http://localhost:5421":        true,
+		"http://localhost:5421":         true,
 		"wails://wails.localhost:34115": true,
 		"http://wails.localhost:34115":  true,
 	}
@@ -143,6 +143,58 @@ func TestWorkCatalogDesktopUIQueriesWithoutChatAndRejectsUntrustedCallers(t *tes
 		g.serveRemoteRequest(w, httptest.NewRequest(method, "/api/hoxi/work/catalog/status", nil), remoteSourceRelay)
 		if w.Code != http.StatusForbidden {
 			t.Fatal("remote allowlist admitted catalog", method, w.Code)
+		}
+	}
+}
+
+func TestWorkCatalogBrowserExtractRejectsCrossStoreSession(t *testing.T) {
+	work := workapps.NewService(nil, workapps.NewStore(filepath.Join(t.TempDir(), "work-apps.json")))
+	if err := work.SaveState(map[string]any{"storesByApp": map[string]any{"1688": []any{
+		map[string]any{"id": "store-a", "platform": "1688"},
+		map[string]any{"id": "store-b", "platform": "1688"},
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	g := &Gateway{
+		workApps:    work,
+		workCatalog: workcatalog.NewService(workcatalog.NewStore(t.TempDir())),
+		mux:         http.NewServeMux(),
+	}
+	t.Cleanup(g.workCatalog.Close)
+	g.SetGatewayToken("catalog-local-token")
+	g.uiOrigins = map[string]bool{"http://localhost:5421": true}
+	g.registerWorkMCPRoutes()
+
+	sendExtract := func(storeID, sessionID string) *httptest.ResponseRecorder {
+		body := `{"sessionID":` + `"` + sessionID + `","operation":"extract"}`
+		r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/api/hoxi/work/catalog/browser-extract?storeId="+storeID, strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("Origin", "http://localhost:5421")
+		r.Header.Set("Authorization", "Bearer catalog-local-token")
+		r.Header.Set("X-Hoxi-Work-UI", "true")
+		w := httptest.NewRecorder()
+		g.mux.ServeHTTP(w, r)
+		return w
+	}
+
+	for _, tc := range []struct {
+		name      string
+		storeID   string
+		sessionID string
+		want      int
+	}{
+		{"primary store canonical scope", "store-a", "workstore_store-a", http.StatusOK},
+		{"primary store default scope", "store-a", "workstore_default", http.StatusOK},
+		{"primary store empty session defaults", "store-a", "", http.StatusOK},
+		{"primary store rejects secondary scope", "store-a", "workstore_store-b", http.StatusForbidden},
+		{"secondary store canonical scope", "store-b", "workstore_store-b", http.StatusOK},
+		{"secondary store empty session defaults", "store-b", "", http.StatusOK},
+		{"secondary store rejects primary scope", "store-b", "workstore_store-a", http.StatusForbidden},
+		{"secondary store rejects default scope", "store-b", "workstore_default", http.StatusForbidden},
+	} {
+		w := sendExtract(tc.storeID, tc.sessionID)
+		if w.Code != tc.want {
+			t.Fatalf("%s: expected %d, got %d (%s)", tc.name, tc.want, w.Code, w.Body.String())
 		}
 	}
 }

@@ -29,15 +29,15 @@ func reorderImageFlagsFirst(args []string) []string {
 	valueFlags := map[string]bool{
 		"-m": true, "--model": true,
 		"--provider": true,
-		"--aspect": true,
-		"--size": true,
-		"--count": true,
-		"-o": true, "--out": true,
-		"--in": true,
-		"--dir": true,
+		"--aspect":   true,
+		"--size":     true,
+		"--count":    true,
+		"-o":         true, "--out": true,
+		"--in":      true,
+		"--dir":     true,
 		"--address": true,
 		"--session": true,
-		"-p": true, "--prompt": true,
+		"-p":        true, "--prompt": true,
 	}
 	var flags []string
 	var pos []string

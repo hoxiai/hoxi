@@ -8,15 +8,27 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const webRoot = fileURLToPath(new URL("..", import.meta.url));
+const normalizedWebRoot = path.resolve(webRoot);
 const entry = process.argv[2];
-if (!entry || !existsSync(path.resolve(webRoot, entry))) throw new Error("Pass a browser test entry relative to web/");
+const resolvedEntry = entry ? path.resolve(normalizedWebRoot, entry) : "";
+if (!entry || !existsSync(resolvedEntry)) throw new Error("Pass a browser test entry relative to web/");
 const chromePath = process.env.CHROME_BIN || [
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
   "/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser",
   process.env.PROGRAMFILES && path.join(process.env.PROGRAMFILES, "Google/Chrome/Application/chrome.exe"),
 ].find((candidate) => candidate && existsSync(candidate));
 if (!chromePath) throw new Error("Chrome is required; set CHROME_BIN to its executable");
-process.env.HOXI_DISABLE_WORK_EXT = "1";
+const enableWorkExt =
+  process.argv.includes("--with-work-ext") ||
+  process.env.HOXI_DISABLE_WORK_EXT === "0";
+if (enableWorkExt) {
+  delete process.env.HOXI_DISABLE_WORK_EXT;
+} else {
+  process.env.HOXI_DISABLE_WORK_EXT = "1";
+}
+const devEntryUrl = resolvedEntry.startsWith(normalizedWebRoot + path.sep)
+  ? `/${path.relative(normalizedWebRoot, resolvedEntry).replace(/\\/g, "/")}`
+  : `/@fs/${resolvedEntry.replace(/\\/g, "/")}`;
 const profile = await mkdtemp(path.join(tmpdir(), "hoxi-browser-test-"));
 const production = process.argv.includes("--production");
 const output = production ? await mkdtemp(path.join(tmpdir(), "hoxi-browser-build-")) : undefined;
@@ -28,7 +40,7 @@ const config = {
     configureServer(vite) {
       vite.middlewares.use("/__browser_test", async (_req, res) => {
         const html = `<html><body><script type="module">
-          import { runBrowserTest } from ${JSON.stringify(`/${entry}`)};
+          import { runBrowserTest } from ${JSON.stringify(devEntryUrl)};
           window.browserTestResult = await runBrowserTest().then(
             results => ({ results }), error => ({ error: error.stack || String(error) })
           );

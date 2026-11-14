@@ -110,12 +110,12 @@ export default defineConfig({
           ),
         ),
       },
-      { find: /^@hoxi-core\/(.*)$/, replacement: `${srcRoot}/$1` },
       ...(hasWorkExt
         ? [
             { find: /^.*[\/\\]surface-extension(?:\.ts)?$/, replacement: workExtEntry },
           ]
         : []),
+      { find: /^@hoxi-core\/(.*)$/, replacement: `${srcRoot}/$1` },
     ],
   },
   server: {
@@ -189,10 +189,26 @@ export default defineConfig({
               return "vendor-shiki-core";
             }
           }
-          if (
+          const inWorkExt =
             (hasWorkExt && normalized.startsWith(`${workRepoDir}/`)) ||
-            normalized.includes("/hoxi-work/")
+            normalized.includes("/hoxi-work/");
+          if (
+            normalized.includes("/src/components/workcatalog/") ||
+            (inWorkExt &&
+              /\/(?:WorkCatalogSurface|WorkCatalogSources|store\/catalog-workspace)\.[tj]sx?$/.test(
+                normalized,
+              ))
           ) {
+            return "app-work-catalog";
+          }
+          if (inWorkExt) {
+            if (
+              /\/(?:Work1688Studio|WorkCrossBorderStudios|WorkGlobalPlatformStudios|WorkMcpEnvelopeShelf|work-1688-helpers|work-global-platform-helpers|work-storefront-publisher)\.[tj]sx?$/.test(
+                normalized,
+              )
+            ) {
+              return "surface-work-studios";
+            }
             return "surface-work";
           }
           if (normalized.includes("/src/i18n/")) {

@@ -515,9 +515,9 @@ func parseOptionalBoolFlag(flagName, raw string) (*bool, error) {
 }
 
 type workProductJSONFallback struct {
-	TitleCn    string   `json:"titleCn"`
-	WeightG    float64  `json:"weightG"`
-	DimsCm     string   `json:"dimsCm"`
+	TitleCn    string  `json:"titleCn"`
+	WeightG    float64 `json:"weightG"`
+	DimsCm     string  `json:"dimsCm"`
 	StepPrices []struct {
 		MOQ      int     `json:"moq"`
 		PriceRmb float64 `json:"priceRmb"`

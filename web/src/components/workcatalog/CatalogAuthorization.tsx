@@ -63,15 +63,23 @@ export default function CatalogAuthorization(props: {
 
   const bindBrowser = async () => {
     const targetSeller = browserSeller().trim();
-    if (!targetSeller) return;
-    if (await configureCatalogBrowserAuthorization(targetSeller)) {
+    const originStoreId = workCatalogState.scope?.storeId;
+    if (!targetSeller || !originStoreId) return;
+    if (
+      await configureCatalogBrowserAuthorization(
+        targetSeller,
+        false,
+        originStoreId,
+      )
+    ) {
       setSeller(targetSeller);
     }
   };
 
   const detectSeller = async () => {
+    const originStoreId = workCatalogState.scope?.storeId;
     const detected = await props.browserController?.detectSellerLoginId();
-    if (detected) {
+    if (detected && workCatalogState.scope?.storeId === originStoreId) {
       setBrowserSeller(detected);
       if (!seller().trim()) setSeller(detected);
     }

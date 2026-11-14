@@ -193,3 +193,147 @@ func TestHTTPFacadeBrowserAuthAndSyncEndpoints(t *testing.T) {
 		t.Fatalf("browser-sync failed: %d %s", syncRec.Code, syncRec.Body.String())
 	}
 }
+
+func TestBrowserListSyncPreservesEnrichedSKUsStockAndTierPrices(t *testing.T) {
+	ctx := context.Background()
+	svc := NewService(NewStore(t.TempDir()))
+	t.Cleanup(svc.Close)
+
+	settings := StoreSettings{StoreID: "store-merge-guard", Platform: "1688"}
+	initial, err := svc.ResolveTarget(ctx, settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Seed a detail-enriched product with 2 full SKUs, known stock, 2 tier prices,
+	// attributes, categoryName, sourceUrl, and a 3-image gallery.
+	_, err = svc.SyncBrowserProducts(ctx, initial, BrowserSyncInput{
+		SellerLoginID: "factory-merge",
+		Products: []BrowserProductInput{
+			{
+				ID: "601",
+				Data: map[string]any{
+					"subject":      "Enriched CNC aluminum stand",
+					"status":       "published",
+					"categoryName": "Laptop Stands",
+					"sourceUrl":    "https://detail.1688.com/offer/601.html",
+					"description":  "<ul><li><strong>材质：</strong>铝合金</li></ul><p>Detail body</p>",
+					"attributes": []any{
+						map[string]any{"attributeName": "材质", "value": "铝合金"},
+					},
+					"saleInfo": map[string]any{
+						"amountOnSale": 850,
+						"priceRanges": []any{
+							map[string]any{"startQuantity": 2, "price": 39.0},
+							map[string]any{"startQuantity": 50, "price": 32.5},
+						},
+					},
+					"skuInfos": []any{
+						map[string]any{"skuId": "9001", "specId": "s1", "cargoNumber": "STD-SLV", "price": "39.0", "amountOnSale": 500},
+						map[string]any{"skuId": "9002", "specId": "s2", "cargoNumber": "STD-GRY", "price": "39.0", "amountOnSale": 350},
+					},
+					"image": map[string]any{
+						"images": []string{
+							"img/ibank/stand1.jpg",
+							"img/ibank/stand2.jpg",
+							"img/ibank/stand3.jpg",
+						},
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("seed enriched product failed: %v", err)
+	}
+
+	target, err := svc.ResolveTarget(ctx, settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 2. Simulate Mode B seller-list sync: 1 synthetic summary SKU (`skuId: "1"`),
+	// null stock, empty tier prices, and a single row thumbnail.
+	_, err = svc.SyncBrowserProducts(ctx, target, BrowserSyncInput{
+		Products: []BrowserProductInput{
+			{
+				ID: "601",
+				Data: map[string]any{
+					"subject": "Updated CNC aluminum stand",
+					"status":  "published",
+					"saleInfo": map[string]any{
+						"amountOnSale": nil,
+						"priceRanges":  []any{},
+					},
+					"skuInfos": []any{
+						map[string]any{"skuId": "1", "cargoNumber": "STD-SLV"},
+					},
+					"image": map[string]any{
+						"images": []string{"img/ibank/stand1.jpg"},
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("list summary sync failed: %v", err)
+	}
+
+	queried, err := svc.QueryProducts(ctx, target.Scope, Query{Query: "STD-GRY"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if queried.Total != 1 {
+		t.Fatalf("expected second full SKU cargoNumber to remain searchable, got %+v", queried)
+	}
+	item := queried.Items[0]
+	if item.Title != "Updated CNC aluminum stand" {
+		t.Fatalf("expected updated list title, got %q", item.Title)
+	}
+	if item.SKUCount != 2 {
+		t.Fatalf("expected 2 full SKUs to survive summary list sync, got %d", item.SKUCount)
+	}
+	if scalarID(item.Stock) != "850" {
+		t.Fatalf("expected stock 850 to survive null list stock, got %v", item.Stock)
+	}
+	if len(item.Prices) != 2 {
+		t.Fatalf("expected 2 tier prices to survive empty list priceRanges, got %v", item.Prices)
+	}
+	if !item.HasDetail || item.Category != "Laptop Stands" {
+		t.Fatalf("expected HasDetail and category to survive list sync, got %+v", item)
+	}
+
+	// 3. When a subsequent list sync reports a genuinely changed price and zero stock,
+	// those real updates must take effect while still preserving the 2 full SKUs.
+	_, err = svc.SyncBrowserProducts(ctx, target, BrowserSyncInput{
+		Products: []BrowserProductInput{
+			{
+				ID: "601",
+				Data: map[string]any{
+					"subject": "Updated CNC aluminum stand",
+					"status":  "expired",
+					"saleInfo": map[string]any{
+						"amountOnSale": 0,
+						"priceRanges": []any{
+							map[string]any{"startQuantity": 1, "price": 41.0},
+						},
+					},
+					"skuInfos": []any{
+						map[string]any{"skuId": "1", "cargoNumber": "STD-SLV"},
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("list price/stock update sync failed: %v", err)
+	}
+	updatedQuery, err := svc.QueryProducts(ctx, target.Scope, Query{})
+	if err != nil || updatedQuery.Total != 1 {
+		t.Fatalf("query after list price update failed: %+v (%v)", updatedQuery, err)
+	}
+	updated := updatedQuery.Items[0]
+	if updated.Status != "expired" || scalarID(updated.Stock) != "0" || len(updated.Prices) != 1 || updated.SKUCount != 2 {
+		t.Fatalf("expected explicit status/zero-stock/new-price update while keeping 2 SKUs, got %+v", updated)
+	}
+}

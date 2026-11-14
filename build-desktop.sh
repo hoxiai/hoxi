@@ -91,7 +91,11 @@ node scripts/sparkle.mjs check
 
 resolve_work_repo_dir() {
   if [[ -n "${HOXI_WORK_DIR:-}" ]]; then
-    echo "${HOXI_WORK_DIR}"
+    if [[ -d "${HOXI_WORK_DIR}" ]]; then
+      (cd "${HOXI_WORK_DIR}" && pwd)
+    else
+      echo "${HOXI_WORK_DIR}"
+    fi
     return 0
   fi
   local main_root=""
@@ -107,7 +111,7 @@ resolve_work_repo_dir() {
     "${PROJECT_ROOT}/../../../../hoxi-work"
   )
   for c in "${candidates[@]}"; do
-    if [[ -n "${c}" && -d "${c}" ]]; then
+    if [[ -n "${c}" && -f "${c}/web/index.tsx" && -r "${c}/web/index.tsx" ]]; then
       (cd "${c}" && pwd)
       return 0
     fi
@@ -116,7 +120,7 @@ resolve_work_repo_dir() {
 }
 
 WORK_REPO_DIR="$(resolve_work_repo_dir)"
-if [[ -d "${WORK_REPO_DIR}" ]]; then
+if [[ -f "${WORK_REPO_DIR}/web/index.tsx" && -r "${WORK_REPO_DIR}/web/index.tsx" ]]; then
   export HOXI_WORK_DIR="${WORK_REPO_DIR}"
 fi
 

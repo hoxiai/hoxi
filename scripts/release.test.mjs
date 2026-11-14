@@ -550,3 +550,54 @@ test("release version metadata, release notes and root CHANGELOG stay synchroniz
     );
   }
 });
+
+test("build-desktop.sh skips incomplete work/ directories and preserves valid fallback for Vite", () => {
+  const repoRoot = path.join(scripts, "..");
+  const buildScript = fs.readFileSync(path.join(repoRoot, "build-desktop.sh"), "utf8");
+  const start = buildScript.indexOf("resolve_work_repo_dir() {");
+  const end = buildScript.indexOf("\nif [[ ! -d web/node_modules ]]; then", start);
+  assert.ok(start > 0 && end > start, "Expected resolve_work_repo_dir block in build-desktop.sh");
+  const snippet = buildScript.slice(start, end);
+
+  const sandboxDir = fs.mkdtempSync(path.join(os.tmpdir(), "hoxi-work-resolve-"));
+  try {
+    const projectRoot = path.join(sandboxDir, "hoxi");
+    const incompleteWork = path.join(projectRoot, "work");
+    const siblingWork = path.join(sandboxDir, "hoxi-work");
+    fs.mkdirSync(path.join(incompleteWork, "docs"), { recursive: true });
+    fs.mkdirSync(path.join(siblingWork, "web"), { recursive: true });
+    fs.writeFileSync(path.join(siblingWork, "web/index.tsx"), "export const surfaceExtension = { enabled: true };\n");
+
+    const run = spawnSync(
+      "bash",
+      [
+        "-c",
+        `set -euo pipefail\nPROJECT_ROOT="$1"\n${snippet}\nprintf '%s\\n%s\\n' "$WORK_REPO_DIR" "\${HOXI_WORK_DIR:-}"`,
+        "bash",
+        projectRoot,
+      ],
+      { encoding: "utf8", env: { ...process.env, HOXI_WORK_DIR: "" } }
+    );
+    assert.equal(run.status, 0, run.stderr);
+    const [resolvedDir, exportedDir] = run.stdout.trim().split("\n");
+    assert.equal(fs.realpathSync(resolvedDir), fs.realpathSync(siblingWork));
+    assert.equal(fs.realpathSync(exportedDir), fs.realpathSync(siblingWork));
+
+    // When no candidate has web/index.tsx, HOXI_WORK_DIR must not be exported to an empty work/ dir.
+    fs.rmSync(siblingWork, { recursive: true, force: true });
+    const runMissing = spawnSync(
+      "bash",
+      [
+        "-c",
+        `set -euo pipefail\nPROJECT_ROOT="$1"\n${snippet}\nprintf '%s\\n' "\${HOXI_WORK_DIR:-UNSET}"`,
+        "bash",
+        projectRoot,
+      ],
+      { encoding: "utf8", env: { ...process.env, HOXI_WORK_DIR: "" } }
+    );
+    assert.equal(runMissing.status, 0, runMissing.stderr);
+    assert.equal(runMissing.stdout.trim(), "UNSET");
+  } finally {
+    fs.rmSync(sandboxDir, { recursive: true, force: true });
+  }
+});

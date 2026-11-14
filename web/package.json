@@ -25,7 +25,9 @@
     "check:cycles": "node scripts/run-script.js scripts/check-cycles.ts",
     "lint": "tsc --noEmit && npm run check:i18n && npm run check:lines && npm run check:cycles",
     "test:inspector-selectable": "node scripts/run-browser-test.mjs src/__tests__/inspector-selectable.browser.tsx",
-    "test:memory-bank": "node scripts/run-browser-test.mjs src/__tests__/memory-bank.browser.tsx"
+    "test:memory-bank": "node scripts/run-browser-test.mjs src/__tests__/memory-bank.browser.tsx",
+    "test:work-catalog": "node scripts/run-browser-test.mjs src/__tests__/work-catalog.browser.tsx",
+    "test:work-catalog-ext": "node scripts/run-browser-test.mjs ../work/tests/catalog-workspace.browser.tsx --with-work-ext"
   },
   "dependencies": {
     "@pierre/diffs": "^1.5.2",

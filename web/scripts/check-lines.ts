@@ -161,7 +161,6 @@ const IGNORE_DIRS = new Set([
   ".hoxi",
   ".claude",
   "client",
-  "work",
   "site",
   ".dart_tool",
   ".pub-cache",
@@ -179,6 +178,22 @@ const IGNORE_DIRS = new Set([
   ".gocache",
   ".gomodcache",
 ]);
+
+// Frozen line-count ratchet for the 10 pre-existing Work extension files that
+// already exceeded 800 lines when relocated into work/. None may grow, and all
+// other Work files must obey MAX_LINES (800).
+const WORK_LEGACY_LINE_CAPS: Record<string, number> = {
+  "work/web/Work1688Studio.tsx": 1282,
+  "work/web/WorkComposer.tsx": 975,
+  "work/web/WorkCrossBorderStudios.tsx": 1143,
+  "work/web/WorkGlobalPlatformStudios.tsx": 1669,
+  "work/web/WorkMcpEnvelopeShelf.tsx": 880,
+  "work/web/WorkStoreAuthModal.tsx": 1259,
+  "work/web/work-1688-helpers.ts": 2071,
+  "work/web/work-apps.ts": 1355,
+  "work/web/work-mcp-client.ts": 1127,
+  "work/web/work-stores.ts": 1647,
+};
 
 const GO_BASE_PACKAGES = new Set([
   "agentcli",
@@ -237,8 +252,9 @@ for (const file of files) {
     ? content.split("\n").length - 1
     : content.split("\n").length;
 
-  if (lineCount > MAX_LINES) {
-    console.error(`  ✗ [${MAX_LINES}-line limit] ${rel}: ${lineCount} lines (max ${MAX_LINES})`);
+  const lineCap = WORK_LEGACY_LINE_CAPS[rel] ?? MAX_LINES;
+  if (lineCount > lineCap) {
+    console.error(`  ✗ [${lineCap}-line limit] ${rel}: ${lineCount} lines (max ${lineCap})`);
     violations++;
   }
 
@@ -322,6 +338,26 @@ for (const file of files) {
             violations++;
           }
         }
+      }
+    }
+  } else if (rel.startsWith("work/web/")) {
+    if (/["'`]\/(?:session|event|permission)(?:[/"'`?]|$)/.test(content)) {
+      console.error(`  ✗ [gateway plane violation] ${rel} must not call raw '/session', '/event', or '/permission'; route through '/api/hoxi/sessions', '/api/hoxi/event', and '/api/hoxi/permission'.`);
+      violations++;
+    }
+    if (rel.startsWith("work/web/store/")) {
+      if (!/^[a-z0-9-]+\.ts$/.test(baseName)) {
+        console.error(`  ✗ [naming violation] ${rel} must use lowercase kebab-case.ts filename.`);
+        violations++;
+      }
+      const badImport = content.match(/(?:from\s+|import\s*\(\s*)["'][^"']*\/components(?:\/|["'])/);
+      if (badImport) {
+        console.error(`  ✗ [layering violation] ${rel} must not import from components/ (${badImport[0]}).`);
+        violations++;
+      }
+      if (rel.endsWith("-storage.ts")) {
+        console.error(`  ✗ [fragment violation] ${rel} must not split out a separate *-storage.ts scaffold file.`);
+        violations++;
       }
     }
   } else if (rel.startsWith("web/src/i18n/") && /domain-.*-types\.ts$/.test(rel)) {

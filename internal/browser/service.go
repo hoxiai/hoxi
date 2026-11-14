@@ -105,12 +105,12 @@ type Service struct {
 	resolveEnv                func(sessionID, directory string) (StoreEnvConfig, error)
 	allowLoopbackProxyTargets bool
 	isSessionBusy             func(sessionID string) bool
-	bridgeURL      string
-	ledger         *reclaim.Ledger
-	now            func() time.Time
-	idleTimeout    time.Duration
-	idleClosed     map[scopeKey]idleNotice
-	reaperDone     chan struct{}
+	bridgeURL                 string
+	ledger                    *reclaim.Ledger
+	now                       func() time.Time
+	idleTimeout               time.Duration
+	idleClosed                map[scopeKey]idleNotice
+	reaperDone                chan struct{}
 	// How long a held UI mouse button survives without pointer input.
 	pointerHold    time.Duration
 	saveFileDialog func(name, title string) (string, error)
