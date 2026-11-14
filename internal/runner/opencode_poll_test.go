@@ -115,3 +115,87 @@ func TestOpenCodePollSkipsCleanIdleWorktreesAndRunsConcurrently(t *testing.T) {
 		t.Fatalf("untouched worktree[1] permission hits = %d, want 1", wt1HitsAfterUpdate)
 	}
 }
+
+type countingProjectResolver struct {
+	roots       []string
+	dirLookups  atomic.Int32
+	projectByID string
+}
+
+func (r *countingProjectResolver) ProjectIDForDirectory(directory string) (string, bool) {
+	r.dirLookups.Add(1)
+	norm := normalizeComparePath(directory)
+	for _, root := range r.roots {
+		if normalizeComparePath(root) == norm {
+			return r.projectByID, true
+		}
+	}
+	return "", false
+}
+
+func (r *countingProjectResolver) EnsureProjectForDirectory(directory string) (string, error) {
+	id, _ := r.ProjectIDForDirectory(directory)
+	return id, nil
+}
+
+func (r *countingProjectResolver) ProjectRoots(projectID string) []string {
+	if projectID == r.projectByID {
+		return r.roots
+	}
+	return nil
+}
+
+func TestConversationListMemoizesDirResolutionAndQueriesRootsConcurrently(t *testing.T) {
+	t.Parallel()
+	roots := []string{t.TempDir(), t.TempDir(), t.TempDir()}
+	svc := NewService(roots[0], nil, statusbar.NewTracker(), filepath.Join(t.TempDir(), "sessions.json"))
+	resolver := &countingProjectResolver{roots: roots, projectByID: "prj_multi"}
+	svc.SetProjectResolver(resolver)
+
+	var active atomic.Int32
+	var maxConcurrent atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cur := active.Add(1)
+		for {
+			prev := maxConcurrent.Load()
+			if cur <= prev || maxConcurrent.CompareAndSwap(prev, cur) {
+				break
+			}
+		}
+		time.Sleep(15 * time.Millisecond)
+		active.Add(-1)
+
+		qDir := r.URL.Query().Get("directory")
+		switch r.URL.Path {
+		case "/session":
+			items := make([]map[string]interface{}, 0, 20)
+			for i := 0; i < 20; i++ {
+				items = append(items, map[string]interface{}{
+					"id":        fmt.Sprintf("oc_%s_%d", filepath.Base(qDir), i),
+					"directory": qDir,
+					"time":      map[string]interface{}{"updated": 100 + i},
+				})
+			}
+			writeJSON(w, http.StatusOK, items)
+		case "/session/status":
+			writeJSON(w, http.StatusOK, map[string]interface{}{})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	svc.ConfigureOpenCode(server.URL, "secret")
+
+	got := svc.listConversationsWithSurface(context.Background(), "prj_multi", roots[0], "code")
+	if len(got) != 60 {
+		t.Fatalf("conversations = %d, want 60", len(got))
+	}
+	if maxConcurrent.Load() < 2 {
+		t.Fatalf("expected concurrent multi-root /session queries >= 2, got %d", maxConcurrent.Load())
+	}
+	// 60 sessions across 3 roots should only resolve each unique directory once (<= 3 lookups).
+	if lookups := resolver.dirLookups.Load(); lookups > 3 {
+		t.Fatalf("ProjectIDForDirectory lookups = %d, want <= 3 (memoized per directory)", lookups)
+	}
+	_ = svc.conversationStatuses(context.Background(), "prj_multi", roots[0])
+}

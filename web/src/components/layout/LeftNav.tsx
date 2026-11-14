@@ -1,5 +1,5 @@
 // web/src/components/layout/LeftNav.tsx
-import { batch, createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
+import { batch, createEffect, createMemo, createSignal, For, onCleanup, Show, untrack } from "solid-js";
 import { Presence } from "../motion/Presence";
 import { Activity, ArrowRightLeft, Bell, Check, Clock, Folder, FolderPlus, Layers, Plus, RefreshCw, Search } from "lucide-solid";
 import {
@@ -186,11 +186,19 @@ export default function LeftNav() {
   createEffect(() => {
     if (isWorkSurface()) return;
     const activeRoot = normalizeFolderPath(workspace.rootDir);
+    if (activeRoot && workspace.bootstrappingSessions) return;
+    void workspace.savedWorkspaces.length;
+    const currentSessions = untrack(projectSessions);
+    const currentLoading = untrack(loadingProjects);
+    const unloaded: string[] = [];
     for (const rawPath of expandedProjects()) {
       const path = normalizeFolderPath(rawPath);
       if (!path || isInvalidProjectPath(path) || path === activeRoot) continue;
-      if (loadingProjects()[path] || projectSessions()[path] !== undefined) continue;
-      void loadSessionsForProject(path);
+      if (currentLoading[path] || currentSessions[path] !== undefined) continue;
+      unloaded.push(path);
+    }
+    if (unloaded.length > 0) {
+      sessionLists.enqueueBackground(unloaded);
     }
   });
 

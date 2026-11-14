@@ -146,37 +146,53 @@ func (s *Service) HealSessionDirectory(sessionID string) bool {
 // HealProjectSessions relinks any stale sessions of projectID whose ProjectDir
 // is no longer part of the project's folders.
 func (s *Service) HealProjectSessions(projectID, directory string) {
-	if s == nil || s.store == nil || s.projectResolver == nil {
-		return
+	_ = s.healAndListProjectRecords(projectID, directory)
+}
+
+func (s *Service) healAndListProjectRecords(projectID, directory string) []SessionRecord {
+	if s == nil || s.store == nil {
+		return nil
 	}
-	projectID = strings.TrimSpace(projectID)
-	if projectID == "" && strings.TrimSpace(directory) != "" {
-		projectID, _ = s.projectIDForDirectory(directory)
+	scopeDir := s.projectScopeDirectory(projectID, directory)
+	records := s.store.listProjectRecords(projectID, scopeDir)
+	if len(records) == 0 || s.projectResolver == nil {
+		return records
 	}
-	if projectID == "" {
-		return
+	resolvedID := strings.TrimSpace(projectID)
+	if resolvedID == "" && strings.TrimSpace(directory) != "" {
+		resolvedID, _ = s.projectIDForDirectory(directory)
 	}
-	canonicalID, live := s.canonicalProjectID(projectID)
+	if resolvedID == "" {
+		return records
+	}
+	canonicalID, live := s.canonicalProjectID(resolvedID)
 	if !live || canonicalID == "" {
-		return
+		return records
 	}
 	roots := s.projectResolver.ProjectRoots(canonicalID)
 	if len(roots) == 0 {
-		return
+		return records
 	}
 	rootSet := make(map[string]bool, len(roots))
 	for _, root := range roots {
 		rootSet[normalizeComparePath(root)] = true
 	}
-	for _, rec := range s.store.listProjectRecords(projectID, s.projectScopeDirectory(projectID, directory)) {
+	healed := false
+	for _, rec := range records {
 		if rec.Subagent || strings.TrimSpace(rec.ProjectID) == "" || strings.TrimSpace(rec.ProjectDir) == "" {
 			continue
 		}
 		if rootSet[normalizeComparePath(rec.ProjectDir)] {
 			continue
 		}
-		_ = s.HealSessionDirectory(rec.ID)
+		if s.HealSessionDirectory(rec.ID) {
+			healed = true
+		}
 	}
+	if healed {
+		return s.store.listProjectRecords(projectID, scopeDir)
+	}
+	return records
 }
 
 func (s *Service) staleSessionTargetRoot(rec SessionRecord) (string, bool) {

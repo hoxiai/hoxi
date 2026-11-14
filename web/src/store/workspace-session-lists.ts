@@ -7,12 +7,17 @@ import { bootstrapProjectSessions, loadProjects } from "./workspace-projects";
 import { isSessionDeleted } from "./session-query";
 import { workspace } from "./workspace-state";
 
+const BACKGROUND_LOAD_CONCURRENCY = 2;
+
 /** Sidebar list state is scoped to its owner; pending reads never borrow another root's list. */
 export function createProjectSessionLists() {
   const [sessions, setSessions] = createSignal<Record<string, SessionInfo[]>>({});
   const [loading, setLoading] = createSignal<Record<string, boolean>>({});
   const revisions = new Map<string, number>();
   const pending = new Map<string, Promise<void>>();
+  const backgroundQueue: string[] = [];
+  const backgroundQueued = new Set<string>();
+  let backgroundActive = 0;
   let disposed = false;
   const revisionFor = (path: string) => revisions.get(path) || 0;
   const advance = (path: string) => revisions.set(path, revisionFor(path) + 1);
@@ -69,10 +74,60 @@ export function createProjectSessionLists() {
     return request;
   }
 
+  function pumpBackground(): void {
+    while (!disposed && backgroundActive < BACKGROUND_LOAD_CONCURRENCY && backgroundQueue.length > 0) {
+      const next = backgroundQueue.shift()!;
+      backgroundQueued.delete(next);
+      if (pending.has(next) || untrack(sessions)[next] !== undefined) continue;
+      backgroundActive += 1;
+      void load(next).finally(() => {
+        backgroundActive -= 1;
+        pumpBackground();
+      });
+    }
+  }
+
+  function enqueueBackground(paths: readonly string[]): void {
+    if (disposed) return;
+    const currentSessions = untrack(sessions);
+    for (const raw of paths) {
+      const path = normalizeFolderPath(raw);
+      if (!path || isInvalidProjectPath(path)) continue;
+      if (pending.has(path) || backgroundQueued.has(path) || currentSessions[path] !== undefined) continue;
+      backgroundQueued.add(path);
+      backgroundQueue.push(path);
+    }
+    pumpBackground();
+  }
+
+  async function loadWithConcurrency(paths: readonly string[], limit: number): Promise<void> {
+    if (disposed || paths.length === 0) return;
+    let nextIdx = 0;
+    const workerCount = Math.min(paths.length, Math.max(1, limit));
+    await Promise.all(
+      Array.from({ length: workerCount }, async () => {
+        while (!disposed) {
+          const idx = nextIdx++;
+          if (idx >= paths.length) return;
+          await load(paths[idx]);
+        }
+      })
+    );
+  }
+
   async function refresh(paths: string[]): Promise<void> {
     await loadProjects();
     if (disposed) return;
-    await Promise.all([...new Set(paths.map(normalizeFolderPath))].map(load));
+    const unique = [
+      ...new Set(paths.map(normalizeFolderPath).filter((p) => p && !isInvalidProjectPath(p))),
+    ];
+    const activeRoot = normalizeFolderPath(workspace.rootDir);
+    if (activeRoot && unique.includes(activeRoot)) {
+      await load(activeRoot);
+      if (disposed) return;
+    }
+    const rest = unique.filter((p) => p !== activeRoot);
+    await loadWithConcurrency(rest, BACKGROUND_LOAD_CONCURRENCY);
   }
 
   function updateSession(directory: string, sessionID: string, update: (info: SessionInfo) => SessionInfo | null): void {
@@ -90,6 +145,18 @@ export function createProjectSessionLists() {
     });
   }
 
-  return { sessions, loading, syncActive, load, refresh, updateSession,
-    dispose: () => { disposed = true; } };
+  return {
+    sessions,
+    loading,
+    syncActive,
+    load,
+    enqueueBackground,
+    refresh,
+    updateSession,
+    dispose: () => {
+      disposed = true;
+      backgroundQueue.length = 0;
+      backgroundQueued.clear();
+    },
+  };
 }

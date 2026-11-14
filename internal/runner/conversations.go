@@ -68,8 +68,7 @@ func (s *Service) listConversationsWithSurface(ctx context.Context, projectID, d
 	var entries []entry
 	owned := make(map[string]bool)
 	engineToHoxi := make(map[string]string)
-	s.HealProjectSessions(projectID, directory)
-	for _, rec := range s.store.listProjectRecords(projectID, s.projectScopeDirectory(projectID, directory)) {
+	for _, rec := range s.healAndListProjectRecords(projectID, directory) {
 		info := rec.ToSessionInfo()
 		owned[info.ID] = true
 		if info.ExternalID != "" {
@@ -94,65 +93,90 @@ func (s *Service) listConversationsWithSurface(ctx context.Context, projectID, d
 		}
 		entries = append(entries, entry{info.Time.Updated, raw})
 	}
-	seenEngine := make(map[string]bool)
-	for _, engineDir := range s.conversationDirectories(projectID, directory) {
-		status, raw, err := s.openCodeRaw(ctx, http.MethodGet, "/session", directoryQuery(engineDir, url.Values{"limit": {"200"}}), nil)
-		var items []json.RawMessage
-		if err != nil || status != http.StatusOK || json.Unmarshal(raw, &items) != nil {
-			continue
+	if s.openCode != nil {
+		engineDirs := s.conversationDirectories(projectID, directory)
+		batches := make([][]json.RawMessage, len(engineDirs))
+		runIndexedByDirs(engineDirs, func(i int, engineDir string) {
+			status, raw, err := s.openCodeRaw(ctx, http.MethodGet, "/session", directoryQuery(engineDir, url.Values{"limit": {"200"}}), nil)
+			var items []json.RawMessage
+			if err == nil && status == http.StatusOK && json.Unmarshal(raw, &items) == nil {
+				batches[i] = items
+			}
+		})
+		resolvedProjectByDir := make(map[string]string)
+		projectForDir := func(d string) string {
+			d = strings.TrimSpace(d)
+			if d == "" {
+				return ""
+			}
+			if id, ok := resolvedProjectByDir[d]; ok {
+				return id
+			}
+			id, _ := s.projectIDForDirectory(d)
+			resolvedProjectByDir[d] = id
+			return id
 		}
-		for _, item := range items {
-			var info struct {
-				ID        string `json:"id"`
-				ParentID  string `json:"parentID"`
-				Directory string `json:"directory"`
-				Surface   string `json:"surface"`
-				Time      struct {
-					Updated int64 `json:"updated"`
-				} `json:"time"`
-				Metadata map[string]interface{} `json:"metadata"`
-			}
-			if json.Unmarshal(item, &info) != nil || info.ID == "" || owned[info.ID] || seenEngine[info.ID] ||
-				info.Metadata["hoxiConversation"] != nil {
+		seenEngine := make(map[string]bool)
+		for i, engineDir := range engineDirs {
+			items := batches[i]
+			if len(items) == 0 {
 				continue
 			}
-			parentHoxiID := engineToHoxi[strings.TrimSpace(info.ParentID)]
-			if parentHoxiID == "" {
-				if v, ok := s.openCodeChildParent.Load(info.ID); ok {
-					parentHoxiID = v
+			normEngineDir := normalizeComparePath(engineDir)
+			baseProjectID := projectID
+			if baseProjectID == "" {
+				baseProjectID = projectForDir(engineDir)
+			}
+			for _, item := range items {
+				var info struct {
+					ID        string `json:"id"`
+					ParentID  string `json:"parentID"`
+					Directory string `json:"directory"`
+					Surface   string `json:"surface"`
+					Time      struct {
+						Updated int64 `json:"updated"`
+					} `json:"time"`
+					Metadata map[string]interface{} `json:"metadata"`
 				}
-			}
-			if s.IsManagedOpenCodeSession(info.ID) && !s.isManagedOpenCodeChild(info.ID) && parentHoxiID == "" {
-				continue
-			}
-			entryProjectID := projectID
-			if entryProjectID == "" {
-				entryProjectID, _ = s.projectIDForDirectory(engineDir)
-			}
-			itemProjectID := ""
-			itemDir := strings.TrimSpace(info.Directory)
-			if itemDir != "" {
-				itemProjectID, _ = s.projectIDForDirectory(itemDir)
-				// OpenCode may return sessions from nested directories that share
-				// its git workspace. Filter by the session's own directory instead
-				// of trusting the query root.
-				if entryProjectID != "" && itemProjectID != "" && itemProjectID != entryProjectID {
+				if json.Unmarshal(item, &info) != nil || info.ID == "" || owned[info.ID] || seenEngine[info.ID] ||
+					info.Metadata["hoxiConversation"] != nil {
 					continue
 				}
-				if entryProjectID != "" && itemProjectID == "" &&
-					normalizeComparePath(itemDir) != normalizeComparePath(engineDir) {
+				parentHoxiID := engineToHoxi[strings.TrimSpace(info.ParentID)]
+				if parentHoxiID == "" {
+					if v, ok := s.openCodeChildParent.Load(info.ID); ok {
+						parentHoxiID = v
+					}
+				}
+				if s.IsManagedOpenCodeSession(info.ID) && !s.isManagedOpenCodeChild(info.ID) && parentHoxiID == "" {
 					continue
 				}
+				entryProjectID := baseProjectID
+				itemProjectID := ""
+				itemDir := strings.TrimSpace(info.Directory)
+				if itemDir != "" {
+					itemProjectID = projectForDir(itemDir)
+					// OpenCode may return sessions from nested directories that share
+					// its git workspace. Filter by the session's own directory instead
+					// of trusting the query root.
+					if entryProjectID != "" && itemProjectID != "" && itemProjectID != entryProjectID {
+						continue
+					}
+					if entryProjectID != "" && itemProjectID == "" &&
+						normalizeComparePath(itemDir) != normEngineDir {
+						continue
+					}
+				}
+				if entryProjectID == "" {
+					entryProjectID = itemProjectID
+				}
+				inferredSurface := NormalizeSessionSurface(info.Surface, firstNonEmptyStr(itemDir, engineDir))
+				if (surfaceFilter == "work" || surfaceFilter == "code") && inferredSurface != surfaceFilter {
+					continue
+				}
+				seenEngine[info.ID] = true
+				entries = append(entries, entry{info.Time.Updated, withProjectIDAndSurface(item, entryProjectID, inferredSurface, parentHoxiID)})
 			}
-			if entryProjectID == "" {
-				entryProjectID = itemProjectID
-			}
-			inferredSurface := NormalizeSessionSurface(info.Surface, firstNonEmptyStr(itemDir, engineDir))
-			if (surfaceFilter == "work" || surfaceFilter == "code") && inferredSurface != surfaceFilter {
-				continue
-			}
-			seenEngine[info.ID] = true
-			entries = append(entries, entry{info.Time.Updated, withProjectIDAndSurface(item, entryProjectID, inferredSurface, parentHoxiID)})
 		}
 	}
 	sort.SliceStable(entries, func(i, j int) bool { return entries[i].updated > entries[j].updated })
@@ -260,28 +284,34 @@ func (s *Service) handleConversationStatuses(w http.ResponseWriter, r *http.Requ
 // ID only, via the runner's own process table.
 func (s *Service) conversationStatuses(ctx context.Context, projectID, directory string) map[string]json.RawMessage {
 	out := make(map[string]json.RawMessage)
-	for _, engineDir := range s.conversationDirectories(projectID, directory) {
-		status, raw, err := s.openCodeRaw(ctx, http.MethodGet, "/session/status", directoryQuery(engineDir, nil), nil)
-		var engine map[string]json.RawMessage
-		if err != nil || status != http.StatusOK || json.Unmarshal(raw, &engine) != nil {
-			continue
-		}
-		for id, st := range engine {
-			if !s.IsManagedOpenCodeSession(id) || s.isManagedOpenCodeChild(id) {
-				var parsed SessionStatus
-				if json.Unmarshal(st, &parsed) == nil && parsed.Type == "retry" {
-					if _, cut := shouldCutOffTurnRetry(parsed, time.Now()); cut {
-						s.abortOpenCodeRunawayTurn(SessionRecord{ExternalID: id, WorktreePath: engineDir})
-						continue
+	if s.openCode != nil {
+		engineDirs := s.conversationDirectories(projectID, directory)
+		batches := make([]map[string]json.RawMessage, len(engineDirs))
+		runIndexedByDirs(engineDirs, func(i int, engineDir string) {
+			status, raw, err := s.openCodeRaw(ctx, http.MethodGet, "/session/status", directoryQuery(engineDir, nil), nil)
+			var engine map[string]json.RawMessage
+			if err == nil && status == http.StatusOK && json.Unmarshal(raw, &engine) == nil {
+				batches[i] = engine
+			}
+		})
+		for i, engineDir := range engineDirs {
+			for id, st := range batches[i] {
+				if !s.IsManagedOpenCodeSession(id) || s.isManagedOpenCodeChild(id) {
+					var parsed SessionStatus
+					if json.Unmarshal(st, &parsed) == nil && parsed.Type == "retry" {
+						if _, cut := shouldCutOffTurnRetry(parsed, time.Now()); cut {
+							s.abortOpenCodeRunawayTurn(SessionRecord{ExternalID: id, WorktreePath: engineDir})
+							continue
+						}
 					}
+					out[id] = st
 				}
-				out[id] = st
 			}
 		}
 	}
 	allowed := make(map[string]bool)
-	for _, info := range s.store.ListProject(projectID, s.projectScopeDirectory(projectID, directory)) {
-		allowed[info.ID] = true
+	for _, rec := range s.store.listProjectRecords(projectID, s.projectScopeDirectory(projectID, directory)) {
+		allowed[rec.ID] = true
 	}
 	for _, id := range s.busySessionIDs() {
 		if allowed[id] {

@@ -238,25 +238,12 @@ func (s *Service) forgetCleanIdleOpenCodeDirs(rec SessionRecord) {
 	}
 }
 
-func (s *Service) fetchOpenCodeListByDirs(ctx context.Context, path string, dirs []string) ([][]map[string]interface{}, []bool) {
-	results := make([][]map[string]interface{}, len(dirs))
-	ok := make([]bool, len(dirs))
-	fetchOne := func(i int) {
-		status, raw, err := s.openCodeRaw(ctx, http.MethodGet, path, directoryQuery(dirs[i], nil), nil)
-		if err != nil || status != http.StatusOK {
-			return
-		}
-		var batch []map[string]interface{}
-		if json.Unmarshal(raw, &batch) == nil {
-			results[i] = batch
-			ok[i] = true
-		}
-	}
+func runIndexedByDirs(dirs []string, fn func(i int, dir string)) {
 	if len(dirs) <= 1 {
 		if len(dirs) == 1 {
-			fetchOne(0)
+			fn(0, dirs[0])
 		}
-		return results, ok
+		return
 	}
 	workers := len(dirs)
 	if workers > 4 {
@@ -273,10 +260,26 @@ func (s *Service) fetchOpenCodeListByDirs(ctx context.Context, path string, dirs
 				if idx >= len(dirs) {
 					return
 				}
-				fetchOne(idx)
+				fn(idx, dirs[idx])
 			}
 		}()
 	}
 	wg.Wait()
+}
+
+func (s *Service) fetchOpenCodeListByDirs(ctx context.Context, path string, dirs []string) ([][]map[string]interface{}, []bool) {
+	results := make([][]map[string]interface{}, len(dirs))
+	ok := make([]bool, len(dirs))
+	runIndexedByDirs(dirs, func(i int, dir string) {
+		status, raw, err := s.openCodeRaw(ctx, http.MethodGet, path, directoryQuery(dir, nil), nil)
+		if err != nil || status != http.StatusOK {
+			return
+		}
+		var batch []map[string]interface{}
+		if json.Unmarshal(raw, &batch) == nil {
+			results[i] = batch
+			ok[i] = true
+		}
+	})
 	return results, ok
 }

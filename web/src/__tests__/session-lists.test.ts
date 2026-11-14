@@ -241,4 +241,40 @@ describe("sidebar project session lists", () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  it("throttles background expanded-project session loads to bounded concurrency", async () => {
+    await withListsFixture(async (lists) => {
+      const gates = new Map<string, ReturnType<typeof deferred<SessionInfo[]>>>();
+      let inflight = 0;
+      let maxInflight = 0;
+      hoxiAPI.listSessions = async (dir?: string) => {
+        const key = dir || "";
+        const gate = deferred<SessionInfo[]>();
+        gates.set(key, gate);
+        inflight += 1;
+        if (inflight > maxInflight) maxInflight = inflight;
+        try {
+          return await gate.promise;
+        } finally {
+          inflight -= 1;
+        }
+      };
+
+      const paths = ["/bg-1", "/bg-2", "/bg-3", "/bg-4", "/bg-5"];
+      lists.enqueueBackground(paths);
+      await new Promise((r) => setTimeout(r, 10));
+      assertEqual(maxInflight, 2, "background queue must cap concurrent loads at 2");
+      assertEqual(gates.size, 2);
+
+      for (const p of paths) {
+        await new Promise((r) => setTimeout(r, 5));
+        gates.get(p)?.resolve([session(`ses_${p.slice(1)}`, p)]);
+      }
+      await new Promise((r) => setTimeout(r, 15));
+      assertEqual(maxInflight, 2);
+      for (const p of paths) {
+        assertDeepEqual(ids(lists.sessions()[p]), [`ses_${p.slice(1)}`]);
+      }
+    });
+  });
 });
