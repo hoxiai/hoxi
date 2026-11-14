@@ -1,6 +1,6 @@
 // web/scripts/check-cycles.ts
-// Fails when web/src has a circular runtime import. Type-only imports and
-// lazy `import()` calls are ignored because they do not run at module init.
+// Fails when web/src or work/web has a circular runtime import. Type-only imports
+// and lazy `import()` calls are ignored because they do not run at module init.
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -8,15 +8,55 @@ import type tsType from "typescript";
 
 const ts = createRequire(path.resolve(process.cwd(), "package.json"))("typescript") as typeof tsType;
 
-const SRC = path.resolve(process.cwd(), "src");
+const WEB_ROOT = path.resolve(process.cwd());
+const REPO_ROOT = path.resolve(WEB_ROOT, "..");
+const SRC = path.resolve(WEB_ROOT, "src");
 const EXTENSIONS = [".ts", ".tsx"];
+
+function resolveWorktreeMainRoot(dir: string): string | null {
+  try {
+    const dotGit = path.join(dir, ".git");
+    if (!fs.statSync(dotGit).isFile()) return null;
+    const match = fs.readFileSync(dotGit, "utf8").match(/^gitdir:\s*(.+)$/m);
+    if (!match) return null;
+    const commonGitDir = path.resolve(path.resolve(dir, match[1].trim()), "../..");
+    return path.basename(commonGitDir) === ".git" ? path.dirname(commonGitDir) : null;
+  } catch {
+    return null;
+  }
+}
+
+function resolveWorkWebDir(): string | null {
+  if (process.env.HOXI_DISABLE_WORK_EXT === "1") return null;
+  const mainRoot = resolveWorktreeMainRoot(REPO_ROOT);
+  const candidates = process.env.HOXI_WORK_DIR
+    ? [path.resolve(WEB_ROOT, process.env.HOXI_WORK_DIR)]
+    : [
+        path.resolve(REPO_ROOT, "work"),
+        ...(mainRoot ? [path.resolve(mainRoot, "work")] : []),
+        path.resolve(WEB_ROOT, "../../hoxi-work"),
+        path.resolve(WEB_ROOT, "../../../../../hoxi-work"),
+      ];
+  for (const candidate of candidates) {
+    const entry = path.join(candidate, "web/index.tsx");
+    if (fs.existsSync(entry) && fs.statSync(entry).isFile()) {
+      return path.join(candidate, "web");
+    }
+  }
+  return null;
+}
+
+const WORK_WEB = resolveWorkWebDir();
+const WORK_EXT_ENTRY = WORK_WEB ? path.join(WORK_WEB, "index.tsx") : null;
 
 function listSources(dir: string): string[] {
   const out: string[] = [];
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (entry.name !== "__tests__" && entry.name !== "node_modules") out.push(...listSources(full));
+      if (entry.name !== "__tests__" && entry.name !== "tests" && entry.name !== "node_modules") {
+        out.push(...listSources(full));
+      }
     } else if (EXTENSIONS.some((ext) => entry.name.endsWith(ext)) && !entry.name.endsWith(".d.ts")) {
       out.push(full);
     }
@@ -24,14 +64,35 @@ function listSources(dir: string): string[] {
   return out;
 }
 
-function resolveImport(from: string, spec: string): string | undefined {
-  const base = path.resolve(path.dirname(from), spec);
-  const candidates = [base, ...EXTENSIONS.map((ext) => base + ext), ...EXTENSIONS.map((ext) => path.join(base, "index" + ext))];
+function resolveCandidates(base: string): string | undefined {
+  const candidates = [
+    base,
+    ...EXTENSIONS.map((ext) => base + ext),
+    ...EXTENSIONS.map((ext) => path.join(base, "index" + ext)),
+  ];
   return candidates.find((p) => fs.existsSync(p) && fs.statSync(p).isFile());
 }
 
-function isRelativeSpecifier(spec: string): boolean {
-  return spec.startsWith("./") || spec.startsWith("../");
+function resolveImport(from: string, spec: string): string | undefined {
+  if (WORK_EXT_ENTRY && /(?:^|[\/\\])surface-extension(?:\.ts)?$/.test(spec)) {
+    return WORK_EXT_ENTRY;
+  }
+  if (spec.startsWith("@hoxi-core/")) {
+    return resolveCandidates(path.join(SRC, spec.slice("@hoxi-core/".length)));
+  }
+  if (spec.startsWith("./") || spec.startsWith("../")) {
+    return resolveCandidates(path.resolve(path.dirname(from), spec));
+  }
+  return undefined;
+}
+
+function isTrackedSpecifier(spec: string): boolean {
+  return (
+    spec.startsWith("./") ||
+    spec.startsWith("../") ||
+    spec.startsWith("@hoxi-core/") ||
+    Boolean(WORK_EXT_ENTRY && /(?:^|[\/\\])surface-extension(?:\.ts)?$/.test(spec))
+  );
 }
 
 function hasRuntimeImportClause(clause: ts.ImportClause | undefined): boolean {
@@ -58,12 +119,12 @@ function runtimeImports(file: string): string[] {
   for (const stmt of sf.statements) {
     if (ts.isImportDeclaration(stmt) && ts.isStringLiteral(stmt.moduleSpecifier)) {
       const spec = stmt.moduleSpecifier.text;
-      if (isRelativeSpecifier(spec) && hasRuntimeImportClause(stmt.importClause)) {
+      if (isTrackedSpecifier(spec) && hasRuntimeImportClause(stmt.importClause)) {
         specs.push(spec);
       }
     } else if (ts.isExportDeclaration(stmt) && stmt.moduleSpecifier && ts.isStringLiteral(stmt.moduleSpecifier)) {
       const spec = stmt.moduleSpecifier.text;
-      if (isRelativeSpecifier(spec) && hasRuntimeExportClause(stmt)) {
+      if (isTrackedSpecifier(spec) && hasRuntimeExportClause(stmt)) {
         specs.push(spec);
       }
     }
@@ -71,8 +132,11 @@ function runtimeImports(file: string): string[] {
   return specs.map((spec) => resolveImport(file, spec)).filter((p): p is string => Boolean(p));
 }
 
+const roots = [SRC, ...(WORK_WEB ? [WORK_WEB] : [])];
 const graph = new Map<string, string[]>();
-for (const file of listSources(SRC)) graph.set(file, runtimeImports(file));
+for (const root of roots) {
+  for (const file of listSources(root)) graph.set(file, runtimeImports(file));
+}
 
 const state = new Map<string, "visiting" | "done">();
 const stack: string[] = [];
@@ -83,7 +147,7 @@ function visit(node: string): void {
   stack.push(node);
   for (const next of graph.get(node) ?? []) {
     if (state.get(next) === "visiting") {
-      const cycle = stack.slice(stack.indexOf(next)).map((p) => path.relative(SRC, p));
+      const cycle = stack.slice(stack.indexOf(next)).map((p) => path.relative(REPO_ROOT, p));
       cycles.add(cycle.join(" > "));
     } else if (!state.has(next) && graph.has(next)) {
       visit(next);
@@ -96,7 +160,7 @@ function visit(node: string): void {
 for (const node of graph.keys()) if (!state.has(node)) visit(node);
 
 if (cycles.size > 0) {
-  console.error(`[lint:cycles] ✗ Found ${cycles.size} circular runtime import(s) in web/src:`);
+  console.error(`[lint:cycles] ✗ Found ${cycles.size} circular runtime import(s):`);
   for (const cycle of cycles) console.error(`  ✗ ${cycle}`);
   console.error("  Move the shared piece into its own module instead of importing a parent back.");
   process.exit(1);

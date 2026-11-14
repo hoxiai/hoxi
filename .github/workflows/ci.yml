@@ -52,6 +52,13 @@ jobs:
       - name: Run frontend unit tests
         run: npm --prefix web test
 
+      - name: Run headless browser catalog regressions
+        run: |
+          npm --prefix web run test:work-catalog
+          if [[ -f work/tests/catalog-workspace.browser.tsx ]]; then
+            npm --prefix web run test:work-catalog-ext
+          fi
+
       - name: Run release pipeline regression tests
         run: node --test scripts/release.test.mjs
 

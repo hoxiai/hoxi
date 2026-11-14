@@ -337,3 +337,101 @@ func TestBrowserListSyncPreservesEnrichedSKUsStockAndTierPrices(t *testing.T) {
 		t.Fatalf("expected explicit status/zero-stock/new-price update while keeping 2 SKUs, got %+v", updated)
 	}
 }
+
+func TestBrowserListSyncPreservesMultiTierPriceThresholdsAndRejectsMismatchedItemSeller(t *testing.T) {
+	ctx := context.Background()
+	svc := NewService(NewStore(t.TempDir()))
+	t.Cleanup(svc.Close)
+
+	settings := StoreSettings{StoreID: "store-tier-moq-guard", Platform: "1688"}
+	initial, err := svc.ResolveTarget(ctx, settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Seed detail-enriched product whose real MOQ thresholds are 3 / 50.
+	_, err = svc.SyncBrowserProducts(ctx, initial, BrowserSyncInput{
+		SellerLoginID: "factory-a",
+		Products: []BrowserProductInput{
+			{
+				ID: "701",
+				Data: map[string]any{
+					"subject":     "Industrial braided hydraulic hose",
+					"status":      "published",
+					"description": "<p>High pressure hose detail</p>",
+					"saleInfo": map[string]any{
+						"amountOnSale": 1200,
+						"priceRanges": []any{
+							map[string]any{"startQuantity": 3, "price": 18.5},
+							map[string]any{"startQuantity": 50, "price": 14.0},
+						},
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("seed detail product failed: %v", err)
+	}
+
+	target, err := svc.ResolveTarget(ctx, settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 2. Simulate list summary refresh with identical unit-price set {14.0, 18.5} and
+	// same tier count (2), but synthetic list thresholds `1 / 10`.
+	_, err = svc.SyncBrowserProducts(ctx, target, BrowserSyncInput{
+		SellerLoginID: "factory-a",
+		Products: []BrowserProductInput{
+			{
+				ID: "701",
+				Data: map[string]any{
+					"subject": "Industrial braided hydraulic hose",
+					"status":  "published",
+					"saleInfo": map[string]any{
+						"amountOnSale": nil,
+						"priceRanges": []any{
+							map[string]any{"startQuantity": 1, "price": 14.0},
+							map[string]any{"startQuantity": 10, "price": 18.5},
+						},
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("list summary refresh failed: %v", err)
+	}
+
+	stored, err := svc.GetProduct(ctx, target.Scope, "701")
+	if err != nil {
+		t.Fatal(err)
+	}
+	saleInfo, _ := stored.Data["saleInfo"].(map[string]any)
+	ranges, _ := saleInfo["priceRanges"].([]any)
+	if len(ranges) != 2 {
+		t.Fatalf("expected 2 tier prices, got %#v", ranges)
+	}
+	firstStart, _ := rangeFieldFloat(ranges[0], "startQuantity")
+	firstPrice, _ := rangeFieldFloat(ranges[0], "price")
+	secondStart, _ := rangeFieldFloat(ranges[1], "startQuantity")
+	secondPrice, _ := rangeFieldFloat(ranges[1], "price")
+	if firstStart != 3 || firstPrice != 18.5 || secondStart != 50 || secondPrice != 14.0 {
+		t.Fatalf("expected real MOQ thresholds 3@18.5 / 50@14.0 to survive list summary 1/10, got %#v", ranges)
+	}
+
+	// 3. Reject foreign seller items even when top-level SellerLoginID is "factory-a".
+	for _, foreign := range []map[string]any{
+		{"subject": "Foreign via sellerLoginId", "sellerLoginId": "factory-b"},
+		{"subject": "Foreign via supplierLoginId", "sellerLoginId": "factory-a", "supplierLoginId": "factory-b"},
+		{"subject": "Foreign via sourceUrl", "sourceUrl": "https://factory-b.1688.com/offer/702.html"},
+	} {
+		if _, err := svc.SyncBrowserProducts(ctx, target, BrowserSyncInput{
+			SellerLoginID: "factory-a",
+			Products:      []BrowserProductInput{{ID: "702", Data: foreign}},
+		}); err == nil {
+			t.Fatalf("expected foreign item %+v to be rejected", foreign)
+		}
+	}
+}

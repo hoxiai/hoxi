@@ -79,6 +79,18 @@ func hasEnrichedDetail(item workcatalog.BrowserProductInput) bool {
 	return strings.TrimSpace(desc) != ""
 }
 
+func hasItemSellerIdentity(data map[string]any) bool {
+	if data == nil {
+		return false
+	}
+	for _, key := range []string{"sellerLoginId", "supplierLoginId"} {
+		if s, ok := data[key].(string); ok && strings.TrimSpace(s) != "" {
+			return true
+		}
+	}
+	return false
+}
+
 func (g *Gateway) resolveCatalogBrowserSession(rawSessionID, storeID string) (string, error) {
 	storeID = strings.TrimSpace(storeID)
 	if storeID == "" {
@@ -226,6 +238,7 @@ func (g *Gateway) handleWorkCatalogBrowserExtract(w http.ResponseWriter, r *http
 		byID := make(map[string]int)
 		activeCaptcha := false
 		anyCaptcha := false
+		fallbackSeller := ""
 
 		for _, ev := range evals {
 			payload, ok := parseFrameExtractPayload(ev.Value)
@@ -238,8 +251,13 @@ func (g *Gateway) handleWorkCatalogBrowserExtract(w http.ResponseWriter, r *http
 					activeCaptcha = true
 				}
 			}
-			if resp.SellerID == "" && strings.TrimSpace(payload.SellerID) != "" {
-				resp.SellerID = strings.TrimSpace(payload.SellerID)
+			frameSeller := strings.TrimSpace(payload.SellerID)
+			if frameSeller != "" {
+				if ev.TabID == st.TabID && resp.SellerID == "" {
+					resp.SellerID = frameSeller
+				} else if fallbackSeller == "" {
+					fallbackSeller = frameSeller
+				}
 			}
 			if ev.TabID == st.TabID && payload.HasNextPage {
 				resp.HasNextPage = true
@@ -248,6 +266,14 @@ func (g *Gateway) handleWorkCatalogBrowserExtract(w http.ResponseWriter, r *http
 				id := strings.TrimSpace(item.ID)
 				if id == "" || item.Data == nil {
 					continue
+				}
+				if frameSeller != "" && !hasItemSellerIdentity(item.Data) {
+					cloned := make(map[string]any, len(item.Data)+1)
+					for k, v := range item.Data {
+						cloned[k] = v
+					}
+					cloned["sellerLoginId"] = frameSeller
+					item.Data = cloned
 				}
 				if existingIdx, exists := byID[id]; exists {
 					if !hasEnrichedDetail(resp.Items[existingIdx]) && hasEnrichedDetail(item) {
@@ -264,6 +290,9 @@ func (g *Gateway) handleWorkCatalogBrowserExtract(w http.ResponseWriter, r *http
 			if len(resp.Items) >= 200 {
 				break
 			}
+		}
+		if resp.SellerID == "" {
+			resp.SellerID = fallbackSeller
 		}
 
 		if len(resp.Items) == 0 && (activeCaptcha || anyCaptcha) {

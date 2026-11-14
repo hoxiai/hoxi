@@ -80,6 +80,9 @@ try {
   const address = server.httpServer.address();
   chrome = spawn(chromePath, [
     "--headless=new", "--no-first-run", "--no-default-browser-check", "--disable-background-networking",
+    ...(process.platform === "linux" && process.env.CI
+      ? ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
+      : []),
     "--remote-debugging-port=0", `--user-data-dir=${profile}`, "about:blank",
   ], { stdio: "ignore" });
   let launchError;

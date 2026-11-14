@@ -14,6 +14,41 @@ import (
 
 var thumbnailSizeSuffix = regexp.MustCompile(`\.\d{2,4}x\d{2,4}(?:xz|q\d+)?\.`)
 
+var system1688Subdomains = map[string]struct{}{
+	"www": {}, "work": {}, "myseller": {}, "sell": {}, "alisell": {},
+	"offer": {}, "detail": {}, "s": {}, "my": {}, "air": {},
+	"sycm": {}, "open": {}, "fuwu": {}, "page": {}, "cart": {},
+	"trade": {}, "login": {}, "passport": {}, "member": {}, "pas": {},
+	"show": {}, "shop": {}, "m": {}, "amos": {}, "p4p": {},
+	"fxg": {}, "re": {}, "cbu01": {}, "1688": {},
+}
+
+func infer1688SellerFromURL(raw string) string {
+	u := strings.TrimSpace(raw)
+	if u == "" {
+		return ""
+	}
+	if strings.HasPrefix(u, "//") {
+		u = "https:" + u
+	}
+	parsed, err := url.Parse(u)
+	if err != nil {
+		return ""
+	}
+	host := strings.ToLower(strings.TrimSpace(parsed.Hostname()))
+	if !strings.HasSuffix(host, ".1688.com") {
+		return ""
+	}
+	sub := strings.TrimSuffix(host, ".1688.com")
+	if sub == "" || strings.Contains(sub, ".") {
+		return ""
+	}
+	if _, sys := system1688Subdomains[sub]; sys {
+		return ""
+	}
+	return sub
+}
+
 type BrowserProductInput struct {
 	ID   string         `json:"id"`
 	Data map[string]any `json:"data"`
@@ -153,11 +188,31 @@ func normalizeBrowserProduct(raw BrowserProductInput, seller string, syncedAt ti
 	} else if existingID != id {
 		return Product{}, errors.New("productID in data does not match product ID")
 	}
-	owner, _ := data["sellerLoginId"].(string)
-	if owner == "" {
-		owner, _ = data["supplierLoginId"].(string)
+	for _, key := range []string{"sellerLoginId", "supplierLoginId"} {
+		rawOwner, exists := data[key]
+		if !exists || rawOwner == nil {
+			continue
+		}
+		ownerStr, ok := rawOwner.(string)
+		if !ok {
+			return Product{}, errors.New("platform product seller does not match the bound store")
+		}
+		ownerStr = strings.TrimSpace(ownerStr)
+		if ownerStr == "" {
+			delete(data, key)
+			continue
+		}
+		if ownerStr != seller && !strings.EqualFold(ownerStr, seller) {
+			return Product{}, errors.New("platform product seller does not match the bound store")
+		}
+		data[key] = seller
 	}
-	if owner == "" {
+	if srcURL, ok := data["sourceUrl"].(string); ok {
+		if urlSeller := infer1688SellerFromURL(srcURL); urlSeller != "" && !strings.EqualFold(urlSeller, seller) {
+			return Product{}, errors.New("platform product seller does not match the bound store")
+		}
+	}
+	if _, ok := data["sellerLoginId"].(string); !ok {
 		data["sellerLoginId"] = seller
 	}
 	subject, _ := data["subject"].(string)
@@ -256,6 +311,8 @@ func normalizeAlibabaBrowserImageURL(raw string) string {
 }
 
 func mergeBrowserProduct(existing, incoming Product) Product {
+	existingIsDetail := hasNonEmptyCatalogString(existing.Data["description"]) ||
+		hasNonEmptyCatalogSlice(existing.Data["attributes"])
 	incomingIsDetail := hasNonEmptyCatalogString(incoming.Data["description"]) ||
 		hasNonEmptyCatalogSlice(incoming.Data["attributes"])
 	merged := make(map[string]any, len(existing.Data)+len(incoming.Data))
@@ -293,7 +350,7 @@ func mergeBrowserProduct(existing, incoming Product) Product {
 			}
 		}
 		if k == "saleInfo" {
-			merged["saleInfo"] = mergeBrowserSaleInfo(existing.Data["saleInfo"], v, incomingIsDetail)
+			merged["saleInfo"] = mergeBrowserSaleInfo(existing.Data["saleInfo"], v, existingIsDetail, incomingIsDetail)
 			continue
 		}
 		if k == "image" {
@@ -363,7 +420,7 @@ func isSummarySKUList(list []any) bool {
 		item["amountOnSale"] == nil
 }
 
-func mergeBrowserSaleInfo(prevRaw, nextRaw any, incomingIsDetail bool) any {
+func mergeBrowserSaleInfo(prevRaw, nextRaw any, existingIsDetail, incomingIsDetail bool) any {
 	prevMap, prevOK := prevRaw.(map[string]any)
 	nextMap, nextOK := nextRaw.(map[string]any)
 	if !nextOK || nextMap == nil {
@@ -390,7 +447,7 @@ func mergeBrowserSaleInfo(prevRaw, nextRaw any, incomingIsDetail bool) any {
 				continue
 			}
 		}
-		if k == "priceRanges" && shouldPreservePriceRanges(prevMap["priceRanges"], v, incomingIsDetail) {
+		if k == "priceRanges" && shouldPreservePriceRanges(prevMap["priceRanges"], v, existingIsDetail, incomingIsDetail) {
 			continue
 		}
 		out[k] = v
@@ -398,7 +455,7 @@ func mergeBrowserSaleInfo(prevRaw, nextRaw any, incomingIsDetail bool) any {
 	return out
 }
 
-func shouldPreservePriceRanges(prevRaw, nextRaw any, incomingIsDetail bool) bool {
+func shouldPreservePriceRanges(prevRaw, nextRaw any, existingIsDetail, incomingIsDetail bool) bool {
 	prevRanges, ok := prevRaw.([]any)
 	if !ok || len(prevRanges) == 0 {
 		return false
@@ -410,17 +467,33 @@ func shouldPreservePriceRanges(prevRaw, nextRaw any, incomingIsDetail bool) bool
 	if incomingIsDetail || !priceRangesSubset(nextRanges, prevRanges) {
 		return false
 	}
-	if len(nextRanges) < len(prevRanges) {
+	if existingIsDetail || len(nextRanges) < len(prevRanges) || isSyntheticSummaryPriceRanges(nextRanges) {
 		return true
 	}
-	if len(nextRanges) == 1 && len(prevRanges) == 1 {
-		nextStart, nextOK := rangeFieldFloat(nextRanges[0], "startQuantity")
-		prevStart, prevOK := rangeFieldFloat(prevRanges[0], "startQuantity")
-		if nextOK && prevOK && nextStart == 1 && prevStart > 1 {
-			return true
+	return false
+}
+
+// isSyntheticSummaryPriceRanges detects list-extracted tier placeholders (`1`, `10`, `20`, ...)
+// so list refreshes never overwrite previously known MOQ thresholds (e.g. `3 / 50`) when the
+// unit-price set has not changed.
+func isSyntheticSummaryPriceRanges(list []any) bool {
+	if len(list) == 0 {
+		return false
+	}
+	for i, raw := range list {
+		start, ok := rangeFieldFloat(raw, "startQuantity")
+		if !ok {
+			return false
+		}
+		expected := 1.0
+		if i > 0 {
+			expected = float64(i * 10)
+		}
+		if start != expected {
+			return false
 		}
 	}
-	return false
+	return true
 }
 
 func priceRangesSubset(subset, superset []any) bool {

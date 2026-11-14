@@ -169,10 +169,16 @@ export default defineConfig({
     emptyOutDir: true,
     chunkSizeWarningLimit: 900,
     rollupOptions: {
+      onwarn(warning, warn) {
+        if (warning.code === "CIRCULAR_CHUNK") {
+          throw new Error(warning.message);
+        }
+        warn(warning);
+      },
       output: {
         manualChunks(id) {
           const normalized = id.replace(/\\/g, "/");
-          if (normalized.includes("node_modules/solid-js")) {
+          if (normalized.includes("node_modules/solid-js") || id.includes("preload-helper")) {
             return "vendor-solid";
           }
           if (normalized.includes("node_modules/lucide-solid")) {
@@ -192,24 +198,13 @@ export default defineConfig({
           const inWorkExt =
             (hasWorkExt && normalized.startsWith(`${workRepoDir}/`)) ||
             normalized.includes("/hoxi-work/");
-          if (
-            normalized.includes("/src/components/workcatalog/") ||
-            (inWorkExt &&
-              /\/(?:WorkCatalogSurface|WorkCatalogSources|store\/catalog-workspace)\.[tj]sx?$/.test(
-                normalized,
-              ))
-          ) {
-            return "app-work-catalog";
-          }
           if (inWorkExt) {
-            if (
-              /\/(?:Work1688Studio|WorkCrossBorderStudios|WorkGlobalPlatformStudios|WorkMcpEnvelopeShelf|work-1688-helpers|work-global-platform-helpers|work-storefront-publisher)\.[tj]sx?$/.test(
-                normalized,
-              )
-            ) {
-              return "surface-work-studios";
-            }
-            return "surface-work";
+            return /\.ts(?:\?.*)?$/.test(normalized) && !/\.tsx(?:\?.*)?$/.test(normalized)
+              ? "surface-work-core"
+              : "surface-work";
+          }
+          if (normalized.includes("/src/components/workcatalog/")) {
+            return hasWorkExt ? "surface-work" : "app-work-catalog";
           }
           if (normalized.includes("/src/i18n/")) {
             return "app-i18n";

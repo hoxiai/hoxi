@@ -208,10 +208,12 @@ const catalog1688ExtractScript = `(() => {
     if (!/^[1-9][0-9]{5,18}$/.test(id) || seen.has(id)) return;
     if (isInvalidProductTitle(subject)) return;
     seen.add(id);
+    const itemSeller = clean(opts.sellerLoginId || detectedSeller || "");
     items.push({
       id,
       data: {
         productID: id,
+        sellerLoginId: itemSeller || undefined,
         subject: subject.slice(0, 120),
         status: opts.status || "published",
         sourceUrl: opts.sourceUrl || undefined,
@@ -242,7 +244,12 @@ const catalog1688ExtractScript = `(() => {
       const ibank = toIbank(typeof rawImg === "string" ? rawImg : rawImg?.url || rawImg?.fullPathImageURI || "");
       const rawPrice = Number(node.price ?? node.minPrice ?? node.tradePrice ?? node.unitPrice ?? NaN);
       const rawStock = Number(node.amountOnSale ?? node.canBookCount ?? node.quantity ?? node.stock ?? NaN);
+      const nodeSeller =
+        clean(node.sellerLoginId || node.supplierLoginId || "") ||
+        inferSellerFromUrl(String(node.detailUrl || node.offerUrl || "")) ||
+        detectedSeller;
       pushItem(candId, candTitle, {
+        sellerLoginId: nodeSeller,
         status: inferStatus(String(node.status || node.offerStatus || "")),
         amountOnSale: Number.isFinite(rawStock) && rawStock >= 0 ? rawStock : null,
         priceRanges: Number.isFinite(rawPrice) && rawPrice > 0 ? [{ startQuantity: 1, price: rawPrice }] : [],
@@ -314,7 +321,7 @@ const catalog1688ExtractScript = `(() => {
           .map((m) => Number(m.replace(/[¥￥\s]/g, "")))
           .filter((n) => Number.isFinite(n) && n > 0 && n < 1000000)
       )
-    ).sort((a, b) => a - b);
+    ).sort((a, b) => b - a);
 
     const stockMatch = rowText.match(/(?:库存|可售|在售数量|总量)[：:\s]*([0-9]{1,9})/);
     const cargoMatch = rowText.match(/(?:货号|单品货号|编码|SKU)[：:\s]*([A-Za-z0-9._-]{2,40})/i);
@@ -337,6 +344,7 @@ const catalog1688ExtractScript = `(() => {
         : "";
 
     pushItem(id, subject, {
+      sellerLoginId: inferSellerFromUrl(normHref) || detectedSeller,
       status: inferStatus(rowText),
       sourceUrl: normHref,
       amountOnSale: stockMatch ? Number(stockMatch[1]) : null,

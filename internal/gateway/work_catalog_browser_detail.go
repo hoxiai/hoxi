@@ -433,15 +433,38 @@ const catalog1688ExtractDetailPart = `
         .filter(Boolean)
         .join("\n") || ("<p>" + subject + "</p>");
 
+    let offerSeller =
+      inferSellerFromUrl(href) ||
+      clean(
+        tempModel?.sellerLoginId ||
+          globalData?.sellerLoginId ||
+          globalData?.sellerMixSetting?.sellerLoginId ||
+          ""
+      );
+    if (!offerSeller) {
+      for (const r of roots) {
+        for (const a of Array.from(r.querySelectorAll("a[href]")).slice(0, 120)) {
+          const cand = inferSellerFromUrl(a.getAttribute("href") || "");
+          if (cand) {
+            offerSeller = cand;
+            break;
+          }
+        }
+        if (offerSeller) break;
+      }
+    }
+    if (!offerSeller) offerSeller = detectedSeller;
+
     return JSON.stringify({
       hasCaptcha: false,
-      sellerId: detectedSeller,
+      sellerId: offerSeller,
       pageUrl: href,
       items: [
         {
           id,
           data: {
             productID: id,
+            sellerLoginId: offerSeller || undefined,
             subject: subject.slice(0, 120),
             status: "published",
             categoryName: categoryName || undefined,
