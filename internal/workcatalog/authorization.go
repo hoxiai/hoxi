@@ -64,6 +64,7 @@ type Capabilities struct {
 }
 
 type Target struct {
+	PlatformID          string
 	Scope               Scope
 	Platform            func() (Platform, error)
 	Authorization       AuthorizationStatus
@@ -71,7 +72,17 @@ type Target struct {
 	authorizationDigest [32]byte
 }
 
-func (s *Service) readAuthorization(storeID string) (*authorizationRecord, error) {
+func (s *Service) credentialValidator(platform string) func(Credentials) error {
+	if spec, ok := s.Adapter(platform); ok && spec.ValidateCredentials != nil {
+		return spec.ValidateCredentials
+	}
+	return validateCredentials
+}
+
+func (s *Service) readAuthorization(storeID string, validate func(Credentials) error) (*authorizationRecord, error) {
+	if validate == nil {
+		validate = validateCredentials
+	}
 	path, err := s.store.path(Scope{StoreID: storeID, SellerLoginID: "authorization"})
 	if err != nil {
 		return nil, err
@@ -93,7 +104,7 @@ func (s *Service) readAuthorization(storeID string) (*authorizationRecord, error
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decodeErr := decoder.Decode(&record)
 	var extra any
-	if decodeErr != nil || decoder.Decode(&extra) != io.EOF || record.Version != 1 || record.StoreID != storeID || validateCredentials(record.Credentials) != nil {
+	if decodeErr != nil || decoder.Decode(&extra) != io.EOF || record.Version != 1 || record.StoreID != storeID || validate(record.Credentials) != nil {
 		sum := sha256.Sum256(raw)
 		if err := hoxipaths.WriteFileAtomic(path+".corrupt-"+hex.EncodeToString(sum[:]), raw, 0600); err != nil {
 			return nil, errors.New("cannot back up invalid local store authorization")
@@ -116,12 +127,24 @@ func validateCredentials(c Credentials) error {
 }
 
 func (s *Service) ConfigureAuthorization(ctx context.Context, storeID string, input Credentials) (AuthorizationStatus, error) {
+	return s.ConfigureAuthorizationForPlatform(ctx, "1688", storeID, input)
+}
+
+func (s *Service) ConfigureAuthorizationForPlatform(ctx context.Context, platform, storeID string, input Credentials) (AuthorizationStatus, error) {
+	if normalizePlatformID(platform) == "" {
+		platform = "1688"
+	}
+	spec, supported := s.Adapter(platform)
+	if !supported {
+		return AuthorizationStatus{}, errors.New("this platform has no local catalog adapter")
+	}
+	validate := s.credentialValidator(platform)
 	unlock, err := s.store.lock(ctx, Scope{StoreID: storeID, SellerLoginID: "authorization"}, ".authorization.lock")
 	if err != nil {
 		return AuthorizationStatus{}, err
 	}
 	defer unlock()
-	previous, err := s.readAuthorization(storeID)
+	previous, err := s.readAuthorization(storeID, validate)
 	if err != nil {
 		return AuthorizationStatus{}, err
 	}
@@ -133,7 +156,7 @@ func (s *Service) ConfigureAuthorization(ctx context.Context, storeID string, in
 			input.AccessToken = previous.Credentials.AccessToken
 		}
 	}
-	if err := validateCredentials(input); err != nil {
+	if err := validate(input); err != nil {
 		return AuthorizationStatus{}, err
 	}
 	// A credential update must not silently relink an existing catalog to a
@@ -146,11 +169,11 @@ func (s *Service) ConfigureAuthorization(ctx context.Context, storeID string, in
 	if err := hoxipaths.WriteJSONAtomic(path+".auth.json", record, 0600); err != nil {
 		return AuthorizationStatus{}, errors.New("cannot save local store authorization")
 	}
-	return authorizationView(&record), nil
+	return authorizationView(&record, spec.Destination), nil
 }
 
-func authorizationView(record *authorizationRecord) AuthorizationStatus {
-	view := AuthorizationStatus{Source: "none", Destination: "https://gw.open.1688.com"}
+func authorizationView(record *authorizationRecord, destination string) AuthorizationStatus {
+	view := AuthorizationStatus{Source: "none", Destination: destination}
 	if record != nil {
 		view.Source, view.Configured = "local", true
 		view.SellerLoginID, view.AppKey = record.Credentials.SellerLoginID, record.Credentials.AppKey
@@ -161,16 +184,19 @@ func authorizationView(record *authorizationRecord) AuthorizationStatus {
 }
 
 func (s *Service) ResolveTarget(ctx context.Context, settings StoreSettings) (Target, error) {
+	platformID := normalizePlatformID(settings.Platform)
+	spec, supported := s.Adapter(platformID)
+	validate := s.credentialValidator(platformID)
 	unlock, err := s.store.lock(ctx, Scope{StoreID: settings.StoreID, SellerLoginID: "authorization"}, ".authorization.lock")
 	if err != nil {
 		return Target{}, err
 	}
-	record, err := s.readAuthorization(settings.StoreID)
+	record, err := s.readAuthorization(settings.StoreID, validate)
 	unlock()
 	if err != nil {
 		return Target{}, err
 	}
-	view := authorizationView(record)
+	view := authorizationView(record, spec.Destination)
 	seller := settings.SellerLoginID
 	if record != nil {
 		seller = record.Credentials.SellerLoginID
@@ -179,32 +205,40 @@ func (s *Service) ResolveTarget(ctx context.Context, settings StoreSettings) (Ta
 		seller = "unconfigured"
 	}
 	factory := func() (Platform, error) {
-		if settings.Platform != "1688" {
+		if !supported {
 			return nil, errors.New("this platform has no local catalog adapter")
 		}
 		if settings.ProxyRequired && settings.ProxyURL == "" {
 			return nil, errors.New("the store requires a configured proxy")
 		}
 		if record != nil {
-			return NewAlibaba1688(record.Credentials, settings.ProxyURL)
+			if spec.NewFromCredentials == nil {
+				return nil, errors.New("this platform has no local catalog adapter")
+			}
+			return spec.NewFromCredentials(record.Credentials, settings.ProxyURL)
 		}
-		return NewAlibaba1688FromEnv(settings.CredentialEnv, settings.ProxyURL)
+		if spec.NewFromEnv == nil {
+			return nil, errors.New("store authorization is not configured")
+		}
+		return spec.NewFromEnv(settings.CredentialEnv, settings.ProxyURL)
 	}
-	if record == nil && settings.SellerLoginID != "" {
+	if supported && record == nil && settings.SellerLoginID != "" {
 		if _, err := factory(); err == nil {
 			view.Source, view.Configured, view.SellerLoginID = "environment", true, seller
 			view.HasAppSecret, view.HasAccessToken = true, true
 		}
 	}
-	supported := settings.Platform == "1688"
 	var digest [32]byte
 	if record != nil {
 		raw, _ := json.Marshal(record.Credentials)
 		digest = sha256.Sum256(raw)
 	}
-	return Target{Scope: Scope{StoreID: settings.StoreID, SellerLoginID: seller}, Platform: factory, Authorization: view, authorizationDigest: digest,
-		Capabilities: Capabilities{Supported: supported, Read: supported, Sync: supported, EditDraft: supported, NewDraft: supported,
-			PublishUpdate: supported, PublishNew: false, EditableFields: []string{"subject", "description", "images"}}}, nil
+	capabilities := Capabilities{Supported: false, EditableFields: []string{}}
+	if supported {
+		capabilities = spec.Capabilities
+	}
+	return Target{PlatformID: platformID, Scope: Scope{StoreID: settings.StoreID, SellerLoginID: seller}, Platform: factory,
+		Authorization: view, authorizationDigest: digest, Capabilities: capabilities}, nil
 }
 
 func (s *Service) CheckAuthorization(ctx context.Context, target Target) (AuthorizationStatus, error) {
@@ -248,7 +282,7 @@ func (s *Service) markAuthorizationChecked(ctx context.Context, target Target, w
 		return err
 	}
 	defer unlock()
-	record, err := s.readAuthorization(target.Scope.StoreID)
+	record, err := s.readAuthorization(target.Scope.StoreID, s.credentialValidator(target.PlatformID))
 	if err != nil {
 		return err
 	}

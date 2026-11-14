@@ -81,21 +81,33 @@ type Scope struct {
 type Authorize func(context.Context, Draft) error
 
 type Service struct {
-	store  *Store
-	jobsMu sync.Mutex
-	jobs   map[string]*syncWorker
-	closed bool
+	store      *Store
+	adaptersMu sync.RWMutex
+	adapters   map[string]AdapterSpec
+	jobsMu     sync.Mutex
+	jobs       map[string]*syncWorker
+	closed     bool
 }
 
 func NewService(store *Store) *Service {
 	if store == nil {
 		store = NewStore("")
 	}
-	return &Service{store: store, jobs: map[string]*syncWorker{}}
+	svc := &Service{store: store, adapters: map[string]AdapterSpec{}, jobs: map[string]*syncWorker{}}
+	svc.RegisterAdapter(alibaba1688AdapterSpec())
+	return svc
 }
 
 func (s *Service) CreateDraft(ctx context.Context, scope Scope, productID string, patch Patch) (Draft, error) {
-	if err := validatePatch(patch); err != nil {
+	return s.CreateDraftForPlatform(ctx, "1688", scope, productID, patch)
+}
+
+func (s *Service) CreateDraftForPlatform(ctx context.Context, platform string, scope Scope, productID string, patch Patch) (Draft, error) {
+	validator := validatePatch
+	if spec, ok := s.Adapter(platform); ok && spec.ValidatePatch != nil {
+		validator = spec.ValidatePatch
+	}
+	if err := validator(patch); err != nil {
 		return Draft{}, err
 	}
 	var draft Draft

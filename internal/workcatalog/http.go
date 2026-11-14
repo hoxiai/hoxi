@@ -66,7 +66,7 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if !target.Capabilities.Supported {
 				err = errors.New("this platform has no local catalog adapter")
 			} else {
-				output, err = h.service.ConfigureAuthorization(ctx, scope.StoreID, input)
+				output, err = h.service.ConfigureAuthorizationForPlatform(ctx, target.PlatformID, scope.StoreID, input)
 			}
 		}
 	case path == "/api/hoxi/work/catalog/authorization-check" && method == http.MethodPost:
@@ -105,7 +105,7 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			} else if input.Kind == "create" && input.NewProduct != nil && input.ProductID == "" && input.Changes.Subject == nil && input.Changes.Description == nil && input.Changes.Images == nil {
 				output, err = h.service.IntakeDraft(ctx, scope, *input.NewProduct)
 			} else if input.Kind == "update" && input.ProductID != "" && input.NewProduct == nil {
-				output, err = h.service.CreateDraft(ctx, scope, input.ProductID, input.Changes)
+				output, err = h.service.CreateDraftForPlatform(ctx, target.PlatformID, scope, input.ProductID, input.Changes)
 			} else {
 				err = errors.New("draft kind and payload do not match")
 			}

@@ -22,7 +22,11 @@ func TestWorkCatalogDesktopUIQueriesWithoutChatAndRejectsUntrustedCallers(t *tes
 	g := &Gateway{workApps: work, workCatalog: workcatalog.NewService(workcatalog.NewStore(t.TempDir())), mux: http.NewServeMux()}
 	t.Cleanup(g.workCatalog.Close)
 	g.SetGatewayToken("catalog-local-token")
-	g.uiOrigins = map[string]bool{"http://localhost:5421": true}
+	g.uiOrigins = map[string]bool{
+		"http://localhost:5421":        true,
+		"wails://wails.localhost:34115": true,
+		"http://wails.localhost:34115":  true,
+	}
 	g.registerWorkMCPRoutes()
 	request := func(method, action, store, origin, token, ui, body string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, "http://127.0.0.1/api/hoxi/work/catalog/"+action+"?storeId="+store, strings.NewReader(body))
@@ -74,6 +78,42 @@ func TestWorkCatalogDesktopUIQueriesWithoutChatAndRejectsUntrustedCallers(t *tes
 	g.mux.ServeHTTP(proxiedResponse, proxied)
 	if proxiedResponse.Code != 403 {
 		t.Fatal("untrusted Referer was accepted")
+	}
+
+	// Native Wails release/dev contexts omit Origin and Sec-Fetch-Site on GETs;
+	// unconfigured ports, cross-site metadata, and forged Referers must still fail closed.
+	for _, tc := range []struct {
+		name    string
+		host    string
+		site    string
+		referer string
+		want    int
+	}{
+		{"wails release host", "wails", "", "", 200},
+		{"wails dev macos port", "wails.localhost:34115", "", "wails://wails.localhost:34115/", 200},
+		{"wails dev proxied referer", "127.0.0.1:5420", "", "wails://wails.localhost:34115/", 200},
+		{"wails dev windows http", "wails.localhost:34115", "same-origin", "http://wails.localhost:34115/", 200},
+		{"unconfigured wails port", "wails.localhost:9999", "", "wails://wails.localhost:9999/", 403},
+		{"wails cross-site fetch", "wails.localhost:34115", "cross-site", "wails://wails.localhost:34115/", 403},
+		{"wails same-site fetch", "wails.localhost:34115", "same-site", "wails://wails.localhost:34115/", 403},
+		{"forged referer userinfo", "127.0.0.1:5420", "", "wails://user@wails.localhost:34115/", 403},
+		{"bare loopback without context", "127.0.0.1:5420", "", "", 403},
+	} {
+		r := httptest.NewRequest("GET", "http://"+tc.host+"/api/hoxi/work/catalog/status?storeId=store-a", nil)
+		r.Host = tc.host
+		r.Header.Set("Authorization", "Bearer catalog-local-token")
+		r.Header.Set("X-Hoxi-Work-UI", "true")
+		if tc.site != "" {
+			r.Header.Set("Sec-Fetch-Site", tc.site)
+		}
+		if tc.referer != "" {
+			r.Header.Set("Referer", tc.referer)
+		}
+		rec := httptest.NewRecorder()
+		g.mux.ServeHTTP(rec, r)
+		if rec.Code != tc.want {
+			t.Fatalf("%s: expected %d, got %d (%s)", tc.name, tc.want, rec.Code, rec.Body.String())
+		}
 	}
 	w := request("PUT", "authorization", "store-a", "http://localhost:5421", "catalog-local-token", "true", credentials)
 	if w.Code != 200 || strings.Contains(w.Body.String(), "hidden-") {

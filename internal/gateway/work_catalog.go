@@ -37,27 +37,26 @@ func (g *Gateway) resolveWorkCatalogUI(r *http.Request) (workcatalog.Target, err
 		return workcatalog.Target{}, errors.New("Work catalog requires the local gateway token")
 	}
 	origin := r.Header.Get("Origin")
-	g.originMu.RLock()
-	allowed := g.uiOrigins[origin] || origin == "wails://wails" || origin == "wails://wails.localhost" || origin == "wails://app.wails.localhost"
-	configuredHost := false
-	for candidate := range g.uiOrigins {
-		if u, err := url.Parse(candidate); err == nil && u.Host == r.Host {
-			configuredHost = true
-		}
-	}
+	allowed, configuredHost, native := g.trustedComputerUI(origin, r.Host)
 	trustedReferer := false
-	if ref, err := url.Parse(r.Header.Get("Referer")); err == nil && ref.User == nil {
-		trustedReferer = g.uiOrigins[ref.Scheme+"://"+ref.Host]
+	wailsReferer := false
+	if ref, err := url.Parse(r.Header.Get("Referer")); err == nil && ref.User == nil && ref.Host != "" {
+		allowedRef, _, refNative := g.trustedComputerUI(ref.Scheme+"://"+ref.Host, ref.Host)
+		trustedReferer = allowedRef
+		wailsReferer = ref.Scheme == "wails" && allowedRef && refNative
 	}
-	g.originMu.RUnlock()
 	if origin != "" {
 		if len(r.Header.Values("Origin")) != 1 || !allowed {
 			return workcatalog.Target{}, errors.New("untrusted Work catalog origin")
 		}
 	} else {
 		site := r.Header.Get("Sec-Fetch-Site")
-		native := nativeHost(r.Host) && (site == "" || site == "same-origin")
-		if !native && !(site == "same-origin" && (configuredHost || trustedReferer)) {
+		if !native && site == "" && wailsReferer {
+			native = true
+		}
+		nativeAllowed := native && (site == "" || site == "same-origin" || site == "none")
+		httpAllowed := site == "same-origin" && (configuredHost || trustedReferer)
+		if !nativeAllowed && !httpAllowed {
 			return workcatalog.Target{}, errors.New("Work catalog requires a desktop UI context")
 		}
 	}

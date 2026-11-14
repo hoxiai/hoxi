@@ -182,3 +182,29 @@ func TestResolveBrowserProfileKey(t *testing.T) {
 		t.Fatalf("expected unsafe direct workstore_ key to be rejected, got %q", got)
 	}
 }
+
+func TestGetStoreFallsBackToLegacyDefaultConnection(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "work-apps.json"))
+	svc := NewService(nil, store)
+	if err := svc.SaveState(map[string]any{
+		"connections": map[string]any{
+			"1688": map[string]any{
+				"authorized": true,
+				"storeName":  "义乌工厂 · 1688 旺铺",
+				"siteUrl":    "https://factory.1688.com",
+			},
+		},
+	}); err != nil {
+		t.Fatalf("SaveState failed: %v", err)
+	}
+	prof, ok := svc.GetStore("store-1688-default")
+	if !ok {
+		t.Fatalf("expected legacy default store-1688-default to resolve")
+	}
+	if prof.Platform != "1688" || prof.AppID != "1688" || prof.Name != "义乌工厂 · 1688 旺铺" || prof.BrowserProfileKey != "default" {
+		t.Fatalf("unexpected legacy StoreProfile: %+v", prof)
+	}
+	if _, ok := svc.GetStore("store-shopify-default"); ok {
+		t.Fatalf("unconfigured legacy store must not resolve")
+	}
+}

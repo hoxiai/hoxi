@@ -563,6 +563,24 @@ func findStoreInState(state map[string]any, storeID, preferredAppID string) (*St
 		}
 		return &prof, true
 	}
+	if strings.HasPrefix(storeID, "store-") && strings.HasSuffix(storeID, "-default") {
+		appID := strings.TrimSuffix(strings.TrimPrefix(storeID, "store-"), "-default")
+		if appID != "" && (preferredAppID == "" || preferredAppID == appID) {
+			if conns, ok := state["connections"].(map[string]any); ok {
+				if conn, ok := conns[appID].(map[string]any); ok && (boolField(conn, "authorized") || strings.TrimSpace(stringField(conn, "storeName", "siteUrl", "apiToken")) != "") {
+					base := map[string]any{"id": storeID, "browserProfileKey": "default"}
+					for k, v := range conn {
+						base[k] = v
+					}
+					prof := parseStoreProfile(appID, base, extra)
+					if prof.BrowserProfileKey == "" {
+						prof.BrowserProfileKey = "default"
+					}
+					return &prof, true
+				}
+			}
+		}
+	}
 	return nil, false
 }
 
