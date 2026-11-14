@@ -3,6 +3,7 @@
 // copy is judged as its own command. Over the cap the loop is left untouched.
 // Mirrors expandLiteralForLoops in internal/runner/opaque_expand.go.
 import { normalizeNumericLoops } from "./numeric-loops.js";
+import { isScopedProjectScript, stripScriptRedirects } from "./shell-script.js";
 
 const MAX_LITERAL_LOOP_ITEMS = 64;
 const MAX_LITERAL_LOOP_BYTES = 256 * 1024;
@@ -449,7 +450,7 @@ export function isSafeHomeScriptWord(word, vars, deps) {
 
 export function isSafeShellScriptSegment(base, rawArgs, piped, deps) {
   if (piped || (base !== "sh" && base !== "bash" && base !== "zsh")) return false;
-  const args = deps.stripNullRedirects(rawArgs);
+  const args = stripScriptRedirects(rawArgs, deps, isMacOSTempPath);
   if (!args || args.length === 0) return false;
   let syntaxOnly = false;
   let i = 0;
@@ -478,7 +479,7 @@ export function isSafeShellScriptSegment(base, rawArgs, piped, deps) {
   // Full trust also runs a plain script file outside attachments, matching
   // `./build.sh` (isSafeShellScriptSegmentWith in opaque_expand.go).
   const isAttachment = lower.includes("/.hoxi/attachments/") || lower.startsWith(".hoxi/attachments/");
-  if (!syntaxOnly && !isSkill && (!deps.allowFileScripts || isAttachment)) return false;
+  if (!syntaxOnly && !isSkill && ((!deps.allowFileScripts && !(deps.allowProjectScripts && isScopedProjectScript(script, deps.worktree, deps.cwd))) || isAttachment)) return false;
   return args.slice(i + 1).every((w) => !/[$`]/.test(w));
 }
 

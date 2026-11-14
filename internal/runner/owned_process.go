@@ -420,11 +420,12 @@ func (s *Service) ownedProcessJudgedItem(item map[string]interface{}, sessionID 
 		return item, false
 	}
 	verify := s.ownedProcessVerifier(sessionID)
+	trusted := s.processControlToolVerifier(sessionID)
 	changed := false
 	maskValue := func(v interface{}) interface{} {
 		switch x := v.(type) {
 		case string:
-			if masked, ok := maskVerifiedProcessControl(unwrapSandboxCommand(x), verify); ok {
+			if masked, ok := maskVerifiedProcessControlWithResolver(unwrapSandboxCommand(x), verify, trusted); ok {
 				changed = true
 				return masked
 			}
@@ -432,7 +433,7 @@ func (s *Service) ownedProcessJudgedItem(item map[string]interface{}, sessionID 
 			out := make([]string, len(x))
 			for i, e := range x {
 				out[i] = e
-				if masked, ok := maskVerifiedProcessControl(unwrapSandboxCommand(e), verify); ok {
+				if masked, ok := maskVerifiedProcessControlWithResolver(unwrapSandboxCommand(e), verify, trusted); ok {
 					changed = true
 					out[i] = masked
 				}
@@ -443,7 +444,7 @@ func (s *Service) ownedProcessJudgedItem(item map[string]interface{}, sessionID 
 			for i, e := range x {
 				out[i] = e
 				if str, isStr := e.(string); isStr {
-					if masked, ok := maskVerifiedProcessControl(unwrapSandboxCommand(str), verify); ok {
+					if masked, ok := maskVerifiedProcessControlWithResolver(unwrapSandboxCommand(str), verify, trusted); ok {
 						changed = true
 						out[i] = masked
 					}

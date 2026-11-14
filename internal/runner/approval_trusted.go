@@ -283,6 +283,9 @@ func recoverableCommandClassesAt(command, worktree string, classes map[string]bo
 			cwd = ""
 			continue
 		case dataArgInterpreters[base]:
+			if !isDestructiveCommand(seg) && !isOpaqueShellCommandWith(seg, cwd, trust) {
+				continue
+			}
 			// `curl ... | sh`, `xargs rm`, `sudo ...`: each half can look
 			// harmless while the pipeline is not.
 			return false

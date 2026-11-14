@@ -32,6 +32,9 @@ func externalDirectoryTargetsAreRoutine(item map[string]interface{}) bool {
 		if readOnly {
 			sensitive = isSensitiveExternalReadPath(target)
 		}
+		if sensitive && isClaudeSkillReadRequest(item, target) {
+			sensitive = false
+		}
 		if sensitive && !isOwnSessionRecordRead(item, target) {
 			return false
 		}
@@ -237,6 +240,9 @@ func isRoutineHoxiSubpath(slash string) bool {
 }
 
 func isProtectedShellReadPath(p string) bool {
+	if isClaudeSkillReadPath(p, false) {
+		return false
+	}
 	rawSlash := strings.ToLower(filepath.ToSlash(filepath.Clean(p)))
 	slash := stripWorktreePrefix(rawSlash)
 	if isRoutineHoxiSubpath(slash) {
@@ -254,6 +260,9 @@ func isSensitiveExternalReadPath(rawPath string) bool {
 }
 
 func isSensitiveExternalPathWith(rawPath string, checkProtected bool) bool {
+	if !checkProtected && isClaudeSkillReadPath(rawPath, false) {
+		return false
+	}
 	trimmed := strings.TrimSpace(rawPath)
 	if trimmed == "" {
 		return false
@@ -304,6 +313,9 @@ func isSensitiveExternalPathWith(rawPath string, checkProtected bool) bool {
 // stays routine while `.env` asks in every mode, matching OpenCode's own
 // read defaults (`*.env`, `*.env.*` ask; `*.env.example` allowed).
 func isSecretFilePath(p string) bool {
+	if isClaudeSkillReadPath(p, false) {
+		return false
+	}
 	if isSecretFilePathLexical(p) {
 		return true
 	}

@@ -262,7 +262,7 @@ func TestOnDemandSandboxTightensCommandSandboxSessionAndRespectsGrants(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	opaqueCmd := `bash build.sh`
+	opaqueCmd := `bash /opt/hoxi/shared/build.sh`
 	// Session profile alone allows outbound network, so it must NOT cover opacity.
 	if approvalAutoApproves(wrappedRequest(snap.ProfilePath, opaqueCmd), ApprovalPolicy{Mode: ApprovalModeAuto}, nil, workspace) {
 		t.Fatal("session network-allow profile must not auto-approve opaque commands")

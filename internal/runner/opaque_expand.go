@@ -733,10 +733,14 @@ func isSafeShellScriptSegment(base string, rawArgs []string, piped bool) bool {
 // trust), any plain script file outside attachments: `bash build.sh` is
 // `./build.sh`. isOpaqueShellCommandWith refuses one the command also names.
 func isSafeShellScriptSegmentWith(base string, rawArgs []string, piped, allowFileScripts bool) bool {
+	return isSafeShellScriptSegmentIn(base, rawArgs, piped, allowFileScripts, false, "", "")
+}
+
+func isSafeShellScriptSegmentIn(base string, rawArgs []string, piped, allowFileScripts, allowProjectScripts bool, worktree, cwd string) bool {
 	if piped || (base != "sh" && base != "bash" && base != "zsh") {
 		return false
 	}
-	args, ok := stripNullRedirects(rawArgs)
+	args, ok := stripScriptRedirects(rawArgs, worktree, cwd)
 	if !ok || len(args) == 0 {
 		return false
 	}
@@ -780,7 +784,7 @@ func isSafeShellScriptSegmentWith(base string, rawArgs []string, piped, allowFil
 	if isSafeCurlOutputTarget(script) || isSecretFilePath(script) || isSensitiveExternalPath(script) || (!isSkill && isProtectedRelPath(script)) {
 		return false
 	}
-	if !syntaxOnly && !isSkill && (!allowFileScripts || isRoutineAttachmentSubpath(lower)) {
+	if !syntaxOnly && !isSkill && ((!allowFileScripts && !(allowProjectScripts && isScopedProjectScript(script, worktree, cwd))) || isRoutineAttachmentSubpath(lower)) {
 		return false
 	}
 	for _, w := range args[i+1:] {

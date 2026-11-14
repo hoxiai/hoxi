@@ -324,12 +324,16 @@ func TestTrustedRunsScriptFilesAndRelativeSiblingCD(t *testing.T) {
 			t.Errorf("trusted mode should run %q", cmd)
 		}
 	}
-	// The cd fix holds in every mode; the file-script relaxation is full trust only.
+	// Project script files now run in auto too, while a different project's
+	// script remains outside that narrow scope.
 	if !approvalAutoApproves(req("bash", "cd ../apay && git status --short"), auto, nil, local) {
 		t.Error("auto mode should follow a relative cd into a sibling checkout")
 	}
-	if approvalAutoApproves(req("bash", "bash build.sh"), auto, nil, local) {
-		t.Error("auto mode must keep asking for a shell running a script")
+	if !approvalAutoApproves(req("bash", "bash build.sh"), auto, nil, local) {
+		t.Error("auto mode should run a fixed project script")
+	}
+	if approvalAutoApproves(req("bash", "bash "+filepath.Join(sibling, "build.sh")), auto, nil, local) {
+		t.Error("auto mode must keep asking for another project's shell script")
 	}
 	for _, cmd := range []string{
 		"cd ../apay && cat .env",

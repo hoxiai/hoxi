@@ -520,6 +520,9 @@ func isDestructivePermissionRequest(item map[string]interface{}) bool {
 	if isHoxiTools, action := hoxiToolsAction(item); isHoxiTools {
 		return action != "discover" && action != "inspect"
 	}
+	if hasNonCanonicalClaudeSkillPath(item) {
+		return true
+	}
 	if perm == "external_directory" {
 		return !externalDirectoryTargetsAreRoutine(item)
 	}

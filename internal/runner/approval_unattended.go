@@ -143,6 +143,9 @@ func unattendedHardDeny(item map[string]interface{}, worktree string) string {
 	}
 	if perm == "external_directory" {
 		for _, p := range externalDirectoryTargets(item) {
+			if isClaudeSkillReadRequest(item, p) {
+				continue
+			}
 			if (isSecretFilePath(p) || unattendedSecretDir(p)) && !(isOwnSessionRecordRead(item, p) && !unattendedSecretDir(p)) {
 				return unattendedCategorySecret
 			}

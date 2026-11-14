@@ -1,6 +1,7 @@
 // Path, secret, and session-record risk helpers shared by permission-policy.js
 // and OpenCode tool wrappers. Mirrors internal/runner/external_path_risk.go and
 // the path predicates in internal/runner/approval_decision.go.
+import { unwrapCommandPrefixes } from "./command-wrappers.js";
 
 export const READ_PERMISSIONS = new Set(["read", "glob", "grep", "list", "lsp", "todoread"]);
 
@@ -35,11 +36,97 @@ const SENSITIVE_PATH_FRAGMENTS = [
 const SENSITIVE_ENV_BASENAME_RE =
   /^\.en(?:v(?:\.(?:local|prod(?:uction)?|dev(?:elopment)?|stag(?:e|ing)|test(?:ing)?|ci|preview|secret\w*|key\w*|private\w*|bak|backup)(?:\.local)?)?|\?|\*)$/i;
 
+const CLAUDE_SKILL_CREDENTIAL_NAMES = new Set(["auth.json", "credentials.json", "token.json", "tokens.json", "secrets.json", "oauth.json"]);
+const CLAUDE_SKILL_SHELL_READ_TOOLS = new Set(["cat", "head", "tail", "grep", "rg", "sed", "awk", "jq", "diff", "cmp", "stat", "file", "ls", "find", "wc", "nl", "cut"]);
+const CLAUDE_SKILL_READ_TOOL_DIRS = new Set(["/usr/local/go/bin", "/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"]);
+
 function isRoutineHoxiSubpath(slash) {
   return (
     slash.includes("/.hoxi/skills/") || slash.includes("/.hoxi/attachments/") || slash.includes("/.agents/skills/") ||
     slash.startsWith(".hoxi/skills/") || slash.startsWith(".hoxi/attachments/") || slash.startsWith(".agents/skills/")
   );
+}
+
+// This port is lexical; Go additionally resolves links and checks the concrete
+// destination stays inside the installed skill root. A wildcard is range-only.
+export function isClaudeSkillReadPath(rawPath, directoryScope = false) {
+  if (typeof rawPath !== "string") return false;
+  const slash = rawPath.trim().replaceAll("\\", "/");
+  if (claudeSkillPathHasAmbiguousInput(rawPath) || !slash || /[\0\r\n$`]/.test(slash) || (!slash.startsWith("/") && !/^[a-z]:\//i.test(slash))) return false;
+  const parts = slash.replace(/\/+$/, "").split("/").filter((p) => p !== "" && p !== ".");
+  if (parts.includes("..")) return false;
+  if (directoryScope && ["*", "**"].includes(parts[parts.length - 1])) parts.pop();
+  if (parts.some((p) => /[*?\[\]]/.test(p))) return false;
+  const lower = parts.map((p) => p.toLowerCase());
+  const index = lower.findIndex((p, i) => p === ".claude" && lower[i + 1] === "skills");
+  if (index < 0) return false;
+  const parent = (slash.startsWith("/") ? "/" : "") + parts.slice(0, index).join("/");
+  if (isProtectedPath(parent) || isSensitiveExternalPath(parent) || lower.slice(0, index).some((p) => PROTECTED_PATH_SEGMENTS.has(p))) return false;
+  const parentSlash = "/" + parent.toLowerCase().replace(/^\/+/, "") + "/";
+  if (SENSITIVE_PATH_FRAGMENTS.some((p) => parentSlash.includes(p)) || SENSITIVE_PATH_PREFIXES.some((p) => parentSlash.startsWith(p))) return false;
+  const suffix = lower.slice(index + 2);
+  if (suffix.some((p) => PROTECTED_PATH_SEGMENTS.has(p) || SENSITIVE_BASENAMES.has(p) || CLAUDE_SKILL_CREDENTIAL_NAMES.has(p) || SENSITIVE_ENV_BASENAME_RE.test(p) ||
+    /(?:\.(?:key|pem|p12|pfx|jks|keystore|ppk|asc|gpg)|^id_[a-z0-9_.-]+)$/i.test(p))) return false;
+  if (SENSITIVE_PATH_FRAGMENTS.some((p) => ("/" + suffix.join("/") + "/").includes(p)) || isProtectedPath(suffix.join("/"))) return false;
+  return true;
+}
+
+// A bare external_directory request grants scope only; write/execute requests
+// still pass their own tool gate, and cannot claim the read-only exemption here.
+export function isClaudeSkillReadRequest(input, target) {
+  const perm = String(input?.permission || input?.type || "").trim().toLowerCase();
+  const meta = input?.metadata || {};
+  let tool = [meta.tool, input?.tool?.name].find((v) => typeof v === "string" && v.trim()) || "";
+  if (!tool && perm === "tool") tool = input?.patterns?.[0] || "";
+  tool = String(tool).trim().toLowerCase();
+  if (meta.destructive === true || typeof meta.command === "string" || typeof meta.cmd === "string" || Array.isArray(meta.commands) ||
+    OWN_SESSION_EDIT_TOOLS.has(perm) || OWN_SESSION_EDIT_TOOLS.has(tool)) return false;
+  const readTool = READ_PERMISSIONS.has(tool) || OWN_SESSION_READ_TOOLS.has(tool);
+  if (perm === "external_directory") return (!tool || readTool) && isClaudeSkillReadPath(target, true);
+  return (READ_PERMISSIONS.has(perm) || (perm === "tool" && readTool)) && isClaudeSkillReadPath(target);
+}
+
+export function hasUnsafeClaudeSkillShellAccess(command, splitCommandChain, shellWords) {
+  const keywords = new Set(["while", "until", "do", "done", "if", "then", "else", "elif", "fi", "!"]);
+  const isSkillPath = (arg) => (arg.startsWith("/") || arg.startsWith("~/") || /^[a-z]:[\\/]/i.test(arg)) &&
+    (arg.replaceAll("\\", "/").toLowerCase() + "/").includes("/.claude/skills/");
+  for (const segment of splitCommandChain(command)) {
+    let words = shellWords(segment);
+    while (words.length && (keywords.has(words[0]) || /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0]))) words = words.slice(1);
+    const parsed = unwrapCommandPrefixes(words);
+    if (!parsed || parsed.lookupOnly || !parsed.words.length) continue;
+    words = parsed.words;
+    const base = words[0].slice(words[0].lastIndexOf("/") + 1);
+    if (isSkillPath(words[0])) return true;
+    const readTool = CLAUDE_SKILL_SHELL_READ_TOOLS.has(base) &&
+      (!words[0].includes("/") || CLAUDE_SKILL_READ_TOOL_DIRS.has(words[0].slice(0, words[0].lastIndexOf("/"))));
+    for (let arg of words.slice(1)) {
+      if (arg.startsWith("-") && arg.includes("=")) arg = arg.slice(arg.indexOf("=") + 1);
+      if (isSkillPath(arg) && (!readTool || !isClaudeSkillReadPath(arg))) return true;
+    }
+  }
+  return false;
+}
+
+export function claudeSkillPathHasAmbiguousInput(raw) {
+  if (typeof raw !== "string" || !("/" + raw.replaceAll("\\", "/").toLowerCase() + "/").includes("/.claude/skills/")) return false;
+  const wrongSeparator = raw.includes("\\") && !/^[a-z]:[\\/]/i.test(raw) && !raw.startsWith("\\\\");
+  return raw !== raw.trim() || wrongSeparator;
+}
+
+export function hasNonCanonicalClaudeSkillPath(input) {
+  const check = (v) => {
+    if (typeof v === "string") return claudeSkillPathHasAmbiguousInput(v);
+    if (Array.isArray(v)) return v.some(check);
+    if (v && typeof v === "object") return ["movePath", ...TOOL_ARG_PATH_KEYS].some((key) => check(v[key]));
+    return false;
+  };
+  const perm = String(input?.permission || input?.type || "").toLowerCase(), meta = input?.metadata || {};
+  if (["read", "external_directory"].includes(perm) && [input?.patterns, input?.pattern, input?.always].some(check)) return true;
+  if (["filepath", "filePath", "path", "target", "parentDir", "dir", "directories", "files"].some((key) => check(meta[key]))) return true;
+  let args = meta.args;
+  if (typeof args === "string") { try { args = JSON.parse(args); } catch {} }
+  return check(args);
 }
 
 // Reading these can expose credentials; mirrors isSecretFilePath in
@@ -51,6 +138,7 @@ export function isSecretPath(rawPath) {
   if (!slash) return false;
   const base = slash.slice(slash.lastIndexOf("/") + 1);
   if (SENSITIVE_BASENAMES.has(base) || SENSITIVE_ENV_BASENAME_RE.test(base)) return true;
+  if (isClaudeSkillReadPath(rawPath)) return false;
   if (isRoutineHoxiSubpath(slash)) return false;
   const normalized = slash.replace(/^\/+/, "");
   return SENSITIVE_PATH_FRAGMENTS.some((p) => `/${normalized}/`.includes(p));
@@ -82,6 +170,7 @@ export function isSensitiveExternalReadPath(rawPath) {
 
 function isSensitiveExternalPathWith(rawPath, checkProtected) {
   if (typeof rawPath !== "string") return false;
+  if (!checkProtected && isClaudeSkillReadPath(rawPath)) return false;
   const trimmed = rawPath.trim();
   if (!trimmed) return false;
   const candidates = [trimmed];
@@ -126,6 +215,7 @@ export function isProtectedPath(rawPath) {
 
 export function isProtectedShellReadPath(rawPath) {
   if (typeof rawPath !== "string" || !rawPath.trim()) return false;
+  if (isClaudeSkillReadPath(rawPath)) return false;
   const slash = stripWorktreePrefix(rawPath.trim().replaceAll("\\", "/").toLowerCase());
   return isRoutineHoxiSubpath(slash) ? false : isProtectedPath(rawPath);
 }

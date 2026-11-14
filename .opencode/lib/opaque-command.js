@@ -290,17 +290,20 @@ function hasInlineScriptFlag(base, args) {
 // is auto's: inline Python/Node code passes only when inlineScriptsReadOnly finds
 // it can just read and print (isOpaqueShellCommandWith in opaque_command.go).
 export function isOpaqueShellCommand(command, worktree = "", options = {}) {
+  let judgeOptions = options;
   if (options.readOnlyInlineScripts && !options.allowInlineScripts) {
     if (!isOpaqueShellCommandDepth(command, worktree, {}, 0)) return false;
     if (!inlineScriptsReadOnly(unwrapSandboxCommand(String(command ?? "")))) return true;
-    return isOpaqueShellCommandDepth(command, worktree, { inlineOnly: true }, 0);
+    judgeOptions = { inlineOnly: true };
   }
-  if (isOpaqueShellCommandDepth(command, worktree, options, 0)) return true;
+  if (isOpaqueShellCommandDepth(command, worktree, judgeOptions, 0)) return true;
+  const raw = unwrapSandboxCommand(String(command ?? "")), expanded = concretizeLiterals(raw);
+  const judgment = expanded.status === "applied" ? expanded.text : raw;
   // Only a command the relaxation cleared is reined back, so full trust is
   // never stricter than auto (`bash -n x.sh` after writing x.sh stays clear).
   return (
-    Boolean(options.allowInlineScripts) &&
-    runsScriptNamedElsewhere(unwrapSandboxCommand(String(command ?? ""))) &&
+    Boolean(options.allowInlineScripts || options.readOnlyInlineScripts) &&
+    (runsScriptNamedElsewhere(raw) || runsScriptNamedElsewhere(judgment)) &&
     isOpaqueShellCommandDepth(command, worktree, {}, 0)
   );
 }
@@ -404,7 +407,7 @@ function opaqueShellCore(command, worktree, trust, valueClass) {
       DATA_ARG_INTERPRETERS.has(base) &&
       !(base === "xargs" && isSafeXargsSegment(args, i > 0 && pipedIn[i], prevSeg, { stripNullRedirects, normalizeAbsoluteTool, isSafeListingPipeline })) &&
       !(base === "ssh" && args.length === 1 && args[0] === "Q") &&
-      !isSafeShellScriptSegment(base, args, i > 0 && pipedIn[i], { stripNullRedirects, isSecretPath, isSensitiveExternalPath, isProtectedPath, allowFileScripts: trust === "full" })
+      !isSafeShellScriptSegment(base, args, i > 0 && pipedIn[i], { stripNullRedirects, isSecretPath, isSensitiveExternalPath, isProtectedPath, allowFileScripts: trust === "full", allowProjectScripts: trust === "readonly", worktree, cwd })
     ) {
       return true;
     }

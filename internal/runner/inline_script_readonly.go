@@ -458,6 +458,9 @@ func checkFileCallPaths(fnName string, args [][]inlineTok, vars map[string][]str
 }
 
 func isDisallowedFileCallTarget(raw string) bool {
+	if claudeSkillPathHasAmbiguousInput(raw) {
+		return true
+	}
 	if strings.ContainsRune(raw, 0) {
 		return true
 	}
@@ -478,6 +481,9 @@ func isDisallowedFileCallTarget(raw string) bool {
 }
 
 func isDisallowedInlineLiteral(raw string) bool {
+	if claudeSkillPathHasAmbiguousInput(raw) {
+		return true
+	}
 	p := strings.TrimSpace(raw)
 	if p == "" {
 		return false

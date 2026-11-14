@@ -25,7 +25,8 @@ func isOpaqueShellCommand(command, worktree string) bool {
 // programs, heredocs whose body still expands, attachments, and a script the
 // same command also names (so it may have just been written or downloaded)
 // stay opaque. scriptTrustReadOnly (auto) lets inline Python/Node code through
-// only when inlineScriptsReadOnly finds it can just read and print.
+// only when inlineScriptsReadOnly finds it can just read and print, and runs
+// scoped project script files like ./script.sh with checked log redirections.
 func isOpaqueShellCommandWith(command, worktree string, trust scriptTrust) bool {
 	if trust == scriptTrustReadOnly {
 		if !isOpaqueShellCommandDepth(command, worktree, scriptTrustNone, 0) {
@@ -40,7 +41,11 @@ func isOpaqueShellCommandWith(command, worktree string, trust scriptTrust) bool 
 	}
 	// Only a command the relaxation cleared is reined back, so full trust is
 	// never stricter than auto (`bash -n x.sh` after writing x.sh stays clear).
-	return trust == scriptTrustFull && runsScriptNamedElsewhere(unwrapSandboxCommand(command)) &&
+	judgment := unwrapSandboxCommand(command)
+	if expanded, status := concretizeLiterals(judgment); status == constApplied {
+		judgment = expanded
+	}
+	return trust != scriptTrustNone && (runsScriptNamedElsewhere(unwrapSandboxCommand(command)) || runsScriptNamedElsewhere(judgment)) &&
 		isOpaqueShellCommandDepth(command, worktree, scriptTrustNone, 0)
 }
 
@@ -207,7 +212,7 @@ func opaqueShellCore(command, worktree string, trust scriptTrust, valueClass boo
 		if dataArgInterpreters[base] &&
 			!(base == "xargs" && isSafeXargsSegment(args, i > 0 && pipedIn[i], prevSeg)) &&
 			!(base == "ssh" && len(args) == 1 && args[0] == maskedDataArgument) &&
-			!isSafeShellScriptSegmentWith(base, args, i > 0 && pipedIn[i], trust == scriptTrustFull) {
+			!isSafeShellScriptSegmentIn(base, args, i > 0 && pipedIn[i], trust == scriptTrustFull, trust == scriptTrustReadOnly, worktree, cwd) {
 			return true
 		}
 		if awkProgramExecutes(base, args) {

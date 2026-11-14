@@ -1,7 +1,7 @@
 // Auto mode's read-only check for inline interpreter code. Mirrors
 // internal/runner/inline_script_readonly.go; `autoOpaque` in
 // opaque-command.cases.json keeps both aligned.
-import { isProtectedShellReadPath, isSecretPath, isSensitiveExternalReadPath } from "./external-path-risk.js";
+import { isProtectedShellReadPath, isSecretPath, isSensitiveExternalReadPath, claudeSkillPathHasAmbiguousInput } from "./external-path-risk.js";
 import {
   FILE_CALLS,
   OPEN_KW_SAFE,
@@ -319,6 +319,7 @@ function validateInlineCalls(toks, vars) {
 }
 
 function isDisallowedFileCallTarget(raw) {
+  if (claudeSkillPathHasAmbiguousInput(raw)) return true;
   if (typeof raw !== "string" || raw.includes("\0")) return true;
   const p = raw.trim();
   if (!p) return true;
@@ -333,6 +334,7 @@ function isDisallowedFileCallTarget(raw) {
 }
 
 function isDisallowedInlineLiteral(raw) {
+  if (claudeSkillPathHasAmbiguousInput(raw)) return true;
   const p = String(raw ?? "").trim();
   if (!p) return false;
   for (const cand of [p, cleanInlinePosixPath(p)]) {

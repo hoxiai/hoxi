@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -26,16 +27,16 @@ type processControlTarget struct {
 // processControlRawRe accepts the raw text of a segment only when it holds
 // plain words: no redirect, expansion, escape or glob anywhere between the
 // command name and its last argument.
-var processControlRawRe = regexp.MustCompile(`^(?:pkill|kill)(?:[ \t]+(?:[A-Za-z0-9_./:@%+,=^-]+|'[^'\n]*'|"[^"$` + "`" + `\\!\n]*"))+$`)
+var processControlRawRe = regexp.MustCompile(`^(?:pkill|kill|/usr/bin/pkill|/(?:usr/)?bin/kill)(?:[ \t]+(?:[A-Za-z0-9_./:@%+,=^-]+|'[^'\n]*'|"[^"$` + "`" + `\\!\n]*"))+$`)
 
 // processControlWordRe finds commands that may mention process control at
 // all; anything else skips the parse.
 var processControlWordRe = regexp.MustCompile(`\b(?:pkill|kill)\b`)
 
 // processControlRefusals change what `kill` or `pkill` resolves to (aliases,
-// functions, sourced files, PATH, hashed paths, builtins); a command that
-// touches them is never masked.
-var processControlRefusalRe = regexp.MustCompile(`\b(?:alias|unalias|function|hash|enable|builtin|disable|source)\b|\(\s*\)|\bPATH\s*[+]?=|\bpath\s*[+]?=|\bpath\[|(?:^|[;&|\n(])\s*\.\s`)
+// functions, sourced files, hashed paths, builtins). PATH writes are checked
+// separately after parsing; only verified literal suffix exports qualify.
+var processControlRefusalRe = regexp.MustCompile(`\b(?:alias|unalias|function|hash|enable|builtin|disable|source)\b|\(\s*\)|\bpath\s*[+]?=|\bpath\[|(?:^|[;&|\n(])\s*\.\s`)
 
 var processControlSignals = setOf("1", "2", "3", "9", "15", "HUP", "INT", "QUIT", "KILL", "TERM",
 	"USR1", "USR2", "STOP", "CONT", "SIGHUP", "SIGINT", "SIGQUIT", "SIGKILL", "SIGTERM", "SIGUSR1",
@@ -52,7 +53,11 @@ func parseProcessControlSegment(seg *uSeg) (processControlTarget, bool) {
 			return processControlTarget{}, false
 		}
 	}
-	switch seg.words[0].text {
+	name := seg.words[0].text
+	if name == "/usr/bin/pkill" || name == "/bin/kill" || name == "/usr/bin/kill" {
+		name = filepath.Base(name)
+	}
+	switch name {
 	case "pkill":
 		return parsePkillWords(seg.words[1:])
 	case "kill":
@@ -141,6 +146,10 @@ func parseKillWords(words []uWord) (processControlTarget, bool) {
 // `if pkill`) or behind a wrapper (`xargs kill`, `sudo pkill`) are not
 // top-level command words and stay in the text.
 func maskVerifiedProcessControl(cmd string, owned func(processControlTarget) bool) (string, bool) {
+	return maskVerifiedProcessControlWithResolver(cmd, owned, trustedProcessControlTool)
+}
+
+func maskVerifiedProcessControlWithResolver(cmd string, owned func(processControlTarget) bool, trusted func(string) bool) (string, bool) {
 	if owned == nil || !processControlWordRe.MatchString(cmd) || processControlRefusalRe.MatchString(cmd) {
 		return cmd, false
 	}
@@ -148,11 +157,26 @@ func maskVerifiedProcessControl(cmd string, owned func(processControlTarget) boo
 	if !ok {
 		return cmd, false
 	}
+	appends, pathChanged, ok := processControlPathAppends(cmd, script)
+	if !ok {
+		return cmd, false
+	}
 	type span struct{ start, end int }
 	var spans []span
+	priorSafe := true
 	for _, seg := range script.segs {
+		if appends[seg] {
+			continue
+		}
 		target, ok := parseProcessControlSegment(seg)
 		if !ok {
+			if len(seg.words) > 0 {
+				priorSafe = false
+			}
+			continue
+		}
+		if (pathChanged || strings.HasPrefix(seg.words[0].text, "/")) &&
+			(!priorSafe || trusted == nil || !trusted(seg.words[0].text)) {
 			continue
 		}
 		first, last := seg.words[0], seg.words[len(seg.words)-1]

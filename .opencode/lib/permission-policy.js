@@ -17,6 +17,9 @@ import {
   externalDirectoryTargets,
   extractToolArgPaths,
   isOwnSessionRecordRead,
+  isClaudeSkillReadRequest,
+  hasUnsafeClaudeSkillShellAccess,
+  hasNonCanonicalClaudeSkillPath,
   isProtectedPath,
   isProtectedShellReadPath,
   isReadOnlyTaskStatusRequest,
@@ -552,7 +555,7 @@ function hasDestructiveGitCleanOrRestore(blob) {
 }
 
 function matchesDestructive(blob) {
-  return DESTRUCTIVE_RE.test(blob) || DESTRUCTIVE_GIT_RE.test(blob) || hasDestructiveGitCleanOrRestore(blob) || hasProtectedGitOutput(blob, splitCommandChain, shellWords);
+  return DESTRUCTIVE_RE.test(blob) || DESTRUCTIVE_GIT_RE.test(blob) || hasDestructiveGitCleanOrRestore(blob) || hasProtectedGitOutput(blob, splitCommandChain, shellWords) || hasUnsafeClaudeSkillShellAccess(blob, splitCommandChain, shellWords);
 }
 
 function hoxiToolsAction(input) {
@@ -583,13 +586,14 @@ export function isDestructivePermissionRequest(input) {
   if (permission === "doom_loop") return true;
   const hoxiTools = hoxiToolsAction(input);
   if (hoxiTools.isHoxiTools) return hoxiTools.action !== "discover" && hoxiTools.action !== "inspect";
+  if (hasNonCanonicalClaudeSkillPath(input)) return true;
   if (permission === "external_directory") {
     // OpenCode raises this for every read/write outside the session directory,
     // including sibling folders the user already registered as a workspace.
     // Only credential/execution-controlling targets keep asking. A read of this
     // session's own runner record is not one of them.
     const targets = externalDirectoryTargets(input);
-    return targets.length === 0 || targets.some((t) => isSensitiveExternalPath(t) && !isOwnSessionRecordRead(input, t));
+    return targets.length === 0 || targets.some((t) => isSensitiveExternalPath(t) && !isOwnSessionRecordRead(input, t) && !isClaudeSkillReadRequest(input, t));
   }
   if (input?.metadata?.destructive === true) return true;
   const toolName = String(input?.metadata?.tool || input?.patterns?.[0] || "").trim().toLowerCase();
@@ -597,7 +601,7 @@ export function isDestructivePermissionRequest(input) {
   if (input?.metadata?.externalDirectory === true) {
     const targets = externalDirectoryTargets(input);
     const isSens = readOnlyTool ? isSensitiveExternalReadPath : isSensitiveExternalPath;
-    if (targets.length === 0 || targets.some((t) => isSens(t) && !isOwnSessionRecordRead(input, t))) return true;
+    if (targets.length === 0 || targets.some((t) => isSens(t) && !isOwnSessionRecordRead(input, t) && !isClaudeSkillReadRequest(input, t))) return true;
   }
   if (READ_PERMISSIONS.has(permission)) {
     // Search patterns are not paths; only a file read can expose a secret.

@@ -160,7 +160,7 @@ func hasDestructiveGitCleanOrRestore(blob string) bool {
 }
 
 func matchesDestructive(blob string) bool {
-	return destructiveRe.MatchString(blob) || destructiveGitRe.MatchString(blob) || hasDestructiveGitCleanOrRestore(blob) || hasProtectedGitOutput(blob)
+	return destructiveRe.MatchString(blob) || destructiveGitRe.MatchString(blob) || hasDestructiveGitCleanOrRestore(blob) || hasProtectedGitOutput(blob) || hasUnsafeClaudeSkillShellAccess(blob)
 }
 
 // decideCommandPermission mirrors decidePermission({permission:"bash", patterns:[command]}).

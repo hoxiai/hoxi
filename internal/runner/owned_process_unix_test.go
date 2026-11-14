@@ -168,3 +168,28 @@ func TestOwnedProcessJudgedItemMasksOnlyVerifiedKills(t *testing.T) {
 		t.Fatalf("manual mode asks for everything")
 	}
 }
+
+func TestOwnedProcessSDKRestartRefusesAMixedProcessMatch(t *testing.T) {
+	if !trustedProcessControlTool("pkill") {
+		t.Skip("inherited pkill is not the trusted system executable")
+	}
+	root := t.TempDir()
+	svc := NewService(root, nil, nil, filepath.Join(t.TempDir(), "sessions.json"))
+	secs := uniqueSleepSeconds()
+	group, _ := startDetachedServer(t, secs)
+	svc.ownedProcs.record("ses_sdk_restart", group, "")
+	log := filepath.ToSlash(filepath.Join(t.TempDir(), "run.log"))
+	command := `export PATH="$PATH:/opt/flutter/bin"` + "\n" + `pkill -f "sleep ` + secs + `" 2>/dev/null || true` + "\n" +
+		`rm -f ` + log + "\n" + `nohup bash scripts/run_local.sh -d DEVICE > ` + log + ` 2>&1 &`
+	item := openCodeBashItem("ses_sdk_restart", command)
+	judged, changed := svc.ownedProcessJudgedItem(item, "ses_sdk_restart")
+	if !changed || !svc.policyApproves(judged, root) || svc.policyApproves(item, root) {
+		t.Fatal("only a verified system-tool/owned-target restart should run directly")
+	}
+	// This second group was not recorded for the session. The same pattern
+	// now matches both, so a fresh request must keep the pkill unmasked.
+	startDetachedServer(t, secs)
+	if _, changed := svc.ownedProcessJudgedItem(item, "ses_sdk_restart"); changed {
+		t.Fatal("a same-name process outside the session was included in the exemption")
+	}
+}
