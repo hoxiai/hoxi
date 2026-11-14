@@ -95,7 +95,7 @@ func runDocCommand(args []string, cwd string, stdin io.Reader, stdout, stderr io
 	fs.StringVar(&textFlag, "text", "", "inline text/Markdown content (for write-docx / write-pdf)")
 	fs.IntVar(&maxRows, "max-rows", 400, "maximum rows per sheet to read")
 	fs.IntVar(&maxChars, "max-chars", 64000, "maximum characters to extract")
-	posArgs, err := parseDocFlagsInterspersed(fs, args)
+	posArgs, err := parseFlagsInterspersed(fs, args)
 	if err != nil {
 		return 2
 	}
@@ -139,37 +139,6 @@ func runDocCommand(args []string, cwd string, stdin io.Reader, stdout, stderr io
 		fmt.Fprintf(stderr, "Unknown doc action %q (supported: inspect, read, write-xlsx, set-cell, write-docx, write-pptx, write-pdf)\n", action)
 		return 2
 	}
-}
-
-func parseDocFlagsInterspersed(fs *flag.FlagSet, args []string) ([]string, error) {
-	var flagPart []string
-	var posPart []string
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		if a == "--" {
-			posPart = append(posPart, args[i+1:]...)
-			break
-		}
-		if strings.HasPrefix(a, "-") && a != "-" {
-			flagPart = append(flagPart, a)
-			if !strings.Contains(a, "=") && i+1 < len(args) {
-				name := strings.TrimLeft(a, "-")
-				if f := fs.Lookup(name); f != nil {
-					if bf, ok := f.Value.(interface{ IsBoolFlag() bool }); !ok || !bf.IsBoolFlag() {
-						i++
-						flagPart = append(flagPart, args[i])
-					}
-				}
-			}
-		} else {
-			posPart = append(posPart, a)
-		}
-	}
-	if err := fs.Parse(flagPart); err != nil {
-		return nil, err
-	}
-	posPart = append(posPart, fs.Args()...)
-	return posPart, nil
 }
 
 func runDocInspect(targetPath string, maxRows int, stdout, stderr io.Writer) int {

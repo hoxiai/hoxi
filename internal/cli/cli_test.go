@@ -152,6 +152,7 @@ func TestCLISingleTurnAndREPLWithGateway(t *testing.T) {
 		focusedDesktop atomic.Bool
 		repliedPerm    atomic.Value
 		activeRuntime  atomic.Value
+		lastPrompt     atomic.Value
 	)
 	activeRuntime.Store("opencode")
 
@@ -195,7 +196,12 @@ func TestCLISingleTurnAndREPLWithGateway(t *testing.T) {
 			Title:       "Test Session",
 		})
 	})
-	mux.HandleFunc("/api/hoxi/sessions/ses_test_1/prompt", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/api/hoxi/sessions/ses_test_1/prompt", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Text string `json:"text"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		lastPrompt.Store(body.Text)
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 	})
 	mux.HandleFunc("/api/hoxi/permission/per_rnr_123/reply", func(w http.ResponseWriter, r *http.Request) {
@@ -301,6 +307,39 @@ func TestCLISingleTurnAndREPLWithGateway(t *testing.T) {
 	}
 	if !focusedDesktop.Load() {
 		t.Fatal("expected /open to trigger /api/hoxi/desktop/focus")
+	}
+
+	for _, tc := range []struct {
+		name    string
+		args    []string
+		prompt  string
+		runtime string
+	}{
+		{"quoted prompt", []string{"browser --help"}, "browser --help", "opencode"},
+		{"unquoted prompt", []string{"explain", "browser", "usage"}, "explain browser usage", "opencode"},
+		{"literal after delimiter", []string{"--", "browser", "--help"}, "browser --help", "opencode"},
+		{"unicode literal after delimiter", []string{"--", "browser", "—help"}, "browser —help", "opencode"},
+		{"explicit prompt value", []string{"--prompt", "--help"}, "--help", "opencode"},
+		{"option after prompt", []string{"explain browser", "--runtime", "claude"}, "explain browser", "claude-code"},
+		{"option value resembling help", []string{"explain browser", "--model", "--help"}, "explain browser", "opencode"},
+		{"run literal after delimiter", []string{"run", "--", "browser", "--help"}, "browser --help", "opencode"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			outBuf.Reset()
+			errBuf.Reset()
+			lastPrompt.Store("")
+			code := Run(context.Background(), append([]string{"hoxi"}, tc.args...),
+				strings.NewReader("y\n"), &outBuf, &errBuf, addr, nil)
+			if code != 0 {
+				t.Fatalf("exit=%d, stderr=%s", code, errBuf.String())
+			}
+			if got := lastPrompt.Load(); got != tc.prompt {
+				t.Errorf("sent prompt=%q, want %q", got, tc.prompt)
+			}
+			if got := activeRuntime.Load(); got != tc.runtime {
+				t.Errorf("runtime=%q, want %q", got, tc.runtime)
+			}
+		})
 	}
 }
 

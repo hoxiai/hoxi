@@ -226,7 +226,8 @@ func Run(
 	fs.BoolVar(&showHelp, "help", false, "show help")
 	fs.BoolVar(&showHelp, "h", false, "show help")
 
-	if err := fs.Parse(flagArgs); err != nil {
+	posArgs, err := parseFlagsInterspersed(fs, flagArgs)
+	if err != nil {
 		return 2
 	}
 	if showHelp {
@@ -248,12 +249,12 @@ func Run(
 	}
 
 	if opts.TUI {
-		return runNativeOpenCodeTUI(ctx, fs.Args(), opts.Directory, stdout, stderr)
+		return runNativeOpenCodeTUI(ctx, posArgs, opts.Directory, stdout, stderr)
 	}
 
 	prompt := strings.TrimSpace(promptFlag)
-	if prompt == "" && fs.NArg() > 0 {
-		prompt = strings.TrimSpace(strings.Join(fs.Args(), " "))
+	if prompt == "" && len(posArgs) > 0 {
+		prompt = strings.TrimSpace(strings.Join(posArgs, " "))
 	}
 
 	client, cleanup, err := ConnectOrSpawn(ctx, opts.BridgeAddr, opts.Directory, bootHeadless)
@@ -274,6 +275,42 @@ func Run(
 	return RunREPL(ctx, client, opts, prompt, stdin, stdout, stderr)
 }
 
+// parseFlagsInterspersed accepts options before or after positional arguments.
+// Keep quoted argument contents, option values and everything after -- intact;
+// in particular, a trailing --help must never become an accidental model prompt.
+func parseFlagsInterspersed(fs *flag.FlagSet, args []string) ([]string, error) {
+	var flagPart, posPart []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" {
+			posPart = append(posPart, args[i+1:]...)
+			break
+		}
+		if strings.HasPrefix(a, "—") || strings.HasPrefix(a, "–") {
+			err := fmt.Errorf("invalid option %q: use ASCII '-' for options", a)
+			fmt.Fprintln(fs.Output(), err)
+			return nil, err
+		}
+		if strings.HasPrefix(a, "-") && a != "-" {
+			flagPart = append(flagPart, a)
+			if !strings.Contains(a, "=") && i+1 < len(args) {
+				if f := fs.Lookup(strings.TrimLeft(a, "-")); f != nil {
+					if bf, ok := f.Value.(interface{ IsBoolFlag() bool }); !ok || !bf.IsBoolFlag() {
+						i++
+						flagPart = append(flagPart, args[i])
+					}
+				}
+			}
+		} else {
+			posPart = append(posPart, a)
+		}
+	}
+	if err := fs.Parse(flagPart); err != nil {
+		return nil, err
+	}
+	return append(posPart, fs.Args()...), nil
+}
+
 func isInteractiveFlagSet(args []string) bool {
 	return len(args) > 1 && strings.TrimSpace(args[1]) == "chat"
 }
@@ -284,6 +321,7 @@ func printHelp(w io.Writer) {
 Usage:
   hoxi [flags]                        Start interactive terminal agent in current directory
   hoxi "<prompt>" [flags]             Execute a prompt directly in the terminal
+  hoxi -- <literal prompt...>         Treat remaining arguments as prompt text, including options
   hoxi run "<prompt>" [flags]         Run a one-shot task and exit
   hoxi open [directory]               Open or focus the Hoxi desktop workspace window
   hoxi models [-r <runtime>]          List configured models for a runtime
@@ -308,6 +346,7 @@ Flags:
       --mode <mode>      Agent mode: build (default) | plan
       --dir <path>       Target project directory (defaults to current working directory)
       --tui              Attach full-screen OpenCode TUI
+  -h, --help             Show help locally without starting a session
 
 Interactive Slash Commands:
   /runtime <name>        Switch runtime mid-session (opencode, claude, agy, gemini-cli, qoder, codebuddy)
