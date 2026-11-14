@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -340,5 +342,271 @@ func TestStartOpenCodeTurnAutoRecoversFromMidTaskTransitionalStop(t *testing.T) 
 	}
 	if stored.Turns[3].Info.ID != "msg_a3" || stored.Turns[3].Info.ParentID != "msg_u_initial" {
 		t.Fatalf("expected recovered turn msg_a3 with ParentID=msg_u_initial, got %+v", stored.Turns[3].Info)
+	}
+}
+
+func TestStartOpenCodeTurnRotatesPoisonedSessionAndCarriesHandoffContext(t *testing.T) {
+	t.Parallel()
+
+	priorTurns := []MessageTurn{
+		{
+			Info:  MessageInfo{ID: "msg_u_prior", SessionID: "ses_hoxi_poisoned", Role: "user", Time: MessageTime{Created: 100}},
+			Parts: []MessagePart{{ID: "prt_u_prior", SessionID: "ses_hoxi_poisoned", MessageID: "msg_u_prior", Type: "text", Text: "建议增加新客服消息通知"}},
+		},
+		{
+			Info: MessageInfo{
+				ID: "msg_a_prior", SessionID: "ses_hoxi_poisoned", Role: "assistant", ParentID: "msg_u_prior",
+				Finish: "stop", Time: MessageTime{Created: 101, Completed: 102},
+			},
+			Parts: []MessagePart{{ID: "prt_a_prior", SessionID: "ses_hoxi_poisoned", MessageID: "msg_a_prior", Type: "text", Text: "已规划好 APNs 与桌面端通知方案。"}},
+		},
+	}
+
+	var (
+		mu             sync.Mutex
+		createdCount   int
+		poisonedPosts  int
+		freshPosts     int
+		freshSystem    string
+		freshPostedMsg string
+		freshTurns     []MessageTurn
+	)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/event":
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			if f, ok := w.(http.Flusher); ok {
+				_, _ = w.Write([]byte(": connected\n\n"))
+				f.Flush()
+			}
+			<-r.Context().Done()
+		case r.Method == http.MethodPost && r.URL.Path == "/session/ses_oc_poisoned/message":
+			mu.Lock()
+			poisonedPosts++
+			mu.Unlock()
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"name":"UnknownError","data":{"message":"Unexpected server error. Check server logs for details.","ref":"err_d43c8cf9"}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/session/ses_oc_poisoned/message":
+			_ = json.NewEncoder(w).Encode(priorTurns)
+		case r.Method == http.MethodPost && r.URL.Path == "/session":
+			mu.Lock()
+			createdCount++
+			mu.Unlock()
+			_, _ = w.Write([]byte(`{"id":"ses_oc_fresh"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/session/ses_oc_fresh/message":
+			var body map[string]interface{}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			msgID, _ := body["messageID"].(string)
+			sysText, _ := body["system"].(string)
+			mu.Lock()
+			freshPosts++
+			freshPostedMsg = msgID
+			freshSystem = sysText
+			freshTurns = []MessageTurn{
+				{
+					Info:  MessageInfo{ID: msgID, SessionID: "ses_oc_fresh", Role: "user", Time: MessageTime{Created: 200}},
+					Parts: []MessagePart{{ID: "prt_u2", SessionID: "ses_oc_fresh", MessageID: msgID, Type: "text", Text: "请直接按这个方案实现"}},
+				},
+				{
+					Info: MessageInfo{
+						ID: "msg_a_fresh", SessionID: "ses_oc_fresh", Role: "assistant", ParentID: msgID,
+						Finish: "stop", Time: MessageTime{Created: 201, Completed: 202},
+					},
+					Parts: []MessagePart{{ID: "prt_a_fresh", SessionID: "ses_oc_fresh", MessageID: "msg_a_fresh", Type: "text", Text: "已完成新客服消息通知实现。"}},
+				},
+			}
+			mu.Unlock()
+			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/session/ses_oc_fresh/message":
+			mu.Lock()
+			snapshot := append([]MessageTurn(nil), freshTurns...)
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(snapshot)
+		default:
+			_, _ = w.Write([]byte(`{}`))
+		}
+	}))
+	defer srv.Close()
+
+	root := t.TempDir()
+	svc := NewService(root, nil, nil, filepath.Join(t.TempDir(), "sessions"))
+	svc.ConfigureOpenCode(srv.URL, "secret")
+	rec := SessionRecord{
+		ID:           "ses_hoxi_poisoned",
+		Title:        "建议增加新客服消息通知",
+		ExternalID:   "ses_oc_poisoned",
+		OpenCodeIDs:  []string{"ses_oc_poisoned"},
+		Runtime:      "opencode",
+		ProjectDir:   root,
+		WorktreePath: root,
+		SandboxMode:  "local",
+		Turns:        priorTurns,
+	}
+	if err := svc.store.Put(rec); err != nil {
+		t.Fatal(err)
+	}
+	ch, unsub := svc.Subscribe(rec.ID)
+	defer unsub()
+
+	user := MessageInfo{ID: "msg_u_followup", SessionID: rec.ID, Role: "user", Time: MessageTime{Created: 200}}
+	parts := []MessagePart{{ID: "prt_u_followup", SessionID: rec.ID, MessageID: user.ID, Type: "text", Text: "请直接按这个方案实现"}}
+	if err := svc.startOpenCodeTurn(rec, "build", "gpt-5", "openai", "", user, parts, parts); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		svc.mu.Lock()
+		busy := svc.procs[rec.ID] != nil
+		svc.mu.Unlock()
+		if !busy {
+			break
+		}
+		time.Sleep(15 * time.Millisecond)
+	}
+
+	for len(ch) > 0 {
+		evt := <-ch
+		if evt.Type == "session.error" {
+			t.Fatalf("unexpected session.error after successful session rotation: %+v", evt)
+		}
+	}
+
+	mu.Lock()
+	gotPoisoned := poisonedPosts
+	gotCreated := createdCount
+	gotFresh := freshPosts
+	gotMsg := freshPostedMsg
+	gotSys := freshSystem
+	mu.Unlock()
+
+	if gotPoisoned != 1 || gotCreated != 1 || gotFresh != 1 || gotMsg != "msg_u_followup" {
+		t.Fatalf("unexpected rotation counts: poisoned=%d created=%d fresh=%d msg=%q", gotPoisoned, gotCreated, gotFresh, gotMsg)
+	}
+	if !strings.Contains(gotSys, "已规划好 APNs 与桌面端通知方案") {
+		t.Fatalf("expected rotated session system prompt to carry prior handoff context, got: %q", gotSys)
+	}
+
+	stored, ok := svc.store.Get(rec.ID)
+	if !ok {
+		t.Fatal("expected session record in store")
+	}
+	if stored.ExternalID != "ses_oc_fresh" || !slices.Contains(stored.OpenCodeIDs, "ses_oc_fresh") {
+		t.Fatalf("expected ExternalID=ses_oc_fresh in OpenCodeIDs, got ExternalID=%q IDs=%v", stored.ExternalID, stored.OpenCodeIDs)
+	}
+	if stored.ContextPending {
+		t.Fatal("expected ContextPending to be cleared after rotated turn succeeded")
+	}
+	if len(stored.Turns) != 4 || stored.Turns[3].Info.ID != "msg_a_fresh" {
+		t.Fatalf("expected 4 turns ending with msg_a_fresh, got %d turns", len(stored.Turns))
+	}
+}
+
+func TestStartOpenCodeTurnPersistsFailedTurnWithoutRotatingNonServerFault(t *testing.T) {
+	t.Parallel()
+
+	var (
+		mu           sync.Mutex
+		createdCount int
+	)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/event":
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			if f, ok := w.(http.Flusher); ok {
+				_, _ = w.Write([]byte(": connected\n\n"))
+				f.Flush()
+			}
+			<-r.Context().Done()
+		case r.Method == http.MethodPost && r.URL.Path == "/session":
+			mu.Lock()
+			createdCount++
+			mu.Unlock()
+			_, _ = w.Write([]byte(`{"id":"ses_should_not_create"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/session/ses_oc_modelerr/message":
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"name":"UnknownError","data":{"message":"Model not found: openai/gpt-missing."}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/session/ses_oc_modelerr/message":
+			_ = json.NewEncoder(w).Encode([]MessageTurn{})
+		default:
+			_, _ = w.Write([]byte(`{}`))
+		}
+	}))
+	defer srv.Close()
+
+	root := t.TempDir()
+	svc := NewService(root, nil, nil, filepath.Join(t.TempDir(), "sessions"))
+	svc.ConfigureOpenCode(srv.URL, "secret")
+	rec := SessionRecord{
+		ID:           "ses_hoxi_modelerr",
+		ExternalID:   "ses_oc_modelerr",
+		OpenCodeIDs:  []string{"ses_oc_modelerr"},
+		Runtime:      "opencode",
+		ProjectDir:   root,
+		WorktreePath: root,
+		SandboxMode:  "local",
+	}
+	if err := svc.store.Put(rec); err != nil {
+		t.Fatal(err)
+	}
+	ch, unsub := svc.Subscribe(rec.ID)
+	defer unsub()
+
+	user := MessageInfo{ID: "msg_u_fail", SessionID: rec.ID, Role: "user", Time: MessageTime{Created: 300}}
+	parts := []MessagePart{{ID: "prt_u_fail", SessionID: rec.ID, MessageID: user.ID, Type: "text", Text: "请继续处理"}}
+	if err := svc.startOpenCodeTurn(rec, "build", "gpt-missing", "openai", "", user, parts, parts); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		svc.mu.Lock()
+		busy := svc.procs[rec.ID] != nil
+		svc.mu.Unlock()
+		if !busy {
+			break
+		}
+		time.Sleep(15 * time.Millisecond)
+	}
+
+	mu.Lock()
+	gotCreated := createdCount
+	mu.Unlock()
+	if gotCreated != 0 {
+		t.Fatalf("model-not-found must never rotate OpenCode session, got %d /session creations", gotCreated)
+	}
+
+	var sawSessionError bool
+	for len(ch) > 0 {
+		evt := <-ch
+		if evt.Type == "session.error" {
+			sawSessionError = true
+		}
+	}
+	if !sawSessionError {
+		t.Fatal("expected session.error event to be broadcast")
+	}
+
+	stored, ok := svc.store.Get(rec.ID)
+	if !ok {
+		t.Fatal("expected session record in store")
+	}
+	if stored.ExternalID != "ses_oc_modelerr" {
+		t.Fatalf("expected ExternalID to stay ses_oc_modelerr, got %q", stored.ExternalID)
+	}
+	if len(stored.Turns) != 2 {
+		t.Fatalf("expected user turn + assistant error turn persisted in store, got %d turns: %+v", len(stored.Turns), stored.Turns)
+	}
+	if stored.Turns[0].Info.ID != "msg_u_fail" || len(stored.Turns[0].Parts) != 1 || stored.Turns[0].Parts[0].Text != "请继续处理" {
+		t.Fatalf("unexpected persisted user turn: %+v", stored.Turns[0])
+	}
+	if stored.Turns[1].Info.Role != "assistant" || stored.Turns[1].Info.Error == nil || stored.Turns[1].Info.Error.Name != "ProviderModelNotFoundError" {
+		t.Fatalf("expected persisted assistant turn with ProviderModelNotFoundError, got %+v", stored.Turns[1].Info)
 	}
 }

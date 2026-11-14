@@ -3,6 +3,8 @@ package runner
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"net/url"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -611,4 +613,168 @@ func (s *Service) abandonOpenCodeInFlightParts(sessionID string, now int64) {
 			}
 		}
 	}
+}
+
+func turnsContainMessageID(turns []MessageTurn, messageID string) bool {
+	if strings.TrimSpace(messageID) == "" {
+		return false
+	}
+	for _, t := range turns {
+		if t.Info.ID == messageID {
+			return true
+		}
+	}
+	return false
+}
+
+// rotateOpenCodeSessionIfBroken replaces a vanished (404 NotFoundError) or
+// sequence-poisoned (500 before persisting sentMsgID while the daemon remains
+// readable) backing OpenCode session with a fresh one carrying Hoxi's frozen
+// prior-turn handoff context.
+func (s *Service) rotateOpenCodeSessionIfBroken(
+	ctx context.Context,
+	rec SessionRecord,
+	ap *activeProcess,
+	reusedExistingSession bool,
+	sentMsgID string,
+	postErr error,
+) (SessionRecord, bool) {
+	if postErr == nil {
+		return rec, false
+	}
+	if !isMissingEngineSession(postErr) {
+		if !reusedExistingSession || strings.TrimSpace(rec.ExternalID) == "" {
+			return rec, false
+		}
+		if ap == nil || ap.wasAborted() || ap.hasPendingError() || !isEngineSessionPostServerFailure(postErr) {
+			return rec, false
+		}
+		probeCtx, cancelProbe := context.WithTimeout(ctx, 3*time.Second)
+		recentTurns, fetchErr := s.fetchOpenCodeRecentMessages(probeCtx, rec.ExternalID, rec.WorktreePath, 8)
+		cancelProbe()
+		if fetchErr != nil || turnsContainMessageID(recentTurns, sentMsgID) {
+			return rec, false
+		}
+	}
+	var info SessionInfo
+	if createErr := s.openCodeJSON(ctx, http.MethodPost, "/session", rec.WorktreePath, map[string]interface{}{
+		"title":    rec.Title,
+		"metadata": map[string]string{"hoxiConversation": rec.ID},
+	}, &info); createErr != nil || info.ID == "" {
+		return rec, false
+	}
+	updated, ok, updateErr := s.store.Update(rec.ID, func(r *SessionRecord) {
+		r.ExternalID = info.ID
+		r.OpenCodeIDs = append(r.OpenCodeIDs, info.ID)
+		if r.OpenCodeDirectories == nil {
+			r.OpenCodeDirectories = make(map[string]string)
+		}
+		r.OpenCodeDirectories[info.ID] = rec.WorktreePath
+		priorTurns := len(r.Turns)
+		if priorTurns > 0 && sentMsgID != "" && r.Turns[priorTurns-1].Info.ID == sentMsgID {
+			priorTurns--
+		}
+		if priorTurns > 0 {
+			r.ContextPending = true
+			r.ContextTurnCount = priorTurns
+		}
+	})
+	if !ok || updateErr != nil {
+		delCtx, cancelDel := context.WithTimeout(context.Background(), 3*time.Second)
+		_ = s.openCodeJSON(delCtx, http.MethodDelete, "/session/"+url.PathEscape(info.ID), rec.WorktreePath, nil, nil)
+		cancelDel()
+		return rec, false
+	}
+	s.managedOpenCode.Store(info.ID, true)
+	s.updateInflightExternalID(rec.ID, info.ID)
+	ap.setOpenCodeRecord(updated)
+	return updated, true
+}
+
+// persistFailedOpenCodeTurn ensures a user prompt and its structured engine
+// failure are recorded in Hoxi's transcript even when OpenCode rejects or
+// crashes before echoing `message.updated` on `/event`.
+func (s *Service) persistFailedOpenCodeTurn(
+	sessionID string,
+	user MessageInfo,
+	storedParts []MessagePart,
+	modelID, providerID, mode string,
+	msgErr *MessageError,
+) {
+	if msgErr == nil || strings.TrimSpace(sessionID) == "" || strings.TrimSpace(user.ID) == "" {
+		return
+	}
+	current, ok := s.store.Get(sessionID)
+	if !ok {
+		return
+	}
+	userIdx := -1
+	for i := range current.Turns {
+		if current.Turns[i].Info.ID == user.ID {
+			userIdx = i
+			break
+		}
+	}
+	if userIdx < 0 {
+		s.broadcast(sessionID, SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": user}})
+		for _, sp := range storedParts {
+			s.broadcast(sessionID, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": sp}})
+		}
+	} else {
+		existingIDs := make(map[string]bool, len(current.Turns[userIdx].Parts))
+		hasText := false
+		for _, p := range current.Turns[userIdx].Parts {
+			existingIDs[p.ID] = true
+			if p.Type == "text" && strings.TrimSpace(p.Text) != "" {
+				hasText = true
+			}
+		}
+		for _, sp := range storedParts {
+			if existingIDs[sp.ID] || (sp.Type == "text" && hasText) {
+				continue
+			}
+			s.broadcast(sessionID, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": sp}})
+		}
+	}
+	current, ok = s.store.Get(sessionID)
+	if !ok {
+		return
+	}
+	for i := len(current.Turns) - 1; i >= 0; i-- {
+		t := current.Turns[i]
+		if t.Info.ID == user.ID {
+			break
+		}
+		if t.Info.Role == "assistant" && (t.Info.ParentID == user.ID || t.Info.Time.Created >= user.Time.Created) {
+			if t.Info.Error == nil {
+				nowMs := time.Now().UnixMilli()
+				if t.Info.Time.Completed == 0 {
+					t.Info.Time.Completed = max(nowMs, t.Info.Time.Created)
+				}
+				t.Info.Error = msgErr
+				if t.Info.Finish == "" {
+					t.Info.Finish = "error"
+				}
+				s.broadcast(sessionID, SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": t.Info}})
+			}
+			return
+		}
+	}
+	nowMs := time.Now().UnixMilli()
+	if nowMs <= user.Time.Created {
+		nowMs = user.Time.Created + 1
+	}
+	asstErr := MessageInfo{
+		ID:         fmt.Sprintf("msg_a_err_%d", nowMs),
+		SessionID:  sessionID,
+		Role:       "assistant",
+		ParentID:   user.ID,
+		Time:       MessageTime{Created: nowMs, Completed: nowMs},
+		Agent:      mode,
+		ModelID:    modelID,
+		ProviderID: providerID,
+		Error:      msgErr,
+		Finish:     "error",
+	}
+	s.broadcast(sessionID, SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": asstErr}})
 }

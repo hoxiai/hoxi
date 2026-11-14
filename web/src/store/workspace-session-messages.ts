@@ -231,6 +231,7 @@ export async function dispatchSessionPrompt(
   const optimisticMsgID = `optimistic_${now}`;
   let shouldSummarizeTitle = isBrandNewSession;
   let stagedOptimistic = false;
+  let priorTailID: string | undefined;
 
   const stageOptimisticTurn = (sessionID: string) => {
     if (stagedOptimistic) return;
@@ -297,6 +298,7 @@ export async function dispatchSessionPrompt(
               ...(effectiveSkill ? { metadata: { hoxiSkill: { ...effectiveSkill } } } : {}),
             });
           }
+          priorTailID = list[list.length - 1]?.info.id;
           list.push({
             info: {
               id: optimisticMsgID,
@@ -391,6 +393,7 @@ export async function dispatchSessionPrompt(
         triedKeys: new Set([`${effectiveModel.providerID}/${effectiveModel.modelID}`]),
         sameModelRetries: 0,
         backendRetried: false,
+        priorTailID,
         dispatchedAt: Date.now(),
       });
     } else {
@@ -476,6 +479,7 @@ export async function dispatchSessionPrompt(
         })
       );
       if (!wasBusyBeforeSubmit && !isSessionDeleted(id)) {
+        clearTurnDispatchState(id);
         setWorkspace("statusBySession", id, { type: "idle" });
       }
     });

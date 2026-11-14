@@ -35,6 +35,7 @@ export interface StashedComposerDraft<TImage = any, TPaste = any> {
 
 const drainingBySession = new Set<string>();
 const lastPromptDispatchAtBySession = new Map<string, number>();
+const promptDispatchSeqBySession = new Map<string, number>();
 const editingBySession = new Map<string, EditingQueuedPromptState>();
 const stashedDraftBySession = new Map<string, StashedComposerDraft>();
 let liveDraftGetter: ((sessionID: string) => LiveQueuedEditDraft | null) | null = null;
@@ -81,10 +82,15 @@ export function wasQueuedTurnShown(turnID: string): boolean {
 
 export function markSessionPromptDispatched(sessionID: string) {
   lastPromptDispatchAtBySession.set(sessionID, Date.now());
+  promptDispatchSeqBySession.set(sessionID, (promptDispatchSeqBySession.get(sessionID) ?? 0) + 1);
 }
 
 export function lastPromptDispatchedAt(sessionID: string): number {
   return lastPromptDispatchAtBySession.get(sessionID) || 0;
+}
+
+export function promptDispatchSeq(sessionID: string): number {
+  return promptDispatchSeqBySession.get(sessionID) || 0;
 }
 
 export function enqueueSessionPrompt(
@@ -503,6 +509,7 @@ export function forgetPromptQueueState(sessionIDs: string[]): void {
   for (const id of sessionIDs) {
     drainingBySession.delete(id);
     lastPromptDispatchAtBySession.delete(id);
+    promptDispatchSeqBySession.delete(id);
     editingBySession.delete(id);
     stashedDraftBySession.delete(id);
   }

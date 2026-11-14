@@ -3,6 +3,7 @@ package runner
 import (
 	"encoding/json"
 	"errors"
+	"net/http"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -94,6 +95,29 @@ func isMissingEngineSession(err error) bool {
 	}
 	message = strings.ToLower(strings.TrimSpace(message))
 	return message == "" || strings.Contains(message, "session")
+}
+
+// isEngineSessionPostServerFailure reports whether a synchronous POST to an
+// existing OpenCode session failed with an internal engine 500 error (such as
+// event-store sequence poisoning `UNIQUE constraint failed: event.aggregate_id, event.seq`
+// masked as UnknownError), excluding provider/model/auth/quota/context faults.
+func isEngineSessionPostServerFailure(err error) bool {
+	var httpErr *ocapi.HTTPError
+	if !errors.As(err, &httpErr) || httpErr.Status != http.StatusInternalServerError {
+		return false
+	}
+	lowerBody := strings.ToLower(httpErr.Body)
+	if strings.Contains(lowerBody, "unique constraint failed: event.") ||
+		strings.Contains(lowerBody, "effectdrizzlequeryerror") ||
+		strings.Contains(lowerBody, "sqlerror/uniqueviolation") {
+		return true
+	}
+	name, message := parseEngineBodyError(httpErr.Body)
+	if name != "UnknownError" && name != "EngineRequestError" {
+		return false
+	}
+	fault := llm.ClassifyFault(name, message, httpErr.Status, time.Now())
+	return fault.Kind == llm.FaultKindServer
 }
 
 func isEngineErrorName(name string) bool {

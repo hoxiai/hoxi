@@ -285,12 +285,15 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 		cleanupCreatedSession()
 		return err
 	}
+	reusedExistingSession := createdSessionID == "" && strings.TrimSpace(rec.ExternalID) != ""
 	ap := &activeProcess{sessionID: rec.ID, runtime: "opencode", done: make(chan struct{}), idleCh: make(chan struct{}, 1)}
+	ap.setOpenCodeRecord(rec)
 	ap.cancel = func() {
+		curRec := ap.openCodeRecord()
 		abortCtx, done := context.WithTimeout(context.Background(), 5*time.Second)
 		defer done()
-		s.rejectOpenCodeSessionPermissions(abortCtx, rec)
-		_ = s.openCodeJSON(abortCtx, "POST", "/session/"+rec.ExternalID+"/abort", rec.WorktreePath, map[string]interface{}{}, nil)
+		s.rejectOpenCodeSessionPermissions(abortCtx, curRec)
+		_ = s.openCodeJSON(abortCtx, "POST", "/session/"+curRec.ExternalID+"/abort", curRec.WorktreePath, map[string]interface{}{}, nil)
 		cancel()
 	}
 	ap.stall.touch(time.Now())
@@ -324,7 +327,7 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 	go func() {
 		defer close(streamDone)
 		scanOpenCodeSSEDataLines(stream.Body, func(payload []byte) {
-			s.relayOpenCodeEventWithFiles(rec, payload, fileURLByMsgAndName)
+			s.relayOpenCodeEventWithFiles(ap.openCodeRecord(), payload, fileURLByMsgAndName)
 		})
 	}()
 	go func() {
@@ -333,7 +336,7 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 			_ = stream.Body.Close()
 			<-streamDone
 			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
-			s.rejectOpenCodeSessionPermissions(cleanupCtx, rec)
+			s.rejectOpenCodeSessionPermissions(cleanupCtx, ap.openCodeRecord())
 			cleanupCancel()
 			if !ap.wasRestarting() {
 				s.clearInflightTurn(rec.ID)
@@ -376,29 +379,13 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 			payload["system"] = system
 		}
 		err := s.openCodeJSON(ctx, "POST", "/session/"+rec.ExternalID+"/message", rec.WorktreePath, payload, nil)
-		if isMissingEngineSession(err) {
-			var info SessionInfo
-			if createErr := s.openCodeJSON(ctx, "POST", "/session", rec.WorktreePath, map[string]interface{}{"title": rec.Title, "metadata": map[string]string{"hoxiConversation": rec.ID}}, &info); createErr == nil && info.ID != "" {
-				rec, _, _ = s.store.Update(rec.ID, func(r *SessionRecord) {
-					r.ExternalID = info.ID
-					r.OpenCodeIDs = append(r.OpenCodeIDs, info.ID)
-					if r.OpenCodeDirectories == nil {
-						r.OpenCodeDirectories = make(map[string]string)
-					}
-					r.OpenCodeDirectories[info.ID] = rec.WorktreePath
-					if len(r.Turns) > 0 {
-						r.ContextPending = true
-						r.ContextTurnCount = len(r.Turns)
-					}
-				})
-				s.managedOpenCode.Store(info.ID, true)
-				s.updateInflightExternalID(rec.ID, info.ID)
-				// Recovery below must resend the same system prompt as this retry.
-				if system = openCodeTurnSystem(baseSystem, rec); system != "" {
-					payload["system"] = system
-				}
-				err = s.openCodeJSON(ctx, "POST", "/session/"+rec.ExternalID+"/message", rec.WorktreePath, payload, nil)
+		if rotated, ok := s.rotateOpenCodeSessionIfBroken(ctx, rec, ap, reusedExistingSession, user.ID, err); ok {
+			rec = rotated
+			// Recovery below must resend the same system prompt as this retry.
+			if system = openCodeTurnSystem(baseSystem, rec); system != "" {
+				payload["system"] = system
 			}
+			err = s.openCodeJSON(ctx, "POST", "/session/"+rec.ExternalID+"/message", rec.WorktreePath, payload, nil)
 		}
 		if err == nil && ap.wasSteered() && !ap.wasAborted() && !ap.hasPendingError() {
 			s.waitForOpenCodeIdle(ctx, rec, ap)
@@ -439,7 +426,9 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 			s.stampAbortedTurnErrorOnStore(rec.ID, stallErr)
 			ap.setPendingError(SSEEvent{Type: "session.error", Properties: map[string]interface{}{"sessionID": rec.ID, "error": stallErr}})
 		} else if err != nil && !ap.wasAborted() && !ap.hasPendingError() {
-			ap.setPendingError(SSEEvent{Type: "session.error", Properties: map[string]interface{}{"sessionID": rec.ID, "error": openCodeEngineError(err)}})
+			msgErr := openCodeEngineError(err)
+			s.persistFailedOpenCodeTurn(rec.ID, user, storedParts, modelID, rec.ProviderID, mode, msgErr)
+			ap.setPendingError(SSEEvent{Type: "session.error", Properties: map[string]interface{}{"sessionID": rec.ID, "error": msgErr}})
 		}
 	}()
 	return nil

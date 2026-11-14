@@ -460,10 +460,30 @@ type activeProcess struct {
 	toolFails     toolFailureStreak
 	reasoningLoop openCodeReasoningGuard
 	pendingErr    *SSEEvent
+	openCodeRec   SessionRecord
 	// openCodeChildren holds the OpenCode subagent session IDs spawned by
 	// this turn, so their activity counts toward the parent's watchdog.
 	openCodeChildren syncMap[string, bool]
 	fileURLs         syncMap[string, string]
+}
+
+func (ap *activeProcess) setOpenCodeRecord(rec SessionRecord) {
+	if ap == nil {
+		return
+	}
+	ap.mu.Lock()
+	ap.openCodeRec = rec
+	ap.mu.Unlock()
+}
+
+func (ap *activeProcess) openCodeRecord() SessionRecord {
+	if ap == nil {
+		return SessionRecord{}
+	}
+	ap.mu.Lock()
+	rec := ap.openCodeRec
+	ap.mu.Unlock()
+	return rec
 }
 
 var abortInterruptGrace = 2 * time.Second

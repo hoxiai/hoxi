@@ -1,6 +1,7 @@
 // web/src/store/session-task-control.ts
 import { produce } from "solid-js/store";
 import { hoxiAPI, resolveRunnerRuntimeForProvider } from "../services/api";
+import type { MessagePart } from "../services/sse-types";
 import { isAutoModel, resolveAutoModelTarget } from "./auto-models";
 import { recordPromptDispatched, recordSessionRetry, recordUserAbortAction } from "./provider-telemetry";
 import {
@@ -32,9 +33,9 @@ import {
 } from "./workspace-state";
 import { sessionAIConfig } from "./session-ai";
 import { loadSessionMessages } from "./workspace-sessions";
-import { isSessionDeleted, sessionDirectory } from "./session-query";
+import { isSessionBusy, isSessionDeleted, sessionDirectory } from "./session-query";
 import { pauseSessionGoal } from "./session-goal-state";
-import { markSessionPromptDispatched } from "./prompt-queue";
+import { markSessionPromptDispatched, promptDispatchSeq } from "./prompt-queue";
 import { collectChildSubagentSessionIDs } from "./subagent-sessions";
 
 const lastInterruptAtBySession = new Map<string, number>();
@@ -130,6 +131,7 @@ export async function rerouteRetryingTurnToModel(
     sameModelRetries: 0,
     backendRetried: false,
     retrying: true,
+    priorTailID: prev.priorTailID,
     dispatchedAt: Date.now(),
   };
   rememberTurnDispatch(sessionID, nextState);
@@ -334,8 +336,10 @@ export async function handleSessionErrorEvent(
   let initialCooldownUntil: number | undefined;
   const isGone = () =>
     isSessionDeleted(sessionID) || workspace.archivedSessionIDs.includes(sessionID);
-  const isSuperseded = () =>
-    autoState !== undefined && getTurnDispatchState(sessionID) !== autoState;
+  const isSuperseded = () => {
+    const cur = getTurnDispatchState(sessionID);
+    return cur !== undefined && cur !== autoState;
+  };
   const isStoppedOrSuperseded = () =>
     isGone() || Boolean(workspace.interruptedBySession[sessionID]) || isSuperseded();
 
@@ -418,20 +422,80 @@ export async function handleSessionErrorEvent(
   lastInterruptAtBySession.set(sessionID, Date.now());
   setWorkspace("statusBySession", sessionID, { type: "idle" });
   setWorkspace("unreadCompletedBySession", sessionID, false);
+  const settledDispatchSeq = promptDispatchSeq(sessionID);
   await loadSessionMessages(sessionID);
   if (
     !currentError ||
     isGone() ||
     workspace.interruptedBySession[sessionID] ||
-    isSuperseded()
+    isSuperseded() ||
+    isSessionBusy(sessionID) ||
+    promptDispatchSeq(sessionID) !== settledDispatchSeq
   ) {
     return;
   }
   setWorkspace(
     produce((state) => {
       const list = (state.messagesBySession[sessionID] ||= []);
-      const last = list[list.length - 1];
-      if (last?.info.role === "assistant") {
+      const priorIdx = autoState?.priorTailID
+        ? list.findIndex((m) => m.info.id === autoState.priorTailID)
+        : -1;
+      const isTurnFromDispatch = (
+        m: { info: { id: string; time?: { created?: number } } },
+        idx: number
+      ): boolean => {
+        if (!autoState) return true;
+        if (m.info.id.startsWith("optimistic_")) return true;
+        if (priorIdx >= 0) return idx > priorIdx;
+        return (m.info.time?.created ?? 0) >= autoState.dispatchedAt;
+      };
+      const hasDispatchTurn = list.some((m, idx) => isTurnFromDispatch(m, idx));
+      const atts = autoState?.attachments ?? [];
+      if (
+        autoState &&
+        !hasDispatchTurn &&
+        (autoState.promptText || atts.length > 0 || autoState.skillSelection)
+      ) {
+        const prevCreated = list[list.length - 1]?.info.time?.created ?? 0;
+        const userCreated = Math.max(autoState.dispatchedAt, prevCreated + 1);
+        const recoveredMsgID = `optimistic_${userCreated}`;
+        const recoveredParts: MessagePart[] = atts.map((att, idx) => ({
+          id: `prt_file_${userCreated}_${idx}`,
+          sessionID,
+          messageID: recoveredMsgID,
+          type: "file",
+          mime: att.mime,
+          filename: att.filename,
+          url: att.url,
+        }));
+        if (autoState.promptText || autoState.skillSelection || recoveredParts.length === 0) {
+          recoveredParts.push({
+            id: `prt_${userCreated}`,
+            sessionID,
+            messageID: recoveredMsgID,
+            type: "text",
+            text: autoState.promptText,
+            ...(autoState.skillSelection
+              ? { metadata: { hoxiSkill: { ...autoState.skillSelection } } }
+              : {}),
+          });
+        }
+        list.push({
+          info: {
+            id: recoveredMsgID,
+            sessionID,
+            role: "user",
+            time: { created: userCreated },
+            agent: autoState.agent,
+            modelID: autoState.target.modelID,
+            providerID: autoState.target.providerID,
+          },
+          parts: recoveredParts,
+        });
+      }
+      const lastIdx = list.length - 1;
+      const last = lastIdx >= 0 ? list[lastIdx] : undefined;
+      if (last?.info.role === "assistant" && isTurnFromDispatch(last, lastIdx)) {
         // A runner stop (watchdog, repeated invalid tool calls, or retry cutoff) explains the engine's own "aborted" error.
         const existingErrName = (last.info.error?.name || "").toLowerCase();
         const existingIsAbort =
@@ -447,15 +511,15 @@ export async function handleSessionErrorEvent(
         }
         return;
       }
-      const now = Date.now();
+      const now = Math.max(Date.now(), (last?.info.time?.created ?? 0) + 1);
       list.push({
         info: {
           id: `msg_err_${now}`,
           sessionID,
           role: "assistant",
           time: { created: now, completed: now },
-          modelID: sessionAIConfig(sessionID).model?.modelID,
-          providerID: sessionAIConfig(sessionID).model?.providerID,
+          modelID: autoState?.target.modelID ?? sessionAIConfig(sessionID).model?.modelID,
+          providerID: autoState?.target.providerID ?? sessionAIConfig(sessionID).model?.providerID,
           error: currentError,
         },
         parts: [],

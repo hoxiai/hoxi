@@ -309,6 +309,7 @@ export interface TurnDispatchState {
   retrying?: boolean;
   manualModel?: SelectedModel;
   manualEffort?: ReasoningEffort;
+  priorTailID?: string;
   dispatchedAt: number;
 }
 

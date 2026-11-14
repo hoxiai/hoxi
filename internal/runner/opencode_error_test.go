@@ -141,3 +141,80 @@ func TestIsMissingEngineSession(t *testing.T) {
 		}
 	}
 }
+
+func TestIsEngineSessionPostServerFailure(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "masked v1.19.3 hono unknown error 500",
+			err:  &ocapi.HTTPError{Status: 500, Body: `{"name":"UnknownError","data":{"message":"Unexpected server error. Check server logs for details.","ref":"err_d43c8cf9"}}`},
+			want: true,
+		},
+		{
+			name: "explicit event seq unique constraint 500",
+			err:  &ocapi.HTTPError{Status: 500, Body: `{"name":"EffectDrizzleQueryError","data":{"message":"SQLiteError: UNIQUE constraint failed: event.aggregate_id, event.seq"}}`},
+			want: true,
+		},
+		{
+			name: "model not found 500 must not rotate session",
+			err:  &ocapi.HTTPError{Status: 500, Body: `{"name":"UnknownError","data":{"message":"Model not found: openai/gpt-missing."}}`},
+			want: false,
+		},
+		{
+			name: "structured provider model not found 500",
+			err:  &ocapi.HTTPError{Status: 500, Body: `{"name":"ProviderModelNotFoundError","data":{"message":"Model not found: subapi/m"}}`},
+			want: false,
+		},
+		{
+			name: "auth failure 500",
+			err:  &ocapi.HTTPError{Status: 500, Body: `{"name":"APIError","data":{"message":"Invalid API Key"}}`},
+			want: false,
+		},
+		{
+			name: "rate limit 500",
+			err:  &ocapi.HTTPError{Status: 500, Body: `{"name":"APIError","data":{"message":"Rate limit exceeded"}}`},
+			want: false,
+		},
+		{
+			name: "quota 500",
+			err:  &ocapi.HTTPError{Status: 500, Body: `{"name":"APIError","data":{"message":"Insufficient quota"}}`},
+			want: false,
+		},
+		{
+			name: "context overflow 500",
+			err:  &ocapi.HTTPError{Status: 500, Body: `{"name":"APIError","data":{"message":"maximum context length is 128k"}}`},
+			want: false,
+		},
+		{
+			name: "404 session not found handled separately",
+			err:  &ocapi.HTTPError{Status: 404, Body: `{"name":"NotFoundError","data":{"message":"Session not found: ses_x"}}`},
+			want: false,
+		},
+		{
+			name: "502 bad gateway is upstream proxy error",
+			err:  &ocapi.HTTPError{Status: 502, Body: "<html>bad gateway</html>"},
+			want: false,
+		},
+		{
+			name: "network error without status",
+			err:  errors.New("dial tcp 127.0.0.1:4096: connect: connection refused"),
+			want: false,
+		},
+		{
+			name: "nil error",
+			err:  nil,
+			want: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isEngineSessionPostServerFailure(tc.err); got != tc.want {
+				t.Fatalf("isEngineSessionPostServerFailure(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}

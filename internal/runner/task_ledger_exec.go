@@ -109,18 +109,24 @@ func (s *Service) resumeOpenCodeTurnFromLedger(ctx context.Context, rec SessionR
 	s.abandonOpenCodeInFlightParts(rec.ID, nowMs)
 	s.clearInterruptedTurnAbortError(rec.ID)
 
+	if latest, ok := s.store.Get(rec.ID); ok {
+		rec = latest
+	}
 	turnCtx, cancelTurn := context.WithCancel(context.Background())
 	stream, err := s.openCodeRequest(turnCtx, "GET", "/event", rec.WorktreePath, nil)
 	if err != nil {
 		cancelTurn()
 		return err
 	}
+	reusedExistingSession := strings.TrimSpace(rec.ExternalID) != ""
 	ap := &activeProcess{sessionID: rec.ID, runtime: "opencode", done: make(chan struct{}), idleCh: make(chan struct{}, 1)}
+	ap.setOpenCodeRecord(rec)
 	ap.cancel = func() {
+		curRec := ap.openCodeRecord()
 		abortCtx, done := context.WithTimeout(context.Background(), 5*time.Second)
 		defer done()
-		s.rejectOpenCodeSessionPermissions(abortCtx, rec)
-		_ = s.openCodeJSON(abortCtx, "POST", "/session/"+rec.ExternalID+"/abort", rec.WorktreePath, map[string]interface{}{}, nil)
+		s.rejectOpenCodeSessionPermissions(abortCtx, curRec)
+		_ = s.openCodeJSON(abortCtx, "POST", "/session/"+curRec.ExternalID+"/abort", curRec.WorktreePath, map[string]interface{}{}, nil)
 		cancelTurn()
 	}
 	ap.stall.touch(time.Now())
@@ -144,7 +150,7 @@ func (s *Service) resumeOpenCodeTurnFromLedger(ctx context.Context, rec SessionR
 	go func() {
 		defer close(streamDone)
 		scanOpenCodeSSEDataLines(stream.Body, func(payload []byte) {
-			s.relayOpenCodeEventWithFiles(rec, payload, nil)
+			s.relayOpenCodeEventWithFiles(ap.openCodeRecord(), payload, nil)
 		})
 	}()
 
@@ -154,7 +160,7 @@ func (s *Service) resumeOpenCodeTurnFromLedger(ctx context.Context, rec SessionR
 			_ = stream.Body.Close()
 			<-streamDone
 			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
-			s.rejectOpenCodeSessionPermissions(cleanupCtx, rec)
+			s.rejectOpenCodeSessionPermissions(cleanupCtx, ap.openCodeRecord())
 			cleanupCancel()
 			if !ap.wasRestarting() {
 				s.clearInflightTurn(rec.ID)
@@ -190,28 +196,12 @@ func (s *Service) resumeOpenCodeTurnFromLedger(ctx context.Context, rec SessionR
 			payload["system"] = system
 		}
 		postErr := s.openCodeJSON(turnCtx, "POST", "/session/"+rec.ExternalID+"/message", rec.WorktreePath, payload, nil)
-		if isMissingEngineSession(postErr) {
-			var info SessionInfo
-			if createErr := s.openCodeJSON(turnCtx, "POST", "/session", rec.WorktreePath, map[string]interface{}{"title": rec.Title, "metadata": map[string]string{"hoxiConversation": rec.ID}}, &info); createErr == nil && info.ID != "" {
-				rec, _, _ = s.store.Update(rec.ID, func(r *SessionRecord) {
-					r.ExternalID = info.ID
-					r.OpenCodeIDs = append(r.OpenCodeIDs, info.ID)
-					if r.OpenCodeDirectories == nil {
-						r.OpenCodeDirectories = make(map[string]string)
-					}
-					r.OpenCodeDirectories[info.ID] = rec.WorktreePath
-					if len(r.Turns) > 0 {
-						r.ContextPending = true
-						r.ContextTurnCount = len(r.Turns)
-					}
-				})
-				s.managedOpenCode.Store(info.ID, true)
-				s.updateInflightExternalID(rec.ID, info.ID)
-				if system = openCodeTurnSystem(baseSystem, rec); system != "" {
-					payload["system"] = system
-				}
-				postErr = s.openCodeJSON(turnCtx, "POST", "/session/"+rec.ExternalID+"/message", rec.WorktreePath, payload, nil)
+		if rotated, ok := s.rotateOpenCodeSessionIfBroken(turnCtx, rec, ap, reusedExistingSession, recoverMsgID, postErr); ok {
+			rec = rotated
+			if system = openCodeTurnSystem(baseSystem, rec); system != "" {
+				payload["system"] = system
 			}
+			postErr = s.openCodeJSON(turnCtx, "POST", "/session/"+rec.ExternalID+"/message", rec.WorktreePath, payload, nil)
 		}
 		if postErr == nil && ap.wasSteered() && !ap.wasAborted() && !ap.hasPendingError() {
 			s.waitForOpenCodeIdle(turnCtx, rec, ap)
