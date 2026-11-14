@@ -73,9 +73,20 @@ function resolveCandidates(base: string): string | undefined {
   return candidates.find((p) => fs.existsSync(p) && fs.statSync(p).isFile());
 }
 
+// Vite's `surface-extension` alias redirects only specifiers that resolve to the
+// core stub. Imports inside the work repo itself (for example `./surface-extension`
+// or a path that lands back on the work entry) resolve literally, so mirroring
+// that here keeps the cycle graph identical to the bundle.
+function isCoreSurfaceExtensionImport(from: string, spec: string): boolean {
+  if (!WORK_EXT_ENTRY || !/(?:^|[\/\\])surface-extension(?:\.ts)?$/.test(spec)) return false;
+  if (!spec.startsWith("./") && !spec.startsWith("../")) return true;
+  const literal = resolveCandidates(path.resolve(path.dirname(from), spec));
+  return Boolean(literal && path.resolve(literal) !== path.resolve(WORK_EXT_ENTRY));
+}
+
 function resolveImport(from: string, spec: string): string | undefined {
-  if (WORK_EXT_ENTRY && /(?:^|[\/\\])surface-extension(?:\.ts)?$/.test(spec)) {
-    return WORK_EXT_ENTRY;
+  if (isCoreSurfaceExtensionImport(from, spec)) {
+    return WORK_EXT_ENTRY ?? undefined;
   }
   if (spec.startsWith("@hoxi-core/")) {
     return resolveCandidates(path.join(SRC, spec.slice("@hoxi-core/".length)));
@@ -91,7 +102,7 @@ function isTrackedSpecifier(spec: string): boolean {
     spec.startsWith("./") ||
     spec.startsWith("../") ||
     spec.startsWith("@hoxi-core/") ||
-    Boolean(WORK_EXT_ENTRY && /(?:^|[\/\\])surface-extension(?:\.ts)?$/.test(spec))
+    /(?:^|[\/\\])surface-extension(?:\.ts)?$/.test(spec)
   );
 }
 
