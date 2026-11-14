@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-const claudeResearchReferenceDir = "/Users/hugh/.claude/skills/synced/5367d089-917b-42e9-863e-145e292ec06f_5f1be84d-c28f-401e9113-c96b91384f53/deep-research/references"
+const claudeResearchReferenceDir = "/Users/u/.claude/skills/synced/5367d089-917b-42e9-863e-145e292ec06f_5f1be84d-c28f-401e9113-c96b91384f53/deep-research/references"
 
 func TestClaudeSkillDocumentsReadWithoutApproval(t *testing.T) {
 	for _, item := range []map[string]interface{}{
@@ -65,8 +65,8 @@ func TestClaudeSkillReadExemptionRejectsSensitiveAndNonReadRequests(t *testing.T
 		{"permission": "external_directory", "patterns": []interface{}{claudeResearchReferenceDir + "/*"}, "metadata": map[string]interface{}{"tool": "unknown_tool"}},
 		{"permission": "external_directory", "patterns": []interface{}{claudeResearchReferenceDir + "/*"}, "metadata": map[string]interface{}{"command": "cat guide.md"}},
 		{"permission": "external_directory", "patterns": []interface{}{claudeResearchReferenceDir + "/*"}, "metadata": map[string]interface{}{"destructive": true}},
-		{"permission": "external_directory", "patterns": []interface{}{claudeResearchReferenceDir + "/*"}, "always": []interface{}{"/Users/hugh/.claude/*"}},
-		{"permission": "external_directory", "patterns": []interface{}{claudeResearchReferenceDir + "/*", "/Users/hugh/.claude/.credentials.json"}},
+		{"permission": "external_directory", "patterns": []interface{}{claudeResearchReferenceDir + "/*"}, "always": []interface{}{"/Users/u/.claude/*"}},
+		{"permission": "external_directory", "patterns": []interface{}{claudeResearchReferenceDir + "/*", "/Users/u/.claude/.credentials.json"}},
 	} {
 		if !isDestructivePermissionRequest(item) {
 			t.Errorf("non-read/mixed request used skill exemption: %#v", item)

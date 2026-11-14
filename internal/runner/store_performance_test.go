@@ -56,36 +56,34 @@ func BenchmarkRunnerEditedFiles(b *testing.B) {
 }
 
 func BenchmarkRunnerStreamPersist(b *testing.B) {
-	svc := NewService("/repo", nil, nil, filepath.Join(b.TempDir(), "sessions"))
-	svc.store.StartPersistence(context.Background())
-	b.Cleanup(svc.store.ClosePersistence)
 	rec := SessionRecord{ID: "bench", Turns: []MessageTurn{{Info: MessageInfo{ID: "msg", SessionID: "bench"}, Parts: []MessagePart{{
 		ID: "tool", MessageID: "msg", Type: "tool", Tool: "bash", State: &ToolState{Status: "completed", Output: strings.Repeat("output\n", 150000)},
 	}}}}}
-	b.Cleanup(svc.store.Flush)
+	info := MessageInfo{ID: "msg", SessionID: "bench", Role: "assistant"}
 	for _, inline := range []bool{true, false} {
 		name := "queued-stream"
 		if inline {
 			name = "inline-baseline"
 		}
 		b.Run(name, func(b *testing.B) {
+			svc := NewService("/repo", nil, nil, filepath.Join(b.TempDir(), "sessions"))
+			svc.store.StartPersistence(context.Background())
+			b.Cleanup(svc.store.ClosePersistence)
+			if err := svc.store.Put(rec); err != nil {
+				b.Fatal(err)
+			}
+			svc.store.SetActive("bench", true)
 			b.ReportAllocs()
+			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				b.StopTimer()
-				if err := svc.store.Put(rec); err != nil {
-					b.Fatal(err)
-				}
-				svc.store.SetActive("bench", true)
-				info := MessageInfo{ID: "msg", SessionID: "bench", Role: "assistant"}
-				b.StartTimer()
 				if inline {
 					svc.store.UpsertTurnInfo("bench", info)
 				} else {
 					svc.broadcast("bench", SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": info}})
 				}
-				b.StopTimer()
-				svc.store.FlushSession("bench")
 			}
+			b.StopTimer()
+			svc.store.FlushSession("bench")
 		})
 	}
 }

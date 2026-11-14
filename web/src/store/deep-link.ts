@@ -139,7 +139,7 @@ export function openSessionDeepLink(
   expiryTimer = setTimeout(() => {
     expiryTimer = undefined;
     if (pending() === entry) setPending(null);
-  }, ttlMs);
+  }, Math.max(0, ttlMs));
   resolvePendingDeepLink();
 }
 

@@ -58,6 +58,12 @@ func (s *Service) StartSync(ctx context.Context, target Target, in SyncInput) (S
 	workerCtx = context.WithValue(workerCtx, syncJobContextKey{}, true)
 	worker := &syncWorker{cancel: cancel, done: make(chan struct{})}
 	s.jobsMu.Lock()
+	if s.jobs[target.Scope.StoreID] != nil {
+		s.jobsMu.Unlock()
+		cancel()
+		unlock()
+		return SyncJob{}, errors.New("store is busy; retry after the current operation")
+	}
 	if s.closed || len(s.jobs) >= 32 {
 		s.jobsMu.Unlock()
 		cancel()
@@ -70,7 +76,9 @@ func (s *Service) StartSync(ctx context.Context, target Target, in SyncInput) (S
 	err = s.store.update(ctx, target.Scope, func(st *state) error { st.SyncJob = &job; return nil })
 	if err != nil {
 		s.jobsMu.Lock()
-		delete(s.jobs, target.Scope.StoreID)
+		if s.jobs[target.Scope.StoreID] == worker {
+			delete(s.jobs, target.Scope.StoreID)
+		}
 		s.jobsMu.Unlock()
 		cancel()
 		unlock()
@@ -80,10 +88,12 @@ func (s *Service) StartSync(ctx context.Context, target Target, in SyncInput) (S
 	go func() {
 		defer func() {
 			cancel()
-			unlock()
 			s.jobsMu.Lock()
-			delete(s.jobs, target.Scope.StoreID)
+			if s.jobs[target.Scope.StoreID] == worker {
+				delete(s.jobs, target.Scope.StoreID)
+			}
 			s.jobsMu.Unlock()
+			unlock()
 			close(worker.done)
 		}()
 		input := in

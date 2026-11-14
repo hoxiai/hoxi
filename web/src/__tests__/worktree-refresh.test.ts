@@ -22,13 +22,47 @@ import {
 } from "../store/workspace";
 import { assertEqual, assertTrue, describe, it } from "./test-harness";
 import {
+  cancelScheduledSessionDiff,
   cancelScheduledWorktreeStatus,
   refreshWorktreeStatus,
+  scheduleRefreshSessionDiff,
   scheduleRefreshWorktreeStatus,
 } from "../store/session-diffs";
+import { reconcileSessionsInPlace } from "../store/workspace-sessions";
 import { applyStreamFrameBatch } from "../store/session-stream";
 
 describe("worktree refresh lifecycle", () => {
+  it("does not fire scheduled worktree or diff refresh after a mounted session is unloaded without deleteConversation", async () => {
+    const saved = structuredClone(unwrap(workspace));
+    const origStatus = hoxiAPI.getWorktreeStatus;
+    const origDiff = hoxiAPI.getSessionDiff;
+    const sid = "ses_unloaded_without_delete";
+    let statusCalls = 0;
+    let diffCalls = 0;
+    hoxiAPI.getWorktreeStatus = async () => { statusCalls++; throw new Error("stale worktree refresh fired"); };
+    hoxiAPI.getSessionDiff = async () => { diffCalls++; throw new Error("stale diff refresh fired"); };
+    try {
+      setWorkspace({
+        rootDir: "/repo",
+        activeSessionID: sid,
+        sessions: [{ id: sid, title: "Mounted", time: { created: 1, updated: 1 } }],
+      });
+      scheduleRefreshWorktreeStatus(sid, 10);
+      scheduleRefreshSessionDiff(sid, 10);
+      // Session list resets / switches out without markSessionDeleted; rootDir remains "/repo".
+      setWorkspace("activeSessionID", null);
+      reconcileSessionsInPlace([]);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      assertEqual(statusCalls, 0);
+      assertEqual(diffCalls, 0);
+    } finally {
+      cancelScheduledWorktreeStatus(sid);
+      cancelScheduledSessionDiff(sid);
+      hoxiAPI.getWorktreeStatus = origStatus;
+      hoxiAPI.getSessionDiff = origDiff;
+      setWorkspace(reconcile(saved));
+    }
+  });
   it("does not request status after the scheduled refresh is cancelled", async () => {
     const original = hoxiAPI.getWorktreeStatus;
     let calls = 0;

@@ -305,22 +305,16 @@ func TestStartOpenCodeTurnAutoRecoversFromMidTaskTransitionalStop(t *testing.T) 
 	if err := svc.store.Put(rec); err != nil {
 		t.Fatal(err)
 	}
+	ch, unsub := svc.Subscribe(rec.ID)
+	defer unsub()
+
 	user := MessageInfo{ID: "msg_u_initial", SessionID: rec.ID, Role: "user", Time: MessageTime{Created: 100}}
 	parts := []MessagePart{{ID: "prt_u1", SessionID: rec.ID, MessageID: user.ID, Type: "text", Text: "帮我进行这个迁移"}}
 	if err := svc.startOpenCodeTurn(rec, "build", "deepseek-flash", "", "", user, parts, parts); err != nil {
 		t.Fatal(err)
 	}
 
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		svc.mu.Lock()
-		busy := svc.procs[rec.ID] != nil
-		svc.mu.Unlock()
-		if !busy {
-			break
-		}
-		time.Sleep(15 * time.Millisecond)
-	}
+	drainUntilSessionIdle(t, ch)
 
 	mu.Lock()
 	gotPosts := append([]string(nil), postedMsgIDs...)
@@ -457,19 +451,7 @@ func TestStartOpenCodeTurnRotatesPoisonedSessionAndCarriesHandoffContext(t *test
 		t.Fatal(err)
 	}
 
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		svc.mu.Lock()
-		busy := svc.procs[rec.ID] != nil
-		svc.mu.Unlock()
-		if !busy {
-			break
-		}
-		time.Sleep(15 * time.Millisecond)
-	}
-
-	for len(ch) > 0 {
-		evt := <-ch
+	for _, evt := range drainUntilSessionIdle(t, ch) {
 		if evt.Type == "session.error" {
 			t.Fatalf("unexpected session.error after successful session rotation: %+v", evt)
 		}
@@ -564,16 +546,7 @@ func TestStartOpenCodeTurnPersistsFailedTurnWithoutRotatingNonServerFault(t *tes
 		t.Fatal(err)
 	}
 
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		svc.mu.Lock()
-		busy := svc.procs[rec.ID] != nil
-		svc.mu.Unlock()
-		if !busy {
-			break
-		}
-		time.Sleep(15 * time.Millisecond)
-	}
+	evts := drainUntilSessionIdle(t, ch)
 
 	mu.Lock()
 	gotCreated := createdCount
@@ -583,8 +556,7 @@ func TestStartOpenCodeTurnPersistsFailedTurnWithoutRotatingNonServerFault(t *tes
 	}
 
 	var sawSessionError bool
-	for len(ch) > 0 {
-		evt := <-ch
+	for _, evt := range evts {
 		if evt.Type == "session.error" {
 			sawSessionError = true
 		}
@@ -608,5 +580,26 @@ func TestStartOpenCodeTurnPersistsFailedTurnWithoutRotatingNonServerFault(t *tes
 	}
 	if stored.Turns[1].Info.Role != "assistant" || stored.Turns[1].Info.Error == nil || stored.Turns[1].Info.Error.Name != "ProviderModelNotFoundError" {
 		t.Fatalf("expected persisted assistant turn with ProviderModelNotFoundError, got %+v", stored.Turns[1].Info)
+	}
+}
+
+func drainUntilSessionIdle(t *testing.T, ch <-chan SSEEvent) []SSEEvent {
+	t.Helper()
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+	var evts []SSEEvent
+	for {
+		select {
+		case evt := <-ch:
+			evts = append(evts, evt)
+			if evt.Type == "session.status" && isOpenCodeIdleStatus(evt.Properties["status"]) {
+				for len(ch) > 0 {
+					evts = append(evts, <-ch)
+				}
+				return evts
+			}
+		case <-timer.C:
+			t.Fatalf("timed out waiting for session.status(idle), got %d events", len(evts))
+		}
 	}
 }

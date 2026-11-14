@@ -11,7 +11,7 @@ import (
 )
 
 const flutterRestartCommand = `# hoxi:unsandboxed
-export PATH="$PATH:/Users/hugh/sdk/flutter/bin"
+export PATH="$PATH:/Users/u/sdk/flutter/bin"
 pkill -f "hot_reload_watch.py" 2>/dev/null || true
 sleep 1
 rm -f /tmp/hoxi_flutter_run.log

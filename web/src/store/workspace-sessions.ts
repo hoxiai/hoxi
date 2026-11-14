@@ -41,6 +41,8 @@ import {
   sessionDirectory,
 } from "./session-query";
 import {
+  cancelScheduledSessionDiff,
+  cancelScheduledWorktreeStatus,
   forgetSessionDiffState,
   refreshSessionDiff,
   scheduleRefreshSessionDiff,
@@ -171,6 +173,13 @@ export function reconcileSessionsInPlace(incomingList: SessionInfo[]): void {
         }
       }
       if (orderOrLengthChanged) {
+        const nextIds = new Set(next.map((s) => s.id));
+        for (const prevId of existingById.keys()) {
+          if (!nextIds.has(prevId) && prevId !== state.activeSessionID) {
+            cancelScheduledWorktreeStatus(prevId);
+            cancelScheduledSessionDiff(prevId);
+          }
+        }
         state.sessions = next;
       }
     })

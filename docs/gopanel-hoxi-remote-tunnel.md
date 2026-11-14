@@ -179,7 +179,8 @@ Type(1B) | StreamID(8B, BigEndian uint64) | Payload(≤ 4MB)
 
 ## 7. 移动端与远程客户端接入契约
 
-- **中继地址**：`https://<gopanel>/api/tunnel/hoxi-nodes/<nodeId>/proxy`，作为受控节点的 `url` 保存；客户端把 `/api/hoxi/...` 直接拼在后面，无需修改业务协议。
+- **多传输选路（节点身份 ⟂ 传输）**：客户端 `ServerConnection.transports` 为同一节点保存多个传输候选（局域网 `:5417` 配对令牌直连 + GoPanel 隧道中继 / Cloudflare Tunnel `:5418`），由 `HoxiTransportResolver` 优先选用局域网（明文 LAN 先无凭据预探测挑战并核对 `appVersion` + `rootDir`）、失败回落中继，`HoxiTransportFailover` 在传输故障后重探并更新后续请求地址，且绝不自动重放原失败请求。
+- **中继地址**：`https://<gopanel>/api/tunnel/hoxi-nodes/<nodeId>/proxy`，作为中继传输地址（或单中继节点的 `url`）保存；客户端把 `/api/hoxi/...` 直接拼在后面，无需修改业务协议。
 - **凭据**：中继连接复用所属 GoPanel 的登录 JWT 与安全入口，由鉴权拦截器发送 `X-Auth` 与 `EntranceCode`。GoPanel 重新登录保存连接时，会同步刷新它名下所有中继连接的凭据。
 - **地址规范化**：客户端规范化地址时不应把中继路径当作安全入口剥离，连接迁移时保留中继路径。
 - **入口**：服务器列表 → GoPanel 卡片的电脑图标；离线电脑不可选。
@@ -200,7 +201,7 @@ Type(1B) | StreamID(8B, BigEndian uint64) | Payload(≤ 4MB)
 
 - 经隧道转发 WebSocket（手机远程终端）。GoPanel 侧已支持，Hoxi 侧需要回连本机端口或实现进程内 Hijack。
 - 跨网端到端加密（E2E）：同局域网 `5417` 配对令牌直连（`internal/gateway/lan.go`）与本机 `127.0.0.1:5418` 反向代理入口（`internal/gateway/ingress.go`）已实现，但跨网端到端加密信封与盲目中继尚未实现（见 [`docs/remote-access-e2e-contract.md`](remote-access-e2e-contract.md)）。
-- 隧道 token 存入 macOS 钥匙串；Android 推送；节点身份与传输地址分离后的自动切换。
+- 隧道 token 存入 macOS 钥匙串；Android 推送；Wi-Fi / 移动网络切换下的多传输漫游与公网真机验收（客户端 `HoxiTransportResolver` / `HoxiTransportFailover` 多传输自动选路与故障重探已实现，不自动重放失败请求）。
 
 ## 10. 验证
 

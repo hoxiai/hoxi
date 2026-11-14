@@ -258,22 +258,16 @@ func TestStartOpenCodeTurnAutoRecoversFromReasoningOnlyTruncation(t *testing.T) 
 	if err := svc.store.Put(rec); err != nil {
 		t.Fatal(err)
 	}
+	ch, unsub := svc.Subscribe(rec.ID)
+	defer unsub()
+
 	user := MessageInfo{ID: "msg_u_initial", SessionID: rec.ID, Role: "user", Time: MessageTime{Created: 100}}
 	parts := []MessagePart{{ID: "prt_u1", SessionID: rec.ID, MessageID: user.ID, Type: "text", Text: "继续执行"}}
 	if err := svc.startOpenCodeTurn(rec, "build", "deepseek-v4", "", "", user, parts, parts); err != nil {
 		t.Fatal(err)
 	}
 
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		svc.mu.Lock()
-		busy := svc.procs[rec.ID] != nil
-		svc.mu.Unlock()
-		if !busy {
-			break
-		}
-		time.Sleep(15 * time.Millisecond)
-	}
+	drainUntilSessionIdle(t, ch)
 
 	mu.Lock()
 	gotPosts := append([]string(nil), postedMsgIDs...)
@@ -411,22 +405,16 @@ func TestStartOpenCodeTurnWaitsForIdleAndPrunesEmptyRecoveryStubTurn(t *testing.
 	// Pre-seed the empty stub turn in store as if SSE streaming created it before abort.
 	svc.store.UpsertTurnInfo(rec.ID, MessageInfo{ID: "msg_a_empty_stub", SessionID: rec.ID, Role: "assistant", ParentID: "msg_u_initial"})
 
+	ch, unsub := svc.Subscribe(rec.ID)
+	defer unsub()
+
 	user := MessageInfo{ID: "msg_u_initial", SessionID: rec.ID, Role: "user", Time: MessageTime{Created: 100}}
 	parts := []MessagePart{{ID: "prt_u1", SessionID: rec.ID, MessageID: user.ID, Type: "text", Text: "检查状态"}}
 	if err := svc.startOpenCodeTurn(rec, "build", "deepseek-v4", "", "", user, parts, parts); err != nil {
 		t.Fatal(err)
 	}
 
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		svc.mu.Lock()
-		busy := svc.procs[rec.ID] != nil
-		svc.mu.Unlock()
-		if !busy {
-			break
-		}
-		time.Sleep(15 * time.Millisecond)
-	}
+	drainUntilSessionIdle(t, ch)
 
 	mu.Lock()
 	polls := statusPolls

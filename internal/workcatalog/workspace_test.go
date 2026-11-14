@@ -281,3 +281,43 @@ func waitCatalogJob(t *testing.T, s *Service, scope Scope, status string) *SyncJ
 	t.Fatal("sync job did not reach", status)
 	return nil
 }
+
+func TestStartSyncCleanupPreservesReplacementWorkerHandle(t *testing.T) {
+	s, scope, f, _ := setupCatalog(t)
+	t.Cleanup(s.Close)
+	for round := range 8 {
+		entered1 := make(chan struct{})
+		api1 := &blockingPagePlatform{fakePlatform: f, page: 1, entered: entered1}
+		target1 := Target{
+			Scope:         scope,
+			Platform:      func() (Platform, error) { return api1, nil },
+			Authorization: AuthorizationStatus{Configured: true},
+			Capabilities:  Capabilities{Sync: true},
+		}
+		if _, err := s.StartSync(context.Background(), target1, SyncInput{}); err != nil {
+			t.Fatalf("round %d first StartSync: %v", round, err)
+		}
+		<-entered1
+		if err := s.CancelSync(scope.StoreID); err != nil {
+			t.Fatalf("round %d first CancelSync: %v", round, err)
+		}
+
+		entered2 := make(chan struct{})
+		api2 := &blockingPagePlatform{fakePlatform: f, page: 1, entered: entered2}
+		target2 := Target{
+			Scope:         scope,
+			Platform:      func() (Platform, error) { return api2, nil },
+			Authorization: AuthorizationStatus{Configured: true},
+			Capabilities:  Capabilities{Sync: true},
+		}
+		if _, err := s.StartSync(context.Background(), target2, SyncInput{}); err != nil {
+			t.Fatalf("round %d replacement StartSync: %v", round, err)
+		}
+		<-entered2
+		// Replacement worker handle must still be registered for CancelSync/Close.
+		if err := s.CancelSync(scope.StoreID); err != nil {
+			t.Fatalf("round %d replacement CancelSync lost worker handle: %v", round, err)
+		}
+		waitCatalogJob(t, s, scope, "cancelled")
+	}
+}

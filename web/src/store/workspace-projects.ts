@@ -31,7 +31,7 @@ import {
   workspaceFoldersForDir,
 } from "./workspace-folders";
 import { setDefaultWorkspaceDir, setSurfaceMode, surfaceMode, type SurfaceMode } from "./layout";
-import { refreshWorktreeStatus } from "./session-diffs";
+import { pruneScheduledSessionDiffTimers, refreshWorktreeStatus } from "./session-diffs";
 import {
   filterProjectSessions, getCachedProjectSessions, setCachedProjectSessions,
 } from "./session-index";
@@ -95,6 +95,7 @@ export async function activateSurfaceMode(nextMode: SurfaceMode): Promise<void> 
       await switchPromise;
     } else {
       batch(() => {
+        pruneScheduledSessionDiffTimers();
         setSurfaceMode("work");
         setWorkspace({ rootDir: "", sessions: [], activeSessionID: null, activeProjectID: null, activeBrowserScopeID: null });
       });
@@ -126,6 +127,7 @@ export async function activateSurfaceMode(nextMode: SurfaceMode): Promise<void> 
       await switchPromise;
     } else {
       batch(() => {
+        pruneScheduledSessionDiffTimers();
         setSurfaceMode("code");
         setWorkspace({ rootDir: "", sessions: [], activeSessionID: null, activeProjectID: null, activeBrowserScopeID: null });
       });
@@ -408,6 +410,13 @@ export async function switchWorkspace(
     warmSurfaceSwitch &&
     hasCachedSessions &&
     Date.now() - (lastBootstrappedAtByDir.get(cleaned) || 0) < 30_000;
+
+  const retainedSessionIDs = new Set(hydratedSessions.map((s) => s.id));
+  if (targetSessionID) retainedSessionIDs.add(targetSessionID);
+  pruneScheduledSessionDiffTimers(
+    retainedSessionIDs,
+    normalizeFolderPath(workspace.rootDir) === cleaned
+  );
 
   setWorkspace({
     rootDir: cleaned,

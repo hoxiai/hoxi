@@ -14,7 +14,19 @@ import (
 )
 
 func TestDestructiveRequestsMatchSharedFixture(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "..", ".opencode", "lib", "permission-request.cases.json"))
+	libDir := filepath.Join("..", "..", ".opencode", "lib")
+	if home, err := os.UserHomeDir(); err == nil {
+		slashHome := strings.TrimRight(filepath.ToSlash(filepath.Clean(home)), "/")
+		if len(slashHome) > 1 && slashHome != "/Users/u" && slashHome != "/home/u" {
+			matches, _ := filepath.Glob(filepath.Join(libDir, "*.cases.json"))
+			for _, f := range matches {
+				if data, err := os.ReadFile(f); err == nil && strings.Contains(string(data), slashHome+"/") {
+					t.Errorf("shared fixture %s hardcodes host home directory %q; use synthetic /Users/u/... instead", filepath.Base(f), slashHome)
+				}
+			}
+		}
+	}
+	raw, err := os.ReadFile(filepath.Join(libDir, "permission-request.cases.json"))
 	if err != nil {
 		t.Fatalf("read shared fixture: %v", err)
 	}

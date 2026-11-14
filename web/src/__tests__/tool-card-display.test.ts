@@ -22,7 +22,7 @@ import { summarizeStepTarget } from "../components/timeline/context-activity-sum
 import { resolveReadLineRange, resolveToolArgPills } from "../components/timeline/tool-card-state";
 import type { MessagePart, ToolPart, ToolState } from "../services/sse-types";
 import { dictionaries, setLocale } from "../i18n";
-import { type MessageTurn, setWorkspace } from "../store/workspace-state";
+import { type MessageTurn, setWorkspace, workspace } from "../store/workspace-state";
 import { assertDeepEqual, assertEqual, assertTrue, describe, it } from "./test-harness";
 
 const marker = "# hoxi-stop:ses_display:call_1";
@@ -240,7 +240,9 @@ describe("localized tool labels for CLI runtimes", () => {
   });
 
   it("summarizes noisy shell exploration and ssh commands into concise semantic intents", () => {
+    const prevRoot = workspace.rootDir;
     setWorkspace("rootDir", "/Users/hugh/code/hoxi/shopark");
+    try {
 
     const sedRead = analyzeShellCommand(
       "cd /Users/hugh/code/hoxi/shopark && sed -n '340,420p' go-fast/app/service/theme_decor_bundle.go"
@@ -338,8 +340,11 @@ describe("localized tool labels for CLI runtimes", () => {
     assertEqual(grouped.length, 2);
     assertEqual(grouped[0].kind, "part");
     assertEqual(grouped[1].kind, "exploration-fold");
-    if (grouped[1].kind === "exploration-fold") {
-      assertEqual(grouped[1].parts.length, 3);
+      if (grouped[1].kind === "exploration-fold") {
+        assertEqual(grouped[1].parts.length, 3);
+      }
+    } finally {
+      setWorkspace("rootDir", prevRoot);
     }
   });
 

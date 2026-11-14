@@ -494,9 +494,22 @@ func TestEnsureHoxiEngineDataDir(t *testing.T) {
 	if dataDir != filepath.Join(home, ".hoxi", "engine-data") || stateDir != filepath.Join(home, ".hoxi", "engine-state") {
 		t.Fatalf("unexpected engine dirs: data=%s state=%s", dataDir, stateDir)
 	}
-	seededAuth, err := os.ReadFile(filepath.Join(dataDir, "opencode", "auth.json"))
+	dstAuthPath := filepath.Join(dataDir, "opencode", "auth.json")
+	seededAuth, err := os.ReadFile(dstAuthPath)
 	if err != nil || !bytes.Equal(seededAuth, wantAuth) {
 		t.Fatalf("expected seeded auth.json, got %q (err=%v)", string(seededAuth), err)
+	}
+	if runtime.GOOS != "windows" {
+		if st, err := os.Stat(dstAuthPath); err != nil || st.Mode().Perm() != 0o600 {
+			t.Fatalf("expected 0600 on seeded auth.json, got %v (err=%v)", st.Mode().Perm(), err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(extOpenCodeDir, "auth.json"), []byte(`{"openai":{"key":"sk-newer"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	EnsureHoxiEngineDataDir()
+	if afterAuth, err := os.ReadFile(dstAuthPath); err != nil || !bytes.Equal(afterAuth, wantAuth) {
+		t.Fatalf("existing engine auth.json must not be overwritten, got %q (err=%v)", string(afterAuth), err)
 	}
 
 	if runtime.GOOS != "windows" {

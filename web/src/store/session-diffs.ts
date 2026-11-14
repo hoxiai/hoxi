@@ -51,14 +51,27 @@ export function applySessionDiffEvent(sessionID: string, diffs: SnapshotFileDiff
 
 const diffRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
-/** Coalesces bursts (e.g. many settled subagents) into one parent diff refresh. */
-export function scheduleRefreshSessionDiff(sessionID: string, delayMs = 150): void {
+function isSessionMountedForDiff(sessionID: string): boolean {
+  return workspace.activeSessionID === sessionID || workspace.sessions.some((s) => s.id === sessionID);
+}
+
+export function cancelScheduledSessionDiff(sessionID: string): void {
   const pending = diffRefreshTimers.get(sessionID);
   if (pending !== undefined) clearTimeout(pending);
+  diffRefreshTimers.delete(sessionID);
+}
+
+/** Coalesces bursts (e.g. many settled subagents) into one parent diff refresh. */
+export function scheduleRefreshSessionDiff(sessionID: string, delayMs = 150): void {
+  const directory = sessionDirectory(sessionID);
+  const wasMounted = isSessionMountedForDiff(sessionID);
+  cancelScheduledSessionDiff(sessionID);
   diffRefreshTimers.set(sessionID, setTimeout(() => {
     diffRefreshTimers.delete(sessionID);
-    if (!isSessionDeleted(sessionID)) void refreshSessionDiff(sessionID);
-  }, delayMs));
+    if (isSessionDeleted(sessionID) || sessionDirectory(sessionID) !== directory) return;
+    if (wasMounted && !isSessionMountedForDiff(sessionID)) return;
+    void refreshSessionDiff(sessionID);
+  }, Math.max(0, delayMs)));
 }
 
 export async function refreshSessionDiff(
@@ -115,14 +128,32 @@ export function invalidateSessionDiffReads(id: string): void {
   worktreeRevisions.set(id, (worktreeRevisions.get(id) ?? 0) + 1);
   inFlightWorktreeStatusByKey.delete(id);
   cancelScheduledWorktreeStatus(id);
-  clearTimeout(diffRefreshTimers.get(id));
-  diffRefreshTimers.delete(id);
+  cancelScheduledSessionDiff(id);
 }
 
 export function forgetSessionDiffState(id: string): void {
   invalidateSessionDiffReads(id);
   diffRevisions.delete(id);
   worktreeRevisions.delete(id);
+}
+
+export function pruneScheduledSessionDiffTimers(
+  retainedSessionIDs?: ReadonlySet<string>,
+  keepRoot = false
+): void {
+  for (const [key, timer] of worktreeRefreshTimers) {
+    const keep = key === "__root__" ? keepRoot : Boolean(retainedSessionIDs?.has(key));
+    if (!keep) {
+      clearTimeout(timer);
+      worktreeRefreshTimers.delete(key);
+    }
+  }
+  for (const [id, timer] of diffRefreshTimers) {
+    if (!retainedSessionIDs?.has(id)) {
+      clearTimeout(timer);
+      diffRefreshTimers.delete(id);
+    }
+  }
 }
 
 export function cancelScheduledWorktreeStatus(sessionID?: string | null): void {
@@ -139,6 +170,7 @@ export function scheduleRefreshWorktreeStatus(
   const key = sessionID || "__root__";
   const directory = worktreeStatusDirectory(key);
   const normalizedDirectory = normalizeFolderPath(directory);
+  const wasMounted = key !== "__root__" && isSessionMountedForDiff(key);
   cancelScheduledWorktreeStatus(key);
   const timer = setTimeout(async () => {
     // Keep the latest automatic refresh queued while a status/diff read is active.
@@ -149,12 +181,18 @@ export function scheduleRefreshWorktreeStatus(
         continue;
       }
       worktreeRefreshTimers.delete(key);
-      if (!isSessionDeleted(key) && worktreeStatusDirectory(key) === directory) {
+      const stillLive =
+        key === "__root__"
+          ? Boolean(directory)
+          : wasMounted
+            ? isSessionMountedForDiff(key)
+            : isSessionMountedForDiff(key) || workspace.worktreeBySession[key] !== undefined;
+      if (!isSessionDeleted(key) && stillLive && worktreeStatusDirectory(key) === directory) {
         void refreshWorktreeStatus(key);
       }
       return;
     }
-  }, delayMs);
+  }, Math.max(0, delayMs));
   worktreeRefreshTimers.set(key, timer);
 }
 

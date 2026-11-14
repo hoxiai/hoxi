@@ -27,6 +27,7 @@ var (
 	cachedOpenCodeVerMu    sync.Mutex
 	cachedOpenCodeVersions = make(map[string]string)
 	inflightOpenCodeVer    = make(map[string]chan struct{})
+	seedOpenCodeAuthMu     sync.Mutex
 )
 
 // EnsureHoxiEngineDataDir prepares Hoxi's private engine data and state directories
@@ -55,8 +56,11 @@ func ensureHoxiDB() string {
 }
 
 func seedOpenCodeAuthIfNeeded(targetOpenCodeDir string) {
+	seedOpenCodeAuthMu.Lock()
+	defer seedOpenCodeAuthMu.Unlock()
+
 	dstAuth := filepath.Join(targetOpenCodeDir, "auth.json")
-	if _, err := os.Stat(dstAuth); err == nil {
+	if _, err := os.Stat(dstAuth); err == nil || !os.IsNotExist(err) {
 		return
 	}
 	home, err := os.UserHomeDir()
@@ -68,7 +72,9 @@ func seedOpenCodeAuthIfNeeded(targetOpenCodeDir string) {
 		return
 	}
 	if raw, err := os.ReadFile(srcAuth); err == nil && len(raw) > 0 {
-		_ = os.WriteFile(dstAuth, raw, 0o600)
+		if err := hoxipaths.WriteFileAtomic(dstAuth, raw, 0o600); err != nil {
+			slog.Warn("opencode: failed to seed engine auth.json", "path", dstAuth, "err", err)
+		}
 	}
 }
 
