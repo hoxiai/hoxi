@@ -94,17 +94,25 @@ resolve_work_repo_dir() {
     echo "${HOXI_WORK_DIR}"
     return 0
   fi
+  local main_root=""
+  local common_git=""
+  common_git="$(git -C "${PROJECT_ROOT}" rev-parse --git-common-dir 2>/dev/null || true)"
+  if [[ -n "${common_git}" ]]; then
+    main_root="$(cd "${PROJECT_ROOT}" && cd "${common_git}/.." 2>/dev/null && pwd || true)"
+  fi
   local candidates=(
+    "${PROJECT_ROOT}/work"
+    ${main_root:+"${main_root}/work"}
     "${PROJECT_ROOT}/../hoxi-work"
     "${PROJECT_ROOT}/../../../../hoxi-work"
   )
   for c in "${candidates[@]}"; do
-    if [[ -d "${c}" ]]; then
+    if [[ -n "${c}" && -d "${c}" ]]; then
       (cd "${c}" && pwd)
       return 0
     fi
   done
-  echo "${PROJECT_ROOT}/../hoxi-work"
+  echo "${PROJECT_ROOT}/work"
 }
 
 WORK_REPO_DIR="$(resolve_work_repo_dir)"

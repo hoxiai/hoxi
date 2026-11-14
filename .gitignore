@@ -24,6 +24,7 @@ build/windows/installer/wails_tools.nsh
 
 # Mobile app lives in a separate private repository
 /client/
+/work/
 
 # Environment & Secrets
 .env

@@ -22,11 +22,26 @@ const isReadableFile = (filePath: string) => {
     return false;
   }
 };
+const resolveWorktreeMainRoot = (dir: string): string | null => {
+  try {
+    const dotGit = path.join(dir, ".git");
+    if (!fs.statSync(dotGit).isFile()) return null;
+    const match = fs.readFileSync(dotGit, "utf8").match(/^gitdir:\s*(.+)$/m);
+    if (!match) return null;
+    const commonGitDir = path.resolve(path.resolve(dir, match[1].trim()), "../..");
+    return path.basename(commonGitDir) === ".git" ? path.dirname(commonGitDir) : null;
+  } catch {
+    return null;
+  }
+};
 const resolveWorkRepoDir = () => {
   if (process.env.HOXI_WORK_DIR) {
     return path.resolve(webRoot, process.env.HOXI_WORK_DIR);
   }
+  const mainRoot = resolveWorktreeMainRoot(repoRoot);
   const candidates = [
+    path.resolve(repoRoot, "work"),
+    ...(mainRoot ? [path.resolve(mainRoot, "work")] : []),
     path.resolve(webRoot, "../../hoxi-work"),
     path.resolve(webRoot, "../../../../../hoxi-work"),
   ];
@@ -174,7 +189,10 @@ export default defineConfig({
               return "vendor-shiki-core";
             }
           }
-          if (normalized.includes("/hoxi-work/")) {
+          if (
+            (hasWorkExt && normalized.startsWith(`${workRepoDir}/`)) ||
+            normalized.includes("/hoxi-work/")
+          ) {
             return "surface-work";
           }
           if (normalized.includes("/src/i18n/")) {
