@@ -10,12 +10,16 @@ import {
   Archive,
   Boxes,
   FilePlus2,
+  Globe,
   KeyRound,
   RefreshCw,
   Search,
 } from "lucide-solid";
 import { t } from "../../i18n";
-import type { CatalogPublishContext } from "../../services/work-catalog";
+import type {
+  CatalogBrowserSyncController,
+  CatalogPublishContext,
+} from "../../services/work-catalog";
 import {
   activateWorkCatalogScope,
   catalogPriceLabel,
@@ -55,6 +59,7 @@ export default function WorkCatalogView(props: {
   publishContext?: CatalogPublishContext | null;
   onCreateTask?: () => void;
   renderSources?: () => JSX.Element;
+  browserController?: CatalogBrowserSyncController;
 }) {
   createEffect(() => {
     const scope = props.storeId
@@ -94,11 +99,21 @@ export default function WorkCatalogView(props: {
     }
   };
   const authLabel = () =>
-    workCatalogState.status?.authorization.verifiedRead
-      ? t("workCatalog.verified")
-      : workCatalogState.status?.authorization.configured
-        ? t("workCatalog.configured")
-        : t("workCatalog.unconfigured");
+    workCatalogState.status?.authorization.source === "browser"
+      ? t("workCatalog.browserSource", {
+          seller: workCatalogState.status?.authorization.sellerLoginId || "",
+        })
+      : workCatalogState.status?.authorization.verifiedRead
+        ? t("workCatalog.verified")
+        : workCatalogState.status?.authorization.configured
+          ? t("workCatalog.configured")
+          : t("workCatalog.unconfigured");
+  const showOpenApiSyncButton = () =>
+    !props.browserController ||
+    Boolean(
+      workCatalogState.status?.authorization.configured &&
+        workCatalogState.status?.capabilities.sync,
+    );
   const draftRows = () =>
     workCatalogState.drafts.filter((draft) =>
       workCatalogState.tab === "history"
@@ -146,29 +161,52 @@ export default function WorkCatalogView(props: {
                 <KeyRound size={13} />
                 {t("workCatalog.authorize")}
               </button>
-              <button
-                class={button}
-                disabled={
-                  !workCatalogState.status?.capabilities.sync ||
-                  !workCatalogState.status?.authorization.configured ||
-                  workCatalogState.status?.job?.status === "running"
-                }
-                onClick={() => void startCatalogSync()}
-              >
-                <RefreshCw
-                  size={13}
-                  class={
+              <Show when={props.browserController}>
+                {(ctrl) => (
+                  <button
+                    class={button}
+                    data-testid="catalog-browser-sync"
+                    disabled={
+                      !workCatalogState.status?.capabilities.supported ||
+                      ctrl().busy()
+                    }
+                    onClick={() => void ctrl().syncStoreList()}
+                  >
+                    <Globe
+                      size={13}
+                      class={ctrl().busy() ? "animate-pulse" : ""}
+                    />
+                    {ctrl().busy()
+                      ? t("workCatalog.syncingFromBrowser")
+                      : t("workCatalog.syncFromBrowser")}
+                  </button>
+                )}
+              </Show>
+              <Show when={showOpenApiSyncButton()}>
+                <button
+                  class={button}
+                  disabled={
+                    !workCatalogState.status?.capabilities.sync ||
+                    !workCatalogState.status?.authorization.configured ||
                     workCatalogState.status?.job?.status === "running"
-                      ? "animate-spin"
-                      : ""
                   }
-                />
-                {["interrupted", "error", "cancelled"].includes(
-                  workCatalogState.status?.job?.status || "",
-                )
-                  ? t("workCatalog.resume")
-                  : t("workCatalog.sync")}
-              </button>
+                  onClick={() => void startCatalogSync()}
+                >
+                  <RefreshCw
+                    size={13}
+                    class={
+                      workCatalogState.status?.job?.status === "running"
+                        ? "animate-spin"
+                        : ""
+                    }
+                  />
+                  {["interrupted", "error", "cancelled"].includes(
+                    workCatalogState.status?.job?.status || "",
+                  )
+                    ? t("workCatalog.resume")
+                    : t("workCatalog.sync")}
+                </button>
+              </Show>
               <button
                 class={`${button} bg-[var(--accent-primary)] !text-white`}
                 disabled={
@@ -212,6 +250,16 @@ export default function WorkCatalogView(props: {
             </button>
           </div>
         </Show>
+        <Show when={props.browserController?.progressMessage()}>
+          {(msg) => (
+            <p
+              role="status"
+              class="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-3 py-2 text-xs text-[var(--text-secondary)]"
+            >
+              {msg()}
+            </p>
+          )}
+        </Show>
         <Show when={workCatalogState.status?.job}>
           <div class="space-y-2 text-xs" role="status">
             <div class="flex justify-between gap-3">
@@ -223,7 +271,8 @@ export default function WorkCatalogView(props: {
                     class="text-[var(--text-muted)]"
                     onClick={() => void startCatalogSync(true)}
                     disabled={
-                      !workCatalogState.status?.authorization.configured
+                      !workCatalogState.status?.authorization.configured ||
+                      !workCatalogState.status?.capabilities.sync
                     }
                   >
                     {t("workCatalog.restartSync")}
@@ -245,7 +294,7 @@ export default function WorkCatalogView(props: {
           </div>
         </Show>
         <Show when={workCatalogState.authorizationOpen}>
-          <CatalogAuthorization />
+          <CatalogAuthorization browserController={props.browserController} />
         </Show>
         <Show when={catalogPendingApprovals().length > 0}>
           <div class="space-y-2" data-testid="catalog-publish-approval">
@@ -568,7 +617,10 @@ export default function WorkCatalogView(props: {
               </Show>
             </main>
             <Show when={hasDetail()}>
-              <CatalogProductDetail onCreateTask={props.onCreateTask} />
+              <CatalogProductDetail
+                onCreateTask={props.onCreateTask}
+                browserController={props.browserController}
+              />
             </Show>
           </div>
         </Show>

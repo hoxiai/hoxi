@@ -15,9 +15,10 @@ import (
 // Connection is resolved from the authenticated HTTP request, not tool arguments.
 // A new request must revalidate the session/store binding before executing tools.
 type Connection struct {
-	Scope     Scope
-	Platform  func() (Platform, error)
-	Authorize Authorize
+	Scope               Scope
+	AuthorizationSource string
+	Platform            func() (Platform, error)
+	Authorize           Authorize
 }
 
 func NewMCPHandler(s *Service, resolve func(*http.Request) (Connection, error)) http.Handler {
@@ -67,10 +68,16 @@ func NewMCPServer(s *Service, conn Connection) *mcp.Server {
 			if err != nil {
 				return nil, nil, err
 			}
+			authSource := conn.AuthorizationSource
+			if authSource == "" {
+				authSource = "local"
+			}
 			out := map[string]any{"storeId": conn.Scope.StoreID, "sellerLoginId": conn.Scope.SellerLoginID,
-				"productCount": len(st.Products), "editableFields": []string{"subject", "description", "images"}, "lastSync": st.LastSync}
+				"authorizationSource": authSource, "productCount": len(st.Products),
+				"editableFields": []string{"subject", "description", "images"}, "lastSync": st.LastSync}
 			_, authErr := conn.Platform()
-			out["authorizationConfigured"] = authErr == nil
+			out["authorizationConfigured"] = authErr == nil || authSource == "browser"
+			out["onlineSyncAvailable"] = authErr == nil
 			out["platformDestination"] = "https://gw.open.1688.com"
 			if authErr != nil {
 				out["authorizationMessage"] = authErr.Error()

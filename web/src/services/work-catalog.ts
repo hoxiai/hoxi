@@ -36,6 +36,48 @@ export interface CatalogCredentials {
   appSecret: string;
   accessToken: string;
 }
+export interface CatalogBrowserAuthInput {
+  sellerLoginId: string;
+  clearCredentials?: boolean;
+}
+export interface CatalogBrowserProductInput {
+  id: string;
+  data: Record<string, unknown>;
+}
+export interface CatalogBrowserSyncInput {
+  sellerLoginId?: string;
+  products: CatalogBrowserProductInput[];
+  replaceAll?: boolean;
+}
+export interface CatalogBrowserSyncResult {
+  authorization: CatalogAuthorization;
+  sync: {
+    id: string;
+    status: string;
+    fetched: number;
+    total: number;
+    startedAt: string;
+    finishedAt?: string;
+  };
+  productCount: number;
+}
+export interface CatalogBrowserLiveState {
+  running: boolean;
+  isLoginPage: boolean;
+  url: string;
+  title: string;
+  detectedSellerId?: string;
+}
+export interface CatalogBrowserSyncController {
+  busy: () => boolean;
+  progressMessage: () => string;
+  browserState: () => CatalogBrowserLiveState | null;
+  openSellerBackend: () => Promise<void>;
+  detectSellerLoginId: () => Promise<string | null>;
+  syncStoreList: () => Promise<void>;
+  enrichProductDetail: (productId: string) => Promise<void>;
+  openDraftInSellerEditor: (draft: CatalogDraft) => Promise<void>;
+}
 export interface CatalogJob {
   id: string;
   status: string;
@@ -187,6 +229,10 @@ export const workCatalogAPI = {
     call<CatalogDraft>(storeId, "draft", "DELETE", { draftId, revision }),
   configure: (storeId: string, credentials: CatalogCredentials) =>
     call<CatalogAuthorization>(storeId, "authorization", "PUT", credentials),
+  configureBrowser: (storeId: string, input: CatalogBrowserAuthInput) =>
+    call<CatalogAuthorization>(storeId, "browser-auth", "PUT", input),
+  syncBrowser: (storeId: string, input: CatalogBrowserSyncInput) =>
+    call<CatalogBrowserSyncResult>(storeId, "browser-sync", "POST", input),
   check: (storeId: string) =>
     call<CatalogAuthorization>(storeId, "authorization-check", "POST", {}),
   sync: (storeId: string, restart: boolean) =>

@@ -44,6 +44,27 @@ export const workCatalog = {
   environmentSource:
     "Authorization currently comes from the desktop process environment",
   localSource: "Authorization is stored on this desktop",
+  browserSource: "Bound to isolated browser ({seller})",
+  browserAuthTitle:
+    "Option 1: Use isolated browser login (Recommended · No API keys)",
+  browserAuthDescription:
+    "Sign in to 1688 Seller Center in the store's isolated browser to pull products and details directly without applying for OpenAPI keys.",
+  openSellerBrowser: "Open 1688 Seller Login",
+  detectSellerAccount: "Detect seller ID",
+  bindBrowserSeller: "Bind seller account",
+  browserLoggedIn: "Isolated browser ready: {title}",
+  browserNeedLogin:
+    "Click 'Open 1688 Seller Login' to sign in inside the isolated browser first",
+  advancedApiKeyTitle:
+    "Advanced: Use 1688 OpenAPI Keys (Unlocks background sync & atomic publish)",
+  syncFromBrowser: "Sync from browser",
+  syncingFromBrowser: "Syncing from browser…",
+  enrichFromBrowser: "Enrich details from browser",
+  openEditInBrowser: "Open 1688 editor & autofill draft",
+  copyDraftContent: "Copy draft title & HTML",
+  copiedDraftContent: "Copied draft content",
+  browserPublishHint:
+    "In browser-login mode, open the 1688 product editor to autofill the updated title (HTML copied to clipboard), or expand Advanced API Keys under API authorization for direct atomic publishing.",
   search: "Search title, product ID or SKU",
   allStatuses: "All platform statuses",
   onlyDrafts: "With unpublished changes",

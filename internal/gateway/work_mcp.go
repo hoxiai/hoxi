@@ -50,8 +50,9 @@ func (g *Gateway) resolveWorkMCP(r *http.Request) (workcatalog.Connection, error
 		return workcatalog.Connection{}, errors.New("configure the bound store's seller identity first")
 	}
 	return workcatalog.Connection{
-		Scope:    target.Scope,
-		Platform: target.Platform,
+		Scope:               target.Scope,
+		AuthorizationSource: target.Authorization.Source,
+		Platform:            target.Platform,
 		Authorize: func(ctx context.Context, draft workcatalog.Draft) error {
 			// Recheck after waiting for approval as well: store bindings and session
 			// lifetime can change while the user reviews the diff.

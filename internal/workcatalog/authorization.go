@@ -24,8 +24,14 @@ type Credentials struct {
 	AccessToken   string `json:"accessToken"`
 }
 
+type BrowserAuthorizationInput struct {
+	SellerLoginID    string `json:"sellerLoginId"`
+	ClearCredentials bool   `json:"clearCredentials,omitempty"`
+}
+
 type authorizationRecord struct {
 	Version     int         `json:"version"`
+	Mode        string      `json:"mode,omitempty"`
 	StoreID     string      `json:"storeId"`
 	Credentials Credentials `json:"credentials"`
 	VerifiedAt  *time.Time  `json:"verifiedAt,omitempty"`
@@ -79,6 +85,33 @@ func (s *Service) credentialValidator(platform string) func(Credentials) error {
 	return validateCredentials
 }
 
+func validateSellerLoginID(seller string) error {
+	if seller == "" || len(seller) > 128 || seller != strings.TrimSpace(seller) || strings.ContainsAny(seller, "\r\n\t") || seller == "unconfigured" {
+		return errors.New("valid seller login ID is required")
+	}
+	return nil
+}
+
+func validateAuthorizationRecord(record authorizationRecord, validate func(Credentials) error) error {
+	if record.Version != 1 {
+		return errors.New("unsupported authorization record version")
+	}
+	switch record.Mode {
+	case "", "openapi":
+		return validate(record.Credentials)
+	case "browser":
+		if err := validateSellerLoginID(record.Credentials.SellerLoginID); err != nil {
+			return err
+		}
+		if record.Credentials.AppKey != "" || record.Credentials.AppSecret != "" || record.Credentials.AccessToken != "" {
+			return errors.New("browser authorization record must not contain API credentials")
+		}
+		return nil
+	default:
+		return errors.New("unsupported authorization mode")
+	}
+}
+
 func (s *Service) readAuthorization(storeID string, validate func(Credentials) error) (*authorizationRecord, error) {
 	if validate == nil {
 		validate = validateCredentials
@@ -104,7 +137,7 @@ func (s *Service) readAuthorization(storeID string, validate func(Credentials) e
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decodeErr := decoder.Decode(&record)
 	var extra any
-	if decodeErr != nil || decoder.Decode(&extra) != io.EOF || record.Version != 1 || record.StoreID != storeID || validate(record.Credentials) != nil {
+	if decodeErr != nil || decoder.Decode(&extra) != io.EOF || record.StoreID != storeID || validateAuthorizationRecord(record, validate) != nil {
 		sum := sha256.Sum256(raw)
 		if err := hoxipaths.WriteFileAtomic(path+".corrupt-"+hex.EncodeToString(sum[:]), raw, 0600); err != nil {
 			return nil, errors.New("cannot back up invalid local store authorization")
@@ -115,7 +148,7 @@ func (s *Service) readAuthorization(storeID string, validate func(Credentials) e
 }
 
 func validateCredentials(c Credentials) error {
-	if c.SellerLoginID == "" || len(c.SellerLoginID) > 128 || c.SellerLoginID != strings.TrimSpace(c.SellerLoginID) || strings.ContainsAny(c.SellerLoginID, "\r\n\t") || !productIDPattern.MatchString(c.AppKey) {
+	if validateSellerLoginID(c.SellerLoginID) != nil || !productIDPattern.MatchString(c.AppKey) {
 		return errors.New("valid seller login ID and numeric application key are required")
 	}
 	for _, secret := range []string{c.AppSecret, c.AccessToken} {
@@ -148,7 +181,7 @@ func (s *Service) ConfigureAuthorizationForPlatform(ctx context.Context, platfor
 	if err != nil {
 		return AuthorizationStatus{}, err
 	}
-	if previous != nil && previous.Credentials.SellerLoginID == input.SellerLoginID && previous.Credentials.AppKey == input.AppKey {
+	if previous != nil && previous.Mode != "browser" && previous.Credentials.SellerLoginID == input.SellerLoginID && previous.Credentials.AppKey == input.AppKey {
 		if input.AppSecret == "" {
 			input.AppSecret = previous.Credentials.AppSecret
 		}
@@ -172,9 +205,62 @@ func (s *Service) ConfigureAuthorizationForPlatform(ctx context.Context, platfor
 	return authorizationView(&record, spec.Destination), nil
 }
 
+func (s *Service) ConfigureBrowserAuthorization(ctx context.Context, storeID string, input BrowserAuthorizationInput) (AuthorizationStatus, error) {
+	return s.ConfigureBrowserAuthorizationForPlatform(ctx, "1688", storeID, input)
+}
+
+func (s *Service) ConfigureBrowserAuthorizationForPlatform(ctx context.Context, platform, storeID string, input BrowserAuthorizationInput) (AuthorizationStatus, error) {
+	if normalizePlatformID(platform) == "" {
+		platform = "1688"
+	}
+	spec, supported := s.Adapter(platform)
+	if !supported {
+		return AuthorizationStatus{}, errors.New("this platform has no local catalog adapter")
+	}
+	if err := validateSellerLoginID(input.SellerLoginID); err != nil {
+		return AuthorizationStatus{}, err
+	}
+	validate := s.credentialValidator(platform)
+	unlock, err := s.store.lock(ctx, Scope{StoreID: storeID, SellerLoginID: "authorization"}, ".authorization.lock")
+	if err != nil {
+		return AuthorizationStatus{}, err
+	}
+	defer unlock()
+	previous, err := s.readAuthorization(storeID, validate)
+	if err != nil {
+		return AuthorizationStatus{}, err
+	}
+	if previous != nil && previous.Mode != "browser" && previous.Credentials.SellerLoginID == input.SellerLoginID && !input.ClearCredentials {
+		return authorizationView(previous, spec.Destination), nil
+	}
+	if _, err := s.store.load(ctx, Scope{StoreID: storeID, SellerLoginID: input.SellerLoginID}); err != nil {
+		return AuthorizationStatus{}, err
+	}
+	now := time.Now().UTC()
+	record := authorizationRecord{
+		Version:     1,
+		Mode:        "browser",
+		StoreID:     storeID,
+		Credentials: Credentials{SellerLoginID: input.SellerLoginID},
+		VerifiedAt:  &now,
+	}
+	path, _ := s.store.path(Scope{StoreID: storeID, SellerLoginID: "authorization"})
+	if err := hoxipaths.WriteJSONAtomic(path+".auth.json", record, 0600); err != nil {
+		return AuthorizationStatus{}, errors.New("cannot save local store authorization")
+	}
+	return authorizationView(&record, spec.Destination), nil
+}
+
 func authorizationView(record *authorizationRecord, destination string) AuthorizationStatus {
 	view := AuthorizationStatus{Source: "none", Destination: destination}
 	if record != nil {
+		if record.Mode == "browser" {
+			view.Source, view.Configured = "browser", true
+			view.SellerLoginID = record.Credentials.SellerLoginID
+			view.HasAppSecret, view.HasAccessToken = false, false
+			view.VerifiedAt, view.VerifiedRead = record.VerifiedAt, record.VerifiedAt != nil
+			return view
+		}
 		view.Source, view.Configured = "local", true
 		view.SellerLoginID, view.AppKey = record.Credentials.SellerLoginID, record.Credentials.AppKey
 		view.HasAppSecret, view.HasAccessToken = true, true
@@ -211,21 +297,29 @@ func (s *Service) ResolveTarget(ctx context.Context, settings StoreSettings) (Ta
 		if settings.ProxyRequired && settings.ProxyURL == "" {
 			return nil, errors.New("the store requires a configured proxy")
 		}
-		if record != nil {
+		if record != nil && record.Mode != "browser" {
 			if spec.NewFromCredentials == nil {
 				return nil, errors.New("this platform has no local catalog adapter")
 			}
 			return spec.NewFromCredentials(record.Credentials, settings.ProxyURL)
+		}
+		if spec.NewFromEnv != nil && settings.CredentialEnv != "" {
+			return spec.NewFromEnv(settings.CredentialEnv, settings.ProxyURL)
+		}
+		if record != nil && record.Mode == "browser" {
+			return nil, errors.New("current store uses isolated-browser login sync; sync from the store browser panel or configure OpenAPI credentials in Advanced settings")
 		}
 		if spec.NewFromEnv == nil {
 			return nil, errors.New("store authorization is not configured")
 		}
 		return spec.NewFromEnv(settings.CredentialEnv, settings.ProxyURL)
 	}
-	if supported && record == nil && settings.SellerLoginID != "" {
-		if _, err := factory(); err == nil {
-			view.Source, view.Configured, view.SellerLoginID = "environment", true, seller
-			view.HasAppSecret, view.HasAccessToken = true, true
+	if supported && (record == nil || record.Mode == "browser") && settings.SellerLoginID != "" {
+		if record == nil || settings.SellerLoginID == record.Credentials.SellerLoginID {
+			if _, err := factory(); err == nil {
+				view.Source, view.Configured, view.SellerLoginID = "environment", true, seller
+				view.HasAppSecret, view.HasAccessToken = true, true
+			}
 		}
 	}
 	var digest [32]byte
@@ -236,6 +330,10 @@ func (s *Service) ResolveTarget(ctx context.Context, settings StoreSettings) (Ta
 	capabilities := Capabilities{Supported: false, EditableFields: []string{}}
 	if supported {
 		capabilities = spec.Capabilities
+		if view.Source == "browser" {
+			capabilities.Sync = false
+			capabilities.PublishUpdate = false
+		}
 	}
 	return Target{PlatformID: platformID, Scope: Scope{StoreID: settings.StoreID, SellerLoginID: seller}, Platform: factory,
 		Authorization: view, authorizationDigest: digest, Capabilities: capabilities}, nil

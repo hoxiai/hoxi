@@ -1,5 +1,6 @@
-import { For, Show } from "solid-js";
+import { createSignal, For, Show } from "solid-js";
 import { t } from "../../i18n";
+import type { CatalogBrowserSyncController } from "../../services/work-catalog";
 import {
   catalogProductText,
   catalogDisplayImages,
@@ -13,7 +14,27 @@ import { catalogDraftStatusLabel } from "./catalog-labels";
 
 export default function CatalogProductDetail(props: {
   onCreateTask?: () => void;
+  browserController?: CatalogBrowserSyncController;
 }) {
+  const [copied, setCopied] = createSignal(false);
+
+  const copyDraft = async () => {
+    const draft = workCatalogState.draft;
+    if (!draft) return;
+    const subject =
+      draft.patch.subject || catalogProductText(draft.base, "subject");
+    const desc =
+      draft.patch.description || catalogProductText(draft.base, "description");
+    const text = desc ? `${subject}\n\n${desc}` : subject;
+    try {
+      await navigator.clipboard?.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      /* ignore clipboard unavailability */
+    }
+  };
+
   return (
     <aside
       class="w-full shrink-0 border-t border-[var(--border-subtle)] bg-[var(--bg-panel)] p-4 xl:w-[420px] xl:border-l xl:border-t-0 overflow-y-auto"
@@ -54,7 +75,7 @@ export default function CatalogProductDetail(props: {
                     loading="lazy"
                     referrerpolicy="no-referrer"
                     class="h-20 w-20 shrink-0 rounded-lg object-cover"
-                  />
+                    />
                 )}
               </For>
             </div>
@@ -92,13 +113,31 @@ export default function CatalogProductDetail(props: {
                 <dd>{workCatalogState.product?.syncedAt}</dd>
               </div>
             </dl>
-            <button
-              disabled={!workCatalogState.status?.capabilities.editDraft}
-              onClick={() => openCatalogEditor("update")}
-              class="rounded-lg bg-[var(--accent-primary)] px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
-            >
-              {t("workCatalog.edit")}
-            </button>
+            <div class="flex flex-wrap gap-2">
+              <button
+                disabled={!workCatalogState.status?.capabilities.editDraft}
+                onClick={() => openCatalogEditor("update")}
+                class="rounded-lg bg-[var(--accent-primary)] px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
+              >
+                {t("workCatalog.edit")}
+              </button>
+              <Show when={props.browserController}>
+                {(ctrl) => (
+                  <button
+                    type="button"
+                    disabled={ctrl().busy()}
+                    onClick={() =>
+                      void ctrl().enrichProductDetail(
+                        workCatalogState.product!.id,
+                      )
+                    }
+                    class="rounded-lg border border-[var(--border-subtle)] px-3 py-2 text-xs font-medium hover:bg-[var(--bg-hover)] disabled:opacity-50"
+                  >
+                    {t("workCatalog.enrichFromBrowser")}
+                  </button>
+                )}
+              </Show>
+            </div>
             <h5 class="mt-5 mb-2 text-xs font-semibold">
               {t("workCatalog.description")}
             </h5>
@@ -197,37 +236,78 @@ export default function CatalogProductDetail(props: {
                   workCatalogState.draft?.kind !== "create"
                 }
               >
-                <p class="text-xs text-[var(--text-muted)]">
-                  {t("workCatalog.publicationHint")}
-                </p>
                 <Show
-                  when={workCatalogState.publishContext}
+                  when={
+                    workCatalogState.status?.capabilities.publishUpdate !==
+                    false
+                  }
                   fallback={
                     <div class="space-y-2">
-                      <p class="text-xs text-amber-600">
-                        {t("workCatalog.sessionRequired")}
+                      <p class="text-xs text-[var(--text-muted)]">
+                        {t("workCatalog.browserPublishHint")}
                       </p>
-                      <Show when={props.onCreateTask}>
+                      <div class="flex flex-wrap gap-2">
+                        <Show when={props.browserController}>
+                          {(ctrl) => (
+                            <button
+                              type="button"
+                              disabled={ctrl().busy()}
+                              onClick={() =>
+                                void ctrl().openDraftInSellerEditor(
+                                  workCatalogState.draft!,
+                                )
+                              }
+                              class="rounded-lg bg-[var(--accent-primary)] px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
+                            >
+                              {t("workCatalog.openEditInBrowser")}
+                            </button>
+                          )}
+                        </Show>
                         <button
-                          onClick={() => props.onCreateTask?.()}
-                          class="rounded-lg border border-[var(--border-subtle)] px-3 py-2 text-xs"
+                          type="button"
+                          onClick={() => void copyDraft()}
+                          class="rounded-lg border border-[var(--border-subtle)] px-3 py-2 text-xs hover:bg-[var(--bg-hover)]"
                         >
-                          {t("workCatalog.createTask")}
+                          {copied()
+                            ? t("workCatalog.copiedDraftContent")
+                            : t("workCatalog.copyDraftContent")}
                         </button>
-                      </Show>
+                      </div>
                     </div>
                   }
                 >
-                  <button
-                    disabled={
-                      workCatalogState.publishing ||
-                      !workCatalogState.status?.authorization.configured
+                  <p class="text-xs text-[var(--text-muted)]">
+                    {t("workCatalog.publicationHint")}
+                  </p>
+                  <Show
+                    when={workCatalogState.publishContext}
+                    fallback={
+                      <div class="space-y-2">
+                        <p class="text-xs text-amber-600">
+                          {t("workCatalog.sessionRequired")}
+                        </p>
+                        <Show when={props.onCreateTask}>
+                          <button
+                            onClick={() => props.onCreateTask?.()}
+                            class="rounded-lg border border-[var(--border-subtle)] px-3 py-2 text-xs"
+                          >
+                            {t("workCatalog.createTask")}
+                          </button>
+                        </Show>
+                      </div>
                     }
-                    onClick={() => void executeCatalogDraftAction("publish")}
-                    class="rounded-lg bg-[var(--accent-primary)] px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
                   >
-                    {t("workCatalog.publish")}
-                  </button>
+                    <button
+                      disabled={
+                        workCatalogState.publishing ||
+                        !workCatalogState.status?.authorization.configured
+                      }
+                      onClick={() => void executeCatalogDraftAction("publish")}
+                      class="rounded-lg bg-[var(--accent-primary)] px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
+                    >
+                      {t("workCatalog.publish")}
+                    </button>
+                  </Show>
                 </Show>
               </Show>
               <Show

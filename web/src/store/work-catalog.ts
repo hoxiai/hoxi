@@ -6,6 +6,8 @@ import { setWorkspace, workspace } from "./workspace-state";
 import {
   readCatalogImport,
   workCatalogAPI,
+  type CatalogBrowserSyncInput,
+  type CatalogBrowserSyncResult,
   type CatalogCredentials,
   type CatalogDraft,
   type CatalogDraftSummary,
@@ -514,6 +516,55 @@ export async function configureCatalogAuthorization(
     return false;
   } finally {
     if (generation === scopeGeneration) setWorkCatalogState("saving", false);
+  }
+}
+
+export async function configureCatalogBrowserAuthorization(
+  sellerLoginId: string,
+  clearCredentials = false,
+): Promise<boolean> {
+  const scope = workCatalogState.scope;
+  const cleanSeller = sellerLoginId.trim();
+  if (!scope || !cleanSeller || workCatalogState.saving) return false;
+  const generation = scopeGeneration;
+  setWorkCatalogState({ saving: true, error: "" });
+  try {
+    await workCatalogAPI.configureBrowser(scope.storeId, {
+      sellerLoginId: cleanSeller,
+      clearCredentials,
+    });
+    if (generation !== scopeGeneration) return false;
+    await refreshCatalogStatus();
+    return true;
+  } catch (error) {
+    if (generation === scopeGeneration) report(error);
+    return false;
+  } finally {
+    if (generation === scopeGeneration) setWorkCatalogState("saving", false);
+  }
+}
+
+export async function syncCatalogBrowserProducts(
+  input: CatalogBrowserSyncInput,
+): Promise<CatalogBrowserSyncResult | null> {
+  const scope = workCatalogState.scope;
+  if (!scope) return null;
+  const generation = scopeGeneration;
+  setWorkCatalogState("error", "");
+  try {
+    const res = await workCatalogAPI.syncBrowser(scope.storeId, input);
+    if (generation !== scopeGeneration) return null;
+    await Promise.all([refreshCatalogStatus(), loadCatalogProducts(0)]);
+    if (
+      workCatalogState.product &&
+      input.products.some((item) => item.id === workCatalogState.product?.id)
+    ) {
+      await selectCatalogProduct(workCatalogState.product.id);
+    }
+    return res;
+  } catch (error) {
+    if (generation === scopeGeneration) report(error);
+    return null;
   }
 }
 

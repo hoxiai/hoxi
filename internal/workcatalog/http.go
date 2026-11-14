@@ -69,6 +69,20 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				output, err = h.service.ConfigureAuthorizationForPlatform(ctx, target.PlatformID, scope.StoreID, input)
 			}
 		}
+	case path == "/api/hoxi/work/catalog/browser-auth" && method == http.MethodPut:
+		var input BrowserAuthorizationInput
+		if err = decodeCatalogJSON(w, r, &input); err == nil {
+			if !target.Capabilities.Supported {
+				err = errors.New("this platform has no local catalog adapter")
+			} else {
+				output, err = h.service.ConfigureBrowserAuthorizationForPlatform(ctx, target.PlatformID, scope.StoreID, input)
+			}
+		}
+	case path == "/api/hoxi/work/catalog/browser-sync" && method == http.MethodPost:
+		var input BrowserSyncInput
+		if err = decodeCatalogJSON(w, r, &input); err == nil {
+			output, err = h.service.SyncBrowserProducts(ctx, target, input)
+		}
 	case path == "/api/hoxi/work/catalog/authorization-check" && method == http.MethodPost:
 		var input struct{}
 		if err = decodeCatalogJSON(w, r, &input); err == nil {

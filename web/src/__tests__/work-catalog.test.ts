@@ -10,6 +10,7 @@ import {
   activateWorkCatalogScope,
   catalogDisplayImages,
   closeCatalogDetail,
+  configureCatalogBrowserAuthorization,
   executeCatalogDraftAction,
   loadCatalogProducts,
   openCatalogEditor,
@@ -18,6 +19,7 @@ import {
   selectCatalogProduct,
   setWorkCatalogState,
   startCatalogSync,
+  syncCatalogBrowserProducts,
   updateCatalogEditor,
   workCatalogState,
 } from "../store/work-catalog";
@@ -249,4 +251,67 @@ describe("Work product catalog isolation", () => {
     assertEqual(images.length, 1);
     assertEqual(images[0], "https://cbu01.alicdn.com/img/ibank/a.jpg");
   });
+
+  it("binds browser seller identity and refreshes snapshot on browser product sync", async () =>
+    fixture(async () => {
+      let boundSeller = "";
+      let syncedBatchCount = 0;
+      workCatalogAPI.configureBrowser = async (_storeId, input) => {
+        boundSeller = input.sellerLoginId;
+        return {
+          ...status("store-a").authorization,
+          source: "browser",
+          appKey: "",
+          hasAppSecret: false,
+          hasAccessToken: false,
+          sellerLoginId: input.sellerLoginId,
+        };
+      };
+      workCatalogAPI.status = async (id) => ({
+        ...status(id),
+        authorization: {
+          ...status(id).authorization,
+          source: "browser",
+          sellerLoginId: boundSeller || "factory-a",
+          appKey: "",
+          hasAppSecret: false,
+          hasAccessToken: false,
+        },
+        capabilities: {
+          ...status(id).capabilities,
+          sync: false,
+          publishUpdate: false,
+        },
+      });
+      workCatalogAPI.syncBrowser = async (_storeId, input) => {
+        syncedBatchCount = input.products.length;
+        return {
+          authorization: (await workCatalogAPI.status("store-a")).authorization,
+          sync: {
+            id: "bsyn_1",
+            status: "completed",
+            fetched: input.products.length,
+            total: input.products.length,
+            startedAt: "2026-11-14T00:00:00Z",
+            finishedAt: "2026-11-14T00:00:00Z",
+          },
+          productCount: input.products.length,
+        };
+      };
+      workCatalogAPI.products = async () => page("501");
+
+      const ok = await configureCatalogBrowserAuthorization("factory-browser");
+      assertTrue(ok);
+      assertEqual(boundSeller, "factory-browser");
+      assertEqual(workCatalogState.status?.authorization.source, "browser");
+      assertEqual(workCatalogState.status?.capabilities.sync, false);
+
+      const syncRes = await syncCatalogBrowserProducts({
+        sellerLoginId: "factory-browser",
+        products: [{ id: "501", data: { subject: "Browser item" } }],
+      });
+      assertEqual(syncedBatchCount, 1);
+      assertEqual(syncRes?.productCount, 1);
+      assertEqual(workCatalogState.page?.items[0]?.id, "501");
+    }));
 });
