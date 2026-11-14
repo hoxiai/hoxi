@@ -2,6 +2,15 @@
 
 All notable releases of **Hoxi Desktop** are documented below. Full per-version release notes are archived under [`docs/release-notes/`](docs/release-notes/) and consumed directly by `.github/workflows/release.yml` and `scripts/ai-release.sh`.
 
+## [v0.6.19](docs/release-notes/v0.6.19.md) — 2026-11-14
+
+- **Work Catalog**: Standard MCP store-product workflow, store product management UI, detail readiness badges and batch enrichment; parse real 1688 titles, packaging and SKUs, preserve tier MOQ and enforce seller ownership.
+- **E-commerce & Isolation**: Multi-store anti-association isolation, a deterministic e-commerce calculator engine, a default Xianyu sourcing skill, isolated browser seller auth and folded API key UI.
+- **Models & Routing**: Align 2026 frontier model params, modalities and context limits; preserve runtime reasoning tiers; require explicit evidence for free models; multimodal pool routing, auto-ASR fallback, persistent vectors and multi-protocol relay; Gemini and `/v1/responses` parity.
+- **Approval**: Reduce read-only false positives (bounded numeric loops, quoted directories, composite heredoc chains, test filters, value lookups); keep OpenCode always-allow in Hoxi with per-file session grants; tighten command-sandbox sessions to the on-demand profile.
+- **Browser & Runtime**: Configurable Chrome idle auto-close (30m default), graceful close and SingletonLock guards; rotate poisoned OpenCode sessions and preserve failed turn errors; support standalone `antigravity-cli` and surface local CLI subscription quota.
+- **Performance**: Lossless startup, memory and GPU compositing optimizations; indexed history and batched stream persistence; faster project switching and worktree polling; offloaded transcript search/highlighting.
+
 ## [v0.6.18](docs/release-notes/v0.6.18.md) — 2026-11-10
 
 - **Sandbox Hardening**: Deny every loopback TCP/UDP port already listening when an on-demand profile is written (refusing to confine when the snapshot fails), allow outbound Unix sockets only under the workspace, and deny other agents' sign-in tokens and IDE credential locks.
