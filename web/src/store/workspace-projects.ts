@@ -96,7 +96,7 @@ export async function activateSurfaceMode(nextMode: SurfaceMode): Promise<void> 
     } else {
       batch(() => {
         setSurfaceMode("work");
-        setWorkspace({ rootDir: "", sessions: [], activeSessionID: null, activeProjectID: null });
+        setWorkspace({ rootDir: "", sessions: [], activeSessionID: null, activeProjectID: null, activeBrowserScopeID: null });
       });
     }
   } else {
@@ -112,6 +112,7 @@ export async function activateSurfaceMode(nextMode: SurfaceMode): Promise<void> 
           setSidebarProjectMode("multi");
         }
         setSurfaceMode("code");
+        setWorkspace("activeBrowserScopeID", null);
         switchPromise = switchWorkspace(codeDir, {
           targetSessionID: remCode.sessionID ?? undefined,
           selectInitial: !remCode.sessionID,
@@ -126,7 +127,7 @@ export async function activateSurfaceMode(nextMode: SurfaceMode): Promise<void> 
     } else {
       batch(() => {
         setSurfaceMode("code");
-        setWorkspace({ rootDir: "", sessions: [], activeSessionID: null, activeProjectID: null });
+        setWorkspace({ rootDir: "", sessions: [], activeSessionID: null, activeProjectID: null, activeBrowserScopeID: null });
       });
     }
   }

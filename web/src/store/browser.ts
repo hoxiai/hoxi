@@ -54,6 +54,8 @@ export function requiresBrowserTakeover(action: BrowserAction): boolean {
   return ["click", "type", "key", "wheel", "zoom", "zoom_reset", "context", "copy", "paste", "upload_cancel"].includes(action.action) || (action.action === "pointer" && action.phase === "down");
 }
 
+import type { SurfaceMode } from "./layout";
+
 // Address-bar input is more permissive than the browser API's explicit URLs.
 // Keep normalization on the UI side; agent requests retain strict validation.
 export function normalizeBrowserAddress(raw: string): string | null {
@@ -79,6 +81,19 @@ export function normalizeBrowserAddress(raw: string): string | null {
   } catch {
     return null;
   }
+}
+
+export function displayBrowserAddress(raw: string | null | undefined): string {
+  const address = (raw || "").trim();
+  return !address || address === "about:blank" ? "" : address;
+}
+
+export function resolveBrowserInspectorSessionID(
+  mode: SurfaceMode,
+  activeBrowserScopeID: string | null,
+  activeSessionID: string | null
+): string | null {
+  return (mode === "work" ? activeBrowserScopeID : null) || activeSessionID;
 }
 
 export function fetchBrowserState(

@@ -228,12 +228,14 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	stopSvc := context.AfterFunc(s.ctx, cancel)
 	defer stopSvc()
 	defer cancel()
-	// Pointer input only reaches a page the inspector already shows; it never
-	// reserves a scope or starts Chrome (for example right after an idle close).
-	liveInput := action.Action == "pointer" || action.Action == "wheel" || action.Action == "zoom" || action.Action == "stop_loading" ||
-		action.Action == "context" || action.Action == "copy" || action.Action == "paste" || action.Action == "upload_cancel" || action.Action == "zoom_reset" || action.Action == "focus" ||
-		action.Action == "viewport_reset"
-	sc, err := s.acquire(ctx, key, path == "action" && action.Action != "close" && !liveInput)
+	// Pointer input only reaches a page the inspector already shows; read-only
+	// probes (snapshot/screenshot) only inspect an already-open browser. Neither
+	// reserves a scope nor cold-starts Chrome at about:blank.
+	liveInput := isLiveInputAction(action.Action)
+	readOnlyProbe := action.Action == "snapshot" || action.Action == "screenshot"
+	canColdStart := action.Action == "navigate" || action.Action == "tab_new"
+	reserveScope := path == "action" && (canColdStart || action.Action == "control" || action.Action == "mode" || action.Action == "resize" || action.Action == "pair")
+	sc, err := s.acquire(ctx, key, reserveScope)
 	if err != nil {
 		fail(w, 503, err)
 		return
@@ -241,6 +243,10 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	if sc == nil {
 		if path == "frame" {
 			fail(w, 404, errors.New("browser not started"))
+			return
+		}
+		if path == "action" && action.Action != "close" && !liveInput && !readOnlyProbe {
+			fail(w, 409, errors.New("browser not started; navigate to a URL first"))
 			return
 		}
 		writeJSON(w, 200, s.idleState(key))
@@ -290,6 +296,7 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	if sc.browser != nil && sc.browser.Err() != nil {
 		sc.resetBrowser()
 	}
+	var coldStarted bool
 	if path == "action" && action.Action == "control" {
 		sc.manual = *action.Manual
 	} else if path == "action" && action.Action == "mode" {
@@ -321,7 +328,11 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		sc.fullPage = fullPage
 		sc.width, sc.height = *action.Width, *action.Height
 		sc.scale = scale
-	} else if path == "action" && !liveInput {
+	} else if path == "action" && !liveInput && !readOnlyProbe {
+		if sc.browser == nil && !canColdStart {
+			fail(w, 409, errors.New("browser not started; navigate to a URL first"))
+			return
+		}
 		if action.Window != nil && sc.browser == nil {
 			sc.window = *action.Window
 		}
@@ -331,6 +342,7 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 			fail(w, 502, err)
 			return
 		}
+		coldStarted = wasStopped
 		if wasStopped && sc.window && !agent {
 			_ = sc.focusWindow(ctx)
 		}
@@ -399,13 +411,34 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	var extra map[string]any
 	if path == "action" && action.Action != "control" && action.Action != "mode" {
+		if coldStarted && action.Action == "tab_new" {
+			action.Action = "navigate"
+			if strings.TrimSpace(action.URL) == "" {
+				action.URL = "about:blank"
+			}
+		}
 		if sc.tabID == "" && action.Action != "tab_new" && action.Action != "tab_select" && action.Action != "tab_close" && action.Action != "focus" {
 			if _, err = sc.state(opctx); err != nil {
 				fail(w, 502, err)
 				return
 			}
 		}
-		action = sc.prepareCallerTab(opctx, callerSession, action)
+		var hasTab bool
+		action, hasTab = sc.resolveCallerAction(opctx, callerSession, action, agent)
+		if !hasTab {
+			if readOnlyProbe {
+				idle := emptyState()
+				idle.Manual = sc.manual
+				if sc.window {
+					idle.Mode = "window"
+				}
+				s.applyStoreMetadata(sc.sessionID, sc.directory, &idle)
+				writeJSON(w, 200, idle)
+				return
+			}
+			fail(w, 409, errors.New("no browser tab open for this session; navigate to a URL first"))
+			return
+		}
 		prevTab := sc.tabID
 		extra, err = sc.perform(opctx, action)
 		if err != nil && !liveInput && action.Action != "tab_new" && action.Action != "tab_select" && action.Action != "tab_close" {

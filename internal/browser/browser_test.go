@@ -384,3 +384,84 @@ func TestWindowModeAndPersistentProfile(t *testing.T) {
 		t.Fatalf("persistent profile should not be deleted on Close: %v", err)
 	}
 }
+
+func TestReadOnlyProbesAndUnstartedActionsNeverColdStartChrome(t *testing.T) {
+	t.Setenv("HOXI_BROWSER_HEADLESS", "")
+	s := New()
+	defer s.Close()
+	s.SetAgentToken("secret")
+	s.SetDefaultWindowMode(true)
+	profileRoot := filepath.Join(t.TempDir(), "browser-profile")
+	s.SetProfileRoot(profileRoot)
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Read-only probes (snapshot/screenshot) on an unstarted session must return
+	// idle state (200, empty tabs) without reserving a scope or launching Chrome.
+	for _, agent := range []bool{true, false} {
+		for _, body := range []string{`{"action":"snapshot"}`, `{"action":"screenshot"}`} {
+			w := request(t, s, dir, "ses_probe", "action", body, agent)
+			if w.Code != 200 {
+				t.Fatalf("agent=%v body=%s: got %d %s", agent, body, w.Code, w.Body.String())
+			}
+			var st State
+			if err := json.Unmarshal(w.Body.Bytes(), &st); err != nil {
+				t.Fatal(err)
+			}
+			if len(st.Tabs) != 0 || st.URL != "" || st.Mode != "window" {
+				t.Fatalf("expected idle window state, got %+v", st)
+			}
+		}
+	}
+	if len(s.scopes) != 0 {
+		t.Fatalf("read-only probe reserved %d scope(s)", len(s.scopes))
+	}
+	if _, err := os.Stat(profileRoot); !os.IsNotExist(err) {
+		t.Fatalf("read-only probe created profile directory: %v", err)
+	}
+
+	// Non-cold-start page mutations must fail fast with 409 instead of launching
+	// a Chrome window at about:blank.
+	for _, body := range []string{
+		`{"action":"click","selector":"#btn"}`,
+		`{"action":"type","text":"hi"}`,
+		`{"action":"key","key":"Enter"}`,
+		`{"action":"scroll","deltaY":100}`,
+		`{"action":"evaluate","text":"location.href"}`,
+		`{"action":"reload"}`,
+		`{"action":"back"}`,
+		`{"action":"forward"}`,
+		`{"action":"tab_select","tabID":"t1"}`,
+		`{"action":"tab_close","tabID":"t1"}`,
+	} {
+		w := request(t, s, dir, "ses_unstarted", "action", body, true)
+		if w.Code != 409 {
+			t.Fatalf("body=%s: expected 409, got %d %s", body, w.Code, w.Body.String())
+		}
+	}
+	if len(s.scopes) != 0 {
+		t.Fatalf("unstarted mutation reserved %d scope(s)", len(s.scopes))
+	}
+
+	// Once UI enables manual takeover lazily, agent probes and mutations must still get 403,
+	// while UI snapshot stays lazy (200, manual=true, no Chrome process).
+	if w := request(t, s, dir, "ses_manual_probe", "action", `{"action":"control","manual":true}`, false); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	for _, body := range []string{`{"action":"snapshot"}`, `{"action":"screenshot"}`, `{"action":"click","selector":"#btn"}`} {
+		if w := request(t, s, dir, "ses_manual_probe", "action", body, true); w.Code != 403 {
+			t.Fatalf("manual takeover bypassed for %s: got %d %s", body, w.Code, w.Body.String())
+		}
+	}
+	uiSnap := request(t, s, dir, "ses_manual_probe", "action", `{"action":"snapshot"}`, false)
+	if uiSnap.Code != 200 || !strings.Contains(uiSnap.Body.String(), `"manual":true`) {
+		t.Fatalf("UI snapshot under manual idle scope failed: %d %s", uiSnap.Code, uiSnap.Body.String())
+	}
+	for _, sc := range s.scopes {
+		if sc.browser != nil {
+			t.Fatal("manual/probe check launched Chrome")
+		}
+	}
+}

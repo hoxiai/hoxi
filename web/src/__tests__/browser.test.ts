@@ -1,7 +1,15 @@
 import { createRoot } from "solid-js";
 import { browserAPI, browserPoint, browserStreamURL, browserURL, connectBrowserStream, observeBrowserZoom } from "../services/browser";
-import { browserLoadPhase, normalizeBrowserAddress, requiresBrowserTakeover } from "../store/browser";
+import {
+  browserLoadPhase,
+  displayBrowserAddress,
+  normalizeBrowserAddress,
+  requiresBrowserTakeover,
+  resolveBrowserInspectorSessionID,
+} from "../store/browser";
 import { createBrowserController } from "../store/browser-controller";
+import { setSurfaceMode } from "../store/layout";
+import { setWorkspace, workspace } from "../store/workspace-state";
 import { assertDeepEqual, assertEqual, describe, it } from "./test-harness";
 
 describe("Browser inspector", () => {
@@ -235,6 +243,76 @@ describe("Browser inspector", () => {
       assertEqual(controller.headlessMode(), false);
     } finally {
       dispose();
+      if (originalDoc) Object.defineProperty(globalThis, "document", originalDoc);
+      else Reflect.deleteProperty(globalThis, "document");
+    }
+  });
+
+  it("keeps address bar empty on about:blank and scopes activeBrowserScopeID only to work mode", () => {
+    const originalDoc = Object.getOwnPropertyDescriptor(globalThis, "document");
+    const prevRootDir = workspace.rootDir;
+    const prevSessions = workspace.sessions.slice();
+    const prevSessionID = workspace.activeSessionID;
+    const prevScopeID = workspace.activeBrowserScopeID;
+    let disposeCode = () => {};
+    let disposeWork = () => {};
+    try {
+      Object.defineProperty(globalThis, "document", {
+        configurable: true,
+        value: {
+          hidden: false,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+        },
+      });
+
+      assertEqual(displayBrowserAddress(""), "");
+      assertEqual(displayBrowserAddress("about:blank"), "");
+      assertEqual(displayBrowserAddress("  about:blank  "), "");
+      assertEqual(displayBrowserAddress("https://example.com/"), "https://example.com/");
+
+      assertEqual(resolveBrowserInspectorSessionID("code", "workstore_leaked", "ses_code_1"), "ses_code_1");
+      assertEqual(resolveBrowserInspectorSessionID("work", "workstore_leaked", "ses_code_1"), "workstore_leaked");
+      assertEqual(resolveBrowserInspectorSessionID("work", null, "ses_work_1"), "ses_work_1");
+
+      setWorkspace({
+        rootDir: "/code/repo",
+        sessions: [{ id: "ses_code_1", title: "Code", directory: "/code/repo" }] as typeof workspace.sessions,
+        activeSessionID: "ses_code_1",
+        activeBrowserScopeID: "workstore_leaked",
+      });
+
+      setSurfaceMode("code");
+      const codeController = createRoot(d => {
+        disposeCode = d;
+        return createBrowserController();
+      });
+      assertEqual(codeController.scope()?.sessionID, "ses_code_1");
+
+      // Starting browser with empty input or about:blank never pollutes url() with "about:blank".
+      codeController.navigateAddress("");
+      assertEqual(codeController.url(), "");
+      codeController.navigateAddress("example.com");
+      assertEqual(codeController.url(), "https://example.com/");
+      codeController.navigateAddress("about:blank");
+      assertEqual(codeController.url(), "");
+
+      setSurfaceMode("work");
+      const workController = createRoot(d => {
+        disposeWork = d;
+        return createBrowserController();
+      });
+      assertEqual(workController.scope()?.sessionID, "workstore_leaked");
+    } finally {
+      disposeCode();
+      disposeWork();
+      setSurfaceMode("code");
+      setWorkspace({
+        rootDir: prevRootDir,
+        sessions: prevSessions,
+        activeSessionID: prevSessionID,
+        activeBrowserScopeID: prevScopeID,
+      });
       if (originalDoc) Object.defineProperty(globalThis, "document", originalDoc);
       else Reflect.deleteProperty(globalThis, "document");
     }

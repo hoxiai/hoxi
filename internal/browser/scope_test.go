@@ -353,6 +353,122 @@ func TestConversationsUseDifferentTabsForSameURL(t *testing.T) {
 	}
 }
 
+func TestSharedWindowAvoidsPhantomBlankTabs(t *testing.T) {
+	if os.Getenv("HOXI_BROWSER_TEST") != "1" {
+		t.Skip("set HOXI_BROWSER_TEST=1 to run Chrome integration tests")
+	}
+	pageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte("<!doctype html><title>" + r.URL.Path + "</title><button id='btn'>Orders</button><p>" + r.URL.String() + "</p>"))
+	}))
+	defer pageServer.Close()
+
+	// 1. Cold-starting via tab_new with a URL must navigate the initial tab directly
+	// instead of leaving an orphaned about:blank tab alongside a second tab.
+	sCold := New()
+	defer sCold.Close()
+	sCold.SetAgentToken("secret")
+	sCold.SetProfileRoot(filepath.Join(t.TempDir(), "profile-cold"))
+	dirCold := t.TempDir()
+	coldURL := pageServer.URL + "/cold-tab-new"
+	wCold := request(t, sCold, dirCold, "ses_cold", "action", `{"action":"tab_new","url":`+strconvQuote(coldURL)+`}`, true)
+	if wCold.Code != 200 {
+		t.Fatalf("cold tab_new: %d %s", wCold.Code, wCold.Body.String())
+	}
+	var coldRes map[string]any
+	if err := json.Unmarshal(wCold.Body.Bytes(), &coldRes); err != nil {
+		t.Fatal(err)
+	}
+	if tabs := coldRes["tabs"].([]any); len(tabs) != 1 || coldRes["url"] != coldURL {
+		t.Fatalf("cold tab_new left extra blank tab: url=%v tabs=%v", coldRes["url"], tabs)
+	}
+
+	// 2. Shared workstore_* tab: unbound chat session reading/clicking/evaluating
+	// reuses the open store tab instead of spawning about:blank, and UI pointer
+	// moves in another session also never spawn about:blank.
+	sStore := New()
+	defer sStore.Close()
+	sStore.SetAgentToken("secret")
+	sStore.SetProfileRoot(filepath.Join(t.TempDir(), "profile-store"))
+	sStore.SetProfileResolver(func(_, _ string) string { return "amazon-us" })
+	dirStore := t.TempDir()
+	storeURL := pageServer.URL + "/seller-central"
+	wStore := request(t, sStore, dirStore, "workstore_amazon-us", "action", `{"action":"navigate","url":`+strconvQuote(storeURL)+`}`, false)
+	if wStore.Code != 200 {
+		t.Fatalf("open store portal: %d %s", wStore.Code, wStore.Body.String())
+	}
+	for _, body := range []string{
+		`{"action":"snapshot"}`,
+		`{"action":"click","selector":"#btn"}`,
+		`{"action":"evaluate","text":"window.location.href"}`,
+	} {
+		w := request(t, sStore, dirStore, "ses_work_chat", "action", body, true)
+		if w.Code != 200 {
+			t.Fatalf("ses_work_chat %s: %d %s", body, w.Code, w.Body.String())
+		}
+		var out map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		if tabs := out["tabs"].([]any); len(tabs) != 1 || out["url"] != storeURL {
+			t.Fatalf("ses_work_chat %s spawned unexpected tab or changed URL: url=%v tabs=%v", body, out["url"], tabs)
+		}
+	}
+	// UI pointer hover in an unbound session must never spawn about:blank.
+	wPtr := request(t, sStore, dirStore, "ses_other_inspector", "action", `{"action":"pointer","phase":"move","x":10,"y":10}`, false)
+	if wPtr.Code != 200 {
+		t.Fatalf("pointer move: %d %s", wPtr.Code, wPtr.Body.String())
+	}
+	var ptrRes map[string]any
+	if err := json.Unmarshal(wPtr.Body.Bytes(), &ptrRes); err != nil {
+		t.Fatal(err)
+	}
+	if tabs := ptrRes["tabs"].([]any); len(tabs) != 1 {
+		t.Fatalf("pointer move in unbound session spawned about:blank: tabs=%v", tabs)
+	}
+
+	// 3. Isolated conversations with no shared store tab: unbound session B
+	// probing snapshot gets idle empty tabs (no leak, no about:blank), mutating
+	// without navigate gets 409, and failed navigation cleans up its blank tab.
+	sIso := New()
+	defer sIso.Close()
+	sIso.SetAgentToken("secret")
+	sIso.SetProfileRoot(filepath.Join(t.TempDir(), "profile-iso"))
+	dirIso := t.TempDir()
+	privURL := pageServer.URL + "/private-a"
+	wA := request(t, sIso, dirIso, "ses_priv_a", "action", `{"action":"navigate","url":`+strconvQuote(privURL)+`}`, true)
+	if wA.Code != 200 {
+		t.Fatalf("ses_priv_a navigate: %d %s", wA.Code, wA.Body.String())
+	}
+	wProbeB := request(t, sIso, dirIso, "ses_priv_b", "action", `{"action":"snapshot"}`, true)
+	if wProbeB.Code != 200 {
+		t.Fatalf("ses_priv_b snapshot: %d %s", wProbeB.Code, wProbeB.Body.String())
+	}
+	var probeB State
+	if err := json.Unmarshal(wProbeB.Body.Bytes(), &probeB); err != nil {
+		t.Fatal(err)
+	}
+	if len(probeB.Tabs) != 0 || probeB.URL != "" {
+		t.Fatalf("ses_priv_b snapshot leaked tab or opened blank: %+v", probeB)
+	}
+	if wMutB := request(t, sIso, dirIso, "ses_priv_b", "action", `{"action":"evaluate","text":"location.href"}`, true); wMutB.Code != 409 {
+		t.Fatalf("expected 409 for unbound ses_priv_b evaluate, got %d %s", wMutB.Code, wMutB.Body.String())
+	}
+	// Failed cross-session navigation must clean up its temporary about:blank tab.
+	wFailNav := request(t, sIso, dirIso, "ses_priv_b", "action", `{"action":"navigate","url":"http://127.0.0.1:1/unreachable"}`, true)
+	if wFailNav.Code != 502 {
+		t.Fatalf("expected 502 on unreachable URL, got %d %s", wFailNav.Code, wFailNav.Body.String())
+	}
+	wStateA := request(t, sIso, dirIso, "ses_priv_a", "state", "", true)
+	var stateA State
+	if err := json.Unmarshal(wStateA.Body.Bytes(), &stateA); err != nil {
+		t.Fatal(err)
+	}
+	if len(stateA.Tabs) != 1 || stateA.URL != privURL {
+		t.Fatalf("failed tab_new left orphaned about:blank tab: %+v", stateA)
+	}
+}
+
 func strconvQuote(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)

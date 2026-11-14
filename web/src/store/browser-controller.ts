@@ -1,6 +1,7 @@
 import { createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js";
 import { BrowserInputBuffer } from "./browser-input";
 import { workspace, setWorkspace } from "./workspace-state";
+import { surfaceMode } from "./layout";
 import { sessionDirectory } from "./session-query";
 import { t } from "../i18n";
 import { createBrowserClipboard } from "./browser-clipboard";
@@ -8,8 +9,8 @@ import { createBrowserWorkflows } from "./browser-workflows";
 import { createBrowserDeveloper, browserViewportPresets } from "./browser-developer";
 import { writeDesktopClipboard } from "../services/desktop-events";
 import {
-  connectBrowserStream, createChromePairing, executeBrowserAction, fetchBrowserState,
-  normalizeBrowserAddress, releaseBrowserPointer, observeBrowserVisibility, decodeBrowserFrame,
+  connectBrowserStream, createChromePairing, displayBrowserAddress, executeBrowserAction, fetchBrowserState,
+  normalizeBrowserAddress, releaseBrowserPointer, resolveBrowserInspectorSessionID, observeBrowserVisibility, decodeBrowserFrame,
   browserLoadPhase, requiresBrowserTakeover,
   type BrowserAction, type BrowserActionResult, type BrowserScope, type BrowserState, type BrowserStreamPhase,
 } from "./browser";
@@ -57,7 +58,7 @@ export function createBrowserController() {
   const [streamGeneration, setStreamGeneration] = createSignal(0);
   let frameSize = { width: 0, height: 0 };
   const scope = createMemo(() => {
-    const sessionID = workspace.activeBrowserScopeID || workspace.activeSessionID;
+    const sessionID = resolveBrowserInspectorSessionID(surfaceMode(), workspace.activeBrowserScopeID, workspace.activeSessionID);
     const directory = workspace.activeSessionID
       ? sessionDirectory(workspace.activeSessionID)
       : workspace.rootDir;
@@ -101,7 +102,11 @@ export function createBrowserController() {
     setState(next);
     if (!editingURL) {
       const address = next.navigation?.status === "loading" || next.navigation?.status === "failed" ? next.navigation.url : next.url;
-      if (address) setURL(address);
+      if (address === "about:blank" || (!address && !next.tabs.length)) {
+        setURL("");
+      } else if (address) {
+        setURL(displayBrowserAddress(address));
+      }
     }
     if (!next.tabs.length) replaceFrame(null);
   }
@@ -260,7 +265,7 @@ export function createBrowserController() {
       setError(t("inspector.browser.invalidURL"));
       return;
     }
-    setURL(target);
+    setURL(displayBrowserAddress(target));
     send({ action: "navigate", url: target });
   }
 
@@ -457,7 +462,7 @@ export function createBrowserController() {
     if (busy() || pairing() || state()?.connected === false) return;
     const target = normalizeBrowserAddress(address);
     if (!target) { setError(t("inspector.browser.invalidURL")); return; }
-    setURL(target);
+    setURL(displayBrowserAddress(target));
     editingURL = false;
     send({ action: "navigate", url: target });
   }

@@ -12459,7 +12459,7 @@ function createBrowserTool() {
   };
   const schema = tool.schema.object(args);
   return tool({
-    description: "Control the active session browser (Desktop Window, isolated headless Chrome, or an attached Chrome Link tab). Use snapshot for visible text and CSS selectors, screenshot for a JPEG, and evaluate for JavaScript (requires approval). Mutations require approval; manual mode blocks agent control.",
+    description: "Control the active session browser (Desktop Window, isolated headless Chrome, or an attached Chrome Link tab). Call navigate with an HTTP(S) URL to open a page; snapshot and screenshot only inspect an already-open browser and return empty tabs when idle. Use snapshot for visible text and CSS selectors, screenshot for a JPEG, and evaluate for JavaScript (requires approval). Mutations require approval; manual mode blocks agent control.",
     args,
     async execute(input, context) {
       const action = schema.parse(input);
@@ -12660,6 +12660,9 @@ var GREP_VALUE_FLAGS = setOf(
   "--group-separator"
 );
 var GIT_GLOBAL_VALUE_FLAGS = setOf("-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path");
+var INLINE_SHELL_KW = setOf("while", "until", "do", "done", "if", "then", "else", "elif", "fi", "!");
+var SAFE_PY_FLAGS = setOf("-u", "-B", "-E", "-s", "-S", "-O", "-OO", "-q", "-I");
+var SAFE_NODE_FLAGS = setOf("--no-warnings", "--input-type=module", "--input-type=commonjs", "-c", "--check");
 
 // .opencode/lib/external-path-risk.js
 var EDIT_PERMISSIONS = /* @__PURE__ */ new Set([
@@ -12727,16 +12730,55 @@ var SENSITIVE_PATH_FRAGMENTS = [
   "/library/startupitems/"
 ];
 var SENSITIVE_ENV_BASENAME_RE = /^\.en(?:v(?:\.(?:local|prod(?:uction)?|dev(?:elopment)?|stag(?:e|ing)|test(?:ing)?|ci|preview|secret\w*|key\w*|private\w*|bak|backup)(?:\.local)?)?|\?|\*)$/i;
+var CLAUDE_SKILL_CREDENTIAL_NAMES = /* @__PURE__ */ new Set(["auth.json", "credentials.json", "token.json", "tokens.json", "secrets.json", "oauth.json"]);
 function isRoutineHoxiSubpath(slash) {
   return slash.includes("/.hoxi/skills/") || slash.includes("/.hoxi/attachments/") || slash.includes("/.agents/skills/") || slash.startsWith(".hoxi/skills/") || slash.startsWith(".hoxi/attachments/") || slash.startsWith(".agents/skills/");
 }
+function isClaudeSkillReadPath(rawPath, directoryScope = false) {
+  if (typeof rawPath !== "string") return false;
+  const slash = rawPath.trim().replaceAll("\\", "/");
+  if (claudeSkillPathHasAmbiguousInput(rawPath) || !slash || /[\0\r\n$`]/.test(slash) || !slash.startsWith("/") && !/^[a-z]:\//i.test(slash)) return false;
+  const parts = slash.replace(/\/+$/, "").split("/").filter((p) => p !== "" && p !== ".");
+  if (parts.includes("..")) return false;
+  if (directoryScope && ["*", "**"].includes(parts[parts.length - 1])) parts.pop();
+  if (parts.some((p) => /[*?\[\]]/.test(p))) return false;
+  const lower = parts.map((p) => p.toLowerCase());
+  const index = lower.findIndex((p, i) => p === ".claude" && lower[i + 1] === "skills");
+  if (index < 0) return false;
+  const parent = (slash.startsWith("/") ? "/" : "") + parts.slice(0, index).join("/");
+  if (isProtectedPath(parent) || isSensitiveExternalPath(parent) || lower.slice(0, index).some((p) => PROTECTED_PATH_SEGMENTS.has(p))) return false;
+  const parentSlash = "/" + parent.toLowerCase().replace(/^\/+/, "") + "/";
+  if (SENSITIVE_PATH_FRAGMENTS.some((p) => parentSlash.includes(p)) || SENSITIVE_PATH_PREFIXES.some((p) => parentSlash.startsWith(p))) return false;
+  const suffix = lower.slice(index + 2);
+  if (suffix.some((p) => PROTECTED_PATH_SEGMENTS.has(p) || SENSITIVE_BASENAMES.has(p) || CLAUDE_SKILL_CREDENTIAL_NAMES.has(p) || SENSITIVE_ENV_BASENAME_RE.test(p) || /(?:\.(?:key|pem|p12|pfx|jks|keystore|ppk|asc|gpg)|^id_[a-z0-9_.-]+)$/i.test(p))) return false;
+  if (SENSITIVE_PATH_FRAGMENTS.some((p) => ("/" + suffix.join("/") + "/").includes(p)) || isProtectedPath(suffix.join("/"))) return false;
+  return true;
+}
+function claudeSkillPathHasAmbiguousInput(raw) {
+  if (typeof raw !== "string" || !("/" + raw.replaceAll("\\", "/").toLowerCase() + "/").includes("/.claude/skills/")) return false;
+  const wrongSeparator = raw.includes("\\") && !/^[a-z]:[\\/]/i.test(raw) && !raw.startsWith("\\\\");
+  return raw !== raw.trim() || wrongSeparator;
+}
+function isAttributionPreferenceTarget(raw) {
+  const env = globalThis.process?.env;
+  const userHome = env?.HOME?.trim() || env?.USERPROFILE?.trim();
+  if (!env || !env.HOXI_HOME?.trim() && !userHome) return false;
+  const home = env.HOXI_HOME?.trim() || userHome.replace(/[\\/]+$/, "") + "/.hoxi";
+  const root = home.replaceAll("\\", "/").replace(/\/+$/, "");
+  if (!root.startsWith("/") && !/^[a-z]:\//i.test(root) || typeof raw !== "string") return false;
+  const actual = raw.trim().replaceAll("\\", "/");
+  const expected = root + "/git-attribution.json";
+  return env?.OS === "Windows_NT" ? actual.toLowerCase() === expected.toLowerCase() : actual === expected;
+}
 function isSecretPath(rawPath) {
   if (typeof rawPath !== "string") return false;
+  if (isAttributionPreferenceTarget(rawPath)) return true;
   const rawSlash = rawPath.trim().replaceAll("\\", "/").toLowerCase().replace(/\/+$/, "");
   const slash = stripWorktreePrefix(rawSlash).replace(/\/+$/, "");
   if (!slash) return false;
   const base = slash.slice(slash.lastIndexOf("/") + 1);
   if (SENSITIVE_BASENAMES.has(base) || SENSITIVE_ENV_BASENAME_RE.test(base)) return true;
+  if (isClaudeSkillReadPath(rawPath)) return false;
   if (isRoutineHoxiSubpath(slash)) return false;
   const normalized = slash.replace(/^\/+/, "");
   return SENSITIVE_PATH_FRAGMENTS.some((p) => `/${normalized}/`.includes(p));
@@ -12761,6 +12803,8 @@ function isSensitiveExternalPath(rawPath) {
 }
 function isSensitiveExternalPathWith(rawPath, checkProtected) {
   if (typeof rawPath !== "string") return false;
+  if (isAttributionPreferenceTarget(rawPath)) return true;
+  if (!checkProtected && isClaudeSkillReadPath(rawPath)) return false;
   const trimmed = rawPath.trim();
   if (!trimmed) return false;
   const candidates = [trimmed];
@@ -12796,6 +12840,7 @@ function isProtectedPath(rawPath) {
 }
 function isProtectedShellReadPath(rawPath) {
   if (typeof rawPath !== "string" || !rawPath.trim()) return false;
+  if (isClaudeSkillReadPath(rawPath)) return false;
   const slash = stripWorktreePrefix(rawPath.trim().replaceAll("\\", "/").toLowerCase());
   return isRoutineHoxiSubpath(slash) ? false : isProtectedPath(rawPath);
 }
@@ -12805,6 +12850,9 @@ var OWN_SESSION_EDIT_TOOLS = /* @__PURE__ */ new Set([
   "str_replace_editor",
   "str_replace_based_edit_tool"
 ]);
+
+// .opencode/lib/shell-loops.js
+var MAX_LITERAL_LOOP_BYTES = 256 * 1024;
 
 // .opencode/lib/shell-constants.js
 var judge = {
@@ -12822,8 +12870,8 @@ var ENV_FILE_PATTERN = String.raw`(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.en(?:v(?:
 var ENVRC_FILE_PATTERN = String.raw`(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.envrc(?:$|[\s;&|)'"*?])`;
 var DESTRUCTIVE_RE = new RegExp(
   [
-    // Core destructive / privilege / disk / power commands
-    String.raw`\b(rm|rmdir|unlink|shred|truncate|srm|sudo|chmod|chown|mkfs|dd|diskutil|killall|reboot|shutdown)\b`,
+    // Core destructive / privilege / disk / power commands (anchored to command/word boundaries, not mid-path dirs, hyphens, or source extensions)
+    String.raw`(?:^|[\s;&|()<>\x60'"=:\/{},$])(?:mkfs(?:\.[a-z0-9]+)?|(?:rm|rmdir|unlink|shred|truncate|srm|sudo|chmod|chown|dd|diskutil|killall|reboot|shutdown)(?:\.(?:exe|cmd|bat))?)(?:$|[\s;&|()<>\x60'"\\{},$])`,
     // kill (excluding pure `kill -0 <pid>` liveness probes) and pkill
     String.raw`\bkill\s+(?:(?:(?:-0\s+)*(?:-(?:[1-9a-mo-rt-z][a-z0-9]*|[sn][a-z0-9]+|0[a-z0-9]+|-)\s+|-[sn]\s+(?:[1-9a-z][a-z0-9]*|0[a-z0-9]+)\s+))+[-?\d%]|(?:-[1-9]\d*|[1-9?%]|0(?:\s|$)))`,
     String.raw`\bpkill\b`,
@@ -12835,7 +12883,7 @@ var DESTRUCTIVE_RE = new RegExp(
     String.raw`(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.(?:ssh|aws|gnupg|kube)\/`,
     String.raw`(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.(?:netrc|npmrc|git-credentials|credentials\.json)(?:$|[\s;&|)'"*?])`,
     String.raw`\.claude\/\.credentials\.json`,
-    String.raw`\.hoxi\/(?:models|auth|tunnel(?:-dev)?|cloudflared|pairing|relay-keys|approval-policy|hoxi)\.(?:json|db)`,
+    String.raw`\.hoxi\/(?:models|auth|tunnel(?:-dev)?|cloudflared|pairing|relay-keys|work-apps|approval-policy|hoxi)\.(?:json|db)`,
     String.raw`\.docker\/config\.json`,
     // .env / .env.* / .envrc files
     ENV_FILE_PATTERN,
@@ -12857,9 +12905,7 @@ var DESTRUCTIVE_GIT_RE = new RegExp(
     String.raw`worktree\s+(?:remove|prune)\b`,
     String.raw`push\b[^\n;&|]*(?:\s--f(?:o(?:r\S*)?)?(?:[=\s]|$)|\s--d(?:e(?:l\S*)?)?(?:[=\s]|$)|\s--mi\S*|\s--pru\S*|\s-[a-zA-Z]*[fd][a-zA-Z]*(?:\s|$)|\s\+\S|\s:\S)`,
     String.raw`reset\b[^\n;&|]*\s--h(?:a\S*)?(?:[=\s]|$)`,
-    String.raw`clean\b[^\n;&|]*\s-[a-zA-Z]*f`,
     String.raw`checkout\b[^\n;&|]*(?:\s--(?:\s|$)|\s-[a-zA-Z]*f[a-zA-Z]*(?:\s|$)|\s\.(?:[;&|]|\s|\/|$))`,
-    String.raw`restore\b`,
     String.raw`stash\s+(?:drop|clear)\b`,
     String.raw`switch\b[^\n;&|]*(?:\s-[a-zA-Z]*f[a-zA-Z]*(?:\s|$)|\s--f(?:o(?:r\S*)?)?(?:[=\s]|$)|\s--di(?:s(?:c\S*)?)?(?:[=\s]|$))`
   ].join("|") + String.raw`)`
@@ -12889,6 +12935,11 @@ function shellWords(s) {
   for (let i = 0; i < s.length; i++) {
     const c = s[i];
     if (quote) {
+      if (quote === "'" && c === "'" && s.startsWith("\\''", i + 1)) {
+        cur += "'";
+        i += 3;
+        continue;
+      }
       if (c === quote) {
         quote = "";
       } else {
@@ -13677,7 +13728,5 @@ async function HoxiPlugin({ directory: factoryDir } = {}) {
   };
 }
 export {
-  HOXI_FALLBACK_GUIDANCE,
-  HOXI_TOOL_RULES,
   HoxiPlugin as default
 };

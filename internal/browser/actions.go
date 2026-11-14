@@ -338,18 +338,92 @@ func (sc *scope) bindCallerTab(callerSession, tabID string) {
 	}
 }
 
-// prepareCallerTab ensures that when multiple conversation sessions or a direct
+func isLiveInputAction(action string) bool {
+	switch action {
+	case "pointer", "wheel", "zoom", "stop_loading", "context", "copy", "paste", "upload_cancel", "zoom_reset", "focus", "viewport_reset":
+		return true
+	default:
+		return false
+	}
+}
+
+func isBlankTabURL(raw string) bool {
+	u := strings.TrimSpace(raw)
+	return u == "" || u == "about:blank" || strings.HasPrefix(u, "chrome://newtab") || strings.HasPrefix(u, "chrome://new-tab-page")
+}
+
+func (sc *scope) unownedBlankTab(state State, callerSession string) string {
+	if state.TabID != "" {
+		for _, tab := range state.Tabs {
+			if tab.ID == state.TabID && isBlankTabURL(tab.URL) && !sc.tabOwnedByOtherSession(tab.ID, callerSession) {
+				return tab.ID
+			}
+		}
+	}
+	for _, tab := range state.Tabs {
+		if isBlankTabURL(tab.URL) && !sc.tabOwnedByOtherSession(tab.ID, callerSession) {
+			return tab.ID
+		}
+	}
+	return ""
+}
+
+func (sc *scope) sharedWindowTab(state State) string {
+	sc.tabMu.Lock()
+	defer sc.tabMu.Unlock()
+	isShared := func(tabID string) bool {
+		if tabID == "" {
+			return false
+		}
+		if owner := sc.tabOwners[tabID]; owner != "" && owner != sc.sessionID {
+			return false
+		}
+		for session, bound := range sc.sessionTabs {
+			if session != sc.sessionID && bound == tabID {
+				return false
+			}
+		}
+		return true
+	}
+	if storeTab := sc.sessionTabs[sc.sessionID]; storeTab != "" && isShared(storeTab) {
+		for _, tab := range state.Tabs {
+			if tab.ID == storeTab {
+				return tab.ID
+			}
+		}
+	}
+	if state.TabID != "" && isShared(state.TabID) {
+		for _, tab := range state.Tabs {
+			if tab.ID == state.TabID {
+				return tab.ID
+			}
+		}
+	}
+	for _, tab := range state.Tabs {
+		if isShared(tab.ID) {
+			return tab.ID
+		}
+	}
+	return ""
+}
+
+func (sc *scope) prepareCallerTab(ctx context.Context, callerSession string, a Action) Action {
+	out, _ := sc.resolveCallerAction(ctx, callerSession, a, false)
+	return out
+}
+
+// resolveCallerAction ensures that when multiple conversation sessions or a direct
 // workstore_* caller share a unified browser scope, each caller owns and
 // restores its own tab in the shared Chrome window rather than overwriting
-// another caller's tab.
-func (sc *scope) prepareCallerTab(ctx context.Context, callerSession string, a Action) Action {
+// another caller's tab or spawning phantom about:blank tabs.
+func (sc *scope) resolveCallerAction(ctx context.Context, callerSession string, a Action, agent bool) (Action, bool) {
 	callerSession = strings.TrimSpace(callerSession)
 	if callerSession == "" || sc.browser == nil {
-		return a
+		return a, true
 	}
 	state, err := sc.state(ctx)
 	if err != nil || len(state.Tabs) == 0 {
-		return a
+		return a, true
 	}
 	sc.tabMu.Lock()
 	if sc.sessionTabs == nil {
@@ -387,30 +461,45 @@ func (sc *scope) prepareCallerTab(ctx context.Context, callerSession string, a A
 				return target.ActivateTarget(target.ID(boundTab)).Do(ctx)
 			}))
 		}
-		return a
+		return a, true
 	}
-	if a.Action == "" || a.Action == "tab_new" || a.Action == "tab_select" || a.Action == "tab_close" || a.Action == "focus" || a.Action == "resize" || a.Action == "viewport_reset" {
-		return a
+	if a.Action == "" || a.Action == "tab_new" || a.Action == "tab_select" || a.Action == "tab_close" || a.Action == "resize" || isLiveInputAction(a.Action) {
+		return a, true
 	}
-	onlyBlank := len(state.Tabs) == 1 &&
-		(strings.TrimSpace(state.Tabs[0].URL) == "" || strings.TrimSpace(state.Tabs[0].URL) == "about:blank") &&
-		!sc.tabOwnedByOtherSession(state.Tabs[0].ID, callerSession)
-	if onlyBlank {
-		sc.setTabID(state.Tabs[0].ID)
-		sc.bindCallerTab(callerSession, sc.tabID)
-		return a
+	if blankTab := sc.unownedBlankTab(state, callerSession); blankTab != "" {
+		if sc.tabID != blankTab {
+			sc.stopStream()
+			sc.setTabID(blankTab)
+			_ = sc.withTab(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+				return target.ActivateTarget(target.ID(blankTab)).Do(ctx)
+			}))
+		}
+		if a.Action != "snapshot" && a.Action != "screenshot" {
+			sc.bindCallerTab(callerSession, blankTab)
+		}
+		return a, true
 	}
 	if a.Action == "navigate" {
 		// Existing tabs are non-blank or owned by other sessions: open a new
 		// tab in the running Chrome window so the conversation reuses the
 		// logged-in profile without overwriting another session's page.
 		a.Action = "tab_new"
-		return a
+		return a, true
 	}
-	if _, err := sc.perform(ctx, Action{Action: "tab_new", URL: "about:blank"}); err == nil && sc.tabID != "" {
-		sc.bindCallerTab(callerSession, sc.tabID)
+	if sharedTab := sc.sharedWindowTab(state); sharedTab != "" {
+		if sc.tabID != sharedTab {
+			sc.stopStream()
+			sc.setTabID(sharedTab)
+			_ = sc.withTab(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+				return target.ActivateTarget(target.ID(sharedTab)).Do(ctx)
+			}))
+		}
+		return a, true
 	}
-	return a
+	if !agent {
+		return a, true
+	}
+	return a, false
 }
 
 func (sc *scope) perform(ctx context.Context, a Action) (map[string]any, error) {
@@ -504,6 +593,7 @@ func (sc *scope) perform(ctx context.Context, a Action) (map[string]any, error) 
 		return map[string]any{"result": result}, err
 	case "tab_new":
 		u := strings.TrimSpace(a.URL)
+		prevTab := sc.tabID
 		id, err := target.CreateTarget("about:blank").Do(cdp.WithExecutor(ctx, chromedp.FromContext(sc.browser).Browser))
 		if err == nil {
 			sc.stopStream()
@@ -522,6 +612,9 @@ func (sc *scope) perform(ctx context.Context, a Action) (map[string]any, error) 
 				}
 			} else {
 				err = sc.withTab(ctx, activate)
+			}
+			if err != nil && prevTab != "" && prevTab != string(id) {
+				sc.cleanupFailedNewTab(id, prevTab)
 			}
 		}
 		return nil, err
@@ -587,6 +680,40 @@ func (sc *scope) perform(ctx context.Context, a Action) (map[string]any, error) 
 		return nil, errors.New("unsupported action")
 	}
 	return nil, sc.withTab(ctx, task)
+}
+
+func (sc *scope) cleanupFailedNewTab(id target.ID, prevTab string) {
+	if sc.browser == nil || sc.browser.Err() != nil {
+		return
+	}
+	cleanCtx, cancel := context.WithTimeout(sc.browser, 2*time.Second)
+	defer cancel()
+	exec := cdp.WithExecutor(cleanCtx, chromedp.FromContext(sc.browser).Browser)
+	if err := target.CloseTarget(id).Do(exec); err != nil {
+		return
+	}
+	sc.releaseTab(string(id))
+	for i := 0; i < 20; i++ {
+		infos, err := chromedp.Targets(cleanCtx)
+		if err != nil {
+			break
+		}
+		stillOpen := false
+		for _, info := range infos {
+			if info.TargetID == id {
+				stillOpen = true
+				break
+			}
+		}
+		if !stillOpen {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	sc.setTabID(prevTab)
+	_ = sc.withTab(cleanCtx, chromedp.ActionFunc(func(ctx context.Context) error {
+		return target.ActivateTarget(target.ID(prevTab)).Do(ctx)
+	}))
 }
 
 func (sc *scope) releaseTab(id string) {

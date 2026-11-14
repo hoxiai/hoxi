@@ -161,7 +161,7 @@ export default function BrowserWindowCard(props: Props) {
                 {state()?.title || t("inspector.browser.windowModeTitle")}
               </p>
               <p class="truncate text-[10px] text-[var(--text-muted)]">
-                {state()?.url || t("inspector.browser.windowModeHint")}
+                {state()?.url && state()?.url !== "about:blank" ? state()?.url : t("inspector.browser.windowModeHint")}
               </p>
             </div>
             <span

@@ -164,7 +164,7 @@ export default function BrowserInspector() {
             <div class="flex flex-1 min-w-0 overflow-x-auto no-scrollbar gap-1" role="tablist" aria-label={t("inspector.browser.tabs")}>
               <For each={state()?.tabs}>{(tab) => (
                 <div class="flex shrink-0 items-center rounded border border-[var(--border-subtle)] text-[11px]" classList={{ "bg-[var(--accent-surface)] text-[var(--accent-primary)]": state()?.tabID === tab.id }}>
-                  <button role="tab" aria-selected={state()?.tabID === tab.id} class="max-w-32 truncate px-1.5 py-0.5 cursor-pointer" disabled={busy()} title={tab.url} onClick={() => send({ action: "tab_select", tabID: tab.id })}>{tab.title || tab.url || t("inspector.browser.untitled")}</button>
+                  <button role="tab" aria-selected={state()?.tabID === tab.id} class="max-w-32 truncate px-1.5 py-0.5 cursor-pointer" disabled={busy()} title={tab.url === "about:blank" ? t("inspector.browser.untitled") : tab.url} onClick={() => send({ action: "tab_select", tabID: tab.id })}>{(tab.title && tab.title !== "about:blank") ? tab.title : (tab.url && tab.url !== "about:blank") ? tab.url : t("inspector.browser.untitled")}</button>
                   <Show when={!chromeLinked() || (state()?.tabs.length ?? 0) > 1}><button class="shrink-0 rounded p-0.5 hover:bg-[var(--bg-hover)] disabled:opacity-40 cursor-pointer" disabled={busy()} aria-label={t("inspector.browser.closeTab")} onClick={() => send({ action: "tab_close", tabID: tab.id })}><X size={11} /></button></Show>
                 </div>
               )}</For>
