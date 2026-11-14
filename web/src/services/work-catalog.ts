@@ -49,6 +49,22 @@ export interface CatalogBrowserSyncInput {
   products: CatalogBrowserProductInput[];
   replaceAll?: boolean;
 }
+export interface CatalogBrowserExtractInput {
+  sessionID: string;
+  directory?: string;
+  operation?: "extract" | "next_page";
+}
+export interface CatalogBrowserExtractResult {
+  running: boolean;
+  activeUrl?: string;
+  activeTitle?: string;
+  tabCount: number;
+  hasCaptcha: boolean;
+  sellerId?: string;
+  hasNextPage: boolean;
+  clicked?: boolean;
+  items: CatalogBrowserProductInput[];
+}
 export interface CatalogBrowserSyncResult {
   authorization: CatalogAuthorization;
   sync: {
@@ -237,6 +253,8 @@ export const workCatalogAPI = {
     call<CatalogAuthorization>(storeId, "browser-auth", "PUT", input),
   syncBrowser: (storeId: string, input: CatalogBrowserSyncInput) =>
     call<CatalogBrowserSyncResult>(storeId, "browser-sync", "POST", input),
+  extractBrowser: (storeId: string, input: CatalogBrowserExtractInput) =>
+    call<CatalogBrowserExtractResult>(storeId, "browser-extract", "POST", input),
   check: (storeId: string) =>
     call<CatalogAuthorization>(storeId, "authorization-check", "POST", {}),
   sync: (storeId: string, restart: boolean) =>

@@ -74,6 +74,7 @@ func (g *Gateway) registerWorkMCPRoutes() {
 		return
 	}
 	g.mux.Handle("/api/hoxi/work/mcp", desktopOnlyWorkHandler(workcatalog.NewMCPHandler(g.workCatalog, g.resolveWorkMCP)))
+	g.mux.Handle("/api/hoxi/work/catalog/browser-extract", desktopOnlyWorkHandler(http.HandlerFunc(g.handleWorkCatalogBrowserExtract)))
 	handler := workcatalog.NewHTTPHandler(g.workCatalog, g.resolveWorkCatalogUI, func(r *http.Request) (workcatalog.Authorize, error) {
 		connection, err := g.resolveWorkMCP(r)
 		return connection.Authorize, err

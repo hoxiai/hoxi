@@ -1,9 +1,13 @@
-import { createSignal, For, Show } from "solid-js";
+import { createMemo, createSignal, For, Show } from "solid-js";
 import { t } from "../../i18n";
-import type { CatalogBrowserSyncController } from "../../services/work-catalog";
+import type {
+  CatalogBrowserSyncController,
+  CatalogProduct,
+} from "../../services/work-catalog";
 import {
-  catalogProductText,
   catalogDisplayImages,
+  catalogPriceLabel,
+  catalogProductText,
   closeCatalogDetail,
   executeCatalogDraftAction,
   openCatalogEditor,
@@ -12,11 +16,185 @@ import {
 import CatalogDraftEditor from "./CatalogDraftEditor";
 import { catalogDraftStatusLabel } from "./catalog-labels";
 
+interface NormalizedTier {
+  qty: string;
+  priceLabel: string;
+}
+
+interface NormalizedSkuRow {
+  key: string;
+  spec: string;
+  price: string;
+  stock: string;
+  code: string;
+}
+
+interface NormalizedAttrItem {
+  name: string;
+  value: string;
+}
+
+function asRecord(val: unknown): Record<string, unknown> | null {
+  return val && typeof val === "object" && !Array.isArray(val)
+    ? (val as Record<string, unknown>)
+    : null;
+}
+
+function scalarText(val: unknown): string {
+  if (typeof val === "string") return val.trim();
+  if (typeof val === "number" && Number.isFinite(val)) return String(val);
+  return "";
+}
+
+function extractSaleOverview(product: CatalogProduct | null): {
+  stock: string;
+  tiers: NormalizedTier[];
+} {
+  const sale = asRecord(product?.data.saleInfo);
+  if (!sale) return { stock: "", tiers: [] };
+  const stock = scalarText(sale.amountOnSale);
+  const rawRanges = Array.isArray(sale.priceRanges) ? sale.priceRanges : [];
+  const tiers: NormalizedTier[] = [];
+  for (const r of rawRanges) {
+    const rec = asRecord(r);
+    if (!rec || rec.price === undefined || rec.price === null) continue;
+    const qty = scalarText(rec.startQuantity || 1) || "1";
+    tiers.push({
+      qty,
+      priceLabel: catalogPriceLabel([{ price: rec.price }]),
+    });
+  }
+  return { stock, tiers };
+}
+
+function extractPackagingFields(
+  product: CatalogProduct | null,
+): Array<{ labelKey: string; value: string }> {
+  const ship =
+    asRecord(product?.data.shippingInfo) ||
+    asRecord(product?.data.productShippingInfo);
+  if (!ship) return [];
+
+  const weight =
+    scalarText(ship.weightText) ||
+    (scalarText(ship.unitWeight) ? `${scalarText(ship.unitWeight)} kg` : "") ||
+    (scalarText(ship.suttleWeight)
+      ? `${scalarText(ship.suttleWeight)} kg`
+      : "");
+
+  const dimsParts = [
+    scalarText(ship.length || ship.packageLength),
+    scalarText(ship.width || ship.packageWidth),
+    scalarText(ship.height || ship.packageHeight),
+  ].filter(Boolean);
+  const dimsFallback = dimsParts.length === 3 ? `${dimsParts.join("x")} cm` : "";
+  const size =
+    scalarText(ship.packageSize) ||
+    dimsFallback ||
+    scalarText(ship.volume);
+
+  const rows: Array<{ labelKey: string; value: string }> = [];
+  if (weight) rows.push({ labelKey: "workCatalog.unitWeight", value: weight });
+  if (size) rows.push({ labelKey: "workCatalog.packageSize", value: size });
+  const packingWay = scalarText(ship.packingWay);
+  if (packingWay)
+    rows.push({ labelKey: "workCatalog.packingWay", value: packingWay });
+  const pcs = scalarText(ship.pcsPerCarton);
+  if (pcs) rows.push({ labelKey: "workCatalog.pcsPerCarton", value: pcs });
+  const carton = scalarText(ship.cartonSize);
+  if (carton) rows.push({ labelKey: "workCatalog.cartonSize", value: carton });
+  const from = scalarText(ship.sendGoodsAddressText);
+  if (from) rows.push({ labelKey: "workCatalog.shipFrom", value: from });
+  const handling = scalarText(
+    ship.handlingTime || (ship.sendGoodsDays ? `${ship.sendGoodsDays}d` : ""),
+  );
+  if (handling)
+    rows.push({ labelKey: "workCatalog.handlingTime", value: handling });
+  return rows;
+}
+
+function extractSkuRows(product: CatalogProduct | null): NormalizedSkuRow[] {
+  const list = product?.data.skuInfos;
+  if (!Array.isArray(list)) return [];
+  const out: NormalizedSkuRow[] = [];
+  for (let i = 0; i < list.length && out.length < 100; i++) {
+    const rec = asRecord(list[i]);
+    if (!rec) continue;
+    const attrParts = Array.isArray(rec.attributes)
+      ? rec.attributes
+          .map((a) => {
+            const ar = asRecord(a);
+            return scalarText(ar?.attributeValue ?? ar?.value);
+          })
+          .filter(Boolean)
+      : [];
+    const spec =
+      scalarText(rec.specLabel) ||
+      attrParts.join(" / ") ||
+      scalarText(rec.cargoNumber) ||
+      scalarText(rec.skuCode) ||
+      scalarText(rec.skuId) ||
+      String(i + 1);
+    const rawPrice = rec.price ?? rec.consignPrice ?? rec.retailPrice;
+    const price =
+      rawPrice !== undefined && rawPrice !== null && scalarText(rawPrice) !== ""
+        ? catalogPriceLabel([{ price: rawPrice }])
+        : "—";
+    const stock = scalarText(rec.amountOnSale) || "—";
+    const code = scalarText(rec.cargoNumber || rec.skuCode) || "—";
+    out.push({
+      key: `${scalarText(rec.skuId) || i}-${i}`,
+      spec,
+      price,
+      stock,
+      code,
+    });
+  }
+  return out;
+}
+
+function extractAttributeRows(
+  product: CatalogProduct | null,
+): NormalizedAttrItem[] {
+  const list = product?.data.attributes;
+  if (!Array.isArray(list)) return [];
+  const out: NormalizedAttrItem[] = [];
+  for (const raw of list) {
+    const rec = asRecord(raw);
+    if (!rec) continue;
+    const name = scalarText(rec.attributeName || rec.name);
+    const value = scalarText(rec.value ?? rec.attributeValue);
+    if (!name || !value) continue;
+    out.push({ name, value });
+    if (out.length >= 60) break;
+  }
+  return out;
+}
+
 export default function CatalogProductDetail(props: {
   onCreateTask?: () => void;
   browserController?: CatalogBrowserSyncController;
 }) {
   const [copied, setCopied] = createSignal(false);
+
+  const saleOverview = createMemo(() =>
+    extractSaleOverview(workCatalogState.product),
+  );
+  const packagingRows = createMemo(() =>
+    extractPackagingFields(workCatalogState.product),
+  );
+  const skuRows = createMemo(() => extractSkuRows(workCatalogState.product));
+  const attrRows = createMemo(() =>
+    extractAttributeRows(workCatalogState.product),
+  );
+  const hasRichDetail = createMemo(
+    () =>
+      Boolean(
+        catalogProductText(workCatalogState.product, "description").trim(),
+      ) ||
+      packagingRows().length > 0 ||
+      attrRows().length > 0,
+  );
 
   const copyDraft = async () => {
     const draft = workCatalogState.draft;
@@ -37,7 +215,7 @@ export default function CatalogProductDetail(props: {
 
   return (
     <aside
-      class="w-full shrink-0 border-t border-[var(--border-subtle)] bg-[var(--bg-panel)] p-4 xl:w-[420px] xl:border-l xl:border-t-0 overflow-y-auto"
+      class="w-full shrink-0 border-t border-[var(--border-subtle)] bg-[var(--bg-panel)] p-4 xl:w-[440px] xl:border-l xl:border-t-0 overflow-y-auto"
       data-testid="catalog-detail"
     >
       <Show
@@ -75,16 +253,18 @@ export default function CatalogProductDetail(props: {
                     loading="lazy"
                     referrerpolicy="no-referrer"
                     class="h-20 w-20 shrink-0 rounded-lg object-cover"
-                    />
+                  />
                 )}
               </For>
             </div>
-            <dl class="my-3 space-y-2 text-xs">
+            <dl class="my-3 grid grid-cols-2 gap-2 text-xs">
               <div>
                 <dt class="text-[var(--text-muted)]">
                   {t("workCatalog.productId")}
                 </dt>
-                <dd class="font-mono">{workCatalogState.product?.id}</dd>
+                <dd class="font-mono break-all">
+                  {workCatalogState.product?.id}
+                </dd>
               </div>
               <div>
                 <dt class="text-[var(--text-muted)]">
@@ -95,7 +275,7 @@ export default function CatalogProductDetail(props: {
                     t("workCatalog.unknown")}
                 </dd>
               </div>
-              <div>
+              <div class="col-span-2">
                 <dt class="text-[var(--text-muted)]">
                   {t("workCatalog.category")}
                 </dt>
@@ -106,13 +286,14 @@ export default function CatalogProductDetail(props: {
                   ) || t("workCatalog.unknown")}
                 </dd>
               </div>
-              <div>
+              <div class="col-span-2">
                 <dt class="text-[var(--text-muted)]">
                   {t("workCatalog.syncedAt")}
                 </dt>
                 <dd>{workCatalogState.product?.syncedAt}</dd>
               </div>
             </dl>
+
             <div class="flex flex-wrap gap-2">
               <button
                 disabled={!workCatalogState.status?.capabilities.editDraft}
@@ -138,6 +319,134 @@ export default function CatalogProductDetail(props: {
                 )}
               </Show>
             </div>
+
+            <Show when={!hasRichDetail()}>
+              <p class="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 text-xs text-[var(--text-secondary)]">
+                {t("workCatalog.missingDetailHint")}
+              </p>
+            </Show>
+
+            <Show
+              when={
+                saleOverview().tiers.length > 0 || Boolean(saleOverview().stock)
+              }
+            >
+              <div class="mt-4 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-3 text-xs">
+                <div class="flex items-center justify-between gap-2 mb-2">
+                  <span class="font-semibold">
+                    {t("workCatalog.priceAndStock")}
+                  </span>
+                  <Show when={saleOverview().stock}>
+                    <span class="text-[var(--text-muted)]">
+                      {t("workCatalog.stock")}: {saleOverview().stock}
+                    </span>
+                  </Show>
+                </div>
+                <Show when={saleOverview().tiers.length > 0}>
+                  <div class="flex flex-wrap gap-1.5">
+                    <For each={saleOverview().tiers}>
+                      {(tier) => (
+                        <span class="rounded bg-[var(--bg-panel)] px-2 py-1 font-mono text-[11px] border border-[var(--border-subtle)]">
+                          {t("workCatalog.minOrderQty", { qty: tier.qty })} ·{" "}
+                          {tier.priceLabel}
+                        </span>
+                      )}
+                    </For>
+                  </div>
+                </Show>
+              </div>
+            </Show>
+
+            <Show when={packagingRows().length > 0}>
+              <div class="mt-4">
+                <h5 class="mb-2 text-xs font-semibold">
+                  {t("workCatalog.packagingSection")}
+                </h5>
+                <dl class="grid grid-cols-2 gap-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-3 text-xs">
+                  <For each={packagingRows()}>
+                    {(item) => (
+                      <div>
+                        <dt class="text-[var(--text-muted)]">
+                          {t(item.labelKey as "workCatalog.unitWeight")}
+                        </dt>
+                        <dd class="font-medium break-words">{item.value}</dd>
+                      </div>
+                    )}
+                  </For>
+                </dl>
+              </div>
+            </Show>
+
+            <Show when={skuRows().length > 0}>
+              <div class="mt-4">
+                <h5 class="mb-2 text-xs font-semibold">
+                  {t("workCatalog.skuSection", { count: skuRows().length })}
+                </h5>
+                <div class="max-h-56 overflow-auto rounded-lg border border-[var(--border-subtle)]">
+                  <table class="w-full text-left text-[11px]">
+                    <thead class="sticky top-0 bg-[var(--bg-inset)] text-[var(--text-muted)]">
+                      <tr>
+                        <th class="px-2.5 py-1.5 font-medium">
+                          {t("workCatalog.skuSpec")}
+                        </th>
+                        <th class="px-2 py-1.5 font-medium">
+                          {t("workCatalog.skuPrice")}
+                        </th>
+                        <th class="px-2 py-1.5 font-medium">
+                          {t("workCatalog.skuStock")}
+                        </th>
+                        <th class="px-2 py-1.5 font-medium">
+                          {t("workCatalog.skuCode")}
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody class="divide-y divide-[var(--border-subtle)]">
+                      <For each={skuRows()}>
+                        {(row) => (
+                          <tr>
+                            <td class="px-2.5 py-1.5 break-words">
+                              {row.spec}
+                            </td>
+                            <td class="px-2 py-1.5 font-mono whitespace-nowrap">
+                              {row.price}
+                            </td>
+                            <td class="px-2 py-1.5 font-mono whitespace-nowrap">
+                              {row.stock}
+                            </td>
+                            <td class="px-2 py-1.5 font-mono text-[var(--text-muted)] break-all">
+                              {row.code}
+                            </td>
+                          </tr>
+                        )}
+                      </For>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </Show>
+
+            <Show when={attrRows().length > 0}>
+              <div class="mt-4">
+                <h5 class="mb-2 text-xs font-semibold">
+                  {t("workCatalog.attributesSection", {
+                    count: attrRows().length,
+                  })}
+                </h5>
+                <dl class="max-h-52 overflow-auto grid grid-cols-2 gap-x-3 gap-y-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-3 text-[11px]">
+                  <For each={attrRows()}>
+                    {(attr) => (
+                      <div class="min-w-0">
+                        <dt class="text-[var(--text-muted)] truncate">
+                          {attr.name}
+                        </dt>
+                        <dd class="break-words">{attr.value}</dd>
+                      </div>
+                    )}
+                  </For>
+                </dl>
+              </div>
+            </Show>
+
             <h5 class="mt-5 mb-2 text-xs font-semibold">
               {t("workCatalog.description")}
             </h5>

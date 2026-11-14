@@ -256,24 +256,45 @@ func normalizeAlibabaBrowserImageURL(raw string) string {
 }
 
 func mergeBrowserProduct(existing, incoming Product) Product {
+	incomingIsDetail := hasNonEmptyCatalogString(incoming.Data["description"]) ||
+		hasNonEmptyCatalogSlice(incoming.Data["attributes"])
 	merged := make(map[string]any, len(existing.Data)+len(incoming.Data))
 	for k, v := range existing.Data {
 		merged[k] = v
 	}
 	for k, v := range incoming.Data {
-		if k == "description" {
-			if desc, _ := v.(string); strings.TrimSpace(desc) == "" {
-				if prevDesc, _ := existing.Data["description"].(string); strings.TrimSpace(prevDesc) != "" {
+		if v == nil {
+			if existing.Data[k] != nil {
+				continue
+			}
+		}
+		if k == "description" || k == "categoryName" || k == "sourceUrl" {
+			if s, ok := v.(string); ok && strings.TrimSpace(s) == "" {
+				if hasNonEmptyCatalogString(existing.Data[k]) {
+					continue
+				}
+			}
+		}
+		if k == "attributes" {
+			if !hasNonEmptyCatalogSlice(v) && hasNonEmptyCatalogSlice(existing.Data["attributes"]) {
+				continue
+			}
+		}
+		if k == "shippingInfo" {
+			if prevMap, ok := existing.Data["shippingInfo"].(map[string]any); ok && len(prevMap) > 0 {
+				if nextMap, nextOK := v.(map[string]any); !nextOK || len(nextMap) == 0 {
 					continue
 				}
 			}
 		}
 		if k == "skuInfos" {
-			if list, ok := v.([]any); ok && len(list) == 0 {
-				if prevList, ok := existing.Data["skuInfos"].([]any); ok && len(prevList) > 0 {
-					continue
-				}
+			if shouldPreserveExistingSKUs(existing.Data["skuInfos"], v, incomingIsDetail) {
+				continue
 			}
+		}
+		if k == "saleInfo" {
+			merged["saleInfo"] = mergeBrowserSaleInfo(existing.Data["saleInfo"], v, incomingIsDetail)
+			continue
 		}
 		if k == "image" {
 			prevImgs := extractImageSlice(existing.Data["image"])
@@ -284,6 +305,9 @@ func mergeBrowserProduct(existing, incoming Product) Product {
 			if len(nextImgs) == 1 && len(prevImgs) > 1 && prevImgs[0] == nextImgs[0] {
 				continue
 			}
+			if !incomingIsDetail && len(nextImgs) < len(prevImgs) && stringSliceSubset(nextImgs, prevImgs) {
+				continue
+			}
 		}
 		merged[k] = v
 	}
@@ -292,6 +316,169 @@ func mergeBrowserProduct(existing, incoming Product) Product {
 		Data:     merged,
 		SyncedAt: incoming.SyncedAt,
 	}
+}
+
+func hasNonEmptyCatalogString(raw any) bool {
+	s, ok := raw.(string)
+	return ok && strings.TrimSpace(s) != ""
+}
+
+func hasNonEmptyCatalogSlice(raw any) bool {
+	s, ok := raw.([]any)
+	return ok && len(s) > 0
+}
+
+func shouldPreserveExistingSKUs(prevRaw, nextRaw any, incomingIsDetail bool) bool {
+	prevList, ok := prevRaw.([]any)
+	if !ok || len(prevList) == 0 {
+		return false
+	}
+	nextList, ok := nextRaw.([]any)
+	if !ok || len(nextList) == 0 {
+		return true
+	}
+	if isSummarySKUList(nextList) && (len(prevList) > 1 || !isSummarySKUList(prevList)) {
+		return true
+	}
+	if !incomingIsDetail && len(nextList) < len(prevList) {
+		return true
+	}
+	return false
+}
+
+// isSummarySKUList detects the single-item placeholder SKU (`skuId: "1"` with
+// only `cargoNumber`) emitted when extracting a seller backend list row.
+func isSummarySKUList(list []any) bool {
+	if len(list) != 1 {
+		return false
+	}
+	item, ok := list[0].(map[string]any)
+	if !ok || item == nil {
+		return false
+	}
+	return scalarID(item["skuId"]) == "1" &&
+		scalarID(item["specId"]) == "" &&
+		scalarID(item["skuCode"]) == "" &&
+		item["price"] == nil &&
+		item["amountOnSale"] == nil
+}
+
+func mergeBrowserSaleInfo(prevRaw, nextRaw any, incomingIsDetail bool) any {
+	prevMap, prevOK := prevRaw.(map[string]any)
+	nextMap, nextOK := nextRaw.(map[string]any)
+	if !nextOK || nextMap == nil {
+		if prevOK && prevMap != nil {
+			return prevMap
+		}
+		return nextRaw
+	}
+	if !prevOK || prevMap == nil {
+		return nextMap
+	}
+	out := make(map[string]any, len(prevMap)+len(nextMap))
+	for k, v := range prevMap {
+		out[k] = v
+	}
+	for k, v := range nextMap {
+		if v == nil {
+			if prevMap[k] != nil {
+				continue
+			}
+		}
+		if k == "amountOnSale" {
+			if s, ok := v.(string); ok && strings.TrimSpace(s) == "" && prevMap[k] != nil {
+				continue
+			}
+		}
+		if k == "priceRanges" && shouldPreservePriceRanges(prevMap["priceRanges"], v, incomingIsDetail) {
+			continue
+		}
+		out[k] = v
+	}
+	return out
+}
+
+func shouldPreservePriceRanges(prevRaw, nextRaw any, incomingIsDetail bool) bool {
+	prevRanges, ok := prevRaw.([]any)
+	if !ok || len(prevRanges) == 0 {
+		return false
+	}
+	nextRanges, ok := nextRaw.([]any)
+	if !ok || len(nextRanges) == 0 {
+		return true
+	}
+	if incomingIsDetail || !priceRangesSubset(nextRanges, prevRanges) {
+		return false
+	}
+	if len(nextRanges) < len(prevRanges) {
+		return true
+	}
+	if len(nextRanges) == 1 && len(prevRanges) == 1 {
+		nextStart, nextOK := rangeFieldFloat(nextRanges[0], "startQuantity")
+		prevStart, prevOK := rangeFieldFloat(prevRanges[0], "startQuantity")
+		if nextOK && prevOK && nextStart == 1 && prevStart > 1 {
+			return true
+		}
+	}
+	return false
+}
+
+func priceRangesSubset(subset, superset []any) bool {
+	known := make(map[float64]struct{}, len(superset))
+	for _, raw := range superset {
+		if p, ok := rangeFieldFloat(raw, "price"); ok {
+			known[p] = struct{}{}
+		}
+	}
+	if len(known) == 0 {
+		return false
+	}
+	for _, raw := range subset {
+		p, ok := rangeFieldFloat(raw, "price")
+		if !ok {
+			return false
+		}
+		if _, exists := known[p]; !exists {
+			return false
+		}
+	}
+	return true
+}
+
+func rangeFieldFloat(raw any, key string) (float64, bool) {
+	m, ok := raw.(map[string]any)
+	if !ok || m == nil {
+		return 0, false
+	}
+	switch n := m[key].(type) {
+	case json.Number:
+		f, err := n.Float64()
+		return f, err == nil
+	case float64:
+		return n, true
+	case int:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	case string:
+		f, err := json.Number(strings.TrimSpace(n)).Float64()
+		return f, err == nil
+	default:
+		return 0, false
+	}
+}
+
+func stringSliceSubset(subset, superset []string) bool {
+	seen := make(map[string]struct{}, len(superset))
+	for _, s := range superset {
+		seen[s] = struct{}{}
+	}
+	for _, s := range subset {
+		if _, ok := seen[s]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func extractImageSlice(raw any) []string {

@@ -6,6 +6,8 @@ import { setWorkspace, workspace } from "./workspace-state";
 import {
   readCatalogImport,
   workCatalogAPI,
+  type CatalogBrowserExtractInput,
+  type CatalogBrowserExtractResult,
   type CatalogBrowserSyncInput,
   type CatalogBrowserSyncResult,
   type CatalogCredentials,
@@ -522,10 +524,19 @@ export async function configureCatalogAuthorization(
 export async function configureCatalogBrowserAuthorization(
   sellerLoginId: string,
   clearCredentials = false,
+  expectedStoreId?: string,
 ): Promise<boolean> {
   const scope = workCatalogState.scope;
   const cleanSeller = sellerLoginId.trim();
-  if (!scope || !cleanSeller || workCatalogState.saving) return false;
+  const targetStore = expectedStoreId?.trim();
+  if (expectedStoreId !== undefined && !targetStore) return false;
+  if (
+    !scope ||
+    (targetStore && scope.storeId !== targetStore) ||
+    !cleanSeller ||
+    workCatalogState.saving
+  )
+    return false;
   const generation = scopeGeneration;
   setWorkCatalogState({ saving: true, error: "" });
   try {
@@ -533,7 +544,11 @@ export async function configureCatalogBrowserAuthorization(
       sellerLoginId: cleanSeller,
       clearCredentials,
     });
-    if (generation !== scopeGeneration) return false;
+    if (
+      generation !== scopeGeneration ||
+      workCatalogState.scope?.storeId !== scope.storeId
+    )
+      return false;
     await refreshCatalogStatus();
     return true;
   } catch (error) {
@@ -544,18 +559,46 @@ export async function configureCatalogBrowserAuthorization(
   }
 }
 
+export async function extractCatalogBrowserPage(
+  input: CatalogBrowserExtractInput,
+  expectedStoreId?: string,
+): Promise<CatalogBrowserExtractResult | null> {
+  const scope = workCatalogState.scope;
+  const targetStore = expectedStoreId?.trim();
+  if (expectedStoreId !== undefined && !targetStore) return null;
+  if (!scope || (targetStore && scope.storeId !== targetStore)) return null;
+  const generation = scopeGeneration;
+  const res = await workCatalogAPI.extractBrowser(scope.storeId, input);
+  if (
+    generation !== scopeGeneration ||
+    workCatalogState.scope?.storeId !== scope.storeId
+  ) {
+    return null;
+  }
+  return res;
+}
+
 export async function syncCatalogBrowserProducts(
   input: CatalogBrowserSyncInput,
+  expectedStoreId?: string,
 ): Promise<CatalogBrowserSyncResult | null> {
   const scope = workCatalogState.scope;
-  if (!scope) return null;
+  const targetStore = expectedStoreId?.trim();
+  if (expectedStoreId !== undefined && !targetStore) return null;
+  if (!scope || (targetStore && scope.storeId !== targetStore)) return null;
   const generation = scopeGeneration;
   setWorkCatalogState("error", "");
   try {
     const res = await workCatalogAPI.syncBrowser(scope.storeId, input);
-    if (generation !== scopeGeneration) return null;
+    if (
+      generation !== scopeGeneration ||
+      workCatalogState.scope?.storeId !== scope.storeId
+    )
+      return null;
     await Promise.all([refreshCatalogStatus(), loadCatalogProducts(0)]);
     if (
+      generation === scopeGeneration &&
+      workCatalogState.scope?.storeId === scope.storeId &&
       workCatalogState.product &&
       input.products.some((item) => item.id === workCatalogState.product?.id)
     ) {

@@ -12,6 +12,7 @@ import {
   closeCatalogDetail,
   configureCatalogBrowserAuthorization,
   executeCatalogDraftAction,
+  extractCatalogBrowserPage,
   loadCatalogProducts,
   openCatalogEditor,
   refreshCatalogStatus,
@@ -313,5 +314,28 @@ describe("Work product catalog isolation", () => {
       assertEqual(syncedBatchCount, 1);
       assertEqual(syncRes?.productCount, 1);
       assertEqual(workCatalogState.page?.items[0]?.id, "501");
+
+      workCatalogAPI.extractBrowser = async (storeId, input) => {
+        assertEqual(storeId, "store-a");
+        assertEqual(input.sessionID, "workstore_default");
+        return {
+          running: true,
+          tabCount: 1,
+          hasCaptcha: false,
+          sellerId: "factory-browser",
+          hasNextPage: false,
+          items: [{ id: "502", data: { subject: "Extracted item" } }],
+        };
+      };
+      const mismatch = await extractCatalogBrowserPage(
+        { sessionID: "workstore_default", operation: "extract" },
+        "store-other",
+      );
+      assertEqual(mismatch, null);
+      const extracted = await extractCatalogBrowserPage(
+        { sessionID: "workstore_default", operation: "extract" },
+        "store-a",
+      );
+      assertEqual(extracted?.items[0]?.id, "502");
     }));
 });
