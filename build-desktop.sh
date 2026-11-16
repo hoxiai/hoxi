@@ -344,9 +344,10 @@ cleanup_build_stage() {
 trap cleanup_build_stage EXIT
 
 if [[ -f "${WORK_REPO_DIR}/go/stage-host.sh" ]]; then
+  staged_host_paths="$(bash "${WORK_REPO_DIR}/go/stage-host.sh" "${PROJECT_ROOT}")"
   while IFS= read -r staged_path; do
     [[ -n "${staged_path}" ]] && STAGED_HOST_FILES+=("${staged_path}")
-  done < <(bash "${WORK_REPO_DIR}/go/stage-host.sh" "${PROJECT_ROOT}")
+  done <<< "${staged_host_paths}"
 fi
 
 if [[ -d "${WORK_REPO_DIR}/skills" ]]; then
@@ -372,6 +373,7 @@ if [[ "${BUILD_DEV}" -eq 1 ]]; then
     -clean \
     -skipbindings \
     -debug \
+    -m \
     -nosyncgomod \
     -platform "darwin/${TARGET_ARCH}" \
     -ldflags "-X github.com/hoxiai/hoxi/internal/app.BuildVariant=dev -X github.com/hoxiai/hoxi/internal/buildinfo.Version=${BUILD_VERSION}" \
