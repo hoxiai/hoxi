@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  Native macOS &amp; Windows command center for <b>parallel AI software engineering</b>, paired with a mobile control plane for <b>Hoxi &amp; <a href="https://github.com/hoxiai/gopanel">GoPanel</a> servers</b>.
+  Native macOS &amp; Windows command center for <b>parallel AI software engineering</b>, with built-in remote channels for the optional mobile companion &amp; <b><a href="https://github.com/hoxiai/gopanel">GoPanel</a> servers</b>.
 </p>
 
 <p align="center">
@@ -25,7 +25,7 @@
 
 ---
 
-**Hoxi** ([hoxi.ai](https://hoxi.ai)) unifies **OpenCode**, **Claude Code**, **Google Antigravity (`agy`)**, **Gemini CLI (`gemini`)**, **Qoder**, and **CodeBuddy** inside a native macOS & Windows workspace (typically **~30 MB** RAM and **~0.2s** cold start)—and supports remote mobile control to command running AI agents and manage [**GoPanel**](https://github.com/hoxiai/gopanel) Linux servers on the go.
+**Hoxi** ([hoxi.ai](https://hoxi.ai)) unifies **OpenCode**, **Claude Code**, **Google Antigravity (`agy`)**, **Gemini CLI (`gemini`)**, **Qoder**, and **CodeBuddy** inside a native macOS & Windows workspace (typically **~30 MB** RAM and **~0.2s** cold start)—and exposes secure remote channels so the optional Hoxi mobile companion app and [**GoPanel**](https://github.com/hoxiai/gopanel) Linux servers can supervise running AI agents on the go.
 
 ---
 
@@ -68,7 +68,7 @@ Most AI coding tools stop at the repository. Hoxi also lets a session act on nat
 - **Multi-Agent DAG Orchestration**: Describe a goal once and Hoxi drafts a task DAG (a "convoy") where every task runs as its own session—one isolated worktree per task in a Git repo—so dependent tasks start from their prerequisites' merged changes while independent ones run in parallel.
 - **GitHub PR & CI Review (`forge`)**: Read live PR status, checks and review threads through the `gh` CLI without leaving the workspace.
 
-**Also built in**: symbol/chunk code index with BM25 search; Agent Skills (local discovery, built-in defaults, SHA-256-verified installs from the hoxi.ai marketplace); the Hoxi Tools gateway (220+ provider endpoints via discover/inspect/run); one-click official Hoxi account (AINode) provider and MCP OAuth 2.1 PKCE connect; multi-workspace profiles; `/goal` session goals; multimodal attachments; prompt enhancement; a model leaderboard; and a crash-safe reclaim ledger that cleans up orphaned `opencode`/Chrome processes after a crash or `kill -9`. Local-first by design: the only telemetry is a launch beacon (event, install id, os/arch, version—never prompts, code, paths or keys), and the OpenAI-compatible relay is loopback-only.
+**Also built in**: symbol/chunk code index with BM25 search; Agent Skills (local discovery, built-in defaults, SHA-256-verified installs from the hoxi.ai marketplace); the Hoxi Tools gateway (220+ provider endpoints via discover/inspect/run); optional one-click official Hoxi account provider and MCP OAuth 2.1 PKCE connect; multi-workspace profiles; `/goal` session goals; multimodal attachments; prompt enhancement; a model leaderboard; and a crash-safe reclaim ledger that cleans up orphaned `opencode`/Chrome processes after a crash or `kill -9`. Local-first by design: the only telemetry is a launch beacon (event, install id, os/arch, version—never prompts, code, paths or keys), and the OpenAI-compatible relay is loopback-only.
 
 ---
 
@@ -118,7 +118,7 @@ Most AI coding tools stop at the repository. Hoxi also lets a session act on nat
 
 ### 2. Prerequisites (Building from Source)
 - **macOS** `>= 13.0` or **Windows 10/11** (`x64`)
-- **Go** `>= 1.23`
+- **Go** `>= 1.25`
 - **Node.js** `>= 20` (or **Bun** `>= 1.2`)
 - **Wails CLI v2** (`go install github.com/wailsapp/wails/v2/cmd/wails@v2.13.0`)
 - **Agent engine**: release builds bundle [`opencode`](https://github.com/anomalyco/opencode), and development runs auto-download the pinned, SHA-256-verified binary into `~/.hoxi/bin` when missing. Alternatively install `opencode`, `claude`, `agy`, `gemini`, `qoder`, or `codebuddy` on `PATH`

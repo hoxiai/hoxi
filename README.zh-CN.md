@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  专为高强度 AI 研发打造的 <b>macOS &amp; Windows 原生多 Agent 并行工作台</b>，支持与 <b><a href="https://github.com/hoxiai/gopanel">GoPanel</a> 服务器面板</b>及移动端远程协同。
+  专为高强度 AI 研发打造的 <b>macOS &amp; Windows 原生多 Agent 并行工作台</b>，内置远程协同通道对接 <b><a href="https://github.com/hoxiai/gopanel">GoPanel</a> 服务器面板</b>与可选配套移动端 App。
 </p>
 
 <p align="center">
@@ -27,7 +27,7 @@
 
 **Hoxi** ([hoxi.ai](https://hoxi.ai)) 不是又一个吃掉 1.5GB 内存的套壳 Electron 编辑器（macOS 与 Windows 原生宿主，典型约 **30 MB 内存**、约 **0.2 秒冷启动**）。
 
-它把桌面端的 **OpenCode**、**Claude Code**、**Google Antigravity (`agy`)**、**Gemini CLI (`gemini`)**、**Qoder（通义灵码）**、**CodeBuddy（腾讯云）** 统一收进同一个三栏工作区，并支持配套移动端远程协同，把**桌面 AI 研发指挥**与 **[GoPanel](https://github.com/hoxiai/gopanel) 服务器运维管理**装进你的口袋。
+它把桌面端的 **OpenCode**、**Claude Code**、**Google Antigravity (`agy`)**、**Gemini CLI (`gemini`)**、**Qoder（通义灵码）**、**CodeBuddy（腾讯云）** 统一收进同一个三栏工作区，并内置远程协同协议，可配合独立发行的配套移动端 App 与 **[GoPanel](https://github.com/hoxiai/gopanel) 服务器面板**在外出时随时掌控研发与运维进度。
 
 ---
 
@@ -70,7 +70,7 @@
 - **多 Agent DAG 编排（Convoy）**：一句话描述目标，自动拆成分工 DAG——Git 仓库里每个任务独占一个隔离 worktree，任务按依赖从上游已合并改动起步，无依赖的并行执行。
 - **GitHub PR 与 CI 审查（`forge`）**：在工作区内直接读取 PR 状态、检查项与评论线程（经 GitHub CLI `gh`），无需切换窗口。
 
-**另外还内置**：符号/分块 + BM25 检索的代码索引；Agent Skills（本地发现、内置默认技能、经 SHA-256 校验从 hoxi.ai 市场显式安装）；Hoxi Tools 网关（220+ 服务商接口，经 discover/inspect/run 调用）；官方 Hoxi 账号（AINode）一键接入与 MCP OAuth 2.1 PKCE 连接；多工作区 profile；`/goal` 会话目标；多模态附件；提示词增强；模型排行榜；以及崩溃安全回收账本（崩溃或 `kill -9` 后清理残留的 `opencode` / Chrome 进程）。本地优先：唯一遥测是启动信标（事件、安装 ID、系统/架构、版本——绝不含提示词、代码、路径或密钥），OpenAI 兼容中转只在回环地址、不上隧道。
+**另外还内置**：符号/分块 + BM25 检索的代码索引；Agent Skills（本地发现、内置默认技能、经 SHA-256 校验从 hoxi.ai 市场显式安装）；Hoxi Tools 网关（220+ 服务商接口，经 discover/inspect/run 调用）；可选官方 Hoxi 账号直连通道与 MCP OAuth 2.1 PKCE 连接；多工作区 profile；`/goal` 会话目标；多模态附件；提示词增强；模型排行榜；以及崩溃安全回收账本（崩溃或 `kill -9` 后清理残留的 `opencode` / Chrome 进程）。本地优先：唯一遥测是启动信标（事件、安装 ID、系统/架构、版本——绝不含提示词、代码、路径或密钥），OpenAI 兼容中转只在回环地址、不上隧道。
 
 ---
 
@@ -120,7 +120,7 @@
 
 ### 2. 源码构建环境要求
 - **macOS** `>= 13.0` 或 **Windows 10/11** (`x64`)
-- **Go** `>= 1.23`
+- **Go** `>= 1.25`
 - **Node.js** `>= 20`（或 **Bun** `>= 1.2`）
 - **Wails CLI v2**（`go install github.com/wailsapp/wails/v2/cmd/wails@v2.13.0`）
 - **Agent 引擎**：正式发布包已内置 [`opencode`](https://github.com/anomalyco/opencode)；开发模式会在缺失时自动下载经 SHA-256 校验的固定版本到 `~/.hoxi/bin`。也可以自行在 `PATH` 安装 `opencode`、`claude`、`agy`、`gemini`、`qoder` 或 `codebuddy`

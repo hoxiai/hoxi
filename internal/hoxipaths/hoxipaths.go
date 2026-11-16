@@ -251,7 +251,7 @@ func DefaultWorkspaceDir() string {
 	return join(Home(), "workspaces", "default")
 }
 
-// EnsureDefaultWorkspaceDir creates DefaultWorkspaceDir (plus starter operations
+// EnsureDefaultWorkspaceDir creates DefaultWorkspaceDir (plus starter
 // subdirectories and README.md when absent) if needed and returns it.
 func EnsureDefaultWorkspaceDir() string {
 	dir := DefaultWorkspaceDir()
@@ -261,7 +261,7 @@ func EnsureDefaultWorkspaceDir() string {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return ""
 	}
-	for _, sub := range []string{"docs", "exports", "campaigns", "reports"} {
+	for _, sub := range []string{"notes", "scripts", "docs", "outputs"} {
 		_ = os.MkdirAll(filepath.Join(dir, sub), 0o755)
 	}
 	readmePath := filepath.Join(dir, "README.md")
@@ -271,18 +271,18 @@ func EnsureDefaultWorkspaceDir() string {
 	return dir
 }
 
-const defaultWorkspaceReadme = `# Hoxi Default Operations Workspace
+const defaultWorkspaceReadme = `# Hoxi Default Workspace
 
-This directory (~/.hoxi/workspaces/default) is Hoxi's built-in workspace for
-daily e-commerce operations, content creation, and data analysis when no git
-repository is selected.
+This directory (~/.hoxi/workspaces/default) is Hoxi's built-in scratch workspace
+for general coding tasks, scripts, research notes, and generated artifacts when
+no Git repository is selected.
 
-## Recommended Folders
+## Default Folders
 
-- docs/      - Brand guidelines, SOPs, product copy, and campaign briefs
-- exports/   - Exported CSV/XLSX reports (Shopify, TikTok Shop, Amazon, Ads)
-- campaigns/ - Ad creatives, influencer seeding trackers, and launch assets
-- reports/   - Weekly/monthly operations diagnostics and audit summaries
+- notes/   - Architecture notes, debugging logs, and research summaries
+- scripts/ - Standalone utility scripts and quick prototypes
+- docs/    - Draft documentation and specifications
+- outputs/ - Generated reports, spreadsheets, and exported files
 `
 
 // DBPath returns the SQLite database the managed OpenCode engine writes to.

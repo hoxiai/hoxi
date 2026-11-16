@@ -142,7 +142,7 @@ func TestDefaultWorkspaceDir(t *testing.T) {
 	if got := EnsureDefaultWorkspaceDir(); got != want {
 		t.Fatalf("EnsureDefaultWorkspaceDir() = %q, want %q", got, want)
 	}
-	for _, entry := range []string{"docs", "exports", "campaigns", "reports", "README.md"} {
+	for _, entry := range []string{"notes", "scripts", "docs", "outputs", "README.md"} {
 		if _, err := os.Stat(filepath.Join(want, entry)); err != nil {
 			t.Fatalf("expected default workspace entry %s to exist: %v", entry, err)
 		}

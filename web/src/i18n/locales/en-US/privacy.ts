@@ -1,6 +1,6 @@
 export const privacy = {
   title: "Network & Privacy",
-  openSource: "Hoxi is an open-source local tool, not an AI service. There is no Hoxi-hosted AI endpoint and no account required to use it.",
+  openSource: "Hoxi is an open-source, local-first tool. No account is required—connect your own AI providers or local CLIs directly, while signing in to hoxi.ai is completely optional.",
   providers: "You connect your own AI providers or external CLI tools. Prompts, code, diffs and attachments go directly from this device to the destinations you configure, under their own policies. Custom endpoints, proxies and CLI configuration decide who receives requests, so review them before use and whenever configuration changes.",
   connections: "Hoxi itself only makes auxiliary connections: an anonymous launch beacon to hoxi.ai, software update checks, optional account sign-in, and model price or leaderboard sync. These do not carry prompts, code or session content, and can all be silenced below.",
   offlineTitle: "Silent offline mode",

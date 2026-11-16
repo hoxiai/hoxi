@@ -4,8 +4,6 @@ All notable releases of **Hoxi Desktop** are documented below. Full per-version 
 
 ## [v0.6.19](docs/release-notes/v0.6.19.md) — 2026-11-14
 
-- **Work Catalog**: Standard MCP store-product workflow, store product management UI, detail readiness badges and batch enrichment; parse real 1688 titles, packaging and SKUs, preserve tier MOQ and enforce seller ownership.
-- **E-commerce & Isolation**: Multi-store anti-association isolation, a deterministic e-commerce calculator engine, a default Xianyu sourcing skill, isolated browser seller auth and folded API key UI.
 - **Models & Routing**: Align 2026 frontier model params, modalities and context limits; preserve runtime reasoning tiers; require explicit evidence for free models; multimodal pool routing, auto-ASR fallback, persistent vectors and multi-protocol relay; Gemini and `/v1/responses` parity.
 - **Approval**: Reduce read-only false positives (bounded numeric loops, quoted directories, composite heredoc chains, test filters, value lookups); keep OpenCode always-allow in Hoxi with per-file session grants; tighten command-sandbox sessions to the on-demand profile.
 - **Browser & Runtime**: Configurable Chrome idle auto-close (30m default), graceful close and SingletonLock guards; rotate poisoned OpenCode sessions and preserve failed turn errors; support standalone `antigravity-cli` and surface local CLI subscription quota.
@@ -49,11 +47,11 @@ All notable releases of **Hoxi Desktop** are documented below. Full per-version 
 
 - **Turn Retry Bounds**: Abort engine retry events beyond 15s, 3 attempts or a permanent/quota fault, stamp the error on the last assistant message, and stop auto-retrying long quota resets; keep `Retry-After` inside the retry ceiling.
 - **Computer & Pairing**: Tighten computer-control grants per session and app with inspector state; harden the pairing poll lifecycle and surface progress in the settings menu.
-- **Bundled Skills**: Seed `ashare-ops`, `hk-warrant-ops` and `us-options-ops` as default skills.
+- **Bundled Skills**: Seed built-in default skills automatically on startup with version-gated updates.
 
 ## [v0.6.12](docs/release-notes/v0.6.12.md) — 2026-11-04
 
-- **Hotfix**: Fix the blank window on launch after upgrading to v0.6.11 — the Work sidebar read `isLoaded` before it was initialized (TDZ) whenever a Work workspace existed; the release build had bundled a stale `hoxi-work` revision without the fix.
+- **Hotfix**: Fix the blank window on launch after upgrading to v0.6.11 — the workspace sidebar read `isLoaded` before initialization (TDZ) when persisted workspace state existed.
 - **Tests**: Pin `core.autocrlf` off in the worktree merge fixture so it passes on Windows runners.
 
 ## [v0.6.11](docs/release-notes/v0.6.11.md) — 2026-11-04

@@ -1,16 +1,13 @@
 # Hoxi Skills 开发规范与实现架构
 
 > 状态：**已实现**（`internal/skills/`、`internal/runner/skills.go`、`web/src/store/skills.ts`、`web/src/components/skills/`）。
-> 支持全部 6 个运行时（OpenCode 原生 `skill` 工具调用 + Claude Code / Antigravity / Gemini CLI / Qoder / CodeBuddy 内联 `<skill_content>` 注入）、内置默认技能播种（`skill-authoring`、`tools`）以及 hoxi.ai 线上技能市集（`GET /api/hoxi/skills/marketplace` + `POST /api/hoxi/skills/marketplace/install`）。
+> 支持全部 6 个运行时（OpenCode 原生 `skill` 工具调用 + Claude Code / Antigravity / Gemini CLI / Qoder / CodeBuddy 内联 `<skill_content>` 注入）、内置默认技能播种（`skill-authoring`、`tools`、`office-docs`）以及 hoxi.ai 线上技能市集（`GET /api/hoxi/skills/marketplace` + `POST /api/hoxi/skills/marketplace/install`）。
 
 ## 1. 实际基线与实现架构
 
 ### 1.1 版本与证据范围
 
-本地检查确认以下两个二进制均为 `1.19.3`：
-
-- `/Applications/Hoxi.app/Contents/MacOS/opencode`。
-- `/opt/homebrew/bin/opencode`。
+隔离探测确认内置及系统环境中的 `opencode` 二进制版本均为 `1.19.3`。
 
 本次使用 Hoxi.app 内置二进制启动独立 `opencode serve`，在临时 Git 仓库和独立 data/config/cache/state 目录下探测，启用 pure 模式，不读取用户真实技能源，不调用模型。临时服务在结束后停止。
 
@@ -147,7 +144,7 @@ Claude Code 的扩展能力和标准字段需要分开处理，参见 [官方兼
 
 ### 2.4 Hoxi 默认技能
 
-- 内置默认技能（`skill-authoring`、`tools`、`ashare-ops`、`hk-warrant-ops`、`us-options-ops`）随应用发布，引擎启动前由 `skills.SeedDefaults`（`internal/skills/defaults.go`）播种到 `~/.hoxi/skills/<name>/SKILL.md`；当磁盘文件仍带 `author: "Hoxi"` 且内置 `version` 更高时自动升级，若用户已自行修改或自定义则保留用户文件不覆盖。已废弃的旧内置技能目录（`hoxi-tools`）在未添加用户自定义文件时自动清理。
+- 内置默认技能（`skill-authoring`、`tools`、`office-docs`）随应用发布，引擎启动前由 `skills.SeedDefaults`（`internal/skills/defaults.go`）播种到 `~/.hoxi/skills/<name>/SKILL.md`；当磁盘文件仍带 `author: "Hoxi"` 且内置 `version` 更高时自动升级，若用户已自行修改或自定义则保留用户文件不覆盖。已废弃的旧内置技能目录（`hoxi-tools`）在未添加用户自定义文件时自动清理。
 - `ensureHoxiModelsConfig` 在生成 `OPENCODE_CONFIG` 时把该目录并入 `skills`。合并按路径并集处理，兼容数组与 `{paths, urls}` 两种既有形式，统一输出数组形式（官方 schema 已把对象形式标记为 deprecated），不覆盖用户自定义来源。
 - `internal/skills/userSkillRoots` 登记的个人技能根包含 `$XDG_CONFIG_HOME/{opencode,agents,claude}`、`~/.config/opencode`、`~/.opencode`、`~/.claude`、`~/.agents`、`~/.hoxi/skills` 与 `~/.gemini`，技能面板将其归类为 `user` 来源并允许在本地打开文件。
 - 默认技能源文件位于 `internal/skills/defaults/`；仓库根 `.opencode/skills/` 的副本用于本项目会话，测试会校验两者一致。
@@ -167,7 +164,7 @@ OpenCode 1.19.3 每次模型请求都把全部已发现技能的名称、描述�
 1. 引擎配置 `permission.skill` 按引擎规则（文档顺序、最后命中生效）得出 `deny` → `unavailable`（`config-denied`）。
 2. 对该技能名单独写的 `allow` / `ask` 规则 → `auto`（`config-pinned`）。这是把按需技能放回常驻目录、或确认某个依赖判断误报的配置入口，写在 `~/.hoxi/models.json` 或项目引擎配置里。
 3. 正文调用 `mcp__<server>__<tool>` 形式的工具，而 `<server>` 不在当前引擎 `mcp` 配置里 → `unavailable`（`missing-tools`，列出缺失的工具族）。
-4. 编码项目里，位于 Hoxi 托管目录 `~/.hoxi/skills`（内置交易技能、线上市集与 Work 扩展安装）且不是通用技能（目前只有 `skill-authoring`）→ `on-demand`（`hoxi-managed`）。Work 工作区（已保存为 `surface: "work"` 的工作区目录及其 worktree，或默认 `~/.hoxi/workspaces/default`）里这些技能保持 `auto`，由网关 `skillSurface` 判定。
+4. 编码项目里，位于 Hoxi 托管目录 `~/.hoxi/skills`（如线上市集安装技能）且不是通用内置技能 → `on-demand`（`hoxi-managed`），避免非通用技能长期占用每轮系统提示上下文。
 5. 由其他客户端账号同步、位于 `<root>/skills/synced/<bucket>/` 且被该目录 `manifest.json` 列出 → `on-demand`（`client-synced`）。用户直接放在 `~/.claude/skills/<name>/` 的技能不受此条影响。
 6. 其余（项目技能、`~/.agents` 等跨客户端个人技能、上游内置技能）→ `auto`。
 

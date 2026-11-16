@@ -1,6 +1,6 @@
 # AGENTS.md
 
-`Hoxi` 是面向独立开发者的本地多 Agent 研发工作台（**macOS 与 Windows 桌面端**，Go + Wails + SolidJS），可与配套 **GoPanel 服务器面板**（`gopanel_v2`）及移动端远程协同（局域网直连、Cloudflare Tunnel 或 GoPanel 反向隧道）。
+`Hoxi` 是面向独立开发者的本地多 Agent 研发工作台（**macOS 与 Windows 桌面端**，Go + Wails + SolidJS），可与配套 **GoPanel 服务器面板**及独立移动端客户端远程协同（局域网直连、Cloudflare Tunnel 或 GoPanel 反向隧道）。
 
 本文常驻 AI 会话上下文，只保留**写代码必须遵守的约束**与**验证入口**。模块现状、完整目录结构与规划明细见 [`docs/architecture-overview.md`](docs/architecture-overview.md)：定位模块归属、判断能力是否已实现、或在注释/UI 文案中描述现有能力前先读它。远程通道以 [远程隧道契约](docs/gopanel-hoxi-remote-tunnel.md) 为准；文档与代码冲突时以代码和测试为准并同步修正文档。
 
