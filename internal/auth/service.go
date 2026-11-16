@@ -72,7 +72,9 @@ func NewService(logger *slog.Logger) *Service {
 	// 启动时按当前服务端地址加载对应的本地凭据，避免 dev 与正式环境串用或误清
 	if stored, err := svc.store.LoadForServer(svc.serverBaseURL); err == nil && stored != nil {
 		svc.current = stored
-		go svc.verifyBackground(stored, svc.serverBaseURL, svc.generation)
+		if !hoxipaths.AuxiliaryNetworkDisabled() {
+			go svc.verifyBackground(stored, svc.serverBaseURL, svc.generation)
+		}
 	}
 
 	return svc

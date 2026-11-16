@@ -1,10 +1,35 @@
 # Telemetry and Network Egress
 
 Hoxi is a local-first, bring-your-own-provider tool. This page describes the
-only telemetry Hoxi itself sends, and how to turn it off. AI prompts, code,
-diffs, file paths and session content never go to Hoxi.
+only telemetry Hoxi itself sends, how source builds stay silent by default, and
+how to turn off all auxiliary cloud connections. AI prompts, code, diffs, file
+paths and session content never go to Hoxi.
 
-## What is sent
+## Default behavior by build variant
+
+- **Source & development builds (`go run`, `go build`, `wails dev`, `Hoxi Dev`)**:
+  anonymous usage stats default to **off**. No launch event is sent unless you
+  explicitly enable it in **Settings → Network & Privacy**.
+- **Official packaged release builds (`BuildVariant=release`)**: anonymous usage
+  stats default to **on**, and can be disabled at any time via the UI toggle or
+  environment variables below.
+
+## Silent offline mode
+
+To silence **all** background auxiliary requests to `hoxi.ai` at once (automatic
+update checks, model leaderboard & pricing sync, skills marketplace catalog,
+launch telemetry, and background device-token verification), enable **Silent
+offline mode** under **Settings → Network & Privacy**, or set:
+
+```bash
+HOXI_OFFLINE=1
+```
+
+While silent offline mode is active, Hoxi uses built-in local fallbacks and
+never contacts `hoxi.ai` in the background. Direct connections to your own
+configured AI providers and manual sign-in actions remain unaffected.
+
+## What is sent (when telemetry is enabled)
 
 At application startup the desktop host may POST to
 `https://hoxi.ai/api/hoxi/client-events`:
@@ -46,37 +71,37 @@ requests are separate connections. They are described in the app under
 | Path | Purpose | Mode |
 | --- | --- | --- |
 | `~/.hoxi/device-id` | Random install identifier | `0600` |
-| `~/.hoxi/telemetry.json` | Explicit opt-in/opt-out preference | `0600` |
+| `~/.hoxi/telemetry.json` | Explicit telemetry & silent-offline preferences (`enabled`, `offline`) | `0600` |
 
 Deleting `~/.hoxi/device-id` makes the next launch look like a new install.
-Deleting `~/.hoxi/telemetry.json` returns to the default (enabled).
+Deleting `~/.hoxi/telemetry.json` returns to the build-variant default (`off`
+for source/dev builds, `on` for packaged release builds) with silent offline
+mode off.
 
 ## Opting out
 
-1. Open **Settings → Network & Privacy** and switch **Anonymous usage stats** off.
-   The preference is stored in `~/.hoxi/telemetry.json` and checked before any
+1. Open **Settings → Network & Privacy** and switch **Silent offline mode** on
+   (to stop all auxiliary `hoxi.ai` requests) or **Anonymous usage stats** off.
+   Preferences are stored in `~/.hoxi/telemetry.json` and checked before any
    request is created.
-2. Or set an environment variable for the app process:
+2. Or set environment variables for the app process:
 
    ```bash
+   # Silence all auxiliary background requests to hoxi.ai
+   HOXI_OFFLINE=1
+
+   # Or disable only anonymous launch telemetry
    HOXI_DISABLE_TELEMETRY=1
-   # or the cross-tool convention
    DO_NOT_TRACK=1
    ```
 
-   `1`, `true`, `yes` and `on` are accepted. The environment override wins over
-   the stored preference, and the settings toggle is disabled while it is set.
-   For a Finder-launched app, set it in the launch environment
-   (`launchctl setenv HOXI_DISABLE_TELEMETRY 1` and relaunch), or start Hoxi from
-   a terminal.
+   `1`, `true`, `yes` and `on` are accepted. Environment overrides win over
+   stored preferences, and the corresponding settings toggle is locked while set.
 
-The gateway exposes the same preference at `GET/PUT /api/hoxi/telemetry`:
+The gateway exposes the same preferences at `GET/PUT /api/hoxi/telemetry`:
 
 ```bash
 curl -s http://127.0.0.1:<gateway-port>/api/hoxi/telemetry
 curl -s -X PUT http://127.0.0.1:<gateway-port>/api/hoxi/telemetry \
-  -H 'Content-Type: application/json' -d '{"enabled":false}'
+  -H 'Content-Type: application/json' -d '{"enabled":false,"offline":true}'
 ```
-
-Opting out affects only future events. It does not delete the install
-identifier, and it does not stop a request already in flight.

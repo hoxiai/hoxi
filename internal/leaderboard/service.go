@@ -62,6 +62,9 @@ func (s *Service) GetLeaderboard(dimension string, limit int, lang ...string) (*
 		limit = 10
 	}
 	normLang := normalizeLang(lang...)
+	if hoxipaths.AuxiliaryNetworkDisabled() {
+		return s.fallbackLeaderboard(dimension, limit, normLang), nil
+	}
 	cacheKey := fmt.Sprintf("leaderboard_%s_%d_%s", dimension, limit, normLang)
 
 	s.mu.RLock()
@@ -119,6 +122,13 @@ func isSelfOperatedGateway(item GatewayItem) bool {
 // the list the desktop shows cannot drift from what the server recommends.
 func (s *Service) GetConnectableGateways(lang ...string) (*GatewaysResponse, error) {
 	normLang := normalizeLang(lang...)
+	if hoxipaths.AuxiliaryNetworkDisabled() {
+		return &GatewaysResponse{
+			Code:    200,
+			Message: "ok (offline mode)",
+			Data:    &GatewaysData{Items: []GatewayItem{}},
+		}, nil
+	}
 
 	endpoint := fmt.Sprintf("%s/api/hoxi/gateways/connectable?lang=%s", s.baseURL, url.QueryEscape(normLang))
 	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
@@ -281,8 +291,12 @@ func (s *Service) GetModelPricing(forceRefresh bool) (*ModelPricingResponse, err
 	}
 
 	endpoint := fmt.Sprintf("%s/api/hoxi/models", s.baseURL)
-	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
-	if err == nil {
+	var req *http.Request
+	var err error
+	if !hoxipaths.AuxiliaryNetworkDisabled() {
+		req, err = http.NewRequest(http.MethodGet, endpoint, nil)
+	}
+	if !hoxipaths.AuxiliaryNetworkDisabled() && err == nil {
 		req.Header.Set("Accept", "application/json")
 		req.Header.Set("User-Agent", buildinfo.UserAgent())
 		if resp, err := s.client.Do(req); err == nil {
@@ -372,6 +386,9 @@ func (s *Service) fallbackModelPricing() *ModelPricingResponse {
 
 func (s *Service) GetFreeTiers(lang ...string) (*FreeTiersResponse, error) {
 	resolvedLang := normalizeLang(lang...)
+	if hoxipaths.AuxiliaryNetworkDisabled() {
+		return s.fallbackFreeTiers(resolvedLang), nil
+	}
 	cacheKey := fmt.Sprintf("free_tiers:%s", resolvedLang)
 
 	s.mu.RLock()

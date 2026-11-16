@@ -49,6 +49,19 @@ func (c *Checker) Check(ctx context.Context) (*UpdateCheckResult, error) {
 	osName := hoxipaths.NormalizedPlatform(runtime.GOOS)
 	archName := hoxipaths.NormalizedArch(runtime.GOARCH)
 
+	if hoxipaths.AuxiliaryNetworkDisabled() {
+		res := &UpdateCheckResult{
+			CurrentVersion: currVer,
+			LatestVersion:  currVer,
+			NeedUpdate:     false,
+			CheckedAt:      time.Now().Format(time.RFC3339),
+		}
+		c.mu.Lock()
+		c.lastResult = res
+		c.mu.Unlock()
+		return res, nil
+	}
+
 	apiURL := fmt.Sprintf("%s/api/hoxi/upgrade?package=desktop&os=%s&arch=%s&version=%s",
 		serverURL,
 		url.QueryEscape(osName),

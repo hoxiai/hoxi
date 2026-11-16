@@ -6,6 +6,7 @@ import { openExternalBrowserURL } from "../services/desktop-events";
 import { errorMessageOf } from "../services/http";
 import type { MemberCheckinStatus, PortalTarget } from "../services/platform-api";
 import { setAppSettings, signOutUserAccount, updateAppSetting } from "./settings";
+import { telemetry } from "./telemetry";
 import { OFFICIAL_PROVIDER_ID, workspace } from "./workspace-state";
 
 export interface DesktopMemberState {
@@ -223,7 +224,7 @@ function applyMemberStatus(status: MemberCheckinStatus) {
 }
 
 export async function refreshDesktopMember(): Promise<MemberCheckinStatus | null> {
-  if (!desktopAuth.isLoggedIn || desktopAuth.member.checkingIn) return null;
+  if (!desktopAuth.isLoggedIn || desktopAuth.member.checkingIn || telemetry.offline) return null;
   const generation = authGeneration;
   const seq = ++memberRequestSeq;
   lastMemberRefreshAt = Date.now();

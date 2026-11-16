@@ -5,6 +5,7 @@ import {
   loadTelemetrySettings,
   openExternalURL,
   resolveOfficialWebURL,
+  saveOfflineMode,
   saveTelemetryEnabled,
   telemetry,
 } from "../../store/workspace";
@@ -32,19 +33,42 @@ export function PrivacySettingsTab() {
       <section class="space-y-3 border-t border-[var(--border-subtle)] pt-5">
         <div class="flex items-start justify-between gap-4">
           <div class="space-y-1">
+            <h4 class="font-semibold">{t("privacy.offlineTitle")}</h4>
+            <p class="text-[13px] text-[var(--text-secondary)]">{t("privacy.offlineDesc")}</p>
+          </div>
+          <button
+            role="switch"
+            aria-checked={telemetry.offline}
+            disabled={telemetry.offlineEnvOverride || telemetry.saving}
+            onClick={() => void saveOfflineMode(!telemetry.offline)}
+            class={`${buttonClass} shrink-0 min-w-[72px]`}
+          >
+            {telemetry.offline ? t("privacy.telemetryOn") : t("privacy.telemetryOff")}
+          </button>
+        </div>
+        <Show when={telemetry.offlineEnvOverride}>
+          <p class="text-[13px] text-[var(--text-secondary)]">{t("privacy.offlineEnvLocked")}</p>
+        </Show>
+      </section>
+      <section class="space-y-3 border-t border-[var(--border-subtle)] pt-5">
+        <div class="flex items-start justify-between gap-4">
+          <div class="space-y-1">
             <h4 class="font-semibold">{t("privacy.telemetryTitle")}</h4>
             <p class="text-[13px] text-[var(--text-secondary)]">{t("privacy.telemetryDesc")}</p>
           </div>
           <button
             role="switch"
-            aria-checked={telemetry.enabled}
-            disabled={telemetry.envOverride || telemetry.saving}
+            aria-checked={telemetry.enabled && !telemetry.offline}
+            disabled={telemetry.envOverride || telemetry.offline || telemetry.saving}
             onClick={() => void saveTelemetryEnabled(!telemetry.enabled)}
             class={`${buttonClass} shrink-0 min-w-[72px]`}
           >
-            {telemetry.enabled ? t("privacy.telemetryOn") : t("privacy.telemetryOff")}
+            {telemetry.enabled && !telemetry.offline ? t("privacy.telemetryOn") : t("privacy.telemetryOff")}
           </button>
         </div>
+        <Show when={telemetry.offline && !telemetry.envOverride}>
+          <p class="text-[13px] text-[var(--text-secondary)]">{t("privacy.telemetrySuppressedByOffline")}</p>
+        </Show>
         <Show when={telemetry.envOverride}>
           <p class="text-[13px] text-[var(--text-secondary)]">{t("privacy.telemetryEnvLocked")}</p>
         </Show>

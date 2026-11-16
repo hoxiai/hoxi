@@ -139,6 +139,9 @@ func NewMarketplaceService(baseURL string, client *http.Client) *MarketplaceServ
 
 // List returns the remote catalog annotated with local install state.
 func (s *MarketplaceService) List(ctx context.Context, forceRefresh bool) (MarketplaceResponse, error) {
+	if hoxipaths.AuxiliaryNetworkDisabled() {
+		return MarketplaceResponse{Skills: []MarketplaceSkill{}}, nil
+	}
 	skills, err := s.catalog(ctx, forceRefresh)
 	if err != nil {
 		return MarketplaceResponse{}, err
@@ -166,6 +169,9 @@ func (s *MarketplaceService) List(ctx context.Context, forceRefresh bool) (Marke
 // it under ~/.hoxi/skills/<slug>/SKILL.md. overwrite must be set explicitly to
 // replace an existing file that differs from the published digest.
 func (s *MarketplaceService) Install(ctx context.Context, slug string, overwrite bool) (MarketplaceSkill, error) {
+	if hoxipaths.AuxiliaryNetworkDisabled() {
+		return MarketplaceSkill{}, fmt.Errorf("%w: silent offline mode is enabled", ErrMarketplaceUnavailable)
+	}
 	slug = strings.TrimSpace(slug)
 	if !marketplaceSkillSlug.MatchString(slug) || len(slug) > 64 {
 		return MarketplaceSkill{}, fmt.Errorf("%w: %q", ErrInvalidSkillSlug, slug)

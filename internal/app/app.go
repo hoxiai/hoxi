@@ -111,6 +111,7 @@ func Run(distFS fs.FS) {
 
 	exePath, _ := os.Executable()
 	identity := ResolveIdentity(BuildVariant, exePath)
+	telemetry.SetDefaultEnabled(identity.Variant == "release")
 	if identity.Variant == "dev" && strings.TrimSpace(os.Getenv("HOXI_SERVER_URL")) == "" {
 		if conn, err := net.DialTimeout("tcp", hoxipaths.DefaultDevServerHostPort, 150*time.Millisecond); err == nil {
 			_ = conn.Close()
@@ -587,7 +588,7 @@ func (a *DesktopApp) startup(ctx context.Context) {
 		a.onURLOpen(link) // Windows: Hoxi was started by opening a hoxi:// link
 	}
 	telemetry.ReportLaunch(a.logger)
-	if BuildVariant == "release" {
+	if BuildVariant == "release" && !hoxipaths.AuxiliaryNetworkDisabled() {
 		// Wails startup can precede the Cocoa run loop; never wait for it here.
 		go func() {
 			if err := updater.StartNative(func(force bool) bool {

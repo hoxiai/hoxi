@@ -104,7 +104,7 @@ Most AI coding tools stop at the repository. Hoxi also lets a session act on nat
 
 ## Quick Start
 
-> **Local-First & Zero Mandatory Login**: Hoxi runs 100% locally with your own API keys (Anthropic, OpenAI, Gemini, DeepSeek, Ollama/vLLM, or any OpenAI-compatible endpoint) and existing local CLIs (`claude`, `opencode`, `gemini`, `agy`)—registering a `hoxi.ai` account is completely optional. You can also toggle off the anonymous launch version check anytime under **Settings → Privacy** (see [docs/telemetry.md](docs/telemetry.md)).
+> **Local-First, Zero Mandatory Login & Silent Offline Mode**: Hoxi runs 100% locally with your own API keys (Anthropic, OpenAI, Gemini, DeepSeek, Ollama/vLLM, or any OpenAI-compatible endpoint) and existing local CLIs (`claude`, `opencode`, `gemini`, `agy`)—registering a `hoxi.ai` account is completely optional. Anonymous launch telemetry is **off by default** in source and development builds, and **Silent offline mode** (**Settings → Network & Privacy** or `HOXI_OFFLINE=1`) silences all background `hoxi.ai` update/catalog sync requests at once (see [docs/telemetry.md](docs/telemetry.md)).
 
 ### 1. Direct Install (Recommended for Users)
 - **macOS (Apple Silicon `arm64`, `>= 13.0`)**: Download `Hoxi-<version>-darwin-arm64.dmg` from [GitHub Releases](https://github.com/hoxiai/hoxi/releases) and drag `Hoxi.app` into `Applications`.

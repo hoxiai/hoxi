@@ -106,7 +106,7 @@
 
 ## 快速开始
 
-> **本地优先 · 零强制登录**：Hoxi 支持 100% 纯本地自备 Key 运行——直接填入你自己的模型 API Key（Anthropic、OpenAI、Gemini、DeepSeek、本地 Ollama/vLLM 或任意 OpenAI 兼容网关），或直接接管本机已安装的 `claude`、`opencode`、`gemini`、`agy` CLI 即可开箱使用，无需注册或登录 `hoxi.ai` 账号。匿名启动版本检查可随时在 **设置 → 隐私** 中一键关闭（详见 [docs/telemetry.md](docs/telemetry.md)）。
+> **本地优先 · 零强制登录 · 一键纯离线静默**：Hoxi 支持 100% 纯本地自备 Key 运行——直接填入你自己的模型 API Key（Anthropic、OpenAI、Gemini、DeepSeek、本地 Ollama/vLLM 或任意 OpenAI 兼容网关），或直接接管本机已安装的 `claude`、`opencode`、`gemini`、`agy` CLI 即可开箱使用，无需注册或登录 `hoxi.ai` 账号。源码自编译与开发模式**默认关闭**匿名启动上报，还可在 **设置 → 网络与隐私**（或设置 `HOXI_OFFLINE=1`）开启**纯离线静默模式**一键停止全部 `hoxi.ai` 后台同步与更新请求（详见 [docs/telemetry.md](docs/telemetry.md)）。
 
 ### 1. 直接下载安装（普通用户推荐）
 - **macOS (Apple Silicon `arm64`, `>= 13.0`)**：前往 [GitHub Releases](https://github.com/hoxiai/hoxi/releases) 下载 `Hoxi-<version>-darwin-arm64.dmg`，拖入 `Applications` 即可。
