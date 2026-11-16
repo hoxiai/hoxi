@@ -1,0 +1,582 @@
+@import "tailwindcss";
+
+/*
+ * Hoxi Semantic Design Tokens — Kilo-inspired spacious & breathable aesthetic.
+ * Light is the default theme; `.dark` on <html> switches every surface to dark.
+ */
+:root {
+  color-scheme: light;
+
+  /* App typography & layout metrics (aligned with Kilo Desktop) */
+  --app-ui-text-size: 13px;
+  --app-chat-text-size: 14.5px;
+  --app-code-text-size: 13px;
+  --thread-max-width: calc(68rem - 100px);
+  --composer-radius: 1rem;
+
+  /* Surfaces (Aligned with Client Default Blue — crisp sky-tinted slate) */
+  --bg-canvas: #f4f7fb;
+  --bg-panel: #ffffff;
+  --bg-elevated: #f8fafc;
+  --bg-composer: rgba(255, 255, 255, 0.92);
+  --bg-inset: rgba(15, 23, 42, 0.035);
+  --bg-hover: rgba(15, 23, 42, 0.045);
+  --bg-selected: rgba(37, 99, 235, 0.09);
+  --bg-code: #f8fafc;
+
+  /* Lines & Strokes (Slate-200 family) */
+  --border-subtle: rgba(30, 41, 59, 0.08);
+  --border-strong: rgba(30, 41, 59, 0.13);
+  --border-focus: rgba(37, 99, 235, 0.45);
+
+  /* Motion System (durations + curves are shared by every transition primitive) */
+  --motion-enter: 260ms;
+  --motion-exit: 160ms;
+  --motion-move: 240ms;
+  --motion-press: 90ms;
+  --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 0.68, 0.28);
+  --ease-move: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --ease-spring: cubic-bezier(0.22, 1.14, 0.36, 1);
+
+  /* Elevation Ladder (light — airy & low-noise like Client cards) */
+  --elevation-1: 0 1px 2px rgba(15, 23, 42, 0.04), 0 1px 1px rgba(15, 23, 42, 0.02);
+  --elevation-2: 0 1px 3px rgba(15, 23, 42, 0.04), 0 10px 26px -18px rgba(15, 23, 42, 0.14);
+  --elevation-3: 0 2px 8px rgba(15, 23, 42, 0.06), 0 20px 48px -20px rgba(15, 23, 42, 0.22);
+  --elevation-4: 0 4px 12px rgba(15, 23, 42, 0.08), 0 36px 80px -24px rgba(15, 23, 42, 0.32);
+  --overlay-backdrop: rgba(11, 18, 32, 0.46);
+  --overlay-blur: 4px;
+
+  /* Shadows */
+  --island-shadow: var(--elevation-2);
+  --composer-shadow: 0 14px 34px -18px rgba(37, 99, 235, 0.11), 0 4px 12px -2px rgba(15, 23, 42, 0.05);
+  --bg-glass-pill: rgba(255, 255, 255, 0.76);
+  --border-glass-pill: rgba(255, 255, 255, 0.84);
+  --shadow-glass-pill: 0 6px 18px -6px rgba(15, 23, 42, 0.12), 0 0 0 1px rgba(30, 41, 59, 0.06);
+
+  /* Text (Tailwind Slate hierarchy aligned with Client) */
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #64748b;
+  --text-faint: #94a3b8;
+
+  /* Primary Brand Accent (Hoxi Blue — #2563EB / #EFF6FF / #DBEAFE) */
+  --accent-primary: #2563eb;
+  --accent-foreground: #ffffff;
+  --accent-text: #1d4ed8;
+  --accent-surface: rgba(37, 99, 235, 0.08);
+  --accent-border: rgba(37, 99, 235, 0.22);
+
+  /* Semantic Status */
+  --status-running: #2563eb;
+  --info-text: #1d4ed8;
+  --info-surface: rgba(37, 99, 235, 0.08);
+  --info-border: rgba(37, 99, 235, 0.22);
+
+  --status-success: #10b981;
+  --ok: #10b981;
+  --ok-text: #047857;
+  --ok-surface: rgba(16, 185, 129, 0.1);
+  --ok-border: rgba(16, 185, 129, 0.28);
+
+  --status-warning: #f59e0b;
+  --warn: #f59e0b;
+  --warn-text: #b45309;
+  --warn-surface: rgba(245, 158, 11, 0.11);
+  --warn-border: rgba(245, 158, 11, 0.34);
+
+  --status-danger: #f43f5e;
+  --danger-text: #e11d48;
+  --danger-surface: rgba(244, 63, 94, 0.08);
+  --danger-border: rgba(244, 63, 94, 0.25);
+
+  --violet-text: #6d28d9;
+  --violet-surface: rgba(139, 92, 246, 0.1);
+  --violet-border: rgba(139, 92, 246, 0.3);
+
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Mono", "SF Mono", Menlo, Consolas, "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", monospace;
+}
+
+:root.dark {
+  color-scheme: dark;
+
+  /* Surfaces (Aligned with Client Deep-Sea Navy Dark) */
+  --bg-canvas: #0b1220;
+  --bg-panel: #141c2b;
+  --bg-elevated: #1b2436;
+  --bg-composer: rgba(20, 28, 43, 0.9);
+  --bg-inset: rgba(148, 163, 184, 0.06);
+  --bg-hover: rgba(148, 163, 184, 0.085);
+  --bg-selected: rgba(59, 130, 246, 0.16);
+  --bg-code: #0f1726;
+
+  /* Lines & Strokes (#243044 navy-slate border family) */
+  --border-subtle: rgba(148, 163, 184, 0.12);
+  --border-strong: rgba(148, 163, 184, 0.2);
+  --border-focus: rgba(59, 130, 246, 0.5);
+
+  /* Elevation Ladder (dark: layered umbra + inset top highlight keeps edges readable) */
+  --elevation-1: 0 1px 2px rgba(2, 6, 23, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  --elevation-2: 0 1px 2px rgba(2, 6, 23, 0.5), 0 14px 34px -20px rgba(2, 6, 23, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.045);
+  --elevation-3: 0 2px 8px rgba(2, 6, 23, 0.55), 0 22px 50px -22px rgba(2, 6, 23, 0.85), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --elevation-4: 0 4px 12px rgba(2, 6, 23, 0.6), 0 36px 76px -26px rgba(2, 6, 23, 0.9), inset 0 1px 0 rgba(255, 255, 255, 0.055);
+  --overlay-backdrop: rgba(4, 8, 16, 0.64);
+
+  /* Shadows */
+  --island-shadow: var(--elevation-2);
+  --composer-shadow: 0 20px 44px -18px rgba(2, 6, 23, 0.72), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  --bg-glass-pill: rgba(27, 36, 54, 0.72);
+  --border-glass-pill: rgba(148, 163, 184, 0.14);
+  --shadow-glass-pill: 0 8px 22px -6px rgba(2, 6, 23, 0.6), 0 0 0 1px rgba(148, 163, 184, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+
+  /* Text (Tailwind Slate dark hierarchy aligned with Client) */
+  --text-primary: #e2e8f0;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  --text-faint: #475569;
+
+  /* Primary Brand Accent (Hoxi Blue Dark — #3B82F6 / #17233A / #1E3A5F) */
+  --accent-primary: #3b82f6;
+  --accent-text: #93c5fd;
+  --accent-surface: rgba(59, 130, 246, 0.14);
+  --accent-border: rgba(59, 130, 246, 0.32);
+
+  /* Semantic Status */
+  --status-running: #3b82f6;
+  --info-text: #60a5fa;
+  --info-surface: rgba(59, 130, 246, 0.12);
+  --info-border: rgba(59, 130, 246, 0.28);
+
+  --status-success: #10b981;
+  --ok: #10b981;
+  --ok-text: #34d399;
+  --ok-surface: rgba(16, 185, 129, 0.12);
+  --ok-border: rgba(16, 185, 129, 0.3);
+
+  --status-warning: #f59e0b;
+  --warn: #f59e0b;
+  --warn-text: #fcd34d;
+  --warn-surface: rgba(245, 158, 11, 0.12);
+  --warn-border: rgba(245, 158, 11, 0.35);
+
+  --status-danger: #f43f5e;
+  --danger-text: #fb7185;
+  --danger-surface: rgba(244, 63, 94, 0.12);
+  --danger-border: rgba(244, 63, 94, 0.32);
+
+  --violet-text: #ddd6fe;
+  --violet-surface: rgba(139, 92, 246, 0.14);
+  --violet-border: rgba(139, 92, 246, 0.36);
+}
+
+:root[data-color-scheme="classic"] {
+  --bg-canvas: #f7f7f5;
+  --bg-panel: #ffffff;
+  --bg-elevated: #f0f0ee;
+  --bg-composer: rgba(255, 255, 255, 0.92);
+  --bg-inset: rgba(0, 0, 0, 0.035);
+  --bg-hover: rgba(0, 0, 0, 0.05);
+  --bg-selected: rgba(0, 0, 0, 0.07);
+  --bg-code: #f3f3f1;
+  --border-subtle: rgba(0, 0, 0, 0.08);
+  --border-strong: rgba(0, 0, 0, 0.16);
+  --border-focus: rgba(0, 0, 0, 0.45);
+  --elevation-2: 0 1px 2px rgba(0, 0, 0, 0.05), 0 10px 28px -18px rgba(0, 0, 0, 0.2);
+  --elevation-3: 0 2px 6px rgba(0, 0, 0, 0.07), 0 18px 44px -20px rgba(0, 0, 0, 0.26);
+  --elevation-4: 0 4px 10px rgba(0, 0, 0, 0.09), 0 32px 68px -24px rgba(0, 0, 0, 0.34);
+  --overlay-backdrop: rgba(0, 0, 0, 0.45);
+  --island-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  --composer-shadow: 0 14px 32px -16px rgba(0, 0, 0, 0.14);
+  --bg-glass-pill: rgba(255, 255, 255, 0.75);
+  --border-glass-pill: rgba(255, 255, 255, 0.8);
+  --shadow-glass-pill: 0 4px 14px -4px rgba(0, 0, 0, 0.1);
+  --text-primary: #202020;
+  --text-secondary: #505050;
+  --text-muted: #6b6b6b;
+  --text-faint: #858585;
+  --accent-primary: #242424;
+  --accent-foreground: #ffffff;
+  --accent-text: #242424;
+  --accent-surface: rgba(0, 0, 0, 0.055);
+  --accent-border: rgba(0, 0, 0, 0.2);
+}
+
+:root.dark[data-color-scheme="classic"] {
+  --bg-canvas: #212121;
+  --bg-panel: #282828;
+  --bg-elevated: #333333;
+  --bg-composer: rgba(48, 48, 48, 0.95);
+  --bg-inset: rgba(255, 255, 255, 0.04);
+  --bg-hover: rgba(255, 255, 255, 0.065);
+  --bg-selected: rgba(255, 255, 255, 0.1);
+  --bg-code: #1b1b1b;
+  --border-subtle: rgba(255, 255, 255, 0.09);
+  --border-strong: rgba(255, 255, 255, 0.18);
+  --border-focus: rgba(255, 255, 255, 0.5);
+  --elevation-2: 0 1px 2px rgba(0, 0, 0, 0.45), 0 14px 34px -20px rgba(0, 0, 0, 0.75), inset 0 1px 0 rgba(255, 255, 255, 0.045);
+  --elevation-3: 0 2px 8px rgba(0, 0, 0, 0.5), 0 22px 50px -22px rgba(0, 0, 0, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --elevation-4: 0 4px 12px rgba(0, 0, 0, 0.55), 0 36px 76px -26px rgba(0, 0, 0, 0.85), inset 0 1px 0 rgba(255, 255, 255, 0.055);
+  --overlay-backdrop: rgba(0, 0, 0, 0.55);
+  --island-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  --composer-shadow: 0 16px 36px -16px rgba(0, 0, 0, 0.5);
+  --bg-glass-pill: rgba(48, 48, 48, 0.8);
+  --border-glass-pill: rgba(255, 255, 255, 0.1);
+  --shadow-glass-pill: 0 4px 14px -4px rgba(0, 0, 0, 0.4);
+  --text-primary: #ececec;
+  --text-secondary: #c2c2c2;
+  --text-muted: #a0a0a0;
+  --text-faint: #858585;
+  --accent-primary: #ececec;
+  --accent-foreground: #202020;
+  --accent-text: #ececec;
+  --accent-surface: rgba(255, 255, 255, 0.08);
+  --accent-border: rgba(255, 255, 255, 0.24);
+}
+
+/* Warm Sand — low-glare amber palette for long reading sessions */
+:root[data-color-scheme="warm"] {
+  --bg-canvas: #f5efe6;
+  --bg-panel: #fffaf3;
+  --bg-elevated: #f7f0e6;
+  --bg-composer: rgba(255, 250, 243, 0.9);
+  --bg-inset: rgba(120, 90, 50, 0.05);
+  --bg-hover: rgba(120, 90, 50, 0.06);
+  --bg-selected: rgba(180, 120, 50, 0.12);
+  --bg-code: #f4ecdf;
+  --border-subtle: rgba(120, 90, 50, 0.12);
+  --border-strong: rgba(120, 90, 50, 0.2);
+  --border-focus: rgba(180, 120, 50, 0.45);
+  --elevation-2: 0 1px 2px rgba(90, 65, 35, 0.06), 0 10px 28px -18px rgba(90, 65, 35, 0.2);
+  --elevation-3: 0 2px 6px rgba(90, 65, 35, 0.08), 0 18px 44px -20px rgba(90, 65, 35, 0.26);
+  --elevation-4: 0 4px 10px rgba(90, 65, 35, 0.1), 0 32px 68px -24px rgba(90, 65, 35, 0.34);
+  --overlay-backdrop: rgba(40, 28, 14, 0.45);
+  --island-shadow: 0 1px 3px rgba(90, 65, 35, 0.05);
+  --composer-shadow: 0 14px 32px -16px rgba(90, 65, 35, 0.15);
+  --bg-glass-pill: rgba(255, 250, 243, 0.75);
+  --border-glass-pill: rgba(255, 255, 255, 0.8);
+  --shadow-glass-pill: 0 4px 14px -4px rgba(90, 65, 35, 0.12);
+  --text-primary: #2b241c;
+  --text-secondary: #5c5143;
+  --text-muted: #7d7160;
+  --text-faint: #a0937f;
+  --accent-primary: #b45309;
+  --accent-foreground: #ffffff;
+  --accent-text: #92400e;
+  --accent-surface: rgba(180, 83, 9, 0.1);
+  --accent-border: rgba(180, 83, 9, 0.28);
+}
+
+:root.dark[data-color-scheme="warm"] {
+  --bg-canvas: #1a1613;
+  --bg-panel: #221d18;
+  --bg-elevated: #2c251e;
+  --bg-composer: rgba(44, 37, 30, 0.9);
+  --bg-inset: rgba(255, 220, 170, 0.04);
+  --bg-hover: rgba(255, 220, 170, 0.06);
+  --bg-selected: rgba(217, 119, 6, 0.16);
+  --bg-code: rgba(0, 0, 0, 0.25);
+  --border-subtle: rgba(255, 220, 170, 0.09);
+  --border-strong: rgba(255, 220, 170, 0.16);
+  --border-focus: rgba(245, 158, 11, 0.5);
+  --elevation-2: 0 1px 2px rgba(0, 0, 0, 0.5), 0 14px 34px -20px rgba(0, 0, 0, 0.8), inset 0 1px 0 rgba(255, 220, 170, 0.05);
+  --elevation-3: 0 2px 8px rgba(0, 0, 0, 0.55), 0 22px 50px -22px rgba(0, 0, 0, 0.85), inset 0 1px 0 rgba(255, 220, 170, 0.055);
+  --elevation-4: 0 4px 12px rgba(0, 0, 0, 0.6), 0 36px 76px -26px rgba(0, 0, 0, 0.9), inset 0 1px 0 rgba(255, 220, 170, 0.06);
+  --overlay-backdrop: rgba(8, 5, 2, 0.65);
+  --island-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  --composer-shadow: 0 16px 36px -16px rgba(0, 0, 0, 0.55);
+  --bg-glass-pill: rgba(44, 37, 30, 0.72);
+  --border-glass-pill: rgba(255, 220, 170, 0.1);
+  --shadow-glass-pill: 0 4px 14px -4px rgba(0, 0, 0, 0.45);
+  --text-primary: #f0e6d8;
+  --text-secondary: #c2b3a0;
+  --text-muted: #9a8b78;
+  --text-faint: #766a5b;
+  --accent-primary: #f59e0b;
+  --accent-foreground: #1a1613;
+  --accent-text: #fcd34d;
+  --accent-surface: rgba(245, 158, 11, 0.14);
+  --accent-border: rgba(245, 158, 11, 0.32);
+}
+
+/* Midnight — high-contrast neutral palette with true-black dark surfaces */
+:root[data-color-scheme="midnight"] {
+  --bg-canvas: #f7f8fb;
+  --bg-panel: #ffffff;
+  --bg-elevated: #eef1f6;
+  --bg-composer: rgba(255, 255, 255, 0.92);
+  --bg-inset: rgba(15, 23, 42, 0.05);
+  --bg-hover: rgba(15, 23, 42, 0.06);
+  --bg-selected: rgba(79, 70, 229, 0.1);
+  --bg-code: #f1f3f8;
+  --border-subtle: rgba(15, 23, 42, 0.1);
+  --border-strong: rgba(15, 23, 42, 0.18);
+  --border-focus: rgba(79, 70, 229, 0.45);
+  --text-primary: #0b1020;
+  --text-secondary: #414a5e;
+  --text-muted: #697386;
+  --text-faint: #9aa3b5;
+  --accent-primary: #4f46e5;
+  --accent-foreground: #ffffff;
+  --accent-text: #4338ca;
+  --accent-surface: rgba(79, 70, 229, 0.1);
+  --accent-border: rgba(79, 70, 229, 0.28);
+}
+
+:root.dark[data-color-scheme="midnight"] {
+  --bg-canvas: #000000;
+  --bg-panel: #0a0a0c;
+  --bg-elevated: #141418;
+  --bg-composer: rgba(20, 20, 24, 0.92);
+  --bg-inset: rgba(255, 255, 255, 0.045);
+  --bg-hover: rgba(255, 255, 255, 0.07);
+  --bg-selected: rgba(99, 102, 241, 0.2);
+  --bg-code: #08080a;
+  --border-subtle: rgba(255, 255, 255, 0.09);
+  --border-strong: rgba(255, 255, 255, 0.16);
+  --border-focus: rgba(99, 102, 241, 0.55);
+  --elevation-1: 0 1px 2px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --elevation-2: 0 1px 2px rgba(0, 0, 0, 0.7), 0 14px 34px -20px rgba(0, 0, 0, 0.9), inset 0 1px 0 rgba(255, 255, 255, 0.055);
+  --elevation-3: 0 2px 8px rgba(0, 0, 0, 0.75), 0 22px 50px -22px rgba(0, 0, 0, 0.95), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  --elevation-4: 0 4px 12px rgba(0, 0, 0, 0.8), 0 36px 76px -26px rgba(0, 0, 0, 1), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  --overlay-backdrop: rgba(0, 0, 0, 0.75);
+  --island-shadow: var(--elevation-2);
+  --composer-shadow: 0 20px 44px -18px rgba(0, 0, 0, 0.85), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  --bg-glass-pill: rgba(20, 20, 24, 0.7);
+  --border-glass-pill: rgba(255, 255, 255, 0.1);
+  --shadow-glass-pill: 0 8px 22px -6px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.07), inset 0 1px 0 rgba(255, 255, 255, 0.045);
+  --text-primary: #f4f5f8;
+  --text-secondary: #a9afbd;
+  --text-muted: #7c8494;
+  --text-faint: #5a6270;
+  --accent-primary: #6366f1;
+  --accent-foreground: #ffffff;
+  --accent-text: #a5b4fc;
+  --accent-surface: rgba(99, 102, 241, 0.16);
+  --accent-border: rgba(99, 102, 241, 0.36);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  border: none;
+  outline: none;
+  background-color: var(--bg-canvas);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--app-ui-text-size);
+  line-height: 1.5;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+.selectable-text {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* Kilo-style Floating Island Pane */
+.pane-island {
+  background-color: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.75rem;
+  box-shadow: var(--island-shadow);
+  contain: layout paint;
+}
+
+/* Shared elevation utilities */
+.hoxi-elevation-2 {
+  box-shadow: var(--elevation-2);
+}
+
+.hoxi-elevation-3 {
+  box-shadow: var(--elevation-3);
+}
+
+.hoxi-elevation-4 {
+  box-shadow: var(--elevation-4);
+}
+
+/* Kilo-style Translucent Glass Composer */
+.chat-composer-glass {
+  container-type: inline-size;
+  background-color: var(--bg-composer);
+  -webkit-backdrop-filter: blur(16px) saturate(1.14);
+  backdrop-filter: blur(16px) saturate(1.14);
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--composer-shadow);
+  transition:
+    border-color 180ms var(--ease-enter),
+    box-shadow 240ms var(--ease-enter);
+}
+
+.chat-composer-glass:focus-within {
+  border-color: var(--border-focus);
+  box-shadow:
+    var(--composer-shadow),
+    0 0 0 3px color-mix(in srgb, var(--accent-primary) 10%, transparent);
+}
+
+/* Keep narrow toolbars on two rows when draft-only send actions disappear. */
+@container (min-width: 56rem) {
+  .composer-toolbar {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .composer-toolbar > :last-child {
+    align-self: auto;
+  }
+}
+
+/* Frosted Glass Pill for Session Row Hover Actions */
+.session-action-glass {
+  background-color: var(--bg-glass-pill);
+  border: 1px solid var(--border-glass-pill);
+  box-shadow: var(--shadow-glass-pill);
+}
+
+.group\/row:hover .session-action-glass,
+.group\/row:has(:focus-visible) .session-action-glass {
+  -webkit-backdrop-filter: blur(12px) saturate(1.35);
+  backdrop-filter: blur(12px) saturate(1.35);
+}
+
+.group\/row:hover .session-row-title,
+.group\/row:has(:focus-visible) .session-row-title {
+  -webkit-mask-image: linear-gradient(to right, black calc(100% - 56px), transparent calc(100% - 16px));
+  mask-image: linear-gradient(to right, black calc(100% - 56px), transparent calc(100% - 16px));
+}
+
+.session-action-danger-glass {
+  background-color: color-mix(in srgb, var(--danger-surface) 75%, var(--bg-glass-pill));
+  -webkit-backdrop-filter: blur(14px) saturate(1.35);
+  backdrop-filter: blur(14px) saturate(1.35);
+  border: 1px solid var(--danger-border);
+  box-shadow: var(--shadow-glass-pill);
+}
+
+/* Subtle custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(150, 160, 175, 0.22);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(150, 160, 175, 0.42);
+}
+
+/* Keep the conversation surface quiet until the reader enters it. */
+.timeline-result-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  overflow-anchor: none;
+}
+
+.timeline-result-scroll::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.timeline-result-scroll:hover,
+.timeline-result-scroll:focus-within {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(150, 160, 175, 0.42) transparent;
+}
+
+.timeline-result-scroll:hover::-webkit-scrollbar,
+.timeline-result-scroll:focus-within::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.timeline-result-scroll::-webkit-scrollbar-thumb {
+  background: transparent;
+  transition: background-color 240ms ease-in-out;
+}
+
+.timeline-result-scroll:hover::-webkit-scrollbar-thumb,
+.timeline-result-scroll:focus-within::-webkit-scrollbar-thumb {
+  background: rgba(150, 160, 175, 0.42);
+}
+
+/* Inspector lists stay visually quiet until the pointer enters the pane. */
+.inspector-scroll::-webkit-scrollbar {
+  width: 3px;
+  height: 3px;
+}
+
+.inspector-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.inspector-scroll::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 9999px;
+  transition: background-color 200ms ease-in-out;
+}
+
+.inspector-scroll:hover::-webkit-scrollbar-thumb,
+.inspector-scroll:focus-within::-webkit-scrollbar-thumb {
+  background: rgba(150, 160, 175, 0.3);
+}
+
+.inspector-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(150, 160, 175, 0.45);
+}
+
+/* Keep the workspace navigation quiet until the pointer enters its list. */
+.sidebar-scroll::-webkit-scrollbar {
+  width: 3px;
+  height: 3px;
+}
+
+.sidebar-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sidebar-scroll::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 9999px;
+  transition: background-color 200ms ease-in-out;
+}
+
+.sidebar-scroll:hover::-webkit-scrollbar-thumb,
+.sidebar-scroll:focus-within::-webkit-scrollbar-thumb {
+  background: rgba(150, 160, 175, 0.26);
+}
+
+.sidebar-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(150, 160, 175, 0.42);
+}
+
+@supports not selector(::-webkit-scrollbar) {
+  .inspector-scroll,
+  .sidebar-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+  }
+
+  .inspector-scroll:hover,
+  .inspector-scroll:focus-within {
+    scrollbar-color: rgba(150, 160, 175, 0.3) transparent;
+  }
+
+  .sidebar-scroll:hover,
+  .sidebar-scroll:focus-within {
+    scrollbar-color: rgba(150, 160, 175, 0.26) transparent;
+  }
+}

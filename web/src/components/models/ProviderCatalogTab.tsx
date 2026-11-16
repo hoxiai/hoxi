@@ -1,0 +1,702 @@
+// web/src/components/models/ProviderCatalogTab.tsx
+import { createEffect, createMemo, createSignal, For, onMount, Show } from "solid-js";
+import {
+  Ban,
+  ChevronDown,
+  ChevronRight,
+  ExternalLink,
+  Eye,
+  KeyRound,
+  LoaderCircle,
+  Pencil,
+  Plus,
+  RotateCcw,
+  Server,
+  Sparkles,
+} from "lucide-solid";
+import type { ProviderInfo } from "../../services/api";
+import {
+  cancelProviderMcpOAuth,
+  connectProviderWithMcpOAuth,
+  desktopAuth,
+  disconnectProvider,
+  fetchGateways,
+  getProviderSourceLabel,
+  isCustomOrConfiguredProvider,
+  isImportedOpenCodeProvider,
+  leaderboardState,
+  loadOfficialChannelModels,
+  OFFICIAL_PROVIDER_ID,
+  officialChannelState,
+  openProviderModal,
+  openSettingsModal,
+  POPULAR_PROVIDER_IDS,
+  providerMcpOAuthState,
+  toggleDisabledProvider,
+  workspace,
+} from "../../store/workspace";
+import { ProviderIcon } from "../icons";
+import { t } from "../../i18n";
+import { ProviderConnectView, ProviderSelectAllView } from "./ProviderConnectSubView";
+import { ProviderHealthBadge } from "./ProviderQualityCard";
+import { isModelFree } from "./model-selector-utils";
+import LocalCliBridgeBanner from "./LocalCliBridgeBanner";
+import ProviderDisconnectButton from "./provider-disconnect-button";
+type SubView = "list" | "connect" | "select-all";
+
+export default function ProviderCatalogTab() {
+  const [subView, setSubView] = createSignal<SubView>("list");
+  const [targetID, setTargetID] = createSignal<string>("deepseek");
+  const [disabledExpanded, setDisabledExpanded] = createSignal(false);
+  const [busyID, setBusyID] = createSignal<string | null>(null);
+  const [disconnectingID, setDisconnectingID] = createSignal<string | null>(null);
+  const [mcpToast, setMcpToast] = createSignal<{ ok: boolean; text: string } | null>(null);
+  const [actionError, setActionError] = createSignal<string | null>(null);
+
+  const rowBusy = (id: string) => busyID() === id || disconnectingID() === id;
+
+  onMount(() => {
+    void fetchGateways();
+  });
+
+  createEffect(() => {
+    if (desktopAuth.isLoggedIn) {
+      void loadOfficialChannelModels();
+    }
+  });
+
+  const connectedSet = createMemo(() => new Set(workspace.connectedProviders));
+  const disabledSet = createMemo(() => {
+    const arr = workspace.globalConfig?.disabled_providers;
+    return new Set<string>(Array.isArray(arr) ? arr : []);
+  });
+
+  const providerMap = createMemo(() => {
+    const map = new Map<string, ProviderInfo>();
+    for (const p of workspace.providers) {
+      map.set(p.id, p);
+    }
+    const cfgProviders = workspace.globalConfig?.provider ?? {};
+    for (const [id, cfg] of Object.entries<any>(cfgProviders)) {
+      if (!cfg || typeof cfg !== "object") continue;
+      if (!map.has(id)) {
+        map.set(id, {
+          id,
+          name: cfg.name || id,
+          source: "custom",
+          npm: cfg.npm,
+          options: cfg.options,
+          models: cfg.models || {},
+        });
+      }
+    }
+    return map;
+  });
+
+  const connectedProviders = createMemo(() => {
+    const conn = connectedSet();
+    const dis = disabledSet();
+    const cfgProviders = workspace.globalConfig?.provider ?? {};
+    const result: ProviderInfo[] = [];
+
+    for (const p of providerMap().values()) {
+      if (p.id === OFFICIAL_PROVIDER_ID) continue;
+      if (dis.has(p.id)) continue;
+      const isConn = conn.has(p.id) || Boolean(cfgProviders[p.id]);
+      if (isConn) {
+        result.push(p);
+      }
+    }
+    return result.sort((a, b) => {
+      const aPrio = a.source === "runner" || isCustomOrConfiguredProvider(a);
+      const bPrio = b.source === "runner" || isCustomOrConfiguredProvider(b);
+      if (aPrio !== bPrio) return aPrio ? -1 : 1;
+      return (a.name || a.id).localeCompare(b.name || b.id);
+    });
+  });
+
+  const popularNotConnected = createMemo(() => {
+    const connIds = new Set(connectedProviders().map((p) => p.id));
+    const dis = disabledSet();
+    const map = providerMap();
+    const out: ProviderInfo[] = [];
+
+    for (const pid of POPULAR_PROVIDER_IDS) {
+      if (connIds.has(pid) || dis.has(pid)) continue;
+      const found = map.get(pid);
+      if (found) {
+        out.push(found);
+      } else {
+        out.push({ id: pid, name: pid, models: {} });
+      }
+    }
+    return out;
+  });
+
+  const disabledProviders = createMemo(() => {
+    const dis = disabledSet();
+    const map = providerMap();
+    return Array.from(dis)
+      .filter((id) => id !== OFFICIAL_PROVIDER_ID)
+      .map((id) => map.get(id) || { id, name: id, models: {} });
+  });
+
+  const targetProvider = createMemo<ProviderInfo>(() => {
+    const id = targetID();
+    const existing = providerMap().get(id);
+    if (existing) return existing;
+    const gw = leaderboardState.gateways.find((g) => g.id === id);
+    if (gw) {
+      return {
+        id: gw.id,
+        name: gw.name,
+        options: { baseURL: gw.baseUrl },
+        models: {},
+      };
+    }
+    return { id, name: id, models: {} };
+  });
+
+  const recommendedGateways = createMemo(() => {
+    const dis = disabledSet();
+    return leaderboardState.gateways.filter((gw) => !dis.has(gw.id));
+  });
+
+  const onMcpQuickConnect = async (gw: (typeof leaderboardState.gateways)[number]) => {
+    setMcpToast(null);
+    try {
+      const res = await connectProviderWithMcpOAuth({
+        providerID: gw.id,
+        providerName: gw.name,
+        siteURL: gw.url,
+        baseURL: gw.baseUrl,
+        recommendedModels: gw.recommendedModels,
+      });
+      if (res) {
+        const count =
+          res.models?.length ||
+          gw.recommendedModels?.length ||
+          Object.keys(providerMap().get(gw.id)?.models || {}).length;
+        setMcpToast({
+          ok: true,
+          text: t("models.mcpOAuthSuccessToast", { name: gw.name, count }),
+        });
+      }
+    } catch (err: any) {
+      setMcpToast({
+        ok: false,
+        text: err?.message || t("models.mcpOAuthFailed"),
+      });
+    }
+  };
+
+  const openConnectView = (providerID: string) => {
+    setTargetID(providerID);
+    setSubView("connect");
+  };
+
+  const sourceLabel = (p: ProviderInfo) => getProviderSourceLabel(p);
+
+  const onDisconnect = async (pid: string) => {
+    if (busyID() || disconnectingID()) return;
+    setActionError(null);
+    setDisconnectingID(pid);
+    try {
+      await disconnectProvider(pid);
+    } catch (err: any) {
+      setActionError(err?.message || t("models.disconnectFailed"));
+    } finally {
+      setDisconnectingID(null);
+    }
+  };
+
+  const onToggleDisabled = async (pid: string, disabled: boolean) => {
+    if (busyID() || disconnectingID()) return;
+    setActionError(null);
+    setBusyID(pid);
+    try {
+      await toggleDisabledProvider(pid, disabled);
+    } catch (err: any) {
+      setActionError(err?.message || t("models.providerActionFailed"));
+    } finally {
+      setBusyID(null);
+    }
+  };
+
+  return (
+    <div class="flex flex-1 flex-col min-h-0 overflow-hidden">
+      <Show when={subView() === "list"}>
+        <div class="flex-1 overflow-y-auto p-6 sm:p-8">
+          <div class="mx-auto w-full max-w-5xl space-y-6">
+          <LocalCliBridgeBanner />
+
+          <Show when={actionError()}>
+            {(message) => (
+              <div class="flex items-start justify-between gap-3 rounded-xl border border-[var(--danger-border)] bg-[var(--danger-surface)] px-3.5 py-2 text-[12px] text-[var(--danger-text)]">
+                <span class="min-w-0 break-words">{message()}</span>
+                <button
+                  type="button"
+                  onClick={() => setActionError(null)}
+                  class="shrink-0 rounded-md px-1.5 py-0.5 text-[11px] font-medium text-[var(--danger-text)] hover:bg-black/10 transition-colors cursor-pointer"
+                >
+                  {t("common.close")}
+                </button>
+              </div>
+            )}
+          </Show>
+
+          <Show when={desktopAuth.isLoggedIn}>
+            <button
+              type="button"
+              onClick={() => openSettingsModal("official")}
+              class="flex w-full items-center justify-between gap-4 rounded-2xl border border-[var(--accent-border)] bg-[var(--accent-surface)]/35 px-4 py-3 text-left hover:border-[var(--accent-primary)] transition-colors cursor-pointer"
+            >
+              <div class="flex items-center gap-3 min-w-0">
+                <Sparkles size={16} class="shrink-0 text-[var(--accent-primary)]" />
+                <div class="min-w-0">
+                  <div class="text-[13px] font-semibold text-[var(--text-primary)]">
+                    {t("models.officialCardTitle")}
+                  </div>
+                  <div class="text-[12px] text-[var(--text-secondary)] line-clamp-1">
+                    {t("models.officialModelsCount", { count: officialChannelState.models.length })}
+                  </div>
+                </div>
+              </div>
+              <span class="shrink-0 text-[12px] font-medium text-[var(--accent-primary)]">
+                {t("models.officialOpenTab")}
+              </span>
+            </button>
+          </Show>
+
+          {/* Custom Provider Quick Card */}
+          <div class="flex items-center justify-between gap-4 rounded-2xl border border-[var(--accent-border)] bg-[var(--accent-surface)]/40 px-4 py-3.5">
+            <div class="flex items-center gap-3 min-w-0">
+              <div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[var(--accent-surface)] text-[var(--accent-primary)]">
+                <Server size={17} />
+              </div>
+              <div class="min-w-0">
+                <div class="text-[13px] font-semibold text-[var(--text-primary)]">
+                  {t("models.customProviderCardTitle")}
+                </div>
+                <div class="text-[12px] text-[var(--text-secondary)] line-clamp-1">
+                  {t("models.customProviderCardDesc")}
+                </div>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => openProviderModal("custom", null)}
+              class="shrink-0 inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] px-3.5 py-1.5 text-[12px] font-medium text-[var(--accent-foreground)] hover:opacity-90 transition-opacity cursor-pointer"
+            >
+              <Plus size={13} />
+              {t("models.configureCustom")}
+            </button>
+          </div>
+
+          {/* Connected Providers Section */}
+          <div class="space-y-2.5">
+            <div class="flex items-center justify-between px-1">
+              <h3 class="text-[12px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                {t("models.connectedSection")} ({connectedProviders().length})
+              </h3>
+            </div>
+
+            <Show
+              when={connectedProviders().length > 0}
+              fallback={
+                <div class="rounded-xl border border-dashed border-[var(--border-subtle)] bg-[var(--bg-elevated)]/30 p-5 text-center text-[12px] text-[var(--text-muted)]">
+                  {t("models.noConnectedProviders")}
+                </div>
+              }
+            >
+              <div class="divide-y divide-[var(--border-subtle)] rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/50 overflow-hidden">
+                <For each={connectedProviders()}>
+                  {(item) => {
+                    const isCustom = () => isCustomOrConfiguredProvider(item);
+                    const isImported = () => isImportedOpenCodeProvider(item.id);
+                    const modelCount = () => Object.keys(item.models || {}).length;
+                    const freeCount = () =>
+                      Object.entries(item.models || {}).filter(([mID, mInfo]) =>
+                        isModelFree(item.id, mID, mInfo)
+                      ).length;
+                    const customUrl = () =>
+                      workspace.hoxiProviders?.[item.id]?.options?.baseURL ||
+                      workspace.globalConfig?.provider?.[item.id]?.options?.baseURL ||
+                      item.options?.baseURL;
+
+                    return (
+                      <div class="flex items-center justify-between gap-3 px-4 py-3 hover:bg-[var(--bg-hover)]/50 transition-colors">
+                        <div class="flex items-center gap-3 min-w-0">
+                          <ProviderIcon id={item.id} class="w-5 h-5 shrink-0" />
+                          <div class="min-w-0">
+                            <div class="flex items-center gap-2 flex-wrap">
+                              <span class="text-[13px] font-semibold text-[var(--text-primary)] truncate">
+                                {item.name || item.id}
+                              </span>
+                              <span class="rounded-md bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--text-muted)]">
+                                {item.id}
+                              </span>
+                              <span
+                                class={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                                  isImported()
+                                    ? "bg-amber-500/10 text-amber-400"
+                                    : "bg-[var(--ok-surface)] text-[var(--ok-text)]"
+                                }`}
+                              >
+                                <span
+                                  class={`h-1.5 w-1.5 rounded-full ${
+                                    isImported() ? "bg-amber-400" : "bg-[var(--ok)]"
+                                  }`}
+                                />
+                                {sourceLabel(item)}
+                              </span>
+                              <ProviderHealthBadge providerID={item.id} />
+                              <span class="text-[11px] text-[var(--text-faint)]">
+                                {t("models.modelsCount", { count: modelCount() })}
+                              </span>
+                              <Show when={freeCount() > 0}>
+                                <span class="rounded-full bg-[var(--ok-surface)] px-2 py-0.5 text-[11px] font-semibold text-[var(--ok-text)]">
+                                  {t("models.freeModelsCount", { count: freeCount() })}
+                                </span>
+                              </Show>
+                            </div>
+                            <Show when={customUrl()}>
+                              <div class="mt-0.5 font-mono text-[11px] text-[var(--text-faint)] truncate">
+                                {customUrl()}
+                              </div>
+                            </Show>
+                          </div>
+                        </div>
+
+                        <div class="flex items-center gap-1.5 shrink-0">
+                          <Show when={isCustom()}>
+                            <button
+                              type="button"
+                              onClick={() => openProviderModal("custom", item.id)}
+                              class="inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[12px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--border-strong)] transition-colors cursor-pointer"
+                              title={
+                                isImported()
+                                  ? t("models.viewImportedEndpoint")
+                                  : t("models.editProvider")
+                              }
+                            >
+                              <Show when={isImported()} fallback={<Pencil size={11} />}>
+                                <Eye size={11} />
+                              </Show>
+                              {isImported()
+                                ? t("models.viewImportedEndpoint")
+                                : t("models.editProvider")}
+                            </button>
+                          </Show>
+                          <Show when={!isImported() && item.source !== "runner"}>
+                            <button
+                              type="button"
+                              onClick={() => openConnectView(item.id)}
+                              class="inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[12px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--border-strong)] transition-colors cursor-pointer"
+                              title={t("models.changeKey")}
+                            >
+                              <KeyRound size={11} />
+                              {t("models.changeKey")}
+                            </button>
+                          </Show>
+                          <button
+                            type="button"
+                            disabled={rowBusy(item.id)}
+                            onClick={() => void onToggleDisabled(item.id, true)}
+                            class="rounded-lg p-1.5 text-[var(--text-faint)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-secondary)] transition-colors cursor-pointer"
+                            title={t("models.disableProvider")}
+                          >
+                            <Ban size={13} />
+                          </button>
+                          <Show when={!isImported() && item.source !== "runner"}>
+                            <ProviderDisconnectButton
+                              providerName={item.name}
+                              disabled={busyID() === item.id}
+                              loading={disconnectingID() === item.id}
+                              onConfirm={() => void onDisconnect(item.id)}
+                            />
+                          </Show>
+                        </div>
+                      </div>
+                    );
+                  }}
+                </For>
+              </div>
+            </Show>
+          </div>
+
+          {/* Recommended Providers Section */}
+          <Show when={leaderboardState.gatewaysError && recommendedGateways().length === 0}>
+            <div class="flex items-start justify-between gap-3 rounded-2xl border border-[var(--danger-border)] bg-[var(--danger-surface)] px-4 py-3">
+              <span class="min-w-0 text-[12px] leading-relaxed text-[var(--danger-text)]">
+                {t("models.gatewaysLoadError")}
+              </span>
+              <button
+                type="button"
+                onClick={() => void fetchGateways()}
+                class="shrink-0 rounded-lg border border-[var(--danger-border)] bg-[var(--bg-panel)] px-2.5 py-1 text-[12px] font-medium text-[var(--danger-text)] hover:opacity-90 transition-opacity cursor-pointer"
+              >
+                {t("common.refresh")}
+              </button>
+            </div>
+          </Show>
+
+          <Show when={recommendedGateways().length > 0}>
+            <div class="space-y-2.5">
+              <div class="flex items-center justify-between px-1">
+                <div class="flex items-center gap-2">
+                  <Sparkles size={13} class="text-[var(--accent-primary)]" />
+                  <h3 class="text-[12px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                    {t("models.recommendedSectionTitle")}
+                  </h3>
+                  <span class="text-[11px] text-[var(--text-faint)] hidden sm:inline">
+                    · {t("models.recommendedSectionSubtitle")}
+                  </span>
+                </div>
+              </div>
+
+              <Show when={mcpToast()}>
+                {(notice) => (
+                  <div
+                    class={`rounded-xl border px-3.5 py-2 text-[12px] ${
+                      notice().ok
+                        ? "border-[var(--ok-border)] bg-[var(--ok-surface)] text-[var(--ok-text)]"
+                        : "border-[var(--danger-border)] bg-[var(--danger-surface)] text-[var(--danger-text)]"
+                    }`}
+                  >
+                    {notice().text}
+                  </div>
+                )}
+              </Show>
+
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <For each={recommendedGateways()}>
+                  {(gw) => {
+                    const isConnected = () =>
+                      connectedSet().has(gw.id) || Boolean(workspace.globalConfig?.provider?.[gw.id]);
+                    const isAuthorizing = () => providerMcpOAuthState.authorizingProviderID === gw.id;
+
+                    return (
+                      <div class="flex flex-col justify-between gap-3 rounded-2xl border border-[var(--accent-border)]/70 bg-[var(--bg-elevated)]/60 p-4 hover:border-[var(--accent-border)] transition-colors">
+                        <div class="space-y-2">
+                          <div class="flex items-start justify-between gap-2">
+                            <div class="flex items-center gap-2.5 min-w-0">
+                              <ProviderIcon id={gw.id} class="w-5 h-5 shrink-0" />
+                              <div class="min-w-0">
+                                <div class="flex items-center gap-1.5 flex-wrap">
+                                  <span class="text-[13px] font-semibold text-[var(--text-primary)] truncate">
+                                    {gw.name}
+                                  </span>
+                                  <Show when={gw.badge}>
+                                    <span class="rounded-full bg-[var(--accent-surface)] px-2 py-0.5 text-[10px] font-semibold text-[var(--accent-primary)]">
+                                      {gw.badge}
+                                    </span>
+                                  </Show>
+                                  <Show when={gw.priceLabel}>
+                                    <span class="rounded-full bg-[var(--ok-surface)] px-2 py-0.5 text-[10px] font-semibold text-[var(--ok-text)]">
+                                      {gw.priceLabel}
+                                    </span>
+                                  </Show>
+                                </div>
+                                <div class="font-mono text-[11px] text-[var(--text-faint)] truncate">
+                                  {gw.domain} · {gw.uptime} · ~{gw.latencyMs}ms
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          <Show when={gw.caveat}>
+                            <p class="text-[11px] text-[var(--text-secondary)] line-clamp-2">
+                              {gw.caveat}
+                            </p>
+                          </Show>
+
+                          <Show when={gw.recommendedModels?.length}>
+                            <div class="flex items-center gap-1 flex-wrap">
+                              <For each={gw.recommendedModels.slice(0, 4)}>
+                                {(m) => (
+                                  <span class="rounded-md bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-muted)]">
+                                    {m}
+                                  </span>
+                                )}
+                              </For>
+                            </div>
+                          </Show>
+                        </div>
+
+                        <div class="flex items-center justify-end gap-2 pt-1 border-t border-[var(--border-subtle)]/60">
+                          <Show
+                            when={gw.canOneClickConnect}
+                            fallback={
+                              <button
+                                type="button"
+                                onClick={() => openConnectView(gw.id)}
+                                class="rounded-xl border border-[var(--border-strong)] bg-[var(--bg-panel)] px-3 py-1.5 text-[12px] font-medium text-[var(--text-primary)] hover:bg-[var(--accent-surface)] hover:text-[var(--accent-primary)] hover:border-[var(--accent-border)] transition-colors cursor-pointer"
+                              >
+                                {isConnected() ? t("models.changeKey") : t("models.connect")}
+                              </button>
+                            }
+                          >
+                            <button
+                              type="button"
+                              onClick={() => openConnectView(gw.id)}
+                              class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1.5 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+                            >
+                              {t("models.manualConfigBtn")}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={isAuthorizing()}
+                              onClick={() => void onMcpQuickConnect(gw)}
+                              class="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] px-3 py-1.5 text-[12px] font-medium text-[var(--accent-foreground)] hover:opacity-90 disabled:opacity-60 transition-opacity cursor-pointer"
+                            >
+                              <Show when={!isAuthorizing()} fallback={<LoaderCircle size={12} class="animate-spin" />}>
+                                <ExternalLink size={12} />
+                              </Show>
+                              {isAuthorizing()
+                                ? t("models.mcpOAuthAuthorizing")
+                                : isConnected()
+                                  ? t("models.mcpOAuthReconnectBtn")
+                                  : t("models.mcpOAuthConnectBtn")}
+                            </button>
+                            <Show when={isAuthorizing()}>
+                              <button
+                                type="button"
+                                onClick={() => cancelProviderMcpOAuth()}
+                                class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-1.5 text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+                              >
+                                {t("models.mcpOAuthCancelBtn")}
+                              </button>
+                            </Show>
+                          </Show>
+                        </div>
+                      </div>
+                    );
+                  }}
+                </For>
+              </div>
+            </div>
+          </Show>
+
+          {/* Popular Providers Section */}
+          <div class="space-y-2.5">
+            <div class="flex items-center justify-between px-1">
+              <h3 class="text-[12px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                {t("models.popularSection")}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setSubView("select-all")}
+                class="text-[12px] font-medium text-[var(--accent-primary)] hover:underline cursor-pointer"
+              >
+                {t("models.viewAllProviders")} ({providerMap().size}) →
+              </button>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+              <For each={popularNotConnected()}>
+                {(item) => {
+                  const modelCount = () => Object.keys(item.models || {}).length;
+                  return (
+                    <div class="flex items-center justify-between gap-2.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/40 px-3.5 py-2.5 hover:border-[var(--border-strong)] transition-colors">
+                      <div class="flex items-center gap-2.5 min-w-0">
+                        <ProviderIcon id={item.id} class="w-4 h-4 shrink-0" />
+                        <div class="min-w-0">
+                          <div class="text-[13px] font-medium text-[var(--text-primary)] truncate">
+                            {item.name || item.id}
+                          </div>
+                          <div class="text-[11px] text-[var(--text-faint)]">
+                            {modelCount() > 0
+                              ? t("models.modelsCount", { count: modelCount() })
+                              : item.id}
+                          </div>
+                        </div>
+                      </div>
+                      <div class="flex items-center gap-1 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => openConnectView(item.id)}
+                          class="rounded-lg border border-[var(--border-strong)] bg-[var(--bg-panel)] px-2.5 py-1 text-[12px] font-medium text-[var(--text-primary)] hover:bg-[var(--accent-surface)] hover:text-[var(--accent-primary)] hover:border-[var(--accent-border)] transition-colors cursor-pointer"
+                        >
+                          {t("models.connect")}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void onToggleDisabled(item.id, true)}
+                          class="rounded-lg p-1 text-[var(--text-faint)] hover:text-[var(--text-secondary)] cursor-pointer"
+                          title={t("models.disableProvider")}
+                        >
+                          <Ban size={12} />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                }}
+              </For>
+            </div>
+          </div>
+
+          {/* Disabled Providers Collapsible */}
+          <Show when={disabledProviders().length > 0}>
+            <div class="pt-1">
+              <button
+                type="button"
+                onClick={() => setDisabledExpanded(!disabledExpanded())}
+                class="flex items-center gap-1.5 text-[12px] font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+              >
+                <Show when={disabledExpanded()} fallback={<ChevronRight size={13} />}>
+                  <ChevronDown size={13} />
+                </Show>
+                {t("models.disabledSection")} ({disabledProviders().length})
+              </button>
+
+              <Show when={disabledExpanded()}>
+                <div class="mt-2 grid grid-cols-2 gap-2">
+                  <For each={disabledProviders()}>
+                    {(item) => (
+                      <div class="flex items-center justify-between rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)]/60 px-3 py-2 opacity-75">
+                        <div class="flex items-center gap-2 min-w-0">
+                          <ProviderIcon id={item.id} class="w-4 h-4 shrink-0" />
+                          <span class="truncate text-[12px] text-[var(--text-secondary)]">
+                            {item.name || item.id}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void onToggleDisabled(item.id, false)}
+                          class="inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-0.5 text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+                        >
+                          <RotateCcw size={11} />
+                          {t("models.enableProvider")}
+                        </button>
+                      </div>
+                    )}
+                  </For>
+                </div>
+              </Show>
+            </div>
+          </Show>
+          </div>
+        </div>
+      </Show>
+
+      <Show when={subView() === "connect"}>
+        <ProviderConnectView
+          provider={targetProvider()}
+          connected={connectedSet().has(targetID())}
+          onBack={() => setSubView("list")}
+        />
+      </Show>
+
+      <Show when={subView() === "select-all"}>
+        <ProviderSelectAllView
+          providers={Array.from(providerMap().values())}
+          connectedSet={connectedSet()}
+          disabledSet={disabledSet()}
+          onSelect={(pid) => openConnectView(pid)}
+          onBack={() => setSubView("list")}
+        />
+      </Show>
+    </div>
+  );
+}

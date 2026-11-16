@@ -1,0 +1,327 @@
+{
+  "observedAt": "2026-10-20",
+  "baseline": {
+    "binary": "Hoxi.app/Contents/MacOS/opencode",
+    "version": "1.19.3",
+    "installedCommandVersion": "1.19.3"
+  },
+  "method": {
+    "isolatedGitRepositories": 2,
+    "isolatedDataConfigCacheState": true,
+    "pureMode": true,
+    "modelEndpointsCalled": [],
+    "serverStoppedAfterProbe": true
+  },
+  "contract": {
+    "GET /skill": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "location": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "location",
+          "content"
+        ],
+        "additionalProperties": false
+      },
+      "description": "List of skills"
+    },
+    "Command": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "command",
+            "mcp",
+            "skill"
+          ]
+        },
+        "template": {
+          "type": "string"
+        },
+        "subtask": {
+          "type": "boolean"
+        },
+        "hints": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "name",
+        "template",
+        "hints"
+      ],
+      "additionalProperties": false
+    },
+    "POST /session/{sessionID}/command": {
+      "type": "object",
+      "properties": {
+        "messageID": {
+          "type": "string",
+          "pattern": "^msg"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "arguments": {
+          "type": "string"
+        },
+        "command": {
+          "type": "string"
+        },
+        "variant": {
+          "type": "string"
+        },
+        "parts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^prt"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "file"
+                ]
+              },
+              "mime": {
+                "type": "string"
+              },
+              "filename": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "source": {
+                "$ref": "#/components/schemas/FilePartSource"
+              }
+            },
+            "required": [
+              "type",
+              "mime",
+              "url"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "arguments",
+        "command"
+      ],
+      "additionalProperties": false
+    },
+    "skillNamedRoutes": [
+      "/api/skill",
+      "/skill"
+    ],
+    "protocolChoice": "Hoxi currently uses the legacy /skill and /session contract; /api/skill is a separate v2 contract."
+  },
+  "skillsWorkspaceA": [
+    {
+      "name": "customize-opencode",
+      "keys": [
+        "content",
+        "description",
+        "location",
+        "name"
+      ],
+      "location": "<built-in>",
+      "contentLength": 16060
+    },
+    {
+      "name": "hoxi-probe-claude",
+      "keys": [
+        "content",
+        "description",
+        "location",
+        "name"
+      ],
+      "location": "<probe>/workspace-a/.claude/skills/hoxi-probe-claude/SKILL.md",
+      "contentLength": 54
+    },
+    {
+      "name": "hoxi-probe-agents",
+      "keys": [
+        "content",
+        "description",
+        "location",
+        "name"
+      ],
+      "location": "<probe>/workspace-a/.agents/skills/hoxi-probe-agents/SKILL.md",
+      "contentLength": 54
+    },
+    {
+      "name": "hoxi-probe-metadata",
+      "keys": [
+        "content",
+        "description",
+        "location",
+        "name"
+      ],
+      "location": "<probe>/workspace-a/.opencode/skills/hoxi-probe-metadata/SKILL.md",
+      "contentLength": 54
+    },
+    {
+      "name": "hoxi-probe-global",
+      "keys": [
+        "content",
+        "description",
+        "location",
+        "name"
+      ],
+      "location": "<probe>/config/opencode/skills/hoxi-probe-global/SKILL.md",
+      "contentLength": 54
+    },
+    {
+      "name": "hoxi-probe-basic",
+      "keys": [
+        "content",
+        "description",
+        "location",
+        "name"
+      ],
+      "location": "<probe>/workspace-a/.opencode/skills/hoxi-probe-basic/SKILL.md",
+      "contentLength": 54
+    }
+  ],
+  "skillsWorkspaceB": [
+    {
+      "name": "customize-opencode",
+      "keys": [
+        "content",
+        "description",
+        "location",
+        "name"
+      ],
+      "location": "<built-in>",
+      "contentLength": 16060
+    },
+    {
+      "name": "hoxi-probe-global",
+      "keys": [
+        "content",
+        "description",
+        "location",
+        "name"
+      ],
+      "location": "<probe>/config/opencode/skills/hoxi-probe-global/SKILL.md",
+      "contentLength": 54
+    },
+    {
+      "name": "hoxi-probe-other-workspace",
+      "keys": [
+        "content",
+        "description",
+        "location",
+        "name"
+      ],
+      "location": "<probe>/workspace-b/.opencode/skills/hoxi-probe-other-workspace/SKILL.md",
+      "contentLength": 54
+    }
+  ],
+  "commandsWorkspaceA": [
+    {
+      "name": "init",
+      "source": "command",
+      "hints": [
+        "$ARGUMENTS"
+      ]
+    },
+    {
+      "name": "review",
+      "source": "command",
+      "hints": [
+        "$ARGUMENTS"
+      ]
+    },
+    {
+      "name": "customize-opencode",
+      "source": "skill",
+      "hints": []
+    },
+    {
+      "name": "hoxi-probe-claude",
+      "source": "skill",
+      "hints": []
+    },
+    {
+      "name": "hoxi-probe-agents",
+      "source": "skill",
+      "hints": []
+    },
+    {
+      "name": "hoxi-probe-metadata",
+      "source": "skill",
+      "hints": []
+    },
+    {
+      "name": "hoxi-probe-global",
+      "source": "skill",
+      "hints": []
+    },
+    {
+      "name": "hoxi-probe-basic",
+      "source": "skill",
+      "hints": []
+    }
+  ],
+  "metadataFixture": {
+    "metadata": {
+      "opencode/slash": "false",
+      "opencode/autoinvoke": "false"
+    },
+    "listedInSkill": true,
+    "listedAsSkillCommand": true,
+    "modelAutoinvocationTested": false
+  },
+  "refresh": {
+    "newSkillName": "hoxi-probe-late",
+    "presentAfterFileAdded": false,
+    "instanceDisposeResult": true,
+    "presentAfterInstanceDispose": true,
+    "productionBusyInstanceDisposalTested": false
+  },
+  "limitations": [
+    "No real model request, tool execution, command completion, or end-to-end Hoxi UI interaction was performed.",
+    "The installed binary was tested in isolation; the running desktop daemon configuration was not read.",
+    "Other CLI runtimes were not tested."
+  ]
+}

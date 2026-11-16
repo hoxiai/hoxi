@@ -1,0 +1,637 @@
+package runner
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/hoxiai/hoxi/internal/agentcli"
+	"github.com/hoxiai/hoxi/internal/attachment"
+	"github.com/hoxiai/hoxi/internal/diagnostics"
+	"github.com/hoxiai/hoxi/internal/llm"
+	"github.com/hoxiai/hoxi/internal/opencode/ocapi"
+	"github.com/hoxiai/hoxi/internal/statusbar"
+	"github.com/hoxiai/hoxi/internal/worktree"
+)
+
+// openCodeBridgeState holds OpenCode daemon client state, session mappings,
+// and auto-reply concurrency tracking.
+type openCodeBridgeState struct {
+	openCode               *ocapi.Client
+	managedOpenCode        syncMap[string, bool]
+	openCodeChildParent    syncMap[string, string] // openCode child session ID -> hoxi session ID
+	openCodeAutoReplies    syncMap[string, any]    // request ID -> openCodeAutoReply* state or openCodeSettledMark
+	cleanIdlePermDirs      syncMap[string, int64]  // normalized worktree dir -> max UpdatedAt stamp when verified empty & idle
+	cleanIdleQuestionDirs  syncMap[string, int64]  // normalized worktree dir -> max UpdatedAt stamp when verified empty & idle
+	openCodeReplySem       chan struct{}
+	openCodeTimeoutRetries []time.Duration
+}
+
+// turnLedgerState holds bounded per-session / per-turn ephemera cleaned up on
+// turn completion or session deletion.
+type turnLedgerState struct {
+	ledger             *taskLedgerStore
+	pendingResumes     syncMap[string, InflightTurnEntry] // sessionID -> graceful-restart entry awaiting boot resume
+	resumingFlights    syncMap[string, *resumeFlight]     // sessionID -> active singleflight boot-resume coordinator
+	userSkillByMsg     syncMap[string, userSkillOverride]
+	stoppedTools       syncMap[string, bool] // sessionID\x00(part|call):id -> bool
+	turnStats          syncMap[string, *turnCounts]
+	promptReceipts     syncMap[string, cachedPromptReceipt]   // sessionID\x00clientRequestID -> cachedPromptReceipt
+	permissionReplies  syncMap[string, cachedPermissionReply] // permissionID\x00clientRequestID -> cachedPermissionReply
+	cliSystemDelivered syncMap[string, string]                // sessionID\x00runtime -> last delivered caller system prompt
+	turnRetryDelays    []time.Duration
+}
+
+type Service struct {
+	rootDir     string
+	store       *Store
+	attachments *attachment.Store
+	worktrees   *worktree.Manager
+	status      *statusbar.Tracker
+	gate        *approvalGate
+	audit       *approvalAuditStore
+	deferred    *deferredStore
+	policy      *approvalPolicyStore
+	ownedProcs  *ownedProcessLedger
+	doomLoop    *doomLoopGuard
+	stall       stallPolicy
+
+	mu              sync.Mutex
+	turnMu          sessionTurnLocks
+	procs           map[string]*activeProcess
+	childBusy       map[string]bool
+	subs            map[chan SSEEvent]string
+	seqSeed         int64
+	imageClient     llm.ImageClient
+	audioClient     llm.AudioClient
+	skillResolver   func(ctx context.Context, directory, sessionID string, sel SkillSelection) (ResolvedSkill, error)
+	sessionContext  func(sessionID, directory string) string
+	projectResolver ProjectResolver
+	permissionRules func() map[string]interface{}
+	onPolicySaved   func()
+	onSummary       func(sessionID, body string)
+	onDeleted       func(sessionID string)
+
+	openCodeBridgeState
+	sessionDiffState
+	prewarmState
+	turnLedgerState
+}
+
+// SetSessionContextResolver injects optional per-session operational context
+// (such as a bound Work store's credential-scrubbed profile) into turn prompts.
+func (s *Service) SetSessionContextResolver(fn func(sessionID, directory string) string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.sessionContext = fn
+	s.mu.Unlock()
+}
+
+func (s *Service) resolveSessionContextBlock(sessionID, directory string) string {
+	if s == nil {
+		return ""
+	}
+	s.mu.Lock()
+	fn := s.sessionContext
+	s.mu.Unlock()
+	if fn == nil {
+		return ""
+	}
+	return strings.TrimSpace(fn(sessionID, directory))
+}
+
+// SetSummaryNotifier receives the end-of-turn count line. The body contains
+// counts only, never a command, path or session title.
+func (s *Service) SetSummaryNotifier(fn func(sessionID, body string)) {
+	if s != nil {
+		s.onSummary = fn
+	}
+}
+
+// SetSessionDeletedHook is called once for each deleted conversation and each
+// subagent child removed with it, after its transcript is gone, so other
+// domains can drop per-session state such as browser profiles.
+func (s *Service) SetSessionDeletedHook(fn func(sessionID string)) {
+	if s != nil {
+		s.onDeleted = fn
+	}
+}
+
+func (s *Service) notifySessionDeleted(id string) {
+	if s.onDeleted != nil && strings.TrimSpace(id) != "" {
+		s.onDeleted(id)
+	}
+}
+
+func NewService(rootDir string, worktrees *worktree.Manager, status *statusbar.Tracker, customStorePath string) *Service {
+	if worktrees == nil {
+		worktrees = worktree.NewManager(rootDir)
+	}
+	attDir := ""
+	if strings.TrimSpace(customStorePath) != "" {
+		attDir = filepath.Join(filepath.Dir(customStorePath), "attachments")
+	}
+	svc := &Service{
+		rootDir:     rootDir,
+		store:       NewStore(customStorePath),
+		attachments: attachment.NewStore(attDir),
+		worktrees:   worktrees,
+		status:      status,
+		gate:        newApprovalGate(),
+		audit:       newApprovalAuditStore(customStorePath),
+		deferred:    newDeferredStore(customStorePath),
+		policy:      newApprovalPolicyStore(customStorePath),
+		ownedProcs:  newOwnedProcessLedger(),
+		doomLoop:    newDoomLoopGuard(),
+		stall:       stallPolicyFromEnv(),
+		procs:       make(map[string]*activeProcess),
+		childBusy:   make(map[string]bool),
+		subs:        make(map[chan SSEEvent]string),
+	}
+	svc.ledger = newTaskLedgerStore(customStorePath)
+	svc.hydrateReceiptsFromLedger()
+	svc.openCodeReplySem = make(chan struct{}, maxConcurrentOpenCodeAutoReplies)
+	for _, info := range svc.store.List("") {
+		rec, _ := svc.store.Meta(info.ID)
+		svc.restoreOpenCodeSessionMappings(rec)
+		if rec.Subagent || validateSessionDirectory(rec) != nil {
+			continue
+		}
+		if info.SandboxMode == "local" {
+			if _, err := existingDirectory(rec.ProjectDir); err == nil {
+				_ = svc.worktrees.ForDirectory(rec.ProjectDir).UseLocalDirectory(info.ID)
+			}
+		} else {
+			_ = svc.worktrees.ForDirectory(rec.ProjectDir).RestoreSession(rec.ID, rec.WorktreePath, rec.Branch, rec.BaseCommit)
+		}
+	}
+	svc.settleStartupLedger()
+	svc.worktrees.SetApplyGuard(svc.guardWorktreeApply)
+	return svc
+}
+
+func (s *Service) Store() *Store {
+	return s.store
+}
+
+func (s *Service) Attachments() *attachment.Store {
+	if s == nil {
+		return nil
+	}
+	return s.attachments
+}
+
+func (s *Service) CloseAll() {
+	if s.store != nil {
+		defer s.store.Flush()
+	}
+	var flights []*resumeFlight
+	s.resumingFlights.Range(func(sid string, f *resumeFlight) bool {
+		s.pendingResumes.Delete(sid)
+		if f != nil {
+			f.aborted.Store(true)
+			if f.cancel != nil {
+				f.cancel()
+			}
+			flights = append(flights, f)
+		}
+		return true
+	})
+	s.mu.Lock()
+	active := make([]*activeProcess, 0, len(s.procs))
+	for _, p := range s.procs {
+		if p != nil {
+			active = append(active, p)
+		}
+	}
+	s.mu.Unlock()
+	if len(active) == 0 && len(flights) == 0 {
+		return
+	}
+	for _, p := range active {
+		p.Abort()
+	}
+	// OpenCode turns and boot-resume flights have no OS process for Abort to
+	// wait on. Let their teardown finish before the host exits or removes the
+	// store, with a shared deadline so shutdown remains bounded.
+	timer := time.NewTimer(abortSettleTimeout)
+	defer timer.Stop()
+	for _, f := range flights {
+		if f.done == nil {
+			continue
+		}
+		select {
+		case <-f.done:
+		case <-timer.C:
+			return
+		}
+	}
+	for _, p := range active {
+		if p.done == nil {
+			continue
+		}
+		select {
+		case <-p.done:
+		case <-timer.C:
+			return
+		}
+	}
+}
+
+func (s *Service) RegisterRoutes(mux *http.ServeMux) {
+	if s.attachments != nil {
+		s.attachments.RegisterRoutes(mux)
+	}
+	mux.HandleFunc("/api/hoxi/runner/antigravity/models", s.handleAntigravityModels)
+	mux.HandleFunc("/api/hoxi/runner/claude-code/models", s.handleClaudeModels)
+	mux.HandleFunc("/api/hoxi/runner/gemini-cli/models", s.handleGeminiModels)
+	mux.HandleFunc("/api/hoxi/runner/codebuddy/models", s.handleCodeBuddyModels)
+	mux.HandleFunc("/api/hoxi/runner/qoder/models", s.handleQoderModels)
+	mux.HandleFunc("/api/hoxi/runner/antigravity/hook", s.handleAgyHookInstall)
+	mux.HandleFunc(hookPreToolPath, s.handleHookPreTool)
+	mux.HandleFunc(claudeHookPreToolPath, s.handleClaudeHookPreTool)
+	mux.HandleFunc(geminiHookPreToolPath, s.handleGeminiHookPreTool)
+	mux.HandleFunc(sandboxRoutePath, s.handleSandboxRoute)
+	mux.HandleFunc("/api/hoxi/permission", s.handleUnifiedPermissionRoutes)
+	mux.HandleFunc("/api/hoxi/permission/", s.handleUnifiedPermissionRoutes)
+	mux.HandleFunc("/api/hoxi/question", s.handleUnifiedQuestionRoutes)
+	mux.HandleFunc("/api/hoxi/question/", s.handleUnifiedQuestionRoutes)
+	mux.HandleFunc("/api/hoxi/runner/permission", s.handlePermissionRoutes)
+	mux.HandleFunc("/api/hoxi/runner/permission/", s.handlePermissionRoutes)
+	mux.HandleFunc("/api/hoxi/event", s.handleUnifiedSSE)
+	mux.HandleFunc("/api/hoxi/runner/event", s.handleGlobalSSE)
+	mux.HandleFunc("/api/hoxi/sessions", s.handleConversationsRoot)
+	mux.HandleFunc("/api/hoxi/sessions/status", s.handleConversationStatuses)
+	mux.HandleFunc("/api/hoxi/runner/sessions", s.handleSessionsRoot)
+	mux.HandleFunc("/api/hoxi/runner/sessions/", s.handleSessionSubroutes)
+}
+
+func (s *Service) Subscribe(sessionID string) (chan SSEEvent, func()) {
+	ch := make(chan SSEEvent, 512)
+	s.mu.Lock()
+	s.subs[ch] = strings.TrimSpace(sessionID)
+	s.mu.Unlock()
+	unsub := func() {
+		s.mu.Lock()
+		delete(s.subs, ch)
+		s.mu.Unlock()
+	}
+	return ch, unsub
+}
+
+func (s *Service) broadcast(sessionID string, evts ...SSEEvent) {
+	for _, evt := range evts {
+		s.decorateStoppedToolEvent(sessionID, &evt)
+		s.decorateQuestionToolEvent(sessionID, &evt)
+		s.noteRuntimeShellEvent(sessionID, evt)
+		if evt.Type == "session.error" {
+			if entry := sessionErrorDiagnostic(sessionID, evt.Properties["error"]); entry != nil {
+				if rec, ok := s.store.Meta(sessionID); ok {
+					entry.ProviderID, entry.ModelID = rec.ProviderID, rec.ModelID
+				}
+				diagnostics.Record(*entry)
+			}
+		}
+		s.persistEventToStore(sessionID, evt)
+		s.mu.Lock()
+		for ch, filterSid := range s.subs {
+			if filterSid == "" || filterSid == sessionID {
+				enqueueStreamEvent(ch, evt)
+			}
+		}
+		s.mu.Unlock()
+	}
+}
+
+func (s *Service) persistEventToStore(sessionID string, evt SSEEvent) {
+	switch evt.Type {
+	case "message.updated":
+		if info, ok := evt.Properties["info"].(MessageInfo); ok {
+			s.store.upsertTurnInfo(sessionID, info, true)
+		}
+	case "message.part.updated":
+		if part, ok := evt.Properties["part"].(MessagePart); ok {
+			s.store.upsertTurnPart(sessionID, part, true)
+		}
+	case "message.part.delta":
+		msgID, _ := evt.Properties["messageID"].(string)
+		partID, _ := evt.Properties["partID"].(string)
+		delta, _ := evt.Properties["delta"].(string)
+		if msgID != "" && partID != "" && delta != "" {
+			s.store.AppendPartDelta(sessionID, msgID, partID, delta)
+		}
+	case "session.status":
+		if status, ok := evt.Properties["status"].(SessionStatus); ok {
+			active := status.Type == "busy" || status.Type == "retry"
+			if !active {
+				s.store.FlushSession(sessionID)
+			}
+			s.store.SetActive(sessionID, active)
+			if !active {
+				s.store.scheduleIdleMaintenance(sessionID)
+			}
+		}
+	case "session.idle", "session.error":
+		s.store.FlushSession(sessionID)
+		s.store.SetActive(sessionID, false)
+		s.store.scheduleIdleMaintenance(sessionID)
+		s.doomLoop.resetTurn(sessionID)
+		// Subagent hook calls keep their repeat counters under the child.
+		childIDs, _ := s.store.ChildSessionIDs(sessionID)
+		for _, id := range childIDs {
+			s.doomLoop.resetTurn(id)
+		}
+		s.finishTurnSummary(sessionID, evt.Type)
+	}
+}
+
+func (s *Service) handleAntigravityModels(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONError(w, http.StatusMethodNotAllowed, "GET required")
+		return
+	}
+	forceRefresh := r.URL.Query().Get("refresh") == "1" || r.URL.Query().Get("refresh") == "true"
+	bin := ResolveAgyBinary()
+	models, _, _ := DiscoverAgyModelsWithRefresh(forceRefresh)
+	defaultModel := ""
+	if len(models) > 0 {
+		defaultModel = models[0].ID
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"installed":  bin != "",
+		"available":  bin != "",
+		"binaryPath": bin,
+		"default":    defaultModel,
+		"models":     models,
+	})
+}
+
+func (s *Service) handleClaudeModels(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONError(w, http.StatusMethodNotAllowed, "GET required")
+		return
+	}
+	bin := ResolveClaudeBinary()
+	models := DiscoverClaudeModels()
+	defaultModel := ""
+	if len(models) > 0 {
+		defaultModel = models[0].ID
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"installed":  bin != "",
+		"available":  bin != "",
+		"binaryPath": bin,
+		"default":    defaultModel,
+		"models":     models,
+	})
+}
+
+func (s *Service) handleGeminiModels(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONError(w, http.StatusMethodNotAllowed, "GET required")
+		return
+	}
+	forceRefresh := r.URL.Query().Get("refresh") == "1" || r.URL.Query().Get("refresh") == "true"
+	bin := ResolveGeminiBinary()
+	models := DiscoverGeminiModelsWithRefresh(forceRefresh)
+	defaultModel := ""
+	if len(models) > 0 {
+		defaultModel = models[0].ID
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"installed":  bin != "",
+		"available":  bin != "",
+		"binaryPath": bin,
+		"default":    defaultModel,
+		"models":     models,
+	})
+}
+
+func (s *Service) handleCodeBuddyModels(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONError(w, http.StatusMethodNotAllowed, "GET required")
+		return
+	}
+	forceRefresh := r.URL.Query().Get("refresh") == "1" || r.URL.Query().Get("refresh") == "true"
+	bin := agentcli.ResolveCodeBuddyBinary()
+	models := agentcli.DiscoverCodeBuddyModelsWithRefresh(forceRefresh)
+	defaultModel := ""
+	if len(models) > 0 {
+		defaultModel = models[0].ID
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"installed":  bin != "",
+		"available":  bin != "",
+		"binaryPath": bin,
+		"default":    defaultModel,
+		"models":     models,
+	})
+}
+
+func (s *Service) handleQoderModels(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONError(w, http.StatusMethodNotAllowed, "GET required")
+		return
+	}
+	forceRefresh := r.URL.Query().Get("refresh") == "1" || r.URL.Query().Get("refresh") == "true"
+	bin := agentcli.ResolveQoderBinary()
+	models := agentcli.DiscoverQoderModelsWithRefresh(forceRefresh)
+	defaultModel := ""
+	if len(models) > 0 {
+		defaultModel = models[0].ID
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"installed":  bin != "",
+		"available":  bin != "",
+		"binaryPath": bin,
+		"default":    defaultModel,
+		"models":     models,
+	})
+}
+
+func (s *Service) handleSessionsRoot(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		dir := r.URL.Query().Get("directory")
+		writeJSON(w, http.StatusOK, s.store.List(dir))
+	case http.MethodPost:
+		s.handleCreateSession(w, r)
+	default:
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (s *Service) handleSessionSubroutes(w http.ResponseWriter, r *http.Request) {
+	sub := strings.TrimPrefix(r.URL.Path, "/api/hoxi/runner/sessions/")
+	if sub == "status" && r.Method == http.MethodGet {
+		res := make(map[string]SessionStatus)
+		for _, sid := range s.busySessionIDs() {
+			res[sid] = SessionStatus{Type: "busy"}
+		}
+		writeJSON(w, http.StatusOK, res)
+		return
+	}
+
+	parts := strings.SplitN(sub, "/", 2)
+	sessionID := strings.TrimSpace(parts[0])
+	action := ""
+	if len(parts) > 1 {
+		action = strings.TrimSpace(parts[1])
+	}
+	if sessionID == "" {
+		writeJSONError(w, http.StatusBadRequest, "session id required")
+		return
+	}
+	s.HealSessionDirectory(sessionID)
+
+	switch action {
+	case "":
+		s.handleSingleSession(w, r, sessionID)
+	case "message":
+		raw, ok := s.store.MarshalTurnsPage(sessionID, parseHistoryPage(r.URL.Query()))
+		if !ok {
+			writeJSONError(w, http.StatusNotFound, "runner session not found")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(SanitizeOpenCodeToolJSON(raw))
+	case "prompt", "prompt_async":
+		s.handleSessionPrompt(w, r, sessionID)
+	case "runtime":
+		s.handleRuntimeSwitch(w, r, sessionID)
+	case "abort":
+		s.handleSessionAbort(w, r, sessionID)
+	case "stop-tool":
+		s.handleSessionStopTool(w, r, sessionID)
+	case "summarize":
+		s.handleSessionSummarize(w, r, sessionID)
+	case "revert":
+		s.handleSessionRevert(w, r, sessionID)
+	case "unrevert":
+		s.handleSessionUnrevert(w, r, sessionID)
+	case "fork":
+		s.handleSessionFork(w, r, sessionID)
+	case "diff":
+		s.handleSessionDiff(w, r, sessionID)
+	case "event":
+		s.serveSSE(w, r, sessionID)
+	default:
+		writeJSONError(w, http.StatusNotFound, "unknown runner endpoint")
+	}
+}
+
+func (s *Service) handleSingleSession(w http.ResponseWriter, r *http.Request, sessionID string) {
+	switch r.Method {
+	case http.MethodGet:
+		rec, ok := s.store.Meta(sessionID)
+		if !ok {
+			writeJSONError(w, http.StatusNotFound, "runner session not found")
+			return
+		}
+		writeJSON(w, http.StatusOK, rec.ToSessionInfo())
+
+	case http.MethodPatch:
+		var body struct {
+			Title          string  `json:"title"`
+			SandboxMode    *string `json:"sandboxMode"`
+			CommandSandbox *bool   `json:"commandSandbox"`
+			Force          bool    `json:"force"`
+			KeepBranch     *bool   `json:"keepBranch"`
+			Time           *struct {
+				Archived *int64 `json:"archived"`
+			} `json:"time"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&body); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid session update")
+			return
+		}
+		if body.SandboxMode != nil {
+			keepBranch := true
+			if body.KeepBranch != nil {
+				keepBranch = *body.KeepBranch
+			}
+			info, err := s.changeSessionSandboxWithOptions(sessionID, *body.SandboxMode, body.Force, keepBranch)
+			if err != nil {
+				writeJSONError(w, http.StatusConflict, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, info)
+			return
+		}
+		if body.CommandSandbox != nil {
+			info, err := s.setCommandSandbox(sessionID, *body.CommandSandbox)
+			if err != nil {
+				writeJSONError(w, http.StatusConflict, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, info)
+			return
+		}
+		updated, ok, err := s.store.UpdateMetadata(sessionID, func(rec *SessionMetadata) {
+			if strings.TrimSpace(body.Title) != "" {
+				rec.Title = strings.TrimSpace(body.Title)
+			}
+			if body.Time != nil && body.Time.Archived != nil {
+				rec.ArchivedAt = *body.Time.Archived
+			}
+		})
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if !ok {
+			writeJSONError(w, http.StatusNotFound, "runner session not found")
+			return
+		}
+		if body.Time != nil && body.Time.Archived != nil && *body.Time.Archived > 0 {
+			s.clearInflightTurn(sessionID)
+			s.gate.forgetSession(sessionID)
+			s.abortActiveProcess(sessionID)
+			if updated.Runtime == "opencode" || len(updated.OpenCodeIDs) > 0 {
+				s.rejectOpenCodeSessionPermissions(r.Context(), updated)
+			}
+		}
+		info := updated.ToSessionInfo()
+		s.broadcast(sessionID, SSEEvent{Type: "session.updated", Properties: map[string]interface{}{"info": info}})
+		writeJSON(w, http.StatusOK, info)
+
+	case http.MethodDelete:
+		if err := s.DeleteConversation(r.Context(), sessionID); err != nil {
+			writeJSONError(w, http.StatusConflict, err.Error())
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+
+	default:
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (s *Service) handleSessionPrompt(w http.ResponseWriter, r *http.Request, sessionID string) {
+	if r.Method != http.MethodPost {
+		writeJSONError(w, http.StatusMethodNotAllowed, "POST required")
+		return
+	}
+	var body PromptRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<20)).Decode(&body); err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if strings.TrimSpace(body.ClientRequestID) == "" {
+		body.ClientRequestID = strings.TrimSpace(r.Header.Get("X-Idempotency-Key"))
+	}
+	receiptStatus, receipt, err := s.startPromptWithReceipt(r.Context(), sessionID, r.URL.Query().Get("directory"), body)
+	if err != nil {
+		writeJSONError(w, receiptStatus, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, receipt)
+}

@@ -1,0 +1,265 @@
+package runner
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/hoxiai/hoxi/internal/sandbox"
+	"github.com/hoxiai/hoxi/internal/worktree"
+)
+
+func (r SessionRecord) sandboxMode() string {
+	if r.SandboxMode != "" {
+		return r.SandboxMode
+	}
+	// Records created before mode selection was supported always used worktrees.
+	if normalizeComparePath(r.WorktreePath) == normalizeComparePath(r.ProjectDir) {
+		return "local"
+	}
+	return "worktree"
+}
+
+func normalizeSandboxMode(mode string) (string, error) {
+	mode = strings.TrimSpace(mode)
+	if mode == "" {
+		mode = "local"
+	}
+	if mode != "local" && mode != "worktree" {
+		return "", errors.New("sandboxMode must be local or worktree")
+	}
+	return mode, nil
+}
+
+func existingDirectory(directory string) (string, error) {
+	if strings.TrimSpace(directory) == "" {
+		return "", errors.New("session directory is required")
+	}
+	abs, err := filepath.Abs(strings.TrimSpace(directory))
+	if err != nil {
+		return "", err
+	}
+	abs, err = filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", err
+	}
+	st, err := os.Stat(abs)
+	if err != nil || !st.IsDir() {
+		return "", fmt.Errorf("session directory does not exist: %s", abs)
+	}
+	return abs, nil
+}
+
+func validateSessionDirectory(rec SessionRecord) error {
+	if rec.sandboxMode() == "worktree" {
+		return ValidateWorktreeDir(rec.WorktreePath, rec.ProjectDir)
+	}
+	if rec.sandboxMode() != "local" {
+		return errors.New("invalid session sandbox mode")
+	}
+	project, err := existingDirectory(rec.ProjectDir)
+	if err != nil {
+		return err
+	}
+	directory, err := existingDirectory(rec.WorktreePath)
+	if err != nil {
+		return err
+	}
+	if directory != project {
+		return errors.New("local session directory does not match its project")
+	}
+	return nil
+}
+
+func (s *Service) provisionSessionDirectory(rec *SessionRecord) error {
+	// .hoxi/ holds Hoxi state (memory, worktrees, attachments). Excluding it here
+	// keeps it out of git status for local sessions that never create a worktree.
+	if strings.TrimSpace(rec.ProjectDir) != "" {
+		worktree.EnsureGitExclude(rec.ProjectDir, ".hoxi/")
+	}
+	if rec.SandboxMode == "local" {
+		rec.WorktreePath = rec.ProjectDir
+		rec.Branch, rec.BaseCommit = "", ""
+		if err := validateSessionDirectory(*rec); err != nil {
+			return err
+		}
+		if err := s.worktrees.ForDirectory(rec.ProjectDir).UseLocalDirectory(rec.ID); err != nil {
+			return err
+		}
+		s.warmDirectoryAsync(rec.WorktreePath)
+		return nil
+	}
+	meta, err := s.worktrees.ForDirectory(rec.ProjectDir).CreateOnBranch(rec.ID, rec.RetainedBranch)
+	if err != nil {
+		return fmt.Errorf("failed to create isolated git worktree: %w", err)
+	}
+	if !meta.Isolated {
+		return errors.New("cannot create an isolated Git worktree; the folder must be the root of a Git repository with at least one commit")
+	}
+	if err := ValidateWorktreeDir(meta.Directory, rec.ProjectDir); err != nil {
+		return err
+	}
+	rec.WorktreePath, rec.Branch, rec.BaseCommit = meta.Directory, meta.Branch, meta.BaseCommit
+	rec.RetainedBranch = ""
+	s.warmDirectoryAsync(rec.WorktreePath)
+	return nil
+}
+
+func (s *Service) changeSessionSandbox(sessionID, mode string) (SessionInfo, error) {
+	return s.changeSessionSandboxWithOptions(sessionID, mode, false, true)
+}
+
+func (s *Service) changeSessionSandboxWithOptions(sessionID, mode string, force, keepBranch bool) (SessionInfo, error) {
+	unlock := s.turnMu.lock(sessionID)
+	defer unlock()
+	mode, err := normalizeSandboxMode(mode)
+	if err != nil {
+		return SessionInfo{}, err
+	}
+	s.mu.Lock()
+	busy := s.procs[sessionID] != nil
+	s.mu.Unlock()
+	if busy {
+		return SessionInfo{}, errors.New("cannot change sandbox mode while the session is running")
+	}
+	rec, ok := s.store.Get(sessionID)
+	if ok && rec.Subagent {
+		return SessionInfo{}, errSubagentSessionReadOnly
+	}
+	if !ok {
+		return SessionInfo{}, errors.New("runner session not found")
+	}
+	if rec.sandboxMode() == mode {
+		return rec.ToSessionInfo(), nil
+	}
+	original, _ := s.store.Get(sessionID)
+	rec.SandboxMode = mode
+	if mode == "local" {
+		// A normal mode switch is safe; the explicit discard action supplies force.
+		if _, err := existingDirectory(rec.ProjectDir); err != nil {
+			return SessionInfo{}, err
+		}
+		if keepBranch {
+			branch, err := s.worktrees.ForDirectory(rec.ProjectDir).Status(sessionID)
+			if err != nil {
+				return SessionInfo{}, err
+			}
+			rec.RetainedBranch = branch.Branch
+		} else {
+			rec.RetainedBranch = ""
+		}
+		rec.WorktreePath, rec.Branch, rec.BaseCommit = rec.ProjectDir, "", ""
+	} else {
+		if err := s.provisionSessionDirectory(&rec); err != nil {
+			return SessionInfo{}, err
+		}
+		if original.sandboxMode() == "local" && original.RetainedBranch == "" && len(original.Turns) > 0 {
+			_ = worktree.TransferWorkingState(rec.ProjectDir, rec.WorktreePath)
+		}
+		if s.ApprovalPolicy().Mode == ApprovalModeUnattended && runtimeSandboxConfirmed(rec.Runtime) && sandbox.Available() {
+			rec.CommandSandbox = true
+		}
+	}
+	updated, _, err := s.store.Update(sessionID, func(r *SessionRecord) {
+		r.SandboxMode, r.WorktreePath = rec.SandboxMode, rec.WorktreePath
+		r.Branch, r.BaseCommit = rec.Branch, rec.BaseCommit
+		r.RetainedBranch = rec.RetainedBranch
+		r.CommandSandbox = rec.CommandSandbox
+		// Engine resume handles belong to their original working directory.
+		r.ExternalID, r.ContextPending = "", len(r.Turns) > 0
+		r.ContextTurnCount = len(r.Turns)
+	})
+	if err != nil {
+		return SessionInfo{}, err
+	}
+	if mode == "local" {
+		manager := s.worktrees.ForDirectory(rec.ProjectDir)
+		if err := manager.RemoveWithOptions(sessionID, force, keepBranch); err != nil {
+			// A branch deletion can fail after removal; never point back at a missing directory.
+			if _, statErr := os.Stat(original.WorktreePath); statErr == nil {
+				_, _, rollbackErr := s.store.Update(sessionID, func(r *SessionRecord) {
+					r.SandboxMode, r.WorktreePath = original.SandboxMode, original.WorktreePath
+					r.Branch, r.BaseCommit, r.RetainedBranch = original.Branch, original.BaseCommit, original.RetainedBranch
+					r.CommandSandbox = original.CommandSandbox
+					r.ExternalID, r.ContextPending, r.ContextTurnCount = original.ExternalID, original.ContextPending, original.ContextTurnCount
+				})
+				return SessionInfo{}, errors.Join(err, rollbackErr)
+			}
+			_ = manager.UseLocalDirectory(sessionID)
+			info := updated.ToSessionInfo()
+			s.broadcast(sessionID, SSEEvent{Type: "session.updated", Properties: map[string]interface{}{"info": info}})
+			return SessionInfo{}, err
+		}
+		if err := manager.UseLocalDirectory(sessionID); err != nil {
+			return SessionInfo{}, err
+		}
+		if original.WorktreePath != "" && filepath.Clean(original.WorktreePath) != filepath.Clean(rec.ProjectDir) {
+			s.forgetWarmedDirectory(original.WorktreePath)
+		}
+	}
+	if updated.Runtime == "opencode" {
+		_ = syncOpenCodeCommandSandbox(updated)
+	}
+	info := updated.ToSessionInfo()
+	s.broadcast(sessionID, SSEEvent{Type: "session.updated", Properties: map[string]interface{}{"info": info}})
+	return info, nil
+}
+
+func (s *Service) SetCommandSandbox(sessionID string, enabled bool) (SessionInfo, error) {
+	return s.setCommandSandbox(sessionID, enabled)
+}
+
+// setCommandSandbox toggles OS-level confinement for the runtime subprocess of
+// a native session. It refuses to change while a turn is running so a live
+// process is never half-confined.
+func (s *Service) setCommandSandbox(sessionID string, enabled bool) (SessionInfo, error) {
+	unlock := s.turnMu.lock(sessionID)
+	defer unlock()
+	s.mu.Lock()
+	busy := s.procs[sessionID] != nil
+	s.mu.Unlock()
+	if busy {
+		return SessionInfo{}, errors.New("cannot change command sandbox while the session is running")
+	}
+	rec, ok := s.store.Meta(sessionID)
+	if !ok {
+		return SessionInfo{}, errors.New("runner session not found")
+	}
+	if rec.Subagent {
+		return SessionInfo{}, errSubagentSessionReadOnly
+	}
+	if enabled && !sandbox.Available() {
+		return SessionInfo{}, errors.New(sandbox.UnavailableReason())
+	}
+	updated, ok, err := s.store.Update(sessionID, func(r *SessionRecord) {
+		r.CommandSandbox = enabled
+	})
+	if err != nil {
+		return SessionInfo{}, err
+	}
+	if !ok {
+		return SessionInfo{}, errors.New("runner session not found")
+	}
+	if updated.Runtime == "opencode" {
+		_ = syncOpenCodeCommandSandbox(updated)
+	}
+	info := updated.ToSessionInfo()
+	s.broadcast(sessionID, SSEEvent{Type: "session.updated", Properties: map[string]interface{}{"info": info}})
+	return info, nil
+}
+
+func (s *Service) guardWorktreeApply(sessionID string, apply func() error) error {
+	unlock := s.turnMu.lock(sessionID)
+	defer unlock()
+	if _, known := s.store.Meta(sessionID); known {
+		s.mu.Lock()
+		busy := s.procs[sessionID] != nil
+		s.mu.Unlock()
+		if busy {
+			return errors.New("cannot apply worktree while the session is running")
+		}
+	}
+	return apply()
+}

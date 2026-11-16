@@ -1,0 +1,592 @@
+package runner
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/hoxiai/hoxi/internal/agentcli"
+)
+
+// PromptRequest is one user turn: the JSON body of POST .../prompt, also
+// submitted in process by RunPromptAndWait.
+type PromptImageOptions struct {
+	AspectRatio string `json:"aspectRatio,omitempty"`
+	ImageSize   string `json:"imageSize,omitempty"`
+	Count       int    `json:"count,omitempty"`
+}
+
+type PromptRequest struct {
+	Text            string              `json:"text"`
+	Runtime         string              `json:"runtime,omitempty"`
+	Agent           string              `json:"agent"`
+	Variant         string              `json:"variant"`
+	System          string              `json:"system"`
+	Model           *PromptModel        `json:"model"`
+	ImageOptions    *PromptImageOptions `json:"imageOptions,omitempty"`
+	Parts           []MessagePart       `json:"parts"`
+	SkillSelection  *SkillSelection     `json:"skillSelection,omitempty"`
+	ClientRequestID string              `json:"clientRequestId,omitempty"`
+	ContinueTask    bool                `json:"continueTask,omitempty"`
+}
+
+func resolveRequestedPromptRuntime(body PromptRequest, currentRuntime string) string {
+	if rt := strings.TrimSpace(body.Runtime); rt == "opencode" || IsValidRuntime(rt) {
+		return rt
+	}
+	if body.Model != nil {
+		if prov := strings.TrimSpace(body.Model.ProviderID); IsValidRuntime(prov) {
+			return prov
+		}
+	}
+	return currentRuntime
+}
+
+// Stable execution guidance shared by desktop, mobile, CLI and orchestration
+// prompts. Keep it out of visible user text and out of the approval policy.
+const commandExecutionGuidance = `Hoxi command execution:
+Keep build, test and workspace-check progress visible. Unless the user explicitly requests it, do not pipe long-running checks into tail/head or filters that suppress progress: tail -N waits for EOF, and grep may buffer output.
+Use the tool's bounded output when available. If a full log is needed, save it to a unique temporary file and inspect bounded excerpts while the command runs. Preserve and check the original command's exit status; a successful tail/grep does not prove the check passed.
+Set a suitable tool timeout and test timeout. If a check stays silent, inspect its current stage and existing log before retrying; do not start duplicate checks or repeatedly wait without reporting progress. Reuse build caches unless a clean build is required.
+When navigating code, follow: locate symbol/file or fetch a full surgical package in one step (prefer hoxi_code_index tool or 'hoxi code-index context|search|inspect|callers|callees|impact|refresh') -> inspect the target function and minimal surrounding lines instead of whole files -> check callers, callees, blast radius (impact) and related tests. Edit and then run targeted verification only when the task asks for changes.
+When the user asks to generate or edit visual/image assets (icons, banners, illustrations, mockups, or photo edits), prefer calling the hoxi_image tool (or 'hoxi image generate "<prompt>" --out <workspace-relative-path>' in CLI sessions) so Hoxi invokes the user's configured image generation model directly.
+For cross-border e-commerce unit economics, 1688 volumetric landed cost, Search Term ad report audits, Amazon 249B/policy listing checks, TikTok script timing, or Shopify variant CSVs, prefer 'hoxi ecom profit|ads-audit|listing-check|shopify-csv' over mental estimation.
+Reviews, audits and questions are read-only: report findings and do not edit, commit, push or publish unless the user asks for a fix or that action. Within the work the user asked for, keep going without asking whether to continue; stop to ask only for a real blocker, a choice the user must make, or an action that needs approval.
+When the user asks to spawn/start a background subtask and continue chatting in the main thread (e.g. "开一个子任务…然后继续对话" / "background subtask"), or to split work into parallel coding subtasks: do NOT call the built-in synchronous task/subagent tool (which blocks the current turn until the subagent finishes). Instead, output a fenced hoxi-subtasks JSON block and end your turn immediately so Hoxi runs the subtask(s) asynchronously in isolated background sessions while the main conversation stays responsive: {"title":"plan title","autoStart":true,"concurrency":3,"tasks":[{"id":"task-1","prompt":"self-contained instructions and verification","dependsOn":[]}]} (use "autoStart":true when the user wants the subtask(s) started right away, or "autoStart":false when proposing a multi-task plan for review first).`
+
+// PromptReceipt is returned by POST .../prompt and .../prompt_async so callers
+// can correlate node-assigned instruction/message IDs and detect deduplicated retries.
+type PromptReceipt struct {
+	OK              bool   `json:"ok"`
+	InstructionID   int64  `json:"instructionId,omitempty"`
+	MessageID       string `json:"messageId,omitempty"`
+	ClientRequestID string `json:"clientRequestId,omitempty"`
+	Deduplicated    bool   `json:"deduplicated,omitempty"`
+}
+
+type cachedPromptReceipt struct {
+	receipt   PromptReceipt
+	expiresAt time.Time
+}
+
+const idempotencyReceiptTTL = 15 * time.Minute
+
+func (s *Service) lookupPromptReceipt(sessionID, clientRequestID string) (PromptReceipt, bool) {
+	clientRequestID = strings.TrimSpace(clientRequestID)
+	if clientRequestID == "" {
+		return PromptReceipt{}, false
+	}
+	key := sessionID + "\x00" + clientRequestID
+	entry, ok := s.promptReceipts.Load(key)
+	if !ok {
+		return PromptReceipt{}, false
+	}
+	if time.Now().After(entry.expiresAt) {
+		s.promptReceipts.Delete(key)
+		return PromptReceipt{}, false
+	}
+	out := entry.receipt
+	out.Deduplicated = true
+	return out, true
+}
+
+func (s *Service) storePromptReceipt(sessionID, clientRequestID string, receipt PromptReceipt) {
+	clientRequestID = strings.TrimSpace(clientRequestID)
+	if clientRequestID == "" {
+		return
+	}
+	now := time.Now()
+	expiresAt := now.Add(idempotencyReceiptTTL)
+	s.promptReceipts.Range(func(k string, entry cachedPromptReceipt) bool {
+		if now.After(entry.expiresAt) {
+			s.promptReceipts.Delete(k)
+		}
+		return true
+	})
+	s.promptReceipts.Store(sessionID+"\x00"+clientRequestID, cachedPromptReceipt{
+		receipt:   receipt,
+		expiresAt: expiresAt,
+	})
+	if s.ledger != nil {
+		s.ledger.putPromptReceipt(sessionID, clientRequestID, receipt, expiresAt)
+	}
+}
+
+// PromptModel selects the provider/model for one turn.
+type PromptModel struct {
+	ProviderID string `json:"providerID"`
+	ModelID    string `json:"modelID"`
+}
+
+// startPrompt starts (or, for a busy OpenCode session, steers) one turn and
+// returns the HTTP status that describes the outcome. directory is the
+// caller's optional directory selector, checked against the session sandbox.
+func (s *Service) startPrompt(ctx context.Context, sessionID, directory string, body PromptRequest) (int, error) {
+	status, _, err := s.startPromptWithReceipt(ctx, sessionID, directory, body)
+	return status, err
+}
+
+func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directory string, body PromptRequest) (int, PromptReceipt, error) {
+	unlock := s.turnMu.lock(sessionID)
+	defer unlock()
+
+	clientReqID := strings.TrimSpace(body.ClientRequestID)
+	if cached, ok := s.lookupPromptReceipt(sessionID, clientReqID); ok {
+		return http.StatusOK, cached, nil
+	}
+
+	rec, ok := s.store.Get(sessionID)
+	unmanagedBusySteer := false
+	pendingAdopted := false
+	wantRuntime := resolveRequestedPromptRuntime(body, "opencode")
+	reqImageTurn := body.Model != nil && s.IsImageModel(body.Model.ProviderID, body.Model.ModelID)
+	hasStoreCtx := s.resolveSessionContextBlock(sessionID, directory) != ""
+	if !ok && (body.SkillSelection != nil || reqImageTurn || hasStoreCtx || (wantRuntime != "" && wantRuntime != "opencode")) {
+		adopted, adoptErr := s.adoptOpenCodeSession(ctx, sessionID, directory)
+		if adoptErr != nil {
+			if adoptErr.Error() == "cannot change runtime while the session is running" {
+				dir := s.resolveUnmanagedSessionDir(sessionID, directory)
+				projectID, _ := s.ensureProjectID(dir)
+				rec = SessionRecord{
+					ID:           sessionID,
+					ProjectID:    projectID,
+					Runtime:      "opencode",
+					ExternalID:   sessionID,
+					ProjectDir:   dir,
+					WorktreePath: dir,
+					SandboxMode:  "local",
+				}
+				ok = true
+				unmanagedBusySteer = true
+			} else if reqImageTurn {
+				dir := s.resolveUnmanagedSessionDir(sessionID, directory)
+				projectID, _ := s.ensureProjectID(dir)
+				nowMs := time.Now().UnixMilli()
+				rec = SessionRecord{
+					ID:           sessionID,
+					ProjectID:    projectID,
+					Runtime:      "opencode",
+					ProjectDir:   dir,
+					WorktreePath: dir,
+					SandboxMode:  "local",
+					Title:        "New Session",
+					CreatedAt:    nowMs,
+					UpdatedAt:    nowMs,
+					Turns:        []MessageTurn{},
+				}
+				ok = true
+				pendingAdopted = true
+			} else {
+				return http.StatusConflict, PromptReceipt{}, adoptErr
+			}
+		} else {
+			rec = adopted
+			ok = true
+			pendingAdopted = true
+		}
+	}
+	if !ok {
+		return http.StatusNotFound, PromptReceipt{}, errors.New("runner session not found")
+	}
+	if reqDir := strings.TrimSpace(directory); reqDir != "" &&
+		normalizeComparePath(reqDir) != normalizeComparePath(rec.WorktreePath) &&
+		normalizeComparePath(reqDir) != normalizeComparePath(rec.ProjectDir) {
+		return http.StatusForbidden, PromptReceipt{}, errors.New("session directory does not match its sandbox")
+	}
+
+	promptText := strings.TrimSpace(body.Text)
+	var fileParts []MessagePart
+	for _, p := range body.Parts {
+		if p.Type == "file" && strings.TrimSpace(p.URL) != "" {
+			fileParts = append(fileParts, p)
+		}
+	}
+	if promptText == "" {
+		var texts []string
+		for _, p := range body.Parts {
+			if p.Type == "text" && strings.TrimSpace(p.Text) != "" {
+				texts = append(texts, strings.TrimSpace(p.Text))
+			}
+		}
+		promptText = strings.Join(texts, "\n")
+	}
+	if promptText == "" && len(fileParts) == 0 && body.SkillSelection == nil {
+		return http.StatusBadRequest, PromptReceipt{}, errors.New("prompt text is required")
+	}
+
+	if rec.Subagent {
+		return http.StatusConflict, PromptReceipt{}, errSubagentSessionReadOnly
+	}
+	if err := validateSessionDirectory(rec); err != nil {
+		return http.StatusBadRequest, PromptReceipt{}, err
+	}
+	runtimeSwitched := false
+	if targetRuntime := resolveRequestedPromptRuntime(body, rec.Runtime); targetRuntime != "" && targetRuntime != rec.Runtime && !unmanagedBusySteer {
+		s.mu.Lock()
+		ap := s.procs[sessionID]
+		busy := ap != nil && !ap.hasPendingError() && !ap.wasAborted()
+		s.mu.Unlock()
+		if busy {
+			return http.StatusConflict, PromptReceipt{}, errors.New("cannot change runtime while the session is running")
+		}
+		runtimeSwitched = true
+		rec.Runtime = targetRuntime
+		rec.ExternalID = ""
+		rec.ContextPending = len(rec.Turns) > 0
+		rec.ContextTurnCount = len(rec.Turns)
+		if targetRuntime == "opencode" && IsValidRuntime(rec.ProviderID) {
+			rec.ProviderID = ""
+		}
+	}
+	callerSystem := strings.TrimSpace(body.System)
+	if storeCtx := s.resolveSessionContextBlock(rec.ID, rec.WorktreePath); storeCtx != "" && !strings.Contains(callerSystem, "<hoxi_work_store_profile>") {
+		if callerSystem == "" {
+			callerSystem = storeCtx
+		} else {
+			callerSystem = storeCtx + "\n\n" + callerSystem
+		}
+	}
+	body.System = strings.TrimSpace(commandExecutionGuidance + "\n\n" + callerSystem)
+	var resolvedSkill ResolvedSkill
+	if body.SkillSelection != nil {
+		resolved, err := s.resolveSkillSelection(ctx, rec.WorktreePath, rec.ID, rec.Runtime, *body.SkillSelection)
+		if err != nil {
+			return http.StatusConflict, PromptReceipt{}, err
+		}
+		resolvedSkill = resolved
+	}
+	candidateModelID, candidateProviderID := rec.ModelID, rec.ProviderID
+	if body.Model != nil && strings.TrimSpace(body.Model.ModelID) != "" {
+		candidateModelID = strings.TrimSpace(body.Model.ModelID)
+		if strings.TrimSpace(body.Model.ProviderID) != "" {
+			candidateProviderID = strings.TrimSpace(body.Model.ProviderID)
+		}
+	}
+	isImageTurn := s.IsImageModel(candidateProviderID, candidateModelID)
+	if rec.Runtime == "opencode" && !isImageTurn {
+		s.mu.Lock()
+		ap := s.procs[sessionID]
+		busy := unmanagedBusySteer || (ap != nil && ap.runtime == "opencode" && !ap.hasPendingError() && !ap.wasAborted())
+		s.mu.Unlock()
+		if busy {
+			modelID, providerID := rec.ModelID, rec.ProviderID
+			if body.Model != nil {
+				modelID, providerID = body.Model.ModelID, body.Model.ProviderID
+			}
+			resolvedModel, checkErr := s.ensureOpenCodeModelAvailable(ctx, rec.WorktreePath, firstNonEmptyStr(providerID, rec.ProviderID), firstNonEmptyStr(modelID, rec.ModelID), false)
+			if checkErr != nil {
+				return http.StatusConflict, PromptReceipt{}, checkErr
+			}
+			if modelID != "" && resolvedModel != "" {
+				modelID = resolvedModel
+			}
+			if pendingAdopted {
+				if putErr := s.store.Put(rec); putErr != nil {
+					return http.StatusInternalServerError, PromptReceipt{}, putErr
+				}
+				for _, id := range rec.OpenCodeIDs {
+					s.managedOpenCode.Store(id, true)
+				}
+			}
+			steerSeq, steerMsgID, err := s.steerOpenCodeTurn(ctx, rec, firstNonEmptyStr(body.Agent, rec.Mode, "build"), modelID, providerID, body.Variant, body.System, promptText, body.Parts, body.SkillSelection)
+			if err != nil {
+				return http.StatusBadGateway, PromptReceipt{}, err
+			}
+			receipt := PromptReceipt{
+				OK:              true,
+				InstructionID:   steerSeq,
+				MessageID:       steerMsgID,
+				ClientRequestID: clientReqID,
+			}
+			s.storePromptReceipt(sessionID, clientReqID, receipt)
+			return http.StatusOK, receipt, nil
+		}
+	}
+
+	mode := firstNonEmptyStr(body.Agent, rec.Mode, "build")
+	modelID := rec.ModelID
+	if body.Model != nil && strings.TrimSpace(body.Model.ModelID) != "" {
+		modelID = strings.TrimSpace(body.Model.ModelID)
+		if body.Model.ProviderID != "" {
+			rec.ProviderID = body.Model.ProviderID
+		} else if rec.Runtime == "opencode" && IsValidRuntime(rec.ProviderID) {
+			rec.ProviderID = ""
+		}
+	}
+	effort := strings.TrimSpace(body.Variant)
+	if rec.Runtime == string(RuntimeAntigravity) {
+		modelID, effort = ResolveAgyModelAndEffort(modelID, effort)
+	}
+
+	binPath := ResolveAgyBinary()
+	missingMsg := "Antigravity CLI (agy) binary not found in ~/.gemini/bin/agy or PATH"
+	switch rec.Runtime {
+	case string(RuntimeClaudeCode):
+		binPath = ResolveClaudeBinary()
+		missingMsg = "Claude Code CLI (claude) binary not found in ~/.local/bin/claude or PATH"
+	case string(RuntimeGeminiCLI):
+		binPath, _ = ResolveGeminiTurnBinary(modelID)
+		missingMsg = "Gemini CLI (gemini / agy) binary not found in ~/.gemini/bin or PATH"
+	case string(RuntimeCodeBuddy):
+		binPath = agentcli.ResolveCodeBuddyBinary()
+		missingMsg = "CodeBuddy CLI (codebuddy) binary not found in PATH"
+	case string(RuntimeQoder):
+		binPath, _ = agentcli.ResolveQoderBinaryForModel(modelID)
+		missingMsg = "Qoder CLI (qodercli / qoderclicn) binary not found in PATH"
+	}
+	if binPath == "" && rec.Runtime != "opencode" {
+		return http.StatusBadRequest, PromptReceipt{}, errors.New(missingMsg)
+	}
+	isImageTurn = s.IsImageModel(rec.ProviderID, modelID)
+	if rec.Runtime == "opencode" && !isImageTurn {
+		resolvedModel, checkErr := s.ensureOpenCodeModelAvailable(ctx, rec.WorktreePath, rec.ProviderID, modelID, true)
+		if checkErr != nil {
+			return http.StatusConflict, PromptReceipt{}, checkErr
+		}
+		if resolvedModel != "" && resolvedModel != modelID {
+			modelID = resolvedModel
+		}
+	}
+
+	s.mu.Lock()
+	ap := s.procs[sessionID]
+	s.mu.Unlock()
+	steeredTurn := false
+	if ap != nil && !ap.wasAborted() && !ap.hasPendingError() && RuntimeCapabilities(rec.Runtime, rec.Subagent).Steer {
+		steeredTurn = true
+		ap.markSteered()
+		s.abortActiveProcess(sessionID)
+	}
+	finishSteerAbort := func() {
+		if !steeredTurn {
+			return
+		}
+		if s.status != nil {
+			s.status.SetSessionBusy(sessionID, false)
+		}
+		s.broadcast(sessionID, SSEEvent{
+			Type: "session.status",
+			Properties: map[string]interface{}{
+				"sessionID": sessionID,
+				"status":    SessionStatus{Type: "idle"},
+			},
+		})
+	}
+	if ap != nil && (ap.wasAborted() || ap.hasPendingError()) {
+		select {
+		case <-ap.done:
+		case <-ctx.Done():
+			finishSteerAbort()
+			return http.StatusRequestTimeout, PromptReceipt{}, ctx.Err()
+		case <-time.After(5 * time.Second):
+		}
+		if latest, ok := s.store.Get(sessionID); ok {
+			if !runtimeSwitched {
+				rec.ExternalID = latest.ExternalID
+			} else {
+				rec.ContextPending = len(latest.Turns) > 0
+				rec.ContextTurnCount = len(latest.Turns)
+			}
+			rec.Turns = latest.Turns
+		}
+	}
+	s.mu.Lock()
+	if s.procs[sessionID] != nil {
+		s.mu.Unlock()
+		finishSteerAbort()
+		return http.StatusConflict, PromptReceipt{}, errors.New("session already has an active CLI process running")
+	}
+	s.seqSeed++
+	seq := s.seqSeed
+	s.mu.Unlock()
+
+	preMutationRec, hadPreMutationRec := s.store.Get(sessionID)
+	if pendingAdopted {
+		if putErr := s.store.Put(rec); putErr != nil {
+			finishSteerAbort()
+			return http.StatusInternalServerError, PromptReceipt{}, putErr
+		}
+		for _, id := range rec.OpenCodeIDs {
+			s.managedOpenCode.Store(id, true)
+		}
+	}
+
+	now := time.Now().UnixMilli()
+	userMsgID := fmt.Sprintf("msg_u_%d_%d", now, seq)
+	asstMsgID := fmt.Sprintf("msg_a_%d_%d", now+1, seq)
+	userInfo := MessageInfo{
+		ID:           userMsgID,
+		SessionID:    sessionID,
+		Role:         "user",
+		Time:         MessageTime{Created: now},
+		Agent:        mode,
+		ModelID:      modelID,
+		ProviderID:   rec.ProviderID,
+		ContinueTask: body.ContinueTask,
+	}
+	storedParts, deliveryParts, cliPrompt := s.prepareTurnAttachmentsForModel(rec, rec.ProviderID, modelID, isImageTurn, now, seq, userMsgID, promptText, fileParts)
+	if body.SkillSelection != nil {
+		s.recordUserSkillOverride(userMsgID, promptText, body.SkillSelection)
+		storedParts, deliveryParts = applySkillSelectionToTurnParts(
+			sessionID,
+			userMsgID,
+			now,
+			seq,
+			promptText,
+			body.SkillSelection,
+			rec.Runtime != "opencode",
+			resolvedSkill.Content,
+			storedParts,
+			deliveryParts,
+		)
+	}
+
+	oldQoderBin, _ := agentcli.ResolveQoderBinaryForModel(rec.ModelID)
+	newQoderBin, _ := agentcli.ResolveQoderBinaryForModel(modelID)
+	resetQoderResume := rec.Runtime == string(RuntimeQoder) &&
+		strings.TrimSpace(rec.ExternalID) != "" &&
+		oldQoderBin != newQoderBin
+	resetGeminiResume := rec.Runtime == string(RuntimeGeminiCLI) &&
+		strings.TrimSpace(rec.ExternalID) != "" &&
+		ShouldGeminiCLIUseAgy(rec.ModelID) != ShouldGeminiCLIUseAgy(modelID)
+	resetAgySplitBrain := (rec.Runtime == string(RuntimeAntigravity) ||
+		(rec.Runtime == string(RuntimeGeminiCLI) && ShouldGeminiCLIUseAgy(modelID))) &&
+		len(rec.Turns) > 0 &&
+		hasAgySplitBrainConversation(rec.ExternalID)
+	if resetAgySplitBrain && quarantineEmptyAgySQLiteStore(rec.ExternalID) {
+		// The history is intact in the Protobuf store: keep resuming it.
+		resetAgySplitBrain = false
+	}
+	_, _, _ = s.store.Update(sessionID, func(r *SessionRecord) {
+		if runtimeSwitched {
+			r.Runtime = rec.Runtime
+			r.ExternalID = ""
+			r.ContextPending = len(r.Turns) > 0
+			r.ContextTurnCount = len(r.Turns)
+		}
+		r.ModelID = modelID
+		r.Mode = mode
+		r.ProviderID = rec.ProviderID
+		if resetGeminiResume || resetQoderResume || resetAgySplitBrain {
+			r.ExternalID = ""
+			r.ContextPending = len(r.Turns) > 0
+			r.ContextTurnCount = len(r.Turns)
+		}
+	})
+	s.recordTurnSnapshot(sessionID, userMsgID)
+	if updated, ok := s.store.Get(sessionID); ok {
+		rec = updated
+	}
+
+	s.recordInflightTurn(InflightTurnEntry{
+		SessionID:       rec.ID,
+		Runtime:         rec.Runtime,
+		ExternalID:      rec.ExternalID,
+		UserMsgID:       userMsgID,
+		AsstMsgID:       asstMsgID,
+		Mode:            mode,
+		ProviderID:      rec.ProviderID,
+		ModelID:         modelID,
+		Effort:          effort,
+		CallerSystem:    callerSystem,
+		PromptText:      cliPrompt,
+		ClientRequestID: clientReqID,
+		StartedAt:       now,
+		UpdatedAt:       now,
+	})
+
+	var err error
+	if isImageTurn {
+		err = s.startImageGenerationTurn(rec, mode, modelID, userInfo, storedParts, deliveryParts, asstMsgID, promptText, body.ImageOptions)
+	} else if rec.Runtime == "opencode" {
+		err = s.startOpenCodeTurn(rec, mode, modelID, effort, body.System, userInfo, storedParts, deliveryParts)
+	} else {
+		input := runtimeMemoryContext(rec) + runtimeContext(rec)
+		if body.SkillSelection != nil {
+			input += formatInlineSkillPrompt(body.SkillSelection.Name, resolvedSkill.Content, "") + "\n\n"
+		}
+		if cliSys := s.nativeCLISystemForTurn(rec, callerSystem, body.System); cliSys != "" {
+			input += cliSys + "\n\n"
+		}
+		err = s.startTurnProcess(rec, binPath, mode, modelID, effort, input+cliPrompt, userInfo, storedParts, deliveryParts, asstMsgID)
+		if err == nil {
+			s.recordCLISystemDelivered(rec.ID, rec.Runtime, callerSystem)
+		}
+	}
+	if err != nil {
+		s.clearInflightTurn(sessionID)
+		if current, ok := s.store.Get(sessionID); ok {
+			prevIDs := make(map[string]bool, len(preMutationRec.OpenCodeIDs))
+			for _, id := range preMutationRec.OpenCodeIDs {
+				prevIDs[id] = true
+			}
+			for _, id := range current.OpenCodeIDs {
+				if !prevIDs[id] {
+					s.managedOpenCode.Delete(id)
+				}
+			}
+		}
+		if hadPreMutationRec {
+			_ = s.store.Put(preMutationRec)
+		} else if pendingAdopted {
+			_ = s.store.Delete(sessionID)
+			for _, id := range rec.OpenCodeIDs {
+				s.managedOpenCode.Delete(id)
+			}
+		}
+		finishSteerAbort()
+		return http.StatusInternalServerError, PromptReceipt{}, err
+	}
+	if runtimeSwitched {
+		if updated, ok := s.store.Get(sessionID); ok {
+			info := updated.ToSessionInfo()
+			s.broadcast(sessionID, SSEEvent{Type: "session.updated", Properties: map[string]interface{}{"info": info}})
+		}
+	}
+	receipt := PromptReceipt{
+		OK:              true,
+		InstructionID:   seq,
+		MessageID:       userMsgID,
+		ClientRequestID: clientReqID,
+	}
+	s.storePromptReceipt(sessionID, clientReqID, receipt)
+	return http.StatusOK, receipt, nil
+}
+
+// nativeCLISystemForTurn avoids repeating commandExecutionGuidance and unchanged
+// caller system instructions inside every user message of a resumed native CLI
+// conversation (--resume / --conversation), where Turn 1 already placed them in
+// the CLI's persistent conversation history.
+func (s *Service) nativeCLISystemForTurn(rec SessionRecord, callerSystem, fullSystem string) string {
+	if strings.TrimSpace(rec.ExternalID) == "" || rec.ContextPending {
+		return fullSystem
+	}
+	prevCaller, ok := s.cliSystemDelivered.Load(rec.ID + "\x00" + rec.Runtime)
+	if !ok {
+		return fullSystem
+	}
+	if callerSystem == "" || callerSystem == prevCaller {
+		return ""
+	}
+	return callerSystem
+}
+
+func (s *Service) recordCLISystemDelivered(sessionID, runtime, callerSystem string) {
+	if strings.TrimSpace(sessionID) == "" || strings.TrimSpace(runtime) == "" {
+		return
+	}
+	s.cliSystemDelivered.Store(sessionID+"\x00"+runtime, callerSystem)
+}
+
+func (s *Service) fallbackCLISystemForFreshRetry(sessionID, runtime string) string {
+	sys := commandExecutionGuidance
+	if caller, ok := s.cliSystemDelivered.Load(sessionID + "\x00" + runtime); ok {
+		if strings.TrimSpace(caller) != "" {
+			sys += "\n\n" + strings.TrimSpace(caller)
+		}
+	}
+	return sys
+}

@@ -1,0 +1,6 @@
+body { width: 320px; padding: 14px; font: 13px system-ui; color: #202124; }
+h1 { font-size: 17px; }
+p { line-height: 1.5; overflow-wrap: anywhere; }
+textarea { box-sizing: border-box; width: 100%; padding: 8px; border: 1px solid #aaa; border-radius: 6px; }
+button { margin: 10px 4px 0 0; padding: 8px 12px; cursor: pointer; }
+#status { white-space: pre-wrap; }

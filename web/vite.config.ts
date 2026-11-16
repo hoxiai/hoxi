@@ -1,0 +1,216 @@
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { defineConfig, type Plugin } from "vite";
+import solidPlugin from "vite-plugin-solid";
+import tailwindcss from "@tailwindcss/vite";
+
+const toPosixPath = (p: string) => p.replace(/\\/g, "/");
+const webRoot = toPosixPath(fileURLToPath(new URL(".", import.meta.url)));
+const repoRoot = toPosixPath(path.resolve(webRoot, ".."));
+const srcRoot = toPosixPath(fileURLToPath(new URL("./src", import.meta.url)));
+const lucideSolidEsm = toPosixPath(
+  fileURLToPath(
+    new URL("./node_modules/lucide-solid/dist/esm/lucide-solid.js", import.meta.url),
+  ),
+);
+const isReadableFile = (filePath: string) => {
+  try {
+    fs.accessSync(filePath, fs.constants.R_OK);
+    return fs.statSync(filePath).isFile();
+  } catch {
+    return false;
+  }
+};
+const resolveWorktreeMainRoot = (dir: string): string | null => {
+  try {
+    const dotGit = path.join(dir, ".git");
+    if (!fs.statSync(dotGit).isFile()) return null;
+    const match = fs.readFileSync(dotGit, "utf8").match(/^gitdir:\s*(.+)$/m);
+    if (!match) return null;
+    const commonGitDir = path.resolve(path.resolve(dir, match[1].trim()), "../..");
+    return path.basename(commonGitDir) === ".git" ? path.dirname(commonGitDir) : null;
+  } catch {
+    return null;
+  }
+};
+const resolveWorkRepoDir = () => {
+  if (process.env.HOXI_WORK_DIR) {
+    return path.resolve(webRoot, process.env.HOXI_WORK_DIR);
+  }
+  const mainRoot = resolveWorktreeMainRoot(repoRoot);
+  const candidates = [
+    path.resolve(repoRoot, "work"),
+    ...(mainRoot ? [path.resolve(mainRoot, "work")] : []),
+    path.resolve(webRoot, "../../hoxi-work"),
+    path.resolve(webRoot, "../../../../../hoxi-work"),
+  ];
+  for (const candidate of candidates) {
+    if (isReadableFile(path.join(candidate, "web/index.tsx"))) {
+      return candidate;
+    }
+  }
+  return candidates[0];
+};
+const workRepoDir = toPosixPath(resolveWorkRepoDir());
+const workExtEntry = toPosixPath(path.join(workRepoDir, "web/index.tsx"));
+const hasWorkExt =
+  process.env.HOXI_DISABLE_WORK_EXT !== "1" && isReadableFile(workExtEntry);
+
+// Tailwind v4 only scans the core web/src tree by default, so utilities that
+// appear solely in the optional hoxi-work repo (for example the app switcher's
+// list height cap) were never generated and the popover had no height bound.
+// Inject an extra @source for the work repo into the Tailwind CSS entry.
+const workTailwindSource = toPosixPath(
+  path.relative(srcRoot, path.join(workRepoDir, "web")),
+);
+const stylesEntry = `${srcRoot}/styles.css`;
+
+const tailwindWorkSource = (): Plugin => ({
+  name: "hoxi:tailwind-work-source",
+  enforce: "pre",
+  transform(code, id) {
+    if (!hasWorkExt || id.split("?")[0] !== stylesEntry) return null;
+    return { code: `${code}\n@source "${workTailwindSource}";\n`, map: null };
+  },
+});
+
+const isRelease = (process.env.HOXI_VARIANT || "").trim().toLowerCase() === "release";
+const target =
+  process.env.HOXI_BACKEND_URL || (isRelease ? "http://127.0.0.1:5410" : "http://127.0.0.1:5420");
+const port = Number(process.env.HOXI_WEB_PORT) || (isRelease ? 5411 : 5421);
+
+export default defineConfig({
+  plugins: [tailwindWorkSource(), tailwindcss(), solidPlugin()],
+  resolve: {
+    dedupe: ["solid-js", "solid-js/web", "solid-js/store", "lucide-solid"],
+    alias: [
+      { find: /^lucide-solid$/, replacement: lucideSolidEsm },
+      {
+        find: /^solid-js$/,
+        replacement: toPosixPath(
+          fileURLToPath(
+            new URL("./node_modules/solid-js/dist/solid.js", import.meta.url),
+          ),
+        ),
+      },
+      {
+        find: /^solid-js\/web$/,
+        replacement: toPosixPath(
+          fileURLToPath(
+            new URL("./node_modules/solid-js/web/dist/web.js", import.meta.url),
+          ),
+        ),
+      },
+      {
+        find: /^solid-js\/store$/,
+        replacement: toPosixPath(
+          fileURLToPath(
+            new URL("./node_modules/solid-js/store/dist/store.js", import.meta.url),
+          ),
+        ),
+      },
+      ...(hasWorkExt
+        ? [
+            { find: /^.*[\/\\]surface-extension(?:\.ts)?$/, replacement: workExtEntry },
+          ]
+        : []),
+      { find: /^@hoxi-core\/(.*)$/, replacement: `${srcRoot}/$1` },
+    ],
+  },
+  server: {
+    fs: {
+      allow: [webRoot, repoRoot, ...(hasWorkExt ? [workRepoDir] : [])],
+    },
+    port,
+    strictPort: false,
+    // macOS WKWebView loads `wails://wails/` without a Host header, so Wails
+    // proxies dev requests with `Host: wails`. Vite's host check would answer
+    // 403, which shows up as a blank window. (Windows uses wails.localhost,
+    // which Vite already allows.)
+    allowedHosts: ["wails"],
+    proxy: {
+      "/api": { target, changeOrigin: true, ws: true },
+      "/healthz": { target, changeOrigin: true },
+      "/session": { target, changeOrigin: true },
+      "/event": { target, changeOrigin: true },
+      "/pty": { target, changeOrigin: true, ws: true },
+      "/file": { target, changeOrigin: true },
+      "/find": { target, changeOrigin: true },
+      "/worktree": { target, changeOrigin: true },
+      "/permission": { target, changeOrigin: true },
+      "/question": { target, changeOrigin: true },
+      "/vcs": { target, changeOrigin: true },
+      "/global": { target, changeOrigin: true },
+      "/provider": { target, changeOrigin: true },
+      "/auth": { target, changeOrigin: true },
+      "/config": { target, changeOrigin: true },
+      "/command": { target, changeOrigin: true },
+      "/agent": { target, changeOrigin: true },
+      "/lsp": { target, changeOrigin: true },
+      "/mcp": { target, changeOrigin: true },
+      "/formatter": { target, changeOrigin: true },
+      "/skill": { target, changeOrigin: true },
+      "/experimental": { target, changeOrigin: true },
+      "/path": { target, changeOrigin: true },
+      "/project": { target, changeOrigin: true },
+    },
+  },
+  preview: {
+    port: 5411,
+    strictPort: false,
+  },
+  worker: {
+    format: "es",
+  },
+  build: {
+    target: "esnext",
+    outDir: "dist",
+    emptyOutDir: true,
+    chunkSizeWarningLimit: 900,
+    rollupOptions: {
+      onwarn(warning, warn) {
+        if (warning.code === "CIRCULAR_CHUNK") {
+          throw new Error(warning.message);
+        }
+        warn(warning);
+      },
+      output: {
+        manualChunks(id) {
+          const normalized = id.replace(/\\/g, "/");
+          if (normalized.includes("node_modules/solid-js") || id.includes("preload-helper")) {
+            return "vendor-solid";
+          }
+          if (normalized.includes("node_modules/lucide-solid")) {
+            return "vendor-icons";
+          }
+          if (normalized.includes("node_modules/@pierre/diffs")) {
+            return "vendor-pierre-diffs";
+          }
+          if (normalized.includes("node_modules/@xterm")) {
+            return "vendor-xterm";
+          }
+          if (normalized.includes("node_modules/@shikijs") || normalized.includes("node_modules/shiki")) {
+            if (!normalized.includes("/langs/") && !normalized.includes("/themes/")) {
+              return "vendor-shiki-core";
+            }
+          }
+          const inWorkExt =
+            (hasWorkExt && normalized.startsWith(`${workRepoDir}/`)) ||
+            normalized.includes("/hoxi-work/");
+          if (inWorkExt) {
+            return /\.ts(?:\?.*)?$/.test(normalized) && !/\.tsx(?:\?.*)?$/.test(normalized)
+              ? "surface-work-core"
+              : "surface-work";
+          }
+          if (normalized.includes("/src/i18n/")) {
+            return "app-i18n";
+          }
+          if (normalized.includes("/src/store/") || normalized.includes("/src/services/")) {
+            return "app-core";
+          }
+        },
+      },
+    },
+  },
+});

@@ -1,0 +1,587 @@
+package provider
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
+	"github.com/hoxiai/hoxi/internal/opencode/ocapi"
+)
+
+type Service struct {
+	openCode             *ocapi.Client
+	rootDir              string
+	proxy                http.Handler
+	stats                *modelStatsStore
+	breaker              *breakerStore
+	assistMu             sync.RWMutex
+	assist               map[string]http.HandlerFunc
+	isBusyFn             func() bool
+	reloadMu             sync.Mutex
+	reloadPending        bool
+	reloadLoopRunning    bool
+	configPersistMu      sync.Mutex
+	relayMu              sync.Mutex
+	relayPersistMu       sync.Mutex
+	relayBaseURL         string
+	relayKeysPath        string
+	relayKeysLoaded      bool
+	relayKeysModTime     time.Time
+	relayKeysSize        int64
+	relayKeys            []relayKeyRecord
+	mcpOAuthMu           sync.Mutex
+	mcpOAuthSessions     map[string]*mcpOAuthSession
+	mcpOAuthPollInterval time.Duration
+	openBrowserFunc      func(string)
+	authMu               sync.RWMutex
+	authSource           AuthSource
+	officialMu           sync.Mutex
+	officialBlocked      atomic.Bool
+	// noReasoningEffort remembers provider/model pairs whose endpoint rejected
+	// reasoning_effort, so later calls skip the doomed first attempt.
+	noReasoningEffort sync.Map
+}
+
+func NewService(openCodePort int, password, rootDir string, proxy http.Handler) *Service {
+	s := &Service{
+		openCode: ocapi.NewForPort(openCodePort, password),
+		rootDir:  rootDir,
+		proxy:    proxy,
+		stats:    newModelStatsStore(rootDir),
+		breaker:  newBreakerStore(rootDir),
+	}
+	s.officialBlocked.Store(true)
+	return s
+}
+
+// SetOnProviderDegraded wires persistent internal LLM failure notifications
+// (e.g. to the macOS status bar Attention badge).
+func (s *Service) SetOnProviderDegraded(fn func(providerID string, degraded bool)) {
+	if s.stats != nil {
+		s.stats.setOnDegradedChange(fn)
+	}
+}
+
+// SetBusyCheck wires a predicate that reports whether any session or runtime
+// process is actively executing, so global OpenCode config reloads (`POST /global/dispose`)
+// are deferred until active turns complete instead of killing in-flight tasks.
+func (s *Service) SetBusyCheck(fn func() bool) {
+	s.reloadMu.Lock()
+	defer s.reloadMu.Unlock()
+	s.isBusyFn = fn
+}
+
+func (s *Service) RegisterRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("/api/hoxi/provider/fetch-models", s.handleFetchProviderModels)
+	mux.HandleFunc("/api/hoxi/provider/test-model", s.handleTestProviderModel)
+	mux.HandleFunc("/api/hoxi/provider/mcp-oauth/start", s.handleProviderMCPOAuthStart)
+	mux.HandleFunc("/api/hoxi/provider/mcp-oauth/poll", s.handleProviderMCPOAuthPoll)
+	mux.HandleFunc("/api/hoxi/provider/official/models", s.handleOfficialModels)
+	mux.HandleFunc("/api/hoxi/provider/official/connect", s.handleOfficialConnect)
+	for _, action := range assistActions {
+		mux.HandleFunc("/api/hoxi/provider/"+action, s.serveAssist(action))
+	}
+	mux.HandleFunc("/api/hoxi/provider/auto-pools", s.handleAutoPoolsConfig)
+	mux.HandleFunc("/api/hoxi/provider/relay/keys", s.handleRelayAdmin)
+	mux.HandleFunc("/api/hoxi/provider/models", s.handleModelCatalog)
+	mux.HandleFunc("/api/hoxi/models-config", s.handleModelsConfig)
+	mux.HandleFunc("/global/config", s.handleGlobalConfigProxy)
+	mux.HandleFunc("/global/dispose", s.handleGlobalDispose)
+	mux.HandleFunc("/provider", s.handleProviderProxy)
+	mux.HandleFunc("/auth", s.handleProviderAuth)
+	mux.HandleFunc("/auth/", s.handleProviderAuth)
+	mux.HandleFunc("/api/auth/", s.handleProviderAuth)
+	if s.stats != nil {
+		s.stats.registerRoutes(mux)
+	}
+	if s.breaker != nil {
+		s.breaker.registerRoutes(mux)
+	}
+}
+
+func EnsureHoxiModelsConfig(rootDir string) string {
+	return ensureHoxiModelsConfig(rootDir)
+}
+
+func UserHoxiModelsPath() string {
+	return userHoxiModelsPath()
+}
+
+func (s *Service) WorkspaceHoxiModelsPath() string {
+	return s.workspaceHoxiModelsPath()
+}
+
+func (s *Service) ResolveStoredProviderKey(providerID, requestedBaseURL string) string {
+	return s.resolveStoredProviderKey(providerID, requestedBaseURL)
+}
+
+func (s *Service) LoadHoxiConfigDoc() map[string]interface{} {
+	return s.loadHoxiConfigDoc()
+}
+
+func (s *Service) LoadHoxiProvidersMap() map[string]interface{} {
+	return s.loadHoxiProvidersMap()
+}
+
+func (s *Service) PersistHoxiConfigDoc(doc map[string]interface{}) error {
+	return s.persistMergedConfigDoc(doc)
+}
+
+func (s *Service) ReloadOpenCodeGlobalConfig() {
+	s.reloadOpenCodeGlobalConfig()
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+func writeJSONError(w http.ResponseWriter, status int, msg string) {
+	writeJSON(w, status, map[string]any{"error": msg})
+}
+
+type fetchProviderModelsRequest struct {
+	BaseURL    string            `json:"baseURL"`
+	APIKey     string            `json:"apiKey,omitempty"`
+	ProviderID string            `json:"providerID,omitempty"`
+	NPM        string            `json:"npm,omitempty"`
+	Headers    map[string]string `json:"headers,omitempty"`
+}
+
+type fetchedModelItem struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type fetchProviderModelsResponse struct {
+	Models []fetchedModelItem `json:"models,omitempty"`
+	Error  string             `json:"error,omitempty"`
+	Auth   bool               `json:"auth,omitempty"`
+}
+
+func (g *Service) handleFetchProviderModels(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONError(w, http.StatusMethodNotAllowed, "POST required")
+		return
+	}
+
+	var req fetchProviderModelsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusOK, fetchProviderModelsResponse{Error: "Invalid request payload"})
+		return
+	}
+
+	baseURL := strings.TrimSpace(g.localizeBridgeURL(req.BaseURL))
+	if !strings.HasPrefix(baseURL, "http://") && !strings.HasPrefix(baseURL, "https://") {
+		writeJSON(w, http.StatusOK, fetchProviderModelsResponse{Error: "Base URL must start with http:// or https://"})
+		return
+	}
+
+	pid := strings.TrimSpace(req.ProviderID)
+	npm := strings.TrimSpace(req.NPM)
+	if npm == "" && pid != "" {
+		_, _, npm, _ = g.resolveProviderConnection(pid, baseURL, "")
+	}
+	proto := effectiveProviderProtocol(pid, npm, baseURL)
+	isAnthropic := proto == "anthropic"
+	isGoogle := proto == "google"
+
+	apiKey := strings.TrimSpace(req.APIKey)
+	if apiKey == "********" {
+		apiKey = ""
+	}
+	// Resolve {env:VAR_NAME} syntax if used
+	if strings.HasPrefix(apiKey, "{env:") && strings.HasSuffix(apiKey, "}") {
+		envName := strings.TrimSpace(apiKey[5 : len(apiKey)-1])
+		apiKey = os.Getenv(envName)
+	}
+	// If editing an existing provider with untouched key, look up stored key
+	if apiKey == "" && pid != "" {
+		apiKey = g.resolveStoredProviderKey(pid, baseURL)
+	}
+
+	trimmedBase := strings.TrimRight(baseURL, "/")
+	var modelsURL string
+	if isGoogle {
+		modelsURL = googleModelsBaseURL(trimmedBase)
+	} else if isAnthropic && !strings.HasSuffix(trimmedBase, "/v1") && !strings.HasSuffix(trimmedBase, "/models") {
+		modelsURL = trimmedBase + "/v1/models"
+	} else if strings.HasSuffix(trimmedBase, "/models") {
+		modelsURL = trimmedBase
+	} else {
+		modelsURL = trimmedBase + "/models"
+	}
+
+	doFetch := func(reqURL string, includeBearerWithQueryKey bool) (*http.Response, []byte, error) {
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		defer cancel()
+
+		outReq, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+		if err != nil {
+			return nil, nil, err
+		}
+		outReq.Header.Set("Accept", "application/json")
+		outReq.Header.Set("Content-Type", "application/json")
+		hasCustomAuth := false
+		for k, v := range req.Headers {
+			k = strings.TrimSpace(k)
+			v = strings.TrimSpace(v)
+			if k != "" && v != "" {
+				if strings.EqualFold(k, "Authorization") || strings.EqualFold(k, "x-goog-api-key") || strings.EqualFold(k, "x-api-key") {
+					hasCustomAuth = true
+				}
+				outReq.Header.Set(k, v)
+			}
+		}
+		if apiKey != "" && !hasCustomAuth {
+			if isAnthropic {
+				outReq.Header.Set("x-api-key", apiKey)
+				outReq.Header.Set("anthropic-version", "2023-06-01")
+			} else if isGoogle {
+				outReq.Header.Set("x-goog-api-key", apiKey)
+				if includeBearerWithQueryKey {
+					outReq.Header.Set("Authorization", "Bearer "+apiKey)
+				}
+			} else {
+				outReq.Header.Set("Authorization", "Bearer "+apiKey)
+			}
+		}
+		client := &http.Client{
+			Timeout:   15 * time.Second,
+			Transport: providerTransport,
+		}
+		if isLoopbackURL(reqURL) {
+			client.Transport = localTransport
+		}
+		resp, err := client.Do(outReq)
+		if err != nil {
+			return nil, nil, err
+		}
+		defer resp.Body.Close()
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4*1024*1024))
+		return resp, bodyBytes, nil
+	}
+
+	resp, bodyBytes, err := doFetch(modelsURL, false)
+	if err != nil {
+		writeJSON(w, http.StatusOK, fetchProviderModelsResponse{Error: redactSecretInText(err.Error(), apiKey)})
+		return
+	}
+	if isGoogle && apiKey != "" && !isOfficialGoogleHost(modelsURL) &&
+		(resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) {
+		if retryResp, retryBytes, retryErr := doFetch(appendGoogleQueryKey(modelsURL, apiKey), shouldSendBearerOnGoogleRetry(apiKey)); retryErr == nil && retryResp != nil {
+			resp, bodyBytes = retryResp, retryBytes
+		}
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		msg := redactSecretInText(extractAPIErrorMessage(resp.StatusCode, bodyBytes), apiKey)
+		isAuth := resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden
+		writeJSON(w, http.StatusOK, fetchProviderModelsResponse{
+			Error: msg,
+			Auth:  isAuth,
+		})
+		return
+	}
+
+	models := parseOpenAIModelsPayload(bodyBytes)
+	writeJSON(w, http.StatusOK, fetchProviderModelsResponse{Models: models})
+}
+
+func parseOpenAIModelsPayload(raw []byte) []fetchedModelItem {
+	type rawModel struct {
+		ID          string `json:"id"`
+		Name        string `json:"name"`
+		DisplayName string `json:"displayName"`
+	}
+	var wrapper struct {
+		Data   []rawModel `json:"data"`
+		Models []rawModel `json:"models"`
+	}
+
+	var list []rawModel
+	if err := json.Unmarshal(raw, &wrapper); err == nil {
+		if len(wrapper.Data) > 0 {
+			list = wrapper.Data
+		} else if len(wrapper.Models) > 0 {
+			list = wrapper.Models
+		}
+	}
+	if len(list) == 0 {
+		_ = json.Unmarshal(raw, &list)
+	}
+
+	seen := make(map[string]struct{}, len(list))
+	result := make([]fetchedModelItem, 0, len(list))
+	for _, item := range list {
+		id := strings.TrimSpace(item.ID)
+		name := strings.TrimSpace(item.Name)
+		if id == "" && name != "" {
+			// Google Gemini /v1beta/models uses "name": "models/gemini-..." and "displayName": "Gemini ...".
+			id = strings.TrimPrefix(name, "models/")
+			name = strings.TrimSpace(item.DisplayName)
+		} else {
+			id = strings.TrimPrefix(id, "models/")
+			if name == "" || name == "models/"+id {
+				name = strings.TrimSpace(item.DisplayName)
+			}
+		}
+		if id == "" {
+			continue
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		if name == "" {
+			name = id
+		}
+		result = append(result, fetchedModelItem{ID: id, Name: name})
+	}
+
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].ID < result[j].ID
+	})
+	return result
+}
+
+func sameProviderBaseURL(a, b string) bool {
+	na := strings.TrimRight(strings.TrimSpace(a), "/")
+	nb := strings.TrimRight(strings.TrimSpace(b), "/")
+	return na != "" && nb != "" && strings.EqualFold(na, nb)
+}
+
+func (g *Service) isAuthorizedProviderBaseURL(providerID, requestedBaseURL string, extraAllowed ...string) bool {
+	reqURL := strings.TrimSpace(g.localizeBridgeURL(requestedBaseURL))
+	if reqURL == "" {
+		return true
+	}
+	hasConfiguredURL := false
+	if defURL := strings.TrimSpace(defaultProviderBaseURLs[providerID]); defURL != "" {
+		hasConfiguredURL = true
+		if sameProviderBaseURL(reqURL, defURL) {
+			return true
+		}
+	}
+	for _, extra := range extraAllowed {
+		if strings.TrimSpace(extra) != "" {
+			hasConfiguredURL = true
+			if sameProviderBaseURL(reqURL, g.localizeBridgeURL(extra)) {
+				return true
+			}
+		}
+	}
+	for _, src := range []map[string]any{g.loadHoxiProvidersMap(), g.loadOpenCodeImportedProviderMap()} {
+		if rawCfg, ok := src[providerID].(map[string]any); ok {
+			if opts, ok := rawCfg["options"].(map[string]any); ok {
+				if u, ok := opts["baseURL"].(string); ok && strings.TrimSpace(u) != "" {
+					hasConfiguredURL = true
+					if sameProviderBaseURL(reqURL, g.localizeBridgeURL(u)) {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return !hasConfiguredURL && isLoopbackURL(reqURL)
+}
+
+func (g *Service) resolveProviderConnection(providerID, hintBaseURL, hintNPM string) (baseURL, apiKey, npm string, headers map[string]string) {
+	if providerID == officialProviderID && g.officialBlocked.Load() {
+		return "", "", "", nil
+	}
+	baseURL = strings.TrimSpace(g.localizeBridgeURL(hintBaseURL))
+	npm = strings.TrimSpace(hintNPM)
+	headers = map[string]string{}
+
+	merged := g.loadOpenCodeImportedProviderMap()
+	for k, v := range g.loadHoxiProvidersMap() {
+		merged[k] = v
+	}
+	var configuredBaseURL string
+	if rawCfg, ok := merged[providerID].(map[string]any); ok {
+		if npm == "" {
+			if s, ok := rawCfg["npm"].(string); ok {
+				npm = strings.TrimSpace(s)
+			}
+		}
+		if opts, ok := rawCfg["options"].(map[string]any); ok {
+			if u, ok := opts["baseURL"].(string); ok {
+				configuredBaseURL = strings.TrimSpace(g.localizeBridgeURL(u))
+			}
+			if baseURL == "" {
+				baseURL = configuredBaseURL
+			}
+			if k, ok := opts["apiKey"].(string); ok && k != "" && k != "********" {
+				if g.isAuthorizedProviderBaseURL(providerID, baseURL, configuredBaseURL) {
+					apiKey = strings.TrimSpace(k)
+				}
+			}
+			if hMap, ok := opts["headers"].(map[string]any); ok {
+				for hk, hv := range hMap {
+					if vs, ok := hv.(string); ok {
+						headers[hk] = vs
+					}
+				}
+			}
+		}
+	}
+
+	liveURL, liveKey, liveNPM, liveHeaders := g.resolveOpenCodeLiveModelConfig(providerID, "")
+	if baseURL == "" && liveURL != "" {
+		baseURL = liveURL
+	}
+	if baseURL == "" {
+		baseURL = defaultProviderBaseURLs[providerID]
+	}
+	if npm == "" && liveNPM != "" {
+		npm = liveNPM
+	}
+	if npm == "" {
+		switch effectiveProviderProtocol(providerID, "", baseURL) {
+		case "google":
+			npm = "@ai-sdk/google"
+		case "anthropic":
+			npm = "@ai-sdk/anthropic"
+		}
+	}
+	if g.isAuthorizedProviderBaseURL(providerID, baseURL, configuredBaseURL, liveURL) {
+		for hk, hv := range liveHeaders {
+			if _, exists := headers[hk]; !exists {
+				headers[hk] = hv
+			}
+		}
+		if apiKey == "" && liveKey != "" {
+			apiKey = liveKey
+		}
+	}
+	if apiKey == "" {
+		apiKey = g.resolveStoredProviderKey(providerID, baseURL)
+	}
+	if apiKey != "" {
+		apiKey = g.selectRotatedProviderKey(providerID, apiKey)
+	}
+	return baseURL, apiKey, npm, headers
+}
+
+func (g *Service) resolveOpenCodeLiveModelConfig(providerID, modelID string) (baseURL, apiKey, npm string, headers map[string]string) {
+	if !g.openCode.Available() || strings.TrimSpace(providerID) == "" {
+		return "", "", "", nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	var payload struct {
+		All []struct {
+			ID      string         `json:"id"`
+			Key     string         `json:"key"`
+			Options map[string]any `json:"options"`
+			Models  map[string]struct {
+				API struct {
+					URL string `json:"url"`
+					NPM string `json:"npm"`
+				} `json:"api"`
+				Headers map[string]any `json:"headers"`
+			} `json:"models"`
+		} `json:"all"`
+	}
+	if g.openCode.JSON(ctx, http.MethodGet, "/provider", nil, nil, &payload) != nil {
+		return "", "", "", nil
+	}
+	headers = map[string]string{}
+	for _, p := range payload.All {
+		if p.ID != providerID {
+			continue
+		}
+		if optURL, ok := p.Options["baseURL"].(string); ok {
+			baseURL = strings.TrimSpace(optURL)
+		}
+		if p.Key != "" {
+			apiKey = strings.TrimSpace(p.Key)
+		} else if optKey, ok := p.Options["apiKey"].(string); ok && optKey != "" {
+			apiKey = strings.TrimSpace(optKey)
+		}
+		if hMap, ok := p.Options["headers"].(map[string]any); ok {
+			for hk, hv := range hMap {
+				if vs, ok := hv.(string); ok && strings.TrimSpace(hk) != "" && strings.TrimSpace(vs) != "" {
+					headers[strings.TrimSpace(hk)] = strings.TrimSpace(vs)
+				}
+			}
+		}
+		if modelID != "" {
+			if m, ok := p.Models[modelID]; ok {
+				if strings.TrimSpace(m.API.URL) != "" {
+					baseURL = strings.TrimSpace(m.API.URL)
+				}
+				if strings.TrimSpace(m.API.NPM) != "" {
+					npm = strings.TrimSpace(m.API.NPM)
+				}
+				for hk, hv := range m.Headers {
+					if vs, ok := hv.(string); ok && strings.TrimSpace(hk) != "" && strings.TrimSpace(vs) != "" {
+						headers[strings.TrimSpace(hk)] = strings.TrimSpace(vs)
+					}
+				}
+			}
+		}
+		break
+	}
+	return baseURL, apiKey, npm, headers
+}
+
+func (g *Service) resolveStoredProviderKey(providerID, requestedBaseURL string) string {
+	if providerID == officialProviderID && g.officialBlocked.Load() {
+		return ""
+	}
+	openCodeBaseURL, openCodeKey, _, _ := g.resolveOpenCodeLiveModelConfig(providerID, "")
+
+	if !g.isAuthorizedProviderBaseURL(providerID, requestedBaseURL, openCodeBaseURL) {
+		return ""
+	}
+	if openCodeKey != "" {
+		return openCodeKey
+	}
+
+	// 2. Check .hoxi/models.json configured options
+	if hProv, ok := g.loadHoxiProvidersMap()[providerID].(map[string]interface{}); ok {
+		if opts, ok := hProv["options"].(map[string]interface{}); ok {
+			if optKey, ok := opts["apiKey"].(string); ok && strings.TrimSpace(optKey) != "" {
+				return strings.TrimSpace(optKey)
+			}
+		}
+	}
+
+	// 3. Fallback to Hoxi engine auth.json or ~/.local/share/opencode/auth.json (supports both API key and OAuth access token)
+	if home, err := os.UserHomeDir(); err == nil {
+		for _, authPath := range []string{
+			hoxipaths.EngineAuthPath(),
+			filepath.Join(home, ".local", "share", "opencode", "auth.json"),
+		} {
+			if data, err := os.ReadFile(authPath); err == nil {
+				var authMap map[string]struct {
+					Key    string `json:"key"`
+					Access string `json:"access"`
+				}
+				if json.Unmarshal(data, &authMap) == nil {
+					if entry, ok := authMap[providerID]; ok {
+						if strings.TrimSpace(entry.Key) != "" {
+							return strings.TrimSpace(entry.Key)
+						}
+						if strings.TrimSpace(entry.Access) != "" {
+							return strings.TrimSpace(entry.Access)
+						}
+					}
+				}
+			}
+		}
+	}
+	return ""
+}

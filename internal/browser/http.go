@@ -1,0 +1,500 @@
+package browser
+
+import (
+	"context"
+	"crypto/subtle"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"io"
+	"mime"
+	"net"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+)
+
+type Action struct {
+	RequestID         string   `json:"requestID,omitempty"`
+	Accept            *bool    `json:"accept,omitempty"`
+	Action            string   `json:"action"`
+	Async             bool     `json:"async,omitempty"`
+	URL               string   `json:"url,omitempty"`
+	Selector          string   `json:"selector,omitempty"`
+	Text              string   `json:"text,omitempty"`
+	Key               string   `json:"key,omitempty"`
+	X                 float64  `json:"x,omitempty"`
+	Y                 float64  `json:"y,omitempty"`
+	DeltaX            float64  `json:"deltaX,omitempty"`
+	DeltaY            float64  `json:"deltaY,omitempty"`
+	TabID             string   `json:"tabID,omitempty"`
+	Manual            *bool    `json:"manual,omitempty"`
+	Window            *bool    `json:"window,omitempty"`
+	Width             *int     `json:"width,omitempty"`
+	Height            *int     `json:"height,omitempty"`
+	DeviceScaleFactor *float64 `json:"deviceScaleFactor,omitempty"`
+	// FullPage makes resize capture the whole document: the emulated viewport
+	// height follows the page content instead of the panel height.
+	FullPage    *bool    `json:"fullPage,omitempty"`
+	ScaleFactor *float64 `json:"scaleFactor,omitempty"`
+	// UI-only pointer input: phase down/move/up/cancel, button
+	// left/middle/right, clickCount 1..3, CDP modifier bits Alt=1 Ctrl=2 Meta=4 Shift=8.
+	Phase      string `json:"phase,omitempty"`
+	Button     string `json:"button,omitempty"`
+	ClickCount int    `json:"clickCount,omitempty"`
+	Modifiers  int    `json:"modifiers,omitempty"`
+}
+
+type Tab struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
+	URL   string `json:"url"`
+}
+
+type State struct {
+	Navigation *Navigation `json:"navigation,omitempty"`
+	Mode       string      `json:"mode,omitempty"`
+	URL        string      `json:"url"`
+	Title      string      `json:"title"`
+	Tabs       []Tab       `json:"tabs"`
+	TabID      string      `json:"tabID"`
+	Manual     bool        `json:"manual"`
+	// Set on a scope that no longer exists because its Chrome went unused
+	// for IdleMinutes, until a new scope is created for the same key.
+	IdleClosed    bool   `json:"idleClosed,omitempty"`
+	IdleMinutes   int    `json:"idleMinutes,omitempty"`
+	StoreID       string `json:"storeId,omitempty"`
+	StoreProxy    string `json:"storeProxy,omitempty"`
+	StoreTimezone string `json:"storeTimezone,omitempty"`
+	StoreLocale   string `json:"storeLocale,omitempty"`
+}
+
+func emptyState() State { return State{Tabs: []Tab{}} }
+
+func (s *Service) RegisterRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("/api/hoxi/browser/workflows", s.serveWorkflows)
+	mux.HandleFunc("/api/hoxi/browser/diagnostics", s.serveDiagnostics)
+	for _, path := range []string{"upload", "download-save", "download-open", "download-reveal", "download-cancel"} {
+		mux.HandleFunc("/api/hoxi/browser/"+path, s.serveTransfer)
+	}
+	mux.HandleFunc("/api/hoxi/browser/extension", s.ServeExtension)
+	mux.HandleFunc("/api/hoxi/browser/stream", s.serveStream)
+	for _, path := range []string{"state", "frame", "action"} {
+		mux.HandleFunc("/api/hoxi/browser/"+path, s.serveHTTP)
+	}
+}
+
+func localHost(host string) bool {
+	return host == "localhost" || wailsHost(host) || host == "127.0.0.1" || host == "::1"
+}
+
+func wailsHost(host string) bool {
+	return host == "wails" || host == "wails.localhost" || host == "app.wails.localhost"
+}
+
+func trustedAuthority(authority string) bool {
+	u, err := url.Parse("http://" + authority)
+	if err != nil || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || !localHost(u.Hostname()) {
+		return false
+	}
+	if strings.Contains(authority, ":") && !strings.HasPrefix(authority, "[") {
+		if _, _, err := net.SplitHostPort(authority); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
+func validOrigin(u *url.URL) bool {
+	return u.User == nil && u.Host != "" && u.Path == "" && u.RawQuery == "" && !u.ForceQuery && u.Fragment == "" && u.Opaque == ""
+}
+
+func (s *Service) trustedUI(origin, authority string) (bool, bool, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	configuredHost := false
+	for allowed := range s.uiOrigins {
+		u, _ := url.Parse(allowed)
+		if u.Host == authority {
+			configuredHost = true
+		}
+	}
+	u, err := url.Parse(origin)
+	nativeOrigin := err == nil && validOrigin(u) && u.Scheme == "wails" && wailsHost(u.Host)
+	nativeHost := wailsHost(authority) || s.uiOrigins["wails://"+authority]
+	return nativeOrigin || s.uiOrigins[origin], configuredHost, nativeHost
+}
+
+func (s *Service) authenticate(r *http.Request) (bool, error) {
+	if !trustedAuthority(r.Host) {
+		return false, errors.New("untrusted Host")
+	}
+	origin := r.Header.Get("Origin")
+	allowedOrigin, configuredHost, native := s.trustedUI(origin, r.Host)
+	if origin != "" && !allowedOrigin {
+		return false, errors.New("untrusted Origin")
+	}
+	agentHeader, auth := r.Header.Get("X-Hoxi-Agent"), r.Header.Get("Authorization")
+	if agentHeader != "" || auth != "" {
+		// Browser-originated requests can never acquire agent privileges.
+		if origin != "" || r.Header.Get("Sec-Fetch-Site") != "" || r.Header.Get("X-Hoxi-Browser") != "" {
+			return false, errors.New("agent requests must not originate in a browser")
+		}
+		s.mu.Lock()
+		token := s.token
+		s.mu.Unlock()
+		if agentHeader != "true" || token == "" || subtle.ConstantTimeCompare([]byte(auth), []byte("Bearer "+token)) != 1 {
+			return false, errors.New("invalid agent credentials")
+		}
+		return true, nil
+	}
+	if origin == "" {
+		site := r.Header.Get("Sec-Fetch-Site")
+		if !native && site == "" {
+			if ref, err := url.Parse(r.Header.Get("Referer")); err == nil && ref.Scheme == "wails" {
+				allowedRef, _, refNative := s.trustedUI(ref.Scheme+"://"+ref.Host, ref.Host)
+				native = allowedRef && refNative
+			}
+		}
+		if r.Header.Get("X-Hoxi-Browser") != "true" || (!native && !configuredHost) || (site != "same-origin" && !(site == "" && native)) {
+			return false, errors.New("UI Origin or trusted browser request required")
+		}
+	}
+	return false, nil
+}
+
+func writeJSON(w http.ResponseWriter, status int, value any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(value)
+}
+
+func fail(w http.ResponseWriter, status int, err error) {
+	writeJSON(w, status, map[string]string{"error": err.Error()})
+}
+
+func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	agent, err := s.authenticate(r)
+	if err != nil {
+		fail(w, 403, err)
+		return
+	}
+	path := strings.TrimPrefix(r.URL.Path, "/api/hoxi/browser/")
+	method := http.MethodGet
+	if path == "action" {
+		method = http.MethodPost
+	}
+	if r.Method != method {
+		w.Header().Set("Allow", method)
+		fail(w, 405, errors.New("method not allowed"))
+		return
+	}
+	key, callerSession, err := s.requestScopeWithCaller(r)
+	if err != nil {
+		fail(w, 400, err)
+		return
+	}
+	var action Action
+	if path == "action" {
+		media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+		if err != nil || media != "application/json" {
+			fail(w, 415, errors.New("application/json required"))
+			return
+		}
+		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+		decoder.DisallowUnknownFields()
+		if err = decoder.Decode(&action); err != nil {
+			fail(w, 400, err)
+			return
+		}
+		if err = decoder.Decode(new(any)); err != io.EOF {
+			fail(w, 400, errors.New("one JSON object required"))
+			return
+		}
+		if err = validateAction(action, agent); err != nil {
+			fail(w, 400, err)
+			return
+		}
+		if action.Window != nil && !*action.Window && callerSession != "" && key.session != callerSession {
+			if rawKey, rawErr := requestScope(r); rawErr == nil {
+				key = scopeKey{directory: rawKey.directory, session: callerSession}
+			}
+		}
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	stopSvc := context.AfterFunc(s.ctx, cancel)
+	defer stopSvc()
+	defer cancel()
+	// Pointer input only reaches a page the inspector already shows; read-only
+	// probes (snapshot/screenshot) only inspect an already-open browser. Neither
+	// reserves a scope nor cold-starts Chrome at about:blank.
+	liveInput := isLiveInputAction(action.Action)
+	readOnlyProbe := action.Action == "snapshot" || action.Action == "screenshot"
+	canColdStart := action.Action == "navigate" || action.Action == "tab_new"
+	reserveScope := path == "action" && (canColdStart || action.Action == "control" || action.Action == "mode" || action.Action == "resize" || action.Action == "pair")
+	sc, err := s.acquire(ctx, key, reserveScope)
+	if err != nil {
+		fail(w, 503, err)
+		return
+	}
+	if sc == nil {
+		if path == "frame" {
+			fail(w, 404, errors.New("browser not started"))
+			return
+		}
+		if path == "action" && action.Action != "close" && !liveInput && !readOnlyProbe {
+			fail(w, 409, errors.New("browser not started; navigate to a URL first"))
+			return
+		}
+		writeJSON(w, 200, s.idleState(key))
+		return
+	}
+	// Every request counts as use, including the inspector's state poll: it
+	// runs only while the panel shows this session in a visible window.
+	defer func() {
+		sc.lastUsed = s.now()
+		<-sc.gate
+	}()
+	if agent && sc.manual {
+		fail(w, 403, errors.New("manual control is active"))
+		return
+	}
+	if path == "action" && action.Action == "close" {
+		s.remove(key, sc)
+		state := emptyState()
+		if s.defaultModeWindow() {
+			state.Mode = "window"
+		}
+		s.applyStoreMetadata(key.session, key.directory, &state)
+		writeJSON(w, 200, state)
+		return
+	}
+	if path == "action" && action.Action == "pair" {
+		s.servePair(w, sc)
+		return
+	}
+	if sc.pairToken != "" && path == "action" && action.Action != "resize" && action.Action != "viewport_reset" && action.Action != "control" && action.Action != "mode" {
+		fail(w, 409, errors.New("Chrome pairing pending; connect the extension or cancel pairing first"))
+		return
+	}
+	if sc.extension != nil {
+		if path == "action" && action.Action == "mode" {
+			sc.extension.close()
+			sc.extension = nil
+			sc.window = *action.Window
+		} else {
+			if path == "action" && action.Action == "control" {
+				sc.manual = *action.Manual
+			}
+			s.serveExtensionAction(w, ctx, sc, path, action)
+			return
+		}
+	}
+	if sc.browser != nil && sc.browser.Err() != nil {
+		sc.resetBrowser()
+	}
+	var coldStarted bool
+	if path == "action" && action.Action == "control" {
+		sc.manual = *action.Manual
+	} else if path == "action" && action.Action == "mode" {
+		if *action.Window && !sc.window && callerSession != "" && key.session == callerSession && s.hasUnifiedWindowScope(callerSession, key.directory) {
+			s.remove(key, sc)
+			state := emptyState()
+			state.Mode = "window"
+			writeJSON(w, 200, state)
+			return
+		}
+		if sc.window != *action.Window {
+			if sc.browser != nil {
+				sc.resetBrowser()
+			}
+			sc.window = *action.Window
+		}
+		sc.pairToken = ""
+	} else if path == "action" && action.Action == "resize" {
+		scale := 1.0
+		if action.DeviceScaleFactor != nil {
+			scale = *action.DeviceScaleFactor
+		}
+		fullPage := action.FullPage != nil && *action.FullPage
+		// Full page replaces the requested height with the measured content
+		// height, so only width/scale changes can invalidate the stream here.
+		if sc.width != *action.Width || sc.scale != scale || (!fullPage && sc.height != *action.Height) {
+			sc.stopStream()
+		}
+		sc.fullPage = fullPage
+		sc.width, sc.height = *action.Width, *action.Height
+		sc.scale = scale
+	} else if path == "action" && !liveInput && !readOnlyProbe {
+		if sc.browser == nil && !canColdStart {
+			fail(w, 409, errors.New("browser not started; navigate to a URL first"))
+			return
+		}
+		if action.Window != nil && sc.browser == nil {
+			sc.window = *action.Window
+		}
+		wasStopped := sc.browser == nil
+		if err = sc.start(ctx); err != nil {
+			s.remove(key, sc)
+			fail(w, 502, err)
+			return
+		}
+		coldStarted = wasStopped
+		if wasStopped && sc.window && !agent {
+			_ = sc.focusWindow(ctx)
+		}
+	}
+	if sc.browser == nil {
+		if path == "frame" {
+			fail(w, 404, errors.New("browser not started"))
+			return
+		}
+		state := emptyState()
+		state.Manual = sc.manual
+		if sc.window {
+			state.Mode = "window"
+		}
+		s.applyStoreMetadata(sc.sessionID, sc.directory, &state)
+		if sc.pairToken != "" {
+			resp := map[string]any{"tabs": []Tab{}, "tabID": "", "url": "", "title": "", "manual": sc.manual, "pairing": true}
+			if state.Mode != "" {
+				resp["mode"] = state.Mode
+			}
+			if state.StoreID != "" {
+				resp["storeId"] = state.StoreID
+			}
+			if state.StoreProxy != "" {
+				resp["storeProxy"] = state.StoreProxy
+			}
+			if state.StoreTimezone != "" {
+				resp["storeTimezone"] = state.StoreTimezone
+			}
+			if state.StoreLocale != "" {
+				resp["storeLocale"] = state.StoreLocale
+			}
+			writeJSON(w, 200, resp)
+			return
+		}
+		writeJSON(w, 200, state)
+		return
+	}
+	opctx, opcancel := context.WithCancel(sc.browser)
+	stop := context.AfterFunc(ctx, opcancel)
+	defer stop()
+	defer opcancel()
+	if path != "action" && callerSession != "" {
+		sc.prepareCallerTab(opctx, callerSession, Action{})
+	}
+	if path == "frame" {
+		if sc.tabID == "" {
+			if _, err := sc.state(opctx); err != nil {
+				fail(w, 502, err)
+				return
+			}
+		}
+		image, err := sc.capture(opctx)
+		if err != nil {
+			if _, stateErr := sc.state(opctx); stateErr == nil && sc.tabID != "" {
+				image, err = sc.capture(opctx)
+			}
+		}
+		if err != nil {
+			fail(w, 502, err)
+			return
+		}
+		w.Header().Set("Content-Type", "image/jpeg")
+		_, _ = w.Write(image)
+		return
+	}
+	var extra map[string]any
+	if path == "action" && action.Action != "control" && action.Action != "mode" {
+		if coldStarted && action.Action == "tab_new" {
+			action.Action = "navigate"
+			if strings.TrimSpace(action.URL) == "" {
+				action.URL = "about:blank"
+			}
+		}
+		if sc.tabID == "" && action.Action != "tab_new" && action.Action != "tab_select" && action.Action != "tab_close" && action.Action != "focus" {
+			if _, err = sc.state(opctx); err != nil {
+				fail(w, 502, err)
+				return
+			}
+		}
+		var hasTab bool
+		action, hasTab = sc.resolveCallerAction(opctx, callerSession, action, agent)
+		if !hasTab {
+			if readOnlyProbe {
+				idle := emptyState()
+				idle.Manual = sc.manual
+				if sc.window {
+					idle.Mode = "window"
+				}
+				s.applyStoreMetadata(sc.sessionID, sc.directory, &idle)
+				writeJSON(w, 200, idle)
+				return
+			}
+			fail(w, 409, errors.New("no browser tab open for this session; navigate to a URL first"))
+			return
+		}
+		prevTab := sc.tabID
+		extra, err = sc.perform(opctx, action)
+		if err != nil && !liveInput && action.Action != "tab_new" && action.Action != "tab_select" && action.Action != "tab_close" {
+			if _, stateErr := sc.state(opctx); stateErr == nil && sc.tabID != "" && sc.tabID != prevTab {
+				extra, err = sc.perform(opctx, action)
+			}
+		}
+		if err != nil {
+			fail(w, 502, err)
+			return
+		}
+		if callerSession != "" && sc.tabID != "" && (action.Action == "navigate" || action.Action == "tab_new" || action.Action == "tab_select") {
+			sc.bindCallerTab(callerSession, sc.tabID)
+		}
+	}
+	state, err := sc.state(opctx)
+	if err != nil {
+		if path == "state" && sc.browser != nil && sc.browser.Err() != nil {
+			sc.resetBrowser()
+			fallback := emptyState()
+			fallback.Manual = sc.manual
+			if sc.window {
+				fallback.Mode = "window"
+			}
+			s.applyStoreMetadata(sc.sessionID, sc.directory, &fallback)
+			writeJSON(w, 200, fallback)
+			return
+		}
+		fail(w, 502, err)
+		return
+	}
+	result := map[string]any{"url": state.URL, "title": state.Title, "tabs": state.Tabs, "tabID": state.TabID, "manual": state.Manual}
+	if state.Mode != "" {
+		result["mode"] = state.Mode
+	}
+	if state.Navigation != nil {
+		result["navigation"] = state.Navigation
+	}
+	if state.StoreID != "" {
+		result["storeId"] = state.StoreID
+	}
+	if state.StoreProxy != "" {
+		result["storeProxy"] = state.StoreProxy
+	}
+	if state.StoreTimezone != "" {
+		result["storeTimezone"] = state.StoreTimezone
+	}
+	if state.StoreLocale != "" {
+		result["storeLocale"] = state.StoreLocale
+	}
+	for k, v := range extra {
+		if b, ok := v.([]byte); ok {
+			result[k] = base64.StdEncoding.EncodeToString(b)
+		} else {
+			result[k] = v
+		}
+	}
+	writeJSON(w, 200, result)
+}

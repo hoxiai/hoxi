@@ -1,0 +1,616 @@
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import fs from "node:fs";
+import http from "node:http";
+import os from "node:os";
+import path from "node:path";
+import { StringDecoder } from "node:string_decoder";
+import { test } from "node:test";
+import HoxiSandboxPlugin from "./sandbox_plugin.mjs";
+
+function hash(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+// The stop trap follows every tag; it must match openCodeStopTrap in
+// internal/runner.
+const TRAP = String.raw`trap 'printf "\n[Command stopped by user]\n"; exit 130' USR1; trap : EXIT`;
+
+function tagged(sessionID, callID, command) {
+  return `# hoxi-stop:${sessionID}:${callID}\n${TRAP}\n${command}`;
+}
+
+function fixture(network) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "hoxi-sandbox-test-"));
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "hoxi-workspace-test-"));
+  const profilePath = path.join(root, "profile.sb");
+  fs.writeFileSync(profilePath, "(version 1)");
+  fs.writeFileSync(
+    path.join(root, hash("ses_sandbox") + ".json"),
+    JSON.stringify({ enabled: true, network, workspace, profilePath })
+  );
+  process.env.HOXI_SANDBOX_ROOT = root;
+  return { root, workspace, profilePath };
+}
+
+test("sandbox plugin", async (t) => {
+  const previous = process.env.HOXI_SANDBOX_ROOT;
+  const previousShell = process.env.SHELL;
+  process.env.SHELL = "/bin/zsh";
+  t.after(() => {
+    if (previous === undefined) delete process.env.HOXI_SANDBOX_ROOT;
+    else process.env.HOXI_SANDBOX_ROOT = previous;
+    if (previousShell === undefined) delete process.env.SHELL;
+    else process.env.SHELL = previousShell;
+  });
+
+  await t.test("wraps bash in the generated profile", async () => {
+    const { workspace, profilePath } = fixture("deny");
+    const hooks = await HoxiSandboxPlugin();
+    const output = { args: { command: "echo 'hi' > out.txt" } };
+    await hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_sandbox", callID: "c1" }, output);
+    // The stop marker is the first line of the final command, after wrapping.
+    assert.ok(output.args.command.startsWith(`# hoxi-stop:ses_sandbox:c1\n${TRAP}\n'/usr/bin/sandbox-exec'`));
+    assert.ok(output.args.command.includes("'/usr/bin/sandbox-exec' -f "));
+    assert.ok(output.args.command.includes(profilePath));
+    assert.ok(output.args.command.includes("/bin/sh -c "));
+    assert.ok(output.args.command.includes("echo '\\''hi'\\'' > out.txt"));
+    assert.ok(output.args.command.endsWith("'"));
+  });
+
+  await t.test("confines file writes to the workspace", async () => {
+    const { workspace } = fixture("deny");
+    const hooks = await HoxiSandboxPlugin();
+    const inside = path.join(workspace, "src", "file.ts");
+    await hooks["tool.execute.before"](
+      { tool: "write", sessionID: "ses_sandbox", callID: "c2" },
+      { args: { filePath: inside } }
+    );
+    await assert.rejects(
+      hooks["tool.execute.before"](
+        { tool: "edit", sessionID: "ses_sandbox", callID: "c3" },
+        { args: { filePath: "/etc/hosts" } }
+      ),
+      /outside the session workspace/
+    );
+    await assert.rejects(
+      hooks["tool.execute.before"](
+        { tool: "write", sessionID: "ses_sandbox", callID: "c4" },
+        { args: { filePath: path.join(workspace, ".git", "config") } }
+      ),
+      /git metadata/
+    );
+  });
+
+  await t.test("confines multiedit and apply_patch targets to the workspace", async () => {
+    const { workspace } = fixture("deny");
+    const hooks = await HoxiSandboxPlugin();
+    await hooks["tool.execute.before"](
+      { tool: "multiedit", sessionID: "ses_sandbox", callID: "p1" },
+      { args: { filePath: path.join(workspace, "a.ts"), edits: [] } }
+    );
+    const patch = (target) => `*** Begin Patch\n*** Update File: ${target}\n@@\n-a\n+b\n*** End Patch`;
+    await hooks["tool.execute.before"](
+      { tool: "apply_patch", sessionID: "ses_sandbox", callID: "p2" },
+      { args: { patchText: patch("src/a.ts") } }
+    );
+    await assert.rejects(
+      hooks["tool.execute.before"](
+        { tool: "apply_patch", sessionID: "ses_sandbox", callID: "p3" },
+        { args: { patchText: patch("src/a.ts") + `\n*** Add File: /etc/evil` } }
+      ),
+      /outside the session workspace/
+    );
+    await assert.rejects(
+      hooks["tool.execute.before"](
+        { tool: "apply_patch", sessionID: "ses_sandbox", callID: "p4" },
+        { args: { patchText: "garbage" } }
+      ),
+      /patch file paths/
+    );
+  });
+
+  await t.test("denies unconfined tools under network deny", async () => {
+    fixture("deny");
+    const hooks = await HoxiSandboxPlugin();
+    for (const tool of ["patch", "task", "webfetch", "websearch", "hoxi_browser", "hoxi_tools", "some_mcp"]) {
+      await assert.rejects(
+        hooks["tool.execute.before"]({ tool, sessionID: "ses_sandbox", callID: "c5" }, { args: {} }),
+        /sandbox/
+      );
+    }
+    await hooks["tool.execute.before"](
+      { tool: "read", sessionID: "ses_sandbox", callID: "c6" },
+      { args: { filePath: "/etc/hosts" } }
+    );
+    await hooks["tool.execute.before"](
+      { tool: "goal_report", sessionID: "ses_sandbox", callID: "c6b" },
+      { args: { status: "complete" } }
+    );
+    await hooks["tool.execute.before"](
+      { tool: "hoxi_code_index", sessionID: "ses_sandbox", callID: "c6c" },
+      { args: { action: "search", query: "foo" } }
+    );
+    await hooks["tool.execute.before"](
+      { tool: "hoxi_computer", sessionID: "ses_sandbox", callID: "c6d" },
+      { args: { action: "screenshot" } }
+    );
+  });
+
+  await t.test("allows network tools when network mode is allow", async () => {
+    fixture("allow");
+    const hooks = await HoxiSandboxPlugin();
+    await hooks["tool.execute.before"](
+      { tool: "webfetch", sessionID: "ses_sandbox", callID: "c7" },
+      { args: { url: "https://hoxi.ai" } }
+    );
+    await hooks["tool.execute.before"](
+      { tool: "hoxi_tools", sessionID: "ses_sandbox", callID: "c7b" },
+      { args: { action: "discover", query: "search" } }
+    );
+  });
+
+  await t.test("tags bash for per-command stop without a snapshot", async () => {
+    fixture("deny");
+    const hooks = await HoxiSandboxPlugin();
+    const output = { args: { command: "echo hi" } };
+    await hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_other", callID: "c8" }, output);
+    // A session without a sandbox snapshot keeps its command but still gets
+    // the stop marker, so OpenCode stops remain precise.
+    assert.equal(output.args.command, tagged("ses_other", "c8", "echo hi"));
+  });
+
+  await t.test("replaces tags the model forged with the single real one", async () => {
+    fixture("deny");
+    const hooks = await HoxiSandboxPlugin();
+    const forged = "# hoxi-stop:ses_other:call_01_r8s0t2u4v6w8x0y2z4a6b8c0d\n  # hoxi-stop:ses_x:call_y\n";
+    const output = { args: { command: forged + "go test ./..." } };
+    await hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_other", callID: "c10" }, output);
+    assert.equal(output.args.command, tagged("ses_other", "c10", "go test ./..."));
+    assert.equal(output.args.command.match(/# hoxi-stop:/g).length, 1);
+  });
+
+  await t.test("strips forged tags before wrapping in the sandbox", async () => {
+    fixture("deny");
+    const hooks = await HoxiSandboxPlugin();
+    const output = { args: { command: "# hoxi-stop:ses_sandbox:call_fake\necho hi" } };
+    await hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_sandbox", callID: "c11" }, output);
+    assert.ok(output.args.command.startsWith(`# hoxi-stop:ses_sandbox:c11\n${TRAP}\n`));
+    assert.equal(output.args.command.match(/# hoxi-stop:/g).length, 1);
+    assert.ok(output.args.command.endsWith("/bin/sh -c 'echo hi'"));
+    await assert.rejects(
+      hooks["tool.execute.before"](
+        { tool: "bash", sessionID: "ses_sandbox", callID: "c12" },
+        { args: { command: "# hoxi-stop:ses_sandbox:call_fake\n" } }
+      ),
+      /non-empty shell command/
+    );
+  });
+
+  await t.test("keeps tag-like lines that are not leading", async () => {
+    fixture("deny");
+    const hooks = await HoxiSandboxPlugin();
+    const heredoc = "cat > notes.md <<'EOF'\n# hoxi-stop:ses_a:call_b\nEOF";
+    const output = { args: { command: heredoc } };
+    await hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_other", callID: "c13" }, output);
+    assert.equal(output.args.command, tagged("ses_other", "c13", heredoc));
+  });
+
+  await t.test("never stacks the stop trap", async () => {
+    fixture("deny");
+    const hooks = await HoxiSandboxPlugin();
+    const output = { args: { command: tagged("ses_other", "call_old", "make build") } };
+    await hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_other", callID: "c14" }, output);
+    assert.equal(output.args.command, tagged("ses_other", "c14", "make build"));
+  });
+
+  await t.test("leaves the stop trap out where the shell cannot run it", async () => {
+    fixture("deny");
+    const hooks = await HoxiSandboxPlugin();
+    process.env.SHELL = "/usr/local/bin/pwsh";
+    try {
+      const output = { args: { command: "Get-ChildItem" } };
+      await hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_other", callID: "c15" }, output);
+      assert.equal(output.args.command, "# hoxi-stop:ses_other:c15\nGet-ChildItem");
+    } finally {
+      process.env.SHELL = "/bin/zsh";
+    }
+  });
+
+  await t.test("strips tags from history sent to the model", async () => {
+    const hooks = await HoxiSandboxPlugin();
+    // A rejected call never completes, so its stored input keeps every tag.
+    const state = {
+      status: "error",
+      input: { command: `# hoxi-stop:ses_a:c1\n${TRAP}\n# hoxi-stop:ses_a:call_fake\ntrap : EXIT\nls`, description: "list" },
+      error: "rejected",
+    };
+    const bash = { id: "prt_1", type: "tool", tool: "bash", callID: "c1", state };
+    const legacy = {
+      id: "prt_legacy",
+      type: "tool",
+      tool: "bash",
+      callID: "c_legacy",
+      state: { status: "completed", input: { command: "trap : EXIT\ngit status" } },
+    };
+    const text = { id: "prt_2", type: "text", text: "# hoxi-stop:ses_a:c1" };
+    const read = { id: "prt_3", type: "tool", tool: "read", callID: "c2", state: { status: "completed", input: { filePath: "a" } } };
+    const pending = { id: "prt_4", type: "tool", tool: "bash", callID: "c3", state: { status: "pending", input: {} } };
+    const messages = [{ info: { role: "assistant" }, parts: [bash, legacy, text, read, pending] }];
+    await hooks["experimental.chat.messages.transform"]({}, { messages });
+    const cleaned = messages[0].parts[0];
+    assert.equal(cleaned.state.input.command, "ls");
+    assert.equal(cleaned.state.input.description, "list");
+    assert.equal(cleaned.state.error, "rejected");
+    assert.equal(cleaned.callID, "c1");
+    assert.equal(messages[0].parts[1].state.input.command, "git status");
+    // OpenCode's own objects are never mutated, only replaced.
+    assert.equal(state.input.command, `# hoxi-stop:ses_a:c1\n${TRAP}\n# hoxi-stop:ses_a:call_fake\ntrap : EXIT\nls`);
+    assert.equal(messages[0].parts[2], text);
+    assert.equal(messages[0].parts[3], read);
+    assert.equal(messages[0].parts[4], pending);
+    await hooks["experimental.chat.messages.transform"]({}, {});
+  });
+
+  await t.test("unwraps sandbox-exec from history and prevents recursive wrapping", async () => {
+    const { profilePath } = fixture("deny");
+    const hooks = await HoxiSandboxPlugin();
+    const first = { args: { command: "echo 'hi' > out.txt" } };
+    await hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_sandbox", callID: "c1" }, first);
+    const wrappedOnce = first.args.command;
+
+    // If the model echoes the wrapped command back on a subsequent step, it must not be double-wrapped.
+    const second = { args: { command: wrappedOnce } };
+    await hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_sandbox", callID: "c2" }, second);
+    assert.equal(second.args.command.match(/\/usr\/bin\/sandbox-exec/g).length, 1);
+    assert.ok(second.args.command.includes(profilePath));
+
+    // History transform strips both the stop marker/trap and the sandbox-exec wrapper, even when nested.
+    const nested = `# hoxi-stop:ses_sandbox:c2\n${TRAP}\n'/usr/bin/sandbox-exec' -f '${profilePath}' -- /bin/sh -c '${wrappedOnce.replace(/'/g, "'\\''")}'`;
+    const messages = [
+      {
+        info: { role: "assistant" },
+        parts: [{ id: "prt_nested", type: "tool", tool: "bash", callID: "c2", state: { status: "completed", input: { command: nested } } }],
+      },
+    ];
+    await hooks["experimental.chat.messages.transform"]({}, { messages });
+    assert.equal(messages[0].parts[0].state.input.command, "echo 'hi' > out.txt");
+  });
+
+  await t.test("exports only plugin functions", async () => {
+    // OpenCode calls every export of a plugin module as a plugin; exporting
+    // both a named and a default binding would run the hooks twice.
+    const mod = await import("./sandbox_plugin.mjs");
+    assert.deepEqual(Object.values(mod), [HoxiSandboxPlugin]);
+  });
+
+  await t.test("does not tag non-bash tools", async () => {
+    fixture("deny");
+    const hooks = await HoxiSandboxPlugin();
+    const inside = path.join(fixture("deny").workspace, "a.txt");
+    const output = { args: { filePath: inside } };
+    await hooks["tool.execute.before"]({ tool: "write", sessionID: "ses_tag", callID: "c9" }, output);
+    assert.deepEqual(output, { args: { filePath: inside } });
+  });
+
+  await t.test("stops repeated identical bash or read calls in the same turn and resets after file edit or new user turn", async () => {
+    const { workspace } = fixture("deny");
+    const hooks = await HoxiSandboxPlugin();
+
+    // 1. Consecutive identical bash calls trip on the 3rd call (and continue rejecting subsequent identical calls in a burst),
+    // even when unique callIDs or different descriptions are passed.
+    await hooks["tool.execute.before"](
+      { tool: "bash", sessionID: "ses_loop", callID: "call_1" },
+      { args: { command: "grep -rn 'super_store_id' .", description: "search 1" } }
+    );
+    await hooks["tool.execute.before"](
+      { tool: "bash", sessionID: "ses_loop", callID: "call_2" },
+      { args: { command: "grep -rn 'super_store_id' .", description: "search 2" } }
+    );
+    for (const cid of ["call_3", "call_4", "call_5"]) {
+      await assert.rejects(
+        hooks["tool.execute.before"](
+          { tool: "bash", sessionID: "ses_loop", callID: cid },
+          { args: { command: "grep -rn 'super_store_id' .", description: `search ${cid}` } }
+        ),
+        /Hoxi stopped a repeated tool call: bash/
+      );
+    }
+
+    // 2. Interleaving read-only calls without any file mutation still trips on the 3rd identical bash call.
+    await hooks["tool.execute.before"](
+      { tool: "bash", sessionID: "ses_interleaved", callID: "ic_1" },
+      { args: { command: "go test ./..." } }
+    );
+    await hooks["tool.execute.before"](
+      { tool: "read", sessionID: "ses_interleaved", callID: "ir_1" },
+      { args: { filePath: path.join(workspace, "a.go") } }
+    );
+    await hooks["tool.execute.before"](
+      { tool: "bash", sessionID: "ses_interleaved", callID: "ic_2" },
+      { args: { command: "go test ./..." } }
+    );
+    await hooks["tool.execute.before"](
+      { tool: "read", sessionID: "ses_interleaved", callID: "ir_2" },
+      { args: { filePath: path.join(workspace, "b.go") } }
+    );
+    await assert.rejects(
+      hooks["tool.execute.before"](
+        { tool: "bash", sessionID: "ses_interleaved", callID: "ic_3" },
+        { args: { command: "go test ./..." } }
+      ),
+      /Hoxi stopped a repeated tool call: bash/
+    );
+
+    // 3. A file edit resets non-consecutive repeat counts so re-running tests after each edit is allowed.
+    for (let i = 1; i <= 4; i++) {
+      await hooks["tool.execute.before"](
+        { tool: "edit", sessionID: "ses_productive", callID: `pe_${i}` },
+        { args: { filePath: path.join(workspace, "main.go"), oldString: `v${i}`, newString: `v${i + 1}` } }
+      );
+      await hooks["tool.execute.before"](
+        { tool: "bash", sessionID: "ses_productive", callID: `pt_${i}` },
+        { args: { command: "go test ./..." } }
+      );
+    }
+
+    // 4. Modifying a file via bash twice and reading the same file a 3rd time must be allowed.
+    const targetFile = path.join(workspace, "mod_via_bash.txt");
+    fs.writeFileSync(targetFile, "v1\n");
+    await hooks["tool.execute.before"](
+      { tool: "read", sessionID: "ses_bash_edit", callID: "be_r1" },
+      { args: { filePath: targetFile } }
+    );
+    await hooks["tool.execute.before"](
+      { tool: "bash", sessionID: "ses_bash_edit", callID: "be_b1" },
+      { args: { command: "./custom_ step_1" } }
+    );
+    fs.writeFileSync(targetFile, "v2\n");
+    await hooks["tool.execute.before"](
+      { tool: "read", sessionID: "ses_bash_edit", callID: "be_r2" },
+      { args: { filePath: targetFile } }
+    );
+    await hooks["tool.execute.before"](
+      { tool: "bash", sessionID: "ses_bash_edit", callID: "be_b2" },
+      { args: { command: "./custom_step_2" } }
+    );
+    fs.writeFileSync(targetFile, "v3\n");
+    await hooks["tool.execute.before"](
+      { tool: "read", sessionID: "ses_bash_edit", callID: "be_r3" },
+      { args: { filePath: targetFile } }
+    );
+
+    // 5. Repeated scroll actions with identical parameters move the viewport and must not be rejected.
+    for (let i = 1; i <= 5; i++) {
+      await hooks["tool.execute.before"](
+        { tool: "hoxi_computer", sessionID: "ses_scroll", callID: `sc_${i}` },
+        { args: { action: "scroll", direction: "down", amount: 500 } }
+      );
+    }
+
+    // 6. A new user message in messages.transform or session.idle event resets the turn guard.
+    await hooks["experimental.chat.messages.transform"](
+      {},
+      { messages: [{ info: { id: "msg_u_next", sessionID: "ses_loop", role: "user" }, parts: [] }] }
+    );
+    await hooks["tool.execute.before"](
+      { tool: "bash", sessionID: "ses_loop", callID: "call_next_1" },
+      { args: { command: "grep -rn 'super_store_id' ." } }
+    );
+    await hooks.event({ event: { type: "session.idle", properties: { sessionID: "ses_interleaved" } } });
+    await hooks["tool.execute.before"](
+      { tool: "bash", sessionID: "ses_interleaved", callID: "ic_after_idle" },
+      { args: { command: "go test ./..." } }
+    );
+  });
+
+  test("decodes Windows GBK/CP936 command output and mixed UTF-8 without corrupting valid UTF-8", () => {
+    const decode = HoxiSandboxPlugin._decodeWindowsOutputBuffer;
+    assert.equal(typeof decode, "function");
+
+    // 1. Pure GBK line ("Windows IP 配置\r\n" -> 配置 = C5 E4 D6 C3)
+    const gbkBuf = Buffer.from([
+      0x57, 0x69, 0x6e, 0x64, 0x6f, 0x77, 0x73, 0x20, 0x49, 0x50, 0x20, 0xc5, 0xe4, 0xd6, 0xc3, 0x0d, 0x0a,
+    ]);
+    assert.equal(decode(gbkBuf, gbkBuf.toString("utf8")), "Windows IP 配置\r\n");
+
+    // 2. Mixed UTF-8 line + GBK line
+    const utf8Line = Buffer.from("=== 中文标题 ===\n", "utf8");
+    const mixedBuf = Buffer.concat([utf8Line, gbkBuf]);
+    assert.equal(decode(mixedBuf, mixedBuf.toString("utf8")), "=== 中文标题 ===\nWindows IP 配置\r\n");
+
+    // 3. Valid UTF-8 containing literal U+FFFD replacement character must stay untouched
+    const literalFFFD = Buffer.from("Valid UTF-8 with \uFFFD literal\n", "utf8");
+    assert.equal(decode(literalFFFD, literalFFFD.toString("utf8")), "Valid UTF-8 with \uFFFD literal\n");
+
+    // 4. Incomplete trailing multi-byte UTF-8 sequence at chunk boundary is trimmed cleanly
+    const fullUTF8 = Buffer.from("Hello世界", "utf8");
+    const splitUTF8 = fullUTF8.subarray(0, fullUTF8.length - 1);
+    assert.equal(decode(splitUTF8, splitUTF8.toString("utf8")), "Hello世");
+
+    // 5. UTF-8 decoded as CP936/GBK Mojibake ("涓枃" -> "中文", "涓€" -> "一", "寮€" -> "开") is repaired in linear time
+    const repair = HoxiSandboxPlugin._repairWindowsMojibake;
+    assert.equal(typeof repair, "function");
+    const cp936Mojibake = new TextDecoder("gb18030").decode(Buffer.from("// 中文注释: 测试成功\n", "utf8"));
+    assert.notEqual(cp936Mojibake, "// 中文注释: 测试成功\n");
+    assert.equal(repair(cp936Mojibake), "// 中文注释: 测试成功\n");
+    assert.equal(repair("涓€个寮€始"), "一个开始");
+    assert.equal(repair("正常中文输出"), "正常中文输出");
+    assert.equal(repair("réécrire créée ää"), "réécrire créée ää");
+
+    const repeatedChinese = "中".repeat(3000);
+    const startMs = performance.now();
+    assert.equal(repair(repeatedChinese), repeatedChinese);
+    const elapsedMs = performance.now() - startMs;
+    assert.ok(elapsedMs < 100, `expected linear-time repair (< 100ms), took ${elapsedMs.toFixed(2)}ms`);
+
+    // 6. Valid UTF-8 buffers containing literal source strings like "涓€" or "娴嬭瘯" are never mutated during byte decoding
+    const validSourceLiteral = Buffer.from('const sample = "涓€"; // 娴嬭瘯\n', "utf8");
+    assert.equal(decode(validSourceLiteral, validSourceLiteral.toString("utf8")), 'const sample = "涓€"; // 娴嬭瘯\n');
+
+    // 7. Simulated Windows runtime monkey-patch must not recurse on unmappable bytes like 0xFF
+    const ensureWin = HoxiSandboxPlugin._ensureWindowsUTF8Runtime;
+    assert.equal(typeof ensureWin, "function");
+    ensureWin(true);
+    assert.equal(Buffer.from([0xff]).toString("utf8"), "\uFFFD");
+    assert.equal(new TextDecoder().decode(Uint8Array.of(0xff)), "\uFFFD");
+    assert.equal(new StringDecoder("utf8").write(Buffer.from([0xff])), "\uFFFD");
+    assert.equal(gbkBuf.toString("utf8"), "Windows IP 配置\r\n");
+    assert.equal(new TextDecoder().decode(gbkBuf), "Windows IP 配置\r\n");
+    assert.equal(new StringDecoder("utf8").write(gbkBuf), "Windows IP 配置\r\n");
+  });
+
+  await t.test("injects UTF-8 shell.env defaults and preserves raw tool outputs in tool.execute.after", async () => {
+    const hooks = await HoxiSandboxPlugin();
+    const envOut = { env: {} };
+    await hooks["shell.env"]({}, envOut);
+    assert.equal(envOut.env.PYTHONUTF8, "1");
+    assert.equal(envOut.env.PYTHONIOENCODING, "utf-8");
+    assert.equal(envOut.env.LANG, "C.UTF-8");
+
+    const readOut = {
+      output: 'const a = "涓€";\nconst b = "娴嬭瘯";\n',
+      metadata: { output: 'const a = "涓€";\nconst b = "娴嬭瘯";\n' },
+    };
+    await hooks["tool.execute.after"]({ tool: "read" }, readOut);
+    assert.equal(readOut.output, 'const a = "涓€";\nconst b = "娴嬭瘯";\n');
+    assert.equal(readOut.metadata.output, 'const a = "涓€";\nconst b = "娴嬭瘯";\n');
+  });
+});
+
+// Hoxi's on-demand route, faked: it confines commands with a substitution
+// and leaves the rest alone, and records what the plugin asked.
+async function fakeRoute(t, profile) {
+  const asked = [];
+  const server = http.createServer((req, res) => {
+    let body = "";
+    req.on("data", (chunk) => { body += chunk; });
+    req.on("end", () => {
+      const parsed = JSON.parse(body);
+      asked.push({ path: req.url, ...parsed });
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ profile: parsed.command.includes("$(") ? profile : "" }));
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const previous = process.env.HOXI_GATEWAY_URL;
+  process.env.HOXI_GATEWAY_URL = `http://127.0.0.1:${server.address().port}/`;
+  t.after(() => {
+    server.close();
+    if (previous === undefined) delete process.env.HOXI_GATEWAY_URL;
+    else process.env.HOXI_GATEWAY_URL = previous;
+  });
+  return asked;
+}
+
+test("on-demand sandbox", async (t) => {
+  const previousRoot = process.env.HOXI_SANDBOX_ROOT;
+  process.env.HOXI_SANDBOX_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "hoxi-sandbox-empty-"));
+  t.after(() => {
+    if (previousRoot === undefined) delete process.env.HOXI_SANDBOX_ROOT;
+    else process.env.HOXI_SANDBOX_ROOT = previousRoot;
+  });
+  const profile = "/tmp/hoxi-on-demand-test.sb";
+  const asked = await fakeRoute(t, profile);
+  const hooks = await HoxiSandboxPlugin({ directory: "/work/app" });
+  const run = async (command, callID) => {
+    const output = { args: { command } };
+    await hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_od", callID }, output);
+    return output.args.command;
+  };
+
+  await t.test("wraps a command Hoxi confines and tells it where it runs", async () => {
+    const command = 'for f in $(ls); do wc -l "$f"; done';
+    const final = await run(command, "od1");
+    assert.ok(final.startsWith(`# hoxi-stop:ses_od:od1\n`));
+    assert.ok(final.includes(`'/usr/bin/sandbox-exec' -f '${profile}' -- /bin/sh -c `));
+    const last = asked.at(-1);
+    assert.deepEqual(last, { path: "/api/hoxi/runner/sandbox/route", sessionID: "ses_od", directory: "/work/app", command });
+  });
+
+  await t.test("leaves a command Hoxi does not confine as it is", async () => {
+    const final = await run("git status", "od2");
+    assert.ok(!final.includes("sandbox-exec"));
+    assert.ok(final.endsWith("\ngit status"));
+  });
+
+  await t.test("never asks for a command the model marked unsandboxed", async () => {
+    const before = asked.length;
+    const command = "# hoxi:unsandboxed\nfor h in $(cat hosts); do ssh $h uptime; done";
+    const final = await run(command, "od3");
+    assert.equal(asked.length, before);
+    assert.ok(!final.includes("sandbox-exec"));
+    assert.ok(final.endsWith(command));
+  });
+
+  await t.test("explains a sandbox denial only for wrapped calls", async () => {
+    const denied = { output: "touch: ../x: Operation not permitted\n" };
+    await hooks["tool.execute.after"]({ tool: "bash", callID: "od1" }, denied);
+    assert.ok(denied.output.includes("# hoxi:unsandboxed"));
+    const again = { output: "touch: ../x: Operation not permitted\n" };
+    await hooks["tool.execute.after"]({ tool: "bash", callID: "od1" }, again);
+    assert.ok(!again.output.includes("[Hoxi]"), "the note is added once per call");
+    const plain = { output: "touch: ../x: Operation not permitted\n" };
+    await hooks["tool.execute.after"]({ tool: "bash", callID: "od2" }, plain);
+    assert.ok(!plain.output.includes("[Hoxi]"));
+    await run('for f in $(ls src); do wc -l "$f"; done', "od4");
+    const fine = { output: "3 a.txt\n" };
+    await hooks["tool.execute.after"]({ tool: "bash", callID: "od4" }, fine);
+    assert.equal(fine.output, "3 a.txt\n");
+  });
+
+  await t.test("runs unwrapped when Hoxi cannot be reached", async () => {
+    const savedURL = process.env.HOXI_GATEWAY_URL;
+    process.env.HOXI_GATEWAY_URL = "http://127.0.0.1:1/";
+    try {
+      const final = await run('for f in $(ls docs); do wc -l "$f"; done', "od5");
+      assert.ok(!final.includes("sandbox-exec"));
+    } finally {
+      process.env.HOXI_GATEWAY_URL = savedURL;
+    }
+  });
+
+  await t.test("a network-allow session sandbox tightens opaque commands to on-demand and falls back on unsandboxed", async () => {
+    const { workspace, profilePath } = fixture("allow");
+    const sessionHooks = await HoxiSandboxPlugin({ directory: workspace });
+
+    // Opaque command: tightened from session profilePath to on-demand profile so auto mode runs without asking.
+    const opaqueCmd = 'for f in $(ls); do wc -l "$f"; done';
+    const opaqueOut = { args: { command: opaqueCmd } };
+    await sessionHooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_sandbox", callID: "od6" }, opaqueOut);
+    assert.ok(opaqueOut.args.command.includes(`'/usr/bin/sandbox-exec' -f '${profile}' -- /bin/sh -c `));
+    assert.ok(!opaqueOut.args.command.includes(profilePath));
+    assert.deepEqual(asked.at(-1), {
+      path: "/api/hoxi/runner/sandbox/route",
+      sessionID: "ses_sandbox",
+      directory: workspace,
+      command: opaqueCmd,
+    });
+    const denied = { output: "curl: Operation not permitted\n" };
+    await sessionHooks["tool.execute.after"]({ tool: "bash", callID: "od6" }, denied);
+    assert.ok(denied.output.includes("# hoxi:unsandboxed"));
+
+    // Plain command: route offers nothing, session sandbox profilePath still confines it.
+    const plainOut = { args: { command: "git status" } };
+    await sessionHooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_sandbox", callID: "od7" }, plainOut);
+    assert.ok(plainOut.args.command.includes(profilePath));
+
+    // # hoxi:unsandboxed opts out of on-demand tightening (so Hoxi prompts) but NEVER escapes the session sandbox.
+    const before = asked.length;
+    const retryOut = { args: { command: `# hoxi:unsandboxed\n${opaqueCmd}` } };
+    await sessionHooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_sandbox", callID: "od8" }, retryOut);
+    assert.equal(asked.length, before);
+    assert.ok(retryOut.args.command.includes(profilePath));
+    assert.ok(!retryOut.args.command.includes(profile));
+  });
+
+  await t.test("a network-deny session sandbox keeps its stricter profile without asking the route", async () => {
+    const before = asked.length;
+    const { workspace, profilePath } = fixture("deny");
+    const sessionHooks = await HoxiSandboxPlugin({ directory: workspace });
+    const output = { args: { command: 'for f in $(ls); do wc -l "$f"; done' } };
+    await sessionHooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_sandbox", callID: "od9" }, output);
+    assert.ok(output.args.command.includes(profilePath));
+    assert.equal(asked.length, before);
+  });
+});

@@ -1,0 +1,273 @@
+name: Release Windows and Linux
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.2.1)"
+        required: true
+        default: "v0.2.1"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-windows:
+    name: "Windows: Build ${{ matrix.arch }} Client & Release"
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: web/package-lock.json
+
+      - name: Validate release version
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          VERSION="$(node scripts/release-artifact.mjs version "$RELEASE_TAG")"
+          echo "RELEASE_VERSION=$VERSION" >> "$GITHUB_ENV"
+          node -e '
+            const fs = require("node:fs");
+            const ver = process.argv[1];
+            const winVer = ver + ".0";
+            const info = JSON.parse(fs.readFileSync("build/windows/info.json", "utf8"));
+            info.fileVersion = winVer;
+            info.productVersion = winVer;
+            fs.writeFileSync("build/windows/info.json", JSON.stringify(info, null, 2) + "\n");
+            const wailsCfg = JSON.parse(fs.readFileSync("wails.json", "utf8"));
+            wailsCfg.info = wailsCfg.info || {};
+            wailsCfg.info.productVersion = ver;
+            fs.writeFileSync("wails.json", JSON.stringify(wailsCfg, null, 2) + "\n");
+          ' "$VERSION"
+
+      - name: Install frontend dependencies & Build web
+        shell: bash
+        env:
+          HOXI_WORK_TOKEN: ${{ secrets.HOXI_WORK_TOKEN }}
+        run: |
+          if [[ ! -d "../hoxi-work" && -n "${HOXI_WORK_TOKEN:-}" ]]; then
+            git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$HOXI_WORK_TOKEN" | base64 | tr -d '\r\n')" \
+              clone --depth 1 https://github.com/hoxiai/hoxi-work.git ../hoxi-work
+            test -f "../hoxi-work/web/index.tsx"
+          fi
+          if [[ -f "../hoxi-work/go/stage-host.sh" ]]; then
+            bash "../hoxi-work/go/stage-host.sh" "$PWD" >/dev/null
+          fi
+          if [[ -d "../hoxi-work/skills" ]]; then
+            for skill_src in ../hoxi-work/skills/*; do
+              [[ -d "${skill_src}" && -f "${skill_src}/SKILL.md" ]] || continue
+              target_dir="internal/skills/defaults/$(basename "${skill_src}")"
+              [[ -d "${target_dir}" ]] || cp -R "${skill_src}" "${target_dir}"
+            done
+          fi
+          npm --prefix web ci
+          npm --prefix web run build
+          grep -q "modeExecuteLabel" web/dist/assets/*.js
+
+      - name: Run Windows Go vet
+        run: go vet ./...
+
+      - name: Run Windows computer control regressions
+        run: go test ./internal/computer
+
+
+      - name: Install Wails v2
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.13.0
+
+      - name: Bundle OpenCode Runtime
+        shell: bash
+        run: |
+          OPENCODE_ZIP="opencode-windows-${{ matrix.arch }}.zip"
+          node scripts/opencode-lock.mjs verify
+          curl -fsSL -o "$OPENCODE_ZIP" "$(node scripts/opencode-lock.mjs url windows/${{ matrix.arch }})"
+          node scripts/opencode-lock.mjs verify-archive windows/${{ matrix.arch }} "$OPENCODE_ZIP"
+          mkdir -p build/bin build/windows/installer/tmp
+          7z e -y "$OPENCODE_ZIP" opencode.exe -obuild/bin/
+          cp -f build/bin/opencode.exe build/windows/installer/tmp/opencode.exe
+          rm -f "$OPENCODE_ZIP"
+          test -f build/bin/opencode.exe
+          test -f build/windows/installer/tmp/opencode.exe
+          echo "Bundled standalone opencode.exe into build/bin/ and build/windows/installer/tmp/"
+
+      - name: Bundle verified SQLite CLI
+        shell: bash
+        run: |
+          curl -fsSL -o sqlite-tools.zip "$(node scripts/sqlite-tools.mjs url ${{ matrix.arch }})"
+          node scripts/sqlite-tools.mjs verify sqlite-tools.zip ${{ matrix.arch }}
+          7z e -y sqlite-tools.zip sqlite3.exe -obuild/bin/
+          test -f build/bin/sqlite3.exe
+          cp -f build/bin/sqlite3.exe build/windows/installer/tmp/sqlite3.exe
+
+      - name: Build Windows Desktop App & Setup Installer
+        shell: bash
+        run: |
+          if ! command -v makensis >/dev/null 2>&1; then
+            if [[ -x "/c/Program Files (x86)/NSIS/makensis.exe" ]]; then
+              export PATH="/c/Program Files (x86)/NSIS:$PATH"
+            else
+              choco install nsis -y
+              export PATH="/c/Program Files (x86)/NSIS:$PATH"
+            fi
+          fi
+          command -v makensis
+          wails build -platform windows/${{ matrix.arch }} -nsis -s -m -nosyncgomod \
+            -ldflags "-X github.com/hoxiai/hoxi/internal/app.BuildVariant=release -X github.com/hoxiai/hoxi/internal/buildinfo.Version=${RELEASE_VERSION}"
+          # An x64 runner cannot execute an arm64 PE, so only run the built
+          # binary when the host architecture matches; otherwise assert the
+          # embedded ldflags version (via `go version -m`) and the PE machine.
+          HOST_ARCH="$(uname -m)"
+          if [[ "$HOST_ARCH" == "x86_64" && "${{ matrix.arch }}" == "amd64" ]] || [[ "$HOST_ARCH" == "aarch64" && "${{ matrix.arch }}" == "arm64" ]]; then
+            test "$(./build/bin/Hoxi.exe --version | tr -d '\r\n')" = "${RELEASE_VERSION}"
+          else
+            go version -m build/bin/Hoxi.exe | grep -q "buildinfo.Version=${RELEASE_VERSION}"
+          fi
+          cp -f build/windows/installer/tmp/opencode.exe build/bin/opencode.exe
+          cp -f build/windows/installer/tmp/sqlite3.exe build/bin/sqlite3.exe
+          test -f build/bin/opencode.exe
+          test -f build/bin/sqlite3.exe
+          node scripts/pe-arch.mjs verify ${{ matrix.arch }} build/bin/Hoxi.exe build/bin/opencode.exe build/bin/sqlite3.exe
+          test -f build/bin/Hoxi-${{ matrix.arch }}-installer.exe
+
+      - name: Package Windows Release Archives
+        shell: bash
+        run: |
+          SETUP_NAME="Hoxi-${RELEASE_VERSION}-windows-${{ matrix.arch }}-setup.exe"
+          ZIP_NAME="Hoxi-${RELEASE_VERSION}-windows-${{ matrix.arch }}.zip"
+          cd build/bin
+          mv -f Hoxi-${{ matrix.arch }}-installer.exe "$SETUP_NAME"
+          sha256sum "$SETUP_NAME" > "${SETUP_NAME}.sha256"
+          7z a "$ZIP_NAME" Hoxi.exe opencode.exe sqlite3.exe
+          sha256sum "$ZIP_NAME" > "${ZIP_NAME}.sha256"
+
+      - name: Upload Windows Artifact to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: |
+            build/bin/Hoxi-${{ env.RELEASE_VERSION }}-windows-${{ matrix.arch }}-setup.exe
+            build/bin/Hoxi-${{ env.RELEASE_VERSION }}-windows-${{ matrix.arch }}-setup.exe.sha256
+            build/bin/Hoxi-${{ env.RELEASE_VERSION }}-windows-${{ matrix.arch }}.zip
+            build/bin/Hoxi-${{ env.RELEASE_VERSION }}-windows-${{ matrix.arch }}.zip.sha256
+          fail_on_unmatched_files: true
+          draft: false
+          prerelease: false
+
+  build-linux:
+    name: "Linux: Build x64 Client & Release"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install Linux Desktop Dependencies (WebKit2GTK)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev || sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev
+
+      - name: Validate release version
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          VERSION="$(node scripts/release-artifact.mjs version "$RELEASE_TAG")"
+          echo "RELEASE_VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Install frontend dependencies & Build web
+        shell: bash
+        env:
+          HOXI_WORK_TOKEN: ${{ secrets.HOXI_WORK_TOKEN }}
+        run: |
+          if [[ ! -d "../hoxi-work" && -n "${HOXI_WORK_TOKEN:-}" ]]; then
+            git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$HOXI_WORK_TOKEN" | base64 | tr -d '\r\n')" \
+              clone --depth 1 https://github.com/hoxiai/hoxi-work.git ../hoxi-work
+            test -f "../hoxi-work/web/index.tsx"
+          fi
+          if [[ -f "../hoxi-work/go/stage-host.sh" ]]; then
+            bash "../hoxi-work/go/stage-host.sh" "$PWD" >/dev/null
+          fi
+          if [[ -d "../hoxi-work/skills" ]]; then
+            for skill_src in ../hoxi-work/skills/*; do
+              [[ -d "${skill_src}" && -f "${skill_src}/SKILL.md" ]] || continue
+              target_dir="internal/skills/defaults/$(basename "${skill_src}")"
+              [[ -d "${target_dir}" ]] || cp -R "${skill_src}" "${target_dir}"
+            done
+          fi
+          npm --prefix web ci
+          npm --prefix web run build
+          grep -q "modeExecuteLabel" web/dist/assets/*.js
+
+      - name: Install Wails v2
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.13.0
+
+      - name: Build Linux Desktop App
+        run: |
+          wails build -platform linux/amd64 -tags webkit2_41 -s -m -nosyncgomod \
+            -ldflags "-X github.com/hoxiai/hoxi/internal/app.BuildVariant=release -X github.com/hoxiai/hoxi/internal/buildinfo.Version=${RELEASE_VERSION}"
+
+      - name: Bundle OpenCode Runtime
+        run: |
+          OPENCODE_TAR="opencode-linux-x64.tar.gz"
+          node scripts/opencode-lock.mjs verify
+          curl -fsSL -o "$OPENCODE_TAR" "$(node scripts/opencode-lock.mjs url linux/amd64)"
+          node scripts/opencode-lock.mjs verify-archive linux/amd64 "$OPENCODE_TAR"
+          tar -xzf "$OPENCODE_TAR" -C build/bin/ opencode
+          rm -f "$OPENCODE_TAR"
+          chmod +x build/bin/opencode
+          test -x build/bin/opencode
+          echo "Bundled standalone opencode into build/bin/"
+
+      - name: Package Linux Release Archive
+        run: |
+          TAR_NAME="Hoxi-${RELEASE_VERSION}-linux-amd64.tar.gz"
+          cp build/linux/hoxi.desktop build/bin/
+          cp build/appicon.png build/bin/hoxi.png
+          cd build/bin
+          tar -czf "$TAR_NAME" Hoxi opencode hoxi.desktop hoxi.png
+
+      - name: Upload Linux Artifact to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: |
+            build/bin/Hoxi-${{ env.RELEASE_VERSION }}-linux-amd64.tar.gz
+          draft: false
+          prerelease: false

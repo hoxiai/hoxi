@@ -1,0 +1,512 @@
+package cli
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+
+	"github.com/hoxiai/hoxi/internal/handoff"
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
+	"github.com/hoxiai/hoxi/internal/runner"
+)
+
+// FileDiff represents a file diff item returned by /api/hoxi/worktree/diff.
+type FileDiff struct {
+	File      string `json:"file"`
+	Patch     string `json:"patch,omitempty"`
+	Additions int    `json:"additions"`
+	Deletions int    `json:"deletions"`
+	Status    string `json:"status,omitempty"`
+}
+
+// SandboxStatus represents the status returned by /api/hoxi/worktree/status.
+type SandboxStatus struct {
+	SessionID    string `json:"sessionID"`
+	Isolated     bool   `json:"isolated"`
+	Directory    string `json:"directory"`
+	Branch       string `json:"branch,omitempty"`
+	ChangedFiles int    `json:"changedFiles"`
+	Additions    int    `json:"additions"`
+	Deletions    int    `json:"deletions"`
+}
+
+// Client communicates with a local Hoxi Gateway over loopback HTTP/SSE.
+type Client struct {
+	baseURL  string
+	attached bool
+	token    string
+	http     *http.Client
+}
+
+// NewClient creates a loopback gateway client that bypasses system HTTP_PROXY.
+func NewClient(baseURL string, attached bool) *Client {
+	u := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if !strings.HasPrefix(u, "http://") && !strings.HasPrefix(u, "https://") {
+		u = "http://" + u
+	}
+	return &Client{
+		baseURL:  u,
+		attached: attached,
+		http: &http.Client{
+			Transport: &http.Transport{
+				Proxy: nil,
+				DialContext: (&net.Dialer{
+					Timeout:   5 * time.Second,
+					KeepAlive: 30 * time.Second,
+				}).DialContext,
+				IdleConnTimeout: 90 * time.Second,
+			},
+		},
+	}
+}
+
+func (c *Client) BaseURL() string              { return c.baseURL }
+func (c *Client) IsAttached() bool             { return c.attached }
+func (c *Client) Token() string                { return c.token }
+func (c *Client) Transport() http.RoundTripper { return c.http.Transport }
+
+// ConnectOrSpawn attaches to an already-running local Hoxi Gateway if reachable,
+// or boots an in-process headless gateway when none is running.
+func ConnectOrSpawn(
+	ctx context.Context,
+	preferredAddr string,
+	rootDir string,
+	bootHeadless HeadlessBootFunc,
+) (*Client, func(), error) {
+	trimmedPref := strings.TrimSpace(preferredAddr)
+	if !strings.EqualFold(trimmedPref, "headless") {
+		candidates := []string{}
+		if trimmedPref != "" {
+			candidates = append(candidates, trimmedPref)
+		}
+		if trimmedPref == "" || trimmedPref == hoxipaths.DefaultReleaseBridgeAddr || trimmedPref == hoxipaths.DefaultDevBridgeAddr {
+			for _, fallback := range []string{hoxipaths.DefaultReleaseBridgeAddr, hoxipaths.DefaultDevBridgeAddr} {
+				if fallback != trimmedPref {
+					candidates = append(candidates, fallback)
+				}
+			}
+		}
+
+		for _, addr := range candidates {
+			c := NewClient(addr, true)
+			if c.Healthy(ctx) {
+				c.ensureGatewayToken(ctx)
+				return c, func() {}, nil
+			}
+		}
+	}
+
+	if bootHeadless == nil {
+		return nil, nil, fmt.Errorf("no running Hoxi gateway found at %s and headless boot is unavailable", preferredAddr)
+	}
+	baseURL, cleanup, err := bootHeadless(ctx, rootDir)
+	if err != nil {
+		return nil, nil, err
+	}
+	c := NewClient(baseURL, false)
+	c.ensureGatewayToken(ctx)
+	return c, cleanup, nil
+}
+
+// Healthy checks whether the gateway responds 200 OK on /healthz.
+func (c *Client) Healthy(ctx context.Context) bool {
+	probeCtx, cancel := context.WithTimeout(ctx, 600*time.Millisecond)
+	defer cancel()
+	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, c.baseURL+"/healthz", nil)
+	if err != nil {
+		return false
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
+}
+
+// ensureGatewayToken captures the per-boot gateway token advertised by
+// /api/hoxi/bootstrap when the gateway requires one.
+func (c *Client) ensureGatewayToken(ctx context.Context) {
+	var boot struct {
+		GatewayToken string `json:"gatewayToken"`
+	}
+	if err := c.doJSON(ctx, http.MethodGet, "/api/hoxi/bootstrap", nil, &boot); err == nil && strings.TrimSpace(boot.GatewayToken) != "" {
+		c.token = strings.TrimSpace(boot.GatewayToken)
+	}
+}
+
+// CLIModelItem describes an available model across OpenCode or a native CLI runtime.
+type CLIModelItem struct {
+	ProviderID string `json:"providerID"`
+	ModelID    string `json:"modelID"`
+	Name       string `json:"name"`
+	Default    bool   `json:"default"`
+}
+
+func (c *Client) ListModels(ctx context.Context, directory, runtime string) ([]CLIModelItem, string, string, error) {
+	rt := NormalizeRuntime(runtime)
+	if rt != "opencode" {
+		var resp struct {
+			Default string `json:"default"`
+			Models  []struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"models"`
+		}
+		if err := c.doJSON(ctx, http.MethodGet, "/api/hoxi/runner/"+url.PathEscape(rt)+"/models", nil, &resp); err != nil {
+			return nil, "", "", err
+		}
+		items := make([]CLIModelItem, 0, len(resp.Models))
+		defModel := strings.TrimSpace(resp.Default)
+		for _, m := range resp.Models {
+			if strings.TrimSpace(m.ID) == "" {
+				continue
+			}
+			if defModel == "" {
+				defModel = m.ID
+			}
+			items = append(items, CLIModelItem{
+				ProviderID: rt,
+				ModelID:    m.ID,
+				Name:       firstNonEmpty(m.Name, m.ID),
+				Default:    m.ID == defModel,
+			})
+		}
+		return items, rt, defModel, nil
+	}
+
+	path := "/config/providers"
+	if strings.TrimSpace(directory) != "" {
+		path += "?directory=" + url.QueryEscape(directory)
+	}
+	var resp struct {
+		Providers []struct {
+			ID     string `json:"id"`
+			Name   string `json:"name"`
+			Source string `json:"source"`
+			Key    string `json:"key"`
+			Models map[string]struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"models"`
+		} `json:"providers"`
+		Default map[string]string `json:"default"`
+	}
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, &resp); err != nil {
+		return nil, "", "", err
+	}
+
+	defProvider := ""
+	defModel := ""
+	for _, p := range resp.Providers {
+		if p.ID == "opencode" && p.Source != "config" && p.Key == "" {
+			continue
+		}
+		if d := strings.TrimSpace(resp.Default[p.ID]); d != "" {
+			if _, ok := p.Models[d]; ok || len(p.Models) == 0 {
+				defProvider = p.ID
+				defModel = d
+				break
+			}
+		}
+		for mID := range p.Models {
+			defProvider = p.ID
+			defModel = mID
+			break
+		}
+		if defProvider != "" {
+			break
+		}
+	}
+	if defProvider == "" {
+		for _, p := range resp.Providers {
+			if d := strings.TrimSpace(resp.Default[p.ID]); d != "" {
+				defProvider = p.ID
+				defModel = d
+				break
+			}
+		}
+	}
+
+	var items []CLIModelItem
+	for _, p := range resp.Providers {
+		for mID, m := range p.Models {
+			items = append(items, CLIModelItem{
+				ProviderID: p.ID,
+				ModelID:    mID,
+				Name:       firstNonEmpty(m.Name, mID),
+				Default:    p.ID == defProvider && mID == defModel,
+			})
+		}
+	}
+	return items, defProvider, defModel, nil
+}
+
+func (c *Client) ResolveModel(ctx context.Context, directory, runtime, providerID, modelID string) (string, string) {
+	providerID = strings.TrimSpace(providerID)
+	modelID = strings.TrimSpace(modelID)
+	if providerID == "" && strings.Contains(modelID, "/") {
+		parts := strings.SplitN(modelID, "/", 2)
+		if strings.TrimSpace(parts[0]) != "" && strings.TrimSpace(parts[1]) != "" {
+			providerID = strings.TrimSpace(parts[0])
+			modelID = strings.TrimSpace(parts[1])
+		}
+	}
+	if NormalizeRuntime(runtime) != "opencode" {
+		if modelID != "" {
+			return providerID, modelID
+		}
+		_, _, defModel, err := c.ListModels(ctx, directory, runtime)
+		if err == nil && defModel != "" {
+			return providerID, defModel
+		}
+		return providerID, modelID
+	}
+	if providerID != "" && modelID != "" {
+		return providerID, modelID
+	}
+	items, defProv, defMod, err := c.ListModels(ctx, directory, "opencode")
+	if err != nil {
+		return providerID, modelID
+	}
+	if modelID != "" && providerID == "" {
+		for _, it := range items {
+			if it.ModelID == modelID {
+				return it.ProviderID, modelID
+			}
+		}
+		return defProv, modelID
+	}
+	if providerID != "" && modelID == "" {
+		for _, it := range items {
+			if it.ProviderID == providerID && it.Default {
+				return providerID, it.ModelID
+			}
+		}
+		for _, it := range items {
+			if it.ProviderID == providerID {
+				return providerID, it.ModelID
+			}
+		}
+		return providerID, modelID
+	}
+	return defProv, defMod
+}
+
+func (c *Client) CreateSession(ctx context.Context, opts Options) (*runner.SessionInfo, error) {
+	provID, modID := c.ResolveModel(ctx, opts.Directory, opts.Runtime, opts.ProviderID, opts.ModelID)
+	payload := map[string]interface{}{
+		"directory":   opts.Directory,
+		"runtime":     opts.Runtime,
+		"modelID":     modID,
+		"providerID":  provID,
+		"mode":        opts.Mode,
+		"sandboxMode": opts.SandboxMode,
+	}
+	var info runner.SessionInfo
+	if err := c.doJSON(ctx, http.MethodPost, "/api/hoxi/sessions?directory="+url.QueryEscape(opts.Directory), payload, &info); err != nil {
+		return nil, err
+	}
+	if info.ModelID == "" {
+		info.ModelID = modID
+	}
+	if info.ProviderID == "" {
+		info.ProviderID = provID
+	}
+	return &info, nil
+}
+
+func (c *Client) GetSession(ctx context.Context, sessionID, directory string) (*runner.SessionInfo, error) {
+	var info runner.SessionInfo
+	path := "/api/hoxi/sessions/" + url.PathEscape(sessionID)
+	if strings.TrimSpace(directory) != "" {
+		path += "?directory=" + url.QueryEscape(directory)
+	}
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, &info); err != nil {
+		return nil, err
+	}
+	return &info, nil
+}
+
+func (c *Client) ListSessions(ctx context.Context, directory string) ([]runner.SessionInfo, error) {
+	var list []runner.SessionInfo
+	path := "/api/hoxi/sessions"
+	if strings.TrimSpace(directory) != "" {
+		path += "?directory=" + url.QueryEscape(directory)
+	}
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, &list); err != nil {
+		return nil, err
+	}
+	return list, nil
+}
+
+func (c *Client) SwitchRuntime(ctx context.Context, sessionID, runtime, modelID, providerID string) (*runner.SessionInfo, error) {
+	payload := map[string]interface{}{
+		"runtime":    NormalizeRuntime(runtime),
+		"modelID":    modelID,
+		"providerID": providerID,
+	}
+	var info runner.SessionInfo
+	if err := c.doJSON(ctx, http.MethodPost, "/api/hoxi/sessions/"+url.PathEscape(sessionID)+"/runtime", payload, &info); err != nil {
+		return nil, err
+	}
+	return &info, nil
+}
+
+func (c *Client) SwitchSandbox(ctx context.Context, sessionID, sandboxMode string, force bool) (*runner.SessionInfo, error) {
+	payload := map[string]interface{}{
+		"sandboxMode": sandboxMode,
+		"force":       force,
+	}
+	var info runner.SessionInfo
+	if err := c.doJSON(ctx, http.MethodPatch, "/api/hoxi/sessions/"+url.PathEscape(sessionID), payload, &info); err != nil {
+		return nil, err
+	}
+	return &info, nil
+}
+
+func (c *Client) AbortSession(ctx context.Context, sessionID, directory string) error {
+	path := "/api/hoxi/sessions/" + url.PathEscape(sessionID) + "/abort"
+	if strings.TrimSpace(directory) != "" {
+		path += "?directory=" + url.QueryEscape(directory)
+	}
+	return c.doJSON(ctx, http.MethodPost, path, map[string]interface{}{}, nil)
+}
+
+func (c *Client) ReplyPermission(ctx context.Context, requestID, directory, reply string) error {
+	path := "/api/hoxi/permission/" + url.PathEscape(requestID) + "/reply"
+	if strings.TrimSpace(directory) != "" {
+		path += "?directory=" + url.QueryEscape(directory)
+	}
+	return c.doJSON(ctx, http.MethodPost, path, map[string]interface{}{"reply": reply}, nil)
+}
+
+func (c *Client) SessionDiff(ctx context.Context, sessionID, directory string) ([]FileDiff, error) {
+	path := "/api/hoxi/worktree/diff?sessionID=" + url.QueryEscape(sessionID)
+	if strings.TrimSpace(directory) != "" {
+		path += "&directory=" + url.QueryEscape(directory)
+	}
+	var diffs []FileDiff
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, &diffs); err != nil {
+		return nil, err
+	}
+	return diffs, nil
+}
+
+func (c *Client) WorktreeStatus(ctx context.Context, sessionID, directory string) (*SandboxStatus, error) {
+	path := "/api/hoxi/worktree/status?sessionID=" + url.QueryEscape(sessionID)
+	if strings.TrimSpace(directory) != "" {
+		path += "&directory=" + url.QueryEscape(directory)
+	}
+	var st SandboxStatus
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, &st); err != nil {
+		return nil, err
+	}
+	return &st, nil
+}
+
+func (c *Client) WorktreeApply(ctx context.Context, sessionID, directory, mode string) error {
+	path := "/api/hoxi/worktree/apply"
+	if strings.TrimSpace(directory) != "" {
+		path += "?directory=" + url.QueryEscape(directory)
+	}
+	return c.doJSON(ctx, http.MethodPost, path, map[string]interface{}{
+		"sessionID": sessionID,
+		"mode":      mode,
+	}, nil)
+}
+
+func (c *Client) ListHandoffSessions(ctx context.Context, directory, source string, onlyCurrent bool) (*handoff.HandoffSessionsResponse, error) {
+	q := url.Values{}
+	if strings.TrimSpace(directory) != "" {
+		q.Set("directory", directory)
+	}
+	if strings.TrimSpace(source) != "" {
+		q.Set("source", source)
+	}
+	if onlyCurrent {
+		q.Set("onlyCurrent", "1")
+	}
+	var res handoff.HandoffSessionsResponse
+	if err := c.doJSON(ctx, http.MethodGet, "/api/hoxi/handoff/sessions?"+q.Encode(), nil, &res); err != nil {
+		return nil, err
+	}
+	return &res, nil
+}
+
+func (c *Client) ImportHandoffSession(ctx context.Context, req handoff.HandoffImportRequest) (*handoff.HandoffImportResponse, error) {
+	var res handoff.HandoffImportResponse
+	if err := c.doJSON(ctx, http.MethodPost, "/api/hoxi/handoff/import", req, &res); err != nil {
+		return nil, err
+	}
+	if !res.OK && res.Error != "" {
+		return &res, fmt.Errorf("%s", res.Error)
+	}
+	return &res, nil
+}
+
+func (c *Client) FocusDesktop(ctx context.Context, directory, sessionID string) error {
+	return c.doJSON(ctx, http.MethodPost, "/api/hoxi/desktop/focus", map[string]interface{}{
+		"directory": directory,
+		"sessionID": sessionID,
+	}, nil)
+}
+
+func (c *Client) doJSON(ctx context.Context, method, path string, body interface{}, out interface{}) error {
+	var bodyReader io.Reader
+	if body != nil {
+		raw, err := json.Marshal(body)
+		if err != nil {
+			return err
+		}
+		bodyReader = bytes.NewReader(raw)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, bodyReader)
+	if err != nil {
+		return err
+	}
+	if c.token != "" {
+		req.Header.Set("X-Hoxi-Token", c.token)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		var errDoc struct {
+			Error string `json:"error"`
+		}
+		if json.Unmarshal(raw, &errDoc) == nil && strings.TrimSpace(errDoc.Error) != "" {
+			return fmt.Errorf("%s", errDoc.Error)
+		}
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+	if out != nil && len(bytes.TrimSpace(raw)) > 0 {
+		return json.Unmarshal(raw, out)
+	}
+	return nil
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}

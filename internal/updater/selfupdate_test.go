@@ -1,0 +1,348 @@
+package updater
+
+import (
+	"archive/zip"
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+func buildTestWindowsReleaseZip(t *testing.T, includeHoxi bool) ([]byte, string) {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	if includeHoxi {
+		w, err := zw.Create("Hoxi.exe")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = w.Write([]byte("MZ-fake-hoxi-exe-binary"))
+	}
+	w2, err := zw.Create("opencode.exe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = w2.Write([]byte("MZ-fake-opencode-exe-binary"))
+	w3, err := zw.Create("sqlite3.exe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = w3.Write([]byte("MZ-fake-sqlite-exe-binary"))
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	raw := buf.Bytes()
+	sum := sha256.Sum256(raw)
+	return raw, hex.EncodeToString(sum[:])
+}
+
+func TestDownloadAndStageWindowsZipVerifiesSHA256AndExtracts(t *testing.T) {
+	zipBytes, zipSHA := buildTestWindowsReleaseZip(t, true)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/Hoxi-0.4.5-windows-amd64.zip":
+			w.Header().Set("Content-Type", "application/zip")
+			_, _ = w.Write(zipBytes)
+		case "/Hoxi-0.4.5-windows-amd64.zip.sha256":
+			_, _ = w.Write([]byte(zipSHA + "  Hoxi-0.4.5-windows-amd64.zip\n"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	stageDir := filepath.Join(t.TempDir(), "stage")
+	var snapshots []InstallProgress
+	err := downloadAndStageWindowsZip(context.Background(), srv.Client(), srv.URL+"/Hoxi-0.4.5-windows-amd64.zip", "", stageDir, func(p InstallProgress) {
+		snapshots = append(snapshots, p)
+	})
+	if err != nil {
+		t.Fatalf("downloadAndStageWindowsZip failed: %v", err)
+	}
+	if len(snapshots) < 4 || snapshots[0].Phase != "downloading" || snapshots[len(snapshots)-2].Phase != "verifying" || snapshots[len(snapshots)-1].Phase != "staging" {
+		t.Fatalf("expected downloading, verifying and staging progress phases, got %+v", snapshots)
+	}
+	if p := snapshots[len(snapshots)-3]; p.DownloadedBytes != int64(len(zipBytes)) || p.TotalBytes != int64(len(zipBytes)) {
+		t.Fatalf("incorrect zip download progress: %+v", p)
+	}
+	hoxiRaw, err := os.ReadFile(filepath.Join(stageDir, "Hoxi.exe"))
+	if err != nil || string(hoxiRaw) != "MZ-fake-hoxi-exe-binary" {
+		t.Fatalf("staged Hoxi.exe mismatch: %v / %q", err, string(hoxiRaw))
+	}
+	ocRaw, err := os.ReadFile(filepath.Join(stageDir, "opencode.exe"))
+	if err != nil || string(ocRaw) != "MZ-fake-opencode-exe-binary" {
+		t.Fatalf("staged opencode.exe mismatch: %v / %q", err, string(ocRaw))
+	}
+	sqliteRaw, err := os.ReadFile(filepath.Join(stageDir, "sqlite3.exe"))
+	if err != nil || string(sqliteRaw) != "MZ-fake-sqlite-exe-binary" {
+		t.Fatalf("staged sqlite3.exe mismatch: %v / %q", err, string(sqliteRaw))
+	}
+	if _, err := os.Stat(filepath.Join(stageDir, "update.zip")); !os.IsNotExist(err) {
+		t.Fatalf("expected temporary update.zip to be removed after extraction")
+	}
+
+	// Corrupt SHA-256 must be rejected
+	badStage := filepath.Join(t.TempDir(), "bad-stage")
+	err = downloadAndStageWindowsZip(
+		context.Background(),
+		srv.Client(),
+		srv.URL+"/Hoxi-0.4.5-windows-amd64.zip?nosidecar=1",
+		strings.Repeat("0", 64),
+		badStage,
+		nil,
+	)
+	if err == nil || !strings.Contains(err.Error(), "SHA-256 mismatch") {
+		t.Fatalf("expected SHA-256 mismatch error, got %v", err)
+	}
+
+	// resolveWindowsArchiveURL falls back to the Windows .zip asset when DownloadURL points to a .dmg or -setup.exe
+	gotURL := resolveWindowsArchiveURL(&UpdateCheckResult{
+		LatestVersion: "0.4.5",
+		DownloadURL:   "https://github.com/hoxiai/hoxi/releases/download/v0.4.5/Hoxi-0.4.5-darwin-arm64.dmg",
+	})
+	wantURL := "https://github.com/hoxiai/hoxi/releases/download/v0.4.5/Hoxi-0.4.5-windows-" + windowsReleaseArch() + ".zip"
+	if gotURL != wantURL {
+		t.Fatalf("resolveWindowsArchiveURL = %q, want %q", gotURL, wantURL)
+	}
+	gotSetupConverted := resolveWindowsArchiveURL(&UpdateCheckResult{
+		LatestVersion: "0.4.5",
+		DownloadURL:   "https://gitcode.com/hoxiai/hoxi/releases/download/v0.4.5/Hoxi-0.4.5-windows-amd64-setup.exe",
+	})
+	// A foreign-arch installer URL is aligned to the running host architecture
+	// so a shared or stale mirror cannot hand an arm64 host an amd64 package.
+	wantSetupConverted := "https://gitcode.com/hoxiai/hoxi/releases/download/v0.4.5/Hoxi-0.4.5-windows-" + windowsReleaseArch() + ".zip"
+	if gotSetupConverted != wantSetupConverted {
+		t.Fatalf("resolveWindowsArchiveURL(-setup.exe) = %q, want %q", gotSetupConverted, wantSetupConverted)
+	}
+}
+
+func TestDownloadAndVerifyDMGAndBundleResolution(t *testing.T) {
+	dmgPayload := []byte("fake-dmg-payload-bytes")
+	sum := sha256.Sum256(dmgPayload)
+	dmgSHA := hex.EncodeToString(sum[:])
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/Hoxi-0.5.0-darwin-arm64.dmg":
+			w.Header().Set("Content-Type", "application/x-apple-diskimage")
+			_, _ = w.Write(dmgPayload)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	dstPath := filepath.Join(t.TempDir(), "update.dmg")
+	var snapshots []InstallProgress
+	if err := downloadAndVerifyDMG(context.Background(), srv.Client(), srv.URL+"/Hoxi-0.5.0-darwin-arm64.dmg", dmgSHA, dstPath, func(p InstallProgress) {
+		snapshots = append(snapshots, p)
+	}); err != nil {
+		t.Fatalf("downloadAndVerifyDMG failed: %v", err)
+	}
+	if len(snapshots) < 3 || snapshots[0].Phase != "downloading" || snapshots[len(snapshots)-1].Phase != "verifying" {
+		t.Fatalf("expected download and verification stages, got %+v", snapshots)
+	}
+	if p := snapshots[len(snapshots)-2]; p.DownloadedBytes != int64(len(dmgPayload)) || p.TotalBytes != int64(len(dmgPayload)) {
+		t.Fatalf("incorrect download progress: %+v", p)
+	}
+	gotBytes, err := os.ReadFile(dstPath)
+	if err != nil || !bytes.Equal(gotBytes, dmgPayload) {
+		t.Fatalf("downloaded DMG mismatch: %v / %q", err, string(gotBytes))
+	}
+
+	// Corrupt SHA-256 must fail and remove the partial file
+	badPath := filepath.Join(t.TempDir(), "bad.dmg")
+	err = downloadAndVerifyDMG(context.Background(), srv.Client(), srv.URL+"/Hoxi-0.5.0-darwin-arm64.dmg", strings.Repeat("f", 64), badPath, nil)
+	if err == nil || !strings.Contains(err.Error(), "SHA-256 mismatch") {
+		t.Fatalf("expected SHA-256 mismatch error, got %v", err)
+	}
+	if _, statErr := os.Stat(badPath); !os.IsNotExist(statErr) {
+		t.Fatalf("expected corrupt DMG to be removed")
+	}
+
+	// resolveDarwinAppBundlePath accepts release .app bundles and rejects Hoxi Dev.app or bare binaries
+	appBundle, err := resolveDarwinAppBundlePath("/Applications/Hoxi.app/Contents/MacOS/Hoxi")
+	if err != nil || appBundle != "/Applications/Hoxi.app" {
+		t.Fatalf("resolveDarwinAppBundlePath(/Applications/Hoxi.app/...) = %q, %v", appBundle, err)
+	}
+	if _, err := resolveDarwinAppBundlePath("/Users/test/build/bin/Hoxi Dev.app/Contents/MacOS/Hoxi"); err == nil {
+		t.Fatalf("expected Hoxi Dev.app to be rejected by resolveDarwinAppBundlePath")
+	}
+	if _, err := resolveDarwinAppBundlePath("/usr/local/bin/hoxi"); err == nil {
+		t.Fatalf("expected bare binary to be rejected by resolveDarwinAppBundlePath")
+	}
+
+	gotDMG := resolveDarwinDMGURL(&UpdateCheckResult{
+		LatestVersion: "0.5.0",
+		DownloadURL:   "https://github.com/hoxiai/hoxi/releases/download/v0.5.0/Hoxi-0.5.0-darwin-arm64.dmg",
+	})
+	wantDMG := "https://github.com/hoxiai/hoxi/releases/download/v0.5.0/Hoxi-0.5.0-darwin-" + darwinReleaseArch() + ".dmg"
+	if gotDMG != wantDMG {
+		t.Fatalf("resolveDarwinDMGURL = %q, want %q", gotDMG, wantDMG)
+	}
+}
+
+func TestResolveDarwinDMGURLFallsBackToHostArchitecture(t *testing.T) {
+	arch := darwinReleaseArch()
+	if arch != "arm64" && arch != "amd64" {
+		t.Fatalf("darwinReleaseArch() = %q", arch)
+	}
+	got := resolveDarwinDMGURL(&UpdateCheckResult{LatestVersion: "0.5.0"})
+	want := "https://github.com/hoxiai/hoxi/releases/download/v0.5.0/Hoxi-0.5.0-darwin-" + arch + ".dmg"
+	if got != want {
+		t.Fatalf("resolveDarwinDMGURL fallback = %q, want %q", got, want)
+	}
+	// Cross-arch URL in DownloadURL is aligned to the running host architecture.
+	otherArch := "amd64"
+	if arch == "amd64" {
+		otherArch = "arm64"
+	}
+	gotAligned := resolveDarwinDMGURL(&UpdateCheckResult{
+		LatestVersion: "0.5.0",
+		DownloadURL:   "https://github.com/hoxiai/hoxi/releases/download/v0.5.0/Hoxi-0.5.0-darwin-" + otherArch + ".dmg",
+	})
+	if gotAligned != want {
+		t.Fatalf("resolveDarwinDMGURL aligned = %q, want %q", gotAligned, want)
+	}
+}
+
+func TestResolveArchiveSHA256FromChecksumsTxt(t *testing.T) {
+	got := parseSHA256ForFilename(
+		strings.Repeat("0", 64)+"  Hoxi-0.6.9-darwin-arm64.dmg\n"+strings.Repeat("a", 64)+"  *Hoxi-0.6.9-darwin-amd64.dmg\n",
+		"Hoxi-0.6.9-darwin-amd64.dmg",
+	)
+	if got != strings.Repeat("a", 64) {
+		t.Fatalf("parseSHA256ForFilename = %q", got)
+	}
+	csURL, name := resolveChecksumsURL("https://github.com/hoxiai/hoxi/releases/download/v0.6.9/Hoxi-0.6.9-darwin-amd64.dmg")
+	if csURL != "https://github.com/hoxiai/hoxi/releases/download/v0.6.9/checksums.txt" || name != "Hoxi-0.6.9-darwin-amd64.dmg" {
+		t.Fatalf("resolveChecksumsURL = %q, %q", csURL, name)
+	}
+}
+
+func TestResolveWindowsArchiveURLFallsBackToHostArchitecture(t *testing.T) {
+	arch := windowsReleaseArch()
+	if arch != "amd64" && arch != "arm64" {
+		t.Fatalf("windowsReleaseArch() = %q", arch)
+	}
+	got := resolveWindowsArchiveURL(&UpdateCheckResult{LatestVersion: "0.5.0"})
+	want := "https://github.com/hoxiai/hoxi/releases/download/v0.5.0/Hoxi-0.5.0-windows-" + arch + ".zip"
+	if got != want {
+		t.Fatalf("resolveWindowsArchiveURL fallback = %q, want %q", got, want)
+	}
+	// A foreign-arch ZIP is aligned to the running host architecture.
+	otherArch := "amd64"
+	if arch == "amd64" {
+		otherArch = "arm64"
+	}
+	gotAligned := resolveWindowsArchiveURL(&UpdateCheckResult{
+		LatestVersion: "0.5.0",
+		DownloadURL:   "https://github.com/hoxiai/hoxi/releases/download/v0.5.0/Hoxi-0.5.0-windows-" + otherArch + ".zip",
+	})
+	if gotAligned != want {
+		t.Fatalf("resolveWindowsArchiveURL aligned = %q, want %q", gotAligned, want)
+	}
+}
+
+func TestDownloadAbortsPromptlyWhenStreamStalls(t *testing.T) {
+	oldStall := downloadStallTimeout
+	downloadStallTimeout = 80 * time.Millisecond
+	defer func() { downloadStallTimeout = oldStall }()
+
+	unblock := make(chan struct{})
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, ".sha256") {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Length", "1048576")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("partial-head"))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		select {
+		case <-unblock:
+		case <-r.Context().Done():
+		}
+	}))
+	defer srv.Close()
+	defer close(unblock)
+
+	dstPath := filepath.Join(t.TempDir(), "stalled.dmg")
+	err := downloadAndVerifyDMG(
+		context.Background(),
+		srv.Client(),
+		srv.URL+"/Hoxi-0.6.0-darwin-arm64.dmg",
+		strings.Repeat("a", 64),
+		dstPath,
+		nil,
+	)
+	if err == nil || !strings.Contains(err.Error(), "update download stalled") {
+		t.Fatalf("expected stalled download error, got %v", err)
+	}
+	if _, statErr := os.Stat(dstPath); !os.IsNotExist(statErr) {
+		t.Fatalf("expected stalled partial DMG to be removed")
+	}
+}
+
+func TestAdmitSelfUpdateHandlesIdleBusyConfirmAndCancel(t *testing.T) {
+	if admitSelfUpdate(nil, nil) {
+		t.Fatal("nil canInstall must fail closed")
+	}
+
+	var calls []bool
+	var confirmCalls int
+	if !admitSelfUpdate(func(force bool) bool {
+		calls = append(calls, force)
+		return true
+	}, func() bool {
+		confirmCalls++
+		return true
+	}) {
+		t.Fatal("idle workspace must be admitted without prompting")
+	}
+	if len(calls) != 1 || calls[0] || confirmCalls != 0 {
+		t.Fatalf("unexpected idle calls=%v confirmCalls=%d", calls, confirmCalls)
+	}
+
+	calls = nil
+	confirmCalls = 0
+	if !admitSelfUpdate(func(force bool) bool {
+		calls = append(calls, force)
+		return force
+	}, func() bool {
+		confirmCalls++
+		return true
+	}) {
+		t.Fatal("busy workspace must admit forced update when user confirms")
+	}
+	if len(calls) != 2 || calls[0] || !calls[1] || confirmCalls != 1 {
+		t.Fatalf("unexpected confirmed busy calls=%v confirmCalls=%d", calls, confirmCalls)
+	}
+
+	calls = nil
+	confirmCalls = 0
+	if admitSelfUpdate(func(force bool) bool {
+		calls = append(calls, force)
+		return force
+	}, func() bool {
+		confirmCalls++
+		return false
+	}) {
+		t.Fatal("busy workspace must reject update when user cancels confirmation")
+	}
+	if len(calls) != 1 || calls[0] || confirmCalls != 1 {
+		t.Fatalf("unexpected cancelled busy calls=%v confirmCalls=%d", calls, confirmCalls)
+	}
+}

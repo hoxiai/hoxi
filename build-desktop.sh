@@ -1,0 +1,434 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "${PROJECT_ROOT}"
+
+BUILD_RELEASE=1
+BUILD_DEV=1
+INSTALL_RELEASE=1
+BUILD_DMG=0
+NOTARIZE=0
+NOTARY_PROFILE="${NOTARY_PROFILE:-hoxi-notary}"
+SIGN_IDENTITY=""
+BUILD_VERSION="${HOXI_BUILD_VERSION:-}"
+TARGET_ARCH="${HOXI_TARGET_ARCH:-}"
+EXTRA_WAILS_ARGS=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --version)
+      [[ $# -ge 2 && -n "$2" ]] || { echo "--version requires a value" >&2; exit 1; }
+      BUILD_VERSION="$2"
+      shift 2
+      ;;
+    --arch)
+      [[ $# -ge 2 && -n "$2" ]] || { echo "--arch requires a value (arm64 or amd64)" >&2; exit 1; }
+      TARGET_ARCH="$2"
+      shift 2
+      ;;
+    --release-only)
+      BUILD_DEV=0
+      shift
+      ;;
+    --dev-only)
+      BUILD_RELEASE=0
+      INSTALL_RELEASE=0
+      shift
+      ;;
+    --no-install)
+      INSTALL_RELEASE=0
+      shift
+      ;;
+    --dmg)
+      BUILD_DMG=1
+      shift
+      ;;
+    --notarize)
+      BUILD_DMG=1
+      NOTARIZE=1
+      shift
+      ;;
+    --notary-profile)
+      NOTARY_PROFILE="$2"
+      shift 2
+      ;;
+    --identity)
+      SIGN_IDENTITY="$2"
+      shift 2
+      ;;
+    *)
+      EXTRA_WAILS_ARGS+=("$1")
+      shift
+      ;;
+  esac
+done
+
+if [[ -n "${BUILD_VERSION}" ]]; then
+  BUILD_VERSION="$(node scripts/release-artifact.mjs version "${BUILD_VERSION}")"
+else
+  BUILD_VERSION="$(node scripts/release-artifact.mjs default-version)"
+fi
+
+resolve_host_arch() {
+  case "$(uname -m)" in
+    arm64|aarch64) echo "arm64" ;;
+    x86_64|amd64)  echo "amd64" ;;
+    *) echo "" ;;
+  esac
+}
+
+if [[ -z "${TARGET_ARCH}" ]]; then
+  TARGET_ARCH="$(resolve_host_arch)"
+fi
+case "${TARGET_ARCH}" in
+  arm64|amd64) ;;
+  *) echo "Unsupported target macOS architecture: ${TARGET_ARCH:-$(uname -m)}" >&2; exit 1 ;;
+esac
+
+export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-13.0}"
+node scripts/sparkle.mjs check
+
+resolve_work_repo_dir() {
+  if [[ -n "${HOXI_WORK_DIR:-}" ]]; then
+    if [[ -d "${HOXI_WORK_DIR}" ]]; then
+      (cd "${HOXI_WORK_DIR}" && pwd)
+    else
+      echo "${HOXI_WORK_DIR}"
+    fi
+    return 0
+  fi
+  local main_root=""
+  local common_git=""
+  common_git="$(git -C "${PROJECT_ROOT}" rev-parse --git-common-dir 2>/dev/null || true)"
+  if [[ -n "${common_git}" ]]; then
+    main_root="$(cd "${PROJECT_ROOT}" && cd "${common_git}/.." 2>/dev/null && pwd || true)"
+  fi
+  local candidates=(
+    "${PROJECT_ROOT}/work"
+    ${main_root:+"${main_root}/work"}
+    "${PROJECT_ROOT}/../hoxi-work"
+    "${PROJECT_ROOT}/../../../../hoxi-work"
+  )
+  for c in "${candidates[@]}"; do
+    if [[ -n "${c}" && -f "${c}/web/index.tsx" && -r "${c}/web/index.tsx" ]]; then
+      (cd "${c}" && pwd)
+      return 0
+    fi
+  done
+  echo "${PROJECT_ROOT}/work"
+}
+
+WORK_REPO_DIR="$(resolve_work_repo_dir)"
+if [[ -f "${WORK_REPO_DIR}/web/index.tsx" && -r "${WORK_REPO_DIR}/web/index.tsx" ]]; then
+  export HOXI_WORK_DIR="${WORK_REPO_DIR}"
+fi
+
+if [[ ! -d web/node_modules ]]; then
+  npm --prefix web install
+fi
+npm --prefix web run build
+
+mkdir -p build/bin
+
+verify_sidecar_binary() {
+  local bin="$1" arch="$2"
+  # Executing a cross-arch binary needs Rosetta and is slow for the large
+  # hardened-runtime sidecar, so verify the pinned archive by SHA-256 and assert
+  # the Mach-O slice instead of running it. Native builds keep the runtime check.
+  if [[ "$(resolve_host_arch)" == "${arch}" ]]; then
+    node scripts/opencode-lock.mjs verify-binary "${bin}" >&2
+    return $?
+  fi
+  local want
+  case "${arch}" in
+    arm64) want="arm64" ;;
+    amd64) want="x86_64" ;;
+    *) echo "Unsupported sidecar architecture: ${arch}" >&2; return 1 ;;
+  esac
+  if ! lipo -archs "${bin}" | tr ' ' '\n' | grep -qx "${want}"; then
+    echo "OpenCode sidecar lacks ${want} code: ${bin}" >&2
+    return 1
+  fi
+}
+
+resolve_opencode_bin() {
+  local target_arch="$1"
+  node scripts/opencode-lock.mjs verify >/dev/null
+  if [[ -n "${HOXI_OPENCODE:-}" ]]; then
+    if [[ ! -x "${HOXI_OPENCODE}" ]]; then
+      echo "HOXI_OPENCODE is not executable: ${HOXI_OPENCODE}" >&2
+      return 1
+    fi
+    verify_sidecar_binary "${HOXI_OPENCODE}" "${target_arch}"
+    echo "${HOXI_OPENCODE}"
+    return 0
+  fi
+
+  # A host-local binary is only valid when it matches the requested target arch.
+  if [[ "$(resolve_host_arch)" == "${target_arch}" ]]; then
+    local candidates=(
+      "${HOME}/.hoxi/bin/opencode"
+      "${HOME}/.opencode/bin/opencode"
+      "/opt/homebrew/bin/opencode"
+      "/usr/local/bin/opencode"
+      "$(command -v opencode 2>/dev/null || true)"
+    )
+    for c in "${candidates[@]}"; do
+      if [[ -n "${c}" && -x "${c}" ]] && node scripts/opencode-lock.mjs verify-binary "${c}" >/dev/null 2>&1; then
+        echo "${c}"
+        return 0
+      fi
+    done
+  fi
+
+  if [[ "$(uname -s)" != "Darwin" ]]; then
+    return 1
+  fi
+
+  local platform="darwin/${target_arch}"
+  local opencode_url
+  opencode_url="$(node scripts/opencode-lock.mjs url "${platform}")"
+  local dl_dir
+  dl_dir="$(mktemp -d "${TMPDIR:-/tmp}/hoxi-opencode.XXXXXX")"
+  echo "⬇️  Downloading & verifying pinned OpenCode (${platform}) from opencode.lock..." >&2
+  if ! curl --fail --location --silent --show-error --proto '=https' --proto-redir '=https' \
+    "${opencode_url}" -o "${dl_dir}/opencode.zip"; then
+    rm -rf "${dl_dir}"
+    return 1
+  fi
+  if ! node scripts/opencode-lock.mjs verify-archive "${platform}" "${dl_dir}/opencode.zip" >&2; then
+    rm -rf "${dl_dir}"
+    return 1
+  fi
+  mkdir -p "${dl_dir}/extracted" "${HOME}/.hoxi/bin"
+  ditto -x -k "${dl_dir}/opencode.zip" "${dl_dir}/extracted"
+  if ! verify_sidecar_binary "${dl_dir}/extracted/opencode" "${target_arch}"; then
+    rm -rf "${dl_dir}"
+    return 1
+  fi
+  local target_bin="${HOME}/.hoxi/bin/opencode"
+  local tmp_bin="${HOME}/.hoxi/bin/.opencode.$$.tmp"
+  cp -f "${dl_dir}/extracted/opencode" "${tmp_bin}"
+  chmod 0755 "${tmp_bin}"
+  mv -f "${tmp_bin}" "${target_bin}"
+  rm -rf "${dl_dir}"
+  echo "${target_bin}"
+  return 0
+}
+
+OPENCODE_SRC="$(resolve_opencode_bin "${TARGET_ARCH}" || true)"
+if [[ -z "${OPENCODE_SRC}" && "$(uname -s)" == "Darwin" ]]; then
+  echo "Failed to resolve or download verified OpenCode executable matching internal/opencode/opencode.lock." >&2
+  exit 1
+fi
+
+resolve_signing_identity() {
+  if [[ -n "${SIGN_IDENTITY}" ]]; then
+    echo "${SIGN_IDENTITY}"
+    return 0
+  fi
+  if [[ -n "${HOXI_SIGN_IDENTITY:-}" ]]; then
+    echo "${HOXI_SIGN_IDENTITY}"
+    return 0
+  fi
+  # Auto-detect Developer ID Application in Keychain
+  local id
+  id="$(security find-identity -p codesigning -v 2>/dev/null | grep 'Developer ID Application:' | head -n 1 | sed -E 's/.*"([^"]+)".*/\1/' || true)"
+  if [[ -n "${id}" ]]; then
+    echo "${id}"
+    return 0
+  fi
+  echo "-"
+}
+
+CURRENT_IDENTITY="$(resolve_signing_identity)"
+if [[ "${NOTARIZE}" -eq 1 && "${CURRENT_IDENTITY}" == "-" ]]; then
+  echo "Notarization requires a Developer ID Application signing identity." >&2
+  exit 1
+fi
+
+bundle_and_sign_macos_app() {
+  local app_path="$1"
+  local bundle_id="$2"
+  local display_name="$3"
+  local is_release="$4"
+  local arch="$5"
+
+  test -x "${app_path}/Contents/MacOS/Hoxi"
+
+  /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier ${bundle_id}" "${app_path}/Contents/Info.plist"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleName ${display_name}" "${app_path}/Contents/Info.plist"
+  if /usr/libexec/PlistBuddy -c "Print :CFBundleDisplayName" "${app_path}/Contents/Info.plist" >/dev/null 2>&1; then
+    /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName ${display_name}" "${app_path}/Contents/Info.plist"
+  else
+    /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string ${display_name}" "${app_path}/Contents/Info.plist"
+  fi
+
+  if [[ -n "${OPENCODE_SRC}" && -x "${OPENCODE_SRC}" ]]; then
+    cp -L "${OPENCODE_SRC}" "${app_path}/Contents/MacOS/opencode"
+    chmod 0755 "${app_path}/Contents/MacOS/opencode"
+    echo "✅ Bundled standalone opencode sidecar (${OPENCODE_SRC}) into ${app_path}/Contents/MacOS/opencode"
+  fi
+
+  for notice in LICENSE NOTICE THIRD_PARTY_NOTICES.md; do
+    if [[ -f "${notice}" ]]; then
+      cp "${notice}" "${app_path}/Contents/Resources/${notice}"
+    fi
+  done
+
+  # Sparkle auto-update is bound to the single arm64 appcast enclosure. The
+  # Intel bundle omits it so an Intel Mac never installs an arm64 update; it
+  # relies on the arch-aware JSON/self-updater instead.
+  local sparkle_enabled="${is_release}"
+  if [[ "${arch}" == "amd64" ]]; then
+    sparkle_enabled=0
+  fi
+  node scripts/sparkle.mjs configure "${app_path}" "${sparkle_enabled}"
+  node scripts/release-artifact.mjs configure-app "${app_path}" "${BUILD_VERSION}" "${arch}"
+
+  local target_identity="-"
+  if [[ "${is_release}" -eq 1 && "${CURRENT_IDENTITY}" != "-" ]]; then
+    target_identity="${CURRENT_IDENTITY}"
+  fi
+
+  local entitlements="build/darwin/entitlements.plist"
+  if [[ -d "${app_path}/Contents/Frameworks/Sparkle.framework" ]]; then
+    node scripts/sparkle.mjs sign-framework "${app_path}/Contents/Frameworks/Sparkle.framework" "${target_identity}"
+  fi
+
+  if [[ "${target_identity}" != "-" ]]; then
+    echo "🔏 Signing with Apple Developer ID: '${target_identity}' (Hardened Runtime enabled)..."
+    if [[ -f "${app_path}/Contents/MacOS/opencode" ]]; then
+      codesign --force --timestamp --options runtime \
+        --entitlements "${entitlements}" \
+        --sign "${target_identity}" \
+        "${app_path}/Contents/MacOS/opencode"
+    fi
+    codesign --force --timestamp --options runtime \
+      --entitlements "${entitlements}" \
+      --sign "${target_identity}" \
+      "${app_path}"
+    codesign --verify --deep --strict --verbose=1 "${app_path}"
+    echo "✅ Verified signature for ${app_path}"
+  else
+    echo "ℹ️  Signing with Ad-hoc signature (local use only)..."
+    if [[ -f "${app_path}/Contents/MacOS/opencode" ]]; then
+      codesign --force --sign - "${app_path}/Contents/MacOS/opencode"
+    fi
+    codesign --force --sign - "${app_path}"
+  fi
+
+  if [[ "${is_release}" -eq 1 ]]; then
+    node scripts/release-artifact.mjs verify-app "${app_path}" "${BUILD_VERSION}" "${arch}"
+  fi
+
+  local actual_id
+  actual_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${app_path}/Contents/Info.plist")"
+  test "${actual_id}" = "${bundle_id}"
+  echo "✅ Built macOS application at ${app_path} (${actual_id})"
+}
+
+STAGE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/hoxi-build.XXXXXX")"
+STAGED_SKILLS=()
+STAGED_HOST_FILES=()
+cleanup_build_stage() {
+  for skill_dir in "${STAGED_SKILLS[@]+"${STAGED_SKILLS[@]}"}"; do
+    rm -rf "${skill_dir}"
+  done
+  for staged_file in "${STAGED_HOST_FILES[@]+"${STAGED_HOST_FILES[@]}"}"; do
+    rm -f "${staged_file}"
+  done
+  rm -rf "${STAGE_DIR}"
+}
+trap cleanup_build_stage EXIT
+
+if [[ -f "${WORK_REPO_DIR}/go/stage-host.sh" ]]; then
+  while IFS= read -r staged_path; do
+    [[ -n "${staged_path}" ]] && STAGED_HOST_FILES+=("${staged_path}")
+  done < <(bash "${WORK_REPO_DIR}/go/stage-host.sh" "${PROJECT_ROOT}")
+fi
+
+if [[ -d "${WORK_REPO_DIR}/skills" ]]; then
+  for skill_src in "${WORK_REPO_DIR}/skills"/*; do
+    [[ -d "${skill_src}" && -f "${skill_src}/SKILL.md" ]] || continue
+    skill_name="$(basename "${skill_src}")"
+    target_dir="${PROJECT_ROOT}/internal/skills/defaults/${skill_name}"
+    if [[ ! -d "${target_dir}" ]]; then
+      cp -R "${skill_src}" "${target_dir}"
+      STAGED_SKILLS+=("${target_dir}")
+      echo "📦 Staged private skill '${skill_name}' from ${WORK_REPO_DIR}"
+    fi
+  done
+fi
+
+if [[ "${BUILD_DEV}" -eq 0 && -d "build/bin/Hoxi Dev.app" ]]; then
+  mv "build/bin/Hoxi Dev.app" "${STAGE_DIR}/Hoxi Dev.app"
+fi
+
+if [[ "${BUILD_DEV}" -eq 1 ]]; then
+  echo "🔨 Building Local Development App (Hoxi Dev.app with DevTools)..."
+  go run github.com/wailsapp/wails/v2/cmd/wails@v2.13.0 build \
+    -clean \
+    -skipbindings \
+    -debug \
+    -nosyncgomod \
+    -platform "darwin/${TARGET_ARCH}" \
+    -ldflags "-X github.com/hoxiai/hoxi/internal/app.BuildVariant=dev -X github.com/hoxiai/hoxi/internal/buildinfo.Version=${BUILD_VERSION}" \
+    "${EXTRA_WAILS_ARGS[@]+"${EXTRA_WAILS_ARGS[@]}"}"
+
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    DEV_STAGE_APP="${STAGE_DIR}/Hoxi Dev.app"
+    rm -rf "${DEV_STAGE_APP}"
+    mv "build/bin/Hoxi.app" "${DEV_STAGE_APP}"
+    bundle_and_sign_macos_app "${DEV_STAGE_APP}" "ai.hoxi.desktop.dev" "Hoxi Dev" 0 "${TARGET_ARCH}"
+  fi
+fi
+
+if [[ "${BUILD_RELEASE}" -eq 1 ]]; then
+  echo "🚀 Building Production Release App (Hoxi.app)..."
+  go run github.com/wailsapp/wails/v2/cmd/wails@v2.13.0 build \
+    -clean \
+    -skipbindings \
+    -s \
+    -m \
+    -nosyncgomod \
+    -platform "darwin/${TARGET_ARCH}" \
+    -ldflags "-X github.com/hoxiai/hoxi/internal/app.BuildVariant=release -X github.com/hoxiai/hoxi/internal/buildinfo.Version=${BUILD_VERSION}" \
+    "${EXTRA_WAILS_ARGS[@]+"${EXTRA_WAILS_ARGS[@]}"}"
+
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    APP_PATH="build/bin/Hoxi.app"
+    bundle_and_sign_macos_app "${APP_PATH}" "ai.hoxi.desktop" "Hoxi" 1 "${TARGET_ARCH}"
+
+    if [[ "${BUILD_DMG}" -eq 1 ]]; then
+      DMG_PATH="build/bin/Hoxi.dmg"
+      ./scripts/package-dmg.sh "${APP_PATH}" "${DMG_PATH}" "Hoxi" "${CURRENT_IDENTITY}"
+
+      if [[ "${NOTARIZE}" -eq 1 ]]; then
+        echo "☁️  Submitting ${DMG_PATH} to Apple Notary Service (profile: ${NOTARY_PROFILE})..."
+        xcrun notarytool submit "${DMG_PATH}" --keychain-profile "${NOTARY_PROFILE}" --wait
+        echo "📎 Stapling notarization ticket to ${DMG_PATH} and ${APP_PATH}..."
+        xcrun stapler staple "${DMG_PATH}"
+        xcrun stapler validate "${DMG_PATH}"
+        xcrun stapler staple "${APP_PATH}"
+        xcrun stapler validate "${APP_PATH}"
+        echo "🎉 Notarization and Stapling complete! Distribution DMG is ready."
+      fi
+    fi
+
+    if [[ "${INSTALL_RELEASE}" -eq 1 && -d "/Applications" && -w "/Applications" ]]; then
+      INSTALL_PATH="/Applications/Hoxi.app"
+      rm -rf "${INSTALL_PATH}"
+      ditto "${APP_PATH}" "${INSTALL_PATH}"
+      echo "✅ Installed Production Release to ${INSTALL_PATH} (ai.hoxi.desktop)"
+    fi
+  fi
+fi
+
+if [[ -d "${STAGE_DIR}/Hoxi Dev.app" && "$(uname -s)" == "Darwin" ]]; then
+  DEV_APP_PATH="build/bin/Hoxi Dev.app"
+  rm -rf "${DEV_APP_PATH}"
+  mv "${STAGE_DIR}/Hoxi Dev.app" "${DEV_APP_PATH}"
+  echo "✅ Local Development App ready at ${DEV_APP_PATH} (ai.hoxi.desktop.dev)"
+fi

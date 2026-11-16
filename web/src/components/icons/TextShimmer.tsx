@@ -1,0 +1,295 @@
+import { createEffect, createMemo, createSignal, on, onCleanup, onMount, untrack, type ValidComponent } from "solid-js"
+import { createStore } from "solid-js/store"
+import { Dynamic } from "solid-js/web"
+import { observeSpinner } from "./Spinner"
+
+export const TextShimmer = <T extends ValidComponent = "span">(props: {
+  text: string
+  class?: string
+  as?: T
+  active?: boolean
+  offset?: number
+}) => {
+  const active = createMemo(() => props.active ?? true)
+  const offset = createMemo(() => props.offset ?? 0)
+
+  return (
+    <Dynamic
+      component={props.as || "span"}
+      ref={(el: Element) => {
+        if (el instanceof Element) observeSpinner(el)
+      }}
+      data-component="text-shimmer"
+      data-active={active() ? "true" : "false"}
+      class={props.class}
+      aria-label={props.text}
+      style={{
+        "--text-shimmer-swap": "220ms",
+        "--text-shimmer-index": `${offset()}`,
+      }}
+    >
+      <span data-slot="text-shimmer-char" aria-hidden="true">
+        <span data-slot="text-shimmer-char-base">{props.text}</span>
+        <span data-slot="text-shimmer-char-shimmer">{props.text}</span>
+      </span>
+    </Dynamic>
+  )
+}
+
+/**
+ * Kilo's ToolStatusTitle — smoothly morphs between active (shimmering) and done text
+ * while smoothly animating width changes.
+ */
+export function ToolStatusTitle(props: {
+  active: boolean
+  activeText: string
+  doneText: string
+  split?: boolean
+  class?: string
+}) {
+  const split = () => props.split ?? true
+
+  const parts = createMemo(() => {
+    if (!split()) return undefined
+    const activeWords = props.activeText.split(" ")
+    const doneWords = props.doneText.split(" ")
+    let i = 0
+    while (
+      i < activeWords.length - 1 &&
+      i < doneWords.length - 1 &&
+      activeWords[activeWords.length - 1 - i] === doneWords[doneWords.length - 1 - i]
+    ) {
+      i++
+    }
+    if (i === 0) return undefined
+    return {
+      activePrefix: activeWords.slice(0, activeWords.length - i).join(" "),
+      donePrefix: doneWords.slice(0, doneWords.length - i).join(" "),
+      suffix: " " + activeWords.slice(activeWords.length - i).join(" "),
+    }
+  })
+
+  return (
+    <span class={`inline-flex items-baseline ${props.class ?? ""}`}>
+      {parts() ? (
+        <>
+          <TextShimmer text={props.active ? parts()!.activePrefix : parts()!.donePrefix} active={props.active} />
+          <TextShimmer text={parts()!.suffix} active={props.active} offset={parts()!.activePrefix.length} />
+        </>
+      ) : (
+        <TextShimmer text={props.active ? props.activeText : props.doneText} active={props.active} />
+      )}
+    </span>
+  )
+}
+
+const px = (value: number | string | undefined, fallback: number) => {
+  if (typeof value === "number") return `${value}px`
+  if (typeof value === "string") return value
+  return `${fallback}px`
+}
+
+const ms = (value: number | string | undefined, fallback: number) => {
+  if (typeof value === "number") return `${value}ms`
+  if (typeof value === "string") return value
+  return `${fallback}ms`
+}
+
+const pct = (value: number | undefined, fallback: number) => {
+  const v = value ?? fallback
+  return `${v}%`
+}
+
+export function isSameTextRevealStream(prev: string | undefined, next: string | undefined): boolean {
+  if (typeof prev !== "string" || typeof next !== "string") return false
+  if (next.startsWith(prev)) return true
+  const prevStem = prev.endsWith("\u2026") ? prev.slice(0, -1).trimEnd() : prev
+  const nextStem = next.endsWith("\u2026") ? next.slice(0, -1).trimEnd() : next
+  if (
+    prevStem.length >= 12 &&
+    nextStem.length >= 12 &&
+    (nextStem.startsWith(prevStem) || prevStem.startsWith(nextStem))
+  ) {
+    return true
+  }
+  const minLen = Math.min(prevStem.length, nextStem.length)
+  if (minLen >= 6) {
+    const compareLen = Math.max(4, minLen - 2)
+    if (
+      nextStem.slice(0, compareLen) === prevStem.slice(0, compareLen) &&
+      nextStem.length >= prevStem.length - 2
+    ) {
+      return true
+    }
+  }
+  return false
+}
+
+/** At most one swap per second for live status lines (current step, thinking summary). */
+export const LIVE_STATUS_SWAP_MS = 1000
+
+/**
+ * Kilo's TextReveal — top-to-bottom CSS gradient mask wipe animation for live
+ * step details and reasoning summaries without vertical height changes.
+ */
+export function TextReveal(props: {
+  text?: string
+  class?: string
+  duration?: number | string
+  edge?: number
+  travel?: number | string
+  spring?: string
+  springSoft?: string
+  growOnly?: boolean
+  truncate?: boolean
+  /**
+   * Least time between two swaps. A live status line can change several
+   * times a second; each swap is an animation, so faster changes read as
+   * flicker. Later replacements wait and only the newest one is shown.
+   * Text that keeps growing the current line updates at once.
+   */
+  minSwapMs?: number
+}) {
+  const [paced, setPaced] = createSignal(props.text)
+  // Mounting with text counts as showing it, so a change right after mount waits too.
+  let lastSwapAt = props.text ? Date.now() : 0
+  let swapTimer: ReturnType<typeof setTimeout> | undefined
+  const clearSwapTimer = () => {
+    if (swapTimer !== undefined) clearTimeout(swapTimer)
+    swapTimer = undefined
+  }
+  const showNow = (text: string | undefined) => {
+    clearSwapTimer()
+    lastSwapAt = Date.now()
+    setPaced(text)
+  }
+  createEffect(
+    on(
+      () => props.text,
+      (next) => {
+        const shown = untrack(paced)
+        if (next === shown) return clearSwapTimer()
+        const min = props.minSwapMs ?? 0
+        if (min <= 0 || isSameTextRevealStream(shown, next)) {
+          clearSwapTimer()
+          setPaced(next)
+          return
+        }
+        const wait = lastSwapAt + min - Date.now()
+        if (wait <= 0) return showNow(next)
+        swapTimer ??= setTimeout(() => {
+          swapTimer = undefined
+          const latest = untrack(() => props.text)
+          if (latest !== untrack(paced)) showNow(latest)
+        }, wait)
+      },
+      { defer: true },
+    ),
+  )
+  onCleanup(clearSwapTimer)
+
+  const [state, setState] = createStore({
+    cur: props.text,
+    old: undefined as string | undefined,
+    width: "auto",
+    ready: false,
+    swapping: false,
+  })
+  let inRef: HTMLSpanElement | undefined
+  let outRef: HTMLSpanElement | undefined
+  let rootRef: HTMLSpanElement | undefined
+  let frame: number | undefined
+
+  const win = () => inRef?.scrollWidth ?? 0
+  const wout = () => outRef?.scrollWidth ?? 0
+
+  const widen = (next: number) => {
+    if (props.truncate || next <= 0) return
+    if (props.growOnly ?? true) {
+      const prev = Number.parseFloat(state.width)
+      if (Number.isFinite(prev) && next <= prev) return
+    }
+    setState("width", `${next}px`)
+  }
+
+  createEffect(
+    on(
+      paced,
+      (next, prev) => {
+        if (next === prev) return
+        if (isSameTextRevealStream(prev, next)) {
+          setState("cur", next)
+          if (!props.truncate) widen(win())
+          return
+        }
+        setState("swapping", true)
+        setState("old", prev)
+        setState("cur", next)
+
+        if (typeof requestAnimationFrame !== "function") {
+          if (!props.truncate) widen(Math.max(win(), wout()))
+          void rootRef?.offsetHeight
+          setState("swapping", false)
+          return
+        }
+        if (frame !== undefined && typeof cancelAnimationFrame === "function") cancelAnimationFrame(frame)
+        frame = requestAnimationFrame(() => {
+          if (!props.truncate) widen(Math.max(win(), wout()))
+          void rootRef?.offsetHeight
+          setState("swapping", false)
+          frame = undefined
+        })
+      },
+    ),
+  )
+
+  onMount(() => {
+    if (!props.truncate) widen(win())
+    const fonts = typeof document !== "undefined" ? document.fonts : undefined
+    if (typeof requestAnimationFrame !== "function") {
+      setState("ready", true)
+      return
+    }
+    if (!fonts) {
+      requestAnimationFrame(() => setState("ready", true))
+      return
+    }
+    void fonts.ready.finally(() => {
+      if (!props.truncate) widen(win())
+      requestAnimationFrame(() => setState("ready", true))
+    })
+  })
+
+  onCleanup(() => {
+    if (frame === undefined || typeof cancelAnimationFrame !== "function") return
+    cancelAnimationFrame(frame)
+  })
+
+  return (
+    <span
+      ref={rootRef}
+      data-component="text-reveal"
+      data-ready={state.ready ? "true" : "false"}
+      data-swapping={state.swapping ? "true" : "false"}
+      data-truncate={props.truncate ? "true" : "false"}
+      class={props.class}
+      aria-label={paced() ?? ""}
+      style={{
+        "--text-reveal-duration": ms(props.duration, 380),
+        "--text-reveal-edge": pct(props.edge, 17),
+        "--text-reveal-travel": px(props.travel, 2),
+        "--text-reveal-spring": props.spring ?? "cubic-bezier(0.34, 1.08, 0.64, 1)",
+        "--text-reveal-spring-soft": props.springSoft ?? "cubic-bezier(0.34, 1, 0.64, 1)",
+      }}
+    >
+      <span data-slot="text-reveal-track" style={{ width: props.truncate ? "100%" : state.width }}>
+        <span data-slot="text-reveal-entering" ref={inRef}>
+          {state.cur ?? "\u00A0"}
+        </span>
+        <span data-slot="text-reveal-leaving" ref={outRef}>
+          {state.old ?? "\u00A0"}
+        </span>
+      </span>
+    </span>
+  )
+}

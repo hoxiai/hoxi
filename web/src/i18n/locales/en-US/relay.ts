@@ -1,0 +1,41 @@
+// web/src/i18n/locales/en-US/relay.ts
+
+export const relay = {
+  title: "Local model relay",
+  subtitle: "Let other local AI tools call the models you already configured here",
+  intro:
+    "Hoxi exposes an OpenAI-compatible endpoint on loopback only. Cline, Continue, Cherry Studio, Open WebUI, aider or any script can point at it and reuse your configured providers. Requests still go straight from this Mac to the provider you configured; nothing is proxied through Hoxi servers.",
+  endpointTitle: "Endpoint",
+  endpointDesc: "OpenAI-compatible base URL. Add /v1/chat/completions or /v1/models when your tool asks for a full path",
+  baseURL: "Base URL",
+  chatURL: "Chat completions",
+  modelsURL: "Model list",
+  copy: "Copy",
+  copied: "Copied",
+  copyFailed: "Could not copy to clipboard",
+  keysTitle: "Relay keys",
+  keysDesc: "Clients authenticate with an hk-* key. Upstream provider keys never leave this machine and are never handed to clients",
+  noKeys: "No relay key yet. Create one, then paste it into the client's API key field",
+  keyLabelPlaceholder: "Label (e.g. Cline, Open WebUI)",
+  createKey: "Create key",
+  creating: "Creating…",
+  revoke: "Revoke",
+  revokeConfirm: "Revoke this relay key? Clients using it will start failing immediately",
+  createdTitle: "Copy this key now",
+  createdDesc: "It is shown only once. Hoxi stores just a hash and cannot show it again",
+  dismiss: "Done",
+  lastUsed: "Last used",
+  neverUsed: "Never used",
+  created: "Created",
+  keyCount: "{count} keys",
+  loadError: "Could not load the local relay status",
+  createError: "Could not create the relay key",
+  revokeError: "Could not revoke the relay key",
+  modelHint: "Use {auto} for automatic routing, or pick an explicit provider/model id from the model list",
+  loopbackOnly: "Loopback only",
+  loopbackOnlyDesc:
+    "Bound to 127.0.0.1 and never exposed through the GoPanel tunnel, so paired phones and remote panels cannot reach it",
+  disclaimerTitle: "Before you share this endpoint",
+  disclaimerDesc:
+    "Anyone who can run a process on this Mac can use a relay key to spend your provider credits. Treat keys like passwords, revoke them when a tool stops being used, and remember that prompts and code sent through the relay leave this machine under your provider's policy",
+};

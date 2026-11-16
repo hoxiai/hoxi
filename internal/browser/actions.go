@@ -1,0 +1,774 @@
+package browser
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"math"
+	"net/url"
+	"regexp"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/chromedp/cdproto/cdp"
+	"github.com/chromedp/cdproto/emulation"
+	"github.com/chromedp/cdproto/input"
+	"github.com/chromedp/cdproto/page"
+	"github.com/chromedp/cdproto/target"
+	"github.com/chromedp/chromedp"
+)
+
+func navigationURL(raw string) bool {
+	if raw == "about:blank" {
+		return true
+	}
+	u, err := url.Parse(raw)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Hostname() != "" && u.User == nil
+}
+
+func validateAction(a Action, agent bool) error {
+	if a.RequestID != "" && a.Action != "upload_cancel" {
+		return errors.New("requestID is only valid for a file request")
+	}
+	if a.Accept != nil {
+		return errors.New("accept is only valid for a page dialog")
+	}
+	if a.Async && (agent || !navigationAction(a.Action)) {
+		return errors.New("async navigation is UI only")
+	}
+	if a.ScaleFactor != nil && a.Action != "zoom" {
+		return errors.New("scaleFactor is only valid for zoom")
+	}
+	if a.Action != "resize" && (a.Width != nil || a.Height != nil || a.DeviceScaleFactor != nil) {
+		return errors.New("width and height are only valid for resize")
+	}
+	if a.FullPage != nil && a.Action != "resize" {
+		return errors.New("fullPage is only valid for resize")
+	}
+	if a.Manual != nil && a.Action != "control" {
+		return errors.New("manual is only valid for control")
+	}
+	if a.Window != nil && (agent || (a.Action != "mode" && a.Action != "navigate" && a.Action != "tab_new")) {
+		return errors.New("window is only valid for UI mode, navigate or tab_new")
+	}
+	if a.Action != "pointer" && (a.Phase != "" || a.Button != "" || a.ClickCount != 0 || a.Modifiers != 0) {
+		return errors.New("phase, button, clickCount and modifiers are only valid for pointer")
+	}
+	switch a.Action {
+	case "mode":
+		if agent || a.Window == nil {
+			return errors.New("only UI may set browser mode")
+		}
+	case "focus":
+		if agent {
+			return errors.New("only UI may focus the browser window")
+		}
+	case "zoom_reset":
+		if agent {
+			return errors.New("only UI may reset page zoom")
+		}
+	case "viewport_reset":
+		if agent {
+			return errors.New("only UI may restore the Chrome Link viewport")
+		}
+	case "upload_cancel":
+		if agent || !regexp.MustCompile(`^[a-f0-9]{32}$`).MatchString(a.RequestID) {
+			return errors.New("only UI may cancel an identified file request")
+		}
+	case "pair":
+		if agent {
+			return errors.New("only UI may pair Chrome")
+		}
+	case "resize":
+		if agent || a.Width == nil || a.Height == nil {
+			return errors.New("only UI may resize; integer width and height are required")
+		}
+		width, height := *a.Width, *a.Height
+		scale := 1.0
+		if a.DeviceScaleFactor != nil {
+			scale = *a.DeviceScaleFactor
+		}
+		if math.IsNaN(scale) || math.IsInf(scale, 0) || scale < 1 || scale > 2 || width < 1 || width > 4096 || height < 1 || height > 4096 || math.Ceil(float64(width)*scale)*math.Ceil(float64(height)*scale) > 8388608 {
+			return errors.New("viewport dimensions must be 1..4096 with at most 8388608 pixels")
+		}
+	case "navigate":
+		if !navigationURL(a.URL) {
+			return errors.New("only http, https and about:blank navigation is allowed")
+		}
+	case "tab_new":
+		if a.URL != "" && !navigationURL(a.URL) {
+			return errors.New("invalid tab URL")
+		}
+	case "control":
+		if agent || a.Manual == nil {
+			return errors.New("only UI may set manual control")
+		}
+	case "stop_loading":
+		if agent {
+			return errors.New("only UI may stop loading")
+		}
+	case "context", "copy", "paste":
+		if agent {
+			return errors.New("only UI may use clipboard actions")
+		}
+		if math.IsNaN(a.X) || math.IsInf(a.X, 0) || math.IsNaN(a.Y) || math.IsInf(a.Y, 0) ||
+			a.X < 0 || a.X > 16384 || a.Y < 0 || a.Y > 16384 || a.Selector != "" || a.URL != "" || a.Key != "" ||
+			a.DeltaX != 0 || a.DeltaY != 0 || a.TabID != "" || (a.Action != "paste" && a.Text != "") ||
+			(a.Action == "copy" && (a.X != 0 || a.Y != 0)) || len(a.Text) > 262144 {
+			return errors.New("invalid clipboard action")
+		}
+		units := 0
+		for _, r := range a.Text {
+			units++
+			if r > 0xffff {
+				units++
+			}
+		}
+		if units > 65536 {
+			return errors.New("clipboard text exceeds 65536 characters")
+		}
+	case "evaluate":
+		if !agent || a.Text == "" {
+			return errors.New("evaluate requires an agent and text expression")
+		}
+	case "tab_select", "tab_close":
+		if a.TabID == "" {
+			return errors.New("tabID required")
+		}
+	case "pointer":
+		return validatePointer(a, agent)
+	case "wheel", "zoom":
+		return validateGesture(a, agent)
+	case "type":
+	case "key":
+		_, err := keyAction(a.Key)
+		return err
+	case "back", "forward", "reload", "click", "scroll", "snapshot", "screenshot", "close":
+	default:
+		return errors.New("unknown browser action")
+	}
+	return nil
+}
+
+func (sc *scope) state(ctx context.Context) (State, error) {
+	infos, err := chromedp.Targets(ctx)
+	if err != nil {
+		return State{}, err
+	}
+	state := emptyState()
+	state.Manual = sc.manual
+	if sc.window {
+		state.Mode = "window"
+	}
+	state.StoreID = sc.env.StoreID
+	if sc.env.RedactedProxy != "" {
+		state.StoreProxy = sc.env.RedactedProxy
+	} else if sc.proxyBridge != nil && sc.proxyBridge.redacted != "" {
+		state.StoreProxy = sc.proxyBridge.redacted
+	} else if u, parseErr := parseAndValidateUpstreamProxy(sc.env.ProxyURL); parseErr == nil {
+		state.StoreProxy = redactUpstreamProxy(u)
+	}
+	state.StoreTimezone = sc.env.Timezone
+	state.StoreLocale = sc.env.Locale
+	live := make(map[string]bool)
+	for _, info := range infos {
+		if info.Type == "page" {
+			live[string(info.TargetID)] = true
+			state.Tabs = append(state.Tabs, Tab{string(info.TargetID), info.Title, info.URL})
+		}
+	}
+	for id := range sc.tabs {
+		if !live[id] {
+			sc.releaseTab(id)
+		}
+	}
+	sort.Slice(state.Tabs, func(i, j int) bool { return state.Tabs[i].ID < state.Tabs[j].ID })
+	found := false
+	for _, tab := range state.Tabs {
+		if tab.ID == sc.tabID {
+			found = true
+		}
+	}
+	if !found {
+		sc.stopStream()
+		nextTab := ""
+		if len(state.Tabs) > 0 {
+			nextTab = state.Tabs[0].ID
+		}
+		sc.setTabID(nextTab)
+	}
+	state.TabID = sc.tabID
+	if n := sc.navigations[sc.tabID]; n != nil {
+		state.Navigation = n.snapshot()
+	}
+	for _, tab := range state.Tabs {
+		if tab.ID == sc.tabID {
+			state.URL, state.Title = tab.URL, tab.Title
+		}
+	}
+	return state, nil
+}
+
+// Tab contexts belong to the scope, never to the request that attached them.
+func (sc *scope) withTab(ctx context.Context, tasks ...chromedp.Action) error {
+	if sc.tabID == "" {
+		return errors.New("no open tab; use tab_new")
+	}
+	tab := sc.tabs[sc.tabID]
+	if tab == nil {
+		var cancel context.CancelFunc
+		tab, cancel = chromedp.NewContext(sc.browser, chromedp.WithTargetID(target.ID(sc.tabID)))
+		// Initial attachment starts a target event loop using this context.
+		// Keep it alive across requests, just like the initial browser target.
+		done := make(chan error, 1)
+		go func() {
+			initActions := sc.emulationActions()
+			if !sc.window {
+				initActions = append([]chromedp.Action{sc.viewport().action(), page.SetInterceptFileChooserDialog(true)}, initActions...)
+			}
+			done <- chromedp.Run(tab, initActions...)
+		}()
+		select {
+		case err := <-done:
+			if err != nil {
+				cancel()
+				return err
+			}
+		case <-ctx.Done():
+			cancel()
+			<-done
+			return ctx.Err()
+		}
+		sc.tabs[sc.tabID] = tab
+		sc.trackNavigation(tab, sc.tabID)
+		sc.tabCancels[sc.tabID] = cancel
+		sc.viewports[sc.tabID] = sc.viewport()
+	}
+	op, cancel := context.WithCancel(tab)
+	stop := context.AfterFunc(ctx, cancel)
+	defer stop()
+	defer cancel()
+	if !sc.window && sc.viewports[sc.tabID] != sc.viewport() {
+		if err := chromedp.Run(op, sc.viewport().action()); err != nil {
+			return err
+		}
+		sc.viewports[sc.tabID] = sc.viewport()
+	}
+	return chromedp.Run(op, tasks...)
+}
+
+func (sc *scope) capture(ctx context.Context) ([]byte, error) {
+	var image []byte
+	err := sc.withTab(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+		var err error
+		// Without a document-coordinate clip, Chrome captures the visible viewport,
+		// including its current scroll offset, at the scope's emulated size.
+		image, err = page.CaptureScreenshot().WithFormat(page.CaptureScreenshotFormatJpeg).WithQuality(80).
+			WithOptimizeForSpeed(true).WithCaptureBeyondViewport(false).Do(ctx)
+		return err
+	}))
+	return image, err
+}
+
+// contentHeight measures the whole document so a full-page viewport can cover
+// it. The result stays within the same 4096 / 8388608-pixel bounds as resize.
+func (sc *scope) contentHeight(ctx context.Context) (int, error) {
+	var height float64
+	const expression = `(()=>{const d=document.documentElement,b=document.body;return Math.max(d?d.scrollHeight:0,b?b.scrollHeight:0,d?d.offsetHeight:0)||0})()`
+	if err := sc.withTab(ctx, chromedp.Evaluate(expression, &height)); err != nil {
+		return 0, err
+	}
+	measured := int(math.Ceil(height))
+	if measured < 1 {
+		measured = 1
+	}
+	if measured > 4096 {
+		measured = 4096
+	}
+	// Keep the emulated surface within the same pixel budget as resize.
+	scale := sc.scale
+	if scale <= 0 {
+		scale = 1
+	}
+	if sc.width > 0 {
+		if limit := int(8388608 / (float64(sc.width) * scale * scale)); measured > limit {
+			measured = limit
+		}
+	}
+	if measured < 1 {
+		measured = 1
+	}
+	return measured, nil
+}
+
+func (sc *scope) tabOwnedByOtherSession(tabID, callerSession string) bool {
+	if tabID == "" {
+		return false
+	}
+	sc.tabMu.Lock()
+	defer sc.tabMu.Unlock()
+	if owner := sc.tabOwners[tabID]; owner != "" && owner != callerSession {
+		return true
+	}
+	for session, bound := range sc.sessionTabs {
+		if session != callerSession && bound == tabID {
+			return true
+		}
+	}
+	return false
+}
+
+func (sc *scope) bindCallerTab(callerSession, tabID string) {
+	callerSession = strings.TrimSpace(callerSession)
+	if callerSession == "" || tabID == "" {
+		return
+	}
+	sc.tabMu.Lock()
+	defer sc.tabMu.Unlock()
+	if sc.sessionTabs == nil {
+		sc.sessionTabs = make(map[string]string)
+	}
+	if sc.tabOwners == nil {
+		sc.tabOwners = make(map[string]string)
+	}
+	sc.sessionTabs[callerSession] = tabID
+	if sc.tabOwners[tabID] == "" || sc.tabOwners[tabID] == callerSession {
+		sc.tabOwners[tabID] = callerSession
+	}
+}
+
+func isLiveInputAction(action string) bool {
+	switch action {
+	case "pointer", "wheel", "zoom", "stop_loading", "context", "copy", "paste", "upload_cancel", "zoom_reset", "focus", "viewport_reset":
+		return true
+	default:
+		return false
+	}
+}
+
+func isBlankTabURL(raw string) bool {
+	u := strings.TrimSpace(raw)
+	return u == "" || u == "about:blank" || strings.HasPrefix(u, "chrome://newtab") || strings.HasPrefix(u, "chrome://new-tab-page")
+}
+
+func (sc *scope) unownedBlankTab(state State, callerSession string) string {
+	if state.TabID != "" {
+		for _, tab := range state.Tabs {
+			if tab.ID == state.TabID && isBlankTabURL(tab.URL) && !sc.tabOwnedByOtherSession(tab.ID, callerSession) {
+				return tab.ID
+			}
+		}
+	}
+	for _, tab := range state.Tabs {
+		if isBlankTabURL(tab.URL) && !sc.tabOwnedByOtherSession(tab.ID, callerSession) {
+			return tab.ID
+		}
+	}
+	return ""
+}
+
+func (sc *scope) sharedWindowTab(state State) string {
+	sc.tabMu.Lock()
+	defer sc.tabMu.Unlock()
+	isShared := func(tabID string) bool {
+		if tabID == "" {
+			return false
+		}
+		if owner := sc.tabOwners[tabID]; owner != "" && owner != sc.sessionID {
+			return false
+		}
+		for session, bound := range sc.sessionTabs {
+			if session != sc.sessionID && bound == tabID {
+				return false
+			}
+		}
+		return true
+	}
+	if storeTab := sc.sessionTabs[sc.sessionID]; storeTab != "" && isShared(storeTab) {
+		for _, tab := range state.Tabs {
+			if tab.ID == storeTab {
+				return tab.ID
+			}
+		}
+	}
+	if state.TabID != "" && isShared(state.TabID) {
+		for _, tab := range state.Tabs {
+			if tab.ID == state.TabID {
+				return tab.ID
+			}
+		}
+	}
+	for _, tab := range state.Tabs {
+		if isShared(tab.ID) {
+			return tab.ID
+		}
+	}
+	return ""
+}
+
+func (sc *scope) prepareCallerTab(ctx context.Context, callerSession string, a Action) Action {
+	out, _ := sc.resolveCallerAction(ctx, callerSession, a, false)
+	return out
+}
+
+// resolveCallerAction ensures that when multiple conversation sessions or a direct
+// workstore_* caller share a unified browser scope, each caller owns and
+// restores its own tab in the shared Chrome window rather than overwriting
+// another caller's tab or spawning phantom about:blank tabs.
+func (sc *scope) resolveCallerAction(ctx context.Context, callerSession string, a Action, agent bool) (Action, bool) {
+	callerSession = strings.TrimSpace(callerSession)
+	if callerSession == "" || sc.browser == nil {
+		return a, true
+	}
+	state, err := sc.state(ctx)
+	if err != nil || len(state.Tabs) == 0 {
+		return a, true
+	}
+	sc.tabMu.Lock()
+	if sc.sessionTabs == nil {
+		sc.sessionTabs = make(map[string]string)
+	}
+	boundTab := sc.sessionTabs[callerSession]
+	if boundTab != "" {
+		live := false
+		for _, tab := range state.Tabs {
+			if tab.ID == boundTab {
+				live = true
+				break
+			}
+		}
+		if !live {
+			delete(sc.sessionTabs, callerSession)
+			boundTab = ""
+		}
+	}
+	if boundTab == "" && len(sc.tabOwners) > 0 {
+		for _, tab := range state.Tabs {
+			if sc.tabOwners[tab.ID] == callerSession {
+				boundTab = tab.ID
+				sc.sessionTabs[callerSession] = boundTab
+				break
+			}
+		}
+	}
+	sc.tabMu.Unlock()
+	if boundTab != "" {
+		if a.Action != "tab_select" && sc.tabID != boundTab {
+			sc.stopStream()
+			sc.setTabID(boundTab)
+			_ = sc.withTab(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+				return target.ActivateTarget(target.ID(boundTab)).Do(ctx)
+			}))
+		}
+		return a, true
+	}
+	if a.Action == "" || a.Action == "tab_new" || a.Action == "tab_select" || a.Action == "tab_close" || a.Action == "resize" || isLiveInputAction(a.Action) {
+		return a, true
+	}
+	if blankTab := sc.unownedBlankTab(state, callerSession); blankTab != "" {
+		if sc.tabID != blankTab {
+			sc.stopStream()
+			sc.setTabID(blankTab)
+			_ = sc.withTab(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+				return target.ActivateTarget(target.ID(blankTab)).Do(ctx)
+			}))
+		}
+		if a.Action != "snapshot" && a.Action != "screenshot" {
+			sc.bindCallerTab(callerSession, blankTab)
+		}
+		return a, true
+	}
+	if a.Action == "navigate" {
+		// Existing tabs are non-blank or owned by other sessions: open a new
+		// tab in the running Chrome window so the conversation reuses the
+		// logged-in profile without overwriting another session's page.
+		a.Action = "tab_new"
+		return a, true
+	}
+	if sharedTab := sc.sharedWindowTab(state); sharedTab != "" {
+		if sc.tabID != sharedTab {
+			sc.stopStream()
+			sc.setTabID(sharedTab)
+			_ = sc.withTab(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+				return target.ActivateTarget(target.ID(sharedTab)).Do(ctx)
+			}))
+		}
+		return a, true
+	}
+	if !agent {
+		return a, true
+	}
+	return a, false
+}
+
+func (sc *scope) perform(ctx context.Context, a Action) (map[string]any, error) {
+	if a.Async && a.Action != "tab_new" {
+		return nil, sc.startNavigation(ctx, a)
+	}
+	if a.Action == "stop_loading" {
+		return nil, sc.stopNavigation(ctx)
+	}
+	if a.Action == "context" || a.Action == "copy" || a.Action == "paste" {
+		return sc.clipboard(ctx, a)
+	}
+	if a.Action == "upload_cancel" {
+		return nil, sc.workflowAction(ctx, a)
+	}
+	if a.Action == "wheel" {
+		return sc.wheel(ctx, a)
+	}
+	if a.Action == "zoom" {
+		return sc.zoom(ctx, a)
+	}
+	if releasesPointer(a.Action) {
+		sc.dropPointer(ctx)
+	}
+	var task chromedp.Action
+	switch a.Action {
+	case "focus":
+		return nil, sc.focusWindow(ctx)
+	case "pointer":
+		_, err := sc.pointer(ctx, a)
+		return nil, err
+	case "resize":
+		if !sc.fullPage || sc.window {
+			return nil, sc.withTab(ctx)
+		}
+		height, err := sc.contentHeight(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if height != sc.height {
+			sc.height = height
+			sc.stopStream()
+		}
+		return nil, sc.withTab(ctx)
+	case "viewport_reset":
+		// Only Chrome Link emulates a viewport it can restore; Hoxi-owned
+		// browsers always follow their own size.
+		return nil, nil
+	case "zoom_reset":
+		return nil, sc.withTab(ctx, emulation.SetPageScaleFactor(1))
+	case "navigate":
+		task = chromedp.Navigate(a.URL)
+	case "back":
+		task = chromedp.NavigateBack()
+	case "forward":
+		task = chromedp.NavigateForward()
+	case "reload":
+		task = chromedp.Reload()
+	case "click":
+		if a.Selector != "" {
+			task = chromedp.Click(a.Selector, chromedp.ByQuery)
+		} else {
+			task = chromedp.MouseClickXY(a.X, a.Y)
+		}
+	case "type":
+		tasks := chromedp.Tasks{}
+		if a.Selector != "" {
+			tasks = append(tasks, chromedp.Focus(a.Selector, chromedp.ByQuery))
+		}
+		task = append(tasks, input.InsertText(a.Text))
+	case "key":
+		var err error
+		task, err = keyAction(a.Key)
+		if err != nil {
+			return nil, err
+		}
+	case "scroll":
+		task = input.DispatchMouseEvent(input.MouseWheel, a.X, a.Y).WithDeltaX(a.DeltaX).WithDeltaY(a.DeltaY)
+	case "screenshot":
+		image, err := sc.capture(ctx)
+		return map[string]any{"image": image}, err
+	case "snapshot":
+		var snapshot any
+		err := sc.withTab(ctx, chromedp.Evaluate(snapshotJS, &snapshot))
+		return map[string]any{"snapshot": snapshot}, err
+	case "evaluate":
+		// Bound serialization in the page before CDP transports the result.
+		var result string
+		expression := fmt.Sprintf(`(()=>{const v=(0,eval)(%q);const s=JSON.stringify(v);return (s===undefined?"undefined":s).slice(0,65536)})()`, a.Text)
+		err := sc.withTab(ctx, chromedp.Evaluate(expression, &result))
+		return map[string]any{"result": result}, err
+	case "tab_new":
+		u := strings.TrimSpace(a.URL)
+		prevTab := sc.tabID
+		id, err := target.CreateTarget("about:blank").Do(cdp.WithExecutor(ctx, chromedp.FromContext(sc.browser).Browser))
+		if err == nil {
+			sc.stopStream()
+			sc.setTabID(string(id))
+			activate := chromedp.ActionFunc(func(ctx context.Context) error {
+				return target.ActivateTarget(id).Do(ctx)
+			})
+			if u != "" && u != "about:blank" {
+				if a.Async {
+					err = sc.withTab(ctx, activate)
+					if err == nil {
+						err = sc.startNavigation(ctx, Action{Action: "navigate", URL: u})
+					}
+				} else {
+					err = sc.withTab(ctx, activate, chromedp.Navigate(u))
+				}
+			} else {
+				err = sc.withTab(ctx, activate)
+			}
+			if err != nil && prevTab != "" && prevTab != string(id) {
+				sc.cleanupFailedNewTab(id, prevTab)
+			}
+		}
+		return nil, err
+	case "tab_select", "tab_close":
+		state, err := sc.state(ctx)
+		if err != nil {
+			return nil, err
+		}
+		found := false
+		for _, tab := range state.Tabs {
+			if tab.ID == a.TabID {
+				found = true
+			}
+		}
+		if !found {
+			return nil, errors.New("tab does not belong to this browser")
+		}
+		if a.Action == "tab_select" {
+			if sc.tabID != a.TabID {
+				sc.stopStream()
+			}
+			sc.setTabID(a.TabID)
+			return nil, sc.withTab(ctx, chromedp.ActionFunc(func(ctx context.Context) error { return target.ActivateTarget(target.ID(a.TabID)).Do(ctx) }))
+		}
+		executor := cdp.WithExecutor(ctx, chromedp.FromContext(sc.browser).Browser)
+		if len(state.Tabs) == 1 {
+			sc.stopStream()
+			// Keep Chrome and the scope usable when its last page is closed.
+			id, err := target.CreateTarget("about:blank").Do(executor)
+			if err != nil {
+				return nil, err
+			}
+			sc.setTabID(string(id))
+		}
+		err = target.CloseTarget(target.ID(a.TabID)).Do(executor)
+		if err == nil {
+			sc.releaseTab(a.TabID)
+			// CloseTarget acknowledges the request before target destruction finishes.
+			// Wait before returning state so the closed tab cannot be selected again.
+			for {
+				infos, listErr := chromedp.Targets(ctx)
+				if listErr != nil {
+					return nil, listErr
+				}
+				live := false
+				for _, info := range infos {
+					if string(info.TargetID) == a.TabID {
+						live = true
+					}
+				}
+				if !live {
+					break
+				}
+				select {
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				case <-time.After(10 * time.Millisecond):
+				}
+			}
+		}
+		return nil, err
+	default:
+		return nil, errors.New("unsupported action")
+	}
+	return nil, sc.withTab(ctx, task)
+}
+
+func (sc *scope) cleanupFailedNewTab(id target.ID, prevTab string) {
+	if sc.browser == nil || sc.browser.Err() != nil {
+		return
+	}
+	cleanCtx, cancel := context.WithTimeout(sc.browser, 2*time.Second)
+	defer cancel()
+	exec := cdp.WithExecutor(cleanCtx, chromedp.FromContext(sc.browser).Browser)
+	if err := target.CloseTarget(id).Do(exec); err != nil {
+		return
+	}
+	sc.releaseTab(string(id))
+	for i := 0; i < 20; i++ {
+		infos, err := chromedp.Targets(cleanCtx)
+		if err != nil {
+			break
+		}
+		stillOpen := false
+		for _, info := range infos {
+			if info.TargetID == id {
+				stillOpen = true
+				break
+			}
+		}
+		if !stillOpen {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	sc.setTabID(prevTab)
+	_ = sc.withTab(cleanCtx, chromedp.ActionFunc(func(ctx context.Context) error {
+		return target.ActivateTarget(target.ID(prevTab)).Do(ctx)
+	}))
+}
+
+func (sc *scope) releaseTab(id string) {
+	if n := sc.navigations[id]; n != nil {
+		n.stop()
+		delete(sc.navigations, id)
+	}
+	if sc.stream != nil && sc.stream.frame.TabID == id {
+		sc.stopStream()
+	}
+	// The initial page shares the root browser context. Dropping that page must
+	// not cancel Chrome; only attached child contexts have entries in this map.
+	if cancel := sc.tabCancels[id]; cancel != nil {
+		cancel()
+		delete(sc.tabCancels, id)
+	}
+	delete(sc.tabs, id)
+	sc.tabMu.Lock()
+	delete(sc.tabOwners, id)
+	for k, tabID := range sc.sessionTabs {
+		if tabID == id {
+			delete(sc.sessionTabs, k)
+		}
+	}
+	sc.tabMu.Unlock()
+	delete(sc.viewports, id)
+	delete(sc.diagnostics, id)
+	if sc.workflows != nil {
+		sc.workflows.mu.Lock()
+		delete(sc.workflows.uploads, id)
+		delete(sc.workflows.dialogs, id)
+		delete(sc.workflows.tabs, id)
+		sc.workflows.mu.Unlock()
+	}
+}
+
+// Light-DOM snapshot: at most 200 visible controls and 32 KiB of rendered text.
+// CSS.escape and structural paths avoid assuming IDs are unique or CSS-safe.
+const snapshotJS = `(()=>{
+ const controls=[];
+ const selector=(el)=>{
+  const parts=[];
+  while(el&&el.nodeType===1){
+   let part=el.localName;
+   if(el.id){const id='#'+CSS.escape(el.id);if(document.querySelectorAll(id).length===1){parts.unshift(id);break}}
+   const parent=el.parentElement;
+   if(parent){const siblings=Array.from(parent.children).filter(x=>x.localName===el.localName);if(siblings.length>1)part+=':nth-of-type('+(siblings.indexOf(el)+1)+')'}
+   parts.unshift(part);el=parent;
+  }
+  return parts.join(' > ');
+ };
+ for(const el of document.querySelectorAll('a,button,input,textarea,select,[role="button"],[contenteditable="true"],[tabindex]')){
+  if(controls.length>=200)break;
+  if(!el.getClientRects().length||getComputedStyle(el).visibility==='hidden')continue;
+  controls.push({selector:selector(el).slice(0,2048),tag:el.localName,text:(el.getAttribute('aria-label')||el.innerText||el.getAttribute('placeholder')||'').slice(0,256)});
+ }
+ return {text:(document.body?.innerText||'').slice(0,32768),controls};
+})()`

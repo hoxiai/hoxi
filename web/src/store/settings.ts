@@ -1,0 +1,668 @@
+// web/src/store/settings.ts
+import { createSignal } from "solid-js";
+import { createStore } from "solid-js/store";
+import { hoxiAPI, type SystemRuntimeInfo } from "../services/api";
+import {
+  deliverDesktopNotification,
+  fetchDesktopNotificationPermission,
+  requestDesktopNotificationPermission as requestNativeDesktopNotificationPermission,
+  type DesktopNotificationPermission,
+} from "../services/desktop-notify";
+import { openExternalBrowserURL } from "../services/desktop-events";
+import {
+  readStorageItem,
+  readStorageJSON,
+  setWorkspace,
+  THEME_KEY,
+  workspace,
+  writeStorageItem,
+  writeStorageJSON,
+  type ProviderModalTab,
+} from "./workspace-state";
+
+export type ApprovalMode = "auto" | "smart" | "manual" | "trusted" | "unattended";
+export type BashApprovalRule = "" | "allow" | "smart" | "ask";
+
+export type SettingsTab =
+  | "general"
+  | "chat"
+  | "workspace"
+  | "terminal"
+  | "account"
+  | "system"
+  | "privacy"
+  | "diagnostics"
+  | "errorLog"
+  | "usage"
+  | "relay"
+  | "remote"
+  | "extensions"
+  | ProviderModalTab;
+export type ThemeMode = "light" | "dark" | "system";
+export type ColorScheme = "blue" | "classic" | "warm" | "midnight";
+
+export const COLOR_SCHEMES: ColorScheme[] = ["blue", "classic", "warm", "midnight"];
+export type FontScale = "compact" | "default" | "comfortable" | "large";
+export type SendShortcutMode = "enter" | "mod-enter";
+export type ReasoningDisplayMode = "auto-collapse" | "expanded" | "collapsed";
+export type DiffLayoutMode = "unified" | "split";
+export type WorktreeApplyStrategy = "patch" | "merge";
+export type LinkOpenTarget = "external" | "inspector";
+export const BROWSER_IDLE_MINUTE_PRESETS = [5, 10, 15, 30, 60, 120, 0] as const;
+
+export interface AppSettingsState {
+  modalOpen: boolean;
+  activeTab: SettingsTab;
+  themeMode: ThemeMode;
+  colorScheme: ColorScheme;
+  fontScale: FontScale;
+  sidebarAutoCollapse: boolean;
+  sidebarMinSessions: number;
+  sidebarRecentMinutes: number;
+  userLoggedIn: boolean;
+  userDisplayName: string;
+  userEmail: string;
+  detectedSystemUsername: string;
+  detectedGitUserName: string;
+  detectedGitUserEmail: string;
+  sendShortcut: SendShortcutMode;
+  approvalMode: ApprovalMode;
+  /** Legacy localStorage override; migrated to ~/.hoxi/approval-policy.json on startup. */
+  bashApprovalRule: BashApprovalRule;
+  reasoningDisplay: ReasoningDisplayMode;
+  autoScrollStream: boolean;
+  confirmBeforeRevert: boolean;
+  customSystemPrompt: string;
+  defaultSandboxMode: "local" | "worktree";
+  defaultDiffStyle: DiffLayoutMode;
+  worktreeApplyMode: WorktreeApplyStrategy;
+  terminalFontSize: number;
+  terminalCursorBlink: boolean;
+  desktopNotifications: boolean;
+  notificationSound: boolean;
+  notifyOnComplete: boolean;
+  notifyOnAttention: boolean;
+  notifyOnStall: boolean;
+  keepAwakeWhileRunning: boolean;
+  browserIdleMinutes: number;
+  linkOpenTarget: LinkOpenTarget;
+}
+
+export const APP_SETTINGS_KEY = "hoxi-app-settings:v1";
+
+type PersistedSettings = Omit<
+  AppSettingsState,
+  | "modalOpen"
+  | "activeTab"
+  | "detectedSystemUsername"
+  | "detectedGitUserName"
+  | "detectedGitUserEmail"
+>;
+
+const DEFAULT_SETTINGS: PersistedSettings = {
+  themeMode: "light",
+  colorScheme: "blue",
+  fontScale: "default",
+  sidebarAutoCollapse: true,
+  sidebarMinSessions: 7,
+  sidebarRecentMinutes: 60,
+  userLoggedIn: false,
+  userDisplayName: "",
+  userEmail: "",
+  sendShortcut: "enter",
+  approvalMode: "auto",
+  bashApprovalRule: "",
+  reasoningDisplay: "auto-collapse",
+  autoScrollStream: true,
+  confirmBeforeRevert: true,
+  customSystemPrompt: "",
+  defaultSandboxMode: "local",
+  defaultDiffStyle: "unified",
+  worktreeApplyMode: "patch",
+  terminalFontSize: 12,
+  terminalCursorBlink: true,
+  desktopNotifications: true,
+  notificationSound: true,
+  notifyOnComplete: true,
+  notifyOnAttention: true,
+  notifyOnStall: true,
+  keepAwakeWhileRunning: true,
+  browserIdleMinutes: 30,
+  linkOpenTarget: "external",
+};
+
+function isColorScheme(value: unknown): value is ColorScheme {
+  return typeof value === "string" && (COLOR_SCHEMES as string[]).includes(value);
+}
+
+export function loadInitialSettings(): PersistedSettings {
+  let baseTheme: ThemeMode = "light";
+  const savedLegacyTheme = readStorageItem(THEME_KEY);
+  if (savedLegacyTheme === "dark" || savedLegacyTheme === "light") {
+    baseTheme = savedLegacyTheme;
+  }
+
+  try {
+    const parsed = readStorageJSON<Record<string, any>>(APP_SETTINGS_KEY);
+    if (!parsed || typeof parsed !== "object") {
+      return { ...DEFAULT_SETTINGS, themeMode: baseTheme };
+    }
+    return {
+      colorScheme: isColorScheme(parsed.colorScheme) ? parsed.colorScheme : "blue",
+      themeMode:
+        parsed.themeMode === "light" ||
+        parsed.themeMode === "dark" ||
+        parsed.themeMode === "system"
+          ? parsed.themeMode
+          : baseTheme,
+      fontScale:
+        parsed.fontScale === "compact" ||
+        parsed.fontScale === "default" ||
+        parsed.fontScale === "comfortable" ||
+        parsed.fontScale === "large"
+          ? parsed.fontScale
+          : DEFAULT_SETTINGS.fontScale,
+      sidebarAutoCollapse:
+        typeof parsed.sidebarAutoCollapse === "boolean"
+          ? parsed.sidebarAutoCollapse
+          : DEFAULT_SETTINGS.sidebarAutoCollapse,
+      sidebarMinSessions:
+        Number.isInteger(parsed.sidebarMinSessions) &&
+        parsed.sidebarMinSessions >= 1 &&
+        parsed.sidebarMinSessions <= 100
+          ? parsed.sidebarMinSessions
+          : DEFAULT_SETTINGS.sidebarMinSessions,
+      sidebarRecentMinutes:
+        Number.isInteger(parsed.sidebarRecentMinutes) &&
+        parsed.sidebarRecentMinutes >= 0 &&
+        parsed.sidebarRecentMinutes <= 10080
+          ? parsed.sidebarRecentMinutes
+          : DEFAULT_SETTINGS.sidebarRecentMinutes,
+      userLoggedIn:
+        typeof parsed.userLoggedIn === "boolean"
+          ? parsed.userLoggedIn
+          : DEFAULT_SETTINGS.userLoggedIn,
+      userDisplayName:
+        typeof parsed.userDisplayName === "string" ? parsed.userDisplayName : "",
+      userEmail:
+        typeof parsed.userEmail === "string" ? parsed.userEmail : "",
+      sendShortcut:
+        parsed.sendShortcut === "enter" || parsed.sendShortcut === "mod-enter"
+          ? parsed.sendShortcut
+          : DEFAULT_SETTINGS.sendShortcut,
+      approvalMode:
+        parsed.approvalMode === "auto" ||
+        parsed.approvalMode === "smart" ||
+        parsed.approvalMode === "manual" ||
+        parsed.approvalMode === "trusted" ||
+        parsed.approvalMode === "unattended"
+          ? parsed.approvalMode
+          : DEFAULT_SETTINGS.approvalMode,
+      bashApprovalRule:
+        parsed.bashApprovalRule === "allow" ||
+        parsed.bashApprovalRule === "smart" ||
+        parsed.bashApprovalRule === "ask"
+          ? parsed.bashApprovalRule
+          : DEFAULT_SETTINGS.bashApprovalRule,
+      reasoningDisplay:
+        parsed.reasoningDisplay === "auto-collapse" ||
+        parsed.reasoningDisplay === "expanded" ||
+        parsed.reasoningDisplay === "collapsed"
+          ? parsed.reasoningDisplay
+          : DEFAULT_SETTINGS.reasoningDisplay,
+      autoScrollStream:
+        typeof parsed.autoScrollStream === "boolean"
+          ? parsed.autoScrollStream
+          : DEFAULT_SETTINGS.autoScrollStream,
+      confirmBeforeRevert:
+        typeof parsed.confirmBeforeRevert === "boolean"
+          ? parsed.confirmBeforeRevert
+          : DEFAULT_SETTINGS.confirmBeforeRevert,
+      customSystemPrompt:
+        typeof parsed.customSystemPrompt === "string"
+          ? parsed.customSystemPrompt
+          : DEFAULT_SETTINGS.customSystemPrompt,
+      defaultSandboxMode:
+        parsed.defaultSandboxMode === "local" || parsed.defaultSandboxMode === "worktree"
+          ? parsed.defaultSandboxMode
+          : DEFAULT_SETTINGS.defaultSandboxMode,
+      defaultDiffStyle:
+        parsed.defaultDiffStyle === "unified" || parsed.defaultDiffStyle === "split"
+          ? parsed.defaultDiffStyle
+          : DEFAULT_SETTINGS.defaultDiffStyle,
+      worktreeApplyMode:
+        parsed.worktreeApplyMode === "patch" || parsed.worktreeApplyMode === "merge"
+          ? parsed.worktreeApplyMode
+          : DEFAULT_SETTINGS.worktreeApplyMode,
+      terminalFontSize:
+        typeof parsed.terminalFontSize === "number" &&
+        parsed.terminalFontSize >= 10 &&
+        parsed.terminalFontSize <= 18
+          ? parsed.terminalFontSize
+          : DEFAULT_SETTINGS.terminalFontSize,
+      terminalCursorBlink:
+        typeof parsed.terminalCursorBlink === "boolean"
+          ? parsed.terminalCursorBlink
+          : DEFAULT_SETTINGS.terminalCursorBlink,
+      desktopNotifications:
+        typeof parsed.desktopNotifications === "boolean"
+          ? parsed.desktopNotifications
+          : DEFAULT_SETTINGS.desktopNotifications,
+      notificationSound:
+        typeof parsed.notificationSound === "boolean"
+          ? parsed.notificationSound
+          : DEFAULT_SETTINGS.notificationSound,
+      notifyOnComplete:
+        typeof parsed.notifyOnComplete === "boolean"
+          ? parsed.notifyOnComplete
+          : DEFAULT_SETTINGS.notifyOnComplete,
+      notifyOnAttention:
+        typeof parsed.notifyOnAttention === "boolean"
+          ? parsed.notifyOnAttention
+          : DEFAULT_SETTINGS.notifyOnAttention,
+      notifyOnStall:
+        typeof parsed.notifyOnStall === "boolean"
+          ? parsed.notifyOnStall
+          : DEFAULT_SETTINGS.notifyOnStall,
+      keepAwakeWhileRunning:
+        typeof parsed.keepAwakeWhileRunning === "boolean"
+          ? parsed.keepAwakeWhileRunning
+          : DEFAULT_SETTINGS.keepAwakeWhileRunning,
+      browserIdleMinutes:
+        Number.isInteger(parsed.browserIdleMinutes) &&
+        parsed.browserIdleMinutes >= 0 &&
+        parsed.browserIdleMinutes <= 1440
+          ? parsed.browserIdleMinutes
+          : DEFAULT_SETTINGS.browserIdleMinutes,
+      linkOpenTarget:
+        parsed.linkOpenTarget === "external" || parsed.linkOpenTarget === "inspector"
+          ? parsed.linkOpenTarget
+          : DEFAULT_SETTINGS.linkOpenTarget,
+    };
+  } catch {
+    return { ...DEFAULT_SETTINGS, themeMode: baseTheme };
+  }
+}
+
+export const [appSettings, setAppSettings] = createStore<AppSettingsState>({
+  modalOpen: false,
+  activeTab: "general",
+  detectedSystemUsername: "",
+  detectedGitUserName: "",
+  detectedGitUserEmail: "",
+  ...loadInitialSettings(),
+});
+
+function persistAppSettings() {
+  const payload: PersistedSettings = {
+    themeMode: appSettings.themeMode,
+    colorScheme: appSettings.colorScheme,
+    fontScale: appSettings.fontScale,
+    sidebarAutoCollapse: appSettings.sidebarAutoCollapse,
+    sidebarMinSessions: appSettings.sidebarMinSessions,
+    sidebarRecentMinutes: appSettings.sidebarRecentMinutes,
+    userLoggedIn: appSettings.userLoggedIn,
+    userDisplayName: appSettings.userDisplayName,
+    userEmail: appSettings.userEmail,
+    sendShortcut: appSettings.sendShortcut,
+    approvalMode: appSettings.approvalMode,
+    bashApprovalRule: appSettings.bashApprovalRule,
+    reasoningDisplay: appSettings.reasoningDisplay,
+    autoScrollStream: appSettings.autoScrollStream,
+    confirmBeforeRevert: appSettings.confirmBeforeRevert,
+    customSystemPrompt: appSettings.customSystemPrompt,
+    defaultSandboxMode: appSettings.defaultSandboxMode,
+    defaultDiffStyle: appSettings.defaultDiffStyle,
+    worktreeApplyMode: appSettings.worktreeApplyMode,
+    terminalFontSize: appSettings.terminalFontSize,
+    terminalCursorBlink: appSettings.terminalCursorBlink,
+    desktopNotifications: appSettings.desktopNotifications,
+    notificationSound: appSettings.notificationSound,
+    notifyOnComplete: appSettings.notifyOnComplete,
+    notifyOnAttention: appSettings.notifyOnAttention,
+    notifyOnStall: appSettings.notifyOnStall,
+    keepAwakeWhileRunning: appSettings.keepAwakeWhileRunning,
+    browserIdleMinutes: appSettings.browserIdleMinutes,
+    linkOpenTarget: appSettings.linkOpenTarget,
+  };
+  writeStorageJSON(APP_SETTINGS_KEY, payload);
+}
+
+export function hydrateLocalUserIdentity(info: {
+  systemUsername?: string;
+  gitUserName?: string;
+  gitUserEmail?: string;
+}) {
+  setAppSettings({
+    detectedSystemUsername: info.systemUsername?.trim() || "",
+    detectedGitUserName: info.gitUserName?.trim() || "",
+    detectedGitUserEmail: info.gitUserEmail?.trim() || "",
+  });
+}
+
+export function resolvedUserDisplayName(): string {
+  const custom = appSettings.userDisplayName.trim();
+  if (custom) return custom;
+  if (appSettings.detectedGitUserName) return appSettings.detectedGitUserName;
+  if (appSettings.detectedSystemUsername) return appSettings.detectedSystemUsername;
+  const root = workspace.rootDir || "";
+  const match = root.match(/^\/(?:Users|home)\/([^/]+)/);
+  if (match?.[1]) return match[1];
+  return "developer";
+}
+
+export function resolvedUserEmail(): string {
+  const custom = appSettings.userEmail.trim();
+  if (custom) return custom;
+  if (appSettings.detectedGitUserEmail) return appSettings.detectedGitUserEmail;
+  const nameSlug = resolvedUserDisplayName()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]/g, "");
+  return `${nameSlug || "user"}@hoxi.local`;
+}
+
+export function signInUserAccount(name?: string, email?: string) {
+  if (typeof name === "string") {
+    setAppSettings("userDisplayName", name.trim());
+  }
+  if (typeof email === "string") {
+    setAppSettings("userEmail", email.trim());
+  }
+  setAppSettings("userLoggedIn", true);
+  persistAppSettings();
+}
+
+export function signOutUserAccount() {
+  setAppSettings({ userLoggedIn: false, userDisplayName: "", userEmail: "" });
+  persistAppSettings();
+}
+
+export function applyThemeClass(theme: "light" | "dark") {
+  if (typeof document === "undefined") return;
+  document.documentElement.classList.toggle("dark", theme === "dark");
+}
+
+export function resolveEffectiveTheme(mode: ThemeMode): "light" | "dark" {
+  if (mode === "light" || mode === "dark") return mode;
+  if (typeof window !== "undefined" && window.matchMedia) {
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  }
+  return "light";
+}
+
+export function applyFontScaleToDOM(scale: FontScale) {
+  if (typeof document === "undefined") return;
+  const map: Record<FontScale, { ui: string; chat: string; code: string }> = {
+    compact: { ui: "12.5px", chat: "13.5px", code: "12px" },
+    default: { ui: "13px", chat: "14.5px", code: "13px" },
+    comfortable: { ui: "13.5px", chat: "15.5px", code: "13.5px" },
+    large: { ui: "14px", chat: "16.5px", code: "14px" },
+  };
+  const chosen = map[scale] || map.default;
+  document.documentElement.style.setProperty("--app-ui-text-size", chosen.ui);
+  document.documentElement.style.setProperty("--app-chat-text-size", chosen.chat);
+  document.documentElement.style.setProperty("--app-code-text-size", chosen.code);
+}
+
+export function syncSettingsSideEffects() {
+  const effective = resolveEffectiveTheme(appSettings.themeMode);
+  setWorkspace("theme", effective);
+  setWorkspace("sessionSandboxMode", appSettings.defaultSandboxMode);
+  applyThemeClass(effective);
+  if (typeof document !== "undefined") {
+    document.documentElement.dataset.colorScheme = appSettings.colorScheme;
+  }
+  writeStorageItem(THEME_KEY, effective);
+  applyFontScaleToDOM(appSettings.fontScale);
+}
+
+// Listen for OS theme changes when themeMode === "system"
+if (typeof window !== "undefined" && window.matchMedia) {
+  const mq = window.matchMedia("(prefers-color-scheme: dark)");
+  mq.addEventListener?.("change", () => {
+    if (appSettings.themeMode === "system") {
+      syncSettingsSideEffects();
+    }
+  });
+}
+
+export function openSettingsModal(
+  tab: SettingsTab = "general",
+  editProviderID: string | null = null
+) {
+  const resolvedTab: SettingsTab = tab === "terminal" ? "general" : tab;
+  setWorkspace("editingProviderID", resolvedTab === "custom" ? editProviderID : null);
+  setAppSettings({ activeTab: resolvedTab, modalOpen: true });
+}
+
+export function openProviderModal(
+  tab: ProviderModalTab = "providers",
+  editProviderID: string | null = null
+) {
+  openSettingsModal(tab, editProviderID);
+}
+
+export function openHandoffModal() { setWorkspace("handoffModalOpen", true); }
+export function closeHandoffModal() { setWorkspace("handoffModalOpen", false); }
+
+export function closeSettingsModal() {
+  setAppSettings("modalOpen", false);
+}
+
+export function updateAppSetting<K extends keyof PersistedSettings>(
+  key: K,
+  value: PersistedSettings[K]
+) {
+  setAppSettings(key as any, value as any);
+  persistAppSettings();
+  if (key === "themeMode" || key === "colorScheme" || key === "fontScale" || key === "defaultSandboxMode") {
+    syncSettingsSideEffects();
+  }
+  if (key === "keepAwakeWhileRunning") {
+    void hoxiAPI.setKeepAwake(Boolean(value)).catch(() => {});
+  }
+  if (key === "browserIdleMinutes" && typeof value === "number") {
+    void hoxiAPI.setBrowserIdleMinutes(value).catch(() => {});
+  }
+}
+
+export function setSessionSandboxMode(mode: "local" | "worktree") {
+  updateAppSetting("defaultSandboxMode", mode);
+}
+
+export function setTheme(theme: "light" | "dark") {
+  updateAppSetting("themeMode", theme);
+}
+
+export function toggleTheme() {
+  setTheme(workspace.theme === "dark" ? "light" : "dark");
+}
+
+export function syncKeepAwakeFromBackend(enabled: boolean) {
+  if (appSettings.keepAwakeWhileRunning !== enabled) {
+    setAppSettings("keepAwakeWhileRunning", enabled);
+    persistAppSettings();
+  }
+}
+
+export function syncBrowserIdleMinutesFromBackend(minutes: number) {
+  if (
+    Number.isInteger(minutes) &&
+    minutes >= 0 &&
+    minutes <= 1440 &&
+    appSettings.browserIdleMinutes !== minutes
+  ) {
+    setAppSettings("browserIdleMinutes", minutes);
+    persistAppSettings();
+  }
+}
+
+/** Reads gateway/runtime info and adopts the backend's keep-awake and browser idle states. */
+export async function fetchSystemRuntimeInfo(): Promise<SystemRuntimeInfo> {
+  const info = await hoxiAPI.getSystemInfo();
+  if (typeof info?.status?.keepAwakeEnabled === "boolean") {
+    syncKeepAwakeFromBackend(info.status.keepAwakeEnabled);
+  }
+  if (typeof info?.browserIdleMinutes === "number") {
+    syncBrowserIdleMinutesFromBackend(info.browserIdleMinutes);
+  }
+  return info;
+}
+
+export function fetchSystemStorage() {
+  return hoxiAPI.getSystemStorage();
+}
+
+export function cleanSystemStorage() {
+  return hoxiAPI.cleanSystemStorage();
+}
+
+export function resetAllAppSettings() {
+  setAppSettings({
+    ...DEFAULT_SETTINGS,
+  });
+  persistAppSettings();
+  syncSettingsSideEffects();
+  void hoxiAPI.setBrowserIdleMinutes(DEFAULT_SETTINGS.browserIdleMinutes).catch(() => {});
+}
+
+export type NotificationKind = "complete" | "attention" | "stall";
+
+export interface DesktopNotificationOptions {
+  sessionID?: string;
+  kind?: NotificationKind;
+}
+
+const NOTIFICATION_DEDUPE_MS = 8000;
+const recentNotifications = new Map<string, number>();
+let notificationAudioContext: AudioContext | null = null;
+let playingNotificationTones = 0;
+
+function notificationKindEnabled(kind: NotificationKind): boolean {
+  if (kind === "complete") return appSettings.notifyOnComplete;
+  if (kind === "attention") return appSettings.notifyOnAttention;
+  return appSettings.notifyOnStall;
+}
+
+export function playNotificationSound(force = false) {
+  if (!force && !appSettings.notificationSound) return;
+  if (typeof window === "undefined") return;
+  const AudioCtor =
+    window.AudioContext ||
+    (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!AudioCtor) return;
+  try {
+    notificationAudioContext ??= new AudioCtor();
+    const ctx = notificationAudioContext;
+    // Always resume: it is a no-op while running and also undoes a suspend
+    // still in flight from the previous chime.
+    void ctx.resume().catch(() => undefined);
+    const now = ctx.currentTime;
+    const oscillator = ctx.createOscillator();
+    const gain = ctx.createGain();
+    oscillator.type = "sine";
+    oscillator.frequency.setValueAtTime(880, now);
+    oscillator.frequency.exponentialRampToValueAtTime(1174.66, now + 0.12);
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.12, now + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.22);
+    oscillator.connect(gain);
+    gain.connect(ctx.destination);
+    // A running context keeps the output device open (and blocks idle sleep)
+    // for as long as the app runs, so suspend it once the last chime ends.
+    playingNotificationTones++;
+    oscillator.onended = () => {
+      oscillator.disconnect();
+      gain.disconnect();
+      playingNotificationTones = Math.max(0, playingNotificationTones - 1);
+      if (playingNotificationTones === 0 && ctx.state === "running") {
+        void ctx.suspend().catch(() => undefined);
+      }
+    };
+    oscillator.start(now);
+    oscillator.stop(now + 0.24);
+  } catch {
+    /* audio unavailable */
+  }
+}
+
+export function triggerDesktopNotification(
+  title: string,
+  body: string,
+  options: DesktopNotificationOptions = {}
+) {
+  if (!appSettings.desktopNotifications) return;
+  const kind = options.kind ?? "complete";
+  if (!notificationKindEnabled(kind)) return;
+  if (typeof document !== "undefined" && document.hasFocus()) return;
+
+  const dedupeKey = `${kind}:${options.sessionID || ""}:${title}`;
+  const now = Date.now();
+  const previous = recentNotifications.get(dedupeKey);
+  if (previous && now - previous < NOTIFICATION_DEDUPE_MS) return;
+  recentNotifications.set(dedupeKey, now);
+  setTimeout(() => {
+    if (recentNotifications.get(dedupeKey) === now) recentNotifications.delete(dedupeKey);
+  }, NOTIFICATION_DEDUPE_MS);
+
+  playNotificationSound();
+  void deliverDesktopNotification({ title, body, sessionID: options.sessionID });
+}
+
+// Components must route side effects through the store layer.
+export function sendDesktopNotification(request: {
+  title: string;
+  body: string;
+  sessionID?: string;
+}): void {
+  void deliverDesktopNotification(request);
+}
+
+// Latest known host notification permission; null until first loaded so the UI
+// can distinguish "checking" from a real state.
+export const [desktopNotificationPermission, setDesktopNotificationPermission] =
+  createSignal<DesktopNotificationPermission | null>(null);
+
+export async function refreshDesktopNotificationPermission(): Promise<DesktopNotificationPermission> {
+  const permission = await fetchDesktopNotificationPermission();
+  setDesktopNotificationPermission(permission);
+  return permission;
+}
+
+export async function requestDesktopNotificationPermission(): Promise<DesktopNotificationPermission> {
+  const permission = await requestNativeDesktopNotificationPermission();
+  setDesktopNotificationPermission(permission);
+  return permission;
+}
+
+// Opens macOS System Settings › Notifications so a denied app can be re-enabled.
+export function openNotificationSystemSettings(): void {
+  openExternalBrowserURL("x-apple.systempreferences:com.apple.preference.notifications");
+}
+
+export function buildCombinedSystemPrompt(
+  workspaceFoldersPrompt?: string
+): string | undefined {
+  const custom = appSettings.customSystemPrompt.trim();
+  const parts: string[] = [];
+  if (workspaceFoldersPrompt) parts.push(workspaceFoldersPrompt);
+  if (custom) {
+    parts.push(`User global custom instructions:\n${custom}`);
+  }
+  return parts.length > 0 ? parts.join("\n\n") : undefined;
+}
+
+const CODE_WRAP_STORAGE_KEY = "hoxi.codeWrap";
+
+function readInitialCodeWrap(): boolean {
+  return readStorageItem(CODE_WRAP_STORAGE_KEY) === "1";
+}
+
+export const [codeWrapEnabled, setCodeWrapEnabled] = createSignal(readInitialCodeWrap());
+
+export function toggleCodeWrap(): void {
+  const next = !codeWrapEnabled();
+  setCodeWrapEnabled(next);
+  writeStorageItem(CODE_WRAP_STORAGE_KEY, next ? "1" : "0");
+}
+

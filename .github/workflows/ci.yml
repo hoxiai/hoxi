@@ -1,0 +1,152 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "master"]
+  pull_request:
+    branches: ["main", "master"]
+
+# Cancel obsolete in-flight runs when new commits are pushed to the same PR/branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend-lint:
+    name: "Frontend: TypeCheck, i18n & Architecture Lint"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm --prefix web ci
+
+      - name: Run TypeScript, i18n parity & architecture checks
+        run: npm --prefix web run lint
+
+  frontend-build:
+    name: "Frontend: Unit Tests & Bundle Build"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm --prefix web ci
+
+      - name: Run frontend unit tests
+        run: npm --prefix web test
+
+      - name: Run release pipeline regression tests
+        run: node --test scripts/release.test.mjs
+
+      - name: Run browser, sandbox, computer and Chrome Link extension tests
+        run: node --test internal/opencode/browser_plugin_test.mjs internal/opencode/skill_catalog_test.mjs internal/opencode/sandbox_plugin_test.mjs internal/opencode/computer_tool_test.mjs extensions/chrome/*.test.mjs
+
+      - name: Build frontend production bundle
+        run: npm --prefix web run build
+
+  backend-linux:
+    name: "Go Backend: Linux Build & Fast Tests"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Prepare embedded asset placeholder
+        run: mkdir -p web/dist && touch web/dist/placeholder
+
+      - name: Check Go formatting (gofmt)
+        run: |
+          UNFORMATTED="$(gofmt -l main.go cmd internal)"
+          if [[ -n "$UNFORMATTED" ]]; then
+            echo "The following Go files are not formatted with gofmt:" >&2
+            echo "$UNFORMATTED" >&2
+            exit 1
+          fi
+
+      - name: Run Go vet
+        run: go vet ./...
+
+      - name: Run Go tests with race detector
+        run: go test -v -race ./...
+
+      - name: Build headless CLI daemon binary
+        run: go build -v ./cmd/hoxi
+
+      - name: Cross-check Windows vet & build
+        run: |
+          GOOS=windows GOARCH=amd64 go vet ./...
+          GOOS=windows GOARCH=amd64 go build -v . ./cmd/hoxi
+
+  windows-native:
+    name: "Windows Native: Go Build & Core Tests"
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Prepare embedded asset placeholder
+        shell: bash
+        run: mkdir -p web/dist && touch web/dist/placeholder
+
+      - name: Run Windows Go vet
+        run: go vet ./...
+
+      - name: Run Windows core unit tests
+        run: go test -v ./internal/agentcli ./internal/attachment ./internal/cloudflared ./internal/computer ./internal/diagnostics ./internal/hoxipaths ./internal/notify ./internal/osopen ./internal/pairing ./internal/reclaim ./internal/runner ./internal/sandbox ./internal/statusbar ./internal/subproc ./internal/updater ./internal/worktree
+
+      - name: Build Windows desktop and CLI entrypoints
+        run: go build -v . ./cmd/hoxi
+
+  macos-native:
+    name: "macOS Native: Darwin CGo & Desktop Host"
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Prepare embedded asset placeholder
+        run: mkdir -p web/dist && touch web/dist/placeholder
+
+      - name: Run Go vet (Darwin & Cocoa CGo)
+        run: go vet ./...
+
+      - name: Run Darwin native Go tests with race detector
+        run: go test -v -race ./...
+
+      - name: Build root desktop entrypoint
+        run: go build -v .

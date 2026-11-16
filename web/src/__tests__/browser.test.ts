@@ -1,0 +1,320 @@
+import { createRoot } from "solid-js";
+import { browserAPI, browserPoint, browserStreamURL, browserURL, connectBrowserStream, observeBrowserZoom } from "../services/browser";
+import {
+  browserLoadPhase,
+  displayBrowserAddress,
+  normalizeBrowserAddress,
+  requiresBrowserTakeover,
+  resolveBrowserInspectorSessionID,
+} from "../store/browser";
+import { createBrowserController } from "../store/browser-controller";
+import { setSurfaceMode } from "../store/layout";
+import { setWorkspace, workspace } from "../store/workspace-state";
+import { assertDeepEqual, assertEqual, describe, it } from "./test-harness";
+
+describe("Browser inspector", () => {
+  it("distinguishes startup, slow navigation, page failure, and preview connection", () => {
+    const state = { url: "https://example.com", title: "", tabID: "one", tabs: [{ id: "one", title: "", url: "" }], manual: false };
+    assertEqual(browserLoadPhase(null, false, "connecting", "", 20000), "idle");
+    assertEqual(browserLoadPhase(null, true, "connecting", "", 20000), "starting");
+    assertEqual(browserLoadPhase({ ...state, navigation: { status: "loading", startedAt: 19000 } }, false, "live", "", 20000), "loading");
+    assertEqual(browserLoadPhase({ ...state, navigation: { status: "loading", startedAt: 1000 } }, false, "live", "", 20000), "slow");
+    assertEqual(browserLoadPhase({ ...state, navigation: { status: "failed", httpStatus: 404 } }, false, "live", "", 20000), "failed");
+    assertEqual(browserLoadPhase({ ...state, navigation: { status: "stopped" } }, false, "live", "", 20000), "stopped");
+    assertEqual(browserLoadPhase(state, false, "reconnecting", "", 20000), "reconnecting");
+    assertEqual(browserLoadPhase(state, false, "delayed", "", 20000), "delayed");
+    assertEqual(browserLoadPhase(state, false, "live", "", 20000), "ready");
+    assertEqual(browserLoadPhase({ ...state, mode: "window" }, false, "connecting", "", 20000, false), "ready");
+    assertEqual(browserLoadPhase({ ...state, connected: false }, false, "live", "", 20000), "disconnected");
+    assertEqual(browserLoadPhase({ ...state, connected: false }, false, "connecting", "", 20000, false), "disconnected");
+  });
+
+  it("takes over on deliberate page input without taking control on hover or release", () => {
+    for (const action of ["type", "key", "wheel", "zoom", "click", "context", "copy", "paste"] as const) assertEqual(requiresBrowserTakeover({ action }), true);
+    assertEqual(requiresBrowserTakeover({ action: "pointer", phase: "down" }), true);
+    for (const phase of ["move", "up", "cancel"] as const) assertEqual(requiresBrowserTakeover({ action: "pointer", phase }), false);
+    assertEqual(requiresBrowserTakeover({ action: "control", manual: false }), false);
+    assertEqual(requiresBrowserTakeover({ action: "mode", window: true }), false);
+    assertEqual(requiresBrowserTakeover({ action: "focus" }), false);
+  });
+  it("translates native WebKit pinch and Ctrl+wheel zoom and removes its listeners", () => {
+    const target = new EventTarget();
+    const zooms: number[] = [];
+    const stop = observeBrowserZoom(target as HTMLElement, scale => zooms.push(scale));
+    const dispatch = (type: string, data: object) => {
+      const event = Object.assign(new Event(type, { cancelable: true }), data);
+      target.dispatchEvent(event);
+      return event.defaultPrevented;
+    };
+    assertEqual(dispatch("gesturestart", {}), true);
+    dispatch("gesturechange", { scale: 1.5, clientX: 10, clientY: 20 });
+    dispatch("gesturechange", { scale: 3, clientX: 10, clientY: 20 });
+    dispatch("gestureend", {});
+    assertDeepEqual(zooms, [1.5, 2]);
+    assertEqual(dispatch("wheel", { ctrlKey: false, deltaY: -10 }), false);
+    assertEqual(dispatch("wheel", { ctrlKey: true, deltaY: -10, clientX: 10, clientY: 20 }), true);
+    assertEqual(zooms[2], Math.exp(.1));
+    stop();
+    assertEqual(dispatch("gesturestart", {}), false);
+    assertEqual(dispatch("wheel", { ctrlKey: true, deltaY: -10 }), false);
+    assertEqual(zooms.length, 3);
+  });
+  it("opens domains and local development addresses without a scheme", () => {
+    for (const [address, expected] of [
+      ["example.com", "https://example.com/"],
+      [" www.example.com/docs?q=test#top ", "https://www.example.com/docs?q=test#top"],
+      ["//example.com/path", "https://example.com/path"],
+      ["localhost:5400", "http://localhost:5400/"],
+      ["localhost:5400/path?q=1", "http://localhost:5400/path?q=1"],
+      ["app.localhost", "http://app.localhost/"],
+      ["127.0.0.1:5421", "http://127.0.0.1:5421/"],
+      ["192.168.1.2:3000", "http://192.168.1.2:3000/"],
+      ["[::1]:8080", "http://[::1]:8080/"],
+      ["devbox:8080", "http://devbox:8080/"],
+      ["https://localhost:5400/", "https://localhost:5400/"],
+      ["http://example.com/page", "http://example.com/page"],
+      ["HTTPS://EXAMPLE.COM", "https://example.com/"],
+      ["", "about:blank"], ["about:blank", "about:blank"],
+    ]) assertEqual(normalizeBrowserAddress(address), expected, address);
+  });
+
+  it("rejects unsupported schemes, credentials, and invalid address input", () => {
+    for (const address of ["javascript:alert(1)", "file:///tmp", "data:text/html,test", "chrome://settings",
+      "ftp://example.com", "about:config", "https://user:password@example.com", "user@example.com",
+      "hello world", "search", "http://", "localhost:99999", "https://[invalid]"]) {
+      assertEqual(normalizeBrowserAddress(address), null, address);
+    }
+  });
+
+  it("creates a Chrome connection code only through the scoped UI action", async () => {
+    const original = globalThis.fetch;
+    const scope = { sessionID: "ses_chrome", directory: "/work trees/chrome" };
+    const signal = new AbortController().signal;
+    try {
+      globalThis.fetch = async (url, init) => {
+        assertEqual(String(url), browserURL("action", scope));
+        assertEqual(init?.method, "POST");
+        assertEqual(init?.signal, signal);
+        assertEqual(init?.body, JSON.stringify({ action: "pair" }));
+        assertEqual((init?.headers as Record<string, string>)["X-Hoxi-Browser"], "true");
+        return new Response(JSON.stringify({ code: "one-use-code", expiresIn: 120 }));
+      };
+      assertDeepEqual(await browserAPI.pair(scope, signal), { code: "one-use-code", expiresIn: 120 });
+    } finally { globalThis.fetch = original; }
+  });
+  it("encodes session and worktree scope on every endpoint", () => {
+    const scope = { sessionID: "session &?", directory: "/work trees/\u4e2d\u6587?&" };
+    for (const endpoint of ["state", "frame", "action", "stream"] as const) {
+      const url = new URL(browserURL(endpoint, scope), "http://localhost");
+      assertEqual(url.pathname, `/api/hoxi/browser/${endpoint}`);
+      assertEqual(url.searchParams.get("sessionID"), scope.sessionID);
+      assertEqual(url.searchParams.get("directory"), scope.directory);
+    }
+  });
+
+  it("uses the loopback WebSocket bridge and ACKs only after display finishes", async () => {
+    const original = globalThis.WebSocket;
+    const sockets: MockSocket[] = [];
+    class MockSocket {
+      static OPEN = 1;
+      readyState = 1;
+      onmessage: ((event: { data: string }) => Promise<void>) | null = null;
+      onerror: (() => void) | null = null;
+      onclose: (() => void) | null = null;
+      onopen: (() => void) | null = null;
+      sent: string[] = [];
+      closed = false;
+      constructor(public url: string) { sockets.push(this); }
+      send(text: string) { this.sent.push(text); }
+      close() { this.closed = true; this.readyState = 3; this.onclose?.(); }
+    }
+    globalThis.WebSocket = MockSocket as unknown as typeof WebSocket;
+    let stop = () => {};
+    try {
+      const scope = { sessionID: "ses_test", directory: "/work tree" };
+      let displayed = 0;
+      const statuses: string[] = [];
+      let finish = () => {};
+      stop = connectBrowserStream(scope, "ws://127.0.0.1:42817/", async frame => {
+        assertEqual(frame.width, 375);
+        displayed++;
+        await new Promise<void>(resolve => { finish = resolve; });
+      }, error => { throw new Error(error); }, status => statuses.push(status));
+      const socket = sockets[0];
+      assertDeepEqual(statuses, ["connecting"]);
+      socket.onopen?.();
+      assertDeepEqual(statuses, ["connecting", "connected"]);
+      assertEqual(socket.url, browserStreamURL(scope, "ws://127.0.0.1:42817"));
+      const message = JSON.stringify({ image: "YWJj", width: 375, height: 667, tabID: "tab" });
+      const pending = socket.onmessage!({ data: message });
+      assertEqual(displayed, 1);
+      assertDeepEqual(socket.sent, []);
+      finish();
+      await pending;
+      assertDeepEqual(socket.sent, ["ack"]);
+      const late = socket.onmessage!({ data: message });
+      socket.onclose?.();
+      assertDeepEqual(statuses, ["connecting", "connected", "reconnecting"]);
+      stop();
+      finish();
+      await late;
+      assertDeepEqual(socket.sent, ["ack"]);
+      assertEqual(socket.closed, true);
+      await socket.onmessage!({ data: message });
+      assertEqual(displayed, 2);
+    } finally {
+      stop();
+      globalThis.WebSocket = original;
+    }
+  });
+
+  it("maps scaled image bounds to the actual viewport and clamps the last pixel", () => {
+    const bounds = { left: 100, top: 50, width: 640, height: 400 };
+    const viewport = { width: 1280, height: 800 };
+    assertDeepEqual(browserPoint(bounds, 420, 250, viewport), { x: 640, y: 400 });
+    assertDeepEqual(browserPoint(bounds, 100, 50, viewport), { x: 0, y: 0 });
+    assertDeepEqual(browserPoint(bounds, 740, 450, viewport), { x: 1279, y: 799 });
+    assertEqual(browserPoint(bounds, 99, 50, viewport), null);
+    assertEqual(browserPoint(bounds, 740, 451, viewport), null);
+    assertEqual(browserPoint({ ...bounds, width: 0 }, 100, 50, viewport), null);
+    assertDeepEqual(browserPoint(bounds, 420, 250, { width: 375, height: 700 }), { x: 187, y: 350 });
+    assertDeepEqual(browserPoint(bounds, 740, 450, { width: 375, height: 700 }), { x: 374, y: 699 });
+    assertEqual(browserPoint(bounds, 420, 250, { width: 0, height: 700 }), null);
+  });
+
+  it("sends same-origin JSON actions and treats missing frames as empty", async () => {
+    const original = globalThis.fetch;
+    const scope = { sessionID: "s1", directory: "/worktree" };
+    const signal = new AbortController().signal;
+    try {
+      globalThis.fetch = async (url, init) => {
+        assertEqual(String(url), browserURL("action", scope));
+        assertEqual(init?.method, "POST");
+        assertEqual(init?.signal, signal);
+        assertEqual(init?.body, JSON.stringify({ action: "control", manual: true }));
+        assertEqual((init?.headers as Record<string, string>)["Content-Type"], "application/json");
+        assertEqual((init?.headers as Record<string, string>)["X-Hoxi-Browser"], "true");
+        return new Response(JSON.stringify({ manual: true }));
+      };
+      assertEqual((await browserAPI.action(scope, { action: "control", manual: true }, signal)).manual, true);
+      globalThis.fetch = async () => new Response(null, { status: 404 });
+      assertEqual(await browserAPI.frame(scope, signal), null);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  it("sends viewport dimensions through the scoped resize action", async () => {
+    const original = globalThis.fetch;
+    const scope = { sessionID: "s2", directory: "/another-worktree" };
+    const signal = new AbortController().signal;
+    try {
+      globalThis.fetch = async (url, init) => {
+        assertEqual(String(url), browserURL("action", scope));
+        assertEqual(init?.method, "POST");
+        assertEqual(init?.signal, signal);
+        assertEqual(init?.body, JSON.stringify({ action: "resize", width: 375, height: 667 }));
+        return new Response(JSON.stringify({ tabs: [], manual: false }));
+      };
+      assertDeepEqual((await browserAPI.action(scope, { action: "resize", width: 375, height: 667 }, signal)).tabs, []);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  it("keeps desktop window mode active when developer viewportMode defaults to page", () => {
+    const originalDoc = Object.getOwnPropertyDescriptor(globalThis, "document");
+    let dispose = () => {};
+    try {
+      Object.defineProperty(globalThis, "document", {
+        configurable: true,
+        value: {
+          hidden: false,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+        },
+      });
+      const controller = createRoot(d => {
+        dispose = d;
+        return createBrowserController();
+      });
+      assertEqual(controller.developer.viewportMode(), "page");
+      assertEqual(controller.windowMode(), true);
+      assertEqual(controller.headlessMode(), false);
+    } finally {
+      dispose();
+      if (originalDoc) Object.defineProperty(globalThis, "document", originalDoc);
+      else Reflect.deleteProperty(globalThis, "document");
+    }
+  });
+
+  it("keeps address bar empty on about:blank and scopes activeBrowserScopeID only to work mode", () => {
+    const originalDoc = Object.getOwnPropertyDescriptor(globalThis, "document");
+    const prevRootDir = workspace.rootDir;
+    const prevSessions = workspace.sessions.slice();
+    const prevSessionID = workspace.activeSessionID;
+    const prevScopeID = workspace.activeBrowserScopeID;
+    let disposeCode = () => {};
+    let disposeWork = () => {};
+    try {
+      Object.defineProperty(globalThis, "document", {
+        configurable: true,
+        value: {
+          hidden: false,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+        },
+      });
+
+      assertEqual(displayBrowserAddress(""), "");
+      assertEqual(displayBrowserAddress("about:blank"), "");
+      assertEqual(displayBrowserAddress("  about:blank  "), "");
+      assertEqual(displayBrowserAddress("https://example.com/"), "https://example.com/");
+
+      assertEqual(resolveBrowserInspectorSessionID("code", "workstore_leaked", "ses_code_1"), "ses_code_1");
+      assertEqual(resolveBrowserInspectorSessionID("work", "workstore_leaked", "ses_code_1"), "workstore_leaked");
+      assertEqual(resolveBrowserInspectorSessionID("work", null, "ses_work_1"), "ses_work_1");
+
+      setWorkspace({
+        rootDir: "/code/repo",
+        sessions: [{ id: "ses_code_1", title: "Code", directory: "/code/repo" }] as typeof workspace.sessions,
+        activeSessionID: "ses_code_1",
+        activeBrowserScopeID: "workstore_leaked",
+      });
+
+      setSurfaceMode("code");
+      const codeController = createRoot(d => {
+        disposeCode = d;
+        return createBrowserController();
+      });
+      assertEqual(codeController.scope()?.sessionID, "ses_code_1");
+
+      // Starting browser with empty input or about:blank never pollutes url() with "about:blank".
+      codeController.navigateAddress("");
+      assertEqual(codeController.url(), "");
+      codeController.navigateAddress("example.com");
+      assertEqual(codeController.url(), "https://example.com/");
+      codeController.navigateAddress("about:blank");
+      assertEqual(codeController.url(), "");
+
+      setSurfaceMode("work");
+      const workController = createRoot(d => {
+        disposeWork = d;
+        return createBrowserController();
+      });
+      assertEqual(workController.scope()?.sessionID, "workstore_leaked");
+    } finally {
+      disposeCode();
+      disposeWork();
+      setSurfaceMode("code");
+      setWorkspace({
+        rootDir: prevRootDir,
+        sessions: prevSessions,
+        activeSessionID: prevSessionID,
+        activeBrowserScopeID: prevScopeID,
+      });
+      if (originalDoc) Object.defineProperty(globalThis, "document", originalDoc);
+      else Reflect.deleteProperty(globalThis, "document");
+    }
+  });
+});

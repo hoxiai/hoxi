@@ -1,0 +1,110 @@
+package runner
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"reflect"
+	"testing"
+)
+
+type policyCase struct {
+	Command     string `json:"command"`
+	Worktree    string `json:"worktree"`
+	Decision    string `json:"decision"`
+	Destructive bool   `json:"destructive"`
+	// SessionGrant, when set, is whether an exact-command "always" is kept.
+	SessionGrant *bool `json:"sessionGrant"`
+}
+
+// The same fixture drives web/src/__tests__/permissions.test.ts, so the Go
+// port and .opencode/lib/permission-policy.js cannot drift apart silently.
+func TestPermissionPolicyMatchesSharedFixture(t *testing.T) {
+	t.Parallel()
+	raw, err := os.ReadFile(filepath.Join("..", "..", ".opencode", "lib", "permission-policy.cases.json"))
+	if err != nil {
+		t.Fatalf("read shared fixture: %v", err)
+	}
+	var cases []policyCase
+	if err := json.Unmarshal(raw, &cases); err != nil {
+		t.Fatalf("parse shared fixture: %v", err)
+	}
+	if len(cases) < 20 {
+		t.Fatalf("fixture unexpectedly small: %d cases", len(cases))
+	}
+	for _, c := range cases {
+		if got := decideCommandPermissionIn(c.Command, c.Worktree); got != c.Decision {
+			t.Errorf("decide(%q) = %q, want %q", c.Command, got, c.Decision)
+		}
+		if got := isDestructiveCommand(c.Command); got != c.Destructive {
+			t.Errorf("destructive(%q) = %v, want %v", c.Command, got, c.Destructive)
+		}
+		if c.SessionGrant != nil {
+			if got := sessionGrantRefusal(c.Command) == ""; got != *c.SessionGrant {
+				t.Errorf("session grant kept(%q) = %v, want %v", c.Command, got, *c.SessionGrant)
+			}
+		}
+	}
+}
+
+func TestSplitCommandChainMatchesJSSeparators(t *testing.T) {
+	t.Parallel()
+	cases := map[string][]string{
+		"git status && git diff": {"git status", "git diff"},
+		"a || b; c\nd":           {"a", "b", "c", "d"},
+		"a | b":                  {"a", "b"},
+		"go test ./... 2>&1":     {"go test ./... 2>&1"},
+		"cmd &> out.log":         {"cmd &> out.log"},
+		"a & b":                  {"a", "b"},
+		"echo $(date)":           {"echo", "date"},
+		"echo `date`":            {"echo", "date"},
+		"(cd web && npm test)":   {"(cd web", "npm test"},
+		"   ":                    nil,
+	}
+	for in, want := range cases {
+		if got := splitCommandChain(in); !reflect.DeepEqual(got, want) {
+			t.Errorf("split(%q) = %#v, want %#v", in, got, want)
+		}
+	}
+}
+
+func TestDecideCommandPermissionInNormalizesRunnerCommands(t *testing.T) {
+	t.Parallel()
+	worktree := t.TempDir()
+	outside := t.TempDir()
+	escapeLink := filepath.Join(worktree, "escape-link")
+	if err := os.Symlink(outside, escapeLink); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		command string
+		want    string
+	}{
+		{"cd " + filepath.Join(worktree, "go-fast") + " && /usr/local/go/bin/go test ./... -count=1 | tail -80", "allow"},
+		{"cd " + worktree + " && /usr/local/go/bin/go vet ./...", "allow"},
+		{"/opt/homebrew/bin/npm run build", "allow"},
+		{"cd " + worktree + " && /usr/local/go/bin/go test ./... 2>&1", "allow"},
+		{"cd " + worktree + " && /usr/local/go/bin/go test ./... && cat /etc/hosts", "allow"},
+		{"cd /tmp && go test ./...", "ask"},
+		{"cd " + escapeLink + " && go test ./...", "ask"},
+		{"cd " + worktree, "ask"},
+		{"/tmp/not-a-toolchain/go test ./...", "ask"},
+		{"cd " + worktree + " && rm -rf build", "ask"},
+		{`cd .' ls' ; r\m -rf .`, "ask"},
+		{`cd .' ls' ; unlink ~/important`, "ask"},
+		{`cd .' ls' ; git push origin +main`, "ask"},
+		{"cd " + worktree + " && fd . -x unlink {}", "ask"},
+		{"cd " + worktree + " && git diff --output=/tmp/x", "ask"},
+		{"cd " + worktree + " && rg --pre ./evil.sh x .", "ask"},
+		{"cd " + worktree + " && find . -fprintf ~/.zshrc x", "ask"},
+		{"cd " + worktree + " && go env -w GOPROXY=https://evil.example", "ask"},
+		{"cd " + worktree + " && npx tsc-anything", "ask"},
+		{"cd " + worktree + " && git reset --har", "ask"},
+		{"cd " + worktree + " && git push -uf", "ask"},
+	}
+	for _, c := range cases {
+		if got := decideCommandPermissionIn(c.command, worktree); got != c.want {
+			t.Errorf("decideIn(%q) = %q, want %q", c.command, got, c.want)
+		}
+	}
+}

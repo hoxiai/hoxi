@@ -1,0 +1,658 @@
+package auth
+
+import (
+	"bytes"
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/url"
+	"os/exec"
+	"runtime"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
+	"github.com/hoxiai/hoxi/internal/subproc"
+)
+
+func devicePlatform() string {
+	return fmt.Sprintf("%s-%s", hoxipaths.NormalizedPlatform(runtime.GOOS), hoxipaths.NormalizedArch(runtime.GOARCH))
+}
+
+type Service struct {
+	// credentialMu orders account changes with dependent credential commits.
+	// Authorization requests run outside this lock; callbacks never hold mu.
+	credentialMu  sync.Mutex
+	mu            sync.RWMutex
+	store         *TokenStore
+	logger        *slog.Logger
+	serverBaseURL string
+	httpClient    *http.Client
+
+	current       *StoredAuth
+	pending       *authorization
+	generation    uint64
+	launchBrowser func(string)
+	onClear       func() error
+	// pollInterval paces device-token polling; zero means defaultPollInterval.
+	// Tests shorten it so they do not wait on real seconds.
+	pollInterval time.Duration
+}
+
+const defaultPollInterval = 2 * time.Second
+
+type authorization struct {
+	exchangeMu sync.Mutex
+	state      string
+	baseURL    string
+	expiresAt  time.Time
+	ctx        context.Context
+	cancel     context.CancelFunc
+	completed  *StoredAuth
+}
+
+func NewService(logger *slog.Logger) *Service {
+	svc := &Service{
+		store:         NewTokenStore(),
+		logger:        logger,
+		serverBaseURL: hoxipaths.ServerBaseURL(),
+		launchBrowser: openBrowser,
+		httpClient: &http.Client{
+			Timeout: 10 * time.Second,
+		},
+	}
+
+	// 启动时按当前服务端地址加载对应的本地凭据，避免 dev 与正式环境串用或误清
+	if stored, err := svc.store.LoadForServer(svc.serverBaseURL); err == nil && stored != nil {
+		svc.current = stored
+		go svc.verifyBackground(stored, svc.serverBaseURL, svc.generation)
+	}
+
+	return svc
+}
+
+func (s *Service) ServerBaseURL() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.serverBaseURL
+}
+
+// SetOnClear registers a callback invoked after local desktop account
+// credentials are cleared by logout or upstream 401 invalidation.
+func (s *Service) SetOnClear(fn func() error) {
+	s.mu.Lock()
+	s.onClear = fn
+	s.mu.Unlock()
+}
+
+func (s *Service) SetServerBaseURL(urlStr string) {
+	s.credentialMu.Lock()
+	defer s.credentialMu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	baseURL := strings.TrimRight(urlStr, "/")
+	if s.serverBaseURL != baseURL {
+		s.cancelPendingLocked()
+		s.generation++
+		s.serverBaseURL = baseURL
+		if stored, err := s.store.LoadForServer(baseURL); err == nil {
+			s.current = stored
+		} else {
+			s.current = nil
+		}
+	}
+}
+
+func (s *Service) Snapshot() AuthStatusSnapshot {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	snap := AuthStatusSnapshot{
+		IsLoggedIn:    s.current != nil && s.current.DeviceToken != "",
+		ServerBaseURL: s.serverBaseURL,
+	}
+	if s.pending != nil && time.Now().Before(s.pending.expiresAt) && s.pending.ctx.Err() == nil {
+		snap.IsAuthorizing = true
+		snap.PendingState = s.pending.state
+	}
+
+	if s.current != nil {
+		user := s.current.User
+		snap.User = &user
+		snap.ExpiresAt = s.current.ExpiresAt
+		if !s.current.LastVerifiedAt.IsZero() {
+			snap.LastVerifiedAt = s.current.LastVerifiedAt.Format(time.RFC3339)
+		}
+	}
+
+	return snap
+}
+
+func (s *Service) CurrentDeviceToken() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.current == nil {
+		return ""
+	}
+	return s.current.DeviceToken
+}
+
+// InvalidateDeviceToken 在上游返回 401 时清理匹配的本地过期凭据。
+func (s *Service) InvalidateDeviceToken(token, baseURL string) {
+	if err := s.invalidateDeviceToken(token, baseURL, nil); err != nil && s.logger != nil {
+		s.logger.Error("failed to clear revoked account credentials", "error", err)
+	}
+}
+
+// StartAuthorization 发起一键授权流程
+func (s *Service) StartAuthorization(ctx context.Context) (*StartAuthResponse, error) {
+	s.credentialMu.Lock()
+	s.mu.Lock()
+
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		s.mu.Unlock()
+		s.credentialMu.Unlock()
+		return nil, fmt.Errorf("failed to generate random state: %w", err)
+	}
+	state := hex.EncodeToString(buf)
+	s.cancelPendingLocked()
+	s.generation++
+	expiresAt := time.Now().Add(3 * time.Minute)
+	pollCtx, cancel := context.WithDeadline(context.Background(), expiresAt)
+	baseURL := s.serverBaseURL
+	attempt := &authorization{state: state, baseURL: baseURL, expiresAt: expiresAt, ctx: pollCtx, cancel: cancel}
+	s.pending = attempt
+	s.mu.Unlock()
+	s.credentialMu.Unlock()
+
+	authURL := fmt.Sprintf("%s/auth/authorize-desktop?state=%s", baseURL, state)
+
+	// 启动浏览器
+	if s.launchBrowser != nil {
+		go s.launchBrowser(authURL)
+	}
+
+	// 启动后台轮询
+	go s.runPollWorker(attempt)
+
+	return &StartAuthResponse{
+		State:   state,
+		AuthURL: authURL,
+	}, nil
+}
+
+// HandleCallback accepts only the desktop login callback, never an arbitrary exchange URL.
+func (s *Service) HandleCallback(ctx context.Context, rawURL string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Scheme != "hoxi" || u.Host != "auth-callback" ||
+		u.User != nil || u.Path != "" || u.Opaque != "" || u.Fragment != "" {
+		return errors.New("invalid desktop authorization callback")
+	}
+	query, err := url.ParseQuery(u.RawQuery)
+	if err != nil || len(query["handoff"]) != 1 || len(query["state"]) != 1 ||
+		strings.TrimSpace(query.Get("handoff")) == "" || strings.TrimSpace(query.Get("state")) == "" {
+		return errors.New("invalid desktop authorization callback parameters")
+	}
+	_, err = s.ExchangeToken(ctx, query.Get("handoff"), query.Get("state"))
+	return err
+}
+
+// ExchangeToken 外部唤起（如 Deep Link）时主动兑换令牌
+func (s *Service) ExchangeToken(ctx context.Context, handoffToken, state string) (*StoredAuth, error) {
+	if handoffToken == "" || state == "" {
+		return nil, errors.New("missing handoffToken or state")
+	}
+
+	s.mu.RLock()
+	attempt := s.pending
+	valid := s.pendingValidLocked(attempt) && attempt.state == state
+	s.mu.RUnlock()
+	if !valid {
+		return nil, errors.New("invalid or expired authorization state")
+	}
+
+	attempt.exchangeMu.Lock()
+	defer attempt.exchangeMu.Unlock()
+
+	if attempt.completed != nil {
+		copied := *attempt.completed
+		return &copied, nil
+	}
+	s.mu.RLock()
+	stillValid := s.pendingValidLocked(attempt) && attempt.state == state
+	s.mu.RUnlock()
+	if !stillValid {
+		return nil, errors.New("invalid or expired authorization state")
+	}
+
+	requestCtx, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(attempt.ctx, cancel)
+	defer stop()
+	defer cancel()
+	baseURL := attempt.baseURL
+	reqBody, _ := json.Marshal(map[string]string{
+		"handoffToken": handoffToken,
+		"state":        state,
+		"platform":     devicePlatform(),
+	})
+
+	apiURL := fmt.Sprintf("%s/api/hoxi/device-tokens/authorize", baseURL)
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodPost, apiURL, bytes.NewReader(reqBody))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("exchange request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("exchange failed with HTTP %d", resp.StatusCode)
+	}
+
+	var res struct {
+		Success     bool        `json:"success"`
+		User        UserProfile `json:"user"`
+		DeviceToken string      `json:"deviceToken"`
+		ExpiresAt   string      `json:"expiresAt"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&res); err != nil {
+		return nil, err
+	}
+
+	if !res.Success || res.DeviceToken == "" {
+		return nil, errors.New("server returned unsuccessful authorization")
+	}
+
+	stored := &StoredAuth{
+		DeviceToken:    res.DeviceToken,
+		User:           res.User,
+		ExpiresAt:      res.ExpiresAt,
+		LastVerifiedAt: time.Now(),
+		ServerBaseURL:  baseURL,
+	}
+
+	if err := s.applyAuthorized(attempt, stored); err != nil {
+		return nil, err
+	}
+
+	return stored, nil
+}
+
+func (s *Service) Logout(ctx context.Context) error {
+	s.credentialMu.Lock()
+	s.mu.Lock()
+	token := ""
+	if s.current != nil {
+		token = s.current.DeviceToken
+	}
+	if err := s.store.ClearForServer(s.serverBaseURL, token); err != nil {
+		s.mu.Unlock()
+		s.credentialMu.Unlock()
+		return fmt.Errorf("failed to clear local credentials: %w", err)
+	}
+	s.cancelPendingLocked()
+	s.generation++
+	s.current = nil
+	baseURL := s.serverBaseURL
+	onClear := s.onClear
+	s.mu.Unlock()
+
+	var cleanupErr error
+	if onClear != nil {
+		cleanupErr = onClear()
+	}
+	s.credentialMu.Unlock()
+
+	if token != "" {
+		revokeURL := fmt.Sprintf("%s/api/hoxi/device-tokens/revoke", baseURL)
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, revokeURL, nil)
+		if err == nil {
+			req.Header.Set("Authorization", "Bearer "+token)
+			var resp *http.Response
+			resp, err = s.httpClient.Do(req)
+			if err == nil {
+				_ = resp.Body.Close()
+				if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+					err = fmt.Errorf("revoke returned HTTP %d", resp.StatusCode)
+				}
+			}
+		}
+		if err != nil && s.logger != nil {
+			s.logger.Warn("local logout completed; remote device token revocation was not confirmed", "error", err)
+		}
+	}
+
+	if cleanupErr != nil {
+		return fmt.Errorf("failed to clear account provider credentials: %w", cleanupErr)
+	}
+	return nil
+}
+
+func (s *Service) cancelPendingLocked() {
+	if s.pending != nil {
+		s.pending.cancel()
+		s.pending = nil
+	}
+}
+
+func (s *Service) pendingValidLocked(attempt *authorization) bool {
+	return attempt != nil && s.pending == attempt && s.serverBaseURL == attempt.baseURL &&
+		time.Now().Before(attempt.expiresAt) && attempt.ctx.Err() == nil
+}
+
+func (s *Service) applyAuthorized(attempt *authorization, auth *StoredAuth) error {
+	s.credentialMu.Lock()
+	defer s.credentialMu.Unlock()
+	s.mu.Lock()
+	if !s.pendingValidLocked(attempt) {
+		s.mu.Unlock()
+		return errors.New("invalid or expired authorization state")
+	}
+	onClear := s.onClear
+	changingAccount := s.current != nil && s.current.DeviceToken != auth.DeviceToken
+	s.mu.Unlock()
+	if changingAccount && onClear != nil {
+		if err := onClear(); err != nil {
+			return fmt.Errorf("failed to clear previous account provider: %w", err)
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.pendingValidLocked(attempt) {
+		return errors.New("invalid or expired authorization state")
+	}
+	auth.ServerBaseURL = attempt.baseURL
+	// Keep persistence ordered with logout and publish only successfully saved credentials.
+	if err := s.store.SaveForServer(attempt.baseURL, auth); err != nil {
+		return err
+	}
+	attempt.completed = auth
+	s.current = auth
+	s.generation++
+	s.cancelPendingLocked()
+	return nil
+}
+
+func (s *Service) runPollWorker(attempt *authorization) {
+	ctx := attempt.ctx
+	defer func() {
+		s.mu.Lock()
+		if s.pending == attempt {
+			s.cancelPendingLocked()
+		}
+		s.mu.Unlock()
+	}()
+	interval := s.pollInterval
+	if interval <= 0 {
+		interval = defaultPollInterval
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	platform := devicePlatform()
+	pollURL := fmt.Sprintf("%s/api/hoxi/device-tokens/poll?state=%s&platform=%s",
+		attempt.baseURL, url.QueryEscape(attempt.state), url.QueryEscape(platform))
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			done := func() bool {
+				attempt.exchangeMu.Lock()
+				defer attempt.exchangeMu.Unlock()
+				if ctx.Err() != nil || attempt.completed != nil {
+					return true
+				}
+				req, err := http.NewRequestWithContext(ctx, http.MethodGet, pollURL, nil)
+				if err != nil {
+					return false
+				}
+				resp, err := s.httpClient.Do(req)
+				if err != nil {
+					return false
+				}
+
+				var result struct {
+					Status      string       `json:"status"`
+					Message     string       `json:"message"`
+					User        *UserProfile `json:"user,omitempty"`
+					DeviceToken string       `json:"deviceToken,omitempty"`
+					ExpiresAt   string       `json:"expiresAt,omitempty"`
+				}
+
+				decodeErr := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&result)
+				_ = resp.Body.Close()
+				if resp.StatusCode != http.StatusOK || decodeErr != nil {
+					return false
+				}
+
+				if result.Status == "authorized" && result.DeviceToken != "" && result.User != nil {
+					stored := &StoredAuth{
+						DeviceToken:    result.DeviceToken,
+						User:           *result.User,
+						ExpiresAt:      result.ExpiresAt,
+						LastVerifiedAt: time.Now(),
+						ServerBaseURL:  attempt.baseURL,
+					}
+					if err := s.applyAuthorized(attempt, stored); err == nil && s.logger != nil {
+						s.logger.Info("hoxi desktop authorized successfully via poll", "email", result.User.Email)
+					}
+					return true
+				}
+				return result.Status == "expired" || result.Status == "error"
+			}()
+			if done {
+				return
+			}
+		}
+	}
+}
+
+func (s *Service) verifyBackground(auth *StoredAuth, baseURL string, generation uint64) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	verifyURL := fmt.Sprintf("%s/api/hoxi/device-tokens/verify", baseURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, verifyURL, nil)
+	if err != nil {
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+auth.DeviceToken)
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	var verifyRes struct {
+		Valid bool        `json:"valid"`
+		User  UserProfile `json:"user"`
+	}
+	if resp.StatusCode == http.StatusOK {
+		if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&verifyRes); err != nil {
+			return
+		}
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		if err := s.invalidateDeviceToken(auth.DeviceToken, baseURL, &generation); err != nil && s.logger != nil {
+			s.logger.Error("failed to clear revoked credentials", "error", err)
+		}
+		return
+	}
+	s.credentialMu.Lock()
+	defer s.credentialMu.Unlock()
+	s.mu.Lock()
+	if s.current != auth || s.generation != generation || s.serverBaseURL != baseURL {
+		s.mu.Unlock()
+		return
+	}
+
+	if resp.StatusCode == http.StatusOK && verifyRes.Valid {
+		updated := *auth
+		updated.User = verifyRes.User
+		updated.LastVerifiedAt = time.Now()
+		updated.ServerBaseURL = baseURL
+		if err := s.store.SaveForServer(baseURL, &updated); err == nil {
+			s.current = &updated
+		}
+	}
+	s.mu.Unlock()
+}
+
+var ErrNotLoggedIn = errors.New("not logged in")
+
+type UpstreamAPIError struct {
+	StatusCode int
+	Message    string
+}
+
+func (e *UpstreamAPIError) Error() string {
+	if e.Message != "" {
+		return e.Message
+	}
+	return fmt.Sprintf("upstream returned HTTP %d", e.StatusCode)
+}
+
+func (s *Service) FetchMemberStatus(ctx context.Context) (map[string]any, error) {
+	return s.callMemberEndpoint(ctx, http.MethodGet, "/api/hoxi/member/checkin", nil)
+}
+
+func (s *Service) PerformCheckin(ctx context.Context) (map[string]any, error) {
+	return s.callMemberEndpoint(ctx, http.MethodPost, "/api/hoxi/member/checkin", []byte(`{}`))
+}
+
+// MintMCPToken 使用本地已授权的设备凭据向 hoxi.ai 申请签发符合 Hoxi MCP 规范的 Scoped Token
+func (s *Service) MintMCPToken(ctx context.Context, req MCPTokenRequest) (map[string]any, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
+	}
+	return s.callMemberEndpoint(ctx, http.MethodPost, "/api/hoxi/mcp/token", body)
+}
+
+func (s *Service) callMemberEndpoint(ctx context.Context, method, endpoint string, body []byte) (map[string]any, error) {
+	s.mu.RLock()
+	var auth *StoredAuth
+	if s.current != nil && s.current.DeviceToken != "" {
+		copied := *s.current
+		auth = &copied
+	}
+	baseURL := s.serverBaseURL
+	generation := s.generation
+	s.mu.RUnlock()
+
+	if auth == nil {
+		return nil, ErrNotLoggedIn
+	}
+
+	targetURL := fmt.Sprintf("%s%s", baseURL, endpoint)
+	var req *http.Request
+	var err error
+	if body != nil {
+		req, err = http.NewRequestWithContext(ctx, method, targetURL, bytes.NewReader(body))
+	} else {
+		req, err = http.NewRequestWithContext(ctx, method, targetURL, nil)
+	}
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+auth.DeviceToken)
+	req.Header.Set("Accept", "application/json")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var payload map[string]any
+	_ = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload)
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		if err := s.invalidateDeviceToken(auth.DeviceToken, baseURL, &generation); err != nil {
+			return nil, errors.Join(ErrNotLoggedIn, err)
+		}
+		return nil, ErrNotLoggedIn
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		msg := ""
+		if payload != nil {
+			if m, ok := payload["message"].(string); ok && m != "" {
+				msg = m
+			} else if m, ok := payload["statusMessage"].(string); ok && m != "" {
+				msg = m
+			} else if m, ok := payload["error"].(string); ok && m != "" {
+				msg = m
+			}
+		}
+		return nil, &UpstreamAPIError{
+			StatusCode: resp.StatusCode,
+			Message:    msg,
+		}
+	}
+
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	return payload, nil
+}
+
+func (s *Service) OpenPortalPage(target string) (string, error) {
+	baseURL := s.ServerBaseURL()
+	var fullURL string
+	switch strings.TrimSpace(target) {
+	case "dashboard", "":
+		fullURL = baseURL + "/user/dashboard"
+	case "rewards":
+		fullURL = baseURL + "/user/rewards"
+	case "models":
+		fullURL = baseURL + "/user/models"
+	case "keys":
+		fullURL = baseURL + "/user/keys"
+	case "billing":
+		fullURL = baseURL + "/user/billing"
+	case "account":
+		fullURL = baseURL + "/user/account"
+	case "feedback":
+		fullURL = "https://github.com/hoxiai/hoxi/issues"
+	default:
+		return "", errors.New("unsupported portal target")
+	}
+
+	if s.launchBrowser != nil {
+		go s.launchBrowser(fullURL)
+	}
+	return fullURL, nil
+}
+
+func openBrowser(targetURL string) {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = subproc.Command("open", targetURL)
+	case "windows":
+		cmd = subproc.Command("rundll32", "url.dll,FileProtocolHandler", targetURL)
+	default:
+		cmd = subproc.Command("xdg-open", targetURL)
+	}
+	if err := cmd.Start(); err == nil {
+		go func() { _ = cmd.Wait() }()
+	}
+}

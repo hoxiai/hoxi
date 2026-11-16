@@ -1,0 +1,235 @@
+# Hoxi ⇄ GoPanel 远程隧道契约
+
+> 双仓同一份契约：`hoxi/docs/gopanel-hoxi-remote-tunnel.md` 与 `gopanel_v2/docs/hoxi-remote-tunnel.md` 内容保持一致，修改任一侧必须同步另一侧。
+> 本文只描述**已实现并有测试覆盖**的行为；规划项单独列在「尚未实现」中，不能当作现有能力引用。
+
+## 1. 目标与现状
+
+让手机 Hoxi App 在任意网络下控制家里或办公室的 Hoxi 桌面：Mac 主动外连公网 GoPanel，手机只访问 GoPanel，由 GoPanel 经已有的隧道把请求转给 Mac。Mac 不开放任何监听端口。
+
+| 能力 | 状态 |
+| --- | --- |
+| Hoxi 桌面与 GoPanel 配对、长连接、断线重连 | 已实现 |
+| 桌面一键授权（桌面只填 GoPanel 地址，面板确认后自动连接） | 桌面端已实现；GoPanel 侧接口见 §5.3 |
+| 手机经 GoPanel 访问 Hoxi 的 HTTP 接口 | 已实现 |
+| 手机经 GoPanel 订阅 Hoxi SSE（`/api/hoxi/event`） | 已实现，逐块转发不缓冲 |
+| 手机在服务器列表中发现并添加 Hoxi 电脑 | 已实现 |
+| 经隧道的 WebSocket（终端 `/pty`） | 未实现，GoPanel 返回 501 |
+| 同局域网手机直连 Mac（`5417` 监听） | 已实现（`internal/gateway/lan.go` + `internal/pairing`，明文 + 配对令牌；跨网端到端加密仍为规划，见第 9 节） |
+| iPhone 审批提醒推送（APNs），点开进入待处理审批列表 | 已实现，待真机验收；需在 GoPanel 配置 APNs 密钥 |
+| Android 推送 | 未实现（国内无统一通道，需厂商推送或第三方） |
+
+## 2. 拓扑
+
+```text
+手机 Hoxi App
+  │  HTTPS  https://<gopanel>/api/tunnel/hoxi-nodes/<nodeId>/proxy/api/hoxi/...
+  │  X-Auth: <GoPanel 登录 JWT>（可带 EntranceCode）
+  ▼
+公网 GoPanel（gopanel_v2）
+  │  JWT 管理员鉴权 → 请求头白名单 → 本机隧道入口 127.0.0.1:<随机端口>
+  │  （复用网站隧道的 serveTunnelHTTP，按 serviceId=hoxi-gateway 选路）
+  ▼  WSS /api/tunnel/connect（Mac 主动外连，9 字节头二进制多路复用帧）
+Hoxi 桌面（hoxi，internal/tunnel）
+  │  路由白名单 → 进程内交给 Gateway.ServeHTTP（不经端口）
+  ▼
+/api/hoxi/sessions · /api/hoxi/event · /api/hoxi/permission · /api/hoxi/worktree …
+```
+
+隧道底座（配对、帧协议、心跳、服务注册、本机入口）是 GoPanel 原有的「双端网站隧道」，本方案没有新增协议，只新增了 Hoxi 客户端、GoPanel 的两条手机路由和手机端中继连接。
+
+## 3. 使用流程
+
+1. **GoPanel 签发配对码**：GoPanel 管理后台 → 主机 → 隧道 → 本机服务与连接 → 公网主控，生成 10 分钟有效、一次性的 32 位十六进制配对码（`POST /api/tunnel/pairing`）。
+2. **Hoxi 桌面配对**：Hoxi 设置 → 系统 → 经 GoPanel 远程控制，填写 GoPanel 地址、配对码和设备名，点「配对」。Hoxi 调用 GoPanel `POST /api/tunnel/pair/exchange` 换取长期凭据，随即连接并上报服务。GoPanel 节点列表中出现一个 `connectMode = tunnel` 的节点。
+3. **手机添加**：手机「服务器列表」中已登录的 GoPanel 卡片右侧点电脑图标，列出该 GoPanel 下在线的 Hoxi 电脑，选中后保存为一个 Hoxi 节点（中继地址），之后与普通 Hoxi 节点一样使用。
+
+**一键授权（推荐，替代手动配对码）**：Hoxi 设置里只填 GoPanel 地址（`ip:端口`，无需安全入口）点「一键授权」，桌面调用 `POST /api/tunnel/pair/request` 打开一条待批准请求并展示授权码；管理员在 GoPanel 后台「主机 → 隧道 → 待处理配对请求」批准后，桌面轮询到批准结果，自动兑换一次性配对码并连接。桌面不需要安全入口，因为配对相关端点对入口豁免；但管理员批准与手机侧管理接口仍需安全入口（见 §5.3 与 §8）。
+
+解除：Hoxi 设置中点「解除配对」，桌面用隧道凭据调用 GoPanel `POST /api/tunnel/unpair` 删除对应节点，然后删除本机凭据；若面板已删除节点导致凭据被拒（连接返回 401/403），桌面会检测到这是永久失败，自动清除本机凭据并停止重试，不再留下孤儿节点。管理员也可在 GoPanel「主机 → 隧道 → 隧道节点」直接删除节点。
+
+## 4. 线缆协议（与 `gopanel_v2/app/service/tunnel_protocol.go` 逐字节一致）
+
+### 4.1 配对
+
+`POST /api/tunnel/pair/exchange`（无需登录，配对码即凭证）
+
+```json
+{"code": "<32 hex>", "name": "Studio", "hostname": "Mac-Studio.local", "version": "0.2.9"}
+```
+
+响应使用 GoPanel 包装，**`code` 为 0 表示成功**：
+
+```json
+{"code": 0, "msg": "Success", "data": {"nodeId": 3, "clientId": "<uuid>", "token": "<64 hex>"}}
+```
+
+### 4.2 长连接
+
+`GET /api/tunnel/connect`（WebSocket Upgrade），请求头 `X-GoPanel-Tunnel-Client: <clientId>`、`X-GoPanel-Tunnel-Token: <token>`。公网 GoPanel 必须使用 HTTPS（WSS）；明文 HTTP 只允许回环地址用于本地开发。
+
+### 4.3 帧
+
+```text
+Type(1B) | StreamID(8B, BigEndian uint64) | Payload(≤ 4MB)
+```
+
+| Type | 名称 | 方向 | 载荷 |
+| --- | --- | --- | --- |
+| 1 | Open | GoPanel → Hoxi | JSON `serviceId, method, requestUri, headers, hasBody, upgrade` |
+| 2 | Response | Hoxi → GoPanel | JSON `status, headers` |
+| 3 | Data | 双向 | 首字节 `0`=HTTP 字节流，`1`/`2`=WS 文本/二进制 |
+| 4 | End | 双向 | 空 |
+| 5 | Reset | 双向 | 错误原因文本 |
+| 6 / 7 | Ping / Pong | 双向 | 时间戳 |
+| 8 | ServiceSync | Hoxi → GoPanel | 见 4.4 |
+| 9 | Notify | Hoxi → GoPanel | 待处理提醒，StreamID 为 0，见第 11 节；旧版 GoPanel 会忽略 |
+
+心跳 20 秒，读超时 65 秒，写超时 15 秒；断线后 1s 起指数退避至 30s 重连，连上后退避归零。GoPanel 每条请求流缓冲 32 帧、Hoxi 每条请求体缓冲 16 块，超出即 Reset（见第 8 节）。
+
+### 4.4 服务注册
+
+连接建立后 Hoxi 立即发送：
+
+```json
+{
+  "hostname": "Mac-Studio.local",
+  "version": "0.2.9",
+  "services": [{
+    "publicId": "hoxi-gateway",
+    "name": "Hoxi Desktop Gateway",
+    "scheme": "http",
+    "targetHost": "127.0.0.1",
+    "targetPort": 5410,
+    "enabled": true
+  }]
+}
+```
+
+`publicId = "hoxi-gateway"` 是 GoPanel 识别 Hoxi 电脑的唯一依据。`targetPort` 是 Hoxi 本机桥接端口（release 5410、dev 5420），**仅用于展示**：Hoxi 在进程内处理请求，不会回连这个端口。
+
+## 5. GoPanel 侧接口（`gopanel_v2`）
+
+两条路由挂在 `/api/tunnel` 管理组，与其他管理接口一样要求管理员 JWT（`X-Auth`）。
+
+### 5.1 `GET /api/tunnel/hoxi-nodes`
+
+返回注册了启用状态 `hoxi-gateway` 服务的隧道节点；`status` 按隧道是否在线实时计算。
+
+```json
+{"code": 0, "msg": "Success", "data": {"items": [{
+  "nodeId": 3, "name": "Studio", "hostname": "Mac-Studio.local", "version": "0.2.9",
+  "status": "online", "serviceId": "hoxi-gateway", "targetPort": 5410,
+  "lastSeenAt": "2026-10-21T10:25:00Z"
+}]}}
+```
+
+### 5.2 `ALL /api/tunnel/hoxi-nodes/:nodeId/proxy/*`
+
+把 `/<*>?<query>` 转发给该节点的 Hoxi 网关。
+
+- **请求头白名单**：只透传 `Accept`、`Accept-Language`、`Cache-Control`、`Content-Type`、`Last-Event-ID`、`X-Hoxi-Directory`。`X-Auth`、`Authorization`、`Cookie`、`EntranceCode` 等 GoPanel 凭据不会离开 GoPanel；查询串经 `SanitizeNodeProxyQuery` 去掉 GoPanel 凭据参数。
+- **响应**：状态码与响应头原样回传，但丢弃 `Set-Cookie`（Hoxi 不能在 GoPanel 域名下种 Cookie）与逐跳头；响应体每读到一块就写出并 Flush，SSE 实时到达手机。
+- **错误**：隧道层错误使用 Hoxi 网关格式 `{"error": "..."}` 与真实 HTTP 状态码，便于手机端按 Hoxi 协议处理：
+  - `503`：节点离线、节点未注册 `hoxi-gateway`、隧道入口未启动
+  - `502`：转发途中失败
+  - `501`：WebSocket Upgrade（暂不支持）
+  - JWT 失效仍由 GoPanel 中间件返回其标准包装（HTTP 200，`code = 401`）
+   - 实现：`app/api/tunnel_hoxi.go`、`app/service/tunnel_hoxi.go`；转发经现有 `serveTunnelIngress`，没有复制帧处理逻辑。写操作照常记入 GoPanel 操作日志。
+
+### 5.3 一键授权（`/api/tunnel/pair/request*`）
+
+桌面发起、面板确认的配对流程；除 `approve`/`deny` 外均对安全入口豁免（加入 `shouldBypassEntrance`）。
+
+- `POST /api/tunnel/pair/request`（免鉴权、免入口）body `{name, hostname, version}` → `{code:0, data:{requestId, userCode, expiresAt, pollToken}}`，`expiresAt` 为 RFC3339。创建一条 `waiting` 请求，TTL 10 分钟；限流按来源 IP 固定窗口 5 次/分钟 + 全局 60 次/分钟，超限返回 `ErrTunnelPairRequestTooFrequent`。
+- `GET /api/tunnel/pair/request/:id`（免鉴权、免入口）轮询状态；桌面用请求头 **`X-GoPanel-Tunnel-PollToken`** 携带 `pollToken` 鉴权（也接受 `?pollToken=`）。→ `{code:0, data:{state, code}}`，`state ∈ waiting|approved|denied|expired`；仅 `approved` 且尚未下发过时返回一次性 `code`（仍走 `/api/tunnel/pair/exchange` 兑换，不直接发 token）。`pollToken` 错误、`:id` 未知一律拒绝。
+- `GET /api/tunnel/pair/requests`、`POST /api/tunnel/pair/request/:id/approve`、`POST /api/tunnel/pair/request/:id/deny`（管理组：管理员 JWT + 安全入口）。approve 仅在 `waiting` 且未过期时置 `approved`（重复批准、已过期、已拒绝、未知 id → 拒绝），deny 置 `denied`；列表只返回未过期的 `waiting` 请求。
+
+`pollToken` 只在创建响应一次性下发、服务端只存哈希，后续响应与日志都不回显；一次性配对码只在首次批准后轮询时下发、只存哈希，兑换成功后在 `tunnel_pair_requests.node_id` 回填关联节点。批准与拒绝计入 GoPanel 操作日志。
+
+### 5.4 桌面自解除配对（`POST /api/tunnel/unpair`）
+
+- `POST /api/tunnel/unpair`（免入口、免管理员 JWT）：由 `middleware.TunnelClientAuth` 用请求头 `X-GoPanel-Tunnel-Client` 与 `X-GoPanel-Tunnel-Token` 鉴权，通过后删除该凭据对应的节点（吊销凭据、清理已同步服务、关闭在线连接，复用 `service.NewNode().Delete`），返回 `{code:0}`；鉴权失败返回 HTTP 401、`code = 50`。桌面只需自持的隧道凭据，无需安全入口。
+
+## 6. Hoxi 桌面侧（`hoxi`）
+
+- **`internal/tunnel`**：配对、连接管理、帧协议与进程内分发。收到 Open 帧后构造请求：`Host` 改为 `127.0.0.1`，丢弃逐跳头、`Origin`、`Referer`、`Cookie`、`Authorization`、`X-Hoxi-Token`、`Sec-*`、`X-Forwarded-*`、`X-GoPanel-*`；`serviceId` 不是 `hoxi-gateway`、`upgrade = true` 或 URI 非法时直接 Reset。
+- **路由白名单（`internal/gateway/tunnel.go`）**：采用显式「HTTP 方法 + 路径模式」逐段匹配（`*` 仅匹配单个非空路径段，**不做任何前缀匹配**），路径必须已是 `path.Clean` 规范形式且不得包含编码斜杠（`%2F`）。经隧道仅开放：
+  - **基础与模型列表（只读）**：`GET /healthz`、`GET /api/hoxi/bootstrap`、`GET /api/hoxi/system-info`、`GET /api/hoxi/provider/models`（只读脱敏模型列表：仅 `{source, providers: [{id, name, models: [{id, name}]}]}`，不含密钥、`baseURL` 或请求头）、`GET /api/hoxi/runner/{antigravity,claude-code,gemini-cli,codebuddy,qoder}/models`
+  - **会话平面**：`GET /api/hoxi/sessions`、`POST /api/hoxi/sessions`、`GET /api/hoxi/sessions/status`、`GET /api/hoxi/sessions/*`、`GET /api/hoxi/sessions/*/message`、`GET /api/hoxi/sessions/*/diff`、`POST /api/hoxi/sessions/*/{prompt,prompt_async,runtime,abort,stop-tool,revert,unrevert,fork}`
+  - **事件、审批与提问平面**：`GET /api/hoxi/event`、`GET /api/hoxi/permission`、`POST /api/hoxi/permission/*/reply`（经隧道仅允许 `reply=once` 或 `reject`，携带 `always` 或非法 JSON 返回 403；审批策略 `/api/hoxi/permission/policy`、审批审计 `/api/hoxi/permission/audit` 与会话级授权撤销 `/api/hoxi/permission/grants` 仅限桌面本机）、`GET /api/hoxi/question`、`POST /api/hoxi/question/*/reply`、`POST /api/hoxi/question/*/reject`
+  - **Worktree 审查与提交**：`GET /api/hoxi/worktree/{status,diff,branches,verify-status}`、`POST /api/hoxi/worktree/commit`（请求体仅允许 `push=false`，携带 `push=true` 或非法 JSON 返回 403）、`POST /api/hoxi/worktree/apply`。命令执行与写配置/分支变更类接口（`verify-run`、`verify-config`、`verify-stop`、`push`、`checkout`、`setup-retry`、`prune-sandboxes`、`create`、`sync`、`revert-file`、`rename-branch`、`DELETE` 等）一律仅限桌面本机
+  - **附件、Skill 与工作区（只读）**：`POST /api/hoxi/attachments`、`GET /api/hoxi/attachments/*`、`GET /api/hoxi/attachments/*/content`、`GET /api/hoxi/skills/list`、`GET /api/hoxi/skills/marketplace`（hoxi.ai 技能目录元数据，不含正文与安装动作）、`GET /api/hoxi/workspaces`（新建/修改/删除工作区仅限桌面本机；`POST /api/hoxi/skills/marketplace/install` 会写入 `~/.hoxi` 并改变 Agent 能力，仅限桌面本机）
+  - **工作区内文件读取与搜索（`internal/gateway/files.go`）**：`GET /file/content`、`GET /api/file/content`、`GET /api/hoxi/file/content`（均必须携带非空 `?path=`，绝不回退到 OpenCode 原始代理）、`GET /api/hoxi/file/list`、`GET /api/hoxi/file/search`。经隧道访问的目标路径与搜索根目录必须位于网关根目录、已注册工作区目录或会话绑定的 worktree 内（解析软链接防越界，不信任请求自带的越界 `directory` 参数，并拦截敏感凭据文件）；`/file`、`/api/file`、`POST /api/hoxi/file/open`、`POST /api/hoxi/file/validate` 一律 403
+
+  其余所有路由（包括隧道与账号管理、`/api/hoxi/models-config` 及其它 `/api/hoxi/provider/*` 接口、**本机模型中转**、Runner Hook 与旧版 `/api/hoxi/runner/*` 会话接口、浏览器、剪贴板、对话框、更新器以及 `/session`、`/pty`、`/config`、`/auth`、`/file` 等 OpenCode 原始透传）一律返回 403。
+- **本机模型中转不进隧道**：`POST /v1/chat/completions`、`GET /v1/models` 与中转 Key 管理 `GET|POST|DELETE /api/hoxi/provider/relay/keys` 只监听回环地址，**永远不加入隧道白名单**。中转 Key（`hk-*`）能驱动用户已配置的全部服务商并消耗其额度，等同于上游凭据的代理凭证；因此配对即授权的远程端不得创建、查看或使用它。`internal/gateway/tunnel_test.go` 同时断言这几条路径被拒绝。
+- **本机网关令牌不出机器**：网关在转发隧道请求前显式剥离 `X-Hoxi-Token` 且绝不注入本机令牌（受令牌保护的 OpenCode 原始透传对隧道始终不可达）；`/api/hoxi/bootstrap` 对隧道请求不返回 `gatewayToken`，也不种令牌 Cookie。
+- **凭据文件**：release `~/.hoxi/tunnel.json`，dev `~/.hoxi/tunnel-dev.json`（两个变体可同时运行，互不挤占隧道）。临时文件 + `os.Rename` 原子写入，权限 `0600`，已加入受保护状态文件列表；状态接口从不返回 token。
+- **管理接口**（只在本机可访问，隧道白名单不包含）：
+  - `GET /api/hoxi/tunnel/status` → `{enabled, state: disabled|connecting|online|offline, controllerUrl, nodeId, name, message, connectedAt, pending?}`；`pending` 为进行中的一键授权 `{requestId, userCode, expiresAt, state: waiting|approved|denied|expired}`，从不含投票令牌或隧道 token
+  - `GET /api/hoxi/tunnel/qr` → `{available, panel?, nodeId?, name?, payload?, qrPng?}`：桌面侧展示给手机扫的中继二维码（`payload` 为 `{"type":"gopanel-relay","panel","nodeId","name"}`，只带面板地址与节点身份、不含凭据；`qrPng` 为 `data:image/png;base64,`）；未配对时 `available=false`
+  - `POST /api/hoxi/tunnel/pair` `{controllerUrl, code, name}`：手动配对码路径
+  - `POST /api/hoxi/tunnel/pair/request` `{controllerUrl, name}`：一键授权，打开待批准请求并返回最新 Status（含 `pending`）
+  - `POST /api/hoxi/tunnel/pair/cancel` `{}`：取消进行中的一键授权请求
+  - `POST /api/hoxi/tunnel/disable`：断开、调用 GoPanel `POST /api/tunnel/unpair` 删除远端节点并删除本机凭据
+- 一键授权由 `internal/tunnel/pairing.go` 实现：`RequestPair` 打开请求后由后台轮询协程等待批准，批准即兑换一次性码并连接；超时、拒绝、过期或被取消（`CancelPair`/解除配对）都会停止轮询且不落盘。轮询间隔与总超时由 `Options.PollInterval`（默认 2s）与 `Options.PollTimeout`（默认 10min）控制。
+- 只有桌面主进程（含 `--no-desktop` 守护模式）启用隧道；CLI 临时拉起的 headless 网关没有凭据路径，配对会在兑换配对码**之前**被拒绝，避免在 GoPanel 留下孤儿节点。
+- 桌面 UI：设置 → 系统 → 经 GoPanel 远程控制（`web/src/components/settings/RemoteTunnelControls.tsx`）。
+
+## 7. 移动端与远程客户端接入契约
+
+- **多传输选路（节点身份 ⟂ 传输）**：客户端 `ServerConnection.transports` 为同一节点保存多个传输候选（局域网 `:5417` 配对令牌直连 + GoPanel 隧道中继 / Cloudflare Tunnel `:5418`），由 `HoxiTransportResolver` 优先选用局域网（明文 LAN 先无凭据预探测挑战并核对 `appVersion` + `rootDir`）、失败回落中继，`HoxiTransportFailover` 在传输故障后重探并更新后续请求地址，且绝不自动重放原失败请求。
+- **中继地址**：`https://<gopanel>/api/tunnel/hoxi-nodes/<nodeId>/proxy`，作为中继传输地址（或单中继节点的 `url`）保存；客户端把 `/api/hoxi/...` 直接拼在后面，无需修改业务协议。
+- **凭据**：中继连接复用所属 GoPanel 的登录 JWT 与安全入口，由鉴权拦截器发送 `X-Auth` 与 `EntranceCode`。GoPanel 重新登录保存连接时，会同步刷新它名下所有中继连接的凭据。
+- **地址规范化**：客户端规范化地址时不应把中继路径当作安全入口剥离，连接迁移时保留中继路径。
+- **入口**：服务器列表 → GoPanel 卡片的电脑图标；离线电脑不可选。
+- **扫码添加中继节点**：两个位置都能出同一种二维码（payload 为 `{"type":"gopanel-relay","panel":"<面板根地址>","nodeId":N,"name":"..."}`，只带面板地址与节点身份、不含凭据）：① Hoxi 桌面配对成功后，设置 → 远程 直接展示（`GET /api/hoxi/tunnel/qr`）；② 面板「主机 → 隧道 → 隧道节点」对 Hoxi 节点的「手机扫码」。手机扫码后若已登录同面板就直接保存为经中继访问的 Hoxi 节点，否则提示先登录面板（不签发登录态）。
+
+## 8. 安全模型与已知限制
+
+- **信任边界**：配对即授权。能以管理员身份登录这台 GoPanel 的人，可以在白名单范围内远程操作这台 Mac（新建会话、下发指令、批准审批）。Hoxi 自身的破坏性命令审批门控照常生效，但审批本身也能经手机远程批准。只与自己控制的 GoPanel 配对。
+- **凭据**：GoPanel JWT 只在手机与 GoPanel 之间；隧道 token 只在 Mac 与 GoPanel 之间，以 `0600` 明文文件保存在 Mac 上（尚未接入钥匙串）；Hoxi 本机网关令牌不离开 Mac。
+- **一键授权与安全入口**：`/api/tunnel/pair/request` 与其轮询接口对安全入口豁免，桌面只填 GoPanel 的 `ip:端口`；`pollToken` 只在 GoPanel 与桌面之间流转，桌面 `/api/hoxi/tunnel/status` 从不回显 pollToken 或隧道 token。GoPanel 后台的批准/拒绝与手机侧管理接口仍需管理员 JWT 与安全入口。拒绝、过期或超时会停止轮询且不落盘，不会在 GoPanel 留下孤儿节点。
+- **解除配对双向一致**：桌面「解除配对」用隧道凭据调用 `POST /api/tunnel/unpair`（免入口）删除远端节点后再删本机凭据；面板删除节点后凭据即失效，桌面连接被拒（401/403）时判定为永久失败，自动清除本机凭据并停止重试。两个方向都不会留下孤儿节点。
+- **无端到端加密**：GoPanel 能看到经它转发的请求和响应明文（会话内容、Diff）。传输加密依赖手机 ↔ GoPanel、Mac ↔ GoPanel 两段 TLS。
+- **无流控**：手机读得慢时 GoPanel 单流 32 帧缓冲会溢出并 Reset 该流（SSE 断开后由手机端重连）；大文件下载不适合走隧道。
+- **单连接**：同一凭据只保留最新的一条隧道，旧连接会被替换。
+- **JWT 有效期**：GoPanel 管理员登录默认 72 小时，过期后需在手机重新登录 GoPanel（中继连接随之刷新）。
+
+## 9. 尚未实现
+
+- 经隧道转发 WebSocket（手机远程终端）。GoPanel 侧已支持，Hoxi 侧需要回连本机端口或实现进程内 Hijack。
+- 跨网端到端加密（E2E）：同局域网 `5417` 配对令牌直连（`internal/gateway/lan.go`）与本机 `127.0.0.1:5418` 反向代理入口（`internal/gateway/ingress.go`）已实现，但跨网端到端加密信封与盲目中继尚未实现（见 [`docs/remote-access-e2e-contract.md`](remote-access-e2e-contract.md)）。
+- 隧道 token 存入 macOS 钥匙串；Android 推送；Wi-Fi / 移动网络切换下的多传输漫游与公网真机验收（客户端 `HoxiTransportResolver` / `HoxiTransportFailover` 多传输自动选路与故障重探已实现，不自动重放失败请求）。
+
+## 10. 验证
+
+| 范围 | 命令 / 测试 |
+| --- | --- |
+| Hoxi 隧道客户端 | `go test ./internal/tunnel/`（配对、`0600` 凭据、ServiceSync、请求转发、凭据头剥离、Reset 场景、解除配对：删除本机凭据并向 GoPanel 自注销、凭据被拒后自动清理并停止重试；一键授权：批准后自动连接、拒绝/过期/超时/网络错误/取消均不落盘、无凭据路径时拒绝且不产生孤儿请求） |
+| Hoxi 路由白名单 | `go test ./internal/gateway/ -run Tunnel` |
+| GoPanel 代理 | `go test ./app/service/ -run HoxiTunnel`（SSE 逐块到达、GoPanel 凭据不泄漏、丢弃 Set-Cookie、未注册服务拒绝） |
+| 双仓互通 | 用临时 `go.work` 同时引入两个模块，让真实 GoPanel `HandleTunnelConnection` 与真实 Hoxi `tunnel.Manager` 对接：SSE 首块约 2ms 到达、200KB 请求体完整。该测试不入库，修改帧协议时需重跑 |
+
+## 11. 审批提醒推送
+
+Agent 等待审批或向用户提问时，iPhone 收到通知；点开后 App 连接对应的 Hoxi 电脑并直接打开结构化待审批列表，不会自动开启麦克风或启动语音通话。
+
+```text
+Hoxi statusbar.Tracker（OpenCode permission/question.asked 与 Runner PreToolUse 审批）
+  → 新增待处理项只通知一次 → tunnel.Manager.Notify → Notify 帧（类型 9）
+  → GoPanel HandleHoxiNotice（仅限注册了 hoxi-gateway 的节点，按 requestId 去重 10 分钟）
+  → APNs（.p8 token 认证，HTTP/2，collapse-id = hoxi-node-<nodeId>）→ 已注册的 iPhone
+  → 点开：按 panel + nodeId 找到中继连接 → 切换节点 → 打开结构化待审批列表（CodeAttentionScreen，不自动开启麦克风）
+```
+
+- **内容最小化**：Notify 载荷只有 `kind`（approval / question / summary）、`requestId`、`sessionId`、`permission`、`pending`；`summary` 另有 `status`、`allowed`、`denied`、`timedOut`、`deferred` 五个数字。推送正文只说“有 N 项操作等待审批”，任务结束时只说“任务已结束：自动放行 X，拒绝 Y，待处理 Z”，**不含命令、代码、路径或会话内容**（这些会经过 Apple 并显示在锁屏上）。细节由手机点开后经隧道读取。GoPanel 需识别 `kind: "summary"` 并发上述通用正文；未识别时按旧逻辑忽略即可
+- **设备注册**：手机在存在中继节点时申请通知权限，并向对应 GoPanel `POST /api/push/devices` 注册 `{platform: ios, token, environment, name, panelUrl}`（管理员 JWT）；`environment` 由构建配置决定（Debug / Profile 为 sandbox，Release 为 production，与 `aps-environment` 授权一致）；同一 token 重复注册即更新
+- **APNs 配置**：GoPanel 后台 → 节点 → 手机推送，填写 Team ID、Key ID、Bundle ID（默认 `ai.hoxi.app`）与 `.p8` 内容，可发送测试推送。接口：`GET/POST /api/push/apns`、`POST /api/push/test`。`.p8` 加密存储且不经接口返回
+- **失效设备**：APNs 返回 410 / BadDeviceToken / DeviceTokenNotForTopic 时自动停用该设备
+- **限制**：离线期间产生的提醒不排队（重新打开 App 仍能看到待处理项）；OpenCode 运行时的审批依赖网关 SSE 旁路观测，桌面端没有任何客户端订阅事件流时可能漏报；未做真机验收
+
+验证：Hoxi `go test ./internal/statusbar/ ./internal/tunnel/`（只通知一次、不含命令文本、Notify 帧类型固定为 9）；GoPanel `go test ./app/service/ -run 'APNs|HoxiNotice|TunnelNotify|RegisterPushDevice'`（ES256 JWT 与请求头、经真实隧道读循环触发推送、去重、停用失效设备、通用正文）。
+
+尚未做真机联调：真实公网 GoPanel + 真实 Mac + 手机 4G 下的端到端验收、长时间 SSE 稳定性与重连表现。

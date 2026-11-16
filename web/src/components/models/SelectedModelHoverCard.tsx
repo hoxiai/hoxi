@@ -1,0 +1,242 @@
+// web/src/components/models/SelectedModelHoverCard.tsx
+import { onMount, Show } from "solid-js";
+import { ChevronRight, Image, Sparkles, Wrench } from "lucide-solid";
+import {
+  AUTO_PROVIDER_ID,
+  ensureLocalCLIStatusLoaded,
+  getEffectivePoolCandidates,
+  getLocalCLIStatusForProvider,
+  isCandidateCoolingDown,
+  peekAutoModelTarget,
+  workspace,
+} from "../../store/workspace";
+import { ProviderIcon } from "../icons";
+import { t } from "../../i18n";
+import { LocalCliQuotaBadges } from "./LocalCliQuotaBadges";
+import { ProviderHealthBadge } from "./ProviderQualityCard";
+import {
+  formatPricePerMillion,
+  formatTokenLimit,
+  getModelSourceInfo,
+  getMultiplierBadgeClass,
+  type FlattenedModel,
+} from "./model-selector-utils";
+
+export function SelectedModelHoverCard(props: {
+  model: FlattenedModel;
+  onActivate?: () => void;
+  onHoverStart?: () => void;
+  onHoverEnd?: () => void;
+}) {
+  const srcInfo = () => getModelSourceInfo(props.model);
+  const cliTool = () => getLocalCLIStatusForProvider(props.model.providerID);
+  onMount(() => {
+    void ensureLocalCLIStatusLoaded();
+  });
+  const ctxText = () => formatTokenLimit(props.model.contextLimit);
+  const outText = () => formatTokenLimit(props.model.outputLimit);
+  const inPrice = () => formatPricePerMillion(props.model.inputCost, props.model.priceCurrency);
+  const outPrice = () => formatPricePerMillion(props.model.outputCost, props.model.priceCurrency);
+  const isAuto = () => props.model.providerID === AUTO_PROVIDER_ID;
+  const autoTarget = () => (isAuto() ? peekAutoModelTarget(props.model.modelID) : null);
+  const autoCands = () => (isAuto() ? getEffectivePoolCandidates(props.model.modelID) : []);
+  const autoReadyCount = () =>
+    autoCands().filter((c) => !isCandidateCoolingDown(c.providerID, c.modelID)).length;
+  const hasEffortControl = () =>
+    props.model.reasoning || (props.model.efforts?.length ?? 0) > 0;
+  const effortText = () => {
+    const current = workspace.reasoningEffort;
+    if (current) return current.toUpperCase();
+    const def = props.model.defaultEffort;
+    return def
+      ? t("models.hoverEffortAutoDefault", { effort: def.toUpperCase() })
+      : t("models.effortAuto");
+  };
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      aria-label={t("models.hoverEffortHint")}
+      onClick={() => props.onActivate?.()}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          props.onActivate?.();
+        }
+      }}
+      onMouseEnter={() => props.onHoverStart?.()}
+      onMouseLeave={() => props.onHoverEnd?.()}
+      class="pointer-events-auto cursor-pointer absolute bottom-full left-0 z-30 mb-2 w-[320px] rounded-xl border border-[var(--border-strong)] bg-[var(--bg-panel)] p-3 shadow-2xl text-[12px] space-y-2 animate-in fade-in duration-100"
+    >
+      <div class="flex items-center justify-between gap-2 border-b border-[var(--border-subtle)] pb-2">
+        <div class="flex items-center gap-1.5 min-w-0">
+          <ProviderIcon id={props.model.providerID} class="w-4 h-4 shrink-0" />
+          <span class="font-semibold text-[var(--text-primary)] truncate text-[13px]">
+            {props.model.modelName}
+          </span>
+          <Show when={props.model.free}>
+            <span class="shrink-0 rounded bg-[var(--ok-surface)] px-1.5 py-[1px] text-[11px] font-semibold text-[var(--ok-text)]">
+              {t("models.freeModel")}
+            </span>
+          </Show>
+          <Show when={props.model.multiplier}>
+            <span
+              class={`shrink-0 rounded px-1.5 py-[1px] font-mono text-[11px] font-semibold ${getMultiplierBadgeClass(
+                props.model.multiplier,
+                props.model.free
+              )}`}
+            >
+              {props.model.multiplier}
+            </span>
+          </Show>
+        </div>
+        <ProviderHealthBadge
+          providerID={props.model.providerID}
+          modelID={props.model.modelID}
+          compact
+        />
+      </div>
+
+      <div class="space-y-1.5 text-[11px]">
+        <div class="flex items-center justify-between gap-2">
+          <span class="text-[var(--text-muted)] shrink-0">
+            {t("models.hoverSourceLabel")}
+          </span>
+          <span class="inline-flex items-center gap-1.5 min-w-0">
+            <span
+              class={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                srcInfo().isImported
+                  ? "bg-amber-500/10 text-amber-400"
+                  : "bg-[var(--ok-surface)] text-[var(--ok-text)]"
+              }`}
+            >
+              <span
+                class={`h-1.5 w-1.5 rounded-full ${
+                  srcInfo().isImported ? "bg-amber-400" : "bg-[var(--ok)]"
+                }`}
+              />
+              {srcInfo().label}
+            </span>
+            <Show when={srcInfo().configHint}>
+              <span class="font-mono text-[11px] text-[var(--text-faint)] truncate">
+                {srcInfo().configHint}
+              </span>
+            </Show>
+          </span>
+        </div>
+
+        <div class="flex items-center justify-between gap-2">
+          <span class="text-[var(--text-muted)] shrink-0">
+            {t("models.hoverProviderLabel")}
+          </span>
+          <span class="text-[var(--text-primary)] font-medium truncate">
+            {props.model.providerName}{" "}
+            <span class="font-mono text-[11px] text-[var(--text-faint)]">
+              ({props.model.providerID})
+            </span>
+          </span>
+        </div>
+
+        <div class="flex items-center justify-between gap-2">
+          <span class="text-[var(--text-muted)] shrink-0">
+            {t("models.hoverModelIdLabel")}
+          </span>
+          <span class="font-mono text-[11px] text-[var(--text-secondary)] truncate">
+            {props.model.modelID}
+          </span>
+        </div>
+
+        <Show when={isAuto()}>
+          <div class="flex items-center justify-between gap-2 rounded-lg bg-[var(--accent-surface)]/40 px-2 py-1 text-[11px]">
+            <span class="font-medium text-[var(--accent-primary)] truncate">
+              {autoTarget()
+                ? t("models.autoPoolActiveTarget", {
+                    model: `${autoTarget()!.providerID}/${autoTarget()!.modelID}`,
+                  })
+                : t("models.autoRailLabel")}
+            </span>
+            <span class="shrink-0 font-mono text-[11px] text-[var(--text-secondary)]">
+              {autoReadyCount()}/{autoCands().length} {t("models.autoPoolReadyStatus")}
+            </span>
+          </div>
+        </Show>
+
+        <Show when={props.model.baseURL}>
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-[var(--text-muted)] shrink-0">
+              {t("models.hoverEndpointLabel")}
+            </span>
+            <span class="font-mono text-[11px] text-[var(--text-secondary)] truncate max-w-[205px]">
+              {props.model.baseURL}
+            </span>
+          </div>
+        </Show>
+
+        <LocalCliQuotaBadges
+          quota={cliTool()?.quota}
+          providerID={props.model.providerID}
+          modelID={props.model.modelID}
+          detailed
+        />
+
+        <div class="flex items-center justify-between gap-2 pt-1.5 border-t border-[var(--border-subtle)] text-[11px] text-[var(--text-muted)]">
+          <div class="flex items-center gap-2 flex-wrap">
+            <Show when={ctxText()}>
+              <span>
+                {t("models.contextWindow")}:{" "}
+                <strong class="font-mono text-[var(--text-secondary)]">
+                  {ctxText()}
+                </strong>
+              </span>
+            </Show>
+            <Show when={outText()}>
+              <span>
+                {t("models.maxOutput")}:{" "}
+                <strong class="font-mono text-[var(--text-secondary)]">
+                  {outText()}
+                </strong>
+              </span>
+            </Show>
+            <Show when={!props.model.free && (inPrice() || outPrice())}>
+              <span class="font-mono text-[11px]">
+                {inPrice() || "-"} / {outPrice() || "-"}
+              </span>
+            </Show>
+          </div>
+
+          <div class="flex items-center gap-1 shrink-0">
+            <Show when={hasEffortControl()}>
+              <span class="inline-flex items-center gap-0.5 rounded bg-[var(--accent-surface)] px-1.5 py-[1px] text-[11px] font-medium text-[var(--accent-primary)]">
+                <Sparkles size={9} />
+                {t("models.reasoningCap")}
+                <span class="font-mono uppercase">
+                  ·{effortText()}
+                </span>
+              </span>
+            </Show>
+            <Show when={props.model.image}>
+              <span class="inline-flex items-center gap-0.5 rounded bg-[var(--bg-inset)] px-1.5 py-[1px] text-[11px] font-medium text-[var(--text-secondary)]">
+                <Image size={9} />
+                {t("models.imageCap")}
+              </span>
+            </Show>
+            <Show when={props.model.toolcall}>
+              <span class="inline-flex items-center gap-0.5 rounded bg-[var(--bg-inset)] px-1.5 py-[1px] text-[11px] text-[var(--text-muted)]">
+                <Wrench size={9} />
+                {t("models.toolsCap")}
+              </span>
+            </Show>
+          </div>
+        </div>
+
+        <Show when={hasEffortControl()}>
+          <div class="flex items-center justify-between gap-2 border-t border-[var(--border-subtle)] pt-1.5 text-[11px] text-[var(--text-faint)]">
+            <span>{t("models.hoverEffortHint")}</span>
+            <ChevronRight size={11} class="shrink-0 text-[var(--accent-primary)]" />
+          </div>
+        </Show>
+      </div>
+    </div>
+  );
+}

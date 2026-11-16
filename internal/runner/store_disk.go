@@ -1,0 +1,535 @@
+package runner
+
+import (
+	"bufio"
+	"bytes"
+	"encoding/json"
+	"errors"
+	"io"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
+)
+
+// On-disk layout, one directory per conversation so that a long transcript
+// never forces a rewrite of every other session:
+//
+//	<root>/<session-id>/session.json  metadata only, rewritten atomically
+//	<root>/<session-id>/turns.jsonl   append-only upserts of message infos and parts
+//
+// turns.jsonl is replayed with upsert semantics and compacted once stale
+// entries dominate it.
+const (
+	sessionMetaFile  = "session.json"
+	sessionTurnsFile = "turns.jsonl"
+	legacyStoreFile  = "runner-sessions.json"
+)
+
+type turnLogEntry struct {
+	Info *MessageInfo `json:"info,omitempty"`
+	Part *MessagePart `json:"part,omitempty"`
+}
+
+var errInvalidSessionID = errors.New("invalid session id")
+
+func validStoreID(id string) bool {
+	if id == "" || id == "." || id == ".." || len(id) > 200 {
+		return false
+	}
+	return !strings.ContainsAny(id, "/\\\x00:")
+}
+
+func (s *Store) sessionDir(id string) string {
+	return filepath.Join(s.dir, id)
+}
+
+func writeFileAtomic(path string, raw []byte) error {
+	return hoxipaths.WriteFileAtomic(path, raw, 0o600)
+}
+
+func (s *Store) writeMeta(rec SessionRecord) error {
+	if !validStoreID(rec.ID) {
+		return errInvalidSessionID
+	}
+	rec.Turns = nil
+	raw, err := json.MarshalIndent(rec, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeFileAtomic(filepath.Join(s.sessionDir(rec.ID), sessionMetaFile), raw)
+}
+
+func encodeTurns(turns []MessageTurn) ([]byte, int, error) {
+	raw, lines, _, err := encodeTurnsIndexed(turns)
+	return raw, lines, err
+}
+
+func encodeTurnsIndexed(turns []MessageTurn) ([]byte, int, *historyLogIndex, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	idx := &historyLogIndex{Version: 1, EditsComplete: true}
+	lines := 0
+	for i := range turns {
+		info := turns[i].Info
+		idx.noteEntry(turnLogEntry{Info: &info}, int64(buf.Len()))
+		if err := enc.Encode(turnLogEntry{Info: &info}); err != nil {
+			return nil, 0, nil, err
+		}
+		lines++
+		for j := range turns[i].Parts {
+			part := turns[i].Parts[j]
+			idx.noteEntry(turnLogEntry{Part: &part}, int64(buf.Len()))
+			if err := enc.Encode(turnLogEntry{Part: &part}); err != nil {
+				return nil, 0, nil, err
+			}
+			lines++
+		}
+	}
+	return buf.Bytes(), lines, idx, nil
+}
+
+// rewriteTurns replaces the log with one entry per message info and part.
+func (s *Store) rewriteTurns(id string, turns []MessageTurn) (int, error) {
+	raw, lines, idx, err := encodeTurnsIndexed(turns)
+	if err != nil {
+		return 0, err
+	}
+	if err := writeFileAtomic(filepath.Join(s.sessionDir(id), sessionTurnsFile), raw); err != nil {
+		return 0, err
+	}
+	if info, err := os.Stat(filepath.Join(s.sessionDir(id), sessionTurnsFile)); err == nil {
+		recordPersistenceError(s.saveHistoryIndex(id, idx, info))
+	} else {
+		recordPersistenceError(err)
+	}
+	return lines, nil
+}
+
+func (s *Store) appendTurnEntries(ss *storedSession, entries []turnLogEntry) error {
+	if len(entries) == 0 {
+		return nil
+	}
+	var buf bytes.Buffer
+	id := ss.rec.ID
+	enc := json.NewEncoder(&buf)
+	for _, e := range entries {
+		if err := enc.Encode(e); err != nil {
+			return err
+		}
+	}
+	if err := os.MkdirAll(s.sessionDir(id), 0o700); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(filepath.Join(s.sessionDir(id), sessionTurnsFile), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return err
+	}
+	info, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return err
+	}
+	cleanEnd, prependNewline := info.Size(), false
+	if previous := ss.appendLog; previous == nil || !os.SameFile(previous, info) || previous.Size() != info.Size() || !previous.ModTime().Equal(info.ModTime()) {
+		cleanEnd, prependNewline, err = prepareTurnsAppend(f)
+	}
+	if err != nil {
+		_ = f.Close()
+		return err
+	}
+	if _, err := f.Seek(cleanEnd, io.SeekStart); err != nil {
+		_ = f.Close()
+		return err
+	}
+	payload := buf.Bytes()
+	if prependNewline {
+		payload = append([]byte{'\n'}, payload...)
+	}
+	if _, err := f.Write(payload); err != nil {
+		_ = f.Truncate(cleanEnd)
+		_ = f.Close()
+		return err
+	}
+	ss.appendLog, _ = f.Stat()
+	ss.needsSync = true
+	return f.Close()
+}
+
+func findLastNewlineBefore(f *os.File, limit int64) (int64, error) {
+	const chunkSize = 64 * 1024
+	if limit <= 0 {
+		return -1, nil
+	}
+	buf := make([]byte, min(limit, int64(chunkSize)))
+	offset := limit
+	for offset > 0 {
+		readLen := min(offset, int64(len(buf)))
+		offset -= readLen
+		n, err := f.ReadAt(buf[:readLen], offset)
+		if err != nil && !errors.Is(err, io.EOF) {
+			return -1, err
+		}
+		if idx := bytes.LastIndexByte(buf[:n], '\n'); idx >= 0 {
+			return offset + int64(idx), nil
+		}
+	}
+	return -1, nil
+}
+
+func readTrailingTurnsLine(f *os.File, end int64) (lineStart int64, rawLine []byte, hasNewline bool, err error) {
+	const fastWindow = 4096
+	winLen := min(end, int64(fastWindow))
+	winStart := end - winLen
+	win := make([]byte, winLen)
+	n, err := f.ReadAt(win, winStart)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return 0, nil, false, err
+	}
+	win = win[:n]
+	if len(win) == 0 {
+		return end, nil, false, nil
+	}
+	hasNewline = win[len(win)-1] == '\n'
+	search := win
+	if hasNewline {
+		search = win[:len(win)-1]
+	}
+	if idx := bytes.LastIndexByte(search, '\n'); idx >= 0 {
+		return winStart + int64(idx) + 1, search[idx+1:], hasNewline, nil
+	}
+	if winStart == 0 {
+		return 0, search, hasNewline, nil
+	}
+	prevNL, err := findLastNewlineBefore(f, winStart)
+	if err != nil {
+		return 0, nil, false, err
+	}
+	lineStart = prevNL + 1
+	lineEnd := end
+	if hasNewline {
+		lineEnd = end - 1
+	}
+	rawLine = make([]byte, lineEnd-lineStart)
+	if _, err := f.ReadAt(rawLine, lineStart); err != nil && !errors.Is(err, io.EOF) {
+		return 0, nil, false, err
+	}
+	return lineStart, rawLine, hasNewline, nil
+}
+
+// prepareTurnsAppend strips any torn trailing line left by an interrupted write
+// so new JSONL entries are never concatenated onto a partial line.
+func prepareTurnsAppend(f *os.File) (cleanEnd int64, prependNewline bool, err error) {
+	info, err := f.Stat()
+	if err != nil {
+		return 0, false, err
+	}
+	size := info.Size()
+	end := size
+	for end > 0 {
+		lineStart, rawLine, hasNewline, err := readTrailingTurnsLine(f, end)
+		if err != nil {
+			return 0, false, err
+		}
+		trimmed := bytes.TrimSpace(rawLine)
+		var probe turnLogEntry
+		if len(trimmed) > 0 && json.Unmarshal(trimmed, &probe) == nil && (probe.Info != nil || probe.Part != nil) {
+			if end < size {
+				if err := f.Truncate(end); err != nil {
+					return 0, false, err
+				}
+			}
+			return end, !hasNewline, nil
+		}
+		end = lineStart
+	}
+	if size > 0 {
+		if err := f.Truncate(0); err != nil {
+			return 0, false, err
+		}
+	}
+	return 0, false, nil
+}
+
+// readTurns replays the log. A torn trailing line from a crash is skipped.
+func (s *Store) readTurns(id string) ([]MessageTurn, int) {
+	turns, lines, _ := s.readTurnsWithStatus(id)
+	return turns, lines
+}
+
+func (s *Store) readTurnsWithStatus(id string) ([]MessageTurn, int, bool) {
+	f, err := os.Open(filepath.Join(s.sessionDir(id), sessionTurnsFile))
+	if err != nil {
+		return nil, 0, false
+	}
+	defer f.Close()
+	var turns []MessageTurn
+	var index transcriptIndex
+	lines := 0
+	corrupted := false
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 64*1024), 64*1024*1024)
+	for scanner.Scan() {
+		line := bytes.TrimSpace(scanner.Bytes())
+		if len(line) == 0 {
+			continue
+		}
+		var e turnLogEntry
+		if json.Unmarshal(line, &e) != nil || (e.Info == nil && e.Part == nil) {
+			corrupted = true
+			continue
+		}
+		lines++
+		switch {
+		case e.Info != nil:
+			index.upsertInfo(&turns, *e.Info)
+		case e.Part != nil:
+			index.upsertPart(turns, *e.Part)
+		}
+	}
+	if scanner.Err() != nil {
+		corrupted = true
+	}
+	for i := range turns {
+		turns[i].Parts = dedupeClaudeStreamParts(turns[i].Parts)
+		turns[i].Parts = pruneRunawayDuplicateToolParts(turns[i].Parts)
+	}
+	return turns, lines, corrupted
+}
+
+func claudePartStem(id string) string {
+	idx := strings.LastIndexByte(id, '_')
+	if idx <= 0 || idx == len(id)-1 {
+		return ""
+	}
+	for _, ch := range id[idx+1:] {
+		if ch < '0' || ch > '9' {
+			return ""
+		}
+	}
+	stem := id[:idx+1]
+	if strings.HasSuffix(stem, "_text_") || strings.HasSuffix(stem, "_reason_") {
+		return stem
+	}
+	return ""
+}
+
+func dedupeClaudeStreamParts(parts []MessagePart) []MessagePart {
+	if len(parts) < 2 {
+		return parts
+	}
+	out := make([]MessagePart, 0, len(parts))
+	for _, p := range parts {
+		stem := claudePartStem(p.ID)
+		if stem != "" && p.Text != "" {
+			merged := false
+			for i := range out {
+				if out[i].Type == p.Type && out[i].Text == p.Text && claudePartStem(out[i].ID) == stem {
+					if p.Time != nil && p.Time.End > 0 {
+						start := p.Time.Start
+						if out[i].Time != nil && out[i].Time.Start > 0 {
+							start = out[i].Time.Start
+						}
+						out[i].Time = &PartTime{Start: start, End: p.Time.End}
+					}
+					merged = true
+					break
+				}
+			}
+			if merged {
+				continue
+			}
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+func (s *Store) loadAllMeta() {
+	entries, err := os.ReadDir(s.dir)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() || !validStoreID(entry.Name()) {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(s.dir, entry.Name(), sessionMetaFile))
+		if err != nil {
+			continue
+		}
+		var rec SessionRecord
+		if json.Unmarshal(raw, &rec) != nil || rec.ID != entry.Name() {
+			continue
+		}
+		hasReverted := len(rec.RevertedTurns) > 0
+		rec.Turns, rec.RevertedTurns = nil, nil
+		s.records[rec.ID] = &storedSession{rec: rec, meta: metadataOnly(rec), hasRevertedTurns: hasReverted}
+	}
+}
+
+func countCanonicalTurnLines(turns []MessageTurn) int {
+	lines := 0
+	for i := range turns {
+		lines++
+		lines += len(turns[i].Parts)
+	}
+	return lines
+}
+
+// CompactIdleTurns rewrites turns.jsonl for idle sessions whose on-disk log
+// contains redundant upsert lines, and removes any leftover .tmp files.
+func (s *Store) CompactIdleTurns() (compacted int, freedBytes int64) {
+	s.mu.RLock()
+	ids := make([]string, 0, len(s.records))
+	for id := range s.records {
+		ids = append(ids, id)
+	}
+	s.mu.RUnlock()
+
+	for _, id := range ids {
+		ss := s.lockSession(id, false)
+		if ss == nil {
+			continue
+		}
+		if ss.active {
+			ss.mu.Unlock()
+			continue
+		}
+		_ = s.flushSessionLocked(ss)
+		turnsPath := filepath.Join(s.sessionDir(id), sessionTurnsFile)
+		beforeInfo, err := os.Stat(turnsPath)
+		if err != nil || beforeInfo.Size() == 0 {
+			ss.mu.Unlock()
+			continue
+		}
+		turns := ss.rec.Turns
+		lines := ss.logLines
+		corrupted := false
+		if !ss.turnsLoaded {
+			turns, lines, corrupted = s.readTurnsWithStatus(id)
+		}
+		if corrupted || lines > countCanonicalTurnLines(turns) {
+			ss.diskMu.Lock()
+			if newLines, err := s.rewriteTurns(id, turns); err == nil {
+				if ss.turnsLoaded {
+					ss.logLines = newLines
+				}
+				if afterInfo, err := os.Stat(turnsPath); err == nil && beforeInfo.Size() > afterInfo.Size() {
+					compacted++
+					freedBytes += beforeInfo.Size() - afterInfo.Size()
+				}
+			}
+			ss.diskMu.Unlock()
+		}
+		ss.mu.Unlock()
+	}
+	return compacted, freedBytes
+}
+
+// StorageBytes returns the total on-disk footprint of the session store directory.
+func (s *Store) StorageBytes() int64 {
+	if s == nil {
+		return 0
+	}
+	return MeasureDirBytes(s.dir)
+}
+
+// CleanStorage compacts idle session logs and removes leftover .tmp files under s.dir.
+func (s *Store) CleanStorage(minAge time.Duration) (compacted int, prunedFiles int, freedBytes int64) {
+	if s == nil {
+		return 0, 0, 0
+	}
+	compacted, freedBytes = s.CompactIdleTurns()
+	files, tmpFreed := PruneTempFiles(s.dir, minAge)
+	return compacted, files, freedBytes + tmpFreed
+}
+
+// MeasureDirBytes returns the recursive file size sum under root.
+func MeasureDirBytes(root string) int64 {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return 0
+	}
+	var total int64
+	_ = filepath.WalkDir(root, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if info, infoErr := d.Info(); infoErr == nil {
+			total += info.Size()
+		}
+		return nil
+	})
+	return total
+}
+
+// PruneTempFiles removes leftover *.tmp files older than minAge under root.
+func PruneTempFiles(root string, minAge time.Duration) (int, int64) {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return 0, 0
+	}
+	now := time.Now()
+	var count int
+	var freed int64
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || (!strings.HasSuffix(d.Name(), ".tmp") && !strings.Contains(d.Name(), ".tmp-")) {
+			return nil
+		}
+		info, infoErr := d.Info()
+		if infoErr != nil {
+			return nil
+		}
+		if minAge > 0 && now.Sub(info.ModTime()) < minAge {
+			return nil
+		}
+		if os.Remove(path) == nil {
+			count++
+			freed += info.Size()
+		}
+		return nil
+	})
+	return count, freed
+}
+
+// migrateLegacy imports the single-file store used before per-session
+// directories. The old file is renamed only after every record was written,
+// so an interrupted import is retried on the next start.
+func (s *Store) migrateLegacy(legacyPath string) {
+	raw, err := os.ReadFile(legacyPath)
+	if err != nil || len(raw) == 0 {
+		return
+	}
+	var doc struct {
+		Sessions []*SessionRecord `json:"sessions"`
+	}
+	if json.Unmarshal(raw, &doc) != nil {
+		return
+	}
+	for _, rec := range doc.Sessions {
+		if rec == nil || !validStoreID(strings.TrimSpace(rec.ID)) {
+			continue
+		}
+		if _, exists := s.records[rec.ID]; exists {
+			continue
+		}
+		copied := cloneRecord(*rec)
+		lines, err := s.rewriteTurns(copied.ID, copied.Turns)
+		if err == nil {
+			err = s.writeMeta(copied)
+		}
+		if err != nil {
+			return
+		}
+		ss := &storedSession{rec: copied, turnsLoaded: true, logLines: lines, hasRevertedTurns: len(copied.RevertedTurns) > 0}
+		ss.index.rebuild(copied.Turns)
+		ss.bodyBytes = estimateTurnsBytes(copied.Turns) + estimateTurnsBytes(copied.RevertedTurns)
+		s.records[copied.ID] = ss
+		s.publishSessionLocked(ss)
+	}
+	_ = os.Rename(legacyPath, legacyPath+".migrated")
+}

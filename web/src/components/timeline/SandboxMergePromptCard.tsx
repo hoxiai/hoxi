@@ -1,0 +1,415 @@
+// web/src/components/timeline/SandboxMergePromptCard.tsx
+import { createComputed, createEffect, createMemo, createSignal, on, onCleanup, Show } from "solid-js";
+import {
+  Check,
+  GitBranch,
+  GitMerge,
+  GitPullRequestArrow,
+  LoaderCircle,
+  Sparkles,
+  X,
+} from "lucide-solid";
+import type { SnapshotFileDiff } from "../../services/sse-types";
+import {
+  applyAndExitSessionWorktree,
+  buildSandboxConflictResolutionPrompt,
+  dismissSandboxMergePrompt,
+  generateSmartCommitMessage,
+  isSandboxMergeConflictError,
+  isSessionBusy,
+  refreshWorktreeStatus,
+  sessionGoal,
+  sessionDirectory,
+  submitSessionPrompt,
+  syncSessionWorktree,
+  synthesizeLocalCommitMessage,
+  uncommittedSessionFiles,
+  workspace,
+} from "../../store/workspace";
+import { t } from "../../i18n";
+import { Presence } from "../motion/Presence";
+
+export default function SandboxMergePromptCard(props: {
+  active?: boolean;
+  sessionID: string;
+  messageID: string;
+  changedFiles: SnapshotFileDiff[];
+}) {
+  const [commitOpen, setCommitOpen] = createSignal(false);
+  const [commitMsg, setCommitMsg] = createSignal("");
+  const [generatingMsg, setGeneratingMsg] = createSignal(false);
+  const [busyAction, setBusyAction] = createSignal<
+    "merge-exit" | "sync-base" | null
+  >(null);
+  const [errorMsg, setErrorMsg] = createSignal<string | null>(null);
+  const [notice, setNotice] = createSignal<string | null>(null);
+  let commitMessageRevision = 0;
+  let commitMessageRequest = 0;
+  onCleanup(() => { commitMessageRequest++; });
+  let inputRef: HTMLInputElement | undefined;
+
+  const dismissKey = createMemo(() => `${props.sessionID}:${props.messageID}`);
+  createComputed(on([dismissKey, () => props.active, () => sessionDirectory(props.sessionID)], () => {
+    commitMessageRequest++;
+    setGeneratingMsg(false);
+  }));
+  const activeWorktree = createMemo(() => workspace.worktreeBySession[props.sessionID]);
+  const isolated = createMemo(() => Boolean(activeWorktree()?.isolated));
+  const sandboxBranch = createMemo(
+    () => activeWorktree()?.branch || `hoxi/${props.sessionID}`
+  );
+  const baseBranch = createMemo(
+    () =>
+      activeWorktree()?.baseBranch ||
+      workspace.worktreeBySession["__root__"]?.branch ||
+      "main"
+  );
+  const behindCount = createMemo(() => activeWorktree()?.behindCount ?? 0);
+  const aheadCount = createMemo(() => activeWorktree()?.aheadCount ?? 0);
+  const isPromotedBranch = createMemo(() => {
+    const br = activeWorktree()?.branch || "";
+    return Boolean(br && !br.startsWith("hoxi/"));
+  });
+
+  const effectiveDiffs = createMemo(() => {
+    const sessionDiffs = uncommittedSessionFiles(props.sessionID);
+    return sessionDiffs.length > 0 ? sessionDiffs : props.changedFiles;
+  });
+
+  const dirtyCount = createMemo(() =>
+    Math.max(
+      activeWorktree()?.changedFiles ?? 0,
+      effectiveDiffs().length
+    )
+  );
+
+  const hasUnmergedWork = createMemo(
+    () =>
+      Boolean(activeWorktree()?.dirty) ||
+      dirtyCount() > 0 ||
+      aheadCount() > 0
+  );
+
+  const isIdleAndSettled = createMemo(() => {
+    const sid = props.sessionID;
+    if (props.active === false) return false;
+    if (!sid || isSessionBusy(sid)) return false;
+    if (workspace.interruptedBySession[sid]) return false;
+    if (workspace.pendingPermissions.some((p) => p.sessionID === sid)) return false;
+    if (workspace.pendingQuestions.some((q) => q.sessionID === sid)) return false;
+    if ((workspace.queuedPromptsBySession[sid]?.length ?? 0) > 0) return false;
+    if (sessionGoal(sid)?.status === "active") return false;
+    return true;
+  });
+
+  // Ensure worktree status is fresh when the turn finishes
+  let refreshedForTurn = "";
+  createEffect(() => {
+    const key = dismissKey();
+    if (isIdleAndSettled() && isolated() && refreshedForTurn !== key) {
+      refreshedForTurn = key;
+      void refreshWorktreeStatus(props.sessionID);
+    }
+  });
+
+  const visible = createMemo(() => {
+    if (props.active === false) return false;
+    if (workspace.dismissedSandboxMergePrompts[dismissKey()]) return false;
+    if (notice()) return true;
+    return isIdleAndSettled() && isolated() && hasUnmergedWork();
+  });
+
+  const metaDescription = createMemo(() => {
+    const files = dirtyCount();
+    const commits = aheadCount();
+    if (files > 0 && commits > 0) {
+      return t("timeline.sandboxMergePromptMetaBoth", {
+        sandbox: sandboxBranch(),
+        files,
+        commits,
+      });
+    }
+    if (commits > 0 && files === 0) {
+      return t("timeline.sandboxMergePromptMetaAhead", {
+        sandbox: sandboxBranch(),
+        branch: baseBranch(),
+        count: commits,
+      });
+    }
+    return t("timeline.sandboxMergePromptMetaDirty", {
+      sandbox: sandboxBranch(),
+      count: Math.max(1, files),
+    });
+  });
+
+  const populateSmartCommitMessage = async (forceOverwrite = false) => {
+    const diffs = effectiveDiffs();
+    const fallback = synthesizeLocalCommitMessage(props.sessionID, diffs);
+    const canReplace = !commitMsg().trim() || forceOverwrite;
+    if (canReplace) {
+      setCommitMsg(fallback);
+    }
+    const request = ++commitMessageRequest;
+    const revision = commitMessageRevision;
+    setGeneratingMsg(true);
+    try {
+      const smart = await generateSmartCommitMessage(props.sessionID, diffs);
+      if (request === commitMessageRequest && revision === commitMessageRevision && canReplace && smart?.trim()) {
+        setCommitMsg(smart.trim());
+      }
+    } catch {
+      /* keep local fallback */
+    } finally {
+      if (request === commitMessageRequest) setGeneratingMsg(false);
+    }
+  };
+
+  const onOpenMergeCommitBar = () => {
+    if (busyAction()) return;
+    setErrorMsg(null);
+    setNotice(null);
+    if (!commitOpen()) {
+      setCommitOpen(true);
+      void populateSmartCommitMessage(false);
+      queueMicrotask(() => inputRef?.focus());
+      return;
+    }
+    void onConfirmMergeAndExit();
+  };
+
+  const runAction = async (
+    action: "merge-exit" | "sync-base",
+    fn: () => Promise<void>
+  ) => {
+    if (busyAction()) return;
+    setBusyAction(action);
+    setErrorMsg(null);
+    setNotice(null);
+    try {
+      await fn();
+    } catch (err: any) {
+      setErrorMsg(err?.message || t("timeline.sandboxApplyFailed"));
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const onConfirmMergeAndExit = () =>
+    runAction("merge-exit", async () => {
+      const fallback = synthesizeLocalCommitMessage(
+        props.sessionID,
+        effectiveDiffs()
+      );
+      const finalMessage = commitMsg().trim() || fallback;
+      const targetBranch = baseBranch();
+      await applyAndExitSessionWorktree(
+        props.sessionID,
+        "merge",
+        isPromotedBranch(),
+        finalMessage
+      );
+      setCommitOpen(false);
+      setNotice(
+        t("timeline.sandboxMergeCompletedNotice", { branch: targetBranch })
+      );
+    });
+
+  const onSyncWithBase = () =>
+    runAction("sync-base", async () => {
+      await syncSessionWorktree(props.sessionID);
+      setNotice(
+        t("timeline.sandboxSyncedBaseSuccess", { branch: baseBranch() })
+      );
+    });
+
+  return (
+    // Keep the outgoing card mounted long enough for its height to collapse.
+    // Removing it in the prompt-staging update made the bottom-pinned transcript blink.
+    <Presence when={visible()} exitMs={180}>
+      {(state) => (
+        <div
+          class={`grid transition-[grid-template-rows,opacity] duration-150 ease-out motion-reduce:transition-none ${state() === "exit" ? "grid-rows-[0fr] opacity-0 pointer-events-none" : "grid-rows-[1fr] opacity-100"}`}
+          inert={!visible()}
+          aria-hidden={!visible()}
+        >
+          <div class="min-h-0 overflow-hidden">
+            <div
+              data-sandbox-merge-prompt
+              class="rounded-2xl border border-[var(--accent-border)] bg-[var(--bg-panel)] px-4 py-3 shadow-2xs transition-colors"
+            >
+              <div class="flex items-start justify-between gap-3 flex-wrap">
+                <div class="flex items-center gap-3 min-w-0">
+                  <div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-[var(--accent-border)] bg-[var(--accent-surface)] text-[var(--accent-primary)]">
+                    <GitMerge size={16} />
+                  </div>
+                  <div class="min-w-0">
+                    <div class="flex items-center gap-2 flex-wrap">
+                      <span class="text-[13px] font-semibold text-[var(--text-primary)]">
+                        {t("timeline.sandboxMergePromptTitle", {
+                          branch: baseBranch(),
+                        })}
+                      </span>
+                    </div>
+                    <div class="mt-0.5 flex items-center gap-1.5 text-[11.5px] font-mono text-[var(--text-muted)] truncate">
+                      <GitBranch size={11} class="shrink-0 text-[var(--accent-primary)]" />
+                      <span class="truncate">{metaDescription()}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="flex items-center gap-1.5 flex-wrap ml-auto">
+                  <Show when={isolated()}>
+                    <button
+                      type="button"
+                      disabled={!!busyAction()}
+                      onClick={onOpenMergeCommitBar}
+                      class="inline-flex items-center gap-1.5 rounded-xl border border-[var(--accent-border)] bg-[var(--accent-surface)] hover:opacity-95 px-3 py-1.5 text-[12px] font-semibold text-[var(--accent-primary)] disabled:opacity-50 transition-opacity cursor-pointer"
+                    >
+                      <Show
+                        when={busyAction() !== "merge-exit"}
+                        fallback={<LoaderCircle size={12} class="animate-spin shrink-0" />}
+                      >
+                        <GitMerge size={12} class="shrink-0" />
+                      </Show>
+                      <span>
+                        {t("timeline.sandboxMergeCommitExitBtn", {
+                          branch: baseBranch(),
+                        })}
+                      </span>
+                    </button>
+
+                    <Show when={behindCount() > 0}>
+                      <button
+                        type="button"
+                        disabled={!!busyAction()}
+                        onClick={() => void onSyncWithBase()}
+                        class="inline-flex items-center gap-1 rounded-xl px-2.5 py-1.5 text-[12px] text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] disabled:opacity-50 transition-colors cursor-pointer"
+                      >
+                        <Show
+                          when={busyAction() !== "sync-base"}
+                          fallback={<LoaderCircle size={12} class="animate-spin shrink-0" />}
+                        >
+                          <GitPullRequestArrow size={12} class="shrink-0" />
+                        </Show>
+                        <span>
+                          {t("timeline.sandboxSyncBaseBtn", {
+                            branch: baseBranch(),
+                            count: behindCount(),
+                          })}
+                        </span>
+                      </button>
+                    </Show>
+                  </Show>
+
+                  <button
+                    type="button"
+                    onClick={() => dismissSandboxMergePrompt(dismissKey())}
+                    title={t("common.close")}
+                    aria-label={t("common.close")}
+                    class="inline-flex h-7 w-7 items-center justify-center rounded-lg text-[var(--text-faint)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-secondary)] transition-colors cursor-pointer"
+                  >
+                    <X size={13} />
+                  </button>
+                </div>
+              </div>
+
+              <Show when={commitOpen() && isolated()}>
+                <div class="mt-2.5 pt-2.5 border-t border-[var(--border-subtle)] flex items-center gap-2 flex-wrap">
+                  <div class="relative flex-1 min-w-[220px] flex items-center">
+                    <input
+                      ref={inputRef}
+                      type="text"
+                      value={commitMsg()}
+                      placeholder={t("timeline.sandboxMergeCommitPlaceholder")}
+                      disabled={!!busyAction()}
+                      onInput={(ev) => {
+                        commitMessageRevision++;
+                        setCommitMsg(ev.currentTarget.value);
+                      }}
+                      onKeyDown={(ev) => {
+                        if (ev.key === "Enter" && !ev.isComposing) {
+                          ev.preventDefault();
+                          void onConfirmMergeAndExit();
+                        } else if (ev.key === "Escape") {
+                          ev.preventDefault();
+                          setCommitOpen(false);
+                        }
+                      }}
+                      class="w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] pl-3 pr-8 py-1.5 text-[12px] font-mono text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none focus:border-[var(--accent-border)]"
+                    />
+                    <button
+                      type="button"
+                      disabled={generatingMsg() || !!busyAction()}
+                      onClick={() => void populateSmartCommitMessage(true)}
+                      title={t("timeline.gitCommitModelLabel")}
+                      class="absolute right-2 inline-flex h-5 w-5 items-center justify-center rounded-md text-[var(--text-muted)] hover:text-[var(--accent-primary)] disabled:opacity-40 transition-colors cursor-pointer"
+                    >
+                      <Show
+                        when={!generatingMsg()}
+                        fallback={<LoaderCircle size={12} class="animate-spin" />}
+                      >
+                        <Sparkles size={12} />
+                      </Show>
+                    </button>
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={!!busyAction()}
+                    onClick={() => void onConfirmMergeAndExit()}
+                    class="shrink-0 inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] hover:opacity-95 px-3 py-1.5 text-[12px] font-semibold text-white disabled:opacity-50 transition-opacity cursor-pointer"
+                  >
+                    <Show
+                      when={busyAction() !== "merge-exit"}
+                      fallback={<LoaderCircle size={12} class="animate-spin shrink-0" />}
+                    >
+                      <GitMerge size={12} class="shrink-0" />
+                    </Show>
+                    <span>{t("timeline.sandboxMergeConfirmBtn")}</span>
+                  </button>
+                </div>
+              </Show>
+
+              <Show when={errorMsg()}>
+                <div class="mt-2 flex items-center justify-between gap-2 flex-wrap rounded-xl border border-[var(--danger-border)] bg-[var(--danger-surface)] px-3 py-1.5 text-[11.5px] text-[var(--danger-text)] break-words">
+                  <span class="min-w-0 flex-1">{errorMsg()}</span>
+                  <Show when={isSandboxMergeConflictError(errorMsg())}>
+                    <button
+                      type="button"
+                      disabled={!!busyAction()}
+                      onClick={() => {
+                        const err = errorMsg();
+                        if (!err) return;
+                        setErrorMsg(null);
+                        void submitSessionPrompt(
+                          buildSandboxConflictResolutionPrompt({
+                            sessionID: props.sessionID,
+                            sandboxBranch: sandboxBranch(),
+                            baseBranch: baseBranch(),
+                            errorDetail: err,
+                          }),
+                          props.sessionID
+                        );
+                      }}
+                      class="shrink-0 inline-flex items-center gap-1 rounded-lg border border-[var(--danger-border)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11px] font-semibold text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+                    >
+                      <Sparkles size={11} class="text-[var(--accent-primary)]" />
+                      <span>{t("timeline.sandboxResolveConflictWithAI")}</span>
+                    </button>
+                  </Show>
+                </div>
+              </Show>
+
+              <Show when={notice()}>
+                <div class="mt-2 flex items-center gap-1.5 rounded-xl border border-[var(--ok)]/30 bg-[var(--ok-surface)] px-3 py-1.5 text-[11.5px] text-[var(--ok-text)] break-words">
+                  <Check size={12} class="shrink-0" />
+                  <span>{notice()}</span>
+                </div>
+              </Show>
+            </div>
+          </div>
+        </div>
+      )}
+    </Presence>
+  );
+}

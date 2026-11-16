@@ -1,0 +1,45 @@
+# macOS & OS files
+.DS_Store
+
+# Node & Frontend build artifacts
+node_modules/
+web/node_modules/
+web/dist/
+.opencode/node_modules/
+.opencode/bun.lock
+
+# Go & Wails build binaries
+/hoxi
+/cmd/hoxi/hoxi
+build/bin/
+build/preflight/
+build/windows/installer/tmp/
+build/windows/installer/wails_tools.nsh
+
+# Local session worktrees & runtime state
+.hoxi/
+.claude/
+# Legacy memory location; Hoxi now writes .hoxi/memory/ (kept out of git too)
+.opencode/memory/
+
+# Private sibling sub-repositories & local workspace wiring
+/client/
+/work/
+/site/
+/.ai/
+/verify.sh
+/go.work
+/go.work.sum
+/internal/app/work_bridge.go
+
+# Environment & Secrets
+.env
+.env.local
+.env.*.local
+
+# Internal website release & publishing scripts (local maintainer only)
+scripts/publish-release-to-posts.mjs
+scripts/publish-*.mjs
+.env.example
+
+

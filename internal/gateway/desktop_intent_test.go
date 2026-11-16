@@ -1,0 +1,131 @@
+package gateway
+
+import (
+	"encoding/json"
+	"net/http"
+	"strings"
+	"testing"
+)
+
+func consumeIntentInTest(t *testing.T, gw *Gateway) (DesktopIntent, bool) {
+	t.Helper()
+	res := serve(gw, http.MethodPost, "/api/hoxi/desktop/intent", "")
+	if res.Code != http.StatusOK {
+		t.Fatalf("consume intent status = %d, want 200", res.Code)
+	}
+	var body struct {
+		Intent *DesktopIntent `json:"intent"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode intent response: %v", err)
+	}
+	if body.Intent == nil {
+		return DesktopIntent{}, false
+	}
+	return *body.Intent, true
+}
+
+func TestDesktopIntentRoundTrip(t *testing.T) {
+	gw := New(0, "test", t.TempDir(), nil, nil)
+	notified := 0
+	gw.SetDesktopIntentNotifier(func() { notified++ })
+
+	gw.QueueDesktopIntent(DesktopIntent{
+		SessionID: " ses_abc ",
+		MessageID: " msg_a_1 ",
+		Directory: "  /repo/project/  ",
+	})
+	if notified != 1 {
+		t.Fatalf("notifier calls = %d, want 1", notified)
+	}
+
+	intent, ok := consumeIntentInTest(t, gw)
+	if !ok {
+		t.Fatal("expected a pending intent")
+	}
+	if intent.SessionID != "ses_abc" || intent.MessageID != "msg_a_1" || intent.Directory != "/repo/project" {
+		t.Fatalf("unexpected intent: %+v", intent)
+	}
+
+	if _, ok := consumeIntentInTest(t, gw); ok {
+		t.Fatal("expected intent to be cleared after consume")
+	}
+}
+
+func TestDesktopIntentIgnoresEmptyOrInvalidInputs(t *testing.T) {
+	gw := New(0, "test", t.TempDir(), nil, nil)
+	notified := 0
+	gw.SetDesktopIntentNotifier(func() { notified++ })
+
+	invalidCases := []DesktopIntent{
+		{SessionID: "   "},
+		{SessionID: "ses_"},
+		{SessionID: "abc_123"},
+		{SessionID: "ses_bad.dot"},
+		{SessionID: "ses_bad/slash"},
+		{SessionID: "ses_" + strings.Repeat("a", 96)},
+		{SessionID: "ses_valid", MessageID: "msg_"},
+		{SessionID: "ses_valid", MessageID: "not_msg_1"},
+		{SessionID: "ses_valid", MessageID: "msg_bad.dot"},
+		{SessionID: "ses_valid", MessageID: "msg_" + strings.Repeat("a", 96)},
+		{SessionID: "ses_valid", Directory: "relative/path"},
+		{SessionID: "ses_valid", Directory: "/repo/with\nnewline"},
+		{SessionID: "ses_valid", Directory: "/repo/with\x00null"},
+		{Action: "unknown-action"},
+		{Action: "unknown-action", SessionID: "ses_valid"},
+	}
+	for i, tc := range invalidCases {
+		gw.QueueDesktopIntent(tc)
+		if notified != 0 {
+			t.Fatalf("case %d (%+v): notifier calls = %d, want 0", i, tc, notified)
+		}
+		if got, ok := consumeIntentInTest(t, gw); ok {
+			t.Fatalf("case %d (%+v): expected no pending intent, got %+v", i, tc, got)
+		}
+	}
+}
+
+func TestDesktopIntentActionWithoutSession(t *testing.T) {
+	gw := New(0, "test", t.TempDir(), nil, nil)
+	for _, action := range []string{
+		DesktopIntentActionAttention,
+		DesktopIntentActionRunning,
+		DesktopIntentActionNewThread,
+		DesktopIntentActionHandoff,
+		DesktopIntentActionPolicy,
+		DesktopIntentActionSettings,
+		DesktopIntentActionSyncKeepAwake,
+	} {
+		gw.QueueDesktopIntent(DesktopIntent{Action: action})
+		got, ok := consumeIntentInTest(t, gw)
+		if !ok || got.Action != action || got.SessionID != "" {
+			t.Fatalf("action %q round-trip got %+v (ok=%v)", action, got, ok)
+		}
+	}
+}
+
+func TestDesktopFocusQueuesIntent(t *testing.T) {
+	gw := New(0, "test", t.TempDir(), nil, nil)
+	focused := 0
+	gw.SetDesktopFocusHandler(func(directory, sessionID string) { focused++ })
+
+	res := serve(gw, http.MethodPost, "/api/hoxi/desktop/focus", `{"directory":"/repo","sessionID":"ses_1"}`)
+	if res.Code != http.StatusOK {
+		t.Fatalf("focus status = %d, want 200", res.Code)
+	}
+	if focused != 1 {
+		t.Fatalf("focus handler calls = %d, want 1", focused)
+	}
+	intent, ok := gw.ConsumeDesktopIntent()
+	if !ok || intent.SessionID != "ses_1" || intent.Directory != "/repo" {
+		t.Fatalf("unexpected intent: %+v (ok=%v)", intent, ok)
+	}
+}
+
+func TestDesktopIntentRequiresPost(t *testing.T) {
+	gw := New(0, "test", t.TempDir(), nil, nil)
+	res := serve(gw, http.MethodGet, "/api/hoxi/desktop/intent", "")
+	if res.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want 405", res.Code)
+	}
+}

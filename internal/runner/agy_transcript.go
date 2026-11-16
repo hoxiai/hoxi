@@ -1,0 +1,734 @@
+package runner
+
+import (
+	"bufio"
+	"bytes"
+	"encoding/json"
+	"io"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// Antigravity keeps a per-conversation transcript under
+// <gemini-home>/<product>/brain/<conversation-id>/.system_generated/logs/.
+// It carries what stdout leaves out: thinking text, system message bodies and
+// every step of subagents.
+
+const agySubagentLogChunk = 1 << 20
+
+type agyTranscriptRow struct {
+	StepIndex       int           `json:"step_index"`
+	Type            string        `json:"type"`
+	Status          string        `json:"status"`
+	CreatedAt       string        `json:"created_at"`
+	Thinking        string        `json:"thinking"`
+	Content         string        `json:"content"`
+	ToolCalls       []agyToolCall `json:"tool_calls"`
+	InputTokens     int           `json:"input_tokens"`
+	OutputTokens    int           `json:"output_tokens"`
+	ThinkingTokens  int           `json:"thinking_tokens"`
+	CacheReadTokens int           `json:"cache_read_tokens"`
+}
+
+// agyToolCall is one planned tool invocation recorded in a transcript row.
+// One PLANNER_RESPONSE can carry several; agy then runs them one stdout step
+// at a time, and those steps only repeat the file path.
+type agyToolCall struct {
+	Name string                 `json:"name"`
+	Args map[string]interface{} `json:"args"`
+}
+
+var agyStringOnlyArgNames = map[string]bool{
+	"Content":            true,
+	"content":            true,
+	"Target":             true,
+	"target":             true,
+	"Replacement":        true,
+	"replacement":        true,
+	"TargetContent":      true,
+	"targetContent":      true,
+	"ReplacementContent": true,
+	"replacementContent": true,
+	"CodeContent":        true,
+	"codeContent":        true,
+	"old_string":         true,
+	"new_string":         true,
+	"oldString":          true,
+	"newString":          true,
+	"Path":               true,
+	"path":               true,
+	"AbsolutePath":       true,
+	"TargetFile":         true,
+	"CommandLine":        true,
+	"toolSummary":        true,
+}
+
+func decodeAgyStringLiteral(s string) (string, bool) {
+	trimmed := strings.TrimSpace(s)
+	if !strings.HasPrefix(trimmed, "\"") {
+		return "", false
+	}
+	var unquoted string
+	if json.Unmarshal([]byte(trimmed), &unquoted) == nil {
+		return unquoted, true
+	}
+	if idx := strings.LastIndex(trimmed, "<truncated "); idx > 0 && strings.HasSuffix(trimmed, "bytes>") {
+		prefix := strings.TrimRight(trimmed[:idx], "\r\n")
+		bs := 0
+		for i := len(prefix) - 1; i >= 0 && prefix[i] == '\\'; i-- {
+			bs++
+		}
+		if bs%2 == 1 {
+			prefix = prefix[:len(prefix)-1]
+		}
+		if json.Unmarshal([]byte(prefix+"\""), &unquoted) == nil {
+			return unquoted, true
+		}
+	}
+	return "", false
+}
+
+// decodeAgyToolArgs unwraps transcript tool arguments, which compact
+// transcript.jsonl stores as JSON-encoded strings (`"CommandLine": "\"ls -la\""`),
+// while keeping JSON file contents in transcript_full.jsonl as strings.
+func decodeAgyToolArgs(args map[string]interface{}) map[string]interface{} {
+	out := make(map[string]interface{}, len(args))
+	for k, v := range args {
+		if s, ok := v.(string); ok {
+			if unquoted, ok := decodeAgyStringLiteral(s); ok {
+				v = unquoted
+			} else if agyStringOnlyArgNames[k] {
+				if idx := strings.LastIndex(s, "\n<truncated "); idx >= 0 && strings.HasSuffix(strings.TrimSpace(s[idx:]), "bytes>") {
+					s = s[:idx]
+				}
+				v = s
+			} else {
+				var decoded interface{}
+				if json.Unmarshal([]byte(s), &decoded) == nil {
+					v = decoded
+				}
+			}
+		}
+		out[k] = v
+	}
+	return out
+}
+
+// stripAgyResultHeader drops the "Created At/Completed At" preamble of tool results.
+func stripAgyResultHeader(content string) string {
+	lines := strings.Split(content, "\n")
+	i := 0
+	for i < len(lines) && (strings.HasPrefix(lines[i], "Created At:") || strings.HasPrefix(lines[i], "Completed At:")) {
+		i++
+	}
+	return strings.TrimSpace(strings.Join(lines[i:], "\n"))
+}
+
+func agyBrainRoots() []string {
+	gRoot := geminiHomeDir()
+	if gRoot == "" {
+		return nil
+	}
+	return []string{
+		filepath.Join(gRoot, "antigravity-cli", "brain"),
+		filepath.Join(gRoot, "antigravity", "brain"),
+	}
+}
+
+func agyConversationRoots() []string {
+	gRoot := geminiHomeDir()
+	if gRoot == "" {
+		return nil
+	}
+	return []string{
+		filepath.Join(gRoot, "antigravity-cli", "conversations"),
+		filepath.Join(gRoot, "antigravity", "conversations"),
+	}
+}
+
+// hasAgySplitBrainConversation reports whether an Antigravity conversation
+// wrote its initial trajectory to the legacy Protobuf store (<id>.pb) while
+// leaving a competing SQLite store (<id>.db) on disk (caused by a schema-init
+// SQLite lock race in agy). Resuming such a conversation via --conversation
+// opens the SQLite store and drops the Protobuf trajectory.
+func hasAgySplitBrainConversation(conversationID string) bool {
+	conversationID = strings.TrimSpace(conversationID)
+	if !validStoreID(conversationID) {
+		return false
+	}
+	for _, root := range agyConversationRoots() {
+		pbInfo, pbErr := os.Stat(filepath.Join(root, conversationID+".pb"))
+		if pbErr != nil || pbInfo.IsDir() || pbInfo.Size() == 0 {
+			continue
+		}
+		dbInfo, dbErr := os.Stat(filepath.Join(root, conversationID+".db"))
+		if dbErr == nil && !dbInfo.IsDir() && dbInfo.Size() > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func agyTranscriptLogDir(root, conversationID string) string {
+	return filepath.Join(root, conversationID, ".system_generated", "logs")
+}
+
+// lookupAgyTranscriptRow returns the latest row for stepIndex in the active
+// trajectory segment (after any step_index=0 USER_INPUT reset) that satisfies keep.
+func lookupAgyTranscriptRow(conversationID string, stepIndex int, keep func(agyTranscriptRow) bool) (agyTranscriptRow, bool) {
+	if !validStoreID(conversationID) {
+		return agyTranscriptRow{}, false
+	}
+	for _, root := range agyBrainRoots() {
+		dir := agyTranscriptLogDir(root, conversationID)
+		for _, name := range []string{"transcript_full.jsonl", "transcript.jsonl"} {
+			f, err := os.Open(filepath.Join(dir, name))
+			if err != nil {
+				continue
+			}
+			var lastRow agyTranscriptRow
+			matched := false
+			scanner := bufio.NewScanner(f)
+			scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
+			for scanner.Scan() {
+				var row agyTranscriptRow
+				if json.Unmarshal(bytes.TrimSpace(scanner.Bytes()), &row) != nil {
+					continue
+				}
+				if row.StepIndex == 0 && row.Type == "USER_INPUT" {
+					lastRow = agyTranscriptRow{}
+					matched = false
+				}
+				if row.StepIndex == stepIndex && keep(row) {
+					lastRow = row
+					matched = true
+				}
+			}
+			_ = f.Close()
+			if matched {
+				return lastRow, true
+			}
+		}
+	}
+	return agyTranscriptRow{}, false
+}
+
+func hasAgyTranscriptFile(conversationID string) bool {
+	if !validStoreID(conversationID) {
+		return false
+	}
+	for _, root := range agyBrainRoots() {
+		dir := agyTranscriptLogDir(root, conversationID)
+		for _, name := range []string{"transcript_full.jsonl", "transcript.jsonl"} {
+			if st, err := os.Stat(filepath.Join(dir, name)); err == nil && st.Size() > 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func lookupAgyTranscriptThinking(conversationID string, stepIndex int) string {
+	for attempt := 0; ; attempt++ {
+		row, ok := lookupAgyTranscriptRow(conversationID, stepIndex, func(r agyTranscriptRow) bool {
+			return r.Type == "PLANNER_RESPONSE" || strings.TrimSpace(r.Thinking) != ""
+		})
+		if ok || attempt == 1 || !hasAgyTranscriptFile(conversationID) {
+			return strings.TrimSpace(row.Thinking)
+		}
+		time.Sleep(40 * time.Millisecond)
+	}
+}
+
+// lookupAgyTranscriptContent retries briefly because stdout can announce a
+// step before agy has flushed it to the transcript.
+func lookupAgyTranscriptContent(conversationID string, stepIndex int) string {
+	for attempt := 0; ; attempt++ {
+		row, ok := lookupAgyTranscriptRow(conversationID, stepIndex, func(r agyTranscriptRow) bool {
+			return strings.TrimSpace(r.Content) != ""
+		})
+		if ok || attempt == 2 {
+			return strings.TrimSpace(row.Content)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// resolveAgySubagentLog trusts a reported log_uri only inside a brain root,
+// and otherwise derives the transcript path from the conversation ID.
+func resolveAgySubagentLog(logURI, conversationID string) string {
+	roots := agyBrainRoots()
+	if u, err := url.Parse(strings.TrimSpace(logURI)); err == nil && u.Scheme == "file" && u.Path != "" {
+		p := filepath.Clean(u.Path)
+		base := filepath.Base(p)
+		if base == "transcript.jsonl" || base == "transcript_full.jsonl" {
+			for _, root := range roots {
+				if strings.HasPrefix(p, root+string(filepath.Separator)) {
+					if base == "transcript.jsonl" {
+						full := filepath.Join(filepath.Dir(p), "transcript_full.jsonl")
+						if _, err := os.Stat(full); err == nil {
+							return full
+						}
+					}
+					return p
+				}
+			}
+		}
+	}
+	if !validStoreID(conversationID) {
+		return ""
+	}
+	for _, root := range roots {
+		dir := agyTranscriptLogDir(root, conversationID)
+		for _, name := range []string{"transcript_full.jsonl", "transcript.jsonl"} {
+			p := filepath.Join(dir, name)
+			if _, err := os.Stat(p); err == nil {
+				return p
+			}
+		}
+	}
+	return ""
+}
+
+// advanceAgySubagentLog returns the complete rows appended since the last
+// call and the file's modification time; ok is false when nothing moved.
+func advanceAgySubagentLog(tr *agySubagentTrack) (rows []agyTranscriptRow, modMs int64, ok bool) {
+	st, err := os.Stat(tr.logPath)
+	if err != nil {
+		return nil, 0, false
+	}
+	if st.Size() < tr.readOffset {
+		tr.readOffset = 0
+	}
+	if st.Size() == tr.readOffset {
+		return nil, 0, false
+	}
+	f, err := os.Open(tr.logPath)
+	if err != nil {
+		return nil, 0, false
+	}
+	defer f.Close()
+	buf := make([]byte, min(st.Size()-tr.readOffset, agySubagentLogChunk))
+	n, err := f.ReadAt(buf, tr.readOffset)
+	if err != nil && err != io.EOF {
+		return nil, 0, false
+	}
+	buf = buf[:n]
+	end := bytes.LastIndexByte(buf, '\n')
+	if end < 0 {
+		if len(buf) == agySubagentLogChunk {
+			tr.readOffset += int64(len(buf)) // a single oversized row; skip it
+		}
+		return nil, 0, false // otherwise the current row is still being written
+	}
+	for _, line := range bytes.Split(buf[:end], []byte{'\n'}) {
+		var row agyTranscriptRow
+		if json.Unmarshal(bytes.TrimSpace(line), &row) == nil {
+			rows = append(rows, row)
+		}
+	}
+	tr.readOffset += int64(end + 1)
+	return rows, st.ModTime().UnixMilli(), true
+}
+
+// IsStaleAgyResultError reports whether a stream `result` line is a historical
+// trajectory error re-emitted by `agy` on a resumed conversation after the
+// current turn has already finished its final assistant response cleanly.
+func (t *TurnTranslator) IsStaleAgyResultError(rawLine string) bool {
+	line := strings.TrimSpace(rawLine)
+	if line == "" || !strings.HasPrefix(line, "{") {
+		return false
+	}
+	var env agyRawEvent
+	if err := json.Unmarshal([]byte(line), &env); err != nil {
+		return false
+	}
+	if env.Event != "result" || env.Result == nil {
+		return false
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if id := strings.TrimSpace(firstNonEmptyStr(env.Result.ConversationID, env.ConversationID)); id != "" && t.convPinned && id != t.externalID {
+		return false
+	}
+	return t.isStaleAgyResultErrorLocked(env.Result)
+}
+
+func (t *TurnTranslator) isStaleAgyResultErrorLocked(res *agyResult) bool {
+	if res == nil || res.Status != "ERROR" || !t.agyFinalResponseDone {
+		return false
+	}
+	if len(res.DeniedActions) > 0 || t.hasWaitingSubagents() {
+		return false
+	}
+	errMsg := strings.TrimSpace(res.Error)
+	if strings.EqualFold(errMsg, "interrupted") || !isRetryableTurnError(errMsg) {
+		return false
+	}
+	for _, p := range t.partsByID {
+		if p != nil && p.Type == "tool" && p.State != nil {
+			switch p.State.Status {
+			case "pending", "running":
+				return false
+			case "error":
+				// A tool error from an earlier step that the model already
+				// recovered from (before completing a later agent_response)
+				// must not resurrect a stale historical trajectory error.
+				if step, ok := parseAgyPartStepIndex(p.ID); !ok || step >= t.agyFinalResponseStep {
+					return false
+				}
+			}
+		}
+	}
+	return true
+}
+
+func parseAgyPartStepIndex(partID string) (int, bool) {
+	for _, marker := range []string{"_reason_", "_text_", "_tool_", "_subagent_"} {
+		idx := strings.LastIndex(partID, marker)
+		if idx < 0 {
+			continue
+		}
+		rest := partID[idx+len(marker):]
+		if rest == "" || strings.Contains(rest, "_") {
+			continue
+		}
+		step, err := strconv.Atoi(rest)
+		if err != nil || step <= 0 {
+			continue
+		}
+		return step, true
+	}
+	return 0, false
+}
+
+func turnAgyStepInfo(parts []MessagePart) (maxStep, stepCount int) {
+	seen := make(map[int]struct{}, len(parts))
+	for _, p := range parts {
+		step, ok := parseAgyPartStepIndex(p.ID)
+		if !ok {
+			continue
+		}
+		seen[step] = struct{}{}
+		if step > maxStep {
+			maxStep = step
+		}
+	}
+	return maxStep, len(seen)
+}
+
+func turnNeedsAgyTokenHydration(turn MessageTurn) bool {
+	if turn.Info.Role != "assistant" || turn.Info.Tokens == nil {
+		return false
+	}
+	tok := turn.Info.Tokens
+	if tok.Total <= 0 {
+		return false
+	}
+	_, stepCount := turnAgyStepInfo(turn.Parts)
+	if tok.Total == tok.Input+tok.Output {
+		return tok.Cache.Read > 0 || stepCount > 1
+	}
+	sumAll := tok.Input + tok.Output + tok.Reasoning + tok.Cache.Read + tok.Cache.Write
+	return stepCount > 1 && tok.Total == sumAll
+}
+
+func markAgyTextPartTransitional(p *MessagePart) bool {
+	if p == nil || isAgyTransitionalTextPart(*p) {
+		return false
+	}
+	if p.Metadata == nil {
+		p.Metadata = make(map[string]interface{})
+	}
+	p.Metadata["agyTransitional"] = true
+	return true
+}
+
+func isAgyTransitionalTextPart(p MessagePart) bool {
+	if p.Metadata == nil {
+		return false
+	}
+	v, ok := p.Metadata["agyTransitional"].(bool)
+	return ok && v
+}
+
+func loadAgyTranscriptActiveRows(conversationID string) []agyTranscriptRow {
+	if !validStoreID(conversationID) {
+		return nil
+	}
+	for _, root := range agyBrainRoots() {
+		dir := agyTranscriptLogDir(root, conversationID)
+		for _, name := range []string{"transcript_full.jsonl", "transcript.jsonl"} {
+			f, err := os.Open(filepath.Join(dir, name))
+			if err != nil {
+				continue
+			}
+			var rows []agyTranscriptRow
+			scanner := bufio.NewScanner(f)
+			scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
+			for scanner.Scan() {
+				var row agyTranscriptRow
+				if json.Unmarshal(bytes.TrimSpace(scanner.Bytes()), &row) != nil {
+					continue
+				}
+				if row.StepIndex == 0 && row.Type == "USER_INPUT" {
+					rows = nil
+				}
+				rows = append(rows, row)
+			}
+			_ = f.Close()
+			if len(rows) > 0 {
+				return rows
+			}
+		}
+	}
+	return nil
+}
+
+func turnCandidateStaleAgyErrorStep(turn MessageTurn) (int, bool) {
+	if turn.Info.Role != "assistant" || turn.Info.Error == nil || turn.Info.Error.Data == nil {
+		return 0, false
+	}
+	errMsg := strings.TrimSpace(turn.Info.Error.Data.Message)
+	if strings.EqualFold(errMsg, "interrupted") || !isRetryableTurnError(errMsg) {
+		return 0, false
+	}
+	maxStep := 0
+	maxDoneTextStep := 0
+	var maxDoneTextPart *MessagePart
+	for i := range turn.Parts {
+		p := &turn.Parts[i]
+		step, ok := parseAgyPartStepIndex(p.ID)
+		if ok && step > maxStep {
+			maxStep = step
+		}
+		if p.Type == "text" && ok && strings.TrimSpace(p.Text) != "" && p.Time != nil && p.Time.End > 0 && step >= maxDoneTextStep {
+			maxDoneTextStep = step
+			maxDoneTextPart = p
+		}
+	}
+	if maxDoneTextStep <= 0 || maxDoneTextStep < maxStep || maxDoneTextPart == nil || isAgyTransitionalTextPart(*maxDoneTextPart) {
+		return 0, false
+	}
+	for _, p := range turn.Parts {
+		if p.Type == "tool" && p.State != nil {
+			switch p.State.Status {
+			case "pending", "running":
+				return 0, false
+			case "error":
+				if step, ok := parseAgyPartStepIndex(p.ID); !ok || step >= maxDoneTextStep {
+					return 0, false
+				}
+			}
+		}
+	}
+	return maxDoneTextStep, true
+}
+
+func transcriptConfirmsAgyFinalStep(rows []agyTranscriptRow, prevMaxStep, doneStep int) bool {
+	if len(rows) == 0 || doneStep <= 0 || doneStep <= prevMaxStep {
+		return false
+	}
+	var matched *agyTranscriptRow
+	for i := range rows {
+		r := &rows[i]
+		if r.StepIndex <= prevMaxStep {
+			continue
+		}
+		if r.StepIndex > doneStep {
+			if r.Type == "USER_INPUT" {
+				break
+			}
+			// A subsequent planner/tool/system step started in this same turn,
+			// so doneStep was a transitional step rather than the final response.
+			return false
+		}
+		if r.StepIndex == doneStep {
+			if strings.EqualFold(r.Status, "ERROR") {
+				return false
+			}
+			matched = r
+		}
+	}
+	if matched == nil || matched.Type != "PLANNER_RESPONSE" || !strings.EqualFold(matched.Status, "DONE") {
+		return false
+	}
+	return strings.TrimSpace(matched.Content) != "" && len(matched.ToolCalls) == 0
+}
+
+func turnNeedsAgyReasoningHydration(turn MessageTurn) bool {
+	if turn.Info.Role != "assistant" || len(turn.Parts) == 0 {
+		return false
+	}
+	occupied := make(map[int]bool, len(turn.Parts))
+	hasReasoning := make(map[int]bool, len(turn.Parts))
+	var textSteps []int
+	var callSteps []int
+	for _, p := range turn.Parts {
+		step, ok := parseAgyPartStepIndex(p.ID)
+		if !ok {
+			continue
+		}
+		switch p.Type {
+		case "text":
+			textSteps = append(textSteps, step)
+		case "reasoning":
+			occupied[step] = true
+			if strings.TrimSpace(p.Text) != "" {
+				hasReasoning[step] = true
+			}
+		case "tool", "subagent":
+			occupied[step] = true
+			callSteps = append(callSteps, step)
+		default:
+			occupied[step] = true
+		}
+	}
+	for _, step := range textSteps {
+		if !hasReasoning[step] {
+			return true
+		}
+	}
+	for _, step := range callSteps {
+		if step > 1 && !occupied[step-1] {
+			return true
+		}
+	}
+	return false
+}
+
+func hydrateAgyTurnReasoningParts(turn *MessageTurn, rows []agyTranscriptRow) bool {
+	if turn == nil || turn.Info.Role != "assistant" || len(rows) == 0 {
+		return false
+	}
+	existing := make(map[string]bool, len(turn.Parts))
+	for _, p := range turn.Parts {
+		existing[p.ID] = true
+	}
+	changed := false
+	for _, r := range rows {
+		if r.Type != "PLANNER_RESPONSE" {
+			continue
+		}
+		think := strings.TrimSpace(r.Thinking)
+		if think == "" {
+			continue
+		}
+		rID := "prt_" + turn.Info.ID + "_reason_" + strconv.Itoa(r.StepIndex)
+		if existing[rID] {
+			continue
+		}
+		txtID := "prt_" + turn.Info.ID + "_text_" + strconv.Itoa(r.StepIndex)
+		toolID := "prt_" + turn.Info.ID + "_tool_" + strconv.Itoa(r.StepIndex+1)
+		subID := "prt_" + turn.Info.ID + "_subagent_" + strconv.Itoa(r.StepIndex+1)
+		anchorIdx := -1
+		for idx, p := range turn.Parts {
+			if p.ID == txtID || p.ID == toolID || p.ID == subID {
+				anchorIdx = idx
+				break
+			}
+		}
+		if anchorIdx < 0 {
+			continue
+		}
+		anchor := turn.Parts[anchorIdx]
+		startMs := turn.Info.Time.Created
+		if anchor.Time != nil && anchor.Time.Start > 0 {
+			startMs = anchor.Time.Start
+		} else if anchor.State != nil && anchor.State.Time != nil && anchor.State.Time.Start > 0 {
+			startMs = anchor.State.Time.Start
+		}
+		reasonPart := MessagePart{
+			ID:        rID,
+			SessionID: turn.Info.SessionID,
+			MessageID: turn.Info.ID,
+			Type:      "reasoning",
+			Text:      think,
+			Time:      &PartTime{Start: startMs, End: startMs},
+		}
+		turn.Parts = append(turn.Parts, MessagePart{})
+		copy(turn.Parts[anchorIdx+1:], turn.Parts[anchorIdx:])
+		turn.Parts[anchorIdx] = reasonPart
+		existing[rID] = true
+		changed = true
+	}
+	return changed
+}
+
+// hydrateAgyTranscriptTurnTokens repairs legacy Antigravity assistant turns
+// where Tokens.Total summed InputTokens+OutputTokens across every tool-loop
+// step instead of recording the final parent step's context window occupancy,
+// backfills missing reasoning parts from transcript.jsonl, and clears stale
+// historical result errors only when persisted transcript step evidence
+// confirms the turn's final response completed with no subsequent step.
+func hydrateAgyTranscriptTurnTokens(externalID string, turns []MessageTurn) bool {
+	needsRepair := false
+	for i := range turns {
+		if _, ok := turnCandidateStaleAgyErrorStep(turns[i]); ok || turnNeedsAgyTokenHydration(turns[i]) || turnNeedsAgyReasoningHydration(turns[i]) {
+			needsRepair = true
+			break
+		}
+	}
+	if !needsRepair {
+		return false
+	}
+	rows := loadAgyTranscriptActiveRows(strings.TrimSpace(externalID))
+	if len(rows) == 0 {
+		return false
+	}
+	changed := false
+	prevMaxStep := 0
+	for i := range turns {
+		if turns[i].Info.Role != "assistant" {
+			continue
+		}
+		if hydrateAgyTurnReasoningParts(&turns[i], rows) {
+			changed = true
+		}
+		maxStep, _ := turnAgyStepInfo(turns[i].Parts)
+		if maxStep > 0 && maxStep < prevMaxStep {
+			prevMaxStep = 0
+		}
+		if doneStep, ok := turnCandidateStaleAgyErrorStep(turns[i]); ok && transcriptConfirmsAgyFinalStep(rows, prevMaxStep, doneStep) {
+			turns[i].Info.Error = nil
+			turns[i].Info.Finish = "stop"
+			changed = true
+		}
+		if turnNeedsAgyTokenHydration(turns[i]) {
+			var matched *agyTranscriptRow
+			for j := range rows {
+				r := &rows[j]
+				if r.Type != "PLANNER_RESPONSE" || (r.InputTokens == 0 && r.OutputTokens == 0 && r.ThinkingTokens == 0 && r.CacheReadTokens == 0) {
+					continue
+				}
+				if maxStep > 0 {
+					if r.StepIndex > prevMaxStep && r.StepIndex <= maxStep {
+						matched = r
+					}
+				} else if i == len(turns)-1 {
+					matched = r
+				}
+			}
+			if matched != nil {
+				u := agyUsage{
+					InputTokens:     matched.InputTokens,
+					OutputTokens:    matched.OutputTokens,
+					ThinkingTokens:  matched.ThinkingTokens,
+					CacheReadTokens: matched.CacheReadTokens,
+				}
+				if ctx := u.contextTokens(); ctx > 0 && turns[i].Info.Tokens.Total != ctx {
+					turns[i].Info.Tokens.Total = ctx
+					changed = true
+				}
+			}
+		}
+		if maxStep > prevMaxStep {
+			prevMaxStep = maxStep
+		}
+	}
+	return changed
+}

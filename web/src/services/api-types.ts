@@ -1,0 +1,724 @@
+// web/src/services/api-types.ts
+export type DesktopIntentAction =
+  | "attention"
+  | "running"
+  | "new-thread"
+  | "handoff"
+  | "policy"
+  | "settings"
+  | "sync-keep-awake";
+
+export interface DesktopIntent {
+  action?: DesktopIntentAction;
+  sessionID?: string;
+  messageID?: string;
+  directory?: string;
+}
+
+export interface PromptAttachment {
+  type: "file";
+  mime: string;
+  filename?: string;
+  url: string;
+}
+
+export interface PromptImageOptions {
+  aspectRatio?: string;
+  imageSize?: string;
+  count?: number;
+}
+
+export interface MediaImageModelOption {
+  providerID: string;
+  modelID: string;
+  name?: string;
+  protocol?: string;
+}
+
+export interface MediaCapabilitiesResponse {
+  ok: boolean;
+  hasImageModel: boolean;
+  hasAudioTranscriber: boolean;
+  hasEmbeddingModel: boolean;
+  imageModels?: MediaImageModelOption[];
+}
+
+export interface MediaTranscribeResponse {
+  ok: boolean;
+  text?: string;
+  providerID?: string;
+  modelID?: string;
+  error?: string;
+}
+
+export interface WorktreeRepoStatus {
+  repo: string;
+  name: string;
+  directory: string;
+  branch?: string;
+  headCommit?: string;
+  headSubject?: string;
+  dirty: boolean;
+  changedFiles: number;
+  additions: number;
+  deletions: number;
+  aheadCount?: number;
+  behindCount?: number;
+  hasUpstream?: boolean;
+  compareURL?: string;
+}
+
+export interface WorktreeMeta {
+  sessionID: string;
+  isolated: boolean;
+  directory: string;
+  branch?: string;
+  baseBranch?: string;
+  baseCommit?: string;
+  headCommit?: string;
+  headSubject?: string;
+  createdAt: string;
+  dirty?: boolean;
+  changedFiles?: number;
+  uncommittedLines?: number;
+  additions?: number;
+  deletions?: number;
+  aheadCount?: number;
+  behindCount?: number;
+  hasUpstream?: boolean;
+  compareURL?: string;
+  health?: "ok" | "absent-restorable" | "unregistered" | "quarantined" | string;
+  setupScript?: string;
+  setupStatus?: "none" | "running" | "succeeded" | "failed" | string;
+  setupError?: string;
+  allocatedPort?: number;
+  runStatus?: "idle" | "running" | "succeeded" | "failed" | "stopped" | string;
+  previewURL?: string;
+  repos?: WorktreeRepoStatus[];
+}
+
+export interface WorktreeVerifyConfig {
+  runCommand: string;
+  testCommand: string;
+}
+
+export interface WorktreeVerifyState {
+  sessionID: string;
+  directory: string;
+  setupScript?: string;
+  setupStatus: "none" | "running" | "succeeded" | "failed" | string;
+  setupOutput?: string;
+  setupError?: string;
+  runCommand?: string;
+  testCommand?: string;
+  activeKind?: "" | "setup" | "run" | "test" | string;
+  runStatus: "idle" | "running" | "succeeded" | "failed" | "stopped" | string;
+  allocatedPort?: number;
+  previewURL?: string;
+  output?: string;
+  exitCode?: number;
+  updatedAt?: string;
+}
+
+export interface KeepAwakeStatusResponse {
+  ok?: boolean;
+  enabled: boolean;
+  active: boolean;
+  supported: boolean;
+}
+
+export interface BrowserSettingsResponse {
+  idleMinutes: number;
+}
+
+export interface CommitAndPushResponse {
+  ok: boolean;
+  commit?: string;
+  branch?: string;
+  remote?: string;
+  pushed?: boolean;
+  message?: string;
+  compareURL?: string;
+}
+
+export interface ProjectInfo {
+  id: string;
+  worktree: string;
+  vcs?: string;
+  icon?: { color?: string; url?: string };
+  time: {
+    created: number;
+    updated: number;
+  };
+  sandboxes?: string[];
+}
+
+export interface WorkspaceFolderInput {
+  id?: string;
+  path: string;
+  isPrimary?: boolean;
+  missing?: boolean;
+}
+
+export interface WorkspaceFolder {
+  id: string;
+  path: string;
+  isPrimary: boolean;
+  position: number;
+  missing?: boolean;
+}
+
+export interface WorkspaceProfile {
+  id: string;
+  name: string;
+  color: string;
+  surface?: "code" | "work";
+  folders: WorkspaceFolder[];
+  hidden?: boolean;
+  aliases?: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectResolveResponse {
+  projectID: string;
+  directory: string;
+  roots: string[];
+}
+
+export interface SaveWorkspaceInput {
+  name?: string;
+  color?: string;
+  surface?: "code" | "work";
+  folders: WorkspaceFolderInput[];
+}
+
+export interface WorktreeStatus {
+  sessionID: string;
+  isolated: boolean;
+  directory: string;
+  branch?: string;
+  baseBranch?: string;
+  baseCommit?: string;
+  headCommit?: string;
+  headSubject?: string;
+  dirty: boolean;
+  changedFiles: number;
+  uncommittedLines: number;
+  additions: number;
+  deletions: number;
+  aheadCount?: number;
+  behindCount?: number;
+  hasUpstream?: boolean;
+  compareURL?: string;
+  health?: "ok" | "absent-restorable" | "unregistered" | "quarantined" | string;
+  setupScript?: string;
+  setupStatus?: "none" | "running" | "succeeded" | "failed" | string;
+  setupError?: string;
+  allocatedPort?: number;
+  runStatus?: "idle" | "running" | "succeeded" | "failed" | "stopped" | string;
+  previewURL?: string;
+  repos?: WorktreeRepoStatus[];
+}
+
+export interface GitBranchInfo {
+  name: string;
+  current: boolean;
+  isSandbox: boolean;
+  worktree?: string;
+  sessionID?: string;
+  headCommit?: string;
+  subject?: string;
+}
+
+export interface BranchListResponse {
+  currentBranch: string;
+  branches: GitBranchInfo[];
+  sandboxCount: number;
+}
+
+export interface BootstrapInfo {
+  appVersion: string;
+  rootDir: string;
+  defaultWorkspaceDir?: string;
+  wsBaseURL: string;
+  browserIdleMinutes?: number;
+  gatewayToken?: string;
+  status: {
+    attention: number;
+    running: number;
+    queued: number;
+    available: boolean;
+    keepAwakeEnabled?: boolean;
+    keepAwakeActive?: boolean;
+  };
+}
+
+export interface SystemRuntimeInfo {
+  appVersion: string;
+  openCodeBinPath: string;
+  openCodeVersion: string;
+  openCodePort: number;
+  openCodeReady?: boolean;
+  openCodeSource?: "bundled" | "downloaded" | "external" | string;
+  wsBaseURL: string;
+  rootDir: string;
+  userConfigPath: string;
+  workspaceConfigPath: string;
+  os: string;
+  arch: string;
+  goVersion: string;
+  systemUsername?: string;
+  gitUserName?: string;
+  gitUserEmail?: string;
+  browserIdleMinutes?: number;
+  status: {
+    attention: number;
+    running: number;
+    queued: number;
+    available: boolean;
+    keepAwakeEnabled?: boolean;
+    keepAwakeActive?: boolean;
+  };
+}
+
+export interface ProviderModelInfo {
+  id: string;
+  name?: string;
+  family?: string;
+  free?: boolean;
+  reasoning?: boolean;
+  attachment?: boolean;
+  temperature?: boolean;
+  tool_call?: boolean;
+  release_date?: string;
+  modalities?: {
+    input?: string[];
+    output?: string[];
+  };
+  capabilities?: {
+    temperature?: boolean;
+    reasoning?: boolean;
+    attachment?: boolean;
+    toolcall?: boolean;
+    input?: {
+      text?: boolean;
+      audio?: boolean;
+      image?: boolean;
+      video?: boolean;
+      pdf?: boolean;
+    };
+    output?: {
+      text?: boolean;
+      audio?: boolean;
+      image?: boolean;
+      video?: boolean;
+      pdf?: boolean;
+    };
+  };
+  cost?: {
+    input?: number;
+    output?: number;
+    cache?: {
+      read?: number;
+      write?: number;
+    };
+    currency?: string;
+  };
+  limit?: {
+    context?: number;
+    input?: number;
+    output?: number;
+  };
+  options?: Record<string, any>;
+  variants?: Record<string, any>;
+  efforts?: string[];
+  defaultEffort?: string;
+  multiplier?: string;
+}
+
+export interface ProviderInfo {
+  id: string;
+  name: string;
+  source?: "env" | "config" | "custom" | "api" | "runner" | "auto";
+  env?: string[];
+  key?: string;
+  npm?: string;
+  options?: Record<string, any>;
+  models: Record<string, ProviderModelInfo>;
+}
+
+export interface ProviderAuthPrompt {
+  type: "text" | "select";
+  key: string;
+  message: string;
+  placeholder?: string;
+  options?: Array<{ label: string; value: string; hint?: string }>;
+  when?: { key: string; op: "eq" | "neq"; value: string };
+}
+
+export interface ProviderAuthMethod {
+  type: "oauth" | "api";
+  label: string;
+  prompts?: ProviderAuthPrompt[];
+}
+
+export interface ProviderAuthAuthorization {
+  url: string;
+  method: "auto" | "code";
+  instructions: string;
+}
+
+export interface ProviderListResponse {
+  all: ProviderInfo[];
+  default: Record<string, string>;
+  connected: string[];
+}
+
+export interface SlashCommandInfo {
+  name: string;
+  description?: string;
+  agent?: string;
+  model?: string;
+  source?: "command" | "mcp" | "skill";
+  template?: string;
+  subtask?: boolean;
+  hints?: string[];
+}
+
+export type CommandInfo = SlashCommandInfo;
+
+export interface AgentInfo {
+  name: string;
+  description?: string;
+  mode?: "primary" | "subagent" | "all";
+  hidden?: boolean;
+  native?: boolean;
+  prompt?: string;
+  temperature?: number;
+}
+
+export type ProviderIncidentType =
+  | "timeout"
+  | "api_error"
+  | "retry"
+  | "tool_error"
+  | "hallucination_loop"
+  | "user_revert";
+
+export interface ProviderIncident {
+  timestamp: number;
+  type: ProviderIncidentType;
+  modelID?: string;
+  detail?: string;
+}
+
+export interface ModelTelemetryStats {
+  modelID: string;
+  totalTurns: number;
+  successTurns: number;
+  errorTurns: number;
+  timeoutTurns: number;
+  retryCount: number;
+  toolCallsTotal: number;
+  toolCallsFailed: number;
+  hallucinationFlags: number;
+  revertCount: number;
+  cacheHitTurns: number;
+  cacheEligibleTurns?: number;
+  reasoningTurns?: number;
+  ttftSamplesMs?: number[];
+  tpsSamples?: number[];
+  lastProbeLatencyMs?: number;
+  lastProbeOk?: boolean;
+  updatedAt: number;
+}
+
+export interface ProviderTelemetryStats {
+  providerID: string;
+  totalTurns: number;
+  successTurns: number;
+  errorTurns: number;
+  timeoutTurns: number;
+  retryCount: number;
+  toolCallsTotal: number;
+  toolCallsFailed: number;
+  hallucinationFlags: number;
+  revertCount: number;
+  cacheHitTurns: number;
+  cacheEligibleTurns?: number;
+  reasoningTurns?: number;
+  ttftSamplesMs?: number[];
+  tpsSamples?: number[];
+  lastProbeLatencyMs?: number;
+  lastProbeOk?: boolean;
+  models?: Record<string, ModelTelemetryStats>;
+  recentIncidents?: ProviderIncident[];
+  updatedAt: number;
+}
+
+// Candidate-level circuit breaker snapshot, keyed by "provider/model" in the
+// /api/hoxi/provider/candidates response. An open breaker means the candidate is
+// cooling down after failures and must be skipped by auto-pool rotation.
+export interface CandidateBreakerSnapshot {
+  providerID: string;
+  modelID: string;
+  phase: "closed" | "open";
+  open: boolean;
+  openUntil?: number;
+  score: number;
+  latencyEwmaMs?: number;
+  consecutiveFailures: number;
+  lastClass?: string;
+  updatedAt: number;
+}
+
+export interface CandidateOutcomeInput {
+  providerID: string;
+  modelID: string;
+  ok: boolean;
+  statusCode?: number;
+  message?: string;
+  latencyMs?: number;
+  class?: string;
+}
+
+export * from "./handoff-types";
+export type {
+  AuthStatusSnapshot,
+  AuthUserProfile,
+  ConnectableGatewayItem,
+  ConnectableGatewaysResponse,
+  FreeTierGuideRemoteItem,
+  FreeTiersResponse,
+  LeaderboardModelItem,
+  LeaderboardResponse,
+  ModelPricingItem,
+  ModelPricingResponse,
+  NativeUpdateStatus,
+  NativeUpdateProgress,
+  StartAuthResponse,
+  UpdateCheckResult,
+  UpdateMirrors,
+} from "./platform-api";
+
+export interface GitDailyPulseResponse {
+  todayCommits: number;
+  committedAdditions: number;
+  committedDeletions: number;
+  committedFiles: number;
+  uncommittedAdditions: number;
+  uncommittedDeletions: number;
+  uncommittedFiles: number;
+  /** Union of committed and uncommitted paths; avoids double counting. */
+  changedFiles?: number;
+  /** Untracked-line counting hit its read budget, so additions are a lower bound. */
+  uncommittedTruncated?: boolean;
+  branch?: string;
+  headCommit?: string;
+  headSubject?: string;
+  dbTotalTokens?: number;
+  dbInputTokens?: number;
+  dbOutputTokens?: number;
+  dbReasoningTokens?: number;
+  dbCacheReadTokens?: number;
+  dbCacheWriteTokens?: number;
+  dbTotalCost?: number;
+  dbTurnsCount?: number;
+  dbSessionsCount?: number;
+  dbToolCallsTotal?: number;
+  dbToolCallsFailed?: number;
+  dbLatestTurnTs?: number;
+  dbModels?: Array<{
+    providerID: string;
+    modelID: string;
+    turns: number;
+    totalTokens: number;
+    inputTokens?: number;
+    outputTokens?: number;
+    reasoningTokens?: number;
+    cacheReadTokens?: number;
+    cacheWriteTokens?: number;
+    cost: number;
+  }>;
+  hqMatrix?: {
+    enabled: boolean;
+    rootDir?: string;
+    updatedAt?: string;
+    totalProjects: number;
+    idleProjects: number;
+    readyProjects: number;
+    activeProjects: number;
+    blockedProjects: number;
+    blockedNames?: string[];
+    activeSandboxes: number;
+    opsUpdatedAt?: string;
+    opsHealthyCount: number;
+    opsAnomalyCount: number;
+  };
+}
+
+export interface DevPulseHistoryModelStat {
+  providerID: string;
+  modelID: string;
+  turns: number;
+  inputTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  /** Present from the history endpoint; omitted by older fixtures. */
+  durationSumMs?: number;
+  durationSamples?: number;
+}
+
+export interface DevPulseHistoryDay {
+  date: string;
+  turns: number;
+  sessions: number;
+  inputTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  toolCallsTotal: number;
+  toolCallsFailed: number;
+  commits: number;
+  additions: number;
+  deletions: number;
+  files: number;
+  models: DevPulseHistoryModelStat[];
+}
+
+export interface RequestLogEntry {
+  id: string;
+  sessionID: string;
+  time: number;
+  completed?: number;
+  durationMs: number;
+  firstTokenMs?: number;
+  providerID: string;
+  account?: string;
+  modelID: string;
+  client: string;
+  status?: number;
+  level: "info" | "error" | "pending" | string;
+  retry?: number;
+  inputTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  cost?: number;
+  error?: string;
+}
+
+export interface RequestLogResponse {
+  entries: RequestLogEntry[];
+  total: number;
+  local: boolean;
+  timezone: string;
+}
+
+export interface RequestLogContentPart {
+  role: "user" | "assistant" | string;
+  kind: "text" | "reasoning" | string;
+  text: string;
+}
+
+export interface RequestLogContent {
+  input: RequestLogContentPart[];
+  output: RequestLogContentPart[];
+  found: boolean;
+  truncated?: boolean;
+}
+
+export interface DevPulseHistoryResponse {
+  days: DevPulseHistoryDay[];
+  startDate: string;
+  endDate: string;
+  timezone: string;
+}
+
+export interface SpreadsheetSheetPreview {
+  name: string;
+  rows: string[][];
+  rowNumbers?: number[];
+  totalRows?: number;
+  truncated?: boolean;
+}
+
+export interface FileContentResponse {
+  type?: "text" | "binary";
+  content: string;
+  encoding?: "base64";
+  mimeType?: string;
+  resolvedPath?: string;
+  outsideWorkspace?: boolean;
+  size?: number;
+  isDirectory?: boolean;
+  sheets?: SpreadsheetSheetPreview[];
+  extractedText?: string;
+}
+
+export interface FileValidateResponse {
+  existing: string[];
+  resolved?: Record<string, string>;
+}
+
+export interface SystemStorageStats {
+  totalBytes: number;
+  databaseBytes: number;
+  sessionsBytes: number;
+  engineLogsBytes: number;
+  cacheIndexBytes: number;
+  /** Persistent Chrome profiles of the built-in browser. */
+  browserBytes?: number;
+  dataDir: string;
+}
+
+export interface SystemStorageCleanResult {
+  freedBytes: number;
+  compactedSessions: number;
+  prunedFiles: number;
+  storage: SystemStorageStats;
+}
+
+/** A root conversation idle long enough to be offered for manual cleanup. */
+export interface OldSessionCandidate {
+  id: string;
+  title: string;
+  directory?: string;
+  runtime?: string;
+  /** Latest activity across the conversation and its subagents (ms). */
+  updatedAt: number;
+  /** Estimated bytes reclaimed, including subagent children. */
+  bytes: number;
+  children: number;
+  archived?: boolean;
+  /** Has an isolated worktree that is removed (branch kept) if clean. */
+  worktree?: boolean;
+}
+
+export interface OldSessionsPreview {
+  olderThanDays: number;
+  cutoff: number;
+  sessions: OldSessionCandidate[];
+  totalBytes: number;
+  busySkipped: number;
+}
+
+export type OldSessionSkipReason =
+  | "notEligible"
+  | "busy"
+  | "worktreeDirty"
+  | "worktreeFailed"
+  | "deleteFailed";
+
+export interface OldSessionsDeleteResult {
+  deleted: string[];
+  skipped: Array<{ id: string; reason: OldSessionSkipReason; error?: string }>;
+  freedBytes: number;
+  vacuumDeferred?: boolean;
+  storage: SystemStorageStats;
+}

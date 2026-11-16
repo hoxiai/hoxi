@@ -1,0 +1,221 @@
+package agentcli
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/hoxiai/hoxi/internal/testutil/execstub"
+)
+
+func TestCodeBuddyAndQoderModelDiscovery(t *testing.T) {
+	if mult, free := parseCodeBuddyCredits("x0.00 credits"); !free || mult != "0x" {
+		t.Fatalf("expected x0.00 credits to be free 0x, got %q / %v", mult, free)
+	}
+	if mult, free := parseCodeBuddyCredits("x0.29 credits"); free || mult != "0.29x" {
+		t.Fatalf("expected x0.29 credits to be 0.29x, got %q / %v", mult, free)
+	}
+	cbBuilt := buildCodeBuddyModelItems("", defaultCodeBuddyModelSlugs())
+	var sawCBFreeHy3, sawCBFreeDS, sawCBHy4 bool
+	for _, it := range cbBuilt {
+		if it.ID == "hy3" && it.Free && it.Multiplier == "0x" && it.ContextLimit == 192000 {
+			sawCBFreeHy3 = true
+		}
+		if it.ID == "deepseek-v4.1-flash" && it.Free && it.Multiplier == "0x" && it.ContextLimit == 1000000 {
+			sawCBFreeDS = true
+		}
+		if it.ID == "hy4-preview" && !it.Free && it.Multiplier == "0.29x" && it.InputCost > 0 {
+			sawCBHy4 = true
+		}
+	}
+	if !sawCBFreeHy3 || !sawCBFreeDS || !sawCBHy4 {
+		t.Fatalf("expected CodeBuddy free (0x) and multiplier metadata, got: %+v", cbBuilt)
+	}
+
+	cbModels := ParseCodeBuddyModelsOutput("  --model <model>  Currently supported: (default-model, hy4-preview, glm-5.3, gpt-6-astra)\n")
+	if len(cbModels) != 4 || cbModels[1] != "hy4-preview" || cbModels[3] != "gpt-6-astra" {
+		t.Fatalf("unexpected CodeBuddy parsed models: %v", cbModels)
+	}
+	tmpDir := t.TempDir()
+	intlBin := execstub.Write(t, tmpDir, "qodercli", "printf 'MODEL\\nAuto\\nclaude-sonnet-4-6\\n'\n")
+	cnBin := execstub.Write(t, tmpDir, "qoderclicn", "printf 'MODEL\\nAuto\\nQwen3.8-Max\\nQwen3.8-Flash\\n'\n")
+	t.Setenv("QODER_BIN", intlBin)
+	t.Setenv("QODER_CN_BIN", cnBin)
+	// execstub avoids the macOS first-exec scan of fresh scripts; keep headroom
+	// over the production probe timeout for a loaded full-suite run anyway.
+	prevTimeout := qoderProbeTimeout
+	qoderProbeTimeout = 30 * time.Second
+	t.Cleanup(func() { qoderProbeTimeout = prevTimeout })
+
+	items := DiscoverQoderModelsWithRefresh(true)
+	var sawCN, sawCNFree, sawIntl, sawHeader bool
+	for _, it := range items {
+		if strings.EqualFold(it.ID, "model") || strings.HasSuffix(strings.ToLower(it.ID), ":model") {
+			sawHeader = true
+		}
+		if it.ID == "cn:Qwen3.8-Max" && it.Multiplier == "0.5x" && it.InputCost > 0 {
+			sawCN = true
+		}
+		if it.ID == "cn:Qwen3.8-Flash" && it.Free && it.Multiplier == "0x" {
+			sawCNFree = true
+		}
+		if it.ID == "intl:claude-sonnet-4-6" && it.Multiplier == "1.1x" {
+			sawIntl = true
+		}
+	}
+	if sawHeader || !sawCN || !sawCNFree || !sawIntl {
+		t.Fatalf("expected both CN (with free 0x & 0.5x) and Intl Qoder models without MODEL header, got: %+v", items)
+	}
+
+	resolvedBin, cleanModel := ResolveQoderBinaryForModel("cn:Qwen3.8-Max")
+	if resolvedBin != cnBin || cleanModel != "Qwen3.8-Max" {
+		t.Fatalf("expected CN bin %q and clean model Qwen3.8-Max, got %q / %q", cnBin, resolvedBin, cleanModel)
+	}
+	resolvedIntl, cleanIntl := ResolveQoderBinaryForModel("intl:claude-sonnet-4-6")
+	if resolvedIntl != intlBin || cleanIntl != "claude-sonnet-4-6" {
+		t.Fatalf("expected Intl bin %q and clean model claude-sonnet-4-6, got %q / %q", intlBin, resolvedIntl, cleanIntl)
+	}
+
+	if got := FormatClaudeModelName("claude-sonnet-4-6-20251001-thinking"); got != "Claude Sonnet 4.6" {
+		t.Fatalf("FormatClaudeModelName with date before suffix = %q, want Claude Sonnet 4.6", got)
+	}
+	if got := FormatClaudeModelName("claude-fable-6-1"); got != "Claude Fable 6.1" {
+		t.Fatalf("FormatClaudeModelName(claude-fable-6-1) = %q, want Claude Fable 6.1", got)
+	}
+}
+
+func TestGeminiCLIModelDiscovery(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("GEMINI_HOME", tmpDir)
+	t.Setenv("GEMINI_BIN", "")
+	if got := ResolveGeminiBinary(); got != "" {
+		t.Fatalf("expected empty gemini binary when GEMINI_HOME has no bin/gemini, got %q", got)
+	}
+
+	binDir := filepath.Join(tmpDir, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	gemBin := execstub.Write(t, binDir, "gemini", "exit 0\n")
+	if err := os.WriteFile(filepath.Join(tmpDir, "settings.json"), []byte(`{"model":{"name":"gemini-2.5-pro-exp"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got := ResolveGeminiBinary(); got != gemBin {
+		t.Fatalf("expected ResolveGeminiBinary=%q, got %q", gemBin, got)
+	}
+	models := DiscoverGeminiModelsWithRefresh(true)
+	if len(models) < 6 {
+		t.Fatalf("expected at least 6 Gemini CLI models, got %d", len(models))
+	}
+	if models[0].ID != "auto" || models[0].Runtime != RuntimeGeminiCLI {
+		t.Fatalf("expected first model auto for gemini-cli, got %+v", models[0])
+	}
+	if models[1].ID != "gemini-2.5-pro-exp" || models[1].Name != "Gemini 2.5 Pro Exp" {
+		t.Fatalf("expected custom model from settings.json, got %+v", models[1])
+	}
+
+	t.Setenv("GEMINI_API_KEY", "")
+	t.Setenv("GOOGLE_API_KEY", "")
+	t.Setenv("GOOGLE_GENERATIVE_AI_API_KEY", "")
+	if err := os.WriteFile(filepath.Join(tmpDir, "settings.json"), []byte(`{"security":{"auth":{"selectedType":"oauth-personal"}}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if HasGeminiCLIDirectAuth() {
+		t.Fatal("expected HasGeminiCLIDirectAuth() == false for oauth-personal without API key")
+	}
+	if !IsAgyOnlyGeminiModel("gemini-4-carbon") || !IsAgyOnlyGeminiModel("gemini-4-argon") || !IsAgyOnlyGeminiModel("gemini-3.8-flash") || IsAgyOnlyGeminiModel("gemini-2.5-pro") {
+		t.Fatal("unexpected IsAgyOnlyGeminiModel classification")
+	}
+	var sawCarbon bool
+	for _, it := range models {
+		if it.ID == "gemini-4-carbon" && it.Name == "Gemini 4 Carbon" && it.OutputLimit == 131072 {
+			sawCarbon = true
+		}
+	}
+	if !sawCarbon {
+		t.Fatalf("expected gemini-4-carbon with 131072 output limit in Gemini CLI catalog, got %+v", models)
+	}
+
+	// Verify standalone ~/.gemini/antigravity-cli/bin/agy resolution and dynamic Gemini model refresh.
+	agyCliBinDir := filepath.Join(tmpDir, "antigravity-cli", "bin")
+	if err := os.MkdirAll(agyCliBinDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	agyCliBin := execstub.Write(t, agyCliBinDir, "agy", "printf 'gemini-4-carbon-low   Gemini 4 Carbon (Low)\\ngemini-4-carbon-high  Gemini 4 Carbon (High)\\ngemini-4-diamond-high Gemini 4 Diamond (High)\\nclaude-opus-5-5-high  Claude Opus 5.5 (High)\\n'\n")
+	execstub.Write(t, binDir, "agy", "exit 1\n")
+	if gotAgy := ResolveAgyBinary(); gotAgy != agyCliBin {
+		t.Fatalf("expected ResolveAgyBinary to prefer antigravity-cli/bin/agy (%q), got %q", agyCliBin, gotAgy)
+	}
+	refreshed := DiscoverGeminiModelsWithRefresh(true)
+	var sawDiamond, sawClaudeInGem, sawRawSuffix bool
+	for _, it := range refreshed {
+		if it.ID == "gemini-4-diamond" && it.OutputLimit == 131072 {
+			sawDiamond = true
+		}
+		if strings.HasPrefix(it.ID, "claude-") {
+			sawClaudeInGem = true
+		}
+		if it.ID == "gemini-4-diamond-high" || it.ID == "gemini-4-carbon-high" {
+			sawRawSuffix = true
+		}
+	}
+	if !sawDiamond || sawClaudeInGem || sawRawSuffix {
+		t.Fatalf("expected dynamic agy gemini base slug without non-gemini or raw effort suffixes, got %+v", refreshed)
+	}
+
+	t.Setenv("GEMINI_API_KEY", "AIzaSyTestKey123456")
+	if !HasGeminiCLIDirectAuth() {
+		t.Fatal("expected HasGeminiCLIDirectAuth() == true when GEMINI_API_KEY is set")
+	}
+}
+
+func TestWithUserBinPathPrependsMissingDirs(t *testing.T) {
+	env := []string{"FOO=1", "PATH=/usr/bin:/opt/homebrew/bin"}
+	got := WithUserBinPath(env)
+	if env[1] != "PATH=/usr/bin:/opt/homebrew/bin" {
+		t.Fatalf("input env was mutated: %#v", env)
+	}
+	path := ""
+	for _, kv := range got {
+		if strings.HasPrefix(kv, "PATH=") {
+			path = strings.TrimPrefix(kv, "PATH=")
+		}
+	}
+	if !strings.HasSuffix(path, "/usr/bin:/opt/homebrew/bin") {
+		t.Fatalf("original PATH order lost: %q", path)
+	}
+	if strings.Count(path, "/opt/homebrew/bin") != 1 {
+		t.Fatalf("/opt/homebrew/bin duplicated: %q", path)
+	}
+	if first := filepath.SplitList(path)[0]; first == "/usr/bin" {
+		t.Fatalf("user bin dirs were not prepended: %q", path)
+	}
+	if !strings.Contains(path, filepath.Join(".hoxi", "bin")) {
+		t.Fatalf("expected ~/.hoxi/bin in prepended PATH so native CLIs can invoke hoxi code-index, got %q", path)
+	}
+	if !strings.Contains(path, filepath.Join(".gemini", "antigravity-cli", "bin")) {
+		t.Fatalf("expected ~/.gemini/antigravity-cli/bin in prepended PATH, got %q", path)
+	}
+}
+
+func TestWithUserBinPathAddsPATHWhenMissing(t *testing.T) {
+	got := WithUserBinPath([]string{"FOO=1"})
+	found := false
+	for _, kv := range got {
+		if strings.HasPrefix(kv, "PATH=") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("PATH was not added: %#v", got)
+	}
+
+	// Windows environment variables often use mixed-case "Path=".
+	winEnv := []string{"SystemRoot=C:\\Windows", "Path=C:\\Windows\\system32"}
+	winGot := WithUserBinPath(winEnv)
+	if len(winGot) != 2 || !strings.HasPrefix(winGot[1], "Path=") || !strings.HasSuffix(winGot[1], "C:\\Windows\\system32") {
+		t.Fatalf("expected mixed-case Path= to be updated in place, got %#v", winGot)
+	}
+}

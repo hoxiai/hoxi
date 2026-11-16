@@ -1,0 +1,780 @@
+package runner
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+
+	"github.com/hoxiai/hoxi/internal/agentcli"
+	"github.com/hoxiai/hoxi/internal/attachment"
+)
+
+// openCodeRequest opens a 2xx engine response scoped to directory; the caller
+// closes the body (it may be an SSE stream).
+func (s *Service) openCodeRequest(ctx context.Context, method, path, directory string, body interface{}) (*http.Response, error) {
+	return s.openCode.Stream(ctx, method, path, url.Values{"directory": {directory}}, body)
+}
+
+func (s *Service) openCodeJSON(ctx context.Context, method, path, directory string, body, out interface{}) error {
+	return s.openCode.JSON(ctx, method, path, url.Values{"directory": {directory}}, body, out)
+}
+
+func (s *Service) resolveOpenCodeModel(ctx context.Context, directory, providerID, modelID string) (string, string) {
+	providerID = strings.TrimSpace(providerID)
+	modelID = strings.TrimSpace(modelID)
+	if providerID == "" && strings.Contains(modelID, "/") {
+		parts := strings.SplitN(modelID, "/", 2)
+		if strings.TrimSpace(parts[0]) != "" && strings.TrimSpace(parts[1]) != "" {
+			providerID = strings.TrimSpace(parts[0])
+			modelID = strings.TrimSpace(parts[1])
+		}
+	}
+	if providerID != "" && modelID != "" {
+		return providerID, modelID
+	}
+
+	qCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	var resp struct {
+		Providers []struct {
+			ID     string                 `json:"id"`
+			Source string                 `json:"source"`
+			Key    string                 `json:"key"`
+			Models map[string]interface{} `json:"models"`
+		} `json:"providers"`
+		Default map[string]string `json:"default"`
+	}
+	if err := s.openCodeJSON(qCtx, http.MethodGet, "/config/providers", directory, nil, &resp); err != nil {
+		return providerID, modelID
+	}
+
+	if modelID != "" && providerID == "" {
+		for _, p := range resp.Providers {
+			if _, ok := p.Models[modelID]; ok {
+				return p.ID, modelID
+			}
+		}
+		return providerID, modelID
+	}
+
+	if providerID != "" && modelID == "" {
+		if def := strings.TrimSpace(resp.Default[providerID]); def != "" {
+			return providerID, def
+		}
+		for _, p := range resp.Providers {
+			if p.ID == providerID {
+				for mID := range p.Models {
+					return providerID, mID
+				}
+			}
+		}
+		return providerID, modelID
+	}
+
+	for _, p := range resp.Providers {
+		if p.ID == "opencode" && p.Source != "config" && p.Key == "" {
+			continue
+		}
+		if def := strings.TrimSpace(resp.Default[p.ID]); def != "" {
+			if _, ok := p.Models[def]; ok || len(p.Models) == 0 {
+				return p.ID, def
+			}
+		}
+		for mID := range p.Models {
+			return p.ID, mID
+		}
+	}
+	for _, p := range resp.Providers {
+		if def := strings.TrimSpace(resp.Default[p.ID]); def != "" {
+			return p.ID, def
+		}
+	}
+	return providerID, modelID
+}
+
+func clampOpenCodeEffortFallback(providerID, modelID, effort string) string {
+	if providerID == "" && modelID == "" {
+		return effort
+	}
+	supported, def := agentcli.InferVendorEffortSpec(providerID, modelID, true)
+	if len(supported) == 0 {
+		return ""
+	}
+	return agentcli.ClampEffortToSupported(effort, supported, def)
+}
+
+func modelExplicitlyDisablesReasoning(mObj map[string]interface{}) bool {
+	if r, hasR := mObj["reasoning"].(bool); hasR && !r {
+		return true
+	}
+	if caps, ok := mObj["capabilities"].(map[string]interface{}); ok {
+		if r, hasR := caps["reasoning"].(bool); hasR && !r {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Service) resolveOpenCodeVariant(ctx context.Context, directory, providerID, modelID, effort string) string {
+	e := agentcli.NormalizeEffortName(effort)
+	if e == "" {
+		return ""
+	}
+	if !s.openCode.Available() || providerID == "" || modelID == "" {
+		return clampOpenCodeEffortFallback(providerID, modelID, e)
+	}
+	qCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	var resp struct {
+		Providers []struct {
+			ID     string                 `json:"id"`
+			Models map[string]interface{} `json:"models"`
+		} `json:"providers"`
+	}
+	if err := s.openCodeJSON(qCtx, http.MethodGet, "/config/providers", directory, nil, &resp); err != nil {
+		return clampOpenCodeEffortFallback(providerID, modelID, e)
+	}
+	for _, p := range resp.Providers {
+		if p.ID != providerID {
+			continue
+		}
+		mObj, ok := p.Models[modelID].(map[string]interface{})
+		if !ok {
+			return clampOpenCodeEffortFallback(providerID, modelID, e)
+		}
+		vMap, hasVariants := mObj["variants"].(map[string]interface{})
+		if !hasVariants {
+			if modelExplicitlyDisablesReasoning(mObj) {
+				return ""
+			}
+			return clampOpenCodeEffortFallback(providerID, modelID, e)
+		}
+		if len(vMap) == 0 {
+			return ""
+		}
+		if _, exact := vMap[e]; exact {
+			return e
+		}
+		keys := make([]string, 0, len(vMap))
+		for k := range vMap {
+			keys = append(keys, k)
+		}
+		_, def := agentcli.InferVendorEffortSpec(providerID, modelID, true)
+		return agentcli.ClampEffortToSupported(e, keys, def)
+	}
+	return clampOpenCodeEffortFallback(providerID, modelID, e)
+}
+
+func (s *Service) normalizeOpenCodePart(rec SessionRecord, part *MessagePart, fileURLByMsgAndName map[string]string) bool {
+	stripOpenCodeStopMarker(part)
+	if part.Type == "file" && strings.HasPrefix(strings.TrimSpace(part.URL), "data:") {
+		key := part.MessageID + "\x00" + part.Filename
+		if mapped, ok := fileURLByMsgAndName[key]; ok && mapped != "" {
+			part.URL = mapped
+			return true
+		}
+		s.mu.Lock()
+		ap := s.procs[rec.ID]
+		s.mu.Unlock()
+		if ap != nil {
+			if mapped, ok := ap.fileURLs.Load(key); ok && mapped != "" {
+				part.URL = mapped
+				return true
+			}
+		}
+		if s.attachments != nil {
+			if meta, err := s.attachments.Save(attachment.SaveRequest{
+				SessionID: rec.ID,
+				Directory: rec.WorktreePath,
+				Filename:  part.Filename,
+				Mime:      part.Mime,
+				DataURL:   part.URL,
+			}); err == nil {
+				part.URL = meta.URL
+				part.Mime = meta.Mime
+				part.Filename = meta.Filename
+				if fileURLByMsgAndName != nil {
+					fileURLByMsgAndName[key] = meta.URL
+				}
+			}
+		}
+		return true
+	}
+	if part.Type == "reasoning" {
+		if cleaned, leaked := stripLeakedReasoningToolMarkup(part.Text); leaked {
+			part.Text = cleaned
+			if strings.TrimSpace(part.Text) == "" {
+				return false
+			}
+		}
+		return true
+	}
+	if part.Type == "text" {
+		const prefix = "Please analyze the attached file(s):\n\n<attached_file "
+		if strings.HasPrefix(part.Text, prefix) {
+			part.Text = ""
+			return false
+		}
+		if idx := strings.Index(part.Text, "\n\n<attached_file name="); idx >= 0 {
+			part.Text = part.Text[:idx]
+		}
+		s.applyUserSkillOverride(rec.ID, part)
+	}
+	return true
+}
+
+func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, system string, user MessageInfo, storedParts []MessagePart, deliveryParts []MessagePart) error {
+	setup, cancelSetup := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancelSetup()
+	resolvedProvider, resolvedModel := s.resolveOpenCodeModel(setup, rec.WorktreePath, rec.ProviderID, modelID)
+	if resolvedProvider != "" && resolvedProvider != rec.ProviderID || resolvedModel != "" && resolvedModel != modelID {
+		rec.ProviderID = firstNonEmptyStr(resolvedProvider, rec.ProviderID)
+		modelID = firstNonEmptyStr(resolvedModel, modelID)
+		_, _, _ = s.store.UpdateMetadata(rec.ID, func(r *SessionMetadata) {
+			r.ProviderID = rec.ProviderID
+			r.ModelID = modelID
+		})
+	}
+	effort = s.resolveOpenCodeVariant(setup, rec.WorktreePath, rec.ProviderID, modelID, effort)
+	createdSessionID := ""
+	cleanupCreatedSession := func() {
+		if createdSessionID == "" {
+			return
+		}
+		s.managedOpenCode.Delete(createdSessionID)
+		_ = s.openCodeJSON(setup, http.MethodDelete, "/session/"+url.PathEscape(createdSessionID), rec.WorktreePath, nil, nil)
+	}
+	if rec.ExternalID == "" {
+		var info SessionInfo
+		if err := s.openCodeJSON(setup, "POST", "/session", rec.WorktreePath, map[string]interface{}{"title": rec.Title, "metadata": map[string]string{"hoxiConversation": rec.ID}}, &info); err != nil {
+			return err
+		}
+		rec.ExternalID = info.ID
+		if rec.ExternalID == "" {
+			return fmt.Errorf("OpenCode returned an empty session ID")
+		}
+		createdSessionID = info.ID
+		var err error
+		rec, _, err = s.store.Update(rec.ID, func(r *SessionRecord) {
+			r.ExternalID = info.ID
+			r.OpenCodeIDs = append(r.OpenCodeIDs, info.ID)
+			if r.OpenCodeDirectories == nil {
+				r.OpenCodeDirectories = make(map[string]string)
+			}
+			r.OpenCodeDirectories[info.ID] = rec.WorktreePath
+		})
+		if err != nil {
+			cleanupCreatedSession()
+			return err
+		}
+		s.managedOpenCode.Store(info.ID, true)
+	}
+	s.updateInflightExternalID(rec.ID, rec.ExternalID)
+	if err := syncOpenCodeCommandSandbox(rec); err != nil {
+		cleanupCreatedSession()
+		return err
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	stream, err := s.openCodeRequest(ctx, "GET", "/event", rec.WorktreePath, nil)
+	if err != nil {
+		cancel()
+		cleanupCreatedSession()
+		return err
+	}
+	reusedExistingSession := createdSessionID == "" && strings.TrimSpace(rec.ExternalID) != ""
+	ap := &activeProcess{sessionID: rec.ID, runtime: "opencode", done: make(chan struct{}), idleCh: make(chan struct{}, 1)}
+	ap.setOpenCodeRecord(rec)
+	ap.cancel = func() {
+		curRec := ap.openCodeRecord()
+		abortCtx, done := context.WithTimeout(context.Background(), 5*time.Second)
+		defer done()
+		s.rejectOpenCodeSessionPermissions(abortCtx, curRec)
+		_ = s.openCodeJSON(abortCtx, "POST", "/session/"+curRec.ExternalID+"/abort", curRec.WorktreePath, map[string]interface{}{}, nil)
+		cancel()
+	}
+	ap.stall.touch(time.Now())
+	s.mu.Lock()
+	s.procs[rec.ID] = ap
+	s.mu.Unlock()
+	s.forgetCleanIdleOpenCodeDirs(rec)
+	if s.status != nil {
+		s.status.SetSessionBusy(rec.ID, true)
+	}
+	s.broadcast(rec.ID, SSEEvent{Type: "session.status", Properties: map[string]interface{}{"sessionID": rec.ID, "status": SessionStatus{Type: "busy"}}})
+	go s.watchStall(ap)
+	fileURLByMsgAndName := make(map[string]string)
+	var docOnlyFileParts []MessagePart
+	deliveryFileIDs := make(map[string]bool)
+	for _, dp := range deliveryParts {
+		if dp.Type == "file" {
+			deliveryFileIDs[dp.ID] = true
+		}
+	}
+	for _, sp := range storedParts {
+		if sp.Type == "file" {
+			fileURLByMsgAndName[user.ID+"\x00"+sp.Filename] = sp.URL
+			ap.fileURLs.Store(user.ID+"\x00"+sp.Filename, sp.URL)
+			if !deliveryFileIDs[sp.ID] {
+				docOnlyFileParts = append(docOnlyFileParts, sp)
+			}
+		}
+	}
+	streamDone := make(chan struct{})
+	go func() {
+		defer close(streamDone)
+		scanOpenCodeSSEDataLines(stream.Body, func(payload []byte) {
+			s.relayOpenCodeEventWithFiles(ap.openCodeRecord(), payload, fileURLByMsgAndName)
+		})
+	}()
+	go func() {
+		defer func() {
+			cancel()
+			_ = stream.Body.Close()
+			<-streamDone
+			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			s.rejectOpenCodeSessionPermissions(cleanupCtx, ap.openCodeRecord())
+			cleanupCancel()
+			if !ap.wasRestarting() {
+				s.clearInflightTurn(rec.ID)
+			}
+			s.abandonOpenCodeInFlightParts(rec.ID, time.Now().UnixMilli())
+			s.store.FlushSession(rec.ID)
+			s.releaseActiveProcess(rec.ID, ap)
+			if !ap.wasRestarting() {
+				if errEvt, ok := ap.takePendingError(); ok {
+					s.publishOpenCodeEvent(rec.ID, errEvt)
+				}
+				s.broadcast(rec.ID, SSEEvent{Type: "session.status", Properties: map[string]interface{}{"sessionID": rec.ID, "status": SessionStatus{Type: "idle"}}})
+			}
+			close(ap.done)
+		}()
+		if len(docOnlyFileParts) > 0 {
+			s.broadcast(rec.ID, SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": user}})
+			for _, fp := range docOnlyFileParts {
+				s.broadcast(rec.ID, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": fp}})
+			}
+		}
+		inputParts := make([]map[string]interface{}, 0, len(deliveryParts))
+		for _, p := range deliveryParts {
+			if p.Type == "file" {
+				inputParts = append(inputParts, map[string]interface{}{"type": "file", "mime": p.Mime, "url": p.URL, "filename": p.Filename})
+			} else if p.Type == "text" && (strings.TrimSpace(p.Text) != "" || len(deliveryParts) == 1) {
+				inputParts = append(inputParts, map[string]interface{}{"type": "text", "text": p.Text})
+			}
+		}
+		payload := map[string]interface{}{"messageID": user.ID, "agent": mode, "parts": inputParts}
+		if rec.ProviderID != "" && modelID != "" {
+			payload["model"] = map[string]string{"providerID": rec.ProviderID, "modelID": modelID}
+		}
+		if effort != "" {
+			payload["variant"] = effort
+		}
+		baseSystem := system
+		system = openCodeTurnSystem(baseSystem, rec)
+		if system != "" {
+			payload["system"] = system
+		}
+		err := s.openCodeJSON(ctx, "POST", "/session/"+rec.ExternalID+"/message", rec.WorktreePath, payload, nil)
+		if rotated, ok := s.rotateOpenCodeSessionIfBroken(ctx, rec, ap, reusedExistingSession, user.ID, err); ok {
+			rec = rotated
+			// Recovery below must resend the same system prompt as this retry.
+			if system = openCodeTurnSystem(baseSystem, rec); system != "" {
+				payload["system"] = system
+			}
+			err = s.openCodeJSON(ctx, "POST", "/session/"+rec.ExternalID+"/message", rec.WorktreePath, payload, nil)
+		}
+		if err == nil && ap.wasSteered() && !ap.wasAborted() && !ap.hasPendingError() {
+			s.waitForOpenCodeIdle(ctx, rec, ap)
+		}
+		if ((err == nil && !ap.hasPendingError()) || ap.reasoningLoop.hasPendingRecovery()) && !ap.wasAborted() {
+			err = s.recoverOpenCodeReasoningIfNeeded(ctx, rec, ap, mode, modelID, effort, system, err)
+		}
+		// Stop the stream before authoritative snapshots, so a delayed delta cannot
+		// append to an already complete snapshot.
+		_ = stream.Body.Close()
+		<-streamDone
+		if err != nil && ap.reasoningLoop.shouldSuppressAbortError(err.Error()) {
+			err = nil
+		}
+		if err == nil || ap.reasoningLoop.hasTriggered() || ap.stall.abortError() != nil || ap.wasRestarting() {
+			s.markContextDelivered(rec.ID)
+			s.reconcileOpenCodePostTurnMessages(rec, ap, user.ID, fileURLByMsgAndName)
+			if _, hasSkill := s.userSkillByMsg.Load(user.ID); hasSkill {
+				hasUserTurn := false
+				if current, ok := s.store.Get(rec.ID); ok {
+					for _, t := range current.Turns {
+						if t.Info.ID == user.ID {
+							hasUserTurn = true
+							break
+						}
+					}
+				}
+				if !hasUserTurn {
+					s.broadcast(rec.ID, SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": user}})
+					for _, sp := range storedParts {
+						s.broadcast(rec.ID, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": sp}})
+					}
+				}
+			}
+			s.syncSessionMemoryFile(rec.ID)
+		}
+		if stallErr := ap.stall.abortError(); stallErr != nil {
+			s.stampAbortedTurnErrorOnStore(rec.ID, stallErr)
+			ap.setPendingError(SSEEvent{Type: "session.error", Properties: map[string]interface{}{"sessionID": rec.ID, "error": stallErr}})
+		} else if err != nil && !ap.wasAborted() && !ap.hasPendingError() {
+			msgErr := openCodeEngineError(err)
+			s.persistFailedOpenCodeTurn(rec.ID, user, storedParts, modelID, rec.ProviderID, mode, msgErr)
+			ap.setPendingError(SSEEvent{Type: "session.error", Properties: map[string]interface{}{"sessionID": rec.ID, "error": msgErr}})
+		}
+	}()
+	return nil
+}
+
+func (s *Service) relayOpenCodeEvent(rec SessionRecord, raw []byte) {
+	s.relayOpenCodeEventWithFiles(rec, raw, nil)
+}
+
+func (s *Service) relayOpenCodeEventWithFiles(rec SessionRecord, raw []byte, fileURLByMsgAndName map[string]string) {
+	var evt SSEEvent
+	if json.Unmarshal(raw, &evt) != nil {
+		return
+	}
+	s.noteOpenCodeShellEvent(rec, evt)
+	if s.noteOpenCodeChildEvent(rec, evt) {
+		return
+	}
+	if evt.Type == "session.updated" {
+		data, _ := json.Marshal(evt.Properties["info"])
+		var info SessionInfo
+		if json.Unmarshal(data, &info) == nil && info.ID == rec.ExternalID && strings.TrimSpace(info.Title) != "" {
+			if updated, ok, err := s.store.Update(rec.ID, func(r *SessionRecord) {
+				if r.Title == "" || r.Title == "New Session" || strings.HasPrefix(r.Title, "New session - ") {
+					r.Title = strings.TrimSpace(info.Title)
+				}
+			}); err == nil && ok {
+				s.broadcast(rec.ID, SSEEvent{Type: "session.updated", Properties: map[string]interface{}{"info": updated.ToSessionInfo()}})
+			}
+		}
+		return
+	}
+	// Rewriting only sessionID leaves message/part/request IDs intact, so
+	// permissions and questions can use the daemon's existing reply endpoints.
+	var rewrite func(interface{})
+	matched := false
+	rewrite = func(value interface{}) {
+		switch v := value.(type) {
+		case map[string]interface{}:
+			for key, item := range v {
+				if key == "sessionID" && item == rec.ExternalID {
+					v[key] = rec.ID
+					matched = true
+				} else {
+					rewrite(item)
+				}
+			}
+		case []interface{}:
+			for _, item := range v {
+				rewrite(item)
+			}
+		}
+	}
+	rewrite(evt.Properties)
+	if !matched {
+		return
+	}
+	s.mu.Lock()
+	ap := s.procs[rec.ID]
+	s.mu.Unlock()
+	if evt.Type == "message.part.delta" {
+		msgID := firstString(evt.Properties["messageID"])
+		if isInternalRecoveryMessageID(msgID) {
+			return
+		}
+		if ap != nil {
+			triggered, drop := ap.reasoningLoop.observeDelta(msgID, firstString(evt.Properties["partID"]), firstString(evt.Properties["delta"]))
+			if triggered {
+				s.abortOpenCodeRunawayTurn(rec)
+			}
+			if drop {
+				return
+			}
+		}
+	}
+	s.noteOpenCodeActivity(rec.ID, evt)
+	if evt.Type == "question.asked" || evt.Type == "question.v2.asked" {
+		if evt.Properties != nil && rec.WorktreePath != "" && firstString(evt.Properties["directory"]) == "" {
+			evt.Properties["directory"] = rec.WorktreePath
+		}
+	}
+	if evt.Type == "permission.asked" {
+		sanitizeOpenCodePermissionItem(evt.Properties)
+		if evt.Properties != nil && (rec.WorktreePath != "" || rec.ExternalID != "") {
+			meta, _ := evt.Properties["metadata"].(map[string]interface{})
+			if meta == nil {
+				meta = make(map[string]interface{})
+				evt.Properties["metadata"] = meta
+			}
+			if rec.WorktreePath != "" && firstString(meta["directory"]) == "" {
+				meta["directory"] = rec.WorktreePath
+			}
+			// The permission's sessionID is rewritten to the Hoxi id above.
+			// Keep the runtime id too, so a read of this session's own
+			// ~/.hoxi/sessions/<id>/ record can match either one.
+			if rec.ExternalID != "" && firstString(meta["externalID"]) == "" {
+				meta["externalID"] = rec.ExternalID
+			}
+		}
+		if s.audit != nil {
+			// Capture the request as soon as the engine announces it, so a reply
+			// that beats the 4s listPermissions poll is still audited with its
+			// session, command and risk instead of a bare request ID.
+			s.audit.rememberOpenCodePerm(evt.Properties, rec.WorktreePath)
+		}
+		// The policy answers what it allows before anyone sees it, so the
+		// status bar and phone push only count requests that need the user.
+		published := evt
+		if s.claimOpenCodePermission(evt.Properties, rec.ID, rec.WorktreePath, func() { s.publishOpenCodeEvent(rec.ID, published) }) {
+			return
+		}
+	}
+	if evt.Type == "session.status" {
+		if st, ok := parseSessionStatus(evt.Properties["status"]); ok && st.Type == "retry" {
+			if retryErr, cut := shouldCutOffTurnRetry(st, time.Now()); cut {
+				if ap != nil {
+					s.abortTurnAsync(ap, retryErr)
+				} else {
+					s.abortOpenCodeRunawayTurn(rec)
+				}
+				return
+			}
+		}
+	}
+	if evt.Type == "session.idle" || (evt.Type == "session.status" && !ap.shouldRelayOpenCodeStatus(evt.Properties["status"])) {
+		if evt.Type == "session.idle" || isOpenCodeIdleStatus(evt.Properties["status"]) {
+			if ap != nil {
+				ap.notifyIdle()
+			}
+		}
+		return
+	}
+	switch evt.Type {
+	case "message.updated":
+		data, _ := json.Marshal(evt.Properties["info"])
+		var info MessageInfo
+		if json.Unmarshal(data, &info) != nil || isInternalRecoveryMessageID(info.ID) {
+			return
+		}
+		s.rewriteRecoveryParentID(rec.ID, &info)
+		sanitizeRunawayTriggeredInfo(&info, ap)
+		sanitizeAbortedTurnErrorInfo(&info, ap)
+		evt.Properties["info"] = info
+	case "message.part.updated":
+		data, _ := json.Marshal(evt.Properties["part"])
+		var part MessagePart
+		if json.Unmarshal(data, &part) != nil || isInternalRecoveryMessageID(part.MessageID) {
+			return
+		}
+		if ap != nil {
+			triggered, drop := ap.reasoningLoop.observePart(part)
+			if triggered {
+				s.abortOpenCodeRunawayTurn(rec)
+			}
+			if drop {
+				s.pruneOpenCodePartsFromStore(rec.ID, part.MessageID, ap.reasoningLoop.droppedPartsSnapshot())
+				return
+			}
+		}
+		if !s.normalizeOpenCodePart(rec, &part, fileURLByMsgAndName) {
+			return
+		}
+		evt.Properties["part"] = part
+		s.noteToolOutcome(rec.ID, part)
+	case "session.diff":
+		evt.Properties["diff"] = s.filterLocalSessionDiffEvent(rec.ID, evt.Properties["diff"])
+	case "session.error":
+		if ap != nil && (ap.reasoningLoop.shouldSuppressAbortError(evt.Properties["error"]) || ap.stall.abortError() != nil) {
+			ap.notifyIdle()
+			return
+		}
+		if ap != nil {
+			ap.setPendingError(evt)
+			ap.notifyIdle()
+			return
+		}
+	}
+	s.publishOpenCodeEvent(rec.ID, evt)
+}
+
+func (s *Service) publishOpenCodeEvent(sessionID string, evt SSEEvent) {
+	if s.status != nil {
+		data, _ := json.Marshal(evt)
+		s.status.InspectSSELine("data: " + string(data))
+	}
+	s.broadcast(sessionID, evt)
+}
+
+func isOpenCodeIdleStatus(raw interface{}) bool {
+	switch v := raw.(type) {
+	case SessionStatus:
+		return v.Type == "idle"
+	case map[string]interface{}:
+		t, _ := v["type"].(string)
+		return t == "idle"
+	}
+	return false
+}
+
+func (s *Service) waitForOpenCodeIdle(ctx context.Context, rec SessionRecord, ap *activeProcess) {
+	ticker := time.NewTicker(150 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		qCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		var statuses map[string]SessionStatus
+		err := s.openCodeJSON(qCtx, http.MethodGet, "/session/status", rec.WorktreePath, nil, &statuses)
+		cancel()
+		if err != nil {
+			return
+		}
+		st := statuses[rec.ExternalID]
+		if st.Type == "" || st.Type == "idle" {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ap.idleCh:
+		case <-ticker.C:
+		}
+	}
+}
+
+func (s *Service) resolveUnmanagedSessionDir(sessionID, requestedDir string) string {
+	if binding, bound, err := s.worktrees.BindingForSession(sessionID); err == nil && bound && strings.TrimSpace(binding.Directory) != "" {
+		return strings.TrimSpace(binding.Directory)
+	}
+	if strings.TrimSpace(requestedDir) != "" {
+		return strings.TrimSpace(requestedDir)
+	}
+	return s.rootDir
+}
+
+// Keep OpenCode's live steering on the backing session; its existing event
+// subscription continues to relay all subsequent tool steps to the same chat.
+func (s *Service) steerOpenCodeTurn(ctx context.Context, rec SessionRecord, mode, modelID, providerID, effort, system, text string, parts []MessagePart, skillSelection *SkillSelection) (int64, string, error) {
+	providerID, modelID = s.resolveOpenCodeModel(ctx, rec.WorktreePath, providerID, modelID)
+	effort = s.resolveOpenCodeVariant(ctx, rec.WorktreePath, providerID, modelID, effort)
+	s.mu.Lock()
+	s.seqSeed++
+	seq := s.seqSeed
+	ap := s.procs[rec.ID]
+	s.mu.Unlock()
+	now := time.Now().UnixMilli()
+	steerMsgID := fmt.Sprintf("msg_u_%d_%d", now, seq)
+	var fileParts []MessagePart
+	for _, p := range parts {
+		if p.Type == "file" && strings.TrimSpace(p.URL) != "" {
+			fileParts = append(fileParts, p)
+		}
+	}
+	storedParts, deliveryParts, _ := s.prepareTurnAttachmentsForModel(rec, providerID, modelID, false, now, seq, steerMsgID, text, fileParts)
+	if skillSelection != nil {
+		s.recordUserSkillOverride(steerMsgID, text, skillSelection)
+		storedParts, deliveryParts = applySkillSelectionToTurnParts(
+			rec.ID,
+			steerMsgID,
+			now,
+			seq,
+			text,
+			skillSelection,
+			false,
+			"",
+			storedParts,
+			deliveryParts,
+		)
+	}
+	if rec.ID != "" && s.OwnsSession(rec.ID) {
+		s.recordTurnSnapshot(rec.ID, steerMsgID)
+	}
+	inputParts := make([]map[string]interface{}, 0, len(deliveryParts))
+	for _, part := range deliveryParts {
+		if part.Type == "file" {
+			inputParts = append(inputParts, map[string]interface{}{"type": "file", "mime": part.Mime, "filename": part.Filename, "url": part.URL})
+		} else if part.Type == "text" && (strings.TrimSpace(part.Text) != "" || len(deliveryParts) == 1) {
+			inputParts = append(inputParts, map[string]interface{}{"type": "text", "text": part.Text})
+		}
+	}
+	payload := map[string]interface{}{"messageID": steerMsgID, "agent": mode, "parts": inputParts}
+	if providerID != "" && modelID != "" {
+		payload["model"] = map[string]string{"providerID": providerID, "modelID": modelID}
+	}
+	if effort != "" {
+		payload["variant"] = effort
+	}
+	// Build the system prompt exactly like startOpenCodeTurn so a steer keeps the prompt cache.
+	if system = openCodeTurnSystem(system, rec); system != "" {
+		payload["system"] = system
+	}
+	if ap != nil {
+		ap.markSteered()
+		ap.stall.touch(time.Now())
+	}
+	if err := s.openCodeJSON(ctx, "POST", "/session/"+rec.ExternalID+"/prompt_async", rec.WorktreePath, payload, nil); err != nil {
+		return 0, "", err
+	}
+	s.updateInflightSteer(rec.ID, steerMsgID, mode, providerID, modelID, effort, text)
+	// Documents reach OpenCode inlined into the text, which the relay strips
+	// from the echoed message; show their file chips like a normal turn does.
+	deliveredFiles := make(map[string]bool)
+	for _, dp := range deliveryParts {
+		if dp.Type == "file" {
+			deliveredFiles[dp.ID] = true
+		}
+	}
+	var docParts []MessagePart
+	for _, sp := range storedParts {
+		if sp.Type == "file" {
+			if ap != nil {
+				ap.fileURLs.Store(steerMsgID+"\x00"+sp.Filename, sp.URL)
+			}
+			if !deliveredFiles[sp.ID] {
+				docParts = append(docParts, sp)
+			}
+		}
+	}
+	if len(docParts) > 0 && rec.ID != "" && s.OwnsSession(rec.ID) {
+		user := MessageInfo{ID: steerMsgID, SessionID: rec.ID, Role: "user", Time: MessageTime{Created: now}, Agent: mode, ModelID: modelID, ProviderID: providerID}
+		s.broadcast(rec.ID, SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": user}})
+		for _, fp := range docParts {
+			s.broadcast(rec.ID, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": fp}})
+		}
+	}
+	return seq, steerMsgID, nil
+}
+
+func (ap *activeProcess) shouldRelayOpenCodeStatus(raw interface{}) bool {
+	if ap == nil {
+		return false
+	}
+	var stType string
+	switch v := raw.(type) {
+	case SessionStatus:
+		stType = v.Type
+	case map[string]interface{}:
+		stType, _ = v["type"].(string)
+	}
+	ap.mu.Lock()
+	defer ap.mu.Unlock()
+	if stType == "retry" {
+		ap.retrying = true
+		return true
+	}
+	if stType == "busy" && ap.retrying {
+		ap.retrying = false
+		return true
+	}
+	return false
+}

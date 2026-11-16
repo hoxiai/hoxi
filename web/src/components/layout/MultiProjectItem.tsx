@@ -1,0 +1,456 @@
+import { createEffect, createMemo, createSelector, createSignal, For, onCleanup, Show } from "solid-js";
+import { Portal } from "solid-js/web";
+import { Presence } from "../motion/Presence";
+import { GripVertical, MoreHorizontal, FolderPlus, Pencil, Layers, Trash2, Plus } from "lucide-solid";
+import {
+  isSessionArchived,
+  normalizeFolderPath,
+  openCreateWorkspaceModal,
+  openDeleteWorkspaceModal,
+  openEditWorkspaceModal,
+  openManageWorkspacesModal,
+  partitionCodeSessions,
+  quickAddFolderToWorkspace,
+  sortSessionsByActivity,
+  workspace,
+} from "../../store/workspace";
+import type { SessionInfo } from "../../services/sse-types";
+import { Icon, Spinner } from "../icons";
+import {
+  FolderIcon,
+  countRunningSessionsForProject,
+  resolveActiveRootSessionID,
+  shortenPath,
+  type ProjectNavEntry,
+} from "./left-nav-helpers";
+import { SessionNavItem } from "./SessionNavItem";
+import { useAnchoredPopover } from "./anchored-popover";
+import { t } from "../../i18n";
+import { SessionHistoryList, useSessionHistory } from "./SessionHistory";
+import { matchesProjectSearch, matchesSessionSearch } from "./session-search";
+import { isWorkSurface } from "./surface-extension";
+
+export function WorkspaceActionMenu(props: {
+  dirOrWorkspaceID: string;
+  alwaysVisible?: boolean;
+}) {
+  const [open, setOpen] = createSignal(false);
+  const [menuRef, setMenuRef] = createSignal<HTMLDivElement | undefined>();
+  let btnRef: HTMLButtonElement | undefined;
+  const anchored = useAnchoredPopover({
+    anchor: () => btnRef,
+    panel: () => (open() ? menuRef() : undefined),
+    align: "end",
+  });
+
+  createEffect(() => {
+    if (!open()) return;
+    const handlePointerDown = (e: MouseEvent) => {
+      const target = e.target as Node;
+      const menu = menuRef();
+      if (menu && !menu.contains(target) && btnRef && !btnRef.contains(target)) {
+        setOpen(false);
+      }
+    };
+    window.addEventListener("pointerdown", handlePointerDown);
+    onCleanup(() => window.removeEventListener("pointerdown", handlePointerDown));
+  });
+
+  return (
+    <div class="relative inline-flex items-center shrink-0" onClick={(e) => e.stopPropagation()}>
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((v) => !v);
+        }}
+        class={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-[var(--text-faint)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-opacity cursor-pointer ${
+          props.alwaysVisible || open()
+            ? "opacity-100"
+            : "opacity-0 group-hover/proj:opacity-100"
+        }`}
+        title={t("leftNav.workspaceActions")}
+      >
+        <MoreHorizontal size={13} class="block shrink-0" />
+      </button>
+
+      <Presence when={open()}>
+        {(state) => (
+        <Portal>
+          <div
+            ref={setMenuRef}
+            data-state={state()}
+            class="hoxi-popover fixed w-48 max-w-[calc(100vw-16px)] rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1 z-[100]"
+            style={{ ...anchored.positionStyle(), "--hoxi-origin": "top right" }}
+          >
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                openEditWorkspaceModal(props.dirOrWorkspaceID);
+              }}
+              class="w-full flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+            >
+              <Pencil size={13} />
+              <span>{t("leftNav.editWorkspace")}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                void quickAddFolderToWorkspace(props.dirOrWorkspaceID);
+              }}
+              class="w-full flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+            >
+              <FolderPlus size={13} />
+              <span>{t("leftNav.addFolderToWorkspace")}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                openCreateWorkspaceModal();
+              }}
+              class="w-full flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+            >
+              <Plus size={13} />
+              <span>{t("leftNav.newWorkspace")}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                openManageWorkspacesModal();
+              }}
+              class="w-full flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+            >
+              <Layers size={13} />
+              <span>{t("leftNav.manageWorkspaces")}</span>
+            </button>
+
+            <div class="my-1 border-t border-[var(--border-subtle)]/60" />
+
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                openDeleteWorkspaceModal(props.dirOrWorkspaceID);
+              }}
+              class="w-full flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] text-[var(--danger-text)] hover:bg-[var(--danger-surface)] transition-colors cursor-pointer"
+            >
+              <Trash2 size={13} />
+              <span>{t("leftNav.deleteWorkspace")}</span>
+            </button>
+          </div>
+        </Portal>
+        )}
+      </Presence>
+    </div>
+  );
+}
+
+export default function MultiProjectTreeItem(props: {
+  proj: ProjectNavEntry;
+  expanded: boolean;
+  isCreating: boolean;
+  isLoadingSessions: boolean;
+  isDraggingThis: boolean;
+  isDropBefore: boolean;
+  isDropAfter: boolean;
+  isArchivedOpen: boolean;
+  filterQuery: string;
+  cachedSessions: SessionInfo[];
+  pendingSessions: Set<string>;
+  onPointerDown: (ev: PointerEvent, fromPath: string) => void;
+  onToggleProject: (path: string, ev?: MouseEvent) => void;
+  onToggleArchived: (path: string) => void;
+  onCreateThread: (e: MouseEvent, path: string) => void;
+  onSelectSession: (path: string, sessionID: string) => void;
+  onArchiveSession: (path: string, ev: MouseEvent, sessionID: string) => void;
+  onUnarchiveSession: (path: string, ev: MouseEvent, sessionID: string) => void;
+  onDiscardSession: (path: string, ev: MouseEvent, sessionID: string) => Promise<void> | void;
+}) {
+  const isActive = createMemo(
+    () =>
+      !isWorkSurface() &&
+      normalizeFolderPath(props.proj.path) === normalizeFolderPath(workspace.rootDir)
+  );
+  const isSelectedSession = createSelector<string | null, string>(() =>
+    isActive() ? resolveActiveRootSessionID() : null
+  );
+  // Running work elsewhere must stay visible: the header shows a live count for
+  // sessions of this project that are still executing.
+  const runningCount = createMemo(() => {
+    if (isWorkSurface()) return 0;
+    return countRunningSessionsForProject(
+      props.proj.path,
+      isActive() ? workspace.sessions : props.cachedSessions,
+      props.proj.folders
+    );
+  });
+  const [everExpanded, setEverExpanded] = createSignal(props.expanded);
+  const [everArchivedOpen, setEverArchivedOpen] = createSignal(props.isArchivedOpen);
+
+  createEffect(() => {
+    if (props.expanded) setEverExpanded(true);
+  });
+  createEffect(() => {
+    if (props.isArchivedOpen) setEverArchivedOpen(true);
+  });
+
+  const codeProjection = createMemo((prev?: ReturnType<typeof partitionCodeSessions>) => {
+    if (!everExpanded()) return { codeSessions: [], roots: [], subagentsByRoot: new Map<string, SessionInfo[]>() };
+    if (isWorkSurface() && prev) return prev;
+    const rawList =
+      isActive() && !workspace.bootstrappingSessions && workspace.sessions.length > 0
+        ? workspace.sessions
+        : props.cachedSessions;
+    return partitionCodeSessions(rawList);
+  });
+
+  const subagentsByRoot = () => codeProjection().subagentsByRoot;
+
+  const allFilteredSessions = createMemo<SessionInfo[]>((prev) => {
+    if (!everExpanded()) return [];
+    if (isWorkSurface()) return prev ?? [];
+    const q = props.filterQuery.trim().toLowerCase();
+    const sorted = sortSessionsByActivity(codeProjection().roots);
+    if (matchesProjectSearch(props.proj, q)) return sorted;
+    const byRoot = subagentsByRoot();
+    return sorted.filter((s) => matchesSessionSearch(s, q, byRoot.get(s.id)));
+  });
+
+  const activeSessions = createMemo(() =>
+    allFilteredSessions().filter((s) => !isSessionArchived(s))
+  );
+
+  const archivedSessions = createMemo(() =>
+    allFilteredSessions().filter((s) => isSessionArchived(s))
+  );
+  const history = useSessionHistory(
+    activeSessions,
+    () => props.proj.path,
+    () => props.pendingSessions,
+    () => props.filterQuery,
+    subagentsByRoot
+  );
+
+  return (
+    <div data-project-item={props.proj.path} class="relative">
+      <Show when={props.isDropBefore}>
+        <div class="h-0.5 bg-[var(--accent-primary)] rounded-full mx-1.5 my-0.5" />
+      </Show>
+
+      {/* Project Header Row */}
+      <div
+        data-project-header={props.proj.path}
+        onPointerDown={(ev) => props.onPointerDown(ev, props.proj.path)}
+        onClick={(ev) => props.onToggleProject(props.proj.path, ev)}
+        title={shortenPath(props.proj.path)}
+        class={`group/proj flex items-center justify-between gap-1.5 rounded-lg px-2.5 py-1.5 cursor-pointer active:cursor-grabbing transition-colors ${
+          props.isDraggingThis
+            ? "opacity-55 bg-[var(--accent-surface)] ring-1 ring-[var(--accent-border)]"
+            : "hover:bg-[var(--bg-hover)]/70"
+        }`}
+      >
+        <div class="flex items-center gap-1.5 min-w-0 flex-1">
+          <span
+            data-project-chevron
+            class="hoxi-chevron shrink-0 text-[var(--text-faint)] group-hover/proj:text-[var(--text-muted)] transition-colors"
+            data-open={props.expanded ? "true" : "false"}
+          >
+            <Icon name="chevron-right" size="small" class="w-3.5 h-3.5" />
+          </span>
+
+          <FolderIcon
+            open={props.expanded}
+            color={props.proj.color}
+            class="w-3.5 h-3.5 shrink-0"
+          />
+
+          <span
+            class={`truncate text-[13px] font-medium ${
+              isActive()
+                ? "text-[var(--text-primary)]"
+                : "text-[var(--text-secondary)] group-hover/proj:text-[var(--text-primary)]"
+            }`}
+          >
+            {props.proj.name}
+          </span>
+
+          <Show when={runningCount() > 0}>
+            <span
+              class="shrink-0 inline-flex items-center gap-1 rounded px-1.5 py-0.2 text-[11px] font-mono bg-[var(--accent-surface)] text-[var(--accent-primary)]"
+              title={t("leftNav.runningInProject", { count: runningCount() })}
+            >
+              <span class="hoxi-pulse-dot w-1.5 h-1.5 rounded-full bg-[var(--accent-primary)]" />
+              {runningCount()}
+            </span>
+          </Show>
+
+          <Show when={props.proj.folders.length > 1}>
+            <span
+              class="shrink-0 rounded px-1.5 py-0.2 text-[11px] font-mono bg-[var(--bg-inset)] text-[var(--text-muted)]"
+              title={[
+                t("leftNav.folderCountBadge", {
+                  count: props.proj.folders.length,
+                }),
+                ...props.proj.folders.map((f) => shortenPath(f.path)),
+              ].join("\n")}
+            >
+              {props.proj.folders.length}
+            </span>
+          </Show>
+        </div>
+
+        <div class="flex items-center gap-0.5 shrink-0">
+          <span
+            class="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-[var(--text-faint)] hover:text-[var(--text-muted)] opacity-0 group-hover/proj:opacity-100 transition-opacity cursor-grab active:cursor-grabbing"
+            title={t("leftNav.dragToReorder")}
+          >
+            <GripVertical size={13} class="block shrink-0" />
+          </span>
+
+          <WorkspaceActionMenu
+            dirOrWorkspaceID={props.proj.workspaceId || props.proj.path}
+          />
+
+          <button
+            type="button"
+            onClick={(e) => props.onCreateThread(e, props.proj.path)}
+            disabled={props.isCreating}
+            class="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] opacity-0 group-hover/proj:opacity-100 transition-opacity cursor-pointer"
+            title={t("leftNav.newThread")}
+          >
+            <Show
+              when={!props.isCreating}
+              fallback={<Spinner class="w-3.5 h-3.5 text-[var(--accent-primary)]" />}
+            >
+              <Plus size={13} class="block shrink-0" />
+            </Show>
+          </button>
+        </div>
+      </div>
+
+      {/* Expanded Workspace Sessions */}
+      <Show when={everExpanded()}>
+        <div
+          class="hoxi-drawer-grid"
+          data-open={props.expanded ? "true" : "false"}
+          aria-hidden={!props.expanded}
+        >
+          <div class="min-h-0 min-w-0 overflow-hidden">
+            <div class="ml-3.5 pl-2 border-l border-[var(--border-subtle)]/60 my-1 space-y-1 min-w-0">
+              <Show when={props.isLoadingSessions}>
+                <div class="flex items-center gap-1.5 px-2 py-1 text-[12px] text-[var(--text-faint)]">
+                  <Spinner class="w-3 h-3" />
+                  <span>{t("common.loading")}</span>
+                </div>
+              </Show>
+              <Show when={!props.isLoadingSessions && activeSessions().length === 0}>
+                <div class="px-2 py-1.5 text-[12px] text-[var(--text-faint)] italic">
+                  {t("leftNav.noThreads")}
+                </div>
+              </Show>
+
+              <Show when={!props.isLoadingSessions && activeSessions().length > 0}>
+                <SessionHistoryList history={history}>
+                  {(session) => (
+                    <SessionNavItem
+                      session={session}
+                      active={isSelectedSession(session.id)}
+                      canDelete={true}
+                      isArchived={false}
+                      pendingSessions={props.pendingSessions}
+                      subagents={subagentsByRoot().get(session.id)}
+                      filterQuery={props.filterQuery}
+                      onSelect={() => props.onSelectSession(props.proj.path, session.id)}
+                      onSelectSubagent={(subID) =>
+                        props.onSelectSession(props.proj.path, subID)
+                      }
+                      onArchive={(ev, id) =>
+                        props.onArchiveSession(props.proj.path, ev, id)
+                      }
+                      onDiscard={(ev, id) =>
+                        props.onDiscardSession(props.proj.path, ev, id)
+                      }
+                    />
+                  )}
+                </SessionHistoryList>
+              </Show>
+
+              {/* Collapsible Archived Section for this project */}
+              <Show when={!props.isLoadingSessions && archivedSessions().length > 0}>
+                <div class="pt-0.5">
+                  <button
+                    type="button"
+                    onClick={(ev) => {
+                      ev.stopPropagation();
+                      props.onToggleArchived(props.proj.path);
+                    }}
+                    class="w-full flex items-center justify-between gap-1.5 rounded-lg px-2 py-1 text-[12px] text-[var(--text-faint)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]/40 transition-colors cursor-pointer"
+                  >
+                    <div class="flex items-center gap-1">
+                      <span
+                        class="hoxi-chevron"
+                        data-open={props.isArchivedOpen ? "true" : "false"}
+                      >
+                        <Icon name="chevron-right" size="small" class="w-3 h-3" />
+                      </span>
+                      <Icon name="archive" size="small" class="w-3 h-3" />
+                      <span>{t("leftNav.archivedSessions")}</span>
+                    </div>
+                    <span class="text-[11px] font-mono">
+                      {archivedSessions().length}
+                    </span>
+                  </button>
+
+                  <Show when={everArchivedOpen()}>
+                    <div
+                      class="hoxi-drawer-grid"
+                      data-open={props.isArchivedOpen ? "true" : "false"}
+                      aria-hidden={!props.isArchivedOpen}
+                    >
+                      <div class="min-h-0 overflow-hidden">
+                        <div class="mt-1 space-y-1">
+                          <For each={archivedSessions()}>
+                            {(session) => (
+                              <SessionNavItem
+                                session={session}
+                                active={isSelectedSession(session.id)}
+                                canDelete={true}
+                                isArchived={true}
+                                pendingSessions={props.pendingSessions}
+                                onSelect={() =>
+                                  props.onSelectSession(props.proj.path, session.id)
+                                }
+                                onUnarchive={(ev, id) =>
+                                  props.onUnarchiveSession(props.proj.path, ev, id)
+                                }
+                                onDiscard={(ev, id) =>
+                                  props.onDiscardSession(props.proj.path, ev, id)
+                                }
+                              />
+                            )}
+                          </For>
+                        </div>
+                      </div>
+                    </div>
+                  </Show>
+                </div>
+              </Show>
+            </div>
+          </div>
+        </div>
+      </Show>
+
+      <Show when={props.isDropAfter}>
+        <div class="h-0.5 bg-[var(--accent-primary)] rounded-full mx-1.5 my-0.5" />
+      </Show>
+    </div>
+  );
+}

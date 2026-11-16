@@ -1,0 +1,293 @@
+# Hoxi 跨软件会话接管与本地 CLI 桥接落地方案 (`HANDOFF_AND_CLI_BRIDGE.md`)
+
+> **核心定位**：不仅支持一键发现并桥接本地已安装的 AI CLI / IDE 工具（**Grok CLI**、**Claude Code**、**OpenAI Codex**、**Google Antigravity (`agy`)**、**OpenCode CLI**、**Trae**、**Qoder（通义灵码）**、**CodeBuddy（腾讯云）**）的模型与凭证，更将**跨软件会话接管与任务无缝续做（Cross-Tool Session Handoff & Task Continuation）**作为一等公民能力落盘——自动扫描本机 8 大外部工具的历史会话，按工程目录（`cwd`）精准匹配，将外部会话的完整对话轮次（User Prompt、Reasoning 思考链、Tool Call/Result 工具执行记录、Assistant 回复）、任务摘要（Summary）与执行计划（Plan）无损物化到 Hoxi / OpenCode 会话存储与 8 维结构化记忆库中，实现跨工具一键接力续做任务。
+
+---
+
+## 1. 总体架构与四层解耦流水线
+
+```text
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ Layer 1: External Session & CLI Scanners (`internal/handoff/`, 只读无侵入)    │
+│  ├─ GrokAdapter       (`~/.grok/sessions/*` + `~/.grok/auth.json`)           │
+│  ├─ ClaudeAdapter     (`~/.claude/projects/<dash-cwd>/*.jsonl` + Keychain)   │
+│  ├─ CodexAdapter      (`~/.codex/state_*.sqlite` + `rollout-*.jsonl[.zst]`)  │
+│  ├─ GeminiAdapter     (`~/.gemini/antigravity/brain/<id>/transcript*.jsonl`) │
+│  ├─ OpenCodeAdapter   (`~/.local/share/opencode/opencode.db` SQLite)         │
+│  ├─ TraeAdapter       (`~/Library/Application Support/Trae*` SQLite/JSON)    │
+│  ├─ QoderAdapter      (`~/.qoder/projects/*` & Application Support/Qoder)    │
+│  └─ CodeBuddyAdapter  (`~/.codebuddy/*` & Application Support/CodeBuddy)     │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ Layer 2: Canonical Session & Tool IR (`internal/handoff/types.go`)           │
+│  ├─ ExternalSessionSummary (ID, Source, CWD, Title, Summary, Branch, Time)   │
+│  ├─ ExternalSessionDetail  (Turns[], PlanSteps[], ChangedFiles[], GitContext)│
+│  └─ Tool Call Normalization:                                                 │
+│     • Read/View -> `read`       • Edit/Patch -> `edit`                       │
+│     • Write/Create -> `write`   • Bash/Exec  -> `bash`                       │
+│     • Grep/Search -> `grep`     • Glob/List  -> `glob`                       │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ Layer 3: Session Materializer & 8-Dim Handoff Memory (`materialize.go`)      │
+│  ├─ 1. 创建目标会话与 Hoxi 会话记录 (`~/.hoxi/sessions/<id>/`)                │
+│  ├─ 2. 注入历史消息与 Part: 写入会话存储与 OpenCode SQLite (`opencode.db`)    │
+│  │     生成单调递增 msg_* / prt_* ID，保留完整时间线、ThoughtBox 与 ToolCard  │
+│  ├─ 3. 生成 8 维交接记忆: `.hoxi/memory/sessions/<new-session-id>.md`     │
+│  │     并通过 `.opencode/plugins/hoxi-memory.js` 自动注入 System Prompt      │
+│  └─ 4. Git 分支与工作树对齐: 检测源会话 `git_branch` / `head_commit` 状态     │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ Layer 4: In-Process Local CLI Protocol Bridge (`cli_bridge.go`, `grok_*.go`) │
+│  └─ `/api/hoxi/bridge/{toolID}/v1/*`                                         │
+│     • 动态读取本地 CLI 最新 Token，零明文拷贝落盘                             │
+│     • 注入专有握手头 (`X-XAI-Token-Auth`, `x-grok-client-version`,            │
+│       `x-grok-model-override`)                                               │
+│     • Stream-to-JSON 双向自适应转换（解决上游强制 `stream: true` 限制）        │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 2. 本机 8 大 CLI / IDE 会话与凭证格式规范
+
+### 2.1 Grok CLI (`~/.grok`)
+1. **会话索引与目录结构**：
+   - 全局全文检索库：`~/.grok/sessions/session_search.sqlite`（表 `session_docs(session_id, cwd, updated_at, title, content)`），毫秒级按 `cwd` 或关键词检索。
+   - 会话目录：`~/.grok/sessions/<url-encoded-cwd>/<session-id>/`（其中 `<url-encoded-cwd>` 将 `/` 编码为 `%2F`）。
+2. **单会话核心文件**：
+   - `summary.json`：
+     - `info.id`、`info.cwd`、`generated_title`、`session_summary`、`created_at`、`updated_at`、`current_model_id`
+     - `git_root_dir`、`head_commit`、`head_branch`
+     - `last_turn_summary`（最后轮次摘要）、`last_recap`（阶段性回顾）
+   - `plan.json`：结构化任务计划列表（含 step title / status）。
+   - `chat_history.jsonl`：按行存储的对话记录，包含 `type: "user" | "reasoning" | "assistant" | "tool_call" | "tool_result"`（或 OpenAI 兼容 message 结构）。
+   - `updates.jsonl`：ACP 协议 `session/update` 增量流（当 `chat_history.jsonl` 缺失或仅含部分记录时，可聚合 `user_message_chunk`、`agent_thought_chunk`、`agent_message_chunk`、`tool_call` 重建完整对话）。
+3. **凭证与模型缓存**：
+   - `~/.grok/auth.json`：`{"grok.com": {"type": "api", "key": "xai-...", "refresh_token": "...", "expires_at": "..."}}`（`grok login` 生成的 OIDC Bearer Token 默认有效期 6 小时，含单次轮换 `refresh_token`；Hoxi 从不直接回写 `auth.json`，当检测到 `expires_at` 已过期或距过期不足 5 分钟时，自动委托本机 `grok models` 在其自身文件锁下刷新凭证）。
+   - `~/.grok/models_cache.json`：`models: ["grok-4.7", "grok-4.7-build-fast", "grok-4.6", "grok-4.5"]`，`default_model: "grok-4.7"`
+   - `~/.grok/version.json`：`{"latest_version": "1.0.52"}`
+   - **上游专有协议要求**：
+     - Base URL：`https://cli-chat-proxy.grok.com/v1`
+     - 必需请求头：
+       - `Authorization: Bearer <key>`
+       - `X-XAI-Token-Auth: xai-grok-cli`
+       - `x-grok-client-version: <latest_version>`
+       - `x-grok-model-override: <request.model>`（每次请求动态匹配 body 中的 `model`）
+     - 流式约束：`POST /v1/chat/completions` 必须传 `"stream": true`，非流式请求会返回 `400 Streaming is required`。
+
+### 2.2 Claude Code (`~/.claude`)
+1. **会话存储结构**：
+   - 路径：`~/.claude/projects/<dash-encoded-cwd>/<session-id>.jsonl`
+   - 每行 JSON 事件包含：
+     - `type`: `"user"` | `"assistant"` | `"custom-title"` | `"ai-title"` | `"summary"`
+     - `cwd`: 精确的原始工作目录绝对路径（无需反解目录名中的 `-`）
+     - `gitBranch`: 会话当时的 Git 分支名
+     - `sessionId`: 会话 UUID
+     - `timestamp`: ISO-8601 时间戳
+     - `message`:
+       - `role`: `"user"` | `"assistant"`
+       - `content`: 字符串，或数组 `[ { "type": "text", "text": "..." }, { "type": "thinking", "thinking": "..." }, { "type": "tool_use", "id": "...", "name": "...", "input": {...} }, { "type": "tool_result", "tool_use_id": "...", "content": "..." } ]`
+2. **凭证与环境配置**：
+   - `~/.claude/settings.json`：读取 `env.ANTHROPIC_BASE_URL`、`env.ANTHROPIC_AUTH_TOKEN`、`env.ANTHROPIC_API_KEY`。
+   - **认证模式区分（`claude-settings` vs `claude-runner`）**：当检测到真实 API Key 时（`authMode: "claude-settings"`，排除 `sk-ant-oat*` OAuth token）可一键导入到 `~/.hoxi/models.json`；若用户使用 Claude 官方 OAuth 登录（`authMode: "claude-runner"`），Hoxi **绝不将 Claude OAuth Token 导入 OpenCode**，而是引导用户直接使用原生 `Claude Code` 运行时新建或切换会话。
+
+### 2.3 OpenAI Codex (`~/.codex`)
+1. **会话存储结构**：
+   - SQLite 索引库：`~/.codex/state_5.sqlite`（或 `~/.codex/state_*.sqlite` 最新版本）中的 `threads` 表：
+     - 字段：`id`, `rollout_path`, `created_at`, `updated_at`, `source`, `model_provider`, `cwd`, `title`, `git_sha`, `git_branch`, `model`, `reasoning_effort`, `first_user_message`, `preview`。
+   - 对话轨迹文件：`rollout_path` 指向 `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`（或 `.jsonl.zst`，可通过 `zstd -dc` 解压读取）：
+     - `type: "event_msg"` (`payload.type`: `"user_message"`, `"agent_message"`, `"agent_reasoning"`)
+     - `type: "response_item"` (`payload.type`: `"message"`, `"reasoning"`, `"function_call"`, `"function_call_output"`)
+2. **凭证与防互踢同步机制**：
+   - `~/.codex/auth.json`：支持 `OPENAI_API_KEY`（API Key 模式）与 `tokens`（ChatGPT OAuth 模式：`access_token`, `refresh_token`, `account_id`）。
+   - **单向只读同步（防 Refresh Token 抢先消费与防旧凭证回滚）**：Hoxi 绝不回写 `~/.codex/auth.json`——注入 OpenCode `/auth/openai` 时从 `access_token` JWT 中提取真实 `exp` 过期时间（毫秒；非 JWT 保持 `0`），使 JWT 未过期前双端直接共享同一个 `access_token` 而不提前消费 `refresh_token`；且后台 `credentialSyncLoop` 与引擎 `auth.json` 合并均采用「新 Token 优先（`isEngineOAuthNewer`）」策略，防止 Hoxi 重启时把引擎已刷新的新 Token 回滚为 `~/.codex/auth.json` 中的旧 Token。
+   - `~/.codex/config.toml` 与 `~/.codex/models_cache.json`：提取 `model` 与可用模型列表。
+
+### 2.4 Google Antigravity / Gemini CLI (`~/.gemini`)、OpenCode CLI、Trae、Qoder 与 CodeBuddy
+- **Google Antigravity (`agy`) / Gemini CLI (`gemini`)**（`internal/handoff/gemini.go`）：扫描 `~/.gemini/antigravity/brain/<id>/transcript*.jsonl`（优先读取完整 `transcript_full.jsonl`），解析 `USER_INPUT`、`PLANNER_RESPONSE`（含 `thinking` 与 `tool_calls`）及工作区路径。
+- **OpenCode CLI**（`internal/handoff/opencode.go`）：以只读模式（`-readonly` + `.timeout 5000`）扫描本机 `~/.local/share/opencode/opencode.db`（或 `$XDG_DATA_HOME/opencode/opencode.db`）的 `session`、`message`、`part` 表。
+- **Trae**（`internal/handoff/trae.go`）：扫描 `~/Library/Application Support/Trae*`（及 Windows `%APPDATA%\Trae*`）下的 SQLite `ItemTable` 与会话历史。
+- **Qoder（通义灵码）**（`internal/handoff/qoder.go`）：扫描 `~/.qoder/projects/*` 与 Application Support 下的会话记录。
+- **CodeBuddy（腾讯云）**（`internal/handoff/codebuddy.go`）：扫描 `~/.codebuddy/*` 与 Application Support 下的会话记录。
+
+---
+
+## 3. Canonical Session IR 与 OpenCode 无损物化机制
+
+### 3.1 统一会话中间表示 (`NormalizedExternalSession`)
+```go
+type ExternalToolID string
+
+const (
+    ExternalToolGrok      ExternalToolID = "grok-cli"
+    ExternalToolClaude    ExternalToolID = "claude-code"
+    ExternalToolCodex     ExternalToolID = "codex-cli"
+    ExternalToolGemini    ExternalToolID = "gemini-antigravity"
+    ExternalToolCodeBuddy ExternalToolID = "codebuddy"
+    ExternalToolTrae      ExternalToolID = "trae"
+    ExternalToolQoder     ExternalToolID = "qoder"
+    ExternalToolOpenCode  ExternalToolID = "opencode-cli"
+)
+
+type ExternalSessionSummary struct {
+    ID           string         `json:"id"`
+    Source       ExternalToolID `json:"source"`
+    SourceLabel  string         `json:"sourceLabel"`
+    CWD          string         `json:"cwd"`
+    Title        string         `json:"title"`
+    Summary      string         `json:"summary,omitempty"`
+    Model        string         `json:"model,omitempty"`
+    GitBranch    string         `json:"gitBranch,omitempty"`
+    GitCommit    string         `json:"gitCommit,omitempty"`
+    CreatedAt    int64          `json:"createdAt"` // Unix ms
+    UpdatedAt    int64          `json:"updatedAt"` // Unix ms
+    TurnCount    int            `json:"turnCount,omitempty"`
+    MatchesCWD   bool           `json:"matchesCwd"`
+}
+
+type NormalizedToolCall struct {
+    CallID string                 `json:"callID"`
+    Tool   string                 `json:"tool"` // read | edit | write | bash | grep | glob
+    Title  string                 `json:"title"`
+    Input  map[string]interface{} `json:"input"`
+    Output string                 `json:"output"`
+    Status string                 `json:"status"` // completed | error
+}
+
+type NormalizedTurn struct {
+    Role      string               `json:"role"` // "user" | "assistant"
+    Timestamp int64                `json:"timestamp"`
+    Text      string               `json:"text"`
+    Reasoning string               `json:"reasoning,omitempty"`
+    Tools     []NormalizedToolCall `json:"tools,omitempty"`
+    ModelID   string               `json:"modelID,omitempty"`
+}
+```
+
+### 3.2 工具调用语义映射表 (`normalizeExternalToolName`)
+将不同 CLI 的内置工具名统一映射为 Hoxi `ToolCard.tsx` 原生支持渲染的 OpenCode 标准工具名：
+- 文件读取：`read`, `Read`, `view_file`, `read_file`, `cat` $\rightarrow$ `"read"`
+- 文件编辑：`edit`, `Edit`, `MultiEdit`, `replace_file_content`, `apply_patch`, `patch` $\rightarrow$ `"edit"`
+- 文件写入：`write`, `Write`, `write_file`, `create_file` $\rightarrow$ `"write"`
+- 终端命令：`bash`, `Bash`, `exec_command`, `shell`, `run_command`, `terminal` $\rightarrow$ `"bash"`
+- 内容搜索：`grep`, `Grep`, `search`, `ripgrep`, `rg` $\rightarrow$ `"grep"`
+- 文件查找：`glob`, `Glob`, `list_dir`, `ls`, `find` $\rightarrow$ `"glob"`
+
+### 3.3 物化到 OpenCode 数据库与 8 维记忆库 (`MaterializeExternalSession`)
+当用户点击「接管会话并继续任务 (Take Over & Continue)」时，Go 后端执行以下原子步骤：
+1. **确定目标工作目录 (`targetDir`)**：
+   - 默认使用外部会话记录的 `cwd`（若该目录存在），或当前 Hoxi 激活的工程目录。
+   - OpenCode、Claude Code 和 Antigravity 新会话统一遵循“默认目录模式”：开启 Worktree 时创建 `.hoxi/worktrees/<sessionID>`；选择本地时在当前项目目录和当前分支运行，不创建分支。
+   - 本地 CLI 的目录选择不会关闭其自身的工具权限限制。已有会话保留原目录模式，空闲时可切换；退出工作树时保留分支，未提交改动需先处理。
+2. **创建原生 OpenCode 会话**：
+   - 调用 `POST http://127.0.0.1:<openCodePort>/session?directory=<targetDir>`，标题设为 `[Grok/Claude/Codex] <原会话标题>`，获取合法的 OpenCode `SessionInfo`（含 `ses_...` ID）。
+3. **写入对话历史 (`message` 与 `part` 表)**：
+   - 定位 OpenCode SQLite 数据库 `~/.local/share/opencode/opencode.db`（支持 `$XDG_DATA_HOME/opencode/opencode.db`）。
+   - 将 `NormalizedTurn[]` 转换为 OpenCode 的 `message` 行与 `part` 行（使用单调递增的 `msg_` 与 `prt_` 标识符，确保时间轴严格有序）：
+     - `user` 轮次生成 `role: "user"` 的 `message` + `type: "text"` 的 `part`。
+     - `assistant` 轮次生成 `role: "assistant"` 的 `message` +：
+       - 若含思考过程：生成 `type: "reasoning"` 的 `part`（前端自动渲染为可折叠 `<ThoughtBox />`）。
+       - 若含工具调用：为每个工具生成 `type: "tool"` 的 `part`（`state.status = "completed"`，前端自动渲染为带输入输出详情的 `<ToolCard />`）。
+       - 若含回复正文：生成 `type: "text"` 的 `part`。
+4. **生成并注入 8 维结构化交接记忆 (`.hoxi/memory/sessions/<sessionID>.md`)**：
+   - 提取源会话的：
+     1. `## 1. Goals`（首轮用户需求 + 源会话标题与核心目标）
+     2. `## 2. Constraints`（工作目录、源工具、Git 分支与 Commit 约束）
+     3. `## 3. Key Facts`（源会话摘要 `session_summary` / `last_recap`）
+     4. `## 4. Changed Files`（从历史 `edit` / `write` / `apply_patch` 工具调用中提取的已修改文件列表）
+     5. `## 5. Errors & Fixes`（历史工具调用中的错误与修复上下文）
+     6. `## 6. Todo`（从 `plan.json` 或最近任务计划提取的待办项）
+     7. `## 7. Progress`（最后轮次进展 `last_turn_summary` 与已完成轮次统计）
+     8. `## 8. Next Steps`（无缝续做指引：基于上述已落盘的对话历史与代码现状继续执行下一步）
+   - 写入 `<targetDir>/.hoxi/memory/sessions/<sessionID>.md`（隔离会话写到项目根 `.hoxi/memory/`，不写入可删除的 worktree；旧版 `.opencode/memory/` 仅作为读取回退）。
+   - 升级 `.opencode/plugins/hoxi-memory.js`：在 `experimental.chat.system.transform` 钩子中，除了读取 `project.md`，还根据 `input.sessionID` 自动读取 `.hoxi/memory/sessions/${input.sessionID}.md` 并作为 `<session_handoff_memory>` 注入 System Prompt！
+
+---
+
+## 4. 后端 HTTP API 与协议桥接契约
+
+### 4.1 跨软件会话发现与接管接口
+- `GET /api/hoxi/handoff/sessions?directory=<cwd>&query=<q>&source=<all|grok-cli|claude-code|codex-cli|gemini-antigravity|opencode-cli|trae|qoder|codebuddy>&limit=50`
+  - 返回本机外部 CLI 会话列表（优先置顶与当前 `directory` 匹配的会话，同时支持跨工程全局搜索）：
+    ```json
+    {
+      "sessions": [
+        {
+          "id": "b1bc6d85-1695-4df4-a7ae-9de75aa9df70",
+          "source": "grok-cli",
+          "sourceLabel": "Grok CLI",
+          "cwd": "/path/to/project",
+          "title": "Analyze local CLI session handoff",
+          "summary": "...",
+          "model": "grok-4.7",
+          "gitBranch": "main",
+          "gitCommit": "a1b2c3d",
+          "createdAt": 1775573432177,
+          "updatedAt": 1775574102000,
+          "turnCount": 14,
+          "matchesCwd": true
+        }
+      ],
+      "sources": {
+        "grok-cli": { "installed": true, "sessionCount": 27 },
+        "claude-code": { "installed": true, "sessionCount": 639 },
+        "codex-cli": { "installed": true, "sessionCount": 1260 }
+      }
+    }
+    ```
+- `GET /api/hoxi/handoff/preview?source=<source>&id=<sessionID>&cwd=<encodedOrRawCwd>`
+  - 返回外部会话的完整预览详情（`NormalizedTurn[]`、`PlanSteps`、`ChangedFiles`、`Summary`），供用户在接管前在弹窗中实时预览对话内容与任务进度。
+- `POST /api/hoxi/handoff/import`
+  - 请求体：
+    ```json
+    {
+      "source": "grok-cli",
+      "sessionID": "b1bc6d85-1695-4df4-a7ae-9de75aa9df70",
+      "sourceCwd": "/path/to/project",
+      "targetDirectory": "/path/to/project",
+      "switchProject": true
+    }
+    ```
+  - 响应体：
+    ```json
+    {
+      "ok": true,
+      "session": { "id": "ses_...", "title": "...", "directory": "..." },
+      "importedTurns": 14,
+      "memoryPath": ".hoxi/memory/sessions/ses_....md",
+      "targetDirectory": "/path/to/project"
+    }
+    ```
+
+### 4.2 本地 CLI 模型与凭证探测/导入接口
+- `GET /api/hoxi/local-cli/status`
+  - 并行探测本机 8 大工具（`grok-cli`、`claude-code`、`codex-cli`、`gemini-antigravity`、`codebuddy`、`trae`、`qoder`、`opencode-cli`）的安装状态、认证模式、可用模型列表、会话数量以及是否已接入 Hoxi。
+- `POST /api/hoxi/local-cli/import`
+  - 请求体：`{ "toolID": "grok-cli" | "codex-cli" | "claude-code" | "gemini-antigravity" | "opencode-cli" }`
+  - 行为：
+    - `grok-cli`：在 `~/.hoxi/models.json` 中注册 `grok-cli` 提供商，落盘进程中立的 `grokCLIStoredBridgeURL`（`http://127.0.0.1:5410/api/hoxi/bridge/grok-cli/v1`），各运行实例在内存中将其重写为自身回环桥接端口（避免 release / dev / headless 多实例互改配置文件），并自动导入 `~/.grok/models_cache.json` 中的模型。
+    - `codex-cli`：读取 `~/.codex/auth.json` 的 OAuth 凭证（解析真实 JWT `exp` 毫秒过期时间，由后台 `credentialSyncLoop` 每 60s 按新旧比对同步，绝不用旧文件回滚引擎已刷新的 Token）或 API Key 同步至 OpenCode `/auth/openai` 与 `~/.hoxi/models.json`。
+    - `claude-code`：仅当 `~/.claude/settings.json` 或环境变量配置了真实 API Key（`authMode: "claude-settings"`）时才导入 `~/.hoxi/models.json`；若为 Claude OAuth 登录（`authMode: "claude-runner"`），绝不将 OAuth Token 导入 OpenCode，而是由 `Claude Code` 原生运行时直接驱动。
+
+### 4.3 本地 CLI 协议转换网关 (`/api/hoxi/bridge/grok-cli/v1/*`)
+- `GET /api/hoxi/bridge/grok-cli/v1/models`：动态读取 `~/.grok/models_cache.json` 并返回标准 OpenAI `{ "object": "list", "data": [...] }`。
+- `POST /api/hoxi/bridge/grok-cli/v1/chat/completions`：
+  - 实时从 `~/.grok/auth.json` 读取最新 Bearer Key，从 `~/.grok/version.json` 读取 `latest_version`；后台 `credentialSyncLoop` 每 60s 巡检一次，且每次请求前若发现 OIDC Token 已过期或 5 分钟内即将过期，自动调用本机 `grok models` 刷新 `~/.grok/auth.json`；若上游仍返回 `401 Unauthorized`，网关自动触发一次强制提前刷新并透明重放请求。
+  - 解析请求 JSON 中的 `model` 与 `stream` 字段，注入 `X-XAI-Token-Auth: xai-grok-cli`、`x-grok-client-version`、`x-grok-model-override: <model>`。
+  - 若调用方请求 `"stream": false`（例如模型连通性探测、代码审计或标题总结），网关在转发上游时自动改写为 `"stream": true`，并在内存中聚合 SSE `delta.content` / `delta.reasoning_content` / `delta.tool_calls` 后返回标准非流式 OpenAI JSON 响应；若调用方请求 `"stream": true`，则零缓冲直通转发 SSE 流。
+
+---
+
+## 5. 模块化落地结构（严格遵守单文件 < 800 行红线与单向分层）
+
+### 5.1 后端模块 (`internal/handoff/`)
+1. `internal/handoff/types.go` & `service.go`：跨软件会话接管与本地 CLI 桥接的数据结构定义、工具名归一化映射、HTTP 路由分发入口。
+2. `internal/handoff/grok.go` & `grok_bridge.go`：Grok CLI 会话扫描器（SQLite + JSONL/Updates 解析）、凭证/模型探测与 `/api/hoxi/bridge/grok-cli/v1/*` 协议桥。
+3. `internal/handoff/claude.go`：Claude Code 会话扫描器（`~/.claude/projects` JSONL 解析、Thinking/ToolUse/ToolResult 提取）与环境凭证探测。
+4. `internal/handoff/codex.go`：OpenAI Codex 会话扫描器（`~/.codex/state_*.sqlite` 检索 + `.jsonl`/`.jsonl.zst` 解压解析）与 OAuth/API 凭证桥接。
+5. `internal/handoff/gemini.go`：Google Antigravity (`agy`) 会话扫描器（`~/.gemini/antigravity/brain/*` transcript 解析）。
+6. `internal/handoff/opencode.go`：本机外部 OpenCode CLI 历史会话扫描器。
+7. `internal/handoff/trae.go`、`qoder.go`、`codebuddy.go`：Trae、Qoder（通义灵码）、CodeBuddy（腾讯云）会话与本地配置扫描器。
+8. `internal/handoff/materialize.go`：Hoxi / OpenCode 会话物化写入器 + 8 维交接记忆 `.hoxi/memory/sessions/<id>.md` 生成器。
+
+### 5.2 前端模块 (`web/src/components/handoff/` & `models/`)
+1. `web/src/components/handoff/ExternalHandoffModal.tsx` & `ExternalHandoffPreviewPane.tsx`：跨软件会话接管中心弹窗与实时详情预览面板（支持 8 大来源过滤、当前工程置顶、8 维记忆预览与一键接管续做）。
+2. `web/src/components/models/LocalCliBridgeBanner.tsx`：在模型管理页（`ProviderCatalogTab.tsx`）顶部展示本机已安装的 CLI 工具，支持一键接入模型与凭证，并可直接跳转打开会话接管中心。
+3. `web/src/components/inspector/MemoryBankView.tsx`：右侧 `Memory` 面板，支持切换查看「当前会话交接记忆 (`sessions/<id>.md`)」与「项目长期记忆 (`project.md`)」。

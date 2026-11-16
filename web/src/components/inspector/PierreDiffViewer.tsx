@@ -1,0 +1,577 @@
+// web/src/components/inspector/PierreDiffViewer.tsx
+import { createEffect, createMemo, createSignal, on, onCleanup, Show } from "solid-js";
+import { ArrowUpFromLine, Check, Columns2, FolderSync, GitCommitHorizontal, GitPullRequestArrow, RefreshCw, Rows2, Sparkles } from "lucide-solid";
+import {
+  activeDirectory,
+  activeWorkspaceFolders,
+  appSettings,
+  commitWorktreeChanges,
+  createBranchPullRequest,
+  generateSmartCommitMessage,
+  isSessionBusy,
+  loadSessionMessagesOnly,
+  pushWorktreeChanges,
+  refreshWorktreeStatus,
+  restoreSessionWorktree,
+  scheduleRefreshWorktreeStatus,
+  setWorkspace,
+  syncSessionWorktree,
+  updateAppSetting,
+  workspace,
+} from "../../store/workspace";
+import {
+  collectCycleChangedFiles,
+  enrichDiffWithWorktree,
+} from "../timeline/tool-card-state";
+import { t } from "../../i18n";
+import AICommitFallbackToast from "./ai-commit-fallback-toast";
+import PullRequestBadge from "./PullRequestBadge";
+import PullRequestIssuesButton from "./PullRequestIssuesButton";
+import DiffEmptyState from "./pierre-diff-empty";
+import DiffFileTree from "./diff-file-tree";
+import MultiRepoDiffView from "./multi-repo-diff-view";
+import {
+  FileDiffBlock,
+  openRemoteCompareURL,
+  SelectedDiffDetail,
+  synthesizeAICommitMessage,
+} from "./pierre-diff-parts";
+
+export { FileDiffBlock };
+
+export default function PierreDiffViewer() {
+  const diffStyle = () => appSettings.defaultDiffStyle;
+  const setDiffStyle = (mode: "unified" | "split") =>
+    updateAppSetting("defaultDiffStyle", mode);
+  const [refreshing, setRefreshing] = createSignal(false);
+  const [commitMsg, setCommitMsg] = createSignal("");
+  const [commitExpanded, setCommitExpanded] = createSignal(false);
+  const [committing, setCommitting] = createSignal(false);
+  const [pushing, setPushing] = createSignal(false);
+  const [committedHash, setCommittedHash] = createSignal<string | null>(null);
+  const [lastCompareURL, setLastCompareURL] = createSignal<string | null>(null);
+  const [restoring, setRestoring] = createSignal(false);
+  const [syncingBase, setSyncingBase] = createSignal(false);
+
+  const sessionKey = () => workspace.activeSessionID || "__root__";
+  const activeWt = createMemo(() => workspace.worktreeBySession[sessionKey()]);
+  const repos = createMemo(() => activeWt()?.repos ?? []);
+  const compareURL = () => lastCompareURL() || activeWt()?.compareURL || "";
+
+  const onRestoreWorktree = async () => {
+    const id = workspace.activeSessionID;
+    if (!id || restoring()) return;
+    setRestoring(true);
+    try {
+      await restoreSessionWorktree(id);
+    } catch (err) {
+      console.error("restoreSessionWorktree failed:", err);
+    } finally {
+      setRestoring(false);
+    }
+  };
+
+  const onSyncWithBase = async () => {
+    const id = workspace.activeSessionID;
+    if (!id || syncingBase()) return;
+    setSyncingBase(true);
+    try {
+      await syncSessionWorktree(id);
+    } catch (err) {
+      console.error("syncSessionWorktree failed:", err);
+    } finally {
+      setSyncingBase(false);
+    }
+  };
+
+  const diffs = createMemo(() => {
+    if (!workspace.inspectorOpen || workspace.inspectorTab !== "diffs") {
+      return [];
+    }
+    const id = workspace.activeSessionID;
+    const key = sessionKey();
+    const wtDiffs = workspace.worktreeDiffsBySession[key] ?? [];
+    if (workspace.diffScope === "worktree") {
+      return wtDiffs;
+    }
+    const isolated = activeWt()?.isolated;
+    const sessionDiffs = id
+      ? workspace.diffsBySession[id] ?? []
+      : workspace.diffsBySession[key] ?? [];
+    if (sessionDiffs.length > 0 || !id) {
+      return wtDiffs.length > 0
+        ? sessionDiffs.map((d) => enrichDiffWithWorktree(d, wtDiffs, isolated))
+        : sessionDiffs;
+    }
+    if (activeWt()?.dirty === false && !isSessionBusy(id)) {
+      return sessionDiffs;
+    }
+    const turns = workspace.messagesBySession[id] ?? [];
+    return turns.length > 0 ? collectCycleChangedFiles(turns, id) : sessionDiffs;
+  });
+
+  // The clicked turn may describe a historical edit absent from the current Git diff.
+  // Keep that preview separate from the live diff list used for totals and commits.
+  const previewDiffs = createMemo(() => {
+    const list = diffs();
+    const clicked = workspace.inspectedFileDiff;
+    if (!clicked || !workspace.inspectedDiffFile) return list;
+    const exactIdx = list.findIndex((item) => item.file === clicked.file);
+    const index =
+      exactIdx >= 0
+        ? exactIdx
+        : list.findIndex(
+            (item) =>
+              item.file.endsWith(`/${clicked.file}`) ||
+              clicked.file.endsWith(`/${item.file}`)
+          );
+    if (index < 0) return [...list, clicked];
+    const current = list[index];
+    if (current.patch || typeof current.before === "string" || typeof current.after === "string") return list;
+    return list.map((item, i) => i === index ? clicked : item);
+  });
+
+  const selectedIndex = createMemo(() => {
+    const target = workspace.inspectedDiffFile;
+    if (!target) return -1;
+    const list = previewDiffs();
+    const exactIdx = list.findIndex((d) => d.file === target);
+    if (exactIdx >= 0) return exactIdx;
+    return list.findIndex(
+      (d) => d.file.endsWith(`/${target}`) || target.endsWith(`/${d.file}`)
+    );
+  });
+
+  const selectedDiff = createMemo(() => {
+    const idx = selectedIndex();
+    return idx >= 0 ? previewDiffs()[idx] : null;
+  });
+
+  const hasMultipleRepos = createMemo(() => {
+    if (repos().length > 1) return true;
+    const seen = new Set<string>();
+    for (const d of previewDiffs()) {
+      seen.add(d.repoDir || d.repo || ".");
+      if (seen.size > 1) return true;
+    }
+    return false;
+  });
+
+  const totals = createMemo(() => {
+    let add = 0;
+    let del = 0;
+    for (const d of diffs()) {
+      add += d.additions || 0;
+      del += d.deletions || 0;
+    }
+    return { add, del };
+  });
+
+  createEffect(on(() => [
+    workspace.activeSessionID,
+    workspace.rootDir,
+    activeWorkspaceFolders().length,
+    workspace.inspectorOpen,
+    workspace.inspectorTab === "diffs",
+  ] as const, ([id, root, , isOpen, isDiffsTab]) => {
+    setLastCompareURL(null);
+    if (!isOpen || !isDiffsTab || (!root && !id)) return;
+    const key = id || "__root__";
+    if (!workspace.worktreeBySession[key] || !workspace.worktreeDiffsBySession[key]) {
+      scheduleRefreshWorktreeStatus(id, 0);
+    }
+    let cleanStreak = 0;
+    const timer = setInterval(() => {
+      if (document.hidden || !workspace.inspectorOpen || workspace.inspectorTab !== "diffs") return;
+      const busy = Boolean(id && workspace.statusBySession[id]?.type === "busy");
+      const dirty = Boolean(workspace.worktreeBySession[key]?.dirty);
+      if (!busy && !dirty) {
+        cleanStreak++;
+        if (cleanStreak > 2 && cleanStreak % 3 !== 0) return;
+      } else {
+        cleanStreak = 0;
+      }
+      scheduleRefreshWorktreeStatus(id, 0);
+    }, 5000);
+    onCleanup(() => clearInterval(timer));
+  }));
+
+  const onRefresh = async () => {
+    if (refreshing()) return;
+    setRefreshing(true);
+    try {
+      const id = workspace.activeSessionID;
+      await Promise.all([
+        id ? loadSessionMessagesOnly(id) : Promise.resolve(),
+        refreshWorktreeStatus(id),
+      ]);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const onGenerateAICommit = async () => {
+    setCommitMsg(synthesizeAICommitMessage(workspace.activeSessionID, diffs()));
+    const smart = await generateSmartCommitMessage(workspace.activeSessionID, diffs());
+    if (smart) setCommitMsg(smart);
+  };
+
+  const onCommitWorktree = async (push = false) => {
+    const msg = commitMsg().trim();
+    if (!msg || committing() || pushing()) return;
+    setCommitting(true);
+    if (push) setPushing(true);
+    try {
+      const res = await commitWorktreeChanges(msg, { push });
+      setCommitMsg("");
+      if (res.compareURL) setLastCompareURL(res.compareURL);
+      setCommittedHash(res.commit || "HEAD");
+      setWorkspace("inspectedDiffFile", null);
+      setTimeout(() => setCommittedHash(null), 5000);
+    } catch (err) {
+      console.error("commitWorktree failed:", err);
+    } finally {
+      setCommitting(false);
+      setPushing(false);
+    }
+  };
+
+  const onPushWorktree = async (): Promise<string> => {
+    if (pushing() || committing()) return compareURL();
+    setPushing(true);
+    try {
+      const res = await pushWorktreeChanges();
+      if (res.compareURL) setLastCompareURL(res.compareURL);
+      return res.compareURL || compareURL();
+    } catch (err) {
+      console.error("pushWorktree failed:", err);
+      return "";
+    } finally {
+      setPushing(false);
+    }
+  };
+
+  const onOpenCreatePR = async () => {
+    if (pushing() || committing()) return;
+    const wt = activeWt();
+    let url = compareURL();
+    if ((wt?.aheadCount ?? 0) > 0 || !wt?.hasUpstream) {
+      const pushedURL = await onPushWorktree();
+      if (pushedURL) url = pushedURL;
+    }
+    try {
+      const created = await createBranchPullRequest({
+        directory: wt?.directory || activeDirectory(),
+        head: wt?.branch,
+        base: wt?.baseBranch,
+      });
+      if (created?.ok && (created.url || created.pullRequest?.url)) {
+        openRemoteCompareURL(created.url || created.pullRequest!.url);
+        return;
+      }
+    } catch {
+      /* fall back to compare URL when gh CLI is unavailable */
+    }
+    if (url) openRemoteCompareURL(url);
+  };
+
+  return (
+    <div class="flex flex-col h-full">
+      <div class="shrink-0 flex items-center gap-1 px-2.5 py-1">
+        <div class="inline-flex items-center rounded-lg bg-[var(--bg-inset)] p-0.5">
+          <button
+            type="button"
+            class={`rounded-md px-2 py-0.5 text-[11px] transition-colors cursor-pointer ${
+              workspace.diffScope === "worktree"
+                ? "bg-[var(--bg-panel)] text-[var(--text-primary)] font-medium shadow-2xs"
+                : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+            }`}
+            aria-pressed={workspace.diffScope === "worktree"}
+            onClick={() => setWorkspace("diffScope", "worktree")}
+          >
+            {t("inspector.diffs.scopeWorktree")}
+          </button>
+          <button
+            type="button"
+            class={`rounded-md px-2 py-0.5 text-[11px] transition-colors cursor-pointer ${
+              workspace.diffScope === "session"
+                ? "bg-[var(--bg-panel)] text-[var(--text-primary)] font-medium shadow-2xs"
+                : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+            }`}
+            aria-pressed={workspace.diffScope === "session"}
+            onClick={() => setWorkspace("diffScope", "session")}
+          >
+            {t("inspector.diffs.scopeSession")}
+          </button>
+        </div>
+        <button type="button" onClick={() => setWorkspace("inspectedDiffFile", null)}
+          title={t("inspector.diffs.backToTree")}
+          class="ml-auto flex shrink-0 items-center gap-1.5 px-1 text-[11px] font-mono tabular-nums cursor-pointer">
+          <span class="text-[var(--ok-text)]">+{totals().add}</span>
+          <span class="text-[var(--danger-text)]">-{totals().del}</span>
+        </button>
+        <Show when={selectedDiff()}>
+          <button type="button" onClick={() => setDiffStyle(diffStyle() === "unified" ? "split" : "unified")}
+            title={diffStyle() === "unified" ? t("inspector.diffs.split") : t("inspector.diffs.unified")}
+            aria-label={diffStyle() === "unified" ? t("inspector.diffs.split") : t("inspector.diffs.unified")}
+            class="shrink-0 rounded-md p-1.5 text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-pointer">
+            <Show when={diffStyle() === "unified"} fallback={<Rows2 size={13} />}><Columns2 size={13} /></Show>
+          </button>
+        </Show>
+        <button type="button" onClick={() => void onRefresh()} disabled={refreshing()}
+          title={t("inspector.diffs.refresh")} aria-label={t("inspector.diffs.refresh")}
+          class="shrink-0 rounded-md p-1.5 text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-pointer">
+          <RefreshCw size={13} class={refreshing() ? "animate-spin" : ""} />
+        </button>
+        <Show when={(activeWt()?.aheadCount ?? 0) > 0}>
+          <button
+            type="button"
+            disabled={pushing() || committing()}
+            onClick={() => void onPushWorktree()}
+            title={t("inspector.diffs.pushAheadBtn", { count: activeWt()?.aheadCount ?? 0 })}
+            aria-label={t("inspector.diffs.pushAheadBtn", { count: activeWt()?.aheadCount ?? 0 })}
+            class="shrink-0 inline-flex items-center gap-1 rounded-md bg-[var(--bg-inset)] px-1.5 py-0.5 text-[11px] font-mono text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:opacity-40 cursor-pointer"
+          >
+            <ArrowUpFromLine size={11} class={pushing() ? "animate-bounce" : ""} />
+            <span>{pushing() ? t("inspector.diffs.pushingBtn") : `↑${activeWt()?.aheadCount ?? 0}`}</span>
+          </button>
+        </Show>
+        <PullRequestBadge
+          directory={activeWt()?.directory || activeDirectory()}
+          branch={activeWt()?.branch}
+          compareURL={compareURL()}
+          active={workspace.inspectorOpen && workspace.inspectorTab === "diffs"}
+          canCreate={
+            Boolean(compareURL()) &&
+            ((activeWt()?.aheadCount ?? 0) > 0 ||
+              Boolean(activeWt()?.hasUpstream) ||
+              Boolean(committedHash()))
+          }
+          disabled={pushing() || committing()}
+          onCreate={onOpenCreatePR}
+        />
+        <PullRequestIssuesButton
+          directory={activeWt()?.directory || activeDirectory()}
+          branch={activeWt()?.branch}
+          sessionID={workspace.activeSessionID || undefined}
+          active={workspace.inspectorOpen && workspace.inspectorTab === "diffs"}
+          disabled={pushing() || committing()}
+        />
+        <Show when={diffs().length > 0}>
+          <button type="button" onClick={() => setCommitExpanded(!commitExpanded())}
+            aria-expanded={commitExpanded()} aria-controls="diff-commit-editor"
+            title={t("inspector.diffs.commitBtn", { count: diffs().length })}
+            aria-label={t("inspector.diffs.commitBtn", { count: diffs().length })}
+            class={`shrink-0 rounded-md p-1.5 cursor-pointer transition-colors ${commitExpanded() ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]" : "text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--accent-primary)]"}`}>
+            <GitCommitHorizontal size={14} />
+          </button>
+        </Show>
+      </div>
+      <Show when={activeWt()?.health === "absent-restorable"}>
+        <div class="shrink-0 mx-2.5 my-1 flex items-center justify-between gap-2 rounded-lg px-3 py-2 bg-[var(--warn-surface)]/70 text-[11px]">
+          <div class="min-w-0 flex-1">
+            <div class="font-semibold text-[var(--warn-text)] truncate">
+              {t("inspector.diffs.restorableTitle")}
+            </div>
+            <div class="text-[11px] text-[var(--text-secondary)] truncate">
+              {t("inspector.diffs.restorableDesc", {
+                branch: activeWt()?.branch || `hoxi/${workspace.activeSessionID || ""}`,
+              })}
+            </div>
+          </div>
+          <button
+            type="button"
+            disabled={restoring()}
+            onClick={() => void onRestoreWorktree()}
+            class="shrink-0 inline-flex items-center gap-1 rounded-lg bg-[var(--accent-primary)] px-2.5 py-1 text-[11px] font-medium text-[var(--accent-foreground)] hover:opacity-90 disabled:opacity-40 cursor-pointer"
+          >
+            <FolderSync size={11} />
+            <span>
+              {restoring()
+                ? t("inspector.diffs.restoringWorktreeBtn")
+                : t("inspector.diffs.restoreWorktreeBtn")}
+            </span>
+          </button>
+        </div>
+      </Show>
+      <Show when={activeWt()?.isolated && (activeWt()?.behindCount ?? 0) > 0}>
+        <div class="shrink-0 mx-2.5 my-1 flex items-center justify-between gap-2 rounded-lg px-3 py-1.5 bg-[var(--accent-surface)]/45 text-[11px]">
+          <span class="font-mono text-[var(--text-secondary)] truncate">
+            {t("inspector.diffs.behindBaseHint", {
+              count: activeWt()?.behindCount ?? 0,
+              branch: activeWt()?.baseBranch || "main",
+            })}
+          </span>
+          <button
+            type="button"
+            disabled={syncingBase()}
+            onClick={() => void onSyncWithBase()}
+            class="shrink-0 inline-flex items-center gap-1 rounded-md bg-[var(--bg-panel)] px-2 py-0.5 text-[11px] font-medium text-[var(--accent-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-40 cursor-pointer"
+          >
+            <GitPullRequestArrow size={11} />
+            <span>
+              {syncingBase()
+                ? t("inspector.diffs.syncingBaseBtn")
+                : t("inspector.diffs.syncBaseBtn", {
+                    branch: activeWt()?.baseBranch || "main",
+                  })}
+            </span>
+          </button>
+        </div>
+      </Show>
+      <div
+        class="hoxi-drawer-grid shrink-0"
+        data-open={diffs().length > 0 && commitExpanded() ? "true" : "false"}
+        aria-hidden={!(diffs().length > 0 && commitExpanded())}
+      >
+        <div class="min-h-0 overflow-hidden">
+          <div id="diff-commit-editor" class="mx-2.5 my-1 rounded-xl bg-[var(--bg-inset)] p-2 grid grid-cols-[1fr_auto] items-center gap-2">
+            <input
+              type="text"
+              value={commitMsg()}
+              tabIndex={diffs().length > 0 && commitExpanded() ? 0 : -1}
+              onInput={(ev) => setCommitMsg(ev.currentTarget.value)}
+              onKeyDown={(ev) => {
+                if (ev.key === "Enter" && !ev.isComposing) {
+                  ev.preventDefault();
+                  void onCommitWorktree(false);
+                }
+              }}
+              placeholder={t("inspector.diffs.commitPlaceholder")}
+              aria-label={t("inspector.diffs.commitPlaceholder")}
+              class="min-w-0 rounded-lg border border-transparent bg-[var(--bg-panel)] px-2.5 py-1.5 text-[12px] font-mono text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none focus:border-[var(--accent-border)]"
+            />
+            <button
+              type="button"
+              onClick={onGenerateAICommit}
+              class="hoxi-press shrink-0 rounded-md p-1.5 text-[var(--violet-text)] hover:bg-[var(--violet-surface)] cursor-pointer"
+              title={t("inspector.diffs.generateCommitTooltip")}
+              aria-label={t("inspector.diffs.generateCommitBtn")}
+            >
+              <Sparkles size={11} />
+            </button>
+            <div class="col-span-2 flex items-center justify-end gap-1.5">
+              <button
+                type="button"
+                disabled={!commitMsg().trim() || committing() || pushing()}
+                onClick={() => void onCommitWorktree(false)}
+                class="hoxi-press inline-flex items-center gap-1 rounded-lg bg-[var(--bg-panel)] px-2.5 py-1 text-[11px] font-medium text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-40 cursor-pointer"
+              >
+                <GitCommitHorizontal size={12} />
+                <span>
+                  {committing() && !pushing()
+                    ? t("inspector.diffs.committing")
+                    : t("inspector.diffs.commitBtn", { count: diffs().length })}
+                </span>
+              </button>
+              <button
+                type="button"
+                disabled={!commitMsg().trim() || committing() || pushing()}
+                onClick={() => void onCommitWorktree(true)}
+                class="hoxi-press inline-flex items-center gap-1 rounded-lg bg-[var(--accent-primary)] px-2.5 py-1 text-[11px] font-semibold text-[var(--accent-foreground)] hover:opacity-90 disabled:opacity-40 cursor-pointer"
+              >
+                <ArrowUpFromLine size={11} />
+                <span>
+                  {pushing()
+                    ? t("inspector.diffs.pushingBtn")
+                    : t("inspector.diffs.commitAndPushBtn")}
+                </span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <AICommitFallbackToast />
+
+      <Show when={committedHash()}>
+        {(hash) => (
+          <div class="hoxi-view-enter shrink-0 mx-2.5 my-1 flex items-center justify-between gap-2 rounded-lg px-3 py-1.5 bg-[var(--ok-surface)] text-[11px] font-mono text-[var(--ok-text)]">
+            <div class="flex items-center gap-1.5 min-w-0 truncate">
+              <Check size={11} class="shrink-0" />
+              <span class="truncate">{t("inspector.diffs.commitSuccess", { hash: hash() })}</span>
+            </div>
+            <Show when={compareURL()}>
+              <PullRequestBadge
+                directory={activeWt()?.directory || activeDirectory()}
+                branch={activeWt()?.branch}
+                compareURL={compareURL()}
+                active={workspace.inspectorOpen && workspace.inspectorTab === "diffs"}
+                canCreate={Boolean(compareURL())}
+                disabled={pushing()}
+                onCreate={onOpenCreatePR}
+                compact
+              />
+            </Show>
+          </div>
+        )}
+      </Show>
+
+      <div class="inspector-scroll flex-1 min-h-0 overflow-y-auto px-2 py-1 space-y-1.5">
+        <Show
+          when={
+            previewDiffs().length > 0 ||
+            (workspace.diffScope === "worktree" && hasMultipleRepos())
+          }
+          fallback={
+            <div class="hoxi-fade-enter">
+              <DiffEmptyState
+                refreshing={refreshing()}
+                onRefresh={() => void onRefresh()}
+              />
+            </div>
+          }
+        >
+          <Show
+            when={selectedDiff()}
+            fallback={
+              <div class="hoxi-view-enter space-y-1.5">
+                <Show
+                  when={hasMultipleRepos()}
+                  fallback={
+                    <DiffFileTree
+                      diffs={previewDiffs()}
+                      onSelectFile={(file) => setWorkspace("inspectedDiffFile", file)}
+                    />
+                  }
+                >
+                  <MultiRepoDiffView
+                    repos={repos()}
+                    diffs={previewDiffs()}
+                    onSelectFile={(file) => setWorkspace("inspectedDiffFile", file)}
+                  />
+                  <Show when={previewDiffs().length === 0}>
+                    <DiffEmptyState
+                      refreshing={refreshing()}
+                      onRefresh={() => void onRefresh()}
+                    />
+                  </Show>
+                </Show>
+              </div>
+            }
+          >
+            {(activeDiff) => (
+              <SelectedDiffDetail
+                diff={activeDiff()}
+                diffStyle={diffStyle()}
+                currentIndex={selectedIndex()}
+                totalFiles={previewDiffs().length}
+                onBack={() => setWorkspace("inspectedDiffFile", null)}
+                onPrev={() => {
+                  const prev = previewDiffs()[selectedIndex() - 1];
+                  if (prev) setWorkspace("inspectedDiffFile", prev.file);
+                }}
+                onNext={() => {
+                  const next = previewDiffs()[selectedIndex() + 1];
+                  if (next) setWorkspace("inspectedDiffFile", next.file);
+                }}
+              />
+            )}
+          </Show>
+        </Show>
+      </div>
+    </div>
+  );
+}

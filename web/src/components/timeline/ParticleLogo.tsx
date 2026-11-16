@@ -1,0 +1,409 @@
+import { createEffect, on, onCleanup, onMount } from "solid-js";
+
+const WIDTH = 640;
+const HEIGHT = 240;
+const COUNT = 1024;
+const ASSEMBLE_MS = 1800;
+const FLIGHT_MS = 450;
+const ACCENT_FALLBACK = "#2563eb";
+const LOADING_ALPHA_BANDS = [0.06, 0.09, 0.13, 0.17, 0.22, 0.28];
+
+function readAccentColor(element: HTMLElement): string {
+  const value = getComputedStyle(element).getPropertyValue("--accent-primary").trim();
+  return value || ACCENT_FALLBACK;
+}
+
+interface Particle {
+  tx: number;
+  ty: number;
+  x: number;
+  y: number;
+  sx: number;
+  sy: number;
+  vx: number;
+  vy: number;
+  delay: number;
+  u: number;
+  v: number;
+  crest: number;
+}
+
+function sampleLoadingShimmer(particle: Particle, elapsedSec: number): number {
+  const sweep = ((elapsedSec * 0.65) % 1.6) - 0.25;
+  const proj = particle.u + (particle.v - 0.5) * 0.18;
+  const dist = Math.abs(proj - sweep);
+  const rawBand = Math.max(0, 1 - dist / 0.28);
+  const smoothBand = rawBand * rawBand * (3 - 2 * rawBand);
+  const ripple = 0.5 + 0.5 * Math.sin(particle.u * 8.5 + particle.v * 4.5 - elapsedSec * 3.0);
+  return Math.min(1, smoothBand * 0.82 + ripple * 0.18);
+}
+
+interface CachedWordmarkGrid {
+  points: { x: number; y: number }[];
+  gridStep: number;
+  minX: number;
+  maxX: number;
+}
+
+let cachedWordmarkGrid: CachedWordmarkGrid | null = null;
+
+function resolveWordmarkGrid(): CachedWordmarkGrid | null {
+  if (cachedWordmarkGrid) return cachedWordmarkGrid;
+  const mask = document.createElement("canvas");
+  mask.width = WIDTH;
+  mask.height = HEIGHT;
+  const ink = mask.getContext("2d", { willReadFrequently: true });
+  if (!ink) return null;
+  // Use local fonts so the empty state also works offline in the desktop app.
+  ink.font = '900 180px "Inter", -apple-system, BlinkMacSystemFont, sans-serif';
+  ink.textAlign = "center";
+  const metrics = ink.measureText("Hoxi");
+  ink.fillText("Hoxi", WIDTH / 2, (HEIGHT + metrics.actualBoundingBoxAscent - metrics.actualBoundingBoxDescent) / 2);
+  const pixels = ink.getImageData(0, 0, WIDTH, HEIGHT).data;
+  const sampleGrid = (step: number): { x: number; y: number }[] => {
+    const candidate: { x: number; y: number }[] = [];
+    const columns = Math.floor(WIDTH / step);
+    const rows = Math.floor(HEIGHT / step);
+    const offsetX = (WIDTH - columns * step) / 2;
+    const offsetY = (HEIGHT - rows * step) / 2;
+    for (let row = 0; row < rows; row++) {
+      const y = offsetY + row * step;
+      const rowOffset = Math.round(y) * WIDTH;
+      for (let column = 0; column < columns; column++) {
+        const x = offsetX + column * step;
+        if (pixels[(rowOffset + Math.round(x)) * 4 + 3] > 100) {
+          candidate.push({ x, y });
+        }
+      }
+    }
+    return candidate;
+  };
+  let points: { x: number; y: number }[] = [];
+  let gridStep = 5;
+  // Keep whole grid cells; point count decreases monotonically with step, so
+  // binary-search the 0.125-step lattice instead of scanning all 49 steps.
+  let lo = 0;
+  let hi = 48;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const step = 3 + mid * 0.125;
+    const candidate = sampleGrid(step);
+    if (
+      candidate.length &&
+      (!points.length || Math.abs(candidate.length - COUNT) < Math.abs(points.length - COUNT))
+    ) {
+      points = candidate;
+      gridStep = step;
+    }
+    if (candidate.length > COUNT) {
+      lo = mid + 1;
+    } else if (candidate.length < COUNT) {
+      hi = mid - 1;
+    } else {
+      break;
+    }
+  }
+  if (!points.length) return null;
+  let minX = Infinity;
+  let maxX = -Infinity;
+  for (const point of points) {
+    if (point.x < minX) minX = point.x;
+    if (point.x > maxX) maxX = point.x;
+  }
+  cachedWordmarkGrid = { points, gridStep, minX, maxX };
+  return cachedWordmarkGrid;
+}
+
+export default function ParticleLogo(props: { play?: boolean; loading?: boolean }) {
+  let canvas!: HTMLCanvasElement;
+  let restartLogo: (() => void) | null = null;
+
+  onMount(() => {
+    const context = canvas.getContext("2d");
+    if (!context) return;
+
+    const grid = resolveWordmarkGrid();
+    if (!grid) return;
+    const { points, gridStep, minX, maxX } = grid;
+    const radius = gridStep * 0.3;
+    const isLoadingMode = Boolean(props.loading);
+    const shimmerBuckets: Particle[][] = Array.from({ length: LOADING_ALPHA_BANDS.length }, () => []);
+    const particles: Particle[] = points.map((point) => {
+      const u = (point.x - minX) / (maxX - minX || 1);
+      const v = point.y / HEIGHT;
+      const sx = WIDTH + 50 + Math.random() * 160;
+      const sy = point.y + (Math.random() - 0.5) * 80;
+      const particle: Particle = {
+        tx: point.x,
+        ty: point.y,
+        x: isLoadingMode ? point.x : sx,
+        y: isLoadingMode ? point.y : sy,
+        sx,
+        sy,
+        vx: 0,
+        vy: 0,
+        delay: u * (ASSEMBLE_MS - FLIGHT_MS) + v * 22,
+        u,
+        v,
+        crest: 1,
+      };
+      if (isLoadingMode) {
+        particle.crest = sampleLoadingShimmer(particle, 0);
+      }
+      return particle;
+    });
+
+    let accent = readAccentColor(canvas);
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    let frame = 0;
+    let startedAt = performance.now();
+    let previousTime = startedAt;
+    let assembled = isLoadingMode || reducedMotion.matches;
+    let visible = true;
+    let disposed = false;
+    let mouseX = -9999;
+    let mouseY = -9999;
+    let scale = 1;
+
+    const draw = () => {
+      context.clearRect(0, 0, WIDTH, HEIGHT);
+      context.fillStyle = accent;
+      if (isLoadingMode) {
+        if (reducedMotion.matches) {
+          context.globalAlpha = 0.12;
+          context.beginPath();
+          for (const particle of particles) {
+            context.moveTo(particle.x + radius, particle.y);
+            context.arc(particle.x, particle.y, radius, 0, Math.PI * 2);
+          }
+          context.fill();
+          context.globalAlpha = 1;
+          return;
+        }
+        const bandCount = LOADING_ALPHA_BANDS.length;
+        for (let i = 0; i < bandCount; i++) {
+          shimmerBuckets[i].length = 0;
+        }
+        for (const particle of particles) {
+          const idx = Math.min(bandCount - 1, Math.max(0, Math.floor(particle.crest * bandCount)));
+          shimmerBuckets[idx].push(particle);
+        }
+        for (let i = 0; i < bandCount; i++) {
+          const bucket = shimmerBuckets[i];
+          if (!bucket.length) continue;
+          context.globalAlpha = LOADING_ALPHA_BANDS[i];
+          context.beginPath();
+          for (const particle of bucket) {
+            const r = radius * (0.78 + 0.34 * particle.crest);
+            context.moveTo(particle.x + r, particle.y);
+            context.arc(particle.x, particle.y, r, 0, Math.PI * 2);
+          }
+          context.fill();
+        }
+        context.globalAlpha = 1;
+        return;
+      }
+      context.beginPath();
+      for (const particle of particles) {
+        if (!assembled && previousTime - startedAt < particle.delay) continue;
+        context.moveTo(particle.x + radius, particle.y);
+        context.arc(particle.x, particle.y, radius, 0, Math.PI * 2);
+      }
+      context.fill();
+    };
+
+    const settle = () => {
+      assembled = true;
+      for (const particle of particles) {
+        particle.x = particle.tx;
+        particle.y = particle.ty;
+        particle.vx = particle.vy = 0;
+        particle.crest = 1;
+      }
+      draw();
+    };
+
+    const render = (now: number) => {
+      frame = 0;
+      if (disposed || !visible || document.hidden) return;
+      const elapsed = now - startedAt;
+      const elapsedSec = elapsed / 1000;
+      // Normalize the spring simulation across 60 Hz and high-refresh displays.
+      const step = Math.min(2, Math.max(0.1, (now - previousTime) / (1000 / 60)));
+      previousTime = now;
+      let moving = isLoadingMode;
+      for (const particle of particles) {
+        if (!isLoadingMode && !assembled && elapsed < particle.delay + FLIGHT_MS) {
+          moving = true;
+          if (elapsed < particle.delay) continue;
+          const progress = Math.min(1, (elapsed - particle.delay) / FLIGHT_MS);
+          const eased = 1 - (1 - progress) ** 3;
+          particle.x = particle.sx + (particle.tx - particle.sx) * eased;
+          particle.y = particle.sy + (particle.ty - particle.sy) * eased;
+          continue;
+        }
+        if (isLoadingMode) {
+          particle.crest = sampleLoadingShimmer(particle, elapsedSec);
+          continue;
+        }
+        const dx = particle.tx - particle.x;
+        const dy = particle.ty - particle.y;
+        particle.vx += dx * 0.065 * step;
+        particle.vy += dy * 0.065 * step;
+        const mx = particle.x - mouseX;
+        const my = particle.y - mouseY;
+        const distance = Math.hypot(mx, my);
+        if (distance < 85 && distance > 0.001) {
+          const force = (1 - distance / 85) * 8.5 * step;
+          particle.vx += mx / distance * force;
+          particle.vy += my / distance * force;
+        }
+        particle.vx *= 0.84 ** step;
+        particle.vy *= 0.84 ** step;
+        particle.x += particle.vx * step;
+        particle.y += particle.vy * step;
+        if (Math.abs(dx) + Math.abs(dy) + Math.abs(particle.vx) + Math.abs(particle.vy) > 0.08) {
+          moving = true;
+        } else {
+          particle.x = particle.tx;
+          particle.y = particle.ty;
+          particle.vx = particle.vy = 0;
+        }
+      }
+      if (!isLoadingMode && elapsed >= ASSEMBLE_MS + 22) assembled = true;
+      draw();
+      if (moving) wake();
+    };
+
+    function wake() {
+      if (!frame && !disposed && visible && !document.hidden && !reducedMotion.matches) {
+        frame = requestAnimationFrame(render);
+      }
+    }
+
+    // Replay the assemble flight whenever a fresh conversation is revealed;
+    // the canvas stays mounted so the drawer can animate its collapse.
+    const restart = () => {
+      cancelAnimationFrame(frame);
+      frame = 0;
+      mouseX = mouseY = -9999;
+      assembled = reducedMotion.matches;
+      for (const particle of particles) {
+        particle.x = particle.sx;
+        particle.y = particle.sy;
+        particle.vx = particle.vy = 0;
+      }
+      startedAt = previousTime = performance.now();
+      if (assembled) settle();
+      else wake();
+    };
+
+    const resize = () => {
+      const bounds = canvas.getBoundingClientRect();
+      if (!bounds.width) return;
+      scale = bounds.width / WIDTH;
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.round(bounds.width * dpr);
+      canvas.height = Math.round(bounds.height * dpr);
+      context.setTransform(canvas.width / WIDTH, 0, 0, canvas.height / HEIGHT, 0, 0);
+      draw();
+    };
+    const move = (event: PointerEvent) => {
+      if (reducedMotion.matches || isLoadingMode) return;
+      const bounds = canvas.getBoundingClientRect();
+      mouseX = (event.clientX - bounds.left) / scale;
+      mouseY = (event.clientY - bounds.top) / scale;
+      previousTime = performance.now();
+      wake();
+    };
+    const leave = () => {
+      if (isLoadingMode) return;
+      mouseX = mouseY = -9999;
+      wake();
+    };
+    const resume = () => {
+      const now = performance.now();
+      // The canvas can stay mounted while the drawer is collapsed; if the
+      // flight timed out off-screen, replay it instead of snapping to the
+      // assembled wordmark.
+      if (!assembled && now - startedAt > ASSEMBLE_MS) startedAt = now;
+      previousTime = now;
+      wake();
+    };
+    const motionChanged = () => {
+      if (reducedMotion.matches) {
+        cancelAnimationFrame(frame);
+        frame = 0;
+        settle();
+      } else if (isLoadingMode) {
+        previousTime = performance.now();
+        wake();
+      }
+    };
+    const resizeObserver = new ResizeObserver(resize);
+    const visibilityObserver = new IntersectionObserver((entries) => {
+      visible = entries[0]?.isIntersecting ?? false;
+      if (visible) resume();
+    });
+    const themeObserver = new MutationObserver(() => {
+      const next = readAccentColor(canvas);
+      if (next === accent) return;
+      accent = next;
+      draw();
+    });
+    resizeObserver.observe(canvas);
+    visibilityObserver.observe(canvas);
+    themeObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class", "data-color-scheme"],
+    });
+    canvas.addEventListener("pointermove", move);
+    canvas.addEventListener("pointerleave", leave);
+    canvas.addEventListener("pointerup", leave);
+    canvas.addEventListener("pointercancel", leave);
+    document.addEventListener("visibilitychange", resume);
+    reducedMotion.addEventListener("change", motionChanged);
+    resize();
+    if (reducedMotion.matches) settle();
+    else {
+      startedAt = previousTime = performance.now();
+      wake();
+    }
+    restartLogo = restart;
+
+    onCleanup(() => {
+      disposed = true;
+      cancelAnimationFrame(frame);
+      resizeObserver.disconnect();
+      visibilityObserver.disconnect();
+      themeObserver.disconnect();
+      canvas.removeEventListener("pointermove", move);
+      canvas.removeEventListener("pointerleave", leave);
+      canvas.removeEventListener("pointerup", leave);
+      canvas.removeEventListener("pointercancel", leave);
+      document.removeEventListener("visibilitychange", resume);
+      reducedMotion.removeEventListener("change", motionChanged);
+    });
+  });
+
+  // Replay the assemble flight only when a new conversation becomes visible.
+  createEffect(
+    on(
+      () => props.play,
+      (play, previous) => {
+        if (!play || previous) return;
+        restartLogo?.();
+      },
+      { defer: true }
+    )
+  );
+
+  return (
+    <div
+      class={`mx-auto w-full max-w-[480px] shrink-0 px-6 ${props.loading ? "" : "mb-4"}`}
+      aria-hidden="true"
+    >
+      <canvas ref={canvas} class="block aspect-[8/3] w-full" />
+    </div>
+  );
+}

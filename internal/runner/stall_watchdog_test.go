@@ -1,0 +1,292 @@
+package runner
+
+import (
+	"os/exec"
+	"path/filepath"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/hoxiai/hoxi/internal/statusbar"
+)
+
+// shortenTurnGraces lowers the drain/abort grace periods once for the whole
+// test binary. They are never restored: watchdog and Abort goroutines started
+// by a finished test may still read them, so restoring them in t.Cleanup was a
+// data race.
+var shortenTurnGraces sync.Once
+
+func newStallTestService(t *testing.T) *Service {
+	t.Helper()
+	shortenTurnGraces.Do(func() {
+		orphanDrainGrace = 120 * time.Millisecond
+		abortInterruptGrace = 120 * time.Millisecond
+	})
+	svc := NewService(t.TempDir(), nil, statusbar.NewTracker(), filepath.Join(t.TempDir(), "sessions.json"))
+	svc.stall = stallPolicy{warnAfter: 5 * time.Minute, abortAfter: 30 * time.Minute}.normalized()
+	return svc
+}
+
+func registerStallTestProcess(svc *Service, sessionID string, lastActivity time.Time) *activeProcess {
+	ap := &activeProcess{sessionID: sessionID, done: make(chan struct{})}
+	ap.stall.touch(lastActivity)
+	svc.mu.Lock()
+	svc.procs[sessionID] = ap
+	svc.mu.Unlock()
+	return ap
+}
+
+func nextStallEvent(t *testing.T, ch chan SSEEvent) int64 {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case evt := <-ch:
+			if evt.Type == "session.stall" {
+				since, _ := evt.Properties["stalledSince"].(int64)
+				return since
+			}
+		case <-deadline:
+			t.Fatal("no session.stall event")
+		}
+	}
+}
+
+func TestStallWatchdogWarnsThenClearsOnOutput(t *testing.T) {
+	svc := newStallTestService(t)
+	events, unsub := svc.Subscribe("ses_stall")
+	defer unsub()
+	now := time.Now()
+	last := now.Add(-6 * time.Minute)
+	ap := registerStallTestProcess(svc, "ses_stall", last)
+
+	if !svc.checkStall(ap, now.Add(-2*time.Minute)) {
+		t.Fatal("turn stopped before the warn threshold")
+	}
+	if ap.stall.stalledSince.Load() != 0 {
+		t.Fatal("flagged as stalled after only 4 minutes of silence")
+	}
+
+	svc.checkStall(ap, now)
+	if got := nextStallEvent(t, events); got != last.UnixMilli() {
+		t.Fatalf("stalledSince = %d, want last output %d", got, last.UnixMilli())
+	}
+	// A second tick must not re-announce the same stall.
+	svc.checkStall(ap, now.Add(time.Minute))
+
+	svc.noteActivity(ap)
+	if got := nextStallEvent(t, events); got != 0 {
+		t.Fatalf("output did not clear the stall, stalledSince = %d", got)
+	}
+}
+
+func TestStallWatchdogIgnoresApprovalWaits(t *testing.T) {
+	svc := newStallTestService(t)
+	now := time.Now()
+	ap := registerStallTestProcess(svc, "ses_wait", now.Add(-time.Hour))
+	svc.gate.mu.Lock()
+	svc.gate.pending["per_rnr_test"] = &pendingApproval{sid: "ses_wait", reply: make(chan approvalReply, 1)}
+	svc.gate.mu.Unlock()
+
+	if !svc.checkStall(ap, now) || ap.stall.abortError() != nil {
+		t.Fatal("a turn waiting on the user was treated as stuck")
+	}
+	if idle := now.Sub(time.UnixMilli(ap.stall.lastActivity.Load())); idle > time.Minute {
+		t.Fatalf("approval wait did not restart the idle clock (idle %s)", idle)
+	}
+
+	svc.gate.mu.Lock()
+	delete(svc.gate.pending, "per_rnr_test")
+	svc.gate.mu.Unlock()
+	svc.noteOpenCodeActivity("ses_wait", SSEEvent{Type: "permission.asked", Properties: map[string]interface{}{"id": "per_oc"}})
+	if !svc.awaitingUser(ap) {
+		t.Fatal("OpenCode permission.asked not tracked as a user wait")
+	}
+	svc.noteOpenCodeActivity("ses_wait", SSEEvent{Type: "permission.replied", Properties: map[string]interface{}{"requestID": "per_oc"}})
+	if svc.awaitingUser(ap) {
+		t.Fatal("OpenCode permission.replied did not end the user wait")
+	}
+}
+
+func TestStallWatchdogStopsLongSilence(t *testing.T) {
+	svc := newStallTestService(t)
+	now := time.Now()
+	ap := registerStallTestProcess(svc, "ses_dead", now.Add(-31*time.Minute))
+
+	if svc.checkStall(ap, now) {
+		t.Fatal("watchdog kept a turn silent past abortAfter")
+	}
+	if !ap.wasAborted() {
+		t.Fatal("silent turn was not aborted")
+	}
+	if err := ap.stall.abortError(); err == nil || err.Name != stallErrorName {
+		t.Fatalf("abort error = %+v, want %s", err, stallErrorName)
+	}
+}
+
+func TestStallPolicyFromEnv(t *testing.T) {
+	t.Setenv(envStallWarnAfter, "")
+	t.Setenv(envStallAbortAfter, "")
+	if p := stallPolicyFromEnv(); p.warnAfter != 15*time.Minute || p.abortAfter != 0 {
+		t.Fatalf("default policy = %+v, want warn=15m abort=0", p)
+	}
+	t.Setenv(envStallWarnAfter, "90s")
+	t.Setenv(envStallAbortAfter, "30s")
+	p := stallPolicyFromEnv()
+	if p.warnAfter != 90*time.Second || p.abortAfter != 90*time.Second {
+		t.Fatalf("policy = %+v, want abort clamped up to warn", p)
+	}
+	t.Setenv(envStallAbortAfter, "0")
+	if p := stallPolicyFromEnv(); p.abortAfter != 0 {
+		t.Fatalf("abortAfter = %s, want disabled", p.abortAfter)
+	}
+}
+
+func TestStallWatchdogKeepsTurnWithRunningSubagentTask(t *testing.T) {
+	svc := newStallTestService(t)
+	now := time.Now()
+	ap := registerStallTestProcess(svc, "ses_subagent_work", now.Add(-45*time.Minute))
+	if err := svc.store.Put(SessionRecord{
+		ID: "ses_subagent_work",
+		Turns: []MessageTurn{
+			{
+				Info: MessageInfo{ID: "msg_a_1", SessionID: "ses_subagent_work", Role: "assistant"},
+				Parts: []MessagePart{
+					{
+						ID:        "prt_task_1",
+						SessionID: "ses_subagent_work",
+						MessageID: "msg_a_1",
+						Type:      "tool",
+						Tool:      "task",
+						State: &ToolState{
+							Status:   "running",
+							Metadata: map[string]interface{}{"sessionId": "ses_child_active"},
+						},
+					},
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	svc.setChildBusy("ses_child_active", true)
+	defer svc.setChildBusy("ses_child_active", false)
+
+	if !svc.checkStall(ap, now) || ap.wasAborted() {
+		t.Fatal("watchdog aborted a turn while its subagent task was still running")
+	}
+	if ap.stall.stalledSince.Load() == 0 {
+		t.Fatal("expected stall warning to be set while silent past warnAfter")
+	}
+}
+
+func TestOpenCodeSubagentActivityKeepsParentAlive(t *testing.T) {
+	svc := newStallTestService(t)
+	now := time.Now()
+	ap := registerStallTestProcess(svc, "ses_hoxi_parent", now.Add(-time.Hour))
+	rec := SessionRecord{ID: "ses_hoxi_parent", ExternalID: "ses_oc_parent"}
+
+	created := `{"type":"session.created","properties":{"info":{"id":"ses_oc_child","parentID":"ses_oc_parent"}}}`
+	svc.relayOpenCodeEvent(rec, []byte(created))
+	grand := `{"type":"session.created","properties":{"info":{"id":"ses_oc_grand","parentID":"ses_oc_child"}}}`
+	svc.relayOpenCodeEvent(rec, []byte(grand))
+	if !ap.isOpenCodeChild("ses_oc_child") || !ap.isOpenCodeChild("ses_oc_grand") {
+		t.Fatal("subagent sessions were not tracked")
+	}
+
+	ap.stall.touch(now.Add(-time.Hour))
+	delta := `{"type":"message.part.updated","properties":{"part":{"id":"prt_1","sessionID":"ses_oc_grand","type":"text","text":"x"}}}`
+	svc.relayOpenCodeEvent(rec, []byte(delta))
+	if idle := now.Sub(time.UnixMilli(ap.stall.lastActivity.Load())); idle > time.Minute {
+		t.Fatalf("subagent output did not refresh the parent turn (idle %s)", idle)
+	}
+
+	asked := `{"type":"permission.asked","properties":{"id":"per_child","sessionID":"ses_oc_child"}}`
+	svc.relayOpenCodeEvent(rec, []byte(asked))
+	if !svc.awaitingUser(ap) {
+		t.Fatal("subagent permission request was not tracked as a user wait")
+	}
+
+	ap.stall.touch(now.Add(-time.Hour))
+	other := `{"type":"message.part.updated","properties":{"part":{"id":"prt_2","sessionID":"ses_unrelated","type":"text","text":"x"}}}`
+	svc.relayOpenCodeEvent(rec, []byte(other))
+	if idle := now.Sub(time.UnixMilli(ap.stall.lastActivity.Load())); idle < 30*time.Minute {
+		t.Fatal("unrelated session activity refreshed the turn")
+	}
+
+	// Releasing the parent turn must clear busy/pending status for tracked OpenCode children too.
+	svc.status.SetSessionBusy("ses_hoxi_parent", true)
+	svc.status.SetSessionBusy("ses_oc_child", true)
+	svc.status.SetPendingApproval("per_child", "ses_oc_grand", true)
+	svc.releaseActiveProcess("ses_hoxi_parent", ap)
+	if snap := svc.status.Snapshot(); snap.Running != 0 || snap.PendingApprovals != 0 {
+		t.Fatalf("releaseActiveProcess left stale child status: %+v", snap)
+	}
+}
+
+func TestStallWatchdogAbortsDespiteIdleMCPChildProcess(t *testing.T) {
+	svc := newStallTestService(t)
+	now := time.Now()
+
+	// Start a parent shell that spawns an idle MCP-like child process ("sleep 30").
+	parentCmd := exec.Command("sh", "-c", "sleep 30")
+	if err := parentCmd.Start(); err != nil {
+		t.Skipf("unable to spawn sh for process tree test: %v", err)
+	}
+	t.Cleanup(func() {
+		if parentCmd.Process != nil {
+			_ = parentCmd.Process.Kill()
+			_, _ = parentCmd.Process.Wait()
+		}
+	})
+
+	byPID := map[int]procSnapshot{
+		100: {pid: 100, ppid: 1, pgid: 100, args: "/usr/local/bin/claude --output-format stream-json"},
+		101: {pid: 101, ppid: 100, pgid: 101, args: "node /opt/mcp-server/index.js --stdio"},
+		102: {pid: 102, ppid: 100, pgid: 102, args: "/bin/zsh -c cargo test --workspace"},
+	}
+	children := map[int][]int{
+		100: {101, 102},
+	}
+
+	// 1. An idle MCP child process (101) must NOT be treated as a running tool when no shell command
+	// is running or when the running command does not match the MCP server's arguments.
+	if hasLiveChildToolProcess(100, byPID, children) {
+		t.Fatal("hasLiveChildToolProcess matched an idle MCP child when no shell tool commands were running")
+	}
+	if hasLiveChildToolProcess(100, byPID, map[int][]int{100: {101}}, "cargo test --workspace") {
+		t.Fatal("hasLiveChildToolProcess matched an unrelated MCP child process")
+	}
+	if !hasLiveChildToolProcess(100, byPID, children, "cargo test --workspace") {
+		t.Fatal("hasLiveChildToolProcess failed to match an active shell tool subprocess")
+	}
+
+	// 2. When HOXI_RUNNER_STALL_ABORT is configured and a non-matching tool is stuck in "running",
+	// checkStall must abort the turn instead of being blocked by the idle child process.
+	ap := registerStallTestProcess(svc, "ses_mcp_stuck", now.Add(-45*time.Minute))
+	ap.cmd = parentCmd
+	if err := svc.store.Put(SessionRecord{
+		ID: "ses_mcp_stuck",
+		Turns: []MessageTurn{
+			{
+				Info: MessageInfo{ID: "msg_a_mcp", SessionID: "ses_mcp_stuck", Role: "assistant"},
+				Parts: []MessagePart{
+					{
+						ID:        "prt_tool_mcp",
+						SessionID: "ses_mcp_stuck",
+						MessageID: "msg_a_mcp",
+						Type:      "tool",
+						Tool:      "mcp_memory_query",
+						State:     &ToolState{Status: "running"},
+					},
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if svc.checkStall(ap, now) || !ap.wasAborted() {
+		t.Fatal("watchdog failed to abort a stalled turn when an idle child process was present")
+	}
+}

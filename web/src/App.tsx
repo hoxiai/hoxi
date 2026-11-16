@@ -1,0 +1,473 @@
+import { Show, createEffect, createSignal, onCleanup, onMount } from "solid-js";
+import ThreePaneShell from "./components/layout/ThreePaneShell";
+import { hoxiAPI } from "./services/api";
+import { connectEventStream } from "./services/sse";
+import { watchNetworkStatus } from "./services/network";
+import {
+  advanceSessionGoal,
+  applySessionDiffEvent,
+  applyPartDeltaBatch,
+  applyManagedStatusSnapshot,
+  applyStreamFrameBatch,
+  bootstrapProjectSessions,
+  desktopAuth,
+  drainNextQueuedPrompt,
+  ensureOfficialProviderConnected,
+  getActiveWorkWorkspaceDir,
+  handleIncomingPermissionRequest,
+  hasStoredSurfaceMode,
+  markPermissionResolved,
+  clearAutoFailoverPending,
+  clearSessionPendingApprovals,
+  clearTurnDispatchState,
+  handleSessionErrorEvent,
+  handleSessionRetryStatus,
+  isActionableApprovalSession,
+  isAutoFailoverPending,
+  isRerouteAbortInFlight,
+  isDismissedProjectPath,
+  isInvalidProjectPath,
+  isManagedSession,
+  isSessionBusy,
+  indexSessionFromEvent,
+  lastPromptDispatchedAt,
+  loadAgents,
+  loadApprovalPolicy,
+  loadGitAttribution,
+  loadProjects,
+  loadProviders,
+  loadProviderTelemetry,
+  refreshAuthStatus,
+  syncProviderBreakers,
+  loadSavedWorkspaces,
+  loadSessionMessagesOnly,
+  normalizeFolderPath,
+  recordSessionRetry,
+  refreshSettledSessionMessages,
+  rememberQuestionReject,
+  rememberQuestionReply,
+  rememberQuestionRequest,
+  removeSessionFromStore,
+  replaceSessionFromEvent,
+  resolveDefaultProjectDir,
+  resolveParentSessionID,
+  resyncResidentTranscripts,
+  scheduleRefreshWorktreeStatus,
+  selectSession,
+  setDefaultWorkspaceDir,
+  setRememberedCodeSurface,
+  setSurfaceMode,
+  setWorkspace,
+  surfaceOnboardingOpen,
+  syncActiveProjectID,
+  syncBrowserIdleMinutesFromBackend,
+  syncPendingPermissions,
+  syncPendingQuestions,
+  syncSessionStatuses,
+  triggerDesktopNotification,
+  trimSessionTranscripts,
+  upsertMessageInfo,
+  upsertMessagePart,
+  waitForSurfaceOnboarding,
+  workspace,
+  refreshDesktopMemberAfterTurn,
+} from "./store/workspace";
+import { isWorkSurface, surfaceExtension } from "./components/layout/surface-extension";
+import { t } from "./i18n";
+
+export default function App() {
+  const [online, setOnline] = createSignal(typeof navigator === "undefined" || navigator.onLine);
+  const [eventStreamStarted, setEventStreamStarted] = createSignal(false);
+  let retryEventStream: (() => void) | undefined;
+  // Ask before the first render so the shell never flashes the wrong surface.
+  const surfaceOnboarding =
+    surfaceExtension.enabled && surfaceExtension.renderOnboarding && !hasStoredSurfaceMode()
+      ? waitForSurfaceOnboarding()
+      : null;
+
+  // Auto-provision the official Hoxi channel once the account is signed in so
+  // its models are always selectable in the model picker.
+  createEffect(() => {
+    if (desktopAuth.isLoggedIn) {
+      void ensureOfficialProviderConnected();
+    }
+  });
+
+  onMount(() => {
+    let disconnectStream: (() => void) | undefined;
+    const stopWatchingNetwork = watchNetworkStatus((isOnline) => {
+      setOnline(isOnline);
+      if (isOnline) retryEventStream?.();
+    });
+    const watchdogTimer = setInterval(() => {
+      // Managed sessions converge through the stream's global status snapshot,
+      // so status polling is only needed for unadopted OpenCode sessions.
+      const hasUnmanagedBusy = Object.entries(workspace.statusBySession).some(
+        ([sid, s]) =>
+          (s?.type === "busy" || s?.type === "retry") && !isManagedSession(sid)
+      );
+      const hasBusySession = Object.values(workspace.statusBySession).some(
+        (s) => s?.type === "busy" || s?.type === "retry"
+      );
+      if (hasBusySession || Object.keys(workspace.messagesBySession).length > 12) {
+        trimSessionTranscripts();
+      }
+      if (hasUnmanagedBusy) {
+        void syncSessionStatuses();
+      }
+      // Approvals still need the REST fallback: an approval raised before the
+      // stream connected (or while the user was elsewhere) is only visible there.
+      if (hasBusySession || workspace.pendingPermissions.length > 0) {
+        void syncPendingPermissions();
+      }
+      if (hasBusySession || workspace.pendingQuestions.length > 0) {
+        void syncPendingQuestions();
+      }
+    }, 4000);
+
+    onCleanup(() => {
+      clearInterval(watchdogTimer);
+      disconnectStream?.();
+      stopWatchingNetwork();
+    });
+
+    void (async () => {
+      try {
+        const boot = await hoxiAPI.getBootstrap();
+        if (typeof boot?.browserIdleMinutes === "number") {
+          syncBrowserIdleMinutesFromBackend(boot.browserIdleMinutes);
+        }
+        if (surfaceOnboarding) {
+          await surfaceOnboarding;
+        } else if (surfaceExtension.enabled && !hasStoredSurfaceMode() && surfaceExtension.defaultMode) {
+          setSurfaceMode(surfaceExtension.defaultMode);
+        }
+        const fallbackWorkDir = boot.defaultWorkspaceDir
+          ? normalizeFolderPath(boot.defaultWorkspaceDir)
+          : "";
+        setDefaultWorkspaceDir(fallbackWorkDir);
+        const bootRoot = isInvalidProjectPath(boot.rootDir)
+          ? ""
+          : normalizeFolderPath(boot.rootDir);
+        const startInWork = isWorkSurface() && Boolean(fallbackWorkDir);
+        const initialWorkRoot = getActiveWorkWorkspaceDir() || fallbackWorkDir;
+        const initialRoot = startInWork ? initialWorkRoot : bootRoot;
+        setWorkspace({
+          appVersion: boot.appVersion,
+          rootDir: initialRoot,
+          activeProjectID: null,
+          wsBaseURL: boot.wsBaseURL,
+        });
+
+        const eagerBootRoot =
+          initialRoot && !isDismissedProjectPath(initialRoot) ? initialRoot : "";
+        const eagerSessionsPromise = eagerBootRoot
+          ? bootstrapProjectSessions(eagerBootRoot, !startInWork).catch((err) => {
+              console.warn("Initial session load retry pending:", err);
+              return null;
+            })
+          : null;
+
+        // Kick off non-blocking background loads while awaiting saved workspaces & projects
+        const approvalReady = loadApprovalPolicy().catch((e) => {
+          console.warn("Failed to load approval policy:", e);
+        });
+        void Promise.all([loadProviders(), refreshAuthStatus(), approvalReady])
+          .then(() => ensureOfficialProviderConnected())
+          .catch(() => {});
+        void loadProviderTelemetry();
+        void syncProviderBreakers();
+        void loadAgents();
+        void loadGitAttribution();
+        void syncPendingPermissions(eagerBootRoot || undefined);
+        void syncPendingQuestions(eagerBootRoot || undefined);
+
+        await Promise.all([loadSavedWorkspaces(), loadProjects()]);
+
+        const resolvedCodeRoot = resolveDefaultProjectDir(bootRoot);
+        if (resolvedCodeRoot) {
+          setRememberedCodeSurface(resolvedCodeRoot, null);
+        }
+        const activeRoot = startInWork
+          ? (getActiveWorkWorkspaceDir() || fallbackWorkDir)
+          : resolvedCodeRoot;
+        if (activeRoot && activeRoot !== workspace.rootDir) {
+          setWorkspace("rootDir", activeRoot);
+        }
+
+        if (activeRoot) {
+          const selectInitial = !startInWork;
+          const projectID = await syncActiveProjectID(activeRoot);
+          if (eagerSessionsPromise && activeRoot === eagerBootRoot) {
+            await eagerSessionsPromise;
+            if (workspace.sessions.length === 0) {
+              await bootstrapProjectSessions(activeRoot, selectInitial, projectID);
+            }
+          } else {
+            await bootstrapProjectSessions(activeRoot, selectInitial, projectID);
+          }
+        } else {
+          setWorkspace("bootstrappingSessions", false);
+        }
+      } catch (err) {
+        setWorkspace("bootstrappingSessions", false);
+        console.error("Bootstrap error:", err);
+      }
+
+      // Events may have been missed while disconnected; pull authoritative state.
+      let resyncing = false;
+      let resyncRequested = false;
+      const resyncFromServer = async () => {
+        resyncRequested = true;
+        if (resyncing) return;
+        resyncing = true;
+        try {
+          while (resyncRequested) {
+            resyncRequested = false;
+            await Promise.allSettled([
+              syncSessionStatuses(), syncPendingPermissions(), syncPendingQuestions(), resyncResidentTranscripts(),
+              workspace.rootDir
+                ? bootstrapProjectSessions(workspace.rootDir, false, workspace.activeProjectID)
+                : Promise.resolve(),
+            ]);
+          }
+        } finally { resyncing = false; }
+      };
+      const handlers: Parameters<typeof connectEventStream>[0] = {
+        onConnectionChange: (connected) => {
+          setWorkspace("connected", connected);
+          if (connected) {
+            void refreshAuthStatus();
+            void loadProviders();
+            void loadProviderTelemetry();
+            void syncProviderBreakers();
+            resyncFromServer();
+            if (
+              workspace.rootDir &&
+              workspace.sessions.length === 0 &&
+              !workspace.bootstrappingSessions
+            ) {
+              void bootstrapProjectSessions(workspace.rootDir).catch(() => {});
+            }
+          }
+        },
+        onResync: resyncFromServer,
+        onDeltaBatch: applyPartDeltaBatch,
+        onFrameBatch: applyStreamFrameBatch,
+        isFocusedSession: (sid) =>
+          !workspace.activeSessionID ||
+          sid === workspace.activeSessionID ||
+          resolveParentSessionID(sid) === workspace.activeSessionID,
+        onEvent: (evt, directory) => {
+          switch (evt.type) {
+            case "message.updated":
+              upsertMessageInfo(evt.properties.info);
+              break;
+            case "message.part.updated":
+              upsertMessagePart(evt.properties.part);
+              break;
+            case "session.updated":
+            case "session.created":
+              indexSessionFromEvent(evt.properties.info, directory);
+              replaceSessionFromEvent(evt.properties.info, directory);
+              break;
+            case "session.deleted": {
+              const delID = evt.properties.sessionID || evt.properties.info?.id;
+              if (delID) {
+                const wasActive = workspace.activeSessionID === delID;
+                const nextCandidate = removeSessionFromStore(delID);
+                if (wasActive) {
+                  if (nextCandidate) {
+                    void selectSession(nextCandidate.id);
+                  } else {
+                    setWorkspace("activeSessionID", null);
+                  }
+                }
+              }
+              break;
+            }
+            case "session.status": {
+              const sid = evt.properties.sessionID;
+              if (
+                (evt.properties.status.type === "idle" && isAutoFailoverPending(sid)) ||
+                (evt.properties.status.type === "retry" && isRerouteAbortInFlight(sid))
+              ) {
+                break;
+              }
+              if (
+                evt.properties.status.type === "retry" &&
+                handleSessionRetryStatus(sid, evt.properties.status)
+              ) {
+                break;
+              }
+              if (evt.properties.status.type === "busy" && !isRerouteAbortInFlight(sid)) {
+                clearAutoFailoverPending(sid);
+              }
+              const previousStatus = workspace.statusBySession[sid]?.type;
+              const wasBusy = previousStatus === "busy" || previousStatus === "retry";
+              setWorkspace("statusBySession", sid, evt.properties.status);
+              setWorkspace("stalledSinceBySession", sid, 0);
+              if (evt.properties.status.type === "busy") {
+                setWorkspace("unreadCompletedBySession", sid, false);
+              } else if (evt.properties.status.type === "idle") {
+                clearTurnDispatchState(sid);
+                clearSessionPendingApprovals(sid);
+                setWorkspace("sessionFinishedAt", sid, Date.now());
+                const parentID = resolveParentSessionID(sid);
+                if (wasBusy && parentID) {
+                  void loadSessionMessagesOnly(sid);
+                  void loadSessionMessagesOnly(parentID);
+                  scheduleRefreshWorktreeStatus(parentID, 600);
+                } else if (wasBusy) {
+                  void refreshSettledSessionMessages(sid)
+                    .then(() => refreshDesktopMemberAfterTurn(sid))
+                    .catch(console.error);
+                }
+                if (
+                  wasBusy &&
+                  !parentID &&
+                  sid !== workspace.activeSessionID &&
+                  !workspace.interruptedBySession[sid]
+                ) {
+                  setWorkspace("unreadCompletedBySession", sid, true);
+                }
+                trimSessionTranscripts();
+                void drainNextQueuedPrompt(sid);
+                if (wasBusy && !parentID) void advanceSessionGoal(sid);
+                if (wasBusy) refreshDesktopMemberAfterTurn(sid);
+              } else if (evt.properties.status.type === "retry") {
+                recordSessionRetry(
+                  sid,
+                  evt.properties.status.attempt,
+                  evt.properties.status.message
+                );
+              }
+              break;
+            }
+            case "session.idle": {
+              const sid = evt.properties.sessionID;
+              if (isAutoFailoverPending(sid)) {
+                break;
+              }
+              // Native runtimes send `session.status` idle right before this
+              // event; that one may already have dispatched the next queued
+              // prompt, whose busy state must not be flipped back to idle.
+              const nextPromptRunning =
+                isSessionBusy(sid) && Date.now() - lastPromptDispatchedAt(sid) <= 3500;
+              if (!nextPromptRunning) {
+                clearTurnDispatchState(sid);
+                clearSessionPendingApprovals(sid);
+                setWorkspace("statusBySession", sid, { type: "idle" });
+                setWorkspace("stalledSinceBySession", sid, 0);
+              }
+              setWorkspace("sessionFinishedAt", sid, Date.now());
+              refreshDesktopMemberAfterTurn(sid);
+              const parentID = resolveParentSessionID(sid);
+              if (parentID) {
+                void loadSessionMessagesOnly(sid);
+                void loadSessionMessagesOnly(parentID);
+                scheduleRefreshWorktreeStatus(parentID, 600);
+              } else {
+                if (
+                  sid !== workspace.activeSessionID &&
+                  !workspace.interruptedBySession[sid]
+                ) {
+                  setWorkspace("unreadCompletedBySession", sid, true);
+                }
+                triggerDesktopNotification("Hoxi", t("timeline.turnCompleted"), { sessionID: sid, kind: "complete" });
+                void refreshSettledSessionMessages(sid).then(() => {
+                  refreshDesktopMemberAfterTurn(sid);
+                  void drainNextQueuedPrompt(sid);
+                  void advanceSessionGoal(sid);
+                }).catch(console.error);
+              }
+              break;
+            }
+            case "session.stall":
+              setWorkspace(
+                "stalledSinceBySession",
+                evt.properties.sessionID,
+                evt.properties.stalledSince || 0
+              );
+              if (evt.properties.stalledSince) {
+                triggerDesktopNotification("Hoxi", t("timeline.stalledNotification"), { sessionID: evt.properties.sessionID, kind: "stall" });
+              }
+              break;
+            case "session.diff":
+              applySessionDiffEvent(evt.properties.sessionID, evt.properties.diff);
+              if (evt.properties.sessionID === workspace.activeSessionID) {
+                scheduleRefreshWorktreeStatus(evt.properties.sessionID, 600);
+              }
+              break;
+            case "permission.asked":
+              handleIncomingPermissionRequest(evt.properties);
+              break;
+            case "permission.replied":
+              markPermissionResolved(evt.properties.requestID);
+              break;
+            case "question.asked":
+            case "question.v2.asked":
+              if (!isActionableApprovalSession(evt.properties?.sessionID)) {
+                break;
+              }
+              rememberQuestionRequest(evt.properties);
+              setWorkspace("pendingQuestions", (prev) =>
+                prev.some((q) => q.id === evt.properties.id) ? prev : [...prev, evt.properties]
+              );
+              triggerDesktopNotification("Hoxi", t("approval.questionTitle"), { sessionID: evt.properties.sessionID, kind: "attention" });
+              break;
+            case "question.replied":
+            case "question.v2.replied":
+              rememberQuestionReply(
+                evt.properties.requestID,
+                evt.properties.sessionID,
+                evt.properties.answers
+              );
+              setWorkspace("pendingQuestions", (prev) =>
+                prev.filter((q) => q.id !== evt.properties.requestID)
+              );
+              break;
+            case "question.rejected":
+            case "question.v2.rejected":
+              rememberQuestionReject(evt.properties.requestID, evt.properties.sessionID);
+              setWorkspace("pendingQuestions", (prev) =>
+                prev.filter((q) => q.id !== evt.properties.requestID)
+              );
+              break;
+            case "hoxi.status.snapshot":
+              if (Array.isArray(evt.properties.busy)) {
+                applyManagedStatusSnapshot(evt.properties.busy, evt.properties.stalled ?? {});
+              }
+              break;
+            case "session.error":
+              if (evt.properties.sessionID) {
+                void handleSessionErrorEvent(evt.properties.sessionID, evt.properties.error as any);
+              }
+              console.error("session error:", evt.properties);
+              break;
+          }
+        },
+      };
+      retryEventStream = () => {
+        disconnectStream?.();
+        disconnectStream = connectEventStream(handlers, undefined, workspace.wsBaseURL);
+        setEventStreamStarted(true);
+      };
+      retryEventStream();
+    })();
+  });
+
+  return (
+    <>
+      <ThreePaneShell
+        network={{
+          online,
+          connected: () => workspace.connected,
+          streamStarted: eventStreamStarted,
+          onRetry: () => retryEventStream?.(),
+        }}
+      />
+      <Show when={surfaceOnboardingOpen()}>{surfaceExtension.renderOnboarding?.()}</Show>
+    </>
+  );
+}

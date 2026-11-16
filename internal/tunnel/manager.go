@@ -1,0 +1,612 @@
+package tunnel
+
+import (
+	"bytes"
+	"context"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/gorilla/websocket"
+)
+
+const (
+	StateDisabled   = "disabled"
+	StateConnecting = "connecting"
+	StateOnline     = "online"
+	StateOffline    = "offline"
+)
+
+// Pending states surfaced while a one-click pairing request waits for an
+// administrator to approve it in GoPanel. They mirror the poll response so the
+// UI can render the authorization code, a countdown and the outcome.
+const (
+	PendingWaiting  = "waiting"
+	PendingApproved = "approved"
+	PendingDenied   = "denied"
+	PendingExpired  = "expired"
+)
+
+// Pending is the in-flight one-click pairing request, safe to return to the UI.
+// It never carries the poll token or the tunnel credential.
+type Pending struct {
+	RequestID string    `json:"requestId"`
+	UserCode  string    `json:"userCode"`
+	ExpiresAt time.Time `json:"expiresAt"`
+	State     string    `json:"state"`
+}
+
+// Options wires the manager to the gateway without importing it.
+type Options struct {
+	// Handler serves every tunnelled request in-process. The gateway passes a
+	// wrapper that enforces the remote route allowlist.
+	Handler    http.Handler
+	Store      *Store
+	Version    string
+	TargetPort int
+	Hostname   func() string
+	Dialer     *websocket.Dialer
+	HTTPClient *http.Client
+
+	// PollInterval and PollTimeout bound the one-click pairing poll loop: the
+	// first wait before re-checking GoPanel, and the overall deadline. Both
+	// default (2s, 10min) and are overridden in tests.
+	PollInterval time.Duration
+	PollTimeout  time.Duration
+
+	// DefaultRelayURL is the optional public relay controller URL used for
+	// zero-config outbound tunnel registration when no manual tunnel credential
+	// exists yet. Empty disables auto-registration (the default in tests).
+	DefaultRelayURL string
+}
+
+// Status is safe to return to the UI: it never includes the tunnel token.
+type Status struct {
+	Enabled       bool       `json:"enabled"`
+	State         string     `json:"state"`
+	ControllerURL string     `json:"controllerUrl,omitempty"`
+	NodeID        uint       `json:"nodeId,omitempty"`
+	Name          string     `json:"name,omitempty"`
+	Message       string     `json:"message,omitempty"`
+	ConnectedAt   *time.Time `json:"connectedAt,omitempty"`
+	Pending       *Pending   `json:"pending,omitempty"`
+}
+
+type Manager struct {
+	opts      Options
+	restartMu sync.Mutex
+	mu        sync.Mutex
+	cancel    context.CancelFunc
+	done      chan struct{}
+	status    Status
+	autoRelay bool
+	peer      *peer
+	pending   *pendingPair
+}
+
+// ErrOffline is returned by Notify when no tunnel is connected.
+var ErrOffline = errors.New("remote tunnel is not connected")
+
+// errTunnelUnauthorized marks a permanent credential rejection: GoPanel no
+// longer accepts this desktop's tunnel token (revoked or node deleted). The
+// manager clears the local credential and stops retrying instead of looping.
+var errTunnelUnauthorized = errors.New("tunnel credential rejected by GoPanel")
+
+// Notify sends an attention notice to GoPanel for phone push. Notices are not
+// queued: one raised while offline is dropped, and the phone still sees the
+// pending item when it next opens the node.
+func (m *Manager) Notify(notice any) error {
+	m.mu.Lock()
+	p := m.peer
+	m.mu.Unlock()
+	if p == nil {
+		return ErrOffline
+	}
+	f, err := jsonFrame(frameNotify, 0, notice)
+	if err != nil {
+		return err
+	}
+	return p.send(f)
+}
+
+func NewManager(opts Options) *Manager {
+	if opts.Store == nil {
+		opts.Store = NewStore("")
+	}
+	if opts.Hostname == nil {
+		opts.Hostname = func() string {
+			name, _ := os.Hostname()
+			return strings.TrimSpace(name)
+		}
+	}
+	if opts.Dialer == nil {
+		opts.Dialer = &websocket.Dialer{Proxy: http.ProxyFromEnvironment, HandshakeTimeout: 15 * time.Second}
+	}
+	if opts.HTTPClient == nil {
+		opts.HTTPClient = &http.Client{
+			Timeout: 15 * time.Second,
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		}
+	}
+	if opts.PollInterval <= 0 {
+		opts.PollInterval = 2 * time.Second
+	}
+	if opts.PollTimeout <= 0 {
+		opts.PollTimeout = 10 * time.Minute
+	}
+	return &Manager{opts: opts, status: Status{State: StateDisabled}}
+}
+
+// Configure sets where the credential lives and the loopback bridge port
+// reported to GoPanel. The port is informational: requests are served
+// in-process, not dialled to it. Without a store path pairing is refused,
+// which keeps ephemeral headless gateways from claiming the desktop's node.
+func (m *Manager) Configure(store *Store, targetPort int) {
+	m.mu.Lock()
+	if store != nil {
+		m.opts.Store = store
+	}
+	m.opts.TargetPort = targetPort
+	m.mu.Unlock()
+}
+
+// SetDefaultRelayURL configures the default relay controller used for
+// zero-config outbound tunnel registration when no saved credential exists.
+func (m *Manager) SetDefaultRelayURL(controllerURL string) {
+	m.mu.Lock()
+	m.opts.DefaultRelayURL = strings.TrimSpace(controllerURL)
+	m.mu.Unlock()
+}
+
+func (m *Manager) defaultRelayURL() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return strings.TrimSpace(m.opts.DefaultRelayURL)
+}
+
+// RelayProxyURL returns the public Hoxi relay proxy endpoint when this desktop
+// has an enabled tunnel with a known controller URL and node ID.
+func (m *Manager) RelayProxyURL() string {
+	m.mu.Lock()
+	st := m.status
+	m.mu.Unlock()
+	if !st.Enabled || strings.TrimSpace(st.ControllerURL) == "" || st.NodeID == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s/api/tunnel/hoxi-nodes/%d/proxy", strings.TrimRight(strings.TrimSpace(st.ControllerURL), "/"), st.NodeID)
+}
+
+// RequiresPairingToken reports whether incoming tunnel requests must always
+// carry a valid Hoxi pairing/relay token (true for zero-config auto-relay
+// tunnels on a shared controller).
+func (m *Manager) RequiresPairingToken() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.autoRelay
+}
+
+func (m *Manager) store() *Store {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.opts.Store
+}
+
+// Start connects in the background when a paired credential exists, or
+// auto-registers with DefaultRelayURL when configured and no credential exists.
+func (m *Manager) Start() {
+	cfg, err := m.store().Load()
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) && m.store().path != "" {
+			if defaultRelay := m.defaultRelayURL(); defaultRelay != "" {
+				m.startAutoRegister(defaultRelay)
+				return
+			}
+		}
+		m.restartMu.Lock()
+		defer m.restartMu.Unlock()
+		m.stopLocked()
+		status := Status{State: StateDisabled}
+		if !errors.Is(err, os.ErrNotExist) {
+			status.Message = err.Error()
+		}
+		m.setStatus(status)
+		return
+	}
+	m.restart(cfg)
+}
+
+func (m *Manager) Stop() {
+	m.CancelPair()
+	m.restartMu.Lock()
+	defer m.restartMu.Unlock()
+	m.stopLocked()
+}
+
+func (m *Manager) stopLocked() {
+	m.mu.Lock()
+	cancel, done := m.cancel, m.done
+	m.cancel, m.done = nil, nil
+	m.mu.Unlock()
+	if cancel != nil {
+		cancel()
+		<-done
+	}
+	m.mu.Lock()
+	if m.status.Enabled {
+		m.status.State = StateOffline
+		m.status.ConnectedAt = nil
+	} else {
+		m.status = Status{State: StateDisabled}
+	}
+	m.mu.Unlock()
+}
+
+func (m *Manager) Status() Status {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	status := m.status
+	// Copy the pending request so the returned value never shares mutable state
+	// with the poll goroutine.
+	if m.pending != nil {
+		status.Pending = &Pending{
+			RequestID: m.pending.requestID,
+			UserCode:  m.pending.userCode,
+			ExpiresAt: m.pending.expiresAt,
+			State:     m.pending.state,
+		}
+	} else {
+		status.Pending = nil
+	}
+	return status
+}
+
+func (m *Manager) setStatus(status Status) {
+	m.mu.Lock()
+	m.status = status
+	m.mu.Unlock()
+}
+
+func (m *Manager) restart(cfg Config) {
+	m.restartMu.Lock()
+	defer m.restartMu.Unlock()
+	m.stopLocked()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	m.mu.Lock()
+	m.cancel, m.done = cancel, done
+	m.autoRelay = cfg.AutoRelay
+	m.status = Status{Enabled: true, State: StateConnecting, ControllerURL: cfg.ControllerURL, NodeID: cfg.NodeID, Name: cfg.Name}
+	m.mu.Unlock()
+	go func() {
+		defer close(done)
+		m.run(ctx, cfg)
+	}()
+}
+
+func (m *Manager) startAutoRegister(controllerURL string) {
+	normalized, err := normalizeControllerURL(controllerURL)
+	if err != nil {
+		return
+	}
+	m.restartMu.Lock()
+	defer m.restartMu.Unlock()
+	m.stopLocked()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	m.mu.Lock()
+	m.cancel, m.done = cancel, done
+	m.autoRelay = true
+	m.status = Status{Enabled: true, State: StateConnecting, ControllerURL: normalized}
+	m.mu.Unlock()
+	go func() {
+		defer close(done)
+		m.autoRegisterAndRun(ctx, normalized)
+	}()
+}
+
+func (m *Manager) autoRegisterAndRun(ctx context.Context, controllerURL string) {
+	backoff := 2 * time.Second
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		cfg, err := m.autoRegisterOnce(ctx, controllerURL)
+		if err == nil {
+			_ = m.store().Save(cfg)
+			m.mu.Lock()
+			m.autoRelay = true
+			m.status = Status{Enabled: true, State: StateConnecting, ControllerURL: cfg.ControllerURL, NodeID: cfg.NodeID, Name: cfg.Name}
+			m.mu.Unlock()
+			m.run(ctx, cfg)
+			return
+		}
+		m.setStatus(Status{Enabled: false, State: StateDisabled})
+		timer := time.NewTimer(backoff)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+		backoff = min(backoff*2, 60*time.Second)
+	}
+}
+
+func (m *Manager) autoRegisterOnce(ctx context.Context, controllerURL string) (Config, error) {
+	hostname := m.opts.Hostname()
+	name := hostname
+	if name == "" {
+		name = "Hoxi Desktop"
+	}
+	payload, err := json.Marshal(map[string]string{
+		"name":     name,
+		"hostname": hostname,
+		"version":  m.opts.Version,
+	})
+	if err != nil {
+		return Config{}, err
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, controllerURL+"/api/tunnel/pair/auto", bytes.NewReader(payload))
+	if err != nil {
+		return Config{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := *m.opts.HTTPClient
+	client.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	response, err := client.Do(req)
+	if err != nil {
+		return Config{}, err
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	if err != nil {
+		return Config{}, err
+	}
+	var result struct {
+		Code int `json:"code"`
+		Data struct {
+			NodeID   uint   `json:"nodeId"`
+			ClientID string `json:"clientId"`
+			Token    string `json:"token"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return Config{}, err
+	}
+	if response.StatusCode != http.StatusOK || result.Code != 0 || result.Data.ClientID == "" || result.Data.Token == "" {
+		return Config{}, fmt.Errorf("auto relay registration rejected (HTTP %d)", response.StatusCode)
+	}
+	return Config{
+		ControllerURL: controllerURL,
+		NodeID:        result.Data.NodeID,
+		ClientID:      result.Data.ClientID,
+		Token:         result.Data.Token,
+		Name:          name,
+		AutoRelay:     true,
+	}, nil
+}
+
+func (m *Manager) run(ctx context.Context, cfg Config) {
+	backoff := time.Second
+	for {
+		connected, err := m.connect(ctx, cfg)
+		if ctx.Err() != nil {
+			return
+		}
+		if errors.Is(err, errTunnelUnauthorized) {
+			m.forgetCredential()
+			return
+		}
+		if connected {
+			backoff = time.Second
+		}
+		message := "tunnel disconnected"
+		if err != nil {
+			message = err.Error()
+		}
+		m.setStatus(Status{Enabled: true, State: StateOffline, ControllerURL: cfg.ControllerURL, NodeID: cfg.NodeID, Name: cfg.Name, Message: message})
+		timer := time.NewTimer(backoff)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+		backoff = min(backoff*2, 30*time.Second)
+	}
+}
+
+func (m *Manager) connect(ctx context.Context, cfg Config) (bool, error) {
+	endpoint, err := connectURL(cfg.ControllerURL)
+	if err != nil {
+		return false, err
+	}
+	header := http.Header{}
+	header.Set("X-GoPanel-Tunnel-Client", cfg.ClientID)
+	header.Set("X-GoPanel-Tunnel-Token", cfg.Token)
+	conn, response, err := m.opts.Dialer.DialContext(ctx, endpoint, header)
+	if err != nil {
+		if response != nil {
+			if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
+				return false, errTunnelUnauthorized
+			}
+			return false, fmt.Errorf("GoPanel rejected the tunnel (HTTP %d)", response.StatusCode)
+		}
+		return false, fmt.Errorf("connect GoPanel: %w", err)
+	}
+	if response != nil {
+		if rawNodeID := strings.TrimSpace(response.Header.Get("X-GoPanel-Tunnel-Node-Id")); rawNodeID != "" {
+			if parsed, parseErr := strconv.ParseUint(rawNodeID, 10, 64); parseErr == nil && parsed > 0 && cfg.NodeID != uint(parsed) {
+				cfg.NodeID = uint(parsed)
+				_ = m.store().Save(cfg)
+			}
+		}
+	}
+	p := newPeer(conn, m.opts.Handler)
+	defer func() {
+		m.mu.Lock()
+		if m.peer == p {
+			m.peer = nil
+		}
+		m.mu.Unlock()
+		p.close()
+	}()
+	m.mu.Lock()
+	targetPort := m.opts.TargetPort
+	m.mu.Unlock()
+	if err := p.sendServiceSync(m.opts.Hostname(), m.opts.Version, targetPort); err != nil {
+		return false, err
+	}
+	now := time.Now()
+	m.mu.Lock()
+	m.peer = p
+	m.mu.Unlock()
+	m.setStatus(Status{Enabled: true, State: StateOnline, ControllerURL: cfg.ControllerURL, NodeID: cfg.NodeID, Name: cfg.Name, ConnectedAt: &now})
+	go p.heartbeat(ctx)
+	return true, p.readLoop(ctx)
+}
+
+// Pair redeems a one-time GoPanel pairing code, stores the credential and
+// connects. GoPanel creates a tunnel node for this desktop on success. This is
+// the manual path (the user pastes a code); the one-click flow uses RequestPair.
+func (m *Manager) Pair(ctx context.Context, controllerURL, code, name string) error {
+	// Check before redeeming: a consumed code with nowhere to store the
+	// credential would leave an orphan node on GoPanel.
+	if m.store().path == "" {
+		return errors.New("remote tunnel is not available in this Hoxi process")
+	}
+	normalized, err := normalizeControllerURL(controllerURL)
+	if err != nil {
+		return err
+	}
+	m.CancelPair()
+	return m.exchangeAndConnect(ctx, normalized, code, name)
+}
+
+// exchangeAndConnect redeems a one-time pairing code, persists the credential
+// and starts the tunnel. controllerURL must already be normalized.
+func (m *Manager) exchangeAndConnect(ctx context.Context, controllerURL, code, name string) error {
+	code = strings.TrimSpace(code)
+	if decoded, err := hex.DecodeString(code); err != nil || len(decoded) != 16 {
+		return errors.New("pairing code must be the 32-character code issued by GoPanel")
+	}
+	name = strings.TrimSpace(name)
+	hostname := m.opts.Hostname()
+	if name == "" {
+		name = hostname
+	}
+	payload, err := json.Marshal(map[string]string{"code": code, "name": name, "hostname": hostname, "version": m.opts.Version})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, controllerURL+"/api/tunnel/pair/exchange", bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := *m.opts.HTTPClient
+	client.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	response, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("connect GoPanel: %w", err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	if err != nil {
+		return err
+	}
+	// GoPanel wraps results as {code, msg, data}; code 0 means success.
+	var result struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+		Data struct {
+			NodeID   uint   `json:"nodeId"`
+			ClientID string `json:"clientId"`
+			Token    string `json:"token"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return fmt.Errorf("GoPanel returned an unrecognized pairing response (HTTP %d)", response.StatusCode)
+	}
+	if response.StatusCode != http.StatusOK || result.Code != 0 || result.Data.ClientID == "" || result.Data.Token == "" {
+		message := strings.TrimSpace(result.Msg)
+		if message == "" {
+			message = fmt.Sprintf("HTTP %d", response.StatusCode)
+		}
+		return fmt.Errorf("GoPanel rejected pairing: %s", message)
+	}
+	cfg := Config{ControllerURL: controllerURL, NodeID: result.Data.NodeID, ClientID: result.Data.ClientID, Token: result.Data.Token, Name: name}
+	if err := m.store().Save(cfg); err != nil {
+		return fmt.Errorf("save tunnel credential: %w", err)
+	}
+	m.restart(cfg)
+	return nil
+}
+
+// Unpair disconnects, cancels any in-flight one-click request and deletes the
+// local credential. It returns immediately; asking GoPanel to delete this
+// desktop's node is a best-effort background step so the UI never waits on the
+// network or on an unreachable panel.
+func (m *Manager) Unpair() error {
+	m.CancelPair()
+	m.Stop()
+	if cfg, err := m.store().Load(); err == nil {
+		go m.revokeOnController(cfg)
+	}
+	if err := m.store().Delete(); err != nil {
+		return err
+	}
+	m.setStatus(Status{State: StateDisabled})
+	return nil
+}
+
+// revokeOnController posts this desktop's credential to GoPanel's self-unpair
+// endpoint so no orphan node is left behind. It is best-effort: an offline
+// panel or an already-deleted node is ignored, because the local credential is
+// removed regardless.
+func (m *Manager) revokeOnController(cfg Config) {
+	if cfg.ControllerURL == "" || cfg.ClientID == "" || cfg.Token == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.ControllerURL+"/api/tunnel/unpair", nil)
+	if err != nil {
+		return
+	}
+	req.Header.Set("X-GoPanel-Tunnel-Client", cfg.ClientID)
+	req.Header.Set("X-GoPanel-Tunnel-Token", cfg.Token)
+	client := *m.opts.HTTPClient
+	client.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	response, err := client.Do(req)
+	if err != nil {
+		return
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1<<20))
+	_ = response.Body.Close()
+}
+
+// forgetCredential drops a credential GoPanel no longer accepts so the desktop
+// stops retrying and the settings panel returns to "not paired".
+func (m *Manager) forgetCredential() {
+	_ = m.store().Delete()
+	m.setStatus(Status{State: StateDisabled})
+}
