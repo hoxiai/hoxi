@@ -1,9 +1,9 @@
 package handoff
 
 import (
-	"bytes"
 	"context"
 	"crypto/md5"
+	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -15,7 +15,6 @@ import (
 
 	"github.com/hoxiai/hoxi/internal/agentcli"
 	"github.com/hoxiai/hoxi/internal/sqlitecli"
-	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 func codeBuddyDotDirs() []string {
@@ -149,16 +148,27 @@ func collectCodeBuddyCandidates(targetDir string) (map[string]*codeBuddySessionC
 		// codebuddy-sessions.vscdb
 		vscdb := filepath.Join(appDir, "codebuddy-sessions.vscdb")
 		if _, err := os.Stat(vscdb); err == nil {
+			type valRow struct{ Value string }
+			var rows []valRow
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			cmd := subproc.CommandContext(ctx, sqlitecli.Executable(), "-readonly", "-cmd", ".timeout 3000", "-json", vscdb, "SELECT value FROM ItemTable WHERE key LIKE 'session:%' LIMIT 150;")
-			cmd.WaitDelay = time.Second
-			rawOut, err := cmd.Output()
-			cancel()
-			if err == nil && len(bytes.TrimSpace(rawOut)) > 0 {
-				var rows []struct {
-					Value string `json:"value"`
+			err := sqlitecli.WithReadOnly(ctx, vscdb, 3*time.Second, func(ctx context.Context, db *sql.DB) error {
+				rset, err := db.QueryContext(ctx, "SELECT COALESCE(value,'') FROM ItemTable WHERE key LIKE 'session:%' LIMIT 150")
+				if err != nil {
+					return err
 				}
-				if json.Unmarshal(rawOut, &rows) == nil {
+				defer rset.Close()
+				for rset.Next() {
+					var r valRow
+					if err := rset.Scan(&r.Value); err != nil {
+						return err
+					}
+					rows = append(rows, r)
+				}
+				return rset.Err()
+			})
+			cancel()
+			if err == nil && len(rows) > 0 {
+				{
 					for _, r := range rows {
 						var item struct {
 							ConversationID string `json:"conversationId"`

@@ -32,7 +32,7 @@ export const skills = {
   emptyFiltered: "No skills match the current filter.",
   unsupportedTitle: "Skills catalog not supported for {runtime}",
   unsupportedDesc:
-    "Native skills are available for OpenCode sessions. Switch to an OpenCode model to browse and invoke them.",
+    "Native skills are supported in Hoxi Execution Engine and OpenCode sessions. Switch to a supported model to browse and invoke them.",
   selectToPreview: "Select a skill to preview its SKILL.md instructions.",
   loadingCatalog: "Loading skills catalog…",
   loadingDetail: "Loading skill content…",
@@ -70,7 +70,7 @@ export const skills = {
   sandboxSkillMissing:
     "Skill \"{name}\" is unavailable in the new sandbox and was deselected.",
   runtimeSwitchedCleared:
-    "Skill \"{name}\" cleared; skills currently require OpenCode.",
+    "Skill \"{name}\" cleared; the selected runtime does not support native skills.",
   tabLocal: "Local",
   tabMarketplace: "Marketplace",
   marketplaceHint:

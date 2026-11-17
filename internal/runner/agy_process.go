@@ -382,7 +382,7 @@ func EncodeStreamInputTurn(runtime, promptText string) ([]byte, error) {
 }
 
 func EncodeStreamInputTurnWithParts(runtime, promptText string, parts []MessagePart) ([]byte, error) {
-	if runtime == string(RuntimeGeminiCLI) {
+	if runtime == string(RuntimeGeminiCLI) || runtime == string(RuntimeCodex) || runtime == string(RuntimeOpenCode) {
 		return []byte(promptText + "\n"), nil
 	}
 	if runtime == string(RuntimeClaudeCode) && len(parts) > 0 {
@@ -455,6 +455,7 @@ type activeProcess struct {
 	retrying      bool
 	idleCh        chan struct{}
 	cancel        func()
+	steerQueue    *nativeSteerQueue
 	mu            sync.Mutex
 	stall         stallState
 	toolFails     toolFailureStreak

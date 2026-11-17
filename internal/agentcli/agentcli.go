@@ -25,6 +25,7 @@ import (
 // Runtime identifiers shared with the runner's RuntimeType values.
 const (
 	RuntimeOpenCode    = "opencode"
+	RuntimeCodex       = "codex"
 	RuntimeAntigravity = "antigravity"
 	RuntimeClaudeCode  = "claude-code"
 	RuntimeGeminiCLI   = "gemini-cli"

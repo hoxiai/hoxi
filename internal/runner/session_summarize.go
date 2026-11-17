@@ -3,16 +3,20 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"time"
 )
 
-const summarizeTimeout = 3 * time.Minute
+const (
+	summarizeTimeout           = 3 * time.Minute
+	maxNativeSummaryInputChars = 120000
+)
 
-// handleSessionSummarize compacts an OpenCode-backed conversation. Native CLI
-// runtimes compact their own context, so they only report that nothing ran.
+// handleSessionSummarize compacts an OpenCode or Native Go Agent conversation.
+// External CLI runtimes compact their own context, so they report false.
 func (s *Service) handleSessionSummarize(w http.ResponseWriter, r *http.Request, sessionID string) {
 	if r.Method != http.MethodPost {
 		writeJSONError(w, http.StatusMethodNotAllowed, "POST required")
@@ -40,7 +44,9 @@ func (s *Service) handleSessionSummarize(w http.ResponseWriter, r *http.Request,
 		writeJSONError(w, http.StatusConflict, errSubagentSessionReadOnly.Error())
 		return
 	}
-	if rec.Runtime != "opencode" || strings.TrimSpace(rec.ExternalID) == "" {
+	isOpenCode := rec.Runtime == "opencode" && strings.TrimSpace(rec.ExternalID) != ""
+	isNative := rec.Runtime == string(RuntimeNative)
+	if !isOpenCode && !isNative {
 		writeJSON(w, http.StatusOK, false)
 		return
 	}
@@ -60,6 +66,11 @@ func (s *Service) handleSessionSummarize(w http.ResponseWriter, r *http.Request,
 	}
 	if modelID == "" {
 		modelID = rec.ModelID
+	}
+
+	if isNative {
+		s.handleNativeSessionSummarize(w, r, rec, providerID, modelID)
+		return
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), summarizeTimeout)
@@ -137,4 +148,164 @@ func (s *Service) handleSessionSummarize(w http.ResponseWriter, r *http.Request,
 	s.syncSessionMemoryFile(rec.ID)
 
 	writeJSON(w, http.StatusOK, true)
+}
+
+func (s *Service) handleNativeSessionSummarize(
+	w http.ResponseWriter,
+	r *http.Request,
+	rec SessionRecord,
+	providerID, modelID string,
+) {
+	s.mu.Lock()
+	eng := s.nativeEngine
+	s.mu.Unlock()
+	if eng == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "native engine is not configured")
+		return
+	}
+	if providerID == "" || modelID == "" {
+		writeJSONError(w, http.StatusBadRequest, "providerID and modelID are required")
+		return
+	}
+	transcript := formatTurnsForNativeSummary(rec.Turns)
+	if strings.TrimSpace(transcript) == "" {
+		writeJSON(w, http.StatusOK, false)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), summarizeTimeout)
+	defer cancel()
+	summary, err := eng.Summarize(ctx, providerID, modelID, transcript)
+	if err != nil {
+		writeJSONError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+
+	nowMs := time.Now().UnixMilli()
+	s.mu.Lock()
+	s.seqSeed++
+	seq := s.seqSeed
+	s.mu.Unlock()
+
+	userMsgID := fmt.Sprintf("msg_u_cmp_%d_%d", nowMs, seq)
+	asstMsgID := fmt.Sprintf("msg_a_cmp_%d_%d", nowMs+1, seq)
+	userPart := MessagePart{
+		ID:        fmt.Sprintf("prt_u_cmp_%d_%d", nowMs, seq),
+		SessionID: rec.ID,
+		MessageID: userMsgID,
+		Type:      "text",
+		Text:      "[Context Compacted]",
+	}
+	summaryBody := "### Compacted Context Summary\n\n" + strings.TrimSpace(summary)
+	asstPart := MessagePart{
+		ID:        fmt.Sprintf("prt_a_cmp_%d_%d", nowMs+1, seq),
+		SessionID: rec.ID,
+		MessageID: asstMsgID,
+		Type:      "text",
+		Text:      summaryBody,
+		Time:      &PartTime{Start: nowMs, End: nowMs + 1},
+	}
+	estTokens := max(1, len(summaryBody)/4)
+	compacted := []MessageTurn{
+		{
+			Info: MessageInfo{
+				ID:         userMsgID,
+				SessionID:  rec.ID,
+				Role:       "user",
+				Time:       MessageTime{Created: nowMs},
+				Agent:      firstNonEmptyStr(rec.Mode, "build"),
+				ProviderID: providerID,
+				ModelID:    modelID,
+			},
+			Parts: []MessagePart{userPart},
+		},
+		{
+			Info: MessageInfo{
+				ID:         asstMsgID,
+				SessionID:  rec.ID,
+				Role:       "assistant",
+				ParentID:   userMsgID,
+				Time:       MessageTime{Created: nowMs, Completed: nowMs + 1},
+				Agent:      firstNonEmptyStr(rec.Mode, "build"),
+				ProviderID: providerID,
+				ModelID:    modelID,
+				Finish:     "stop",
+				Tokens:     &MessageTokens{Total: estTokens, Output: estTokens},
+			},
+			Parts: []MessagePart{asstPart},
+		},
+	}
+
+	updated, ok, err := s.store.Update(rec.ID, func(sr *SessionRecord) {
+		sr.Turns = compacted
+	})
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !ok {
+		writeJSONError(w, http.StatusNotFound, "session not found")
+		return
+	}
+	for _, turn := range updated.Turns {
+		s.broadcast(rec.ID, SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": turn.Info}})
+		for _, part := range turn.Parts {
+			s.broadcast(rec.ID, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": part}})
+		}
+	}
+	s.syncSessionMemoryFile(rec.ID)
+	writeJSON(w, http.StatusOK, true)
+}
+
+func formatTurnsForNativeSummary(turns []MessageTurn) string {
+	var b strings.Builder
+	startIdx := 0
+	if compIdx, summary, scope, _, ok := findLatestCompactionCheckpoint(turns); ok {
+		fmt.Fprintf(&b, "[PRIOR CHECKPOINT]\n%s\n\n", summary)
+		startIdx = compIdx
+		if scope != "before_step" {
+			if parentID := strings.TrimSpace(turns[compIdx].Info.ParentID); parentID != "" {
+				for k := compIdx - 1; k >= 0; k-- {
+					if turns[k].Info.ID == parentID {
+						startIdx = k
+						break
+					}
+				}
+			} else if compIdx > 0 && strings.EqualFold(strings.TrimSpace(turns[compIdx-1].Info.Role), "user") {
+				startIdx = compIdx - 1
+			}
+		}
+	}
+	for _, t := range turns[startIdx:] {
+		role := strings.ToUpper(strings.TrimSpace(t.Info.Role))
+		if role == "" {
+			role = "MESSAGE"
+		}
+		for _, p := range t.Parts {
+			switch p.Type {
+			case "text":
+				if strings.TrimSpace(p.Text) != "" {
+					fmt.Fprintf(&b, "[%s]\n%s\n\n", role, strings.TrimSpace(p.Text))
+				}
+			case "file":
+				fmt.Fprintf(&b, "[%s ATTACHMENT: %s (%s)]\n\n", role, p.Filename, p.Mime)
+			case "tool":
+				if p.State == nil {
+					continue
+				}
+				out := strings.TrimSpace(firstNonEmptyStr(p.State.Output, p.State.Error))
+				if len(out) > 1200 {
+					out = out[:1200] + "...[truncated]"
+				}
+				fmt.Fprintf(&b, "[TOOL %s (%s)] %s\n%s\n\n", p.Tool, p.State.Status, p.State.Title, out)
+			}
+		}
+	}
+	text := strings.TrimSpace(b.String())
+	if len(text) > maxNativeSummaryInputChars {
+		head := maxNativeSummaryInputChars / 3
+		tail := maxNativeSummaryInputChars - head
+		text = text[:head] + "\n\n...[earlier turns omitted]...\n\n" + text[len(text)-tail:]
+	}
+	return text
 }

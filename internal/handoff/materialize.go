@@ -3,6 +3,7 @@ package handoff
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -15,7 +16,6 @@ import (
 
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
 	"github.com/hoxiai/hoxi/internal/sqlitecli"
-	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 const base62Alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
@@ -251,222 +251,179 @@ func insertNormalizedTurnsToOpenCodeDB(
 		}
 	}
 
-	var sqlBuf strings.Builder
-	sqlBuf.WriteString("PRAGMA busy_timeout = 5000;\nBEGIN TRANSACTION;\n")
-
-	baseTs := time.Now().UnixMilli() - int64(len(turns)*2000)
-	seq := 0
-	lastUserMsgID := ""
-
-	for idx, turn := range turns {
-		seq++
-		ts := turn.Timestamp
-		if ts <= 0 {
-			ts = baseTs + int64(idx*1000)
-		}
-		msgID := makeAscendingOpenCodeID("msg", ts, seq)
-
-		if turn.Role == "user" {
-			lastUserMsgID = msgID
-			msgData := map[string]interface{}{
-				"role":  "user",
-				"time":  map[string]interface{}{"created": ts},
-				"agent": "build",
-				"model": map[string]interface{}{
-					"providerID": providerID,
-					"modelID":    modelID,
-				},
-				"summary": map[string]interface{}{"diffs": []interface{}{}},
-			}
-			msgBytes, _ := json.Marshal(msgData)
-			sqlBuf.WriteString(fmt.Sprintf(
-				"INSERT OR REPLACE INTO message (id, session_id, time_created, time_updated, data) VALUES (%s, %s, %d, %d, %s);\n",
-				sqlEscapeLiteral(msgID),
-				sqlEscapeLiteral(sessionID),
-				ts,
-				ts,
-				sqlEscapeLiteral(string(msgBytes)),
-			))
-
-			seq++
-			partID := makeAscendingOpenCodeID("prt", ts, seq)
-			partData := map[string]interface{}{
-				"type": "text",
-				"text": turn.Text,
-			}
-			partBytes, _ := json.Marshal(partData)
-			sqlBuf.WriteString(fmt.Sprintf(
-				"INSERT OR REPLACE INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (%s, %s, %s, %d, %d, %s);\n",
-				sqlEscapeLiteral(partID),
-				sqlEscapeLiteral(msgID),
-				sqlEscapeLiteral(sessionID),
-				ts,
-				ts,
-				sqlEscapeLiteral(string(partBytes)),
-			))
-			continue
-		}
-
-		// Assistant turn
-		if lastUserMsgID == "" {
-			// Ensure every assistant message has a valid parent user message
-			userMsgID := makeAscendingOpenCodeID("msg", ts-100, seq)
-			lastUserMsgID = userMsgID
-			uData, _ := json.Marshal(map[string]interface{}{
-				"role":    "user",
-				"time":    map[string]interface{}{"created": ts - 100},
-				"agent":   "build",
-				"model":   map[string]interface{}{"providerID": providerID, "modelID": modelID},
-				"summary": map[string]interface{}{"diffs": []interface{}{}},
-			})
-			sqlBuf.WriteString(fmt.Sprintf(
-				"INSERT OR REPLACE INTO message (id, session_id, time_created, time_updated, data) VALUES (%s, %s, %d, %d, %s);\n",
-				sqlEscapeLiteral(userMsgID),
-				sqlEscapeLiteral(sessionID),
-				ts-100,
-				ts-100,
-				sqlEscapeLiteral(string(uData)),
-			))
-			seq++
-			uPartID := makeAscendingOpenCodeID("prt", ts-90, seq)
-			uPartBytes, _ := json.Marshal(map[string]interface{}{
-				"type": "text",
-				"text": detail.Summary.Title,
-			})
-			sqlBuf.WriteString(fmt.Sprintf(
-				"INSERT OR REPLACE INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (%s, %s, %s, %d, %d, %s);\n",
-				sqlEscapeLiteral(uPartID),
-				sqlEscapeLiteral(userMsgID),
-				sqlEscapeLiteral(sessionID),
-				ts-90,
-				ts-90,
-				sqlEscapeLiteral(string(uPartBytes)),
-			))
-		}
-
-		effModel := modelID
-		if turn.ModelID != "" {
-			effModel = turn.ModelID
-		}
-		usage := turn.Usage
-		msgData := map[string]interface{}{
-			"parentID": lastUserMsgID,
-			"role":     "assistant",
-			"mode":     "build",
-			"agent":    "build",
-			"path":     map[string]interface{}{"cwd": targetDir, "root": targetDir},
-			"cost":     usage.Cost,
-			"tokens": map[string]interface{}{
-				"total":     usage.totalContextTokens(),
-				"input":     usage.Input,
-				"output":    usage.Output,
-				"reasoning": usage.Reasoning,
-				"cache":     map[string]interface{}{"write": usage.CacheWrite, "read": usage.CacheRead},
-			},
-			"modelID":    effModel,
-			"providerID": providerID,
-			"imported":   true,
-			"time":       map[string]interface{}{"created": ts, "completed": ts + 500},
-			"finish":     "stop",
-		}
-		msgBytes, _ := json.Marshal(msgData)
-		sqlBuf.WriteString(fmt.Sprintf(
-			"INSERT OR REPLACE INTO message (id, session_id, time_created, time_updated, data) VALUES (%s, %s, %d, %d, %s);\n",
-			sqlEscapeLiteral(msgID),
-			sqlEscapeLiteral(sessionID),
-			ts,
-			ts+500,
-			sqlEscapeLiteral(string(msgBytes)),
-		))
-
-		if strings.TrimSpace(turn.Reasoning) != "" {
-			seq++
-			rPartID := makeAscendingOpenCodeID("prt", ts+10, seq)
-			rData, _ := json.Marshal(map[string]interface{}{
-				"type": "reasoning",
-				"text": turn.Reasoning,
-				"time": map[string]interface{}{"start": ts, "end": ts + 200},
-			})
-			sqlBuf.WriteString(fmt.Sprintf(
-				"INSERT OR REPLACE INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (%s, %s, %s, %d, %d, %s);\n",
-				sqlEscapeLiteral(rPartID),
-				sqlEscapeLiteral(msgID),
-				sqlEscapeLiteral(sessionID),
-				ts+10,
-				ts+200,
-				sqlEscapeLiteral(string(rData)),
-			))
-		}
-
-		for tIdx, tc := range turn.Tools {
-			seq++
-			tPartID := makeAscendingOpenCodeID("prt", ts+20+int64(tIdx), seq)
-			callID := sanitizeToolCallID(tc.CallID, seq)
-			inMap := tc.Input
-			if inMap == nil {
-				inMap = map[string]interface{}{}
-			}
-			title := tc.Title
-			if title == "" {
-				title = tc.Tool
-			}
-			tData, _ := json.Marshal(map[string]interface{}{
-				"type":     "tool",
-				"tool":     tc.Tool,
-				"callID":   callID,
-				"imported": true,
-				"state": map[string]interface{}{
-					"status":   "completed",
-					"input":    inMap,
-					"output":   tc.Output,
-					"title":    title,
-					"metadata": map[string]interface{}{"truncated": false},
-					"time":     map[string]interface{}{"start": ts + 20, "end": ts + 150},
-				},
-			})
-			sqlBuf.WriteString(fmt.Sprintf(
-				"INSERT OR REPLACE INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (%s, %s, %s, %d, %d, %s);\n",
-				sqlEscapeLiteral(tPartID),
-				sqlEscapeLiteral(msgID),
-				sqlEscapeLiteral(sessionID),
-				ts+20+int64(tIdx),
-				ts+150+int64(tIdx),
-				sqlEscapeLiteral(string(tData)),
-			))
-		}
-
-		replyText := strings.TrimSpace(turn.Text)
-		if replyText == "" && len(turn.Tools) > 0 {
-			replyText = fmt.Sprintf("Executed %d tool step(s).", len(turn.Tools))
-		}
-		if replyText != "" {
-			seq++
-			txtPartID := makeAscendingOpenCodeID("prt", ts+300, seq)
-			txtData, _ := json.Marshal(map[string]interface{}{
-				"type": "text",
-				"text": replyText,
-			})
-			sqlBuf.WriteString(fmt.Sprintf(
-				"INSERT OR REPLACE INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (%s, %s, %s, %d, %d, %s);\n",
-				sqlEscapeLiteral(txtPartID),
-				sqlEscapeLiteral(msgID),
-				sqlEscapeLiteral(sessionID),
-				ts+300,
-				ts+400,
-				sqlEscapeLiteral(string(txtData)),
-			))
-		}
-	}
-
-	sqlBuf.WriteString("COMMIT;\n")
-
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	cmd := subproc.CommandContext(ctx, sqlitecli.Executable(), "-cmd", ".timeout 5000", dbPath)
-	cmd.WaitDelay = time.Second
-	cmd.Stdin = strings.NewReader(sqlBuf.String())
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("sqlite3 error: %v (%s)", err, strings.TrimSpace(string(out)))
+
+	err := sqlitecli.WithImmediateTx(ctx, dbPath, 5*time.Second, func(ctx context.Context, conn *sql.Conn) error {
+		msgStmt, err := conn.PrepareContext(ctx, `INSERT OR REPLACE INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?);`)
+		if err != nil {
+			return err
+		}
+		defer msgStmt.Close()
+
+		partStmt, err := conn.PrepareContext(ctx, `INSERT OR REPLACE INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?, ?);`)
+		if err != nil {
+			return err
+		}
+		defer partStmt.Close()
+
+		execMsg := func(id string, created, updated int64, data map[string]interface{}) error {
+			b, _ := json.Marshal(data)
+			_, err := msgStmt.ExecContext(ctx, id, sessionID, created, updated, string(b))
+			return err
+		}
+		execPart := func(id, msgID string, created, updated int64, data map[string]interface{}) error {
+			b, _ := json.Marshal(data)
+			_, err := partStmt.ExecContext(ctx, id, msgID, sessionID, created, updated, string(b))
+			return err
+		}
+
+		baseTs := time.Now().UnixMilli() - int64(len(turns)*2000)
+		seq := 0
+		lastUserMsgID := ""
+
+		for idx, turn := range turns {
+			seq++
+			ts := turn.Timestamp
+			if ts <= 0 {
+				ts = baseTs + int64(idx*1000)
+			}
+			msgID := makeAscendingOpenCodeID("msg", ts, seq)
+
+			if turn.Role == "user" {
+				lastUserMsgID = msgID
+				if err := execMsg(msgID, ts, ts, map[string]interface{}{
+					"role":    "user",
+					"time":    map[string]interface{}{"created": ts},
+					"agent":   "build",
+					"model":   map[string]interface{}{"providerID": providerID, "modelID": modelID},
+					"summary": map[string]interface{}{"diffs": []interface{}{}},
+				}); err != nil {
+					return err
+				}
+				seq++
+				partID := makeAscendingOpenCodeID("prt", ts, seq)
+				if err := execPart(partID, msgID, ts, ts, map[string]interface{}{
+					"type": "text",
+					"text": turn.Text,
+				}); err != nil {
+					return err
+				}
+				continue
+			}
+
+			// Assistant turn
+			if lastUserMsgID == "" {
+				userMsgID := makeAscendingOpenCodeID("msg", ts-100, seq)
+				lastUserMsgID = userMsgID
+				if err := execMsg(userMsgID, ts-100, ts-100, map[string]interface{}{
+					"role":    "user",
+					"time":    map[string]interface{}{"created": ts - 100},
+					"agent":   "build",
+					"model":   map[string]interface{}{"providerID": providerID, "modelID": modelID},
+					"summary": map[string]interface{}{"diffs": []interface{}{}},
+				}); err != nil {
+					return err
+				}
+				seq++
+				uPartID := makeAscendingOpenCodeID("prt", ts-90, seq)
+				if err := execPart(uPartID, userMsgID, ts-90, ts-90, map[string]interface{}{
+					"type": "text",
+					"text": detail.Summary.Title,
+				}); err != nil {
+					return err
+				}
+			}
+
+			effModel := modelID
+			if turn.ModelID != "" {
+				effModel = turn.ModelID
+			}
+			usage := turn.Usage
+			if err := execMsg(msgID, ts, ts+500, map[string]interface{}{
+				"parentID": lastUserMsgID,
+				"role":     "assistant",
+				"mode":     "build",
+				"agent":    "build",
+				"path":     map[string]interface{}{"cwd": targetDir, "root": targetDir},
+				"cost":     usage.Cost,
+				"tokens": map[string]interface{}{
+					"total":     usage.totalContextTokens(),
+					"input":     usage.Input,
+					"output":    usage.Output,
+					"reasoning": usage.Reasoning,
+					"cache":     map[string]interface{}{"write": usage.CacheWrite, "read": usage.CacheRead},
+				},
+				"modelID":    effModel,
+				"providerID": providerID,
+				"imported":   true,
+				"time":       map[string]interface{}{"created": ts, "completed": ts + 500},
+				"finish":     "stop",
+			}); err != nil {
+				return err
+			}
+
+			if strings.TrimSpace(turn.Reasoning) != "" {
+				seq++
+				rPartID := makeAscendingOpenCodeID("prt", ts+10, seq)
+				if err := execPart(rPartID, msgID, ts+10, ts+200, map[string]interface{}{
+					"type": "reasoning",
+					"text": turn.Reasoning,
+					"time": map[string]interface{}{"start": ts, "end": ts + 200},
+				}); err != nil {
+					return err
+				}
+			}
+
+			for tIdx, tc := range turn.Tools {
+				seq++
+				tPartID := makeAscendingOpenCodeID("prt", ts+20+int64(tIdx), seq)
+				callID := sanitizeToolCallID(tc.CallID, seq)
+				inMap := tc.Input
+				if inMap == nil {
+					inMap = map[string]interface{}{}
+				}
+				title := tc.Title
+				if title == "" {
+					title = tc.Tool
+				}
+				if err := execPart(tPartID, msgID, ts+20+int64(tIdx), ts+150+int64(tIdx), map[string]interface{}{
+					"type":     "tool",
+					"tool":     tc.Tool,
+					"callID":   callID,
+					"imported": true,
+					"state": map[string]interface{}{
+						"status":   "completed",
+						"input":    inMap,
+						"output":   tc.Output,
+						"title":    title,
+						"metadata": map[string]interface{}{"truncated": false},
+						"time":     map[string]interface{}{"start": ts + 20, "end": ts + 150},
+					},
+				}); err != nil {
+					return err
+				}
+			}
+
+			replyText := strings.TrimSpace(turn.Text)
+			if replyText == "" && len(turn.Tools) > 0 {
+				replyText = fmt.Sprintf("Executed %d tool step(s).", len(turn.Tools))
+			}
+			if replyText != "" {
+				seq++
+				txtPartID := makeAscendingOpenCodeID("prt", ts+300, seq)
+				if err := execPart(txtPartID, msgID, ts+300, ts+400, map[string]interface{}{
+					"type": "text",
+					"text": replyText,
+				}); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("sqlite3 error: %w", err)
 	}
 	return nil
 }

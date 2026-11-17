@@ -579,40 +579,7 @@ func (s *Service) reconcileOpenCodePostTurnMessages(rec SessionRecord, ap *activ
 }
 
 func (s *Service) abandonOpenCodeInFlightParts(sessionID string, now int64) {
-	rec, ok := s.store.Get(sessionID)
-	if !ok || len(rec.Turns) == 0 {
-		return
-	}
-	for i := range rec.Turns {
-		for j := range rec.Turns[i].Parts {
-			p := rec.Turns[i].Parts[j]
-			if isInFlightToolPart(p) {
-				start := now
-				if p.State.Time != nil && p.State.Time.Start > 0 {
-					start = p.State.Time.Start
-				}
-				p.State.Status = "error"
-				if strings.TrimSpace(p.State.Error) == "" {
-					p.State.Error = interruptedToolError
-				}
-				p.State.Time = &PartTime{Start: start, End: now}
-				s.broadcast(sessionID, SSEEvent{
-					Type:       "message.part.updated",
-					Properties: map[string]interface{}{"part": p},
-				})
-			} else if p.Type == "reasoning" && (p.Time == nil || p.Time.End == 0) {
-				start := now
-				if p.Time != nil && p.Time.Start > 0 {
-					start = p.Time.Start
-				}
-				p.Time = &PartTime{Start: start, End: now}
-				s.broadcast(sessionID, SSEEvent{
-					Type:       "message.part.updated",
-					Properties: map[string]interface{}{"part": p},
-				})
-			}
-		}
-	}
+	s.settleSessionInFlightParts(sessionID, now, false)
 }
 
 func turnsContainMessageID(turns []MessageTurn, messageID string) bool {

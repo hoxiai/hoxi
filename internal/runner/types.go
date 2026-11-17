@@ -10,11 +10,14 @@ import (
 type RuntimeType string
 
 const (
+	RuntimeOpenCode    RuntimeType = agentcli.RuntimeOpenCode
+	RuntimeCodex       RuntimeType = agentcli.RuntimeCodex
 	RuntimeAntigravity RuntimeType = agentcli.RuntimeAntigravity
 	RuntimeClaudeCode  RuntimeType = agentcli.RuntimeClaudeCode
 	RuntimeGeminiCLI   RuntimeType = agentcli.RuntimeGeminiCLI
 	RuntimeCodeBuddy   RuntimeType = agentcli.RuntimeCodeBuddy
 	RuntimeQoder       RuntimeType = agentcli.RuntimeQoder
+	RuntimeNative      RuntimeType = "native"
 )
 
 func IsValidRuntime(rt string) bool {
@@ -22,7 +25,9 @@ func IsValidRuntime(rt string) bool {
 		rt == string(RuntimeClaudeCode) ||
 		rt == string(RuntimeGeminiCLI) ||
 		rt == string(RuntimeCodeBuddy) ||
-		rt == string(RuntimeQoder)
+		rt == string(RuntimeQoder) ||
+		rt == string(RuntimeCodex) ||
+		rt == string(RuntimeNative)
 }
 
 func IsClaudeProtocolRuntime(rt string) bool {
@@ -123,6 +128,16 @@ func RuntimeCapabilities(rt string, subagent bool) SessionCapabilities {
 			Attachments: false,
 			CostStats:   true,
 		}
+	case string(RuntimeCodex):
+		return SessionCapabilities{
+			Approval:    false,
+			Steer:       false,
+			Resume:      true,
+			Revert:      true,
+			Fork:        true,
+			Attachments: false,
+			CostStats:   true,
+		}
 	default: // opencode or native gateway session
 		return SessionCapabilities{
 			Approval:    true,
@@ -132,7 +147,7 @@ func RuntimeCapabilities(rt string, subagent bool) SessionCapabilities {
 			Fork:        true,
 			Attachments: true,
 			CostStats:   true,
-			Compact:     rt == "opencode",
+			Compact:     rt == "opencode" || rt == string(RuntimeNative),
 		}
 	}
 }
@@ -188,6 +203,7 @@ type MessageTime struct {
 
 type MessageTokens struct {
 	Total     int `json:"total"`
+	Context   int `json:"context,omitempty"`
 	Input     int `json:"input"`
 	Output    int `json:"output"`
 	Reasoning int `json:"reasoning"`
@@ -277,6 +293,7 @@ type MessageTurn struct {
 }
 
 type SSEEvent struct {
+	Seq        uint64                 `json:"seq,omitempty"`
 	Type       string                 `json:"type"`
 	Properties map[string]interface{} `json:"properties"`
 }

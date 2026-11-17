@@ -200,6 +200,7 @@ const GO_BASE_PACKAGES = new Set([
   "agyhook",
   "buildinfo",
   "claudeconfig",
+  "dataprofiles",
   "diagnostics",
   "hoxipaths",
   "llm",

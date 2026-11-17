@@ -1,0 +1,133 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <linearGradient id="ac-sky" x1="0" y1="0" x2="0.8" y2="1">
+      <stop offset="0%" stop-color="#0284c7"/>
+      <stop offset="48%" stop-color="#38bdf8"/>
+      <stop offset="82%" stop-color="#bae6fd"/>
+      <stop offset="100%" stop-color="#f0f9ff"/>
+    </linearGradient>
+    <radialGradient id="ac-sun" cx="72%" cy="22%" r="48%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.92"/>
+      <stop offset="45%" stop-color="#e0f2fe" stop-opacity="0.45"/>
+      <stop offset="100%" stop-color="#38bdf8" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="ac-beam" x1="1" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.42"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="ac-hair" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="58%" stop-color="#e2e8f0"/>
+      <stop offset="100%" stop-color="#94a3b8"/>
+    </linearGradient>
+    <linearGradient id="ac-coat" x1="0" y1="0" x2="0.3" y2="1">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#dbeafe"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Azure Sky & Sunlit Cumulus Clouds -->
+  <rect width="1600" height="900" fill="url(#ac-sky)"/>
+  <rect width="1600" height="900" fill="url(#ac-sun)"/>
+
+  <!-- Distant Sea Horizon -->
+  <rect x="0" y="650" width="1600" height="250" fill="#0ea5e9" fill-opacity="0.45"/>
+  <path d="M0 650 Q420 638 860 652 T1600 645 L1600 900 L0 900 Z" fill="#0369a1" fill-opacity="0.28"/>
+
+  <!-- Towering Shinkai-style Cumulus Clouds -->
+  <g fill="#ffffff">
+    <circle cx="420" cy="430" r="115" fill-opacity="0.92"/>
+    <circle cx="515" cy="370" r="135" fill-opacity="0.95"/>
+    <circle cx="625" cy="445" r="105" fill-opacity="0.9"/>
+    <circle cx="330" cy="495" r="88" fill-opacity="0.88"/>
+    <circle cx="485" cy="500" r="120" fill="#e0f2fe" fill-opacity="0.92"/>
+    <rect x="260" y="510" width="460" height="140" fill="#f0f9ff" fill-opacity="0.85"/>
+  </g>
+  <path d="M0 595 Q280 535 560 590 T1180 570 L1600 610 L1600 710 L0 710 Z" fill="#f8fafc" fill-opacity="0.72"/>
+
+  <!-- Architectural Sunlit Window Frame (Right Perspective) -->
+  <polygon points="730,0 810,0 810,900 730,900" fill="#cbd5e1" fill-opacity="0.55"/>
+  <polygon points="810,0 1600,0 1600,72 810,128" fill="#e2e8f0" fill-opacity="0.65"/>
+  <line x1="1120" y1="95" x2="1120" y2="900" stroke="#f8fafc" stroke-width="10" stroke-opacity="0.75"/>
+  <line x1="810" y1="530" x2="1600" y2="495" stroke="#f8fafc" stroke-width="8" stroke-opacity="0.7"/>
+  <polygon points="720,765 1600,715 1600,900 720,900" fill="#f59e0b" fill-opacity="0.22"/>
+  <polygon points="720,765 1600,715 1600,745 720,792" fill="#fef3c7" fill-opacity="0.8"/>
+
+  <!-- Diagonal Sunbeams -->
+  <polygon points="1450,0 1600,0 960,900 690,900" fill="url(#ac-beam)"/>
+  <polygon points="1140,0 1260,0 590,900 460,900" fill="url(#ac-beam)"/>
+
+  <!-- Anime Character (Right-Third Golden Ratio: Silver-Bob Academy Girl) -->
+  <g transform="translate(955, 148)">
+    <!-- Soft Halo above head -->
+    <ellipse cx="245" cy="36" rx="76" ry="15" fill="none" stroke="#38bdf8" stroke-width="4" stroke-opacity="0.85"/>
+    <ellipse cx="245" cy="36" rx="60" ry="10" fill="none" stroke="#ffffff" stroke-width="2" stroke-opacity="0.9"/>
+
+    <!-- Back Hair & Sky-Blue Inner Layer -->
+    <path d="M128 210 C118 96, 175 56, 248 56 C322 56, 378 98, 368 216 C362 288, 342 332, 318 352 L174 352 C152 332, 134 286, 128 210 Z" fill="url(#ac-hair)" stroke="#475569" stroke-width="2.5"/>
+    <path d="M152 226 C148 158, 172 132, 195 132 L195 338 C172 322, 155 282, 152 226 Z" fill="#0ea5e9"/>
+    <path d="M342 226 C346 158, 322 132, 299 132 L299 338 C322 322, 339 282, 342 226 Z" fill="#0ea5e9"/>
+
+    <!-- Neck & Academy Blazer Torso -->
+    <path d="M222 292 L222 346 L272 346 L272 292 Z" fill="#ffe4dc"/>
+    <!-- Pleated Navy Skirt -->
+    <path d="M138 615 L356 615 L392 760 L104 760 Z" fill="#1e3a8a" stroke="#0f172a" stroke-width="2.5"/>
+    <line x1="176" y1="620" x2="154" y2="758" stroke="#3b82f6" stroke-width="2" stroke-opacity="0.55"/>
+    <line x1="226" y1="620" x2="216" y2="758" stroke="#3b82f6" stroke-width="2" stroke-opacity="0.55"/>
+    <line x1="274" y1="620" x2="284" y2="758" stroke="#3b82f6" stroke-width="2" stroke-opacity="0.55"/>
+    <line x1="322" y1="620" x2="344" y2="758" stroke="#3b82f6" stroke-width="2" stroke-opacity="0.55"/>
+
+    <!-- White & Navy Academy Jacket -->
+    <path d="M126 368 C142 338, 184 328, 247 328 C310 328, 352 338, 368 368 L402 628 L94 628 Z" fill="url(#ac-coat)" stroke="#334155" stroke-width="2.6"/>
+    <!-- Navy Sailor Lapels & Gold Trim -->
+    <path d="M182 332 L247 458 L312 332 L284 328 L247 412 L210 328 Z" fill="#1e3a8a" stroke="#eab308" stroke-width="2"/>
+    <!-- Blue Tie -->
+    <polygon points="247,396 263,432 247,542 231,432" fill="#0284c7" stroke="#0f172a" stroke-width="1.8"/>
+    <line x1="247" y1="458" x2="247" y2="628" stroke="#94a3b8" stroke-width="2"/>
+    <circle cx="262" cy="498" r="5" fill="#facc15"/>
+    <circle cx="262" cy="552" r="5" fill="#facc15"/>
+
+    <!-- Face -->
+    <path d="M174 188 C174 132, 204 110, 247 110 C290 110, 320 132, 320 188 C320 254, 288 302, 247 302 C206 302, 174 254, 174 188 Z" fill="#fff1ec" stroke="#475569" stroke-width="2.2"/>
+
+    <!-- Blush -->
+    <ellipse cx="198" cy="238" rx="16" ry="7.5" fill="#fb7185" fill-opacity="0.38"/>
+    <ellipse cx="296" cy="238" rx="16" ry="7.5" fill="#fb7185" fill-opacity="0.38"/>
+
+    <!-- Sapphire Anime Eyes -->
+    <g>
+      <path d="M188 202 Q208 190 226 204" fill="none" stroke="#1e293b" stroke-width="3.6" stroke-linecap="round"/>
+      <ellipse cx="208" cy="215" rx="13" ry="16" fill="#0369a1"/>
+      <ellipse cx="208" cy="219" rx="9.5" ry="11" fill="#38bdf8"/>
+      <circle cx="208" cy="214" r="5.5" fill="#0f172a"/>
+      <circle cx="213" cy="207" r="4.2" fill="#ffffff"/>
+      <circle cx="202" cy="222" r="2.2" fill="#ffffff"/>
+
+      <path d="M268 204 Q286 190 306 202" fill="none" stroke="#1e293b" stroke-width="3.6" stroke-linecap="round"/>
+      <ellipse cx="286" cy="215" rx="13" ry="16" fill="#0369a1"/>
+      <ellipse cx="286" cy="219" rx="9.5" ry="11" fill="#38bdf8"/>
+      <circle cx="286" cy="214" r="5.5" fill="#0f172a"/>
+      <circle cx="291" cy="207" r="4.2" fill="#ffffff"/>
+      <circle cx="280" cy="222" r="2.2" fill="#ffffff"/>
+    </g>
+
+    <!-- Nose & Gentle Smile -->
+    <path d="M246 238 L244 244" stroke="#94a3b8" stroke-width="2" stroke-linecap="round"/>
+    <path d="M235 266 Q247 275 259 266" fill="none" stroke="#be123c" stroke-width="2.4" stroke-linecap="round"/>
+
+    <!-- Layered Silver Front Bangs & Side Locks -->
+    <path d="M144 196 C148 110, 192 66, 247 66 C302 66, 346 110, 350 196 C336 160, 322 146, 308 192 C298 148, 282 146, 268 194 C256 144, 240 144, 226 194 C212 148, 196 148, 186 192 C172 148, 158 160, 144 196 Z" fill="url(#ac-hair)" stroke="#475569" stroke-width="2.2"/>
+
+    <!-- Glowing Star Hairpin -->
+    <path d="M312 126 L320 144 L338 152 L320 160 L312 178 L304 160 L286 152 L304 144 Z" fill="#fde047" stroke="#0284c7" stroke-width="2"/>
+  </g>
+
+  <!-- Floating Cyan Holo Petals / Light Particles -->
+  <g fill="#7dd3fc" fill-opacity="0.82">
+    <circle cx="680" cy="260" r="6"/>
+    <circle cx="845" cy="410" r="8"/>
+    <circle cx="910" cy="215" r="5"/>
+    <circle cx="1465" cy="290" r="7"/>
+    <circle cx="1390" cy="540" r="6"/>
+  </g>
+</svg>

@@ -19,6 +19,8 @@ import {
   writeStorageJSON,
   type ProviderModalTab,
 } from "./workspace-state";
+import { resetAllCompanionSettings } from "./companion";
+import { resetAllWallpaperSettings, syncWallpaperDOM } from "./wallpaper";
 
 export type ApprovalMode = "auto" | "smart" | "manual" | "trusted" | "unattended";
 export type BashApprovalRule = "" | "allow" | "smart" | "ask";
@@ -39,9 +41,24 @@ export type SettingsTab =
   | "extensions"
   | ProviderModalTab;
 export type ThemeMode = "light" | "dark" | "system";
-export type ColorScheme = "blue" | "classic" | "warm" | "midnight";
+export type ColorScheme =
+  | "blue"
+  | "classic"
+  | "warm"
+  | "midnight"
+  | "sakura"
+  | "cyber"
+  | "obsidian";
 
-export const COLOR_SCHEMES: ColorScheme[] = ["blue", "classic", "warm", "midnight"];
+export const COLOR_SCHEMES: ColorScheme[] = [
+  "blue",
+  "classic",
+  "warm",
+  "midnight",
+  "sakura",
+  "cyber",
+  "obsidian",
+];
 export type FontScale = "compact" | "default" | "comfortable" | "large";
 export type SendShortcutMode = "enter" | "mod-enter";
 export type ReasoningDisplayMode = "auto-collapse" | "expanded" | "collapsed";
@@ -414,6 +431,7 @@ export function syncSettingsSideEffects() {
   }
   writeStorageItem(THEME_KEY, effective);
   applyFontScaleToDOM(appSettings.fontScale);
+  syncWallpaperDOM();
 }
 
 // Listen for OS theme changes when themeMode === "system"
@@ -523,6 +541,8 @@ export function resetAllAppSettings() {
   });
   persistAppSettings();
   syncSettingsSideEffects();
+  void resetAllWallpaperSettings();
+  void resetAllCompanionSettings();
   void hoxiAPI.setBrowserIdleMinutes(DEFAULT_SETTINGS.browserIdleMinutes).catch(() => {});
 }
 

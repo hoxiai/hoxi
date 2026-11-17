@@ -232,50 +232,69 @@ func (g *Service) fetchOpenCodeForProxy(w http.ResponseWriter, r *http.Request, 
 	return status, body, true
 }
 
-// handleProviderProxy filters GET /provider so any provider managed in .hoxi/models.json only exposes its .hoxi models.
+// handleProviderProxy serves GET /provider from OpenCode when running and
+// synthesizes the full Hoxi provider catalog offline when OpenCode is absent.
 func (g *Service) handleProviderProxy(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		g.proxy.ServeHTTP(w, r)
+		if g.proxy != nil && g.openCode != nil && g.openCode.Available() {
+			g.proxy.ServeHTTP(w, r)
+			return
+		}
+		writeJSONError(w, http.StatusMethodNotAllowed, "GET required")
 		return
 	}
-	status, body, ok := g.fetchOpenCodeForProxy(w, r, r.URL.Path, r.URL.Query())
-	if !ok {
-		return
+	if g.openCode != nil && g.openCode.Available() {
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		status, body, err := g.openCode.Raw(ctx, http.MethodGet, r.URL.Path, r.URL.Query(), nil)
+		cancel()
+		if err == nil && status >= 200 && status < 300 {
+			var payload map[string]interface{}
+			if json.Unmarshal(body, &payload) == nil {
+				g.filterProviderProxyPayload(payload)
+				writeJSON(w, status, payload)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(status)
+			_, _ = w.Write(body)
+			return
+		}
 	}
-	var payload map[string]interface{}
-	if json.Unmarshal(body, &payload) == nil {
-		if g.officialBlocked.Load() {
-			for _, field := range []string{"all", "connected"} {
-				if items, ok := payload[field].([]interface{}); ok {
-					kept := make([]interface{}, 0, len(items))
-					for _, item := range items {
-						id, _ := item.(string)
-						if p, ok := item.(map[string]interface{}); ok {
-							id, _ = p["id"].(string)
-						}
-						if id != officialProviderID {
-							kept = append(kept, item)
-						}
+	writeJSON(w, http.StatusOK, g.buildOfflineProviderListPayload())
+}
+
+func (g *Service) filterProviderProxyPayload(payload map[string]interface{}) {
+	if g.officialBlocked.Load() {
+		for _, field := range []string{"all", "connected"} {
+			if items, ok := payload[field].([]interface{}); ok {
+				kept := make([]interface{}, 0, len(items))
+				for _, item := range items {
+					id, _ := item.(string)
+					if p, ok := item.(map[string]interface{}); ok {
+						id, _ = p["id"].(string)
 					}
-					payload[field] = kept
+					if id != officialProviderID {
+						kept = append(kept, item)
+					}
 				}
+				payload[field] = kept
 			}
 		}
-		hoxiMap := g.loadHoxiProvidersMap()
-		if allArr, ok := payload["all"].([]interface{}); ok {
-			for _, item := range allArr {
-				if pObj, ok := item.(map[string]interface{}); ok {
-					pid, _ := pObj["id"].(string)
-					if pid == "opencode" || pid == "opencode-go" {
-						continue
-					}
-					if hProv, ok := hoxiMap[pid].(map[string]interface{}); ok {
-						if hModels, ok := hProv["models"].(map[string]interface{}); ok && len(hModels) > 0 {
-							if pModels, ok := pObj["models"].(map[string]interface{}); ok {
-								for mid := range pModels {
-									if _, keep := hModels[mid]; !keep {
-										delete(pModels, mid)
-									}
+	}
+	hoxiMap := g.loadHoxiProvidersMap()
+	if allArr, ok := payload["all"].([]interface{}); ok {
+		for _, item := range allArr {
+			if pObj, ok := item.(map[string]interface{}); ok {
+				pid, _ := pObj["id"].(string)
+				if pid == "opencode" || pid == "opencode-go" {
+					continue
+				}
+				if hProv, ok := hoxiMap[pid].(map[string]interface{}); ok {
+					if hModels, ok := hProv["models"].(map[string]interface{}); ok && len(hModels) > 0 {
+						if pModels, ok := pObj["models"].(map[string]interface{}); ok {
+							for mid := range pModels {
+								if _, keep := hModels[mid]; !keep {
+									delete(pModels, mid)
 								}
 							}
 						}
@@ -283,10 +302,82 @@ func (g *Service) handleProviderProxy(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		writeJSON(w, status, payload)
-		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_, _ = w.Write(body)
+}
+
+func (g *Service) buildOfflineProviderListPayload() map[string]interface{} {
+	hoxiMap := g.loadHoxiProvidersMap()
+	authIDs := map[string]bool{}
+	if dir := hoxipaths.EngineOpenCodeDir(); dir != "" {
+		if raw, err := os.ReadFile(filepath.Join(dir, "auth.json")); err == nil {
+			var parsed map[string]interface{}
+			if json.Unmarshal(raw, &parsed) == nil {
+				for k := range parsed {
+					authIDs[strings.TrimSpace(k)] = true
+				}
+			}
+		}
+	}
+
+	all := make([]interface{}, 0, len(hoxiMap))
+	connected := make([]string, 0, len(hoxiMap))
+	defaults := map[string]string{}
+
+	for pid, rawProv := range hoxiMap {
+		if g.officialBlocked.Load() && pid == officialProviderID {
+			continue
+		}
+		pMap, ok := rawProv.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		name, _ := pMap["name"].(string)
+		if strings.TrimSpace(name) == "" {
+			name = pid
+		}
+		npmPkg, _ := pMap["npm"].(string)
+		modelsRaw, _ := pMap["models"].(map[string]interface{})
+		modelsOut := map[string]interface{}{}
+		firstModelID := ""
+		for mid, mRaw := range modelsRaw {
+			if firstModelID == "" {
+				firstModelID = mid
+			}
+			if mObj, ok := mRaw.(map[string]interface{}); ok {
+				cp := make(map[string]interface{}, len(mObj)+2)
+				for k, v := range mObj {
+					cp[k] = v
+				}
+				if cp["id"] == nil {
+					cp["id"] = mid
+				}
+				if cp["name"] == nil {
+					cp["name"] = mid
+				}
+				modelsOut[mid] = cp
+			}
+		}
+		if firstModelID != "" {
+			defaults[pid] = firstModelID
+		}
+		opts, _ := pMap["options"].(map[string]interface{})
+		apiKey, _ := opts["apiKey"].(string)
+		baseURL, _ := opts["baseURL"].(string)
+		isConnected := authIDs[pid] || strings.TrimSpace(apiKey) != "" || g.ResolveStoredProviderKey(pid, baseURL) != "" || isLoopbackURL(baseURL)
+		if isConnected {
+			connected = append(connected, pid)
+		}
+		all = append(all, map[string]interface{}{
+			"id":     pid,
+			"name":   name,
+			"npm":    npmPkg,
+			"source": "custom",
+			"models": modelsOut,
+		})
+	}
+	return map[string]interface{}{
+		"all":       all,
+		"default":   defaults,
+		"connected": connected,
+	}
 }

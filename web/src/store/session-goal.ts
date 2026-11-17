@@ -3,12 +3,13 @@
 // commands are routed here; every other prompt goes straight to
 // dispatchSessionPrompt. Goal state itself lives in session-goal-state.
 import { t } from "../i18n";
+import { hoxiAPI } from "../services/api";
 import {
   buildProposeSubtasksPrompt,
   parseSubtasksCommand,
   spawnBackgroundSubtask,
 } from "./orchestration";
-import { isSessionBusy } from "./session-query";
+import { isSessionBusy, sessionDirectory } from "./session-query";
 import { hasEditingQueuedPrompt } from "./prompt-queue";
 import { dispatchSessionPrompt } from "./workspace-session-messages";
 import { loadSessionMessagesOnly } from "./workspace-sessions";
@@ -139,6 +140,22 @@ export async function submitSessionPrompt(
   targetSessionID?: string | null,
   options?: Parameters<typeof dispatchSessionPrompt>[2]
 ): Promise<string> {
+  if (promptText.trim().toLowerCase() === "/compact") {
+    const sid = targetSessionID ?? workspace.activeSessionID;
+    const sel = workspace.selectedModel;
+    if (sid && sel?.providerID && sel?.modelID && !isSessionBusy(sid)) {
+      const compacted = await hoxiAPI.summarizeSession(
+        sid,
+        sel.providerID,
+        sel.modelID,
+        options?.directory || sessionDirectory(sid)
+      );
+      if (compacted) {
+        await loadSessionMessagesOnly(sid);
+      }
+      return "";
+    }
+  }
   const goalCommand = parseGoalCommand(promptText);
   if (goalCommand) {
     await runGoalCommand(goalCommand, targetSessionID ?? workspace.activeSessionID);

@@ -4,10 +4,9 @@
   One-line Windows installer for Hoxi Desktop.
 .DESCRIPTION
   Downloads the official Hoxi Windows release from GitHub Releases, verifies its
-  SHA-256 checksum against the release .sha256 sidecar, installs Hoxi (and its
-  bundled opencode.exe sidecar) into %LOCALAPPDATA%\Programs\Hoxi, creates
-  Desktop and Start Menu shortcuts, registers the hoxi:// URL protocol, adds
-  Hoxi to the user PATH, and launches Hoxi.
+  SHA-256 checksum against the release .sha256 sidecar, installs Hoxi into
+  %LOCALAPPDATA%\Programs\Hoxi, creates Desktop and Start Menu shortcuts,
+  registers the hoxi:// URL protocol, adds Hoxi to the user PATH, and launches Hoxi.
 .EXAMPLE
   irm https://raw.githubusercontent.com/hoxiai/hoxi/main/scripts/install.ps1 | iex
 #>
@@ -117,6 +116,13 @@ if ($SetupAsset -and -not $Portable) {
   $Downloaded = Get-VerifiedDownload -AssetUrl $ZipAsset.browser_download_url -FileName $ZipName
   try {
     Get-Process -Name "Hoxi" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    $LegacySidecar = Join-Path $InstallDir "opencode.exe"
+    if (Test-Path $LegacySidecar) {
+      Get-Process -Name "opencode" -ErrorAction SilentlyContinue |
+        Where-Object { $_.Path -and ($_.Path -ieq $LegacySidecar) } |
+        Stop-Process -Force -ErrorAction SilentlyContinue
+      Remove-Item -Force $LegacySidecar -ErrorAction SilentlyContinue
+    }
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
     Write-Host "==> Extracting Hoxi $Ver to $InstallDir..." -ForegroundColor Cyan
     Expand-Archive -Path $Downloaded.FilePath -DestinationPath $InstallDir -Force

@@ -78,20 +78,44 @@ function readInfo(app) {
   return JSON.parse(run("plutil", ["-convert", "json", "-o", "-", path.join(app, "Contents/Info.plist")]));
 }
 
-function inspectBinaries(app, info, arch = "arm64") {
+export function sidecarPolicy(env = process.env) {
+  const raw = String(env?.HOXI_BUNDLE_OPENCODE ?? "").trim().toLowerCase();
+  if (raw === "" || raw === "auto") return "optional";
+  if (raw === "0" || raw === "false") return "forbidden";
+  if (raw === "1" || raw === "true") return "required";
+  throw new Error(
+    `Invalid HOXI_BUNDLE_OPENCODE value: ${JSON.stringify(env?.HOXI_BUNDLE_OPENCODE)} (expected 0, 1, or auto)`,
+  );
+}
+
+export function inspectBinaries(app, info, arch = "arm64", env = process.env) {
   assert.equal(path.basename(info.CFBundleExecutable), info.CFBundleExecutable, "Invalid app executable");
   const archName = machoArchName(arch);
+  const policy = sidecarPolicy(env);
   const main = path.join(app, "Contents/MacOS", info.CFBundleExecutable);
-  const sidecar = path.join(app, "Contents/MacOS/opencode");
+  const sidecarCandidate = path.join(app, "Contents/MacOS/opencode");
+  const sidecarStat = fs.lstatSync(sidecarCandidate, { throwIfNoEntry: false });
+  if (policy === "forbidden") {
+    assert.equal(
+      sidecarStat,
+      undefined,
+      `Unexpected bundled OpenCode sidecar when HOXI_BUNDLE_OPENCODE=0: ${sidecarCandidate}`,
+    );
+  } else if (policy === "required") {
+    assert.ok(sidecarStat?.isFile(), `Missing executable: ${sidecarCandidate}`);
+  } else if (sidecarStat) {
+    assert.ok(sidecarStat.isFile(), `Invalid bundled OpenCode sidecar: ${sidecarCandidate}`);
+  }
+  const sidecar = sidecarStat ? sidecarCandidate : null;
   const framework = path.join(app, "Contents/Frameworks/Sparkle.framework");
   // The Intel bundle intentionally ships without Sparkle: the published appcast
   // carries a single arm64 enclosure, so a bundled updater would push arm64 to
   // an Intel Mac. It relies on the arch-aware JSON/self-updater instead.
-  const config = arch === "amd64" ? null : sparkleConfig();
+  const config = arch === "amd64" ? null : sparkleConfig(env);
   if (validateSparkleApp(info, config)) {
     frameworkFiles(framework);
   } else assert.ok(!fs.existsSync(framework), "Unconfigured Sparkle framework");
-  const binaries = [main, sidecar, ...(fs.existsSync(framework) ? machoFiles(framework) : [])];
+  const binaries = [main, ...(sidecar ? [sidecar] : []), ...(fs.existsSync(framework) ? machoFiles(framework) : [])];
   const minimum = maximumMacOS([minimumSupportedMacOS, info.LSMinimumSystemVersion, ...binaries.map((binary) => {
     assert.ok(fs.statSync(binary).isFile(), `Missing executable: ${binary}`);
     const architectures = run("lipo", ["-archs", binary]).trim().split(/\s+/);
@@ -114,10 +138,10 @@ export function validateAppMetadata(info, expectedVersion, requiredMinimum) {
     "App minimum macOS is lower than a bundled executable requires");
 }
 
-export function configureApp(app, version, arch = "arm64") {
+export function configureApp(app, version, arch = "arm64", env = process.env) {
   version = normalizeVersion(version);
   const info = readInfo(app);
-  const { minimum } = inspectBinaries(app, info, arch);
+  const { minimum } = inspectBinaries(app, info, arch, env);
   for (const [key, value] of Object.entries({
     CFBundleVersion: String(versionCode(version)), CFBundleShortVersionString: version, LSMinimumSystemVersion: minimum,
   })) {
@@ -125,32 +149,39 @@ export function configureApp(app, version, arch = "arm64") {
   }
 }
 
-export function verifyApp(app, version, arch = "arm64") {
+export function verifyApp(app, version, arch = "arm64", env = process.env) {
   const info = readInfo(app);
-  const { main, sidecar, minimum } = inspectBinaries(app, info, arch);
+  const { main, sidecar, minimum } = inspectBinaries(app, info, arch, env);
   validateAppMetadata(info, version, minimum);
   run("codesign", ["--verify", "--deep", "--strict", app]);
   // Cross-arch artifacts cannot run natively here: Rosetta cold-start of the
   // large hardened-runtime sidecar exceeds the exec timeout. Verify structure,
-  // the exact Mach-O slice, signature and plist version instead; the sidecar
-  // itself is already pinned by opencode.lock's SHA-256. Native builds keep the
-  // full runtime check.
+  // the exact Mach-O slice, signature and plist version instead; when bundled,
+  // the sidecar itself is pinned by opencode.lock's SHA-256. Native builds keep
+  // the full runtime check.
   if (hostReleaseArch() === arch) {
     assert.equal(run(main, ["--version"]).trim(), normalizeVersion(version),
       "Embedded runtime version differs from release version");
-    verifyBinaryVersion(sidecar);
+    if (sidecar) {
+      verifyBinaryVersion(sidecar);
+    }
   }
-  return { version: normalizeVersion(version), minimumMacOS: info.LSMinimumSystemVersion, architecture: arch };
+  return {
+    version: normalizeVersion(version),
+    minimumMacOS: info.LSMinimumSystemVersion,
+    architecture: arch,
+    bundledOpenCode: Boolean(sidecar),
+  };
 }
 
-export function verifyDMG(dmg, version, arch = "arm64") {
+export function verifyDMG(dmg, version, arch = "arm64", env = process.env) {
   const mount = fs.mkdtempSync(path.join(os.tmpdir(), "hoxi-verify-dmg-"));
   let attached = false;
   let metadata;
   try {
     run("hdiutil", ["attach", "-readonly", "-nobrowse", "-mountpoint", mount, path.resolve(dmg)]);
     attached = true;
-    metadata = verifyApp(path.join(mount, "Hoxi.app"), version, arch);
+    metadata = verifyApp(path.join(mount, "Hoxi.app"), version, arch, env);
   } finally {
     // Never recursively remove a mount point: detach must succeed first.
     if (attached) run("hdiutil", ["detach", mount]);

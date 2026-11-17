@@ -21,6 +21,10 @@ type desktopBridgeState struct {
 	intentMu        sync.Mutex
 	pendingIntent   *DesktopIntent
 	onDesktopIntent func()
+
+	companionMu             sync.RWMutex
+	onDesktopCompanionSync  func(DesktopCompanionState) DesktopCompanionSyncStatus
+	onDesktopCompanionReset func()
 }
 
 const (
@@ -28,13 +32,16 @@ const (
 	desktopSessionIDPrefix   = "ses_"
 	desktopMessageIDPrefix   = "msg_"
 
-	DesktopIntentActionAttention     = "attention"
-	DesktopIntentActionRunning       = "running"
-	DesktopIntentActionNewThread     = "new-thread"
-	DesktopIntentActionHandoff       = "handoff"
-	DesktopIntentActionPolicy        = "policy"
-	DesktopIntentActionSettings      = "settings"
-	DesktopIntentActionSyncKeepAwake = "sync-keep-awake"
+	DesktopIntentActionAttention          = "attention"
+	DesktopIntentActionRunning            = "running"
+	DesktopIntentActionNewThread          = "new-thread"
+	DesktopIntentActionHandoff            = "handoff"
+	DesktopIntentActionPolicy             = "policy"
+	DesktopIntentActionSettings           = "settings"
+	DesktopIntentActionSyncKeepAwake      = "sync-keep-awake"
+	DesktopIntentActionCompanionTap       = "companion-tap"
+	DesktopIntentActionCompanionToggleMin = "companion-toggle-min"
+	DesktopIntentActionCompanionDismiss   = "companion-dismiss"
 )
 
 // DesktopIntent is a one-shot navigation request produced by a deep link, the
@@ -95,7 +102,10 @@ func validDesktopIntentAction(action string) bool {
 		DesktopIntentActionHandoff,
 		DesktopIntentActionPolicy,
 		DesktopIntentActionSettings,
-		DesktopIntentActionSyncKeepAwake:
+		DesktopIntentActionSyncKeepAwake,
+		DesktopIntentActionCompanionTap,
+		DesktopIntentActionCompanionToggleMin,
+		DesktopIntentActionCompanionDismiss:
 		return true
 	default:
 		return false

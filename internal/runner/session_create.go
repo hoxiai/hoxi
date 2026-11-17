@@ -46,9 +46,9 @@ func (s *Service) CreateSession(body CreateSessionRequest, directory string) (Se
 
 	rt := strings.TrimSpace(body.Runtime)
 	if rt == "" {
-		rt = string(RuntimeAntigravity)
+		rt = string(RuntimeNative)
 	}
-	if !IsValidRuntime(rt) {
+	if !IsValidRuntime(rt) && rt != string(RuntimeOpenCode) {
 		return SessionInfo{}, http.StatusBadRequest, errors.New("unsupported runner runtime: " + rt)
 	}
 	projDir := strings.TrimSpace(body.Directory)
@@ -96,6 +96,16 @@ func (s *Service) CreateSession(body CreateSessionRequest, directory string) (Se
 			if ms := agentcli.DiscoverQoderModels(); len(ms) > 0 {
 				modelID = ms[0].ID
 			}
+		case string(RuntimeCodex):
+			if ms := agentcli.DiscoverCodexModelsWithRefresh(false); len(ms) > 0 {
+				modelID = ms[0].ID
+			}
+		case string(RuntimeOpenCode):
+			if ms := agentcli.DiscoverOpenCodeCLIModelsWithRefresh(false); len(ms) > 0 {
+				modelID = ms[0].ID
+			}
+		case string(RuntimeNative):
+			// Native sessions use the user's configured provider/model or "auto".
 		default:
 			if ms, _, _ := DiscoverAgyModels(); len(ms) > 0 {
 				modelID = ms[0].ID
@@ -104,7 +114,11 @@ func (s *Service) CreateSession(body CreateSessionRequest, directory string) (Se
 	}
 	provID := strings.TrimSpace(body.ProviderID)
 	if provID == "" {
-		provID = rt
+		if rt == string(RuntimeNative) {
+			provID = "auto"
+		} else {
+			provID = rt
+		}
 	}
 	title := strings.TrimSpace(body.Title)
 	if title == "" {
@@ -117,6 +131,12 @@ func (s *Service) CreateSession(body CreateSessionRequest, directory string) (Se
 			title = "CodeBuddy Session"
 		case string(RuntimeQoder):
 			title = "Qoder Session"
+		case string(RuntimeCodex):
+			title = "Codex CLI Session"
+		case string(RuntimeOpenCode):
+			title = "OpenCode CLI Session"
+		case string(RuntimeNative):
+			title = "Hoxi Native Session"
 		default:
 			title = "Antigravity Session"
 		}

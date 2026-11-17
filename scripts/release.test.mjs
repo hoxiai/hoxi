@@ -6,7 +6,8 @@ import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import {
-  normalizeVersion, maximumMacOS, minimumFromMachO, validateAppMetadata, validatePublication,
+  normalizeVersion, maximumMacOS, minimumFromMachO, sidecarPolicy, configureApp, verifyApp,
+  validateAppMetadata, validatePublication,
 } from "./release-artifact.mjs";
 import { releasePayload, publishRelease } from "./release-publisher.mjs";
 import { sparkleConfig, validateSparkle, validateSparkleApp, frameworkFiles, verifyUpdateSignature } from "./sparkle.mjs";
@@ -128,34 +129,31 @@ test("publisher rejects HTTP errors, non-confirmations and confirmations for a d
 // separately against a real packaged app; this fixture isolates orchestration.
 const scripts = path.dirname(fileURLToPath(import.meta.url));
 
-test("opencode.lock pins every shipped platform and release workflows consume it", () => {
+test("opencode.lock pins every platform while release workflows ship lean sidecar-free bundles by default", () => {
   const lock = loadOpenCodeLock();
   assert.match(lock.version, /^\d+\.\d+\.\d+$/);
   assert.equal(Object.keys(lock.assets).length, 6);
 
   const macWorkflow = fs.readFileSync(path.join(scripts, "../.github/workflows/release.yml"), "utf8");
   assert.match(macWorkflow, /node scripts\/opencode-lock\.mjs verify/);
-  assert.match(macWorkflow, /opencode-lock\.mjs url darwin\/arm64/);
-  assert.match(macWorkflow, /opencode-lock\.mjs sha256 darwin\/arm64/);
-  assert.match(macWorkflow, /opencode-lock\.mjs url darwin\/amd64/);
-  assert.match(macWorkflow, /opencode-lock\.mjs sha256 darwin\/amd64/);
+  assert.match(macWorkflow, /HOXI_BUNDLE_OPENCODE:\s*"0"/);
+  assert.doesNotMatch(macWorkflow, /opencode-arm64\.zip|opencode-amd64\.zip/);
   assert.doesNotMatch(macWorkflow, /vars\.HOXI_OPENCODE_ARCHIVE_(URL|SHA256)/);
 
   const crossWorkflow = fs.readFileSync(path.join(scripts, "../.github/workflows/release-cross-platform.yml"), "utf8");
   assert.doesNotMatch(crossWorkflow, /releases\/latest\/download/);
-  // Windows opencode/lock lookups are templated by the amd64/arm64 matrix; Linux stays literal.
-  assert.ok(crossWorkflow.includes("opencode-lock.mjs url windows/${{ matrix.arch }}"), "workflow must use the lock URL for windows");
-  assert.ok(crossWorkflow.includes("opencode-lock.mjs verify-archive windows/${{ matrix.arch }}"), "workflow must verify windows");
-  for (const platform of ["linux/amd64"]) {
-    assert.ok(crossWorkflow.includes(`opencode-lock.mjs url ${platform}`), `workflow must use the lock URL for ${platform}`);
-    assert.ok(crossWorkflow.includes(`opencode-lock.mjs verify-archive ${platform}`), `workflow must verify ${platform}`);
-  }
-  // Windows builds run for both amd64 and arm64 via a matrix.
+  assert.match(crossWorkflow, /node scripts\/opencode-lock\.mjs verify/);
+  assert.match(crossWorkflow, /HOXI_BUNDLE_OPENCODE:\s*"0"/);
+  assert.doesNotMatch(crossWorkflow, /opencode-windows-|opencode-linux-/);
+  // Windows builds run for both amd64 and arm64 via a matrix without bundling opencode.exe.
   assert.match(crossWorkflow, /arch: \[amd64, arm64\]/);
   assert.match(crossWorkflow, /wails build -platform windows\/\$\{\{ matrix\.arch \}\} -nsis/);
   assert.match(crossWorkflow, /Hoxi-\$\{RELEASE_VERSION\}-windows-\$\{\{ matrix\.arch \}\}-setup\.exe/);
   assert.match(crossWorkflow, /Hoxi-\$\{RELEASE_VERSION\}-windows-\$\{\{ matrix\.arch \}\}\.zip/);
-  assert.match(crossWorkflow, /pe-arch\.mjs verify \$\{\{ matrix\.arch \}\}/);
+  assert.match(crossWorkflow, /test ! -f build\/bin\/opencode\.exe/);
+  assert.match(crossWorkflow, /pe-arch\.mjs verify \$\{\{ matrix\.arch \}\} build\/bin\/Hoxi\.exe build\/bin\/sqlite3\.exe/);
+  assert.match(crossWorkflow, /7z a "\$ZIP_NAME" Hoxi\.exe sqlite3\.exe/);
+  assert.match(crossWorkflow, /tar -czf "\$TAR_NAME" Hoxi hoxi\.desktop hoxi\.png/);
 
   const nsisProject = fs.readFileSync(path.join(scripts, "../build/windows/installer/project.nsi"), "utf8");
   assert.match(nsisProject, /!define WAILS_INSTALL_SCOPE "user"/);
@@ -165,7 +163,11 @@ test("opencode.lock pins every shipped platform and release workflows consume it
   assert.match(nsisProject, /Page custom HoxiQuickInstallPageCreate HoxiQuickInstallPageLeave/);
   assert.match(nsisProject, /Page custom HoxiFinishPageCreate HoxiFinishPageLeave/);
   assert.match(nsisProject, /ShowInstDetails nevershow/);
+  assert.doesNotMatch(nsisProject, /!error "Hoxi installer requires opencode\.exe/);
+  assert.match(nsisProject, /!ifdef ARG_HOXI_OPENCODE_BINARY/);
   assert.match(nsisProject, /File "\/oname=opencode\.exe"/);
+  assert.match(nsisProject, /Delete "\$INSTDIR\\opencode\.exe"/);
+  assert.match(nsisProject, /File "\/oname=sqlite3\.exe"/);
   assert.match(nsisProject, /!insertmacro wails\.webview2runtime/);
   assert.match(nsisProject, /!insertmacro wails\.associateCustomProtocols/);
   for (const bmp of ["banner.bmp", "header.bmp", "wizard.bmp"]) {
@@ -173,9 +175,9 @@ test("opencode.lock pins every shipped platform and release workflows consume it
     assert.equal(fs.existsSync(bmpPath), true, `Missing Windows installer asset: ${bmp}`);
     assert.equal(fs.readFileSync(bmpPath).subarray(0, 2).toString("ascii"), "BM");
   }
-  // Killing Hoxi.exe alone orphans its opencode.exe child, which keeps the file
-  // locked: install and uninstall must both stop sidecars running from $INSTDIR,
-  // matched by full path rather than by process name.
+  // Upgrading from an older sidecar-bundled install must still stop any legacy
+  // $INSTDIR\opencode.exe child before deleting it, matched by full path rather
+  // than by process name so user-installed external opencode binaries stay intact.
   assert.equal(nsisProject.match(/^\s*!insertmacro hoxi\.stopInstalledProcesses\s*$/gm)?.length, 2);
   assert.match(nsisProject, /'opencode\.exe', 'sqlite3\.exe'/);
   assert.match(nsisProject, /GetDirectoryName\(\$\$_\.ExecutablePath\) -ieq \$\$root/);
@@ -185,6 +187,8 @@ test("opencode.lock pins every shipped platform and release workflows consume it
   assert.match(macBuild, /opencode-lock\.mjs verify-binary/);
   assert.match(macBuild, /opencode-lock\.mjs verify-archive/);
   const winBuild = fs.readFileSync(path.join(scripts, "build-windows.ps1"), "utf8");
+  assert.match(winBuild, /\[switch\]\$BundleOpenCode/);
+  assert.match(winBuild, /\$env:HOXI_BUNDLE_OPENCODE = \$BundleMode/);
   assert.match(winBuild, /opencode-lock\.mjs verify-binary/);
   assert.match(winBuild, /opencode-lock\.mjs verify-archive/);
   assert.match(winBuild, /\[ValidateSet\("amd64", "arm64"\)\]/);
@@ -600,4 +604,143 @@ test("build-desktop.sh skips incomplete work/ directories and preserves valid fa
   } finally {
     fs.rmSync(sandboxDir, { recursive: true, force: true });
   }
+});
+
+test("sidecarPolicy defaults to optional verification, forbids sidecar on 0 and requires it on 1", () => {
+  assert.equal(sidecarPolicy({}), "optional");
+  assert.equal(sidecarPolicy({ HOXI_BUNDLE_OPENCODE: "" }), "optional");
+  assert.equal(sidecarPolicy({ HOXI_BUNDLE_OPENCODE: "auto" }), "optional");
+  assert.equal(sidecarPolicy({ HOXI_BUNDLE_OPENCODE: "0" }), "forbidden");
+  assert.equal(sidecarPolicy({ HOXI_BUNDLE_OPENCODE: "false" }), "forbidden");
+  assert.equal(sidecarPolicy({ HOXI_BUNDLE_OPENCODE: "1" }), "required");
+  assert.equal(sidecarPolicy({ HOXI_BUNDLE_OPENCODE: "true" }), "required");
+  for (const invalid of ["yes", "2", "invalid"]) {
+    assert.throws(() => sidecarPolicy({ HOXI_BUNDLE_OPENCODE: invalid }), /HOXI_BUNDLE_OPENCODE/);
+  }
+});
+
+test("build-desktop.sh omits opencode sidecar by default and supports opt-in HOXI_BUNDLE_OPENCODE=1", () => {
+  const repoRoot = path.join(scripts, "..");
+  const buildScript = fs.readFileSync(path.join(repoRoot, "build-desktop.sh"), "utf8");
+  const start = buildScript.indexOf('OPENCODE_SRC=""');
+  const end = buildScript.indexOf("\nresolve_signing_identity() {", start);
+  assert.ok(start > 0 && end > start, "Expected HOXI_BUNDLE_OPENCODE block in build-desktop.sh");
+  const snippet = buildScript.slice(start, end);
+
+  const runSnippet = (envOverrides = {}) => spawnSync(
+    "bash",
+    [
+      "-c",
+      `set -euo pipefail\nTARGET_ARCH="arm64"\nresolve_opencode_bin() {\n  if [[ "\${MOCK_OPENCODE_FAIL:-0}" == "1" ]]; then return 1; fi\n  echo "/mock/bin/opencode"\n}\n${snippet}\nprintf '%s|%s\\n' "\${HOXI_BUNDLE_OPENCODE}" "\${OPENCODE_SRC}"`,
+    ],
+    { encoding: "utf8", env: { ...process.env, ...envOverrides } },
+  );
+
+  const defaultEnv = { ...process.env };
+  delete defaultEnv.HOXI_BUNDLE_OPENCODE;
+  const byDefault = spawnSync(
+    "bash",
+    [
+      "-c",
+      `set -euo pipefail\nTARGET_ARCH="arm64"\nresolve_opencode_bin() { echo "should-not-run" >&2; exit 99; }\n${snippet}\nprintf '%s|%s\\n' "\${HOXI_BUNDLE_OPENCODE}" "\${OPENCODE_SRC}"`,
+    ],
+    { encoding: "utf8", env: defaultEnv },
+  );
+  assert.equal(byDefault.status, 0, byDefault.stderr);
+  assert.equal(byDefault.stdout.trim(), "0|");
+
+  const explicitZero = runSnippet({ HOXI_BUNDLE_OPENCODE: "0" });
+  assert.equal(explicitZero.status, 0, explicitZero.stderr);
+  assert.equal(explicitZero.stdout.trim(), "0|");
+
+  const optIn = runSnippet({ HOXI_BUNDLE_OPENCODE: "1" });
+  assert.equal(optIn.status, 0, optIn.stderr);
+  assert.equal(optIn.stdout.trim(), "1|/mock/bin/opencode");
+
+  const optInMissing = runSnippet({ HOXI_BUNDLE_OPENCODE: "1", MOCK_OPENCODE_FAIL: "1" });
+  assert.notEqual(optInMissing.status, 0);
+  assert.match(optInMissing.stderr, /Failed to resolve or download verified OpenCode/);
+
+  const invalidMode = runSnippet({ HOXI_BUNDLE_OPENCODE: "bogus" });
+  assert.notEqual(invalidMode.status, 0);
+  assert.match(invalidMode.stderr, /Unsupported HOXI_BUNDLE_OPENCODE/);
+});
+
+test("configureApp and verifyApp validate lean pure-Go bundles and opt-in OpenCode sidecars", { skip: process.platform !== "darwin" }, (t) => {
+  const hostArch = process.arch === "x64" ? "amd64" : process.arch;
+  const clangArch = hostArch === "amd64" ? "x86_64" : "arm64";
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "hoxi-app-sidecar-gate-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  const compileStub = (outPath, printedLine, minos = "13.0") => {
+    const src = `#include <stdio.h>\nint main(void) { puts(${JSON.stringify(printedLine)}); return 0; }\n`;
+    const res = spawnSync(
+      "cc",
+      ["-x", "c", "-", "-arch", clangArch, `-mmacosx-version-min=${minos}`, "-o", outPath],
+      { input: src, encoding: "utf8" },
+    );
+    assert.equal(res.status, 0, res.stderr);
+    fs.chmodSync(outPath, 0o755);
+  };
+
+  const signBundle = (appPath) => {
+    const sidecarPath = path.join(appPath, "Contents/MacOS/opencode");
+    if (fs.existsSync(sidecarPath)) {
+      const s1 = spawnSync("codesign", ["--force", "--sign", "-", sidecarPath], { encoding: "utf8" });
+      assert.equal(s1.status, 0, s1.stderr);
+    }
+    const s2 = spawnSync("codesign", ["--force", "--sign", "-", appPath], { encoding: "utf8" });
+    assert.equal(s2.status, 0, s2.stderr);
+  };
+
+  const app = path.join(root, "Hoxi.app");
+  fs.mkdirSync(path.join(app, "Contents/MacOS"), { recursive: true });
+  fs.writeFileSync(
+    path.join(app, "Contents/Info.plist"),
+    `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleExecutable</key><string>Hoxi</string>
+  <key>CFBundleIdentifier</key><string>ai.hoxi.desktop</string>
+  <key>CFBundleVersion</key><string>1</string>
+  <key>CFBundleShortVersionString</key><string>0.0.1</string>
+  <key>LSMinimumSystemVersion</key><string>13.0</string>
+  <key>CFBundleURLTypes</key><array><dict><key>CFBundleURLSchemes</key><array><string>hoxi</string></array></dict></array>
+</dict></plist>`,
+  );
+  compileStub(path.join(app, "Contents/MacOS/Hoxi"), "0.2.1", "13.0");
+
+  const baseEnv = {};
+  configureApp(app, "0.2.1", hostArch, { ...baseEnv, HOXI_BUNDLE_OPENCODE: "0" });
+  signBundle(app);
+
+  const leanVerified = verifyApp(app, "0.2.1", hostArch, { ...baseEnv, HOXI_BUNDLE_OPENCODE: "0" });
+  assert.equal(leanVerified.bundledOpenCode, false);
+  assert.equal(leanVerified.minimumMacOS, "13.0");
+  assert.equal(verifyApp(app, "0.2.1", hostArch, baseEnv).bundledOpenCode, false);
+  assert.throws(
+    () => verifyApp(app, "0.2.1", hostArch, { ...baseEnv, HOXI_BUNDLE_OPENCODE: "1" }),
+    /Missing executable: .*opencode/,
+  );
+
+  const lock = loadOpenCodeLock();
+  const sidecarPath = path.join(app, "Contents/MacOS/opencode");
+  compileStub(sidecarPath, `opencode ${lock.version}`, "14.0");
+  assert.throws(
+    () => verifyApp(app, "0.2.1", hostArch, { ...baseEnv, HOXI_BUNDLE_OPENCODE: "0" }),
+    /Unexpected bundled OpenCode sidecar/,
+  );
+
+  configureApp(app, "0.2.1", hostArch, { ...baseEnv, HOXI_BUNDLE_OPENCODE: "1" });
+  signBundle(app);
+  const bundledVerified = verifyApp(app, "0.2.1", hostArch, { ...baseEnv, HOXI_BUNDLE_OPENCODE: "1" });
+  assert.equal(bundledVerified.bundledOpenCode, true);
+  assert.equal(bundledVerified.minimumMacOS, "14.0");
+
+  compileStub(sidecarPath, "opencode 0.0.1", "14.0");
+  signBundle(app);
+  assert.throws(
+    () => verifyApp(app, "0.2.1", hostArch, { ...baseEnv, HOXI_BUNDLE_OPENCODE: "1" }),
+    /version mismatch/,
+  );
 });

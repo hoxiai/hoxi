@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hoxiai/hoxi/internal/agentcli"
@@ -53,9 +54,40 @@ Use the tool's bounded output when available. If a full log is needed, save it t
 Set a suitable tool timeout and test timeout. If a check stays silent, inspect its current stage and existing log before retrying; do not start duplicate checks or repeatedly wait without reporting progress. Reuse build caches unless a clean build is required.
 When navigating code, follow: locate symbol/file or fetch a full surgical package in one step (prefer hoxi_code_index tool or 'hoxi code-index context|search|inspect|callers|callees|impact|refresh') -> inspect the target function and minimal surrounding lines instead of whole files -> check callers, callees, blast radius (impact) and related tests. Edit and then run targeted verification only when the task asks for changes.
 When the user asks to generate or edit visual/image assets (icons, banners, illustrations, mockups, or photo edits), prefer calling the hoxi_image tool (or 'hoxi image generate "<prompt>" --out <workspace-relative-path>' in CLI sessions) so Hoxi invokes the user's configured image generation model directly.
-For cross-border e-commerce unit economics, 1688 volumetric landed cost, Search Term ad report audits, Amazon 249B/policy listing checks, TikTok script timing, or Shopify variant CSVs, prefer 'hoxi ecom profit|ads-audit|listing-check|shopify-csv' over mental estimation.
 Reviews, audits and questions are read-only: report findings and do not edit, commit, push or publish unless the user asks for a fix or that action. Within the work the user asked for, keep going without asking whether to continue; stop to ask only for a real blocker, a choice the user must make, or an action that needs approval.
 When the user asks to spawn/start a background subtask and continue chatting in the main thread (e.g. "开一个子任务…然后继续对话" / "background subtask"), or to split work into parallel coding subtasks: do NOT call the built-in synchronous task/subagent tool (which blocks the current turn until the subagent finishes). Instead, output a fenced hoxi-subtasks JSON block and end your turn immediately so Hoxi runs the subtask(s) asynchronously in isolated background sessions while the main conversation stays responsive: {"title":"plan title","autoStart":true,"concurrency":3,"tasks":[{"id":"task-1","prompt":"self-contained instructions and verification","dependsOn":[]}]} (use "autoStart":true when the user wants the subtask(s) started right away, or "autoStart":false when proposing a multi-task plan for review first).`
+
+var (
+	promptGuidanceMu    sync.RWMutex
+	extraPromptGuidance []string
+)
+
+// RegisterPromptGuidance appends host extension execution guidance lines
+// without leaking private domain terminology into the open-source host.
+func RegisterPromptGuidance(guidance string) {
+	guidance = strings.TrimSpace(guidance)
+	if guidance == "" {
+		return
+	}
+	promptGuidanceMu.Lock()
+	defer promptGuidanceMu.Unlock()
+	for _, existing := range extraPromptGuidance {
+		if existing == guidance {
+			return
+		}
+	}
+	extraPromptGuidance = append(extraPromptGuidance, guidance)
+}
+
+func effectiveCommandExecutionGuidance() string {
+	promptGuidanceMu.RLock()
+	extra := append([]string(nil), extraPromptGuidance...)
+	promptGuidanceMu.RUnlock()
+	if len(extra) == 0 {
+		return commandExecutionGuidance
+	}
+	return commandExecutionGuidance + "\n" + strings.Join(extra, "\n")
+}
 
 // PromptReceipt is returned by POST .../prompt and .../prompt_async so callers
 // can correlate node-assigned instruction/message IDs and detect deduplicated retries.
@@ -249,7 +281,7 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 			callerSystem = storeCtx + "\n\n" + callerSystem
 		}
 	}
-	body.System = strings.TrimSpace(commandExecutionGuidance + "\n\n" + callerSystem)
+	body.System = strings.TrimSpace(effectiveCommandExecutionGuidance() + "\n\n" + callerSystem)
 	var resolvedSkill ResolvedSkill
 	if body.SkillSelection != nil {
 		resolved, err := s.resolveSkillSelection(ctx, rec.WorktreePath, rec.ID, rec.Runtime, *body.SkillSelection)
@@ -266,7 +298,8 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 		}
 	}
 	isImageTurn := s.IsImageModel(candidateProviderID, candidateModelID)
-	if rec.Runtime == "opencode" && !isImageTurn {
+	openCodeDaemonUp := s.openCode != nil && s.openCode.Available()
+	if rec.Runtime == "opencode" && !isImageTurn && openCodeDaemonUp {
 		s.mu.Lock()
 		ap := s.procs[sessionID]
 		busy := unmanagedBusySteer || (ap != nil && ap.runtime == "opencode" && !ap.hasPendingError() && !ap.wasAborted())
@@ -316,6 +349,22 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 			rec.ProviderID = ""
 		}
 	}
+	llmPromptText, resolvedMode, resolvedProvID, resolvedModelID, nextCallerSys := resolveSlashCommandAndAgentOverrides(
+		promptText,
+		rec.WorktreePath,
+		mode,
+		rec.ProviderID,
+		modelID,
+		callerSystem,
+		rec.Runtime,
+	)
+	mode = resolvedMode
+	rec.ProviderID = resolvedProvID
+	modelID = resolvedModelID
+	if nextCallerSys != callerSystem {
+		callerSystem = nextCallerSys
+		body.System = strings.TrimSpace(effectiveCommandExecutionGuidance() + "\n\n" + callerSystem)
+	}
 	effort := strings.TrimSpace(body.Variant)
 	if rec.Runtime == string(RuntimeAntigravity) {
 		modelID, effort = ResolveAgyModelAndEffort(modelID, effort)
@@ -336,12 +385,22 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 	case string(RuntimeQoder):
 		binPath, _ = agentcli.ResolveQoderBinaryForModel(modelID)
 		missingMsg = "Qoder CLI (qodercli / qoderclicn) binary not found in PATH"
+	case string(RuntimeCodex):
+		binPath = agentcli.ResolveCodexBinary()
+		missingMsg = "Codex CLI (codex) binary not found in PATH"
+	case string(RuntimeOpenCode):
+		if !openCodeDaemonUp {
+			binPath = agentcli.ResolveOpenCodeBinary()
+			missingMsg = "OpenCode CLI (opencode) binary not found in ~/.hoxi/bin/opencode or PATH (install via 'npm i -g opencode-ai' or 'brew install opencode', then reload runtimes in Settings)"
+		}
+	case string(RuntimeNative):
+		binPath = "native"
 	}
-	if binPath == "" && rec.Runtime != "opencode" {
+	if binPath == "" && (rec.Runtime != "opencode" || !openCodeDaemonUp) && rec.Runtime != string(RuntimeNative) {
 		return http.StatusBadRequest, PromptReceipt{}, errors.New(missingMsg)
 	}
 	isImageTurn = s.IsImageModel(rec.ProviderID, modelID)
-	if rec.Runtime == "opencode" && !isImageTurn {
+	if rec.Runtime == "opencode" && !isImageTurn && openCodeDaemonUp {
 		resolvedModel, checkErr := s.ensureOpenCodeModelAvailable(ctx, rec.WorktreePath, rec.ProviderID, modelID, true)
 		if checkErr != nil {
 			return http.StatusConflict, PromptReceipt{}, checkErr
@@ -427,7 +486,15 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 		ProviderID:   rec.ProviderID,
 		ContinueTask: body.ContinueTask,
 	}
-	storedParts, deliveryParts, cliPrompt := s.prepareTurnAttachmentsForModel(rec, rec.ProviderID, modelID, isImageTurn, now, seq, userMsgID, promptText, fileParts)
+	storedParts, deliveryParts, cliPrompt := s.prepareTurnAttachmentsForModel(rec, rec.ProviderID, modelID, isImageTurn, now, seq, userMsgID, llmPromptText, fileParts)
+	if llmPromptText != promptText {
+		for i := range storedParts {
+			if storedParts[i].Type == "text" {
+				storedParts[i].Text = promptText
+				break
+			}
+		}
+	}
 	if body.SkillSelection != nil {
 		s.recordUserSkillOverride(userMsgID, promptText, body.SkillSelection)
 		storedParts, deliveryParts = applySkillSelectionToTurnParts(
@@ -435,7 +502,7 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 			userMsgID,
 			now,
 			seq,
-			promptText,
+			llmPromptText,
 			body.SkillSelection,
 			rec.Runtime != "opencode",
 			resolvedSkill.Content,
@@ -501,8 +568,22 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 	var err error
 	if isImageTurn {
 		err = s.startImageGenerationTurn(rec, mode, modelID, userInfo, storedParts, deliveryParts, asstMsgID, promptText, body.ImageOptions)
-	} else if rec.Runtime == "opencode" {
+	} else if rec.Runtime == "opencode" && openCodeDaemonUp {
 		err = s.startOpenCodeTurn(rec, mode, modelID, effort, body.System, userInfo, storedParts, deliveryParts)
+	} else if rec.Runtime == string(RuntimeNative) {
+		nativeSystem := body.System
+		if memCtx := strings.TrimSpace(runtimeMemoryContext(rec)); memCtx != "" && !strings.Contains(nativeSystem, "<project_memory>") {
+			if nativeSystem == "" {
+				nativeSystem = memCtx
+			} else {
+				nativeSystem = memCtx + "\n\n" + nativeSystem
+			}
+		}
+		promptInput := cliPrompt
+		if body.SkillSelection != nil {
+			promptInput = formatInlineSkillPrompt(body.SkillSelection.Name, resolvedSkill.Content, "") + "\n\n" + promptInput
+		}
+		err = s.startNativeTurn(rec, mode, modelID, effort, nativeSystem, promptInput, userInfo, storedParts, asstMsgID, deliveryParts...)
 	} else {
 		input := runtimeMemoryContext(rec) + runtimeContext(rec)
 		if body.SkillSelection != nil {
@@ -582,7 +663,7 @@ func (s *Service) recordCLISystemDelivered(sessionID, runtime, callerSystem stri
 }
 
 func (s *Service) fallbackCLISystemForFreshRetry(sessionID, runtime string) string {
-	sys := commandExecutionGuidance
+	sys := effectiveCommandExecutionGuidance()
 	if caller, ok := s.cliSystemDelivered.Load(sessionID + "\x00" + runtime); ok {
 		if strings.TrimSpace(caller) != "" {
 			sys += "\n\n" + strings.TrimSpace(caller)

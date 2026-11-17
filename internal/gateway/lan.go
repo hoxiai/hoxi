@@ -12,11 +12,9 @@ import (
 // file confinement as the GoPanel tunnel, so a phone on the local network gets
 // exactly the remote capabilities and nothing more.
 //
-// The phone reaches this Mac over plain HTTP on the local network, so the token
-// is bearer-style and the transport is unencrypted: anyone who can passively
-// read the LAN can recover the token, and anyone who has it can act as the
-// phone. Keep the pairing QR private and treat the LAN as trusted. An
-// end-to-end encrypted transport is tracked separately.
+// Paired mobile clients carrying the E2EE key from the pairing QR authenticate
+// and encrypt payloads end-to-end with AES-256-GCM (X-Hoxi-E2EE: v1); legacy
+// clients without X-Hoxi-E2EE remain compatible on trusted local networks.
 func (g *Gateway) ServeLANRequest(w http.ResponseWriter, r *http.Request) {
 	// Refuse public source addresses before doing any token work: the port may
 	// be reachable from the internet on a host without NAT, and Hoxi serves the

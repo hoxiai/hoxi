@@ -13,7 +13,7 @@
 - **Run Headless**: `go run ./cmd/hoxi --no-desktop`
 - **Web Lint / Test / Build**: `npm --prefix web run lint && npm --prefix web test && npm --prefix web run build`
 - **AI One-Click Release**: `./scripts/ai-release.sh <version> "<release-notes>"`
-- **Go 分层归属**（完整目录树见 `docs/architecture-overview.md`）：顶层 `main.go`、`cmd/hoxi`、`internal/app`、`internal/cli`；网关层 `internal/gateway`；底座层 `internal/opencode/ocapi`、`internal/opencode/ocstate`、`hoxipaths`、`llm`、`agentcli`、`agyhook`、`claudeconfig`、`diagnostics`、`buildinfo`、`notify`、`osopen`、`reclaim`、`sqlitecli`、`statusbar`、`subproc`、`textindex`、`testutil/execstub`；其余 `internal/*` 为业务层
+- **Go 分层归属**（完整目录树见 `docs/architecture-overview.md`）：顶层 `main.go`、`cmd/hoxi`、`internal/app`、`internal/cli`；网关层 `internal/gateway`；底座层 `internal/opencode/ocapi`、`internal/opencode/ocstate`、`hoxipaths`、`llm`、`agentcli`、`agyhook`、`claudeconfig`、`dataprofiles`、`diagnostics`、`buildinfo`、`notify`、`osopen`、`reclaim`、`sqlitecli`、`statusbar`、`subproc`、`textindex`、`testutil/execstub`；其余 `internal/*` 为业务层
 - **配置根**：`.opencode/{plugins,lib,skills}/` 是本仓库自用的上游 OpenCode 配置根（只读）；`.hoxi/memory/` 为 git-ignored 项目状态
 
 ---
@@ -62,7 +62,7 @@
      - **无人值守（`unattended`，`approval_unattended.go`，仅桌面端）**：要求隔离 worktree + 命令沙箱且运行时受 Seatbelt 包裹；硬拒绝读密钥、任何 `git push` 与发布、提权、凭据外发及动态代码（`dynamic` 类，共用 `.opencode/lib/unattended.cases.json`），拒绝项记入 `/api/hoxi/permission/deferred`（不入隧道）。
      - **结束本会话进程（`owned_process.go` + `process_control.go`）**：除手动模式外，顶层字面量 `pkill`/`kill` 仅在核实所有目标均属本会话进程组时放行（审计来源 `own_process`），任一目标不属本会话或含动态参数一律询问；同链仅把固定绝对目录追加到 `PATH` 尾部时，还须确认继承环境解析到系统工具，前置/替换 PATH、工具来源不明或停止前出现其他可能改写工具的操作均不豁免。
      - **任何模式（含完全信任）必问硬底线**：读密钥与凭据、工作树外敏感路径、受保护路径（`.git`、`.opencode`、`.claude`、`.hoxi`、`.agents`、`.envrc`、`.vscode/settings.json`；`.hoxi/attachments/` 读写豁免，`.hoxi/skills/` 与 `.agents/skills/` 仅读与执行既有脚本豁免，`.claude/skills/` 普通资料仅读豁免（凭据、越界软链与实际通配内容读取不豁免，目录范围授权不等于写入或执行授权），读本会话 `~/.hoxi/sessions/<id>/` 豁免）、`sudo`、`git push --force`/删远端分支、共享 git 状态、发布命令、非本会话 `kill`/`pkill`/`killall`、磁盘系统命令、管道执行、`unsandboxed` 工具与无法按 `opaque_command.go` / `opaque-command.js` 归约的不透明命令（共用 `.opencode/lib/opaque-command.cases.json`）。
-   - **本地网关与外发边界**：网关仅监听 `127.0.0.1`，反向代理 `Transport` 配 `Proxy: nil` 与 `FlushInterval: -1` 并长生命周期复用，外部响应与进程输出用 `io.LimitReader` 限流。AI 请求直连用户服务商（回环中转 `relay.go` 同样直发且不入隧道）；辅助外发（遥测、更新、登录、榜单）严禁含提示词、代码、Diff 或会话内容；后台 LLM 调用须在 UI 标明目的地。
+   - **本地网关与外发边界**：网关仅监听 `127.0.0.1`，反向代理 `Transport` 配 `Proxy: nil` 与 `FlushInterval: -1` 并长生命周期复用，外部响应与进程输出用 `io.LimitReader` 限流。AI 请求直连用户服务商（回环中转 `relay.go` 同样直发且不入隧道）；辅助外发（遥测、更新、登录、模型价目同步）严禁含提示词、代码、Diff 或会话内容；后台 LLM 调用须在 UI 标明目的地。
    - **子进程消毒与原子落盘**：子进程一律用 [`internal/subproc`](internal/subproc/subproc.go) 创建（Windows `CREATE_NO_WINDOW`，修改而非替换 `SysProcAttr`）；外部 `git`/CLI 绑超时并设 `GIT_TERMINAL_PROMPT=0`、`GCM_INTERACTIVE=never`，剥离 `GIT_ASKPASS`/`SSH_ASKPASS`/`GIT_EDITOR`；读外部 SQLite 只读 + `_busy_timeout`。`~/.hoxi/` 与 `.hoxi/` 状态文件须「加锁 + 同目录临时文件 + fsync + `os.Rename`」；日志自动脱敏 `Authorization`、`Bearer`、`x-api-key`、`OPENCODE_SERVER_PASSWORD`。
 
    - **署名偏好只读例外**：仅实际 `hoxipaths.Home()` 下精确的 `git-attribution.json` 文件可由已知只读工具读取；校验原始路径与真实根/文件，拒绝目录、通配、歧义路径、凭据软链与伪造配置根。编辑和写入仍须审批，不豁免其他 Hoxi 状态文件
@@ -115,4 +115,4 @@
 
 ## 三、未实现能力
 
-勿将以下能力当作现有能力，也勿在注释/UI 文案中宣称已支持（明细见 `docs/architecture-overview.md` 第二节）：跨网 E2E 加密与盲目中继（LAN 直连与 `:5417` 令牌监听已实现）、隧道 WebSocket（远程 `/pty` 当前返回 501）、隧道凭据入钥匙串（当前为 `0600` 文件）、Android 推送、远程隧道公网真机验收（`prompt_async` 与审批 `reply` 跨重启幂等收据及 `~/.hoxi/task-ledger.json` 跨重启任务账本自动续跑已实现）。
+勿将以下能力当作现有能力，也勿在注释/UI 文案中宣称已支持（明细见 `docs/architecture-overview.md` 第二节）：QUIC 直连 NAT 打洞与边缘一次性配对票据服务（`hoxi-e2ee-v1` 应用层端到端加密、`v1-sse` 流式加密与跨网首次 X25519 ECDH 密钥协商已实现，但路径/时序元数据隐藏尚未实现）、隧道 WebSocket（远程 `/pty` 严禁开放并返回 403）、桌面端隧道凭据入系统钥匙串（当前桌面为 `0600` 文件，手机端已存 `FlutterSecureStorage`）、Android 原生系统推送、远程隧道公网真机压力验收（`prompt_async` 与审批 `reply` 跨重启幂等收据及 `~/.hoxi/task-ledger.json` 跨重启任务账本自动续跑已实现）。

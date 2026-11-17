@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <linearGradient id="ob-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#070709"/>
+      <stop offset="55%" stop-color="#121116"/>
+      <stop offset="100%" stop-color="#22190f"/>
+    </linearGradient>
+    <radialGradient id="ob-aura" cx="76%" cy="34%" r="48%">
+      <stop offset="0%" stop-color="#f59e0b" stop-opacity="0.38"/>
+      <stop offset="52%" stop-color="#b45309" stop-opacity="0.14"/>
+      <stop offset="100%" stop-color="#070709" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="ob-hair" x1="0" y1="0" x2="0.6" y2="1">
+      <stop offset="0%" stop-color="#fef3c7"/>
+      <stop offset="52%" stop-color="#e7e5e4"/>
+      <stop offset="100%" stop-color="#a8a29e"/>
+    </linearGradient>
+    <linearGradient id="ob-coat" x1="0" y1="0" x2="0.4" y2="1">
+      <stop offset="0%" stop-color="#27272a"/>
+      <stop offset="55%" stop-color="#141417"/>
+      <stop offset="100%" stop-color="#09090b"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1600" height="900" fill="url(#ob-bg)"/>
+  <rect width="1600" height="900" fill="url(#ob-aura)"/>
+
+  <!-- Cathedral Observatory Arches in Deep Shadow -->
+  <g fill="none" stroke="#27272a" stroke-width="14" stroke-opacity="0.65">
+    <path d="M120 900 L120 260 Q290 60 460 260 L460 900"/>
+    <path d="M520 900 L520 220 Q710 20 900 220 L900 900"/>
+  </g>
+
+  <!-- Luminous Golden Astrolabe & Celestial Clockwork Rings -->
+  <g transform="translate(1225, 315)" fill="none">
+    <circle cx="0" cy="0" r="285" stroke="#fbbf24" stroke-opacity="0.28" stroke-width="1.8"/>
+    <circle cx="0" cy="0" r="245" stroke="#f59e0b" stroke-opacity="0.42" stroke-width="1.4" stroke-dasharray="10 8"/>
+    <ellipse cx="0" cy="0" rx="340" ry="118" transform="rotate(-18)" stroke="#fde68a" stroke-opacity="0.48" stroke-width="2"/>
+    <ellipse cx="0" cy="0" rx="310" ry="96" transform="rotate(-18)" stroke="#f59e0b" stroke-opacity="0.3" stroke-width="1.2" stroke-dasharray="6 6"/>
+    <circle cx="-210" cy="-82" r="34" stroke="#fbbf24" stroke-opacity="0.55" stroke-width="2"/>
+    <circle cx="155" cy="-215" r="42" stroke="#fbbf24" stroke-opacity="0.5" stroke-width="2"/>
+  </g>
+
+  <!-- Anime Tactical Commander Girl (Right-Third Golden Ratio: Ash-Blonde Hair & Black-Gold Coat) -->
+  <g transform="translate(955, 134)">
+    <!-- Long Flowing Platinum/Ash-Blonde Hair -->
+    <path d="M150 188 C118 310, 64 425, 34 538 C115 512, 168 446, 206 370 Z" fill="url(#ob-hair)"/>
+    <path d="M156 184 C150 82, 206 44, 276 44 C348 44, 404 96, 408 220 C412 348, 438 456, 476 542 C406 516, 362 448, 338 368 L196 360 Z" fill="url(#ob-hair)" stroke="#44403c" stroke-width="2.2"/>
+    <!-- Sharp Golden Rim Light -->
+    <path d="M352 68 C402 118, 412 224, 426 346" fill="none" stroke="#fde047" stroke-width="4" stroke-linecap="round"/>
+
+    <!-- Matte-Black Tailored Tactical Coat with Gold Trim -->
+    <path d="M126 766 L168 386 C184 342, 226 326, 276 326 C326 326, 368 342, 386 386 L432 766 Z" fill="url(#ob-coat)" stroke="#f59e0b" stroke-width="2.4"/>
+    <!-- High Tactical Collar & Gold Piping -->
+    <path d="M222 296 L232 362 L276 388 L320 362 L330 296 L298 308 L276 344 L254 308 Z" fill="#18181b" stroke="#fbbf24" stroke-width="2.2"/>
+    <line x1="276" y1="388" x2="276" y2="766" stroke="#f59e0b" stroke-width="2.4"/>
+    <path d="M214 388 L248 528 L276 502 L304 528 L338 388" fill="none" stroke="#fbbf24" stroke-width="2" stroke-opacity="0.82"/>
+    <!-- Gold Shoulder Clasps -->
+    <rect x="172" y="366" width="34" height="12" rx="4" fill="#f59e0b"/>
+    <rect x="346" y="366" width="34" height="12" rx="4" fill="#f59e0b"/>
+
+    <!-- Poised Face -->
+    <path d="M198 182 C198 128, 230 104, 276 104 C322 104, 352 128, 352 182 C352 246, 318 294, 276 294 C234 294, 198 246, 198 182 Z" fill="#fdf2ea" stroke="#44403c" stroke-width="2"/>
+
+    <!-- Piercing Luminous Amber-Gold Anime Eyes -->
+    <g>
+      <path d="M210 194 L252 200" fill="none" stroke="#1c1917" stroke-width="3.6" stroke-linecap="round"/>
+      <ellipse cx="232" cy="211" rx="12" ry="13.5" fill="#92400e"/>
+      <ellipse cx="232" cy="215" rx="8.8" ry="9.5" fill="#fbbf24"/>
+      <circle cx="232" cy="210" r="4.8" fill="#09090b"/>
+      <circle cx="237" cy="205" r="3.8" fill="#ffffff"/>
+
+      <path d="M342 194 L300 200" fill="none" stroke="#1c1917" stroke-width="3.6" stroke-linecap="round"/>
+      <ellipse cx="320" cy="211" rx="12" ry="13.5" fill="#92400e"/>
+      <ellipse cx="320" cy="215" rx="8.8" ry="9.5" fill="#fbbf24"/>
+      <circle cx="320" cy="210" r="4.8" fill="#09090b"/>
+      <circle cx="325" cy="205" r="3.8" fill="#ffffff"/>
+    </g>
+
+    <!-- Composed Expression -->
+    <path d="M266 262 L286 262" fill="none" stroke="#78350f" stroke-width="2.2" stroke-linecap="round"/>
+
+    <!-- Sharp Layered Blonde Bangs -->
+    <path d="M174 192 C182 102, 224 56, 276 56 C328 56, 370 102, 378 192 C358 148, 342 142, 326 190 C312 140, 294 140, 276 194 C258 140, 240 140, 226 190 C210 142, 194 148, 174 192 Z" fill="url(#ob-hair)" stroke="#44403c" stroke-width="2"/>
+  </g>
+
+  <!-- Floating Gold Stardust Embers -->
+  <g fill="#fcd34d" fill-opacity="0.85">
+    <circle cx="480" cy="340" r="3.5"/>
+    <circle cx="670" cy="520" r="4.5"/>
+    <circle cx="820" cy="260" r="3"/>
+    <circle cx="930" cy="460" r="5"/>
+    <circle cx="1465" cy="410" r="4"/>
+    <circle cx="1115" cy="640" r="3.5"/>
+  </g>
+</svg>

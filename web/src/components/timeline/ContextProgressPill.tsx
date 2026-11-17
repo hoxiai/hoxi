@@ -6,6 +6,7 @@ import type { MessagePart } from "../../services/sse-types";
 import {
   canCompactSession,
   compactSessionContext,
+  computeSessionContextWatermark,
   createContextContributors,
   contextLimitForSelection,
   isAutoModel,
@@ -91,49 +92,7 @@ export default function ContextProgressPill() {
     const id = workspace.activeSessionID;
     if (!id) return null;
     const turns = workspace.messagesBySession[id] ?? [];
-    let latestInput = 0;
-    let latestOutput = 0;
-    let latestReasoning = 0;
-    let latestCacheRead = 0;
-    let latestCacheWrite = 0;
-    let latestTotal = 0;
-    let totalCost = 0;
-
-    for (const turn of turns) {
-      if (typeof turn.info.cost === "number") {
-        totalCost += turn.info.cost;
-      }
-      const t = turn.info.tokens;
-      if (t && (t.input > 0 || t.output > 0 || (t.cache?.read ?? 0) > 0)) {
-        latestInput = t.input || 0;
-        latestOutput = t.output || 0;
-        latestReasoning = t.reasoning || 0;
-        latestCacheRead = t.cache?.read || 0;
-        latestCacheWrite = t.cache?.write || 0;
-        latestTotal = t.total || 0;
-      }
-    }
-
-    const used =
-      latestTotal > 0
-        ? latestTotal
-        : latestInput + latestOutput + latestCacheRead + latestCacheWrite;
-    const limit = contextLimit();
-    const rawPercent = limit > 0 ? Math.round((used / limit) * 100) : 0;
-    const percent = Math.min(100, rawPercent);
-
-    return {
-      used,
-      limit,
-      percent,
-      overLimit: rawPercent > 100,
-      input: latestInput,
-      output: latestOutput,
-      reasoning: latestReasoning,
-      cacheRead: latestCacheRead,
-      cacheWrite: latestCacheWrite,
-      totalCost,
-    };
+    return computeSessionContextWatermark(turns, contextLimit());
   });
 
   const compactable = createMemo(() => canCompactSession(workspace.activeSessionID));

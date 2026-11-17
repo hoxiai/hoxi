@@ -1,7 +1,7 @@
 // web/src/services/sse-types.ts
 // Verified against OpenCode v1.18.25 OpenAPI 3.x specification
 
-export type SessionRuntime = "opencode" | "antigravity" | "gemini-cli" | "claude-code" | "codebuddy" | "qoder";
+export type SessionRuntime = "opencode" | "native" | "codex" | "antigravity" | "gemini-cli" | "claude-code" | "codebuddy" | "qoder";
 export type SessionSurface = "code" | "work";
 
 export interface SessionCapabilities {
@@ -59,6 +59,8 @@ export interface MessageError {
 
 export interface MessageTokens {
   total?: number;
+  /** Single-step parent context window occupancy when turn buckets hold multi-step billing sums. */
+  context?: number;
   input: number;
   output: number;
   reasoning: number;
@@ -379,10 +381,12 @@ export type OpenCodeEvent =
     }
   | {
       // Stream control from /api/hoxi/event: `server.heartbeat` proves the
-      // connection is alive; `hoxi.stream.resync` means OpenCode events may
-      // have been missed while its upstream leg reconnected.
+      // connection is alive; `hoxi.stream.resync` means OpenCode or lagged
+      // runner events were missed so clients should reload from snapshots.
       type: "server.heartbeat" | "hoxi.stream.resync";
-      properties: Record<string, never>;
+      properties: {
+        seq?: number;
+      };
     }
   | {
       // Authoritative busy set for every Hoxi-managed session across all
@@ -392,6 +396,7 @@ export type OpenCodeEvent =
       type: "hoxi.status.snapshot";
       properties: {
         scope: "managed";
+        seq?: number;
         busy: string[];
         // sessionID -> unix ms when the turn was flagged as stalled.
         stalled?: Record<string, number>;

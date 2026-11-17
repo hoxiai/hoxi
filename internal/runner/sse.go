@@ -74,7 +74,7 @@ func (s *Service) handleUnifiedSSE(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusInternalServerError, "streaming unsupported")
 		return
 	}
-	ch, unsub := s.Subscribe("")
+	ch, subSeq, unsub := s.subscribeSinceWithSeq("", parseAfterSeqRequest(r))
 	defer unsub()
 
 	var upstream chan string
@@ -85,9 +85,9 @@ func (s *Service) handleUnifiedSSE(w http.ResponseWriter, r *http.Request) {
 	}
 
 	startSSE(w, flusher)
-	// The first frame is the authoritative busy set, so a client that switched
-	// projects never has to poll every project to learn what is still running.
-	if frame := s.statusSnapshotFrame(); frame != "" {
+	// The first frame is the authoritative busy set, stamped with the exact
+	// subscription seq so events broadcast right after subscribe are never skipped.
+	if frame := s.statusSnapshotFrameAt(subSeq); frame != "" {
 		_, _ = io.WriteString(w, frame)
 		flusher.Flush()
 	}
@@ -99,6 +99,10 @@ func (s *Service) handleUnifiedSSE(w http.ResponseWriter, r *http.Request) {
 // a pure in-memory read, so the periodic refresh stays cheap. Stall flags ride
 // along so a reconnect restores Attention for stalled sessions in every project.
 func (s *Service) statusSnapshotFrame() string {
+	return s.statusSnapshotFrameAt(s.CurrentEventSeq())
+}
+
+func (s *Service) statusSnapshotFrameAt(seq uint64) string {
 	busy := s.busySessionIDs()
 	sort.Strings(busy)
 	busyRaw, err := json.Marshal(busy)
@@ -109,8 +113,8 @@ func (s *Service) statusSnapshotFrame() string {
 	if err != nil {
 		return ""
 	}
-	return fmt.Sprintf("data: {\"type\":%q,\"properties\":{\"scope\":%q,\"busy\":%s,\"stalled\":%s}}\n\n",
-		statusSnapshotEventType, statusSnapshotScope, busyRaw, stalledRaw)
+	return fmt.Sprintf("data: {\"type\":%q,\"properties\":{\"scope\":%q,\"seq\":%d,\"busy\":%s,\"stalled\":%s}}\n\n",
+		statusSnapshotEventType, statusSnapshotScope, seq, busyRaw, stalledRaw)
 }
 
 func (s *Service) serveSSE(w http.ResponseWriter, r *http.Request, sessionID string) {
@@ -120,7 +124,7 @@ func (s *Service) serveSSE(w http.ResponseWriter, r *http.Request, sessionID str
 		return
 	}
 	// Subscribe before flushing headers so clients cannot dispatch a prompt before we listen.
-	ch, unsub := s.Subscribe(sessionID)
+	ch, unsub := s.SubscribeSince(sessionID, parseAfterSeqRequest(r))
 	defer unsub()
 
 	startSSE(w, flusher)

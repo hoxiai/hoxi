@@ -75,7 +75,7 @@ export const models = {
   optional: "Optional",
   registerExtraModel: "Register Additional Model ID",
   extraModelPlaceholder: "e.g. deepseek-v4.1-flash",
-  keysStoreNote: "Keys are stored locally in OpenCode's encrypted auth store.",
+  keysStoreNote: "Keys are stored locally on this device in Hoxi's auth store.",
   saveAndConnect: "Save & Connect",
   connect: "Connect",
   connected: "Connected",

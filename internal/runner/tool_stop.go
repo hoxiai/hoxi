@@ -138,9 +138,13 @@ func (s *Service) StopToolCommand(sessionID, callID, partID, command string) (in
 		s.noteActivity(ap)
 	}
 	stopped := 0
+	activeProc := ap.activeProcess()
 	switch {
-	case ap != nil && ap.cmd != nil && ap.cmd.Process != nil:
-		stopped = stopChildToolProcesses(ap.cmd.Process.Pid, command)
+	case ap != nil && ap.runtime == string(RuntimeNative) && activeProc != nil:
+		terminateNativeCommandTree(activeProc, nil)
+		stopped = 1
+	case activeProc != nil:
+		stopped = stopChildToolProcesses(activeProc.Pid, command)
 	case openCodeSession && s.openCode != nil && isRunningBashPart(matchedPart):
 		// OpenCode tool commands are children of the shared `opencode serve`
 		// daemon. The sandbox plugin tags each bash command with its engine

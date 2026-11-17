@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/hoxiai/hoxi/internal/sqlitecli"
-	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 // agy sometimes writes a new conversation to the Protobuf store (<id>.pb) and
@@ -21,40 +20,15 @@ import (
 
 const agyEmptyStoreSuffix = ".hoxi-empty-"
 
-func sqliteImmutableURI(dbPath string) string {
-	slash := filepath.ToSlash(dbPath)
-	escaped := strings.NewReplacer("%", "%25", "?", "%3f", "#", "%23").Replace(slash)
-	if len(escaped) >= 2 && escaped[1] == ':' {
-		return "file:///" + escaped + "?immutable=1"
-	}
-	return "file:" + escaped + "?immutable=1"
-}
-
-// countAgyStoreSteps is a variable so tests can simulate a missing sqlite3.
+// countAgyStoreSteps is a variable so tests can simulate a missing or failing SQLite reader.
 var countAgyStoreSteps = func(dbPath string) (int, error) {
-	query := func(target string) (int, error) {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-		out, err := subproc.CommandContext(ctx, sqlitecli.Executable(), "-readonly", "-cmd", ".timeout 2000", target, "SELECT count(*) FROM steps;").Output()
-		if err != nil {
-			return 0, err
-		}
-		return strconv.Atoi(strings.TrimSpace(string(out)))
-	}
-	n, err := query(dbPath)
-	if err != nil {
-		// agy unlinks <id>.db-wal and <id>.db-shm on exit while leaving the
-		// database header in WAL mode (02 02). sqlite3 -readonly fails with
-		// SQLITE_CANTOPEN (14) when -shm is absent because a read-only handle
-		// cannot create the shared-memory index. When no -wal file exists on
-		// disk, there are no uncheckpointed frames, so immutable=1 safely
-		// inspects the checkpointed store without creating sidecars.
-		if _, walErr := os.Lstat(dbPath + "-wal"); os.IsNotExist(walErr) {
-			return query(sqliteImmutableURI(dbPath))
-		}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	var count int
+	if err := sqlitecli.QueryRowReadOnly(ctx, dbPath, 2*time.Second, "SELECT count(*) FROM steps;", nil, &count); err != nil {
 		return 0, err
 	}
-	return n, nil
+	return count, nil
 }
 
 func nonEmptyRegularFile(path string) bool {

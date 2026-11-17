@@ -15,7 +15,6 @@ import (
 	"github.com/hoxiai/hoxi/internal/gateway"
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
 	"github.com/hoxiai/hoxi/internal/notify"
-	"github.com/hoxiai/hoxi/internal/opencode"
 	"github.com/hoxiai/hoxi/internal/statusbar"
 	"github.com/hoxiai/hoxi/internal/workspace"
 )
@@ -80,10 +79,7 @@ func envOr(key, fallback string) string {
 // loopback port when the CLI is invoked while Hoxi Desktop is not running.
 func StartEphemeralHeadless(ctx context.Context, rootDir string) (string, func(), error) {
 	rootDir = workspace.ResolveInitialRootDir(rootDir)
-	port, err := chooseFreePort()
-	if err != nil {
-		return "", nil, err
-	}
+	port := 0
 	password, err := generateRandomHex(16)
 	if err != nil {
 		return "", nil, err
@@ -91,6 +87,7 @@ func StartEphemeralHeadless(ctx context.Context, rootDir string) (string, func()
 	applyDefaultMemoryLimit()
 	quietLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	statusTracker := statusbar.NewTracker()
+	statusTracker.SetAvailable(true)
 	gw := gateway.New(port, password, rootDir, nil, statusTracker)
 	gw.EnableAgyApprovalHook()
 	gw.StartEnginePrewarm(ctx)
@@ -113,7 +110,6 @@ func StartEphemeralHeadless(ctx context.Context, rootDir string) (string, func()
 	browserToken, _ := generateRandomHex(32)
 	gw.SetBrowserAgentToken(browserToken)
 	gw.SetComputerAgentToken(browserToken)
-	browserEnv, cleanupPlugin, _ := opencode.PrepareBrowserPlugin("http://"+loopbackAddr, browserToken, ledger)
 
 	dapp := &DesktopApp{
 		cfg: Config{
@@ -125,7 +121,6 @@ func StartEphemeralHeadless(ctx context.Context, rootDir string) (string, func()
 		logger:       quietLogger,
 		gateway:      gw,
 		status:       statusTracker,
-		browserEnv:   browserEnv,
 		runCtx:       ctx,
 		openCodePort: port,
 		openCodePass: password,
@@ -137,16 +132,6 @@ func StartEphemeralHeadless(ctx context.Context, rootDir string) (string, func()
 		}
 		return dapp.EnsureEngine(ctx)
 	})
-
-	if localBin := opencode.FindBinary(dapp.cfg.OpenCode); localBin != "" {
-		if child, startErr := dapp.startOpenCode(ctx, localBin, port, password); startErr == nil {
-			dapp.setChild(child)
-		} else {
-			go dapp.BootstrapOpenCodeAsync(ctx, port, password)
-		}
-	} else {
-		go dapp.BootstrapOpenCodeAsync(ctx, port, password)
-	}
 
 	srv := &http.Server{Handler: gw, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second}
 	dapp.wsServer = srv
@@ -161,9 +146,6 @@ func StartEphemeralHeadless(ctx context.Context, rootDir string) (string, func()
 		_ = listener.Close()
 		dapp.killChild()
 		gw.CloseBrowser()
-		if cleanupPlugin != nil {
-			cleanupPlugin()
-		}
 	}
 	return "http://" + loopbackAddr, cleanup, nil
 }

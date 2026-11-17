@@ -26,7 +26,7 @@ import { cancelPendingSessionMessageLoads, loadSessionMessages, replaceSession }
 import { renameSessionTitle } from "./session-lifecycle";
 import { currentPromptImageOptions } from "./media-options";
 import { buildWorkspaceFoldersSystemPrompt, normalizeFolderPath, workspaceFoldersForDir } from "./workspace-folders";
-import { isSessionBusy, isSessionDeleted, requestTimelineFollow, sessionDirectory, sessionRuntimeForID, timelineFollowRequest } from "./session-query";
+import { isSessionBusy, isSessionDeleted, requestTimelineFollow, resolveSessionTargetRuntime, sessionDirectory, sessionRuntimeForID, timelineFollowRequest } from "./session-query";
 import { beginQueueDrain, commitEditingQueuedPromptToQueue, endQueueDrain, enqueueSessionPrompt, getEditingQueuedPrompt, isQueuedPromptDrainBlocked, markQueuedTurnShown, markSessionPromptDispatched, removeQueuedPrompt, restoreEditingQueuedPrompt, restoreQueuedPromptAt, takeEditingQueuedPrompt } from "./prompt-queue";
 import {
   abortChildSubagentSessions,
@@ -170,7 +170,8 @@ export async function dispatchSessionPrompt(
       effectiveModel = { ...fallbackBrain };
     }
   }
-  if (!effectiveModel && sessionRuntimeForID(id) === "opencode") {
+  const activeRt = sessionRuntimeForID(id);
+  if (!effectiveModel && (activeRt === "opencode" || activeRt === "native")) {
     throw new Error(t("timeline.selectModelToSend"));
   }
   if (effectiveModel && workspace.providers.length && !workspace.providers.some((provider) =>
@@ -348,10 +349,7 @@ export async function dispatchSessionPrompt(
   try {
     if (effectiveSkill) {
       const finalDir = targetDir || workspace.rootDir || "";
-      const finalRuntime = resolveRunnerRuntimeForProvider(
-        effectiveModel?.providerID,
-        Boolean(workspace.hoxiProviders?.[effectiveModel?.providerID || ""])
-      );
+      const finalRuntime = resolveSessionTargetRuntime(id, effectiveModel?.providerID);
       const check = await revalidateSkillForTargetDirectory({
         sessionID: id,
         directory: finalDir,
@@ -413,7 +411,7 @@ export async function dispatchSessionPrompt(
         system,
         attachments,
         skillSelection: effectiveSkill,
-        runtime: resolveRunnerRuntimeForProvider(effectiveModel?.providerID, Boolean(workspace.hoxiProviders?.[effectiveModel?.providerID || ""])),
+        runtime: resolveSessionTargetRuntime(id, effectiveModel?.providerID),
         continueTask: options?.continueTask || wasBusyBeforeSubmit,
       });
     } catch (sendErr) {

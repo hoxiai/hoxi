@@ -71,7 +71,10 @@ export default function HeaderOverflowMenu() {
     "w-full flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer";
 
   return (
-    <div class="relative inline-flex items-center">
+    <div
+      class="relative inline-flex items-center"
+      style={{ "--wails-draggable": "no-drag" } as any}
+    >
       <button
         ref={triggerRef}
         type="button"
@@ -81,7 +84,6 @@ export default function HeaderOverflowMenu() {
             ? "bg-[var(--bg-hover)] text-[var(--text-primary)]"
             : "text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
         }`}
-        style={{ "--wails-draggable": "no-drag" } as any}
         title={t("header.moreTooltip")}
         aria-label={t("header.moreTooltip")}
         aria-haspopup="menu"
@@ -100,7 +102,7 @@ export default function HeaderOverflowMenu() {
             data-state={state()}
             role="menu"
             style={{ "--hoxi-origin": "top right" }}
-            class="hoxi-popover absolute right-0 top-full mt-2 z-50 w-[252px] rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1.5 shadow-xl"
+            class="hoxi-popover absolute right-0 top-full mt-2 z-50 w-[252px] max-h-[calc(100vh-4rem)] overflow-y-auto rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1.5 shadow-xl"
           >
             <Show
               when={panel()}
@@ -197,7 +199,7 @@ export default function HeaderOverflowMenu() {
                       when={current() === "appearance"}
                       fallback={<DevPulseContent onNavigate={close} />}
                     >
-                      <ThemeStyleContent />
+                      <ThemeStyleContent onNavigateSettings={close} />
                     </Show>
                   </div>
                 </div>

@@ -1,9 +1,8 @@
 package devpulse
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
+	"database/sql"
 	"fmt"
 	"net/http"
 	"os"
@@ -14,7 +13,6 @@ import (
 
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
 	"github.com/hoxiai/hoxi/internal/sqlitecli"
-	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 const (
@@ -173,24 +171,24 @@ func (s *Service) queryHistoryFromDB(startMs, endMs int64, day func(string) *His
 	partClause := s.notImportedClause("s.title", "p.data", "p.time_created", "s.time_created")
 	sqlQuery := fmt.Sprintf(`
 SELECT
-  date(m.time_created / 1000, 'unixepoch', 'localtime') AS day,
-  m.session_id,
+  COALESCE(date(m.time_created / 1000, 'unixepoch', 'localtime'), '') AS day,
+  COALESCE(m.session_id, ''),
   COALESCE(json_extract(m.data, '$.providerID'), 'unknown') AS provider_id,
   COALESCE(json_extract(m.data, '$.modelID'), 'unknown') AS model_id,
   COUNT(*) AS turns,
-  SUM(CAST(COALESCE(json_extract(m.data, '$.tokens.input'), 0) AS INTEGER)) AS input,
-  SUM(CAST(COALESCE(json_extract(m.data, '$.tokens.output'), 0) AS INTEGER)) AS output,
-  SUM(CAST(COALESCE(json_extract(m.data, '$.tokens.reasoning'), 0) AS INTEGER)) AS reasoning,
-  SUM(CAST(COALESCE(json_extract(m.data, '$.tokens.cache.read'), 0) AS INTEGER)) AS cache_read,
-  SUM(CAST(COALESCE(json_extract(m.data, '$.tokens.cache.write'), 0) AS INTEGER)) AS cache_write,
-  SUM(CASE WHEN CAST(COALESCE(json_extract(m.data, '$.time.completed'), 0) AS INTEGER) > m.time_created
-        THEN CAST(COALESCE(json_extract(m.data, '$.time.completed'), 0) AS INTEGER) - m.time_created ELSE 0 END) AS dur_sum,
-  SUM(CASE WHEN CAST(COALESCE(json_extract(m.data, '$.time.completed'), 0) AS INTEGER) > m.time_created
-        THEN 1 ELSE 0 END) AS dur_n
+  COALESCE(SUM(CAST(COALESCE(json_extract(m.data, '$.tokens.input'), 0) AS INTEGER)), 0) AS input,
+  COALESCE(SUM(CAST(COALESCE(json_extract(m.data, '$.tokens.output'), 0) AS INTEGER)), 0) AS output,
+  COALESCE(SUM(CAST(COALESCE(json_extract(m.data, '$.tokens.reasoning'), 0) AS INTEGER)), 0) AS reasoning,
+  COALESCE(SUM(CAST(COALESCE(json_extract(m.data, '$.tokens.cache.read'), 0) AS INTEGER)), 0) AS cache_read,
+  COALESCE(SUM(CAST(COALESCE(json_extract(m.data, '$.tokens.cache.write'), 0) AS INTEGER)), 0) AS cache_write,
+  COALESCE(SUM(CASE WHEN CAST(COALESCE(json_extract(m.data, '$.time.completed'), 0) AS INTEGER) > m.time_created
+        THEN CAST(COALESCE(json_extract(m.data, '$.time.completed'), 0) AS INTEGER) - m.time_created ELSE 0 END), 0) AS dur_sum,
+  COALESCE(SUM(CASE WHEN CAST(COALESCE(json_extract(m.data, '$.time.completed'), 0) AS INTEGER) > m.time_created
+        THEN 1 ELSE 0 END), 0) AS dur_n
 FROM session s
 CROSS JOIN message m ON m.session_id = s.id
-WHERE m.time_created >= %d
-  AND m.time_created < %d
+WHERE m.time_created >= ?
+  AND m.time_created < ?
   AND json_extract(m.data, '$.role') = 'assistant'
   AND %s
   AND (
@@ -199,72 +197,13 @@ WHERE m.time_created >= %d
     OR CAST(COALESCE(json_extract(m.data, '$.tokens.cache.read'), 0) AS INTEGER) > 0
   )
 GROUP BY day, m.session_id, provider_id, model_id
-ORDER BY day;`, startMs, endMs, msgClause)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-	defer cancel()
-	cmd := subproc.CommandContext(ctx, sqlitecli.Executable(), "-json", "-readonly", "-cmd", ".timeout 5000", dbPath, sqlQuery)
-	out, err := cmd.Output()
-	if err != nil || len(bytes.TrimSpace(out)) == 0 {
-		return
-	}
-
-	var rows []struct {
-		Day        string `json:"day"`
-		SessionID  string `json:"session_id"`
-		ProviderID string `json:"provider_id"`
-		ModelID    string `json:"model_id"`
-		Turns      int    `json:"turns"`
-		Input      int64  `json:"input"`
-		Output     int64  `json:"output"`
-		Reasoning  int64  `json:"reasoning"`
-		CacheRead  int64  `json:"cache_read"`
-		CacheWrite int64  `json:"cache_write"`
-		DurSum     int64  `json:"dur_sum"`
-		DurN       int    `json:"dur_n"`
-	}
-	if err := json.Unmarshal(bytes.TrimSpace(out), &rows); err != nil {
-		return
-	}
-
-	sessionsByDay := make(map[string]map[string]struct{})
-	for _, row := range rows {
-		if row.Day == "" {
-			continue
-		}
-		target := day(row.Day)
-		target.Turns += row.Turns
-		target.InputTokens += row.Input
-		target.OutputTokens += row.Output
-		target.ReasoningTokens += row.Reasoning
-		target.CacheReadTokens += row.CacheRead
-		target.CacheWriteTokens += row.CacheWrite
-		mergeHistoryModel(target, HistoryModelStat{
-			ProviderID:       row.ProviderID,
-			ModelID:          row.ModelID,
-			Turns:            row.Turns,
-			InputTokens:      row.Input,
-			OutputTokens:     row.Output,
-			ReasoningTokens:  row.Reasoning,
-			CacheReadTokens:  row.CacheRead,
-			CacheWriteTokens: row.CacheWrite,
-			DurationSumMs:    row.DurSum,
-			DurationSamples:  row.DurN,
-		})
-		if sessionsByDay[row.Day] == nil {
-			sessionsByDay[row.Day] = make(map[string]struct{})
-		}
-		sessionsByDay[row.Day][row.SessionID] = struct{}{}
-	}
-	for key, sessions := range sessionsByDay {
-		day(key).Sessions += len(sessions)
-	}
+ORDER BY day;`, msgClause)
 
 	toolSQL := fmt.Sprintf(`
 SELECT
-  day,
+  COALESCE(day, ''),
   COUNT(*) AS tools_total,
-  SUM(is_error) AS tools_failed
+  COALESCE(SUM(is_error), 0) AS tools_failed
 FROM (
   SELECT
     date(p.time_created / 1000, 'unixepoch', 'localtime') AS day,
@@ -272,37 +211,88 @@ FROM (
   FROM session s
   CROSS JOIN message m ON m.session_id = s.id
   CROSS JOIN part p ON p.message_id = m.id
-  WHERE m.time_created >= %d
-    AND m.time_created < %d
-    AND p.time_created >= %d
-    AND p.time_created < %d
+  WHERE m.time_created >= ?
+    AND m.time_created < ?
+    AND p.time_created >= ?
+    AND p.time_created < ?
     AND json_extract(p.data, '$.type') = 'tool'
     AND %s
   GROUP BY date(p.time_created / 1000, 'unixepoch', 'localtime'), COALESCE(json_extract(p.data, '$.callID'), p.id)
 )
 GROUP BY day
-ORDER BY day;`, startMs-partMessageLookbackMs, endMs, startMs, endMs, partClause)
+ORDER BY day;`, partClause)
 
-	tCtx, tCancel := context.WithTimeout(context.Background(), 8*time.Second)
-	defer tCancel()
-	tCmd := subproc.CommandContext(tCtx, sqlitecli.Executable(), "-json", "-readonly", "-cmd", ".timeout 5000", dbPath, toolSQL)
-	if tOut, err := tCmd.Output(); err == nil && len(bytes.TrimSpace(tOut)) > 0 {
-		var toolRows []struct {
-			Day         string `json:"day"`
-			ToolsTotal  int    `json:"tools_total"`
-			ToolsFailed int    `json:"tools_failed"`
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_ = sqlitecli.WithReadOnly(ctx, dbPath, 5*time.Second, func(ctx context.Context, db *sql.DB) error {
+		rows, err := db.QueryContext(ctx, sqlQuery, startMs, endMs)
+		if err != nil {
+			return err
 		}
-		if json.Unmarshal(bytes.TrimSpace(tOut), &toolRows) == nil {
-			for _, tr := range toolRows {
-				if tr.Day == "" {
-					continue
-				}
-				target := day(tr.Day)
-				target.ToolCallsTotal += tr.ToolsTotal
-				target.ToolCallsFailed += tr.ToolsFailed
+		sessionsByDay := make(map[string]map[string]struct{})
+		for rows.Next() {
+			var rowDay, sessionID, providerID, modelID string
+			var turns, durN int
+			var input, output, reasoning, cacheRead, cacheWrite, durSum int64
+			if err := rows.Scan(&rowDay, &sessionID, &providerID, &modelID, &turns, &input, &output, &reasoning, &cacheRead, &cacheWrite, &durSum, &durN); err != nil {
+				_ = rows.Close()
+				return err
 			}
+			if rowDay == "" {
+				continue
+			}
+			target := day(rowDay)
+			target.Turns += turns
+			target.InputTokens += input
+			target.OutputTokens += output
+			target.ReasoningTokens += reasoning
+			target.CacheReadTokens += cacheRead
+			target.CacheWriteTokens += cacheWrite
+			mergeHistoryModel(target, HistoryModelStat{
+				ProviderID:       providerID,
+				ModelID:          modelID,
+				Turns:            turns,
+				InputTokens:      input,
+				OutputTokens:     output,
+				ReasoningTokens:  reasoning,
+				CacheReadTokens:  cacheRead,
+				CacheWriteTokens: cacheWrite,
+				DurationSumMs:    durSum,
+				DurationSamples:  durN,
+			})
+			if sessionsByDay[rowDay] == nil {
+				sessionsByDay[rowDay] = make(map[string]struct{})
+			}
+			sessionsByDay[rowDay][sessionID] = struct{}{}
 		}
-	}
+		_ = rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		for key, sessions := range sessionsByDay {
+			day(key).Sessions += len(sessions)
+		}
+
+		tRows, err := db.QueryContext(ctx, toolSQL, startMs-partMessageLookbackMs, endMs, startMs, endMs)
+		if err != nil {
+			return nil
+		}
+		defer tRows.Close()
+		for tRows.Next() {
+			var trDay string
+			var toolsTotal, toolsFailed int
+			if err := tRows.Scan(&trDay, &toolsTotal, &toolsFailed); err != nil {
+				break
+			}
+			if trDay == "" {
+				continue
+			}
+			target := day(trDay)
+			target.ToolCallsTotal += toolsTotal
+			target.ToolCallsFailed += toolsFailed
+		}
+		return nil
+	})
 }
 
 func mergeHistoryModel(target *HistoryDay, incoming HistoryModelStat) {

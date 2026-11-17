@@ -4,19 +4,18 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/hoxiai/hoxi/internal/agentcli"
 	"github.com/hoxiai/hoxi/internal/sqlitecli"
-	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 func geminiRootDir() string {
@@ -116,34 +115,33 @@ func scanGeminiAntigravitySessions(targetDir, query string) ([]ExternalSessionSu
 			continue
 		}
 
+		var rows []antigravitySummaryRow
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		countCmd := subproc.CommandContext(ctx, sqlitecli.Executable(), "-readonly", "-cmd", ".timeout 3000", dbPath, "SELECT count(*) FROM conversation_summaries WHERE nesting_depth = 0 AND killed = 0;")
-		countCmd.WaitDelay = time.Second
-		countOut, countErr := countCmd.Output()
-		cancel()
-		if countErr == nil {
-			if n, err := strconv.Atoi(strings.TrimSpace(string(countOut))); err == nil && n > stats.SessionCount {
+		err := sqlitecli.WithReadOnly(ctx, dbPath, 3*time.Second, func(ctx context.Context, db *sql.DB) error {
+			var n int
+			if err := db.QueryRowContext(ctx, `SELECT count(*) FROM conversation_summaries WHERE nesting_depth = 0 AND killed = 0`).Scan(&n); err == nil && n > stats.SessionCount {
 				stats.SessionCount = n
 			}
-		}
-
-		sqlQuery := `SELECT conversation_id, COALESCE(title,'') AS title, COALESCE(substr(preview,1,280),'') AS preview, step_count, COALESCE(last_modified_time,'') AS last_modified_time, COALESCE(last_user_input_time,'') AS last_user_input_time, COALESCE(workspace_uris,'') AS workspace_uris, COALESCE(status,'') AS status
+			rset, err := db.QueryContext(ctx, `SELECT COALESCE(conversation_id,''), COALESCE(title,''), COALESCE(substr(preview,1,280),''), COALESCE(step_count,0), COALESCE(last_modified_time,''), COALESCE(last_user_input_time,''), COALESCE(workspace_uris,''), COALESCE(status,'')
 FROM conversation_summaries
 WHERE nesting_depth = 0 AND killed = 0
 ORDER BY last_modified_time DESC
-LIMIT 120;`
-
-		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
-		queryCmd := subproc.CommandContext(ctx, sqlitecli.Executable(), "-readonly", "-cmd", ".timeout 3000", "-json", dbPath, sqlQuery)
-		queryCmd.WaitDelay = time.Second
-		rawOut, err := queryCmd.Output()
+LIMIT 120`)
+			if err != nil {
+				return err
+			}
+			defer rset.Close()
+			for rset.Next() {
+				var r antigravitySummaryRow
+				if err := rset.Scan(&r.ConversationID, &r.Title, &r.Preview, &r.StepCount, &r.LastModifiedTime, &r.LastUserInput, &r.WorkspaceURIs, &r.Status); err != nil {
+					return err
+				}
+				rows = append(rows, r)
+			}
+			return rset.Err()
+		})
 		cancel()
-		if err != nil || len(bytes.TrimSpace(rawOut)) == 0 {
-			continue
-		}
-
-		var rows []antigravitySummaryRow
-		if json.Unmarshal(rawOut, &rows) != nil {
+		if err != nil || len(rows) == 0 {
 			continue
 		}
 

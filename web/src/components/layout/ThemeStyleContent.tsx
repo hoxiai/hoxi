@@ -1,11 +1,16 @@
-import { Check, Monitor, Moon, Sun } from "lucide-solid";
+import { Bot, Check, Monitor, Moon, SlidersHorizontal, Sparkles, Sun } from "lucide-solid";
 import { For, Show } from "solid-js";
 import {
   appSettings,
+  companionState,
+  openSettingsModal,
+  setCompanionEnabled,
+  setWallpaperEnabled,
   updateAppSetting,
+  wallpaperState,
   type ColorScheme,
   type ThemeMode,
-} from "../../store/settings";
+} from "../../store/workspace";
 import { t, type TxKey } from "../../i18n";
 
 const THEME_OPTIONS: Array<{ id: ThemeMode; icon: any; labelKey: TxKey }> = [
@@ -14,7 +19,7 @@ const THEME_OPTIONS: Array<{ id: ThemeMode; icon: any; labelKey: TxKey }> = [
   { id: "system", icon: Monitor, labelKey: "header.appearanceSystem" },
 ];
 
-const STYLE_OPTIONS: Array<{
+export const STYLE_SWATCH_OPTIONS: Array<{
   id: ColorScheme;
   labelKey: TxKey;
   descKey: TxKey;
@@ -44,9 +49,27 @@ const STYLE_OPTIONS: Array<{
     descKey: "header.styleMidnightDesc",
     swatch: { canvas: "#000000", surface: "#141418", accent: "#6366f1" },
   },
+  {
+    id: "sakura",
+    labelKey: "header.styleSakura",
+    descKey: "header.styleSakuraDesc",
+    swatch: { canvas: "#fdf2f7", surface: "#fffbfd", accent: "#ec4899" },
+  },
+  {
+    id: "cyber",
+    labelKey: "header.styleCyber",
+    descKey: "header.styleCyberDesc",
+    swatch: { canvas: "#080b16", surface: "#18203a", accent: "#a855f7" },
+  },
+  {
+    id: "obsidian",
+    labelKey: "header.styleObsidian",
+    descKey: "header.styleObsidianDesc",
+    swatch: { canvas: "#0c0c0e", surface: "#1e1e24", accent: "#f59e0b" },
+  },
 ];
 
-export default function ThemeStyleContent() {
+export default function ThemeStyleContent(props: { onNavigateSettings?: () => void } = {}) {
   return (
     <div class="select-none">
       <div class="grid grid-cols-3 gap-1 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-1">
@@ -76,8 +99,8 @@ export default function ThemeStyleContent() {
         {t("header.appearanceStyleLabel")}
       </div>
 
-      <div class="space-y-0.5">
-        <For each={STYLE_OPTIONS}>
+      <div class="max-h-64 overflow-y-auto space-y-0.5 pr-0.5">
+        <For each={STYLE_SWATCH_OPTIONS}>
           {(style) => {
             const active = () => appSettings.colorScheme === style.id;
             return (
@@ -120,6 +143,62 @@ export default function ThemeStyleContent() {
             );
           }}
         </For>
+      </div>
+
+      <div class="mt-2.5 pt-2.5 border-t border-[var(--border-subtle)] space-y-1">
+        <button
+          type="button"
+          onClick={() => setWallpaperEnabled(!wallpaperState.enabled)}
+          aria-pressed={wallpaperState.enabled}
+          class={`hoxi-press flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-[12.5px] font-medium cursor-pointer ${
+            wallpaperState.enabled
+              ? "bg-[var(--accent-surface)] text-[var(--accent-text)]"
+              : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+          }`}
+        >
+          <span class="inline-flex items-center gap-2 min-w-0">
+            <Sparkles size={13.5} class="shrink-0 text-[var(--accent-primary)]" />
+            <span class="truncate">{t("header.wallpaperQuickToggle")}</span>
+          </span>
+          <span
+            class={`h-2 w-2 rounded-full shrink-0 ${
+              wallpaperState.enabled ? "bg-[var(--accent-primary)]" : "bg-[var(--border-strong)]"
+            }`}
+          />
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setCompanionEnabled(!companionState.enabled)}
+          aria-pressed={companionState.enabled}
+          class={`hoxi-press flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-[12.5px] font-medium cursor-pointer ${
+            companionState.enabled
+              ? "bg-[var(--accent-surface)] text-[var(--accent-text)]"
+              : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+          }`}
+        >
+          <span class="inline-flex items-center gap-2 min-w-0">
+            <Bot size={13.5} class="shrink-0 text-[var(--accent-primary)]" />
+            <span class="truncate">{t("companion.headerQuickToggle")}</span>
+          </span>
+          <span
+            class={`h-2 w-2 rounded-full shrink-0 ${
+              companionState.enabled ? "bg-[var(--accent-primary)]" : "bg-[var(--border-strong)]"
+            }`}
+          />
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            props.onNavigateSettings?.();
+            openSettingsModal("general");
+          }}
+          class="hoxi-press flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-[12px] text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-pointer"
+        >
+          <SlidersHorizontal size={13} class="shrink-0" />
+          <span class="truncate">{t("header.wallpaperQuickCustomize")}</span>
+        </button>
       </div>
     </div>
   );

@@ -46,6 +46,7 @@ type Service struct {
 	authSource           AuthSource
 	officialMu           sync.Mutex
 	officialBlocked      atomic.Bool
+	streamStallTimeout   time.Duration
 	// noReasoningEffort remembers provider/model pairs whose endpoint rejected
 	// reasoning_effort, so later calls skip the doomed first attempt.
 	noReasoningEffort sync.Map

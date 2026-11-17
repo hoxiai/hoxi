@@ -19,6 +19,7 @@ type securityGateState struct {
 	originMu           sync.RWMutex
 	uiOrigins          map[string]bool
 	gatewayToken       string
+	browserAgentToken  string
 	computerAgentToken string
 	confirmComputerApp func(context.Context, ComputerAppConfirmation) (bool, error)
 	computerLocale     string

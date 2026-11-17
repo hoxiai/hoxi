@@ -9,6 +9,102 @@ export interface ContextContributor {
   tokens: number;
 }
 
+export interface SessionContextWatermarkStats {
+  used: number;
+  limit: number;
+  percent: number;
+  overLimit: boolean;
+  input: number;
+  output: number;
+  reasoning: number;
+  cacheRead: number;
+  cacheWrite: number;
+  totalCost: number;
+}
+
+/**
+ * Computes the active context-window occupancy watermark from session turns,
+ * separating single-step window occupancy (`tokens.context` / `tokens.total`)
+ * from multi-step cumulative billing buckets (`input`, `cache.read`, etc.).
+ */
+export function computeSessionContextWatermark(
+  turns: MessageTurn[],
+  limit: number
+): SessionContextWatermarkStats {
+  let latestInput = 0;
+  let latestOutput = 0;
+  let latestReasoning = 0;
+  let latestCacheRead = 0;
+  let latestCacheWrite = 0;
+  let latestTotal = 0;
+  let latestContext = 0;
+  let latestReasoningPartCount = 0;
+  let totalCost = 0;
+
+  for (const turn of turns) {
+    if (typeof turn.info.cost === "number") {
+      totalCost += turn.info.cost;
+    }
+    const t = turn.info.tokens;
+    if (
+      t &&
+      ((t.context ?? 0) > 0 ||
+        (t.total ?? 0) > 0 ||
+        t.input > 0 ||
+        t.output > 0 ||
+        (t.cache?.read ?? 0) > 0)
+    ) {
+      latestInput = t.input || 0;
+      latestOutput = t.output || 0;
+      latestReasoning = t.reasoning || 0;
+      latestCacheRead = t.cache?.read || 0;
+      latestCacheWrite = t.cache?.write || 0;
+      latestTotal = t.total || 0;
+      latestContext = t.context || 0;
+      latestReasoningPartCount = turn.parts.filter((p) => p.type === "reasoning").length;
+    }
+  }
+
+  let used = 0;
+  if (latestContext > 0) {
+    used = latestContext;
+  } else if (latestTotal > 0) {
+    const legacyNoCacheSum = latestInput + latestOutput + latestReasoning;
+    const fullTurnPool = legacyNoCacheSum + latestCacheRead + latestCacheWrite;
+    if (
+      latestReasoningPartCount >= 2 &&
+      (latestTotal === legacyNoCacheSum || latestTotal === fullTurnPool)
+    ) {
+      used = Math.round(fullTurnPool / latestReasoningPartCount);
+    } else {
+      used = latestTotal;
+    }
+  } else {
+    used =
+      latestInput +
+      latestOutput +
+      latestReasoning +
+      latestCacheRead +
+      latestCacheWrite;
+  }
+
+  const rawPercent = limit > 0 ? Math.round((used / limit) * 100) : 0;
+  const percent = Math.min(100, Math.max(0, rawPercent));
+
+  return {
+    used,
+    limit,
+    percent,
+    overLimit: rawPercent > 100,
+    input: latestInput,
+    output: latestOutput,
+    reasoning: latestReasoning,
+    cacheRead: latestCacheRead,
+    cacheWrite: latestCacheWrite,
+    totalCost,
+  };
+}
+
 function partTokenEstimate(part: MessagePart, inputChars: number): number {
   let chars = 0;
   switch (part.type) {

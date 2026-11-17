@@ -17,6 +17,7 @@ const READ_TOOLS = new Set([
 ]);
 const SEARCH_TOOLS = new Set([
   "grep", "grep_search", "search_file_content", "ripgrep", "rg", "search_file", "search",
+  "code_search", "symbol_inspect", "impact_analysis",
 ]);
 const LIST_TOOLS = new Set([
   "glob", "find", "find_by_name", "list", "ls", "list_dir", "list_directory", "list_files",
@@ -148,9 +149,13 @@ export function formatToolDisplayName(tool: string, part?: ToolPart): string {
   if (isQuestionTool(name)) return t("toolCard.actionQuestion");
   if (isComputerTool(name)) return t("toolCard.actionComputer");
   if (isBrowserTool(name)) return t("toolCard.actionBrowser");
-  if (name === "hoxi_code_index") return t("toolCard.actionCodeIndex");
+  if (name === "hoxi_code_index" || name === "code_search" || name === "symbol_inspect" || name === "impact_analysis") {
+    return t("toolCard.actionCodeIndex");
+  }
   if (name === "hoxi_tools") return t("toolCard.actionTools");
-  if (name === "call_mcp_tool" || name.startsWith("mcp__")) return t("toolCard.actionMcp");
+  if (name === "call_mcp_tool" || name === "mcp_call_tool" || name === "mcp_list_tools" || name.startsWith("mcp__")) {
+    return t("toolCard.actionMcp");
+  }
   if (name === "skill") return t("toolCard.actionSkill");
   if (isShellTool(name)) return t("toolCard.actionShell");
   if (isTodoTool(name)) return t("toolCard.actionTodo");

@@ -2,8 +2,8 @@ package handoff
 
 import (
 	"bufio"
-	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -14,7 +14,6 @@ import (
 
 	"github.com/hoxiai/hoxi/internal/agentcli"
 	"github.com/hoxiai/hoxi/internal/sqlitecli"
-	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 func qoderDotDirs() []string {
@@ -109,13 +108,12 @@ func readQoderDefaultModel() string {
 		if _, err := os.Stat(vscdb); err != nil {
 			continue
 		}
+		var val string
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		cmd := subproc.CommandContext(ctx, sqlitecli.Executable(), "-readonly", "-cmd", ".timeout 3000", vscdb, "SELECT value FROM ItemTable WHERE key = 'chat.modelConfig.assistant' LIMIT 1;")
-		cmd.WaitDelay = time.Second
-		out, err := cmd.Output()
+		err := sqlitecli.QueryRowReadOnly(ctx, vscdb, 3*time.Second, "SELECT COALESCE(value,'') FROM ItemTable WHERE key = 'chat.modelConfig.assistant' LIMIT 1", nil, &val)
 		cancel()
 		if err == nil {
-			if m := strings.TrimSpace(string(out)); m != "" && !strings.ContainsAny(m, " {}") {
+			if m := strings.TrimSpace(val); m != "" && !strings.ContainsAny(m, " {}") {
 				return m
 			}
 		}
@@ -164,21 +162,29 @@ func collectQoderCandidates(targetDir string) (map[string]*qoderSessionCandidate
 		if _, err := os.Stat(dbPath); err != nil {
 			continue
 		}
-		sqlQuery := `SELECT session_id, COALESCE(session_title,'') AS session_title, COALESCE(project_uri,'') AS project_uri, COALESCE(project_name,'') AS project_name, COALESCE(gmt_create,0) AS gmt_create, COALESCE(gmt_modified,0) AS gmt_modified, COALESCE(preferred_model_info,'') AS preferred_model_info
+		var rows []qoderDBSessionRow
+		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+		err := sqlitecli.WithReadOnly(ctx, dbPath, 3*time.Second, func(ctx context.Context, db *sql.DB) error {
+			rset, err := db.QueryContext(ctx, `SELECT COALESCE(session_id,''), COALESCE(session_title,''), COALESCE(project_uri,''), COALESCE(project_name,''), COALESCE(gmt_create,0), COALESCE(gmt_modified,0), COALESCE(preferred_model_info,'')
 FROM chat_session
 WHERE COALESCE(parent_session_id,'') = ''
 ORDER BY gmt_modified DESC
-LIMIT 120;`
-		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
-		cmd := subproc.CommandContext(ctx, sqlitecli.Executable(), "-readonly", "-cmd", ".timeout 3000", "-json", dbPath, sqlQuery)
-		cmd.WaitDelay = time.Second
-		rawOut, err := cmd.Output()
+LIMIT 120`)
+			if err != nil {
+				return err
+			}
+			defer rset.Close()
+			for rset.Next() {
+				var r qoderDBSessionRow
+				if err := rset.Scan(&r.SessionID, &r.Title, &r.ProjectURI, &r.ProjectName, &r.CreatedAt, &r.UpdatedAt, &r.PreferredModelInfo); err != nil {
+					return err
+				}
+				rows = append(rows, r)
+			}
+			return rset.Err()
+		})
 		cancel()
-		if err != nil || len(bytes.TrimSpace(rawOut)) == 0 {
-			continue
-		}
-		var rows []qoderDBSessionRow
-		if json.Unmarshal(rawOut, &rows) != nil {
+		if err != nil || len(rows) == 0 {
 			continue
 		}
 		for _, r := range rows {
@@ -486,26 +492,23 @@ func loadQoderProjectMemories(cwd, sessionID, localDBPath string) string {
 
 	// 1. Check SQLite agent_memory if localDBPath exists
 	if localDBPath != "" && sessionID != "" {
-		safeID := strings.ReplaceAll(strings.ReplaceAll(sessionID, "\x00", ""), "'", "''")
-		sqlQuery := fmt.Sprintf("SELECT COALESCE(title,'') AS title, COALESCE(content,'') AS content FROM agent_memory WHERE session_id = '%s' ORDER BY gmt_modified DESC LIMIT 8;", safeID)
+		cleanID := strings.ReplaceAll(sessionID, "\x00", "")
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		cmd := subproc.CommandContext(ctx, sqlitecli.Executable(), "-readonly", "-cmd", ".timeout 3000", "-json", localDBPath, sqlQuery)
-		cmd.WaitDelay = time.Second
-		rawOut, err := cmd.Output()
-		cancel()
-		if err == nil && len(bytes.TrimSpace(rawOut)) > 0 {
-			var rows []struct {
-				Title   string `json:"title"`
-				Content string `json:"content"`
+		_ = sqlitecli.WithReadOnly(ctx, localDBPath, 3*time.Second, func(ctx context.Context, db *sql.DB) error {
+			rset, err := db.QueryContext(ctx, "SELECT COALESCE(title,''), COALESCE(content,'') FROM agent_memory WHERE session_id = ? ORDER BY gmt_modified DESC LIMIT 8", cleanID)
+			if err != nil {
+				return err
 			}
-			if json.Unmarshal(rawOut, &rows) == nil {
-				for _, r := range rows {
-					if strings.TrimSpace(r.Content) != "" {
-						sections = append(sections, strings.TrimSpace(r.Title+": "+r.Content))
-					}
+			defer rset.Close()
+			for rset.Next() {
+				var title, content string
+				if err := rset.Scan(&title, &content); err == nil && strings.TrimSpace(content) != "" {
+					sections = append(sections, strings.TrimSpace(title+": "+content))
 				}
 			}
-		}
+			return rset.Err()
+		})
+		cancel()
 	}
 
 	// 2. Check ~/.qoder*/memories/*/projects/<encoded-cwd>/task_summary_experience/*.md

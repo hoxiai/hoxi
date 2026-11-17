@@ -108,6 +108,30 @@ func TestEngineReadyCachesProbeResult(t *testing.T) {
 	}
 }
 
+func TestEngineReadySkipsZeroPortWithoutNetworkProbe(t *testing.T) {
+	t.Setenv("HOXI_HOME", t.TempDir())
+	gw := New(0, "test-pass", t.TempDir(), nil, nil)
+	if gw.engineReady() {
+		t.Fatal("expected unconfigured openCodePort=0 to report openCodeReady=false")
+	}
+	gw.engineReadyMu.Lock()
+	probed := !gw.engineReadyAt.IsZero()
+	gw.engineReadyMu.Unlock()
+	if probed {
+		t.Fatal("expected openCodePort=0 to skip network health probe")
+	}
+
+	rec := httptest.NewRecorder()
+	gw.ServeHTTP(rec, localRequest(http.MethodGet, "/api/hoxi/system-info", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/hoxi/system-info = %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"nativeEngineReady":true`) || !strings.Contains(body, `"openCodeReady":false`) {
+		t.Fatalf("expected nativeEngineReady=true and openCodeReady=false in system-info, got: %s", body)
+	}
+}
+
 func TestOpenCodeBinarySource(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOXI_HOME", home)

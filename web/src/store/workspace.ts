@@ -90,3 +90,6 @@ export * from "./subagent-config";
 export * from "./image-viewer";
 export * from "./markdown-images";
 export * from "./media-options";
+export * from "./wallpaper-optics";
+export * from "./wallpaper";
+export * from "./companion";

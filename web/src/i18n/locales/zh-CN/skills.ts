@@ -33,7 +33,7 @@ export const skills: SkillsI18n = {
   emptyFiltered: "没有匹配的技能",
   unsupportedTitle: "当前运行时（{runtime}）暂未支持技能目录",
   unsupportedDesc:
-    "原生技能目前支持 OpenCode 会话；切换到 OpenCode 模型后即可浏览与调用",
+    "原生技能支持 Hoxi 执行引擎与 OpenCode 会话；切换到对应模型后即可浏览与调用",
   selectToPreview: "选择技能以预览 SKILL.md 正文",
   loadingCatalog: "正在读取技能目录…",
   loadingDetail: "正在读取技能正文…",
@@ -71,7 +71,7 @@ export const skills: SkillsI18n = {
   sandboxSkillMissing:
     "技能「{name}」在新沙箱中不可用，已取消选择",
   runtimeSwitchedCleared:
-    "已取消技能「{name}」，当前仅支持 OpenCode",
+    "已取消技能「{name}」，当前运行时暂不支持原生技能",
   tabLocal: "本地技能",
   tabMarketplace: "线上市集",
   marketplaceHint:

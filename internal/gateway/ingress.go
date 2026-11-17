@@ -33,12 +33,9 @@ func (g *Gateway) servePairedRequest(w http.ResponseWriter, r *http.Request, sou
 // only a local forwarder can reach it, and every request is still gated by the
 // pairing token and the remote route allow-list.
 //
-// Unlike the LAN listener there is no source-address filter: the forwarder's own
-// public-facing authentication (for example Cloudflare Access) decides who may
-// reach this gateway, and the forwarder dials in over loopback. The transport is
-// the proxy's TLS, terminated at its edge, so an end-to-end encrypted envelope
-// is still required before this path carries code or session content to a
-// provider that must not read it.
+// Paired mobile clients carrying the QR-provisioned E2EE key wrap payloads in
+// an AES-256-GCM envelope (X-Hoxi-E2EE: v1) so TLS-terminating relays cannot
+// read prompts, diffs, or workspace files.
 func (g *Gateway) ServeIngressRequest(w http.ResponseWriter, r *http.Request) {
 	g.servePairedRequest(w, r, remoteSourceRelay)
 }

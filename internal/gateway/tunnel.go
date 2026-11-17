@@ -326,11 +326,21 @@ func sanitizeRemoteRequest(r *http.Request) {
 	stripGatewayTokenFromRequest(r)
 }
 
-// serveRemoteRequest applies the paired-controller route allow-list and file
-// confinement, tags the request with its transport source for the approval
-// audit, and serves it in-process.
+// serveRemoteRequest unwraps optional end-to-end encryption, applies the
+// paired-controller route allow-list and file confinement, tags the request
+// with its transport source for the approval audit, and serves it in-process.
 func (g *Gateway) serveRemoteRequest(w http.ResponseWriter, r *http.Request, source string) {
-	if !tunnelRequestAllowed(r) || !tunnelBodyAllowed(r) {
+	if !tunnelRequestAllowed(r) {
+		writeJSONError(w, http.StatusForbidden, "route is not available for remote controllers")
+		return
+	}
+	wrappedW, finalizeE2EE, ok := g.unwrapRemoteE2EERequest(w, r)
+	if !ok {
+		return
+	}
+	defer finalizeE2EE()
+	w = wrappedW
+	if !tunnelBodyAllowed(r) {
 		writeJSONError(w, http.StatusForbidden, "route is not available for remote controllers")
 		return
 	}
@@ -344,7 +354,9 @@ func (g *Gateway) serveRemoteRequest(w http.ResponseWriter, r *http.Request, sou
 		writeJSONError(w, http.StatusForbidden, "path is outside the workspace")
 		return
 	}
-	g.ServeHTTP(w, r)
+	bootW, finalizeBoot := g.wrapRemoteBootstrap(w, r)
+	defer finalizeBoot()
+	g.ServeHTTP(bootW, r)
 }
 
 func worktreeParentRepo(dir string) string {

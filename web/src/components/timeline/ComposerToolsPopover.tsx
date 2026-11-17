@@ -2,6 +2,7 @@
 import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import { Presence } from "../motion/Presence";
 import {
+  Cpu,
   GitBranch,
   LoaderCircle,
   Paperclip,
@@ -19,6 +20,7 @@ export default function ComposerToolsPopover(props: {
   skillActive?: boolean;
   sandboxMode: "local" | "worktree";
   runtime: string;
+  busy?: boolean;
   canEnhance: boolean;
   enhancing: boolean;
   onAttach: () => void;
@@ -26,6 +28,7 @@ export default function ComposerToolsPopover(props: {
   onOpenCodeSearch: () => void;
   onOpenConvoy: () => void;
   onSwitchSandbox: () => void;
+  onToggleEngine?: () => void;
   onEnhance: () => void;
 }) {
   const [open, setOpen] = createSignal(false);
@@ -58,6 +61,9 @@ export default function ComposerToolsPopover(props: {
     setOpen(false);
     action();
   };
+  const targetEngineLabel = () => props.runtime === "native"
+    ? t("timeline.runtimeOpenCode")
+    : t("timeline.runtimeNativeShort");
 
   return (
     <div class="relative inline-block">
@@ -151,6 +157,29 @@ export default function ComposerToolsPopover(props: {
             </button>
 
             <Show when={!(isWorkSurface() && surfaceExtension.hideCodeComposerControls)}>
+              <Show when={(props.runtime === "opencode" || props.runtime === "native") && props.onToggleEngine}>
+                <button
+                  type="button"
+                  disabled={Boolean(props.busy)}
+                  onClick={() => run(() => props.onToggleEngine?.())}
+                  title={t("timeline.switchAgentEngineTooltip", { engine: targetEngineLabel() })}
+                  class="w-full flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                >
+                  <Cpu size={14} class={`shrink-0 ${props.runtime === "native" ? "text-[var(--accent-primary)]" : ""}`} />
+                  <span class="flex-1 min-w-0 truncate">
+                    {t("timeline.switchAgentEngine", { engine: targetEngineLabel() })}
+                  </span>
+                  <span
+                    class={`shrink-0 rounded px-1.5 py-0.5 text-[10.5px] font-medium ${
+                      props.runtime === "native"
+                        ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
+                        : "bg-[var(--bg-inset)] text-[var(--text-muted)]"
+                    }`}
+                  >
+                    {props.runtime === "native" ? t("timeline.runtimeNativeShort") : t("timeline.runtimeOpenCode")}
+                  </span>
+                </button>
+              </Show>
               <Show when={unattendedGapFor(props.runtime, props.sandboxMode)}>
                 {(gap) => (
                   <p class="px-2.5 py-1.5 text-[11px] text-[var(--danger-text)]">

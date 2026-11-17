@@ -1,10 +1,14 @@
 package devpulse
 
 import (
+	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/sqlitecli"
 )
 
 type stubPulseSource struct {
@@ -129,5 +133,56 @@ func TestCollectGitDailyStatsCountsNonASCIIUntrackedFiles(t *testing.T) {
 				t.Fatalf("stats = %+v, want UncommittedFiles=1 UncommittedAdditions=2", stats)
 			}
 		})
+	}
+}
+
+func TestDailyPulseAndHistoryInProcessSQLite(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "hoxi.db")
+	t.Setenv("HOXI_DB_PATH", dbPath)
+	t.Setenv("OPENCODE_DB", "")
+
+	now := time.Now()
+	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	ts := startOfToday.Add(2 * time.Hour).UnixMilli()
+
+	err := sqlitecli.WithReadWrite(context.Background(), dbPath, 3*time.Second, func(ctx context.Context, db *sql.DB) error {
+		_, execErr := db.ExecContext(ctx, `
+			CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT, title TEXT, time_created INTEGER);
+			CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, data TEXT);
+			CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, time_created INTEGER, data TEXT);
+			INSERT INTO session VALUES ('ses_1', '/tmp/proj', 'Pulse Test', ?);
+			INSERT INTO message VALUES ('msg_1', 'ses_1', ?, '{"role":"assistant","providerID":"openai","modelID":"gpt-5","cost":0.05,"time":{"completed":1999999999999},"tokens":{"input":1200,"output":300,"reasoning":100,"cache":{"read":400,"write":50}}}');
+			INSERT INTO part VALUES ('prt_1', 'msg_1', 'ses_1', ?, '{"type":"tool","callID":"c1","state":{"status":"completed"}}');
+			INSERT INTO part VALUES ('prt_2', 'msg_1', 'ses_1', ?, '{"type":"tool","callID":"c2","state":{"status":"error"}}');
+		`, ts, ts, ts, ts)
+		return execErr
+	})
+	if err != nil {
+		t.Fatalf("seed pulse db: %v", err)
+	}
+
+	svc := NewService(&stubPulseSource{})
+	pulse := svc.DailyPulse("", "", true)
+	if pulse.DbSessionsCount != 1 || pulse.DbTurnsCount != 1 || pulse.DbTotalTokens != 2050 {
+		t.Fatalf("unexpected pulse counts: %+v", pulse)
+	}
+	if pulse.DbToolCallsTotal != 2 || pulse.DbToolCallsFailed != 1 {
+		t.Fatalf("unexpected tool counts: total=%d failed=%d", pulse.DbToolCallsTotal, pulse.DbToolCallsFailed)
+	}
+
+	byDate := map[string]*HistoryDay{}
+	dayFn := func(k string) *HistoryDay {
+		if d, ok := byDate[k]; ok {
+			return d
+		}
+		d := &HistoryDay{Date: k}
+		byDate[k] = d
+		return d
+	}
+	svc.queryHistoryFromDB(startOfToday.UnixMilli(), startOfToday.AddDate(0, 0, 1).UnixMilli(), dayFn)
+	todayKey := startOfToday.Format("2006-01-02")
+	gotDay := byDate[todayKey]
+	if gotDay == nil || gotDay.Turns != 1 || gotDay.Sessions != 1 || gotDay.InputTokens != 1200 || gotDay.ToolCallsTotal != 2 || gotDay.ToolCallsFailed != 1 {
+		t.Fatalf("unexpected history day: %+v", gotDay)
 	}
 }

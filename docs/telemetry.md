@@ -17,7 +17,7 @@ paths and session content never go to Hoxi.
 ## Silent offline mode
 
 To silence **all** background auxiliary requests to `hoxi.ai` at once (automatic
-update checks, model leaderboard & pricing sync, skills marketplace catalog,
+update checks, model pricing sync, skills marketplace catalog,
 launch telemetry, and background device-token verification), enable **Silent
 offline mode** under **Settings → Network & Privacy**, or set:
 
@@ -60,7 +60,7 @@ server; otherwise `https://hoxi.ai` is used.
 - Approval decisions, tool arguments or terminal output
 - API keys, provider credentials or gateway tokens
 
-Update checks, optional sign-in, model price/leaderboard sync and AI provider
+Update checks, optional sign-in, model price sync and AI provider
 requests are separate connections. They are described in the app under
 **Settings → Network & Privacy** and on the published privacy notice:
 <https://hoxi.ai/legal/privacy-en.html> (Chinese:

@@ -38,7 +38,7 @@ func newGateFixture(t *testing.T) *gateFixture {
 	mux := http.NewServeMux()
 	svc.RegisterRoutes(mux)
 	srv := httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
+	t.Cleanup(func() { srv.Close(); svc.CloseAll() })
 	svc.SetHookBaseURL(srv.URL)
 	envList, revoke := svc.issueHookEnv("ses_agy_gate", "msg_a_1")
 	env := map[string]string{}

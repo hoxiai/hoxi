@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/hoxiai/hoxi/internal/agent"
 	"github.com/hoxiai/hoxi/internal/auth"
 	"github.com/hoxiai/hoxi/internal/browser"
 	"github.com/hoxiai/hoxi/internal/buildinfo"
@@ -77,6 +78,7 @@ type Gateway struct {
 	securityGateState
 	updateGateState
 	engineGateState
+	nativeHostState
 	devPulse       *devpulse.Service
 	devPulseOnce   sync.Once
 	requestLog     requestLogCache
@@ -146,7 +148,7 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 	workspaces.SetFolderRelinkHandler(func(projectID, oldPath, newPath string) error {
 		return runnerSvc.RelinkProject(projectID, oldPath, newPath)
 	})
-	runnerSvc.ConfigureOpenCode(targetURL.String(), password)
+	runnerSvc.ConfigureOpenCode(openCode.BaseURL(), password)
 	runnerSvc.SetPermissionRulesSource(providers.PermissionRules)
 	runnerSvc.SetApprovalPolicyHook(providers.EnforceAskPermissions)
 	if status != nil {
@@ -203,6 +205,7 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 		})
 	}
 	g.initExtensions()
+	g.initNativeHost()
 	g.loadBrowserSettings()
 	if profileDir := hoxipaths.BrowserProfileDir(); profileDir != "" {
 		g.browser.SetProfileRoot(profileDir)
@@ -216,10 +219,12 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 		}
 		g.orchestration = orchestration.NewService(convoySessions{runner: g.runner}, options...)
 	}
-	g.skills = skills.NewService(targetURL.String(), password, g.resolveSkillContext)
+	g.skills = skills.NewService(openCode.BaseURL(), password, g.resolveSkillContext)
 	g.skills.SetMarketplace(skills.NewMarketplaceService("", nil))
 	runnerSvc.SetImageClient(providers)
 	runnerSvc.SetAudioClient(providers)
+	searchHook, inspectHook, impactHook := buildNativeCodeIndexHooks(g.codeIndex)
+	runnerSvc.SetNativeEngine(newGatewayNativeAgent(providers, searchHook, inspectHook, impactHook, providers.LoadHoxiConfigDoc, g.invokeNativeHostTool, g.buildNativeSkillCatalogPrompt))
 	runnerSvc.SetSkillResolver(func(ctx context.Context, directory, sessionID string, sel runner.SkillSelection) (runner.ResolvedSkill, error) {
 		detail, err := g.skills.ResolveSelection(ctx, directory, sessionID, skills.SkillSelection{
 			Key:     sel.Key,
@@ -261,7 +266,12 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 	return g
 }
 
-func (g *Gateway) SetBrowserAgentToken(token string) { g.browser.SetAgentToken(token) }
+func (g *Gateway) SetBrowserAgentToken(token string) {
+	g.originMu.Lock()
+	g.browserAgentToken = token
+	g.originMu.Unlock()
+	g.browser.SetAgentToken(token)
+}
 
 // SetBrowserLedger records headless Chrome processes and profiles so the next
 // Hoxi start can reclaim them after this process dies without CloseBrowser.
@@ -288,9 +298,11 @@ func (g *Gateway) HandleAuthCallback(ctx context.Context, rawURL string) error {
 func (g *Gateway) CloseBrowser() {
 	g.closeExtensions()
 	g.browser.Close()
+	g.closeNativeHost()
 	if g.computer != nil {
 		g.computer.Stop()
 	}
+	agent.CloseStdioMCPPool()
 	if g.runner != nil {
 		g.runner.CloseAll()
 		if store := g.runner.Store(); store != nil {
@@ -451,20 +463,6 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 		if tok != "" {
 			resp["gatewayToken"] = tok
 		}
-		if g.pairing != nil {
-			if _, peers := g.pairing.LanEndpoints(); len(peers) > 0 {
-				resp["peers"] = peers
-			}
-			if relayURL := g.pairing.RelayURL(); relayURL != "" {
-				resp["relay"] = relayURL
-				resp["relayUrl"] = relayURL
-				if src := remoteSource(r); src == remoteSourceLAN || src == remoteSourceRelay {
-					if relayTok, err := g.pairing.RelayToken(); err == nil && relayTok != "" {
-						resp["relayToken"] = relayTok
-					}
-				}
-			}
-		}
 		if g.tunnel != nil {
 			if ts := g.tunnel.Status(); ts.Enabled && ts.ControllerURL != "" && ts.NodeID > 0 {
 				resp["nodeId"] = ts.NodeID
@@ -536,6 +534,7 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 		writeJSON(w, http.StatusOK, map[string]any{"intent": intent})
 	})
 	g.registerDesktopNotifyRoute(g.mux)
+	g.registerDesktopCompanionRoutes(g.mux)
 
 	g.mux.HandleFunc("/api/hoxi/system-info", g.handleSystemRuntimeInfo)
 	g.mux.HandleFunc("/api/hoxi/system/storage", g.handleSystemStorage)
@@ -603,8 +602,6 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 	}
 	if g.leaderboard != nil {
 		h := leaderboard.NewHTTPHandler(g.leaderboard)
-		g.mux.Handle("/api/hoxi/models/leaderboard", h)
-		g.mux.Handle("/api/hoxi/models/leaderboard/", h)
 		g.mux.Handle("/api/hoxi/models/pricing", h)
 		g.mux.Handle("/api/hoxi/models/pricing/", h)
 		g.mux.Handle("/api/hoxi/models/free-tiers", h)
@@ -613,8 +610,13 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 		g.mux.Handle("/api/hoxi/gateways/connectable/", h)
 	}
 
-	// OpenCode API prefixes
+	g.registerNativeHostRoutes()
+
+	// OpenCode API prefixes (remaining fallback routes)
 	for _, prefix := range openCodeProxyPrefixes {
+		if prefix == "/pty" || prefix == "/agent" || prefix == "/command" || prefix == "/lsp" || prefix == "/project" || prefix == "/skill" || prefix == "/path" {
+			continue
+		}
 		g.mux.Handle(prefix, g.proxy)
 		g.mux.Handle(prefix+"/", g.proxy)
 	}

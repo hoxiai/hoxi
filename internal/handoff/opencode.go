@@ -1,8 +1,8 @@
 package handoff
 
 import (
-	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -15,7 +15,6 @@ import (
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
 	"github.com/hoxiai/hoxi/internal/opencode/ocstate"
 	"github.com/hoxiai/hoxi/internal/sqlitecli"
-	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 func resolveExternalOpenCodeBinary() string {
@@ -108,28 +107,29 @@ msg_counts AS (
   WHERE session_id IN (SELECT id FROM top_sessions)
   GROUP BY session_id
 )
-SELECT json_group_array(json_object(
-  'id', s.id,
-  'directory', COALESCE(s.directory, ''),
-  'title', COALESCE(s.title, ''),
-  'timeCreated', COALESCE(s.time_created, 0),
-  'timeUpdated', COALESCE(s.time_updated, 0),
-  'model', COALESCE(s.model, ''),
-  'turnCount', COALESCE(mc.cnt, 0)
-))
+SELECT COALESCE(s.id, ''), COALESCE(s.directory, ''), COALESCE(s.title, ''), COALESCE(s.time_created, 0), COALESCE(s.time_updated, 0), COALESCE(s.model, ''), COALESCE(mc.cnt, 0)
 FROM top_sessions s
-LEFT JOIN msg_counts mc ON mc.session_id = s.id;`
+LEFT JOIN msg_counts mc ON mc.session_id = s.id`
 
+	var rows []openCodeDBSessionRow
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 	defer cancel()
-	cmd := subproc.CommandContext(ctx, sqlitecli.Executable(), "-readonly", "-cmd", ".timeout 3000", dbPath, sqlRich)
-	cmd.WaitDelay = time.Second
-	out, err := cmd.Output()
-	if err != nil || len(bytes.TrimSpace(out)) == 0 {
-		return nil
-	}
-	var rows []openCodeDBSessionRow
-	if json.Unmarshal(bytes.TrimSpace(out), &rows) != nil {
+	err := sqlitecli.WithReadOnly(ctx, dbPath, 3*time.Second, func(ctx context.Context, db *sql.DB) error {
+		rset, err := db.QueryContext(ctx, sqlRich)
+		if err != nil {
+			return err
+		}
+		defer rset.Close()
+		for rset.Next() {
+			var r openCodeDBSessionRow
+			if err := rset.Scan(&r.ID, &r.Directory, &r.Title, &r.TimeCreated, &r.TimeUpdated, &r.Model, &r.TurnCount); err != nil {
+				return err
+			}
+			rows = append(rows, r)
+		}
+		return rset.Err()
+	})
+	if err != nil {
 		return nil
 	}
 	return rows
@@ -201,74 +201,71 @@ func loadOpenCodeSessionDetail(sessionID, hintCWD, activeRoot string) (*External
 }
 
 func loadOpenCodeSessionFromDB(dbPath, sessionID, hintCWD, activeRoot string) (*ExternalSessionDetail, error) {
-	escID := sqlEscapeLiteral(sessionID)
-	sqlQuery := fmt.Sprintf(`
-SELECT json_object(
-  'session', (
-    SELECT json_object(
-      'id', s.id,
-      'directory', COALESCE(s.directory, ''),
-      'title', COALESCE(s.title, ''),
-      'timeCreated', COALESCE(s.time_created, 0),
-      'timeUpdated', COALESCE(s.time_updated, 0),
-      'model', COALESCE(s.model, '')
-    )
-    FROM session s WHERE s.id = %s
-  ),
-  'messages', COALESCE((
-    SELECT json_group_array(json_object(
-      'id', m.id,
-      'timeCreated', COALESCE(m.time_created, 0),
-      'data', m.data
-    ))
-    FROM (
-      SELECT id, time_created, data FROM message WHERE session_id = %s ORDER BY time_created ASC, id ASC
-    ) m
-  ), json('[]')),
-  'parts', COALESCE((
-    SELECT json_group_array(json_object(
-      'id', p.id,
-      'messageID', p.message_id,
-      'timeCreated', COALESCE(p.time_created, 0),
-      'data', p.data
-    ))
-    FROM (
-      SELECT id, message_id, time_created, data FROM part WHERE session_id = %s ORDER BY time_created ASC, id ASC
-    ) p
-  ), json('[]'))
-);`, escID, escID, escID)
+	type sessMeta struct {
+		ID          string
+		Directory   string
+		Title       string
+		TimeCreated int64
+		TimeUpdated int64
+		Model       string
+	}
+	type msgRow struct {
+		ID          string
+		TimeCreated int64
+		Data        string
+	}
+	type partRow struct {
+		ID          string
+		MessageID   string
+		TimeCreated int64
+		Data        string
+	}
+	var payload struct {
+		Session  *sessMeta
+		Messages []msgRow
+		Parts    []partRow
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	cmd := subproc.CommandContext(ctx, sqlitecli.Executable(), "-readonly", "-cmd", ".timeout 3000", dbPath, sqlQuery)
-	cmd.WaitDelay = time.Second
-	out, err := cmd.Output()
-	if err != nil || len(bytes.TrimSpace(out)) == 0 {
-		return nil, fmt.Errorf("query opencode.db failed")
-	}
+	err := sqlitecli.WithReadOnly(ctx, dbPath, 3*time.Second, func(ctx context.Context, db *sql.DB) error {
+		var sm sessMeta
+		if err := db.QueryRowContext(ctx, "SELECT COALESCE(id,''), COALESCE(directory,''), COALESCE(title,''), COALESCE(time_created,0), COALESCE(time_updated,0), COALESCE(model,'') FROM session WHERE id = ?", sessionID).Scan(&sm.ID, &sm.Directory, &sm.Title, &sm.TimeCreated, &sm.TimeUpdated, &sm.Model); err != nil {
+			return err
+		}
+		payload.Session = &sm
 
-	var payload struct {
-		Session *struct {
-			ID          string `json:"id"`
-			Directory   string `json:"directory"`
-			Title       string `json:"title"`
-			TimeCreated int64  `json:"timeCreated"`
-			TimeUpdated int64  `json:"timeUpdated"`
-			Model       string `json:"model"`
-		} `json:"session"`
-		Messages []struct {
-			ID          string `json:"id"`
-			TimeCreated int64  `json:"timeCreated"`
-			Data        string `json:"data"`
-		} `json:"messages"`
-		Parts []struct {
-			ID          string `json:"id"`
-			MessageID   string `json:"messageID"`
-			TimeCreated int64  `json:"timeCreated"`
-			Data        string `json:"data"`
-		} `json:"parts"`
-	}
-	if err := json.Unmarshal(bytes.TrimSpace(out), &payload); err != nil || payload.Session == nil || payload.Session.ID == "" {
+		mRows, err := db.QueryContext(ctx, "SELECT COALESCE(id,''), COALESCE(time_created,0), COALESCE(data,'') FROM message WHERE session_id = ? ORDER BY time_created ASC, id ASC", sessionID)
+		if err != nil {
+			return err
+		}
+		for mRows.Next() {
+			var m msgRow
+			if err := mRows.Scan(&m.ID, &m.TimeCreated, &m.Data); err != nil {
+				_ = mRows.Close()
+				return err
+			}
+			payload.Messages = append(payload.Messages, m)
+		}
+		if err := mRows.Close(); err != nil {
+			return err
+		}
+
+		pRows, err := db.QueryContext(ctx, "SELECT COALESCE(id,''), COALESCE(message_id,''), COALESCE(time_created,0), COALESCE(data,'') FROM part WHERE session_id = ? ORDER BY time_created ASC, id ASC", sessionID)
+		if err != nil {
+			return err
+		}
+		defer pRows.Close()
+		for pRows.Next() {
+			var p partRow
+			if err := pRows.Scan(&p.ID, &p.MessageID, &p.TimeCreated, &p.Data); err != nil {
+				return err
+			}
+			payload.Parts = append(payload.Parts, p)
+		}
+		return pRows.Err()
+	})
+	if err != nil || payload.Session == nil || payload.Session.ID == "" {
 		return nil, fmt.Errorf("session %s not found in %s", sessionID, dbPath)
 	}
 

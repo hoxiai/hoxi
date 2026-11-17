@@ -158,19 +158,16 @@ func Run(distFS fs.FS) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	port, err := chooseFreePort()
-	if err != nil {
-		logger.Error("failed to allocate free port for opencode", "error", err)
-		os.Exit(1)
-	}
+	port := 0
 	password, err := generateRandomHex(16)
 	if err != nil {
-		logger.Error("failed to generate opencode password", "error", err)
+		logger.Error("failed to generate gateway secret", "error", err)
 		os.Exit(1)
 	}
 
 	applyDefaultMemoryLimit()
 	statusTracker := statusbar.NewTracker()
+	statusTracker.SetAvailable(true)
 	gw := gateway.New(port, password, cfg.RootDir, distFS, statusTracker)
 	gw.EnableAgyApprovalHook()
 	gw.StartEnginePrewarm(ctx)
@@ -264,16 +261,7 @@ func Run(distFS fs.FS) {
 	}
 	gw.SetBrowserAgentToken(browserToken)
 	gw.SetComputerAgentToken(browserToken)
-	browserEnv, cleanupPlugin, err := opencode.PrepareBrowserPlugin("http://"+loopbackAddr, browserToken, ledger)
-	if err != nil {
-		logger.Error("failed to prepare browser tools", "error", err)
-		return
-	}
-	defer func() {
-		app.killChild()
-		cleanupPlugin()
-	}()
-	app.browserEnv = browserEnv
+	defer app.killChild()
 	wsServer := &http.Server{Handler: gw, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second}
 	app.wsServer = wsServer
 	defer wsServer.Close()
@@ -325,34 +313,9 @@ func Run(distFS fs.FS) {
 		logger.Warn("remote ingress port unavailable; relay access is disabled", "addr", hoxipaths.DefaultRemoteIngressAddr, "error", ingressErr)
 	}
 
-	// Fast path: if opencode binary is already present locally (or bundled in Hoxi.app), start it immediately.
-	// Slow path: if opencode is missing on the user's machine, launch the UI window without crashing and
-	// auto-download official opencode into ~/.hoxi/bin in the background.
-	if localBin := opencode.FindBinary(cfg.OpenCode); localBin != "" {
-		child, startErr := app.startOpenCode(daemonCtx, localBin, port, password)
-		if startErr != nil {
-			logger.Warn("initial opencode start failed; will retry in background", "error", startErr)
-			statusTracker.SetAvailable(false)
-			go app.BootstrapOpenCodeAsync(daemonCtx, port, password)
-		} else {
-			app.setChild(child)
-		}
-	} else if cfg.NoDesktop {
-		binPath, dlErr := opencode.ResolveOrInstall(ctx, cfg.OpenCode, logger)
-		if dlErr != nil {
-			logger.Error("failed to resolve or install opencode", "error", dlErr)
-			os.Exit(1)
-		}
-		child, startErr := app.startOpenCode(daemonCtx, binPath, port, password)
-		if startErr != nil {
-			logger.Error("failed to start opencode daemon", "error", startErr)
-			os.Exit(1)
-		}
-		app.setChild(child)
-	} else {
-		statusTracker.SetAvailable(false)
-		go app.BootstrapOpenCodeAsync(daemonCtx, port, password)
-	}
+	// Hoxi runs its in-process Go Native Agent engine by default; OpenCode is
+	// invoked on demand as a single-turn CLI runner rather than a boot daemon.
+	statusTracker.SetAvailable(true)
 
 	updater.SetBeforeRestart(func() {
 		prepCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -416,6 +379,7 @@ func Run(distFS fs.FS) {
 	app.configureBrowserFiles(gw)
 	app.configureComputer(gw)
 	app.configureFileAccess(gw)
+	app.configureDesktopCompanion(gw)
 	gw.SetDesktopFocusHandler(func(_, _ string) {
 		app.showWindow()
 	})
@@ -580,6 +544,7 @@ func (a *DesktopApp) startup(ctx context.Context) {
 	statusbar.SetActionHandler(a.handleStatusBarMenuAction)
 	statusbar.Start(ctx)
 	statusbar.Update(a.status.Snapshot())
+	a.startDesktopCompanion()
 	if a.notifier != nil {
 		a.notifier.Start()
 	}
@@ -607,6 +572,7 @@ func (a *DesktopApp) startup(ctx context.Context) {
 }
 
 func (a *DesktopApp) shutdown(_ context.Context) {
+	a.stopDesktopCompanion()
 	statusbar.SetActionHandler(nil)
 	statusbar.Stop()
 	if a.gateway != nil {
@@ -680,4 +646,43 @@ func (a *DesktopApp) desktopContext() context.Context {
 	a.contextMu.RLock()
 	defer a.contextMu.RUnlock()
 	return a.context
+}
+
+func (a *DesktopApp) configureDesktopCompanion(gw *gateway.Gateway) {
+	if !statusbar.PetSupported() {
+		return
+	}
+	gw.SetDesktopCompanionBridge(
+		func(st gateway.DesktopCompanionState) gateway.DesktopCompanionSyncStatus {
+			res := statusbar.SyncPet(statusbar.PetPayload{
+				Visible:         st.Visible,
+				Minimized:       st.Minimized,
+				DarkTheme:       st.DarkTheme,
+				Persona:         st.Persona,
+				PersonaName:     st.PersonaName,
+				Mood:            st.Mood,
+				BadgeLabel:      st.BadgeLabel,
+				LevelText:       st.LevelText,
+				Dialogue:        st.Dialogue,
+				ShowBubble:      st.ShowBubble,
+				TargetSessionID: st.TargetSessionID,
+				AccentHex:       st.AccentHex,
+				AvatarKey:       st.AvatarKey,
+				AvatarDataURL:   st.AvatarDataURL,
+			})
+			return gateway.DesktopCompanionSyncStatus{
+				Supported:  res.Supported,
+				NeedAvatar: res.NeedAvatar,
+			}
+		},
+		statusbar.ResetPetPosition,
+	)
+}
+
+func (a *DesktopApp) startDesktopCompanion() {
+	statusbar.StartPet()
+}
+
+func (a *DesktopApp) stopDesktopCompanion() {
+	statusbar.StopPet()
 }

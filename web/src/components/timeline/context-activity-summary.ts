@@ -76,6 +76,17 @@ export function summarizeStepTarget(part: ToolPart): string {
   if (typeof inp.pattern === "string" && inp.pattern.trim()) {
     return `"${inp.pattern.trim()}"`;
   }
+  if (typeof inp.symbol === "string" && inp.symbol.trim()) {
+    return inp.symbol.trim();
+  }
+  if (typeof inp.query === "string" && inp.query.trim()) {
+    return `"${inp.query.trim()}"`;
+  }
+  if (typeof inp.server === "string" && inp.server.trim()) {
+    return typeof inp.tool === "string" && inp.tool.trim()
+      ? `${inp.server.trim()}:${inp.tool.trim()}`
+      : inp.server.trim();
+  }
   return "";
 }
 

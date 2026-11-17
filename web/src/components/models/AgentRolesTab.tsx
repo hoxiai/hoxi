@@ -220,13 +220,16 @@ export default function AgentRolesTab() {
       model: workspace.globalConfig?.agent?.debug?.model || "",
     });
 
-    // Custom Agents from globalConfig.agent
+    // Custom Agents from globalConfig.agent and file-defined Markdown agents
+    const seenIds = new Set<string>(list.map((a) => a.id.toLowerCase()));
     const cfgAgent = workspace.globalConfig?.agent || {};
     for (const [key, val] of Object.entries(cfgAgent)) {
-      if (BUILTIN_MODE_IDS.has(key) || SUBAGENT_ONLY_IDS.has(key)) continue;
+      const lower = key.toLowerCase();
+      if (BUILTIN_MODE_IDS.has(lower) || SUBAGENT_ONLY_IDS.has(lower)) continue;
       if (val && typeof val === "object") {
         const item = val as Record<string, any>;
         if (item.mode === "subagent") continue;
+        seenIds.add(lower);
         list.push({
           id: key,
           name: key,
@@ -236,6 +239,22 @@ export default function AgentRolesTab() {
           prompt: typeof item.prompt === "string" ? item.prompt : "",
         });
       }
+    }
+    for (const wa of workspace.agents || []) {
+      const lower = (wa.name || "").toLowerCase();
+      if (!lower || seenIds.has(lower) || BUILTIN_MODE_IDS.has(lower) || SUBAGENT_ONLY_IDS.has(lower) || wa.builtIn) {
+        continue;
+      }
+      if (wa.mode === "subagent") continue;
+      seenIds.add(lower);
+      list.push({
+        id: wa.name,
+        name: wa.name,
+        isBuiltin: false,
+        description: wa.description || t("models.agentRoleCustomDesc"),
+        model: typeof wa.model === "string" ? wa.model : "",
+        prompt: typeof wa.prompt === "string" ? wa.prompt : "",
+      });
     }
 
     return list;

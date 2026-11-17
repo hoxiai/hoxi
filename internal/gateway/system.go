@@ -26,6 +26,8 @@ import (
 
 type systemRuntimeInfoResponse struct {
 	AppVersion          string            `json:"appVersion"`
+	NativeEngineReady   bool              `json:"nativeEngineReady"`
+	ExecutablePath      string            `json:"executablePath"`
 	OpenCodeBinPath     string            `json:"openCodeBinPath"`
 	OpenCodeVersion     string            `json:"openCodeVersion"`
 	OpenCodePort        int               `json:"openCodePort"`
@@ -51,10 +53,18 @@ var (
 	cachedSystemUsername   string
 	cachedGitUserName      string
 	cachedGitUserEmail     string
+	cachedExecutablePath   string
 )
 
-func resolveLocalUserIdentity() (sysUser, gitName, gitEmail string) {
+func resolveLocalUserIdentity() (sysUser, gitName, gitEmail, exePath string) {
 	cachedUserIdentityOnce.Do(func() {
+		if exe, err := os.Executable(); err == nil && strings.TrimSpace(exe) != "" {
+			if resolved, evalErr := filepath.EvalSymlinks(exe); evalErr == nil && strings.TrimSpace(resolved) != "" {
+				cachedExecutablePath = filepath.Clean(resolved)
+			} else {
+				cachedExecutablePath = filepath.Clean(exe)
+			}
+		}
 		if u, err := user.Current(); err == nil && u != nil {
 			uname := strings.TrimSpace(u.Username)
 			if idx := strings.LastIndex(uname, `\`); idx >= 0 && idx < len(uname)-1 {
@@ -76,7 +86,7 @@ func resolveLocalUserIdentity() (sysUser, gitName, gitEmail string) {
 		cachedGitUserName = readGitGlobal("user.name")
 		cachedGitUserEmail = readGitGlobal("user.email")
 	})
-	return cachedSystemUsername, cachedGitUserName, cachedGitUserEmail
+	return cachedSystemUsername, cachedGitUserName, cachedGitUserEmail, cachedExecutablePath
 }
 
 func (g *Gateway) handleSystemRuntimeInfo(w http.ResponseWriter, r *http.Request) {
@@ -86,7 +96,7 @@ func (g *Gateway) handleSystemRuntimeInfo(w http.ResponseWriter, r *http.Request
 	}
 	binPath := opencode.FindBinary("opencode")
 	ver := opencode.ResolveVersion(binPath)
-	sysUser, gitName, gitEmail := resolveLocalUserIdentity()
+	sysUser, gitName, gitEmail, exePath := resolveLocalUserIdentity()
 
 	var st statusbar.Summary
 	if g.status != nil {
@@ -100,6 +110,8 @@ func (g *Gateway) handleSystemRuntimeInfo(w http.ResponseWriter, r *http.Request
 
 	writeJSON(w, http.StatusOK, systemRuntimeInfoResponse{
 		AppVersion:          buildinfo.Version,
+		NativeEngineReady:   g.runner != nil,
+		ExecutablePath:      exePath,
 		OpenCodeBinPath:     binPath,
 		OpenCodeVersion:     ver,
 		OpenCodePort:        g.openCodePort,

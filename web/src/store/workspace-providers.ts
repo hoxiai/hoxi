@@ -101,7 +101,9 @@ export async function loadAgents(
     const list = await pending;
     let resolved: AgentInfo[] = DEFAULT_AGENTS;
     if (Array.isArray(list) && list.length > 0) {
-      const primaries = list.filter((a) => (a.mode === "primary" || !a.mode) && !a.hidden);
+      const primaries = list.filter(
+        (a) => (a.mode === "primary" || a.mode === "all" || !a.mode) && !a.hidden
+      );
       if (primaries.length > 0) {
         resolved = primaries;
       }
@@ -274,7 +276,7 @@ export async function loadProviders(forceRefresh = false): Promise<void> {
   const run = async () => {
   try {
     const dir = workspace.rootDir || undefined;
-    const [res, cfg, authMethods, hoxiCfg, agyRunner, geminiRunner, claudeRunner, codeBuddyRunner, qoderRunner] = await Promise.all([
+    const [res, cfg, authMethods, hoxiCfg, agyRunner, geminiRunner, claudeRunner, codeBuddyRunner, qoderRunner, codexRunner, openCodeCLIRunner] = await Promise.all([
       hoxiAPI
         .listProviders(dir)
         .catch(() => ({ all: [], connected: [] as string[], default: {} as Record<string, string> })),
@@ -290,6 +292,8 @@ export async function loadProviders(forceRefresh = false): Promise<void> {
       runnerAPI.listModels("claude-code", forceRefresh).catch(() => null),
       runnerAPI.listModels("codebuddy", forceRefresh).catch(() => null),
       runnerAPI.listModels("qoder", forceRefresh).catch(() => null),
+      runnerAPI.listModels("codex", forceRefresh).catch(() => null),
+      runnerAPI.listModels("opencode", forceRefresh).catch(() => null),
       syncOfficialModelPricing(forceRefresh).catch(() => {}),
     ]);
 
@@ -427,6 +431,12 @@ export async function loadProviders(forceRefresh = false): Promise<void> {
     }
     if (!hoxiMap["qoder"]) {
       registerRunnerProvider("qoder", t("timeline.runtimeQoderLocal"), qoderRunner);
+    }
+    if (!hoxiMap["codex"]) {
+      registerRunnerProvider("codex", t("timeline.runtimeCodexLocal"), codexRunner);
+    }
+    if (!hoxiMap["opencode"]) {
+      registerRunnerProvider("opencode", t("timeline.runtimeOpenCodeLocal"), openCodeCLIRunner);
     }
 
     const all = Array.from(byId.values()).filter((p) => p.id !== AUTO_PROVIDER_ID);

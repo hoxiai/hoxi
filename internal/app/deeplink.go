@@ -215,5 +215,23 @@ func (a *DesktopApp) handleStatusBarMenuAction(action statusbar.MenuAction) {
 				Action: gateway.DesktopIntentActionSettings,
 			})
 		}
+	case statusbar.MenuActionCompanionTap:
+		if a.gateway != nil {
+			a.gateway.QueueDesktopIntent(gateway.DesktopIntent{
+				Action: gateway.DesktopIntentActionCompanionTap,
+			})
+		}
+	case statusbar.MenuActionCompanionToggleMin:
+		if a.gateway != nil {
+			a.gateway.QueueDesktopIntent(gateway.DesktopIntent{
+				Action: gateway.DesktopIntentActionCompanionToggleMin,
+			})
+		}
+	case statusbar.MenuActionCompanionDismiss:
+		if a.gateway != nil {
+			a.gateway.QueueDesktopIntent(gateway.DesktopIntent{
+				Action: gateway.DesktopIntentActionCompanionDismiss,
+			})
+		}
 	}
 }

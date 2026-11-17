@@ -89,7 +89,7 @@ export function AssistantTurnFooter(props: {
 
   const isTruncatedTurn = createMemo(() => {
     if (interruptMode() || !props.info.time?.completed || props.info.error) return false;
-    if (props.info.finish === "length") return true;
+    if (props.info.finish === "length" || props.info.finish === "interrupted") return true;
     const hasTools = props.parts.some((p) => p.type === "tool");
     const hasVisibleText = props.parts.some(
       (p) => p.type === "text" && Boolean(extractVisibleAssistantText(p.text).trim())

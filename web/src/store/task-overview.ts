@@ -149,7 +149,7 @@ function subagentStatus(sessionID: string): TaskNodeStatus {
   if (turns === undefined) return "succeeded";
   const last = lastAssistantTurn(turns);
   if (!last) return "pending";
-  if (last.info.error) return "failed";
+  if (last.info.error || last.info.finish === "interrupted") return "failed";
   if (last.info.finish === "aborted") return "cancelled";
   return "succeeded";
 }

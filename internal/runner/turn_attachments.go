@@ -200,7 +200,7 @@ func (s *Service) prepareTurnAttachmentsForModel(
 				_, localPath, _ = s.attachments.MaterializeToDir(meta.ID, rec.WorktreePath)
 			}
 
-			nativeMultimodal := rec.Runtime == "opencode" &&
+			nativeMultimodal := (rec.Runtime == "opencode" || rec.Runtime == string(RuntimeNative)) &&
 				!isImageTurn &&
 				(meta.Kind == attachment.KindPDF || meta.Kind == attachment.KindAudio || meta.Kind == attachment.KindVideo) &&
 				s.openCodeSupportsNativeAttachment(rec.WorktreePath, targetProviderID, targetModelID, meta.Kind)

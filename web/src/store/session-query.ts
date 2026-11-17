@@ -11,7 +11,24 @@ import {
 import type { SessionInfo, SessionRuntime } from "../services/sse-types";
 import { AUTO_PROVIDER_ID, peekAutoModelTarget } from "./auto-models";
 import { indexedSession } from "./session-index";
-import { workspace } from "./workspace-state";
+import { readStorageItem, workspace, writeStorageItem } from "./workspace-state";
+
+export type AgentEngineMode = "opencode" | "native";
+export const AGENT_ENGINE_STORAGE_KEY = "hoxi-agent-engine:v1";
+
+const [preferredAgentEngineSignal, setPreferredAgentEngineSignal] = createSignal<AgentEngineMode>(
+  readStorageItem(AGENT_ENGINE_STORAGE_KEY) === "opencode" ? "opencode" : "native"
+);
+
+export function preferredAgentEngine(): AgentEngineMode {
+  return preferredAgentEngineSignal();
+}
+
+export function setPreferredAgentEngine(mode: AgentEngineMode): void {
+  const next: AgentEngineMode = mode === "native" ? "native" : "opencode";
+  setPreferredAgentEngineSignal(next);
+  writeStorageItem(AGENT_ENGINE_STORAGE_KEY, next);
+}
 
 // Bumped when the user sends (or queues) a prompt or selects an active-task
 // session so the timeline re-follows the live tail.
@@ -136,15 +153,31 @@ export function sessionsWithPendingPermission(): Set<string> {
 }
 
 /**
- * True when sending would fail because no model is chosen: OpenCode needs one,
- * while native CLI runtimes fall back to their own default.
+ * True when sending would fail because no model is chosen: OpenCode and Go Native
+ * need a configured model, while local CLI runtimes fall back to their own default.
  */
 export function sessionNeedsModelSelection(sessionID?: string | null): boolean {
   const config = (sessionID && workspace.aiBySession[sessionID]) || workspace.defaultAI;
   if (config.model) return false;
   const agentModel = workspace.globalConfig?.agent?.[config.agent]?.model;
   if (typeof agentModel === "string" && agentModel) return false;
-  return sessionRuntimeForID(sessionID) === "opencode";
+  const rt = sessionRuntimeForID(sessionID);
+  return rt === "opencode" || rt === "native";
+}
+
+export function resolveSessionTargetRuntime(
+  sessionID?: string | null,
+  providerID?: string | null
+): SessionRuntime {
+  const hasConfigured = Boolean(workspace.hoxiProviders?.[providerID || ""]);
+  const found = sessionID ? workspace.sessions.find((s) => s.id === sessionID) : undefined;
+  const stickyEngine: AgentEngineMode =
+    found?.runtime === "native"
+      ? "native"
+      : found?.runtime === "opencode"
+        ? "opencode"
+        : preferredAgentEngine();
+  return resolveRunnerRuntimeForProvider(providerID, hasConfigured, stickyEngine);
 }
 
 export function sessionRuntimeForID(sessionID?: string | null): SessionRuntime {
@@ -155,9 +188,13 @@ export function sessionRuntimeForID(sessionID?: string | null): SessionRuntime {
         ? peekAutoModelTarget(rawModel.modelID)
         : rawModel;
     const draftProv = resolved?.providerID;
-    return resolveRunnerRuntimeForProvider(draftProv, Boolean(workspace.hoxiProviders?.[draftProv || ""]));
+    return resolveRunnerRuntimeForProvider(
+      draftProv,
+      Boolean(workspace.hoxiProviders?.[draftProv || ""]),
+      preferredAgentEngine()
+    );
   }
   const found = workspace.sessions.find((s) => s.id === sessionID);
   if (found?.runtime) return found.runtime;
-  return inferRunnerRuntimeFromSessionID(sessionID) || "opencode";
+  return inferRunnerRuntimeFromSessionID(sessionID) || preferredAgentEngine();
 }

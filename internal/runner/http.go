@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -66,7 +67,9 @@ type Service struct {
 	procs           map[string]*activeProcess
 	childBusy       map[string]bool
 	subs            map[chan SSEEvent]string
+	sseReplay       sseReplayRing
 	seqSeed         int64
+	nativeEngine    NativeEngine
 	imageClient     llm.ImageClient
 	audioClient     llm.AudioClient
 	skillResolver   func(ctx context.Context, directory, sessionID string, sel SkillSelection) (ResolvedSkill, error)
@@ -172,6 +175,9 @@ func NewService(rootDir string, worktrees *worktree.Manager, status *statusbar.T
 			_ = svc.worktrees.ForDirectory(rec.ProjectDir).RestoreSession(rec.ID, rec.WorktreePath, rec.Branch, rec.BaseCommit)
 		}
 	}
+	if strings.TrimSpace(customStorePath) == "" {
+		svc.migrateDefaultOpenCodeDBs()
+	}
 	svc.settleStartupLedger()
 	svc.worktrees.SetApplyGuard(svc.guardWorktreeApply)
 	return svc
@@ -254,6 +260,8 @@ func (s *Service) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/hoxi/runner/gemini-cli/models", s.handleGeminiModels)
 	mux.HandleFunc("/api/hoxi/runner/codebuddy/models", s.handleCodeBuddyModels)
 	mux.HandleFunc("/api/hoxi/runner/qoder/models", s.handleQoderModels)
+	mux.HandleFunc("/api/hoxi/runner/codex/models", s.handleCodexModels)
+	mux.HandleFunc("/api/hoxi/runner/opencode/models", s.handleOpenCodeCLIModels)
 	mux.HandleFunc("/api/hoxi/runner/antigravity/hook", s.handleAgyHookInstall)
 	mux.HandleFunc(hookPreToolPath, s.handleHookPreTool)
 	mux.HandleFunc(claudeHookPreToolPath, s.handleClaudeHookPreTool)
@@ -274,16 +282,7 @@ func (s *Service) RegisterRoutes(mux *http.ServeMux) {
 }
 
 func (s *Service) Subscribe(sessionID string) (chan SSEEvent, func()) {
-	ch := make(chan SSEEvent, 512)
-	s.mu.Lock()
-	s.subs[ch] = strings.TrimSpace(sessionID)
-	s.mu.Unlock()
-	unsub := func() {
-		s.mu.Lock()
-		delete(s.subs, ch)
-		s.mu.Unlock()
-	}
-	return ch, unsub
+	return s.SubscribeSince(sessionID, 0)
 }
 
 func (s *Service) broadcast(sessionID string, evts ...SSEEvent) {
@@ -301,6 +300,7 @@ func (s *Service) broadcast(sessionID string, evts ...SSEEvent) {
 		}
 		s.persistEventToStore(sessionID, evt)
 		s.mu.Lock()
+		evt = s.sseReplay.append(sessionID, evt)
 		for ch, filterSid := range s.subs {
 			if filterSid == "" || filterSid == sessionID {
 				enqueueStreamEvent(ch, evt)
@@ -495,12 +495,14 @@ func (s *Service) handleSessionSubroutes(w http.ResponseWriter, r *http.Request)
 	case "":
 		s.handleSingleSession(w, r, sessionID)
 	case "message":
+		seqAtRead := s.CurrentEventSeq()
 		raw, ok := s.store.MarshalTurnsPage(sessionID, parseHistoryPage(r.URL.Query()))
 		if !ok {
 			writeJSONError(w, http.StatusNotFound, "runner session not found")
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Hoxi-Event-Seq", strconv.FormatUint(seqAtRead, 10))
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(SanitizeOpenCodeToolJSON(raw))
 	case "prompt", "prompt_async":

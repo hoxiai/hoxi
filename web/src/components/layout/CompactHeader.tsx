@@ -58,7 +58,7 @@ export default function CompactHeader(props: CompactHeaderProps) {
 
   return (
     <header
-      class={`shrink-0 bg-transparent flex items-center gap-3 px-4 ${
+      class={`hoxi-header-bar shrink-0 bg-transparent flex items-center gap-3 px-4 ${
         isMac ? "h-[52px] pl-[96px]" : "h-[42px] pl-4"
       } select-none`}
       style={{ "--wails-draggable": "drag" } as any}

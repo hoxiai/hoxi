@@ -237,3 +237,193 @@ describe("session error recovery on single-model turns", () => {
     }
   });
 });
+
+describe("restrained AssistantErrorCard view state across all error classes", () => {
+  it("denoises official & provider balance notices with stateful retry promotion", async () => {
+    const { resolveErrorCardViewState } = await import("../components/timeline/assistant-error-card");
+    const { locale, setLocale } = await import("../i18n");
+    const prevLocale = locale();
+    try {
+      setLocale("en-US");
+      const checkedIn = resolveErrorCardViewState({
+        kind: "officialBalance",
+        superseded: false,
+        hasSelectedModel: true,
+        hasFallbackModel: true,
+        memberLoaded: true,
+        points: 120.38,
+        pointsIncreased: false,
+        canCheckin: false,
+        checkinError: false,
+        topUpInitiated: false,
+      });
+      assertEqual(checkedIn.tone, "notice");
+      assertEqual(checkedIn.monoMessage, false);
+      assertEqual(checkedIn.showStatusCode, false);
+      assertEqual(checkedIn.showHealthBadge, false);
+      assertEqual(checkedIn.message, "Remaining 120.38 points — not enough for this request");
+      assertDeepEqual(checkedIn.actions, [
+        { id: "topup", primary: true },
+        { id: "fallback", primary: false },
+      ]);
+
+      const unChecked = resolveErrorCardViewState({
+        kind: "officialBalance",
+        superseded: false,
+        hasSelectedModel: true,
+        hasFallbackModel: true,
+        memberLoaded: true,
+        points: 12,
+        pointsIncreased: false,
+        canCheckin: true,
+        checkinError: false,
+        topUpInitiated: false,
+      });
+      assertDeepEqual(unChecked.actions, [
+        { id: "checkin", primary: true },
+        { id: "fallback", primary: false },
+      ]);
+
+      const toppedUp = resolveErrorCardViewState({
+        kind: "officialBalance",
+        superseded: false,
+        hasSelectedModel: true,
+        hasFallbackModel: false,
+        memberLoaded: true,
+        points: 620.38,
+        pointsIncreased: true,
+        canCheckin: false,
+        checkinError: false,
+        topUpInitiated: true,
+      });
+      assertEqual(toppedUp.message, "Points updated to 620.38 — ready to retry this request");
+      assertDeepEqual(toppedUp.actions, [
+        { id: "balanceRetry", primary: true },
+        { id: "topup", primary: false },
+        { id: "configure", primary: false },
+      ]);
+
+      const thirdParty = resolveErrorCardViewState({
+        kind: "providerBalance",
+        superseded: false,
+        hasSelectedModel: true,
+        hasFallbackModel: true,
+      });
+      assertEqual(thirdParty.tone, "notice");
+      assertDeepEqual(thirdParty.actions, [
+        { id: "fallback", primary: true },
+        { id: "balanceRetry", primary: false },
+        { id: "configure", primary: false },
+      ]);
+    } finally {
+      setLocale(prevLocale);
+    }
+  });
+
+  it("denoises overflow, model-not-loaded, stall, and auth/transient API errors without dead-click primaries", async () => {
+    const { resolveErrorCardViewState } = await import("../components/timeline/assistant-error-card");
+    const { locale, setLocale } = await import("../i18n");
+    const prevLocale = locale();
+    try {
+      setLocale("en-US");
+
+      // 1. Context overflow: single primary Compact & retry button, no diagnostics/configure/health chrome
+      const overflow = resolveErrorCardViewState({
+        kind: "overflow",
+        superseded: false,
+        hasSelectedModel: true,
+        hasFallbackModel: true,
+      });
+      assertEqual(overflow.tone, "notice");
+      assertEqual(overflow.showStatusCode, false);
+      assertEqual(overflow.showHealthBadge, false);
+      assertEqual(overflow.monoMessage, false);
+      assertDeepEqual(overflow.actions, [{ id: "compactRetry", primary: true }]);
+
+      // 2. Model not loaded: removes dead-click retryModel, promotes reloadAndRetry + fallback
+      const modelMissing = resolveErrorCardViewState({
+        kind: "model",
+        superseded: false,
+        hasSelectedModel: true,
+        hasFallbackModel: true,
+      });
+      assertEqual(modelMissing.tone, "notice");
+      assertEqual(modelMissing.showStatusCode, false);
+      assertDeepEqual(modelMissing.actions, [
+        { id: "reloadAndRetry", primary: true },
+        { id: "fallback", primary: false },
+      ]);
+
+      // 3. Runner stall: hides health badge & configure keys, places Retry before Diagnostics
+      const stall = resolveErrorCardViewState({
+        kind: "stall",
+        superseded: false,
+        hasSelectedModel: true,
+        hasFallbackModel: true,
+      });
+      assertEqual(stall.tone, "notice");
+      assertEqual(stall.showHealthBadge, false);
+      assertDeepEqual(stall.actions, [
+        { id: "retryStall", primary: true },
+        { id: "diagnostics", primary: false },
+      ]);
+
+      // 4. Generic API 401 Auth failure: promotes Configure Models & Keys first, then promotes retry after config opened
+      const authInitial = resolveErrorCardViewState({
+        kind: "api",
+        superseded: false,
+        hasSelectedModel: true,
+        hasFallbackModel: true,
+        isAuthError: true,
+        configOpened: false,
+        rawErrorName: "APIError",
+        rawErrorMessage: "Invalid API key",
+      });
+      assertEqual(authInitial.tone, "danger");
+      assertEqual(authInitial.monoMessage, true);
+      assertEqual(authInitial.showStatusCode, true);
+      assertEqual(authInitial.showHealthBadge, true);
+      assertDeepEqual(authInitial.actions, [
+        { id: "configure", primary: true },
+        { id: "fallback", primary: false },
+        { id: "diagnostics", primary: false },
+      ]);
+
+      const authAfterConfig = resolveErrorCardViewState({
+        kind: "api",
+        superseded: false,
+        hasSelectedModel: true,
+        hasFallbackModel: true,
+        isAuthError: true,
+        configOpened: true,
+        rawErrorName: "APIError",
+        rawErrorMessage: "Invalid API key",
+      });
+      assertDeepEqual(authAfterConfig.actions, [
+        { id: "retryModel", primary: true },
+        { id: "configure", primary: false },
+        { id: "fallback", primary: false },
+        { id: "diagnostics", primary: false },
+      ]);
+
+      // 5. Generic API 502 on degraded provider: promotes healthy fallback first, retryModel second, diagnostics last
+      const degraded502 = resolveErrorCardViewState({
+        kind: "api",
+        superseded: false,
+        hasSelectedModel: true,
+        hasFallbackModel: true,
+        isAuthError: false,
+        isProviderDegraded: true,
+        rawErrorName: "APIError",
+        rawErrorMessage: "Bad gateway",
+      });
+      assertDeepEqual(degraded502.actions, [
+        { id: "fallback", primary: true },
+        { id: "retryModel", primary: false },
+        { id: "diagnostics", primary: false },
+      ]);
+    } finally {
+      setLocale(prevLocale);
+    }
+  });
+});

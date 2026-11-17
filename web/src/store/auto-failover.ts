@@ -25,6 +25,7 @@ import {
 export type AutoFailoverFaultKind =
   | "aborted"
   | "stalled"
+  | "outcome_unknown"
   | "context"
   | "policy"
   | "model"
@@ -113,9 +114,14 @@ export function decideAutoFailover(
   const notEndpoint = { failover: false, penalize: false, reason: "other" as const };
   const yes = (reason: AutoFailoverReason) => ({ failover: true, penalize: true, reason });
 
+  if (name === "streaminterruptederror" && error.data?.isRetryable === false) {
+    return notEndpoint;
+  }
+
   switch (kind) {
     case "aborted":
     case "stalled":
+    case "outcome_unknown":
     case "context":
     case "policy":
     case "badRequest":
@@ -478,7 +484,9 @@ export function selectNextDispatchTarget(
     NEVER_SWITCH_NAMES.has(lowerErrName) ||
     ABORT_RE.test(lowerErrName) ||
     currentError.data?.kind === "aborted" ||
-    currentError.data?.kind === "stalled";
+    currentError.data?.kind === "stalled" ||
+    currentError.data?.kind === "outcome_unknown" ||
+    (lowerErrName === "streaminterruptederror" && currentError.data?.isRetryable === false);
   if (autoState.manualModel && !isAbortedOrStalled) {
     if (autoState.poolID && decision.penalize) {
       markAutoCandidateCooldown(failed.providerID, failed.modelID, errText, status, cooldownMs);

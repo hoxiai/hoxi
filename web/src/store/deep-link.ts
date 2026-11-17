@@ -18,6 +18,12 @@ import {
   openSettingsModal,
 } from "./settings";
 import { resolveRootSessionID } from "./subagent-sessions";
+import {
+  companionState,
+  pokeCompanion,
+  setCompanionCornerDock,
+  setCompanionMinimized,
+} from "./companion";
 import { setWorkspace, workspace } from "./workspace-state";
 import { findWorkspaceProfileByDir, normalizeFolderPath, workspacePrimaryFolder } from "./workspace-folders";
 import {
@@ -338,6 +344,15 @@ export function applyDesktopIntent(intent: DesktopIntent | null | undefined): vo
   switch (intent.action) {
     case "sync-keep-awake":
       void fetchSystemRuntimeInfo().catch(() => {});
+      return;
+    case "companion-tap":
+      pokeCompanion();
+      return;
+    case "companion-toggle-min":
+      setCompanionMinimized(!companionState.minimized);
+      return;
+    case "companion-dismiss":
+      setCompanionCornerDock(false);
       return;
     case "policy":
       closeHandoffModal();

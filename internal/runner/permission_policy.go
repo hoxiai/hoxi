@@ -125,8 +125,37 @@ var (
 	goEnvWriteFlags          = setOf("w", "u")
 	hoxiCodeIndexSubcommands = setOf("search", "inspect", "callers", "callees", "impact", "context", "explore", "refresh", "status")
 	hoxiDocReadSubcommands   = setOf("inspect", "read")
-	hoxiEcomReadSubcommands  = setOf("profit", "listing-check", "ads-audit", "help")
+
+	extSafeHoxiMu      sync.RWMutex
+	extSafeHoxiSubcmds = make(map[string]map[string]bool)
 )
+
+// RegisterSafeHoxiReadSubcommands allows host extensions to register read-only
+// hoxi CLI subcommands that forbid output-file flags and protected paths.
+func RegisterSafeHoxiReadSubcommands(group string, subs ...string) {
+	group = strings.TrimSpace(group)
+	if group == "" || len(subs) == 0 {
+		return
+	}
+	extSafeHoxiMu.Lock()
+	defer extSafeHoxiMu.Unlock()
+	m := extSafeHoxiSubcmds[group]
+	if m == nil {
+		m = make(map[string]bool, len(subs))
+		extSafeHoxiSubcmds[group] = m
+	}
+	for _, sub := range subs {
+		if s := strings.TrimSpace(sub); s != "" {
+			m[s] = true
+		}
+	}
+}
+
+func isRegisteredSafeHoxiSubcommand(group, sub string) bool {
+	extSafeHoxiMu.RLock()
+	defer extSafeHoxiMu.RUnlock()
+	return extSafeHoxiSubcmds[group][sub]
+}
 
 func setOf(items ...string) map[string]bool {
 	out := make(map[string]bool, len(items))
@@ -466,10 +495,8 @@ func isSafeWords(words []string) bool {
 				len(args) >= 3 &&
 				hoxiCodeIndexArgsSafe(args[2:])
 		}
-		if arg(0) == "ecom" {
-			return len(args) >= 2 &&
-				hoxiEcomReadSubcommands[arg(1)] &&
-				hoxiEcomArgsSafe(args[2:])
+		if len(args) >= 2 && isRegisteredSafeHoxiSubcommand(arg(0), arg(1)) {
+			return hoxiNoOutputArgsSafe(args[2:])
 		}
 		return (arg(0) == "code-index" || arg(0) == "codeindex") &&
 			hoxiCodeIndexSubcommands[arg(1)] &&
@@ -499,7 +526,7 @@ func isSafeKillProbeArgs(args []string) bool {
 	return true
 }
 
-func hoxiEcomArgsSafe(args []string) bool {
+func hoxiNoOutputArgsSafe(args []string) bool {
 	for _, raw := range args {
 		a := strings.TrimSpace(raw)
 		if a == "-o" || a == "--out" || a == "-out" ||

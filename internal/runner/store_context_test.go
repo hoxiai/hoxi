@@ -49,8 +49,8 @@ func TestSessionStoreContextInjectionAndNativeCLIDedup(t *testing.T) {
 	// Turn 1 (fresh CLI conversation): delivers commandExecutionGuidance + store profile + user system.
 	caller1, full1 := buildTurnSystems("Follow brand voice.")
 	sys1 := svc.nativeCLISystemForTurn(rec, caller1, full1)
-	if !strings.Contains(sys1, "hoxi ecom") || !strings.Contains(sys1, "amz-us-main") || !strings.Contains(sys1, "Follow brand voice.") {
-		t.Fatalf("expected Turn 1 system to include ecom guidance, store profile, and caller system, got:\n%s", sys1)
+	if !strings.Contains(sys1, "hoxi code-index") || !strings.Contains(sys1, "amz-us-main") || !strings.Contains(sys1, "Follow brand voice.") {
+		t.Fatalf("expected Turn 1 system to include execution guidance, store profile, and caller system, got:\n%s", sys1)
 	}
 	svc.recordCLISystemDelivered(rec.ID, rec.Runtime, caller1)
 

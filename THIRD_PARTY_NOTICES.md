@@ -30,6 +30,8 @@ distribution.
 | `github.com/chromedp/chromedp` | `v0.14.2` | MIT | Copyright (c) 2016-2025 Kenneth Shaw |
 | `github.com/chromedp/sysutil` | `v1.1.0` | MIT | Copyright (c) 2016-2017 Kenneth Shaw |
 | `github.com/davecgh/go-spew` | `v1.1.1` | ISC | Copyright (c) 2012-2016 Dave Collins <dave@davec.name> |
+| `github.com/dustin/go-humanize` | `v1.0.1` | MIT | Copyright (c) 2005-2008 Dustin Sallings |
+| `github.com/glebarez/go-sqlite` | `v1.21.2` | BSD-3-Clause | Copyright (c) 2017 The Sqlite Authors |
 | `github.com/go-json-experiment/json` | `v0.0.0-20250725192818-e39067aee2d2` | BSD-3-Clause | Copyright (c) 2020 The Go Authors. All rights reserved. |
 | `github.com/go-ole/go-ole` | `v1.3.0` | MIT | Copyright © 2013-2017 Yasuhiro Matsumoto, <mattn.jp@gmail.com> |
 | `github.com/gobwas/httphead` | `v0.1.0` | MIT | Copyright (c) 2017 Sergey Kamardin |
@@ -57,6 +59,7 @@ distribution.
 | `github.com/pkg/browser` | `v0.0.0-20240102092130-5ac0b6a4141c` | BSD-2-Clause | Copyright (c) 2014, Dave Cheney <dave@cheney.net> |
 | `github.com/pkg/errors` | `v0.9.1` | BSD-2-Clause | Copyright (c) 2015, Dave Cheney <dave@cheney.net> |
 | `github.com/pmezard/go-difflib` | `v1.0.0` | BSD-2-Clause | Copyright (c) 2013, Patrick Mezard |
+| `github.com/remyoudompheng/bigfft` | `v0.0.0-20230129092748-24d4a6f8daec` | BSD-3-Clause | Copyright (c) 2012 The Go Authors. All rights reserved. |
 | `github.com/rivo/uniseg` | `v0.4.7` | MIT | Copyright (c) 2019 Oliver Kuederle |
 | `github.com/samber/lo` | `v1.49.1` | MIT | Copyright (c) 2022-2025 Samuel Berthe |
 | `github.com/segmentio/asm` | `v1.1.3` | MIT | Copyright (c) 2019 Segment.io, Inc. |
@@ -78,6 +81,10 @@ distribution.
 | `golang.org/x/text` | `v0.37.0` | BSD-3-Clause | Copyright 2009 The Go Authors. |
 | `golang.org/x/time` | `v0.15.0` | BSD-3-Clause | Copyright 2014 The Go Authors. |
 | `gopkg.in/yaml.v3` | `v3.0.1` | Apache-2.0 | Copyright (c) 2006-2011 Kirill Simonov; 2011-2019 Canonical Ltd |
+| `modernc.org/libc` | `v1.22.5` | BSD-3-Clause | Copyright (c) The Libc Authors. All rights reserved. |
+| `modernc.org/mathutil` | `v1.5.0` | BSD-3-Clause | Copyright (c) The Mathutil Authors. All rights reserved. |
+| `modernc.org/memory` | `v1.5.0` | BSD-3-Clause | Copyright (c) The Memory Authors. All rights reserved. |
+| `modernc.org/sqlite` | `v1.23.1` | BSD-3-Clause | Copyright (c) The Sqlite Authors. All rights reserved. |
 
 ## Frontend runtime packages
 

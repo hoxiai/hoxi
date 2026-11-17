@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -238,24 +239,59 @@ func TestDeepRejectedPromptDoesNotChangeRuntime(t *testing.T) {
 	}
 }
 
+func newInMemoryRunnerMux(t *testing.T) (*Service, *http.ServeMux, string) {
+	t.Helper()
+	dir := t.TempDir()
+	svc := NewService(dir, nil, nil, filepath.Join(t.TempDir(), "sessions.json"))
+	t.Cleanup(svc.CloseAll)
+	if err := svc.store.Put(SessionRecord{ID: "ses_agy_gate", Runtime: "antigravity", ProjectDir: dir, WorktreePath: dir, ExternalID: "conv-1"}); err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	svc.RegisterRoutes(mux)
+	return svc, mux, dir
+}
+
 func TestVerifyEngineStartupFailurePreservesPreviousRuntime(t *testing.T) {
 	t.Parallel()
-	f := newGateFixture(t)
-	prior, ok := f.svc.store.Get("ses_agy_gate")
+	svc, mux, dir := newInMemoryRunnerMux(t)
+	svc.ConfigureOpenCode("http://127.0.0.1:1", "")
+	prior, ok := svc.store.Get("ses_agy_gate")
 	if !ok {
 		t.Fatal("missing seeded session")
 	}
 	payload := []byte(`{"text":"Audit startup failure","runtime":"opencode"}`)
-	endpoint := "/api/hoxi/runner/sessions/ses_agy_gate/prompt_async?" + url.Values{"directory": {f.dir}}.Encode()
+	endpoint := "/api/hoxi/runner/sessions/ses_agy_gate/prompt_async?" + url.Values{"directory": {dir}}.Encode()
 	req := httptest.NewRequest(http.MethodPost, endpoint, bytes.NewReader(payload))
 	rec := httptest.NewRecorder()
-	f.srv.Config.Handler.ServeHTTP(rec, req)
+	mux.ServeHTTP(rec, req)
 	if rec.Code == http.StatusOK {
 		t.Fatalf("expected startup failure when OpenCode is unavailable, got 200")
 	}
-	got, ok := f.svc.store.Get("ses_agy_gate")
+	got, ok := svc.store.Get("ses_agy_gate")
 	if !ok || got.Runtime != prior.Runtime || got.ExternalID != prior.ExternalID {
 		t.Fatalf("startup failure %s changed runtime/resume ID: before=%q/%q after=%q/%q", rec.Body.String(), prior.Runtime, prior.ExternalID, got.Runtime, got.ExternalID)
+	}
+}
+
+func TestMissingOpenCodeCLIBinaryRejectsWithoutChangingRuntime(t *testing.T) {
+	svc, mux, dir := newInMemoryRunnerMux(t)
+	t.Setenv("HOXI_OPENCODE_BIN", filepath.Join(dir, "missing-opencode-bin"))
+	prior, ok := svc.store.Get("ses_agy_gate")
+	if !ok {
+		t.Fatal("missing seeded session")
+	}
+	payload := []byte(`{"text":"Audit CLI missing","runtime":"opencode"}`)
+	endpoint := "/api/hoxi/runner/sessions/ses_agy_gate/prompt_async?" + url.Values{"directory": {dir}}.Encode()
+	req := httptest.NewRequest(http.MethodPost, endpoint, bytes.NewReader(payload))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 when OpenCode CLI binary is unavailable, got %d: %s", rec.Code, rec.Body.String())
+	}
+	got, ok := svc.store.Get("ses_agy_gate")
+	if !ok || got.Runtime != prior.Runtime || got.ExternalID != prior.ExternalID {
+		t.Fatalf("missing CLI binary changed runtime/resume ID: before=%q/%q after=%q/%q", prior.Runtime, prior.ExternalID, got.Runtime, got.ExternalID)
 	}
 }
 

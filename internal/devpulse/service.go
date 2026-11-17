@@ -4,8 +4,8 @@
 package devpulse
 
 import (
-	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -16,7 +16,6 @@ import (
 
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
 	"github.com/hoxiai/hoxi/internal/sqlitecli"
-	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 const (
@@ -434,158 +433,126 @@ func (s *Service) queryOpenCodeDailyDB(startOfTodayMs int64, res *DailyPulseResp
 
 	msgClause := s.notImportedClause("s.title", "m.data", "m.time_created", "s.time_created")
 	partClause := s.notImportedClause("s.title", "p.data", "p.time_created", "s.time_created")
-	sqlQuery := fmt.Sprintf(`
-SELECT json_object(
-  'models', COALESCE((
-    SELECT json_group_array(json_object(
-      'providerID', provider_id,
-      'modelID', model_id,
-      'turns', turns,
-      'totalTokens', total_tokens,
-      'inputTokens', input_tokens,
-      'outputTokens', output_tokens,
-      'reasoningTokens', reasoning_tokens,
-      'cacheReadTokens', cache_read_tokens,
-      'cacheWriteTokens', cache_write_tokens,
-      'cost', total_cost,
-      'maxTs', max_ts
-    ))
-    FROM (
-      SELECT
-        provider_id,
-        model_id,
-        COUNT(*) as turns,
-        SUM(tok_in + tok_out + tok_reason + cache_read + cache_write) as total_tokens,
-        SUM(tok_in) as input_tokens,
-        SUM(tok_out) as output_tokens,
-        SUM(tok_reason) as reasoning_tokens,
-        SUM(cache_read) as cache_read_tokens,
-        SUM(cache_write) as cache_write_tokens,
-        SUM(cost) as total_cost,
-        MAX(msg_ts) as max_ts
-      FROM (
-        SELECT
-          COALESCE(json_extract(m.data, '$.providerID'), 'unknown') as provider_id,
-          COALESCE(json_extract(m.data, '$.modelID'), 'unknown') as model_id,
-          m.time_created as msg_ts,
-          CAST(COALESCE(json_extract(m.data, '$.cost'), 0) AS REAL) as cost,
-          CAST(COALESCE(json_extract(m.data, '$.tokens.input'), 0) AS INTEGER) as tok_in,
-          CAST(COALESCE(json_extract(m.data, '$.tokens.output'), 0) AS INTEGER) as tok_out,
-          CAST(COALESCE(json_extract(m.data, '$.tokens.reasoning'), 0) AS INTEGER) as tok_reason,
-          CAST(COALESCE(json_extract(m.data, '$.tokens.cache.read'), 0) AS INTEGER) as cache_read,
-          CAST(COALESCE(json_extract(m.data, '$.tokens.cache.write'), 0) AS INTEGER) as cache_write
-        FROM session s
-        CROSS JOIN message m ON m.session_id = s.id
-        WHERE m.time_created >= %d
-          AND json_extract(m.data, '$.role') = 'assistant'
-          AND %s
-          AND (
-            CAST(COALESCE(json_extract(m.data, '$.tokens.input'), 0) AS INTEGER) > 0
-            OR CAST(COALESCE(json_extract(m.data, '$.tokens.output'), 0) AS INTEGER) > 0
-            OR CAST(COALESCE(json_extract(m.data, '$.tokens.cache.read'), 0) AS INTEGER) > 0
-          )
-      )
-      GROUP BY provider_id, model_id
-      ORDER BY total_tokens DESC
+	modelsSQL := fmt.Sprintf(`
+SELECT
+  provider_id,
+  model_id,
+  COUNT(*) AS turns,
+  COALESCE(SUM(tok_in + tok_out + tok_reason + cache_read + cache_write), 0) AS total_tokens,
+  COALESCE(SUM(tok_in), 0) AS input_tokens,
+  COALESCE(SUM(tok_out), 0) AS output_tokens,
+  COALESCE(SUM(tok_reason), 0) AS reasoning_tokens,
+  COALESCE(SUM(cache_read), 0) AS cache_read_tokens,
+  COALESCE(SUM(cache_write), 0) AS cache_write_tokens,
+  COALESCE(SUM(cost), 0) AS total_cost,
+  COALESCE(MAX(msg_ts), 0) AS max_ts
+FROM (
+  SELECT
+    COALESCE(json_extract(m.data, '$.providerID'), 'unknown') AS provider_id,
+    COALESCE(json_extract(m.data, '$.modelID'), 'unknown') AS model_id,
+    m.time_created AS msg_ts,
+    CAST(COALESCE(json_extract(m.data, '$.cost'), 0) AS REAL) AS cost,
+    CAST(COALESCE(json_extract(m.data, '$.tokens.input'), 0) AS INTEGER) AS tok_in,
+    CAST(COALESCE(json_extract(m.data, '$.tokens.output'), 0) AS INTEGER) AS tok_out,
+    CAST(COALESCE(json_extract(m.data, '$.tokens.reasoning'), 0) AS INTEGER) AS tok_reason,
+    CAST(COALESCE(json_extract(m.data, '$.tokens.cache.read'), 0) AS INTEGER) AS cache_read,
+    CAST(COALESCE(json_extract(m.data, '$.tokens.cache.write'), 0) AS INTEGER) AS cache_write
+  FROM session s
+  CROSS JOIN message m ON m.session_id = s.id
+  WHERE m.time_created >= ?
+    AND json_extract(m.data, '$.role') = 'assistant'
+    AND %s
+    AND (
+      CAST(COALESCE(json_extract(m.data, '$.tokens.input'), 0) AS INTEGER) > 0
+      OR CAST(COALESCE(json_extract(m.data, '$.tokens.output'), 0) AS INTEGER) > 0
+      OR CAST(COALESCE(json_extract(m.data, '$.tokens.cache.read'), 0) AS INTEGER) > 0
     )
-  ), json('[]')),
-  'sessionsCount', (
-    SELECT COUNT(DISTINCT s.id)
-    FROM session s
-    CROSS JOIN message m ON m.session_id = s.id
-    WHERE m.time_created >= %d
-      AND %s
-  ),
-  'toolsTotal', (
-    SELECT COUNT(*) FROM (
-      SELECT 1 FROM session s
-      CROSS JOIN message m ON m.session_id = s.id
-      CROSS JOIN part p ON p.message_id = m.id
-      WHERE m.time_created >= %d
-        AND p.time_created >= %d
-        AND json_extract(p.data, '$.type') = 'tool'
-        AND %s
-      GROUP BY COALESCE(json_extract(p.data, '$.callID'), p.id)
-    )
-  ),
-  'toolsFailed', (
-    SELECT COUNT(*) FROM (
-      SELECT 1 FROM session s
-      CROSS JOIN message m ON m.session_id = s.id
-      CROSS JOIN part p ON p.message_id = m.id
-      WHERE m.time_created >= %d
-        AND p.time_created >= %d
-        AND json_extract(p.data, '$.type') = 'tool'
-        AND json_extract(p.data, '$.state.status') = 'error'
-        AND %s
-      GROUP BY COALESCE(json_extract(p.data, '$.callID'), p.id)
-    )
-  )
-);`,
-		startOfTodayMs, msgClause,
-		startOfTodayMs, msgClause,
-		startOfTodayMs-partMessageLookbackMs, startOfTodayMs, partClause,
-		startOfTodayMs-partMessageLookbackMs, startOfTodayMs, partClause)
+)
+GROUP BY provider_id, model_id
+ORDER BY total_tokens DESC;`, msgClause)
+
+	sessionsSQL := fmt.Sprintf(`
+SELECT COUNT(DISTINCT s.id)
+FROM session s
+CROSS JOIN message m ON m.session_id = s.id
+WHERE m.time_created >= ?
+  AND %s;`, msgClause)
+
+	toolsSQL := fmt.Sprintf(`
+SELECT COUNT(*), COALESCE(SUM(is_error), 0)
+FROM (
+  SELECT MAX(CASE WHEN json_extract(p.data, '$.state.status') = 'error' THEN 1 ELSE 0 END) AS is_error
+  FROM session s
+  CROSS JOIN message m ON m.session_id = s.id
+  CROSS JOIN part p ON p.message_id = m.id
+  WHERE m.time_created >= ?
+    AND p.time_created >= ?
+    AND json_extract(p.data, '$.type') = 'tool'
+    AND %s
+  GROUP BY COALESCE(json_extract(p.data, '$.callID'), p.id)
+);`, partClause)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 	defer cancel()
-	cmd := subproc.CommandContext(ctx, sqlitecli.Executable(), "-readonly", "-cmd", ".timeout 5000", dbPath, sqlQuery)
-	out, err := cmd.Output()
-	if err != nil || len(bytes.TrimSpace(out)) == 0 {
-		return
-	}
-
-	var parsed struct {
-		Models []struct {
-			ProviderID       string  `json:"providerID"`
-			ModelID          string  `json:"modelID"`
-			Turns            int     `json:"turns"`
-			TotalTokens      int64   `json:"totalTokens"`
-			InputTokens      int64   `json:"inputTokens"`
-			OutputTokens     int64   `json:"outputTokens"`
-			ReasoningTokens  int64   `json:"reasoningTokens"`
-			CacheReadTokens  int64   `json:"cacheReadTokens"`
-			CacheWriteTokens int64   `json:"cacheWriteTokens"`
-			Cost             float64 `json:"cost"`
-			MaxTs            int64   `json:"maxTs"`
-		} `json:"models"`
-		SessionsCount int `json:"sessionsCount"`
-		ToolsTotal    int `json:"toolsTotal"`
-		ToolsFailed   int `json:"toolsFailed"`
-	}
-	if err := json.Unmarshal(bytes.TrimSpace(out), &parsed); err != nil {
-		return
-	}
-
-	res.DbSessionsCount = parsed.SessionsCount
-	res.DbToolCallsTotal = parsed.ToolsTotal
-	res.DbToolCallsFailed = parsed.ToolsFailed
-
-	for _, m := range parsed.Models {
-		res.DbTurnsCount += m.Turns
-		res.DbTotalTokens += m.TotalTokens
-		res.DbInputTokens += m.InputTokens
-		res.DbOutputTokens += m.OutputTokens
-		res.DbReasoningTokens += m.ReasoningTokens
-		res.DbCacheReadTokens += m.CacheReadTokens
-		res.DbCacheWriteTokens += m.CacheWriteTokens
-		res.DbTotalCost += m.Cost
-		if m.MaxTs > res.DbLatestTurnTs {
-			res.DbLatestTurnTs = m.MaxTs
+	_ = sqlitecli.WithReadOnly(ctx, dbPath, 5*time.Second, func(ctx context.Context, db *sql.DB) error {
+		rows, err := db.QueryContext(ctx, modelsSQL, startOfTodayMs)
+		if err != nil {
+			return err
 		}
-		res.DbModels = append(res.DbModels, DailyModelStat{
-			ProviderID:       m.ProviderID,
-			ModelID:          m.ModelID,
-			Turns:            m.Turns,
-			TotalTokens:      m.TotalTokens,
-			InputTokens:      m.InputTokens,
-			OutputTokens:     m.OutputTokens,
-			ReasoningTokens:  m.ReasoningTokens,
-			CacheReadTokens:  m.CacheReadTokens,
-			CacheWriteTokens: m.CacheWriteTokens,
-			Cost:             m.Cost,
-		})
-	}
+
+		var models []DailyModelStat
+		var turnsCount int
+		var totalTok, inTok, outTok, reasonTok, cacheReadTok, cacheWriteTok, latestTs int64
+		var totalCost float64
+		for rows.Next() {
+			var m DailyModelStat
+			var maxTs int64
+			if err := rows.Scan(&m.ProviderID, &m.ModelID, &m.Turns, &m.TotalTokens, &m.InputTokens, &m.OutputTokens, &m.ReasoningTokens, &m.CacheReadTokens, &m.CacheWriteTokens, &m.Cost, &maxTs); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			turnsCount += m.Turns
+			totalTok += m.TotalTokens
+			inTok += m.InputTokens
+			outTok += m.OutputTokens
+			reasonTok += m.ReasoningTokens
+			cacheReadTok += m.CacheReadTokens
+			cacheWriteTok += m.CacheWriteTokens
+			totalCost += m.Cost
+			if maxTs > latestTs {
+				latestTs = maxTs
+			}
+			models = append(models, m)
+		}
+		rErr := rows.Err()
+		_ = rows.Close()
+		if rErr != nil {
+			return rErr
+		}
+
+		var sessCount, toolsTotal, toolsFailed int
+		if err := db.QueryRowContext(ctx, sessionsSQL, startOfTodayMs).Scan(&sessCount); err != nil {
+			return err
+		}
+		_ = db.QueryRowContext(ctx, toolsSQL, startOfTodayMs-partMessageLookbackMs, startOfTodayMs).Scan(&toolsTotal, &toolsFailed)
+
+		res.DbSessionsCount = sessCount
+		res.DbToolCallsTotal = toolsTotal
+		res.DbToolCallsFailed = toolsFailed
+		res.DbTurnsCount += turnsCount
+		res.DbTotalTokens += totalTok
+		res.DbInputTokens += inTok
+		res.DbOutputTokens += outTok
+		res.DbReasoningTokens += reasonTok
+		res.DbCacheReadTokens += cacheReadTok
+		res.DbCacheWriteTokens += cacheWriteTok
+		res.DbTotalCost += totalCost
+		if latestTs > res.DbLatestTurnTs {
+			res.DbLatestTurnTs = latestTs
+		}
+		res.DbModels = append(res.DbModels, models...)
+		return nil
+	})
 }
 
 func writeJSON(w http.ResponseWriter, status int, data any) {

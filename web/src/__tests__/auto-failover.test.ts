@@ -107,6 +107,18 @@ describe("auto-pool failover decision", () => {
     const d2 = decideAutoFailover(structuredPolicy, 1_000);
     assertEqual(d2.failover, false);
     assertEqual(d2.penalize, false);
+
+    const mutatingInterrupted = {
+      name: "StreamInterruptedError",
+      data: {
+        message: "unexpected EOF: model stream ended before terminal frame",
+        kind: "outcome_unknown",
+        isRetryable: false,
+      },
+    };
+    const d3 = decideAutoFailover(mutatingInterrupted, 2_000);
+    assertEqual(d3.failover, false, "outcome_unknown must never auto-resend mutating turns");
+    assertEqual(d3.penalize, false);
   });
 
   it("parses the stated reset time", () => {

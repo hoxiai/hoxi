@@ -14,10 +14,10 @@ import {
   desktopUpdater,
   fetchSystemRuntimeInfo,
   isDesktopUpdateInstalling,
-  installOpenCodeEngine,
   openExternalURL,
   openProviderModal,
   refreshDesktopUpdateStatus,
+  reloadRuntimeCatalogs,
   resetAllAppSettings,
   resetProviderTelemetry,
   startDesktopUpdate,
@@ -33,7 +33,7 @@ import { StorageCleanupSection } from "./StorageCleanupSection";
 
 export function SystemRuntimeSettingsTab() {
   const [sysInfo, setSysInfo] = createSignal<SystemRuntimeInfo | null>(null);
-  const [installingEngine, setInstallingEngine] = createSignal(false);
+  const [reloadingRuntime, setReloadingRuntime] = createSignal(false);
   const [actionToast, setActionToast] = createSignal<string | null>(null);
 
   const fetchInfo = async () => {
@@ -57,43 +57,30 @@ export function SystemRuntimeSettingsTab() {
     setTimeout(() => setActionToast(null), 3000);
   };
 
-  const onEngineAction = async () => {
-    if (installingEngine()) return;
-    const restart = engineReady();
-    setInstallingEngine(true);
+  const onReloadRuntime = async () => {
+    if (reloadingRuntime()) return;
+    setReloadingRuntime(true);
     try {
-      await installOpenCodeEngine(restart);
-      await fetchInfo();
-      showToast(
-        restart
-          ? t("settings.engineRestartSuccess")
-          : t("settings.engineInstallSuccess")
-      );
+      await Promise.all([reloadRuntimeCatalogs(), fetchInfo()]);
+      showToast(t("settings.runtimeReloadSuccess"));
     } catch (err) {
       showToast(
-        t("settings.engineInstallFailed", {
+        t("settings.runtimeReloadFailed", {
           error: err instanceof Error ? err.message : String(err),
         })
       );
     } finally {
-      setInstallingEngine(false);
+      setReloadingRuntime(false);
     }
   };
 
-  const engineReady = () =>
-    sysInfo() ? Boolean(sysInfo()!.openCodeReady) : workspace.connected;
+  const nativeEngineReady = () =>
+    sysInfo() ? sysInfo()!.nativeEngineReady !== false : workspace.connected;
 
-  const engineSourceLabel = () => {
-    switch (sysInfo()?.openCodeSource) {
-      case "bundled":
-        return t("settings.engineSourceBundled");
-      case "downloaded":
-        return t("settings.engineSourceDownloaded");
-      case "external":
-        return t("settings.engineSourceExternal");
-      default:
-        return t("settings.runtimeNotDetected");
-    }
+  const localGatewayEndpoint = () => {
+    const raw = (sysInfo()?.wsBaseURL || "").trim();
+    if (!raw) return "—";
+    return raw.replace(/^ws(s?):\/\//i, "http$1://");
   };
 
   const onClearTelemetry = async () => {
@@ -369,7 +356,7 @@ export function SystemRuntimeSettingsTab() {
         </Show>
       </SettingGroup>
 
-      {/* 2. OpenCode Runtime Diagnostics */}
+      {/* 2. Hoxi Native Engine & Gateway Diagnostics */}
       <SettingGroup
         title={t("settings.sectionRuntimeTitle")}
         tip={t("settings.sectionRuntimeDesc")}
@@ -388,25 +375,23 @@ export function SystemRuntimeSettingsTab() {
           <span class="inline-flex items-center gap-2 text-[13px] font-medium text-[var(--text-primary)]">
             <span
               class={`h-2.5 w-2.5 rounded-full ${
-                engineReady() ? "bg-[var(--ok)]" : "bg-[var(--warn)] animate-pulse"
+                nativeEngineReady() ? "bg-[var(--ok)]" : "bg-[var(--warn)] animate-pulse"
               }`}
             />
-            {engineReady()
+            {nativeEngineReady()
               ? t("common.ready")
               : sysInfo()
                 ? t("settings.engineNotReady")
                 : t("common.connecting")}
-            <Show when={sysInfo()?.openCodeVersion}>
-              <span class="ml-1 rounded-md bg-[var(--bg-panel)] px-2 py-0.5 font-mono text-[12px] text-[var(--text-muted)]">
-                {sysInfo()?.openCodeVersion}
-              </span>
-            </Show>
+            <span class="ml-1 rounded-md bg-[var(--bg-panel)] px-2 py-0.5 text-[11.5px] font-medium text-[var(--text-secondary)]">
+              {t("settings.engineModeInProcessBadge")}
+            </span>
           </span>
         </SettingRow>
 
-        <SettingRow label={t("settings.engineSourceLabel")}>
-          <span class="text-[13px] text-[var(--text-secondary)]">
-            {engineSourceLabel()}
+        <SettingRow label={t("settings.runtimeGatewayLabel")}>
+          <span class="font-mono text-[13px] text-[var(--text-secondary)] selectable-text">
+            {localGatewayEndpoint()}
           </span>
         </SettingRow>
 
@@ -468,18 +453,12 @@ export function SystemRuntimeSettingsTab() {
             <span>{t("settings.runtimeAdvancedPaths")}</span>
           </summary>
           <div class="divide-y divide-[var(--border-subtle)]/55 border-t border-[var(--border-subtle)]/55">
-            <SettingRow label={t("settings.runtimePortLabel")}>
-              <span class="font-mono text-[13px] text-[var(--text-secondary)]">
-                127.0.0.1:{sysInfo()?.openCodePort || "—"}
-              </span>
-            </SettingRow>
-
             <SettingRow label={t("settings.runtimeBinaryLabel")}>
               <span
                 class="max-w-[320px] truncate font-mono text-[13px] text-[var(--text-secondary)] selectable-text"
-                title={sysInfo()?.openCodeBinPath}
+                title={sysInfo()?.executablePath}
               >
-                {sysInfo()?.openCodeBinPath || t("settings.runtimeNotDetected")}
+                {sysInfo()?.executablePath || "—"}
               </span>
             </SettingRow>
 
@@ -491,6 +470,19 @@ export function SystemRuntimeSettingsTab() {
                 {sysInfo()?.userConfigPath || "—"}
               </span>
             </SettingRow>
+
+            <Show when={sysInfo()?.openCodeBinPath}>
+              <SettingRow label={t("settings.runtimeExternalOpenCodeLabel")}>
+                <span
+                  class="max-w-[320px] truncate font-mono text-[13px] text-[var(--text-secondary)] selectable-text"
+                  title={sysInfo()?.openCodeBinPath}
+                >
+                  {sysInfo()?.openCodeVersion
+                    ? `${sysInfo()!.openCodeVersion} · ${sysInfo()!.openCodeBinPath}`
+                    : sysInfo()?.openCodeBinPath}
+                </span>
+              </SettingRow>
+            </Show>
 
             <SettingRow label={t("settings.runtimePlatformLabel")}>
               <span class="font-mono text-[13px] text-[var(--text-secondary)]">
@@ -514,29 +506,16 @@ export function SystemRuntimeSettingsTab() {
         <div class="p-4 flex flex-wrap items-center gap-3">
           <button
             type="button"
-            disabled={installingEngine()}
-            onClick={() => void onEngineAction()}
+            disabled={reloadingRuntime()}
+            onClick={() => void onReloadRuntime()}
             class="inline-flex items-center gap-2 rounded-xl bg-[var(--accent-primary)] px-4 py-2 text-[13px] font-medium text-[var(--accent-foreground)] hover:opacity-90 transition-opacity cursor-pointer disabled:opacity-50 disabled:cursor-wait"
           >
-            <Show
-              when={installingEngine()}
-              fallback={
-                engineReady() ? (
-                  <RotateCcw size={14} />
-                ) : (
-                  <Download size={14} />
-                )
-              }
-            >
+            <Show when={reloadingRuntime()} fallback={<RefreshCw size={14} />}>
               <Spinner class="h-3.5 w-3.5" />
             </Show>
-            {installingEngine()
-              ? engineReady()
-                ? t("settings.engineRestartingBtn")
-                : t("settings.engineInstallingBtn")
-              : engineReady()
-                ? t("settings.engineRestartBtn")
-                : t("settings.engineInstallBtn")}
+            {reloadingRuntime()
+              ? t("settings.runtimeReloadingBtn")
+              : t("settings.runtimeReloadBtn")}
           </button>
 
           <button

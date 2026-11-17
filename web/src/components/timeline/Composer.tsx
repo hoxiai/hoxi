@@ -25,6 +25,7 @@ import {
   spawnBackgroundSubtask,
   stopSessionTask,
   submitSessionPrompt,
+  switchActiveSessionEngine,
   switchActiveSessionSandboxMode,
   switchWorkspace,
   workspace,
@@ -756,6 +757,7 @@ export default function Composer() {
             onOpenCodeSearch={() => setCodeSearchOpen(true)}
             onOpenConvoy={() => setConvoyOpen(true)}
             onSwitchSandbox={(m) => void onToggleSandbox(m)}
+            onToggleEngine={() => void switchActiveSessionEngine(sessionRuntimeForID(sessionID()) === "native" ? "opencode" : "native")}
             onEnhance={() => void onEnhance()}
             onChooseFolder={() => void chooseFolder()}
             onFork={onFork}

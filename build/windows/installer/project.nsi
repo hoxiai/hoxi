@@ -14,8 +14,9 @@ Unicode true
 ## Defaults to per-user installation (%LOCALAPPDATA%\Programs\Hoxi) so that:
 ##   1. Installation does not require UAC Administrator elevation.
 ##   2. Hoxi's in-app Windows self-updater (internal/updater/native_windows.go)
-##      can stage and atomically replace Hoxi.exe and opencode.exe in $INSTDIR.
-##   3. Both Hoxi.exe and the verified opencode.exe sidecar are bundled together.
+##      can stage and atomically replace Hoxi.exe (and sqlite3.exe) in $INSTDIR.
+##   3. Lean pure-Go Hoxi.exe + sqlite3.exe by default; opencode.exe is omitted
+##      unless explicitly staged into tmp\opencode.exe (HOXI_BUNDLE_OPENCODE=1).
 ####
 
 !ifndef INFO_COMPANYNAME
@@ -32,12 +33,8 @@ Unicode true
 !endif
 
 !ifndef ARG_HOXI_OPENCODE_BINARY
-  !if /FileExists "..\..\bin\opencode.exe"
-    !define ARG_HOXI_OPENCODE_BINARY "..\..\bin\opencode.exe"
-  !else if /FileExists "tmp\opencode.exe"
+  !if /FileExists "tmp\opencode.exe"
     !define ARG_HOXI_OPENCODE_BINARY "tmp\opencode.exe"
-  !else
-    !error "Hoxi installer requires opencode.exe in build/bin/opencode.exe or build/windows/installer/tmp/opencode.exe"
   !endif
 !endif
 
@@ -452,7 +449,11 @@ Section
     !insertmacro hoxi.stopInstalledProcesses
 
     !insertmacro wails.files
-    File "/oname=opencode.exe" "${ARG_HOXI_OPENCODE_BINARY}"
+    !ifdef ARG_HOXI_OPENCODE_BINARY
+        File "/oname=opencode.exe" "${ARG_HOXI_OPENCODE_BINARY}"
+    !else
+        Delete "$INSTDIR\opencode.exe"
+    !endif
     File "/oname=sqlite3.exe" "${ARG_HOXI_SQLITE_BINARY}"
     File /nonfatal "..\..\..\LICENSE"
     File /nonfatal "..\..\..\NOTICE"

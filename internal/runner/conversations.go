@@ -21,8 +21,13 @@ import (
 
 // OwnsSession reports whether Hoxi's store is the source of truth for id.
 func (s *Service) OwnsSession(id string) bool {
-	_, ok := s.store.Meta(id)
-	return ok
+	if _, ok := s.store.Meta(id); ok {
+		return true
+	}
+	if (s.openCode == nil || !s.openCode.Available()) && s.tryMigrateSingleOpenCodeSession(id) {
+		return true
+	}
+	return false
 }
 
 func (s *Service) openCodeRaw(ctx context.Context, method, path string, query url.Values, body []byte) (int, []byte, error) {
@@ -354,7 +359,10 @@ func (s *Service) handleConversationCreate(w http.ResponseWriter, r *http.Reques
 // directory is the fallback project directory when body.Directory is empty.
 func (s *Service) CreateConversation(ctx context.Context, body CreateSessionRequest, directory string) (SessionInfo, int, error) {
 	var err error
-	if IsValidRuntime(body.Runtime) {
+	if strings.TrimSpace(body.Runtime) == "" && (s.openCode == nil || !s.openCode.Available()) {
+		body.Runtime = string(RuntimeNative)
+	}
+	if IsValidRuntime(body.Runtime) || (body.Runtime == string(RuntimeOpenCode) && (s.openCode == nil || !s.openCode.Available())) {
 		return s.CreateSession(body, directory)
 	}
 	if body.Runtime != "" && body.Runtime != "opencode" {

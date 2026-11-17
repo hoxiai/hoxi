@@ -1,7 +1,7 @@
 # Hoxi 远程可达性与端到端加密契约（草案）
 
 > 状态：**草案 / 规划**。除「现状」一节外，本文描述的都是**尚未实现**的目标形态，不能当作现有能力引用或宣传。
-> 参照 `sailry-harness`（AGPL-3.0-only）的架构思路（配对票据服务与数据面分离、直连优先、盲目中继回落）写成；**只借鉴契约与架构，不复制其代码**。
+> 本文围绕「配对票据服务与数据面分离、直连优先、盲目中继回落」的分层安全原则设计。
 
 ## 1. 目标
 
@@ -29,9 +29,10 @@
 | 手机扫码直连（Hoxi 节点二维码，`type=hoxi`） | 已实现 | 客户端扫码与配对协议 |
 | 反向代理入口（loopback `127.0.0.1:5418`，供 cloudflared 等本地转发器指向；只认中继令牌 `relayToken`（局域网令牌一律 401）+ 远程路由白名单；**不做来源地址过滤**，由转发器自身的前置鉴权把关） | 已实现 | [`internal/gateway/ingress.go`](../internal/gateway/ingress.go)、[`internal/app/app.go`](../internal/app/app.go) |
 | 受监管的 Cloudflare Tunnel 连接器（设置 → 远程：粘贴 connector token、启停、运行状态；token 存 `~/.hoxi/cloudflared.json`，0600；二进制仅在 PATH / `~/.hoxi/bin` 解析，不自动下载） | 已实现 | [`internal/cloudflared`](../internal/cloudflared/manager.go) |
-| 客户端多传输选路（身份 ⟂ 传输：节点保存局域网 + 中继多个传输，选路 LAN 优先、失败回落中继，带缓存与重探；`relay` 与 `relayToken` 由二维码携带，按目标地址选令牌：中继发 `relayToken`、局域网发 `token`） | 已实现 | 客户端传输选路与故障切换契约 |
-| GoPanel 反向隧道（**明文**，GoPanel 可见内容） | 已实现 | [`docs/gopanel-hoxi-remote-tunnel.md`](gopanel-hoxi-remote-tunnel.md) |
-| 端到端加密传输、配对票据服务、盲目中继回落 | **未实现** | 本文 |
+| 客户端多传输选路（身份 ⟂ 传输：节点保存局域网 + Tailscale CGNAT/ULA + 中继多个传输，选路直连优先、失败回落中继，带缓存与动态候选刷新；按目标地址隔离发送 `relayToken` 或局域网 `token`） | 已实现 | 客户端传输选路与故障切换契约 |
+| 应用层端到端加密与零知识密钥协商（`hoxi-e2ee-v1` 定向 AES-256-GCM 请求/响应信封、`v1-sse` 逐帧序号绑定流式加密、HMAC-SHA256 请求头签名防重放，以及跨网首次连接 `X-Hoxi-KEX-Pub` / `e2eeKex` X25519 ECDH 密钥封装） | 已实现 | [`internal/pairing/e2ee.go`](../internal/pairing/e2ee.go)、[`internal/pairing/kex.go`](../internal/pairing/kex.go)、[`internal/gateway/e2ee.go`](../internal/gateway/e2ee.go) |
+| GoPanel / Cloudflare 反向隧道（叠加 `hoxi-e2ee-v1` 应用层端到端加密后中继不可见业务载荷明文；路径与时序元数据仍可见） | 已实现 | [`docs/gopanel-hoxi-remote-tunnel.md`](gopanel-hoxi-remote-tunnel.md) |
+| QUIC 直连 NAT 打洞、DERP/TURN 传输层回落、边缘一次性配对票据服务 | **未实现** | 本文第 4–7 节 |
 
 当前 `5417` 为**明文 HTTP + 令牌**：局域网内被动监听者可嗅探到令牌并冒充手机。适用于可信家庭/办公网络；跨网场景由后续 E2E 阶段解决。监听器**只接受局域网来源地址**（loopback / RFC1918 / ULA / 链路本地 / `100.64.0.0/10`），公网来源在鉴权前即被拒绝，因此即便某台机器直接暴露在公网也不会被外部接入。
 
@@ -63,9 +64,9 @@
 - 复用现有协议：**HTTP/SSE 跑在 QUIC 单流之上**，手机端适配层几乎不动（现在经隧道访问 `/api/hoxi/...`，改的是底层传输而不改业务路由）。
 - 身份与信任：`TOFU`——手机 pin 二维码里的桌面公钥；已配对的重连不再需要票据。
 
-### 4.3 为什么不用 iroh（Sailry 的选择）
+### 4.3 为什么不引入 iroh
 
-iroh 是 **Rust**；Hoxi 桌面是 **Go**。没有官方 Go iroh，Go 端只能 cgo 包 FFI。为避免重写传输栈，Hoxi 采用 **`quic-go` + DERP/TURN** 复刻同一套思想；若未来生态成熟可再评估 iroh。
+iroh 基于 **Rust** 生态，而 Hoxi 桌面端采用 **Go** 构建。由于没有官方原生 Go 实现，若经 cgo 封装 FFI 会引入跨平台交叉编译与运行期维护负担，因此 Hoxi 直接采用 Go 原生的 **`quic-go` + DERP/TURN** 架构实现直连打洞与盲目中继回落。
 
 ## 5. QR 载荷（已实现：v1 + `relay` + `relayToken`）
 
@@ -86,7 +87,7 @@ iroh 是 **Rust**；Hoxi 桌面是 **Go**。没有官方 Go iroh，Go 端只能 
 
 ## 7. 配对票据服务契约（草案）
 
-仿 `sailry-harness` 的 `services/pairing-relay`，但 Hoxi 以二维码承载主票据：
+采用无状态边缘一次性票据交换设计，Hoxi 默认以二维码直接承载主票据：
 
 | 方法 + 路径 | 请求体 | 成功 |
 | --- | --- | --- |

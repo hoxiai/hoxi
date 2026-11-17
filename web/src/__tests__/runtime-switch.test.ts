@@ -90,4 +90,40 @@ describe("runtime switching in an existing conversation", () => {
       assertTrue(calls[0].includes("/runtime?directory="));
     } finally { globalThis.fetch = savedFetch; }
   });
+
+  it("supports native Go engine preference, sticky session runtime, steering, compaction, and unattended worktrees", async () => {
+    const saved = structuredClone(unwrap(workspace));
+    const { preferredAgentEngine, resolveSessionTargetRuntime, setPreferredAgentEngine } = await import("../store/session-query");
+    const { canCompactSession, canSteerSession } = await import("../store/session-capabilities");
+    const { unattendedGapFor } = await import("../store/approval-mode");
+    const { appSettings, updateAppSetting } = await import("../store/settings");
+    const prevApproval = appSettings.approvalMode;
+    try {
+      setPreferredAgentEngine("native");
+      assertEqual(preferredAgentEngine(), "native");
+      setWorkspace({
+        activeSessionID: null,
+        hoxiProviders: { openai: { options: { apiKey: "test" } } },
+        defaultAI: { model: { providerID: "openai", modelID: "gpt-5" }, agent: "build", effort: "high" },
+        sessions: [
+          { id: "ses_nat_123", runtime: "native", sandboxMode: "worktree", directory: "/project/.hoxi/worktrees/ses_nat_123", title: "Native", time: { created: 1, updated: 1 } },
+        ],
+      });
+      assertEqual(sessionRuntimeForID(null), "native");
+      assertEqual(resolveSessionTargetRuntime("ses_nat_123", "openai"), "native");
+      assertEqual(resolveSessionTargetRuntime("ses_nat_123", "antigravity"), "antigravity");
+      assertEqual(resolveSessionTargetRuntime("ses_nat_123", "codex"), "codex");
+      assertEqual(resolveSessionTargetRuntime("ses_nat_123", "opencode"), "opencode");
+      assertEqual(canSteerSession("ses_nat_123", { providerID: "openai", modelID: "gpt-5" }), true);
+      assertEqual(canCompactSession("ses_nat_123"), true);
+      assertEqual(canCompactSession("ses_nat_unlisted"), true);
+      updateAppSetting("approvalMode", "unattended");
+      assertEqual(unattendedGapFor("native", "worktree"), null);
+      assertEqual(unattendedGapFor("native", "local"), "isolation");
+    } finally {
+      setPreferredAgentEngine("native");
+      updateAppSetting("approvalMode", prevApproval);
+      setWorkspace(reconcile(saved));
+    }
+  });
 });

@@ -119,7 +119,8 @@ func (g *Gateway) routeConversation(w http.ResponseWriter, r *http.Request) bool
 		suffix = "/" + action
 	}
 	// Runtime switches, tool-stop actions, extension-bound sessions, skill-selected prompts, and image-model prompts always go to the runner.
-	if action != "runtime" && action != "stop-tool" && !g.runner.OwnsSession(id) {
+	owned := g.runner.OwnsSession(id)
+	if g.openCode.Available() && action != "runtime" && action != "stop-tool" && !owned {
 		hasExtCtx := g.hasExtensionSessionContext(id)
 		needsRunner := (action == "prompt" || action == "prompt_async") && (hasExtCtx || requestNeedsRunner(r, g.runner.IsImageModel))
 		if !needsRunner {

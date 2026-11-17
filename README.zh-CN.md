@@ -25,9 +25,9 @@
 
 ---
 
-**Hoxi** ([hoxi.ai](https://hoxi.ai)) 不是又一个吃掉 1.5GB 内存的套壳 Electron 编辑器（macOS 与 Windows 原生宿主，典型约 **30 MB 内存**、约 **0.2 秒冷启动**）。
+**Hoxi** ([hoxi.ai](https://hoxi.ai)) 不是又一个吃掉 1.5GB 内存的套壳 Electron 编辑器（macOS 与 Windows 原生宿主，典型约 **30 MB 内存**、约 **0.2 秒冷启动**、解包体积仅约 **53 MB**）。
 
-它把桌面端的 **OpenCode**、**Claude Code**、**Google Antigravity (`agy`)**、**Gemini CLI (`gemini`)**、**Qoder（通义灵码）**、**CodeBuddy（腾讯云）** 统一收进同一个三栏工作区，并内置远程协同协议，可配合独立发行的配套移动端 App 与 **[GoPanel](https://github.com/hoxiai/gopanel) 服务器面板**在外出时随时掌控研发与运维进度。
+它内置零外部依赖的 **Go Native 自研执行引擎**（开箱即用，无需捆绑或后台常驻百兆外部 Sidecar），同时把本机按需安装的 **Claude Code**、**OpenAI Codex CLI**、**OpenCode**、**Google Antigravity (`agy`)**、**Gemini CLI (`gemini`)**、**Qoder（通义灵码）**、**CodeBuddy（腾讯云）** 统一收进同一个三栏工作区，并内置端到端加密（E2EE）远程协同协议，可配合配套移动端 App 与 **[GoPanel](https://github.com/hoxiai/gopanel) 服务器面板**在外出时随时掌控研发与运维进度。
 
 ---
 
@@ -36,7 +36,7 @@
 ### 1. 额度限流、账号被封或单工具死循环，换工具就得从头讲起
 日常写代码往往同时装了 Claude Code、Codex、Antigravity、Gemini CLI、Trae、Qoder、CodeBuddy。一旦主力工具触发 Rate Limit、额度见底，或者在某个诡异 Bug 上死循环，切到别的工具就要重新贴文件、重新交代上下文。
 - **跨软件会话一键无损接管（Session Handoff）**：自动扫描本机 **Claude Code**、**OpenAI Codex CLI**、**Grok CLI**、**Antigravity / Gemini CLI**、**OpenCode** 以及国内高频使用的 **Trae**、**Qoder**、**CodeBuddy** 历史会话。一键导入完整对话、思考链（Reasoning）、工具调用记录与已改文件，并自动提炼 **8 维交接记忆**，换个模型无缝接着干。
-- **同会话多引擎热切换**：无需新建对话，同一个会话内可随时在 `OpenCode` / `Claude Code` / `Antigravity` / `Gemini CLI` / `Qoder` / `CodeBuddy` 运行时之间平滑切换；Claude Code 与 Antigravity 派发的子代理（Subagent）直接在时间线内以嵌套任务树实时展示。Qoder 与 CodeBuddy 仅能只读（Plan 模式）运行——它们的 CLI 没有 PreToolUse 审批门控。
+- **内置自研内核 + 同会话多引擎热切换**：默认运行在进程内 **Hoxi Go Native 自研引擎**之上，无需安装任何外部 CLI 即可直接开工；无需新建对话，同一个会话内可随时在 `Hoxi Native` / `Claude Code` / `Codex` / `OpenCode` / `Antigravity` / `Gemini CLI` / `Qoder` / `CodeBuddy` 运行时之间平滑切换；Hoxi Native、Claude Code 与 Antigravity 派发的并发子代理（Subagent）直接在时间线内以嵌套任务树实时展示。Qoder 与 CodeBuddy 仅能只读（Plan 模式）运行——它们的 CLI 没有 PreToolUse 审批门控。
 
 ### 2. 中转站“偷偷降智 / 掺水 / 断流”，开着 Clash / Surge 动不动 502
 国内开发者大量混用 API 中转站、聚合网关或国产模型（DeepSeek、千问 Qwen、智谱 GLM、Kimi、MiniMax、豆包、硅基流动），但中转站到底稳不稳全靠体感；而且系统一开全局代理，本地 Agent 守护进程经常报 `502 Bad Gateway`。
@@ -57,20 +57,20 @@
 
 ### 5. 离开工位不敢放手，线上服务器还得背电脑管（Seatbelt 沙箱 + 移动端远程遥控）
 独立开发者与精干团队既要写代码，又要管线上服务器。全自动放行怕 Agent 一句 `rm -rf` 删库或泄露密钥；全手动又得死盯屏幕点确认；出门在外还得随时处理审批与服务器告警。
-- **跨引擎统一高危门控 + Seatbelt 进程沙箱 + 无人值守模式（`unattended`）**：无论底层是 OpenCode、Claude Code、Antigravity 还是 Gemini CLI，涉及 `rm`、`sudo`、`git push --force`、敏感文件读取等高危指令一律经 PreToolUse Hook 硬拦截并点亮 macOS `NSStatusBar` / Windows 系统托盘 `Attention` 徽章。开启**无人值守模式**后，会话强制运行在「隔离 Git Worktree + macOS Seatbelt 操作系统沙箱」内，自动剥离环境变量凭据、封锁 `~/.ssh` / `~/.aws` / `.env` 读取，并对动态拼接命令、`git push`、提权与外发执行零妥协硬拒绝。
-- **运行时中途纠偏（Steer，OpenCode 会话）+ 桌面浏览器窗口 / 隔离无头浏览器 / Chrome Link 扩展**：Agent 思路偏了无需强杀重来，随时插入指令实时纠偏；默认打开持久化 `~/.hoxi/browser-profile` 的真实桌面 Chrome 窗口（`window` 模式，登录态跨重启保留），可选会话独占的隔离无头模式（`headless`），也可通过 Chrome Link 扩展（`extensions/chrome`，首次 2 分钟一次性配对码、后续通过 `linkToken` 一键自动重连，支持多标签与子弹窗 `openerTabId` 接管）安全操控日常 Chrome。
+- **跨引擎统一高危门控 + Seatbelt 进程沙箱 + 无人值守模式（`unattended`）**：无论底层是 Hoxi Native 自研引擎、Claude Code、Codex、OpenCode、Antigravity 还是 Gemini CLI，涉及 `rm`、`sudo`、`git push --force`、敏感文件读取等高危指令一律经 PreToolUse 安全门控硬拦截并点亮 macOS `NSStatusBar` / Windows 系统托盘 `Attention` 徽章。开启**无人值守模式**后，会话强制运行在「隔离 Git Worktree + macOS Seatbelt 操作系统沙箱」内，自动剥离环境变量凭据、封锁 `~/.ssh` / `~/.aws` / `.env` 读取，并对动态拼接命令、`git push`、提权与外发执行零妥协硬拒绝。
+- **运行时中途纠偏（Steer，支持 Hoxi Native 与 OpenCode 会话）+ 桌面浏览器窗口 / 隔离无头浏览器 / Chrome Link 扩展**：Agent 思路偏了无需强杀重来，随时插入指令实时纠偏；默认打开持久化 `~/.hoxi/browser-profile` 的真实桌面 Chrome 窗口（`window` 模式，登录态跨重启保留），可选会话独占的隔离无头模式（`headless`），也可通过 Chrome Link 扩展（`extensions/chrome`，首次 2 分钟一次性配对码、后续通过 `linkToken` 一键自动重连，支持多标签与子弹窗 `openerTabId` 接管）安全操控日常 Chrome。
 - **移动端随身遥控（支持局域网直连、Cloudflare 中继与 GoPanel 反向隧道）**：
-  1. **三通道弹性连接（局域网优先、失败回落中继）**：支持**局域网扫码直连**（`:5417`）、**Cloudflare Tunnel 中继**（`:5418`）以及 **[GoPanel](https://github.com/hoxiai/gopanel) 反向隧道 + iPhone APNs 审批提醒推送**（推送载荷仅含待处理计数，绝不经第三方通道传输代码或命令明文）。
+  1. **三通道弹性连接 + 1-RTT X25519 零知识端到端加密（E2EE）**：支持**局域网扫码直连**（`:5417`）、**Cloudflare Tunnel 中继**（`:5418`）以及 **[GoPanel](https://github.com/hoxiai/gopanel) 反向隧道 + iPhone APNs 审批提醒推送**，全程采用 `hoxi-e2ee-v1` 双向 AES-256-GCM 加密封装（推送载荷仅含待处理计数，绝不经第三方通道传输代码或命令明文）。
   2. **工具意图识别 + 修改类操作强制确认闭环**：一句话查询 **Hoxi 桌面编码进展**与 **GoPanel 服务器水位**，或下发指令跑单测、审查/提交 Git 改动、批准安全门控、重启容器、续期 SSL 证书；所有修改类动作强制生成 **2 分钟有效、单次消费的确认卡片**，并携带 `X-Idempotency-Key` 与 `instructionId` 幂等对账，杜绝误触与弱网重放。
   3. **原生语音输入与连续通话（手动开启；真机验收待定）**：内置 iOS `.voiceChat` 硬件回声消除、50 秒识别轮转、开口或点击即打断（`onUserBargeIn`），采用原生 ASR + 模型网关 `/v1/audio/speech` 服务端 TTS（失败自动回落系统语音），并支持挂载节点端发现的 Agent Skills。
 
 ### 6. 让智能体走出聊天框
 多数 AI 编码工具止步于仓库。Hoxi 还能让会话操作原生应用、把一个目标拆成并行任务，并回看上游落地了什么。
-- **原生电脑控制（`hoxi_computer`）**：OpenCode 会话可读取窗口并驱动前台输入——macOS 走 Accessibility / ScreenCaptureKit / CGEvent，Windows 走 UI Automation / PrintWindow / SendInput。授权绑定「一个会话 + 一个运行中的应用」，经原生弹窗确认；每次输入都只接受本机「允许一次」，不支持远程、始终允许或无人值守；截图只截授权窗口、不返回密码字段，相关路由不对隧道、局域网与中继开放。
+- **原生电脑控制（`hoxi_computer`）**：Hoxi Native 与 OpenCode 会话可读取窗口并驱动前台输入——macOS 走 Accessibility / ScreenCaptureKit / CGEvent，Windows 走 UI Automation / PrintWindow / SendInput。授权绑定「一个会话 + 一个运行中的应用」，经原生弹窗确认；每次输入都只接受本机「允许一次」，不支持远程、始终允许或无人值守；截图只截授权窗口、不返回密码字段，相关路由不对隧道、局域网与中继开放。
 - **多 Agent DAG 编排（Convoy）**：一句话描述目标，自动拆成分工 DAG——Git 仓库里每个任务独占一个隔离 worktree，任务按依赖从上游已合并改动起步，无依赖的并行执行。
 - **GitHub PR 与 CI 审查（`forge`）**：在工作区内直接读取 PR 状态、检查项与评论线程（经 GitHub CLI `gh`），无需切换窗口。
 
-**另外还内置**：符号/分块 + BM25 检索的代码索引；Agent Skills（本地发现、内置默认技能、经 SHA-256 校验从 hoxi.ai 市场显式安装）；Hoxi Tools 网关（220+ 服务商接口，经 discover/inspect/run 调用）；可选官方 Hoxi 账号直连通道与 MCP OAuth 2.1 PKCE 连接；多工作区 profile；`/goal` 会话目标；多模态附件；提示词增强；模型排行榜；以及崩溃安全回收账本（崩溃或 `kill -9` 后清理残留的 `opencode` / Chrome 进程）。本地优先：唯一遥测是启动信标（事件、安装 ID、系统/架构、版本——绝不含提示词、代码、路径或密钥），OpenAI 兼容中转只在回环地址、不上隧道。
+**另外还内置**：纯 Go 进程内 SQLite 引擎（`internal/sqlitecli`，零外部 `sqlite3` 依赖）；符号/分块 + BM25 检索的代码索引；Agent Skills（本地发现、内置默认技能、经 SHA-256 校验从 hoxi.ai 市场显式安装）；Hoxi Tools 网关（220+ 服务商接口，经 discover/inspect/run 调用）；可选官方 Hoxi 账号直连通道与 MCP OAuth 2.1 PKCE 连接；多工作区 profile；`/goal` 会话目标；多模态附件；提示词增强；以及崩溃安全回收账本（崩溃或 `kill -9` 后清理残留的子 CLI / Chrome 进程）。本地优先：唯一遥测是启动信标（事件、安装 ID、系统/架构、版本——绝不含提示词、代码、路径或密钥），OpenAI 兼容中转只在回环地址、不上隧道。
 
 ---
 
@@ -78,10 +78,10 @@
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────────┐
-│ 原生宿主与远程接入控制 (Wails v2 + 原生托盘 + 局域网/中继通道)            │
+│ 原生宿主与远程接入控制 (Wails v2 + 原生托盘 + E2EE 局域网/中继通道)      │
 │  • macOS WKWebView & Windows WebView2 (约 30MB 内存, 约 0.2s 冷启动)    │
 │  • 状态栏/系统托盘 (`NSStatusBar` / `Shell_NotifyIconW`) Running/审批   │
-│  • 远程通道: 局域网/中继/GoPanel 隧道安全接管 Hoxi 桌面与服务器          │
+│  • 远程通道: 1-RTT X25519 E2EE 端到端加密接管 Hoxi 桌面与 GoPanel 面板  │
 ├─────────────────────────────────────────────────────────────────────────┤
 │ 三栏 SolidJS 极速工作区 (零虚拟 DOM, 120Hz rAF 批处理满帧流式渲染)       │
 │  • 左栏：多项目管理、Git Worktree 沙箱切换、跨软件会话接管中心           │
@@ -93,11 +93,11 @@
 │  • Git Worktree 沙箱、Seatbelt 进程沙箱与统一审批门控 (`internal/runner`)│
 │  • 原生电脑控制 (`internal/computer`) 与多模式浏览器 (`internal/browser`)│
 │  • 8 大 CLI 会话无损物化、本机 OpenAI 兼容中转与健康度熔断选模           │
-│  • 本地防劫持网关 (`Proxy: nil` 免疫代理 502, `FlushInterval: -1`)       │
+│  • 纯 Go 进程内 SQLite (`sqlitecli`) 与防劫持回环网关 (`Proxy: nil`)    │
 ├─────────────────────────────────────────────────────────────────────────┤
-│ 可插拔多执行引擎层 (`internal/runner` & `internal/opencode`)            │
-│  • OpenCode (原版 `opencode serve` 零侵入监管 + 内联 LSP 诊断)          │
-│  • Claude Code (`claude`) / Antigravity (`agy`) / Gemini CLI (`gemini`) │
+│ 自研内核与可插拔多执行引擎层 (`internal/agent` & `internal/runner`)      │
+│  • Hoxi Go Native 自研引擎 (进程内原生 Agent 循环, 零外部 Sidecar 依赖) │
+│  • 按需外部 CLI: Claude Code / Codex / OpenCode / Antigravity / Gemini  │
 │  • Qoder (`qoder`) / CodeBuddy (`codebuddy`)（只读 Plan 模式）          │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
@@ -106,24 +106,24 @@
 
 ## 快速开始
 
-> **本地优先 · 零强制登录 · 一键纯离线静默**：Hoxi 支持 100% 纯本地自备 Key 运行——直接填入你自己的模型 API Key（Anthropic、OpenAI、Gemini、DeepSeek、本地 Ollama/vLLM 或任意 OpenAI 兼容网关），或直接接管本机已安装的 `claude`、`opencode`、`gemini`、`agy` CLI 即可开箱使用，无需注册或登录 `hoxi.ai` 账号。源码自编译与开发模式**默认关闭**匿名启动上报，还可在 **设置 → 网络与隐私**（或设置 `HOXI_OFFLINE=1`）开启**纯离线静默模式**一键停止全部 `hoxi.ai` 后台同步与更新请求（详见 [docs/telemetry.md](docs/telemetry.md)）。
+> **本地优先 · 零强制登录 · 一键纯离线静默**：Hoxi 已内置 Go Native 自研执行引擎，支持 100% 纯本地自备 Key 运行——直接填入你自己的模型 API Key（Anthropic、OpenAI、Gemini、DeepSeek、本地 Ollama/vLLM 或任意 OpenAI 兼容网关），或按需接管本机已安装的 `claude`、`codex`、`opencode`、`gemini`、`agy` CLI 即可开箱使用，无需注册或登录 `hoxi.ai` 账号。源码自编译与开发模式**默认关闭**匿名启动上报，还可在 **设置 → 网络与隐私**（或设置 `HOXI_OFFLINE=1`）开启**纯离线静默模式**一键停止全部 `hoxi.ai` 后台同步与更新请求（详见 [docs/telemetry.md](docs/telemetry.md)）。
 
 ### 1. 直接下载安装（普通用户推荐）
 - **macOS (Apple Silicon `arm64`, `>= 13.0`)**：前往 [GitHub Releases](https://github.com/hoxiai/hoxi/releases) 下载 `Hoxi-<version>-darwin-arm64.dmg`，拖入 `Applications` 即可。
 - **Windows 10 / 11 (64-bit `x64`)**：
-  - **图形化安装包**：下载 [`Hoxi-<version>-windows-amd64-setup.exe`](https://github.com/hoxiai/hoxi/releases) 双击安装（自动部署至 `%LOCALAPPDATA%\Programs\Hoxi`、内置 `opencode.exe` 引擎、自动检测安装 WebView2 Runtime、创建桌面与开始菜单快捷方式并注册 `hoxi://` 登录回调协议，支持应用内自更新）。
+  - **图形化安装包**：下载 [`Hoxi-<version>-windows-amd64-setup.exe`](https://github.com/hoxiai/hoxi/releases) 双击安装（自动部署至 `%LOCALAPPDATA%\Programs\Hoxi`、内置 Go Native 自研引擎与纯 Go SQLite、自动检测安装 WebView2 Runtime、创建桌面与开始菜单快捷方式并注册 `hoxi://` 登录回调协议，支持应用内自更新）。
   - **PowerShell 一行命令安装**：
     ```powershell
     irm https://raw.githubusercontent.com/hoxiai/hoxi/main/scripts/install.ps1 | iex
     ```
-  - Windows 暂不支持操作系统命令沙箱和无人值守审批模式。正式构建内置 SQLite，供数据库相关功能使用；源码构建可以使用 `PATH` 中的 `sqlite3.exe`。
+  - Windows 暂不支持操作系统命令沙箱和无人值守审批模式。正式构建与源码构建均已内置纯 Go 进程内 SQLite（`internal/sqlitecli`），无需额外安装外部 `sqlite3`。
 
 ### 2. 源码构建环境要求
 - **macOS** `>= 13.0` 或 **Windows 10/11** (`x64`)
 - **Go** `>= 1.25`
 - **Node.js** `>= 20`（或 **Bun** `>= 1.2`）
 - **Wails CLI v2**（`go install github.com/wailsapp/wails/v2/cmd/wails@v2.13.0`）
-- **Agent 引擎**：正式发布包已内置 [`opencode`](https://github.com/anomalyco/opencode)；开发模式会在缺失时自动下载经 SHA-256 校验的固定版本到 `~/.hoxi/bin`。也可以自行在 `PATH` 安装 `opencode`、`claude`、`agy`、`gemini`、`qoder` 或 `codebuddy`
+- **Agent 引擎**：Hoxi 已内置 **Go Native 自研执行引擎**，开箱即用，无需下载或捆绑任何外部 Sidecar 二进制。如需混用外部 CLI，也可按需在 `PATH` 安装 `claude`、`codex`、`opencode`、`agy`、`gemini`、`qoder` 或 `codebuddy`
 
 ### 本地开发运行
 ```bash

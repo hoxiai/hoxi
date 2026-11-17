@@ -58,38 +58,6 @@ export interface UpdateCheckResult {
   checkedAt: string;
 }
 
-export interface LeaderboardModelItem {
-  rank: number;
-  slug: string;
-  name: string;
-  vendor: string;
-  apiName: string;
-  price: {
-    currency: string;
-    input: number;
-    output: number;
-    cacheRead?: number;
-    cacheWrite?: number;
-  };
-  contextWindow: number;
-  scores: {
-    overall?: number;
-    coding?: number;
-    reasoning?: number;
-    chinese?: number;
-    agentic?: number;
-  };
-  perf: {
-    tps?: number;
-    ttft?: number;
-  };
-  badges: string[];
-  scenes: string[];
-  summary: string;
-  reasoning?: boolean;
-  isFree?: boolean;
-}
-
 export interface ConnectableGatewayItem {
   id: string;
   name: string;
@@ -110,17 +78,6 @@ export interface ConnectableGatewayItem {
   features: string[];
   caveat: string;
   authUrl?: string;
-}
-
-export interface LeaderboardResponse {
-  code: number;
-  message: string;
-  data: {
-    dimension: string;
-    updatedAt: string;
-    total: number;
-    items: LeaderboardModelItem[];
-  };
 }
 
 export interface ConnectableGatewaysResponse {
@@ -284,16 +241,6 @@ export const updaterAPI = {
 };
 
 export const leaderboardAPI = {
-  async getLeaderboard(
-    sort: string = "overall",
-    limit: number = 10,
-    lang: string = "en"
-  ): Promise<LeaderboardModelItem[]> {
-    const json = await requestJSON<LeaderboardResponse>(
-      `/api/hoxi/models/leaderboard?sort=${encodeURIComponent(sort)}&limit=${limit}&lang=${encodeURIComponent(lang)}`
-    );
-    return json.data?.items || [];
-  },
   async getConnectableGateways(
     lang: string = "en"
   ): Promise<ConnectableGatewayItem[]> {

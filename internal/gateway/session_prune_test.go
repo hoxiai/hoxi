@@ -12,7 +12,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hoxiai/hoxi/internal/opencode/ocstate"
 	"github.com/hoxiai/hoxi/internal/runner"
+	"github.com/hoxiai/hoxi/internal/sqlitecli"
+	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 type pruneFixture struct {
@@ -309,8 +312,9 @@ func TestOldSessionsDeleteFailureReportsRemovedWorktreeState(t *testing.T) {
 	id := "ses_hoxi_fail_del"
 	wtDir := filepath.Join(f.repo, ".hoxi", "worktrees", id)
 	runGitT(t, f.repo, "worktree", "add", "-q", "-b", "hoxi/"+id, wtDir)
-	// Runtime "opencode" with an OpenCodeIDs entry and no reachable OpenCode
-	// server makes DeleteConversation fail after the clean worktree is removed.
+	// Configure an unreachable OpenCode daemon endpoint so DeleteConversation
+	// fails upstream after the clean worktree has been removed.
+	f.svc.ConfigureOpenCode("http://127.0.0.1:1", "pass")
 	f.put(t, runner.SessionRecord{
 		ID:           id,
 		Runtime:      "opencode",
@@ -337,5 +341,51 @@ func TestOldSessionsDeleteFailureReportsRemovedWorktreeState(t *testing.T) {
 	out, err := exec.Command("git", "-C", f.repo, "branch", "--list", "hoxi/"+id).CombinedOutput()
 	if err != nil || !strings.Contains(string(out), "hoxi/"+id) {
 		t.Fatalf("the removed worktree's branch must be preserved: %q %v", out, err)
+	}
+}
+
+func TestOldSessionsDaemonlessDeletePurgesSQLiteAndPreventsResurrection(t *testing.T) {
+	f := newPruneFixture(t)
+	dbPath := os.Getenv("HOXI_DB_PATH")
+	sid := "ses_legacy_prune_1"
+	initSQL := `
+CREATE TABLE event (id INTEGER PRIMARY KEY, data TEXT);
+CREATE TABLE event_sequence (id INTEGER PRIMARY KEY, seq INTEGER);
+CREATE TABLE session (id TEXT PRIMARY KEY, parent_id TEXT, directory TEXT, title TEXT, time_created INTEGER, time_updated INTEGER, model TEXT, metadata TEXT);
+CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, data TEXT);
+CREATE TABLE part (id TEXT PRIMARY KEY, session_id TEXT, message_id TEXT, time_created INTEGER, data TEXT);
+INSERT INTO session VALUES ('` + sid + `', NULL, '` + strings.ReplaceAll(f.repo, "'", "''") + `', 'Legacy Prune Chat', 1700000000000, 1700000005000, 'openai/gpt-5', '{}');
+INSERT INTO message VALUES ('msg_u_1', '` + sid + `', 1700000001000, '{"id":"msg_u_1","role":"user","time":{"created":1700000001000}}');
+INSERT INTO part VALUES ('prt_u_1', '` + sid + `', 'msg_u_1', 1700000001000, '{"id":"prt_u_1","type":"text","text":"Old history payload"}');
+`
+	if out, err := subproc.Command(sqlitecli.Executable(), dbPath, initSQL).CombinedOutput(); err != nil {
+		t.Fatalf("seed sqlite db: %v (%s)", err, string(out))
+	}
+	extCopy := filepath.Join(t.TempDir(), "external_opencode.db")
+	rawDB, err := os.ReadFile(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(extCopy, rawDB, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if n := f.svc.MigrateOpenCodeDB(dbPath); n != 1 {
+		t.Fatalf("expected 1 migrated session, got %d", n)
+	}
+
+	code, res := f.delete(t, `{"olderThanDays":30,"sessionIDs":["`+sid+`"]}`)
+	if code != http.StatusOK || len(res.Deleted) != 1 || res.Deleted[0] != sid {
+		t.Fatalf("daemonless delete failed: code=%d res=%+v", code, res)
+	}
+	sizes, err := ocstate.SessionContentBytes(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("SessionContentBytes: %v", err)
+	}
+	if sizes[sid] != 0 {
+		t.Fatalf("expected SQLite message/part bytes for %s purged to 0, got %d", sid, sizes[sid])
+	}
+	if n := f.svc.MigrateOpenCodeDB(extCopy); n != 0 {
+		t.Fatalf("deleted migrated session must not resurrect from external DB, got %d", n)
 	}
 }

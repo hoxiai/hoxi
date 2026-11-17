@@ -78,6 +78,10 @@ function sessionPath(sessionID: string): string {
   return `${SESSIONS}/${encodeURIComponent(sessionID)}`;
 }
 
+function createClientRequestID(): string {
+  return `req_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
 // Hands the conversation to another engine before dispatch. Unadopted OpenCode
 // sessions staying on OpenCode need no handoff.
 async function prepareRuntime(
@@ -287,6 +291,22 @@ export const hoxiAPI = {
     };
   },
 
+  syncDesktopCompanion(
+    payload: import("./api-types").DesktopCompanionPayload
+  ): Promise<import("./api-types").DesktopCompanionSyncResponse> {
+    return requestJSON("/api/hoxi/desktop/companion", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  resetDesktopCompanionPosition(): Promise<{ ok: boolean }> {
+    return requestJSON("/api/hoxi/desktop/companion/reset-position", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+  },
+
   async createSession(
     title?: string,
     directory?: string,
@@ -313,6 +333,20 @@ export const hoxiAPI = {
       method: "PATCH",
       body: JSON.stringify({ title }),
     });
+  },
+
+  async switchSessionRuntime(
+    sessionID: string,
+    runtime: SessionRuntime,
+    model?: { providerID: string; modelID: string },
+    directory?: string
+  ): Promise<SessionInfo> {
+    const info = await requestJSON<SessionInfo>(withDir(`${sessionPath(sessionID)}/runtime`, directory), {
+      method: "POST",
+      body: JSON.stringify({ runtime, ...(model || {}) }),
+    });
+    if (info?.id) registerRunnerSessions([info]);
+    return info;
   },
 
   setSandboxMode(
@@ -380,9 +414,11 @@ export const hoxiAPI = {
       skillSelection?: import("./skills-types").SkillSelection;
       imageOptions?: import("./api-types").PromptImageOptions;
       continueTask?: boolean;
+      clientRequestId?: string;
     }
   ): Promise<void> {
     if (options?.runtime) await prepareRuntime(sessionID, options.runtime, options.model, options.directory);
+    const clientRequestId = options?.clientRequestId?.trim() || createClientRequestID();
     const parts: Array<{ type: "text"; text: string } | PromptAttachment> = [];
     if (options?.attachments && options.attachments.length > 0) {
       parts.push(...options.attachments);
@@ -392,8 +428,10 @@ export const hoxiAPI = {
     }
     return requestJSON(withDir(`${sessionPath(sessionID)}/prompt_async`, options?.directory), {
       method: "POST",
+      headers: { "X-Idempotency-Key": clientRequestId },
       body: JSON.stringify({
         agent: options?.agent || "build",
+        clientRequestId,
         ...(options?.model ? { model: options.model } : {}),
         ...(options?.imageOptions ? { imageOptions: options.imageOptions } : {}),
         ...(options?.variant ? { variant: options.variant } : {}),

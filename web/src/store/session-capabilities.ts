@@ -1,11 +1,9 @@
-// web/src/store/session-capabilities.ts
 import { workspace } from "./workspace-state";
 import {
   inferRunnerRuntimeFromSessionID,
   isRunnerSessionID,
-  resolveRunnerRuntimeForProvider,
 } from "../services/api";
-import { isSessionBusy } from "./session-query";
+import { isSessionBusy, resolveSessionTargetRuntime } from "./session-query";
 
 export function canRevertSession(sessionID?: string | null): boolean {
   if (!sessionID) return false;
@@ -33,25 +31,22 @@ export function canSteerSession(
     inferRunnerRuntimeFromSessionID(sessionID) ||
     (isRunnerSessionID(sessionID) ? "" : "opencode");
   if (targetModel?.providerID) {
-    const targetRuntime = resolveRunnerRuntimeForProvider(
-      targetModel.providerID,
-      Boolean(workspace.hoxiProviders?.[targetModel.providerID])
-    );
+    const targetRuntime = resolveSessionTargetRuntime(sessionID, targetModel.providerID);
     if (currentRuntime && targetRuntime !== currentRuntime) return false;
-    if (targetRuntime !== "opencode" && targetRuntime !== "antigravity") return false;
+    if (targetRuntime !== "opencode" && targetRuntime !== "native" && targetRuntime !== "antigravity") return false;
   }
   if (session?.capabilities?.steer !== undefined) return session.capabilities.steer;
-  if (currentRuntime) return currentRuntime === "opencode" || currentRuntime === "antigravity";
+  if (currentRuntime) return currentRuntime === "opencode" || currentRuntime === "native" || currentRuntime === "antigravity";
   return !isRunnerSessionID(sessionID);
 }
 
-/** Only OpenCode sessions can be compacted from Hoxi; native CLIs keep their own window. */
+/** OpenCode and Native Go Agent sessions can be compacted directly from Hoxi; external CLIs keep their own window. */
 export function canCompactSession(sessionID?: string | null): boolean {
   if (!sessionID) return false;
   const session = workspace.sessions.find((s) => s.id === sessionID);
   if (session?.capabilities?.compact !== undefined) return session.capabilities.compact;
   const runtime = session?.runtime || inferRunnerRuntimeFromSessionID(sessionID);
-  if (runtime) return runtime === "opencode";
+  if (runtime) return runtime === "opencode" || runtime === "native";
   return true;
 }
 

@@ -98,20 +98,12 @@ jobs:
       - name: Install Wails v2
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.13.0
 
-      - name: Bundle OpenCode Runtime
+      - name: Prepare clean Windows staging & verify lockfiles
         shell: bash
         run: |
-          OPENCODE_ZIP="opencode-windows-${{ matrix.arch }}.zip"
           node scripts/opencode-lock.mjs verify
-          curl -fsSL -o "$OPENCODE_ZIP" "$(node scripts/opencode-lock.mjs url windows/${{ matrix.arch }})"
-          node scripts/opencode-lock.mjs verify-archive windows/${{ matrix.arch }} "$OPENCODE_ZIP"
           mkdir -p build/bin build/windows/installer/tmp
-          7z e -y "$OPENCODE_ZIP" opencode.exe -obuild/bin/
-          cp -f build/bin/opencode.exe build/windows/installer/tmp/opencode.exe
-          rm -f "$OPENCODE_ZIP"
-          test -f build/bin/opencode.exe
-          test -f build/windows/installer/tmp/opencode.exe
-          echo "Bundled standalone opencode.exe into build/bin/ and build/windows/installer/tmp/"
+          rm -f build/bin/opencode.exe build/windows/installer/tmp/opencode.exe
 
       - name: Bundle verified SQLite CLI
         shell: bash
@@ -124,6 +116,8 @@ jobs:
 
       - name: Build Windows Desktop App & Setup Installer
         shell: bash
+        env:
+          HOXI_BUNDLE_OPENCODE: "0"
         run: |
           if ! command -v makensis >/dev/null 2>&1; then
             if [[ -x "/c/Program Files (x86)/NSIS/makensis.exe" ]]; then
@@ -145,11 +139,10 @@ jobs:
           else
             go version -m build/bin/Hoxi.exe | grep -q "buildinfo.Version=${RELEASE_VERSION}"
           fi
-          cp -f build/windows/installer/tmp/opencode.exe build/bin/opencode.exe
           cp -f build/windows/installer/tmp/sqlite3.exe build/bin/sqlite3.exe
-          test -f build/bin/opencode.exe
+          test ! -f build/bin/opencode.exe
           test -f build/bin/sqlite3.exe
-          node scripts/pe-arch.mjs verify ${{ matrix.arch }} build/bin/Hoxi.exe build/bin/opencode.exe build/bin/sqlite3.exe
+          node scripts/pe-arch.mjs verify ${{ matrix.arch }} build/bin/Hoxi.exe build/bin/sqlite3.exe
           test -f build/bin/Hoxi-${{ matrix.arch }}-installer.exe
 
       - name: Package Windows Release Archives
@@ -160,7 +153,7 @@ jobs:
           cd build/bin
           mv -f Hoxi-${{ matrix.arch }}-installer.exe "$SETUP_NAME"
           sha256sum "$SETUP_NAME" > "${SETUP_NAME}.sha256"
-          7z a "$ZIP_NAME" Hoxi.exe opencode.exe sqlite3.exe
+          7z a "$ZIP_NAME" Hoxi.exe sqlite3.exe
           sha256sum "$ZIP_NAME" > "${ZIP_NAME}.sha256"
 
       - name: Upload Windows Artifact to Release
@@ -240,20 +233,9 @@ jobs:
 
       - name: Build Linux Desktop App
         run: |
+          rm -f build/bin/opencode
           wails build -platform linux/amd64 -tags webkit2_41 -s -m -nosyncgomod \
             -ldflags "-X github.com/hoxiai/hoxi/internal/app.BuildVariant=release -X github.com/hoxiai/hoxi/internal/buildinfo.Version=${RELEASE_VERSION}"
-
-      - name: Bundle OpenCode Runtime
-        run: |
-          OPENCODE_TAR="opencode-linux-x64.tar.gz"
-          node scripts/opencode-lock.mjs verify
-          curl -fsSL -o "$OPENCODE_TAR" "$(node scripts/opencode-lock.mjs url linux/amd64)"
-          node scripts/opencode-lock.mjs verify-archive linux/amd64 "$OPENCODE_TAR"
-          tar -xzf "$OPENCODE_TAR" -C build/bin/ opencode
-          rm -f "$OPENCODE_TAR"
-          chmod +x build/bin/opencode
-          test -x build/bin/opencode
-          echo "Bundled standalone opencode into build/bin/"
 
       - name: Package Linux Release Archive
         run: |
@@ -261,7 +243,8 @@ jobs:
           cp build/linux/hoxi.desktop build/bin/
           cp build/appicon.png build/bin/hoxi.png
           cd build/bin
-          tar -czf "$TAR_NAME" Hoxi opencode hoxi.desktop hoxi.png
+          test ! -f opencode
+          tar -czf "$TAR_NAME" Hoxi hoxi.desktop hoxi.png
 
       - name: Upload Linux Artifact to Release
         uses: softprops/action-gh-release@v2

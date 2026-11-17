@@ -33,7 +33,7 @@ export const computer = {
   inspect: "查看窗口截图",
   inspectElements: "仅刷新元素",
   capturing: "正在读取…",
-  nextStep: "请在 OpenCode 会话中让智能体使用 hoxi_computer，每次输入后会自动刷新窗口元素与观测状态，你随时可以在这里暂停或撤销授权",
+  nextStep: "请在会话中让智能体使用 hoxi_computer，每次输入后会自动刷新窗口元素与观测状态，你随时可以在这里暂停或撤销授权",
   targetWindow: "目标窗口",
   preview: "已授权应用的窗口截图（点击查看后刷新）",
   elementCount: "可读界面元素：{count}",

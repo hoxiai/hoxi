@@ -15,7 +15,10 @@ import (
 type ChildSessionSpec struct {
 	Title      string
 	Prompt     string
+	ProviderID string
 	ModelID    string
+	Mode       string
+	Agent      string
 	ExternalID string
 }
 
@@ -42,12 +45,14 @@ func (t *TurnTranslator) openChild(key string, spec ChildSessionSpec, now int64)
 		return nil
 	}
 	suffix := fmt.Sprintf("%d_%d", now, len(t.childOrder))
+	childMode := firstNonEmptyStr(spec.Mode, t.mode)
+	childAgent := firstNonEmptyStr(spec.Agent, childMode)
 	user := MessageInfo{
 		ID:        "msg_u_" + suffix,
 		SessionID: info.ID,
 		Role:      "user",
 		Time:      MessageTime{Created: now},
-		Agent:     t.mode,
+		Agent:     childAgent,
 	}
 	c := &childSink{
 		info: info,
@@ -57,10 +62,10 @@ func (t *TurnTranslator) openChild(key string, spec ChildSessionSpec, now int64)
 			Role:       "assistant",
 			ParentID:   user.ID,
 			Time:       MessageTime{Created: now + 1},
-			ModelID:    firstNonEmptyStr(info.ModelID, t.msgInfo.ModelID),
-			ProviderID: t.providerID,
-			Mode:       t.mode,
-			Agent:      t.mode,
+			ModelID:    firstNonEmptyStr(info.ModelID, spec.ModelID, t.msgInfo.ModelID),
+			ProviderID: firstNonEmptyStr(info.ProviderID, spec.ProviderID, t.providerID),
+			Mode:       childMode,
+			Agent:      childAgent,
 		},
 		parts:    make(map[string]*MessagePart),
 		byCallID: make(map[string]string),

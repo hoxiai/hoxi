@@ -1,17 +1,19 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-  Builds Hoxi for Windows (Hoxi.exe + bundled opencode.exe + NSIS setup.exe + portable .zip).
+  Builds Hoxi for Windows (lean Hoxi.exe + sqlite3.exe + NSIS setup.exe + portable .zip; optional opencode.exe via -BundleOpenCode or HOXI_BUNDLE_OPENCODE=1).
 .EXAMPLE
   .\scripts\build-windows.ps1
-  .\scripts\build-windows.ps1 -Version 0.5.1
+  .\scripts\build-windows.ps1 -Version 0.6.19
   .\scripts\build-windows.ps1 -Arch arm64
+  .\scripts\build-windows.ps1 -BundleOpenCode
 #>
 [CmdletBinding()]
 param(
   [string]$Version = "",
   [ValidateSet("amd64", "arm64")]
   [string]$Arch = "amd64",
+  [switch]$BundleOpenCode,
   [switch]$SkipInstaller
 )
 
@@ -29,7 +31,24 @@ try {
     throw "Failed to resolve build version"
   }
 
-  Write-Host "==> Building Hoxi v$Version for Windows (windows/$Arch)..." -ForegroundColor Cyan
+  $BundleMode = if ($BundleOpenCode) {
+    "1"
+  } elseif (-not [string]::IsNullOrWhiteSpace($env:HOXI_BUNDLE_OPENCODE)) {
+    $env:HOXI_BUNDLE_OPENCODE.Trim().ToLowerInvariant()
+  } else {
+    "0"
+  }
+  switch ($BundleMode) {
+    { $_ -in @("0", "false") } { $BundleMode = "0" }
+    { $_ -in @("1", "true") }  { $BundleMode = "1" }
+    "auto"                     { $BundleMode = "auto" }
+    default {
+      throw "Unsupported HOXI_BUNDLE_OPENCODE value: $BundleMode (expected 0, 1, or auto)"
+    }
+  }
+  $env:HOXI_BUNDLE_OPENCODE = $BundleMode
+
+  Write-Host "==> Building Hoxi v$Version for Windows (windows/$Arch, HOXI_BUNDLE_OPENCODE=$BundleMode)..." -ForegroundColor Cyan
 
   # Sync version metadata into build/windows/info.json and wails.json
   & node -e '
@@ -67,12 +86,15 @@ try {
   Expand-Archive -Path $SQLiteZip -DestinationPath "build/windows/installer/tmp/sqlite" -Force
   Remove-Item -Force $SQLiteZip
   Copy-Item -Path "build/windows/installer/tmp/sqlite/sqlite3.exe" -Destination "build/bin/sqlite3.exe" -Force
+  Remove-Item -Force "build/bin/opencode.exe", "build/windows/installer/tmp/opencode.exe" -ErrorAction SilentlyContinue
 
+  $Platform = "windows/$Arch"
+  if ($BundleMode -eq "0") {
+    Write-Host "==> HOXI_BUNDLE_OPENCODE=0 (default): skipping opencode.exe sidecar for lean pure-Go Hoxi Native bundle (pass -BundleOpenCode or HOXI_BUNDLE_OPENCODE=1 to bundle)." -ForegroundColor Cyan
+  } else {
   # Resolve or download + verify pinned opencode.exe sidecar for the target arch
   & node scripts/opencode-lock.mjs verify
   if ($LASTEXITCODE -ne 0) { throw "opencode.lock verification failed" }
-
-  $Platform = "windows/$Arch"
   $OpenCodeSrc = $null
   if (-not [string]::IsNullOrWhiteSpace($env:HOXI_OPENCODE)) {
     if (-not (Test-Path $env:HOXI_OPENCODE)) {
@@ -120,6 +142,7 @@ try {
       Copy-Item -Path "build/windows/installer/tmp/opencode.exe" -Destination (Join-Path $CacheDir "opencode.exe") -Force
     }
   }
+  }
 
   # Ensure NSIS (makensis) is on PATH when building the installer
   $WailsArgs = @(
@@ -141,7 +164,11 @@ try {
   & go run github.com/wailsapp/wails/v2/cmd/wails@v2.13.0 @WailsArgs
   if ($LASTEXITCODE -ne 0) { throw "Wails Windows build failed" }
 
-  Copy-Item -Path "build/windows/installer/tmp/opencode.exe" -Destination "build/bin/opencode.exe" -Force
+  if (Test-Path "build/windows/installer/tmp/opencode.exe") {
+    Copy-Item -Path "build/windows/installer/tmp/opencode.exe" -Destination "build/bin/opencode.exe" -Force
+  } else {
+    Remove-Item -Force "build/bin/opencode.exe" -ErrorAction SilentlyContinue
+  }
   Copy-Item -Path "build/windows/installer/tmp/sqlite/sqlite3.exe" -Destination "build/bin/sqlite3.exe" -Force
 
   $BuiltVer = (& "build/bin/Hoxi.exe" --version).Trim()
@@ -163,7 +190,11 @@ try {
 
   $ZipPath = "build/bin/Hoxi-$Version-windows-$Arch.zip"
   if (Test-Path $ZipPath) { Remove-Item -Force $ZipPath }
-  Compress-Archive -Path @("build/bin/Hoxi.exe", "build/bin/opencode.exe", "build/bin/sqlite3.exe") -DestinationPath $ZipPath -Force
+  $ZipEntries = @("build/bin/Hoxi.exe", "build/bin/sqlite3.exe")
+  if (Test-Path "build/bin/opencode.exe") {
+    $ZipEntries += "build/bin/opencode.exe"
+  }
+  Compress-Archive -Path $ZipEntries -DestinationPath $ZipPath -Force
   $ZipSha = (Get-FileHash -Path $ZipPath -Algorithm SHA256).Hash.ToLowerInvariant()
   Set-Content -Path "$ZipPath.sha256" -Value "$ZipSha  Hoxi-$Version-windows-$Arch.zip`n" -NoNewline
   Write-Host "==> Built Windows Portable Archive: $ZipPath" -ForegroundColor Green

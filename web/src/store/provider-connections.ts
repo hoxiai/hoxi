@@ -18,7 +18,7 @@ import {
   type FreeTierGuideItem,
 } from "./auto-models";
 import { isImportedOpenCodeProvider } from "./provider-catalog";
-import { setLocalCLIStatusItems } from "./handoff";
+import { ensureLocalCLIStatusLoaded, setLocalCLIStatusItems } from "./handoff";
 import { parseModelString } from "./session-ai";
 import {
   loadAgents,
@@ -264,6 +264,15 @@ export async function installOpenCodeEngine(restart = false): Promise<void> {
   await Promise.allSettled([
     loadProviders(true),
     loadAgents(workspace.rootDir || undefined),
+  ]);
+}
+
+/** Reloads provider configs, external CLI runner catalogs, and agent definitions. */
+export async function reloadRuntimeCatalogs(): Promise<void> {
+  await Promise.allSettled([
+    loadProviders(true),
+    loadAgents(workspace.rootDir || undefined),
+    ensureLocalCLIStatusLoaded(true),
   ]);
 }
 

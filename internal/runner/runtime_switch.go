@@ -641,30 +641,33 @@ func (s *Service) deleteConversation(ctx context.Context, id string) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	if rec.Runtime == "opencode" || len(rec.OpenCodeIDs) > 0 || len(rec.OpenCodeChildIDs) > 0 {
+	ocUp := s.openCode != nil && s.openCode.Available()
+	if ocUp && (rec.Runtime == "opencode" || len(rec.OpenCodeIDs) > 0 || len(rec.OpenCodeChildIDs) > 0) {
 		s.rejectOpenCodeSessionPermissions(ctx, rec)
 	}
 	for _, engineID := range rec.OpenCodeIDs {
-		dir := rec.OpenCodeDirectories[engineID]
-		if dir == "" {
-			dir = rec.WorktreePath
-		}
-		err := s.openCodeJSON(ctx, "DELETE", "/session/"+engineID, dir, nil, nil)
-		if err != nil && !strings.Contains(err.Error(), "HTTP 404:") {
-			return err
+		if ocUp {
+			dir := firstNonEmptyStr(rec.OpenCodeDirectories[engineID], rec.WorktreePath)
+			if err := s.openCodeJSON(ctx, "DELETE", "/session/"+engineID, dir, nil, nil); err != nil && !strings.Contains(err.Error(), "HTTP 404:") {
+				return err
+			}
 		}
 		if s.attachments != nil {
 			s.attachments.DeleteBySession(engineID)
 		}
 	}
 	childDir := firstNonEmptyStr(rec.WorktreePath, rec.ProjectDir)
-	for _, childID := range s.collectOpenCodeChildIDs(id, rec, ap) {
-		if s.openCode != nil {
+	childIDs := s.collectOpenCodeChildIDs(id, rec, ap)
+	for _, childID := range childIDs {
+		if ocUp {
 			_ = s.openCodeJSON(ctx, "DELETE", "/session/"+childID, childDir, nil, nil)
 		}
 		if s.attachments != nil {
 			s.attachments.DeleteBySession(childID)
 		}
+	}
+	if !ocUp {
+		s.purgeDeletedOpenCodeState(ctx, id, rec, childIDs)
 	}
 	s.forgetOpenCodeMappings(id, rec, ap)
 	if s.attachments != nil {

@@ -170,6 +170,12 @@ func (t *TurnTranslator) FeedLine(rawLine string) []SSEEvent {
 	if t.runtime == string(RuntimeGeminiCLI) {
 		return t.feedGeminiLine(line)
 	}
+	if t.runtime == string(RuntimeCodex) {
+		return t.feedCodexLine(line)
+	}
+	if t.runtime == string(RuntimeOpenCode) {
+		return t.feedOpenCodeCLILine(line)
+	}
 	return t.feedAgyLine(line)
 }
 

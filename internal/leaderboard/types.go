@@ -1,41 +1,5 @@
 package leaderboard
 
-type ModelItem struct {
-	Rank    int    `json:"rank"`
-	Slug    string `json:"slug"`
-	Name    string `json:"name"`
-	Vendor  string `json:"vendor"`
-	APIName string `json:"apiName"`
-	Price   struct {
-		Currency   string  `json:"currency"`
-		Input      float64 `json:"input"`
-		Output     float64 `json:"output"`
-		CacheRead  float64 `json:"cacheRead,omitempty"`
-		CacheWrite float64 `json:"cacheWrite,omitempty"`
-	} `json:"price"`
-	ContextWindow int            `json:"contextWindow"`
-	Scores        map[string]any `json:"scores"`
-	Perf          map[string]any `json:"perf"`
-	Badges        []string       `json:"badges"`
-	Scenes        []string       `json:"scenes"`
-	Summary       string         `json:"summary"`
-	Reasoning     bool           `json:"reasoning"`
-	IsFree        bool           `json:"isFree"`
-}
-
-type LeaderboardData struct {
-	Dimension string      `json:"dimension"`
-	UpdatedAt string      `json:"updatedAt"`
-	Total     int         `json:"total"`
-	Items     []ModelItem `json:"items"`
-}
-
-type LeaderboardResponse struct {
-	Code    int              `json:"code"`
-	Message string           `json:"message"`
-	Data    *LeaderboardData `json:"data"`
-}
-
 type GatewayItem struct {
 	ID                 string   `json:"id"`
 	Name               string   `json:"name"`

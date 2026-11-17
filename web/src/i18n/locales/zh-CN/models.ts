@@ -75,7 +75,7 @@ export const models: ModelsI18n = {
   optional: "可选",
   registerExtraModel: "注册额外模型 ID",
   extraModelPlaceholder: "例如 deepseek-v4.1-flash",
-  keysStoreNote: "密钥均保存在 OpenCode 本地加密授权库中",
+  keysStoreNote: "密钥仅保存在本机 Hoxi 本地授权配置中",
   saveAndConnect: "保存并连接",
   connect: "连接",
   connected: "已连接",

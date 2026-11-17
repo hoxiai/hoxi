@@ -42,9 +42,14 @@ const EVENT_SOURCE_CLOSED = 2;
 export function connectEventStream(handlers: SSEHandlers, directory?: string, wsBaseURL = ""): () => void {
   // Wails' macOS scheme handler has no http.Flusher; use the existing loopback server.
   const base = wsBaseURL.replace(/^ws:/, "http:").replace(/^wss:/, "https:").replace(/\/$/, "");
-  const url = directory
-    ? `/api/hoxi/event?directory=${encodeURIComponent(directory)}`
-    : "/api/hoxi/event";
+  let lastSeenSeq = 0;
+  const buildStreamURL = (): string => {
+    const params = new URLSearchParams();
+    if (directory) params.set("directory", directory);
+    if (lastSeenSeq > 0) params.set("after_seq", String(lastSeenSeq));
+    const qs = params.toString();
+    return `${base}/api/hoxi/event${qs ? `?${qs}` : ""}`;
+  };
 
   const infoMap = new Map<string, MessageInfo>();
   const partMap = new Map<string, MessagePart>();
@@ -65,20 +70,24 @@ export function connectEventStream(handlers: SSEHandlers, directory?: string, ws
         clearTimeout(bgFlushTimer);
         bgFlushTimer = null;
       }
-      if (rafID === null) {
-        rafID = requestAnimationFrame(flushFrame);
-        // WebViews may suspend rAF while hidden; keep draining the stream in batches.
+      if (rafID === null && flushTimer === null) {
+        if (typeof requestAnimationFrame === "function") {
+          rafID = requestAnimationFrame(flushFrame);
+        }
+        // WebViews may suspend rAF while hidden (and Node/Workers lack rAF); keep draining in batches.
         flushTimer = setTimeout(flushFrame, 100);
       }
       return;
     }
-    if (rafID === null && bgFlushTimer === null) {
+    if (rafID === null && flushTimer === null && bgFlushTimer === null) {
       bgFlushTimer = setTimeout(flushFrame, BACKGROUND_FLUSH_MS);
     }
   };
 
   const flushFrame = () => {
-    if (rafID !== null) cancelAnimationFrame(rafID);
+    if (rafID !== null && typeof cancelAnimationFrame === "function") {
+      cancelAnimationFrame(rafID);
+    }
     if (flushTimer !== null) clearTimeout(flushTimer);
     if (bgFlushTimer !== null) clearTimeout(bgFlushTimer);
     rafID = null;
@@ -117,15 +126,33 @@ export function connectEventStream(handlers: SSEHandlers, directory?: string, ws
       const eventDirectory = wrapped
         ? (typeof parsed.directory === "string" ? parsed.directory : undefined)
         : streamDirectory;
+      const frameSeq =
+        !wrapped && typeof parsed?.seq === "number" && parsed.seq > 0 ? parsed.seq : 0;
       const evt = (wrapped
         ? parsed.payload
         : parsed) as OpenCodeEvent;
       if (!evt || typeof evt.type !== "string") return;
       if (evt.type === "server.heartbeat") return;
       if (evt.type === "hoxi.stream.resync") {
+        if (typeof evt.properties?.seq === "number" && evt.properties.seq >= 0) {
+          lastSeenSeq = evt.properties.seq;
+        } else if (frameSeq > 0) {
+          lastSeenSeq = frameSeq;
+        }
         flushFrame();
         handlers.onResync?.();
         return;
+      }
+      if (frameSeq > 0) {
+        if (frameSeq <= lastSeenSeq) return;
+        lastSeenSeq = frameSeq;
+      } else if (
+        evt.type === "hoxi.status.snapshot" &&
+        lastSeenSeq === 0 &&
+        typeof evt.properties?.seq === "number" &&
+        evt.properties.seq > 0
+      ) {
+        lastSeenSeq = evt.properties.seq;
       }
 
       if (evt.type === "message.updated") {
@@ -209,7 +236,7 @@ export function connectEventStream(handlers: SSEHandlers, directory?: string, ws
 
   function open() {
     if (disposed) return;
-    const es = new EventSource(`${base}${url}`);
+    const es = new EventSource(buildStreamURL());
     source = es;
     armWatchdog();
     es.onopen = () => {
@@ -220,8 +247,9 @@ export function connectEventStream(handlers: SSEHandlers, directory?: string, ws
     };
     es.onerror = () => {
       if (source !== es) return;
-      // A refused or non-200 response is final for EventSource; retry ourselves.
-      if (es.readyState === EVENT_SOURCE_CLOSED) {
+      // Reopen explicitly when closed or once sequenced events were seen so
+      // reconnects carry the latest `?after_seq=<N>` cursor.
+      if (es.readyState === EVENT_SOURCE_CLOSED || lastSeenSeq > 0) {
         reopen();
         return;
       }

@@ -9,7 +9,7 @@ import (
 const telemetrySettingsFile = "telemetry.json"
 
 // AuxiliaryOfflineEnv reports whether HOXI_OFFLINE forces silent offline mode
-// for auxiliary Hoxi cloud requests (telemetry, update checks, leaderboard/price
+// for auxiliary Hoxi cloud requests (telemetry, update checks, model price
 // sync, skills marketplace catalog, and background account verification).
 func AuxiliaryOfflineEnv() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("HOXI_OFFLINE"))) {

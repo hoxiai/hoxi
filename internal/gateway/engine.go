@@ -38,10 +38,11 @@ type engineInstallResponse struct {
 	Ready           bool   `json:"ready"`
 }
 
-// engineReady probes the supervised daemon's health endpoint. It never
-// surfaces transport details, so callers only learn ready/not-ready.
+// engineReady probes the supervised daemon's health endpoint. When Hoxi runs
+// in pure Go Native mode (openCodePort == 0 and no custom daemon URL), no
+// OpenCode daemon is expected so it returns false immediately without dialing.
 func (g *Gateway) engineReady() bool {
-	if g.openCode == nil {
+	if g.openCode == nil || !g.openCode.Available() || (g.openCodePort <= 0 && strings.HasSuffix(g.openCode.BaseURL(), ":0")) {
 		return false
 	}
 	g.engineReadyMu.Lock()

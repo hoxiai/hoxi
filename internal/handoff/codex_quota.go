@@ -2,7 +2,8 @@ package handoff
 
 import (
 	"bufio"
-	"bytes"
+	"context"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"math"
@@ -136,32 +137,38 @@ func recentCodexRolloutCandidates(cDir string) []codexRolloutCandidate {
 	var out []codexRolloutCandidate
 
 	if dbPath := findCodexStateDB(); dbPath != "" {
-		sqlQuery := `SELECT rollout_path, updated_at FROM threads WHERE archived = 0 ORDER BY updated_at DESC LIMIT 15;`
-		if rawJSON, err := codexCommandOutput(sqlitecli.Executable(), "-readonly", "-cmd", ".timeout 3000", "-json", dbPath, sqlQuery); err == nil && len(bytes.TrimSpace(rawJSON)) > 0 {
-			var rows []struct {
-				RolloutPath string `json:"rollout_path"`
-				UpdatedAt   int64  `json:"updated_at"`
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		_ = sqlitecli.WithReadOnly(ctx, dbPath, 3*time.Second, func(ctx context.Context, db *sql.DB) error {
+			rows, err := db.QueryContext(ctx, `SELECT COALESCE(rollout_path, ''), COALESCE(updated_at, 0) FROM threads WHERE archived = 0 ORDER BY updated_at DESC LIMIT 15;`)
+			if err != nil {
+				return err
 			}
-			if json.Unmarshal(rawJSON, &rows) == nil {
-				for _, r := range rows {
-					p := strings.TrimSpace(r.RolloutPath)
-					if p == "" || seen[p] {
-						continue
+			defer rows.Close()
+			for rows.Next() {
+				var rawPath string
+				var updatedAt int64
+				if err := rows.Scan(&rawPath, &updatedAt); err != nil {
+					break
+				}
+				p := strings.TrimSpace(rawPath)
+				if p == "" || seen[p] {
+					continue
+				}
+				if st, err := os.Stat(p); err == nil && !st.IsDir() {
+					seen[p] = true
+					uMs := updatedAt
+					if uMs > 0 && uMs < 10_000_000_000 {
+						uMs *= 1000
 					}
-					if st, err := os.Stat(p); err == nil && !st.IsDir() {
-						seen[p] = true
-						uMs := r.UpdatedAt
-						if uMs > 0 && uMs < 10_000_000_000 {
-							uMs *= 1000
-						}
-						if fiMod := st.ModTime().UnixMilli(); fiMod > uMs {
-							uMs = fiMod
-						}
-						out = append(out, codexRolloutCandidate{path: p, updatedMs: uMs})
+					if fiMod := st.ModTime().UnixMilli(); fiMod > uMs {
+						uMs = fiMod
 					}
+					out = append(out, codexRolloutCandidate{path: p, updatedMs: uMs})
 				}
 			}
-		}
+			return rows.Err()
+		})
+		cancel()
 	}
 
 	sessRoot := filepath.Join(cDir, "sessions")

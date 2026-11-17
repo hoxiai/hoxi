@@ -2,8 +2,8 @@ package handoff
 
 import (
 	"bufio"
-	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/hoxiai/hoxi/internal/sqlitecli"
-	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 func traeDotDirs() []string {
@@ -82,20 +81,29 @@ func readTraeSessionModels() (bySession map[string]string, defaultModel string) 
 		if _, err := os.Stat(vscdb); err != nil {
 			continue
 		}
-		sqlQuery := `SELECT key, value FROM ItemTable WHERE key LIKE '%AI.agent.model.session_selected_model' OR key LIKE '%AI.agent.model.recent_user_selection_by_agent_label' OR key LIKE '%ai-chat:sessionRelation:globalModelMap' LIMIT 20;`
+		type kvRow struct {
+			Key   string
+			Value string
+		}
+		var rows []kvRow
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		cmd := subproc.CommandContext(ctx, sqlitecli.Executable(), "-readonly", "-cmd", ".timeout 3000", "-json", vscdb, sqlQuery)
-		cmd.WaitDelay = time.Second
-		rawOut, err := cmd.Output()
+		err := sqlitecli.WithReadOnly(ctx, vscdb, 3*time.Second, func(ctx context.Context, db *sql.DB) error {
+			rset, err := db.QueryContext(ctx, `SELECT COALESCE(key,''), COALESCE(value,'') FROM ItemTable WHERE key LIKE '%AI.agent.model.session_selected_model' OR key LIKE '%AI.agent.model.recent_user_selection_by_agent_label' OR key LIKE '%ai-chat:sessionRelation:globalModelMap' LIMIT 20`)
+			if err != nil {
+				return err
+			}
+			defer rset.Close()
+			for rset.Next() {
+				var r kvRow
+				if err := rset.Scan(&r.Key, &r.Value); err != nil {
+					return err
+				}
+				rows = append(rows, r)
+			}
+			return rset.Err()
+		})
 		cancel()
-		if err != nil || len(bytes.TrimSpace(rawOut)) == 0 {
-			continue
-		}
-		var rows []struct {
-			Key   string `json:"key"`
-			Value string `json:"value"`
-		}
-		if json.Unmarshal(rawOut, &rows) != nil {
+		if err != nil || len(rows) == 0 {
 			continue
 		}
 		for _, r := range rows {

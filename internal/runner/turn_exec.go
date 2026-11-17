@@ -63,7 +63,7 @@ func (s *Service) startTurnProcessWithMode(
 		hookEnv, revokeHook = s.issueHookEnv(rec.ID, asstMsgID)
 	}
 
-	args := buildTurnCLIArgs(rec.Runtime, mode, modelID, effort, rec.ExternalID, geminiUsesAgy, claudeHookArgs)
+	args := buildTurnCLIArgs(rec.Runtime, mode, rec.ProviderID, modelID, effort, rec.ExternalID, geminiUsesAgy, claudeHookArgs)
 	binPath, args, err := s.confineRuntimeCommand(rec, rawBinPath, args)
 	if err != nil {
 		revokeHook()
@@ -301,7 +301,7 @@ func (s *Service) startTurnProcessWithMode(
 					if len(resetEvts) > 0 {
 						s.broadcastRouted(rec.ID, resetEvts)
 					}
-					retryArgs = buildTurnCLIArgs(rec.Runtime, mode, modelID, effort, initialExternalID, geminiUsesAgy, claudeHookArgs)
+					retryArgs = buildTurnCLIArgs(rec.Runtime, mode, rec.ProviderID, modelID, effort, initialExternalID, geminiUsesAgy, claudeHookArgs)
 					retryInput = inputBytes
 				} else {
 					settleEvts := tr.PrepareForResumeRetry(time.Now().UnixMilli())
@@ -312,7 +312,7 @@ func (s *Service) startTurnProcessWithMode(
 					if len(settleEvts) > 0 {
 						s.broadcastRouted(rec.ID, settleEvts)
 					}
-					retryArgs = buildTurnCLIArgs(rec.Runtime, mode, modelID, effort, resumeExtID, geminiUsesAgy, claudeHookArgs)
+					retryArgs = buildTurnCLIArgs(rec.Runtime, mode, rec.ProviderID, modelID, effort, resumeExtID, geminiUsesAgy, claudeHookArgs)
 					retryInput, _ = EncodeStreamInputTurnWithParts(inputRuntime, turnResumePrompt, nil)
 				}
 				emitMu.Unlock()
@@ -354,7 +354,7 @@ func (s *Service) startTurnProcessWithMode(
 					retryPrompt = sysPrefix + promptText
 				}
 				retryInput, _ := EncodeStreamInputTurnWithParts(inputRuntime, retryPrompt, deliveryParts)
-				retryArgs := buildTurnCLIArgs(rec.Runtime, mode, modelID, effort, "", geminiUsesAgy, claudeHookArgs)
+				retryArgs := buildTurnCLIArgs(rec.Runtime, mode, rec.ProviderID, modelID, effort, "", geminiUsesAgy, claudeHookArgs)
 				if started, retryWaitErr := s.runRetrySubprocess(rec, rawBinPath, retryArgs, procEnv, retryInput, ap, &stderrBuf, false, feedStdout); started {
 					waitErr = retryWaitErr
 					continue
@@ -478,7 +478,7 @@ func writeJSONError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]interface{}{"error": msg})
 }
 
-func buildTurnCLIArgs(runtime, mode, modelID, effort, externalID string, geminiUsesAgy bool, claudeHookArgs []string) []string {
+func buildTurnCLIArgs(runtime, mode, providerID, modelID, effort, externalID string, geminiUsesAgy bool, claudeHookArgs []string) []string {
 	switch runtime {
 	case string(RuntimeClaudeCode):
 		return append(BuildClaudeArgs(mode, modelID, effort, externalID), claudeHookArgs...)
@@ -492,6 +492,10 @@ func buildTurnCLIArgs(runtime, mode, modelID, effort, externalID string, geminiU
 		return BuildCodeBuddyArgs(mode, modelID, effort, externalID)
 	case string(RuntimeQoder):
 		return BuildQoderArgs(mode, modelID, effort, externalID)
+	case string(RuntimeCodex):
+		return BuildCodexArgs(mode, modelID, effort, externalID)
+	case string(RuntimeOpenCode):
+		return BuildOpenCodeCLIArgs(mode, providerID, modelID, effort, externalID)
 	default:
 		return BuildAgyArgs(mode, modelID, effort, externalID)
 	}

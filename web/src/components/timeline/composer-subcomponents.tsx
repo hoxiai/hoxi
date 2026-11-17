@@ -227,6 +227,7 @@ export function ComposerBottomToolbar(props: {
   onOpenCodeSearch: () => void;
   onOpenConvoy: () => void;
   onSwitchSandbox: (mode: "local" | "worktree") => void;
+  onToggleEngine?: () => void;
   onEnhance: () => void;
   onChooseFolder: () => void;
   onFork: () => void;
@@ -244,6 +245,7 @@ export function ComposerBottomToolbar(props: {
           skillActive={props.skillActive}
           sandboxMode={props.sandboxMode}
           runtime={props.runtime}
+          busy={props.busy}
           canEnhance={props.canEnhance}
           enhancing={props.enhancing}
           onAttach={props.onAttach}
@@ -251,6 +253,7 @@ export function ComposerBottomToolbar(props: {
           onOpenCodeSearch={props.onOpenCodeSearch}
           onOpenConvoy={props.onOpenConvoy}
           onSwitchSandbox={() => props.onSwitchSandbox("worktree")}
+          onToggleEngine={props.onToggleEngine}
           onEnhance={props.onEnhance}
         />
 

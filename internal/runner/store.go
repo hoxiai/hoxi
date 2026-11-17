@@ -123,6 +123,10 @@ func GenerateRunnerSessionID(rt string) string {
 		prefix = "ses_cbd"
 	case string(RuntimeQoder):
 		prefix = "ses_qdr"
+	case string(RuntimeCodex):
+		prefix = "ses_cdx"
+	case string(RuntimeNative):
+		prefix = "ses_nat"
 	case "opencode":
 		prefix = "ses_hoxi"
 	}
@@ -138,6 +142,8 @@ func IsRunnerSessionID(sessionID string) bool {
 		strings.HasPrefix(s, "ses_gem_") ||
 		strings.HasPrefix(s, "ses_cbd_") ||
 		strings.HasPrefix(s, "ses_qdr_") ||
+		strings.HasPrefix(s, "ses_cdx_") ||
+		strings.HasPrefix(s, "ses_nat_") ||
 		strings.HasPrefix(s, "ses_hoxi_")
 }
 

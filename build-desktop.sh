@@ -40,6 +40,14 @@ while [[ $# -gt 0 ]]; do
       INSTALL_RELEASE=0
       shift
       ;;
+    --bundle-opencode)
+      HOXI_BUNDLE_OPENCODE=1
+      shift
+      ;;
+    --no-bundle-opencode)
+      HOXI_BUNDLE_OPENCODE=0
+      shift
+      ;;
     --dmg)
       BUILD_DMG=1
       shift
@@ -217,11 +225,34 @@ resolve_opencode_bin() {
   return 0
 }
 
-OPENCODE_SRC="$(resolve_opencode_bin "${TARGET_ARCH}" || true)"
-if [[ -z "${OPENCODE_SRC}" && "$(uname -s)" == "Darwin" ]]; then
-  echo "Failed to resolve or download verified OpenCode executable matching internal/opencode/opencode.lock." >&2
-  exit 1
-fi
+OPENCODE_SRC=""
+BUNDLE_OPENCODE="${HOXI_BUNDLE_OPENCODE:-0}"
+case "${BUNDLE_OPENCODE}" in
+  0|false|FALSE)
+    BUNDLE_OPENCODE="0"
+    echo "ℹ️  HOXI_BUNDLE_OPENCODE=0 (default): skipping OpenCode sidecar for lean pure-Go Hoxi Native bundle (set HOXI_BUNDLE_OPENCODE=1 to bundle)." >&2
+    ;;
+  1|true|TRUE)
+    BUNDLE_OPENCODE="1"
+    OPENCODE_SRC="$(resolve_opencode_bin "${TARGET_ARCH}" || true)"
+    if [[ -z "${OPENCODE_SRC}" ]]; then
+      echo "Failed to resolve or download verified OpenCode executable matching internal/opencode/opencode.lock." >&2
+      exit 1
+    fi
+    ;;
+  auto|AUTO)
+    BUNDLE_OPENCODE="auto"
+    OPENCODE_SRC="$(resolve_opencode_bin "${TARGET_ARCH}" || true)"
+    if [[ -z "${OPENCODE_SRC}" ]]; then
+      echo "⚠️  OpenCode sidecar not bundled (offline or unavailable); building standalone pure-Go Hoxi Native bundle." >&2
+    fi
+    ;;
+  *)
+    echo "Unsupported HOXI_BUNDLE_OPENCODE value: ${BUNDLE_OPENCODE} (expected 0, 1, or auto)" >&2
+    exit 1
+    ;;
+esac
+export HOXI_BUNDLE_OPENCODE="${BUNDLE_OPENCODE}"
 
 resolve_signing_identity() {
   if [[ -n "${SIGN_IDENTITY}" ]]; then
@@ -269,6 +300,8 @@ bundle_and_sign_macos_app() {
     cp -L "${OPENCODE_SRC}" "${app_path}/Contents/MacOS/opencode"
     chmod 0755 "${app_path}/Contents/MacOS/opencode"
     echo "✅ Bundled standalone opencode sidecar (${OPENCODE_SRC}) into ${app_path}/Contents/MacOS/opencode"
+  else
+    rm -f "${app_path}/Contents/MacOS/opencode"
   fi
 
   for notice in LICENSE NOTICE THIRD_PARTY_NOTICES.md; do

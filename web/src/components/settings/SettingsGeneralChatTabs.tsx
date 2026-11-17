@@ -42,6 +42,8 @@ import {
   SettingRow,
   ToggleSwitch,
 } from "./setting-controls";
+import { CompanionSettingsSection } from "./CompanionSettingsSection";
+import { WallpaperGlassSection } from "./WallpaperGlassSection";
 
 export function GeneralAppearanceTab() {
   return (
@@ -107,16 +109,37 @@ export function GeneralAppearanceTab() {
           label={t("settings.sectionColorSchemeTitle")}
           tip={t("settings.sectionColorSchemeDesc")}
         >
-          <SegmentedPills<ColorScheme>
-            value={appSettings.colorScheme}
-            options={[
-              { id: "blue", label: () => t("settings.colorSchemeBlue") },
-              { id: "classic", label: () => t("settings.colorSchemeClassic") },
-              { id: "warm", label: () => t("settings.colorSchemeWarm") },
-              { id: "midnight", label: () => t("settings.colorSchemeMidnight") },
-            ]}
-            onChange={(val) => updateAppSetting("colorScheme", val)}
-          />
+          <div class="flex flex-wrap justify-end gap-1 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-1 max-w-xl">
+            <For
+              each={[
+                { id: "blue" as ColorScheme, label: () => t("settings.colorSchemeBlue"), dot: "#2563eb" },
+                { id: "classic" as ColorScheme, label: () => t("settings.colorSchemeClassic"), dot: "#52525b" },
+                { id: "warm" as ColorScheme, label: () => t("settings.colorSchemeWarm"), dot: "#b45309" },
+                { id: "midnight" as ColorScheme, label: () => t("settings.colorSchemeMidnight"), dot: "#6366f1" },
+                { id: "sakura" as ColorScheme, label: () => t("settings.colorSchemeSakura"), dot: "#ec4899" },
+                { id: "cyber" as ColorScheme, label: () => t("settings.colorSchemeCyber"), dot: "#a855f7" },
+                { id: "obsidian" as ColorScheme, label: () => t("settings.colorSchemeObsidian"), dot: "#f59e0b" },
+              ]}
+            >
+              {(opt) => (
+                <button
+                  type="button"
+                  onClick={() => updateAppSetting("colorScheme", opt.id)}
+                  class={`hoxi-press inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12.5px] font-medium cursor-pointer ${
+                    appSettings.colorScheme === opt.id
+                      ? "bg-[var(--bg-panel)] text-[var(--accent-primary)] shadow-2xs"
+                      : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                  }`}
+                >
+                  <span
+                    class="h-2 w-2 rounded-full shrink-0"
+                    style={{ background: opt.dot }}
+                  />
+                  <span>{opt.label()}</span>
+                </button>
+              )}
+            </For>
+          </div>
         </SettingRow>
 
         <SettingRow
@@ -136,6 +159,10 @@ export function GeneralAppearanceTab() {
           />
         </SettingRow>
       </SettingGroup>
+
+      <WallpaperGlassSection />
+
+      <CompanionSettingsSection />
 
       {/* 2. Terminal Appearance */}
       <SettingGroup

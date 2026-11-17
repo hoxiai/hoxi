@@ -2,6 +2,7 @@ import { batch } from "solid-js";
 import { t } from "../i18n";
 import {
   hoxiAPI,
+  isRunnerSessionID,
   resolveRunnerRuntimeForProvider,
   type BranchListResponse,
   type WorktreeMeta,
@@ -24,7 +25,15 @@ import {
   replaceSession,
 } from "./workspace-sessions";
 import { exitSessionWorktree, removeSessionFromStore } from "./session-lifecycle";
-import { isManagedSession, isSessionBusy, sessionDirectory, sessionRuntimeForID } from "./session-query";
+import {
+  isManagedSession,
+  isSessionBusy,
+  resolveSessionTargetRuntime,
+  sessionDirectory,
+  sessionRuntimeForID,
+  setPreferredAgentEngine,
+  type AgentEngineMode,
+} from "./session-query";
 import { refreshWorktreeStatus } from "./session-diffs";
 import { indexSession } from "./session-index";
 import { surfaceMode } from "./layout";
@@ -112,10 +121,7 @@ export async function newIsolatedSession(
   const directory = normalizeFolderPath(options?.directory) || workspace.rootDir;
   const initialAI = { ...workspace.defaultAI };
   const previousSessionID = workspace.activeSessionID;
-  const runtime = resolveRunnerRuntimeForProvider(
-    initialAI.model?.providerID,
-    Boolean(workspace.hoxiProviders?.[initialAI.model?.providerID || ""])
-  );
+  const runtime = resolveSessionTargetRuntime(null, initialAI.model?.providerID);
   const isRunner = runtime !== "opencode";
   const unattended = appSettings.approvalMode === "unattended";
   const currentSurface = isWorkSurfacePath(directory) ? "work" : surfaceMode();
@@ -136,7 +142,8 @@ export async function newIsolatedSession(
       sandboxMode: shouldIsolate ? "worktree" : "local",
       commandSandbox: unattended ? true : undefined,
     });
-    if (isRunner || session.managed) {
+    const serverProvisioned = Boolean(session.managed || (isRunner && (session.runtime || isRunnerSessionID(session.id))));
+    if (serverProvisioned) {
       const wtDir = session.directory || directory;
       if (!wtDir || (shouldIsolate && wtDir === directory)) {
         throw new Error(t("timeline.worktreeIsolationUnavailable"));
@@ -413,4 +420,18 @@ export function buildWorktreeVerifyFailurePrompt(input: {
     "",
     "Please diagnose the root cause from the output above, fix the relevant code or configuration, and re-run verification to confirm it passes.",
   ].join("\n");
+}
+
+export async function switchActiveSessionEngine(nextEngine: AgentEngineMode): Promise<void> {
+  setPreferredAgentEngine(nextEngine);
+  const id = workspace.activeSessionID;
+  if (!id || isSessionBusy(id)) return;
+  const curRuntime = sessionRuntimeForID(id);
+  if ((curRuntime !== "opencode" && curRuntime !== "native") || curRuntime === nextEngine) {
+    return;
+  }
+  const targetDir = sessionDirectory(id) || workspace.rootDir || undefined;
+  const model = workspace.aiBySession[id]?.model || workspace.defaultAI.model || undefined;
+  const updated = await hoxiAPI.switchSessionRuntime(id, nextEngine, model, targetDir);
+  replaceSession(updated);
 }

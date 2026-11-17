@@ -118,8 +118,20 @@ export default function SettingsModal() {
           icon: Settings,
           keywords: () => [
             t("settings.sectionThemeTitle"),
+            t("settings.sectionWallpaperTitle"),
+            t("companion.sectionTitle"),
+            t("companion.nameHoxiChan"),
+            t("companion.nameNekoBot"),
+            t("settings.colorSchemeSakura"),
+            t("settings.colorSchemeCyber"),
+            t("settings.colorSchemeObsidian"),
             t("settings.sectionTerminalTitle"),
             t("settings.sectionSidebarHistoryTitle"),
+            "Wallpaper",
+            "Glass",
+            "ACG",
+            "Companion",
+            "Mascot",
           ],
         },
         {
@@ -231,6 +243,9 @@ export default function SettingsModal() {
             t("settings.sectionMaintenanceTitle"),
             t("settings.browserIdleTimeoutLabel"),
             t("diagnostics.errorLogTitle"),
+            "Hoxi",
+            "Native",
+            "Engine",
             "OpenCode",
             "Chrome",
             "Browser",
@@ -390,7 +405,7 @@ export default function SettingsModal() {
 
         {/* Full-Screen Body: Left Grouped Sidebar Island + Right Content Island */}
         <div class="flex-1 flex flex-col sm:flex-row min-h-0 px-2 pb-2 gap-2">
-          <nav class="pane-island sm:w-64 shrink-0 p-3 flex sm:flex-col justify-between overflow-x-auto sm:overflow-y-auto bg-[var(--bg-panel)]">
+          <nav class="pane-island sm:w-64 shrink-0 p-3 flex sm:flex-col justify-between overflow-x-auto sm:overflow-y-auto">
             <div class="flex sm:block gap-2 sm:space-y-4 w-full">
               {/* Settings Search Filter */}
               <div class="hidden sm:block pb-1">
@@ -495,7 +510,7 @@ export default function SettingsModal() {
           </nav>
 
           {/* Right Content Island */}
-          <div class="pane-island flex-1 min-w-0 h-full flex flex-col overflow-hidden bg-[var(--bg-panel)]">
+          <div class="pane-island flex-1 min-w-0 h-full flex flex-col overflow-hidden">
             <Show when={isModelTab()}>
               <Show when={activeTab() === "providers"}>
                 <div class="flex-1 min-h-0 flex flex-col hoxi-view-enter">

@@ -274,3 +274,58 @@ func (s *Service) stampAbortedTurnErrorOnStore(sessionID string, abortErr *Messa
 		Properties: map[string]interface{}{"info": last},
 	})
 }
+
+func resolveSlashCommandAndAgentOverrides(
+	rawPrompt string,
+	worktreeDir string,
+	mode string,
+	providerID string,
+	modelID string,
+	callerSystem string,
+	runtimeName string,
+) (renderedPrompt, outMode, outProviderID, outModelID, outCallerSystem string) {
+	renderedPrompt = rawPrompt
+	outMode = mode
+	outProviderID = providerID
+	outModelID = modelID
+	outCallerSystem = callerSystem
+
+	if expanded, ok := llm.ExpandSlashCommand(rawPrompt, worktreeDir, nil); ok {
+		renderedPrompt = expanded.RenderedPrompt
+		if expanded.Agent != "" {
+			outMode = expanded.Agent
+		}
+		if expanded.Model != "" {
+			p, m := llm.SplitModelRef(expanded.Model)
+			if m != "" {
+				if p != "" {
+					outProviderID = p
+				}
+				outModelID = m
+			}
+		}
+	}
+
+	_, agentMap := llm.LoadAgents(worktreeDir, nil)
+	if spec, ok := agentMap[strings.ToLower(strings.TrimSpace(outMode))]; ok {
+		if strings.TrimSpace(outModelID) == "" && strings.TrimSpace(spec.Model) != "" {
+			if p, m := llm.SplitModelRef(spec.Model); m != "" {
+				if p != "" {
+					outProviderID = p
+				}
+				outModelID = m
+			}
+		}
+		// Inject custom agent prompt for non-native CLI runtimes too (native injects inside Engine.RunTurn).
+		if runtimeName != string(RuntimeNative) {
+			if p := strings.TrimSpace(spec.Prompt); p != "" && !strings.Contains(outCallerSystem, p) {
+				if outCallerSystem == "" {
+					outCallerSystem = p
+				} else {
+					outCallerSystem = p + "\n\n" + outCallerSystem
+				}
+			}
+		}
+	}
+	return renderedPrompt, outMode, outProviderID, outModelID, outCallerSystem
+}

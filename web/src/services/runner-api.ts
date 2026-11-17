@@ -5,6 +5,8 @@ import type { PermissionRequest, SessionInfo, SessionRuntime } from "./sse-types
 export { getGatewayToken, requestJSON, setGatewayToken };
 
 export const RUNNER_RUNTIMES = [
+  "native",
+  "codex",
   "antigravity",
   "gemini-cli",
   "claude-code",
@@ -15,6 +17,8 @@ export const RUNNER_RUNTIMES = [
 export type RunnerRuntimeID = (typeof RUNNER_RUNTIMES)[number];
 
 const RUNNER_SESSION_PREFIX_MAP: ReadonlyArray<[string, RunnerRuntimeID]> = [
+  ["ses_nat_", "native"],
+  ["ses_cdx_", "codex"],
   ["ses_agy_", "antigravity"],
   ["ses_gem_", "gemini-cli"],
   ["ses_cld_", "claude-code"],
@@ -23,6 +27,7 @@ const RUNNER_SESSION_PREFIX_MAP: ReadonlyArray<[string, RunnerRuntimeID]> = [
 ];
 
 const RUNNER_AUTH_MODE_SET = new Set<string>([
+  "codex-runner",
   "antigravity-runner",
   "gemini-runner",
   "claude-runner",
@@ -73,14 +78,17 @@ export function registerRunnerSessions(sessions: SessionInfo[]): void {
 
 export function resolveRunnerRuntimeForProvider(
   providerID?: string | null,
-  hasConfiguredProvider = false
+  hasConfiguredProvider = false,
+  preferredEngine: "opencode" | "native" = "native"
 ): SessionRuntime {
   if (providerID === "antigravity") return "antigravity";
+  if (providerID === "codex" && !hasConfiguredProvider) return "codex";
+  if (providerID === "opencode" && !hasConfiguredProvider) return "opencode";
   if (providerID === "gemini-cli" && !hasConfiguredProvider) return "gemini-cli";
   if (providerID === "claude-code" && !hasConfiguredProvider) return "claude-code";
   if (providerID === "codebuddy" && !hasConfiguredProvider) return "codebuddy";
   if (providerID === "qoder" && !hasConfiguredProvider) return "qoder";
-  return "opencode";
+  return preferredEngine === "opencode" ? "opencode" : "native";
 }
 
 // `installed && !current` means hooks.json still points at an old Hoxi binary.
@@ -118,7 +126,7 @@ export interface RunnerModelsResponse {
 
 export const runnerAPI = {
   listModels(
-    runtime: "antigravity" | "gemini-cli" | "claude-code" | "codebuddy" | "qoder",
+    runtime: "antigravity" | "gemini-cli" | "claude-code" | "codebuddy" | "qoder" | "codex" | "opencode",
     forceRefresh = false
   ): Promise<RunnerModelsResponse> {
     const qs = forceRefresh ? "?refresh=1" : "";
@@ -150,4 +158,3 @@ export const runnerAPI = {
     return requestJSON("/api/hoxi/runner/antigravity/hook", { method: "DELETE" });
   },
 };
-

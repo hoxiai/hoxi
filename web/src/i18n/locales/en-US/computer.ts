@@ -33,7 +33,7 @@ export const computer = {
   inspect: "Capture window",
   inspectElements: "Refresh elements",
   capturing: "Capturing…",
-  nextStep: "In an OpenCode chat, ask the agent to use hoxi_computer. Each input automatically refreshes window elements and observation state. You can pause or revoke access here",
+  nextStep: "Ask the agent in your chat to use hoxi_computer. Each input automatically refreshes window elements and observation state. You can pause or revoke access here",
   targetWindow: "Target window",
   preview: "Snapshot of the authorized app window (refresh manually)",
   elementCount: "Readable interface elements: {count}",

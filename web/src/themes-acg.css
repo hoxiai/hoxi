@@ -1,0 +1,441 @@
+/*
+ * Hoxi Extended Palettes & Adaptive Optical Frosted-Glass Engine
+ * Includes Sakura Bloom, Cyber ACG, Obsidian Gold, WCAG-tuned contrast ramps,
+ * and dual-layer dynamic-range-compressed glass overrides.
+ */
+
+/* Sakura Bloom — airy cherry-blossom mist (light) & night-sakura velvet (dark) */
+:root[data-color-scheme="sakura"] {
+  --bg-canvas: #fdf2f7;
+  --bg-panel: #fffbfd;
+  --bg-elevated: #fcecf3;
+  --bg-composer: rgba(255, 250, 253, 0.92);
+  --bg-inset: rgba(157, 23, 77, 0.055);
+  --bg-hover: rgba(190, 24, 93, 0.075);
+  --bg-selected: rgba(236, 72, 153, 0.14);
+  --bg-code: #faf0f5;
+  --border-subtle: rgba(157, 23, 77, 0.11);
+  --border-strong: rgba(157, 23, 77, 0.2);
+  --border-focus: rgba(236, 72, 153, 0.52);
+  --elevation-1: 0 1px 2px rgba(131, 24, 67, 0.05), 0 1px 1px rgba(131, 24, 67, 0.03);
+  --elevation-2: 0 1px 3px rgba(131, 24, 67, 0.06), 0 12px 28px -18px rgba(157, 23, 77, 0.18);
+  --elevation-3: 0 2px 8px rgba(131, 24, 67, 0.08), 0 20px 46px -20px rgba(157, 23, 77, 0.24);
+  --elevation-4: 0 4px 12px rgba(131, 24, 67, 0.1), 0 34px 72px -24px rgba(157, 23, 77, 0.32);
+  --overlay-backdrop: rgba(46, 12, 31, 0.44);
+  --island-shadow: var(--elevation-2);
+  --composer-shadow: 0 14px 34px -16px rgba(236, 72, 153, 0.18), 0 4px 12px -2px rgba(131, 24, 67, 0.06);
+  --bg-glass-pill: rgba(255, 248, 252, 0.84);
+  --border-glass-pill: rgba(255, 255, 255, 0.9);
+  --shadow-glass-pill: 0 6px 18px -6px rgba(157, 23, 77, 0.15), 0 0 0 1px rgba(190, 24, 93, 0.08);
+  --text-primary: #240f1b;
+  --text-secondary: #563246;
+  --text-muted: #764c63;
+  --text-faint: #966c83;
+  --accent-primary: #db2777;
+  --accent-foreground: #ffffff;
+  --accent-text: #be185d;
+  --accent-surface: rgba(236, 72, 153, 0.11);
+  --accent-border: rgba(236, 72, 153, 0.3);
+  --status-running: #db2777;
+  --info-text: #be185d;
+  --info-surface: rgba(236, 72, 153, 0.1);
+  --info-border: rgba(236, 72, 153, 0.26);
+}
+
+:root.dark[data-color-scheme="sakura"] {
+  --bg-canvas: #160e19;
+  --bg-panel: #211526;
+  --bg-elevated: #2c1d33;
+  --bg-composer: rgba(33, 21, 38, 0.92);
+  --bg-inset: rgba(249, 168, 212, 0.065);
+  --bg-hover: rgba(249, 168, 212, 0.095);
+  --bg-selected: rgba(244, 114, 182, 0.2);
+  --bg-code: #140c17;
+  --border-subtle: rgba(249, 168, 212, 0.13);
+  --border-strong: rgba(249, 168, 212, 0.22);
+  --border-focus: rgba(244, 114, 182, 0.58);
+  --elevation-1: 0 1px 2px rgba(8, 3, 12, 0.5), inset 0 1px 0 rgba(255, 228, 242, 0.05);
+  --elevation-2: 0 1px 2px rgba(8, 3, 12, 0.55), 0 14px 34px -20px rgba(8, 3, 12, 0.85), inset 0 1px 0 rgba(255, 228, 242, 0.055);
+  --elevation-3: 0 2px 8px rgba(8, 3, 12, 0.6), 0 22px 50px -22px rgba(8, 3, 12, 0.9), inset 0 1px 0 rgba(255, 228, 242, 0.06);
+  --elevation-4: 0 4px 12px rgba(8, 3, 12, 0.65), 0 36px 76px -26px rgba(8, 3, 12, 0.94), inset 0 1px 0 rgba(255, 228, 242, 0.07);
+  --overlay-backdrop: rgba(10, 4, 14, 0.68);
+  --island-shadow: var(--elevation-2);
+  --composer-shadow: 0 20px 44px -18px rgba(8, 3, 12, 0.78), 0 0 24px -12px rgba(244, 114, 182, 0.2), inset 0 1px 0 rgba(255, 228, 242, 0.05);
+  --bg-glass-pill: rgba(44, 29, 51, 0.82);
+  --border-glass-pill: rgba(249, 168, 212, 0.18);
+  --shadow-glass-pill: 0 8px 22px -6px rgba(8, 3, 12, 0.65), 0 0 0 1px rgba(249, 168, 212, 0.09);
+  --text-primary: #fdf2f8;
+  --text-secondary: #dfc4d4;
+  --text-muted: #b896aa;
+  --text-faint: #8f6d82;
+  --accent-primary: #f472b6;
+  --accent-foreground: #240c1c;
+  --accent-text: #fbcfe8;
+  --accent-surface: rgba(244, 114, 182, 0.17);
+  --accent-border: rgba(244, 114, 182, 0.36);
+  --status-running: #f472b6;
+  --info-text: #fbcfe8;
+  --info-surface: rgba(244, 114, 182, 0.15);
+  --info-border: rgba(244, 114, 182, 0.32);
+}
+
+/* Cyber ACG — holo-ice terminal (light) & neon Akihabara night-deck (dark) */
+:root[data-color-scheme="cyber"] {
+  --bg-canvas: #f0f5ff;
+  --bg-panel: #fbfdff;
+  --bg-elevated: #e9f1ff;
+  --bg-composer: rgba(251, 253, 255, 0.92);
+  --bg-inset: rgba(79, 70, 229, 0.055);
+  --bg-hover: rgba(124, 58, 237, 0.075);
+  --bg-selected: rgba(124, 58, 237, 0.13);
+  --bg-code: #eef3fc;
+  --border-subtle: rgba(79, 70, 229, 0.12);
+  --border-strong: rgba(79, 70, 229, 0.22);
+  --border-focus: rgba(124, 58, 237, 0.54);
+  --elevation-2: 0 1px 3px rgba(30, 27, 75, 0.05), 0 12px 28px -18px rgba(91, 33, 182, 0.2);
+  --elevation-3: 0 2px 8px rgba(30, 27, 75, 0.08), 0 20px 48px -20px rgba(91, 33, 182, 0.26);
+  --elevation-4: 0 4px 12px rgba(30, 27, 75, 0.1), 0 36px 76px -24px rgba(91, 33, 182, 0.34);
+  --overlay-backdrop: rgba(15, 18, 42, 0.46);
+  --island-shadow: var(--elevation-2);
+  --composer-shadow: 0 14px 34px -16px rgba(124, 58, 237, 0.18), 0 4px 12px -2px rgba(6, 182, 212, 0.09);
+  --bg-glass-pill: rgba(250, 252, 255, 0.84);
+  --border-glass-pill: rgba(255, 255, 255, 0.9);
+  --shadow-glass-pill: 0 6px 18px -6px rgba(79, 70, 229, 0.16), 0 0 0 1px rgba(124, 58, 237, 0.08);
+  --text-primary: #0f152b;
+  --text-secondary: #394266;
+  --text-muted: #58638a;
+  --text-faint: #7883a8;
+  --accent-primary: #7c3aed;
+  --accent-foreground: #ffffff;
+  --accent-text: #6d28d9;
+  --accent-surface: rgba(124, 58, 237, 0.11);
+  --accent-border: rgba(124, 58, 237, 0.3);
+  --status-running: #0891b2;
+  --info-text: #0e7490;
+  --info-surface: rgba(6, 182, 212, 0.11);
+  --info-border: rgba(6, 182, 212, 0.3);
+}
+
+:root.dark[data-color-scheme="cyber"] {
+  --bg-canvas: #080b16;
+  --bg-panel: #101528;
+  --bg-elevated: #18203a;
+  --bg-composer: rgba(16, 21, 40, 0.92);
+  --bg-inset: rgba(167, 139, 250, 0.07);
+  --bg-hover: rgba(167, 139, 250, 0.1);
+  --bg-selected: rgba(168, 85, 247, 0.22);
+  --bg-code: #0b0f1f;
+  --border-subtle: rgba(139, 92, 246, 0.16);
+  --border-strong: rgba(56, 189, 248, 0.26);
+  --border-focus: rgba(168, 85, 247, 0.62);
+  --elevation-1: 0 1px 2px rgba(2, 4, 14, 0.55), inset 0 1px 0 rgba(196, 181, 253, 0.06);
+  --elevation-2: 0 1px 2px rgba(2, 4, 14, 0.6), 0 14px 36px -18px rgba(2, 4, 14, 0.88), inset 0 1px 0 rgba(56, 189, 248, 0.07);
+  --elevation-3: 0 2px 10px rgba(2, 4, 14, 0.65), 0 24px 52px -20px rgba(2, 4, 14, 0.92), inset 0 1px 0 rgba(168, 85, 247, 0.08);
+  --elevation-4: 0 4px 14px rgba(2, 4, 14, 0.72), 0 36px 78px -24px rgba(2, 4, 14, 0.96), inset 0 1px 0 rgba(56, 189, 248, 0.09);
+  --overlay-backdrop: rgba(4, 6, 16, 0.72);
+  --island-shadow: var(--elevation-2);
+  --composer-shadow: 0 20px 46px -18px rgba(2, 4, 14, 0.82), 0 0 28px -12px rgba(168, 85, 247, 0.28), inset 0 1px 0 rgba(56, 189, 248, 0.08);
+  --bg-glass-pill: rgba(24, 32, 58, 0.84);
+  --border-glass-pill: rgba(167, 139, 250, 0.22);
+  --shadow-glass-pill: 0 8px 22px -6px rgba(2, 4, 14, 0.7), 0 0 0 1px rgba(56, 189, 248, 0.1);
+  --text-primary: #f1f5ff;
+  --text-secondary: #bfd0ef;
+  --text-muted: #93a4c8;
+  --text-faint: #6f80a6;
+  --accent-primary: #a855f7;
+  --accent-foreground: #ffffff;
+  --accent-text: #e9d5ff;
+  --accent-surface: rgba(168, 85, 247, 0.18);
+  --accent-border: rgba(168, 85, 247, 0.4);
+  --status-running: #22d3ee;
+  --info-text: #a5f3fc;
+  --info-surface: rgba(34, 211, 238, 0.14);
+  --info-border: rgba(34, 211, 238, 0.34);
+}
+
+/* Obsidian Gold — warm ivory & carbon-obsidian with signature amber-gold accent */
+:root[data-color-scheme="obsidian"] {
+  --bg-canvas: #f6f5f1;
+  --bg-panel: #ffffff;
+  --bg-elevated: #efede6;
+  --bg-composer: rgba(255, 255, 255, 0.94);
+  --bg-inset: rgba(24, 24, 27, 0.05);
+  --bg-hover: rgba(217, 119, 6, 0.08);
+  --bg-selected: rgba(217, 119, 6, 0.14);
+  --bg-code: #f2f0e9;
+  --border-subtle: rgba(24, 24, 27, 0.1);
+  --border-strong: rgba(24, 24, 27, 0.19);
+  --border-focus: rgba(217, 119, 6, 0.54);
+  --elevation-2: 0 1px 2px rgba(24, 24, 27, 0.06), 0 10px 28px -18px rgba(24, 24, 27, 0.18);
+  --elevation-3: 0 2px 7px rgba(24, 24, 27, 0.08), 0 18px 44px -20px rgba(24, 24, 27, 0.24);
+  --elevation-4: 0 4px 12px rgba(24, 24, 27, 0.1), 0 32px 68px -24px rgba(24, 24, 27, 0.32);
+  --overlay-backdrop: rgba(18, 17, 15, 0.48);
+  --island-shadow: var(--elevation-2);
+  --composer-shadow: 0 14px 32px -16px rgba(180, 83, 9, 0.14), 0 4px 12px -2px rgba(24, 24, 27, 0.05);
+  --bg-glass-pill: rgba(255, 254, 250, 0.84);
+  --border-glass-pill: rgba(255, 255, 255, 0.88);
+  --shadow-glass-pill: 0 4px 14px -4px rgba(24, 24, 27, 0.12);
+  --text-primary: #18181b;
+  --text-secondary: #43413c;
+  --text-muted: #636058;
+  --text-faint: #827e75;
+  --accent-primary: #d97706;
+  --accent-foreground: #ffffff;
+  --accent-text: #b45309;
+  --accent-surface: rgba(217, 119, 6, 0.12);
+  --accent-border: rgba(217, 119, 6, 0.32);
+  --status-running: #d97706;
+  --info-text: #b45309;
+  --info-surface: rgba(217, 119, 6, 0.11);
+  --info-border: rgba(217, 119, 6, 0.28);
+}
+
+:root.dark[data-color-scheme="obsidian"] {
+  --bg-canvas: #0c0c0e;
+  --bg-panel: #151519;
+  --bg-elevated: #1e1e24;
+  --bg-composer: rgba(21, 21, 25, 0.94);
+  --bg-inset: rgba(251, 191, 36, 0.06);
+  --bg-hover: rgba(251, 191, 36, 0.09);
+  --bg-selected: rgba(245, 158, 11, 0.2);
+  --bg-code: #0a0a0c;
+  --border-subtle: rgba(255, 255, 255, 0.1);
+  --border-strong: rgba(251, 191, 36, 0.24);
+  --border-focus: rgba(245, 158, 11, 0.6);
+  --elevation-1: 0 1px 2px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(251, 191, 36, 0.05);
+  --elevation-2: 0 1px 2px rgba(0, 0, 0, 0.68), 0 14px 34px -20px rgba(0, 0, 0, 0.9), inset 0 1px 0 rgba(251, 191, 36, 0.065);
+  --elevation-3: 0 2px 8px rgba(0, 0, 0, 0.74), 0 22px 50px -22px rgba(0, 0, 0, 0.94), inset 0 1px 0 rgba(251, 191, 36, 0.08);
+  --elevation-4: 0 4px 12px rgba(0, 0, 0, 0.8), 0 36px 76px -26px rgba(0, 0, 0, 0.98), inset 0 1px 0 rgba(251, 191, 36, 0.09);
+  --overlay-backdrop: rgba(4, 4, 6, 0.76);
+  --island-shadow: var(--elevation-2);
+  --composer-shadow: 0 20px 44px -18px rgba(0, 0, 0, 0.86), 0 0 22px -12px rgba(245, 158, 11, 0.2), inset 0 1px 0 rgba(251, 191, 36, 0.07);
+  --bg-glass-pill: rgba(30, 30, 36, 0.84);
+  --border-glass-pill: rgba(251, 191, 36, 0.18);
+  --shadow-glass-pill: 0 8px 22px -6px rgba(0, 0, 0, 0.72), 0 0 0 1px rgba(251, 191, 36, 0.08);
+  --text-primary: #f7f6f2;
+  --text-secondary: #cbc8bf;
+  --text-muted: #a19d93;
+  --text-faint: #7c786f;
+  --accent-primary: #f59e0b;
+  --accent-foreground: #111113;
+  --accent-text: #fde68a;
+  --accent-surface: rgba(245, 158, 11, 0.16);
+  --accent-border: rgba(245, 158, 11, 0.38);
+  --status-running: #fbbf24;
+  --info-text: #fde68a;
+  --info-surface: rgba(245, 158, 11, 0.14);
+  --info-border: rgba(245, 158, 11, 0.32);
+}
+
+/*
+ * Adaptive Dual-Layer Frosted Glass & Wallpaper Readability Engine
+ * Activated when `:root[data-wallpaper-active="true"]` is set by store/wallpaper.ts.
+ */
+:root {
+  --glass-surface-opacity: 78%;
+  --glass-text-zone-opacity: 84%;
+  --glass-art-zone-opacity: 72%;
+  --glass-nav-opacity: 72%;
+  --glass-composer-opacity: 86%;
+  --glass-header-opacity: 72%;
+  --glass-blur: 18px;
+  --glass-backdrop-contrast: 0.86;
+  --glass-backdrop-saturate: 1.08;
+  --wallpaper-img-contrast: 0.88;
+  --wallpaper-img-brightness: 1;
+  --wallpaper-dim-opacity: 0.2;
+  --wallpaper-header-scrim: 0.56;
+}
+
+:root[data-wallpaper-active="true"] {
+  --text-secondary: color-mix(in srgb, var(--text-primary) 82%, var(--bg-panel));
+  --text-muted: color-mix(in srgb, var(--text-primary) 68%, var(--bg-panel));
+  --text-faint: color-mix(in srgb, var(--text-primary) 54%, var(--bg-panel));
+  --bg-inset: color-mix(in srgb, var(--bg-panel) 72%, var(--text-primary) 7%);
+  --bg-hover: color-mix(in srgb, var(--bg-panel) 66%, var(--accent-primary) 13%);
+  --glass-text-halo:
+    0 1px 1.5px color-mix(in srgb, var(--bg-panel) 92%, #ffffff),
+    0 0 6px color-mix(in srgb, var(--bg-panel) 64%, transparent);
+  --glass-specular-edge: rgba(255, 255, 255, 0.55);
+}
+
+:root.dark[data-wallpaper-active="true"] {
+  --glass-text-halo:
+    0 1px 2px rgba(2, 6, 18, 0.84),
+    0 0 8px rgba(2, 6, 18, 0.52);
+  --glass-specular-edge: rgba(255, 255, 255, 0.12);
+}
+
+:root[data-wallpaper-active="true"] body {
+  background-color: var(--bg-canvas);
+}
+
+:root[data-wallpaper-active="true"] .hoxi-shell-root {
+  background-color: transparent;
+}
+
+:root[data-wallpaper-active="true"] .hoxi-header-bar {
+  background-color: color-mix(in srgb, var(--bg-canvas) var(--glass-header-opacity), transparent);
+  -webkit-backdrop-filter: blur(14px)
+    contrast(var(--glass-backdrop-contrast))
+    saturate(var(--glass-backdrop-saturate));
+  backdrop-filter: blur(14px)
+    contrast(var(--glass-backdrop-contrast))
+    saturate(var(--glass-backdrop-saturate));
+  border-bottom: 1px solid color-mix(in srgb, var(--border-subtle) 80%, var(--glass-specular-edge));
+  text-shadow: var(--glass-text-halo);
+}
+
+:root[data-wallpaper-active="true"] .hoxi-screen {
+  background-color: color-mix(in srgb, var(--bg-canvas) 88%, transparent);
+  -webkit-backdrop-filter: blur(24px) contrast(0.86) saturate(1.08);
+  backdrop-filter: blur(24px) contrast(0.86) saturate(1.08);
+}
+
+/* Crystal Mode (0px main-pane blur): keeps `contain: layout paint` while adaptive veil + text halo guard legibility */
+:root[data-wallpaper-active="true"] .pane-island {
+  background: linear-gradient(
+    104deg,
+    color-mix(in srgb, var(--bg-panel) var(--glass-text-zone-opacity), transparent) 0%,
+    color-mix(in srgb, var(--bg-panel) var(--glass-surface-opacity), transparent) 58%,
+    color-mix(in srgb, var(--bg-panel) var(--glass-art-zone-opacity), transparent) 100%
+  );
+  border-color: color-mix(in srgb, var(--border-strong) 86%, var(--glass-specular-edge));
+  box-shadow: var(--island-shadow), inset 0 1px 0 var(--glass-specular-edge);
+  text-shadow: var(--glass-text-halo);
+  contain: layout paint;
+}
+
+/* Frosted Mode (default, blur >= 12px): optical dynamic-range-compressing Gaussian blur */
+:root[data-wallpaper-active="true"][data-wallpaper-blur="true"] .pane-island {
+  -webkit-backdrop-filter: blur(var(--glass-blur))
+    contrast(var(--glass-backdrop-contrast))
+    saturate(var(--glass-backdrop-saturate));
+  backdrop-filter: blur(var(--glass-blur))
+    contrast(var(--glass-backdrop-contrast))
+    saturate(var(--glass-backdrop-saturate));
+  contain: layout;
+}
+
+:root[data-wallpaper-active="true"] .pane-island pre,
+:root[data-wallpaper-active="true"] .pane-island code,
+:root[data-wallpaper-active="true"] .pane-island .shiki,
+:root[data-wallpaper-active="true"] input,
+:root[data-wallpaper-active="true"] textarea {
+  text-shadow: none;
+}
+
+:root[data-wallpaper-active="true"] .pane-island pre,
+:root[data-wallpaper-active="true"] .pane-island .shiki {
+  background-color: color-mix(in srgb, var(--bg-code) 95%, var(--bg-panel));
+}
+
+:root[data-wallpaper-active="true"] #workspace-left-nav {
+  background-color: color-mix(in srgb, var(--bg-panel) var(--glass-nav-opacity), transparent);
+  border-right: 1px solid color-mix(in srgb, var(--border-subtle) 82%, var(--glass-specular-edge));
+  border-radius: 0 0.75rem 0.75rem 0;
+  text-shadow: var(--glass-text-halo);
+}
+
+:root[data-wallpaper-active="true"][data-wallpaper-blur="true"] #workspace-left-nav {
+  -webkit-backdrop-filter: blur(var(--glass-blur))
+    contrast(var(--glass-backdrop-contrast))
+    saturate(var(--glass-backdrop-saturate));
+  backdrop-filter: blur(var(--glass-blur))
+    contrast(var(--glass-backdrop-contrast))
+    saturate(var(--glass-backdrop-saturate));
+}
+
+:root[data-wallpaper-active="true"] .chat-composer-glass {
+  background-color: color-mix(in srgb, var(--bg-panel) var(--glass-composer-opacity), transparent);
+  -webkit-backdrop-filter: blur(18px)
+    contrast(var(--glass-backdrop-contrast))
+    saturate(1.12);
+  backdrop-filter: blur(18px)
+    contrast(var(--glass-backdrop-contrast))
+    saturate(1.12);
+  text-shadow: none;
+}
+
+/* Dedicated Companion Card & Floating Dock Glass (no `container-type: inline-size` width collapse) */
+.hoxi-companion-glass {
+  background-color: var(--bg-composer);
+  -webkit-backdrop-filter: blur(16px) saturate(1.14);
+  backdrop-filter: blur(16px) saturate(1.14);
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--elevation-3);
+  transition:
+    border-color 180ms var(--ease-enter),
+    box-shadow 240ms var(--ease-enter);
+}
+
+:root[data-wallpaper-active="true"] .hoxi-companion-glass {
+  background-color: color-mix(in srgb, var(--bg-panel) var(--glass-composer-opacity), transparent);
+  -webkit-backdrop-filter: blur(18px)
+    contrast(var(--glass-backdrop-contrast))
+    saturate(1.12);
+  backdrop-filter: blur(18px)
+    contrast(var(--glass-backdrop-contrast))
+    saturate(1.12);
+  text-shadow: none;
+}
+
+:root[data-wallpaper-active="true"] .hoxi-popover {
+  background-color: color-mix(in srgb, var(--bg-elevated) 92%, transparent);
+  -webkit-backdrop-filter: blur(24px) contrast(0.86) saturate(1.12);
+  backdrop-filter: blur(24px) contrast(0.86) saturate(1.12);
+  text-shadow: none;
+}
+
+/* Companion Mascot Motion Primitives */
+@keyframes hoxi-companion-bob {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-3.5px);
+  }
+}
+
+@keyframes hoxi-companion-shake {
+  0%, 100% {
+    transform: translateX(0px);
+  }
+  25% {
+    transform: translateX(-2px) rotate(-1.5deg);
+  }
+  75% {
+    transform: translateX(2px) rotate(1.5deg);
+  }
+}
+
+@keyframes hoxi-companion-blink {
+  0%, 92%, 100% {
+    transform: scaleY(1);
+  }
+  96% {
+    transform: scaleY(0.12);
+  }
+}
+
+.hoxi-companion-float {
+  animation: hoxi-companion-bob 3.6s ease-in-out infinite;
+}
+
+.hoxi-companion-alert {
+  animation: hoxi-companion-shake 0.55s ease-in-out 3;
+}
+
+.hoxi-companion-eye {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: hoxi-companion-blink 4.8s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hoxi-companion-float,
+  .hoxi-companion-alert,
+  .hoxi-companion-eye {
+    animation: none;
+  }
+}

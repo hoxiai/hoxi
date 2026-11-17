@@ -3,7 +3,7 @@ package devpulse
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -12,7 +12,6 @@ import (
 
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
 	"github.com/hoxiai/hoxi/internal/sqlitecli"
-	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 type GitTarget struct {
@@ -552,17 +551,22 @@ func queryOpenCodeSessionDirs() []string {
 	if dbPath == "" {
 		return nil
 	}
-	if _, err := os.Stat(dbPath); err != nil {
-		return nil
-	}
-	const q = `SELECT COALESCE(json_group_array(directory), '[]') FROM (SELECT DISTINCT directory FROM session WHERE directory IS NOT NULL AND directory != '' LIMIT 200);`
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	out, err := subproc.CommandContext(ctx, sqlitecli.Executable(), "-readonly", "-cmd", ".timeout 2000", dbPath, q).Output()
-	if err != nil || len(bytes.TrimSpace(out)) == 0 {
-		return nil
-	}
 	var dirs []string
-	_ = json.Unmarshal(bytes.TrimSpace(out), &dirs)
+	_ = sqlitecli.WithReadOnly(ctx, dbPath, 2*time.Second, func(ctx context.Context, db *sql.DB) error {
+		rows, err := db.QueryContext(ctx, `SELECT DISTINCT directory FROM session WHERE directory IS NOT NULL AND directory != '' LIMIT 200;`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var d string
+			if rows.Scan(&d) == nil && d != "" {
+				dirs = append(dirs, d)
+			}
+		}
+		return rows.Err()
+	})
 	return dirs
 }

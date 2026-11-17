@@ -337,7 +337,7 @@ func (s *Service) resolveContext(ctx context.Context, directory, sessionID, requ
 		return RequestContext{}, fmt.Errorf("%w: valid workspace directory is required", ErrBadRequest)
 	}
 	if rc.Runtime == "" {
-		rc.Runtime = "opencode"
+		rc.Runtime = "native"
 	}
 	return rc, nil
 }
@@ -359,7 +359,7 @@ func (s *Service) loadOpenCodeCatalog(ctx context.Context, rc RequestContext, fo
 
 	rawItems, err := s.fetchOpenCodeSkills(ctx, rc.Directory)
 	if err != nil {
-		return nil, err
+		rawItems = scanLocalSkills(rc.Directory, rc.ProjectRoot)
 	}
 
 	engineCfg := s.fetchEngineSkillConfig(ctx, rc.Directory)

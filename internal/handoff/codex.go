@@ -4,13 +4,13 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -70,27 +70,31 @@ func scanCodexSessions(targetDir, query string) ([]ExternalSessionSummary, Exter
 		return nil, stats
 	}
 
-	// Count total threads and fetch top 100 recent threads
-	countOut, err := codexCommandOutput(sqlitecli.Executable(), "-readonly", "-cmd", ".timeout 5000", dbPath, "SELECT count(*) FROM threads WHERE archived = 0;")
-	if err == nil {
-		if n, err := strconv.Atoi(strings.TrimSpace(string(countOut))); err == nil {
-			stats.SessionCount = n
-		}
-	}
-
-	sqlQuery := `SELECT id, rollout_path, created_at, updated_at, cwd, title, COALESCE(git_branch,'') AS git_branch, COALESCE(git_sha,'') AS git_sha, COALESCE(model,'') AS model, COALESCE(first_user_message,'') AS first_user_message
-FROM threads
-WHERE archived = 0 AND title != 'Guardian review'
-ORDER BY updated_at DESC
-LIMIT 120;`
-
-	rawJSON, err := codexCommandOutput(sqlitecli.Executable(), "-readonly", "-cmd", ".timeout 5000", "-json", dbPath, sqlQuery)
-	if err != nil || len(bytes.TrimSpace(rawJSON)) == 0 {
-		return nil, stats
-	}
-
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	var rows []codexThreadRow
-	if json.Unmarshal(rawJSON, &rows) != nil {
+	err := sqlitecli.WithReadOnly(ctx, dbPath, 5*time.Second, func(ctx context.Context, db *sql.DB) error {
+		_ = db.QueryRowContext(ctx, `SELECT count(*) FROM threads WHERE archived = 0;`).Scan(&stats.SessionCount)
+		r, err := db.QueryContext(ctx, `
+			SELECT COALESCE(id,''), COALESCE(rollout_path,''), COALESCE(created_at,0), COALESCE(updated_at,0), COALESCE(cwd,''), COALESCE(title,''), COALESCE(git_branch,''), COALESCE(git_sha,''), COALESCE(model,''), COALESCE(first_user_message,'')
+			FROM threads
+			WHERE archived = 0 AND COALESCE(title,'') != 'Guardian review'
+			ORDER BY updated_at DESC
+			LIMIT 120;`)
+		if err != nil {
+			return err
+		}
+		defer r.Close()
+		for r.Next() {
+			var row codexThreadRow
+			if err := r.Scan(&row.ID, &row.RolloutPath, &row.CreatedAt, &row.UpdatedAt, &row.CWD, &row.Title, &row.GitBranch, &row.GitSHA, &row.Model, &row.FirstUserMessage); err != nil {
+				return err
+			}
+			rows = append(rows, row)
+		}
+		return r.Err()
+	})
+	if err != nil || len(rows) == 0 {
 		return nil, stats
 	}
 
@@ -145,19 +149,17 @@ func loadCodexSessionDetail(sessionID, hintCWD, activeRoot string) (*ExternalSes
 	if dbPath == "" {
 		return nil, fmt.Errorf("codex state database not found")
 	}
-	safeID := strings.ReplaceAll(strings.ReplaceAll(sessionID, "\x00", ""), "'", "''")
-	sqlQuery := fmt.Sprintf(`SELECT id, rollout_path, created_at, updated_at, cwd, title, COALESCE(git_branch,'') AS git_branch, COALESCE(git_sha,'') AS git_sha, COALESCE(model,'') AS model, COALESCE(first_user_message,'') AS first_user_message
-FROM threads WHERE id = '%s' LIMIT 1;`, safeID)
-
-	rawJSON, err := codexCommandOutput(sqlitecli.Executable(), "-readonly", "-cmd", ".timeout 5000", "-json", dbPath, sqlQuery)
-	if err != nil {
-		return nil, err
-	}
-	var rows []codexThreadRow
-	if json.Unmarshal(rawJSON, &rows) != nil || len(rows) == 0 {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var row codexThreadRow
+	err := sqlitecli.QueryRowReadOnly(ctx, dbPath, 5*time.Second,
+		`SELECT COALESCE(id,''), COALESCE(rollout_path,''), COALESCE(created_at,0), COALESCE(updated_at,0), COALESCE(cwd,''), COALESCE(title,''), COALESCE(git_branch,''), COALESCE(git_sha,''), COALESCE(model,''), COALESCE(first_user_message,'') FROM threads WHERE id = ? LIMIT 1;`,
+		[]any{sessionID},
+		&row.ID, &row.RolloutPath, &row.CreatedAt, &row.UpdatedAt, &row.CWD, &row.Title, &row.GitBranch, &row.GitSHA, &row.Model, &row.FirstUserMessage,
+	)
+	if err != nil || row.ID == "" {
 		return nil, fmt.Errorf("codex session not found: %s", sessionID)
 	}
-	row := rows[0]
 	createdMs := row.CreatedAt
 	if createdMs > 0 && createdMs < 10000000000 {
 		createdMs *= 1000

@@ -4,6 +4,9 @@ import type { CommandPaletteMode } from "./CommandPalette";
 import UpdateDrainNotice from "./UpdateDrainNotice";
 import UpdateWatcher from "./UpdateWatcher";
 import LeftNav from "./LeftNav";
+import WallpaperBackdrop from "./WallpaperBackdrop";
+import CompanionCornerDock from "../companion/CompanionCornerDock";
+import CompanionWelcomeStage from "../companion/CompanionWelcomeStage";
 import MessageStream from "../timeline/MessageStream";
 import Composer from "../timeline/Composer";
 import ParticleLogo from "../timeline/ParticleLogo";
@@ -13,12 +16,12 @@ import {
   canFitRightPane,
   clampRightPaneWidth,
   closeSettingsModal,
+  companionState,
   DEFAULT_LEFT_WIDTH,
   DEFAULT_RIGHT_WIDTH,
   imageViewerOpen,
   isWorkSurfacePath,
   isUpdateModalOpen,
-  leaderboardState,
   LEFT_PANE_MAX,
   LEFT_PANE_MIN,
   leftNavOpen,
@@ -44,7 +47,6 @@ const UpdateModal = lazy(() => import("./UpdateModal"));
 const ImagePreviewOverlay = lazy(() => import("../preview/ImagePreviewOverlay"));
 const WorkspaceModal = lazy(() => import("./WorkspaceModal"));
 const ExternalHandoffModal = lazy(() => import("../handoff/ExternalHandoffModal"));
-const ModelLeaderboardModal = lazy(() => import("../models/ModelLeaderboardModal"));
 const SettingsModal = lazy(() => import("../settings/SettingsModal"));
 
 interface ThreePaneShellProps {
@@ -70,7 +72,6 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
   const updateModalEverOpened = useEverOpened(isUpdateModalOpen);
   const workspaceModalEverOpened = useEverOpened(() => workspace.workspaceModalMode !== null);
   const handoffModalEverOpened = useEverOpened(() => workspace.handoffModalOpen);
-  const leaderboardEverOpened = useEverOpened(() => leaderboardState.modalOpen);
   const settingsEverOpened = useEverOpened(() => appSettings.modalOpen);
 
   const effectiveLeftWidth = () => (leftNavOpen() ? leftWidth() : 0);
@@ -153,7 +154,6 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
         !ev.defaultPrevented &&
         appSettings.modalOpen &&
         !isUpdateModalOpen() &&
-        !leaderboardState.modalOpen &&
         !workspace.handoffModalOpen &&
         workspace.workspaceModalMode === null
       ) {
@@ -260,29 +260,31 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
   return (
     <div
       data-surface={isWorkSurface() ? "work" : "code"}
-      class="h-screen w-screen flex flex-col bg-[var(--bg-canvas)] text-[var(--text-primary)] overflow-hidden"
+      class="hoxi-shell-root relative isolate h-screen w-screen flex flex-col bg-[var(--bg-canvas)] text-[var(--text-primary)] overflow-hidden"
     >
+      <WallpaperBackdrop />
       <Show when={surfaceExtension.enabled && surfaceExtension.renderTheme}>
         {surfaceExtension.renderTheme!()}
       </Show>
-      <CompactHeader
-        network={props.network}
-        leftNavOpen={leftNavOpen()}
-        onToggleLeftNav={() => setLeftNavOpen((open) => !open)}
-        inspectorOpen={workspace.inspectorOpen}
-        onOpenCommandPalette={() => setPaletteMode("actions")}
-        onToggleInspector={() => {
-          const next = !workspace.inspectorOpen;
-          setWorkspace("inspectorOpen", next);
-          if (!next) {
-            setWorkspace("inspectorMaximized", false);
-          }
-        }}
-      />
+      <div class="relative z-30 shrink-0">
+        <CompactHeader
+          network={props.network}
+          leftNavOpen={leftNavOpen()}
+          onToggleLeftNav={() => setLeftNavOpen((open) => !open)}
+          inspectorOpen={workspace.inspectorOpen}
+          onOpenCommandPalette={() => setPaletteMode("actions")}
+          onToggleInspector={() => {
+            const next = !workspace.inspectorOpen;
+            setWorkspace("inspectorOpen", next);
+            if (!next) {
+              setWorkspace("inspectorMaximized", false);
+            }
+          }}
+        />
+        <UpdateDrainNotice />
+      </div>
 
-      <UpdateDrainNotice />
-
-      <main class="flex-1 flex min-h-0 pb-2 pr-2">
+      <main class="relative z-10 flex-1 flex min-h-0 pb-2 pr-2">
         {/* Left Navigation Sidebar (outer clips width transition; inner keeps fixed width for zero text reflow) */}
         <div
           id="workspace-left-nav"
@@ -358,7 +360,12 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
                     </div>
                   </Show>
                   <div class={isWorkSurface() && surfaceExtension.renderLaunchpad ? "hidden" : "block"}>
-                    <ParticleLogo play={isNewConversation() && !isWorkSurface()} />
+                    <Show
+                      when={companionState.enabled && companionState.showWelcomeStage}
+                      fallback={<ParticleLogo play={isNewConversation() && !isWorkSurface()} />}
+                    >
+                      <CompanionWelcomeStage />
+                    </Show>
                   </div>
                 </div>
               </div>
@@ -379,6 +386,7 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
               "flex-grow": isNewConversation() ? 0.64 : 0,
             }}
           />
+
           </Show>
         </section>
 
@@ -450,9 +458,12 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
         </div>
       </main>
 
+      <CompanionCornerDock
+        hiddenByStage={isWorkSurface() || (isNewConversation() && companionState.showWelcomeStage)}
+      />
       <UpdateWatcher />
 
-      {/* On-demand overlays, Workspace, Session Handoff, Leaderboard Modals & Full-Screen Settings Control Center */}
+      {/* On-demand overlays, Workspace, Session Handoff & Full-Screen Settings Control Center */}
       <Suspense>
         <Show when={imageViewerEverOpened()}>
           <ImagePreviewOverlay />
@@ -468,9 +479,6 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
         </Show>
         <Show when={handoffModalEverOpened()}>
           <ExternalHandoffModal />
-        </Show>
-        <Show when={leaderboardEverOpened()}>
-          <ModelLeaderboardModal />
         </Show>
         <Show when={settingsEverOpened()}>
           <SettingsModal />

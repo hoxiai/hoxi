@@ -6,13 +6,38 @@ export type DesktopIntentAction =
   | "handoff"
   | "policy"
   | "settings"
-  | "sync-keep-awake";
+  | "sync-keep-awake"
+  | "companion-tap"
+  | "companion-toggle-min"
+  | "companion-dismiss";
 
 export interface DesktopIntent {
   action?: DesktopIntentAction;
   sessionID?: string;
   messageID?: string;
   directory?: string;
+}
+
+export interface DesktopCompanionPayload {
+  visible: boolean;
+  minimized: boolean;
+  darkTheme: boolean;
+  persona: string;
+  personaName: string;
+  mood: string;
+  badgeLabel: string;
+  levelText: string;
+  dialogue: string;
+  showBubble: boolean;
+  targetSessionID: string;
+  accentHex: string;
+  avatarKey: string;
+  avatarDataURL?: string;
+}
+
+export interface DesktopCompanionSyncResponse {
+  supported: boolean;
+  needAvatar: boolean;
 }
 
 export interface PromptAttachment {
@@ -256,6 +281,8 @@ export interface BootstrapInfo {
 
 export interface SystemRuntimeInfo {
   appVersion: string;
+  nativeEngineReady?: boolean;
+  executablePath?: string;
   openCodeBinPath: string;
   openCodeVersion: string;
   openCodePort: number;
@@ -392,6 +419,10 @@ export interface AgentInfo {
   name: string;
   description?: string;
   mode?: "primary" | "subagent" | "all";
+  model?: string;
+  steps?: number;
+  builtIn?: boolean;
+  readOnly?: boolean;
   hidden?: boolean;
   native?: boolean;
   prompt?: string;
@@ -491,8 +522,6 @@ export type {
   ConnectableGatewaysResponse,
   FreeTierGuideRemoteItem,
   FreeTiersResponse,
-  LeaderboardModelItem,
-  LeaderboardResponse,
   ModelPricingItem,
   ModelPricingResponse,
   NativeUpdateStatus,

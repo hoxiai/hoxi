@@ -37,7 +37,8 @@ export default function PlanFollowupBar() {
     if (
       lastTurn.info.error ||
       lastTurn.info.finish === "error" ||
-      lastTurn.info.finish === "aborted"
+      lastTurn.info.finish === "aborted" ||
+      lastTurn.info.finish === "interrupted"
     ) {
       return null;
     }
