@@ -17,6 +17,7 @@ import {
   isRunnerStallError,
   isSessionBusy,
   isUserAbortError,
+  LOCAL_CLI_RUNTIME_PROVIDERS,
   MAX_TURN_RETRY_DELAY_MS,
   OFFICIAL_PROVIDER_ID,
   openDesktopPortalPage,
@@ -143,7 +144,7 @@ export function AssistantErrorCard(props: { info: MessageInfo }) {
   );
   const isProviderDegraded = createMemo(() => {
     const h = providerHealth();
-    if (!h) return false;
+    if (!h || h.totalTurns < 2) return false;
     return (
       (h.stabilityScore ?? 100) < 82 &&
       (h.status === "degraded" || h.status === "warning" || h.riskTags.length > 0)
@@ -152,9 +153,12 @@ export function AssistantErrorCard(props: { info: MessageInfo }) {
   const isAuthError = createMemo(() =>
     props.info.error ? decideAutoFailover(props.info.error, 0).reason === "auth" : false
   );
+  const isCliRuntimeTurn = createMemo(() => LOCAL_CLI_RUNTIME_PROVIDERS.has(providerID()));
 
   const recommendedFallback = createMemo(() =>
-    providerID() && !isStall() ? findBestFallbackModel(providerID()) : null
+    providerID() && !isStall()
+      ? findBestFallbackModel(providerID(), { httpOnly: !isCliRuntimeTurn() })
+      : null
   );
 
   const freeFallbackModel = createMemo(() => {
@@ -162,6 +166,7 @@ export function AssistantErrorCard(props: { info: MessageInfo }) {
     const curMID = workspace.selectedModel?.modelID;
     const errPID = props.info.providerID;
     const errMID = props.info.modelID;
+    const httpOnly = !isCliRuntimeTurn();
     const isSameAsActiveOrFailed = (pid: string, mid: string) =>
       (curPID === pid && curMID === mid) || (errPID === pid && errMID === mid);
 
@@ -169,7 +174,11 @@ export function AssistantErrorCard(props: { info: MessageInfo }) {
       if (!c?.providerID || !c?.modelID || isSameAsActiveOrFailed(c.providerID, c.modelID)) {
         continue;
       }
+      if (httpOnly && LOCAL_CLI_RUNTIME_PROVIDERS.has(c.providerID)) {
+        continue;
+      }
       const prov = workspace.providers.find((p) => p.id === c.providerID);
+      if (httpOnly && prov?.source === "runner") continue;
       if (prov && isModelFree(c.providerID, c.modelID, prov.models?.[c.modelID])) {
         return { providerID: c.providerID, modelID: c.modelID };
       }
@@ -177,6 +186,7 @@ export function AssistantErrorCard(props: { info: MessageInfo }) {
     const connSet = new Set(workspace.connectedProviders);
     const cfgProviders = workspace.globalConfig?.provider ?? {};
     for (const p of workspace.providers) {
+      if (httpOnly && (p.source === "runner" || LOCAL_CLI_RUNTIME_PROVIDERS.has(p.id))) continue;
       const isConn = connSet.has(p.id) || Boolean(cfgProviders[p.id]);
       for (const [mid, mInfo] of Object.entries(p.models || {})) {
         if (!isConn && p.id !== "opencode") continue;

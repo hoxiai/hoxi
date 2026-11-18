@@ -1,6 +1,6 @@
 # Hoxi 跨软件会话接管与本地 CLI 桥接落地方案 (`HANDOFF_AND_CLI_BRIDGE.md`)
 
-> **核心定位**：不仅支持一键发现并桥接本地已安装的 AI CLI / IDE 工具（**Grok CLI**、**Claude Code**、**OpenAI Codex**、**Google Antigravity (`agy`)**、**OpenCode CLI**、**Trae**、**Qoder（通义灵码）**、**CodeBuddy（腾讯云）**）的模型与凭证，更将**跨软件会话接管与任务无缝续做（Cross-Tool Session Handoff & Task Continuation）**作为一等公民能力落盘——自动扫描本机 8 大外部工具的历史会话，按工程目录（`cwd`）精准匹配，将外部会话的完整对话轮次（User Prompt、Reasoning 思考链、Tool Call/Result 工具执行记录、Assistant 回复）、任务摘要（Summary）与执行计划（Plan）无损物化到 Hoxi / OpenCode 会话存储与 8 维结构化记忆库中，实现跨工具一键接力续做任务。
+> **核心定位**：不仅支持一键发现并桥接本地已安装的 AI CLI / IDE 工具（**Grok CLI**、**Claude Code**、**OpenAI Codex**、**Google Antigravity (`agy`)**、**OpenCode CLI**、**Trae**、**Qoder（通义灵码）**、**CodeBuddy（腾讯云）**）的模型与凭证，更将**跨软件会话接管与任务无缝续做（Cross-Tool Session Handoff & Task Continuation）**作为一等公民能力落盘——自动扫描本机 8 大外部工具的历史会话，按工程目录（`cwd`）精准匹配，将外部会话的完整对话轮次（User Prompt、Reasoning 思考链、Tool Call/Result 工具执行记录、Assistant 回复）、任务摘要（Summary）与执行计划（Plan）无损物化到 Hoxi 原生会话存储（`~/.hoxi/sessions/<id>/`）与 8 维结构化记忆库（`<project>/.hoxi/memory/`）中，实现跨工具一键接力续做任务。
 
 ---
 
@@ -26,12 +26,12 @@
 │     • Write/Create -> `write`   • Bash/Exec  -> `bash`                       │
 │     • Grep/Search -> `grep`     • Glob/List  -> `glob`                       │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│ Layer 3: Session Materializer & 8-Dim Handoff Memory (`materialize.go`)      │
-│  ├─ 1. 创建目标会话与 Hoxi 会话记录 (`~/.hoxi/sessions/<id>/`)                │
-│  ├─ 2. 注入历史消息与 Part: 写入会话存储与 OpenCode SQLite (`opencode.db`)    │
+│ Layer 3: Session Materializer & 8-Dim Handoff Memory (`handoff_materialize.go`)│
+│  ├─ 1. 创建目标会话与 Hoxi 原生记录 (`~/.hoxi/sessions/<id>/`, 默认 `native`) │
+│  ├─ 2. 注入历史消息与 Part: 原子写入 `turns.jsonl`（零 `opencode.db` 依赖）   │
 │  │     生成单调递增 msg_* / prt_* ID，保留完整时间线、ThoughtBox 与 ToolCard  │
-│  ├─ 3. 生成 8 维交接记忆: `.hoxi/memory/sessions/<new-session-id>.md`     │
-│  │     并通过 `.opencode/plugins/hoxi-memory.js` 自动注入 System Prompt      │
+│  ├─ 3. 生成 8 维交接记忆: `<project>/.hoxi/memory/sessions/<session-id>.md`  │
+│  │     由 `runtimeMemoryContext` 自动注入所有 Hoxi 运行时上下文               │
 │  └─ 4. Git 分支与工作树对齐: 检测源会话 `git_branch` / `head_commit` 状态     │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ Layer 4: In-Process Local CLI Protocol Bridge (`cli_bridge.go`, `grok_*.go`) │
@@ -109,7 +109,7 @@
 
 ---
 
-## 3. Canonical Session IR 与 OpenCode 无损物化机制
+## 3. Canonical Session IR 与 Hoxi 原生无损物化机制
 
 ### 3.1 统一会话中间表示 (`NormalizedExternalSession`)
 ```go
@@ -162,7 +162,7 @@ type NormalizedTurn struct {
 ```
 
 ### 3.2 工具调用语义映射表 (`normalizeExternalToolName`)
-将不同 CLI 的内置工具名统一映射为 Hoxi `ToolCard.tsx` 原生支持渲染的 OpenCode 标准工具名：
+将不同 CLI 的内置工具名统一映射为 Hoxi `ToolCard.tsx` 原生支持渲染的标准工具名：
 - 文件读取：`read`, `Read`, `view_file`, `read_file`, `cat` $\rightarrow$ `"read"`
 - 文件编辑：`edit`, `Edit`, `MultiEdit`, `replace_file_content`, `apply_patch`, `patch` $\rightarrow$ `"edit"`
 - 文件写入：`write`, `Write`, `write_file`, `create_file` $\rightarrow$ `"write"`
@@ -170,17 +170,16 @@ type NormalizedTurn struct {
 - 内容搜索：`grep`, `Grep`, `search`, `ripgrep`, `rg` $\rightarrow$ `"grep"`
 - 文件查找：`glob`, `Glob`, `list_dir`, `ls`, `find` $\rightarrow$ `"glob"`
 
-### 3.3 物化到 OpenCode 数据库与 8 维记忆库 (`MaterializeExternalSession`)
-当用户点击「接管会话并继续任务 (Take Over & Continue)」时，Go 后端执行以下原子步骤：
+### 3.3 物化到 Hoxi 原生会话存储与 8 维记忆库 (`handoff_materialize.go`)
+当用户点击「接管会话并继续任务 (Take Over & Continue)」时，Go 后端（[`internal/runner/handoff_materialize.go`](internal/runner/handoff_materialize.go)）直接物化到 Hoxi 原生存储，无需启动 `opencode serve` 或依赖外部 `opencode.db`：
 1. **确定目标工作目录 (`targetDir`)**：
    - 默认使用外部会话记录的 `cwd`（若该目录存在），或当前 Hoxi 激活的工程目录。
-   - OpenCode、Claude Code 和 Antigravity 新会话统一遵循“默认目录模式”：开启 Worktree 时创建 `.hoxi/worktrees/<sessionID>`；选择本地时在当前项目目录和当前分支运行，不创建分支。
+   - Hoxi 默认 `native` 引擎及外部 CLI 新会话统一遵循“默认目录模式”：开启 Worktree 时创建 `.hoxi/worktrees/<sessionID>`；选择本地时在当前项目目录和当前分支运行，不创建分支。
    - 本地 CLI 的目录选择不会关闭其自身的工具权限限制。已有会话保留原目录模式，空闲时可切换；退出工作树时保留分支，未提交改动需先处理。
-2. **创建原生 OpenCode 会话**：
-   - 调用 `POST http://127.0.0.1:<openCodePort>/session?directory=<targetDir>`，标题设为 `[Grok/Claude/Codex] <原会话标题>`，获取合法的 OpenCode `SessionInfo`（含 `ses_...` ID）。
-3. **写入对话历史 (`message` 与 `part` 表)**：
-   - 定位 OpenCode SQLite 数据库 `~/.local/share/opencode/opencode.db`（支持 `$XDG_DATA_HOME/opencode/opencode.db`）。
-   - 将 `NormalizedTurn[]` 转换为 OpenCode 的 `message` 行与 `part` 行（使用单调递增的 `msg_` 与 `prt_` 标识符，确保时间轴严格有序）：
+2. **创建 Hoxi 托管会话记录**：
+   - 生成原生会话 ID（如 `ses_nat_...`，默认 `Runtime: "native"`，或用户指定的目标运行时），标题设为 `[Grok/Claude/Codex] <原会话标题>`，原子落盘至 `~/.hoxi/sessions/<sessionID>/session.json`。
+3. **写入对话历史 (`turns.jsonl`)**：
+   - 将 `NormalizedTurn[]` 转换为 Hoxi 标准 `message` 与 `part` 记录（使用单调递增的 `msg_` 与 `prt_` 标识符，确保时间轴严格有序）：
      - `user` 轮次生成 `role: "user"` 的 `message` + `type: "text"` 的 `part`。
      - `assistant` 轮次生成 `role: "assistant"` 的 `message` +：
        - 若含思考过程：生成 `type: "reasoning"` 的 `part`（前端自动渲染为可折叠 `<ThoughtBox />`）。
@@ -197,7 +196,7 @@ type NormalizedTurn struct {
      7. `## 7. Progress`（最后轮次进展 `last_turn_summary` 与已完成轮次统计）
      8. `## 8. Next Steps`（无缝续做指引：基于上述已落盘的对话历史与代码现状继续执行下一步）
    - 写入 `<targetDir>/.hoxi/memory/sessions/<sessionID>.md`（隔离会话写到项目根 `.hoxi/memory/`，不写入可删除的 worktree；旧版 `.opencode/memory/` 仅作为读取回退）。
-   - 升级 `.opencode/plugins/hoxi-memory.js`：在 `experimental.chat.system.transform` 钩子中，除了读取 `project.md`，还根据 `input.sessionID` 自动读取 `.hoxi/memory/sessions/${input.sessionID}.md` 并作为 `<session_handoff_memory>` 注入 System Prompt！
+   - 后续轮次由 `internal/runner/session_memory.go`（`runtimeMemoryContext`）自动读取 `project.md` 与 `sessions/<sessionID>.md` 作为 `<project_memory>` / `<session_handoff_memory>` 注入各运行时上下文（可选 OpenCode 运行时由内置覆盖层 `internal/opencode/hoxi_plugin.js` 同步去重注入）。
 
 ---
 

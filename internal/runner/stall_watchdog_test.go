@@ -241,9 +241,9 @@ func TestStallWatchdogAbortsDespiteIdleMCPChildProcess(t *testing.T) {
 	})
 
 	byPID := map[int]procSnapshot{
-		100: {pid: 100, ppid: 1, pgid: 100, args: "/usr/local/bin/claude --output-format stream-json"},
-		101: {pid: 101, ppid: 100, pgid: 101, args: "node /opt/mcp-server/index.js --stdio"},
-		102: {pid: 102, ppid: 100, pgid: 102, args: "/bin/zsh -c cargo test --workspace"},
+		100: {PID: 100, PPID: 1, PGID: 100, Args: "/usr/local/bin/claude --output-format stream-json"},
+		101: {PID: 101, PPID: 100, PGID: 101, Args: "node /opt/mcp-server/index.js --stdio"},
+		102: {PID: 102, PPID: 100, PGID: 102, Args: "/bin/zsh -c cargo test --workspace"},
 	}
 	children := map[int][]int{
 		100: {101, 102},

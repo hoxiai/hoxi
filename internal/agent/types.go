@@ -72,27 +72,31 @@ type TokenUsage struct {
 	Reasoning  int
 	CacheRead  int
 	CacheWrite int
+	CostUSD    float64
 }
 
 // StreamEventKind enumerates incremental events emitted by a ModelDriver.
 type StreamEventKind string
 
 const (
-	EventTextDelta      StreamEventKind = "text_delta"
-	EventThinkingDelta  StreamEventKind = "thinking_delta"
-	EventSignatureDelta StreamEventKind = "signature_delta"
-	EventToolCallReady  StreamEventKind = "tool_call_ready"
-	EventUsage          StreamEventKind = "usage"
-	EventFinish         StreamEventKind = "finish"
+	EventTextDelta        StreamEventKind = "text_delta"
+	EventThinkingDelta    StreamEventKind = "thinking_delta"
+	EventThinkingEnd      StreamEventKind = "thinking_end"
+	EventRedactedThinking StreamEventKind = "redacted_thinking"
+	EventSignatureDelta   StreamEventKind = "signature_delta"
+	EventToolCallReady    StreamEventKind = "tool_call_ready"
+	EventUsage            StreamEventKind = "usage"
+	EventFinish           StreamEventKind = "finish"
 )
 
 // StreamEvent is emitted by a ModelDriver while parsing an upstream SSE stream.
 type StreamEvent struct {
-	Kind     StreamEventKind
-	Delta    string
-	ToolCall *ToolCall
-	Usage    *TokenUsage
-	Finish   string
+	Kind       StreamEventKind
+	BlockIndex int
+	Delta      string
+	ToolCall   *ToolCall
+	Usage      *TokenUsage
+	Finish     string
 }
 
 // ModelRequest is the canonical input to ModelDriver.BuildRequest.
@@ -115,22 +119,43 @@ type ModelDriver interface {
 
 // ToolContext provides execution context and injected host capabilities to tools.
 type ToolContext struct {
-	SessionID        string
-	CallID           string
-	WorktreeDir      string
-	Mode             string
-	SubtaskDepth     int
-	PermissionVetted bool
-	RunCommand       CommandRunner
-	Diagnostics      DiagnosticHook
-	CodeSearch       CodeSearchHook
-	SymbolInspect    SymbolInspectHook
-	ImpactInspect    ImpactInspectHook
-	AskQuestion      QuestionAsker
-	MCPConfig        MCPConfigSource
-	RunSubtask       SubtaskRunner
-	HostInvoke       HostInvokeHook
+	SessionID          string
+	CallID             string
+	WorktreeDir        string
+	Mode               string
+	SubtaskDepth       int
+	PermissionVetted   bool
+	RulesTracker       *SubdirRuleTracker
+	FileRevisions      *FileRevisionTracker
+	CoordinateFileEdit FileEditCoordinatorHook
+	RecordFileEdit     FileEditRecordedHook
+	RunCommand         CommandRunner
+	StreamRunCommand   StreamingCommandRunner
+	BackgroundCommands BackgroundCommandManager
+	OnToolOutput       func(partialOutput string)
+	Diagnostics        DiagnosticHook
+	CodeSearch         CodeSearchHook
+	SymbolInspect      SymbolInspectHook
+	ImpactInspect      ImpactInspectHook
+	AskQuestion        QuestionAsker
+	MCPConfig          MCPConfigSource
+	projectConfig      map[string]any
+	RunSubtask         SubtaskRunner
+	HostInvoke         HostInvokeHook
 }
+
+// FileEditCoordination reports cross-session lease and peer-modification state for a file mutation.
+type FileEditCoordination struct {
+	Release        func()
+	Waited         bool
+	ModifiedByPeer map[string]bool
+}
+
+// FileEditCoordinatorHook coordinates cross-session active file leases and atomic per-path locks.
+type FileEditCoordinatorHook func(ctx context.Context, paths []string, onWait func(waitedPath string)) (FileEditCoordination, error)
+
+// FileEditRecordedHook notifies the host coordinator after file mutations land on disk.
+type FileEditRecordedHook func(paths []string)
 
 // HostToolResult carries text, metadata, and optional media returned by a Hoxi host capability.
 type HostToolResult struct {
@@ -145,6 +170,9 @@ type HostInvokeHook func(ctx context.Context, tc ToolContext, toolName string, i
 
 // CommandRunner executes a shell command inside a workspace (optionally sandboxed).
 type CommandRunner func(ctx context.Context, dir, command string) (output string, exitCode int, err error)
+
+// StreamingCommandRunner executes a shell command and emits throttled partial output snapshots while running.
+type StreamingCommandRunner func(ctx context.Context, dir, command string, onOutput func(partial string)) (output string, exitCode int, err error)
 
 // DiagnosticHook inspects workspace files after edits and returns compiler/LSP diagnostics.
 type DiagnosticHook func(ctx context.Context, dir, filePath string) string
@@ -232,21 +260,26 @@ type PermissionHook func(ctx context.Context, req PermissionRequest) error
 type EngineEventKind string
 
 const (
-	EngineTextStart        EngineEventKind = "text_start"
-	EngineTextDelta        EngineEventKind = "text_delta"
-	EngineTextEnd          EngineEventKind = "text_end"
-	EngineThinkingStart    EngineEventKind = "thinking_start"
-	EngineThinkingDelta    EngineEventKind = "thinking_delta"
-	EngineThinkingEnd      EngineEventKind = "thinking_end"
-	EngineToolPending      EngineEventKind = "tool_pending"
-	EngineToolRunning      EngineEventKind = "tool_running"
-	EngineToolCompleted    EngineEventKind = "tool_completed"
-	EngineToolError        EngineEventKind = "tool_error"
-	EngineTurnUsage        EngineEventKind = "turn_usage"
-	EngineTurnFinish       EngineEventKind = "turn_finish"
-	EngineContextCompacted EngineEventKind = "context_compacted"
-	EngineSubtaskStart     EngineEventKind = "subtask_start"
-	EngineSubtaskEnd       EngineEventKind = "subtask_end"
+	EngineTextStart              EngineEventKind = "text_start"
+	EngineTextDelta              EngineEventKind = "text_delta"
+	EngineTextEnd                EngineEventKind = "text_end"
+	EngineThinkingStart          EngineEventKind = "thinking_start"
+	EngineThinkingDelta          EngineEventKind = "thinking_delta"
+	EngineThinkingEnd            EngineEventKind = "thinking_end"
+	EngineToolPending            EngineEventKind = "tool_pending"
+	EngineToolRunning            EngineEventKind = "tool_running"
+	EngineToolCompleted          EngineEventKind = "tool_completed"
+	EngineToolError              EngineEventKind = "tool_error"
+	EngineTurnUsage              EngineEventKind = "turn_usage"
+	EngineTurnFinish             EngineEventKind = "turn_finish"
+	EngineContextCompacted       EngineEventKind = "context_compacted"
+	EngineRulesBudget            EngineEventKind = "rules_budget"
+	EngineModePromoted           EngineEventKind = "mode_promoted"
+	EngineStepRetry              EngineEventKind = "step_retry"
+	EngineStepRetryDone          EngineEventKind = "step_retry_done"
+	EngineThinkingSignatureReset EngineEventKind = "thinking_signature_reset"
+	EngineSubtaskStart           EngineEventKind = "subtask_start"
+	EngineSubtaskEnd             EngineEventKind = "subtask_end"
 )
 
 // EngineEvent is emitted to the host runtime (e.g. runner SSE translator).
@@ -271,4 +304,9 @@ type EngineEvent struct {
 // SteerSource yields queued user steering instructions between tool steps.
 type SteerSource interface {
 	Drain() []string
+}
+
+// SteerBlockSource optionally yields full structured user steering messages (text + media).
+type SteerBlockSource interface {
+	DrainMessages() []Message
 }

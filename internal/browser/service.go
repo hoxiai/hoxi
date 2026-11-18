@@ -46,6 +46,7 @@ type scope struct {
 	sessionID         string
 	directory         string
 	diagnostics       map[string]*diagnosticTracker
+	snapshotRefs      map[string]map[string]string
 	wheelGesture      wheelGesture
 	gate              chan struct{}
 	ctx               context.Context

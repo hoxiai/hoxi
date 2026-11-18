@@ -172,7 +172,7 @@ func printSessionList(w io.Writer, list []runner.SessionInfo, active *runner.Ses
 		if active != nil && active.ID == s.ID {
 			marker = "* "
 		}
-		rt := firstNonEmpty(s.Runtime, "opencode")
+		rt := firstNonEmpty(s.Runtime, string(runner.RuntimeNative))
 		sb := firstNonEmpty(s.SandboxMode, "local")
 		if s.Branch != "" && sb == "worktree" {
 			sb = "wt:" + s.Branch
@@ -197,8 +197,8 @@ func runModelsCommand(
 	fs := flag.NewFlagSet("hoxi models", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	var rt string
-	fs.StringVar(&rt, "runtime", "opencode", "runtime: opencode | claude | agy | gemini-cli | qoder | codebuddy")
-	fs.StringVar(&rt, "r", "opencode", "shorthand for --runtime")
+	fs.StringVar(&rt, "runtime", string(runner.RuntimeNative), "runtime: native | opencode | claude | agy | gemini-cli | qoder | codebuddy")
+	fs.StringVar(&rt, "r", string(runner.RuntimeNative), "shorthand for --runtime")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -239,7 +239,7 @@ func printModelList(
 			marker = "* "
 		}
 		key := it.ModelID
-		if NormalizeRuntime(runtime) == "opencode" && it.ProviderID != "" {
+		if isCatalogRuntime(NormalizeRuntime(runtime)) && it.ProviderID != "" {
 			key = it.ProviderID + "/" + it.ModelID
 		}
 		defBadge := ""
@@ -352,7 +352,7 @@ func runHandoffCommand(
 		allDirs    bool
 	)
 	fs.StringVar(&fromSource, "from", "", "source CLI (claude, codex, gemini, opencode, qoder, codebuddy, grok, trae)")
-	fs.StringVar(&toRuntime, "to", "opencode", "target runtime in Hoxi")
+	fs.StringVar(&toRuntime, "to", string(runner.RuntimeNative), "target runtime in Hoxi")
 	fs.StringVar(&sessionID, "id", "", "external session ID to import")
 	fs.BoolVar(&allDirs, "all", false, "include sessions from all directories")
 	if err := fs.Parse(args); err != nil {
@@ -523,11 +523,37 @@ func InstallSymlink(exePath, preferredBinDir string) (string, error) {
 	return "", lastErr
 }
 
-func runNativeOpenCodeTUI(ctx context.Context, args []string, dir string, stdout, stderr io.Writer) int {
+func hasOpenCodeBinary() bool {
+	return opencode.FindBinary("opencode") != ""
+}
+
+func runNativeOpenCodeTUI(
+	ctx context.Context,
+	args []string,
+	dir, defaultBridgeAddr string,
+	bootHeadless HeadlessBootFunc,
+	stdin io.Reader,
+	stdout, stderr io.Writer,
+) int {
 	binPath := opencode.FindBinary("opencode")
 	if binPath == "" {
-		fmt.Fprintln(stderr, "Error: opencode binary not found. Run Hoxi Desktop once or install opencode in PATH.")
-		return 1
+		if stdin == nil {
+			stdin = os.Stdin
+		}
+		fmt.Fprintln(stderr, "OpenCode binary not installed; starting Hoxi Native interactive terminal...")
+		client, cleanup, err := ConnectOrSpawn(ctx, defaultBridgeAddr, dir, bootHeadless)
+		if err != nil {
+			fmt.Fprintf(stderr, "Error starting Hoxi Native engine: %v\n", err)
+			return 1
+		}
+		defer cleanup()
+		return RunREPL(ctx, client, Options{
+			Runtime:     string(runner.RuntimeNative),
+			Mode:        "build",
+			SandboxMode: "local",
+			Directory:   dir,
+			BridgeAddr:  defaultBridgeAddr,
+		}, strings.TrimSpace(strings.Join(args, " ")), stdin, stdout, stderr)
 	}
 	if _, err := skills.SeedDefaults(); err != nil {
 		fmt.Fprintf(stderr, "Warning: failed to seed default skills: %v\n", err)
@@ -535,7 +561,11 @@ func runNativeOpenCodeTUI(ctx context.Context, args []string, dir string, stdout
 	cfgPath := provider.EnsureHoxiModelsConfig(dir)
 	cmd := subproc.CommandContext(ctx, binPath, args...)
 	cmd.Dir = dir
-	cmd.Stdin = os.Stdin
+	if stdin != nil {
+		cmd.Stdin = stdin
+	} else {
+		cmd.Stdin = os.Stdin
+	}
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	env := append(os.Environ(), "OPENCODE_DISABLE_CONFIG_DEPENDENCY_INSTALL=1")

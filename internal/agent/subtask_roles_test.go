@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/hoxiai/hoxi/internal/agent"
 	"github.com/hoxiai/hoxi/internal/llm"
@@ -21,6 +22,8 @@ type recordedLLMCall struct {
 	System     string
 	ToolNames  []string
 	UserPrompt string
+	Effort     string
+	Deadline   time.Time
 }
 
 type inspectableStreamClient struct {

@@ -382,7 +382,7 @@ func TestReadJSONMapFileAcceptsJSONCCommentsAndTrailingCommas(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "opencode.json")
 	jsonc := `{
   // Line comment with https://example.com
-  "model": "anthropic/claude-sonnet-4-5", /* block comment */
+  "model":/*adjacent comment*/"anthropic/claude-sonnet-4-5", /* block comment */
   "provider": {
     "custom": {
       "options": {
@@ -397,6 +397,42 @@ func TestReadJSONMapFileAcceptsJSONCCommentsAndTrailingCommas(t *testing.T) {
 	got := readJSONMapFile(path)
 	if got == nil || got["model"] != "anthropic/claude-sonnet-4-5" {
 		t.Fatalf("expected JSONC config to parse, got %+v", got)
+	}
+
+	// Unterminated block comments must NOT silently truncate the rest of the JSON file.
+	unterminated := filepath.Join(t.TempDir(), "unterminated.json")
+	if err := os.WriteFile(unterminated, []byte(`{"model": "ok"} /* unclosed comment {"provider":{"lost":true}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if bad := readJSONMapFile(unterminated); bad != nil {
+		t.Fatalf("expected unterminated block comment to fail closed rather than silently truncate, got %+v", bad)
+	}
+
+	// Unreadable existing user models.json (non-ENOENT error) must NOT be clobbered by EnsureHoxiModelsConfig.
+	if runtime.GOOS != "windows" && os.Geteuid() != 0 {
+		_, ws := setupIsolatedEnv(t)
+		uPath := userHoxiModelsPath()
+		if err := os.MkdirAll(filepath.Dir(uPath), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		protectedContent := []byte(`{"provider":{"keep":{"options":{"apiKey":"must-not-be-clobbered"}}}}`)
+		if err := os.WriteFile(uPath, protectedContent, 0o000); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(uPath, 0o600) })
+
+		EnsureHoxiModelsConfig(ws)
+
+		if err := os.Chmod(uPath, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		afterRaw, err := os.ReadFile(uPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(afterRaw) != string(protectedContent) {
+			t.Fatalf("EnsureHoxiModelsConfig clobbered unreadable models.json: got %s", string(afterRaw))
+		}
 	}
 }
 

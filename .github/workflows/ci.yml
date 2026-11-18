@@ -150,3 +150,43 @@ jobs:
 
       - name: Build root desktop entrypoint
         run: go build -v .
+
+  mobile-flutter:
+    name: "Mobile (Flutter): Boundary Gates, Analyze & Tests"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check if mobile/ exists in this repository
+        id: check_mobile
+        run: |
+          if [[ -f "mobile/pubspec.yaml" ]]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run mobile architecture & boundary gates
+        if: steps.check_mobile.outputs.present == 'true'
+        working-directory: mobile
+        run: |
+          python3 scripts/check_source_lines.py
+          python3 scripts/check_network_boundary.py
+          python3 scripts/check_feature_boundaries.py
+
+      - name: Set up Flutter
+        if: steps.check_mobile.outputs.present == 'true'
+        uses: subosito/flutter-action@v2
+        with:
+          channel: "stable"
+          cache: true
+
+      - name: Analyze & test Flutter mobile controller
+        if: steps.check_mobile.outputs.present == 'true'
+        working-directory: mobile
+        run: |
+          flutter pub get
+          flutter gen-l10n
+          flutter analyze
+          flutter test

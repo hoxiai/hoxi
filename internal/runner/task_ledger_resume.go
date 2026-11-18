@@ -6,6 +6,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/agentcli"
 )
 
 const restartContinuationPrompt = "Hoxi restarted while your previous turn was in progress (any tool call still running at shutdown was interrupted). Inspect the current workspace state if needed and continue from where you left off to complete the user's request."
@@ -91,21 +93,21 @@ func (s *Service) recordInflightTurn(e InflightTurnEntry) {
 	}
 	sid := strings.TrimSpace(e.SessionID)
 	s.pendingResumes.Delete(sid)
-	s.ledger.putEntry(e)
+	s.ledger.PutEntry(e)
 }
 
 func (s *Service) updateInflightExternalID(sessionID, externalID string) {
 	if s == nil || s.ledger == nil {
 		return
 	}
-	s.ledger.updateExternalID(sessionID, externalID)
+	s.ledger.UpdateExternalID(sessionID, externalID)
 }
 
 func (s *Service) updateInflightSteer(sessionID, userMsgID, mode, providerID, modelID, effort, promptText string) {
 	if s == nil || s.ledger == nil {
 		return
 	}
-	s.ledger.updateSteer(sessionID, userMsgID, mode, providerID, modelID, effort, promptText)
+	s.ledger.UpdateSteer(sessionID, userMsgID, mode, providerID, modelID, effort, promptText)
 }
 
 func (s *Service) clearInflightTurn(sessionID string) {
@@ -143,9 +145,9 @@ func (s *Service) clearInflightTurnWithGuard(sessionID, userMsgID string, cancel
 	}
 	if s.ledger != nil {
 		if cancelFlight {
-			s.ledger.deleteEntry(sid)
+			s.ledger.DeleteEntry(sid)
 		} else {
-			s.ledger.deleteEntryForUserMsg(sid, userMsgID)
+			s.ledger.DeleteEntryForUserMsg(sid, userMsgID)
 		}
 	}
 }
@@ -164,7 +166,7 @@ func (s *Service) forgetLedgerSessions(seen map[string]bool) {
 		}
 	}
 	if s.ledger != nil {
-		s.ledger.forgetSessions(seen)
+		s.ledger.ForgetSessions(seen)
 	}
 }
 
@@ -176,12 +178,13 @@ func (s *Service) settleStartupLedger() {
 	if s == nil || s.ledger == nil {
 		return
 	}
+	s.ledger.SettleAdmittedRequestsOnBoot()
 	nowMs := time.Now().UnixMilli()
 	maxAgeMs := restartResumeMaxAge.Milliseconds()
-	for _, entry := range s.ledger.listEntries() {
+	for _, entry := range s.ledger.ListEntries() {
 		rec, ok := s.store.Get(entry.SessionID)
 		if !ok || rec.Subagent || rec.ArchivedAt > 0 || validateSessionDirectory(rec) != nil {
-			s.ledger.deleteEntry(entry.SessionID)
+			s.ledger.DeleteEntry(entry.SessionID)
 			continue
 		}
 		fresh := maxAgeMs <= 0 || (entry.UpdatedAt > 0 && nowMs-entry.UpdatedAt <= maxAgeMs)
@@ -189,7 +192,7 @@ func (s *Service) settleStartupLedger() {
 		if canAutoResume {
 			// Settle any interrupted tool/reasoning parts from before the restart
 			// while keeping the turn free of fatal error banners so resumption appends cleanly.
-			s.abandonOpenCodeInFlightParts(rec.ID, nowMs)
+			s.settleSessionInFlightParts(rec.ID, nowMs, false)
 			s.clearInterruptedTurnAbortError(rec.ID)
 			s.store.FlushSession(rec.ID)
 			s.pendingResumes.Store(rec.ID, entry)
@@ -198,7 +201,7 @@ func (s *Service) settleStartupLedger() {
 			}
 			continue
 		}
-		s.ledger.deleteEntry(entry.SessionID)
+		s.ledger.DeleteEntry(entry.SessionID)
 		s.settleCrashedSessionOnDisk(rec.ID, nowMs)
 	}
 }
@@ -212,7 +215,14 @@ func (s *Service) clearInterruptedTurnAbortError(sessionID string) {
 	if last.Role != "assistant" || last.Error == nil {
 		return
 	}
-	if !strings.Contains(strings.ToLower(last.Error.Name), "abort") {
+	errMsg := ""
+	if last.Error.Data != nil {
+		errMsg = strings.ToLower(last.Error.Data.Message)
+	}
+	if !strings.Contains(strings.ToLower(last.Error.Name), "abort") &&
+		last.Finish != TurnFinishInterrupted &&
+		!strings.Contains(errMsg, "context canceled") &&
+		!strings.Contains(errMsg, "interrupted") {
 		return
 	}
 	last.Error = nil
@@ -379,20 +389,22 @@ func (s *Service) ensureSessionResumed(ctx context.Context, sessionID string) (b
 		return false, nil
 	}
 
-	// Wait for OpenCode readiness OUTSIDE s.turnMu so user Stop/Delete/Archive
-	// never blocks while the supervised daemon is booting.
+	// Wait for OpenCode readiness OUTSIDE s.turnMu only when an OpenCode daemon
+	// or binary is actually configured; on OpenCode-free upgrades, promote to native.
 	if recMeta, ok := s.store.Meta(sessionID); ok && recMeta.Runtime == "opencode" {
-		if err := s.waitForOpenCodeReady(flightCtx, restartEngineWaitTimeout); err != nil {
-			if flight.wasRestarting() || flight.aborted.Load() {
-				return false, nil
+		if (s.openCode != nil && s.openCode.Available()) || agentcli.ResolveOpenCodeBinary() != "" {
+			if err := s.waitForOpenCodeReady(flightCtx, restartEngineWaitTimeout); err != nil {
+				if flight.wasRestarting() || flight.aborted.Load() {
+					return false, nil
+				}
+				if _, stillQueued := s.pendingResumes.LoadAndDelete(sessionID); !stillQueued {
+					return false, nil
+				}
+				s.clearInflightTurn(sessionID)
+				s.settleCrashedSessionOnDisk(sessionID, time.Now().UnixMilli())
+				flight.err = err
+				return false, err
 			}
-			if _, stillQueued := s.pendingResumes.LoadAndDelete(sessionID); !stillQueued {
-				return false, nil
-			}
-			s.clearInflightTurn(sessionID)
-			s.settleCrashedSessionOnDisk(sessionID, time.Now().UnixMilli())
-			flight.err = err
-			return false, err
 		}
 	}
 
@@ -431,6 +443,40 @@ func (s *Service) ensureSessionResumed(ctx context.Context, sessionID string) (b
 		return false, err
 	}
 
+	if rec.Runtime == string(RuntimeNative) {
+		if err := s.resumeNativeTurnFromLedger(flightCtx, rec, entry); err != nil {
+			if !flight.wasRestarting() {
+				s.clearInflightTurn(sessionID)
+				s.settleCrashedSessionOnDisk(sessionID, time.Now().UnixMilli())
+			}
+			flight.err = err
+			return false, err
+		}
+		flight.started = true
+		return true, nil
+	}
+	if rec.Runtime == "opencode" && (s.openCode == nil || !s.openCode.Available()) && agentcli.ResolveOpenCodeBinary() == "" {
+		if len(rec.Turns) == 0 {
+			_ = s.tryMigrateSingleOpenCodeSession(sessionID)
+			if refreshed, rOK := s.store.Get(sessionID); rOK {
+				rec = refreshed
+			}
+		}
+		rec.Runtime = string(RuntimeNative)
+		rec.ExternalID = ""
+	}
+	if rec.Runtime == string(RuntimeNative) {
+		if err := s.resumeNativeTurnFromLedger(flightCtx, rec, entry); err != nil {
+			if !flight.wasRestarting() {
+				s.clearInflightTurn(sessionID)
+				s.settleCrashedSessionOnDisk(sessionID, time.Now().UnixMilli())
+			}
+			flight.err = err
+			return false, err
+		}
+		flight.started = true
+		return true, nil
+	}
 	if rec.Runtime == "opencode" {
 		if err := s.resumeOpenCodeTurnFromLedger(flightCtx, rec, entry); err != nil {
 			if !flight.wasRestarting() {

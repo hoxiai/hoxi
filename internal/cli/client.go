@@ -152,7 +152,7 @@ type CLIModelItem struct {
 
 func (c *Client) ListModels(ctx context.Context, directory, runtime string) ([]CLIModelItem, string, string, error) {
 	rt := NormalizeRuntime(runtime)
-	if rt != "opencode" {
+	if !isCatalogRuntime(rt) {
 		var resp struct {
 			Default string `json:"default"`
 			Models  []struct {
@@ -259,7 +259,7 @@ func (c *Client) ResolveModel(ctx context.Context, directory, runtime, providerI
 			modelID = strings.TrimSpace(parts[1])
 		}
 	}
-	if NormalizeRuntime(runtime) != "opencode" {
+	if !isCatalogRuntime(NormalizeRuntime(runtime)) {
 		if modelID != "" {
 			return providerID, modelID
 		}
@@ -272,7 +272,7 @@ func (c *Client) ResolveModel(ctx context.Context, directory, runtime, providerI
 	if providerID != "" && modelID != "" {
 		return providerID, modelID
 	}
-	items, defProv, defMod, err := c.ListModels(ctx, directory, "opencode")
+	items, defProv, defMod, err := c.ListModels(ctx, directory, NormalizeRuntime(runtime))
 	if err != nil {
 		return providerID, modelID
 	}

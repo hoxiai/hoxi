@@ -86,8 +86,91 @@ func TestNativeHostOfflineRoutesAndSkillTool(t *testing.T) {
 	if raw := checkGET("/global/health"); !strings.Contains(string(raw), `"native"`) {
 		t.Fatalf("unexpected /global/health payload: %s", string(raw))
 	}
+	if raw := checkGET("/pty"); strings.TrimSpace(string(raw)) != "[]" {
+		t.Fatalf("expected default native /pty list to return [], got: %s", string(raw))
+	}
+	if raw := checkGET("/api/hoxi/dataprofiles"); !strings.Contains(string(raw), `"profiles"`) {
+		t.Fatalf("expected default /api/hoxi/dataprofiles route, got: %s", string(raw))
+	}
+	// Remote callers must be rejected on /api/hoxi/dataprofiles (desktop-only).
+	remReq := localRequest(http.MethodGet, "/api/hoxi/dataprofiles", nil)
+	remReq.Host = "wails"
+	remReq = remReq.WithContext(context.WithValue(remReq.Context(), remoteSourceKey{}, remoteSourceTunnel))
+	remRec := httptest.NewRecorder()
+	g.ServeHTTP(remRec, remReq)
+	if remRec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for remote /api/hoxi/dataprofiles, got %d: %s", remRec.Code, remRec.Body.String())
+	}
+
+	// Workspace skill catalog without sessionID must default to runtime="native" when OpenCode is absent,
+	// so its skl_* key matches a newly created native session.
+	rawSkillList := checkGET("/api/hoxi/skills/list?directory=" + wsDir)
+	var listResp struct {
+		Runtime string `json:"runtime"`
+		Skills  []struct {
+			Key  string `json:"key"`
+			Name string `json:"name"`
+		} `json:"skills"`
+	}
+	if err := json.Unmarshal(rawSkillList, &listResp); err != nil {
+		t.Fatalf("unmarshal skills list: %v", err)
+	}
+	if listResp.Runtime != "native" {
+		t.Fatalf("expected default offline skills runtime='native', got %q", listResp.Runtime)
+	}
+	var demoKey string
+	for _, item := range listResp.Skills {
+		if item.Name == "demo-skill" {
+			demoKey = item.Key
+			break
+		}
+	}
+	if demoKey == "" {
+		t.Fatalf("demo-skill missing from /api/hoxi/skills/list: %s", string(rawSkillList))
+	}
+	natSess, _, err := g.runner.CreateConversation(context.Background(), runner.CreateSessionRequest{Directory: wsDir}, wsDir)
+	if err != nil {
+		t.Fatalf("create native conversation: %v", err)
+	}
+	rawSkillDetail := checkGET("/api/hoxi/skills/detail?directory=" + wsDir + "&sessionID=" + natSess.ID + "&key=" + demoKey)
+	if !strings.Contains(string(rawSkillDetail), "Always run unit tests.") {
+		t.Fatalf("expected workspace skill key %s to resolve under native session %s: %s", demoKey, natSess.ID, string(rawSkillDetail))
+	}
 	if raw := checkGET("/skill"); !strings.Contains(string(raw), "demo-skill") {
 		t.Fatalf("unexpected /skill payload: %s", string(raw))
+	}
+	// Verify canonical /api/hoxi/* host & provider routes (plus legacy /pty) work out-of-the-box without opencode serve.
+	if raw := checkGET("/api/hoxi/pty"); strings.TrimSpace(string(raw)) != "[]" {
+		t.Fatalf("expected out-of-the-box native /api/hoxi/pty list [], got: %s", string(raw))
+	}
+	if raw := checkGET("/pty"); strings.TrimSpace(string(raw)) != "[]" {
+		t.Fatalf("expected out-of-the-box native /pty list [], got: %s", string(raw))
+	}
+	if raw := checkGET("/api/hoxi/agents?directory=" + wsDir); !strings.Contains(string(raw), `"build"`) {
+		t.Fatalf("expected out-of-the-box /api/hoxi/agents, got: %s", string(raw))
+	}
+	if raw := checkGET("/api/hoxi/commands?directory=" + wsDir); !strings.Contains(string(raw), `"plan"`) {
+		t.Fatalf("expected out-of-the-box /api/hoxi/commands, got: %s", string(raw))
+	}
+	if raw := checkGET("/api/hoxi/lsp?directory=" + wsDir); !json.Valid(raw) {
+		t.Fatalf("expected valid JSON from /api/hoxi/lsp, got: %s", string(raw))
+	}
+	if raw := checkGET("/api/hoxi/provider/catalog"); !strings.Contains(string(raw), `"all"`) {
+		t.Fatalf("expected out-of-the-box /api/hoxi/provider/catalog, got: %s", string(raw))
+	}
+	if raw := checkGET("/api/hoxi/provider/auth-methods"); !json.Valid(raw) {
+		t.Fatalf("expected valid JSON from /api/hoxi/provider/auth-methods, got: %s", string(raw))
+	}
+	if raw := checkGET("/api/hoxi/provider/config"); !strings.Contains(string(raw), `"provider"`) {
+		t.Fatalf("expected out-of-the-box /api/hoxi/provider/config, got: %s", string(raw))
+	}
+	if raw := checkGET("/api/hoxi/dataprofiles"); !strings.Contains(string(raw), `"profiles"`) {
+		t.Fatalf("expected out-of-the-box /api/hoxi/dataprofiles, got: %s", string(raw))
+	}
+	// Verify default hoxi_data host tool works out-of-the-box before any test stub override.
+	defaultDPRes, err := g.invokeNativeHostTool(context.Background(), agent.ToolContext{SessionID: "ses_nat_test1", WorktreeDir: wsDir}, "hoxi_data", json.RawMessage(`{"action":"list"}`))
+	if err != nil || !strings.Contains(defaultDPRes.Output, `"count":0`) {
+		t.Fatalf("default hoxi_data list failed: err=%v out=%s", err, defaultDPRes.Output)
 	}
 	if cat := g.buildNativeSkillCatalogPrompt(context.Background(), "ses_nat_test1", wsDir); !strings.Contains(cat, "<available_skills>") || !strings.Contains(cat, "demo-skill") {
 		t.Fatalf("unexpected native skill catalog prompt:\n%s", cat)
@@ -206,5 +289,40 @@ func TestGatewayNativeAgentForwardsForceAskAndTurnFinish(t *testing.T) {
 	}
 	if gotFinish != "stop" {
 		t.Fatalf("expected NativeEventTurnFinish='stop', got %q", gotFinish)
+	}
+}
+
+func TestNormalizeComputerAgentInputCoercionAndStrictness(t *testing.T) {
+	coerced := normalizeComputerAgentInput(json.RawMessage(`{"action":"click","windowID":4821,"elementID":"12","deltaY":120.0,"clickCount":"2"}`))
+	var parsed map[string]any
+	if err := json.Unmarshal(coerced, &parsed); err != nil {
+		t.Fatalf("unmarshal coerced: %v", err)
+	}
+	if parsed["windowID"] != "4821" {
+		t.Fatalf("expected windowID string '4821', got %#v", parsed["windowID"])
+	}
+	if parsed["elementID"] != float64(12) || parsed["deltaY"] != float64(120) || parsed["clickCount"] != float64(2) {
+		t.Fatalf("unexpected integer coercions: %+v", parsed)
+	}
+
+	// Malformed non-integer values must NOT be silently dropped or coerced, so decodeComputerJSON rejects them.
+	untouched := normalizeComputerAgentInput(json.RawMessage(`{"action":"scroll","windowID":"w1","elementID":"abc","deltaY":12.5}`))
+	var bad map[string]any
+	if err := json.Unmarshal(untouched, &bad); err != nil {
+		t.Fatalf("unmarshal untouched: %v", err)
+	}
+	if bad["elementID"] != "abc" || bad["deltaY"] != 12.5 {
+		t.Fatalf("expected malformed values preserved for strict rejection, got %+v", bad)
+	}
+}
+
+func TestExtractHostActionResultDetectsScreenshotMime(t *testing.T) {
+	pngRes, err := extractHostActionResult("hoxi_computer", http.StatusOK, []byte(`{"windowID":"1","image":"iVBORw0KGgoAAAANSUhEUg=="}`))
+	if err != nil || len(pngRes.Media) != 1 || pngRes.Media[0].MimeType != "image/png" || pngRes.Media[0].Filename != "hoxi_computer.png" {
+		t.Fatalf("expected PNG screenshot media detection, got err=%v media=%+v", err, pngRes.Media)
+	}
+	jpgRes, err := extractHostActionResult("hoxi_browser", http.StatusOK, []byte(`{"tabID":"t1","image":"/9j/4AAQSkZJRgABAQ=="}`))
+	if err != nil || len(jpgRes.Media) != 1 || jpgRes.Media[0].MimeType != "image/jpeg" || jpgRes.Media[0].Filename != "hoxi_browser.jpg" {
+		t.Fatalf("expected JPEG screenshot media detection, got err=%v media=%+v", err, jpgRes.Media)
 	}
 }

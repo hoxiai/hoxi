@@ -20,19 +20,23 @@ An already named `Hoxi-<version>-darwin-arm64.dmg` takes precedence over a gener
 candidate (use the matching `--skip-build` DMG name).
 
 `build-desktop.sh` accepts `--arch arm64|amd64` (default: the host architecture) and
-builds the matching `darwin/<arch>` slice, bundling the OpenCode sidecar pinned for
-that same platform. Release verification is arch-aware: it asserts the requested
-Mach-O slice (arm64 or x86_64) on the app, sidecar and any Sparkle framework.
+builds the matching `darwin/<arch>` slice with the built-in Go Native Agent Engine
+and embedded pure-Go SQLite (`internal/sqlitecli`)—omitting external `opencode`
+sidecar bundling by default (`HOXI_BUNDLE_OPENCODE=0`, optional opt-in via
+`HOXI_BUNDLE_OPENCODE=1`). Release verification is arch-aware: it asserts the
+requested Mach-O slice (arm64 or x86_64) on the app, any optional sidecar, and any
+Sparkle framework.
 
 The runtime `--version`, bootstrap API, update requests, settings page, and both
 bundle version fields use the embedded build version. The declared minimum macOS
-is at least 13.0 and is raised if the main executable or bundled OpenCode requires
-a newer version. This release path verifies both arm64 and amd64 artifacts.
+is at least 13.0 and is raised if the main executable (or optional bundled sidecar)
+requires a newer version. This release path verifies both arm64 and amd64 artifacts.
 
 For Windows builds (`build-windows.ps1` / `.github/workflows/release-desktop.yml`),
-the release pipeline builds `windows/amd64` (and `windows/arm64` when configured),
-bundles the matching pinned `opencode.exe` and `sqlite3.exe` from
-`internal/opencode/opencode.lock`, and packages both the NSIS installer
+the release pipeline builds `windows/amd64` (and `windows/arm64` when configured)
+with the built-in Go Native Agent Engine and embedded pure-Go SQLite
+(`internal/sqlitecli`) without requiring external `opencode.exe` or `sqlite3.exe`
+sidecars by default, and packages both the NSIS installer
 (`Hoxi-<version>-windows-<arch>-setup.exe`) and the portable self-update archive
 (`Hoxi-<version>-windows-<arch>.zip`) along with SHA-256 checksums.
 
@@ -93,11 +97,11 @@ DMG. The website must explicitly
 confirm Sparkle metadata acceptance and feed deployment, not just generic release
 success. Its implementation is absent here and remains a deployment blocker.
 
-See [Auto-Updates](auto-updates.md) for required Sparkle secrets, pinned SDK/OpenCode
+See [Auto-Updates](auto-updates.md) for required Sparkle secrets, pinned SDK/sidecar
 archive variables, secure key-file handling, local opt-in builds and the website
 appcast contract. Production tag CI requires updater configuration; development
-bundles never include the updater. Local builds require a preinstalled verified
-OpenCode executable and do not execute a remote installer.
+bundles never include the updater. Local builds require no external OpenCode binary
+by default and never execute a remote installer.
 
 ## Regression checks
 

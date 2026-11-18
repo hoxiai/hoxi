@@ -43,7 +43,7 @@ func (g *Service) handleModelCatalog(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, modelCatalog{Source: "engine", Providers: providers})
 		return
 	}
-	writeJSON(w, http.StatusOK, modelCatalog{Source: "config", Providers: configModelCatalog(hoxiMap, importedMap, disabled)})
+	writeJSON(w, http.StatusOK, modelCatalog{Source: "config", Providers: configModelCatalog(hoxiMap, importedMap, unrevokedAuthProviderIDs(), disabled)})
 }
 
 // engineModelCatalog lists the engine's connected providers plus any locally
@@ -122,17 +122,27 @@ func (g *Service) engineModelCatalog(parent context.Context, hoxiMap, importedMa
 }
 
 // configModelCatalog is the fallback when the engine is not running: providers
-// from .hoxi/models.json, then OpenCode-imported ones it does not override.
-func configModelCatalog(hoxiMap, importedMap map[string]interface{}, disabled map[string]bool) []modelCatalogProvider {
-	out := make([]modelCatalogProvider, 0, len(hoxiMap)+len(importedMap))
+// from .hoxi/models.json, OpenCode-imported ones it does not override, and
+// built-in mainstream templates with active credentials in auth.json.
+func configModelCatalog(hoxiMap, importedMap map[string]interface{}, authIDs, disabled map[string]bool) []modelCatalogProvider {
+	out := make([]modelCatalogProvider, 0, len(hoxiMap)+len(importedMap)+len(authIDs))
+	seen := make(map[string]bool, len(hoxiMap)+len(importedMap)+len(authIDs))
 	add := func(pid string, v interface{}) {
 		pid = strings.TrimSpace(pid)
-		if pid == "" || pid == AutoProviderID || disabled[pid] {
+		if pid == "" || pid == AutoProviderID || seen[pid] || disabled[pid] || disabled[strings.ToLower(pid)] {
 			return
 		}
 		p, _ := v.(map[string]interface{})
 		if prov, ok := catalogProvider(pid, p, nil); ok {
+			seen[pid] = true
 			out = append(out, prov)
+			return
+		}
+		if tplMap, _, hasTpl := builtinProviderConfigMap(pid); hasTpl {
+			if prov, ok := mergeCatalogProvider(pid, p, tplMap, nil); ok {
+				seen[pid] = true
+				out = append(out, prov)
+			}
 		}
 	}
 	for pid, v := range hoxiMap {
@@ -141,6 +151,14 @@ func configModelCatalog(hoxiMap, importedMap map[string]interface{}, disabled ma
 	for pid, v := range importedMap {
 		if _, overridden := hoxiMap[pid]; !overridden {
 			add(pid, v)
+		}
+	}
+	for pid, ok := range authIDs {
+		if !ok || seen[pid] {
+			continue
+		}
+		if tplMap, _, hasTpl := builtinProviderConfigMap(pid); hasTpl {
+			add(pid, tplMap)
 		}
 	}
 	sortCatalog(out)

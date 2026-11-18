@@ -164,6 +164,26 @@ export interface CommitAndPushResponse {
   pushed?: boolean;
   message?: string;
   compareURL?: string;
+  clientRequestId?: string;
+  deduplicated?: boolean;
+}
+
+export type RequestInspectKind = "prompt" | "permission_reply" | "worktree_commit";
+export type RequestInspectStatus = "not_admitted" | "admitted" | "completed" | "outcome_unknown";
+
+export interface RequestInspectResponse<T = unknown> {
+  ok: boolean;
+  kind: RequestInspectKind;
+  scope: string;
+  clientRequestId: string;
+  digest?: string;
+  status: RequestInspectStatus;
+  httpStatus?: number;
+  result?: T;
+  errorCode?: string;
+  errorMessage?: string;
+  evidence?: Record<string, unknown>;
+  updatedAtMs?: number;
 }
 
 export interface ProjectInfo {

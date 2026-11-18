@@ -671,9 +671,36 @@ func ensureGitExclude(repoRoot string, patterns ...string) {
 			excludeFile = filepath.Clean(p)
 		}
 	}
+	hasTrackedHoxi := len(trackedShareableHoxiPaths(repoRoot)) > 0
+	expandedPatterns := make([]string, 0, len(patterns)+len(hoxiRuntimeExcludePatterns))
+	for _, p := range patterns {
+		cleanP := strings.TrimPrefix(strings.TrimSuffix(strings.TrimSpace(p), "/"), "/")
+		if cleanP == ".hoxi" && hasTrackedHoxi {
+			expandedPatterns = append(expandedPatterns, hoxiRuntimeExcludePatterns...)
+			continue
+		}
+		expandedPatterns = append(expandedPatterns, p)
+	}
+
 	_ = os.MkdirAll(filepath.Dir(excludeFile), 0o755)
 	data, _ := os.ReadFile(excludeFile)
 	content := string(data)
+	rewroteBlanketHoxi := false
+	if hasTrackedHoxi && content != "" {
+		var filtered []string
+		for _, rawLine := range strings.Split(content, "\n") {
+			trimmed := strings.TrimSpace(strings.TrimSuffix(rawLine, "\r"))
+			if trimmed == ".hoxi" || trimmed == ".hoxi/" || trimmed == "/.hoxi" || trimmed == "/.hoxi/" {
+				rewroteBlanketHoxi = true
+				continue
+			}
+			filtered = append(filtered, rawLine)
+		}
+		if rewroteBlanketHoxi {
+			content = strings.Join(filtered, "\n")
+			data = []byte(content)
+		}
+	}
 	existing := make(map[string]bool)
 	for _, rawLine := range strings.Split(content, "\n") {
 		line := strings.TrimSpace(strings.TrimSuffix(rawLine, "\r"))
@@ -684,7 +711,7 @@ func ensureGitExclude(repoRoot string, patterns ...string) {
 		existing[strings.TrimSuffix(line, "/")] = true
 	}
 	var toAppend strings.Builder
-	for _, pattern := range patterns {
+	for _, pattern := range expandedPatterns {
 		pattern = strings.TrimSpace(pattern)
 		if pattern == "" {
 			continue
@@ -704,7 +731,7 @@ func ensureGitExclude(repoRoot string, patterns ...string) {
 		existing[pattern] = true
 		existing[norm] = true
 	}
-	if toAppend.Len() > 0 {
+	if rewroteBlanketHoxi || toAppend.Len() > 0 {
 		_ = hoxipaths.WriteFileAtomic(excludeFile, append(data, []byte(toAppend.String())...), 0o644)
 	}
 }

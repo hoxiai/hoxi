@@ -1,0 +1,17 @@
+{
+  "$schema": "../schemas/hoxi.schema.json",
+  "version": 1,
+  "permission": {
+    "edit": "allow",
+    "bash": "allow",
+    "webfetch": "ask"
+  },
+  "skills": { "paths": [".hoxi/skills"] },
+  "mcp": {
+    "project-tools": {
+      "type": "local",
+      "command": ["node", "./tools/launch_mcp.mjs", "example"],
+      "enabled": false
+    }
+  }
+}

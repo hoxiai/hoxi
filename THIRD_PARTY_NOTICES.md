@@ -5,20 +5,21 @@ third-party components distributed with the Hoxi desktop application and their
 licenses. Build-only tooling (TypeScript, Vite, Tailwind, test runners) is not
 distributed and is therefore omitted.
 
-The application bundle includes a standalone `opencode` sidecar and the
-`Sparkle.framework` updater, both compiled or copied into the `.app`. Go modules
-are statically linked into the Hoxi binary. Frontend runtime packages are bundled
-into the web assets. Transitive npm runtime dependencies are recorded in
-`web/package-lock.json`; their license files remain part of the source
-distribution.
+The desktop application embeds a pure-Go Native Agent Engine and pure-Go SQLite
+by default without bundling external CLI sidecars. Official macOS `arm64`
+release bundles include the `Sparkle.framework` updater, and optional builds
+with `HOXI_BUNDLE_OPENCODE=1` may include a standalone `opencode` sidecar. Go
+modules are statically linked into the Hoxi binary. Frontend runtime packages
+are bundled into the web assets (`web/package-lock.json`), and the open-source
+Flutter mobile companion (`mobile/pubspec.yaml`) declares its Dart/Flutter
+runtime packages below.
 
-## Bundled executables and frameworks
+## Optional bundled executables and frameworks
 
 | Component | Version | License | Copyright |
 | --- | --- | --- | --- |
-| [opencode](https://github.com/anomalyco/opencode) | v1.18+ (resolved at build) | MIT | Copyright (c) 2025 opencode |
-| [SQLite](https://www.sqlite.org/copyright.html) Windows CLI | 3.54.1 | Public domain | SQLite authors |
-| [Sparkle](https://github.com/sparkle-project/Sparkle) | 2.x (bundled framework) | MIT | Copyright (c) 2006-2013 Andy Matuschak; 2009-2013 Elgato Systems GmbH; 2011-2014 Kornel Lesiński; 2015-2017 Mayur Pawashe; 2014 C.W. Betts; 2014 Petroules Corporation; 2014 Big Nerd Ranch |
+| [Sparkle](https://github.com/sparkle-project/Sparkle) | 2.x (macOS release framework) | MIT | Copyright (c) 2006-2013 Andy Matuschak; 2009-2013 Elgato Systems GmbH; 2011-2014 Kornel Lesiński; 2015-2017 Mayur Pawashe; 2014 C.W. Betts; 2014 Petroules Corporation; 2014 Big Nerd Ranch |
+| [opencode](https://github.com/anomalyco/opencode) | v1.19+ (opt-in via `HOXI_BUNDLE_OPENCODE=1`) | MIT | Copyright (c) 2025 opencode |
 
 ## Go modules
 
@@ -97,6 +98,24 @@ distribution.
 | `lucide-solid` | `0.475.0` | ISC | Copyright (c) for portions of Lucide are held by Cole Bemis 2013-2022 as part of Feather (MIT). All other copyright (c) for Lucide are held by Lucide Contributors 2022. |
 | `shiki` | `4.5.0` | MIT | Copyright (c) 2021 Pine Wu; 2023 Anthony Fu |
 | `solid-js` | `1.9.17` | MIT | Copyright (c) 2016-2025 Ryan Carniato |
+
+## Mobile companion packages (`mobile/pubspec.yaml`)
+
+| Package | Version | License | Copyright |
+| --- | --- | --- | --- |
+| `cupertino_icons` | `^1.0.8` | MIT | Copyright (c) 2016 Vladimir Kharlampidi; Flutter Authors |
+| `dio` | `^5.9.2` | MIT | Copyright (c) 2018 wendux; CFUG |
+| `flutter_markdown_plus` | `^1.0.12` | BSD-3-Clause | Copyright 2013 The Flutter Authors |
+| `flutter_riverpod` | `^3.3.1` | MIT | Copyright (c) 2020 Remi Rousselet |
+| `flutter_secure_storage` | `^10.0.0` | BSD-3-Clause | Copyright (c) 2017 German Saprykin |
+| `go_router` | `^17.2.0` | BSD-3-Clause | Copyright 2013 The Flutter Authors |
+| `image_picker` | `^1.1.2` | Apache-2.0 / BSD-3-Clause | Copyright 2013 The Flutter Authors |
+| `intl` | `any` | BSD-3-Clause | Copyright 2013, the Dart project authors |
+| `mobile_scanner` | `^7.2.0` | BSD-3-Clause | Copyright (c) 2022 Julian Steenbakker |
+| `shared_preferences` | `^2.5.5` | BSD-3-Clause | Copyright 2013 The Flutter Authors |
+| `url_launcher` | `^6.3.2` | BSD-3-Clause | Copyright 2013 The Flutter Authors |
+| `web_socket_channel` | `^3.0.3` | BSD-3-Clause | Copyright 2016, the Dart project authors |
+| `xterm` | `^4.0.0` | MIT | Copyright (c) 2020 xuty |
 
 ## License texts
 

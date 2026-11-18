@@ -62,8 +62,8 @@ require (
 )
 
 ignore (
-	client
 	docs
+	mobile
 	node_modules
 	scripts
 	web/node_modules

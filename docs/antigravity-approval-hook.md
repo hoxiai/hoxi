@@ -102,7 +102,7 @@ agy 发起 run_command
 - `hook_gate.go`：
   - 路由 `POST /api/hoxi/runner/hook/pretool`，只接受来自 127.0.0.1 的请求，用 `subtle.ConstantTimeCompare` 校验 token 与会话的对应关系。
   - 校验 `conversationId` 与会话记录的 externalID 一致（首次 `init` 之前允许为空），`toolCall.args.Cwd` / `workspacePaths` 必须落在会话目录内（`pathWithin` 同时解析多层符号链接与悬空符号链接，防止经符号链接越界）。
-  - 策略：把 `.opencode/lib/permission-policy.js` 移植到 Go（`internal/runner/permission_policy.go` 与 `internal/runner/approval_decision.go`），只解析一次命令链（绝不把命令段拼回字符串二次解析），对含转义/引号拼接/`$(`/反引号/变量展开的模糊语法一律 fail-closed（`ask`），按完整 token 匹配只读安全白名单并拦截高危参数（`find -exec/-delete/-fprint*`、`fd -x`、`rg --pre`、`git diff|log|show --output`、`go -exec/-toolexec/-o`、`go env -w` 等），同时对去混淆文本检测破坏性指令（含 git 参数缩写 `--forc`/`--har`、组合短参数 `-uf`、`+refspec` 强推）。再用 `.opencode/lib/permission-policy.cases.json`（命令级）与 `.opencode/lib/permission-request.cases.json`（请求级）做 JS 和 Go 的一致性测试。所有审批决策统一由 Go 的 `approvalAutoApproves` 根据 `~/.hoxi/approval-policy.json` 判定：破坏性命令与敏感凭据读取在所有模式下都必须询问用户。
+  - 策略：把 `web/src/policy/permission-policy.js` 与 Go（`internal/runner/shellpolicy/permission_policy.go` 与 `internal/runner/shellpolicy/decision.go`）对齐，只解析一次命令链（绝不把命令段拼回字符串二次解析），对含转义/引号拼接/`$(`/反引号/变量展开的模糊语法一律 fail-closed（`ask`），按完整 token 匹配只读安全白名单并拦截高危参数（`find -exec/-delete/-fprint*`、`fd -x`、`rg --pre`、`git diff|log|show --output`、`go -exec/-toolexec/-o`、`go env -w` 等），同时对去混淆文本检测破坏性指令（含 git 参数缩写 `--forc`/`--har`、组合短参数 `-uf`、`+refspec` 强推）。再用 `internal/runner/shellpolicy/testdata/permission-policy.cases.json`（命令级）与 `internal/runner/shellpolicy/testdata/permission-request.cases.json`（请求级）做 JS 和 Go 的一致性测试。所有审批决策统一由 Go 的 `approvalAutoApproves` 根据 `~/.hoxi/approval-policy.json` 判定：破坏性命令与敏感凭据读取在所有模式下都必须询问用户。
   - ask：生成 `PermissionRequest{id:"per_agy_<seq>", sessionID, permission:"bash", patterns:[CommandLine], metadata:{command, cwd, source:"antigravity"}, always:[命令前缀], tool:{messageID, callID}}`，其中 `callID` 通过 `stepIdx` 映射到 translate.go 为该 step 生成的 tool part。然后推送 `permission.asked`，在 channel 上等待。
   - 会话内的 always 规则只存在 Hoxi 自己的会话记录里，**不写** agy 的 `settings.json`，避免污染用户的全局权限。
   - Stop、进程退出或会话删除时，所有挂起的请求统一以 deny 结束，并推送 `permission.replied`。
@@ -149,13 +149,13 @@ agy 发起 run_command
 | `hoxi agy-hook` 客户端 | `internal/agyhook/agyhook.go`，由 `internal/app/app.go` 在 `Run` 最开头分发 |
 | 审批网关、回复与列表接口 | `internal/runner/hook_gate.go`，路由为 `/api/hoxi/runner/hook/pretool`、`/api/hoxi/runner/permission[/{id}/reply]` |
 | 全局 hooks.json 安装器 | `internal/runner/agy_hook_install.go`，`GET/POST/DELETE /api/hoxi/runner/antigravity/hook` 分别对应查询状态、安装、卸载；每轮 agy 启动前自动确认已安装，仅桌面 App 开启自动安装 |
-| 权限策略 Go 移植 | `internal/runner/permission_policy.go`，与 JS 共用 `.opencode/lib/permission-policy.cases.json` |
+| 权限策略 Go 移植 | `internal/runner/shellpolicy/permission_policy.go`，与 JS（`web/src/policy/`）共用 `internal/runner/shellpolicy/testdata/permission-policy.cases.json` |
 | 进程接线 | `internal/runner/turn_exec.go`（每轮签发凭证；Stop 或进程退出时拒绝所有挂起请求）、`internal/gateway/gateway.go`（传入回调地址） |
 | 前端 | `services/runner-api.ts` / `services/api.ts`（`per_rnr_` 前缀的请求路由到 Runner，经统一网关 `/api/hoxi/permission/{id}/reply` 回复）、`ApprovalGateCard.tsx`（拒绝说明随回复带回，Runner 请求不显示 OpenCode 规则选择器）、`components/models/AgentPolicyMcpTab.tsx`（显示 Antigravity 审批 Hook 安装状态并提供安装/卸载按钮） |
 
 与原方案的差异：
 
-- 审批决策统一由 Go 端 `approvalAutoApproves`（`internal/runner/approval_decision.go`）按 `~/.hoxi/approval-policy.json`（5 种模式：`auto` / `trusted` / `smart` / `manual` / `unattended`，及工具覆盖）判定：策略允许的请求由 Go 直接 `auto_approve`，不推送 `permission.asked` 事件、不计入状态栏 Attention；策略不允许的请求（含任何模式下的破坏性命令、敏感凭据读取及受保护路径修改）推送 `permission.asked` 等待用户确认。前端只负责展示与编辑策略，不再替用户自动回复。
+- 审批决策统一由 Go 端 `approvalAutoApproves`（`internal/runner/shellpolicy/decision.go`）按 `~/.hoxi/approval-policy.json`（5 种模式：`auto` / `trusted` / `smart` / `manual` / `unattended`，及工具覆盖）判定：策略允许的请求由 Go 直接 `auto_approve`，不推送 `permission.asked` 事件、不计入状态栏 Attention；策略不允许的请求（含任何模式下的破坏性命令、敏感凭据读取及受保护路径修改）推送 `permission.asked` 等待用户确认。前端只负责展示与编辑策略，不再替用户自动回复。
 - 会话内的 always 规则只保存在内存里，按完全相同的命令匹配，Hoxi 重启后失效。破坏性命令永远不会被 always 记住。
 
 端到端测试（需要真实的 agy，会消耗少量模型请求）：

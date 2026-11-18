@@ -117,8 +117,7 @@ function HoxiChanSvg(props: { mood: CompanionMood }) {
       {/* Main hair dome */}
       <path
         d="M25 56 C25 26, 42 15, 60 15 C78 15, 95 26, 95 56 C95 74, 88 86, 82 91 C82 76, 80 65, 76 58 L44 58 C40 65, 38 76, 38 91 C32 86, 25 74, 25 56 Z"
-        fill="var(--text-primary)"
-        fill-opacity="0.88"
+        fill="#261f33"
       />
       <path
         d="M29 50 C31 27, 45 18, 60 18 C75 18, 89 27, 91 50 C81 40, 70 36, 60 36 C50 36, 39 40, 29 50 Z"
@@ -130,6 +129,8 @@ function HoxiChanSvg(props: { mood: CompanionMood }) {
       <path
         d="M36 53 C36 40, 46 34, 60 34 C74 34, 84 40, 84 53 C84 71, 74 83, 60 83 C46 83, 36 71, 36 53 Z"
         fill="#fff5f2"
+        stroke="rgba(30, 41, 59, 0.22)"
+        stroke-width="1.2"
       />
 
       {/* Soft anime blush */}
@@ -139,8 +140,7 @@ function HoxiChanSvg(props: { mood: CompanionMood }) {
       {/* Front bangs */}
       <path
         d="M33 49 C37 33, 48 27, 60 27 C72 27, 83 33, 87 49 C80 43, 75 49, 71 53 C67 43, 62 47, 58 53 C53 44, 48 47, 44 53 C40 46, 36 45, 33 49 Z"
-        fill="var(--text-primary)"
-        fill-opacity="0.9"
+        fill="#261f33"
       />
 
       {/* Signature Hoxi 4-point star hairpin */}

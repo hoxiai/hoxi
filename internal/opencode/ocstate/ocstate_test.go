@@ -81,7 +81,7 @@ func TestPruneOversizedMessageDiffsPreservesSchemaAndSmallDiffs(t *testing.T) {
 	bigPatch := strings.Repeat("A", 80_000)
 	runSQLite(t, db, `
 CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, data TEXT);
-INSERT INTO message VALUES ('msg_big', 'ses_1', '{"role":"user","summary":{"title":"Move Fastix","diffs":[{"file":"a.php","before":"`+bigPatch+`","after":""}]}}');
+INSERT INTO message VALUES ('msg_big', 'ses_1', '{"role":"user","summary":{"title":"Move module","diffs":[{"file":"a.php","before":"`+bigPatch+`","after":""}]}}');
 INSERT INTO message VALUES ('msg_small', 'ses_1', '{"role":"user","summary":{"title":"Small edit","diffs":[{"file":"b.php","before":"x","after":"y"}]}}');
 `)
 	if err := PruneOversizedMessageDiffs(context.Background(), db); err != nil {
@@ -94,7 +94,7 @@ INSERT INTO message VALUES ('msg_small', 'ses_1', '{"role":"user","summary":{"ti
 		t.Fatalf("query pruned rows: %v (%s)", err, out)
 	}
 	got := strings.TrimSpace(string(out))
-	want := "msg_big|1|array|0|Move Fastix\nmsg_small|1|array|1|Small edit"
+	want := "msg_big|1|array|0|Move module\nmsg_small|1|array|1|Small edit"
 	if got != want {
 		t.Fatalf("unexpected rows after prune:\ngot:  %s\nwant: %s", got, want)
 	}

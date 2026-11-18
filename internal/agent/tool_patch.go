@@ -54,6 +54,8 @@ type stagedFileMutation struct {
 	op         patchFileOp
 	absSource  string
 	absTarget  string
+	oldContent []byte
+	hadSource  bool
 	newContent []byte
 	fileMode   os.FileMode
 }
@@ -97,51 +99,127 @@ func (t *applyPatchTool) Execute(ctx context.Context, tc ToolContext, input json
 		return os.ReadFile(absPath)
 	}
 
+	type resolvedPatchOp struct {
+		op     patchFileOp
+		srcAbs string
+		dstAbs string
+	}
+	resolvedOps := make([]resolvedPatchOp, 0, len(ops))
+	coordPaths := make([]string, 0, len(ops)*2)
+	coordLabels := make(map[string]string, len(ops)*2)
 	for _, op := range ops {
-		srcAbs, err := resolveWorkspacePath(tc.WorktreeDir, op.path, true)
+		srcAbs, err := resolveWorkspacePath(tc.WorktreeDir, op.path, !tc.PermissionVetted)
 		if err != nil {
 			return ToolOutput{Title: op.path, IsError: true}, err
 		}
-		if isSensitiveAgentPath(srcAbs) {
+		if !tc.PermissionVetted && isSensitiveAgentPath(srcAbs) {
 			return ToolOutput{Title: op.path, IsError: true}, fmt.Errorf("refusing to patch secret/credential file %s", op.path)
 		}
 		dstAbs := srcAbs
 		if op.moveTo != "" {
-			dstAbs, err = resolveWorkspacePath(tc.WorktreeDir, op.moveTo, true)
+			dstAbs, err = resolveWorkspacePath(tc.WorktreeDir, op.moveTo, !tc.PermissionVetted)
 			if err != nil {
 				return ToolOutput{Title: op.moveTo, IsError: true}, err
 			}
-			if isSensitiveAgentPath(dstAbs) {
+			if !tc.PermissionVetted && isSensitiveAgentPath(dstAbs) {
 				return ToolOutput{Title: op.moveTo, IsError: true}, fmt.Errorf("refusing to move into secret/credential file %s", op.moveTo)
 			}
 		}
+		resolvedOps = append(resolvedOps, resolvedPatchOp{op: op, srcAbs: srcAbs, dstAbs: dstAbs})
+		coordPaths = append(coordPaths, srcAbs)
+		coordLabels[srcAbs] = op.path
+		if dstAbs != srcAbs {
+			coordPaths = append(coordPaths, dstAbs)
+			coordLabels[dstAbs] = op.moveTo
+		}
+	}
+
+	release, peerModified, err := coordinateFileMutation(ctx, tc, coordPaths, coordLabels)
+	if err != nil {
+		return ToolOutput{Title: "apply_patch", IsError: true}, err
+	}
+	defer release()
+
+	for _, rop := range resolvedOps {
+		op := rop.op
+		srcAbs := rop.srcAbs
+		dstAbs := rop.dstAbs
 
 		switch op.kind {
 		case patchOpAdd:
+			var prevAddBytes []byte
+			var hadPrevAdd bool
+			if prevB, rErr := readVirtual(dstAbs); rErr == nil {
+				prevAddBytes = prevB
+				hadPrevAdd = true
+			}
+			if _, stagedBefore := virtualFS[dstAbs]; !stagedBefore && !deletedFS[dstAbs] {
+				if err := tc.FileRevisions.CheckWrite(dstAbs, op.path); err != nil {
+					return ToolOutput{Title: op.path, IsError: true}, err
+				}
+				if peerModified(dstAbs) && hadPrevAdd && len(prevAddBytes) > 0 {
+					if err := checkEditWithPeerGuard(tc.FileRevisions, dstAbs, op.path, prevAddBytes, true); err != nil {
+						return ToolOutput{Title: op.path, IsError: true}, err
+					}
+				}
+			}
 			content := []byte(strings.Join(op.addLines, "\n") + "\n")
 			if len(op.addLines) == 0 {
 				content = []byte{}
 			}
 			virtualFS[dstAbs] = content
 			delete(deletedFS, dstAbs)
-			staged = append(staged, stagedFileMutation{op: op, absSource: srcAbs, absTarget: dstAbs, newContent: content})
+			staged = append(staged, stagedFileMutation{
+				op: op, absSource: srcAbs, absTarget: dstAbs,
+				oldContent: prevAddBytes, hadSource: hadPrevAdd, newContent: content,
+			})
 
 		case patchOpDelete:
-			if _, err := readVirtual(srcAbs); err != nil {
+			_, stagedBefore := virtualFS[srcAbs]
+			origBytes, err := readVirtual(srcAbs)
+			if err != nil {
 				return ToolOutput{Title: op.path, IsError: true}, fmt.Errorf("cannot delete %s: %w", op.path, err)
+			}
+			if !stagedBefore {
+				if err := checkEditWithPeerGuard(tc.FileRevisions, srcAbs, op.path, origBytes, peerModified(srcAbs)); err != nil {
+					return ToolOutput{Title: op.path, IsError: true}, err
+				}
 			}
 			delete(virtualFS, srcAbs)
 			deletedFS[srcAbs] = true
-			staged = append(staged, stagedFileMutation{op: op, absSource: srcAbs, absTarget: srcAbs})
+			staged = append(staged, stagedFileMutation{
+				op: op, absSource: srcAbs, absTarget: srcAbs,
+				oldContent: origBytes, hadSource: true,
+			})
 
 		case patchOpUpdate:
 			var srcMode os.FileMode
 			if st, sErr := os.Stat(srcAbs); sErr == nil && st.Mode().IsRegular() {
 				srcMode = st.Mode().Perm()
 			}
+			_, stagedBefore := virtualFS[srcAbs]
 			origBytes, err := readVirtual(srcAbs)
 			if err != nil {
 				return ToolOutput{Title: op.path, IsError: true}, fmt.Errorf("cannot read %s: %w", op.path, err)
+			}
+			if !stagedBefore {
+				if err := checkEditWithPeerGuard(tc.FileRevisions, srcAbs, op.path, origBytes, peerModified(srcAbs)); err != nil {
+					return ToolOutput{Title: op.path, IsError: true}, fmt.Errorf("%s: %w", op.path, err)
+				}
+			}
+			if dstAbs != srcAbs {
+				if _, dstStaged := virtualFS[dstAbs]; !dstStaged && !deletedFS[dstAbs] {
+					if err := tc.FileRevisions.CheckWrite(dstAbs, op.moveTo); err != nil {
+						return ToolOutput{Title: op.moveTo, IsError: true}, err
+					}
+					if peerModified(dstAbs) {
+						if diskBytes, rErr := os.ReadFile(dstAbs); rErr == nil {
+							if err := checkEditWithPeerGuard(tc.FileRevisions, dstAbs, op.moveTo, diskBytes, true); err != nil {
+								return ToolOutput{Title: op.moveTo, IsError: true}, err
+							}
+						}
+					}
+				}
 			}
 			useCRLF := strings.Contains(string(origBytes), "\r\n")
 			normSrc := strings.ReplaceAll(string(origBytes), "\r\n", "\n")
@@ -159,12 +237,17 @@ func (t *applyPatchTool) Execute(ctx context.Context, tc ToolContext, input json
 			}
 			virtualFS[dstAbs] = outBytes
 			delete(deletedFS, dstAbs)
-			staged = append(staged, stagedFileMutation{op: op, absSource: srcAbs, absTarget: dstAbs, newContent: outBytes, fileMode: srcMode})
+			staged = append(staged, stagedFileMutation{
+				op: op, absSource: srcAbs, absTarget: dstAbs,
+				oldContent: origBytes, hadSource: true, newContent: outBytes, fileMode: srcMode,
+			})
 		}
 	}
 
 	var summaryLines []string
+	var fileMeta []map[string]any
 	var diagTargets []string
+	var mutatedPaths []string
 	seenDiag := make(map[string]bool)
 
 	for _, m := range staged {
@@ -173,7 +256,10 @@ func (t *applyPatchTool) Execute(ctx context.Context, tc ToolContext, input json
 			if err := os.Remove(m.absSource); err != nil && !os.IsNotExist(err) {
 				return ToolOutput{Title: m.op.path, IsError: true}, err
 			}
+			tc.FileRevisions.Forget(m.absSource)
+			mutatedPaths = append(mutatedPaths, m.absSource)
 			summaryLines = append(summaryLines, "D "+m.op.path)
+			fileMeta = append(fileMeta, buildPatchFileMetaEntry(tc.WorktreeDir, m))
 		case patchOpAdd, patchOpUpdate:
 			if err := os.MkdirAll(filepath.Dir(m.absTarget), 0o755); err != nil {
 				return ToolOutput{Title: m.op.path, IsError: true}, err
@@ -181,20 +267,31 @@ func (t *applyPatchTool) Execute(ctx context.Context, tc ToolContext, input json
 			if err := writeAtomicFileMode(m.absTarget, m.newContent, m.fileMode); err != nil {
 				return ToolOutput{Title: m.op.path, IsError: true}, err
 			}
+			if m.op.kind == patchOpAdd {
+				tc.FileRevisions.RecordBytes(m.absTarget, m.newContent)
+			} else {
+				tc.FileRevisions.RecordTargetedMove(m.absSource, m.absTarget, m.oldContent, m.newContent)
+			}
 			if m.absTarget != m.absSource {
 				_ = os.Remove(m.absSource)
+				tc.FileRevisions.Forget(m.absSource)
+				mutatedPaths = append(mutatedPaths, m.absSource)
 				summaryLines = append(summaryLines, "R "+m.op.path+" -> "+m.op.moveTo)
 			} else if m.op.kind == patchOpAdd {
 				summaryLines = append(summaryLines, "A "+m.op.path)
 			} else {
 				summaryLines = append(summaryLines, "M "+m.op.path)
 			}
+			fileMeta = append(fileMeta, buildPatchFileMetaEntry(tc.WorktreeDir, m))
+			mutatedPaths = append(mutatedPaths, m.absTarget)
 			if !seenDiag[m.absTarget] {
 				seenDiag[m.absTarget] = true
 				diagTargets = append(diagTargets, m.absTarget)
 			}
 		}
 	}
+	recordCompletedFileEdit(tc, mutatedPaths...)
+	release()
 
 	out := fmt.Sprintf("applied patch across %d file operation(s):\n%s", len(staged), strings.Join(summaryLines, "\n"))
 	if tc.Diagnostics != nil && len(diagTargets) > 0 {
@@ -210,11 +307,65 @@ func (t *applyPatchTool) Execute(ctx context.Context, tc ToolContext, input json
 			out += "\n\nDiagnostics:\n" + strings.Join(diags, "\n")
 		}
 	}
+	for _, m := range staged {
+		out = appendSubdirectoryRules(tc, m.absTarget, out)
+	}
 	return ToolOutput{
 		Title:    fmt.Sprintf("%d files patched", len(staged)),
 		Output:   out,
-		Metadata: map[string]any{"files": summaryLines},
+		Metadata: map[string]any{"files": fileMeta, "summary": summaryLines},
 	}, nil
+}
+
+func buildPatchFileMetaEntry(worktreeDir string, m stagedFileMutation) map[string]any {
+	primaryAbs := m.absTarget
+	if m.op.kind == patchOpDelete {
+		primaryAbs = m.absSource
+	}
+	rel := workspaceRelativeSlash(worktreeDir, primaryAbs)
+	var beforeStr, afterStr string
+	if m.hadSource {
+		beforeStr = string(m.oldContent)
+	}
+	if m.op.kind != patchOpDelete {
+		afterStr = string(m.newContent)
+	}
+	adds, dels := countPatchMutationLines(m, beforeStr, afterStr)
+	entry := map[string]any{
+		"filePath":     primaryAbs,
+		"relativePath": rel,
+		"type":         string(m.op.kind),
+		"additions":    adds,
+		"deletions":    dels,
+	}
+	if m.absTarget != m.absSource {
+		entry["filePath"] = m.absSource
+		entry["type"] = "move"
+		entry["movePath"] = m.absTarget
+	}
+	if len(beforeStr)+len(afterStr) <= maxInlineDiffMetadataBytes {
+		entry["before"] = beforeStr
+		entry["after"] = afterStr
+	}
+	return entry
+}
+
+func countPatchMutationLines(m stagedFileMutation, beforeStr, afterStr string) (int, int) {
+	if m.op.kind == patchOpUpdate && len(m.op.hunks) > 0 {
+		adds, dels := 0, 0
+		for _, h := range m.op.hunks {
+			for _, hl := range h {
+				switch hl.prefix {
+				case '+':
+					adds++
+				case '-':
+					dels++
+				}
+			}
+		}
+		return adds, dels
+	}
+	return countTextDiffLines(beforeStr, afterStr)
 }
 
 func parseMultiFilePatch(raw string) ([]patchFileOp, error) {

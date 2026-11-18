@@ -1,5 +1,5 @@
 // web/src/services/sse.ts
-import type { MessageInfo, MessagePart, OpenCodeEvent } from "./sse-types";
+import type { HoxiEvent, MessageInfo, MessagePart } from "./sse-types";
 
 export interface StreamFrameBatch {
   infos: MessageInfo[];
@@ -14,7 +14,7 @@ export interface StreamFrameBatch {
 }
 
 export interface SSEHandlers {
-  onEvent: (event: OpenCodeEvent, directory?: string) => void;
+  onEvent: (event: HoxiEvent, directory?: string) => void;
   onDeltaBatch: (
     batches: Array<{
       sessionID: string;
@@ -26,7 +26,7 @@ export interface SSEHandlers {
   ) => void;
   onFrameBatch?: (batch: StreamFrameBatch) => void;
   onConnectionChange?: (connected: boolean) => void;
-  /** OpenCode events may have been missed; reload anything event-driven. */
+  /** Stream events may have been missed; reload anything event-driven. */
   onResync?: () => void;
   isFocusedSession?: (sessionID: string) => boolean;
 }
@@ -130,7 +130,7 @@ export function connectEventStream(handlers: SSEHandlers, directory?: string, ws
         !wrapped && typeof parsed?.seq === "number" && parsed.seq > 0 ? parsed.seq : 0;
       const evt = (wrapped
         ? parsed.payload
-        : parsed) as OpenCodeEvent;
+        : parsed) as HoxiEvent;
       if (!evt || typeof evt.type !== "string") return;
       if (evt.type === "server.heartbeat") return;
       if (evt.type === "hoxi.stream.resync") {

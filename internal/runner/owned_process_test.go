@@ -4,76 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
-	"time"
 )
-
-func TestOwnedProcessForgetCancelsPendingScans(t *testing.T) {
-	l := newOwnedProcessLedger()
-	watch := l.startWatch("ses_a", "call_1")
-	other := l.startWatch("ses_b", "call_1")
-	if watch == nil || other == nil {
-		t.Fatal("expected watches for both sessions")
-	}
-	if l.startWatch("ses_a", "call_1") != nil {
-		t.Fatal("duplicate scans must be suppressed")
-	}
-	l.recordWatched("ses_a", "call_1", watch, 4242, "server a")
-	l.recordWatched("ses_b", "call_1", other, 5353, "server b")
-	done := make(chan bool, 1)
-	go func() { done <- watch.wait(time.Hour) }()
-	l.forget("ses_a")
-	select {
-	case elapsed := <-done:
-		if elapsed {
-			t.Fatal("deleted session's scan delay must be canceled")
-		}
-	case <-time.After(time.Second):
-		t.Fatal("deleted session's scanner is still waiting")
-	}
-	if watch.wait(0) {
-		t.Fatal("deleted session's zero-delay scan must not proceed")
-	}
-	// Repeated deletion must not close an already closed watch.
-	l.forget("ses_a")
-	select {
-	case <-other.done:
-		t.Fatal("another session's scanner must survive")
-	default:
-	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if len(l.groups["ses_a"]) != 0 || len(l.groups["ses_b"]) != 1 {
-		t.Fatalf("unexpected process ownership after deletion: %v", l.groups)
-	}
-}
-
-func TestOwnedProcessForgottenScanCannotRestoreOwnership(t *testing.T) {
-	l := newOwnedProcessLedger()
-	stale := l.startWatch("ses_a", "call_1")
-	l.forget("ses_a")
-	// The scanner had already read a snapshot when deletion canceled it.
-	l.recordWatched("ses_a", "call_1", stale, 4242, "stale server")
-	if len(l.groups) != 0 {
-		t.Fatal("an in-flight scan restored deleted ownership")
-	}
-
-	current := l.startWatch("ses_a", "call_1")
-	if current == nil {
-		t.Fatal("expected a new watch after cleanup")
-	}
-	l.recordWatched("ses_a", "call_1", stale, 4242, "stale server")
-	l.endWatch("ses_a", "call_1", stale)
-	if l.startWatch("ses_a", "call_1") != nil {
-		t.Fatal("stale scanner cleanup removed the replacement watch")
-	}
-	l.recordWatched("ses_a", "call_1", current, 5353, "current server")
-	l.endWatch("ses_a", "call_1", current)
-	l.recordWatched("ses_a", "call_1", current, 6464, "finished scan")
-	groups := l.groups["ses_a"]
-	if len(groups) != 1 || groups[0].pgid != 5353 {
-		t.Fatalf("only the current scanner may record ownership: %v", groups)
-	}
-}
 
 func TestDeleteConversationCancelsRootAndChildProcessScans(t *testing.T) {
 	repo := t.TempDir()
@@ -86,22 +17,49 @@ func TestDeleteConversationCancelsRootAndChildProcessScans(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	root := svc.ownedProcs.startWatch("ses_cld_root", "root_call")
-	child := svc.ownedProcs.startWatch("ses_cld_child", "child_call")
-	other := svc.ownedProcs.startWatch("ses_other", "other_call")
+	root := svc.ownedProcs.StartWatch("ses_cld_root", "root_call")
+	child := svc.ownedProcs.StartWatch("ses_cld_child", "child_call")
+	other := svc.ownedProcs.StartWatch("ses_other", "other_call")
 	if err := svc.DeleteConversation(context.Background(), "ses_cld_root"); err != nil {
 		t.Fatal(err)
 	}
 	for _, watch := range []*ownedProcessWatch{root, child} {
 		select {
-		case <-watch.done:
+		case <-watch.Done():
 		default:
 			t.Fatal("conversation deletion left a process scanner running")
 		}
 	}
 	select {
-	case <-other.done:
+	case <-other.Done():
 		t.Fatal("conversation deletion canceled an unrelated scanner")
 	default:
+	}
+}
+
+func TestTrustedWindowsKillPathAcceptsOnlyProgramFilesGit(t *testing.T) {
+	getenv := func(k string) string {
+		switch k {
+		case "ProgramFiles":
+			return `C:\Program Files`
+		case "ProgramFiles(x86)":
+			return `C:\Program Files (x86)`
+		case "LOCALAPPDATA":
+			return `C:\Users\dev\AppData\Local`
+		}
+		return ""
+	}
+	if !isTrustedWindowsKillPath(`C:\Program Files\Git\usr\bin\kill.exe`, getenv) {
+		t.Fatal("expected ProgramFiles Git usr/bin/kill.exe to be trusted")
+	}
+	for _, bad := range []string{
+		`C:\Users\dev\AppData\Local\Programs\Git\usr\bin\kill.exe`,
+		`C:\Users\dev\scoop\apps\git\current\usr\bin\kill.exe`,
+		`C:\Program Files\Git\usr\bin\pkill.exe`,
+		`C:\Temp\kill.exe`,
+	} {
+		if isTrustedWindowsKillPath(bad, getenv) {
+			t.Fatalf("expected %q to be rejected by isTrustedWindowsKillPath", bad)
+		}
 	}
 }

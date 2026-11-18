@@ -92,6 +92,7 @@ func StartEphemeralHeadless(ctx context.Context, rootDir string) (string, func()
 	gw.EnableAgyApprovalHook()
 	gw.StartEnginePrewarm(ctx)
 	gw.StartStorageMaintenance(ctx)
+	gw.StartLegacySessionImport()
 	gw.StartIdleMemoryRelease(ctx)
 	// Record, but leave sweeping to the long-lived desktop or daemon process.
 	ledger := openReclaimLedger(quietLogger)

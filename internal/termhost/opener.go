@@ -39,7 +39,7 @@ func DefaultOpener(cwd, _ string, cols, rows uint16) (*StreamHandle, error) {
 	env = append(env, "COLORTERM=truecolor")
 	cmd.Env = env
 
-	rw, resizeFn, killFn, err := startPlatformPTY(cmd, cols, rows)
+	rw, resizeFn, killFn, waitFn, err := startPlatformPTY(cmd, cols, rows)
 	if err != nil {
 		return nil, err
 	}
@@ -47,7 +47,7 @@ func DefaultOpener(cwd, _ string, cols, rows uint16) (*StreamHandle, error) {
 		RW:     rw,
 		Resize: resizeFn,
 		Kill:   killFn,
-		Wait:   cmd.Wait,
+		Wait:   waitFn,
 	}, nil
 }
 

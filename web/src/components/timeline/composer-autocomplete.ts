@@ -1,5 +1,5 @@
 // web/src/components/timeline/composer-autocomplete.ts
-import { type Accessor, createEffect, createSignal, onCleanup, type Setter } from "solid-js";
+import { type Accessor, createEffect, createMemo, createSignal, onCleanup, type Setter } from "solid-js";
 import {
   hoxiAPI,
   skillsAPI,
@@ -13,6 +13,7 @@ import {
   inspectPromptContextMentions,
   isSkillHidden,
   recordSkillDescriptors,
+  recordWorkspaceCommandNames,
   resolveContextMentionsForSend,
   selectComposerSkill,
   sessionDirectory,
@@ -24,11 +25,26 @@ import {
   type ContextMentionChipInfo,
 } from "../../store/workspace";
 import { t } from "../../i18n";
+import {
+  applySlashCommandToken,
+  countCompletedCommandArgs,
+  inspectActiveSlashCommand,
+  mergeSlashCommands,
+  removeLeadingSlashCommand,
+  splitCommandHintSlots,
+  type ActiveSlashCommandInfo,
+} from "./slash-command-helpers";
 
 export {
+  applySlashCommandToken,
+  countCompletedCommandArgs,
   expandContextMentions,
+  inspectActiveSlashCommand,
   inspectPromptContextMentions,
+  removeLeadingSlashCommand,
   resolveContextMentionsForSend,
+  splitCommandHintSlots,
+  type ActiveSlashCommandInfo,
   type ContextMentionChipInfo,
 };
 
@@ -89,7 +105,7 @@ export function buildSlashCommandSuggestions(params: {
         type: "command",
         source: src,
         label: `/${c.name}`,
-        detail: c.description || "Run command",
+        detail: c.description || t("timeline.runSlashCommandFallback"),
         insertText: `/${c.name} `,
         hints: c.hints?.length ? c.hints : undefined,
       });
@@ -163,6 +179,17 @@ export function findAutocompleteToken(
     }
   }
 
+  // 3. Leading Chinese IME full-width slash key (U+3001 at index 0)
+  const cjkSlashMatch = before.match(/^\u3001([^\s/\u3001@]*)$/);
+  if (cjkSlashMatch) {
+    return {
+      mode: "command",
+      query: cjkSlashMatch[1],
+      start: 0,
+      end: cursor,
+    };
+  }
+
   return null;
 }
 
@@ -188,13 +215,118 @@ const MAX_SLASH_SUGGESTIONS = 100;
 const FILE_SEARCH_CACHE_TTL_MS = 15_000;
 const COMMAND_CACHE_TTL_MS = 30_000;
 const MAX_FILE_SEARCH_CACHE = 48;
+const MAX_COMMAND_CACHE = 24;
 
 const fileSearchCache = new Map<string, { files: string[]; expiresAt: number }>();
 const commandByDirCache = new Map<string, { commands: CommandInfo[]; expiresAt: number }>();
 const skillsByDirCache = new Map<string, { skills: SkillDescriptor[]; expiresAt: number }>();
+const inFlightCommandsByDir = new Map<string, Promise<CommandInfo[]>>();
+const [commandCatalogTick, setCommandCatalogTick] = createSignal(0);
 
 export function invalidateComposerSkillsAutocompleteCache() {
   skillsByDirCache.clear();
+  commandByDirCache.clear();
+  setCommandCatalogTick((n) => n + 1);
+}
+
+/**
+ * Reactive reader returning merged slash commands (workspace/global + built-ins)
+ * for `dir`, lazily fetching `/command` when uncached or stale.
+ */
+export function readDirectorySlashCommands(dir?: string): CommandInfo[] {
+  commandCatalogTick();
+  const cached = readCachedCommands(dir);
+  if (!cached || !cached.fresh) {
+    void fetchDirectoryCommands(dir);
+  }
+  return mergeSlashCommands(cached?.commands).filter((c) => c.source !== "skill");
+}
+
+function readCachedCommands(dir?: string): { commands: CommandInfo[]; fresh: boolean } | null {
+  const key = dir || "__root__";
+  const entry = commandByDirCache.get(key);
+  if (!entry) return null;
+  commandByDirCache.delete(key);
+  commandByDirCache.set(key, entry);
+  return {
+    commands: entry.commands,
+    fresh: Date.now() <= entry.expiresAt,
+  };
+}
+
+function writeCachedCommands(dir: string | undefined, commands: CommandInfo[]) {
+  const key = dir || "__root__";
+  if (commandByDirCache.has(key)) commandByDirCache.delete(key);
+  while (commandByDirCache.size >= MAX_COMMAND_CACHE) {
+    const oldest = commandByDirCache.keys().next().value;
+    if (oldest === undefined) break;
+    commandByDirCache.delete(oldest);
+  }
+  commandByDirCache.set(key, {
+    commands,
+    expiresAt: Date.now() + COMMAND_CACHE_TTL_MS,
+  });
+  recordWorkspaceCommandNames(
+    dir,
+    commands.filter((c) => c.source !== "skill").map((c) => c.name)
+  );
+  setCommandCatalogTick((n) => n + 1);
+}
+
+function writeCachedSkills(key: string, skills: SkillDescriptor[]) {
+  if (skillsByDirCache.has(key)) skillsByDirCache.delete(key);
+  while (skillsByDirCache.size >= MAX_COMMAND_CACHE) {
+    const oldest = skillsByDirCache.keys().next().value;
+    if (oldest === undefined) break;
+    skillsByDirCache.delete(oldest);
+  }
+  skillsByDirCache.set(key, {
+    skills,
+    expiresAt: Date.now() + COMMAND_CACHE_TTL_MS,
+  });
+}
+
+function fetchDirectoryCommands(dir?: string): Promise<CommandInfo[]> {
+  const key = dir || "__root__";
+  const existing = inFlightCommandsByDir.get(key);
+  if (existing) return existing;
+  const task = hoxiAPI
+    .listCommands(dir)
+    .then((res) => {
+      const list = res ?? [];
+      writeCachedCommands(dir, list);
+      return list;
+    })
+    .catch(() => readCachedCommands(dir)?.commands ?? [])
+    .finally(() => {
+      inFlightCommandsByDir.delete(key);
+    });
+  inFlightCommandsByDir.set(key, task);
+  return task;
+}
+
+export function resolveSentSlashCommand(
+  text: string,
+  dir?: string
+): { command: ActiveSlashCommandInfo; restText: string } | null {
+  const trimmed = text.trimStart();
+  if (!trimmed.startsWith("/") || trimmed.length < 2) return null;
+  const rest = trimmed.slice(1);
+  const wsIdx = rest.search(/\s/);
+  const firstToken = wsIdx >= 0 ? rest.slice(0, wsIdx) : rest;
+  // Ignore obvious filenames with extensions
+  if (!firstToken || /\.[a-zA-Z0-9]{1,8}$/.test(firstToken)) {
+    return null;
+  }
+  commandCatalogTick();
+  const cached = readCachedCommands(dir);
+  if (!cached || !cached.fresh) {
+    void fetchDirectoryCommands(dir);
+  }
+  const matched = inspectActiveSlashCommand(trimmed, mergeSlashCommands(cached?.commands));
+  if (!matched) return null;
+  const restText = trimmed.slice(matched.rawToken.length).replace(/^[ \t]+/, "");
+  return { command: matched, restText };
 }
 
 function readCachedFileSearch(dir: string | undefined, query: string): string[] | null {
@@ -243,15 +375,39 @@ export function createComposerAutocomplete(
     requestGen++;
   });
 
+  const effectiveDirectory = createMemo(() => {
+    const sid = sessionID();
+    return (
+      (sid ? sessionDirectory(sid) : workspace.rootDir) ||
+      workspace.rootDir ||
+      defaultWorkspaceDir() ||
+      undefined
+    );
+  });
+
+  const activeCommand = createMemo<ActiveSlashCommandInfo | null>(() => {
+    const val = text();
+    if (!val.trimStart().startsWith("/")) return null;
+    commandCatalogTick();
+    const dir = effectiveDirectory();
+    const cached = readCachedCommands(dir);
+    if (!cached || !cached.fresh) {
+      void fetchDirectoryCommands(dir);
+    }
+    return inspectActiveSlashCommand(val, mergeSlashCommands(cached?.commands));
+  });
+
+  const clearActiveCommand = () => {
+    const next = removeLeadingSlashCommand(text());
+    setText(next);
+    onApplied?.(0);
+  };
+
   createEffect(() => {
     const val = text();
     const cursor = cursorOffset ? cursorOffset() : val.length;
     const sid = sessionID();
-    const dir =
-      (sid ? sessionDirectory(sid) : workspace.rootDir) ||
-      workspace.rootDir ||
-      defaultWorkspaceDir() ||
-      undefined;
+    const dir = effectiveDirectory();
     const token = findAutocompleteToken(val, cursor);
     setActiveToken(token);
 
@@ -267,15 +423,14 @@ export function createComposerAutocomplete(
       const query = token.query.toLowerCase();
       const runtime = sessionRuntimeForID(sid);
       const rev = skillsCatalogRevision();
-      const effectiveDir = dir || workspace.rootDir || defaultWorkspaceDir() || undefined;
-      const dirKey = `${runtime}\x00${rev}\x00${effectiveDir || "__root__"}`;
+      const effectiveDir = dir;
+      const skillKey = `${runtime}\x00${rev}\x00${effectiveDir || "__root__"}`;
       const reqID = ++requestGen;
       setTriggerMode("command");
       void (async () => {
-        const cachedCmds = commandByDirCache.get(dirKey);
-        let cmds =
-          cachedCmds && Date.now() <= cachedCmds.expiresAt ? cachedCmds.commands : null;
-        const cachedSkills = skillsByDirCache.get(dirKey);
+        const cachedCmds = readCachedCommands(effectiveDir);
+        let cmds = cachedCmds && cachedCmds.fresh ? cachedCmds.commands : null;
+        const cachedSkills = skillsByDirCache.get(skillKey);
         let skills =
           cachedSkills && Date.now() <= cachedSkills.expiresAt ? cachedSkills.skills : null;
         if (
@@ -286,33 +441,10 @@ export function createComposerAutocomplete(
           skills = skillsStore.skills;
         }
 
-        const builtinCommands: CommandInfo[] = [
-          {
-            name: "subtasks",
-            description: t("timeline.subtasksSlashDescription"),
-            source: "command",
-            hints: ["[goal]"],
-          },
-          {
-            name: "subtask",
-            description: t("timeline.subtaskSpawnSlashDescription"),
-            source: "command",
-            hints: ["<prompt>"],
-          },
-        ];
-
         const publish = () => {
           if (reqID !== requestGen) return;
-          const mergedCmds: CommandInfo[] = [...builtinCommands];
-          const seenNames = new Set(builtinCommands.map((c) => c.name));
-          for (const c of cmds ?? []) {
-            if (!seenNames.has(c.name)) {
-              seenNames.add(c.name);
-              mergedCmds.push(c);
-            }
-          }
           const filtered = buildSlashCommandSuggestions({
-            commands: mergedCmds,
+            commands: mergeSlashCommands(cmds),
             skills: skills ?? [],
             query,
             runtime,
@@ -326,21 +458,10 @@ export function createComposerAutocomplete(
         const tasks: Promise<void>[] = [];
         if (!cmds) {
           tasks.push(
-            hoxiAPI
-              .listCommands(effectiveDir)
-              .then((res) => {
-                cmds = res ?? [];
-                if (cmds.length > 0) {
-                  commandByDirCache.set(dirKey, {
-                    commands: cmds,
-                    expiresAt: Date.now() + COMMAND_CACHE_TTL_MS,
-                  });
-                }
-                publish();
-              })
-              .catch(() => {
-                cmds = cmds ?? [];
-              })
+            fetchDirectoryCommands(effectiveDir).then((res) => {
+              cmds = res;
+              publish();
+            })
           );
         }
         if (!cachedSkills || Date.now() > cachedSkills.expiresAt) {
@@ -355,10 +476,7 @@ export function createComposerAutocomplete(
                 skills = res.supported ? (res.skills ?? []) : [];
                 recordSkillDescriptors(skills);
                 if (skills.length > 0) {
-                  skillsByDirCache.set(dirKey, {
-                    skills,
-                    expiresAt: Date.now() + COMMAND_CACHE_TTL_MS,
-                  });
+                  writeCachedSkills(skillKey, skills);
                 }
                 publish();
               })
@@ -505,7 +623,10 @@ export function createComposerAutocomplete(
       return;
     }
     if (token) {
-      const applied = applyAutocompleteToken(val, token, item.insertText);
+      const applied =
+        item.type === "command"
+          ? applySlashCommandToken(val, token, item.insertText)
+          : applyAutocompleteToken(val, token, item.insertText);
       setText(applied.text);
       setTriggerMode(null);
       setActiveToken(null);
@@ -537,6 +658,8 @@ export function createComposerAutocomplete(
     selectedIndex,
     setSelectedIndex,
     triggerMode,
+    activeCommand,
+    clearActiveCommand,
     applySuggestion,
     reset,
   };

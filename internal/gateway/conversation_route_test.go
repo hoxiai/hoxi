@@ -270,8 +270,8 @@ func TestSkillSelectionProbeKeepsLargeBodies(t *testing.T) {
 		{`not json`, false},
 	} {
 		r := httptest.NewRequest(http.MethodPost, "/api/hoxi/sessions/ses_1/prompt_async", strings.NewReader(tc.payload))
-		if got := requestHasSkillSelection(r); got != tc.want {
-			t.Fatalf("requestHasSkillSelection = %v, want %v", got, tc.want)
+		if got := requestNeedsRunner(r, nil); got != tc.want {
+			t.Fatalf("requestNeedsRunner = %v, want %v", got, tc.want)
 		}
 		got, err := io.ReadAll(r.Body)
 		if err != nil {

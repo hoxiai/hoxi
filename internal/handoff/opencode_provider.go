@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hoxiai/hoxi/internal/hoxiconfig"
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
 	"github.com/hoxiai/hoxi/internal/opencode/ocstate"
 )
@@ -71,82 +72,11 @@ func externalOpenCodeAuthPaths() []string {
 }
 
 func sanitizeOpenCodeJSONC(raw []byte) []byte {
-	noComments := make([]byte, 0, len(raw))
-	inStr := false
-	escaped := false
-	for i := 0; i < len(raw); i++ {
-		c := raw[i]
-		if inStr {
-			noComments = append(noComments, c)
-			if escaped {
-				escaped = false
-			} else if c == '\\' {
-				escaped = true
-			} else if c == '"' {
-				inStr = false
-			}
-			continue
-		}
-		if c == '"' {
-			inStr = true
-			noComments = append(noComments, c)
-			continue
-		}
-		if c == '/' && i+1 < len(raw) {
-			if raw[i+1] == '/' {
-				i += 2
-				for i < len(raw) && raw[i] != '\n' {
-					i++
-				}
-				if i < len(raw) {
-					noComments = append(noComments, '\n')
-				}
-				continue
-			}
-			if raw[i+1] == '*' {
-				i += 2
-				for i+1 < len(raw) && !(raw[i] == '*' && raw[i+1] == '/') {
-					i++
-				}
-				i++
-				continue
-			}
-		}
-		noComments = append(noComments, c)
+	cleaned, err := hoxiconfig.SanitizeJSONC(raw)
+	if err != nil {
+		return raw
 	}
-	out := make([]byte, 0, len(noComments))
-	inStr = false
-	escaped = false
-	for i := 0; i < len(noComments); i++ {
-		c := noComments[i]
-		if inStr {
-			out = append(out, c)
-			if escaped {
-				escaped = false
-			} else if c == '\\' {
-				escaped = true
-			} else if c == '"' {
-				inStr = false
-			}
-			continue
-		}
-		if c == '"' {
-			inStr = true
-			out = append(out, c)
-			continue
-		}
-		if c == ',' {
-			j := i + 1
-			for j < len(noComments) && (noComments[j] == ' ' || noComments[j] == '\t' || noComments[j] == '\r' || noComments[j] == '\n') {
-				j++
-			}
-			if j < len(noComments) && (noComments[j] == '}' || noComments[j] == ']') {
-				continue
-			}
-		}
-		out = append(out, c)
-	}
-	return out
+	return cleaned
 }
 
 func readOpenCodeAuthFile(path string) map[string]interface{} {

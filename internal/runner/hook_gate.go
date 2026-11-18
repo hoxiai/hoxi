@@ -60,6 +60,11 @@ type pendingApproval struct {
 	result  approvalReply
 }
 
+type nativeOnDemandTicket struct {
+	command string
+	profile string
+}
+
 type approvalGate struct {
 	mu                 sync.Mutex
 	baseURL            string
@@ -75,6 +80,9 @@ type approvalGate struct {
 	toolAlways         map[string]map[string]ApprovalGrant
 	classGrants        map[string]map[string]ApprovalGrant // session -> recoverable class
 	openCodeAsks       map[string]openCodeAsk              // OpenCode request ID -> request shown to the user
+	onDemandTickets    map[string][]nativeOnDemandTicket   // session -> approved one-shot native on-demand profiles
+	sessionCreated     map[string]map[string]bool          // session -> canonical paths newly created by this session
+	checkpointPaths    map[string]map[string][]string      // session -> callID -> turn-snapshot revert relPaths
 	waitLimit          time.Duration
 	subagentWait       time.Duration // see agySubagentHookWait
 }
@@ -92,6 +100,7 @@ func newApprovalGate() *approvalGate {
 		toolAlways:         make(map[string]map[string]ApprovalGrant),
 		classGrants:        make(map[string]map[string]ApprovalGrant),
 		openCodeAsks:       make(map[string]openCodeAsk),
+		onDemandTickets:    make(map[string][]nativeOnDemandTicket),
 		waitLimit:          agyhook.ClientTimeout - 5*time.Second,
 		subagentWait:       agySubagentHookWait,
 	}
@@ -170,6 +179,8 @@ func (g *approvalGate) lookup(token string) (hookCredential, bool) {
 // cancelSessionApprovals rejects every pending request of a stopped session.
 func (s *Service) cancelSessionApprovals(sessionID, reason string) {
 	s.gate.mu.Lock()
+	delete(s.gate.onDemandTickets, sessionID)
+	delete(s.gate.checkpointPaths, sessionID)
 	var targets []*pendingApproval
 	for _, p := range s.gate.pending {
 		if p.sid == sessionID {
@@ -282,12 +293,18 @@ func (s *Service) decideHookCall(r *http.Request, cred hookCredential, p hookPay
 		}
 		if pathWithin(rec.WorktreePath, path) && !isProtectedWorktreePath(rec.WorktreePath, path) &&
 			s.policyApprovesWorktreeEdit(rec, path) {
+			if ok, reason := s.acquireHookFileLease(r.Context(), cred.sessionID, path); !ok {
+				return hookDecisionDeny, reason
+			}
 			return hookDecisionApprove, ""
 		}
 		// Outside the worktree, protected paths, and edits the policy wants
 		// confirmed all go through the same gate as every other runtime.
 		approved, reason := s.gateToolCall(r, cred, p.ToolCall.Name, p.ToolCall.Args, callID)
 		if approved {
+			if ok, reason := s.acquireHookFileLease(r.Context(), cred.sessionID, path); !ok {
+				return hookDecisionDeny, reason
+			}
 			return hookDecisionApprove, ""
 		}
 		return hookDecisionDeny, reason
@@ -334,6 +351,7 @@ func (s *Service) gateCommand(r *http.Request, cred hookCredential, rec SessionR
 	if ask.cwd != "" && !pathWithin(rec.WorktreePath, ask.cwd) {
 		return false, "command working directory is outside this session's directory"
 	}
+	effectiveRoot := rec.WorktreePath
 	item := map[string]interface{}{
 		"permission": "bash",
 		"patterns":   []string{ask.command},
@@ -342,7 +360,7 @@ func (s *Service) gateCommand(r *http.Request, cred hookCredential, rec SessionR
 	// The hard-refuse classes come before any session grant: a command allowed
 	// for the session in another mode is still refused while unattended.
 	if s.ApprovalPolicy().Mode == ApprovalModeUnattended {
-		if allow, category := unattendedDecision(item, rec.WorktreePath); !allow && category != "" {
+		if allow, category := unattendedDecision(item, effectiveRoot); !allow && category != "" {
 			s.recordUnattendedDeny(cred, item, category)
 			return false, unattendedDenyReason(category)
 		}
@@ -361,23 +379,39 @@ func (s *Service) gateCommand(r *http.Request, cred hookCredential, rec SessionR
 		}
 		// Read-only commands are routine; only audit what the policy let
 		// through beyond them.
-		if decideCommandPermissionIn(ask.command, rec.WorktreePath) != "allow" {
+		if decideCommandPermissionIn(ask.command, effectiveRoot) != "allow" {
 			s.recordPolicyApproval(cred, item)
 		}
 	}
-	if s.ApprovalPolicy().Mode == ApprovalModeUnattended && unattendedIsolated(rec) && s.policyApprovesIsolated(judged, rec.WorktreePath, true) {
+	if s.ApprovalPolicy().Mode == ApprovalModeUnattended && unattendedIsolated(rec) && s.policyApprovesIsolated(judged, effectiveRoot, true) {
 		recordApproval()
 		s.noteTurn(cred.sessionID, "allow")
 		return true, ""
 	}
-	if s.policyApproves(judged, rec.WorktreePath) {
+	if s.policyApproves(judged, effectiveRoot) {
 		recordApproval()
 		return true, ""
 	}
-	if s.classGrantApproves(item, cred.sessionID, rec.WorktreePath) {
+	if s.classGrantApproves(item, cred.sessionID, effectiveRoot) {
 		item["id"] = runnerPermissionID + randomHex(12)
 		s.recordRunnerApprovalAudit(cred, item, "once", approvalReply{Reply: "once", Source: grantSourceSession})
 		return true, ""
+	}
+	if cred.runtime == string(RuntimeNative) {
+		if checkpointRel, ok := s.nativeCheckpointRecoverable(rec, ask, effectiveRoot); ok {
+			if len(checkpointRel) > 0 {
+				s.gate.stashNativeCheckpointPaths(cred.sessionID, ask.callID, checkpointRel)
+			}
+			item["id"] = runnerPermissionID + randomHex(12)
+			s.recordRunnerApprovalAudit(cred, item, "once", approvalReply{Reply: "once", Source: approvalSourceCheckpoint})
+			return true, ""
+		}
+		if profile := s.nativeOnDemandSandboxProfile(cred.sessionID, effectiveRoot, ask.command); profile != "" {
+			s.gate.stashNativeOnDemand(cred.sessionID, ask.command, profile)
+			item["id"] = runnerPermissionID + randomHex(12)
+			s.recordRunnerApprovalAudit(cred, item, "once", approvalReply{Reply: "once", Source: approvalSourceSandbox})
+			return true, ""
+		}
 	}
 	return s.awaitApproval(r, cred, ask)
 }
@@ -607,12 +641,57 @@ func (g *approvalGate) hasToolAlways(sessionID, key string) bool {
 	return ok
 }
 
+func (g *approvalGate) stashNativeOnDemand(sessionID, command, profile string) {
+	sid := strings.TrimSpace(sessionID)
+	cmd := strings.TrimSpace(command)
+	prof := strings.TrimSpace(profile)
+	if g == nil || sid == "" || cmd == "" || prof == "" {
+		return
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.onDemandTickets == nil {
+		g.onDemandTickets = make(map[string][]nativeOnDemandTicket)
+	}
+	list := g.onDemandTickets[sid]
+	if len(list) >= 64 {
+		list = list[len(list)-63:]
+	}
+	g.onDemandTickets[sid] = append(list, nativeOnDemandTicket{command: cmd, profile: prof})
+}
+
+func (g *approvalGate) consumeNativeOnDemand(sessionID, command string) string {
+	sid := strings.TrimSpace(sessionID)
+	cmd := strings.TrimSpace(command)
+	if g == nil || sid == "" || cmd == "" {
+		return ""
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	list := g.onDemandTickets[sid]
+	for i, t := range list {
+		if t.command == cmd {
+			list = append(list[:i], list[i+1:]...)
+			if len(list) == 0 {
+				delete(g.onDemandTickets, sid)
+			} else {
+				g.onDemandTickets[sid] = list
+			}
+			return t.profile
+		}
+	}
+	return ""
+}
+
 func (g *approvalGate) forgetSession(sessionID string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	delete(g.always, sessionID)
 	delete(g.toolAlways, sessionID)
 	delete(g.classGrants, sessionID)
+	delete(g.onDemandTickets, sessionID)
+	delete(g.sessionCreated, sessionID)
+	delete(g.checkpointPaths, sessionID)
 	prefix := sessionID + "\x00"
 	for k := range g.resolvedQuestions {
 		if strings.HasPrefix(k, prefix) {

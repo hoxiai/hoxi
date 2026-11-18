@@ -24,12 +24,14 @@ func newToolRegistry() *BuiltinToolRegistry {
 	r.Register(&readTool{})
 	r.Register(&globTool{})
 	r.Register(&grepTool{})
+	r.Register(&hoxiCodeIndexTool{})
 	r.Register(&codeSearchTool{})
 	r.Register(&symbolInspectTool{})
 	r.Register(&impactAnalysisTool{})
 	r.Register(&todoReadTool{})
 	r.Register(&todoWriteTool{})
 	r.Register(&questionTool{})
+	r.Register(&planConsentTool{})
 	r.Register(&webFetchTool{})
 	r.Register(&mcpListToolsTool{})
 	r.Register(&mcpCallTool{})
@@ -57,7 +59,7 @@ func isAllowedInPlanMode(t Tool) bool {
 		return true
 	}
 	switch t.Name() {
-	case "todowrite", "question", "goal_report":
+	case "todowrite", "question", "plan_consent", "goal_report":
 		return true
 	default:
 		return false
@@ -99,7 +101,7 @@ func (r *BuiltinToolRegistry) SpecsForTurn(mode string, subtaskDepth int) []Tool
 		if planMode && !isAllowedInPlanMode(t) {
 			continue
 		}
-		if subtaskDepth > 0 && (name == "task" || name == "question" || name == "todowrite" || name == "goal_report") {
+		if subtaskDepth > 0 && (name == "task" || name == "question" || name == "plan_consent" || name == "todowrite" || name == "goal_report") {
 			continue
 		}
 		names = append(names, name)
@@ -132,7 +134,7 @@ func (r *BuiltinToolRegistry) Execute(
 	if strings.EqualFold(strings.TrimSpace(tc.Mode), "plan") && !isAllowedInPlanMode(t) {
 		return ToolOutput{Title: call.Name, Output: fmt.Sprintf("tool %s is disabled in plan (read-only) mode", call.Name), IsError: true}, fmt.Errorf("tool %s is disabled in plan mode", call.Name)
 	}
-	if tc.SubtaskDepth > 0 && (call.Name == "task" || call.Name == "question" || call.Name == "todowrite" || call.Name == "goal_report") {
+	if tc.SubtaskDepth > 0 && (call.Name == "task" || call.Name == "question" || call.Name == "plan_consent" || call.Name == "todowrite" || call.Name == "goal_report") {
 		return ToolOutput{Title: call.Name, Output: fmt.Sprintf("tool %s is disabled inside subagents", call.Name), IsError: true}, fmt.Errorf("tool %s is disabled inside subagents", call.Name)
 	}
 	if permHook != nil {
@@ -160,16 +162,20 @@ func (r *BuiltinToolRegistry) Execute(
 		rawInput = json.RawMessage("{}")
 	}
 	out, err = t.Execute(ctx, tc, rawInput)
-	maxBytes := maxToolOutputBytes
-	if call.Name == "webfetch" {
-		maxBytes = maxWebFetchOutputBytes
-	}
-	out.Output = truncateToolOutput(out.Output, maxBytes)
 	if err != nil {
 		out.IsError = true
 		if out.Output == "" {
 			out.Output = err.Error()
 		}
+	}
+	maxBytes := maxToolOutputBytes
+	if call.Name == "webfetch" || call.Name == "hoxi_browser" || call.Name == "hoxi_computer" {
+		maxBytes = maxWebFetchOutputBytes
+	}
+	if call.Name == "bash" {
+		out.Output = compactBashToolOutput(rawInput, out.Output, out.IsError, maxBytes)
+	} else {
+		out.Output = truncateToolOutput(out.Output, maxBytes)
 	}
 	return out, err
 }
@@ -274,11 +280,14 @@ func evalAgentRealPath(p string, depth int) (string, bool) {
 }
 
 func truncateToolOutput(s string, maxBytes int) string {
+	s = ensureValidUTF8(s)
 	if maxBytes <= 0 || len(s) <= maxBytes {
 		return s
 	}
-	head := maxBytes * 2 / 3
-	tail := maxBytes - head
-	omitted := len(s) - head - tail
-	return s[:head] + fmt.Sprintf("\n\n... [%d bytes truncated] ...\n\n", omitted) + s[len(s)-tail:]
+	headBudget := maxBytes * 2 / 3
+	tailBudget := maxBytes - headBudget
+	head := utf8Prefix(s, headBudget)
+	tail := utf8Suffix(s, tailBudget)
+	omitted := max(0, len(s)-len(head)-len(tail))
+	return head + fmt.Sprintf("\n\n... [%d bytes truncated] ...\n\n", omitted) + tail
 }

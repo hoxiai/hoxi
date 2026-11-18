@@ -59,8 +59,10 @@ func (s *Service) Inspect(directory, relPath, symbol string, startLine, endLine,
 	if err != nil {
 		return InspectResponse{}, err
 	}
-	relPath = strings.TrimSpace(relPath)
-	symbol = strings.TrimSpace(symbol)
+	symbol, relPath, err = normalizeSymbolAndPath(directory, symbol, relPath)
+	if err != nil {
+		return InspectResponse{}, err
+	}
 	if relPath == "" && symbol == "" {
 		return InspectResponse{}, errors.New("path or symbol is required")
 	}
@@ -175,6 +177,9 @@ func (s *Service) Inspect(directory, relPath, symbol string, startLine, endLine,
 
 func shortSymbolName(symbol string) string {
 	target := strings.TrimSpace(symbol)
+	if looksLikeFilePathInput(target) {
+		return ""
+	}
 	if dot := strings.LastIndexByte(target, '.'); dot >= 0 && dot+1 < len(target) {
 		return target[dot+1:]
 	}
@@ -186,7 +191,13 @@ func (s *Service) Callers(directory, symbol, excludePath string, limit int) (Cal
 	if err != nil {
 		return CallersResponse{}, err
 	}
-	symbol = strings.TrimSpace(symbol)
+	symbol, excludePath, err = normalizeSymbolAndPath(directory, symbol, excludePath)
+	if err != nil {
+		return CallersResponse{}, err
+	}
+	if symbol == "" && excludePath != "" {
+		return s.callersForFile(directory, excludePath, limit)
+	}
 	callIdent := shortSymbolName(symbol)
 	if callIdent == "" {
 		return CallersResponse{}, errors.New("symbol is required")
@@ -335,9 +346,9 @@ func fileChunksMightContainSymbol(rec *FileRecord, lowerTarget string, maxChunks
 }
 
 func (s *Service) locateSymbolInIndex(directory string, c *cachedIndex, symbol string) (path string, startLine, endLine int, resolvedSymbol string, ok bool) {
-	target := strings.TrimSpace(symbol)
-	if dot := strings.LastIndexByte(target, '.'); dot >= 0 && dot+1 < len(target) {
-		target = target[dot+1:]
+	target := shortSymbolName(symbol)
+	if target == "" {
+		return "", 0, 0, "", false
 	}
 	lowerTarget := strings.ToLower(target)
 	if target != "" && len(c.symbols) > 0 {
@@ -429,7 +440,7 @@ func extractLineSymbolCandidate(line string) string {
 
 func findSymbolInLines(lines []string, symbol string) (startLine, endLine int, resolvedSymbol string, ok bool) {
 	target := strings.TrimSpace(symbol)
-	if target == "" {
+	if target == "" || looksLikeFilePathInput(target) {
 		return 0, 0, "", false
 	}
 	shortTarget := ""

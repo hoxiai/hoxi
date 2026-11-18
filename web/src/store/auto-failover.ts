@@ -101,6 +101,8 @@ const SERVER_RE =
   /overloaded|service unavailable|bad gateway|gateway timeout|temporarily unavailable|\b50[0234]\b|\b52[0249]\b|internal server error|\u670d\u52a1.{0,4}(\u7e41\u5fd9|\u4e0d\u53ef\u7528)/;
 const NETWORK_RE =
   /timeout|timed out|econn|connection reset|connection refused|connection aborted|software caused connection abort|connection closed|closed network connection|closed idle connection|broken pipe|epipe|enetunreach|ehostunreach|eai_again|unexpected eof|\beof\b|fetch failed|network|socket|stream was interrupted|stream interrupted|connection interrupted|network interrupted|unexpectedly interrupted|read tcp|write tcp|dial tcp|tls handshake|deadline exceeded|i\/o timeout|client connection lost|server sent goaway|\u8d85\u65f6|\u8fde\u63a5.{0,4}(\u5931\u8d25|\u4e2d\u65ad|\u91cd\u7f6e|\u8d85\u65f6)|\u7f51\u7edc.{0,4}(\u5f02\u5e38|\u9519\u8bef|\u4e2d\u65ad)/;
+const THINKING_PROTOCOL_MISMATCH_RE =
+  /(?:thinking|redacted_thinking)[\s\S]{0,60}(?:signature|must start with|expected|cannot be modified)|thought_?signature/;
 
 export function decideAutoFailover(
   error: AutoFailoverError,
@@ -124,7 +126,11 @@ export function decideAutoFailover(
     case "outcome_unknown":
     case "context":
     case "policy":
+      return notEndpoint;
     case "badRequest":
+      if (THINKING_PROTOCOL_MISMATCH_RE.test(msg)) {
+        return { failover: true, penalize: false, reason: "other" };
+      }
       return notEndpoint;
     case "model":
     case "quota":
@@ -145,7 +151,12 @@ export function decideAutoFailover(
   if ((status !== undefined && status >= 500) || SERVER_RE.test(msg)) return yes("server");
   if (status === 408 || NETWORK_RE.test(msg)) return yes("network");
   if (error.data?.isRetryable) return yes("server");
-  if (status === 400 || status === 413 || status === 422) return notEndpoint;
+  if (status === 400 || status === 413 || status === 422) {
+    if (THINKING_PROTOCOL_MISMATCH_RE.test(msg)) {
+      return { failover: true, penalize: false, reason: "other" };
+    }
+    return notEndpoint;
+  }
   return elapsedMs < FAST_FAILURE_MS
     ? yes("other")
     : { failover: false, penalize: true, reason: "other" };

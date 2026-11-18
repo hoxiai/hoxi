@@ -121,7 +121,7 @@ func TestChildCleanupFlushesAndUnpinsAbortedTranscript(t *testing.T) {
 	svc.store.UpsertTurnPart("child", MessagePart{ID: "part", SessionID: "child", MessageID: "message", Type: "text"})
 	svc.store.AppendPartDelta("child", "message", "part", "unfinished child output")
 	svc.setChildBusy("child", false)
-	if svc.store.records["child"].active {
+	if svc.store.IsActive("child") {
 		t.Fatal("aborted child remained pinned")
 	}
 	rec, _ := NewStore(dir).Get("child")

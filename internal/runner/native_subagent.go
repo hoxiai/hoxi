@@ -70,9 +70,7 @@ func (b *nativeSubagentBridge) enrichParentTaskPart(part *MessagePart, nowMs int
 	if callID == "" {
 		return
 	}
-	b.tr.mu.Lock()
-	childID := b.tr.childSessionID(callID)
-	b.tr.mu.Unlock()
+	childID := b.tr.ChildSessionIDForKey(callID)
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -128,56 +126,64 @@ func (b *nativeSubagentBridge) handleChildEvent(evt NativeEvent, nowMs int64) []
 		}
 	}
 
-	b.tr.mu.Lock()
+	toolMeta := cloneGenericMap(evt.Metadata)
+	if evt.Kind == NativeEventToolCompleted || evt.Kind == NativeEventToolError {
+		if toolMeta == nil {
+			toolMeta = make(map[string]interface{})
+		}
+		if evt.Step > 0 {
+			toolMeta["step"] = evt.Step
+		}
+		// Saving attachments performs disk I/O, so do it outside translator locks.
+		if b.svc != nil && len(evt.Media) > 0 {
+			childID := b.tr.ChildSessionIDForKey(parentCallID)
+			if rec, ok := b.svc.store.Get(childID); ok {
+				if refs := b.svc.saveNativeToolMediaAttachments(rec, evt.Media); len(refs) > 0 {
+					toolMeta["mediaAttachments"] = refs
+				}
+			}
+		}
+	}
 	var evts []SSEEvent
+	var childID string
 	switch evt.Kind {
 	case NativeEventSubtaskStart:
 		childProv := metaStr(evt.Metadata, "providerID")
 		childModel := firstNonEmptyStr(metaStr(evt.Metadata, "modelID"), b.modelID)
 		childMode := firstNonEmptyStr(metaStr(evt.Metadata, "mode"), "plan")
 		subType := metaStr(evt.Metadata, "subagent_type")
-		evts = append(evts, b.tr.openChild(parentCallID, ChildSessionSpec{
+		evts, childID = b.tr.OpenChildSession(parentCallID, ChildSessionSpec{
 			Title:      firstNonEmptyStr(evt.Title, "Subagent"),
 			Prompt:     evt.Text,
 			ProviderID: childProv,
 			ModelID:    childModel,
 			Mode:       childMode,
 			Agent:      subType,
-		}, nowMs)...)
+		}, nowMs)
 
 	case NativeEventThinkingEnd:
-		if c := b.tr.children[parentCallID]; c != nil {
-			suffix := firstNonEmptyStr(evt.PartID, fmt.Sprintf("think_%d", nowMs))
-			evts = append(evts, c.upsertText("reasoning", suffix, evt.Text, nowMs, nowMs)...)
-		}
+		suffix := firstNonEmptyStr(evt.PartID, fmt.Sprintf("think_%d", nowMs))
+		evts, childID = b.tr.UpsertChildText(parentCallID, "reasoning", suffix, evt.Text, nowMs, nowMs)
 
 	case NativeEventTextEnd:
-		if c := b.tr.children[parentCallID]; c != nil {
-			suffix := firstNonEmptyStr(evt.PartID, fmt.Sprintf("text_%d", nowMs))
-			evts = append(evts, c.upsertText("text", suffix, evt.Text, nowMs, nowMs)...)
-		}
+		suffix := firstNonEmptyStr(evt.PartID, fmt.Sprintf("text_%d", nowMs))
+		evts, childID = b.tr.UpsertChildText(parentCallID, "text", suffix, evt.Text, nowMs, nowMs)
 
 	case NativeEventToolRunning:
-		if c := b.tr.children[parentCallID]; c != nil {
-			key := firstNonEmptyStr(evt.CallID, evt.PartID, fmt.Sprintf("tool_%d", nowMs))
-			evts = append(evts, c.startTool(key, evt.CallID, evt.ToolName, evt.Input, nowMs)...)
-		}
+		key := firstNonEmptyStr(evt.CallID, evt.PartID, fmt.Sprintf("tool_%d", nowMs))
+		runMeta := cloneGenericMap(evt.Metadata)
+		evts, childID = b.tr.StartChildTool(parentCallID, key, evt.CallID, evt.ToolName, evt.Input, runMeta, nowMs)
 
-	case NativeEventToolCompleted:
-		if c := b.tr.children[parentCallID]; c != nil {
-			evts = append(evts, c.finishTool(evt.CallID, evt.Text, false, nowMs)...)
-		}
-
-	case NativeEventToolError:
-		if c := b.tr.children[parentCallID]; c != nil {
-			evts = append(evts, c.finishTool(evt.CallID, firstNonEmptyStr(evt.ErrorText, evt.Text), true, nowMs)...)
-		}
+	case NativeEventToolCompleted, NativeEventToolError:
+		isError := evt.Kind == NativeEventToolError
+		evts, childID = b.tr.FinishChildTool(parentCallID, evt.CallID, firstNonEmptyStr(evt.ErrorText, evt.Text), isError, evt.Step, toolMeta, nowMs)
 
 	case NativeEventSubtaskEnd:
-		evts = append(evts, b.tr.closeChild(parentCallID, strings.TrimSpace(evt.ErrorText) != "", nowMs)...)
+		evts, childID = b.tr.CloseChildSession(parentCallID, strings.TrimSpace(evt.ErrorText) != "", nowMs)
+
+	default:
+		childID = b.tr.ChildSessionIDForKey(parentCallID)
 	}
-	childID := b.tr.childSessionID(parentCallID)
-	b.tr.mu.Unlock()
 
 	// Update parent `task` tool part metadata (`sessionId`, `lastActivityAt`,
 	// and resolved child model/role) so running ToolCard shimmer & details stay live.

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -71,8 +72,15 @@ func TestProfileCredentialIsolationAndReadOnlyGuards(t *testing.T) {
 		t.Fatalf("secret credential leaked in list output: %s", string(rawList))
 	}
 
-	// Verify SSRF / host-override guard rejects external URLs and protocol-relative paths.
-	for _, badEP := range []string{"https://attacker.invalid/steal", "//attacker.invalid/steal", "api/v1/nodes"} {
+	// Verify SSRF / host-override / path-traversal guard rejects external URLs, protocol-relative paths, and '..' segments.
+	for _, badEP := range []string{
+		"https://attacker.invalid/steal",
+		"//attacker.invalid/steal",
+		"api/v1/nodes",
+		"/../../v1/other-tenant",
+		"/api/%2e%2e/admin",
+		`/api\..\..\secret`,
+	} {
 		if _, err := svc.Invoke(ctx, InvokeRequest{
 			Action:   "http_request",
 			Profile:  "gopanel-prod",
@@ -80,6 +88,18 @@ func TestProfileCredentialIsolationAndReadOnlyGuards(t *testing.T) {
 			Endpoint: badEP,
 		}); err == nil {
 			t.Fatalf("expected endpoint %q to be rejected", badEP)
+		}
+	}
+
+	// Verify leading '-' flag-injection inputs are rejected on SQLite, Postgres/MySQL, and SSH profiles.
+	for _, badProf := range []Profile{
+		{ID: "bad-sqlite", Kind: KindSQLite, DBPath: "-cmd"},
+		{ID: "bad-pg-user", Kind: KindPostgres, Host: "127.0.0.1", Username: "-o"},
+		{ID: "bad-pg-db", Kind: KindPostgres, Host: "127.0.0.1", Database: "-d"},
+		{ID: "bad-ssh-key", Kind: KindSSH, Host: "example.com", KeyPath: "-oProxyCommand=sh"},
+	} {
+		if _, err := svc.Upsert(badProf); err == nil {
+			t.Fatalf("expected leading-dash field in %+v to be rejected", badProf)
 		}
 	}
 
@@ -122,5 +142,85 @@ func TestProfileCredentialIsolationAndReadOnlyGuards(t *testing.T) {
 	mux.ServeHTTP(remW, remReq)
 	if remW.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 for remote caller, got %d", remW.Code)
+	}
+}
+
+func TestCorruptDataProfilesStoreBackedUpBeforeFail(t *testing.T) {
+	dir := t.TempDir()
+	storePath := filepath.Join(dir, "dataprofiles.json")
+	corruptPayload := []byte(`{"profiles": [BROKEN_JSON`)
+	if err := os.WriteFile(storePath, corruptPayload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := NewService(storePath, nil)
+	if _, err := svc.List(); err == nil || !strings.Contains(err.Error(), "corrupt") {
+		t.Fatalf("expected corrupt store error, got %v", err)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var backupPath string
+	for _, ent := range entries {
+		if strings.HasPrefix(ent.Name(), "dataprofiles.json.corrupt-") {
+			backupPath = filepath.Join(dir, ent.Name())
+			break
+		}
+	}
+	if backupPath == "" {
+		t.Fatal("expected corrupt dataprofiles.json to be moved aside to .corrupt-* backup")
+	}
+	gotBackup, err := os.ReadFile(backupPath)
+	if err != nil || string(gotBackup) != string(corruptPayload) {
+		t.Fatalf("backup content mismatch: err=%v got=%q", err, string(gotBackup))
+	}
+
+	// Subsequent Upsert succeeds cleanly without touching the backup file.
+	if _, err := svc.Upsert(Profile{ID: "clean-1", BaseURL: "https://api.example.com"}); err != nil {
+		t.Fatalf("Upsert after backup failed: %v", err)
+	}
+	if _, err := os.Stat(backupPath); err != nil {
+		t.Fatalf("backup file should remain intact: %v", err)
+	}
+}
+
+func TestDefaultHTTPClientBlocksCrossOriginRedirectCredentialLeak(t *testing.T) {
+	var leakedHeader string
+	evil := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		leakedHeader = r.Header.Get("X-Api-Secret")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer evil.Close()
+
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, evil.URL+"/collect", http.StatusFound)
+	}))
+	defer origin.Close()
+
+	svc := NewService(filepath.Join(t.TempDir(), "dataprofiles.json"), nil)
+	if _, err := svc.Upsert(Profile{
+		ID:          "redir-test",
+		Kind:        KindHTTPAPI,
+		BaseURL:     origin.URL,
+		BearerToken: "tok_secret_123456",
+		Headers:     map[string]string{"X-Api-Secret": "hdr_secret_654321"},
+		ReadOnly:    true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := svc.Invoke(context.Background(), InvokeRequest{
+		Action:   "http_request",
+		Profile:  "redir-test",
+		Method:   "GET",
+		Endpoint: "/v1/items",
+	}); err == nil || !strings.Contains(err.Error(), "cross-origin redirect") {
+		t.Fatalf("expected cross-origin redirect to be refused, got err=%v", err)
+	}
+	if leakedHeader != "" {
+		t.Fatalf("custom secret header leaked to cross-origin redirect target: %q", leakedHeader)
 	}
 }

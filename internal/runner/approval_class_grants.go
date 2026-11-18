@@ -50,6 +50,9 @@ func grantableRequestClasses(item map[string]interface{}, dir string) []string {
 	if editPermissions[permissionName(item)] {
 		return grantableEditFiles(item, dir)
 	}
+	if classes := grantableRunnerToolEditFiles(item, dir); len(classes) > 0 {
+		return classes
+	}
 	if strings.TrimSpace(dir) == "" || !isShellPermissionItem(item) {
 		return nil
 	}

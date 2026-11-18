@@ -51,7 +51,7 @@ test("standalone browser plugin", async (t) => {
   };
 
   await t.test("all mutations ask before scoped authenticated fetch", async () => {
-    for (const action of ["navigate", "back", "forward", "reload", "click", "type", "key", "scroll", "evaluate", "tab_new", "tab_select", "tab_close", "close"]) {
+    for (const action of ["navigate", "back", "forward", "reload", "click", "hover", "type", "select", "key", "scroll", "evaluate", "tab_new", "tab_select", "tab_close", "close"]) {
       requests = []; asks = [];
       const result = await execute({ action, text: "document.title", sessionID: "spoof", directory: "/spoof", manual: false }, context);
       assert.equal(asks.length, 1);
@@ -83,10 +83,10 @@ test("standalone browser plugin", async (t) => {
     assert.equal(requests.length, 0);
   });
 
-  await t.test("snapshot and screenshot skip approvals; images only in attachments", async () => {
+  await t.test("snapshot, screenshot, diagnostics and wait skip approvals; images only in attachments", async () => {
     asks = [];
     globalThis.fetch = async () => Response.json({ ...state, image: "/9j/BASE64", snapshot: { text: "untrusted" } });
-    for (const action of ["snapshot", "screenshot"]) {
+    for (const action of ["snapshot", "screenshot", "diagnostics", "wait"]) {
       const result = await execute({ action }, context);
       assert.equal(asks.length, 0);
       assert.equal(result.output.includes("BASE64"), false);
@@ -333,7 +333,7 @@ test("standalone browser plugin", async (t) => {
     assert.ok(!failureCheckMessages[0].parts[2].state.output.includes("passing check output omitted"));
   });
 
-  await t.test("system.transform deduplicates <project_memory> across plugins and redacts secrets", async () => {
+  await t.test("system.transform deduplicates <project_memory> and redacts secrets", async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "hoxi-mem-dedup-"));
     try {
       await fs.mkdir(path.join(tmpDir, ".hoxi", "memory"), { recursive: true });
@@ -342,17 +342,19 @@ test("standalone browser plugin", async (t) => {
         "Updated: 2026-10-24T00:00:00Z\n# Project Rules\nNever leak sk-1234567890abcdefghijklmno.",
         "utf8",
       );
-      const { HoxiMemoryPlugin } = await import("../../.opencode/plugins/hoxi-memory.js");
-      const memHooks = await HoxiMemoryPlugin({ directory: tmpDir });
       const out = { system: [] };
       await hooks["experimental.chat.system.transform"]({ sessionID: "ses_dedup", directory: tmpDir }, out);
-      await memHooks["experimental.chat.system.transform"]({ sessionID: "ses_dedup", directory: tmpDir }, out);
+      await hooks["experimental.chat.system.transform"]({ sessionID: "ses_dedup", directory: tmpDir }, out);
 
       const memBlocks = out.system.filter((s) => s.includes("<project_memory>"));
-      assert.equal(memBlocks.length, 1, "expected exactly 1 <project_memory> block when both plugins run");
+      assert.equal(memBlocks.length, 1, "expected exactly 1 <project_memory> block across repeated transforms");
       assert.ok(!memBlocks[0].includes("Updated:"));
       assert.ok(!memBlocks[0].includes("sk-1234567890abcdefghijklmno"));
       assert.ok(memBlocks[0].includes("[REDACTED_SECRET]"));
+
+      const preSeeded = { system: ["<project_memory>\nRunner injected\n</project_memory>"] };
+      await hooks["experimental.chat.system.transform"]({ sessionID: "ses_runner", directory: tmpDir }, preSeeded);
+      assert.equal(preSeeded.system.filter((s) => s.includes("<project_memory>")).length, 1);
     } finally {
       await fs.rm(tmpDir, { recursive: true, force: true });
     }

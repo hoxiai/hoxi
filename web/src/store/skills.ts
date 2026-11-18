@@ -78,7 +78,7 @@ export function toggleSkillHidden(name: string) {
 export const [skillsStore, setSkillsStore] = createStore<SkillsStoreState>({
   skills: [],
   supported: true,
-  runtime: "opencode",
+  runtime: "native",
   directory: "",
   cacheHint: "",
   loading: false,
@@ -114,7 +114,7 @@ export function buildSkillsCacheKey(
   directory: string,
   sessionID?: string | null
 ): string {
-  return `${runtime || "opencode"}\x00${version || "0"}\x00${directory || "__root__"}\x00${sessionID || "__workspace__"}`;
+  return `${runtime || "native"}\x00${version || "0"}\x00${directory || "__root__"}\x00${sessionID || "__workspace__"}`;
 }
 
 export function invalidateSkillsCatalogCache() {

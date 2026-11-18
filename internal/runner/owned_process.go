@@ -8,200 +8,32 @@ import (
 	"time"
 )
 
-// Owned processes let a session stop what it started itself (a dev server it
-// launched with `nohup … &`, a watcher, a tunnel) without asking, while a
-// kill that reaches anything else still asks.
-//
-// Ownership is by process group. Each shell a session runs leads a process
-// group of its own, and background jobs keep that group after the shell has
-// exited and they were reparented to launchd. While a session's shell command
-// runs, Hoxi finds that shell (an OpenCode shell by the `# hoxi-stop:` tag the
-// sandbox plugin puts in its command line, a CLI runtime's shells as group
-// leaders inside the runtime's own process tree) and records its group. A
-// process belongs to the session when its group is one of these.
-//
-// The record is in memory, per Hoxi session, and only Hoxi writes it: a model
-// can neither add a group nor tag a process it did not start. A group is
-// dropped once no process holds it, and a group whose leader PID now runs a
-// different command line is treated as reused and dropped too.
-
-// maxOwnedGroupsPerSession bounds one session's record.
-const maxOwnedGroupsPerSession = 256
-
-// ownedShellScanDelays are when a running shell command is looked for after
-// its tool call starts. A shell that exits before the first scan finds it
-// leaves no record, and a later kill of what it started keeps asking.
-var ownedShellScanDelays = []time.Duration{0, 150 * time.Millisecond, 400 * time.Millisecond, time.Second, 2500 * time.Millisecond}
-
 // approvalSourceOwnProcess marks requests auto-approved because their only
 // risky part was a kill of the session's own processes.
 const approvalSourceOwnProcess = "own_process"
 
-type ownedProcessGroup struct {
-	pgid       int
-	leaderArgs string // the group leader's command line when recorded
-}
+var ownedShellScanDelays = []time.Duration{0, 150 * time.Millisecond, 400 * time.Millisecond, time.Second, 2500 * time.Millisecond}
 
-type ownedProcessLedger struct {
-	mu       sync.Mutex
-	groups   map[string][]ownedProcessGroup // Hoxi session ID -> groups
-	watching map[string]*ownedProcessWatch  // sessionID\x00callID being looked for
-}
-
-type ownedProcessWatch struct {
-	done chan struct{}
-}
-
-func (w *ownedProcessWatch) wait(delay time.Duration) bool {
-	select {
-	case <-w.done:
-		return false
-	default:
-	}
-	if delay <= 0 {
-		return true
-	}
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-w.done:
-		return false
-	case <-timer.C:
-		return true
-	}
-}
-
-func newOwnedProcessLedger() *ownedProcessLedger {
-	return &ownedProcessLedger{groups: map[string][]ownedProcessGroup{}, watching: map[string]*ownedProcessWatch{}}
-}
-
-// startWatch reports whether the caller should look for this call's shell;
-// each call is looked for once.
-func (l *ownedProcessLedger) startWatch(sessionID, callID string) *ownedProcessWatch {
-	if l == nil || sessionID == "" || callID == "" {
-		return nil
-	}
-	key := sessionID + "\x00" + callID
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.watching[key] != nil {
-		return nil
-	}
-	watch := &ownedProcessWatch{done: make(chan struct{})}
-	l.watching[key] = watch
-	return watch
-}
-
-// endWatch forgets a call after its scans, keeping the map small. A call ID
-// that comes back later is a new tool call and is looked for again.
-func (l *ownedProcessLedger) endWatch(sessionID, callID string, watch *ownedProcessWatch) {
-	if l == nil {
-		return
-	}
-	l.mu.Lock()
-	key := sessionID + "\x00" + callID
-	if l.watching[key] == watch {
-		delete(l.watching, key)
-	}
-	l.mu.Unlock()
-}
-
-// forget drops all recorded process groups and watch keys for a deleted session.
-func (l *ownedProcessLedger) forget(sessionID string) {
-	if l == nil || sessionID == "" {
-		return
-	}
-	prefix := sessionID + "\x00"
-	l.mu.Lock()
-	delete(l.groups, sessionID)
-	for k := range l.watching {
-		if strings.HasPrefix(k, prefix) {
-			close(l.watching[k].done)
-			delete(l.watching, k)
-		}
-	}
-	l.mu.Unlock()
-}
-
-func (l *ownedProcessLedger) record(sessionID string, pgid int, leaderArgs string) {
-	if l == nil || sessionID == "" || pgid <= 1 {
-		return
-	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.recordLocked(sessionID, pgid, leaderArgs)
-}
-
-// A scan may already be reading the process table when forget cancels it.
-// Check its identity under the write lock so it cannot restore deleted state
-// or interfere with a later watch using the same session and call IDs.
-func (l *ownedProcessLedger) recordWatched(sessionID, callID string, watch *ownedProcessWatch, pgid int, leaderArgs string) {
-	if l == nil || watch == nil || pgid <= 1 {
-		return
-	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.watching[sessionID+"\x00"+callID] == watch {
-		l.recordLocked(sessionID, pgid, leaderArgs)
-	}
-}
-
-func (l *ownedProcessLedger) recordLocked(sessionID string, pgid int, leaderArgs string) {
-	groups := l.groups[sessionID]
-	for i, g := range groups {
-		if g.pgid == pgid {
-			groups[i].leaderArgs = leaderArgs
-			return
-		}
-	}
-	groups = append(groups, ownedProcessGroup{pgid: pgid, leaderArgs: leaderArgs})
-	if len(groups) > maxOwnedGroupsPerSession {
-		groups = groups[len(groups)-maxOwnedGroupsPerSession:]
-	}
-	l.groups[sessionID] = groups
-}
-
-// liveGroups prunes every session's record against byPID and returns the
-// groups sessionID still owns.
-func (l *ownedProcessLedger) liveGroups(sessionID string, byPID map[int]procSnapshot) map[int]bool {
-	if l == nil || len(byPID) == 0 {
-		return nil
-	}
-	held := make(map[int]bool, len(byPID))
-	for _, snap := range byPID {
-		if snap.pgid > 1 {
-			held[snap.pgid] = true
-		}
-	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	out := map[int]bool{}
-	for sid, groups := range l.groups {
-		kept := groups[:0]
-		for _, g := range groups {
-			if !held[g.pgid] {
-				continue
-			}
-			if leader, alive := byPID[g.pgid]; alive && leader.args != g.leaderArgs {
-				continue // the leader PID was reused by another command
-			}
-			kept = append(kept, g)
-			if sid == sessionID {
-				out[g.pgid] = true
+func (s *Service) processControlToolVerifier(sessionID string) func(string) bool {
+	path := os.Getenv("PATH")
+	s.mu.Lock()
+	ap := s.procs[sessionID]
+	s.mu.Unlock()
+	if ap != nil {
+		ap.mu.Lock()
+		if ap.cmd != nil && ap.cmd.Env != nil {
+			path = ""
+			for _, entry := range ap.cmd.Env {
+				if strings.HasPrefix(entry, "PATH=") {
+					path = strings.TrimPrefix(entry, "PATH=")
+				}
 			}
 		}
-		if len(kept) == 0 {
-			delete(l.groups, sid)
-		} else {
-			l.groups[sid] = kept
-		}
+		ap.mu.Unlock()
 	}
-	return out
+	return func(name string) bool { return trustedProcessControlToolIn(name, path) }
 }
 
-// noteOpenCodeShellEvent starts looking for the shell of a running OpenCode
-// bash call. evt is the raw daemon event; its sessionID is the engine
-// session (the turn's own or one of its subagents').
 func (s *Service) noteOpenCodeShellEvent(rec SessionRecord, evt SSEEvent) {
 	if s.ownedProcs == nil || s.openCode == nil || evt.Type != "message.part.updated" {
 		return
@@ -233,46 +65,25 @@ func (s *Service) noteOpenCodeShellEvent(rec SessionRecord, evt SSEEvent) {
 	}
 	port := u.Port()
 	sessionID := rec.ID
-	watch := s.ownedProcs.startWatch(sessionID, callID)
+	watch := s.ownedProcs.StartWatch(sessionID, callID)
 	if watch == nil {
 		return
 	}
 	go func() {
-		defer s.ownedProcs.endWatch(sessionID, callID, watch)
+		defer s.ownedProcs.EndWatch(sessionID, callID, watch)
 		for _, delay := range ownedShellScanDelays {
-			if !watch.wait(delay) {
+			if !watch.Wait(delay) {
 				return
 			}
 			byPID, children := readProcessSnapshots()
 			if shell := findOpenCodeShellGroup(byPID, children, port, marker); shell > 1 {
-				s.ownedProcs.recordWatched(sessionID, callID, watch, shell, byPID[shell].args)
+				s.ownedProcs.RecordWatched(sessionID, callID, watch, shell, byPID[shell].Args)
 				return
 			}
 		}
 	}()
 }
 
-// findOpenCodeShellGroup returns the shell carrying marker among the direct
-// children of the OpenCode daemon on port, when it leads its own process
-// group. Only the daemon starts its direct children, so a model cannot plant
-// a tag there; a forged tag deeper in the tree is ignored.
-func findOpenCodeShellGroup(byPID map[int]procSnapshot, children map[int][]int, port, marker string) int {
-	daemon := selectOpenCodeDaemonPID(byPID, children, port)
-	if daemon <= 1 || marker == "" {
-		return 0
-	}
-	for _, child := range children[daemon] {
-		snap := byPID[child]
-		if child > 1 && snap.pgid == child && argsCarryStopMarker(snap.args, marker) {
-			return child
-		}
-	}
-	return 0
-}
-
-// noteRuntimeShellEvent records the process groups a CLI runtime's shell
-// tools lead while one runs. Only groups whose leader sits in the runtime's
-// own process tree are recorded.
 func (s *Service) noteRuntimeShellEvent(sessionID string, evt SSEEvent) {
 	if s.ownedProcs == nil || evt.Type != "message.part.updated" {
 		return
@@ -284,48 +95,59 @@ func (s *Service) noteRuntimeShellEvent(sessionID string, evt SSEEvent) {
 	if !bashToolNames[strings.ToLower(strings.TrimSpace(part.Tool))] {
 		return
 	}
-	root := s.runtimeRootPID(sessionID)
-	if root <= 1 {
+	s.mu.Lock()
+	hasActive := s.procs[sessionID] != nil
+	s.mu.Unlock()
+	if !hasActive {
 		return
 	}
 	callID := part.CallID
-	watch := s.ownedProcs.startWatch(sessionID, callID)
+	watch := s.ownedProcs.StartWatch(sessionID, callID)
 	if watch == nil {
 		return
 	}
 	go func() {
-		defer s.ownedProcs.endWatch(sessionID, callID, watch)
+		defer s.ownedProcs.EndWatch(sessionID, callID, watch)
 		protected := selfProcessGroupID()
+		selfPID := os.Getpid()
 		for _, delay := range ownedShellScanDelays {
-			if !watch.wait(delay) {
+			if !watch.Wait(delay) {
 				return
 			}
+			root := s.runtimeRootPID(sessionID)
+			if root <= 1 {
+				s.mu.Lock()
+				stillActive := s.procs[sessionID] != nil
+				s.mu.Unlock()
+				if !stillActive {
+					return
+				}
+				continue
+			}
 			byPID, children := readProcessSnapshots()
-			if _, alive := byPID[root]; !alive {
+			rootSnap, alive := byPID[root]
+			if !alive {
 				return
 			}
 			for _, pid := range runtimeShellGroups(byPID, children, root, protected) {
-				s.ownedProcs.recordWatched(sessionID, callID, watch, pid, byPID[pid].args)
+				s.ownedProcs.RecordWatched(sessionID, callID, watch, pid, byPID[pid].Args)
+			}
+			if rootSnap.PGID == 0 && rootSnap.CreateTime != 0 {
+				for _, pid := range collectSubtreePIDs(root, children) {
+					if pid <= 4 || pid == selfPID {
+						continue
+					}
+					cSnap, ok := byPID[pid]
+					if !ok || cSnap.CreateTime == 0 || cSnap.CreateTime < rootSnap.CreateTime || isAgentRuntimeProcessArgs(cSnap.Args) {
+						continue
+					}
+					s.ownedProcs.RecordWatchedPID(sessionID, callID, watch, pid, cSnap.CreateTime, cSnap.Args)
+				}
 			}
 		}
 	}()
 }
 
-// runtimeShellGroups lists the process-group leaders inside root's tree. A
-// group led from outside the tree is never listed, even when a process in
-// the tree joined it.
-func runtimeShellGroups(byPID map[int]procSnapshot, children map[int][]int, root, protected int) []int {
-	var out []int
-	for _, pid := range collectSubtreePIDs(root, children) {
-		if snap, ok := byPID[pid]; ok && pid > 1 && snap.pgid == pid && pid != protected {
-			out = append(out, pid)
-		}
-	}
-	return out
-}
-
-// runtimeRootPID is the pid of the session's running CLI runtime, or 0 for
-// OpenCode turns and idle sessions.
 func (s *Service) runtimeRootPID(sessionID string) int {
 	s.mu.Lock()
 	ap := s.procs[sessionID]
@@ -336,13 +158,12 @@ func (s *Service) runtimeRootPID(sessionID string) int {
 	return ap.cmd.Process.Pid
 }
 
-// ownedProcessVerifier returns the check maskVerifiedProcessControl uses for
-// one request. It reads the process table once, on first use.
 func (s *Service) ownedProcessVerifier(sessionID string) func(processControlTarget) bool {
 	var (
 		once     sync.Once
 		byPID    map[int]procSnapshot
 		groups   map[int]bool
+		pids     map[int]bool
 		subtree  map[int]bool
 		blocked  map[int]bool
 		verdicts = map[string]bool{}
@@ -350,7 +171,8 @@ func (s *Service) ownedProcessVerifier(sessionID string) func(processControlTarg
 	load := func() {
 		var children map[int][]int
 		byPID, children = readProcessSnapshots()
-		groups = s.ownedProcs.liveGroups(sessionID, byPID)
+		groups = s.ownedProcs.LiveGroups(sessionID, byPID)
+		pids = s.ownedProcs.LivePIDs(sessionID, byPID, children)
 		blocked = map[int]bool{1: true, os.Getpid(): true}
 		if pgid := selfProcessGroupID(); pgid > 1 {
 			blocked[pgid] = true
@@ -358,17 +180,21 @@ func (s *Service) ownedProcessVerifier(sessionID string) func(processControlTarg
 		subtree = map[int]bool{}
 		if root := s.runtimeRootPID(sessionID); root > 1 {
 			blocked[root] = true
+			rootCreate := byPID[root].CreateTime
 			for _, pid := range collectSubtreePIDs(root, children)[1:] {
+				if rootCreate > 0 && byPID[pid].CreateTime < rootCreate {
+					continue
+				}
 				subtree[pid] = true
 			}
 		}
 	}
 	ownedPID := func(pid int) bool {
 		snap, ok := byPID[pid]
-		if !ok || blocked[pid] || blocked[snap.pgid] || isAgentRuntimeProcessArgs(snap.args) {
+		if !ok || pid <= 1 || blocked[pid] || (snap.PGID > 0 && blocked[snap.PGID]) || isAgentRuntimeProcessArgs(snap.Args) {
 			return false
 		}
-		return groups[snap.pgid] || subtree[pid]
+		return (snap.PGID > 1 && groups[snap.PGID]) || pids[pid] || subtree[pid]
 	}
 	return func(target processControlTarget) bool {
 		if sessionID == "" || s.ownedProcs == nil {
@@ -378,12 +204,12 @@ func (s *Service) ownedProcessVerifier(sessionID string) func(processControlTarg
 		if len(byPID) == 0 {
 			return false
 		}
-		key := strings.Join(target.pgrepArgs, "\x00")
-		if len(target.pgrepArgs) > 0 {
+		key := strings.Join(target.PgrepArgs, "\x00")
+		if len(target.PgrepArgs) > 0 {
 			if v, seen := verdicts[key]; seen {
 				return v
 			}
-			pids, ok := pgrepPIDs(target.pgrepArgs)
+			pids, ok := pgrepPIDs(target.PgrepArgs)
 			verdict := ok
 			for _, pid := range pids {
 				if !ownedPID(pid) {
@@ -394,12 +220,12 @@ func (s *Service) ownedProcessVerifier(sessionID string) func(processControlTarg
 			verdicts[key] = verdict
 			return verdict
 		}
-		if len(target.pids) == 0 {
+		if len(target.PIDs) == 0 {
 			return false
 		}
-		for _, pid := range target.pids {
+		for _, pid := range target.PIDs {
 			if _, listed := byPID[pid]; !listed && !processAlive(pid) {
-				continue // already gone: the kill signals nothing
+				continue
 			}
 			if !ownedPID(pid) {
 				return false
@@ -409,9 +235,6 @@ func (s *Service) ownedProcessVerifier(sessionID string) func(processControlTarg
 	}
 }
 
-// ownedProcessJudgedItem returns the copy of a shell request the policy
-// should judge: verified kills of the session's own processes are masked.
-// The original item stays what the user sees and what the audit records.
 func (s *Service) ownedProcessJudgedItem(item map[string]interface{}, sessionID string) (map[string]interface{}, bool) {
 	if s.ownedProcs == nil || strings.TrimSpace(sessionID) == "" || !isShellPermissionItem(item) {
 		return item, false

@@ -20,6 +20,65 @@ import (
 
 const base62Alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
+// MaterializedTokens carries normalized token counts for an imported assistant turn.
+type MaterializedTokens struct {
+	Total      int `json:"total"`
+	Context    int `json:"context,omitempty"`
+	Input      int `json:"input"`
+	Output     int `json:"output"`
+	Reasoning  int `json:"reasoning"`
+	CacheRead  int `json:"cacheRead"`
+	CacheWrite int `json:"cacheWrite"`
+}
+
+// MaterializedPart represents one canonical message part written into Hoxi's session store.
+type MaterializedPart struct {
+	ID       string                 `json:"id"`
+	Type     string                 `json:"type"` // "text" | "reasoning" | "tool"
+	Text     string                 `json:"text,omitempty"`
+	Tool     string                 `json:"tool,omitempty"`
+	CallID   string                 `json:"callID,omitempty"`
+	Title    string                 `json:"title,omitempty"`
+	Status   string                 `json:"status,omitempty"`
+	Input    map[string]interface{} `json:"input,omitempty"`
+	Output   string                 `json:"output,omitempty"`
+	StartMs  int64                  `json:"startMs,omitempty"`
+	EndMs    int64                  `json:"endMs,omitempty"`
+	Metadata map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// MaterializedTurn represents one normalized user or assistant turn for direct Hoxi store import.
+type MaterializedTurn struct {
+	ID          string              `json:"id"`
+	ParentID    string              `json:"parentID,omitempty"`
+	Role        string              `json:"role"`
+	CreatedMs   int64               `json:"createdMs"`
+	CompletedMs int64               `json:"completedMs,omitempty"`
+	ProviderID  string              `json:"providerID,omitempty"`
+	ModelID     string              `json:"modelID,omitempty"`
+	Mode        string              `json:"mode,omitempty"`
+	Cost        float64             `json:"cost,omitempty"`
+	Finish      string              `json:"finish,omitempty"`
+	Tokens      *MaterializedTokens `json:"tokens,omitempty"`
+	Parts       []MaterializedPart  `json:"parts"`
+}
+
+// NativeMaterializeParams describes a parsed external CLI session ready to persist in Hoxi's native store.
+type NativeMaterializeParams struct {
+	TargetDirectory string             `json:"targetDirectory"`
+	Title           string             `json:"title"`
+	ProviderID      string             `json:"providerID"`
+	ModelID         string             `json:"modelID"`
+	Source          string             `json:"source"`
+	SourceSessionID string             `json:"sourceSessionID"`
+	CreatedAt       int64              `json:"createdAt"`
+	UpdatedAt       int64              `json:"updatedAt"`
+	Turns           []MaterializedTurn `json:"turns"`
+}
+
+// NativeSessionMaterializer writes a normalized external session directly into Hoxi's session store.
+type NativeSessionMaterializer func(ctx context.Context, params NativeMaterializeParams) (map[string]interface{}, error)
+
 func makeAscendingOpenCodeID(prefix string, tsMs int64, seq int) string {
 	if tsMs <= 0 {
 		tsMs = time.Now().UnixMilli()
@@ -62,6 +121,184 @@ func sqlEscapeLiteral(s string) string {
 	return "'" + strings.ReplaceAll(cleaned, "'", "''") + "'"
 }
 
+func buildMaterializedTurns(targetDir, providerID, modelID string, detail *ExternalSessionDetail) []MaterializedTurn {
+	turns := detail.Turns
+	if len(turns) == 0 {
+		turns = []NormalizedTurn{
+			{
+				Role:      "user",
+				Timestamp: detail.Summary.CreatedAt,
+				Text:      detail.Summary.Title,
+			},
+			{
+				Role:      "assistant",
+				Timestamp: detail.Summary.UpdatedAt,
+				Text:      firstNonEmpty(detail.Summary.Summary, detail.LastTurnSummary, "Session imported into Hoxi."),
+			},
+		}
+	}
+
+	baseTs := time.Now().UnixMilli() - int64(len(turns)*2000)
+	seq := 0
+	lastUserMsgID := ""
+	out := make([]MaterializedTurn, 0, len(turns)+1)
+
+	for idx, turn := range turns {
+		seq++
+		ts := turn.Timestamp
+		if ts <= 0 {
+			ts = baseTs + int64(idx*1000)
+		}
+		msgID := makeAscendingOpenCodeID("msg", ts, seq)
+
+		if turn.Role == "user" {
+			lastUserMsgID = msgID
+			seq++
+			partID := makeAscendingOpenCodeID("prt", ts, seq)
+			out = append(out, MaterializedTurn{
+				ID:         msgID,
+				Role:       "user",
+				CreatedMs:  ts,
+				ProviderID: providerID,
+				ModelID:    modelID,
+				Mode:       "build",
+				Parts: []MaterializedPart{{
+					ID:   partID,
+					Type: "text",
+					Text: turn.Text,
+				}},
+			})
+			continue
+		}
+
+		if lastUserMsgID == "" {
+			userMsgID := makeAscendingOpenCodeID("msg", ts-100, seq)
+			lastUserMsgID = userMsgID
+			seq++
+			uPartID := makeAscendingOpenCodeID("prt", ts-90, seq)
+			out = append(out, MaterializedTurn{
+				ID:         userMsgID,
+				Role:       "user",
+				CreatedMs:  ts - 100,
+				ProviderID: providerID,
+				ModelID:    modelID,
+				Mode:       "build",
+				Parts: []MaterializedPart{{
+					ID:   uPartID,
+					Type: "text",
+					Text: detail.Summary.Title,
+				}},
+			})
+		}
+
+		effModel := modelID
+		if turn.ModelID != "" {
+			if _, parsedMod := splitOpenCodeProviderModel(turn.ModelID); parsedMod != "" {
+				effModel = parsedMod
+			} else {
+				effModel = turn.ModelID
+			}
+		}
+		usage := turn.Usage
+		var tok *MaterializedTokens
+		if !usage.empty() {
+			ctxTok := int(usage.totalContextTokens())
+			tok = &MaterializedTokens{
+				Total:      ctxTok,
+				Context:    ctxTok,
+				Input:      int(usage.Input),
+				Output:     int(usage.Output),
+				Reasoning:  int(usage.Reasoning),
+				CacheRead:  int(usage.CacheRead),
+				CacheWrite: int(usage.CacheWrite),
+			}
+		}
+
+		var parts []MaterializedPart
+		if strings.TrimSpace(turn.Reasoning) != "" {
+			seq++
+			rPartID := makeAscendingOpenCodeID("prt", ts+10, seq)
+			parts = append(parts, MaterializedPart{
+				ID:      rPartID,
+				Type:    "reasoning",
+				Text:    turn.Reasoning,
+				StartMs: ts,
+				EndMs:   ts + 200,
+				Metadata: map[string]interface{}{
+					"providerID": providerID,
+					"modelID":    effModel,
+				},
+			})
+		}
+
+		for tIdx, tc := range turn.Tools {
+			seq++
+			tPartID := makeAscendingOpenCodeID("prt", ts+20+int64(tIdx), seq)
+			callID := sanitizeToolCallID(tc.CallID, seq)
+			inMap := tc.Input
+			if inMap == nil {
+				inMap = map[string]interface{}{}
+			}
+			title := firstNonEmpty(tc.Title, tc.Tool)
+			status := strings.ToLower(strings.TrimSpace(tc.Status))
+			outcome := "completed"
+			if status == "error" || status == "failed" {
+				status = "error"
+				outcome = "failed"
+			} else {
+				status = "completed"
+			}
+			parts = append(parts, MaterializedPart{
+				ID:      tPartID,
+				Type:    "tool",
+				Tool:    tc.Tool,
+				CallID:  callID,
+				Title:   title,
+				Status:  status,
+				Input:   inMap,
+				Output:  tc.Output,
+				StartMs: ts + 20 + int64(tIdx),
+				EndMs:   ts + 150 + int64(tIdx),
+				Metadata: map[string]interface{}{
+					"imported":  true,
+					"outcome":   outcome,
+					"truncated": false,
+				},
+			})
+		}
+
+		replyText := strings.TrimSpace(turn.Text)
+		if replyText == "" && len(turn.Tools) > 0 {
+			replyText = fmt.Sprintf("Executed %d tool step(s).", len(turn.Tools))
+		}
+		if replyText != "" {
+			seq++
+			txtPartID := makeAscendingOpenCodeID("prt", ts+300, seq)
+			parts = append(parts, MaterializedPart{
+				ID:   txtPartID,
+				Type: "text",
+				Text: replyText,
+			})
+		}
+
+		out = append(out, MaterializedTurn{
+			ID:          msgID,
+			ParentID:    lastUserMsgID,
+			Role:        "assistant",
+			CreatedMs:   ts,
+			CompletedMs: ts + 500,
+			ProviderID:  providerID,
+			ModelID:     effModel,
+			Mode:        "build",
+			Cost:        usage.Cost,
+			Finish:      "stop",
+			Tokens:      tok,
+			Parts:       parts,
+		})
+	}
+	return out
+}
+
 func (g *Service) materializeExternalSession(ctx context.Context, req HandoffImportRequest) (HandoffImportResponse, error) {
 	detail, err := loadExternalSessionDetail(req.Source, req.SessionID, req.SourceCWD, g.rootDir)
 	if err != nil {
@@ -81,20 +318,44 @@ func (g *Service) materializeExternalSession(ctx context.Context, req HandoffImp
 	}
 
 	sessionTitle := fmt.Sprintf("[%s] %s", detail.Summary.SourceLabel, detail.Summary.Title)
-	sessionObj, err := g.createOpenCodeSessionInDir(ctx, targetDir, sessionTitle)
-	if err != nil {
-		return HandoffImportResponse{}, fmt.Errorf("create opencode session: %w", err)
-	}
-
-	newSessionID, _ := sessionObj["id"].(string)
-	if newSessionID == "" {
-		return HandoffImportResponse{}, fmt.Errorf("opencode returned empty session id")
-	}
-
 	providerID, modelID := g.resolveDefaultHandoffModel(detail.Summary, req)
 	g.ensureHandoffModelReady(detail.Summary.Source, providerID, modelID, detail)
-	if err := insertNormalizedTurnsToOpenCodeDB(newSessionID, targetDir, providerID, modelID, detail); err != nil {
-		return HandoffImportResponse{}, fmt.Errorf("insert session history: %w", err)
+
+	var sessionObj map[string]interface{}
+	var newSessionID string
+
+	if matFn := g.getNativeMaterializer(); matFn != nil {
+		matTurns := buildMaterializedTurns(targetDir, providerID, modelID, detail)
+		sessionObj, err = matFn(ctx, NativeMaterializeParams{
+			TargetDirectory: targetDir,
+			Title:           sessionTitle,
+			ProviderID:      providerID,
+			ModelID:         modelID,
+			Source:          string(detail.Summary.Source),
+			SourceSessionID: detail.Summary.ID,
+			CreatedAt:       detail.Summary.CreatedAt,
+			UpdatedAt:       detail.Summary.UpdatedAt,
+			Turns:           matTurns,
+		})
+		if err != nil {
+			return HandoffImportResponse{}, fmt.Errorf("create native hoxi session: %w", err)
+		}
+		newSessionID, _ = sessionObj["id"].(string)
+		if newSessionID == "" {
+			return HandoffImportResponse{}, fmt.Errorf("native materializer returned empty session id")
+		}
+	} else {
+		sessionObj, err = g.createOpenCodeSessionInDir(ctx, targetDir, sessionTitle)
+		if err != nil {
+			return HandoffImportResponse{}, fmt.Errorf("create opencode session: %w", err)
+		}
+		newSessionID, _ = sessionObj["id"].(string)
+		if newSessionID == "" {
+			return HandoffImportResponse{}, fmt.Errorf("opencode returned empty session id")
+		}
+		if err := insertNormalizedTurnsToOpenCodeDB(newSessionID, targetDir, providerID, modelID, detail); err != nil {
+			return HandoffImportResponse{}, fmt.Errorf("insert session history: %w", err)
+		}
 	}
 
 	// Memory is Hoxi state and belongs under .hoxi/, never under the upstream
@@ -120,7 +381,7 @@ func (g *Service) materializeExternalSession(ctx context.Context, req HandoffImp
 }
 
 func (g *Service) ensureHandoffModelReady(source ExternalToolID, providerID, modelID string, detail *ExternalSessionDetail) {
-	if providerID == "" {
+	if providerID == "" || providerID == "auto" {
 		return
 	}
 	provMap, _ := g.loadHoxiConfigDoc()["provider"].(map[string]interface{})
@@ -200,30 +461,49 @@ func (g *Service) createOpenCodeSessionInDir(ctx context.Context, targetDir, tit
 	return sessionObj, nil
 }
 
+func isRuntimePlaceholderProvider(p string) bool {
+	lower := strings.ToLower(strings.TrimSpace(p))
+	return lower == "native" || lower == "opencode" || lower == "oc"
+}
+
 func (g *Service) resolveDefaultHandoffModel(sum ExternalSessionSummary, req HandoffImportRequest) (string, string) {
-	if strings.TrimSpace(req.PreferredProviderID) != "" && strings.TrimSpace(req.PreferredModelID) != "" {
-		return strings.TrimSpace(req.PreferredProviderID), strings.TrimSpace(req.PreferredModelID)
+	prefProv := strings.TrimSpace(req.PreferredProviderID)
+	prefMod := strings.TrimSpace(req.PreferredModelID)
+	if prefProv != "" && prefMod != "" && !isRuntimePlaceholderProvider(prefProv) {
+		return prefProv, prefMod
+	}
+	if prefMod != "" && strings.Contains(prefMod, "/") {
+		if p, m := splitOpenCodeProviderModel(prefMod); p != "" && m != "" {
+			return p, m
+		}
 	}
 	switch sum.Source {
 	case ExternalToolGrok:
-		return "grok-cli", firstNonEmpty(sum.Model, loadGrokLocalCredentials().DefaultModel)
+		return "grok-cli", firstNonEmpty(prefMod, sum.Model, loadGrokLocalCredentials().DefaultModel)
 	case ExternalToolClaude:
 		_, _, defModel, _ := readClaudeSettingsEnv()
-		return "claude-code", firstNonEmpty(sum.Model, defModel)
+		return "claude-code", firstNonEmpty(prefMod, sum.Model, defModel)
 	case ExternalToolCodex:
 		defModel, _, _ := readCodexLocalConfig()
-		return "openai", firstNonEmpty(sum.Model, defModel)
+		return "openai", firstNonEmpty(prefMod, sum.Model, defModel)
 	case ExternalToolGemini:
 		_, defModel, _ := readGeminiLocalKeyAndModels()
-		return "google", firstNonEmpty(sum.Model, defModel)
+		return "google", firstNonEmpty(prefMod, sum.Model, defModel)
 	case ExternalToolOpenCode:
 		provID, modID := splitOpenCodeProviderModel(sum.Model)
 		if provID != "" && modID != "" {
 			return provID, modID
 		}
-		return "opencode", firstNonEmpty(modID, sum.Model, "opencode")
+		if g != nil {
+			if cfgModel := asString(g.loadHoxiConfigDoc()["model"]); cfgModel != "" {
+				if cp, cm := splitOpenCodeProviderModel(cfgModel); cp != "" && cm != "" {
+					return cp, cm
+				}
+			}
+		}
+		return "auto", firstNonEmpty(prefMod, modID, sum.Model)
 	default:
-		return string(sum.Source), firstNonEmpty(sum.Model, string(sum.Source))
+		return string(sum.Source), firstNonEmpty(prefMod, sum.Model, string(sum.Source))
 	}
 }
 
@@ -235,21 +515,7 @@ func insertNormalizedTurnsToOpenCodeDB(
 	if dbPath == "" {
 		return fmt.Errorf("opencode.db not found")
 	}
-	turns := detail.Turns
-	if len(turns) == 0 {
-		turns = []NormalizedTurn{
-			{
-				Role:      "user",
-				Timestamp: detail.Summary.CreatedAt,
-				Text:      detail.Summary.Title,
-			},
-			{
-				Role:      "assistant",
-				Timestamp: detail.Summary.UpdatedAt,
-				Text:      firstNonEmpty(detail.Summary.Summary, detail.LastTurnSummary, "Session imported into Hoxi."),
-			},
-		}
-	}
+	matTurns := buildMaterializedTurns(targetDir, providerID, modelID, detail)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -278,145 +544,89 @@ func insertNormalizedTurnsToOpenCodeDB(
 			return err
 		}
 
-		baseTs := time.Now().UnixMilli() - int64(len(turns)*2000)
-		seq := 0
-		lastUserMsgID := ""
-
-		for idx, turn := range turns {
-			seq++
-			ts := turn.Timestamp
-			if ts <= 0 {
-				ts = baseTs + int64(idx*1000)
-			}
-			msgID := makeAscendingOpenCodeID("msg", ts, seq)
-
-			if turn.Role == "user" {
-				lastUserMsgID = msgID
-				if err := execMsg(msgID, ts, ts, map[string]interface{}{
+		for _, mt := range matTurns {
+			if mt.Role == "user" {
+				if err := execMsg(mt.ID, mt.CreatedMs, mt.CreatedMs, map[string]interface{}{
 					"role":    "user",
-					"time":    map[string]interface{}{"created": ts},
+					"time":    map[string]interface{}{"created": mt.CreatedMs},
 					"agent":   "build",
-					"model":   map[string]interface{}{"providerID": providerID, "modelID": modelID},
+					"model":   map[string]interface{}{"providerID": mt.ProviderID, "modelID": mt.ModelID},
 					"summary": map[string]interface{}{"diffs": []interface{}{}},
 				}); err != nil {
 					return err
 				}
-				seq++
-				partID := makeAscendingOpenCodeID("prt", ts, seq)
-				if err := execPart(partID, msgID, ts, ts, map[string]interface{}{
-					"type": "text",
-					"text": turn.Text,
-				}); err != nil {
-					return err
+				for _, p := range mt.Parts {
+					if err := execPart(p.ID, mt.ID, mt.CreatedMs, mt.CreatedMs, map[string]interface{}{
+						"type": "text",
+						"text": p.Text,
+					}); err != nil {
+						return err
+					}
 				}
 				continue
 			}
 
-			// Assistant turn
-			if lastUserMsgID == "" {
-				userMsgID := makeAscendingOpenCodeID("msg", ts-100, seq)
-				lastUserMsgID = userMsgID
-				if err := execMsg(userMsgID, ts-100, ts-100, map[string]interface{}{
-					"role":    "user",
-					"time":    map[string]interface{}{"created": ts - 100},
-					"agent":   "build",
-					"model":   map[string]interface{}{"providerID": providerID, "modelID": modelID},
-					"summary": map[string]interface{}{"diffs": []interface{}{}},
-				}); err != nil {
-					return err
-				}
-				seq++
-				uPartID := makeAscendingOpenCodeID("prt", ts-90, seq)
-				if err := execPart(uPartID, userMsgID, ts-90, ts-90, map[string]interface{}{
-					"type": "text",
-					"text": detail.Summary.Title,
-				}); err != nil {
-					return err
-				}
+			tok := mt.Tokens
+			if tok == nil {
+				tok = &MaterializedTokens{}
 			}
-
-			effModel := modelID
-			if turn.ModelID != "" {
-				effModel = turn.ModelID
-			}
-			usage := turn.Usage
-			if err := execMsg(msgID, ts, ts+500, map[string]interface{}{
-				"parentID": lastUserMsgID,
+			if err := execMsg(mt.ID, mt.CreatedMs, mt.CompletedMs, map[string]interface{}{
+				"parentID": mt.ParentID,
 				"role":     "assistant",
 				"mode":     "build",
 				"agent":    "build",
 				"path":     map[string]interface{}{"cwd": targetDir, "root": targetDir},
-				"cost":     usage.Cost,
+				"cost":     mt.Cost,
 				"tokens": map[string]interface{}{
-					"total":     usage.totalContextTokens(),
-					"input":     usage.Input,
-					"output":    usage.Output,
-					"reasoning": usage.Reasoning,
-					"cache":     map[string]interface{}{"write": usage.CacheWrite, "read": usage.CacheRead},
+					"total":     tok.Total,
+					"input":     tok.Input,
+					"output":    tok.Output,
+					"reasoning": tok.Reasoning,
+					"cache":     map[string]interface{}{"write": tok.CacheWrite, "read": tok.CacheRead},
 				},
-				"modelID":    effModel,
-				"providerID": providerID,
+				"modelID":    mt.ModelID,
+				"providerID": mt.ProviderID,
 				"imported":   true,
-				"time":       map[string]interface{}{"created": ts, "completed": ts + 500},
-				"finish":     "stop",
+				"time":       map[string]interface{}{"created": mt.CreatedMs, "completed": mt.CompletedMs},
+				"finish":     firstNonEmpty(mt.Finish, "stop"),
 			}); err != nil {
 				return err
 			}
 
-			if strings.TrimSpace(turn.Reasoning) != "" {
-				seq++
-				rPartID := makeAscendingOpenCodeID("prt", ts+10, seq)
-				if err := execPart(rPartID, msgID, ts+10, ts+200, map[string]interface{}{
-					"type": "reasoning",
-					"text": turn.Reasoning,
-					"time": map[string]interface{}{"start": ts, "end": ts + 200},
-				}); err != nil {
-					return err
-				}
-			}
-
-			for tIdx, tc := range turn.Tools {
-				seq++
-				tPartID := makeAscendingOpenCodeID("prt", ts+20+int64(tIdx), seq)
-				callID := sanitizeToolCallID(tc.CallID, seq)
-				inMap := tc.Input
-				if inMap == nil {
-					inMap = map[string]interface{}{}
-				}
-				title := tc.Title
-				if title == "" {
-					title = tc.Tool
-				}
-				if err := execPart(tPartID, msgID, ts+20+int64(tIdx), ts+150+int64(tIdx), map[string]interface{}{
-					"type":     "tool",
-					"tool":     tc.Tool,
-					"callID":   callID,
-					"imported": true,
-					"state": map[string]interface{}{
-						"status":   "completed",
-						"input":    inMap,
-						"output":   tc.Output,
-						"title":    title,
-						"metadata": map[string]interface{}{"truncated": false},
-						"time":     map[string]interface{}{"start": ts + 20, "end": ts + 150},
-					},
-				}); err != nil {
-					return err
-				}
-			}
-
-			replyText := strings.TrimSpace(turn.Text)
-			if replyText == "" && len(turn.Tools) > 0 {
-				replyText = fmt.Sprintf("Executed %d tool step(s).", len(turn.Tools))
-			}
-			if replyText != "" {
-				seq++
-				txtPartID := makeAscendingOpenCodeID("prt", ts+300, seq)
-				if err := execPart(txtPartID, msgID, ts+300, ts+400, map[string]interface{}{
-					"type": "text",
-					"text": replyText,
-				}); err != nil {
-					return err
+			for _, p := range mt.Parts {
+				switch p.Type {
+				case "reasoning":
+					if err := execPart(p.ID, mt.ID, p.StartMs+10, p.EndMs, map[string]interface{}{
+						"type": "reasoning",
+						"text": p.Text,
+						"time": map[string]interface{}{"start": p.StartMs, "end": p.EndMs},
+					}); err != nil {
+						return err
+					}
+				case "tool":
+					if err := execPart(p.ID, mt.ID, p.StartMs, p.EndMs, map[string]interface{}{
+						"type":     "tool",
+						"tool":     p.Tool,
+						"callID":   p.CallID,
+						"imported": true,
+						"state": map[string]interface{}{
+							"status":   p.Status,
+							"input":    p.Input,
+							"output":   p.Output,
+							"title":    p.Title,
+							"metadata": p.Metadata,
+							"time":     map[string]interface{}{"start": p.StartMs, "end": p.EndMs},
+						},
+					}); err != nil {
+						return err
+					}
+				case "text":
+					if err := execPart(p.ID, mt.ID, mt.CreatedMs+300, mt.CreatedMs+400, map[string]interface{}{
+						"type": "text",
+						"text": p.Text,
+					}); err != nil {
+						return err
+					}
 				}
 			}
 		}

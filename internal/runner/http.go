@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/hoxiai/hoxi/internal/agentcli"
@@ -31,6 +32,12 @@ type openCodeBridgeState struct {
 	cleanIdleQuestionDirs  syncMap[string, int64]  // normalized worktree dir -> max UpdatedAt stamp when verified empty & idle
 	openCodeReplySem       chan struct{}
 	openCodeTimeoutRetries []time.Duration
+	ocMigrateMu            sync.Mutex
+	lastOCMigration        *OpenCodeMigrationReport
+	ocJournalBatch         *ocMigrationJournalBatch // guarded by ocMigrateMu
+	ocMigrateRunMu         sync.Mutex               // serializes whole migration passes
+	ocMigrateStop          atomic.Bool              // set by CloseAll to end a background pass between rows
+	ocMigrateWG            sync.WaitGroup           // tracks the startup background pass
 }
 
 // turnLedgerState holds bounded per-session / per-turn ephemera cleaned up on
@@ -59,26 +66,30 @@ type Service struct {
 	deferred    *deferredStore
 	policy      *approvalPolicyStore
 	ownedProcs  *ownedProcessLedger
+	bgProcs     *nativeBgRegistry
 	doomLoop    *doomLoopGuard
+	fileCoord   *fileEditCoordinator
 	stall       stallPolicy
 
-	mu              sync.Mutex
-	turnMu          sessionTurnLocks
-	procs           map[string]*activeProcess
-	childBusy       map[string]bool
-	subs            map[chan SSEEvent]string
-	sseReplay       sseReplayRing
-	seqSeed         int64
-	nativeEngine    NativeEngine
-	imageClient     llm.ImageClient
-	audioClient     llm.AudioClient
-	skillResolver   func(ctx context.Context, directory, sessionID string, sel SkillSelection) (ResolvedSkill, error)
-	sessionContext  func(sessionID, directory string) string
-	projectResolver ProjectResolver
-	permissionRules func() map[string]interface{}
-	onPolicySaved   func()
-	onSummary       func(sessionID, body string)
-	onDeleted       func(sessionID string)
+	mu                 sync.Mutex
+	turnMu             sessionTurnLocks
+	procs              map[string]*activeProcess
+	childBusy          map[string]bool
+	subs               map[chan SSEEvent]string
+	sseReplay          sseReplayRing
+	seqSeed            int64
+	nativeEngine       NativeEngine
+	streamClient       llm.StreamClient
+	imageClient        llm.ImageClient
+	audioClient        llm.AudioClient
+	skillResolver      func(ctx context.Context, directory, sessionID string, sel SkillSelection) (ResolvedSkill, error)
+	sessionContext     func(sessionID, directory string) string
+	projectResolver    ProjectResolver
+	permissionRules    func() map[string]interface{}
+	dataProfileChecker DataProfileSafetyChecker
+	onPolicySaved      func()
+	onSummary          func(sessionID, body string)
+	onDeleted          func(sessionID string)
 
 	openCodeBridgeState
 	sessionDiffState
@@ -128,8 +139,25 @@ func (s *Service) SetSessionDeletedHook(fn func(sessionID string)) {
 }
 
 func (s *Service) notifySessionDeleted(id string) {
-	if s.onDeleted != nil && strings.TrimSpace(id) != "" {
-		s.onDeleted(id)
+	trimmed := strings.TrimSpace(id)
+	if trimmed == "" {
+		return
+	}
+	if s.fileCoord != nil {
+		s.fileCoord.ForgetSession(trimmed)
+	}
+	if s.bgProcs != nil {
+		s.bgProcs.stopSession(trimmed)
+	}
+	cleanupSessionTSCCache(trimmed)
+	s.mu.Lock()
+	eng := s.nativeEngine
+	s.mu.Unlock()
+	if cleaner, ok := eng.(interface{ ForgetSession(string) }); ok {
+		cleaner.ForgetSession(trimmed)
+	}
+	if s.onDeleted != nil {
+		s.onDeleted(trimmed)
 	}
 }
 
@@ -152,12 +180,14 @@ func NewService(rootDir string, worktrees *worktree.Manager, status *statusbar.T
 		deferred:    newDeferredStore(customStorePath),
 		policy:      newApprovalPolicyStore(customStorePath),
 		ownedProcs:  newOwnedProcessLedger(),
+		bgProcs:     newNativeBgRegistry(),
 		doomLoop:    newDoomLoopGuard(),
 		stall:       stallPolicyFromEnv(),
 		procs:       make(map[string]*activeProcess),
 		childBusy:   make(map[string]bool),
 		subs:        make(map[chan SSEEvent]string),
 	}
+	svc.fileCoord = newFileEditCoordinator(svc.isLeaseOwnerActive)
 	svc.ledger = newTaskLedgerStore(customStorePath)
 	svc.hydrateReceiptsFromLedger()
 	svc.openCodeReplySem = make(chan struct{}, maxConcurrentOpenCodeAutoReplies)
@@ -175,11 +205,9 @@ func NewService(rootDir string, worktrees *worktree.Manager, status *statusbar.T
 			_ = svc.worktrees.ForDirectory(rec.ProjectDir).RestoreSession(rec.ID, rec.WorktreePath, rec.Branch, rec.BaseCommit)
 		}
 	}
-	if strings.TrimSpace(customStorePath) == "" {
-		svc.migrateDefaultOpenCodeDBs()
-	}
 	svc.settleStartupLedger()
 	svc.worktrees.SetApplyGuard(svc.guardWorktreeApply)
+	svc.worktrees.SetCommitLedger(svc)
 	return svc
 }
 
@@ -197,6 +225,10 @@ func (s *Service) Attachments() *attachment.Store {
 func (s *Service) CloseAll() {
 	if s.store != nil {
 		defer s.store.Flush()
+	}
+	s.stopBackgroundOpenCodeMigration()
+	if s.bgProcs != nil {
+		s.bgProcs.stopAll()
 	}
 	var flights []*resumeFlight
 	s.resumingFlights.Range(func(sid string, f *resumeFlight) bool {
@@ -262,11 +294,13 @@ func (s *Service) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/hoxi/runner/qoder/models", s.handleQoderModels)
 	mux.HandleFunc("/api/hoxi/runner/codex/models", s.handleCodexModels)
 	mux.HandleFunc("/api/hoxi/runner/opencode/models", s.handleOpenCodeCLIModels)
+	mux.HandleFunc("/api/hoxi/runner/opencode/migration", s.handleOpenCodeMigration)
 	mux.HandleFunc("/api/hoxi/runner/antigravity/hook", s.handleAgyHookInstall)
 	mux.HandleFunc(hookPreToolPath, s.handleHookPreTool)
 	mux.HandleFunc(claudeHookPreToolPath, s.handleClaudeHookPreTool)
 	mux.HandleFunc(geminiHookPreToolPath, s.handleGeminiHookPreTool)
 	mux.HandleFunc(sandboxRoutePath, s.handleSandboxRoute)
+	mux.HandleFunc("/api/hoxi/requests/", s.handleInspectRequest)
 	mux.HandleFunc("/api/hoxi/permission", s.handleUnifiedPermissionRoutes)
 	mux.HandleFunc("/api/hoxi/permission/", s.handleUnifiedPermissionRoutes)
 	mux.HandleFunc("/api/hoxi/question", s.handleUnifiedQuestionRoutes)
@@ -314,11 +348,11 @@ func (s *Service) persistEventToStore(sessionID string, evt SSEEvent) {
 	switch evt.Type {
 	case "message.updated":
 		if info, ok := evt.Properties["info"].(MessageInfo); ok {
-			s.store.upsertTurnInfo(sessionID, info, true)
+			s.store.UpsertTurnInfoAsync(sessionID, info)
 		}
 	case "message.part.updated":
 		if part, ok := evt.Properties["part"].(MessagePart); ok {
-			s.store.upsertTurnPart(sessionID, part, true)
+			s.store.UpsertTurnPartAsync(sessionID, part)
 		}
 	case "message.part.delta":
 		msgID, _ := evt.Properties["messageID"].(string)
@@ -335,13 +369,13 @@ func (s *Service) persistEventToStore(sessionID string, evt SSEEvent) {
 			}
 			s.store.SetActive(sessionID, active)
 			if !active {
-				s.store.scheduleIdleMaintenance(sessionID)
+				s.store.ScheduleIdleMaintenance(sessionID)
 			}
 		}
 	case "session.idle", "session.error":
 		s.store.FlushSession(sessionID)
 		s.store.SetActive(sessionID, false)
-		s.store.scheduleIdleMaintenance(sessionID)
+		s.store.ScheduleIdleMaintenance(sessionID)
 		s.doomLoop.resetTurn(sessionID)
 		// Subagent hook calls keep their repeat counters under the child.
 		childIDs, _ := s.store.ChildSessionIDs(sessionID)
@@ -632,8 +666,11 @@ func (s *Service) handleSessionPrompt(w http.ResponseWriter, r *http.Request, se
 	}
 	receiptStatus, receipt, err := s.startPromptWithReceipt(r.Context(), sessionID, r.URL.Query().Get("directory"), body)
 	if err != nil {
-		writeJSONError(w, receiptStatus, err.Error())
+		writeRunnerRequestError(w, receiptStatus, err)
 		return
+	}
+	if receipt.Deduplicated {
+		w.Header().Set("X-Hoxi-Deduplicated", "true")
 	}
 	writeJSON(w, http.StatusOK, receipt)
 }

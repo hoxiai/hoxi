@@ -17,42 +17,7 @@ import (
 	"github.com/hoxiai/hoxi/internal/sandbox"
 )
 
-// ApprovalPolicy is the user's approval mode plus per-tool overrides. It lives
-// in ~/.hoxi/approval-policy.json so the decision is the same whether a
-// request is answered by the desktop, the CLI, the phone, or nobody is
-// watching. An empty override follows the mode's preset.
-type ApprovalPolicy struct {
-	Mode     string `json:"mode"`
-	Edit     string `json:"edit,omitempty"`     // "" | "allow" | "ask"
-	Webfetch string `json:"webfetch,omitempty"` // "" | "allow" | "ask"
-	Bash     string `json:"bash,omitempty"`     // "" | "allow" | "smart" | "ask"
-	// ApprovalTimeoutSeconds is how long a pending request waits before it is
-	// rejected. Zero means the default. A timeout only ever rejects.
-	ApprovalTimeoutSeconds int   `json:"approvalTimeoutSeconds,omitempty"`
-	UpdatedAt              int64 `json:"updatedAt,omitempty"`
-}
-
-const (
-	defaultApprovalTimeoutSeconds = 600
-	minApprovalTimeoutSeconds     = 60
-	maxApprovalTimeoutSeconds     = 3600
-)
-
 const approvalPolicyFile = "approval-policy.json"
-
-func defaultApprovalPolicy() ApprovalPolicy {
-	return ApprovalPolicy{Mode: ApprovalModeAuto}
-}
-
-// approvalWaitLimit is how long a pending request waits. Zero in the file
-// means the default.
-func (p ApprovalPolicy) approvalWaitLimit() time.Duration {
-	seconds := p.ApprovalTimeoutSeconds
-	if seconds <= 0 {
-		seconds = defaultApprovalTimeoutSeconds
-	}
-	return time.Duration(seconds) * time.Second
-}
 
 // approvalWaitLimit is the wait for a hook request: the configured timeout,
 // but never longer than the CLI's own kill minus a few seconds.
@@ -61,78 +26,11 @@ func (s *Service) approvalWaitLimit() time.Duration {
 		// Tests inject a short limit directly; a saved policy never does.
 		return s.gate.waitLimit
 	}
-	limit := s.ApprovalPolicy().approvalWaitLimit()
+	limit := s.ApprovalPolicy().ApprovalWaitLimit()
 	if cap := agyhook.ClientTimeout - 5*time.Second; limit > cap {
 		return cap
 	}
 	return limit
-}
-
-func approvalTimeoutReason(p ApprovalPolicy) string {
-	minutes := int(p.approvalWaitLimit() / time.Minute)
-	if minutes < 1 {
-		minutes = 1
-	}
-	return fmt.Sprintf("Approval timed out after %d minute(s) with no response and was rejected. Try an approach that does not need this permission, or say so in the summary.", minutes)
-}
-
-// unattendedQuestionTimeoutReason is the only wording a question gets back
-// while unattended. Other modes keep approvalTimeoutReason unchanged.
-func unattendedQuestionTimeoutReason() string {
-	return "The user is away. Choose the safest plan that needs no approval, and say what you assumed."
-}
-
-func isQuestionRequest(req map[string]interface{}) bool {
-	name := strings.ToLower(strings.TrimSpace(permissionName(req)))
-	return name == "question" || name == "ask_question" || strings.HasSuffix(name, ".question")
-}
-
-// effectiveRule resolves a category's rule from its override or the mode preset.
-func (p ApprovalPolicy) effectiveRule(category string) string {
-	switch category {
-	case permissionCategoryEdit:
-		if p.Edit != "" {
-			return p.Edit
-		}
-	case permissionCategoryWebfetch:
-		if p.Webfetch != "" {
-			return p.Webfetch
-		}
-	case permissionCategoryBash:
-		if p.Bash != "" {
-			return p.Bash
-		}
-	}
-	switch p.Mode {
-	case ApprovalModeManual:
-		return "ask"
-	case ApprovalModeSmart:
-		if category == permissionCategoryBash {
-			return "smart"
-		}
-	}
-	return "allow"
-}
-
-// validate rejects unknown values instead of silently dropping them.
-func (p ApprovalPolicy) validate() error {
-	switch p.Mode {
-	case ApprovalModeAuto, ApprovalModeSmart, ApprovalModeManual, ApprovalModeTrusted, ApprovalModeUnattended:
-	default:
-		return fmt.Errorf("mode must be auto, smart, manual, trusted or unattended")
-	}
-	if p.ApprovalTimeoutSeconds != 0 && (p.ApprovalTimeoutSeconds < minApprovalTimeoutSeconds || p.ApprovalTimeoutSeconds > maxApprovalTimeoutSeconds) {
-		return fmt.Errorf("approvalTimeoutSeconds must be between %d and %d", minApprovalTimeoutSeconds, maxApprovalTimeoutSeconds)
-	}
-	for name, value := range map[string]string{"edit": p.Edit, "webfetch": p.Webfetch} {
-		if value != "" && value != "allow" && value != "ask" {
-			return fmt.Errorf("%s must be empty, allow or ask", name)
-		}
-	}
-	if p.Bash != "" && p.Bash != "allow" && p.Bash != "smart" && p.Bash != "ask" {
-		return fmt.Errorf("bash must be empty, allow, smart or ask")
-	}
-	return nil
 }
 
 type approvalPolicyStore struct {
@@ -181,7 +79,7 @@ func (s *approvalPolicyStore) load() {
 		return
 	}
 	var p ApprovalPolicy
-	if err := json.Unmarshal(raw, &p); err != nil || p.validate() != nil {
+	if err := json.Unmarshal(raw, &p); err != nil || p.Validate() != nil {
 		// Keep the bad file for inspection; restore a clean default file on disk.
 		backup := fmt.Sprintf("%s.corrupt-%s", s.path, time.Now().UTC().Format("20060102T150405.000000000"))
 		if renameErr := os.Rename(s.path, backup); renameErr != nil {
@@ -202,7 +100,7 @@ func (s *approvalPolicyStore) get() (ApprovalPolicy, bool) {
 }
 
 func (s *approvalPolicyStore) set(p ApprovalPolicy) (ApprovalPolicy, error) {
-	if err := p.validate(); err != nil {
+	if err := p.Validate(); err != nil {
 		return ApprovalPolicy{}, err
 	}
 	p.UpdatedAt = time.Now().UnixMilli()
@@ -283,7 +181,7 @@ func (s *Service) handleApprovalPolicy(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusBadRequest, "invalid approval policy")
 			return
 		}
-		if err := body.validate(); err != nil {
+		if err := body.Validate(); err != nil {
 			writeJSONError(w, http.StatusBadRequest, err.Error())
 			return
 		}

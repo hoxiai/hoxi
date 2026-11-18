@@ -11,7 +11,7 @@ export const cloudflared = {
   tokenLabel: "连接器令牌",
   tokenPlaceholder: "粘贴 Cloudflare 中的 tunnel 连接器令牌",
   hostnameLabel: "公开主机名",
-  hostnamePlaceholder: "abc123.node.hoxi.work",
+  hostnamePlaceholder: "abc123.node.hoxi.ai",
   enableAction: "启用",
   disableAction: "停用",
   disableConfirm: "确定停用 Cloudflare Tunnel 连接器？停用后手机将无法从局域网外访问，需重新启用",

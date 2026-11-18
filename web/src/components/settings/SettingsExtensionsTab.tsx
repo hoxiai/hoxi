@@ -10,6 +10,8 @@ import {
   setWorkspace,
 } from "../../store/workspace";
 import SkillsInspectorView from "../skills/SkillsInspectorView";
+import { DataProfilesSection } from "./DataProfilesSection";
+import { RemoteHostsSection } from "./RemoteHostsSection";
 import { SettingGroup } from "./setting-controls";
 
 export function SettingsExtensionsTab() {
@@ -131,7 +133,7 @@ export function SettingsExtensionsTab() {
               placeholder={
                 mcpType() === "local"
                   ? "npx -y @modelcontextprotocol/server-filesystem ."
-                  : "https://mcp.hoxi.ai/sse"
+                  : "https://hoxi.ai/api/mcp"
               }
               value={mcpTarget()}
               onInput={(e) => setMcpTarget(e.currentTarget.value)}
@@ -198,7 +200,13 @@ export function SettingsExtensionsTab() {
         </div>
       </SettingGroup>
 
-      {/* 2. Agent Skills (Local + Marketplace) */}
+      {/* 2. Credential-Isolated Data & SSH Profiles */}
+      <DataProfilesSection />
+
+      {/* 3. Cross-Platform Headless Dev Hosts (hoxi host) */}
+      <RemoteHostsSection />
+
+      {/* 4. Agent Skills (Local + Marketplace) */}
       <div class="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/35 overflow-hidden h-[540px] flex flex-col">
         <SkillsInspectorView />
       </div>

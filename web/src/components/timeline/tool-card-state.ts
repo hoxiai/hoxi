@@ -17,6 +17,7 @@ import {
   isEditingTool,
   isTaskTool,
   resolveToolInput,
+  stripLegacyPatchStatus,
   type DiagnosticItem,
   type ToolPart,
 } from "./tool-card-helpers";
@@ -197,12 +198,15 @@ export function parseApplyPatchText(
   const results: SnapshotFileDiff[] = [];
 
   let currentFile = "";
+  let movedFrom = "";
   let currentOp: "add" | "update" | "delete" = "update";
   let hunkLines: string[] = [];
 
   const flushCurrent = () => {
     if (!currentFile) return;
     const normFile = normalizeWorkspaceRelPath(currentFile);
+    const normMovedFrom = movedFrom ? normalizeWorkspaceRelPath(movedFrom) : undefined;
+    movedFrom = "";
     if (!normFile) return;
 
     let additions = 0;
@@ -256,12 +260,8 @@ export function parseApplyPatchText(
       patch: formattedHunks.length > 0 ? `${header}${formattedHunks.join("\n")}\n` : undefined,
       additions,
       deletions,
-      status:
-        currentOp === "add"
-          ? "added"
-          : currentOp === "delete"
-            ? "deleted"
-            : "modified",
+      movedFrom: normMovedFrom && normMovedFrom !== normFile ? normMovedFrom : undefined,
+      status: currentOp === "add" ? "added" : currentOp === "delete" ? "deleted" : "modified",
     };
     if (formattedHunks.length === 0 && additions === 0 && deletions === 0 && sessionID) {
       const existing = matchSessionDiff(sessionID, normFile);
@@ -273,13 +273,39 @@ export function parseApplyPatchText(
     results.push(enrichToolDiffMeta(entry, sessionID));
   };
 
-  for (const line of lines) {
+  const cleanUnified = (raw: string) =>
+    raw.split("\t")[0].trim().replace(/^[ab]\//, "");
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     const m = line.match(/^\*\*\*\s+(Update|Add|Delete)\s+File:\s*(.+)$/);
     if (m) {
       flushCurrent();
       const op = m[1].toLowerCase();
       currentOp = op === "add" ? "add" : op === "delete" ? "delete" : "update";
       currentFile = m[2].trim();
+      hunkLines = [];
+      continue;
+    }
+    const moveMatch = line.match(/^\*\*\*\s+Move to:\s*(.+)$/);
+    if (moveMatch && currentFile) {
+      if (!movedFrom) movedFrom = currentFile;
+      currentFile = moveMatch[1].trim();
+      continue;
+    }
+    if (line.startsWith("--- ") && i + 1 < lines.length && lines[i + 1].startsWith("+++ ")) {
+      flushCurrent();
+      const oldP = lines[i].slice(4).trim();
+      const newP = lines[i + 1].slice(4).trim();
+      currentOp = oldP === "/dev/null" ? "add" : newP === "/dev/null" ? "delete" : "update";
+      currentFile = cleanUnified(newP === "/dev/null" ? oldP : newP);
+      hunkLines = [];
+      i++;
+      continue;
+    }
+    if (line.startsWith("diff --git ")) {
+      flushCurrent();
+      currentFile = "";
       hunkLines = [];
       continue;
     }
@@ -300,6 +326,7 @@ export function parseApplyPatchText(
 export function extractTargetFiles(part: ToolPart): string[] {
   const single = extractTargetFile(part);
   const state = part.state;
+  const input = resolveToolInput(part);
   const meta = state.status !== "pending" ? state.metadata : undefined;
   const out: string[] = [];
   const add = (p?: string | null) => {
@@ -310,16 +337,18 @@ export function extractTargetFiles(part: ToolPart): string[] {
   if (single) add(single);
   if (Array.isArray(meta?.files)) {
     for (const f of meta.files) {
-      if (typeof f === "string") add(f);
+      if (typeof f === "string") add(stripLegacyPatchStatus(f));
       else if (f && typeof f === "object") {
         const rel = typeof f.relativePath === "string" ? f.relativePath : "";
         const abs = typeof f.filePath === "string" ? f.filePath : "";
-        add((rel && !rel.startsWith("..") ? rel : abs) || rel || f.file || f.path);
+        add((rel && !rel.startsWith("..") ? rel : abs) || rel || f.movePath || f.file || f.path);
       }
     }
   }
-  const patchText = state.input?.patchText;
-  if (typeof patchText === "string") {
+  const patchText = [input.patchText, input.patch, input.diff].find(
+    (v): v is string => typeof v === "string" && v.length > 0
+  );
+  if (patchText) {
     for (const d of parseApplyPatchText(patchText, part.sessionID)) {
       add(d.file);
     }
@@ -436,7 +465,7 @@ function normalizeToolDiffText(raw: unknown): string | undefined {
 export function isRealFileDiff(d: SnapshotFileDiff | undefined): boolean {
   if (!d || !d.file) return false;
   if ((d.additions ?? 0) > 0 || (d.deletions ?? 0) > 0) return true;
-  if (d.status === "added" || d.status === "deleted") return true;
+  if (d.status === "added" || d.status === "deleted" || Boolean(d.movedFrom)) return true;
   if (typeof d.patch === "string" && d.patch.trim().length > 0) {
     const counts = countDiffLines(d.patch);
     return counts.additions > 0 || counts.deletions > 0;
@@ -471,12 +500,13 @@ export function resolveToolFileDiffs(
       const patch = typeof item.diff === "string" ? item.diff : undefined;
       const before = typeof item.before === "string" ? item.before : undefined;
       const after = typeof item.after === "string" ? item.after : undefined;
+      const isMove = item.type === "move" || (typeof item.movePath === "string" && item.movePath.trim().length > 0);
+      const status: SnapshotFileDiff["status"] =
+        item.type === "add" ? "added" : item.type === "delete" ? "deleted" : item.type ? "modified" : undefined;
+      const srcRel = isMove ? normalizeWorkspaceRelPath(abs) : "";
       const hasItemPayload =
-        patch !== undefined ||
-        before !== undefined ||
-        after !== undefined ||
-        typeof item.additions === "number" ||
-        typeof item.deletions === "number";
+        status !== undefined || patch !== undefined || before !== undefined || after !== undefined ||
+        typeof item.additions === "number" || typeof item.deletions === "number";
       if (hasItemPayload) {
         const counts = countDiffLines(patch, before, after);
         const entry: SnapshotFileDiff = {
@@ -484,6 +514,8 @@ export function resolveToolFileDiffs(
           patch,
           before,
           after,
+          status,
+          movedFrom: srcRel && srcRel !== file ? srcRel : undefined,
           additions: typeof item.additions === "number" ? item.additions : counts.additions,
           deletions: typeof item.deletions === "number" ? item.deletions : counts.deletions,
         };
@@ -500,28 +532,35 @@ export function resolveToolFileDiffs(
     if (list.length > 0) return list;
   }
 
-  // 2. `apply_patch` input.patchText
-  if (typeof state.input?.patchText === "string") {
-    const parsed = parseApplyPatchText(state.input.patchText, diffSessionID).filter(
-      isRealFileDiff
-    );
+  // 2. `apply_patch` input (`patchText` / `patch` / `diff`)
+  const input = resolveToolInput(part);
+  const rawPatchInput = [input.patchText, input.patch, input.diff].find(
+    (v): v is string => typeof v === "string" && v.length > 0
+  );
+  if (rawPatchInput && (typeof input.patchText === "string" || (part.tool || "").toLowerCase() === "apply_patch")) {
+    const parsed = parseApplyPatchText(rawPatchInput, diffSessionID).filter(isRealFileDiff);
     if (parsed.length > 0) return parsed;
   }
 
-  // 3. Single file `edit` / `write` / `patch` / `replace_file_content` / `write_to_file`
+  // 3. Single file `edit` / `multiedit` / `write` / `patch` / `replace_file_content` / `write_to_file`
   const file = normalizeWorkspaceRelPath(primaryFile);
   if (!file) return [];
-  const input = resolveToolInput(part);
   const patch = meta?.diff || meta?.patch || input.patch || input.diff;
   let chunksBefore: string | undefined;
   let chunksAfter: string | undefined;
-  if (Array.isArray(input.ReplacementChunks) && input.ReplacementChunks.length > 0) {
+  const chunkList =
+    Array.isArray(input.ReplacementChunks) && input.ReplacementChunks.length > 0
+      ? input.ReplacementChunks
+      : Array.isArray(input.edits) && input.edits.length > 0
+        ? input.edits
+        : undefined;
+  if (chunkList) {
     const bParts: string[] = [];
     const aParts: string[] = [];
-    for (const ch of input.ReplacementChunks) {
+    for (const ch of chunkList) {
       if (ch && typeof ch === "object") {
-        const tb = normalizeToolDiffText(ch.TargetContent ?? ch.targetContent);
-        const ta = normalizeToolDiffText(ch.ReplacementContent ?? ch.replacementContent);
+        const tb = normalizeToolDiffText(ch.TargetContent ?? ch.targetContent ?? ch.oldString ?? ch.old_string);
+        const ta = normalizeToolDiffText(ch.ReplacementContent ?? ch.replacementContent ?? ch.newString ?? ch.new_string);
         if (typeof tb === "string") bParts.push(tb);
         if (typeof ta === "string") aParts.push(ta);
       }

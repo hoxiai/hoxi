@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/hoxiai/hoxi/internal/llm"
 )
@@ -16,10 +17,15 @@ Preserve verbatim:
 1. Core user goal, active requirements, and explicit constraints/preferences.
 2. Exact file paths read, created, or modified, plus key function/type symbols and architectural invariants.
 3. Completed milestones, verified test/build results, and any errors encountered + how they were resolved.
-4. Remaining TODO items and exact next technical step.`
+4. Remaining TODO items and exact next technical step.
 
-// Summarize runs a single-step streaming summarization pass using the configured
-// provider/model driver so /compact works across Anthropic, OpenAI, Responses, and Gemini.
+The input may be a contiguous transcript segment or ordered checkpoints from earlier segments.
+Preserve fragmentary requirements even when their surrounding context is in another segment.
+When merging checkpoints, retain their facts and chronology; later explicit user corrections supersede earlier instructions.`
+
+// Summarize covers the entire transcript in bounded, ordered chunks, then merges
+// their checkpoints. Nothing is discarded before the model sees it. A failed
+// chunk or non-converging reduction fails the operation without a partial summary.
 func (e *Engine) Summarize(ctx context.Context, providerID, modelID, transcript string) (string, error) {
 	if e.stream == nil {
 		return "", fmt.Errorf("native stream client is not configured")
@@ -36,6 +42,72 @@ func (e *Engine) Summarize(ctx context.Context, providerID, modelID, transcript 
 	if target.OutputLimit > 0 && target.OutputLimit < maxOut {
 		maxOut = target.OutputLimit
 	}
+	contextLimit := target.ContextLimit
+	if contextLimit <= 0 {
+		contextLimit = 128000
+	}
+	maxOut = min(maxOut, contextLimit/4)
+	// One byte per input token is deliberately conservative for arbitrary code
+	// and multilingual text. Reserve space for the prompt and response framing.
+	chunkBytes := min(48000, contextLimit-maxOut-2048)
+	if chunkBytes < 1024 || maxOut <= 0 {
+		return "", fmt.Errorf("model context window is too small for summarization")
+	}
+	if strings.TrimSpace(transcript) == "" {
+		return "", fmt.Errorf("summarization transcript is empty")
+	}
+	const maxSummaryCalls = 256
+	calls := 0
+	for pass := 0; pass < 8; pass++ {
+		chunks := splitSummaryTranscript(transcript, chunkBytes)
+		if calls+len(chunks) > maxSummaryCalls {
+			return "", fmt.Errorf("summarization exceeds %d requests; original context retained", maxSummaryCalls)
+		}
+		var checkpoints strings.Builder
+		for i, chunk := range chunks {
+			if err := ctx.Err(); err != nil {
+				return "", err
+			}
+			summary, err := e.summarizeChunk(ctx, target, drv, maxOut, chunk)
+			calls++
+			if err != nil {
+				return "", fmt.Errorf("summarize segment %d/%d: %w", i+1, len(chunks), err)
+			}
+			if len(chunks) == 1 {
+				return summary, nil
+			}
+			fmt.Fprintf(&checkpoints, "[Checkpoint %d/%d in chronological order]\n%s\n\n", i+1, len(chunks), summary)
+		}
+		next := checkpoints.String()
+		if len(next) >= len(transcript) {
+			return "", fmt.Errorf("summarization did not reduce context; original context retained")
+		}
+		transcript = next
+	}
+	return "", fmt.Errorf("summarization did not converge; original context retained")
+}
+
+func splitSummaryTranscript(text string, maxBytes int) []string {
+	text = ensureValidUTF8(text)
+	var chunks []string
+	for len(text) > maxBytes {
+		end := maxBytes
+		for end > 0 && !utf8.RuneStart(text[end]) {
+			end--
+		}
+		if newline := strings.LastIndexByte(text[:end], '\n'); newline >= end/2 {
+			end = newline + 1
+		}
+		chunks = append(chunks, text[:end])
+		text = text[end:]
+	}
+	if text != "" {
+		chunks = append(chunks, text)
+	}
+	return chunks
+}
+
+func (e *Engine) summarizeChunk(ctx context.Context, target llm.StreamTarget, drv ModelDriver, maxOut int, transcript string) (string, error) {
 	httpReq, err := drv.BuildRequest(ModelRequest{
 		Target:    target,
 		System:    compactionSystemPrompt,
@@ -45,14 +117,16 @@ func (e *Engine) Summarize(ctx context.Context, providerID, modelID, transcript 
 			Role: RoleUser,
 			Content: []ContentBlock{{
 				Type: ContentText,
-				Text: "Summarize the following engineering conversation into a structured technical checkpoint:\n\n<transcript>\n" + strings.TrimSpace(transcript) + "\n</transcript>",
+				Text: "Summarize the following engineering conversation into a structured technical checkpoint:\n\n<transcript>\n" + transcript + "\n</transcript>",
 			}},
 		}},
 	})
 	if err != nil {
 		return "", err
 	}
+	openStarted := time.Now()
 	resp, err := e.stream.OpenStream(ctx, httpReq)
+	headerLatency := time.Since(openStarted)
 	if err != nil {
 		return "", err
 	}
@@ -72,8 +146,10 @@ func (e *Engine) Summarize(ctx context.Context, providerID, modelID, transcript 
 			}
 		}
 	}); err != nil {
+		e.reportStreamOutcome(ctx, target, time.Since(openStarted), err)
 		return "", err
 	}
+	e.reportStreamOutcome(ctx, target, headerLatency, nil)
 	if isTruncatedFinishReason(finishReason) {
 		return "", fmt.Errorf("summarization truncated at output token limit (%s)", finishReason)
 	}
@@ -97,7 +173,7 @@ func isContextOverflowError(err error) bool {
 	if err == nil {
 		return false
 	}
-	return llm.ClassifyFault("", err.Error(), 0, time.Now()).Kind == llm.FaultKindContext
+	return llm.ClassifyError(err, time.Now()).Kind == llm.FaultKindContext
 }
 
 type compactionCheckpointInfo struct {
@@ -119,25 +195,22 @@ func (e *Engine) compactContextOverflow(
 	if len(msgs) == 0 {
 		return nil, nil, false
 	}
-	origChars := countMessageChars(msgs)
-	slim := slimMessagesForOverflow(msgs)
-	slimChars := countMessageChars(slim)
 
 	// Identify the minimal trailing anchor to keep intact: either the current
 	// user prompt slice (at step 1), the final user message, or the final
 	// [assistant(tool_use), user(tool_result)] pair so every tool_result retains
 	// its matching tool_use call ID.
-	tailStart := len(slim) - 1
+	tailStart := len(msgs) - 1
 	keptPriorToolPair := false
-	if currentStep <= 1 && historyLen >= 2 && historyLen < len(slim) {
+	if currentStep <= 1 && historyLen >= 2 && historyLen < len(msgs) {
 		tailStart = historyLen
-	} else if hasToolResultBlocks(slim[tailStart]) && tailStart > 0 && slim[tailStart-1].Role == RoleAssistant {
+	} else if hasToolResultBlocks(msgs[tailStart]) && tailStart > 0 && msgs[tailStart-1].Role == RoleAssistant {
 		tailStart--
 		keptPriorToolPair = true
 	}
 
 	if tailStart >= 2 {
-		transcript := renderOverflowTranscript(slim[:tailStart], 48000)
+		transcript := renderOverflowTranscript(msgs[:tailStart])
 		if transcript != "" {
 			if summary, err := e.Summarize(ctx, providerID, modelID, transcript); err == nil && strings.TrimSpace(summary) != "" {
 				trimmedSummary := strings.TrimSpace(summary)
@@ -150,13 +223,13 @@ func (e *Engine) compactContextOverflow(
 				}
 				var out []Message
 				out = append(out, checkpoint)
-				if slim[tailStart].Role == RoleUser {
+				if msgs[tailStart].Role == RoleUser {
 					out = append(out, Message{
 						Role:    RoleAssistant,
 						Content: []ContentBlock{{Type: ContentText, Text: "Understood. Continuing from the compacted checkpoint."}},
 					})
 				}
-				out = append(out, slim[tailStart:]...)
+				out = append(out, msgs[tailStart:]...)
 				info := &compactionCheckpointInfo{
 					Summary:      trimmedSummary,
 					Scope:        "before_current_user",
@@ -175,9 +248,6 @@ func (e *Engine) compactContextOverflow(
 		}
 	}
 
-	if slimChars < origChars*3/4 {
-		return slim, nil, true
-	}
 	return nil, nil, false
 }
 
@@ -190,56 +260,7 @@ func hasToolResultBlocks(m Message) bool {
 	return false
 }
 
-func countMessageChars(msgs []Message) int {
-	total := 0
-	for _, m := range msgs {
-		for _, b := range m.Content {
-			total += len(b.Text) + len(b.Input) + len(b.Data)
-		}
-	}
-	return total
-}
-
-func slimMessagesForOverflow(msgs []Message) []Message {
-	out := make([]Message, len(msgs))
-	lastIdx := len(msgs) - 1
-	for i, m := range msgs {
-		blocks := make([]ContentBlock, 0, len(m.Content))
-		for _, b := range m.Content {
-			switch b.Type {
-			case ContentMedia:
-				if i == lastIdx {
-					blocks = append(blocks, b)
-				} else {
-					blocks = append(blocks, ContentBlock{
-						Type: ContentText,
-						Text: fmt.Sprintf("[omitted earlier media attachment: %s (%s)]", b.Filename, b.MimeType),
-					})
-				}
-			case ContentToolResult:
-				if len(b.Text) > 320 {
-					cp := b
-					cp.Text = fmt.Sprintf("[tool output emergency-pruned: %d chars]\n%s", len(b.Text), b.Text[:240]+"...")
-					blocks = append(blocks, cp)
-				} else {
-					blocks = append(blocks, b)
-				}
-			default:
-				if b.Type == ContentText && i < lastIdx && len(b.Text) > 2400 {
-					cp := b
-					cp.Text = b.Text[:1200] + "\n...[truncated]...\n" + b.Text[len(b.Text)-800:]
-					blocks = append(blocks, cp)
-				} else {
-					blocks = append(blocks, b)
-				}
-			}
-		}
-		out[i] = Message{Role: m.Role, Content: blocks}
-	}
-	return out
-}
-
-func renderOverflowTranscript(msgs []Message, maxChars int) string {
+func renderOverflowTranscript(msgs []Message) string {
 	var b strings.Builder
 	for _, m := range msgs {
 		b.WriteString("[")
@@ -253,25 +274,51 @@ func renderOverflowTranscript(msgs []Message, maxChars int) string {
 					b.WriteByte('\n')
 				}
 			case ContentToolUse:
-				fmt.Fprintf(&b, "tool_use %s(%s)\n", blk.Name, truncateInline(string(blk.Input), 200))
+				fmt.Fprintf(&b, "tool_use[%s] %s(%s)\n", blk.ID, blk.Name, blk.Input)
 			case ContentToolResult:
-				fmt.Fprintf(&b, "tool_result[%s]: %s\n", blk.ToolUseID, truncateInline(blk.Text, 300))
+				fmt.Fprintf(&b, "tool_result[%s] (error=%t): %s\n", blk.ToolUseID, blk.IsError, blk.Text)
+			case ContentMedia:
+				fmt.Fprintf(&b, "[Attachment: %s (%s); binary content remains in session history]\n", blk.Filename, blk.MimeType)
 			}
 		}
 		b.WriteByte('\n')
 	}
-	s := strings.TrimSpace(b.String())
-	if maxChars > 0 && len(s) > maxChars {
-		half := maxChars / 2
-		s = s[:half] + "\n\n... [middle transcript omitted] ...\n\n" + s[len(s)-half:]
-	}
-	return s
+	return ensureValidUTF8(strings.TrimSpace(b.String()))
 }
 
-func truncateInline(s string, limit int) string {
-	s = strings.TrimSpace(s)
-	if len(s) <= limit {
+func ensureValidUTF8(s string) string {
+	if utf8.ValidString(s) {
 		return s
 	}
-	return s[:limit] + "..."
+	return strings.ToValidUTF8(s, "\uFFFD")
+}
+
+func utf8Prefix(s string, maxBytes int) string {
+	s = ensureValidUTF8(s)
+	if maxBytes <= 0 {
+		return ""
+	}
+	if len(s) <= maxBytes {
+		return s
+	}
+	cut := maxBytes
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut]
+}
+
+func utf8Suffix(s string, maxBytes int) string {
+	s = ensureValidUTF8(s)
+	if maxBytes <= 0 {
+		return ""
+	}
+	if len(s) <= maxBytes {
+		return s
+	}
+	start := len(s) - maxBytes
+	for start < len(s) && !utf8.RuneStart(s[start]) {
+		start++
+	}
+	return s[start:]
 }

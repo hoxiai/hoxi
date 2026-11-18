@@ -1,9 +1,9 @@
-import { decidePermission } from "../../../.opencode/lib/permission-policy.js";
-import requestCases from "../../../.opencode/lib/permission-request.cases.json";
-import opaqueCases from "../../../.opencode/lib/opaque-command.cases.json";
-import unattendedCases from "../../../.opencode/lib/unattended.cases.json";
-import { unattendedCommandDecision } from "../../../.opencode/lib/unattended-policy.js";
-import { isOpaquePermissionRequest, isOpaqueShellCommand } from "../../../.opencode/lib/opaque-command.js";
+import { decidePermission } from "../policy/permission-policy.js";
+import requestCases from "../../../internal/runner/shellpolicy/testdata/permission-request.cases.json";
+import opaqueCases from "../../../internal/runner/shellpolicy/testdata/opaque-command.cases.json";
+import unattendedCases from "../../../internal/runner/shellpolicy/testdata/unattended.cases.json";
+import { unattendedCommandDecision } from "../policy/unattended-policy.js";
+import { isOpaquePermissionRequest, isOpaqueShellCommand } from "../policy/opaque-command.js";
 import { hoxiAPI, type ApprovalPolicy } from "../services/api";
 import type { PermissionRequest } from "../services/sse-types";
 import {

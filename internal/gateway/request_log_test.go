@@ -1,17 +1,19 @@
 package gateway
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/hoxiai/hoxi/internal/runner"
+	"github.com/hoxiai/hoxi/internal/sqlitecli"
 )
 
 func TestRequestLogListsNativeCallsNewestFirst(t *testing.T) {
@@ -208,6 +210,7 @@ func TestOpenCodeRequestContentWithoutSessionIDAndMissingMessage(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "hoxi.db")
 	t.Setenv("OPENCODE_DB", "")
 	t.Setenv("HOXI_DB_PATH", dbPath)
+	t.Setenv("PATH", "")
 
 	schema := `
 CREATE TABLE session (id TEXT PRIMARY KEY, title TEXT);
@@ -215,13 +218,21 @@ CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER
 CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, time_created INTEGER, data TEXT);
 INSERT INTO session VALUES ('ses_oc', 'OpenCode Session');
 INSERT INTO message VALUES ('m_user', 'ses_oc', 1000, '{"role":"user"}');
-INSERT INTO message VALUES ('m_asst', 'ses_oc', 2000, '{"role":"assistant"}');
+INSERT INTO message VALUES ('m_asst', 'ses_oc', 2000, '{"role":"assistant","providerID":"openai","modelID":"gpt-5","time":{"completed":2500},"tokens":{"input":42,"output":11}}');
 INSERT INTO part VALUES ('p_u1', 'm_user', 'ses_oc', 1000, '{"type":"text","text":"hello from user"}');
 INSERT INTO part VALUES ('p_u_blob', 'm_user', 'ses_oc', 1001, '{"type":"file","url":"data:image/png;base64,AAAA"}');
-INSERT INTO part VALUES ('p_a1', 'm_asst', 'ses_oc', 2000, '{"type":"text","text":"hello from assistant"}');
+INSERT INTO part VALUES ('p_a1', 'm_asst', 'ses_oc', 2100, '{"type":"text","text":"hello from assistant"}');
 `
-	if out, err := exec.Command("sqlite3", dbPath, schema).CombinedOutput(); err != nil {
-		t.Fatalf("sqlite3 init: %v %s", err, out)
+	if err := sqlitecli.WithReadWrite(context.Background(), dbPath, 5*time.Second, func(ctx context.Context, db *sql.DB) error {
+		_, err := db.ExecContext(ctx, schema)
+		return err
+	}); err != nil {
+		t.Fatalf("sqlite init: %v", err)
+	}
+
+	entries := queryOpenCodeRequestLog(0, 0)
+	if len(entries) != 1 || entries[0].ID != "m_asst" || entries[0].InputTokens != 42 || entries[0].OutputTokens != 11 || entries[0].FirstTokenMs != 100 {
+		t.Fatalf("unexpected pure-Go queryOpenCodeRequestLog result: %+v", entries)
 	}
 
 	// Empty sessionID resolves from the target message row.

@@ -6,14 +6,12 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/hoxiai/hoxi/internal/hoxipaths"
 	"github.com/hoxiai/hoxi/internal/opencode/ocapi"
 )
 
@@ -50,6 +48,9 @@ type Service struct {
 	// noReasoningEffort remembers provider/model pairs whose endpoint rejected
 	// reasoning_effort, so later calls skip the doomed first attempt.
 	noReasoningEffort sync.Map
+	// noAnthropicMessages remembers custom OpenAI-compatible gateways that returned
+	// 404/405/501 on /v1/messages so subsequent Claude calls go straight to /v1/chat/completions.
+	noAnthropicMessages sync.Map
 }
 
 func NewService(openCodePort int, password, rootDir string, proxy http.Handler) *Service {
@@ -94,10 +95,21 @@ func (s *Service) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/hoxi/provider/auto-pools", s.handleAutoPoolsConfig)
 	mux.HandleFunc("/api/hoxi/provider/relay/keys", s.handleRelayAdmin)
 	mux.HandleFunc("/api/hoxi/provider/models", s.handleModelCatalog)
+	mux.HandleFunc("/api/hoxi/provider/catalog", s.handleProviderProxy)
+	mux.HandleFunc("/api/hoxi/provider/auth-methods", s.handleProviderSubroutes)
+	mux.HandleFunc("/api/hoxi/provider/oauth/", s.handleProviderSubroutes)
+	mux.HandleFunc("/api/hoxi/provider/credentials", s.handleProviderAuth)
+	mux.HandleFunc("/api/hoxi/provider/credentials/", s.handleProviderAuth)
+	mux.HandleFunc("/api/hoxi/provider/config", s.handleGlobalConfigProxy)
+	mux.HandleFunc("/api/hoxi/provider/dispose", s.handleGlobalDispose)
 	mux.HandleFunc("/api/hoxi/models-config", s.handleModelsConfig)
 	mux.HandleFunc("/global/config", s.handleGlobalConfigProxy)
 	mux.HandleFunc("/global/dispose", s.handleGlobalDispose)
 	mux.HandleFunc("/provider", s.handleProviderProxy)
+	mux.HandleFunc("/provider/", s.handleProviderSubroutes)
+	mux.HandleFunc("/api/provider/", s.handleProviderSubroutes)
+	mux.HandleFunc("/config/providers", s.handleConfigProvidersProxy)
+	mux.HandleFunc("/api/config/providers", s.handleConfigProvidersProxy)
 	mux.HandleFunc("/auth", s.handleProviderAuth)
 	mux.HandleFunc("/auth/", s.handleProviderAuth)
 	mux.HandleFunc("/api/auth/", s.handleProviderAuth)
@@ -560,29 +572,9 @@ func (g *Service) resolveStoredProviderKey(providerID, requestedBaseURL string) 
 		}
 	}
 
-	// 3. Fallback to Hoxi engine auth.json or ~/.local/share/opencode/auth.json (supports both API key and OAuth access token)
-	if home, err := os.UserHomeDir(); err == nil {
-		for _, authPath := range []string{
-			hoxipaths.EngineAuthPath(),
-			filepath.Join(home, ".local", "share", "opencode", "auth.json"),
-		} {
-			if data, err := os.ReadFile(authPath); err == nil {
-				var authMap map[string]struct {
-					Key    string `json:"key"`
-					Access string `json:"access"`
-				}
-				if json.Unmarshal(data, &authMap) == nil {
-					if entry, ok := authMap[providerID]; ok {
-						if strings.TrimSpace(entry.Key) != "" {
-							return strings.TrimSpace(entry.Key)
-						}
-						if strings.TrimSpace(entry.Access) != "" {
-							return strings.TrimSpace(entry.Access)
-						}
-					}
-				}
-			}
-		}
+	// 3. Fallback to Hoxi engine auth.json or legacy OpenCode auth.json with automatic OAuth refresh & revocation checks.
+	if key, _, err := g.resolveAuthFileCredential(context.Background(), providerID); err == nil && strings.TrimSpace(key) != "" {
+		return strings.TrimSpace(key)
 	}
 	return ""
 }

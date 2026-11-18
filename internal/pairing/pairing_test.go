@@ -145,13 +145,13 @@ func TestCodeIncludesPeerLANURLsWhenMultipleInterfacesExist(t *testing.T) {
 
 func TestCodeIncludesRelayWhenConfigured(t *testing.T) {
 	svc, _ := newTestService(t, "192.168.1.20")
-	svc.SetRelayURL(func() string { return "https://abc123.node.hoxi.work" })
+	svc.SetRelayURL(func() string { return "https://abc123.node.hoxi.ai" })
 
 	code, err := svc.Code()
 	if err != nil {
 		t.Fatalf("Code: %v", err)
 	}
-	if code.Relay != "https://abc123.node.hoxi.work" {
+	if code.Relay != "https://abc123.node.hoxi.ai" {
 		t.Fatalf("relay = %q", code.Relay)
 	}
 	if len(code.RelayToken) != 64 || code.RelayToken == code.Token {
@@ -176,7 +176,7 @@ func TestCodeOmitsRelayWhenUnset(t *testing.T) {
 
 func TestAuthorizeIsolatesLANAndRelayTokens(t *testing.T) {
 	svc, path := newTestService(t, "192.168.1.20")
-	svc.SetRelayURL(func() string { return "https://abc123.node.hoxi.work" })
+	svc.SetRelayURL(func() string { return "https://abc123.node.hoxi.ai" })
 
 	code, err := svc.Code()
 	if err != nil {

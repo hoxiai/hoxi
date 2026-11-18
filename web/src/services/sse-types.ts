@@ -1,5 +1,6 @@
 // web/src/services/sse-types.ts
-// Verified against OpenCode v1.18.25 OpenAPI 3.x specification
+// Unified Hoxi SSE & session timeline contract (compatible across Hoxi Native Engine,
+// Claude Code, Codex, OpenCode, Antigravity, Gemini CLI, Qoder, and CodeBuddy).
 
 export type SessionRuntime = "opencode" | "native" | "codex" | "antigravity" | "gemini-cli" | "claude-code" | "codebuddy" | "qoder";
 export type SessionSurface = "code" | "work";
@@ -12,7 +13,7 @@ export interface SessionCapabilities {
   fork?: boolean;
   attachments?: boolean;
   costStats?: boolean;
-  /** Hoxi can compact the context itself (OpenCode only). */
+  /** Hoxi can compact the context itself (Native & OpenCode). */
   compact?: boolean;
 }
 
@@ -25,6 +26,7 @@ export interface SessionInfo {
   surface?: SessionSurface;
   directory?: string;
   runtime?: SessionRuntime;
+  mode?: string;
   managed?: boolean;
   sandboxMode?: "local" | "worktree";
   branch?: string;
@@ -53,6 +55,7 @@ export interface MessageError {
     isRetryable?: boolean;
     kind?: string;
     retryAfterMs?: number;
+    upstream?: Record<string, any>;
     [key: string]: any;
   };
 }
@@ -74,6 +77,7 @@ export interface MessageInfo {
   id: string;
   sessionID: string;
   role: "user" | "assistant";
+  parentID?: string;
   time: {
     created: number;
     completed?: number;
@@ -177,6 +181,7 @@ export interface SnapshotFileDiff {
   additions: number;
   deletions: number;
   status?: "added" | "deleted" | "modified";
+  movedFrom?: string;
   repo?: string;
   repoDir?: string;
   branch?: string;
@@ -263,11 +268,21 @@ export interface QuestionInfo {
   custom?: boolean;
 }
 
+export interface PlanConsentPreview {
+  title?: string;
+  summary?: string;
+  steps?: string[];
+  files?: string[];
+  risks?: string[];
+}
+
 export interface QuestionRequest {
   id: string;
   sessionID: string;
   subagentSessionID?: string;
   directory?: string;
+  kind?: string;
+  plan?: PlanConsentPreview;
   questions: QuestionInfo[];
   tool?: {
     messageID: string;
@@ -280,7 +295,7 @@ export type SessionStatus =
   | { type: "busy"; stalledSince?: number }
   | { type: "retry"; attempt: number; message: string; next: number };
 
-export type OpenCodeEvent =
+export type HoxiEvent =
   | {
       type: "message.updated";
       properties: { sessionID?: string; info: MessageInfo };
@@ -402,3 +417,6 @@ export type OpenCodeEvent =
         stalled?: Record<string, number>;
       };
     };
+
+/** Legacy type alias retained for compatibility with existing imports and tests. */
+export type OpenCodeEvent = HoxiEvent;

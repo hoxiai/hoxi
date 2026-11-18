@@ -1,10 +1,10 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-  Builds Hoxi for Windows (lean Hoxi.exe + sqlite3.exe + NSIS setup.exe + portable .zip; optional opencode.exe via -BundleOpenCode or HOXI_BUNDLE_OPENCODE=1).
+  Builds Hoxi for Windows (lean single-binary Hoxi.exe + NSIS setup.exe + portable .zip; optional opencode.exe via -BundleOpenCode or HOXI_BUNDLE_OPENCODE=1).
 .EXAMPLE
   .\scripts\build-windows.ps1
-  .\scripts\build-windows.ps1 -Version 0.6.19
+  .\scripts\build-windows.ps1 -Version 0.7.0
   .\scripts\build-windows.ps1 -Arch arm64
   .\scripts\build-windows.ps1 -BundleOpenCode
 #>
@@ -75,18 +75,7 @@ try {
 
   New-Item -ItemType Directory -Path "build/bin" -Force | Out-Null
   New-Item -ItemType Directory -Path "build/windows/installer/tmp" -Force | Out-Null
-
-  # Bundle the official SQLite CLI for account import, history and statistics.
-  $SQLiteZip = Join-Path "build/windows/installer/tmp" "sqlite-tools.zip"
-  $SQLiteURL = (& node scripts/sqlite-tools.mjs url $Arch).Trim()
-  if ($LASTEXITCODE -ne 0) { throw "Failed to resolve SQLite URL" }
-  Invoke-WebRequest -Uri $SQLiteURL -OutFile $SQLiteZip -UseBasicParsing
-  & node scripts/sqlite-tools.mjs verify $SQLiteZip $Arch
-  if ($LASTEXITCODE -ne 0) { throw "Downloaded SQLite archive failed SHA3-256 verification" }
-  Expand-Archive -Path $SQLiteZip -DestinationPath "build/windows/installer/tmp/sqlite" -Force
-  Remove-Item -Force $SQLiteZip
-  Copy-Item -Path "build/windows/installer/tmp/sqlite/sqlite3.exe" -Destination "build/bin/sqlite3.exe" -Force
-  Remove-Item -Force "build/bin/opencode.exe", "build/windows/installer/tmp/opencode.exe" -ErrorAction SilentlyContinue
+  Remove-Item -Force "build/bin/opencode.exe", "build/windows/installer/tmp/opencode.exe", "build/bin/sqlite3.exe", "build/windows/installer/tmp/sqlite3.exe" -ErrorAction SilentlyContinue
 
   $Platform = "windows/$Arch"
   if ($BundleMode -eq "0") {
@@ -169,7 +158,7 @@ try {
   } else {
     Remove-Item -Force "build/bin/opencode.exe" -ErrorAction SilentlyContinue
   }
-  Copy-Item -Path "build/windows/installer/tmp/sqlite/sqlite3.exe" -Destination "build/bin/sqlite3.exe" -Force
+  Remove-Item -Force "build/bin/sqlite3.exe" -ErrorAction SilentlyContinue
 
   $BuiltVer = (& "build/bin/Hoxi.exe" --version).Trim()
   if ($BuiltVer -ne $Version) {
@@ -190,7 +179,7 @@ try {
 
   $ZipPath = "build/bin/Hoxi-$Version-windows-$Arch.zip"
   if (Test-Path $ZipPath) { Remove-Item -Force $ZipPath }
-  $ZipEntries = @("build/bin/Hoxi.exe", "build/bin/sqlite3.exe")
+  $ZipEntries = @("build/bin/Hoxi.exe")
   if (Test-Path "build/bin/opencode.exe") {
     $ZipEntries += "build/bin/opencode.exe"
   }

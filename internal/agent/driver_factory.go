@@ -10,6 +10,10 @@ import (
 // DriverConstructor builds a ModelDriver instance for a registered protocol.
 type DriverConstructor func() ModelDriver
 
+func unsupportedMediaText(b ContentBlock, protocol llm.StreamProtocol) string {
+	return fmt.Sprintf("[Attachment %q (%s) retained, but this %s adapter does not support sending that media type. Its contents have not been inspected. Request a supported representation or use a suitable tool.]", b.Filename, b.MimeType, protocol)
+}
+
 // ProtocolFactory is a thread-safe registry factory for ModelDriver implementations.
 type ProtocolFactory struct {
 	mu           sync.RWMutex

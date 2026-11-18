@@ -31,6 +31,30 @@ func (s *Service) confineRuntimeCommand(rec SessionRecord, bin string, args []st
 	return sandbox.WrapExec(profile, bin, args)
 }
 
+// confineNativeCommandWithOnDemand wraps one native bash command in an approved
+// on-demand Seatbelt profile when present (replacing any session-wide profile
+// so Seatbelt is never nested), or falls back to confineRuntimeCommand.
+func (s *Service) confineNativeCommandWithOnDemand(rec SessionRecord, onDemandProfile, bin string, args []string) (string, []string, error) {
+	return s.confineNativeCommandWithOnDemandIn(rec, rec.WorktreePath, onDemandProfile, bin, args)
+}
+
+func (s *Service) confineNativeCommandWithOnDemandIn(rec SessionRecord, rootDir, onDemandProfile, bin string, args []string) (string, []string, error) {
+	if strings.TrimSpace(onDemandProfile) != "" {
+		if !sandbox.Available() {
+			return "", nil, errors.New(sandbox.UnavailableReason())
+		}
+		trustedRoot := firstNonEmptyStr(strings.TrimSpace(rootDir), rec.WorktreePath)
+		if !sandbox.NewManager("").OnDemandTrusted(onDemandProfile, trustedRoot) {
+			return "", nil, errors.New("on-demand sandbox profile is not trusted for this workspace")
+		}
+		wrapped := make([]string, 0, 4+len(args))
+		wrapped = append(wrapped, "-f", onDemandProfile, "--", bin)
+		wrapped = append(wrapped, args...)
+		return sandboxExecPath, wrapped, nil
+	}
+	return s.confineRuntimeCommand(rec, bin, args)
+}
+
 func geminiSandboxWritableDirs() []string {
 	var dirs []string
 	if hoxi := strings.TrimSpace(hoxipaths.Home()); hoxi != "" {

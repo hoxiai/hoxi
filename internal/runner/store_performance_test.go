@@ -31,7 +31,7 @@ func BenchmarkRunnerHistoryPage(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, ok := NewStore(dir).MarshalTurnsPage("bench", historyPage{limit: 200}); !ok {
+		if _, ok := NewStore(dir).MarshalTurnsPage("bench", HistoryPage{Limit: 200}); !ok {
 			b.Fatal("missing history")
 		}
 	}

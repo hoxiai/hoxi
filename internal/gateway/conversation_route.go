@@ -27,12 +27,14 @@ func isInternalConversationRoute(r *http.Request) bool {
 	return v
 }
 
-func requestHasSkillSelection(r *http.Request) bool {
-	return requestNeedsRunner(r, nil)
-}
-
 func requestNeedsRunner(r *http.Request, isImageModel func(providerID, modelID string) bool) bool {
-	if r == nil || r.Body == nil || r.Method != http.MethodPost {
+	if r == nil || r.Method != http.MethodPost {
+		return false
+	}
+	if strings.TrimSpace(r.Header.Get("X-Idempotency-Key")) != "" {
+		return true
+	}
+	if r.Body == nil {
 		return false
 	}
 	// Scan top-level keys as a stream and hand the backend the full body:
@@ -45,10 +47,6 @@ func requestNeedsRunner(r *http.Request, isImageModel func(providerID, modelID s
 		io.Closer
 	}{io.MultiReader(&consumed, body), body}
 	return found
-}
-
-func scanSkillSelection(dec *json.Decoder) bool {
-	return scanRunnerPromptHints(dec, nil)
 }
 
 func scanRunnerPromptHints(dec *json.Decoder, isImageModel func(providerID, modelID string) bool) bool {
@@ -65,6 +63,11 @@ func scanRunnerPromptHints(dec *json.Decoder, isImageModel func(providerID, mode
 			return false
 		}
 		switch key, _ := tok.(string); key {
+		case "clientRequestId":
+			var cid string
+			if json.Unmarshal(value, &cid) == nil && strings.TrimSpace(cid) != "" {
+				return true
+			}
 		case "skillSelection":
 			trimmed := bytes.TrimSpace(value)
 			if len(trimmed) > 0 && !bytes.Equal(trimmed, []byte("null")) {

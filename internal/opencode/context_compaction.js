@@ -1,7 +1,7 @@
 import {
   EIGHT_DIM_COMPACTION_PROMPT,
   createFrozenProjectMemoryResolver,
-} from "../../.opencode/lib/memory-compaction.js";
+} from "./memory_compaction.js";
 
 export { EIGHT_DIM_COMPACTION_PROMPT, createFrozenProjectMemoryResolver };
 

@@ -23,8 +23,11 @@ import (
 )
 
 const (
-	stdioMCPInitTimeout = 15 * time.Second
-	stdioMCPIdleTTL     = 5 * time.Minute
+	DefaultStdioMCPStartupBudget = 5 * time.Second
+	MinStdioMCPStartupBudget     = 250 * time.Millisecond
+	MaxStdioMCPStartupBudget     = 30 * time.Second
+	stdioMCPStartupCooldown      = 15 * time.Second
+	stdioMCPIdleTTL              = 5 * time.Minute
 )
 
 var errDeadStdioSession = errors.New("stdio MCP session closed before request dispatch")
@@ -49,6 +52,7 @@ func StdioMCPSpawnCountForTest() int64 {
 // spawn counter for deterministic unit testing.
 func ResetStdioMCPPoolForTest() {
 	defaultStdioPool.closeAll()
+	defaultStdioPool.clearAllCooldowns()
 	stdioSpawnCounter.Store(0)
 }
 
@@ -82,17 +86,70 @@ type rpcOutcome struct {
 	err    error
 }
 
+type stdioStartupCooldownEntry struct {
+	until   time.Time
+	message string
+}
+
 type stdioMCPPool struct {
-	mu       sync.Mutex
-	sessions map[string]*stdioMCPSession
-	idleTTL  time.Duration
+	mu              sync.Mutex
+	sessions        map[string]*stdioMCPSession
+	startupCooldown map[string]stdioStartupCooldownEntry
+	idleTTL         time.Duration
 }
 
 func newStdioMCPPool(idleTTL time.Duration) *stdioMCPPool {
 	return &stdioMCPPool{
-		sessions: make(map[string]*stdioMCPSession),
-		idleTTL:  idleTTL,
+		sessions:        make(map[string]*stdioMCPSession),
+		startupCooldown: make(map[string]stdioStartupCooldownEntry),
+		idleTTL:         idleTTL,
 	}
+}
+
+func (p *stdioMCPPool) clearAllCooldowns() {
+	p.mu.Lock()
+	p.startupCooldown = make(map[string]stdioStartupCooldownEntry)
+	p.mu.Unlock()
+}
+
+func effectiveStdioStartupBudget(srv mcpServerSpec) time.Duration {
+	if srv.StartupBudgetMs <= 0 {
+		return DefaultStdioMCPStartupBudget
+	}
+	d := time.Duration(srv.StartupBudgetMs) * time.Millisecond
+	if d < MinStdioMCPStartupBudget {
+		return MinStdioMCPStartupBudget
+	}
+	if d > MaxStdioMCPStartupBudget {
+		return MaxStdioMCPStartupBudget
+	}
+	return d
+}
+
+func (p *stdioMCPPool) checkStartupCooldown(slotKey, specHash string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	rec, ok := p.startupCooldown[slotKey+"\x00"+specHash]
+	if !ok {
+		return nil
+	}
+	if time.Now().After(rec.until) {
+		delete(p.startupCooldown, slotKey+"\x00"+specHash)
+		return nil
+	}
+	return fmt.Errorf("%s (cooling down after startup failure)", rec.message)
+}
+
+func (p *stdioMCPPool) recordStartupFailure(slotKey, specHash, msg string) {
+	p.mu.Lock()
+	if p.startupCooldown == nil {
+		p.startupCooldown = make(map[string]stdioStartupCooldownEntry)
+	}
+	p.startupCooldown[slotKey+"\x00"+specHash] = stdioStartupCooldownEntry{
+		until:   time.Now().Add(stdioMCPStartupCooldown),
+		message: msg,
+	}
+	p.mu.Unlock()
 }
 
 func (p *stdioMCPPool) invoke(ctx context.Context, worktreeDir string, srv mcpServerSpec, method string, params map[string]any) (json.RawMessage, error) {
@@ -107,6 +164,9 @@ func (p *stdioMCPPool) invoke(ctx context.Context, worktreeDir string, srv mcpSe
 	}
 	slotKey := cleanDir + "\x00" + strings.ToLower(strings.TrimSpace(srv.Name))
 	specHash := hashStdioMCPSpec(cleanDir, srv)
+	if err := p.checkStartupCooldown(slotKey, specHash); err != nil {
+		return nil, err
+	}
 
 	sess, reused := p.acquire(slotKey, specHash, cleanDir, srv)
 	res, err := sess.call(ctx, method, params)
@@ -290,10 +350,12 @@ func (s *stdioMCPSession) ensureReady(ctx context.Context) error {
 		s.close()
 	}()
 
+	budget := effectiveStdioStartupBudget(s.srv)
+	startedAt := time.Now()
 	initCtx := ctx
 	var cancel context.CancelFunc
-	if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) > stdioMCPInitTimeout {
-		initCtx, cancel = context.WithTimeout(ctx, stdioMCPInitTimeout)
+	if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) > budget {
+		initCtx, cancel = context.WithTimeout(ctx, budget)
 		defer cancel()
 	}
 
@@ -302,8 +364,14 @@ func (s *stdioMCPSession) ensureReady(ctx context.Context) error {
 		"capabilities":    map[string]any{},
 		"clientInfo":      map[string]any{"name": "hoxi-native", "version": "1.0.0"},
 	}); err != nil {
+		elapsedMs := time.Since(startedAt).Milliseconds()
 		s.close()
 		s.pool.evictIfMatch(s.slotKey, s)
+		if errors.Is(initCtx.Err(), context.DeadlineExceeded) && (ctx == nil || ctx.Err() == nil) {
+			msg := fmt.Sprintf("MCP server %q exceeded startup budget (%dms > %dms)", s.srv.Name, elapsedMs, budget.Milliseconds())
+			s.pool.recordStartupFailure(s.slotKey, s.specHash, msg)
+			return errors.New(msg)
+		}
 		return err
 	}
 	_ = s.sendNotification("notifications/initialized")

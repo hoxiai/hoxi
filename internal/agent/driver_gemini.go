@@ -118,6 +118,8 @@ func (d *geminiDriver) BuildRequest(req ModelRequest) (llm.StreamHTTPRequest, er
 
 func (d *geminiDriver) ParseSSE(ctx context.Context, body io.Reader, emit func(StreamEvent)) error {
 	callSeq := 0
+	thoughtBlockIdx := 1
+	thoughtOpen := false
 	var usage TokenUsage
 	var finishReason string
 	var sawTerminal bool
@@ -188,13 +190,28 @@ func (d *geminiDriver) ParseSSE(ctx context.Context, body io.Reader, emit func(S
 					})
 					continue
 				}
-				if sig != "" {
-					emit(StreamEvent{Kind: EventSignatureDelta, Delta: sig})
-				}
-				if txt, _ := part["text"].(string); txt != "" {
-					if thought, _ := part["thought"].(bool); thought {
-						emit(StreamEvent{Kind: EventThinkingDelta, Delta: txt})
-					} else {
+				txt, _ := part["text"].(string)
+				if thought, _ := part["thought"].(bool); thought {
+					thoughtOpen = true
+					if txt != "" {
+						emit(StreamEvent{Kind: EventThinkingDelta, BlockIndex: thoughtBlockIdx, Delta: txt})
+					}
+					if sig != "" {
+						emit(StreamEvent{Kind: EventSignatureDelta, BlockIndex: thoughtBlockIdx, Delta: sig})
+						emit(StreamEvent{Kind: EventThinkingEnd, BlockIndex: thoughtBlockIdx})
+						thoughtBlockIdx++
+						thoughtOpen = false
+					}
+				} else {
+					if sig != "" {
+						emit(StreamEvent{Kind: EventSignatureDelta, BlockIndex: thoughtBlockIdx, Delta: sig})
+					}
+					if thoughtOpen && (sig != "" || txt != "") {
+						emit(StreamEvent{Kind: EventThinkingEnd, BlockIndex: thoughtBlockIdx})
+						thoughtBlockIdx++
+						thoughtOpen = false
+					}
+					if txt != "" {
 						emit(StreamEvent{Kind: EventTextDelta, Delta: txt})
 					}
 				}

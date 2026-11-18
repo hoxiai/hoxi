@@ -1,14 +1,23 @@
 package llm
 
 import (
+	"bytes"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
+)
+
+const (
+	maxTemplateInlineFileBytes  = 64 * 1024
+	maxTemplateInlineTotalBytes = 128 * 1024
 )
 
 // SlashCommandSpec describes a built-in, JSON-configured, or Markdown-defined slash command.
@@ -30,6 +39,7 @@ type ExpandedCommand struct {
 	RenderedPrompt string
 	Agent          string
 	Model          string
+	Subtask        bool
 }
 
 const builtinInitTemplate = `Inspect this repository's directory structure, package manifests, build/lint/test scripts, architecture boundaries, and coding conventions, then create or update AGENTS.md in the workspace root.
@@ -187,6 +197,10 @@ func ExpandSlashCommand(rawPrompt, worktreeDir string, extraCfg map[string]any) 
 	}
 
 	tmpl := matched.Template
+	// Resolve static @<workspace-file> references from the command template BEFORE
+	// interpolating user-supplied $ARGUMENTS / $1..$9 so arguments cannot inject file reads.
+	inlinedBlocks := collectTemplateFileBlocks(tmpl, worktreeDir)
+
 	posArgs := splitCommandArgs(rawArgs)
 	usedPlaceholder := false
 
@@ -206,6 +220,9 @@ func ExpandSlashCommand(rawPrompt, worktreeDir string, extraCfg map[string]any) 
 		}
 	}
 	rendered := strings.TrimSpace(tmpl)
+	if len(inlinedBlocks) > 0 {
+		rendered = rendered + "\n\n" + strings.Join(inlinedBlocks, "\n\n")
+	}
 	if rawArgs != "" && !usedPlaceholder {
 		rendered = rendered + "\n\nArguments: " + rawArgs
 	}
@@ -214,6 +231,7 @@ func ExpandSlashCommand(rawPrompt, worktreeDir string, extraCfg map[string]any) 
 		RenderedPrompt: rendered,
 		Agent:          strings.TrimSpace(matched.Agent),
 		Model:          strings.TrimSpace(matched.Model),
+		Subtask:        matched.Subtask,
 	}, true
 }
 
@@ -391,4 +409,165 @@ func extractStringSlice(v any) []string {
 		}
 	}
 	return out
+}
+
+func collectTemplateFileBlocks(tmpl, worktreeDir string) []string {
+	worktreeDir = strings.TrimSpace(worktreeDir)
+	if worktreeDir == "" || !strings.Contains(tmpl, "@") {
+		return nil
+	}
+	realRoot, err := filepath.EvalSymlinks(worktreeDir)
+	if err != nil || !filepath.IsAbs(realRoot) {
+		return nil
+	}
+	realRoot = filepath.Clean(realRoot)
+
+	var blocks []string
+	seen := make(map[string]bool)
+	remaining := maxTemplateInlineTotalBytes
+
+	for i := 0; i < len(tmpl) && remaining > 0; i++ {
+		if tmpl[i] != '@' {
+			continue
+		}
+		if i > 0 {
+			prev, _ := utf8.DecodeLastRuneInString(tmpl[:i])
+			if !isTemplateRefBoundaryBefore(prev) {
+				continue
+			}
+		}
+		end := i + 1
+		for end < len(tmpl) {
+			r, w := utf8.DecodeRuneInString(tmpl[end:])
+			if unicode.IsSpace(r) || strings.ContainsRune(",;<>\"'`()[]{}，；、。）)】》", r) {
+				break
+			}
+			end += w
+		}
+		rawRef := strings.TrimRight(tmpl[i+1:end], ".:!?：！？")
+		if end > i+1 {
+			i = end - 1
+		}
+		if rawRef == "" {
+			continue
+		}
+		cleanRel, ok := sanitizeTemplateRelativePath(rawRef)
+		if !ok || seen[cleanRel] {
+			continue
+		}
+		content, n, ok := readSafeTemplateWorkspaceFile(worktreeDir, realRoot, cleanRel, remaining)
+		if !ok {
+			continue
+		}
+		seen[cleanRel] = true
+		remaining -= n
+		blocks = append(blocks, "<file path=\""+cleanRel+"\">\n"+content+"\n</file>")
+	}
+	return blocks
+}
+
+func isTemplateRefBoundaryBefore(r rune) bool {
+	return unicode.IsSpace(r) || strings.ContainsRune("([{\"'`:：、，。；", r)
+}
+
+func sanitizeTemplateRelativePath(raw string) (string, bool) {
+	if strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "\\") || strings.HasPrefix(raw, "~") ||
+		strings.ContainsAny(raw, "*?[\x00") {
+		return "", false
+	}
+	slash := filepath.ToSlash(filepath.Clean(filepath.FromSlash(raw)))
+	if slash == "." || slash == "" || slash == ".." || strings.HasPrefix(slash, "../") || strings.Contains(slash, "/../") {
+		return "", false
+	}
+	parts := strings.Split(slash, "/")
+	startIdx := 0
+	// Exempt workspace skill docs (.hoxi/skills/<slug>/..., .agents/skills/<slug>/..., .opencode/skills/<slug>/...) while blocking all other hidden/dot paths.
+	if len(parts) >= 3 && (parts[0] == ".hoxi" || parts[0] == ".agents" || parts[0] == ".opencode") && parts[1] == "skills" && !strings.HasPrefix(parts[2], ".") {
+		startIdx = 2
+	}
+	for _, seg := range parts[startIdx:] {
+		if seg == "" || strings.HasPrefix(seg, ".") {
+			return "", false
+		}
+	}
+	if isSecretTemplateFileName(parts[len(parts)-1]) {
+		return "", false
+	}
+	return slash, true
+}
+
+func isSecretTemplateFileName(name string) bool {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	for _, ext := range []string{".pem", ".key", ".p12", ".pfx", ".jks", ".keystore", ".kdbx", ".asc", ".gpg", ".crt", ".cer", ".der", ".tfstate"} {
+		if strings.HasSuffix(lower, ext) {
+			return true
+		}
+	}
+	for _, prefix := range []string{"id_rsa", "id_ed25519", "id_ecdsa", "id_dsa"} {
+		if strings.HasPrefix(lower, prefix) {
+			return true
+		}
+	}
+	for _, sub := range []string{"secret", "credential", "password", "private_key", "apikey", "api_key", "token", "auth.json", "kubeconfig"} {
+		if strings.Contains(lower, sub) {
+			return true
+		}
+	}
+	return false
+}
+
+func readSafeTemplateWorkspaceFile(worktreeDir, realRoot, cleanRel string, remaining int) (string, int, bool) {
+	joined := filepath.Join(worktreeDir, filepath.FromSlash(cleanRel))
+	realFile, err := filepath.EvalSymlinks(joined)
+	if err != nil {
+		return "", 0, false
+	}
+	realFile = filepath.Clean(realFile)
+	if !strings.HasPrefix(realFile, realRoot+string(filepath.Separator)) {
+		return "", 0, false
+	}
+	// Re-check resolved basename against secret rules so symlinks to secret files inside workspace are also refused.
+	if isSecretTemplateFileName(filepath.Base(realFile)) || strings.HasPrefix(filepath.Base(realFile), ".") {
+		return "", 0, false
+	}
+	relFromRealRoot, err := filepath.Rel(realRoot, realFile)
+	if err != nil {
+		return "", 0, false
+	}
+	if _, ok := sanitizeTemplateRelativePath(filepath.ToSlash(relFromRealRoot)); !ok {
+		return "", 0, false
+	}
+	st, err := os.Stat(realFile)
+	if err != nil || !st.Mode().IsRegular() || st.Size() == 0 {
+		return "", 0, false
+	}
+	capBytes := maxTemplateInlineFileBytes
+	if remaining < capBytes {
+		capBytes = remaining
+	}
+	f, err := os.Open(realFile)
+	if err != nil {
+		return "", 0, false
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, int64(capBytes)+1))
+	if err != nil || len(data) == 0 {
+		return "", 0, false
+	}
+	truncated := false
+	if len(data) > capBytes {
+		data = data[:capBytes]
+		for len(data) > 0 && !utf8.Valid(data) {
+			data = data[:len(data)-1]
+		}
+		truncated = true
+	}
+	if bytes.IndexByte(data, 0) >= 0 || !utf8.Valid(data) {
+		return "", 0, false
+	}
+	text := strings.TrimRight(string(data), "\r\n")
+	if truncated {
+		text += "\n... [truncated]"
+	}
+	return text, len(data), true
 }

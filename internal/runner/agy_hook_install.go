@@ -22,8 +22,6 @@ import (
 // when the Hoxi binary is gone, so agy and the IDE keep working after an
 // uninstall (a failing hook would turn every command into a tool error).
 
-const agyHookName = "hoxi-approval-gate"
-
 var (
 	agyHookMu       sync.Mutex
 	agyHookWarned   bool

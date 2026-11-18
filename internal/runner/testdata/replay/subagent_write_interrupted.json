@@ -1,0 +1,68 @@
+{
+  "name": "subagent_write_interrupted",
+  "description": "Parent turn spawns a subagent that begins a file write and gets interrupted mid-execution; both parent task card and child session tool parts settle cleanly.",
+  "engineCalls": [
+    {
+      "steps": [
+        {
+          "op": "emit",
+          "event": {
+            "Kind": "tool_running",
+            "Step": 1,
+            "PartID": "prt_parent_task_1",
+            "CallID": "call_sub_1",
+            "ToolName": "task",
+            "Title": "Implement worker",
+            "Input": { "description": "Implement worker", "subagent_type": "general" }
+          }
+        },
+        {
+          "op": "emit",
+          "event": {
+            "Kind": "subtask_start",
+            "ParentCallID": "call_sub_1",
+            "Title": "Subagent Worker",
+            "Text": "Write worker.go",
+            "Metadata": {
+              "subagent_type": "general",
+              "providerID": "replay",
+              "modelID": "replay-scripted-v1",
+              "mode": "build"
+            }
+          }
+        },
+        {
+          "op": "emit",
+          "event": {
+            "Kind": "tool_running",
+            "ParentCallID": "call_sub_1",
+            "PartID": "prt_child_write_1",
+            "CallID": "call_child_write_1",
+            "ToolName": "write",
+            "Input": { "filePath": "<WORKSPACE>/worker.go" }
+          }
+        },
+        { "op": "signal_gate", "gate": "child_writing" },
+        { "op": "wait_abort" }
+      ]
+    }
+  ],
+  "clientActions": [
+    {
+      "name": "start_subagent_turn",
+      "op": "prompt",
+      "text": "spawn subagent to write worker.go",
+      "clientRequestId": "fx-sub-prompt-1",
+      "expectHttp": 200
+    },
+    { "name": "wait_child_write_in_flight", "op": "wait_gate", "gate": "child_writing" },
+    { "name": "interrupt_mid_write", "op": "abort", "expectHttp": 200 },
+    { "name": "wait_settled", "op": "wait_idle" }
+  ],
+  "expect": {
+    "userTurnCount": 1,
+    "noRunningTools": true,
+    "childSessionsCount": 1,
+    "childSessionsSettled": true
+  }
+}

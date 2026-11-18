@@ -3,10 +3,12 @@ package provider
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -18,6 +20,7 @@ import (
 
 var (
 	_ llm.StreamClient            = (*Service)(nil)
+	_ llm.StreamOutcomeReporter   = (*Service)(nil)
 	_ llm.SubagentEconomyResolver = (*Service)(nil)
 )
 
@@ -92,6 +95,9 @@ func (s *Service) ResolveStreamTarget(providerID, modelID string) llm.StreamTarg
 	default:
 		if isOpenAIResponsesProtocol(npm, baseURL) {
 			target.Protocol = llm.ProtocolOpenAIResponses
+		} else if s.shouldPromoteClaudeToAnthropicMessages(pid, mid, baseURL) {
+			target.Protocol = llm.ProtocolAnthropic
+			target.FallbackOpenAI = true
 		} else {
 			target.Protocol = llm.ProtocolOpenAI
 		}
@@ -106,7 +112,13 @@ func (s *Service) ResolveStreamTarget(providerID, modelID string) llm.StreamTarg
 	}
 	// Reuse the model options exposed to OpenCode so native turns honor the
 	// same legacy/adaptive thinking modes and explicit non-reasoning models.
-	target.Variants = defaultModelVariants(pid, npm, mid)
+	if target.FallbackOpenAI {
+		if !hasProxyBakedEffortSuffix(mid) {
+			target.Variants = defaultModelVariants(pid, "@ai-sdk/anthropic", mid)
+		}
+	} else {
+		target.Variants = defaultModelVariants(pid, npm, mid)
+	}
 	if target.Protocol == llm.ProtocolGoogle && isNonThinkingGeminiChatModel(mid) {
 		target.Variants = nil
 	}
@@ -114,9 +126,11 @@ func (s *Service) ResolveStreamTarget(providerID, modelID string) llm.StreamTarg
 	for id, cfg := range s.loadHoxiProvidersMap() {
 		providers[id] = cfg
 	}
+	var modelCfg map[string]any
 	if cfg, ok := providers[pid].(map[string]any); ok {
 		models, _ := cfg["models"].(map[string]any)
 		model, _ := models[mid].(map[string]any)
+		modelCfg = model
 		if limits, ok := model["limit"].(map[string]any); ok {
 			if n := positiveNumber(limits["context"]); n > 0 {
 				target.ContextLimit = n
@@ -126,12 +140,26 @@ func (s *Service) ResolveStreamTarget(providerID, modelID string) llm.StreamTarg
 			}
 		}
 		if variants, ok := model["variants"].(map[string]any); ok {
-			target.Variants = variants
+			if !target.FallbackOpenAI || variantsContainThinkingMap(variants) {
+				target.Variants = variants
+			}
 		}
 		if reasoning, ok := model["reasoning"].(bool); ok && !reasoning {
 			target.Variants = nil
 		}
 	}
+	if modelCfg == nil {
+		modelCfg = builtinModelConfigMap(pid, mid)
+		if limits, ok := modelCfg["limit"].(map[string]any); ok {
+			if n := positiveNumber(limits["context"]); n > 0 {
+				target.ContextLimit = n
+			}
+			if n := positiveNumber(limits["output"]); n > 0 {
+				target.OutputLimit = n
+			}
+		}
+	}
+	target.Cost = resolveModelPricing(pid, mid, baseURL, modelCfg)
 	return target
 }
 
@@ -167,6 +195,11 @@ func (s *Service) OpenStream(ctx context.Context, req llm.StreamHTTPRequest) (*h
 	}
 	targetURL := resolveStreamEndpointURL(baseURL, req.Target)
 	proto := effectiveProviderProtocol(req.Target.ProviderID, npm, baseURL)
+	if req.Target.Protocol == llm.ProtocolAnthropic {
+		proto = "anthropic"
+	} else if req.Target.Protocol == llm.ProtocolOpenAI || req.Target.Protocol == llm.ProtocolOpenAIResponses {
+		proto = "openai"
+	}
 
 	stallLimit := DefaultStreamStallTimeout
 	if s.streamStallTimeout > 0 {
@@ -214,6 +247,9 @@ func (s *Service) OpenStream(ctx context.Context, req llm.StreamHTTPRequest) (*h
 			case "anthropic":
 				outReq.Header.Set("x-api-key", apiKey)
 				outReq.Header.Set("anthropic-version", "2023-06-01")
+				if !isOfficialAnthropicHost(reqURL) {
+					outReq.Header.Set("Authorization", "Bearer "+apiKey)
+				}
 			case "google":
 				outReq.Header.Set("x-goog-api-key", apiKey)
 				if includeBearerWithQueryKey {
@@ -260,28 +296,257 @@ func (s *Service) OpenStream(ctx context.Context, req llm.StreamHTTPRequest) (*h
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
 		_ = resp.Body.Close()
+		now := time.Now()
+		latencyMs := now.Sub(started).Milliseconds()
+		retryAfter := parseStreamRetryHeaders(resp.Header, resp.StatusCode, now)
+		secrets := make([]string, 0, 1+len(headers)+len(req.ExtraHeaders))
+		if apiKey != "" {
+			secrets = append(secrets, apiKey)
+		}
+		for _, v := range headers {
+			if trimmed := strings.TrimSpace(v); len(trimmed) >= 6 {
+				secrets = append(secrets, trimmed)
+			}
+		}
+		for _, v := range req.ExtraHeaders {
+			if trimmed := strings.TrimSpace(v); len(trimmed) >= 6 {
+				secrets = append(secrets, trimmed)
+			}
+		}
+		upstream := llm.BuildRedactedUpstreamDetails(
+			resp.StatusCode,
+			req.Target.Protocol,
+			targetURL,
+			resp.Header,
+			bodyBytes,
+			latencyMs,
+			secrets...,
+		)
 		errText := redactSecretInText(extractAPIErrorMessage(resp.StatusCode, bodyBytes), apiKey)
+		if req.Target.FallbackOpenAI && (resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed || resp.StatusCode == http.StatusNotImplemented) {
+			s.noAnthropicMessages.Store(anthropicMessagesKey(req.Target.ProviderID, baseURL), true)
+			return nil, &llm.StreamHTTPError{
+				StatusCode: resp.StatusCode,
+				RetryAfter: retryAfter,
+				Message:    errText,
+				Upstream:   upstream,
+			}
+		}
 		if s.breaker != nil {
 			class := classifyCandidateFailure(resp.StatusCode, fmt.Errorf("%s", errText), nil)
 			if isQuotaExhausted(bodyBytes) {
 				class = breakerClassQuota
 			}
-			s.breaker.RecordFailure(req.Target.ProviderID, req.Target.ModelID, class, resp.StatusCode, 0, errText)
+			s.breaker.RecordFailure(req.Target.ProviderID, req.Target.ModelID, class, resp.StatusCode, retryAfter.Milliseconds(), errText)
+		}
+		diagMsg := "native stream HTTP error"
+		if upstream != nil && upstream.RequestID != "" {
+			diagMsg += " (req=" + upstream.RequestID + ")"
 		}
 		diagnostics.Record(diagnostics.Entry{
 			Kind:       "request",
 			Level:      "error",
 			Source:     "provider",
-			Message:    "native stream HTTP error",
+			Message:    diagMsg,
 			ProviderID: req.Target.ProviderID,
 			ModelID:    req.Target.ModelID,
 			Status:     resp.StatusCode,
-			DurationMs: time.Since(started).Milliseconds(),
+			DurationMs: latencyMs,
 		})
-		return nil, fmt.Errorf("%s", errText)
-	}
-	if s.breaker != nil {
-		s.breaker.RecordSuccess(req.Target.ProviderID, req.Target.ModelID, time.Since(started).Milliseconds())
+		return nil, &llm.StreamHTTPError{
+			StatusCode: resp.StatusCode,
+			RetryAfter: retryAfter,
+			Message:    errText,
+			Upstream:   upstream,
+		}
 	}
 	return resp, nil
+}
+
+// RecordStreamOutcome records the terminal outcome of an opened 2xx SSE stream
+// once the protocol driver has verified a clean terminal frame (or hit a stream
+// error/EOF/stall), avoiding premature circuit-breaker resets on 200 headers.
+func (s *Service) RecordStreamOutcome(providerID, modelID string, latencyMs int64, streamErr error) {
+	if s == nil || s.breaker == nil {
+		return
+	}
+	if streamErr == nil {
+		s.breaker.RecordSuccess(providerID, modelID, latencyMs)
+		return
+	}
+	if errors.Is(streamErr, context.Canceled) {
+		return
+	}
+	class := classifyCandidateFailure(0, streamErr, nil)
+	if isQuotaExhausted([]byte(streamErr.Error())) {
+		class = breakerClassQuota
+	}
+	s.breaker.RecordFailure(providerID, modelID, class, 0, latencyMs, streamErr.Error())
+}
+
+func anthropicMessagesKey(providerID, baseURL string) string {
+	return strings.ToLower(strings.TrimSpace(providerID)) + "|" + strings.TrimRight(strings.ToLower(strings.TrimSpace(baseURL)), "/")
+}
+
+func isOfficialAnthropicHost(rawURL string) bool {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	return host == "api.anthropic.com" || strings.HasSuffix(host, ".anthropic.com")
+}
+
+func isOpenAIOnlyChatHost(rawURL string) bool {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	p := strings.TrimRight(strings.ToLower(u.Path), "/")
+	if strings.HasSuffix(p, "/chat/completions") || strings.HasSuffix(p, "/openai") || strings.Contains(p, "/openai/") {
+		return true
+	}
+	for _, suffix := range []string{
+		"openai.com",
+		"openai.azure.com",
+		"openrouter.ai",
+		"siliconflow.cn",
+		"siliconflow.com",
+		"githubcopilot.com",
+		"inference.ai.azure.com",
+		"dashscope.aliyuncs.com",
+		"groq.com",
+		"together.xyz",
+		"fireworks.ai",
+	} {
+		if host == suffix || strings.HasSuffix(host, "."+suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasProxyBakedEffortSuffix(modelID string) bool {
+	lower := strings.ToLower(strings.TrimSpace(modelID))
+	for _, suf := range []string{"-low", "-medium", "-high", "-xhigh", "-max", ":thinking"} {
+		if strings.HasSuffix(lower, suf) {
+			return true
+		}
+	}
+	return false
+}
+
+func variantsContainThinkingMap(variants map[string]any) bool {
+	for _, raw := range variants {
+		if m, ok := raw.(map[string]any); ok && m["thinking"] != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Service) shouldPromoteClaudeToAnthropicMessages(providerID, modelID, baseURL string) bool {
+	if !isHTTPEndpoint(baseURL) || isOpenAIOnlyChatHost(baseURL) {
+		return false
+	}
+	if !strings.Contains(strings.ToLower(strings.TrimSpace(modelID)), "claude") {
+		return false
+	}
+	if s != nil {
+		if _, blocked := s.noAnthropicMessages.Load(anthropicMessagesKey(providerID, baseURL)); blocked {
+			return false
+		}
+	}
+	return true
+}
+
+func parseStreamRetryHeaders(h http.Header, statusCode int, now time.Time) time.Duration {
+	if h == nil {
+		return 0
+	}
+	var best time.Duration
+	if rawMs := strings.TrimSpace(h.Get("Retry-After-Ms")); rawMs != "" {
+		if ms, err := strconv.ParseFloat(rawMs, 64); err == nil && ms > 0 {
+			best = time.Duration(ms * float64(time.Millisecond))
+		}
+	}
+	if d := parseRetryAfter(h.Get("Retry-After"), now); d > best {
+		best = d
+	}
+	// Explicit Retry-After / Retry-After-Ms headers are authoritative for this
+	// rejected request; do not let long-window X-Ratelimit-Reset-* headers
+	// inflate a short burst retry into a quota-exhaustion cooldown.
+	if best > 0 {
+		if best > llm.MaxResetWait {
+			return llm.MaxResetWait
+		}
+		return best
+	}
+	if statusCode == http.StatusTooManyRequests || statusCode >= 500 {
+		reqExhausted, hasRemReq := isRateLimitBucketExhausted(h.Get("X-Ratelimit-Remaining-Requests"))
+		var dReq time.Duration
+		if !hasRemReq || reqExhausted {
+			dReq = parseRateLimitResetDuration(h.Get("X-Ratelimit-Reset-Requests"), now)
+		}
+		dTok := parseRateLimitResetDuration(h.Get("X-Ratelimit-Reset-Tokens"), now)
+		switch {
+		case dReq > 0 && dTok > 0:
+			if hasRemReq && reqExhausted {
+				best = max(dReq, dTok)
+			} else if dTok < llm.QuotaResetPromoteAfter && dReq >= llm.QuotaResetPromoteAfter {
+				best = dTok
+			} else if dReq < llm.QuotaResetPromoteAfter && dTok >= llm.QuotaResetPromoteAfter {
+				best = dReq
+			} else {
+				best = max(dReq, dTok)
+			}
+		case dTok > 0:
+			best = dTok
+		case dReq > 0:
+			best = dReq
+		}
+	}
+	if best > llm.MaxResetWait {
+		best = llm.MaxResetWait
+	}
+	return best
+}
+
+func isRateLimitBucketExhausted(rawRemaining string) (exhausted bool, present bool) {
+	v := strings.TrimSpace(rawRemaining)
+	if v == "" {
+		return false, false
+	}
+	n, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		return false, false
+	}
+	return n <= 0, true
+}
+
+func parseRateLimitResetDuration(raw string, now time.Time) time.Duration {
+	v := strings.TrimSpace(raw)
+	if v == "" {
+		return 0
+	}
+	if d, err := time.ParseDuration(v); err == nil {
+		if d <= 0 {
+			return 0
+		}
+		if d > llm.MaxResetWait {
+			return llm.MaxResetWait
+		}
+		return d
+	}
+	if ts, err := time.Parse(time.RFC3339Nano, v); err == nil {
+		if d := ts.Sub(now); d > 0 {
+			if d > llm.MaxResetWait {
+				return llm.MaxResetWait
+			}
+			return d
+		}
+		return 0
+	}
+	return llm.ParseRetryDelay("retry after "+v, now, llm.MaxResetWait)
 }

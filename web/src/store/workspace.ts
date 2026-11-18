@@ -43,6 +43,7 @@ export * from "./daily-pulse";
 export * from "./model-pricing";
 export * from "./usage-history";
 export * from "./request-log";
+export * from "./request-recovery";
 export * from "./auth-state";
 export * from "./handoff";
 export * from "./updater-state";
@@ -93,3 +94,12 @@ export * from "./media-options";
 export * from "./wallpaper-optics";
 export * from "./wallpaper";
 export * from "./companion";
+export * from "./host-profiles";
+export type {
+  DataProfileItem,
+  DataProfileKind,
+  DataProfileUpsertPayload,
+  RemoteHostItem,
+  RemoteHostProbeResponse,
+  RemoteHostUpsertPayload,
+} from "../services/host-profiles-api";

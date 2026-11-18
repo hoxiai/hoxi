@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -15,7 +16,6 @@ import (
 	"github.com/hoxiai/hoxi/internal/opencode/ocstate"
 	"github.com/hoxiai/hoxi/internal/runner"
 	"github.com/hoxiai/hoxi/internal/sqlitecli"
-	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 type pruneFixture struct {
@@ -358,8 +358,11 @@ INSERT INTO session VALUES ('` + sid + `', NULL, '` + strings.ReplaceAll(f.repo,
 INSERT INTO message VALUES ('msg_u_1', '` + sid + `', 1700000001000, '{"id":"msg_u_1","role":"user","time":{"created":1700000001000}}');
 INSERT INTO part VALUES ('prt_u_1', '` + sid + `', 'msg_u_1', 1700000001000, '{"id":"prt_u_1","type":"text","text":"Old history payload"}');
 `
-	if out, err := subproc.Command(sqlitecli.Executable(), dbPath, initSQL).CombinedOutput(); err != nil {
-		t.Fatalf("seed sqlite db: %v (%s)", err, string(out))
+	if err := sqlitecli.WithReadWrite(context.Background(), dbPath, 5*time.Second, func(ctx context.Context, db *sql.DB) error {
+		_, err := db.ExecContext(ctx, initSQL)
+		return err
+	}); err != nil {
+		t.Fatalf("seed sqlite db: %v", err)
 	}
 	extCopy := filepath.Join(t.TempDir(), "external_opencode.db")
 	rawDB, err := os.ReadFile(dbPath)

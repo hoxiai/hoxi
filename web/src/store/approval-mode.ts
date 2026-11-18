@@ -49,8 +49,8 @@ import {
   uninstallAgyHook,
   type DeferredEntry,
 } from "./approval-records";
-import { isDestructivePermissionRequest } from "../../../.opencode/lib/permission-policy.js";
-import { sessionGrantRefusal } from "../../../.opencode/lib/opaque-command.js";
+import { isDestructivePermissionRequest } from "../policy/permission-policy.js";
+import { sessionGrantRefusal } from "../policy/opaque-command.js";
 
 export {
   approvalAuditEntries,

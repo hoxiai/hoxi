@@ -257,6 +257,21 @@ export function upsertTurnInfo(list: MessageTurn[], info: MessageInfo) {
     }
   }
 
+  if (
+    info.role === "assistant" &&
+    info.parentID &&
+    !isOptimisticID(info.parentID) &&
+    getIndexCache(list)?.hasOptimistic !== false
+  ) {
+    const parentIdx = findMessageIndex(list, info.parentID);
+    const optIdx = list.findIndex((m) => isOptimisticID(m.info.id));
+    if (parentIdx >= 0 && optIdx > parentIdx) {
+      list.splice(optIdx, 1);
+      invalidateIndex(list);
+      idx = findMessageIndex(list, info.id);
+    }
+  }
+
   if (idx >= 0) {
     const prevID = list[idx].info.id;
     Object.assign(list[idx].info, info);

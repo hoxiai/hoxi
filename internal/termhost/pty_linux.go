@@ -14,26 +14,26 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func startPlatformPTY(cmd *exec.Cmd, cols, rows uint16) (io.ReadWriteCloser, func(uint16, uint16) error, func() error, error) {
+func startPlatformPTY(cmd *exec.Cmd, cols, rows uint16) (io.ReadWriteCloser, func(uint16, uint16) error, func() error, func() error, error) {
 	master, err := os.OpenFile("/dev/ptmx", os.O_RDWR|syscall.O_CLOEXEC, 0)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("open /dev/ptmx: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("open /dev/ptmx: %w", err)
 	}
 	var ptn uint32
 	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, master.Fd(), syscall.TIOCGPTN, uintptr(unsafe.Pointer(&ptn))); errno != 0 {
 		_ = master.Close()
-		return nil, nil, nil, fmt.Errorf("TIOCGPTN: %w", errno)
+		return nil, nil, nil, nil, fmt.Errorf("TIOCGPTN: %w", errno)
 	}
 	var unlock int32
 	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, master.Fd(), syscall.TIOCSPTLCK, uintptr(unsafe.Pointer(&unlock))); errno != 0 {
 		_ = master.Close()
-		return nil, nil, nil, fmt.Errorf("TIOCSPTLCK: %w", errno)
+		return nil, nil, nil, nil, fmt.Errorf("TIOCSPTLCK: %w", errno)
 	}
 	slaveName := "/dev/pts/" + strconv.Itoa(int(ptn))
 	slave, err := os.OpenFile(slaveName, os.O_RDWR|syscall.O_NOCTTY, 0)
 	if err != nil {
 		_ = master.Close()
-		return nil, nil, nil, fmt.Errorf("open %s: %w", slaveName, err)
+		return nil, nil, nil, nil, fmt.Errorf("open %s: %w", slaveName, err)
 	}
 
 	if cols == 0 {
@@ -55,7 +55,7 @@ func startPlatformPTY(cmd *exec.Cmd, cols, rows uint16) (io.ReadWriteCloser, fun
 	if err := cmd.Start(); err != nil {
 		_ = slave.Close()
 		_ = master.Close()
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	_ = slave.Close()
 
@@ -72,5 +72,5 @@ func startPlatformPTY(cmd *exec.Cmd, cols, rows uint16) (io.ReadWriteCloser, fun
 		}
 		return master.Close()
 	}
-	return master, resizeFn, killFn, nil
+	return master, resizeFn, killFn, cmd.Wait, nil
 }

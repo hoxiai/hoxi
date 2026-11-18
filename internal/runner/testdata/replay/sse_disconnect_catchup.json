@@ -1,0 +1,77 @@
+{
+  "name": "sse_disconnect_catchup",
+  "description": "Mobile/desktop client records its SSE sequence cursor before going offline, misses incremental deltas and tool completion, and catches up losslessly via SubscribeSince(after_seq).",
+  "engineCalls": [
+    {
+      "steps": [
+        { "op": "signal_gate", "gate": "turn_entered" },
+        { "op": "wait_gate", "gate": "cursor_marked" },
+        {
+          "op": "emit",
+          "event": {
+            "Kind": "text_start",
+            "Step": 1,
+            "PartID": "prt_stream_txt_1"
+          }
+        },
+        {
+          "op": "emit",
+          "event": {
+            "Kind": "text_delta",
+            "Step": 1,
+            "PartID": "prt_stream_txt_1",
+            "Text": "Hello from "
+          }
+        },
+        {
+          "op": "emit",
+          "event": {
+            "Kind": "text_delta",
+            "Step": 1,
+            "PartID": "prt_stream_txt_1",
+            "Text": "offline catch-up!"
+          }
+        },
+        {
+          "op": "emit",
+          "event": {
+            "Kind": "text_end",
+            "Step": 1,
+            "PartID": "prt_stream_txt_1",
+            "Text": "Hello from offline catch-up!"
+          }
+        },
+        {
+          "op": "emit",
+          "event": { "Kind": "turn_finish", "Finish": "stop" }
+        }
+      ]
+    }
+  ],
+  "clientActions": [
+    {
+      "name": "submit_turn",
+      "op": "prompt",
+      "text": "stream response across disconnect",
+      "clientRequestId": "fx-sse-prompt-1",
+      "expectHttp": 200
+    },
+    { "name": "await_turn_entered", "op": "wait_gate", "gate": "turn_entered" },
+    { "name": "record_seq_before_offline", "op": "mark_sse_seq" },
+    { "name": "allow_stream_while_offline", "op": "signal_gate", "gate": "cursor_marked" },
+    { "name": "await_turn_complete", "op": "wait_idle" },
+    { "name": "reconnect_with_after_seq", "op": "sse_catchup" }
+  ],
+  "expect": {
+    "userTurnCount": 1,
+    "minTotalTurns": 2,
+    "noRunningTools": true,
+    "noResyncOnCatchup": true,
+    "catchupContainsTypes": [
+      "message.part.updated",
+      "message.part.delta",
+      "session.idle",
+      "session.status"
+    ]
+  }
+}

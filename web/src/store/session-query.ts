@@ -11,24 +11,16 @@ import {
 import type { SessionInfo, SessionRuntime } from "../services/sse-types";
 import { AUTO_PROVIDER_ID, peekAutoModelTarget } from "./auto-models";
 import { indexedSession } from "./session-index";
-import { readStorageItem, workspace, writeStorageItem } from "./workspace-state";
+import {
+  AGENT_ENGINE_STORAGE_KEY,
+  preferredAgentEngine,
+  setPreferredAgentEngine,
+  workspace,
+  type AgentEngineMode,
+} from "./workspace-state";
 
-export type AgentEngineMode = "opencode" | "native";
-export const AGENT_ENGINE_STORAGE_KEY = "hoxi-agent-engine:v1";
-
-const [preferredAgentEngineSignal, setPreferredAgentEngineSignal] = createSignal<AgentEngineMode>(
-  readStorageItem(AGENT_ENGINE_STORAGE_KEY) === "opencode" ? "opencode" : "native"
-);
-
-export function preferredAgentEngine(): AgentEngineMode {
-  return preferredAgentEngineSignal();
-}
-
-export function setPreferredAgentEngine(mode: AgentEngineMode): void {
-  const next: AgentEngineMode = mode === "native" ? "native" : "opencode";
-  setPreferredAgentEngineSignal(next);
-  writeStorageItem(AGENT_ENGINE_STORAGE_KEY, next);
-}
+export { AGENT_ENGINE_STORAGE_KEY, preferredAgentEngine, setPreferredAgentEngine };
+export type { AgentEngineMode };
 
 // Bumped when the user sends (or queues) a prompt or selects an active-task
 // session so the timeline re-follows the live tail.
@@ -46,6 +38,40 @@ export function isSessionArchived(session: SessionInfo): boolean {
 }
 
 const deletedSessionIDs = new Set<string>();
+const MAX_DISMISSED_SHARED_BRANCH_NOTICES = 128;
+const dismissedSharedBranchKeys = new Set<string>();
+const [sharedBranchNoticeRev, setSharedBranchNoticeRev] = createSignal(0);
+
+function formatSharedBranchNoticeKey(sessionID: string | null | undefined, peerIDs: string[]): string {
+  const scope = (sessionID || "__draft__").trim() || "__draft__";
+  const sorted = [...peerIDs].map((id) => id.trim()).filter(Boolean).sort();
+  return `${scope}\0${sorted.join(",")}`;
+}
+
+export function isSharedBranchNoticeDismissed(
+  sessionID: string | null | undefined,
+  peerIDs: string[]
+): boolean {
+  sharedBranchNoticeRev();
+  if (peerIDs.length === 0) return false;
+  return dismissedSharedBranchKeys.has(formatSharedBranchNoticeKey(sessionID, peerIDs));
+}
+
+export function dismissSharedBranchNotice(
+  sessionID: string | null | undefined,
+  peerIDs: string[]
+): void {
+  if (peerIDs.length === 0) return;
+  const key = formatSharedBranchNoticeKey(sessionID, peerIDs);
+  if (dismissedSharedBranchKeys.has(key)) return;
+  while (dismissedSharedBranchKeys.size >= MAX_DISMISSED_SHARED_BRANCH_NOTICES) {
+    const oldest = dismissedSharedBranchKeys.values().next().value;
+    if (oldest === undefined) break;
+    dismissedSharedBranchKeys.delete(oldest);
+  }
+  dismissedSharedBranchKeys.add(key);
+  setSharedBranchNoticeRev((v) => v + 1);
+}
 
 export function isSessionDeleted(id: string): boolean {
   return deletedSessionIDs.has(id);
@@ -53,6 +79,15 @@ export function isSessionDeleted(id: string): boolean {
 
 export function markSessionDeleted(id: string): void {
   deletedSessionIDs.add(id);
+  const prefix = `${id}\0`;
+  let removed = false;
+  for (const key of Array.from(dismissedSharedBranchKeys)) {
+    if (key.startsWith(prefix)) {
+      dismissedSharedBranchKeys.delete(key);
+      removed = true;
+    }
+  }
+  if (removed) setSharedBranchNoticeRev((v) => v + 1);
 }
 
 export function activeSession(): SessionInfo | undefined {

@@ -144,6 +144,7 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 	wireAssistRoutes(providers, wtMgr)
 	handoffSvc := handoff.NewService(openCodePort, password, rootDir, providers)
 	runnerSvc = runner.NewService(rootDir, wtMgr, status, "")
+	wireHandoffNativeMaterializer(handoffSvc, runnerSvc)
 	runnerSvc.SetProjectResolver(workspaces)
 	workspaces.SetFolderRelinkHandler(func(projectID, oldPath, newPath string) error {
 		return runnerSvc.RelinkProject(projectID, oldPath, newPath)
@@ -223,8 +224,11 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 	g.skills.SetMarketplace(skills.NewMarketplaceService("", nil))
 	runnerSvc.SetImageClient(providers)
 	runnerSvc.SetAudioClient(providers)
+	runnerSvc.SetStreamClient(providers)
 	searchHook, inspectHook, impactHook := buildNativeCodeIndexHooks(g.codeIndex)
-	runnerSvc.SetNativeEngine(newGatewayNativeAgent(providers, searchHook, inspectHook, impactHook, providers.LoadHoxiConfigDoc, g.invokeNativeHostTool, g.buildNativeSkillCatalogPrompt))
+	nativeEngine := newGatewayNativeAgent(providers, searchHook, inspectHook, impactHook, providers.LoadHoxiConfigDoc, g.invokeNativeHostTool, g.buildNativeSkillCatalogPrompt)
+	nativeEngine.directoryConfig = providers.LoadNativeConfigDoc
+	runnerSvc.SetNativeEngine(nativeEngine)
 	runnerSvc.SetSkillResolver(func(ctx context.Context, directory, sessionID string, sel runner.SkillSelection) (runner.ResolvedSkill, error) {
 		detail, err := g.skills.ResolveSelection(ctx, directory, sessionID, skills.SkillSelection{
 			Key:     sel.Key,
@@ -552,7 +556,6 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 	g.mux.HandleFunc("/api/hoxi/memory/promote", g.handleMemoryPromote)
 	g.mux.HandleFunc("/api/hoxi/request-log", g.handleRequestLog)
 	g.mux.HandleFunc("/api/hoxi/request-log/content", g.handleRequestLogContent)
-	g.mux.Handle("/provider/", g.proxy)
 
 	g.providers.RegisterRoutes(g.mux)
 	g.registerMediaRoutes()

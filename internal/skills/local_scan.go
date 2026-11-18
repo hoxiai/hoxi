@@ -1,12 +1,15 @@
 package skills
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/hoxiai/hoxi/internal/hoxiconfig"
 )
 
 var (
@@ -18,7 +21,11 @@ var (
 // scanLocalSkills discovers SKILL.md files directly from workspace and user
 // skill directories so Hoxi's skill catalog and inline skill loader work 100%
 // natively without requiring an OpenCode daemon.
-func scanLocalSkills(directory, projectRoot string) []OpenCodeSkillInfo {
+func scanLocalSkills(directory, projectRoot string) ([]OpenCodeSkillInfo, error) {
+	project, err := hoxiconfig.Load(directory)
+	if err != nil {
+		return nil, err
+	}
 	seedDefaultsOnce.Do(func() {
 		_, _ = SeedDefaults()
 	})
@@ -36,8 +43,16 @@ func scanLocalSkills(directory, projectRoot string) []OpenCodeSkillInfo {
 		seenDirs[c] = true
 		searchDirs = append(searchDirs, c)
 	}
+	for _, path := range hoxiconfig.SkillPaths(directory, project) {
+		// Resolve symlinks too: a project path must not become a credential
+		// directory or another workspace through a symlink.
+		if !isWithinDir(directory, path) {
+			return nil, fmt.Errorf("hoxi.json skills.paths resolves outside the project")
+		}
+		addSkillRoot(path)
+	}
 
-	for _, base := range []string{directory, projectRoot} {
+	for _, base := range []string{directory} {
 		if strings.TrimSpace(base) == "" {
 			continue
 		}
@@ -74,26 +89,62 @@ func scanLocalSkills(directory, projectRoot string) []OpenCodeSkillInfo {
 		}
 		sort.Strings(names)
 		for _, slug := range names {
-			skillPath := filepath.Join(root, slug, "SKILL.md")
-			raw, err := os.ReadFile(skillPath)
-			if err != nil || len(raw) == 0 || len(raw) > maxUpstreamSkillBytes {
+			if slug == "synced" {
+				if !isWithinDir(root, filepath.Join(root, "synced")) {
+					continue
+				}
+				syncedBuckets, bErr := os.ReadDir(filepath.Join(root, "synced"))
+				if bErr != nil {
+					continue
+				}
+				for _, b := range syncedBuckets {
+					if !b.IsDir() {
+						continue
+					}
+					bDir := filepath.Join(root, "synced", b.Name())
+					if !isWithinDir(root, bDir) {
+						continue
+					}
+					subEntries, sErr := os.ReadDir(bDir)
+					if sErr != nil {
+						continue
+					}
+					for _, se := range subEntries {
+						if !se.IsDir() && se.Type()&os.ModeSymlink == 0 {
+							continue
+						}
+						appendSkillIfValid(&results, seenNames, filepath.Join(bDir, se.Name(), "SKILL.md"), se.Name())
+					}
+				}
 				continue
 			}
-			content := string(raw)
-			name, desc := parseSkillFrontmatter(content, slug)
-			if name == "" || seenNames[name] {
-				continue
-			}
-			seenNames[name] = true
-			results = append(results, OpenCodeSkillInfo{
-				Name:        name,
-				Description: desc,
-				Location:    skillPath,
-				Content:     content,
-			})
+			appendSkillIfValid(&results, seenNames, filepath.Join(root, slug, "SKILL.md"), slug)
 		}
 	}
-	return results
+	return results, nil
+}
+
+func appendSkillIfValid(results *[]OpenCodeSkillInfo, seenNames map[string]bool, skillPath, slug string) {
+	root := filepath.Dir(filepath.Dir(skillPath))
+	if !isWithinDir(root, skillPath) {
+		return
+	}
+	raw, err := os.ReadFile(skillPath)
+	if err != nil || len(raw) == 0 || len(raw) > maxUpstreamSkillBytes {
+		return
+	}
+	content := string(raw)
+	name, desc := parseSkillFrontmatter(content, slug)
+	if name == "" || seenNames[name] {
+		return
+	}
+	seenNames[name] = true
+	*results = append(*results, OpenCodeSkillInfo{
+		Name:        name,
+		Description: desc,
+		Location:    skillPath,
+		Content:     content,
+	})
 }
 
 func parseSkillFrontmatter(content, fallbackSlug string) (name, description string) {

@@ -101,7 +101,7 @@ func (t *readTool) Execute(_ context.Context, tc ToolContext, input json.RawMess
 			}
 			lines = append(lines, e.Name()+suffix)
 		}
-		return ToolOutput{Title: p, Output: strings.Join(lines, "\n")}, nil
+		return ToolOutput{Title: p, Output: appendSubdirectoryRules(tc, realTarget, strings.Join(lines, "\n"))}, nil
 	}
 	if mimeType := readMediaMimeType(target); mimeType != "" {
 		if info.Size() > maxReadMediaBytes {
@@ -114,6 +114,7 @@ func (t *readTool) Execute(_ context.Context, tc ToolContext, input json.RawMess
 		if err != nil {
 			return ToolOutput{Title: p, IsError: true}, err
 		}
+		tc.FileRevisions.RecordBytes(realTarget, raw)
 		if len(raw) == 0 {
 			return ToolOutput{Title: p, Output: "(empty file)"}, nil
 		}
@@ -134,6 +135,7 @@ func (t *readTool) Execute(_ context.Context, tc ToolContext, input json.RawMess
 		return ToolOutput{Title: p, IsError: true}, err
 	}
 	if bytes.IndexByte(raw[:min(len(raw), 4096)], 0) >= 0 {
+		tc.FileRevisions.RecordPartialRead(realTarget, raw)
 		return ToolOutput{Title: p, Output: fmt.Sprintf("binary file (%d bytes)", len(raw))}, nil
 	}
 	allLines := strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n")
@@ -143,6 +145,7 @@ func (t *readTool) Execute(_ context.Context, tc ToolContext, input json.RawMess
 		limit = 2000
 	}
 	if start > len(allLines) {
+		tc.FileRevisions.RecordPartialRead(realTarget, raw)
 		return ToolOutput{Title: p, Output: fmt.Sprintf("(file has %d lines; offset %d is past EOF)", len(allLines), start)}, nil
 	}
 	end := min(len(allLines), start+limit-1)
@@ -153,7 +156,10 @@ func (t *readTool) Execute(_ context.Context, tc ToolContext, input json.RawMess
 	if end < len(allLines) {
 		fmt.Fprintf(&b, "\n(showing lines %d-%d of %d)", start, end, len(allLines))
 	}
-	return ToolOutput{Title: p, Output: b.String()}, nil
+	outText := appendSubdirectoryRules(tc, realTarget, b.String())
+	deliveredComplete := len(ensureValidUTF8(outText)) <= maxToolOutputBytes
+	tc.FileRevisions.RecordReadLines(realTarget, raw, start, end, len(allLines), deliveredComplete)
+	return ToolOutput{Title: p, Output: outText}, nil
 }
 
 type globTool struct{}
@@ -201,6 +207,7 @@ func (t *globTool) Execute(ctx context.Context, tc ToolContext, input json.RawMe
 	if pat == "" {
 		pat = "*"
 	}
+	ignorer := newWorkspaceIgnorer(tc.WorktreeDir, root)
 	var matches []string
 	const maxMatches = 200
 	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, walkErr error) error {
@@ -211,16 +218,28 @@ func (t *globTool) Execute(ctx context.Context, tc ToolContext, input json.RawMe
 			return nil
 		}
 		if d.IsDir() {
-			if shouldSkipSearchDir(d.Name()) && p != root {
-				return filepath.SkipDir
+			if p != root {
+				if shouldSkipSearchDir(d.Name()) {
+					return filepath.SkipDir
+				}
+				if ignorer != nil && ignorer.IsIgnored(p, true) && !ignorer.CanReincludeUnderDir(p) {
+					return filepath.SkipDir
+				}
 			}
+			ignorer.EnterDir(p)
+			return nil
+		}
+		if isSensitiveAgentPathLexical(p) {
 			return nil
 		}
 		if d.Type()&fs.ModeSymlink != 0 {
 			realFile, lErr := filepath.EvalSymlinks(p)
-			if lErr != nil || !isLexicalPathWithin(realRoot, realFile) {
+			if lErr != nil || !isLexicalPathWithin(realRoot, realFile) || isSensitiveAgentPathLexical(realFile) {
 				return nil
 			}
+		}
+		if ignorer != nil && ignorer.IsIgnored(p, false) {
+			return nil
 		}
 		rel, err := filepath.Rel(root, p)
 		if err != nil {
@@ -316,13 +335,12 @@ func (t *grepTool) Execute(ctx context.Context, tc ToolContext, input json.RawMe
 
 	if !rootInfo.IsDir() {
 		if rootInfo.Mode().IsRegular() && rootInfo.Size() <= maxGrepFileSize {
-			if args.Include == "" {
-				files = append(files, grepCandidate{displayPath: root, openPath: realRoot, expectInfo: rootInfo})
-			} else if ok, _ := filepath.Match(args.Include, filepath.Base(root)); ok {
+			if args.Include == "" || matchGlob(args.Include, filepath.Base(root)) {
 				files = append(files, grepCandidate{displayPath: root, openPath: realRoot, expectInfo: rootInfo})
 			}
 		}
 	} else {
+		ignorer := newWorkspaceIgnorer(tc.WorktreeDir, root)
 		_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, walkErr error) error {
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -331,16 +349,30 @@ func (t *grepTool) Execute(ctx context.Context, tc ToolContext, input json.RawMe
 				return nil
 			}
 			if d.IsDir() {
-				if shouldSkipSearchDir(d.Name()) && p != root {
-					return filepath.SkipDir
+				if p != root {
+					if shouldSkipSearchDir(d.Name()) {
+						return filepath.SkipDir
+					}
+					if ignorer != nil && ignorer.IsIgnored(p, true) && !ignorer.CanReincludeUnderDir(p) {
+						return filepath.SkipDir
+					}
 				}
+				ignorer.EnterDir(p)
 				return nil
 			}
 			if isSensitiveAgentPathLexical(p) {
 				return nil
 			}
+			if ignorer != nil && ignorer.IsIgnored(p, false) {
+				return nil
+			}
 			if args.Include != "" {
-				if ok, _ := filepath.Match(args.Include, d.Name()); !ok {
+				relInc, relErr := filepath.Rel(root, p)
+				relIncSlash := d.Name()
+				if relErr == nil && relInc != "." {
+					relIncSlash = filepath.ToSlash(relInc)
+				}
+				if !matchGlob(args.Include, relIncSlash) {
 					return nil
 				}
 			}
@@ -440,7 +472,9 @@ func (t *grepTool) Execute(ctx context.Context, tc ToolContext, input json.RawMe
 
 func shouldSkipSearchDir(name string) bool {
 	switch name {
-	case ".git", "node_modules", "dist", "build", ".hoxi", ".opencode", "target", ".dart_tool":
+	case ".git", "node_modules", "dist", "build", ".hoxi", ".opencode", "target", ".dart_tool",
+		".next", ".nuxt", ".svelte-kit", ".turbo", "coverage", "vendor",
+		".venv", "venv", "__pycache__", ".pytest_cache", ".mypy_cache", ".gradle", "Pods":
 		return true
 	}
 	return false
@@ -541,17 +575,4 @@ func isSensitiveAgentPathLexical(fullPath string) bool {
 		}
 	}
 	return false
-}
-
-func matchGlob(pattern, relSlash string) bool {
-	if !strings.Contains(pattern, "/") && !strings.Contains(pattern, "**") {
-		ok, _ := filepath.Match(pattern, filepath.Base(relSlash))
-		return ok
-	}
-	cleanPat := strings.ReplaceAll(pattern, "**/", "")
-	if ok, _ := filepath.Match(cleanPat, relSlash); ok {
-		return true
-	}
-	ok, _ := filepath.Match(cleanPat, filepath.Base(relSlash))
-	return ok
 }

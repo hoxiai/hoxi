@@ -44,6 +44,7 @@ async function rasterizeSvgElementToPngDataUrl(svgEl: SVGSVGElement | null): Pro
   }
   const accent = readThemeCssVar("--accent-primary", "#2563eb");
   const textPrimary = readThemeCssVar("--text-primary", "#0f172a");
+  const textSecondary = readThemeCssVar("--text-secondary", "#475569");
   const bgElevated = readThemeCssVar("--bg-elevated", "#f8fafc");
   const borderStrong = readThemeCssVar("--border-strong", "rgba(30,41,59,0.2)");
 
@@ -56,6 +57,7 @@ async function rasterizeSvgElementToPngDataUrl(svgEl: SVGSVGElement | null): Pro
   serialized = serialized
     .replace(/var\(--accent-primary\)/g, accent)
     .replace(/var\(--text-primary\)/g, textPrimary)
+    .replace(/var\(--text-secondary\)/g, textSecondary)
     .replace(/var\(--bg-elevated\)/g, bgElevated)
     .replace(/var\(--border-strong\)/g, borderStrong);
 

@@ -349,3 +349,31 @@ func savePool(t *testing.T, svc *Service, poolID, strategy string, candidates []
 		t.Fatalf("savePool %s status = %d: %s", poolID, rec.Code, rec.Body.String())
 	}
 }
+
+func TestRecordStreamOutcomeHandlesMidStreamFailuresAndCleanCompletion(t *testing.T) {
+	_, dir := setupIsolatedEnv(t)
+	svc := NewService(0, "password", dir, nil)
+
+	// Two mid-stream SSE/EOF failures open the circuit instead of being masked by HTTP 200 headers.
+	svc.RecordStreamOutcome("subapi", "claude-opus", 320, errors.New("anthropic stream error: Overloaded"))
+	if snap := svc.breaker.Snapshot()["subapi/claude-opus"]; snap.ConsecutiveFailures != 1 || snap.Open {
+		t.Fatalf("expected 1 transient failure before opening, got %+v", snap)
+	}
+	svc.RecordStreamOutcome("subapi", "claude-opus", 410, errors.New("unexpected EOF: model stream ended before terminal frame"))
+	if snap := svc.breaker.Snapshot()["subapi/claude-opus"]; !snap.Open || snap.ConsecutiveFailures != 2 {
+		t.Fatalf("expected circuit to open on second mid-stream failure, got %+v", snap)
+	}
+
+	// Context cancellation never penalizes the candidate.
+	svc.RecordStreamOutcome("subapi", "other-model", 100, context.Canceled)
+	if _, exists := svc.breaker.Snapshot()["subapi/other-model"]; exists {
+		t.Fatal("expected context.Canceled stream abort not to penalize candidate")
+	}
+
+	// Clean terminal SSE frame closes the circuit and records header latency.
+	svc.RecordStreamOutcome("subapi", "claude-opus", 185, nil)
+	snap := svc.breaker.Snapshot()["subapi/claude-opus"]
+	if snap.Open || snap.ConsecutiveFailures != 0 || snap.LatencyEwmaMs != 185 {
+		t.Fatalf("expected clean stream completion to close circuit with latency 185ms, got %+v", snap)
+	}
+}

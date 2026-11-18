@@ -25,37 +25,10 @@ const (
 // external processes, or remote state so recovery logic never blindly replays
 // an uncertain execution.
 func isMutatingRunnerTool(toolName string, input map[string]interface{}) bool {
-	lower := strings.ToLower(strings.TrimSpace(toolName))
-	switch lower {
-	case "", "read", "glob", "grep", "code_search", "symbol_inspect", "impact_analysis",
-		"todoread", "todowrite", "question", "webfetch", "mcp_list_tools", "skill", "goal_report", "task":
-		return false
-	case "hoxi_browser":
-		act := strings.ToLower(strings.TrimSpace(firstString(input["action"])))
-		return act != "snapshot" && act != "screenshot"
-	case "hoxi_tools":
-		act := strings.ToLower(strings.TrimSpace(firstString(input["action"])))
-		return act != "discover" && act != "inspect"
-	case "hoxi_remote", "hoxi_data":
-		act := strings.ToLower(strings.TrimSpace(firstString(input["action"])))
-		switch act {
-		case "list", "sql_query":
-			return false
-		case "http_request":
-			m := strings.ToUpper(strings.TrimSpace(firstString(input["method"])))
-			return m != "" && m != "GET" && m != "HEAD"
-		default:
-			return true
-		}
-	case "write", "edit", "multiedit", "apply_patch", "bash", "shell", "create_file",
-		"mcp_call_tool", "hoxi_computer", "hoxi_image":
-		return true
-	default:
-		if strings.HasSuffix(lower, "_read") || strings.HasPrefix(lower, "list_") || strings.HasPrefix(lower, "get_") {
-			return false
-		}
-		return true
+	if strings.EqualFold(strings.TrimSpace(toolName), "hoxi_data") {
+		return isMutatingDataProfileCall(input)
 	}
+	return canonicalIsMutatingTool(toolName, input)
 }
 
 // isMutatingToolPart evaluates whether a recorded MessagePart may have mutated
@@ -156,33 +129,12 @@ func (s *Service) settleSessionInFlightParts(sessionID string, now int64, userCa
 }
 
 func stringMetaField(meta map[string]interface{}, key string) string {
-	if meta == nil {
-		return ""
-	}
-	s, _ := meta[key].(string)
-	return strings.TrimSpace(s)
+	return canonicalStringMeta(meta, key)
 }
 
 func intMetaField(meta map[string]interface{}, key string) int {
-	if meta == nil {
-		return 0
-	}
-	switch v := meta[key].(type) {
-	case int:
-		return v
-	case int64:
-		return int(v)
-	case float64:
-		return int(v)
-	case json.Number:
-		n, _ := v.Int64()
-		return int(n)
-	case string:
-		n, _ := strconv.Atoi(strings.TrimSpace(v))
-		return n
-	default:
-		return 0
-	}
+	_ = strconv.IntSize
+	return canonicalIntMeta(meta, key)
 }
 
 func partStep(p MessagePart) int {
@@ -209,16 +161,7 @@ func findLatestCompactionCheckpoint(turns []MessageTurn) (turnIdx int, summary, 
 }
 
 func appendCanonicalMessage(msgs []NativeMessage, role string, blocks []NativeContentBlock) []NativeMessage {
-	if len(blocks) == 0 {
-		return msgs
-	}
-	if len(msgs) > 0 && msgs[len(msgs)-1].Role == role {
-		msgs[len(msgs)-1].Content = append(msgs[len(msgs)-1].Content, blocks...)
-		return msgs
-	}
-	copied := make([]NativeContentBlock, len(blocks))
-	copy(copied, blocks)
-	return append(msgs, NativeMessage{Role: role, Content: copied})
+	return canonicalAppendMessage(msgs, role, blocks)
 }
 
 func (s *Service) appendToolMediaBlocks(meta map[string]interface{}, dst []NativeContentBlock) []NativeContentBlock {
@@ -271,29 +214,11 @@ func (s *Service) appendToolMediaBlocks(meta map[string]interface{}, dst []Nativ
 // cryptographic signature when present. Switching models strips private
 // thinking/signatures while keeping canonical text and tool history intact.
 func keepReasoningAffinity(turnInfo MessageInfo, part MessagePart, targetProviderID, targetModelID string) (sig string, keep bool) {
-	sig = stringMetaField(part.Metadata, "signature")
-	srcProv := firstNonEmptyStr(stringMetaField(part.Metadata, "providerID"), turnInfo.ProviderID)
-	srcModel := firstNonEmptyStr(stringMetaField(part.Metadata, "modelID"), turnInfo.ModelID)
-	targetProv := strings.TrimSpace(targetProviderID)
-	targetMod := strings.TrimSpace(targetModelID)
-	if srcProv == "" || srcModel == "" || targetProv == "" || targetMod == "" {
-		return "", false
-	}
-	if !strings.EqualFold(srcProv, targetProv) || !strings.EqualFold(srcModel, targetMod) {
-		return "", false
-	}
-	if strings.TrimSpace(part.Text) == "" && sig == "" {
-		return "", false
-	}
-	return sig, true
+	return canonicalKeepReasoningAffinity(turnInfo.ProviderID, turnInfo.ModelID, part.Text, part.Metadata, targetProviderID, targetModelID)
 }
 
 func sameProducerModel(turnInfo MessageInfo, targetProviderID, targetModelID string) bool {
-	if strings.TrimSpace(turnInfo.ProviderID) == "" || strings.TrimSpace(turnInfo.ModelID) == "" {
-		return false
-	}
-	return strings.EqualFold(strings.TrimSpace(turnInfo.ProviderID), strings.TrimSpace(targetProviderID)) &&
-		strings.EqualFold(strings.TrimSpace(turnInfo.ModelID), strings.TrimSpace(targetModelID))
+	return canonicalSameProducerModel(turnInfo.ProviderID, turnInfo.ModelID, targetProviderID, targetModelID)
 }
 
 // projectCanonicalNativeHistory projects Hoxi's durable SessionRecord.Turns
@@ -321,10 +246,13 @@ func (s *Service) projectCanonicalNativeHistory(turns []MessageTurn, targetProvi
 			Type: "text",
 			Text: "Understood. Continuing from the compacted checkpoint.",
 		}})
-		if scope == "before_step" {
+		switch scope {
+		case "before_step":
 			startIdx = compIdx
 			firstTurnMinStep = max(1, keepFromStep)
-		} else {
+		case "after_turn":
+			startIdx = compIdx + 1
+		default:
 			startIdx = compIdx
 			if parentID := strings.TrimSpace(turns[compIdx].Info.ParentID); parentID != "" {
 				for k := compIdx - 1; k >= 0; k-- {
@@ -356,6 +284,21 @@ func (s *Service) projectCanonicalNativeHistory(turns []MessageTurn, targetProvi
 						blocks = append(blocks, NativeContentBlock{Type: "text", Text: p.Text})
 					}
 				case "file":
+					lowerMime := strings.ToLower(strings.TrimSpace(p.Mime))
+					if (strings.HasPrefix(lowerMime, "audio/") || strings.HasPrefix(lowerMime, "video/")) &&
+						!s.isNativeGoogleStreamProtocol(targetProviderID, targetModelID) {
+						if tr := stringMetaField(p.Metadata, "transcript"); tr != "" {
+							hdr := `<attached_file name="` + p.Filename + `" mime="` + p.Mime + `"`
+							if by := stringMetaField(p.Metadata, "transcribedBy"); by != "" {
+								hdr += ` transcribed_by="` + by + `"`
+							}
+							blocks = append(blocks, NativeContentBlock{
+								Type: "text",
+								Text: hdr + ">\n[Audio Transcript]\n" + tr + "\n</attached_file>",
+							})
+							continue
+						}
+					}
 					if mb, ok := s.resolveNativeHistoryFileBlock(p); ok {
 						blocks = append(blocks, mb)
 					}
@@ -399,6 +342,7 @@ func (s *Service) projectCanonicalNativeHistory(turns []MessageTurn, targetProvi
 							Type:      "thinking",
 							Text:      p.Text,
 							Signature: sig,
+							Data:      stringMetaField(p.Metadata, "redactedData"),
 						})
 					}
 				case "text":
@@ -470,6 +414,7 @@ func (s *Service) projectCanonicalNativeHistory(turns []MessageTurn, targetProvi
 							Text:      errOut,
 							IsError:   true,
 						})
+						resultBlocks = s.appendToolMediaBlocks(p.State.Metadata, resultBlocks)
 					}
 				}
 			}
@@ -598,10 +543,58 @@ func (s *Service) classifyNativeTurnFailure(sessionID, asstMsgID string, err err
 			},
 		}
 	}
-	classified := newClassifiedMessageError("NativeAgentError", err.Error(), 0)
-	if classified != nil && classified.Data != nil && hasSideEffect {
-		classified.Data.IsRetryable = false
-		classified.Data.Kind = ToolOutcomeUnknown
+	return "error", classifyNativeAgentFailureError(err, hasSideEffect)
+}
+
+// extractLatestSessionTodos scans persisted turns within the current user task
+// cycle to recover the latest todowrite checklist (e.g. after process restart).
+func extractLatestSessionTodos(turns []MessageTurn) []NativeTodoItem {
+	if len(turns) == 0 {
+		return nil
 	}
-	return "error", classified
+	cycleStart := 0
+	for i := len(turns) - 1; i >= 0; i-- {
+		if strings.EqualFold(strings.TrimSpace(turns[i].Info.Role), "user") && !turns[i].Info.ContinueTask {
+			cycleStart = i
+			break
+		}
+	}
+	for i := len(turns) - 1; i >= cycleStart; i-- {
+		parts := turns[i].Parts
+		for j := len(parts) - 1; j >= 0; j-- {
+			p := parts[j]
+			if p.Type != "tool" || !strings.EqualFold(strings.TrimSpace(p.Tool), "todowrite") || p.State == nil {
+				continue
+			}
+			raw := p.State.Metadata["todos"]
+			if raw == nil && p.State.Input != nil {
+				raw = p.State.Input["todos"]
+			}
+			if items := decodePersistedTodoSlice(raw); len(items) > 0 {
+				return items
+			}
+		}
+	}
+	return nil
+}
+
+func decodePersistedTodoSlice(raw interface{}) []NativeTodoItem {
+	if raw == nil {
+		return nil
+	}
+	buf, err := json.Marshal(raw)
+	if err != nil {
+		return nil
+	}
+	var parsed []NativeTodoItem
+	if json.Unmarshal(buf, &parsed) != nil {
+		return nil
+	}
+	out := make([]NativeTodoItem, 0, len(parsed))
+	for _, it := range parsed {
+		if strings.TrimSpace(it.Content) != "" {
+			out = append(out, it)
+		}
+	}
+	return out
 }

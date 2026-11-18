@@ -10,10 +10,7 @@ import (
 	"time"
 )
 
-const (
-	summarizeTimeout           = 3 * time.Minute
-	maxNativeSummaryInputChars = 120000
-)
+const summarizeTimeout = 3 * time.Minute
 
 // handleSessionSummarize compacts an OpenCode or Native Go Agent conversation.
 // External CLI runtimes compact their own context, so they report false.
@@ -187,18 +184,27 @@ func (s *Service) handleNativeSessionSummarize(
 	seq := s.seqSeed
 	s.mu.Unlock()
 
-	userMsgID := fmt.Sprintf("msg_u_cmp_%d_%d", nowMs, seq)
-	asstMsgID := fmt.Sprintf("msg_a_cmp_%d_%d", nowMs+1, seq)
-	userPart := MessagePart{
-		ID:        fmt.Sprintf("prt_u_cmp_%d_%d", nowMs, seq),
-		SessionID: rec.ID,
-		MessageID: userMsgID,
-		Type:      "text",
-		Text:      "[Context Compacted]",
+	trimmedSummary := strings.TrimSpace(summary)
+	asstMsgID := fmt.Sprintf("msg_a_cmp_%d_%d", nowMs, seq)
+	var parentUserID string
+	for i := len(rec.Turns) - 1; i >= 0; i-- {
+		if strings.EqualFold(strings.TrimSpace(rec.Turns[i].Info.Role), "user") {
+			parentUserID = rec.Turns[i].Info.ID
+			break
+		}
 	}
-	summaryBody := "### Compacted Context Summary\n\n" + strings.TrimSpace(summary)
+	compPart := MessagePart{
+		ID:        "prt_cmp_" + asstMsgID,
+		SessionID: rec.ID,
+		MessageID: asstMsgID,
+		Type:      "compaction",
+		Text:      trimmedSummary,
+		Metadata:  map[string]interface{}{"scope": "after_turn"},
+		Time:      &PartTime{Start: nowMs, End: nowMs + 1},
+	}
+	summaryBody := "### Compacted Context Summary\n\n" + trimmedSummary
 	asstPart := MessagePart{
-		ID:        fmt.Sprintf("prt_a_cmp_%d_%d", nowMs+1, seq),
+		ID:        fmt.Sprintf("prt_a_cmp_%d_%d", nowMs, seq),
 		SessionID: rec.ID,
 		MessageID: asstMsgID,
 		Type:      "text",
@@ -206,38 +212,24 @@ func (s *Service) handleNativeSessionSummarize(
 		Time:      &PartTime{Start: nowMs, End: nowMs + 1},
 	}
 	estTokens := max(1, len(summaryBody)/4)
-	compacted := []MessageTurn{
-		{
-			Info: MessageInfo{
-				ID:         userMsgID,
-				SessionID:  rec.ID,
-				Role:       "user",
-				Time:       MessageTime{Created: nowMs},
-				Agent:      firstNonEmptyStr(rec.Mode, "build"),
-				ProviderID: providerID,
-				ModelID:    modelID,
-			},
-			Parts: []MessagePart{userPart},
+	checkpointTurn := MessageTurn{
+		Info: MessageInfo{
+			ID:         asstMsgID,
+			SessionID:  rec.ID,
+			Role:       "assistant",
+			ParentID:   parentUserID,
+			Time:       MessageTime{Created: nowMs, Completed: nowMs + 1},
+			Agent:      firstNonEmptyStr(rec.Mode, "build"),
+			ProviderID: providerID,
+			ModelID:    modelID,
+			Finish:     "stop",
+			Tokens:     &MessageTokens{Total: estTokens, Context: estTokens, Output: estTokens},
 		},
-		{
-			Info: MessageInfo{
-				ID:         asstMsgID,
-				SessionID:  rec.ID,
-				Role:       "assistant",
-				ParentID:   userMsgID,
-				Time:       MessageTime{Created: nowMs, Completed: nowMs + 1},
-				Agent:      firstNonEmptyStr(rec.Mode, "build"),
-				ProviderID: providerID,
-				ModelID:    modelID,
-				Finish:     "stop",
-				Tokens:     &MessageTokens{Total: estTokens, Output: estTokens},
-			},
-			Parts: []MessagePart{asstPart},
-		},
+		Parts: []MessagePart{compPart, asstPart},
 	}
 
-	updated, ok, err := s.store.Update(rec.ID, func(sr *SessionRecord) {
-		sr.Turns = compacted
+	_, ok, err := s.store.Update(rec.ID, func(sr *SessionRecord) {
+		sr.Turns = append(sr.Turns, checkpointTurn)
 	})
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
@@ -247,11 +239,9 @@ func (s *Service) handleNativeSessionSummarize(
 		writeJSONError(w, http.StatusNotFound, "session not found")
 		return
 	}
-	for _, turn := range updated.Turns {
-		s.broadcast(rec.ID, SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": turn.Info}})
-		for _, part := range turn.Parts {
-			s.broadcast(rec.ID, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": part}})
-		}
+	s.broadcast(rec.ID, SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": checkpointTurn.Info}})
+	for _, part := range checkpointTurn.Parts {
+		s.broadcast(rec.ID, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": part}})
 	}
 	s.syncSessionMemoryFile(rec.ID)
 	writeJSON(w, http.StatusOK, true)
@@ -262,8 +252,13 @@ func formatTurnsForNativeSummary(turns []MessageTurn) string {
 	startIdx := 0
 	if compIdx, summary, scope, _, ok := findLatestCompactionCheckpoint(turns); ok {
 		fmt.Fprintf(&b, "[PRIOR CHECKPOINT]\n%s\n\n", summary)
-		startIdx = compIdx
-		if scope != "before_step" {
+		switch scope {
+		case "before_step":
+			startIdx = compIdx
+		case "after_turn":
+			startIdx = compIdx + 1
+		default:
+			startIdx = compIdx
 			if parentID := strings.TrimSpace(turns[compIdx].Info.ParentID); parentID != "" {
 				for k := compIdx - 1; k >= 0; k-- {
 					if turns[k].Info.ID == parentID {
@@ -294,18 +289,14 @@ func formatTurnsForNativeSummary(turns []MessageTurn) string {
 					continue
 				}
 				out := strings.TrimSpace(firstNonEmptyStr(p.State.Output, p.State.Error))
-				if len(out) > 1200 {
-					out = out[:1200] + "...[truncated]"
+				if len(p.State.Input) > 0 {
+					input, _ := json.Marshal(p.State.Input)
+					fmt.Fprintf(&b, "[TOOL INPUT %s]\n%s\n", p.Tool, input)
 				}
 				fmt.Fprintf(&b, "[TOOL %s (%s)] %s\n%s\n\n", p.Tool, p.State.Status, p.State.Title, out)
 			}
 		}
 	}
-	text := strings.TrimSpace(b.String())
-	if len(text) > maxNativeSummaryInputChars {
-		head := maxNativeSummaryInputChars / 3
-		tail := maxNativeSummaryInputChars - head
-		text = text[:head] + "\n\n...[earlier turns omitted]...\n\n" + text[len(text)-tail:]
-	}
-	return text
+	// The engine chunks the complete transcript to the selected model's budget.
+	return strings.TrimSpace(b.String())
 }

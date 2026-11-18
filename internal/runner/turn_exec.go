@@ -116,6 +116,7 @@ func (s *Service) startTurnProcessWithMode(
 	s.mu.Lock()
 	s.procs[rec.ID] = ap
 	s.mu.Unlock()
+	s.beginSessionFileTurn(rec.ID)
 
 	if s.status != nil {
 		s.status.SetSessionBusy(rec.ID, true)
@@ -123,7 +124,7 @@ func (s *Service) startTurnProcessWithMode(
 	go s.watchStall(ap)
 
 	tr := NewTurnTranslator(rec.ID, rec.Runtime, asstMsgID, userInfo.ID, rec.ProviderID, modelID, mode, rec.ExternalID)
-	tr.createChild = s.childSessionFactory(rec, modelID, mode)
+	tr.CreateChild = s.childSessionFactory(rec, modelID, mode)
 	if emitUserTurn {
 		s.broadcast(rec.ID, tr.InitialEvents(userInfo, storedParts)...)
 	} else {
@@ -203,7 +204,7 @@ func (s *Service) startTurnProcessWithMode(
 						resErr := extractFailedStreamResultError(line, tr.LastErrorText())
 						canResume := !tr.HasToolParts() || strings.TrimSpace(firstNonEmptyStr(tr.ExternalID(), rec.ExternalID)) != ""
 						if (retryAttempt < len(retryDelays) && isRetryableTurnError(resErr) && canResume) ||
-							(canRetryWithoutResume && len(tr.partsByID) == 0) {
+							(canRetryWithoutResume && !tr.HasParts()) {
 							heldFailedResultLine = line
 							return
 						}
@@ -325,7 +326,7 @@ func (s *Service) startTurnProcessWithMode(
 				continue
 			}
 
-			if canRetryWithoutResume && len(tr.partsByID) == 0 {
+			if canRetryWithoutResume && !tr.HasParts() {
 				canRetryWithoutResume = false
 				heldFailedResultLine = ""
 				rec.ExternalID = ""
@@ -385,9 +386,9 @@ func (s *Service) startTurnProcessWithMode(
 			s.broadcastRouted(rec.ID, tr.AbandonTurn(time.Now().UnixMilli()))
 			stallErr := ap.stall.abortError()
 			if ap.wasAborted() && stallErr == nil {
-				tr.msgInfo.Time.Completed = time.Now().UnixMilli()
-				tr.msgInfo.Finish = "aborted"
-				s.broadcast(rec.ID, SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": tr.msgInfo}})
+				tr.MsgInfo.Time.Completed = time.Now().UnixMilli()
+				tr.MsgInfo.Finish = "aborted"
+				s.broadcast(rec.ID, SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": tr.MsgInfo}})
 				terminalEvts = append(terminalEvts, SSEEvent{Type: "session.status", Properties: map[string]interface{}{"sessionID": rec.ID, "status": SessionStatus{Type: "idle"}}})
 				return
 			}
@@ -402,10 +403,10 @@ func (s *Service) startTurnProcessWithMode(
 			if stallErr != nil {
 				msgErr = stallErr
 			}
-			tr.msgInfo.Time.Completed = time.Now().UnixMilli()
-			tr.msgInfo.Error = msgErr
-			tr.msgInfo.Finish = "error"
-			s.broadcast(rec.ID, SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": tr.msgInfo}})
+			tr.MsgInfo.Time.Completed = time.Now().UnixMilli()
+			tr.MsgInfo.Error = msgErr
+			tr.MsgInfo.Finish = "error"
+			s.broadcast(rec.ID, SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": tr.MsgInfo}})
 			terminalEvts = append(terminalEvts,
 				SSEEvent{Type: "session.error", Properties: map[string]interface{}{"sessionID": rec.ID, "error": msgErr}},
 				SSEEvent{Type: "session.status", Properties: map[string]interface{}{"sessionID": rec.ID, "status": SessionStatus{Type: "idle"}}},

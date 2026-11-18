@@ -67,8 +67,8 @@ func TestProfileTextKeepsExplicitGitDirWritable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !Available() {
-		t.Skip("seatbelt backend unavailable")
+	if !CanApply() {
+		t.Skip("seatbelt sandbox_apply unavailable or blocked by outer sandbox")
 	}
 
 	probe := filepath.Join(gitDir, "probe.txt")
@@ -165,8 +165,8 @@ func TestWrapExecKeepsArguments(t *testing.T) {
 }
 
 func TestEnforcedWriteStaysInsideWorkspace(t *testing.T) {
-	if !Available() {
-		t.Skip("seatbelt backend unavailable")
+	if !CanApply() {
+		t.Skip("seatbelt sandbox_apply unavailable or blocked by outer sandbox")
 	}
 	workspace := t.TempDir()
 	profile, err := DefaultProfile(workspace, NetworkDeny)
@@ -206,8 +206,8 @@ func shellQuote(value string) string {
 }
 
 func TestEnforcedWriteProtectsHoxiStateAndHooks(t *testing.T) {
-	if !Available() {
-		t.Skip("seatbelt backend unavailable")
+	if !CanApply() {
+		t.Skip("seatbelt sandbox_apply unavailable or blocked by outer sandbox")
 	}
 	home, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -250,8 +250,8 @@ func TestEnforcedWriteProtectsHoxiStateAndHooks(t *testing.T) {
 }
 
 func TestSandboxDeniesSecretReadsUnderFakeHome(t *testing.T) {
-	if !Available() {
-		t.Skip("seatbelt backend unavailable")
+	if !CanApply() {
+		t.Skip("seatbelt sandbox_apply unavailable or blocked by outer sandbox")
 	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -302,8 +302,8 @@ func TestSandboxDeniesSecretReadsUnderFakeHome(t *testing.T) {
 }
 
 func TestSandboxDeniesGitControlWrites(t *testing.T) {
-	if !Available() {
-		t.Skip("seatbelt backend unavailable")
+	if !CanApply() {
+		t.Skip("seatbelt sandbox_apply unavailable or blocked by outer sandbox")
 	}
 	workspace := t.TempDir()
 	for _, dir := range []string{".git/hooks", ".git"} {
@@ -397,8 +397,8 @@ func TestProfileTextDeniesCredentialAgentSockets(t *testing.T) {
 // TestSandboxRefusesLaunchdAgentSocket connects to a socket at the path
 // launchd gives the default SSH agent; a socket elsewhere stays reachable.
 func TestSandboxRefusesLaunchdAgentSocket(t *testing.T) {
-	if !Available() {
-		t.Skip("seatbelt backend unavailable")
+	if !CanApply() {
+		t.Skip("seatbelt sandbox_apply unavailable or blocked by outer sandbox")
 	}
 	if _, err := exec.LookPath("nc"); err != nil {
 		t.Skip("nc unavailable")

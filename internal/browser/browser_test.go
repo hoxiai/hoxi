@@ -50,9 +50,32 @@ func TestValidation(t *testing.T) {
 			t.Errorf("accepted %q", raw)
 		}
 	}
-	for _, a := range []Action{{Action: "oops"}, {Action: "control"}, {Action: "evaluate", Text: "1"}, {Action: "key", Key: "Control+"}, {Action: "navigate", URL: "file:///tmp"}} {
+	for _, a := range []Action{
+		{Action: "oops"},
+		{Action: "control"},
+		{Action: "evaluate", Text: "1"},
+		{Action: "key", Key: "Control+"},
+		{Action: "navigate", URL: "file:///tmp"},
+		{Action: "click", Clear: true},
+		{Action: "navigate", URL: "https://example.com", TimeoutMs: 500},
+		{Action: "wait", TimeoutMs: 20000},
+		{Action: "select", Selector: "#country"},
+		{Action: "hover", X: -5, Y: 10},
+		{Action: "type", Text: "hi", Key: "Control+"},
+	} {
 		if validateAction(a, false) == nil {
 			t.Errorf("accepted %+v", a)
+		}
+	}
+	for _, valid := range []Action{
+		{Action: "type", Selector: "@e2", Text: "hello", Clear: true, Key: "Enter"},
+		{Action: "select", Selector: "@e3", Text: "US"},
+		{Action: "hover", Selector: "@e1"},
+		{Action: "wait", Selector: "#ready", TimeoutMs: 1500},
+		{Action: "diagnostics"},
+	} {
+		if err := validateAction(valid, true); err != nil {
+			t.Errorf("rejected valid action %+v: %v", valid, err)
 		}
 	}
 	dir, err := filepath.EvalSymlinks(t.TempDir())
@@ -398,10 +421,10 @@ func TestReadOnlyProbesAndUnstartedActionsNeverColdStartChrome(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Read-only probes (snapshot/screenshot) on an unstarted session must return
+	// Read-only probes (snapshot/screenshot/diagnostics) on an unstarted session must return
 	// idle state (200, empty tabs) without reserving a scope or launching Chrome.
 	for _, agent := range []bool{true, false} {
-		for _, body := range []string{`{"action":"snapshot"}`, `{"action":"screenshot"}`} {
+		for _, body := range []string{`{"action":"snapshot"}`, `{"action":"screenshot"}`, `{"action":"diagnostics"}`} {
 			w := request(t, s, dir, "ses_probe", "action", body, agent)
 			if w.Code != 200 {
 				t.Fatalf("agent=%v body=%s: got %d %s", agent, body, w.Code, w.Body.String())
@@ -426,6 +449,9 @@ func TestReadOnlyProbesAndUnstartedActionsNeverColdStartChrome(t *testing.T) {
 	// a Chrome window at about:blank.
 	for _, body := range []string{
 		`{"action":"click","selector":"#btn"}`,
+		`{"action":"hover","selector":"#btn"}`,
+		`{"action":"select","selector":"#sel","text":"opt"}`,
+		`{"action":"wait","selector":"#btn","timeoutMs":500}`,
 		`{"action":"type","text":"hi"}`,
 		`{"action":"key","key":"Enter"}`,
 		`{"action":"scroll","deltaY":100}`,
@@ -450,7 +476,7 @@ func TestReadOnlyProbesAndUnstartedActionsNeverColdStartChrome(t *testing.T) {
 	if w := request(t, s, dir, "ses_manual_probe", "action", `{"action":"control","manual":true}`, false); w.Code != 200 {
 		t.Fatal(w.Code, w.Body.String())
 	}
-	for _, body := range []string{`{"action":"snapshot"}`, `{"action":"screenshot"}`, `{"action":"click","selector":"#btn"}`} {
+	for _, body := range []string{`{"action":"snapshot"}`, `{"action":"screenshot"}`, `{"action":"diagnostics"}`, `{"action":"click","selector":"#btn"}`} {
 		if w := request(t, s, dir, "ses_manual_probe", "action", body, true); w.Code != 403 {
 			t.Fatalf("manual takeover bypassed for %s: got %d %s", body, w.Code, w.Body.String())
 		}
@@ -463,5 +489,33 @@ func TestReadOnlyProbesAndUnstartedActionsNeverColdStartChrome(t *testing.T) {
 		if sc.browser != nil {
 			t.Fatal("manual/probe check launched Chrome")
 		}
+	}
+}
+
+func TestSnapshotRefResolutionAndExpiry(t *testing.T) {
+	sc := &scope{}
+	sc.recordSnapshotRefs("tab-1", map[string]any{
+		"controls": []any{
+			map[string]any{"ref": "@e1", "selector": "#login-email", "tag": "input"},
+			map[string]any{"ref": "@e2", "selector": "form > button:nth-of-type(1)", "tag": "button"},
+		},
+	})
+	if got, err := sc.resolveSelector("tab-1", "@e1"); err != nil || got != "#login-email" {
+		t.Fatalf("resolve @e1 = %q, %v", got, err)
+	}
+	if got, err := sc.resolveSelector("tab-1", "  #plain-css "); err != nil || got != "#plain-css" {
+		t.Fatalf("resolve CSS = %q, %v", got, err)
+	}
+	for _, bad := range []string{"@e3", "@e0", "@bad"} {
+		if _, err := sc.resolveSelector("tab-1", bad); err == nil {
+			t.Fatalf("expected error for %q", bad)
+		}
+	}
+	if _, err := sc.resolveSelector("tab-2", "@e1"); err == nil {
+		t.Fatal("expected cross-tab ref lookup to fail")
+	}
+	sc.clearSnapshotRefs("tab-1")
+	if _, err := sc.resolveSelector("tab-1", "@e1"); err == nil {
+		t.Fatal("expected cleared tab ref lookup to fail")
 	}
 }

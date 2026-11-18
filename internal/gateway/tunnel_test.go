@@ -29,7 +29,7 @@ func TestTunnelRouteAllowlist(t *testing.T) {
 		{post, "/api/hoxi/sessions/ses_1/abort"}, {post, "/api/hoxi/sessions/ses_1/stop-tool"},
 		{post, "/api/hoxi/sessions/ses_1/revert"}, {post, "/api/hoxi/sessions/ses_1/unrevert"},
 		{post, "/api/hoxi/sessions/ses_1/fork"},
-		{get, "/api/hoxi/event"}, {get, "/api/hoxi/permission"}, {post, "/api/hoxi/permission/per_1/reply"},
+		{get, "/api/hoxi/event"}, {get, "/api/hoxi/requests/req_1"}, {get, "/api/hoxi/permission"}, {post, "/api/hoxi/permission/per_1/reply"},
 		{get, "/api/hoxi/question"}, {post, "/api/hoxi/question/que_1/reply"}, {post, "/api/hoxi/question/que_1/reject"},
 		{get, "/api/hoxi/worktree/status"}, {get, "/api/hoxi/worktree/diff"}, {get, "/api/hoxi/worktree/branches"},
 		{get, "/api/hoxi/worktree/verify-status"}, {post, "/api/hoxi/worktree/commit"}, {post, "/api/hoxi/worktree/apply"},
@@ -56,8 +56,14 @@ func TestTunnelRouteAllowlist(t *testing.T) {
 		// The Cloudflare connector token and control must stay desktop-only.
 		{get, "/api/hoxi/cloudflared/status"}, {post, "/api/hoxi/cloudflared/enable"}, {post, "/api/hoxi/cloudflared/disable"},
 		{get, "/api/hoxi/auth"}, {get, "/api/hoxi/models-config"},
+		{get, "/api/hoxi/dataprofiles"}, {post, "/api/hoxi/dataprofiles"}, {http.MethodDelete, "/api/hoxi/dataprofiles/p1"},
 		{get, "/api/hoxi/provider/keys"}, {post, "/api/hoxi/provider/fetch-models"}, {post, "/api/hoxi/provider/test-model"},
 		{get, "/api/hoxi/provider/auto-pools"}, {get, "/api/hoxi/provider/models/x"}, {get, "/provider"}, {get, "/global/config"},
+		{get, "/api/hoxi/provider/catalog"}, {get, "/api/hoxi/provider/auth-methods"}, {post, "/api/hoxi/provider/oauth/openrouter/authorize"},
+		{http.MethodPut, "/api/hoxi/provider/credentials/openai"}, {http.MethodDelete, "/api/hoxi/provider/credentials/openai"},
+		{get, "/api/hoxi/provider/config"}, {http.MethodPatch, "/api/hoxi/provider/config"}, {post, "/api/hoxi/provider/dispose"},
+		{get, "/api/hoxi/pty"}, {post, "/api/hoxi/pty"}, {get, "/api/hoxi/pty/1/connect"},
+		{get, "/api/hoxi/agents"}, {get, "/api/hoxi/commands"}, {get, "/api/hoxi/lsp"},
 		{get, "/api/hoxi/browser"}, {get, "/api/hoxi/clipboard/images"}, {get, "/api/hoxi/sessionsx"},
 		{get, "/api/hoxi/sessions/../tunnel/pair"}, {get, "/session"}, {get, "/pty/1/connect"}, {get, "/config"}, {get, "/auth/openai"},
 		{post, "/api/hoxi/desktop/notify"}, {post, "/api/hoxi/desktop/focus"}, {get, "/api/hoxi/dev-pulse"},
@@ -111,6 +117,7 @@ func TestTunnelRouteAllowlist(t *testing.T) {
 		{post, "/api/hoxi/sessions/ses_1/message"}, {get, "/api/hoxi/permission/per_1/reply"},
 		{post, "/api/hoxi/event"}, {post, "/file/content"}, {post, "/api/hoxi/file/list"},
 		{http.MethodOptions, "/api/hoxi/sessions"}, {http.MethodHead, "/healthz"}, {get, "/api/hoxi/worktree/commit"},
+		{post, "/api/hoxi/requests/req_1"}, {get, "/api/hoxi/requests/req_1/extra"}, {get, "/api/hoxi/requests/"},
 	}
 	for _, r := range denied {
 		if tunnelRouteAllowed(r.method, r.path) {

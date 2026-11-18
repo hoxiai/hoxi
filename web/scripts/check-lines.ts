@@ -179,46 +179,55 @@ const IGNORE_DIRS = new Set([
   ".gomodcache",
 ]);
 
-// Frozen line-count ratchet for the 10 pre-existing Work extension files that
-// already exceeded 800 lines when relocated into work/. None may grow, and all
-// other Work files must obey MAX_LINES (800).
-const WORK_LEGACY_LINE_CAPS: Record<string, number> = {
-  "work/web/Work1688Studio.tsx": 1282,
-  "work/web/WorkComposer.tsx": 975,
-  "work/web/WorkCrossBorderStudios.tsx": 1143,
-  "work/web/WorkGlobalPlatformStudios.tsx": 1669,
-  "work/web/WorkMcpEnvelopeShelf.tsx": 880,
-  "work/web/WorkStoreAuthModal.tsx": 1259,
-  "work/web/work-1688-helpers.ts": 2071,
-  "work/web/work-apps.ts": 1355,
-  "work/web/work-mcp-client.ts": 1127,
-  "work/web/work-stores.ts": 1647,
-};
+interface OptionalWorkLintConfig {
+  caps?: Record<string, number>;
+  allowHostImportPrefix?: string;
+  forbiddenInternalSubpackages?: string[];
+}
+
+function loadOptionalWorkLintConfig(root: string): OptionalWorkLintConfig {
+  const cfgPath = path.join(root, "work/line-caps.json");
+  if (!fs.existsSync(cfgPath)) return {};
+  try {
+    return JSON.parse(fs.readFileSync(cfgPath, "utf8")) as OptionalWorkLintConfig;
+  } catch {
+    return {};
+  }
+}
 
 const GO_BASE_PACKAGES = new Set([
   "agentcli",
   "agyhook",
   "buildinfo",
+  "canonical",
   "claudeconfig",
   "dataprofiles",
   "diagnostics",
   "hoxipaths",
+  "hoxiconfig",
   "llm",
   "notify",
   "opencode/ocapi",
   "opencode/ocstate",
   "osopen",
   "reclaim",
+  "runner/sessionstore",
+  "runner/taskledger",
+  "runner/turnstream",
   "sqlitecli",
   "statusbar",
   "subproc",
+  "testutil/execstub",
   "textindex",
 ]);
 
 const GO_ALLOWED_DOMAIN_IMPORTS: Record<string, string[]> = {
   opencode: ["sandbox"],
   provider: ["skills"],
-  runner: ["attachment", "sandbox", "worktree"],
+  runner: ["attachment", "runner/memstore", "runner/procgroup", "runner/shellpolicy", "sandbox", "worktree"],
+  "runner/memstore": ["worktree"],
+  "runner/procgroup": ["runner/shellpolicy"],
+  "runner/shellpolicy": ["sandbox", "worktree"],
   telemetry: ["auth"],
 };
 
@@ -239,6 +248,13 @@ function walkRepo(dir: string): string[] {
 }
 
 const repoRoot = fs.existsSync("./src") ? path.resolve("..") : path.resolve(".");
+const optionalWorkCfg = loadOptionalWorkLintConfig(repoRoot);
+const optionalWorkCaps = optionalWorkCfg.caps ?? {};
+const optionalWorkHostPrefix = optionalWorkCfg.allowHostImportPrefix ?? "";
+const optionalWorkForbiddenPkgs = ["gateway", "app", "cli", ...(optionalWorkCfg.forbiddenInternalSubpackages ?? [])];
+const optionalWorkForbiddenRe = new RegExp(
+  `"github\\.com/hoxiai/hoxi/internal/(?:${optionalWorkForbiddenPkgs.join("|")})"`
+);
 const files = walkRepo(repoRoot);
 
 let violations = 0;
@@ -253,7 +269,7 @@ for (const file of files) {
     ? content.split("\n").length - 1
     : content.split("\n").length;
 
-  const lineCap = WORK_LEGACY_LINE_CAPS[rel] ?? MAX_LINES;
+  const lineCap = optionalWorkCaps[rel] ?? MAX_LINES;
   if (lineCount > lineCap) {
     console.error(`  ✗ [${lineCap}-line limit] ${rel}: ${lineCount} lines (max ${lineCap})`);
     violations++;
@@ -267,8 +283,22 @@ for (const file of files) {
     violations++;
   }
 
-  // Enforce unidirectional frontend layering & naming: components -> store -> services
-  if (rel.startsWith("web/src/services/")) {
+  // Enforce unidirectional frontend layering & naming: components -> store -> (services | policy)
+  if (rel.startsWith("web/src/policy/")) {
+    if (!/^[a-z0-9-]+\.(?:js|ts)$/.test(baseName)) {
+      console.error(`  ✗ [naming violation] ${rel} must use lowercase kebab-case.(js|ts) filename.`);
+      violations++;
+    }
+    const badImport = content.match(/(?:from\s+|import\s*\(\s*)["'][^"']*\/(?:services|store|components)(?:\/|["'])/);
+    if (badImport) {
+      console.error(`  ✗ [layering violation] ${rel} must stay pure and must not import from services/, store/, or components/ (${badImport[0]}).`);
+      violations++;
+    }
+    if (/\blocalStorage\b|\bEvents(?:On|Off)\s*\(|\bwindow\b[^\n]*\.runtime\b/.test(content)) {
+      console.error(`  ✗ [layering violation] ${rel} must stay pure and must not access localStorage or Wails window.runtime.`);
+      violations++;
+    }
+  } else if (rel.startsWith("web/src/services/")) {
     if (!/^[a-z0-9-]+\.ts$/.test(baseName)) {
       console.error(`  ✗ [naming violation] ${rel} must use lowercase kebab-case.ts filename.`);
       violations++;
@@ -364,6 +394,19 @@ for (const file of files) {
   } else if (rel.startsWith("web/src/i18n/") && /domain-.*-types\.ts$/.test(rel)) {
     console.error(`  ✗ [i18n violation] ${rel} must not define manual i18n interface files; types are automatically inferred from en-US in web/src/i18n/types.ts.`);
     violations++;
+  } else if (rel.startsWith("work/go/") && rel.endsWith(".go")) {
+    if (!/^[a-z0-9_]+\.go$/.test(baseName)) {
+      console.error(`  ✗ [naming violation] ${rel} must use lowercase snake_case.go filename.`);
+      violations++;
+    }
+    if (
+      (!optionalWorkHostPrefix || !rel.startsWith(optionalWorkHostPrefix)) &&
+      !rel.endsWith("_test.go") &&
+      optionalWorkForbiddenRe.test(content)
+    ) {
+      console.error(`  ✗ [layering violation] ${rel} must not reverse-import host top-level packages (${optionalWorkForbiddenPkgs.join(", ")}).`);
+      violations++;
+    }
   } else if (rel.startsWith("internal/") && rel.endsWith(".go")) {
     if (!/^[a-z0-9_]+\.go$/.test(baseName)) {
       console.error(`  ✗ [naming violation] ${rel} must use lowercase snake_case.go filename.`);

@@ -112,3 +112,9 @@ func agentCredentialRules() []PathRule {
 }
 
 var errNoPortSnapshot = errors.New("on-demand sandbox could not list the local ports in use")
+
+func probeSeatbeltApply() bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	return subproc.CommandContext(ctx, sandboxExec, "-p", "(version 1)\n(allow default)\n", "--", "/usr/bin/true").Run() == nil
+}

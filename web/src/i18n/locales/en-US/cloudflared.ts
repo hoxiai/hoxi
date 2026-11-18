@@ -11,7 +11,7 @@ export const cloudflared = {
   tokenLabel: "Connector token",
   tokenPlaceholder: "Paste the tunnel connector token from Cloudflare",
   hostnameLabel: "Public hostname",
-  hostnamePlaceholder: "abc123.node.hoxi.work",
+  hostnamePlaceholder: "abc123.node.hoxi.ai",
   enableAction: "Enable",
   disableAction: "Disable",
   disableConfirm: "Disable the Cloudflare Tunnel connector? Remote access outside the local network stops until you enable it again",

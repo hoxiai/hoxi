@@ -1,0 +1,255 @@
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../../../core/l10n/l10n.dart';
+import '../../../../core/theme/app_theme.dart';
+import '../controllers/ai_workspace_controller.dart';
+import '../controllers/code_git_diff_controller.dart';
+
+class CodeGitDiffScreen extends ConsumerStatefulWidget {
+  const CodeGitDiffScreen({
+    super.key,
+    required this.sessionId,
+    required this.repositoryId,
+    required this.path,
+    required this.kind,
+  });
+
+  final int sessionId;
+  final String repositoryId;
+  final String path;
+  final String kind;
+
+  @override
+  ConsumerState<CodeGitDiffScreen> createState() => _CodeGitDiffScreenState();
+}
+
+class _CodeGitDiffScreenState extends ConsumerState<CodeGitDiffScreen> {
+  late final CodeGitDiffController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = CodeGitDiffController(
+      repository: ref.read(aiWorkspaceRepositoryProvider),
+      sessionId: widget.sessionId,
+      repositoryId: widget.repositoryId,
+      path: widget.path,
+      kind: widget.kind,
+    )..load();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, _) {
+        final state = _controller.state;
+        return Scaffold(
+          appBar: AppBar(
+            title: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(context.l10n.gitReviewDiffTitle),
+                Text(
+                  widget.path,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 11, color: AppTheme.textSecondary),
+                ),
+              ],
+            ),
+            actions: [
+              IconButton(
+                tooltip: context.l10n.gitReviewCopyDiff,
+                onPressed: state.diff?.content.isNotEmpty == true
+                    ? () => _copy(state.diff!.content)
+                    : null,
+                icon: const Icon(Icons.content_copy_rounded),
+              ),
+              IconButton(
+                onPressed: state.isLoading ? null : _controller.load,
+                icon: const Icon(Icons.refresh_rounded),
+              ),
+            ],
+          ),
+          body: RefreshIndicator(
+            onRefresh: _controller.load,
+            child: _buildBody(state),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildBody(CodeGitDiffState state) {
+    if (state.isLoading && state.diff == null) {
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        children: const [
+          SizedBox(height: 180),
+          Center(child: CircularProgressIndicator()),
+        ],
+      );
+    }
+    if (state.errorMessage != null && state.diff == null) {
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(24),
+        children: [
+          const SizedBox(height: 72),
+          const Icon(Icons.difference_outlined, size: 48),
+          const SizedBox(height: 12),
+          Text(
+            context.l10n.gitReviewDiffLoadFailed,
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 8),
+          Text(state.errorMessage!, textAlign: TextAlign.center),
+          const SizedBox(height: 14),
+          Center(
+            child: OutlinedButton(
+              onPressed: _controller.load,
+              child: const Icon(Icons.refresh_rounded),
+            ),
+          ),
+        ],
+      );
+    }
+    final diff = state.diff;
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.all(12),
+      children: [
+        if (state.isLoading) const LinearProgressIndicator(minHeight: 2),
+        if (state.errorMessage != null) ...[
+          _Notice(message: state.errorMessage!, error: true),
+          const SizedBox(height: 10),
+        ],
+        if (diff?.truncated == true) ...[
+          _Notice(message: context.l10n.gitReviewDiffTruncated),
+          const SizedBox(height: 10),
+        ],
+        if (diff == null || diff.content.isEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 80),
+            child: Center(
+              child: Text(context.l10n.gitReviewDiffEmpty),
+            ),
+          )
+        else
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: AppTheme.surface,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppTheme.border),
+            ),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: _buildDiffView(diff.content),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildDiffView(String content) {
+    final isDark = AppTheme.isDark;
+    final lines = content.split('\n');
+    final spans = <TextSpan>[];
+    for (var i = 0; i < lines.length; i++) {
+      final line = lines[i];
+      final isLast = i == lines.length - 1;
+      final lineWithNewline = isLast ? line : '$line\n';
+
+      TextStyle style;
+      if (line.startsWith('+++') ||
+          line.startsWith('---') ||
+          line.startsWith('diff ') ||
+          line.startsWith('index ')) {
+        style = TextStyle(
+          color: AppTheme.textSecondary,
+          fontFamily: 'monospace',
+          fontSize: 11,
+          fontWeight: FontWeight.bold,
+          height: 1.5,
+        );
+      } else if (line.startsWith('+')) {
+        style = TextStyle(
+          color: isDark ? const Color(0xFF4ADE80) : const Color(0xFF15803D),
+          backgroundColor: const Color(0x2210B981),
+          fontFamily: 'monospace',
+          fontSize: 11,
+          height: 1.5,
+        );
+      } else if (line.startsWith('-')) {
+        style = TextStyle(
+          color: isDark ? const Color(0xFFF87171) : const Color(0xFFB91C1C),
+          backgroundColor: const Color(0x22EF4444),
+          fontFamily: 'monospace',
+          fontSize: 11,
+          height: 1.5,
+        );
+      } else if (line.startsWith('@@')) {
+        style = TextStyle(
+          color: AppTheme.primaryBlueText,
+          backgroundColor: AppTheme.primaryBlueLight,
+          fontFamily: 'monospace',
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+          height: 1.5,
+        );
+      } else {
+        style = TextStyle(
+          color: AppTheme.textPrimary,
+          fontFamily: 'monospace',
+          fontSize: 11,
+          height: 1.5,
+        );
+      }
+      spans.add(TextSpan(text: lineWithNewline, style: style));
+    }
+
+    return SelectableText.rich(
+      TextSpan(children: spans),
+    );
+  }
+
+  Future<void> _copy(String content) async {
+    await Clipboard.setData(ClipboardData(text: content));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(context.l10n.gitReviewDiffCopied)),
+    );
+  }
+}
+
+class _Notice extends StatelessWidget {
+  const _Notice({required this.message, this.error = false});
+
+  final String message;
+  final bool error;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: error ? AppTheme.errorSoft : AppTheme.warningSoft,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Text(
+        message,
+        style: TextStyle(color: error ? AppTheme.error : AppTheme.warning),
+      ),
+    );
+  }
+}

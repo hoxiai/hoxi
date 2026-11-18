@@ -28,7 +28,7 @@ function reset() {
 const onlineStatus: CloudflaredStatus = {
   enabled: true,
   state: "online",
-  hostname: "abc123.node.hoxi.work",
+  hostname: "abc123.node.hoxi.ai",
   binary: "/usr/local/bin/cloudflared",
   hasToken: true,
   ingressUrl: "http://127.0.0.1:5418",
@@ -58,7 +58,7 @@ describe("cloudflare tunnel connector", () => {
         sentToken = token;
         return { ...onlineStatus, hostname };
       };
-      const ok = await enableCloudflared("cf-connector-token", "abc123.node.hoxi.work");
+      const ok = await enableCloudflared("cf-connector-token", "abc123.node.hoxi.ai");
       assertEqual(ok, true);
       assertEqual(sentToken, "cf-connector-token");
       assertEqual(cloudflared.status.enabled, true);
@@ -117,7 +117,7 @@ describe("cloudflare tunnel connector", () => {
           host: "192.168.1.20",
           port: 5417,
           hostname: "Studio",
-          relay: "https://abc123.node.hoxi.work",
+          relay: "https://abc123.node.hoxi.ai",
           available: true,
           qrPng: "data:image/png;base64,AAAA",
         };
@@ -126,7 +126,7 @@ describe("cloudflare tunnel connector", () => {
       cloudflaredAPI.enable = async (_token, hostname) => ({ ...onlineStatus, hostname });
 
       const stalePoll = loadCloudflaredStatus();
-      const ok = await enableCloudflared("tok", "abc123.node.hoxi.work");
+      const ok = await enableCloudflared("tok", "abc123.node.hoxi.ai");
       assertEqual(ok, true);
       assertEqual(cloudflared.status.enabled, true);
       assertTrue(pairingRefreshCount >= 1, "enabling cloudflared must refresh pairing QR");

@@ -7,6 +7,7 @@ import {
   applyWallpaperCustomUrl,
   applyWallpaperMaterialMode,
   clearCustomWallpaper,
+  composeLayeredWallpaperStyle,
   resetWallpaperSliders,
   selectWallpaperPreset,
   setWallpaperEnabled,
@@ -157,13 +158,17 @@ export function WallpaperGlassSection() {
                     }`}
                   >
                     <div
-                      class="aspect-video w-full bg-cover bg-right transition-transform duration-300 group-hover:scale-105"
-                      style={{
-                        background: WALLPAPER_PRESET_ART[presetId].previewGradient,
-                        "background-image": `url("${WALLPAPER_PRESET_ART[presetId].imageUri}")`,
-                        "background-size": "cover",
-                        "background-position": "right center",
-                      }}
+                      class="aspect-video w-full transition-transform duration-300 group-hover:scale-105"
+                      style={composeLayeredWallpaperStyle(
+                        WALLPAPER_PRESET_ART[presetId].imageUri,
+                        WALLPAPER_PRESET_ART[presetId].standeeUri,
+                        WALLPAPER_PRESET_ART[presetId].standeePositionX,
+                        "right center",
+                        {
+                          standeeSize: "auto 92%",
+                          fallbackGradient: WALLPAPER_PRESET_ART[presetId].previewGradient,
+                        }
+                      )}
                     />
                     <div class="flex items-center justify-between gap-1.5 bg-[var(--bg-panel)] px-2.5 py-1.5">
                       <span class="truncate text-[12px] font-medium text-[var(--text-primary)]">

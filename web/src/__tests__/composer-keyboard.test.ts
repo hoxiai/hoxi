@@ -3,7 +3,13 @@ import { reconcile, unwrap } from "solid-js/store";
 import { isComposerIMEEvent } from "../components/timeline/composer-keyboard";
 import {
   applyAutocompleteToken,
+  applySlashCommandToken,
+  buildSlashCommandSuggestions,
+  countCompletedCommandArgs,
   findAutocompleteToken,
+  inspectActiveSlashCommand,
+  removeLeadingSlashCommand,
+  splitCommandHintSlots,
 } from "../components/timeline/composer-autocomplete";
 import {
   classifyAttachmentKind,
@@ -406,13 +412,146 @@ describe("Queued prompt re-editing & prompt history safety", () => {
           dispose();
         }
       });
-    } finally {
-      forgetPromptQueueState([sid, other]);
-      hoxiAPI.sendPromptAsync = savedSend;
-      setWorkspace(reconcile(saved));
-    }
+      } finally {
+        forgetPromptQueueState([sid, other]);
+        hoxiAPI.sendPromptAsync = savedSend;
+        setWorkspace(reconcile(saved));
+      }
+    });
+  });
+
+describe("Slash command active chip, CJK command names, and mid-sentence hoisting", () => {
+  // "\u4f30\u503c" = "估值", "\u4f30" = "估", "\u817e\u8baf\u63a7\u80a1" = "腾讯控股", "\u5206\u6790" = "分析"
+  const valName = "\u4f30\u503c";
+  const valPrefix = "\u4f30";
+  const targetCompany = "\u817e\u8baf\u63a7\u80a1";
+  const analyzeWord = "\u5206\u6790";
+  const sampleCommands = [
+    {
+      name: valName,
+      description: "DCF & comparable company valuation",
+      source: "command" as const,
+      agent: "plan",
+      hints: ["<ticker>"],
+    },
+    {
+      name: "fe:audit",
+      description: "Audit frontend accessibility",
+      source: "command" as const,
+      hints: ["<component>"],
+    },
+    {
+      name: "demo-skill",
+      description: "Skill entry should not match as command chip",
+      source: "skill" as const,
+    },
+  ];
+
+  it("supports CJK command names and leading Chinese IME full-width slash key (U+3001)", () => {
+    assertDeepEqual(findAutocompleteToken(`/${valPrefix}`, 2), {
+      mode: "command",
+      query: valPrefix,
+      start: 0,
+      end: 2,
+    });
+    assertDeepEqual(findAutocompleteToken(`\u3001${valPrefix}`, 2), {
+      mode: "command",
+      query: valPrefix,
+      start: 0,
+      end: 2,
+    });
+    // Mid-sentence Chinese enumeration comma (U+3001) must not trigger command autocomplete
+    assertEqual(findAutocompleteToken("A\u3001B\u3001C", 3), null);
+
+    const suggestions = buildSlashCommandSuggestions({
+      commands: sampleCommands,
+      skills: [],
+      query: valPrefix,
+      runtime: "native",
+      isHidden: () => false,
+    });
+    assertEqual(suggestions.length, 1);
+    assertEqual(suggestions[0]?.label, `/${valName}`);
+    assertEqual(suggestions[0]?.insertText, `/${valName} `);
+
+    const fromIme = applySlashCommandToken(
+      `\u3001${valPrefix}`,
+      { start: 0, end: 2 },
+      `/${valName} `
+    );
+    assertEqual(fromIme.text, `/${valName} `);
+    assertEqual(fromIme.cursor, 4);
+  });
+
+  it("hoists mid-sentence slash commands to index 0 while preserving arguments", () => {
+    const midEndInput = `${targetCompany} /${valPrefix}`;
+    const midEnd = findAutocompleteToken(midEndInput, 7)!;
+    const hoistedEnd = applySlashCommandToken(midEndInput, midEnd, `/${valName} `);
+    assertEqual(hoistedEnd.text, `/${valName} ${targetCompany}`);
+    assertEqual(hoistedEnd.cursor, 8);
+
+    const midBetweenInput = `${analyzeWord} /${valPrefix} ${targetCompany}`;
+    const midBetween = findAutocompleteToken(midBetweenInput, 5)!;
+    const hoistedBetween = applySlashCommandToken(midBetweenInput, midBetween, `/${valName} `);
+    assertEqual(hoistedBetween.text, `/${valName} ${analyzeWord} ${targetCompany}`);
+    assertEqual(hoistedBetween.cursor, 6);
+  });
+
+  it("resolves active leading slash commands, tracks positional hint slots, and removes prefix cleanly", () => {
+    assertDeepEqual(splitCommandHintSlots(["<ticker> <method> [discount rate]"]), [
+      "<ticker>",
+      "<method>",
+      "[discount rate]",
+    ]);
+    assertEqual(countCompletedCommandArgs(""), 0);
+    assertEqual(countCompletedCommandArgs(" 00700"), 0);
+    assertEqual(countCompletedCommandArgs(" 00700 "), 1);
+    assertEqual(countCompletedCommandArgs(' "Berkshire Hathaway"'), 0);
+    assertEqual(countCompletedCommandArgs(' "Berkshire Hathaway" '), 1);
+    assertEqual(countCompletedCommandArgs(' "Berkshire Hathaway" DCF'), 1);
+    assertEqual(countCompletedCommandArgs(' "Berkshire Hathaway" DCF '), 2);
+
+    assertDeepEqual(inspectActiveSlashCommand(`/${valName} `, sampleCommands), {
+      name: valName,
+      rawToken: `/${valName}`,
+      description: "DCF & comparable company valuation",
+      hints: ["<ticker>"],
+      hintSlots: ["<ticker>"],
+      activeArgIndex: 0,
+      agent: "plan",
+      model: undefined,
+      subtask: undefined,
+      hasArgs: false,
+    });
+    assertDeepEqual(inspectActiveSlashCommand(`/${valName} ${targetCompany} 00700`, sampleCommands), {
+      name: valName,
+      rawToken: `/${valName}`,
+      description: "DCF & comparable company valuation",
+      hints: ["<ticker>"],
+      hintSlots: ["<ticker>"],
+      activeArgIndex: 1,
+      agent: "plan",
+      model: undefined,
+      subtask: undefined,
+      hasArgs: true,
+    });
+    // Nested `/fe/audit` alias matches `fe:audit`
+    const nested = inspectActiveSlashCommand("/fe/audit Composer.tsx", sampleCommands);
+    assertEqual(nested?.name, "fe:audit");
+    assertEqual(nested?.rawToken, "/fe/audit");
+    assertEqual(nested?.activeArgIndex, 0);
+    assertEqual(nested?.hasArgs, true);
+
+    // Non-leading text, unknown commands, and skills do not activate command chip
+    assertEqual(inspectActiveSlashCommand(`please /${valName} ${targetCompany}`, sampleCommands), null);
+    assertEqual(inspectActiveSlashCommand("/unknown-cmd arg", sampleCommands), null);
+    assertEqual(inspectActiveSlashCommand("/demo-skill arg", sampleCommands), null);
+
+    assertEqual(removeLeadingSlashCommand(`/${valName} ${targetCompany}`), targetCompany);
+    assertEqual(removeLeadingSlashCommand(`  /${valName}   `), "");
   });
 });
+
 
 
 

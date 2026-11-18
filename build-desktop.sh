@@ -95,6 +95,15 @@ case "${TARGET_ARCH}" in
 esac
 
 export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-13.0}"
+# Wails appends -mmacosx-version-min=10.13 unless the flag is already present,
+# and an explicit flag overrides MACOSX_DEPLOYMENT_TARGET. Pin cgo to the
+# bundle's LSMinimumSystemVersion so availability checks match the real target.
+if [[ "${CGO_CFLAGS:-}" != *"-mmacosx-version-min"* ]]; then
+  export CGO_CFLAGS="${CGO_CFLAGS:+${CGO_CFLAGS} }-mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET}"
+fi
+if [[ "${CGO_LDFLAGS:-}" != *"-mmacosx-version-min"* ]]; then
+  export CGO_LDFLAGS="${CGO_LDFLAGS:+${CGO_LDFLAGS} }-mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET}"
+fi
 node scripts/sparkle.mjs check
 
 resolve_work_repo_dir() {
@@ -115,8 +124,8 @@ resolve_work_repo_dir() {
   local candidates=(
     "${PROJECT_ROOT}/work"
     ${main_root:+"${main_root}/work"}
-    "${PROJECT_ROOT}/../hoxi-work"
-    "${PROJECT_ROOT}/../../../../hoxi-work"
+    "${PROJECT_ROOT}/../hoxi-ext"
+    "${PROJECT_ROOT}/../../../../hoxi-ext"
   )
   for c in "${candidates[@]}"; do
     if [[ -n "${c}" && -f "${c}/web/index.tsx" && -r "${c}/web/index.tsx" ]]; then

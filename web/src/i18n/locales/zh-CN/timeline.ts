@@ -2,6 +2,10 @@
 import type { TimelineI18n } from "../../types";
 
 export const timeline: TimelineI18n = {
+  pendingRequestsUnreadable: "无法读取待核对请求记录，请先恢复记录再发送",
+  requestAwaitingConfirmation: "有请求尚待确认，请恢复连接并核对结果后再发送",
+  previousRequestRecovered: "已确认主机收到上一条请求，请先查看会话再发送新消息",
+  pendingRequestsFull: "请先核对待处理请求，再发送新请求",
   exportSessionFailed: "导出 {session} 失败：{error}\n未保存任何文件，请重试",
   loadEarlierSteps: "加载之前的 {count} 个步骤",
   scrollToBottom: "回到底部",
@@ -220,6 +224,9 @@ export const timeline: TimelineI18n = {
   mentionWorkspaceFile: "工作区文件",
   pastedLinesChip: "已粘贴 {count} 行",
   slashCommandsHeader: "斜杠指令",
+  removeSlashCommand: "移除斜杠指令",
+  runSlashCommandFallback: "执行斜杠指令",
+  goalSlashDescription: "设置持续推进的多轮会话目标直至验证完成",
   mentionFileOrContextHeader: "引用文件、@changes、@session 或 @worktree",
   modelRequestFailed: "模型请求失败",
   apiError: "API 错误",
@@ -517,4 +524,7 @@ export const timeline: TimelineI18n = {
   voiceInputUnsupported: "当前环境不支持麦克风录音",
   voiceInputEmpty: "未识别到语音内容",
   voiceInputFailed: "语音转写失败：{error}",
+  sharedBranchActivePill: "主分支另有 {count} 个任务运行中 · 同文件修改自动排队",
+  sharedBranchActiveTooltip: "正在共享当前工作区目录的任务：{titles}",
+  sharedBranchIsolateBtn: "切为 Worktree",
 };

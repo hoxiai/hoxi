@@ -2,12 +2,29 @@ package runner
 
 import (
 	"context"
+	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/hoxiai/hoxi/internal/attachment"
 	"github.com/hoxiai/hoxi/internal/llm"
 )
+
+type stubProtocolStreamClient struct {
+	protocols map[string]llm.StreamProtocol
+}
+
+func (s *stubProtocolStreamClient) ResolveStreamTarget(providerID, modelID string) llm.StreamTarget {
+	proto := s.protocols[providerID]
+	if proto == "" {
+		proto = llm.ProtocolOpenAI
+	}
+	return llm.StreamTarget{ProviderID: providerID, ModelID: modelID, Protocol: proto, HasEndpoint: true}
+}
+
+func (s *stubProtocolStreamClient) OpenStream(_ context.Context, _ llm.StreamHTTPRequest) (*http.Response, error) {
+	return nil, llm.ErrUnavailable
+}
 
 type stubTurnAudioClient struct {
 	calls      int
@@ -128,5 +145,118 @@ func TestNativeMultimodalAttachmentPassthroughVsOCRFallback(t *testing.T) {
 	}
 	if !strings.Contains(joinedText, "[Audio Transcript]") || !strings.Contains(joinedText, asrStub.transcript) {
 		t.Fatalf("expected [Audio Transcript] injected into prompt delivery parts, got %q", joinedText)
+	}
+}
+
+func TestNativeAudioAttachmentTightensToGoogleProtocolAndASRTranscriptReplay(t *testing.T) {
+	attDir := t.TempDir()
+	workDir := t.TempDir()
+	store := attachment.NewStore(attDir)
+
+	audioMeta, err := store.Save(attachment.SaveRequest{
+		SessionID: "ses_nat_audio",
+		Directory: workDir,
+		Filename:  "voice.wav",
+		Mime:      "audio/wav",
+		Data:      []byte("RIFF-fake-wav-payload"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	asrStub := &stubTurnAudioClient{transcript: "Fix the audio drop bug on non-Google drivers."}
+	svc := &Service{attachments: store}
+	svc.SetAudioClient(asrStub)
+	svc.SetStreamClient(&stubProtocolStreamClient{
+		protocols: map[string]llm.StreamProtocol{
+			"google":     llm.ProtocolGoogle,
+			"openai":     llm.ProtocolOpenAI,
+			"openrouter": llm.ProtocolOpenAI,
+			"anthropic":  llm.ProtocolAnthropic,
+		},
+	})
+
+	natRec := SessionRecord{
+		ID:           "ses_nat_audio",
+		Runtime:      string(RuntimeNative),
+		WorktreePath: workDir,
+	}
+	audioPart := []MessagePart{{Type: "file", Filename: audioMeta.Filename, Mime: audioMeta.Mime, URL: audioMeta.URL}}
+
+	// 1. Native Google Gemini protocol passes raw audio inline without calling ASR.
+	_, googleDelivery, _ := svc.prepareTurnAttachmentsForModel(
+		natRec, "google", "gemini-2.5-pro", false, 2000, 1, "msg_u_g", "Listen", audioPart,
+	)
+	if asrStub.calls != 0 {
+		t.Fatalf("expected 0 ASR calls for native google protocol, got %d", asrStub.calls)
+	}
+	hasRawAudio := false
+	for _, dp := range googleDelivery {
+		if dp.Type == "file" && dp.Mime == "audio/wav" && strings.HasPrefix(dp.URL, "data:") {
+			hasRawAudio = true
+		}
+	}
+	if !hasRawAudio {
+		t.Fatalf("expected native google protocol to receive raw audio data URL, got %+v", googleDelivery)
+	}
+
+	// 2. Non-Google protocols (even for model IDs containing "audio", "omni", or "gemini" on an OpenAI proxy)
+	// MUST transcribe via ASR and NOT pass raw audio binary into deliveryParts.
+	for idx, tc := range []struct {
+		prov  string
+		model string
+	}{
+		{"openai", "gpt-4o-audio-preview"},
+		{"openrouter", "google/gemini-2.5-pro"},
+		{"anthropic", "claude-sonnet-4-5"},
+	} {
+		prevCalls := asrStub.calls
+		stored, delivery, cliPrompt := svc.prepareTurnAttachmentsForModel(
+			natRec, tc.prov, tc.model, false, int64(2010+idx), int64(idx+2), "msg_u_ng", "Transcribe this", audioPart,
+		)
+		if asrStub.calls != prevCalls+1 {
+			t.Fatalf("%s/%s: expected ASR call, got %d -> %d", tc.prov, tc.model, prevCalls, asrStub.calls)
+		}
+		for _, dp := range delivery {
+			if dp.Type == "file" {
+				t.Fatalf("%s/%s: unexpected raw binary audio file in deliveryParts: %+v", tc.prov, tc.model, dp)
+			}
+		}
+		if !strings.Contains(cliPrompt, "[Audio Transcript]") || !strings.Contains(cliPrompt, asrStub.transcript) {
+			t.Fatalf("%s/%s: missing [Audio Transcript] in cliPrompt: %q", tc.prov, tc.model, cliPrompt)
+		}
+
+		// 3. Multi-turn canonical history replay keeps the transcript for OpenAI/Anthropic,
+		// and replays raw media if the user later switches to native Google protocol.
+		turns := []MessageTurn{{
+			Info:  MessageInfo{ID: "msg_u_ng", SessionID: natRec.ID, Role: "user"},
+			Parts: stored,
+		}}
+		openAIHist := svc.projectCanonicalNativeHistory(turns, tc.prov, tc.model)
+		foundHistTranscript := false
+		for _, m := range openAIHist {
+			for _, b := range m.Content {
+				if b.Type == "media" {
+					t.Fatalf("%s/%s: unexpected raw audio media block in canonical history replay: %+v", tc.prov, tc.model, b)
+				}
+				if b.Type == "text" && strings.Contains(b.Text, asrStub.transcript) {
+					foundHistTranscript = true
+				}
+			}
+		}
+		if !foundHistTranscript {
+			t.Fatalf("%s/%s: expected persisted ASR transcript replayed in canonical history, got %+v", tc.prov, tc.model, openAIHist)
+		}
+		googleHist := svc.projectCanonicalNativeHistory(turns, "google", "gemini-2.5-pro")
+		foundGoogleMedia := false
+		for _, m := range googleHist {
+			for _, b := range m.Content {
+				if b.Type == "media" && b.MimeType == "audio/wav" {
+					foundGoogleMedia = true
+				}
+			}
+		}
+		if !foundGoogleMedia {
+			t.Fatalf("expected raw audio media replayed when switching history to native google protocol, got %+v", googleHist)
+		}
 	}
 }

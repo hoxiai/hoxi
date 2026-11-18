@@ -20,34 +20,34 @@ const (
 	darwinTIOCPTYGNAME = 0x40807453
 )
 
-func startPlatformPTY(cmd *exec.Cmd, cols, rows uint16) (io.ReadWriteCloser, func(uint16, uint16) error, func() error, error) {
+func startPlatformPTY(cmd *exec.Cmd, cols, rows uint16) (io.ReadWriteCloser, func(uint16, uint16) error, func() error, func() error, error) {
 	master, err := os.OpenFile("/dev/ptmx", os.O_RDWR|syscall.O_CLOEXEC, 0)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("open /dev/ptmx: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("open /dev/ptmx: %w", err)
 	}
 	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, master.Fd(), darwinTIOCPTYGRANT, 0); errno != 0 {
 		_ = master.Close()
-		return nil, nil, nil, fmt.Errorf("TIOCPTYGRANT: %w", errno)
+		return nil, nil, nil, nil, fmt.Errorf("TIOCPTYGRANT: %w", errno)
 	}
 	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, master.Fd(), darwinTIOCPTYUNLK, 0); errno != 0 {
 		_ = master.Close()
-		return nil, nil, nil, fmt.Errorf("TIOCPTYUNLK: %w", errno)
+		return nil, nil, nil, nil, fmt.Errorf("TIOCPTYUNLK: %w", errno)
 	}
 	var nameBuf [128]byte
 	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, master.Fd(), darwinTIOCPTYGNAME, uintptr(unsafe.Pointer(&nameBuf[0]))); errno != 0 {
 		_ = master.Close()
-		return nil, nil, nil, fmt.Errorf("TIOCPTYGNAME: %w", errno)
+		return nil, nil, nil, nil, fmt.Errorf("TIOCPTYGNAME: %w", errno)
 	}
 	n := bytes.IndexByte(nameBuf[:], 0)
 	if n <= 0 {
 		_ = master.Close()
-		return nil, nil, nil, fmt.Errorf("empty slave pty name")
+		return nil, nil, nil, nil, fmt.Errorf("empty slave pty name")
 	}
 	slaveName := string(nameBuf[:n])
 	slave, err := os.OpenFile(slaveName, os.O_RDWR|syscall.O_NOCTTY, 0)
 	if err != nil {
 		_ = master.Close()
-		return nil, nil, nil, fmt.Errorf("open slave pty %s: %w", slaveName, err)
+		return nil, nil, nil, nil, fmt.Errorf("open slave pty %s: %w", slaveName, err)
 	}
 
 	if cols == 0 {
@@ -69,7 +69,7 @@ func startPlatformPTY(cmd *exec.Cmd, cols, rows uint16) (io.ReadWriteCloser, fun
 	if err := cmd.Start(); err != nil {
 		_ = slave.Close()
 		_ = master.Close()
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	_ = slave.Close()
 
@@ -86,5 +86,5 @@ func startPlatformPTY(cmd *exec.Cmd, cols, rows uint16) (io.ReadWriteCloser, fun
 		}
 		return master.Close()
 	}
-	return master, resizeFn, killFn, nil
+	return master, resizeFn, killFn, cmd.Wait, nil
 }

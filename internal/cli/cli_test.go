@@ -85,7 +85,9 @@ func TestShouldHandleAndIsServeCommand(t *testing.T) {
 
 func TestNormalizeRuntime(t *testing.T) {
 	cases := map[string]string{
-		"":           "opencode",
+		"":           "native",
+		"native":     "native",
+		"hoxi":       "native",
 		"oc":         "opencode",
 		"opencode":   "opencode",
 		"claude":     "claude-code",
@@ -154,7 +156,7 @@ func TestCLISingleTurnAndREPLWithGateway(t *testing.T) {
 		activeRuntime  atomic.Value
 		lastPrompt     atomic.Value
 	)
-	activeRuntime.Store("opencode")
+	activeRuntime.Store("native")
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -300,20 +302,28 @@ func TestCLISingleTurnAndREPLWithGateway(t *testing.T) {
 		}
 	}
 
-	// 2. Test interactive REPL slash commands (/runtime claude, /sessions, /open, /exit)
+	// 2. Test interactive REPL slash commands (/runtime claude, custom /估值 forwarding, unknown rejection, /sessions, /open, /exit)
+	cmdWsDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(cmdWsDir, ".opencode", "commands"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cmdWsDir, ".opencode", "commands", "估值.md"), []byte("---\ndescription: Valuation\n---\nAnalyze $ARGUMENTS"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	outBuf.Reset()
 	errBuf.Reset()
 	replInput := strings.Join([]string{
 		"/runtime claude",
-		"hello agent",
+		"/估值 腾讯控股",
 		"y",
+		"/unknown_repl_cmd",
 		"/sessions",
 		"/open",
 		"/exit",
 	}, "\n") + "\n"
 	code = Run(
 		context.Background(),
-		[]string{"hoxi", "--address", addr},
+		[]string{"hoxi", "--address", addr, "--dir", cmdWsDir},
 		strings.NewReader(replInput),
 		&outBuf,
 		&errBuf,
@@ -322,6 +332,12 @@ func TestCLISingleTurnAndREPLWithGateway(t *testing.T) {
 	)
 	if code != 0 {
 		t.Fatalf("expected REPL exit code 0, got %d (stderr: %s)", code, errBuf.String())
+	}
+	if got := lastPrompt.Load().(string); got != "/估值 腾讯控股" {
+		t.Fatalf("expected REPL to forward custom command '/估值 腾讯控股', got %q", got)
+	}
+	if !strings.Contains(errBuf.String(), `Unknown command "/unknown_repl_cmd"`) {
+		t.Fatalf("expected unknown slash command error in stderr, got %q", errBuf.String())
 	}
 	if got := activeRuntime.Load().(string); got != "claude-code" {
 		t.Fatalf("expected runtime to switch to claude-code, got %q", got)
@@ -336,14 +352,15 @@ func TestCLISingleTurnAndREPLWithGateway(t *testing.T) {
 		prompt  string
 		runtime string
 	}{
-		{"quoted prompt", []string{"browser --help"}, "browser --help", "opencode"},
-		{"unquoted prompt", []string{"explain", "browser", "usage"}, "explain browser usage", "opencode"},
-		{"literal after delimiter", []string{"--", "browser", "--help"}, "browser --help", "opencode"},
-		{"unicode literal after delimiter", []string{"--", "browser", "—help"}, "browser —help", "opencode"},
-		{"explicit prompt value", []string{"--prompt", "--help"}, "--help", "opencode"},
+		{"quoted prompt", []string{"browser --help"}, "browser --help", "native"},
+		{"unquoted prompt", []string{"explain", "browser", "usage"}, "explain browser usage", "native"},
+		{"literal after delimiter", []string{"--", "browser", "--help"}, "browser --help", "native"},
+		{"unicode literal after delimiter", []string{"--", "browser", "—help"}, "browser —help", "native"},
+		{"explicit prompt value", []string{"--prompt", "--help"}, "--help", "native"},
 		{"option after prompt", []string{"explain browser", "--runtime", "claude"}, "explain browser", "claude-code"},
-		{"option value resembling help", []string{"explain browser", "--model", "--help"}, "explain browser", "opencode"},
-		{"run literal after delimiter", []string{"run", "--", "browser", "--help"}, "browser --help", "opencode"},
+		{"explicit opencode runtime", []string{"explain browser", "-r", "opencode"}, "explain browser", "opencode"},
+		{"option value resembling help", []string{"explain browser", "--model", "--help"}, "explain browser", "native"},
+		{"run literal after delimiter", []string{"run", "--", "browser", "--help"}, "browser --help", "native"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			outBuf.Reset()

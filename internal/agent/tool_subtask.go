@@ -32,7 +32,7 @@ func (t *subtaskTool) Parameters() map[string]any {
 			},
 			"model": map[string]any{
 				"type":        "string",
-				"description": "Optional model override ('providerID/modelID', same-provider 'modelID', or 'economy'/'fast' for read-only tasks; defaults to configured subagent role model or same-provider economy routing)",
+				"description": "Optional model override ('providerID/modelID', same-provider 'modelID', or explicit 'economy'/'fast'); otherwise uses the configured subagent role model or inherits the parent model without automatic downgrading",
 			},
 		},
 		"required": []string{"description", "prompt"},

@@ -74,8 +74,9 @@ var tunnelRoutes = []tunnelRoute{
 	{http.MethodPost, "/api/hoxi/sessions/*/unrevert"},
 	{http.MethodPost, "/api/hoxi/sessions/*/fork"},
 
-	// Event, approval and question planes.
+	// Event, approval, question and request-outcome inspection planes.
 	{http.MethodGet, "/api/hoxi/event"},
+	{http.MethodGet, "/api/hoxi/requests/*"},
 	{http.MethodGet, "/api/hoxi/permission"},
 	{http.MethodPost, "/api/hoxi/permission/*/reply"},
 	{http.MethodGet, "/api/hoxi/question"},
@@ -388,6 +389,17 @@ func (g *Gateway) tunnelRequestDirectoriesAllowed(r *http.Request) bool {
 	sessionID := strings.TrimSpace(q.Get("sessionID"))
 	if sessionID == "" {
 		sessionID = remoteSessionPathID(r.URL.Path)
+	}
+	if strings.HasPrefix(r.URL.Path, "/api/hoxi/requests/") {
+		reqKind := strings.TrimSpace(q.Get("kind"))
+		reqScope := strings.TrimSpace(q.Get("scope"))
+		if strings.HasPrefix(reqScope, "dir:") {
+			if !g.tunnelFilePathAllowed(strings.TrimPrefix(reqScope, "dir:"), sessionID) {
+				return false
+			}
+		} else if sessionID == "" && reqScope != "" && (reqKind == "prompt" || reqKind == "worktree_commit") {
+			sessionID = reqScope
+		}
 	}
 	var dirs []string
 	for _, d := range q["directory"] {

@@ -1,10 +1,8 @@
 package gateway
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"fmt"
+	"database/sql"
 	"net/http"
 	"os"
 	"regexp"
@@ -17,7 +15,6 @@ import (
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
 	"github.com/hoxiai/hoxi/internal/runner"
 	"github.com/hoxiai/hoxi/internal/sqlitecli"
-	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 const (
@@ -340,7 +337,7 @@ func queryOpenCodeRequestLog(cutoffMs, earliestMs int64) []requestLogEntry {
 	if _, err := os.Stat(dbPath); err != nil {
 		return nil
 	}
-	sqlQuery := fmt.Sprintf(`
+	const sqlQuery = `
 SELECT
   top_m.id,
   top_m.session_id,
@@ -378,44 +375,59 @@ FROM (
     COALESCE(json_extract(m.data, '$.error.data.message'), json_extract(m.data, '$.error.name'), '') AS error
   FROM session s
   CROSS JOIN message m ON m.session_id = s.id
-  WHERE m.time_created >= %d
+  WHERE m.time_created >= ?
     AND json_extract(m.data, '$.role') = 'assistant'
     AND (
       CAST(COALESCE(json_extract(m.data, '$.tokens.input'), 0) AS INTEGER) > 0
       OR CAST(COALESCE(json_extract(m.data, '$.tokens.output'), 0) AS INTEGER) > 0
       OR CAST(COALESCE(json_extract(m.data, '$.tokens.cache.read'), 0) AS INTEGER) > 0
       OR json_extract(m.data, '$.error') IS NOT NULL
-      OR (json_extract(m.data, '$.time.completed') IS NULL AND m.time_created >= %d)
+      OR (json_extract(m.data, '$.time.completed') IS NULL AND m.time_created >= ?)
     )
   ORDER BY m.time_created DESC
-  LIMIT %d
-) top_m;`, earliestMs, cutoffMs, requestLogMaxLimit)
+  LIMIT ?
+) top_m;`
 
+	type scannedRow struct {
+		ID         string
+		SessionID  string
+		Time       int64
+		Completed  int64
+		ProviderID string
+		ModelID    string
+		Input      int64
+		Output     int64
+		Reasoning  int64
+		CacheRead  int64
+		CacheWrite int64
+		Cost       float64
+		Status     int
+		Error      string
+		FirstPart  int64
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
-	cmd := subproc.CommandContext(ctx, sqlitecli.Executable(), "-json", "-readonly", "-cmd", ".timeout 5000", dbPath, sqlQuery)
-	out, err := cmd.Output()
-	if err != nil || len(bytes.TrimSpace(out)) == 0 {
-		return nil
-	}
-	var rows []struct {
-		ID         string  `json:"id"`
-		SessionID  string  `json:"session_id"`
-		Time       int64   `json:"time_created"`
-		Completed  int64   `json:"completed"`
-		ProviderID string  `json:"provider_id"`
-		ModelID    string  `json:"model_id"`
-		Input      int64   `json:"input"`
-		Output     int64   `json:"output"`
-		Reasoning  int64   `json:"reasoning"`
-		CacheRead  int64   `json:"cache_read"`
-		CacheWrite int64   `json:"cache_write"`
-		Cost       float64 `json:"cost"`
-		Status     int     `json:"status"`
-		Error      string  `json:"error"`
-		FirstPart  int64   `json:"first_part"`
-	}
-	if err := json.Unmarshal(bytes.TrimSpace(out), &rows); err != nil {
+	var rows []scannedRow
+	err := sqlitecli.WithReadOnly(ctx, dbPath, 5*time.Second, func(ctx context.Context, db *sql.DB) error {
+		qRows, qErr := db.QueryContext(ctx, sqlQuery, earliestMs, cutoffMs, requestLogMaxLimit)
+		if qErr != nil {
+			return qErr
+		}
+		defer qRows.Close()
+		for qRows.Next() {
+			var r scannedRow
+			if sErr := qRows.Scan(
+				&r.ID, &r.SessionID, &r.Time, &r.Completed, &r.ProviderID, &r.ModelID,
+				&r.Input, &r.Output, &r.Reasoning, &r.CacheRead, &r.CacheWrite,
+				&r.Cost, &r.Status, &r.Error, &r.FirstPart,
+			); sErr != nil {
+				return sErr
+			}
+			rows = append(rows, r)
+		}
+		return qRows.Err()
+	})
+	if err != nil || len(rows) == 0 {
 		return nil
 	}
 	entries := make([]requestLogEntry, 0, len(rows))

@@ -13,6 +13,7 @@ import {
   isBrowserTool,
   isComputerTool,
   isEditingTool,
+  isImageGenTool,
   isQuestionTool,
   isReadTool,
   isSearchOrListTool,
@@ -22,6 +23,8 @@ import {
   kiloToolIconName,
   meaningfulToolTitle,
 } from "./tool-taxonomy";
+
+export { isImageGenTool };
 
 export type ToolPart = Extract<MessagePart, { type: "tool" }>;
 
@@ -142,7 +145,7 @@ function extractRawField(raw: string, key: string): string | undefined {
 
 const RAW_KEYS = [
   "filePath", "file_path", "path", "file", "TargetFile", "targetFile", "target_file", "command", "cmd",
-  "description", "toolSummary", "toolAction", "pattern", "include", "url", "subagent_type", "patchText", "name", "action", "key", "text",
+  "description", "toolSummary", "toolAction", "pattern", "include", "url", "subagent_type", "patchText", "patch", "diff", "name", "action", "key", "text",
 ] as const;
 
 export function resolveToolInput(part: ToolPart): Record<string, any> {
@@ -164,25 +167,36 @@ export function resolveToolInput(part: ToolPart): Record<string, any> {
   return input || {};
 }
 
+export function stripLegacyPatchStatus(raw: string): string {
+  const s = raw.trim();
+  const m = /^[AMDR]\s+(.+)$/.exec(s);
+  if (!m) return s;
+  const rest = m[1].trim();
+  return s.startsWith("R ") && rest.includes(" -> ") ? rest.split(" -> ").pop()!.trim() : rest;
+}
+
 export function extractTargetFile(part: ToolPart): string | null {
   const toolLower = (part.tool || "").toLowerCase();
   if (toolLower === "glob" || toolLower === "grep") return null;
   const input = resolveToolInput(part);
   const metaFiles = part.state.status !== "pending" ? part.state.metadata?.files : undefined;
-  const firstMetaObj = Array.isArray(metaFiles) && metaFiles[0] ? metaFiles[0] : undefined;
-  const firstMetaRel = typeof firstMetaObj?.relativePath === "string" ? firstMetaObj.relativePath : "";
-  const firstMetaAbs = typeof firstMetaObj?.filePath === "string" ? firstMetaObj.filePath : "";
-  const firstMetaFile = firstMetaObj
-    ? (firstMetaRel && !firstMetaRel.startsWith("..") ? firstMetaRel : firstMetaAbs) || firstMetaRel || firstMetaObj.file || firstMetaObj.path
+  const firstMeta = Array.isArray(metaFiles) ? metaFiles[0] : undefined;
+  const firstMetaRel = typeof firstMeta?.relativePath === "string" ? firstMeta.relativePath : "";
+  const firstMetaAbs = typeof firstMeta?.filePath === "string" ? firstMeta.filePath : "";
+  const firstMetaFile = typeof firstMeta === "string"
+    ? stripLegacyPatchStatus(firstMeta)
+    : firstMeta
+      ? (firstMetaRel && !firstMetaRel.startsWith("..") ? firstMetaRel : firstMetaAbs) || firstMetaRel || firstMeta.movePath || firstMeta.file || firstMeta.path
+      : undefined;
+  const rawPatch = [input.patchText, input.patch, input.diff].find((v): v is string => typeof v === "string" && v.length > 0);
+  const patchFile = rawPatch
+    ? (rawPatch.match(/^\*\*\*\s+(?:Move to|(?:Update|Add|Delete)\s+File):\s*(.+)$/m)?.[1] ??
+       rawPatch.match(/^(?:\+\+\+|---)\s+(?!\/dev\/null)(?:[ab]\/)?([^\t\r\n]+)/m)?.[1])?.trim()
     : undefined;
-  const patchMatch =
-    typeof input.patchText === "string"
-      ? input.patchText.match(/^\*\*\*\s+(?:Update|Add|Delete)\s+File:\s*(.+)$/m)
-      : null;
   const raw =
     input.filePath || input.file_path || input.path || input.file ||
     input.filename || input.targetFile || input.TargetFile || input.target_file || input.Path ||
-    input.AbsolutePath || input.notebook_path || firstMetaFile || patchMatch?.[1]?.trim() ||
+    input.AbsolutePath || input.notebook_path || firstMetaFile || patchFile ||
     (part.state.status !== "pending"
       ? part.state.metadata?.filePath || part.state.metadata?.filepath
       : undefined);
@@ -290,6 +304,63 @@ export function extractDescription(part: ToolPart): string {
     if (action === "scroll") return `scroll Δ(${input.deltaX ?? 0}, ${input.deltaY ?? 0})`;
     if (action) return action;
   }
+  if (isBrowserTool(part.tool)) {
+    const action = typeof input.action === "string" ? input.action.trim() : "";
+    const sel = typeof input.selector === "string" && input.selector.trim()
+      ? input.selector.trim()
+      : typeof input.x === "number" && typeof input.y === "number"
+        ? `(${Math.round(input.x)}, ${Math.round(input.y)})`
+        : "";
+    if ((action === "navigate" || action === "tab_new") && typeof input.url === "string" && input.url.trim()) {
+      return `${action} ${input.url.trim()}`;
+    }
+    if (action === "click" || action === "hover") return sel ? `${action} ${sel}` : action;
+    if (action === "type" || action === "select") {
+      const txt = typeof input.text === "string" ? (input.text.length > 28 ? `${input.text.slice(0, 28)}…` : input.text) : "";
+      const keySuf = action === "type" && typeof input.key === "string" && input.key.trim() ? ` + ${input.key.trim()}` : "";
+      return `${action}${sel ? ` ${sel}` : ""}${txt ? ` "${txt}"` : ""}${keySuf}`;
+    }
+    if (action === "wait") {
+      const ms = typeof input.timeoutMs === "number" ? ` (${input.timeoutMs}ms)` : "";
+      return `wait${sel ? ` ${sel}` : ""}${ms}`;
+    }
+    if (action === "key" && typeof input.key === "string") return `key ${input.key}`;
+    if (action === "scroll") return `scroll Δ(${input.deltaX ?? 0}, ${input.deltaY ?? 0})`;
+    if (action === "tab_select" && typeof input.tabID === "string") return `tab_select ${input.tabID}`;
+    if (action) return action;
+  }
+  const toolLower = (part.tool || "").toLowerCase();
+  if (toolLower === "hoxi_code_index" || toolLower === "code_search" || toolLower === "symbol_inspect" || toolLower === "impact_analysis") {
+    const act = typeof input.action === "string" ? input.action.trim() : "";
+    const sym = (typeof input.symbol === "string" && input.symbol.trim()) || (typeof input.query === "string" && input.query.trim()) || "";
+    const p = (typeof input.path === "string" && input.path.trim()) || (typeof input.filePath === "string" && input.filePath.trim()) || (typeof input.pathPrefix === "string" && input.pathPrefix.trim()) || "";
+    const main = [act, sym || p].filter(Boolean).join(" ");
+    if (main) return main;
+  }
+  if (toolLower === "hoxi_tools") {
+    const act = typeof input.action === "string" ? input.action.trim() : "";
+    const prov = typeof input.provider === "string" ? input.provider.trim() : "";
+    const ep = (typeof input.endpoint === "string" && input.endpoint.trim()) || (typeof input.query === "string" && input.query.trim()) || "";
+    const main = [act, prov, ep].filter(Boolean).join(" ");
+    if (main) return main;
+  }
+  if (toolLower === "hoxi_data" || toolLower === "hoxi_remote") {
+    const act = typeof input.action === "string" ? input.action.trim() : "";
+    if (act === "http_request") {
+      const m = typeof input.method === "string" && input.method.trim() ? input.method.trim().toUpperCase() : "GET";
+      const prof = typeof input.profile === "string" ? input.profile.trim() : "";
+      const ep = typeof input.endpoint === "string" ? input.endpoint.trim() : "";
+      return [m, prof, ep].filter(Boolean).join(" ");
+    }
+    if (act) return act;
+  }
+  if (isImageGenTool(part.tool)) {
+    if (typeof input.outputPath === "string" && input.outputPath.trim()) return input.outputPath.trim();
+    if (typeof input.prompt === "string" && input.prompt.trim()) {
+      const p = input.prompt.trim();
+      return p.length > 48 ? `${p.slice(0, 48)}…` : p;
+    }
+  }
   if ((part.tool || "").toLowerCase() === "skill") {
     const skillName =
       (typeof input.name === "string" && input.name.trim()) ||
@@ -311,6 +382,28 @@ export function extractDescription(part: ToolPart): string {
   if (typeof input.url === "string" && input.url.trim()) return input.url.trim();
   if (part.state.title) return meaningfulToolTitle(part.state.title, part.tool);
   return "";
+}
+
+export function resolveToolMediaAttachments(state: ToolState): Array<{ url: string; mime: string; filename?: string }> {
+  const out: Array<{ url: string; mime: string; filename?: string }> = [];
+  const seen = new Set<string>();
+  const pushItem = (raw: unknown) => {
+    if (!raw || typeof raw !== "object") return;
+    const item = raw as Record<string, unknown>;
+    const url = typeof item.url === "string" ? item.url.trim() : "";
+    const mime = typeof item.mime === "string" ? item.mime.trim() : "";
+    if (!url || !mime.startsWith("image/") || seen.has(url)) return;
+    seen.add(url);
+    out.push({ url, mime, filename: typeof item.filename === "string" ? item.filename : undefined });
+  };
+  if (state.status === "completed" && Array.isArray(state.attachments)) {
+    for (const att of state.attachments) pushItem(att);
+  }
+  const metaAtts = state.metadata?.mediaAttachments;
+  if (Array.isArray(metaAtts)) {
+    for (const att of metaAtts) pushItem(att);
+  }
+  return out;
 }
 
 const MAX_EXPANDED_TOOL_OUTPUT_CHARS = 64 * 1024;
@@ -632,26 +725,24 @@ export function ToolCardExpandedBody(props: {
             </div>
           </Show>
 
-          <Show when={props.part.state.status === "completed" && props.part.state.attachments?.length}>
+          <Show when={(props.part.state.status === "completed" || props.part.state.status === "error") && resolveToolMediaAttachments(props.part.state).length > 0}>
             <div class="flex flex-wrap gap-2">
-              <For each={(props.part.state as Extract<ToolState, { status: "completed" }>).attachments}>
+              <For each={resolveToolMediaAttachments(props.part.state)}>
                 {(att) => (
-                  <Show when={att.mime?.startsWith("image/") && att.url}>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        openImagePreview({ src: att.url, alt: att.filename || props.part.tool });
-                      }}
-                      class="overflow-hidden rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] hover:border-[var(--accent-border)] transition-colors cursor-zoom-in"
-                    >
-                      <img
-                        src={att.url}
-                        alt={att.filename || props.part.tool}
-                        class="max-h-56 w-auto object-contain block"
-                      />
-                    </button>
-                  </Show>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openImagePreview({ src: att.url, alt: att.filename || props.part.tool });
+                    }}
+                    class="overflow-hidden rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] hover:border-[var(--accent-border)] transition-colors cursor-zoom-in"
+                  >
+                    <img
+                      src={att.url}
+                      alt={att.filename || props.part.tool}
+                      class="max-h-56 w-auto object-contain block"
+                    />
+                  </button>
                 )}
               </For>
             </div>

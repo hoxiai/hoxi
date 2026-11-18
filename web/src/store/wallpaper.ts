@@ -213,6 +213,30 @@ export function resolveActiveWallpaperUrl(): string {
   return WALLPAPER_PRESET_ART[wallpaperState.presetId].imageUri;
 }
 
+export function resolveActiveWallpaperStandee(): {
+  url: string;
+  positionX: string;
+  viewportSize: string;
+} | null {
+  if (!wallpaperState.enabled) return null;
+  if (
+    wallpaperState.source === "custom" &&
+    (wallpaperState.customObjectUrl || wallpaperState.hasStoredCustomBlob)
+  ) {
+    return null;
+  }
+  if (wallpaperState.source === "url" && isSafeWallpaperUrl(wallpaperState.customUrl)) {
+    return null;
+  }
+  const preset = WALLPAPER_PRESET_ART[wallpaperState.presetId];
+  if (!preset?.standeeUri) return null;
+  return {
+    url: preset.standeeUri,
+    positionX: preset.standeePositionX || "84%",
+    viewportSize: preset.standeeViewportSize || "min(44%, 58vh) auto",
+  };
+}
+
 export function resolveActiveWallpaperLuminance(): WallpaperLuminance {
   if (wallpaperState.source === "custom") {
     if (wallpaperState.customObjectUrl || wallpaperState.hasStoredCustomBlob) {

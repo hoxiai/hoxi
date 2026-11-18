@@ -6,7 +6,7 @@ The website JSON upgrade API (`/api/hoxi/upgrade?package=desktop&os=<macos|windo
 
 - **macOS (`darwin-arm64` with Sparkle configured)**: The Update in App action opens Sparkle's localized native UI (`internal/updater/native_darwin.go`), which uses the configured official website appcast (`https://hoxi.ai/api/hoxi/appcast.xml`) for Ed25519-authenticated installation. Automatic checks are enabled. Background downloads are disabled: Sparkle couples them to install-on-quit staging, which has no public veto for active agent tasks. Users confirm downloading and restarting in the native dialog.
 - **macOS DMG self-updater fallback (`darwin-amd64` or bundles without Sparkle)**: On macOS release bundles without a usable Sparkle framework, Update in App uses the SHA-256 verified DMG self-updater (`internal/updater/native_darwin.go`), which downloads the `.dmg`, verifies its SHA-256 digest, mounts it read-only, validates the bundle signature and version, swaps `/Applications/Hoxi.app`, and relaunches.
-- **Windows `.zip` self-updater (`windows-amd64` / `windows-arm64`)**: On Windows (`internal/updater/native_windows.go`), Update in App downloads the HTTPS `.zip` archive (`Hoxi-<version>-windows-<arch>.zip`), verifies its SHA-256 digest, extracts and validates `Hoxi.exe` (plus bundled `opencode.exe` and `sqlite3.exe`) in a staging directory next to the install directory, and spawns a hidden PowerShell helper that waits for the current PID to exit, atomically swaps the binaries with rollback on failure, and relaunches `Hoxi.exe`.
+- **Windows `.zip` self-updater (`windows-amd64` / `windows-arm64`)**: On Windows (`internal/updater/native_windows.go`), Update in App downloads the HTTPS `.zip` archive (`Hoxi-<version>-windows-<arch>.zip`), verifies its SHA-256 digest, extracts and validates `Hoxi.exe` (with its built-in Go Native Agent Engine and embedded pure-Go SQLite `internal/sqlitecli`, plus any optional sidecars when present) in a staging directory next to the install directory, and spawns a hidden PowerShell helper that waits for the current PID to exit, atomically swaps the binaries with rollback on failure, and relaunches `Hoxi.exe`.
 
 For both the macOS DMG self-updater and the Windows `.zip` self-updater, `GET /api/hoxi/updater/native` returns `{available, progress?: {phase, downloadedBytes, totalBytes, error?}}` (`internal/updater/progress.go`, phases: `downloading` → `verifying` → `installing` → `restarting` / `error`) so the workspace displays download progress, verification, installation preparation, and restart separately. Downloads without a known size show bytes and an indeterminate progress bar. Failures remain visible in status, and a new install attempt clears the previous failure.
 
@@ -51,7 +51,7 @@ Intel requires a per-arch appcast item on the website (out of this repository).
 
 ## Deployment Blocker
 
-The website implementation lives in the separate APay Hoxi theme repository.
+The website implementation lives in the separate official Hoxi website repository.
 Its canonical feed is `https://hoxi.ai/api/hoxi/appcast.xml`; the code must be
 deployed and verified before shipping an updater-enabled release. A generic release API success
 is deliberately insufficient: publication fails without explicit Sparkle acceptance.
@@ -65,7 +65,6 @@ Use an independently verified, official Sparkle >= 2.6 distribution extracted lo
 export HOXI_SPARKLE_DIR=/absolute/path/to/extracted-sparkle
 export HOXI_SPARKLE_PUBLIC_KEY='<canonical base64 Ed25519 public key, 32 bytes>'
 export HOXI_SPARKLE_FEED_URL=https://hoxi.ai/api/hoxi/appcast.xml
-export HOXI_OPENCODE=/absolute/path/to/verified/opencode
 ./build-desktop.sh --release-only --no-install --notarize --version 0.2.1
 ```
 

@@ -29,6 +29,7 @@ import {
 } from "lucide-solid";
 import { hoxiAPI } from "../../services/api";
 import {
+  defaultWorkspaceDir,
   isSessionArchived,
   isSessionBusy,
   openFileInInspector,
@@ -43,12 +44,13 @@ import {
   workspace,
 } from "../../store/workspace";
 import { t } from "../../i18n";
+import { readDirectorySlashCommands } from "../timeline/composer-autocomplete";
 import { copyMessageLink, downloadSessionExport } from "../timeline/session-export";
 
 export type CommandPaletteMode = "actions" | "files";
 
 type PaletteIcon = Component<{ size?: number; class?: string }>;
-type PaletteGroup = "actions" | "sessions" | "files";
+type PaletteGroup = "actions" | "commands" | "sessions" | "files";
 
 interface PaletteItem {
   id: string;
@@ -266,6 +268,30 @@ export default function CommandPalette(props: CommandPaletteProps) {
       }))
   );
 
+  const slashCommandItems = createMemo<PaletteItem[]>(() => {
+    if (props.mode !== "actions") return [];
+    const dir =
+      sessionDirectory(activeSessionID()) ||
+      workspace.rootDir ||
+      defaultWorkspaceDir() ||
+      undefined;
+    return readDirectorySlashCommands(dir).map((cmd) => ({
+      id: `slash:${cmd.name}`,
+      group: "commands" as const,
+      label: `/${cmd.name}`,
+      detail: cmd.description || undefined,
+      shortcut: cmd.hints?.length ? cmd.hints.join(" ") : undefined,
+      icon: Terminal,
+      run: () => {
+        window.dispatchEvent(
+          new CustomEvent("hoxi:composer-fill", {
+            detail: { text: `/${cmd.name} ` },
+          })
+        );
+      },
+    }));
+  });
+
   const visibleItems = createMemo<PaletteItem[]>(() => {
     if (props.mode === "files") {
       return fileResults().map((file) => ({
@@ -283,12 +309,18 @@ export default function CommandPalette(props: CommandPaletteProps) {
       .filter((entry) => entry.score >= 0)
       .sort((a, b) => a.score - b.score)
       .map((entry) => entry.item);
+    const commands = slashCommandItems()
+      .map((item) => ({ item, score: scoreMatch(q, `${item.label} ${item.detail || ""}`) }))
+      .filter((entry) => entry.score >= 0)
+      .sort((a, b) => a.score - b.score)
+      .slice(0, q ? 16 : 8)
+      .map((entry) => entry.item);
     const sessions = sessionItems()
       .map((item) => ({ item, score: scoreMatch(q, `${item.label} ${item.detail || ""}`) }))
       .filter((entry) => entry.score >= 0)
       .slice(0, q ? 12 : 6)
       .map((entry) => entry.item);
-    return [...actions, ...sessions];
+    return q.startsWith("/") ? [...commands, ...actions, ...sessions] : [...actions, ...commands, ...sessions];
   });
 
   createEffect(() => {
@@ -375,9 +407,11 @@ export default function CommandPalette(props: CommandPaletteProps) {
   const groupLabel = (group: PaletteGroup) =>
     group === "actions"
       ? t("commandPalette.actions")
-      : group === "sessions"
-        ? t("commandPalette.sessions")
-        : t("commandPalette.files");
+      : group === "commands"
+        ? t("commandPalette.commands")
+        : group === "sessions"
+          ? t("commandPalette.sessions")
+          : t("commandPalette.files");
 
   return (
     <Presence when={Boolean(props.mode)}>

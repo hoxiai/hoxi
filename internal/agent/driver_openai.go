@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"sort"
 	"strings"
 
@@ -37,7 +38,41 @@ func (d *openaiDriver) BuildRequest(req ModelRequest) (llm.StreamHTTPRequest, er
 	return d.buildChatCompletionsRequest(req)
 }
 
+func isStrictOpenAIChatHost(target llm.StreamTarget) bool {
+	raw := strings.TrimSpace(target.BaseURL)
+	if raw == "" {
+		return false
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(strings.TrimSpace(u.Hostname()))
+	return host == "api.openai.com" || strings.HasSuffix(host, ".openai.com") || strings.HasSuffix(host, ".openai.azure.com")
+}
+
+func requiresToolReasoningField(target llm.StreamTarget, msgs []Message) bool {
+	for _, m := range msgs {
+		if m.Role != RoleAssistant {
+			continue
+		}
+		for _, b := range m.Content {
+			if b.Type == ContentThinking && b.Text != "" {
+				return true
+			}
+		}
+	}
+	lowerMod := strings.ToLower(strings.TrimSpace(target.ModelID))
+	return strings.Contains(lowerMod, "deepseek-reasoner") ||
+		strings.Contains(lowerMod, "deepseek-r1") ||
+		(strings.Contains(lowerMod, "kimi") && strings.Contains(lowerMod, "thinking")) ||
+		strings.HasSuffix(lowerMod, ":thinking")
+}
+
 func (d *openaiDriver) buildChatCompletionsRequest(req ModelRequest) (llm.StreamHTTPRequest, error) {
+	allowReasoningContent := !isStrictOpenAIChatHost(req.Target)
+	forceToolReasoning := allowReasoningContent && requiresToolReasoningField(req.Target, req.Messages)
+
 	msgs := make([]map[string]any, 0, len(req.Messages)+1)
 	if strings.TrimSpace(req.System) != "" {
 		msgs = append(msgs, map[string]any{"role": "system", "content": req.System})
@@ -46,6 +81,7 @@ func (d *openaiDriver) buildChatCompletionsRequest(req ModelRequest) (llm.Stream
 		if m.Role == RoleSystem {
 			continue
 		}
+		var thinkingParts []string
 		var textParts []string
 		var contentItems []map[string]any
 		hasMedia := false
@@ -53,6 +89,10 @@ func (d *openaiDriver) buildChatCompletionsRequest(req ModelRequest) (llm.Stream
 		var toolResults []map[string]any
 		for _, b := range m.Content {
 			switch b.Type {
+			case ContentThinking:
+				if b.Text != "" {
+					thinkingParts = append(thinkingParts, b.Text)
+				}
 			case ContentText:
 				if b.Text != "" {
 					textParts = append(textParts, b.Text)
@@ -73,11 +113,13 @@ func (d *openaiDriver) buildChatCompletionsRequest(req ModelRequest) (llm.Stream
 						"type": "file",
 						"file": map[string]any{"filename": fname, "file_data": dataURI},
 					})
-				} else {
+				} else if strings.HasPrefix(strings.ToLower(b.MimeType), "image/") {
 					contentItems = append(contentItems, map[string]any{
 						"type":      "image_url",
 						"image_url": map[string]any{"url": dataURI},
 					})
+				} else {
+					contentItems = append(contentItems, map[string]any{"type": "text", "text": unsupportedMediaText(b, d.Protocol())})
 				}
 			case ContentToolUse:
 				args := strings.TrimSpace(string(b.Input))
@@ -98,14 +140,23 @@ func (d *openaiDriver) buildChatCompletionsRequest(req ModelRequest) (llm.Stream
 			msgs = append(msgs, toolResults...)
 			toolResults = nil
 		}
-		if len(contentItems) > 0 || len(toolCalls) > 0 {
+		if len(contentItems) > 0 || len(toolCalls) > 0 || len(thinkingParts) > 0 {
 			msg := map[string]any{"role": string(m.Role)}
 			if hasMedia && m.Role == RoleUser {
 				msg["content"] = contentItems
 			} else if len(textParts) > 0 {
 				msg["content"] = strings.Join(textParts, "\n")
+			} else if !allowReasoningContent && len(thinkingParts) > 0 && len(toolCalls) == 0 {
+				msg["content"] = "[thinking truncated]"
 			} else {
 				msg["content"] = ""
+			}
+			if m.Role == RoleAssistant && allowReasoningContent {
+				if len(thinkingParts) > 0 {
+					msg["reasoning_content"] = strings.Join(thinkingParts, "\n")
+				} else if len(toolCalls) > 0 && forceToolReasoning {
+					msg["reasoning_content"] = ""
+				}
 			}
 			if len(toolCalls) > 0 {
 				msg["tool_calls"] = toolCalls
@@ -194,10 +245,12 @@ func (d *openaiDriver) buildResponsesRequest(req ModelRequest) (llm.StreamHTTPRe
 					userMulti = append(userMulti, map[string]any{
 						"type": "input_file", "filename": fname, "file_data": dataURI,
 					})
-				} else {
+				} else if strings.HasPrefix(strings.ToLower(b.MimeType), "image/") {
 					userMulti = append(userMulti, map[string]any{
 						"type": "input_image", "image_url": dataURI,
 					})
+				} else {
+					userMulti = append(userMulti, map[string]any{"type": "input_text", "text": unsupportedMediaText(b, d.Protocol())})
 				}
 			case ContentToolUse:
 				args := strings.TrimSpace(string(b.Input))

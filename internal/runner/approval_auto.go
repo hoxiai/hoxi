@@ -325,7 +325,7 @@ func openCodePermissionCreatedAt(item map[string]interface{}) time.Time {
 // each of openCodeTimeoutRetryDelays until the request is settled.
 func (s *Service) armOpenCodeTimeout(id, sessionID, directory string, item map[string]interface{}) {
 	created := openCodePermissionCreatedAt(item)
-	wait := s.ApprovalPolicy().approvalWaitLimit()
+	wait := s.ApprovalPolicy().ApprovalWaitLimit()
 	deadline := created.Add(wait)
 	delay := time.Until(deadline)
 	if delay < 0 {

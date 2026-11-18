@@ -170,7 +170,7 @@ esac
 	if !sawCompletedStep1 || !sawResumedText {
 		t.Fatalf("expected completed tool step (%v) and resumed final text (%v)", sawCompletedStep1, sawResumedText)
 	}
-	if entries := svc2.ledger.listEntries(); len(entries) != 0 {
+	if entries := svc2.ledger.ListEntries(); len(entries) != 0 {
 		t.Fatalf("expected ledger entries cleared after resumed turn idle, got %+v", entries)
 	}
 }
@@ -388,7 +388,7 @@ func TestOpenCodeGracefulRestartAutoResumesWithByteStableSystemPrompt(t *testing
 	if !sawFinal {
 		t.Fatalf("expected OPENCODE_RESUMED_OK in transcript, got %+v", stored.Turns)
 	}
-	if entries := svc2.ledger.listEntries(); len(entries) != 0 {
+	if entries := svc2.ledger.ListEntries(); len(entries) != 0 {
 		t.Fatalf("expected ledger empty after completion, got %+v", entries)
 	}
 }
@@ -399,7 +399,7 @@ func TestUngracefulCrashCorruptBackupAndCrossRestartIdempotency(t *testing.T) {
 	storeDir := filepath.Join(stateRoot, "sessions")
 	ledgerPath := filepath.Join(stateRoot, taskLedgerFile)
 
-	// 1. Corrupt ledger file must be backed up before starting clean (Guardrail #4).
+	// 1. Preserve corrupt history and fail closed rather than starting clean.
 	if err := os.WriteFile(ledgerPath, []byte("{corrupt-json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -472,7 +472,7 @@ func TestUngracefulCrashCorruptBackupAndCrossRestartIdempotency(t *testing.T) {
 	if lastTurn.Parts[0].State.Status != "error" || lastTurn.Parts[0].State.Error == "" {
 		t.Fatalf("expected dangling running tool settled as error, got %+v", lastTurn.Parts[0].State)
 	}
-	if len(svcAfterCrash.ledger.listEntries()) != 0 {
+	if len(svcAfterCrash.ledger.ListEntries()) != 0 {
 		t.Fatalf("expected crashed entry removed from ledger")
 	}
 

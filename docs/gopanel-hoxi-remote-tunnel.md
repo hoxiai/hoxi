@@ -15,7 +15,7 @@
 | 手机经 GoPanel 订阅 Hoxi SSE（`/api/hoxi/event`） | 已实现，逐块转发不缓冲 |
 | 手机在服务器列表中发现并添加 Hoxi 电脑 | 已实现 |
 | 经隧道的 WebSocket（终端 `/pty`） | 未实现，GoPanel 返回 501 |
-| 同局域网手机直连 Mac（`5417` 监听） | 已实现（`internal/gateway/lan.go` + `internal/pairing`，明文 + 配对令牌；跨网端到端加密仍为规划，见第 9 节） |
+| 同局域网手机直连 Mac（`5417` 监听） | 已实现（`internal/gateway/lan.go` + `internal/pairing`，支持配对令牌与 `hoxi-e2ee-v1` 端到端加密信封；QUIC 打洞与路径元数据隐藏见第 9 节） |
 | iPhone 审批提醒推送（APNs），点开进入待处理审批列表 | 已实现，待真机验收；需在 GoPanel 配置 APNs 密钥 |
 | Android 推送 | 未实现（国内无统一通道，需厂商推送或第三方） |
 
@@ -157,7 +157,7 @@ Type(1B) | StreamID(8B, BigEndian uint64) | Payload(≤ 4MB)
 - **路由白名单（`internal/gateway/tunnel.go`）**：采用显式「HTTP 方法 + 路径模式」逐段匹配（`*` 仅匹配单个非空路径段，**不做任何前缀匹配**），路径必须已是 `path.Clean` 规范形式且不得包含编码斜杠（`%2F`）。经隧道仅开放：
   - **基础与模型列表（只读）**：`GET /healthz`、`GET /api/hoxi/bootstrap`、`GET /api/hoxi/system-info`、`GET /api/hoxi/provider/models`（只读脱敏模型列表：仅 `{source, providers: [{id, name, models: [{id, name}]}]}`，不含密钥、`baseURL` 或请求头）、`GET /api/hoxi/runner/{antigravity,claude-code,gemini-cli,codebuddy,qoder}/models`
   - **会话平面**：`GET /api/hoxi/sessions`、`POST /api/hoxi/sessions`、`GET /api/hoxi/sessions/status`、`GET /api/hoxi/sessions/*`、`GET /api/hoxi/sessions/*/message`、`GET /api/hoxi/sessions/*/diff`、`POST /api/hoxi/sessions/*/{prompt,prompt_async,runtime,abort,stop-tool,revert,unrevert,fork}`
-  - **事件、审批与提问平面**：`GET /api/hoxi/event`、`GET /api/hoxi/permission`、`POST /api/hoxi/permission/*/reply`（经隧道仅允许 `reply=once` 或 `reject`，携带 `always` 或非法 JSON 返回 403；审批策略 `/api/hoxi/permission/policy`、审批审计 `/api/hoxi/permission/audit` 与会话级授权撤销 `/api/hoxi/permission/grants` 仅限桌面本机）、`GET /api/hoxi/question`、`POST /api/hoxi/question/*/reply`、`POST /api/hoxi/question/*/reject`
+  - **事件、请求对账、审批与提问平面**：`GET /api/hoxi/event`、`GET /api/hoxi/requests/*`（按 `kind`、`scope` 与可选 `digest` 只读查询 `not_admitted / admitted / completed / outcome_unknown` 三态回执与现场证据）、`GET /api/hoxi/permission`、`POST /api/hoxi/permission/*/reply`（经隧道仅允许 `reply=once` 或 `reject`，携带 `always` 或非法 JSON 返回 403；审批策略 `/api/hoxi/permission/policy`、审批审计 `/api/hoxi/permission/audit` 与会话级授权撤销 `/api/hoxi/permission/grants` 仅限桌面本机）、`GET /api/hoxi/question`、`POST /api/hoxi/question/*/reply`、`POST /api/hoxi/question/*/reject`
   - **Worktree 审查与提交**：`GET /api/hoxi/worktree/{status,diff,branches,verify-status}`、`POST /api/hoxi/worktree/commit`（请求体仅允许 `push=false`，携带 `push=true` 或非法 JSON 返回 403）、`POST /api/hoxi/worktree/apply`。命令执行与写配置/分支变更类接口（`verify-run`、`verify-config`、`verify-stop`、`push`、`checkout`、`setup-retry`、`prune-sandboxes`、`create`、`sync`、`revert-file`、`rename-branch`、`DELETE` 等）一律仅限桌面本机
   - **附件、Skill 与工作区（只读）**：`POST /api/hoxi/attachments`、`GET /api/hoxi/attachments/*`、`GET /api/hoxi/attachments/*/content`、`GET /api/hoxi/skills/list`、`GET /api/hoxi/skills/marketplace`（hoxi.ai 技能目录元数据，不含正文与安装动作）、`GET /api/hoxi/workspaces`（新建/修改/删除工作区仅限桌面本机；`POST /api/hoxi/skills/marketplace/install` 会写入 `~/.hoxi` 并改变 Agent 能力，仅限桌面本机）
   - **工作区内文件读取与搜索（`internal/gateway/files.go`）**：`GET /file/content`、`GET /api/file/content`、`GET /api/hoxi/file/content`（均必须携带非空 `?path=`，绝不回退到 OpenCode 原始代理）、`GET /api/hoxi/file/list`、`GET /api/hoxi/file/search`。经隧道访问的目标路径与搜索根目录必须位于网关根目录、已注册工作区目录或会话绑定的 worktree 内（解析软链接防越界，不信任请求自带的越界 `directory` 参数，并拦截敏感凭据文件）；`/file`、`/api/file`、`POST /api/hoxi/file/open`、`POST /api/hoxi/file/validate` 一律 403
@@ -192,7 +192,7 @@ Type(1B) | StreamID(8B, BigEndian uint64) | Payload(≤ 4MB)
 - **凭据**：GoPanel JWT 只在手机与 GoPanel 之间；隧道 token 只在 Mac 与 GoPanel 之间，以 `0600` 明文文件保存在 Mac 上（尚未接入钥匙串）；Hoxi 本机网关令牌不离开 Mac。
 - **一键授权与安全入口**：`/api/tunnel/pair/request` 与其轮询接口对安全入口豁免，桌面只填 GoPanel 的 `ip:端口`；`pollToken` 只在 GoPanel 与桌面之间流转，桌面 `/api/hoxi/tunnel/status` 从不回显 pollToken 或隧道 token。GoPanel 后台的批准/拒绝与手机侧管理接口仍需管理员 JWT 与安全入口。拒绝、过期或超时会停止轮询且不落盘，不会在 GoPanel 留下孤儿节点。
 - **解除配对双向一致**：桌面「解除配对」用隧道凭据调用 `POST /api/tunnel/unpair`（免入口）删除远端节点后再删本机凭据；面板删除节点后凭据即失效，桌面连接被拒（401/403）时判定为永久失败，自动清除本机凭据并停止重试。两个方向都不会留下孤儿节点。
-- **无端到端加密**：GoPanel 能看到经它转发的请求和响应明文（会话内容、Diff）。传输加密依赖手机 ↔ GoPanel、Mac ↔ GoPanel 两段 TLS。
+- **应用层端到端加密（`hoxi-e2ee-v1`）**：跨网连接启用 X25519 ECDH 协商与 AES-256-GCM / `v1-sse` 流式加密信封后，GoPanel 与中继不可见业务载荷明文，但请求路径、体积与时序元数据仍可见；未启用 E2EE 信封的旧连接仍依赖两段 TLS。
 - **无流控**：手机读得慢时 GoPanel 单流 32 帧缓冲会溢出并 Reset 该流（SSE 断开后由手机端重连）；大文件下载不适合走隧道。
 - **单连接**：同一凭据只保留最新的一条隧道，旧连接会被替换。
 - **JWT 有效期**：GoPanel 管理员登录默认 72 小时，过期后需在手机重新登录 GoPanel（中继连接随之刷新）。
@@ -200,7 +200,7 @@ Type(1B) | StreamID(8B, BigEndian uint64) | Payload(≤ 4MB)
 ## 9. 尚未实现
 
 - 经隧道转发 WebSocket（手机远程终端）。GoPanel 侧已支持，Hoxi 侧需要回连本机端口或实现进程内 Hijack。
-- 跨网端到端加密（E2E）：同局域网 `5417` 配对令牌直连（`internal/gateway/lan.go`）与本机 `127.0.0.1:5418` 反向代理入口（`internal/gateway/ingress.go`）已实现，但跨网端到端加密信封与盲目中继尚未实现（见 [`docs/remote-access-e2e-contract.md`](remote-access-e2e-contract.md)）。
+- QUIC 直连 NAT 打洞、边缘配对票据服务与路径/时序元数据隐藏：应用层 `hoxi-e2ee-v1` 端到端加密信封、`v1-sse` 流式加密与首次 X25519 ECDH 密钥协商已实现（见第 8 节），但 QUIC 打洞、边缘一次性票据与盲目路径隐藏尚未实现（见 [`docs/remote-access-e2e-contract.md`](remote-access-e2e-contract.md)）。
 - 隧道 token 存入 macOS 钥匙串；Android 推送；Wi-Fi / 移动网络切换下的多传输漫游与公网真机验收（客户端 `HoxiTransportResolver` / `HoxiTransportFailover` 多传输自动选路与故障重探已实现，不自动重放失败请求）。
 
 ## 10. 验证

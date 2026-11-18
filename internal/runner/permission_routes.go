@@ -18,45 +18,22 @@ type cachedPermissionReply struct {
 
 func (s *Service) lookupPermissionReply(permissionID, clientRequestID, reply string) ([]byte, bool) {
 	clientRequestID = strings.TrimSpace(clientRequestID)
-	if clientRequestID == "" {
+	if clientRequestID == "" || s.ledger == nil {
 		return nil, false
 	}
-	key := permissionID + "\x00" + clientRequestID
-	entry, ok := s.permissionReplies.Load(key)
-	if !ok {
+	out, found := s.ledger.peekRequest(RequestKindPermissionReply, permissionID, clientRequestID, "", map[string]string{"reply": reply})
+	if !found || out.State != RequestAdmissionDone {
 		return nil, false
 	}
-	if time.Now().After(entry.expiresAt) {
-		s.permissionReplies.Delete(key)
-		return nil, false
-	}
-	if entry.reply != reply {
-		return nil, false
-	}
-	return entry.rawBody, true
+	return out.ResponseBody, true
 }
 
 func (s *Service) storePermissionReply(permissionID, sessionID, clientRequestID, reply string, rawBody []byte) {
 	clientRequestID = strings.TrimSpace(clientRequestID)
-	if clientRequestID == "" {
+	if clientRequestID == "" || s.ledger == nil {
 		return
 	}
-	now := time.Now()
-	expiresAt := now.Add(idempotencyReceiptTTL)
-	s.permissionReplies.Range(func(k string, entry cachedPermissionReply) bool {
-		if now.After(entry.expiresAt) {
-			s.permissionReplies.Delete(k)
-		}
-		return true
-	})
-	s.permissionReplies.Store(permissionID+"\x00"+clientRequestID, cachedPermissionReply{
-		reply:     reply,
-		rawBody:   append([]byte(nil), rawBody...),
-		expiresAt: expiresAt,
-	})
-	if s.ledger != nil {
-		s.ledger.putPermissionReply(permissionID, sessionID, clientRequestID, reply, rawBody, expiresAt)
-	}
+	s.ledger.completeRequest(RequestKindPermissionReply, permissionID, sessionID, clientRequestID, "", http.StatusOK, rawBody, map[string]string{"reply": reply})
 }
 
 func (s *Service) handlePermissionRoutes(w http.ResponseWriter, r *http.Request) {
@@ -112,6 +89,10 @@ func (s *Service) handleUnifiedPermissionRoutes(w http.ResponseWriter, r *http.R
 		writeJSONError(w, http.StatusNotFound, "unknown permission endpoint")
 		return
 	}
+	if s.ledger != nil && s.ledger.loadErr != nil {
+		writeCodedRunnerError(w, http.StatusServiceUnavailable, ErrCodeRequestStorageUnavailable, "request ledger could not be loaded; restore it and restart before replying", "")
+		return
+	}
 	if strings.HasPrefix(id, runnerPermissionID) {
 		s.replyRunnerPermission(w, r, id)
 		return
@@ -141,15 +122,38 @@ func (s *Service) handleUnifiedPermissionRoutes(w http.ResponseWriter, r *http.R
 		writeJSONError(w, http.StatusForbidden, "always approval is not allowed over the remote tunnel")
 		return
 	}
-	if cachedRaw, ok := s.lookupPermissionReply(id, clientReqID, parsedReply.Reply); ok {
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(cachedRaw)
-		return
+	permDigest := ""
+	permMeta := map[string]string{"reply": parsedReply.Reply}
+	if clientReqID != "" && s.ledger != nil {
+		permDigest = PermissionReplyDigest(id, parsedReply.Reply, parsedReply.Message, parsedReply.GrantClass)
+		if prev, found := s.ledger.peekRequest(RequestKindPermissionReply, id, clientReqID, permDigest, permMeta); found {
+			if prev.State == RequestAdmissionDone {
+				w.Header().Set("Content-Type", "application/json; charset=utf-8")
+				w.Header().Set("X-Hoxi-Deduplicated", "true")
+				w.WriteHeader(prev.HTTPStatus)
+				_, _ = w.Write(prev.ResponseBody)
+				return
+			}
+			writeCodedRunnerError(w, prev.HTTPStatus, prev.ErrorCode, prev.ErrorMessage, clientReqID)
+			return
+		}
 	}
 	release, claimed := s.claimOpenCodeAnswer(id)
 	if !claimed {
-		writeJSONError(w, http.StatusConflict, "permission request already answered")
+		if clientReqID != "" && s.ledger != nil {
+			if prev, found := s.ledger.peekRequest(RequestKindPermissionReply, id, clientReqID, permDigest, permMeta); found {
+				if prev.State == RequestAdmissionDone {
+					w.Header().Set("Content-Type", "application/json; charset=utf-8")
+					w.Header().Set("X-Hoxi-Deduplicated", "true")
+					w.WriteHeader(prev.HTTPStatus)
+					_, _ = w.Write(prev.ResponseBody)
+					return
+				}
+				writeCodedRunnerError(w, prev.HTTPStatus, prev.ErrorCode, prev.ErrorMessage, clientReqID)
+				return
+			}
+		}
+		writeCodedRunnerError(w, http.StatusConflict, ErrCodeAlreadyAnswered, "permission request already answered", clientReqID)
 		return
 	}
 	dir := r.URL.Query().Get("directory")
@@ -204,16 +208,45 @@ func (s *Service) handleUnifiedPermissionRoutes(w http.ResponseWriter, r *http.R
 			}
 		}
 	}
+	permSessionID := ask.sessionID
+	if permSessionID == "" {
+		if shown, ok := s.gate.openCodeAskFor(id); ok {
+			permSessionID = shown.sessionID
+		}
+	}
+	if clientReqID != "" && s.ledger != nil {
+		if adm := s.ledger.admitRequest(RequestKindPermissionReply, id, permSessionID, clientReqID, permDigest, permMeta); adm.State != RequestAdmissionNew {
+			release()
+			if adm.State == RequestAdmissionDone {
+				w.Header().Set("Content-Type", "application/json; charset=utf-8")
+				w.Header().Set("X-Hoxi-Deduplicated", "true")
+				w.WriteHeader(adm.HTTPStatus)
+				_, _ = w.Write(adm.ResponseBody)
+				return
+			}
+			writeCodedRunnerError(w, adm.HTTPStatus, adm.ErrorCode, adm.ErrorMessage, clientReqID)
+			return
+		}
+	}
 	status, respRaw, err := s.replyOpenCodePermission(r.Context(), id, dir, raw)
 	if err != nil {
+		if clientReqID != "" && s.ledger != nil {
+			s.ledger.markRequestUnknown(RequestKindPermissionReply, id, clientReqID, "opencode service unavailable: "+err.Error())
+		}
 		release()
-		writeJSONError(w, http.StatusBadGateway, "opencode service unavailable: "+err.Error())
+		writeCodedRunnerError(w, http.StatusBadGateway, ErrCodeOutcomeUnknown, "opencode service unavailable: "+err.Error(), clientReqID)
 		return
 	}
 	switch {
 	case status == http.StatusNotFound:
+		if clientReqID != "" && s.ledger != nil {
+			s.ledger.abortUncommittedRequest(RequestKindPermissionReply, id, clientReqID)
+		}
 		s.settleOpenCodePermission(id)
 	case status < 200 || status >= 300:
+		if clientReqID != "" && s.ledger != nil {
+			s.ledger.abortUncommittedRequest(RequestKindPermissionReply, id, clientReqID)
+		}
 		release()
 	}
 	if status >= 200 && status < 300 {
@@ -228,14 +261,10 @@ func (s *Service) handleUnifiedPermissionRoutes(w http.ResponseWriter, r *http.R
 			s.gate.addOpenCodeAlwaysGrants(alwaysSession, alwaysPerm, alwaysPatterns, source)
 			go s.reconcilePendingApprovals()
 		}
-		permSessionID := ask.sessionID
-		if permSessionID == "" {
-			if shown, ok := s.gate.openCodeAskFor(id); ok {
-				permSessionID = shown.sessionID
-			}
-		}
 		s.recordOpenCodeApprovalAudit(id, dir, auditReply, parsedReply.Message, source)
-		s.storePermissionReply(id, permSessionID, clientReqID, parsedReply.Reply, respRaw)
+		if clientReqID != "" && s.ledger != nil {
+			s.ledger.completeRequest(RequestKindPermissionReply, id, permSessionID, clientReqID, permDigest, status, respRaw, permMeta)
+		}
 		s.settleOpenCodePermission(id)
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -244,6 +273,10 @@ func (s *Service) handleUnifiedPermissionRoutes(w http.ResponseWriter, r *http.R
 }
 
 func (s *Service) replyRunnerPermission(w http.ResponseWriter, r *http.Request, id string) {
+	if s.ledger != nil && s.ledger.loadErr != nil {
+		writeCodedRunnerError(w, http.StatusServiceUnavailable, ErrCodeRequestStorageUnavailable, "request ledger could not be loaded; restore it and restart before replying", "")
+		return
+	}
 	var body struct {
 		Reply           string `json:"reply"`
 		Message         string `json:"message"`
@@ -267,11 +300,21 @@ func (s *Service) replyRunnerPermission(w http.ResponseWriter, r *http.Request, 
 		writeJSONError(w, http.StatusForbidden, "always approval is not allowed over the remote tunnel")
 		return
 	}
-	if cachedRaw, ok := s.lookupPermissionReply(id, clientReqID, body.Reply); ok {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(cachedRaw)
-		return
+	permDigest := ""
+	permMeta := map[string]string{"reply": body.Reply}
+	if clientReqID != "" && s.ledger != nil {
+		permDigest = PermissionReplyDigest(id, body.Reply, body.Message, body.GrantClass)
+		if prev, found := s.ledger.peekRequest(RequestKindPermissionReply, id, clientReqID, permDigest, permMeta); found {
+			if prev.State == RequestAdmissionDone {
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("X-Hoxi-Deduplicated", "true")
+				w.WriteHeader(prev.HTTPStatus)
+				_, _ = w.Write(prev.ResponseBody)
+				return
+			}
+			writeCodedRunnerError(w, prev.HTTPStatus, prev.ErrorCode, prev.ErrorMessage, clientReqID)
+			return
+		}
 	}
 	s.gate.mu.Lock()
 	pa := s.gate.pending[id]
@@ -295,7 +338,16 @@ func (s *Service) replyRunnerPermission(w http.ResponseWriter, r *http.Request, 
 	reply := approvalReply{Reply: body.Reply, Message: body.Message, Source: source}
 	var granted []string
 	if body.GrantClass {
-		classes, problem := grantClassesForReply(source, body.Reply, pa.req, s.sessionWorktree(pa.sid))
+		grantDir := s.sessionWorktree(pa.sid)
+		if reqCwd := strings.TrimSpace(firstString(itemMetadata(pa.req)["cwd"])); reqCwd != "" {
+			if rec, ok := s.store.Meta(pa.sid); ok {
+				_, writeRoots := s.sessionWorkspaceRoots(rec)
+				if matched, okRoot := matchSessionRoot(writeRoots, reqCwd); okRoot {
+					grantDir = matched
+				}
+			}
+		}
+		classes, problem := grantClassesForReply(source, body.Reply, pa.req, grantDir)
 		if problem != "" {
 			status := http.StatusBadRequest
 			if isRemoteApprovalSource(source) {
@@ -309,16 +361,34 @@ func (s *Service) replyRunnerPermission(w http.ResponseWriter, r *http.Request, 
 		// class grant below is what covers later requests.
 		reply.Reply = "always"
 	}
+	if clientReqID != "" && s.ledger != nil {
+		if adm := s.ledger.admitRequest(RequestKindPermissionReply, id, pa.sid, clientReqID, permDigest, permMeta); adm.State != RequestAdmissionNew {
+			if adm.State == RequestAdmissionDone {
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("X-Hoxi-Deduplicated", "true")
+				w.WriteHeader(adm.HTTPStatus)
+				_, _ = w.Write(adm.ResponseBody)
+				return
+			}
+			writeCodedRunnerError(w, adm.HTTPStatus, adm.ErrorCode, adm.ErrorMessage, clientReqID)
+			return
+		}
+	}
 	select {
 	case pa.reply <- reply:
 		if len(granted) > 0 {
 			s.gate.addClassGrants(pa.sid, granted, source)
 			go s.reconcilePendingApprovals()
 		}
-		s.storePermissionReply(id, pa.sid, clientReqID, body.Reply, []byte("true\n"))
+		if clientReqID != "" && s.ledger != nil {
+			s.ledger.completeRequest(RequestKindPermissionReply, id, pa.sid, clientReqID, permDigest, http.StatusOK, []byte("true\n"), permMeta)
+		}
 		writeJSON(w, http.StatusOK, true)
 	default:
-		writeJSONError(w, http.StatusConflict, "permission request already answered")
+		if clientReqID != "" && s.ledger != nil {
+			s.ledger.abortUncommittedRequest(RequestKindPermissionReply, id, clientReqID)
+		}
+		writeCodedRunnerError(w, http.StatusConflict, ErrCodeAlreadyAnswered, "permission request already answered", clientReqID)
 	}
 }
 

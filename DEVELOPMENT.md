@@ -1,6 +1,6 @@
 # hoxi 开发者全景与工程实现手册 (DEVELOPMENT.md)
 
-本文档是 `hoxi` 的**生产级工程实现规范（Implementation-Ready Blueprint）**。文档中的所有接口路径、SSE 事件载荷、插件 Hook 签名、Git Worktree 状态机及 Wails/CGo 原生宿主代码均已对齐 **OpenCode `v1.18+` 真实 OpenAPI 规范**、**`gopanel_v2` 桌面宿主实现**、**三栏工作区架构** 以及 **`Kilo Code` SolidJS 任务执行引擎**，可直接作为开发与验收的唯一事实来源（Single Source of Truth）。
+本文档是 `hoxi` 的**生产级工程实现规范（Implementation-Ready Blueprint）**。文档中的所有接口路径、SSE 事件载荷、审批门控、Git Worktree 状态机及 Wails/CGo 原生宿主架构均对齐 **Hoxi 内置 Go 原生 Agent 引擎（`internal/agent`，零外部 sidecar 依赖）**、**统一 `/api/hoxi/*` 网关平面**、**三栏 SolidJS 工作区架构** 以及 **多运行时适配引擎（`internal/runner`）**，与 [`AGENTS.md`](AGENTS.md) 和 [`docs/architecture-overview.md`](docs/architecture-overview.md) 共同构成开发与验收的事实来源。
 
 ---
 
@@ -8,12 +8,12 @@
 
 1. [架构全景与设计哲学](#1-架构全景与设计哲学)
 2. [技术栈选型与职责边界](#2-技术栈选型与职责边界)
-3. [Go 守护进程与零端口内存网关规范](#3-go-守护进程与零端口内存网关规范)
-   - [3.1 OpenCode 子进程守护与冷启动优化](#31-opencode-子进程守护与冷启动优化)
-   - [3.2 HTTP Basic Auth 注入与本地代理防劫持](#32-http-basic-auth-注入与本地代理防劫持)
-   - [3.3 SSE 零缓冲流式转发与 WebSocket 终端升级](#33-sse-零缓冲流式转发与-websocket-终端升级)
-4. [统一网关三大平面与 OpenCode 通信契约](#4-统一网关三大平面与-opencode-通信契约)
-   - [4.1 客户端统一网关平面与上游端点对照表](#41-客户端统一网关平面与上游端点对照表)
+3. [Go 原生宿主网关与可选外部引擎兼容规范](#3-go-原生宿主网关与可选外部引擎兼容规范)
+   - [3.1 默认进程内原生启动与按需兼容子进程](#31-默认进程内原生启动与按需兼容子进程)
+   - [3.2 回环网关鉴权与本地代理防劫持](#32-回环网关鉴权与本地代理防劫持)
+   - [3.3 SSE 零缓冲流式推送与 WebSocket 终端升级](#33-sse-零缓冲流式推送与-websocket-终端升级)
+4. [统一 `/api/hoxi/*` 网关平面与通信契约](#4-统一-apihoxi-网关平面与通信契约)
+   - [4.1 客户端统一网关平面端点对照表](#41-客户端统一网关平面端点对照表)
    - [4.2 发送异步 Prompt 与模式/模型切换](#42-发送异步-prompt-与模式模型切换)
    - [4.3 权限审批与追问回复契约](#43-权限审批与追问回复契约)
    - [4.4 内置 PTY 终端与 WebSocket 协议](#44-内置-pty-终端与-websocket-协议)
@@ -30,14 +30,14 @@
 7. [Git Worktree 物理会话隔离与合并生命周期](#7-git-worktree-物理会话隔离与合并生命周期)
    - [7.1 Worktree 沙箱状态机](#71-worktree-沙箱状态机)
    - [7.2 Go Worktree 管理器接口契约 (`internal/worktree/`)](#72-go-worktree-管理器接口契约-internalworktree)
-8. [OpenCode 插件体系：安全门控与 8 维记忆沉淀](#8-opencode-插件体系安全门控与-8-维记忆沉淀)
-   - [8.1 真实 `@opencode-ai/plugin` Hook 签名](#81-真实-opencode-aiplugin-hook-签名)
+8. [统一安全门控与 8 维记忆沉淀体系](#8-统一安全门控与-8-维记忆沉淀体系)
+   - [8.1 原生门控钩子与可选 OpenCode 插件签名](#81-原生门控钩子与可选-opencode-插件签名)
    - [8.2 统一审批策略门控 (`approval_decision.go` & `permission-policy.js`)](#82-统一审批策略门控-approval_decisiongo--permission-policyjs)
-   - [8.3 8 维度结构化记忆插件 (`hoxi-memory.js`)](#83-8-维度结构化记忆插件-hoxi-memoryjs)
+   - [8.3 8 维度结构化记忆沉淀 (`internal/runner/memory.go` & `.hoxi/memory/`)](#83-8-维度结构化记忆沉淀-internalrunnermemorygo--hoximemory)
 9. [macOS & Windows 原生宿主与状态栏托盘 (`internal/app/` & `internal/statusbar/`)](#9-macos--windows-原生宿主与状态栏托盘-internalapp--internalstatusbar)
    - [9.1 Wails 窗口配置与单实例锁](#91-wails-窗口配置与单实例锁)
    - [9.2 原生状态栏 / 系统托盘状态机联动](#92-原生状态栏--系统托盘状态机联动)
-10. [多运行时执行引擎与跨软件会话接管 (`internal/runner/` & `internal/handoff/`)](#10-多运行时执行引擎与跨软件会话接管-internalrunner--internalhandoff)
+10. [默认原生引擎、多运行时适配与会话接管 (`internal/agent/`, `internal/runner/`, `internal/handoff/`)](#10-默认原生引擎多运行时适配与会话接管-internalagent-internalrunner-internalhandoff)
 11. [远程访问与多通道接入架构 (`internal/tunnel/`, `internal/pairing/`, `internal/cloudflared/`)](#11-远程访问与多通道接入架构-internaltunnel-internalpairing-internalcloudflared)
 
 ---
@@ -46,7 +46,7 @@
 
 ## 1. 架构全景与设计哲学
 
-`hoxi` 的核心定位是：**专为全功能 AI Agent 打造的高颜值、轻量化、原生质感桌面工作台**。项目通过四层解耦架构，将核心工程能力融为一体（完整目录树与模块归属决策表以 [`AGENTS.md`](AGENTS.md) 为唯一权威来源）：
+`hoxi` 的核心定位是：**专为全功能 AI Agent 打造的高颜值、轻量化、原生质感桌面工作台**。项目通过四层解耦架构，将核心工程能力融为一体（完整目录树与模块归属决策表以 [`AGENTS.md`](AGENTS.md) 与 [`docs/architecture-overview.md`](docs/architecture-overview.md) 为唯一权威来源）：
 
 ```text
 ┌────────────────────────────────────────────────────────────────────────┐
@@ -62,22 +62,21 @@
 │    - 核心引擎：Vite + SolidJS + Tailwind CSS (零 VDOM，120Hz 满帧流式)  │
 │    - 审查与终端：@pierre/diffs Hunk 级代码对比 + @xterm/addon-webgl     │
 ├────────────────────────────────────────────────────────────────────────┤
-│ 3. Go 模块化守护与安全网关 (internal/{gateway,worktree,provider,...})  │
-│    - 子进程守护 (internal/opencode)：全生命周期监管原版 `opencode serve`│
-│    - 零端口内存网关 (internal/gateway)：进程内反向代理 + 会话目录隔离守卫│
-│    - Basic Auth 随机密码注入 + 绕过系统 HTTP_PROXY 防止本地 502         │
+│ 3. Go 原生宿主服务与安全网关 (internal/{gateway,termhost,worktree,...}) │
+│    - 统一网关平面 (internal/gateway)：/api/hoxi/* 路由与会话目录隔离守卫│
+│    - 原生终端宿主 (internal/termhost)：进程内 PTY 与 WebSocket 双向流    │
+│    - Hoxi 会话与记忆存储：~/.hoxi/sessions/<id>/ 与 <repo>/.hoxi/memory│
 │    - Git Worktree 沙箱引擎 (internal/worktree)：`.hoxi/worktrees/<id>`  │
 ├────────────────────────────────────────────────────────────────────────┤
-│ 4. 多运行时 Agent 内核 (internal/opencode & internal/runner)           │
-│    - 官方 pristine `opencode` 二进制（Upstream Zero-Fork 零侵入）        │
-│    - 多运行时引擎 (internal/runner)：OpenCode / Claude Code / agy /     │
-│      Gemini CLI / Qoder / CodeBuddy                                    │
-│    - 本地插件：.opencode/plugins/ (8 维度结构化记忆沉淀 + `/goal` 目标) │
+│ 4. 默认 Go 原生引擎与多运行时内核 (internal/agent & internal/runner)    │
+│    - 默认内置引擎：Go Native Agent Engine (`native`, 零外部 sidecar)    │
+│    - 可选外部 CLI 运行时：Claude Code / Codex / OpenCode / Antigravity  │
+│      (`agy`) / Gemini CLI / Qoder / CodeBuddy                          │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 核心铁律：Upstream Zero-Fork（上游零侵入）
-**严禁 Fork 或修改 OpenCode 源码**。`opencode` 仅作为被 Go 监管的外部子进程运行。上游新增模型适配（Claude / GPT / Gemini / DeepSeek / 本地 Ollama）或升级工具链时，直接升级系统的 `opencode` 二进制即可。
+### 核心铁律：原生优先与外部 CLI 零侵入（Native-First & Zero-Fork）
+Hoxi 默认开箱即用运行内置 **Go 原生 Agent 引擎**（`internal/agent`），不依赖外部 sidecar 二进制；对用户可选接入的外部 CLI（`claude`、`codex`、`opencode`、`agy`、`gemini`、`qoder`、`codebuddy`）严禁 Fork 或修改上游源码，统一通过 `internal/runner` 进程适配与 PreToolUse 门控协同。项目状态与扩展目录统一写 `<project>/.hoxi/` 与 `~/.hoxi/`，严禁在用户项目创建 `.opencode/`。
 
 ---
 
@@ -85,98 +84,69 @@
 
 | 层级 | 技术栈与核心依赖 | 借鉴定点与选型依据 |
 | :--- | :--- | :--- |
-| **桌面宿主** | Go `>= 1.23` + Wails `v2.13+` + CGo / Win32 | 模块化收归于 `internal/app` 与 `internal/statusbar`（含 `statusbar_darwin.m` 与 `statusbar_windows.go`）。 |
+| **桌面宿主** | Go `>= 1.25` + Wails `v2.13+` + CGo / Win32 | 模块化收归于 `internal/app` 与 `internal/statusbar`（含 `statusbar_darwin.m` 与 `statusbar_windows.go`）。 |
 | **前端视图层** | SolidJS `^1.9` + TypeScript `^5.7` + Vite `^6.0` | 与 `Kilo Code` (`packages/kilo-ui`) 同源技术栈；细粒度 Signal 响应式直接操作真实 DOM，流式渲染零虚拟 DOM 开销。 |
 | **样式系统** | Tailwind CSS `^4.0` + CSS Variables | 深邃暗黑极简调性（`#0b0d12` 底色 + `1px` 微光边框 + 等宽数值对齐）。 |
-| **代码 Diff** | `@pierre/diffs` | 渲染 OpenCode 返回的 `SnapshotFileDiff` / Unified Patch，支持 Inline 与 Side-by-Side 切换。 |
-| **终端组件** | `@xterm/xterm` + `@xterm/addon-webgl` + `@xterm/addon-fit` | 直连 OpenCode 内置的 `/pty/{ptyID}/connect` WebSocket 终端流，支持 GPU 加速与窗口自适应。 |
-| **Agent 内核** | `opencode serve` (`>= v1.18.0`) + `internal/runner` | 提供 `/session`、`/event`、`/permission`、`/pty`、`/vcs`、`/file` 及多运行时适配能力。 |
+| **代码 Diff** | `@pierre/diffs` | 渲染 Hoxi Worktree / 会话返回的 `SnapshotFileDiff` / Unified Patch，支持 Inline 与 Side-by-Side 切换。 |
+| **终端组件** | `@xterm/xterm` + `@xterm/addon-webgl` + `@xterm/addon-fit` | 直连 Hoxi 原生终端宿主 `/api/hoxi/pty/{ptyID}/connect` WebSocket 终端流，支持 GPU 加速与窗口自适应。 |
+| **Agent 内核** | `internal/agent` (`native` 默认) + `internal/runner` | 内置 Anthropic / OpenAI / Gemini 协议、文件/Shell/代码索引/宿主工具循环，并统一驱动多外部 CLI 运行时。 |
 
 ---
 
-## 3. Go 守护进程与零端口内存网关规范
+## 3. Go 原生宿主网关与可选外部引擎兼容规范
 
-### 3.1 OpenCode 子进程守护与冷启动优化
-Go 启动时（[`internal/opencode/`](internal/opencode/)）查找 `HOXI_OPENCODE` 环境变量或系统 `PATH` 中的 `opencode`，分配空闲本地回环端口（如 `127.0.0.1:41xxx`），并以如下参数启动：
+### 3.1 默认进程内原生启动与按需兼容子进程
+Hoxi 启动时（[`internal/app/app.go`](internal/app/app.go)）默认运行纯 Go 原生引擎（`openCodePort = 0`），直接就绪而无需拉起任何外部守护进程，冷启动耗时约 **~0.2s**、常驻内存约 **~30MB**。
 
-```bash
-opencode serve --hostname 127.0.0.1 --port <free-port> --print-logs
-```
+当用户显式安装并启用可选的 `opencode` 守护进程模式时（[`internal/app/supervise.go`](internal/app/supervise.go) + [`internal/opencode/`](internal/opencode/)），才按需以回环空闲端口启动 `opencode serve --hostname 127.0.0.1 --port <free-port> --print-logs`，并注入：
+1. `OPENCODE_SERVER_PASSWORD=<32-byte-random-hex>` 與 `OPENCODE_SERVER_USERNAME=opencode`（绝不落盘）。
+2. `OPENCODE_DISABLE_CONFIG_DEPENDENCY_INSTALL=1`：禁止在 `.opencode/` 联网自动安装依赖。
+3. `NO_PROXY=127.0.0.1,localhost`：防止子进程内部回环请求被系统代理拦截。
+4. 状态与配置目录统一由 [`internal/hoxipaths`](internal/hoxipaths/hoxipaths.go) 解析在 `~/.hoxi/` 下。
 
-**关键环境变量注入（必配）**：
-1. `OPENCODE_SERVER_PASSWORD=<32-byte-random-hex>`：由 Go `crypto/rand` 在每次启动时生成，绝不落盘。
-2. `OPENCODE_SERVER_USERNAME=opencode`：显式固定认证用户名。
-3. `OPENCODE_DISABLE_CONFIG_DEPENDENCY_INSTALL=1`：**极其重要**！OpenCode 默认在检测到 `.opencode/` 目录时会调用 `bun add @opencode-ai/plugin` 联网安装依赖，在国内网络或代理异常时会导致冷启动卡死超时。设置该变量（或在 `.opencode/` 预置好静态依赖）可将冷启动耗时控制在 **200ms** 以内。
-4. `NO_PROXY=127.0.0.1,localhost`：防止子进程内部回环请求被系统代理拦截。
+### 3.2 回环网关鉴权与本地代理防劫持
+1. **每次启动生成一次性 `gatewayToken`**：由 `/api/hoxi/bootstrap` 下发给本机桌面前端与 CLI（远程隧道请求绝不下发），回环敏感宿主路由（`/api/hoxi/pty`、`/api/hoxi/provider/{credentials,config,catalog,oauth}` 等）强制校验 `X-Hoxi-Token` / `HttpOnly` Cookie / `?hoxiToken=`（[`internal/gateway/security.go`](internal/gateway/security.go)）。
+2. **防系统 HTTP_PROXY 劫持**：macOS / Windows 开发者常开启 Clash / Surge 等系统代理。回环客户端（[`internal/opencode/ocapi`](internal/opencode/ocapi/client.go)）显式配置 `Proxy: nil` 与 `FlushInterval: -1`，彻底杜绝本机回环 `502 Bad Gateway` 与流式缓冲延迟。
 
-**就绪探针与引擎状态路径（Health Check & Engine Paths）**：
-- 引擎数据库（`hoxi.db`）与数据/状态目录（`engine-data`、`engine-state`）统一由底座包 [`internal/hoxipaths`](internal/hoxipaths/hoxipaths.go) 解析；本机 OpenCode Console 账号预同步由 [`internal/opencode/ocstate`](internal/opencode/ocstate/ocstate.go) 统一处理。
-- Go 启动子进程后，通过 [`internal/opencode/ocapi`](internal/opencode/ocapi/client.go) 以 100ms 间隔轮询 `GET http://127.0.0.1:<port>/global/health`（携带 Basic Auth），当返回 `200 OK` 且 `{"healthy": true}` 时标记网关就绪。
-
-### 3.2 HTTP Basic Auth 注入与本地代理防劫持
-> [!IMPORTANT]
-> **避坑指南（实测验证）**：
-> 1. `opencode serve` 在设置 `OPENCODE_SERVER_PASSWORD` 后，使用的是 **HTTP Basic Auth**（`WWW-Authenticate: Basic realm="Secure Area"`），**不是** `Bearer` Token！若注入 `Bearer` 会直接收到 `401 Unauthorized`。
-> 2. macOS 开发者常开启 Clash / Surge 等系统代理（设置 `HTTP_PROXY` 环境变量）。Go 的 `http.DefaultTransport` 默认会读取环境代理，导致发往 `127.0.0.1:<port>` 的反向代理请求被转发给外部代理并返回 `502 Bad Gateway`。因此反向代理及所有直连引擎的客户端 **必须复用 [`internal/opencode/ocapi`](internal/opencode/ocapi/client.go) 的共享 `Transport`（显式设置 `Proxy: nil`）**。
-
-[`internal/gateway/gateway.go`](internal/gateway/gateway.go) 与 [`internal/opencode/ocapi/client.go`](internal/opencode/ocapi/client.go) 标准实现模型：
-
-```go
-func newOpenCodeReverseProxy(target *url.URL, openCode *ocapi.Client) *httputil.ReverseProxy {
-	proxy := httputil.NewSingleHostReverseProxy(target)
-	// 1. 复用 ocapi 共享回环 Transport（Proxy: nil），忽略系统 HTTP_PROXY / HTTPS_PROXY，彻底杜绝 502 Bad Gateway
-	proxy.Transport = ocapi.Transport()
-	// 2. SSE 实时流必须设置 FlushInterval = -1，禁用响应缓冲，收到字节立即推送给前端
-	proxy.FlushInterval = -1
-
-	origDirector := proxy.Director
-	proxy.Director = func(req *http.Request) {
-		origDirector(req)
-		req.Host = target.Host
-		// 3. 统一由 ocapi 注入 OpenCode 要求的 HTTP Basic Auth (username: "opencode")
-		openCode.Authorize(req)
-	}
-	return proxy
-}
-```
-
-### 3.3 SSE 零缓冲流式转发与 WebSocket 终端升级
-1. **静态资源与 API 分流（`internal/gateway/gateway.go`）**：
-   - 当请求路径匹配 `/session`、`/event`、`/global`、`/permission`、`/question`、`/pty`、`/vcs`、`/file`、`/find`、`/provider`、`/config`、`/command`、`/agent`、`/lsp`、`/experimental`、`/api/hoxi/` 时，交由 Go 网关处理或反向代理至 `opencode serve`。
-   - 其余路径回退给 `web/dist` 前端静态资源（SPA History 路由回退至 `index.html`）。
-2. **WebSocket 终端连接限制与方案**：
-   - Wails 的 `AssetServer.Handler` 基于自定义 `wails://` Scheme 拦截 HTTP 请求，**原生不支持在 `wails://` 上直接 Upgrade WebSocket**（见 `gopanel_v2/desktop_gateway.go` 注释）。
-   - **标准解决方案**：Go 网关同时在 `127.0.0.1:<gateway-port>` 开启一个仅绑定本地回环的轻量级 HTTP/WS 监听器（携带一次性启动 Nonce 校验），并通过 `/api/hoxi/bootstrap` 接口将该 `ws://127.0.0.1:<gateway-port>` 地址下发给前端。前端 Xterm 组件通过该本地地址建立 `/pty/{ptyID}/connect` WebSocket 连接，Go 网关自动完成 Basic Auth 注入与双向字节流透传。
+### 3.3 SSE 零缓冲流式推送与 WebSocket 终端升级
+1. **静态资源与 `/api/hoxi/*` 路由分流（[`internal/gateway/gateway.go`](internal/gateway/gateway.go)）**：
+   - `/api/hoxi/*` 统一承载会话、事件流、审批、终端 PTY、Agent/Command 目录、LSP 状态、Skills、文件检索/预览、Worktree、浏览器与电脑控制（同时在 [`native_host.go`](internal/gateway/native_host.go) 保留旧无前缀兼容别名供存量测试与插件回退）。
+   - 其余非 API 路径回退给 `web/dist` 前端静态资源（SPA History 路由回退至 `index.html`）。
+2. **WebSocket 终端连接方案**：
+   - Wails 的 `AssetServer.Handler` 基于自定义 `wails://` Scheme 拦截 HTTP 请求，不支持直接在 `wails://` 上 Upgrade WebSocket。
+   - Go 宿主在本地回环（release `127.0.0.1:5410`、dev `127.0.0.1:5420`，占用自动回退随机端口）开启轻量级 HTTP/WS 监听器，经 `/api/hoxi/bootstrap` 下发 `wsBaseURL` 与 `gatewayToken`。前端 Xterm 组件连接 `ws://127.0.0.1:<port>/api/hoxi/pty/{ptyID}/connect?directory=...&hoxiToken=...`，直连 [`internal/termhost`](internal/termhost/service.go) 双向字节流。
 
 ---
 
-## 4. 统一网关三大平面与 OpenCode 通信契约
+## 4. 统一 `/api/hoxi/*` 网关平面与通信契约
 
 > [!IMPORTANT]
-> **三大统一网关平面强制约束（见 `AGENTS.md` §2.2 第 3 条）**：
-> - **前端（`web/src/services/api.ts`、`sse.ts`）、CLI 与手机端**的所有会话操作**必须**调用 `/api/hoxi/sessions`，事件流**必须**订阅 `/api/hoxi/event`，权限审批**必须**调用 `/api/hoxi/permission`（由 `gateway` 与 `runner` 统一收口并合并路由 `OpenCode`、`Claude Code`、`Antigravity`、`Gemini CLI`、`Qoder`、`CodeBuddy` 六大运行时）。
-> - **严禁前端或 CLI 直接裸调上游 `/session`、`/event` 或 `/permission` 接口**——这些裸路径仅由 Go 网关进程内在回环地址转发给 `opencode serve`。
+> **统一 `/api/hoxi/*` 网关平面强制约束（见 `AGENTS.md` §2.2 第 3 条）**：
+> - **前端（`web/src/services/api.ts`、`sse.ts`）、CLI 与手机端**的所有会话操作**必须**调用 `/api/hoxi/sessions`，事件流**必须**订阅 `/api/hoxi/event`，权限审批**必须**调用 `/api/hoxi/permission`，宿主终端、目录、LSP、文件与提供商统一走 `/api/hoxi/{pty,agents,commands,lsp,file,provider}`。
+> - **严禁前端或 CLI 直接裸调旧版无前缀路径（`/session`、`/event`、`/permission`、`/pty`、`/agent`、`/command`、`/lsp`、`/find/file`、`/provider`、`/auth`、`/global`）**。
 > - 所有关联特定会话或沙箱的请求均必须携带 `?directory=<urlencoded-worktree-path>` 参数。
 
-### 4.1 客户端统一网关平面与上游端点对照表
+### 4.1 客户端统一网关平面端点对照表
 
-| 功能模块 | 前端 / CLI / 手机端统一入口（必走） | 底层 `opencode serve` 内部端点（仅 Go 网关内部回环调用） | 请求体 / 响应说明 |
+| 功能模块 | 前端 / CLI / 手机端统一入口（必走） | 宿主实现包 | 请求体 / 响应说明 |
 | :--- | :--- | :--- | :--- |
-| **健康检查** | `GET /healthz` / `GET /global/health` | `GET /global/health` | `{"healthy": true, "version": "1.19.3"}` |
-| **全局事件流** | `GET /api/hoxi/event?directory=` | `GET /event?directory=` | SSE `text/event-stream`，合并 Runner 与 OpenCode 事件，首帧及每 10s 推送 `hoxi.status.snapshot` 与 `server.heartbeat` |
-| **会话列表** | `GET /api/hoxi/sessions?directory=&limit=50` | `GET /session?directory=` | 返回合并后的 `Session[]` 列表 |
-| **创建会话** | `POST /api/hoxi/sessions?directory=` | `POST /session?directory=` | `{"title"?: string, "runtime"?: string}` -> 返回新建的 `Session` (`id: "ses_..."`) |
-| **更新/删除会话**| `PATCH\|DELETE /api/hoxi/sessions/{sessionID}?directory=` | `PATCH\|DELETE /session/{sessionID}` | 重命名标题或删除会话 |
-| **读取消息流** | `GET /api/hoxi/sessions/{sessionID}/message?directory=&limit=N&before=` | `GET /session/{sessionID}/message` | 支持游标分页（桌面端默认最新 200 条），返回 `Array<{ info: Message, parts: Part[] }>` |
-| **异步发消息** | `POST /api/hoxi/sessions/{sessionID}/prompt_async?directory=` | `POST /session/{sessionID}/prompt_async` | 见 [4.2 节](#42-发送异步-prompt-与模式模型切换)，立即返回 `204 No Content`，结果由 `/api/hoxi/event` 推送 |
-| **终止执行** | `POST /api/hoxi/sessions/{sessionID}/abort?directory=` | `POST /session/{sessionID}/abort` | 立即中断当前会话正在运行的生成或工具调用 |
-| **时光机回滚** | `POST /api/hoxi/sessions/{sessionID}/revert?directory=` | `POST /session/{sessionID}/revert` | `{"messageID": "msg_...", "partID"?: "prt_..."}`，回滚对话与磁盘文件快照（运行中返回 `409`） |
-| **撤销回滚** | `POST /api/hoxi/sessions/{sessionID}/unrevert?directory=` | `POST /session/{sessionID}/unrevert` | `{}`，恢复刚被 `revert` 撤回的对话与代码变更 |
-| **会话分叉** | `POST /api/hoxi/sessions/{sessionID}/fork?directory=` | `POST /session/{sessionID}/fork` | `{"messageID"?: "msg_..."}`，从指定消息节点克隆分叉新会话 |
-| **会话级 Diff** | `GET /api/hoxi/sessions/{sessionID}/diff?directory=` | `GET /session/{sessionID}/diff` | 返回 `SnapshotFileDiff[]`（含 `file`, `patch`, `additions`, `deletions`） |
-| **权限审批列表/回复**| `GET /api/hoxi/permission?directory=`<br>`POST /api/hoxi/permission/{requestID}/reply?directory=` | `GET /permission`<br>`POST /permission/{requestID}/reply` | `{"reply": "once" \| "always" \| "reject", "message"?: string}`，统一处理 OpenCode 与 Runner (`per_rnr_*`) 审批 |
-| **Agent 追问回复**| `POST /question/{requestID}/reply?directory=` | `POST /question/{requestID}/reply` | `{"answers": string[][]}`，回复 Agent 发出的交互式选择题 |
-| **LSP / Provider / 文件**| `GET /lsp`、`GET /provider`、`GET /api/hoxi/file/{list,search,content}` | `GET /lsp`、`GET /provider`、`GET /find/file`、`GET /file/content` | 获取 LSP 诊断、模型列表与工作区内受守卫的文件检索/读取 |
+| **健康与引导** | `GET /healthz` / `GET /api/hoxi/bootstrap` | `internal/gateway` | 返回版本、默认工作区、`wsBaseURL`、本机 `gatewayToken` 与托盘摘要 |
+| **全局事件流** | `GET /api/hoxi/event?directory=` | `internal/runner` | SSE `text/event-stream`，首帧及每 10s 推送 `hoxi.status.snapshot` 与 `server.heartbeat` |
+| **会话列表** | `GET /api/hoxi/sessions?directory=&limit=50` | `internal/runner` | 返回当前工作区或全局 `SessionInfo[]` 列表 |
+| **创建会话** | `POST /api/hoxi/sessions?directory=` | `internal/runner` | `{"title"?: string, "runtime"?: "native" \| string}` -> 默认创建 `native` 会话 (`id: "ses_..."`) |
+| **更新/删除会话**| `PATCH\|DELETE /api/hoxi/sessions/{sessionID}?directory=` | `internal/runner` | 重命名标题、归档、切换沙箱或删除会话 |
+| **读取消息流** | `GET /api/hoxi/sessions/{sessionID}/message?directory=&limit=N&before=` | `internal/runner` | 支持游标冷分页（桌面端首屏最新 200 条），返回 `Array<{ info: Message, parts: Part[] }>` |
+| **异步发消息** | `POST /api/hoxi/sessions/{sessionID}/prompt_async?directory=` | `internal/runner` | 见 [4.2 节](#42-发送异步-prompt-与模式模型切换)，支持 `X-Idempotency-Key`，结果由 `/api/hoxi/event` 推送 |
+| **终止执行** | `POST /api/hoxi/sessions/{sessionID}/abort?directory=` | `internal/runner` | 立即中断当前会话正在运行的生成或工具调用 |
+| **时光机回滚** | `POST /api/hoxi/sessions/{sessionID}/revert?directory=` | `internal/runner` + `worktree` | `{"messageID": "msg_...", "partID"?: "prt_..."}`，回滚对话与磁盘文件快照（运行中返回 `409`） |
+| **撤销回滚** | `POST /api/hoxi/sessions/{sessionID}/unrevert?directory=` | `internal/runner` + `worktree` | `{}`，恢复刚被 `revert` 撤回的对话与代码变更 |
+| **会话分叉** | `POST /api/hoxi/sessions/{sessionID}/fork?directory=` | `internal/runner` | `{"messageID"?: "msg_..."}`，从指定消息节点克隆分叉新会话 |
+| **会话级 Diff** | `GET /api/hoxi/sessions/{sessionID}/diff?directory=` | `internal/worktree` | 返回 `SnapshotFileDiff[]`（含 `file`, `patch`, `additions`, `deletions`） |
+| **权限审批列表/回复**| `GET /api/hoxi/permission?directory=`<br>`POST /api/hoxi/permission/{requestID}/reply?directory=` | `internal/runner` | `{"reply": "once" \| "always" \| "reject", "message"?: string}`，统一处理全运行时审批 |
+| **Agent 追问回复**| `GET /api/hoxi/question?directory=`<br>`POST /api/hoxi/question/{requestID}/{reply,reject}?directory=` | `internal/runner` | `{"answers": string[][]}`，回复或拒绝 Agent 发出的交互式选择题 |
+| **终端 PTY** | `POST /api/hoxi/pty?directory=`<br>`PUT\|DELETE /api/hoxi/pty/{ptyID}?directory=` | `internal/termhost` | 创建、调整尺寸与销毁本地 PTY 终端，WS 连接 `/api/hoxi/pty/{ptyID}/connect`（仅本机） |
+| **Agent / 命令 / LSP** | `GET /api/hoxi/{agents,commands,lsp}?directory=` | `internal/gateway` + `llm` | 获取内置与 `.hoxi/` 自定义角色、斜杠命令及工作区语言工具链状态 |
+| **Provider / 文件**| `GET /api/hoxi/provider/{catalog,models,config}`、`GET /api/hoxi/file/{list,search,content}` | `internal/provider` + `gateway` | 提供商目录、凭据（`/api/hoxi/provider/credentials/{id}`）与受守卫的工作区文件检索/读取 |
 
 ### 4.2 发送异步 Prompt 与模式/模型切换
 在前端用户输入指令并点击发送时，统一调用 **`POST /api/hoxi/sessions/{sessionID}/prompt_async?directory=<worktreePath>`**（严禁直调 `/session/{sessionID}/prompt_async`），HTTP 请求立即返回 `204`，所有 Token 增量与工具状态由 `/api/hoxi/event` SSE 统一驱动：
@@ -219,14 +189,14 @@ export interface SessionPromptInput {
    每一次完成决策（桌面、隧道或系统自动拒绝）都会写入 `~/.hoxi/approval-audit.json`（原子写入、`0600`、最多 500 条、密钥自动脱敏），可在 `GET /api/hoxi/permission/audit` 查询；该接口与 `GET|DELETE /api/hoxi/permission/grants` 都仅限桌面本机。
 
 ### 4.4 内置 PTY 终端与 WebSocket 协议
-右侧审查面板的 `Terminal` 标签页直接对接 OpenCode 的原生 PTY 管理器：
+右侧审查面板的 `Terminal` 标签页直接对接 Hoxi 原生 PTY 终端宿主（[`internal/termhost/`](internal/termhost/service.go)）：
 1. **创建终端会话**：
-   `POST /pty?directory=<worktreePath>`
-   请求体：`{"cwd": "<worktreePath>", "title": "Workspace Shell"}` -> 返回 `Pty` 对象（含 `id: "pty_..."`）。
+   `POST /api/hoxi/pty?directory=<worktreePath>`
+   请求体：`{"cwd": "<worktreePath>", "title": "Hoxi Terminal"}` -> 返回 `Pty` 对象（含 `id: "pty_..."`）。
 2. **连接实时终端流**：
-   通过 WebSocket 连接 `ws://127.0.0.1:<gateway-port>/pty/{ptyID}/connect?directory=<worktreePath>`，双向收发终端 stdin/stdout 原始字符流。
-3. **窗口尺寸同步**：
-   当 Xterm `@xterm/addon-fit` 触发 `onResize({ cols, rows })` 时，调用 `PUT /pty/{ptyID}` 发送 `{"size": {"rows": rows, "cols": cols}}`。
+   通过 WebSocket 连接 `ws://127.0.0.1:<gateway-port>/api/hoxi/pty/{ptyID}/connect?directory=<worktreePath>&hoxiToken=<token>`，双向收发终端 stdin/stdout 原始字符流。
+3. **窗口尺寸同步与销毁**：
+   当 Xterm `@xterm/addon-fit` 触发 `onResize({ cols, rows })` 时调用 `PUT /api/hoxi/pty/{ptyID}` 发送 `{"size": {"rows": rows, "cols": cols}}`；关闭终端时调用 `DELETE /api/hoxi/pty/{ptyID}`。
 
 ---
 
@@ -240,7 +210,7 @@ export interface SessionPromptInput {
 ```typescript
 // web/src/services/sse-types.ts
 
-export type OpenCodeEvent =
+export type HoxiEvent =
   | {
       type: "message.updated";
       properties: { sessionID: string; info: MessageInfo };
@@ -435,16 +405,16 @@ function scheduleFlush(applyDeltaToStore: (key: string, delta: string) => void) 
 1. **顶栏 (`CompactHeader` - 高度 `38px`)**：
    - 左侧预留 `76px` 空白区供 macOS 原生红绿灯（Traffic Lights）嵌入，整栏设置 `style="--wails-draggable: drag"` 支持拖拽窗口。
    - 中间展示当前项目名、Git Worktree 沙箱分支胶囊（如 `hoxi/ses_01J...`）以及一键合入按钮 `Apply to Main`。
-   - 右侧展示 OpenCode 引擎在线状态指示灯与右侧审查栏折叠开关。
+   - 右侧展示引擎运行状态指示灯与右侧审查栏折叠开关。
 2. **左栏 (`LeftNav` - 默认 `268px`，可拖拽缩放 `220–360px`，开关与宽度持久化)**：
-   - 顶部 `+ New Isolated Session` 按钮（点击触发 Worktree 沙箱创建 + OpenCode Session 创建）。
+   - 顶部 `+ New Isolated Session` 按钮（点击触发 Worktree 沙箱创建 + Hoxi 默认 `native` 会话创建）。
    - 按时间分组的会话列表（支持 Single / Multi / Running / Attention 视图切换），每项实时展示：会话标题、状态徽标（蓝点 Running / 黄点 Approval / 空闲）、Git 分支 / PR 状态胶囊，并将非归档子 Agent 会话（Subagent / Convoy 子任务）折叠归组在根父会话下方（子会话运行中、待审批、被选中或命中搜索时自动展开）。
 3. **中栏 (`MessageStream` + `Composer` - 弹性自适应 `flex-1`，目标最小 `560px`)**：
    - 消息流按 `MessagePart` 顺序渲染：`ReasoningPart` -> `ToolPart` -> `TextPart`。
    - 底部 Composer 支持：
      - `Mode` 切换胶囊：`Build`（全权限编码） / `Plan`（只读架构规划）。
-     - `Model` 选择器：读取 `GET /provider` 动态切换模型。
-     - `@` 符号唤起文件模糊搜索（调用 `GET /find/file`）。
+     - `Model` 选择器：读取 `GET /api/hoxi/provider/catalog` 动态切换模型。
+     - `@` 符号唤起文件模糊搜索（调用 `GET /api/hoxi/file/search`）。
      - 生成中展示红色 `Stop` 按钮（调用 `POST /api/hoxi/sessions/{id}/abort`）。
 4. **右栏 (`InspectorPane` - 默认 `420px`，可拖拽 `340–640px`，按可用宽度动态收窄，空间不足时自动收起，宽度持久化)**：
    - 高频标签页：`Diffs (N)` | `Memory (8-Dim)` | `Files` | `Terminal` | `Browser` | `Computer`。
@@ -465,21 +435,21 @@ function scheduleFlush(applyDeltaToStore: (key: string, delta: string) => void) 
 
 ### 6.5 Pierre Diff 审查器与 WebGL Xterm 终端集成
 - **`PierreDiffViewer`**：监听 `session.diff` 事件或调用 `GET /api/hoxi/sessions/{sessionID}/diff`，将返回的 `SnapshotFileDiff[]` 渲染为可折叠的文件变更卡片列表，支持一键切换 `Unified` 与 `Split` 视图。
-- **`WebGLTerminal`**：基于 `@xterm/xterm` + `@xterm/addon-webgl` 初始化，挂载时自动请求 `POST /pty` 获取 `ptyID` 并连接 WebSocket，确保在桌面工作台内拥有接近 iTerm2 的零延迟命令行体验。
+- **`WebGLTerminal`**：基于 `@xterm/xterm` + `@xterm/addon-webgl` 初始化，挂载时自动请求 `POST /api/hoxi/pty` 获取 `ptyID` 并连接 WebSocket，确保在桌面工作台内拥有接近 iTerm2 的零延迟命令行体验。
 
 ### 6.6 三大高阶控制能力
-为确保在执行控制力上提供全维度闭环体验，前端与插件层额外集成以下三项高阶机制：
+为确保在执行控制力上提供全维度闭环体验，前端与宿主引擎额外集成以下三项高阶机制：
 
 1. **执行中途“实时插话纠偏”（Live Guidance / Steering）**：
    - 当会话处于 `session.status.type === "busy"`（Agent 正在连续调用工具）时，底部 `Composer` 输入框**保持可输入状态**，右侧主按钮切换为紫色的 **`[Steer 实时纠偏]`**（旁边保留独立的红色 `[Stop]` 按钮）。
-   - 用户在 Agent 执行中途发送纠偏指令时，前端统一调用 `POST /api/hoxi/sessions/{sessionID}/prompt_async?directory=...` 追加指导消息。OpenCode 内核会在当前工具步骤完成后立即将该纠偏指令并入下一轮上下文，无需粗暴中断重来。
+   - 用户在 Agent 执行中途发送纠偏指令时，前端统一调用 `POST /api/hoxi/sessions/{sessionID}/prompt_async?directory=...` 追加指导消息。Hoxi 原生引擎（`native`）与可选 OpenCode 运行时会在当前工具步骤完成后立即将该纠偏指令并入下一轮上下文，无需粗暴中断重来。
 2. **单步级“代码时光机回滚”与“分支探索”（Checkpoint Revert & Session Fork）**：
    - 在每条用户消息及每张已完成的文件修改 `ToolCard` 右上角提供两个快捷微交互按钮：
      - **`[Revert to Here 回滚到此步]`**：经统一 `POST /api/hoxi/sessions/{sessionID}/revert?directory=...`（传入 `{ messageID, partID }`）回退消息与对应文件检查点。执行中（含重试等待）禁用回退，后端对运行中的任务返回 409，绝不隐式停止主任务或子任务；“立即发送”已送入运行时的消息目前不能无中断撤回。仅实际恢复文件时显示 `[Undo Revert 恢复重做]` 提示条（绑定统一 `POST /api/hoxi/sessions/{sessionID}/unrevert` 路由）；纯消息回退不显示代码回滚提示。请求失败时保留原消息、回退状态与输入草稿。
      - **`[Fork 分叉探索]`**：经统一 `POST /api/hoxi/sessions/{sessionID}/fork?directory=...`（传入 `{ messageID }`），从当前节点瞬间克隆出一条新会话，方便对比两种不同的技术重构路径。
-3. **毫秒级“LSP 编译器诊断闭环”（Auto LSP Diagnostics）**：
-   - 顶栏与右侧审查栏常驻显示当前工作区的 **LSP 状态徽标**（读取 `GET /lsp`）。
-   - 当 Agent 调用 `edit` 或 `write` 修改代码后，OpenCode 原生 LSP 客户端会在毫秒级内抓取编译器语法/类型报错（Diagnostics）并直接附带在工具返回结果（`ToolStateCompleted.output` / `metadata`）中，无需每次执行耗时的全量编译即可触发 Agent 自动修复。
+3. **工具链与编译器诊断闭环（Diagnostics）**：
+   - 顶栏与右侧审查栏可查看当前工作区语言工具链状态（读取 `GET /api/hoxi/lsp`）。
+   - 当 Agent 调用 `edit` 或 `write` 修改代码后，引擎抓取编译器语法/类型报错（Diagnostics）并附带在工具返回结果（`ToolStateCompleted.output` / `metadata`）中，触发 Agent 自动修复。
 
 ---
 
@@ -527,26 +497,22 @@ stateDiagram-v2
 
 ---
 
-## 8. OpenCode 插件体系：安全门控与 8 维记忆沉淀
+## 8. 统一安全门控与 8 维记忆沉淀体系
 
-### 8.1 真实 `@opencode-ai/plugin` Hook 签名
-根据 OpenCode `v1.18+` 官方类型定义（`@opencode-ai/plugin/dist/index.d.ts`），本地插件导出一个异步工厂函数 `(input: PluginInput) => Promise<Hooks>`，核心可用 Hook 包括：
-- `"permission.ask"?: (input: Permission, output: { status: "ask" | "deny" | "allow" }) => Promise<void>`
-- `"experimental.chat.system.transform"?: (input: { sessionID?: string; model: Model }, output: { system: string[] }) => Promise<void>`
-- `"experimental.session.compacting"?: (input: { sessionID: string }, output: { context: string[]; prompt?: string }) => Promise<void>`
-- `event?: (input: { event: Event }) => Promise<void>`
+### 8.1 原生门控钩子与可选 OpenCode 插件签名
+Hoxi 默认 Go 原生引擎（`internal/agent`）与外部 CLI 运行时（Claude Code、Codex、Antigravity、Gemini CLI）统一通过进程内 `PermissionHook` 或回环 PreToolUse / BeforeTool Hook 接入 Go 端门控；可选 OpenCode 运行时则通过 `@opencode-ai/plugin` 钩子（`permission.ask`、`experimental.chat.system.transform`、`experimental.session.compacting`、`event`）协同同一套 Go 门控。
 
-### 8.2 统一审批策略门控 (`approval_decision.go` & `permission-policy.js`)
-审批决策统一收口在 Go 端 [`internal/runner/approval_decision.go`](internal/runner/approval_decision.go)（策略持久化于 `~/.hoxi/approval-policy.json`），与前端 [`.opencode/lib/permission-policy.js`](.opencode/lib/permission-policy.js) 共享命令级（[`.opencode/lib/permission-policy.cases.json`](.opencode/lib/permission-policy.cases.json)）与请求级（[`.opencode/lib/permission-request.cases.json`](.opencode/lib/permission-request.cases.json)）两套一致性测试集：
+### 8.2 统一审批策略门控 (`shellpolicy/decision.go` & `permission-policy.js`)
+审批决策统一收口在 Go 端 [`internal/runner/shellpolicy/decision.go`](internal/runner/shellpolicy/decision.go)（策略持久化于 `~/.hoxi/approval-policy.json`），与前端 [`web/src/policy/permission-policy.js`](web/src/policy/permission-policy.js) 共享命令级（[`internal/runner/shellpolicy/testdata/permission-policy.cases.json`](internal/runner/shellpolicy/testdata/permission-policy.cases.json)）与请求级（[`internal/runner/shellpolicy/testdata/permission-request.cases.json`](internal/runner/shellpolicy/testdata/permission-request.cases.json)）两套一致性测试集：
 1. 支持五种审批模式：`auto`（自动放行常规操作）、`trusted`（完全信任，额外放行隔离 worktree 内与系统临时目录的可恢复删除/重置及内联解释器脚本）、`smart`（智能只读白名单）、`manual`（全部询问）、`unattended`（无人值守，强制要求隔离 worktree + OS 命令沙箱，硬拒绝读取密钥、`git push`、提权、凭据外发与动态拼接代码），以及可选的轻量模型审查 `aiReview` + `aiReviewModel`（`internal/runner/approval_ai_review.go`）。
 2. 在任何模式下（含 `trusted`），命中硬底线（读取密钥与凭据文件、工作树外敏感路径、控制执行的受保护路径、`sudo`、`git push --force`、共享 git 状态变更、发布类命令、非本会话自有进程的 `kill`/`pkill`/`killall`、磁盘与系统命令、管道执行等）一律挂起等待 `<ApprovalGateCard />` 人工确认（`unattended` 模式下直接硬拒绝并记入 `/api/hoxi/permission/deferred`）。
-3. OpenCode 全局配置的 `edit` / `webfetch` / `bash` 统一保持 `"ask"`（对象规则自动补 `"*": "ask"` 兜底），收到 `permission.asked` 或 PreToolUse / BeforeTool Hook 时由 Go 端 `approvalAutoApproves` 按当前策略决定直接放行或广播给客户端。
+3. 所有运行时执行命令与敏感读写时，统一由 Go 端 `approvalAutoApproves` 按当前策略决定直接放行或广播 `permission.asked` 给客户端。
 
-### 8.3 8 维度结构化记忆插件 (`hoxi-memory.js`)
-放置在 [`.opencode/plugins/hoxi-memory.js`](.opencode/plugins/hoxi-memory.js)，实现 **8 维度上下文压缩协议**：
-1. 在每次对话构造 System Prompt 时（`experimental.chat.system.transform`），自动把项目根 `.hoxi/memory/project.md` 与当前会话交接记忆 `.hoxi/memory/sessions/<sessionID>.md` 注入模型上下文（兼容读取旧版 `.opencode/memory/` 数据）。
-2. 在会话触发上下文压缩时（`experimental.session.compacting`），将压缩 Prompt 替换为标准 8 维度结构化模板（`Goals`, `Constraints`, `Key Facts`, `Changed Files`, `Errors & Fixes`, `Todo`, `Progress`, `Next Steps`）。
-3. 在会话进入空闲状态时（`event` 收到 `session.idle`），将会话关键进展归档至 `.hoxi/memory/sessions/<sessionID>.md`。
+### 8.3 8 维度结构化记忆沉淀 (`internal/runner/memory.go` & `.hoxi/memory/`)
+由 Go 端 [`internal/runner/memstore/memory.go`](internal/runner/memstore/memory.go) 与 [`internal/runner/memstore/memory_bank.go`](internal/runner/memstore/memory_bank.go)（可选 OpenCode 运行时辅以内置覆盖层 [`internal/opencode/hoxi_plugin.js`](internal/opencode/hoxi_plugin.js)）统一实现 **8 维度上下文压缩协议**：
+1. 在每轮对话构造上下文时（`runtimeMemoryContext`），自动将项目根 `<project>/.hoxi/memory/project.md` 与当前会话交接记忆 `<project>/.hoxi/memory/sessions/<sessionID>.md` 注入模型上下文（兼容只读回退旧版 `.opencode/memory/` 数据）。
+2. 在会话触发上下文压缩时（[`internal/agent/summarize.go`](internal/agent/summarize.go) / `session_summarize.go`），按模型预算分段摘要并生成标准 8 维度结构化记忆（`Goals`, `Constraints`, `Key Facts`, `Changed Files`, `Errors & Fixes`, `Todo`, `Progress`, `Next Steps`）。
+3. 在会话完成轮次或通过 `PUT /api/hoxi/memory`、`POST /api/hoxi/memory/promote` 编辑提炼时，原子写入 `<project>/.hoxi/memory/`。
 
 ---
 
@@ -575,12 +541,12 @@ Go 网关在转发 `/api/hoxi/event` SSE 流及多运行时事件时，旁路解
 
 ---
 
-## 10. 多运行时执行引擎与跨软件会话接管 (`internal/runner/` & `internal/handoff/`)
+## 10. 默认原生引擎、多运行时适配与会话接管 (`internal/agent/`, `internal/runner/`, `internal/handoff/`)
 
-1. **多运行时执行引擎（[`internal/runner/`](internal/runner/)）**：
-   - 除默认 `opencode` 运行时外，原生支持驱动 **Claude Code (`claude`)**、**Google Antigravity (`agy`)**、**Gemini CLI (`gemini`)**、**Qoder (`qoder`)** 与 **CodeBuddy (`codebuddy`)** 子进程，并将各 CLI 的流式 JSONL 事件实时转译为统一的 OpenCode SSE 事件契约（`message.updated`、`message.part.delta`、`permission.asked`、`session.status`），使前端 Timeline、ToolCard、ThoughtBox、ApprovalGateCard 与状态栏托盘对底层运行时完全透明。其中 Qoder 与 CodeBuddy 因无 PreToolUse 门控能力，强制仅允许在只读模式（Plan）下运行。
-   - 针对外部 CLI 瞬态网络故障或空输出中断，内置最多 2 次指数退避自动重连续跑（[`internal/runner/turn_retry.go`](internal/runner/turn_retry.go)，复用 `--resume` 并在产生真实工具副作用后禁止自动重跑）；对 OpenCode 派生的子会话（Subagent），自动追踪父子映射并将子会话审批与忙闲状态聚合至根托管会话。
-   - 详见专项文档：[`docs/antigravity-runner-probe.md`](docs/antigravity-runner-probe.md)、[`docs/antigravity-approval-hook.md`](docs/antigravity-approval-hook.md)、[`docs/claude-code-approval-hook.md`](docs/claude-code-approval-hook.md)。
+1. **默认 Go 原生引擎与多运行时执行引擎（[`internal/agent/`](internal/agent/) + [`internal/runner/`](internal/runner/)）**：
+   - 默认使用进程内 **Go Native Agent Engine (`native`)**（内置 Anthropic、OpenAI Chat/Responses、Gemini 协议，文件读写编辑、后台 Shell、代码索引、子 Agent、Skills、MCP 及 `hoxi_browser`/`hoxi_computer`/`hoxi_image`/`hoxi_tools` 宿主工具），同时按需驱动 **Claude Code (`claude`)**、**OpenAI Codex (`codex`)**、**OpenCode (`opencode`)**、**Google Antigravity (`agy`)**、**Gemini CLI (`gemini`)**、**Qoder (`qoder`)** 与 **CodeBuddy (`codebuddy`)** 子进程，并将全运行时的流式事件统一输出为 Hoxi SSE 事件契约（`message.updated`、`message.part.delta`、`permission.asked`、`session.status`），使前端 Timeline、ToolCard、ThoughtBox、ApprovalGateCard 与状态栏托盘完全透明。其中 Qoder 与 CodeBuddy 因无 PreToolUse 门控能力，强制仅允许在只读模式（Plan）下运行。
+   - 针对网络瞬态故障或空输出中断，内置指数退避自动重试与恢复（[`internal/agent/step_retry.go`](internal/agent/step_retry.go)、[`internal/runner/turn_retry.go`](internal/runner/turn_retry.go)）；自动追踪子 Agent 父子会话映射并将审批与忙闲状态聚合至根托管会话。
+   - 详见专项文档：[`docs/architecture-overview.md`](docs/architecture-overview.md)、[`docs/antigravity-approval-hook.md`](docs/antigravity-approval-hook.md)、[`docs/claude-code-approval-hook.md`](docs/claude-code-approval-hook.md)。
 2. **跨软件会话接管与本地 CLI 协议桥接（[`internal/handoff/`](internal/handoff/)）**：
    - 支持一键扫描本机 Grok CLI、Claude Code、OpenAI Codex、Google Antigravity / Gemini CLI、OpenCode CLI、Trae、Qoder、CodeBuddy 的历史会话，归一化为统一 IR 并物化写入会话存储与 `<project>/.hoxi/memory/sessions/<sessionID>.md` 8 维交接记忆。
    - 详见专项蓝图：[`HANDOFF_AND_CLI_BRIDGE.md`](HANDOFF_AND_CLI_BRIDGE.md)。

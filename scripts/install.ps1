@@ -116,12 +116,14 @@ if ($SetupAsset -and -not $Portable) {
   $Downloaded = Get-VerifiedDownload -AssetUrl $ZipAsset.browser_download_url -FileName $ZipName
   try {
     Get-Process -Name "Hoxi" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-    $LegacySidecar = Join-Path $InstallDir "opencode.exe"
-    if (Test-Path $LegacySidecar) {
-      Get-Process -Name "opencode" -ErrorAction SilentlyContinue |
-        Where-Object { $_.Path -and ($_.Path -ieq $LegacySidecar) } |
-        Stop-Process -Force -ErrorAction SilentlyContinue
-      Remove-Item -Force $LegacySidecar -ErrorAction SilentlyContinue
+    foreach ($SidecarName in @("opencode", "sqlite3")) {
+      $LegacySidecar = Join-Path $InstallDir "$SidecarName.exe"
+      if (Test-Path $LegacySidecar) {
+        Get-Process -Name $SidecarName -ErrorAction SilentlyContinue |
+          Where-Object { $_.Path -and ($_.Path -ieq $LegacySidecar) } |
+          Stop-Process -Force -ErrorAction SilentlyContinue
+        Remove-Item -Force $LegacySidecar -ErrorAction SilentlyContinue
+      }
     }
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
     Write-Host "==> Extracting Hoxi $Ver to $InstallDir..." -ForegroundColor Cyan

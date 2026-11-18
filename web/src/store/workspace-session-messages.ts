@@ -19,17 +19,20 @@ import {
 } from "./auto-failover";
 import { hasPendingSessionSandbox, newIsolatedSession, waitForSessionSandbox } from "./session-sandbox";
 import { buildCombinedSystemPrompt } from "./settings";
-import { setWorkspace, workspace, type ReasoningEffort, type SelectedModel } from "./workspace-state";
+import { setWorkspace, workspace, type MessageTurn, type ReasoningEffort, type SelectedModel } from "./workspace-state";
 import { initializeSessionAI, parseModelString, sessionAIConfig } from "./session-ai";
 import { compareMessageIDOrder } from "./message-lookup";
 import { cancelPendingSessionMessageLoads, loadSessionMessages, replaceSession } from "./workspace-sessions";
 import { renameSessionTitle } from "./session-lifecycle";
 import { currentPromptImageOptions } from "./media-options";
+import { hasPendingPrompt, recoverPendingPrompt, sendRecoverablePrompt } from "./request-recovery";
 import { buildWorkspaceFoldersSystemPrompt, normalizeFolderPath, workspaceFoldersForDir } from "./workspace-folders";
 import { isSessionBusy, isSessionDeleted, requestTimelineFollow, resolveSessionTargetRuntime, sessionDirectory, sessionRuntimeForID, timelineFollowRequest } from "./session-query";
 import { beginQueueDrain, commitEditingQueuedPromptToQueue, endQueueDrain, enqueueSessionPrompt, getEditingQueuedPrompt, isQueuedPromptDrainBlocked, markQueuedTurnShown, markSessionPromptDispatched, removeQueuedPrompt, restoreEditingQueuedPrompt, restoreQueuedPromptAt, takeEditingQueuedPrompt } from "./prompt-queue";
 import {
   abortChildSubagentSessions,
+  applyOptimisticFailedTailRetry,
+  canResumeReadOnlyFailedCycle,
   clearSessionInterrupted,
   handleSessionErrorEvent,
   hasRecentSessionInterrupt,
@@ -99,6 +102,8 @@ export async function dispatchSessionPrompt(
     followTimeline?: boolean;
     /** The prompt was on screen as a queued bubble; its turn replaces it without a fade-in. */
     fromQueue?: boolean;
+    replaceFailedTail?: boolean;
+    resumeFailedTail?: boolean;
     beforeSend?: (sessionID: string) => Promise<void>;
     onTurnStaged?: (sessionID: string) => void;
   }
@@ -107,6 +112,11 @@ export async function dispatchSessionPrompt(
   const isBrandNewSession = !id;
   const requestedDir = normalizeFolderPath(options?.directory) || workspace.rootDir;
   if (id && isSessionDeleted(id)) throw new Error(t("timeline.sessionUnavailable"));
+  if (id && hasPendingPrompt(id) && await recoverPendingPrompt(id)) {
+    await loadSessionMessages(id);
+    // Keep the user's new draft rather than silently treating it as sent.
+    throw new Error(t("timeline.previousRequestRecovered"));
+  }
   if (id && !workspace.aiBySession[id]) {
     await loadSessionMessages(id);
     if (isSessionDeleted(id)) throw new Error(t("timeline.sessionUnavailable"));
@@ -233,6 +243,7 @@ export async function dispatchSessionPrompt(
   let shouldSummarizeTitle = isBrandNewSession;
   let stagedOptimistic = false;
   let priorTailID: string | undefined;
+  let replacedFailedTurns: MessageTurn[] | undefined;
 
   const stageOptimisticTurn = (sessionID: string) => {
     if (stagedOptimistic) return;
@@ -271,6 +282,16 @@ export async function dispatchSessionPrompt(
               );
               if (afterIdx >= 0) list.splice(afterIdx);
             }
+          }
+          const retryStage = applyOptimisticFailedTailRetry(
+            list,
+            options?.replaceFailedTail,
+            options?.resumeFailedTail
+          );
+          replacedFailedTurns = retryStage.replaced;
+          if (retryStage.resumedTailID) {
+            priorTailID = retryStage.resumedTailID;
+            return;
           }
           if (!wasBusyBeforeSubmit) {
             for (const prior of list) {
@@ -402,7 +423,7 @@ export async function dispatchSessionPrompt(
       const effectiveImageOptions =
         options?.imageOptions ??
         (explicitlySelectedImageModel ? currentPromptImageOptions() : undefined);
-      await hoxiAPI.sendPromptAsync(id, promptText, {
+      const delivery = await sendRecoverablePrompt(id, promptText, {
         agent: effectiveAgent,
         model: effectiveModel,
         ...(effectiveImageOptions ? { imageOptions: effectiveImageOptions } : {}),
@@ -413,7 +434,16 @@ export async function dispatchSessionPrompt(
         skillSelection: effectiveSkill,
         runtime: resolveSessionTargetRuntime(id, effectiveModel?.providerID),
         continueTask: options?.continueTask || wasBusyBeforeSubmit,
-      });
+      }, () => !isSessionDeleted(id!) && !hasRecentSessionInterrupt(id!));
+      if (delivery === "recovered") {
+        setWorkspace(produce((state) => {
+          const list = state.messagesBySession[id!];
+          const idx = list?.findIndex((turn) => turn.info.id === optimisticMsgID) ?? -1;
+          if (list && idx >= 0) list.splice(idx, 1);
+        }));
+        await loadSessionMessages(id);
+        return id;
+      }
     } catch (sendErr) {
       if (usedAutoPool && effectiveModel) {
         const errMsg = sendErr instanceof Error ? sendErr.message : String(sendErr || "error");
@@ -474,6 +504,13 @@ export async function dispatchSessionPrompt(
           if (!list) return;
           const optIdx = list.findIndex((m) => m.info.id === optimisticMsgID);
           if (optIdx >= 0) list.splice(optIdx, 1);
+          if (replacedFailedTurns) {
+            if (options?.resumeFailedTail) {
+              state.messagesBySession[id!] = replacedFailedTurns;
+            } else {
+              list.push(...replacedFailedTurns);
+            }
+          }
         })
       );
       if (!wasBusyBeforeSubmit && !isSessionDeleted(id)) {
@@ -529,6 +566,10 @@ export function applyManualEffortSwitchToSession(
 export async function retryLastUserPrompt(sessionID?: string | null): Promise<void> {
   const id = sessionID ?? workspace.activeSessionID;
   if (!id) return;
+  if (await recoverPendingPrompt(id)) {
+    await loadSessionMessages(id);
+    return;
+  }
   const wasRetrying = isSessionTurnRetrying(id);
   if (wasRetrying) {
     if (await rerouteRetryingTurnToModel(id)) {
@@ -557,10 +598,27 @@ export async function retryLastUserPrompt(sessionID?: string | null): Promise<vo
         }));
       const skillSelection = extractUserTurnSkillSelection(turns[i].parts) ?? undefined;
       if (text || attachments.length > 0 || skillSelection) {
+        const tail = turns[turns.length - 1];
+        const replaceFailedTail = Boolean(
+          i === turns.length - 2 &&
+            tail?.info.role === "assistant" &&
+            tail.info.error &&
+            tail.info.error.data?.kind !== "outcome_unknown" &&
+            tail.parts.length === 0
+        );
+        const resumeFailedTail = Boolean(
+          !replaceFailedTail &&
+            attachments.length === 0 &&
+            !skillSelection &&
+            resolveSessionTargetRuntime(id, sessionAIConfig(id).model?.providerID) === "native" &&
+            canResumeReadOnlyFailedCycle(turns, i)
+        );
         await dispatchSessionPrompt(text, id, {
           attachments,
           skillSelection,
           continueTask: true,
+          replaceFailedTail,
+          resumeFailedTail,
           ...(wasRetrying ? { forceImmediate: true } : {}),
         });
       }

@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"errors"
 	"strings"
 	"time"
 )
@@ -250,4 +251,25 @@ func ClassifyFault(name, message string, statusCode int, now time.Time) FaultDet
 		return FaultDetails{Kind: FaultKindServer, IsRetryable: true, RetryAfterMs: retryAfterMs}
 	}
 	return FaultDetails{RetryAfterMs: retryAfterMs}
+}
+
+// ClassifyError inspects err (including structured *StreamHTTPError status codes
+// and Retry-After headers) and returns canonical FaultDetails.
+func ClassifyError(err error, now time.Time) FaultDetails {
+	if err == nil {
+		return FaultDetails{}
+	}
+	var httpErr *StreamHTTPError
+	if errors.As(err, &httpErr) && httpErr != nil {
+		d := ClassifyFault("", httpErr.Message, httpErr.StatusCode, now)
+		if hdrMs := httpErr.RetryAfter.Milliseconds(); hdrMs > d.RetryAfterMs {
+			d.RetryAfterMs = hdrMs
+		}
+		if d.Kind == FaultKindRateLimit && d.RetryAfterMs >= QuotaResetPromoteAfter.Milliseconds() {
+			d.Kind = FaultKindQuota
+			d.IsRetryable = false
+		}
+		return d
+	}
+	return ClassifyFault("", err.Error(), 0, now)
 }

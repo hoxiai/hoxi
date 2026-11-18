@@ -1,4 +1,4 @@
-import { tool } from "@opencode-ai/plugin";
+import { tool } from "./plugin_tool.js";
 
 const toolsActions = ["discover", "inspect", "run"];
 

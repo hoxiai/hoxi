@@ -148,6 +148,68 @@ func QueryRowReadOnly(ctx context.Context, dbPath string, busyTimeout time.Durat
 	})
 }
 
+// QueryRows executes a bounded tabular query against dbPath in-process using
+// read-only or read-write mode and returns column names, row maps, and truncation flag.
+func QueryRows(ctx context.Context, dbPath string, readOnly bool, maxRows int, query string, args ...any) ([]string, []map[string]any, bool, error) {
+	if strings.TrimSpace(dbPath) == "" {
+		return nil, nil, false, fmt.Errorf("empty sqlite database path")
+	}
+	if maxRows <= 0 {
+		maxRows = 200
+	}
+	var cols []string
+	var records []map[string]any
+	truncated := false
+
+	scan := func(ctx context.Context, db *sql.DB) error {
+		rows, err := db.QueryContext(ctx, query, args...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		cols, err = rows.Columns()
+		if err != nil {
+			return err
+		}
+		records = make([]map[string]any, 0, min(maxRows, 32))
+		for rows.Next() {
+			if len(records) >= maxRows {
+				truncated = true
+				break
+			}
+			vals := make([]any, len(cols))
+			ptrs := make([]any, len(cols))
+			for i := range vals {
+				ptrs[i] = &vals[i]
+			}
+			if err := rows.Scan(ptrs...); err != nil {
+				return err
+			}
+			m := make(map[string]any, len(cols))
+			for i, c := range cols {
+				if b, ok := vals[i].([]byte); ok {
+					if len(b) > 4096 {
+						m[c] = string(b[:4096]) + "...[truncated]"
+					} else {
+						m[c] = string(b)
+					}
+				} else {
+					m[c] = vals[i]
+				}
+			}
+			records = append(records, m)
+		}
+		return rows.Err()
+	}
+	var err error
+	if readOnly {
+		err = WithReadOnly(ctx, dbPath, 5*time.Second, scan)
+	} else {
+		err = WithReadWrite(ctx, dbPath, 5*time.Second, scan)
+	}
+	return cols, records, truncated, err
+}
+
 // WithReadWrite executes fn against a pure-Go in-process read-write SQLite handle.
 func WithReadWrite(ctx context.Context, dbPath string, busyTimeout time.Duration, fn func(ctx context.Context, db *sql.DB) error) error {
 	dbPath = strings.TrimSpace(dbPath)

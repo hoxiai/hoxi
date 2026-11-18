@@ -66,27 +66,9 @@ jobs:
 
       - name: Install frontend dependencies & Build web
         shell: bash
-        env:
-          HOXI_WORK_TOKEN: ${{ secrets.HOXI_WORK_TOKEN }}
         run: |
-          if [[ ! -d "../hoxi-work" && -n "${HOXI_WORK_TOKEN:-}" ]]; then
-            git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$HOXI_WORK_TOKEN" | base64 | tr -d '\r\n')" \
-              clone --depth 1 https://github.com/hoxiai/hoxi-work.git ../hoxi-work
-            test -f "../hoxi-work/web/index.tsx"
-          fi
-          if [[ -f "../hoxi-work/go/stage-host.sh" ]]; then
-            bash "../hoxi-work/go/stage-host.sh" "$PWD" >/dev/null
-          fi
-          if [[ -d "../hoxi-work/skills" ]]; then
-            for skill_src in ../hoxi-work/skills/*; do
-              [[ -d "${skill_src}" && -f "${skill_src}/SKILL.md" ]] || continue
-              target_dir="internal/skills/defaults/$(basename "${skill_src}")"
-              [[ -d "${target_dir}" ]] || cp -R "${skill_src}" "${target_dir}"
-            done
-          fi
           npm --prefix web ci
           npm --prefix web run build
-          grep -q "modeExecuteLabel" web/dist/assets/*.js
 
       - name: Run Windows Go vet
         run: go vet ./...
@@ -103,16 +85,7 @@ jobs:
         run: |
           node scripts/opencode-lock.mjs verify
           mkdir -p build/bin build/windows/installer/tmp
-          rm -f build/bin/opencode.exe build/windows/installer/tmp/opencode.exe
-
-      - name: Bundle verified SQLite CLI
-        shell: bash
-        run: |
-          curl -fsSL -o sqlite-tools.zip "$(node scripts/sqlite-tools.mjs url ${{ matrix.arch }})"
-          node scripts/sqlite-tools.mjs verify sqlite-tools.zip ${{ matrix.arch }}
-          7z e -y sqlite-tools.zip sqlite3.exe -obuild/bin/
-          test -f build/bin/sqlite3.exe
-          cp -f build/bin/sqlite3.exe build/windows/installer/tmp/sqlite3.exe
+          rm -f build/bin/opencode.exe build/windows/installer/tmp/opencode.exe build/bin/sqlite3.exe build/windows/installer/tmp/sqlite3.exe
 
       - name: Build Windows Desktop App & Setup Installer
         shell: bash
@@ -139,10 +112,9 @@ jobs:
           else
             go version -m build/bin/Hoxi.exe | grep -q "buildinfo.Version=${RELEASE_VERSION}"
           fi
-          cp -f build/windows/installer/tmp/sqlite3.exe build/bin/sqlite3.exe
           test ! -f build/bin/opencode.exe
-          test -f build/bin/sqlite3.exe
-          node scripts/pe-arch.mjs verify ${{ matrix.arch }} build/bin/Hoxi.exe build/bin/sqlite3.exe
+          test ! -f build/bin/sqlite3.exe
+          node scripts/pe-arch.mjs verify ${{ matrix.arch }} build/bin/Hoxi.exe
           test -f build/bin/Hoxi-${{ matrix.arch }}-installer.exe
 
       - name: Package Windows Release Archives
@@ -153,7 +125,7 @@ jobs:
           cd build/bin
           mv -f Hoxi-${{ matrix.arch }}-installer.exe "$SETUP_NAME"
           sha256sum "$SETUP_NAME" > "${SETUP_NAME}.sha256"
-          7z a "$ZIP_NAME" Hoxi.exe sqlite3.exe
+          7z a "$ZIP_NAME" Hoxi.exe
           sha256sum "$ZIP_NAME" > "${ZIP_NAME}.sha256"
 
       - name: Upload Windows Artifact to Release
@@ -206,27 +178,9 @@ jobs:
 
       - name: Install frontend dependencies & Build web
         shell: bash
-        env:
-          HOXI_WORK_TOKEN: ${{ secrets.HOXI_WORK_TOKEN }}
         run: |
-          if [[ ! -d "../hoxi-work" && -n "${HOXI_WORK_TOKEN:-}" ]]; then
-            git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$HOXI_WORK_TOKEN" | base64 | tr -d '\r\n')" \
-              clone --depth 1 https://github.com/hoxiai/hoxi-work.git ../hoxi-work
-            test -f "../hoxi-work/web/index.tsx"
-          fi
-          if [[ -f "../hoxi-work/go/stage-host.sh" ]]; then
-            bash "../hoxi-work/go/stage-host.sh" "$PWD" >/dev/null
-          fi
-          if [[ -d "../hoxi-work/skills" ]]; then
-            for skill_src in ../hoxi-work/skills/*; do
-              [[ -d "${skill_src}" && -f "${skill_src}/SKILL.md" ]] || continue
-              target_dir="internal/skills/defaults/$(basename "${skill_src}")"
-              [[ -d "${target_dir}" ]] || cp -R "${skill_src}" "${target_dir}"
-            done
-          fi
           npm --prefix web ci
           npm --prefix web run build
-          grep -q "modeExecuteLabel" web/dist/assets/*.js
 
       - name: Install Wails v2
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.13.0
@@ -245,6 +199,7 @@ jobs:
           cd build/bin
           test ! -f opencode
           tar -czf "$TAR_NAME" Hoxi hoxi.desktop hoxi.png
+          sha256sum "$TAR_NAME" > "${TAR_NAME}.sha256"
 
       - name: Upload Linux Artifact to Release
         uses: softprops/action-gh-release@v2
@@ -252,5 +207,7 @@ jobs:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           files: |
             build/bin/Hoxi-${{ env.RELEASE_VERSION }}-linux-amd64.tar.gz
+            build/bin/Hoxi-${{ env.RELEASE_VERSION }}-linux-amd64.tar.gz.sha256
+          fail_on_unmatched_files: true
           draft: false
           prerelease: false

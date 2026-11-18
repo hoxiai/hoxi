@@ -1,7 +1,7 @@
 # Hoxi Skills 开发规范与实现架构
 
-> 状态：**已实现**（`internal/skills/`、`internal/runner/skills.go`、`web/src/store/skills.ts`、`web/src/components/skills/`）。
-> 支持全部 6 个运行时（OpenCode 原生 `skill` 工具调用 + Claude Code / Antigravity / Gemini CLI / Qoder / CodeBuddy 内联 `<skill_content>` 注入）、内置默认技能播种（`skill-authoring`、`tools`、`office-docs`）以及 hoxi.ai 线上技能市集（`GET /api/hoxi/skills/marketplace` + `POST /api/hoxi/skills/marketplace/install`）。
+> 状态：**已实现**（`internal/skills/`、`internal/gateway/native_host.go`、`internal/runner/skills.go`、`web/src/store/skills.ts`、`web/src/components/skills/`）。
+> 默认由 Hoxi 原生本地扫描器（`internal/skills/local_scan.go`）直接发现 `.hoxi/skills`、`~/.hoxi/skills` 等目录，无需运行 `opencode serve`；支持默认 **Go 原生引擎（`native`）** 及全部外部 CLI 运行时（Claude Code / Codex / Antigravity / Gemini CLI / Qoder / CodeBuddy 内联 `<skill_content>` 注入 + 可选 OpenCode 运行时原生 `skill` 工具调用）、内置默认技能自动播种（`skill-authoring`、`tools`、`office-docs`）以及 hoxi.ai 线上技能市集（`GET /api/hoxi/skills/marketplace` + `POST /api/hoxi/skills/marketplace/install`）。
 
 ## 1. 实际基线与实现架构
 
@@ -31,12 +31,15 @@
 
 当前已交付以下能力：
 
-1. **统一目录与详情接口**（`internal/skills/skills.go`）：`GET /api/hoxi/skills/list` 与 `GET /api/hoxi/skills/detail` 读取 OpenCode `GET /skill` 目录并按会话真实运行时适配，对全部 6 个运行时（`opencode`、`claude-code`、`antigravity`、`gemini-cli`、`qoder`、`codebuddy`）均返回 `supported: true`，标注来源（`builtin` / `project` / `user` / `external`）与本地路径打开权限。
-2. **多运行时技能注入**（`internal/runner/skills.go`）：在输入框选择一个技能（`skillSelection`）后：
-   - **OpenCode 运行时**（`mode: "native"`）：向模型追加明确指令，要求先调用原生 `skill` 工具（`{"name": "<name>"}`）加载该技能，并在前端复用原生 `skill` 工具事件与 `ToolCard` 确认加载状态。
-   - **CLI 运行时**（`claude-code` / `antigravity` / `gemini-cli` / `qoder` / `codebuddy`，`mode: "inline"`）：由 `formatInlineSkillPrompt` 将经过校验的技能正文及 `<Base directory for this skill: ...>` 直接以 `<skill_content name="...">...</skill_content>` 内联注入本轮提示词。
-3. **内置默认技能自动播种与升级**（`internal/skills/defaults.go`）：启动时 `skills.SeedDefaults()` 将 `internal/skills/defaults/` 下的 `skill-authoring` 与 `tools` 写入 `~/.hoxi/skills/<name>/SKILL.md`；当文件仍由 `author: "Hoxi"` 维护且内置 `version` 更高时自动升级，并自动清理已废弃的旧默认目录（`hoxi-tools`）。
+1. **统一目录与详情接口**（`internal/skills/skills.go` + `local_scan.go`）：`GET /api/hoxi/skills/list` 与 `GET /api/hoxi/skills/detail` 默认直接从本地工作区与个人技能目录扫描 `SKILL.md`（优先 `<project>/.hoxi/skills` 与 `~/.hoxi/skills`，无需依赖 `opencode serve`；当可选 OpenCode 实例在线时合并其目录），对默认 `native` 引擎及全部外部运行时（`claude-code`、`codex`、`antigravity`、`gemini-cli`、`qoder`、`codebuddy`、`opencode`）均返回 `supported: true`，标注来源（`builtin` / `project` / `user` / `external`）与本地路径打开权限。
+2. **多运行时技能加载与注入**（`internal/gateway/native_host.go` + `internal/runner/skills.go`）：
+   - **Hoxi 默认 Go 原生引擎（`native`）**：系统提示词由 `buildNativeSkillCatalogPrompt` 注入 `<available_skills>` 目录，模型按需调用内置宿主工具 `skill`（`{"name": "<name>"}`）读取完整技能正文；用户在输入框显式选择技能（`skillSelection`）时直接注入所选技能内容。
+   - **外部 CLI 运行时**（`claude-code` / `codex` / `antigravity` / `gemini-cli` / `qoder` / `codebuddy`，`mode: "inline"`）：由 `formatInlineSkillPrompt` 将经过校验的技能正文及 `<Base directory for this skill: ...>` 直接以 `<skill_content name="...">...</skill_content>` 内联注入本轮提示词。
+   - **可选 OpenCode 运行时**（`mode: "native"`）：向模型追加明确指令，要求先调用原生 `skill` 工具（`{"name": "<name>"}`）加载该技能，并在前端复用原生 `skill` 工具事件与 `ToolCard` 确认加载状态。
+3. **内置默认技能自动播种与升级**（`internal/skills/defaults.go`）：启动及本地扫描时 `skills.SeedDefaults()` 将 `internal/skills/defaults/` 下的 `skill-authoring`、`tools` 与 `office-docs` 写入 `~/.hoxi/skills/<name>/SKILL.md`；当文件仍由 `author: "Hoxi"` 维护且内置 `version` 更高时自动升级，并自动清理已废弃的旧默认目录（`hoxi-tools`）。
 4. **hoxi.ai 线上技能市集**（`internal/skills/marketplace.go`）：`GET /api/hoxi/skills/marketplace` 拉取线上目录并标注本地安装状态（`installed` / `updatable`）；`POST /api/hoxi/skills/marketplace/install` 在用户点击后下载单个 `SKILL.md`，校验 `contentSha256` 与 frontmatter `name == slug`，再原子写入 `~/.hoxi/skills/<slug>/SKILL.md`（本地文件已被用户修改时需显式传 `overwrite=true`）。不做自动安装、不执行远程脚本、安装接口不对远程隧道开放。
+
+原生引擎还支持执行目录根部 `hoxi.json` 的 `skills.paths` 附加技能目录及 `permission.skill`；路径限项目内部（包括真实符号链接目标），配置错误明确报告，列表/详情重新检查禁用规则。参见 [`hoxi-config.md`](hoxi-config.md)，不会自动创建或修改 OpenCode 配置。
 
 ## 2. 标准 SKILL.md 编写约定
 
@@ -147,7 +150,7 @@ Claude Code 的扩展能力和标准字段需要分开处理，参见 [官方兼
 - 内置默认技能（`skill-authoring`、`tools`、`office-docs`）随应用发布，引擎启动前由 `skills.SeedDefaults`（`internal/skills/defaults.go`）播种到 `~/.hoxi/skills/<name>/SKILL.md`；当磁盘文件仍带 `author: "Hoxi"` 且内置 `version` 更高时自动升级，若用户已自行修改或自定义则保留用户文件不覆盖。已废弃的旧内置技能目录（`hoxi-tools`）在未添加用户自定义文件时自动清理。
 - `ensureHoxiModelsConfig` 在生成 `OPENCODE_CONFIG` 时把该目录并入 `skills`。合并按路径并集处理，兼容数组与 `{paths, urls}` 两种既有形式，统一输出数组形式（官方 schema 已把对象形式标记为 deprecated），不覆盖用户自定义来源。
 - `internal/skills/userSkillRoots` 登记的个人技能根包含 `$XDG_CONFIG_HOME/{opencode,agents,claude}`、`~/.config/opencode`、`~/.opencode`、`~/.claude`、`~/.agents`、`~/.hoxi/skills` 与 `~/.gemini`，技能面板将其归类为 `user` 来源并允许在本地打开文件。
-- 默认技能源文件位于 `internal/skills/defaults/`；仓库根 `.opencode/skills/` 的副本用于本项目会话，测试会校验两者一致。
+- 默认技能源文件位于 `internal/skills/defaults/`；仓库根 `.hoxi/skills/` 的副本用于本项目会话（并兼容校验站点公开副本），单测 `TestDefaultSkillMatchesRepoCopy` 会校验一致。
 
 ### 2.5 技能曝光：模型能看到什么
 
@@ -423,9 +426,10 @@ OpenCode 的原生技能权限配置和工具禁用机制可优先复用，参�
 
 | 能力 | 状态与说明 |
 | --- | --- |
-| OpenCode | 已实现（`mode: "native"`）：模型调用原生 `skill` 工具加载技能，前端根据 `tool: "skill"` 事件展示加载状态 |
-| Claude Code / Antigravity / Gemini CLI / Qoder / CodeBuddy | 已实现（`mode: "inline"`）：`internal/runner/skills.go` 校验 `skillSelection` 后通过 `formatInlineSkillPrompt` 将 `<skill_content name="...">` 与技能资源目录内联注入本轮提示词 |
-| 内置默认技能与线上市集 | 已实现：`skills.SeedDefaults` 自动播种/按版本升级 `skill-authoring` 与 `tools`；`GET /api/hoxi/skills/marketplace` 与 `POST /api/hoxi/skills/marketplace/install` 提供 SHA-256 校验后的单文件显式安装 |
+| Hoxi Go 原生引擎（`native`，默认） | 已实现：`native_host.go` 自动注入 `<available_skills>` 目录并提供内置 `skill` 宿主工具按需读取正文；显式 `skillSelection` 直接注入本轮上下文 |
+| Claude Code / Codex / Antigravity / Gemini CLI / Qoder / CodeBuddy | 已实现（`mode: "inline"`）：`internal/runner/skills.go` 校验 `skillSelection` 后通过 `formatInlineSkillPrompt` 将 `<skill_content name="...">` 与技能资源目录内联注入本轮提示词 |
+| OpenCode（可选外部运行时） | 已实现（`mode: "native"`）：模型调用原生 `skill` 工具加载技能，前端根据 `tool: "skill"` 事件展示加载状态 |
+| 内置默认技能与线上市集 | 已实现：`skills.SeedDefaults` 自动播种/按版本升级 `skill-authoring`、`tools` 与 `office-docs`；`GET /api/hoxi/skills/marketplace` 与 `POST /api/hoxi/skills/marketplace/install` 提供 SHA-256 校验后的单文件显式安装 |
 | 移动端 | 已实现只读目录：`/api/hoxi/skills/list` 与 `/api/hoxi/skills/marketplace` 在远程隧道白名单内只读开放，安装接口（`/api/hoxi/skills/marketplace/install`）仅限桌面本机 |
 | 后续演进 | 精确全包版本快照、多文件技能包远程同步、业务 Skill 结构化返回契约（`requiresConfirmation`）仍属后续规划 |
 

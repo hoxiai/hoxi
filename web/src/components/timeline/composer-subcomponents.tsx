@@ -1,17 +1,13 @@
 // web/src/components/timeline/composer-subcomponents.tsx
-import { createEffect, For, Show } from "solid-js";
+import { Show } from "solid-js";
 import {
   ArrowUp,
-  AtSign,
   Clock,
   FolderOpen,
   LoaderCircle,
-  Sparkles,
   Square,
   Workflow,
-  X,
 } from "lucide-solid";
-import { FileIcon } from "../icons";
 import { t } from "../../i18n";
 import ModelSelector from "../models/ModelSelector";
 import { ComposerSandboxPill } from "./ComposerSandboxPill";
@@ -21,97 +17,12 @@ import ModeSwitcher from "./ModeSwitcher";
 import ComposerToolsPopover from "./ComposerToolsPopover";
 import { ComposerImageOptionsBar, ComposerVoiceInputButton } from "./ComposerMediaControls";
 import { isWorkSurface, surfaceExtension } from "../layout/surface-extension";
-import type { AutocompleteItem } from "./composer-hooks";
 
-export { ComposerAttachmentChips, ComposerEnhancePreview } from "./composer-attachment-chips";
-
-export function ComposerAutocompletePopover(props: {
-  triggerMode: "file" | "command" | null;
-  suggestions: AutocompleteItem[];
-  selectedIndex: number;
-  onSelectIndex: (idx: number) => void;
-  onApply: (item: AutocompleteItem) => void;
-}) {
-  let listRef: HTMLDivElement | undefined;
-
-  createEffect(() => {
-    const idx = props.selectedIndex;
-    if (!props.triggerMode || props.suggestions.length === 0) return;
-    queueMicrotask(() => {
-      const btn = listRef?.querySelector<HTMLButtonElement>(
-        `[data-ac-index="${idx}"]`
-      );
-      btn?.scrollIntoView({ block: "nearest" });
-    });
-  });
-
-  return (
-    <Show when={props.triggerMode && props.suggestions.length > 0}>
-      <div class="absolute bottom-full left-0 mb-2 w-full max-w-[32rem] rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1.5 shadow-xl z-40">
-        <div class="px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
-          {props.triggerMode === "command"
-            ? t("timeline.slashCommandsHeader")
-            : t("timeline.mentionFileOrContextHeader")}
-        </div>
-        <div ref={listRef} class="max-h-56 overflow-y-auto space-y-0.5">
-          <For each={props.suggestions}>
-            {(item, idx) => (
-              <button
-                type="button"
-                data-ac-index={idx()}
-                class={`w-full flex flex-col gap-0.5 rounded-lg px-2.5 py-1 text-left text-[13px] transition-colors cursor-pointer ${
-                  idx() === props.selectedIndex
-                    ? "bg-[var(--accent-surface)] text-[var(--accent-text)]"
-                    : "text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
-                }`}
-                onMouseEnter={() => props.onSelectIndex(idx())}
-                onClick={() => props.onApply(item)}
-              >
-                <span class="flex w-full items-center gap-2 min-w-0 font-mono">
-                  {item.source === "skill" ? (
-                    <Sparkles size={12} class="text-[var(--accent-primary)] shrink-0" />
-                  ) : item.type === "context" ? (
-                    <AtSign size={12} class="text-[var(--accent-primary)] shrink-0" />
-                  ) : item.type === "file" ? (
-                    <FileIcon
-                      node={{
-                        path: item.label,
-                        type: item.label.endsWith("/") ? "directory" : "file",
-                      }}
-                      class="w-3.5 h-3.5 shrink-0"
-                    />
-                  ) : null}
-                  <span class="truncate">
-                    {item.type === "context" ? item.label.replace(/^@/, "") : item.label}
-                  </span>
-                  <Show when={item.hints && item.hints.length > 0}>
-                    <span class="shrink-0 font-sans text-[11px] text-[var(--text-faint)]">
-                      {item.hints!.join(" ")}
-                    </span>
-                  </Show>
-                  <Show when={item.source}>
-                    <span class="ml-auto shrink-0 rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-sans text-[10px] font-medium uppercase tracking-wider text-[var(--text-faint)]">
-                      {item.source === "skill"
-                        ? t("skills.groupSkills")
-                        : item.source === "mcp"
-                        ? t("skills.groupMcp")
-                        : t("skills.groupCommands")}
-                    </span>
-                  </Show>
-                </span>
-                <Show when={item.detail}>
-                  <span class="w-full truncate font-sans text-[11px] leading-tight text-[var(--text-muted)]">
-                    {item.detail}
-                  </span>
-                </Show>
-              </button>
-            )}
-          </For>
-        </div>
-      </div>
-    </Show>
-  );
-}
+export {
+  ComposerAttachmentChips,
+  ComposerAutocompletePopover,
+  ComposerEnhancePreview,
+} from "./composer-attachment-chips";
 
 export function ComposerSendButtons(props: {
   busy: boolean;

@@ -27,7 +27,10 @@ import {
 import { exitSessionWorktree, removeSessionFromStore } from "./session-lifecycle";
 import {
   isManagedSession,
+  isSessionArchived,
   isSessionBusy,
+  isSessionDeleted,
+  isSessionTaskActive,
   resolveSessionTargetRuntime,
   sessionDirectory,
   sessionRuntimeForID,
@@ -420,6 +423,43 @@ export function buildWorktreeVerifyFailurePrompt(input: {
     "",
     "Please diagnose the root cause from the output above, fix the relevant code or configuration, and re-run verification to confirm it passes.",
   ].join("\n");
+}
+
+export function resolveEffectiveSandboxMode(sessionID?: string | null): "local" | "worktree" {
+  if (sessionID) {
+    if (workspace.worktreeBySession[sessionID]) {
+      return workspace.worktreeBySession[sessionID].isolated ? "worktree" : "local";
+    }
+    const s = workspace.sessions.find((item) => item.id === sessionID);
+    if (s?.sandboxMode) return s.sandboxMode;
+    if (s?.directory?.includes("/.hoxi/worktrees/")) return "worktree";
+    if (s) return "local";
+  }
+  if (appSettings.approvalMode === "unattended") return "worktree";
+  return appSettings.defaultSandboxMode;
+}
+
+/**
+ * Active root sessions sharing the same local (main-branch) project directory
+ * as `sessionID` (or the current new-thread draft).
+ */
+export function concurrentLocalPeerSessions(
+  sessionID?: string | null,
+  directory?: string | null
+): SessionInfo[] {
+  const rawDir = directory || (sessionID ? sessionDirectory(sessionID) : workspace.rootDir);
+  const targetDir = normalizeFolderPath(rawDir);
+  if (!targetDir || isWorkSurfacePath(targetDir)) return [];
+  const peers: SessionInfo[] = [];
+  for (const s of workspace.sessions) {
+    if (!s?.id || s.id === sessionID || s.parentID) continue;
+    if (isSessionArchived(s) || isSessionDeleted(s.id)) continue;
+    if (resolveEffectiveSandboxMode(s.id) !== "local") continue;
+    if (!isSessionTaskActive(s.id)) continue;
+    if (normalizeFolderPath(sessionDirectory(s.id)) !== targetDir) continue;
+    peers.push(s);
+  }
+  return peers;
 }
 
 export async function switchActiveSessionEngine(nextEngine: AgentEngineMode): Promise<void> {

@@ -42,6 +42,9 @@ func (s *Service) RunPromptAndWait(ctx context.Context, sessionID string, req Pr
 func (s *Service) AbortSession(sessionID string) {
 	s.clearInflightTurn(sessionID)
 	s.abortActiveProcess(sessionID)
+	if s.fileCoord != nil {
+		s.fileCoord.ReleaseTurn(s.rootLeaseOwner(sessionID))
+	}
 	s.broadcast(sessionID, SSEEvent{
 		Type:       "session.status",
 		Properties: map[string]interface{}{"sessionID": sessionID, "status": SessionStatus{Type: "idle"}},

@@ -1,9 +1,29 @@
 // web/src/components/layout/WallpaperBackdrop.tsx
 import { createMemo, Show } from "solid-js";
-import { resolveActiveWallpaperUrl, wallpaperState } from "../../store/workspace";
+import {
+  composeLayeredWallpaperStyle,
+  resolveActiveWallpaperStandee,
+  resolveActiveWallpaperUrl,
+  wallpaperState,
+} from "../../store/workspace";
 
 export default function WallpaperBackdrop() {
   const activeUrl = createMemo(() => resolveActiveWallpaperUrl());
+  const activeStandee = createMemo(() => resolveActiveWallpaperStandee());
+  const layerStyle = createMemo(() => {
+    const standee = activeStandee();
+    return {
+      ...composeLayeredWallpaperStyle(
+        activeUrl(),
+        standee?.url,
+        standee?.positionX,
+        "72% center",
+        standee ? { standeeSize: standee.viewportSize } : undefined
+      ),
+      filter:
+        "contrast(var(--wallpaper-img-contrast, 0.88)) brightness(var(--wallpaper-img-brightness, 1)) saturate(1.04)",
+    };
+  });
 
   return (
     <Show when={wallpaperState.enabled && Boolean(activeUrl())}>
@@ -12,13 +32,8 @@ export default function WallpaperBackdrop() {
         class="pointer-events-none fixed inset-0 z-0 overflow-hidden select-none"
       >
         <div
-          class="absolute inset-0 bg-cover bg-no-repeat transition-[background-image,transform,filter] duration-300"
-          style={{
-            "background-image": `url("${activeUrl().replace(/"/g, '\\"')}")`,
-            "background-position": "72% center",
-            filter:
-              "contrast(var(--wallpaper-img-contrast, 0.88)) brightness(var(--wallpaper-img-brightness, 1)) saturate(1.04)",
-          }}
+          class="absolute inset-0 transition-[background-image,transform,filter] duration-300"
+          style={layerStyle()}
         />
         <div
           class="absolute inset-0 bg-[var(--bg-canvas)] transition-opacity duration-200"

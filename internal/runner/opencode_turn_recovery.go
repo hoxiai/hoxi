@@ -462,7 +462,7 @@ func (s *Service) pruneOpenCodeTurnsFromStore(sessionID string, dropIDs map[stri
 	if len(dropIDs) == 0 {
 		return
 	}
-	_, _, _ = s.store.updateWithoutActivity(sessionID, func(r *SessionRecord) {
+	_, _, _ = s.store.UpdateWithoutActivity(sessionID, func(r *SessionRecord) {
 		filtered := r.Turns[:0]
 		for _, t := range r.Turns {
 			if dropIDs[t.Info.ID] || isInternalRecoveryMessageID(t.Info.ID) {
@@ -478,7 +478,7 @@ func (s *Service) pruneOpenCodePartsFromStore(sessionID, messageID string, dropP
 	if len(dropPartIDs) == 0 {
 		return
 	}
-	_, _, _ = s.store.updateWithoutActivity(sessionID, func(r *SessionRecord) {
+	_, _, _ = s.store.UpdateWithoutActivity(sessionID, func(r *SessionRecord) {
 		for i := range r.Turns {
 			if messageID != "" && r.Turns[i].Info.ID != messageID {
 				continue

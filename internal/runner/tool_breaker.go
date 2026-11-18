@@ -93,14 +93,34 @@ func (s *Service) noteToolOutcome(sessionID string, part MessagePart) {
 
 // noteToolEvents scans translated CLI events for tool outcomes.
 func (s *Service) noteToolEvents(sessionID string, evts []SSEEvent) {
-	for _, evt := range evts {
+	for i := range evts {
+		evt := &evts[i]
 		if evt.Type != "message.part.updated" {
 			continue
 		}
 		if part, ok := evt.Properties["part"].(MessagePart); ok {
+			if strings.EqualFold(part.Tool, "bash") && part.State != nil && part.State.Status == "completed" && s.gate != nil {
+				if rels := s.gate.consumeNativeCheckpointPaths(sessionID, part.CallID); len(rels) > 0 {
+					if part.State.Metadata == nil {
+						part.State.Metadata = make(map[string]interface{})
+					}
+					part.State.Metadata["checkpointFiles"] = rels
+					evt.Properties["part"] = part
+				}
+			}
 			s.noteToolOutcome(sessionID, part)
+			s.noteCompletedFileEdits(sessionID, part)
 		} else if part, ok := evt.Properties["part"].(*MessagePart); ok && part != nil {
+			if strings.EqualFold(part.Tool, "bash") && part.State != nil && part.State.Status == "completed" && s.gate != nil {
+				if rels := s.gate.consumeNativeCheckpointPaths(sessionID, part.CallID); len(rels) > 0 {
+					if part.State.Metadata == nil {
+						part.State.Metadata = make(map[string]interface{})
+					}
+					part.State.Metadata["checkpointFiles"] = rels
+				}
+			}
 			s.noteToolOutcome(sessionID, *part)
+			s.noteCompletedFileEdits(sessionID, *part)
 		}
 	}
 }

@@ -157,3 +157,78 @@ func TestEnsureGitExcludeExactLineMatch(t *testing.T) {
 		t.Fatalf("expected idempotent exclude file, got:\n%s\nwant:\n%s", string(afterSecond), string(afterFirst))
 	}
 }
+
+func TestSnapshotAndExcludePreserveTrackedHoxiSkillsWhileIgnoringRuntimeState(t *testing.T) {
+	t.Parallel()
+	repoDir := initTempGitRepo(t)
+	excludePath := filepath.Join(repoDir, ".git", "info", "exclude")
+	// Simulate an existing repo that previously had a blanket .hoxi/ exclude.
+	if err := os.WriteFile(excludePath, []byte(".hoxi/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	skillPath := filepath.Join(repoDir, ".hoxi", "skills", "demo", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(skillPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(skillPath, []byte("# Demo v1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runGit(repoDir, "add", "-f", ".hoxi/skills/demo/SKILL.md"); err != nil {
+		t.Fatalf("git add .hoxi/skills/demo/SKILL.md: %v", err)
+	}
+	if _, err := runGit(repoDir, "commit", "-m", "chore: track .hoxi/skills/demo/SKILL.md"); err != nil {
+		t.Fatalf("git commit .hoxi/skills/demo/SKILL.md: %v", err)
+	}
+
+	// Edit tracked skill (v2) and write untracked runtime memory.
+	if err := os.WriteFile(skillPath, []byte("# Demo v2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	memPath := filepath.Join(repoDir, ".hoxi", "memory", "project.md")
+	if err := os.MkdirAll(filepath.Dir(memPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(memPath, []byte("# Project Memory\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	snap, err := CreateSnapshot(repoDir)
+	if err != nil || snap == "" {
+		t.Fatalf("CreateSnapshot failed: snap=%q err=%v", snap, err)
+	}
+
+	// Blanket .hoxi/ must be replaced with runtime-only excludes so new .hoxi/skills/* stay visible.
+	excludeBytes, err := os.ReadFile(excludePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(excludeBytes), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == ".hoxi" || trimmed == ".hoxi/" {
+			t.Fatalf("expected blanket .hoxi/ exclude to be narrowed when .hoxi/skills is tracked, got:\n%s", string(excludeBytes))
+		}
+	}
+	if !gitIgnoresPath(repoDir, ".hoxi/memory/project.md") {
+		t.Fatalf("expected .hoxi/memory/project.md to remain git-ignored")
+	}
+	if gitIgnoresPath(repoDir, ".hoxi/skills/new-skill/SKILL.md") {
+		t.Fatalf("expected new .hoxi/skills/new-skill/SKILL.md not to be git-ignored")
+	}
+
+	// Overwrite tracked skill (v3), then restore snapshot and verify v2 + runtime memory survive.
+	if err := os.WriteFile(skillPath, []byte("# Demo v3\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := RestoreSnapshot(repoDir, snap); err != nil {
+		t.Fatalf("RestoreSnapshot failed: %v", err)
+	}
+	gotSkill, err := os.ReadFile(skillPath)
+	if err != nil || string(gotSkill) != "# Demo v2\n" {
+		t.Fatalf(".hoxi/skills/demo/SKILL.md = %q (err=%v), want %q", string(gotSkill), err, "# Demo v2\n")
+	}
+	gotMem, err := os.ReadFile(memPath)
+	if err != nil || string(gotMem) != "# Project Memory\n" {
+		t.Fatalf(".hoxi/memory/project.md = %q (err=%v), want intact", string(gotMem), err)
+	}
+}

@@ -76,22 +76,26 @@ func (s *Service) handleUnifiedSSE(w http.ResponseWriter, r *http.Request) {
 	}
 	ch, subSeq, unsub := s.subscribeSinceWithSeq("", parseAfterSeqRequest(r))
 	defer unsub()
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
 
 	var upstream chan string
 	if s.openCode.Available() {
 		upstream = make(chan string, 128)
 		directory := strings.TrimSpace(r.URL.Query().Get("directory"))
-		go s.pumpOpenCodeEvents(r.Context(), directory, upstream)
+		go s.pumpOpenCodeEvents(ctx, directory, upstream)
 	}
 
 	startSSE(w, flusher)
 	// The first frame is the authoritative busy set, stamped with the exact
 	// subscription seq so events broadcast right after subscribe are never skipped.
 	if frame := s.statusSnapshotFrameAt(subSeq); frame != "" {
-		_, _ = io.WriteString(w, frame)
+		if _, err := io.WriteString(w, frame); err != nil {
+			return
+		}
 		flusher.Flush()
 	}
-	streamSSE(r.Context(), w, flusher, ch, upstream, sseHeartbeatInterval, heartbeatFrame, s.statusSnapshotFrame)
+	streamSSE(ctx, w, flusher, ch, upstream, sseHeartbeatInterval, heartbeatFrame, s.statusSnapshotFrame)
 }
 
 // statusSnapshotFrame reports the runner's own process table only: these are
@@ -162,22 +166,33 @@ func streamSSE(
 		case <-ticker.C:
 			if snapshot != nil {
 				if frame := snapshot(); frame != "" {
-					_, _ = io.WriteString(w, frame)
+					if _, err := io.WriteString(w, frame); err != nil {
+						return
+					}
 				}
 			}
-			_, _ = io.WriteString(w, heartbeat)
-		case evt := <-ch:
+			if _, err := io.WriteString(w, heartbeat); err != nil {
+				return
+			}
+		case evt, ok := <-ch:
+			if !ok {
+				return
+			}
 			raw, err := json.Marshal(evt)
 			if err != nil {
 				continue
 			}
-			_, _ = fmt.Fprintf(w, "data: %s\n\n", raw)
+			if _, err := fmt.Fprintf(w, "data: %s\n\n", raw); err != nil {
+				return
+			}
 		case frame, ok := <-upstream:
 			if !ok {
 				upstream = nil
 				continue
 			}
-			_, _ = io.WriteString(w, frame)
+			if _, err := io.WriteString(w, frame); err != nil {
+				return
+			}
 		}
 		flusher.Flush()
 	}

@@ -315,7 +315,7 @@ func (s *Service) conversationStatuses(ctx context.Context, projectID, directory
 		}
 	}
 	allowed := make(map[string]bool)
-	for _, rec := range s.store.listProjectRecords(projectID, s.projectScopeDirectory(projectID, directory)) {
+	for _, rec := range s.store.ListProjectRecords(projectID, s.projectScopeDirectory(projectID, directory)) {
 		allowed[rec.ID] = true
 	}
 	for _, id := range s.busySessionIDs() {

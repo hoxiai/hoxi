@@ -300,6 +300,7 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 	s.mu.Lock()
 	s.procs[rec.ID] = ap
 	s.mu.Unlock()
+	s.beginSessionFileTurn(rec.ID)
 	s.forgetCleanIdleOpenCodeDirs(rec)
 	if s.status != nil {
 		s.status.SetSessionBusy(rec.ID, true)
@@ -593,6 +594,7 @@ func (s *Service) relayOpenCodeEventWithFiles(rec SessionRecord, raw []byte, fil
 		}
 		evt.Properties["part"] = part
 		s.noteToolOutcome(rec.ID, part)
+		s.noteCompletedFileEdits(rec.ID, part)
 	case "session.diff":
 		evt.Properties["diff"] = s.filterLocalSessionDiffEvent(rec.ID, evt.Properties["diff"])
 	case "session.error":

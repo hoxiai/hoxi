@@ -85,11 +85,11 @@ func TestHistoryPagingReturnsTailAndOlderPages(t *testing.T) {
 func TestParseHistoryPageCapsLimit(t *testing.T) {
 	t.Parallel()
 	page := parseHistoryPage(map[string][]string{"limit": {"999999"}})
-	if page.limit != maxHistoryPageTurns {
-		t.Fatalf("limit = %d, want cap %d", page.limit, maxHistoryPageTurns)
+	if page.Limit != maxHistoryPageTurns {
+		t.Fatalf("limit = %d, want cap %d", page.Limit, maxHistoryPageTurns)
 	}
-	if page := parseHistoryPage(map[string][]string{"limit": {"-4"}}); page.limit != 0 {
-		t.Fatalf("negative limit = %d, want full history", page.limit)
+	if page := parseHistoryPage(map[string][]string{"limit": {"-4"}}); page.Limit != 0 {
+		t.Fatalf("negative limit = %d, want full history", page.Limit)
 	}
 }
 

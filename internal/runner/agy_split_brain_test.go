@@ -162,9 +162,8 @@ func TestQuarantineEmptyAgySQLiteStore(t *testing.T) {
 		}
 		writeAgyProtobufStore(t, filepath.Join(convDir, "conv-nocli.pb"))
 		writeAgySQLiteStore(t, sqlite, filepath.Join(convDir, "conv-nocli.db"), 0)
-		orig := countAgyStoreSteps
-		countAgyStoreSteps = func(string) (int, error) { return 0, errors.New("sqlite3: not found") }
-		t.Cleanup(func() { countAgyStoreSteps = orig })
+		restore := setCountAgyStoreStepsForTest(func(string) (int, error) { return 0, errors.New("sqlite3: not found") })
+		t.Cleanup(restore)
 
 		if quarantineEmptyAgySQLiteStore("conv-nocli") {
 			t.Fatal("expected no quarantine without sqlite3")

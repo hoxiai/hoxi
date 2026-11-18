@@ -1,0 +1,86 @@
+{
+  "name": "steer_then_stop",
+  "description": "User submits a prompt, steers the active native turn at a safe boundary, and then stops execution cleanly without dangling running tool parts.",
+  "engineCalls": [
+    {
+      "steps": [
+        {
+          "op": "emit",
+          "event": {
+            "Kind": "thinking_end",
+            "Step": 1,
+            "PartID": "prt_think_1",
+            "Text": "Inspecting <WORKSPACE> build graph"
+          }
+        },
+        {
+          "op": "emit",
+          "event": {
+            "Kind": "tool_running",
+            "Step": 1,
+            "PartID": "prt_tool_1",
+            "CallID": "call_read_1",
+            "ToolName": "read",
+            "Title": "go.mod",
+            "Input": { "filePath": "<WORKSPACE>/go.mod" }
+          }
+        },
+        {
+          "op": "emit",
+          "event": {
+            "Kind": "tool_completed",
+            "Step": 1,
+            "PartID": "prt_tool_1",
+            "CallID": "call_read_1",
+            "ToolName": "read",
+            "Title": "go.mod",
+            "Text": "module example.com/demo"
+          }
+        },
+        { "op": "signal_gate", "gate": "step1_done" },
+        { "op": "wait_gate", "gate": "steer_queued" },
+        { "op": "drain_steer", "expectSteers": 1 },
+        {
+          "op": "emit",
+          "event": {
+            "Kind": "tool_running",
+            "Step": 2,
+            "PartID": "prt_tool_2",
+            "CallID": "call_bash_2",
+            "ToolName": "bash",
+            "Title": "long check",
+            "Input": { "command": "go test ./..." }
+          }
+        },
+        { "op": "signal_gate", "gate": "step2_running" },
+        { "op": "wait_abort" }
+      ]
+    }
+  ],
+  "clientActions": [
+    {
+      "name": "initial_prompt",
+      "op": "prompt",
+      "text": "audit module dependencies",
+      "clientRequestId": "fx-steer-prompt-1",
+      "expectHttp": 200
+    },
+    { "name": "await_step1", "op": "wait_gate", "gate": "step1_done" },
+    {
+      "name": "live_steer",
+      "op": "prompt",
+      "text": "focus only on internal/runner tests",
+      "clientRequestId": "fx-steer-prompt-2",
+      "expectHttp": 200
+    },
+    { "name": "release_steer", "op": "signal_gate", "gate": "steer_queued" },
+    { "name": "await_step2", "op": "wait_gate", "gate": "step2_running" },
+    { "name": "stop_turn", "op": "abort", "expectHttp": 200 },
+    { "name": "await_settled", "op": "wait_idle" }
+  ],
+  "expect": {
+    "userTurnCount": 2,
+    "minTotalTurns": 4,
+    "noRunningTools": true
+  }
+}

@@ -13,10 +13,12 @@
 - **Run Headless**: `go run ./cmd/hoxi --no-desktop`
 - **Web Lint / Test / Build**: `npm --prefix web run lint && npm --prefix web test && npm --prefix web run build`
 - **AI One-Click Release**: `./scripts/ai-release.sh <version> "<release-notes>"`
-- **Go 分层归属**（完整目录树见 `docs/architecture-overview.md`）：顶层 `main.go`、`cmd/hoxi`、`internal/app`、`internal/cli`；网关层 `internal/gateway`；底座层 `internal/opencode/ocapi`、`internal/opencode/ocstate`、`hoxipaths`、`llm`、`agentcli`、`agyhook`、`claudeconfig`、`dataprofiles`、`diagnostics`、`buildinfo`、`notify`、`osopen`、`reclaim`、`sqlitecli`、`statusbar`、`subproc`、`textindex`、`testutil/execstub`；其余 `internal/*` 为业务层
-- **配置根**：`.opencode/{plugins,lib,skills}/` 是本仓库自用的上游 OpenCode 配置根（只读）；`.hoxi/memory/` 为 git-ignored 项目状态
+- **Go 分层归属**（完整目录树见 `docs/architecture-overview.md`）：顶层 `main.go`、`cmd/hoxi`、`internal/app`、`internal/cli`；网关层 `internal/gateway`；业务层核心含默认 Go 原生引擎 `internal/agent`、多运行时与统一审批 `internal/runner`（含子包 `shellpolicy`、`memstore`、`procgroup`）、原生终端宿主 `internal/termhost` 等 `internal/*`；底座层 `hoxipaths`、`hoxiconfig`、`canonical`、`llm`、`agentcli`、`agyhook`、`claudeconfig`、`dataprofiles`、`diagnostics`、`buildinfo`、`notify`、`osopen`、`reclaim`、`sqlitecli`、`statusbar`、`subproc`、`textindex`、`testutil/execstub`（及 `internal/runner/{sessionstore,turnstream,taskledger}`、可选 OpenCode 兼容底座 `internal/opencode/ocapi`、`internal/opencode/ocstate`）
+- **配置根**：项目状态与扩展目录默认走 `<project>/.hoxi/`（`memory/`、`worktrees/`、`attachments/` 为运行态 git-ignored，`skills/`、`commands/`、`agents/` 可随仓库共享）与全局 `~/.hoxi/`；跨端审批策略 JS 镜像位于 `web/src/policy/`、共享用例位于 `internal/runner/shellpolicy/testdata/`
 
 ---
+
+项目共享原生配置使用执行目录根部 `hoxi.json`（底座 `internal/hoxiconfig`，格式与边界见 [`docs/hoxi-config.md`](docs/hoxi-config.md)）；与 `.hoxi/models.json` 本机凭据分离，不得将有效项目配置回写全局。`hoxi.json` 是受保护执行配置，项目权限不能放宽本机审批。
 
 ## 二、边界与约束
 
@@ -39,13 +41,13 @@
      - 业务领域包与底座包（见第一节分层速查）**严禁反向 `import` `internal/gateway`、`internal/app` 或 `internal/cli`**。
      - 各子包用明确 Receiver（`*Gateway`/`*Service`/`*Manager`），禁跨包伪装别名；内部 LLM 请求统一由 `gateway` 注入 [`llm.Client`](internal/llm/llm.go)，业务包**严禁直接 `import internal/provider`**。
 
-2. **OpenCode 上游零侵入**
-   - 严禁 Fork 或修改 `opencode` 内部源码；定制能力仅经 Go 进程监管、反向代理或插件钩子扩展。
-   - **严禁在用户项目创建 `.opencode/`**：否则 `opencode serve` 会在其中安装 `node_modules` 污染仓库。项目状态（记忆、工作树、附件）一律写 `<project>/.hoxi/`，路径走 [`internal/hoxipaths`](internal/hoxipaths/hoxipaths.go)（`ProjectMemoryDir` / `ProjectSessionMemoryFile`）；旧版 `.opencode/memory/` 仅只读回退。
+2. **默认原生引擎优先与外部 CLI 零侵入兼容**
+   - Hoxi 默认使用进程内 **Go 原生 Agent 引擎**（[`internal/agent`](internal/agent/engine.go)，`runtime: "native"`），启动无需运行 `opencode serve` 或外部 sidecar；`Claude Code`、`Codex`、`OpenCode`、`Antigravity`、`Gemini CLI`、`Qoder`、`CodeBuddy` 作为可选外部运行时经 `internal/runner` 统一适配，严禁 Fork 或侵入修改外部 CLI 源码。
+   - **项目状态与扩展一律写 `.hoxi/`，严禁在用户项目创建 `.opencode/`**：否则外部 `opencode` 会在其中安装 `node_modules` 污染仓库。项目状态（记忆、工作树、附件）与默认项目级技能/命令一律走 `<project>/.hoxi/`（路径经 [`internal/hoxipaths`](internal/hoxipaths/hoxipaths.go) 解析）；`.claude/`、`.agents/`、`.opencode/` 仅作只读兼容回退。
 
-3. **三大统一网关平面与 Git Worktree 强隔离**
-   - 前端（[`api.ts`](web/src/services/api.ts)、[`sse.ts`](web/src/services/sse.ts)）与 CLI 会话操作统一走 `/api/hoxi/sessions`，事件流走 `/api/hoxi/event`，权限审批走 `/api/hoxi/permission`，**严禁裸调上游 `/session`、`/event` 或 `/permission`**。
-   - 关联特定会话或沙箱的请求（`/api/hoxi/sessions`、`/api/hoxi/event`、`/api/hoxi/permission`、`/file`、`/pty`）**必须**带 `?directory=<worktree-path>`，严禁跨会话读写。
+3. **统一 `/api/hoxi/*` 网关平面与 Git Worktree 强隔离**
+   - 前端（[`api.ts`](web/src/services/api.ts)、[`sse.ts`](web/src/services/sse.ts)）与 CLI 会话操作统一走 `/api/hoxi/sessions`，事件流走 `/api/hoxi/event`，权限审批走 `/api/hoxi/permission`，宿主终端、目录、LSP、文件与提供商统一走 `/api/hoxi/{pty,agents,commands,lsp,file,provider}`，**严禁前端或 CLI 裸调旧版无前缀上游路径（`/session`、`/event`、`/permission`、`/pty`、`/agent`、`/command`、`/lsp`、`/find/file`、`/provider`、`/auth`、`/global`）**。
+   - 关联特定会话或沙箱的请求（`/api/hoxi/sessions`、`/api/hoxi/event`、`/api/hoxi/permission`、`/api/hoxi/file/*`、`/api/hoxi/pty`）**必须**带 `?directory=<worktree-path>`，严禁跨会话读写。
 
 4. **SolidJS 响应式、成对清理与防过期响应**
    - **禁解构响应式源**：组件内严禁解构 `props` 或 `store`；`/api/hoxi/event` 高频增量事件须经 `requestAnimationFrame` 批处理合并后更新 Store。
@@ -57,11 +59,11 @@
 
 6. **安全门控、网络外发、子进程消毒与原子持久化**
    - **破坏性操作与审批门控底线**（完整 AST/Shell 展开、不透明命令、无人值守与本会话进程归属细则必读 [`docs/ai-coding-guardrails.md`](docs/ai-coding-guardrails.md) 第 1、5 节）：
-     - 含破坏性指令（`rm`, `sudo`, `chmod`, `chown`, `diskutil`, `mkfs`, `git push --force`, `git reset --hard`）与敏感文件读取（`.env` 等）默认须人工确认；字面量数据参数先经 `maskCommandDataArguments`（`command_data_args.go` / `command-data-args.js`）遮蔽，语义不明时不替换。`auto` 模式额外放行临时目录（`/tmp`、`/private/tmp`、`os.TempDir()`、macOS `/var/folders/<id>/T/<子路径>`）下具名条目的删除，以及对工作目录/临时目录内非受保护具体文件的非递归常规 `chmod`（禁 setuid/setgid/sticky 与 `000`）；只操作暂存区的 `git restore --staged`/`-S`（不含 `-W`/`--worktree`/`--source`）与只读预览 `git clean -n`/`--dry-run` 不计入破坏性指令。
-     - **完全信任（`trusted`，`approval_trusted.go`，仅桌面端）**：在 `auto` 基础上额外放行隔离 worktree（`.hoxi/worktrees/`）内非受保护路径删除、递归/通配 `chmod` 与 `git reset --hard`/`checkout --`/`restore`/`clean`。
-     - **无人值守（`unattended`，`approval_unattended.go`，仅桌面端）**：要求隔离 worktree + 命令沙箱且运行时受 Seatbelt 包裹；硬拒绝读密钥、任何 `git push` 与发布、提权、凭据外发及动态代码（`dynamic` 类，共用 `.opencode/lib/unattended.cases.json`），拒绝项记入 `/api/hoxi/permission/deferred`（不入隧道）。
-     - **结束本会话进程（`owned_process.go` + `process_control.go`）**：除手动模式外，顶层字面量 `pkill`/`kill` 仅在核实所有目标均属本会话进程组时放行（审计来源 `own_process`），任一目标不属本会话或含动态参数一律询问；同链仅把固定绝对目录追加到 `PATH` 尾部时，还须确认继承环境解析到系统工具，前置/替换 PATH、工具来源不明或停止前出现其他可能改写工具的操作均不豁免。
-     - **任何模式（含完全信任）必问硬底线**：读密钥与凭据、工作树外敏感路径、受保护路径（`.git`、`.opencode`、`.claude`、`.hoxi`、`.agents`、`.envrc`、`.vscode/settings.json`；`.hoxi/attachments/` 读写豁免，`.hoxi/skills/` 与 `.agents/skills/` 仅读与执行既有脚本豁免，`.claude/skills/` 普通资料仅读豁免（凭据、越界软链与实际通配内容读取不豁免，目录范围授权不等于写入或执行授权），读本会话 `~/.hoxi/sessions/<id>/` 豁免）、`sudo`、`git push --force`/删远端分支、共享 git 状态、发布命令、非本会话 `kill`/`pkill`/`killall`、磁盘系统命令、管道执行、`unsandboxed` 工具与无法按 `opaque_command.go` / `opaque-command.js` 归约的不透明命令（共用 `.opencode/lib/opaque-command.cases.json`）。
+     - 含破坏性指令（`rm`, `sudo`, `chmod`, `chown`, `diskutil`, `mkfs`, `git push --force`, `git reset --hard`）与敏感文件读取（`.env` 等）默认须人工确认；字面量数据参数先经 `maskCommandDataArguments`（`shellpolicy/command_data_args.go` / `command-data-args.js`）遮蔽，语义不明时不替换。`auto` 模式额外放行临时目录（`/tmp`、`/private/tmp`、`os.TempDir()`、macOS `/var/folders/<id>/T/<子路径>`）下具名条目的删除，以及对工作目录/临时目录内非受保护具体文件的非递归常规 `chmod`（禁 setuid/setgid/sticky 与 `000`）；只操作暂存区的 `git restore --staged`/`-S`（不含 `-W`/`--worktree`/`--source`）与只读预览 `git clean -n`/`--dry-run` 不计入破坏性指令。
+     - **完全信任（`trusted`，`shellpolicy/trusted.go`，仅桌面端）**：在 `auto` 基础上额外放行隔离 worktree（`.hoxi/worktrees/`）内非受保护路径删除、递归/通配 `chmod` 与 `git reset --hard`/`checkout --`/`restore`/`clean`。
+     - **无人值守（`unattended`，`shellpolicy/unattended.go`，仅桌面端）**：要求隔离 worktree + 命令沙箱且运行时受 Seatbelt 包裹；硬拒绝读密钥、任何 `git push` 与发布、提权、凭据外发及动态代码（`dynamic` 类，共用 `internal/runner/shellpolicy/testdata/unattended.cases.json`），拒绝项记入 `/api/hoxi/permission/deferred`（不入隧道）。
+     - **结束本会话进程（`owned_process.go` + `procgroup/owned.go` + `shellpolicy/process_control.go`）**：除手动模式外，顶层字面量 `pkill`/`kill` 仅在核实所有目标均属本会话进程组时放行（审计来源 `own_process`），任一目标不属本会话或含动态参数一律询问；同链仅把固定绝对目录追加到 `PATH` 尾部时，还须确认继承环境解析到系统工具，前置/替换 PATH、工具来源不明或停止前出现其他可能改写工具的操作均不豁免。
+     - **任何模式（含完全信任）必问硬底线**：读密钥与凭据、工作树外敏感路径、受保护路径（`.git`、`.opencode`、`.claude`、`.hoxi`、`.agents`、`.envrc`、`.vscode/settings.json`；`.hoxi/attachments/` 读写豁免，`.hoxi/skills/` 与 `.agents/skills/` 仅读与执行既有脚本豁免，`.claude/skills/` 普通资料仅读豁免（凭据、越界软链与实际通配内容读取不豁免，目录范围授权不等于写入或执行授权），读本会话 `~/.hoxi/sessions/<id>/` 豁免）、`sudo`、`git push --force`/删远端分支、共享 git 状态、发布命令、非本会话 `kill`/`pkill`/`killall`、磁盘系统命令、管道执行、`unsandboxed` 工具与无法按 `shellpolicy/opaque_command.go` / `web/src/policy/opaque-command.js` 归约的不透明命令（共用 `internal/runner/shellpolicy/testdata/opaque-command.cases.json`）。
    - **本地网关与外发边界**：网关仅监听 `127.0.0.1`，反向代理 `Transport` 配 `Proxy: nil` 与 `FlushInterval: -1` 并长生命周期复用，外部响应与进程输出用 `io.LimitReader` 限流。AI 请求直连用户服务商（回环中转 `relay.go` 同样直发且不入隧道）；辅助外发（遥测、更新、登录、模型价目同步）严禁含提示词、代码、Diff 或会话内容；后台 LLM 调用须在 UI 标明目的地。
    - **子进程消毒与原子落盘**：子进程一律用 [`internal/subproc`](internal/subproc/subproc.go) 创建（Windows `CREATE_NO_WINDOW`，修改而非替换 `SysProcAttr`）；外部 `git`/CLI 绑超时并设 `GIT_TERMINAL_PROMPT=0`、`GCM_INTERACTIVE=never`，剥离 `GIT_ASKPASS`/`SSH_ASKPASS`/`GIT_EDITOR`；读外部 SQLite 只读 + `_busy_timeout`。`~/.hoxi/` 与 `.hoxi/` 状态文件须「加锁 + 同目录临时文件 + fsync + `os.Rename`」；日志自动脱敏 `Authorization`、`Bearer`、`x-api-key`、`OPENCODE_SERVER_PASSWORD`。
 
@@ -80,7 +82,7 @@
     - 遵循 `~/.hoxi/git-attribution.json`（`GET/PUT /api/hoxi/git/attribution`）：默认 `auto` 在 Hoxi 隔离工作树（`<project>/.hoxi/worktrees/*`）及本仓库追加 `Co-authored-by: Hoxi <code@hoxi.ai>`，`always` 全部署，`never` 关闭。
 
 11. **AI 编码红线 (AI Guardrails)** —— 详见 [`docs/ai-coding-guardrails.md`](docs/ai-coding-guardrails.md)，改审批、隧道、工作区/会话迁移、持久化、进程控制前必读
-    - **审批策略只解析一次、失败即 ask**：禁重拼命令字符串再解析；语义不明输入禁走白名单；白名单按 token 锚定（禁 `\b`）；未知与网络工具按策略判定（禁按前缀放行）；Go 与 JS 策略同步修改并写入 `.opencode/lib/permission-policy.cases.json` 与 `permission-request.cases.json`。
+    - **审批策略只解析一次、失败即 ask**：禁重拼命令字符串再解析；语义不明输入禁走白名单；白名单按 token 锚定（禁 `\b`）；未知与网络工具按策略判定（禁按前缀放行）；Go 与 JS（`web/src/policy/`）策略同步修改并写入 `internal/runner/shellpolicy/testdata/permission-policy.cases.json` 与 `permission-request.cases.json`。
     - **审批超时只拒绝永不放行**（默认 600s，范围 60–3600）；硬拒绝类不得被任何模式或「始终允许」放宽；待处理清单不入隧道。
     - **隧道白名单只用显式「方法 + 路由」清单**，禁前缀匹配；命令执行、`open`、工作区外文件、凭据与 OpenCode 原始透传永不入隧道。
     - **禁启发式推断破坏性操作**（按下标或 `os.Stat` 猜移动、匹配不到扩大 kill 范围等）；迁移/删除/杀进程仅在显式指令下执行且限本会话范围。
@@ -94,10 +96,11 @@
 | **本机 OpenAI 兼容中转** | [`relay.go`](internal/provider/relay.go) + [`relay_keys.go`](internal/provider/relay_keys.go)（仅存哈希） | 严禁入 [`tunnel.go`](internal/gateway/tunnel.go) 白名单或下发上游 `apiKey` | [`internal/provider/relay.go`](internal/provider/relay.go) |
 | **经隧道开放的路由** | [`tunnel.go`](internal/gateway/tunnel.go) 显式「方法+路由」+ `tunnel_test.go` + 契约文档 | 严禁前缀放行或开放账号、提供商、命令执行、`open`、工作区外文件 | [`docs/gopanel-hoxi-remote-tunnel.md`](docs/gopanel-hoxi-remote-tunnel.md) |
 | **网关自发轻量 LLM 调用** | 领域包接收 `gateway` 注入的 [`llm.Client`](internal/llm/llm.go) | 严禁业务包 `import internal/provider` 或手写 `http.Post` | [`internal/promptassist/`](internal/promptassist/service.go) |
-| **直连 `opencode serve`** | 一律用 [`internal/opencode/ocapi`](internal/opencode/ocapi/client.go) | 严禁自建回环 `http.Client`/`Transport` 或手写 Basic Auth | [`internal/opencode/ocapi/client.go`](internal/opencode/ocapi/client.go) |
-| **`~/.hoxi` 与记忆路径** | 一律用 [`internal/hoxipaths`](internal/hoxipaths/hoxipaths.go)（`DBPath`、`ProjectMemoryDir` 等） | 严禁硬编码路径，严禁在用户项目创建 `.opencode/` | [`internal/hoxipaths/hoxipaths.go`](internal/hoxipaths/hoxipaths.go) |
+| **默认 Go 原生引擎与内置工具** | [`internal/agent/`](internal/agent/engine.go)（宿主桥接见 [`native_agent.go`](internal/gateway/native_agent.go) / [`native_host.go`](internal/gateway/native_host.go)） | 严禁塞入 `internal/opencode` 或业务包直接 `import internal/provider` | [`internal/agent/engine.go`](internal/agent/engine.go) |
+| **原生 PTY 终端宿主** | [`internal/termhost/`](internal/termhost/service.go)，经 `/api/hoxi/pty` 暴露 | 严禁入远程隧道白名单或绕过 `gatewayToken` 门控 | [`internal/termhost/service.go`](internal/termhost/service.go) |
+| **`~/.hoxi` 与项目 `.hoxi/` 路径** | 一律用 [`internal/hoxipaths`](internal/hoxipaths/hoxipaths.go)（`Home`、`ProjectMemoryDir` 等） | 严禁硬编码路径，严禁在用户项目创建 `.opencode/` | [`internal/hoxipaths/hoxipaths.go`](internal/hoxipaths/hoxipaths.go) |
 | **外部 CLI 会话接管** | `internal/handoff/<tool>.go` 单文件高内聚 | 严禁跨工具混放或塞入 `types.go` / `service.go` | [`internal/handoff/codex.go`](internal/handoff/codex.go) |
-| **多运行时子进程驱动** | `internal/runner/` 对应 adapter 与 translator | 严禁侵入或修改 `internal/opencode` | [`internal/runner/http.go`](internal/runner/http.go) |
+| **多运行时子进程驱动** | `internal/runner/` 协调层与子包 `turnstream/`、`procgroup/`、`shellpolicy/`（可选 OpenCode 回环通信仅走 [`ocapi`](internal/opencode/ocapi/client.go)） | 严禁自建无防劫持回环 `http.Client` 或跨运行时耦合 | [`internal/runner/http.go`](internal/runner/http.go) |
 | **前端网络层 (`services/`)** | `web/src/services/`，复用 [`requestJSON`](web/src/services/http.ts) | 严禁反向导入 `store/` 或 `components/`，禁混入 UI 工具 | [`web/src/services/http.ts`](web/src/services/http.ts) |
 | **前端状态层 (`store/`)** | `web/src/store/<domain>.ts`，在 [`workspace.ts`](web/src/store/workspace.ts) 扁平导出 | 严禁反向导入 `components/`，禁建 `*-storage.ts` 或二级 `export *` | [`web/src/store/git-commit.ts`](web/src/store/git-commit.ts) |
 | **前端独立业务弹窗** | `web/src/components/<domain>/`（`models/`, `handoff/`, `settings/`, `approval/`） | 严禁将非布局业务 Modal 塞进 `components/layout/` | [`ExternalHandoffModal.tsx`](web/src/components/handoff/ExternalHandoffModal.tsx) |

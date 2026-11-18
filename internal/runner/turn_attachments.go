@@ -2,7 +2,6 @@ package runner
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"net/http"
 	"os"
@@ -20,6 +19,40 @@ import (
 func (s *Service) SetAudioClient(c llm.AudioClient) {
 	if s != nil {
 		s.audioClient = c
+	}
+}
+
+// SetStreamClient wires the provider stream target resolver so the native Go
+// agent only passes raw audio/video inlineData when the wire protocol is native
+// Google Gemini, routing OpenAI/Anthropic protocol audio through ASR instead.
+func (s *Service) SetStreamClient(c llm.StreamClient) {
+	if s != nil {
+		s.streamClient = c
+	}
+}
+
+func (s *Service) isNativeGoogleStreamProtocol(providerID, modelID string) bool {
+	if s != nil && s.streamClient != nil {
+		return s.streamClient.ResolveStreamTarget(providerID, modelID).Protocol == llm.ProtocolGoogle
+	}
+	lp := strings.ToLower(strings.TrimSpace(providerID))
+	return lp == "google" || lp == "gemini" || strings.HasPrefix(lp, "google-")
+}
+
+func (s *Service) runtimeSupportsNativeAttachment(rec SessionRecord, providerID, modelID string, kind attachment.Kind) bool {
+	if kind != attachment.KindPDF && kind != attachment.KindAudio && kind != attachment.KindVideo {
+		return false
+	}
+	switch rec.Runtime {
+	case string(RuntimeNative):
+		if (kind == attachment.KindAudio || kind == attachment.KindVideo) && !s.isNativeGoogleStreamProtocol(providerID, modelID) {
+			return false
+		}
+		return s.openCodeSupportsNativeAttachment(rec.WorktreePath, providerID, modelID, kind)
+	case "opencode":
+		return s.openCodeSupportsNativeAttachment(rec.WorktreePath, providerID, modelID, kind)
+	default:
+		return false
 	}
 }
 
@@ -200,10 +233,8 @@ func (s *Service) prepareTurnAttachmentsForModel(
 				_, localPath, _ = s.attachments.MaterializeToDir(meta.ID, rec.WorktreePath)
 			}
 
-			nativeMultimodal := (rec.Runtime == "opencode" || rec.Runtime == string(RuntimeNative)) &&
-				!isImageTurn &&
-				(meta.Kind == attachment.KindPDF || meta.Kind == attachment.KindAudio || meta.Kind == attachment.KindVideo) &&
-				s.openCodeSupportsNativeAttachment(rec.WorktreePath, targetProviderID, targetModelID, meta.Kind)
+			nativeMultimodal := !isImageTurn &&
+				s.runtimeSupportsNativeAttachment(rec, targetProviderID, targetModelID, meta.Kind)
 
 			if meta.Kind == attachment.KindImage || nativeMultimodal {
 				_, dataURL, err := s.attachments.ReadAsDataURL(meta.ID)
@@ -261,6 +292,12 @@ func (s *Service) prepareTurnAttachmentsForModel(
 				}
 				header += ">"
 				if transcript != "" {
+					if idx := len(storedFiles) - 1; idx >= 0 {
+						storedFiles[idx].Metadata = map[string]interface{}{
+							"transcript":    transcript,
+							"transcribedBy": transcribedBy,
+						}
+					}
 					docBlocks = append(docBlocks, header+"\n[Audio Transcript]\n"+transcript+"\n</attached_file>")
 				} else {
 					docBlocks = append(docBlocks, header+"</attached_file>")
@@ -335,34 +372,6 @@ func (s *Service) prepareTurnAttachmentsForModel(
 	deliveryParts = append(deliveryParts, deliveryFiles...)
 
 	return storedParts, deliveryParts, cliPrompt
-}
-
-func parseBase64DataURL(dataURL, fallbackMime string) (mimeType, b64Data string, rawBytes []byte, ok bool) {
-	trimmed := strings.TrimSpace(dataURL)
-	if !strings.HasPrefix(trimmed, "data:") {
-		return "", "", nil, false
-	}
-	comma := strings.IndexByte(trimmed, ',')
-	if comma < 0 {
-		return "", "", nil, false
-	}
-	header := trimmed[5:comma]
-	b64Data = strings.TrimSpace(trimmed[comma+1:])
-	if b64Data == "" {
-		return "", "", nil, false
-	}
-	mimeType = strings.TrimSpace(strings.Split(header, ";")[0])
-	if mimeType == "" {
-		mimeType = strings.TrimSpace(fallbackMime)
-	}
-	if mimeType == "" {
-		mimeType = "image/png"
-	}
-	decoded, err := base64.StdEncoding.DecodeString(b64Data)
-	if err != nil || len(decoded) == 0 {
-		return "", "", nil, false
-	}
-	return mimeType, b64Data, decoded, true
 }
 
 func attachmentExtForMime(mimeType string) string {

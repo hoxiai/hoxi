@@ -13,6 +13,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
 
 // Exposure says how a discovered skill reaches the model. The skills list
@@ -177,11 +179,13 @@ func isClientSyncedSkill(location, name string) bool {
 }
 
 // fetchEngineSkillConfig reads the effective engine config for directory.
-// Any failure yields an empty config: no MCP servers and no rules.
-func (s *Service) fetchEngineSkillConfig(ctx context.Context, directory string) engineSkillConfig {
+// When OpenCode is not running, it reads Hoxi's user and workspace .hoxi/models.json
+// files directly so MCP server availability and permission.skill rules apply
+// identically on the in-process native engine.
+func (s *Service) fetchEngineSkillConfig(ctx context.Context, directory, projectRoot string) engineSkillConfig {
 	cfg := engineSkillConfig{mcpServers: map[string]bool{}}
 	if !s.openCode.Available() {
-		return cfg
+		return loadOfflineHoxiSkillConfig(directory, projectRoot)
 	}
 	ctx, cancel := context.WithTimeout(ctx, upstreamSkillTimeout)
 	defer cancel()
@@ -194,6 +198,40 @@ func (s *Service) fetchEngineSkillConfig(ctx context.Context, directory string) 
 		return cfg
 	}
 	return parsed
+}
+
+func loadOfflineHoxiSkillConfig(directory, projectRoot string) engineSkillConfig {
+	merged := engineSkillConfig{mcpServers: map[string]bool{}}
+	var candidates []string
+	if userPath := hoxipaths.Join("models.json"); userPath != "" {
+		candidates = append(candidates, userPath)
+	}
+	for _, root := range []string{projectRoot, directory} {
+		if trimmed := strings.TrimSpace(root); trimmed != "" {
+			candidates = append(candidates, filepath.Join(trimmed, ".hoxi", "models.json"))
+		}
+	}
+	seen := make(map[string]bool, len(candidates))
+	for _, p := range candidates {
+		clean := filepath.Clean(p)
+		if seen[clean] {
+			continue
+		}
+		seen[clean] = true
+		raw, err := os.ReadFile(clean)
+		if err != nil || len(raw) == 0 || len(raw) > maxUpstreamSkillBytes {
+			continue
+		}
+		parsed, err := parseEngineSkillConfig(raw)
+		if err != nil {
+			continue
+		}
+		for k, v := range parsed.mcpServers {
+			merged.mcpServers[k] = v
+		}
+		merged.rules = append(merged.rules, parsed.rules...)
+	}
+	return merged
 }
 
 func parseEngineSkillConfig(body []byte) (engineSkillConfig, error) {
@@ -210,6 +248,7 @@ func parseEngineSkillConfig(body []byte) (engineSkillConfig, error) {
 			Enabled *bool `json:"enabled"`
 		}
 		if json.Unmarshal(raw, &entry) == nil && entry.Enabled != nil && !*entry.Enabled {
+			cfg.mcpServers[strings.ToLower(name)] = false
 			continue
 		}
 		cfg.mcpServers[strings.ToLower(name)] = true

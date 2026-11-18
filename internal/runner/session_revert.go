@@ -627,7 +627,16 @@ func collectTurnEditedRelPaths(worktreePath string, turns []MessageTurn, startPa
 			if part.Type != "tool" || part.State == nil {
 				continue
 			}
+			if st := strings.ToLower(strings.TrimSpace(part.State.Status)); st != "" && st != "completed" {
+				continue
+			}
 			toolLower := strings.ToLower(strings.TrimSpace(part.Tool))
+			if toolLower == "bash" {
+				for _, f := range stringList(part.State.Metadata["checkpointFiles"]) {
+					addPath(f)
+				}
+				continue
+			}
 			if !editToolNames[toolLower] {
 				continue
 			}
@@ -635,6 +644,9 @@ func collectTurnEditedRelPaths(worktreePath string, turns []MessageTurn, startPa
 				for _, f := range stringList(part.State.Input[key]) {
 					addPath(f)
 				}
+			}
+			for _, f := range extractEditedPathsFromPart(part) {
+				addPath(f)
 			}
 			if diff, ok := part.State.Metadata["filediff"].(map[string]interface{}); ok {
 				for _, f := range stringList(firstString(diff["file"], diff["path"], diff["filePath"])) {

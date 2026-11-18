@@ -3,6 +3,7 @@ import { createMemo, createSignal, For, Show } from "solid-js";
 import { Check, HelpCircle, LoaderCircle, MessageSquarePlus, X } from "lucide-solid";
 import type { QuestionInfo, QuestionRequest } from "../../services/sse-types";
 import { rejectQuestionRequest, replyQuestionRequest } from "../../store/workspace";
+import { extractPlanPreview, PlanConsentPreviewCard } from "./plan-consent-preview";
 import { t } from "../../i18n";
 
 /**
@@ -99,7 +100,7 @@ export default function QuestionDock(props: { request: QuestionRequest }) {
         <div class="flex items-center gap-2 min-w-0">
           <HelpCircle size={14} class="text-[var(--accent-primary)] shrink-0" />
           <span class="text-[12px] font-semibold text-[var(--text-primary)] truncate">
-            {t("approval.questionTitle")}
+            {props.request.plan ? t("approval.planConsentTitle") : t("approval.questionTitle")}
           </span>
         </div>
 
@@ -140,6 +141,15 @@ export default function QuestionDock(props: { request: QuestionRequest }) {
           <X size={13} />
         </button>
       </div>
+
+      {/* Optional Structured Plan Consent Preview */}
+      <Show when={extractPlanPreview(props.request.plan)}>
+        {(plan) => (
+          <div class="px-3.5 pt-3">
+            <PlanConsentPreviewCard plan={plan()} />
+          </div>
+        )}
+      </Show>
 
       {/* Body */}
       <Show when={currentQuestion()}>

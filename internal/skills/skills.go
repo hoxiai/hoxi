@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hoxiai/hoxi/internal/hoxiconfig"
 	"github.com/hoxiai/hoxi/internal/opencode/ocapi"
 )
 
@@ -150,7 +151,11 @@ func (s *Service) handleList(w http.ResponseWriter, r *http.Request) {
 
 	entries, err := s.loadOpenCodeCatalog(r.Context(), rc, true)
 	if err != nil {
-		writeJSONError(w, http.StatusBadGateway, "failed to load skills from OpenCode: "+err.Error())
+		status := http.StatusBadGateway
+		if errors.Is(err, hoxiconfig.ErrInvalidConfig) {
+			status = http.StatusBadRequest
+		}
+		writeJSONError(w, status, "failed to load skills: "+err.Error())
 		return
 	}
 
@@ -347,8 +352,12 @@ func catalogCacheKey(rc RequestContext) string {
 }
 
 func (s *Service) loadOpenCodeCatalog(ctx context.Context, rc RequestContext, forceRefresh bool) ([]cachedSkillEntry, error) {
+	project, err := hoxiconfig.Load(rc.Directory)
+	if err != nil {
+		return nil, err
+	}
 	cKey := catalogCacheKey(rc)
-	if !forceRefresh {
+	if !forceRefresh && rc.Runtime != "native" {
 		s.mu.RLock()
 		cached, ok := s.cache[cKey]
 		s.mu.RUnlock()
@@ -357,12 +366,35 @@ func (s *Service) loadOpenCodeCatalog(ctx context.Context, rc RequestContext, fo
 		}
 	}
 
-	rawItems, err := s.fetchOpenCodeSkills(ctx, rc.Directory)
-	if err != nil {
-		rawItems = scanLocalSkills(rc.Directory, rc.ProjectRoot)
+	var rawItems []OpenCodeSkillInfo
+	if rc.Runtime != "native" {
+		rawItems, err = s.fetchOpenCodeSkills(ctx, rc.Directory)
+	}
+	if rc.Runtime == "native" || err != nil {
+		rawItems, err = scanLocalSkills(rc.Directory, rc.ProjectRoot)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	engineCfg := s.fetchEngineSkillConfig(ctx, rc.Directory)
+	engineCfg := engineSkillConfig{}
+	if rc.Runtime == "native" {
+		engineCfg = loadOfflineHoxiSkillConfig(rc.Directory, rc.Directory)
+	} else {
+		engineCfg = s.fetchEngineSkillConfig(ctx, rc.Directory, rc.ProjectRoot)
+	}
+	localSkillRules := append([]skillRule(nil), engineCfg.rules...)
+	if project != nil {
+		raw, _ := json.Marshal(project)
+		layer, err := parseEngineSkillConfig(raw)
+		if err != nil {
+			return nil, err
+		}
+		for name, enabled := range layer.mcpServers {
+			engineCfg.mcpServers[name] = enabled
+		}
+		engineCfg.rules = append(engineCfg.rules, layer.rules...)
+	}
 	hoxiDir := canonicalizeDir(DefaultUserDir())
 	entries := make([]cachedSkillEntry, 0, len(rawItems))
 	seenNames := make(map[string]bool, len(rawItems))
@@ -374,6 +406,9 @@ func (s *Service) loadOpenCodeCatalog(ctx context.Context, rc RequestContext, fo
 		seenNames[name] = true
 		entry := buildSkillEntry(rc, item)
 		decision := classifyExposure(engineCfg, hoxiDir, rc.Surface, name, entry.resolvedPath, item.Content)
+		if action, _ := (engineSkillConfig{rules: localSkillRules}).ruleFor(name); action == "deny" {
+			decision = exposureDecision{exposure: ExposureUnavailable, reason: reasonConfigDenied}
+		}
 		entry.detail.Exposure = decision.exposure
 		entry.detail.ExposureReason = decision.reason
 		entry.detail.MissingTools = decision.missingTools

@@ -35,6 +35,8 @@ export const toolCard: ToolCardI18n = {
   actionBrowser: "浏览器操作",
   actionCodeIndex: "代码索引",
   actionTools: "工具调用",
+  actionData: "数据接口",
+  openBrowser: "打开浏览器预览",
   actionMcp: "MCP 工具",
   actionSkill: "调用技能",
   actionQuestion: "提问确认",
@@ -72,4 +74,6 @@ export const toolCard: ToolCardI18n = {
   stopCommandFailed: "未找到可终止的进程",
   stopCommandFailedTooltip: "没有匹配到唯一的目标进程，未终止任何进程",
   stoppedByUser: "已手动终止",
+  actionPlanConsent: "规划审批",
+  planPromotedBadge: "已切换至构建模式",
 };

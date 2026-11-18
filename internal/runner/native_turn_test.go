@@ -95,8 +95,19 @@ func TestStartNativeTurnWiresHooksAndMultimodal(t *testing.T) {
 		t.Fatalf("expected native summarize 200 true, got %d %q", recW.Code, recW.Body.String())
 	}
 	after, ok := svc.store.Get(rec.ID)
-	if !ok || len(after.Turns) != 2 || !strings.Contains(after.Turns[1].Parts[0].Text, "Compacted Context Summary") {
-		t.Fatalf("expected compacted 2-turn checkpoint in store, got: %+v", after.Turns)
+	if !ok || len(after.Turns) != 3 {
+		t.Fatalf("expected non-destructive 3-turn transcript after compact, got: %+v", after.Turns)
+	}
+	if after.Turns[0].Info.ID != "msg_u1" || after.Turns[1].Info.ID != "msg_a1" {
+		t.Fatalf("expected prior turns preserved for scrollback/revert, got: %+v", after.Turns)
+	}
+	ckpt := after.Turns[2]
+	if ckpt.Info.Role != "assistant" || len(ckpt.Parts) != 2 || ckpt.Parts[0].Type != "compaction" || !strings.Contains(ckpt.Parts[1].Text, "Compacted Context Summary") {
+		t.Fatalf("expected appended assistant compaction checkpoint, got: %+v", ckpt)
+	}
+	projected := svc.projectCanonicalNativeHistory(after.Turns, "openai", "gpt-5")
+	if len(projected) != 2 || !strings.Contains(projected[0].Content[0].Text, "<context_checkpoint>") {
+		t.Fatalf("expected canonical history to project from after_turn checkpoint, got: %+v", projected)
 	}
 }
 
@@ -310,5 +321,237 @@ func TestNativeSubagentBridgeCreatesChildSessionAndMetadata(t *testing.T) {
 	childRec, ok := svc.store.Get(childSessionID)
 	if !ok || childRec.ParentID != rec.ID || len(childRec.Turns) < 2 {
 		t.Fatalf("expected child session linked to parent %s, got: %+v", rec.ID, childRec)
+	}
+}
+
+type retryAndCleanupNativeEngine struct {
+	done      chan struct{}
+	forgotten chan string
+}
+
+func (e *retryAndCleanupNativeEngine) RunTurn(_ context.Context, req NativeTurnRequest) error {
+	defer close(e.done)
+	if req.Emit != nil {
+		req.Emit(NativeEvent{
+			Kind:      NativeEventStepRetry,
+			Step:      1,
+			ErrorText: "HTTP 429: rate_limit_error",
+			Metadata:  map[string]any{"attempt": 2, "next": int64(1790000012345)},
+		})
+		req.Emit(NativeEvent{Kind: NativeEventStepRetryDone, Step: 1})
+		req.Emit(NativeEvent{Kind: NativeEventTextStart, PartID: "prt_1"})
+		req.Emit(NativeEvent{Kind: NativeEventTextEnd, PartID: "prt_1", Text: "done"})
+	}
+	return nil
+}
+
+func (e *retryAndCleanupNativeEngine) Summarize(_ context.Context, _, _, _ string) (string, error) {
+	return "ok", nil
+}
+
+func (e *retryAndCleanupNativeEngine) ForgetSession(sessionID string) {
+	select {
+	case e.forgotten <- sessionID:
+	default:
+	}
+}
+
+func TestNativeStepRetryBroadcastsStatusAndDeleteCleansSessionState(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "ws")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(workspace, nil, nil, filepath.Join(root, "sessions.json"))
+	eng := &retryAndCleanupNativeEngine{
+		done:      make(chan struct{}),
+		forgotten: make(chan string, 2),
+	}
+	svc.SetNativeEngine(eng)
+
+	rec := SessionRecord{
+		ID:           "ses_nat_retry_1",
+		Runtime:      string(RuntimeNative),
+		ProviderID:   "anthropic",
+		ModelID:      "claude-sonnet-4-5",
+		ProjectDir:   workspace,
+		WorktreePath: workspace,
+	}
+	if err := svc.store.Put(rec); err != nil {
+		t.Fatal(err)
+	}
+	ch, unsub := svc.Subscribe(rec.ID)
+	defer unsub()
+
+	userMsg := MessageInfo{ID: "msg_u_r1", SessionID: rec.ID, Role: "user"}
+	storedParts := []MessagePart{{ID: "prt_u_r1", SessionID: rec.ID, MessageID: userMsg.ID, Type: "text", Text: "hi"}}
+	if err := svc.startNativeTurn(rec, "build", "claude-sonnet-4-5", "", "", "hi", userMsg, storedParts, "msg_a_r1", storedParts...); err != nil {
+		t.Fatalf("startNativeTurn failed: %v", err)
+	}
+
+	var sawRetryStatus, sawBusyAfterRetry, sawIdle bool
+	deadline := time.After(3 * time.Second)
+	for !sawIdle {
+		select {
+		case evt := <-ch:
+			if evt.Type == "session.status" {
+				st, ok := parseSessionStatus(evt.Properties["status"])
+				if !ok {
+					continue
+				}
+				switch st.Type {
+				case "retry":
+					if st.Attempt == 2 && st.Next == 1790000012345 && strings.Contains(st.Message, "429") {
+						sawRetryStatus = true
+					}
+				case "busy":
+					if sawRetryStatus {
+						sawBusyAfterRetry = true
+					}
+				case "idle":
+					sawIdle = true
+				}
+			}
+		case <-deadline:
+			t.Fatalf("timed out waiting for idle status (sawRetry=%v sawBusyAfterRetry=%v)", sawRetryStatus, sawBusyAfterRetry)
+		}
+	}
+	if !sawRetryStatus || !sawBusyAfterRetry {
+		t.Fatalf("expected retry -> busy -> idle status sequence, got retry=%v busyAfterRetry=%v", sawRetryStatus, sawBusyAfterRetry)
+	}
+
+	if err := svc.DeleteConversation(context.Background(), rec.ID); err != nil {
+		t.Fatalf("DeleteConversation failed: %v", err)
+	}
+	select {
+	case gotID := <-eng.forgotten:
+		if gotID != rec.ID {
+			t.Fatalf("expected ForgetSession(%q), got %q", rec.ID, gotID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected DeleteConversation to invoke ForgetSession on nativeEngine")
+	}
+	svc.CloseAll()
+}
+
+type costAndTodoNativeEngine struct {
+	gotReq chan NativeTurnRequest
+}
+
+func (e *costAndTodoNativeEngine) RunTurn(_ context.Context, req NativeTurnRequest) error {
+	e.gotReq <- req
+	if req.Emit != nil {
+		req.Emit(NativeEvent{
+			Kind:         NativeEventTurnUsage,
+			ParentCallID: "call_sub_1",
+			Usage:        &NativeTokenUsage{Input: 1000, Output: 500, CostUSD: 0.0125},
+		})
+		req.Emit(NativeEvent{
+			Kind:  NativeEventTurnUsage,
+			Usage: &NativeTokenUsage{Input: 4000, Output: 1000, CostUSD: 0.0375},
+		})
+		req.Emit(NativeEvent{Kind: NativeEventTextStart, PartID: "prt_txt_cost"})
+		req.Emit(NativeEvent{Kind: NativeEventTextEnd, PartID: "prt_txt_cost", Text: "Completed with cost"})
+		req.Emit(NativeEvent{Kind: NativeEventTurnFinish, Finish: "stop"})
+	}
+	return nil
+}
+
+func (e *costAndTodoNativeEngine) Summarize(_ context.Context, _, _, _ string) (string, error) {
+	return "ok", nil
+}
+
+func TestNativeTurnPropagatesCostSeedsTodosAndPermissions(t *testing.T) {
+	root := t.TempDir()
+	svc := NewService(root, nil, nil, filepath.Join(root, "sessions.json"))
+	eng := &costAndTodoNativeEngine{gotReq: make(chan NativeTurnRequest, 1)}
+	svc.SetNativeEngine(eng)
+
+	rec := SessionRecord{
+		ID:           "ses_nat_cost_todo",
+		Runtime:      string(RuntimeNative),
+		ProviderID:   "anthropic",
+		ModelID:      "claude-sonnet-4-5",
+		ProjectDir:   root,
+		WorktreePath: root,
+		Turns: []MessageTurn{
+			{
+				Info:  MessageInfo{ID: "msg_prev_u", SessionID: "ses_nat_cost_todo", Role: "user"},
+				Parts: []MessagePart{{ID: "prt_prev_u", Type: "text", Text: "start plan"}},
+			},
+			{
+				Info: MessageInfo{ID: "msg_prev_a", SessionID: "ses_nat_cost_todo", Role: "assistant"},
+				Parts: []MessagePart{{
+					ID:   "prt_prev_todo",
+					Type: "tool",
+					Tool: "todowrite",
+					State: &ToolState{
+						Status: "completed",
+						Metadata: map[string]interface{}{
+							"todos": []map[string]interface{}{
+								{"id": "t1", "content": "Audit capability gaps", "status": "completed"},
+								{"id": "t2", "content": "Wire cost & streaming", "status": "in_progress"},
+							},
+						},
+					},
+				}},
+			},
+		},
+	}
+	if err := svc.store.Put(rec); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify hoxi_data list action is allowed read-only in Smart mode while http_request requires approval
+	if _, err := svc.UpdateApprovalPolicy(ApprovalPolicy{Mode: ApprovalModeSmart}); err != nil {
+		t.Fatal(err)
+	}
+	permHook := svc.nativePermissionHook(rec, "msg_a_perm")
+	if err := permHook(context.Background(), NativePermissionRequest{
+		SessionID: rec.ID,
+		CallID:    "call_data_list",
+		ToolName:  "hoxi_data",
+		Input:     json.RawMessage(`{"action":"list"}`),
+		IsRead:    true,
+	}); err != nil {
+		t.Fatalf("expected hoxi_data action=list to be allowed without approval prompt, got: %v", err)
+	}
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := permHook(canceledCtx, NativePermissionRequest{
+		SessionID: rec.ID,
+		CallID:    "call_data_http",
+		ToolName:  "hoxi_data",
+		Input:     json.RawMessage(`{"action":"http_request","profile":"prod","path":"/users"}`),
+	}); err == nil {
+		t.Fatal("expected hoxi_data action=http_request to require approval gate and fail when context is canceled")
+	}
+
+	userMsg := MessageInfo{ID: "msg_u2", SessionID: rec.ID, Role: "user", ContinueTask: true}
+	storedParts := []MessagePart{{ID: "prt_u2", SessionID: rec.ID, MessageID: userMsg.ID, Type: "text", Text: "continue"}}
+	if err := svc.startNativeTurn(rec, "code", "claude-sonnet-4-5", "", "", "continue", userMsg, storedParts, "msg_a2"); err != nil {
+		t.Fatalf("startNativeTurn: %v", err)
+	}
+
+	select {
+	case req := <-eng.gotReq:
+		if len(req.InitialTodos) != 2 || req.InitialTodos[1].Content != "Wire cost & streaming" {
+			t.Fatalf("expected InitialTodos seeded from persisted todowrite turn, got: %+v", req.InitialTodos)
+		}
+		if req.StreamCommandRunner == nil {
+			t.Fatal("expected StreamCommandRunner to be wired")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for RunTurn")
+	}
+	svc.CloseAll()
+
+	after, ok := svc.store.Get(rec.ID)
+	if !ok || len(after.Turns) != 4 {
+		t.Fatalf("expected 4 turns in store, got: %+v", after.Turns)
+	}
+	gotCost := after.Turns[3].Info.Cost
+	if gotCost < 0.049999 || gotCost > 0.050001 {
+		t.Fatalf("expected accumulated parent+subagent Cost=0.0500, got %.6f", gotCost)
 	}
 }

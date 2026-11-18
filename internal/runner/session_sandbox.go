@@ -11,17 +11,6 @@ import (
 	"github.com/hoxiai/hoxi/internal/worktree"
 )
 
-func (r SessionRecord) sandboxMode() string {
-	if r.SandboxMode != "" {
-		return r.SandboxMode
-	}
-	// Records created before mode selection was supported always used worktrees.
-	if normalizeComparePath(r.WorktreePath) == normalizeComparePath(r.ProjectDir) {
-		return "local"
-	}
-	return "worktree"
-}
-
 func normalizeSandboxMode(mode string) (string, error) {
 	mode = strings.TrimSpace(mode)
 	if mode == "" {
@@ -53,10 +42,10 @@ func existingDirectory(directory string) (string, error) {
 }
 
 func validateSessionDirectory(rec SessionRecord) error {
-	if rec.sandboxMode() == "worktree" {
+	if rec.SandboxModeValue() == "worktree" {
 		return ValidateWorktreeDir(rec.WorktreePath, rec.ProjectDir)
 	}
-	if rec.sandboxMode() != "local" {
+	if rec.SandboxModeValue() != "local" {
 		return errors.New("invalid session sandbox mode")
 	}
 	project, err := existingDirectory(rec.ProjectDir)
@@ -131,7 +120,7 @@ func (s *Service) changeSessionSandboxWithOptions(sessionID, mode string, force,
 	if !ok {
 		return SessionInfo{}, errors.New("runner session not found")
 	}
-	if rec.sandboxMode() == mode {
+	if rec.SandboxModeValue() == mode {
 		return rec.ToSessionInfo(), nil
 	}
 	original, _ := s.store.Get(sessionID)
@@ -155,7 +144,7 @@ func (s *Service) changeSessionSandboxWithOptions(sessionID, mode string, force,
 		if err := s.provisionSessionDirectory(&rec); err != nil {
 			return SessionInfo{}, err
 		}
-		if original.sandboxMode() == "local" && original.RetainedBranch == "" && len(original.Turns) > 0 {
+		if original.SandboxModeValue() == "local" && original.RetainedBranch == "" && len(original.Turns) > 0 {
 			_ = worktree.TransferWorkingState(rec.ProjectDir, rec.WorktreePath)
 		}
 		if s.ApprovalPolicy().Mode == ApprovalModeUnattended && runtimeSandboxConfirmed(rec.Runtime) && sandbox.Available() {

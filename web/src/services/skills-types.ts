@@ -9,7 +9,7 @@ export interface SkillDescriptor {
   key: string;
   name: string;
   description?: string;
-  runtime: "opencode";
+  runtime: string;
   source: SkillSource;
   sourceLabel: string;
   canOpenLocation: boolean;

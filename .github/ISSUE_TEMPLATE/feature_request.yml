@@ -1,0 +1,26 @@
+name: Feature Request
+description: Propose an enhancement or workflow improvement for Hoxi
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or Pain Point
+      description: What workflow friction or limitation are you running into?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Solution
+      description: How should this work from the user's perspective?
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Alternatives & Security Considerations (Optional)
+      description: Any workarounds you've tried, or impact on local-first / approval boundaries

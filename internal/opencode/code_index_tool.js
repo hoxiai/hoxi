@@ -1,5 +1,5 @@
-import { tool } from "@opencode-ai/plugin";
-import { isProtectedPath, isSecretPath, isSensitiveExternalPath } from "../../.opencode/lib/permission-policy.js";
+import { tool } from "./plugin_tool.js";
+import { isProtectedPath, isSecretPath, isSensitiveExternalPath } from "../../web/src/policy/permission-policy.js";
 
 const indexActions = ["context", "search", "inspect", "callers", "callees", "impact", "refresh"];
 

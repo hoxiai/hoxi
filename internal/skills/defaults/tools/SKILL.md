@@ -4,7 +4,7 @@ description: Discover, inspect, and execute 220+ verified Agent Tools and 2,000+
 compatibility: 支持 Hoxi 桌面端本地免 Key 桥接、Hoxi MCP Server 与 REST API 调用
 metadata:
   author: "Hoxi"
-  version: "1.2.0"
+  version: "1.3.0"
 ---
 
 # Hoxi Tools — 全栈与 Agent 工具调度技能
@@ -19,7 +19,7 @@ metadata:
 
 1. **第 1 层：零成本本地能力优先（0 积分）**
    - **公开单页读取**：目标只是读取普通公开网页正文、文档或截图时，直接使用内置网页抓取或 Hoxi 桌面端浏览器（Desktop Window / 隔离无头 Chrome）。
-   - **用户已登录后台读取与回填**：目标是读取或操作用户在 Chrome 已登录的卖家/创作者后台（Amazon Seller Central、小红书创作者中心、TikTok Shop、Shopify Admin、1688 旺铺、广告后台），优先使用 **Hoxi Chrome Link 扩展**。Chrome Link 已连接标签页与桌面窗口/隔离无头浏览器统一通过 OpenCode 的 `hoxi_browser` 工具或本机 `/api/hoxi/browser/*` 回环接口控制。
+   - **用户已登录后台读取与回填**：目标是读取或操作用户在 Chrome 已登录的卖家/创作者后台（Amazon Seller Central、小红书创作者中心、TikTok Shop、Shopify Admin、1688 旺铺、广告后台），优先使用 **Hoxi Chrome Link 扩展**。Chrome Link 已连接标签页与桌面窗口/隔离无头浏览器统一通过 Hoxi 内置的 `hoxi_browser` 工具或本机 `/api/hoxi/browser/*` 回环接口控制。
    - **本地电商与买量测算**：纯算术与本地文本规则校验（如 ROAS 盈亏平衡计算、Amazon FBA 利润与 250B 字节长度校验、Shopify 阶梯定价 CSV 生成、TikTok 30s 脚本字数与佣金测算、小红书违禁词规则比对、1688 阶梯批发价测算）直接由 Agent 或本地脚本在工作区内计算完成（0 积分），无需调用付费外部 API。
    - **本地 Office / PDF 文档与报表读写**：读取、拆解、生成或修改 `.xlsx`、`.xls`、`.ods`、`.csv`、`.tsv`、`.docx`、`.pptx`、`.pdf` 时，优先使用 Hoxi 内置零依赖命令 `hoxi doc inspect|read|write-xlsx|set-cell|write-docx|write-pptx|write-pdf`（详见 `office-docs` 技能，0 积分、免装第三方库）。
 
@@ -45,9 +45,9 @@ metadata:
 
 ## 三、四种调用通道（按当前运行环境自动选择）
 
-### 通道 A：OpenCode 原生内置工具 `hoxi_tools`（当前会话具备 `hoxi_tools` 工具时首选）
+### 通道 A：Hoxi 原生内置工具 `hoxi_tools`（当前会话具备 `hoxi_tools` 工具时首选）
 
-当工具列表包含内置的 **`hoxi_tools`**（Hoxi 桌面端 OpenCode 运行时自动注入）时，无需跑 `curl` 命令、也无需手动配置任何 API Key，直接调用 `hoxi_tools`（在 OpenCode 中 `discover` 与 `inspect` 为只读操作自动放行且 0 积分，`run` 会发起工具审批并按次消耗积分）：
+当工具列表包含内置的 **`hoxi_tools`**（Hoxi 桌面端默认 Go 原生引擎 `native` 及可选 OpenCode 运行时自动注入）时，无需跑 `curl` 命令、也无需手动配置任何 API Key，直接调用 `hoxi_tools`（`discover` 与 `inspect` 为只读操作自动放行且 0 积分，`run` 会发起工具审批并按次消耗积分）：
 
 1. **Discover（检索可用工具与 Endpoint）**：
    调用 `hoxi_tools`：`{ "action": "discover", "query": "amazon reviews", "limit": 8 }`

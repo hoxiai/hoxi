@@ -37,9 +37,7 @@ func (s *Service) SetProjectResolver(resolver ProjectResolver) {
 	if c, ok := resolver.(projectCanonicalizer); ok {
 		canonical = c.CanonicalProjectID
 	}
-	s.store.mu.Lock()
-	s.store.canonicalProject = canonical
-	s.store.mu.Unlock()
+	s.store.SetCanonicalProject(canonical)
 	s.backfillProjectIDs()
 }
 

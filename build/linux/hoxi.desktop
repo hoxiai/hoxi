@@ -2,7 +2,7 @@
 Name=Hoxi
 GenericName=AI Engineering Command Center
 Comment=Native command center for parallel AI engineering
-Exec=hoxi %U
+Exec=Hoxi %U
 Icon=hoxi
 Terminal=false
 Type=Application

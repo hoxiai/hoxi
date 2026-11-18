@@ -14,16 +14,19 @@ import {
 } from "../components/timeline/tool-card-helpers";
 import type { PermissionRequest, ToolPart } from "../services/sse-types";
 import { getCandidateBreaker } from "../store/auto-breaker";
-import { computeProviderHealth } from "../store/provider-health";
+import { computeProviderHealth, findBestFallbackModel } from "../store/provider-health";
 import {
   emptyStats,
+  forgetSessionTelemetry,
   isBalanceError,
   isContextOverflowError,
   isModelUnavailableError,
   pushSample,
   recordAssistantTurnUpdated,
+  recordPromptDispatched,
+  recordUserAbortAction,
 } from "../store/provider-telemetry";
-import { setWorkspace } from "../store/workspace";
+import { setWorkspace, workspace } from "../store/workspace";
 import { assertDeepEqual, assertEqual, assertTrue, describe, it } from "./test-harness";
 
 describe("approval & toolcard pure helpers", () => {
@@ -465,5 +468,75 @@ describe("balance exhausted detection", () => {
 
     recordAssistantTurnUpdated(info({ name: "APIError", message: "Bad gateway", statusCode: 502 }, "balance_test"));
     assertEqual(computeProviderHealth("balance_test").stabilityScore, 0);
+    assertEqual(computeProviderHealth("balance_test").status, "warning", "single transient failure stays warning before burst threshold");
+  });
+
+  it("keeps 400 invalid_request_error, context overflow, and content policy out of provider stability and excludes CLI runtimes from HTTP fallbacks", () => {
+    setWorkspace("providerTelemetry", "subapi_sig_test", undefined as any);
+    const sigErr = info(
+      {
+        name: "NativeAgentError",
+        message:
+          'HTTP 400: {"type":"error","error":{"type":"invalid_request_error","message":"messages.1.content.0: Invalid \'signature\' in \'thinking\' block"}}',
+        statusCode: 400,
+      },
+      "subapi_sig_test"
+    );
+    sigErr.modelID = "antigravity-claude-opus-5-5-high";
+    sigErr.error.data.kind = "badRequest";
+    recordAssistantTurnUpdated(sigErr);
+    recordAssistantTurnUpdated(
+      info({ name: "ContextOverflowError", message: "prompt is too long", statusCode: 400 }, "subapi_sig_test")
+    );
+    recordAssistantTurnUpdated(
+      info({ name: "APIError", message: "blocked by content policy", statusCode: 400 }, "subapi_sig_test")
+    );
+    assertEqual(computeProviderHealth("subapi_sig_test").status, "untested");
+    assertEqual(computeProviderHealth("subapi_sig_test").stabilityScore, null);
+
+    setWorkspace("providers", [
+      { id: "subapi", name: "SubAPI", models: { "claude-opus": { id: "claude-opus", name: "Claude Opus" } } },
+      { id: "qoder", name: "Qoder CLI", source: "runner", models: { Auto: { id: "Auto", name: "Auto" } } },
+      { id: "openai", name: "OpenAI", models: { "gpt-5": { id: "gpt-5", name: "GPT-5" } } },
+    ] as any);
+    setWorkspace("connectedProviders", ["subapi", "qoder", "openai"]);
+    setWorkspace("defaultModels", { subapi: "claude-opus", qoder: "Auto", openai: "gpt-5" });
+    const httpFallback = findBestFallbackModel("subapi", { httpOnly: true });
+    assertDeepEqual(httpFallback, { providerID: "openai", modelID: "gpt-5" });
+  });
+
+  it("clears active turn telemetry on turn completion and session purge so late aborts do not penalize prior turns", () => {
+    const origNow = Date.now;
+    let fakeNow = 1_000_000;
+    Date.now = () => fakeNow;
+    try {
+      setWorkspace("providerTelemetry", "abort_guard_prov", undefined as any);
+      recordPromptDispatched("ses_abort_guard", "abort_guard_prov", "m-fast");
+      fakeNow += 1_000;
+      recordAssistantTurnUpdated({
+        id: "msg_done_1",
+        sessionID: "ses_abort_guard",
+        role: "assistant",
+        providerID: "abort_guard_prov",
+        modelID: "m-fast",
+        time: { created: 1_000_000, completed: 1_001_000 },
+      } as any);
+
+      // 30s later, an abort on the now-settled session must NOT charge a timeout against the completed turn.
+      fakeNow += 30_000;
+      recordUserAbortAction("ses_abort_guard");
+      assertEqual(workspace.providerTelemetry["abort_guard_prov"]?.timeoutTurns ?? 0, 0);
+      assertEqual(workspace.providerTelemetry["abort_guard_prov"]?.recentIncidents?.length ?? 0, 0);
+
+      // Session purge also clears an active uncompleted dispatch before abort.
+      recordPromptDispatched("ses_purged", "abort_guard_prov", "m-fast");
+      fakeNow += 20_000;
+      forgetSessionTelemetry(["ses_purged"]);
+      recordUserAbortAction("ses_purged");
+      assertEqual(workspace.providerTelemetry["abort_guard_prov"]?.timeoutTurns ?? 0, 0);
+      assertEqual(workspace.providerTelemetry["abort_guard_prov"]?.recentIncidents?.length ?? 0, 0);
+    } finally {
+      Date.now = origNow;
+    }
   });
 });

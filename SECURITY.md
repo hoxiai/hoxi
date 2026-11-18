@@ -27,11 +27,13 @@ content. Use a throwaway provider key and a local test workspace.
 
 In scope:
 
-- The Go desktop host, local reverse proxy and gateway (`internal/app`,
-  `internal/gateway`)
+- The Go desktop host, local gateway, built-in Go Native Agent Engine and native
+  terminal host (`internal/app`, `internal/gateway`, `internal/agent`,
+  `internal/termhost`)
 - Per-boot gateway token, origin allow-list and directory scoping
-- Approval hooks and destructive-command gating (`internal/runner`,
-  `internal/agyhook`, `.opencode/plugins/`)
+- Unified PreToolUse approval gates, Seatbelt command sandboxing and
+  destructive-command gating (`internal/runner`, `internal/runner/shellpolicy`,
+  `internal/sandbox`, `internal/agyhook`, `web/src/policy/`)
 - Headless browser bridge, manual takeover and inspector boundaries
 - Handoff parsers and credential discovery
 

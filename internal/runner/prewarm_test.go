@@ -129,6 +129,17 @@ func TestPrewarmProjectRootsRequestsRetryWhenEngineDown(t *testing.T) {
 	}
 }
 
+func TestPrewarmProjectRootsExitsImmediatelyWhenDaemonless(t *testing.T) {
+	t.Parallel()
+	svc := NewService(t.TempDir(), nil, nil, t.TempDir())
+	svc.ConfigureOpenCode("", "pw")
+	svc.SetProjectResolver(projectRootsResolver{roots: []string{t.TempDir()}})
+
+	if !svc.prewarmProjectRoots(context.Background()) {
+		t.Fatal("expected immediate completion in daemonless native mode without OpenCode URL")
+	}
+}
+
 func TestIndexPrewarmDecoupledFromEngineKeepAliveAndCapped(t *testing.T) {
 	t.Parallel()
 	activeRoot := t.TempDir()

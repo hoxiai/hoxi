@@ -141,6 +141,8 @@ export function computeProviderHealth(
       ? "healthy"
       : lowestScore >= 62 && !riskTags.includes("high_hallucination")
       ? "warning"
+      : totalTurns < 2 && !riskTags.includes("high_hallucination")
+      ? "warning"
       : "degraded";
 
   const incidents = trimmedModel

@@ -45,7 +45,7 @@ func TestRemoteE2EEEnvelopeProtectsRelayAndEnforcesBodyGuards(t *testing.T) {
 	reqID := "e2ee_boot_req_0001"
 	hdr := clientCipher.BuildRequestHeader(http.MethodGet, "/api/hoxi/bootstrap", reqID, now, false)
 	relayReq := httptest.NewRequest(http.MethodGet, "/api/hoxi/bootstrap", nil)
-	relayReq.Host = "abc123.node.hoxi.work"
+	relayReq.Host = "abc123.node.hoxi.ai"
 	relayReq.RemoteAddr = "203.0.113.9:51000"
 	relayReq.Header.Set("X-Auth", relayToken)
 	relayReq.Header.Set(pairing.E2EEHeader, hdr)
@@ -80,7 +80,7 @@ func TestRemoteE2EEEnvelopeProtectsRelayAndEnforcesBodyGuards(t *testing.T) {
 	}
 
 	replayReq := httptest.NewRequest(http.MethodGet, "/api/hoxi/bootstrap", nil)
-	replayReq.Host = "abc123.node.hoxi.work"
+	replayReq.Host = "abc123.node.hoxi.ai"
 	replayReq.RemoteAddr = "203.0.113.9:51000"
 	replayReq.Header.Set("X-Auth", relayToken)
 	replayReq.Header.Set(pairing.E2EEHeader, hdr)
@@ -104,7 +104,7 @@ func TestRemoteE2EEEnvelopeProtectsRelayAndEnforcesBodyGuards(t *testing.T) {
 		t.Fatal(err)
 	}
 	commitReq := httptest.NewRequest(http.MethodPost, "/api/hoxi/worktree/commit", bytes.NewReader(sealedCommit))
-	commitReq.Host = "abc123.node.hoxi.work"
+	commitReq.Host = "abc123.node.hoxi.ai"
 	commitReq.RemoteAddr = "203.0.113.9:51000"
 	commitReq.Header.Set("X-Auth", relayToken)
 	commitReq.Header.Set("Content-Type", "application/json")
@@ -147,7 +147,7 @@ func TestRemoteE2EEStreamsSSEFramesIncrementally(t *testing.T) {
 	reqID := "e2ee_sse_stream_01"
 	hdr := clientCipher.BuildRequestHeader(http.MethodGet, "/api/hoxi/event", reqID, now, false)
 	req := httptest.NewRequest(http.MethodGet, "/api/hoxi/event", nil)
-	req.Host = "abc123.node.hoxi.work"
+	req.Host = "abc123.node.hoxi.ai"
 	req.RemoteAddr = "203.0.113.9:51000"
 	req.Header.Set("X-Auth", relayToken)
 	req.Header.Set(pairing.E2EEHeader, hdr)
@@ -197,7 +197,7 @@ func TestRemoteX25519KEXBootstrapAndPtyBlocked(t *testing.T) {
 		t.Fatal(err)
 	}
 	kexReq := httptest.NewRequest(http.MethodGet, "/api/hoxi/bootstrap", nil)
-	kexReq.Host = "abc123.node.hoxi.work"
+	kexReq.Host = "abc123.node.hoxi.ai"
 	kexReq.RemoteAddr = "203.0.113.9:51000"
 	kexReq.Header.Set("X-Auth", relayToken)
 	kexReq.Header.Set(pairing.KEXClientPubHeader, clientPriv.pubB64)
@@ -232,7 +232,7 @@ func TestRemoteX25519KEXBootstrapAndPtyBlocked(t *testing.T) {
 	reqID := "kex_upgraded_req_01"
 	hdr := cipherSuite.BuildRequestHeader(http.MethodGet, "/healthz", reqID, now, false)
 	encReq := httptest.NewRequest(http.MethodGet, "/healthz", nil)
-	encReq.Host = "abc123.node.hoxi.work"
+	encReq.Host = "abc123.node.hoxi.ai"
 	encReq.RemoteAddr = "203.0.113.9:51000"
 	encReq.Header.Set("X-Auth", relayToken)
 	encReq.Header.Set(pairing.E2EEHeader, hdr)
@@ -244,7 +244,7 @@ func TestRemoteX25519KEXBootstrapAndPtyBlocked(t *testing.T) {
 
 	for _, ptyPath := range []string{"/pty", "/api/pty"} {
 		ptyReq := httptest.NewRequest(http.MethodGet, ptyPath, nil)
-		ptyReq.Host = "abc123.node.hoxi.work"
+		ptyReq.Host = "abc123.node.hoxi.ai"
 		ptyReq.RemoteAddr = "203.0.113.9:51000"
 		ptyReq.Header.Set("X-Auth", relayToken)
 		ptyRec := httptest.NewRecorder()

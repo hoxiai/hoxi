@@ -241,3 +241,35 @@ func TestParseSkillRulesKeepsDocumentOrder(t *testing.T) {
 		t.Fatal("non-object config must be rejected")
 	}
 }
+
+func TestOfflineHoxiModelsConfigControlsSkillExposureWithoutOpenCode(t *testing.T) {
+	f := newSkillFixture(t)
+	userModels := `{"mcp":{"Claude_Browser":{"enabled":true},"remote-devices":{"enabled":true}},"permission":{"skill":{"pdf":"allow"}}}`
+	if err := os.WriteFile(filepath.Join(f.home, ".hoxi", "models.json"), []byte(userModels), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Workspace .hoxi/models.json disables remote-devices and denies review-changes.
+	wsHoxi := filepath.Join(f.project, ".hoxi")
+	if err := os.MkdirAll(wsHoxi, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	wsModels := `{"mcp":{"remote-devices":{"enabled":false}},"permission":{"skill":{"review-changes":"deny"}}}`
+	if err := os.WriteFile(filepath.Join(wsHoxi, "models.json"), []byte(wsModels), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := NewService("", "", func(_ context.Context, _, sessionID, _ string) (RequestContext, error) {
+		return RequestContext{SessionID: sessionID, Runtime: "native", Directory: f.project, ProjectRoot: f.project}, nil
+	})
+	got := listExposures(t, svc, f.project)
+
+	if d := got["pdf"]; d.Exposure != ExposureAuto || d.ExposureReason != reasonConfigPinned {
+		t.Fatalf("expected user models.json to pin pdf to auto without OpenCode, got %+v", d)
+	}
+	if d := got["review-changes"]; d.Exposure != ExposureUnavailable || d.ExposureReason != reasonConfigDenied {
+		t.Fatalf("expected workspace .hoxi/models.json to deny review-changes, got %+v", d)
+	}
+	if d := got["built-in-browser"]; d.Exposure != ExposureUnavailable || strings.Join(d.MissingTools, ",") != "mcp__remote-devices__*" {
+		t.Fatalf("expected workspace enabled:false override to leave only mcp__remote-devices__* missing, got %+v", d)
+	}
+}

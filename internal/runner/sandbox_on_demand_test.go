@@ -2,12 +2,16 @@ package runner
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/hoxiai/hoxi/internal/sandbox"
 	"github.com/hoxiai/hoxi/internal/statusbar"
@@ -288,5 +292,172 @@ func TestOnDemandSandboxTightensCommandSandboxSessionAndRespectsGrants(t *testin
 	// Spoofing rec.ExternalID against another directory must never apply rec's grants or offer a profile.
 	if got := svc.onDemandSandboxProfile(rec.ExternalID, otherDir, opaqueCmd); got != "" {
 		t.Fatalf("mismatched directory for known session must fail closed, got %q", got)
+	}
+}
+
+func TestNativeEngineOnDemandSandboxAutoRunsOpaqueAndBlocksEscapes(t *testing.T) {
+	svc, rawWorkspace := newOnDemandFixture(t, ApprovalModeAuto)
+	workspace, err := filepath.EvalSymlinks(rawWorkspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "hello.txt"), []byte("line1\nline2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, ".env"), []byte("SECRET=topsecret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "target.txt"), []byte(".env\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := SessionRecord{
+		ID:             "ses_nat_ondemand",
+		Runtime:        string(RuntimeNative),
+		ProjectDir:     workspace,
+		WorktreePath:   workspace,
+		CommandSandbox: true, // Also verifies tightening CommandSandbox without nested sandbox-exec!
+	}
+	if err := svc.store.Put(rec); err != nil {
+		t.Fatal(err)
+	}
+	cred := hookCredential{runtime: string(RuntimeNative), sessionID: rec.ID, messageID: "msg_a1"}
+
+	// 1. Harmless opaque loop auto-approves via OnDemandProfile without prompting, wraps once (never nested), and audits Source="sandbox".
+	loopCmd := `for f in $(ls hello.txt); do wc -l "$f"; done`
+	reqCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	httpReq, _ := http.NewRequestWithContext(reqCtx, http.MethodPost, "/", nil)
+	ok, reason := svc.gateCommand(httpReq, cred, rec, approvalAsk{
+		command: loopCmd, cwd: workspace, callID: "call_loop", source: string(RuntimeNative),
+	})
+	if !ok {
+		t.Fatalf("expected opaque harmless loop approved under on-demand sandbox, got deny: %s", reason)
+	}
+	entries := svc.audit.list("", 10)
+	if len(entries) == 0 || entries[0].Source != approvalSourceSandbox {
+		t.Fatalf("expected approval audit source=%q, got %+v", approvalSourceSandbox, entries)
+	}
+
+	canNestSeatbelt := exec.Command(sandboxExecPath, "-p", "(version 1)(allow default)", "/usr/bin/true").Run() == nil
+	if canNestSeatbelt {
+		out, code, runErr := svc.nativeCommandRunner(rec, nil)(reqCtx, workspace, loopCmd)
+		if runErr != nil || code != 0 || !strings.Contains(out, "hello.txt") {
+			t.Fatalf("expected sandboxed loop to succeed without nested sandbox-exec error, code=%d err=%v out=%q", code, runErr, out)
+		}
+	} else {
+		// Inside an already-sandboxed runner (e.g. agy --sandbox), verify the exact single-wrap command argv & note helper.
+		consumed := svc.gate.consumeNativeOnDemand(rec.ID, loopCmd)
+		if consumed == "" {
+			t.Fatal("expected stashed on-demand profile ticket")
+		}
+		bin, args, wrapErr := svc.confineNativeCommandWithOnDemand(rec, consumed, "/bin/sh", []string{"-c", loopCmd})
+		if wrapErr != nil || bin != sandboxExecPath || len(args) != 6 || args[0] != "-f" || args[1] != consumed || args[3] != "/bin/sh" || args[4] != "-c" || args[5] != loopCmd {
+			t.Fatalf("expected single non-nested sandbox-exec wrap, got bin=%q args=%#v err=%v", bin, args, wrapErr)
+		}
+		noted := appendOnDemandSandboxNote("cat: .env: Operation not permitted")
+		if !strings.Contains(noted, unsandboxedMarker) {
+			t.Fatalf("expected # hoxi:unsandboxed guidance appended on Seatbelt denial, got %q", noted)
+		}
+	}
+	// Ticket is one-shot: consumed after execution.
+	if leftover := svc.gate.consumeNativeOnDemand(rec.ID, loopCmd); leftover != "" {
+		t.Fatalf("expected one-shot on-demand ticket consumed, got %q", leftover)
+	}
+
+	// 2. Indirect opaque read of .env inside OnDemandProfile is blocked by Seatbelt AND appends # hoxi:unsandboxed guidance.
+	if canNestSeatbelt {
+		indirectEnvCmd := `F=$(cat target.txt); cat "$F"`
+		ok, reason = svc.gateCommand(httpReq, cred, rec, approvalAsk{
+			command: indirectEnvCmd, cwd: workspace, callID: "call_env", source: string(RuntimeNative),
+		})
+		if !ok {
+			t.Fatalf("expected indirect opaque read gated into on-demand sandbox, got: %s", reason)
+		}
+		envOut, envCode, _ := svc.nativeCommandRunner(rec, nil)(reqCtx, workspace, indirectEnvCmd)
+		if envCode == 0 || strings.Contains(envOut, "topsecret") {
+			t.Fatalf("Seatbelt on-demand profile failed to block .env read! code=%d out=%q", envCode, envOut)
+		}
+		if !strings.Contains(envOut, unsandboxedMarker) {
+			t.Fatalf("expected # hoxi:unsandboxed hint appended on Seatbelt denial, got: %q", envOut)
+		}
+	}
+
+	// 3. # hoxi:unsandboxed opt-out, destructive/hard-deny/host-only commands, and smart mode MUST NOT auto-approve via on-demand sandbox.
+	for _, mustAsk := range []string{
+		"# hoxi:unsandboxed\n" + loopCmd,
+		`for f in $(ls); do rm -rf "$f"; done`,
+		`H=$(cat target.txt); ssh "root@$H" uptime`,
+		`B=$(git branch --show-current); git push origin "$B"`,
+		`eval "$(cat target.txt)"`,
+	} {
+		shortCtx, shortCancel := context.WithTimeout(context.Background(), 60*time.Millisecond)
+		shortReq, _ := http.NewRequestWithContext(shortCtx, http.MethodPost, "/", nil)
+		approved, _ := svc.gateCommand(shortReq, cred, rec, approvalAsk{
+			command: mustAsk, cwd: workspace, callID: "call_ask", source: string(RuntimeNative),
+		})
+		shortCancel()
+		if approved {
+			t.Fatalf("command %q must NOT be auto-approved by on-demand sandbox", mustAsk)
+		}
+	}
+
+	setTestApprovalPolicy(t, svc, ApprovalPolicy{Mode: ApprovalModeSmart})
+	shortCtx, shortCancel := context.WithTimeout(context.Background(), 60*time.Millisecond)
+	shortReq, _ := http.NewRequestWithContext(shortCtx, http.MethodPost, "/", nil)
+	if approved, _ := svc.gateCommand(shortReq, cred, rec, approvalAsk{
+		command: loopCmd, cwd: workspace, callID: "call_smart", source: string(RuntimeNative),
+	}); approved {
+		t.Fatal("smart mode must not auto-approve opaque command via on-demand sandbox")
+	}
+	shortCancel()
+
+	// 4. Stashed tickets are cleaned up on turn end (cancelSessionApprovals), session delete (forgetSession),
+	// and never leak when pre-exec validation (outside workdir or full background slots) rejects early.
+	svc.gate.stashNativeOnDemand(rec.ID, loopCmd, "/tmp/fake.sb")
+	svc.cancelSessionApprovals(rec.ID, "turn ended")
+	if got := svc.gate.consumeNativeOnDemand(rec.ID, loopCmd); got != "" {
+		t.Fatalf("expected cancelSessionApprovals to clear stashed tickets, got %q", got)
+	}
+	svc.gate.stashNativeOnDemand(rec.ID, loopCmd, "/tmp/fake.sb")
+	svc.gate.forgetSession(rec.ID)
+	if got := svc.gate.consumeNativeOnDemand(rec.ID, loopCmd); got != "" {
+		t.Fatalf("expected forgetSession to clear stashed tickets, got %q", got)
+	}
+
+	setTestApprovalPolicy(t, svc, ApprovalPolicy{Mode: ApprovalModeAuto})
+	outsideDir := t.TempDir()
+	hookFn := svc.nativePermissionHook(rec, "msg_a2")
+	badInput, _ := json.Marshal(map[string]any{"command": loopCmd, "workdir": outsideDir})
+	if err := hookFn(reqCtx, NativePermissionRequest{ToolName: "bash", CallID: "call_out", Input: badInput}); err == nil {
+		t.Fatal("expected nativePermissionHook to reject outside workdir upfront")
+	}
+	if leaked := svc.gate.consumeNativeOnDemand(rec.ID, loopCmd); leaked != "" {
+		t.Fatalf("outside workdir leaked stashed ticket %q", leaked)
+	}
+
+	svc.gate.stashNativeOnDemand(rec.ID, loopCmd, "/tmp/fake_stream.sb")
+	_, _, streamErr := svc.nativeStreamCommandRunner(rec, nil)(reqCtx, outsideDir, loopCmd, nil)
+	if streamErr == nil {
+		t.Fatal("expected nativeStreamCommandRunner to reject outside dir")
+	}
+	if leaked := svc.gate.consumeNativeOnDemand(rec.ID, loopCmd); leaked != "" {
+		t.Fatalf("early stream validation failure leaked ticket %q", leaked)
+	}
+
+	svc.bgProcs.mu.Lock()
+	bgBucket := &nativeSessionBgBucket{jobs: make(map[string]*nativeBgJob)}
+	for i := 0; i < maxNativeBgRunningPerSession; i++ {
+		id := filepath.Base(t.TempDir())
+		bgBucket.jobs[id] = &nativeBgJob{id: id, sessionID: rec.ID, running: true}
+	}
+	svc.bgProcs.sessions[rec.ID] = bgBucket
+	svc.bgProcs.mu.Unlock()
+	svc.gate.stashNativeOnDemand(rec.ID, loopCmd, "/tmp/fake_bg.sb")
+	if _, bgErr := svc.nativeBackgroundManager(rec).Start(reqCtx, workspace, loopCmd); bgErr == nil {
+		t.Fatal("expected Start to reject when maxNativeBgRunningPerSession is full")
+	}
+	if leaked := svc.gate.consumeNativeOnDemand(rec.ID, loopCmd); leaked != "" {
+		t.Fatalf("full background slot failure leaked ticket %q", leaked)
 	}
 }

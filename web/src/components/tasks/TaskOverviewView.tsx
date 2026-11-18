@@ -5,6 +5,7 @@ import {
   For,
   Match,
   onCleanup,
+  onMount,
   Show,
   Switch,
 } from "solid-js";
@@ -80,11 +81,39 @@ function groupLabel(id: TaskGroupID): string {
   }
 }
 
+function TaskLoadingIcon(props: { class?: string }) {
+  let icon: SVGSVGElement | undefined;
+
+  const restartAnimation = () => {
+    if (!icon || (typeof document !== "undefined" && document.visibilityState === "hidden")) return;
+    // WebKit can leave a CSS animation on its last compositor frame after the
+    // desktop window regains focus. Force a style/layout boundary so it starts
+    // from a fresh animation timeline instead of appearing stuck.
+    icon.classList.remove("animate-spin");
+    void icon.getBoundingClientRect().width;
+    icon.classList.add("animate-spin");
+  };
+
+  onMount(() => {
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") restartAnimation();
+    };
+    window.addEventListener("focus", restartAnimation);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    onCleanup(() => {
+      window.removeEventListener("focus", restartAnimation);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    });
+  });
+
+  return <LoaderCircle ref={icon} size={13} class={`shrink-0 animate-spin ${props.class ?? ""}`} />;
+}
+
 function StatusIcon(props: { status: TaskNodeStatus }) {
   return (
     <Switch>
       <Match when={props.status === "running"}>
-        <LoaderCircle size={12} class="shrink-0 animate-spin text-[var(--accent-primary)]" />
+        <TaskLoadingIcon class="text-[var(--accent-primary)]" />
       </Match>
       <Match when={props.status === "succeeded"}>
         <CheckCircle2 size={12} class="shrink-0 text-[var(--ok-text)]" />
@@ -203,7 +232,7 @@ export default function TaskOverviewView() {
             fallback={
               <div class="flex items-center justify-center gap-2 px-2 py-8 text-[12px] text-[var(--text-faint)]">
                 <Show when={taskOverviewLoading()}>
-                  <LoaderCircle size={13} class="shrink-0 animate-spin text-[var(--text-muted)]" />
+                  <TaskLoadingIcon class="text-[var(--text-muted)]" />
                 </Show>
                 <span>{taskOverviewFailed() ? t("tasks.loadFailed") : t("tasks.empty")}</span>
               </div>

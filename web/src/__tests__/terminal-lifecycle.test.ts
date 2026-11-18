@@ -189,7 +189,7 @@ describe("terminal lifecycle", () => {
     };
     try {
       await hoxiAPI.deletePTY("pty/id", "/repo/worktree A");
-      assertDeepEqual(request, ["/pty/pty%2Fid?directory=%2Frepo%2Fworktree%20A", "DELETE"]);
+      assertDeepEqual(request, ["/api/hoxi/pty/pty%2Fid?directory=%2Frepo%2Fworktree%20A", "DELETE"]);
     } finally {
       globalThis.fetch = saved;
     }

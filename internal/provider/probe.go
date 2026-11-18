@@ -33,6 +33,7 @@ var defaultProviderBaseURLs = map[string]string{
 	"google":      "https://generativelanguage.googleapis.com/v1beta",
 	"gemini":      "https://generativelanguage.googleapis.com/v1beta",
 	"openrouter":  "https://openrouter.ai/api/v1",
+	"siliconflow": "https://api.siliconflow.cn/v1",
 	"xai":         "https://api.x.ai/v1",
 	"groq":        "https://api.groq.com/openai/v1",
 	"mistral":     "https://api.mistral.ai/v1",

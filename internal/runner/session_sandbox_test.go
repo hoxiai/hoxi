@@ -259,7 +259,7 @@ func TestExplicitRunnerDiscardHonorsBranchChoice(t *testing.T) {
 				t.Fatalf("keepBranch=%v: %s %v", keep, out, err)
 			}
 			rec, _ := svc.Store().Get(info.ID)
-			if rec.sandboxMode() != "local" || rec.WorktreePath != root {
+			if rec.SandboxModeValue() != "local" || rec.WorktreePath != root {
 				t.Fatal("discard did not update runner execution directory")
 			}
 		})

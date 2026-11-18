@@ -264,10 +264,7 @@ func isFastKeywordModel(modelID string) bool {
 // latency-sensitive approval review, preferring non-reasoning fast models.
 func (g *Service) selectFastReviewCandidate() (string, string) {
 	disabledSet := g.disabledProvidersSet()
-	merged := g.loadOpenCodeImportedProviderMap()
-	for k, v := range g.loadHoxiProvidersMap() {
-		merged[k] = v
-	}
+	merged := g.loadEffectiveConfiguredProvidersMap()
 	var fastNonReasoning, nonReasoning, anyHealthy []AutoPoolCandidate
 	for _, pid := range sortedKeys(merged) {
 		if pid == AutoProviderID || disabledSet[pid] || disabledSet[strings.ToLower(pid)] {
@@ -424,10 +421,7 @@ func (g *Service) autoPoolCandidateList(poolID string) []AutoPoolCandidate {
 	// store (the UI derives smart defaults), so the catalog fallback is required.
 	if len(candidates) == 0 && !customized {
 		disabledSet := g.disabledProvidersSet()
-		merged := g.loadOpenCodeImportedProviderMap()
-		for k, v := range g.loadHoxiProvidersMap() {
-			merged[k] = v
-		}
+		merged := g.loadEffectiveConfiguredProvidersMap()
 		var allChat, freeOnly []AutoPoolCandidate
 		for _, pid := range sortedKeys(merged) {
 			if pid == AutoProviderID || disabledSet[pid] || disabledSet[strings.ToLower(pid)] {

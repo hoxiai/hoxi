@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  iOS 导出配置示例。使用时复制到仓库外（避免入库）并传给：
+    HOXI_IOS_EXPORT_OPTIONS=/path/to/ExportOptions.plist scripts/release.sh ios
+  method 可选：app-store-connect（App Store）/ ad-hoc / development / enterprise。
+  teamID 与 ios/Runner.xcodeproj 中的 DEVELOPMENT_TEAM 保持一致。
+-->
+<plist version="1.0">
+<dict>
+	<key>method</key>
+	<string>app-store-connect</string>
+	<key>teamID</key>
+	<string>8ER9ZL9ZFL</string>
+	<key>signingStyle</key>
+	<string>automatic</string>
+	<key>uploadSymbols</key>
+	<true/>
+	<key>destination</key>
+	<string>export</string>
+</dict>
+</plist>

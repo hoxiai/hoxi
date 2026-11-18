@@ -101,7 +101,7 @@ iroh 基于 **Rust** 生态，而 Hoxi 桌面端采用 **Go** 构建。由于没
 ## 8. 中继 provider 配置面
 
 - **自建 GoPanel**（现有）：作为可达性通道，配合应用层 E2E 后即变成盲中继。
-- **Cloudflare Tunnel**：仅做可达性（`cloudflared` 主动外连、不开公网端口）；边缘终结 TLS，故**必须叠加应用层 E2E** 才盲。桌面侧的落点是反向代理入口 `http://127.0.0.1:5418`（`internal/gateway/ingress.go`，中继令牌 `relayToken` 鉴权 + 远程白名单），`cloudflared` 的 `service` 指到这里；连接器由 Hoxi 监管（`internal/cloudflared`，设置 → 远程 粘贴 connector token 并启停），域名用 `<opaque-id>.node.hoxi.work`（CNAME → `<tunnel-id>.cfargotunnel.com`，Proxied），由后端用 Cloudflare API 自动开通，或用户自带。
+- **Cloudflare Tunnel**：仅做可达性（`cloudflared` 主动外连、不开公网端口）；边缘终结 TLS，故**必须叠加应用层 E2E** 才盲。桌面侧的落点是反向代理入口 `http://127.0.0.1:5418`（`internal/gateway/ingress.go`，中继令牌 `relayToken` 鉴权 + 远程白名单），`cloudflared` 的 `service` 指到这里；连接器由 Hoxi 监管（`internal/cloudflared`，设置 → 远程 粘贴 connector token 并启停），域名用 `<opaque-id>.node.hoxi.ai`（CNAME → `<tunnel-id>.cfargotunnel.com`，Proxied），由后端用 Cloudflare API 自动开通，或用户自带。
 - **Cloudflare TURN / Realtime**：语音等实时通道打不通时回落，DTLS 本身即盲。
 - **EdgeOne**：与 Cloudflare 同构，作配对票据服务的备选 provider。
 

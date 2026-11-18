@@ -115,9 +115,9 @@ func TestNativeExplicitAskTaskPromptsInSmartAutoAndTrustedAndDeniesInUnattended(
 }
 
 type subagentMutationInterruptEngine struct {
-	subagentType string
-	readOnly     bool
-	childMutates bool
+	subagentType  string
+	readOnly      bool
+	childMutates  bool
 	childFinishes bool
 }
 

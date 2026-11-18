@@ -71,6 +71,7 @@ func (g *Gateway) registerExtensionRoutes() {
 	if g == nil || g.mux == nil {
 		return
 	}
+	g.registerDeclarativeExtensionRoutes()
 	for _, ext := range g.extensions {
 		ext.RegisterRoutes(g.mux)
 	}

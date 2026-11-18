@@ -11,6 +11,8 @@ import type {
   LocalCLIImportResponse,
   LocalCLIStatusResponse,
   ProjectInfo,
+  RequestInspectKind,
+  RequestInspectResponse,
   SaveWorkspaceInput,
   SpreadsheetSheetPreview,
   WorkspaceProfile,
@@ -20,6 +22,7 @@ import type {
   WorktreeVerifyState,
 } from "./api-types";
 import { requestJSON, withDir } from "./http";
+import { commitWorktreeWithRecovery, inspectHoxiRequest } from "./request-ledger";
 
 export const fileAndPtyAPI = {
   searchFiles(
@@ -42,8 +45,9 @@ export const fileAndPtyAPI = {
     const q = `path=${encodeURIComponent(path)}${sessionID ? `&sessionID=${encodeURIComponent(sessionID)}` : ""}`;
     return requestJSON(withDir(`/api/hoxi/file/list?${q}`, directory));
   },
-  findFiles(query: string, directory?: string): Promise<string[]> {
-    return requestJSON(withDir(`/find/file?query=${encodeURIComponent(query)}&limit=15`, directory));
+  async findFiles(query: string, directory?: string): Promise<string[]> {
+    const entries = await fileAndPtyAPI.searchFiles(query, directory, undefined, 15);
+    return Array.isArray(entries) ? entries.map((e) => e.path).filter(Boolean) : [];
   },
   readFileContent(
     filePath: string,
@@ -116,19 +120,19 @@ export const fileAndPtyAPI = {
 
   // Built-in PTY Terminal
   createPTY(directory?: string): Promise<{ id: string; title: string; cwd: string }> {
-    return requestJSON(withDir("/pty", directory), {
+    return requestJSON(withDir("/api/hoxi/pty", directory), {
       method: "POST",
       body: JSON.stringify({ cwd: directory, title: "Hoxi Terminal" }),
     });
   },
   resizePTY(ptyID: string, cols: number, rows: number, directory?: string): Promise<void> {
-    return requestJSON(withDir(`/pty/${ptyID}`, directory), {
+    return requestJSON(withDir(`/api/hoxi/pty/${encodeURIComponent(ptyID)}`, directory), {
       method: "PUT",
       body: JSON.stringify({ size: { cols, rows } }),
     });
   },
   deletePTY(ptyID: string, directory?: string): Promise<void> {
-    return requestJSON(withDir(`/pty/${encodeURIComponent(ptyID)}`, directory), {
+    return requestJSON(withDir(`/api/hoxi/pty/${encodeURIComponent(ptyID)}`, directory), {
       method: "DELETE",
     });
   },
@@ -181,18 +185,23 @@ export const worktreeAndWorkspaceAPI = {
   commitWorktree(
     sessionID: string,
     message: string,
-    opts?: { push?: boolean; directory?: string; sessionDiffs?: SnapshotFileDiff[] }
+    opts?: {
+      push?: boolean;
+      directory?: string;
+      sessionDiffs?: SnapshotFileDiff[];
+      clientRequestId?: string;
+    }
   ): Promise<CommitAndPushResponse> {
-    return requestJSON("/api/hoxi/worktree/commit", {
-      method: "POST",
-      body: JSON.stringify({
-        sessionID,
-        message,
-        ...(opts?.push ? { push: true } : {}),
-        ...(opts?.directory ? { directory: opts.directory } : {}),
-        ...(opts?.sessionDiffs !== undefined ? { sessionDiffs: opts.sessionDiffs } : {}),
-      }),
-    });
+    return commitWorktreeWithRecovery(sessionID, message, opts);
+  },
+  inspectRequest<T = unknown>(input: {
+    clientRequestId: string;
+    kind: RequestInspectKind;
+    scope: string;
+    directory?: string;
+    digest?: string;
+  }): Promise<RequestInspectResponse<T>> {
+    return inspectHoxiRequest<T>(input);
   },
   pushWorktree(sessionID: string, directory?: string): Promise<CommitAndPushResponse> {
     return requestJSON("/api/hoxi/worktree/push", {

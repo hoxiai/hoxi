@@ -140,6 +140,12 @@ func CreateSnapshot(dir string) (string, error) {
 			return "", fmt.Errorf("stage tracked .claude snapshot: %w", err)
 		}
 	}
+	if trackedHoxi := trackedShareableHoxiPaths(repoRoot); len(trackedHoxi) > 0 {
+		addArgs := append([]string{"add", "-A", "--"}, trackedHoxi...)
+		if _, err := runGitWithIndex(repoRoot, tmpIndex, addArgs...); err != nil {
+			return "", fmt.Errorf("stage tracked .hoxi snapshot: %w", err)
+		}
+	}
 	tree, err := runGitWithIndex(repoRoot, tmpIndex, "write-tree")
 	if err != nil {
 		return "", fmt.Errorf("write snapshot tree: %w", err)
@@ -169,6 +175,45 @@ func trackedPathsUnder(repoRoot, relDir string) []string {
 		collect(out)
 	}
 	return paths
+}
+
+func isRuntimeHoxiRelPath(rel string) bool {
+	slash := strings.TrimPrefix(filepath.ToSlash(rel), "/")
+	if slash == ".hoxi" {
+		return true
+	}
+	if !strings.HasPrefix(slash, ".hoxi/") {
+		return false
+	}
+	rest := strings.TrimPrefix(slash, ".hoxi/")
+	for _, shareable := range []string{"skills/", "commands/", "agents/"} {
+		if strings.HasPrefix(rest, shareable) {
+			return false
+		}
+	}
+	return true
+}
+
+func trackedShareableHoxiPaths(repoRoot string) []string {
+	all := trackedPathsUnder(repoRoot, ".hoxi")
+	if len(all) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(all))
+	for _, p := range all {
+		if !isRuntimeHoxiRelPath(p) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+var hoxiRuntimeExcludePatterns = []string{
+	".hoxi/worktrees/",
+	".hoxi/memory/",
+	".hoxi/attachments/",
+	".hoxi/verify.json",
+	".hoxi/models.json",
 }
 
 // HeadTree returns the Git tree SHA of HEAD in dir.
@@ -298,7 +343,7 @@ func SnapshotChangedPaths(dir, fromTree, toTree string) ([]string, error) {
 			continue
 		}
 		rel := strings.Trim(filepath.ToSlash(entry), "/")
-		if rel == "" || strings.HasPrefix(rel, ".hoxi/") || strings.HasPrefix(rel, ".opencode/") || isIgnoredUntrackedWorktreePath(rel) {
+		if rel == "" || isRuntimeHoxiRelPath(rel) || strings.HasPrefix(rel, ".opencode/") || isIgnoredUntrackedWorktreePath(rel) {
 			continue
 		}
 		if _, ok := seen[rel]; ok {
@@ -562,4 +607,77 @@ func applyGitPatch(workDir, patch string, extraArgs ...string) error {
 		return run(true)
 	}
 	return nil
+}
+
+// SnapshotBlobOID returns the Git blob OID recorded for absTarget inside snapSHA
+// (created by CreateSnapshot), or ("", false) when the file is absent or not a blob.
+func SnapshotBlobOID(dir, snapSHA, absTarget string) (string, bool) {
+	dir = strings.TrimSpace(dir)
+	snapSHA = strings.TrimSpace(snapSHA)
+	absTarget = strings.TrimSpace(absTarget)
+	if dir == "" || snapSHA == "" || absTarget == "" {
+		return "", false
+	}
+	topLevel, err := runGit(dir, "rev-parse", "--show-toplevel")
+	if err != nil || strings.TrimSpace(topLevel) == "" {
+		return "", false
+	}
+	repoRoot := filepath.Clean(strings.TrimSpace(topLevel))
+	if realRoot, rErr := filepath.EvalSymlinks(repoRoot); rErr == nil && realRoot != "" {
+		repoRoot = filepath.Clean(realRoot)
+	}
+	cleanTarget := filepath.Clean(absTarget)
+	if realTarget, rErr := filepath.EvalSymlinks(cleanTarget); rErr == nil && realTarget != "" {
+		cleanTarget = filepath.Clean(realTarget)
+	}
+	rel, err := filepath.Rel(repoRoot, cleanTarget)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(filepath.ToSlash(rel), "../") {
+		return "", false
+	}
+	spec := snapSHA + ":" + filepath.ToSlash(rel)
+	tp, err := runGit(repoRoot, "cat-file", "-t", spec)
+	if err != nil || strings.TrimSpace(tp) != "blob" {
+		return "", false
+	}
+	oid, err := runGit(repoRoot, "rev-parse", "--verify", "--quiet", spec)
+	if err != nil || strings.TrimSpace(oid) == "" {
+		return "", false
+	}
+	return strings.TrimSpace(oid), true
+}
+
+// HashFileOID computes the Git blob OID of an existing on-disk file without writing to the object store.
+func HashFileOID(dir, absTarget string) (string, bool) {
+	oid, err := runGit(dir, "hash-object", "--", absTarget)
+	if err != nil || strings.TrimSpace(oid) == "" {
+		return "", false
+	}
+	return strings.TrimSpace(oid), true
+}
+
+// IsGitIgnoredUntrackedTarget reports whether relPath inside dir is ignored by
+// Git rules and contains zero tracked files in the index.
+func IsGitIgnoredUntrackedTarget(dir, relPath string) bool {
+	dir = strings.TrimSpace(dir)
+	relPath = strings.Trim(filepath.ToSlash(strings.TrimSpace(relPath)), "/")
+	if dir == "" || relPath == "" || relPath == "." || strings.Contains(relPath, "..") {
+		return false
+	}
+	if _, err := runGit(dir, "rev-parse", "--show-toplevel"); err != nil {
+		return false
+	}
+	tracked, err := runGit(dir, "ls-files", "--", relPath)
+	if err != nil || strings.TrimSpace(tracked) != "" {
+		return false
+	}
+	if _, err := runGit(dir, "check-ignore", "--no-index", "-q", "--", relPath); err == nil {
+		return true
+	}
+	absCand := filepath.Join(dir, filepath.FromSlash(relPath))
+	if st, statErr := os.Stat(absCand); os.IsNotExist(statErr) || (statErr == nil && st.IsDir()) {
+		if _, err := runGit(dir, "check-ignore", "--no-index", "-q", "--", relPath+"/"); err == nil {
+			return true
+		}
+	}
+	return false
 }

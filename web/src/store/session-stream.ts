@@ -87,6 +87,13 @@ function mutateUpsertInfo(state: typeof workspace, info: MessageInfo) {
   touchSessionTranscript(info.sessionID);
   const list = (state.messagesBySession[info.sessionID] ||= []);
   upsertTurnInfo(list, info);
+  if (
+    info.role === "assistant" &&
+    (info.mode === "build" || info.agent === "build") &&
+    state.aiBySession[info.sessionID]?.agent === "plan"
+  ) {
+    state.aiBySession[info.sessionID].agent = "build";
+  }
 }
 
 function mutateUpsertPart(state: typeof workspace, part: MessagePart) {

@@ -34,6 +34,8 @@ export const toolCard = {
   actionBrowser: "Browser",
   actionCodeIndex: "Code index",
   actionTools: "Tools",
+  actionData: "Data API",
+  openBrowser: "Open browser preview",
   actionMcp: "MCP tool",
   actionSkill: "Skill",
   actionQuestion: "Question",
@@ -71,4 +73,6 @@ export const toolCard = {
   stopCommandFailed: "No process stopped",
   stopCommandFailedTooltip: "No single matching process was found, so nothing was stopped",
   stoppedByUser: "Stopped by user",
+  actionPlanConsent: "Plan consent",
+  planPromotedBadge: "Promoted to Build",
 };

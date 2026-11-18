@@ -5,14 +5,8 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
-)
-
-var (
-	applyPatchHeaderRe    = regexp.MustCompile(`(?m)^\*\*\*\s+(?:Update|Add|Delete)\s+File:\s*(.+)$`)
-	taskOutputSessionIDRe = regexp.MustCompile(`session_id:\s*([a-zA-Z0-9_-]+)`)
 )
 
 type editedFilesEntry struct {
@@ -104,7 +98,7 @@ func (s *Service) sessionEditedFileSet(sessionID string) map[string]struct{} {
 		return nil
 	}
 	childIDs, _ := s.store.ChildSessionIDs(sessionID)
-	stamp := s.store.editMutations.Load()
+	stamp := s.store.EditMutations()
 	if entry, hit := s.editedFiles.Load(sessionID); hit && entry.stamp == stamp {
 		return entry.files
 	}
@@ -147,15 +141,15 @@ func (s *Service) sessionEditedFileSet(sessionID string) map[string]struct{} {
 		}
 		visited[sid] = true
 		var subChildren []string
-		if snapshot, ok := s.store.sessionEditsSnapshot(sid); ok {
-			rec := snapshot.record
+		if snapshot, ok := s.store.SessionEditsSnapshot(sid); ok {
+			rec := snapshot.Record
 			if sid != sessionID && !rec.Subagent && normalizeComparePath(rec.WorktreePath) != normalizeComparePath(rootRec.WorktreePath) {
 				return
 			}
-			for _, path := range snapshot.paths {
+			for _, path := range snapshot.Paths {
 				edited[path] = struct{}{}
 			}
-			subChildren = append(subChildren, snapshot.children...)
+			subChildren = append(subChildren, snapshot.Children...)
 			for _, cid := range subChildren {
 				walkSession(cid)
 			}
@@ -178,7 +172,7 @@ func (s *Service) sessionEditedFileSet(sessionID string) map[string]struct{} {
 		walkSession(cid)
 	}
 	if !hasExternalChild {
-		postStamp := s.store.editMutations.Load()
+		postStamp := s.store.EditMutations()
 		if postStamp == stamp {
 			s.editedFiles.Store(sessionID, editedFilesEntry{stamp: postStamp, files: edited})
 		}
@@ -237,125 +231,4 @@ func (s *Service) openCodeChildTurns(sid, dir string) []MessageTurn {
 	})
 	s.childTurns.Store(key, childTurnsEntry{turns: turns, expires: now.Add(ttl)})
 	return turns
-}
-
-func isRunnerEditingTool(tool string) bool {
-	t := strings.ToLower(strings.TrimSpace(tool))
-	if t == "" || t == "todowrite" || t == "todoread" || t == "glob" || t == "grep" || t == "read" || strings.HasSuffix(t, "_read") {
-		return false
-	}
-	return strings.Contains(t, "edit") || strings.Contains(t, "write") || strings.Contains(t, "patch") || strings.Contains(t, "replace")
-}
-
-func isRunnerTaskTool(tool string) bool {
-	t := strings.ToLower(strings.TrimSpace(tool))
-	return t == "task" || t == "agent" || strings.Contains(t, "subagent")
-}
-
-func extractChildSessionIDsFromPart(part MessagePart) []string {
-	var ids []string
-	add := func(v interface{}) {
-		if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
-			ids = append(ids, strings.TrimSpace(s))
-		}
-	}
-	if part.State != nil {
-		if part.State.Metadata != nil {
-			add(part.State.Metadata["sessionId"])
-			add(part.State.Metadata["sessionID"])
-		}
-		if part.State.Input != nil {
-			add(part.State.Input["task_id"])
-		}
-		if m := taskOutputSessionIDRe.FindStringSubmatch(part.State.Output); len(m) > 1 {
-			add(m[1])
-		}
-	}
-	return ids
-}
-
-func extractEditedPathsFromPart(part MessagePart) []string {
-	if part.State == nil {
-		return nil
-	}
-	var out []string
-	add := func(v interface{}) {
-		if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
-			out = append(out, strings.TrimSpace(s))
-		}
-	}
-	if in := part.State.Input; in != nil {
-		for _, k := range []string{"filePath", "file_path", "Path", "AbsolutePath", "path", "file", "filename", "targetFile", "TargetFile", "target_file", "notebook_path"} {
-			add(in[k])
-		}
-		if patchText, ok := in["patchText"].(string); ok && patchText != "" {
-			for _, m := range applyPatchHeaderRe.FindAllStringSubmatch(patchText, -1) {
-				if len(m) > 1 {
-					add(m[1])
-				}
-			}
-		}
-	}
-	if meta := part.State.Metadata; meta != nil {
-		add(meta["filePath"])
-		add(meta["filepath"])
-		if files, ok := meta["files"].([]interface{}); ok {
-			for _, item := range files {
-				switch v := item.(type) {
-				case string:
-					add(v)
-				case map[string]interface{}:
-					rel, _ := v["relativePath"].(string)
-					abs, _ := v["filePath"].(string)
-					if rel != "" && !strings.HasPrefix(rel, "..") {
-						add(rel)
-					} else if abs != "" {
-						add(abs)
-					} else {
-						add(v["file"])
-						add(v["path"])
-					}
-				}
-			}
-		}
-	}
-	return out
-}
-
-func normalizeSessionRelPath(raw, projectDir, worktreeDir string) string {
-	trimmed := strings.TrimSpace(filepath.ToSlash(raw))
-	if trimmed == "" {
-		return ""
-	}
-	for _, root := range []string{worktreeDir, projectDir} {
-		r := strings.TrimRight(filepath.ToSlash(strings.TrimSpace(root)), "/")
-		if r != "" && (trimmed == r || strings.HasPrefix(trimmed, r+"/")) {
-			trimmed = strings.TrimLeft(trimmed[len(r):], "/")
-			break
-		}
-	}
-	trimmed = strings.TrimPrefix(trimmed, "./")
-	if strings.HasPrefix(trimmed, ".hoxi/worktrees/") {
-		rest := strings.TrimPrefix(trimmed, ".hoxi/worktrees/")
-		if idx := strings.IndexByte(rest, '/'); idx >= 0 {
-			trimmed = strings.TrimLeft(rest[idx+1:], "/")
-		}
-	}
-	return trimmed
-}
-
-func matchesEditedFileSet(candidate, projectDir, worktreeDir string, edited map[string]struct{}) bool {
-	norm := normalizeSessionRelPath(candidate, projectDir, worktreeDir)
-	if norm == "" {
-		return false
-	}
-	if _, ok := edited[norm]; ok {
-		return true
-	}
-	for k := range edited {
-		if strings.HasSuffix(norm, "/"+k) || strings.HasSuffix(k, "/"+norm) {
-			return true
-		}
-	}
-	return false
 }

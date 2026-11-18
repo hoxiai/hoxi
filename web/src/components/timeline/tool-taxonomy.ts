@@ -17,7 +17,7 @@ const READ_TOOLS = new Set([
 ]);
 const SEARCH_TOOLS = new Set([
   "grep", "grep_search", "search_file_content", "ripgrep", "rg", "search_file", "search",
-  "code_search", "symbol_inspect", "impact_analysis",
+  "hoxi_code_index", "code_search", "symbol_inspect", "impact_analysis",
 ]);
 const LIST_TOOLS = new Set([
   "glob", "find", "find_by_name", "list", "ls", "list_dir", "list_directory", "list_files",
@@ -27,7 +27,7 @@ const TASK_TOOLS = new Set([
   "task", "agent", "invoke_subagent", "manage_subagents", "define_subagent",
   "browser_subagent", "spawn_agent",
 ]);
-const QUESTION_TOOLS = new Set(["question", "ask_question"]);
+const QUESTION_TOOLS = new Set(["question", "ask_question", "plan_consent"]);
 const WEB_SEARCH_TOOLS = new Set(["websearch", "search_web", "web_search", "google_web_search"]);
 const WEB_FETCH_TOOLS = new Set(["webfetch", "web_fetch", "read_url_content", "fetch_url"]);
 const WRITE_TOOLS = new Set(["write", "write_file", "write_to_file", "create_file"]);
@@ -89,6 +89,11 @@ export function isBrowserTool(tool: string): boolean {
     name === "click_browser_pixel" || name === "execute_browser_javascript" || name === "open_browser_url";
 }
 
+export function isImageGenTool(tool: string): boolean {
+  const name = lower(tool);
+  return name === "hoxi_image" || name === "generate_image";
+}
+
 function isWebSearchTool(tool: string): boolean {
   return WEB_SEARCH_TOOLS.has(lower(tool));
 }
@@ -130,7 +135,10 @@ export function kiloToolIconName(tool: string): IconName {
   if (isTodoTool(name)) return "checklist";
   if (isTaskTool(name)) return "task";
   if (name === "skill") return "brain";
+  if (name === "plan_consent") return "checklist";
   if (isQuestionTool(name) || name === "agent_report") return "bubble-5";
+  if (isImageGenTool(name)) return "photo";
+  if (name === "hoxi_data" || name === "hoxi_remote") return "server";
   if (name === "agent_wait" || name === "agent_status") return "task";
   return "mcp";
 }
@@ -146,6 +154,7 @@ export function formatToolDisplayName(tool: string, part?: ToolPart): string {
   }
   if (name === "agent_status" || name === "manage_subagents") return t("toolCard.actionCheckSubagents");
   if (name === "goal_report") return t("toolCard.actionGoalReport");
+  if (name === "plan_consent") return t("toolCard.actionPlanConsent");
   if (isQuestionTool(name)) return t("toolCard.actionQuestion");
   if (isComputerTool(name)) return t("toolCard.actionComputer");
   if (isBrowserTool(name)) return t("toolCard.actionBrowser");
@@ -153,6 +162,8 @@ export function formatToolDisplayName(tool: string, part?: ToolPart): string {
     return t("toolCard.actionCodeIndex");
   }
   if (name === "hoxi_tools") return t("toolCard.actionTools");
+  if (name === "hoxi_data" || name === "hoxi_remote") return t("toolCard.actionData");
+  if (isImageGenTool(name)) return t("toolCard.actionImage");
   if (name === "call_mcp_tool" || name === "mcp_call_tool" || name === "mcp_list_tools" || name.startsWith("mcp__")) {
     return t("toolCard.actionMcp");
   }

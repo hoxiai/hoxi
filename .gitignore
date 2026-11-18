@@ -5,8 +5,6 @@
 node_modules/
 web/node_modules/
 web/dist/
-.opencode/node_modules/
-.opencode/bun.lock
 
 # Go & Wails build binaries
 /hoxi
@@ -16,16 +14,17 @@ build/preflight/
 build/windows/installer/tmp/
 build/windows/installer/wails_tools.nsh
 
-# Local session worktrees & runtime state
-.hoxi/
+# Local session worktrees & runtime state (allow project-shared .hoxi/skills/)
+.hoxi/*
+!.hoxi/skills/
+.agents/
 .claude/
-# Legacy memory location; Hoxi now writes .hoxi/memory/ (kept out of git too)
-.opencode/memory/
+.opencode/
 
 # Private sibling sub-repositories & local workspace wiring
-/client/
+client/
 /work/
-/site/
+site/
 /.ai/
 /verify.sh
 /go.work

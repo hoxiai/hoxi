@@ -23,6 +23,7 @@ var uniqueSleepSeq uint64
 // process group still ties it to that shell.
 func startDetachedServer(t *testing.T, secs string) (shellPID, serverPID int) {
 	t.Helper()
+	requireProcessSnapshots(t)
 	cmd := exec.Command("/bin/sh", "-c", "nohup sleep "+secs+" >/dev/null 2>&1 &")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
@@ -35,7 +36,7 @@ func startDetachedServer(t *testing.T, secs string) (shellPID, serverPID int) {
 	for time.Now().Before(deadline) {
 		byPID, _ := readProcessSnapshots()
 		for pid, snap := range byPID {
-			if snap.pgid == shellPID && strings.Contains(snap.args, "sleep "+secs) {
+			if snap.PGID == shellPID && strings.Contains(snap.Args, "sleep "+secs) {
 				return shellPID, pid
 			}
 		}
@@ -54,19 +55,19 @@ func TestOwnedProcessVerifierFindsReparentedBackgroundJobs(t *testing.T) {
 	svc := NewService(t.TempDir(), nil, nil, filepath.Join(t.TempDir(), "sessions.json"))
 	secs := uniqueSleepSeconds()
 	shellPID, serverPID := startDetachedServer(t, secs)
-	svc.ownedProcs.record("ses_a", shellPID, "")
+	svc.ownedProcs.Record("ses_a", shellPID, "")
 
 	pattern := "sleep " + secs
-	if !svc.ownedProcessVerifier("ses_a")(processControlTarget{pgrepArgs: []string{"-f", pattern}}) {
+	if !svc.ownedProcessVerifier("ses_a")(processControlTarget{PgrepArgs: []string{"-f", pattern}}) {
 		t.Fatalf("pkill of the session's own background job should be verified")
 	}
-	if !svc.ownedProcessVerifier("ses_a")(processControlTarget{pids: []int{serverPID}}) {
+	if !svc.ownedProcessVerifier("ses_a")(processControlTarget{PIDs: []int{serverPID}}) {
 		t.Fatalf("kill of the session's own background job should be verified")
 	}
-	if svc.ownedProcessVerifier("ses_b")(processControlTarget{pgrepArgs: []string{"-f", pattern}}) {
+	if svc.ownedProcessVerifier("ses_b")(processControlTarget{PgrepArgs: []string{"-f", pattern}}) {
 		t.Fatalf("another session must not be allowed to kill it")
 	}
-	if svc.ownedProcessVerifier("ses_b")(processControlTarget{pids: []int{serverPID}}) {
+	if svc.ownedProcessVerifier("ses_b")(processControlTarget{PIDs: []int{serverPID}}) {
 		t.Fatalf("another session must not be allowed to kill it by pid")
 	}
 }
@@ -75,7 +76,7 @@ func TestOwnedProcessVerifierRefusesProcessesOutsideTheSession(t *testing.T) {
 	svc := NewService(t.TempDir(), nil, nil, filepath.Join(t.TempDir(), "sessions.json"))
 	secs := uniqueSleepSeconds()
 	ownShell, _ := startDetachedServer(t, secs)
-	svc.ownedProcs.record("ses_a", ownShell, "")
+	svc.ownedProcs.Record("ses_a", ownShell, "")
 	// The same command started outside the session (by the user, say).
 	foreign := exec.Command("sleep", secs)
 	foreign.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -85,44 +86,44 @@ func TestOwnedProcessVerifierRefusesProcessesOutsideTheSession(t *testing.T) {
 	t.Cleanup(func() { _ = foreign.Process.Kill(); _, _ = foreign.Process.Wait() })
 
 	verify := svc.ownedProcessVerifier("ses_a")
-	if verify(processControlTarget{pgrepArgs: []string{"-f", "sleep " + secs}}) {
+	if verify(processControlTarget{PgrepArgs: []string{"-f", "sleep " + secs}}) {
 		t.Fatalf("a pattern that also matches a process outside the session must ask")
 	}
-	if verify(processControlTarget{pids: []int{foreign.Process.Pid}}) {
+	if verify(processControlTarget{PIDs: []int{foreign.Process.Pid}}) {
 		t.Fatalf("kill of a process outside the session must ask")
 	}
-	if verify(processControlTarget{pids: []int{1}}) {
+	if verify(processControlTarget{PIDs: []int{1}}) {
 		t.Fatalf("launchd/init is never owned")
 	}
-	if verify(processControlTarget{pgrepArgs: []string{"-f", "("}}) {
+	if verify(processControlTarget{PgrepArgs: []string{"-f", "("}}) {
 		t.Fatalf("a pattern pgrep rejects must not count as matching nothing")
 	}
-	if !verify(processControlTarget{pgrepArgs: []string{"-f", "hoxi-no-such-process-" + strconv.Itoa(ownShell)}}) {
+	if !verify(processControlTarget{PgrepArgs: []string{"-f", "hoxi-no-such-process-" + strconv.Itoa(ownShell)}}) {
 		t.Fatalf("a pattern that matches nothing signals nothing")
 	}
 }
 
 func TestOwnedProcessLedgerDropsEmptyAndReusedGroups(t *testing.T) {
 	l := newOwnedProcessLedger()
-	l.record("ses_a", 4242, "zsh -c # hoxi-stop:ses:call_1")
-	l.record("ses_a", 5353, "zsh -c # hoxi-stop:ses:call_2")
-	l.record("ses_b", 6464, "")
+	l.Record("ses_a", 4242, "zsh -c # hoxi-stop:ses:call_1")
+	l.Record("ses_a", 5353, "zsh -c # hoxi-stop:ses:call_2")
+	l.Record("ses_b", 6464, "")
 	byPID := map[int]procSnapshot{
-		4242: {pid: 4242, pgid: 4242, args: "zsh -c # hoxi-stop:ses:call_1"},
-		4300: {pid: 4300, pgid: 4242, args: "./server"},
-		5353: {pid: 5353, pgid: 5353, args: "-zsh"}, // leader PID reused by another command
-		6500: {pid: 6500, pgid: 6464, args: "node dev"},
+		4242: {PID: 4242, PGID: 4242, Args: "zsh -c # hoxi-stop:ses:call_1"},
+		4300: {PID: 4300, PGID: 4242, Args: "./server"},
+		5353: {PID: 5353, PGID: 5353, Args: "-zsh"}, // leader PID reused by another command
+		6500: {PID: 6500, PGID: 6464, Args: "node dev"},
 	}
-	got := l.liveGroups("ses_a", byPID)
+	got := l.LiveGroups("ses_a", byPID)
 	if !got[4242] || got[5353] || got[6464] || len(got) != 1 {
 		t.Fatalf("ses_a groups = %v, want only 4242", got)
 	}
 	delete(byPID, 4242)
 	delete(byPID, 4300)
-	if got := l.liveGroups("ses_a", byPID); len(got) != 0 {
+	if got := l.LiveGroups("ses_a", byPID); len(got) != 0 {
 		t.Fatalf("an emptied group must be dropped, got %v", got)
 	}
-	if got := l.liveGroups("ses_b", byPID); !got[6464] {
+	if got := l.LiveGroups("ses_b", byPID); !got[6464] {
 		t.Fatalf("other sessions keep their live groups, got %v", got)
 	}
 }
@@ -131,7 +132,7 @@ func TestOwnedProcessJudgedItemMasksOnlyVerifiedKills(t *testing.T) {
 	svc := NewService(t.TempDir(), nil, nil, filepath.Join(t.TempDir(), "sessions.json"))
 	secs := uniqueSleepSeconds()
 	shellPID, _ := startDetachedServer(t, secs)
-	svc.ownedProcs.record("ses_a", shellPID, "")
+	svc.ownedProcs.Record("ses_a", shellPID, "")
 	restart := `pkill -f "sleep ` + secs + `"; sleep 1; nohup ./server > /tmp/run.out 2>&1 & sleep 5; curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:5800/`
 	item := map[string]interface{}{
 		"id": "per_x", "permission": "bash",
@@ -177,7 +178,7 @@ func TestOwnedProcessSDKRestartRefusesAMixedProcessMatch(t *testing.T) {
 	svc := NewService(root, nil, nil, filepath.Join(t.TempDir(), "sessions.json"))
 	secs := uniqueSleepSeconds()
 	group, _ := startDetachedServer(t, secs)
-	svc.ownedProcs.record("ses_sdk_restart", group, "")
+	svc.ownedProcs.Record("ses_sdk_restart", group, "")
 	log := filepath.ToSlash(filepath.Join(t.TempDir(), "run.log"))
 	command := `export PATH="$PATH:/opt/flutter/bin"` + "\n" + `pkill -f "sleep ` + secs + `" 2>/dev/null || true` + "\n" +
 		`rm -f ` + log + "\n" + `nohup bash scripts/run_local.sh -d DEVICE > ` + log + ` 2>&1 &`

@@ -67,6 +67,9 @@ func TestHomeOverrideServerURLAndProtectedStateFiles(t *testing.T) {
 	if got, want := BrowserSettingsPath(), filepath.Join(customHome, "browser-settings.json"); got != want {
 		t.Fatalf("BrowserSettingsPath() = %s, want %s", got, want)
 	}
+	if got, want := WindowStatePath(), filepath.Join(customHome, "window-state.json"); got != want {
+		t.Fatalf("WindowStatePath() = %s, want %s", got, want)
+	}
 
 	t.Setenv("HOXI_SERVER_URL", "https://mirror.hoxi.ai/")
 	if got := ServerBaseURL(); got != "https://mirror.hoxi.ai" {
@@ -76,8 +79,11 @@ func TestHomeOverrideServerURLAndProtectedStateFiles(t *testing.T) {
 	if got, want := TaskLedgerPath(), filepath.Join(customHome, "task-ledger.json"); got != want {
 		t.Fatalf("TaskLedgerPath() = %s, want %s", got, want)
 	}
+	if got, want := DataProfilesPath(), filepath.Join(customHome, "dataprofiles.json"); got != want {
+		t.Fatalf("DataProfilesPath() = %s, want %s", got, want)
+	}
 
-	for _, name := range []string{"models.json", "auth.json", "auto-pools.json", "workspaces.json", "device-id", "telemetry.json", "relay-keys.json", "browser-settings.json", "work-apps.json", "reclaim.json", "reclaim.json.lock", "task-ledger.json", "task-ledger.json.lock"} {
+	for _, name := range []string{"models.json", "auth.json", "auto-pools.json", "workspaces.json", "device-id", "telemetry.json", "relay-keys.json", "browser-settings.json", "window-state.json", "work-apps.json", "dataprofiles.json", "dataprofiles.json.lock", "reclaim.json", "reclaim.json.lock", "task-ledger.json", "task-ledger.json.lock"} {
 		if !IsProtectedStateFile(name) {
 			t.Fatalf("expected %s to be protected state file", name)
 		}

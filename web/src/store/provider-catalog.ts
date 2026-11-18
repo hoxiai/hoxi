@@ -18,7 +18,23 @@ import {
   type InferredModelSpec,
 } from "./model-limits";
 import { convertToUsdPerMillion } from "./model-pricing";
-import { workspace, type ReasoningEffort, type SelectedModel } from "./workspace-state";
+import {
+  preferredAgentEngine,
+  workspace,
+  type ReasoningEffort,
+  type SelectedModel,
+} from "./workspace-state";
+
+export function isOpenCodeProviderAvailable(
+  connectedIds: Set<string>,
+  globalConfig?: Record<string, any> | null
+): boolean {
+  return (
+    connectedIds.has("opencode") ||
+    Boolean(globalConfig?.provider?.opencode) ||
+    preferredAgentEngine() === "opencode"
+  );
+}
 
 export type ConcreteReasoningEffort = Exclude<ReasoningEffort, "">;
 
@@ -450,7 +466,9 @@ export function extractFlattenedModels(
       const toolcall = Boolean(mInfo.capabilities?.toolcall ?? mInfo.tool_call ?? true);
       const multiplier = mInfo.multiplier ?? cfgModel?.multiplier;
       const free = isModelFree(p.id, mID, mInfo);
-      const isConn = baseConn || (p.id === "opencode" && free);
+      const isConn =
+        baseConn ||
+        (p.id === "opencode" && free && isOpenCodeProviderAvailable(connectedIds, globalConfig));
 
       const canonID = canonicalModelKey(mID);
       const canonName = canonicalModelKey(modelName);
@@ -621,7 +639,10 @@ export function getConnectedProviderModelGroups(): ConnectedProviderGroup[] {
 
   for (const p of workspace.providers) {
     if (disSet.has(p.id)) continue;
-    const isConn = connSet.has(p.id) || Boolean(cfgProviders[p.id]) || p.id === "opencode";
+    const isConn =
+      connSet.has(p.id) ||
+      Boolean(cfgProviders[p.id]) ||
+      (p.id === "opencode" && isOpenCodeProviderAvailable(connSet, workspace.globalConfig));
     if (!isConn) continue;
 
     const models = Object.entries(p.models || {}).map(([mID, mInfo]) => ({

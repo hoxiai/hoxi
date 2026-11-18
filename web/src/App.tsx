@@ -17,6 +17,7 @@ import {
   handleIncomingPermissionRequest,
   hasStoredSurfaceMode,
   markPermissionResolved,
+  clearActiveTurnTelemetry,
   clearAutoFailoverPending,
   clearSessionPendingApprovals,
   clearTurnDispatchState,
@@ -311,6 +312,7 @@ export default function App() {
                 setWorkspace("unreadCompletedBySession", sid, false);
               } else if (evt.properties.status.type === "idle") {
                 clearTurnDispatchState(sid);
+                clearActiveTurnTelemetry(sid);
                 clearSessionPendingApprovals(sid);
                 setWorkspace("sessionFinishedAt", sid, Date.now());
                 const parentID = resolveParentSessionID(sid);
@@ -356,6 +358,7 @@ export default function App() {
                 isSessionBusy(sid) && Date.now() - lastPromptDispatchedAt(sid) <= 3500;
               if (!nextPromptRunning) {
                 clearTurnDispatchState(sid);
+                clearActiveTurnTelemetry(sid);
                 clearSessionPendingApprovals(sid);
                 setWorkspace("statusBySession", sid, { type: "idle" });
                 setWorkspace("stalledSinceBySession", sid, 0);

@@ -7,6 +7,71 @@ import (
 	"strings"
 )
 
+type hoxiCodeIndexTool struct{}
+
+func (t *hoxiCodeIndexTool) Name() string     { return "hoxi_code_index" }
+func (t *hoxiCodeIndexTool) IsReadOnly() bool { return true }
+func (t *hoxiCodeIndexTool) Description() string {
+	return "Navigate workspace code efficiently via the worktree-scoped knowledge graph. Prefer action='context' to fetch a symbol's source, callees, callers, blast radius, and tests in 1 call; or use search -> inspect -> callers/callees/impact -> refresh. Avoids full-repo grep and whole-file reads."
+}
+func (t *hoxiCodeIndexTool) Parameters() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"action": map[string]any{
+				"type":        "string",
+				"enum":        []string{"context", "search", "inspect", "callers", "callees", "impact", "refresh"},
+				"description": "context | search | inspect | callers | callees | impact | refresh",
+			},
+			"query":        map[string]any{"type": "string", "description": "Symbol or keyword query for search or context"},
+			"symbol":       map[string]any{"type": "string", "description": "Symbol name for context, inspect, callers, callees, or impact"},
+			"path":         map[string]any{"type": "string", "description": "Relative file path (context/inspect/callers/callees/impact) or path prefix (search)"},
+			"startLine":    map[string]any{"type": "integer", "description": "1-based start line for inspect"},
+			"endLine":      map[string]any{"type": "integer", "description": "1-based end line for inspect"},
+			"contextLines": map[string]any{"type": "integer", "description": "Extra context lines for inspect or context (default 5, max 30)"},
+			"depth":        map[string]any{"type": "integer", "description": "Call graph depth for impact (default 2, max 3)"},
+			"limit":        map[string]any{"type": "integer", "description": "Max hits for search, callers, callees, or impact (default 12)"},
+			"refresh":      map[string]any{"type": "boolean", "description": "Refresh worktree index before search"},
+		},
+		"required": []string{"action"},
+	}
+}
+
+func (t *hoxiCodeIndexTool) Execute(ctx context.Context, tc ToolContext, input json.RawMessage) (ToolOutput, error) {
+	if tc.HostInvoke != nil {
+		return execHostTool(ctx, tc, t.Name(), input)
+	}
+	var args struct {
+		Action string `json:"action"`
+		Query  string `json:"query"`
+		Symbol string `json:"symbol"`
+		Path   string `json:"path"`
+		Depth  int    `json:"depth"`
+		Limit  int    `json:"limit"`
+	}
+	_ = json.Unmarshal(input, &args)
+	switch strings.ToLower(strings.TrimSpace(args.Action)) {
+	case "inspect", "callers", "context":
+		fb, _ := json.Marshal(map[string]any{"symbol": firstNonEmptyCodeStr(args.Symbol, args.Query), "filePath": args.Path, "includeCallers": true})
+		return (&symbolInspectTool{}).Execute(ctx, tc, fb)
+	case "impact", "callees":
+		fb, _ := json.Marshal(map[string]any{"symbol": firstNonEmptyCodeStr(args.Symbol, args.Query), "filePath": args.Path, "depth": args.Depth, "limit": args.Limit})
+		return (&impactAnalysisTool{}).Execute(ctx, tc, fb)
+	case "refresh":
+		return ToolOutput{Title: "CodeIndex: refresh", Output: "Index refresh is unavailable without host gateway."}, nil
+	default:
+		fb, _ := json.Marshal(map[string]any{"query": firstNonEmptyCodeStr(args.Query, args.Symbol), "pathPrefix": args.Path, "limit": args.Limit})
+		return (&codeSearchTool{}).Execute(ctx, tc, fb)
+	}
+}
+
+func firstNonEmptyCodeStr(a, b string) string {
+	if strings.TrimSpace(a) != "" {
+		return strings.TrimSpace(a)
+	}
+	return strings.TrimSpace(b)
+}
+
 type codeSearchTool struct{}
 
 func (t *codeSearchTool) Name() string     { return "code_search" }

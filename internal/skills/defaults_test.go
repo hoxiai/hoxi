@@ -50,18 +50,18 @@ func TestSeedDefaultsInstallsBundledSkills(t *testing.T) {
 }
 
 func TestDefaultSkillMatchesRepoCopy(t *testing.T) {
-	for _, slug := range []string{"skill-authoring", "tools"} {
+	for _, slug := range []string{"office-docs", "skill-authoring", "tools"} {
 		embedded, err := defaultSkillFiles.ReadFile("defaults/" + slug + "/SKILL.md")
 		if err != nil {
 			t.Fatalf("read embedded %s: %v", slug, err)
 		}
-		repoPath := filepath.Join("..", "..", ".opencode", "skills", slug, "SKILL.md")
+		repoPath := filepath.Join("..", "..", ".hoxi", "skills", slug, "SKILL.md")
 		repo, err := os.ReadFile(repoPath)
 		if err != nil {
 			t.Fatalf("read repo skill copy (%s): %v", slug, err)
 		}
 		if !bytes.Equal(embedded, repo) {
-			t.Fatalf("bundled default and .opencode/skills/%s/SKILL.md differ", slug)
+			t.Fatalf("bundled default and .hoxi/skills/%s/SKILL.md differ", slug)
 		}
 		sitePath := filepath.Join("..", "..", "site", "themes", "hoxi", "public", "skills", slug, "SKILL.md")
 		if siteCopy, err := os.ReadFile(sitePath); err == nil {
@@ -152,8 +152,8 @@ func TestSeedDefaultsMigratesLegacyAndUpgradesOutdatedBundledSkill(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(upgraded), `version: "1.2.0"`) {
-		t.Fatalf("expected tools/SKILL.md to be upgraded to 1.2.0, got:\n%s", string(upgraded))
+	if !strings.Contains(string(upgraded), `version: "1.3.0"`) {
+		t.Fatalf("expected tools/SKILL.md to be upgraded to 1.3.0, got:\n%s", string(upgraded))
 	}
 }
 

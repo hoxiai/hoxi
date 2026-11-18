@@ -1,12 +1,22 @@
 import { reconcile, unwrap } from "solid-js/store";
 import { hoxiAPI } from "../services/api";
 import { appSettings, setAppSettings } from "../store/settings";
-import { newIsolatedSession, switchActiveSessionSandboxMode } from "../store/session-sandbox";
+import {
+  concurrentLocalPeerSessions,
+  newIsolatedSession,
+  resolveEffectiveSandboxMode,
+  switchActiveSessionSandboxMode,
+} from "../store/session-sandbox";
 import { replaceSessionFromEvent } from "../store/workspace-sessions";
 import { exitSessionWorktree } from "../store/session-lifecycle";
 import { setWorkspace, workspace } from "../store/workspace";
 import { assertEqual, assertTrue, describe, it } from "./test-harness";
-import { sessionDirectory } from "../store/session-query";
+import {
+  dismissSharedBranchNotice,
+  isSharedBranchNoticeDismissed,
+  markSessionDeleted,
+  sessionDirectory,
+} from "../store/session-query";
 import { cancelScheduledWorktreeStatus } from "../store/session-diffs";
 
 async function withFixture(run: () => Promise<void>) {
@@ -136,6 +146,84 @@ describe("local CLI sandbox settings", () => {
       };
       const id = await newIsolatedSession(undefined, { isolated: false });
       assertEqual(workspace.worktreeBySession[id].isolated, false);
+    });
+  });
+
+  it("detects concurrent active local peers on the same branch while ignoring isolated, child, idle, and other-folder tasks", async () => {
+    await withFixture(async () => {
+      setAppSettings("defaultSandboxMode", "local");
+      setWorkspace({
+        rootDir: "/runner-project",
+        activeSessionID: "ses_local_b",
+        sessions: [
+          {
+            id: "ses_local_a",
+            runtime: "native",
+            sandboxMode: "local",
+            title: "Task A",
+            directory: "/runner-project",
+            time: { created: 1, updated: 2 },
+          },
+          {
+            id: "ses_local_b",
+            runtime: "native",
+            sandboxMode: "local",
+            title: "Task B",
+            directory: "/runner-project",
+            time: { created: 1, updated: 3 },
+          },
+          {
+            id: "ses_wt_c",
+            runtime: "native",
+            sandboxMode: "worktree",
+            title: "Isolated C",
+            directory: "/runner-project/.hoxi/worktrees/ses_wt_c",
+            time: { created: 1, updated: 4 },
+          },
+          {
+            id: "ses_sub_a",
+            parentID: "ses_local_a",
+            runtime: "native",
+            sandboxMode: "local",
+            title: "Subagent",
+            directory: "/runner-project",
+            time: { created: 1, updated: 5 },
+          },
+          {
+            id: "ses_other_repo",
+            runtime: "native",
+            sandboxMode: "local",
+            title: "Other Repo",
+            directory: "/other-project",
+            time: { created: 1, updated: 6 },
+          },
+        ],
+        statusBySession: {
+          ses_local_a: { type: "busy" },
+          ses_wt_c: { type: "busy" },
+          ses_sub_a: { type: "busy" },
+          ses_other_repo: { type: "busy" },
+        },
+      });
+
+      assertEqual(resolveEffectiveSandboxMode("ses_local_b"), "local");
+      assertEqual(resolveEffectiveSandboxMode("ses_wt_c"), "worktree");
+
+      const peersForB = concurrentLocalPeerSessions("ses_local_b");
+      assertEqual(peersForB.map((s) => s.id).join(","), "ses_local_a");
+
+      // New thread draft in /runner-project also sees ses_local_a as active local peer
+      const peersForDraft = concurrentLocalPeerSessions(null);
+      assertEqual(peersForDraft.map((s) => s.id).join(","), "ses_local_a");
+
+      // Dismissing for ["ses_local_a"] hides notice until a new peer becomes active, and cleans up on delete
+      assertEqual(isSharedBranchNoticeDismissed("ses_local_b", ["ses_local_a"]), false);
+      dismissSharedBranchNotice("ses_local_b", ["ses_local_a"]);
+      assertEqual(isSharedBranchNoticeDismissed("ses_local_b", ["ses_local_a"]), true);
+      assertEqual(isSharedBranchNoticeDismissed("ses_local_b", ["ses_local_a", "ses_local_d"]), false);
+
+      markSessionDeleted("ses_local_b");
+      assertEqual(isSharedBranchNoticeDismissed("ses_local_b", ["ses_local_a"]), false);
     });
   });
 });

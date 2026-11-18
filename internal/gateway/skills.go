@@ -121,7 +121,7 @@ func (g *Gateway) resolveSkillContext(ctx context.Context, directory, sessionID,
 				}
 				return skills.RequestContext{
 					SessionID:    sessionID,
-					Runtime:      "opencode",
+					Runtime:      g.defaultSkillRuntime(),
 					Directory:    binding.Directory,
 					ProjectRoot:  proj,
 					AllowedRoots: allowedRoots,
@@ -148,8 +148,8 @@ func (g *Gateway) resolveSkillContext(ctx context.Context, directory, sessionID,
 		return skills.RequestContext{}, fmt.Errorf("%w: directory is not a registered workspace", skills.ErrForbidden)
 	}
 
-	rt := "opencode"
-	if reqRT := strings.TrimSpace(requestedRuntime); reqRT != "" && reqRT != "opencode" {
+	rt := g.defaultSkillRuntime()
+	if reqRT := strings.TrimSpace(requestedRuntime); reqRT != "" && (reqRT == "opencode" || runner.IsValidRuntime(reqRT)) {
 		rt = reqRT
 	}
 
@@ -160,4 +160,11 @@ func (g *Gateway) resolveSkillContext(ctx context.Context, directory, sessionID,
 		AllowedRoots: allowedRoots,
 		Surface:      g.skillSurface(projRoot, cDir),
 	}, nil
+}
+
+func (g *Gateway) defaultSkillRuntime() string {
+	if g != nil && g.openCode != nil && g.openCode.Available() {
+		return "opencode"
+	}
+	return string(runner.RuntimeNative)
 }

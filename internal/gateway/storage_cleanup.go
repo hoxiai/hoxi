@@ -75,6 +75,15 @@ func (g *Gateway) handleSystemStorageClean(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, g.CleanStorage(ctx))
 }
 
+// StartLegacySessionImport imports legacy OpenCode sessions in the background.
+// It used to run synchronously inside gateway.New, which blocked desktop window
+// creation for minutes on large profiles.
+func (g *Gateway) StartLegacySessionImport() {
+	if g.runner != nil {
+		g.runner.StartBackgroundOpenCodeMigration()
+	}
+}
+
 // StartStorageMaintenance runs periodic background cleanup of transient engine
 // logs, stale git pack tempfiles, redundant session JSONL lines, and oversized
 // SQLite event logs until ctx is cancelled.

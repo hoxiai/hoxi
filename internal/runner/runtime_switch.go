@@ -725,7 +725,7 @@ func (s *Service) forgetOpenCodeMappings(id string, rec SessionRecord, ap *activ
 		s.editedFiles.Delete(sid)
 		s.turnStats.Delete(sid)
 		if s.ownedProcs != nil {
-			s.ownedProcs.forget(sid)
+			s.ownedProcs.Forget(sid)
 		}
 		if s.status != nil {
 			s.status.SetSessionBusy(sid, false)

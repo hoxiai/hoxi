@@ -11,11 +11,13 @@ import {
   getComposerSkill,
   getComposerSkillNotice,
   hasAsyncContextMentions,
+  isPureLocalSlashCommand,
   isSessionBusy,
   isSessionDeleted,
   loadSkillDetail,
   loadSkillsCatalog,
   removeReviewComment,
+  resolveEffectiveSandboxMode,
   selectComposerSkill,
   sessionDirectory,
   sessionNeedsModelSelection,
@@ -119,20 +121,9 @@ export default function Composer() {
       void loadSkillDetail(inspectKey, { sessionID: sid, directory: dir, runtime: rt });
     }
   };
-  const effectiveSandboxMode = createMemo<"local" | "worktree">(() => {
-    const id = sessionID();
-    if (id) {
-      if (workspace.worktreeBySession[id]) {
-        return workspace.worktreeBySession[id].isolated ? "worktree" : "local";
-      }
-      const s = workspace.sessions.find((item) => item.id === id);
-      if (s?.sandboxMode) return s.sandboxMode;
-      if (s?.directory?.includes("/.hoxi/worktrees/")) return "worktree";
-      if (s) return "local";
-    }
-    if (appSettings.approvalMode === "unattended") return "worktree";
-    return appSettings.defaultSandboxMode;
-  });
+  const effectiveSandboxMode = createMemo<"local" | "worktree">(() =>
+    resolveEffectiveSandboxMode(sessionID())
+  );
 
   const onToggleSandbox = async (mode: "local" | "worktree") => {
     if (switchingSandbox() || busy()) return;
@@ -281,17 +272,11 @@ export default function Composer() {
     return id ? (workspace.reviewCommentsBySession[id] ?? []) : [];
   });
 
-  const contextMentions = createMemo(() =>
-    inspectPromptContextMentions(text(), sessionID())
-  );
+  const contextMentions = createMemo(() => inspectPromptContextMentions(text(), sessionID()));
 
   const removeContextMention = (token: string) => {
     const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    setText((prev) =>
-      prev
-        .replace(new RegExp(`\\s*${escaped}\\s*`, "g"), " ")
-        .replace(/^\s+/, "")
-    );
+    setText((prev) => prev.replace(new RegExp(`\\s*${escaped}\\s*`, "g"), " ").replace(/^\s+/, ""));
     requestAnimationFrame(adjustHeight);
   };
 
@@ -330,6 +315,19 @@ export default function Composer() {
 
   const onSend = async () => {
     if (choosingFolder()) return;
+    const initialWithPastes = pasteCollapse.expandIntoPrompt(text());
+    if (!sending() && isPureLocalSlashCommand(initialWithPastes, workspace.rootDir)) {
+      if (text().trim()) promptHistory.recordPrompt(text().trim());
+      setEnhanceState(null);
+      setEnhanceError(null);
+      ac.reset();
+      setText("");
+      setCursorOffset(0);
+      pasteCollapse.clearPastes();
+      if (textareaRef) textareaRef.style.height = "48px";
+      await submitSessionPrompt(initialWithPastes, sessionID(), { directory: workspace.rootDir });
+      return;
+    }
     if (!sessionID() && !workspace.rootDir) {
       if (isWorkSurface() && defaultWorkspaceDir()) {
         await switchWorkspace(defaultWorkspaceDir(), false);
@@ -648,6 +646,8 @@ export default function Composer() {
           <ComposerAttachmentChips
             images={imgAttach.images()}
             pastes={pasteCollapse.pastes()}
+            activeCommand={ac.activeCommand()}
+            onRemoveCommand={ac.clearActiveCommand}
             contextMentions={contextMentions()}
             onRemoveMention={removeContextMention}
             pendingCount={imgAttach.pendingCount()}

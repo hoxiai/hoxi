@@ -217,7 +217,7 @@ func (s *Service) prewarmProjectRoots(ctx context.Context) bool {
 	if ctx.Err() != nil {
 		return true
 	}
-	if s.openCode == nil {
+	if s.openCode == nil || !s.openCode.Available() {
 		return true
 	}
 	roots := s.candidatePrewarmRoots()

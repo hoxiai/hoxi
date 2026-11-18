@@ -43,18 +43,7 @@ jobs:
           cache-dependency-path: web/package-lock.json
 
       - name: Install frontend dependencies
-        env:
-          HOXI_WORK_TOKEN: ${{ secrets.HOXI_WORK_TOKEN }}
-        run: |
-          if [[ ! -d "../hoxi-work" && -n "${HOXI_WORK_TOKEN:-}" ]]; then
-            git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$HOXI_WORK_TOKEN" | base64 | tr -d '\r\n')" \
-              clone --depth 1 https://github.com/hoxiai/hoxi-work.git ../hoxi-work
-            test -f "../hoxi-work/web/index.tsx"
-          fi
-          if [[ -f "../hoxi-work/go/stage-host.sh" ]]; then
-            bash "../hoxi-work/go/stage-host.sh" "$PWD" >/dev/null
-          fi
-          npm --prefix web ci
+        run: npm --prefix web ci
 
       - name: Validate release version
         env:
@@ -92,13 +81,12 @@ jobs:
           SPARKLE_SHA256: ${{ vars.HOXI_SPARKLE_ARCHIVE_SHA256 }}
           SPARKLE_PRIVATE_KEY: ${{ secrets.HOXI_SPARKLE_PRIVATE_KEY }}
           HOXI_RELEASE_KEY: ${{ secrets.HOXI_RELEASE_KEY }}
-          APAY_RELEASE_KEY: ${{ secrets.APAY_RELEASE_KEY }}
         run: |
           node scripts/opencode-lock.mjs verify
           : "${HOXI_SPARKLE_PUBLIC_KEY:?Sparkle public key required}"
           : "${HOXI_SPARKLE_FEED_URL:?Official feed URL required}"
           : "${SPARKLE_PRIVATE_KEY:?Sparkle private key required}"
-          : "${APAY_RELEASE_KEY:?Unified release-center credential required (APAY_RELEASE_KEY)}"
+          : "${HOXI_RELEASE_KEY:?Release credential required (HOXI_RELEASE_KEY)}"
           : "${SPARKLE_URL:?Pinned official Sparkle archive URL required}"
           : "${SPARKLE_SHA256:?Sparkle SHA-256 required}"
           [[ "$SPARKLE_URL" == https://github.com/sparkle-project/Sparkle/releases/download/* ]]
@@ -202,8 +190,8 @@ jobs:
 
       - name: Publish website metadata after asset upload
         env:
-          APAY_RELEASE_KEY: ${{ secrets.APAY_RELEASE_KEY }}
-          APAY_RELEASE_API_URL: ${{ vars.APAY_RELEASE_API_URL }}
+          HOXI_RELEASE_KEY: ${{ secrets.HOXI_RELEASE_KEY }}
+          HOXI_RELEASE_API_URL: ${{ vars.HOXI_RELEASE_API_URL }}
           RELEASE_NOTES: ${{ env.RELEASE_NOTES }}
         run: |
           node --input-type=module - "$RELEASE_VERSION" <<'JS' | node scripts/release-publisher.mjs

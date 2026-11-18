@@ -344,6 +344,8 @@ function worktreeTarget(directory?: string): { sessionID: string | null; key: st
   };
 }
 
+let pendingCommitAttempt: { signature: string; clientRequestId: string } | null = null;
+
 /**
  * Commits the active session's worktree (or one repo of a multi-repo workspace
  * via `directory`), optionally pushing, then refreshes git status and the
@@ -351,16 +353,34 @@ function worktreeTarget(directory?: string): { sessionID: string | null; key: st
  */
 export async function commitWorktreeChanges(
   message: string,
-  options: { push?: boolean; directory?: string } = {}
+  options: { push?: boolean; directory?: string; clientRequestId?: string } = {}
 ): Promise<CommitAndPushResponse> {
   const target = worktreeTarget(options.directory);
-  const res = await hoxiAPI.commitWorktree(target.key, message, {
-    push: options.push,
-    directory: target.directory,
-  });
-  await refreshWorktreeStatus(target.sessionID);
-  if (target.sessionID) await loadSessionMessagesOnly(target.sessionID);
-  return res;
+  const signature = `${target.key}\0${message.trim()}\0${Boolean(options.push)}\0${target.directory || ""}`;
+  const clientRequestId =
+    options.clientRequestId?.trim() ||
+    (pendingCommitAttempt?.signature === signature
+      ? pendingCommitAttempt.clientRequestId
+      : `commit_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`);
+  pendingCommitAttempt = { signature, clientRequestId };
+
+  try {
+    const res = await hoxiAPI.commitWorktree(target.key, message, {
+      push: options.push,
+      directory: target.directory,
+      clientRequestId,
+    });
+    pendingCommitAttempt = null;
+    await refreshWorktreeStatus(target.sessionID);
+    if (target.sessionID) await loadSessionMessagesOnly(target.sessionID);
+    return res;
+  } catch (err) {
+    if (err instanceof Error && err.name === "RequestOutcomeUnknownError") {
+      pendingCommitAttempt = null;
+      await refreshWorktreeStatus(target.sessionID).catch(() => {});
+    }
+    throw err;
+  }
 }
 
 /** Pushes the active session's worktree branch (or one repo via `directory`). */

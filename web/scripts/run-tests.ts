@@ -88,6 +88,9 @@ import "../src/__tests__/layout.test";
 import "../src/__tests__/gemini-image-session.test";
 import "../src/__tests__/slash-and-agents.test";
 import "../src/__tests__/context-watermark.test";
+import "../src/__tests__/request-ledger.test";
+import "../src/__tests__/request-recovery.test";
+import "../src/__tests__/plan-consent.test";
 
 console.log("[test] Running Hoxi frontend unit tests...");
 runAllTests().then((failed) => {

@@ -126,6 +126,7 @@ func TestStopToolCommandOpenCodeIgnoresForgedMarker(t *testing.T) {
 // parallel command survives. The test process stands in for the daemon so it
 // can read the shell's real exit status.
 func TestStopOpenCodeToolShellExitsWithCode(t *testing.T) {
+	requireProcessSnapshots(t)
 	for _, shell := range []string{"/bin/zsh", "/bin/bash", "/bin/sh"} {
 		if _, err := os.Stat(shell); err != nil {
 			continue

@@ -2,6 +2,7 @@ export const commandPalette = {
   placeholderActions: "输入命令或搜索会话…",
   placeholderFiles: "按文件名或路径搜索…",
   actions: "操作",
+  commands: "斜杠指令",
   sessions: "会话",
   files: "文件",
   noResults: "没有匹配结果",
@@ -32,4 +33,9 @@ export const commandPalette = {
   shortcutFiles: "⌘P",
   shortcutActions: "⌘K",
   currentSession: "当前会话",
+  slashNewDesc: "开启新会话",
+  slashPlanDesc: "切换为规划模式（可直接附带问题）",
+  slashBuildDesc: "切换为构建模式（可直接附带指令）",
+  slashDiffDesc: "打开当前会话变更面板",
+  slashUndoDesc: "撤回当前会话的上一轮消息与改动",
 };

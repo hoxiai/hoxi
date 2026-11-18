@@ -20,6 +20,7 @@ import {
   isCustomOrConfiguredProvider,
   isFavoriteModel,
   isNonChatUtilityModelID,
+  isOpenCodeProviderAvailable,
   OFFICIAL_PROVIDER_ID,
   openProviderModal,
   peekAutoModelTarget,
@@ -168,8 +169,14 @@ export default function ModelSelector(props: { openRequest?: number }) {
   const connectedModels = createMemo<FlattenedModel[]>(() => {
     const conn = allModels().filter((m) => m.connected);
     if (conn.length > 0) return conn;
-    const freeModels = allModels().filter((m) => m.providerID === "opencode" || m.free);
-    return freeModels.length > 0 ? freeModels : allModels().slice(0, 30);
+    const allowOpenCodeFree = isOpenCodeProviderAvailable(connectedSet(), workspace.globalConfig);
+    const freeModels = allModels().filter(
+      (m) => (allowOpenCodeFree ? m.providerID === "opencode" || m.free : m.free && m.providerID !== "opencode")
+    );
+    if (freeModels.length > 0) return freeModels;
+    return allModels()
+      .filter((m) => allowOpenCodeFree || m.providerID !== "opencode")
+      .slice(0, 30);
   });
 
   const freeConnectedModels = createMemo<FlattenedModel[]>(() =>

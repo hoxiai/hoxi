@@ -2,17 +2,6 @@ package runner
 
 import "strings"
 
-// interruptedToolError is the error a tool call gets when its turn ends before
-// the call finishes.
-const interruptedToolError = "Interrupted before completion"
-
-// isInFlightToolPart reports a tool call that will be finalized as interrupted
-// once its turn ends. Task calls are left alone: their subagent can still finish.
-func isInFlightToolPart(p MessagePart) bool {
-	return p.Type == "tool" && p.Tool != "task" && p.State != nil &&
-		(p.State.Status == "pending" || p.State.Status == "running")
-}
-
 // openCodeTurnSystem builds the system prompt for an OpenCode start, steer or
 // recovery request. All of them must produce the same bytes: one changed byte
 // invalidates the provider's prompt cache for everything after it.

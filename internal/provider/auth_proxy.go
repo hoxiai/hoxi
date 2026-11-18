@@ -17,8 +17,16 @@ import (
 )
 
 func extractAuthProviderID(requestPath string) string {
-	trimmed := strings.TrimPrefix(requestPath, "/api")
-	trimmed = strings.TrimPrefix(trimmed, "/auth/")
+	var trimmed string
+	switch {
+	case strings.HasPrefix(requestPath, "/api/hoxi/provider/credentials/"):
+		trimmed = strings.TrimPrefix(requestPath, "/api/hoxi/provider/credentials/")
+	case requestPath == "/api/hoxi/provider/credentials":
+		return ""
+	default:
+		trimmed = strings.TrimPrefix(requestPath, "/api")
+		trimmed = strings.TrimPrefix(trimmed, "/auth/")
+	}
 	trimmed = strings.TrimSpace(trimmed)
 	if trimmed == "" || trimmed == "/auth" || strings.Contains(trimmed, "/") {
 		return ""
@@ -39,7 +47,7 @@ func extractAuthProviderID(requestPath string) string {
 func (g *Service) handleProviderAuth(w http.ResponseWriter, r *http.Request) {
 	providerID := extractAuthProviderID(r.URL.Path)
 	if providerID == "" {
-		if g.proxy != nil {
+		if g.proxy != nil && !strings.HasPrefix(r.URL.Path, "/api/hoxi/") {
 			g.proxy.ServeHTTP(w, r)
 			return
 		}
@@ -70,7 +78,7 @@ func (g *Service) handleProviderAuth(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, true)
 
 	default:
-		if g.proxy != nil {
+		if g.proxy != nil && !strings.HasPrefix(r.URL.Path, "/api/hoxi/") {
 			g.proxy.ServeHTTP(w, r)
 			return
 		}
@@ -149,8 +157,27 @@ func (g *Service) removeEngineProviderAuth(providerID string) error {
 // and overlays GET /global/config with that document, so routing roles (small_model, subagent_model,
 // agent models) and Hoxi-managed provider model keys reflect the latest persisted config.
 func (g *Service) handleGlobalConfigProxy(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet && strings.TrimSpace(r.URL.Query().Get("directory")) != "" {
+		doc, err := g.LoadProjectConfigDoc(r.URL.Query().Get("directory"))
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if g.officialBlocked.Load() {
+			if providers, ok := doc["provider"].(map[string]any); ok {
+				delete(providers, officialProviderID)
+			}
+		}
+		writeJSON(w, http.StatusOK, doc)
+		return
+	}
 	if r.Method == http.MethodPatch {
-		raw, err := io.ReadAll(r.Body)
+		const maxGlobalConfigPatchBytes = 4 << 20
+		raw, err := io.ReadAll(io.LimitReader(r.Body, maxGlobalConfigPatchBytes+1))
+		if err == nil && int64(len(raw)) > maxGlobalConfigPatchBytes {
+			writeJSONError(w, http.StatusRequestEntityTooLarge, "config patch exceeds maximum size")
+			return
+		}
 		if err == nil && len(raw) > 0 {
 			var patch map[string]interface{}
 			if json.Unmarshal(raw, &patch) == nil && patch != nil {
@@ -207,7 +234,7 @@ func (g *Service) handleGlobalConfigProxy(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if g.proxy != nil {
+	if g.proxy != nil && !strings.HasPrefix(r.URL.Path, "/api/hoxi/") {
 		g.proxy.ServeHTTP(w, r)
 		return
 	}
@@ -232,11 +259,12 @@ func (g *Service) fetchOpenCodeForProxy(w http.ResponseWriter, r *http.Request, 
 	return status, body, true
 }
 
-// handleProviderProxy serves GET /provider from OpenCode when running and
-// synthesizes the full Hoxi provider catalog offline when OpenCode is absent.
+// handleProviderProxy serves GET /api/hoxi/provider/catalog (and legacy GET /provider)
+// from OpenCode when running and synthesizes the full Hoxi provider catalog offline
+// when OpenCode is absent.
 func (g *Service) handleProviderProxy(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		if g.proxy != nil && g.openCode != nil && g.openCode.Available() {
+		if g.proxy != nil && g.openCode != nil && g.openCode.Available() && !strings.HasPrefix(r.URL.Path, "/api/hoxi/") {
 			g.proxy.ServeHTTP(w, r)
 			return
 		}
@@ -244,8 +272,12 @@ func (g *Service) handleProviderProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if g.openCode != nil && g.openCode.Available() {
+		upstreamPath := r.URL.Path
+		if strings.HasPrefix(upstreamPath, "/api/hoxi/") {
+			upstreamPath = "/provider"
+		}
 		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-		status, body, err := g.openCode.Raw(ctx, http.MethodGet, r.URL.Path, r.URL.Query(), nil)
+		status, body, err := g.openCode.Raw(ctx, http.MethodGet, upstreamPath, r.URL.Query(), nil)
 		cancel()
 		if err == nil && status >= 200 && status < 300 {
 			var payload map[string]interface{}
@@ -307,36 +339,44 @@ func (g *Service) filterProviderProxyPayload(payload map[string]interface{}) {
 
 func (g *Service) buildOfflineProviderListPayload() map[string]interface{} {
 	hoxiMap := g.loadHoxiProvidersMap()
-	authIDs := map[string]bool{}
-	if dir := hoxipaths.EngineOpenCodeDir(); dir != "" {
-		if raw, err := os.ReadFile(filepath.Join(dir, "auth.json")); err == nil {
-			var parsed map[string]interface{}
-			if json.Unmarshal(raw, &parsed) == nil {
-				for k := range parsed {
-					authIDs[strings.TrimSpace(k)] = true
-				}
-			}
-		}
-	}
+	importedMap := g.loadOpenCodeImportedProviderMap()
+	disabled := g.disabledProvidersSet()
+	authIDs := unrevokedAuthProviderIDs()
 
-	all := make([]interface{}, 0, len(hoxiMap))
-	connected := make([]string, 0, len(hoxiMap))
+	all := make([]interface{}, 0, len(hoxiMap)+len(importedMap)+len(builtinProviderTemplates))
+	connected := make([]string, 0, len(hoxiMap)+len(authIDs))
 	defaults := map[string]string{}
+	seen := map[string]bool{}
 
-	for pid, rawProv := range hoxiMap {
+	appendConfigured := func(pid string, rawProv interface{}, source string) {
+		pid = strings.TrimSpace(pid)
+		if pid == "" || pid == AutoProviderID || seen[pid] || disabled[pid] || disabled[strings.ToLower(pid)] {
+			return
+		}
 		if g.officialBlocked.Load() && pid == officialProviderID {
-			continue
+			return
 		}
 		pMap, ok := rawProv.(map[string]interface{})
 		if !ok {
-			continue
+			return
 		}
+		seen[pid] = true
+		tplMap, tplDefault, hasTpl := builtinProviderConfigMap(pid)
 		name, _ := pMap["name"].(string)
+		if strings.TrimSpace(name) == "" && hasTpl {
+			name, _ = tplMap["name"].(string)
+		}
 		if strings.TrimSpace(name) == "" {
 			name = pid
 		}
 		npmPkg, _ := pMap["npm"].(string)
+		if strings.TrimSpace(npmPkg) == "" && hasTpl {
+			npmPkg, _ = tplMap["npm"].(string)
+		}
 		modelsRaw, _ := pMap["models"].(map[string]interface{})
+		if len(modelsRaw) == 0 && hasTpl {
+			modelsRaw, _ = tplMap["models"].(map[string]interface{})
+		}
 		modelsOut := map[string]interface{}{}
 		firstModelID := ""
 		for mid, mRaw := range modelsRaw {
@@ -357,6 +397,9 @@ func (g *Service) buildOfflineProviderListPayload() map[string]interface{} {
 				modelsOut[mid] = cp
 			}
 		}
+		if firstModelID == "" && tplDefault != "" {
+			firstModelID = tplDefault
+		}
 		if firstModelID != "" {
 			defaults[pid] = firstModelID
 		}
@@ -367,14 +410,46 @@ func (g *Service) buildOfflineProviderListPayload() map[string]interface{} {
 		if isConnected {
 			connected = append(connected, pid)
 		}
-		all = append(all, map[string]interface{}{
+		entry := map[string]interface{}{
 			"id":     pid,
 			"name":   name,
 			"npm":    npmPkg,
-			"source": "custom",
+			"source": source,
 			"models": modelsOut,
-		})
+		}
+		if hasTpl {
+			if envList, ok := tplMap["env"]; ok {
+				entry["env"] = envList
+			}
+		}
+		all = append(all, entry)
 	}
+
+	for pid, rawProv := range hoxiMap {
+		appendConfigured(pid, rawProv, "custom")
+	}
+	for pid, rawProv := range importedMap {
+		appendConfigured(pid, rawProv, "config")
+	}
+	for _, tpl := range builtinProviderTemplates {
+		pid := tpl.ID
+		if seen[pid] || disabled[pid] || (g.officialBlocked.Load() && pid == officialProviderID) {
+			continue
+		}
+		tplMap, tplDefault, ok := builtinProviderConfigMap(pid)
+		if !ok {
+			continue
+		}
+		seen[pid] = true
+		if tplDefault != "" {
+			defaults[pid] = tplDefault
+		}
+		if authIDs[pid] || g.ResolveStoredProviderKey(pid, DefaultBaseURL(pid)) != "" {
+			connected = append(connected, pid)
+		}
+		all = append(all, tplMap)
+	}
+
 	return map[string]interface{}{
 		"all":       all,
 		"default":   defaults,

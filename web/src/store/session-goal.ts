@@ -11,9 +11,13 @@ import {
 } from "./orchestration";
 import { isSessionBusy, sessionDirectory } from "./session-query";
 import { hasEditingQueuedPrompt } from "./prompt-queue";
+import { setActiveAgent } from "./session-ai";
+import { canRevertSession } from "./session-capabilities";
+import { revertToHere } from "./session-revert";
+import { startNewThreadDraft } from "./session-sandbox";
 import { dispatchSessionPrompt } from "./workspace-session-messages";
 import { loadSessionMessagesOnly } from "./workspace-sessions";
-import { workspace } from "./workspace-state";
+import { setWorkspace, workspace } from "./workspace-state";
 import {
   clearSessionGoal,
   collectTurnEvidence,
@@ -29,7 +33,7 @@ import {
 const advancing = new Set<string>();
 
 // Every runtime understands a plain-text verdict; goal_report only exists where
-// the hoxi-goal OpenCode plugin is loaded, so it is offered but never required.
+// Hoxi's built-in goal_report tool is registered, so it is offered but never required.
 const VERDICT_INSTRUCTIONS = [
   "When the objective is fully met and verified, end your final reply with this exact last line:",
   "[[goal:complete]] <one sentence on what you verified>",
@@ -131,15 +135,120 @@ export async function advanceSessionGoal(sessionID: string): Promise<void> {
   }
 }
 
+export type ComposerControlCommand =
+  | { kind: "new" }
+  | { kind: "diff" }
+  | { kind: "undo" }
+  | { kind: "mode"; mode: "plan" | "build"; prompt: string };
+
+const MAX_CUSTOM_CMD_DIRS = 24;
+const customCommandsByDir = new Map<string, Set<string>>();
+
+export function recordWorkspaceCommandNames(dir: string | undefined, names: string[]): void {
+  const key = dir || "__root__";
+  if (customCommandsByDir.has(key)) customCommandsByDir.delete(key);
+  while (customCommandsByDir.size >= MAX_CUSTOM_CMD_DIRS) {
+    const oldest = customCommandsByDir.keys().next().value;
+    if (oldest === undefined) break;
+    customCommandsByDir.delete(oldest);
+  }
+  customCommandsByDir.set(key, new Set(names.map((n) => n.toLowerCase())));
+}
+
+function hasCustomWorkspaceCommand(dir: string | undefined, name: string): boolean {
+  const set = customCommandsByDir.get(dir || "__root__");
+  return Boolean(set?.has(name.toLowerCase()));
+}
+
+const REVIEW_HEADER_PREFIX = "Please address the following inline code review comments:\n";
+
+export function parseComposerControlCommand(
+  text: string,
+  directory?: string
+): ComposerControlCommand | null {
+  const trimmed = text.trim();
+  if (trimmed.startsWith(REVIEW_HEADER_PREFIX)) {
+    const splitIdx = trimmed.indexOf("\n\n/");
+    if (splitIdx > 0) {
+      const prefix = trimmed.slice(0, splitIdx);
+      const tail = trimmed.slice(splitIdx + 2).trim();
+      const modeMatch = tail.match(/^\/(plan|build)(?:\s+([\s\S]*))?$/i);
+      if (modeMatch) {
+        const mode = modeMatch[1].toLowerCase() as "plan" | "build";
+        if (!hasCustomWorkspaceCommand(directory, mode)) {
+          const rest = (modeMatch[2] ?? "").trim();
+          return {
+            kind: "mode",
+            mode,
+            prompt: rest ? `${prefix}\n\n${rest}` : prefix,
+          };
+        }
+      }
+    }
+    return null;
+  }
+  if (!trimmed.startsWith("/")) return null;
+  const cmdName = trimmed.slice(1).split(/\s+/)[0]?.toLowerCase() || "";
+  if (hasCustomWorkspaceCommand(directory, cmdName)) return null;
+
+  if (/^\/(?:new|clear)$/i.test(trimmed)) return { kind: "new" };
+  if (/^\/diff$/i.test(trimmed)) return { kind: "diff" };
+  if (/^\/undo$/i.test(trimmed)) return { kind: "undo" };
+  const modeMatch = trimmed.match(/^\/(plan|build)(?:\s+([\s\S]*))?$/i);
+  if (modeMatch) {
+    return {
+      kind: "mode",
+      mode: modeMatch[1].toLowerCase() as "plan" | "build",
+      prompt: (modeMatch[2] ?? "").trim(),
+    };
+  }
+  return null;
+}
+
+export function isPureLocalSlashCommand(text: string, directory?: string): boolean {
+  const cmd = parseComposerControlCommand(text, directory);
+  if (!cmd) return false;
+  return cmd.kind !== "mode" || !cmd.prompt;
+}
+
 /**
- * Sends a prompt from the composer or any other caller: goal commands are handled
- * locally, everything else is dispatched (or queued while the session is busy).
+ * Sends a prompt from the composer or any other caller: goal and local control
+ * commands are handled locally, everything else is dispatched (or queued while busy).
  */
 export async function submitSessionPrompt(
   promptText: string,
   targetSessionID?: string | null,
   options?: Parameters<typeof dispatchSessionPrompt>[2]
 ): Promise<string> {
+  const sid = targetSessionID ?? workspace.activeSessionID;
+  const effectiveDir = options?.directory || sessionDirectory(sid) || workspace.rootDir || undefined;
+  const controlCommand = parseComposerControlCommand(promptText, effectiveDir);
+  if (controlCommand) {
+    switch (controlCommand.kind) {
+      case "new":
+        startNewThreadDraft();
+        return "";
+      case "diff":
+        setWorkspace({ inspectorOpen: true, inspectorTab: "diffs" });
+        return "";
+      case "undo": {
+        if (sid && canRevertSession(sid)) {
+          const turns = workspace.messagesBySession[sid] ?? [];
+          for (let i = turns.length - 1; i >= 0; i--) {
+            if (turns[i].info.role === "user") {
+              await revertToHere(sid, turns[i].info.id);
+              break;
+            }
+          }
+        }
+        return "";
+      }
+      case "mode":
+        setActiveAgent(controlCommand.mode, sid);
+        if (!controlCommand.prompt) return "";
+        return dispatchSessionPrompt(controlCommand.prompt, targetSessionID, options);
+    }
+  }
   if (promptText.trim().toLowerCase() === "/compact") {
     const sid = targetSessionID ?? workspace.activeSessionID;
     const sel = workspace.selectedModel;

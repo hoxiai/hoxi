@@ -98,6 +98,7 @@ type DesktopApp struct {
 	ingressServer   *http.Server
 	browserEnv      []string
 	ledger          *reclaim.Ledger
+	windowTracker   *windowGeometryTracker
 }
 
 func Run(distFS fs.FS) {
@@ -122,6 +123,7 @@ func Run(distFS fs.FS) {
 		os.Args = rewritten
 	}
 	if cli.ShouldHandle(os.Args, os.Getenv) {
+		cli.SetHostDaemonRunner(RunHostDaemon)
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
 		os.Exit(cli.Run(ctx, os.Args, os.Stdin, os.Stdout, os.Stderr, envOr("HOXI_BRIDGE_ADDR", identity.DefaultBridgeAddr), StartEphemeralHeadless))
@@ -172,6 +174,7 @@ func Run(distFS fs.FS) {
 	gw.EnableAgyApprovalHook()
 	gw.StartEnginePrewarm(ctx)
 	gw.StartStorageMaintenance(ctx)
+	gw.StartLegacySessionImport()
 	gw.StartIdleMemoryRelease(ctx)
 	defer gw.CloseBrowser()
 	ledger := openReclaimLedger(logger)
@@ -318,6 +321,7 @@ func Run(distFS fs.FS) {
 	statusTracker.SetAvailable(true)
 
 	updater.SetBeforeRestart(func() {
+		app.persistWindowGeometry()
 		prepCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		gw.PrepareForRestart(prepCtx)
@@ -391,12 +395,21 @@ func Run(distFS fs.FS) {
 
 	sanitizeFrontendDevServerEnv(logger, 1500*time.Millisecond)
 
+	windowStore := newWindowStateStore(hoxipaths.WindowStatePath(), logger)
+	savedWindow, loadWinErr := windowStore.Load()
+	if loadWinErr != nil {
+		logger.Warn("failed to load saved window geometry; using adaptive default", "error", loadWinErr)
+	}
+	launchWindow := resolveWindowLaunchSpec(primaryScreenWorkArea(), savedWindow, runtime.GOOS)
+	app.windowTracker = newWindowGeometryTracker(windowStore, launchWindow, logger)
+
 	err = wails.Run(&options.App{
 		Title:                    identity.Title,
-		Width:                    1360,
-		Height:                   860,
-		MinWidth:                 880,
-		MinHeight:                560,
+		Width:                    launchWindow.Width,
+		Height:                   launchWindow.Height,
+		MinWidth:                 launchWindow.MinWidth,
+		MinHeight:                launchWindow.MinHeight,
+		WindowStartState:         launchWindow.StartState,
 		HideWindowOnClose:        runtime.GOOS == "darwin" || runtime.GOOS == "windows",
 		EnableDefaultContextMenu: true,
 		BackgroundColour:         options.NewRGBA(244, 247, 251, 255),
@@ -420,8 +433,9 @@ func Run(distFS fs.FS) {
 			UniqueId:               identity.BundleID,
 			OnSecondInstanceLaunch: app.onSecondInstance,
 		},
-		OnStartup:  app.startup,
-		OnShutdown: app.shutdown,
+		OnStartup:     app.startup,
+		OnBeforeClose: app.beforeClose,
+		OnShutdown:    app.shutdown,
 	})
 	if err != nil {
 		logger.Error("wails application exited with error", "error", err)
@@ -544,6 +558,7 @@ func (a *DesktopApp) startup(ctx context.Context) {
 	statusbar.SetActionHandler(a.handleStatusBarMenuAction)
 	statusbar.Start(ctx)
 	statusbar.Update(a.status.Snapshot())
+	startPlatformWindowObserver(ctx, a.windowTracker)
 	a.startDesktopCompanion()
 	if a.notifier != nil {
 		a.notifier.Start()
@@ -571,7 +586,27 @@ func (a *DesktopApp) startup(ctx context.Context) {
 	}
 }
 
+func (a *DesktopApp) beforeClose(ctx context.Context) bool {
+	capturePlatformWindowState(ctx, a.windowTracker)
+	if a.windowTracker != nil {
+		a.windowTracker.Flush()
+	}
+	return false
+}
+
+func (a *DesktopApp) persistWindowGeometry() {
+	if a.windowTracker == nil {
+		return
+	}
+	capturePlatformWindowState(a.desktopContext(), a.windowTracker)
+	a.windowTracker.Flush()
+}
+
 func (a *DesktopApp) shutdown(_ context.Context) {
+	stopPlatformWindowObserver()
+	if a.windowTracker != nil {
+		a.windowTracker.Close()
+	}
 	a.stopDesktopCompanion()
 	statusbar.SetActionHandler(nil)
 	statusbar.Stop()

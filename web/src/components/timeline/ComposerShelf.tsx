@@ -4,6 +4,7 @@ import {
   ChevronDown,
   ChevronUp,
   ExternalLink,
+  GitBranch,
   GitMerge,
   LoaderCircle,
   MessageSquareShare,
@@ -15,25 +16,31 @@ import {
   buildConvoyCompletionSummaryPrompt,
   clearReviewComments,
   collectCurrentTaskTurns,
+  concurrentLocalPeerSessions,
   currentTaskHistoryScope,
   dismissSessionSpawnedConvoyPlan,
+  dismissSharedBranchNotice,
   fetchConvoyPlan,
   forgetSessionTaskHistory,
   getSessionSpawnedConvoyPlans,
   isConvoyPlanTerminal,
   isSessionBusy,
+  isSharedBranchNoticeDismissed,
   hasOlderSessionHistory,
   loadCurrentTaskHistory,
   mergeConvoyPlan,
   openFileInInspector,
   recordSessionConvoyPlan,
   removeReviewComment,
+  resolveEffectiveSandboxMode,
   resolveRootSessionID,
   selectSession,
   setWorkspace,
   submitSessionPrompt,
+  switchActiveSessionSandboxMode,
   workspace,
 } from "../../store/workspace";
+import { isWorkSurface } from "../layout/surface-extension";
 import ApprovalGateCard from "../approval/ApprovalGateCard";
 import QuestionDock from "../approval/QuestionDock";
 import { FileIcon } from "../icons";
@@ -49,10 +56,24 @@ export default function ComposerShelf() {
   const [reviewsExpanded, setReviewsExpanded] = createSignal(false);
   const [subtasksExpanded, setSubtasksExpanded] = createSignal(false);
   const [mergingPlanID, setMergingPlanID] = createSignal<string | null>(null);
+  const [switchingToWorktree, setSwitchingToWorktree] = createSignal(false);
   let reviewContainerRef: HTMLDivElement | undefined;
   let subtasksContainerRef: HTMLDivElement | undefined;
 
   const sessionID = () => workspace.activeSessionID;
+
+  const concurrentLocalPeers = createMemo(() => {
+    if (isWorkSurface()) return [];
+    const sid = sessionID();
+    if (resolveEffectiveSandboxMode(sid) !== "local") return [];
+    return concurrentLocalPeerSessions(sid);
+  });
+  const concurrentPeerIDs = createMemo(() => concurrentLocalPeers().map((p) => p.id));
+  const showSharedBranchPill = createMemo(
+    () =>
+      concurrentPeerIDs().length > 0 &&
+      !isSharedBranchNoticeDismissed(sessionID(), concurrentPeerIDs())
+  );
 
   const spawnedPlans = createMemo(() => getSessionSpawnedConvoyPlans(sessionID()));
   const activeSpawnedPlans = createMemo(() =>
@@ -204,6 +225,47 @@ export default function ComposerShelf() {
           <RevertBanner />
           <PlanFollowupBar />
           <ChangedFilesSummary files={changedFiles()} variant="pill" />
+
+          <Show when={showSharedBranchPill()}>
+            <div
+              title={t("timeline.sharedBranchActiveTooltip", {
+                titles: concurrentLocalPeers()
+                  .map((p) => p.title?.trim() || p.id)
+                  .slice(0, 4)
+                  .join(", "),
+              })}
+              class="inline-flex items-center gap-1.5 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/85 px-2.5 py-1 text-[12px] text-[var(--text-secondary)]"
+            >
+              <GitBranch size={12} class="shrink-0 text-[var(--accent-primary)]" />
+              <span class="truncate max-w-[340px]">
+                {t("timeline.sharedBranchActivePill", { count: concurrentLocalPeers().length })}
+              </span>
+              <Show when={!isSessionBusy(sessionID())}>
+                <button
+                  type="button"
+                  disabled={switchingToWorktree()}
+                  onClick={() => {
+                    if (switchingToWorktree()) return;
+                    setSwitchingToWorktree(true);
+                    void switchActiveSessionSandboxMode("worktree")
+                      .catch((err) => console.error("switch to worktree failed:", err))
+                      .finally(() => setSwitchingToWorktree(false));
+                  }}
+                  class="rounded bg-[var(--accent-surface)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--accent-primary)] hover:opacity-90 cursor-pointer shrink-0"
+                >
+                  {t("timeline.sharedBranchIsolateBtn")}
+                </button>
+              </Show>
+              <button
+                type="button"
+                aria-label={t("common.close")}
+                onClick={() => dismissSharedBranchNotice(sessionID(), concurrentPeerIDs())}
+                class="p-0.5 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer shrink-0"
+              >
+                <X size={11} />
+              </button>
+            </div>
+          </Show>
 
           <Show when={spawnedPlans().length > 0}>
             <div ref={subtasksContainerRef} class="relative inline-flex items-center">

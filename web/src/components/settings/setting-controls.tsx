@@ -2,6 +2,7 @@
 // Shared building blocks for the settings tabs. They live apart from
 // SettingsModal so the tabs it renders do not import their own parent.
 import { For, type JSX, Show } from "solid-js";
+import { Dynamic } from "solid-js/web";
 import { CircleHelp } from "lucide-solid";
 
 export function HelpTip(props: { text: string }) {
@@ -54,12 +55,11 @@ export function SettingRow(props: {
   icon?: any;
   children: JSX.Element;
 }) {
-  const IconComp = props.icon;
   return (
     <div class="flex items-center justify-between gap-6 px-5 py-4">
       <div class="flex items-center gap-2.5 min-w-0">
-        <Show when={IconComp}>
-          <IconComp size={16} class="text-[var(--text-muted)] shrink-0" />
+        <Show when={props.icon}>
+          <Dynamic component={props.icon} size={16} class="text-[var(--text-muted)] shrink-0" />
         </Show>
         <span class="text-[15px] font-medium text-[var(--text-primary)] truncate">
           {props.label}

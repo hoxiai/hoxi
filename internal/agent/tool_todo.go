@@ -16,7 +16,13 @@ type TodoItem struct {
 	Priority string `json:"priority,omitempty"`
 }
 
-var sessionTodoStore sync.Map // sessionKey -> []TodoItem
+const maxTrackedTodoSessions = 256
+
+var (
+	sessionTodoMu    sync.Mutex
+	sessionTodoMap   = make(map[string][]TodoItem)
+	sessionTodoOrder []string
+)
 
 func normalizeSessionTodoKey(sessionID string) string {
 	s := strings.TrimSpace(sessionID)
@@ -24,6 +30,99 @@ func normalizeSessionTodoKey(sessionID string) string {
 		return "_default"
 	}
 	return s
+}
+
+func storeSessionTodos(sessionID string, items []TodoItem) {
+	key := normalizeSessionTodoKey(sessionID)
+	copied := make([]TodoItem, len(items))
+	copy(copied, items)
+
+	sessionTodoMu.Lock()
+	defer sessionTodoMu.Unlock()
+	if _, exists := sessionTodoMap[key]; !exists {
+		for len(sessionTodoOrder) >= maxTrackedTodoSessions {
+			oldest := sessionTodoOrder[0]
+			sessionTodoOrder = sessionTodoOrder[1:]
+			delete(sessionTodoMap, oldest)
+		}
+		sessionTodoOrder = append(sessionTodoOrder, key)
+	}
+	sessionTodoMap[key] = copied
+}
+
+func loadSessionTodos(sessionID string) ([]TodoItem, bool) {
+	key := normalizeSessionTodoKey(sessionID)
+	sessionTodoMu.Lock()
+	items, ok := sessionTodoMap[key]
+	sessionTodoMu.Unlock()
+	if !ok {
+		return nil, false
+	}
+	copied := make([]TodoItem, len(items))
+	copy(copied, items)
+	return copied, true
+}
+
+// SeedSessionTodosIfAbsent populates the in-memory todo checklist for sessionID
+// from persisted session history (e.g. after process restart) without overwriting
+// any checklist already written during the current process lifetime.
+func SeedSessionTodosIfAbsent(sessionID string, rawItems []TodoItem) {
+	trimmedID := strings.TrimSpace(sessionID)
+	if trimmedID == "" || len(rawItems) == 0 {
+		return
+	}
+	normalized := make([]TodoItem, 0, len(rawItems))
+	for i, item := range rawItems {
+		content := strings.TrimSpace(item.Content)
+		if content == "" {
+			continue
+		}
+		id := strings.TrimSpace(item.ID)
+		if id == "" {
+			id = fmt.Sprintf("%d", i+1)
+		}
+		normalized = append(normalized, TodoItem{
+			ID:       id,
+			Content:  content,
+			Status:   normalizeTodoStatus(item.Status),
+			Priority: strings.TrimSpace(item.Priority),
+		})
+	}
+	if len(normalized) == 0 {
+		return
+	}
+	sessionTodoMu.Lock()
+	defer sessionTodoMu.Unlock()
+	if _, exists := sessionTodoMap[trimmedID]; exists {
+		return
+	}
+	for len(sessionTodoOrder) >= maxTrackedTodoSessions {
+		oldest := sessionTodoOrder[0]
+		sessionTodoOrder = sessionTodoOrder[1:]
+		delete(sessionTodoMap, oldest)
+	}
+	sessionTodoOrder = append(sessionTodoOrder, trimmedID)
+	sessionTodoMap[trimmedID] = normalized
+}
+
+// DeleteSessionTodos removes any cached todo checklist for a deleted session.
+func DeleteSessionTodos(sessionID string) {
+	trimmedID := strings.TrimSpace(sessionID)
+	if trimmedID == "" {
+		return
+	}
+	sessionTodoMu.Lock()
+	defer sessionTodoMu.Unlock()
+	if _, exists := sessionTodoMap[trimmedID]; !exists {
+		return
+	}
+	delete(sessionTodoMap, trimmedID)
+	for i, k := range sessionTodoOrder {
+		if k == trimmedID {
+			sessionTodoOrder = append(sessionTodoOrder[:i], sessionTodoOrder[i+1:]...)
+			break
+		}
+	}
 }
 
 func normalizeTodoStatus(raw string) string {
@@ -98,7 +197,7 @@ func (t *todoWriteTool) Execute(_ context.Context, tc ToolContext, input json.Ra
 			Priority: strings.TrimSpace(item.Priority),
 		})
 	}
-	sessionTodoStore.Store(normalizeSessionTodoKey(tc.SessionID), normalized)
+	storeSessionTodos(tc.SessionID, normalized)
 
 	encoded, _ := json.MarshalIndent(normalized, "", "  ")
 	title := fmt.Sprintf("%d/%d todos completed", completed, len(normalized))
@@ -124,13 +223,8 @@ func (t *todoReadTool) Parameters() map[string]any {
 }
 
 func (t *todoReadTool) Execute(_ context.Context, tc ToolContext, _ json.RawMessage) (ToolOutput, error) {
-	var items []TodoItem
-	if raw, ok := sessionTodoStore.Load(normalizeSessionTodoKey(tc.SessionID)); ok {
-		if saved, ok := raw.([]TodoItem); ok {
-			items = saved
-		}
-	}
-	if items == nil {
+	items, ok := loadSessionTodos(tc.SessionID)
+	if !ok || items == nil {
 		items = []TodoItem{}
 	}
 	encoded, _ := json.MarshalIndent(items, "", "  ")

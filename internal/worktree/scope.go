@@ -19,10 +19,12 @@ type SessionBinding struct {
 
 type managerRoots struct {
 	sync.Mutex
-	managers   map[string]*worktreeManager
-	applyGuard func(string, func() error) error
-	quarantine *quarantineTracker
-	verify     *verifyTracker
+	managers     map[string]*worktreeManager
+	applyGuard   func(string, func() error) error
+	commitLedger CommitLedger
+	commitLocks  map[string]*commitScopeMutex
+	quarantine   *quarantineTracker
+	verify       *verifyTracker
 }
 
 // SetApplyGuard coordinates worktree applies with the runner's process-start lock.

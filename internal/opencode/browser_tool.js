@@ -1,17 +1,22 @@
-import { tool } from "@opencode-ai/plugin";
+import { tool } from "./plugin_tool.js";
 
 const actions = [
-  "navigate", "back", "forward", "reload", "click", "type", "key",
-  "scroll", "snapshot", "screenshot", "evaluate", "tab_new", "tab_select", "tab_close", "close",
+  "navigate", "back", "forward", "reload", "click", "hover", "type", "select", "key",
+  "scroll", "wait", "snapshot", "screenshot", "diagnostics", "evaluate",
+  "tab_new", "tab_select", "tab_close", "close",
 ];
+
+const readOnlyActions = new Set(["snapshot", "screenshot", "diagnostics", "wait"]);
 
 export function createBrowserTool() {
   const args = {
     action: tool.schema.enum(actions),
     url: tool.schema.string().optional().describe("HTTP(S) URL for navigate or tab_new"),
-    selector: tool.schema.string().optional().describe("CSS selector for click or type"),
-    text: tool.schema.string().optional().describe("Text to type, or JavaScript expression for evaluate"),
-    key: tool.schema.string().optional().describe("DOM key name, e.g. Enter"),
+    selector: tool.schema.string().optional().describe("CSS selector or @eN snapshot ref (e.g. @e3) for click, hover, type, select, or wait"),
+    text: tool.schema.string().optional().describe("Text to type, option value/label for select, or JavaScript expression for evaluate"),
+    key: tool.schema.string().optional().describe("DOM key name (e.g. Enter, Tab), or trailing key after type"),
+    clear: tool.schema.boolean().optional().describe("Clear existing input/textarea value before typing (action='type')"),
+    timeoutMs: tool.schema.number().int().min(100).max(10000).optional().describe("Bounded wait timeout in ms (100..10000, action='wait')"),
     x: tool.schema.number().finite().optional(),
     y: tool.schema.number().finite().optional(),
     deltaX: tool.schema.number().finite().optional(),
@@ -22,7 +27,7 @@ export function createBrowserTool() {
 
   return tool({
     description:
-      "Control the active session browser (Desktop Window, isolated headless Chrome, or an attached Chrome Link tab). Call navigate with an HTTP(S) URL to open a page; snapshot and screenshot only inspect an already-open browser and return empty tabs when idle. Use snapshot for visible text and CSS selectors, screenshot for a JPEG, and evaluate for JavaScript (requires approval). Mutations require approval; manual mode blocks agent control.",
+      "Control the active session browser (Desktop Window, isolated headless Chrome, or an attached Chrome Link tab). Call navigate with an HTTP(S) URL to open a page; snapshot, screenshot, and diagnostics only inspect an already-open browser and return empty tabs when idle. snapshot returns visible text plus interactive controls with @e1..@e200 refs and CSS selectors; pass @eN or a CSS selector to click, hover, type, select, or wait. For type, pass clear=true to replace existing text and/or key (e.g. Enter) to submit atomically. Read-only actions (snapshot, screenshot, diagnostics, wait) skip approval; mutations (including evaluate) require approval; manual mode blocks agent control.",
     args,
     async execute(input, context) {
       // Strip unknown fields, including any model-supplied scope or manual override.
@@ -33,7 +38,7 @@ export function createBrowserTool() {
         throw new Error("Hoxi browser runtime is unavailable");
       }
       context.abort.throwIfAborted();
-      if (action.action !== "snapshot" && action.action !== "screenshot") {
+      if (!readOnlyActions.has(action.action)) {
         await context.ask({
           permission: "hoxi_browser",
           patterns: [action.action + " " + JSON.stringify(action)],

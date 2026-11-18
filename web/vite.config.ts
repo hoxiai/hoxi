@@ -42,8 +42,8 @@ const resolveWorkRepoDir = () => {
   const candidates = [
     path.resolve(repoRoot, "work"),
     ...(mainRoot ? [path.resolve(mainRoot, "work")] : []),
-    path.resolve(webRoot, "../../hoxi-work"),
-    path.resolve(webRoot, "../../../../../hoxi-work"),
+    path.resolve(webRoot, "../../hoxi-ext"),
+    path.resolve(webRoot, "../../../../../hoxi-ext"),
   ];
   for (const candidate of candidates) {
     if (isReadableFile(path.join(candidate, "web/index.tsx"))) {
@@ -58,7 +58,7 @@ const hasWorkExt =
   process.env.HOXI_DISABLE_WORK_EXT !== "1" && isReadableFile(workExtEntry);
 
 // Tailwind v4 only scans the core web/src tree by default, so utilities that
-// appear solely in the optional hoxi-work repo (for example the app switcher's
+// appear solely in the optional hoxi-ext repo (for example the app switcher's
 // list height cap) were never generated and the popover had no height bound.
 // Inject an extra @source for the work repo into the Tailwind CSS entry.
 const workTailwindSource = toPosixPath(
@@ -197,7 +197,7 @@ export default defineConfig({
           }
           const inWorkExt =
             (hasWorkExt && normalized.startsWith(`${workRepoDir}/`)) ||
-            normalized.includes("/hoxi-work/");
+            normalized.includes("/hoxi-ext/");
           if (inWorkExt) {
             return /\.ts(?:\?.*)?$/.test(normalized) && !/\.tsx(?:\?.*)?$/.test(normalized)
               ? "surface-work-core"

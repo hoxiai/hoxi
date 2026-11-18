@@ -169,7 +169,7 @@ func DefaultProfile(workspace string, network NetworkMode, extraWritable ...stri
 			AllowWrite:         allow,
 			DenyWrite:          deny,
 			DenyRead:           secretReadRules(workspace),
-			DenyNames:          []string{".git"},
+			DenyNames:          []string{".git", "hoxi.json"},
 			NameDenyExemptions: nameDenyExemptions,
 			TemporaryDirectory: "/private/tmp",
 		},
@@ -314,7 +314,7 @@ func secretReadRules(workspace string) []PathRule {
 	return rules
 }
 
-// worktreeEnvRules deny the workspace's .env files at any depth (`apay/.env`,
+// worktreeEnvRules deny the workspace's .env files at any depth (`apps/web/.env`,
 // `plugins/app/one/.env.production`). The regex ends at the name, so
 // `.env.example` and files inside a directory named `.env` stay readable. A
 // workspace path that cannot sit in a profile regex falls back to the root

@@ -55,6 +55,15 @@ func validateAction(a Action, agent bool) error {
 	if a.Action != "pointer" && (a.Phase != "" || a.Button != "" || a.ClickCount != 0 || a.Modifiers != 0) {
 		return errors.New("phase, button, clickCount and modifiers are only valid for pointer")
 	}
+	if a.Clear && a.Action != "type" {
+		return errors.New("clear is only valid for type")
+	}
+	if a.TimeoutMs != 0 && a.Action != "wait" {
+		return errors.New("timeoutMs is only valid for wait")
+	}
+	if a.TimeoutMs < 0 || a.TimeoutMs > 10000 {
+		return errors.New("timeoutMs must be between 0 and 10000")
+	}
 	switch a.Action {
 	case "mode":
 		if agent || a.Window == nil {
@@ -141,10 +150,22 @@ func validateAction(a Action, agent bool) error {
 	case "wheel", "zoom":
 		return validateGesture(a, agent)
 	case "type":
+		if a.Key != "" {
+			_, err := keyAction(a.Key)
+			return err
+		}
+	case "select":
+		if strings.TrimSpace(a.Selector) == "" || a.Text == "" {
+			return errors.New("select requires selector and text")
+		}
+	case "hover":
+		if strings.TrimSpace(a.Selector) == "" && (math.IsNaN(a.X) || math.IsInf(a.X, 0) || math.IsNaN(a.Y) || math.IsInf(a.Y, 0) || a.X < 0 || a.X > 16384 || a.Y < 0 || a.Y > 16384) {
+			return errors.New("hover requires selector or valid coordinates")
+		}
 	case "key":
 		_, err := keyAction(a.Key)
 		return err
-	case "back", "forward", "reload", "click", "scroll", "snapshot", "screenshot", "close":
+	case "back", "forward", "reload", "click", "scroll", "snapshot", "screenshot", "wait", "diagnostics", "close":
 	default:
 		return errors.New("unknown browser action")
 	}
@@ -474,7 +495,7 @@ func (sc *scope) resolveCallerAction(ctx context.Context, callerSession string, 
 				return target.ActivateTarget(target.ID(blankTab)).Do(ctx)
 			}))
 		}
-		if a.Action != "snapshot" && a.Action != "screenshot" {
+		if a.Action != "snapshot" && a.Action != "screenshot" && a.Action != "diagnostics" {
 			sc.bindCallerTab(callerSession, blankTab)
 		}
 		return a, true
@@ -551,25 +572,37 @@ func (sc *scope) perform(ctx context.Context, a Action) (map[string]any, error) 
 	case "zoom_reset":
 		return nil, sc.withTab(ctx, emulation.SetPageScaleFactor(1))
 	case "navigate":
+		sc.clearSnapshotRefs(sc.tabID)
 		task = chromedp.Navigate(a.URL)
 	case "back":
+		sc.clearSnapshotRefs(sc.tabID)
 		task = chromedp.NavigateBack()
 	case "forward":
+		sc.clearSnapshotRefs(sc.tabID)
 		task = chromedp.NavigateForward()
 	case "reload":
+		sc.clearSnapshotRefs(sc.tabID)
 		task = chromedp.Reload()
 	case "click":
 		if a.Selector != "" {
-			task = chromedp.Click(a.Selector, chromedp.ByQuery)
+			sel, err := sc.resolveSelector(sc.tabID, a.Selector)
+			if err != nil {
+				return nil, err
+			}
+			task = chromedp.Click(sel, chromedp.ByQuery)
 		} else {
 			task = chromedp.MouseClickXY(a.X, a.Y)
 		}
+	case "hover":
+		return nil, sc.performHover(ctx, a)
 	case "type":
-		tasks := chromedp.Tasks{}
-		if a.Selector != "" {
-			tasks = append(tasks, chromedp.Focus(a.Selector, chromedp.ByQuery))
-		}
-		task = append(tasks, input.InsertText(a.Text))
+		return nil, sc.performType(ctx, a)
+	case "select":
+		return sc.performSelect(ctx, a)
+	case "wait":
+		return sc.performWait(ctx, a)
+	case "diagnostics":
+		return sc.performDiagnostics(), nil
 	case "key":
 		var err error
 		task, err = keyAction(a.Key)
@@ -582,9 +615,7 @@ func (sc *scope) perform(ctx context.Context, a Action) (map[string]any, error) 
 		image, err := sc.capture(ctx)
 		return map[string]any{"image": image}, err
 	case "snapshot":
-		var snapshot any
-		err := sc.withTab(ctx, chromedp.Evaluate(snapshotJS, &snapshot))
-		return map[string]any{"snapshot": snapshot}, err
+		return sc.performSnapshot(ctx)
 	case "evaluate":
 		// Bound serialization in the page before CDP transports the result.
 		var result string
@@ -741,6 +772,7 @@ func (sc *scope) releaseTab(id string) {
 	sc.tabMu.Unlock()
 	delete(sc.viewports, id)
 	delete(sc.diagnostics, id)
+	sc.clearSnapshotRefs(id)
 	if sc.workflows != nil {
 		sc.workflows.mu.Lock()
 		delete(sc.workflows.uploads, id)
@@ -749,26 +781,3 @@ func (sc *scope) releaseTab(id string) {
 		sc.workflows.mu.Unlock()
 	}
 }
-
-// Light-DOM snapshot: at most 200 visible controls and 32 KiB of rendered text.
-// CSS.escape and structural paths avoid assuming IDs are unique or CSS-safe.
-const snapshotJS = `(()=>{
- const controls=[];
- const selector=(el)=>{
-  const parts=[];
-  while(el&&el.nodeType===1){
-   let part=el.localName;
-   if(el.id){const id='#'+CSS.escape(el.id);if(document.querySelectorAll(id).length===1){parts.unshift(id);break}}
-   const parent=el.parentElement;
-   if(parent){const siblings=Array.from(parent.children).filter(x=>x.localName===el.localName);if(siblings.length>1)part+=':nth-of-type('+(siblings.indexOf(el)+1)+')'}
-   parts.unshift(part);el=parent;
-  }
-  return parts.join(' > ');
- };
- for(const el of document.querySelectorAll('a,button,input,textarea,select,[role="button"],[contenteditable="true"],[tabindex]')){
-  if(controls.length>=200)break;
-  if(!el.getClientRects().length||getComputedStyle(el).visibility==='hidden')continue;
-  controls.push({selector:selector(el).slice(0,2048),tag:el.localName,text:(el.getAttribute('aria-label')||el.innerText||el.getAttribute('placeholder')||'').slice(0,256)});
- }
- return {text:(document.body?.innerText||'').slice(0,32768),controls};
-})()`

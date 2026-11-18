@@ -104,9 +104,13 @@ for ($i = 0; $i -lt 20; $i++) {
   try {
     if (Test-Path (Join-Path $stageDir 'opencode.exe')) {
       Move-Item -Force (Join-Path $stageDir 'opencode.exe') (Join-Path $targetDir 'opencode.exe')
+    } else {
+      Remove-Item -Force (Join-Path $targetDir 'opencode.exe') -ErrorAction SilentlyContinue
     }
     if (Test-Path (Join-Path $stageDir 'sqlite3.exe')) {
       Move-Item -Force (Join-Path $stageDir 'sqlite3.exe') (Join-Path $targetDir 'sqlite3.exe')
+    } else {
+      Remove-Item -Force (Join-Path $targetDir 'sqlite3.exe') -ErrorAction SilentlyContinue
     }
     Move-Item -Force (Join-Path $stageDir 'Hoxi.exe') (Join-Path $targetDir $exeName)
     break

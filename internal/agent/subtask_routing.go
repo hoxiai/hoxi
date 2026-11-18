@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"sync"
 
@@ -16,76 +15,11 @@ func subtaskPolicyDecision(
 	byKey map[string]llm.AgentSpec,
 	cfgDoc map[string]any,
 ) string {
-	targetLower := strings.ToLower(strings.TrimSpace(targetSubagent))
-	if spec, ok := byKey[targetLower]; ok && spec.Disable {
-		return "deny"
-	}
-	if pSpec, ok := byKey[strings.ToLower(strings.TrimSpace(primaryMode))]; ok && pSpec.TaskPolicy != nil {
-		if dec := evalTaskPolicyValue(pSpec.TaskPolicy, targetSubagent); dec != "" {
-			return dec
-		}
-	}
-	if cfgDoc != nil {
-		if perm, ok := cfgDoc["permission"].(map[string]any); ok {
-			if dec := evalTaskPolicyValue(perm["task"], targetSubagent); dec != "" {
-				return dec
-			}
-		}
-	}
-	return "allow"
+	return llm.EvalTaskPolicyDecision(primaryMode, targetSubagent, byKey, cfgDoc)
 }
 
 func evalTaskPolicyValue(raw any, targetSubagent string) string {
-	switch pol := raw.(type) {
-	case string:
-		return normalizePolicyAction(pol)
-	case map[string]any:
-		if v, ok := pol[targetSubagent].(string); ok {
-			if act := normalizePolicyAction(v); act != "" {
-				return act
-			}
-		}
-		for k, v := range pol {
-			if strings.EqualFold(k, targetSubagent) {
-				if s, ok := v.(string); ok {
-					if act := normalizePolicyAction(s); act != "" {
-						return act
-					}
-				}
-			}
-		}
-		for pattern, v := range pol {
-			if pattern == "*" {
-				continue
-			}
-			s, ok := v.(string)
-			if !ok {
-				continue
-			}
-			if matched, _ := filepath.Match(strings.ToLower(pattern), strings.ToLower(targetSubagent)); matched {
-				if act := normalizePolicyAction(s); act != "" {
-					return act
-				}
-			}
-		}
-		if star, ok := pol["*"].(string); ok {
-			return normalizePolicyAction(star)
-		}
-	}
-	return ""
-}
-
-func normalizePolicyAction(raw string) string {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "deny":
-		return "deny"
-	case "ask":
-		return "ask"
-	case "allow":
-		return "allow"
-	default:
-		return ""
-	}
+	return llm.EvalWildcardPolicy(raw, targetSubagent)
 }
 
 func (e *Engine) resolveSubtaskModel(
@@ -93,7 +27,6 @@ func (e *Engine) resolveSubtaskModel(
 	subType string,
 	spec llm.AgentSpec,
 	hasSpec bool,
-	childReadOnly bool,
 	callModel string,
 	cfgDoc map[string]any,
 ) (providerID, modelID, routing string) {
@@ -159,18 +92,6 @@ func (e *Engine) resolveSubtaskModel(
 			}
 		}
 	}
-	if childReadOnly && e.stream != nil {
-		if eco, ok := e.stream.(llm.SubagentEconomyResolver); ok {
-			if ecoMid, okEco := eco.ResolveEconomyModel(parent.ProviderID, parent.ModelID); okEco && ecoMid != "" {
-				if t := e.stream.ResolveStreamTarget(parent.ProviderID, ecoMid); t.HasEndpoint && t.ProviderID != "" && t.ModelID != "" {
-					if t.ProviderID == parent.ProviderID && t.ModelID == parent.ModelID {
-						return parent.ProviderID, parent.ModelID, "inherit_parent"
-					}
-					return t.ProviderID, t.ModelID, "economy_auto"
-				}
-			}
-		}
-	}
 	return parent.ProviderID, parent.ModelID, "inherit_parent"
 }
 
@@ -233,7 +154,7 @@ func (e *Engine) runSubtask(
 		}
 	}
 
-	childProv, childModel, routeSource := e.resolveSubtaskModel(parent, subType, spec, hasSpec, childReadOnly, req.Model, cfgDoc)
+	childProv, childModel, routeSource := e.resolveSubtaskModel(parent, subType, spec, hasSpec, req.Model, cfgDoc)
 	res := SubtaskResult{
 		SubagentType: subType,
 		ProviderID:   childProv,
@@ -242,7 +163,10 @@ func (e *Engine) runSubtask(
 		ReadOnly:     childReadOnly,
 	}
 
-	subCtx, cancel := context.WithTimeout(ctx, subtaskTimeout)
+	// Inherit the parent's lifetime, including Stop and any caller deadline.
+	// Tool/request timeouts and the step budget still bound individual work;
+	// a wall-clock task timeout would also consume time awaiting user approval.
+	subCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	releaseSlot, slotErr := e.acquireSubtaskSlot(subCtx)
@@ -253,14 +177,9 @@ func (e *Engine) runSubtask(
 	defer releaseSlot()
 
 	childMode := "plan"
-	childEffort := "low"
+	childEffort := parent.Effort
 	if !childReadOnly {
 		childMode = "build"
-		if strings.TrimSpace(parent.Effort) != "" {
-			childEffort = parent.Effort
-		} else {
-			childEffort = "medium"
-		}
 	}
 	childMaxSteps := subtaskMaxSteps
 	if hasSpec && spec.Steps > 0 {
@@ -293,6 +212,7 @@ func (e *Engine) runSubtask(
 	var childMutated bool
 	var childTruncated bool
 	var mu sync.Mutex
+	childRevisions := parent.FileRevisions.NewChildTracker()
 	childReq := TurnRequest{
 		SessionID:      parent.SessionID,
 		WorktreeDir:    parent.WorktreeDir,
@@ -304,6 +224,7 @@ func (e *Engine) runSubtask(
 		UserPrompt:     req.Prompt,
 		MaxSteps:       childMaxSteps,
 		SubtaskDepth:   parent.SubtaskDepth + 1,
+		FileRevisions:  childRevisions,
 		PermissionHook: parent.PermissionHook,
 		CodeSearch:     parent.CodeSearch,
 		SymbolInspect:  parent.SymbolInspect,
@@ -353,10 +274,17 @@ func (e *Engine) runSubtask(
 	}
 	if !childReadOnly {
 		childReq.CommandRunner = parent.CommandRunner
+		childReq.StreamCommandRunner = parent.StreamCommandRunner
+		childReq.BackgroundCommands = parent.BackgroundCommands
 		childReq.Diagnostics = parent.Diagnostics
+		childReq.CoordinateFileEdit = parent.CoordinateFileEdit
+		childReq.RecordFileEdit = parent.RecordFileEdit
 	}
 
 	subErr := e.RunTurn(subCtx, childReq)
+	if parent.FileRevisions != nil {
+		parent.FileRevisions.MergeChildObservations(childRevisions)
+	}
 	mu.Lock()
 	res.Mutated = childMutated
 	wasTruncated := childTruncated
@@ -400,13 +328,28 @@ func (e *Engine) runSubtask(
 func isSubtaskToolMutating(toolName string, input map[string]any) bool {
 	lower := strings.ToLower(strings.TrimSpace(toolName))
 	switch lower {
-	case "", "read", "glob", "grep", "code_search", "symbol_inspect", "impact_analysis",
-		"todoread", "todowrite", "question", "webfetch", "mcp_list_tools", "skill", "goal_report", "task":
+	case "", "read", "glob", "grep", "hoxi_code_index", "code_search", "symbol_inspect", "impact_analysis",
+		"todoread", "todowrite", "question", "plan_consent", "webfetch", "mcp_list_tools", "skill", "goal_report", "task":
 		return false
+	case "bash":
+		act, _ := input["action"].(string)
+		act = strings.ToLower(strings.TrimSpace(act))
+		return act != "output" && act != "list"
 	case "hoxi_browser":
 		act, _ := input["action"].(string)
 		act = strings.ToLower(strings.TrimSpace(act))
-		return act != "snapshot" && act != "screenshot"
+		return act != "snapshot" && act != "screenshot" && act != "diagnostics" && act != "wait"
+	case "hoxi_computer":
+		act, _ := input["action"].(string)
+		act = strings.ToLower(strings.TrimSpace(act))
+		app, _ := input["app"].(string)
+		if act == "status" || act == "apps" {
+			return false
+		}
+		if (act == "state" || act == "screenshot") && strings.TrimSpace(app) == "" {
+			return false
+		}
+		return true
 	case "hoxi_tools":
 		act, _ := input["action"].(string)
 		act = strings.ToLower(strings.TrimSpace(act))
@@ -414,7 +357,7 @@ func isSubtaskToolMutating(toolName string, input map[string]any) bool {
 	case "hoxi_remote", "hoxi_data":
 		act, _ := input["action"].(string)
 		switch strings.ToLower(strings.TrimSpace(act)) {
-		case "list", "sql_query":
+		case "list", "test", "sql_query":
 			return false
 		case "http_request":
 			m, _ := input["method"].(string)
@@ -432,7 +375,7 @@ func buildSubtaskSystemPrompt(subType, description string, spec llm.AgentSpec, r
 	base := strings.TrimSpace(spec.Prompt)
 	if base == "" {
 		if readOnly {
-			base = "You are a focused read-only codebase exploration subagent. Use code_search, symbol_inspect, impact_analysis, glob, grep, and read in parallel batches, then return a concise factual report citing exact file paths and line numbers."
+			base = "You are a focused read-only codebase exploration subagent. Use hoxi_code_index, code_search, symbol_inspect, impact_analysis, glob, grep, and read in parallel batches, then return a concise factual report citing exact file paths and line numbers."
 		} else {
 			base = "You are a focused general execution subagent. Complete the delegated subtask accurately, verify your work, and return a concise summary citing modified or inspected file paths."
 		}

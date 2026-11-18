@@ -159,3 +159,24 @@ func TestSessionSummarizeSkipsNativeRuntimes(t *testing.T) {
 		t.Fatal("native runtime reached OpenCode")
 	}
 }
+
+func TestNativeSummaryRetainsMiddleTurnsAndToolDetails(t *testing.T) {
+	turns := []MessageTurn{
+		{Info: MessageInfo{Role: "user"}, Parts: []MessagePart{{Type: "text", Text: strings.Repeat("a", 70000)}}},
+		{Info: MessageInfo{Role: "user"}, Parts: []MessagePart{{Type: "text", Text: "MIDDLE_USER_CONSTRAINT"}}},
+		{Info: MessageInfo{Role: "assistant"}, Parts: []MessagePart{{Type: "tool", Tool: "edit", State: &ToolState{
+			Status: "error", Input: map[string]interface{}{"oldString": "TOOL_INPUT_CONSTRAINT"},
+			Error: strings.Repeat("b", 2000) + "TOOL_ERROR_CONSTRAINT",
+		}}}},
+		{Info: MessageInfo{Role: "assistant"}, Parts: []MessagePart{{Type: "text", Text: strings.Repeat("c", 100000)}}},
+	}
+	got := formatTurnsForNativeSummary(turns)
+	for _, marker := range []string{"MIDDLE_USER_CONSTRAINT", "TOOL_INPUT_CONSTRAINT", "TOOL_ERROR_CONSTRAINT"} {
+		if !strings.Contains(got, marker) {
+			t.Errorf("summary input lost %s", marker)
+		}
+	}
+	if strings.Contains(got, "[truncated]") || strings.Contains(got, "turns omitted") {
+		t.Fatal("summary formatter must leave chunking to the native engine")
+	}
+}

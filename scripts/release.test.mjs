@@ -151,9 +151,11 @@ test("opencode.lock pins every platform while release workflows ship lean sideca
   assert.match(crossWorkflow, /Hoxi-\$\{RELEASE_VERSION\}-windows-\$\{\{ matrix\.arch \}\}-setup\.exe/);
   assert.match(crossWorkflow, /Hoxi-\$\{RELEASE_VERSION\}-windows-\$\{\{ matrix\.arch \}\}\.zip/);
   assert.match(crossWorkflow, /test ! -f build\/bin\/opencode\.exe/);
-  assert.match(crossWorkflow, /pe-arch\.mjs verify \$\{\{ matrix\.arch \}\} build\/bin\/Hoxi\.exe build\/bin\/sqlite3\.exe/);
-  assert.match(crossWorkflow, /7z a "\$ZIP_NAME" Hoxi\.exe sqlite3\.exe/);
+  assert.match(crossWorkflow, /test ! -f build\/bin\/sqlite3\.exe/);
+  assert.match(crossWorkflow, /pe-arch\.mjs verify \$\{\{ matrix\.arch \}\} build\/bin\/Hoxi\.exe$/m);
+  assert.match(crossWorkflow, /7z a "\$ZIP_NAME" Hoxi\.exe$/m);
   assert.match(crossWorkflow, /tar -czf "\$TAR_NAME" Hoxi hoxi\.desktop hoxi\.png/);
+  assert.match(crossWorkflow, /Hoxi-\$\{\{ env\.RELEASE_VERSION \}\}-linux-amd64\.tar\.gz\.sha256/);
 
   const nsisProject = fs.readFileSync(path.join(scripts, "../build/windows/installer/project.nsi"), "utf8");
   assert.match(nsisProject, /!define WAILS_INSTALL_SCOPE "user"/);
@@ -164,10 +166,13 @@ test("opencode.lock pins every platform while release workflows ship lean sideca
   assert.match(nsisProject, /Page custom HoxiFinishPageCreate HoxiFinishPageLeave/);
   assert.match(nsisProject, /ShowInstDetails nevershow/);
   assert.doesNotMatch(nsisProject, /!error "Hoxi installer requires opencode\.exe/);
+  assert.doesNotMatch(nsisProject, /!error "Hoxi installer requires the verified sqlite3\.exe sidecar"/);
   assert.match(nsisProject, /!ifdef ARG_HOXI_OPENCODE_BINARY/);
   assert.match(nsisProject, /File "\/oname=opencode\.exe"/);
   assert.match(nsisProject, /Delete "\$INSTDIR\\opencode\.exe"/);
+  assert.match(nsisProject, /!ifdef ARG_HOXI_SQLITE_BINARY/);
   assert.match(nsisProject, /File "\/oname=sqlite3\.exe"/);
+  assert.match(nsisProject, /Delete "\$INSTDIR\\sqlite3\.exe"/);
   assert.match(nsisProject, /!insertmacro wails\.webview2runtime/);
   assert.match(nsisProject, /!insertmacro wails\.associateCustomProtocols/);
   for (const bmp of ["banner.bmp", "header.bmp", "wizard.bmp"]) {
@@ -563,11 +568,11 @@ test("build-desktop.sh skips incomplete work/ directories and preserves valid fa
   assert.ok(start > 0 && end > start, "Expected resolve_work_repo_dir block in build-desktop.sh");
   const snippet = buildScript.slice(start, end);
 
-  const sandboxDir = fs.mkdtempSync(path.join(os.tmpdir(), "hoxi-work-resolve-"));
+  const sandboxDir = fs.mkdtempSync(path.join(os.tmpdir(), "hoxi-ext-resolve-"));
   try {
     const projectRoot = path.join(sandboxDir, "hoxi");
     const incompleteWork = path.join(projectRoot, "work");
-    const siblingWork = path.join(sandboxDir, "hoxi-work");
+    const siblingWork = path.join(sandboxDir, "hoxi-ext");
     fs.mkdirSync(path.join(incompleteWork, "docs"), { recursive: true });
     fs.mkdirSync(path.join(siblingWork, "web"), { recursive: true });
     fs.writeFileSync(path.join(siblingWork, "web/index.tsx"), "export const surfaceExtension = { enabled: true };\n");
@@ -743,4 +748,41 @@ test("configureApp and verifyApp validate lean pure-Go bundles and opt-in OpenCo
     () => verifyApp(app, "0.2.1", hostArch, { ...baseEnv, HOXI_BUNDLE_OPENCODE: "1" }),
     /version mismatch/,
   );
+});
+
+test("export-opensource.sh preserves tracked .hoxi/skills while excluding runtime secrets and .agents", () => {
+  const repoRoot = path.join(scripts, "..");
+  const exportScript = fs.readFileSync(path.join(repoRoot, "scripts/export-opensource.sh"), "utf8");
+  const start = exportScript.indexOf("rsync -a --delete");
+  const end = exportScript.indexOf('\npython3 "${PROJECT_ROOT}/client/scripts/export_mobile_oss.py"', start);
+  assert.ok(start > 0 && end > start, "Expected rsync block in scripts/export-opensource.sh");
+  const rsyncCmd = exportScript.slice(start, end);
+
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "hoxi-oss-export-"));
+  try {
+    const src = path.join(tmp, "src");
+    const dst = path.join(tmp, "dst");
+    fs.mkdirSync(path.join(src, ".hoxi/skills/tools"), { recursive: true });
+    fs.mkdirSync(path.join(src, ".hoxi/memory"), { recursive: true });
+    fs.mkdirSync(path.join(src, ".agents/skills/private"), { recursive: true });
+    fs.mkdirSync(path.join(src, "internal/app"), { recursive: true });
+    fs.mkdirSync(dst, { recursive: true });
+    fs.writeFileSync(path.join(src, ".hoxi/skills/tools/SKILL.md"), "# Tools\n");
+    fs.writeFileSync(path.join(src, ".hoxi/models.json"), '{"secret":"k"}\n');
+    fs.writeFileSync(path.join(src, ".hoxi/memory/notes.md"), "private\n");
+    fs.writeFileSync(path.join(src, ".agents/skills/private/SKILL.md"), "private\n");
+    fs.writeFileSync(path.join(src, "internal/app/work_bridge.go"), "package app\n");
+    fs.writeFileSync(path.join(src, ".env.local"), "KEY=1\n");
+
+    const run = spawnSync("bash", ["-c", `set -euo pipefail\nPROJECT_ROOT="$1"\nTARGET_ABS="$2"\n${rsyncCmd}`, "bash", src, dst], { encoding: "utf8" });
+    assert.equal(run.status, 0, run.stderr);
+    assert.equal(fs.existsSync(path.join(dst, ".hoxi/skills/tools/SKILL.md")), true);
+    assert.equal(fs.existsSync(path.join(dst, ".hoxi/models.json")), false);
+    assert.equal(fs.existsSync(path.join(dst, ".hoxi/memory")), false);
+    assert.equal(fs.existsSync(path.join(dst, ".agents")), false);
+    assert.equal(fs.existsSync(path.join(dst, "internal/app/work_bridge.go")), false);
+    assert.equal(fs.existsSync(path.join(dst, ".env.local")), false);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 });

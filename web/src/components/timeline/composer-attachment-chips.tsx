@@ -1,10 +1,11 @@
 // web/src/components/timeline/composer-attachment-chips.tsx
-// Attachment, paste and context-mention chips shown above the composer input.
-// Kept out of composer-subcomponents so the Work surface composer can reuse it
+// Attachment, paste, active-command, context-mention chips, and autocomplete popover.
+// Kept out of composer-subcomponents so the Work surface composer can reuse them
 // without pulling in ModeSwitcher, which reads the surface extension back.
-import { For, Show } from "solid-js";
+import { createEffect, For, Show } from "solid-js";
 import {
   AlertCircle,
+  AtSign,
   Check,
   ClipboardPaste,
   FileText,
@@ -12,20 +13,116 @@ import {
   RefreshCw,
   Slash,
   Sparkles,
+  Terminal,
   X,
 } from "lucide-solid";
+import { FileIcon } from "../icons";
 import { t } from "../../i18n";
 import type { SkillSelection } from "../../services/api";
 import { classifyAttachmentKind } from "./composer-hooks";
 import type {
+  ActiveSlashCommandInfo,
+  AutocompleteItem,
   CollapsedPasteItem,
   ContextMentionChipInfo,
   ImageItem,
 } from "./composer-hooks";
 
+export function ComposerAutocompletePopover(props: {
+  triggerMode: "file" | "command" | null;
+  suggestions: AutocompleteItem[];
+  selectedIndex: number;
+  onSelectIndex: (idx: number) => void;
+  onApply: (item: AutocompleteItem) => void;
+}) {
+  let listRef: HTMLDivElement | undefined;
+
+  createEffect(() => {
+    const idx = props.selectedIndex;
+    if (!props.triggerMode || props.suggestions.length === 0) return;
+    queueMicrotask(() => {
+      const btn = listRef?.querySelector<HTMLButtonElement>(
+        `[data-ac-index="${idx}"]`
+      );
+      btn?.scrollIntoView({ block: "nearest" });
+    });
+  });
+
+  return (
+    <Show when={props.triggerMode && props.suggestions.length > 0}>
+      <div class="absolute bottom-full left-0 mb-2 w-full max-w-[32rem] rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1.5 shadow-xl z-40">
+        <div class="px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
+          {props.triggerMode === "command"
+            ? t("timeline.slashCommandsHeader")
+            : t("timeline.mentionFileOrContextHeader")}
+        </div>
+        <div ref={listRef} class="max-h-56 overflow-y-auto space-y-0.5">
+          <For each={props.suggestions}>
+            {(item, idx) => (
+              <button
+                type="button"
+                data-ac-index={idx()}
+                class={`w-full flex flex-col gap-0.5 rounded-lg px-2.5 py-1 text-left text-[13px] transition-colors cursor-pointer ${
+                  idx() === props.selectedIndex
+                    ? "bg-[var(--accent-surface)] text-[var(--accent-text)]"
+                    : "text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
+                }`}
+                onMouseEnter={() => props.onSelectIndex(idx())}
+                onClick={() => props.onApply(item)}
+              >
+                <span class="flex w-full items-center gap-2 min-w-0 font-mono">
+                  {item.source === "skill" ? (
+                    <Sparkles size={12} class="text-[var(--accent-primary)] shrink-0" />
+                  ) : item.type === "command" ? (
+                    <Terminal size={12} class="text-[var(--accent-primary)] shrink-0" />
+                  ) : item.type === "context" ? (
+                    <AtSign size={12} class="text-[var(--accent-primary)] shrink-0" />
+                  ) : item.type === "file" ? (
+                    <FileIcon
+                      node={{
+                        path: item.label,
+                        type: item.label.endsWith("/") ? "directory" : "file",
+                      }}
+                      class="w-3.5 h-3.5 shrink-0"
+                    />
+                  ) : null}
+                  <span class="truncate">
+                    {item.type === "context" ? item.label.replace(/^@/, "") : item.label}
+                  </span>
+                  <Show when={item.hints && item.hints.length > 0}>
+                    <span class="shrink-0 font-sans text-[11px] text-[var(--text-faint)]">
+                      {item.hints!.join(" ")}
+                    </span>
+                  </Show>
+                  <Show when={item.source}>
+                    <span class="ml-auto shrink-0 rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-sans text-[10px] font-medium uppercase tracking-wider text-[var(--text-faint)]">
+                      {item.source === "skill"
+                        ? t("skills.groupSkills")
+                        : item.source === "mcp"
+                        ? t("skills.groupMcp")
+                        : t("skills.groupCommands")}
+                    </span>
+                  </Show>
+                </span>
+                <Show when={item.detail}>
+                  <span class="w-full truncate font-sans text-[11px] leading-tight text-[var(--text-muted)]">
+                    {item.detail}
+                  </span>
+                </Show>
+              </button>
+            )}
+          </For>
+        </div>
+      </div>
+    </Show>
+  );
+}
+
 export function ComposerAttachmentChips(props: {
   images: ImageItem[];
   pastes: CollapsedPasteItem[];
+  activeCommand?: ActiveSlashCommandInfo | null;
+  onRemoveCommand?: () => void;
   contextMentions?: ContextMentionChipInfo[];
   onRemoveMention?: (token: string) => void;
   pendingCount?: number;
@@ -119,6 +216,7 @@ export function ComposerAttachmentChips(props: {
 
       <Show
         when={
+          Boolean(props.activeCommand) ||
           Boolean(props.selectedSkill) ||
           (props.contextMentions?.length ?? 0) > 0 ||
           props.images.length > 0 ||
@@ -127,6 +225,76 @@ export function ComposerAttachmentChips(props: {
         }
       >
         <div class="mb-2 flex flex-wrap items-center gap-1.5">
+          <Show when={props.activeCommand}>
+            {(cmd) => (
+              <div
+                class="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2.5 py-1 text-[11px] text-[var(--accent-text)]"
+                title={cmd().description || `/${cmd().name}`}
+              >
+                <Terminal size={11} class="shrink-0 text-[var(--accent-primary)]" />
+                <span class="shrink-0 font-mono font-semibold text-[var(--accent-primary)]">
+                  /{cmd().name}
+                </span>
+                <Show
+                  when={
+                    cmd().hintSlots &&
+                    cmd().hintSlots!.length > 0 &&
+                    !(cmd().hasArgs && cmd().hintSlots!.length === 1 && cmd().hintSlots![0] === "<args>")
+                  }
+                >
+                  <span class="inline-flex shrink-0 items-center gap-1 font-mono text-[10px]">
+                    <For each={cmd().hintSlots!}>
+                      {(slot, slotIdx) => {
+                        const isActiveSlot = () =>
+                          slotIdx() === cmd().activeArgIndex ||
+                          (slotIdx() === cmd().hintSlots!.length - 1 &&
+                            cmd().activeArgIndex >= cmd().hintSlots!.length);
+                        const isFilledSlot = () => slotIdx() < cmd().activeArgIndex && !isActiveSlot();
+                        return (
+                          <span
+                            class={`rounded px-1.5 py-0.5 transition-colors ${
+                              isActiveSlot()
+                                ? "border border-[var(--accent-border)] bg-[var(--bg-panel)] font-semibold text-[var(--accent-primary)]"
+                                : isFilledSlot()
+                                  ? "bg-[var(--bg-panel)]/50 text-[var(--text-faint)]"
+                                  : "bg-[var(--bg-panel)]/65 text-[var(--text-muted)]"
+                            }`}
+                          >
+                            {slot}
+                          </span>
+                        );
+                      }}
+                    </For>
+                  </span>
+                </Show>
+                <Show when={cmd().description}>
+                  <span class="max-w-[260px] truncate text-[11px] text-[var(--text-secondary)]">
+                    · {cmd().description}
+                  </span>
+                </Show>
+                <Show when={cmd().agent}>
+                  <span class="shrink-0 rounded bg-[var(--bg-panel)]/75 px-1.5 py-0.5 font-mono text-[10px] font-medium text-[var(--text-muted)]">
+                    {cmd().agent}
+                  </span>
+                </Show>
+                <Show when={cmd().subtask}>
+                  <span class="shrink-0 rounded bg-[var(--bg-panel)]/75 px-1.5 py-0.5 font-mono text-[10px] font-medium text-[var(--text-muted)]">
+                    subtask
+                  </span>
+                </Show>
+                <Show when={props.onRemoveCommand}>
+                  <button
+                    type="button"
+                    onClick={() => props.onRemoveCommand?.()}
+                    title={t("timeline.removeSlashCommand")}
+                    class="shrink-0 text-[var(--text-muted)] hover:text-[var(--danger-text)] cursor-pointer"
+                  >
+                    <X size={11} />
+                  </button>
+                </Show>
+              </div>
+            )}
+          </Show>
           <For each={props.contextMentions ?? []}>
             {(m) => (
               <div

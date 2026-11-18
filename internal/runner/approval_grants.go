@@ -29,30 +29,6 @@ type ApprovalGrant struct {
 	CreatedAt int64  `json:"createdAt"`
 }
 
-const (
-	sessionGrantRefusedDestructive = "destructive"
-	sessionGrantRefusedOpaque      = "opaque"
-)
-
-// sessionGrantRefusal reports why an exact-command session grant ("always")
-// would not be kept, or "" when it is. Destructive commands never get one, and
-// neither does a command full trust still cannot reduce: the same text can do
-// something else on the next run (`bash -c "$X"`, `env | grep`, a script the
-// command downloads). What full trust does reduce (`python3 -c '…'`,
-// `bash build.sh`) is fixed text the user read and approved. The approval card
-// hides "always" for the same commands, via sessionGrantRefusal in
-// .opencode/lib/opaque-command.js.
-func sessionGrantRefusal(command string) string {
-	trimmed := strings.TrimSpace(command)
-	switch {
-	case isDestructiveCommand(trimmed):
-		return sessionGrantRefusedDestructive
-	case isOpaqueShellCommandWith(trimmed, "", scriptTrustFull):
-		return sessionGrantRefusedOpaque
-	}
-	return ""
-}
-
 // openCodeSessionGrantRefused applies sessionGrantRefusal to an OpenCode shell
 // request, judged as the whole command like the card does.
 func openCodeSessionGrantRefused(item map[string]interface{}) bool {

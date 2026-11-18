@@ -136,3 +136,30 @@ func TestConvoySessionsIsolateTasksAndMergePrerequisites(t *testing.T) {
 		t.Fatalf("expected merged changes in local parent checkout, got %q", main)
 	}
 }
+
+func TestConvoyTopLevelDefaultsToNativeWithoutOpenCodeDaemon(t *testing.T) {
+	repo := t.TempDir()
+	svc := runner.NewService(repo, nil, nil, filepath.Join(t.TempDir(), "sessions.json"))
+	backend := convoySessions{runner: svc}
+
+	ctx := context.Background()
+	id, err := backend.Create(ctx, orchestration.SessionRequest{
+		Directory: repo,
+		Title:     "Convoy · native default",
+		Provider:  "hoxi-auto",
+		Model:     "free",
+	})
+	if err != nil {
+		t.Fatalf("create top-level convoy session without OpenCode daemon: %v", err)
+	}
+	rec, ok := svc.Store().Get(id)
+	if !ok {
+		t.Fatalf("session record %q missing", id)
+	}
+	if rec.Runtime != string(runner.RuntimeNative) {
+		t.Fatalf("expected Runtime=%q without OpenCode daemon, got %q", runner.RuntimeNative, rec.Runtime)
+	}
+	if rec.ProviderID != "auto" {
+		t.Fatalf("expected ProviderID=\"auto\" for native hoxi-auto convoy task, got %q", rec.ProviderID)
+	}
+}

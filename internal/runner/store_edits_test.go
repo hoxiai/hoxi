@@ -24,7 +24,7 @@ func TestEditedFilesIgnoreTextDeltasAndTrackCorrections(t *testing.T) {
 	if got := svc.sessionEditedFileSet("root"); len(got) != 1 {
 		t.Fatalf("initial paths = %v", got)
 	}
-	revision := s.editMutations.Load()
+	revision := s.EditMutations()
 	for i := 0; i < 100; i++ {
 		s.AppendPartDelta("root", "msg", "text", "token")
 		s.UpsertTurnInfo("root", MessageInfo{ID: "msg", SessionID: "root"})
@@ -32,7 +32,7 @@ func TestEditedFilesIgnoreTextDeltasAndTrackCorrections(t *testing.T) {
 			t.Fatalf("text changed edit set: %v", got)
 		}
 	}
-	if s.editMutations.Load() != revision {
+	if s.EditMutations() != revision {
 		t.Fatal("text streaming invalidated the edit cache")
 	}
 	edit("one", "/repo/b.go", "completed")
@@ -98,7 +98,7 @@ func TestColdEditCacheUsesInitialZeroRevisionWithoutHydratingHistory(t *testing.
 	if !cached || entry.stamp != 0 {
 		t.Fatal("initial immutable history was not cached at revision zero")
 	}
-	if svc.store.records["bench"].turnsLoaded {
+	if svc.store.IsTurnsLoaded("bench") {
 		t.Fatal("file set query hydrated the full transcript")
 	}
 }

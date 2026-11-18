@@ -62,8 +62,17 @@ func (d *anthropicDriver) BuildRequest(req ModelRequest) (llm.StreamHTTPRequest,
 							"data":       b.Data,
 						},
 					}
+				} else {
+					block = map[string]any{"type": "text", "text": unsupportedMediaText(b, d.Protocol())}
 				}
 			case ContentThinking:
+				if b.Data != "" {
+					block = map[string]any{
+						"type": "redacted_thinking",
+						"data": b.Data,
+					}
+					break
+				}
 				if b.Text == "" && b.Signature == "" {
 					continue
 				}
@@ -107,6 +116,24 @@ func (d *anthropicDriver) BuildRequest(req ModelRequest) (llm.StreamHTTPRequest,
 		}
 		if len(blocks) == 0 {
 			continue
+		}
+		if m.Role == RoleUser && len(blocks) > 1 {
+			// Anthropic requires all tool_result blocks to precede image/document/text blocks in a user message.
+			var trBlocks, otherBlocks []map[string]any
+			for _, blk := range blocks {
+				delete(blk, "cache_control")
+				if blk["type"] == "tool_result" {
+					trBlocks = append(trBlocks, blk)
+				} else {
+					otherBlocks = append(otherBlocks, blk)
+				}
+			}
+			if len(trBlocks) > 0 && len(otherBlocks) > 0 {
+				blocks = append(trBlocks, otherBlocks...)
+			}
+			if i == len(req.Messages)-1 {
+				blocks[len(blocks)-1]["cache_control"] = map[string]string{"type": "ephemeral"}
+			}
 		}
 		msgs = append(msgs, map[string]any{"role": string(m.Role), "content": blocks})
 	}
@@ -161,6 +188,7 @@ func (d *anthropicDriver) ParseSSE(ctx context.Context, body io.Reader, emit fun
 		stopped bool
 	}
 	toolsByIdx := make(map[int]*pendingTool)
+	thinkingBlocks := make(map[int]bool)
 	var usage TokenUsage
 	var stopReason string
 	var sawTerminal bool
@@ -196,19 +224,40 @@ func (d *anthropicDriver) ParseSSE(ctx context.Context, body io.Reader, emit fun
 			}
 		case "content_block_start":
 			idx := intFromAny(raw["index"])
-			if cb, ok := raw["content_block"].(map[string]any); ok && cb["type"] == "tool_use" {
-				id, _ := cb["id"].(string)
-				name, _ := cb["name"].(string)
-				pt := &pendingTool{id: id, name: name}
-				if inputMap, ok := cb["input"].(map[string]any); ok && len(inputMap) > 0 {
-					if b, err := json.Marshal(inputMap); err == nil {
-						pt.input.Write(b)
+			blockIdx := idx + 1
+			if cb, ok := raw["content_block"].(map[string]any); ok {
+				switch cb["type"] {
+				case "tool_use":
+					id, _ := cb["id"].(string)
+					name, _ := cb["name"].(string)
+					pt := &pendingTool{id: id, name: name}
+					if inputMap, ok := cb["input"].(map[string]any); ok && len(inputMap) > 0 {
+						if b, err := json.Marshal(inputMap); err == nil {
+							pt.input.Write(b)
+						}
+					}
+					toolsByIdx[idx] = pt
+				case "thinking":
+					thinkingBlocks[idx] = true
+					if txt, _ := cb["thinking"].(string); txt != "" {
+						emit(StreamEvent{Kind: EventThinkingDelta, BlockIndex: blockIdx, Delta: txt})
+					}
+					if sig, _ := cb["signature"].(string); sig != "" {
+						emit(StreamEvent{Kind: EventSignatureDelta, BlockIndex: blockIdx, Delta: sig})
+					}
+				case "redacted_thinking":
+					if redacted, _ := cb["data"].(string); redacted != "" {
+						emit(StreamEvent{Kind: EventRedactedThinking, BlockIndex: blockIdx, Delta: redacted})
+					}
+				case "text":
+					if txt, _ := cb["text"].(string); txt != "" {
+						emit(StreamEvent{Kind: EventTextDelta, BlockIndex: blockIdx, Delta: txt})
 					}
 				}
-				toolsByIdx[idx] = pt
 			}
 		case "content_block_delta":
 			idx := intFromAny(raw["index"])
+			blockIdx := idx + 1
 			delta, ok := raw["delta"].(map[string]any)
 			if !ok {
 				return nil
@@ -216,15 +265,17 @@ func (d *anthropicDriver) ParseSSE(ctx context.Context, body io.Reader, emit fun
 			switch delta["type"] {
 			case "text_delta":
 				if txt, _ := delta["text"].(string); txt != "" {
-					emit(StreamEvent{Kind: EventTextDelta, Delta: txt})
+					emit(StreamEvent{Kind: EventTextDelta, BlockIndex: blockIdx, Delta: txt})
 				}
 			case "thinking_delta":
+				thinkingBlocks[idx] = true
 				if txt, _ := delta["thinking"].(string); txt != "" {
-					emit(StreamEvent{Kind: EventThinkingDelta, Delta: txt})
+					emit(StreamEvent{Kind: EventThinkingDelta, BlockIndex: blockIdx, Delta: txt})
 				}
 			case "signature_delta":
+				thinkingBlocks[idx] = true
 				if sig, _ := delta["signature"].(string); sig != "" {
-					emit(StreamEvent{Kind: EventSignatureDelta, Delta: sig})
+					emit(StreamEvent{Kind: EventSignatureDelta, BlockIndex: blockIdx, Delta: sig})
 				}
 			case "input_json_delta":
 				if pt := toolsByIdx[idx]; pt != nil {
@@ -237,6 +288,9 @@ func (d *anthropicDriver) ParseSSE(ctx context.Context, body io.Reader, emit fun
 			idx := intFromAny(raw["index"])
 			if pt := toolsByIdx[idx]; pt != nil {
 				pt.stopped = true
+			}
+			if thinkingBlocks[idx] {
+				emit(StreamEvent{Kind: EventThinkingEnd, BlockIndex: idx + 1})
 			}
 		case "message_delta":
 			if u, ok := raw["usage"].(map[string]any); ok {

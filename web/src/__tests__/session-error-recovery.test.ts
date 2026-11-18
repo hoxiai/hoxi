@@ -82,9 +82,13 @@ describe("session error recovery on single-model turns", () => {
       assertEqual(turns[3].info.error?.name, "ProviderModelNotFoundError");
       assertEqual(turns[3].info.error?.data?.message, "Model not found: openai/gpt-5");
 
-      // Clicking retry must resend the failed follow-up prompt rather than the older turn.
+      // Clicking retry must resend the failed follow-up prompt rather than the older turn,
+      // while replacing the empty failed tail in place instead of stacking duplicate user bubbles.
       await retryLastUserPrompt(sid);
       assertDeepEqual(sentTexts, ["follow-up question after crash", "follow-up question after crash"]);
+      const retriedTurns = workspace.messagesBySession[sid] ?? [];
+      assertEqual(retriedTurns.length, 3, "prior user + prior assistant + single replaced optimistic user turn");
+      assertEqual(retriedTurns[2].info.role, "user");
     } finally {
       clearAutoFailoverPending(sid);
       clearTurnDispatchState(sid);

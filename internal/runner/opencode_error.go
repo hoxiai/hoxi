@@ -18,20 +18,6 @@ const (
 	engineErrorMessageMax = 400
 )
 
-func newClassifiedMessageError(name, message string, status int) *MessageError {
-	fault := llm.ClassifyFault(name, message, status, time.Now())
-	return &MessageError{
-		Name: name,
-		Data: &MessageErrorData{
-			Message:      message,
-			StatusCode:   status,
-			IsRetryable:  fault.IsRetryable,
-			Kind:         string(fault.Kind),
-			RetryAfterMs: fault.RetryAfterMs,
-		},
-	}
-}
-
 // engineBodyError mirrors the engine's structured error envelope. Only the
 // stable code and the human-readable reason are read; anything else (refs,
 // stacks, echoed content) is ignored.

@@ -3,6 +3,7 @@
 // initial values it is created from. Domain modules import state from here (never
 // from the ./workspace barrel), so this file must stay free of runtime imports
 // from other store modules.
+import { createSignal } from "solid-js";
 import { createStore, type SetStoreFunction } from "solid-js/store";
 import type {
   MessageInfo,
@@ -56,6 +57,23 @@ export function writeStorageItem(key: string, value: string): void {
   try {
     localStorage.setItem(key, value);
   } catch {}
+}
+
+export type AgentEngineMode = "opencode" | "native";
+export const AGENT_ENGINE_STORAGE_KEY = "hoxi-agent-engine:v1";
+
+const [preferredAgentEngineSignal, setPreferredAgentEngineSignal] = createSignal<AgentEngineMode>(
+  readStorageItem(AGENT_ENGINE_STORAGE_KEY) === "opencode" ? "opencode" : "native"
+);
+
+export function preferredAgentEngine(): AgentEngineMode {
+  return preferredAgentEngineSignal();
+}
+
+export function setPreferredAgentEngine(mode: AgentEngineMode): void {
+  const next: AgentEngineMode = mode === "native" ? "native" : "opencode";
+  setPreferredAgentEngineSignal(next);
+  writeStorageItem(AGENT_ENGINE_STORAGE_KEY, next);
 }
 
 export function removeStorageItem(key: string): void {

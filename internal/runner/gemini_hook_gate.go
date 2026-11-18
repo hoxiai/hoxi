@@ -248,9 +248,17 @@ func (s *Service) decideGeminiHookCall(r *http.Request, cred hookCredential, p g
 		path := resolveHookToolPath(baseDir, argsMap)
 		if path != "" && pathWithin(rec.WorktreePath, path) && !isProtectedWorktreePath(rec.WorktreePath, path) &&
 			s.policyApprovesWorktreeEdit(rec, path) {
+			if ok, reason := s.acquireHookFileLease(r.Context(), cred.sessionID, path); !ok {
+				return "deny", reason
+			}
 			return "allow", ""
 		}
 		if approved, reason := s.gateToolCallIn(r, cred, p.ToolName, argsMap, callID, p.Cwd); approved {
+			if path != "" {
+				if ok, reason := s.acquireHookFileLease(r.Context(), cred.sessionID, path); !ok {
+					return "deny", reason
+				}
+			}
 			return "allow", ""
 		} else {
 			return "deny", reason

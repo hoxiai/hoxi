@@ -11,12 +11,12 @@ import { requestJSON, withDir } from "./http";
 import { officialChannelAPI, providerMcpOAuthAPI } from "./platform-api";
 
 export const providerAndAssistAPI = {
-  // Providers, Models & Auth (Direct OpenCode endpoints used by Kilo)
+  // Providers, Models & Auth (Unified Hoxi provider plane)
   listProviders(directory?: string): Promise<ProviderListResponse> {
-    return requestJSON(withDir("/provider", directory));
+    return requestJSON(withDir("/api/hoxi/provider/catalog", directory));
   },
   getProviderAuthMethods(directory?: string): Promise<Record<string, ProviderAuthMethod[]>> {
-    return requestJSON(withDir("/provider/auth", directory));
+    return requestJSON(withDir("/api/hoxi/provider/auth-methods", directory));
   },
   authorizeProviderOAuth(
     providerID: string,
@@ -24,19 +24,19 @@ export const providerAndAssistAPI = {
     inputs?: Record<string, string>,
     directory?: string
   ): Promise<ProviderAuthAuthorization> {
-    return requestJSON(withDir(`/provider/${encodeURIComponent(providerID)}/oauth/authorize`, directory), {
+    return requestJSON(withDir(`/api/hoxi/provider/oauth/${encodeURIComponent(providerID)}/authorize`, directory), {
       method: "POST",
       body: JSON.stringify({ method, ...(inputs ? { inputs } : {}) }),
     });
   },
   completeProviderOAuth(providerID: string, method: number, code?: string, directory?: string): Promise<boolean> {
-    return requestJSON(withDir(`/provider/${encodeURIComponent(providerID)}/oauth/callback`, directory), {
+    return requestJSON(withDir(`/api/hoxi/provider/oauth/${encodeURIComponent(providerID)}/callback`, directory), {
       method: "POST",
       body: JSON.stringify({ method, ...(code ? { code } : {}) }),
     });
   },
   setProviderAuth(providerID: string, apiKey: string, metadata?: Record<string, string>): Promise<void> {
-    return requestJSON(`/auth/${encodeURIComponent(providerID)}`, {
+    return requestJSON(`/api/hoxi/provider/credentials/${encodeURIComponent(providerID)}`, {
       method: "PUT",
       body: JSON.stringify({
         type: "api",
@@ -46,7 +46,7 @@ export const providerAndAssistAPI = {
     });
   },
   removeProviderAuth(providerID: string): Promise<void> {
-    return requestJSON(`/auth/${encodeURIComponent(providerID)}`, { method: "DELETE" });
+    return requestJSON(`/api/hoxi/provider/credentials/${encodeURIComponent(providerID)}`, { method: "DELETE" });
   },
   fetchCustomProviderModels(opts: {
     baseURL: string;
@@ -63,10 +63,10 @@ export const providerAndAssistAPI = {
   fetchOfficialChannelModels: officialChannelAPI.models,
   connectOfficialChannelProvider: officialChannelAPI.connect,
   getGlobalConfig(): Promise<Record<string, any>> {
-    return requestJSON("/global/config");
+    return requestJSON("/api/hoxi/provider/config");
   },
   updateGlobalConfig(config: Record<string, any>): Promise<Record<string, any>> {
-    return requestJSON("/global/config", { method: "PATCH", body: JSON.stringify(config) });
+    return requestJSON("/api/hoxi/provider/config", { method: "PATCH", body: JSON.stringify(config) });
   },
   getHoxiModelsConfig(): Promise<{
     hoxiProviders: Record<string, any>;
@@ -111,7 +111,7 @@ export const providerAndAssistAPI = {
     });
   },
   disposeGlobal(): Promise<void> {
-    return requestJSON("/global/dispose", { method: "POST", body: JSON.stringify({}) });
+    return requestJSON("/api/hoxi/provider/dispose", { method: "POST", body: JSON.stringify({}) });
   },
   testProviderModel(opts: {
     providerID?: string;

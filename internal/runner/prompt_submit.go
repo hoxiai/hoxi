@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -89,16 +90,6 @@ func effectiveCommandExecutionGuidance() string {
 	return commandExecutionGuidance + "\n" + strings.Join(extra, "\n")
 }
 
-// PromptReceipt is returned by POST .../prompt and .../prompt_async so callers
-// can correlate node-assigned instruction/message IDs and detect deduplicated retries.
-type PromptReceipt struct {
-	OK              bool   `json:"ok"`
-	InstructionID   int64  `json:"instructionId,omitempty"`
-	MessageID       string `json:"messageId,omitempty"`
-	ClientRequestID string `json:"clientRequestId,omitempty"`
-	Deduplicated    bool   `json:"deduplicated,omitempty"`
-}
-
 type cachedPromptReceipt struct {
 	receipt   PromptReceipt
 	expiresAt time.Time
@@ -110,6 +101,18 @@ func (s *Service) lookupPromptReceipt(sessionID, clientRequestID string) (Prompt
 	clientRequestID = strings.TrimSpace(clientRequestID)
 	if clientRequestID == "" {
 		return PromptReceipt{}, false
+	}
+	if s.ledger != nil {
+		out, found := s.ledger.PeekRequest(RequestKindPrompt, sessionID, clientRequestID, "", nil)
+		if !found || out.State != RequestAdmissionDone {
+			return PromptReceipt{}, false
+		}
+		var cached PromptReceipt
+		if err := json.Unmarshal(out.ResponseBody, &cached); err != nil {
+			return PromptReceipt{}, false
+		}
+		cached.Deduplicated = true
+		return cached, true
 	}
 	key := sessionID + "\x00" + clientRequestID
 	entry, ok := s.promptReceipts.Load(key)
@@ -143,7 +146,7 @@ func (s *Service) storePromptReceipt(sessionID, clientRequestID string, receipt 
 		expiresAt: expiresAt,
 	})
 	if s.ledger != nil {
-		s.ledger.putPromptReceipt(sessionID, clientRequestID, receipt, expiresAt)
+		s.ledger.PutPromptReceipt(sessionID, clientRequestID, receipt, expiresAt)
 	}
 }
 
@@ -166,8 +169,21 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 	defer unlock()
 
 	clientReqID := strings.TrimSpace(body.ClientRequestID)
-	if cached, ok := s.lookupPromptReceipt(sessionID, clientReqID); ok {
-		return http.StatusOK, cached, nil
+	if s.ledger != nil && s.ledger.LoadErr() != nil {
+		return http.StatusServiceUnavailable, PromptReceipt{}, &CodedRequestError{
+			HTTPStatus: http.StatusServiceUnavailable, Code: ErrCodeRequestStorageUnavailable,
+			Message:         "request ledger could not be loaded; restore the preserved ledger and restart before sending",
+			ClientRequestID: clientReqID,
+		}
+	}
+	reqDigest := ""
+	if clientReqID != "" {
+		reqDigest = PromptRequestDigest(sessionID, body)
+	}
+	if s.ledger == nil {
+		if cached, ok := s.lookupPromptReceipt(sessionID, clientReqID); ok {
+			return http.StatusOK, cached, nil
+		}
 	}
 
 	rec, ok := s.store.Get(sessionID)
@@ -176,7 +192,8 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 	wantRuntime := resolveRequestedPromptRuntime(body, "opencode")
 	reqImageTurn := body.Model != nil && s.IsImageModel(body.Model.ProviderID, body.Model.ModelID)
 	hasStoreCtx := s.resolveSessionContextBlock(sessionID, directory) != ""
-	if !ok && (body.SkillSelection != nil || reqImageTurn || hasStoreCtx || (wantRuntime != "" && wantRuntime != "opencode")) {
+	needsOpenCodeAdopt := body.SkillSelection != nil || reqImageTurn || hasStoreCtx || (wantRuntime != "" && wantRuntime != "opencode")
+	if !ok && (needsOpenCodeAdopt || (clientReqID != "" && s.openCode != nil && s.openCode.Available())) {
 		adopted, adoptErr := s.adoptOpenCodeSession(ctx, sessionID, directory)
 		if adoptErr != nil {
 			if adoptErr.Error() == "cannot change runtime while the session is running" {
@@ -211,6 +228,8 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 				}
 				ok = true
 				pendingAdopted = true
+			} else if !needsOpenCodeAdopt && strings.Contains(strings.ToLower(adoptErr.Error()), "not found") {
+				return http.StatusNotFound, PromptReceipt{}, errors.New("runner session not found")
 			} else {
 				return http.StatusConflict, PromptReceipt{}, adoptErr
 			}
@@ -227,6 +246,23 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 		normalizeComparePath(reqDir) != normalizeComparePath(rec.WorktreePath) &&
 		normalizeComparePath(reqDir) != normalizeComparePath(rec.ProjectDir) {
 		return http.StatusForbidden, PromptReceipt{}, errors.New("session directory does not match its sandbox")
+	}
+	if clientReqID != "" && s.ledger != nil {
+		if prev, found := s.ledger.PeekRequest(RequestKindPrompt, sessionID, clientReqID, reqDigest, nil); found {
+			if prev.State == RequestAdmissionDone {
+				var cached PromptReceipt
+				if err := json.Unmarshal(prev.ResponseBody, &cached); err == nil {
+					cached.Deduplicated = true
+					return prev.HTTPStatus, cached, nil
+				}
+			}
+			return prev.HTTPStatus, PromptReceipt{}, &CodedRequestError{
+				HTTPStatus:      prev.HTTPStatus,
+				Code:            prev.ErrorCode,
+				Message:         prev.ErrorMessage,
+				ClientRequestID: clientReqID,
+			}
+		}
 	}
 
 	promptText := strings.TrimSpace(body.Text)
@@ -298,6 +334,11 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 		}
 	}
 	isImageTurn := s.IsImageModel(candidateProviderID, candidateModelID)
+	if rec.Runtime == string(RuntimeNative) && !isImageTurn {
+		if handled, st, recpt, sErr := s.trySteerBusyNativePrompt(ctx, rec, body, promptText, callerSystem, clientReqID, reqDigest, fileParts, resolvedSkill); handled {
+			return st, recpt, sErr
+		}
+	}
 	openCodeDaemonUp := s.openCode != nil && s.openCode.Available()
 	if rec.Runtime == "opencode" && !isImageTurn && openCodeDaemonUp {
 		s.mu.Lock()
@@ -324,8 +365,34 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 					s.managedOpenCode.Store(id, true)
 				}
 			}
+			if clientReqID != "" && s.ledger != nil {
+				if adm := s.ledger.AdmitRequest(RequestKindPrompt, sessionID, sessionID, clientReqID, reqDigest, nil); adm.State != RequestAdmissionNew {
+					if adm.State == RequestAdmissionDone {
+						var cached PromptReceipt
+						if err := json.Unmarshal(adm.ResponseBody, &cached); err == nil {
+							cached.Deduplicated = true
+							return adm.HTTPStatus, cached, nil
+						}
+					}
+					return adm.HTTPStatus, PromptReceipt{}, &CodedRequestError{
+						HTTPStatus:      adm.HTTPStatus,
+						Code:            adm.ErrorCode,
+						Message:         adm.ErrorMessage,
+						ClientRequestID: clientReqID,
+					}
+				}
+			}
 			steerSeq, steerMsgID, err := s.steerOpenCodeTurn(ctx, rec, firstNonEmptyStr(body.Agent, rec.Mode, "build"), modelID, providerID, body.Variant, body.System, promptText, body.Parts, body.SkillSelection)
 			if err != nil {
+				if clientReqID != "" && s.ledger != nil {
+					s.ledger.MarkRequestUnknown(RequestKindPrompt, sessionID, clientReqID, err.Error())
+					return http.StatusBadGateway, PromptReceipt{}, &CodedRequestError{
+						HTTPStatus:      http.StatusBadGateway,
+						Code:            ErrCodeOutcomeUnknown,
+						Message:         err.Error(),
+						ClientRequestID: clientReqID,
+					}
+				}
 				return http.StatusBadGateway, PromptReceipt{}, err
 			}
 			receipt := PromptReceipt{
@@ -334,8 +401,19 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 				MessageID:       steerMsgID,
 				ClientRequestID: clientReqID,
 			}
-			s.storePromptReceipt(sessionID, clientReqID, receipt)
+			if clientReqID != "" && s.ledger != nil {
+				if raw, mErr := json.Marshal(receipt); mErr == nil {
+					s.ledger.CompleteRequest(RequestKindPrompt, sessionID, sessionID, clientReqID, reqDigest, http.StatusOK, raw, map[string]string{"userMsgID": steerMsgID})
+				}
+			} else {
+				s.storePromptReceipt(sessionID, clientReqID, receipt)
+			}
 			return http.StatusOK, receipt, nil
+		}
+	}
+	if (rec.Runtime == string(RuntimeNative) || (rec.Runtime == "opencode" && !openCodeDaemonUp)) && !isImageTurn {
+		if handled, st, rcpt, sErr := s.trySteerBusyNativePrompt(ctx, rec, body, promptText, callerSystem, clientReqID, reqDigest, fileParts, resolvedSkill); handled {
+			return st, rcpt, sErr
 		}
 	}
 
@@ -391,7 +469,20 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 	case string(RuntimeOpenCode):
 		if !openCodeDaemonUp {
 			binPath = agentcli.ResolveOpenCodeBinary()
-			missingMsg = "OpenCode CLI (opencode) binary not found in ~/.hoxi/bin/opencode or PATH (install via 'npm i -g opencode-ai' or 'brew install opencode', then reload runtimes in Settings)"
+			if binPath == "" && strings.TrimSpace(body.Runtime) != "opencode" {
+				// Seamless upgrade continuation: legacy Hoxi sessions persisted with
+				// Runtime="opencode" automatically continue on the in-process native
+				// Go engine when neither `opencode serve` nor `opencode` CLI exists.
+				s.recordMigrationJournalUpgraded(rec, rec.ExternalID, "")
+				runtimeSwitched = true
+				rec.Runtime = string(RuntimeNative)
+				rec.ExternalID = ""
+				rec.ContextPending = len(rec.Turns) > 0
+				rec.ContextTurnCount = len(rec.Turns)
+				binPath = "native"
+			} else {
+				missingMsg = "OpenCode CLI (opencode) binary not found in ~/.hoxi/bin/opencode or PATH (install via 'npm i -g opencode-ai' or 'brew install opencode', then reload runtimes in Settings)"
+			}
 		}
 	case string(RuntimeNative):
 		binPath = "native"
@@ -527,7 +618,13 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 		// The history is intact in the Protobuf store: keep resuming it.
 		resetAgySplitBrain = false
 	}
+	canResumePartialNative := rec.Runtime == string(RuntimeNative) && !isImageTurn && body.SkillSelection == nil && len(fileParts) == 0
+	cycleMutated := s.computeRetryCycleMutated(rec, body.ContinueTask, canResumePartialNative)
+	var resumedUserInfo, clearedFailedAsst *MessageInfo
 	_, _, _ = s.store.Update(sessionID, func(r *SessionRecord) {
+		resumedUserInfo, clearedFailedAsst = prepareFailedTurnRetryLocked(
+			r, body.ContinueTask, canResumePartialNative, cycleMutated, promptText,
+		)
 		if runtimeSwitched {
 			r.Runtime = rec.Runtime
 			r.ExternalID = ""
@@ -543,9 +640,34 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 			r.ContextTurnCount = len(r.Turns)
 		}
 	})
+	if resumedUserInfo != nil {
+		userMsgID = resumedUserInfo.ID
+	}
 	s.recordTurnSnapshot(sessionID, userMsgID)
 	if updated, ok := s.store.Get(sessionID); ok {
 		rec = updated
+	}
+
+	if clientReqID != "" && s.ledger != nil {
+		if adm := s.ledger.AdmitRequest(RequestKindPrompt, sessionID, sessionID, clientReqID, reqDigest, map[string]string{"userMsgID": userMsgID}); adm.State != RequestAdmissionNew {
+			if hadPreMutationRec {
+				_ = s.store.Put(preMutationRec)
+			}
+			finishSteerAbort()
+			if adm.State == RequestAdmissionDone {
+				var cached PromptReceipt
+				if err := json.Unmarshal(adm.ResponseBody, &cached); err == nil {
+					cached.Deduplicated = true
+					return adm.HTTPStatus, cached, nil
+				}
+			}
+			return adm.HTTPStatus, PromptReceipt{}, &CodedRequestError{
+				HTTPStatus:      adm.HTTPStatus,
+				Code:            adm.ErrorCode,
+				Message:         adm.ErrorMessage,
+				ClientRequestID: clientReqID,
+			}
+		}
 	}
 
 	s.recordInflightTurn(InflightTurnEntry{
@@ -579,11 +701,21 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 				nativeSystem = memCtx + "\n\n" + nativeSystem
 			}
 		}
-		promptInput := cliPrompt
-		if body.SkillSelection != nil {
-			promptInput = formatInlineSkillPrompt(body.SkillSelection.Name, resolvedSkill.Content, "") + "\n\n" + promptInput
+		if clearedFailedAsst != nil {
+			s.broadcast(sessionID, SSEEvent{
+				Type:       "message.updated",
+				Properties: map[string]interface{}{"info": *clearedFailedAsst},
+			})
 		}
-		err = s.startNativeTurn(rec, mode, modelID, effort, nativeSystem, promptInput, userInfo, storedParts, asstMsgID, deliveryParts...)
+		if resumedUserInfo != nil {
+			err = s.launchNativeTurn(rec, mode, modelID, effort, nativeSystem, restartContinuationPrompt, *resumedUserInfo, nil, asstMsgID, true)
+		} else {
+			promptInput := cliPrompt
+			if body.SkillSelection != nil {
+				promptInput = formatInlineSkillPrompt(body.SkillSelection.Name, resolvedSkill.Content, "") + "\n\n" + promptInput
+			}
+			err = s.startNativeTurn(rec, mode, modelID, effort, nativeSystem, promptInput, userInfo, storedParts, asstMsgID, deliveryParts...)
+		}
 	} else {
 		input := runtimeMemoryContext(rec) + runtimeContext(rec)
 		if body.SkillSelection != nil {
@@ -598,6 +730,9 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 		}
 	}
 	if err != nil {
+		if clientReqID != "" && s.ledger != nil {
+			s.ledger.AbortUncommittedRequest(RequestKindPrompt, sessionID, clientReqID)
+		}
 		s.clearInflightTurn(sessionID)
 		if current, ok := s.store.Get(sessionID); ok {
 			prevIDs := make(map[string]bool, len(preMutationRec.OpenCodeIDs))
@@ -633,41 +768,12 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 		MessageID:       userMsgID,
 		ClientRequestID: clientReqID,
 	}
-	s.storePromptReceipt(sessionID, clientReqID, receipt)
-	return http.StatusOK, receipt, nil
-}
-
-// nativeCLISystemForTurn avoids repeating commandExecutionGuidance and unchanged
-// caller system instructions inside every user message of a resumed native CLI
-// conversation (--resume / --conversation), where Turn 1 already placed them in
-// the CLI's persistent conversation history.
-func (s *Service) nativeCLISystemForTurn(rec SessionRecord, callerSystem, fullSystem string) string {
-	if strings.TrimSpace(rec.ExternalID) == "" || rec.ContextPending {
-		return fullSystem
-	}
-	prevCaller, ok := s.cliSystemDelivered.Load(rec.ID + "\x00" + rec.Runtime)
-	if !ok {
-		return fullSystem
-	}
-	if callerSystem == "" || callerSystem == prevCaller {
-		return ""
-	}
-	return callerSystem
-}
-
-func (s *Service) recordCLISystemDelivered(sessionID, runtime, callerSystem string) {
-	if strings.TrimSpace(sessionID) == "" || strings.TrimSpace(runtime) == "" {
-		return
-	}
-	s.cliSystemDelivered.Store(sessionID+"\x00"+runtime, callerSystem)
-}
-
-func (s *Service) fallbackCLISystemForFreshRetry(sessionID, runtime string) string {
-	sys := effectiveCommandExecutionGuidance()
-	if caller, ok := s.cliSystemDelivered.Load(sessionID + "\x00" + runtime); ok {
-		if strings.TrimSpace(caller) != "" {
-			sys += "\n\n" + strings.TrimSpace(caller)
+	if clientReqID != "" && s.ledger != nil {
+		if raw, mErr := json.Marshal(receipt); mErr == nil {
+			s.ledger.CompleteRequest(RequestKindPrompt, sessionID, sessionID, clientReqID, reqDigest, http.StatusOK, raw, map[string]string{"userMsgID": userMsgID})
 		}
+	} else {
+		s.storePromptReceipt(sessionID, clientReqID, receipt)
 	}
-	return sys
+	return http.StatusOK, receipt, nil
 }

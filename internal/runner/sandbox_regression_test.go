@@ -111,7 +111,7 @@ func TestRunnerExitPersistenceFailurePreservesWorktree(t *testing.T) {
 			}
 			for _, store := range []*Store{svc.store, NewStore(path)} {
 				rec, _ := store.Get(info.ID)
-				if rec.sandboxMode() != "worktree" || rec.WorktreePath != info.Directory {
+				if rec.SandboxModeValue() != "worktree" || rec.WorktreePath != info.Directory {
 					t.Fatalf("failed save changed session: %+v", rec)
 				}
 			}
@@ -176,7 +176,7 @@ func TestRunnerExitRemovalFailureRollsBackPersistedMode(t *testing.T) {
 	}
 	for _, store := range []*Store{svc.store, NewStore(path)} {
 		rec, _ := store.Get(info.ID)
-		if rec.sandboxMode() != "worktree" || rec.WorktreePath != info.Directory {
+		if rec.SandboxModeValue() != "worktree" || rec.WorktreePath != info.Directory {
 			t.Fatalf("removal failure did not roll back mode: %+v", rec)
 		}
 	}

@@ -180,20 +180,29 @@ export default function PierreDiffViewer() {
     if (!workspace.worktreeBySession[key] || !workspace.worktreeDiffsBySession[key]) {
       scheduleRefreshWorktreeStatus(id, 0);
     }
-    let cleanStreak = 0;
+    let idleStreak = 0;
+    const onWindowFocus = () => {
+      if (document.hidden || !workspace.inspectorOpen || workspace.inspectorTab !== "diffs") return;
+      idleStreak = 0;
+      scheduleRefreshWorktreeStatus(id, 120);
+    };
+    window.addEventListener("focus", onWindowFocus);
     const timer = setInterval(() => {
       if (document.hidden || !workspace.inspectorOpen || workspace.inspectorTab !== "diffs") return;
       const busy = Boolean(id && workspace.statusBySession[id]?.type === "busy");
-      const dirty = Boolean(workspace.worktreeBySession[key]?.dirty);
-      if (!busy && !dirty) {
-        cleanStreak++;
-        if (cleanStreak > 2 && cleanStreak % 3 !== 0) return;
+      if (!busy) {
+        if (typeof document.hasFocus === "function" && !document.hasFocus()) return;
+        idleStreak++;
+        if (idleStreak > 2 && idleStreak % 3 !== 0) return;
       } else {
-        cleanStreak = 0;
+        idleStreak = 0;
       }
       scheduleRefreshWorktreeStatus(id, 0);
     }, 5000);
-    onCleanup(() => clearInterval(timer));
+    onCleanup(() => {
+      window.removeEventListener("focus", onWindowFocus);
+      clearInterval(timer);
+    });
   }));
 
   const onRefresh = async () => {

@@ -1,0 +1,62 @@
+{
+  "name": "commit_disconnect_replay",
+  "description": "Turn finishes editing workspace files, mobile submits worktree commit, retries after simulated response drop with identical clientRequestId (deduplicated), and rejects mismatched commit message with 409 request_conflict.",
+  "engineCalls": [
+    {
+      "steps": [
+        {
+          "op": "emit",
+          "event": {
+            "Kind": "text_end",
+            "Step": 1,
+            "PartID": "prt_commit_ready",
+            "Text": "Ready to commit workspace changes."
+          }
+        },
+        {
+          "op": "emit",
+          "event": { "Kind": "turn_finish", "Finish": "stop" }
+        }
+      ]
+    }
+  ],
+  "clientActions": [
+    {
+      "name": "run_turn",
+      "op": "prompt",
+      "text": "prepare release notes",
+      "clientRequestId": "fx-commit-turn-1",
+      "expectHttp": 200
+    },
+    { "name": "await_turn_idle", "op": "wait_idle" },
+    { "name": "touch_file", "op": "write_workspace_file", "text": "release v1\n" },
+    {
+      "name": "mobile_commit_initial",
+      "op": "worktree_commit",
+      "message": "chore: release notes v1",
+      "clientRequestId": "fx-mob-commit-1",
+      "expectHttp": 200
+    },
+    {
+      "name": "mobile_commit_reconnect_replay",
+      "op": "worktree_commit",
+      "message": "chore: release notes v1",
+      "clientRequestId": "fx-mob-commit-1",
+      "expectHttp": 200,
+      "expectDedup": true
+    },
+    {
+      "name": "mobile_commit_tampered_conflict",
+      "op": "worktree_commit",
+      "message": "chore: different message",
+      "clientRequestId": "fx-mob-commit-1",
+      "expectHttp": 409,
+      "expectCode": "request_conflict"
+    }
+  ],
+  "expect": {
+    "userTurnCount": 1,
+    "minTotalTurns": 2,
+    "noRunningTools": true
+  }
+}

@@ -1,6 +1,8 @@
 // web/src/store/session-task-control.ts
 import { produce } from "solid-js/store";
 import { hoxiAPI, resolveRunnerRuntimeForProvider } from "../services/api";
+import { hasPendingPrompt, recoverPendingPrompt, sendRecoverablePrompt } from "./request-recovery";
+import { RequestOutcomeUnknownError } from "../services/request-ledger";
 import type { MessagePart } from "../services/sse-types";
 import { isAutoModel, resolveAutoModelTarget } from "./auto-models";
 import { recordPromptDispatched, recordSessionRetry, recordUserAbortAction } from "./provider-telemetry";
@@ -28,6 +30,7 @@ import {
 import {
   setWorkspace,
   workspace,
+  type MessageTurn,
   type ReasoningEffort,
   type SelectedModel,
 } from "./workspace-state";
@@ -94,6 +97,12 @@ export async function rerouteRetryingTurnToModel(
   }
   const prev = getTurnDispatchState(sessionID);
   if (!prev) return false;
+  if (hasPendingPrompt(sessionID) && await recoverPendingPrompt(sessionID)) {
+    await loadSessionMessages(sessionID);
+    return true;
+  }
+  if (getTurnDispatchState(sessionID) !== prev || isSessionDeleted(sessionID) ||
+      workspace.archivedSessionIDs.includes(sessionID) || workspace.interruptedBySession[sessionID]) return true;
   const cfg = sessionAIConfig(sessionID);
   const chosen = model ?? prev.manualModel ?? cfg.model;
   if (!chosen?.providerID || !chosen?.modelID) return false;
@@ -167,7 +176,7 @@ export async function rerouteRetryingTurnToModel(
   markSessionPromptDispatched(sessionID);
   setWorkspace("statusBySession", sessionID, { type: "busy" });
   try {
-    await hoxiAPI.sendPromptAsync(sessionID, nextState.promptText, {
+    await sendRecoverablePrompt(sessionID, nextState.promptText, {
       continueTask: true,
       agent: nextState.agent,
       model: effectiveModel,
@@ -180,7 +189,8 @@ export async function rerouteRetryingTurnToModel(
         effectiveModel.providerID,
         Boolean(workspace.hoxiProviders?.[effectiveModel.providerID || ""])
       ),
-    });
+    }, () => rerouteGenBySession.get(sessionID) === gen && getTurnDispatchState(sessionID) === nextState &&
+      !isSessionDeleted(sessionID) && !workspace.archivedSessionIDs.includes(sessionID) && !workspace.interruptedBySession[sessionID]);
     if (
       rerouteGenBySession.get(sessionID) === gen &&
       getTurnDispatchState(sessionID) === nextState &&
@@ -200,7 +210,10 @@ export async function rerouteRetryingTurnToModel(
     const statusMatch = errMsg.match(/\bHTTP (\d{3})\b/);
     await handleSessionErrorEvent(sessionID, {
       name: "APIError",
-      data: { message: errMsg, statusCode: statusMatch ? Number(statusMatch[1]) : undefined },
+      data: {
+        message: errMsg, statusCode: statusMatch ? Number(statusMatch[1]) : undefined,
+        ...(sendErr instanceof RequestOutcomeUnknownError ? { kind: "outcome_unknown" } : {}),
+      },
     });
   }
   return true;
@@ -364,7 +377,7 @@ export async function handleSessionErrorEvent(
     recordPromptDispatched(sessionID, nextStep.target.providerID, nextStep.target.modelID);
     setWorkspace("statusBySession", sessionID, { type: "busy" });
     try {
-      await hoxiAPI.sendPromptAsync(sessionID, autoState.promptText, {
+      await sendRecoverablePrompt(sessionID, autoState.promptText, {
         continueTask: true,
         agent: autoState.agent,
         model: nextStep.target,
@@ -377,7 +390,7 @@ export async function handleSessionErrorEvent(
           nextStep.target.providerID,
           Boolean(workspace.hoxiProviders?.[nextStep.target.providerID || ""])
         ),
-      });
+      }, () => !isStoppedOrSuperseded());
       if (isStoppedOrSuperseded()) {
         if (!isSuperseded()) {
           clearAutoFailoverPending(sessionID);
@@ -406,7 +419,10 @@ export async function handleSessionErrorEvent(
       const statusMatch = errMsg.match(/\bHTTP (\d{3})\b/);
       currentError = {
         name: "APIError",
-        data: { message: errMsg, statusCode: statusMatch ? Number(statusMatch[1]) : undefined },
+        data: {
+          message: errMsg, statusCode: statusMatch ? Number(statusMatch[1]) : undefined,
+          ...(sendErr instanceof RequestOutcomeUnknownError ? { kind: "outcome_unknown" } : {}),
+        },
       };
     }
   }
@@ -617,4 +633,81 @@ export async function stopSessionToolCommand(
     console.warn("stop tool command warning:", err);
     return false;
   }
+}
+
+const READ_ONLY_NATIVE_TOOLS = new Set([
+  "read",
+  "glob",
+  "grep",
+  "hoxi_code_index",
+  "code_search",
+  "symbol_inspect",
+  "impact_analysis",
+  "todoread",
+  "todowrite",
+  "webfetch",
+  "mcp_list_tools",
+  "skill",
+]);
+
+export function canResumeReadOnlyFailedCycle(turns: MessageTurn[], userIdx: number): boolean {
+  const tail = turns[turns.length - 1];
+  if (
+    userIdx < 0 ||
+    userIdx >= turns.length - 1 ||
+    tail?.info.role !== "assistant" ||
+    !tail.info.error ||
+    tail.info.error.data?.kind === "outcome_unknown"
+  ) {
+    return false;
+  }
+  let sawCompletedTool = false;
+  for (let k = userIdx + 1; k < turns.length; k++) {
+    if (turns[k].info.role !== "assistant") return false;
+    for (const p of turns[k].parts) {
+      if (p.type !== "tool") continue;
+      const toolName = (p.tool || "").trim().toLowerCase();
+      if (!READ_ONLY_NATIVE_TOOLS.has(toolName)) return false;
+      if (p.state.status === "completed") sawCompletedTool = true;
+    }
+  }
+  return sawCompletedTool;
+}
+
+export function applyOptimisticFailedTailRetry(
+  list: MessageTurn[],
+  replaceFailedTail?: boolean,
+  resumeFailedTail?: boolean
+): { replaced?: MessageTurn[]; resumedTailID?: string } {
+  if (replaceFailedTail && list.length >= 2) {
+    const tail = list[list.length - 1];
+    const prev = list[list.length - 2];
+    if (
+      prev.info.role === "user" &&
+      tail.info.role === "assistant" &&
+      Boolean(tail.info.error) &&
+      tail.parts.length === 0
+    ) {
+      const replaced = list
+        .splice(list.length - 2, 2)
+        .map((m) => ({ info: { ...m.info }, parts: m.parts.slice() }));
+      return { replaced };
+    }
+  } else if (resumeFailedTail && list.length >= 2) {
+    const snapshot = list.map((m) => ({ info: { ...m.info }, parts: m.parts.slice() }));
+    while (list.length >= 3) {
+      const tail = list[list.length - 1];
+      if (tail.info.role === "assistant" && Boolean(tail.info.error) && tail.parts.length === 0) {
+        list.pop();
+        continue;
+      }
+      break;
+    }
+    const last = list[list.length - 1];
+    if (last?.info.role === "assistant" && last.info.error) {
+      last.info.error = undefined;
+      return { replaced: snapshot, resumedTailID: last.info.id };
+    }
+  }
+  return {};
 }

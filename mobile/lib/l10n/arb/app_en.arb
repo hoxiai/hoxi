@@ -1,0 +1,593 @@
+{
+  "@@locale": "en",
+  "appName": "Hoxi",
+  "@appName": {
+    "description": "Product name shown in English UI. Chinese UI uses Hoxi."
+  },
+  "navChat": "Chat",
+  "commonCancel": "Cancel",
+  "commonRefresh": "Refresh",
+  "chatComposerSkillHint": "Message @{skill} or hold to talk…",
+  "@chatComposerSkillHint": {
+    "placeholders": {
+      "skill": {
+        "type": "String"
+      }
+    }
+  },
+  "chatSend": "Send message",
+  "chatHideKeyboard": "Hide keyboard",
+  "loginSubtitle": "Link Hoxi Desktop or a GoPanel panel",
+  "loginNodeAddress": "Device address",
+  "loginAddressHint": "http://192.168.1.x:port or https://demo.gopanel.run",
+  "loginAddressRequired": "Enter the device address",
+  "loginAddressScheme": "Enter a full URL starting with http/https",
+  "loginPassword": "Password",
+  "loginPasswordHint": "Enter the password (optional on Hoxi Desktop)",
+  "loginPasswordRequired": "Enter the password",
+  "loginConnect": "Connect",
+  "loginScanQr": "Scan QR code",
+  "loginConnectFailed": "Connection failed",
+  "engineeringAddNode": "Link a device",
+  "loginEntranceLabel": "Security entrance (optional)",
+  "loginEntranceHint": "For example: your-entrance",
+  "loginEntranceInvalid": "Use only letters, numbers, underscores and hyphens",
+  "loginAdminEmail": "Administrator email",
+  "loginAdminEmailHint": "Enter the administrator email",
+  "chatPendingApprovals": "{count} pending approval(s)",
+  "@chatPendingApprovals": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "chatModelPickerTitle": "Select model",
+  "chatTooltipHoldToTalk": "Hold to talk",
+  "chatTooltipCamera": "Camera",
+  "chatCameraUnavailable": "Camera unavailable. Check permission; cancelling does not send a photo.",
+  "chatListeningShort": "Listening…",
+  "settingsOverviewTitle": "Me",
+  "addNodeHoxiTitle": "Hoxi Desktop",
+  "addNodeHoxiSubtitle": "Connect desktop Hoxi workspace for AI coding and development",
+  "addNodeGopanelTitle": "GoPanel panel",
+  "addNodeGopanelSubtitle": "Connect a server panel for hosts, containers, sites and certificates",
+  "addNodeComingSoon": "Coming soon",
+  "loginHoxiTitle": "Link Hoxi Desktop",
+  "loginHoxiSubtitle": "Scan desktop QR code, or enter the LAN/relay address",
+  "loginGopanelTitle": "Link a GoPanel panel",
+  "loginGopanelSubtitle": "Sign in with a panel administrator account",
+  "loginPanelAddress": "Panel address",
+  "loginPanelAddressHint": "https://demo.gopanel.run",
+  "loginHoxiAddress": "Desktop address",
+  "loginHoxiAddressHint": "http://192.168.x.x:5417 or relay address",
+  "loginHoxiToken": "Pairing token (optional)",
+  "loginHoxiTokenHint": "Enter pairing token if configured on desktop",
+  "loginHoxiQrHint": "Scan QR code in Hoxi Desktop Settings -> Remote Access",
+  "loginScanHoxiQr": "Scan desktop QR code",
+  "loginScanPanelQr": "Scan panel QR code",
+  "loginUsername": "Account (optional)",
+  "loginPasswordHintPanel": "Enter the administrator password",
+  "settingsDeviceRenameHint": "Give this device a name you will recognize",
+  "commonSave": "Save",
+  "qrErrorMissingUrl": "Invalid QR code: missing device address",
+  "qrErrorMissingToken": "Invalid QR code: missing panel address or credentials",
+  "qrErrorWrongKindPanel": "This is a panel QR code. Go back and choose GoPanel panel",
+  "qrErrorWrongKindHoxi": "This is a desktop QR code. Go back and choose Hoxi Desktop",
+  "qrErrorVerifyFailed": "Connection verification failed",
+  "qrErrorUnrecognized": "Unrecognized QR code content",
+  "qrErrorRelayMissing": "Invalid QR code: missing panel address or node",
+  "qrErrorRelaySignInFirst": "Sign in to this GoPanel panel first before scanning",
+  "qrErrorRelayConnectFailed": "Could not connect to this desktop via GoPanel",
+  "qrAlignHint": "Align the QR code within the frame",
+  "qrVerifying": "Verifying and connecting…",
+  "serverListUnreachable": "Could not reach this device. Check that it is online and reachable.",
+  "serverListRelayConnectFailed": "Could not connect to {name} via GoPanel. Check that the desktop is online and the GoPanel sign-in is valid.",
+  "@serverListRelayConnectFailed": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "relayNodesTitle": "Hoxi Desktop computers via this GoPanel",
+  "relayNodesSubtitle": "Enter the GoPanel pairing code in Hoxi Desktop Settings → Remote Control via GoPanel to see the desktop here",
+  "relayNodesLoadFailed": "Failed to load: {error}",
+  "@relayNodesLoadFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "relayNodesEmpty": "No paired Hoxi Desktop computers yet",
+  "relayNodeOnline": "Online",
+  "relayNodeOffline": "Offline",
+  "commonClose": "Close",
+  "containerFilterAll": "All",
+  "nodeLinkDevicesSection": "Controlled Devices",
+  "codeWsFilesTitle": "Project files",
+  "codeWsFilesRoot": "Project root",
+  "codeWsFilesEmpty": "No viewable files in this directory",
+  "codeWsFilesTruncated": "Only the first 500 items are shown",
+  "codeWsFilesEditing": "Editing",
+  "codeWsFilesSaved": "Saved",
+  "codeWsFilesUnsaved": "Unsaved",
+  "codeWsFilesSave": "Save file",
+  "codeWsFilesSaveSuccess": "File saved",
+  "codeWsFilesUnsavedTitle": "Discard unsaved changes?",
+  "codeWsFilesUnsavedHint": "Your mobile edits will be lost when you go back.",
+  "codeWsFilesDiscard": "Discard",
+  "codeWsFilesKeepEditing": "Keep editing",
+  "codeWsFilesCopy": "Copy content",
+  "codeWsFilesCopied": "File content copied",
+  "codeWsFilesOperationFailed": "File operation failed",
+  "codeWsActionBack": "Back",
+  "codeWsActionParent": "Parent folder",
+  "codeWsActionRefresh": "Refresh",
+  "codeWsActionRetry": "Retry",
+  "codeWsActionStop": "Stop execution",
+  "codeWsActionDismiss": "Dismiss",
+  "codeWsChatTitle": "Hoxi Development",
+  "codeWsChatStreamReconnecting": "Live connection lost. Reconnecting…",
+  "codeWsChatRefresh": "Refresh status",
+  "codeWsChatGitReview": "Review changes",
+  "codeWsChatChooseSession": "Choose or create session",
+  "codeWsChatPreviewTitle": "Session previews",
+  "codeWsChatEmptyTitle": "Start a development session",
+  "codeWsChatEmptyHint": "Connect a project and server executor to send instructions, follow progress, open previews, and handle approvals.",
+  "codeWsChatSessionFallback": "Development #{id}",
+  "@codeWsChatSessionFallback": {
+    "placeholders": {
+      "id": {
+        "type": "int"
+      }
+    }
+  },
+  "codeWsSessionSettingsTitle": "Session settings",
+  "codeWsSessionSettingsName": "Session name",
+  "codeWsSessionSettingsApproval": "Approval policy",
+  "codeWsSessionSettingsPolicyManual": "Confirm each time",
+  "codeWsSessionSettingsPolicySafeAuto": "Safe auto",
+  "codeWsSessionSettingsPolicyFullAuto": "Full auto",
+  "codeWsSessionSettingsPolicyRejectsInConversation": "{executor} cannot ask you in conversation mode: actions that need permission (such as running commands) are rejected outright, so the AI may not finish the task. Approve them one by one in terminal mode instead.",
+  "@codeWsSessionSettingsPolicyRejectsInConversation": {
+    "placeholders": {
+      "executor": {
+        "type": "String"
+      }
+    }
+  },
+  "codeWsSessionSettingsModel": "Model",
+  "codeWsSessionSettingsModelHint": "Leave empty for the executor default",
+  "codeWsSessionSettingsEffort": "Reasoning effort",
+  "codeWsSessionSettingsEffortDefault": "Default",
+  "codeWsSessionSettingsSave": "Save settings",
+  "codeWsSessionSettingsSaved": "Session settings saved",
+  "codeWsAttentionTitle": "Needs attention",
+  "codeWsAttentionViewAll": "View all",
+  "codeWsAttentionEmpty": "No Code items need your attention",
+  "codeWsAttentionLoadFailed": "Failed to load attention items",
+  "codeWsAttentionSession": "Development session #{id}",
+  "@codeWsAttentionSession": {
+    "placeholders": {
+      "id": {
+        "type": "int"
+      }
+    }
+  },
+  "codeWsAttentionConfirmHint": "This action immediately affects the development session. Continue?",
+  "codeWsAttentionCancel": "Cancel",
+  "codeWsAttentionConfirm": "Confirm",
+  "codeWsAttentionActionSuccess": "Action completed",
+  "codeWsAttentionActionFailed": "Action failed. Try again later.",
+  "codeWsAttentionOpenFailed": "Failed to open the development session",
+  "codeWsInstructionClosedHint": "This session is being delivered and cannot accept more changes",
+  "codeWsInstructionInputHint": "Enter an instruction or follow-up...",
+  "codeWsInstructionSelectSessionHint": "Select a development session first",
+  "codeWsInstructionSend": "Send instruction",
+  "codeWsHubTitle": "Development command center",
+  "codeWsHubRecentTasks": "Recent",
+  "codeWsHubProjectsTab": "Projects",
+  "codeWsHubSessionCount": "{count}",
+  "@codeWsHubSessionCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "codeWsHubProject": "Current project",
+  "codeWsHubNoProjectTasks": "No tasks",
+  "codeWsHubNoProjectTasksHint": "Create a session to add a task here.",
+  "codeWsHubCreate": "New",
+  "codeWsHubProjectTerminal": "Project terminal",
+  "codeWsHubProjectTerminalHint": "Open the project directory for command-line work and quick diagnostics.",
+  "codeWsTerminalChooseProject": "Choose a project",
+  "codeWsTerminalChooseProjectHint": "The terminal starts in the project directory. Review high-risk commands carefully.",
+  "codeWsTerminalNoProjects": "No development projects yet. Create one in the admin console first.",
+  "codeWsTerminalOpenFailed": "Failed to open project terminal",
+  "codeWsTerminalOpening": "Opening terminal...",
+  "codeWsTerminalProjectTitle": "Project terminal",
+  "codeWsTerminalNoTask": "No task",
+  "codeWsTerminalTaskTitle": "Task · {task}",
+  "@codeWsTerminalTaskTitle": {
+    "placeholders": {
+      "task": {
+        "type": "String"
+      }
+    }
+  },
+  "codeWsTerminalReconnect": "Reconnect",
+  "codeWsTerminalConnecting": "Connecting to terminal…",
+  "codeWsTerminalReconnecting": "Connection lost. Recovering…",
+  "codeWsTerminalConnectionFailed": "Terminal connection failed. Check the network and retry.",
+  "codeWsTerminalSessionClosed": "Terminal session ended",
+  "codeWsTerminalRelayUnsupported": "Interactive terminals are unavailable over the GoPanel tunnel. Use a Hoxi desktop node on the local network instead.",
+  "codeWsTerminalConnected": "Connected",
+  "codeWsTerminalReleaseControl": "Release terminal control",
+  "codeWsTerminalTakeControl": "Take terminal control",
+  "codeWsTerminalSessionStatus": "Session status and instructions",
+  "codeWsTerminalFiles": "Files",
+  "codeWsTerminalCommandHint": "Type a command; long and composed input supported",
+  "codeWsTerminalDisconnected": "Terminal disconnected",
+  "codeWsTerminalTakeControlHint": "Tap the input to take terminal control",
+  "codeWsTerminalSendCommand": "Send command",
+  "codeWsTerminalHistoryPrevious": "↑ History",
+  "codeWsTerminalHistoryNext": "↓ History",
+  "codeWsTerminalPaste": "Paste",
+  "codeWsTerminalNativeKeyboard": "Terminal keyboard",
+  "codeWsSessionIsolateLabel": "Isolate workspace",
+  "codeWsSessionIsolateNo": "No",
+  "codeWsSessionIsolateYes": "Yes",
+  "codeWsSessionWorktreeChecking": "Checking workspace isolation...",
+  "codeWsSessionWorktreeReady": "Isolated workspace enabled",
+  "codeWsSessionWorktreeReadyHint": "This session runs in a separate Git Worktree without editing the project directory directly.",
+  "codeWsSessionWorktreeDirty": "Uncommitted changes detected",
+  "codeWsSessionWorktreeDirtyHint": "Resolve these repositories on desktop before creating a session: {repositories}",
+  "@codeWsSessionWorktreeDirtyHint": {
+    "placeholders": {
+      "repositories": {
+        "type": "String"
+      }
+    }
+  },
+  "codeWsSessionWorktreeUnavailable": "This project cannot create a safe session",
+  "codeWsSessionWorktreeReasonNotGit": "The project directory is not a Git repository. Configure it on desktop first.",
+  "codeWsSessionWorktreeReasonSourceUnavailable": "The project source directory is unavailable. Check its desktop configuration.",
+  "codeWsSessionWorktreeReasonUnknown": "Git Worktree isolation is unavailable for this project.",
+  "codeWsSessionWorktreeCheckFailed": "Workspace isolation check failed",
+  "codeWsSessionWorktreeRetry": "Check again",
+  "codeWsStopTitle": "Stop the current Code task?",
+  "codeWsStopDescription": "Running and queued instructions will stop. Existing file changes are preserved.",
+  "codeWsStopCancel": "Keep running",
+  "codeWsStopConfirm": "Stop",
+  "codeWsStopSuccess": "Stop request sent",
+  "codeWsRecoveryTitle": "Session history and recovery",
+  "codeWsRecoveryInitialization": "Session initialization",
+  "codeWsRecoveryInitializationFailed": "Initialization failed",
+  "codeWsRecoveryInitializationFailedHint": "The session environment failed to initialize. Retry or review the error details.",
+  "codeWsRecoveryInitializing": "Initializing",
+  "codeWsRecoveryInitialized": "Initialized",
+  "codeWsRecoveryInitializingHint": "Preparing the isolated workspace and execution environment.",
+  "codeWsRecoveryInitializedHint": "The execution environment is ready for more instructions.",
+  "codeWsRecoveryRetryInitialization": "Retry initialization",
+  "codeWsRecoveryRetryInitializationHint": "Hoxi will prepare this session workspace and execution environment again. Continue?",
+  "codeWsRecoveryConversation": "Full conversation",
+  "codeWsRecoveryNoMessages": "No historical messages in this session",
+  "codeWsRecoveryRuns": "Execution runs",
+  "codeWsRecoveryNoRuns": "No execution runs in this session",
+  "codeWsRecoveryViewRunDetail": "View details",
+  "codeWsRecoveryLoadMore": "Load more",
+  "codeWsRecoveryUser": "You",
+  "codeWsRecoveryAgent": "Code assistant",
+  "codeWsRecoveryDuration": "{duration} ms",
+  "@codeWsRecoveryDuration": {
+    "placeholders": {
+      "duration": {
+        "type": "int"
+      }
+    }
+  },
+  "codeWsRecoveryTokens": "{tokens} tokens",
+  "@codeWsRecoveryTokens": {
+    "placeholders": {
+      "tokens": {
+        "type": "int"
+      }
+    }
+  },
+  "codeWsRecoveryRetryInstruction": "Retry instruction",
+  "codeWsRecoveryRetryInstructionHint": "This failed or stopped instruction will run again. Continue?",
+  "codeWsRecoveryRetryQueued": "Queued again",
+  "codeWsRecoveryStatusCompleted": "Completed",
+  "codeWsRecoveryStatusFailed": "Failed",
+  "codeWsRecoveryStatusStopped": "Stopped",
+  "codeWsRecoveryStatusRunning": "Running",
+  "codeWsRecoveryStatusAwaitingApproval": "Awaiting approval",
+  "codeWsRecoveryStatusQueued": "Queued",
+  "codeWsRecoveryStatusUnknown": "Unknown",
+  "codeWsRecoveryLoadFailed": "Failed to load session history",
+  "codeWsRecoveryCancel": "Cancel",
+  "codeWsRecoveryConfirm": "Confirm",
+  "codeWsRecoveryActionSuccess": "Action submitted",
+  "codeWsRecoveryActionFailed": "Action failed. Try again later.",
+  "codeWsRunDetailTitle": "Run #{id}",
+  "@codeWsRunDetailTitle": {
+    "placeholders": {
+      "id": {
+        "type": "int"
+      }
+    }
+  },
+  "codeWsRunDetailCopy": "Copy diagnostics",
+  "codeWsRunDetailCopied": "Diagnostics copied",
+  "codeWsRunDetailLoadFailed": "Failed to load run details",
+  "codeWsRunDetailEmpty": "No run details available",
+  "codeWsRunDetailOverview": "Run overview",
+  "codeWsRunDetailStatus": "Status",
+  "codeWsRunDetailExecutor": "Executor",
+  "codeWsRunDetailModel": "Model",
+  "codeWsRunDetailExitCode": "Exit code",
+  "codeWsRunDetailDurationLabel": "Duration",
+  "codeWsRunDetailSession": "Session",
+  "codeWsRunDetailTask": "Task",
+  "codeWsRunDetailInstruction": "Instruction",
+  "codeWsRunDetailStartedAt": "Started",
+  "codeWsRunDetailCompletedAt": "Completed",
+  "codeWsRunDetailInputTokens": "Input tokens",
+  "codeWsRunDetailOutputTokens": "Output tokens",
+  "codeWsRunDetailCachedTokens": "Cached input tokens",
+  "codeWsRunDetailReasoningTokens": "Reasoning tokens",
+  "codeWsRunDetailTotalTokens": "Total tokens",
+  "codeWsRunDetailPrompt": "Original instruction",
+  "codeWsRunDetailError": "Error details",
+  "codeWsRunDetailOutput": "Execution output",
+  "codeWsRunDetailRawOutput": "Raw logs",
+  "codeWsRunDetailNoPrompt": "No original instruction recorded",
+  "codeWsRunDetailNoOutput": "No structured execution output",
+  "codeWsRunDetailNoRawOutput": "No raw logs available",
+  "codeWsDeliveryTitle": "Unified delivery",
+  "codeWsDeliveryEmpty": "Merge this session into the project branch and push it through the managed delivery flow.",
+  "codeWsDeliveryUnavailable": "This session has no managed worktree. Create a project session with Git Worktree support.",
+  "codeWsDeliveryStart": "Start delivery",
+  "codeWsDeliveryRetry": "Retry delivery",
+  "codeWsDeliveryDeliverLatest": "Deliver newer commits",
+  "codeWsDeliveryConfirmTitle": "Start unified delivery?",
+  "codeWsDeliveryConfirmDescription": "Hoxi snapshots the saved commits, then syncs, merges, runs quality checks, and pushes. Newer commits remain available for another delivery.",
+  "codeWsDeliveryCancel": "Not now",
+  "codeWsDeliveryConfirm": "Deliver",
+  "codeWsDeliveryReviewSummary": "This delivery covers {files} files (+{additions} −{deletions})",
+  "@codeWsDeliveryReviewSummary": {
+    "placeholders": {
+      "files": {
+        "type": "int"
+      },
+      "additions": {
+        "type": "int"
+      },
+      "deletions": {
+        "type": "int"
+      }
+    }
+  },
+  "codeWsDeliveryReviewNotReady": "There are no deliverable commits yet, or some changes are still unsaved. Save them before delivering.",
+  "codeWsDeliveryStarted": "Delivery queued",
+  "codeWsDeliveryFailed": "Delivery failed",
+  "codeWsDeliveryConflict": "Merge conflicts detected",
+  "codeWsDeliveryConflictHint": "Open this session worktree on desktop, resolve and commit these conflicts, then retry here.",
+  "codeWsDeliveryCompleted": "Merge and push completed",
+  "codeWsDeliveryPending": "More commits pending",
+  "codeWsDeliveryCompletedWithPending": "This batch completed; newer commits are waiting for delivery",
+  "codeWsDeliveryCompletedWithUnsaved": "This batch completed; save the newer working tree changes on desktop first",
+  "codeWsDeliveryQueued": "Waiting for delivery",
+  "codeWsDeliveryRunning": "Delivering",
+  "codeWsDeliveryQueuePosition": "Queue position {position}",
+  "@codeWsDeliveryQueuePosition": {
+    "placeholders": {
+      "position": {
+        "type": "int"
+      }
+    }
+  },
+  "codeWsDeliveryAttempt": "Attempt {attempt}",
+  "@codeWsDeliveryAttempt": {
+    "placeholders": {
+      "attempt": {
+        "type": "int"
+      }
+    }
+  },
+  "codeWsDeliveryStageStoppingTerminal": "Stopping host terminals",
+  "codeWsDeliveryStageSyncing": "Syncing the remote branch",
+  "codeWsDeliveryStageMerging": "Merging session changes",
+  "codeWsDeliveryStageQualityCheck": "Running quality checks",
+  "codeWsDeliveryStagePushing": "Pushing the main branch",
+  "codeWsDeliveryStageVerifying": "Verifying the remote commit",
+  "codeWsDeliveryStageCleaning": "Cleaning the session workspace",
+  "codeWsQualityTitle": "Quality Gate",
+  "codeWsQualityRun": "Run",
+  "codeWsQualityRunAll": "Run All",
+  "codeWsQualityRunning": "Running checks...",
+  "codeWsQualityEmpty": "No quality check commands detected",
+  "codeWsQualityEmptyHint": "You can add test or lint scripts to package.json or Makefile.",
+  "codeWsQualityPassed": "Passed",
+  "codeWsQualityFailed": "Failed",
+  "codeWsQualityPending": "Not run",
+  "codeWsQualityExitCode": "Exit code {code}",
+  "@codeWsQualityExitCode": {
+    "placeholders": {
+      "code": {
+        "type": "int"
+      }
+    }
+  },
+  "codeWsQualityDuration": "Duration {duration} ms",
+  "@codeWsQualityDuration": {
+    "placeholders": {
+      "duration": {
+        "type": "int"
+      }
+    }
+  },
+  "codeWsQualityLoadFailed": "Failed to load quality checks",
+  "codeWsQualityRunFailed": "Failed to run quality check",
+  "codeWsMemoryExtract": "Extract Project Memory",
+  "codeWsMemoryExtracting": "Extracting session memory...",
+  "codeWsMemoryExtractSuccess": "Memory extraction queued; will persist as long-term rules upon analysis",
+  "codeWsMemoryExtractFailed": "Failed to queue memory extraction",
+  "codeWsRecoveryAbortInitialization": "Abort initialization?",
+  "codeWsRecoveryAbortInitializationHint": "This stops the current initialization and keeps the existing session record.",
+  "gitReviewTitle": "Review changes",
+  "gitReviewSummary": "{files} files",
+  "@gitReviewSummary": {
+    "placeholders": {
+      "files": {
+        "type": "int"
+      }
+    }
+  },
+  "gitReviewNoRepository": "No Git repository is available for this session",
+  "gitReviewNoChanges": "The workspace has no unsaved changes",
+  "gitReviewLoadFailed": "Failed to load Git changes",
+  "gitReviewDetached": "Detached HEAD",
+  "gitReviewStaged": "Staged",
+  "gitReviewChanged": "Unstaged",
+  "gitReviewUntracked": "New file",
+  "gitReviewSavedCommits": "{count} saved commits",
+  "@gitReviewSavedCommits": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "gitReviewTruncated": "Only the first 500 changed files are shown",
+  "gitReviewWorkingDiff": "View unstaged diff",
+  "gitReviewStagedDiff": "View staged diff",
+  "gitReviewDiffTitle": "File diff",
+  "gitReviewDiffLoadFailed": "Failed to load file diff",
+  "gitReviewDiffEmpty": "No text diff is available for this file",
+  "gitReviewDiffTruncated": "The diff is too large; only the first 1 MB is shown",
+  "gitReviewCopyDiff": "Copy diff",
+  "gitReviewDiffCopied": "Diff copied",
+  "gitReviewSave": "Save changes",
+  "gitReviewSaveUnavailable": "Only managed isolated workspaces can be saved from mobile",
+  "gitReviewSaveTitle": "Save all current changes?",
+  "gitReviewSaveHint": "Hoxi checks file safety and saves every current workspace change in a Git commit.",
+  "gitReviewMessage": "Commit message",
+  "gitReviewMessageHint": "Leave blank to use the default message",
+  "gitReviewCancel": "Cancel",
+  "gitReviewConfirmSave": "Save",
+  "gitReviewSaveSuccess": "Changes saved in a Git commit",
+  "gitReviewSaveFailed": "Save failed. Review the error and try again.",
+  "codeFlowTitle": "Delivery preview",
+  "codeFlowStartHint": "Build this delivery's commits and deploy them to the preview environment for acceptance.",
+  "codeFlowAutoStartHint": "Previews start automatically after delivery.",
+  "codeFlowAutoStartPending": "Delivery finished. Generating the preview automatically…",
+  "codeFlowStart": "Generate preview",
+  "codeFlowStarted": "Preview started",
+  "codeFlowOpenPreview": "Open preview",
+  "codeFlowVersion": "v{version}",
+  "@codeFlowVersion": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "codeFlowStatusQueued": "Queued",
+  "codeFlowStatusRunning": "Running",
+  "codeFlowStatusSuccess": "Released",
+  "codeFlowStatusFailed": "Failed",
+  "codeFlowStatusWaitingDeployment": "Awaiting release",
+  "codeFlowStageBuilding": "Building",
+  "codeFlowStagePublishing": "Publishing release",
+  "codeFlowStageDeploying": "Deploying",
+  "codeFlowEnvironmentPreview": "Preview",
+  "codeFlowEnvironmentProduction": "Production",
+  "codeFlowStatePending": "Pending",
+  "codeFlowStateDeploying": "Deploying",
+  "codeFlowStateFailed": "Failed",
+  "codeFlowStateCurrent": "Live",
+  "codeFlowStateReplaced": "Replaced",
+  "codeFlowActionDeploy": "Deploy",
+  "codeFlowActionRelease": "Release",
+  "codeFlowActionRedeploy": "Redeploy",
+  "codeFlowActionSwitchBack": "Switch back",
+  "codeFlowConfirmTitle": "Deploy to {environment}?",
+  "@codeFlowConfirmTitle": {
+    "placeholders": {
+      "environment": {
+        "type": "String"
+      }
+    }
+  },
+  "codeFlowConfirmPreview": "Deploy v{version} to {environment} ({website}). A health check runs before switching, and the previous version is kept if it fails.",
+  "@codeFlowConfirmPreview": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      },
+      "environment": {
+        "type": "String"
+      },
+      "website": {
+        "type": "String"
+      }
+    }
+  },
+  "codeFlowConfirmProduction": "Release v{version} to production ({website}). This switches live traffic. A health check runs before switching, and the previous version is restored automatically if it fails during stabilization.",
+  "@codeFlowConfirmProduction": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      },
+      "website": {
+        "type": "String"
+      }
+    }
+  },
+  "codeFlowConfirm": "Deploy",
+  "codeFlowCancel": "Cancel",
+  "codeFlowDeployQueued": "Deployment queued",
+  "codeFlowBlockedRunnerTargetStale": "A newer build has replaced this version's runtime. Rebuild it on desktop before deploying.",
+  "codeFlowBlockedRunnerTargetUnavailable": "This version's Runner container was cleaned up. Rebuild it on desktop before deploying.",
+  "codeFlowBlockedRunnerFixedPort": "The pipeline uses a fixed host port, so preview and production cannot coexist. Switch to automatic ports on desktop.",
+  "codeFlowOpenFailed": "Unable to open the preview URL",
+  "authEntranceInvalid": "Use only letters, numbers, underscores, and hyphens",
+  "authOperationTimeout": "The operation timed out. Check the network or keychain access.",
+  "authConnectFailed": "Connection or sign-in failed: {detail}",
+  "@authConnectFailed": {
+    "placeholders": {
+      "detail": {
+        "type": "String"
+      }
+    }
+  },
+  "authQrVerifyFailed": "QR authorization failed: {detail}",
+  "@authQrVerifyFailed": {
+    "placeholders": {
+      "detail": {
+        "type": "String"
+      }
+    }
+  },
+  "authSwitchFailed": "Failed to switch server: {detail}",
+  "@authSwitchFailed": {
+    "placeholders": {
+      "detail": {
+        "type": "String"
+      }
+    }
+  },
+  "codeWsModelPickerSearchHint": "Search model name, provider, or ID…",
+  "codeWsModelPickerCustomInput": "Custom model ID",
+  "codeWsModelPickerCustomHint": "e.g. anthropic/claude-sonnet-4-6",
+  "codeWsModelPickerEmpty": "No matching models found",
+  "codeWsModelPickerDefaultSubtitle": "Follow current executor default configuration",
+  "codeWsProjectPickerSearchHint": "Search project name or path…",
+  "codeWsProjectPickerEmpty": "No matching projects found",
+  "chatCameraPermissionDenied": "Camera or photo library permission denied. No photo was sent.",
+  "chatActionPickGallery": "Choose from Photo Library"
+}

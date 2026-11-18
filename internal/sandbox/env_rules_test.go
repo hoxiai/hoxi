@@ -7,8 +7,8 @@ import (
 )
 
 func TestSandboxDeniesNestedDotEnvReads(t *testing.T) {
-	if !Available() {
-		t.Skip("seatbelt backend unavailable")
+	if !CanApply() {
+		t.Skip("seatbelt sandbox_apply unavailable or blocked by outer sandbox")
 	}
 	workspace := t.TempDir()
 	write := func(rel string) string {

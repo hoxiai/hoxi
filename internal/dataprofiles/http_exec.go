@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -33,11 +34,24 @@ func (s *Service) invokeHTTPRequest(ctx context.Context, prof Profile, req Invok
 	if ep == "" {
 		ep = "/"
 	}
-	if !strings.HasPrefix(ep, "/") || strings.HasPrefix(ep, "//") || strings.Contains(ep, "://") {
+	if !strings.HasPrefix(ep, "/") || strings.HasPrefix(ep, "//") || strings.Contains(ep, "://") || strings.ContainsAny(ep, "\\\r\n\x00") {
 		return nil, errors.New("endpoint must be a relative path starting with '/'")
 	}
-
-	targetURL := prof.BaseURL + ep
+	rawPath, _, _ := strings.Cut(ep, "?")
+	for _, seg := range strings.Split(rawPath, "/") {
+		if seg == ".." || strings.EqualFold(seg, "%2e%2e") || strings.EqualFold(seg, ".%2e") || strings.EqualFold(seg, "%2e.") {
+			return nil, errors.New("endpoint must not contain '..' path traversal segments")
+		}
+	}
+	baseParsed, err := url.Parse(strings.TrimRight(strings.TrimSpace(prof.BaseURL), "/"))
+	if err != nil || baseParsed.Host == "" {
+		return nil, errors.New("profile has invalid baseUrl")
+	}
+	targetURL := strings.TrimRight(strings.TrimSpace(prof.BaseURL), "/") + ep
+	targetParsed, err := url.Parse(targetURL)
+	if err != nil || targetParsed.Scheme != baseParsed.Scheme || !strings.EqualFold(targetParsed.Host, baseParsed.Host) {
+		return nil, errors.New("endpoint resolved outside configured baseUrl origin")
+	}
 	var bodyReader io.Reader
 	if req.Body != nil && method != http.MethodGet && method != http.MethodHead {
 		encoded, err := json.Marshal(req.Body)

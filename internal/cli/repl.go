@@ -10,6 +10,7 @@ import (
 
 	"github.com/hoxiai/hoxi/internal/buildinfo"
 	"github.com/hoxiai/hoxi/internal/handoff"
+	"github.com/hoxiai/hoxi/internal/llm"
 	"github.com/hoxiai/hoxi/internal/runner"
 )
 
@@ -138,7 +139,7 @@ func RunREPL(
 		}
 
 		if strings.HasPrefix(line, "/") {
-			done := handleSlashCommand(ctx, line, client, &opts, &session, ensureSession, stdout, stderr)
+			done := handleSlashCommand(ctx, line, client, &opts, &session, ensureSession, runPrompt, stdout, stderr)
 			if done {
 				return 0
 			}
@@ -153,7 +154,7 @@ func formatModelLabel(runtime, providerID, modelID string) string {
 	if modelID == "" {
 		return "(default)"
 	}
-	if NormalizeRuntime(runtime) == "opencode" && providerID != "" {
+	if isCatalogRuntime(NormalizeRuntime(runtime)) && providerID != "" {
 		return providerID + "/" + modelID
 	}
 	return modelID
@@ -189,6 +190,7 @@ func handleSlashCommand(
 	opts *Options,
 	session **runner.SessionInfo,
 	ensureSession func() (*runner.SessionInfo, error),
+	runPrompt func(string),
 	stdout, stderr io.Writer,
 ) bool {
 	fields := strings.Fields(line)
@@ -207,6 +209,7 @@ func handleSlashCommand(
   /runtime <opencode|claude|agy|gemini-cli|qoder|codebuddy>  Switch active agent runtime
   /model [provider/model | model-id]              List or switch active model
   /mode <build|plan>                              Switch agent mode
+  /plan [prompt] / /build [prompt]                Switch mode (and optionally send prompt)
   /worktree [on|off|status|diff|apply]            Manage Git worktree isolation
   /diff                                           Show modified files in current session
   /sessions                                       List recent sessions in this workspace
@@ -216,6 +219,29 @@ func handleSlashCommand(
   /tui                                            Launch full-screen OpenCode TUI
   /new                                            Start a fresh session
   /exit                                           Exit Hoxi CLI`)
+		targetDir := opts.Directory
+		if *session != nil && (*session).Directory != "" {
+			targetDir = (*session).Directory
+		}
+		if promptCmds := llm.LoadCommands(targetDir, nil); len(promptCmds) > 0 {
+			var lines []string
+			for _, spec := range promptCmds {
+				if strings.EqualFold(spec.Name, "compact") || strings.TrimSpace(spec.Template) == "" {
+					continue
+				}
+				label := "/" + spec.Name
+				if len(spec.Hints) > 0 {
+					label += " " + strings.Join(spec.Hints, " ")
+				}
+				lines = append(lines, fmt.Sprintf("  %-47s %s", label, spec.Description))
+			}
+			if len(lines) > 0 {
+				fmt.Fprintln(stdout, "\nPrompt Commands:")
+				for _, l := range lines {
+					fmt.Fprintln(stdout, l)
+				}
+			}
+		}
 
 	case "/new", "/clear":
 		*session = nil
@@ -224,12 +250,12 @@ func handleSlashCommand(
 
 	case "/runtime", "/r":
 		if arg == "" {
-			fmt.Fprintf(stdout, "Current runtime: %s (available: opencode, claude, agy, gemini-cli, qoder, codebuddy)\n", opts.Runtime)
+			fmt.Fprintf(stdout, "Current runtime: %s (available: native, opencode, claude, agy, gemini-cli, qoder, codebuddy)\n", opts.Runtime)
 			return false
 		}
 		rt := NormalizeRuntime(arg)
 		if rt != "opencode" && !runner.IsValidRuntime(rt) {
-			fmt.Fprintf(stderr, "Unsupported runtime %q (use: opencode, claude, agy, gemini-cli, qoder, codebuddy)\n", arg)
+			fmt.Fprintf(stderr, "Unsupported runtime %q (use: native, opencode, claude, agy, gemini-cli, qoder, codebuddy)\n", arg)
 			return false
 		}
 		newProv, newMod := client.ResolveModel(ctx, opts.Directory, rt, "", "")
@@ -269,6 +295,24 @@ func handleSlashCommand(
 		}
 		opts.Mode = arg
 		fmt.Fprintf(stdout, "%s✓ Mode set to %s%s\n", ansiGreen, arg, ansiReset)
+
+	case "/plan", "/build":
+		targetDir := opts.Directory
+		if *session != nil && (*session).Directory != "" {
+			targetDir = (*session).Directory
+		}
+		if _, hasCustom := llm.ExpandSlashCommand(line, targetDir, nil); hasCustom {
+			runPrompt(line)
+			return false
+		}
+		targetMode := strings.TrimPrefix(cmd, "/")
+		opts.Mode = targetMode
+		if arg == "" {
+			fmt.Fprintf(stdout, "%s✓ Mode set to %s%s\n", ansiGreen, targetMode, ansiReset)
+			return false
+		}
+		rawRest := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), fields[0]))
+		runPrompt(rawRest)
 
 	case "/worktree", "/wt":
 		switch strings.ToLower(arg) {
@@ -398,9 +442,21 @@ func handleSlashCommand(
 		if err == nil && s != nil && s.Directory != "" {
 			targetDir = s.Directory
 		}
-		_ = runNativeOpenCodeTUI(ctx, nil, targetDir, stdout, stderr)
+		if hasOpenCodeBinary() {
+			_ = runNativeOpenCodeTUI(ctx, nil, targetDir, opts.BridgeAddr, nil, nil, stdout, stderr)
+		} else {
+			fmt.Fprintln(stdout, "Already running Hoxi Native interactive terminal (opencode binary is not installed).")
+		}
 
 	default:
+		targetDir := opts.Directory
+		if *session != nil && (*session).Directory != "" {
+			targetDir = (*session).Directory
+		}
+		if _, ok := llm.ExpandSlashCommand(line, targetDir, nil); ok {
+			runPrompt(line)
+			return false
+		}
 		fmt.Fprintf(stderr, "Unknown command %q (type /help for available commands)\n", cmd)
 	}
 	return false

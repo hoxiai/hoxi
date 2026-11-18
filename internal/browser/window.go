@@ -368,6 +368,7 @@ func (sc *scope) resetBrowser() {
 	clear(sc.tabCancels)
 	clear(sc.viewports)
 	clear(sc.diagnostics)
+	clear(sc.snapshotRefs)
 	if sc.allocatorCancel != nil {
 		sc.allocatorCancel()
 		sc.allocatorCancel = nil

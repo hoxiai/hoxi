@@ -2,13 +2,15 @@ package agent
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
 const nativeCodingGuidance = `<native_agent_guidelines>
-- Batch independent read-only tool calls (code_search, symbol_inspect, impact_analysis, read, glob, grep, todoread, webfetch, task) together in a single response so they execute concurrently.
-- Prefer code_search, symbol_inspect, and impact_analysis to locate definitions, callers, callees, and blast radius before refactoring or scanning broadly with grep.
+- Batch independent read-only tool calls (hoxi_code_index, code_search, symbol_inspect, impact_analysis, read, glob, grep, todoread, webfetch, task) together in a single response so they execute concurrently.
+- Prefer hoxi_code_index (action='context' for symbol source + callees + callers + blast radius + tests in 1 call, or search/inspect/callers/callees/impact/refresh) before refactoring or scanning broadly with grep.
 - Track multi-step tasks with todowrite so progress stays visible, and use question when key requirements or choices are genuinely ambiguous.
 - Always read relevant lines before editing; prefer multiedit for single-file multi-hunk edits and apply_patch for coordinated multi-file changes so edits apply atomically with automatic compiler diagnostics.
 - Whenever edit/multiedit/write/apply_patch returns compiler or linter Diagnostics, resolve all introduced errors before finishing.
@@ -20,7 +22,18 @@ const nativeCodingGuidance = `<native_agent_guidelines>
 - In hoxi_computer, inspect state or a screenshot before acting, operate only on the user-authorized app, never run shell commands via desktop control, never interact with Hoxi or OS security settings, never type into password fields, and never bypass a denied, paused, or revoked tool with scripts or other tools.
 </hoxi_tool_safety>`
 
+const planModeConsentGuidance = `<plan_mode_protocol>
+- Session is currently in read-only Plan mode: inspect code, callers, and blast radius thoroughly using read-only tools before proposing changes.
+- When the user's request involves concrete code or workspace modifications, present your proposed plan via the plan_consent tool (with title, summary, ordered steps, candidate files, and risks) so the user can either click 'Approve & Build' to unlock Build mode immediately in this turn or request revisions.
+- For pure informational questions, audits, or explanations where no changes are requested, answer directly without calling plan_consent.
+</plan_mode_protocol>`
+
 func buildSystemPrompt(worktreeDir, callerSystem, driverPatch, effectiveMode string, subtaskDepth int) string {
+	prompt, _ := buildSystemPromptWithRules(worktreeDir, callerSystem, driverPatch, effectiveMode, subtaskDepth, nil)
+	return prompt
+}
+
+func buildSystemPromptWithRules(worktreeDir, callerSystem, driverPatch, effectiveMode string, subtaskDepth int, cfgDoc map[string]any) (string, RulesLoadResult) {
 	var b strings.Builder
 	if strings.TrimSpace(callerSystem) != "" {
 		b.WriteString(strings.TrimSpace(callerSystem))
@@ -32,25 +45,29 @@ func buildSystemPrompt(worktreeDir, callerSystem, driverPatch, effectiveMode str
 	}
 	b.WriteString(nativeCodingGuidance)
 	b.WriteString("\n\n")
-	includeProjectInstructions := subtaskDepth == 0 || !strings.EqualFold(strings.TrimSpace(effectiveMode), "plan")
-	if includeProjectInstructions && strings.TrimSpace(worktreeDir) != "" {
-		for _, name := range []string{"AGENTS.md", "CLAUDE.md"} {
-			if raw, err := os.ReadFile(filepath.Join(worktreeDir, name)); err == nil {
-				txt := strings.TrimSpace(string(raw))
-				if len(txt) > 12000 {
-					txt = txt[:12000] + "\n...[truncated]"
-				}
-				if txt != "" {
-					b.WriteString("<project_instructions file=\"")
-					b.WriteString(name)
-					b.WriteString("\">\n")
-					b.WriteString(txt)
-					b.WriteString("\n</project_instructions>\n\n")
-				}
-			}
+	if strings.EqualFold(strings.TrimSpace(effectiveMode), "plan") && subtaskDepth == 0 {
+		b.WriteString(planModeConsentGuidance)
+		b.WriteString("\n\n")
+	}
+	if !strings.Contains(callerSystem, "<environment>") {
+		if envBlock := buildEnvironmentPrompt(worktreeDir); envBlock != "" {
+			b.WriteString(envBlock)
+			b.WriteString("\n\n")
 		}
 	}
-	return strings.TrimSpace(b.String())
+
+	var rulesRes RulesLoadResult
+	// Subtasks already inherit parent <project_instructions> via callerSystem; avoid
+	// re-reading root files at subtaskDepth > 0 unless parentSystem lacked them.
+	alreadyHasProjectRules := strings.Contains(callerSystem, "<project_instructions ")
+	if !alreadyHasProjectRules && (strings.TrimSpace(worktreeDir) != "" || cfgDoc != nil) {
+		rulesRes = loadProjectRules(worktreeDir, cfgDoc)
+		if rulesRes.Rendered != "" {
+			b.WriteString(rulesRes.Rendered)
+			b.WriteString("\n\n")
+		}
+	}
+	return strings.TrimSpace(b.String()), rulesRes
 }
 
 // extractInheritedSubtaskConstraints derives mandatory parent rules and project
@@ -62,13 +79,27 @@ func extractInheritedSubtaskConstraints(parentSystem string, readOnly bool) stri
 		return ""
 	}
 	if readOnly {
+		var sections []string
 		if mem := extractTaggedSection(cleaned, "<project_memory>", "</project_memory>"); mem != "" {
-			return mem
+			sections = append(sections, mem)
 		}
-		return ""
+		for _, instr := range extractAllTaggedSections(cleaned, "<project_instructions ", "</project_instructions>") {
+			sections = append(sections, instr)
+		}
+		if notice := extractTaggedSection(cleaned, "<rules_budget_notice ", "</rules_budget_notice>"); notice != "" {
+			sections = append(sections, notice)
+		}
+		if len(sections) == 0 {
+			return ""
+		}
+		joined := strings.Join(sections, "\n\n")
+		if sliced, trunc := truncateUTF8Safe(joined, DefaultProjectRulesBudgetBytes); trunc {
+			joined = sliced + "\n...[truncated]"
+		}
+		return "<inherited_parent_constraints>\n" + joined + "\n</inherited_parent_constraints>"
 	}
-	if len(cleaned) > 16000 {
-		cleaned = cleaned[:16000] + "\n...[truncated]"
+	if sliced, trunc := truncateUTF8Safe(cleaned, DefaultProjectRulesBudgetBytes); trunc {
+		cleaned = sliced + "\n...[truncated]"
 	}
 	return "<inherited_parent_constraints>\n" + cleaned + "\n</inherited_parent_constraints>"
 }
@@ -100,4 +131,56 @@ func extractTaggedSection(s, openTag, closeTag string) string {
 		return ""
 	}
 	return strings.TrimSpace(s[start : start+end+len(closeTag)])
+}
+
+func extractAllTaggedSections(s, openTag, closeTag string) []string {
+	var out []string
+	rem := s
+	for {
+		start := strings.Index(rem, openTag)
+		if start < 0 {
+			break
+		}
+		end := strings.Index(rem[start:], closeTag)
+		if end < 0 {
+			break
+		}
+		spanEnd := start + end + len(closeTag)
+		out = append(out, strings.TrimSpace(rem[start:spanEnd]))
+		rem = rem[spanEnd:]
+	}
+	return out
+}
+
+func buildEnvironmentPrompt(worktreeDir string) string {
+	exists := func(p string) bool {
+		st, err := os.Stat(filepath.FromSlash(p))
+		return err == nil && !st.IsDir()
+	}
+	return buildEnvironmentPromptForPlatform(runtime.GOOS, runtime.GOARCH, worktreeDir, os.Getenv, exists, exec.LookPath)
+}
+
+func buildEnvironmentPromptForPlatform(
+	goos, goarch, worktreeDir string,
+	getenv func(string) string,
+	fileExists func(string) bool,
+	lookPath func(string) (string, error),
+) string {
+	var lines []string
+	lines = append(lines, "<environment>")
+	lines = append(lines, "Platform: "+strings.TrimSpace(goos)+"/"+strings.TrimSpace(goarch))
+	if wd := strings.TrimSpace(worktreeDir); wd != "" {
+		lines = append(lines, "Working directory: "+wd)
+	}
+	if goos == "windows" {
+		if bashBin := resolveWindowsGitBash(getenv, fileExists, lookPath); bashBin != "" {
+			lines = append(lines, "Shell (bash tool): "+bashBin+" -c (Git Bash / POSIX syntax on Windows; quote paths with spaces or use forward slashes, and invoke 'powershell -NoProfile -Command ...' when Windows-native cmdlets are needed)")
+		} else {
+			lines = append(lines, `Shell (bash tool): cmd.exe /C (Windows Command Prompt; Git Bash is not installed — do NOT use POSIX-only commands like ls/rm/cat/grep or single-quoted strings in bash; prefer built-in read/glob/grep/edit/write tools, valid cmd.exe syntax, or 'powershell -NoProfile -Command "..."')`)
+		}
+	} else {
+		lines = append(lines, "Shell (bash tool): /bin/sh -c (POSIX sh)")
+	}
+	lines = append(lines, "</environment>")
+	return strings.Join(lines, "\n")
 }

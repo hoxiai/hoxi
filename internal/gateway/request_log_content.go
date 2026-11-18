@@ -1,11 +1,8 @@
 package gateway
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -15,7 +12,6 @@ import (
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
 	"github.com/hoxiai/hoxi/internal/runner"
 	"github.com/hoxiai/hoxi/internal/sqlitecli"
-	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 // requestLogContentMaxChars bounds each text part so an enormous reply cannot
@@ -129,17 +125,15 @@ func openCodeRequestContent(sessionID, messageID string) requestContent {
 	if _, err := os.Stat(dbPath); err != nil {
 		return requestContent{}
 	}
-	msgLit := sqlLiteral(messageID)
-	sesLit := sqlLiteral(sessionID)
-	sqlQuery := fmt.Sprintf(`SELECT json_object(
-  'found', (SELECT COUNT(*) FROM message WHERE id = %s),
+	const sqlQuery = `SELECT json_object(
+  'found', (SELECT COUNT(*) FROM message WHERE id = ?),
   'input', COALESCE((
     SELECT json_group_array(json_object('data', d.data)) FROM (
       SELECT p.data AS data FROM part p WHERE p.message_id = (
         SELECT m.id FROM message m
-        WHERE m.session_id = COALESCE(NULLIF(%s, ''), (SELECT m2.session_id FROM message m2 WHERE m2.id = %s))
+        WHERE m.session_id = COALESCE(NULLIF(?, ''), (SELECT m2.session_id FROM message m2 WHERE m2.id = ?))
           AND json_extract(m.data, '$.role') = 'user'
-          AND m.time_created <= (SELECT time_created FROM message WHERE id = %s)
+          AND m.time_created <= (SELECT time_created FROM message WHERE id = ?)
         ORDER BY m.time_created DESC, m.id DESC LIMIT 1
       ) AND json_extract(p.data, '$.type') IN ('text', 'reasoning')
       ORDER BY p.time_created, p.id
@@ -148,26 +142,28 @@ func openCodeRequestContent(sessionID, messageID string) requestContent {
   'output', COALESCE((
     SELECT json_group_array(json_object('data', d.data)) FROM (
       SELECT p.data AS data FROM part p
-      WHERE p.message_id = %s
+      WHERE p.message_id = ?
         AND json_extract(p.data, '$.type') IN ('text', 'reasoning')
       ORDER BY p.time_created, p.id
     ) d
   ), json('[]'))
-);`, msgLit, sesLit, msgLit, msgLit, msgLit)
+);`
 
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
-	cmd := subproc.CommandContext(ctx, sqlitecli.Executable(), "-readonly", "-cmd", ".timeout 5000", dbPath, sqlQuery)
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
+	var rawOut string
+	if err := sqlitecli.QueryRowReadOnly(
+		ctx,
+		dbPath,
+		5*time.Second,
+		sqlQuery,
+		[]any{messageID, sessionID, messageID, messageID, messageID},
+		&rawOut,
+	); err != nil {
 		return requestContent{}
 	}
-	if err := cmd.Start(); err != nil {
-		return requestContent{}
-	}
-	out, readErr := io.ReadAll(io.LimitReader(stdout, requestLogContentMaxBytes))
-	_ = cmd.Wait()
-	if readErr != nil || len(bytes.TrimSpace(out)) == 0 {
+	trimmed := strings.TrimSpace(rawOut)
+	if trimmed == "" || len(trimmed) > requestLogContentMaxBytes {
 		return requestContent{}
 	}
 	var payload struct {
@@ -175,7 +171,7 @@ func openCodeRequestContent(sessionID, messageID string) requestContent {
 		Input  []partData `json:"input"`
 		Output []partData `json:"output"`
 	}
-	if err := json.Unmarshal(bytes.TrimSpace(out), &payload); err != nil || payload.Found == 0 {
+	if err := json.Unmarshal([]byte(trimmed), &payload); err != nil || payload.Found == 0 {
 		return requestContent{}
 	}
 	content := requestContent{Found: true}
@@ -223,10 +219,4 @@ func clipText(v string) (string, bool) {
 	runes := []rune(v)
 	// Slice on runes so a multi-byte character is never cut in half.
 	return string(runes[:requestLogContentMaxChars]) + "…", true
-}
-
-// sqlLiteral quotes a value for the sqlite3 CLI. SQLite string literals have no
-// backslash escapes, so doubling single quotes is sufficient.
-func sqlLiteral(v string) string {
-	return "'" + strings.ReplaceAll(strings.ReplaceAll(v, "\x00", ""), "'", "''") + "'"
 }

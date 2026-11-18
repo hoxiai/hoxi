@@ -8,11 +8,16 @@ import {
 import { hoxiAPI, type PromptAttachment } from "../../services/api";
 import {
   applyAutocompleteToken,
+  applySlashCommandToken,
   createComposerAutocomplete,
   expandContextMentions,
   findAutocompleteToken,
+  inspectActiveSlashCommand,
   inspectPromptContextMentions,
+  removeLeadingSlashCommand,
   resolveContextMentionsForSend,
+  resolveSentSlashCommand,
+  type ActiveSlashCommandInfo,
   type AutocompleteItem,
   type AutocompleteToken,
   type ContextMentionChipInfo,
@@ -33,6 +38,7 @@ import {
 
 export {
   applyAutocompleteToken,
+  applySlashCommandToken,
   bumpDraftEpoch,
   composerDraftKey,
   createComposerAutocomplete,
@@ -42,8 +48,12 @@ export {
   expandContextMentions,
   findAutocompleteToken,
   getDraftEpoch,
+  inspectActiveSlashCommand,
   inspectPromptContextMentions,
+  removeLeadingSlashCommand,
   resolveContextMentionsForSend,
+  resolveSentSlashCommand,
+  type ActiveSlashCommandInfo,
   type AttachmentKind,
   type AutocompleteItem,
   type AutocompleteToken,

@@ -8,6 +8,7 @@ import {
   isSubagentToolInterrupted,
   openChangedFileInInspector,
   openFileInInspector,
+  openImagePreview,
   resolveSubagentTitle,
   revertToHere,
   selectSession,
@@ -26,8 +27,8 @@ import {
   ActionIconButton,
   extractCommand, extractDescription,
   extractShellOutput, extractTargetFile, formatToolDisplayName, getDirectory, getFilename,
-  hasDistinctShellDescription, InlineDiagnosticsDisplay, isComputerTool, isEditingTool, isQuestionTool, isReadTool, isShellTool, isShellAwaitingFirstOutput,
-  isTaskTool, isTodoTool, kiloToolIconName, processCarriageReturns,
+  hasDistinctShellDescription, InlineDiagnosticsDisplay, isBrowserTool, isComputerTool, isEditingTool, isImageGenTool, isQuestionTool, isReadTool, isShellTool, isShellAwaitingFirstOutput,
+  isTaskTool, isTodoTool, kiloToolIconName, processCarriageReturns, resolveToolMediaAttachments,
   ToolCardExpandedBody, type ToolPart,
 } from "./tool-card-helpers";
 import {
@@ -50,7 +51,7 @@ const MAX_TOOL_CARD_EXPANSION_ENTRIES = 512;
 const toolCardExpansion = new Map<string, boolean>();
 
 export default function ToolCard(props: { part: ToolPart; defaultExpanded?: boolean }) {
-  const initiallyExpanded = toolCardExpansion.get(props.part.id) ?? false;
+  const initiallyExpanded = toolCardExpansion.get(props.part.id) ?? Boolean(props.defaultExpanded || isImageGenTool(props.part.tool));
   const [expanded, setExpandedSignal] = createSignal(initiallyExpanded);
   const setExpanded = (next: boolean) => {
     if (toolCardExpansion.has(props.part.id)) {
@@ -165,6 +166,7 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
   const fileDiagnostics = createMemo(() =>
     everExpanded() ? resolveToolFileDiagnostics(props.part, isEdit(), targetFile() || "") : []
   );
+  const mediaAttachments = createMemo(() => resolveToolMediaAttachments(props.part.state));
 
   // Auto-scroll shell output while streaming
   createEffect(() => {
@@ -491,6 +493,19 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
               )}
             </Show>
 
+            <Show when={isBrowserTool(props.part.tool)}>
+              <ActionIconButton
+                variant="accent"
+                label={t("toolCard.openBrowser")}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setWorkspace({ inspectorOpen: true, inspectorTab: "browser" });
+                }}
+              >
+                <Icon name="window-cursor" size="small" />
+              </ActionIconButton>
+            </Show>
+
             <Show when={isComputerTool(props.part.tool)}>
               <ActionIconButton
                 variant="accent"
@@ -501,6 +516,20 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
                 }}
               >
                 <Icon name="window-cursor" size="small" />
+              </ActionIconButton>
+            </Show>
+
+            <Show when={!expanded() && mediaAttachments().length > 0}>
+              <ActionIconButton
+                variant="accent"
+                label={t("timeline.previewImageTooltip")}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const first = mediaAttachments()[0];
+                  if (first) openImagePreview({ src: first.url, alt: first.filename || props.part.tool });
+                }}
+              >
+                <Icon name="photo" size="small" />
               </ActionIconButton>
             </Show>
 

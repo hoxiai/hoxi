@@ -89,9 +89,16 @@ func (s *Service) CloseAll() {
 	}
 }
 
-// ServeHTTP handles /pty, /pty/{id}, and /pty/{id}/connect (and /api/pty/*).
+// ServeHTTP handles /api/hoxi/pty, /api/hoxi/pty/{id}, and /api/hoxi/pty/{id}/connect
+// (plus legacy /pty/* and /api/pty/* routes).
 func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	cleanPath := strings.TrimPrefix(r.URL.Path, "/api")
+	cleanPath := r.URL.Path
+	switch {
+	case strings.HasPrefix(cleanPath, "/api/hoxi/pty"):
+		cleanPath = strings.TrimPrefix(cleanPath, "/api/hoxi")
+	case strings.HasPrefix(cleanPath, "/api/pty"):
+		cleanPath = strings.TrimPrefix(cleanPath, "/api")
+	}
 	trimmed := strings.Trim(strings.TrimPrefix(cleanPath, "/pty"), "/")
 	if trimmed == "" {
 		switch r.Method {
@@ -131,9 +138,12 @@ func (s *Service) handleList(w http.ResponseWriter) {
 	s.mu.RLock()
 	out := make([]map[string]any, 0, len(s.sessions))
 	for _, sess := range s.sessions {
+		sess.mu.Lock()
+		title := sess.title
+		sess.mu.Unlock()
 		out = append(out, map[string]any{
 			"id":     sess.id,
-			"title":  sess.title,
+			"title":  title,
 			"cwd":    sess.cwd,
 			"status": "running",
 		})
@@ -202,9 +212,12 @@ func (s *Service) handleGet(w http.ResponseWriter, id string) {
 		writePTYError(w, http.StatusNotFound, "terminal session not found")
 		return
 	}
+	sess.mu.Lock()
+	title := sess.title
+	sess.mu.Unlock()
 	writePTYJSON(w, http.StatusOK, map[string]any{
 		"id":     sess.id,
-		"title":  sess.title,
+		"title":  title,
 		"cwd":    sess.cwd,
 		"status": "running",
 	})

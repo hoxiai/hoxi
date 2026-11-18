@@ -50,7 +50,7 @@ func (s *Service) relinkSession(sessionID, oldRoot, newRoot string) error {
 	}
 
 	manager := s.worktrees.ForDirectory(newRoot)
-	mode := rec.sandboxMode()
+	mode := rec.SandboxModeValue()
 	newWorktree := newRoot
 	branch, baseCommit := "", ""
 	if mode == "worktree" {
@@ -106,7 +106,7 @@ func (s *Service) relinkSession(sessionID, oldRoot, newRoot string) error {
 	}
 
 	sandboxMode := ""
-	if mode != rec.sandboxMode() {
+	if mode != rec.SandboxModeValue() {
 		sandboxMode = mode
 	}
 	updated, updatedOK, err := s.store.RelinkSession(rec.ID, newRoot, newWorktree, branch, baseCommit, sandboxMode)
@@ -154,7 +154,7 @@ func (s *Service) healAndListProjectRecords(projectID, directory string) []Sessi
 		return nil
 	}
 	scopeDir := s.projectScopeDirectory(projectID, directory)
-	records := s.store.listProjectRecords(projectID, scopeDir)
+	records := s.store.ListProjectRecords(projectID, scopeDir)
 	if len(records) == 0 || s.projectResolver == nil {
 		return records
 	}
@@ -190,7 +190,7 @@ func (s *Service) healAndListProjectRecords(projectID, directory string) []Sessi
 		}
 	}
 	if healed {
-		return s.store.listProjectRecords(projectID, scopeDir)
+		return s.store.ListProjectRecords(projectID, scopeDir)
 	}
 	return records
 }

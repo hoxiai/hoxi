@@ -79,6 +79,8 @@ function sourceLabel(source: string): string {
       return t("approval.sourceOwnProcess");
     case "sandbox":
       return t("approval.sourceSandbox");
+    case "checkpoint":
+      return t("approval.sourceCheckpoint");
     case "grant":
       return t("approval.sourceGrant");
     default:

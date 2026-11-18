@@ -64,6 +64,13 @@ func readPID(t *testing.T, path string) int {
 	return 0
 }
 
+func requireProcessSnapshots(t *testing.T) {
+	t.Helper()
+	if byPID, _ := readProcessSnapshots(); byPID[os.Getpid()].PID == 0 {
+		t.Skip("OS process table args unavailable inside outer host sandbox")
+	}
+}
+
 func assertProcessGone(t *testing.T, pid int) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
@@ -149,6 +156,7 @@ func TestSilentTurnIsFlaggedThenStopped(t *testing.T) {
 // A CLI that ignores SIGINT and runs its tool command in a process group of
 // its own (as Claude Code does) must not leave that command behind on Stop.
 func TestAbortKillsToolInOwnProcessGroup(t *testing.T) {
+	requireProcessSnapshots(t)
 	svc := newStallTestService(t)
 	pidFile := filepath.Join(t.TempDir(), "pid")
 	t.Setenv("HOXI_TEST_PIDFILE", pidFile)
@@ -257,6 +265,7 @@ wait
 }
 
 func TestStopToolCommandKeepsTurnAliveAndContinues(t *testing.T) {
+	requireProcessSnapshots(t)
 	svc := newStallTestService(t)
 	sessionID := "ses_stop_tool"
 	events, unsub := svc.Subscribe(sessionID)
@@ -367,6 +376,7 @@ func TestStopToolCommandNoMatchKillsNothing(t *testing.T) {
 // Stopping a command in one session must never reach another session's
 // processes, even when their command lines are identical.
 func TestStopToolCommandSparesSiblingSession(t *testing.T) {
+	requireProcessSnapshots(t)
 	svc := newStallTestService(t)
 	_, siblingPID := startSleepingTurn(t, svc, "ses_stop_sibling", "302")
 	_, targetPID := startSleepingTurn(t, svc, "ses_stop_target", "302")
@@ -546,8 +556,8 @@ func TestStripOpenCodeStopMarker(t *testing.T) {
 
 func TestSelectOpenCodeDaemonPIDPrefersLeaf(t *testing.T) {
 	byPID := map[int]procSnapshot{
-		100: {pid: 100, ppid: 1, pgid: 100, args: "/bin/sh -c opencode serve --hostname 127.0.0.1 --port 5432"},
-		200: {pid: 200, ppid: 100, pgid: 100, args: "/usr/local/bin/opencode serve --hostname 127.0.0.1 --port 5432"},
+		100: {PID: 100, PPID: 1, PGID: 100, Args: "/bin/sh -c opencode serve --hostname 127.0.0.1 --port 5432"},
+		200: {PID: 200, PPID: 100, PGID: 100, Args: "/usr/local/bin/opencode serve --hostname 127.0.0.1 --port 5432"},
 	}
 	children := map[int][]int{
 		1:   {100},
@@ -600,6 +610,7 @@ func TestStopOpenCodeToolProcessSubagentCallIDFallbackAndTrapExit(t *testing.T) 
 // the root process and everything it backgrounds becomes its children.
 func startFakeDaemon(t *testing.T, script string, args ...string) (*exec.Cmd, string) {
 	t.Helper()
+	requireProcessSnapshots(t)
 	dir := t.TempDir()
 	bin := execstub.Write(t, dir, "fake-opencode-serve", script+"\n")
 	pidFile := filepath.Join(dir, "pid")
@@ -613,6 +624,7 @@ func startFakeDaemon(t *testing.T, script string, args ...string) (*exec.Cmd, st
 
 // Stopped-tool marks are dropped once the turn ends.
 func TestStopToolCommandClearsMarksWhenTurnEnds(t *testing.T) {
+	requireProcessSnapshots(t)
 	svc := newStallTestService(t)
 	ap, _ := startSleepingTurn(t, svc, "ses_stop_marks", "303")
 	if _, err := svc.StopToolCommand("ses_stop_marks", "toolu_marks", "", "sleep 303"); err != nil {

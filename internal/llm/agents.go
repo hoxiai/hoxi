@@ -211,34 +211,30 @@ func LoadAgents(worktreeDir string, extraCfg map[string]any) ([]AgentSpec, map[s
 
 // IsSubagentAllowed evaluates global `permission.task` and primary-agent `permission.task` rules.
 func IsSubagentAllowed(primaryMode, targetSubagent string, byKey map[string]AgentSpec, cfgDoc map[string]any) bool {
+	return EvalTaskPolicyDecision(primaryMode, targetSubagent, byKey, cfgDoc) != "deny"
+}
+
+// EvalTaskPolicyDecision resolves "allow" | "ask" | "deny" for delegating to
+// targetSubagent from primaryMode, checking disabled state, primary-agent
+// TaskPolicy, and global permission.task rules deterministically.
+func EvalTaskPolicyDecision(primaryMode, targetSubagent string, byKey map[string]AgentSpec, cfgDoc map[string]any) string {
 	targetLower := strings.ToLower(strings.TrimSpace(targetSubagent))
 	if spec, ok := byKey[targetLower]; ok && spec.Disable {
-		return false
+		return "deny"
 	}
 	if pSpec, ok := byKey[strings.ToLower(strings.TrimSpace(primaryMode))]; ok && pSpec.TaskPolicy != nil {
-		switch pol := pSpec.TaskPolicy.(type) {
-		case string:
-			if strings.EqualFold(pol, "deny") {
-				return false
-			}
-			if strings.EqualFold(pol, "allow") || strings.EqualFold(pol, "ask") {
-				return true
-			}
-		case map[string]any:
-			decision := matchWildcardPolicy(pol, targetSubagent)
-			if decision != "" {
-				return !strings.EqualFold(decision, "deny")
-			}
+		if dec := EvalWildcardPolicy(pSpec.TaskPolicy, targetSubagent); dec != "" {
+			return dec
 		}
 	}
 	if cfgDoc != nil {
 		if perm, ok := cfgDoc["permission"].(map[string]any); ok {
-			if taskPol, ok := perm["task"].(string); ok && strings.EqualFold(taskPol, "deny") {
-				return false
+			if dec := EvalWildcardPolicy(perm["task"], targetSubagent); dec != "" {
+				return dec
 			}
 		}
 	}
-	return true
+	return "allow"
 }
 
 // SplitModelRef splits "providerID/modelID" into provider and model (preserving slashes inside modelID).
@@ -254,31 +250,93 @@ func SplitModelRef(raw string) (string, string) {
 	return strings.TrimSpace(s[:slash]), strings.TrimSpace(s[slash+1:])
 }
 
-func matchWildcardPolicy(rules map[string]any, name string) string {
-	if action, ok := rules[name].(string); ok && action != "" {
-		return action
+func normalizePolicyAction(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "deny":
+		return "deny"
+	case "ask":
+		return "ask"
+	case "allow":
+		return "allow"
+	default:
+		return ""
 	}
-	for k, v := range rules {
-		if strings.EqualFold(k, name) {
-			if s, ok := v.(string); ok && s != "" {
-				return s
+}
+
+func policyActionRank(act string) int {
+	switch act {
+	case "deny":
+		return 3
+	case "ask":
+		return 2
+	case "allow":
+		return 1
+	default:
+		return 0
+	}
+}
+
+func hasGlobMeta(pattern string) bool {
+	return strings.ContainsAny(pattern, "*?[")
+}
+
+// EvalWildcardPolicy evaluates a string or map-valued task permission policy
+// without depending on Go map iteration order:
+//  1. Exact literal target name match (no glob metacharacters, case-insensitive).
+//  2. Specific wildcard patterns (excluding catch-all "*").
+//  3. Catch-all "*" fallback.
+//
+// Within any tier where multiple entries match (e.g. overlapping wildcards such
+// as "explore-*": "allow" and "*-secret": "deny"), the most restrictive action
+// wins deterministically (deny > ask > allow).
+func EvalWildcardPolicy(raw any, name string) string {
+	switch pol := raw.(type) {
+	case string:
+		return normalizePolicyAction(pol)
+	case map[string]any:
+		trimmedName := strings.TrimSpace(name)
+		lowerName := strings.ToLower(trimmedName)
+		bestExact := ""
+		bestWildcard := ""
+		bestStar := ""
+		for rawPattern, v := range pol {
+			s, ok := v.(string)
+			if !ok {
+				continue
+			}
+			act := normalizePolicyAction(s)
+			if act == "" {
+				continue
+			}
+			pat := strings.TrimSpace(rawPattern)
+			if pat == "" {
+				continue
+			}
+			if pat == "*" {
+				if policyActionRank(act) > policyActionRank(bestStar) {
+					bestStar = act
+				}
+				continue
+			}
+			if !hasGlobMeta(pat) {
+				if strings.EqualFold(pat, trimmedName) && policyActionRank(act) > policyActionRank(bestExact) {
+					bestExact = act
+				}
+				continue
+			}
+			if matched, err := filepath.Match(strings.ToLower(pat), lowerName); err == nil && matched {
+				if policyActionRank(act) > policyActionRank(bestWildcard) {
+					bestWildcard = act
+				}
 			}
 		}
-	}
-	for pattern, v := range rules {
-		if pattern == "*" {
-			continue
+		if bestExact != "" {
+			return bestExact
 		}
-		s, ok := v.(string)
-		if !ok || s == "" {
-			continue
+		if bestWildcard != "" {
+			return bestWildcard
 		}
-		if matched, _ := filepath.Match(strings.ToLower(pattern), strings.ToLower(name)); matched {
-			return s
-		}
-	}
-	if star, ok := rules["*"].(string); ok {
-		return star
+		return bestStar
 	}
 	return ""
 }

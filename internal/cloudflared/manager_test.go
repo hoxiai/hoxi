@@ -48,7 +48,7 @@ func waitFor(t *testing.T, fn func() bool) bool {
 func TestStoreWritesWith0600(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "cloudflared.json")
 	store := NewStore(path)
-	if err := store.Save(Config{Enabled: true, Token: "secret", Hostname: "abc.node.hoxi.work"}); err != nil {
+	if err := store.Save(Config{Enabled: true, Token: "secret", Hostname: "abc.node.hoxi.ai"}); err != nil {
 		t.Fatalf("save: %v", err)
 	}
 	info, err := os.Stat(path)
@@ -62,7 +62,7 @@ func TestStoreWritesWith0600(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if !cfg.Enabled || cfg.Token != "secret" || cfg.Hostname != "abc.node.hoxi.work" {
+	if !cfg.Enabled || cfg.Token != "secret" || cfg.Hostname != "abc.node.hoxi.ai" {
 		t.Fatalf("config = %+v", cfg)
 	}
 }
@@ -98,17 +98,17 @@ func TestManagerEnableConnectsAndDisableStops(t *testing.T) {
 		Resolve: func() string { return "/usr/local/bin/cloudflared" },
 		Run:     fakeRun,
 	})
-	if err := m.Enable("cf-connector-token", "abc.node.hoxi.work"); err != nil {
+	if err := m.Enable("cf-connector-token", "abc.node.hoxi.ai"); err != nil {
 		t.Fatalf("enable: %v", err)
 	}
 	if !waitFor(t, func() bool { return m.Status().State == StateOnline }) {
 		t.Fatalf("status = %+v, want online", m.Status())
 	}
 	st := m.Status()
-	if !st.Enabled || !st.HasToken || st.Hostname != "abc.node.hoxi.work" {
+	if !st.Enabled || !st.HasToken || st.Hostname != "abc.node.hoxi.ai" {
 		t.Fatalf("status = %+v", st)
 	}
-	if m.Hostname() != "abc.node.hoxi.work" {
+	if m.Hostname() != "abc.node.hoxi.ai" {
 		t.Fatalf("Hostname() = %q", m.Hostname())
 	}
 	// The connector token must never appear in the status payload.
@@ -136,21 +136,21 @@ func TestManagerNormalizesHostnameURL(t *testing.T) {
 		Run:     fakeRun,
 	})
 	t.Cleanup(m.Stop)
-	if err := m.Enable("cf-token", "  https://abc.node.hoxi.work/path/  "); err != nil {
+	if err := m.Enable("cf-token", "  https://abc.node.hoxi.ai/path/  "); err != nil {
 		t.Fatalf("enable: %v", err)
 	}
-	if got := m.Hostname(); got != "abc.node.hoxi.work" {
-		t.Fatalf("Hostname() = %q, want abc.node.hoxi.work", got)
+	if got := m.Hostname(); got != "abc.node.hoxi.ai" {
+		t.Fatalf("Hostname() = %q, want abc.node.hoxi.ai", got)
 	}
-	if got := m.Status().Hostname; got != "abc.node.hoxi.work" {
-		t.Fatalf("Status().Hostname = %q, want abc.node.hoxi.work", got)
+	if got := m.Status().Hostname; got != "abc.node.hoxi.ai" {
+		t.Fatalf("Status().Hostname = %q, want abc.node.hoxi.ai", got)
 	}
 	cfg, err := store.Load()
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if cfg.Hostname != "abc.node.hoxi.work" {
-		t.Fatalf("persisted hostname = %q, want abc.node.hoxi.work", cfg.Hostname)
+	if cfg.Hostname != "abc.node.hoxi.ai" {
+		t.Fatalf("persisted hostname = %q, want abc.node.hoxi.ai", cfg.Hostname)
 	}
 }
 
@@ -194,7 +194,7 @@ func TestManagerEnableRejectsEmptyToken(t *testing.T) {
 		Resolve: func() string { return "" },
 		Run:     fakeRun,
 	})
-	if err := m.Enable("  ", "abc.node.hoxi.work"); err == nil {
+	if err := m.Enable("  ", "abc.node.hoxi.ai"); err == nil {
 		t.Fatal("expected an error for an empty token")
 	}
 }

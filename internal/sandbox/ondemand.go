@@ -67,7 +67,7 @@ func OnDemandProfile(workspace string, denyPorts []int) (Profile, error) {
 			AllowWrite:         allow,
 			DenyWrite:          deny,
 			DenyRead:           denyRead,
-			DenyNames:          []string{".git"},
+			DenyNames:          []string{".git", "hoxi.json"},
 			TemporaryDirectory: "/private/tmp",
 		},
 		Network: NetworkProfile{

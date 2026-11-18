@@ -3,11 +3,14 @@ import {
   extractDescription,
   extractShellOutput,
   extractRollingShellLines,
+  extractTargetFile,
   formatToolDisplayName,
   hasDistinctShellDescription,
   isShellAwaitingFirstOutput,
+  kiloToolIconName,
   processCarriageReturns,
   repairWindowsMojibake,
+  resolveToolMediaAttachments,
 } from "../components/timeline/tool-card-helpers";
 import {
   analyzeShellCommand,
@@ -19,7 +22,13 @@ import {
   resolveMergedTurnParts,
 } from "../components/timeline/context-activity-turns";
 import { summarizeStepTarget } from "../components/timeline/context-activity-summary";
-import { resolveReadLineRange, resolveToolArgPills } from "../components/timeline/tool-card-state";
+import {
+  extractTargetFiles,
+  parseApplyPatchText,
+  resolveReadLineRange,
+  resolveToolArgPills,
+  resolveToolFileDiffs,
+} from "../components/timeline/tool-card-state";
 import type { MessagePart, ToolPart, ToolState } from "../services/sse-types";
 import { dictionaries, setLocale } from "../i18n";
 import { type MessageTurn, setWorkspace, workspace } from "../store/workspace-state";
@@ -459,5 +468,177 @@ describe("localized tool labels for CLI runtimes", () => {
     assertEqual(extractCommand(part), "echo \u4e2d\u6587");
     assertEqual(extractDescription(part), "\u4e2d\u6587");
     assertEqual(extractShellOutput(part.state), expectedComment);
+  });
+
+  it("formats native host tool names, icons, subtitles, and mediaAttachments", () => {
+    setLocale("zh-CN");
+    assertEqual(formatToolDisplayName("hoxi_image"), "\u751f\u6210\u56fe\u7247");
+    assertEqual(formatToolDisplayName("hoxi_data"), "\u6570\u636e\u63a5\u53e3");
+    setLocale("en-US");
+    assertEqual(formatToolDisplayName("hoxi_image"), "Image");
+    assertEqual(formatToolDisplayName("hoxi_data"), "Data API");
+    setLocale("zh-CN");
+    assertEqual(kiloToolIconName("hoxi_image"), "photo");
+    assertEqual(kiloToolIconName("hoxi_data"), "server");
+    assertEqual(kiloToolIconName("hoxi_code_index"), "magnifying-glass-menu");
+
+    const mkPart = (tool: string, input: Record<string, unknown>, metadata?: Record<string, unknown>) =>
+      ({
+        id: "prt_1",
+        sessionID: "ses_1",
+        messageID: "msg_1",
+        type: "tool" as const,
+        tool,
+        callID: "call_1",
+        state: {
+          status: "completed" as const,
+          input,
+          output: "ok",
+          title: tool,
+          metadata: metadata ?? {},
+          time: { start: 1, end: 2 },
+        },
+      });
+
+    assertEqual(extractDescription(mkPart("hoxi_browser", { action: "click", selector: "@e3" })), "click @e3");
+    assertEqual(extractDescription(mkPart("hoxi_browser", { action: "type", selector: "@e5", text: "hello", key: "Enter" })), 'type @e5 "hello" + Enter');
+    assertEqual(extractDescription(mkPart("hoxi_browser", { action: "wait", selector: "#ready", timeoutMs: 1500 })), "wait #ready (1500ms)");
+    assertEqual(extractDescription(mkPart("hoxi_code_index", { action: "context", symbol: "RunTurn" })), "context RunTurn");
+    assertEqual(extractDescription(mkPart("hoxi_tools", { action: "run", provider: "apify", endpoint: "/v2/acts" })), "run apify /v2/acts");
+    assertEqual(extractDescription(mkPart("hoxi_data", { action: "http_request", method: "post", profile: "shopify", endpoint: "/orders" })), "POST shopify /orders");
+    assertEqual(extractDescription(mkPart("hoxi_image", { prompt: "Minimal geometric app icon" })), "Minimal geometric app icon");
+
+    const imgPart = mkPart("hoxi_image", { prompt: "icon" }, {
+      mediaAttachments: [
+        { url: "/api/hoxi/attachments/att_1", mime: "image/png", filename: "icon.png" },
+        { url: "/api/hoxi/attachments/att_1", mime: "image/png", filename: "dup.png" },
+      ],
+    });
+    const atts = resolveToolMediaAttachments(imgPart.state);
+    assertEqual(atts.length, 1);
+    assertEqual(atts[0].url, "/api/hoxi/attachments/att_1");
+
+    const errShotState: ToolState = {
+      status: "error",
+      input: { action: "click" },
+      error: "element not clickable",
+      metadata: {
+        mediaAttachments: [{ url: "/api/hoxi/attachments/att_err/content", mime: "image/jpeg", filename: "hoxi_browser.jpg" }],
+      },
+      time: { start: 1, end: 2 },
+    };
+    assertEqual(resolveToolMediaAttachments(errShotState).length, 1);
+  });
+
+  it("resolves inline diffs and target files for native apply_patch and multiedit", () => {
+    const pendingPatch: ToolPart = {
+      id: "prt_ap_1",
+      sessionID: "ses_1",
+      messageID: "msg_1",
+      callID: "call_ap_1",
+      type: "tool",
+      tool: "apply_patch",
+      state: {
+        status: "running",
+        input: {
+          patch: "*** Begin Patch\n*** Update File: a.go\n*** Move to: b.go\n@@\n-old\n+new\n*** Add File: c.go\n+pkg\n*** End Patch",
+        },
+        time: { start: 1 },
+      },
+    };
+    assertEqual(extractTargetFile(pendingPatch), "a.go");
+    assertDeepEqual(extractTargetFiles(pendingPatch), ["a.go", "b.go", "c.go"]);
+    const streamDiffs = resolveToolFileDiffs(pendingPatch, true, "a.go");
+    assertEqual(streamDiffs.length, 2);
+    assertEqual(streamDiffs[0].file, "b.go");
+    assertEqual(streamDiffs[0].additions, 1);
+    assertEqual(streamDiffs[0].deletions, 1);
+    assertEqual(streamDiffs[1].file, "c.go");
+
+    const unifiedDiffs = parseApplyPatchText("--- a/src/foo.rs\n+++ b/src/foo.rs\n@@ -1 +1 @@\n-fn a() {}\n+fn b() {}\n");
+    assertEqual(unifiedDiffs.length, 1);
+    assertEqual(unifiedDiffs[0].file, "src/foo.rs");
+    assertEqual(unifiedDiffs[0].additions, 1);
+    assertEqual(unifiedDiffs[0].deletions, 1);
+
+    const legacyPatch: ToolPart = {
+      id: "prt_ap_leg",
+      sessionID: "ses_1",
+      messageID: "msg_1",
+      callID: "call_ap_leg",
+      type: "tool",
+      tool: "apply_patch",
+      state: {
+        status: "completed",
+        input: { patch: "*** Begin Patch\n*** Update File: pkg/x.go\n@@\n-1\n+2\n*** End Patch" },
+        output: "ok",
+        title: "patched",
+        metadata: { files: ["M pkg/x.go", "R old.go -> new.go"] },
+        time: { start: 1, end: 2 },
+      },
+    };
+    assertEqual(extractTargetFile(legacyPatch), "pkg/x.go");
+    assertDeepEqual(extractTargetFiles(legacyPatch), ["pkg/x.go", "new.go"]);
+
+    const runningMulti: ToolPart = {
+      id: "prt_me_1",
+      sessionID: "ses_1",
+      messageID: "msg_1",
+      callID: "call_me_1",
+      type: "tool",
+      tool: "multiedit",
+      state: {
+        status: "running",
+        input: {
+          filePath: "web/app.ts",
+          edits: [
+            { oldString: "const a = 1;", newString: "const a = 2;" },
+            { oldString: "const b = 1;", newString: "const b = 3;" },
+          ],
+        },
+        time: { start: 1 },
+      },
+    };
+    const meDiffs = resolveToolFileDiffs(runningMulti, true, "web/app.ts");
+    assertEqual(meDiffs.length, 1);
+    assertEqual(meDiffs[0].file, "web/app.ts");
+    assertTrue(Boolean(meDiffs[0].before?.includes("const a = 1;") && meDiffs[0].after?.includes("const b = 3;")));
+
+    const pureMoveAndEmptyPatch: ToolPart = {
+      id: "prt_ap_move_empty",
+      sessionID: "ses_1",
+      messageID: "msg_1",
+      callID: "call_ap_move_empty",
+      type: "tool",
+      tool: "apply_patch",
+      state: {
+        status: "completed",
+        input: {
+          patch: "*** Begin Patch\n*** Update File: old.ts\n*** Move to: new.ts\n*** Add File: .gitkeep\n*** Delete File: gone.txt\n*** End Patch",
+        },
+        output: "patched 3 files",
+        title: "patched 3 files",
+        metadata: {
+          files: [
+            { filePath: "old.ts", movePath: "new.ts", relativePath: "new.ts", type: "move", before: "export {};\n", after: "export {};\n", additions: 0, deletions: 0 },
+            { filePath: ".gitkeep", relativePath: ".gitkeep", type: "add", before: "", after: "", additions: 0, deletions: 0 },
+            { filePath: "gone.txt", relativePath: "gone.txt", type: "delete", before: "", after: "", additions: 0, deletions: 0 },
+          ],
+        },
+        time: { start: 1, end: 2 },
+      },
+    };
+    const metaDiffs = resolveToolFileDiffs(pureMoveAndEmptyPatch, true, "new.ts");
+    assertEqual(metaDiffs.length, 3);
+    assertEqual(metaDiffs[0].file, "new.ts");
+    assertEqual(metaDiffs[0].movedFrom, "old.ts");
+    assertEqual(metaDiffs[0].status, "modified");
+    assertEqual(metaDiffs[1].status, "added");
+    assertEqual(metaDiffs[2].status, "deleted");
+
+    const streamPureMove = parseApplyPatchText("*** Begin Patch\n*** Update File: a.ts\n*** Move to: b.ts\n*** End Patch");
+    assertEqual(streamPureMove.length, 1);
+    assertEqual(streamPureMove[0].file, "b.ts");
+    assertEqual(streamPureMove[0].movedFrom, "a.ts");
   });
 });

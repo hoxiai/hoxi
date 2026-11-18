@@ -5,20 +5,25 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/hoxiai/hoxi/internal/agent"
+	"github.com/hoxiai/hoxi/internal/dataprofiles"
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
 	"github.com/hoxiai/hoxi/internal/skills"
+	"github.com/hoxiai/hoxi/internal/termhost"
 )
 
-// TerminalHandler is the narrow interface implemented by internal/pty.Service.
+// TerminalHandler is the narrow interface implemented by internal/termhost.Service.
 type TerminalHandler interface {
 	http.Handler
 	CloseAll()
@@ -27,6 +32,10 @@ type TerminalHandler interface {
 type nativeHostState struct {
 	termSvc        TerminalHandler
 	dataProfileSvc DataProfileHandler
+	dataProfileMgr *dataprofiles.Service
+	remoteHostMgr  interface {
+		RegisterRoutes(mux *http.ServeMux, isRemote func(*http.Request) bool)
+	}
 }
 
 // DataProfileHandler is the narrow interface implemented by internal/dataprofiles.Service.
@@ -41,7 +50,22 @@ func (g *Gateway) SetDataProfileService(dp DataProfileHandler) {
 	g.originMu.Unlock()
 }
 
-func (g *Gateway) initNativeHost() {}
+func (g *Gateway) initNativeHost() {
+	g.termSvc = termhost.NewDefaultService()
+	dp := dataprofiles.NewService(hoxipaths.DataProfilesPath(), nil)
+	g.dataProfileSvc = dp
+	g.dataProfileMgr = dp
+	g.remoteHostMgr = newDefaultRemoteHostService()
+	if g.runner != nil {
+		g.runner.SetDataProfileSafetyChecker(func(profileID string) (string, bool, bool) {
+			pub, ok := dp.GetPublic(profileID)
+			if !ok {
+				return "", false, false
+			}
+			return pub.Kind, pub.ReadOnly, true
+		})
+	}
+}
 
 // SetTerminalService attaches the native terminal handler (/pty HTTP + WebSocket).
 func (g *Gateway) SetTerminalService(ts TerminalHandler) {
@@ -109,21 +133,90 @@ func extractHostActionResult(toolName string, status int, raw []byte) (agent.Hos
 
 	var media []agent.ContentBlock
 	if imgB64, ok := parsed["image"].(string); ok && strings.TrimSpace(imgB64) != "" {
+		trimmed := strings.TrimSpace(imgB64)
+		mime, ext := detectBase64ImageMime(trimmed)
 		media = append(media, agent.ContentBlock{
 			Type:     agent.ContentMedia,
-			MimeType: "image/jpeg",
-			Data:     strings.TrimSpace(imgB64),
-			Filename: toolName + ".jpg",
+			MimeType: mime,
+			Data:     trimmed,
+			Filename: toolName + ext,
 		})
 		delete(parsed, "image")
 	}
-	cleanRaw, _ := json.MarshalIndent(parsed, "", "  ")
+	cleanRaw, _ := json.Marshal(parsed)
 	return agent.HostToolResult{
 		Title:    toolName,
 		Output:   string(cleanRaw),
 		Metadata: parsed,
 		Media:    media,
 	}, nil
+}
+
+func detectBase64ImageMime(b64 string) (string, string) {
+	switch {
+	case strings.HasPrefix(b64, "iVBORw0KGgo"):
+		return "image/png", ".png"
+	case strings.HasPrefix(b64, "UklGR"):
+		return "image/webp", ".webp"
+	case strings.HasPrefix(b64, "R0lGOD"):
+		return "image/gif", ".gif"
+	default:
+		return "image/jpeg", ".jpg"
+	}
+}
+
+// normalizeComputerAgentInput losslessly coerces common model JSON type slips
+// (e.g. integer windowID -> string, digit-string elementID -> integer, whole-number
+// float deltaX/deltaY/clickCount -> integer) while preserving any genuinely
+// invalid or unknown fields so decodeComputerJSON still rejects them.
+func normalizeComputerAgentInput(raw json.RawMessage) json.RawMessage {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return raw
+	}
+	dec := json.NewDecoder(bytes.NewReader(trimmed))
+	dec.UseNumber()
+	var obj map[string]any
+	if err := dec.Decode(&obj); err != nil || obj == nil {
+		return raw
+	}
+	changed := false
+	if v, ok := obj["windowID"]; ok {
+		if num, isNum := v.(json.Number); isNum {
+			if _, err := num.Int64(); err == nil {
+				obj["windowID"] = num.String()
+				changed = true
+			}
+		}
+	}
+	for _, intField := range []string{"elementID", "deltaX", "deltaY", "clickCount"} {
+		v, ok := obj[intField]
+		if !ok {
+			continue
+		}
+		switch val := v.(type) {
+		case string:
+			if n, err := strconv.Atoi(strings.TrimSpace(val)); err == nil {
+				obj[intField] = n
+				changed = true
+			}
+		case json.Number:
+			if _, err := val.Int64(); err != nil {
+				if f, fErr := val.Float64(); fErr == nil && !math.IsNaN(f) && !math.IsInf(f, 0) && f == math.Trunc(f) {
+					obj[intField] = int64(f)
+					changed = true
+				}
+			}
+		}
+	}
+	if !changed {
+		return raw
+	}
+	out, err := json.Marshal(obj)
+	if err != nil {
+		return raw
+	}
+	return out
 }
 
 func (g *Gateway) invokeNativeHostTool(
@@ -155,29 +248,17 @@ func (g *Gateway) invokeNativeHostTool(
 		g.originMu.RLock()
 		tok := g.computerAgentToken
 		g.originMu.RUnlock()
-		status, raw, err := g.doInternalMuxJSON(ctx, http.MethodPost, "/api/hoxi/computer/action?"+q.Encode(), input, tok)
+		status, raw, err := g.doInternalMuxJSON(ctx, http.MethodPost, "/api/hoxi/computer/action?"+q.Encode(), normalizeComputerAgentInput(input), tok)
 		if err != nil {
 			return agent.HostToolResult{Title: toolName}, err
 		}
 		return extractHostActionResult(toolName, status, raw)
 
+	case "hoxi_code_index":
+		return g.invokeNativeCodeIndexTool(ctx, tc, input)
+
 	case "hoxi_image":
-		var payload map[string]any
-		_ = json.Unmarshal(input, &payload)
-		if payload == nil {
-			payload = map[string]any{}
-		}
-		payload["sessionID"] = tc.SessionID
-		payload["directory"] = tc.WorktreeDir
-		dirQ := url.Values{}
-		if tc.WorktreeDir != "" {
-			dirQ.Set("directory", tc.WorktreeDir)
-		}
-		status, raw, err := g.doInternalMuxJSON(ctx, http.MethodPost, "/api/hoxi/media/image?"+dirQ.Encode(), payload, "")
-		if err != nil {
-			return agent.HostToolResult{Title: toolName}, err
-		}
-		return extractHostActionResult(toolName, status, raw)
+		return g.invokeNativeImageTool(ctx, tc, input)
 
 	case "hoxi_tools":
 		var payload map[string]any
@@ -205,7 +286,7 @@ func (g *Gateway) invokeNativeHostTool(
 			raw, _ := json.Marshal(res)
 			return agent.HostToolResult{Title: toolName, Output: strings.TrimSpace(string(raw)), Metadata: res}, err
 		}
-		cleanRaw, _ := json.MarshalIndent(res, "", "  ")
+		cleanRaw, _ := json.Marshal(res)
 		return agent.HostToolResult{Title: toolName, Output: string(cleanRaw), Metadata: res}, nil
 
 	case "skill":
@@ -365,14 +446,41 @@ func (g *Gateway) buildNativeSkillCatalogPrompt(ctx context.Context, sessionID, 
 	return b.String()
 }
 
-// registerNativeHostRoutes wires pure-Go replacements for legacy OpenCode routes
-// (/pty, /agent, /command, /lsp, /project, /find/file, /skill, /global, /config, /path).
-// When an explicit OpenCode test upstream is configured (g.openCode.Available()),
-// requests proxy upstream so existing reverse-proxy security tests continue to pass.
+// rewriteHoxiHostProxyPath maps canonical /api/hoxi/* host routes onto the
+// legacy upstream paths when an explicit OpenCode daemon is active.
+func rewriteHoxiHostProxyPath(p string) (string, bool) {
+	switch {
+	case p == "/api/hoxi/pty":
+		return "/pty", true
+	case strings.HasPrefix(p, "/api/hoxi/pty/"):
+		return "/pty/" + strings.TrimPrefix(p, "/api/hoxi/pty/"), true
+	case p == "/api/hoxi/agents":
+		return "/agent", true
+	case p == "/api/hoxi/commands":
+		return "/command", true
+	case p == "/api/hoxi/lsp":
+		return "/lsp", true
+	default:
+		return "", false
+	}
+}
+
+// registerNativeHostRoutes wires Hoxi's pure-Go host endpoints (/api/hoxi/pty,
+// /api/hoxi/agents, /api/hoxi/commands, /api/hoxi/lsp) plus legacy OpenCode-compatible
+// aliases (/pty, /agent, /command, /lsp, /project, /find/file, /skill, /global, /path).
+// When an explicit OpenCode upstream is configured (g.openCode.Available()),
+// requests proxy upstream so reverse-proxy compatibility and security tests pass.
 func (g *Gateway) registerNativeHostRoutes() {
 	wrap := func(nativeFn http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			if g.openCode.Available() {
+				if rewritten, ok := rewriteHoxiHostProxyPath(r.URL.Path); ok {
+					r2 := r.Clone(r.Context())
+					r2.URL.Path = rewritten
+					r2.URL.RawPath = ""
+					g.proxy.ServeHTTP(w, r2)
+					return
+				}
 				if strings.HasPrefix(r.URL.Path, "/api/") {
 					http.StripPrefix("/api", g.proxy).ServeHTTP(w, r)
 					return
@@ -394,20 +502,25 @@ func (g *Gateway) registerNativeHostRoutes() {
 		}
 		ts.ServeHTTP(w, r)
 	})
+	g.mux.HandleFunc("/api/hoxi/pty", ptyHandler)
+	g.mux.HandleFunc("/api/hoxi/pty/", ptyHandler)
 	g.mux.HandleFunc("/pty", ptyHandler)
 	g.mux.HandleFunc("/pty/", ptyHandler)
 	g.mux.HandleFunc("/api/pty", ptyHandler)
 	g.mux.HandleFunc("/api/pty/", ptyHandler)
 
 	agentHandler := wrap(g.handleNativeAgentList)
+	g.mux.HandleFunc("/api/hoxi/agents", agentHandler)
 	g.mux.HandleFunc("/agent", agentHandler)
 	g.mux.HandleFunc("/api/agent", agentHandler)
 
 	cmdHandler := wrap(g.handleNativeCommandList)
+	g.mux.HandleFunc("/api/hoxi/commands", cmdHandler)
 	g.mux.HandleFunc("/command", cmdHandler)
 	g.mux.HandleFunc("/api/command", cmdHandler)
 
 	lspHandler := wrap(g.handleNativeLSPStatus)
+	g.mux.HandleFunc("/api/hoxi/lsp", lspHandler)
 	g.mux.HandleFunc("/lsp", lspHandler)
 	g.mux.HandleFunc("/api/lsp", lspHandler)
 
@@ -439,26 +552,77 @@ func (g *Gateway) registerNativeHostRoutes() {
 	pathHandler := wrap(g.handleNativePathInfo)
 	g.mux.HandleFunc("/path", pathHandler)
 	g.mux.HandleFunc("/api/path", pathHandler)
+
+	if g.dataProfileMgr != nil {
+		g.dataProfileMgr.RegisterRoutes(g.mux, isRemoteRequest)
+	}
+	registerRemoteHostRoutes(g)
 }
 
-func (g *Gateway) handleNativeAgentList(w http.ResponseWriter, r *http.Request) {
+func (g *Gateway) handleNativeLSPStatus(w http.ResponseWriter, r *http.Request) {
 	dir := ""
 	if r != nil {
 		dir = strings.TrimSpace(r.URL.Query().Get("directory"))
 	}
-	writeJSON(w, http.StatusOK, g.loadNativeAgentsForDir(dir))
-}
-
-func (g *Gateway) handleNativeCommandList(w http.ResponseWriter, r *http.Request) {
-	dir := ""
-	if r != nil {
-		dir = strings.TrimSpace(r.URL.Query().Get("directory"))
+	if dir == "" {
+		dir = g.rootDir
 	}
-	writeJSON(w, http.StatusOK, g.loadNativeCommandsForDir(dir))
+	writeJSON(w, http.StatusOK, detectNativeLSPStatus(dir))
 }
 
-func (g *Gateway) handleNativeLSPStatus(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, []any{})
+func detectNativeLSPStatus(dir string) []map[string]any {
+	if strings.TrimSpace(dir) == "" {
+		return []map[string]any{}
+	}
+	type lspProbe struct {
+		id       string
+		name     string
+		markers  []string
+		binaries []string
+	}
+	probes := []lspProbe{
+		{id: "gopls", name: "Go", markers: []string{"go.mod", "go.work"}, binaries: []string{"gopls", "go"}},
+		{id: "typescript", name: "TypeScript", markers: []string{"tsconfig.json", "package.json", "web/tsconfig.json"}, binaries: []string{"typescript-language-server", "tsc"}},
+		{id: "pyright", name: "Python", markers: []string{"pyproject.toml", "requirements.txt"}, binaries: []string{"pyright-langserver", "ruff", "python3"}},
+		{id: "rust-analyzer", name: "Rust", markers: []string{"Cargo.toml"}, binaries: []string{"rust-analyzer", "cargo"}},
+		{id: "dart", name: "Dart / Flutter", markers: []string{"pubspec.yaml", "client/pubspec.yaml"}, binaries: []string{"dart"}},
+	}
+	out := make([]map[string]any, 0, len(probes))
+	for _, p := range probes {
+		hasMarker := false
+		markerRoot := dir
+		for _, m := range p.markers {
+			cand := filepath.Join(dir, filepath.FromSlash(m))
+			if _, err := os.Stat(cand); err == nil {
+				hasMarker = true
+				markerRoot = filepath.Dir(cand)
+				break
+			}
+		}
+		if !hasMarker {
+			continue
+		}
+		status := "disconnected"
+		resolvedBin := ""
+		for _, b := range p.binaries {
+			if found, err := exec.LookPath(b); err == nil && found != "" {
+				status = "connected"
+				resolvedBin = filepath.Base(found)
+				break
+			}
+		}
+		lbl := p.name
+		if resolvedBin != "" {
+			lbl = p.name + " (" + resolvedBin + ")"
+		}
+		out = append(out, map[string]any{
+			"id":     p.id,
+			"name":   lbl,
+			"root":   markerRoot,
+			"status": status,
+		})
+	}
+	return out
 }
 
 func (g *Gateway) handleNativeProjectRoute(w http.ResponseWriter, r *http.Request) {

@@ -8,6 +8,11 @@ import {
   parseGoalCommand,
   restoreStoredGoals,
 } from "../store/session-goal-state";
+import {
+  isPureLocalSlashCommand,
+  parseComposerControlCommand,
+  recordWorkspaceCommandNames,
+} from "../store/session-goal";
 
 function assistantTurn(parts: MessageTurn["parts"], error?: unknown): MessageTurn {
   return {
@@ -46,6 +51,48 @@ describe("session goal command parsing", () => {
   it("rejects objectives over the length limit", () => {
     const long = "x".repeat(GOAL_MAX_OBJECTIVE_LENGTH + 1);
     assertDeepEqual(parseGoalCommand(`/goal ${long}`), { kind: "invalid", error: "objective-too-long" });
+  });
+
+  it("parses local composer control commands without capturing custom command prefixes", () => {
+    assertDeepEqual(parseComposerControlCommand("/new"), { kind: "new" });
+    assertDeepEqual(parseComposerControlCommand("  /clear  "), { kind: "new" });
+    assertDeepEqual(parseComposerControlCommand("/diff"), { kind: "diff" });
+    assertDeepEqual(parseComposerControlCommand("/undo"), { kind: "undo" });
+    assertDeepEqual(parseComposerControlCommand("/plan"), { kind: "mode", mode: "plan", prompt: "" });
+    assertDeepEqual(parseComposerControlCommand("/PLAN  Design auth boundary "), {
+      kind: "mode",
+      mode: "plan",
+      prompt: "Design auth boundary",
+    });
+    assertDeepEqual(parseComposerControlCommand("/build Implement handler"), {
+      kind: "mode",
+      mode: "build",
+      prompt: "Implement handler",
+    });
+    assertEqual(parseComposerControlCommand("/new-feature x"), null);
+    assertEqual(parseComposerControlCommand("/diff-audit x"), null);
+    assertEqual(parseComposerControlCommand("/planner x"), null);
+    assertEqual(parseComposerControlCommand("please /new"), null);
+
+    // Inline code review header followed by /plan switches mode and preserves review header
+    const withReviews =
+      "Please address the following inline code review comments:\n- `api.go:12`: check nil\n\n/plan propose fix";
+    assertDeepEqual(parseComposerControlCommand(withReviews), {
+      kind: "mode",
+      mode: "plan",
+      prompt: "Please address the following inline code review comments:\n- `api.go:12`: check nil\n\npropose fix",
+    });
+
+    // Workspace custom command named `plan.md` takes precedence over local /plan shortcut
+    recordWorkspaceCommandNames("/tmp/custom-ws", ["plan"]);
+    assertEqual(parseComposerControlCommand("/plan sprint", "/tmp/custom-ws"), null);
+    assertEqual(isPureLocalSlashCommand("/plan", "/tmp/custom-ws"), false);
+    recordWorkspaceCommandNames("/tmp/custom-ws", []);
+
+    assertEqual(isPureLocalSlashCommand("/new"), true);
+    assertEqual(isPureLocalSlashCommand("/diff"), true);
+    assertEqual(isPureLocalSlashCommand("/plan"), true);
+    assertEqual(isPureLocalSlashCommand("/plan Design API"), false);
   });
 });
 

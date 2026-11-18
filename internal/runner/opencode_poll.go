@@ -21,7 +21,7 @@ func (s *Service) openCodeEngineSessionMap() (map[string]string, map[string]stri
 	sessionDirByID := make(map[string]string)
 	archivedHoxi := make(map[string]bool)
 	knownHoxi := make(map[string]bool)
-	s.store.eachMeta(func(rec SessionRecord) {
+	s.store.EachMeta(func(rec SessionRecord) {
 		knownHoxi[rec.ID] = true
 		if rec.ArchivedAt > 0 {
 			archivedHoxi[rec.ID] = true
@@ -136,7 +136,7 @@ func (s *Service) openCodePollCandidateDirs(directory string, cleanCache *syncMa
 		}
 	}
 	var allRecords []SessionRecord
-	s.store.eachMeta(func(rec SessionRecord) {
+	s.store.EachMeta(func(rec SessionRecord) {
 		if recordMeta(rec, false) {
 			allRecords = append(allRecords, rec)
 		}

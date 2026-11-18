@@ -55,7 +55,9 @@ import {
 } from "./subagent-sessions";
 import { clearAutoFailoverPending, clearTurnDispatchState } from "./auto-failover";
 import { clearSessionAutoTarget } from "./auto-models";
+import { forgetSessionTelemetry } from "./provider-telemetry";
 import { forgetPromptQueueState } from "./prompt-queue";
+import { forgetSessionRequests } from "./request-recovery";
 import { indexSession, indexSessions, sessionBelongsToProject } from "./session-index";
 import { bumpSessionSurfaceRevision, normalizeFolderPath } from "./workspace-folders";
 
@@ -575,6 +577,8 @@ export function purgeSessionsFromStoreState(
   forgetSubagentLinks(allIDs);
   forgetSessionToolOutputs(allIDs);
   forgetPromptQueueState(allIDs);
+  forgetSessionRequests(allIDs);
+  forgetSessionTelemetry(allIDs);
   let surfaceRemoved = false;
   for (const id of allIDs) {
     settledSessionLoads.delete(id);

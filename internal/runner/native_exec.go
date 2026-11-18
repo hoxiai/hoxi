@@ -3,8 +3,6 @@ package runner
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -14,7 +12,9 @@ import (
 	"runtime"
 	"strings"
 	"time"
+	"unicode/utf8"
 
+	"github.com/hoxiai/hoxi/internal/attachment"
 	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
@@ -23,6 +23,8 @@ const (
 	nativeDiagMaxOutputBytes = 4 * 1024
 	nativeDiagMaxLines       = 35
 	nativeDiagTimeout        = 10 * time.Second
+	nativeLiveTailBytes      = 8 * 1024
+	nativeLiveEmitInterval   = 350 * time.Millisecond
 )
 
 // nativeCommandRunner executes bash tool calls for the in-process Go Agent,
@@ -30,7 +32,18 @@ const (
 // non-interactive environments, process-group isolation, owned-process ledger
 // tracking, and bounded orphan-safe output capture.
 func (s *Service) nativeCommandRunner(rec SessionRecord, ap *activeProcess) func(ctx context.Context, dir, command string) (string, int, error) {
+	streamFn := s.nativeStreamCommandRunner(rec, ap)
 	return func(ctx context.Context, dir, command string) (string, int, error) {
+		return streamFn(ctx, dir, command, nil)
+	}
+}
+
+func (s *Service) nativeStreamCommandRunner(rec SessionRecord, ap *activeProcess) func(ctx context.Context, dir, command string, onOutput func(string)) (string, int, error) {
+	return func(ctx context.Context, dir, command string, onOutput func(string)) (string, int, error) {
+		onDemandProfile := ""
+		if s.gate != nil {
+			onDemandProfile = s.gate.consumeNativeOnDemand(rec.ID, command)
+		}
 		workDir := strings.TrimSpace(dir)
 		if workDir == "" {
 			workDir = rec.WorktreePath
@@ -40,218 +53,12 @@ func (s *Service) nativeCommandRunner(rec SessionRecord, ap *activeProcess) func
 			return err.Error(), 1, err
 		}
 		shellBin, shellArgs := nativeShellCommand(command)
-		out, code, err := s.execNativeConfined(ctx, rec, ap, workDir, shellBin, shellArgs, command, nativeCmdMaxOutputBytes)
+		out, code, err := s.execNativeConfinedWithProfile(ctx, rec, ap, workDir, shellBin, shellArgs, command, nativeCmdMaxOutputBytes, onDemandProfile, onOutput)
+		if onDemandProfile != "" {
+			out = appendOnDemandSandboxNote(out)
+		}
 		return out, code, err
 	}
-}
-
-// nativeDiagnostics runs fast post-edit/write static checks (go vet for Go
-// packages, tsc --noEmit for TypeScript, vue-tsc/oxlint for Vue SFCs, php -l
-// for PHP, and dart analyze for Flutter/Dart) under the same Seatbelt
-// confinement and sanitized environment as the session itself.
-func (s *Service) nativeDiagnostics(rec SessionRecord) func(ctx context.Context, dir, filePath string) string {
-	return func(ctx context.Context, dir, filePath string) string {
-		worktreeRoot := strings.TrimSpace(dir)
-		if worktreeRoot == "" {
-			worktreeRoot = rec.WorktreePath
-		}
-		if worktreeRoot == "" || strings.TrimSpace(filePath) == "" || !pathWithin(worktreeRoot, filePath) {
-			return ""
-		}
-		if st, err := os.Stat(filePath); err != nil || st.IsDir() {
-			return ""
-		}
-
-		diagCtx, cancel := context.WithTimeout(ctx, nativeDiagTimeout)
-		defer cancel()
-
-		ext := strings.ToLower(filepath.Ext(filePath))
-		switch ext {
-		case ".go":
-			return s.runNativeGoVetDiagnostic(diagCtx, rec, worktreeRoot, filePath)
-		case ".ts", ".tsx", ".mts", ".cts":
-			return s.runNativeTSCDiagnostic(diagCtx, rec, worktreeRoot, filePath)
-		case ".vue":
-			return s.runNativeVueDiagnostic(diagCtx, rec, worktreeRoot, filePath)
-		case ".php":
-			return s.runNativePHPDiagnostic(diagCtx, rec, worktreeRoot, filePath)
-		case ".dart":
-			return s.runNativeDartDiagnostic(diagCtx, rec, worktreeRoot, filePath)
-		default:
-			return ""
-		}
-	}
-}
-
-func (s *Service) runNativeGoVetDiagnostic(ctx context.Context, rec SessionRecord, worktreeRoot, filePath string) string {
-	modRoot := findAncestorWithFile(filepath.Dir(filePath), worktreeRoot, "go.mod")
-	if modRoot == "" {
-		return ""
-	}
-	goBin := resolveNativeToolBinary(rec, "go")
-	if goBin == "" {
-		return ""
-	}
-	relPkg, err := filepath.Rel(modRoot, filepath.Dir(filePath))
-	if err != nil || strings.HasPrefix(relPkg, "..") {
-		return ""
-	}
-	pkgTarget := "."
-	if relPkg != "." && relPkg != "" {
-		pkgTarget = "./" + filepath.ToSlash(relPkg)
-	}
-	out, code, err := s.execNativeConfined(ctx, rec, nil, modRoot, goBin, []string{"vet", pkgTarget}, "", nativeDiagMaxOutputBytes*2)
-	if err == nil && code == 0 {
-		return ""
-	}
-	if ctx.Err() != nil {
-		return ""
-	}
-	formatted := formatDiagnosticLines(out, "", nativeDiagMaxLines, nativeDiagMaxOutputBytes)
-	if formatted == "" {
-		return ""
-	}
-	return fmt.Sprintf("[go vet %s]\n%s", pkgTarget, formatted)
-}
-
-func (s *Service) runNativeTSCDiagnostic(ctx context.Context, rec SessionRecord, worktreeRoot, filePath string) string {
-	tsRoot := findAncestorWithFile(filepath.Dir(filePath), worktreeRoot, "tsconfig.json")
-	if tsRoot == "" {
-		return ""
-	}
-	tscBin := resolveWorkspaceTSC(rec, tsRoot, worktreeRoot)
-	if tscBin == "" {
-		return ""
-	}
-	tsconfigPath := filepath.Join(tsRoot, "tsconfig.json")
-	baseArgs := []string{"--project", tsconfigPath, "--noEmit", "--pretty", "false"}
-	args := baseArgs
-	if buildInfoPath := nativeTSCBuildInfoPath(rec.ID, tsconfigPath); buildInfoPath != "" {
-		args = []string{"--project", tsconfigPath, "--noEmit", "--incremental", "--tsBuildInfoFile", buildInfoPath, "--pretty", "false"}
-	}
-	out, code, err := s.execNativeConfined(ctx, rec, nil, tsRoot, tscBin, args, "", nativeDiagMaxOutputBytes*4)
-	if (err != nil || code != 0) && len(args) > len(baseArgs) && isUnsupportedTSCIncrementalError(out) && ctx.Err() == nil {
-		out, code, err = s.execNativeConfined(ctx, rec, nil, tsRoot, tscBin, baseArgs, "", nativeDiagMaxOutputBytes*4)
-	}
-	if err == nil && code == 0 {
-		return ""
-	}
-	if ctx.Err() != nil {
-		return ""
-	}
-	relFile := filepath.Base(filePath)
-	if rel, relErr := filepath.Rel(tsRoot, filePath); relErr == nil && !strings.HasPrefix(rel, "..") {
-		relFile = filepath.ToSlash(rel)
-	}
-	formatted := formatDiagnosticLines(out, relFile, nativeDiagMaxLines, nativeDiagMaxOutputBytes)
-	if formatted == "" {
-		return ""
-	}
-	return "[tsc --noEmit]\n" + formatted
-}
-
-func nativeTSCBuildInfoPath(sessionID, tsconfigPath string) string {
-	tmpBase := strings.TrimSpace(os.TempDir())
-	if tmpBase == "" {
-		return ""
-	}
-	if resolved, err := filepath.EvalSymlinks(tmpBase); err == nil && resolved != "" {
-		tmpBase = resolved
-	}
-	cacheDir := filepath.Join(tmpBase, "hoxi-tsc-cache")
-	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
-		return ""
-	}
-	sum := sha256.Sum256([]byte(strings.TrimSpace(sessionID) + "\x00" + filepath.Clean(tsconfigPath)))
-	return filepath.Join(cacheDir, hex.EncodeToString(sum[:12])+".tsbuildinfo")
-}
-
-func isUnsupportedTSCIncrementalError(out string) bool {
-	return strings.Contains(out, "TS5052") || strings.Contains(out, "TS5053") || strings.Contains(out, "TS5069") || strings.Contains(out, "TS5074")
-}
-
-func (s *Service) runNativeVueDiagnostic(ctx context.Context, rec SessionRecord, worktreeRoot, filePath string) string {
-	tsRoot := findAncestorWithFile(filepath.Dir(filePath), worktreeRoot, "tsconfig.json")
-	if tsRoot != "" {
-		if vueTscBin := resolveWorkspaceNodeBin(rec, tsRoot, worktreeRoot, "vue-tsc"); vueTscBin != "" {
-			tsconfigPath := filepath.Join(tsRoot, "tsconfig.json")
-			args := []string{"--project", tsconfigPath, "--noEmit", "--pretty", "false"}
-			out, code, err := s.execNativeConfined(ctx, rec, nil, tsRoot, vueTscBin, args, "", nativeDiagMaxOutputBytes*4)
-			if err == nil && code == 0 {
-				return ""
-			}
-			if ctx.Err() != nil {
-				return ""
-			}
-			relFile := filepath.Base(filePath)
-			if rel, relErr := filepath.Rel(tsRoot, filePath); relErr == nil && !strings.HasPrefix(rel, "..") {
-				relFile = filepath.ToSlash(rel)
-			}
-			if formatted := formatDiagnosticLines(out, relFile, nativeDiagMaxLines, nativeDiagMaxOutputBytes); formatted != "" {
-				return "[vue-tsc --noEmit]\n" + formatted
-			}
-			return ""
-		}
-	}
-	pkgRoot := findAncestorWithFile(filepath.Dir(filePath), worktreeRoot, "package.json")
-	if pkgRoot == "" {
-		pkgRoot = worktreeRoot
-	}
-	if oxlintBin := resolveWorkspaceNodeBin(rec, pkgRoot, worktreeRoot, "oxlint"); oxlintBin != "" {
-		out, code, err := s.execNativeConfined(ctx, rec, nil, pkgRoot, oxlintBin, []string{"--quiet", filePath}, "", nativeDiagMaxOutputBytes*2)
-		if err == nil && code == 0 || ctx.Err() != nil {
-			return ""
-		}
-		if formatted := formatDiagnosticLines(out, filepath.Base(filePath), nativeDiagMaxLines, nativeDiagMaxOutputBytes); formatted != "" {
-			return "[oxlint]\n" + formatted
-		}
-	}
-	return ""
-}
-
-func (s *Service) runNativePHPDiagnostic(ctx context.Context, rec SessionRecord, worktreeRoot, filePath string) string {
-	phpBin := resolveNativeToolBinary(rec, "php")
-	if phpBin == "" {
-		return ""
-	}
-	out, code, err := s.execNativeConfined(ctx, rec, nil, worktreeRoot, phpBin, []string{"-l", filePath}, "", nativeDiagMaxOutputBytes*2)
-	if err == nil && code == 0 || ctx.Err() != nil {
-		return ""
-	}
-	if formatted := formatDiagnosticLines(out, filepath.Base(filePath), nativeDiagMaxLines, nativeDiagMaxOutputBytes); formatted != "" {
-		return "[php -l]\n" + formatted
-	}
-	return ""
-}
-
-func (s *Service) runNativeDartDiagnostic(ctx context.Context, rec SessionRecord, worktreeRoot, filePath string) string {
-	dartBin := resolveNativeToolBinary(rec, "dart")
-	if dartBin == "" {
-		if flutterBin := resolveNativeToolBinary(rec, "flutter"); flutterBin != "" {
-			cand := filepath.Join(filepath.Dir(flutterBin), "dart")
-			if runtime.GOOS == "windows" {
-				cand += ".bat"
-			}
-			if st, err := os.Stat(cand); err == nil && !st.IsDir() {
-				dartBin = cand
-			}
-		}
-	}
-	if dartBin == "" {
-		return ""
-	}
-	pubRoot := findAncestorWithFile(filepath.Dir(filePath), worktreeRoot, "pubspec.yaml")
-	if pubRoot == "" {
-		pubRoot = worktreeRoot
-	}
-	out, code, err := s.execNativeConfined(ctx, rec, nil, pubRoot, dartBin, []string{"analyze", "--format=machine", filePath}, "", nativeDiagMaxOutputBytes*2)
-	if err == nil && code == 0 || ctx.Err() != nil {
-		return ""
-	}
-	if formatted := formatDiagnosticLines(out, filepath.Base(filePath), nativeDiagMaxLines, nativeDiagMaxOutputBytes); formatted != "" {
-		return "[dart analyze]\n" + formatted
-	}
-	return ""
 }
 
 func (s *Service) execNativeConfined(
@@ -263,7 +70,34 @@ func (s *Service) execNativeConfined(
 	ownedLabel string,
 	maxBytes int,
 ) (string, int, error) {
-	bin, args, err := s.confineRuntimeCommand(rec, rawBin, rawArgs)
+	return s.execNativeConfinedWithProfile(ctx, rec, ap, workDir, rawBin, rawArgs, ownedLabel, maxBytes, "", nil)
+}
+
+func (s *Service) execNativeConfinedWithProgress(
+	ctx context.Context,
+	rec SessionRecord,
+	ap *activeProcess,
+	workDir, rawBin string,
+	rawArgs []string,
+	ownedLabel string,
+	maxBytes int,
+	onProgress func(string),
+) (string, int, error) {
+	return s.execNativeConfinedWithProfile(ctx, rec, ap, workDir, rawBin, rawArgs, ownedLabel, maxBytes, "", onProgress)
+}
+
+func (s *Service) execNativeConfinedWithProfile(
+	ctx context.Context,
+	rec SessionRecord,
+	ap *activeProcess,
+	workDir, rawBin string,
+	rawArgs []string,
+	ownedLabel string,
+	maxBytes int,
+	onDemandProfile string,
+	onProgress func(string),
+) (string, int, error) {
+	bin, args, err := s.confineNativeCommandWithOnDemand(rec, onDemandProfile, rawBin, rawArgs)
 	if err != nil {
 		return err.Error(), 1, err
 	}
@@ -301,14 +135,14 @@ func (s *Service) execNativeConfined(
 		}()
 	}
 	if ownedLabel != "" && s.ownedProcs != nil && runtime.GOOS != "windows" && cmd.Process != nil {
-		s.ownedProcs.record(rec.ID, cmd.Process.Pid, ownedLabel)
+		s.ownedProcs.Record(rec.ID, cmd.Process.Pid, ownedLabel)
 	}
 
-	var buf bytes.Buffer
+	writer := &nativeLimitedWriter{limit: maxBytes, onProgress: onProgress}
 	readerDone := make(chan struct{})
 	go func() {
 		defer close(readerDone)
-		_, _ = io.Copy(&nativeLimitedWriter{buf: &buf, limit: maxBytes}, outR)
+		_, _ = io.Copy(writer, outR)
 	}()
 
 	waitDone := make(chan struct{})
@@ -324,7 +158,7 @@ func (s *Service) execNativeConfined(
 	close(waitDone)
 	reapOrphanedOutput(cmd.Process, outR, readerDone)
 
-	output := subproc.DecodeOutputBytes(buf.Bytes())
+	output := writer.String()
 	if waitErr == nil {
 		return output, 0, nil
 	}
@@ -399,6 +233,13 @@ func nativeSubprocessEnv(rec SessionRecord) []string {
 	)
 }
 
+func isWindowsWSLStubBash(p string) bool {
+	norm := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(p), "/", `\`))
+	return strings.HasSuffix(norm, `\system32\bash.exe`) ||
+		strings.HasSuffix(norm, `\sysnative\bash.exe`) ||
+		strings.Contains(norm, `\microsoft\windowsapps\bash.exe`)
+}
+
 func nativeShellCommand(command string) (string, []string) {
 	if runtime.GOOS == "windows" {
 		for _, k := range []string{"ProgramFiles", "ProgramFiles(x86)", "LocalAppData"} {
@@ -416,7 +257,13 @@ func nativeShellCommand(command string) (string, []string) {
 				}
 			}
 		}
-		if p, err := exec.LookPath("bash"); err == nil && p != "" {
+		if up := strings.TrimSpace(os.Getenv("USERPROFILE")); up != "" {
+			cand := filepath.Join(up, "scoop", "apps", "git", "current", "bin", "bash.exe")
+			if st, err := os.Stat(cand); err == nil && !st.IsDir() {
+				return cand, []string{"-c", command}
+			}
+		}
+		if p, err := exec.LookPath("bash"); err == nil && p != "" && !isWindowsWSLStubBash(p) {
 			return p, []string{"-c", command}
 		}
 		return "cmd", []string{"/C", "chcp 65001 >nul 2>&1 & " + command}
@@ -512,63 +359,112 @@ func resolveNativeToolBinary(rec SessionRecord, toolName string) string {
 	return ""
 }
 
-func formatDiagnosticLines(raw, priorityNeedle string, maxLines, maxBytes int) string {
-	trimmed := strings.TrimSpace(strings.ReplaceAll(raw, "\r\n", "\n"))
-	if trimmed == "" {
-		return ""
-	}
-	lines := strings.Split(trimmed, "\n")
-	var prioritized, others []string
-	baseNeedle := ""
-	if priorityNeedle != "" {
-		baseNeedle = filepath.Base(priorityNeedle)
-	}
-	for _, line := range lines {
-		l := strings.TrimRight(line, " \t")
-		if strings.TrimSpace(l) == "" {
-			continue
-		}
-		if priorityNeedle != "" && (strings.Contains(l, priorityNeedle) || (baseNeedle != "" && strings.Contains(l, baseNeedle))) {
-			prioritized = append(prioritized, l)
-		} else {
-			others = append(others, l)
-		}
-	}
-	ordered := append(prioritized, others...)
-	if len(ordered) == 0 {
-		return ""
-	}
-	truncatedLines := 0
-	if maxLines > 0 && len(ordered) > maxLines {
-		truncatedLines = len(ordered) - maxLines
-		ordered = ordered[:maxLines]
-	}
-	joined := strings.Join(ordered, "\n")
-	if maxBytes > 0 && len(joined) > maxBytes {
-		joined = joined[:maxBytes] + "\n... [diagnostics truncated]"
-	} else if truncatedLines > 0 {
-		joined += fmt.Sprintf("\n... (%d more diagnostic lines)", truncatedLines)
-	}
-	return joined
+type nativeLimitedWriter struct {
+	limit      int
+	onProgress func(string)
+	lastEmit   time.Time
+
+	totalBytes int64
+	head       bytes.Buffer
+	tail       []byte
+	liveTail   []byte
 }
 
-type nativeLimitedWriter struct {
-	buf   *bytes.Buffer
-	limit int
+func appendRollingWindow(dst, src []byte, maxWindow int) []byte {
+	if maxWindow <= 0 || len(src) == 0 {
+		return dst
+	}
+	if len(src) >= maxWindow {
+		return append(dst[:0], src[len(src)-maxWindow:]...)
+	}
+	if len(dst)+len(src) <= maxWindow {
+		return append(dst, src...)
+	}
+	keep := maxWindow - len(src)
+	copy(dst, dst[len(dst)-keep:])
+	return append(dst[:keep], src...)
+}
+
+func alignUTF8WindowStart(raw []byte) []byte {
+	for skipped := 0; skipped < 3 && len(raw) > 0 && !utf8.RuneStart(raw[0]); skipped++ {
+		raw = raw[1:]
+	}
+	return raw
+}
+
+func trimTrailingIncompleteUTF8(raw []byte) []byte {
+	if len(raw) == 0 || utf8.Valid(raw) {
+		return raw
+	}
+	start := max(0, len(raw)-3)
+	for i := len(raw) - 1; i >= start; i-- {
+		if utf8.RuneStart(raw[i]) {
+			if r, width := utf8.DecodeRune(raw[i:]); r == utf8.RuneError && width == 1 && !utf8.FullRune(raw[i:]) {
+				return raw[:i]
+			}
+			break
+		}
+	}
+	return raw
 }
 
 func (w *nativeLimitedWriter) Write(p []byte) (int, error) {
-	if w.limit <= 0 || w.buf.Len() < w.limit {
-		avail := len(p)
-		if w.limit > 0 && w.buf.Len()+avail > bLimit(w.limit) {
-			avail = w.limit - w.buf.Len()
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if w.limit <= 0 {
+		_, _ = w.head.Write(p)
+		w.totalBytes += int64(len(p))
+	} else if w.totalBytes+int64(len(p)) <= int64(w.limit) {
+		_, _ = w.head.Write(p)
+		w.totalBytes += int64(len(p))
+	} else {
+		headCap := w.limit / 2
+		tailCap := w.limit - headCap
+		if w.totalBytes <= int64(w.limit) {
+			if w.head.Len() > headCap {
+				w.tail = appendRollingWindow(w.tail, w.head.Bytes()[headCap:], tailCap)
+				w.head.Truncate(headCap)
+				w.tail = appendRollingWindow(w.tail, p, tailCap)
+			} else {
+				needHead := headCap - w.head.Len()
+				_, _ = w.head.Write(p[:needHead])
+				w.tail = appendRollingWindow(w.tail, p[needHead:], tailCap)
+			}
+		} else {
+			w.tail = appendRollingWindow(w.tail, p, tailCap)
 		}
-		_, _ = w.buf.Write(p[:avail])
+		w.totalBytes += int64(len(p))
+	}
+
+	if w.onProgress != nil {
+		w.liveTail = appendRollingWindow(w.liveTail, p, nativeLiveTailBytes)
+		if len(w.liveTail) > 0 && (w.lastEmit.IsZero() || time.Since(w.lastEmit) >= nativeLiveEmitInterval) {
+			w.lastEmit = time.Now()
+			raw := w.liveTail
+			if w.totalBytes > int64(len(raw)) {
+				raw = alignUTF8WindowStart(raw)
+			}
+			w.onProgress(subproc.DecodeOutputBytes(raw))
+		}
 	}
 	return len(p), nil
 }
 
-func bLimit(v int) int { return v }
+func (w *nativeLimitedWriter) String() string {
+	if w == nil {
+		return ""
+	}
+	if w.limit <= 0 || w.totalBytes <= int64(w.limit) {
+		return subproc.DecodeOutputBytes(w.head.Bytes())
+	}
+	headBytes := trimTrailingIncompleteUTF8(w.head.Bytes())
+	tailBytes := alignUTF8WindowStart(w.tail)
+	omitted := max(int64(1), w.totalBytes-int64(len(headBytes))-int64(len(tailBytes)))
+	return subproc.DecodeOutputBytes(headBytes) +
+		fmt.Sprintf("\n... [%d bytes omitted] ...\n", omitted) +
+		subproc.DecodeOutputBytes(tailBytes)
+}
 
 func (ap *activeProcess) activeProcess() *os.Process {
 	if ap == nil {
@@ -580,4 +476,99 @@ func (ap *activeProcess) activeProcess() *os.Process {
 		return nil
 	}
 	return ap.cmd.Process
+}
+
+func (s *Service) saveNativeToolMediaAttachments(rec SessionRecord, media []NativeContentBlock) []map[string]interface{} {
+	if s == nil || s.attachments == nil || len(media) == 0 {
+		return nil
+	}
+	var refs []map[string]interface{}
+	for _, mb := range media {
+		mime := strings.TrimSpace(mb.MimeType)
+		data := strings.TrimSpace(mb.Data)
+		if mime == "" || data == "" {
+			continue
+		}
+		fname := strings.TrimSpace(mb.Filename)
+		if fname == "" {
+			fname = "tool_media"
+		}
+		saved, err := s.attachments.Save(attachment.SaveRequest{
+			SessionID: rec.ID,
+			Directory: rec.WorktreePath,
+			Filename:  fname,
+			Mime:      mime,
+			DataURL:   "data:" + mime + ";base64," + data,
+		})
+		if err != nil || saved.ID == "" {
+			continue
+		}
+		refs = append(refs, map[string]interface{}{
+			"id":       saved.ID,
+			"url":      saved.URL,
+			"mime":     saved.Mime,
+			"filename": saved.Filename,
+		})
+	}
+	return refs
+}
+
+func buildNativeUserBlocks(promptText string, deliveryParts []MessagePart) []NativeContentBlock {
+	var blocks []NativeContentBlock
+	if strings.TrimSpace(promptText) != "" {
+		blocks = append(blocks, NativeContentBlock{Type: "text", Text: promptText})
+	}
+	for _, p := range deliveryParts {
+		if p.Type != "file" || strings.TrimSpace(p.URL) == "" {
+			continue
+		}
+		if mimeType, b64Data, _, ok := parseBase64DataURL(p.URL, p.Mime); ok {
+			blocks = append(blocks, NativeContentBlock{
+				Type:     "media",
+				MimeType: mimeType,
+				Data:     b64Data,
+				Filename: p.Filename,
+			})
+		}
+	}
+	if len(blocks) == 0 {
+		blocks = append(blocks, NativeContentBlock{Type: "text", Text: promptText})
+	}
+	return blocks
+}
+
+func (s *Service) resolveNativeHistoryFileBlock(p MessagePart) (NativeContentBlock, bool) {
+	rawURL := strings.TrimSpace(p.URL)
+	if !strings.HasPrefix(rawURL, "data:") && s != nil && s.attachments != nil && rawURL != "" {
+		for _, prefix := range []string{"/api/hoxi/attachments/", "hoxi-attachment://"} {
+			if idx := strings.Index(rawURL, prefix); idx >= 0 {
+				refID := strings.TrimSpace(rawURL[idx+len(prefix):])
+				if slash := strings.IndexByte(refID, '/'); slash >= 0 {
+					refID = refID[:slash]
+				}
+				if q := strings.IndexByte(refID, '?'); q >= 0 {
+					refID = refID[:q]
+				}
+				if refID != "" {
+					if _, dataURL, err := s.attachments.ReadAsDataURL(refID); err == nil && dataURL != "" {
+						rawURL = dataURL
+					}
+				}
+				break
+			}
+		}
+	}
+	if rawURL == "" {
+		return NativeContentBlock{}, false
+	}
+	mimeType, b64Data, _, ok := parseBase64DataURL(rawURL, p.Mime)
+	if !ok {
+		return NativeContentBlock{}, false
+	}
+	return NativeContentBlock{
+		Type:     "media",
+		MimeType: mimeType,
+		Data:     b64Data,
+		Filename: p.Filename,
+	}, true
 }

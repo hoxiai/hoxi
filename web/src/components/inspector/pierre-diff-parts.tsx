@@ -72,8 +72,8 @@ function createPierreWorkerPool(lineDiffType: "none" | "word-alt"): WorkerPoolMa
           new Worker(new URL("@pierre/diffs/worker/worker.js", import.meta.url), {
             type: "module",
           }),
-        poolSize: 2,
-        totalASTLRUCacheSize: 120,
+        poolSize: 1,
+        totalASTLRUCacheSize: 48,
         onWorkerError: (event) => {
           event.preventDefault?.();
         },

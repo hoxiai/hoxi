@@ -13,7 +13,6 @@ import (
 
 const (
 	subtaskMaxSteps                = 12
-	subtaskTimeout                 = 90 * time.Second
 	defaultMaxConcurrentSubtasks   = 6
 	maxStepTransientRetries        = 2
 	maxReactiveOverflowCompactions = 2
@@ -45,29 +44,35 @@ type CompactFunc func(msgs []Message, system string, contextLimit int) []Message
 
 // TurnRequest configures a single agentic turn (potentially multi-step tool loop).
 type TurnRequest struct {
-	SessionID      string
-	WorktreeDir    string
-	Mode           string
-	ProviderID     string
-	ModelID        string
-	Effort         string
-	System         string
-	History        []Message
-	UserPrompt     string
-	UserBlocks     []ContentBlock
-	MaxSteps       int
-	SubtaskDepth   int
-	Steer          SteerSource
-	PermissionHook PermissionHook
-	CommandRunner  CommandRunner
-	Diagnostics    DiagnosticHook
-	CodeSearch     CodeSearchHook
-	SymbolInspect  SymbolInspectHook
-	ImpactInspect  ImpactInspectHook
-	AskQuestion    QuestionAsker
-	MCPConfig      MCPConfigSource
-	HostInvoke     HostInvokeHook
-	Sink           EventSink
+	SessionID           string
+	WorktreeDir         string
+	Mode                string
+	ProviderID          string
+	ModelID             string
+	Effort              string
+	System              string
+	History             []Message
+	UserPrompt          string
+	UserBlocks          []ContentBlock
+	MaxSteps            int
+	SubtaskDepth        int
+	FileRevisions       *FileRevisionTracker
+	CoordinateFileEdit  FileEditCoordinatorHook
+	RecordFileEdit      FileEditRecordedHook
+	Steer               SteerSource
+	PermissionHook      PermissionHook
+	CommandRunner       CommandRunner
+	StreamCommandRunner StreamingCommandRunner
+	BackgroundCommands  BackgroundCommandManager
+	Diagnostics         DiagnosticHook
+	CodeSearch          CodeSearchHook
+	SymbolInspect       SymbolInspectHook
+	ImpactInspect       ImpactInspectHook
+	AskQuestion         QuestionAsker
+	MCPConfig           MCPConfigSource
+	projectConfig       map[string]any
+	HostInvoke          HostInvokeHook
+	Sink                EventSink
 }
 
 // EventSink receives streaming engine events.
@@ -83,24 +88,41 @@ func (f EventSinkFunc) Emit(evt EngineEvent) { f(evt) }
 
 // Engine runs an in-process agentic loop using injected factories and hooks.
 type Engine struct {
-	stream     llm.StreamClient
-	drivers    DriverFactory
-	registry   ToolRegistry
-	compact    CompactFunc
-	retryDelay []time.Duration
-	subtaskMu  sync.RWMutex
-	subtaskSem chan struct{}
+	stream         llm.StreamClient
+	drivers        DriverFactory
+	registry       ToolRegistry
+	compact        CompactFunc
+	defaultCompact bool
+	retryDelay     []time.Duration
+	retryBudget    time.Duration
+	customRetry    bool
+	subtaskMu      sync.RWMutex
+	subtaskSem     chan struct{}
+}
+
+func (e *Engine) applyCompact(msgs []Message, system, worktreeDir string, contextLimit int) []Message {
+	if e == nil {
+		return msgs
+	}
+	if e.defaultCompact {
+		return pruneOldToolResultsInWorkspace(msgs, system, worktreeDir, contextLimit)
+	}
+	if e.compact != nil {
+		return e.compact(msgs, system, contextLimit)
+	}
+	return msgs
 }
 
 // NewEngine constructs an Engine with explicit dependencies.
 func NewEngine(stream llm.StreamClient, drivers DriverFactory, registry ToolRegistry, compact CompactFunc) *Engine {
 	return &Engine{
-		stream:     stream,
-		drivers:    drivers,
-		registry:   registry,
-		compact:    compact,
-		retryDelay: defaultStepRetryDelays,
-		subtaskSem: make(chan struct{}, defaultMaxConcurrentSubtasks),
+		stream:      stream,
+		drivers:     drivers,
+		registry:    registry,
+		compact:     compact,
+		retryDelay:  defaultStepRetryDelays,
+		retryBudget: defaultMaxTurnRetryBudget,
+		subtaskSem:  make(chan struct{}, defaultMaxConcurrentSubtasks),
 	}
 }
 
@@ -108,6 +130,14 @@ func NewEngine(stream llm.StreamClient, drivers DriverFactory, registry ToolRegi
 func (e *Engine) SetStepRetryDelays(delays []time.Duration) {
 	if e != nil {
 		e.retryDelay = delays
+		e.customRetry = true
+	}
+}
+
+// SetMaxTurnRetryBudget overrides the cumulative retry wait ceiling for a turn.
+func (e *Engine) SetMaxTurnRetryBudget(budget time.Duration) {
+	if e != nil && budget > 0 {
+		e.retryBudget = budget
 	}
 }
 
@@ -139,50 +169,14 @@ func (e *Engine) acquireSubtaskSlot(ctx context.Context) (func(), error) {
 	}
 }
 
-func (e *Engine) waitStepRetry(ctx context.Context, attempt int) bool {
-	if ctx.Err() != nil {
-		return false
-	}
-	delays := e.retryDelay
-	if len(delays) == 0 {
-		return ctx.Err() == nil
-	}
-	idx := attempt - 1
-	if idx >= len(delays) {
-		idx = len(delays) - 1
-	}
-	d := delays[idx]
-	if d <= 0 {
-		return ctx.Err() == nil
-	}
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-		return false
-	case <-t.C:
-		return ctx.Err() == nil
-	}
-}
-
-func isRetryableStepFailure(err error) bool {
-	if err == nil {
-		return false
-	}
-	if IsIncompleteStreamError(err) {
-		return true
-	}
-	return llm.IsTransientTurnError(err.Error())
-}
-
 // RunTurn executes the multi-step LLM + parallel-read tool loop until completion or cancellation.
 func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 	if e.stream == nil {
 		return fmt.Errorf("native stream client is not configured")
 	}
-	var cfgDoc map[string]any
-	if req.MCPConfig != nil {
-		cfgDoc = req.MCPConfig()
+	cfgDoc, err := prepareProjectTurnConfig(&req)
+	if err != nil {
+		return err
 	}
 	_, agentMap := llm.LoadAgents(req.WorktreeDir, cfgDoc)
 	origMode := strings.TrimSpace(req.Mode)
@@ -228,9 +222,13 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 	}
 	execReq := req
 	execReq.Mode = effectiveMode
+	if execReq.FileRevisions == nil {
+		execReq.FileRevisions = NewFileRevisionTracker()
+	}
 
 	maxSteps, autoScaledSteps := resolveEffectiveMaxSteps(req.MaxSteps, effectiveMode, req.SubtaskDepth, cfgDoc)
-	systemPrompt := buildSystemPrompt(req.WorktreeDir, callerSystem, drv.SystemPromptPatch(), effectiveMode, req.SubtaskDepth)
+	systemPrompt, rulesLoad := buildSystemPromptWithRules(req.WorktreeDir, callerSystem, drv.SystemPromptPatch(), effectiveMode, req.SubtaskDepth, cfgDoc)
+	rulesTracker := NewSubdirRuleTracker(rulesLoad.LoadedFiles, DefaultSubdirRuleBudgetBytes)
 	var toolSpecs []ToolSpec
 	if ts, ok := e.registry.(turnScopedRegistry); ok {
 		toolSpecs = ts.SpecsForTurn(effectiveMode, req.SubtaskDepth)
@@ -270,27 +268,34 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 		return id
 	}
 
+	if req.SubtaskDepth == 0 && rulesLoad.OverBudget {
+		emit(EngineEvent{
+			Kind: EngineRulesBudget,
+			Step: 1,
+			Text: fmt.Sprintf("Project rules exceeded context budget (%d / %d bytes); truncated: %s", rulesLoad.TotalBytes, rulesLoad.BudgetBytes, strings.Join(rulesLoad.TruncatedFiles, ", ")),
+			Metadata: map[string]any{
+				"budgetBytes":    rulesLoad.BudgetBytes,
+				"totalBytes":     rulesLoad.TotalBytes,
+				"truncatedFiles": rulesLoad.TruncatedFiles,
+			},
+		})
+	}
 	overflowCompactions := 0
 	truncationRecoveries := 0
+	foldUnsignedToolSteps := false
+	effectiveEffort := req.Effort
+	var totalRetryWait time.Duration
 	for step := 1; step <= maxSteps; step++ {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if req.Steer != nil {
-			if steers := req.Steer.Drain(); len(steers) > 0 {
-				for _, s := range steers {
-					if strings.TrimSpace(s) != "" {
-						msgs = append(msgs, Message{
-							Role:    RoleUser,
-							Content: []ContentBlock{{Type: ContentText, Text: s}},
-						})
-					}
-				}
-			}
+		if steered := drainSteerMessages(req.Steer); len(steered) > 0 {
+			msgs = append(msgs, steered...)
 		}
-		if e.compact != nil {
-			msgs = e.compact(msgs, systemPrompt, compactLimit)
+		if foldUnsignedToolSteps && !tailToolExchangeHasSignedThinking(msgs) {
+			msgs, _ = recoverMessagesFromThinkingSignatureError(msgs)
 		}
+		msgs = e.applyCompact(msgs, systemPrompt, req.WorktreeDir, compactLimit)
 
 		maxOut := target.OutputLimit
 		if maxOut <= 0 {
@@ -303,7 +308,7 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 				Messages:  msgs,
 				Tools:     toolSpecs,
 				MaxTokens: maxOut,
-				Effort:    req.Effort,
+				Effort:    effectiveEffort,
 			})
 		}
 		httpReq, err := buildStepReq()
@@ -311,17 +316,60 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 			return err
 		}
 
-		var textBuf, thinkBuf, sigBuf strings.Builder
-		var toolCalls []ToolCall
-		var stepFinish string
+		var streamed stepStreamResult
 		var stepErr error
+		stepThinkingRecovered := false
 
-		for attempt := 0; attempt <= maxStepTransientRetries; attempt++ {
-			if attempt > 0 && !e.waitStepRetry(ctx, attempt) {
-				return ctx.Err()
+		tryRecoverThinkingSignature := func(cause error) bool {
+			if stepThinkingRecovered || ctx.Err() != nil || !isRecoverableThinkingSignatureError(cause) {
+				return false
 			}
+			recovered, changed := recoverMessagesFromThinkingSignatureError(msgs)
+			needDisable := messagesRequireThinkingDisabled(recovered)
+			if !changed && (!needDisable || effectiveEffort == "") {
+				return false
+			}
+			stepThinkingRecovered = true
+			foldUnsignedToolSteps = true
+			msgs = recovered
+			if needDisable {
+				effectiveEffort = ""
+			}
+			emit(EngineEvent{
+				Kind:      EngineThinkingSignatureReset,
+				Step:      step,
+				ErrorText: summarizeRetryReason(cause),
+			})
+			return true
+		}
+
+		for attempt := 0; ; attempt++ {
+			openStarted := time.Now()
 			resp, openErr := e.stream.OpenStream(ctx, httpReq)
+			headerLatency := time.Since(openStarted)
 			if openErr != nil {
+				if target.FallbackOpenAI && ctx.Err() == nil && isUnsupportedAnthropicMessagesEndpoint(openErr) {
+					target.Protocol = llm.ProtocolOpenAI
+					target.FallbackOpenAI = false
+					drv, err = e.drivers.Create(target.Protocol)
+					if err != nil {
+						return err
+					}
+					httpReq, err = buildStepReq()
+					if err != nil {
+						return err
+					}
+					attempt = -1
+					continue
+				}
+				if tryRecoverThinkingSignature(openErr) {
+					httpReq, err = buildStepReq()
+					if err != nil {
+						return err
+					}
+					attempt = -1
+					continue
+				}
 				if overflowCompactions < maxReactiveOverflowCompactions && ctx.Err() == nil && isContextOverflowError(openErr) {
 					if compacted, cpInfo, ok := e.compactContextOverflow(ctx, req.ProviderID, req.ModelID, msgs, historyLen, step); ok {
 						overflowCompactions++
@@ -351,74 +399,36 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 					}
 				}
 				stepErr = openErr
-				if attempt < maxStepTransientRetries && ctx.Err() == nil && isRetryableStepFailure(openErr) {
-					continue
+				if ctx.Err() == nil {
+					if dec := e.planStepRetry(openErr, attempt+1, totalRetryWait, time.Now()); dec.shouldRetry {
+						if !e.waitForStepRetry(ctx, step, req.SubtaskDepth, attempt+1, dec, emit) {
+							return ctx.Err()
+						}
+						totalRetryWait += dec.delay
+						continue
+					}
 				}
 				return openErr
 			}
 
-			var textPartID, thinkPartID string
-			emittedVisible := false
-			textBuf.Reset()
-			thinkBuf.Reset()
-			sigBuf.Reset()
-			stepFinish = ""
-			toolCalls = toolCalls[:0]
-
-			parseErr := drv.ParseSSE(ctx, resp.Body, func(se StreamEvent) {
-				switch se.Kind {
-				case EventThinkingDelta:
-					emittedVisible = true
-					if thinkPartID == "" {
-						thinkPartID = nextPartID("think")
-						emit(EngineEvent{Kind: EngineThinkingStart, Step: step, PartID: thinkPartID})
-					}
-					thinkBuf.WriteString(se.Delta)
-					emit(EngineEvent{Kind: EngineThinkingDelta, Step: step, PartID: thinkPartID, Text: se.Delta})
-				case EventSignatureDelta:
-					sigBuf.WriteString(se.Delta)
-				case EventTextDelta:
-					emittedVisible = true
-					if thinkPartID != "" {
-						emit(EngineEvent{Kind: EngineThinkingEnd, Step: step, PartID: thinkPartID, Text: thinkBuf.String(), Signature: sigBuf.String()})
-						thinkPartID = ""
-					}
-					if textPartID == "" {
-						textPartID = nextPartID("text")
-						emit(EngineEvent{Kind: EngineTextStart, Step: step, PartID: textPartID})
-					}
-					textBuf.WriteString(se.Delta)
-					emit(EngineEvent{Kind: EngineTextDelta, Step: step, PartID: textPartID, Text: se.Delta})
-				case EventToolCallReady:
-					if se.ToolCall != nil {
-						toolCalls = append(toolCalls, *se.ToolCall)
-					}
-				case EventUsage:
-					if se.Usage != nil {
-						emit(EngineEvent{Kind: EngineTurnUsage, Step: step, Usage: se.Usage})
-					}
-				case EventFinish:
-					if se.Finish != "" {
-						stepFinish = se.Finish
-					}
-				}
-			})
+			var parseErr error
+			streamed, parseErr = collectStepStream(ctx, drv, resp.Body, target, step, nextPartID, emit)
 			_ = resp.Body.Close()
-
-			if thinkPartID != "" {
-				emit(EngineEvent{Kind: EngineThinkingEnd, Step: step, PartID: thinkPartID, Text: thinkBuf.String(), Signature: sigBuf.String()})
-			} else if sigBuf.Len() > 0 && thinkBuf.Len() > 0 {
-				// Update sealed thinking block with trailing signature delta if signature arrived after text started.
-				emit(EngineEvent{Kind: EngineThinkingEnd, Step: step, PartID: nextPartID("think_sig"), Text: thinkBuf.String(), Signature: sigBuf.String()})
-			}
-			if textPartID != "" {
-				emit(EngineEvent{Kind: EngineTextEnd, Step: step, PartID: textPartID, Text: textBuf.String()})
-			}
 			if parseErr == nil {
+				e.reportStreamOutcome(ctx, target, headerLatency, nil)
 				stepErr = nil
 				break
 			}
-			if !emittedVisible && overflowCompactions < maxReactiveOverflowCompactions && ctx.Err() == nil && isContextOverflowError(parseErr) {
+			e.reportStreamOutcome(ctx, target, time.Since(openStarted), parseErr)
+			if !streamed.emittedVisible && tryRecoverThinkingSignature(parseErr) {
+				httpReq, err = buildStepReq()
+				if err != nil {
+					return err
+				}
+				attempt = -1
+				continue
+			}
+			if !streamed.emittedVisible && overflowCompactions < maxReactiveOverflowCompactions && ctx.Err() == nil && isContextOverflowError(parseErr) {
 				if compacted, cpInfo, ok := e.compactContextOverflow(ctx, req.ProviderID, req.ModelID, msgs, historyLen, step); ok {
 					overflowCompactions++
 					historyLen = 0
@@ -450,8 +460,14 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 			// Safe automatic retry boundary: only retry when no visible draft was
 			// streamed to consumers yet; otherwise seal visible draft and surface
 			// the interrupted stream error cleanly without duplicating output.
-			if !emittedVisible && attempt < maxStepTransientRetries && ctx.Err() == nil && isRetryableStepFailure(parseErr) {
-				continue
+			if !streamed.emittedVisible && ctx.Err() == nil {
+				if dec := e.planStepRetry(parseErr, attempt+1, totalRetryWait, time.Now()); dec.shouldRetry {
+					if !e.waitForStepRetry(ctx, step, req.SubtaskDepth, attempt+1, dec, emit) {
+						return ctx.Err()
+					}
+					totalRetryWait += dec.delay
+					continue
+				}
 			}
 			return parseErr
 		}
@@ -459,38 +475,15 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 			return stepErr
 		}
 
-		var asstBlocks []ContentBlock
-		if thinkBuf.Len() > 0 || sigBuf.Len() > 0 {
-			asstBlocks = append(asstBlocks, ContentBlock{
-				Type:      ContentThinking,
-				Text:      thinkBuf.String(),
-				Signature: sigBuf.String(),
-			})
-		}
-		if textBuf.Len() > 0 {
-			asstBlocks = append(asstBlocks, ContentBlock{
-				Type: ContentText,
-				Text: textBuf.String(),
-			})
-		}
-		for _, tc := range toolCalls {
-			asstBlocks = append(asstBlocks, ContentBlock{
-				Type:      ContentToolUse,
-				ID:        tc.ID,
-				Name:      tc.Name,
-				Input:     tc.Input,
-				Signature: tc.Signature,
-			})
-		}
-		if len(asstBlocks) > 0 {
-			msgs = append(msgs, Message{Role: RoleAssistant, Content: asstBlocks})
+		if len(streamed.asstBlocks) > 0 {
+			msgs = append(msgs, Message{Role: RoleAssistant, Content: streamed.asstBlocks})
 		}
 
-		if len(toolCalls) == 0 {
-			if isTruncatedFinishReason(stepFinish) {
-				if textBuf.Len() == 0 && truncationRecoveries == 0 && step < maxSteps {
+		if len(streamed.toolCalls) == 0 {
+			if isTruncatedFinishReason(streamed.stepFinish) {
+				if streamed.visibleTextLen == 0 && truncationRecoveries == 0 && step < maxSteps {
 					truncationRecoveries++
-					if len(asstBlocks) == 0 {
+					if len(streamed.asstBlocks) == 0 {
 						msgs = append(msgs, Message{
 							Role:    RoleAssistant,
 							Content: []ContentBlock{{Type: ContentText, Text: "[response truncated at output token limit before completion]"}},
@@ -505,32 +498,46 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 					})
 					continue
 				}
-				if req.SubtaskDepth > 0 && textBuf.Len() == 0 {
-					return fmt.Errorf("subagent output truncated at token limit (%s)", stepFinish)
+				if req.SubtaskDepth > 0 && streamed.visibleTextLen == 0 {
+					return fmt.Errorf("subagent output truncated at token limit (%s)", streamed.stepFinish)
 				}
 				emit(EngineEvent{Kind: EngineTurnFinish, Step: step, Finish: "length"})
 				return nil
 			}
-			if strings.EqualFold(stepFinish, "content_filter") {
-				if textBuf.Len() == 0 {
+			if strings.EqualFold(streamed.stepFinish, "content_filter") {
+				if streamed.visibleTextLen == 0 {
 					return fmt.Errorf("model output blocked by content filter")
 				}
 				emit(EngineEvent{Kind: EngineTurnFinish, Step: step, Finish: "content_filter"})
 				return nil
 			}
+			if step < maxSteps {
+				if steered := drainSteerMessages(req.Steer); len(steered) > 0 {
+					msgs = append(msgs, steered...)
+					continue
+				}
+			}
 			emit(EngineEvent{Kind: EngineTurnFinish, Step: step, Finish: "stop"})
 			return nil
 		}
 
-		results := e.executeToolCalls(ctx, execReq, origMode, agentMap, cfgDoc, step, toolCalls, loopGuard, nextPartID, emit)
+		results := e.executeToolCalls(ctx, execReq, origMode, agentMap, cfgDoc, rulesTracker, step, streamed.toolCalls, loopGuard, nextPartID, emit)
 		resultBlocks := make([]ContentBlock, 0, len(results))
+		promoteToBuild := false
 		for i, res := range results {
 			resultBlocks = append(resultBlocks, ContentBlock{
 				Type:      ContentToolResult,
-				ToolUseID: toolCalls[i].ID,
+				ToolUseID: streamed.toolCalls[i].ID,
 				Text:      res.Output,
 				IsError:   res.IsError,
 			})
+			if !res.IsError && req.SubtaskDepth == 0 && strings.EqualFold(effectiveMode, "plan") {
+				if pm, _ := res.Metadata["promoteMode"].(string); strings.EqualFold(strings.TrimSpace(pm), "build") {
+					promoteToBuild = true
+				}
+			}
+		}
+		for _, res := range results {
 			for _, mb := range res.Media {
 				if mb.Type == ContentMedia && mb.Data != "" && mb.MimeType != "" {
 					resultBlocks = append(resultBlocks, mb)
@@ -538,6 +545,35 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 			}
 		}
 		msgs = append(msgs, Message{Role: RoleUser, Content: resultBlocks})
+		if promoteToBuild {
+			prevMode := effectiveMode
+			effectiveMode = "build"
+			origMode = "build"
+			execReq.Mode = "build"
+			if spec, ok := agentMap["plan"]; ok && strings.TrimSpace(spec.Prompt) != "" {
+				callerSystem = strings.TrimSpace(strings.Replace(callerSystem, strings.TrimSpace(spec.Prompt), "", 1))
+			}
+			systemPrompt, _ = buildSystemPromptWithRules(req.WorktreeDir, callerSystem, drv.SystemPromptPatch(), effectiveMode, req.SubtaskDepth, cfgDoc)
+			if ts, ok := e.registry.(turnScopedRegistry); ok {
+				toolSpecs = ts.SpecsForTurn(effectiveMode, req.SubtaskDepth)
+			} else {
+				toolSpecs = e.registry.SpecsForMode(effectiveMode)
+			}
+			compactLimit = effectiveCompactContextLimit(target.ContextLimit, toolSpecs)
+			buildMaxSteps, _ := resolveEffectiveMaxSteps(req.MaxSteps, "build", req.SubtaskDepth, cfgDoc)
+			if step+buildMaxSteps > maxSteps {
+				maxSteps = step + buildMaxSteps
+			}
+			emit(EngineEvent{
+				Kind: EngineModePromoted,
+				Step: step,
+				Text: "build",
+				Metadata: map[string]any{
+					"from": prevMode,
+					"to":   "build",
+				},
+			})
+		}
 		if step == maxSteps {
 			if e.runGracefulFinalizeStep(ctx, drv, target, req, systemPrompt, msgs, maxOut, maxSteps, nextPartID, emit) {
 				return nil
@@ -553,6 +589,7 @@ func (e *Engine) executeToolCalls(
 	origMode string,
 	agentMap map[string]llm.AgentSpec,
 	cfgDoc map[string]any,
+	rulesTracker *SubdirRuleTracker,
 	step int,
 	calls []ToolCall,
 	loopGuard *stepLoopGuard,
@@ -562,18 +599,25 @@ func (e *Engine) executeToolCalls(
 	results := make([]ToolOutput, len(calls))
 	partIDs := make([]string, len(calls))
 	tc := ToolContext{
-		SessionID:     req.SessionID,
-		WorktreeDir:   req.WorktreeDir,
-		Mode:          req.Mode,
-		SubtaskDepth:  req.SubtaskDepth,
-		RunCommand:    req.CommandRunner,
-		Diagnostics:   req.Diagnostics,
-		CodeSearch:    req.CodeSearch,
-		SymbolInspect: req.SymbolInspect,
-		ImpactInspect: req.ImpactInspect,
-		AskQuestion:   req.AskQuestion,
-		MCPConfig:     req.MCPConfig,
-		HostInvoke:    req.HostInvoke,
+		SessionID:          req.SessionID,
+		WorktreeDir:        req.WorktreeDir,
+		Mode:               req.Mode,
+		SubtaskDepth:       req.SubtaskDepth,
+		RulesTracker:       rulesTracker,
+		FileRevisions:      req.FileRevisions,
+		CoordinateFileEdit: req.CoordinateFileEdit,
+		RecordFileEdit:     req.RecordFileEdit,
+		RunCommand:         req.CommandRunner,
+		StreamRunCommand:   req.StreamCommandRunner,
+		BackgroundCommands: req.BackgroundCommands,
+		Diagnostics:        req.Diagnostics,
+		CodeSearch:         req.CodeSearch,
+		SymbolInspect:      req.SymbolInspect,
+		ImpactInspect:      req.ImpactInspect,
+		AskQuestion:        req.AskQuestion,
+		MCPConfig:          req.MCPConfig,
+		projectConfig:      req.projectConfig,
+		HostInvoke:         req.HostInvoke,
 	}
 	if req.SubtaskDepth == 0 {
 		parentReq := req
@@ -658,6 +702,25 @@ func (e *Engine) runSingleTool(
 	if call.Signature != "" {
 		baseMeta = map[string]any{"thoughtSignature": call.Signature}
 	}
+	callTC.OnToolOutput = func(partial string) {
+		if strings.TrimSpace(partial) == "" {
+			return
+		}
+		meta := make(map[string]any, len(baseMeta)+1)
+		for k, v := range baseMeta {
+			meta[k] = v
+		}
+		meta["output"] = stripTerminalControlNoise(partial)
+		emit(EngineEvent{
+			Kind:     EngineToolRunning,
+			Step:     step,
+			PartID:   partID,
+			CallID:   call.ID,
+			ToolName: call.Name,
+			Input:    inputMap,
+			Metadata: meta,
+		})
+	}
 	emit(EngineEvent{
 		Kind:     EngineToolRunning,
 		Step:     step,
@@ -705,6 +768,7 @@ func (e *Engine) runSingleTool(
 			Input:     inputMap,
 			ErrorText: errText,
 			Metadata:  mergedMeta,
+			Media:     out.Media,
 		})
 		return out
 	}

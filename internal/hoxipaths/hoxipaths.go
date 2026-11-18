@@ -23,7 +23,7 @@ import (
 const (
 	// DefaultServerBaseURL is the canonical Hoxi cloud endpoint when HOXI_SERVER_URL is unset.
 	DefaultServerBaseURL = "https://hoxi.ai"
-	// DefaultDevServerBaseURL is the local hoxi.ai endpoint (apay dev server on 127.0.0.1:5400)
+	// DefaultDevServerBaseURL is the local hoxi.ai dev server endpoint on 127.0.0.1:5400
 	// preferred by Hoxi Dev when running locally.
 	DefaultDevServerBaseURL = "http://127.0.0.1:5400"
 	// DefaultDevServerHostPort is the loopback host:port of the local hoxi.ai dev server.
@@ -63,7 +63,13 @@ var protectedStateFiles = []string{
 	"relay-keys.json",
 	"git-attribution.json",
 	"browser-settings.json",
+	"window-state.json",
 	"work-apps.json",
+	"dataprofiles.json",
+	"dataprofiles.json.lock",
+	"host-daemon.json",
+	"remote-hosts.json",
+	"remote-hosts.json.lock",
 	// The reclaim ledger tells the next Hoxi start which processes to signal
 	// and which directories to delete; it must not be writable by agents.
 	"reclaim.json",
@@ -214,6 +220,24 @@ func TaskLedgerPath() string {
 	return Join("task-ledger.json")
 }
 
+// DataProfilesPath returns ~/.hoxi/dataprofiles.json, storing credential-isolated
+// API endpoint handle profiles invoked via hoxi_data. Written 0600.
+func DataProfilesPath() string {
+	return Join("dataprofiles.json")
+}
+
+// HostDaemonPath returns ~/.hoxi/host-daemon.json, storing the persistent
+// headless dev host token and listen metadata for `hoxi host`. Written 0600.
+func HostDaemonPath() string {
+	return Join("host-daemon.json")
+}
+
+// RemoteHostsPath returns ~/.hoxi/remote-hosts.json, storing mounted remote
+// headless development hosts on Hoxi Desktop. Written 0600.
+func RemoteHostsPath() string {
+	return Join("remote-hosts.json")
+}
+
 // BrowserProfileDir returns ~/.hoxi/browser-profile, the persistent Chrome user
 // data directory used when Hoxi launches a visible desktop Chrome window so sign-ins,
 // cookies and extensions survive across sessions and restarts.
@@ -225,6 +249,12 @@ func BrowserProfileDir() string {
 // built-in Chrome lifecycle preferences such as the idle auto-close timeout.
 func BrowserSettingsPath() string {
 	return Join("browser-settings.json")
+}
+
+// WindowStatePath returns ~/.hoxi/window-state.json, storing user-adjusted
+// desktop window geometry across launches. Written 0600.
+func WindowStatePath() string {
+	return Join("window-state.json")
 }
 
 // CloudflaredConfigPath returns ~/.hoxi/cloudflared.json, the Cloudflare Tunnel

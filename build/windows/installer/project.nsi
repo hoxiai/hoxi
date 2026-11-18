@@ -14,9 +14,10 @@ Unicode true
 ## Defaults to per-user installation (%LOCALAPPDATA%\Programs\Hoxi) so that:
 ##   1. Installation does not require UAC Administrator elevation.
 ##   2. Hoxi's in-app Windows self-updater (internal/updater/native_windows.go)
-##      can stage and atomically replace Hoxi.exe (and sqlite3.exe) in $INSTDIR.
-##   3. Lean pure-Go Hoxi.exe + sqlite3.exe by default; opencode.exe is omitted
-##      unless explicitly staged into tmp\opencode.exe (HOXI_BUNDLE_OPENCODE=1).
+##      can stage and atomically replace Hoxi.exe in $INSTDIR.
+##   3. Lean single-binary pure-Go Hoxi.exe by default (embedded pure-Go SQLite
+##      and native agent); opencode.exe and sqlite3.exe are omitted unless
+##      explicitly staged into tmp\.
 ####
 
 !ifndef INFO_COMPANYNAME
@@ -39,14 +40,10 @@ Unicode true
 !endif
 
 !ifndef ARG_HOXI_SQLITE_BINARY
-  !if /FileExists "..\..\bin\sqlite3.exe"
-    !define ARG_HOXI_SQLITE_BINARY "..\..\bin\sqlite3.exe"
-  !else if /FileExists "tmp\sqlite3.exe"
+  !if /FileExists "tmp\sqlite3.exe"
     !define ARG_HOXI_SQLITE_BINARY "tmp\sqlite3.exe"
   !else if /FileExists "tmp\sqlite\sqlite3.exe"
     !define ARG_HOXI_SQLITE_BINARY "tmp\sqlite\sqlite3.exe"
-  !else
-    !error "Hoxi installer requires the verified sqlite3.exe sidecar"
   !endif
 !endif
 
@@ -454,7 +451,11 @@ Section
     !else
         Delete "$INSTDIR\opencode.exe"
     !endif
-    File "/oname=sqlite3.exe" "${ARG_HOXI_SQLITE_BINARY}"
+    !ifdef ARG_HOXI_SQLITE_BINARY
+        File "/oname=sqlite3.exe" "${ARG_HOXI_SQLITE_BINARY}"
+    !else
+        Delete "$INSTDIR\sqlite3.exe"
+    !endif
     File /nonfatal "..\..\..\LICENSE"
     File /nonfatal "..\..\..\NOTICE"
     File /nonfatal "..\..\..\THIRD_PARTY_NOTICES.md"

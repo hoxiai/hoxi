@@ -71,22 +71,30 @@ export const WALLPAPER_PRESET_IDS: WallpaperPresetID[] = [
   "obsidian-gold",
 ];
 
-export const WALLPAPER_PRESET_ART: Record<
-  WallpaperPresetID,
-  {
-    previewGradient: string;
-    imageUri: string;
-    recommendedScheme: string;
-    recommendedThemeMode: "light" | "dark";
-    luminance: WallpaperLuminance;
-  }
-> = {
+export interface WallpaperPresetConfig {
+  previewGradient: string;
+  imageUri: string;
+  /** Optional 2x lossless RGBA character standee layered over the vector SVG backdrop. */
+  standeeUri?: string;
+  /** Horizontal CSS anchor for the standee layer (defaults to "84%"). */
+  standeePositionX?: string;
+  /** Responsive viewport CSS `background-size` for the standee (caps width on narrow split-screen windows while keeping ~92vh on widescreen/ultrawide). */
+  standeeViewportSize?: string;
+  recommendedScheme: string;
+  recommendedThemeMode: "light" | "dark";
+  luminance: WallpaperLuminance;
+}
+
+export const WALLPAPER_PRESET_ART: Record<WallpaperPresetID, WallpaperPresetConfig> = {
   "academy-sky": {
     recommendedScheme: "blue",
     recommendedThemeMode: "light",
-    luminance: { mean: 0.62, top: 0.56, p10: 0.18, p90: 0.94, spread: 0.26, measured: true },
+    luminance: { mean: 0.56, top: 0.57, p10: 0.2, p90: 0.9, spread: 0.27, measured: true },
     previewGradient: "linear-gradient(135deg, #0284c7 0%, #7dd3fc 52%, #f0f9ff 100%)",
     imageUri: "/wallpapers/academy-sky.svg",
+    standeeUri: "/wallpapers/academy-sky-standee.png",
+    standeePositionX: "84%",
+    standeeViewportSize: "min(43%, 54vh) auto",
   },
   "cyber-shibuya": {
     recommendedScheme: "cyber",
@@ -105,11 +113,65 @@ export const WALLPAPER_PRESET_ART: Record<
   "obsidian-gold": {
     recommendedScheme: "obsidian",
     recommendedThemeMode: "dark",
-    luminance: { mean: 0.11, top: 0.08, p10: 0.03, p90: 0.82, spread: 0.26, measured: true },
+    luminance: { mean: 0.09, top: 0.06, p10: 0.02, p90: 0.8, spread: 0.24, measured: true },
     previewGradient: "linear-gradient(135deg, #09090b 0%, #1c1917 58%, #d97706 100%)",
     imageUri: "/wallpapers/obsidian-gold.svg",
+    standeeUri: "/wallpapers/obsidian-gold-standee.png",
+    standeePositionX: "86%",
+    standeeViewportSize: "min(46%, 68vh) auto",
   },
 };
+
+function escapeCssUrl(raw: string): string {
+  return raw.replace(/[\r\n]/g, "").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+export function composeLayeredWallpaperStyle(
+  backdropUrl: string,
+  standeeUrl?: string,
+  standeePositionX = "84%",
+  backdropPosition = "72% center",
+  options?: {
+    standeeSize?: string;
+    fallbackGradient?: string;
+  }
+): Record<string, string> {
+  const escBackdrop = escapeCssUrl(backdropUrl);
+  const standeeSize = options?.standeeSize || "auto 92%";
+  const grad = options?.fallbackGradient?.trim() || "";
+
+  if (standeeUrl) {
+    const escStandee = escapeCssUrl(standeeUrl);
+    if (grad) {
+      return {
+        "background-image": `url("${escStandee}"), url("${escBackdrop}"), ${grad}`,
+        "background-repeat": "no-repeat, no-repeat, no-repeat",
+        "background-size": `${standeeSize}, cover, cover`,
+        "background-position": `${standeePositionX} bottom, ${backdropPosition}, center`,
+      };
+    }
+    return {
+      "background-image": `url("${escStandee}"), url("${escBackdrop}")`,
+      "background-repeat": "no-repeat, no-repeat",
+      "background-size": `${standeeSize}, cover`,
+      "background-position": `${standeePositionX} bottom, ${backdropPosition}`,
+    };
+  }
+  if (grad) {
+    return {
+      "background-image": `url("${escBackdrop}"), ${grad}`,
+      "background-repeat": "no-repeat, no-repeat",
+      "background-size": "cover, cover",
+      "background-position": `${backdropPosition}, center`,
+    };
+  }
+  return {
+    "background-image": `url("${escBackdrop}")`,
+    "background-repeat": "no-repeat",
+    "background-size": "cover",
+    "background-position": backdropPosition,
+  };
+}
 
 export function clampWallpaperInt(val: unknown, min: number, max: number, fallback: number): number {
   if (typeof val !== "number" || !Number.isFinite(val)) return fallback;

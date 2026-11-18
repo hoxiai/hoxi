@@ -170,8 +170,13 @@ func TestUpstreamPassthroughTokenDefenseInDepth(t *testing.T) {
 		t.Fatalf("unexpected bootstrap cookies: %+v", cookies)
 	}
 
-	// 2. Unauthenticated loopback calls to raw upstream prefixes (/pty, /session, /auth, /api/session) fail with 403.
-	for _, target := range []string{"/pty", "/session", "/auth/openai", "/api/session", "/global/config"} {
+	// 2. Unauthenticated loopback calls to raw upstream prefixes and token-gated Hoxi host/provider routes fail with 403.
+	for _, target := range []string{
+		"/pty", "/api/hoxi/pty", "/api/hoxi/pty/pty_1/connect",
+		"/api/hoxi/agents", "/api/hoxi/commands", "/api/hoxi/lsp",
+		"/session", "/auth/openai", "/api/hoxi/provider/credentials/openai",
+		"/api/session", "/global/config", "/api/hoxi/provider/config", "/api/hoxi/provider/catalog",
+	} {
 		w := httptest.NewRecorder()
 		g.ServeHTTP(w, localRequest(http.MethodGet, target, nil))
 		if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "gateway token") {

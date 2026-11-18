@@ -100,15 +100,16 @@ func TestGeminiStreamJSONTranslation(t *testing.T) {
 		t.Fatalf("ExternalID() = %q, want gem-sess-99", tr.ExternalID())
 	}
 
-	if tr.msgInfo.Tokens == nil {
-		t.Fatal("expected token usage on tr.msgInfo")
+	if tr.MsgInfo.Tokens == nil {
+		t.Fatal("expected token usage on tr.MsgInfo")
 	}
-	if tr.msgInfo.Tokens.Input != 1200 || tr.msgInfo.Tokens.Output != 300 || tr.msgInfo.Tokens.Reasoning != 50 || tr.msgInfo.Tokens.Cache.Read != 400 {
-		t.Fatalf("unexpected tokens: %+v", tr.msgInfo.Tokens)
+	if tr.MsgInfo.Tokens.Input != 1200 || tr.MsgInfo.Tokens.Output != 300 || tr.MsgInfo.Tokens.Reasoning != 50 || tr.MsgInfo.Tokens.Cache.Read != 400 {
+		t.Fatalf("unexpected tokens: %+v", tr.MsgInfo.Tokens)
 	}
 
 	var sawBash, sawEdit, sawText, sawReasoning bool
-	for _, p := range tr.partsByID {
+	parts := tr.Parts()
+	for _, p := range parts {
 		switch p.Type {
 		case "tool":
 			if p.Tool == "bash" && p.State != nil && p.State.Status == "completed" && strings.Contains(p.State.Output, "ok  github.com/hoxiai/hoxi") {
@@ -128,7 +129,7 @@ func TestGeminiStreamJSONTranslation(t *testing.T) {
 		}
 	}
 	if !sawBash || !sawEdit || !sawText || !sawReasoning {
-		t.Fatalf("missing translated parts: bash=%v edit=%v text=%v reasoning=%v (parts=%+v)", sawBash, sawEdit, sawText, sawReasoning, tr.partsByID)
+		t.Fatalf("missing translated parts: bash=%v edit=%v text=%v reasoning=%v (parts=%+v)", sawBash, sawEdit, sawText, sawReasoning, parts)
 	}
 }
 
@@ -255,14 +256,14 @@ func TestGeminiCLIAgyFallbackAndTranslation(t *testing.T) {
 	if tr.ExternalID() != "conv-agy-123" {
 		t.Fatalf("ExternalID() = %q, want conv-agy-123", tr.ExternalID())
 	}
-	if tr.msgInfo.ModelID != "gemini-4-argon" {
-		t.Fatalf("msgInfo.ModelID = %q, want gemini-4-argon", tr.msgInfo.ModelID)
+	if tr.MsgInfo.ModelID != "gemini-4-argon" {
+		t.Fatalf("MsgInfo.ModelID = %q, want gemini-4-argon", tr.MsgInfo.ModelID)
 	}
 }
 
 func TestGeminiCLISandboxAllowsHookHomeAndProtectsSettings(t *testing.T) {
-	if !sandbox.Available() {
-		t.Skip("seatbelt backend unavailable")
+	if !sandbox.CanApply() {
+		t.Skip("seatbelt sandbox_apply unavailable or blocked by outer sandbox")
 	}
 	home, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {

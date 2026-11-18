@@ -17,6 +17,7 @@ import {
   setCompanionState,
 } from "../store/companion";
 import {
+  composeLayeredWallpaperStyle,
   computeAdaptiveGlassMetrics,
   srgbPixelLuminance,
   UNMEASURED_WALLPAPER_LUMINANCE,
@@ -28,6 +29,7 @@ import {
   applyWallpaperMaterialMode,
   loadInitialWallpaperMeta,
   resetWallpaperSliders,
+  resolveActiveWallpaperStandee,
   resolveActiveWallpaperUrl,
   selectWallpaperPreset,
   setWallpaperEnabled,
@@ -121,6 +123,38 @@ describe("appearance preferences", () => {
       assertEqual(activeWallpaperMaterialMode(), "frosted");
       assertEqual(root.dataset.wallpaperBlur, "true");
       assertEqual(resolveActiveWallpaperUrl(), "/wallpapers/cyber-shibuya.svg");
+      assertEqual(resolveActiveWallpaperStandee(), null);
+
+      selectWallpaperPreset("academy-sky");
+      assertEqual(resolveActiveWallpaperUrl(), "/wallpapers/academy-sky.svg");
+      assertEqual(resolveActiveWallpaperStandee()?.url, "/wallpapers/academy-sky-standee.png");
+      const layeredAcademy = composeLayeredWallpaperStyle(
+        resolveActiveWallpaperUrl(),
+        resolveActiveWallpaperStandee()?.url,
+        resolveActiveWallpaperStandee()?.positionX,
+        "right center",
+        {
+          standeeSize: "auto 92%",
+          fallbackGradient: WALLPAPER_PRESET_ART["academy-sky"].previewGradient,
+        }
+      );
+      assertEqual(
+        layeredAcademy["background-image"],
+        `url("/wallpapers/academy-sky-standee.png"), url("/wallpapers/academy-sky.svg"), ${WALLPAPER_PRESET_ART["academy-sky"].previewGradient}`
+      );
+      assertEqual(layeredAcademy["background-size"], "auto 92%, cover, cover");
+
+      const escapedCustom = composeLayeredWallpaperStyle('https://example.com/a\\"b\nc.png');
+      assertEqual(escapedCustom["background-image"], 'url("https://example.com/a\\\\\\"bc.png")');
+
+      selectWallpaperPreset("obsidian-gold");
+      assertEqual(resolveActiveWallpaperStandee()?.url, "/wallpapers/obsidian-gold-standee.png");
+      assertEqual(resolveActiveWallpaperStandee()?.positionX, "86%");
+      assertEqual(resolveActiveWallpaperStandee()?.viewportSize, "min(46%, 68vh) auto");
+
+      setWallpaperState({ source: "custom", hasStoredCustomBlob: true, customObjectUrl: "" });
+      assertEqual(resolveActiveWallpaperStandee(), null);
+      selectWallpaperPreset("obsidian-gold");
 
       applyWallpaperMaterialMode("crystal");
       assertEqual(activeWallpaperMaterialMode(), "crystal");
@@ -142,6 +176,7 @@ describe("appearance preferences", () => {
       assertEqual(wallpaperState.wallpaperDim, 0);
       assertEqual(applyWallpaperCustomUrl("invalid-scheme"), false);
       assertEqual(applyWallpaperCustomUrl("data:image/png;base64,AAAA"), true);
+      assertEqual(resolveActiveWallpaperStandee(), null);
       assertEqual(loadInitialWallpaperMeta().source, "url");
       assertEqual(JSON.parse(saved.get(WALLPAPER_STORAGE_KEY)!).enabled, true);
       resetWallpaperSliders();

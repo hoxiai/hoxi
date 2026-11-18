@@ -136,7 +136,28 @@ func (g *Gateway) GatewayToken() string {
 	return g.gatewayToken
 }
 
+func isTokenProtectedHoxiHostPath(requestPath string) bool {
+	switch requestPath {
+	case "/api/hoxi/pty",
+		"/api/hoxi/agents",
+		"/api/hoxi/commands",
+		"/api/hoxi/lsp",
+		"/api/hoxi/provider/catalog",
+		"/api/hoxi/provider/auth-methods",
+		"/api/hoxi/provider/config",
+		"/api/hoxi/provider/dispose",
+		"/api/hoxi/provider/credentials":
+		return true
+	}
+	return strings.HasPrefix(requestPath, "/api/hoxi/pty/") ||
+		strings.HasPrefix(requestPath, "/api/hoxi/provider/credentials/") ||
+		strings.HasPrefix(requestPath, "/api/hoxi/provider/oauth/")
+}
+
 func isUpstreamPassthroughPath(requestPath string) bool {
+	if isTokenProtectedHoxiHostPath(requestPath) {
+		return true
+	}
 	if requestPath == "/api/hoxi" || strings.HasPrefix(requestPath, "/api/hoxi/") ||
 		requestPath == "/file/content" || requestPath == "/api/file/content" ||
 		requestPath == "/healthz" {

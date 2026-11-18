@@ -19,7 +19,7 @@ function wsEndpoint(ptyID: string, directory?: string): string {
   const tok = getGatewayToken();
   if (tok) params.set("hoxiToken", tok);
   const qs = params.toString();
-  return `${base}/pty/${encodeURIComponent(ptyID)}/connect${qs ? `?${qs}` : ""}`;
+  return `${base}/api/hoxi/pty/${encodeURIComponent(ptyID)}/connect${qs ? `?${qs}` : ""}`;
 }
 
 const utf8Decoder = new TextDecoder();

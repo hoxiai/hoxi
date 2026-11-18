@@ -195,7 +195,7 @@ func TestOpenCodeUserReplyStaysSettledWhileStillListed(t *testing.T) {
 func TestOpenCodeRepeatedPollsArmOneTimeout(t *testing.T) {
 	t.Parallel()
 	const id = "per_oc_poll_once"
-	wait := ApprovalPolicy{Mode: ApprovalModeAuto}.approvalWaitLimit()
+	wait := ApprovalPolicy{Mode: ApprovalModeAuto}.ApprovalWaitLimit()
 	created := float64(time.Now().Add(-wait + 300*time.Millisecond).UnixMilli())
 	svc, fake, dir := newStaleOpenCodeService(t, http.StatusOK, map[string]interface{}{
 		"id": id, "sessionID": "oc-stale", "permission": "bash", "patterns": []interface{}{"rm -rf build"}, "createdAt": created,

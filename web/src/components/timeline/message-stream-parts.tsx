@@ -1,8 +1,10 @@
 // web/src/components/timeline/message-stream-parts.tsx
 import { createMemo, createSignal, For, Match, Show, Switch } from "solid-js";
+import { Terminal } from "lucide-solid";
 import ThoughtBox from "./ThoughtBox";
 import ToolCard from "./ToolCard";
 import MarkdownView from "./MarkdownView";
+import { resolveSentSlashCommand } from "./composer-hooks";
 import {
   expandInlineThinkingParts,
   extractVisibleAssistantText,
@@ -19,7 +21,13 @@ import ContextActivityGroupComponent, {
   type TurnRenderItem,
 } from "./ContextActivityGroupView";
 import type { MessageInfo, MessagePart } from "../../services/sse-types";
-import { openAttachmentInInspector, openImagePreview, workspace } from "../../store/workspace";
+import {
+  defaultWorkspaceDir,
+  openAttachmentInInspector,
+  openImagePreview,
+  sessionDirectory,
+  workspace,
+} from "../../store/workspace";
 import { FileIcon, Icon } from "../icons";
 import { t } from "../../i18n";
 import { AssistantErrorCard, SessionRetryCard } from "./assistant-error-card";
@@ -408,6 +416,16 @@ export function UserTextPartView(props: {
   );
 
   const isExpanded = createMemo(() => expanded() || Boolean(props.forceExpand));
+  const slashCommand = createMemo(() => {
+    const raw = props.part.text || "";
+    if (!raw.trimStart().startsWith("/")) return null;
+    const dir =
+      sessionDirectory(props.part.sessionID) ||
+      workspace.rootDir ||
+      defaultWorkspaceDir() ||
+      undefined;
+    return resolveSentSlashCommand(raw, dir);
+  });
 
   const toggleExpanded = () => {
     const next = !expanded();
@@ -439,7 +457,22 @@ export function UserTextPartView(props: {
           }`}
           style={{ "font-size": "var(--app-chat-text-size)" }}
         >
-          {props.part.text}
+          <Show when={slashCommand()} fallback={props.part.text}>
+            {(cmd) => (
+              <>
+                <span
+                  title={cmd().command.description || cmd().command.rawToken}
+                  class={`inline-flex items-center gap-1 rounded-md border border-[var(--accent-border)] bg-[var(--bg-panel)]/85 px-1.5 py-0.5 align-baseline font-mono text-[12px] font-semibold text-[var(--accent-primary)] ${
+                    cmd().restText && !cmd().restText.startsWith("\n") ? "mr-1.5" : ""
+                  }`}
+                >
+                  <Terminal size={11} class="shrink-0" />
+                  <span>{cmd().command.rawToken}</span>
+                </span>
+                {cmd().restText}
+              </>
+            )}
+          </Show>
         </div>
         <Show when={isCollapsible() && !props.forceExpand}>
           <button

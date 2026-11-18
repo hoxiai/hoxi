@@ -10,6 +10,7 @@ import {
 import type { MessageInfo, MessagePart } from "../services/sse-types";
 import { PROVIDER_TELEMETRY_KEY, setWorkspace, workspace, writeStorageJSON } from "./workspace-state";
 import { reportAutoCandidateOutcome } from "./auto-breaker";
+import { decideAutoFailover } from "./auto-failover";
 
 const MAX_SAMPLES = 30;
 const MAX_INCIDENTS = 10;
@@ -184,9 +185,39 @@ interface ActiveTurnContext {
   hallucinationFlagged: boolean;
 }
 
+const MAX_ACTIVE_TURN_TELEMETRY = 256;
+const MAX_PROCESSED_MESSAGE_KEYS = 2048;
+const MAX_PROCESSED_TOOL_KEYS = 4096;
+
 const activeTurnsBySession = new Map<string, ActiveTurnContext>();
 const processedMessageKeys = new Set<string>();
 const processedToolPartKeys = new Set<string>();
+
+function addBoundedKey(set: Set<string>, key: string, max: number): boolean {
+  if (set.has(key)) return false;
+  while (set.size >= max) {
+    const oldest = set.values().next().value;
+    if (oldest === undefined) break;
+    set.delete(oldest);
+  }
+  set.add(key);
+  return true;
+}
+
+export function clearActiveTurnTelemetry(sessionID: string): void {
+  if (sessionID) activeTurnsBySession.delete(sessionID);
+}
+
+export function forgetSessionTelemetry(sessionIDs: string[]): void {
+  for (const id of sessionIDs) {
+    if (!id) continue;
+    activeTurnsBySession.delete(id);
+    const retryPrefix = `retry:${id}:`;
+    for (const key of processedMessageKeys) {
+      if (key.startsWith(retryPrefix)) processedMessageKeys.delete(key);
+    }
+  }
+}
 
 function resolveSessionProvider(sessionID: string): { providerID: string; modelID: string } | null {
   const ctx = activeTurnsBySession.get(sessionID);
@@ -216,7 +247,13 @@ export function recordPromptDispatched(
 ) {
   const pid = providerID || workspace.selectedModel?.providerID || "";
   const mid = modelID || workspace.selectedModel?.modelID || "";
-  if (!pid) return;
+  if (!pid || !sessionID) return;
+  if (activeTurnsBySession.has(sessionID)) activeTurnsBySession.delete(sessionID);
+  while (activeTurnsBySession.size >= MAX_ACTIVE_TURN_TELEMETRY) {
+    const oldest = activeTurnsBySession.keys().next().value;
+    if (oldest === undefined) break;
+    activeTurnsBySession.delete(oldest);
+  }
   activeTurnsBySession.set(sessionID, {
     dispatchedAt: Date.now(),
     providerID: pid,
@@ -264,8 +301,7 @@ export function recordSessionRetry(sessionID: string, attempt: number, message?:
   const resolved = resolveSessionProvider(sessionID);
   if (!resolved) return;
   const dedupKey = `retry:${sessionID}:${attempt}:${message || ""}`;
-  if (processedMessageKeys.has(dedupKey)) return;
-  processedMessageKeys.add(dedupKey);
+  if (!addBoundedKey(processedMessageKeys, dedupKey, MAX_PROCESSED_MESSAGE_KEYS)) return;
 
   const isTimeout = isTimeoutErrorText(message || "");
   setWorkspace(
@@ -311,8 +347,7 @@ export function recordToolPartUpdate(part: MessagePart) {
   if (status !== "completed" && status !== "error") return;
 
   const dedupKey = `${part.id}:${status}`;
-  if (processedToolPartKeys.has(dedupKey)) return;
-  processedToolPartKeys.add(dedupKey);
+  if (!addBoundedKey(processedToolPartKeys, dedupKey, MAX_PROCESSED_TOOL_KEYS)) return;
 
   if (status === "error" && isNonModelToolFailure(part.state.error)) {
     return;
@@ -442,6 +477,19 @@ export function isContextOverflowError(info?: MessageInfo | null): boolean {
   );
 }
 
+export function isNonEndpointTurnError(info?: MessageInfo | null): boolean {
+  if (!info?.error) return false;
+  if (
+    isUserAbortError(info) ||
+    isRunnerStallError(info) ||
+    isBalanceError(info) ||
+    isContextOverflowError(info)
+  ) {
+    return true;
+  }
+  return !decideAutoFailover(info.error, 60_000).penalize;
+}
+
 export function recordAssistantTurnUpdated(info: MessageInfo) {
   if (info.role !== "assistant") return;
   const pid = info.providerID || resolveSessionProvider(info.sessionID)?.providerID;
@@ -455,10 +503,13 @@ export function recordAssistantTurnUpdated(info: MessageInfo) {
   }
 
   if (info.error) {
-    if (isUserAbortError(info) || isRunnerStallError(info)) return;
+    if (isUserAbortError(info) || isRunnerStallError(info)) {
+      activeTurnsBySession.delete(info.sessionID);
+      return;
+    }
     const errKey = `${info.id}:error`;
-    if (processedMessageKeys.has(errKey)) return;
-    processedMessageKeys.add(errKey);
+    if (!addBoundedKey(processedMessageKeys, errKey, MAX_PROCESSED_MESSAGE_KEYS)) return;
+    activeTurnsBySession.delete(info.sessionID);
 
     const errMsg = info.error.data?.message || info.error.name || "API Error";
     const statusCode = info.error.data?.statusCode;
@@ -473,6 +524,12 @@ export function recordAssistantTurnUpdated(info: MessageInfo) {
         message: errMsg,
         class: "quota",
       });
+      return;
+    }
+    if (isNonEndpointTurnError(info)) {
+      // Request-payload (400/413/422), context-window, content-policy, or
+      // interrupted mutating-tool errors are not endpoint instability; mirror
+      // backend breaker.go and do not penalize provider stability scores.
       return;
     }
     const isTimeout = isTimeoutErrorText(errMsg, statusCode);
@@ -512,8 +569,7 @@ export function recordAssistantTurnUpdated(info: MessageInfo) {
 
   if (info.time?.completed && info.time.completed > 0) {
     const okKey = `${info.id}:completed`;
-    if (processedMessageKeys.has(okKey)) return;
-    processedMessageKeys.add(okKey);
+    if (!addBoundedKey(processedMessageKeys, okKey, MAX_PROCESSED_MESSAGE_KEYS)) return;
 
     const durationMs = Math.max(0, info.time.completed - (info.time.created || info.time.completed));
     const outTokens = info.tokens?.output ?? 0;
@@ -558,6 +614,7 @@ export function recordAssistantTurnUpdated(info: MessageInfo) {
     // Report time-to-first-token, not the full agentic turn duration, so the
     // shared breaker's latency average reflects the model's responsiveness.
     const ttftMs = activeTurnsBySession.get(info.sessionID)?.ttftMs ?? 0;
+    activeTurnsBySession.delete(info.sessionID);
     reportAutoCandidateOutcome({
       providerID: pid,
       modelID: mid,
@@ -614,6 +671,7 @@ export function recordUserRevertAction(sessionID: string, messageID?: string) {
 
 export function recordUserAbortAction(sessionID: string) {
   const ctx = activeTurnsBySession.get(sessionID);
+  activeTurnsBySession.delete(sessionID);
   if (!ctx || !ctx.providerID) return;
   const elapsedMs = Date.now() - ctx.dispatchedAt;
   if (elapsedMs < 10_000) return;

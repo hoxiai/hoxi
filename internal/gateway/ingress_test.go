@@ -9,7 +9,7 @@ import (
 func ingressRequest(t *testing.T, g *Gateway, method, path, token string) int {
 	t.Helper()
 	req := httptest.NewRequest(method, path, nil)
-	req.Host = "abc123.node.hoxi.work"
+	req.Host = "abc123.node.hoxi.ai"
 	// The forwarder connects over loopback, but a public source address is
 	// irrelevant here: the ingress has no source-address filter, unlike the LAN
 	// listener. This asserts that difference.
@@ -96,12 +96,12 @@ func TestIngressRequestSanitizesHeadersAndAcceptsExternalOrigin(t *testing.T) {
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/hoxi/workspaces?hoxiToken=leaked&dir=x", nil)
-	req.Host = "abc123.node.hoxi.work"
+	req.Host = "abc123.node.hoxi.ai"
 	req.RemoteAddr = "127.0.0.1:51000"
 	req.Header.Set("X-Auth", relayToken)
 	req.Header.Set("Authorization", "Bearer "+relayToken)
-	req.Header.Set("Origin", "https://abc123.node.hoxi.work")
-	req.Header.Set("Referer", "https://abc123.node.hoxi.work/app")
+	req.Header.Set("Origin", "https://abc123.node.hoxi.ai")
+	req.Header.Set("Referer", "https://abc123.node.hoxi.ai/app")
 	req.Header.Set("Cookie", "CF_Authorization=jwt; hoxi_gateway_token=secret")
 	req.Header.Set("X-Hoxi-Token", "secret")
 	req.Header.Set("Sec-Fetch-Site", "cross-site")

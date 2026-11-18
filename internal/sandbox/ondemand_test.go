@@ -160,8 +160,8 @@ func TestOnDemandProfileFailsClosedWithoutPortSnapshot(t *testing.T) {
 // the workspace and reach a local server, and cannot touch .git, read .env
 // or key files, write outside, or reach a denied control port.
 func TestOnDemandProfileEnforced(t *testing.T) {
-	if !Available() {
-		t.Skip("seatbelt backend unavailable")
+	if !CanApply() {
+		t.Skip("seatbelt sandbox_apply unavailable or blocked by outer sandbox")
 	}
 	// A short workspace path keeps its Unix socket under the 104-byte limit.
 	workspace, err := os.MkdirTemp("/private/tmp", "hxw")
@@ -306,8 +306,8 @@ func TestLoopbackPort(t *testing.T) {
 // Other agents' sign-in tokens and IDE bridge lock files are unreadable from
 // the on-demand sandbox; an ordinary file next to them is not.
 func TestOnDemandProfileHidesAgentCredentials(t *testing.T) {
-	if !Available() {
-		t.Skip("seatbelt backend unavailable")
+	if !CanApply() {
+		t.Skip("seatbelt sandbox_apply unavailable or blocked by outer sandbox")
 	}
 	home := resolvePathSymlinks(t.TempDir())
 	t.Setenv("HOME", home)

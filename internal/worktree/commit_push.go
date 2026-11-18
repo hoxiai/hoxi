@@ -17,13 +17,15 @@ import (
 const gitPushTimeout = 45 * time.Second
 
 type CommitAndPushResult struct {
-	OK         bool   `json:"ok"`
-	Commit     string `json:"commit,omitempty"`
-	Branch     string `json:"branch,omitempty"`
-	Remote     string `json:"remote,omitempty"`
-	Pushed     bool   `json:"pushed"`
-	Message    string `json:"message,omitempty"`
-	CompareURL string `json:"compareURL,omitempty"`
+	OK              bool   `json:"ok"`
+	Commit          string `json:"commit,omitempty"`
+	Branch          string `json:"branch,omitempty"`
+	Remote          string `json:"remote,omitempty"`
+	Pushed          bool   `json:"pushed"`
+	Message         string `json:"message,omitempty"`
+	CompareURL      string `json:"compareURL,omitempty"`
+	ClientRequestID string `json:"clientRequestId,omitempty"`
+	Deduplicated    bool   `json:"deduplicated,omitempty"`
 }
 
 func parseBranchFromPorcelainHeader(headerLine string) string {

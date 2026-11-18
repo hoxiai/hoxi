@@ -59,14 +59,13 @@
 独立开发者与精干团队既要写代码，又要管线上服务器。全自动放行怕 Agent 一句 `rm -rf` 删库或泄露密钥；全手动又得死盯屏幕点确认；出门在外还得随时处理审批与服务器告警。
 - **跨引擎统一高危门控 + Seatbelt 进程沙箱 + 无人值守模式（`unattended`）**：无论底层是 Hoxi Native 自研引擎、Claude Code、Codex、OpenCode、Antigravity 还是 Gemini CLI，涉及 `rm`、`sudo`、`git push --force`、敏感文件读取等高危指令一律经 PreToolUse 安全门控硬拦截并点亮 macOS `NSStatusBar` / Windows 系统托盘 `Attention` 徽章。开启**无人值守模式**后，会话强制运行在「隔离 Git Worktree + macOS Seatbelt 操作系统沙箱」内，自动剥离环境变量凭据、封锁 `~/.ssh` / `~/.aws` / `.env` 读取，并对动态拼接命令、`git push`、提权与外发执行零妥协硬拒绝。
 - **运行时中途纠偏（Steer，支持 Hoxi Native 与 OpenCode 会话）+ 桌面浏览器窗口 / 隔离无头浏览器 / Chrome Link 扩展**：Agent 思路偏了无需强杀重来，随时插入指令实时纠偏；默认打开持久化 `~/.hoxi/browser-profile` 的真实桌面 Chrome 窗口（`window` 模式，登录态跨重启保留），可选会话独占的隔离无头模式（`headless`），也可通过 Chrome Link 扩展（`extensions/chrome`，首次 2 分钟一次性配对码、后续通过 `linkToken` 一键自动重连，支持多标签与子弹窗 `openerTabId` 接管）安全操控日常 Chrome。
-- **移动端随身遥控（支持局域网直连、Cloudflare 中继与 GoPanel 反向隧道）**：
-  1. **三通道弹性连接 + 1-RTT X25519 零知识端到端加密（E2EE）**：支持**局域网扫码直连**（`:5417`）、**Cloudflare Tunnel 中继**（`:5418`）以及 **[GoPanel](https://github.com/hoxiai/gopanel) 反向隧道 + iPhone APNs 审批提醒推送**，全程采用 `hoxi-e2ee-v1` 双向 AES-256-GCM 加密封装（推送载荷仅含待处理计数，绝不经第三方通道传输代码或命令明文）。
-  2. **工具意图识别 + 修改类操作强制确认闭环**：一句话查询 **Hoxi 桌面编码进展**与 **GoPanel 服务器水位**，或下发指令跑单测、审查/提交 Git 改动、批准安全门控、重启容器、续期 SSL 证书；所有修改类动作强制生成 **2 分钟有效、单次消费的确认卡片**，并携带 `X-Idempotency-Key` 与 `instructionId` 幂等对账，杜绝误触与弱网重放。
-  3. **原生语音输入与连续通话（手动开启；真机验收待定）**：内置 iOS `.voiceChat` 硬件回声消除、50 秒识别轮转、开口或点击即打断（`onUserBargeIn`），采用原生 ASR + 模型网关 `/v1/audio/speech` 服务端 TTS（失败自动回落系统语音），并支持挂载节点端发现的 Agent Skills。
+- **移动端随身遥控（仓库内置 `mobile/` Flutter 端，支持局域网直连、Cloudflare 中继与 GoPanel 反向隧道）**：
+  1. **三通道弹性连接 + 1-RTT X25519 零知识端到端加密（E2EE）**：支持**局域网扫码直连**（`:5417`）、**Cloudflare Tunnel 中继**（`:5418`）以及 **[GoPanel](https://github.com/hoxiai/gopanel) 反向隧道**（配合 GoPanel 服务端可选开启 APNs 待处理计数提醒），全程采用 `hoxi-e2ee-v1` 双向 AES-256-GCM 加密封装（推送载荷仅含待处理计数，绝不经第三方通道传输代码或命令明文）。
+  2. **远程会话流式查看、Diff 审查与幂等审批**：随时查看 **Hoxi 桌面编码进展**与 **GoPanel 服务器状态**，或下发指令跑单测、审查/提交 Git Worktree 改动、批准 PreToolUse 安全门控；关键写操作携带 `X-Idempotency-Key` / `clientRequestId` 幂等对账，杜绝误触与弱网重放。
 
 ### 6. 让智能体走出聊天框
 多数 AI 编码工具止步于仓库。Hoxi 还能让会话操作原生应用、把一个目标拆成并行任务，并回看上游落地了什么。
-- **原生电脑控制（`hoxi_computer`）**：Hoxi Native 与 OpenCode 会话可读取窗口并驱动前台输入——macOS 走 Accessibility / ScreenCaptureKit / CGEvent，Windows 走 UI Automation / PrintWindow / SendInput。授权绑定「一个会话 + 一个运行中的应用」，经原生弹窗确认；每次输入都只接受本机「允许一次」，不支持远程、始终允许或无人值守；截图只截授权窗口、不返回密码字段，相关路由不对隧道、局域网与中继开放。
+- **原生电脑控制（`hoxi_computer`）**：Hoxi Native 与 OpenCode 会话可读取窗口并驱动前台输入——macOS 走 Accessibility / ScreenCaptureKit / CGEvent，Windows 走 UI Automation / PrintWindow / SendInput。授权绑定「一个会话 + 一个运行中的应用」，经原生弹窗确认；输入默认每次只接受本机「允许一次」（用户也可在电脑控制面板为当前已授权应用开启本会话连续输入免确认；不支持远程、跨会话始终允许或无人值守）；截图只截授权窗口、不返回密码字段，相关路由不对隧道、局域网与中继开放。
 - **多 Agent DAG 编排（Convoy）**：一句话描述目标，自动拆成分工 DAG——Git 仓库里每个任务独占一个隔离 worktree，任务按依赖从上游已合并改动起步，无依赖的并行执行。
 - **GitHub PR 与 CI 审查（`forge`）**：在工作区内直接读取 PR 状态、检查项与评论线程（经 GitHub CLI `gh`），无需切换窗口。
 
@@ -149,6 +148,14 @@ go build ./... && go test ./internal/...
 npx --prefix web tsc -p web/tsconfig.json --noEmit
 npm --prefix web run check:i18n && npm --prefix web run check:lines
 npm --prefix web test && npm --prefix web run build
+```
+
+### 配套移动端构建（`mobile/`，可选）
+```bash
+cd mobile
+flutter pub get && flutter gen-l10n
+flutter analyze && flutter test
+flutter run
 ```
 
 ---

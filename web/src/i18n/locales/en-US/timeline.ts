@@ -1,6 +1,10 @@
 // web/src/i18n/locales/en-US/timeline.ts
 
 export const timeline = {
+  pendingRequestsUnreadable: "Pending request records could not be read; restore them before sending again",
+  requestAwaitingConfirmation: "A request is awaiting confirmation; reconnect and check its outcome before sending again",
+  previousRequestRecovered: "The previous request was received by the host; review the conversation before sending another message",
+  pendingRequestsFull: "Resolve pending requests before sending more",
   exportSessionFailed: "Could not export {session}: {error}\nNo file was saved. Please try again",
   loadEarlierSteps: "Load {count} earlier steps",
   scrollToBottom: "Scroll to bottom",
@@ -224,6 +228,9 @@ export const timeline = {
   mentionWorkspaceFile: "Workspace file",
   pastedLinesChip: "Pasted {count} lines",
   slashCommandsHeader: "Slash Commands",
+  removeSlashCommand: "Remove slash command",
+  runSlashCommandFallback: "Run slash command",
+  goalSlashDescription: "Set a persistent multi-turn session goal until verified",
   mentionFileOrContextHeader: "Mention File, @changes, @session or @worktree",
   modelRequestFailed: "Model request failed",
   apiError: "API Error",
@@ -525,4 +532,7 @@ export const timeline = {
   voiceInputUnsupported: "Microphone recording is unavailable in this environment",
   voiceInputEmpty: "No speech recognized",
   voiceInputFailed: "Voice transcription failed: {error}",
+  sharedBranchActivePill: "{count} other task(s) active on this branch · same-file edits auto-queued",
+  sharedBranchActiveTooltip: "Active tasks sharing this directory: {titles}",
+  sharedBranchIsolateBtn: "Use Worktree",
 };

@@ -25,7 +25,7 @@ func TestNativeSubagentBridgePropagatesHeterogeneousChildModelAndRole(t *testing
 	svc.store.UpsertTurnInfo(parent.ID, userMsg)
 
 	tr := NewTurnTranslator(parent.ID, string(RuntimeNative), "msg_a_1", userMsg.ID, parent.ProviderID, parent.ModelID, "build", "")
-	tr.createChild = svc.childSessionFactory(parent, parent.ModelID, "plan")
+	tr.CreateChild = svc.childSessionFactory(parent, parent.ModelID, "plan")
 	bridge := newNativeSubagentBridge(svc, parent.ID, parent.ModelID, tr)
 	svc.broadcastRouted(parent.ID, tr.InitialEvents(userMsg, nil))
 

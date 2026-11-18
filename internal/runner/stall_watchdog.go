@@ -165,7 +165,7 @@ func (s *Service) noteOpenCodeChildEvent(rec SessionRecord, evt SSEEvent) bool {
 		prevParent, hadParent := s.openCodeChildParent.Swap(id, rec.ID)
 		s.managedOpenCode.Store(id, true)
 		if !hadParent || prevParent != rec.ID {
-			_, _, _ = s.store.updateWithoutActivity(rec.ID, func(r *SessionRecord) {
+			_, _, _ = s.store.UpdateWithoutActivity(rec.ID, func(r *SessionRecord) {
 				if !slices.Contains(r.OpenCodeChildIDs, id) {
 					r.OpenCodeChildIDs = append(r.OpenCodeChildIDs, id)
 				}
@@ -295,8 +295,8 @@ func (s *Service) watchStall(ap *activeProcess) {
 
 // checkStall evaluates one tick; it reports false once the turn was stopped.
 func (s *Service) checkStall(ap *activeProcess, now time.Time) bool {
-	if s.awaitingUser(ap) {
-		// The clock restarts when the user answers.
+	if s.awaitingUser(ap) || s.isWaitingOnPeerFileLease(ap.sessionID) {
+		// The clock restarts when the user answers or the peer file lease clears.
 		s.noteActivity(ap)
 		return true
 	}
@@ -363,35 +363,6 @@ func (s *Service) hasRunningToolSubprocess(ap *activeProcess) bool {
 					return true
 				}
 			}
-		}
-	}
-	return false
-}
-
-func hasLiveChildToolProcess(rootPID int, byPID map[int]procSnapshot, children map[int][]int, commands ...string) bool {
-	if rootPID <= 1 || len(byPID) == 0 || len(commands) == 0 {
-		return false
-	}
-	var needles []string
-	for _, cmd := range commands {
-		needles = append(needles, commandMatchNeedles(cmd)...)
-	}
-	if len(needles) == 0 {
-		return false
-	}
-	parentPID := rootPID
-	if direct := children[parentPID]; len(direct) == 1 {
-		only := direct[0]
-		if isAgentRuntimeProcessArgs(byPID[only].args) {
-			parentPID = only
-		}
-	}
-	for _, c := range children[parentPID] {
-		if c <= 1 || isNonToolHelperArgs(byPID[c].args) {
-			continue
-		}
-		if subtreeMatchesNeedles(collectSubtreePIDs(c, children), byPID, needles) {
-			return true
 		}
 	}
 	return false

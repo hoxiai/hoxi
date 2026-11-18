@@ -53,6 +53,37 @@ type Service struct {
 	credSyncStop     chan struct{}
 	credSyncDone     chan struct{}
 	codexAuthApplied string
+
+	nativeMatMu        sync.RWMutex
+	nativeMaterializer NativeSessionMaterializer
+}
+
+// SetNativeMaterializer injects Hoxi's native session store writer so external
+// CLI handoffs import directly into Hoxi without requiring `opencode serve` or opencode.db.
+func (g *Service) SetNativeMaterializer(fn NativeSessionMaterializer) {
+	if g == nil {
+		return
+	}
+	g.nativeMatMu.Lock()
+	g.nativeMaterializer = fn
+	g.nativeMatMu.Unlock()
+}
+
+func (g *Service) getNativeMaterializer() NativeSessionMaterializer {
+	if g == nil {
+		return nil
+	}
+	g.nativeMatMu.RLock()
+	fn := g.nativeMaterializer
+	g.nativeMatMu.RUnlock()
+	return fn
+}
+
+func (g *Service) effectiveTargetRuntime() string {
+	if g == nil || g.getNativeMaterializer() != nil || g.openCode == nil || !g.openCode.Available() {
+		return "native"
+	}
+	return "opencode"
 }
 
 // ProviderConfig is the slice of Hoxi's provider configuration that handoff
@@ -367,6 +398,9 @@ func (g *Service) handleHandoffPreview(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeJSONError(w, http.StatusNotFound, err.Error())
 		return
+	}
+	if detail != nil && detail.Fidelity != nil {
+		detail.Fidelity.TargetRuntime = g.effectiveTargetRuntime()
 	}
 
 	g.cacheMu.Lock()

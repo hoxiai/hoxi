@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/hoxiai/hoxi/internal/agent"
 	"github.com/hoxiai/hoxi/internal/llm"
@@ -43,9 +44,10 @@ func (m *economyAwareMockStream) ResolveEconomyModel(providerID, currentModelID 
 	return "", false
 }
 
-func (m *economyAwareMockStream) OpenStream(_ context.Context, req llm.StreamHTTPRequest) (*http.Response, error) {
+func (m *economyAwareMockStream) OpenStream(ctx context.Context, req llm.StreamHTTPRequest) (*http.Response, error) {
 	var body struct {
 		Model    string `json:"model"`
+		Effort   string `json:"reasoning_effort"`
 		Messages []struct {
 			Role    string `json:"role"`
 			Content any    `json:"content"`
@@ -59,9 +61,11 @@ func (m *economyAwareMockStream) OpenStream(_ context.Context, req llm.StreamHTT
 	_ = json.Unmarshal(req.Body, &body)
 
 	rec := recordedLLMCall{
-		URL:   req.Target.BaseURL,
-		Model: body.Model,
+		URL:    req.Target.BaseURL,
+		Model:  body.Model,
+		Effort: body.Effort,
 	}
+	rec.Deadline, _ = ctx.Deadline()
 	for _, msg := range body.Messages {
 		s, _ := msg.Content.(string)
 		if msg.Role == "system" && rec.System == "" {
@@ -88,7 +92,7 @@ func (m *economyAwareMockStream) OpenStream(_ context.Context, req llm.StreamHTT
 	}, nil
 }
 
-func TestSubtaskAutoEconomyRoutingCallOverrideAndLegacyGeneral(t *testing.T) {
+func TestSubtaskInheritsQualityAndLifetimeUnlessModelOverridden(t *testing.T) {
 	t.Setenv("HOXI_HOME", t.TempDir())
 	t.Setenv("HOME", t.TempDir())
 	wsDir := t.TempDir()
@@ -106,7 +110,7 @@ func TestSubtaskAutoEconomyRoutingCallOverrideAndLegacyGeneral(t *testing.T) {
 			if idx == 0 {
 				expArgs, _ := json.Marshal(map[string]any{
 					"subagent_type": "explore",
-					"description":   "auto economy explore",
+					"description":   "inherit parent explore",
 					"prompt":        "Inspect auth routes",
 				})
 				overrideArgs, _ := json.Marshal(map[string]any{
@@ -126,7 +130,7 @@ func TestSubtaskAutoEconomyRoutingCallOverrideAndLegacyGeneral(t *testing.T) {
 					`data: [DONE]`,
 				}, "\n") + "\n"
 			}
-			if strings.Contains(call.System, "Subtask: auto economy explore") ||
+			if strings.Contains(call.System, "Subtask: inherit parent explore") ||
 				strings.Contains(call.System, "Subtask: explicit override scout") ||
 				strings.Contains(call.System, "Subtask: legacy general model") {
 				return "data: {\"choices\":[{\"delta\":{\"content\":\"subagent done\"}}]}\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\ndata: [DONE]\n"
@@ -138,12 +142,16 @@ func TestSubtaskAutoEconomyRoutingCallOverrideAndLegacyGeneral(t *testing.T) {
 	var startMetaMu sync.Mutex
 	startMetaByCall := map[string]map[string]any{}
 	eng := agent.NewDefaultEngine(sc)
-	err := eng.RunTurn(context.Background(), agent.TurnRequest{
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	parentDeadline, _ := ctx.Deadline()
+	err := eng.RunTurn(ctx, agent.TurnRequest{
 		SessionID:   "ses_eco_routing",
 		WorktreeDir: wsDir,
 		Mode:        "build",
 		ProviderID:  "anthropic",
 		ModelID:     "claude-opus-4-6",
+		Effort:      "high",
 		UserPrompt:  "Run heterogeneous subagents",
 		MCPConfig: func() map[string]any {
 			return map[string]any{
@@ -162,8 +170,13 @@ func TestSubtaskAutoEconomyRoutingCallOverrideAndLegacyGeneral(t *testing.T) {
 		t.Fatalf("RunTurn failed: %v", err)
 	}
 
-	if got := startMetaByCall["c_exp"]; got["providerID"] != "anthropic" || got["modelID"] != "claude-haiku-4-5" || got["routing"] != "economy_auto" {
-		t.Fatalf("expected explore auto-economy routing anthropic/claude-haiku-4-5, got %+v", got)
+	if got := startMetaByCall["c_exp"]; got["providerID"] != "anthropic" || got["modelID"] != "claude-opus-4-6" || got["routing"] != "inherit_parent" {
+		t.Fatalf("expected explore to inherit parent model despite an available economy model, got %+v", got)
+	}
+	for _, call := range sc.calls {
+		if call.Effort != "high" || !call.Deadline.Equal(parentDeadline) {
+			t.Fatalf("subtasks must inherit effort and deadline: %+v", call)
+		}
 	}
 	if got := startMetaByCall["c_ovr"]; got["providerID"] != "google" || got["modelID"] != "gemini-2.5-flash" || got["routing"] != "call_override" {
 		t.Fatalf("expected scout per-call override google/gemini-2.5-flash, got %+v", got)

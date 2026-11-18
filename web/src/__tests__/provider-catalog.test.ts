@@ -4,9 +4,12 @@ import { AUTO_PROVIDER_ID, buildAutoVirtualProvider } from "../store/auto-models
 import { computeSmartDefaultCandidates, isModelFree } from "../store/auto-pool-defaults";
 import {
   extractFlattenedModels,
+  getConnectedProviderModelGroups,
   inferModelEffortCapabilities,
+  isOpenCodeProviderAvailable,
   resolveEffectiveModelEffort,
 } from "../store/provider-catalog";
+import { preferredAgentEngine, setPreferredAgentEngine } from "../store/session-query";
 import { setWorkspace, workspace } from "../store/workspace-state";
 import { assertDeepEqual, assertEqual, assertTrue, describe, it } from "./test-harness";
 
@@ -91,5 +94,32 @@ describe("Model catalog reasoning and pricing", () => {
     assertEqual(isModelFree("opencode", "model", {}), true);
     assertEqual(isModelFree("claude-code", "claude-sonnet", { cost: { input: 0, output: 0 } }), false);
     assertEqual(isModelFree("custom", "model:free", { free: false, cost: { input: 0, output: 0 } }), false);
+  });
+
+  it("hides unconnected opencode free models when native engine is active and OpenCode is absent", () => {
+    const saved = structuredClone(unwrap(workspace));
+    const savedEngine = preferredAgentEngine();
+    const providers: ProviderInfo[] = [
+      { id: "opencode", name: "OpenCode", models: { "zen-free": { id: "zen-free", free: true } } },
+    ];
+    try {
+      setPreferredAgentEngine("native");
+      setWorkspace({ providers, connectedProviders: [], globalConfig: {} });
+      assertEqual(isOpenCodeProviderAvailable(new Set(), {}), false);
+      const nativeModels = extractFlattenedModels(providers, new Set(), {});
+      assertEqual(nativeModels[0].connected, false);
+      assertEqual(getConnectedProviderModelGroups().some((g) => g.providerID === "opencode"), false);
+      assertDeepEqual(computeSmartDefaultCandidates("free"), []);
+
+      setPreferredAgentEngine("opencode");
+      assertEqual(isOpenCodeProviderAvailable(new Set(), {}), true);
+      const ocModels = extractFlattenedModels(providers, new Set(), {});
+      assertEqual(ocModels[0].connected, true);
+      assertEqual(getConnectedProviderModelGroups().some((g) => g.providerID === "opencode"), true);
+      assertEqual(computeSmartDefaultCandidates("free").length, 1);
+    } finally {
+      setPreferredAgentEngine(savedEngine);
+      setWorkspace(reconcile(saved));
+    }
   });
 });

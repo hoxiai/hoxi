@@ -22,7 +22,7 @@ import (
 func TestAgyEventTranslationWithPhase0Fixtures(t *testing.T) {
 	t.Parallel()
 	tr := NewTurnTranslator("ses_agy_test", string(RuntimeAntigravity), "msg_a_1", "msg_u_1", "antigravity", "claude-sonnet-4-6", "build", "")
-	tr.lookupThink = func(extID string, stepIdx int) string {
+	tr.LookupThink = func(extID string, stepIdx int) string {
 		if extID == "00000000-0000-0000-0000-000000000001" && stepIdx == 1 {
 			return "Checking workspace directory before running command."
 		}
@@ -246,8 +246,8 @@ func TestAgyDeniedToolAndInterruptTranslation(t *testing.T) {
 			t.Fatalf("interrupted turn must not emit session.error")
 		}
 	}
-	if trAbort.msgInfo.Finish != "aborted" {
-		t.Fatalf("expected finish=aborted, got %q", trAbort.msgInfo.Finish)
+	if trAbort.MsgInfo.Finish != "aborted" {
+		t.Fatalf("expected finish=aborted, got %q", trAbort.MsgInfo.Finish)
 	}
 }
 
@@ -731,8 +731,8 @@ func TestPermissionReplyClientRequestIdIdempotency(t *testing.T) {
 	if code := postReply(map[string]string{"reply": "once", "clientRequestId": "perm-req-1"}); code != http.StatusOK {
 		t.Fatalf("idempotent retry with same clientRequestId should return 200, got %d", code)
 	}
-	if code := postReply(map[string]string{"reply": "reject", "clientRequestId": "perm-req-1"}); code != http.StatusNotFound {
-		t.Fatalf("conflicting decision with same clientRequestId should return 404, got %d", code)
+	if code := postReply(map[string]string{"reply": "reject", "clientRequestId": "perm-req-1"}); code != http.StatusConflict {
+		t.Fatalf("conflicting decision with same clientRequestId should return 409, got %d", code)
 	}
 	if code := postReply(map[string]string{"reply": "once"}); code != http.StatusNotFound {
 		t.Fatalf("duplicate reply without clientRequestId should return 404, got %d", code)

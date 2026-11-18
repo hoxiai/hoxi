@@ -27,7 +27,7 @@ func TestMaskVerifiedProcessControlMasksOwnedKills(t *testing.T) {
 	}
 	seen = nil
 	maskVerifiedProcessControl(`pkill -9 -f "a b"; kill -KILL 77 88`, owned)
-	want := []processControlTarget{{pgrepArgs: []string{"-f", "a b"}}, {pids: []int{77, 88}}}
+	want := []processControlTarget{{PgrepArgs: []string{"-f", "a b"}}, {PIDs: []int{77, 88}}}
 	if !reflect.DeepEqual(seen, want) {
 		t.Fatalf("targets = %#v, want %#v", seen, want)
 	}
@@ -114,16 +114,16 @@ func TestOwnedKillMaskLeavesTheRestJudged(t *testing.T) {
 func TestFindOpenCodeShellGroupOnlyTrustsTheDaemonsOwnShells(t *testing.T) {
 	marker := openCodeStopMarker("ses_eng", "call_1")
 	byPID := map[int]procSnapshot{
-		100: {pid: 100, pgid: 100, args: "opencode serve --hostname 127.0.0.1 --port 4096"},
-		200: {pid: 200, pgid: 200, args: "/bin/zsh -c # hoxi-stop:ses_eng:call_9\\012sleep 30"},
-		300: {pid: 300, pgid: 200, args: "bash -c # hoxi-stop:ses_eng:call_1\\012kill 1"}, // forged below a shell
-		400: {pid: 400, pgid: 100, args: "/bin/zsh -c " + marker + "\\012sleep 5"},        // not a group leader
+		100: {PID: 100, PGID: 100, Args: "opencode serve --hostname 127.0.0.1 --port 4096"},
+		200: {PID: 200, PGID: 200, Args: "/bin/zsh -c # hoxi-stop:ses_eng:call_9\\012sleep 30"},
+		300: {PID: 300, PGID: 200, Args: "bash -c # hoxi-stop:ses_eng:call_1\\012kill 1"}, // forged below a shell
+		400: {PID: 400, PGID: 100, Args: "/bin/zsh -c " + marker + "\\012sleep 5"},        // not a group leader
 	}
 	children := map[int][]int{100: {200, 400}, 200: {300}}
 	if got := findOpenCodeShellGroup(byPID, children, "4096", marker); got != 0 {
 		t.Fatalf("got %d; a forged tag or a shell in the daemon's group must not be recorded", got)
 	}
-	byPID[500] = procSnapshot{pid: 500, pgid: 500, args: "/bin/zsh -c " + marker + "\\012nohup ./server &"}
+	byPID[500] = procSnapshot{PID: 500, PGID: 500, Args: "/bin/zsh -c " + marker + "\\012nohup ./server &"}
 	children[100] = append(children[100], 500)
 	if got := findOpenCodeShellGroup(byPID, children, "4096", marker); got != 500 {
 		t.Fatalf("got %d, want the tagged shell 500", got)
@@ -138,12 +138,12 @@ func TestFindOpenCodeShellGroupOnlyTrustsTheDaemonsOwnShells(t *testing.T) {
 
 func TestRuntimeShellGroupsStaysInsideTheRuntimeTree(t *testing.T) {
 	byPID := map[int]procSnapshot{
-		10: {pid: 10, pgid: 10, args: "claude -p"},
-		11: {pid: 11, pgid: 11, args: "/bin/zsh -c npm run dev"},
-		12: {pid: 12, pgid: 11, args: "node vite"},
-		13: {pid: 13, pgid: 50, args: "joined a foreign group"},
-		50: {pid: 50, pgid: 50, args: "user terminal"},
-		60: {pid: 60, pgid: 60, args: "hoxi"},
+		10: {PID: 10, PGID: 10, Args: "claude -p"},
+		11: {PID: 11, PGID: 11, Args: "/bin/zsh -c npm run dev"},
+		12: {PID: 12, PGID: 11, Args: "node vite"},
+		13: {PID: 13, PGID: 50, Args: "joined a foreign group"},
+		50: {PID: 50, PGID: 50, Args: "user terminal"},
+		60: {PID: 60, PGID: 60, Args: "hoxi"},
 	}
 	children := map[int][]int{10: {11, 13}, 11: {12}}
 	got := runtimeShellGroups(byPID, children, 10, 60)

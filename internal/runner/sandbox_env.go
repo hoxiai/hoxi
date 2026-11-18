@@ -27,56 +27,11 @@ import (
 // its model (runtimeModelEnv). A shell the runtime spawns can still read
 // those; that residual is documented in AGENTS.md rule 6.
 
-// credentialEnvNames are dropped by exact name: agent sockets, askpass
-// helpers, config pointers that lead to credentials outside the sandbox's
-// deny-list, and git config injected through the environment (it can carry
-// http.extraHeader with a token).
-var credentialEnvNames = setOf(
-	"SSH_AUTH_SOCK", "SSH_AGENT_PID", "GPG_AGENT_INFO",
-	"GIT_ASKPASS", "SSH_ASKPASS", "SUDO_ASKPASS",
-	"KUBECONFIG", "DOCKER_CONFIG", "NETRC", "AWS_SHARED_CREDENTIALS_FILE", "AWS_CONFIG_FILE",
-	"GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT",
-)
-
-// credentialNameFragments match anywhere in the upper-cased name
-// (PGPASSWORD, GITHUB_TOKEN, AWS_SECRET_ACCESS_KEY, HOMEBREW_GITHUB_API_TOKEN).
-var credentialNameFragments = []string{"TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL", "APIKEY", "API_KEY", "ACCESS_KEY", "PRIVATE_KEY"}
-
-// credentialNameParts match one `_`-separated part, so SSH_AUTH_SOCK and
-// NPM_CONFIG__AUTH match while GIT_AUTHOR_NAME does not.
-var credentialNameParts = setOf("AUTH", "PAT", "AUTHTOKEN")
-
-// credentialValueRe matches well-known token shapes stored under a name that
-// does not look secret, and URLs that embed a password.
 var credentialValueRe = regexp.MustCompile(`^(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_\w{20,}|glpat-[\w-]{20,}|npm_[A-Za-z0-9]{30,}|xox[abeprs]-[\w-]{10,}|sk-[\w-]{20,}|(?:AKIA|ASIA)[A-Z0-9]{16}|hf_[A-Za-z0-9]{30,})$|^[A-Za-z][A-Za-z0-9+.-]*://[^/@\s:]+:[^/@\s]+@`)
 
 // proxyEnvNames carry the proxy the runtime needs for its own model calls,
 // even when the proxy URL embeds a password.
 var proxyEnvNames = setOf("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy")
-
-// isCredentialEnvName reports whether a variable name looks like it holds a
-// credential. The unattended egress check uses the same rule for `$NAME`
-// references inside a command.
-func isCredentialEnvName(name string) bool {
-	upper := strings.ToUpper(strings.TrimSpace(name))
-	if upper == "" {
-		return false
-	}
-	if credentialEnvNames[upper] || strings.HasPrefix(upper, "GIT_CONFIG_KEY_") || strings.HasPrefix(upper, "GIT_CONFIG_VALUE_") {
-		return true
-	}
-	for _, fragment := range credentialNameFragments {
-		if strings.Contains(upper, fragment) {
-			return true
-		}
-	}
-	for _, part := range strings.Split(upper, "_") {
-		if credentialNameParts[part] {
-			return true
-		}
-	}
-	return strings.HasSuffix(upper, "_KEY")
-}
 
 // isCredentialEnv reports whether one NAME=value entry must be dropped.
 func isCredentialEnv(name, value string) bool {

@@ -2,6 +2,7 @@ export const commandPalette = {
   placeholderActions: "Type a command or search sessions…",
   placeholderFiles: "Search files by name or path…",
   actions: "Actions",
+  commands: "Slash Commands",
   sessions: "Sessions",
   files: "Files",
   noResults: "No results",
@@ -32,4 +33,9 @@ export const commandPalette = {
   shortcutFiles: "⌘P",
   shortcutActions: "⌘K",
   currentSession: "Current session",
+  slashNewDesc: "Start a fresh session",
+  slashPlanDesc: "Switch to Plan mode (or plan a prompt)",
+  slashBuildDesc: "Switch to Build mode (or execute a prompt)",
+  slashDiffDesc: "Open the session changes inspector",
+  slashUndoDesc: "Revert the last turn in this session",
 };

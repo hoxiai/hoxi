@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/hoxiai/hoxi/internal/llm"
 )
@@ -80,7 +81,7 @@ func newStepLoopGuard() *stepLoopGuard {
 
 func isLoopGuardedReadTool(name string) bool {
 	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "read", "grep", "glob", "code_search", "symbol_inspect", "impact_analysis":
+	case "read", "grep", "glob", "hoxi_code_index", "code_search", "symbol_inspect", "impact_analysis":
 		return true
 	default:
 		return false
@@ -90,8 +91,15 @@ func isLoopGuardedReadTool(name string) bool {
 func isWorkspaceMutatingTool(call ToolCall, parentMode string, agentMap map[string]llm.AgentSpec) bool {
 	name := strings.ToLower(strings.TrimSpace(call.Name))
 	switch name {
-	case "todowrite", "todoread", "question", "skill", "goal_report":
+	case "todowrite", "todoread", "question", "plan_consent", "skill", "goal_report":
 		return false
+	case "bash":
+		var args struct {
+			Action string `json:"action"`
+		}
+		_ = json.Unmarshal(call.Input, &args)
+		act := strings.ToLower(strings.TrimSpace(args.Action))
+		return act != "output" && act != "list"
 	case "task":
 		if strings.EqualFold(strings.TrimSpace(parentMode), "plan") {
 			return false
@@ -215,9 +223,7 @@ func (e *Engine) runGracefulFinalizeStep(
 			),
 		}},
 	})
-	if e.compact != nil {
-		finalMsgs = e.compact(finalMsgs, systemPrompt, target.ContextLimit)
-	}
+	finalMsgs = e.applyCompact(finalMsgs, systemPrompt, req.WorktreeDir, target.ContextLimit)
 	httpReq, err := drv.BuildRequest(ModelRequest{
 		Target:    target,
 		System:    systemPrompt,
@@ -229,63 +235,28 @@ func (e *Engine) runGracefulFinalizeStep(
 	if err != nil {
 		return false
 	}
+	openStarted := time.Now()
 	resp, openErr := e.stream.OpenStream(ctx, httpReq)
+	headerLatency := time.Since(openStarted)
 	if openErr != nil {
 		return false
 	}
 
 	step := stepBudget + 1
-	var textBuf, thinkBuf, sigBuf strings.Builder
-	var textPartID, thinkPartID, finishReason string
-	parseErr := drv.ParseSSE(ctx, resp.Body, func(se StreamEvent) {
-		switch se.Kind {
-		case EventThinkingDelta:
-			if thinkPartID == "" {
-				thinkPartID = nextPartID("think")
-				emit(EngineEvent{Kind: EngineThinkingStart, Step: step, PartID: thinkPartID})
-			}
-			thinkBuf.WriteString(se.Delta)
-			emit(EngineEvent{Kind: EngineThinkingDelta, Step: step, PartID: thinkPartID, Text: se.Delta})
-		case EventSignatureDelta:
-			sigBuf.WriteString(se.Delta)
-		case EventTextDelta:
-			if thinkPartID != "" {
-				emit(EngineEvent{Kind: EngineThinkingEnd, Step: step, PartID: thinkPartID, Text: thinkBuf.String(), Signature: sigBuf.String()})
-				thinkPartID = ""
-			}
-			if textPartID == "" {
-				textPartID = nextPartID("text")
-				emit(EngineEvent{Kind: EngineTextStart, Step: step, PartID: textPartID})
-			}
-			textBuf.WriteString(se.Delta)
-			emit(EngineEvent{Kind: EngineTextDelta, Step: step, PartID: textPartID, Text: se.Delta})
-		case EventUsage:
-			if se.Usage != nil {
-				emit(EngineEvent{Kind: EngineTurnUsage, Step: step, Usage: se.Usage})
-			}
-		case EventFinish:
-			if se.Finish != "" {
-				finishReason = se.Finish
-			}
-		}
-	})
+	streamed, parseErr := collectStepStream(ctx, drv, resp.Body, target, step, nextPartID, emit)
 	_ = resp.Body.Close()
-
-	if thinkPartID != "" {
-		emit(EngineEvent{Kind: EngineThinkingEnd, Step: step, PartID: thinkPartID, Text: thinkBuf.String(), Signature: sigBuf.String()})
-	} else if sigBuf.Len() > 0 && thinkBuf.Len() > 0 {
-		emit(EngineEvent{Kind: EngineThinkingEnd, Step: step, PartID: nextPartID("think_sig"), Text: thinkBuf.String(), Signature: sigBuf.String()})
+	if parseErr != nil {
+		e.reportStreamOutcome(ctx, target, time.Since(openStarted), parseErr)
+		return false
 	}
-	if textPartID != "" {
-		emit(EngineEvent{Kind: EngineTextEnd, Step: step, PartID: textPartID, Text: textBuf.String()})
-	}
-	if parseErr != nil || strings.TrimSpace(textBuf.String()) == "" {
+	e.reportStreamOutcome(ctx, target, headerLatency, nil)
+	if streamed.visibleTextLen == 0 {
 		return false
 	}
 	outFinish := "stop"
-	if isTruncatedFinishReason(finishReason) {
+	if isTruncatedFinishReason(streamed.stepFinish) {
 		outFinish = "length"
-	} else if strings.EqualFold(finishReason, "content_filter") {
+	} else if strings.EqualFold(streamed.stepFinish, "content_filter") {
 		outFinish = "content_filter"
 	}
 	emit(EngineEvent{Kind: EngineTurnFinish, Step: step, Finish: outFinish})

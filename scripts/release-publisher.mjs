@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 // Public, dependency-free release API client for the unified version center at
-// hoxi.dev. Credentials remain in the environment (APAY_RELEASE_KEY, with the
-// legacy HOXI_RELEASE_KEY accepted as a fallback).
+// hoxi.dev. Credentials remain in the environment (HOXI_RELEASE_KEY).
 import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -85,7 +84,7 @@ export function releasePayload({ version, notes, sha256, size, mandatory = false
 }
 
 export async function publishRelease(payload, { key, url = DEFAULT_RELEASE_API_URL, fetchImpl = fetch }) {
-  if (!key?.trim()) throw new Error("APAY_RELEASE_KEY (or HOXI_RELEASE_KEY) is required to publish");
+  if (!key?.trim()) throw new Error("HOXI_RELEASE_KEY is required to publish");
   const endpoint = new URL(url);
   const local = ["127.0.0.1", "localhost", "[::1]"].includes(endpoint.hostname);
   if (endpoint.protocol !== "https:" && !(endpoint.protocol === "http:" && local)) {
@@ -139,8 +138,8 @@ async function main() {
     commit: input.commit || process.env.GITHUB_SHA,
   });
   console.log(JSON.stringify(await publishRelease(payload, {
-    key: process.env.APAY_RELEASE_KEY || process.env.HOXI_RELEASE_KEY,
-    url: process.env.APAY_RELEASE_API_URL || process.env.HOXI_RELEASE_API_URL || undefined,
+    key: process.env.HOXI_RELEASE_KEY,
+    url: process.env.HOXI_RELEASE_API_URL || undefined,
   })));
 }
 

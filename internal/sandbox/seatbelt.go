@@ -6,6 +6,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"sync"
 )
 
 const sandboxExec = "/usr/bin/sandbox-exec"
@@ -125,13 +126,31 @@ const seatbeltBase = `(version 1)
 (allow sysctl-read (sysctl-name-regex #"^net.routetable"))
 `
 
-// Available reports whether OS-level confinement can be enforced here.
+// Available reports whether OS-level confinement is installed on this platform.
 func Available() bool {
 	if runtime.GOOS != "darwin" {
 		return false
 	}
 	st, err := os.Stat(sandboxExec)
 	return err == nil && !st.IsDir() && st.Mode()&0o111 != 0
+}
+
+var (
+	canApplyOnce   sync.Once
+	canApplyResult bool
+)
+
+// CanApply reports whether the current process can actually enter a Seatbelt
+// sandbox via /usr/bin/sandbox-exec (returns false when already confined inside
+// an outer macOS Seatbelt sandbox that forbids nested sandbox_apply).
+func CanApply() bool {
+	if !Available() {
+		return false
+	}
+	canApplyOnce.Do(func() {
+		canApplyResult = probeSeatbeltApply()
+	})
+	return canApplyResult
 }
 
 func UnavailableReason() string {

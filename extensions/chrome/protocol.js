@@ -39,8 +39,12 @@ export function snapshot() {
   for (const el of document.querySelectorAll('a,button,input,textarea,select,[role="button"],[contenteditable="true"],[tabindex]')) {
     if (controls.length >= 200) break;
     if (!el.getClientRects().length || getComputedStyle(el).visibility === "hidden") continue;
-    controls.push({ selector: selector(el).slice(0, 2048), tag: el.localName,
-      text: (el.getAttribute("aria-label") || el.innerText || el.getAttribute("placeholder") || "").slice(0, 256) });
+    const ref = "@e" + (controls.length + 1);
+    const entry = { ref, selector: selector(el).slice(0, 2048), tag: el.localName,
+      text: (el.getAttribute("aria-label") || el.innerText || el.getAttribute("placeholder") || "").slice(0, 256) };
+    const tp = typeof el.type === "string" ? el.type.trim().toLowerCase() : "";
+    if (tp && (el.localName === "input" || el.localName === "button")) entry.type = tp.slice(0, 32);
+    controls.push(entry);
   }
   return { text: (document.body?.innerText || "").slice(0, 32768), controls };
 }

@@ -8,8 +8,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/hoxiai/hoxi/internal/attachment"
 )
 
 // NativeEngine is the narrow contract injected by internal/gateway so runner
@@ -19,45 +17,32 @@ type NativeEngine interface {
 	Summarize(ctx context.Context, providerID, modelID, transcript string) (string, error)
 }
 
+// NativeTodoItem, NativeMessage, and NativeContentBlock are aliased in canonical_bridge.go.
+
 // NativeTurnRequest configures one native in-process agent turn.
 type NativeTurnRequest struct {
-	SessionID      string
-	WorktreeDir    string
-	Mode           string
-	ProviderID     string
-	ModelID        string
-	Effort         string
-	System         string
-	History        []NativeMessage
-	UserPrompt     string
-	UserBlocks     []NativeContentBlock
-	SteerDrain     func() []string
-	PermissionHook func(ctx context.Context, req NativePermissionRequest) error
-	CommandRunner  func(ctx context.Context, dir, command string) (output string, exitCode int, err error)
-	Diagnostics    func(ctx context.Context, dir, filePath string) string
-	AskQuestion    func(ctx context.Context, callID, rawJSON string) (output string, metadata map[string]any, err error)
-	Emit           func(evt NativeEvent)
-}
-
-// NativeMessage represents one canonical message passed into NativeEngine.
-type NativeMessage struct {
-	Role    string               `json:"role"`
-	Content []NativeContentBlock `json:"content"`
-}
-
-// NativeContentBlock represents one content block inside NativeMessage.
-type NativeContentBlock struct {
-	Type      string          `json:"type"`
-	Text      string          `json:"text,omitempty"`
-	MimeType  string          `json:"mime_type,omitempty"`
-	Data      string          `json:"data,omitempty"`
-	Filename  string          `json:"filename,omitempty"`
-	Signature string          `json:"signature,omitempty"`
-	ID        string          `json:"id,omitempty"`
-	Name      string          `json:"name,omitempty"`
-	Input     json.RawMessage `json:"input,omitempty"`
-	ToolUseID string          `json:"tool_use_id,omitempty"`
-	IsError   bool            `json:"is_error,omitempty"`
+	SessionID           string
+	WorktreeDir         string
+	Mode                string
+	ProviderID          string
+	ModelID             string
+	Effort              string
+	System              string
+	History             []NativeMessage
+	InitialTodos        []NativeTodoItem
+	UserPrompt          string
+	UserBlocks          []NativeContentBlock
+	SteerDrain          func() []string
+	SteerDrainItems     func() []NativeSteerItem
+	PermissionHook      func(ctx context.Context, req NativePermissionRequest) error
+	CoordinateFileEdit  func(ctx context.Context, paths []string, onWait func(waitedPath string)) (NativeFileEditCoordination, error)
+	RecordFileEdit      func(paths []string)
+	CommandRunner       func(ctx context.Context, dir, command string) (output string, exitCode int, err error)
+	StreamCommandRunner func(ctx context.Context, dir, command string, onOutput func(string)) (output string, exitCode int, err error)
+	BackgroundManager   NativeBackgroundManager
+	Diagnostics         func(ctx context.Context, dir, filePath string) string
+	AskQuestion         func(ctx context.Context, callID, rawJSON string) (output string, metadata map[string]any, err error)
+	Emit                func(evt NativeEvent)
 }
 
 // NativePermissionRequest describes a PreToolUse check from the native engine.
@@ -77,6 +62,7 @@ type NativeTokenUsage struct {
 	Reasoning  int
 	CacheRead  int
 	CacheWrite int
+	CostUSD    float64
 }
 
 // NativeEvent carries streaming text, reasoning, tool lifecycle, and usage updates.
@@ -99,21 +85,24 @@ type NativeEvent struct {
 }
 
 const (
-	NativeEventTextStart        = "text_start"
-	NativeEventTextDelta        = "text_delta"
-	NativeEventTextEnd          = "text_end"
-	NativeEventThinkingStart    = "thinking_start"
-	NativeEventThinkingDelta    = "thinking_delta"
-	NativeEventThinkingEnd      = "thinking_end"
-	NativeEventToolPending      = "tool_pending"
-	NativeEventToolRunning      = "tool_running"
-	NativeEventToolCompleted    = "tool_completed"
-	NativeEventToolError        = "tool_error"
-	NativeEventTurnUsage        = "turn_usage"
-	NativeEventTurnFinish       = "turn_finish"
-	NativeEventContextCompacted = "context_compacted"
-	NativeEventSubtaskStart     = "subtask_start"
-	NativeEventSubtaskEnd       = "subtask_end"
+	NativeEventTextStart              = "text_start"
+	NativeEventTextDelta              = "text_delta"
+	NativeEventTextEnd                = "text_end"
+	NativeEventThinkingStart          = "thinking_start"
+	NativeEventThinkingDelta          = "thinking_delta"
+	NativeEventThinkingEnd            = "thinking_end"
+	NativeEventToolPending            = "tool_pending"
+	NativeEventToolRunning            = "tool_running"
+	NativeEventToolCompleted          = "tool_completed"
+	NativeEventToolError              = "tool_error"
+	NativeEventTurnUsage              = "turn_usage"
+	NativeEventTurnFinish             = "turn_finish"
+	NativeEventContextCompacted       = "context_compacted"
+	NativeEventStepRetry              = "step_retry"
+	NativeEventStepRetryDone          = "step_retry_done"
+	NativeEventThinkingSignatureReset = "thinking_signature_reset"
+	NativeEventSubtaskStart           = "subtask_start"
+	NativeEventSubtaskEnd             = "subtask_end"
 )
 
 // SetNativeEngine injects the in-process Go Agent engine for the native runtime.
@@ -128,22 +117,45 @@ func (s *Service) SetNativeEngine(eng NativeEngine) {
 
 type nativeSteerQueue struct {
 	mu    sync.Mutex
-	items []string
+	items []NativeSteerItem
 }
 
 func (q *nativeSteerQueue) Push(text string) {
-	q.mu.Lock()
-	if strings.TrimSpace(text) != "" {
-		q.items = append(q.items, strings.TrimSpace(text))
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return
 	}
+	q.PushItem(NativeSteerItem{
+		Prompt: trimmed,
+		Blocks: []NativeContentBlock{{Type: "text", Text: trimmed}},
+	})
+}
+
+func (q *nativeSteerQueue) PushItem(item NativeSteerItem) {
+	q.mu.Lock()
+	q.items = append(q.items, item)
 	q.mu.Unlock()
 }
 
-func (q *nativeSteerQueue) Drain() []string {
+func (q *nativeSteerQueue) DrainItems() []NativeSteerItem {
 	q.mu.Lock()
 	out := q.items
 	q.items = nil
 	q.mu.Unlock()
+	return out
+}
+
+func (q *nativeSteerQueue) Drain() []string {
+	items := q.DrainItems()
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(items))
+	for _, it := range items {
+		if strings.TrimSpace(it.Prompt) != "" {
+			out = append(out, strings.TrimSpace(it.Prompt))
+		}
+	}
 	return out
 }
 
@@ -164,6 +176,18 @@ func (s *Service) startNativeTurn(
 	userInfo MessageInfo,
 	storedParts []MessagePart,
 	asstMsgID string,
+	deliveryParts ...MessagePart,
+) error {
+	return s.launchNativeTurn(rec, mode, modelID, effort, systemPrompt, promptText, userInfo, storedParts, asstMsgID, false, deliveryParts...)
+}
+
+func (s *Service) launchNativeTurn(
+	rec SessionRecord,
+	mode, modelID, effort, systemPrompt, promptText string,
+	userInfo MessageInfo,
+	storedParts []MessagePart,
+	asstMsgID string,
+	resumeFromHistory bool,
 	deliveryParts ...MessagePart,
 ) error {
 	s.mu.Lock()
@@ -187,26 +211,39 @@ func (s *Service) startNativeTurn(
 	s.mu.Lock()
 	s.procs[rec.ID] = ap
 	s.mu.Unlock()
+	s.beginSessionFileTurn(rec.ID)
 
 	if s.status != nil {
 		s.status.SetSessionBusy(rec.ID, true)
 	}
 	go s.watchStall(ap)
 
-	tr := NewTurnTranslator(rec.ID, string(RuntimeNative), asstMsgID, userInfo.ID, rec.ProviderID, modelID, mode, "")
-	tr.createChild = s.childSessionFactory(rec, modelID, "plan")
-	subBridge := newNativeSubagentBridge(s, rec.ID, modelID, tr)
-	s.broadcast(rec.ID, tr.InitialEvents(userInfo, storedParts)...)
-
 	history := s.projectCanonicalNativeHistory(rec.Turns, rec.ProviderID, modelID)
 	userBlocks := buildNativeUserBlocks(promptText, deliveryParts)
 
+	tr := NewTurnTranslator(rec.ID, string(RuntimeNative), asstMsgID, userInfo.ID, rec.ProviderID, modelID, mode, "")
+	tr.CreateChild = s.childSessionFactory(rec, modelID, "plan")
+	subBridge := newNativeSubagentBridge(s, rec.ID, modelID, tr)
+	if resumeFromHistory {
+		s.broadcast(rec.ID, tr.ResumeEvents()...)
+	} else {
+		s.broadcast(rec.ID, tr.InitialEvents(userInfo, storedParts)...)
+	}
+
 	go func() {
 		var terminalEvts []SSEEvent
+		var activeMu sync.Mutex
+		curUserMsgID := userInfo.ID
+		curAsstMsgID := asstMsgID
+		emittedAnyPart := false
+
 		defer func() {
 			s.cancelSessionApprovals(rec.ID, "the native agent turn ended")
+			activeMu.Lock()
+			latestUserID := curUserMsgID
+			activeMu.Unlock()
 			if !ap.wasRestarting() {
-				s.clearInflightTurnForUserMsg(rec.ID, userInfo.ID)
+				s.clearInflightTurnForUserMsg(rec.ID, latestUserID)
 			}
 			s.syncSessionMemoryFile(rec.ID)
 			s.store.FlushSession(rec.ID)
@@ -221,8 +258,49 @@ func (s *Service) startNativeTurn(
 		var totalUsage NativeTokenUsage
 		var latestParentStep NativeTokenUsage
 		turnFinish := "stop"
-		var activeMu sync.Mutex
 		partStartTimes := make(map[string]int64)
+
+		drainSteerItems := func() []NativeSteerItem {
+			items := steerQ.DrainItems()
+			if len(items) == 0 {
+				return nil
+			}
+			nowMs := time.Now().UnixMilli()
+			last := items[len(items)-1]
+			if strings.TrimSpace(last.UserMsgID) != "" {
+				activeMu.Lock()
+				oldAsstID := curAsstMsgID
+				hadParts := emittedAnyPart
+				prevInfo := tr.MsgInfo
+				nextAsstID := s.nextNativeAssistantMessageID(nowMs)
+				curUserMsgID = last.UserMsgID
+				curAsstMsgID = nextAsstID
+				emittedAnyPart = false
+				newInfo := MessageInfo{
+					ID:         nextAsstID,
+					SessionID:  rec.ID,
+					Role:       "assistant",
+					ParentID:   curUserMsgID,
+					Time:       MessageTime{Created: nowMs},
+					ModelID:    modelID,
+					ProviderID: rec.ProviderID,
+					Mode:       mode,
+					Agent:      mode,
+				}
+				tr.AdvanceMessage(nextAsstID, curUserMsgID, newInfo)
+				activeMu.Unlock()
+
+				if !hadParts {
+					s.pruneEmptyAssistantTurn(rec.ID, oldAsstID)
+				} else {
+					prevInfo.Time.Completed = nowMs
+					prevInfo.Finish = "tool-calls"
+					s.broadcast(rec.ID, SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": prevInfo}})
+				}
+				s.broadcast(rec.ID, SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": newInfo}})
+			}
+			return items
+		}
 
 		stepMeta := func(step int) map[string]interface{} {
 			if step <= 0 {
@@ -234,6 +312,9 @@ func (s *Service) startNativeTurn(
 		emit := func(evt NativeEvent) {
 			s.noteActivity(ap)
 			nowMs := time.Now().UnixMilli()
+			activeMu.Lock()
+			asstID := curAsstMsgID
+			activeMu.Unlock()
 			if strings.TrimSpace(evt.ParentCallID) != "" {
 				if evt.Kind == NativeEventTurnUsage {
 					if evt.Usage != nil {
@@ -243,6 +324,7 @@ func (s *Service) startNativeTurn(
 						totalUsage.Reasoning += evt.Usage.Reasoning
 						totalUsage.CacheRead += evt.Usage.CacheRead
 						totalUsage.CacheWrite += evt.Usage.CacheWrite
+						totalUsage.CostUSD += evt.Usage.CostUSD
 						activeMu.Unlock()
 					}
 					return
@@ -256,6 +338,7 @@ func (s *Service) startNativeTurn(
 			switch evt.Kind {
 			case NativeEventThinkingStart:
 				activeMu.Lock()
+				emittedAnyPart = true
 				partStartTimes[evt.PartID] = nowMs
 				activeMu.Unlock()
 				meta := map[string]interface{}{
@@ -269,7 +352,7 @@ func (s *Service) startNativeTurn(
 					Type: "message.part.updated",
 					Properties: map[string]interface{}{
 						"part": MessagePart{
-							ID: evt.PartID, SessionID: rec.ID, MessageID: asstMsgID,
+							ID: evt.PartID, SessionID: rec.ID, MessageID: asstID,
 							Type: "reasoning", Text: "", Time: &PartTime{Start: nowMs},
 							Metadata: meta,
 						},
@@ -279,11 +362,12 @@ func (s *Service) startNativeTurn(
 				s.broadcastRouted(rec.ID, []SSEEvent{{
 					Type: "message.part.delta",
 					Properties: map[string]interface{}{
-						"sessionID": rec.ID, "messageID": asstMsgID, "partID": evt.PartID, "field": "text", "delta": evt.Text,
+						"sessionID": rec.ID, "messageID": asstID, "partID": evt.PartID, "field": "text", "delta": evt.Text,
 					},
 				}})
 			case NativeEventThinkingEnd:
 				activeMu.Lock()
+				emittedAnyPart = true
 				startMs := partStartTimes[evt.PartID]
 				activeMu.Unlock()
 				if startMs == 0 {
@@ -299,11 +383,14 @@ func (s *Service) startNativeTurn(
 				if strings.TrimSpace(evt.Signature) != "" {
 					meta["signature"] = strings.TrimSpace(evt.Signature)
 				}
+				if rd := stringMetaField(evt.Metadata, "redactedData"); rd != "" {
+					meta["redactedData"] = rd
+				}
 				s.broadcastRouted(rec.ID, []SSEEvent{{
 					Type: "message.part.updated",
 					Properties: map[string]interface{}{
 						"part": MessagePart{
-							ID: evt.PartID, SessionID: rec.ID, MessageID: asstMsgID,
+							ID: evt.PartID, SessionID: rec.ID, MessageID: asstID,
 							Type: "reasoning", Text: evt.Text, Time: &PartTime{Start: startMs, End: nowMs},
 							Metadata: meta,
 						},
@@ -311,13 +398,14 @@ func (s *Service) startNativeTurn(
 				}})
 			case NativeEventTextStart:
 				activeMu.Lock()
+				emittedAnyPart = true
 				partStartTimes[evt.PartID] = nowMs
 				activeMu.Unlock()
 				s.broadcastRouted(rec.ID, []SSEEvent{{
 					Type: "message.part.updated",
 					Properties: map[string]interface{}{
 						"part": MessagePart{
-							ID: evt.PartID, SessionID: rec.ID, MessageID: asstMsgID,
+							ID: evt.PartID, SessionID: rec.ID, MessageID: asstID,
 							Type: "text", Text: "", Time: &PartTime{Start: nowMs},
 							Metadata: stepMeta(evt.Step),
 						},
@@ -327,11 +415,12 @@ func (s *Service) startNativeTurn(
 				s.broadcastRouted(rec.ID, []SSEEvent{{
 					Type: "message.part.delta",
 					Properties: map[string]interface{}{
-						"sessionID": rec.ID, "messageID": asstMsgID, "partID": evt.PartID, "field": "text", "delta": evt.Text,
+						"sessionID": rec.ID, "messageID": asstID, "partID": evt.PartID, "field": "text", "delta": evt.Text,
 					},
 				}})
 			case NativeEventTextEnd:
 				activeMu.Lock()
+				emittedAnyPart = true
 				startMs := partStartTimes[evt.PartID]
 				activeMu.Unlock()
 				if startMs == 0 {
@@ -341,7 +430,7 @@ func (s *Service) startNativeTurn(
 					Type: "message.part.updated",
 					Properties: map[string]interface{}{
 						"part": MessagePart{
-							ID: evt.PartID, SessionID: rec.ID, MessageID: asstMsgID,
+							ID: evt.PartID, SessionID: rec.ID, MessageID: asstID,
 							Type: "text", Text: evt.Text, Time: &PartTime{Start: startMs, End: nowMs},
 							Metadata: stepMeta(evt.Step),
 						},
@@ -351,6 +440,7 @@ func (s *Service) startNativeTurn(
 				status := "pending"
 				var pt *PartTime
 				activeMu.Lock()
+				emittedAnyPart = true
 				startMs := partStartTimes[evt.PartID]
 				if evt.Kind == NativeEventToolPending || startMs == 0 {
 					startMs = nowMs
@@ -375,9 +465,6 @@ func (s *Service) startNativeTurn(
 						meta = map[string]interface{}{}
 					}
 					meta["outcome"] = ToolOutcomeCompleted
-					if refs := s.saveNativeToolMediaAttachments(rec, evt.Media); len(refs) > 0 {
-						meta["mediaAttachments"] = refs
-					}
 				case NativeEventToolError:
 					status = "error"
 					pt = &PartTime{Start: startMs, End: nowMs}
@@ -388,8 +475,13 @@ func (s *Service) startNativeTurn(
 						meta["outcome"] = ToolOutcomeFailed
 					}
 				}
+				if evt.Kind == NativeEventToolCompleted || evt.Kind == NativeEventToolError {
+					if refs := s.saveNativeToolMediaAttachments(rec, evt.Media); len(refs) > 0 {
+						meta["mediaAttachments"] = refs
+					}
+				}
 				part := MessagePart{
-					ID: evt.PartID, SessionID: rec.ID, MessageID: asstMsgID,
+					ID: evt.PartID, SessionID: rec.ID, MessageID: asstID,
 					Type: "tool", Tool: evt.ToolName, CallID: evt.CallID,
 					Metadata: stepMeta(evt.Step),
 					State: &ToolState{
@@ -406,6 +498,9 @@ func (s *Service) startNativeTurn(
 				s.broadcastRouted(rec.ID, sseEvts)
 			case NativeEventContextCompacted:
 				if strings.TrimSpace(evt.Text) != "" {
+					activeMu.Lock()
+					emittedAnyPart = true
+					activeMu.Unlock()
 					cmpMeta := cloneGenericMap(evt.Metadata)
 					if cmpMeta == nil {
 						cmpMeta = map[string]interface{}{}
@@ -417,9 +512,9 @@ func (s *Service) startNativeTurn(
 						Type: "message.part.updated",
 						Properties: map[string]interface{}{
 							"part": MessagePart{
-								ID:        "prt_cmp_" + asstMsgID,
+								ID:        "prt_cmp_" + asstID,
 								SessionID: rec.ID,
-								MessageID: asstMsgID,
+								MessageID: asstID,
 								Type:      "compaction",
 								Text:      strings.TrimSpace(evt.Text),
 								Metadata:  cmpMeta,
@@ -428,12 +523,56 @@ func (s *Service) startNativeTurn(
 						},
 					}})
 				}
+			case "mode_promoted":
+				if nextMode := strings.TrimSpace(evt.Text); nextMode != "" {
+					activeMu.Lock()
+					mode = nextMode
+					rec.Mode = nextMode
+					activeMu.Unlock()
+					s.applyNativeModePromotion(rec.ID, nextMode, tr)
+				}
 			case NativeEventTurnFinish:
 				if f := strings.TrimSpace(evt.Finish); f != "" {
 					activeMu.Lock()
 					turnFinish = f
 					activeMu.Unlock()
 				}
+			case NativeEventStepRetry:
+				attempt := intFromMap(evt.Metadata, "attempt")
+				if attempt <= 0 {
+					attempt = 1
+				}
+				var nextMs int64
+				switch v := evt.Metadata["next"].(type) {
+				case int64:
+					nextMs = v
+				case int:
+					nextMs = int64(v)
+				case float64:
+					nextMs = int64(v)
+				}
+				s.broadcastRouted(rec.ID, []SSEEvent{{
+					Type: "session.status",
+					Properties: map[string]interface{}{
+						"sessionID": rec.ID,
+						"status": SessionStatus{
+							Type:    "retry",
+							Attempt: attempt,
+							Message: summarizeTurnRetryReason(evt.ErrorText),
+							Next:    nextMs,
+						},
+					},
+				}})
+			case NativeEventStepRetryDone:
+				s.broadcastRouted(rec.ID, []SSEEvent{{
+					Type: "session.status",
+					Properties: map[string]interface{}{
+						"sessionID": rec.ID,
+						"status":    SessionStatus{Type: "busy"},
+					},
+				}})
+			case NativeEventThinkingSignatureReset:
+				s.clearSessionThinkingSignatures(rec.ID)
 			case NativeEventTurnUsage:
 				if evt.Usage != nil {
 					activeMu.Lock()
@@ -442,12 +581,16 @@ func (s *Service) startNativeTurn(
 					totalUsage.Reasoning += evt.Usage.Reasoning
 					totalUsage.CacheRead += evt.Usage.CacheRead
 					totalUsage.CacheWrite += evt.Usage.CacheWrite
+					totalUsage.CostUSD += evt.Usage.CostUSD
 					if nativeStepContextTokens(*evt.Usage) > 0 {
 						latestParentStep = *evt.Usage
 					}
 					liveTokens := buildNativeMessageTokens(totalUsage, latestParentStep)
-					liveInfo := tr.msgInfo
+					liveInfo := tr.MsgInfo
 					liveInfo.Tokens = liveTokens
+					if totalUsage.CostUSD > 0 {
+						liveInfo.Cost = totalUsage.CostUSD
+					}
 					activeMu.Unlock()
 					s.broadcastRouted(rec.ID, []SSEEvent{{
 						Type:       "message.updated",
@@ -457,35 +600,57 @@ func (s *Service) startNativeTurn(
 			}
 		}
 
+		currentAsstID := func() string {
+			activeMu.Lock()
+			defer activeMu.Unlock()
+			return curAsstMsgID
+		}
+
 		err := eng.RunTurn(ctx, NativeTurnRequest{
-			SessionID:      rec.ID,
-			WorktreeDir:    rec.WorktreePath,
-			Mode:           mode,
-			ProviderID:     rec.ProviderID,
-			ModelID:        modelID,
-			Effort:         effort,
-			System:         systemPrompt,
-			History:        history,
-			UserPrompt:     promptText,
-			UserBlocks:     userBlocks,
-			SteerDrain:     steerQ.Drain,
-			PermissionHook: s.nativePermissionHook(rec, asstMsgID),
-			CommandRunner:  s.nativeCommandRunner(rec, ap),
-			Diagnostics:    s.nativeDiagnostics(rec),
-			AskQuestion:    s.nativeQuestionAsker(rec, asstMsgID),
-			Emit:           emit,
+			SessionID:       rec.ID,
+			WorktreeDir:     rec.WorktreePath,
+			Mode:            mode,
+			ProviderID:      rec.ProviderID,
+			ModelID:         modelID,
+			Effort:          effort,
+			System:          systemPrompt,
+			History:         history,
+			InitialTodos:    extractLatestSessionTodos(rec.Turns),
+			UserPrompt:      promptText,
+			UserBlocks:      userBlocks,
+			SteerDrain:      steerQ.Drain,
+			SteerDrainItems: drainSteerItems,
+			PermissionHook: func(pCtx context.Context, pr NativePermissionRequest) error {
+				return s.nativePermissionHook(rec, currentAsstID())(pCtx, pr)
+			},
+			CoordinateFileEdit:  s.nativeCoordinateFileEdit(rec, ap),
+			RecordFileEdit:      s.nativeRecordFileEdit(rec),
+			CommandRunner:       s.nativeCommandRunner(rec, ap),
+			StreamCommandRunner: s.nativeStreamCommandRunner(rec, ap),
+			BackgroundManager:   s.nativeBackgroundManager(rec),
+			Diagnostics:         s.nativeDiagnostics(rec),
+			AskQuestion: func(qCtx context.Context, callID, rawJSON string) (string, map[string]any, error) {
+				return s.nativeQuestionAsker(rec, currentAsstID())(qCtx, callID, rawJSON)
+			},
+			Emit: emit,
 		})
 
 		nowCompleted := time.Now().UnixMilli()
 		activeMu.Lock()
 		finalTokens := buildNativeMessageTokens(totalUsage, latestParentStep)
+		finalCost := totalUsage.CostUSD
 		resolvedFinish := turnFinish
+		finalAsstID := curAsstMsgID
+		hadParts := emittedAnyPart
 		activeMu.Unlock()
 		if resolvedFinish == "" {
 			resolvedFinish = "stop"
 		}
-		tr.msgInfo.Time.Completed = nowCompleted
-		tr.msgInfo.Tokens = finalTokens
+		tr.MsgInfo.Time.Completed = nowCompleted
+		tr.MsgInfo.Tokens = finalTokens
+		if finalCost > 0 {
+			tr.MsgInfo.Cost = finalCost
+		}
 
 		if err != nil {
 			if abandoned := subBridge.abandonAll(nowCompleted); len(abandoned) > 0 {
@@ -495,17 +660,21 @@ func (s *Service) startNativeTurn(
 			userCancelled := ap.wasAborted() && stallErr == nil
 			s.settleSessionInFlightParts(rec.ID, nowCompleted, userCancelled)
 			if userCancelled {
-				tr.msgInfo.Finish = "aborted"
-				s.broadcast(rec.ID, SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": tr.msgInfo}})
+				if !hadParts {
+					s.pruneEmptyAssistantTurn(rec.ID, finalAsstID)
+				} else {
+					tr.MsgInfo.Finish = "aborted"
+					s.broadcast(rec.ID, SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": tr.MsgInfo}})
+				}
 				terminalEvts = append(terminalEvts, SSEEvent{
 					Type: "session.status", Properties: map[string]interface{}{"sessionID": rec.ID, "status": SessionStatus{Type: "idle"}},
 				})
 				return
 			}
-			finish, msgErr := s.classifyNativeTurnFailure(rec.ID, asstMsgID, err, stallErr)
-			tr.msgInfo.Error = msgErr
-			tr.msgInfo.Finish = finish
-			s.broadcast(rec.ID, SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": tr.msgInfo}})
+			finish, msgErr := s.classifyNativeTurnFailure(rec.ID, finalAsstID, err, stallErr)
+			tr.MsgInfo.Error = msgErr
+			tr.MsgInfo.Finish = finish
+			s.broadcast(rec.ID, SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": tr.MsgInfo}})
 			terminalEvts = append(terminalEvts,
 				SSEEvent{Type: "session.error", Properties: map[string]interface{}{"sessionID": rec.ID, "error": msgErr}},
 				SSEEvent{Type: "session.status", Properties: map[string]interface{}{"sessionID": rec.ID, "status": SessionStatus{Type: "idle"}}},
@@ -513,8 +682,8 @@ func (s *Service) startNativeTurn(
 			return
 		}
 
-		tr.msgInfo.Finish = resolvedFinish
-		s.broadcast(rec.ID, SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": tr.msgInfo}})
+		tr.MsgInfo.Finish = resolvedFinish
+		s.broadcast(rec.ID, SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": tr.MsgInfo}})
 		terminalEvts = append(terminalEvts,
 			SSEEvent{Type: "session.idle", Properties: map[string]interface{}{"sessionID": rec.ID}},
 			SSEEvent{Type: "session.status", Properties: map[string]interface{}{"sessionID": rec.ID, "status": SessionStatus{Type: "idle"}}},
@@ -545,101 +714,6 @@ func (s *Service) nativeQuestionAsker(rec SessionRecord, asstMsgID string) func(
 		}
 		return reason, nil, nil
 	}
-}
-
-func (s *Service) saveNativeToolMediaAttachments(rec SessionRecord, media []NativeContentBlock) []map[string]interface{} {
-	if s == nil || s.attachments == nil || len(media) == 0 {
-		return nil
-	}
-	var refs []map[string]interface{}
-	for _, mb := range media {
-		mime := strings.TrimSpace(mb.MimeType)
-		data := strings.TrimSpace(mb.Data)
-		if mime == "" || data == "" {
-			continue
-		}
-		fname := strings.TrimSpace(mb.Filename)
-		if fname == "" {
-			fname = "tool_media"
-		}
-		saved, err := s.attachments.Save(attachment.SaveRequest{
-			SessionID: rec.ID,
-			Directory: rec.WorktreePath,
-			Filename:  fname,
-			Mime:      mime,
-			DataURL:   "data:" + mime + ";base64," + data,
-		})
-		if err != nil || saved.ID == "" {
-			continue
-		}
-		refs = append(refs, map[string]interface{}{
-			"id":       saved.ID,
-			"url":      saved.URL,
-			"mime":     saved.Mime,
-			"filename": saved.Filename,
-		})
-	}
-	return refs
-}
-
-func buildNativeUserBlocks(promptText string, deliveryParts []MessagePart) []NativeContentBlock {
-	var blocks []NativeContentBlock
-	if strings.TrimSpace(promptText) != "" {
-		blocks = append(blocks, NativeContentBlock{Type: "text", Text: promptText})
-	}
-	for _, p := range deliveryParts {
-		if p.Type != "file" || strings.TrimSpace(p.URL) == "" {
-			continue
-		}
-		if mimeType, b64Data, _, ok := parseBase64DataURL(p.URL, p.Mime); ok {
-			blocks = append(blocks, NativeContentBlock{
-				Type:     "media",
-				MimeType: mimeType,
-				Data:     b64Data,
-				Filename: p.Filename,
-			})
-		}
-	}
-	if len(blocks) == 0 {
-		blocks = append(blocks, NativeContentBlock{Type: "text", Text: promptText})
-	}
-	return blocks
-}
-
-func (s *Service) resolveNativeHistoryFileBlock(p MessagePart) (NativeContentBlock, bool) {
-	rawURL := strings.TrimSpace(p.URL)
-	if !strings.HasPrefix(rawURL, "data:") && s != nil && s.attachments != nil && rawURL != "" {
-		for _, prefix := range []string{"/api/hoxi/attachments/", "hoxi-attachment://"} {
-			if idx := strings.Index(rawURL, prefix); idx >= 0 {
-				refID := strings.TrimSpace(rawURL[idx+len(prefix):])
-				if slash := strings.IndexByte(refID, '/'); slash >= 0 {
-					refID = refID[:slash]
-				}
-				if q := strings.IndexByte(refID, '?'); q >= 0 {
-					refID = refID[:q]
-				}
-				if refID != "" {
-					if _, dataURL, err := s.attachments.ReadAsDataURL(refID); err == nil && dataURL != "" {
-						rawURL = dataURL
-					}
-				}
-				break
-			}
-		}
-	}
-	if rawURL == "" {
-		return NativeContentBlock{}, false
-	}
-	mimeType, b64Data, _, ok := parseBase64DataURL(rawURL, p.Mime)
-	if !ok {
-		return NativeContentBlock{}, false
-	}
-	return NativeContentBlock{
-		Type:     "media",
-		MimeType: mimeType,
-		Data:     b64Data,
-		Filename: p.Filename,
-	}, true
 }
 
 func (s *Service) buildNativeHistory(turns []MessageTurn) []NativeMessage {

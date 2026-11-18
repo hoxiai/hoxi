@@ -41,6 +41,9 @@ func isDoomLoopPollingCall(tool string, input json.RawMessage) bool {
 		return true
 	}
 	switch strings.ToLower(strings.TrimSpace(tool)) {
+	case "bash":
+		act := extractDoomLoopToolAction(input)
+		return act == "output" || act == "list"
 	case "manage_task":
 		act := extractDoomLoopToolAction(input)
 		return act == "status" || act == "list"

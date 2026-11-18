@@ -28,7 +28,7 @@ func (c convoySessions) Create(ctx context.Context, req orchestration.SessionReq
 	}
 	provider := strings.TrimSpace(req.Provider)
 	model := strings.TrimSpace(req.Model)
-	runtime := "opencode"
+	runtime := ""
 	if parentID := strings.TrimSpace(req.ParentSessionID); parentID != "" {
 		if parent, ok := c.runner.Store().Get(parentID); ok {
 			if parent.Runtime != "" {

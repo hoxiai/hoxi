@@ -52,7 +52,7 @@ Giving agents blanket shell access risks `rm -rf` or `git push --force`. Approvi
 ### 4. Stepping Away from Your Desk (Mobile AI + [GoPanel](https://github.com/hoxiai/gopanel) Server Ops)
 Solo builders and lean teams don't just write code—they also deploy and maintain servers. Being away from your laptop shouldn't stall a long-running agent or leave a production alert unanswered.
 - **Resilient Multi-Transport Remote Control (LAN Direct, Cloudflare Relay & GoPanel Tunnel)**:
-  - **3-Path Connectivity + 1-RTT X25519 E2EE**: Pair via **LAN Direct QR** (`:5417`), **Cloudflare Tunnel Connector** (`:5418`), or **[GoPanel](https://github.com/hoxiai/gopanel) Reverse Tunnel + iOS APNs Approval Push**, protected by `hoxi-e2ee-v1` zero-knowledge directional AES-256-GCM + X25519 key exchange (push payloads carry pending counts only—never raw commands, code, or file paths).
+  - **3-Path Connectivity + 1-RTT X25519 E2EE**: Pair the open-source Flutter mobile controller (`mobile/`) via **LAN Direct QR** (`:5417`), **Cloudflare Tunnel Connector** (`:5418`), or **[GoPanel](https://github.com/hoxiai/gopanel) Reverse Tunnel** (with optional APNs pending-count notifications on GoPanel), protected by `hoxi-e2ee-v1` zero-knowledge directional AES-256-GCM + X25519 key exchange (push payloads carry pending counts only—never raw commands, code, or file paths).
   - **Remote Action Safety & Idempotency**: Query live coding progress on your Hoxi desktop or server metrics on GoPanel, or dispatch commands to run tests, inspect Git worktree changes, and approve PreToolUse safety gates with `X-Idempotency-Key` and `instructionId` deduplication.
 
 ### 5. Context Rot, Endpoint Degradation & Electron Bloat
@@ -64,7 +64,7 @@ Long sessions forget early architectural constraints; third-party API gateways s
 
 ### 6. Agents That Leave the Chat
 Most AI coding tools stop at the repository. Hoxi also lets a session act on native apps, fan one goal out into parallel projects, and review what lands upstream.
-- **Native Computer Control (`hoxi_computer`)**: Hoxi Native Engine and OpenCode sessions can read a window and drive foreground input on macOS (Accessibility / ScreenCaptureKit / CGEvent) and Windows (UI Automation / PrintWindow / SendInput). Authorization is bound to one session plus one running app and confirmed in a native dialog; every input needs a one-time local approval (never remote, never "always allow", never unattended). Screenshots capture only the granted window, exclude password fields, and the computer-control routes are closed to the tunnel, LAN and relay.
+- **Native Computer Control (`hoxi_computer`)**: Hoxi Native Engine and OpenCode sessions can read a window and drive foreground input on macOS (Accessibility / ScreenCaptureKit / CGEvent) and Windows (UI Automation / PrintWindow / SendInput). Authorization is bound to one session plus one running app and confirmed in a native dialog; input defaults to a one-time local confirmation per action (with an optional session-scoped continuous-input toggle in the Computer Control panel for the currently authorized app; never remote, never cross-session "always allow", never unattended). Screenshots capture only the granted window, exclude password fields, and the computer-control routes are closed to the tunnel, LAN and relay.
 - **Multi-Agent DAG Orchestration**: Describe a goal once and Hoxi drafts a task DAG (a "convoy") where every task runs as its own session—one isolated worktree per task in a Git repo—so dependent tasks start from their prerequisites' merged changes while independent ones run in parallel.
 - **GitHub PR & CI Review (`forge`)**: Read live PR status, checks and review threads through the `gh` CLI without leaving the workspace.
 
@@ -147,6 +147,14 @@ go build ./... && go test ./internal/...
 npx --prefix web tsc -p web/tsconfig.json --noEmit
 npm --prefix web run check:i18n && npm --prefix web run check:lines
 npm --prefix web test && npm --prefix web run build
+```
+
+### Mobile Companion (`mobile/`, Optional)
+```bash
+cd mobile
+flutter pub get && flutter gen-l10n
+flutter analyze && flutter test
+flutter run
 ```
 
 ---

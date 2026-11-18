@@ -4,12 +4,16 @@ import (
 	"context"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/hoxiai/hoxi/internal/agent"
 	"github.com/hoxiai/hoxi/internal/codeindex"
 	"github.com/hoxiai/hoxi/internal/llm"
 	"github.com/hoxiai/hoxi/internal/runner"
 )
+
+const maxTrackedNativeRevisionSessions = 128
 
 type nativeSearchHit struct {
 	Path      string
@@ -21,13 +25,18 @@ type nativeSearchHit struct {
 }
 
 type gatewayNativeAgent struct {
-	engine        *agent.Engine
-	codeSearch    func(ctx context.Context, dir, query, pathPrefix string, limit int) ([]nativeSearchHit, error)
-	symbolInspect func(ctx context.Context, dir, relPath, symbol string, includeCallers bool) (string, error)
-	impactInspect func(ctx context.Context, dir, relPath, symbol string, depth, limit int) (string, error)
-	mcpConfig     func() map[string]any
-	hostInvoke    agent.HostInvokeHook
-	skillCatalog  func(ctx context.Context, sessionID, worktreeDir string) string
+	engine          *agent.Engine
+	codeSearch      func(ctx context.Context, dir, query, pathPrefix string, limit int) ([]nativeSearchHit, error)
+	symbolInspect   func(ctx context.Context, dir, relPath, symbol string, includeCallers bool) (string, error)
+	impactInspect   func(ctx context.Context, dir, relPath, symbol string, depth, limit int) (string, error)
+	mcpConfig       func() map[string]any
+	directoryConfig func(string) map[string]any
+	hostInvoke      agent.HostInvokeHook
+	skillCatalog    func(ctx context.Context, sessionID, worktreeDir string) string
+
+	revMu     sync.Mutex
+	revBySess map[string]*agent.FileRevisionTracker
+	revOrder  []string
 }
 
 func newGatewayNativeAgent(
@@ -38,7 +47,7 @@ func newGatewayNativeAgent(
 	mcpCfgFn func() map[string]any,
 	hostFn agent.HostInvokeHook,
 	skillCatalogFns ...func(ctx context.Context, sessionID, worktreeDir string) string,
-) runner.NativeEngine {
+) *gatewayNativeAgent {
 	var skillCatFn func(ctx context.Context, sessionID, worktreeDir string) string
 	if len(skillCatalogFns) > 0 {
 		skillCatFn = skillCatalogFns[0]
@@ -51,6 +60,54 @@ func newGatewayNativeAgent(
 		mcpConfig:     mcpCfgFn,
 		hostInvoke:    hostFn,
 		skillCatalog:  skillCatFn,
+		revBySess:     make(map[string]*agent.FileRevisionTracker),
+	}
+}
+
+func (g *gatewayNativeAgent) revisionTrackerForSession(sessionID string) *agent.FileRevisionTracker {
+	sid := strings.TrimSpace(sessionID)
+	if g == nil || sid == "" {
+		return agent.NewFileRevisionTracker()
+	}
+	g.revMu.Lock()
+	defer g.revMu.Unlock()
+	if g.revBySess == nil {
+		g.revBySess = make(map[string]*agent.FileRevisionTracker)
+	}
+	if tr, ok := g.revBySess[sid]; ok && tr != nil {
+		return tr
+	}
+	for len(g.revOrder) >= maxTrackedNativeRevisionSessions {
+		oldest := g.revOrder[0]
+		g.revOrder = g.revOrder[1:]
+		delete(g.revBySess, oldest)
+	}
+	tr := agent.NewFileRevisionTracker()
+	g.revBySess[sid] = tr
+	g.revOrder = append(g.revOrder, sid)
+	return tr
+}
+
+func (g *gatewayNativeAgent) ForgetSession(sessionID string) {
+	sid := strings.TrimSpace(sessionID)
+	if sid != "" {
+		agent.DeleteSessionTodos(sid)
+		agent.DeleteSessionBackgroundProcs(sid)
+	}
+	if g == nil || sid == "" {
+		return
+	}
+	g.revMu.Lock()
+	defer g.revMu.Unlock()
+	if _, ok := g.revBySess[sid]; !ok {
+		return
+	}
+	delete(g.revBySess, sid)
+	for i, k := range g.revOrder {
+		if k == sid {
+			g.revOrder = append(g.revOrder[:i], g.revOrder[i+1:]...)
+			break
+		}
 	}
 }
 
@@ -138,6 +195,7 @@ func (g *gatewayNativeAgent) RunTurn(ctx context.Context, req runner.NativeTurnR
 					Reasoning:  evt.Usage.Reasoning,
 					CacheRead:  evt.Usage.CacheRead,
 					CacheWrite: evt.Usage.CacheWrite,
+					CostUSD:    evt.Usage.CostUSD,
 				}
 			}
 			req.Emit(runner.NativeEvent{
@@ -193,38 +251,177 @@ func (g *gatewayNativeAgent) RunTurn(ctx context.Context, req runner.NativeTurnR
 		}
 	}
 
+	if len(req.InitialTodos) > 0 {
+		seeded := make([]agent.TodoItem, 0, len(req.InitialTodos))
+		for _, item := range req.InitialTodos {
+			seeded = append(seeded, agent.TodoItem{
+				ID:       item.ID,
+				Content:  item.Content,
+				Status:   item.Status,
+				Priority: item.Priority,
+			})
+		}
+		agent.SeedSessionTodosIfAbsent(req.SessionID, seeded)
+	}
+
+	var coordEditHook agent.FileEditCoordinatorHook
+	if req.CoordinateFileEdit != nil {
+		coordEditHook = func(ctx context.Context, paths []string, onWait func(string)) (agent.FileEditCoordination, error) {
+			res, err := req.CoordinateFileEdit(ctx, paths, onWait)
+			if err != nil {
+				return agent.FileEditCoordination{}, err
+			}
+			return agent.FileEditCoordination{
+				Release:        res.Release,
+				Waited:         res.Waited,
+				ModifiedByPeer: res.ModifiedByPeer,
+			}, nil
+		}
+	}
+
+	var bgMgr agent.BackgroundCommandManager
+	if req.BackgroundManager != nil {
+		bgMgr = nativeBgManagerAdapter{inner: req.BackgroundManager}
+	}
+
+	config := g.mcpConfig
+	if g.directoryConfig != nil {
+		config = func() map[string]any { return g.directoryConfig(req.WorktreeDir) }
+	}
 	return g.engine.RunTurn(ctx, agent.TurnRequest{
-		SessionID:      req.SessionID,
-		WorktreeDir:    req.WorktreeDir,
-		Mode:           req.Mode,
-		ProviderID:     req.ProviderID,
-		ModelID:        req.ModelID,
-		Effort:         req.Effort,
-		System:         sysPrompt,
-		History:        history,
-		UserPrompt:     req.UserPrompt,
-		UserBlocks:     mapNativeBlocksToAgent(req.UserBlocks),
-		Steer:          steerFunc(req.SteerDrain),
-		PermissionHook: permHook,
-		CommandRunner:  req.CommandRunner,
-		Diagnostics:    req.Diagnostics,
-		CodeSearch:     searchHook,
-		SymbolInspect:  g.symbolInspect,
-		ImpactInspect:  g.impactInspect,
-		AskQuestion:    req.AskQuestion,
-		MCPConfig:      g.mcpConfig,
-		HostInvoke:     g.hostInvoke,
-		Sink:           sink,
+		SessionID:           req.SessionID,
+		WorktreeDir:         req.WorktreeDir,
+		Mode:                req.Mode,
+		ProviderID:          req.ProviderID,
+		ModelID:             req.ModelID,
+		Effort:              req.Effort,
+		System:              sysPrompt,
+		History:             history,
+		UserPrompt:          req.UserPrompt,
+		UserBlocks:          mapNativeBlocksToAgent(req.UserBlocks),
+		FileRevisions:       g.revisionTrackerForSession(req.SessionID),
+		CoordinateFileEdit:  coordEditHook,
+		RecordFileEdit:      req.RecordFileEdit,
+		Steer:               nativeSteerAdapter{drainStr: req.SteerDrain, drainItems: req.SteerDrainItems},
+		PermissionHook:      permHook,
+		CommandRunner:       req.CommandRunner,
+		StreamCommandRunner: req.StreamCommandRunner,
+		BackgroundCommands:  bgMgr,
+		Diagnostics:         req.Diagnostics,
+		CodeSearch:          searchHook,
+		SymbolInspect:       g.symbolInspect,
+		ImpactInspect:       g.impactInspect,
+		AskQuestion:         req.AskQuestion,
+		MCPConfig:           config,
+		HostInvoke:          g.hostInvoke,
+		Sink:                sink,
 	})
 }
 
-type steerFunc func() []string
+type nativeBgManagerAdapter struct {
+	inner runner.NativeBackgroundManager
+}
 
-func (f steerFunc) Drain() []string {
-	if f == nil {
+func mapNativeBgStatus(st runner.NativeBackgroundProc) agent.BackgroundProcStatus {
+	return agent.BackgroundProcStatus{
+		ProcID:    st.ProcID,
+		Command:   st.Command,
+		PID:       st.PID,
+		Running:   st.Running,
+		ExitCode:  st.ExitCode,
+		StartedAt: st.StartedAt,
+		Output:    st.Output,
+		Truncated: st.Truncated,
+	}
+}
+
+func (a nativeBgManagerAdapter) Start(ctx context.Context, dir, command string) (agent.BackgroundProcStatus, error) {
+	st, err := a.inner.Start(ctx, dir, command)
+	return mapNativeBgStatus(st), err
+}
+
+func (a nativeBgManagerAdapter) Output(ctx context.Context, procID string, wait time.Duration) (agent.BackgroundProcStatus, error) {
+	st, err := a.inner.Output(ctx, procID, wait)
+	return mapNativeBgStatus(st), err
+}
+
+func (a nativeBgManagerAdapter) Stop(ctx context.Context, procID string) (agent.BackgroundProcStatus, error) {
+	st, err := a.inner.Stop(ctx, procID)
+	return mapNativeBgStatus(st), err
+}
+
+func (a nativeBgManagerAdapter) List(ctx context.Context) ([]agent.BackgroundProcStatus, error) {
+	items, err := a.inner.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]agent.BackgroundProcStatus, len(items))
+	for i, it := range items {
+		out[i] = mapNativeBgStatus(it)
+	}
+	return out, nil
+}
+
+type nativeSteerAdapter struct {
+	drainStr   func() []string
+	drainItems func() []runner.NativeSteerItem
+}
+
+func (a nativeSteerAdapter) Drain() []string {
+	if a.drainItems != nil {
+		items := a.drainItems()
+		if len(items) == 0 {
+			return nil
+		}
+		out := make([]string, 0, len(items))
+		for _, it := range items {
+			if strings.TrimSpace(it.Prompt) != "" {
+				out = append(out, it.Prompt)
+			}
+		}
+		return out
+	}
+	if a.drainStr == nil {
 		return nil
 	}
-	return f()
+	return a.drainStr()
+}
+
+func (a nativeSteerAdapter) DrainMessages() []agent.Message {
+	if a.drainItems != nil {
+		items := a.drainItems()
+		if len(items) == 0 {
+			return nil
+		}
+		msgs := make([]agent.Message, 0, len(items))
+		for _, it := range items {
+			blocks := mapNativeBlocksToAgent(it.Blocks)
+			if len(blocks) == 0 && strings.TrimSpace(it.Prompt) != "" {
+				blocks = []agent.ContentBlock{{Type: agent.ContentText, Text: it.Prompt}}
+			}
+			if len(blocks) > 0 {
+				msgs = append(msgs, agent.Message{
+					Role:    agent.RoleUser,
+					Content: blocks,
+				})
+			}
+		}
+		return msgs
+	}
+	raw := a.Drain()
+	if len(raw) == 0 {
+		return nil
+	}
+	msgs := make([]agent.Message, 0, len(raw))
+	for _, s := range raw {
+		if strings.TrimSpace(s) != "" {
+			msgs = append(msgs, agent.Message{
+				Role:    agent.RoleUser,
+				Content: []agent.ContentBlock{{Type: agent.ContentText, Text: s}},
+			})
+		}
+	}
+	return msgs
 }
 
 func buildNativeCodeIndexHooks(
@@ -338,7 +535,7 @@ func (g *Gateway) loadNativeAgentsForDir(dir string) []llm.AgentSpec {
 	}
 	var cfgDoc map[string]any
 	if g.providers != nil {
-		cfgDoc = g.providers.LoadHoxiConfigDoc()
+		cfgDoc = g.providers.LoadNativeConfigDoc(dir)
 	}
 	active, _ := llm.LoadAgents(dir, cfgDoc)
 	return active
@@ -350,7 +547,7 @@ func (g *Gateway) loadNativeCommandsForDir(dir string) []llm.SlashCommandSpec {
 	}
 	var cfgDoc map[string]any
 	if g.providers != nil {
-		cfgDoc = g.providers.LoadHoxiConfigDoc()
+		cfgDoc = g.providers.LoadNativeConfigDoc(dir)
 	}
 	return llm.LoadCommands(dir, cfgDoc)
 }

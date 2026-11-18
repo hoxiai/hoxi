@@ -11,6 +11,7 @@ import {
 } from "../../store/question-answers";
 import { isSessionBusy, sessionDirectory } from "../../store/session-query";
 import QuestionDock from "../approval/QuestionDock";
+import { extractPlanPreview, PlanConsentPreviewCard } from "../approval/plan-consent-preview";
 import { t } from "../../i18n";
 
 /**
@@ -37,12 +38,24 @@ export default function QuestionToolBody(props: { part: ToolPart }) {
 
   const items = createMemo(() => resolveQuestionItems(props.part, reply()));
   const rejected = createMemo(() => Boolean(reply()?.rejected));
+  const planPreview = createMemo(() => {
+    const st = props.part.state;
+    const metaPlan = st.status !== "pending" ? st.metadata?.plan : undefined;
+    return extractPlanPreview(metaPlan ?? st.input?.plan ?? st.input);
+  });
+  const promotedToBuild = createMemo(() => {
+    const st = props.part.state;
+    return st.status !== "pending" && st.metadata?.promoteMode === "build";
+  });
 
   return (
     <Show
       when={isAwaitingAnswer() && pendingRequest()}
       fallback={
         <div class="p-3 space-y-2.5">
+          <Show when={planPreview()}>
+            {(plan) => <PlanConsentPreviewCard plan={plan()} promotedToBuild={promotedToBuild()} />}
+          </Show>
           <Show when={rejected()}>
             <div class="inline-flex items-center gap-1.5 text-[12px] text-[var(--text-muted)]">
               <X size={12} class="text-[var(--warn-text)]" />

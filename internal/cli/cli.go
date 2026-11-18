@@ -37,6 +37,7 @@ var knownSubcommands = map[string]bool{
 	"tui":         true,
 	"open":        true,
 	"models":      true,
+	"host":        true,
 	"handoff":     true,
 	"worktree":    true,
 	"code-index":  true,
@@ -122,11 +123,17 @@ func ShouldHandle(args []string, getenv func(string) string) bool {
 	return base == "hoxi" || base == "hoxi.exe"
 }
 
-// NormalizeRuntime maps shorthand runtime aliases ("claude", "agy", "oc") to
-// canonical Hoxi runtime identifiers.
+func isCatalogRuntime(rt string) bool {
+	return rt == string(runner.RuntimeNative) || rt == "opencode"
+}
+
+// NormalizeRuntime maps shorthand runtime aliases ("native", "claude", "agy", "oc")
+// to canonical Hoxi runtime identifiers, defaulting to the built-in Go native engine.
 func NormalizeRuntime(raw string) string {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "", "opencode", "oc":
+	case "", "native", "hoxi":
+		return string(runner.RuntimeNative)
+	case "opencode", "oc":
 		return "opencode"
 	case "claude", "claude-code", "claudecode":
 		return string(runner.RuntimeClaudeCode)
@@ -184,6 +191,8 @@ func Run(
 			return runDocCommand(args[2:], cwd, stdin, stdout, stderr)
 		case "image":
 			return runImageCommand(ctx, args[2:], cwd, defaultBridgeAddr, bootHeadless, stdout, stderr)
+		case "host":
+			return runHostCommand(ctx, args[2:], cwd, stdout, stderr)
 		case "handoff":
 			return runHandoffCommand(ctx, args[2:], cwd, defaultBridgeAddr, bootHeadless, stdout, stderr)
 		case "status":
@@ -191,7 +200,7 @@ func Run(
 		case "install-cli":
 			return runInstallCLICommand(args[2:], stdout, stderr)
 		case "tui":
-			return runNativeOpenCodeTUI(ctx, args[2:], cwd, stdout, stderr)
+			return runNativeOpenCodeTUI(ctx, args[2:], cwd, defaultBridgeAddr, bootHeadless, stdin, stdout, stderr)
 		}
 	}
 
@@ -214,8 +223,8 @@ func Run(
 		promptFlag string
 		showHelp   bool
 	)
-	fs.StringVar(&opts.Runtime, "runtime", "opencode", "agent runtime: opencode | claude | agy | gemini-cli | qoder | codebuddy")
-	fs.StringVar(&opts.Runtime, "r", "opencode", "shorthand for --runtime")
+	fs.StringVar(&opts.Runtime, "runtime", string(runner.RuntimeNative), "agent runtime: native | opencode | claude | agy | gemini-cli | qoder | codebuddy")
+	fs.StringVar(&opts.Runtime, "r", string(runner.RuntimeNative), "shorthand for --runtime")
 	fs.StringVar(&opts.ModelID, "model", "", "model ID override")
 	fs.StringVar(&opts.ModelID, "m", "", "shorthand for --model")
 	fs.StringVar(&opts.ProviderID, "provider", "", "provider ID override")
@@ -228,7 +237,7 @@ func Run(
 	fs.StringVar(&opts.BridgeAddr, "address", defaultBridgeAddr, "Hoxi gateway loopback address")
 	fs.StringVar(&promptFlag, "prompt", "", "prompt to execute")
 	fs.StringVar(&promptFlag, "p", "", "shorthand for --prompt")
-	fs.BoolVar(&opts.TUI, "tui", false, "launch full-screen OpenCode TUI attached to Hoxi")
+	fs.BoolVar(&opts.TUI, "tui", false, "launch interactive terminal UI")
 	fs.BoolVar(&showHelp, "help", false, "show help")
 	fs.BoolVar(&showHelp, "h", false, "show help")
 
@@ -243,7 +252,7 @@ func Run(
 
 	opts.Runtime = NormalizeRuntime(opts.Runtime)
 	if opts.Runtime != "opencode" && !runner.IsValidRuntime(opts.Runtime) {
-		fmt.Fprintf(stderr, "Error: unsupported runtime %q (supported: opencode, claude, agy, gemini-cli, qoder, codebuddy)\n", opts.Runtime)
+		fmt.Fprintf(stderr, "Error: unsupported runtime %q (supported: native, opencode, claude, agy, gemini-cli, qoder, codebuddy)\n", opts.Runtime)
 		return 2
 	}
 	opts.SandboxMode = "local"
@@ -255,7 +264,7 @@ func Run(
 	}
 
 	if opts.TUI {
-		return runNativeOpenCodeTUI(ctx, posArgs, opts.Directory, stdout, stderr)
+		return runNativeOpenCodeTUI(ctx, posArgs, opts.Directory, opts.BridgeAddr, bootHeadless, stdin, stdout, stderr)
 	}
 
 	prompt := strings.TrimSpace(promptFlag)
@@ -338,11 +347,12 @@ Usage:
   hoxi doc <action> [flags]           Read, inspect, create or edit PDF/Excel/Word/CSV documents (inspect|read|write-xlsx|set-cell|write-docx|write-pdf)
   hoxi image <generate|models>        Generate or edit images via configured image models
   hoxi tui                            Launch native OpenCode TUI with Hoxi plugins
+  hoxi host <start|status|token|pair-uri> Manage cross-platform headless development host
   hoxi serve                          Run headless Hoxi daemon for mobile/remote control
   hoxi install-cli                    Install 'hoxi' command into /usr/local/bin or ~/.local/bin
 
 Flags:
-  -r, --runtime <name>   Agent runtime: opencode (default) | claude | agy | gemini-cli | qoder | codebuddy
+  -r, --runtime <name>   Agent runtime: native (default) | opencode | claude | agy | gemini-cli | qoder | codebuddy
   -m, --model <id>       Model ID override (e.g. provider/model or model-id)
   -w, --worktree         Isolate session in a Git worktree (.hoxi/worktrees/<session-id>)
   -s, --session <id>     Resume an existing Hoxi session ID

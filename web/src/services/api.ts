@@ -50,6 +50,7 @@ import {
   runnerAPI,
 } from "./runner-api";
 import { mediaAPI } from "./media-api";
+import { createClientRequestID, recoverPromptRequest, replyPermissionWithRecovery, shouldInspectAfterFailure } from "./request-ledger";
 import { fileAndPtyAPI, worktreeAndWorkspaceAPI } from "./worktree-api";
 
 export * from "./api-types";
@@ -57,6 +58,7 @@ export * from "./skills-types";
 export { skillsAPI } from "./skills";
 export {
   authAPI,
+  createClientRequestID,
   getGatewayToken,
   inferRunnerRuntimeFromSessionID,
   isRunnerAuthMode,
@@ -76,10 +78,6 @@ const SESSIONS = "/api/hoxi/sessions";
 
 function sessionPath(sessionID: string): string {
   return `${SESSIONS}/${encodeURIComponent(sessionID)}`;
-}
-
-function createClientRequestID(): string {
-  return `req_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
 // Hands the conversation to another engine before dispatch. Unadopted OpenCode
@@ -426,21 +424,28 @@ export const hoxiAPI = {
     if (text || parts.length === 0) {
       parts.push({ type: "text", text });
     }
-    return requestJSON(withDir(`${sessionPath(sessionID)}/prompt_async`, options?.directory), {
-      method: "POST",
-      headers: { "X-Idempotency-Key": clientRequestId },
-      body: JSON.stringify({
-        agent: options?.agent || "build",
-        clientRequestId,
-        ...(options?.model ? { model: options.model } : {}),
-        ...(options?.imageOptions ? { imageOptions: options.imageOptions } : {}),
-        ...(options?.variant ? { variant: options.variant } : {}),
-        ...(options?.system ? { system: options.system } : {}),
-        ...(options?.skillSelection ? { skillSelection: options.skillSelection } : {}),
-        ...(options?.continueTask ? { continueTask: true } : {}),
-        parts,
-      }),
-    });
+    try {
+      return await requestJSON(withDir(`${sessionPath(sessionID)}/prompt_async`, options?.directory), {
+        method: "POST",
+        headers: { "X-Idempotency-Key": clientRequestId },
+        body: JSON.stringify({
+          agent: options?.agent || "build",
+          clientRequestId,
+          ...(options?.model ? { model: options.model } : {}),
+          ...(options?.imageOptions ? { imageOptions: options.imageOptions } : {}),
+          ...(options?.variant ? { variant: options.variant } : {}),
+          ...(options?.system ? { system: options.system } : {}),
+          ...(options?.skillSelection ? { skillSelection: options.skillSelection } : {}),
+          ...(options?.continueTask ? { continueTask: true } : {}),
+          parts,
+        }),
+      });
+    } catch (err) {
+      if (!shouldInspectAfterFailure(err)) throw err;
+      const recovered = await recoverPromptRequest({ clientRequestId, sessionID, directory: options?.directory });
+      if (recovered === "completed") return;
+      throw err;
+    }
   },
 
   abortSession(sessionID: string, directory?: string): Promise<void> {
@@ -514,12 +519,17 @@ export const hoxiAPI = {
     reply: "once" | "always" | "reject",
     directory?: string,
     message?: string,
-    grantClass?: boolean
+    grantClass?: boolean,
+    clientRequestId?: string
   ): Promise<void> {
-    return requestJSON(withDir(`/api/hoxi/permission/${encodeURIComponent(requestID)}/reply`, directory), {
-      method: "POST",
-      body: JSON.stringify({ reply, ...(message ? { message } : {}), ...(grantClass ? { grantClass: true } : {}) }),
-    });
+    return replyPermissionWithRecovery(
+      requestID,
+      reply,
+      directory,
+      message,
+      grantClass,
+      clientRequestId
+    );
   },
   async listApprovalGrants(params?: { sessionID?: string; directory?: string }): Promise<ApprovalGrant[]> {
     const q = new URLSearchParams();
@@ -584,13 +594,13 @@ export const hoxiAPI = {
   },
   // Agents / Modes & Commands
   listAgents(directory?: string): Promise<AgentInfo[]> {
-    return requestJSON(withDir("/agent", directory));
+    return requestJSON(withDir("/api/hoxi/agents", directory));
   },
   listCommands(directory?: string): Promise<SlashCommandInfo[]> {
-    return requestJSON(withDir("/command", directory));
+    return requestJSON(withDir("/api/hoxi/commands", directory));
   },
   getLSPStatus(directory?: string): Promise<any[]> {
-    return requestJSON(withDir("/lsp", directory));
+    return requestJSON(withDir("/api/hoxi/lsp", directory));
   },
 
   ...mediaAPI,

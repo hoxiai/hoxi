@@ -529,3 +529,99 @@ func TestPhase3SubtaskBoundedConcurrencyAndParentCallID(t *testing.T) {
 		}
 	}
 }
+
+func TestEditToolsStructuredDiffMetadata(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "old.go"), []byte("package p\nconst V = 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "drop.txt"), []byte("bye\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "multi.go"), []byte("package p\nvar A = 1\nvar B = 2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	readOld, _ := json.Marshal(map[string]any{"filePath": "old.go"})
+	readDrop, _ := json.Marshal(map[string]any{"filePath": "drop.txt"})
+	readMulti, _ := json.Marshal(map[string]any{"filePath": "multi.go"})
+	patchArgs, _ := json.Marshal(map[string]any{
+		"patch": strings.Join([]string{
+			"*** Begin Patch",
+			"*** Add File: created.go",
+			"+package p",
+			"+const New = true",
+			"*** Delete File: drop.txt",
+			"*** Update File: old.go",
+			"*** Move to: renamed.go",
+			"@@",
+			" package p",
+			"-const V = 1",
+			"+const V = 2",
+			"*** End Patch",
+		}, "\n"),
+	})
+	multiArgs, _ := json.Marshal(map[string]any{
+		"filePath": "multi.go",
+		"edits": []map[string]any{
+			{"oldString": "var A = 1", "newString": "var A = 10"},
+			{"oldString": "var B = 2", "newString": "var B = 20"},
+		},
+	})
+
+	sc := &stubStreamClient{
+		proto: llm.ProtocolOpenAI,
+		responses: []string{
+			strings.Join([]string{
+				`data: {"choices":[{"delta":{"tool_calls":[` +
+					`{"index":0,"id":"r1","function":{"name":"read","arguments":` + mustJSONString(string(readOld)) + `}},` +
+					`{"index":1,"id":"r2","function":{"name":"read","arguments":` + mustJSONString(string(readDrop)) + `}},` +
+					`{"index":2,"id":"r3","function":{"name":"read","arguments":` + mustJSONString(string(readMulti)) + `}}` +
+					`]}}]}`,
+				`data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}`,
+				`data: [DONE]`,
+			}, "\n") + "\n",
+			strings.Join([]string{
+				`data: {"choices":[{"delta":{"tool_calls":[` +
+					`{"index":0,"id":"ap1","function":{"name":"apply_patch","arguments":` + mustJSONString(string(patchArgs)) + `}},` +
+					`{"index":1,"id":"me1","function":{"name":"multiedit","arguments":` + mustJSONString(string(multiArgs)) + `}}` +
+					`]}}]}`,
+				`data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}`,
+				`data: [DONE]`,
+			}, "\n") + "\n",
+			"data: {\"choices\":[{\"delta\":{\"content\":\"done\"},\"finish_reason\":\"stop\"}]}\ndata: [DONE]\n",
+		},
+	}
+
+	eng := agent.NewDefaultEngine(sc)
+	completed := make(map[string]agent.EngineEvent)
+	if err := eng.RunTurn(context.Background(), agent.TurnRequest{
+		SessionID: "ses_meta", WorktreeDir: dir, Mode: "build", ProviderID: "openai", ModelID: "gpt-5", UserPrompt: "go",
+		Sink: agent.EventSinkFunc(func(evt agent.EngineEvent) {
+			if evt.Kind == agent.EngineToolCompleted {
+				completed[evt.CallID] = evt
+			}
+		}),
+	}); err != nil {
+		t.Fatalf("RunTurn failed: %v", err)
+	}
+
+	files, ok := completed["ap1"].Metadata["files"].([]map[string]any)
+	if !ok || len(files) != 3 {
+		t.Fatalf("expected 3 structured metadata.files entries on apply_patch, got %#v", completed["ap1"].Metadata["files"])
+	}
+	if files[0]["relativePath"] != "created.go" || files[0]["type"] != "add" || files[0]["additions"] != 2 {
+		t.Fatalf("unexpected add entry: %#v", files[0])
+	}
+	if files[1]["relativePath"] != "drop.txt" || files[1]["type"] != "delete" || files[1]["deletions"] != 1 {
+		t.Fatalf("unexpected delete entry: %#v", files[1])
+	}
+	if files[2]["relativePath"] != "renamed.go" || files[2]["type"] != "move" || files[2]["movePath"] != filepath.Join(dir, "renamed.go") || files[2]["additions"] != 1 || files[2]["deletions"] != 1 {
+		t.Fatalf("unexpected move entry: %#v", files[2])
+	}
+
+	fd, ok := completed["me1"].Metadata["filediff"].(map[string]any)
+	if !ok || fd["file"] != "multi.go" || !strings.Contains(fd["after"].(string), "var B = 20") || fd["additions"] != 2 || fd["deletions"] != 2 {
+		t.Fatalf("unexpected multiedit metadata.filediff: %#v", completed["me1"].Metadata)
+	}
+}

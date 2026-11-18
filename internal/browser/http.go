@@ -24,6 +24,8 @@ type Action struct {
 	Selector          string   `json:"selector,omitempty"`
 	Text              string   `json:"text,omitempty"`
 	Key               string   `json:"key,omitempty"`
+	Clear             bool     `json:"clear,omitempty"`
+	TimeoutMs         int      `json:"timeoutMs,omitempty"`
 	X                 float64  `json:"x,omitempty"`
 	Y                 float64  `json:"y,omitempty"`
 	DeltaX            float64  `json:"deltaX,omitempty"`
@@ -232,7 +234,7 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	// probes (snapshot/screenshot) only inspect an already-open browser. Neither
 	// reserves a scope nor cold-starts Chrome at about:blank.
 	liveInput := isLiveInputAction(action.Action)
-	readOnlyProbe := action.Action == "snapshot" || action.Action == "screenshot"
+	readOnlyProbe := action.Action == "snapshot" || action.Action == "screenshot" || action.Action == "diagnostics"
 	canColdStart := action.Action == "navigate" || action.Action == "tab_new"
 	reserveScope := path == "action" && (canColdStart || action.Action == "control" || action.Action == "mode" || action.Action == "resize" || action.Action == "pair")
 	sc, err := s.acquire(ctx, key, reserveScope)
@@ -402,6 +404,11 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if err != nil {
+			var conflictErr actionConflictError
+			if errors.As(err, &conflictErr) {
+				fail(w, 409, err)
+				return
+			}
 			fail(w, 502, err)
 			return
 		}
@@ -447,6 +454,11 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if err != nil {
+			var conflictErr actionConflictError
+			if errors.As(err, &conflictErr) {
+				fail(w, 409, err)
+				return
+			}
 			fail(w, 502, err)
 			return
 		}

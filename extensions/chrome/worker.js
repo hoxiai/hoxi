@@ -89,8 +89,18 @@ async function state(link) {
   return cachedNavigationState(link);
 }
 
+function resolveRefSelector(link, raw) {
+  const s = typeof raw === "string" ? raw.trim() : "";
+  if (!s || !s.startsWith("@")) return s;
+  if (!/^@e([1-9][0-9]{0,2})$/.test(s)) throw new Error(`Invalid snapshot ref ${s}`);
+  const hit = link.snapshotRefs?.get(link.tabID)?.get(s);
+  if (!hit) throw new Error(`Snapshot ref ${s} not found or expired; call snapshot first`);
+  return hit;
+}
+
 async function navigate(link, a) {
   if (a.action === "navigate" && !allowedURL(a.url)) throw new Error("Only HTTP(S) navigation is supported");
+  link.snapshotRefs?.delete(link.tabID);
   const generation = beginNavigation(link, a.url || link.lastState?.url || "");
   const command = async () => {
     if (a.action === "navigate") return send(link, "Page.navigate", { url: a.url });
@@ -177,6 +187,7 @@ async function execute(link, a) {
       throw new Error("Chrome Link controls only the selected tab; choose another tab in the extension");
     }
     link.tabs.delete(targetID);
+    link.snapshotRefs?.delete(targetID);
     try { await chrome.debugger.detach({ tabId: targetID }); } catch { /* already detached */ }
     await chrome.tabs.remove(targetID);
     if (link.tabID === targetID) {
@@ -195,7 +206,7 @@ async function execute(link, a) {
     }
     case "diagnostics":
       if (a.clear) link.diagnostics = [];
-      return { diagnostics: link.diagnostics || [] };
+      return { ...await state(link), diagnostics: link.diagnostics || [] };
     case "zoom_reset": await send(link, "Emulation.setPageScaleFactor", { pageScaleFactor: 1 }); break;
     case "resize":
       if (!validViewport(a)) throw new Error("Invalid viewport size");
@@ -209,10 +220,20 @@ async function execute(link, a) {
     case "click": {
       let point = { x: a.x || 0, y: a.y || 0 };
       if (a.selector) {
-        point = await evaluate(link, `(()=>{const e=document.querySelector(${JSON.stringify(a.selector)});if(!e)throw new Error('Element not found');e.scrollIntoView({block:'center'});const r=e.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()`);
+        const sel = resolveRefSelector(link, a.selector);
+        point = await evaluate(link, `(()=>{const e=document.querySelector(${JSON.stringify(sel)});if(!e)throw new Error('Element not found');e.scrollIntoView({block:'center',inline:'center'});const r=e.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()`);
       }
       await send(link, "Input.dispatchMouseEvent", { type: "mousePressed", ...point, button: "left", clickCount: 1 });
       await send(link, "Input.dispatchMouseEvent", { type: "mouseReleased", ...point, button: "left", clickCount: 1 });
+      break;
+    }
+    case "hover": {
+      let point = { x: a.x || 0, y: a.y || 0 };
+      if (a.selector) {
+        const sel = resolveRefSelector(link, a.selector);
+        point = await evaluate(link, `(()=>{const e=document.querySelector(${JSON.stringify(sel)});if(!e)throw new Error('Element not found');e.scrollIntoView({block:'center',inline:'center'});const r=e.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()`);
+      }
+      await send(link, "Input.dispatchMouseEvent", { type: "mouseMoved", ...point });
       break;
     }
     case "context": case "copy": case "paste": {
@@ -222,9 +243,40 @@ async function execute(link, a) {
       if (a.action === "paste" && !result.clipboardError) await send(link, "Input.insertText", { text: a.text });
       return { ...await state(link), ...result };
     }
-    case "type":
-      if (a.selector) await evaluate(link, `(()=>{const e=document.querySelector(${JSON.stringify(a.selector)});if(!e)throw new Error('Element not found');e.focus()})()`);
-      await send(link, "Input.insertText", { text: a.text || "" }); break;
+    case "type": {
+      if (a.selector) {
+        const sel = resolveRefSelector(link, a.selector);
+        await evaluate(link, `(()=>{const e=document.querySelector(${JSON.stringify(sel)});if(!e)throw new Error('Element not found');e.focus()})()`);
+      }
+      if (a.clear) {
+        await evaluate(link, `(()=>{const el=document.activeElement;if(!el)return;if(el instanceof HTMLInputElement){const d=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value');if(d&&d.set)d.set.call(el,'');else el.value='';el.dispatchEvent(new Event('input',{bubbles:true}))}else if(el instanceof HTMLTextAreaElement){const d=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value');if(d&&d.set)d.set.call(el,'');else el.value='';el.dispatchEvent(new Event('input',{bubbles:true}))}else if(el.isContentEditable){el.textContent='';el.dispatchEvent(new Event('input',{bubbles:true}))}})()`);
+      }
+      if (a.text) await send(link, "Input.insertText", { text: a.text });
+      if (a.key) await key(link, a.key);
+      break;
+    }
+    case "select": {
+      const sel = resolveRefSelector(link, a.selector);
+      const selected = await evaluate(link, `(()=>{const el=document.querySelector(${JSON.stringify(sel)});if(!el)throw new Error('Element not found');if(!(el instanceof HTMLSelectElement))throw new Error('Target element is not a <select>');const want=String(${JSON.stringify(a.text || "")});const wl=want.trim().toLowerCase();const opts=Array.from(el.options);const hit=opts.find(o=>o.value===want)||opts.find(o=>(o.label||'').trim()===want.trim()||(o.text||'').trim()===want.trim())||opts.find(o=>o.value.toLowerCase()===wl||(o.label||'').trim().toLowerCase()===wl||(o.text||'').trim().toLowerCase()===wl);if(!hit)throw new Error('Option not found: '+want);el.value=hit.value;el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));return {selectedValue:hit.value,selectedText:(hit.label||hit.text||'').trim()}})()`);
+      return { ...await state(link), ...selected };
+    }
+    case "wait": {
+      const started = Date.now();
+      if (!a.selector) {
+        const ms = Math.min(5000, Math.max(100, Number(a.timeoutMs) || 1000));
+        await new Promise(r => setTimeout(r, ms));
+        return { ...await state(link), waitedMs: Date.now() - started };
+      }
+      const sel = resolveRefSelector(link, a.selector);
+      const ms = Math.min(10000, Math.max(100, Number(a.timeoutMs) || 2000));
+      let matched = false;
+      while (true) {
+        matched = Boolean(await evaluate(link, `(()=>{const e=document.querySelector(${JSON.stringify(sel)});return !!(e&&e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden')})()`));
+        if (matched || Date.now() - started >= ms) break;
+        await new Promise(r => setTimeout(r, 100));
+      }
+      return { ...await state(link), matched, waitedMs: Date.now() - started };
+    }
     case "key": await key(link, a.key); break;
     case "pointer": await pointer(link, a); break;
     case "zoom": {
@@ -233,7 +285,14 @@ async function execute(link, a) {
       break;
     }
     case "scroll": await send(link, "Input.dispatchMouseEvent", { type: "mouseWheel", x: a.x || 0, y: a.y || 0, deltaX: a.deltaX || 0, deltaY: a.deltaY || 0 }); break;
-    case "snapshot": return { ...await state(link), snapshot: await evaluate(link, `(${snapshot.toString()})()`) };
+    case "snapshot": {
+      const snap = await evaluate(link, `(${snapshot.toString()})()`);
+      if (!link.snapshotRefs) link.snapshotRefs = new Map();
+      const map = new Map();
+      for (const c of snap?.controls || []) { if (c?.ref && c?.selector) map.set(c.ref, c.selector); }
+      link.snapshotRefs.set(link.tabID, map);
+      return { ...await state(link), snapshot: snap };
+    }
     case "evaluate": {
       const result = await evaluate(link, `(()=>{const v=(0,eval)(${JSON.stringify(a.text)});const s=JSON.stringify(v);return (s===undefined?'undefined':s).slice(0,65536)})()`);
       return { ...await state(link), result };

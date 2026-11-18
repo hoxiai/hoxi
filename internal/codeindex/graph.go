@@ -289,8 +289,11 @@ func pickBestSymbolDecl(cands []symbolDecl, callerPath, calledIdent, receiver st
 }
 
 func (s *Service) locateSymbolSpan(directory string, c *cachedIndex, relPath, symbol string) (string, []string, int, int, string, error) {
-	relPath = strings.TrimSpace(relPath)
-	symbol = strings.TrimSpace(symbol)
+	var err error
+	symbol, relPath, err = normalizeSymbolAndPath(directory, symbol, relPath)
+	if err != nil {
+		return "", nil, 0, 0, "", err
+	}
 	if relPath == "" && symbol == "" {
 		return "", nil, 0, 0, "", errors.New("path or symbol is required")
 	}
@@ -451,14 +454,19 @@ func (s *Service) Impact(directory, symbol, relPath string, depth, limit int) (I
 	if err != nil {
 		return ImpactResponse{}, err
 	}
-	symbol = strings.TrimSpace(symbol)
-	relPath = strings.TrimSpace(relPath)
+	symbol, relPath, err = normalizeSymbolAndPath(directory, symbol, relPath)
+	if err != nil {
+		return ImpactResponse{}, err
+	}
 	if relPath != "" {
 		cleanRel, _, err := resolveSafeWorktreeFile(directory, relPath)
 		if err != nil {
 			return ImpactResponse{}, err
 		}
 		relPath = cleanRel
+	}
+	if symbol == "" && relPath != "" {
+		return s.impactForFile(directory, relPath, depth, limit)
 	}
 	if symbol == "" {
 		return ImpactResponse{}, errors.New("symbol is required")
@@ -601,18 +609,27 @@ func (s *Service) Context(directory, relPath, symbol, query string, contextLines
 	if err != nil {
 		return ContextResponse{}, err
 	}
-	relPath = strings.TrimSpace(relPath)
-	symbol = strings.TrimSpace(symbol)
 	query = strings.TrimSpace(query)
+	symbol, relPath, err = normalizeSymbolAndPath(directory, symbol, relPath)
+	if err != nil {
+		return ContextResponse{}, err
+	}
+	if symbol == "" && relPath == "" && query != "" {
+		if looksLikeFilePathInput(query) {
+			symbol, relPath, err = normalizeSymbolAndPath(directory, query, "")
+			if err != nil {
+				return ContextResponse{}, err
+			}
+		} else {
+			symbol = query
+		}
+	}
 	if relPath != "" {
 		cleanRel, _, err := resolveSafeWorktreeFile(directory, relPath)
 		if err != nil {
 			return ContextResponse{}, err
 		}
 		relPath = cleanRel
-	}
-	if symbol == "" && query != "" {
-		symbol = query
 	}
 	if relPath == "" && symbol == "" {
 		return ContextResponse{}, errors.New("symbol, query, or path is required")
@@ -659,7 +676,7 @@ func (s *Service) Context(directory, relPath, symbol, query string, contextLines
 	tests := []CallerHit{}
 	var affectedFiles []string
 
-	if targetSym != "" {
+	if targetSym != "" || inspected.Path != "" {
 		if calleesRes, cErr := s.Callees(directory, targetSym, inspected.Path, limit); cErr == nil {
 			callees = calleesRes.Callees
 			if len(imports) == 0 {

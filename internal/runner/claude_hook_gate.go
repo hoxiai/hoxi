@@ -175,9 +175,17 @@ func (s *Service) decideClaudeHookCall(r *http.Request, cred hookCredential, p c
 		path := resolveHookToolPath(baseDir, argsMap)
 		if path != "" && pathWithin(rec.WorktreePath, path) && !isProtectedWorktreePath(rec.WorktreePath, path) &&
 			s.policyApprovesWorktreeEdit(rec, path) {
+			if ok, reason := s.acquireHookFileLease(r.Context(), cred.sessionID, path); !ok {
+				return "deny", reason
+			}
 			return "", ""
 		}
 		if approved, reason := s.gateToolCallIn(r, cred, p.ToolName, argsMap, p.ToolUseID, p.Cwd); approved {
+			if path != "" {
+				if ok, reason := s.acquireHookFileLease(r.Context(), cred.sessionID, path); !ok {
+					return "deny", reason
+				}
+			}
 			return "allow", ""
 		} else {
 			return "deny", reason

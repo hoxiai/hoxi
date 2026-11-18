@@ -168,15 +168,20 @@ func (m *worktreeManager) registerRoutes(mux *http.ServeMux) {
 			return
 		}
 		var body struct {
-			SessionID    string         `json:"sessionID"`
-			Message      string         `json:"message"`
-			Push         bool           `json:"push"`
-			Directory    string         `json:"directory"`
-			SessionDiffs *[]SessionDiff `json:"sessionDiffs"`
+			SessionID       string         `json:"sessionID"`
+			Message         string         `json:"message"`
+			Push            bool           `json:"push"`
+			Directory       string         `json:"directory"`
+			SessionDiffs    *[]SessionDiff `json:"sessionDiffs"`
+			ClientRequestID string         `json:"clientRequestId"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeJSONError(w, http.StatusBadRequest, err.Error())
 			return
+		}
+		clientReqID := strings.TrimSpace(body.ClientRequestID)
+		if clientReqID == "" {
+			clientReqID = strings.TrimSpace(r.Header.Get("X-Idempotency-Key"))
 		}
 		var res CommitAndPushResult
 		var err error
@@ -218,14 +223,68 @@ func (m *worktreeManager) registerRoutes(mux *http.ServeMux) {
 		if known {
 			selected = binding.Directory
 		}
+		targetMgr := m.scoped(selected, body.SessionID)
+		workDir := targetMgr.resolveWorkDir(body.SessionID)
+		ledger := targetMgr.commitLedger()
+		var scope string
+		var preHead string
+		if ledger != nil {
+			scope = CommitRequestScope(body.SessionID, workDir)
+			unlockScope := targetMgr.lockCommitScope(scope)
+			defer unlockScope()
+
+			digest := CommitRequestDigest(scope, body.Message, body.Push, body.SessionDiffs)
+			preHead = ObserveGitHead(workDir)
+			dec := ledger.AdmitCommit(scope, strings.TrimSpace(body.SessionID), clientReqID, digest, map[string]string{
+				"workDir": workDir,
+				"preHead": preHead,
+			})
+			switch dec.State {
+			case CommitAdmissionDone:
+				w.Header().Set("Content-Type", "application/json; charset=utf-8")
+				w.Header().Set("X-Hoxi-Deduplicated", "true")
+				status := dec.HTTPStatus
+				if status <= 0 {
+					status = http.StatusOK
+				}
+				w.WriteHeader(status)
+				_, _ = w.Write(injectCommitDeduplicated(dec.ResponseBody))
+				return
+			case CommitAdmissionNew:
+				// Only explicit durable admission may start the Git mutation.
+			default:
+				status := dec.HTTPStatus
+				if status <= 0 {
+					status = http.StatusConflict
+				}
+				writeCodedJSONError(w, status, dec.ErrorCode, dec.ErrorMessage)
+				return
+			}
+		}
 		if body.SessionDiffs != nil {
-			res, err = m.scoped(selected, body.SessionID).CommitSessionChanges(body.SessionID, body.Message, body.Push, *body.SessionDiffs)
+			res, err = targetMgr.CommitSessionChanges(body.SessionID, body.Message, body.Push, *body.SessionDiffs)
 		} else {
-			res, err = m.scoped(selected, body.SessionID).CommitAndPushWorktree(body.SessionID, body.Message, body.Push)
+			res, err = targetMgr.CommitAndPushWorktree(body.SessionID, body.Message, body.Push)
 		}
 		if err != nil {
+			if clientReqID != "" && ledger != nil {
+				postHead := ObserveGitHead(workDir)
+				if res.Commit != "" || (preHead != "" && postHead != "" && postHead != preHead) {
+					ledger.MarkCommitUnknown(scope, clientReqID, err.Error())
+				} else {
+					ledger.AbortUncommittedCommit(scope, clientReqID)
+				}
+			}
 			writeJSONError(w, http.StatusBadRequest, err.Error())
 			return
+		}
+		if clientReqID != "" {
+			res.ClientRequestID = clientReqID
+		}
+		if clientReqID != "" && ledger != nil {
+			if rawResp, mErr := json.Marshal(res); mErr == nil {
+				ledger.CompleteCommit(scope, clientReqID, http.StatusOK, append(rawResp, '\n'))
+			}
 		}
 		writeJSON(w, http.StatusOK, res)
 	})
@@ -501,4 +560,12 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeJSONError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]any{"error": msg})
+}
+
+func writeCodedJSONError(w http.ResponseWriter, status int, code, msg string) {
+	if strings.TrimSpace(code) == "" {
+		writeJSONError(w, status, msg)
+		return
+	}
+	writeJSON(w, status, map[string]any{"error": msg, "code": code})
 }

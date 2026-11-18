@@ -3,9 +3,9 @@ import type { PermissionRequest } from "../services/sse-types";
 import {
   decidePermission,
   isDestructivePermissionRequest,
-} from "../../../.opencode/lib/permission-policy.js";
-import { sessionGrantRefusal } from "../../../.opencode/lib/opaque-command.js";
-import policyCases from "../../../.opencode/lib/permission-policy.cases.json";
+} from "../policy/permission-policy.js";
+import { sessionGrantRefusal } from "../policy/opaque-command.js";
+import policyCases from "../../../internal/runner/shellpolicy/testdata/permission-policy.cases.json";
 import { assertDeepEqual, assertEqual, assertTrue, describe, it } from "./test-harness";
 
 type Call = { url: string; method: string; body: any };
@@ -44,8 +44,17 @@ describe("Antigravity runner permission routing", () => {
       await hoxiAPI.replyPermission("per_rnr_def", "once", "/project");
       assertEqual(m.calls[0].url, "/api/hoxi/permission/per_rnr_abc/reply?directory=%2Fproject");
       assertEqual(m.calls[0].method, "POST");
-      assertDeepEqual(m.calls[0].body, { reply: "reject", message: "use pnpm instead" });
-      assertDeepEqual(m.calls[1].body, { reply: "once" });
+      assertTrue(typeof m.calls[0].body.clientRequestId === "string" && m.calls[0].body.clientRequestId.startsWith("perm_"));
+      assertTrue(typeof m.calls[1].body.clientRequestId === "string" && m.calls[1].body.clientRequestId.startsWith("perm_"));
+      assertDeepEqual(m.calls[0].body, {
+        reply: "reject",
+        message: "use pnpm instead",
+        clientRequestId: m.calls[0].body.clientRequestId,
+      });
+      assertDeepEqual(m.calls[1].body, {
+        reply: "once",
+        clientRequestId: m.calls[1].body.clientRequestId,
+      });
     } finally { m.restore(); }
   });
 
@@ -54,7 +63,11 @@ describe("Antigravity runner permission routing", () => {
     try {
       await hoxiAPI.replyPermission("per_01JABC", "always", "/project");
       assertEqual(m.calls[0].url, "/api/hoxi/permission/per_01JABC/reply?directory=%2Fproject");
-      assertDeepEqual(m.calls[0].body, { reply: "always" });
+      assertTrue(typeof m.calls[0].body.clientRequestId === "string" && m.calls[0].body.clientRequestId.startsWith("perm_"));
+      assertDeepEqual(m.calls[0].body, {
+        reply: "always",
+        clientRequestId: m.calls[0].body.clientRequestId,
+      });
     } finally { m.restore(); }
   });
 

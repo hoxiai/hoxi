@@ -17,8 +17,9 @@ contribute code you cannot license this way.
 - Go 1.25+
 - Node.js 20+
 - Wails CLI v2.13.0
-- At least one agent CLI on `PATH` for manual testing: `opencode`, `claude`,
-  `agy`, `gemini`, `qoder` or `codebuddy`
+- Hoxi includes a built-in Go Native Agent Engine (`internal/agent`) out of the
+  box; optionally install `claude`, `codex`, `opencode`, `agy`, `gemini`, `qoder`
+  or `codebuddy` on `PATH` when testing external CLI runtime adapters
 
 ```bash
 wails dev                    # desktop app with hot reload
@@ -40,18 +41,33 @@ npm --prefix web run build
 `npm --prefix web run lint` also runs `check:i18n` and `check:lines`. The latter
 enforces the 800-line source limit and the frontend layering boundaries.
 
+If your change touches the Flutter mobile companion (`mobile/`), also run:
+
+```bash
+cd mobile
+python3 scripts/check_source_lines.py
+python3 scripts/check_network_boundary.py
+python3 scripts/check_feature_boundaries.py
+flutter pub get && flutter gen-l10n
+flutter analyze && flutter test
+```
+
 ## Engineering rules
 
-- **No upstream fork**: never modify `opencode` internals. Extend behavior through
-  process supervision, the reverse proxy or `.opencode/plugins/`.
+- **Native-first & external CLI zero-fork**: Hoxi runs on its built-in Go Native
+  Agent Engine (`internal/agent`, `runtime: "native"`) by default, and drives
+  external CLIs through `internal/runner` without forking upstream tools. Store
+  project state and defaults under `.hoxi/` and `~/.hoxi/`; never create
+  `.opencode/` in user repositories.
 - **Layering**: `components/ -> store/ -> services/` in the frontend;
   `app/cli -> gateway -> domain packages -> foundation packages` in Go. Domain
   packages must not import `internal/gateway`, `internal/app` or `internal/cli`.
 - **One domain per file**: put new code in the package that owns the domain, not
   in a catch-all `types.go` or `helpers.go`. Source files stay under 800 lines.
 - **Gateway planes**: session operations go through `/api/hoxi/sessions`, events
-  through `/api/hoxi/event`, approvals through `/api/hoxi/permission`. Requests
-  tied to a session must carry `?directory=<worktree-path>`.
+  through `/api/hoxi/event`, approvals through `/api/hoxi/permission`, and host
+  services through `/api/hoxi/{pty,agents,commands,lsp,file,provider}`. Requests
+  tied to a session or sandbox must carry `?directory=<worktree-path>`.
 - **Safety**: destructive commands must stay behind the approval gate. Never add
   an auto-approve path for `rm`, `sudo`, `chmod`, `chown`, `diskutil`, `mkfs`,
   `git push --force` or `git reset --hard`.

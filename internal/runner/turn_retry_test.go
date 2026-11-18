@@ -596,7 +596,7 @@ func TestLookupAgyTranscriptResetsOnStepZeroUserInput(t *testing.T) {
 	}
 
 	cursor := newAgyEditPayloadCursor(convID)
-	name, args := cursor.lookup(2, map[string]interface{}{"Path": "new.go"}, false)
+	name, args := cursor.Lookup(2, map[string]interface{}{"Path": "new.go"}, false)
 	if name != "write_file" || args["Content"] != "new-body" {
 		t.Fatalf("expected edit payload cursor to return post-reset edit for step 2, got name=%q args=%+v", name, args)
 	}

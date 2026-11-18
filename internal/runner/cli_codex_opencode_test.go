@@ -2,13 +2,14 @@ package runner
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hoxiai/hoxi/internal/sqlitecli"
-	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 func TestBuildCodexAndOpenCodeCLIArgs(t *testing.T) {
@@ -121,9 +122,11 @@ INSERT INTO part VALUES ('prt_u_1', 'ses_legacy_42', 'msg_u_legacy', 17000000010
 INSERT INTO message VALUES ('msg_a_legacy', 'ses_legacy_42', 1700000003000, '{"id":"msg_a_legacy","role":"assistant","providerID":"anthropic","modelID":"claude-sonnet-4-5","time":{"created":1700000003000,"completed":1700000005000}}');
 INSERT INTO part VALUES ('prt_a_1', 'ses_legacy_42', 'msg_a_legacy', 1700000004000, '{"id":"prt_a_1","type":"text","text":"The gateway routes sessions natively in Go."}');
 `
-	cmd := subproc.Command(sqlitecli.Executable(), dbPath, initSQL)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("seed sqlite db failed: %v (%s)", err, string(out))
+	if err := sqlitecli.WithReadWrite(context.Background(), dbPath, 5*time.Second, func(ctx context.Context, db *sql.DB) error {
+		_, err := db.ExecContext(ctx, initSQL)
+		return err
+	}); err != nil {
+		t.Fatalf("seed sqlite db failed: %v", err)
 	}
 
 	count := svc.MigrateOpenCodeDB(dbPath)

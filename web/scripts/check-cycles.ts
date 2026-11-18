@@ -34,8 +34,8 @@ function resolveWorkWebDir(): string | null {
     : [
         path.resolve(REPO_ROOT, "work"),
         ...(mainRoot ? [path.resolve(mainRoot, "work")] : []),
-        path.resolve(WEB_ROOT, "../../hoxi-work"),
-        path.resolve(WEB_ROOT, "../../../../../hoxi-work"),
+        path.resolve(WEB_ROOT, "../../hoxi-ext"),
+        path.resolve(WEB_ROOT, "../../../../../hoxi-ext"),
       ];
   for (const candidate of candidates) {
     const entry = path.join(candidate, "web/index.tsx");
