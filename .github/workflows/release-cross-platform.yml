@@ -211,3 +211,113 @@ jobs:
           fail_on_unmatched_files: true
           draft: false
           prerelease: false
+
+  build-mobile-android:
+    name: "Android: Build Hoxi Remote APK & Release"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check if mobile/ exists in this repository
+        id: check_mobile
+        run: |
+          if [[ -f "mobile/pubspec.yaml" ]]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Node.js
+        if: steps.check_mobile.outputs.present == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Validate release version & versionCode
+        if: steps.check_mobile.outputs.present == 'true'
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          VERSION="$(node scripts/release-artifact.mjs version "$RELEASE_TAG")"
+          VERSION_CODE="$(node --input-type=module -e 'import { versionCode } from "./scripts/release-artifact.mjs"; console.log(Math.max(versionCode(process.argv[1]), 1));' "$VERSION")"
+          echo "RELEASE_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "RELEASE_VERSION_CODE=$VERSION_CODE" >> "$GITHUB_ENV"
+
+      - name: Set up Java 17
+        if: steps.check_mobile.outputs.present == 'true'
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      - name: Set up Flutter 3.41.8
+        if: steps.check_mobile.outputs.present == 'true'
+        working-directory: ${{ runner.temp }}
+        run: |
+          git clone --depth 1 --branch "3.41.8" https://github.com/flutter/flutter.git flutter
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+
+      - name: Verify mobile gates, analyze & unit tests
+        if: steps.check_mobile.outputs.present == 'true'
+        working-directory: mobile
+        run: |
+          grep -q 'applicationId = "ai.hoxi.remote"' android/app/build.gradle.kts
+          python3 scripts/check_source_lines.py
+          python3 scripts/check_network_boundary.py
+          python3 scripts/check_feature_boundaries.py
+          flutter pub get
+          flutter gen-l10n
+          flutter analyze --no-pub
+          flutter test --no-pub
+
+      - name: Configure Android Release Keystore
+        if: steps.check_mobile.outputs.present == 'true'
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          : "${ANDROID_KEYSTORE_BASE64:?ANDROID_KEYSTORE_BASE64 secret is required to sign release APKs}"
+          : "${ANDROID_KEYSTORE_PASSWORD:?ANDROID_KEYSTORE_PASSWORD secret is required}"
+          : "${ANDROID_KEY_ALIAS:?ANDROID_KEY_ALIAS secret is required}"
+          KEY_PWD="${ANDROID_KEY_PASSWORD:-$ANDROID_KEYSTORE_PASSWORD}"
+          umask 077
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > mobile/android/hoxi-release.jks
+          printf 'storePassword=%s\nkeyPassword=%s\nkeyAlias=%s\nstoreFile=hoxi-release.jks\n' \
+            "$ANDROID_KEYSTORE_PASSWORD" "$KEY_PWD" "$ANDROID_KEY_ALIAS" > mobile/android/key.properties
+
+      - name: Build Signed Hoxi Remote Release APK
+        if: steps.check_mobile.outputs.present == 'true'
+        working-directory: mobile
+        run: |
+          flutter build apk --release \
+            --build-name="$RELEASE_VERSION" \
+            --build-number="$RELEASE_VERSION_CODE" \
+            --dart-define="HOXI_APP_VERSION=$RELEASE_VERSION"
+          APK_NAME="Hoxi-Remote-${RELEASE_VERSION}-android.apk"
+          mkdir -p ../build/bin
+          cp -f build/app/outputs/flutter-apk/app-release.apk "../build/bin/${APK_NAME}"
+          (cd ../build/bin && sha256sum "${APK_NAME}" > "${APK_NAME}.sha256")
+
+      - name: Upload Hoxi Remote APK to GitHub Release
+        if: steps.check_mobile.outputs.present == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: |
+            build/bin/Hoxi-Remote-${{ env.RELEASE_VERSION }}-android.apk
+            build/bin/Hoxi-Remote-${{ env.RELEASE_VERSION }}-android.apk.sha256
+          fail_on_unmatched_files: true
+          draft: false
+          prerelease: false
+
+      - name: Clean up Android signing credentials
+        if: always()
+        run: |
+          rm -f mobile/android/hoxi-release.jks
+          rm -f mobile/android/key.properties

@@ -360,7 +360,7 @@ class HoxiWorkspaceAdapter {
       '/api/hoxi/event',
       queryParameters: {
         'directory': ref.directory,
-        if (validSeq != null) 'after_seq': validSeq,
+        'after_seq': ?validSeq,
       },
       headers: validSeq != null ? {'Last-Event-ID': '$validSeq'} : null,
       cancelToken: cancelToken,

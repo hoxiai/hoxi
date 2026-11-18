@@ -1,7 +1,7 @@
 name: hoxi
-description: "Open-source mobile controller for Hoxi Desktop (Code mode)."
+description: "Hoxi Remote — open-source mobile controller for Hoxi Desktop (Code mode)."
 publish_to: "none"
-version: 0.1.0+1
+version: 0.7.0+7000
 
 environment:
   sdk: ^3.10.3

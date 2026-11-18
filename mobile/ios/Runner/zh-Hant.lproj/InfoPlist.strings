@@ -1,7 +1,5 @@
-"CFBundleDisplayName" = "Hoxi";
-"CFBundleName" = "Hoxi";
+"CFBundleDisplayName" = "Hoxi Remote";
+"CFBundleName" = "Hoxi Remote";
 "NSCameraUsageDescription" = "Hoxi 使用相機掃描配對二維碼，以及拍攝您主動傳送的對話照片";
 "NSLocalNetworkUsageDescription" = "Hoxi 需要存取區域網路以連線同一 Wi-Fi 下的本地研發工作站與自託管 GoPanel 節點";
-"NSMicrophoneUsageDescription" = "Hoxi 需要使用麥克風錄入您的遠端伺服器容器維運與程式碼測試語音指令";
 "NSPhotoLibraryUsageDescription" = "Hoxi 需要存取您的相簿以選擇個人頭像或上傳您在對話中主動選擇的圖片";
-"NSSpeechRecognitionUsageDescription" = "Hoxi 需要使用系統語音辨識將您的口述維運指令即時轉換為伺服器與工作區控制命令";

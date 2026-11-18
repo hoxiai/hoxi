@@ -12,18 +12,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get appName => 'Hoxi';
 
   @override
-  String get navChat => 'Chat';
-
-  @override
   String get commonCancel => 'Cancel';
 
   @override
   String get commonRefresh => 'Refresh';
-
-  @override
-  String chatComposerSkillHint(String skill) {
-    return 'Message @$skill or hold to talk…';
-  }
 
   @override
   String get chatSend => 'Send message';
@@ -51,7 +43,8 @@ class AppLocalizationsEn extends AppLocalizations {
   String get loginPassword => 'Password';
 
   @override
-  String get loginPasswordHint => 'Enter the password (optional on Hoxi Desktop)';
+  String get loginPasswordHint =>
+      'Enter the password (optional on Hoxi Desktop)';
 
   @override
   String get loginPasswordRequired => 'Enter the password';
@@ -85,11 +78,6 @@ class AppLocalizationsEn extends AppLocalizations {
   String get loginAdminEmailHint => 'Enter the administrator email';
 
   @override
-  String chatPendingApprovals(int count) {
-    return '$count pending approval(s)';
-  }
-
-  @override
   String get chatModelPickerTitle => 'Select model';
 
   @override
@@ -104,9 +92,6 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get chatListeningShort => 'Listening…';
-
-  @override
-  String get settingsOverviewTitle => 'Me';
 
   @override
   String get addNodeHoxiTitle => 'Hoxi Desktop';

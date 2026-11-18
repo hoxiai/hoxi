@@ -12,18 +12,10 @@ class AppLocalizationsZh extends AppLocalizations {
   String get appName => 'Hoxi';
 
   @override
-  String get navChat => '沟通';
-
-  @override
   String get commonCancel => '取消';
 
   @override
   String get commonRefresh => '刷新';
-
-  @override
-  String chatComposerSkillHint(String skill) {
-    return '向 @$skill 发消息或按住说话…';
-  }
 
   @override
   String get chatSend => '发送消息';
@@ -84,11 +76,6 @@ class AppLocalizationsZh extends AppLocalizations {
   String get loginAdminEmailHint => '请输入管理员邮箱';
 
   @override
-  String chatPendingApprovals(int count) {
-    return '$count 项待审批';
-  }
-
-  @override
   String get chatModelPickerTitle => '选择模型';
 
   @override
@@ -102,9 +89,6 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get chatListeningShort => '正在听…';
-
-  @override
-  String get settingsOverviewTitle => '我的';
 
   @override
   String get addNodeHoxiTitle => 'Hoxi 桌面端';

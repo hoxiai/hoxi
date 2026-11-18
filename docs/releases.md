@@ -103,6 +103,36 @@ appcast contract. Production tag CI requires updater configuration; development
 bundles never include the updater. Local builds require no external OpenCode binary
 by default and never execute a remote installer.
 
+## Mobile dual-edition releases (`Hoxi` vs `Hoxi Remote`)
+
+Hoxi ships two distinct Flutter mobile packages with isolated bundle identifiers
+and URL schemes so both apps can coexist on the same device without signature or
+secure-storage collisions:
+
+| Edition | Bundle / Application ID | Display Name | URL Scheme | Distribution Channel |
+| :--- | :--- | :--- | :--- | :--- |
+| **Full Edition** | `ai.hoxi.app` | `Hoxi` | `hoxi://` | Official website CDN (`cdn.hoxi.dev` / `hoxi.dev`, `appKey: "hoxi-mobile"`), Apple App Store / TestFlight, Google Play, HarmonyOS |
+| **Open-Source Remote Edition (`mobile/`)** | `ai.hoxi.remote` | `Hoxi Remote` | `hoxi-remote://` | GitHub Releases (`Hoxi-Remote-<version>-android.apk` + `.sha256`, Obtainium compatible); iOS distributed as source for Xcode local signing |
+
+Both editions align their semantic version with desktop releases and derive a
+monotonic integer build number using the same `versionCode` formula as macOS
+Sparkle (`major * 1_000_000 + minor * 1_000 + patch`, e.g., `0.7.0+7000`).
+
+For the open-source `Hoxi Remote` Android APK built in
+`.github/workflows/release-cross-platform.yml` (`build-mobile-android`),
+configure these GitHub Actions repository secrets before pushing a `v*` tag:
+
+- `ANDROID_KEYSTORE_BASE64`: base64-encoded release `.jks` keystore.
+- `ANDROID_KEYSTORE_PASSWORD`: password for the keystore.
+- `ANDROID_KEY_PASSWORD`: password for the signing key (defaults to `ANDROID_KEYSTORE_PASSWORD` when identical).
+- `ANDROID_KEY_ALIAS`: key alias inside the keystore (e.g., `hoxi-release`).
+
+The workflow pins Flutter `3.41.8`, verifies `applicationId = "ai.hoxi.remote"`
+plus the three mobile architecture/boundary gates and unit tests, signs the
+release APK, uploads `Hoxi-Remote-<version>-android.apk` and its `.sha256`
+checksum to the GitHub Release, and deletes the temporary keystore and
+`key.properties` in an `if: always()` cleanup step.
+
 ## Regression checks
 
 ```sh

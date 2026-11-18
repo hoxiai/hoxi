@@ -156,6 +156,11 @@ test("opencode.lock pins every platform while release workflows ship lean sideca
   assert.match(crossWorkflow, /7z a "\$ZIP_NAME" Hoxi\.exe$/m);
   assert.match(crossWorkflow, /tar -czf "\$TAR_NAME" Hoxi hoxi\.desktop hoxi\.png/);
   assert.match(crossWorkflow, /Hoxi-\$\{\{ env\.RELEASE_VERSION \}\}-linux-amd64\.tar\.gz\.sha256/);
+  assert.match(crossWorkflow, /build-mobile-android:/);
+  assert.match(crossWorkflow, /applicationId = "ai\.hoxi\.remote"/);
+  assert.match(crossWorkflow, /Hoxi-Remote-\$\{\{ env\.RELEASE_VERSION \}\}-android\.apk/);
+  assert.match(crossWorkflow, /Hoxi-Remote-\$\{\{ env\.RELEASE_VERSION \}\}-android\.apk\.sha256/);
+  assert.match(crossWorkflow, /rm -f mobile\/android\/hoxi-release\.jks/);
 
   const nsisProject = fs.readFileSync(path.join(scripts, "../build/windows/installer/project.nsi"), "utf8");
   assert.match(nsisProject, /!define WAILS_INSTALL_SCOPE "user"/);

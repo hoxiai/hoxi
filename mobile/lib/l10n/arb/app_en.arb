@@ -4,17 +4,8 @@
   "@appName": {
     "description": "Product name shown in English UI. Chinese UI uses Hoxi."
   },
-  "navChat": "Chat",
   "commonCancel": "Cancel",
   "commonRefresh": "Refresh",
-  "chatComposerSkillHint": "Message @{skill} or hold to talk…",
-  "@chatComposerSkillHint": {
-    "placeholders": {
-      "skill": {
-        "type": "String"
-      }
-    }
-  },
   "chatSend": "Send message",
   "chatHideKeyboard": "Hide keyboard",
   "loginSubtitle": "Link Hoxi Desktop or a GoPanel panel",
@@ -34,20 +25,11 @@
   "loginEntranceInvalid": "Use only letters, numbers, underscores and hyphens",
   "loginAdminEmail": "Administrator email",
   "loginAdminEmailHint": "Enter the administrator email",
-  "chatPendingApprovals": "{count} pending approval(s)",
-  "@chatPendingApprovals": {
-    "placeholders": {
-      "count": {
-        "type": "int"
-      }
-    }
-  },
   "chatModelPickerTitle": "Select model",
   "chatTooltipHoldToTalk": "Hold to talk",
   "chatTooltipCamera": "Camera",
   "chatCameraUnavailable": "Camera unavailable. Check permission; cancelling does not send a photo.",
   "chatListeningShort": "Listening…",
-  "settingsOverviewTitle": "Me",
   "addNodeHoxiTitle": "Hoxi Desktop",
   "addNodeHoxiSubtitle": "Connect desktop Hoxi workspace for AI coding and development",
   "addNodeGopanelTitle": "GoPanel panel",

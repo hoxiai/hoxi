@@ -175,12 +175,12 @@ jobs:
           python3 scripts/check_network_boundary.py
           python3 scripts/check_feature_boundaries.py
 
-      - name: Set up Flutter
+      - name: Set up Flutter 3.41.8
         if: steps.check_mobile.outputs.present == 'true'
-        uses: subosito/flutter-action@v2
-        with:
-          channel: "stable"
-          cache: true
+        working-directory: ${{ runner.temp }}
+        run: |
+          git clone --depth 1 --branch "3.41.8" https://github.com/flutter/flutter.git flutter
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
 
       - name: Analyze & test Flutter mobile controller
         if: steps.check_mobile.outputs.present == 'true'
@@ -188,5 +188,5 @@ jobs:
         run: |
           flutter pub get
           flutter gen-l10n
-          flutter analyze
-          flutter test
+          flutter analyze --no-pub
+          flutter test --no-pub

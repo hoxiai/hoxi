@@ -150,6 +150,7 @@ npm --prefix web test && npm --prefix web run build
 ```
 
 ### Mobile Companion (`mobile/`, Optional)
+Pre-built signed Android APKs for the lightweight open-source **`Hoxi Remote`** controller (`ai.hoxi.remote`, zero-account / zero-telemetry, Obtainium compatible) are attached to every [GitHub Release](https://github.com/hoxiai/hoxi/releases) (`Hoxi-Remote-<version>-android.apk`) and coexist side-by-side with the full **`Hoxi`** mobile app (`ai.hoxi.app` at [hoxi.ai](https://hoxi.ai)). To run or build from source:
 ```bash
 cd mobile
 flutter pub get && flutter gen-l10n

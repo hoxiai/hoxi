@@ -546,7 +546,9 @@ class StorageService {
         if ((legacyEntrance ?? '').isEmpty && normalized.entrance.isNotEmpty) {
           legacyEntrance = normalized.entrance;
         }
-      } on FormatException {}
+      } on FormatException {
+        // Keep the raw legacy URL when URI parsing fails.
+      }
       final storedCreds = await Future.wait([
         _secureStorage.read(key: _serverTokenKey(id)),
         _secureStorage.read(key: _serverRelayTokenKey(id)),

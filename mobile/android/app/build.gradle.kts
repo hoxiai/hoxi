@@ -31,7 +31,7 @@ android {
     kotlinOptions { jvmTarget = JavaVersion.VERSION_17.toString() }
 
     defaultConfig {
-        applicationId = "ai.hoxi.app"
+        applicationId = "ai.hoxi.remote"
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode

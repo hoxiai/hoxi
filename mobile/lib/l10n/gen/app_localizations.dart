@@ -104,12 +104,6 @@ abstract class AppLocalizations {
   /// **'Hoxi'**
   String get appName;
 
-  /// No description provided for @navChat.
-  ///
-  /// In en, this message translates to:
-  /// **'Chat'**
-  String get navChat;
-
   /// No description provided for @commonCancel.
   ///
   /// In en, this message translates to:
@@ -121,12 +115,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Refresh'**
   String get commonRefresh;
-
-  /// No description provided for @chatComposerSkillHint.
-  ///
-  /// In en, this message translates to:
-  /// **'Message @{skill} or hold to talk…'**
-  String chatComposerSkillHint(String skill);
 
   /// No description provided for @chatSend.
   ///
@@ -242,12 +230,6 @@ abstract class AppLocalizations {
   /// **'Enter the administrator email'**
   String get loginAdminEmailHint;
 
-  /// No description provided for @chatPendingApprovals.
-  ///
-  /// In en, this message translates to:
-  /// **'{count} pending approval(s)'**
-  String chatPendingApprovals(int count);
-
   /// No description provided for @chatModelPickerTitle.
   ///
   /// In en, this message translates to:
@@ -277,12 +259,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Listening…'**
   String get chatListeningShort;
-
-  /// No description provided for @settingsOverviewTitle.
-  ///
-  /// In en, this message translates to:
-  /// **'Me'**
-  String get settingsOverviewTitle;
 
   /// No description provided for @addNodeHoxiTitle.
   ///

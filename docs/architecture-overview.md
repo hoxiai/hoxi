@@ -57,6 +57,12 @@
 - 执行上述操作前必须成功落盘准入记录；失败返回 `503 request_storage_unavailable` 并拒绝启动对应操作，存储恢复后使用原 ID 重试。完成回执丢失时，重启依据已落盘的准入记录保守报告 `outcome_unknown`，而不是重新执行。此保证不扩展到未携带请求 ID 的调用或其他写接口
 - SSE 的初始快照、事件、心跳写失败立即结束连接并释放订阅；统一流同时取消其上游事件泵，不依赖外层请求稍后取消。补帧继续复用 `after_seq` 与 `hoxi.stream.resync`，不因重连重发业务命令
 
+### 1.4 移动端双包协同与身份隔离
+
+- **双包并行分发**：移动端按能力边界拆分为两个独立包名与应用名的客户端，可在同一部手机并存且互不覆盖安全存储：
+  - **完整版 `Hoxi`（`ai.hoxi.app`，`hoxi://`）**：面向全功能随身工作台（含账号连接同步、语音通话、iOS APNs 审批计数提醒与完整门户生态），经官网 CDN（`hoxi-mobile`）与应用商店 / TestFlight 分发。
+  - **轻量开源版 `Hoxi Remote`（仓库 `mobile/`，`ai.hoxi.remote`，`hoxi-remote://`）**：零账号、零遥测的纯净远程控制器（仅含局域网 `:5417` / Cloudflare `:5418` / GoPanel 隧道的 `hoxi-e2ee-v1` + X25519 配对、编码会话流、审批确认、Git 审查与终端），随 GitHub Releases 附带正式签名的 `Hoxi-Remote-<version>-android.apk`（支持 Obtainium 订阅更新），iOS 端提供源码供 Xcode 真机编译。
+
 ## 二、规划（未实现）
 
 勿将以下内容当现有能力或在注释/UI 文案中宣称已支持：

@@ -1,7 +1,5 @@
-"CFBundleDisplayName" = "Hoxi";
-"CFBundleName" = "Hoxi";
+"CFBundleDisplayName" = "Hoxi Remote";
+"CFBundleName" = "Hoxi Remote";
 "NSCameraUsageDescription" = "Hoxi uses the camera to scan pairing QR codes and to take photos you choose to send in chat.";
 "NSLocalNetworkUsageDescription" = "Hoxi needs local network access to reach a Hoxi desktop node on the same Wi-Fi and your self-hosted GoPanel nodes.";
-"NSMicrophoneUsageDescription" = "Hoxi uses the microphone to take spoken instructions for container operations and code testing.";
 "NSPhotoLibraryUsageDescription" = "Hoxi needs photo library access so you can choose a profile avatar or select images to send in chat.";
-"NSSpeechRecognitionUsageDescription" = "Hoxi uses on-device speech recognition to turn spoken operations into commands for your nodes.";

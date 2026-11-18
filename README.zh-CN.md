@@ -150,7 +150,8 @@ npm --prefix web run check:i18n && npm --prefix web run check:lines
 npm --prefix web test && npm --prefix web run build
 ```
 
-### 配套移动端构建（`mobile/`，可选）
+### 配套移动端构建与下载（`mobile/`，可选）
+每个 [GitHub Release](https://github.com/hoxiai/hoxi/releases) 均附带预编译签名的轻量开源版 **`Hoxi Remote`** Android 安装包（`Hoxi-Remote-<version>-android.apk`，包名 `ai.hoxi.remote`，零账号零遥测，支持 Obtainium 自动追更），可与官网 [hoxi.ai](https://hoxi.ai) / TestFlight 分发的完整版 **`Hoxi`**（`ai.hoxi.app`）在同一台手机独立并存。如需从源码运行或自签构建：
 ```bash
 cd mobile
 flutter pub get && flutter gen-l10n

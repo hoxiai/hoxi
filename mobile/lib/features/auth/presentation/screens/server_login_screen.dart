@@ -5,7 +5,6 @@ import 'package:go_router/go_router.dart';
 
 import '../../../../core/l10n/l10n.dart';
 import '../../../../core/navigation/main_scaffold_controller.dart';
-import '../../../../core/navigation/navigation_guard.dart';
 import '../../../../core/storage/account_scope_binding.dart';
 import '../../../../core/storage/server_connection.dart';
 import '../../../../core/storage/storage_service.dart';
