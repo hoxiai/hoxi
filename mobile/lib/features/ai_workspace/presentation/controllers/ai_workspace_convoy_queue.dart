@@ -15,6 +15,7 @@ mixin _AiWorkspaceConvoyAndQueue on Notifier<AiWorkspaceState> {
     CodeInstructionOptions options,
     String? imageDataUrl,
     List<String> attachedFiles,
+    List<LocalPickedDocument> localDocuments,
     NodeSkillSelection? skillSelection,
     bool bypassQueue,
   });
@@ -180,6 +181,7 @@ mixin _AiWorkspaceConvoyAndQueue on Notifier<AiWorkspaceState> {
     required String text,
     String? imageDataUrl,
     List<String> attachedFiles = const [],
+    List<LocalPickedDocument> localDocuments = const [],
     NodeSkillSelection? skillSelection,
     CodeInstructionOptions options = const CodeInstructionOptions(),
   }) {
@@ -190,6 +192,7 @@ mixin _AiWorkspaceConvoyAndQueue on Notifier<AiWorkspaceState> {
       text: text.trim(),
       imageDataUrl: imageDataUrl,
       attachedFiles: List<String>.unmodifiable(attachedFiles),
+      localDocuments: List<LocalPickedDocument>.unmodifiable(localDocuments),
       skillSelection: skillSelection,
       options: options,
       createdAt: now,
@@ -227,6 +230,7 @@ mixin _AiWorkspaceConvoyAndQueue on Notifier<AiWorkspaceState> {
       options: item.options,
       imageDataUrl: item.imageDataUrl,
       attachedFiles: item.attachedFiles,
+      localDocuments: item.localDocuments,
       skillSelection: item.skillSelection,
       bypassQueue: true,
     );
@@ -253,6 +257,7 @@ mixin _AiWorkspaceConvoyAndQueue on Notifier<AiWorkspaceState> {
           options: next.options,
           imageDataUrl: next.imageDataUrl,
           attachedFiles: next.attachedFiles,
+          localDocuments: next.localDocuments,
           skillSelection: next.skillSelection,
           bypassQueue: true,
         );

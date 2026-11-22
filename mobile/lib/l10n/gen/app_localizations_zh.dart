@@ -231,6 +231,52 @@ class AppLocalizationsZh extends AppLocalizations {
   String get containerFilterAll => '全部';
 
   @override
+  String get chatActionUploadDocument => '上传本机文件 (PDF / Excel / 文档)';
+
+  @override
+  String get chatActionUploadDocumentHint => '从手机选择报表、PDF、Word 或数据文件发送给电脑处理';
+
+  @override
+  String get codeComposerAttachWorkspaceFile => '引用工作区文件 (@文件)';
+
+  @override
+  String get codeComposerAttachWorkspaceFileHint => '从电脑当前目录选择已有文件作为上下文';
+
+  @override
+  String get codeComposerAttachSkill => '挂载工作区技能 (Skill)';
+
+  @override
+  String get codeComposerAttachSkillHint => '在当前会话指令中应用指定 Skill 规范';
+
+  @override
+  String chatFileTooLarge(int limitMb) {
+    return '文件超出上传上限（最大 $limitMb MB）';
+  }
+
+  @override
+  String get chatFilePickerUnsupported => '当前设备暂不支持选择本机文档';
+
+  @override
+  String chatFileReadFailed(String error) {
+    return '读取文件失败：$error';
+  }
+
+  @override
+  String get codeWsFilesExportShare => '导出 / 分享文件';
+
+  @override
+  String get codeWsFilesExportUnsupported => '当前设备暂不支持系统文件分享';
+
+  @override
+  String codeWsFilesExportFailed(String error) {
+    return '导出文件失败：$error';
+  }
+
+  @override
+  String get codeWsFilesBinaryPreviewHint =>
+      '此文件为二进制格式，请点击上方「导出 / 分享文件」保存到手机或转发至其他应用查看';
+
+  @override
   String get nodeLinkDevicesSection => '连接对象';
 
   @override

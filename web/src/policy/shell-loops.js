@@ -4,6 +4,7 @@
 // Mirrors expandLiteralForLoops in internal/runner/opaque_expand.go.
 import { isWindowsTempPath } from "./policy-paths.js";
 import { normalizeNumericLoops } from "./numeric-loops.js";
+import { isSafeXargsTarget } from "./shell-idioms.js";
 import { isScopedProjectScript, stripScriptRedirects } from "./shell-script.js";
 
 const MAX_LITERAL_LOOP_ITEMS = 64;
@@ -381,6 +382,7 @@ export function isSafeXargsSegment(rawArgs, piped, prevSeg, deps) {
   const args = deps.stripNullRedirects(rawArgs);
   if (!args) return false;
   let i = 0;
+  let replToken = "";
   while (i < args.length) {
     const a = args[i];
     if (a === "--") { i++; break; }
@@ -392,10 +394,15 @@ export function isSafeXargsSegment(rawArgs, piped, prevSeg, deps) {
     }
     if (a === "-I") {
       if (i + 1 >= args.length || !XARGS_REPL_RE.test(args[i + 1])) return false;
+      replToken = args[i + 1];
       i += 2;
       continue;
     }
-    if (XARGS_ATTACHED_FLAG_RE.test(a)) { i++; continue; }
+    if (XARGS_ATTACHED_FLAG_RE.test(a)) {
+      if (a.startsWith("-I") && a.length > 2) replToken = a.slice(2);
+      i++;
+      continue;
+    }
     if (a.startsWith("-")) return false;
     break;
   }
@@ -404,16 +411,7 @@ export function isSafeXargsSegment(rawArgs, piped, prevSeg, deps) {
   if (rest.some((w) => /[$`]/.test(w))) return false;
   const norm = deps.normalizeAbsoluteTool(rest[0]);
   const targetBase = norm.includes("/") ? norm.slice(norm.lastIndexOf("/") + 1) : norm;
-  const targetArgs = rest.slice(1);
-  if (targetBase !== "basename" && targetBase !== "dirname" && targetBase !== "echo") return false;
-  for (let j = 0; j < targetArgs.length; j++) {
-    const ta = targetArgs[j];
-    if (targetBase === "basename" && (ta === "-a" || ta.startsWith("-s="))) continue;
-    if (targetBase === "basename" && ta === "-s" && j + 1 < targetArgs.length) { j++; continue; }
-    if (targetBase === "echo" && ta === "-n") continue;
-    if (ta.startsWith("-")) return false;
-  }
-  return true;
+  return isSafeXargsTarget(targetBase, rest.slice(1), replToken);
 }
 
 export function normalizeHomePrefixPath(raw) {

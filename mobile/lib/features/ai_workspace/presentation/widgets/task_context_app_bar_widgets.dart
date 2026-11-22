@@ -101,12 +101,14 @@ class AiChatHeaderActionCapsule extends StatelessWidget {
     required this.searchOpen,
     required this.onOpenSessionSheet,
     required this.onMenuSelected,
+    this.isWorkAppMode = false,
   });
 
   final bool hasSession;
   final bool searchOpen;
   final VoidCallback onOpenSessionSheet;
   final ValueChanged<String> onMenuSelected;
+  final bool isWorkAppMode;
 
   @override
   Widget build(BuildContext context) {
@@ -126,24 +128,26 @@ class AiChatHeaderActionCapsule extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            IconButton(
-              key: const ValueKey('ai_chat_session_sheet_btn'),
-              visualDensity: VisualDensity.compact,
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              constraints: const BoxConstraints(minWidth: 34, minHeight: 32),
-              tooltip: l10n.codeWsChatChooseSession,
-              onPressed: onOpenSessionSheet,
-              icon: Icon(
-                CupertinoIcons.square_pencil,
-                size: 18,
-                color: AppTheme.textPrimary,
+            if (!isWorkAppMode) ...[
+              IconButton(
+                key: const ValueKey('ai_chat_session_sheet_btn'),
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                constraints: const BoxConstraints(minWidth: 34, minHeight: 32),
+                tooltip: l10n.codeWsChatChooseSession,
+                onPressed: onOpenSessionSheet,
+                icon: Icon(
+                  CupertinoIcons.square_pencil,
+                  size: 18,
+                  color: AppTheme.textPrimary,
+                ),
               ),
-            ),
-            Container(
-              width: 1,
-              height: 15,
-              color: AppTheme.border.withValues(alpha: 0.9),
-            ),
+              Container(
+                width: 1,
+                height: 15,
+                color: AppTheme.border.withValues(alpha: 0.9),
+              ),
+            ],
             PopupMenuButton<String>(
               key: const ValueKey('ai_chat_more_menu_btn'),
               padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -166,16 +170,18 @@ class AiChatHeaderActionCapsule extends StatelessWidget {
                           : Icons.search_rounded,
                       isZh ? '搜索会话内容' : 'Search session',
                     ),
-                    _buildMenuItem(
-                      'git_review',
-                      Icons.source_outlined,
-                      menuL10n.codeWsChatGitReview,
-                    ),
-                    _buildMenuItem(
-                      'terminal',
-                      Icons.terminal_rounded,
-                      menuL10n.codeWsTerminalProjectTitle,
-                    ),
+                    if (!isWorkAppMode) ...[
+                      _buildMenuItem(
+                        'git_review',
+                        Icons.source_outlined,
+                        menuL10n.codeWsChatGitReview,
+                      ),
+                      _buildMenuItem(
+                        'terminal',
+                        Icons.terminal_rounded,
+                        menuL10n.codeWsTerminalProjectTitle,
+                      ),
+                    ],
                     const PopupMenuDivider(height: 8),
                     _buildMenuItem(
                       'task_detail',

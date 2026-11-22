@@ -611,21 +611,35 @@ class HoxiGitArtifactAdapter {
     );
     final targetPath = norm.isNotEmpty ? norm : path;
     final res = await _apiClient.get<Map<String, dynamic>>(
-      '/file/content',
+      '/api/hoxi/file/content',
       queryParameters: {
         'path': targetPath,
         'directory': ref.directory,
         if (ref.hoxiId.isNotEmpty) 'sessionID': ref.hoxiId,
       },
     );
-    final content = (res.data?['content'] ?? '').toString();
-    return CodeSessionFile(
-      path: targetPath,
-      content: content,
-      extension: targetPath.contains('.') ? targetPath.split('.').last : '',
-      size: utf8.encode(content).length,
-      version: (res.data?['version'] ?? 'hoxi').toString(),
+    return CodeSessionFile.fromHoxiContentJson(targetPath, res.data);
+  }
+
+  Future<({List<int> bytes, String filename})> downloadSessionFileBytes(
+    HoxiSessionTarget ref,
+    String path,
+  ) async {
+    final norm = HoxiSessionDiffScope.normalizeSessionRelPath(
+      path, projectDir: ref.projectDir, worktreeDir: ref.directory,
     );
+    final targetPath = norm.isNotEmpty ? norm : path;
+    final res = await _apiClient.get<dynamic>(
+      '/api/hoxi/file/content',
+      queryParameters: {
+        'path': targetPath, 'directory': ref.directory, 'raw': '1',
+        if (ref.hoxiId.isNotEmpty) 'sessionID': ref.hoxiId,
+      },
+      options: Options(responseType: ResponseType.bytes),
+    );
+    final raw = res.data;
+    final bytes = raw is List<int> ? raw : (raw is String ? utf8.encode(raw) : const <int>[]);
+    return (bytes: bytes, filename: _basename(targetPath));
   }
 
   Future<CodeSessionFile> saveSessionFile(

@@ -31,9 +31,10 @@ const (
 	sessionGrantRefusedDestructive = shellpolicy.SessionGrantRefusedDestructive
 	sessionGrantRefusedOpaque      = shellpolicy.SessionGrantRefusedOpaque
 
-	recoverClassTempDelete = shellpolicy.RecoverClassTempDelete
-	recoverClassDirDelete  = shellpolicy.RecoverClassDirDelete
-	recoverClassGitDiscard = shellpolicy.RecoverClassGitDiscard
+	recoverClassTempDelete   = shellpolicy.RecoverClassTempDelete
+	recoverClassDirDelete    = shellpolicy.RecoverClassDirDelete
+	recoverClassGitDiscard   = shellpolicy.RecoverClassGitDiscard
+	recoverClassInlineScript = shellpolicy.RecoverClassInlineScript
 
 	scriptTrustNone     = shellpolicy.ScriptTrustNone
 	scriptTrustReadOnly = shellpolicy.ScriptTrustReadOnly
@@ -86,6 +87,9 @@ func decideCommandPermissionIn(command, worktree string) string {
 func fileGrantRefused(path string) bool { return shellpolicy.FileGrantRefused(path) }
 func grantableEditFiles(item map[string]interface{}, worktree string) []string {
 	return shellpolicy.GrantableEditFiles(item, worktree)
+}
+func grantableInlineScriptRequest(item map[string]interface{}, worktree string) bool {
+	return shellpolicy.GrantableInlineScriptRequest(item, worktree)
 }
 func isAbsOrRootedPath(p string) bool { return shellpolicy.IsAbsOrRootedPath(p) }
 func hasRiskySearchSelector(tool string, args map[string]interface{}) bool {

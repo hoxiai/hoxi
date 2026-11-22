@@ -89,6 +89,40 @@
   "relayNodeOffline": "Offline",
   "commonClose": "Close",
   "containerFilterAll": "All",
+  "chatActionUploadDocument": "Upload Device File (PDF / Excel / Doc)",
+  "chatActionUploadDocumentHint": "Pick a spreadsheet, PDF, Word, or data file from this device",
+  "codeComposerAttachWorkspaceFile": "Reference Workspace File (@file)",
+  "codeComposerAttachWorkspaceFileHint": "Select an existing file on the computer as context",
+  "codeComposerAttachSkill": "Mount Workspace Skill",
+  "codeComposerAttachSkillHint": "Apply a specific skill instruction in this turn",
+  "chatFileTooLarge": "File exceeds maximum upload size ({limitMb} MB)",
+  "@chatFileTooLarge": {
+    "placeholders": {
+      "limitMb": {
+        "type": "int"
+      }
+    }
+  },
+  "chatFilePickerUnsupported": "Document picking is not supported on this device",
+  "chatFileReadFailed": "Could not read file: {error}",
+  "@chatFileReadFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "codeWsFilesExportShare": "Export / Share File",
+  "codeWsFilesExportUnsupported": "File sharing is not supported on this device",
+  "codeWsFilesExportFailed": "Could not export file: {error}",
+  "@codeWsFilesExportFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "codeWsFilesBinaryPreviewHint": "Binary file preview is limited on mobile. Tap Export / Share above to save or open in another app.",
   "nodeLinkDevicesSection": "Controlled Devices",
   "codeWsFilesTitle": "Project files",
   "codeWsFilesRoot": "Project root",

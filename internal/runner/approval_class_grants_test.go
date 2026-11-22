@@ -21,6 +21,11 @@ func TestGrantableRequestClasses(t *testing.T) {
 		"git checkout -- src/a.go":     {recoverClassGitDiscard},
 		"git restore src/a.go":         {recoverClassGitDiscard},
 		"rm -rf dist && npm run build": {recoverClassDirDelete},
+		"python3 -c 'import urllib.request; print(urllib.request.urlopen(\"https://example.com\").status)'":                           {recoverClassInlineScript},
+		"python3 - <<'PY'\nimport json, urllib.request\nprint(urllib.request.Request('https://cdn.hoxi.dev/a'))\nPY":                  {recoverClassInlineScript},
+		"node -e 'require(\"fs\").writeFileSync(\"tmp.txt\", \"ok\")'":                                                                {recoverClassInlineScript},
+		"node -e 'fetch(\"http://127.0.0.1:5400/health\").then(r => r.text()).then(console.log)'":                                     {recoverClassInlineScript},
+		"export PATH=\"/usr/local/go/bin:$PATH\"\npython3 -c 'import glob; [print(open(p).read()) for p in glob.glob(\"src/*.py\")]'": {recoverClassInlineScript},
 	} {
 		if got := grantableRequestClasses(req("bash", cmd), dir); !reflect.DeepEqual(got, want) {
 			t.Errorf("%q: classes = %v, want %v", cmd, got, want)
@@ -29,6 +34,31 @@ func TestGrantableRequestClasses(t *testing.T) {
 	// The hard floor and everything outside the grantable classes: no grant.
 	for _, cmd := range []string{
 		"ls",
+		"python3 -c 'print(1)'",
+		"ruby -e 'puts 1'",
+		"perl -e 'print 1'",
+		"sh -c 'echo hi'",
+		"eval \"$X\"",
+		"bash /Users/u/other/build.sh",
+		"# hoxi:unsandboxed\npython3 -c 'import urllib.request'",
+		"python3 -c 'import os; print(open(\".env\").read())'",
+		"python3 -c 'print(open(\".\" + \"env\").read())'",
+		"python3 -c 'print(open(chr(46) + \"env\").read())'",
+		"python3 -c 'import os; os.system(\"rm -rf /\")'",
+		"python3 -c 'import os; os.system(\"git push origin main\")'",
+		"python3 -c 'import subprocess; subprocess.run([\"git\", \"status\"])'",
+		"python3 -c 'import subprocess; subprocess.run([\"git\", \"push\", \"origin\", \"main\"])'",
+		"python3 -c 'import os; os.system(\"sudo id\")'",
+		"python3 -c 'import os; print(open(\"/Users/u/.ssh/id_rsa\").read())'",
+		"python3 -c 'import os; print(os.environ)'",
+		"python3 -c 'import shutil; shutil.rmtree(\"build\")'",
+		"python3 -c 'from pathlib import Path; print(Path.home())'",
+		"python3 -c 'import urllib.request; urllib.request.Request(\"https://x\", headers={\"Authorization\": \"Bearer tok\"})'",
+		"node -e 'require(\"child_process\").execSync(\"git push\")'",
+		"node -e 'require(\"fs\").rmSync(\"build\", {recursive: true})'",
+		"node -e 'require(\"fs\").writeFileSync(\"hoxi.json\", \"{}\")'",
+		"node -e 'require(\"fs\").writeFileSync(\".git/hooks/pre-commit\", \"x\")'",
+		"node -e 'console.log(process.env)'",
 		"sudo rm -rf build",
 		"git reset --hard HEAD~1",
 		"git clean -fdx",
@@ -260,5 +290,91 @@ func TestOpenCodeClassGrantSendsOnlyOnceToOpenCode(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("grant for an unknown request: %d", resp.StatusCode)
+	}
+}
+
+func TestSessionInlineScriptGrantCoversLaterScriptsButKeepsHardFloor(t *testing.T) {
+	f := newGateFixture(t)
+	setTestApprovalPolicy(t, f.svc, ApprovalPolicy{Mode: ApprovalModeAuto})
+	events, unsub := f.svc.Subscribe("ses_agy_gate")
+	defer unsub()
+
+	firstCmd := "python3 - <<'PY'\nimport json, urllib.request\nprint(urllib.request.Request('https://cdn.hoxi.dev/a'))\nPY"
+	res := f.asyncHook(t, f.command(1, firstCmd))
+	asked := waitForEvent(t, events, "permission.asked")
+	meta, _ := asked.Properties["metadata"].(map[string]interface{})
+	if got, _ := meta[grantClassesMetaKey].([]string); !reflect.DeepEqual(got, []string{recoverClassInlineScript}) {
+		t.Fatalf("inline script must offer inline-script class grant, got %#v", meta[grantClassesMetaKey])
+	}
+	id, _ := asked.Properties["id"].(string)
+	if code := f.replyBody(t, id, map[string]interface{}{"reply": "once", "grantClass": true}, "tunnel"); code != http.StatusForbidden {
+		t.Fatalf("tunnel inline-script grant must be forbidden, got %d", code)
+	}
+	if code := f.replyBody(t, id, map[string]interface{}{"reply": "once", "grantClass": true}, ""); code != http.StatusOK {
+		t.Fatalf("desktop inline-script grant: %d", code)
+	}
+	if d := <-res; d.Decision != "auto_approve" {
+		t.Fatalf("granted inline script: %q", d.Decision)
+	}
+
+	// A different non-destructive inline Python/Node script runs via the grant.
+	secondCmd := "python3 - <<'PY'\nimport json, time, urllib.request\nprint(time.time(), urllib.request.Request('https://cdn.hoxi.dev/b'))\nPY"
+	if d := f.callHook(t, f.command(2, secondCmd)); d.Decision != "auto_approve" {
+		t.Fatalf("second inline python script after grant: %q", d.Decision)
+	}
+	if d := f.callHook(t, f.command(3, `node -e 'require("fs").writeFileSync("out.txt", "ok")'`)); d.Decision != "auto_approve" {
+		t.Fatalf("inline node script after grant: %q", d.Decision)
+	}
+	foundGrantAudit := false
+	for _, e := range f.svc.audit.list("ses_agy_gate", 10) {
+		if e.Source == grantSourceSession && e.Decision == "once" {
+			foundGrantAudit = true
+			break
+		}
+	}
+	if !foundGrantAudit {
+		t.Fatal("inline-script grant hits must be audited with source grant")
+	}
+
+	// Hard floors and non-inline-script opaque commands still ask every time.
+	for i, cmd := range []string{
+		`python3 -c 'import os; print(open(".env").read())'`,
+		`python3 -c 'import os; os.system("rm -rf /")'`,
+		`python3 -c 'import os; os.system("git push origin main")'`,
+		`python3 -c 'import subprocess; subprocess.run(["git", "push", "origin", "main"])'`,
+		`python3 -c 'import shutil; shutil.rmtree("build")'`,
+		`python3 -c 'import os; print(os.environ)'`,
+		`node -e 'require("fs").writeFileSync("hoxi.json", "{}")'`,
+		`sh -c 'echo hi'`,
+		"# hoxi:unsandboxed\npython3 -c 'import urllib.request'",
+	} {
+		ch := f.asyncHook(t, f.command(10+i, cmd))
+		ev := waitForEvent(t, events, "permission.asked")
+		evID, _ := ev.Properties["id"].(string)
+		f.reply(t, evID, "reject", "hard floor")
+		if d := <-ch; d.Decision != "deny" {
+			t.Fatalf("hard-floor command %q was not gated: %q", cmd, d.Decision)
+		}
+	}
+
+	// Revoking the grant restores prompting.
+	var grantID string
+	for _, g := range f.svc.listApprovalGrants("ses_agy_gate", "") {
+		if g.Kind == grantKindClass && g.Pattern == recoverClassInlineScript {
+			grantID = g.ID
+		}
+	}
+	if grantID == "" {
+		t.Fatal("inline-script class grant missing from grants list")
+	}
+	if n := f.svc.revokeApprovalGrants(grantID, "", false); n != 1 {
+		t.Fatalf("revoked %d grants", n)
+	}
+	ch := f.asyncHook(t, f.command(20, secondCmd))
+	ev := waitForEvent(t, events, "permission.asked")
+	evID, _ := ev.Properties["id"].(string)
+	f.reply(t, evID, "reject", "revoked")
+	if d := <-ch; d.Decision != "deny" {
+		t.Fatalf("after revoke: %q", d.Decision)
 	}
 }

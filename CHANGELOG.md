@@ -2,6 +2,12 @@
 
 All notable releases of **Hoxi Desktop** are documented below. Full per-version release notes are archived under [`docs/release-notes/`](docs/release-notes/) and consumed directly by `.github/workflows/release.yml` and `scripts/ai-release.sh`.
 
+## [v0.7.3](docs/release-notes/v0.7.3.md) — 2026-11-22
+
+- **Shell Approval Noise Reduction, Reason Banner & Inline-Script Grants**: Added Go/JS approval policy support for fail-fast `set` options, quoted `mktemp` + `trap` cleanup idioms, safe value-class substitutions (`gofmt -l`, `realpath`, checksums), non-arithmetic `[[ ... ]]`, read-only piped `xargs`, and literal path brace lists with rebuilt `browser_plugin.mjs` and expanded bypass-denial fixtures; added a sanitized trigger reason banner to `ApprovalGateCard` (`approval-reason.js`); added desktop-only, session-memory, revocable inline-script class grants under strict lexical/capability hard floors.
+- **Remote App Overview, Scoped Session Creation & Mobile File Workflows**: Added `GET /api/hoxi/work/apps-overview`, enriched `GET /api/hoxi/work/app-sessions/{appId}` with launchpad metadata, pending approval counts, and sanitized read-only `hasAccountBinding`/`activeAccountLabel` display labels, and added `POST /api/hoxi/work/app-sessions/{appId}` with strict JSON allowlisting, singleflight `clientRequestId` idempotency, and bind-failure rollback; upgraded mobile clients with native document attachments, workspace binary file viewing/system share export, and published `Hoxi-Remote-0.7.3-android.apk` (`ai.hoxi.remote`).
+- **Release Pipeline Hardening**: Added target repository tag pre-checks and hardened cross-platform desktop release workflows and open-source mirror release isolation.
+
 ## [v0.7.2](docs/release-notes/v0.7.2.md) — 2026-11-22
 
 - **Windows Frameless Top Bar & Native Window Controls**: Integrated a frameless Windows title bar with native-style minimize/maximize/close controls, header double-click maximize hit-testing, active canvas background sync, and z-index layering above onboarding overlays.

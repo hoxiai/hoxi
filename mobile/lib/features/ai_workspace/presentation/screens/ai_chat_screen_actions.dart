@@ -39,6 +39,7 @@ extension _AiChatScreenActions on _AiChatScreenState {
     _setInputText(popped.text);
     _updateScreenState(() {
       _pendingImageDataUrl = popped.imageDataUrl;
+      _pendingDocuments = List<LocalPickedDocument>.of(popped.localDocuments);
       _attachedFiles = List<String>.of(popped.attachedFiles);
       _instructionOptions = popped.options;
     });
@@ -120,12 +121,15 @@ extension _AiChatScreenActions on _AiChatScreenState {
     if (session == null) return;
     final task = state.tasks.where((t) => t.sessionId == session.id).firstOrNull;
     final resolvedProjectId = task?.projectId ?? session.projectId;
-    final projectName = resolveWorkspaceProjectName(
-      projectId: resolvedProjectId,
-      projects: state.projects,
-      sourceWorkDir: session.sourceWorkDir,
-      workDir: session.workDir,
-    );
+    final workLabel = widget.workAppName?.trim() ?? '';
+    final projectName = workLabel.isNotEmpty
+        ? workLabel
+        : resolveWorkspaceProjectName(
+            projectId: resolvedProjectId,
+            projects: state.projects,
+            sourceWorkDir: session.sourceWorkDir,
+            workDir: session.workDir,
+          );
     final entity = buildAiTaskEntity(
       taskId: task?.id ?? (session.lastTaskId > 0 ? session.lastTaskId : session.id),
       sessionId: session.id,
@@ -208,6 +212,36 @@ extension _AiChatScreenActions on _AiChatScreenState {
       final msg = e.failure == ChatCameraFailure.denied
           ? context.l10n.chatCameraPermissionDenied
           : context.l10n.chatCameraUnavailable;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    }
+  }
+
+  Future<void> _pickLocalDocument() async {
+    dismissChatKeyboard(context);
+    final hasE2ee =
+        (StorageService.activeNodeContext.e2eeKey ?? '').trim().isNotEmpty;
+    final limitBytes = hasE2ee
+        ? 8 * 1024 * 1024
+        : LocalFileBridge.defaultMaxUploadBytes;
+    try {
+      final doc = await const LocalFileBridge().pickDocument(
+        maxBytes: limitBytes,
+      );
+      if (!mounted) return;
+      _updateScreenState(() {
+        _pendingDocuments = [..._pendingDocuments, doc];
+      });
+    } on LocalFileBridgeException catch (e) {
+      if (!mounted || e.failure == LocalFileBridgeFailure.cancelled) return;
+      final l10n = context.l10n;
+      final msg = switch (e.failure) {
+        LocalFileBridgeFailure.tooLarge =>
+          l10n.chatFileTooLarge(limitBytes ~/ (1024 * 1024)),
+        LocalFileBridgeFailure.unsupported => l10n.chatFilePickerUnsupported,
+        _ => l10n.chatFileReadFailed(
+            e.message.isNotEmpty ? e.message : e.failure.name,
+          ),
+      };
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
     }
   }

@@ -19,6 +19,17 @@ extension HoxiSessionListAdapter on HoxiWorkspaceAdapter {
         }
       }
     }
+    final hasAuthoritativePending = body['pendingApprovals'] is Map;
+    final pendingApprovalCounts = <String, int>{};
+    if (hasAuthoritativePending) {
+      for (final entry in (body['pendingApprovals'] as Map).entries) {
+        final k = entry.key.toString().trim();
+        final count = (entry.value as num?)?.toInt() ?? 0;
+        if (k.isNotEmpty && count > 0) {
+          pendingApprovalCounts[k] = count;
+        }
+      }
+    }
 
     final rawItems =
         <
@@ -122,9 +133,13 @@ extension HoxiSessionListAdapter on HoxiWorkspaceAdapter {
           ? (prev?.runtime ?? 'opencode')
           : runtime;
       final approvalPolicy = prev?.approvalPolicy ?? 'safe_auto';
-      final stage = isBusy
+      final hasPendingApproval = (pendingApprovalCounts[hoxiId] ?? 0) > 0;
+      final stage = hasPendingApproval
+          ? 'awaiting_approval'
+          : isBusy
           ? 'running'
-          : (_knownStageBySessionId[intId] == 'awaiting_approval'
+          : (!hasAuthoritativePending &&
+                    _knownStageBySessionId[intId] == 'awaiting_approval'
                 ? 'awaiting_approval'
                 : 'idle');
       _knownStageBySessionId[intId] = stage;
@@ -221,11 +236,13 @@ extension HoxiSessionListAdapter on HoxiWorkspaceAdapter {
       final aBusy =
           a.status == 'running' ||
           a.currentStage == 'awaiting_approval' ||
-          a.runningSubagentsCount > 0;
+          a.runningSubagentsCount > 0 ||
+          a.subagents.any((sub) => sub.currentStage == 'awaiting_approval');
       final bBusy =
           b.status == 'running' ||
           b.currentStage == 'awaiting_approval' ||
-          b.runningSubagentsCount > 0;
+          b.runningSubagentsCount > 0 ||
+          b.subagents.any((sub) => sub.currentStage == 'awaiting_approval');
       if (aBusy != bBusy) return aBusy ? -1 : 1;
       final aTime =
           a.updatedAt ?? a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
@@ -235,5 +252,22 @@ extension HoxiSessionListAdapter on HoxiWorkspaceAdapter {
     });
 
     return List<AiDevSession>.unmodifiable(sessions);
+  }
+
+  /// Registers a single externally created Hoxi session (e.g. Work App session)
+  /// into this adapter so subsequent selection, streaming, and prompting target
+  /// its exact Hoxi ID and workspace directory.
+  AiDevSession? registerSingleSession(
+    Map<dynamic, dynamic> raw, {
+    required String fallbackProjectKey,
+  }) {
+    final sessions = registerSessionList(
+      <String, dynamic>{
+        'items': <dynamic>[raw],
+        'statuses': const <String, dynamic>{},
+      },
+      fallbackProjectKey: fallbackProjectKey,
+    );
+    return sessions.firstOrNull;
   }
 }

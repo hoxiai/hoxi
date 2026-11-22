@@ -394,7 +394,8 @@ func expansionsAreBounded(seg string, words []string, vars map[string]bool, valu
 	}
 	// mkdir may take a value-class $(...) (it only creates directories) but
 	// not an ordinary variable. Every other non-read-only command stays opaque.
-	readOnlyTool := readOnlyDataTools[base] || (base == "sed" && isReadOnlySedArgs(args))
+	safeDoubleBracket := base == "[[" && isSafeDoubleBracketArgs(args)
+	readOnlyTool := readOnlyDataTools[base] || (base == "sed" && isReadOnlySedArgs(args)) || safeDoubleBracket
 	if !readOnlyTool && !(valueClass && base == "mkdir") {
 		return false
 	}
@@ -422,7 +423,7 @@ func expansionsAreBounded(seg string, words []string, vars map[string]bool, valu
 			trusted, bound := vars[name]
 			switch {
 			case name == cmdSubstVar:
-				if bound || (!valueOnlyTools[base] && !(valueClass && (acceptsValueClassArg(base) || (base == "sed" && isReadOnlySedArgs(args))))) {
+				if bound || (!(valueOnlyTools[base] || safeDoubleBracket) && !(valueClass && (acceptsValueClassArg(base) || (base == "sed" && isReadOnlySedArgs(args))))) {
 					return false
 				}
 			case bound:
@@ -654,38 +655,10 @@ func skipSafeBraceSpan(s string, i int) (int, bool) {
 	if s[i-1] == '^' && gitPeelBraceRe.MatchString(body) {
 		return i + 1 + end, true
 	}
-	if isFilterFlagBraceList(s, i, i+1+end) {
+	if isFilterFlagBraceList(s, i, i+1+end) || isPathBraceList(s, i, i+1+end) {
 		return i + 1 + end, true
 	}
 	return i, false
-}
-
-// isFilterFlagBraceList reports a literal brace list that is the whole value
-// of a filter flag: `--exclude-dir={node_modules,dist,.git}` is the same as
-// repeating the flag once per item. These flags only narrow what a tool reads.
-// An item that names a secret file is refused, as the expanded
-// `--include=.env` would be.
-func isFilterFlagBraceList(s string, open, close int) bool {
-	start := open
-	for start > 0 && !isWordBoundary(s[start-1]) {
-		start--
-	}
-	if !filterFlagPrefixRe.MatchString(s[start:open]) {
-		return false
-	}
-	if close+1 < len(s) && !isWordBoundary(s[close+1]) {
-		return false
-	}
-	items := strings.Split(s[open+1:close], ",")
-	if len(items) < 2 {
-		return false
-	}
-	for _, item := range items {
-		if !braceFilterItemRe.MatchString(item) || strings.HasPrefix(strings.ToLower(item), ".en") || isSecretFilePath(item) {
-			return false
-		}
-	}
-	return true
 }
 
 // wordExpansionNames lists `$name` / `${name}` in one unquoted word; any

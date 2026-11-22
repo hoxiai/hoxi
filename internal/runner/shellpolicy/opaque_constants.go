@@ -57,10 +57,12 @@ type constSeg struct {
 func (s constSeg) text(command string) string { return command[s.start:s.end] }
 
 type constVal struct {
-	text     string
-	valueSub bool
-	inner    string
-	secret   bool
+	text       string
+	valueSub   bool
+	mktemp     bool
+	assignedAt int
+	inner      string
+	secret     bool
 }
 
 // findSubshellSpans returns the outer (...) groups that are not $(...) or
@@ -158,7 +160,7 @@ func eraseSubshells(s string) string {
 // rewritten command.
 func concretizeLiterals(command string) (string, int) {
 	command = strings.TrimSpace(command)
-	if command == "" || (!strings.Contains(command, "=") && !containsFor(command)) {
+	if command == "" || containsMktempPlaceholder(command) || (!strings.Contains(command, "=") && !containsFor(command)) {
 		return command, constNoop
 	}
 	original := command
@@ -168,8 +170,9 @@ func concretizeLiterals(command string) (string, int) {
 	if len(poisoned) > 0 && expansionsHit(command, poisoned) {
 		return command, constReject
 	}
-	// Value-sub assignments are replaced while segment offsets still match
-	// the original text. Loop expansion and $NAME substitution run after.
+	// Value-sub/mktemp assignments and verified mktemp cleanup traps are
+	// replaced while segment offsets still match the original text. Loop
+	// expansion and $NAME substitution run after.
 	rewritten := replaceValueSubAssignments(command, segs, bindings)
 	rewritten, expanded := expandLiteralForLoops(rewritten, bindings)
 	substituted, ok := substituteVars(rewritten, bindings)
@@ -316,6 +319,8 @@ func constBindings(command string, segs []constSeg) (map[string]constVal, map[st
 	invalid := map[string]bool{}
 	loops := forLoopRanges(command)
 	subshells, _ := findSubshellSpans(command)
+	allowMktemp := !commandRebindsTMPDIR(command, segs)
+	mktempIdx := 0
 	poison := func(name string) {
 		if name == "" {
 			return
@@ -378,7 +383,7 @@ func constBindings(command string, segs []constSeg) (map[string]constVal, map[st
 				raw = sub
 			}
 		}
-		val, ok := parseConstValue(raw)
+		val, ok := parseConstValue(raw, allowMktemp, &mktempIdx, seg.start)
 		if !ok {
 			poison(name)
 			continue
@@ -391,7 +396,7 @@ func constBindings(command string, segs []constSeg) (map[string]constVal, map[st
 func literalOnlyBindings(bound map[string]constVal) map[string]constVal {
 	out := make(map[string]constVal, len(bound))
 	for k, v := range bound {
-		if !v.valueSub && !v.secret {
+		if !v.valueSub && !v.mktemp && !v.secret {
 			out[k] = v
 		}
 	}
@@ -494,13 +499,22 @@ func assignmentValueHasBareSpace(s string) bool {
 	return quote != 0
 }
 
-func parseConstValue(raw string) (constVal, bool) {
+func parseConstValue(raw string, allowMktemp bool, mktempIdx *int, segStart int) (constVal, bool) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return constVal{}, false
 	}
-	if strings.HasPrefix(raw, "$(") && strings.HasSuffix(raw, ")") && processSubstitutionEnd(raw, 2) == len(raw)-1 {
-		inner := raw[2 : len(raw)-1]
+	subRaw := raw
+	if len(subRaw) >= 5 && subRaw[0] == '"' && subRaw[len(subRaw)-1] == '"' && subRaw[1] == '$' && subRaw[2] == '(' {
+		subRaw = subRaw[1 : len(subRaw)-1]
+	}
+	if strings.HasPrefix(subRaw, "$(") && strings.HasSuffix(subRaw, ")") && processSubstitutionEnd(subRaw, 2) == len(subRaw)-1 {
+		inner := subRaw[2 : len(subRaw)-1]
+		if allowMktemp && isSafeMktempSegment(inner) {
+			idx := *mktempIdx
+			*mktempIdx = idx + 1
+			return constVal{text: mktempPlaceholderPath(idx), mktemp: true, assignedAt: segStart, inner: inner}, true
+		}
 		if !isValueClassSegment(inner) || opaqueShellCore(inner, "", scriptTrustNone, false) {
 			return constVal{}, false
 		}
@@ -699,6 +713,9 @@ func substituteVars(s string, vars map[string]constVal) (string, bool) {
 				return s, false
 			}
 			if v, bound := vars[name]; bound {
+				if v.mktemp && !mktempWordSuffixIsSafe(s, next, quote) {
+					return s, false
+				}
 				repl := "$" + cmdSubstVar
 				if !v.valueSub {
 					repl = v.text
@@ -753,32 +770,4 @@ func readDollarName(s string, i int) (name string, next int, ok bool) {
 	default:
 		return "", i + 1, true
 	}
-}
-
-func replaceValueSubAssignments(command string, segs []constSeg, bindings map[string]constVal) string {
-	if len(bindings) == 0 {
-		return command
-	}
-	var b strings.Builder
-	prev := 0
-	for _, seg := range segs {
-		name, _, pure := pureAssignment(strings.TrimSpace(seg.text(command)))
-		v, ok := bindings[name]
-		if !pure || !ok {
-			continue
-		}
-		repl := ""
-		if v.valueSub {
-			repl = v.inner
-		} else if strings.Contains(v.text, "$") {
-			repl = ":"
-		} else {
-			continue
-		}
-		b.WriteString(command[prev:seg.start])
-		b.WriteString(repl)
-		prev = seg.end
-	}
-	b.WriteString(command[prev:])
-	return b.String()
 }

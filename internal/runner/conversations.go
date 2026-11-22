@@ -446,6 +446,72 @@ func (s *Service) ListSessionsByScope(sessionIDs []string, directories []string)
 	return items, statuses
 }
 
+// PendingAttentionCountsBySession returns the number of waiting approvals and
+// questions keyed by Hoxi session ID across non-archived sessions.
+func (s *Service) PendingAttentionCountsBySession() map[string]int {
+	counts := make(map[string]int)
+	if s == nil {
+		return counts
+	}
+	seenReq := make(map[string]bool)
+	addIfActive := func(reqID, sid string) {
+		reqID = strings.TrimSpace(reqID)
+		sid = strings.TrimSpace(sid)
+		if sid == "" {
+			return
+		}
+		if reqID != "" {
+			if seenReq[reqID] {
+				return
+			}
+			seenReq[reqID] = true
+		}
+		if s.store != nil {
+			if rec, ok := s.store.Meta(sid); ok && rec.ArchivedAt > 0 {
+				return
+			}
+		}
+		counts[sid]++
+	}
+	if s.gate != nil {
+		s.gate.mu.Lock()
+		type pendingItem struct{ id, sid string }
+		items := make([]pendingItem, 0, len(s.gate.pending)+len(s.gate.questions))
+		for id, p := range s.gate.pending {
+			items = append(items, pendingItem{id: id, sid: p.sid})
+		}
+		for id, q := range s.gate.questions {
+			items = append(items, pendingItem{id: id, sid: q.sid})
+		}
+		s.gate.mu.Unlock()
+		for _, item := range items {
+			addIfActive(item.id, item.sid)
+		}
+	}
+	if s.status != nil {
+		for reqID, sid := range s.status.PendingRequestsByID() {
+			addIfActive(reqID, sid)
+		}
+	}
+	return counts
+}
+
+// GetSessionInfo returns the public SessionInfo for a non-archived Hoxi session ID.
+func (s *Service) GetSessionInfo(id string) (SessionInfo, bool) {
+	if s == nil || s.store == nil {
+		return SessionInfo{}, false
+	}
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return SessionInfo{}, false
+	}
+	rec, ok := s.store.Meta(id)
+	if !ok || rec.ArchivedAt > 0 {
+		return SessionInfo{}, false
+	}
+	return rec.ToSessionInfo(), true
+}
+
 // handleConversationCreate creates a Hoxi-owned SessionRecord for all runtimes.
 // When the runtime is OpenCode, it also creates an OpenCode session as the
 // backing execution handle and records it in OpenCodeIDs.

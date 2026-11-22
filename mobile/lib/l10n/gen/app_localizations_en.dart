@@ -248,6 +248,59 @@ class AppLocalizationsEn extends AppLocalizations {
   String get containerFilterAll => 'All';
 
   @override
+  String get chatActionUploadDocument =>
+      'Upload Device File (PDF / Excel / Doc)';
+
+  @override
+  String get chatActionUploadDocumentHint =>
+      'Pick a spreadsheet, PDF, Word, or data file from this device';
+
+  @override
+  String get codeComposerAttachWorkspaceFile =>
+      'Reference Workspace File (@file)';
+
+  @override
+  String get codeComposerAttachWorkspaceFileHint =>
+      'Select an existing file on the computer as context';
+
+  @override
+  String get codeComposerAttachSkill => 'Mount Workspace Skill';
+
+  @override
+  String get codeComposerAttachSkillHint =>
+      'Apply a specific skill instruction in this turn';
+
+  @override
+  String chatFileTooLarge(int limitMb) {
+    return 'File exceeds maximum upload size ($limitMb MB)';
+  }
+
+  @override
+  String get chatFilePickerUnsupported =>
+      'Document picking is not supported on this device';
+
+  @override
+  String chatFileReadFailed(String error) {
+    return 'Could not read file: $error';
+  }
+
+  @override
+  String get codeWsFilesExportShare => 'Export / Share File';
+
+  @override
+  String get codeWsFilesExportUnsupported =>
+      'File sharing is not supported on this device';
+
+  @override
+  String codeWsFilesExportFailed(String error) {
+    return 'Could not export file: $error';
+  }
+
+  @override
+  String get codeWsFilesBinaryPreviewHint =>
+      'Binary file preview is limited on mobile. Tap Export / Share above to save or open in another app.';
+
+  @override
   String get nodeLinkDevicesSection => 'Controlled Devices';
 
   @override

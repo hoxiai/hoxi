@@ -413,6 +413,20 @@ class AiWorkspaceRepository {
     return CodeSessionFile.fromJson(response.data ?? const <String, dynamic>{});
   }
 
+  Future<({List<int> bytes, String filename})> downloadSessionFileBytes(
+    int sessionId,
+    String path,
+  ) async {
+    if (_isHoxi) return _hoxiAdapter.downloadSessionFileBytes(sessionId, path);
+    final file = await getSessionFile(sessionId, path);
+    final decoded = file.decodeBase64Bytes();
+    final filename = path.contains('/') ? path.split('/').last : path;
+    return (
+      bytes: decoded ?? utf8.encode(file.content),
+      filename: filename.isNotEmpty ? filename : 'file.txt',
+    );
+  }
+
   Future<CodeSessionFile> saveSessionFile({
     required int sessionId, required CodeSessionFile file, required String content,
   }) async {
@@ -495,6 +509,19 @@ class AiWorkspaceRepository {
       );
     }
     return {'filename': filename, 'mime': mime, 'url': dataUrl};
+  }
+
+  Future<Map<String, dynamic>> uploadDocumentAttachment({
+    required int sessionId, required String filename, required String mime,
+    required List<int> bytes, bool useJsonEnvelope = false,
+  }) async {
+    if (_isHoxi) {
+      return _hoxiAdapter.uploadDocumentAttachment(
+        sessionId: sessionId, filename: filename, mime: mime,
+        bytes: bytes, useJsonEnvelope: useJsonEnvelope,
+      );
+    }
+    return {'filename': filename, 'mime': mime, 'size': bytes.length};
   }
 
   Future<AiInstructionSendResult> sendAiCommand({

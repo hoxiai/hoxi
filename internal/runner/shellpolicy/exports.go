@@ -13,9 +13,10 @@ const (
 	FileGrantPrefix = fileGrantPrefix
 	GrantKindFile   = grantKindFile
 
-	RecoverClassTempDelete = recoverClassTempDelete
-	RecoverClassDirDelete  = recoverClassDirDelete
-	RecoverClassGitDiscard = recoverClassGitDiscard
+	RecoverClassTempDelete   = recoverClassTempDelete
+	RecoverClassDirDelete    = recoverClassDirDelete
+	RecoverClassGitDiscard   = recoverClassGitDiscard
+	RecoverClassInlineScript = recoverClassInlineScript
 
 	ScriptTrustNone     = scriptTrustNone
 	ScriptTrustReadOnly = scriptTrustReadOnly
@@ -57,6 +58,9 @@ func DecideCommandPermissionIn(command, worktree string) string {
 func FileGrantRefused(path string) bool { return fileGrantRefused(path) }
 func GrantableEditFiles(item map[string]interface{}, worktree string) []string {
 	return grantableEditFiles(item, worktree)
+}
+func GrantableInlineScriptRequest(item map[string]interface{}, worktree string) bool {
+	return grantableInlineScriptRequest(item, worktree)
 }
 func IsAbsOrRootedPath(p string) bool { return isAbsOrRootedPath(p) }
 func IsAttributionPreferenceReadRequest(item map[string]interface{}, worktree string) bool {

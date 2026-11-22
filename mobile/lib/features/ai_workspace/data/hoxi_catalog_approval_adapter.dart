@@ -66,6 +66,37 @@ class HoxiCatalogApprovalAdapter {
     return data;
   }
 
+  Future<Map<String, dynamic>> uploadDocumentAttachment({
+    required String sessionId,
+    required String directory,
+    required String filename,
+    required String mime,
+    required List<int> bytes,
+    bool useJsonEnvelope = false,
+  }) async {
+    final safeMime = mime.trim().isNotEmpty ? mime.trim() : 'application/octet-stream';
+    if (useJsonEnvelope) {
+      return uploadAttachment(
+        sessionId: sessionId,
+        directory: directory,
+        filename: filename,
+        mime: safeMime,
+        dataUrl: 'data:$safeMime;base64,${base64Encode(bytes)}',
+      );
+    }
+    final formData = FormData.fromMap({
+      'sessionID': sessionId,
+      'directory': directory,
+      'file': MultipartFile.fromBytes(bytes, filename: filename, contentType: DioMediaType.parse(safeMime)),
+    });
+    final res = await _apiClient.post<Map<String, dynamic>>(
+      '/api/hoxi/attachments',
+      queryParameters: {'directory': directory, 'sessionID': sessionId},
+      data: formData,
+    );
+    return res.data ?? const <String, dynamic>{};
+  }
+
   Future<String?> resolveFilePartImageDataUrl(Map<String, dynamic> part) async {
     final mime = (part['mime'] ?? '').toString().trim().toLowerCase();
     final filename =

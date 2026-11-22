@@ -11,6 +11,7 @@ import '../../../../core/storage/storage_service.dart';
 import '../../../../shared/widgets/chat_keyboard_dismiss.dart';
 import '../../../../shared/widgets/stream_text_pacer.dart';
 import '../../../../shared/utils/chat_camera_capture.dart';
+import '../../../../shared/utils/local_file_bridge.dart';
 import '../../data/task_ai_utils.dart';
 import '../../../../shared/navigation/feature_route_registry.dart';
 import '../../models/ai_dev_session.dart';
@@ -48,7 +49,11 @@ import '../../../../core/theme/app_theme.dart';
 part 'ai_chat_screen_actions.dart';
 
 class AiChatScreen extends ConsumerStatefulWidget {
-  const AiChatScreen({super.key});
+  const AiChatScreen({super.key, this.workAppName});
+
+  /// When opened from a Hoxi Work App session, adapts the header subtitle and
+  /// hides code-only menu actions (Git review / project terminal).
+  final String? workAppName;
 
   @override
   ConsumerState<AiChatScreen> createState() => _AiChatScreenState();
@@ -69,6 +74,7 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen>
   bool _prependingEarlier = false;
   CodeInstructionOptions _instructionOptions = const CodeInstructionOptions();
   String? _pendingImageDataUrl;
+  List<LocalPickedDocument> _pendingDocuments = const [];
   List<String> _attachedFiles = const [];
   late final AiWorkspaceController _workspaceController;
 
@@ -139,17 +145,23 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen>
   Future<void> _sendMessage() async {
     final text = _inputController.text.trim();
     final hasImage = _pendingImageDataUrl?.trim().isNotEmpty ?? false;
+    final hasDocs = _pendingDocuments.isNotEmpty;
     final hasSkill = ref.read(aiWorkspaceControllerProvider).selectedSkill != null;
-    if (text.isEmpty && !hasImage && _attachedFiles.isEmpty && !hasSkill) return;
+    if (text.isEmpty && !hasImage && !hasDocs && _attachedFiles.isEmpty && !hasSkill) return;
     final sessionId = _draftSessionId;
     final sent = await ref.read(aiWorkspaceControllerProvider.notifier).sendMessage(
-      text, options: _instructionOptions, imageDataUrl: _pendingImageDataUrl, attachedFiles: _attachedFiles,
+      text,
+      options: _instructionOptions,
+      imageDataUrl: _pendingImageDataUrl,
+      attachedFiles: _attachedFiles,
+      localDocuments: _pendingDocuments,
     );
     if (!mounted || !sent || _draftSessionId != sessionId) return;
     dismissChatKeyboard(context);
     _setInputText('');
     setState(() {
       _pendingImageDataUrl = null;
+      _pendingDocuments = const [];
       _attachedFiles = const [];
     });
     if (sessionId != null) await StorageService.saveCodeInstructionDraft(sessionId, '');
@@ -175,6 +187,7 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen>
     }
     _draftSessionId = sessionId;
     _pendingImageDataUrl = null;
+    _pendingDocuments = const [];
     _attachedFiles = const [];
     _setInputText(sessionId == null ? '' : StorageService.getCodeInstructionDraft(sessionId));
   }
@@ -365,14 +378,18 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen>
         (state.convoyPlans.isNotEmpty || state.subagents.isNotEmpty || session.subagents.isNotEmpty);
 
     ref.watch(activeNodeGenerationProvider);
-    final projectName = session == null
-        ? ''
-        : resolveWorkspaceProjectName(
-            projectId: session.projectId,
-            projects: state.projects,
-            sourceWorkDir: session.sourceWorkDir,
-            workDir: session.workDir,
-          );
+    final workAppLabel = widget.workAppName?.trim() ?? '';
+    final isWorkAppMode = workAppLabel.isNotEmpty;
+    final projectName = isWorkAppMode
+        ? workAppLabel
+        : (session == null
+              ? ''
+              : resolveWorkspaceProjectName(
+                  projectId: session.projectId,
+                  projects: state.projects,
+                  sourceWorkDir: session.sourceWorkDir,
+                  workDir: session.workDir,
+                ));
     final contextSubtitle = composeTaskContextSubtitle(
       projectName: projectName,
       nodeName: resolveActiveNodeDisplayName(),
@@ -408,6 +425,7 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen>
           AiChatHeaderActionCapsule(
             hasSession: session != null,
             searchOpen: _searchOpen,
+            isWorkAppMode: isWorkAppMode,
             onOpenSessionSheet: _openSessionSheet,
             onMenuSelected: (value) {
               switch (value) {
@@ -671,6 +689,11 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen>
             onSelectModel: _openModelSelector,
             pendingImageDataUrl: _pendingImageDataUrl,
             onClearPendingImage: () => setState(() => _pendingImageDataUrl = null),
+            pendingDocuments: _pendingDocuments,
+            onRemovePendingDocument: (doc) => setState(
+              () => _pendingDocuments = _pendingDocuments.where((d) => !identical(d, doc)).toList(),
+            ),
+            onPickDocument: _pickLocalDocument,
             attachedFiles: _attachedFiles,
             onRemoveAttachedFile: (file) => setState(
               () => _attachedFiles = _attachedFiles.where((f) => f != file).toList(),

@@ -134,28 +134,43 @@ test("opencode.lock pins every platform while release workflows ship lean sideca
   assert.match(lock.version, /^\d+\.\d+\.\d+$/);
   assert.equal(Object.keys(lock.assets).length, 6);
 
-  const macWorkflow = fs.readFileSync(path.join(scripts, "../.github/workflows/release.yml"), "utf8");
-  assert.match(macWorkflow, /node scripts\/opencode-lock\.mjs verify/);
-  assert.match(macWorkflow, /HOXI_BUNDLE_OPENCODE:\s*"0"/);
-  assert.doesNotMatch(macWorkflow, /opencode-arm64\.zip|opencode-amd64\.zip/);
-  assert.doesNotMatch(macWorkflow, /vars\.HOXI_OPENCODE_ARCHIVE_(URL|SHA256)/);
-
+  const macWorkflowPath = path.join(scripts, "../.github/workflows/release.yml");
+  const hasDesktopWorkflows = fs.existsSync(macWorkflowPath);
   const crossWorkflow = fs.readFileSync(path.join(scripts, "../.github/workflows/release-cross-platform.yml"), "utf8");
-  assert.doesNotMatch(crossWorkflow, /releases\/latest\/download/);
-  assert.match(crossWorkflow, /node scripts\/opencode-lock\.mjs verify/);
-  assert.match(crossWorkflow, /HOXI_BUNDLE_OPENCODE:\s*"0"/);
-  assert.doesNotMatch(crossWorkflow, /opencode-windows-|opencode-linux-/);
-  // Windows builds run for both amd64 and arm64 via a matrix without bundling opencode.exe.
-  assert.match(crossWorkflow, /arch: \[amd64, arm64\]/);
-  assert.match(crossWorkflow, /wails build -platform windows\/\$\{\{ matrix\.arch \}\} -nsis/);
-  assert.match(crossWorkflow, /Hoxi-\$\{RELEASE_VERSION\}-windows-\$\{\{ matrix\.arch \}\}-setup\.exe/);
-  assert.match(crossWorkflow, /Hoxi-\$\{RELEASE_VERSION\}-windows-\$\{\{ matrix\.arch \}\}\.zip/);
-  assert.match(crossWorkflow, /test ! -f build\/bin\/opencode\.exe/);
-  assert.match(crossWorkflow, /test ! -f build\/bin\/sqlite3\.exe/);
-  assert.match(crossWorkflow, /pe-arch\.mjs verify \$\{\{ matrix\.arch \}\} build\/bin\/Hoxi\.exe$/m);
-  assert.match(crossWorkflow, /7z a "\$ZIP_NAME" Hoxi\.exe$/m);
-  assert.match(crossWorkflow, /tar -czf "\$TAR_NAME" Hoxi hoxi\.desktop hoxi\.png/);
-  assert.match(crossWorkflow, /Hoxi-\$\{\{ env\.RELEASE_VERSION \}\}-linux-amd64\.tar\.gz\.sha256/);
+
+  if (hasDesktopWorkflows) {
+    const macWorkflow = fs.readFileSync(macWorkflowPath, "utf8");
+    assert.match(macWorkflow, /node scripts\/opencode-lock\.mjs verify/);
+    assert.match(macWorkflow, /HOXI_BUNDLE_OPENCODE:\s*"0"/);
+    assert.doesNotMatch(macWorkflow, /opencode-arm64\.zip|opencode-amd64\.zip/);
+    assert.doesNotMatch(macWorkflow, /vars\.HOXI_OPENCODE_ARCHIVE_(URL|SHA256)/);
+    assert.match(macWorkflow, /HOXI_RELEASE_REPO:\s*\$\{\{ vars\.HOXI_RELEASE_REPO \}\}/);
+    assert.match(macWorkflow, /HOXI_PUBLIC_RELEASE_TOKEN:\?/);
+    assert.match(macWorkflow, /repository:\s*\$\{\{ env\.RELEASE_TARGET_REPO \}\}/);
+
+    assert.doesNotMatch(crossWorkflow, /releases\/latest\/download/);
+    assert.match(crossWorkflow, /node scripts\/opencode-lock\.mjs verify/);
+    assert.match(crossWorkflow, /HOXI_BUNDLE_OPENCODE:\s*"0"/);
+    assert.doesNotMatch(crossWorkflow, /opencode-windows-|opencode-linux-/);
+    // Windows builds run for both amd64 and arm64 via a matrix without bundling opencode.exe.
+    assert.match(crossWorkflow, /arch: \[amd64, arm64\]/);
+    assert.match(crossWorkflow, /wails build -platform windows\/\$\{\{ matrix\.arch \}\} -nsis/);
+    assert.match(crossWorkflow, /Hoxi-\$\{RELEASE_VERSION\}-windows-\$\{\{ matrix\.arch \}\}-setup\.exe/);
+    assert.match(crossWorkflow, /Hoxi-\$\{RELEASE_VERSION\}-windows-\$\{\{ matrix\.arch \}\}\.zip/);
+    assert.match(crossWorkflow, /test ! -f build\/bin\/opencode\.exe/);
+    assert.match(crossWorkflow, /test ! -f build\/bin\/sqlite3\.exe/);
+    assert.match(crossWorkflow, /pe-arch\.mjs verify \$\{\{ matrix\.arch \}\} build\/bin\/Hoxi\.exe$/m);
+    assert.match(crossWorkflow, /7z a "\$ZIP_NAME" Hoxi\.exe$/m);
+    assert.match(crossWorkflow, /tar -czf "\$TAR_NAME" Hoxi hoxi\.desktop hoxi\.png/);
+    assert.match(crossWorkflow, /Hoxi-\$\{\{ env\.RELEASE_VERSION \}\}-linux-amd64\.tar\.gz\.sha256/);
+    assert.equal((crossWorkflow.match(/repository:\s*\$\{\{ env\.RELEASE_TARGET_REPO \}\}/g) || []).length, 2);
+    assert.equal((crossWorkflow.match(/HOXI_PUBLIC_RELEASE_TOKEN:\?/g) || []).length, 2);
+  } else {
+    // Public OSS exports intentionally omit desktop release jobs so v* tags
+    // only publish Hoxi Remote APK and never overwrite official desktop builds.
+    assert.doesNotMatch(crossWorkflow, /^\s+build-(windows|linux):/m);
+    assert.doesNotMatch(crossWorkflow, /HOXI_WORK_TOKEN|HOXI_RELEASE_REPO|HOXI_PUBLIC_RELEASE_TOKEN/);
+  }
   assert.match(crossWorkflow, /build-mobile-android:/);
   assert.match(crossWorkflow, /applicationId = "ai\.hoxi\.remote"/);
   assert.match(crossWorkflow, /Hoxi-Remote-\$\{\{ env\.RELEASE_VERSION \}\}-android\.apk/);
@@ -226,8 +241,13 @@ test("verifyBinaryVersion accepts only the pinned OpenCode version and rejects d
   assert.throws(() => verifyBinaryVersion(brokenBin), /failed to execute/);
 });
 
-test("tag workflow gates publication on tests, versioned artifacts and notarization", () => {
-  const workflow = fs.readFileSync(path.join(scripts, "../.github/workflows/release.yml"), "utf8");
+test("tag workflow gates publication on tests, versioned artifacts and notarization", (t) => {
+  const workflowPath = path.join(scripts, "../.github/workflows/release.yml");
+  if (!fs.existsSync(workflowPath)) {
+    t.skip("Desktop macOS release workflow is maintained outside the OSS export");
+    return;
+  }
+  const workflow = fs.readFileSync(workflowPath, "utf8");
   const required = [
     'version "$RELEASE_TAG"',
     "- name: Resolve release notes",
@@ -464,13 +484,16 @@ test("signature is checked against the configured public key and exact final DMG
 });
 
 test("Sparkle workflow signs only the final stapled DMG and uploads before website publication", () => {
-  const workflow = fs.readFileSync(path.join(scripts, "../.github/workflows/release.yml"), "utf8");
-  const gates = ['verify-distribution "$DMG"', 'sign-update "$DMG"', "uses: softprops/action-gh-release@v2",
-    "- name: Publish website metadata after asset upload", "node scripts/release-publisher.mjs"];
-  let position = -1;
-  for (const gate of gates) { const next = workflow.indexOf(gate, position + 1); assert.ok(next > position); position = next; }
-  assert.match(workflow, /shasum -a 256 -c -/);
-  assert.match(workflow, /HOXI_SPARKLE_PUBLIC_KEY:\s*\$\{\{ secrets\./);
+  const workflowPath = path.join(scripts, "../.github/workflows/release.yml");
+  if (fs.existsSync(workflowPath)) {
+    const workflow = fs.readFileSync(workflowPath, "utf8");
+    const gates = ['verify-distribution "$DMG"', 'sign-update "$DMG"', "uses: softprops/action-gh-release@v2",
+      "- name: Publish website metadata after asset upload", "node scripts/release-publisher.mjs"];
+    let position = -1;
+    for (const gate of gates) { const next = workflow.indexOf(gate, position + 1); assert.ok(next > position); position = next; }
+    assert.match(workflow, /shasum -a 256 -c -/);
+    assert.match(workflow, /HOXI_SPARKLE_PUBLIC_KEY:\s*\$\{\{ secrets\./);
+  }
   const build = fs.readFileSync(path.join(scripts, "../build-desktop.sh"), "utf8");
   assert.ok(build.indexOf('sparkle.mjs configure') < build.indexOf('sparkle.mjs sign-framework'));
   assert.doesNotMatch(build, /opencode.ai\/install/);
@@ -803,6 +826,7 @@ test("Windows build script and Vite config support Work surface staging and Wind
   assert.match(winBuild, /stage-host\.sh/);
   assert.match(winBuild, /WORK_MODULES=\\\(/);
   assert.match(winBuild, /UTF8Encoding\(\$false\)/);
+  assert.match(winBuild, /replace github\.com\/hoxiai\/hoxi v0\.0\.0 => \./);
   assert.match(winBuild, /Select-String -Path "web\/dist\/assets\/\*\.js" -SimpleMatch "modeExecuteLabel" -Quiet/);
   assert.match(winBuild, /go version -m "build\/bin\/Hoxi\.exe"/);
   assert.match(winBuild, /foreach \(\$stagedFile in \$StagedHostFiles\)/);
@@ -828,12 +852,57 @@ test("stage-host.sh writes Windows-compatible portable go.work paths and commerc
 
   const crossWorkflow = fs.readFileSync(path.join(repoRoot, ".github/workflows/release-cross-platform.yml"), "utf8");
   assert.match(crossWorkflow, /HOXI_WORK_TOKEN:\?[^\n]*Windows releases/);
+  assert.match(crossWorkflow, /clone --depth 1 https:\/\/github\.com\/hoxiai\/hoxi-ext\.git work/);
+  assert.doesNotMatch(crossWorkflow, /clone --depth 1 https:\/\/github\.com\/hoxiai\/hoxi-ext\.git \.\.\/hoxi-ext/);
+  assert.doesNotMatch(crossWorkflow, /default:\s*"v0\.2\.1"/);
   assert.match(crossWorkflow, /cygpath -m "\$WORK_DIR"/);
+  assert.match(crossWorkflow, /GOWORK="\$GO_WORK_FILE" go vet \.\/\.\.\./);
   assert.match(crossWorkflow, /grep -q "modeExecuteLabel" web\/dist\/assets\/\*\.js/);
   assert.match(crossWorkflow, /go version -m build\/bin\/Hoxi\.exe \| grep -Fq "\$BRIDGE_PKG"/);
+  assert.match(crossWorkflow, /git\/ref\/tags\/\$\{encodeURIComponent\(tag\)\}/);
+  assert.doesNotMatch(crossWorkflow, /if \[\[ -f "internal\/app\/work_bridge\.go" \]\]/);
+  assert.match(crossWorkflow, /ref: \$\{\{ github\.event\.inputs\.tag \|\| github\.ref \}\}/);
+  assert.match(crossWorkflow, /repository: \$\{\{ env\.RELEASE_TARGET_REPO \}\}/);
+  assert.match(crossWorkflow, /tag_name: \$\{\{ env\.RELEASE_TAG_NAME \}\}/);
+  for (const block of crossWorkflow.matchAll(/^        run: \|\n((?:          .*\n|\n)+)/gm)) {
+    const shell = block[1].replace(/^          /gm, "");
+    const check = spawnSync("bash", ["-n"], { input: shell, encoding: "utf8" });
+    assert.equal(check.status, 0, check.stderr);
+  }
 
   const macWorkflow = fs.readFileSync(path.join(repoRoot, ".github/workflows/release.yml"), "utf8");
   assert.match(macWorkflow, /HOXI_WORK_TOKEN:\?[^\n]*macOS releases/);
+  assert.match(macWorkflow, /clone --depth 1 https:\/\/github\.com\/hoxiai\/hoxi-ext\.git work/);
+  assert.doesNotMatch(macWorkflow, /clone --depth 1 https:\/\/github\.com\/hoxiai\/hoxi-ext\.git \.\.\/hoxi-ext/);
+  assert.match(macWorkflow, /grep -q "modeExecuteLabel" web\/dist\/assets\/\*\.js/);
+  assert.match(macWorkflow, /go version -m "build\/bin\/Hoxi\.app\/Contents\/MacOS\/Hoxi" \| grep -Fq "\$BRIDGE_PKG"/);
+  assert.match(macWorkflow, /git\/ref\/tags\/\$\{encodeURIComponent\(tag\)\}/);
+  assert.doesNotMatch(macWorkflow, /if \[\[ -f "internal\/app\/work_bridge\.go" \]\]/);
+  assert.match(macWorkflow, /ref: \$\{\{ github\.event\.inputs\.tag \|\| github\.ref \}\}/);
+  assert.match(macWorkflow, /repository: \$\{\{ env\.RELEASE_TARGET_REPO \}\}/);
+  assert.match(macWorkflow, /tag_name: \$\{\{ env\.RELEASE_TAG_NAME \}\}/);
+
+  const verifyOssPath = path.join(repoRoot, "client/scripts/verify_oss_root.py");
+  if (fs.existsSync(verifyOssPath)) {
+    const ossStage = fs.mkdtempSync(path.join(os.tmpdir(), "hoxi-oss-workflows-"));
+    t.after(() => fs.rmSync(ossStage, { recursive: true, force: true }));
+    fs.mkdirSync(path.join(ossStage, ".github/workflows"), { recursive: true });
+    fs.copyFileSync(path.join(repoRoot, ".github/workflows/release.yml"), path.join(ossStage, ".github/workflows/release.yml"));
+    fs.copyFileSync(path.join(repoRoot, ".github/workflows/release-cross-platform.yml"), path.join(ossStage, ".github/workflows/release-cross-platform.yml"));
+    const pyRun = spawnSync("python3", [verifyOssPath, ossStage], { encoding: "utf8" });
+    assert.equal(pyRun.status, 0, pyRun.stderr || pyRun.stdout);
+    assert.equal(fs.existsSync(path.join(ossStage, ".github/workflows/release.yml")), false, "OSS export must remove release.yml so public mirror cannot overwrite official macOS builds");
+    const ossCross = fs.readFileSync(path.join(ossStage, ".github/workflows/release-cross-platform.yml"), "utf8");
+    assert.match(ossCross, /^name: Release Hoxi Remote \(Android\)$/m);
+    assert.match(ossCross, /^  build-mobile-android:$/m);
+    assert.doesNotMatch(ossCross, /^  build-(windows|linux):$/m);
+    assert.doesNotMatch(ossCross, /HOXI_WORK_TOKEN|HOXI_RELEASE_REPO|HOXI_PUBLIC_RELEASE_TOKEN/);
+    for (const block of ossCross.matchAll(/^        run: \|\n((?:          .*\n|\n)+)/gm)) {
+      const shell = block[1].replace(/^          /gm, "");
+      const check = spawnSync("bash", ["-n"], { input: shell, encoding: "utf8" });
+      assert.equal(check.status, 0, check.stderr);
+    }
+  }
 
   const modMatch = stageHostSrc.match(/WORK_MODULES=\(([^)]+)\)/);
   assert.ok(modMatch, "Expected WORK_MODULES declaration in stage-host.sh");
@@ -864,9 +933,10 @@ test("stage-host.sh writes Windows-compatible portable go.work paths and commerc
   for (const mod of workModules) {
     assert.ok(nestedGoWork.includes(`"./work/go/${mod}"`), `Expected ./work/go/${mod} in nested go.work`);
   }
+  assert.doesNotMatch(nestedGoWork, /replace github\.com\/hoxiai\/hoxi/);
   assert.equal(fs.existsSync(path.join(nestedHost, "internal/app/work_bridge.go")), true);
 
-  // Case 2: Sibling ../hoxi-ext/go beside host checkout (GitHub Actions layout) -> ../hoxi-ext/go/<mod>
+  // Case 2: Sibling ../hoxi-ext/go beside host checkout -> ../hoxi-ext/go/<mod> + versioned host replace
   const siblingParent = path.join(sandbox, "ci-layout");
   const siblingHost = path.join(siblingParent, "hoxi");
   const siblingWorkGo = path.join(siblingParent, "hoxi-ext/go");
@@ -879,5 +949,6 @@ test("stage-host.sh writes Windows-compatible portable go.work paths and commerc
   for (const mod of workModules) {
     assert.ok(siblingGoWork.includes(`"../hoxi-ext/go/${mod}"`), `Expected ../hoxi-ext/go/${mod} in sibling go.work`);
   }
+  assert.match(siblingGoWork, /replace github\.com\/hoxiai\/hoxi v0\.0\.0 => \./);
   assert.doesNotMatch(siblingGoWork, /"\/[a-z]\//i);
 });

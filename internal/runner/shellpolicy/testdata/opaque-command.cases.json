@@ -686,7 +686,7 @@
   },
   {
     "command": "set -euo pipefail",
-    "opaque": true
+    "opaque": false
   },
   {
     "command": "true && D=/tmp; echo $D",
@@ -1752,6 +1752,202 @@
   {
     "command": "cd \"C:\\Users\\dev\\repo\\\" && git status",
     "worktree": "C:/Users/dev/repo",
+    "opaque": true
+  },
+  {
+    "command": "set -u; go test ./...",
+    "opaque": false
+  },
+  {
+    "command": "export PATH=\"/usr/local/go/bin:$PATH\"\nset -euo pipefail\ngo run ./tools/contractcheck\ngo vet ./...",
+    "opaque": false
+  },
+  {
+    "command": "set -e -u -o pipefail\nfor m in workpkg worksetup; do (cd \"work/go/${m}\" && go vet ./...); done",
+    "opaque": false
+  },
+  {
+    "command": "set -o errexit -o nounset -o pipefail && npm --prefix web run lint",
+    "opaque": false
+  },
+  {
+    "command": "set -a; ls",
+    "opaque": true
+  },
+  {
+    "command": "set +o noglob; ls",
+    "opaque": true
+  },
+  {
+    "command": "set -euo noglob; ls",
+    "opaque": true
+  },
+  {
+    "command": "set -euo; ls",
+    "opaque": true
+  },
+  {
+    "command": "set -euo pipefail extra; ls",
+    "opaque": true
+  },
+  {
+    "command": "set -- .env; ls",
+    "opaque": true
+  },
+  {
+    "command": "set",
+    "opaque": true
+  },
+  {
+    "command": "export PATH=\"/usr/local/go/bin:$PATH\"\nset -euo pipefail\nUNFORMATTED=\"$(gofmt -l main.go cmd internal)\"\nif [[ -n \"$UNFORMATTED\" ]]; then echo \"$UNFORMATTED\"; exit 1; fi",
+    "opaque": false
+  },
+  {
+    "command": "HASH=\"$(md5 -q web/package.json)\"\necho \"$HASH\"",
+    "opaque": false
+  },
+  {
+    "command": "REAL=\"$(realpath src/index.ts)\"\ndirname \"$REAL\"",
+    "opaque": false
+  },
+  {
+    "command": "OUT=\"$(gofmt -w main.go)\"\necho \"$OUT\"",
+    "opaque": true
+  },
+  {
+    "command": "OUT=\"$(gofmt -l -cpuprofile=/tmp/p main.go)\"\necho \"$OUT\"",
+    "opaque": true
+  },
+  {
+    "command": "OUT=\"$(gofmt -l .env)\"\necho \"$OUT\"",
+    "opaque": true
+  },
+  {
+    "command": "OUT=\"$(realpath /etc/passwd)\"\necho \"$OUT\"",
+    "opaque": true
+  },
+  {
+    "command": "OUT=\"$(md5 -q .env)\"\necho \"$OUT\"",
+    "opaque": true
+  },
+  {
+    "command": "X=\"$(gofmt -l main.go)\"\nif [[ \"$X\" -eq 0 ]]; then echo ok; fi",
+    "opaque": true
+  },
+  {
+    "command": "ls internal/runner/shellpolicy/*.go | grep -v _test.go | xargs wc -l | tail -n 1",
+    "opaque": false
+  },
+  {
+    "command": "git ls-files '*.go' | xargs gofmt -l",
+    "opaque": false
+  },
+  {
+    "command": "git ls-files '*.go' | xargs -I'{}' wc -l '{}'",
+    "opaque": false
+  },
+  {
+    "command": "git ls-files '*.go' | xargs -I ITEM wc -l ITEM",
+    "opaque": false
+  },
+  {
+    "command": "git ls-files '*.go' | xargs gofmt -w",
+    "opaque": true
+  },
+  {
+    "command": "git ls-files '*.go' | xargs gofmt -d",
+    "opaque": true
+  },
+  {
+    "command": "git ls-files '*.go' | xargs gofmt -l -cpuprofile=/tmp/p",
+    "opaque": true
+  },
+  {
+    "command": "git ls-files '*.go' | xargs wc --files0-from=.env",
+    "opaque": true
+  },
+  {
+    "command": "rg -n \"duration|retry\" site/themes/demo/pages/{ecommerce-image,text-to-image,image-to-image}",
+    "opaque": false
+  },
+  {
+    "command": "ls site/themes/demo/pages/{ecommerce-image,text-to-image}/index.vue",
+    "opaque": false
+  },
+  {
+    "command": "/bin/{sh,bash} -c id",
+    "opaque": true
+  },
+  {
+    "command": "ls; /bin/{sh,bash}",
+    "opaque": true
+  },
+  {
+    "command": "FOO=1 bin/{a,b}",
+    "opaque": true
+  },
+  {
+    "command": "rg -n x /{etc,tmp}",
+    "opaque": true
+  },
+  {
+    "command": "rg -n x site/pages/{.env,ok}",
+    "opaque": true
+  },
+  {
+    "command": "rg -n x site/pages/{../etc,ok}",
+    "opaque": true
+  },
+  {
+    "command": "rg -n x .git/{config,HEAD}",
+    "opaque": true
+  },
+  {
+    "command": "rg -n x /etc/{passwd,hosts}",
+    "opaque": true
+  },
+  {
+    "command": "rg -n x site/pages/{a,b}c",
+    "opaque": true
+  },
+  {
+    "command": "rg -n x site/pages/{a,b}/{c,d}",
+    "opaque": true
+  },
+  {
+    "command": "set -euo pipefail\nTMP=\"$(mktemp -d)\"\ntrap 'rm -rf \"$TMP\"' EXIT\nmkdir -p \"$TMP/cache\"\nls \"$TMP/cache\"",
+    "opaque": false
+  },
+  {
+    "command": "set -euo pipefail\noss_stage_dir=\"$(mktemp -d /tmp/hoxi-oss-pretest.XXXXXX)\"\ntrap 'rm -rf \"$oss_stage_dir\"' EXIT\n./scripts/export-opensource.sh \"${oss_stage_dir}\"",
+    "opaque": false
+  },
+  {
+    "command": "TMPDIR=/Users/u/code\nTMP=\"$(mktemp -d)\"\ntrap 'rm -rf \"$TMP\"' EXIT",
+    "opaque": true
+  },
+  {
+    "command": "TMP=\"$(mktemp -d /Users/u/code/x.XXXXXX)\"\ntrap 'rm -rf \"$TMP\"' EXIT",
+    "opaque": true
+  },
+  {
+    "command": "TMP=\"$(mktemp -d -u /tmp/x.XXXXXX)\"\ntrap 'rm -rf \"$TMP\"' EXIT",
+    "opaque": true
+  },
+  {
+    "command": "TMP=\"$(mktemp -d)\"\ncat \"$TMP/etc/passwd\"",
+    "opaque": true
+  },
+  {
+    "command": "TMP=\"$(mktemp -d)\"\ncat \"$TMP/.env\"",
+    "opaque": true
+  },
+  {
+    "command": "TMP=\"$(mktemp -d)\"\ncat \"$TMP/../other\"",
+    "opaque": true
+  },
+  {
+    "command": "rm -rf /tmp/__hoxi_mktemp_0__",
     "opaque": true
   }
 ]

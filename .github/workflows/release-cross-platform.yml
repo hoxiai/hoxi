@@ -1,4 +1,4 @@
-name: Release Windows and Linux
+name: Release Hoxi Remote (Android)
 
 on:
   push:
@@ -7,234 +7,14 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (e.g. v0.2.1)"
+        description: "Release tag (e.g. v0.7.2)"
         required: true
-        default: "v0.2.1"
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.inputs.tag || github.ref }}
   cancel-in-progress: false
 
 jobs:
-  build-windows:
-    name: "Windows: Build ${{ matrix.arch }} Client & Release"
-    runs-on: windows-latest
-    permissions:
-      contents: write
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [amd64, arm64]
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: "npm"
-          cache-dependency-path: web/package-lock.json
-
-      - name: Validate release version
-        shell: bash
-        env:
-          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
-        run: |
-          VERSION="$(node scripts/release-artifact.mjs version "$RELEASE_TAG")"
-          echo "RELEASE_VERSION=$VERSION" >> "$GITHUB_ENV"
-          node -e '
-            const fs = require("node:fs");
-            const ver = process.argv[1];
-            const winVer = ver + ".0";
-            const info = JSON.parse(fs.readFileSync("build/windows/info.json", "utf8"));
-            info.fileVersion = winVer;
-            info.productVersion = winVer;
-            fs.writeFileSync("build/windows/info.json", JSON.stringify(info, null, 2) + "\n");
-            const wailsCfg = JSON.parse(fs.readFileSync("wails.json", "utf8"));
-            wailsCfg.info = wailsCfg.info || {};
-            wailsCfg.info.productVersion = ver;
-            fs.writeFileSync("wails.json", JSON.stringify(wailsCfg, null, 2) + "\n");
-          ' "$VERSION"
-
-      - name: Install frontend dependencies & Build web
-        shell: bash
-        run: |
-          npm --prefix web ci
-          npm --prefix web run build
-
-      - name: Run Windows Go vet
-        shell: bash
-        run: |
-          go vet ./...
-          if [[ -f "internal/app/work_bridge.go" ]]; then
-            BRIDGE_PKG="$(sed -n 's/^[[:space:]]*import[[:space:]]*"\([^"]*\)".*/\1/p' internal/app/work_bridge.go | head -n 1)"
-            test -n "$BRIDGE_PKG"
-            go list -tags desktop -f '{{join .Deps "\n"}}' . | grep -Fxq "$BRIDGE_PKG"
-            if [[ -n "${HOXI_WORK_DIR:-}" && -d "${HOXI_WORK_DIR}/go" ]]; then
-              for mod in "${HOXI_WORK_DIR}"/go/*/go.mod; do
-                [[ -f "$mod" ]] || continue
-                (cd "$(dirname "$mod")" && go vet ./...)
-              done
-            fi
-          fi
-
-      - name: Run Windows computer control regressions
-        run: go test ./internal/computer
-
-
-      - name: Install Wails v2
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.13.0
-
-      - name: Prepare clean Windows staging & verify lockfiles
-        shell: bash
-        run: |
-          node scripts/opencode-lock.mjs verify
-          mkdir -p build/bin build/windows/installer/tmp
-          rm -f build/bin/opencode.exe build/windows/installer/tmp/opencode.exe build/bin/sqlite3.exe build/windows/installer/tmp/sqlite3.exe
-
-      - name: Build Windows Desktop App & Setup Installer
-        shell: bash
-        env:
-          HOXI_BUNDLE_OPENCODE: "0"
-        run: |
-          if ! command -v makensis >/dev/null 2>&1; then
-            if [[ -x "/c/Program Files (x86)/NSIS/makensis.exe" ]]; then
-              export PATH="/c/Program Files (x86)/NSIS:$PATH"
-            else
-              choco install nsis -y
-              export PATH="/c/Program Files (x86)/NSIS:$PATH"
-            fi
-          fi
-          command -v makensis
-          wails build -platform windows/${{ matrix.arch }} -nsis -s -m -nosyncgomod \
-            -ldflags "-X github.com/hoxiai/hoxi/internal/app.BuildVariant=release -X github.com/hoxiai/hoxi/internal/buildinfo.Version=${RELEASE_VERSION}"
-          # An x64 runner cannot execute an arm64 PE, so only run the built
-          # binary when the host architecture matches; otherwise assert the
-          # embedded ldflags version (via `go version -m`) and the PE machine.
-          HOST_ARCH="$(uname -m)"
-          if [[ "$HOST_ARCH" == "x86_64" && "${{ matrix.arch }}" == "amd64" ]] || [[ "$HOST_ARCH" == "aarch64" && "${{ matrix.arch }}" == "arm64" ]]; then
-            test "$(./build/bin/Hoxi.exe --version | tr -d '\r\n')" = "${RELEASE_VERSION}"
-          else
-            go version -m build/bin/Hoxi.exe | grep -q "buildinfo.Version=${RELEASE_VERSION}"
-          fi
-          test ! -f build/bin/opencode.exe
-          test ! -f build/bin/sqlite3.exe
-          if [[ -f "internal/app/work_bridge.go" ]]; then
-            BRIDGE_PKG="$(sed -n 's/^[[:space:]]*import[[:space:]]*"\([^"]*\)".*/\1/p' internal/app/work_bridge.go | head -n 1)"
-            test -n "$BRIDGE_PKG"
-            go version -m build/bin/Hoxi.exe | grep -Fq "$BRIDGE_PKG"
-          fi
-          node scripts/pe-arch.mjs verify ${{ matrix.arch }} build/bin/Hoxi.exe
-          test -f build/bin/Hoxi-${{ matrix.arch }}-installer.exe
-
-      - name: Package Windows Release Archives
-        shell: bash
-        run: |
-          SETUP_NAME="Hoxi-${RELEASE_VERSION}-windows-${{ matrix.arch }}-setup.exe"
-          ZIP_NAME="Hoxi-${RELEASE_VERSION}-windows-${{ matrix.arch }}.zip"
-          cd build/bin
-          mv -f Hoxi-${{ matrix.arch }}-installer.exe "$SETUP_NAME"
-          sha256sum "$SETUP_NAME" > "${SETUP_NAME}.sha256"
-          7z a "$ZIP_NAME" Hoxi.exe
-          sha256sum "$ZIP_NAME" > "${ZIP_NAME}.sha256"
-
-      - name: Upload Windows Artifact to Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
-          files: |
-            build/bin/Hoxi-${{ env.RELEASE_VERSION }}-windows-${{ matrix.arch }}-setup.exe
-            build/bin/Hoxi-${{ env.RELEASE_VERSION }}-windows-${{ matrix.arch }}-setup.exe.sha256
-            build/bin/Hoxi-${{ env.RELEASE_VERSION }}-windows-${{ matrix.arch }}.zip
-            build/bin/Hoxi-${{ env.RELEASE_VERSION }}-windows-${{ matrix.arch }}.zip.sha256
-          fail_on_unmatched_files: true
-          draft: false
-          prerelease: false
-
-  build-linux:
-    name: "Linux: Build x64 Client & Release"
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: "npm"
-          cache-dependency-path: web/package-lock.json
-
-      - name: Install Linux Desktop Dependencies (WebKit2GTK)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev || sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev
-
-      - name: Validate release version
-        env:
-          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
-        run: |
-          VERSION="$(node scripts/release-artifact.mjs version "$RELEASE_TAG")"
-          echo "RELEASE_VERSION=$VERSION" >> "$GITHUB_ENV"
-
-      - name: Install frontend dependencies & Build web
-        shell: bash
-        run: |
-          npm --prefix web ci
-          npm --prefix web run build
-
-      - name: Install Wails v2
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.13.0
-
-      - name: Build Linux Desktop App
-        run: |
-          rm -f build/bin/opencode
-          wails build -platform linux/amd64 -tags webkit2_41 -s -m -nosyncgomod \
-            -ldflags "-X github.com/hoxiai/hoxi/internal/app.BuildVariant=release -X github.com/hoxiai/hoxi/internal/buildinfo.Version=${RELEASE_VERSION}"
-          if [[ -f "internal/app/work_bridge.go" ]]; then
-            BRIDGE_PKG="$(sed -n 's/^[[:space:]]*import[[:space:]]*"\([^"]*\)".*/\1/p' internal/app/work_bridge.go | head -n 1)"
-            test -n "$BRIDGE_PKG"
-            go version -m build/bin/Hoxi | grep -Fq "$BRIDGE_PKG"
-          fi
-
-      - name: Package Linux Release Archive
-        run: |
-          TAR_NAME="Hoxi-${RELEASE_VERSION}-linux-amd64.tar.gz"
-          cp build/linux/hoxi.desktop build/bin/
-          cp build/appicon.png build/bin/hoxi.png
-          cd build/bin
-          test ! -f opencode
-          tar -czf "$TAR_NAME" Hoxi hoxi.desktop hoxi.png
-          sha256sum "$TAR_NAME" > "${TAR_NAME}.sha256"
-
-      - name: Upload Linux Artifact to Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
-          files: |
-            build/bin/Hoxi-${{ env.RELEASE_VERSION }}-linux-amd64.tar.gz
-            build/bin/Hoxi-${{ env.RELEASE_VERSION }}-linux-amd64.tar.gz.sha256
-          fail_on_unmatched_files: true
-          draft: false
-          prerelease: false
-
   build-mobile-android:
     name: "Android: Build Hoxi Remote APK & Release"
     runs-on: ubuntu-latest
@@ -244,6 +24,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
 
       - name: Check if mobile/ exists in this repository
         id: check_mobile

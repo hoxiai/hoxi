@@ -32,7 +32,7 @@ bundle version fields use the embedded build version. The declared minimum macOS
 is at least 13.0 and is raised if the main executable (or optional bundled sidecar)
 requires a newer version. This release path verifies both arm64 and amd64 artifacts.
 
-For Windows builds (`build-windows.ps1` / `.github/workflows/release-desktop.yml`),
+For Windows builds (`build-windows.ps1` / `.github/workflows/release-cross-platform.yml`),
 the release pipeline builds `windows/amd64` (and `windows/arm64` when configured)
 with the built-in Go Native Agent Engine and embedded pure-Go SQLite
 (`internal/sqlitecli`) without requiring external `opencode.exe` or `sqlite3.exe`
@@ -81,6 +81,13 @@ Configure these GitHub Actions repository secrets before pushing a release tag:
 - `APPLE_API_KEY`: raw App Store Connect `AuthKey_*.p8` contents.
 - `APPLE_API_KEY_ID`: App Store Connect API key ID.
 - `APPLE_API_ISSUER`: App Store Connect issuer UUID.
+
+When official signed desktop bundles are built in a private repository and published to a separate public release repository (for example, `hoxiai/hoxi`), configure:
+
+- Repository variable `HOXI_RELEASE_REPO`: target `<owner>/<repo>` for GitHub Release asset uploads (defaults to the current repository when unset).
+- Repository secret `HOXI_PUBLIC_RELEASE_TOKEN`: fine-grained PAT with `Contents: write` on `HOXI_RELEASE_REPO` (required whenever `HOXI_RELEASE_REPO` differs from the build repository).
+
+Public open-source mirror exports omit desktop release jobs and only keep the `build-mobile-android` (`Hoxi Remote` APK) release job so pushing a `v*` tag to the public mirror never overwrites official signed desktop artifacts.
 
 Signing and notarization are mandatory on this path. The temporary signing
 keychain is added to the runner's search list and deleted after the job, including

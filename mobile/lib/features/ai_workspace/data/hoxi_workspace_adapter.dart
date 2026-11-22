@@ -485,6 +485,8 @@ class HoxiWorkspaceAdapter {
   static Map<String, String>? _buildPromptModelPayload(String runtime, String rawModelId) =>
       _HoxiSessionTurnParsing.buildPromptModelPayload(runtime, rawModelId);
 
+  String? hoxiSessionIdFor(int sessionId) => _sessionsById[sessionId]?.hoxiId;
+
   Future<Map<String, dynamic>> uploadAttachment({
     required int sessionId, required String filename,
     required String mime, required String dataUrl,
@@ -493,6 +495,19 @@ class HoxiWorkspaceAdapter {
     return _catalogAdapter.uploadAttachment(
       sessionId: ref.hoxiId, directory: ref.directory,
       filename: filename, mime: mime, dataUrl: dataUrl,
+    );
+  }
+
+  Future<Map<String, dynamic>> uploadDocumentAttachment({
+    required int sessionId, required String filename,
+    required String mime, required List<int> bytes,
+    bool useJsonEnvelope = false,
+  }) async {
+    final ref = await _resolveSessionRef(sessionId);
+    return _catalogAdapter.uploadDocumentAttachment(
+      sessionId: ref.hoxiId, directory: ref.directory,
+      filename: filename, mime: mime, bytes: bytes,
+      useJsonEnvelope: useJsonEnvelope,
     );
   }
 
@@ -685,6 +700,11 @@ class HoxiWorkspaceAdapter {
   Future<CodeSessionFile> getSessionFile(int sessionId, String path) async {
     final ref = await _resolveSessionRef(sessionId);
     return _gitAdapter.getSessionFile(ref.toTarget(), path);
+  }
+
+  Future<({List<int> bytes, String filename})> downloadSessionFileBytes(int sessionId, String path) async {
+    final ref = await _resolveSessionRef(sessionId);
+    return _gitAdapter.downloadSessionFileBytes(ref.toTarget(), path);
   }
 
   Future<CodeSessionFile> saveSessionFile({

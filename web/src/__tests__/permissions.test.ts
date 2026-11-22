@@ -8,6 +8,7 @@ import { hoxiAPI, type ApprovalPolicy } from "../services/api";
 import type { PermissionRequest } from "../services/sse-types";
 import {
   approvalPolicy,
+  explainPermissionRequest,
   grantClassLabel,
   grantableClasses,
   handleIncomingPermissionRequest,
@@ -402,6 +403,54 @@ describe("session kind grant", () => {
     assertEqual(isFileGrantClass("dir-delete"), false);
     const label = grantClassLabel(`file:${path}`);
     assertEqual(label.includes(path) && !label.includes("file:"), true);
+    assertEqual(grantClassLabel("inline-script").includes("Python/Node"), true);
+  });
+
+  it("explains why a permission request triggered confirmation without leaking secrets", () => {
+    const bash = (cmd: string) => ({ permission: "bash", patterns: [cmd], metadata: { command: cmd } });
+    const secret = explainPermissionRequest(bash("cat /Users/u/app/.env.local"));
+    assertEqual(secret.code, "secret_read");
+    assertEqual(secret.severity, "danger");
+    assertEqual(secret.detail, undefined);
+
+    const editProtected = explainPermissionRequest({
+      permission: "edit",
+      patterns: [".git/info/exclude"],
+      metadata: { filepath: "/repo/.git/info/exclude" },
+    });
+    assertEqual(editProtected.code, "protected_path");
+    assertEqual(editProtected.severity, "danger");
+
+    const killProc = explainPermissionRequest(bash("# hoxi:unsandboxed\nkill 54095"));
+    assertEqual(killProc.code, "privilege_or_process");
+    assertEqual(killProc.detail, "kill");
+
+    const unsandboxedOnly = explainPermissionRequest(bash("# hoxi:unsandboxed\nfor i in $(seq 1 5); do sleep 1; done"));
+    assertEqual(unsandboxedOnly.code, "unsandboxed");
+    assertEqual(unsandboxedOnly.severity, "warn");
+
+    const inlinePy = explainPermissionRequest(
+      bash("python3 - <<'PY'\nimport urllib.request\nprint(urllib.request.Request('https://example.com'))\nPY")
+    );
+    assertEqual(inlinePy.code, "inline_script");
+    assertEqual(inlinePy.detail, "python");
+
+    const inlineNode = explainPermissionRequest(
+      bash(`node -e 'require("fs").writeFileSync("out.txt", "x")'`)
+    );
+    assertEqual(inlineNode.code, "inline_script");
+    assertEqual(inlineNode.detail, "node");
+
+    const opaqueShell = explainPermissionRequest(bash('cat "$KUBECONFIG"'));
+    assertEqual(opaqueShell.code, "opaque_shell");
+
+    const modeOnly = explainPermissionRequest(bash('git commit -m "fix: rm -rf false positive"'));
+    assertEqual(modeOnly.code, "mode_policy");
+    assertEqual(modeOnly.severity, "info");
+
+    const gitOut = explainPermissionRequest(bash("git log --output=.git/hooks/post-checkout"));
+    assertEqual(gitOut.code, "protected_path");
+    assertEqual(gitOut.severity, "danger");
   });
 
   it("sends grantClass only together with a one-time approval", async () => {

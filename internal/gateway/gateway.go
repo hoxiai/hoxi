@@ -85,10 +85,11 @@ type Gateway struct {
 	updateGateState
 	engineGateState
 	nativeHostState
-	devPulse       *devpulse.Service
-	devPulseOnce   sync.Once
-	requestLog     requestLogCache
-	storageCleanMu sync.Mutex
+	devPulse           *devpulse.Service
+	devPulseOnce       sync.Once
+	requestLog         requestLogCache
+	workPkgCreateCache workPackageSessionCreateCache
+	storageCleanMu     sync.Mutex
 }
 
 func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statusbar.Tracker) *Gateway {
@@ -488,6 +489,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (g *Gateway) registerRoutes(distFS fs.FS) {
 	g.mux.HandleFunc(workAppRegistryPath, g.handleWorkAppRegistryEntry)
+	g.mux.HandleFunc(workAppOverviewPath, g.handleWorkAppOverview)
 	g.mux.HandleFunc(workPackageSessionsPrefix, g.handleWorkPackageSessions)
 	diagnosticHandler := diagnostics.Handler()
 	g.mux.Handle("/api/hoxi/diagnostics", diagnosticHandler)

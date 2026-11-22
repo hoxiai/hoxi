@@ -4,7 +4,23 @@
 import { DATA_ARG_INTERPRETERS } from "./command-data-args.js";
 import { isSecretPath } from "./external-path-risk.js";
 import { unwrapCommandPrefixes as unwrapPrefixes } from "./command-wrappers.js";
+import {
+  commandRebindsTMPDIR,
+  containsMktempPlaceholder,
+  isFilterFlagBraceList,
+  isHarmlessSet,
+  isPathBraceList,
+  isSafeMktempSegment,
+  isValueClassChecksum,
+  isValueClassGofmt,
+  isValueClassRealpath,
+  mktempPlaceholderPath,
+  mktempWordSuffixIsSafe,
+  parseSafeMktempTrapSegment,
+} from "./shell-idioms.js";
 import { containsFor, expandLiteralForLoops, forLoopRanges, isSafeCurlOutputTarget, isValueClassCurl, isValueClassSystem, isValueClassWc, normalizeNumericForHeaders } from "./shell-loops.js";
+
+export { isHarmlessSet };
 
 export const CMD_SUBST_VAR = "__hoxi_cmdsub__";
 export const MAX_SUBSHELL_DEPTH = 2;
@@ -13,8 +29,6 @@ const PIPESTATUS_SUBSCRIPT_RE = /^(?:pipestatus|PIPESTATUS)\[\d+\]$/;
 const GIT_AT_BRACE_RE = /^[A-Za-z0-9_]+$/;
 const GIT_PEEL_BRACE_RE = /^(?:commit|tree|blob|tag|object)$/;
 const PATH_PREPEND_EXPORT_RE = /^export[ \t]+PATH=("?)([A-Za-z0-9_./:$~{}-]+)("?)$/;
-const FILTER_FLAG_PREFIX_RE = /^--(?:exclude-dir|exclude|include)=$/;
-const BRACE_FILTER_ITEM_RE = /^[A-Za-z0-9_.*-]+$/;
 const PARAM_SENSITIVE = new Set(["git", "find", "rm", "rmdir", "unlink", "curl", "wget", "cp", "mv"]);
 const LOOP_VAR_REBINDERS = new Set(["declare", "local", "typeset", "readonly", "mapfile", "readarray", "let", "unset", "export"]);
 const SHELL_KEYWORDS = new Set(["while", "until", "do", "done", "if", "then", "else", "elif", "fi", "!"]);
@@ -37,21 +51,7 @@ export function skipSafeBraceSpan(s, i) {
   if (s[i - 1] === "$") return braceVarName(body) ? end : -1;
   if (s[i - 1] === "@" && GIT_AT_BRACE_RE.test(body)) return end;
   if (s[i - 1] === "^" && GIT_PEEL_BRACE_RE.test(body)) return end; // `v1^{commit}` peels a git ref
-  return isFilterFlagBraceList(s, i, end) ? end : -1;
-}
-
-// A literal brace list that is the whole value of a filter flag:
-// `--exclude-dir={node_modules,dist,.git}` repeats the flag per item. Items
-// naming a secret file are refused, as the expanded `--include=.env` would be.
-// Mirrors isFilterFlagBraceList in internal/runner/opaque_loops.go.
-function isFilterFlagBraceList(s, open, close) {
-  let start = open;
-  while (start > 0 && !isBoundary(s[start - 1])) start--;
-  if (!FILTER_FLAG_PREFIX_RE.test(s.slice(start, open))) return false;
-  if (close + 1 < s.length && !isBoundary(s[close + 1])) return false;
-  const items = s.slice(open + 1, close).split(",");
-  if (items.length < 2) return false;
-  return items.every((item) => BRACE_FILTER_ITEM_RE.test(item) && !item.toLowerCase().startsWith(".en") && !isSecretPath(item));
+  return isFilterFlagBraceList(s, i, end) || isPathBraceList(s, i, end) ? end : -1;
 }
 
 export const READ_ONLY_DATA_TOOLS = new Set(["rg", "grep", "egrep", "fgrep", "cat", "head", "tail", "wc", "ls", "stat",
@@ -367,17 +367,25 @@ function pathSecret(p) {
   return Boolean(judge.isSecret(p));
 }
 
-function parseConstValue(raw) {
+function parseConstValue(raw, allowMktemp, mktempState, segStart) {
   raw = raw.trim();
   if (!raw) return null;
-  if (raw.startsWith("$(") && raw.endsWith(")") && processSubstitutionEnd(raw, 2) === raw.length - 1) {
-    const inner = raw.slice(2, -1);
+  let subRaw = raw;
+  if (subRaw.length >= 5 && subRaw.startsWith('"') && subRaw.endsWith('"') && subRaw[1] === "$" && subRaw[2] === "(") {
+    subRaw = subRaw.slice(1, -1);
+  }
+  if (subRaw.startsWith("$(") && subRaw.endsWith(")") && processSubstitutionEnd(subRaw, 2) === subRaw.length - 1) {
+    const inner = subRaw.slice(2, -1);
+    if (allowMktemp && isSafeMktempSegment(inner, { stripShellKeywords, shellWords: shellWordsOf, unwrapCommandPrefixes })) {
+      const idx = mktempState.idx++;
+      return { valueSub: false, mktemp: true, assignedAt: segStart, inner, text: mktempPlaceholderPath(idx), secret: false };
+    }
     if (!isValueClassSegment(inner) || judge.opaqueCore(inner)) return null;
-    return { valueSub: true, inner, text: "", secret: false };
+    return { valueSub: true, mktemp: false, assignedAt: segStart, inner, text: "", secret: false };
   }
   const val = unquoteConst(raw);
   if (val === null || constLiteralBad(val)) return null;
-  return { valueSub: false, inner: "", text: val, secret: pathSecret(val) };
+  return { valueSub: false, mktemp: false, assignedAt: segStart, inner: "", text: val, secret: pathSecret(val) };
 }
 
 function shellWordsOf(s) {
@@ -446,6 +454,8 @@ function constBindings(command, segs) {
   const invalid = new Set();
   const loops = forLoopRanges(command);
   const subshells = findSubshellSpans(command) || [];
+  const allowMktemp = !commandRebindsTMPDIR(command, segs, { forLoopVar, rebindNames });
+  const mktempState = { idx: 0 };
   const poison = (name) => {
     if (!name) return;
     invalid.add(name);
@@ -477,13 +487,13 @@ function constBindings(command, segs) {
     let raw = assign.raw;
     if (raw.includes("$") && bound.size > 0) {
       const litBound = new Map();
-      for (const [k, v] of bound.entries()) if (!v.valueSub && !v.secret) litBound.set(k, v);
+      for (const [k, v] of bound.entries()) if (!v.valueSub && !v.mktemp && !v.secret) litBound.set(k, v);
       if (litBound.size > 0) {
         const sub = substituteVars(raw, litBound);
         if (sub !== null) raw = sub;
       }
     }
-    const val = parseConstValue(raw);
+    const val = parseConstValue(raw, allowMktemp, mktempState, seg.start);
     if (!val) {
       poison(assign.name);
       continue;
@@ -599,6 +609,7 @@ export function substituteVars(s, vars) {
       if (!got || got.fail) return null;
       if (got.name && vars.has(got.name)) {
         const v = vars.get(got.name);
+        if (v.mktemp && !mktempWordSuffixIsSafe(s, got.next, quote)) return null;
         writeRaw(v.valueSub ? `$${CMD_SUBST_VAR}` : v.text);
         i = got.next - 1;
         continue;
@@ -622,16 +633,31 @@ export function substituteVars(s, vars) {
 
 function replaceValueSubAssignments(command, segs, bound) {
   if (bound.size === 0) return command;
+  let hasMktemp = false;
+  for (const v of bound.values()) {
+    if (v.mktemp) {
+      hasMktemp = true;
+      break;
+    }
+  }
   let out = "";
   let prev = 0;
   for (const seg of segs) {
-    const assign = pureAssignment(command.slice(seg.start, seg.end).trim());
+    const text = command.slice(seg.start, seg.end).trim();
+    const assign = pureAssignment(text);
     const v = assign ? bound.get(assign.name) : null;
-    if (!assign || !v) continue;
     let repl = "";
-    if (v.valueSub) repl = v.inner;
-    else if (v.text.includes("$")) repl = ":";
-    else continue;
+    if (assign && v) {
+      if (v.valueSub || v.mktemp) repl = v.inner;
+      else if (v.text.includes("$")) repl = ":";
+      else continue;
+    } else if (hasMktemp && seg.before !== "p" && seg.next !== "p") {
+      const trapRepl = parseSafeMktempTrapSegment(text, seg.start, bound);
+      if (!trapRepl) continue;
+      repl = trapRepl;
+    } else {
+      continue;
+    }
     out += command.slice(prev, seg.start) + repl;
     prev = seg.end;
   }
@@ -640,7 +666,7 @@ function replaceValueSubAssignments(command, segs, bound) {
 
 export function concretizeLiterals(command) {
   command = String(command ?? "").trim();
-  if (!command || (!command.includes("=") && !containsFor(command))) return { text: command, status: "noop" };
+  if (!command || containsMktempPlaceholder(command) || (!command.includes("=") && !containsFor(command))) return { text: command, status: "noop" };
   const original = command;
   command = normalizeNumericForHeaders(command);
   const segs = splitConstSegments(command);
@@ -720,6 +746,9 @@ export function isValueClassSegment(seg) {
     if (args.length === 2 && args[0] === "branch" && args[1] === "--show-current") return true;
     return ["rev-parse", "write-tree", "merge-base", "symbolic-ref", "describe", "hash-object"].includes(args[0]);
   }
+  if (base === "gofmt") return isValueClassGofmt(args);
+  if (base === "realpath") return isValueClassRealpath(args);
+  if (["md5", "shasum", "sha256sum", "md5sum"].includes(base)) return isValueClassChecksum(base, args);
   return false;
 }
 
@@ -754,14 +783,4 @@ export function commandSubsAreValueClass(s) {
     }
   }
   return found;
-}
-
-export function isHarmlessSet(words) {
-  if (!words || words.length < 2 || baseName(words[0]) !== "set") return false;
-  const args = words.slice(1);
-  if (args.length === 2 && (args[0] === "-o" || args[0] === "+o")) return ["pipefail", "errexit", "xtrace"].includes(args[1]);
-  if (args.length !== 1) return false;
-  const flag = args[0];
-  if (flag.length < 2 || (flag[0] !== "-" && flag[0] !== "+") || flag.startsWith("--")) return false;
-  return [...flag.slice(1)].every((c) => c === "e" || c === "x");
 }

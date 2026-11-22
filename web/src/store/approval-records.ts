@@ -43,6 +43,8 @@ export function grantClassLabel(cls: string): string {
       return t("approval.grantClassDirDelete");
     case "git-discard":
       return t("approval.grantClassGitDiscard");
+    case "inline-script":
+      return t("approval.grantClassInlineScript");
     default:
       return cls;
   }

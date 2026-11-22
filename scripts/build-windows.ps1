@@ -4,7 +4,7 @@
   Builds Hoxi for Windows (lean single-binary Hoxi.exe + NSIS setup.exe + portable .zip; optional opencode.exe via -BundleOpenCode or HOXI_BUNDLE_OPENCODE=1).
 .EXAMPLE
   .\scripts\build-windows.ps1
-  .\scripts\build-windows.ps1 -Version 0.7.2
+  .\scripts\build-windows.ps1 -Version 0.7.3
   .\scripts\build-windows.ps1 -Arch arm64
   .\scripts\build-windows.ps1 -BundleOpenCode
 #>
@@ -156,6 +156,10 @@ try {
             $useLines += "`t`"$GoWorkGoDir/$($modDir.Name)`""
           }
           $goWorkContent = "go 1.25.0`n`nuse (`n" + ($useLines -join "`n") + "`n)`n"
+          if ($GoWorkGoDir -ne "./work/go") {
+            # Override member go.mod relative host replace when Work is checked out outside ./work.
+            $goWorkContent += "`nreplace github.com/hoxiai/hoxi v0.0.0 => .`n"
+          }
           [System.IO.File]::WriteAllText($GoWorkPath, $goWorkContent, (New-Object System.Text.UTF8Encoding($false)))
           $StagedHostFiles += $GoWorkPath
           $StagedHostFiles += $GoWorkSumPath
@@ -166,6 +170,10 @@ try {
               & go work use "$GoWorkGoDir/$($modDir.Name)"
               if ($LASTEXITCODE -ne 0) { throw "Failed to register Work module $($modDir.Name) in go.work" }
             }
+          }
+          if ($GoWorkGoDir -ne "./work/go" -and $existingGoWork -notmatch [regex]::Escape("replace github.com/hoxiai/hoxi v0.0.0 => .")) {
+            & go work edit "-replace=github.com/hoxiai/hoxi@v0.0.0=."
+            if ($LASTEXITCODE -ne 0) { throw "Failed to register host module replace in go.work" }
           }
         }
 

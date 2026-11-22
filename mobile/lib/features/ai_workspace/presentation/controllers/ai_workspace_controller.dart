@@ -10,6 +10,7 @@ import '../../../../core/network/network_providers.dart';
 import '../../../../core/storage/active_node_provider.dart';
 import '../../../../core/storage/node_request_guard.dart';
 import '../../../../shared/models/task_entity.dart';
+import '../../../../shared/utils/local_file_bridge.dart';
 import 'ai_workspace_task_sync_bus.dart';
 import '../../data/ai_workspace_repository.dart';
 import '../../data/hoxi_workspace_adapter.dart';
@@ -486,12 +487,14 @@ class AiWorkspaceController extends Notifier<AiWorkspaceState>
     CodeInstructionOptions options = const CodeInstructionOptions(),
     String? imageDataUrl,
     List<String> attachedFiles = const [],
+    List<LocalPickedDocument> localDocuments = const [],
     NodeSkillSelection? skillSelection,
     bool bypassQueue = false,
   }) async {
     final nodeRequest = NodeRequestGuard(_repo);
     final rawText = text.trim();
     final hasImage = imageDataUrl != null && imageDataUrl.trim().isNotEmpty;
+    final hasDocuments = localDocuments.isNotEmpty;
     final effectiveSkill = skillSelection ?? state.selectedSkill;
     final fileRefs = attachedFiles
         .map((f) => f.trim())
@@ -505,13 +508,14 @@ class AiWorkspaceController extends Notifier<AiWorkspaceState>
       state = state.copyWith(errorMessage: '请先创建或选择一个开发会话');
       return false;
     }
-    if (content.isEmpty && !hasImage && effectiveSkill == null) return false;
+    if (content.isEmpty && !hasImage && !hasDocuments && effectiveSkill == null) return false;
     if (!bypassQueue && (state.isSending || state.isAiThinking)) {
       enqueueFollowUpPrompt(
         sessionId: session.id,
         text: rawText,
         imageDataUrl: hasImage ? imageDataUrl.trim() : null,
         attachedFiles: attachedFiles,
+        localDocuments: localDocuments,
         skillSelection: effectiveSkill,
         options: options,
       );
@@ -519,9 +523,14 @@ class AiWorkspaceController extends Notifier<AiWorkspaceState>
     }
     if (state.isSending) return false;
     final now = DateTime.now();
+    final docTags = localDocuments.map((d) => '[Attachment: ${d.name}]').join('\n');
+    final bubbleText = [
+      if (content.isNotEmpty) content,
+      if (docTags.isNotEmpty) docTags,
+    ].join('\n');
     final userMessage = ChatMessage(
       id: 'local-${now.microsecondsSinceEpoch}',
-      text: content.isNotEmpty ? content : '[@Skill: ${effectiveSkill?.name ?? ""}]',
+      text: bubbleText.isNotEmpty ? bubbleText : '[@Skill: ${effectiveSkill?.name ?? ""}]',
       isUser: true, timestamp: now,
       imageDataUrl: hasImage ? imageDataUrl.trim() : null,
     );
@@ -553,7 +562,7 @@ class AiWorkspaceController extends Notifier<AiWorkspaceState>
     _notifyTaskCenterSession(runningSession, currentStage: 'running');
     _connectConversationStream(session.id);
     try {
-      List<Map<String, dynamic>>? attachments;
+      final attachments = <Map<String, dynamic>>[];
       if (hasImage) {
         final commaIdx = imageDataUrl.indexOf(',');
         final header = commaIdx > 5 ? imageDataUrl.substring(5, commaIdx) : 'image/jpeg;base64';
@@ -564,12 +573,23 @@ class AiWorkspaceController extends Notifier<AiWorkspaceState>
           filename: 'image_${now.millisecondsSinceEpoch}.$ext',
           mime: mime, dataUrl: imageDataUrl,
         );
-        attachments = [uploaded];
+        attachments.add(uploaded);
+      }
+      final useJsonEnvelope = (nodeRequest.node.e2eeKey ?? '').trim().isNotEmpty;
+      for (final doc in localDocuments) {
+        final uploaded = await nodeRequest.repository.uploadDocumentAttachment(
+          sessionId: session.id,
+          filename: doc.name,
+          mime: doc.mime,
+          bytes: doc.bytes,
+          useJsonEnvelope: useJsonEnvelope,
+        );
+        attachments.add(uploaded);
       }
       final result = await nodeRequest.repository.sendAiCommand(
         sessionId: session.id, command: content,
         autoPreview: options.autoPreview, requireApproval: options.requireApproval,
-        attachments: attachments,
+        attachments: attachments.isEmpty ? null : attachments,
         skillSelection: effectiveSkill,
       );
       if (!ref.mounted || !nodeRequest.isCurrent(_repo)) return false;

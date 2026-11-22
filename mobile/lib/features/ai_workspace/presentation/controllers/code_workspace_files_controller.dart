@@ -12,6 +12,7 @@ class CodeWorkspaceFilesState {
   final bool truncated;
   final String draftContent;
   final bool isSaving;
+  final bool isExporting;
 
   const CodeWorkspaceFilesState({
     this.isLoading = false,
@@ -22,9 +23,11 @@ class CodeWorkspaceFilesState {
     this.truncated = false,
     this.draftContent = '',
     this.isSaving = false,
+    this.isExporting = false,
   });
 
-  bool get isDirty => openFile != null && draftContent != openFile!.content;
+  bool get isDirty =>
+      openFile != null && !openFile!.isBinary && draftContent != openFile!.content;
 
   CodeWorkspaceFilesState copyWith({
     bool? isLoading,
@@ -35,6 +38,7 @@ class CodeWorkspaceFilesState {
     bool? truncated,
     String? draftContent,
     bool? isSaving,
+    bool? isExporting,
     bool clearError = false,
     bool closeFile = false,
   }) {
@@ -47,6 +51,7 @@ class CodeWorkspaceFilesState {
       truncated: truncated ?? this.truncated,
       draftContent: closeFile ? '' : (draftContent ?? this.draftContent),
       isSaving: isSaving ?? this.isSaving,
+      isExporting: isExporting ?? this.isExporting,
     );
   }
 }
@@ -174,6 +179,25 @@ class CodeWorkspaceFilesController extends ChangeNotifier {
         _state.copyWith(isSaving: false, errorMessage: error.toString()),
       );
       return false;
+    }
+  }
+
+  Future<({List<int> bytes, String filename})> downloadFileBytes(
+    String path,
+  ) async {
+    _setState(_state.copyWith(isExporting: true, clearError: true));
+    try {
+      final result = await _repository.downloadSessionFileBytes(
+        sessionId,
+        path,
+      );
+      _setState(_state.copyWith(isExporting: false));
+      return result;
+    } catch (error) {
+      _setState(
+        _state.copyWith(isExporting: false, errorMessage: error.toString()),
+      );
+      rethrow;
     }
   }
 

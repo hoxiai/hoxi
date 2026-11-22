@@ -182,17 +182,82 @@ func isAutoControllableCommand(command, dir string) bool {
 // Recoverable work comes in classes. Full trust mode accepts every class;
 // a session grant ("此类都允许") only ever covers the grantable ones.
 const (
-	recoverClassTempDelete = "temp-delete" // named entries under /tmp or $TMPDIR
-	recoverClassDirDelete  = "dir-delete"  // non-protected paths in the session directory
-	recoverClassDirWipe    = "dir-wipe"    // a glob at the session directory root (`rm -rf *`)
-	recoverClassGitDiscard = "git-discard" // git checkout -- / checkout . / restore / clean
-	recoverClassGitReset   = "git-reset"   // git reset --hard moves the branch
-	recoverClassGitClean   = "git-clean"   // git clean deletes untracked (and with -x ignored) files
-	recoverClassChmod      = "chmod"       // recursive or globbed chmod in isolated worktree
-	recoverClassSafeChmod  = "chmod-safe"  // non-recursive safe chmod on concrete workspace/temp files
+	recoverClassTempDelete   = "temp-delete"   // named entries under /tmp or $TMPDIR
+	recoverClassDirDelete    = "dir-delete"    // non-protected paths in the session directory
+	recoverClassDirWipe      = "dir-wipe"      // a glob at the session directory root (`rm -rf *`)
+	recoverClassGitDiscard   = "git-discard"   // git checkout -- / checkout . / restore / clean
+	recoverClassGitReset     = "git-reset"     // git reset --hard moves the branch
+	recoverClassGitClean     = "git-clean"     // git clean deletes untracked (and with -x ignored) files
+	recoverClassChmod        = "chmod"         // recursive or globbed chmod in isolated worktree
+	recoverClassSafeChmod    = "chmod-safe"    // non-recursive safe chmod on concrete workspace/temp files
+	recoverClassInlineScript = "inline-script" // non-destructive inline Python/Node scripts
 )
 
-var sessionGrantableClasses = setOf(recoverClassTempDelete, recoverClassDirDelete, recoverClassGitDiscard)
+var sessionGrantableClasses = setOf(recoverClassTempDelete, recoverClassDirDelete, recoverClassGitDiscard, recoverClassInlineScript)
+
+// isGrantableInlineScriptCommand reports a non-destructive shell command
+// blocked in auto mode solely because its inline Python/Node code is not
+// statically read-only, while full script trust clears it and no secret,
+// publish, privilege, egress, or unsandboxed-opt-out risk is present.
+func isGrantableInlineScriptCommand(command, worktree string) bool {
+	cmd := strings.TrimSpace(unwrapSandboxCommand(command))
+	if cmd == "" || optsOutOfOnDemandSandbox(cmd) || isDestructiveCommand(cmd) {
+		return false
+	}
+	if !isOpaqueShellCommandWith(cmd, worktree, scriptTrustReadOnly) || isOpaqueShellCommandWith(cmd, worktree, scriptTrustFull) {
+		return false
+	}
+	found := false
+	ctx := &unattendedCtx{codeJudge: func(family, code string) string {
+		if family != "python" && family != "python3" && family != "node" {
+			return unattendedCategoryDynamic
+		}
+		found = true
+		return grantableInlineCodeCategory(family, code)
+	}}
+	if cat := unattendedScriptCategory(cmd, 0, ctx); cat != "" {
+		return false
+	}
+	if !found || ((ctx.credRef || ctx.envDump) && ctx.network) {
+		return false
+	}
+	if cat := unattendedCommandCategory(cmd); cat != "" {
+		return false
+	}
+	return true
+}
+
+// grantableInlineScriptRequest reports whether a non-destructive shell request
+// qualifies for the session-scoped `inline-script` class grant. When OpenCode
+// also sends split patterns outside metadata.command, any extra opaque piece
+// must also be a grantable inline script.
+func grantableInlineScriptRequest(item map[string]interface{}, worktree string) bool {
+	if !isControllableShellItem(item) || isDestructivePermissionRequest(item) {
+		return false
+	}
+	candidates := opacityCandidates(item)
+	if len(candidates) == 0 {
+		return false
+	}
+	for _, cmd := range candidates {
+		if !isGrantableInlineScriptCommand(cmd, worktree) {
+			return false
+		}
+	}
+	meta := itemMetadata(item)
+	if whole := strings.TrimSpace(unwrapSandboxCommand(firstString(meta["command"]))); whole != "" {
+		for _, piece := range commandCandidates(item) {
+			piece = strings.TrimSpace(piece)
+			if piece == "" || strings.Contains(whole, piece) {
+				continue
+			}
+			if isOpaqueShellCommandWith(piece, worktree, scriptTrustReadOnly) && !isGrantableInlineScriptCommand(piece, worktree) {
+				return false
+			}
+		}
+	}
+	return true
+}
 
 // isRecoverableWorktreeCommand accepts a command only when every segment is
 // either not destructive at all or one of the recoverable forms below. An
@@ -219,7 +284,7 @@ func recoverableCommandClassesWithTrust(command, worktree string, classes map[st
 // delete written as `D=/tmp/x; rm -rf "$D"` is visible. A secret substitution
 // or an opaque body fails closed.
 func recoverableCommandClassesAt(command, worktree string, classes map[string]bool, trust scriptTrust, depth int) bool {
-	if depth > maxSubshellDepth {
+	if depth > maxSubshellDepth || (depth == 0 && containsMktempPlaceholder(command)) {
 		return false
 	}
 	command = joinLineContinuations(normalizeWindowsDrivePaths(command))
@@ -240,6 +305,7 @@ func recoverableCommandClassesAt(command, worktree string, classes map[string]bo
 		}
 	}
 	command = eraseSubshells(command)
+	rawErased := command
 	// Only a fully applied substitution is judged in place of the original.
 	// A rejection (a PATH export, a reassignment) keeps the original text,
 	// which still fails closed on `$` inside a destructive segment. A secret
@@ -253,7 +319,7 @@ func recoverableCommandClassesAt(command, worktree string, classes map[string]bo
 		return false
 	}
 	// A `# hoxi-stop:` marker line is a comment segment and passes as non-destructive.
-	if hasShellGrouping(command) || isOpaqueShellCommandWith(command, worktree, trust) {
+	if hasShellGrouping(command) || isOpaqueShellCommandWith(rawErased, worktree, trust) {
 		return false
 	}
 	segments := splitCommandChain(command)
@@ -479,8 +545,11 @@ func trustedTempRoots() []string {
 // isTempPathArg accepts an absolute path strictly below a temp root. The root
 // itself, and globs that start a segment there (`/tmp/*`), keep asking.
 func isTempPathArg(arg string) bool {
-	if !isAbsOrRootedPath(arg) || strings.HasPrefix(arg, "~") || strings.ContainsAny(arg, "$[") {
+	if !isAbsOrRootedPath(arg) || strings.HasPrefix(arg, "~") || strings.ContainsAny(arg, "$[{}") {
 		return false
+	}
+	if containsMktempPlaceholder(arg) {
+		return isExactMktempPlaceholderPath(arg)
 	}
 	for _, part := range strings.Split(filepath.ToSlash(arg), "/") {
 		if part == ".." || (part != "" && strings.ContainsAny(part[:1], "*?.") && strings.ContainsAny(part, "*?")) {
@@ -519,7 +588,7 @@ func samePath(a, b string) bool {
 // Globs are allowed except dot-globs (which can match `..`); the worktree
 // root itself may only be reached through a glob (`rm -rf *`).
 func isWorktreePathArg(arg, worktree string) bool {
-	if arg == "" || strings.HasPrefix(arg, "-") || strings.HasPrefix(arg, "~") || strings.ContainsAny(arg, "$[") {
+	if arg == "" || strings.HasPrefix(arg, "-") || strings.HasPrefix(arg, "~") || strings.ContainsAny(arg, "$[{}") {
 		return false
 	}
 	for _, part := range strings.Split(filepath.ToSlash(arg), "/") {

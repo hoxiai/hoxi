@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import '../../../core/models/node_skill.dart';
+import '../../../shared/utils/local_file_bridge.dart';
 import 'ai_dev_session.dart';
 import 'code_instruction_options.dart';
 
@@ -403,6 +404,7 @@ class CodeQueuedPromptItem {
   final String text;
   final String? imageDataUrl;
   final List<String> attachedFiles;
+  final List<LocalPickedDocument> localDocuments;
   final NodeSkillSelection? skillSelection;
   final CodeInstructionOptions options;
   final DateTime createdAt;
@@ -413,6 +415,7 @@ class CodeQueuedPromptItem {
     required this.text,
     this.imageDataUrl,
     this.attachedFiles = const [],
+    this.localDocuments = const [],
     this.skillSelection,
     this.options = const CodeInstructionOptions(),
     required this.createdAt,

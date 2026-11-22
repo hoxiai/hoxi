@@ -530,6 +530,84 @@ abstract class AppLocalizations {
   /// **'All'**
   String get containerFilterAll;
 
+  /// No description provided for @chatActionUploadDocument.
+  ///
+  /// In en, this message translates to:
+  /// **'Upload Device File (PDF / Excel / Doc)'**
+  String get chatActionUploadDocument;
+
+  /// No description provided for @chatActionUploadDocumentHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Pick a spreadsheet, PDF, Word, or data file from this device'**
+  String get chatActionUploadDocumentHint;
+
+  /// No description provided for @codeComposerAttachWorkspaceFile.
+  ///
+  /// In en, this message translates to:
+  /// **'Reference Workspace File (@file)'**
+  String get codeComposerAttachWorkspaceFile;
+
+  /// No description provided for @codeComposerAttachWorkspaceFileHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Select an existing file on the computer as context'**
+  String get codeComposerAttachWorkspaceFileHint;
+
+  /// No description provided for @codeComposerAttachSkill.
+  ///
+  /// In en, this message translates to:
+  /// **'Mount Workspace Skill'**
+  String get codeComposerAttachSkill;
+
+  /// No description provided for @codeComposerAttachSkillHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Apply a specific skill instruction in this turn'**
+  String get codeComposerAttachSkillHint;
+
+  /// No description provided for @chatFileTooLarge.
+  ///
+  /// In en, this message translates to:
+  /// **'File exceeds maximum upload size ({limitMb} MB)'**
+  String chatFileTooLarge(int limitMb);
+
+  /// No description provided for @chatFilePickerUnsupported.
+  ///
+  /// In en, this message translates to:
+  /// **'Document picking is not supported on this device'**
+  String get chatFilePickerUnsupported;
+
+  /// No description provided for @chatFileReadFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not read file: {error}'**
+  String chatFileReadFailed(String error);
+
+  /// No description provided for @codeWsFilesExportShare.
+  ///
+  /// In en, this message translates to:
+  /// **'Export / Share File'**
+  String get codeWsFilesExportShare;
+
+  /// No description provided for @codeWsFilesExportUnsupported.
+  ///
+  /// In en, this message translates to:
+  /// **'File sharing is not supported on this device'**
+  String get codeWsFilesExportUnsupported;
+
+  /// No description provided for @codeWsFilesExportFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not export file: {error}'**
+  String codeWsFilesExportFailed(String error);
+
+  /// No description provided for @codeWsFilesBinaryPreviewHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Binary file preview is limited on mobile. Tap Export / Share above to save or open in another app.'**
+  String get codeWsFilesBinaryPreviewHint;
+
   /// No description provided for @nodeLinkDevicesSection.
   ///
   /// In en, this message translates to:

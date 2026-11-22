@@ -63,6 +63,9 @@ func grantableRequestClasses(item map[string]interface{}, dir string) []string {
 	if external, _ := meta["externalDirectory"].(bool); external {
 		return nil
 	}
+	if grantableInlineScriptRequest(item, dir) {
+		return []string{recoverClassInlineScript}
+	}
 	candidates, ok := recoverableCandidates(item, dir)
 	if !ok {
 		return nil

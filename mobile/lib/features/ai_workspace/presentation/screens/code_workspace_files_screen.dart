@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -6,8 +8,10 @@ import '../../models/code_workspace_file.dart';
 import '../controllers/ai_workspace_controller.dart';
 import '../controllers/code_workspace_files_controller.dart';
 import '../widgets/code_workspace_editor.dart';
+import '../widgets/workspace_binary_file_viewer.dart';
 import '../../../../core/l10n/l10n.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../../../../shared/utils/local_file_bridge.dart';
 
 class CodeWorkspaceFilesScreen extends ConsumerStatefulWidget {
   const CodeWorkspaceFilesScreen({
@@ -93,6 +97,21 @@ class _CodeWorkspaceFilesScreenState
               actions: [
                 if (file != null)
                   IconButton(
+                    key: const ValueKey('workspace_file_appbar_export_btn'),
+                    tooltip: context.l10n.codeWsFilesExportShare,
+                    onPressed: state.isExporting
+                        ? null
+                        : () => _exportOpenFile(context, file),
+                    icon: state.isExporting
+                        ? const SizedBox.square(
+                            dimension: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.ios_share_rounded, size: 20),
+                  ),
+                if (file != null &&
+                    (!file.isBinary || file.extractedText.trim().isNotEmpty))
+                  IconButton(
                     tooltip: context.l10n.codeWsFilesCopy,
                     onPressed: () => _copyFile(context, file),
                     icon: const Icon(Icons.content_copy_rounded),
@@ -125,9 +144,22 @@ class _CodeWorkspaceFilesScreenState
                             : _DirectoryView(
                                 state: state,
                                 onOpen: _controller.openEntry,
+                                onExportEntry: (entry) =>
+                                    _exportPath(context, entry.path),
                                 onOpenParent: _controller.openParent,
                                 onRefresh: _controller.refresh,
                               ))
+                      : file.isBinary
+                      ? WorkspaceBinaryFileViewer(
+                          key: ValueKey('bin_${file.path}:${file.size}'),
+                          file: file,
+                          isExporting: state.isExporting,
+                          onExport: () => _exportOpenFile(context, file),
+                          onCopyExtractedText:
+                              file.extractedText.trim().isNotEmpty
+                              ? () => _copyFile(context, file)
+                              : null,
+                        )
                       : CodeWorkspaceEditor(
                           key: ValueKey('${file.path}:${file.version}'),
                           file: file,
@@ -146,14 +178,99 @@ class _CodeWorkspaceFilesScreenState
     );
   }
 
-  Future<void> _copyFile(BuildContext context, CodeSessionFile _) async {
-    await Clipboard.setData(
-      ClipboardData(text: _controller.state.draftContent),
-    );
+  Future<void> _copyFile(BuildContext context, CodeSessionFile file) async {
+    final text = file.isBinary
+        ? file.extractedText
+        : _controller.state.draftContent;
+    await Clipboard.setData(ClipboardData(text: text));
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(context.l10n.codeWsFilesCopied)),
     );
+  }
+
+  Future<void> _exportOpenFile(
+    BuildContext context,
+    CodeSessionFile file,
+  ) async {
+    if (!file.isBinary) {
+      final filename = file.path.contains('/')
+          ? file.path.split('/').last
+          : file.path;
+      final bytes = Uint8List.fromList(
+        utf8.encode(_controller.state.draftContent),
+      );
+      await _shareBytes(
+        context,
+        filename: filename,
+        bytes: bytes,
+        mime: file.mimeType,
+      );
+      return;
+    }
+    final inlineBytes = file.decodeBase64Bytes();
+    if (inlineBytes != null &&
+        inlineBytes.isNotEmpty &&
+        (file.size <= 0 || inlineBytes.length == file.size)) {
+      final filename = file.path.contains('/')
+          ? file.path.split('/').last
+          : file.path;
+      await _shareBytes(
+        context,
+        filename: filename,
+        bytes: inlineBytes,
+        mime: file.mimeType,
+      );
+      return;
+    }
+    await _exportPath(context, file.path, mimeHint: file.mimeType);
+  }
+
+  Future<void> _exportPath(
+    BuildContext context,
+    String path, {
+    String mimeHint = '',
+  }) async {
+    try {
+      final downloaded = await _controller.downloadFileBytes(path);
+      if (!context.mounted) return;
+      await _shareBytes(
+        context,
+        filename: downloaded.filename,
+        bytes: Uint8List.fromList(downloaded.bytes),
+        mime: mimeHint,
+      );
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(context.l10n.codeWsFilesExportFailed(error.toString())),
+        ),
+      );
+    }
+  }
+
+  Future<void> _shareBytes(
+    BuildContext context, {
+    required String filename,
+    required Uint8List bytes,
+    String mime = '',
+  }) async {
+    try {
+      await const LocalFileBridge().shareFile(
+        filename: filename,
+        bytes: bytes,
+        mime: mime,
+      );
+    } on LocalFileBridgeException catch (e) {
+      if (!context.mounted) return;
+      final msg = e.failure == LocalFileBridgeFailure.unsupported
+          ? context.l10n.codeWsFilesExportUnsupported
+          : context.l10n.codeWsFilesExportFailed(
+              e.message.isNotEmpty ? e.message : e.failure.name,
+            );
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    }
   }
 
   Future<void> _save() async {
@@ -296,12 +413,14 @@ class _DirectoryView extends StatelessWidget {
   const _DirectoryView({
     required this.state,
     required this.onOpen,
+    required this.onExportEntry,
     required this.onOpenParent,
     required this.onRefresh,
   });
 
   final CodeWorkspaceFilesState state;
   final ValueChanged<CodeStructureEntry> onOpen;
+  final ValueChanged<CodeStructureEntry> onExportEntry;
   final VoidCallback onOpenParent;
   final Future<void> Function() onRefresh;
 
@@ -350,12 +469,15 @@ class _DirectoryView extends StatelessWidget {
                 return _FileRow(
                   icon: entry.isDirectory
                       ? Icons.folder_rounded
-                      : _iconForExtension(entry.extension),
+                      : _iconForExtension(entry.extension.toLowerCase()),
                   title: entry.name,
                   subtitle: entry.isDirectory
                       ? null
                       : entry.extension.toUpperCase(),
                   onTap: () => onOpen(entry),
+                  onExport: entry.isDirectory || state.isExporting
+                      ? null
+                      : () => onExportEntry(entry),
                 );
               },
             ),
@@ -367,9 +489,14 @@ class _DirectoryView extends StatelessWidget {
 
   IconData _iconForExtension(String extension) {
     return switch (extension) {
-      'md' => Icons.article_outlined,
+      'xlsx' || 'xls' || 'csv' || 'tsv' || 'ods' => Icons.table_chart_rounded,
+      'pdf' => Icons.picture_as_pdf_rounded,
+      'docx' || 'doc' || 'rtf' || 'md' => Icons.article_outlined,
+      'pptx' || 'ppt' => Icons.slideshow_rounded,
       'json' || 'yaml' || 'yml' => Icons.data_object_rounded,
       'png' || 'jpg' || 'jpeg' || 'gif' || 'webp' => Icons.image_outlined,
+      'mp4' || 'mov' || 'webm' => Icons.movie_outlined,
+      'zip' || 'tar' || 'gz' => Icons.folder_zip_outlined,
       _ => Icons.description_outlined,
     };
   }
@@ -421,12 +548,14 @@ class _FileRow extends StatelessWidget {
     required this.title,
     required this.onTap,
     this.subtitle,
+    this.onExport,
   });
 
   final IconData icon;
   final String title;
   final String? subtitle;
   final VoidCallback onTap;
+  final VoidCallback? onExport;
 
   @override
   Widget build(BuildContext context) {
@@ -440,7 +569,18 @@ class _FileRow extends StatelessWidget {
               subtitle!,
               style: TextStyle(color: AppTheme.textSecondary, fontSize: 12),
             ),
-      trailing: Icon(Icons.chevron_right_rounded, color: AppTheme.textLight),
+      trailing: onExport != null
+          ? IconButton(
+              key: ValueKey('workspace_file_row_export_$title'),
+              tooltip: context.l10n.codeWsFilesExportShare,
+              onPressed: onExport,
+              icon: Icon(
+                Icons.ios_share_rounded,
+                size: 18,
+                color: AppTheme.textSecondary,
+              ),
+            )
+          : Icon(Icons.chevron_right_rounded, color: AppTheme.textLight),
       onTap: onTap,
     );
   }

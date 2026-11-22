@@ -41,7 +41,10 @@ func TestLiteralNarrowing(t *testing.T) {
 		"( ( ( ls ) ) )",
 		"kill $!",
 		"set -f",
-		"set -euo pipefail",
+		"set -a",
+		"set +o noglob",
+		"set -- .env",
+		"set",
 	}
 	for _, cmd := range deny {
 		if !isOpaqueShellCommand(cmd, "") {

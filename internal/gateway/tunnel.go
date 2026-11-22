@@ -103,7 +103,9 @@ var tunnelRoutes = []tunnelRoute{
 	{http.MethodGet, "/api/hoxi/skills/marketplace"},
 	{http.MethodGet, "/api/hoxi/workspaces"},
 	{http.MethodGet, workAppRegistryPath},
+	{http.MethodGet, workAppOverviewPath},
 	{http.MethodGet, workPackageSessionsPattern},
+	{http.MethodPost, workPackageSessionsPattern},
 
 	// Local file reads, confined to workspace folders and session worktrees
 	// for tunnel requests (see tunnelFilePathAllowed). The content routes
@@ -166,7 +168,7 @@ func tunnelRequestAllowed(r *http.Request) bool {
 	if !tunnelRouteAllowed(r.Method, r.URL.Path) {
 		return false
 	}
-	if (r.URL.Path == workAppRegistryPath || strings.HasPrefix(r.URL.Path, workPackageSessionsPrefix)) && r.URL.RawQuery != "" {
+	if (r.URL.Path == workAppRegistryPath || r.URL.Path == workAppOverviewPath || strings.HasPrefix(r.URL.Path, workPackageSessionsPrefix)) && r.URL.RawQuery != "" {
 		return false
 	}
 	if tunnelFileContentRoutes[r.URL.Path] && strings.TrimSpace(r.URL.Query().Get("path")) == "" {

@@ -5,12 +5,13 @@ import '../../../../core/l10n/l10n.dart';
 import '../../../../core/models/node_skill.dart';
 import '../../../../core/models/voice_dictation_port.dart';
 import '../../../../core/theme/app_theme.dart';
-import '../../../../shared/widgets/chat_image_preview.dart';
+import '../../../../shared/utils/local_file_bridge.dart';
 import '../../../../shared/widgets/chat_keyboard_dismiss.dart';
 import '../../../../shared/widgets/stream_text_pacer.dart';
 import '../../models/code_instruction_options.dart';
 import '../../models/code_workspace_file.dart';
 import '../controllers/ai_workspace_controller.dart';
+import 'code_composer_attachments.dart';
 
 class CodeInstructionComposer extends ConsumerWidget {
   const CodeInstructionComposer({
@@ -27,6 +28,9 @@ class CodeInstructionComposer extends ConsumerWidget {
     this.onSelectModel,
     this.pendingImageDataUrl,
     this.onClearPendingImage,
+    this.pendingDocuments = const [],
+    this.onRemovePendingDocument,
+    this.onPickDocument,
     this.attachedFiles = const [],
     this.onRemoveAttachedFile,
     this.selectedSkill,
@@ -52,6 +56,9 @@ class CodeInstructionComposer extends ConsumerWidget {
   final VoidCallback? onSelectModel;
   final String? pendingImageDataUrl;
   final VoidCallback? onClearPendingImage;
+  final List<LocalPickedDocument> pendingDocuments;
+  final ValueChanged<LocalPickedDocument>? onRemovePendingDocument;
+  final VoidCallback? onPickDocument;
   final List<String> attachedFiles;
   final ValueChanged<String>? onRemoveAttachedFile;
   final NodeSkillSelection? selectedSkill;
@@ -87,100 +94,13 @@ class CodeInstructionComposer extends ConsumerWidget {
 
   void _showAttachmentMenu(BuildContext context) {
     if (!enabled) return;
-    dismissChatKeyboard(context);
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: AppTheme.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-      ),
-      builder: (sheetContext) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 36,
-                  height: 4,
-                  margin: const EdgeInsets.only(bottom: 8),
-                  decoration: BoxDecoration(
-                    color: AppTheme.border,
-                    borderRadius: BorderRadius.circular(99),
-                  ),
-                ),
-                if (onPickWorkspaceFile != null)
-                  ListTile(
-                    key: const ValueKey('code_composer_attach_file'),
-                    leading: const Icon(
-                      Icons.description_outlined,
-                      color: AppTheme.primaryBlue,
-                    ),
-                    title: const Text('引用工作区文件 (@文件)'),
-                    subtitle: Text(
-                      '从当前项目选择代码文件作为上下文',
-                      style: TextStyle(
-                        color: AppTheme.textSecondary,
-                        fontSize: 12,
-                      ),
-                    ),
-                    onTap: () {
-                      Navigator.of(sheetContext).pop();
-                      onPickWorkspaceFile?.call();
-                    },
-                  ),
-                if (onPickSkill != null)
-                  ListTile(
-                    key: const ValueKey('code_composer_attach_skill'),
-                    leading: const Icon(
-                      Icons.auto_awesome_outlined,
-                      color: AppTheme.primaryBlue,
-                    ),
-                    title: const Text('挂载工作区技能 (Skill)'),
-                    subtitle: Text(
-                      '在当前会话指令中应用指定 Skill 规范',
-                      style: TextStyle(
-                        color: AppTheme.textSecondary,
-                        fontSize: 12,
-                      ),
-                    ),
-                    onTap: () {
-                      Navigator.of(sheetContext).pop();
-                      onPickSkill?.call();
-                    },
-                  ),
-                if (onPickFromGallery != null)
-                  ListTile(
-                    key: const ValueKey('code_composer_attach_gallery'),
-                    leading: const Icon(
-                      Icons.photo_library_outlined,
-                      color: AppTheme.primaryBlue,
-                    ),
-                    title: Text(context.l10n.chatActionPickGallery),
-                    onTap: () {
-                      Navigator.of(sheetContext).pop();
-                      onPickFromGallery?.call();
-                    },
-                  ),
-                if (onTakePhoto != null)
-                  ListTile(
-                    key: const ValueKey('code_composer_attach_camera'),
-                    leading: const Icon(
-                      Icons.photo_camera_outlined,
-                      color: AppTheme.primaryBlue,
-                    ),
-                    title: Text(context.l10n.chatTooltipCamera),
-                    onTap: () {
-                      Navigator.of(sheetContext).pop();
-                      onTakePhoto?.call();
-                    },
-                  ),
-              ],
-            ),
-          ),
-        );
-      },
+    showCodeComposerAttachmentMenu(
+      context,
+      onPickDocument: onPickDocument,
+      onPickWorkspaceFile: onPickWorkspaceFile,
+      onPickSkill: onPickSkill,
+      onPickFromGallery: onPickFromGallery,
+      onTakePhoto: onTakePhoto,
     );
   }
 
@@ -193,7 +113,10 @@ class CodeInstructionComposer extends ConsumerWidget {
     final hasPendingImage =
         pendingImageDataUrl != null && pendingImageDataUrl!.trim().isNotEmpty;
     final hasAttachments =
-        hasPendingImage || attachedFiles.isNotEmpty || selectedSkill != null;
+        hasPendingImage ||
+        pendingDocuments.isNotEmpty ||
+        attachedFiles.isNotEmpty ||
+        selectedSkill != null;
     final displayModel = modelLabel.trim().isEmpty ? '默认模型' : modelLabel.trim();
     final effortText = reasoningEffort.trim();
 
@@ -227,170 +150,15 @@ class CodeInstructionComposer extends ConsumerWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   if (hasAttachments)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 2, bottom: 6),
-                      child: Wrap(
-                        spacing: 8,
-                        runSpacing: 6,
-                        crossAxisAlignment: WrapCrossAlignment.center,
-                        children: [
-                          if (selectedSkill != null)
-                            Container(
-                              key: const ValueKey(
-                                'code_composer_selected_skill_chip',
-                              ),
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: AppTheme.primaryBlueLight,
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  const Icon(
-                                    Icons.auto_awesome_rounded,
-                                    size: 13,
-                                    color: AppTheme.primaryBlue,
-                                  ),
-                                  const SizedBox(width: 4),
-                                  ConstrainedBox(
-                                    constraints: const BoxConstraints(
-                                      maxWidth: 160,
-                                    ),
-                                    child: Text(
-                                      '技能: ${selectedSkill!.name}',
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                        color: AppTheme.primaryBlue,
-                                        fontSize: 11.5,
-                                        fontWeight: FontWeight.w600,
-                                        fontFamily: 'monospace',
-                                      ),
-                                    ),
-                                  ),
-                                  if (onClearSelectedSkill != null) ...[
-                                    const SizedBox(width: 4),
-                                    InkWell(
-                                      key: const ValueKey(
-                                        'code_composer_clear_skill',
-                                      ),
-                                      onTap: onClearSelectedSkill,
-                                      child: const Icon(
-                                        Icons.close_rounded,
-                                        size: 13,
-                                        color: AppTheme.primaryBlue,
-                                      ),
-                                    ),
-                                  ],
-                                ],
-                              ),
-                            ),
-                          if (hasPendingImage)
-                            Stack(
-                              clipBehavior: Clip.none,
-                              children: [
-                                Container(
-                                  width: 44,
-                                  height: 44,
-                                  decoration: BoxDecoration(
-                                    borderRadius: BorderRadius.circular(8),
-                                    border: Border.all(
-                                      color: AppTheme.primaryBlueBorder,
-                                    ),
-                                  ),
-                                  clipBehavior: Clip.antiAlias,
-                                  child: ChatTappableImage(
-                                    imageDataUrl: pendingImageDataUrl!,
-                                    width: 44,
-                                    height: 44,
-                                    borderRadius: BorderRadius.zero,
-                                    errorBuilder: (_, _, _) => const Icon(
-                                      Icons.image_outlined,
-                                      size: 20,
-                                      color: AppTheme.primaryBlue,
-                                    ),
-                                  ),
-                                ),
-                                if (onClearPendingImage != null)
-                                  Positioned(
-                                    top: -5,
-                                    right: -5,
-                                    child: InkWell(
-                                      key: const ValueKey(
-                                        'code_composer_clear_image',
-                                      ),
-                                      onTap: onClearPendingImage,
-                                      borderRadius: BorderRadius.circular(99),
-                                      child: Container(
-                                        padding: const EdgeInsets.all(2),
-                                        decoration: BoxDecoration(
-                                          color: AppTheme.textPrimary,
-                                          shape: BoxShape.circle,
-                                        ),
-                                        child: Icon(
-                                          Icons.close_rounded,
-                                          size: 11,
-                                          color: AppTheme.surface,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          for (final file in attachedFiles)
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: AppTheme.surface,
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(
-                                    Icons.description_outlined,
-                                    size: 13,
-                                    color: AppTheme.primaryBlueText,
-                                  ),
-                                  const SizedBox(width: 4),
-                                  ConstrainedBox(
-                                    constraints: const BoxConstraints(
-                                      maxWidth: 160,
-                                    ),
-                                    child: Text(
-                                      '@$file',
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        color: AppTheme.textPrimary,
-                                        fontSize: 11.5,
-                                        fontFamily: 'monospace',
-                                      ),
-                                    ),
-                                  ),
-                                  if (onRemoveAttachedFile != null) ...[
-                                    const SizedBox(width: 4),
-                                    InkWell(
-                                      onTap: () => onRemoveAttachedFile!(file),
-                                      child: Icon(
-                                        Icons.close_rounded,
-                                        size: 13,
-                                        color: AppTheme.textSecondary,
-                                      ),
-                                    ),
-                                  ],
-                                ],
-                              ),
-                            ),
-                        ],
-                      ),
+                    CodeComposerAttachmentsBar(
+                      selectedSkill: selectedSkill,
+                      onClearSelectedSkill: onClearSelectedSkill,
+                      pendingImageDataUrl: pendingImageDataUrl,
+                      onClearPendingImage: onClearPendingImage,
+                      pendingDocuments: pendingDocuments,
+                      onRemovePendingDocument: onRemovePendingDocument,
+                      attachedFiles: attachedFiles,
+                      onRemoveAttachedFile: onRemoveAttachedFile,
                     ),
                   TextField(
                     controller: controller,

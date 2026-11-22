@@ -52,6 +52,7 @@ import {
   wordExpansionNames,
 } from "./shell-constants.js";
 import { inlineScriptsReadOnly } from "./inline-script-readonly.js";
+import { containsMktempPlaceholder, isExactMktempPlaceholderPath, isSafeDoubleBracketArgs } from "./shell-idioms.js";
 import {
   SEQ_LOOP_PLACEHOLDER,
   gitReadOnlyLoopExpansions,
@@ -225,7 +226,8 @@ function advanceScopedCD(seg, cwd, worktree) {
 }
 
 function isTempPathArg(arg) {
-  if (!arg || !isAbsPolicyPath(arg) || arg.startsWith("~") || /[$[]/.test(arg)) return false;
+  if (!arg || !isAbsPolicyPath(arg) || arg.startsWith("~") || /[$[{}]/.test(arg)) return false;
+  if (containsMktempPlaceholder(arg)) return isExactMktempPlaceholderPath(arg);
   for (const part of arg.replaceAll("\\", "/").split("/")) {
     if (part === ".." || (part !== "" && "*?.".includes(part[0]) && /[*?]/.test(part))) {
       return false;
@@ -321,7 +323,7 @@ function runsScriptNamedElsewhere(command) {
 
 function isOpaqueShellCommandDepth(command, worktree, options, depth) {
   const raw = String(command ?? "");
-  if (depth > MAX_SUBSHELL_DEPTH || raw.includes(CMD_SUBST_VAR) || raw.includes(SEQ_LOOP_PLACEHOLDER)) return true;
+  if (depth > MAX_SUBSHELL_DEPTH || raw.includes(CMD_SUBST_VAR) || raw.includes(SEQ_LOOP_PLACEHOLDER) || (depth === 0 && containsMktempPlaceholder(raw))) return true;
   const trust = options.allowInlineScripts ? "full" : options.inlineOnly ? "readonly" : "none";
   const trimmed = unwrapSandboxCommand(command).trim();
   if (!trimmed) return true;
@@ -688,7 +690,8 @@ function expansionsAreBounded(seg, words, vars, valueClass = false) {
   if (expanding.length === 0) return true;
   if (base === "git") return gitMessageExpansionsOnly(args, vars) || gitReadOnlyLoopExpansions(args, vars, homeDeps);
   if (!vars.has("HOME") && (base === "sh" || base === "bash" || base === "zsh") && isSafeShellScriptSegment(base, args, false, { stripNullRedirects, isSecretPath, isSensitiveExternalPath, isProtectedPath })) return true;
-  const readOnlyTool = READ_ONLY_DATA_TOOLS.has(base) || (base === "sed" && isReadOnlySedArgs(args, stripNullRedirects));
+  const safeDoubleBracket = base === "[[" && isSafeDoubleBracketArgs(args);
+  const readOnlyTool = READ_ONLY_DATA_TOOLS.has(base) || (base === "sed" && isReadOnlySedArgs(args, stripNullRedirects)) || safeDoubleBracket;
   if (!readOnlyTool && !(valueClass && base === "mkdir")) return false;
   for (const a of args) {
     if (a.startsWith("--pre") || a.startsWith("--hostname-bin") || a.startsWith("--compress-program") || (base === "printf" && a === "-v")) {
@@ -706,7 +709,7 @@ function expansionsAreBounded(seg, words, vars, valueClass = false) {
     for (const name of names) {
       const bound = vars.has(name);
       if (name === CMD_SUBST_VAR) {
-        if (bound || (!VALUE_ONLY_TOOLS.has(base) && !(valueClass && (acceptsValueClassArg(base) || (base === "sed" && isReadOnlySedArgs(args, stripNullRedirects)))))) return false;
+        if (bound || (!(VALUE_ONLY_TOOLS.has(base) || safeDoubleBracket) && !(valueClass && (acceptsValueClassArg(base) || (base === "sed" && isReadOnlySedArgs(args, stripNullRedirects)))))) return false;
       } else if (bound) {
         if (vars.get(name) !== true || !readOnlyTool) return false;
       } else if (!HARMLESS_ENV_VARS.has(name) || !readOnlyTool) {

@@ -376,6 +376,12 @@ func isValueClassSegment(seg string) bool {
 		case "rev-parse", "write-tree", "merge-base", "symbolic-ref", "describe", "hash-object":
 			return true
 		}
+	case "gofmt":
+		return isValueClassGofmt(args)
+	case "realpath":
+		return isValueClassRealpath(args)
+	case "md5", "shasum", "sha256sum", "md5sum":
+		return isValueClassChecksum(base, args)
 	}
 	return false
 }
@@ -497,6 +503,7 @@ func isSafeXargsSegment(rawArgs []string, piped bool, prevSeg string) bool {
 		return false
 	}
 	i := 0
+	replToken := ""
 	for i < len(args) {
 		a := args[i]
 		if a == "--" {
@@ -518,10 +525,14 @@ func isSafeXargsSegment(rawArgs []string, piped bool, prevSeg string) bool {
 			if i+1 >= len(args) || !xargsReplRe.MatchString(args[i+1]) {
 				return false
 			}
+			replToken = args[i+1]
 			i += 2
 			continue
 		}
 		if xargsAttachedFlagRe.MatchString(a) {
+			if strings.HasPrefix(a, "-I") && len(a) > 2 {
+				replToken = a[2:]
+			}
 			i++
 			continue
 		}
@@ -540,27 +551,7 @@ func isSafeXargsSegment(rawArgs []string, piped bool, prevSeg string) bool {
 		}
 	}
 	targetBase := filepath.Base(normalizeAbsoluteTool(rest[0]))
-	targetArgs := rest[1:]
-	if targetBase != "basename" && targetBase != "dirname" && targetBase != "echo" {
-		return false
-	}
-	for j := 0; j < len(targetArgs); j++ {
-		ta := targetArgs[j]
-		if targetBase == "basename" && (ta == "-a" || strings.HasPrefix(ta, "-s=")) {
-			continue
-		}
-		if targetBase == "basename" && ta == "-s" && j+1 < len(targetArgs) {
-			j++
-			continue
-		}
-		if targetBase == "echo" && ta == "-n" {
-			continue
-		}
-		if strings.HasPrefix(ta, "-") {
-			return false
-		}
-	}
-	return true
+	return isSafeXargsTarget(targetBase, rest[1:], replToken)
 }
 
 func isQuotedDirGlobSuffix(s string, openIdx, closeIdx int) bool {
@@ -621,35 +612,6 @@ func commandSubsAreValueClass(s string) bool {
 		}
 	}
 	return found
-}
-
-// isHarmlessSet reports set options that only change exit and trace behavior.
-// Other options (noglob, nounset, allexport, ...) stay opaque.
-func isHarmlessSet(words []string) bool {
-	if len(words) < 2 || filepath.Base(words[0]) != "set" {
-		return false
-	}
-	args := words[1:]
-	if len(args) == 2 && (args[0] == "-o" || args[0] == "+o") {
-		switch args[1] {
-		case "pipefail", "errexit", "xtrace":
-			return true
-		}
-		return false
-	}
-	if len(args) != 1 {
-		return false
-	}
-	flag := args[0]
-	if len(flag) < 2 || (flag[0] != '-' && flag[0] != '+') || strings.HasPrefix(flag, "--") {
-		return false
-	}
-	for _, c := range flag[1:] {
-		if c != 'e' && c != 'x' {
-			return false
-		}
-	}
-	return true
 }
 
 // isMacOSTempPath reports a concrete entry under the per-user temporary

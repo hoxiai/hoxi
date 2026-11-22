@@ -244,6 +244,32 @@ func (t *Tracker) Snapshot() Summary {
 	return summary
 }
 
+// PendingRequestsByID returns a snapshot of waiting approval/question request
+// IDs mapped to their resolved Hoxi session IDs.
+func (t *Tracker) PendingRequestsByID() map[string]string {
+	if t == nil {
+		return nil
+	}
+	t.mu.Lock()
+	raw := make(map[string]string, len(t.pendingApprovals))
+	for reqID, sid := range t.pendingApprovals {
+		raw[reqID] = sid
+	}
+	resolver := t.sessionResolver
+	t.mu.Unlock()
+	if len(raw) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(raw))
+	for reqID, sid := range raw {
+		target := resolveOneTarget(sid, resolver)
+		if target.SessionID != "" {
+			out[reqID] = target.SessionID
+		}
+	}
+	return out
+}
+
 func (t *Tracker) snapshotLocked() Summary {
 	return Summary{
 		Attention:        len(t.pendingApprovals) + len(t.stalledSessions) + len(t.degradedProvider),

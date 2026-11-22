@@ -6,6 +6,7 @@ import {
   ChevronUp,
   Clock,
   ExternalLink,
+  Info,
   LoaderCircle,
   ShieldAlert,
   SlidersHorizontal,
@@ -15,6 +16,7 @@ import {
 } from "lucide-solid";
 import type { PermissionRequest } from "../../services/sse-types";
 import {
+  explainPermissionRequest,
   isDestructivePermissionRequest,
   grantableClasses,
   grantClassLabel,
@@ -89,6 +91,29 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
   const rules = createMemo(() => deriveHierarchicalRules(props.request, command()));
   const isDestructive = createMemo(() => isDestructivePermissionRequest(props.request));
   const isRunner = createMemo(() => isRunnerPermissionID(props.request.id));
+  const approvalReason = createMemo(() => explainPermissionRequest(props.request));
+  const approvalReasonText = createMemo(() => {
+    const info = approvalReason();
+    const labelMap: Record<string, () => string> = {
+      doom_loop: () => t("approval.reasonDoomLoop"),
+      computer_use: () => t("approval.reasonComputerUse"),
+      unsandboxed: () => t("approval.reasonUnsandboxed"),
+      secret_read: () => t("approval.reasonSecretRead"),
+      protected_path: () => t("approval.reasonProtectedPath"),
+      privilege_or_process: () => t("approval.reasonPrivilegeOrProcess"),
+      publish_or_force_push: () => t("approval.reasonPublishOrForcePush"),
+      pipe_to_shell: () => t("approval.reasonPipeToShell"),
+      destructive_delete: () => t("approval.reasonDestructiveDelete"),
+      external_tool: () => t("approval.reasonExternalTool"),
+      external_path: () => t("approval.reasonExternalPath"),
+      high_risk: () => t("approval.reasonHighRisk"),
+      inline_script: () => t("approval.reasonInlineScript"),
+      opaque_shell: () => t("approval.reasonOpaqueShell"),
+      mode_policy: () => t("approval.reasonModePolicy"),
+    };
+    const base = (labelMap[info.code] ?? labelMap.mode_policy)();
+    return info.detail ? t("approval.reasonWithDetail", { reason: base, detail: info.detail }) : base;
+  });
   const sessionClasses = createMemo(() => grantableClasses(props.request));
   const sessionClassLabel = createMemo(() =>
     sessionClasses().every(isFileGrantClass) ? t("approval.allowSessionFile") : t("approval.allowSessionClass")
@@ -221,6 +246,23 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
       </div>
 
       <div class="px-3.5 py-2.5 space-y-2.5 max-h-[290px] overflow-y-auto">
+        <Show when={props.request.permission !== "doom_loop"}>
+          <div
+            class={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11.5px] leading-snug ${
+              approvalReason().severity === "danger"
+                ? "border-[var(--danger-border)] bg-[var(--danger-surface)]/70 text-[var(--danger-text)]"
+                : approvalReason().severity === "warn"
+                  ? "border-[var(--warn-border)] bg-[var(--bg-panel)]/70 text-[var(--warn-text)]"
+                  : "border-[var(--border-subtle)] bg-[var(--bg-panel)]/70 text-[var(--text-secondary)]"
+            }`}
+          >
+            <Info size={12} class="shrink-0 opacity-80" />
+            <span>
+              <span class="font-medium">{t("approval.reasonPrefix")}</span>
+              {approvalReasonText()}
+            </span>
+          </div>
+        </Show>
         <Show when={props.request.permission === "doom_loop"}>
           <div class="text-[12px] leading-relaxed text-[var(--warn-text)]">
             {t("approval.doomLoopNotice", {

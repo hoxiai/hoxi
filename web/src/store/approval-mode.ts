@@ -51,6 +51,7 @@ import {
 } from "./approval-records";
 import { isDestructivePermissionRequest } from "../policy/permission-policy.js";
 import { sessionGrantRefusal } from "../policy/opaque-command.js";
+import { explainPermissionRequest } from "../policy/approval-reason.js";
 
 export {
   approvalAuditEntries,
@@ -58,6 +59,7 @@ export {
   approvalRecordsLoading,
   clearApprovalAudit,
   deferredEntries,
+  explainPermissionRequest,
   fetchAgyHookStatus,
   grantClassLabel,
   grantableClasses,
